@@ -2,9 +2,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, ConfigSaveRefusedError } from '../../packages/api-host-config/src/index.js';
 import { LogHub } from '../../packages/core/src/index.js';
-import { ConfigSaveRefusedError, createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 import { quiet, settle, sleep, waitFor } from '../helpers/fs-watch.js';
 

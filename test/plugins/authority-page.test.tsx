@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
+import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { type App, provide } from '../../packages/core/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // AuthorityPage 组件测试（jsdom，数字等级）—— 锁死「输入不能是死的」：
 // 渲染不崩 + 改用户等级输入真触发 setUserLevel、改整组等级真触发 setAuthorityOverride；
-// 操作成功后显示服务端返回的 message（拒写附注靠它让 owner 看见），没有才用本地提示。
+// 操作成功后显示服务端返回的 message（拒写附注靠它让 owner 看见），没有才用本地提示；
+// 整组设最低等级汇总各条回执（撤销数、失败原因），无论成败都刷新。
 // ════════════════════════════════════════════════════════════
 
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
-/** 各 action 的返回值（缺省 {}，即不带 message） */
+/** 各 action 的返回值（缺省 {}，即不带 message）；给函数时按调用参数取返回值，抛错即该次调用失败 */
 const replies: Record<string, unknown> = {};
 
 const OVERVIEW = {
@@ -26,13 +32,17 @@ const OVERVIEW = {
   commands: [],
   tools: [
     { key: 'weather', name: 'weather', type: 'tool', displayName: 'weather', pluginName: 'p', visibility: 'public' },
+    { key: 'exec', name: 'exec', type: 'tool', displayName: 'exec', pluginName: 'p', visibility: 'restricted' },
+    { key: 'shell', name: 'shell', type: 'tool', displayName: 'shell', pluginName: 'p', visibility: 'restricted' },
   ],
 };
 
 vi.mock('../../packages/plugin-webui-client/src/api', () => ({
   pageAction: vi.fn(async (_plugin: string, method: string, args: Record<string, unknown> = {}) => {
     calls.push({ method, args });
-    return method === 'getOverview' ? OVERVIEW : (replies[method] ?? {});
+    if (method === 'getOverview') return OVERVIEW;
+    const reply = replies[method];
+    return typeof reply === 'function' ? reply(args) : (reply ?? {});
   }),
   api: vi.fn(),
   proxiedMediaUrl: (s: string) => s,
@@ -159,5 +169,102 @@ describe('AuthorityPage 操作提示', () => {
       vi.advanceTimersByTime(1500);
     });
     expect(screen.queryByText(text), '第一条提示的 2200ms 计时已到，不该清掉后来的附注').not.toBeNull();
+  });
+});
+
+// 回执直接取自真实的 plugin-authority 处理器：撤销数的字段名或形状在插件那边一改，这里就变红
+describe('AuthorityPage 整组设最低等级', () => {
+  const OWNER = { platform: 'webui', userId: 'console' };
+  const STRANGER = { platform: 'onebot', userId: 'bob' };
+  let app: App | undefined;
+  afterEach(async () => {
+    await app?.stop();
+    app = undefined;
+  });
+
+  /** 装上真插件，按 grants 给各能力建会话授予（alice 名下，每条一个会话）；返回真实的 setAuthorityOverride 处理器 */
+  async function realOverride(grants: Record<string, number> = {}): Promise<WebuiActionHandler> {
+    const hosted = hostedApp();
+    app = hosted.app;
+    const host = app.bind({ provide, authority });
+    const actions = new Map<string, WebuiActionHandler>();
+    host.provide(webuiServer, {
+      registerPage: () => () => {},
+      registerAction: (method: string, handler: WebuiActionHandler) => {
+        actions.set(method, handler);
+        return () => void actions.delete(method);
+      },
+    } as never);
+    await app.plugins.idle();
+    await app.plugin(authorityPlugin, {});
+    const manager = host.authority.current;
+    const handler = actions.get('setAuthorityOverride');
+    if (!manager || !handler) throw new Error('authority 没起来');
+    manager.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
+    for (const [capability, n] of Object.entries(grants)) {
+      for (let i = 0; i < n; i++) {
+        const name = capability.slice(capability.indexOf(':') + 1);
+        const req = {
+          name,
+          type: 'tool',
+          capability,
+          sessionId: `s${i}`,
+          platform: 'onebot',
+          userId: 'alice',
+        } as const;
+        if (!(await manager.requestAccess(req))) throw new Error('前置：会话授予没建起来');
+      }
+    }
+    return handler;
+  }
+
+  async function commitGroupLevel(value: string) {
+    const input = (await screen.findByTitle('批量设置本组所有操作的最低等级')) as HTMLInputElement;
+    const overviews = calls.filter(c => c.method === 'getOverview').length;
+    // 首屏数据到达后，输入框按 value 重置草稿的挂载副作用可能还没跑；负载高时它晚于输入执行，把草稿盖回空值，
+    // 失焦就什么也不提交。输入没留住就重输，留住了在同一同步段里失焦提交
+    await waitFor(() => {
+      fireEvent.change(input, { target: { value } });
+      expect(input.value, '输入被挂载副作用盖回').toBe(value);
+      fireEvent.blur(input);
+    });
+    return overviews;
+  }
+
+  const refreshedAfter = (overviews: number) =>
+    waitFor(() =>
+      expect(calls.filter(c => c.method === 'getOverview').length, '整组操作落定后没有刷新').toBe(overviews + 1),
+    );
+
+  it('全部成功：提示里带各条回执撤销数的合计', async () => {
+    const override = await realOverride({ 'tool:weather': 2, 'tool:exec': 1 });
+    replies.setAuthorityOverride = (args: Record<string, unknown>) => override(args, OWNER);
+    render(<AuthorityPage />);
+    const overviews = await commitGroupLevel('3');
+    expect(await screen.findByText('整组最低等级已更新（已撤销 3 条相关会话授予）')).toBeTruthy();
+    await refreshedAfter(overviews);
+  });
+
+  it('部分失败：列出成功与失败的条数、撤销数与失败原因，并照常刷新', async () => {
+    const override = await realOverride({ 'tool:weather': 2, 'tool:exec': 1 });
+    replies.setAuthorityOverride = (args: Record<string, unknown>) => {
+      if (args.name === 'tool:shell') throw new Error('未写入配置文件');
+      return override(args, OWNER);
+    };
+    render(<AuthorityPage />);
+    const overviews = await commitGroupLevel('3');
+    expect(
+      await screen.findByText('整组最低等级：2 项已更新（已撤销 3 条相关会话授予），1 项失败：未写入配置文件'),
+    ).toBeTruthy();
+    await refreshedAfter(overviews);
+  });
+
+  it('全部失败：相同的失败原因只列一次，照常刷新', async () => {
+    const override = await realOverride();
+    replies.setAuthorityOverride = (args: Record<string, unknown>) => override(args, STRANGER);
+    render(<AuthorityPage />);
+    const overviews = await commitGroupLevel('3');
+    expect(await screen.findByText('整组最低等级：0 项已更新，3 项失败：只有 owner 可管理权限')).toBeTruthy();
+    await refreshedAfter(overviews);
   });
 });

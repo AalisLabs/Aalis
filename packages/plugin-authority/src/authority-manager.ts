@@ -352,7 +352,12 @@ export class AuthorityManager implements AuthorityService {
     return result;
   }
 
-  /** 等待落盘完成（拆卸路径用；save() 本身只是把写挂上链） */
+  /** 等在飞的等级表读取落定（管理入口改等级前等它：首次读取完成前内存表是空的） */
+  whenLoaded(): Promise<void> {
+    return this.store.whenLoaded();
+  }
+
+  /** 等待落盘完成（拆卸路径与管理入口用；save() 本身只是把写挂上链） */
   flushed(): Promise<void> {
     return this.store.flushed();
   }
@@ -364,5 +369,15 @@ export class AuthorityManager implements AuthorityService {
   /** users.json 加载失败而拒写（实现层状态，不在契约里）：管理动作据此在回执里注明改动未落盘 */
   get persistBlocked(): boolean {
     return this.store.persistBlocked;
+  }
+
+  /** 最近一次写 users.json 失败（实现层状态，不在契约里）：管理动作据此在回执里注明改动未落盘 */
+  get lastSaveFailed(): boolean {
+    return this.store.lastSaveFailed;
+  }
+
+  /** 首次读取 users.json 尚未落定、改动还没写盘（实现层状态，不在契约里）：管理动作据此在回执里注明 */
+  get awaitingFirstLoad(): boolean {
+    return this.store.awaitingFirstLoad;
   }
 }

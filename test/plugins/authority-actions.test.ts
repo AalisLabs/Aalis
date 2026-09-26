@@ -76,6 +76,8 @@ interface BootOptions {
   operations?: OpNode[];
   /** 给出即作为 users.json 原文；缺省按文件不存在处理 */
   usersJson?: string;
+  /** 给出即替换 users.json 的写入；缺省照写即成功 */
+  writeFile?: () => Promise<void>;
 }
 
 const DATA_ROOT: StorageRootInfo = {
@@ -108,7 +110,7 @@ async function boot(opts: BootOptions = {}) {
       if (opts.usersJson === undefined) throw new Error('不存在');
       return opts.usersJson;
     },
-    writeFile: async () => undefined,
+    writeFile: opts.writeFile ?? (async () => undefined),
   } as never);
   if (opts.operations) {
     host.provide(commands, fakeCommandService(opts.operations, handlers) as never);
@@ -345,9 +347,9 @@ describe('setAutoConfirm — owner 切 auto 确认模式', () => {
   });
 });
 
-// users.json 加载失败时整程拒写：等级改动只在内存生效，重启即失。三个等级管理入口的回执
-// 必须如实注明，否则 owner 看到的是「成功」，封禁或提权在重启后静默消失。
-describe('拒写状态下的等级管理回执', () => {
+// 等级改动没写进 users.json 时，三个等级管理入口的回执必须如实注明，否则 owner 看到的是「成功」，
+// 封禁或提权在重启后静默消失。加载失败时整程拒写；写盘失败时改动留在内存，等下次保存重写。
+describe('未落盘时的等级管理回执', () => {
   const NOTE = '仅本次运行生效，未写入 users.json';
   const owner = { platform: 'webui', userId: 'console' };
 
@@ -362,6 +364,28 @@ describe('拒写状态下的等级管理回执', () => {
     expect(set.message).toContain(NOTE);
     const del = (await call('deleteUser', { platform: 'onebot', userId: '777' }, owner)) as { message: string };
     expect(del.message).toContain(NOTE);
+  });
+
+  it('写 users.json 失败（storage 不在线等）：三个入口的回执注明未写入，写成功后附注消失', async () => {
+    const SAVE_NOTE = '未写入 users.json（写入失败，见日志）';
+    let failing = true;
+    const { call, runCommand } = await boot({
+      operations: [],
+      writeFile: async () => {
+        if (failing) throw new Error('未知存储根: data');
+      },
+    });
+
+    expect(await runCommand('level', 'onebot:777', -1)).toContain(SAVE_NOTE);
+    const set = (await call('setUserLevel', { platform: 'onebot', userId: '777', level: -2 }, owner)) as {
+      message: string;
+    };
+    expect(set.message).toContain(SAVE_NOTE);
+    const del = (await call('deleteUser', { platform: 'onebot', userId: '777' }, owner)) as { message: string };
+    expect(del.message).toContain(SAVE_NOTE);
+
+    failing = false;
+    expect(await runCommand('level', 'onebot:777', -3)).toBe('已设 onebot:777 等级: -3');
   });
 
   it('users.json 正常：回执不带该附注', async () => {

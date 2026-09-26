@@ -53,7 +53,8 @@
       "required": [
         "events",
         "logger",
-        "provide"
+        "provide",
+        "services"
       ]
     }
   }

@@ -60,10 +60,16 @@ async function run(caps: Caps): Promise<void> {
   let loading: Promise<void> | undefined;
   // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
   storage.follow(() => {
-    loading = manager.init().then(
-      () => logger.debug('授权用户等级已加载'),
-      err => logger.warn(`授权用户等级加载失败: ${err}`),
-    );
+    loading = manager
+      .init()
+      .then(
+        () => logger.debug('授权用户等级已加载'),
+        // err 作参数交给 logger 渲染：模板字符串遇到转不成字符串的值会抛，被下面的兜底吞掉、一条告警都不留
+        err => logger.warn('授权用户等级加载失败:', err),
+      )
+      // 上报器自身失败（日志订阅者同步抛错）不再外抛，成败两条回调都算：storage 已在线时下面的 await
+      // 会让激活失败，晚上线时没人等这个 Promise，未处理的拒绝会被宿主当致命错误退出进程
+      .catch(() => {});
   });
   // storage 已在线时 follow 是同步首挂：把加载等完再让 apply 返回，避免「等级表还空着
   // 就开始裁决」的窗口（封禁用户在这段时间按默认 0 级通过）。storage 晚上线时无从等待，仍异步。
@@ -203,9 +209,11 @@ async function run(caps: Caps): Promise<void> {
       if (sep < 1) return '目标格式: <platform:userId>';
       const lv = Number(level);
       if (!Number.isInteger(lv)) return '等级必须是整数';
-      manager.setUserLevel({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, lv);
-      manager.save();
-      return withPersistNote(manager, `已设 ${t} 等级: ${lv}`);
+      return applyUserChange(
+        manager,
+        () => manager.setUserLevel({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, lv),
+        `已设 ${t} 等级: ${lv}`,
+      );
     });
 
   // /auto [分钟|off|on] — owner 临时免 dangerous 二次确认（批处理便利）。on=一直, off=关, 数字=分钟。
@@ -244,11 +252,23 @@ async function run(caps: Caps): Promise<void> {
 }
 
 /**
- * 等级改动回执：users.json 加载失败而拒写时，改动只在内存里生效、重启即失，
- * 回执里要如实注明，别让 owner 以为封禁或提权已经落盘。
+ * 等级管理入口（/level、WebUI setUserLevel / deleteUser）的共同流程。
+ * 先等在飞的等级表读取落定再改：首次读取完成前内存里查不到文件里的记录，原等级按默认 0 级算，降权或删除时
+ * 该撤销的会话授予会漏撤；把有备注的用户降为 0 级时也看不到备注，整条记录连同备注被清掉。
+ * （改等级保留文件里的备注、删除不随文件回来，由 UserStore 的字段合并与删除墓碑保证，不靠这次等待。）
+ * 等落盘结束再生成回执，改动没写进 users.json 时如实注明，别让 owner 以为封禁或提权已经落盘：
+ * 加载失败而拒写时只在本次运行生效、重启即失；首次读取尚未落定（storage 未上线）时改动留在内存，读完后写盘；
+ * 写盘失败时改动留在内存，下次保存时重写。
  */
-function withPersistNote(manager: AuthorityManager, message: string): string {
-  return manager.persistBlocked ? `${message}；仅本次运行生效，未写入 users.json（加载失败，见日志）` : message;
+async function applyUserChange(manager: AuthorityManager, change: () => void, message: string): Promise<string> {
+  await manager.whenLoaded();
+  change();
+  manager.save();
+  await manager.flushed();
+  if (manager.persistBlocked) return `${message}；仅本次运行生效，未写入 users.json（加载失败，见日志）`;
+  if (manager.awaitingFirstLoad) return `${message}；未写入 users.json（等级表尚未载入），载入后写入`;
+  if (manager.lastSaveFailed) return `${message}；未写入 users.json（写入失败，见日志），下次保存时重试`;
+  return message;
 }
 
 // ===== WebUI 页面动作（数字等级单轴：用户等级 + 操作门槛 + owner 列表 + 高级）=====
@@ -332,9 +352,12 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     if (!platform || !userId) throw new Error('platform, userId 必填');
     if (typeof level !== 'number' || !Number.isInteger(level)) throw new Error('level 必须是整数');
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    manager.setUserLevel({ platform: platform as string, userId: userId as string }, level);
-    manager.save();
-    return { message: withPersistNote(manager, `${platform}:${userId} 等级已更新为 ${level}`) };
+    const message = await applyUserChange(
+      manager,
+      () => manager.setUserLevel({ platform: platform as string, userId: userId as string }, level),
+      `${platform}:${userId} 等级已更新为 ${level}`,
+    );
+    return { message };
   });
 
   /** 删除用户记录（仅 owner 可达：删掉封禁记录等于解封） */
@@ -342,9 +365,12 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     const { platform, userId } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    manager.removeUser(platform as string, userId as string);
-    manager.save();
-    return { message: withPersistNote(manager, `${platform}:${userId} 记录已删除`) };
+    const message = await applyUserChange(
+      manager,
+      () => manager.removeUser(platform as string, userId as string),
+      `${platform}:${userId} 记录已删除`,
+    );
+    return { message };
   });
 
   /** 更新 owner 列表（仅 owner 可达：防非 owner 把自己加成 owner 提权） */
@@ -394,6 +420,8 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     await config.save();
     return {
       message: `操作 ${name} 最低等级已更新${revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : ''}`,
+      // 结构化撤销数：权限页整组设门槛时据此汇总，不解析 message 文案
+      revokedGrants: revoked,
     };
   });
 

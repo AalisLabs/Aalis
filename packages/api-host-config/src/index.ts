@@ -54,10 +54,30 @@ export interface HostConfig {
   removeServicePreference(name: string): void;
   /**
    * 持久化当前文档。返回的 Promise 兑现时保存已完成；失败以拒绝传出，调用方应 await。
-   * 失败时提供方已记一笔 error 并把拒绝标记为已处理：不 await 的调用不会变成未处理拒绝。
+   * 配置源有尚未生效的外部修改而拒写时以 {@link ConfigSaveRefusedError} 拒绝（用 {@link isConfigSaveRefused} 判定），
+   * 其它失败（如写入出错）原样传出。
+   * 失败时提供方已记一笔日志（拒写记告警，其它记 error）并把拒绝标记为已处理：不 await 的调用不会变成未处理拒绝。
    * 不保证并发保存的先后，也不负责与外部编辑合并。
    */
   save(): Promise<void>;
+}
+
+/**
+ * 宿主因配置源有尚未生效的外部修改而拒绝保存：可预期的拒绝（盘上内容受保护），不是落盘故障。
+ * 宿主抛它；调用方用 {@link isConfigSaveRefused} 与写入失败等其它拒绝区分，不用 instanceof。
+ */
+export class ConfigSaveRefusedError extends Error {
+  override name = 'ConfigSaveRefusedError';
+}
+
+/**
+ * 判定 `save()` 的拒绝是否为宿主拒写 —— 契约级判据，全体消费者复用，勿各自重抄。
+ *
+ * 只按 `name` 判定：进程里装有两份本包时，宿主抛出的是它解析到的那份类，换一份做 instanceof 就不成立，
+ * 按 name 两份都认得。instanceof 认得出的实例 name 同样相符，所以不另留 instanceof 快路径。
+ */
+export function isConfigSaveRefused(err: unknown): boolean {
+  return (err as { name?: unknown } | null | undefined)?.name === 'ConfigSaveRefusedError';
 }
 
 export const hostConfig = defineService<HostConfig>('host-config');

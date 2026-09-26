@@ -97,7 +97,12 @@ export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArra
  * 渲染宿主（webui-server 设置页）从这里取。
  */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
-  name: { type: 'string', label: '应用名称', description: '应用显示名称，用于日志和界面展示', default: 'Aalis' },
+  name: {
+    type: 'string',
+    label: '应用名称',
+    description: '应用显示名称，用于启动日志和界面展示；装有人设时界面显示人设名',
+    default: 'Aalis',
+  },
   logLevel: {
     type: 'select',
     label: '日志等级',

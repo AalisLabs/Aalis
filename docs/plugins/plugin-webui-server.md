@@ -111,13 +111,13 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/status` | POST · POST · GET | 登录换 cookie / 登出 / 登录状态 |
 | `/api/status` | GET | 系统状态、上传能力检测 |
 | `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息） |
-| `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件后写回配置文档 |
+| `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件后写回配置文档。插件有 `configSchema` 时裁掉未声明的字段：本次提交里的在响应 `ignored` 里点名；配置文档里原有、本次没有提交的随写回从配置文件删除，在响应 `removed` 里点名；两者都附在 `message` 末尾。插件运行中、且提交后的配置与运行态和配置文档都相同时，不重载插件，仍把配置文档写回文件（此前保存写文件失败时，原样重试即可补写），回复「配置无改动，已写回配置文件」 |
 | `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins` |
 | `/api/plugins/scan` | POST | 经宿主的 `plugin-source` 服务重新扫描插件源（范围由宿主的加载器决定），加载新发现且尚未注册的插件；宿主未提供插件来源时返回 503 |
 | `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除 |
 | `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |
 | `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器（统一 RPC 入口） |
-| `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取；PUT 可改 `name`、`logLevel`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；可改键的值有变化时保存并自动重启应用；POST `/api/config/save` 把当前配置写回磁盘 |
+| `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取；PUT 可改 `name`、`logLevel`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；`logLevel` 有变化时保存并自动重启应用，只改 `name` 时保存即生效（装有人设时界面显示人设名）；POST `/api/config/save` 把当前配置写回磁盘 |
 | `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除服务偏好提供者（持久化到 `servicePreferences`） |
 | `/api/service-groups` · `/api/tool-groups` · `/api/system-components` | GET | 服务分组 / 工具分组 / 系统组件 |
 | `/api/platforms` | GET | 平台连接状态 |
@@ -130,7 +130,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
 | `/api/proxy/image` | GET | 图片代理 |
 
-core 的插件管理动作与 `services.prefer` 只改运行态；启停、改配置、实例增删与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、实例增删与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好配置文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停、删除实例与服务偏好在重启时以文件为准。修好文件的方式不限，原样改回也会触发这次对账。全局配置（`PUT /api/config`）落盘失败时撤回文档里的改动并返回 409：`name` / `logLevel` 本就要重启才生效，运行态没有改动。
+core 的插件管理动作与 `services.prefer` 只改运行态；启停、改配置、实例增删与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、实例增删与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好配置文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停、删除实例与服务偏好在重启时以文件为准。修好文件的方式不限，原样改回也会触发这次对账。落盘因其它原因失败（如没有写权限、磁盘写满）时，这些路由返回 500 与 `{ error, applied: true }`：文件没有变化，也不会触发重载，改动保留在配置文档里，下一次保存成功时一并写入。全局配置（`PUT /api/config`）落盘失败时撤回文档里的改动，被拒返回 409、其它失败返回 500：`logLevel` 要重启才生效，`name` 由状态接口实时读取，撤回后两者都回到修改前。`POST /api/config/save` 同样是被拒返回 409、其它失败返回 500。
 
 ## WebSocket
 

@@ -61,7 +61,7 @@ export default definePlugin({
    跨会话委派与定时/工作流/子任务派发）
 2. **语义检索**: 经 `agent:prompt` 贡献点（turn-context 锚位），组装请求时：
    - 将用户最新消息 embed 为查询向量
-   - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 minScore / 跨会话模式过滤后时间衰减加权重排；
+   - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 embedding 模型（见下节）、minScore 与跨会话模式过滤后时间衰减加权重排；
      `crossSessionMode: user` 时，当前用户本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
      扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；
@@ -72,11 +72,24 @@ export default definePlugin({
    - `recallRoles` 配置控制 AI 自身回复是否参与召回（`all` 默认 / `others-only`）；
      角色标注不随该开关关闭。存量未打 role 的旧向量按对方对待
 3. **主动召回**: 注册 `memory_recall` 工具，按任意 query 检索，与被动注入共用同一检索排序
-   （候选放大、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
+   （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
    `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
+
+## embedding 模型与存量向量
+
+只有同一 embedding 模型算出的向量才能互相比较。embedding 提供者声明了 `modelId`（向量空间标识，第一方提供者为 `ollama:<model>` / `openai:<model>`）时：
+
+- **写入**：新向量的 metadata 带 `modelId`，取自算这条向量的同一提供者实例。
+- **检索**：被动注入与 `memory_recall` 只保留与查询向量同模型的候选，同维度换模型后其它模型的向量也不会混入排序。排除发生在取回候选之后，候选池大小不变；库里其它模型的向量占多数时，实际命中会少于 `topK`，甚至为零。
+- **存量向量**：升级前写入的向量不带 `modelId`。插件首次检索时读取记忆元数据中的存量标记（namespace `memory-vector`、key `legacy-model`）：已有记录则把存量向量视为该模型生成，没有记录则记下当前模型。memory 服务不在或元数据读写出错时，本次把存量向量视为与当前模型一致（与升级前相同），下次检索时再试；读写连续出错只记一次 warn。
+- **告警**：因模型不一致排除候选时，每个当前模型在一次运行中只记一次 warn，列出被排除向量的模型。要继续召回这些记忆，改回原模型或用当前模型重新 embed 这些向量；不再需要时用 `/clear all -t vector` 清空向量库，由新消息重建。
+
+提供者未声明 `modelId` 时，写入不带该键，检索也不按模型过滤。
+
+存量标记记的是升级后首次检索时的模型，存放在记忆元数据里。全局清空消息历史而不清向量库时（如 `/clear all -t context`），记忆后端会连元数据一起删除，插件在清空后把存量标记原样写回。写回失败时记一条 warn，本次运行仍沿用已确定的标记，重启后按届时的模型重记；清空前就读不到标记时（记忆后端出错），清空后的下一次检索即按当时的模型重记。以下两种情况存量向量会被记成当时的模型、继续混入检索，需清空向量库：升级时同时换了模型；memory 后端是元数据不持久的 plugin-memory-inmemory 而向量库持久化，换模型后一重启，标记就按新模型重记。
 
 ## 依赖
 
 - **vectorstore**: 向量存储服务（如 plugin-vectorstore-flat 或 plugin-vectorstore-lancedb）
 - **embedding**: 文本嵌入服务（如 plugin-embedding-ollama 或 plugin-embedding-openai）
-- **memory**（可选）: 消息存储服务；提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身。该服务在每次扩窗时惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效
+- **memory**（可选）: 消息存储服务，两个用途：提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身；记忆元数据存放存量标记（见上节），缺失时存量向量按当前模型对待。该服务在调用点惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效。plugin-memory-inmemory 的元数据不持久，与持久化向量库（plugin-vectorstore-flat / plugin-vectorstore-lancedb）搭配时，每次重启都会按当时的模型重记存量标记

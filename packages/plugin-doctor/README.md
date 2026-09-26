@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-doctor
 `definePlugin` 默认导出：
 
 - provides：`doctor`
-- uses：`provide`、`logger`、`events`；可选 `plugins`、`commands`、`webui`（`webui-server`）
+- uses：`provide`、`logger`、`events`、`services`；可选 `plugins`、`commands`、`webui`（`webui-server`）
 
 ## 文档
 

@@ -44,7 +44,7 @@ export default definePlugin({
 
 ## 注意事项
 
-- 向量维度由具体 provider 决定（如 OpenAI text-embedding-3-small = 1536；ollama nomic-embed-text = 768）。**消费方应避免假设维度**——`plugin-memory-vector` 会在初始化时 probe 一次并存为元数据。
+- 向量维度由具体 provider 决定（如 OpenAI text-embedding-3-small = 1536；ollama nomic-embed-text = 768），契约不暴露维度。**消费方应避免假设维度**，也不能靠维度区分模型（同维度换模型的向量同样不可比较）。`plugin-memory-vector` 不探测维度，靠 `modelId` 区分模型：提供者声明了它时，写入的向量 metadata 带上 `modelId`，检索只保留与查询向量同模型的候选。
 - 多个 embedding 实现互斥：同一时间只有一个胜者绑定到 `embedding` 服务名（通过 instanceId / 偏好区分多实例）。
 
 ## 实现者

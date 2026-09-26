@@ -180,6 +180,12 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     });
     const unknown = await api.putPlugin('target', { timeoutMs: 70000, sneaky: true });
     expect(unknown.status).toBe(200);
+    expect(unknown.body, '被裁的字段回给调用方，不静默吞掉').toEqual({
+      ok: true,
+      message: '插件 target 配置已更新（已忽略未声明的配置字段: sneaky）',
+      ignored: ['sneaky'],
+      removed: [],
+    });
     await app.plugins.idle();
     expect(
       (store.getPluginConfig('target') as { sneaky?: unknown }).sneaky,
@@ -191,6 +197,145 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     expect(hit, '裁剪必须点名，不能静默').toBeTruthy();
     expect(hit).toContain('sneaky');
     expect(hit).toContain('target');
+  });
+
+  it('文档里原有的 schema 外字段不算本次提交被忽略：另列 removed，写回时从配置文件删除', async () => {
+    const { app, store } = silentApp({
+      config: { plugins: { target: { apiKey: 'sk-PLACEHOLDER', timeoutMs: 30000, legacyKnob: 1 } } },
+    });
+    await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: SCHEMA, apply() {} }));
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
+
+    const reply = await api.putPlugin('target', { timeoutMs: 60000, sneaky: true });
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({
+      ok: true,
+      message: '插件 target 配置已更新（已忽略未声明的配置字段: sneaky）（已从配置文件移除未声明的字段: legacyKnob）',
+      ignored: ['sneaky'],
+      removed: ['legacyKnob'],
+    });
+    expect(Object.hasOwn(store.getPluginConfig('target'), 'legacyKnob'), '照现有政策从文件删除').toBe(false);
+  });
+});
+
+describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
+  const FULL = { apiKey: 'sk-PLACEHOLDER', baseUrl: 'https://api.example.com', timeoutMs: 30000 };
+
+  /** 登记 target 并挂路由；save 计数经窄面外包一层，apply 计数即激活（含 bounce 重建）次数 */
+  async function bootTarget(opts: { config: Record<string, unknown>; failFirstApply?: boolean }) {
+    const { app, store } = silentApp({ config: { plugins: { target: opts.config } } });
+    let applies = 0;
+    await registerFromDoc(
+      app,
+      store,
+      definePlugin({
+        name: 'target',
+        configSchema: SCHEMA,
+        apply() {
+          applies++;
+          if (opts.failFirstApply && applies === 1) throw new Error('首次激活失败');
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const inner = bound.hostConfig.require();
+    let saves = 0;
+    const counted: HostConfig = Object.create(inner) as HostConfig;
+    counted.save = () => {
+      saves++;
+      return inner.save();
+    };
+    const api = attachRoutes({ app: bound.app.require(), plugins: bound.plugins.require(), hostConfig: counted });
+    return { app, store, api, applies: () => applies, saves: () => saves };
+  }
+
+  it('只带 schema 外字段：回「无改动，已写回配置文件」并点名被裁字段，不 bounce，照常落盘', async () => {
+    const w = await bootTarget({ config: { ...FULL } });
+    expect(w.app.plugins.getPlugin('target')?.state).toBe('active');
+    expect(w.applies()).toBe(1);
+
+    const reply = await w.api.putPlugin('target', { typoField: 1 });
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({
+      ok: true,
+      message: '插件 target 配置无改动，已写回配置文件（已忽略未声明的配置字段: typoField）',
+      ignored: ['typoField'],
+      removed: [],
+    });
+    await w.app.plugins.idle();
+    expect(w.applies(), '配置没变，插件（及其下游）不该被重建').toBe(1);
+    expect(w.saves(), '仍要落盘：原样重试得能补上此前写文件失败的保存').toBe(1);
+    expect(w.store.getPluginConfig('target')).toEqual(FULL);
+  });
+
+  it('原样提交现值：同样回「无改动」', async () => {
+    const w = await bootTarget({ config: { ...FULL } });
+    const reply = await w.api.putPlugin('target', { ...FULL });
+    expect(reply.body).toEqual({
+      ok: true,
+      message: '插件 target 配置无改动，已写回配置文件',
+      ignored: [],
+      removed: [],
+    });
+    expect(w.applies()).toBe(1);
+    expect(w.saves()).toBe(1);
+  });
+
+  it('运行态已是这份配置、文档却不同：照常写文档并落盘', async () => {
+    const { app, store } = silentApp();
+    // 运行态直接拿到 FULL，文档里没有这个插件的配置段
+    await app.plugin(definePlugin({ name: 'target', configSchema: SCHEMA, apply() {} }), { ...FULL });
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
+
+    const reply = await api.putPlugin('target', { ...FULL });
+    expect((reply.body as { message: string }).message).toBe('插件 target 配置已更新');
+    expect(store.getPluginConfig('target')).toEqual(FULL);
+  });
+
+  it('error 态插件原样保存：照旧走 updateConfig 重试激活并落盘', async () => {
+    const w = await bootTarget({ config: { ...FULL }, failFirstApply: true });
+    expect(w.app.plugins.getPlugin('target')?.state).toBe('error');
+
+    const reply = await w.api.putPlugin('target', { ...FULL });
+    expect(reply.status).toBe(200);
+    expect((reply.body as { message: string }).message).toBe('插件 target 配置已更新');
+    await w.app.plugins.idle();
+    expect(w.applies()).toBe(2);
+    expect(w.app.plugins.getPlugin('target')?.state).toBe('active');
+    expect(w.saves()).toBe(1);
+  });
+});
+
+describe('PUT /api/plugins/:name/config 保留配置块键序', () => {
+  it('文档里原有的键保持原顺序，缺的默认键追加到末尾', async () => {
+    // 默认值的声明顺序是 baseUrl、timeoutMs；文档里是 timeoutMs、apiKey，且没有 baseUrl
+    const { app, store } = silentApp({
+      config: { plugins: { target: { timeoutMs: 30000, apiKey: 'sk-PLACEHOLDER' } } },
+    });
+    await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: SCHEMA, apply() {} }));
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
+
+    expect((await api.putPlugin('target', { timeoutMs: 60000 })).status).toBe(200);
+    expect(Object.keys(store.getPluginConfig('target'))).toEqual(['timeoutMs', 'apiKey', 'baseUrl']);
   });
 });
 

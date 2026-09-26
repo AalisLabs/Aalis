@@ -16,6 +16,7 @@ import { HUB_PLUGINS } from '../fixtures/hubs.js';
 //   2. 非主卡的 outputFormat 缓存曾按显示名写入、按文件名删除：同名的两张卡共用先解析的那份格式，
 //      热改非主卡的 outputFormat 要重启才生效（此时 outputFormatPrompt 已是新文本，两边对不上）。
 //      现按卡对象缓存，重扫换入新卡对象后旧缓存自然失效。
+//   3. 热改主卡：监听触发重扫，经 reloadPrimaryCardFromCache 换入新卡，人设名与提示词不必重启即更新。
 // 真 storage-local（workspace + data 两个根）+ 真 persona。
 // ════════════════════════════════════════════════════════════
 
@@ -136,5 +137,19 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     const prompt = svc.getSystemPrompt({ persona: 'a' });
     expect(prompt).toContain('"new"');
     expect(prompt).not.toContain('"old"');
+  });
+
+  it('热改主卡：重扫后 getPersonaName 与系统提示词都换成新的', async () => {
+    writeCard('main.yaml', 'name: 旧主卡名\ndescription: m\nprompt: 旧主卡正文\n');
+    const svc = await boot('main', true);
+    await app.start();
+    expect(svc.getPersonaName()).toBe('旧主卡名');
+    await sleep(250); // 等 fs 监听就绪
+
+    writeCard('main.yaml', 'name: 新主卡名\ndescription: m\nprompt: 新主卡正文\n');
+    expect(await waitUntil(() => svc.getPersonaName() === '新主卡名'), '改主卡未被重扫载入').toBe(true);
+    const prompt = svc.getSystemPrompt();
+    expect(prompt).toContain('新主卡正文');
+    expect(prompt).not.toContain('旧主卡正文');
   });
 });

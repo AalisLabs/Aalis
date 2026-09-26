@@ -154,7 +154,7 @@ describe('持久化（v5 save/load 往返）', () => {
           written = payload as string;
         },
         readFile: async () => {
-          if (!written) throw new Error('no file');
+          if (!written) throw Object.assign(new Error('no file'), { code: 'ENOENT' });
           return written;
         },
       } as unknown as StorageService,
@@ -164,6 +164,7 @@ describe('持久化（v5 save/load 往返）', () => {
   it('等级经 save/init 往返存活，写出 version:5', async () => {
     const s = memStorage();
     const m = new AuthorityManager(mkConfig(), silentLogger(), s.svc);
+    await m.init(); // 首次读取落定之前 save 不写盘
     m.setUserLevel({ platform: 'onebot', userId: 'a' }, 3);
     m.save();
     await new Promise(r => setTimeout(r, 0));

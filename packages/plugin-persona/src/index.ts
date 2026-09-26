@@ -622,10 +622,12 @@ async function run(caps: Caps): Promise<void> {
   function refresh(reason: string): Promise<void> {
     if (queued) return queued;
     if (scanning) {
-      queued = scanning.then(() => {
+      // scanOnce 自己吞错；即便日后它会拒绝，也照排尾随重扫，queued 不能停在一个已拒绝的 Promise 上
+      const next = (): Promise<void> => {
         queued = undefined;
         return refresh(reason);
-      });
+      };
+      queued = scanning.then(next, next);
       return queued;
     }
     scanning = scanOnce(reason).finally(() => {

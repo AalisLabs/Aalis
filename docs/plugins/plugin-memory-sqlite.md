@@ -38,6 +38,7 @@ export default definePlugin({
 ## 特性
 
 - `path` 按 storage URI 解析：首段路径视为存储根名（如 `data/aalis.db` 即 `data:/aalis.db`），也可以直接写 `data:/xxx.db`；对应存储根须支持写入和本地路径解析（`resolveLocalPath`），否则启动时报错
+- `better-sqlite3` 是原生模块，按装依赖时的 Node 版本编译。换了 Node 大版本后启动，插件激活失败并提示两条出路：用装依赖时的 Node 启动，或在项目根执行 `npm rebuild better-sqlite3`（pnpm 工程用 `pnpm rebuild better-sqlite3`），报错末尾附原始错误的首行。CPU 架构不符、缺系统库等其它原生加载失败不给这条提示，报错照录原始错误
 - 自动创建 `messages` 表（含 `(sessionId, timestamp)` 与 `(archived, timestamp)` 两个索引）和 `metadata` 表
 - 启用 WAL 模式以提升并发性能
 - `getHistory()`（默认 50 条）只取未归档消息，倒序取最新 N 条后正序返回；`trimHistory()` 是把旧消息标记为归档，不做物理删除

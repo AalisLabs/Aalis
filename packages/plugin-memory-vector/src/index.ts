@@ -398,20 +398,75 @@ async function run({
   const cfgVisibility: Visibility =
     cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
 
+  // === embedding 模型（向量空间）===
+  // 只有同一模型算出的向量才能互相比较。索引时 metadata 记下提供者的 modelId；本版之前写入的
+  // 存量向量不带它，它们出自哪个模型记在记忆元数据的存量标记里：首次需要时读取，不存在就记下
+  // 当时的模型（即升级后第一次检索时的模型）。memory 是可选依赖且可能晚到，确定不了时本次把
+  // 存量向量视为与当前模型一致（与改前行为相同），成功读到或写入后才缓存。
+
+  const LEGACY_MODEL_NAMESPACE = 'memory-vector';
+  const LEGACY_MODEL_KEY = 'legacy-model';
+  /** 已确定的存量标记；undefined = 尚未确定 */
+  let legacyModel: { modelId?: string } | undefined;
+  /** 已为哪些当前模型告警过「排除了其它模型的向量」 */
+  const mismatchWarned = new Set<string>();
   /**
-   * 检索并排序：search → 准入 → minScore → 可见范围 → 时间加权 → 同用户加权 → 按终分降序。
+   * 存量标记读写失败是否已告警。后端持续出错时每轮检索都会重试，同一段连续失败只告警一次；
+   * 标记一经确定即缓存、此后不再经这里读写（全局清空后的写回失败另行告警），失败段随之结束，所以成功时无需复位。
+   */
+  let legacyFailureWarned = false;
+
+  /** 存量向量（无 metadata.modelId）的模型；确定不了时返回 undefined，由调用方按当前模型对待 */
+  async function legacyModelId(currentModelId: string): Promise<string | undefined> {
+    if (legacyModel) return legacyModel.modelId;
+    const mem = memory.current;
+    if (!mem) return undefined;
+    try {
+      const data = await mem.getMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
+      if (data) {
+        legacyModel = { modelId: typeof data.modelId === 'string' ? data.modelId : undefined };
+      } else {
+        await mem.saveMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY, { modelId: currentModelId });
+        legacyModel = { modelId: currentModelId };
+      }
+      return legacyModel.modelId;
+    } catch (err) {
+      if (!legacyFailureWarned) {
+        legacyFailureWarned = true;
+        logger.warn(
+          `读写存量向量的模型标记失败，存量向量暂按当前模型对待；之后每次检索都会重试，恢复前不再重复告警: ${formatError(err)}`,
+        );
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * 检索并排序：search → 同模型 → 准入 → minScore → 可见范围 → 时间加权 → 同用户加权 → 按终分降序。
+   * 同模型：queryModelId 取自算查询向量的那个提供者；声明了时只留同模型的向量（存量向量按存量标记
+   * 认定模型），未声明时不按模型过滤。
    * 准入：others-only 档过滤 AI 自身发言；存量旧向量无 role 字段，不等于 'assistant'，按对方对待。
    * 同用户加权只在给出 boostUserId 时生效（crossSessionMode='user'）：作者是该用户或该用户被 @提及，
    * 分数乘以 userPriorityBoost。
    */
   async function rankCandidates(
     queryVec: number[],
+    queryModelId: string | undefined,
     candidateCount: number,
     scope: { visibility: Visibility; curSessionId: string | undefined; curPlatform: string; boostUserId?: string },
   ): Promise<RankedHit[]> {
     const candidates = await vectorstore.require().search(queryVec, candidateCount);
+    const legacy = queryModelId ? await legacyModelId(queryModelId) : undefined;
+    const excludedModels = new Set<string>();
     const now = Date.now();
     const ranked = candidates
+      .filter(c => {
+        if (!queryModelId) return true;
+        const vecModel = (c.metadata.modelId as string | undefined) ?? legacy ?? queryModelId;
+        if (vecModel === queryModelId) return true;
+        excludedModels.add(vecModel);
+        return false;
+      })
       .filter(c => !(cfg.recallRoles === 'others-only' && c.metadata.role === 'assistant'))
       .filter(c => c.score >= cfg.search.minScore)
       .filter(c => {
@@ -441,6 +496,14 @@ async function run({
         }
         return { ...c, finalScore: score };
       });
+    if (queryModelId && excludedModels.size > 0 && !mismatchWarned.has(queryModelId)) {
+      mismatchWarned.add(queryModelId);
+      logger.warn(
+        `向量库里有其它 embedding 模型生成的向量（${[...excludedModels].join('、')}），与当前模型 ${queryModelId} ` +
+          '的向量不可比较，检索时已排除。要继续召回这些记忆，改回原模型或用当前模型重新 embed 这些向量；' +
+          '不再需要时可用 /clear all -t vector 清空向量库，由新消息重建。',
+      );
+    }
     ranked.sort((a, b) => b.finalScore - a.finalScore);
     return ranked;
   }
@@ -554,7 +617,8 @@ async function run({
     // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
     const messageTimestamp = archived.timestamp ?? Date.now();
     try {
-      const vec = await embedding.require().embed(rawText);
+      const provider = embedding.require();
+      const vec = await provider.embed(rawText);
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
         sessionId: msg.sessionId,
@@ -572,6 +636,8 @@ async function run({
         // @提及到的用户 ID 列表，用于检索时同用户加权
         mentions,
       };
+      // 向量空间标识取自算这条向量的同一实例，检索时只与同模型的查询向量比较
+      if (provider.modelId) metadata.modelId = provider.modelId;
       await vectorstore.require().add(vec, metadata);
       await vectorstore.require().save();
     } catch (err) {
@@ -608,7 +674,8 @@ async function run({
       const selfUserId = (meta.userId as string | undefined) ?? '';
       // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
       const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
-      const vec = await embedding.require().embed(embedText);
+      const provider = embedding.require();
+      const vec = await provider.embed(embedText);
       const metadata: Record<string, unknown> = {
         sessionId,
         role: 'assistant',
@@ -624,6 +691,7 @@ async function run({
         content: rawText,
         mentions: extractMentions(rawText),
       };
+      if (provider.modelId) metadata.modelId = provider.modelId;
       await vectorstore.require().add(vec, metadata);
       await vectorstore.require().save();
     } catch (err) {
@@ -661,7 +729,19 @@ async function run({
 
   hooks.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('vector')) {
+      // 全局清空而向量库不清：清消息历史的默认动作（clearAll）会连记忆元数据一起删，存量标记随之丢失，
+      // 存量向量却还在。放行前确定标记，放行后原样写回，免得之后按届时的模型重记。
+      const modelId = data.scope === 'all' ? embedding.current?.modelId : undefined;
+      const legacy = modelId ? await legacyModelId(modelId) : undefined;
       await next();
+      const mem = memory.current;
+      if (legacy && mem) {
+        try {
+          await mem.saveMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY, { modelId: legacy });
+        } catch (err) {
+          logger.warn(`清空后写回存量向量的模型标记失败，下次启动后标记将按届时的模型重记: ${formatError(err)}`);
+        }
+      }
       return;
     }
 
@@ -720,9 +800,10 @@ async function run({
         data.signal?.throwIfAborted();
         if (candidateCount === 0) return null;
 
-        const queryVec = await embedding.require().embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
+        const provider = embedding.require();
+        const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
-        const ranked = await rankCandidates(queryVec, candidateCount, {
+        const ranked = await rankCandidates(queryVec, provider.modelId, candidateCount, {
           visibility: cfgVisibility,
           curSessionId,
           curPlatform,
@@ -932,14 +1013,20 @@ async function run({
           return JSON.stringify({ ok: true, query, results: [], message: '向量库为空' });
         }
 
-        const queryVec = await embedding.require().embed(query, { signal: callCtx.signal });
+        const provider = embedding.require();
+        const queryVec = await provider.embed(query, { signal: callCtx.signal });
         // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）
-        const ranked = await rankCandidates(queryVec, Math.min(requestedTopK * candidateOversample, storeSize), {
-          visibility: effectiveScope,
-          curSessionId,
-          curPlatform,
-          boostUserId: cfg.crossSessionMode === 'user' ? callCtx.userId : undefined,
-        });
+        const ranked = await rankCandidates(
+          queryVec,
+          provider.modelId,
+          Math.min(requestedTopK * candidateOversample, storeSize),
+          {
+            visibility: effectiveScope,
+            curSessionId,
+            curPlatform,
+            boostUserId: cfg.crossSessionMode === 'user' ? callCtx.userId : undefined,
+          },
+        );
 
         const top = ranked.slice(0, requestedTopK);
         if (top.length === 0) {

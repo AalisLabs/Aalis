@@ -109,8 +109,9 @@ export function PluginConfigPage({
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
     const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
     markBusy(instanceId);
+    let res: { message?: string };
     try {
-      await api(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
+      res = await api<{ message?: string }>(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
         method: 'PUT',
         body: JSON.stringify({ config: parsed }),
       });
@@ -119,7 +120,8 @@ export function PluginConfigPage({
       setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
       return;
     }
-    showToast(`${instanceId} 配置已更新，正在重载…`);
+    // 服务端回执可能带附注（如被裁掉的 schema 外字段）或说明本次无改动，照原样显示
+    showToast(res.message ?? `${instanceId} 配置已更新，正在重载…`);
     setEditingPlugin(null);
     onRefresh();
   };
