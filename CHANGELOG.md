@@ -8,7 +8,7 @@
 
 ---
 
-## 未发布（core 0.17.0 → 0.18.0；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
+## 2026-09-27（core 0.18.0 minor；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
 
 core 只做插件的注册、激活、关停与两种原语（事件、服务）。插件从哪里来、配置存在哪里由宿主负责；钩子与贡献点改为普通插件提供的服务。同批各包删除对旧数据、旧配置与弃用接口的兼容，删除无人使用的公开接口，并收紧若干安全默认值。升级前请先读末尾「版本与必须同批升级的包」一节。
 
