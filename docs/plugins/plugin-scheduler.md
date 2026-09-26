@@ -7,7 +7,7 @@
 
 AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达式（周期）、固定间隔秒数（周期），以及 `runAt` 指定时刻执行一次（一次性）。AI 工具与 WebUI 表单还接受 `delaySeconds`，会换算为 `runAt`。
 
-触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话；plugin-commands 把它当作受信系统源（命令免交互确认，结果写入日志）。流控不对该来源单独豁免，是否受流控取决于 flow-control 的 `scopes` 能否匹配到该消息（默认 `*:group` 匹配不到）。
+触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话；plugin-commands 把它当作受信系统源（命令免交互确认，结果写入日志）。流控不对该来源单独豁免：目标会话禁言期内一律不说话；冷却与限速是否生效取决于 flow-control 的 `scopes` 能否匹配到该消息（默认 `*:group` 匹配不到）。
 
 ## 插件声明
 

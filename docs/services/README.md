@@ -23,7 +23,7 @@
 | [platform](platform.md) | 平台身份/self 识别 helper，供 adapter/persona 消费。 |
 | [message](message.md) | 契约（Message role×kind 模型）——详见[概念层 message-llm-pipeline](../concepts/message-llm-pipeline.md)，本篇为类型速查。 |
 | [message-archive](message-archive.md) | shadow 归档服务；串行归档契约。 |
-| [flow-control](flow-control.md) | 消息流控（去抖/合并/触发策略）：何时让缓冲的入站消息触发一轮 agent。 |
+| [flow-control](flow-control.md) | 会话级节流硬闸：禁言、回复后冷却、限速；要不要开口由 trigger-policy 判定。 |
 
 ## 智能体核心
 | 服务 | 定位 |

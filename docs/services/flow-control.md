@@ -2,14 +2,12 @@
 
 ## 1. 定位
 
-`flow-control` 管理**每会话的「流控状态」**——决定缓冲中的入站消息何时（以及是否）有资格触发一次 agent 回合：计数器/活跃指数（间隔触发依据）、回复后冷却、限速窗口（防 DDoS/刷屏）、自禁言时段、闲置主动触发调度。它**不做触发判定本身**（触发判定是 `trigger-policy` 的职责），只维护被判定方读写的状态 + 在入站管线里把禁言/冷却/限速的消息直接「吞掉」。
+`flow-control` 是会话级的**节流硬闸**：禁言、回复后冷却、限速窗口。它只回答"现在能不能说"，不参与"要不要开口"——后者由 `@aalis/plugin-trigger-policy` 在前一相位判定（@ / 名字 / 计数与评分 / 闲置主动开口）。
 
 - 服务注册名：`'flow-control'`（描述符 `flowControl`，读 `flowControl.current`）
 - 契约包：`@aalis/api-flow-control`
 - 参考实现：`@aalis/plugin-flow-control`
-- 紧密协作的兄弟服务：`@aalis/plugin-trigger-policy`（`trigger-policy`），二者占据入站管线相邻两个相位。
-
-两者的职责切分（`packages/plugin-trigger-policy/src/types.ts`）：**决策（只读）由 `trigger-policy` 负责，状态变更由 `flow-control` 负责**。这是实现 provider/consumer 时首先要明确的边界。
+- 相邻相位：`inbound:trigger`（trigger-policy）→ `inbound:flow`（本服务的参考实现）→ `inbound:dispatch`。
 
 ## 2. 契约
 
@@ -17,229 +15,135 @@
 
 ```ts
 export interface FlowControlService {
-  /** 只读快照（trigger-policy 用） */
-  getStateSnapshot(sessionId: string): FlowSessionStateSnapshot | undefined;
-
-  /** 入站累加（messageCount, activityScore, lastMessageTime, userInteractions, 应用衰减） */
-  recordIncoming(sessionId: string, platform: string, userId?: string, sessionType?: string, targetId?: string): void;
-
-  /** 触发后重置（messageCount=0, activityScore=0, lastReplyTime=now, idleBackoff=1） */
-  recordTriggered(sessionId: string): void;
-  /** 出站后处理：设置冷却 + 限速窗口记录 + 重置退避 + 重排 idle 调度 */
-  recordReply(sessionId: string, platform: string): void;
-
-  isCoolingDown(sessionId: string): boolean;
+  /** 当前是否在禁言期 */
   isMuted(sessionId: string): boolean;
-  /** true 表示已超限 */
+  /** 当前是否在回复后冷却期 */
+  isCoolingDown(sessionId: string): boolean;
+  /** 限速窗口内的回复数是否已达上限（true 表示已超限） */
   isRateLimited(sessionId: string): boolean;
-
-  /** 自禁言：durationSec>0 设禁言至 now+durationSec*1000；<=0 解除。未初始化但给 platform 会自动建 */
+  /**
+   * 设置或解除禁言（禁言关键词命中或平台禁言事件时调用）。
+   * - durationSec > 0：禁言到 now + durationSec 秒
+   * - durationSec <= 0：解除禁言
+   * 会话尚无流控状态时，只有同时给出 platform 才会建立状态并禁言。
+   */
   setMuted(sessionId: string, durationSec: number, platform?: string): void;
-  /** 当前阈值（动态衰减） */
-  getThreshold(sessionId: string): number;
-
-  /** 重排本会话 idle trigger（每次入站后调用） */
-  rescheduleIdle(sessionId: string, platform: string): void;
 }
 ```
-
-只读快照类型（`packages/api-flow-control/src/index.ts`）——这是 `trigger-policy` 唯一拿来算「是否到点」的视图：
-
-```ts
-export interface FlowSessionStateSnapshot {
-  messageCount: number;        // 自上次触发以来累计入站条数
-  activityScore: number;       // 活跃指数（受用户交互权重影响）
-  lastReplyTime: number;
-  lastMessageTime: number;
-  cooldownUntil: number;
-  mutedUntil: number;
-  idleBackoff: number;
-  rateLimitUsed: number;       // 当前窗口已用回复槽
-  rateLimitMax: number;        // 0=未启用限速
-  fixedInterval: number;       // 间隔触发阈值（trigger-policy 复用同一参数）
-  userInteractions: ReadonlyMap<string, { count: number; lastTime: number }>;
-}
-```
-
-类型随描述符提供：`defineService<FlowControlService>('flow-control')`（`packages/api-flow-control/src/index.ts`），下游导入描述符并写进 `uses` 即得类型，**不必硬依赖实现包**。
 
 要点：
-- `getStateSnapshot` / `getThreshold` 是**纯读**；其余方法带状态变更副作用。
-- `getThreshold` 随距上次回复的时间线性衰减（刚回完阈值高、久未回阈值低，`packages/plugin-flow-control/src/state.ts`），消费者比较时应**每次重取**而非缓存。
-- `activityScore` 增量按 `fixedInterval` 归一并叠加用户交互权重（`state.ts`）；可选按 `scoreDecayMinutes` 线性衰减（`state.ts`，默认 0 = 不衰减）。
+
+- 三个查询方法对未知会话返回 `false`（无状态即不限制）。
+- 冷却与限速按 agent 的真实回复（`outbound:message` 且 `source === 'agent'`）计，由实现自己监听，契约不暴露记账方法。
+- 类型随描述符走：下游 `import { flowControl } from '@aalis/api-flow-control'` 写进 `uses` 即可，不必依赖实现包。
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-flow-control`，`provide(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据入站管线 `inbound:flow` 相位做前置闸门，并监听 `outbound:message` 自动记冷却。
+**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。
 
-**典型消费点**：
+**消费点**（全部 `optional`，缺席即不设闸）：
 
-- `@aalis/plugin-trigger-policy`（核心消费者）：`inbound:trigger` 相位里 `flowControl.current` 读快照算 `fixedOk/dynamicOk`、命中 mute 关键词后 `setMuted` + `rescheduleIdle`、触发后 `recordTriggered`（`packages/plugin-trigger-policy/src/index.ts`）。
-- `@aalis/plugin-adapter-onebot`：
-  - 平台群禁言/解禁 notice → `flow.setMuted(sessionId, durationSec, platform)` 桥接（`packages/plugin-adapter-onebot/src/index.ts`）。
-  - agent 主动发送前限速门：`flow.isRateLimited` + `flow.recordReply`（`packages/plugin-adapter-onebot/src/index.ts`）；flow-control 未加载时默认放行（不限速）。
-- 全部消费点都用 `optional` 注入（见下）：`flow-control` 缺失不致命，降级为「不限流、全部放行」。
-
-`recordIncoming` / `recordReply` 在管线内由实现自身调用（`inbound:flow` 中间件与 `outbound:message` 监听），普通业务插件一般不直接调用它们；只读 `getStateSnapshot`、触发 `setMuted`、查询 `isRateLimited` 是更常见的外部用法。
+- `@aalis/plugin-trigger-policy`：`isMuted` 决定禁言期不计数、不识别关键词；命中禁言关键词时 `setMuted`；session 档闲置到点前查 `isMuted`，platform 档挑候选时排除 `isMuted` / `isCoolingDown` / `isRateLimited` 为真的会话（`packages/plugin-trigger-policy/src/index.ts`、`packages/plugin-trigger-policy/src/idle-scheduler.ts`）。
+- `@aalis/plugin-adapter-onebot`：bot 自身被禁言/解禁的 notice、重连后按 `shut_up_timestamp` 恢复时调 `setMuted`（`packages/plugin-adapter-onebot/src/index.ts`）。
+- `@aalis/plugin-tool-session`：`delegate_to_session` 派发前查目标会话，`isMuted` 或 `isRateLimited` 为真即拒绝（`packages/plugin-tool-session/src/index.ts`）。只检不记：限速按目标会话的真实回复计，派发到回复落地之间对同一目标的突发委派不占槽，可能越过限速。
 
 ## 4. 写一个 provider
 
-替换默认实现（例如换一套触发算法）时，**最小必须实现整个 `FlowControlService` 接口**——没有可选方法，`trigger-policy` 会同时用到 `getStateSnapshot` / `getThreshold` / `recordTriggered` / `setMuted` / `rescheduleIdle`，adapter 会用到 `isRateLimited` / `recordReply`。若你只想接管「状态存储」而保留管线相位行为，更简单的做法是直接 fork `plugin-flow-control`；自建 provider 时务必把它占据的 `inbound:flow` 中间件一并搬过来（否则禁言/冷却/限速闸门会失效）。
+替换默认实现时须实现整个 `FlowControlService`，并把 `inbound:flow` 中间件与 `outbound:message` 记账一并搬过来，否则禁言、冷却、限速闸门会失效。双源 manifest 必须同步（`package.json` 的 `aalis.service` 与源码 `provides` / `uses`，见 [concepts/manifest-metadata](../concepts/manifest-metadata.md)）。
 
-双源 manifest 必须同步（`package.json` 的 `aalis.service` 与源码 `provides`/`uses` 两处都要写，见 [concepts/manifest-metadata](../concepts/manifest-metadata.md)）。参考实现的两源：
+参考实现的 `package.json` → `aalis.service`：
 
-`package.json` → `aalis.service`：
 ```json
 { "aalis": { "service": {
-  "required": ["config", "events", "gateway", "hooks", "lifecycle", "logger", "provide"],
+  "required": ["config", "events", "hooks", "lifecycle", "logger", "provide"],
   "optional": ["storage", "message-archive"],
   "provides": ["flow-control"]
 } } }
 ```
 
-`index.ts`（`packages/plugin-flow-control/src/index.ts`）：
-```ts
-provides: [flowControl],
-uses: {
-  logger, events, hooks, lifecycle, config, provide, gateway,
-  storage: optional(storage),
-  messageArchive: optional(messageArchive),
-},
-```
-
-最小骨架（可编译，省略算法细节）：
+最小骨架（省略禁言持久化与分作用域覆盖）：
 
 ```ts
-import { flowControl } from '@aalis/api-flow-control';
-import type { FlowControlService } from '@aalis/api-flow-control';
-import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
+import { INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
-import { messageArchive } from '@aalis/api-message-archive';
-import { definePlugin, optional, provide } from '@aalis/core';
+import { definePlugin, events, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-flow-control',
   provides: [flowControl],
-  uses: {
-    provide,
-    hooks,
-    gateway,
-    messageArchive: optional(messageArchive),
-  },
-  apply({ provide, hooks, gateway, messageArchive }) {
-    void gateway;
-    void messageArchive;
-    const service: FlowControlService = {
-      getStateSnapshot(_sessionId) {
-        return undefined;
-      },
-      recordIncoming(_sessionId, _platform, _userId, _sessionType, _targetId) {},
-      recordTriggered(_sessionId) {},
-      recordReply(_sessionId, _platform) {},
-      isCoolingDown(_sessionId) {
-        return false;
-      },
-      isMuted(_sessionId) {
-        return false;
-      },
-      isRateLimited(_sessionId) {
-        return false;
-      },
-      setMuted(_sessionId, _durationSec, _platform) {},
-      getThreshold(_sessionId) {
-        return 0;
-      },
-      rescheduleIdle(_sessionId, _platform) {},
-    };
+  uses: { provide, hooks, events },
+  apply({ provide, hooks, events }) {
+    const mutedUntil = new Map<string, number>();
+    const cooldownUntil = new Map<string, number>();
 
+    const service: FlowControlService = {
+      isMuted: sid => Date.now() < (mutedUntil.get(sid) ?? 0),
+      isCoolingDown: sid => Date.now() < (cooldownUntil.get(sid) ?? 0),
+      isRateLimited: () => false,
+      setMuted(sid, sec) {
+        if (sec > 0) mutedUntil.set(sid, Date.now() + sec * 1000);
+        else mutedUntil.delete(sid);
+      },
+    };
     provide(flowControl, service);
 
     hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
       const { message } = data;
+      if (service.isMuted(message.sessionId)) return; // 禁言期一律不说话
       if (message.source === 'idle-trigger') return next();
-      service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType);
-      if (
-        service.isMuted(message.sessionId) ||
-        service.isCoolingDown(message.sessionId) ||
-        service.isRateLimited(message.sessionId)
-      ) {
-        return;
-      }
+      if (message.triggerType !== 'immediate' && service.isCoolingDown(message.sessionId)) return;
       await next();
+    });
+
+    events.on('outbound:message', msg => {
+      if (msg.source === 'agent' && msg.sessionId) cooldownUntil.set(msg.sessionId, Date.now() + 10_000);
     });
   },
 });
 ```
 
-注册选项说明（`provide(descriptor, instance, { priority, label, entryId })`，`packages/core/src/composition/core-services.ts`）：
-
-- **priority**：`flow-control` 是单实例后端服务，无 per-entry 分裂场景，留默认 `0` 即可。同名胜出规则为 `偏好 > priority > 注册顺序`（详见 [concepts/service-model](../concepts/service-model.md)），框架已**移除 0.5.0 的能力匹配选择**——不能按 capability 选 provider。
-- **entryId**：只在「按子作用域分裂多个 entry」时用 `'${lifecycle.id}/${sub}'`；flow-control 用全局单例 `Map<sessionId, state>` 管多会话，**不**需要 entryId。
+`flow-control` 是单实例服务，用全局 `Map<sessionId, state>` 管多会话，不需要 `entryId`；`priority` 留默认即可。同名胜出规则见 [concepts/service-model](../concepts/service-model.md)。
 
 ## 5. 标准消费方式
 
-按 [concepts/lazy-service-access](../concepts/lazy-service-access.md) 的规则：**每次用都 `current` 现取，不缓存引用**（provider 反弹会让旧引用失效）。flow-control 是 `optional` 依赖的典范——缺失即降级放行：
+按 [concepts/lazy-service-access](../concepts/lazy-service-access.md)：**每次用都 `current` 现取，不缓存引用**。缺席时按"不设闸"处理：
 
 ```ts
-import type { FlowControlService } from '@aalis/api-flow-control';
-
-// trigger-policy 读快照算是否到点（packages/plugin-trigger-policy/src/index.ts）
+// 委派派发前（packages/plugin-tool-session/src/index.ts）
 const flow = flowControl.current;
-const snap = flow?.getStateSnapshot(message.sessionId);
-if (!snap) {
-  // 没有 flow 状态（私聊/CLI/未启用流控的 scope）→ 默认放行
-  return { kind: 'interval', reason: 'no flow state, default-pass' };
-}
-const fixedOk = snap.messageCount >= snap.fixedInterval;
-const dynamicOk = snap.activityScore >= (flow?.getThreshold(message.sessionId) ?? 0);
+if (flow?.isMuted(targetSessionId)) return JSON.stringify({ error: '委派被拒：目标会话处于禁言期' });
+if (flow?.isRateLimited(targetSessionId)) return JSON.stringify({ error: '委派被拒：目标会话已达流控限速上限' });
 ```
 
-```ts
-// adapter 主动发送前限速门（packages/plugin-adapter-onebot/src/index.ts）
-const flow = flowControl.current;
-if (!flow) return { allowed: true };          // 未加载 → 不限速
-if (flow.isRateLimited(sessionId)) return { allowed: false, reason: '已达限速上限' };
-flow.recordReply(sessionId, 'onebot');         // 记一次出站
-return { allowed: true };
-```
+## 6. 行为不变量
 
-错误边界：
-- `decide()` 抛错时 `trigger-policy` 默认 `next()` 放行而非 swallow（`packages/plugin-trigger-policy/src/index.ts`）——「失败放行」优于「失败静默」。
-- `getStateSnapshot` 对未知 session 返回 `undefined`；`isCoolingDown/isMuted/isRateLimited` 对未知 session 返回 `false`（`state` 不存在视为不限制，`index.ts`）。
-- `recordTriggered` 对未初始化 session 静默 no-op（`packages/plugin-flow-control/src/index.ts`），不会抛。
-
-## 6. 能力 / 风险 → 影响
-
-flow-control 不直接接触 authority/SSRF/沙盒，但它是**对外可见行为的总闸**，provider/consumer 必须守住几条隔离不变量：
-
-- **scope 隔离不能泄漏**。`scopes`/`overrides` 用 `platform:sessionType[:targetId]` 三段通配匹配（`packages/plugin-flow-control/src/config.ts`，默认 `*:group`）。`trigger-policy` 在做 mute 关键词检查**之前**必须先判 scope，否则「QQ 群的 mute 关键词会泄漏到 WebUI/私聊等不在 scope 内的会话」（`packages/plugin-trigger-policy/src/index.ts` 明文警告）。自写 provider/consumer 时保持这个先 scope 后行为的顺序。
-- **idle 主动触发是「AI 替你开口」**。`scheduleSessionIdle` / `PlatformIdleScheduler` 到点会合成一条 `source:'idle-trigger', triggerType:'idle'` 的 `IncomingMessage` 注入 gateway（`packages/plugin-flow-control/src/idle-scheduler.ts`）。这类消息**绕过流控前置闸门**（`index.ts` `if (message.source === 'idle-trigger') return next()`）并被 agent 当系统提示而非用户消息（`plugin-agent/src/index.ts` 跳过归档）。provider 注入 idle 时务必打上 `source:'idle-trigger'`，否则会被自己的闸门再过一遍或被错误归档成用户发言。
-- **禁言态是跨重启的用户意图，要持久化**。参考实现只持久化 `mutedUntil` 一个字段到 `data:/flow-control-mutes.json`（`index.ts`），其余短期态重启重建无碍。该文件读不懂（不存在以外的读取错误、解析失败、顶层不是对象）时，本次运行不再整表回写，禁言改动只在内存生效，storage 换人重读时重新判定。换 provider 时若不持久化，重启会导致「被禁言的群立刻被解除静默」。存储用 `data:` root（`'<root>:/path'` 文法，见 [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md)），注意 storage 不是沙盒。
-- **限速是防刷屏/被平台风控的护栏**。adapter 的「主动发送」路径在发前查 `isRateLimited` 并 `recordReply`（`adapter-onebot/src/index.ts`）。自写主动发送通道的 provider 应接同一闸门，避免绕过限速直发被平台封号。
+- **禁言不看作用域、不看来源**。`inbound:flow` 先查禁言：闲置触发、跨会话委派、定时任务注入的消息在禁言期同样被吞。禁言状态只由关键词或平台禁言针对具体会话写入，所以不会误伤作用域外的会话。
+- **immediate 穿透冷却与限速**。被 @、戳一戳、叫名字时即使处于冷却或限速窗口也放行；禁言期除外。
+- **作用域先于关键词**。`scopes` / `overrides` 用 `platform:sessionType[:targetId]` 三段通配匹配（匹配函数在 `packages/api-gateway/src/index.ts`，默认 `*:group`）。trigger-policy 在识别禁言关键词之前先判作用域，否则群聊的禁言关键词会作用到 WebUI、私聊等不在作用域内的会话。
+- **禁言态要持久化**。禁言可能是小时级的用户意图，参考实现把 `mutedUntil` 落盘到 `data:/flow-control-mutes.json`，冷却与限速不落盘。该文件读不懂（不存在以外的读取错误、解析失败、顶层不是对象）时，本次运行不再整表回写，禁言改动只在内存生效，storage 换人重读时重新判定。换 provider 时若不持久化，重启会让被禁言的群立即恢复发言。
+- **限速是防刷屏与平台风控的护栏**。冷却与限速记在 agent 真实回复上，对任意会话生效：委派到私聊等从未入站过闸的目标，其回复同样计入限速。自建主动发送通道应发 `source: 'agent'` 的 `outbound:message`，才能被计入。
 
 ## 7. 注意事项与边界情形
 
-**Shadow archive 顺序竞态（审计标注，现状未收口）**。被流控/策略 swallow 的入站消息会做「影子归档」，下次触发时作为上下文补回：
+**影子归档顺序竞态（现状未收口）**。被吞掉的入站消息会做影子归档，下次触发时作为上下文：
 
-- `flow-control` 的 `shadowArchive`（`packages/plugin-flow-control/src/index.ts`）和 `trigger-policy` 的 `shadowArchive`（`packages/plugin-trigger-policy/src/index.ts`）都**直接** `await archive.archiveIncoming(message)`。
-- 而真正触发回合的消息走 agent 的**串行归档车道** `archiveIncomingMessageInOrder`（`packages/plugin-agent/src/index.ts`）——一条 per-lane 的 promise 链，保证同会话入站归档有序入库。
-- 两条路径不共享同一把锁/车道，且 `archiveIncoming` 用 `Date.now()` 作 `timestamp`（`packages/plugin-message-archive/src/index.ts`）。当 swallow 与触发在毫秒级交错时，影子归档与串行车道里的归档可能**乱序落库或时间戳并列**，导致下次喂给 LLM 的历史里 swallow 的几条与触发那条相对次序不稳定。
+- `flow-control` 与 `trigger-policy` 的 `shadowArchive`（`packages/plugin-flow-control/src/index.ts`、`packages/plugin-trigger-policy/src/index.ts`）都直接 `await archive.archiveIncoming(message)`。
+- 真正触发回合的消息走 agent 的串行归档车道 `archiveIncomingMessageInOrder`（`packages/plugin-agent/src/index.ts`）。
+- 两条路径不共享车道，`archiveIncoming` 以 `Date.now()` 作时间戳（`packages/plugin-message-archive/src/index.ts`）。吞掉与触发在毫秒级交错时，归档可能乱序或时间戳并列。
 
-现状：功能正确（消息都会进档、都会发 `inbound:message:archived`），但**严格的会话内时序不保证**。规避建议：
-- 自写 provider 做影子归档时，复用 agent 暴露的同一串行车道（若可达）或自建 per-sessionId 串行链，不要直接 `await archiveIncoming`。
-- 依赖严格时序的下游（如按时间排序渲染历史）应以稳定的单调序列号而非 `Date.now()` 排序。
+消息都会进档、都会发 `inbound:message:archived`，但会话内严格时序不保证。依赖严格时序的下游应以单调序列号而非 `Date.now()` 排序。闲置触发的合成提示不做影子归档（与 agent 的归档规则一致）。
 
-**其它注意事项**：
-- `getThreshold` / `getStateSnapshot.activityScore` 随时间变化，**比较前现取**，缓存会算错触发点。
-- `recordReply` 只在 `outbound:message` 且 `source==='agent'` 时由实现触发（`index.ts`）——命令/系统回复不计冷却。自写出站通道若想计冷却，要么发 `source:'agent'` 的 `outbound:message`，要么显式调 `recordReply`。
-- 长寿进程下 `states` 有 30 天 TTL 清理（`index.ts`）；自写 provider 别让 per-session map 无界增长。
+**其它**：
+
+- 命令回复与系统回复（`source` 不是 `agent`）不计冷却与限速。
+- 会话状态每天扫描一次，无挂起禁言/冷却且 30 天未见的会话被删除。
 
 ## 8. 交叉链接
 
-- [concepts/message-llm-pipeline](../concepts/message-llm-pipeline.md) — 入站相位 `CONFIRM → COMMAND → FLOW → TRIGGER → DISPATCH` 全貌（相位常量见 `packages/api-gateway/src/index.ts`）。
-- [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — DI 选名规则、现取不缓存。
-- [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides`/`uses` 双源同步。
-- [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md) — `mutedUntil` 持久化用的 `data:` root 文法。
-- [services/gateway](./gateway.md) — 谁驱动入站相位、`ingressMessage`/`outbound:message`。
-- [services/message-archive](./message-archive.md) — `archiveIncoming` 烘焙/落库语义与 `inbound:message:archived` 事件（影子归档的目标）。
-- 兄弟服务 `trigger-policy`（契约 `@aalis/plugin-trigger-policy`，接口 `packages/plugin-trigger-policy/src/types.ts`）：`decide()` / `getBotNames()` / `detectMuteKeyword()`，与本服务在 `inbound:flow` / `inbound:trigger` 相邻相位协作。
+- [plugins/plugin-flow-control](../plugins/plugin-flow-control.md)、[plugins/plugin-trigger-policy](../plugins/plugin-trigger-policy.md) — 两个相位的处理顺序与配置。
+- [services/gateway](./gateway.md) — 入站相位 `CONFIRM → COMMAND → TRIGGER → FLOW → DISPATCH`（相位常量见 `packages/api-gateway/src/index.ts`）。
+- [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — 服务选名规则、现取不缓存。
+- [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides` / `uses` 双源同步。
+- [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md) — 禁言持久化用的 `data:` root 文法。
+- [services/message-archive](./message-archive.md) — `archiveIncoming` 语义与 `inbound:message:archived` 事件。

@@ -103,7 +103,7 @@ declare module '@aalis/api-hooks' {
 | 注入方 | 钩子键 | 用途 |
 |---|---|---|
 | `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` | agent 一轮处理的各阶段，见 [api-agent](./api-agent.md) |
-| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | 网关出入站的命名相位，见 [services/gateway](../services/gateway.md) |
+| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | 网关出入站的命名相位，见 [services/gateway](../services/gateway.md) |
 | `@aalis/api-memory` | `memory:clear` | 统一记忆清理编排，见 [api-memory](./api-memory.md) |
 
 ## 典型用法

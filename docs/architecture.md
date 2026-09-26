@@ -319,8 +319,8 @@ defaultAction()        ← 所有 handler 通过后执行
 |---|---|---|---|
 | `inbound:confirm` | `InboundPhaseData` | plugin-session-confirm | （无）|
 | `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
-| `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:trigger` | `InboundPhaseData` | plugin-trigger-policy | （无）|
+| `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)` |
 
 `InboundPhaseData = { message, metadata, agent }`，对象在各相位间共享传递。

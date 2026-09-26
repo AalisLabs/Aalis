@@ -10,9 +10,9 @@ Gateway 是 Aalis 的运行时编排中枢，负责：
 
 - **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行触发五个相位的钩子链：
   ```
-  inbound:confirm → inbound:command → inbound:flow → inbound:trigger → inbound:dispatch
+  inbound:confirm → inbound:command → inbound:trigger → inbound:flow → inbound:dispatch
   ```
-  任一相位 handler 不调用 `next()` 即"吞掉"消息，后续相位不再触发。`inbound:dispatch` 默认动作是调用 `agent.handleMessage(message)`。
+  任一相位 handler 不调用 `next()` 即"吞掉"消息，后续相位不再触发。`inbound:trigger` 判定要不要开口并写 `triggerType`，`inbound:flow` 按禁言、冷却、限速把关（`immediate` 穿透冷却与限速）。`inbound:dispatch` 默认动作是调用 `agent.handleMessage(message)`。
 - **出站**：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链；默认动作是 emit `outbound:message` 给平台 adapter。
 
 ## 关键类型
@@ -26,6 +26,19 @@ interface InboundPhaseData {
 ```
 
 五个入站相位的 payload 都是 `InboundPhaseData`，**同一消息在各相位间共享同一对象引用**——可以在 command 相位写入 metadata 让 trigger 读到。
+
+## 会话作用域匹配
+
+按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。
+
+```ts
+/** 群聊取 groupId，私聊取 userId，其他为空串 */
+function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | 'groupId' | 'userId'>): string;
+/** 是否命中 scopes 或任一 overrides[].scope */
+function isScopeEnabled(cfg: { scopes; overrides }, platform, sessionType, targetId?): boolean;
+/** 取命中且最具体的一项 override 按键叠加到 base（跳过 scope 与 undefined）；具体度 targetId > sessionType > platform */
+function resolveEffectiveConfig<T extends { overrides }>(base: T, platform, sessionType, targetId?): T;
+```
 
 ## 服务接口
 

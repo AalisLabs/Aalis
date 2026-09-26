@@ -37,8 +37,8 @@ export default definePlugin({
 |---|---|---|---|
 | `inbound:confirm` | `InboundPhaseData` | plugin-session-confirm | （无）|
 | `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
-| `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:trigger` | `InboundPhaseData` | plugin-trigger-policy | （无）|
+| `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复 |
 
 `inbound:confirm` 排在最前：会话内待确认回复命中后被吞掉，不进入后续相位，也就不会触发 agent 对在途生成的中止。
