@@ -61,6 +61,8 @@ export function PluginConfigPage({
     } catch (err) {
       showToast(errText(err, '未知错误'));
       setBusySet(prev => { const next = new Set(prev); next.delete(plugin.instanceId); return next; });
+      // 失败时运行态也可能已变（停用超过宽限转 error），刷新以显示实际状态
+      onRefresh();
     }
   };
 
@@ -194,6 +196,7 @@ export function PluginConfigPage({
 
   const stateLabel: Record<string, string> = {
     active: '运行中',
+    activating: '激活中',
     disabled: '已禁用',
     pending: '等待中',
     disposed: '已释放',
@@ -203,6 +206,7 @@ export function PluginConfigPage({
   const stateBadge: Record<string, string> = {
     active: 'active',
     disabled: 'disposed',
+    disposed: 'disposed',
     pending: 'pending',
     error: 'error',
   };
@@ -413,6 +417,7 @@ export function PluginConfigPage({
                 </span>
                 <span className={`badge ${stateBadge[p.state] ?? 'pending'}`}>
                   {stateLabel[p.state] ?? p.state}
+                  {p.slow && '（超过阈值）'}
                 </span>
                 {p.reusable && !isSub && <span className="badge" style={{ background: '#7c5cfc', color: '#fff', fontSize: 10 }}>多实例</span>}
                 {p.provides.length > 0 && (

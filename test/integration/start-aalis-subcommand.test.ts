@@ -11,7 +11,7 @@ import { parse } from 'yaml';
 // startAalis 的编排（文件日志装载时机、重启策略注入、子命令命中/未命中后的退出）在进程内
 // 无法单测：它挂全局 fatal handler、最终 process.exit。这里用 tsx 跑 test/fixtures/subcommand-entry.ts
 // （只走 runtime 源码），每个用例一个临时 cwd，断言全部基于「进程退出后」的退出码 / 输出 / 文件内容，
-// 不含计时竞态。
+// 计时相关的用例（慢激活）都留足余量。
 //
 // 三条被守的不变量（对应曾实测出的故障）：
 // 1. 子命令进程不碰 data/latest.log——否则守护进程正在写的日志被截断；
@@ -19,7 +19,8 @@ import { parse } from 'yaml';
 // 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
 //
-// 守护路径（argv 为空）作为对照：文件日志照常写、SIGTERM 优雅退出。
+// 守护路径（argv 为空）作为对照：文件日志照常写、SIGTERM 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
+// 提供者」与「缺少」分开报。
 // ════════════════════════════════════════════════════════════
 
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -187,5 +188,17 @@ describe('startAalis 子命令模式（真实子进程）', () => {
       probeConfig: { known: 3, nested: { filled: 9 } },
       preferred: 'e2e-probe',
     });
+  });
+
+  it('守护路径：pending 告警把仍在后台激活的插件所提供的服务报成等待，其余报缺少', async () => {
+    const dir = project();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nslowThresholdMs: 50\nplugins: {}\n');
+    // e2e-slow 激活 1500ms，超过 50ms 阈值转入后台，它的 e2e-slow-svc 在完成前不对外
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_APPLY_MS: '1500' });
+    expect(r.signal).toBeNull();
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain(
+      '插件 "e2e-waiting" 依赖未满足，未激活（缺少服务: e2e-missing-svc；等待 e2e-slow 激活完成）',
+    );
   });
 });

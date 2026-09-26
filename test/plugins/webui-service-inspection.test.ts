@@ -131,8 +131,29 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     );
     // 卸载前预警取 package-manager 的服务依赖者判定；服务缺席时为空
     expect(current.serviceDependents).toEqual([]);
+    // 装 / 卸 / 更新每次请求现取 package-manager：缺席时 503，提供者晚到（webui-server 激活之后才登记）也要调到它
+    const market = (path: string, body: unknown) =>
+      fetch(`${base}/api/marketplace/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const marketCalls = [
+      ['install', { name: 'zz-market-probe' }],
+      ['uninstall', { name: 'zz-market-probe' }],
+      ['update', { targets: [{ name: 'zz-market-probe', version: '1.0.0' }] }],
+    ] as const;
+    for (const [path, body] of marketCalls) expect((await market(path, body)).status, path).toBe(503);
     const serviceDependents = vi.fn((_name: string) => ['zz-dep']);
-    host.provide(packageManager, { serviceDependents } as unknown as PackageManagerService);
+    const refused = { ok: false, message: 'zz-market-refused' };
+    const install = vi.fn(async (_name: string) => refused);
+    const uninstall = vi.fn(async (_name: string) => refused);
+    const update = vi.fn(async (_targets: unknown) => refused);
+    host.provide(packageManager, { serviceDependents, install, uninstall, update } as unknown as PackageManagerService);
+    for (const [path, body] of marketCalls) {
+      const reply = await market(path, body);
+      expect(reply.status, path).toBe(200);
+      expect(await reply.json(), path).toEqual(refused);
+    }
+    expect(install).toHaveBeenCalledWith('zz-market-probe');
+    expect(uninstall).toHaveBeenCalledWith('zz-market-probe');
+    expect(update).toHaveBeenCalledWith([{ name: 'zz-market-probe', version: '1.0.0' }]);
     const managedGraph = await fetch(`${base}/api/marketplace/depgraph?name=${encodeURIComponent(webuiServer.name)}`, {
       headers,
     });

@@ -761,9 +761,10 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
   }
 
-  // 装配 refresh 真实实现
+  // 装配 refresh 真实实现。与初次注册一样随停用或停机中止：中止即抛出，不再增删条目
   refreshFn = async () => {
-    const next = await discoverAllModelIds();
+    const next = await discoverAllModelIds(lifecycle.signal);
+    lifecycle.signal.throwIfAborted();
     const nextSet = new Set(next);
     const added: string[] = [];
     const removed: string[] = [];

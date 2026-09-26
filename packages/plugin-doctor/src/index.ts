@@ -232,10 +232,23 @@ function registerBuiltinChecks(
       const active = status.filter(s => s.state === 'active');
       // 激活超过 core 慢操作阈值、已转入后台的（依赖它服务的插件在它完成前保持 pending）
       const slow = status.filter(s => s.state === 'activating' && s.slow);
-      // 与 runtime 启动收敛后的 pending 告警同一判据：required 服务当前没有任何提供者登记
+      // 与 runtime 启动收敛后的 pending 告警同一判据：required 服务当前没有任何提供者登记；
+      // 由仍在激活中（含已转入后台）的插件声明提供的，归为「等待 <实例> 激活完成」，其余才是缺少
+      const activating = status.filter(s => s.state === 'activating');
       const describePending = (p: PluginStatusEntry): string => {
-        const unmet = (p.requiredServices ?? []).filter(svc => services.inspect(svc).length === 0);
-        return unmet.length > 0 ? `${p.instanceId}: 缺少 ${unmet.join('、')}` : p.instanceId;
+        const missing: string[] = [];
+        const waiting = new Set<string>();
+        for (const svc of p.requiredServices ?? []) {
+          if (services.inspect(svc).length > 0) continue;
+          const provider = activating.find(s => s.provides?.includes(svc));
+          if (provider) waiting.add(provider.instanceId);
+          else missing.push(svc);
+        }
+        const reasons = [
+          ...(missing.length > 0 ? [`缺少 ${missing.join('、')}`] : []),
+          ...[...waiting].map(id => `等待 ${id} 激活完成`),
+        ];
+        return reasons.length > 0 ? `${p.instanceId}: ${reasons.join('；')}` : p.instanceId;
       };
       return [
         {
