@@ -10,6 +10,7 @@ const CORE_PEER_COUNT = 93;
 
 interface Manifest {
   name?: string;
+  private?: boolean;
   dependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
 }
@@ -45,7 +46,9 @@ describe('CHANGELOG 未发布节的发布声明', () => {
   it('本批发布的 93 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
-      const spec = readManifest(dir).peerDependencies?.['@aalis/core'];
+      const manifest = readManifest(dir);
+      if (manifest.private) continue; // private 包不发布，不在本批发布声明之内
+      const spec = manifest.peerDependencies?.['@aalis/core'];
       if (spec === undefined) continue;
       hits.push({ dir, spec });
     }
