@@ -15,6 +15,7 @@
  * fetchForward / resolveMedia 两个能力函数。
  */
 
+import { truncateChars } from '@aalis/util-text-normalize';
 import type { OneBotMessageSegment } from './types.js';
 import { getForwardNodes, parseCqMessageToSegments } from './types.js';
 
@@ -362,10 +363,8 @@ export function buildEnvelope(expanded: ExpandedForward, summary: string | null,
     return `<forward id="${expanded.id}" ${meta}>\n摘要：${summary.trim()}\n</forward>`;
   }
 
-  // 摘要不可用：信封内退化到截断的原文
-  const text =
-    expanded.fullText.length > truncatedFallbackChars
-      ? `${expanded.fullText.slice(0, truncatedFallbackChars)}\n…（已截断，原文保留在缓存中）`
-      : expanded.fullText;
+  // 摘要不可用：信封内退化到截断的原文。代理安全截断：信封随消息归档、进 agent 与 Laya 的请求，
+  // 截在 emoji 中间留下的孤代理会让严格的 JSON 解析器或分词器拒收
+  const text = truncateChars(expanded.fullText, truncatedFallbackChars, '\n…（已截断，原文保留在缓存中）');
   return `<forward id="${expanded.id}" ${meta}>\n${text}\n</forward>`;
 }
