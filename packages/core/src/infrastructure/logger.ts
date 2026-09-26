@@ -33,25 +33,25 @@ export class LogHub {
   /** 进程级默认中枢——所有未显式传 hub 的 Logger 都用它 */
   static readonly default: LogHub = new LogHub();
 
-  private listeners: Set<(entry: LogEntry) => void> = new Set();
+  #listeners: Set<(entry: LogEntry) => void> = new Set();
   /** 单调递增的 entry seq；首条 = 0。 */
-  private nextSeq = 0;
+  #nextSeq = 0;
 
   /** 分配下一个 seq 给即将 push 的 entry（Logger 内部使用）。 */
   allocSeq(): number {
-    return this.nextSeq++;
+    return this.#nextSeq++;
   }
 
   onEntry(listener: (entry: LogEntry) => void): () => void {
-    this.listeners.add(listener);
+    this.#listeners.add(listener);
     return () => {
-      this.listeners.delete(listener);
+      this.#listeners.delete(listener);
     };
   }
 
   /** 接收一条日志（Logger 内部调用） */
   push(entry: LogEntry): void {
-    for (const fn of this.listeners) fn(entry);
+    for (const fn of this.#listeners) fn(entry);
   }
 }
 
@@ -76,8 +76,10 @@ export interface Logger {
  * 缺省 Logger 实现：按级别过滤后写入 {@link LogHub}。
  */
 export class DefaultLogger implements Logger {
-  private readonly minLevel: LogLevel;
-  private readonly hub: LogHub;
+  readonly #scope: string;
+  readonly #minLevel: LogLevel;
+  readonly #hub: LogHub;
+  readonly #now: () => Date;
 
   /**
    * @param scope    日志作用域（构造前缀）
@@ -86,7 +88,7 @@ export class DefaultLogger implements Logger {
    *                 多 App / 沙盒场景可注入独立 `new LogHub()` 实现隔离。
    */
   constructor(
-    private scope: string,
+    scope: string,
     minLevel: LogLevel = 'info',
     hub: LogHub = LogHub.default,
     /**
@@ -94,50 +96,52 @@ export class DefaultLogger implements Logger {
      * 宿主（@aalis/runtime）经 `App({ now })` 显式注入,从而 core 逻辑不含 ambient 时间效应、
      * 测试可注入固定时钟得到确定性时间戳。
      */
-    private readonly now: () => Date = () => new Date(),
+    now: () => Date = () => new Date(),
   ) {
-    this.minLevel = minLevel;
-    this.hub = hub;
+    this.#scope = scope;
+    this.#minLevel = minLevel;
+    this.#hub = hub;
+    this.#now = now;
   }
 
   child(scope: string): Logger {
-    return new DefaultLogger(`${this.scope}:${scope}`, this.minLevel, this.hub, this.now);
+    return new DefaultLogger(`${this.#scope}:${scope}`, this.#minLevel, this.#hub, this.#now);
   }
 
   debug(message: string, ...args: unknown[]): void {
-    this.log('debug', message, ...args);
+    this.#log('debug', message, ...args);
   }
 
   info(message: string, ...args: unknown[]): void {
-    this.log('info', message, ...args);
+    this.#log('info', message, ...args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    this.log('warn', message, ...args);
+    this.#log('warn', message, ...args);
   }
 
   error(message: string, ...args: unknown[]): void {
-    this.log('error', message, ...args);
+    this.#log('error', message, ...args);
   }
 
-  private log(level: LogLevel, message: string, ...args: unknown[]): void {
-    if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
+  #log(level: LogLevel, message: string, ...args: unknown[]): void {
+    if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.#minLevel]) return;
 
     // 本地时区 ISO 时间戳（YYYY-MM-DDTHH:mm:ss.sss±HH:mm）——信息保真且贴近人读。
     // sink（console / CLI / WebUI）按显示需求自行截取，不在源头丢日期。
-    const timestamp = formatLocalIso(this.now());
+    const timestamp = formatLocalIso(this.#now());
     // 将额外参数（错误对象 / 上下文等）序列化并拼到 message 末尾，
     // 避免 sink 只读 message 时丢失错误细节。**保持运行时中立**：只用纯 ES
     // 原语，不依赖 node:util / window 等任何宿主 API。
     const tail = args.length === 0 ? '' : ` ${args.map(stringifyArg).join(' ')}`;
     const entry: LogEntry = {
-      seq: this.hub.allocSeq(),
+      seq: this.#hub.allocSeq(),
       timestamp,
       level,
-      scope: this.scope,
+      scope: this.#scope,
       message: `${message}${tail}`,
     };
-    this.hub.push(entry);
+    this.#hub.push(entry);
   }
 }
 

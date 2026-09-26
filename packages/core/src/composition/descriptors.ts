@@ -100,7 +100,10 @@ const OPTIONAL = Symbol('aalis.optional-use');
 const MINTED = Symbol.for('aalis.core.minted');
 const THIS_COPY = Symbol('aalis.core.copy');
 
-/** @internal 来自另一份 @aalis/core 的对象：安装问题，注册期按 error 记 */
+/**
+ * 来自另一份 @aalis/core 的对象：安装问题，注册期按 error 记
+ * @internal
+ */
 export class ForeignCoreError extends Error {
   override name = 'ForeignCoreError';
 }
@@ -109,7 +112,10 @@ function mint<T extends object>(value: T): T {
   return Object.defineProperty(value, MINTED, { value: THIS_COPY });
 }
 
-/** @internal 另一份 core 造的对象一律拒绝；没盖章的手写对象按形状放行 */
+/**
+ * 另一份 core 造的对象一律拒绝；没盖章的手写对象按形状放行
+ * @internal
+ */
 export function assertOwnCopy(value: unknown, what: string): void {
   const stamp = (value as { [MINTED]?: unknown } | null)?.[MINTED];
   if (stamp !== undefined && stamp !== THIS_COPY) {
@@ -159,7 +165,10 @@ export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse
   return mint({ optional: descriptor, [OPTIONAL]: true });
 }
 
-/** @internal 是否为 optional() 包装。不看自有 `optional` 字段。 */
+/**
+ * 是否为 optional() 包装。不看自有 `optional` 字段。
+ * @internal
+ */
 // biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
 export function isOptional(use: unknown): use is OptionalUse<any, any> {
   return typeof use === 'object' && use !== null && (use as { [OPTIONAL]?: boolean })[OPTIONAL] === true;

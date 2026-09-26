@@ -3,6 +3,16 @@ import { awaitWithTimeout, DisposableChain, reportQuietly } from '../kernel/disp
 import type { Logger } from './logger.js';
 
 /**
+ * beforeCleanup：收尾之后、清理链之前撤回宿主对外暴露的资源（同步）；afterWithdraw：撤回之后、清理链
+ * 之前等下游对已撤回资源的交接落定（返回待等的 Promise，没有则 undefined）；afterCleanup：清理链之后收尾（同步）。
+ */
+interface ResourceHooks {
+  beforeCleanup?: () => void;
+  afterWithdraw?: () => Promise<unknown> | undefined;
+  afterCleanup?: () => void;
+}
+
+/**
  * 一次激活的资源账与关闭过程；不了解服务、事件或插件调度。
  * disposed 表示已开始关闭；disposables.disposed 表示清理链已被取走。两者之间仍允许登记，
  * 以接住初始化期间迟到的资源。
@@ -20,20 +30,14 @@ export class Resources {
   #completion?: Promise<void>;
   #initialization?: Promise<void>;
   readonly #cuts = new Set<() => void>();
+  readonly #id: string;
+  readonly #logger: Logger;
+  readonly #hooks: ResourceHooks;
 
-  constructor(
-    private readonly id: string,
-    private readonly logger: Logger,
-    /**
-     * beforeCleanup：收尾之后、清理链之前撤回宿主对外暴露的资源（同步）；afterWithdraw：撤回之后、清理链
-     * 之前等下游对已撤回资源的交接落定（返回待等的 Promise，没有则 undefined）；afterCleanup：清理链之后收尾（同步）。
-     */
-    private readonly hooks: {
-      beforeCleanup?: () => void;
-      afterWithdraw?: () => Promise<unknown> | undefined;
-      afterCleanup?: () => void;
-    } = {},
-  ) {
+  constructor(id: string, logger: Logger, hooks: ResourceHooks = {}) {
+    this.#id = id;
+    this.#logger = logger;
+    this.#hooks = hooks;
     const settle = (timeoutMs?: number) =>
       this.#operations === 0 && this.#inflight.size === 0 ? undefined : this.#settle(timeoutMs);
     this.disposables = new DisposableChain(logger, settle);
@@ -46,7 +50,7 @@ export class Resources {
   }
 
   #timeout(what: string): (limit: number) => void {
-    return limit => reportQuietly(() => this.logger.warn(`Resources "${this.id}": ${what}超过 ${limit}ms，放弃等待`));
+    return limit => reportQuietly(() => this.#logger.warn(`Resources "${this.#id}": ${what}超过 ${limit}ms，放弃等待`));
   }
 
   /**
@@ -118,12 +122,12 @@ export class Resources {
     // 没有收尾项时不得多让出一拍：撤回一向与 disposeAsync() 同栈发起；没有待等的下游交接时，清理的首个回调也同栈
     const drained = this.drain(timeoutMs);
     if (drained) await drained;
-    this.hooks.beforeCleanup?.();
+    this.#hooks.beforeCleanup?.();
     for (const cut of this.#cuts) cut();
-    const handover = this.hooks.afterWithdraw?.();
+    const handover = this.#hooks.afterWithdraw?.();
     if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
     await this.disposables.disposeAsync(timeoutMs);
-    this.hooks.afterCleanup?.();
+    this.#hooks.afterCleanup?.();
   }
 
   /**
@@ -150,7 +154,7 @@ export class Resources {
     const settled: Promise<void> = Promise.resolve(work)
       .then(
         () => undefined,
-        error => reportQuietly(() => this.logger.warn(`${what} 撤回拒绝（已忽略）:`, error)),
+        error => reportQuietly(() => this.#logger.warn(`${what} 撤回拒绝（已忽略）:`, error)),
       )
       .then(() => {
         this.#inflight.delete(settled);
@@ -171,7 +175,9 @@ export class Resources {
       await awaitWithTimeout(Promise.all(batch.map(([work]) => work)), timeoutMs, limit => {
         for (const [work, what] of batch) {
           if (!this.#inflight.delete(work)) continue;
-          reportQuietly(() => this.logger.warn(`Resources "${this.id}": 等待 ${what} 的撤回超过 ${limit}ms，放弃等待`));
+          reportQuietly(() =>
+            this.#logger.warn(`Resources "${this.#id}": 等待 ${what} 的撤回超过 ${limit}ms，放弃等待`),
+          );
         }
       });
     }
@@ -206,7 +212,7 @@ export class Resources {
         this.holdInflight(pending, label);
         return pending;
       } catch (error) {
-        reportQuietly(() => this.logger.warn(`${label} 撤回抛错（已忽略）:`, error));
+        reportQuietly(() => this.#logger.warn(`${label} 撤回抛错（已忽略）:`, error));
         return undefined;
       }
     });
@@ -226,12 +232,12 @@ export class Resources {
     if (this.disposed) {
       if (this.disposables.disposed) {
         reportQuietly(() =>
-          this.logger.warn(`Resources "${this.id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行`),
+          this.#logger.warn(`Resources "${this.#id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行`),
         );
       } else {
         reportQuietly(() =>
-          this.logger.debug(
-            `Resources "${this.id}" 拆卸进行中，onDispose${label ? `("${label}")` : ''} 纳入本次清理链`,
+          this.#logger.debug(
+            `Resources "${this.#id}" 拆卸进行中，onDispose${label ? `("${label}")` : ''} 纳入本次清理链`,
           ),
         );
       }

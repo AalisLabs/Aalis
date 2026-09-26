@@ -38,27 +38,29 @@ function describe(label?: string, index?: number): string {
  * 「忘记 push / 忘记清空 / 错误处理不一致」等低级 bug。
  */
 export class DisposableChain {
-  private items: Entry[] = [];
-  /** 链是否已被 {@link take} 取走；对外读口是 `disposed`。不叫 disposed 是因为与那个 getter 撞名。 */
-  private taken = false;
+  #items: Entry[] = [];
+  /** 链是否已被取走（见 `#take`）；对外读口是 `disposed`。 */
+  #disposed = false;
 
   /** disposeAsync 排空期间迟到登记、就地执行的异步清理：段收口等它们落定（拒绝已接住） */
-  private readonly late = new Map<Promise<void>, string>();
-  private draining = false;
+  readonly #late = new Map<Promise<void>, string>();
+  #draining = false;
+  readonly #logger?: CleanupReporter;
+  readonly #settlePhase?: (timeoutMs?: number) => Promise<unknown> | undefined;
 
   /**
    * @param settlePhase 段收口：disposeAsync 每排空一段后调用，返回该段内**发起但尚未落定**的异步清理
    *   （宿主自己记账，链不认识它们；超时与点名由宿主按传入的上限自理）。链等它落定再进下一段——
    *   不占链上条目，条目数与标签名单不受影响。
    */
-  constructor(
-    private readonly logger?: CleanupReporter,
-    private readonly settlePhase?: (timeoutMs?: number) => Promise<unknown> | undefined,
-  ) {}
+  constructor(logger?: CleanupReporter, settlePhase?: (timeoutMs?: number) => Promise<unknown> | undefined) {
+    this.#logger = logger;
+    this.#settlePhase = settlePhase;
+  }
 
   /** 报告清理问题；reporter 自身失败不得中断剩余清理，见 {@link reportQuietly}。 */
-  private report(message: string, ...args: unknown[]): void {
-    reportQuietly(() => this.logger?.warn(message, ...args));
+  #report(message: string, ...args: unknown[]): void {
+    reportQuietly(() => this.#logger?.warn(message, ...args));
   }
 
   /**
@@ -66,59 +68,59 @@ export class DisposableChain {
    * disposeAsync 排空途中就由当前段的收口等到，排空已结束（或链经 seal 取走）则无人等待。
    */
   push(fn: () => unknown, label?: string, phase: DisposePhase = 'cleanup'): void {
-    if (this.taken) {
+    if (this.#disposed) {
       try {
-        this.settle(fn(), describe(label));
+        this.#settle(fn(), describe(label));
       } catch (err) {
-        this.report(`DisposableChain: post-dispose 执行失败${describe(label)}:`, err);
+        this.#report(`DisposableChain: post-dispose 执行失败${describe(label)}:`, err);
       }
       return;
     }
-    this.items.push({ fn, label, phase });
+    this.#items.push({ fn, label, phase });
   }
 
   /**
    * 取走后就地执行的清理不一定有人等（见 push），但拒绝必须有人接：登记方拿不到这个返回值，
    * 逃逸的拒绝会成为宿主进程的 unhandledRejection。
    */
-  private settle(ret: unknown, who: string): void {
+  #settle(ret: unknown, who: string): void {
     if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
       const settled: Promise<void> = Promise.resolve(ret)
         .then(
           () => undefined,
-          err => this.report(`DisposableChain: 异步清理拒绝，已忽略${who}:`, err),
+          err => this.#report(`DisposableChain: 异步清理拒绝，已忽略${who}:`, err),
         )
         .then(() => {
-          this.late.delete(settled);
+          this.#late.delete(settled);
         });
-      if (this.draining) this.late.set(settled, who);
+      if (this.#draining) this.#late.set(settled, who);
     }
   }
 
   /** 链序标签名单（未命名项为 undefined 占位）。测试读口，纯读不执行。 */
   labels(): ReadonlyArray<string | undefined> {
-    return this.items.map(e => e.label);
+    return this.#items.map(e => e.label);
   }
 
   /** 精确移除单个 disposable（不执行）。用于缓冲项"取消"场景。 */
   remove(fn: () => unknown): boolean {
-    const idx = this.items.findIndex(e => e.fn === fn);
+    const idx = this.#items.findIndex(e => e.fn === fn);
     if (idx < 0) return false;
-    this.items.splice(idx, 1);
+    this.#items.splice(idx, 1);
     return true;
   }
 
   get disposed(): boolean {
-    return this.taken;
+    return this.#disposed;
   }
 
   /** 当前登记的清理函数数量（诊断 / 测试用：可检测闭包是否如期自移除）。 */
   get size(): number {
-    return this.items.length;
+    return this.#items.length;
   }
 
   /**
-   * 置位 taken、快照并清空 items——seal 与 disposeAsync 共用，避免逻辑漂移。
+   * 置位 `#disposed`、快照并清空 `#items`——seal 与 disposeAsync 共用，避免逻辑漂移。
    *
    * 先清空再迭代快照：dispose 期间 disposer 常回调 remove(自身)（provide /
    * 订阅句柄的自移除语义）。若在迭代中 splice 活动数组，索引
@@ -126,16 +128,16 @@ export class DisposableChain {
    * 则这些 remove 作用于空数组、安全 no-op（返回 false，符合各自移除点注释
    * 的预期），快照索引也始终稳定。
    */
-  private take(): Entry[] {
-    this.taken = true;
-    const items = this.items;
-    this.items = [];
+  #take(): Entry[] {
+    this.#disposed = true;
+    const items = this.#items;
+    this.#items = [];
     return items;
   }
 
   /** 只标记已取走、不执行任何清理：调用方保证此刻链为空，此后的登记就地执行。重复调用无效果。 */
   seal(): void {
-    this.take();
+    this.#take();
   }
 
   /**
@@ -149,35 +151,35 @@ export class DisposableChain {
    *        缺省或 <=0 不设限。
    */
   async disposeAsync(timeoutMs?: number): Promise<void> {
-    if (this.taken) return;
-    const items = this.take();
-    this.draining = true;
+    if (this.#disposed) return;
+    const items = this.#take();
+    this.#draining = true;
     for (const phase of PHASES) {
       for (let i = items.length - 1; i >= 0; i--) {
         if (items[i].phase !== phase) continue;
         try {
           const ret = items[i].fn();
           if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
-            await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
+            await this.#awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
           }
         } catch (err) {
-          this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+          this.#report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
         }
       }
       // 段收口：先等本段里迟到登记的（它们可能再登记新的，故循环），再等宿主记账的在飞清理
-      while (this.late.size > 0) {
-        const batch = [...this.late];
+      while (this.#late.size > 0) {
+        const batch = [...this.#late];
         await awaitWithTimeout(Promise.all(batch.map(([work]) => work)), timeoutMs, () => {
           for (const [work, who] of batch) {
-            if (!this.late.delete(work)) continue;
-            this.report(`DisposableChain: 迟到登记的异步清理${who} 超过 ${timeoutMs}ms，放弃等待`);
+            if (!this.#late.delete(work)) continue;
+            this.#report(`DisposableChain: 迟到登记的异步清理${who} 超过 ${timeoutMs}ms，放弃等待`);
           }
         });
       }
-      const pending = this.settlePhase?.(timeoutMs);
+      const pending = this.#settlePhase?.(timeoutMs);
       if (pending) await pending;
     }
-    this.draining = false;
+    this.#draining = false;
   }
 
   /**
@@ -187,9 +189,9 @@ export class DisposableChain {
    * 是所有 JS 运行时（浏览器/Node/Deno/Worker）的共有全局，非 `node:` 专属，
    * 不引入环境假设。
    */
-  private async awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number, who = ''): Promise<void> {
+  async #awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number, who = ''): Promise<void> {
     await awaitWithTimeout(p, timeoutMs, () =>
-      this.report(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
+      this.#report(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
     );
   }
 }

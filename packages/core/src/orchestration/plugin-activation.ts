@@ -96,7 +96,7 @@ export function requiredSatisfied(entry: PluginRecord, services: ServiceContaine
  *
  * 本次 required 引用缺席：清理失败激活后回到 pending，并让重算继续观察可能已恢复的依赖。
  * 其余失败转为 error 态（带 message），外层 recompute 不会重试。
- * 前置条件（唯一调用方 recomputeOnce 的 Phase B 在同一拍里已判定）：entry 为 pending，required 依赖都有提供者。
+ * 前置条件（唯一调用方 `#recomputeOnce` 的 Phase B 在同一拍里已判定）：entry 为 pending，required 依赖都有提供者。
  */
 export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {
   const { host, logger } = deps;

@@ -543,7 +543,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 去掉注释与空行后的代码行数。上限是本轮精简实施后的实测值加少量余量；抬高上限的提交必须写明对应哪条用户
 // 决定，不能顺手抬。口径与仓库外的 count-code-lines-fixed.cjs 相同：逐字符状态机去注释（识别字符串、
 // 模板串含嵌套 ${}），再数非空行。
-const CORE_CODE_LINE_CEILING = 2500;
+// 2500 → 2530：2026-09-26 用户批准的 0.18 core 现代化批，C8「私有写法统一为 `#` 与可擦除语法」——17 处构造函数参数属性
+// 改为显式字段加赋值（erasableSyntaxOnly 不允许参数属性）。
+const CORE_CODE_LINE_CEILING = 2530;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

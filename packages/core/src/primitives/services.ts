@@ -45,9 +45,9 @@ interface ServiceEntry {
  *   contextId 只是逻辑身份（路由 / 显示 / 偏好 / 前缀查询），不参与清理
  */
 export class ServiceContainer {
-  private entries = new Map<string, ServiceEntry[]>();
+  #entries = new Map<string, ServiceEntry[]>();
   /** 服务偏好：service name → preferred contextId（preferred 永远胜过 priority） */
-  private preferences = new Map<string, string>();
+  #preferences = new Map<string, string>();
 
   /**
    * 注册一个服务实例。容器只按名字存取，不认识类型——实现是否满足契约由服务描述符在
@@ -71,13 +71,13 @@ export class ServiceContainer {
     if (options?.priority !== undefined && !Number.isFinite(options.priority)) {
       throw new Error(`provide 的 priority 必须是有限数字（收到 ${String(options.priority)}）`);
     }
-    let list = this.entries.get(name);
+    let list = this.#entries.get(name);
     if (list?.length && (options?.exclusive || list.some(entry => entry.exclusive))) {
       throw new Error(`服务 "${name}" 为独占登记，不能添加另一个提供者`);
     }
     if (!list) {
       list = [];
-      this.entries.set(name, list);
+      this.#entries.set(name, list);
     }
     const entry: ServiceEntry = {
       instance,
@@ -93,11 +93,11 @@ export class ServiceContainer {
 
     return () => {
       // 查 registry 当前数组而非闭包捕获的 list：服务名空掉时表项会被删，再注册会新建数组
-      const current = this.entries.get(name);
+      const current = this.#entries.get(name);
       const idx = current?.indexOf(entry) ?? -1;
       if (!current || idx < 0) return false;
       current.splice(idx, 1);
-      if (current.length === 0) this.entries.delete(name);
+      if (current.length === 0) this.#entries.delete(name);
       return true;
     };
   }
@@ -110,10 +110,10 @@ export class ServiceContainer {
    *
    * 这是 get/getAll 的共同基础——保证「偏好 > 优先级 > 注册顺序」语义在所有读路径一致。
    */
-  private resolveEntries(name: string): ServiceEntry[] {
-    const list = this.entries.get(name);
+  #resolveEntries(name: string): ServiceEntry[] {
+    const list = this.#entries.get(name);
     if (!list || list.length === 0) return [];
-    const preferredCtxId = this.preferences.get(name);
+    const preferredCtxId = this.#preferences.get(name);
     if (!preferredCtxId) return list;
     const preferred = list.find(e => e.contextId === preferredCtxId);
     if (!preferred) return list;
@@ -123,17 +123,17 @@ export class ServiceContainer {
   /**
    * 获取当前胜者实例（偏好 > 优先级 > 注册顺序）。
    *
-   * 不走 `resolveEntries`：那里在设了偏好时要 `find` + `filter` + spread 出一条全新的重排
+   * 不走 `#resolveEntries`：那里在设了偏好时要 `find` + `filter` + spread 出一条全新的重排
    * 数组，而这里只取首个、其余全丢。每次 `current` / `require()` 都走到这里，是最频繁的读，
    * 且「锁定默认 LLM」这类偏好在真实部署里是常态，那条被算出来又被丢掉的尾巴不划算。
    *
-   * 语义与 `resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
+   * 语义与 `#resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
    * `list` 在 `register` 里就按 priority 降序排好（稳定排序，同优先级保持注册顺序）。
    */
   get<T = unknown>(name: string): T | undefined {
-    const list = this.entries.get(name);
+    const list = this.#entries.get(name);
     if (!list || list.length === 0) return undefined;
-    const preferredCtxId = this.preferences.get(name);
+    const preferredCtxId = this.#preferences.get(name);
     if (preferredCtxId) {
       const preferred = list.find(e => e.contextId === preferredCtxId);
       if (preferred) return preferred.instance as T;
@@ -148,7 +148,7 @@ export class ServiceContainer {
    * `contextId` 以 `ownerId + '/'` 为前缀的子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
    */
   hasByContext(name: string, contextId: string): boolean {
-    const list = this.entries.get(name);
+    const list = this.#entries.get(name);
     if (!list) return false;
     const prefix = `${contextId}/`;
     return list.some(e => e.contextId === contextId || e.contextId.startsWith(prefix));
@@ -163,13 +163,13 @@ export class ServiceContainer {
    */
   unregisterByOwner(owner: symbol): string[] {
     const removed: string[] = [];
-    for (const [name, list] of this.entries) {
+    for (const [name, list] of this.#entries) {
       const before = list.length;
       for (let i = list.length - 1; i >= 0; i--) {
         if (list[i].owner === owner) list.splice(i, 1);
       }
       if (list.length < before) removed.push(name);
-      if (list.length === 0) this.entries.delete(name);
+      if (list.length === 0) this.#entries.delete(name);
     }
     return removed;
   }
@@ -178,7 +178,7 @@ export class ServiceContainer {
    * 列出所有已注册的服务名
    */
   getServiceNames(): string[] {
-    return [...this.entries.keys()];
+    return [...this.#entries.keys()];
   }
 
   /**
@@ -186,12 +186,12 @@ export class ServiceContainer {
    * @internal
    */
   ownerOf(name: string): symbol | undefined {
-    return this.resolveEntries(name)[0]?.owner;
+    return this.#resolveEntries(name)[0]?.owner;
   }
 
   /** 只读登记元数据（不含实例）：展示与诊断用 */
   inspect(name: string): ServiceInfo[] {
-    return this.resolveEntries(name).map(entry => ({
+    return this.#resolveEntries(name).map(entry => ({
       contextId: entry.contextId,
       priority: entry.priority,
       label: entry.label,
@@ -205,7 +205,7 @@ export class ServiceContainer {
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
   getAll<T = unknown>(name: string): ServiceView<T>[] {
-    return this.resolveEntries(name).map(entry => ({
+    return this.#resolveEntries(name).map(entry => ({
       instance: entry.instance as T,
       contextId: entry.contextId,
       priority: entry.priority,
@@ -225,9 +225,9 @@ export class ServiceContainer {
    * @internal
    */
   prefer(name: string, contextId: string): boolean {
-    const exclusive = this.entries.get(name)?.find(entry => entry.exclusive);
+    const exclusive = this.#entries.get(name)?.find(entry => entry.exclusive);
     if (exclusive && exclusive.contextId !== contextId) return false;
-    this.preferences.set(name, contextId);
+    this.#preferences.set(name, contextId);
     return true;
   }
 
@@ -237,7 +237,7 @@ export class ServiceContainer {
    * @internal
    */
   unprefer(name: string): boolean {
-    return this.preferences.delete(name);
+    return this.#preferences.delete(name);
   }
 
   /**
@@ -246,6 +246,6 @@ export class ServiceContainer {
    * @internal
    */
   getPreferred(name: string): string | undefined {
-    return this.preferences.get(name);
+    return this.#preferences.get(name);
   }
 }

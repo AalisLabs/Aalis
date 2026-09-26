@@ -245,7 +245,20 @@ function activationViolations(source: string): string[] {
     'joinPlan',
     'disposeAsync',
   ]);
-  const allowedFields = new Set(['children', 'declared', 'outbound', 'inbound', 'closing']);
+  const allowedFields = new Set([
+    'id',
+    'owner',
+    'logger',
+    'config',
+    'resources',
+    'children',
+    'declared',
+    '#services',
+    '#owners',
+    '#outbound',
+    '#inbound',
+    '#closing',
+  ]);
   const violations: string[] = [];
   const file = ts.createSourceFile('activation.ts', source, ts.ScriptTarget.Latest, true);
   let found = false;
@@ -268,7 +281,7 @@ function activationViolations(source: string): string[] {
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const receiver = node.expression.expression.getText(file);
-      if (receiver === 'this.services' && node.expression.name.text !== 'ownerOf') {
+      if (receiver === 'this.#services' && node.expression.name.text !== 'ownerOf') {
         violations.push(`激活记录只读取提供者身份，不执行服务操作 ${node.expression.name.text}`);
       }
     }
@@ -311,7 +324,7 @@ describe('内部激活记录保持窄职责，旧 Context 不得回归', () => {
     'class Activation { provide() {} }',
     'class Activation { provide = () => {}; }',
     'class Activation { get events() { return this.bus; } }',
-    'class Activation { closeInfo() { this.services.register("x", {}, "id"); } }',
+    'class Activation { closeInfo() { this.#services.register("x", {}, "id"); } }',
     'import { events } from "../context/builtins.js"; class Activation {}',
   ])('变异被拒绝：%s', source => {
     expect(activationViolations(source).length).toBeGreaterThan(0);
