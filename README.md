@@ -58,7 +58,7 @@ npm start
 
 在本仓库里开发：`pnpm install && pnpm build`，`pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
 
-从仓库源码运行时，仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由模型判定群消息要不要回复，侧车不随仓库分发）与其它插件一样默认启用，并优先于 trigger-policy 接管群聊判定；本机没有侧车时群里只回点名（@、叫名字、戳一戳）。不用它就写进配置文件的 `disabledPlugins`，或在 WebUI 插件管理里停用，说明见 [该包 README](packages/plugin-trigger-laya/README.md)。
+从仓库源码运行时，仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由模型判定群消息要不要回复，侧车不随仓库分发）与其它插件一样默认启用，但默认不生效，群聊判定仍由 trigger-policy 负责。想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页切换 `trigger` 的偏好；它生效而本机没有侧车时群里只回点名（@、叫名字、戳一戳）。说明见 [该包 README](packages/plugin-trigger-laya/README.md)。
 
 ## 写一个插件
 
