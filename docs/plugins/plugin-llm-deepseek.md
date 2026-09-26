@@ -46,5 +46,5 @@ definePlugin({
 - **思考模式**: 由 `thinkingMode` 按模型决定——`auto` 下仅能力集含 `thinking` 的模型启用，`enabled` / `disabled` 覆盖所有模型；请求自带 `think` 时以其为准。启用时请求体附加 `thinking: { type: 'enabled' }`，`reasoningEffort` 非 `auto` 时同时发送 `reasoning_effort`；关闭时显式发送 `thinking: { type: 'disabled' }`。思考内容在非流式响应中通过 `reasoningContent` 返回，在流式响应中通过 `reasoningDelta` 逐段返回
 - **Strict 工具调用**: 启用 `strictToolCalls` 后，每个工具定义的 `function` 字段带上 `strict: true`；关闭时沿用各工具自身声明的 `strict`
 - **SSE 流式解析**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
-- **模型发现**: 启动时 `fetchRemoteModelIds()` 请求 `/models` 获取远端模型列表，与 `customModels` 合并后为每个模型注册一个独立的 `llm` 服务条目
+- **模型发现**: 启动时 `fetchRemoteModelIds()` 请求 `/models` 获取远端模型列表（停用或停机时中止），与 `customModels` 合并后为每个模型注册一个独立的 `llm` 服务条目
 - **能力覆盖**: `modelCapabilities` 每行按**最后一个**冒号切分模型 id 与能力段，`baseUrl` 指向兼容网关时带冒号的模型 id（如 `qwen3:8b`）照原样写即可

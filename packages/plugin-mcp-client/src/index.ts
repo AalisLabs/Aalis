@@ -175,16 +175,18 @@ async function run(caps: Caps): Promise<void> {
     });
   }
 
-  // 并发连接所有 enabled servers；失败的不影响其他
+  // 并发连接所有 enabled servers；失败的不影响其他。停用或停机时中止，中止不记失败
   await Promise.all(
     servers
       .filter(s => s.enabled !== false)
       .map(spec =>
         connectServer(caps, spec).catch(err => {
+          if (caps.lifecycle.signal.aborted) return;
           caps.logger.error(`连接 MCP server "${spec.id}" 失败: ${err instanceof Error ? err.message : String(err)}`);
         }),
       ),
   );
+  caps.lifecycle.signal.throwIfAborted();
 
   // 注册 agent 自服务工具：只读列表 + toggle 已配置 server 的启用开关。
   // 故意不提供「新增 server」工具——那等价于让 agent 任意 spawn 子进程，授权风险过大。
@@ -342,6 +344,7 @@ function normalizeServerSpec(raw: unknown, index: number, logger: Logger): Serve
 }
 
 async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
+  const { signal } = caps.lifecycle;
   const transport = new StdioClientTransport({
     command: spec.command,
     args: spec.args ?? [],
@@ -350,28 +353,42 @@ async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
 
   const client = new Client({ name: 'aalis-mcp-client', version: '0.1.0' }, { capabilities: {} });
 
-  await client.connect(transport);
-  caps.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${(spec.args ?? []).join(' ')})`);
+  // 握手与列工具随停用或停机中止（握手中止时 SDK 自己关掉子进程）。SDK 给传入的 signal 挂 abort 监听且从不摘除，
+  // 直接传长寿的 lifecycle.signal 会逐次累积监听器：这里经本段专用的 controller 桥接，结束时摘掉桥
+  const bridge = new AbortController();
+  const onAbort = (): void => bridge.abort(signal.reason);
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    await client.connect(transport, { signal: bridge.signal });
+    caps.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${(spec.args ?? []).join(' ')})`);
 
-  // 连接生命周期：激活关闭时关闭。握手跨 await，关闭可能已开始——迟到的清理仍会被执行
-  caps.lifecycle.onDispose(async () => {
-    try {
-      await client.close();
-      caps.logger.info(`MCP server "${spec.id}" 已关闭`);
-    } catch (err) {
-      caps.logger.debug(`关闭 MCP server "${spec.id}" 抛错（已忽略）:`, err);
-    }
-  });
+    // 连接生命周期：激活关闭时关闭。握手跨 await，关闭可能已开始——迟到的清理仍会被执行
+    caps.lifecycle.onDispose(async () => {
+      try {
+        await client.close();
+        caps.logger.info(`MCP server "${spec.id}" 已关闭`);
+      } catch (err) {
+        caps.logger.debug(`关闭 MCP server "${spec.id}" 抛错（已忽略）:`, err);
+      }
+    });
 
-  await bridgeClientToTools(caps, client, spec);
+    await bridgeClientToTools(caps, client, spec, bridge.signal);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 }
 
 /**
  * 把一个已连接的 MCP Client 上暴露的所有工具桥接进 Aalis ToolService。
  * 导出以便集成测试直接传入 InMemoryTransport 配对的 client。
  */
-export async function bridgeClientToTools(caps: BridgeCaps, client: Client, spec: ServerSpec): Promise<void> {
-  const { tools: mcpTools } = (await client.listTools()) as { tools: ToolMeta[] };
+export async function bridgeClientToTools(
+  caps: BridgeCaps,
+  client: Client,
+  spec: ServerSpec,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { tools: mcpTools } = (await client.listTools(undefined, { signal })) as { tools: ToolMeta[] };
   caps.logger.info(`  发现 ${mcpTools.length} 个工具`);
 
   for (const t of mcpTools) {

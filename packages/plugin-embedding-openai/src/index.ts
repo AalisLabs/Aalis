@@ -1,6 +1,6 @@
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import { config, definePlugin, logger, provide } from '@aalis/core';
+import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 配置 =====
@@ -91,8 +91,8 @@ export default definePlugin({
   configSchema,
   reusable: true,
   provides: [embedding],
-  uses: { config, logger, provide },
-  async apply({ config, logger, provide }) {
+  uses: { config, logger, lifecycle, provide },
+  async apply({ config, logger, lifecycle, provide }) {
     const apiKey = config.apiKey as string;
     if (!apiKey) {
       throw new Error('OpenAI Embedding 插件需要配置 apiKey');
@@ -105,11 +105,12 @@ export default definePlugin({
 
     const service = new OpenAIEmbeddingService(baseUrl, model, apiKey, timeoutMs);
 
-    // 启动时检查连通性（失败不阻塞，只警告）
+    // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
     try {
-      await service.embed('ping');
+      await service.embed('ping', { signal: lifecycle.signal });
       logger.info(`OpenAI Embedding 已就绪: ${model} @ ${baseUrl}`);
     } catch (err) {
+      lifecycle.signal.throwIfAborted();
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`OpenAI Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
     }

@@ -240,12 +240,15 @@ class OllamaClient {
     this.proc = proc;
   }
 
-  /** 发现远端模型 id 列表 */
-  async fetchRemoteModelIds(): Promise<string[]> {
+  /** 发现远端模型 id 列表；signal 用于中止（中止同样返回空列表） */
+  async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[]> {
     try {
       // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
       // 插件按拓扑序串行卡住;失败语义不变(catch 成不注册 entry)
-      const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(10_000) });
+      const timeout = AbortSignal.timeout(10_000);
+      const res = await fetch(`${this.baseUrl}/api/tags`, {
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+      });
       if (!res.ok) return [];
       const data = (await res.json()) as { models: { name: string }[] };
       return data.models.map(m => m.name);
@@ -256,15 +259,16 @@ class OllamaClient {
 
   /**
    * 查某模型的真实能力(Ollama /api/show 的 `capabilities`,如 completion/vision/audio/tools/thinking）。
-   * 失败返回 null → 调用方回退家族表。fetch 不读 proxy 环境变量,本机调用不受 SOCKS 影响。
+   * 失败（含经 signal 中止）返回 null → 调用方回退家族表。fetch 不读 proxy 环境变量,本机调用不受 SOCKS 影响。
    */
-  async fetchModelCapabilities(modelId: string): Promise<string[] | null> {
+  async fetchModelCapabilities(modelId: string, signal?: AbortSignal): Promise<string[] | null> {
     try {
+      const timeout = AbortSignal.timeout(10000);
       const res = await fetch(`${this.baseUrl}/api/show`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: modelId }),
-        signal: AbortSignal.timeout(10000),
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
       });
       if (!res.ok) return null;
       const data = (await res.json()) as { capabilities?: string[] };
@@ -1124,8 +1128,8 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
     registered.delete(modelId);
   }
 
-  async function discoverAllModelIds(): Promise<string[]> {
-    const remoteIds = await client.fetchRemoteModelIds();
+  async function discoverAllModelIds(signal?: AbortSignal): Promise<string[]> {
+    const remoteIds = await client.fetchRemoteModelIds(signal);
     const remoteSet = new Set(remoteIds);
     for (const cm of ollamaConfig.customModels) {
       if (remoteSet.has(cm)) {
@@ -1135,13 +1139,15 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
     return [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
   }
 
-  // 初次注册
-  const initialIds = await discoverAllModelIds();
+  // 初次注册。停用或停机时中止探测；两个探测把中止也吞成空结果，所以每次 await 之后自己查
+  const initialIds = await discoverAllModelIds(lifecycle.signal);
+  lifecycle.signal.throwIfAborted();
   if (initialIds.length === 0) {
     logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
   } else {
     // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
-    const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id)));
+    const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id, lifecycle.signal)));
+    lifecycle.signal.throwIfAborted();
     for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
     logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${registered.size} 个 model entry`);
   }

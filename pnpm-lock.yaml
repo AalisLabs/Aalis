@@ -1340,7 +1340,7 @@ importers:
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
       '@modelcontextprotocol/sdk':
-        specifier: ^1.0.4
+        specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
     devDependencies:
       '@aalis/core':

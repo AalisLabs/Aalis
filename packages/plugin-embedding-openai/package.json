@@ -43,6 +43,7 @@
       ],
       "required": [
         "config",
+        "lifecycle",
         "logger",
         "provide"
       ]

@@ -217,11 +217,12 @@ async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor
 
   const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, retries);
 
-  // 启动时检查连通性（失败不阻塞，只警告）
+  // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
   try {
-    await service.embed('ping');
+    await service.embed('ping', { signal: lifecycle.signal });
     logger.info(`Ollama Embedding 已就绪: ${model} @ ${baseUrl}`);
   } catch (err) {
+    lifecycle.signal.throwIfAborted();
     const msg = err instanceof Error ? err.message : String(err);
     logger.warn(`Ollama Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
   }
