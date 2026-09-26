@@ -128,7 +128,9 @@ export interface MediaService {
 
   /**
    * 一站式：处理整条 IncomingMessage 的所有 attachments，
-   * 把每条附件的文本描述写入 msg._attachmentDescriptions（与 attachments 同长度）。
+   * 把每条附件的文本描述写入 msg._attachmentDescriptions（与 attachments 同长度；
+   * 本服务不写描述的位，如文件，保留调用前已有的值）。
+   * 同一消息对象重复调用共享同一次处理（进行中则等它、返回同一份报告），不重复识别。
    * 由 plugin-media 的 preprocessor 内部调用，外部一般不需要直接用。
    */
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;
