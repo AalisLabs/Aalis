@@ -49,7 +49,7 @@ export interface MessageArchiveService {
 
 - `plugin-agent`：主链路。`archiveIncomingMessageInOrder` 串行入档入站消息（`packages/plugin-agent/src/index.ts`），并用 `saveMessage` 回档 assistant 产物。
 - `plugin-adapter-onebot`：`archiveNotice` 入档群事件；`findByMessageId` 反查引用原文；`saveMessage` 入档投递失败提示（一处）。
-- `plugin-flow-control` / `plugin-trigger-policy`：把被流控/策略「吞掉」的入站消息做 **shadow 归档**（`plugin-flow-control/src/index.ts`，`plugin-trigger-policy/src/index.ts`）。
+- `plugin-flow-control` / 触发插件（`plugin-trigger-policy` 等）：把被流控/触发判定「吞掉」的入站消息做 **shadow 归档**（`plugin-flow-control/src/index.ts`；触发插件经 `api-trigger/src/index.ts` 的 `archiveSwallowed`）。
 - `plugin-image-sender`：`saveMessage` 回档发出的图片/语音/视频占位。
 - `plugin-subtask` / `plugin-memory-summary`：`saveMessage` 写系统/摘要条目（`plugin-subtask/src/index.ts`，`plugin-memory-summary/src/index.ts`）。
 - `plugin-user-profile`：不直接调服务，而是监听 `inbound:message:archived` 事件做后台事实提取。
@@ -164,7 +164,7 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 - 设计意图见 `MEMORY` 注释「同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入」。
 
 > ⚠️ **审计 caveat——绕过串行队列的 shadow 归档会乱序。**
-> `plugin-flow-control` 与 `plugin-trigger-policy` 直接 `await archive.archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`plugin-trigger-policy/src/index.ts`），**没有经过 `archiveIncomingMessageInOrder` 的 per-lane 队列**。当 shadow 归档与 agent 主链路归档落在同一 `sessionId`/`source` 上并发触发时，两条写入彼此无序，可能造成归档时间线乱序（后吞的消息先落库、连续消息漏看前一条）。
+> `plugin-flow-control` 与触发插件直接 `await archive.archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），**没有经过 `archiveIncomingMessageInOrder` 的 per-lane 队列**。当 shadow 归档与 agent 主链路归档落在同一 `sessionId`/`source` 上并发触发时，两条写入彼此无序，可能造成归档时间线乱序（后吞的消息先落库、连续消息漏看前一条）。
 >
 > 现状：服务契约本身**不提供**跨调用方的串行保证——有序性是 `plugin-agent` 在消费侧自建的，且队列状态私有，shadow 路径触达不到。
 > 规避：

@@ -44,7 +44,7 @@ function runGateway({ events, hooks, logger, provide, agent }: Caps): void {
    * 相位规则（hooks.run 返回 false 即被某 handler swallow，整个管道立即停止）：
    *   1. inbound:confirm  — plugin-session-confirm 在此拦截会话内待确认回复
    *   2. inbound:command  — plugin-commands 在此拦截命令；命中则不进入后续相位
-   *   3. inbound:trigger  — plugin-trigger-policy 在此判定要不要开口
+   *   3. inbound:trigger  — 生效的触发插件（trigger 服务胜者，如 plugin-trigger-policy）在此判定要不要开口
    *   4. inbound:flow     — plugin-flow-control 在此做禁言/冷却/限速闸门
    *   5. inbound:dispatch — 默认动作：调用 agent.handleMessage（plugin-gateway 提供）
    *

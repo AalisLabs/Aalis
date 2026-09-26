@@ -2,125 +2,131 @@
 
 ## 1. 定位
 
-`trigger` 回答"这条入站消息要不要让 agent 开口"。它是多提供者服务：相位宿主 `@aalis/plugin-trigger-policy` 占据 `inbound:trigger`，处理作用域、禁言、禁言关键词、计数与闲置等公共部分，再把"开不开口"逐个交给提供者判定，第一个不弃权的提供者说了算。"现在能不能说"（禁言、冷却、限速）不归它管，由下一相位的 [flow-control](./flow-control.md) 把关。
+`trigger` 标记当前生效的**触发插件**。触发插件回答"这条入站消息要不要让 agent 开口"：它在 `inbound:trigger` 相位判定，放行的消息写好 `triggerType`，不开口的归档后吞掉。每个触发插件都是完整的判定，各自 `provide(trigger, 自己的实例)`，服务胜者即生效者，**二选一**：同一条消息只由生效者判定，其余触发插件直接放行、什么都不做。"现在能不能说"（禁言、冷却、限速）不归它管，由下一相位的 [flow-control](./flow-control.md) 把关。
 
 - 服务注册名：`'trigger'`（描述符 `trigger`）
-- 契约包：`@aalis/api-trigger`
-- 相位宿主兼规则提供者：`@aalis/plugin-trigger-policy`
-- 相邻相位：`inbound:command` → `inbound:trigger`（宿主）→ `inbound:flow`（flow-control）→ `inbound:dispatch`。
+- 契约包：`@aalis/api-trigger`（描述符、服务接口，以及触发插件共用的宿主函数）
+- 触发插件：`@aalis/plugin-trigger-policy`（规则：点名、计数与评分，另有闲置主动开口）；仓库内的私有插件 `@aalis/plugin-trigger-laya`（模型：经本机侧车由 Laya 模型判定，不发布到 npm，说明见该包 README）
+- 相邻相位：`inbound:command` → `inbound:trigger`（生效的触发插件）→ `inbound:flow`（flow-control）→ `inbound:dispatch`。
 
 ## 2. 契约
 
-完整接口（`packages/api-trigger/src/index.ts`）：
+服务接口与描述符（`packages/api-trigger/src/index.ts`）：
 
 ```ts
-export interface TriggerInput {
-  /** 当前入站消息。只读：triggerType、授权主体等由宿主在判定之后统一写 */
-  message: Readonly<IncomingMessage>;
-  /** 宿主识别的"被点名"：@ 自己、戳一戳、名字或别名命中 */
-  addressed: boolean;
-  /** 需要附件描述时调用：宿主按需识别并等待（有上限，永不抛错），多次调用共享同一次识别 */
-  awaitAttachmentDescriptions(): Promise<void>;
+export interface TriggerService {
+  readonly label: string;
 }
 
-export interface TriggerDecision {
-  speak: boolean;
-  /** 判定依据的简短说明，进宿主的判定日志；不要放消息原文 */
-  reason: string;
-  /** 可选的分数（如模型 logit），进宿主的判定日志 */
-  score?: number;
-}
-
-export interface TriggerProvider {
-  /** null = 弃权；抛错或超过宿主截止时间都按弃权处理。仅供相位宿主调用 */
-  decide(input: TriggerInput): Promise<TriggerDecision | null>;
-}
-
-export const trigger = defineService<TriggerProvider>('trigger');
+export const trigger = defineService<TriggerService>('trigger');
 ```
 
-要点：
+服务只用来选出生效者：触发插件拿 `trigger.current`（胜者）与自己的实例比身份，不调用方法。`label` 是触发插件的名字，进日志与诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 服务页显示的是 `provide` 时传的 `label`，两处取同一个值。
 
-- `message` 标为只读：提供者只判定，不写消息，也不写会话状态。开口后的计数清零、`triggerType` 与授权主体由宿主统一写。
-- `addressed` 由宿主按 trigger-policy 的 `triggerOnAt` / `triggerOnPoke` / `triggerNames` 与人设名字算出。规则提供者据此直接开口；模型提供者只把它当类别信息。无论谁开口，宿主都按它定类别：点名为 `immediate`（点名者即授权主体），否则为 `interval`（多人会话回填无主体授权）。
-- `awaitAttachmentDescriptions()` 返回后，`message._attachmentDescriptions` 通常已写好；等待超过宿主的 `mediaWaitMs` 时照常返回，描述可能仍缺。不需要附件描述的提供者不要调用。
+共用的宿主函数（同一文件）：
+
+| 函数 | 作用 |
+|---|---|
+| `isActiveTrigger(phase, trigger, self)` | 这次入站是否由 `self` 判定。胜者每次入站只取一次，记在这次的相位数据上（见 §5） |
+| `hitsMuteKeyword(message, keywords)` | 正文是否包含任一禁言关键词；戳一戳通知恒不命中（正文是合成文案，内嵌戳者昵称） |
+| `isAddressed(message, persona, opts)` | 是否被点名：戳一戳只看 `triggerOnPoke`，不做 @ 与名字检测；其余消息看 `triggerOnAt` 的 `<at self>` 与名字检测（`triggerNames`、人设名字与昵称）。persona 抛错时照抛 |
+| `waitForAttachmentDescriptions(message, media, waitMs, logger)` | 带附件、尚无描述且 media 在场时启动识别，最多等 `waitMs`；超时照常返回，永不抛错 |
+| `markTriggered(message, addressed)` | 放行收尾：点名写 `triggerType = 'immediate'`，否则 `'interval'`；`interval` 在非私聊会话且消息未带 `actor` 时回填无主体授权 |
+| `archiveSwallowed(message, archive, logger)` | 吞掉前影子归档；message-archive 缺席时跳过，失败记 warn |
 
 ## 3. 谁提供 / 谁消费
 
-**提供方**：
+**提供方**：每个触发插件提供一个实例，并以 `optional(trigger)` 声明本服务（自己提供的服务写 required 会把激活闸架在自己的产出上）。
 
-- `@aalis/plugin-trigger-policy` 的规则提供者：标签「规则（计数/评分）」，优先级 0（`packages/plugin-trigger-policy/src/index.ts`）。点名即开口，否则按 `intervalMode` 判定这条消息记入站那一刻的计数与活跃指数（宿主记入站时即算好，不受之后到达的消息影响）；不弃权，是兜底。
-- 其它提供者（如判定模型）以更高优先级登记，排在规则提供者之前；未就绪、超时或处于影子模式时弃权，交给规则提供者。
+| 插件 | 标签 | 优先级 | 判定 |
+|---|---|---|---|
+| `@aalis/plugin-trigger-policy` | 「规则（计数/评分）」 | 0 | 点名直接开口，否则按计数与活跃指数；同步判定。另有闲置主动开口 |
+| `@aalis/plugin-trigger-laya`（私有） | 「Laya 模型」 | 10（`priority` 可配） | 模型分数 ≥ 阈值即开口，点名不强制开口；判定不了时只回点名 |
 
-**消费方**：只有相位宿主 `@aalis/plugin-trigger-policy`。它以 `optional(trigger)` 声明（本插件自己提供，写 required 会把激活闸架在自己的产出上），每条消息经 `trigger.all()` 现取全部提供者。
+两个都启用时 Laya 生效。
 
-## 4. 写一个 provider
+**消费方**：只有触发插件自己，经 `isActiveTrigger` 判断是否生效；trigger-policy 的闲置主动开口到点时也查 `trigger.current` 是不是自己。
 
-提供者插件只需 `provide(trigger, impl, { priority, label })`，不挂钩子。`label` 会出现在 WebUI 服务页与宿主的判定日志里。
+## 4. 写一个触发插件
+
+触发插件在 `inbound:trigger` 挂中间件，第一步判断自己是不是生效者，其余步骤按需取用共用函数：
 
 ```ts
-import { trigger } from '@aalis/api-trigger';
-import { buildIncomingContent } from '@aalis/schema-message';
-import { definePlugin, provide } from '@aalis/core';
+import { flowControl } from '@aalis/api-flow-control';
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
+import { messageArchive } from '@aalis/api-message-archive';
+import { persona } from '@aalis/api-persona';
+import {
+  archiveSwallowed,
+  isActiveTrigger,
+  isAddressed,
+  markTriggered,
+  type TriggerService,
+  trigger,
+} from '@aalis/api-trigger';
+import { definePlugin, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-trigger',
   provides: [trigger],
-  uses: { provide },
-  apply({ provide }) {
-    provide(
-      trigger,
-      {
-        async decide({ message, addressed, awaitAttachmentDescriptions }) {
-          if (message.attachments?.length) await awaitAttachmentDescriptions();
-          const cur = buildIncomingContent(message); // 与归档逐字一致的当前消息文本
-          const score = await myModel(cur, addressed); // 自带超时；无法判定（未就绪、出错、超时）时返回 undefined
-          if (score === undefined) return null; // 弃权，交给后面的提供者
-          return { speak: score >= 0, reason: 'my-model', score };
-        },
-      },
-      { priority: 10, label: '我的判定模型' },
-    );
+  uses: {
+    logger,
+    hooks,
+    provide,
+    trigger: optional(trigger),
+    flowControl: optional(flowControl),
+    persona: optional(persona),
+    messageArchive: optional(messageArchive),
+  },
+  apply(caps) {
+    const self: TriggerService = { label: '我的触发判定' };
+    caps.provide(trigger, self, { priority: 5, label: self.label });
+
+    caps.hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
+      if (!isActiveTrigger(data, caps.trigger, self)) return next(); // 不是生效者：什么都不做
+      const { message } = data;
+      if (message.source) return next(); // 内部注入不经判定
+      if (caps.flowControl.current?.isMuted(message.sessionId)) return next(); // 禁言期交给 flow 相位吞
+      const opts = { triggerOnAt: true, triggerOnPoke: true, triggerNames: [] };
+      const addressed = isAddressed(message, caps.persona, opts);
+      const speak = await myJudge(message, addressed); // 自带超时，不抛错
+      if (!speak) {
+        await archiveSwallowed(message, caps.messageArchive, caps.logger);
+        return; // 吞掉
+      }
+      markTriggered(message, addressed);
+      await next();
+    });
   },
 });
 ```
 
 约束：
 
-- `decide` 在宿主截止时间（`decisionTimeoutMs`，默认 2000 毫秒）内给出结论，否则按弃权处理；等附件识别的时间不计入。宿主放弃后不会取消提供者手里的请求，提供者应自带更短的超时。
-- 不写 `message`，不依赖宿主的会话状态；需要历史上下文的自己从 memory 取。`reason` 里不放消息原文。
-- 无法判定（未就绪、出错、超时）时返回 `null`，交给后面的提供者；判定为不开口时返回 `{ speak: false }`，这条消息会被影子归档后吞掉，后面的提供者不再被问。
+- 不是生效者时直接 `next()`，不计数、不识别、不归档、不请求外部服务。
+- 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）直接放行，不改 `triggerType`（委派的 `proactive` 原样保留）。
+- 作用域判断先于禁言关键词：否则群聊的禁言关键词会作用到私聊、WebUI 等作用域外的会话。
+- 点名识别会调外部 persona 提供者，抛错时放行而不是吞掉（失败放行优于失败静默），不写 `triggerType`。
+- 判定日志不含消息正文与昵称。
 
-## 5. 标准消费方式
+## 5. 行为不变量
 
-只有相位宿主调用 `decide`。宿主的做法（`packages/plugin-trigger-policy/src/index.ts`、`consult.ts`）：
+- **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。
+- **胜者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 `trigger.current`，记在这次入站的相位数据上，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
+- **切换即时生效**。WebUI 服务页把 `trigger` 的偏好切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
+- **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。
+- **状态不共享**。各触发插件的状态只属于自己：trigger-policy 的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，不生效期间不计数；闲置主动开口到点时它不生效就跳过（不注入，也不记为 bot 开口），agent 回复也不记。
+- **附件只识别一次**。要看附件描述的触发插件经 `waitForAttachmentDescriptions` 启动识别；放行与吞掉都不等识别跑完。media 的 `processMessage` 按消息对象只处理一次，agent 预处理器与归档对同一个消息对象调用时命中这次识别（在途则等它），不再识别第二遍。trigger-policy 不看附件，不启动识别。
 
-1. 按 `trigger.all()` 的顺序（偏好 > 优先级 > 注册顺序）逐个问，每次限时 `decisionTimeoutMs`；提供者调用 `awaitAttachmentDescriptions()` 等识别的那段暂停计时。
-2. 返回 `null`、抛错、超时都记为弃权，转问下一个；第一个给出结论的提供者说了算。
-3. 全部弃权（规则提供者在场时不会出现）时失败放行，与点名识别抛错时同一原则。
-4. 每次判定记一行 debug 日志，不含消息正文：
+## 6. 注意事项与边界情形
 
-```
-[trigger] 判定 | session=<会话> | 决定者=<label> | speak=<true|false> | addressed=<true|false> | reason=<reason>[ | score=<score>] | 耗时=<n>ms[ | 弃权=<label>(弃权|超时|出错),…]
-```
+- trigger-policy 从不生效切回生效时，计数接着它上次生效时的状态算，不包含不生效期间的消息；闲置调度用的"最近活动"也只来自它生效时经过的消息与 bot 回复，切回后第一轮闲置可能按较早的活动时间到点。
+- 模型类触发插件在判定之内等附件识别（Laya 至多 `mediaWaitMs`），这期间同一会话后到、不用等识别的消息可能先判定、先抵达 agent。识别可能与 agent 的预处理链并发；media 与 file-reader 的写回都按写回那一刻的消息只补不换，不会互相覆盖。
 
-## 6. 行为不变量
+## 7. 交叉链接
 
-- **规则提供者兜底**。它随宿主一起登记，不弃权；WebUI 服务页不能单独停用某个提供者，只能调偏好，所以宿主在场时总有提供者给出结论。
-- **偏好即回滚开关**。WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」即时生效：规则提供者排到最前，它不弃权，后面的提供者不再被问。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
-- **开口的后果与提供者无关**。任何提供者开口，宿主都清零计数与活跃指数、记触发时间、按 `addressed` 写 `triggerType` 与授权主体；不开口则影子归档后吞掉。
-- **纯规则判定不等附件识别**。规则提供者不调用 `awaitAttachmentDescriptions()`，图片消息的判定延迟与没有模型提供者时相同。
-- **附件只识别一次**。识别由第一个要描述的提供者触发（每条消息只启动一次）；宿主放行与归档都不等它跑完。media 的 `processMessage` 按消息对象只处理一次，agent 预处理器与归档对同一个消息对象调用时命中这次识别（在途则等它），不再识别第二遍。
-
-## 7. 注意事项与边界情形
-
-- 判定不加按会话的锁：同一会话接连到达的消息可能同时在判定。规则提供者按每条消息记入站那一刻的计数与活跃指数判定；判为开口、但这条判定期间本会话已有消息放行（计数已清零）时，这次开口作废，影子归档后吞掉。判定按到达顺序返回时，一簇突发消息只放行撞上阈值的那一条；那条的判定返回得晚时（例如影子期撞上阈值的是等附件识别的消息），放行的可能是后到的那条。点名的消息照常放行，其它提供者的判定不受此约束，逐条各自生效。
-- 识别在判定期间启动时，宿主不等它跑完就把消息交给 flow 相位与 agent，余下的等待落在 agent 预处理器里，与没有模型提供者时相同。提供者自己等识别的那段（至多 `mediaWaitMs`）仍在判定之内，这期间同一会话后到的消息可能先抵达 agent。识别可能与 agent 的预处理链并发；media 与 file-reader 的写回都按写回那一刻的消息只补不换（media 只补 `mimeType` 与自己写的描述位，file-reader 只写文件附件的描述位），不会互相覆盖。
-- 宿主放弃一个提供者（超时或已给出结论）后，它再调用 `awaitAttachmentDescriptions()` 直接返回，不启动识别，也不再计时。
-
-## 8. 交叉链接
-
-- [plugins/plugin-trigger-policy](../plugins/plugin-trigger-policy.md) — 相位宿主的处理顺序、配置与闲置触发。
+- [plugins/plugin-trigger-policy](../plugins/plugin-trigger-policy.md) — 规则判定的处理顺序、配置与闲置触发。
 - [services/flow-control](./flow-control.md) — 下一相位的禁言、冷却与限速。
 - [services/media](./media.md) — `processMessage` 与附件描述。
 - [services/message](./message.md) — `buildIncomingContent`：与归档逐字一致的当前消息文本。

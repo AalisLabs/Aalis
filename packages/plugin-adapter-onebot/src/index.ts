@@ -1720,7 +1720,7 @@ function runAdapter(caps: Caps): void {
       }
 
       // 适配器不再做流控/触发判定 —— 一律送入 inbound:message，
-      // 由 plugin-trigger-policy / plugin-flow-control 在 inbound:trigger / inbound:flow 相位
+      // 由生效的触发插件 / plugin-flow-control 在 inbound:trigger / inbound:flow 相位
       // 决定是否吞噬、归档、或继续派发给 agent。
       // 启动后/重连后通过 shut_up_timestamp 懒查询恢复禁言状态（每会话一次）
       if (sessionType === 'group') {
@@ -1766,7 +1766,7 @@ function runAdapter(caps: Caps): void {
         selfRole,
         selfTitle,
         replyTo,
-        // triggerType 由 trigger-policy 在 inbound:trigger 相位中填充
+        // triggerType 由生效的触发插件在 inbound:trigger 相位中填充
       });
     })().catch(err => {
       logger.warn(`OneBot 消息处理异常: ${err}`);
