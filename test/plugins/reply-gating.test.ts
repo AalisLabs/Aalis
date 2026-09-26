@@ -15,6 +15,7 @@ import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import sessionToolsPlugin from '../../packages/plugin-tool-session/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 回复闸门：trigger-policy 决定要不要开口，flow-control 只做节流硬闸。
@@ -92,6 +93,8 @@ interface SetupOptions {
   archived?: IncomingMessage[];
   /** 提供内存 data 根存储（禁言落盘）；同一个 Map 传给下一个 App 即模拟重启 */
   files?: Map<string, string>;
+  /** agent 收到消息后先等它（模拟回合在途） */
+  hold?: (msg: IncomingMessage) => Promise<void>;
 }
 
 const DATA_ROOT: StorageRootInfo = {
@@ -143,6 +146,7 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
   host.provide(agent, {
     async handleMessage(msg: IncomingMessage) {
       received.push(msg);
+      await opts.hold?.(msg);
       if (opts.autoReply?.(msg)) await reply(msg.sessionId, msg.platform);
     },
   } as never);
@@ -870,6 +874,44 @@ describe('冷却与限速', () => {
     await h.send(groupMsg(G, '冷却中的第二条'));
     expect(h.contents(), '*:group 覆盖的 30s 冷却应生效（顶层为 0）').toEqual(['解禁后第一条']);
   });
+
+  it('按群号覆盖开启限速（顶层关闭）：该群回复后限速、非 immediate 被吞，别的群不受影响', async () => {
+    const G1 = '20001';
+    const G2 = '20002';
+    const h = await setup({
+      flow: {
+        cooldownSeconds: 0,
+        overrides: [{ scope: `onebot:group:${G1}`, rateLimitWindow: 60, rateLimitMaxReplies: 1 }],
+      },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+      autoReply: () => true,
+    });
+
+    await h.send(groupMsg(G1, 'a1'));
+    await h.send(groupMsg(G2, 'b1'));
+    expect(h.flow().isRateLimited(sid(G1))).toBe(true);
+    expect(h.flow().isRateLimited(sid(G2)), '顶层 rateLimitWindow 为 0，别的群不限速').toBe(false);
+    await h.send(groupMsg(G1, 'a2'));
+    await h.send(groupMsg(G2, 'b2'));
+    expect(h.contents()).toEqual(['a1', 'b1', 'b2']);
+  });
+
+  it('活跃会话跨过 30 天不被每日清扫删掉：每次过闸刷新最近活动，长窗口限速的记账保留', async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const G = '20001';
+    const h = await setup({
+      flow: { cooldownSeconds: 0, rateLimitWindow: 3 * 24 * 60 * 60, rateLimitMaxReplies: 1 },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+    });
+
+    await h.send(groupMsg(G, '第 0 天')); // 建出流控状态
+    await advance(29 * DAY);
+    await h.send(groupMsg(G, '第 29 天'));
+    await h.reply(sid(G));
+    expect(h.flow().isRateLimited(sid(G))).toBe(true);
+    await advance(2 * DAY); // 第 30 天的每日清扫：状态建出已满 30 天，但两天前刚过闸
+    expect(h.flow().isRateLimited(sid(G)), '状态被清扫会让限速记账清零').toBe(true);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -1140,6 +1182,48 @@ describe('计数与判定', () => {
     await h.send(groupMsg(G, 'a3'));
     expect(h.contents(), '31 天前的计数应随状态淘汰').not.toContain('a3');
   });
+
+  it('默认配置（intervalMode 为 both、fixedInterval 为 5）：第 2 条由活跃指数放行', async () => {
+    const h = await setup();
+    const G = '20001';
+
+    await h.send(groupMsg(G, 'm1'));
+    await h.send(groupMsg(G, 'm2')); // 0.2 × 1.05 + 0.2 × 1.1 = 0.43 ≥ 下限 0.3，计数只有 2
+    expect(h.contents()).toEqual(['m2']);
+  });
+
+  it('both：计数先到、活跃指数未到时同样放行', async () => {
+    // 上限抬到 5：放行后阈值回到 5，之后只有计数能先达标
+    const h = await setup({ trigger: { fixedInterval: 2, activityScoreUpper: 5 } });
+    const G = '20001';
+
+    for (let i = 1; i <= 4; i++) await h.send(groupMsg(G, `m${i}`));
+    // m1：0.5 × 1.05 ≥ 下限 0.3，由活跃指数放行；m3：计数 2，活跃指数约 1.1，远低于阈值，由计数放行
+    expect(h.contents()).toEqual(['m1', 'm3']);
+  });
+
+  it('按群号覆盖 fixedInterval 与 intervalMode：只影响该群', async () => {
+    const G1 = '20001';
+    const G2 = '20002';
+    const G3 = '20003';
+    const h = await setup({
+      trigger: {
+        intervalMode: 'fixed',
+        fixedInterval: 100,
+        overrides: [
+          { scope: `onebot:group:${G1}`, fixedInterval: 1 },
+          { scope: `onebot:group:${G2}`, intervalMode: 'dynamic', fixedInterval: 5 },
+        ],
+      },
+    });
+
+    for (const g of [G1, G2, G3]) {
+      await h.send(groupMsg(g, `${g}-1`));
+      await h.send(groupMsg(g, `${g}-2`));
+    }
+    // G1：每条都放行；G2：按活跃指数第 2 条放行；G3 走顶层（fixed、100 条）不放行
+    expect(h.contents()).toEqual([`${G1}-1`, `${G1}-2`, `${G2}-2`]);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -1192,6 +1276,23 @@ describe('闲置触发', () => {
     expect(h.idles()).toHaveLength(1);
   });
 
+  it('顶层关闭、按群号覆盖为 session 档：只有该群按时收到闲置注入', async () => {
+    const G1 = '20001';
+    const G2 = '20002';
+    const h = await setup({
+      trigger: {
+        overrides: [
+          { scope: `onebot:group:${G1}`, idleTriggerScope: 'session', idleTriggerMinutes: 1, idleTriggerJitter: false },
+        ],
+      },
+    });
+
+    await h.send(groupMsg(G1, '随便聊聊'));
+    await h.send(groupMsg(G2, '随便聊聊'));
+    await advance(61_000);
+    expect(h.idles().map(m => m.sessionId)).toEqual([sid(G1)]);
+  });
+
   it('exponential 退避封顶 idleTriggerMaxMinutes', async () => {
     const h = await setup({ trigger: sessionIdle('exponential', { idleTriggerMaxMinutes: 2 }) });
 
@@ -1224,6 +1325,27 @@ describe('闲置触发', () => {
     expect(vi.getTimerCount(), '已排上 idle 定时器').toBe(baseline + 1);
     await h.app.stop();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('闲置回合在途时停用插件：回合结束后不再排定时器', async () => {
+    const turn = deferred();
+    const h = await setup({
+      trigger: sessionIdle('fixed'),
+      hold: m => (m.source === 'idle-trigger' ? turn.promise : Promise.resolve()),
+    });
+    await h.send(groupMsg('20001', '随便聊聊'));
+    await advance(60_500); // 闲置注入到达 agent，回合挂起
+    expect(h.idles()).toHaveLength(1);
+
+    expect(await h.app.plugins.disable(triggerPolicyPlugin.name)).toBe(true);
+    await flush();
+    const afterDisable = vi.getTimerCount(); // 只剩 flow-control 的每日清扫
+    turn.resolve();
+    await flush();
+    expect(vi.getTimerCount(), '在途回合结束后不应给已停用的实例排定时器').toBe(afterDisable);
+    await advance(5 * 61_000);
+    expect(vi.getTimerCount()).toBe(afterDisable);
+    expect(h.idles()).toHaveLength(1);
   });
 });
 

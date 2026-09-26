@@ -97,7 +97,7 @@ export interface MediaProcessor {
 | 包 | 调用 | 说明 |
 | --- | --- | --- |
 | `plugin-media`（自身 preprocessor） | `svc.processMessage(msg)` | 经 `buildPreprocessor` 注册到 agent |
-| `plugin-trigger-laya`（私有）经 `@aalis/api-trigger` 的 `waitForAttachmentDescriptions` | `media.current.processMessage(msg)` | 模型判定前提前识别（有等待上限）；之后预处理器与归档不再识别第二遍 |
+| `plugin-trigger-laya`（私有）判定前等附件识别 | `media.current.processMessage(msg)` | 模型判定前提前识别（有等待上限）；之后预处理器与归档不再识别第二遍 |
 | `plugin-file-reader` | `media.describeImage(uri)` | 识别 DOCX 内嵌图；先判 `if (!media?.describeImage) return ''` |
 | `plugin-image-sender` | `media.describeImage(url, { detailLevel: 'casual' })` | 给候选图打描述以挑图 |
 | `plugin-adapter-onebot` | `media.lookupDescription(url)` | 只复用缓存、不触发识别 |

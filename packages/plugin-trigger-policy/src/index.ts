@@ -227,7 +227,7 @@ function run(caps: Caps): void {
   provide(trigger, self, { label: self.label });
   const isActive = (): boolean => caps.trigger.current === self;
 
-  const idleCaps: IdleCaps = { logger, events, gateway: caps.gateway, flowControl, isActive };
+  const idleCaps: IdleCaps = { logger, gateway: caps.gateway, flowControl, isActive };
   const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
   /** 计数与活跃指数清零（禁言与判定放行时） */
@@ -292,7 +292,7 @@ function run(caps: Caps): void {
   // ===== inbound:trigger 相位：要不要开口 =====
   // 由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发。放行的消息写好 triggerType，
   // 交给 flow 相位做节流硬闸（immediate 穿透冷却与限速）。判定是同步的：记入站、判定、清零在同一拍做完，
-  // 同一会话接连到达的消息逐条按计数判定，放行顺序即到达顺序（不需要 plugin-trigger-laya 那样的顺序核对）。
+  // 同一会话接连到达的消息按到达顺序逐条判定，放行顺序即到达顺序（不需要 plugin-trigger-laya 那样的顺序核对）。
   hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     // 不是生效的触发插件：什么都不做（不计数、不识别、不归档），交给生效者或往下走
     if (!isActiveTrigger(data, caps.trigger, self)) return next();
@@ -382,6 +382,9 @@ function run(caps: Caps): void {
     clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);
+    // 清表：session 档闲置注入要等整个 agent 回合，停用时可能还在途；回来时 rescheduleIdle 取不到状态，
+    // 不再排定时器（判定是同步的，入站中间件在 await 之后不再读写状态表）
+    states.clear();
   });
 }
 

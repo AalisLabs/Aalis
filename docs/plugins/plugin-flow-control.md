@@ -87,3 +87,4 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 - 定时任务的消息被禁言或限速吞掉时，plugin-scheduler 仍把这次运行记为成功（`lastResult`），WebUI 上看不出提醒没有发出；被吞的消息只做影子归档，不重试。
 - plugin-workflow 的 agent 节点把指令发往目标会话后等回复。目标会话处于禁言期，或落在作用域内且限速窗口已满时，指令被吞掉，节点等到 `timeoutSeconds` 超时才失败；等待期间同一会话若有其它回合结束（例如有人 @ bot，immediate 穿透限速），节点会把那次回复当作自己的结果（按 sessionId 捕获回合结束，是 workflow 引擎原有的做法）。
 - trigger-policy 的 session 档闲置触发到点时只查禁言与自己是否生效（禁言期或不生效时跳过、不翻倍）。闲置提示被限速吞掉时，`exponential` 风格下退避照样翻倍。
+- 禁言只在入站把关，挡的是禁言之后才开始的回合。命中禁言关键词时 agent 若正在为同一会话生成回复（例如有人刚 @ 过 bot），这条回复照常发出：命中关键词的那条在触发相位就被吞掉，不会中止在途回合，出站方向也不查禁言。平台禁言下适配器本来发不出去，不受影响。

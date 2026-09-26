@@ -103,6 +103,8 @@ onebot:{selfId}:{detailType}:{targetId}
 
 适配器不做流控或触发判定：消息事件解析后直接以 `inbound:message` 发出，由生效的触发插件（如 `@aalis/plugin-trigger-policy`）与 `@aalis/plugin-flow-control` 在 `inbound:trigger` / `inbound:flow` 相位决定是否响应。机器人自身的群禁言与解禁事件，以及启动或重连后按 `shut_up_timestamp` 恢复的禁言状态，通过 `flow-control` 服务的 `setMuted` 同步。
 
+好友申请、入群邀请与加群申请（request 事件）合成为 `[系统通知] …` 消息发出，提示 agent 调用对应的 onebot 工具处理：好友申请与入群邀请发往申请人的私聊会话，加群申请发往该群的会话。这些消息带 `source: 'onebot-request'`，属于系统侧注入：不经触发判定，不受回复后冷却约束，禁言与限速照常；agent 按「会话 + 来源」分道，它们与同一会话的真人消息互不打断。
+
 ## 附件与图片
 
 入站和出站的图片、语音、视频、文件统一缓存到 `data/{kind}s/{session}/`，单文件超过 `attachmentCache.maxBytes` 时不落盘、保留原 URL。入站文本中的 `[图片]`、`[语音]` 等占位符会改写为带本地引用的形式。

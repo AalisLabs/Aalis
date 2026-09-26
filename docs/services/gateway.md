@@ -94,7 +94,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 - **直接调服务（`gateway.current`）** —— 主要是 agent 自己回话，外加主动注入消息的系统侧触发器：
   - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后 `gateway.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `events.emit('outbound:message', message)`，中间件链被跳过）。
-  - `packages/plugin-trigger-policy/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`，缺失时回退 `events.emit('inbound:message', msg)`。
+  - `packages/plugin-trigger-policy/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`（gateway 是 trigger-policy 的必需依赖，缺席的瞬间放弃这次注入）。
   - `packages/plugin-session-confirm/src/index.ts`：取 gateway 走出站总线投递确认提示。
 - **注册到相位 hook（不经服务接口；hook 键后期绑定，注册与 gateway 的加载先后无关）** —— 各中间件占据一个语义相位：
   - `plugin-session-confirm` → `INBOUND_PHASE.CONFIRM`（`packages/plugin-session-confirm/src/index.ts`）
@@ -207,7 +207,7 @@ export default definePlugin({
 });
 ```
 
-> 想从系统侧（非用户消息）主动喂入一条消息（idle / 定时 / 自检），优先 `gateway.current?.ingressMessage(msg)`，缺失时回退 `events.emit('inbound:message', msg)`（参考 idle-scheduler 的写法）。两者都会走完整入站相位链。
+> 想从系统侧（非用户消息）主动喂入一条消息（idle / 定时 / 自检），调 `gateway.current?.ingressMessage(msg)`，或 `events.emit('inbound:message', msg)`（plugin-scheduler 的写法）。两者都由 gateway 插件走完整入站相位链；gateway 缺席时两者都无人处理（见 §8），emit 不能当作 gateway 缺席时的回退。系统侧注入要设置 `source`（见 §7）。
 
 ## 6. 标准消费方式
 
@@ -229,6 +229,7 @@ export default definePlugin({
 - **没有 core 兜底路由**：core 的 `start()` 不注册 `inbound:message` 监听，路由完全由 gateway 插件承担。不加载 gateway 时 `inbound:message` 无人消费，消息被静默丢弃，应把 gateway 视为必需件。
 - **`outbound:message` 直发仍被容忍但属旧路径**：契约注释说 emit 出站「将逐步迁移」（`packages/api-gateway/src/index.ts`）。现状是两条路并存，新代码一律走 `dispatchOutbound()`。
 - **相位顺序是单一真相，只在 gateway-api 改**：默认实现用 `INBOUND_PHASE_ORDER.filter(p => p !== DISPATCH)` 推导前置相位（`packages/plugin-gateway/src/index.ts`）。新增相位**只**改 `gateway-api` 的常量数组，调度方零改动；不要在自己插件里硬编码相位顺序。
+- **plugin-subtask 的任务消息不带 `source`**：`create_subtask` 与 `send_to_subtask` 派发给子会话（`<父会话 id>::<uuid>`）的消息不设 `source`，入站相位按真人消息处理。触发插件的作用域里会话类型段为通配（`*`、`onebot:*` 等）时，它会被计数判定吞掉，子任务不启动；flow-control 的作用域为通配时，子会话冷却期内的追问也会被吞。默认作用域 `*:group` 不受影响。
 - **`ingressMessage` 走内部路径而非再 emit**：默认实现里 `ingressMessage` 直接调 `processInbound`，刻意避免「emit → 自己监听 → 再处理」的事件总线递归歧义（`packages/plugin-gateway/src/index.ts`）。你若重写 gateway 应保持这一点。
 
 ## 9. 交叉链接
