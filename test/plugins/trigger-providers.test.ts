@@ -84,7 +84,7 @@ async function setup(opts: SetupOptions = {}) {
   // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
   const state = app.plugins.getPlugin(triggerPolicyPlugin.name)?.state;
   if (state !== 'active') throw new Error(`trigger-policy 插件未激活（state=${state}）`);
-  return host;
+  return Object.assign(host, { app });
 }
 
 /** 驱动 inbound:trigger 钩子链；记下是否放行，以及放行那一刻的附件描述 */
@@ -221,6 +221,31 @@ describe('trigger 宿主：按序问提供者', () => {
     }
     expect(line).toMatch(/耗时=\d+ms/);
     expect(line).not.toContain('不该进日志');
+  });
+
+  it('判定途中宿主重载：在途消息仍由规则按旧状态判定，不落入「全部弃权、默认放行」', async () => {
+    const gate = deferred();
+    const archived: Array<{ content: string }> = [];
+    const logs: string[] = [];
+    const host = await setup({
+      config: { intervalMode: 'fixed', fixedInterval: 100 },
+      provider: async () => {
+        await gate.promise;
+        return null;
+      },
+      archived,
+      logs,
+    });
+
+    const pending = run(host.hooks, groupMsg('随便聊聊'));
+    await sleep(20); // 模型提供者已被问到、挂起
+    expect(await host.app.plugins.bounce(triggerPolicyPlugin.name)).toBe(true);
+    gate.resolve();
+    const r = await pending;
+    expect(r.reached, '计数 1/100，规则应判不开口').toBe(false);
+    expect(r.message.triggerType).toBeUndefined();
+    expect(archived.map(a => a.content)).toEqual(['随便聊聊']);
+    expect(logs[0]).toContain(`决定者=${RULE_LABEL}`);
   });
 });
 
