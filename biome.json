@@ -132,6 +132,10 @@
       "linter": {
         "rules": {
           "style": {
+            "useConsistentMemberAccessibility": {
+              "level": "error",
+              "options": { "accessibility": "none" }
+            },
             "useNamingConvention": {
               "level": "error",
               "options": {
