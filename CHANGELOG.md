@@ -419,7 +419,7 @@ trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁�
 - session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
 - platform 档闲置触发把注入本身记为 bot 开口，agent 沉默时不会反复挑中同一会话；禁言期内 session 档到点跳过。
 - 冷却与限速只按 agent 的真实回复计，且只对 flow-control 作用域内的会话记账：按会话已记下的类型判；没有流控状态或状态缺类型的会话（重启后没人说话的群、消息都被 trigger 吞掉的群、只有禁言记录的群）按会话 ID 的 `<platform>:<self>:<type>:<target>` 约定推断类型与目标，推断结果只写进 flow-control 自己的会话状态，不回写消息，入站过闸的作用域判定也不用它；会话 ID 不符合约定的（如 WebUI）类型未知，只有会话类型段为通配的作用域（`onebot:*`、`*`）命中。默认 `*:group` 下委派、定时任务发往群的回复照常计入，发往私聊或 WebUI 的不计入，委派闸门对后者不设限；需要限制的在 `scopes` 里纳入。委派派发时不再预记一次回复，同一次委派不会被计两次，也不会在回复落地前给目标会话预设冷却。
-- plugin-media 的 `processMessage` 按消息对象只处理一次：同一条消息再次调用（进行中则等它）返回同一份报告，不重复识别。写回 `_attachmentDescriptions` 时保留本插件不写的位：此前 file-reader 的预处理器先于 media 运行时（两者先后取决于登记次序），文件描述会被整表覆盖冲掉。写回 `attachments` 时不再整表替换，只给写回那一刻的数组逐项补 `mimeType`，识别期间 file-reader 换好的 `aalis-file://` 引用不会被改回原始数据；plugin-file-reader 的预处理器结尾同样只写文件附件自己的描述位，不再整表写回开头读到的描述。
+- plugin-media 的 `processMessage` 按消息对象只处理一次：同一条消息再次调用（进行中则等它）返回同一份报告，不重复识别。写回 `_attachmentDescriptions` 时保留本插件不写的位：此前 file-reader 的预处理器先于 media 运行时（两者先后取决于登记次序），文件描述会被整表覆盖冲掉。写回 `attachments` 时不再整表替换，只给写回那一刻的数组逐项补 `mimeType`，识别期间 file-reader 换好的 `aalis-file://` 引用不会被改回原始数据；plugin-file-reader 的预处理器结尾同样只写文件附件自己的描述位，不再整表写回开头读到的描述，换 `aalis-file://` 引用时也按写回那一刻的附件展开，不丢识别期间补上的 `mimeType`。
 - plugin-message-archive 的 `archiveIncoming` 对传入的消息对象调 `processMessage`，识别结果（附件描述、补齐的 `mimeType`）写回入参；此前对内部拷贝识别，入参不变。触发判定已启动的识别在归档时命中，不再识别第二遍。
 
 **破坏性变更与迁移**：
