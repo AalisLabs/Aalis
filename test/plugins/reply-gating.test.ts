@@ -72,7 +72,7 @@ interface Harness {
   /** 真人入站：走 gateway.ingressMessage（等整条相位链跑完） */
   send: (msg: IncomingMessage) => Promise<void>;
   /** agent 对某会话的真实回复：gateway.dispatchOutbound，source='agent' */
-  reply: (sessionId: string) => Promise<void>;
+  reply: (sessionId: string, platform?: string) => Promise<void>;
   /** 调 delegate_to_session（fire-and-forget）；仅 withDelegate 时可用 */
   delegate: (target: string) => Promise<{ delegated?: boolean; error?: string }>;
   /** 流控服务（模拟平台禁言、读禁言状态） */
@@ -137,13 +137,13 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
   const host = app.bind({ provide, events, hooks, gateway, flowControl });
 
   const received: IncomingMessage[] = [];
-  const reply = async (sessionId: string): Promise<void> => {
-    await host.gateway.require().dispatchOutbound({ content: '好的', sessionId, platform: 'onebot', source: 'agent' });
+  const reply = async (sessionId: string, platform = 'onebot'): Promise<void> => {
+    await host.gateway.require().dispatchOutbound({ content: '好的', sessionId, platform, source: 'agent' });
   };
   host.provide(agent, {
     async handleMessage(msg: IncomingMessage) {
       received.push(msg);
-      if (opts.autoReply?.(msg)) await reply(msg.sessionId);
+      if (opts.autoReply?.(msg)) await reply(msg.sessionId, msg.platform);
     },
   } as never);
 
@@ -324,8 +324,10 @@ describe('缺陷3 禁言期间 idle 不开口', () => {
 // ────────────────────────────────────────────────────────────
 describe('缺陷4 委派不双计、不预设冷却', () => {
   it('放行一次委派 + 目标真实回复一次，限速窗口内只计 1 次', async () => {
+    // 目标群没有真人消息经过 flow 相位、类型未知：回复记账只认会话类型段为通配的作用域，
+    // 作用域取 *，否则回复一次都不计，本用例的「只计 1 次」就成了空断言
     const h = await setup({
-      flow: { rateLimitWindow: 60, rateLimitMaxReplies: 2 },
+      flow: { scopes: ['*'], rateLimitWindow: 60, rateLimitMaxReplies: 2 },
       withDelegate: true,
     });
     const target = sid('20001');
@@ -581,10 +583,10 @@ describe('冷却与限速', () => {
 
   // 按顶层配置生效。只经委派抵达的会话没有 sessionType / targetId，按 *:private 等写的 overrides
   // 对它不生效——已知局限，文档注明，不在此断言。
-  it('委派到无入站记录的私聊：真实回复计入限速，第 N+1 次委派被拒', async () => {
+  it('作用域为 * 时，委派到无入站记录（类型未知）的私聊：真实回复计入限速，第 N+1 次委派被拒', async () => {
     const N = 2;
     const h = await setup({
-      flow: { rateLimitWindow: 60, rateLimitMaxReplies: N },
+      flow: { scopes: ['*'], rateLimitWindow: 60, rateLimitMaxReplies: N },
       autoReply: () => true, // 目标会话收到委派即回复
       withDelegate: true,
     });
@@ -601,6 +603,47 @@ describe('冷却与限速', () => {
       h.received.filter(m => m.sessionId === target),
       '被拒的委派不派发',
     ).toHaveLength(N);
+  });
+
+  it('回复记账只对作用域内会话：委派到 WebUI 会话（默认作用域不含）不记冷却与限速，不被限速拒绝', async () => {
+    // 旧行为：outbound 对任意会话记账，委派到 WebUI 等不受控会话的回复也占限速槽，第 N+1 次委派被拒
+    const N = 2;
+    const h = await setup({
+      flow: { cooldownSeconds: 30, rateLimitWindow: 60, rateLimitMaxReplies: N },
+      autoReply: () => true,
+      withDelegate: true,
+    });
+    const target = 'webui-default';
+
+    for (let i = 0; i <= N; i++) {
+      const res = await h.delegate(target);
+      expect(res.delegated, `第 ${i + 1} 次委派应放行：${res.error ?? ''}`).toBe(true);
+    }
+    expect(h.received.filter(m => m.sessionId === target)).toHaveLength(N + 1);
+    expect(h.flow().isRateLimited(target)).toBe(false);
+    expect(h.flow().isCoolingDown(target)).toBe(false);
+  });
+
+  it('回复记账：没有流控状态的会话按平台判，会话类型段为通配的作用域（*）照常计', async () => {
+    const h = await setup({ flow: { scopes: ['*'], cooldownSeconds: 30 } });
+    await h.reply('webui-default', 'webui'); // 无任何入站经过 flow 相位
+    expect(h.flow().isCoolingDown('webui-default')).toBe(true);
+  });
+
+  it('回复记账：作用域内的群照常计入冷却与限速，委派超限被拒', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 30, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      autoReply: () => true,
+      withDelegate: true,
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // 真人消息经过 flow 相位，会话类型已知（group）→ agent 回复计 1 次
+    expect(h.flow().isCoolingDown(sid(G))).toBe(true);
+    expect(h.flow().isRateLimited(sid(G))).toBe(true);
+    const res = await h.delegate(sid(G));
+    expect(res.delegated).toBeUndefined();
+    expect(res.error).toContain('限速');
   });
 
   it('禁言中的会话拒绝委派', async () => {

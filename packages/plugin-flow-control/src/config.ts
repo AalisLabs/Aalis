@@ -4,10 +4,11 @@ export interface FlowControlConfig {
   /**
    * 统一作用域名单（multiselect），元素格式 "platform:sessionType[:targetId]"，
    * 支持 "*" 通配：onebot:group / onebot:* / *:group / * / onebot:private:10001 。
-   * 默认 ['*:group'] 与历史 OneBot ChatFlow 行为一致。
-   * scopes 只决定入站消息是否过冷却/限速闸；回复记账、委派闸门、闲置选会话不看作用域，
-   * 禁言也不看（禁言只由关键词或平台禁言针对具体会话写入）。
-   * 空数组 = 入站不过冷却/限速闸；但若存在任一 overrides[].scope 命中也视为启用。
+   * 默认 ['*:group'] 与历史 OneBot ChatFlow 行为一致；默认作用域不含 WebUI/CLI，如需纳入，显式添加。
+   * 冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（委派闸门、闲置选会话读的是这份记账）；
+   * 禁言不看（禁言只由关键词或平台禁言针对具体会话写入）。只经出站见到、类型未知的会话
+   * 只有会话类型段为通配的作用域（onebot:*、*）命中。
+   * 空数组 = 冷却与限速对任何会话都不生效；但若存在任一 overrides[].scope 命中也视为启用。
    */
   scopes: string[];
 

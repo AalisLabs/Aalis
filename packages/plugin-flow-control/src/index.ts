@@ -20,7 +20,7 @@ const configSchema: ConfigSchema = {
     dynamicOptions: 'gateway-scopes',
     allowCustom: true,
     description:
-      '只决定入站消息是否过冷却/限速闸；回复记账、委派闸门、闲置选会话不看作用域，禁言也不看。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
+      '冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（委派闸门、闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group；默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。',
   },
   cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
   rateLimitWindow: {
@@ -306,10 +306,14 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // agent 真实回复后记冷却与限速。对任意会话生效：委派到私聊等从未入站过闸的目标也计入限速。
+  // agent 真实回复后记冷却与限速，只对作用域内会话：有状态的按记下的平台、会话类型与目标判；
+  // 没有状态的（如仅经委派抵达）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中，
+  // 与入站不带 sessionType 的内部注入同一口径。委派闸门与闲置选会话读的就是这份记账。
   events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
+    const s = states.get(msg.sessionId);
+    if (!isScopeEnabled(cfg, s?.platform || msg.platform, s?.sessionType, s?.targetId)) return;
     recordReply(msg.sessionId, msg.platform ?? '');
   });
 
