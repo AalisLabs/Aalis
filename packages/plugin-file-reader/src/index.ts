@@ -737,10 +737,10 @@ async function run(caps: Caps): Promise<void> {
       await next();
       return;
     }
-    const attDescs: (string | undefined)[] = msg._attachmentDescriptions ? [...msg._attachmentDescriptions] : [];
-    while (attDescs.length < msg.attachments.length) attDescs.push(undefined);
-
-    let touched = false;
+    // 本插件写的描述先按下标记下，结尾写进那一刻的 _attachmentDescriptions，只动自己负责的位：
+    // 媒体识别可能与本预处理器并发（触发判定启动的识别，放行时不等它跑完），开头取的快照里
+    // 没有其间写好的图片描述，整表写回会把它冲掉
+    const own = new Map<number, string>();
     for (let i = 0; i < msg.attachments.length; i++) {
       const att = msg.attachments[i];
       if (att.kind !== 'file') continue;
@@ -764,10 +764,7 @@ async function run(caps: Caps): Promise<void> {
               index.set(entry.id, entry);
             }
           }
-          if (entry) {
-            attDescs[i] = await buildAttachmentDesc(entry);
-            touched = true;
-          }
+          if (entry) own.set(i, await buildAttachmentDesc(entry));
           // entry 仍缺失：保留上一次的描述，不覆盖、不报错
           continue;
         }
@@ -776,9 +773,10 @@ async function run(caps: Caps): Promise<void> {
         const resolvedMime = att.mimeType || dataMime;
 
         if (buffer.length > maxFileSize) {
-          attDescs[i] =
-            `[文件: ${fileName} - 超过大小限制 (${(buffer.length / 1024 / 1024).toFixed(1)}MB > ${(maxFileSize / 1024 / 1024).toFixed(0)}MB)]`;
-          touched = true;
+          own.set(
+            i,
+            `[文件: ${fileName} - 超过大小限制 (${(buffer.length / 1024 / 1024).toFixed(1)}MB > ${(maxFileSize / 1024 / 1024).toFixed(0)}MB)]`,
+          );
           continue;
         }
 
@@ -786,19 +784,22 @@ async function run(caps: Caps): Promise<void> {
         const entry = await storeFile(fileName, buffer, mimeType, msg.sessionId);
         logger.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
 
-        attDescs[i] = await buildAttachmentDesc(entry);
+        own.set(i, await buildAttachmentDesc(entry));
         // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer
         msg.attachments[i] = { ...att, data: `aalis-file://${entry.id}` };
-        touched = true;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         logger.warn(`文件处理失败 (${fileName}):`, errMsg);
-        attDescs[i] = `[文件: ${fileName} - 处理失败]`;
-        touched = true;
+        own.set(i, `[文件: ${fileName} - 处理失败]`);
       }
     }
 
-    if (touched) msg._attachmentDescriptions = attDescs;
+    if (own.size > 0) {
+      const descs: (string | undefined)[] = msg._attachmentDescriptions ? [...msg._attachmentDescriptions] : [];
+      while (descs.length < msg.attachments.length) descs.push(undefined);
+      for (const [i, desc] of own) descs[i] = desc;
+      msg._attachmentDescriptions = descs;
+    }
     await next();
   }
 

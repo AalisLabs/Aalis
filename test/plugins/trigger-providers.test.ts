@@ -4,7 +4,8 @@ import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type TriggerProvider, trigger } from '../../packages/api-trigger/src/index.js';
-import { App, LogHub, provide, services } from '../../packages/core/src/index.js';
+import { App, type Logger, LogHub, provide, services } from '../../packages/core/src/index.js';
+import { askProvider, createAttachmentRecognition } from '../../packages/plugin-trigger-policy/src/consult.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -14,7 +15,8 @@ import { deferred } from '../helpers/deferred.js';
 // trigger-policy 作为相位宿主：「要不要开口」按 trigger.all() 的顺序问提供者，
 // 第一个不弃权的说了算；规则提供者（本插件自带，优先级 0）兜底。开口后的清零、
 // triggerType（按是否点名）与授权主体由宿主统一写。附件识别由提供者按需触发，
-// 宿主在往下传或归档之前等识别跑完。
+// 宿主往下传与归档都不等它跑完（agent 预处理器与归档按消息对象复用这次识别，整条链见
+// trigger-attachment-chain.test.ts）。
 //
 // 直接驱动 inbound:trigger 钩子链（不装 gateway 插件与 flow-control），另一个提供者
 // 由测试宿主以更高优先级登记，模拟判定模型。
@@ -310,39 +312,36 @@ describe('trigger 宿主：附件识别', () => {
   it.each([
     ['开口', true],
     ['不开口', false],
-  ] as const)('识别超过等待上限：提供者照常判定（%s），宿主等识别跑完才往下传或归档', async (_what, speak) => {
+  ] as const)('识别超过等待上限：提供者照常判定（%s），宿主不等识别跑完就往下传或归档', async (_what, speak) => {
     const gate = deferred();
-    const { svc } = fakeMedia(() => gate.promise);
+    const { svc, calls } = fakeMedia(() => gate.promise);
     const archived: Array<{ content: string; descs?: Array<string | undefined> }> = [];
-    let decided = false;
+    // 提供者回调里的断言会被宿主当作「出错」弃权吞掉，所以只记下来，判定结束后再断言
+    let seenByProvider: Array<string | undefined> | undefined = ['尚未判定'];
     const host = await setup({
       config: { mediaWaitMs: 20 },
       media: svc,
       archived,
       provider: async ({ message, awaitAttachmentDescriptions }) => {
         await awaitAttachmentDescriptions();
-        decided = true;
-        expect(message._attachmentDescriptions, '等待超时时描述尚未写好').toBeUndefined();
+        seenByProvider = message._attachmentDescriptions;
         return { speak, reason: '模型' };
       },
     });
 
-    const pending = run(host.hooks, imageMsg());
-    await sleep(80);
-    expect(decided, '等待上限到了提供者就该拿回控制权').toBe(true);
-    let settled = false;
-    void pending.then(() => {
-      settled = true;
-    });
-    await sleep(20);
-    expect(settled, '识别未完成前不往下传也不归档').toBe(false);
-    expect(archived).toHaveLength(0);
+    const message = imageMsg();
+    const r = await Promise.race([run(host.hooks, message), sleep(1000).then(() => undefined)]);
+    expect(r, '识别未完成时宿主就该往下传或归档').toBeDefined();
+    expect(seenByProvider, '等待超时时描述尚未写好').toBeUndefined();
+    expect(r?.reached).toBe(speak);
+    if (speak) expect(r?.descsAtNext).toBeUndefined();
+    else expect(archived).toEqual([{ content: '看图', descs: undefined }]);
 
+    // 识别在后台继续，写在同一个消息对象上，agent 预处理器与归档随后对它调 processMessage
     gate.resolve();
-    const r = await pending;
-    expect(r.reached).toBe(speak);
-    if (speak) expect(r.descsAtNext).toEqual(['[图片: 一只猫]']);
-    else expect(archived).toEqual([{ content: '看图', descs: ['[图片: 一只猫]'] }]);
+    await sleep(10);
+    expect(calls).toEqual([message]);
+    expect(message._attachmentDescriptions).toEqual(['[图片: 一只猫]']);
   });
 
   it('等附件识别的时间不计入判定截止时间', async () => {
@@ -362,5 +361,50 @@ describe('trigger 宿主：附件识别', () => {
     const r = await run(host.hooks, imageMsg());
     expect(r.reached, '模型的判定应被采纳').toBe(false);
     expect(logs[0]).toContain('决定者=模型');
+  });
+});
+
+describe('askProvider：截止时间与放弃', () => {
+  const silent = { warn: () => {} } as unknown as Logger;
+
+  it('截止时间累计等识别前后的耗时，只扣掉等识别那段', async () => {
+    // 前后各 80ms、中间等识别 60ms、截止 120ms：累计 160ms 应超时；
+    // 若等完识别就重置满额截止时间，后段只算 80ms，会被当作按时判完
+    const answer = await askProvider(
+      {
+        async decide({ awaitAttachmentDescriptions }) {
+          await sleep(80);
+          await awaitAttachmentDescriptions();
+          await sleep(80);
+          return { speak: true, reason: '模型' };
+        },
+      },
+      { message: imageMsg(), addressed: false },
+      { wait: () => sleep(60) },
+      120,
+    );
+    expect(answer.abstain).toBe('超时');
+  });
+
+  it('宿主放弃超时的提供者后，它再等附件描述直接返回，不启动识别', async () => {
+    const { svc, calls } = fakeMedia();
+    const message = imageMsg();
+    const returned = deferred();
+    const answer = await askProvider(
+      {
+        async decide({ awaitAttachmentDescriptions }) {
+          await sleep(60);
+          await awaitAttachmentDescriptions();
+          returned.resolve();
+          return { speak: true, reason: '模型' };
+        },
+      },
+      { message, addressed: false },
+      createAttachmentRecognition(message, { current: svc as never }, 1000, silent),
+      30,
+    );
+    expect(answer.abstain).toBe('超时');
+    await returned.promise;
+    expect(calls).toHaveLength(0);
   });
 });
