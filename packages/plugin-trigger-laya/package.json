@@ -38,6 +38,7 @@
     "service": {
       "required": [
         "config",
+        "events",
         "logger",
         "provide"
       ],

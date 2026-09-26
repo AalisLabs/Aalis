@@ -12,7 +12,7 @@ Laya 触发判定：[`trigger` 服务](../../docs/services/trigger.md)的判定�
 
 ## 依赖
 
-- 服务：`config`、`logger`、`provide`；`memory` 为 optional，缺席时弃权（没有历史窗口无从判定）。
+- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`logger`、`provide`；`memory` 为 optional，缺席时弃权（没有历史窗口无从判定）。
 - 侧车 laya-listener：本机 HTTP 服务，只监听 127.0.0.1，由 launchd 守护。构建、部署、换版本与回滚见本机 `models/listener-sidecar/README.md`（`models/` 在 `.gitignore` 里，不随仓库分发）。
 
 ## 判定流程
@@ -22,7 +22,7 @@ Laya 触发判定：[`trigger` 服务](../../docs/services/trigger.md)的判定�
 3. memory 缺席或处于熔断期时弃权。
 4. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致；最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）多于 `historyRows` 条时，窗口不足 `historyRows` 行。
 5. 调用宿主的 `awaitAttachmentDescriptions()` 等附件识别（上限为宿主的 `mediaWaitMs`），再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两者不一致的情况见「已知局限」。
-6. 请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，直接弃权、不计失败；否则 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
+6. 请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，直接弃权、不计失败；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
 7. `speak = logit ≥ 阈值`，阈值取配置的 `threshold`，留空时用侧车随响应返回的模型阈值。`shadow` 记一行影子判定日志后弃权；`live` 返回 `{ speak, reason: 'Laya <版本> 阈值=<阈值>', score: logit }`。
 
 ## 侧车接口
@@ -75,11 +75,23 @@ Laya 触发判定：[`trigger` 服务](../../docs/services/trigger.md)的判定�
 
 - 宿主的判定日志（debug）：`live` 下由本提供者判定时为 `决定者=Laya 模型`，带 `reason` 与 `score`；弃权时出现在 `弃权=Laya 模型(弃权|超时|出错)` 里。
 - 单次请求失败与请求体超限弃权（debug）；熔断与恢复（warn，一次故障各一条，其间的重新熔断记 debug）；判定异常（warn）。
+- 运行期自检汇总（info，每结清 200 条记一行，计数自插件激活起累计）：
+
+  ```
+  [laya] 自检 | 一致=<n> | 不一致:缺附件描述=<n> | 不一致:含文件附件=<n> | 不一致:其它=<n> | 未归档=<n>
+  ```
+
+  向侧车发请求前，按「会话 ID + 消息 ID」记下这次 `cur` 的哈希与长度（不存原文）；这条消息归档（`inbound:message:archived`）后与归档正文比对，并从表中取出，即结清一条。训练数据与窗口里的历史行都取自归档正文，这一行反映的是模型在线上看到的当前消息与训练口径是否逐字相同。没有消息 ID 的消息、没经本提供者判定的消息，以及没有向侧车发请求的判定（`off`、在此之前弃权、请求体超限）都不记，归档时也不计。
+  - `一致`：逐字相同。
+  - `不一致:缺附件描述`：判定时有图片、语音或视频附件还没有描述（识别超过宿主的 `mediaWaitMs`，或宿主已放弃本次判定），归档时补上了。对应「已知局限」的「识别超时时 `cur` 缺附件描述」。
+  - `不一致:含文件附件`：消息带文件附件，文件描述在 agent 预处理阶段才写入。对应「已知局限」的「文件描述不进 `cur`」。与上一项同时成立时计入上一项。
+  - `不一致:其它`：不属于上面两项的偏差，如 agent 预处理器或 `agent:input:before` 中间件改写了正文、发送者昵称等拼进 `cur` 的字段。
+  - `未归档`：表最多 1000 条，超出时按记下的先后淘汰最早的一条，淘汰时仍未归档的计入此项（如 plugin-message-archive 未启用或归档失败）。条目要等被淘汰才计入，这一项比实际滞后约 1000 次判定。
 
 ## 从影子期到 live
 
 1. 启用本插件（默认 `shadow`），确认侧车在跑：`curl http://127.0.0.1:17878/health`。
-2. 影子期：各群保持 `shadow` 若干天，开口仍由规则判定。只看影子判定行（info 级，带 `addressed` 与 `会开口`）即可：逐条看「被点名但模型会吞」（`addressed=true` 且 `会开口=false`），抽看「没点名但模型会开口」，据此定阈值（顶层 `threshold`，或按作用域覆盖）。
+2. 影子期：各群保持 `shadow` 若干天，开口仍由规则判定。只看影子判定行（info 级，带 `addressed` 与 `会开口`）即可：逐条看「被点名但模型会吞」（`addressed=true` 且 `会开口=false`），抽看「没点名但模型会开口」，据此定阈值（顶层 `threshold`，或按作用域覆盖）。另外用自检汇总行判断线上输入是否偏离训练口径：`不一致:其它` 应接近 0，持续出现说明有未知的改写，查清之前不上 `live`；`不一致:缺附件描述` 占结清总数的比例偏高时，考虑调大宿主的 `mediaWaitMs`（带附件消息的判定耗时随之变长）；`不一致:含文件附件` 是已知缺口，它占结清总数的比例就是受影响的判定比例；`未归档` 持续增长时先确认 plugin-message-archive 已启用。
 3. 单群 `live`：`overrides` 加一条 `{scope: 'onebot:group:<群号>', mode: 'live'}`。
 4. 逐步扩群，最后把顶层 `mode` 改为 `live`。
 
@@ -93,7 +105,8 @@ Laya 触发判定：[`trigger` 服务](../../docs/services/trigger.md)的判定�
 
 ## 已知局限
 
-- **判定时的 `cur` 可能少于归档**：文件附件的描述由 plugin-file-reader 在 agent 预处理阶段才写入，判定时还没有，放行的带文件消息归档里有文件描述而 `cur` 里没有。附件识别超过宿主的 `mediaWaitMs` 时照常判定，`cur` 里同样缺这些描述。
+- **文件描述不进 `cur`**：文件附件的描述由 plugin-file-reader 在 agent 预处理阶段才写入，判定时还没有，放行的带文件消息归档里有文件描述而 `cur` 里没有。自检汇总计入 `不一致:含文件附件`。
+- **识别超时时 `cur` 缺附件描述**：附件识别超过宿主的 `mediaWaitMs` 时照常判定，`cur` 里缺这些描述，归档时补上。自检汇总计入 `不一致:缺附件描述`。
 - **影子期同样等附件识别**：`shadow` 与 `live` 走同一段判定，带附件的消息要等识别（至多 `mediaWaitMs`）和侧车往返之后，规则才接着判定。放行后 agent 预处理器与归档复用这次识别，不再识别第二遍。
 - **带附件的消息可能晚于同会话后到的消息**：等识别的那段（至多 `mediaWaitMs`）在判定之内，这期间同一会话后到、不用等识别的消息可能先判定、先抵达 agent。
 - **超大窗口弃权**：请求体超过侧车的 1 MiB 上限时弃权，回落规则判定。plugin-file-reader 默认把 10 万字以内的文件全文写进附件描述并随消息归档，窗口里有几条这样的消息就可能超限，直到它们滚出窗口。插件不截断行也不丢行：侧车的发言人编号与截断都基于完整窗口，客户端改窗口会偏离训练口径。未超限的大行也会拉长侧车的渲染耗时。
