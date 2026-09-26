@@ -68,7 +68,7 @@ export interface StartAalisOptions {
 
 /**
  * 读取 @aalis/core 的实际安装版本，供 App 启动 banner 展示。
- * core 无 `exports` 限制，package.json 子路径可 require；解析失败则返回 undefined，
+ * core 的 `exports` 开放了 `./package.json` 子路径，可 require；解析失败则返回 undefined，
  * banner 自动省略版本段（不因版本读取失败而影响启动）。
  */
 function readCoreVersion(): string | undefined {

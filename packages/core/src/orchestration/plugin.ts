@@ -23,7 +23,7 @@ import { type Logger, summarizeError } from '../infrastructure/logger.js';
 export type { PluginEntry, PluginState };
 export { parseInstanceId };
 
-/** 一条登记：定义、实例配置（原样生效）、实例 id、是否以禁用态登记。字段含义同 {@link PluginManager.register} */
+/** 一条登记：定义、实例配置（原样生效）、实例 id、是否以禁用态登记。字段含义同 `app.plugin` 的参数 */
 export interface PluginRegistration {
   definition: PluginDefinition;
   config?: Record<string, unknown>;

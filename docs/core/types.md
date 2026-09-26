@@ -4,6 +4,8 @@
 
 **源码**: `packages/core/src/index.ts`（值导出定格见 `test/core/purity.test.ts`）；类型按分层散在 `types/`、`composition/`、`infrastructure/`、`orchestration/`。
 
+一律从包根 `@aalis/core` 导入。`package.json` 的 `exports` 只开放包根与 `@aalis/core/package.json`（读版本号用），`@aalis/core/dist/…` 等深路径报 `ERR_PACKAGE_PATH_NOT_EXPORTED`（定格见 `test/core/package-exports.test.ts`）。
+
 领域接口请到对应契约包查阅，文档入口：[api 包](../api/README.md) 与 [服务](../services/README.md)。
 
 ---
@@ -108,7 +110,7 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 既登记又被调用的服务，把登记方法作为第二参传入：`serviceRef(port, { registerX })`。不要对象展开——`current` 是 getter，展开会求值成一次性快照。
 
-`ProviderOf<D>` / `BoundOf<U>` / `Uses` 是推导载体。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
+`ProviderOf<D>` / `BoundOf<U>` / `Uses` 是推导载体。`OptionalUse<P, B>` 是 `optional()` 的返回类型，`FollowCleanup`（`void | (() => unknown)`）是 `follow` 回调的返回类型，两者都从包根导出。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 
 `BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），也是以这次激活名义调用提供者的凭据，见 [资源身份](service.md#资源身份)。
 
@@ -193,6 +195,6 @@ core 不持配置文档，也不导出配置类型；插件自己的配置视图
 
 ## 编排与宿主 SPI
 
-`App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`RestartStrategy`。插件加载器 `PluginLoader` / `PluginDescriptor` 在 `@aalis/runtime`，插件包入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`。
+`App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`PluginRegistration`（`app.pluginAll` 的条目）；`RestartStrategy`。插件加载器 `PluginLoader` / `PluginDescriptor` 在 `@aalis/runtime`，插件包入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`。
 
 钩子的 `Hooks` / `MiddlewareFn` / `MiddlewareNext` 与贡献点的 `Contributions` / `ContributionSpec` / `ContributionHandle` 见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。

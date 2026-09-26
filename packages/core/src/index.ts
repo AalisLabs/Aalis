@@ -19,7 +19,12 @@ export type { ServiceInfo, ServiceView } from './primitives/services.js';
 // ----- 编排层：应用骨架与插件管理 -----
 export { App, type AppOptions, createApp } from './orchestration/app.js';
 export { appService, pluginsService } from './orchestration/host-services.js';
-export { type PluginEntry, type PluginState, parseInstanceId } from './orchestration/plugin.js';
+export {
+  type PluginEntry,
+  type PluginRegistration,
+  type PluginState,
+  parseInstanceId,
+} from './orchestration/plugin.js';
 // 宿主 SPI：重启策略
 export type { RestartStrategy } from './orchestration/providers.js';
 
@@ -42,6 +47,8 @@ export {
   type BindingPort,
   type BoundOf,
   defineService,
+  type FollowCleanup,
+  type OptionalUse,
   optional,
   type ProviderOf,
   type Registrar,

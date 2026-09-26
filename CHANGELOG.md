@@ -319,6 +319,14 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 测试用 `vi.useFakeTimers()` 的：激活落定前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 撞上不落定的激活会在提醒定时器上空转。先 `await app.plugins.idle()` 再装假定时器，或用 `vi.runOnlyPendingTimers()`。
 - runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，报就绪在启动完成之后。`slowThresholdMs` 设得比 30 秒短时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活；需要这层兜底就别把阈值调到 30 秒以下。
 
+### 包入口收紧（@aalis/core）
+
+- `package.json` 新增 `exports`，只开放包根 `@aalis/core` 与 `@aalis/core/package.json`。`@aalis/core/dist/…` 等深路径导入在 Node 下报 `ERR_PACKAGE_PATH_NOT_EXPORTED`，TypeScript（`moduleResolution` 为 `bundler` / `node16` / `nodenext`）报找不到模块。`main` 与 `types` 保留，`moduleResolution: node` 的旧工程照常解析包根。
+- 包根新增类型导出 `OptionalUse`（`optional()` 的返回类型）、`FollowCleanup`（`follow` 回调的返回类型）、`PluginRegistration`（`app.pluginAll` 的条目类型）。三者此前只在内部模块导出，插件开 `declaration` 构建时，推断类型写成 `import("@aalis/core/dist/…")` 深路径；现在写成 `import("@aalis/core").X`。
+- 发布包附带 `src/`：`dist` 里的 source map 与 declaration map 指向的源码随包在场，调试器与编辑器的「转到定义」能跳到 TypeScript 源码。安装体积约增加 200 KB。
+
+**迁移**：从 `@aalis/core/dist/…` 深路径导入的，改为从包根 `@aalis/core` 导入；包根没有导出的内部模块不再能导入。用 `Parameters<App['pluginAll']>[0][number]` 推导条目类型的，可以改用 `PluginRegistration`。按 `@aalis/core/package.json` 读版本号的照常可用。用了 `optional()` 且开 `declaration` 的插件要在 core 0.18.0 下重新构建：旧产物 `.d.ts` 里的深路径在 `exports` 下解析不到。
+
 ### 包清单元数据（41 个包）
 
 各包 `package.json` 里的 `aalis.types`、`aalis.util`、`aalis.core`、`aalis.tooling` 已移除，当前框架不读取它们（加载器与市场早已只看 keywords）。`aalis.service` 与 `aalis.client` 不变。
