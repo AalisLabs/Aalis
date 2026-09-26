@@ -2,7 +2,7 @@
 // 运行期自检：判定时发给侧车的 cur 与这条消息的归档正文比对
 //
 // 训练数据取自归档正文，cur 与归档用同一个 buildIncomingContent 拼，但判定时的消息未必已是归档时的样子：
-// 附件识别超过宿主的 mediaWaitMs、文件描述要到 agent 预处理阶段才写入、中间件改写消息等。这里按
+// 附件识别超过 mediaWaitMs、文件描述要到 agent 预处理阶段才写入、中间件改写消息等。这里按
 // 「会话 ID + 消息 ID」记下 cur 的哈希与长度（不存原文），归档后比对，按原因分桶计数，定期交出一行
 // 只含计数的汇总。
 // ============================================================
@@ -13,7 +13,7 @@ import type { IncomingMessage } from '@aalis/schema-message';
 interface CurDigest {
   length: number;
   hash: number;
-  /** 判定时有非文件附件还没有描述（识别超过宿主的 mediaWaitMs，或宿主已放弃本次判定） */
+  /** 判定时有非文件附件还没有描述（识别超过 mediaWaitMs、识别失败，或 media 缺席） */
   missingDescriptions: boolean;
   /** 带文件附件：文件描述由 plugin-file-reader 在 agent 预处理阶段才写入 */
   hasFile: boolean;

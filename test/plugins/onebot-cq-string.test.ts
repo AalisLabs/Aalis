@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { isAddressed } from '../../packages/api-trigger/src/index.js';
 import { normalizeOneBotMessage, segmentsToText } from '../../packages/plugin-adapter-onebot/src/types.js';
 import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
-import { checkImmediateMention } from '../../packages/plugin-trigger-policy/src/detector.js';
 
 // ════════════════════════════════════════════════════════════
 // OneBot 实现端用「字符串消息格式」（message 为含 [CQ:…] 码的字符串）上报时，
@@ -15,6 +15,10 @@ import { checkImmediateMention } from '../../packages/plugin-trigger-policy/src/
 
 const SELF = '10000';
 const v11 = new OneBotV11();
+
+/** 触发插件的 @ 判定（只认 <at self>；不配名字、无 persona，只看 @） */
+const mentionsSelf = (content: string) =>
+  isAddressed({ content }, { current: undefined }, { triggerOnAt: true, triggerOnPoke: true, triggerNames: [] });
 
 function parseString(message: string) {
   return v11.parseMessageEvent(
@@ -68,13 +72,13 @@ describe('OneBot v11 字符串消息格式入站规范化', () => {
     expect(ev).not.toBeNull();
     expect(ev?.text).toBe('<at id="99999">99999</at> 你好');
     expect(ev?.text).not.toContain('CQ:');
-    expect(checkImmediateMention(ev?.text ?? '')).toBe(false);
+    expect(mentionsSelf(ev?.text ?? '')).toBe(false);
   });
 
   it('@self：产生 <at self>，@ 判定触发', () => {
     const ev = parseString(`[CQ:at,qq=${SELF}] 在吗`);
     expect(ev?.text).toBe(`<at self id="${SELF}">${SELF}</at> 在吗`);
-    expect(checkImmediateMention(ev?.text ?? '')).toBe(true);
+    expect(mentionsSelf(ev?.text ?? '')).toBe(true);
   });
 
   it('@self 与数组格式逐字一致（同一条 segmentsToText 路径）', () => {
@@ -131,7 +135,7 @@ describe('OneBot v11 raw_message 回退路径', () => {
     const ev = parseRawOnly(`[CQ:at,qq=${SELF}] 在吗`);
     expect(ev?.text).toBe(`<at self id="${SELF}">${SELF}</at> 在吗`);
     expect(ev?.text).not.toContain('CQ:');
-    expect(checkImmediateMention(ev?.text ?? '')).toBe(true);
+    expect(mentionsSelf(ev?.text ?? '')).toBe(true);
   });
 
   it('回退路径与 message 字符串路径逐字一致，附件/引用照常提取', () => {

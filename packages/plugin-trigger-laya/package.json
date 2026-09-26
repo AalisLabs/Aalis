@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "author": "Ace Nyan <ace@acenyan.com>",
-  "description": "Laya 触发判定：trigger 服务的判定模型提供者，经本机侧车判定群消息要不要开口（private，不发布到 npm）",
+  "description": "Laya 触发判定：经本机侧车由 Laya 模型判定群消息要不要开口的触发插件，与 trigger-policy 二选一（private，不发布到 npm）",
   "type": "module",
   "keywords": [
     "aalis",
@@ -20,14 +20,21 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-flow-control": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-media": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-trigger": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -39,11 +46,18 @@
       "required": [
         "config",
         "events",
+        "hooks",
         "logger",
         "provide"
       ],
       "optional": [
-        "memory"
+        "doctor",
+        "flow-control",
+        "media",
+        "memory",
+        "message-archive",
+        "persona",
+        "trigger"
       ],
       "provides": [
         "trigger"
