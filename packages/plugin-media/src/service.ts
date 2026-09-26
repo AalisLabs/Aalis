@@ -333,7 +333,22 @@ export class MediaServiceImpl implements MediaService {
     }
   }
 
-  async processMessage(msg: IncomingMessage): Promise<MediaProcessReport> {
+  /**
+   * 按消息对象记下的处理：触发判定可能先于 agent 预处理器启动识别（判定模型要看附件描述），
+   * 预处理器再调时拿到同一次处理（进行中则等它），不重复识别。成败都不重来。
+   */
+  private readonly processed = new WeakMap<IncomingMessage, Promise<MediaProcessReport>>();
+
+  processMessage(msg: IncomingMessage): Promise<MediaProcessReport> {
+    let pending = this.processed.get(msg);
+    if (!pending) {
+      pending = this.recognizeMessage(msg);
+      this.processed.set(msg, pending);
+    }
+    return pending;
+  }
+
+  private async recognizeMessage(msg: IncomingMessage): Promise<MediaProcessReport> {
     const attachments = normalizeAttachments(msg);
     const report: MediaProcessReport = { total: attachments.length, successCount: 0, items: [] };
     if (attachments.length === 0) return report;
@@ -461,9 +476,11 @@ export class MediaServiceImpl implements MediaService {
       report.items.push(item);
     }
 
-    // 写回 IncomingMessage
+    // 写回 IncomingMessage。本插件没写描述的位（文件、直通音频等）保留已有值：预处理器的先后
+    // 取决于登记次序，file-reader 可能先跑并写好了文件描述，整表覆盖会把它冲掉
+    const prev = msg._attachmentDescriptions;
     msg.attachments = attachments;
-    msg._attachmentDescriptions = descriptions;
+    msg._attachmentDescriptions = prev ? descriptions.map((d, i) => d ?? prev[i]) : descriptions;
     return report;
   }
 
