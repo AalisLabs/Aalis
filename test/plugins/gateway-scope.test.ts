@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { extractTargetId, isScopeEnabled, resolveEffectiveConfig } from '../../packages/api-gateway/src/index.js';
+import {
+  extractTargetId,
+  inferSessionScope,
+  isScopeEnabled,
+  resolveEffectiveConfig,
+} from '../../packages/api-gateway/src/index.js';
 
 // api-gateway 的会话作用域纯函数：flow-control 与 trigger-policy 共用同一份匹配规则。
 
@@ -117,5 +122,36 @@ describe('extractTargetId', () => {
     expect(extractTargetId({ sessionType: 'private', groupId: 'g1', userId: 'u1' })).toBe('u1');
     expect(extractTargetId({ sessionType: 'channel', groupId: 'g1', userId: 'u1' })).toBe('');
     expect(extractTargetId({ userId: 'u1' })).toBe('');
+  });
+});
+
+describe('inferSessionScope', () => {
+  it('按 <platform>:<self>:<type>:<target> 约定推断：群取群号、私聊取对方 id，频道只给类型、目标为空', () => {
+    expect(inferSessionScope('onebot', 'onebot:10000:group:20001')).toEqual({
+      sessionType: 'group',
+      targetId: '20001',
+    });
+    expect(inferSessionScope('onebot', 'onebot:10000:private:30001')).toEqual({
+      sessionType: 'private',
+      targetId: '30001',
+    });
+    expect(inferSessionScope('onebot', 'onebot:10000:channel:40001:50001')).toEqual({
+      sessionType: 'channel',
+      targetId: '',
+    });
+  });
+
+  it('类型段只认 group / private / channel', () => {
+    for (const t of ['guild', 'other', 'GROUP', '']) {
+      expect(inferSessionScope('onebot', `onebot:10000:${t}:20001`), t).toBeUndefined();
+    }
+  });
+
+  it('前缀与平台不符、段数不足、子任务会话、不符合约定的不推断', () => {
+    expect(inferSessionScope('internal', 'onebot:10000:group:20001')).toBeUndefined();
+    expect(inferSessionScope(undefined, 'onebot:10000:group:20001')).toBeUndefined();
+    expect(inferSessionScope('onebot', 'onebot:10000:group')).toBeUndefined();
+    expect(inferSessionScope('onebot', 'onebot:10000:group:20001::abcd1234')).toBeUndefined();
+    expect(inferSessionScope('webui', 'webui-default')).toBeUndefined();
   });
 });
