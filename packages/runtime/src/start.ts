@@ -132,8 +132,9 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // ── 组装 App：YAML 配置文档、按 loader 发现插件、用 spawn 重启 ──
   const { config, provider } = createFsYamlConfigProvider(opts.configPath);
   const store = createConfigStore(config, provider);
-  // core 的慢操作阈值：缺省交给 core 默认；不是非负有限数的写法告警后同样交给默认（启动时读取，改了要重启）
-  const slowThresholdMs = store.get('slowThresholdMs');
+  // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认
+  // （启动时读取，改了要重启）
+  const slowThresholdMs = store.get('slowThresholdMs') ?? undefined;
   const slowThresholdValid =
     slowThresholdMs === undefined ||
     (typeof slowThresholdMs === 'number' && Number.isFinite(slowThresholdMs) && slowThresholdMs >= 0);
@@ -154,9 +155,9 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   });
 
   if (!slowThresholdValid) {
-    app.logger.warn(
-      `配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒），收到 ${JSON.stringify(slowThresholdMs)}，按默认 60000 处理`,
-    );
+    // 数字照原样显示：JSON.stringify 会把 Infinity / NaN 显示成 null
+    const received = typeof slowThresholdMs === 'number' ? String(slowThresholdMs) : JSON.stringify(slowThresholdMs);
+    app.logger.warn(`配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒），收到 ${received}，按默认值处理`);
   }
 
   // 配置文档先于任何插件接上：文档里的服务偏好要在全部提供者上线前生效

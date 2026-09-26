@@ -284,7 +284,15 @@ function registerSelfServiceTools(caps: Caps): void {
       if (!ok) return `失败：updateConfig 返回 false`;
       // 管理动作只改运行态；跨重启保留要自己写文档并落盘
       doc.setPluginConfig(PLUGIN_NAME, next);
-      await doc.save();
+      // 落盘失败时运行态已经切换、插件已在 bounce：如实说明，别报成什么都没发生（save 自己记过日志）
+      try {
+        await doc.save();
+      } catch (err) {
+        return (
+          `已将 server "${id}" 设置为 enabled=${enabled}（运行态已生效，插件会 bounce）；` +
+          `写入配置文件失败：${err instanceof Error ? err.message : String(err)}。配置文件里仍是原值，重启或配置重新载入后可能回退`
+        );
+      }
       return `已将 server "${id}" 设置为 enabled=${enabled}，插件会 bounce 后生效`;
     },
   });

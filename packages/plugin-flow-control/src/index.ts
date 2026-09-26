@@ -178,6 +178,13 @@ async function run(caps: Caps): Promise<void> {
    * 否则下一次 setMuted 就把原有禁言冲掉。每次读（storage 换人时 follow 重读）都重新判定。
    */
   let loadFailed = false;
+  /**
+   * 自上次成功写盘以来 setMuted 改过的会话（解禁也算，含尚无状态的会话）→ 改动序号。重读时这些会话以内存为准：
+   * storage 离线或读取在飞期间的改动还没进文件，按文件值合并会让解禁被旧禁言撤回。
+   * 写盘成功后清掉该次快照已含的改动；写链在飞期间又改过的会话序号更大，留到下一次。
+   */
+  const unsavedMutes = new Map<string, number>();
+  let muteRev = 0;
 
   async function loadMuteState(): Promise<void> {
     loadFailed = false;
@@ -199,8 +206,8 @@ async function run(caps: Caps): Promise<void> {
       let restored = 0;
       for (const [sessionId, entry] of Object.entries(data)) {
         const mutedUntil = Number(entry?.mutedUntil ?? 0);
-        if (!mutedUntil || mutedUntil <= now) continue;
-        // storage 晚上线时读回之前可能已有消息或 setMuted 建了状态：合并而非替换，禁言取较晚的到期时刻
+        if (!mutedUntil || mutedUntil <= now || unsavedMutes.has(sessionId)) continue;
+        // storage 晚上线时读回之前可能已有消息建了状态：合并而非替换，禁言取较晚的到期时刻
         const existing = states.get(sessionId);
         if (existing) {
           existing.mutedUntil = Math.max(existing.mutedUntil, mutedUntil);
@@ -223,7 +230,10 @@ async function run(caps: Caps): Promise<void> {
   // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
   let loading: Promise<void> | undefined;
   caps.storage.follow(() => {
-    loading = loadMuteState();
+    // 读完补写一次：离线期间的改动写盘失败过，还没进文件
+    loading = loadMuteState().then(() => {
+      if (!loadFailed && unsavedMutes.size > 0) saveMuteState();
+    });
   });
 
   let saveChain: Promise<void> = Promise.resolve();
@@ -241,7 +251,9 @@ async function run(caps: Caps): Promise<void> {
         for (const [sessionId, s] of states.entries()) {
           if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
         }
+        const upTo = muteRev;
         await storage.writeFile(muteStateUri, JSON.stringify(out, null, 2));
+        for (const [sessionId, rev] of unsavedMutes) if (rev <= upTo) unsavedMutes.delete(sessionId);
       })
       .catch(err => {
         logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
@@ -301,9 +313,6 @@ async function run(caps: Caps): Promise<void> {
   // ===== Service 实现 =====
 
   const service: FlowControlService = {
-    ensureState(sessionId, platform, sessionType, targetId) {
-      getOrCreate(sessionId, platform, sessionType, targetId);
-    },
     getStateSnapshot(sessionId): FlowSessionStateSnapshot | undefined {
       const s = states.get(sessionId);
       return s ? snapshot(s, eff(s)) : undefined;
@@ -364,6 +373,8 @@ async function run(caps: Caps): Promise<void> {
       if (!s && platform && durationSec > 0) {
         s = getOrCreate(sessionId, platform);
       }
+      // 尚无状态的会话解禁也记：禁言表还没读回时，读回不得恢复它的旧禁言
+      if (s || durationSec <= 0) unsavedMutes.set(sessionId, ++muteRev);
       if (!s) return;
       if (durationSec <= 0) {
         s.mutedUntil = 0;

@@ -126,8 +126,10 @@ describe('配置文档（内存态）', () => {
     expect(snap.constructor).toBe(Object);
   });
 
-  it('未注入 provider 时 persist() 立即完成', async () => {
-    await expect(emptyStore().persist()).resolves.toBeUndefined();
+  it('persist() 兑现值表示是否交给了 provider 落盘：未注入 provider 或 provider 不提供 save 时立即兑现为 false', async () => {
+    await expect(emptyStore().persist()).resolves.toBe(false);
+    await expect(createConfigStore({}, { watch: () => () => {} }).persist()).resolves.toBe(false);
+    await expect(createConfigStore({}, { save: () => {} }).persist()).resolves.toBe(true);
   });
 
   it('persist()：同步 provider 抛错也以拒绝传出，不在调用点同步抛', async () => {
@@ -139,7 +141,7 @@ describe('配置文档（内存态）', () => {
         },
       },
     );
-    let pending: Promise<void> | undefined;
+    let pending: Promise<boolean> | undefined;
     expect(() => {
       pending = store.persist();
     }).not.toThrow();
@@ -326,14 +328,15 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
   function capture() {
     const errors: unknown[][] = [];
     const warns: unknown[][] = [];
+    const infos: unknown[][] = [];
     const logger: Logger = {
       debug() {},
-      info() {},
+      info: (...args: unknown[]) => void infos.push(args),
       warn: (...args: unknown[]) => void warns.push(args),
       error: (...args: unknown[]) => void errors.push(args),
       child: () => logger,
     };
-    return { errors, warns, logger };
+    return { errors, warns, infos, logger };
   }
   const docOf = (app: App) => app.bind({ hostConfig }).hostConfig.require();
 
@@ -403,9 +406,21 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
     ]);
   });
 
-  it('无 provider（内存模式）→ 立即完成', async () => {
-    const { app } = track(hostedApp());
+  it.each([
+    ['不注入 provider', undefined],
+    ['provider 只提供 watch', { watch: () => () => {} }],
+  ] as const)('宿主不持久化（%s）→ 立即完成，不记「配置已保存」', async (_label, provider) => {
+    const { infos, logger } = capture();
+    const { app } = track(hostedApp({}, { logger, provider }));
     await expect(docOf(app).save()).resolves.toBeUndefined();
+    expect(infos.filter(([msg]) => msg === '配置已保存')).toEqual([]);
+  });
+
+  it('对照：provider 提供 save → 记「配置已保存」', async () => {
+    const { infos, logger } = capture();
+    const { app } = track(hostedApp({}, { logger, provider: { save: () => {} } }));
+    await docOf(app).save();
+    expect(infos.filter(([msg]) => msg === '配置已保存')).toEqual([['配置已保存']]);
   });
 
   it('不 await 也不 catch 的调用：同步 provider 抛错只记 error，不产生未处理拒绝', async () => {

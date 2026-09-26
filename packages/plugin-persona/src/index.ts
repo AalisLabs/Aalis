@@ -11,7 +11,13 @@ import {
 } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
 import { sessionManager as sessionManagerService } from '@aalis/api-session-manager';
-import { createStorageGateway, type StorageService, storage as storageService, toStorageUri } from '@aalis/api-storage';
+import {
+  createStorageGateway,
+  isStorageNotFound,
+  type StorageService,
+  storage as storageService,
+  toStorageUri,
+} from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import {
   type BoundOf,
@@ -552,13 +558,14 @@ async function run(caps: Caps): Promise<void> {
     return sawInvalid ? INVALID : undefined;
   }
 
-  /** 扫描人设目录，预填 cache。 */
+  /** 扫描人设目录，预填 cache。目录不存在算零张卡；列不出（storage 缺席、读错误）时抛错，由 scanOnce 记 warn、不剔卡。 */
   async function scanAll(svc: PersonaServiceImpl): Promise<Set<string>> {
     const seenNames = new Set<string>();
     let result: Awaited<ReturnType<StorageService['list']>>;
     try {
       result = await storage.list(personasDir);
-    } catch {
+    } catch (err) {
+      if (!isStorageNotFound(err)) throw err;
       return seenNames;
     }
     for (const entry of result.entries) {
@@ -659,8 +666,7 @@ async function run(caps: Caps): Promise<void> {
         if (cancelled) return;
         // 先挂监听再扫描：扫描期间的改动不会漏掉（由它触发的重扫排在本次扫描之后）
         try {
-          const off = storage.watch?.(personasDir, () => void refresh(`目录变化已重新加载（${personasDir}）`));
-          if (off) offs.push(off);
+          offs.push(storage.watch(personasDir, () => void refresh(`目录变化已重新加载（${personasDir}）`)));
         } catch (err) {
           logger.warn(`persona 目录监听失败（${personasDir}）：${err}`);
         }

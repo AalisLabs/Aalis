@@ -41,7 +41,8 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
   let apps: App[];
   let calls: number;
 
-  const boot = async (): Promise<{ app: App; svc: WorkflowService }> => {
+  /** workspaceDeletable=false：定义目录所在根不可删，删除定义文件必然失败 */
+  const boot = async (workspaceDeletable = true): Promise<{ app: App; svc: WorkflowService }> => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
@@ -54,7 +55,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
         browsable: true,
         readable: true,
         writable: true,
-        deletable: true,
+        deletable: name === 'data' || workspaceDeletable,
       })),
     });
     await app.plugin(toolsPlugin, {});
@@ -157,6 +158,33 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
 
     await second.svc.defineWorkflow(pastOnce(id), { persist: true });
     expect(await waitUntil(() => calls >= 2), '同 id 重建算新工作流，应再触发一次').toBe(true);
+  });
+
+  it('定义文件删不掉时 removeWorkflow 报错，定义与 once 记账都保留，重启不重放；只在内存里的定义照常删除', async () => {
+    const id = 'zz-once-undeletable';
+    const first = await boot(false);
+    await first.svc.defineWorkflow(pastOnce(id), { persist: true });
+    expect(await waitUntil(() => calls >= 1)).toBe(true);
+    expect(await waitLedger(id)).toBe(true);
+
+    await expect(first.svc.removeWorkflow(id)).rejects.toThrow(`删除 workflow 文件 ${id}.yaml 失败`);
+    expect(first.svc.getWorkflow(id), '文件还在，定义不得从列表消失').toBeDefined();
+    // 只在内存里的定义没有文件会被重新载入：根不可删也照常删除
+    await first.svc.defineWorkflow(
+      { id: 'zz-mem', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'tool', tool: 'zz_count' }] },
+      { persist: false },
+    );
+    expect(await first.svc.removeWorkflow('zz-mem')).toBe(true);
+    expect(first.svc.getWorkflow('zz-mem')).toBeUndefined();
+    await first.app.stop(); // 拆卸等排队的落盘写完
+    expect(readLedger()[id], 'once 记账不得清掉').toBeTypeOf('number');
+
+    // 定义文件还在：新实例重新载入它，记账仍在就不得重放
+    const second = await boot(false);
+    await new Promise(r => setTimeout(r, 200));
+    expect(calls, '重启后 once 不得重放').toBe(1);
+    // 启动时从文件载入的定义同样算有文件：删不掉照样报错
+    await expect(second.svc.removeWorkflow(id)).rejects.toThrow(`删除 workflow 文件 ${id}.yaml 失败`);
   });
 });
 

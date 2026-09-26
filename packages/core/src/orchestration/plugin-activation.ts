@@ -37,7 +37,8 @@ export interface ActivationDeps {
 }
 
 /**
- * 拆卸方的唯一形状：先写终态 → 带超时拆激活 → 清引用 → 发 plugin:unloaded。单条也走这里。
+ * 拆卸方的唯一形状：先写终态 → 带超时拆激活 → 清引用 → 发 plugin:unloaded（只给拆前已激活、发过 plugin:loaded
+ * 的）。单条也走这里。
  *
  * 这四步的**顺序**是并发正确性的承重墙：漏一步或抄错顺序就是覆写竞态。约定只有一条：
  * 「拆卸不许手写，调本函数」——由 test/architecture/state-write-sites.test.ts 的写入点定格测试机器守。
@@ -68,11 +69,13 @@ export async function retireBatch(
   deps: ActivationDeps,
   opts?: { emitUnloaded?: boolean; planRoot?: Activation; settle?: Map<Activation, () => void> },
 ): Promise<void> {
-  const closing: Array<{ entry: PluginRecord; activation: Activation; target: PluginState }> = [];
+  const closing: Array<{ entry: PluginRecord; activation: Activation; target: PluginState; loaded: boolean }> = [];
   for (const entry of entries) {
     const target = typeof targetState === 'function' ? targetState(entry) : targetState;
+    // 'active' 与 plugin:loaded 在同一同步段里写下；仍在初始化的、另一管理动作已改走终态的都不算
+    const loaded = entry.state === 'active';
     entry.state = target;
-    if (entry.activation) closing.push({ entry, activation: entry.activation, target });
+    if (entry.activation) closing.push({ entry, activation: entry.activation, target, loaded });
   }
   try {
     const roots = opts?.planRoot ? [opts.planRoot] : closing.map(item => item.activation);
@@ -80,7 +83,7 @@ export async function retireBatch(
   } catch (err) {
     deps.logger.error('拆卸抛错:', err);
   }
-  for (const { entry, activation, target } of closing) {
+  for (const { entry, activation, target, loaded } of closing) {
     if (activation.resources.initializing) {
       const reason = `未在宽限内停止（abort 后收尾段又等了 ${deps.disposeTimeoutMs}ms，初始化仍未落定，不再等待）`;
       deps.logger.error(`插件 "${entry.instanceId}" ${reason}`);
@@ -91,7 +94,7 @@ export async function retireBatch(
       }
     }
     if (entry.activation === activation) entry.activation = undefined;
-    if (opts?.emitUnloaded !== false) deps.host.runtime.notify('plugin:unloaded', entry.instanceId);
+    if (loaded && opts?.emitUnloaded !== false) deps.host.runtime.notify('plugin:unloaded', entry.instanceId);
   }
 }
 
@@ -105,12 +108,13 @@ export function requiredSatisfied(entry: PluginRecord, services: ServiceContaine
 }
 
 /**
- * 尝试激活一个 pending 插件：依赖检查 → 建激活 → 挂载定义 → provides 校验。
+ * 尝试激活一个 pending 插件：建激活 → 挂载定义 → provides 校验（依赖与旧激活已清由调用方在同一拍判定，
+ * 见前置条件）。
  *
  * 本次 required 引用缺席：清理失败激活后回到 pending，并让重算继续观察可能已恢复的依赖。
  * 其余失败转为 error 态（带 message），外层 recompute 不会重试。
- * 前置条件（唯一调用方 `#recomputeOnce` 的 Phase B 在同一拍里已判定）：entry 为 pending、旧激活已清，
- * required 依赖都有提供者。同步段返回时 entry.activation 已是本次激活。
+ * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
+ * 旧激活已清，required 依赖都有提供者且胜者都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
  */
 export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {
@@ -182,15 +186,14 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     if (isRequiredServiceUnavailable(err, activation.resources, entry.required)) {
       logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
       entry.error = undefined;
-      await retireBatch([entry], 'pending', deps, { emitUnloaded: false });
+      await retireBatch([entry], 'pending', deps);
       return 'retry';
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
     // retireBatch 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
     // 调用方）依赖状态机即时转移，异步清理不该拖延 'error' 的可见时点。
-    // 不发 unloaded：本插件从未 loaded 过，配对事件无从谈起。
     entry.error = summarizeError(err);
-    await retireBatch([entry], 'error', deps, { emitUnloaded: false });
+    await retireBatch([entry], 'error', deps);
     return;
   }
 

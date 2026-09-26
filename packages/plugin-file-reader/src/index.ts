@@ -5,7 +5,7 @@ import { hooks } from '@aalis/api-hooks';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
 import { type ToolCallContext, tools, withToolGroups } from '@aalis/api-tools';
 import {
   type BoundOf,
@@ -159,7 +159,7 @@ export interface FileReaderService {
   listFiles(sessionId?: string): FileMeta[];
   /**
    * 文件在本地文件系统上的绝对路径。
-   * 文件不存在、或当前 storage 实现不支持本地路径（如对象存储）时返回 null。
+   * 文件不存在、或当前 storage 实现不支持本地路径（如对象存储）时返回 null；其余存储错误照常抛出。
    */
   resolveLocalPath(fileId: string): Promise<string | null>;
   /** 单个文件的元信息；不存在返回 null。 */
@@ -924,9 +924,11 @@ async function run(caps: Caps): Promise<void> {
       if (!entry) return null;
       try {
         return await storage.resolveLocalPath(entry.dataUri, 'read');
-      } catch {
-        // 网关对不支持 local-path 的根、以及磁盘上已不存在的文件都抛错；契约两者都是 null
-        return null;
+      } catch (err) {
+        // 契约只把这两种情况映射为 null：文件已不在磁盘，或存储根不支持本地路径（网关报「存储根 X 不支持 local-path」）。
+        // 其余错误（根不可读、路径不合法等）照常抛出，不能让调用方误判成「文件不存在」。
+        if (isStorageNotFound(err) || /不支持/.test(err instanceof Error ? err.message : String(err))) return null;
+        throw err;
       }
     },
     getMeta(fileId: string): FileMeta | null {

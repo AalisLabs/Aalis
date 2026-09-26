@@ -4,6 +4,7 @@ import { type AalisConfig, ConfigSaveRefusedError, hostConfig } from '../../pack
 import {
   App,
   appService,
+  config,
   definePlugin,
   optional,
   type PluginDefinition,
@@ -202,6 +203,46 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     }
   });
 
+  /** 配置里没有 apiKey 就激活失败的插件（同 llm-openai 连官方 API 却清空了 apiKey） */
+  const keyed = definePlugin({
+    name: 'keyed',
+    configSchema: { apiKey: { type: 'string', label: 'API Key' } },
+    uses: { config },
+    apply({ config }) {
+      if (!config.apiKey) throw new Error('需要配置 apiKey');
+    },
+  });
+
+  it('启用后激活失败、以 error 收场：回 500 按实际状态说明，文档仍记为启用并落盘', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] });
+    await w.boot(keyed);
+    expect(w.app.plugins.getPlugin('keyed')?.state).toBe('disabled');
+
+    const reply = await w.enable('keyed');
+    expect(w.app.plugins.getPlugin('keyed')?.state).toBe('error');
+    expect(reply.status).toBe(500);
+    expect(reply.body).toEqual({
+      error: '插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；配置文件已记为启用',
+    });
+    expect(w.store.isPluginDisabled('keyed')).toBe(false);
+    expect(w.saved).toHaveLength(1);
+  });
+
+  it('改配置后重新激活失败、以 error 收场：回 500 按实际状态说明，新配置仍写入文档并落盘', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: { apiKey: 'sk-PLACEHOLDER' } } });
+    await w.boot(keyed);
+    expect(w.app.plugins.getPlugin('keyed')?.state).toBe('active');
+
+    const reply = await w.put('keyed', { apiKey: '' });
+    expect(w.app.plugins.getPlugin('keyed')?.state).toBe('error');
+    expect(reply.status).toBe(500);
+    expect(reply.body).toEqual({
+      error: '插件 keyed 按新配置重新激活失败，已转为 error 态（需要配置 apiKey）；配置已写入配置文件',
+    });
+    expect(w.store.getPluginConfig('keyed')).toEqual({ apiKey: '' });
+    expect(w.saved).toHaveLength(1);
+  });
+
   it('宿主没提供 host-config：启停与改配置路由 503，运行态与文档都不动', async () => {
     const w = world({ plugins: { target: { v: 1 } } }, { provideDoc: false });
     await w.boot(target);
@@ -216,7 +257,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('建实例沿用文档里残留的禁用标记并写入配置落盘，删实例移除文档键并落盘', async () => {
-    // 文档里残留一条实例的禁用标记（此前禁用后删掉、或手改配置留下的）
+    // 文档里残留一条实例的禁用标记（手改配置文件留下的）
     const w = world({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['multi:x'] });
     await w.boot(multi);
 
@@ -234,6 +275,37 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(Object.hasOwn(w.store.getAll().plugins, 'multi:x')).toBe(false);
     expect(w.saved).toHaveLength(2);
     expect(Object.hasOwn(w.saved[1].plugins, 'multi:x')).toBe(false);
+  });
+
+  it('停用过的实例删除后同名重建：删除时清掉禁用标记，重建以启用态登记', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
+    await w.boot(multi);
+    expect((await w.createInstance('multi', 'x', { v: 3 })).status).toBe(200);
+    expect((await w.disable('multi:x')).status).toBe(200);
+    expect(w.store.isPluginDisabled('multi:x')).toBe(true);
+
+    expect((await w.deleteInstance('multi:x')).status).toBe(200);
+    expect(w.store.isPluginDisabled('multi:x'), '删除实例要一并清掉它的禁用标记').toBe(false);
+
+    const recreated = await w.createInstance('multi', 'x', { v: 4 });
+    expect(recreated.body).toMatchObject({ ok: true, instanceId: 'multi:x' });
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('multi:x')?.state).toBe('active');
+  });
+
+  it('停机进行中建实例：内核拒绝登记，回 409，配置不写入文档也不落盘', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
+    await w.boot(multi);
+    const stopping = w.app.stop();
+    try {
+      const reply = await w.createInstance('multi', 'x', { v: 3 });
+      expect(reply.status).toBe(409);
+      expect(reply.body).toEqual({ error: '实例 multi:x 未登记（停机中或被拒，见日志），配置未写入' });
+      expect(Object.hasOwn(w.store.getAll().plugins, 'multi:x'), '下次启动不得按文件登记这个实例').toBe(false);
+      expect(w.saved).toHaveLength(0);
+    } finally {
+      await stopping;
+    }
   });
 
   it('落盘被拒：启停、改配置、实例增删都回 409 + applied，说明已在运行态生效、未写入文件', async () => {

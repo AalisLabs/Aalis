@@ -42,19 +42,15 @@ export function registerNumberTheoryTools(tools: BoundTools): void {
           case 'gcd': {
             const nums = (args.numbers as number[]) ?? [n, k];
             if (nums.length < 2) return JSON.stringify({ error: '至少需要 2 个数字' });
-            let result = Math.abs(Math.round(nums[0]));
-            for (let i = 1; i < nums.length; i++) {
-              result = gcd(result, Math.abs(Math.round(nums[i])));
-            }
+            let result = nums[0];
+            for (let i = 1; i < nums.length; i++) result = gcd(result, nums[i]);
             return JSON.stringify({ gcd: result });
           }
           case 'lcm': {
             const nums = (args.numbers as number[]) ?? [n, k];
             if (nums.length < 2) return JSON.stringify({ error: '至少需要 2 个数字' });
-            let result = Math.abs(Math.round(nums[0]));
-            for (let i = 1; i < nums.length; i++) {
-              result = lcm(result, Math.abs(Math.round(nums[i])));
-            }
+            let result = nums[0];
+            for (let i = 1; i < nums.length; i++) result = lcm(result, nums[i]);
             return JSON.stringify({ lcm: result });
           }
           case 'is_prime':
@@ -75,16 +71,12 @@ export function registerNumberTheoryTools(tools: BoundTools): void {
             if (n < 0 || n > 1000) return JSON.stringify({ error: 'n 应在 0-1000 之间' });
             return JSON.stringify({ n, fibonacci: fibonacci(Math.round(n)) });
           }
-          case 'factorial': {
-            if (n < 0 || n > 170 || !Number.isInteger(n)) {
-              return JSON.stringify({ error: '阶乘仅支持 0-170 的整数' });
-            }
-            return JSON.stringify({ n, factorial: factorial(Math.round(n)) });
-          }
+          case 'factorial':
+            return JSON.stringify({ n, factorial: factorial(n) });
           case 'combination':
-            return JSON.stringify({ n, k, result: comb(Math.round(n), Math.round(k)) });
+            return JSON.stringify({ n, k, result: comb(n, k) });
           case 'permutation':
-            return JSON.stringify({ n, k, result: perm(Math.round(n), Math.round(k)) });
+            return JSON.stringify({ n, k, result: perm(n, k) });
           case 'mod_pow': {
             if (m <= 0) return JSON.stringify({ error: '模数 m 必须为正整数' });
             return JSON.stringify({

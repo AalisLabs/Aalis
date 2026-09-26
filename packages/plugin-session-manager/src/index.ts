@@ -164,7 +164,8 @@ class SessionManager implements SessionManagerService {
   private deleted = new Map<string, symbol>();
   /**
    * 会话表所在的 memory 实例：跟随 memory 胜者。换人时先把旧表的未落盘变更写回旧实例，再从新实例读表整体替换
-   * （换后端即换库，不跨后端合并）。新表加载完成前仍指向旧实例，落盘不会把旧表写进新后端。
+   * （换后端即换库，不跨后端合并）。新表加载完成前仍指向旧实例，落盘不会把旧表写进新后端；加载窗口里的改动
+   * 在换表时写回旧实例。读表失败时为 undefined：空表不能当作权威，否则落盘会用新建的空白记录覆盖后端原记录。
    */
   private store: MemoryService | undefined;
   /** 最近一次挂接的加载；apply 等它完成再对外提供服务 */
@@ -204,22 +205,28 @@ class SessionManager implements SessionManagerService {
     };
   }
 
-  /** 从 memory 元数据加载持久化会话列表，加载完成后以它为会话表与落盘目标 */
+  /** 从 memory 元数据加载持久化会话列表，加载完成后以它为会话表与落盘目标；读表失败时会话表为空且不落盘 */
   private async load(instance: MemoryService): Promise<void> {
-    const sessions = new Map<string, SessionInfo>();
+    let sessions: Map<string, SessionInfo> | undefined = new Map();
     try {
       for (const { key, data } of await instance.listMetadata(METADATA_NAMESPACE)) {
         const info = data as unknown as SessionInfo;
         if (info && info.id === key) sessions.set(key, info);
       }
     } catch (err) {
-      this.caps.logger.warn('加载会话数据失败:', err);
+      sessions = undefined;
+      this.caps.logger.error('加载会话数据失败，在这个后端上的会话改动不落盘（以免覆盖原有记录）:', err);
     }
-    this.sessions = sessions;
+    // 加载窗口里旧表的改动：落盘目标此前仍是旧实例，换表前取快照，换表后写回
+    const previous = this.store;
+    const pending = previous && this.dirty ? this.snapshot().ops : undefined;
+    this.sessions = sessions ?? new Map();
     this.deleted.clear();
     this.dirty = false;
-    this.store = instance;
-    this.caps.logger.info(`已加载 ${sessions.size} 个会话`);
+    this.store = sessions ? instance : undefined;
+    if (sessions) this.caps.logger.info(`已加载 ${sessions.size} 个会话`);
+    if (previous && pending)
+      await previous.commitMetadata(pending).catch(err => this.caps.logger.warn('换后端时写回旧后端失败:', err));
   }
 
   /** 标记需要持久化并延迟刷盘 */
@@ -249,6 +256,19 @@ class SessionManager implements SessionManagerService {
     if (!this.dirty || !target) return;
     this.dirty = false;
 
+    const { ops, tombstones } = this.snapshot();
+    try {
+      // 写入目标取落盘开始时的会话表所在实例：换人窗口里当前胜者可能已是新后端，旧表不能写过去
+      await target.commitMetadata(ops);
+      for (const [key, token] of tombstones) if (this.deleted.get(key) === token) this.deleted.delete(key);
+    } catch (err) {
+      this.dirty = true; // 失败要能重试，否则这批变更永远落不了盘
+      throw err;
+    }
+  }
+
+  /** 会话表的全量快照：每个会话一条 put，墓碑各一条 del */
+  private snapshot(): { ops: MetadataOp[]; tombstones: Array<[string, symbol]> } {
     const ops: MetadataOp[] = [...this.sessions].map(([id, info]) => ({
       op: 'put',
       namespace: METADATA_NAMESPACE,
@@ -259,14 +279,7 @@ class SessionManager implements SessionManagerService {
     for (const [key] of tombstones) {
       if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
     }
-    try {
-      // 写入目标取落盘开始时的会话表所在实例：换人窗口里当前胜者可能已是新后端，旧表不能写过去
-      await target.commitMetadata(ops);
-      for (const [key, token] of tombstones) if (this.deleted.get(key) === token) this.deleted.delete(key);
-    } catch (err) {
-      this.dirty = true; // 失败要能重试，否则这批变更永远落不了盘
-      throw err;
-    }
+    return { ops, tombstones };
   }
 
   /**

@@ -157,13 +157,16 @@ export class DisposableChain {
     for (const phase of PHASES) {
       for (let i = items.length - 1; i >= 0; i--) {
         if (items[i].phase !== phase) continue;
+        const who = describe(items[i].label, i);
+        const fail = (err: unknown): void => this.#report(`DisposableChain: dispose 抛出，已忽略${who}:`, err);
         try {
           const ret = items[i].fn();
           if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
-            await this.#awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
+            // 先接住拒绝再限时（与事件总线同一写法）：超时后才到的拒绝也要上报，不能被放弃等待吞掉
+            await this.#awaitWithTimeout(Promise.resolve(ret).catch(fail), timeoutMs, who);
           }
         } catch (err) {
-          this.#report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+          fail(err);
         }
       }
       // 段收口：先等本段里迟到登记的（它们可能再登记新的，故循环），再等宿主记账的在飞清理
@@ -185,7 +188,7 @@ export class DisposableChain {
   /**
    * 等待单个清理 promise，可选超时护栏。
    */
-  async #awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number, who = ''): Promise<void> {
+  async #awaitWithTimeout(p: Promise<unknown>, timeoutMs: number | undefined, who: string): Promise<void> {
     await awaitWithTimeout(p, timeoutMs, () =>
       this.#report(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
     );
@@ -226,7 +229,7 @@ export async function awaitWithTimeout(
     }
   } finally {
     // clearTimeout 必须在 finally：悬空定时器会拖住事件循环，延迟进程退出
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 

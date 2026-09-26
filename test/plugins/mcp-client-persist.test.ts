@@ -1,6 +1,6 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, ConfigSaveRefusedError } from '../../packages/api-host-config/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
@@ -60,6 +60,36 @@ describe('mcp-client 自服务开关落盘', () => {
     await registerFromDoc(rebuilt.app, rebuilt.store, mcpClient);
     await rebuilt.app.plugins.idle();
     expect((rebuilt.app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(true);
+  });
+
+  it('落盘被拒：回执说明运行态已切换、配置文件未写入，而不是只报错', async () => {
+    const server = { id: 'a', command: 'aalis-test-missing-mcp-command', enabled: false };
+    const { app, store } = hostedApp(
+      { plugins: { [NAME]: { servers: [server] } } },
+      {
+        logger: silent,
+        provider: {
+          save: () => {
+            throw new ConfigSaveRefusedError('配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存');
+          },
+        },
+      },
+    );
+    apps.push(app);
+    const registry = new ToolRegistry(silent);
+    registry.setExecutionGuard(async () => null);
+    app.bind({ provide }).provide(tools, registry);
+    await registerFromDoc(app, store, mcpClient);
+    await app.plugins.idle();
+
+    const out = await registry.execute('mcp_set_server_enabled', { id: 'a', enabled: true }, { sessionId: 't' });
+    await app.plugins.idle();
+
+    // 运行态确已切换：只回一个错误的话，agent 会以为什么都没发生
+    expect((app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(true);
+    expect(out.content).toContain('运行态已生效');
+    expect(out.content).toContain('写入配置文件失败：配置文件有尚未生效的外部修改');
+    expect(out.content).toContain('可能回退');
   });
 
   it('宿主没提供 host-config：直接返回失败，运行态配置不变，也不 bounce', async () => {

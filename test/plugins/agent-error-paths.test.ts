@@ -21,7 +21,8 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //   2. 工具参数不是合法 JSON 时跳过执行（旧行为空参真跑），把错误当 tool 结果回给模型，
 //      并带对 tool_call_id（否则下一轮 tool_calls 与 tool 消息不配对，provider 直接 400）；
 //   3. 并行工具批次里单个工具的链路异常（钩子 / 守卫抛错）只算该工具失败，不连坐整组：
-//      兄弟工具已发生的副作用照常落库，回合继续。
+//      兄弟工具已发生的副作用照常落库，回合继续；已发出 tool:execute start 的失败工具要补发 end，
+//      否则 WebUI 流式缓冲里这一段一直显示执行中。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -248,6 +249,10 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     host.events.on('outbound:message', (msg: OutgoingMessage) => {
       outbound.push(msg.content);
     });
+    const toolEvents: Array<{ phase: string; toolName: string; result?: string }> = [];
+    host.events.on('tool:execute', e => {
+      toolEvents.push({ phase: e.phase, toolName: e.toolName, result: e.result });
+    });
 
     await host.agent.require().handleMessage({
       content: '做两件事',
@@ -261,7 +266,8 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
 
     const toolMsgs = history.filter(m => m.role === 'tool');
     const guardedResult = toolMsgs.find(m => m.toolCallId === 'call-guarded')?.content ?? '';
-    return { sideEffects, history, toolMsgs, guardedResult, recorder, outbound };
+    const guardedEvents = toolEvents.filter(e => e.toolName === 'guarded');
+    return { sideEffects, history, toolMsgs, guardedResult, guardedEvents, recorder, outbound };
   }
 
   function bindHost(app: App) {
@@ -290,6 +296,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     expectWholeGroupKept(r);
     expect(r.guardedResult).toContain('工具调用失败');
     expect(r.guardedResult).toContain('钩子拦截');
+    expect(r.guardedEvents, 'before 钩子在 start 之前失败：start 与 end 都不发').toEqual([]);
   });
 
   it('agent:tool:after 抛错：结果写明「已执行」，且不回退到原始输出（fail-closed）', async () => {
@@ -302,6 +309,11 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     expectWholeGroupKept(r);
     expect(r.guardedResult).toContain('工具已执行，但结果处理失败');
     expect(r.guardedResult, 'after 钩子失败时原始输出不得漏给模型').not.toContain('RAW-OUTPUT');
+    expect(
+      r.guardedEvents.map(e => e.phase),
+      '已发出 start 的失败工具要补发配对的 end',
+    ).toEqual(['start', 'end']);
+    expect(r.guardedEvents[1]?.result).toBe(r.guardedResult);
   });
 
   it('守卫返回拒绝文案（不抛错）：本来就只影响该工具', async () => {

@@ -9,6 +9,7 @@
 // 公开 API 自行编排。
 // ============================================================
 
+import { isConfigSaveRefused } from '@aalis/api-host-config';
 import { type App, events, type PluginDefinition, parseInstanceId } from '@aalis/core';
 import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import type { ConfigStore } from './config-store.js';
@@ -173,7 +174,11 @@ function syncPluginConfig(
 }
 
 function saveSyncedConfig(app: App, store: ConfigStore): void {
-  store.persist().catch(err => app.logger.warn('配置同步落盘失败:', err));
+  store.persist().catch(err => {
+    // 拒写是保护盘上外部修改的预期结果，与 host-config 的 save 同一口径：一行告警，不带栈
+    if (isConfigSaveRefused(err)) app.logger.warn(`配置同步未落盘：${err.message}`);
+    else app.logger.warn('配置同步落盘失败:', err);
+  });
 }
 
 /**

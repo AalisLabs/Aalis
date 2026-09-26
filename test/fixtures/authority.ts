@@ -20,10 +20,10 @@ export function silentLogger(): Logger {
   return l as unknown as Logger;
 }
 
-/** 无文件存储（load 抛错→空表；save no-op）。测试用 setUserLevel 直接喂内存。 */
+/** 无文件存储（load 按文件不存在→空表；save no-op）。测试用 setUserLevel 直接喂内存。 */
 export const noFileStorage = {
   readFile: async () => {
-    throw new Error('no file');
+    throw Object.assign(new Error('no file'), { code: 'ENOENT' });
   },
   writeFile: async () => {},
 } as unknown as StorageService;

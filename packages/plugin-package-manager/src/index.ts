@@ -123,22 +123,33 @@ export function nonMarketKind(keywords: unknown): string | undefined {
 }
 
 /**
- * 找出「卸载 target 会断其服务依赖」的活跃插件：target 提供的某服务 S 没有别的插件也提供，
- * 且有别的插件 requiredServices 含 S → 这些插件会被打断。纯函数，便于单测。
+ * 找出「卸载 target 会断其服务依赖」的插件：target 提供的某服务 S 没有别的插件正在提供（只认 active 与
+ * activating；disabled / error / pending 的同类提供者不在提供），且有别的插件 requiredServices 含 S → 这些插件
+ * 会被打断。已禁用（disabled / disposed）的依赖者不算。纯函数，便于单测。
  */
 export function findServiceDependents(
   targetName: string,
-  status: ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'provides' | 'requiredServices'>>,
+  status: ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'state' | 'provides' | 'requiredServices'>>,
 ): string[] {
   const target = status.find(p => p.name === targetName);
   const provided = target?.provides ?? [];
   if (provided.length === 0) return [];
   const dependents = new Set<string>();
   for (const svc of provided) {
-    const otherProvider = status.some(p => p.name !== targetName && (p.provides ?? []).includes(svc));
-    if (otherProvider) continue; // 还有别的提供者，删了不致命
+    const otherProvider = status.some(
+      p =>
+        p.name !== targetName && (p.state === 'active' || p.state === 'activating') && (p.provides ?? []).includes(svc),
+    );
+    if (otherProvider) continue; // 还有别的提供者在提供，删了不致命
     for (const p of status) {
-      if (p.name !== targetName && (p.requiredServices ?? []).includes(svc)) dependents.add(p.name);
+      if (
+        p.name !== targetName &&
+        p.state !== 'disabled' &&
+        p.state !== 'disposed' &&
+        (p.requiredServices ?? []).includes(svc)
+      ) {
+        dependents.add(p.name);
+      }
     }
   }
   return [...dependents];
@@ -315,7 +326,7 @@ export interface PackageManagerDeps {
    */
   isPluginRegistered(name: string): boolean;
   /** 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）。缺省视为没有活跃插件。 */
-  pluginStatus?(): ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'provides' | 'requiredServices'>>;
+  pluginStatus?(): ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'state' | 'provides' | 'requiredServices'>>;
   /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
   unloadPlugin(name: string): Promise<void>;
   /**
@@ -445,11 +456,14 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
 }
 
 /**
- * 从 npm 的失败输出里摘出冲突要点，供前端直接展示。纯函数，便于单测。
+ * 从 npm 的失败输出里摘出冲突要点，供前端直接展示。保留根项目的声明行（`… from the root project`），看得出冲突由
+ * 哪条根依赖引起；完整报告的路径行（`…-eresolve-report.txt`）随不分大小写的 ERESOLVE 一并保留。纯函数，便于单测。
  */
 export function extractPeerConflicts(output: string): string[] {
   const lines = output.split('\n');
-  const picked = lines.filter(l => /ERESOLVE|peer |Conflicting peer|Found:|Could not resolve/i.test(l));
+  const picked = lines.filter(l =>
+    /ERESOLVE|peer |Conflicting peer|Found:|Could not resolve|from the root project/i.test(l),
+  );
   return picked.map(l => l.replace(/^npm (ERR!|error|warn)\s*/i, '').trim()).filter(l => l.length > 0);
 }
 
@@ -969,13 +983,13 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const instanceIds = instanceIdsFor(defName);
 
     // ── 闸三：服务依赖者 ──
-    // 卸掉某服务的唯一提供者会打断 required 它的活跃插件。与市场卸载前的预警同一份判定
-    // （serviceDependents），按加载器解析出的定义 name 查。
+    // 某服务没有别的插件正在提供时，卸掉它的提供者会打断 required 该服务的插件（已禁用的不算）。
+    // 与市场卸载前的预警同一份判定（serviceDependents），按加载器解析出的定义 name 查。
     const dependents = findServiceDependents(defName, deps.pluginStatus?.() ?? []);
     if (dependents.length > 0) {
       return {
         ok: false,
-        message: `卸载会破坏依赖：${dependents.join('、')} 依赖此插件提供的服务且无其他提供者。请先卸载它们或安装替代提供者。`,
+        message: `卸载会破坏依赖：${dependents.join('、')} 依赖此插件提供的服务，且没有别的插件正在提供。请先停用它们，或启用 / 安装替代提供者。`,
       };
     }
 

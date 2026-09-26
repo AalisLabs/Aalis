@@ -63,7 +63,7 @@ plugins:
 - `inputSchema` 顶层非 `type: 'object'` 时自动包装为 `{ input: schema }`。
 - 启动时的握手与列工具在停用或停机时中止，中止不记连接失败。每个 server 连接成功后，经 `lifecycle.onDispose` 注册 `client.close()`；插件关闭时断开所有已连接的 server，关闭时抛出的错误被忽略，仅记 debug 日志。
 - 远端工具的返回文本经 `wrapUntrustedContent` 套上不可信内容边界；返回 `isError` 时不套边界，加 `MCP 工具返回错误:` 前缀返回。
-- 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出已配置 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。后者先经 `plugins.updateConfig` 改运行态，成功后经 `host-config` 写配置文档并 `save()`；`plugins` 或 `host-config` 任一缺席时返回失败，不改运行态。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
+- 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出已配置 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。后者先经 `plugins.updateConfig` 改运行态，成功后经 `host-config` 写配置文档并 `save()`；`plugins` 或 `host-config` 任一缺席时返回失败，不改运行态。`save()` 失败（如配置文件有尚未生效的外部修改而拒写）时运行态已经切换、插件照常 bounce，返回的文本注明这一点与写入失败的原因：配置文件里仍是原值，重启或配置重新载入后可能回退（拒写时配置重新载入以文件为准；其它写入错误时改动仍留在配置文档里，之后别处保存成功会一并写进文件）。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
 
 ## 安全注意事项
 

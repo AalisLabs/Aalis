@@ -88,7 +88,10 @@ export interface TranscribeInput {
   attachment: MessageAttachment;
   /** 期望语种（ISO 639-1，如 'zh' / 'en'）；不填由 backend 自检 */
   language?: string;
-  /** 是否需要时间戳分段 */
+  /**
+   * 是否需要时间戳分段。后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 segments，
+   * 音频 LLM 与 plugin-asr-whisper-cpp 只给整段 text。
+   */
   withTimestamps?: boolean;
   /**
    * 对话上下文文本（可选）：仅当 backend 为 LLM-as-audio（如 gemma4:e4b）时有意义；

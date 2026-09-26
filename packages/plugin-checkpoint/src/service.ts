@@ -293,7 +293,9 @@ export class CheckpointServiceImpl implements CheckpointService {
     try {
       const listed = await this.storage.list(sessionDir);
       entries = listed.entries.filter(e => e.isDirectory).map(e => e.name);
-    } catch {
+    } catch (err) {
+      // 目录不存在即该会话还没有检查点；其它失败（storage 不在线、权限被拒）要留痕，不能静默成空列表
+      if (!isStorageNotFound(err)) this.logger.warn(`checkpoint 列出回合失败 ${sessionDir}: ${(err as Error).message}`);
       return [];
     }
     const summaries: TurnSummary[] = [];
@@ -319,7 +321,9 @@ export class CheckpointServiceImpl implements CheckpointService {
     try {
       const raw = await this.storage.readFile(uri, 'utf-8');
       return JSON.parse(String(raw)) as TurnManifest;
-    } catch {
+    } catch (err) {
+      // 不向上抛：listTurns 逐个读，一个坏 manifest 不能拖垮整张列表。读失败与损坏要留痕
+      if (!isStorageNotFound(err)) this.logger.warn(`checkpoint 读取 manifest 失败 ${uri}: ${(err as Error).message}`);
       return null;
     }
   }

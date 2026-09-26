@@ -133,7 +133,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
 
   const runsPath = () => join(base, 'data', 'workflow-runs.json');
 
-  const boot = async (): Promise<WorkflowService> => {
+  const boot = async (enableTools = false): Promise<WorkflowService> => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     await app.plugin(storageLocalPlugin, {
@@ -160,7 +160,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
         return { content: 'ok' };
       },
     });
-    await app.plugin(workflowPlugin, { enableTools: false });
+    await app.plugin(workflowPlugin, { enableTools });
     await app.plugins.idle();
     const state = app.plugins.getPlugin('@aalis/plugin-workflow')?.state;
     if (state !== 'active') throw new Error(`workflow 未激活（state=${state}）`);
@@ -215,6 +215,37 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     await svc.defineWorkflow(def, { persist: false });
     await settle();
     expect(calls).toBe(0);
+  });
+
+  it('记账读不出时 workflow_define 定义 once：回执注明本次运行不会触发，只对写了文件的定义说重启恢复；记账可读时不带附注', async () => {
+    rmSync(join(base, 'workspace', 'workflows', 'zz-once.yaml'));
+    const define = async (persist: boolean): Promise<{ ok?: boolean; note?: string }> => {
+      const toolSvc = app.bind({ services }).services.get(toolsService);
+      if (!toolSvc) throw new Error('tools 服务未注册');
+      toolSvc.setExecutionGuard(async () => null); // workflow_define 是 sensitive，放行权限闸：这里只看回执
+      const res = await toolSvc.execute(
+        'workflow_define',
+        { yaml: ONCE_YAML, persist },
+        { sessionId: 'internal', platform: 'internal' },
+      );
+      return JSON.parse(res.content);
+    };
+    writeFileSync(runsPath(), 'null');
+    await boot(true);
+    const memoryOnly = await define(false);
+    expect(memoryOnly.ok).toBe(true);
+    expect(memoryOnly.note).toContain('本次运行不会触发');
+    expect(memoryOnly.note, '不持久化的定义重启后就没了').not.toContain('重启');
+    const persisted = await define(true);
+    expect(persisted.ok).toBe(true);
+    expect(persisted.note).toContain('修复运行历史文件后重启恢复');
+
+    await app.stop();
+    rmSync(runsPath());
+    await boot(true);
+    const readable = await define(false);
+    expect(readable.ok).toBe(true);
+    expect(readable.note).toBeUndefined();
   });
 
   it('对照：运行历史文件不存在时过期 once 照常补触发一次', async () => {

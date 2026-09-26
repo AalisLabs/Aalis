@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 内核必须自足：链取走后的 push 就地执行、不等待异步返回值，登记方也拿不到它——
@@ -32,5 +33,18 @@ describe('DisposableChain 异步拒绝兜底（内核自足）', () => {
     const hit = r.warns.find(w => w.err === late);
     expect(hit).toBeDefined();
     expect(hit?.message).toContain('[y]');
+  });
+
+  it('逐项超时之后才到的拒绝：仍按 label 点名上报，不被放弃等待吞掉', async () => {
+    const r = reporter();
+    const chain = new DisposableChain(r);
+    const pending = deferred();
+    const late = new Error('ECONNRESET');
+    chain.push(() => pending.promise, 'db');
+    await chain.disposeAsync(5);
+    expect(r.warns.map(w => w.message)).toEqual(['DisposableChain: 异步清理 [db] 超过 5ms，放弃等待，继续后续清理']);
+    pending.reject(late);
+    await tick();
+    expect(r.warns.at(-1)).toEqual({ message: 'DisposableChain: dispose 抛出，已忽略 [db]:', err: late });
   });
 });

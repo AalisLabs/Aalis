@@ -57,7 +57,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 | `service:unregistered` | `name` | 某服务少了一个对外可见的提供者（退订闭包、激活拆卸；激活转入后台时撤下它已登记的服务） |
 | `service:preference-changed` | `name` | 该服务的偏好 provider 切换（`services.prefer` / `services.unprefer`）；`follow` 借此按胜者变化重挂 |
 | `plugin:loaded` | `instanceId` | 插件实例已激活；同一轮 recompute 可能紧接着激活下一个插件 |
-| `plugin:unloaded` | `instanceId` | 插件实例已拆卸；激活失败的回滚与关机拆卸不发 |
+| `plugin:unloaded` | `instanceId` | 插件实例已拆卸；只发给发过 `plugin:loaded` 的激活：从未激活完成的（激活失败的回滚、仍在初始化时被拆）不发，关机拆卸也不发 |
 | `plugins:changed` | — | 一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 |
 
 `app:ready` 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await，`app:started` 晚于

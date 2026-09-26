@@ -1529,8 +1529,8 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
   }, [onClose]);
   const row: CSSProperties = { display: 'grid', gridTemplateColumns: '120px 1fr', columnGap: 12, rowGap: 4, fontSize: 12 };
   const h: CSSProperties = { margin: '12px 0 4px', fontSize: 13, color: 'var(--text-primary, #e4e4ef)' };
-  // 文档链接（当前服务端不托管 /docs，此链接会落到 SPA 首页）。
-  const docPath = '/docs/plugins/user-relation-graph.md';
+  // WebUI 服务端不托管 docs/（非 API 路径都回 SPA 首页），链到公开仓库里的这篇文档
+  const docPath = 'https://github.com/AalisLabs/Aalis/blob/main/docs/plugins/user-relation-graph.md';
   const body = (
     <div
       onClick={onClose}

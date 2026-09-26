@@ -138,3 +138,17 @@ describe('plugin-memory-mongodb 连接段随 lifecycle.signal 中止', () => {
     expect(h.lines).toEqual([]);
   });
 });
+
+describe('plugin-memory-mongodb 连接失败的包装错误', () => {
+  it('保留驱动原错误作 cause，消息不变', async () => {
+    const original = new Error('connect ECONNREFUSED 127.0.0.1:1');
+    const client = {
+      connect: () => Promise.reject(original),
+      close: async () => {},
+    } as unknown as Client;
+    const { error } = await settle(openAndProvide(client, CONFIG, harness().caps));
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('MongoDB 连接失败: connect ECONNREFUSED 127.0.0.1:1');
+    expect((error as Error).cause).toBe(original);
+  });
+});

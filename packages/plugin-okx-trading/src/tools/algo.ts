@@ -135,13 +135,14 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
     },
     handler: async args => {
       try {
+        const limit = pickLimit(args, pageLimit);
         const r = await client.getAlgoOrderHistory(
           args.ordType as string,
           args.instType as string | undefined,
           args.instId as string | undefined,
-          pickLimit(args, pageLimit),
+          limit,
         );
-        return JSON.stringify(truncate(r.data));
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }

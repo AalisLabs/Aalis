@@ -201,7 +201,7 @@ export class Resources {
   }
 
   /** 一次性撤回；手动开始的异步清理也纳入这次激活的关闭。 */
-  track(off: () => unknown, label = 'resource'): () => void {
+  track(off: () => unknown, label: string): () => void {
     let started = false;
     let result: PromiseLike<unknown> | undefined;
     const run = (): PromiseLike<unknown> | undefined => {

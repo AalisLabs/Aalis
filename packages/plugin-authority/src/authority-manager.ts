@@ -93,8 +93,9 @@ export class AuthorityManager implements AuthorityService {
     const key = `${target.platform}:${target.userId}`;
     const existing = this.store.get(key);
     const prev = existing?.level ?? DEFAULT_AUTHORITY;
-    // 默认等级(0)且无备注 → 直接清记录（保持 users.json 精简）
-    if (level === DEFAULT_AUTHORITY && !existing?.note) {
+    // 默认等级(0)且无备注 → 直接清记录（保持 users.json 精简）。首次读取落定之前、读取失败拒写期间内存里看不到
+    // 文件里的备注，删除会记成墓碑、之后读取成功时连同备注删掉整条记录；这时改为保留记录，读取按字段合并带上文件里的备注
+    if (level === DEFAULT_AUTHORITY && !existing?.note && !this.store.awaitingFirstLoad && !this.store.persistBlocked) {
       this.store.delete(key);
     } else {
       this.store.set(key, { ...existing, level });

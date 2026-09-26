@@ -90,6 +90,7 @@ function world(options: Partial<AppOptions> = {}) {
   host.events.on('service:registered', name => void trace.push(`+${name}`));
   host.events.on('service:unregistered', name => void trace.push(`-${name}`));
   host.events.on('plugin:loaded', id => void trace.push(`loaded:${id}`));
+  host.events.on('plugin:unloaded', id => void trace.push(`unloaded:${id}`));
   host.events.on('plugins:changed', () => void trace.push('changed'));
   const at = (level: string) => lines.filter(line => line.level === level).map(line => line.text);
   const status = (id: string): PluginStatusEntry | undefined =>
@@ -522,6 +523,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
       expect(w.status('deaf')?.state, '重启遇到停不下来的也不再起新实例').toBe('error');
       expect(w.status('deaf')?.error).toContain('未在宽限内停止');
     }
+    expect(w.at('info'), '已转 error 的不再记「已禁用」').not.toContain('插件已禁用: deaf');
   });
 
   it('宽限期间 enable 已把终态改走：不写 error，新一轮照常激活', async () => {
@@ -687,6 +689,120 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     expect(order, '下游还在用旧实例初始化，提供者不能先走').toEqual(['cons 被 abort', 'prov#1 清理']);
     expect(seen).toEqual([1, 2]);
     expect(w.status('cons')?.state).toBe('active');
+    expect(
+      w.trace.filter(t => t.startsWith('unloaded:')),
+      '下游那一轮从未 loaded，不发 unloaded',
+    ).toEqual(['unloaded:prov']);
+  });
+
+  it.each([
+    ['disable', 'pending'],
+    ['bounce', 'active'],
+  ] as const)('先登记后初始化的在飞提供者被 %s 接手：同批依赖方等它关完再判定，最终 %s', async (action, final) => {
+    const w = world({ slowThresholdMs: 5000, disposeTimeoutMs: 1000 });
+    const svc = defineService<{ ready: () => boolean }>('zz-letgo-provider');
+    const entered = deferred();
+    let applies = 0;
+    const seen: boolean[] = [];
+    const registering = w.app.pluginAll([
+      {
+        definition: definePlugin({
+          name: 'prov',
+          uses: { provide, lifecycle },
+          provides: [svc],
+          async apply({ provide, lifecycle }) {
+            let ready = false;
+            provide(svc, { ready: () => ready });
+            if (++applies === 1) {
+              entered.resolve();
+              // 响应 abort，但收尾要一段时间：flight 已不再等它，服务仍在容器里
+              await new Promise(resolve => lifecycle.signal.addEventListener('abort', () => setTimeout(resolve, 50)));
+            }
+            ready = true;
+          },
+        }),
+      },
+      {
+        definition: definePlugin({
+          name: 'cons',
+          uses: { svc },
+          apply({ svc }) {
+            const ready = svc.require().ready();
+            seen.push(ready);
+            if (!ready) throw new Error('提供者尚未初始化');
+          },
+        }),
+      },
+    ]);
+    await entered.promise;
+    expect(await w.app.plugins[action]('prov')).toBe(true);
+    await registering;
+    await w.app.plugins.idle();
+    expect(seen, '依赖方不得激活到正在关闭、尚未初始化完的实例上').toEqual(final === 'active' ? [true] : []);
+    expect(w.status('cons')?.state).toBe(final);
+  });
+
+  it.each([
+    ['disable', 'pending'],
+    ['bounce', 'active'],
+  ] as const)('已激活的提供者被 %s、在 onDrain 里收尾时 flight 走到 pending 依赖方：等它关完再判定，最终 %s', async (action, final) => {
+    const w = world({ slowThresholdMs: 5000, disposeTimeoutMs: 1000 });
+    const svc = defineService<{ alive: () => boolean }>('zz-draining-provider');
+    const slowEntered = deferred();
+    const slowGate = deferred();
+    const draining = deferred();
+    const seen: boolean[] = [];
+    const registering = w.app.pluginAll([
+      {
+        definition: definePlugin({
+          name: 'prov',
+          uses: { provide, lifecycle },
+          provides: [svc],
+          apply({ provide, lifecycle }) {
+            let alive = true;
+            provide(svc, { alive: () => alive });
+            lifecycle.onDrain(async () => {
+              alive = false;
+              draining.resolve();
+              await sleep(80);
+            });
+          },
+        }),
+      },
+      // 无关的慢插件占着 flight：prov 进关闭计划时，排在后面的 cons 还没轮到
+      {
+        definition: definePlugin({
+          name: 'slow',
+          async apply() {
+            slowEntered.resolve();
+            await slowGate.promise;
+          },
+        }),
+      },
+      {
+        definition: definePlugin({
+          name: 'cons',
+          uses: { svc },
+          apply({ svc }) {
+            const alive = svc.require().alive();
+            seen.push(alive);
+            if (!alive) throw new Error('提供者正在关闭');
+          },
+        }),
+      },
+    ]);
+    await slowEntered.promise;
+    expect(w.status('prov')?.state).toBe('active');
+    expect(w.status('cons')?.state).toBe('pending');
+    const acting = w.app.plugins[action]('prov');
+    // prov 已不在初始化，正在 onDrain 里收尾，服务仍在容器里；这时放开 flight
+    await draining.promise;
+    slowGate.resolve();
+    expect(await acting).toBe(true);
+    await registering;
+    await w.app.plugins.idle();
+    expect(seen, '依赖方不得激活到已进关闭计划的实例上').toEqual(final === 'active' ? [true] : []);
+    expect(w.status('cons')?.state).toBe(final);
   });
 
   it('后台激活响应 signal、required 依赖下线：拆掉回到 pending，依赖恢复后重新激活', async () => {

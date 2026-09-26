@@ -117,6 +117,20 @@ describe('Resources', () => {
     expect(warnings.flat().map(String).join(' ')).toContain('stuck cleanup');
   });
 
+  it('a second trackInitialization replaces the first: the earlier one settling does not clear the later', async () => {
+    const { resources } = world();
+    const first = deferred();
+    const second = deferred();
+    resources.trackInitialization(first.promise);
+    resources.trackInitialization(second.promise);
+    first.resolve();
+    await tick();
+    expect(resources.initializing).toBe(true);
+    second.resolve();
+    await tick();
+    expect(resources.initializing).toBe(false);
+  });
+
   it('manual withdrawal can remove an item without executing it, while late cleanup still executes', async () => {
     const { resources } = world();
     let withdrawn = 0;

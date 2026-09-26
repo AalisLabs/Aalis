@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { App, logger } from '../../packages/core/src/index.js';
@@ -52,7 +52,6 @@ async function runMiddleware(
     maxGlobalHotEvents: 5,
     maxGlobalHotEntities: 5,
     groupOnly: opts.groupOnly ?? false,
-    debug: false,
   });
   const data = {
     messages: opts.initialMessages ?? [
@@ -73,6 +72,24 @@ describe('plugin-user-relation: middleware', () => {
     const { host, service } = await setup();
     const messages = await runMiddleware(host, service, { triggerType: 'direct' });
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
+  });
+
+  it('构建抛错（如全图读取失败）→ 本轮不注入，组装器记 warn，不看 debug 开关', async () => {
+    const { host, service } = await setup();
+    await service.observePerson('onebot', 'u1', 'Alice');
+    vi.spyOn(service, 'loadAll').mockRejectedValue(new Error('关系图读取失败'));
+    const warns: unknown[][] = [];
+    vi.spyOn(host.logger, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args);
+    });
+    const messages = await runMiddleware(host, service, { userId: 'u1', platform: 'onebot', triggerType: 'direct' });
+    expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
+    expect(
+      warns.some(
+        ([msg, err]) =>
+          String(msg).includes('/user-relation') && (err as Error | undefined)?.message === '关系图读取失败',
+      ),
+    ).toBe(true);
   });
 
   it('triggerType=interval → 不注入（focus 不在该用户）', async () => {

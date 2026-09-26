@@ -51,12 +51,9 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit
     },
     handler: async args => {
       try {
-        const r = await client.getOrderHistory(
-          args.instType as string,
-          args.instId as string | undefined,
-          pickLimit(args, pageLimit),
-        );
-        return JSON.stringify(truncate(r.data));
+        const limit = pickLimit(args, pageLimit);
+        const r = await client.getOrderHistory(args.instType as string, args.instId as string | undefined, limit);
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }
@@ -85,12 +82,9 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit
     },
     handler: async args => {
       try {
-        const r = await client.getFills(
-          args.instType as string | undefined,
-          args.instId as string | undefined,
-          pickLimit(args, pageLimit),
-        );
-        return JSON.stringify(truncate(r.data));
+        const limit = pickLimit(args, pageLimit);
+        const r = await client.getFills(args.instType as string | undefined, args.instId as string | undefined, limit);
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }

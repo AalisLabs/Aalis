@@ -179,9 +179,9 @@ describe('纯函数判据', () => {
 
   describe('findServiceDependents（卸载护栏：断服务依赖检测）', () => {
     const status = [
-      { name: '@aalis/plugin-llm-openai', provides: ['llm'], requiredServices: [] },
-      { name: '@aalis/plugin-agent', provides: ['agent'], requiredServices: ['llm'] },
-      { name: '@aalis/plugin-llm-deepseek', provides: ['llm'], requiredServices: [] },
+      { name: '@aalis/plugin-llm-openai', state: 'active' as const, provides: ['llm'], requiredServices: [] },
+      { name: '@aalis/plugin-agent', state: 'active' as const, provides: ['agent'], requiredServices: ['llm'] },
+      { name: '@aalis/plugin-llm-deepseek', state: 'active' as const, provides: ['llm'], requiredServices: [] },
     ];
 
     it('删了某服务的唯一提供者 → 列出受影响的依赖方', () => {
@@ -189,13 +189,30 @@ describe('纯函数判据', () => {
       expect(findServiceDependents('@aalis/plugin-llm-openai', onlyProvider)).toEqual(['@aalis/plugin-agent']);
     });
 
-    it('还有别的提供者 → 删了不致命，无依赖方阻断', () => {
-      // openai 与 deepseek 都提供 llm；删 openai，deepseek 仍在
-      expect(findServiceDependents('@aalis/plugin-llm-openai', status)).toEqual([]);
+    it.each(['active', 'activating'] as const)('还有别的提供者（%s）→ 删了不致命，无依赖方阻断', state => {
+      // openai 与 deepseek 都提供 llm；删 openai，deepseek 仍在提供
+      const [openai, agent, deepseek] = status;
+      expect(findServiceDependents('@aalis/plugin-llm-openai', [openai, agent, { ...deepseek, state }])).toEqual([]);
     });
 
     it('目标不提供任何服务 → 空', () => {
       expect(findServiceDependents('@aalis/plugin-agent', status)).toEqual([]);
+    });
+
+    it.each([
+      'disabled',
+      'error',
+      'pending',
+    ] as const)('另一个提供者为 %s（没在提供）→ 不算替代，照样列出依赖方', state => {
+      const [openai, agent, deepseek] = status;
+      expect(findServiceDependents('@aalis/plugin-llm-openai', [openai, agent, { ...deepseek, state }])).toEqual([
+        '@aalis/plugin-agent',
+      ]);
+    });
+
+    it.each(['disabled', 'disposed'] as const)('依赖方为 %s，不会被打断 → 不列出', state => {
+      const [openai, agent] = status;
+      expect(findServiceDependents('@aalis/plugin-llm-openai', [openai, { ...agent, state }])).toEqual([]);
     });
   });
 
@@ -443,6 +460,29 @@ describe('update — 参数校验（纯函数）', () => {
   it('findUnmetPeers 对无 peer 行的正常输出返回空', () => {
     expect(findUnmetPeers('added 1 package in 200ms', ['react'])).toEqual([]);
     expect(findUnmetPeers('', ['react'])).toEqual([]);
+  });
+
+  it('extractPeerConflicts 保留根项目的声明行与完整报告路径，看得出冲突由哪条根依赖引起', () => {
+    // npm 10 的 ERESOLVE 输出（节选）
+    const out = [
+      'npm error code ERESOLVE',
+      'npm error ERESOLVE unable to resolve dependency tree',
+      'npm error',
+      'npm error Found: @aalis/core@0.9.0',
+      'npm error node_modules/@aalis/core',
+      'npm error   @aalis/core@"^0.9.0" from the root project',
+      'npm error',
+      'npm error Could not resolve dependency:',
+      'npm error peer @aalis/core@">=0.10.0 <1.0.0" from @aalis/plugin-x@0.3.0',
+      'npm error node_modules/@aalis/plugin-x',
+      'npm error   @aalis/plugin-x@"*" from the root project',
+      'npm error For a full report see:',
+      'npm error /home/user/.npm/_logs/2026-01-01T00_00_00_000Z-eresolve-report.txt',
+    ].join('\n');
+    const c = extractPeerConflicts(out);
+    expect(c).toContain('@aalis/core@"^0.9.0" from the root project');
+    expect(c).toContain('@aalis/plugin-x@"*" from the root project');
+    expect(c).toContain('/home/user/.npm/_logs/2026-01-01T00_00_00_000Z-eresolve-report.txt');
   });
 
   it('extractPeerConflicts 摘出要点并剥掉 npm 前缀', () => {
@@ -795,14 +835,15 @@ describe('uninstall', () => {
   it('卸掉某服务的唯一提供者会打断 required 它的插件 → 服务层拒绝，不跑 npm', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
     h.deps.pluginStatus = () => [
-      { name: '@scope/foo', provides: ['llm'], requiredServices: [] },
-      { name: '@scope/agent', provides: ['agent'], requiredServices: ['llm'] },
+      { name: '@scope/foo', state: 'active', provides: ['llm'], requiredServices: [] },
+      { name: '@scope/agent', state: 'active', provides: ['agent'], requiredServices: ['llm'] },
     ];
     const pm = createPackageManager(h.deps);
     expect(pm.serviceDependents('@scope/foo'), '预警查询与闸同一份判定').toEqual(['@scope/agent']);
     const r = await pm.uninstall('@scope/foo');
     expect(r.ok).toBe(false);
     expect(r.message).toContain('@scope/agent');
+    expect(r.message, '已禁用的依赖方不算，停用它们即可放行').toContain('请先停用它们，或启用 / 安装替代提供者');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
     expect(h.deps.unloadPlugin).not.toHaveBeenCalled();
   });
@@ -810,9 +851,9 @@ describe('uninstall', () => {
   it('服务还有别的提供者 → 服务依赖者闸放行', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
     h.deps.pluginStatus = () => [
-      { name: '@scope/foo', provides: ['llm'], requiredServices: [] },
-      { name: '@scope/other-llm', provides: ['llm'], requiredServices: [] },
-      { name: '@scope/agent', provides: ['agent'], requiredServices: ['llm'] },
+      { name: '@scope/foo', state: 'active', provides: ['llm'], requiredServices: [] },
+      { name: '@scope/other-llm', state: 'active', provides: ['llm'], requiredServices: [] },
+      { name: '@scope/agent', state: 'active', provides: ['agent'], requiredServices: ['llm'] },
     ];
     expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
   });

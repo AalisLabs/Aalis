@@ -334,7 +334,7 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '严格自证模式',
     description:
-      '开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。person-person 边的 to 必须已存在 PersonNode。',
+      '开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。',
     default: true,
   },
   digToolDefaultMaxDepth: {
@@ -383,7 +383,7 @@ const configSchema: ConfigSchema = {
   debug: {
     type: 'boolean',
     label: 'Debug 日志',
-    description: '开启后会输出提取/注入/工具调用的详细日志',
+    description: '开启后会输出提取/工具调用的详细日志',
     default: false,
   },
 };
@@ -523,10 +523,10 @@ function start(caps: Caps): void {
       rawCommunityAlgorithm === 'leiden' || rawCommunityAlgorithm === 'slpa' ? rawCommunityAlgorithm : 'louvain',
   };
 
-  // ─── 提取（写入）─── 受 extractionEnabled 控制
+  // ─── 提取（写入）─── 受 extractionEnabled 控制；triggerEveryNMessages ≤ 0 即关闭自动提取，不挂监听
   const extractionEnabled = config.extractionEnabled !== false;
   const triggerEveryN = numCfg(config.triggerEveryNMessages, 20);
-  if (extractionEnabled) {
+  if (extractionEnabled && triggerEveryN > 0) {
     const extractor = new RelationExtractor(
       {
         events: caps.events,
@@ -581,7 +581,7 @@ function start(caps: Caps): void {
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (config.agentInjection !== false) {
-    registerRelationContribution({ contributions: caps.contributions, logger: caps.logger }, service, {
+    registerRelationContribution({ contributions: caps.contributions }, service, {
       maxDepth: numCfg(config.injectionMaxDepth, 2),
       maxBreadth: numCfg(config.injectionMaxBreadth, 10),
       maxEvents: numCfg(config.maxInjectedEvents, 5),
@@ -591,7 +591,6 @@ function start(caps: Caps): void {
       maxGlobalHotEvents: numCfg(config.maxGlobalHotEvents, 5),
       maxGlobalHotEntities: numCfg(config.maxGlobalHotEntities, 5),
       groupOnly: config.groupOnly === true,
-      debug,
     });
   }
 

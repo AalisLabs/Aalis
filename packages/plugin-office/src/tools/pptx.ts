@@ -821,7 +821,7 @@ export function registerPptTools(
     async handler(args) {
       return JSON.stringify({
         success: false,
-        message: `pptxgenjs 的类型定义不支持设置幻灯片切换效果。建议在 PowerPoint 中手动设置 "${args.type}" 切换。`,
+        message: `pptxgenjs 不支持设置幻灯片切换效果。建议在 PowerPoint 中手动设置 "${args.type}" 切换。`,
       });
     },
   });

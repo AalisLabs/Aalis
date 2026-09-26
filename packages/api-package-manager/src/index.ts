@@ -23,8 +23,9 @@ export interface PackageManagerService {
   /** 从根 `dependencies` 摘掉并 npm uninstall；闸在服务层（类型 / 撤销通道 / 来源 / 服务依赖者） */
   uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
   /**
-   * 卸载 name 会打断哪些活跃插件：name 提供的某服务没有别的提供者，而它们 required 该服务。
-   * 卸载闸与市场的卸载前预警共用这一份判定。name 按插件定义 name 查。
+   * 卸载 name 会打断哪些插件：name 提供的某服务没有别的插件正在提供（已激活或激活中），而它们 required 该服务
+   * （已禁用的不算）。卸载闸与市场的卸载前预警共用这一份判定。name 是插件定义 name；市场的预警按 npm 包名近似，
+   * 定义 name 与包名不同的插件在那里查不到、预警为空，卸载闸按解析出的定义 name 查，不受影响。
    */
   serviceDependents(name: string): string[];
   /**

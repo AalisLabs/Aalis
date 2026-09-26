@@ -1140,6 +1140,20 @@ function registerUserProfile({
   }
 
   /**
+   * LLM 的 update 针对调用前快照里的 id。快照里有、重读后已不在的，说明调用期间被删（清空或定点删除），
+   * 丢弃：否则 mergeFactList 把未知 id 当新增，删掉的事实换个 id 写回。快照里本就没有的 id 照旧按新增处理
+   */
+  function dropUpdatesOfDeletedFacts(
+    update: ExtractUpdateItem[],
+    snapshot: Fact[],
+    fresh: Fact[],
+  ): ExtractUpdateItem[] {
+    const snapshotIds = new Set(snapshot.map(f => f.id));
+    const freshIds = new Set(fresh.map(f => f.id));
+    return update.filter(u => !snapshotIds.has(u.id) || freshIds.has(u.id));
+  }
+
+  /**
    * 后台触发一次事实提取（并发互斥）。
    * userId/platform/nickname 直接由调用方传入，不再从 history 里猜。
    */
@@ -1161,20 +1175,22 @@ function registerUserProfile({
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
-      const profile = (await loadProfile(mem, userKey)) ?? {
-        facts: [],
-        relationScore: 0,
-        interactionCount: 0,
-        updatedAt: 0,
-      };
-      const ops = await llmExtractFacts(history, profile.facts, nickname, userId, platform);
+      const snapshotFacts = (await loadProfile(mem, userKey))?.facts ?? [];
+      const ops = await llmExtractFacts(history, snapshotFacts, nickname, userId, platform);
       const hasFactOps = ops.add.length > 0 || ops.update.length > 0 || ops.remove.length > 0;
       if (!hasFactOps) return;
-      const newFacts = mergeFactList(profile.facts, ops.add, ops.update, ops.remove, cfg.maxFactsPerUser);
-      // 重新读取最新档案，避免覆盖提取期间（LLM 调用时）已写入的 relationScore 等字段
-      const freshProfile = (await loadProfile(mem, userKey)) ?? profile;
+      // 以 LLM 返回后重读的档案为合并基底：调用期间档案可能被清空或删了事实，以调用前的快照
+      // 为基底会把删掉的内容整份写回；重读也保住期间写入的 relationScore 等字段
+      const fresh = (await loadProfile(mem, userKey)) ?? { facts: [], updatedAt: 0 };
+      const newFacts = mergeFactList(
+        fresh.facts,
+        ops.add,
+        dropUpdatesOfDeletedFacts(ops.update, snapshotFacts, fresh.facts),
+        ops.remove,
+        cfg.maxFactsPerUser,
+      );
       await saveProfile(mem, userKey, {
-        ...freshProfile,
+        ...fresh,
         facts: newFacts,
         updatedAt: Date.now(),
       });
@@ -1292,16 +1308,18 @@ function registerUserProfile({
       // 至少需要一些 assistant 发言作为"自反思"的材料
       if (!history.some(m => m.role === 'assistant' && m.content)) return;
       const selfKey = getSelfKey();
-      const profile = (await loadProfile(mem, selfKey)) ?? {
-        facts: [],
-        relationScore: 0,
-        interactionCount: 0,
-        updatedAt: 0,
-      };
-      const ops = await llmReflectSelf(history, profile.facts);
+      const snapshotFacts = (await loadProfile(mem, selfKey))?.facts ?? [];
+      const ops = await llmReflectSelf(history, snapshotFacts);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
-      const newFacts = mergeFactList(profile.facts, ops.add, ops.update, ops.remove, cfg.maxSelfFacts);
-      const fresh = (await loadProfile(mem, selfKey)) ?? profile;
+      // 合并基底取重读结果，理由同 triggerExtractionForUser
+      const fresh = (await loadProfile(mem, selfKey)) ?? { facts: [], updatedAt: 0 };
+      const newFacts = mergeFactList(
+        fresh.facts,
+        ops.add,
+        dropUpdatesOfDeletedFacts(ops.update, snapshotFacts, fresh.facts),
+        ops.remove,
+        cfg.maxSelfFacts,
+      );
       await saveProfile(mem, selfKey, { ...fresh, facts: newFacts, updatedAt: Date.now() });
       logger.debug(
         `Aalis 自档案已更新 (${selfKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
@@ -1521,8 +1539,11 @@ function registerUserProfile({
       const doc = await loadInstructions(mem);
       const ops = await llmExtractInstructions(history, doc.instructions, authorityFn);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
+      // 合并基底取 LLM 返回后重读的指令表：调用期间被清掉或删掉的指令不随调用前的快照写回；
+      // update 指向已不在的 id 时 mergeInstructions 本就跳过
+      const fresh = await loadInstructions(mem);
       const newInstructions = mergeInstructions(
-        doc.instructions,
+        fresh.instructions,
         ops.add.map(a => ({ ...a, sourceChannel: 'llm' as const })),
         ops.update.map(u => {
           const { id, ...patch } = u;
@@ -1530,12 +1551,7 @@ function registerUserProfile({
         }),
         ops.remove,
       );
-      const fresh = await loadInstructions(mem);
-      await saveInstructions(mem, {
-        ...fresh,
-        instructions: newInstructions,
-        updatedAt: Date.now(),
-      });
+      await saveInstructions(mem, { instructions: newInstructions, updatedAt: Date.now() });
       logger.debug(
         `指令档案已更新 (${getInstructionsKey()}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newInstructions.length} 条`,
       );

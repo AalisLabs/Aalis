@@ -240,20 +240,36 @@ class OllamaClient {
     this.proc = proc;
   }
 
-  /** 发现远端模型 id 列表；signal 用于中止（中止同样返回空列表） */
+  /**
+   * 发现远端模型 id 列表。不可达、超时、非 2xx、响应不是模型列表时抛出，消息带 URL 与原因
+   * （由调用方决定按空列表继续还是报错）；经 signal 中止时抛中止原因
+   */
   async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[]> {
+    const url = `${this.baseUrl}/api/tags`;
     try {
       // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
-      // 插件按拓扑序串行卡住;失败语义不变(catch 成不注册 entry)
+      // 插件按拓扑序串行卡住
       const timeout = AbortSignal.timeout(10_000);
-      const res = await fetch(`${this.baseUrl}/api/tags`, {
+      const res = await fetch(url, {
         signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
       });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} ${res.statusText} - ${body}`);
+      }
       const data = (await res.json()) as { models: { name: string }[] };
       return data.models.map(m => m.name);
-    } catch {
-      return [];
+    } catch (err) {
+      signal?.throwIfAborted();
+      // fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）在 cause 上；连 localhost 时
+      // 两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
+      const cause = err instanceof Error ? err.cause : undefined;
+      const reasons: unknown[] = cause instanceof AggregateError ? cause.errors : cause instanceof Error ? [cause] : [];
+      const detail = reasons.map(e => (e instanceof Error ? e.message : String(e))).join('; ');
+      throw new Error(
+        `模型发现失败 ${url}: ${err instanceof Error ? err.message : String(err)}${detail ? ` ← ${detail}` : ''}`,
+        { cause: err },
+      );
     }
   }
 
@@ -1128,8 +1144,8 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
     registered.delete(modelId);
   }
 
-  async function discoverAllModelIds(signal?: AbortSignal): Promise<string[]> {
-    const remoteIds = await client.fetchRemoteModelIds(signal);
+  /** 自动发现的模型并上 customModels（与自动发现重复的告警） */
+  function withCustomModels(remoteIds: string[]): string[] {
     const remoteSet = new Set(remoteIds);
     for (const cm of ollamaConfig.customModels) {
       if (remoteSet.has(cm)) {
@@ -1139,9 +1155,16 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
     return [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
   }
 
-  // 初次注册。停用或停机时中止探测；两个探测把中止也吞成空结果，所以每次 await 之后自己查
-  const initialIds = await discoverAllModelIds(lifecycle.signal);
+  // 初次注册。停用或停机时中止探测：模型发现中止即抛出，能力探测把中止吞成空结果，所以每次 await 之后自己查。
+  // 模型发现失败记 warn 后按未发现远端模型继续，customModels 照常注册
+  const remoteIds = await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
+    lifecycle.signal.throwIfAborted();
+    // 只记消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
+    logger.warn(`${err instanceof Error ? err.message : String(err)}；启动时只注册 customModels 里的模型`);
+    return [];
+  });
   lifecycle.signal.throwIfAborted();
+  const initialIds = withCustomModels(remoteIds);
   if (initialIds.length === 0) {
     logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
   } else {
@@ -1155,8 +1178,9 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
   // 装配 refresh 真实实现：webui 触发时无需重启插件，按 diff 增删 entries。
   // 同 provider 下所有 OllamaModelHandle 共享同一份 refresh（通过 refreshFn 间接转发）。
   // 与初次注册一样随停用或停机中止：每次 await 之后自己查，中止即抛出，不再增删条目。
+  // 模型发现失败同样抛出（WebUI 据此报错）、不增删条目：按空列表处理会把自动发现的条目全部注销。
   refreshFn = async () => {
-    const next = await discoverAllModelIds(lifecycle.signal);
+    const next = withCustomModels(await client.fetchRemoteModelIds(lifecycle.signal));
     lifecycle.signal.throwIfAborted();
     const nextSet = new Set(next);
     const added: string[] = [];
