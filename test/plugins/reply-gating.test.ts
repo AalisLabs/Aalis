@@ -473,7 +473,7 @@ describe('禁言', () => {
     expect(h.contents(), '禁言前的 2 条不应与解禁后的消息凑满阈值').not.toContain('解禁后第一条');
   });
 
-  it('平台禁言先于任何消息：禁言期的消息建起会话状态但不计数', async () => {
+  it('平台禁言先于任何消息：禁言期的消息不计数', async () => {
     const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
     const G = '20001';
 
@@ -1190,6 +1190,20 @@ describe('计数与判定', () => {
     expect(h.contents(), '两个人各一条不应跨过阈值').toEqual(['A2']);
   });
 
+  it('scoreDecayMinutes：活跃指数按距上一条真人消息的时间衰减，隔 9 分钟的第二条不放行、连发的放行', async () => {
+    // 衰减按上一条消息的时间算，须在记下本条的最近消息时间之前算；次序颠倒时间隔恒为 0、衰减失效
+    const h = await setup({ trigger: { intervalMode: 'dynamic', scoreDecayMinutes: 10 } });
+
+    await h.send(groupMsg('20001', 'A1'));
+    await h.send(groupMsg('20001', 'A2')); // 0.21 + 0.22 = 0.43 ≥ 下限 0.3
+    expect(h.contents()).toEqual(['A2']);
+
+    await h.send(groupMsg('20002', 'B1')); // 0.21
+    await advance(9 * 60_000); // 衰减到 0.1 倍
+    await h.send(groupMsg('20002', 'B2')); // 0.021 + 0.22 = 0.241 < 0.3
+    expect(h.contents(), '隔 9 分钟后活跃指数应已衰减，第二条不应放行').toEqual(['A2']);
+  });
+
   it('30 天无活动的会话状态被清扫，旧计数不跨月残留', async () => {
     const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
     const G = '20001';
@@ -1345,6 +1359,23 @@ describe('闲置触发', () => {
     await h.send(groupMsg(G, '又来一条')); // 退避复位 → t≈160.5s 再次 idle
     await advance(62_000); // t≈162.5s（未复位则要到 t≈220.5s）
     expect(h.idles(), '真人活动后应按 x1 重排').toHaveLength(2);
+  });
+
+  it('平台禁言期内的真人消息同样把退避复位为 1', async () => {
+    const h = await setup({ trigger: sessionIdle('exponential') });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // t=0
+    await advance(60_500); // t=60s 第一次 idle，退避 x2，下一次排在 t=180s
+    expect(h.idles()).toHaveLength(1);
+    await advance(9_500); // t=70s
+    h.flow().setMuted(sid(G), 30, 'onebot'); // 禁言到 t=100s
+    await advance(20_000); // t=90s
+    await h.send(groupMsg(G, '禁言期闲聊')); // 退避复位 → t=150s 再次 idle（未复位则要到 t=210s）
+    await advance(59_000); // t=149s
+    expect(h.idles()).toHaveLength(1);
+    await advance(2_000); // t=151s
+    expect(h.idles(), '禁言期的真人消息应把退避复位为 1').toHaveLength(2);
   });
 
   it('session 档：agent 回复后从回复时刻重排', async () => {
