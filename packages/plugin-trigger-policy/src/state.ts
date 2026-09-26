@@ -16,6 +16,8 @@ export interface TriggerSessionState {
   lastTriggerTime: number;
   /** bot 最近一次开口：agent 真实回复或 idle 注入的时刻 */
   lastBotActivityAt: number;
+  /** 判定放行的次数（点名与非点名都计）：宿主据此识别「这条判定期间本会话已有放行」 */
+  releases: number;
   /** 每个用户在本会话的入站条数（评分权重用） */
   userInteractions: Map<string, number>;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -32,6 +34,7 @@ export function createState(platform: string, sessionType = '', targetId = ''): 
     lastMessageTime: 0,
     lastTriggerTime: 0,
     lastBotActivityAt: 0,
+    releases: 0,
     userInteractions: new Map(),
     idleTimer: null,
     idleBackoff: 1,

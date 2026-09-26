@@ -251,6 +251,53 @@ describe('trigger 宿主：按序问提供者', () => {
   });
 });
 
+// 重组前（1b582a0a）记入站、判定、清零在同一拍同步做完，同一 tick 到达的一簇消息逐条计数：
+// fixedInterval=2 时 4 条放行第 2、4 条。判定改成异步后，一簇消息先全部记入再陆续判定；规则若读
+// 判定那一刻的会话状态，4 条都达标、全部放行。现在规则按各自记入站那一刻的计数判定，判定期间本会话
+// 已有放行的作废：4 条只放行撞上阈值的第 2 条（不多于重组前，第 4 条的计数随第 2 条的放行清零）。
+describe('trigger 宿主：同一会话突发', () => {
+  const EVERY_TWO = { intervalMode: 'fixed', fixedInterval: 2 };
+
+  it('只装规则、同一 tick 发 4 条：只放行撞上阈值的第 2 条', async () => {
+    const logs: string[] = [];
+    const host = await setup({ config: EVERY_TWO, logs });
+    const results = await Promise.all([1, 2, 3, 4].map(i => run(host.hooks, groupMsg(`第 ${i} 条`))));
+    expect(results.map(r => r.reached)).toEqual([false, true, false, false]);
+    expect(logs.filter(l => l.includes('判定期间本会话已放行'))).toHaveLength(2);
+  });
+
+  it('突发里被点名的消息照常放行（与重组前相同）', async () => {
+    const host = await setup({ config: EVERY_TWO });
+    const contents = ['第 1 条', '第 2 条', `${AT}第 3 条`, '第 4 条'];
+    const results = await Promise.all(contents.map(c => run(host.hooks, groupMsg(c))));
+    expect(results.map(r => r.reached)).toEqual([false, true, true, false]);
+    expect(results[2].message.triggerType).toBe('immediate');
+  });
+
+  it('前置慢弃权的提供者（如影子期的判定模型）、每隔 5ms 发 3 条：放行撞上阈值的第 2 条（与重组前相同）', async () => {
+    const host = await setup({
+      config: EVERY_TWO,
+      provider: async () => {
+        await sleep(50);
+        return null;
+      },
+    });
+    const pending: Array<ReturnType<typeof run>> = [];
+    for (let i = 1; i <= 3; i++) {
+      pending.push(run(host.hooks, groupMsg(`第 ${i} 条`)));
+      await sleep(5);
+    }
+    // 读判定那一刻的状态时 3 条都已记入：第 1 条读到计数 3 被放行，撞上阈值的第 2 条反被吞掉
+    expect((await Promise.all(pending)).map(r => r.reached)).toEqual([false, true, false]);
+  });
+
+  it('其它提供者的逐条判定不受约束：模型对同一 tick 的 3 条都判开口，3 条都放行', async () => {
+    const host = await setup({ config: EVERY_TWO, provider: async () => ({ speak: true, reason: '模型' }) });
+    const results = await Promise.all([1, 2, 3].map(i => run(host.hooks, groupMsg(`第 ${i} 条`))));
+    expect(results.map(r => r.reached)).toEqual([true, true, true]);
+  });
+});
+
 describe('trigger 宿主：附件识别', () => {
   it('纯规则判定不启动识别：图片消息的判定不等 media', async () => {
     const { svc, calls } = fakeMedia();
