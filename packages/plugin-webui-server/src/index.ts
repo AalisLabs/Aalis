@@ -15,6 +15,7 @@ import { hostConfig } from '@aalis/api-host-config';
 import type { ModelInfo } from '@aalis/api-llm';
 import { listLLMModels, llm } from '@aalis/api-llm';
 import type {} from '@aalis/api-memory'; // declaration merging：session:compress / session:compressing / history:changed 事件
+import { packageManager } from '@aalis/api-package-manager';
 import { persona } from '@aalis/api-persona';
 import {
   aggregatePlatformDetails,
@@ -48,7 +49,6 @@ import {
   type ServiceView,
   services,
 } from '@aalis/core';
-import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type LogEntry, parseLogLine } from '@aalis/schema-log';
@@ -331,6 +331,7 @@ const uses = {
   app: optional(appService),
   plugins: optional(pluginsService),
   source: optional(pluginSource),
+  packageManager: optional(packageManager),
   storage: optional(storage),
   authority: optional(authority),
   commands: optional(commands),
@@ -636,8 +637,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       logger,
       plugins: caps.plugins,
       services,
-      // package-manager 由插件提供，本包不反向依赖那个插件包：按名动态查，缺席时装卸路由回 503
-      packageManager: () => services.get('package-manager') as PackageManagerService | undefined,
+      packageManager: caps.packageManager,
     },
     gate,
     uiConfig.marketplaceRegistry,

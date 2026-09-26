@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { PackageManagerService } from '@aalis/api-package-manager';
 import type { Logger, PluginManagerService, ServiceRef, Services } from '@aalis/core';
-import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
 import type { LocalScanEntry } from '../client-discovery.js';
@@ -427,11 +427,8 @@ interface MarketplaceRoutesCaps {
   plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
   /** 实际提供者元数据，包含根激活提供的服务；不得为展示实例化服务工厂。 */
   services: Pick<Services, 'inspect'>;
-  /**
-   * 取当前 package-manager 提供者。它由插件提供，而本包不反向依赖那个插件包，故按名现取：
-   * 缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。
-   */
-  packageManager(): PackageManagerService | undefined;
+  /** 可选依赖：缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。 */
+  packageManager: Pick<ServiceRef<PackageManagerService>, 'current'>;
 }
 
 /** 注册插件市场 REST 路由 */
@@ -633,7 +630,7 @@ export function registerMarketplaceRoutes(
       services: { required, provides: svcOf.get(name)?.provides ?? rootServices?.provides ?? [] },
       // 卸载会断服务的依赖者，供卸载弹窗预警；与 package-manager 卸载闸同一份判定。
       // 服务缺席时卸载本就不可用（503），不需要预警。
-      serviceDependents: caps.packageManager()?.serviceDependents(name) ?? [],
+      serviceDependents: caps.packageManager.current?.serviceDependents(name) ?? [],
     });
   });
 
@@ -646,7 +643,7 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
-    const pkgMgr = caps.packageManager();
+    const pkgMgr = caps.packageManager.current;
     if (!pkgMgr) {
       res.status(503).json({ error: 'package-manager 服务未启用，无法安装插件' });
       return;
@@ -669,7 +666,7 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
-    const pkgMgr = caps.packageManager();
+    const pkgMgr = caps.packageManager.current;
     if (!pkgMgr) {
       res.status(503).json({ error: 'package-manager 服务未启用，无法卸载插件' });
       return;
@@ -700,7 +697,7 @@ export function registerMarketplaceRoutes(
       name: typeof (t as { name?: unknown })?.name === 'string' ? (t as { name: string }).name : '',
       version: typeof (t as { version?: unknown })?.version === 'string' ? (t as { version: string }).version : '',
     }));
-    const pkgMgr = caps.packageManager();
+    const pkgMgr = caps.packageManager.current;
     if (!pkgMgr) {
       res.status(503).json({ error: 'package-manager 服务未启用，无法更新' });
       return;

@@ -5,8 +5,8 @@ import {
   type PlatformAdapter,
   platform as platformService,
 } from '@aalis/api-platform';
+import { type AccessChecker, sessionHistory } from '@aalis/api-session-history';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
-import { type AccessChecker, sessionHistory } from '@aalis/api-tool-session';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';

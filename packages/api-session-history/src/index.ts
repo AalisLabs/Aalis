@@ -1,5 +1,5 @@
 /**
- * api-tool-session —— `session-history` 服务的公共类型，
+ * api-session-history —— `session-history` 服务的公共类型，
  * 以及供平台插件注入访问控制规则的 hook 接口。
  *
  * 设计要点：
@@ -69,7 +69,7 @@ export type SessionHistoryReadResult =
 
 /**
  * `session-history` 服务公开接口。由 `@aalis/plugin-tool-session` 实现并 provide。
- * 平台插件 / webui 等：`import { sessionHistory } from '@aalis/api-tool-session'`，写入 uses。
+ * 平台插件 / webui 等：`import { sessionHistory } from '@aalis/api-session-history'`，写入 uses。
  */
 export interface SessionHistoryService {
   getHistory(

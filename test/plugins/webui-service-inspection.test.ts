@@ -1,9 +1,9 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, it, vi } from 'vitest';
+import { type PackageManagerService, packageManager } from '../../packages/api-package-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { defineService, type Logger, provide } from '../../packages/core/src/index.js';
-import { type PackageManagerService, packageManager } from '../../packages/plugin-package-manager/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';

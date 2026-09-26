@@ -39,12 +39,12 @@
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-user-relation": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/api-agent": "workspace:*",
-    "@aalis/plugin-user-relation": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

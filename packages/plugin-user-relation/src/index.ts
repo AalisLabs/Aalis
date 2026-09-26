@@ -23,8 +23,9 @@ import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
 import { tools } from '@aalis/api-tools';
+import { userRelation } from '@aalis/api-user-relation';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { registerRelationActions } from './actions.js';
 import { type EvictionConfig, registerRelationCommands } from './commands.js';
@@ -677,10 +678,6 @@ function numCfg(v: unknown, fallback: number): number {
 export { RelationService } from './service.js';
 export { RelationStore } from './store.js';
 export * from './types.js';
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-// 无独立 `-api` 包：只有这一个实现，契约住在实现包里（同 web-search / scheduler 等）。
-export const userRelation = defineService<RelationService>('user-relation');
 
 const uses = {
   memory,

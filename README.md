@@ -37,7 +37,7 @@ pnpm monorepo，约 100 个包：
 |---|---|
 | `packages/core` | 内核 |
 | `packages/runtime` | Node 宿主：配置文件、插件发现、进程重启 |
-| `packages/api-*` | 29 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），含接口与描述符 |
+| `packages/api-*` | 31 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），含接口与描述符 |
 | `packages/plugin-*` | 60 余个插件：LLM 与 Embedding 提供者、记忆与向量存储、工具集、平台适配器（OneBot / CLI / WebUI）、调度、权限、技能等，清单见 [docs/plugins/](docs/plugins/README.md) |
 | `packages/create-aalis` / `create-aalis-plugin` | 脚手架：建机器人项目 / 建插件骨架 |
 | `docs/` | 文档站源码 |

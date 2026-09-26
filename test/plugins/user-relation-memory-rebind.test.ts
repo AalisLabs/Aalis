@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type MemoryService, type MetadataOp, memory } from '../../packages/api-memory/src/index.js';
+import { userRelation } from '../../packages/api-user-relation/src/index.js';
 import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
-import userRelationPlugin, { userRelation } from '../../packages/plugin-user-relation/src/index.js';
+import userRelationPlugin, { type RelationService } from '../../packages/plugin-user-relation/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -68,7 +69,8 @@ describe('plugin-user-relation: memory 换胜者后读写跟随当前胜者', ()
     expect(app.plugins.getPlugin(userRelationPlugin.name)?.state).toBe('active');
 
     const host = app.bind({ relation: userRelation, services });
-    const before = host.relation.require();
+    // 契约只开放消费方用到的查询面；写入经实现类，提供的实例即插件内的 RelationService
+    const before = host.relation.require() as RelationService;
     await before.observePerson('onebot', 'u1');
 
     expect(host.services.prefer(memory, 'mem-low')).toBe(true);
