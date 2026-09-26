@@ -9,6 +9,7 @@ import type { Resources } from '../infrastructure/resources.js';
 
 // 只认框架为本次激活装配的 required 端口，optional / 动态查询 / 自造端口不借用重试资格。
 class ServiceUnavailableError extends Error {
+  override name = 'ServiceUnavailableError';
   readonly #origin: { resources: Resources; name: string } | undefined;
 
   constructor(scope: BindingScope, name: string, required: boolean) {

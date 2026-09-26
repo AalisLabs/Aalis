@@ -172,7 +172,8 @@ const UNRENDERABLE_ARG = '[无法渲染的参数]';
  * 都能跑。需要 `util.inspect` 级别的深度对象渲染时，由外层 sink 自行处理
  * （sink 可订阅 LogHub 后用宿主 API 二次格式化）。
  *
- * - `Error` / 任何带 `stack` 的对象：尽量打印 stack；否则退化为 name + message
+ * - `Error` / 任何带 `stack` 的对象：尽量打印 stack；否则退化为 name + message。`Error` 其后接因果链，
+ *   见 {@link causeTail}
  * - `string`：原样
  * - `null` / `undefined` / 原始值：`String(v)`
  * - 普通对象 / 数组：尝试 `JSON.stringify`，遇到循环引用或不可序列化值时退化
@@ -201,7 +202,8 @@ function renderArg(value: unknown): string {
   if (value === null || value === undefined) return String(value);
   if (value instanceof Error) {
     const head = `${value.name}: ${value.message}`;
-    return value.stack ? value.stack : head;
+    // 先把 stack 规整成字符串再拼因果链：stack 可被赋成 Symbol 等任意值，直接拼接会抛
+    return String(value.stack ? value.stack : head) + causeTail(value);
   }
   // 鸭子类型：异步链路里 Error 可能跨 realm，instanceof 失效；只要含 stack 就尽量打 stack
   if (typeof value === 'object' && typeof (value as { stack?: unknown }).stack === 'string') {
@@ -219,4 +221,137 @@ function renderArg(value: unknown): string {
     }
   }
   return String(value);
+}
+
+// ----- 错误因果链 -----
+
+/** 因果链最多展开的 cause 层数 */
+const CAUSE_DEPTH = 5;
+/** 日志里每个 AggregateError 最多列出的子错误条数 */
+const AGGREGATE_ITEMS = 10;
+/** 摘要里每个 AggregateError 最多列出的子错误条数 */
+const SUMMARY_ITEMS = 3;
+/** 摘要里非 Error 值的渲染结果最长的字符数（UTF-16 码元，含截断时结尾的「…」） */
+const SUMMARY_VALUE_CHARS = 200;
+
+/**
+ * 沿 `cause` 取出至多 {@link CAUSE_DEPTH} 层（不含起点）；非 Error 的 cause 收下后不再往下走。
+ * `end` 说明链为何没有自然结束：循环引用、超过层数，或读取本身抛错（getter、Proxy 陷阱）。绝不抛。
+ */
+function causesOf(error: Error): { causes: unknown[]; end?: string } {
+  const causes: unknown[] = [];
+  const seen = new Set<unknown>([error]);
+  try {
+    let cause: unknown = error.cause;
+    while (cause !== undefined) {
+      if (seen.has(cause)) return { causes, end: '[循环引用]' };
+      if (causes.length === CAUSE_DEPTH) return { causes, end: `[超过 ${CAUSE_DEPTH} 层，其余省略]` };
+      // 先判定再收下：判定本身可能抛（Proxy 陷阱），抛了这一层按读取失败记，不重复列出
+      const layer = cause instanceof Error ? cause : undefined;
+      causes.push(cause);
+      seen.add(cause);
+      cause = layer?.cause;
+    }
+    return { causes };
+  } catch {
+    return { causes, end: UNRENDERABLE_ARG };
+  }
+}
+
+/**
+ * 一层错误的文字。Error：日志取「名称: 消息」，摘要（`forSummary`）只取消息；消息为空只取名称。其余值按附加参数规则
+ * 渲染后取首行（跨 realm 的错误因此只留 stack 首行），摘要里另限 {@link SUMMARY_VALUE_CHARS} 字符，超出截断、以「…」结尾，
+ * 不截在代理对中间。只读名称与消息，不展开其它属性。绝不抛。
+ */
+function describeLayer(value: unknown, forSummary: boolean): string {
+  try {
+    if (value instanceof Error) {
+      return forSummary ? String(value.message || value.name) : Error.prototype.toString.call(value);
+    }
+    const line = stringifyArg(value).split('\n', 1)[0];
+    if (!forSummary || line.length <= SUMMARY_VALUE_CHARS) return line;
+    return `${line.slice(0, SUMMARY_VALUE_CHARS - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
+  } catch {
+    return UNRENDERABLE_ARG;
+  }
+}
+
+/**
+ * AggregateError 的子错误：`[errors] N 项` 后每项另起一行、缩进两格（多行消息原样续行），超过 {@link AGGREGATE_ITEMS} 条
+ * 写「…另 N 项」。子错误不再展开各自的 cause。绝不抛：读取或遍历 `errors` 抛错（如被改成非数组）时不列。
+ */
+function aggregateLines(value: unknown): string {
+  try {
+    if (!(value instanceof AggregateError)) return '';
+    const items: unknown[] = value.errors;
+    const lines = items.slice(0, AGGREGATE_ITEMS).map(item => `\n  ${describeLayer(item, false)}`);
+    const rest = items.length - AGGREGATE_ITEMS;
+    return `\n[errors] ${items.length} 项${lines.join('')}${rest > 0 ? `\n  …另 ${rest} 项` : ''}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 附在 Error 的 stack 之后的因果链：起点若是 AggregateError 先列子错误，再沿 `cause` 逐层另起一行，以
+ * `[cause] 名称: 消息` 开头（多行消息原样续行；该层是 AggregateError 同样接着列子错误），链没有自然结束时末行写明原因。
+ * 只有最外层带 stack。绝不抛：链上任何一处读取抛错只影响那一处，最外层照常输出。
+ */
+function causeTail(error: Error): string {
+  const { causes, end } = causesOf(error);
+  let tail = aggregateLines(error);
+  for (const cause of causes) tail += `\n[cause] ${describeLayer(cause, false)}${aggregateLines(cause)}`;
+  return end === undefined ? tail : `${tail}\n[cause] ${end}`;
+}
+
+/** 摘要里一层的首行 */
+function summaryLine(value: unknown): string {
+  return describeLayer(value, true).split('\n', 1)[0];
+}
+
+/**
+ * 摘要里接在 AggregateError 层之后的子错误：`: ` 后接前 {@link SUMMARY_ITEMS} 条的首行，以 `; ` 相连，超出写「…另 N 项」；
+ * 没有子错误时为空。子错误不再展开各自的 cause。绝不抛：读取或遍历 `errors` 抛错时不列。
+ */
+function aggregateSummary(value: unknown): string {
+  try {
+    if (!(value instanceof AggregateError)) return '';
+    const items: unknown[] = value.errors;
+    const shown = items.slice(0, SUMMARY_ITEMS).map(summaryLine);
+    if (items.length > SUMMARY_ITEMS) shown.push(`…另 ${items.length - SUMMARY_ITEMS} 项`);
+    return shown.length === 0 ? '' : `: ${shown.join('; ')}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 抛出值的一行说明（`PluginEntry.error` 与注册校验失败的日志）。Error：消息后接因果链摘要，各层取首行，以 ` ← ` 相连，
+ * 层数上限与收尾说明同日志；AggregateError 层之后接子错误（见 {@link aggregateSummary}）。包装错误常写成「前缀: cause 的消息」：
+ * 上一层首行以本层首行结尾，且两者相同或其间以 `:` / `：`（其后可有空白）分隔时，省略本层；首行为空的层不列。其余值取渲染结果首行并限长
+ * （见 {@link describeLayer}）。绝不抛。
+ * @internal
+ */
+export function summarizeError(error: unknown): string {
+  try {
+    const message = describeLayer(error, true);
+    if (!(error instanceof Error)) return message;
+    let summary = message + aggregateSummary(error);
+    let previous = message.split('\n', 1)[0];
+    const { causes, end } = causesOf(error);
+    for (const cause of causes) {
+      const line = summaryLine(cause);
+      // 首行为空的层（空串 cause、以换行开头的消息）没有可显示的内容：不接「←」，去重仍以上一个非空首行为准，子错误照接
+      if (line) {
+        const repeated =
+          previous.endsWith(line) && /(?:^|[:：]\s*)$/.test(previous.slice(0, previous.length - line.length));
+        if (!repeated) summary += ` ← ${line}`;
+        previous = line;
+      }
+      summary += aggregateSummary(cause);
+    }
+    return end === undefined ? summary : `${summary} ← ${end}`;
+  } catch {
+    return UNRENDERABLE_ARG;
+  }
 }
