@@ -146,7 +146,7 @@ export class PlatformIdleScheduler {
     const flow = this.caps.flowControl.current;
     let best: { sessionId: string; state: TriggerSessionState; lastActivity: number; prompt: string } | null = null;
     for (const [sid, s] of this.states) {
-      // 禁言会话选了也会被 flow 相位吞掉；冷却与限速对闲置注入只在这里把关（flow 相位对内部注入只查禁言）
+      // 禁言会话选了也会被 flow 相位吞掉；冷却对闲置注入只在这里把关（flow 相位对内部注入不查冷却），限速在 flow 相位（作用域内）还会再查一次
       if (flow?.isMuted(sid) || flow?.isCoolingDown(sid) || flow?.isRateLimited(sid)) continue;
       const e = resolveEffectiveConfig(this.cfg, s.platform, s.sessionType, s.targetId);
       // per-scope 覆盖单独关掉（'off'）或改成 session 档的会话不能被 platform 档抓来开聊
