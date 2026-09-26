@@ -6,7 +6,7 @@
 
 只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由 [plugin-trigger-policy](./plugin-trigger-policy.md) 决定，本插件不参与。
 
-逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）只决定入站消息是否过冷却/限速闸，默认只覆盖 `*:group`；CLI、WebUI 等不区分会话类型的平台，需要在 `scopes` 中另加 `cli`、`webui` 或 `*`。回复记账、委派闸门、闲置选会话不看作用域，禁言也不看；但 `overrides` 里的数值对它们同样生效（按会话记录的 sessionType / targetId 匹配）。
+逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）决定哪些会话受冷却与限速约束：入站过闸与回复记账都只对作用域内会话，委派闸门与闲置选会话读的是这份记账，因此同样只对作用域内会话生效；禁言不看作用域。默认 `*:group`；默认作用域不含 WebUI/CLI（它们的消息不带会话类型），如需纳入，在 `scopes` 里显式添加（如 `webui`、`cli` 或 `*`）。`overrides` 里的数值按会话记录的 sessionType / targetId 匹配。
 
 ## 插件声明
 
@@ -52,7 +52,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 ## 出站联动
 
-监听 `outbound:message`：`source === 'agent'` 的出站消息对**任意会话**记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。委派到私聊等从未经过入站闸门的目标，其回复同样计入限速。命令回复与系统回复不计入。
+监听 `outbound:message`：`source === 'agent'` 的出站消息对**作用域内**会话记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。作用域按会话已记下的平台、sessionType、targetId 判；没有流控状态的会话（例如仅经委派抵达）类型未知，只有会话类型段为通配的作用域（如 `onebot:*`、`*`）命中，与入站不带 sessionType 的内部注入同一口径。因此默认 `*:group` 下，委派到私聊或 WebUI 的回复不计入，委派闸门对它们不设限；需要限制时在 `scopes` 里纳入。命令回复与系统回复不计入。
 
 冷却与限速按真实回复计，不按"判定放行"计。trigger-policy 在判定放行时即复位计数，放行后若恰好处于冷却或限速期，这次触发作废。
 
@@ -68,7 +68,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 只决定入站消息是否过冷却/限速闸；回复记账、委派闸门、闲置选会话不看作用域，禁言也不看。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。 |
+| `scopes` | multiselect | `["*:group"]` | 冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（委派闸门、闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。 |
 | `cooldownSeconds` | number | `10` | 回复后冷却（秒） |
 | `rateLimitWindow` | number | `0` | 限速窗口（秒，0=关闭） |
 | `rateLimitMaxReplies` | number | `10` | 窗口内最大回复数 |
