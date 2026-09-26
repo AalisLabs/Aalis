@@ -29,7 +29,7 @@ export const trigger = defineService<TriggerService>('trigger');
 |---|---|
 | `isActiveTrigger(phase, trigger, self)` | 这次入站是否由 `self` 判定。胜者每次入站只取一次，以这次的相位数据为键记在 api-trigger 模块内的表里（见 §5） |
 | `hitsMuteKeyword(message, keywords)` | 正文是否包含任一禁言关键词；戳一戳通知恒不命中（正文是合成文案，内嵌戳者昵称） |
-| `createBotNames(persona, logger, tag)` | 建一个名字表，返回 `(triggerNames) => string[]`：每次调用现取别名与**全部**已登记人设（`persona.all()`）的名字、昵称的并集，去重、去空，别名在前。某个人设读名字抛错时只跳过它的名字，记一条 warn，同一提供者同一原因只记一次（它读成功一次后再出错会再记）。触发插件激活时建一个 |
+| `createBotNames(persona, sessionManager, logger, tag)` | 建一个名字表，返回 `(triggerNames, message) => string[]`：每次调用按 `message` 的会话现取别名与**全部**已登记人设（`persona.all()`）的名字、昵称的并集，去重、去空，别名在前。人设按会话取，与 agent 同一取法：`sessionManager.current.resolveConfig(sessionId, platform)` 的 `persona` 作为 `{ persona }` 传给每个提供者的 `getPersonaName` / `getNickNames`；session-manager 缺席时不带参数取，解析抛错时同样不带参数取并记一条 warn（同一原因只记一次）。某个人设读名字抛错时只跳过它的名字，记一条 warn，同一提供者同一原因只记一次（它读成功一次后再出错会再记）。触发插件激活时建一个 |
 | `isAddressed(message, names, opts)` | 是否被点名：戳一戳只看 `triggerOnPoke`，不做 @ 与名字检测；其余消息看 `triggerOnAt` 的 `<at self>` 与名字检测（`names` 里任一个出现在正文里即命中，`names` 通常取自 `createBotNames`） |
 | `waitForAttachmentDescriptions(message, media, waitMs, logger, tag)` | 带附件、尚无描述且 media 在场时启动识别，最多等 `waitMs`；超时照常返回，永不抛错 |
 | `markTriggered(message, addressed)` | 放行收尾：点名写 `triggerType = 'immediate'`，否则 `'interval'`；`interval` 在非私聊会话且消息未带 `actor` 时回填无主体授权 |
@@ -58,6 +58,7 @@ import { INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
+import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
@@ -79,12 +80,13 @@ export default definePlugin({
     trigger: optional(trigger),
     flowControl: optional(flowControl),
     persona: optional(persona),
+    sessionManager: optional(sessionManager),
     messageArchive: optional(messageArchive),
   },
   apply(caps) {
     const self: TriggerService = { label: '我的触发判定' };
     caps.provide(trigger, self, { priority: 5, label: self.label });
-    const botNames = createBotNames(caps.persona, caps.logger, '[my-trigger]');
+    const botNames = createBotNames(caps.persona, caps.sessionManager, caps.logger, '[my-trigger]');
 
     caps.hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
       if (!isActiveTrigger(data, caps.trigger, self)) return next(); // 不是生效者：什么都不做
@@ -92,7 +94,7 @@ export default definePlugin({
       if (message.source) return next(); // 内部注入不经判定
       if (caps.flowControl.current?.isMuted(message.sessionId)) return next(); // 禁言期交给 flow 相位吞
       const opts = { triggerOnAt: true, triggerOnPoke: true };
-      const addressed = isAddressed(message, botNames([]), opts);
+      const addressed = isAddressed(message, botNames([], message), opts);
       const speak = await myJudge(message, addressed); // 自带超时，不抛错
       if (!speak) {
         await archiveSwallowed(message, caps.messageArchive, caps.logger, '[my-trigger]');
@@ -110,7 +112,7 @@ export default definePlugin({
 - 不是生效者时直接 `next()`，不计数、不识别、不归档、不请求外部服务。
 - 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）直接放行，不改 `triggerType`（委派的 `proactive` 原样保留）。
 - 作用域判断先于禁言关键词：否则群聊的禁言关键词会作用到私聊、WebUI 等作用域外的会话。
-- 名字表取自全部人设提供者。现状是 agent 只用当前生效的那一个人设（`getPersonaName()` 不带会话参数），同时装了多个人设插件时，叫其中任何一个的名字都算点名；将来 persona 能按会话取人设时，只需改 `createBotNames` 这一处。某个人设读名字出错不影响判定：只少它的名字。
+- 名字表取自全部人设提供者，按会话取：会话配置改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字出错不影响判定：只少它的名字。
 - 判定日志不含消息正文与昵称。
 
 ## 5. 行为不变量

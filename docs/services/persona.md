@@ -19,11 +19,11 @@ persona 服务负责把「角色卡」渲染成 system prompt，并在回复链�
 export interface PersonaService {
   getSystemPrompt(options?: PersonaSessionOptions): string;
   getVolatilePrompt?(options?: PersonaSessionOptions): string;
-  getPersonaName(): string;
+  getPersonaName(options?: PersonaSessionOptions): string;
   getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;
   isClientSideJsonRendering?(options?: PersonaSessionOptions): boolean;
   listModels?(): Promise<string[]>;
-  getNickNames?(): string[];
+  getNickNames?(options?: PersonaSessionOptions): string[];
   isTimeInjectionEnabled?(): boolean;
   getPersonaSkills?(options?: PersonaSessionOptions): string[] | undefined;
   getSessionState?(sessionId: string): Record<string, unknown> | undefined;
@@ -34,11 +34,11 @@ export interface PersonaService {
 
 - `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，`options.systemPromptExtra`（会话级额外提示），以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
-- `getPersonaName()` — 返回角色卡的 `name`，用于 CLI 标题、触发昵称，以及 user-profile 的分堆 key。
+- `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件按会话传入，做点名识别；CLI 标题、user-profile 的分堆 key 等全局用途不传。
 - `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
 - `isClientSideJsonRendering(options?)` — 该卡是否声明「JSON 由客户端渲染」。为真时服务端不提取回复字段，整段 JSON 透传给前端。
 - `listModels()` — 列出已扫描到的全部角色卡名，供 WebUI 与 session-manager 的下拉框使用。
-- `getNickNames()` — 返回角色卡的 `nick_name` 列表，供触发检测匹配。
+- `getNickNames(options?)` — 返回角色卡的 `nick_name` 列表，供触发检测匹配；按 `options` 取卡，同 `getPersonaName`。
 - `isTimeInjectionEnabled()` — persona 是否已注入当前时间。其它插件据此决定是否还要注册 `system_time` 工具。
 - `getPersonaSkills(options?)` — 返回角色卡的 skill 白名单。约定：返回 `undefined` 表示未声明白名单（全部开放），返回 `[]` 表示禁用所有 skill。
 - `getSessionState(sessionId)` — 读取目标会话最近一次保存的结构化状态（如 mood、state），供 `delegate_to_session` 等跨会话工具回报目标 agent 的「内心情况」。
@@ -66,7 +66,7 @@ export interface PersonaSessionOptions {
 }
 ```
 
-`PersonaSessionOptions` 的来源约定很关键：persona 服务自身不依赖 session-manager，它只根据传入的选项调整行为。会话级的覆盖由调用方（agent，或 persona 自己的 reply 钩子）从 `session-manager.resolveConfig()` 取出后构造，再传给 persona。
+`PersonaSessionOptions` 的来源约定很关键：persona 服务自身不依赖 session-manager，它只根据传入的选项调整行为。会话级的覆盖由调用方（agent、persona 自己的 reply 钩子，以及触发插件共用的名字表 `createBotNames`）从 `session-manager.resolveConfig()` 取出后构造，再传给 persona。
 
 服务描述符随契约包导出，类型随描述符走：
 
@@ -84,7 +84,7 @@ export const persona = defineService<PersonaService>('persona');
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.current`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
 - `@aalis/plugin-skills` — `getAllowedSkills()` 用 `persona?.getPersonaSkills?.()` 过滤暴露给 LLM 的 skill 列表。
-- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 用全部已登记人设的 `getPersonaName()` 与 `getNickNames()` 收集 bot 名字与昵称，做点名识别。
+- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`（`options.persona` 取自 session-manager 解析的会话配置），收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-tool-system` — 通过 `persona.current` 判断，已注入时间则跳过注册 `system_time` 工具。
 - `@aalis/plugin-tool-session` — `delegate_to_session` 用 `getSessionState?.(targetSessionId)` 把目标会话的结构化状态附在委托结果里。
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
@@ -193,7 +193,7 @@ export default definePlugin({
 
 **YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。主角色卡解析失败时回退内置 default，日志说的是「存在但解析失败」而非「未找到」。
 
-**找不到主角色卡时回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，`getPersonaName()` 在 `name` 为空时返回 `"<fileName>，未设置名字"`。
+**找不到主角色卡时回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，`getPersonaName()` 在 `name` 为空时返回 `"<fileName>，未设置名字"`（按会话取的卡没写名字时是那张卡的文件名）。
 
 **`reply: true` 必须有且仅有一个。** `parseRawOutputFormat` 取最后一个 `reply:true` 的 key 作为 `replyField`。如果没有任何 reply 字段，整段 outputFormat 作废并返回 `undefined`。存在多个 reply 字段时不会报错，但只有最后一个生效。
 

@@ -74,7 +74,7 @@ core 只做插件的注册、激活、关停与两种原语（事件、服务）
 - api-doctor：删除 `CheckSpec.label`（从未被读取）。
 - api-embedding：`EmbeddingService` 新增可选的 `readonly modelId`（向量空间标识：同值即向量可比，换模型必须换值）。
 - api-agent：`agent:reply:before` 的数据新增可选字段 `visibleContent`。
-- api-persona：`PersonaSessionOptions` 新增可选字段 `systemPromptExtra`。
+- api-persona：`PersonaSessionOptions` 新增可选字段 `systemPromptExtra`。`getPersonaName` 与 `getNickNames` 新增可选参数 `options?: PersonaSessionOptions`：`options.persona` 指定会话用的卡时返回那张卡的名字、昵称，不传时返回主卡的，旧调用方不变。触发插件的名字表按会话传入。
 - api-flow-control：删除 `FlowControlService.ensureState`（没有调用方；`recordIncoming` 与带 platform 的 `setMuted` 会按需建会话状态）。
 - schema-message：删除类型别名 `_MessageRef`；新增运行时导出 `WellKnownMetadataKeys`（`VisibleContent = 'visibleContent'`）。`buildAttachmentRefMatcher` 的 desc 字符类收紧到与 `parseAttachmentRefs` 一致（排除 `|`）：schema-message 0.8.1 之前写入、desc 含裸 `|` 的存量占位符不再匹配，plugin-media 的 `update_image_description` 改写不了它们，消息本身不变。
 - schema-log：`parseLogLine` 不再解析旧的 `seq|timestamp|level|scope|message` 行（runtime 0.12 及更早的写入格式），不带 `@aalis/log:1 ` 前缀的行一律返回 `null`。
@@ -87,7 +87,7 @@ core 只做插件的注册、激活、关停与两种原语（事件、服务）
 - 要换前端，改为在插件里 `provide(webuiClient, { getClientDir }, { label })`；主动提供的前端默认先于自动发现的前端胜出，已存过 `webui-client` 服务偏好时到 WebUI「服务」页切换。展示名优先取提供方插件的 displayName，没有时取 provide 的 `label` 选项。
 - `registerCheck` 调用里删掉 `label`。
 - 第三方 embedding 提供者建议声明 `modelId`，取值 `<provider>:<model>`；不声明时行为不变。
-- 中间件改写 `agent:reply:before` 的 `content`、使其不再是可见正文时（如保留 JSON 给前端渲染），填写 `visibleContent`。自定义 persona 实现把 `systemPromptExtra` 追加在人设提示之后。
+- 中间件改写 `agent:reply:before` 的 `content`、使其不再是可见正文时（如保留 JSON 给前端渲染），填写 `visibleContent`。自定义 persona 实现把 `systemPromptExtra` 追加在人设提示之后；支持按会话选卡的实现，`getPersonaName` / `getNickNames` 按 `options.persona` 返回那张卡的名字、昵称，不支持的忽略参数即可（名字表按主卡取）。
 - 第三方 `FlowControlService` 实现删掉 `ensureState`，调用它的代码删掉该调用。
 - `_MessageRef` 改用 `Message`（二者等价）。
 - 自行用 `parseLogLine` 读旧日志归档的代码，先把旧行转成新格式或自行解析。WebUI 日志页与 CLI 历史日志不受影响：runtime 0.13 起每次启动截断重写 `data/latest.log`。
@@ -275,6 +275,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 上游返回空流时也按 persona 的要求重试。
 - 会话配置的额外系统提示（`SessionConfig.systemPromptExtra`，WebUI 的「额外提示」）开始生效：agent 透传给 persona，追加在人设提示之后、结构化输出格式说明之前；未装 persona 时不生效。
 - persona 不再搜索 `configDir:/personas`，只在 `personasDir`（默认 `data/personas`）查找人设卡。`personasDir` 的配置说明改正为 storage URI 口径（解析方式未变）：不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根。scheduler 等合成回合按 sessionId 约定推断会话类型，只用于提示词、不回写消息；子任务会话（`<父会话 id>::<后缀>`）不推断。
+- persona 的 `getPersonaName` / `getNickNames` 按传入的 `options.persona` 取卡（找不到该卡时回落主卡；卡没写名字时报那张卡的文件名），与 `getSystemPrompt` 等方法同一取法。
 - persona 的非主卡 `outputFormat` 改为按卡缓存：显示名相同的两张卡不再共用格式，热改非主卡的 `outputFormat` 后无需重启即生效。
 - 结构化输出（persona `outputFormat`）落库时，assistant 消息的 metadata 带解码后的可见正文（`visibleContent`），只在它与落库内容不同时写入。memory-vector 建索引、扩窗与召回的渲染优先读它，memory-summary 的摘要输入同样优先读它，JSON 信封与状态字段不再进入摘要；升级前落库的消息没有这个键，仍按原文呈现。
 - memory_recall 在 `crossSessionMode=user` 下与被动注入一致，对当前用户本人发言或被 @ 的命中乘 `search.userPriorityBoost`（此前工具路径不加权）；回合中止信号传给查询 embedding 与扩窗取数，回合中止时工具返回「回合已中止」，不记 warn。
@@ -407,12 +408,12 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳一戳 / 名字直通、计数与活跃指数判定、闲置主动开口。flow-control 只做节流硬闸：禁言（含落盘与平台禁言同步）、回复后冷却、限速。入站相位随之对调为 `confirm → command → trigger → flow → dispatch`（顺序常量 `INBOUND_PHASE_ORDER` 在 `@aalis/api-gateway`）。
 
-要不要开口由**触发插件**判定，新服务 `trigger`（契约包 `@aalis/api-trigger`）选出生效的那一个：触发插件各自 `provide(trigger, 自己的实例)` 并在 `inbound:trigger` 相位挂中间件，服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一，其余触发插件对每条消息直接放行、什么都不做；没有触发插件时这一相位不做判定，消息照常进入 flow 相位。trigger-policy 是规则触发插件（优先级 0），作用域、禁言、禁言关键词、计数与活跃指数、点名识别与闲置主动开口都在它内部，判定同步完成；只装它时的判定即下文所述。它的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，闲置主动开口也只在它生效时注入。每条判定记一行 debug 日志（不含正文）。`@aalis/api-trigger` 另导出触发插件共用的宿主函数：生效者判断 `isActiveTrigger`、禁言关键词 `hitsMuteKeyword`、名字表 `createBotNames`、点名识别 `isAddressed`、附件识别限时等待 `waitForAttachmentDescriptions`、放行收尾 `markTriggered`、吞掉时的影子归档 `archiveSwallowed`；写日志的函数由调用方传入日志前缀。切换触发插件：WebUI 服务页把 `trigger` 的偏好切到另一个，即时生效；停用生效的触发插件，下一条消息由剩下的接手；手改配置文件的 `servicePreferences` 需重启。
+要不要开口由**触发插件**判定，新服务 `trigger`（契约包 `@aalis/api-trigger`）选出生效的那一个：触发插件各自 `provide(trigger, 自己的实例)` 并在 `inbound:trigger` 相位挂中间件，服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一，其余触发插件对每条消息直接放行、什么都不做；没有触发插件时这一相位不做判定，消息照常进入 flow 相位。trigger-policy 是规则触发插件（优先级 0），作用域、禁言、禁言关键词、计数与活跃指数、点名识别与闲置主动开口都在它内部，判定同步完成；只装它时的判定即下文所述。它的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，闲置主动开口也只在它生效时注入。每条判定记一行 debug 日志（不含正文）。`@aalis/api-trigger` 另导出触发插件共用的宿主函数：生效者判断 `isActiveTrigger`、禁言关键词 `hitsMuteKeyword`、名字表 `createBotNames`（按会话取人设，因此新依赖 `@aalis/api-session-manager`）、点名识别 `isAddressed`、附件识别限时等待 `waitForAttachmentDescriptions`、放行收尾 `markTriggered`、吞掉时的影子归档 `archiveSwallowed`；写日志的函数由调用方传入日志前缀。切换触发插件：WebUI 服务页把 `trigger` 的偏好切到另一个，即时生效；停用生效的触发插件，下一条消息由剩下的接手；手改配置文件的 `servicePreferences` 需重启。
 
 行为变化：
 
 - 被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速；禁言期除外。
-- 名字检测取 `triggerNames` 与全部已登记人设（`persona` 服务的全部提供者）的名字、昵称的并集，此前只取当前生效的人设。agent 仍只用当前生效的那一个人设，同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字、照常判定，记一条 warn（同一提供者同一原因只记一次）；此前整条判定异常，记 warn 后放行、不写 `triggerType`。
+- 名字检测取 `triggerNames` 与全部已登记人设（`persona` 服务的全部提供者）的名字、昵称的并集，人设按会话取：与 agent 同一取法，经 session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给 `getPersonaName` / `getNickNames`。会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响；session-manager 缺席时取全局默认的卡，解析抛错时同样取全局默认的卡并记一条 warn（同一原因只记一次）。此前只取当前生效人设的主卡，会话改用别的卡时那张卡的名字不算点名。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字、照常判定，记一条 warn（同一提供者同一原因只记一次）；此前整条判定异常，记 warn 后放行、不写 `triggerType`。
 - 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、跨会话委派、定时任务注入的消息同样被吞。
 - 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow、跨会话委派）不经触发策略，不计数，`triggerType` 不被改写（委派的 `proactive` 原样保留）；flow 相位对它不查回复后冷却，禁言与限速照常生效（限速仅在会话落入 flow-control 作用域时）。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：先用会话已记下的平台与类型，没有再按会话 ID 约定推断（见下文回复记账一条）；此前只看消息自带的类型，默认 `*:group` 下算作用域外（作用域配成 `*`，或配成 `onebot:*` 且消息平台为 `onebot` 时本来就在作用域内）。因此默认作用域 `*:group` 下配置了限速时（`rateLimitWindow` 默认 0，即关闭），bot 在某个群的限速窗口已满，发往该群的定时提醒、workflow 输出会被吞掉并做影子归档，定时任务不重试；session 档闲置提示同样被吞（闲置提示不归档）；委派在派发前就被限速闸拒绝。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`；第三方适配器投递真人消息**不得**设置 `source`（`schema-message` 的字段说明已据此更新），否则会被当作内部注入跳过触发策略与冷却。
 - 冷却期内的禁言关键词照常生效；平台禁言期内的关键词不再识别，不会缩短平台禁言。戳一戳通知不做禁言关键词匹配。
@@ -445,7 +446,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 `@aalis/schema-message` 0.9.0 新增 `buildIncomingContent`：入站消息拼成归档文本（发送者前缀、引用回复、附件描述）的函数，从 plugin-message-archive 原样移入，归档行为不变；供触发判定拼当前消息时与归档共用同一份拼法。
 
-另新增 `@aalis/plugin-trigger-laya` 0.1.0（`private: true`，不发布到 npm，不计入本批包数）：模型触发插件，经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定作用域内（`scopes` / `overrides`，默认 `*:group`）的消息开不开口，没有计数。它在 `trigger` 服务里的优先级为 10，与 trigger-policy 同时启用时由它生效。@、叫名字、戳一戳不强制开口，只决定开口后记 `immediate` 还是 `interval`、授权主体是谁。点名识别用的名字表同时作为 `selfNames` 发给侧车，侧车渲染时把正文里的这些名字换成模型认识的 bot 代号；不认识该字段的旧侧车忽略它，插件与侧车的升级顺序无关。判定不了时（侧车连续 3 次失败后熔断 30 秒、memory 缺席、侧车回 422 / 413、请求体超过侧车 1 MiB 上限、会话不是 onebot 的群聊或私聊）只回点名，其余消息归档后吞掉，不回退到 trigger-policy；422、413 与请求体超限只让这一条兜底，不计入熔断。侧车熔断或 memory 缺席使判定由可用转为不可用时记一条 error，恢复时记一条 warn；诊断项 `trigger.laya` 报侧车状态。带附件的消息先等识别写好描述，最多 `mediaWaitMs`（默认 8000 毫秒）。运行期自检：向侧车发请求前记下当前消息的哈希与长度，这条消息归档后与归档正文比对，按「一致 / 判定时缺附件描述 / 含文件附件 / 其它 / 未归档」计数，每结清 200 条记一行只含计数的 info 日志。从仓库源码运行时它与其它插件一样被发现并默认启用，启用即生效：本机没有侧车时群里只回点名；不用时在 WebUI 插件管理里停用，或写进配置文件的 `disabledPlugins`。说明见该包 README。
+另新增 `@aalis/plugin-trigger-laya` 0.1.0（`private: true`，不发布到 npm，不计入本批包数）：模型触发插件，经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定作用域内（`scopes` / `overrides`，默认 `*:group`）的消息开不开口，没有计数。它在 `trigger` 服务里的优先级为 10，与 trigger-policy 同时启用时由它生效。@、叫名字、戳一戳不强制开口，只决定开口后记 `immediate` 还是 `interval`、授权主体是谁。点名识别用的名字表（按会话取人设）同时作为 `selfNames` 发给侧车，侧车渲染时把正文里的这些名字换成模型认识的 bot 代号；不认识该字段的旧侧车忽略它，插件与侧车的升级顺序无关。判定不了时（侧车连续 3 次失败后熔断 30 秒、memory 缺席、侧车回 422 / 413、请求体超过侧车 1 MiB 上限、会话不是 onebot 的群聊或私聊）只回点名，其余消息归档后吞掉，不回退到 trigger-policy；422、413 与请求体超限只让这一条兜底，不计入熔断。侧车熔断或 memory 缺席使判定由可用转为不可用时记一条 error，恢复时记一条 warn；诊断项 `trigger.laya` 报侧车状态。带附件的消息先等识别写好描述，最多 `mediaWaitMs`（默认 8000 毫秒）。运行期自检：向侧车发请求前记下当前消息的哈希与长度，这条消息归档后与归档正文比对，按「一致 / 判定时缺附件描述 / 含文件附件 / 其它 / 未归档」计数，每结清 200 条记一行只含计数的 info 日志。从仓库源码运行时它与其它插件一样被发现并默认启用，启用即生效：本机没有侧车时群里只回点名；不用时在 WebUI 插件管理里停用，或写进配置文件的 `disabledPlugins`。说明见该包 README。
 
 本批开发期间加入过、未随任何版本发布的配置已改：trigger-policy 删除 `decisionTimeoutMs` 与 `mediaWaitMs`（规则判定不看附件；等附件识别的上限改为 plugin-trigger-laya 自己的 `mediaWaitMs`）；plugin-trigger-laya 删除 `mode`（`off` / `shadow` / `live`，不想让某些会话走模型就把它们移出 `scopes`），`overrides` 只覆盖 `threshold`，新增 `scopes`、`triggerOnAt` / `triggerOnPoke` / `triggerNames`、`muteKeywords` / `muteTimeSeconds` 与 `mediaWaitMs`（此前由 trigger-policy 代管）。从开发分支升级的配置里残留的这几个顶层字段由 runtime 按 schema 裁掉并记一条 warn。plugin-trigger-laya `overrides` 各项不被裁剪（数组项不按 schema 裁），残留的 `mode` 不再生效，但条目本身仍会启用它的作用域（写一条覆盖即启用）：开发期用 `{scope, mode: shadow}` 或 `{scope, mode: off}` 表示「这里不走模型」的条目，升级后要整条删除，只删 `mode` 会让该作用域改由模型判定（如 `{scope: '*:private', mode: shadow}` 只删 `mode`，私聊就交给模型判定，判不回即吞掉）。原意是让某个群不走模型的，删掉覆盖还不够，`*:group` 仍覆盖它，要把它移出 `scopes`（见该包 README「切换与回滚」）。
 

@@ -85,10 +85,10 @@ outputFormat:
 
 - `getSystemPrompt(options?)`: 返回静态人设提示（名称、描述、性格、prompt、会话级额外提示 `systemPromptExtra` 及 outputFormat 格式说明），同一张卡下逐轮不变
 - `getVolatilePrompt(options?)`: 返回逐轮变化的上下文，包括当前时间（`timeInjection`，时区取 `timeZone`）、当前会话环境、上一轮状态（`statePersistence`）；调用方应把它放在历史消息之后、当前用户消息之前。定时、编排、委派等合成回合的消息不带会话类型时，按 sessionId 的 `<platform>:<self>:<type>:<target>` 约定推断；子任务会话（`<父会话 id>::<uuid>`）不推断
-- `getPersonaName()`: 返回角色名称
+- `getPersonaName(options?)`: 返回角色名称；`options.persona` 指定会话用的卡时返回那张卡的（找不到该卡时回落主卡）
 - `getOutputFormat(options?)`: 返回生效角色卡的结构化输出定义；角色卡没有 outputFormat、没有字段标记 `reply: true`，或会话设置了 `disableOutputFormat` 时返回 undefined
 - `isClientSideJsonRendering(options?)`: 返回是否由客户端渲染 JSON；会话选项优先于角色卡设置
-- `getNickNames()`: 返回角色卡的 `nick_name` 列表，供触发检测使用
+- `getNickNames(options?)`: 返回角色卡的 `nick_name` 列表，供触发检测使用；按 `options` 取卡，同上
 - `getPersonaSkills(options?)`: 返回角色卡的 `skills` 白名单；未声明时返回 undefined
 - `isTimeInjectionEnabled()`: 返回是否启用时间注入，供其它插件判断是否需要注册时间相关工具
 - `getSessionState(sessionId)`: 返回该会话最近一次保存的结构化输出状态（仅 `statePersistence` 启用时有值）

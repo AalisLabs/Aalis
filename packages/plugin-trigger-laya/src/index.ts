@@ -18,6 +18,7 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
+import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
@@ -195,6 +196,8 @@ const uses = {
   flowControl: optional(flowControl),
   // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
+  // 名字表按会话取人设：解析会话配置里的角色卡；缺席时取全局默认的卡
+  sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
   // 缺席时不等附件识别，cur 里缺附件描述
@@ -224,8 +227,8 @@ function run(caps: Caps): void {
   // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行
   const self: TriggerService = { label: 'Laya 模型' };
   caps.provide(trigger, self, { priority: cfg.priority, label: self.label });
-  /** 名字表：别名与全部人设的名字、昵称；某个人设读名字出错只跳过它的名字 */
-  const botNames = createBotNames(caps.persona, logger, '[laya]');
+  /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
+  const botNames = createBotNames(caps.persona, caps.sessionManager, logger, '[laya]');
 
   // ----- 可用性：熔断与告警 -----
 
@@ -335,7 +338,7 @@ function run(caps: Caps): void {
         curNick: message.nickname,
         replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
         selfId,
-        // 超过侧车上限的名字不发（截断后的名字会误换正文），超出个数的取前面的：别名与当前生效的人设在前
+        // 超过侧车上限的名字不发（截断后的名字会误换正文），超出个数的取前面的：别名在前，人设按服务解析顺序
         selfNames: names.filter(n => n.length <= MAX_SELF_NAME_LENGTH).slice(0, MAX_SELF_NAMES),
       },
       (_key, value: unknown) => (typeof value === 'string' ? toWellFormedText(value) : value),
@@ -430,7 +433,7 @@ function run(caps: Caps): void {
       return; // swallow
     }
 
-    const names = botNames(cfg.triggerNames);
+    const names = botNames(cfg.triggerNames, message);
     const addressed = isAddressed(message, names, cfg);
 
     const { threshold } = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
