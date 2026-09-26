@@ -21,13 +21,13 @@ export interface TriggerService {
 export const trigger = defineService<TriggerService>('trigger');
 ```
 
-服务只用来选出生效者：触发插件拿 `trigger.current`（胜者）与自己的实例比身份，不调用方法。`label` 是触发插件的名字，进日志与诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 服务页显示的是 `provide` 时传的 `label`，两处取同一个值。
+服务只用来选出生效者：触发插件拿 `trigger.current`（胜者）与自己的实例比身份，不调用方法。`label` 是触发插件的名字，进诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 服务页显示的是 `provide` 时传的 `label`，两处取同一个值。
 
 共用的宿主函数（同一文件）：
 
 | 函数 | 作用 |
 |---|---|
-| `isActiveTrigger(phase, trigger, self)` | 这次入站是否由 `self` 判定。胜者每次入站只取一次，记在这次的相位数据上（见 §5） |
+| `isActiveTrigger(phase, trigger, self)` | 这次入站是否由 `self` 判定。胜者每次入站只取一次，以这次的相位数据为键记在 api-trigger 模块内的表里（见 §5） |
 | `hitsMuteKeyword(message, keywords)` | 正文是否包含任一禁言关键词；戳一戳通知恒不命中（正文是合成文案，内嵌戳者昵称） |
 | `isAddressed(message, persona, opts)` | 是否被点名：戳一戳只看 `triggerOnPoke`，不做 @ 与名字检测；其余消息看 `triggerOnAt` 的 `<at self>` 与名字检测（`triggerNames`、人设名字与昵称）。persona 抛错时照抛 |
 | `waitForAttachmentDescriptions(message, media, waitMs, logger)` | 带附件、尚无描述且 media 在场时启动识别，最多等 `waitMs`；超时照常返回，永不抛错 |
@@ -113,7 +113,7 @@ export default definePlugin({
 ## 5. 行为不变量
 
 - **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。
-- **胜者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 `trigger.current`，记在这次入站的相位数据上，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
+- **胜者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 `trigger.current`，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
 - **切换即时生效**。WebUI 服务页把 `trigger` 的偏好切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
 - **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。
 - **状态不共享**。各触发插件的状态只属于自己：trigger-policy 的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，不生效期间不计数；闲置主动开口到点时它不生效就跳过（不注入，也不记为 bot 开口），agent 回复也不记。
