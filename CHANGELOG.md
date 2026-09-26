@@ -402,11 +402,11 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 **迁移**：从 `@aalis/core/dist/…` 深路径导入的，改为从包根 `@aalis/core` 导入；包根没有导出的内部模块不再能导入。用 `Parameters<App['pluginAll']>[0][number]` 推导条目类型的，可以改用 `PluginRegistration`。按 `@aalis/core/package.json` 读版本号的照常可用。用了 `optional()` 且开 `declaration` 的插件要在 core 0.18.0 下重新构建：旧产物 `.d.ts` 里的深路径在 `exports` 下解析不到。
 
-### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、新包 @aalis/api-trigger）
+### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、新包 @aalis/api-trigger）
 
 trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳一戳 / 名字直通、计数与活跃指数判定、闲置主动开口。flow-control 只做节流硬闸：禁言（含落盘与平台禁言同步）、回复后冷却、限速。入站相位随之对调为 `confirm → command → trigger → flow → dispatch`（顺序常量 `INBOUND_PHASE_ORDER` 在 `@aalis/api-gateway`）。
 
-trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁言关键词、记入站、点名识别，以及开口后的清零、`triggerType` 与授权主体都在宿主。"开不开口"交给新服务 `trigger`（契约包 `@aalis/api-trigger`）的提供者按序判定（偏好 > 优先级 > 注册顺序），第一个不弃权的说了算。trigger-policy 自带规则提供者（点名、计数与活跃指数，优先级 0，不弃权），只装它时的判定与下文一致；判定模型等提供者以更高优先级登记在它前面，弃权、抛错或超过新配置 `decisionTimeoutMs`（默认 2000 毫秒）时回落到规则。此时 `triggerOnAt` / `triggerOnPoke` / `triggerNames` 只决定是否被点名，即开口后记 `immediate` 还是 `interval`、授权主体是谁，不决定开不开口。提供者要看附件描述时由宿主启动识别，最多等新配置 `mediaWaitMs`（默认 8000 毫秒），每条消息只识别一次；只有规则判定时不启动识别。每条判定记一行 debug 日志（不含正文）。回滚到规则判定：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」即时生效；手改配置文件的 `servicePreferences` 需重启。
+trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁言关键词、记入站、点名识别，以及开口后的清零、`triggerType` 与授权主体都在宿主。"开不开口"交给新服务 `trigger`（契约包 `@aalis/api-trigger`）的提供者按序判定（偏好 > 优先级 > 注册顺序），第一个不弃权的说了算。trigger-policy 自带规则提供者（点名、计数与活跃指数，优先级 0，不弃权），只装它时的判定与下文一致；判定模型等提供者以更高优先级登记在它前面，弃权、抛错或超过新配置 `decisionTimeoutMs`（默认 2000 毫秒）时回落到规则。此时 `triggerOnAt` / `triggerOnPoke` / `triggerNames` 只决定是否被点名，即开口后记 `immediate` 还是 `interval`、授权主体是谁，不决定开不开口。提供者要看附件描述时由宿主启动识别，最多等新配置 `mediaWaitMs`（默认 8000 毫秒），每条消息只识别一次；放行与吞掉都不等识别跑完，agent 预处理器与归档按消息对象复用这次识别；只有规则判定时不启动识别。每条判定记一行 debug 日志（不含正文）。回滚到规则判定：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」即时生效；手改配置文件的 `servicePreferences` 需重启。
 
 行为变化：
 
@@ -418,7 +418,8 @@ trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁�
 - session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
 - platform 档闲置触发把注入本身记为 bot 开口，agent 沉默时不会反复挑中同一会话；禁言期内 session 档到点跳过。
 - 冷却与限速只按 agent 的真实回复计，且只对 flow-control 作用域内的会话记账：按会话已记下的类型判，类型未知的会话（如仅经委派抵达）只有会话类型段为通配的作用域（`onebot:*`、`*`）命中。默认 `*:group` 下委派到私聊或 WebUI 的回复不计入，委派闸门对它们不设限；需要限制的在 `scopes` 里纳入。委派派发时不再预记一次回复，同一次委派不会被计两次，也不会在回复落地前给目标会话预设冷却。
-- plugin-media 的 `processMessage` 按消息对象只处理一次：同一条消息再次调用（进行中则等它）返回同一份报告，不重复识别。写回 `_attachmentDescriptions` 时保留本插件不写的位：此前 file-reader 的预处理器先于 media 运行时（两者先后取决于登记次序），文件描述会被整表覆盖冲掉。
+- plugin-media 的 `processMessage` 按消息对象只处理一次：同一条消息再次调用（进行中则等它）返回同一份报告，不重复识别。写回 `_attachmentDescriptions` 时保留本插件不写的位：此前 file-reader 的预处理器先于 media 运行时（两者先后取决于登记次序），文件描述会被整表覆盖冲掉。写回 `attachments` 时不再整表替换，只给写回那一刻的数组逐项补 `mimeType`，识别期间 file-reader 换好的 `aalis-file://` 引用不会被改回原始数据；plugin-file-reader 的预处理器结尾同样只写文件附件自己的描述位，不再整表写回开头读到的描述。
+- plugin-message-archive 的 `archiveIncoming` 对传入的消息对象调 `processMessage`，识别结果（附件描述、补齐的 `mimeType`）写回入参；此前对内部拷贝识别，入参不变。触发判定已启动的识别在归档时命中，不再识别第二遍。
 
 **破坏性变更与迁移**：
 
