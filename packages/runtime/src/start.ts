@@ -201,12 +201,25 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 典型链条：A 缺 apiKey 激活失败（有 ERROR）→ 依赖 A 所提供服务的 B 静默挂起，
   // 用户只看到 A 的报错，会以为「只是 A 不可用」，不知道 B 也一并废了
   // （实例：embedding-openai 缺 key → memory-vector 永远不激活，向量记忆整个不工作）。
-  for (const p of app.plugins.getStatus()) {
+  // 没有提供者的服务若由仍在激活中（含已转入后台）的插件声明提供，报「等待 <实例> 激活完成」而非缺少：
+  // 它的服务在激活完成前不对外。判据同 plugin-doctor 的 plugins.pending。
+  const status = app.plugins.getStatus();
+  const activating = status.filter(s => s.state === 'activating');
+  for (const p of status) {
     if (p.state !== 'pending') continue;
-    const unmet = (p.requiredServices ?? []).filter(svc => host.services.inspect(svc).length === 0);
-    if (unmet.length > 0) {
-      app.logger.warn(`插件 "${p.instanceId}" 依赖未满足，未激活（缺少服务: ${unmet.join('、')}）`);
+    const missing: string[] = [];
+    const waiting = new Set<string>();
+    for (const svc of p.requiredServices ?? []) {
+      if (host.services.inspect(svc).length > 0) continue;
+      const provider = activating.find(s => s.provides?.includes(svc));
+      if (provider) waiting.add(provider.instanceId);
+      else missing.push(svc);
     }
+    const reasons = [
+      ...(missing.length > 0 ? [`缺少服务: ${missing.join('、')}`] : []),
+      ...[...waiting].map(id => `等待 ${id} 激活完成`),
+    ];
+    if (reasons.length > 0) app.logger.warn(`插件 "${p.instanceId}" 依赖未满足，未激活（${reasons.join('；')}）`);
   }
 
   // 向重启我们的父进程回报「起来了」。父进程据此决定放手退出，还是判定本次

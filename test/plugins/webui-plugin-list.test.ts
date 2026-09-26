@@ -2,7 +2,7 @@ import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService } from '@aalis/api-webui';
 import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
@@ -22,6 +22,7 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
+import { deferred } from '../helpers/deferred.js';
 
 // GET /api/plugins 与 /api/pages 必须按 instanceId 归属工具 / 指令 / displayName。
 // 生产里 tools.register 的 pluginName 就是 contextId（= instanceId）；按 definition.name
@@ -185,6 +186,28 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
       state: 'active',
       uses: before.find(p => p.name === 'waiting')?.uses,
     });
+  });
+
+  it('激活超过慢激活阈值转入后台：列表以 activating 与 slow: true 披露，落定后不再带 slow', async () => {
+    const { app } = hostedApp({}, { slowThresholdMs: 20 });
+    apps.push(app);
+    const gate = deferred();
+    const { invoke } = mountPluginRoutes(app);
+    const rows = async () =>
+      ((await invoke('GET /api/plugins')).body as { plugins: Array<Record<string, unknown>> }).plugins;
+    try {
+      await app.plugin(definePlugin({ name: 'slow-probe', apply: () => gate.promise }));
+      await app.plugin(definePlugin({ name: 'quick-probe', apply() {} }));
+      await app.plugins.idle();
+      const during = await rows();
+      expect(during.find(p => p.name === 'slow-probe')).toMatchObject({ state: 'activating', slow: true });
+      expect(during.find(p => p.name === 'quick-probe')?.state).toBe('active');
+      expect(during.find(p => p.name === 'quick-probe')?.slow).toBeUndefined();
+    } finally {
+      gate.resolve();
+    }
+    await vi.waitFor(() => expect(app.plugins.getPlugin('slow-probe')?.state).toBe('active'));
+    expect((await rows()).find(p => p.name === 'slow-probe')?.slow).toBeUndefined();
   });
 
   it('GET /api/plugins 的 tools/commands/capabilities 必须按 instanceId 索引，不能用 definition.name', async () => {

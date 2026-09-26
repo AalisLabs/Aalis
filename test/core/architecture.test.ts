@@ -66,6 +66,8 @@ interface Parsed {
   eventKeys: string[];
   /** 全部事件发射调用（属性访问与 `['emit']` 元素访问两种写法） */
   emits: EmitCall[];
+  /** 能自行补出宿主全局、绕过白名单的写法：`declare` 修饰的声明、对 globalThis 的引用、脚本文件（`行号: 写法`） */
+  hostEscapes: string[];
 }
 
 const parsed = new Map<string, Parsed>();
@@ -95,9 +97,21 @@ function parseSource(file: string, source: string): Parsed {
     nonEmptyInterfaces: new Set(),
     eventKeys: [],
     emits: [],
+    hostEscapes: [],
   };
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
+    const hostEscape =
+      ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(m => m.kind === ts.SyntaxKind.DeclareKeyword)
+        ? node.getText(sf).split('\n')[0]
+        : ts.isIdentifier(node) &&
+            node.text === 'globalThis' &&
+            !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
+          ? 'globalThis'
+          : null;
+    if (hostEscape) {
+      out.hostEscapes.push(`${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1}: ${hostEscape}`);
+    }
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const clause = node.importClause;
       const bindings = clause?.namedBindings;
@@ -207,6 +221,8 @@ function parseSource(file: string, source: string): Parsed {
     ts.forEachChild(node, visit);
   };
   visit(sf);
+  // 没有 import / export 的文件是脚本：顶层声明直接进全局，不写 declare 也能补出宿主全局
+  if (!ts.isExternalModule(sf)) out.hostEscapes.push('1: 文件没有 import / export，顶层声明会成为全局');
   return out;
 }
 
@@ -477,6 +493,27 @@ describe('core 环境无关：只用 ES 标准库与登记的宿主全局', () =
     const registered = [...new Set([...HOST_GLOBALS.matchAll(/(?:function|interface|var) (\w+)/g)].map(m => m[1]))];
     const inCore = runTscProbe('', probeConfig).filter(e => e.startsWith('packages/core/src/'));
     expect([...new Set(missingNames(inCore))]).toEqual(registered.sort());
+  });
+
+  it('core 源码没有 declare 声明、不引用 globalThis、每个文件都是模块（否则能自行补出宿主全局，上面两条照样全绿）', () => {
+    const offenders = walk(SRC_DIR).flatMap(file => parse(file).hostEscapes.map(hit => `${relToSrc(file)}:${hit}`));
+    expect(offenders, '宿主全局只经 HOST_GLOBALS 登记，环境专有件由宿主经 AppOptions 注入').toEqual([]);
+  });
+
+  it.each([
+    'export {}; declare const process: any;',
+    'export {}; declare let require: any;',
+    'export {}; declare var Buffer: any;',
+    'export {}; declare function require(id: string): unknown;',
+    'export {}; declare class Buffer {}',
+    'export {}; declare namespace NodeJS {}',
+    "export {}; declare module 'node:process' {}",
+    'export {}; declare global { var process: any; }',
+    'export {}; void globalThis.process;',
+    'export {}; void (globalThis as any).process;',
+    'var setImmediate: (callback: () => void) => void;',
+  ])('绕过白名单的写法被拒绝：%s', source => {
+    expect(parseSource('probe.ts', source).hostEscapes).toHaveLength(1);
   });
 });
 

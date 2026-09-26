@@ -105,7 +105,8 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 必须实现 `saveMessage` / `getHistory` / `clearSession`。其余方法带 `?` 可选，但缺失会导致对应功能降级：
 
 - 不实现 `getRecentMessagesAcrossSessions` → 跨会话历史注入功能直接 no-op。
-- 不实现 `trimHistory` / `clearAll` → summary 压缩、全局清除会被跳过。
+- 不实现 `trimHistory` → summary 压缩会被跳过。
+- 不实现 `clearAll` → `/clear all` 不清消息历史，回报一条失败结果。
 - 不实现 `deleteMessagesByTimestamps` → checkpoint 回滚失效。
 
 参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。

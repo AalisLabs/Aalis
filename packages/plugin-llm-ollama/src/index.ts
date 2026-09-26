@@ -1154,14 +1154,18 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
 
   // 装配 refresh 真实实现：webui 触发时无需重启插件，按 diff 增删 entries。
   // 同 provider 下所有 OllamaModelHandle 共享同一份 refresh（通过 refreshFn 间接转发）。
+  // 与初次注册一样随停用或停机中止：每次 await 之后自己查，中止即抛出，不再增删条目。
   refreshFn = async () => {
-    const next = await discoverAllModelIds();
+    const next = await discoverAllModelIds(lifecycle.signal);
+    lifecycle.signal.throwIfAborted();
     const nextSet = new Set(next);
     const added: string[] = [];
     const removed: string[] = [];
     for (const id of next) {
       if (!registered.has(id)) {
-        registerOne(id, await client.fetchModelCapabilities(id));
+        const detected = await client.fetchModelCapabilities(id, lifecycle.signal);
+        lifecycle.signal.throwIfAborted();
+        registerOne(id, detected);
         if (registered.has(id)) added.push(id); // 非对话模型被跳过,不算新增
       }
     }

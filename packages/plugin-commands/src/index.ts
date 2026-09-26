@@ -373,12 +373,18 @@ function registerCommands({
 
       if (!types || types.includes('context')) {
         try {
-          if (isGlobal && memoryService.clearAll) {
+          if (!isGlobal) {
+            await memoryService.clearSession(cmdCtx.sessionId);
+            clearData.results.push({ source: 'memory', success: true, message: '当前会话消息历史已清空' });
+          } else if (memoryService.clearAll) {
             await memoryService.clearAll();
             clearData.results.push({ source: 'memory', success: true, message: '所有消息历史和归档已清空' });
           } else {
-            await memoryService.clearSession(cmdCtx.sessionId);
-            clearData.results.push({ source: 'memory', success: true, message: '当前会话消息历史已清空' });
+            clearData.results.push({
+              source: 'memory',
+              success: false,
+              message: '记忆后端不支持全局清空，消息历史未清理',
+            });
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

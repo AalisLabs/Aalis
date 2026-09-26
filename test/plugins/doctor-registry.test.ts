@@ -7,7 +7,7 @@
  * - spec.run 抛错时被收纳为 error 级别 check，不影响其它检查
  * - generatedAt / summary 正确生成
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
- * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据）
+ * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据），仍在激活中的提供者归为等待
  * - plugins.slow 点名激活超过阈值、已转入后台的插件
  */
 import { describe, expect, it } from 'vitest';
@@ -180,6 +180,39 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const pending = report.checks.find(c => c.id === 'plugins.pending');
     expect(pending?.level).toBe('warn');
     expect(pending?.detail).toBe('zz-doctor-pending-probe: 缺少 zz-doctor-missing-a、zz-doctor-missing-b');
+    await app.stop();
+  });
+
+  it('plugins.pending 把仍在激活中的插件声明提供的服务归为等待它激活完成，其余仍报缺少', async () => {
+    const { app, doctor } = await boot({ slowThresholdMs: 20 });
+    const slowService = defineService<object>('zz-doctor-slow-svc');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const provider = definePlugin({
+      name: 'zz-doctor-slow-provider',
+      provides: [slowService],
+      uses: { provide },
+      async apply({ provide }) {
+        provide(slowService, {});
+        await gate;
+      },
+    });
+    const probe = definePlugin({
+      name: 'zz-doctor-waiting-probe',
+      uses: { slow: slowService, missing: defineService<unknown>('zz-doctor-missing-c') },
+      apply() {},
+    });
+    await app.plugins.register(provider, {});
+    await app.plugins.register(probe, {});
+    await app.plugins.idle();
+
+    const pending = (await doctor.runChecks()).checks.find(c => c.id === 'plugins.pending');
+    expect(pending?.detail).toBe(
+      'zz-doctor-waiting-probe: 缺少 zz-doctor-missing-c；等待 zz-doctor-slow-provider 激活完成',
+    );
+    release();
     await app.stop();
   });
 
