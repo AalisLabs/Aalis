@@ -16,9 +16,8 @@ import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 const SELF = '10000';
 const v11 = new OneBotV11();
 
-/** 触发插件的 @ 判定（只认 <at self>；不配名字、无 persona，只看 @） */
-const mentionsSelf = (content: string) =>
-  isAddressed({ content }, { current: undefined }, { triggerOnAt: true, triggerOnPoke: true, triggerNames: [] });
+/** 触发插件的 @ 判定（只认 <at self>；名字表为空，只看 @） */
+const mentionsSelf = (content: string) => isAddressed({ content }, [], { triggerOnAt: true, triggerOnPoke: true });
 
 function parseString(message: string) {
   return v11.parseMessageEvent(
