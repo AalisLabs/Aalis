@@ -1,10 +1,12 @@
 # @aalis/plugin-flow-control
 
-> 平台无关的消息流控插件 —— 禁言 / 冷却 / 限速 / 闲置触发 / 评分阈值
+> 平台无关的节流硬闸 —— 禁言 / 回复后冷却 / 限速
 
 ## 定位
 
-ChatFlow 状态机提供：消息计数、活跃指数衰减、禁言/冷却/限速窗口、空闲主动触发。逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台；是否对某个平台或会话类型生效，由 `scopes` / `overrides` 决定。默认只覆盖 `*:group`；CLI、WebUI 等不区分会话类型的平台，需要在 `scopes` 中另加 `cli`、`webui` 或 `*`。
+只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由 [plugin-trigger-policy](./plugin-trigger-policy.md) 决定，本插件不参与。
+
+逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。冷却与限速只对命中 `scopes` / `overrides` 的会话生效，默认只覆盖 `*:group`；CLI、WebUI 等不区分会话类型的平台，需要在 `scopes` 中另加 `cli`、`webui` 或 `*`。禁言不受作用域限制。
 
 ## 插件声明
 
@@ -19,7 +21,6 @@ export default definePlugin({
     lifecycle,
     config,
     provide,
-    gateway,
     storage: optional(storage),
     messageArchive: optional(messageArchive),
   },
@@ -29,64 +30,50 @@ export default definePlugin({
 
 ## 注册的服务
 
-| 服务名 | 接口 | 主要方法 |
+| 服务名 | 接口 | 方法 |
 |---|---|---|
-| `flow-control` | `FlowControlService`（来自 `@aalis/api-flow-control`） | `recordIncoming` / `recordReply` / `recordTriggered` / `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted` / `getStateSnapshot` / `getThreshold` / `rescheduleIdle` |
+| `flow-control` | `FlowControlService`（来自 `@aalis/api-flow-control`） | `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted` |
 
 ## 接入相位
 
 ```
-inbound:flow   （由 plugin-gateway 在 inbound:command 之后、inbound:trigger 之前触发）
+inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispatch 之前触发）
 ```
 
-仅对命中 `scopes`（或任一 `overrides[].scope`）的入站消息生效，未命中的会话直接放行；默认 `*:group` 与历史 OneBot ChatFlow 行为一致。对命中作用域的消息先执行 `recordIncoming`（计数、活跃指数照常累加），再依次检查以下三道闸门。命中任一条即吞掉消息、不调用 `next()`；若加载了 `message-archive`，被吞的消息会归档（shadow archive），供下次触发时作为上下文：
+进入本相位时，trigger-policy 已判定要开口并写好 `message.triggerType`。处理顺序：
 
-1. 自禁言期内（`mutedUntil > now`）—— **不**重新调度 idle，避免禁言结束后立即被闲置触发唤醒
-2. 冷却期内（`cooldownUntil > now`）—— 重新调度 idle
-3. 限速窗口已耗尽 —— 重新调度 idle
+1. 会话处于禁言期 → 吞掉。不看作用域、不看来源：闲置触发、跨会话委派、定时任务注入的消息在禁言期同样不说话。禁言状态只由禁言关键词或平台禁言事件针对具体会话写入，作用域之外的会话不会被误伤。
+2. `source === 'idle-trigger'` 或不在作用域内 → `next()` 放行。
+3. 记录会话元数据（platform / sessionType / targetId，供分作用域覆盖匹配）。
+4. `triggerType !== 'immediate'` 时，冷却期内或限速窗口已满 → 吞掉。被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速。
+5. `next()` 进入 dispatch。
 
-通过闸门后调用 `next()` 进入 `trigger-policy`。
+被吞掉的消息在加载了 `message-archive` 时做影子归档（shadow archive），下次触发时作为上下文；闲置触发的合成提示不归档。
 
-## 闲置触发
+## 出站联动
 
-`idleTriggerScope` 三档：
+监听 `outbound:message`：`source === 'agent'` 的出站消息对**任意会话**记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。委派到私聊等从未经过入站闸门的目标，其回复同样计入限速。命令回复与系统回复不计入。
 
-- `off`：完全关闭
-- `session`：每会话独立 `setTimeout`，到点 `gateway.ingressMessage` 注入一条 `source='idle-trigger'` 消息
-- `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最久没有活动的一个注入闲置触发消息。候选还要过 per-scope 覆盖：该会话有效配置的 `idleTriggerScope` 不是 `platform`（被单独关成 `off` 或改成 `session`）就跳过，提示词也按候选会话的有效 `idleTriggerPrompt` 取。但节奏本身只看顶层配置——`idleTriggerMinutes` 与 `idleTriggerStrategy` 在 `platform` 档下不吃 per-scope 覆盖（定时器是跨会话共用的一个，选中会话在挑之后才确定）。每轮之间至少隔一个阈值量级（`idleTriggerMinutes`，下限 60 秒）：发出去了、还是一轮下来全被挤出没有候选，都一样退避，不会每秒重试。进程内一个活动记录都还没有时（重启后即如此），以启动时刻为静默起点——首轮至少等一个 `idleTriggerMinutes`
+冷却与限速按真实回复计，不按"判定放行"计。trigger-policy 在判定放行时即复位计数，放行后若恰好处于冷却或限速期，这次触发作废。
 
-注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`，flow-control / trigger-policy 中间件均会跳过策略判定，直接交给 agent。
+## 禁言
+
+- `setMuted(sessionId, sec, platform)`：`sec > 0` 禁言到 `now + sec`，`sec <= 0` 解除。会话尚无状态时须给出 `platform` 才会建立状态。
+- 调用方：trigger-policy 命中禁言关键词时；OneBot 适配器收到 bot 自身被禁言/解禁的 notice，或重连后按 `shut_up_timestamp` 恢复时。
+- 禁言状态落盘到 `data:/flow-control-mutes.json`，重启后恢复未过期的禁言。冷却与限速是秒级短期状态，不落盘。
 
 ## 配置
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 生效作用域：格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。 |
-| `fixedInterval` | number | `5` | 固定间隔（每 N 条触发） |
-| `activityScoreLower` | number | `0.3` | 活跃指数下限 |
-| `activityScoreUpper` | number | `0.85` | 活跃指数上限 |
-| `activityDecayMinutes` | number | `10` | 阈值衰减分钟 |
-| `scoreDecayMinutes` | number | `0` | 评分衰减分钟（0=不衰减） |
+| `scopes` | multiselect | `["*:group"]` | 冷却与限速的生效范围：格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。禁言不受此项限制。 |
 | `cooldownSeconds` | number | `10` | 回复后冷却（秒） |
 | `rateLimitWindow` | number | `0` | 限速窗口（秒，0=关闭） |
 | `rateLimitMaxReplies` | number | `10` | 窗口内最大回复数 |
-| `idleTriggerScope` | select | `'off'` | 闲置触发范围 |
-| `idleTriggerStrategy` | select | `'all-quiet'` | 闲置触发策略 |
-| `idleTriggerMinutes` | number | `180` | 闲置触发分钟 |
-| `idleTriggerStyle` | select | `'exponential'` | 闲置触发风格 |
-| `idleTriggerMaxMinutes` | number | `1440` | 闲置触发上限分钟 |
-| `idleTriggerJitter` | boolean | `true` | 闲置触发抖动 |
-| `idleTriggerPrompt` | string | `''` | 闲置触发系统提示 |
-| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId &gt; sessionType &gt; platform &gt; 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。 |
+| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段（`cooldownSeconds` / `rateLimitWindow` / `rateLimitMaxReplies`）；字段留空（或不填）= 沿用上方默认。最具体匹配优先（targetId &gt; sessionType &gt; platform &gt; 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却。 |
 
-## 出站联动
+评分类字段（`fixedInterval` / `activityScore*` / `*DecayMinutes`）与闲置触发字段（`idleTrigger*`）已移到 trigger-policy，迁移方法见根目录 `CHANGELOG.md`。
 
-监听 `outbound:message`：只有 `source === 'agent'` 且该会话已存在流控状态（通常意味着曾经过 `inbound:flow` 闸门）的出站消息才会调用 `recordReply`，依次执行：设置冷却（`cooldownSeconds > 0` 时）、把 idle 退避重置为 1、记录限速时间戳、重新调度会话级闲置触发。命令回复和系统回复不计入。
+## 状态清理
 
-## OneBot 适配器协作
-
-适配器仍维护一份本地 `selfMuted: Map<sessionId, untilTs>`（用于 `getSelfMutes()` 工具），但禁言/解禁的实际状态机交给 flow-control：
-
-- bot 自身被禁言/解禁的 notice（v11 `group_ban`，v12 `group_member_ban` / `group_member_unban`）→ `setSelfMute(sessionId, duration)` → `flow.setMuted(sessionId, duration, 'onebot')`；解禁时时长传 0，禁言时长未知时按 60 秒计
-- 重连后通过 `get_group_member_info.shut_up_timestamp` 懒查询恢复
-- 主动发送的限速 (`checkAndRecordProactiveSend`) 也走 flow-control 的限速桶
+会话状态每天扫描一次：无挂起禁言/冷却且 30 天未见（入站过闸或 agent 回复）的会话被删除。

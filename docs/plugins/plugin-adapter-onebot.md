@@ -101,7 +101,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 两种上报消息格式都支持：实现端的 `message` 既可以是消息段数组，也可以是含 `[CQ:…]` 码的字符串（`message_format=string`）。字符串格式在 v11 入站时先被规范化成消息段数组，之后附件提取、引用回复提取与 `segmentsToText()` 富文本渲染与数组格式共用同一条路径——`<at self>` 标记与 selfId 判定只有一处，CQ 码不会流进下游文本（`trigger-policy` 的 @ 判定因此只认 `<at self>`）。段类型名与 data 键沿用 v11 段语义（`at.qq`、`image.url`/`file`、`reply.id` 等），参数原样透传。
 
-适配器不做流控或触发判定：消息事件解析后直接以 `inbound:message` 发出，由 `@aalis/plugin-flow-control` 与 `@aalis/plugin-trigger-policy` 在 `inbound:flow` / `inbound:trigger` 相位决定是否响应。机器人自身的群禁言与解禁事件，以及启动或重连后按 `shut_up_timestamp` 恢复的禁言状态，通过 `flow-control` 服务的 `setMuted` 同步。
+适配器不做流控或触发判定：消息事件解析后直接以 `inbound:message` 发出，由 `@aalis/plugin-trigger-policy` 与 `@aalis/plugin-flow-control` 在 `inbound:trigger` / `inbound:flow` 相位决定是否响应。机器人自身的群禁言与解禁事件，以及启动或重连后按 `shut_up_timestamp` 恢复的禁言状态，通过 `flow-control` 服务的 `setMuted` 同步。
 
 ## 附件与图片
 

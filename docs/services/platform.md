@@ -30,7 +30,6 @@ export interface PlatformAdapter {
   canHandle?(sessionId: string): boolean | Promise<boolean>;        // 路由用，见下  (:67)
   getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;  // 自报机器人身份  (:69)
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>; // 平台原生 API
-  checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string }; // 主动发送限速闸门
 }
 ```
 
@@ -62,7 +61,7 @@ export interface PlatformAdapter {
 
 ### 参考实现（provider）
 
-- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了全部可选方法（`getSelfIdentity`、`callAction`、`checkAndRecordProactiveSend`），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
+- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了全部可选方法（`getSelfIdentity`、`callAction`），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
 - **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；`sessionTypes: []` 表示单会话不区分类型。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。
@@ -71,7 +70,7 @@ export interface PlatformAdapter {
 
 - **plugin-agent**：`getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId)` 给归档的 assistant 消息打 `userId`/`nickname` 元数据（`src/index.ts`）；`uses` 中声明 `platform: optional(platform)`。
 - **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
-- **plugin-tool-session**：跨会话委派工具 `delegate_to_session` 用 `resolvePlatformBySession(platform, targetSessionId)` 定位目标平台并调用其 `checkAndRecordProactiveSend` 限速闸门（`src/index.ts`）。
+- **plugin-tool-session**：跨会话委派工具 `delegate_to_session` 用 `resolvePlatformBySession(platform, targetSessionId)` 定位目标平台，把平台名写进派发的入站消息（`src/index.ts`）。
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-authority**：`getPlatformNames(platform)` 进可选作用域候选（`src/index.ts`）。
 - **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypes` 生成 `gateway-scopes` 笛卡尔积。
@@ -84,7 +83,7 @@ export interface PlatformAdapter {
 
 **必须实现**：`adapterName`、`platform`、`getConnections()`、`sendMessage()`。
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，路由发消息/委派都找不到你的 adapter。
-**按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`checkAndRecordProactiveSend`（接入主动发送限速）、`sessionTypes`（让 UI 能列出你的真实会话类型）。
+**按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`sessionTypes`（让 UI 能列出你的真实会话类型）。
 
 ### 入站消息：出站接口之外还需 emit
 
@@ -146,7 +145,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-- **主动发送限速（反 prompt-injection 骚扰）**：跨会话委派（`delegate_to_session`）在向外部平台 sessionId 派发合成消息前调 `checkAndRecordProactiveSend`，返回 `{ allowed:false, reason }` 即拒发（`plugin-tool-session/src/index.ts`）。**面向外部用户的平台 adapter 应实现此闸门**（OneBot 委托 `flow-control` 的 `isRateLimited`/`recordReply`，`adapter-onebot/src/index.ts`），否则该平台不做主动发送限速、任由委派外发。
+- **主动发送限速（反 prompt-injection 骚扰）**：跨会话委派（`delegate_to_session`）派发前直接查 `flow-control`：目标会话禁言中或限速窗口已满即拒发（`plugin-tool-session/src/index.ts`）。限速按目标会话 agent 的真实回复计，与平台无关，adapter 不需要为此实现任何方法。
 - **跨会话身份隔离**：`getSelfIdentity(sessionId?)` 必须按 `sessionId` 定位到**正确的连接**再返回身份（OneBot 用 `parseSessionId` → `findStateBySelfId`）。多账号/多连接平台若忽略 `sessionId` 永远返回同一身份，会把 A 会话的机器人身份泄漏进 B 会话的 LLM prompt（persona 把它装进 `AsyncLocalStorage` 正是为防跨会话泄漏，`plugin-persona/src/index.ts`）。
 - **`callAction` 是平台原生权能的逃逸口**：它能调任意平台 Action（封禁、踢人等）。本服务**不在 adapter 层做 authority 校验**——风险/等级控制由调用工具侧（如 `plugin-tool-onebot` 的工具定义 + 其 `risk` 标注）经 authority 把关。provider 实现 `callAction` 时应假设调用方已鉴权，但要对 `sessionId` 解析失败/连接不可用做硬校验（OneBot 在不可用时 throw）。authority 模型见 [security-model](../concepts/security-model.md) 与 `docs/plugins/plugin-authority.md`。
 - **`platform` 不是沙盒**：它只是出口抽象；`sendMessage`/`callAction` 直达真实平台，没有任何隔离层。SSRF 安全出口请走 `safeFetch`（`util-network-guard`），不要在 adapter 里裸 `fetch` 外部 URL。

@@ -40,7 +40,6 @@
 | `@aalis/plugin-memory-vector` | `semantic-memory` |
 | `@aalis/plugin-scheduler` | `scheduler` |
 | `@aalis/plugin-skills` | `skills` |
-| `@aalis/plugin-trigger-policy` | `trigger-policy` |
 | `@aalis/plugin-websearch-serper` | `web-search` |
 
 宿主管理面（须显式 uses）：`app` / `plugins` 由 core 在根激活上提供（`packages/core/src/orchestration/host-services.ts`）；
@@ -85,7 +84,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 | api 包 | 注入的钩子键 |
 |---|---|
 | `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` |
-| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` |
+| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` |
 | `@aalis/api-memory` | `memory:clear` |
 
 ---

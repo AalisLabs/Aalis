@@ -103,7 +103,7 @@ core 只做插件的注册、激活、关停与两种原语（事件、服务）
 | plugin-authority | `AuthorityService`；`AuthorityManager` | 前者 `@aalis/api-authority`；后者无替代，经 `authority` 服务使用 |
 | plugin-doctor | `CheckCategory` / `CheckLevel` / `CheckResult` / `CheckSpec` / `DoctorReport` / `DoctorService` | `@aalis/api-doctor` |
 | plugin-session-manager | `PlatformProfile` / `SessionConfig` / `SessionInfo` / `SessionManagerService` / `SessionTreeNode` | `@aalis/api-session-manager` |
-| plugin-flow-control | `FlowControlService` / `FlowSessionStateSnapshot`（`FlowControlConfig` 仍从本包导出） | `@aalis/api-flow-control` |
+| plugin-flow-control | `FlowControlService`（`FlowControlConfig` 仍从本包导出；`FlowSessionStateSnapshot` 随契约收窄删除，见「回复闸门职责重组」） | `@aalis/api-flow-control` |
 | plugin-workflow | `NodeSpec` / `TriggerSpec` / `WorkflowDef` / `WorkflowRun` / `WorkflowService` | `@aalis/api-workflow` |
 | plugin-tool-system | `ToolsBasicConfig` | 无替代 |
 | plugin-webui-server | `WSIncoming` / `WSIncomingSchema` | 无替代（协议 schema 属实现细节） |
@@ -401,6 +401,30 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 发布包附带 `src/`：`dist` 里的 source map 与 declaration map 指向的源码随包在场，调试器与编辑器的「转到定义」能跳到 TypeScript 源码。安装体积约增加 200 KB。
 
 **迁移**：从 `@aalis/core/dist/…` 深路径导入的，改为从包根 `@aalis/core` 导入；包根没有导出的内部模块不再能导入。用 `Parameters<App['pluginAll']>[0][number]` 推导条目类型的，可以改用 `PluginRegistration`。按 `@aalis/core/package.json` 读版本号的照常可用。用了 `optional()` 且开 `declaration` 的插件要在 core 0.18.0 下重新构建：旧产物 `.d.ts` 里的深路径在 `exports` 下解析不到。
+
+### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session）
+
+trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳一戳 / 名字直通、计数与活跃指数判定、闲置主动开口。flow-control 只做节流硬闸：禁言（含落盘与平台禁言同步）、回复后冷却、限速。入站相位随之对调为 `confirm → command → trigger → flow → dispatch`（顺序常量 `INBOUND_PHASE_ORDER` 在 `@aalis/api-gateway`）。
+
+行为变化：
+
+- 被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速；禁言期除外。
+- 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、跨会话委派、定时任务注入的消息同样被吞。
+- 冷却期内的禁言关键词照常生效；平台禁言期内的关键词不再识别，不会缩短平台禁言。戳一戳通知不做禁言关键词匹配。
+- 禁言期内的消息不累计计数，禁言前已攒的计数与活跃指数清零。
+- session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
+- platform 档闲置触发把注入本身记为 bot 开口，agent 沉默时不会反复挑中同一会话；禁言期内 session 档到点跳过。
+- 冷却与限速只按 agent 的真实回复计，对任意会话生效（委派到私聊等从未入站过闸的目标也计入限速）。委派派发时不再预记一次回复，同一次委派不会被计两次，也不会在回复落地前给目标会话预设冷却。
+
+**破坏性变更与迁移**：
+
+- **配置字段搬家**：`fixedInterval` / `activityScoreLower` / `activityScoreUpper` / `activityDecayMinutes` / `scoreDecayMinutes` 与 `idleTriggerScope` / `idleTriggerStrategy` / `idleTriggerMinutes` / `idleTriggerStyle` / `idleTriggerMaxMinutes` / `idleTriggerJitter` / `idleTriggerPrompt` 从 plugin-flow-control 移到 plugin-trigger-policy，字段名与默认值不变；`overrides` 里的同名字段一并移动。flow-control 只保留 `scopes` / `overrides` / `cooldownSeconds` / `rateLimitWindow` / `rateLimitMaxReplies`。不提供自动迁移。runtime 在启动与热重载时会裁掉 schema 外的字段并写回配置文件，因此须先停止运行中的进程，再在配置文件中把上述字段从 flow-control 节整体移到 trigger-policy 节，然后用新版本启动，并核对非默认值未被回填为默认值。
+- **`@aalis/api-flow-control` 收窄**：`FlowControlService` 只剩 `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted`；删除 `ensureState` / `getStateSnapshot` / `recordIncoming` / `recordTriggered` / `recordReply` / `getThreshold` / `rescheduleIdle` 与 `FlowSessionStateSnapshot`。计数与阈值归 trigger-policy 内部；冷却与限速由 flow-control 监听 `outbound:message` 自行记账，自建主动发送通道发 `source: 'agent'` 的 `outbound:message` 即被计入。
+- **`@aalis/api-platform` 删除 `PlatformAdapter.checkAndRecordProactiveSend`**：跨会话委派改由 plugin-tool-session 直接查 flow-control（目标会话禁言中或限速已满即拒绝），适配器无需实现任何方法；自研适配器删掉该方法即可。
+- **plugin-trigger-policy 不再注册 `trigger-policy` 服务**（`TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除），原服务没有外部消费者。判定结果仍写在 `message.triggerType`。
+- **相位顺序**：注册在 `inbound:flow` 的第三方 handler 现在运行在 `inbound:trigger` 之后，能读到 `triggerType`；依赖"flow 先于 trigger"的 handler 需改挂相位。
+
+`@aalis/api-gateway` 0.7.0 另新增作用域纯函数 `extractTargetId` / `isScopeEnabled` / `resolveEffectiveConfig`，flow-control 与 trigger-policy 共用。
 
 ### 包清单元数据（41 个包）
 
