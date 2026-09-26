@@ -142,6 +142,39 @@ describe('插件拓扑：required 真环', () => {
   });
 });
 
+describe('插件拓扑：同一提供者的多项服务', () => {
+  it('消费者 required 同一提供者的两项服务：同源两条边只计一次入度，排在提供者之后激活，不误报依赖环', async () => {
+    const w = world();
+    const a = defineService<object>('zz-oe-twin-a');
+    const b = defineService<object>('zz-oe-twin-b');
+    const applied: string[] = [];
+    await w.app.pluginAll([
+      {
+        definition: definePlugin({
+          name: 'twin-consumer',
+          uses: { a, b },
+          apply: () => void applied.push('twin-consumer'),
+        }),
+      },
+      {
+        definition: definePlugin({
+          name: 'twin-provider',
+          uses: { provide },
+          provides: [a, b],
+          apply({ provide }) {
+            applied.push('twin-provider');
+            provide(a, {});
+            provide(b, {});
+          },
+        }),
+      },
+    ]);
+    await w.app.plugins.idle();
+    expect(applied).toEqual(['twin-provider', 'twin-consumer']);
+    expect(w.at('warn')).toEqual([]);
+  });
+});
+
 describe('关停编排：缠绕的 required 环', () => {
   it('两个 required 环共用一个插件：每次只放开环内一个阶段，残环再点名一次，停机不悬挂', async () => {
     const w = world();

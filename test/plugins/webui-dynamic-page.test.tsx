@@ -10,7 +10,7 @@ import type { WebuiPageDef } from '../../packages/plugin-webui-client/src/types.
 // ════════════════════════════════════════════════════════════
 
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
-/** method → 返回值（或抛出的错误） */
+/** method（或 api() 的请求路径）→ 返回值（或抛出的错误） */
 let replies: Record<string, unknown> = {};
 /** 经 api() 请求过的路径（动态选项等） */
 const apiPaths: string[] = [];
@@ -24,6 +24,7 @@ vi.mock('../../packages/plugin-webui-client/src/api', () => ({
   }),
   api: vi.fn(async (path: string) => {
     apiPaths.push(path);
+    if (replies[path] instanceof Error) throw replies[path];
     if (path.startsWith('/api/models/')) {
       return { models: [], providers: [{ value: 'p/m1', model: 'm1', provider: 'p', contextId: 'p' }] };
     }
@@ -137,6 +138,13 @@ describe('DynamicPage 表单动态选项', () => {
     render(<DynamicPage page={dynFormPage} />);
     await waitFor(() => expect(screen.getByRole('option', { name: 'p / m1' })).toBeTruthy());
     expect(apiPaths).toContain('/api/models/svc%2Fx');
+  });
+
+  it('选项拉取失败：下拉显示「无可选项」，不一直停在「加载中...」', async () => {
+    replies = { getForm: { model: '' }, '/api/models/svc%2Fx': new Error('500') };
+    render(<DynamicPage page={dynFormPage} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: '无可选项' })).toBeTruthy());
+    expect(screen.queryByRole('option', { name: '加载中...' })).toBeNull();
   });
 });
 

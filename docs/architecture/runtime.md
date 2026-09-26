@@ -32,8 +32,8 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createFsPluginLoader` | **monorepo 自托管**加载器：扫 `<cwd>/packages`，复用同一 `aalis-plugin` 纯关键词正向门。 |
 | `createPluginDiscovery(app, loader, doc)` | 发现驱动：`loadAll()` 发现并导入全部插件，按文档取各实例的配置与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）由本包导出。 |
 | `createFsYamlConfigProvider(configPath?)` | 文件系统 + YAML 配置 provider（返回 `{config, provider}`，交给 `createConfigStore`）。 |
-| `createConfigStore(initial, provider?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`，外部变更经 `provider.watch` 接入。本身不碰文件。 |
-| `installHostConfig(app, store)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。插件拿到的 `save()` 兑现即已落盘，失败以拒绝传出并已记一笔 error。须在登记任何插件之前调用。 |
+| `createConfigStore(initial, provider?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。本身不碰文件。 |
+| `installHostConfig(app, store)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
 | `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数均为 `(app, store, opts?)`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余差异经 `updateConfig` 重建）；接管变更监听，在 `app:stopping` 时停止。 |
 | `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |

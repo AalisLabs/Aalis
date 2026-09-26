@@ -59,13 +59,13 @@ export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<
 
   /** 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余 */
   async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {
-    const loaded: Array<{ desc: PluginDescriptor; item: PluginRegistration }> = [];
+    const loaded: PluginRegistration[] = [];
     for (const desc of descriptors) {
       try {
         // 加载器已按入口约定判定（pluginDefinitionOf），不是插件返回 null；定义本身的校验在注册时做
         const definition = fresh && loader.reload ? await loader.reload(desc) : await loader.load(desc);
         if (!definition) continue;
-        loaded.push({ desc, item: registration(definition) });
+        loaded.push(registration(definition));
       } catch (err) {
         log.error(`加载插件 "${desc.name}" 失败:`, err);
       }
@@ -104,9 +104,9 @@ export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<
       const discovered = await loader.discover();
       log.info(`发现 ${discovered.length} 个插件`);
       const loaded = await importAll(discovered, false);
-      const known = new Map(loaded.map(({ item }) => [item.definition.name, item.definition]));
+      const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
       warnOrphanedConfig(known, discovered);
-      await app.pluginAll([...loaded.map(({ item }) => item), ...configuredInstances(known)]);
+      await app.pluginAll([...loaded, ...configuredInstances(known)]);
       // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();
     },
@@ -120,11 +120,11 @@ export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<
         else fresh.push(desc);
       }
       const loaded = await importAll(fresh, true);
-      for (const { item } of loaded) known.set(item.definition.name, item.definition);
-      const results = await app.pluginAll([...loaded.map(({ item }) => item), ...configuredInstances(known)]);
+      for (const item of loaded) known.set(item.definition.name, item.definition);
+      const results = await app.pluginAll([...loaded, ...configuredInstances(known)]);
       // 模块自报的 name 与描述符不同且已注册时 register 会拒绝——那不算热加载，不报进名单。
       // 报的是登记进注册表的主实例名（定义名），不是加载器给的描述符名（通常是包名，二者可以不同）。
-      const names = loaded.filter((_, i) => results[i]).map(({ item }) => item.definition.name);
+      const names = loaded.filter((_, i) => results[i]).map(item => item.definition.name);
       for (const name of names) log.info(`热加载插件: ${name}`);
       return names;
     },

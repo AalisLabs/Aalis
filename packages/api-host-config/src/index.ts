@@ -53,7 +53,7 @@ export interface HostConfig {
   setServicePreference(name: string, contextId: string): void;
   removeServicePreference(name: string): void;
   /**
-   * 持久化当前文档。返回的 Promise 兑现时保存已完成；失败以拒绝传出，调用方应 await。
+   * 持久化当前文档。返回的 Promise 兑现时保存已完成（宿主不持久化时立即兑现、不写盘）；失败以拒绝传出，调用方应 await。
    * 配置源有尚未生效的外部修改而拒写时以 {@link ConfigSaveRefusedError} 拒绝（用 {@link isConfigSaveRefused} 判定），
    * 其它失败（如写入出错）原样传出。
    * 失败时提供方已记一笔日志（拒写记告警，其它记 error）并把拒绝标记为已处理：不 await 的调用不会变成未处理拒绝。

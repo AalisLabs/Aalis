@@ -775,6 +775,19 @@ describe('plugin-file-reader: resolveLocalPath', () => {
       await fx.dispose();
     }
   });
+
+  it('其余存储错误照常抛出，不当成「文件不存在」', async () => {
+    const fx = await setup();
+    try {
+      const { id } = await fx.upload('s-path', 'a.txt', 'hello');
+      fx.store.resolveLocalPath = async () => {
+        throw new Error('存储根 data 不允许该操作 (readable)');
+      };
+      await expect(fx.service().resolveLocalPath(id)).rejects.toThrow('不允许该操作');
+    } finally {
+      await fx.dispose();
+    }
+  });
 });
 
 // ════════════════════════════════════════════════════════════

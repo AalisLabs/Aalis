@@ -16,7 +16,7 @@ import { cloneConfigObject, isUnsafeConfigKey } from '@aalis/schema-config';
  */
 export interface ConfigProvider {
   /**
-   * 持久化当前完整文档。不提供表示宿主拒绝持久化（内存配置 / 只读部署）。
+   * 持久化当前完整文档。不提供表示宿主不持久化（内存配置 / 只读部署），save() 立即兑现、不写盘。
    * 不排队也不去重：上一次未结束时可能再次被调用，实现须可重入；传入的是活对象，
    * 跨 await 使用须自行复制；写的原子性与外部编辑的合并由实现自负。
    */
@@ -27,11 +27,12 @@ export interface ConfigProvider {
 
 /**
  * 宿主持有的配置文档。读写方法与插件经 host-config 看到的相同；落盘与外部变更监听只给宿主：
- * `persist()` 是裸落盘，不记日志，失败原样以拒绝传出。插件拿到的 `save()` 由 {@link installHostConfig}
+ * `persist()` 是裸落盘，不记日志，兑现值表示是否交给了 provider 落盘（provider 不提供 save 时为 false），
+ * 失败原样以拒绝传出。插件拿到的 `save()` 由 {@link installHostConfig}
  * 包上日志与「拒绝已处理」，两者名字不同，本对象因此不能被误当成 HostConfig 直接交出去。
  */
 export interface ConfigStore extends Omit<HostConfig, 'save'> {
-  persist(): Promise<void>;
+  persist(): Promise<boolean>;
   /** 订阅外部变更（新快照已过同一道闸替换进文档后回调）；单订阅者，返回退订 */
   watch(onChange: () => void): () => void;
   unwatch(): void;
@@ -91,7 +92,9 @@ export function createConfigStore(initial: Partial<AalisConfig>, provider?: Conf
     },
     // async：同步 provider 的抛错也以拒绝传出，调用方统一经 Promise 接住
     persist: async () => {
-      await provider?.save?.(config);
+      if (!provider?.save) return false;
+      await provider.save(config);
+      return true;
     },
     watch(onChange) {
       if (onChangeCallback) throw new Error('配置变更只支持一个订阅者，先 unwatch 再订阅');
@@ -126,8 +129,8 @@ export function installHostConfig(app: App, store: ConfigStore): void {
       // 失败在这里记一笔并标记已处理：不 await 的调用方不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出
       save: () => {
         const done = (async () => {
-          await persist();
-          app.logger.info('配置已保存');
+          // 宿主不持久化时没有写盘，不记「已保存」
+          if (await persist()) app.logger.info('配置已保存');
         })();
         done.catch(err => {
           try {

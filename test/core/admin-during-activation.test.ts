@@ -87,7 +87,7 @@ function makeGatedPlugin(
 }
 
 describe('unload 撞上 activating 窗口', () => {
-  it('在飞 ctx 被完整拆卸：无服务残留、无幽灵登记、发 unloaded 不发 loaded', async () => {
+  it('在飞 ctx 被完整拆卸：无服务残留、无幽灵登记；从未激活完成，loaded 与 unloaded 都不发', async () => {
     const { app, host, trace } = makeWorld();
     const { definition, entered, release } = makeGatedPlugin(trace);
     const registering = app.plugin(definition);
@@ -103,7 +103,7 @@ describe('unload 撞上 activating 窗口', () => {
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
     expect(host.services.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
-    expect(trace).toContain('unloaded:gated');
+    expect(trace).not.toContain('unloaded:gated');
     expect(trace).not.toContain('loaded:gated');
     expect(host.hub.list()).toEqual([]);
   });

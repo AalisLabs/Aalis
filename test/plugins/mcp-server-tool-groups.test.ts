@@ -11,6 +11,7 @@ import { freePort } from '../helpers/net.js';
 // 与文档的 string[] 不一致：按文档写的配置每次启动都报 invalid，WebUI 编辑会把字符串展开成对象；
 // 代码两种都收，null / '*' 这类裸值则在 .map 上抛 TypeError。
 // 空数组 = 全部暴露，所以认不出的形态必须拒绝启动，不能退化成空数组（fail-open）。
+// 拒绝启动即激活失败、实例转 error：只记日志的话插件显示运行中、doctor 全绿，实际没有监听。
 // ════════════════════════════════════════════════════════════
 
 function captureLogger() {
@@ -42,8 +43,8 @@ afterEach(async () => {
   for (const a of apps.splice(0)) await a.stop().catch(() => {});
 });
 
-async function start(toolGroups: unknown) {
-  const port = await freePort();
+async function start(toolGroups: unknown, port?: number) {
+  const listenPort = port ?? (await freePort());
   const { logger, errors, infos } = captureLogger();
   const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
@@ -53,9 +54,10 @@ async function start(toolGroups: unknown) {
     getSummaries: () => [],
     execute: async () => ({ content: '' }),
   } as never);
-  await app.plugins.register(mcpServer, { port, bind: '127.0.0.1', toolGroups, allowRestricted: false });
+  await app.plugins.register(mcpServer, { port: listenPort, bind: '127.0.0.1', toolGroups, allowRestricted: false });
   await app.plugins.idle();
-  return { port, errors, infos, state: app.plugins.getPlugin(mcpServer.name)?.state };
+  const entry = app.plugins.getPlugin(mcpServer.name);
+  return { port: listenPort, errors, infos, state: entry?.state, error: entry?.error };
 }
 
 describe('plugin-mcp-server toolGroups', () => {
@@ -81,11 +83,17 @@ describe('plugin-mcp-server toolGroups', () => {
     ['null（YAML 裸键）', null],
     ['含非字符串元素', ['search', 1]],
   ] as const) {
-    it(`${label}：报错且不监听，不退化成全部暴露`, async () => {
+    it(`${label}：激活失败且不监听，不退化成全部暴露`, async () => {
       const r = await start(value);
-      expect(r.errors.join('\n')).toContain('toolGroups 非法');
-      expect(r.state, '配置错误走日志，不把插件打进 error 态').toBe('active');
+      expect(r.state, '配置错误只记了日志，插件显示运行中').toBe('error');
+      expect(r.error).toContain('toolGroups 非法');
       expect(await isListening(r.port)).toBe(false);
     });
   }
+
+  it('端口非法：激活失败，原因可见', async () => {
+    const r = await start([], 0);
+    expect(r.state, '配置错误只记了日志，插件显示运行中').toBe('error');
+    expect(r.error).toContain('端口非法');
+  });
 });

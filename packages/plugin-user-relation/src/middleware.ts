@@ -8,12 +8,11 @@
  * - 仅在 direct/immediate 触发下注入（避免 idle/interval 占用 token）
  * - 与 plugin-user-profile 解耦：profile 侧重"是谁/喜好"，relation 侧重"经历过什么/与谁有关系"
  * - 深度 / 宽度由配置控制；带 visited 防环
- * - 失败优雅降级：任何异常仅 debug log，绝不阻断 agent 流程
+ * - 失败不阻断 agent 流程：构建抛错由组装器记 warn，本贡献本轮缺席
  */
 
 import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
-import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -44,17 +43,15 @@ interface MiddlewareConfig {
   maxGlobalHotEntities: number;
   /** 仅 sessionType === 'group' 时注入 */
   groupOnly: boolean;
-  debug: boolean;
 }
 
 /** 注入贡献用到的能力 */
 interface ContributionCaps {
   contributions: Contributions;
-  logger: Logger;
 }
 
 export function registerRelationContribution(
-  { contributions, logger }: ContributionCaps,
+  { contributions }: ContributionCaps,
   service: RelationService,
   cfg: MiddlewareConfig,
 ): void {
@@ -64,12 +61,7 @@ export function registerRelationContribution(
     async build(view) {
       // 干跑(token 快照)跳过关系图查询；幂等/落点/查重由组装器按全局键统一保障
       if (view.dryRun) return null;
-      try {
-        return await buildBlock(service, view, cfg);
-      } catch (err) {
-        if (cfg.debug) logger.debug(`[user-relation] 贡献构建异常: ${stringifyErr(err)}`);
-        return null;
-      }
+      return buildBlock(service, view, cfg);
     },
   });
 }
@@ -338,8 +330,4 @@ function shortSentiment(s: string): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
-}
-
-function stringifyErr(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

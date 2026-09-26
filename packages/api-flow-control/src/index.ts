@@ -37,8 +37,6 @@ export interface FlowSessionStateSnapshot {
 }
 
 export interface FlowControlService {
-  /** 获取或创建 session 状态（首次访问会初始化）。可选 sessionType / targetId 用于 per-scope 覆盖匹配。 */
-  ensureState(sessionId: string, platform: string, sessionType?: string, targetId?: string): void;
   /** 只读快照（trigger-policy 用） */
   getStateSnapshot(sessionId: string): FlowSessionStateSnapshot | undefined;
 

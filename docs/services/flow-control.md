@@ -17,8 +17,6 @@
 
 ```ts
 export interface FlowControlService {
-  /** 获取或创建 session 状态（首次访问会初始化）。sessionType/targetId 用于 per-scope 覆盖匹配 */
-  ensureState(sessionId: string, platform: string, sessionType?: string, targetId?: string): void;
   /** 只读快照（trigger-policy 用） */
   getStateSnapshot(sessionId: string): FlowSessionStateSnapshot | undefined;
 
@@ -132,7 +130,6 @@ export default definePlugin({
     void gateway;
     void messageArchive;
     const service: FlowControlService = {
-      ensureState(_sessionId, _platform, _sessionType, _targetId) {},
       getStateSnapshot(_sessionId) {
         return undefined;
       },
@@ -160,7 +157,6 @@ export default definePlugin({
     hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
       const { message } = data;
       if (message.source === 'idle-trigger') return next();
-      service.ensureState(message.sessionId, message.platform, message.sessionType);
       service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType);
       if (
         service.isMuted(message.sessionId) ||

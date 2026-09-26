@@ -1,4 +1,4 @@
-import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError, type HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes, saveAfterApply } from '../../packages/plugin-webui-server/src/routes/plugins.js';
@@ -19,7 +19,7 @@ function ref<T>(instance: unknown): ServiceRef<T> {
   return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
 }
 
-function setup(opts: { save?: () => Promise<void> } = {}) {
+function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) {
   const store: Record<string, unknown> = {
     name: 'Aalis',
     logLevel: 'info',
@@ -27,6 +27,14 @@ function setup(opts: { save?: () => Promise<void> } = {}) {
     disabledPlugins: [],
   };
   const calls: string[] = [];
+  const errors: string[] = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn() {},
+    error: (msg: string) => void errors.push(msg),
+    child: () => logger,
+  };
   const { expressApp, invoke } = captureRoutes();
   const hostConfig = {
     set: (k: string, v: unknown) => {
@@ -43,13 +51,14 @@ function setup(opts: { save?: () => Promise<void> } = {}) {
   registerPluginRoutes(
     expressApp,
     {
-      app: ref<AppService>({ restart: () => calls.push('restart') }),
+      app: ref<AppService>({ restart: opts.restart ?? (() => calls.push('restart')) }),
       source: { current: undefined },
       plugins: ref<PluginManagerService>({}),
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
       webui: () => undefined,
+      logger,
     },
     () => ({ platform: 'webui', userId: 'console' }),
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -57,7 +66,7 @@ function setup(opts: { save?: () => Promise<void> } = {}) {
   );
   const put = (body: unknown) => invoke('PUT /api/config', { body, headers: {} });
   const saveToDisk = () => invoke('POST /api/config/save', { body: {}, headers: {} });
-  return { store, calls, put, saveToDisk };
+  return { store, calls, errors, put, saveToDisk };
 }
 
 describe('PUT /api/config 顶层键白名单', () => {
@@ -150,6 +159,22 @@ describe('PUT /api/config 何时重启', () => {
     expect(calls).toEqual(['save']);
   });
 
+  it('已落盘但重启失败（宿主没注入重启策略）→ 仍回 200，文档不撤回，重启失败记一笔 error', async () => {
+    const { store, calls, errors, put } = setup({
+      restart: () => {
+        throw new Error('App.restart() 不可用：未注入 restartStrategy。');
+      },
+    });
+    const r = await put({ logLevel: 'debug' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, restart: true });
+    expect(store.logLevel, '文件里已是 debug，文档撤回的话下一次保存会把 info 写回文件').toBe('debug');
+    expect(calls).toEqual(['save']);
+    expect(errors).toEqual([
+      '全局配置已保存，但重启失败（App.restart() 不可用：未注入 restartStrategy。），改动在下次启动时生效',
+    ]);
+  });
+
   it('name 与 logLevel 一起改 → 保存并重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ name: 'Bot', logLevel: 'debug' });
@@ -220,7 +245,7 @@ describe('拒写与写入失败的区分：POST /api/config/save 与其它落盘
   it('落盘成功 → 200', async () => {
     const { calls, saveToDisk } = setup();
     const r = await saveToDisk();
-    expect(r).toEqual({ status: 200, body: { ok: true, message: '配置已保存到磁盘' } });
+    expect(r).toEqual({ status: 200, body: { ok: true, message: '配置已保存' } });
     expect(calls).toEqual(['save']);
   });
 

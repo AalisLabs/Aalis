@@ -33,7 +33,7 @@ interface UpdateResult {
 
 - `install`：装进根 `dependencies` 与 node_modules，随后经宿主的 `plugin-source` 热扫描让加载器发现它。只接受插件（`aalis-plugin`）与前端界面（`aalis-interface`）包。
 - `uninstall`：从根 `dependencies` 摘掉并执行 npm uninstall。类型、撤销通道、来源与服务依赖者几道闸都在服务层，被拒时返回 `{ ok: false, message }`。
-- `serviceDependents(name)`：卸载 `name` 会打断的活跃插件——`name` 提供的某个服务没有别的提供者，而这些插件 required 该服务。`name` 按插件定义名查。卸载闸与市场的卸载前预警共用这一份判定。
+- `serviceDependents(name)`：卸载 `name` 会打断的插件——`name` 提供的某个服务没有别的插件正在提供（已激活或激活中；已禁用、激活失败或等待依赖的同类提供者不算），而这些插件 required 该服务（已禁用的不算）。`name` 是插件定义名；市场的卸载前预警按 npm 包名近似查询，定义名与包名不同的插件预警为空，卸载闸按解析出的定义名查，不受影响。卸载闸与市场的卸载前预警共用这一份判定。
 - `update(targets)`：整批更新到指定版本，成功后重启进程。必须整批提交：peer 冲突只有对整张版本映射一次预检才能发现，逐个更新还会重启多次、中间态半新半旧。`ok` 且 `restarting` 时进程即将退出，调用方要在退出前发出响应；预检失败时 `conflicts` 列出逐条冲突。
 
 ## 获取方式

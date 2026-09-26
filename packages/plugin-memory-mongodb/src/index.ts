@@ -386,7 +386,7 @@ export async function openAndProvide(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await client.close().catch(() => {});
-    throw new Error(`MongoDB 连接失败: ${message}`);
+    throw new Error(`MongoDB 连接失败: ${message}`, { cause: err });
   } finally {
     lifecycle.signal.removeEventListener('abort', onAbort);
   }

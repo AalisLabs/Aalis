@@ -93,8 +93,9 @@ describe('setUserLevel（owner 管理；覆盖式整数）', () => {
     m.setUserLevel(onebot('1'), 1);
     expect(m.listUsers().find(u => u.userId === '1')?.level).toBe(1);
   });
-  it('默认等级(0)清记录', () => {
+  it('默认等级(0)清记录', async () => {
     const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
+    await m.init(); // 首次读取落定之后才按无备注清记录
     m.setUserLevel(onebot('1'), 5);
     m.setUserLevel(onebot('1'), 0);
     expect(m.listUsers().find(u => u.userId === '1')).toBeUndefined();

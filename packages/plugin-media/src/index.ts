@@ -24,7 +24,7 @@ import { createStorageGateway, storage as storageService } from '@aalis/api-stor
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { flushDescriptionCache, loadDescriptionCache } from './cache.js';
+import { clearDescriptionCache, flushDescriptionCache, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
@@ -314,6 +314,28 @@ function run(caps: Caps): void {
     if (n > 0) logger.info(`图片描述缓存已恢复 ${n} 条（跨重启复用，免去重复识别）`);
   });
   caps.lifecycle.onDispose(() => flushDescriptionCache());
+
+  // 参与 memory:clear（/clear 与删除会话）：描述缓存归入 image 类型。全局清理清空内存条目与别名并删掉快照；
+  // 会话级只删带本会话语境的描述（以含会话目录的落盘路径为键），内容哈希键跨会话共享、无从按会话归属，保留。
+  caps.hooks.middleware('memory:clear', async (data, next) => {
+    const sessionDir = data.scope === 'all' ? undefined : data.sessionId?.replace(/[:/\\]/g, '_');
+    if ((!data.types || data.types.includes('image')) && (data.scope === 'all' || sessionDir)) {
+      try {
+        const removed = await clearDescriptionCache(sessionDir);
+        data.results.push({
+          source: 'media-description',
+          success: true,
+          message: sessionDir
+            ? `当前会话图片描述缓存已清空（${removed} 条）`
+            : `所有图片描述缓存已清空（${removed} 条）`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'media-description', success: false, message: `图片描述缓存清空失败: ${msg}` });
+      }
+    }
+    await next();
+  });
 
   // 出口形态变换：agent 组装完成后、发出之前，按交付形态决定末条 user 消息的 images[]
   // 交给主模型什么——describe 清空（识别归识别模型，结果已在正文文字里），passthrough

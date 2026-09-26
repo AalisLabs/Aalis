@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
-import { type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
+import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
@@ -17,6 +17,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 //   第一次运行就用 {runs:[新], onceFired:{}} 覆盖文件——下次启动所有过期 once 全部重放。
 // - AI 工具经 tools 登记口挂上：提供者晚上线时登记先挂账、上线后补挂；曾用 tools.current
 //   判在场，tools 晚于 workflow 上线时工具永不出现。
+// - 删除定义时删文件在 storage 不在场时必然失败：只在内存里的定义没有文件会被重新载入，
+//   不得因此报错——否则 persist:false 的定义删不掉，触发器也停不下来。
 // 真 storage-local 多根（workspace 在前、data 在后），运行历史落在 data 根。
 // ════════════════════════════════════════════════════════════
 
@@ -110,6 +112,44 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
     await settle();
 
     expect(readFileSync(runsFile(), 'utf-8')).toBe(broken);
+  });
+
+  it('storage 不在场：只在内存里的定义照常删除，不存在的 id 回 false', async () => {
+    await app.plugin(cronEnginePlugin, {});
+    await app.plugin(workflowPlugin, { enableTools: false });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('@aalis/plugin-workflow')?.state).toBe('active');
+    const svc = svcOf();
+    await svc.defineWorkflow(
+      { id: 'zz-mem', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'wait', seconds: 0 }] },
+      { persist: false },
+    );
+
+    expect(await svc.removeWorkflow('zz-mem')).toBe(true);
+    expect(svc.getWorkflow('zz-mem')).toBeUndefined();
+    expect(await svc.removeWorkflow('zz-missing')).toBe(false);
+  });
+
+  it('文件已删掉、同 id 改为只在内存里重建：storage 下线后照常删除', async () => {
+    await registerStorage();
+    await app.plugin(cronEnginePlugin, {});
+    await app.plugin(workflowPlugin, { enableTools: false });
+    await app.plugins.idle();
+    const svc = svcOf();
+    const def: WorkflowDef = {
+      id: 'zz-mem',
+      trigger: { type: 'manual' },
+      nodes: [{ id: 'a', type: 'wait', seconds: 0 }],
+    };
+    await svc.defineWorkflow(def, { persist: true });
+    expect(await svc.removeWorkflow('zz-mem')).toBe(true);
+    await svc.defineWorkflow(def, { persist: false });
+
+    await app.plugins.disable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('@aalis/plugin-workflow')?.state).toBe('active');
+    expect(await svc.removeWorkflow('zz-mem')).toBe(true);
+    expect(svc.getWorkflow('zz-mem')).toBeUndefined();
   });
 
   it('tools 晚于 workflow 上线：AI 工具随后出现', async () => {

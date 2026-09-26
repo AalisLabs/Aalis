@@ -489,9 +489,11 @@ async function run(caps: Caps): Promise<void> {
       logger.info(`workflow 已定义: ${def.id} (持久化=${opts?.persist !== false})`);
     },
     async removeWorkflow(id) {
+      // 先删文件，删不掉就抛错、触发器与 once 记账原样保留：先清账的话，重启后定义被重新载入，过期 once 会重放
+      const had = await loader.removeDef(id);
       triggers.unregister(id);
       runStore.clearOnceFired(id); // 定义没了，once 记账不留孤儿：同 id 重建算新工作流
-      return await loader.removeDef(id);
+      return had;
     },
     async runWorkflow(id, vars, source, caller) {
       return await runById(id, vars ?? {}, source ?? 'manual', caller);
@@ -515,7 +517,7 @@ async function run(caps: Caps): Promise<void> {
   // ── AI 工具 ──
   // tools 晚上线也无妨：登记口在提供者缺席时先挂账，上线后自动补挂
   if (config.enableTools) {
-    registerTools(tools, service);
+    registerTools(tools, service, () => runStore.onceLedgerReadable());
   }
 
   // ── WebUI ──
@@ -538,7 +540,8 @@ async function run(caps: Caps): Promise<void> {
 
 // ─── AI 工具注册 ───
 
-function registerTools(tools: BoundTools, service: WorkflowService): void {
+/** onceLedgerReadable：once 记账读不出时本次运行不安排 once，workflow_define 的回执据此如实说明 */
+function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerReadable: () => boolean): void {
   tools.registerGroup({ name: 'workflow', label: '工作流', description: '定义、运行、查询自主工作流（DAG）' });
 
   tools.register({
@@ -576,12 +579,25 @@ function registerTools(tools: BoundTools, service: WorkflowService): void {
       }
       const def = normalizeDef(raw, `wf-${Date.now()}`);
       if (!def) return JSON.stringify({ error: '定义不合法：缺少 trigger 或 nodes' });
+      const persist = args.persist !== false;
       try {
-        await service.defineWorkflow(def, { persist: args.persist !== false });
+        await service.defineWorkflow(def, { persist });
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
       }
-      return JSON.stringify({ ok: true, id: def.id, nodes: def.nodes.length, trigger: def.trigger.type });
+      const onceSkipped = def.trigger.type === 'once' && def.enabled !== false && !onceLedgerReadable();
+      return JSON.stringify({
+        ok: true,
+        id: def.id,
+        nodes: def.nodes.length,
+        trigger: def.trigger.type,
+        // 不持久化的定义重启后就没了，「重启恢复」只对写了文件的定义成立
+        ...(onceSkipped
+          ? {
+              note: `once 记账读取失败（见日志），本次运行不会触发；可用 workflow_run 手动执行${persist ? '，修复运行历史文件后重启恢复' : ''}`,
+            }
+          : {}),
+      });
     },
   });
 

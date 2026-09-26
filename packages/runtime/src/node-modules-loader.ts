@@ -87,8 +87,8 @@ export const HOST_CORE_DIR: string | undefined = (() => {
  *
  * 依赖树允许同名包存在多份，两份 core 同处一个进程会让进程级身份分裂（默认日志中枢、
  * instanceof 等）且不报任何错。最常见的来路是本地插件目录被装成符号链接：插件目录自带的
- * devDependencies 里那份 core 成了它运行时解析到的那份。错误由 App 逐插件接住记 error，
- * 其余插件照常加载。两加载器共用。
+ * devDependencies 里那份 core 成了它运行时解析到的那份。错误由宿主的插件发现（createPluginDiscovery
+ * 的 importAll）逐插件接住并记 error，其余插件照常加载。两加载器共用。
  *
  * @param hostCoreDir 宿主那份 core 的包目录（realpath）；undefined 时跳过
  * @param pluginDir 插件包目录，即两加载器 discover 写进描述符的 `metadata.dir`；缺失时跳过

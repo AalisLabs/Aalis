@@ -81,8 +81,7 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
 // storage 晚于本插件上线时首载是异步的（apply 无从等待）。save 写的是全量快照：首载还没读完时
 // 插进来的一次等级改动若照常落盘，就拿「只有这条改动」的内存表覆盖掉健康的 users.json；
 // 首载随后把原记录并回内存，但 dirty 已清，磁盘上一直缺这些记录。
-// 管理入口还先等首载落定再改：读完之前内存里查不到文件里的记录，原等级按 0 级算，降权该撤的会话授予会漏撤，
-// 降为 0 级时也看不到备注。
+// 管理入口还先等首载落定再改：读完之前内存里查不到文件里的记录，原等级按 0 级算，降权该撤的会话授予会漏撤。
 describe('authority：storage 晚于本插件上线，首载在飞时的等级改动', () => {
   it('健康的 users.json 不被残缺快照覆盖，改动在首载完成后落盘', async () => {
     const { app, actions, release, writes } = await bootLateStorage();
@@ -145,8 +144,8 @@ describe('authority：storage 晚于本插件上线，首载在飞时的等级�
 });
 
 // storage 还没上线时首次读取尚未开始，入口无从等待，内存表是空的：删除扑空，改等级也带不上文件里的备注。
-// 删除要作为墓碑记下、改等级只盖过内存里有的字段，否则首次读取按文件重建时，删掉的封禁与降为 0 级前的
-// 等级又回来，备注被丢掉；回执也不能报成功——这时改动还没写进 users.json。
+// 删除要作为墓碑记下、改等级只盖过内存里有的字段，降为 0 级也要留下记录（记成删除会连同文件里的备注删掉），
+// 否则首次读取按文件重建时，删掉的封禁与降为 0 级前的等级又回来，备注被丢掉；回执也不能报成功——这时改动还没写进 users.json。
 describe('authority：storage 上线前（首次读取尚未开始）的等级改动', () => {
   it('删记录、降为 0 级、改有备注的用户：回执注明未写入，storage 上线读完后照样生效并落盘，备注保留', async () => {
     await writeFile(
@@ -157,6 +156,7 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
           'onebot:banned': { level: -5 },
           'onebot:mod': { level: 5 },
           'onebot:friend': { level: 1, note: '老朋友' },
+          'onebot:pal': { level: 2, note: '同学' },
         },
       }),
     );
@@ -169,6 +169,7 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
       await deleteUser({ platform: 'onebot', userId: 'banned' }, OWNER),
       await setUserLevel({ platform: 'onebot', userId: 'mod', level: 0 }, OWNER),
       await setUserLevel({ platform: 'onebot', userId: 'friend', level: 3 }, OWNER),
+      await setUserLevel({ platform: 'onebot', userId: 'pal', level: 0 }, OWNER),
     ] as Array<{ message: string }>;
     for (const { message } of replies)
       expect(message, '改动还没写进 users.json，回执却报成功').toContain('未写入 users.json');
@@ -194,8 +195,9 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
     await app.stop();
 
     expect(data.users['onebot:banned'], '删掉的封禁随首次读取回来').toBeUndefined();
-    expect(data.users['onebot:mod'], '降为 0 级前的等级随首次读取回来').toBeUndefined();
+    expect(data.users['onebot:mod']?.level ?? 0, '降为 0 级前的等级随首次读取回来').toBe(0);
     expect(data.users['onebot:friend'], '首次读取前改等级，文件里的备注被丢掉').toEqual({ level: 3, note: '老朋友' });
+    expect(data.users['onebot:pal'], '首次读取前降为 0 级，整条记录连同备注被删').toEqual({ level: 0, note: '同学' });
   });
 
   it('回执注明等级表尚未载入：此时没有写盘，也就谈不上写入失败', async () => {

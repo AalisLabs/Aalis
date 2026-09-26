@@ -175,15 +175,14 @@ export function AuthorityPage() {
   }, [refresh]);
 
   /**
-   * 调 action：失败 flash 错误；成功时 flash 服务端返回的 message（可能带附注，如 users.json 拒写时
-   * 「仅本次运行生效」），没有才用本地 okMsg，然后刷新。
+   * 调 action：失败 flash 错误；成功时 flash 服务端返回的 message（权限插件的写动作都带，可能附注，如 users.json
+   * 拒写时「仅本次运行生效」），然后刷新。
    */
   const act = useCallback(
-    async (method: string, args: Record<string, unknown>, okMsg?: string) => {
+    async (method: string, args: Record<string, unknown>) => {
       try {
         const res = await pageAction<{ message?: unknown } | undefined>(PLUGIN, method, args);
-        const shown = typeof res?.message === 'string' ? res.message : okMsg;
-        if (shown) flash(shown);
+        if (typeof res?.message === 'string') flash(res.message);
         await refresh();
       } catch (e) {
         flash(errMsg(e));
@@ -218,10 +217,10 @@ export function AuthorityPage() {
   const acStatus = acUntil === -1 ? '一直开启' : acUntil > Date.now() ? `开启中 · 剩 ${Math.ceil((acUntil - Date.now()) / 60000)} 分钟` : '关闭';
 
   const setUserLevel = (u: { platform: string; userId: string }, level: number) =>
-    act('setUserLevel', { platform: u.platform, userId: u.userId, level }, `已设等级: ${level}`);
+    act('setUserLevel', { platform: u.platform, userId: u.userId, level });
   const setOpLevel = (op: Operation, level: number | null) =>
-    act('setAuthorityOverride', { name: capKey(op), level }, '已更新最低等级');
-  const setOpConfirm = (op: Operation, c: ConfirmOverride | '') => act('setConfirmOverride', { name: capKey(op), confirm: c }, '已更新确认');
+    act('setAuthorityOverride', { name: capKey(op), level });
+  const setOpConfirm = (op: Operation, c: ConfirmOverride | '') => act('setConfirmOverride', { name: capKey(op), confirm: c });
   /**
    * 整组设最低等级：逐条调 setAuthorityOverride，全部落定后汇总——各条回执的 revokedGrants（撤销的会话授予
    * 条数）相加，失败原因去重列出；无论成败都刷新，部分失败时页面显示的也是实际生效的门槛。
@@ -249,9 +248,9 @@ export function AuthorityPage() {
     );
     await refresh();
   };
-  const applyDenied = (list: string[]) => act('setConfig', { deniedCapabilities: list }, '已更新硬禁');
+  const applyDenied = (list: string[]) => act('setConfig', { deniedCapabilities: list });
   const applyAllow = (list: string[], duration: number) =>
-    act('setRestrictedPolicy', { policy: { allow: list, duration } }, '已更新自动放行');
+    act('setRestrictedPolicy', { policy: { allow: list, duration } });
 
   return (
     <div className="page-content page-authority">
@@ -315,7 +314,7 @@ export function AuthorityPage() {
               { v: '60', label: '1 小时' },
               { v: '-1', label: '一直' },
             ]}
-            onPick={v => act('setAutoConfirm', { minutes: Number(v) }, '已更新确认模式')}
+            onPick={v => act('setAutoConfirm', { minutes: Number(v) })}
           />
         </div>
       </div>
@@ -391,7 +390,7 @@ export function AuthorityPage() {
                   <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                     <span style={{ opacity: 0.6, fontSize: 12 }}>等级</span>
                     <LevelInput value={u.level} onCommit={n => setUserLevel(u, n ?? data.defaultAuthority)} title="整数；越大越高，负数=封禁" />
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('deleteUser', { platform: u.platform, userId: u.userId }, '已删除')}>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('deleteUser', { platform: u.platform, userId: u.userId })}>
                       删除
                     </button>
                   </span>
@@ -423,7 +422,7 @@ export function AuthorityPage() {
                   className="btn btn-primary btn-sm"
                   disabled={!newOwner.platform || !newOwner.userId}
                   onClick={() => {
-                    act('setOwners', { owners: [...data.owners, { ...newOwner }] }, 'Owner 已添加');
+                    act('setOwners', { owners: [...data.owners, { ...newOwner }] });
                     setNewOwner({ platform: '', userId: '' });
                     setShowAddOwner(false);
                   }}
@@ -441,7 +440,7 @@ export function AuthorityPage() {
                     <span style={{ flex: 1 }}>
                       <strong>{o.platform}</strong>:{o.userId}
                     </span>
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('setOwners', { owners: data.owners.filter((_, j) => j !== i) }, 'Owner 已移除')}>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('setOwners', { owners: data.owners.filter((_, j) => j !== i) })}>
                       移除
                     </button>
                   </div>
@@ -708,7 +707,7 @@ export function AuthorityPage() {
                     onClick={async () => {
                       if (advDraft.denied.trim()) await act('setConfig', { deniedCapabilities: [...new Set([...denied, ...toList(advDraft.denied)])] });
                       if (advDraft.allow.trim())
-                        await act('setRestrictedPolicy', { policy: { allow: [...new Set([...allow, ...toList(advDraft.allow)])], duration: advDraft.duration } }, '已追加');
+                        await act('setRestrictedPolicy', { policy: { allow: [...new Set([...allow, ...toList(advDraft.allow)])], duration: advDraft.duration } });
                       setAdvDraft(v => ({ ...v, denied: '', allow: '' }));
                       setShowManual(false);
                     }}
@@ -730,7 +729,7 @@ export function AuthorityPage() {
                       <span className="authority-cmd-plugin" style={{ marginLeft: 6 }}>{g.sessionId}</span>
                     </span>
                     <span style={{ fontSize: 12, opacity: 0.8, marginRight: 8 }}>{g.used}{g.maxUses ? ` / ${g.maxUses}` : ''}</span>
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('revokeTemporaryGrant', { id: g.id }, '已撤销')}>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('revokeTemporaryGrant', { id: g.id })}>
                       撤销
                     </button>
                   </div>

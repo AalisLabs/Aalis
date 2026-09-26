@@ -287,9 +287,11 @@ function wrapLLMAsProcessor(
     capabilities: [cap],
     displayName: `${entry.label ?? entry.contextId} (${cap})`,
     priority: 0,
-    async describe(input: DescribeInput): Promise<DescribeResult> {
-      // 注：audio 不走 describe——音频识别由下方的 proc.transcribe 处理（pickProcessor('audio').transcribe）。
-      if (cap !== 'vision') throw new Error(`LLM adapter 不支持 capability=${cap}`);
+  };
+
+  // 按能力挂方法：vision 只有 describe，audio 只有 transcribe（与 asr 桥接出的音频处理器同形）
+  if (cap === 'vision') {
+    proc.describe = async (input: DescribeInput): Promise<DescribeResult> => {
       // base 优先级：调用方显式 basePrompt > wrap 时注入的 opts.prompt > 内置默认
       // 调用方需要切换 prompt（如详细/专业模板或自路由）时必须传 input.basePrompt，
       // 不要塞进 hint —— 否则会和默认 base 同时存在产生指令冲突。
@@ -349,8 +351,8 @@ function wrapLLMAsProcessor(
         descriptions: input.mode === 'single' ? input.attachments.map(() => text) : [text],
         meta: { processor: name, model: llm.id, tokens: usedTokens },
       };
-    },
-  };
+    };
+  }
 
   if (cap === 'audio') {
     proc.transcribe = async (input: TranscribeInput): Promise<TranscribeResult> => {

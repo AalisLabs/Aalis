@@ -23,6 +23,8 @@ import { deferred } from '../helpers/deferred.js';
 //   - 以前扫描一开始就清空缓存，扫描期间 list_skills / load_skill / 贡献点读到的是空的或半截的缓存；
 //   - 以前只有 service.rescan 清已编译的 triggers，load_skill / list_skills 的按需重扫之后仍用旧正则；
 //   - 扫描在飞时经服务的写入会被收尾替换盖掉，写入时排一次尾随重扫按盘上实况重建。
+// 根目录列不出（storage 缺席、读错误，不是「不存在」）时整次扫描失败：以前按空目录处理，
+// skills 用空结果替换缓存、persona 剔掉全部非主卡，且不留日志。
 // 内存 storage 提供者：能卡住下一次对某目录的 list（目录清单在卡住前取好），能手动触发 watch 回调，
 // 并记录每个目录被 list 的次数，用来数实际跑了几次扫描。
 // ════════════════════════════════════════════════════════════
@@ -183,6 +185,26 @@ describe('persona / skills 的目录重扫', () => {
     expect(fake.listCount(DIR) - before, '进行中的一次加一次尾随').toBe(2);
   });
 
+  it('persona：目录列不出（不是不存在）时扫描失败并记 warn，已载入的卡不被剔掉', async () => {
+    const DIR = 'data:/personas';
+    const fake = gatedStorage({ [`${DIR}/main.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
+    await bootWith(fake);
+    await app.plugin(personaPlugin, { persona: 'main', personasDir: DIR, timeInjection: false });
+    await app.plugins.idle();
+    await app.start();
+    const svc = app.bind({ services }).services.get(persona);
+    if (!svc?.listModels) throw new Error('persona 服务未就绪');
+    expect((await svc.listModels()).sort()).toEqual(['a', 'main']);
+
+    const gate = fake.holdNextList(DIR);
+    fake.fire(`${DIR}/a.yaml`);
+    gate.reject(new Error('未知存储根: data'));
+    await sleep(20);
+
+    expect((await svc.listModels()).sort(), '按空目录处理会剔掉 a').toEqual(['a', 'main']);
+    expect(logs.some(t => t.includes('persona 扫描失败') && t.includes('未知存储根'))).toBe(true);
+  });
+
   it('skills：扫描进行中的并发 rescan 合并为一次尾随重扫，不报虚假的重复名称', async () => {
     const DIR = 'data:/skills';
     const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1'), [`${DIR}/s2/SKILL.md`]: skillMd('s2') });
@@ -236,6 +258,27 @@ describe('persona / skills 的目录重扫', () => {
         .map(s => s.name)
         .sort(),
     ).toEqual(['s1', 's2']);
+  });
+
+  it('skills：根目录列不出（不是不存在）时 rescan 拒绝，保留上一版缓存', async () => {
+    const DIR = 'data:/skills';
+    const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1') });
+    await bootWith(fake);
+    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugins.idle();
+    const svc = app.bind({ services }).services.get(skills);
+    if (!svc) throw new Error('skills 服务未就绪');
+    await svc.rescan();
+    expect(svc.listSkills().map(s => s.name)).toEqual(['s1']);
+
+    const gate = fake.holdNextList(DIR);
+    const scan = svc.rescan();
+    gate.reject(new Error('未知存储根: data'));
+    await expect(scan).rejects.toThrow('未知存储根');
+    expect(
+      svc.listSkills().map(s => s.name),
+      '按空目录处理会清空缓存',
+    ).toEqual(['s1']);
   });
 
   it('skills：扫描卡住期间读者仍看到上一版完整缓存，扫完整体替换', async () => {

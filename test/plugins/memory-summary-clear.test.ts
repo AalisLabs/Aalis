@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
+import { LLMCapabilities, type LLMModel } from '../../packages/api-llm/src/index.js';
 import type { App } from '../../packages/core/src/index.js';
 import { setupSummary } from '../fixtures/memory-summary.js';
 
@@ -53,5 +54,91 @@ describe('plugin-memory-summary: 摘要随 context 清理', () => {
     expect(await clear('all', ['vector', 'image'])).toEqual([]);
     expect(await has('s1')).toBe(true);
     expect(await has('s2')).toBe(true);
+  });
+});
+
+// 摘要在后台跑：模型返回前用户发了 /clear（或删除会话），在途结果不能写回，否则被清掉的对话又以摘要注入提示词。
+describe('plugin-memory-summary: 清理与在途摘要', () => {
+  /** 摘要模型挂在闸门上，放行前可以插入一次清理 */
+  function gatedModel() {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const state = { calls: 0 };
+    const model = {
+      id: 'gated',
+      providerId: 'gated',
+      contextLength: 8192,
+      capabilities: [LLMCapabilities.Chat],
+      async chat() {
+        state.calls++;
+        await gate;
+        return { content: 'STALE-SUMMARY' };
+      },
+    } as unknown as LLMModel;
+    return { model, state, release };
+  }
+
+  async function inFlight(start: 'turn' | 'compress') {
+    const { model, state, release } = gatedModel();
+    const env = await setupSummary({ threshold: 30, keepRecent: 20 }, model);
+    apps.push(env.app);
+    for (let i = 0; i < 35; i++)
+      await env.memory.saveMessage('s1', { role: i % 2 === 0 ? 'user' : 'assistant', content: `第 ${i} 条` });
+    const statuses: string[] = [];
+    env.host.events.on('session:compressing', info => void statuses.push(info.status));
+    // 压缩事件的处理器会一直等到模型返回，emit 不能在放行前 await
+    const started =
+      start === 'turn'
+        ? env.host.hooks.run(
+            'agent:turn:after' as never,
+            { message: { sessionId: 's1' }, reply: 'ok', outcome: 'replied', sessionId: 's1', metadata: {} } as never,
+          )
+        : env.host.events.emit('session:compress', { sessionId: 's1', reason: 'manual' });
+    await expect.poll(() => state.calls).toBe(1);
+    const clear = async (scope: 'session' | 'all', sessionId: string) => {
+      const data: HookContextMap['memory:clear'] = { scope, sessionId, results: [] };
+      await env.host.hooks.run('memory:clear', data, async () => {});
+    };
+    const finish = async () => {
+      release();
+      await started;
+      await new Promise<void>(r => setTimeout(r, 50));
+      return {
+        summary: await env.memory.getMetadata('summary', 's1'),
+        remaining: (await env.memory.getHistory('s1', 1000)).length,
+        statuses,
+      };
+    };
+    return { clear, finish };
+  }
+
+  it.each([
+    ['会话级清理', 'session'],
+    ['全局清理', 'all'],
+  ] as const)('%s发生在模型返回前：丢弃在途摘要，不写摘要、不裁切', async (_label, scope) => {
+    const { clear, finish } = await inFlight('turn');
+    await clear(scope, 's1');
+    const { summary, remaining } = await finish();
+    expect(summary).toBeUndefined();
+    expect(remaining).toBe(35);
+  });
+
+  it('清的是别的会话：本会话的摘要照常写入并裁切', async () => {
+    const { clear, finish } = await inFlight('turn');
+    await clear('session', 's2');
+    const { summary, remaining } = await finish();
+    expect(summary).toMatchObject({ summary: 'STALE-SUMMARY' });
+    expect(remaining).toBe(20);
+  });
+
+  it('手动压缩途中清理：同样丢弃，前端收到 error 而不是 done', async () => {
+    const { clear, finish } = await inFlight('compress');
+    await clear('session', 's1');
+    const { summary, remaining, statuses } = await finish();
+    expect(summary).toBeUndefined();
+    expect(remaining).toBe(35);
+    expect(statuses).toEqual(['start', 'error']);
   });
 });

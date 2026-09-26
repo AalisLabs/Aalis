@@ -98,7 +98,7 @@ export class EventBus {
       const args = this.#stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发
-        if (!set?.has(entry)) return;
+        if (!set!.has(entry)) return;
         // 补发没有 emit 调用方兜底——handler 同步抛错会直达 uncaughtException
         // 崩进程，异步抛错变 unhandledRejection，必须就地捕获。
         try {

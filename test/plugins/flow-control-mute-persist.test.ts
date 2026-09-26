@@ -60,6 +60,17 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     return svc;
   };
 
+  /** 登记了 data 根的 storage 实例：用例替换它的 writeFile 来控制写盘的快慢与成败 */
+  const dataRootOf = () => {
+    const root = app
+      .bind({ services })
+      .services.all(storage)
+      .map(view => view.instance)
+      .find(instance => instance.listRoots().some(r => r.name === 'data'));
+    if (!root) throw new Error('data 根未登记');
+    return root;
+  };
+
   it('storage 先上线：apply 返回时禁言表已读回，激活后立即可判禁言', async () => {
     writeFileSync(
       join(base, 'data', MUTES),
@@ -91,12 +102,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     await app.plugins.idle();
     const svc = svcOf();
     // 让 data 根的第一次写变慢，第二次写就排在写链上
-    const dataRoot = app
-      .bind({ services })
-      .services.all(storage)
-      .map(view => view.instance)
-      .find(instance => instance.listRoots().some(root => root.name === 'data'));
-    if (!dataRoot) throw new Error('data 根未登记');
+    const dataRoot = dataRootOf();
     const write = dataRoot.writeFile.bind(dataRoot);
     let delayed = false;
     dataRoot.writeFile = async (...args: Parameters<typeof write>) => {
@@ -182,7 +188,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     expect(flowPassed, '禁言表读回前放行了已禁言会话的消息').toBe(false);
   });
 
-  it('读回前内存里已有的禁言与磁盘合并：取较晚的到期时刻，不被磁盘整条替换', async () => {
+  it('读回前 setMuted 过的会话以内存为准', async () => {
     const soon = Date.now() + 60_000;
     writeFileSync(
       join(base, 'data', MUTES),
@@ -208,6 +214,93 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     await expect.poll(() => svc.isMuted('zz-b'), { timeout: 2000 }).toBe(true);
     expect(svc.getStateSnapshot('zz-a')?.mutedUntil, '内存里较晚的禁言被磁盘上较早的值盖掉').toBe(memoryUntil);
+  });
+
+  it('storage 离线期间解禁：恢复后重读不把文件里的旧禁言撤回，并补写落盘', async () => {
+    writeFileSync(
+      join(base, 'data', MUTES),
+      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
+    );
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
+    await app.plugin(flowControlPlugin, {});
+    await app.plugins.idle();
+    const svc = svcOf();
+    expect(svc.isMuted('zz-old')).toBe(true);
+
+    await app.plugins.disable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
+    svc.setMuted('zz-old', 0); // 写盘失败，只在内存生效
+    expect(svc.isMuted('zz-old')).toBe(false);
+
+    await app.plugins.enable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
+    await expect.poll(() => Object.keys(readMutes()), { timeout: 2000 }).toEqual([]);
+    expect(svc.isMuted('zz-old'), '重读按文件恢复了旧禁言').toBe(false);
+  });
+
+  it('写盘在飞时又解禁、下一次写盘失败：成功的那次只清它快照以内的改动，重读不恢复旧禁言', async () => {
+    writeFileSync(
+      join(base, 'data', MUTES),
+      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
+    );
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
+    await app.plugin(flowControlPlugin, {});
+    await app.plugins.idle();
+    const svc = svcOf();
+    // 第一次写挂住直到放行，第二次写失败
+    const dataRoot = dataRootOf();
+    const write = dataRoot.writeFile.bind(dataRoot);
+    let writes = 0;
+    let entered!: () => void;
+    const firstEntered = new Promise<void>(r => (entered = r));
+    let release!: () => void;
+    const held = new Promise<void>(r => (release = r));
+    dataRoot.writeFile = async (...args: Parameters<typeof write>) => {
+      writes++;
+      if (writes === 1) {
+        entered();
+        await held;
+      } else if (writes === 2) {
+        throw new Error('zz 写盘失败');
+      }
+      return write(...args);
+    };
+
+    svc.setMuted('zz-a', 600, 'onebot');
+    await firstEntered; // 这次写的快照已取好，zz-old 在里面仍是禁言
+    svc.setMuted('zz-old', 0);
+    release();
+    await expect.poll(() => writes).toBe(2);
+    expect(Object.keys(readMutes()).sort(), '前提：文件里 zz-old 仍是旧禁言').toEqual(['zz-a', 'zz-old']);
+
+    await app.plugins.disable('@aalis/plugin-storage-local');
+    await app.plugins.enable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
+    await expect.poll(() => Object.keys(readMutes()), { timeout: 2000 }).toEqual(['zz-a']);
+    expect(svc.isMuted('zz-old'), '重读按文件恢复了旧禁言').toBe(false);
+  });
+
+  it('storage 晚上线、读回前解禁尚无状态的会话：读回不恢复它的旧禁言', async () => {
+    writeFileSync(
+      join(base, 'data', MUTES),
+      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
+    );
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    await app.plugin(gatewayPlugin, {});
+    await app.plugin(flowControlPlugin, {});
+    await app.plugins.idle();
+    const svc = svcOf();
+    svc.setMuted('zz-old', 0);
+
+    await app.pluginAll([storageLocal()]);
+    await app.plugins.idle();
+    await expect.poll(() => Object.keys(readMutes()), { timeout: 2000 }).toEqual([]);
+    expect(svc.isMuted('zz-old'), '读回按文件恢复了旧禁言').toBe(false);
   });
 
   // ════════════════════════════════════════════════════════════

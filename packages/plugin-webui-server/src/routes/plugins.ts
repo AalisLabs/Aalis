@@ -74,7 +74,7 @@ interface PluginRoutesCaps {
    * 写死引用就绕过了解析——第三方若以更高优先级接管 webui-server，页面列表该跟着走。
    */
   webui(): WebUIService | undefined;
-  /** 裁剪 schema 外字段时点名 warn；测试可不传 */
+  /** 裁剪 schema 外字段时点名 warn，保存全局配置后重启失败时记 error；测试可不传 */
   logger?: Logger;
 }
 
@@ -287,12 +287,6 @@ export function registerPluginRoutes(
 
     try {
       await doc.save();
-      if (restartNeeded) {
-        res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
-        app.restart();
-      } else {
-        res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
-      }
     } catch (err) {
       // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件。
       // logLevel / slowThresholdMs 要重启才生效，name 由状态接口读文档：撤回后都回到修改前，运行态不留改动
@@ -300,6 +294,18 @@ export function registerPluginRoutes(
       res
         .status(isConfigSaveRefused(err) ? 409 : 500)
         .json({ error: `未写入配置文件（${errorMessage(err)}），本次修改已撤回` });
+      return;
+    }
+    if (!restartNeeded) {
+      res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
+      return;
+    }
+    res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
+    // 已写进文件，重启失败（宿主没注入重启策略）不撤回：改动在下次启动时生效
+    try {
+      app.restart();
+    } catch (err) {
+      caps.logger?.error(`全局配置已保存，但重启失败（${errorMessage(err)}），改动在下次启动时生效`);
     }
   });
 
@@ -416,9 +422,18 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
+      // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），但按实际状态回报
+      const after = pm.getPlugin(pluginName);
+      const failure = after?.state === 'error' ? (after.error ?? '详见日志') : undefined;
       // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
       doc.setPluginConfig(pluginName, merged);
       if (!(await saveAfterApply(doc, res, 'reload'))) return;
+      if (failure !== undefined) {
+        res.status(500).json({
+          error: `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${failure}）；配置已写入配置文件${note}`,
+        });
+        return;
+      }
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新${note}`, ignored, removed });
     } else if (pm.getPlugin(pluginName)?.state === 'disabled') {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
@@ -446,8 +461,17 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
+      // 激活失败、转为 error：照样记为启用（重启时再激活），但按实际状态回报
+      const after = pm.getPlugin(pluginName);
+      const failure = after?.state === 'error' ? (after.error ?? '详见日志') : undefined;
       doc.setPluginEnabled(pluginName, true);
       if (!(await saveAfterApply(doc, res, 'restart'))) return;
+      if (failure !== undefined) {
+        res
+          .status(500)
+          .json({ error: `插件 ${pluginName} 激活失败，已转为 error 态（${failure}）；配置文件已记为启用` });
+        return;
+      }
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
@@ -544,12 +568,21 @@ export function registerPluginRoutes(
       return;
     }
     const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
+    let registered: boolean;
     try {
       doc.setPluginConfig(instanceId, mergedConfig);
-      // 文档里残留的禁用标记照旧生效：以禁用态登记
-      await pm.register(sourceModule, mergedConfig, instanceId, { disabled: doc.isPluginDisabled(instanceId) });
+      // 文档里残留的禁用标记（手改配置文件留下的）照旧生效：以禁用态登记
+      registered = await pm.register(sourceModule, mergedConfig, instanceId, {
+        disabled: doc.isPluginDisabled(instanceId),
+      });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
+    if (!registered) {
+      // 前面已查过重名与 reusable，走到这里的实际只有停机进行中：配置不落盘，免得下次启动按文件登记
+      doc.removePluginConfig(instanceId);
+      res.status(409).json({ error: `实例 ${instanceId} 未登记（停机中或被拒，见日志），配置未写入` });
       return;
     }
     if (!(await saveAfterApply(doc, res, 'reload'))) return;
@@ -566,7 +599,7 @@ export function registerPluginRoutes(
     }
     const doc = docOr503(res);
     if (!doc) return;
-    // 实例删除编排：主实例保护 → unload（内部含级联重算）→ 移除配置条目。
+    // 实例删除编排：主实例保护 → unload（内部含级联重算）→ 移除配置条目与禁用标记（同名重建时不再以禁用态登记）。
     const { suffix } = parseInstanceId(instanceId);
     if (!suffix || !pm.getPlugin(instanceId)) {
       res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
@@ -575,6 +608,7 @@ export function registerPluginRoutes(
     try {
       await pm.unload(instanceId);
       doc.removePluginConfig(instanceId);
+      doc.setPluginEnabled(instanceId, true);
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
@@ -583,13 +617,14 @@ export function registerPluginRoutes(
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 
-  // 保存配置到磁盘：与其它落盘路由同一口径，宿主拒写回 409、其它失败回 500
+  // 保存配置文档：与其它落盘路由同一口径，宿主拒写回 409、其它失败回 500。宿主不持久化时 save 不写盘，
+  // 回执因此只说「已保存」，不说保存到磁盘
   expressApp.post('/api/config/save', gate(), async (_req, res) => {
     const doc = docOr503(res);
     if (!doc) return;
     try {
       await doc.save();
-      res.json({ ok: true, message: '配置已保存到磁盘' });
+      res.json({ ok: true, message: '配置已保存' });
     } catch (err) {
       res.status(isConfigSaveRefused(err) ? 409 : 500).json({ error: errorMessage(err) });
     }

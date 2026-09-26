@@ -217,13 +217,14 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
     },
     handler: async args => {
       try {
+        const limit = pickLimit(args, pageLimit);
         const r = await client.getBills(
           args.instType as string | undefined,
           args.ccy as string | undefined,
           args.type as string | undefined,
-          pickLimit(args, pageLimit),
+          limit,
         );
-        return JSON.stringify(truncate(r.data));
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }
@@ -253,13 +254,14 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
     },
     handler: async args => {
       try {
+        const limit = pickLimit(args, pageLimit);
         const r = await client.getBillsArchive(
           args.instType as string | undefined,
           args.ccy as string | undefined,
           args.type as string | undefined,
-          pickLimit(args, pageLimit),
+          limit,
         );
-        return JSON.stringify(truncate(r.data));
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }
@@ -315,12 +317,13 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
     },
     handler: async args => {
       try {
+        const limit = pickLimit(args, pageLimit);
         const r = await client.getPositionsHistory(
           args.instType as string | undefined,
           args.instId as string | undefined,
-          pickLimit(args, pageLimit),
+          limit,
         );
-        return JSON.stringify(truncate(r.data));
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }
@@ -349,12 +352,13 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
     },
     handler: async args => {
       try {
+        const limit = pickLimit(args, pageLimit);
         const r = await client.getInterestAccrued(
           args.instId as string | undefined,
           args.ccy as string | undefined,
-          pickLimit(args, pageLimit),
+          limit,
         );
-        return JSON.stringify(truncate(r.data));
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }

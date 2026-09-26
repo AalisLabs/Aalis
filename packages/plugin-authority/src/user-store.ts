@@ -56,7 +56,7 @@ export class UserStore {
   delete(key: string): boolean {
     const ok = this.users.delete(key);
     // 扑空也记脏键，作为删除墓碑：首次读取完成前（storage 未上线、读取尚未开始）内存表不含文件里的记录，
-    // 不记的话读取按文件重建时被删的记录（封禁、降为 0 级前的等级）又回来
+    // 不记的话读取按文件重建时被删的记录（如封禁）又回来
     this.touch(key);
     return ok;
   }

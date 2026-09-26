@@ -949,9 +949,11 @@ async function run(caps: Caps): Promise<void> {
           : job.runAt
             ? `一次性 @ ${job.runAt}`
             : '?';
+      // 持久化文件读不懂而拒写：新任务只在内存，重启即失，回执里如实说明
+      const persistNote = loadFailed ? `；仅本次运行生效，未写入 ${persistUri}（加载失败，见日志）` : '';
       return JSON.stringify({
         ok: true,
-        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})`,
+        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})${persistNote}`,
       });
     },
   });

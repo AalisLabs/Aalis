@@ -67,7 +67,8 @@ const configSchema: ConfigSchema = {
     type: 'number',
     label: '分页查询最大条数',
     default: 100,
-    description: 'LLM 传入的 limit 会被 cap 到该值。OKX API 本身单页一般最多 100（个别接口 300）。',
+    description:
+      'LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。',
   },
 };
 

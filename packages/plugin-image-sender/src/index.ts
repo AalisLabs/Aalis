@@ -174,7 +174,7 @@ function registerImageSender(caps: Caps): void {
           '  - storage_uri：存储库内的资源 URI（如 data:/images/xxx）。\n' +
           '  - history_ref：历史消息中已识别的引用（[图片/语音/视频: ... | ref:xxx] 中 xxx 部分），\n' +
           '    用于"把之前那条媒体重发/转发回去"。\n' +
-          '建议流程（图片）：search_images 拿候选 URL → preview_image 看清内容 → send_attachment 选其一发出。\n' +
+          '建议流程（图片）：search_images 拿候选 URL →（有 preview_image 时可先看清内容）→ send_attachment 选其一发出。\n' +
           '若想重发自己之前发过的媒体，先用 memory_recall 按描述检索历史，从命中消息里找到 ref 再传 history_ref。\n' +
           '注意：本工具不发送任何文字。如需配文，请把文字写在你本轮最终输出的 message 字段里——' +
           '不要在 message 中重复媒体描述。',

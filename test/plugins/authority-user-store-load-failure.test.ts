@@ -81,6 +81,32 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     expect(data.users['onebot:banned'].level, '原有封禁记录仍在').toBe(-5);
   });
 
+  it('拒写期间把有备注的用户降为 0 级：重读成功后记录连同备注保留', async () => {
+    // 拒写期间内存里没有文件里的记录，看不到备注；按「0 级且无备注」删掉会记成墓碑，重读时连同备注删掉整条记录
+    const file = join(dir, 'users.json');
+    await writeFile(file, JSON.stringify({ version: 5, users: { 'onebot:x': { level: 3, note: '老朋友' } } }));
+    let reads = 0;
+    const firstReadFails = {
+      readFile: async (uri: string) => {
+        if (++reads === 1) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        return fsStorage().readFile(uri, 'utf-8');
+      },
+      writeFile: async (_uri: string, data: string) => writeFile(file, data),
+    } as unknown as StorageService;
+
+    const m = new AuthorityManager(mkConfig(), silentLogger(), firstReadFails);
+    await m.init(); // 读不出 → 拒写
+    m.setUserLevel({ platform: 'onebot', userId: 'x' }, 0);
+    await m.init(); // storage 重新上线，重读成功
+    await m.flushed();
+
+    const data = JSON.parse(await readFile(file, 'utf-8'));
+    expect(data.users['onebot:x'], '拒写期间降为 0 级，重读后整条记录连同备注被删').toEqual({
+      level: 0,
+      note: '老朋友',
+    });
+  });
+
   it('重读在飞期间沿用上次的拒写判定：插进来的 save 不覆盖读不懂的原文件', async () => {
     const file = join(dir, 'users.json');
     const legacy = JSON.stringify({ version: 4, users: { 'onebot:bad': { level: -1 } } });

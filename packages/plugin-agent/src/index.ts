@@ -808,9 +808,10 @@ class DefaultAgent implements AgentService {
                   args: toolBeforeData.args,
                   phase: 'start',
                 });
+                // 紧随 start 赋值：catch 据此判断 start 已发出、要补发配对的 end
+                toolT0 = Date.now();
 
                 this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
-                toolT0 = Date.now();
                 const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
                   toolBeforeData.name,
                   toolBeforeData.args,
@@ -868,11 +869,23 @@ class DefaultAgent implements AgentService {
                   `工具${executeDone ? '已执行，但结果处理' : '调用'}失败: ${toolBeforeData.name} (${reason})`,
                 );
                 const failedAt = Date.now();
+                const result = JSON.stringify({
+                  error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
+                });
+                // start 已发出就补发配对的 end（emit 恒 resolve）：否则 WebUI 流式缓冲里这一段一直显示执行中
+                if (toolT0 !== undefined) {
+                  await this.caps.events.emit('tool:execute', {
+                    sessionId: incoming.sessionId,
+                    platform: incoming.platform,
+                    toolName: toolBeforeData.name,
+                    args: toolBeforeData.args,
+                    phase: 'end',
+                    result,
+                  });
+                }
                 return {
                   toolCall,
-                  result: JSON.stringify({
-                    error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
-                  }),
+                  result,
                   resultImages: undefined,
                   toolName: toolBeforeData.name,
                   toolArgs: toolBeforeData.args,

@@ -509,7 +509,7 @@ function SchemaFormField({
         value={cur}
         onChange={e => onChange(e.target.value)}
       >
-        {allOptions.length === 0 && <option value="">加载中...</option>}
+        {allOptions.length === 0 && <option value="">{dynamicKey && dynamicModels === undefined ? '加载中...' : '无可选项'}</option>}
         {allOptions.map(o => (
           <option key={String(o.value)} value={String(o.value)}>{o.label}</option>
         ))}

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
@@ -12,6 +13,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 // 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（storage 不在场时网关抛
 // 「未知存储根」、文件损坏），曾经一律当成空表，之后第一次增删改把整表写回，原有动态任务全丢。
 // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
+// 拒写期间 scheduler_create_job 的回执注明新任务仅本次运行生效，别让用户以为已经存下。
 // 真 storage-local 多根（workspace 在前、data 在后），任务文件落在 data 根。
 // ════════════════════════════════════════════════════════════
 
@@ -127,6 +129,31 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
         }
       })
       .toEqual(['zz-new']);
+  });
+
+  it('拒写期间 scheduler_create_job 回执注明未写入；文件正常时不带附注', async () => {
+    const create = async (name: string): Promise<string> => {
+      const toolSvc = app.bind({ services }).services.get(tools);
+      if (!toolSvc) throw new Error('tools 服务未注册');
+      toolSvc.setExecutionGuard(async () => null); // 放行确认：这里只看回执
+      const res = await toolSvc.execute(
+        'scheduler_create_job',
+        { name, interval: 3600, content: 'x' },
+        { sessionId: 'internal', platform: 'internal' },
+      );
+      return String(JSON.parse(res.content).message);
+    };
+    writeFileSync(join(base, jobsFile), '[{"name":"zz-old-1"');
+    await registerStorage();
+    await registerScheduler();
+    expect(await create('zz-new')).toContain(`仅本次运行生效，未写入 data:/${JOBS}（加载失败，见日志）`);
+
+    await app.stop();
+    rmSync(join(base, jobsFile));
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerStorage();
+    await registerScheduler();
+    expect(await create('zz-new')).not.toContain('未写入');
   });
 
   it('任务文件正常：读回后 addJob 与原有任务一并落盘', async () => {

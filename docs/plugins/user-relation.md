@@ -277,7 +277,7 @@ $$
 | `groupOnly` | boolean | `false` | 仅在群聊中注入：私聊一般无需关系图上下文 |
 | `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等） |
 | `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予） |
-| `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。person-person 边的 to 必须已存在 PersonNode。 |
+| `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。 |
 | `digToolDefaultMaxDepth` | number | `2` | dig 工具：默认深度 |
 | `digToolDefaultMaxBreadth` | number | `8` | dig 工具：默认宽度 |
 | `digToolHardMaxDepth` | number | `4` | dig 工具：硬上限深度：Agent 传入更大值会被截断 |
@@ -286,4 +286,4 @@ $$
 | `findPathHardMaxDepth` | number | `6` | find_path 硬上限 |
 | `searchEventsDefaultLimit` | number | `10` | search_events 默认 limit |
 | `searchEventsHardMaxLimit` | number | `50` | search_events 硬上限 limit |
-| `debug` | boolean | `false` | Debug 日志：开启后会输出提取/注入/工具调用的详细日志 |
+| `debug` | boolean | `false` | Debug 日志：开启后会输出提取/工具调用的详细日志 |

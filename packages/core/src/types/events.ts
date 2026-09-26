@@ -43,7 +43,10 @@ export interface AalisEvents {
   'service:preference-changed': [name: string];
   /** 通知：插件已激活。同一轮 recompute 可能紧接着激活下一个插件，不等本事件的监听器 */
   'plugin:loaded': [instanceId: string];
-  /** 通知：插件已拆卸。激活失败的回滚（从未 loaded）与关机拆卸（`stop()` 自有事件）不发 */
+  /**
+   * 通知：插件已拆卸。只发给发过 `plugin:loaded` 的激活：从未激活完成的（激活失败的回滚、仍在初始化时被拆）
+   * 不发；关机拆卸（`stop()` 自有事件）也不发
+   */
   'plugin:unloaded': [instanceId: string];
   /** 通知：一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 */
   'plugins:changed': [];

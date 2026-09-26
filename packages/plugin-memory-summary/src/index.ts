@@ -272,6 +272,19 @@ async function run(caps: Caps): Promise<void> {
   const summarizing = new Set<string>();
 
   /**
+   * 清空代数：memory:clear 清摘要时递增（全局清空递增 clearAllEpoch，会话级递增该会话的代数）。
+   * 摘要在读历史前记下代数，模型返回后比对：期间清过就丢弃在途结果，不把已清掉的对话写回摘要。
+   */
+  let clearAllEpoch = 0;
+  const clearEpoch = new Map<string, number>();
+  /** 记下会话此刻的清空代数；返回的函数在此后清过（全局或本会话）时为真 */
+  function clearedSince(sessionId: string): () => boolean {
+    const all = clearAllEpoch;
+    const own = clearEpoch.get(sessionId) ?? 0;
+    return () => clearAllEpoch !== all || (clearEpoch.get(sessionId) ?? 0) !== own;
+  }
+
+  /**
    * 根据 summaryModelMode 解析出用于生成摘要的 LLMModel entry。
    * - global：按默认优先级/preference 选首个 chat-capable entry
    * - custom：按 cfg.summaryLLM 精确匹配
@@ -347,7 +360,8 @@ async function run(caps: Caps): Promise<void> {
    * （compress 路径的任务列表状态与任务提示）。
    *
    * 模型失败或返回空时降级为只裁切、不写摘要；裁切抛错时先把摘要回滚到落库前再原样抛出。
-   * 返回写入的摘要，降级时为空串。
+   * 模型返回时 `cleared()` 为真（开始摘要之后会话被清空过）则整次作废：不写摘要、不裁切、不写标记。
+   * 返回写入的摘要，降级或作废时为空串。
    */
   async function summarizeAndTrim(
     provider: MemoryService,
@@ -356,6 +370,7 @@ async function run(caps: Caps): Promise<void> {
     allHistory: Message[],
     messagesToSummarize: Message[],
     userSuffix: string,
+    cleared: () => boolean,
   ): Promise<string> {
     const store = new SummaryStore(provider);
     const existing = await store.getSummary(sessionId);
@@ -427,6 +442,10 @@ async function run(caps: Caps): Promise<void> {
       // 入库会让它成为后续所有增量摘要的权威基底，链条被永久污染（对抗审计实测）
       summaryText = '';
       logger.warn('生成会话摘要失败，降级为纯裁切（该段历史无摘要，归档层仍可检索）:', err);
+    }
+    if (cleared()) {
+      logger.debug(`会话在摘要期间被清空，丢弃本次摘要: session=${sessionId}`);
+      return '';
     }
 
     const finalSummary = summaryText.trim();
@@ -508,6 +527,7 @@ async function run(caps: Caps): Promise<void> {
   async function generateSummary(sessionId: string): Promise<void> {
     if (summarizing.has(sessionId)) return;
     summarizing.add(sessionId);
+    const cleared = clearedSince(sessionId);
 
     try {
       const provider = memory.current;
@@ -522,7 +542,7 @@ async function run(caps: Caps): Promise<void> {
       const messagesToSummarize = selectMessagesToSummarize(allHistory);
       if (messagesToSummarize.length === 0) return;
 
-      await summarizeAndTrim(provider, summaryModel, sessionId, allHistory, messagesToSummarize, '');
+      await summarizeAndTrim(provider, summaryModel, sessionId, allHistory, messagesToSummarize, '', cleared);
     } catch (err) {
       logger.warn('生成会话摘要失败:', err);
     } finally {
@@ -597,6 +617,7 @@ async function run(caps: Caps): Promise<void> {
     // 压缩不看 threshold：消息数不到阈值也强制执行。
     if (summarizing.has(data.sessionId)) return;
     summarizing.add(data.sessionId);
+    const cleared = clearedSince(data.sessionId);
 
     // 通知前端：压缩开始
     events.emit('session:compressing', { sessionId: data.sessionId, status: 'start' }).catch(() => {});
@@ -656,9 +677,10 @@ async function run(caps: Caps): Promise<void> {
         allHistory,
         messagesToSummarize,
         `${todoContext}${taskHint}`,
+        cleared,
       );
 
-      // 通知前端：成功报 done；降级报 error（摘要确实失败了，裁切结果经历史刷新可见）。
+      // 通知前端：成功报 done；降级报 error（摘要确实失败了，裁切结果经历史刷新可见）；期间被清空而作废也报 error。
       // 空响应此前既不裁也不发事件，前端会永远停在 'start'——现在归入降级路径一并解决。
       events
         .emit('session:compressing', { sessionId: data.sessionId, status: finalSummary ? 'done' : 'error' })
@@ -679,6 +701,8 @@ async function run(caps: Caps): Promise<void> {
       await next();
       return;
     }
+    if (data.scope === 'all') clearAllEpoch++;
+    else if (data.sessionId) clearEpoch.set(data.sessionId, (clearEpoch.get(data.sessionId) ?? 0) + 1);
 
     try {
       const store = new SummaryStore(memory.require());

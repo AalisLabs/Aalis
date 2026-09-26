@@ -60,7 +60,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * 为一次激活造某个服务的资源口
  * @internal
  */
-export function createPort<P>(scope: BindingScope, name: string, required = false): BindingPort<P> {
+export function createPort<P>(scope: BindingScope, name: string, required: boolean): BindingPort<P> {
   const withdraw = (off: () => unknown, what: string) => scope.resources.withdraw(off, what);
 
   // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
@@ -78,7 +78,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     attaching: boolean;
     cancelled: boolean;
   }
-  const followers: Follower[] = [];
+  const followers = new Set<Follower>();
   let subscribed = false;
 
   const desiredProvider = (follower: Follower): P | undefined =>
@@ -106,7 +106,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
               () => undefined,
             )
           : undefined;
-        releaseEdge?.(settled);
+        releaseEdge!(settled);
         if (settled && !follower.overlap) {
           follower.busy = true;
           settled.then(() => {
@@ -170,7 +170,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
       return () => {};
     }
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
-    followers.push(follower);
+    followers.add(follower);
     // 登记账本的条目是本激活对外可见的能力，关闭时与原语同一拍撤掉，不等下游交接
     if (overlap) scope.resources.onCut(() => pump(follower));
     if (!subscribed) subscribe();
@@ -178,8 +178,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     return () => {
       if (follower.cancelled) return;
       follower.cancelled = true;
-      const index = followers.indexOf(follower);
-      if (index >= 0) followers.splice(index, 1);
+      followers.delete(follower);
       pump(follower);
     };
   };

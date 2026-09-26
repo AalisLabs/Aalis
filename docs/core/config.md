@@ -148,6 +148,6 @@ plugins:
 | `logLevel` | select | 'info' | 日志等级 |
 | `slowThresholdMs` | number（≥0） | 60000 | 慢操作阈值（毫秒）：插件激活超过它仍未完成时告警并转入后台，`app:*` 屏障事件的单个监听器超过它时告警并不再等待；0 表示不设限（见 [App](app.md) 的 `AppOptions.slowThresholdMs`） |
 
-`logLevel` 与 `slowThresholdMs` 只在启动时读取，改了要重启；`startAalis` 遇到不是非负有限数的 `slowThresholdMs` 记一条告警，按默认值处理。runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，`slowThresholdMs` 低于它时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活。
+`logLevel` 与 `slowThresholdMs` 只在启动时读取，改了要重启；`startAalis` 把留空的 `slowThresholdMs`（YAML 空键）当作未配置；遇到不是非负有限数的写法记一条告警，同样按默认值处理。runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，`slowThresholdMs` 低于它时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活。
 
 指令前缀不是顶层字段，写在 `plugins["@aalis/plugin-commands"].commandPrefix`（默认 `/`）；写到顶层不会生效，WebUI 的 `PUT /api/config` 也只应用上表三个键；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名。

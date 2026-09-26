@@ -77,12 +77,9 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
     },
     handler: async args => {
       try {
-        const r = await client.getAssetBills(
-          args.ccy as string | undefined,
-          args.type as string | undefined,
-          pickLimit(args, pageLimit),
-        );
-        return JSON.stringify(truncate(r.data));
+        const limit = pickLimit(args, pageLimit);
+        const r = await client.getAssetBills(args.ccy as string | undefined, args.type as string | undefined, limit);
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }
@@ -134,8 +131,9 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
     },
     handler: async args => {
       try {
-        const r = await client.getDepositHistory(args.ccy as string | undefined, pickLimit(args, pageLimit));
-        return JSON.stringify(truncate(r.data));
+        const limit = pickLimit(args, pageLimit);
+        const r = await client.getDepositHistory(args.ccy as string | undefined, limit);
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }
@@ -163,8 +161,9 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
     },
     handler: async args => {
       try {
-        const r = await client.getWithdrawalHistory(args.ccy as string | undefined, pickLimit(args, pageLimit));
-        return JSON.stringify(truncate(r.data));
+        const limit = pickLimit(args, pageLimit);
+        const r = await client.getWithdrawalHistory(args.ccy as string | undefined, limit);
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }

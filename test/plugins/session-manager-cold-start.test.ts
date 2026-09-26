@@ -65,6 +65,40 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
     expect([...preferred.meta.keys()]).toEqual(['old-1']);
   });
 
+  it('新表加载窗口里的改动写回旧后端，不随换表丢失', async () => {
+    const fallback = fakeMemory();
+    const preferred = fakeMemory({ 'old-1': oldSession });
+    const list = preferred.listMetadata;
+    let listing = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    preferred.listMetadata = async () => {
+      listing = true;
+      await gate;
+      return list();
+    };
+    const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    const host = app.bind({ provide, sessionManager });
+    host.provide(memory, fallback as never, { priority: -100 });
+    await app.plugin(sessionManagerPlugin, {});
+    await app.plugins.idle();
+    const sm = () => host.sessionManager.require();
+
+    host.provide(memory, preferred as never, { priority: 10 });
+    await expect.poll(() => listing).toBe(true);
+    await sm().ensureSession('draft', { name: '加载窗口里建的会话', status: 'waiting' });
+    release();
+    await expect.poll(() => sm().getSession('old-1')?.name).toBe('上次运行的会话');
+    await app.plugins.idle();
+
+    expect(fallback.meta.get('draft')?.name, '窗口里的改动写回了旧后端').toBe('加载窗口里建的会话');
+    expect(preferred.meta.has('draft')).toBe(false);
+    await app.stop();
+  });
+
   it('显式删除的会话仍从后端删掉', async () => {
     const store = fakeMemory({ keep: { ...oldSession, id: 'keep' }, drop: { ...oldSession, id: 'drop' } });
     const app = new App({ name: 'T', logLevel: 'error' });

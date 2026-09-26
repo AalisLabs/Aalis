@@ -31,7 +31,7 @@ export default definePlugin({
 
 | 服务名 | 接口 | 主要方法 |
 |---|---|---|
-| `flow-control` | `FlowControlService`（来自 `@aalis/api-flow-control`） | `ensureState` / `recordIncoming` / `recordReply` / `recordTriggered` / `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted` / `getStateSnapshot` / `getThreshold` / `rescheduleIdle` |
+| `flow-control` | `FlowControlService`（来自 `@aalis/api-flow-control`） | `recordIncoming` / `recordReply` / `recordTriggered` / `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted` / `getStateSnapshot` / `getThreshold` / `rescheduleIdle` |
 
 ## 接入相位
 

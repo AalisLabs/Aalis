@@ -10,7 +10,7 @@ import { hostedApp } from '../fixtures/app.js';
 // ════════════════════════════════════════════════════════════
 // AuthorityPage 组件测试（jsdom，数字等级）—— 锁死「输入不能是死的」：
 // 渲染不崩 + 改用户等级输入真触发 setUserLevel、改整组等级真触发 setAuthorityOverride；
-// 操作成功后显示服务端返回的 message（拒写附注靠它让 owner 看见），没有才用本地提示；
+// 操作成功后显示服务端返回的 message（拒写附注靠它让 owner 看见）；
 // 整组设最低等级汇总各条回执（撤销数、失败原因），无论成败都刷新。
 // ════════════════════════════════════════════════════════════
 
@@ -119,25 +119,16 @@ describe('AuthorityPage 操作提示', () => {
 
   const commitLevel = (value: string) => commitInput('整数；越大越高，负数=封禁', value);
 
-  it('setUserLevel / deleteUser 返回带附注的 message：页面显示这段 message，而不是本地的成功提示', async () => {
+  it('setUserLevel / deleteUser 返回带附注的 message：页面显示这段 message', async () => {
     replies.setUserLevel = { message: `onebot:123 等级已更新为 -1${NOTE}` };
     replies.deleteUser = { message: `onebot:123 记录已删除${NOTE}` };
     render(<AuthorityPage />);
 
     await commitLevel('-1');
     expect(await screen.findByText(`onebot:123 等级已更新为 -1${NOTE}`)).toBeTruthy();
-    expect(screen.queryByText('已设等级: -1')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     expect(await screen.findByText(`onebot:123 记录已删除${NOTE}`)).toBeTruthy();
-    expect(screen.queryByText('已删除')).toBeNull();
-  });
-
-  it('返回值不带字符串 message 时退回本地提示', async () => {
-    replies.setUserLevel = { message: 42 };
-    render(<AuthorityPage />);
-    await commitLevel('5');
-    expect(await screen.findByText('已设等级: 5')).toBeTruthy();
   });
 
   it('带附注的长提示停留更久：过了短提示的 2200ms 仍在，按字数到时才清掉', async () => {
@@ -160,10 +151,11 @@ describe('AuthorityPage 操作提示', () => {
 
   it('新提示顶掉旧提示时，旧提示的计时不会把新提示提前清掉', async () => {
     const text = `onebot:123 记录已删除${NOTE}`;
+    replies.setUserLevel = { message: 'onebot:123 等级已更新为 5' };
     replies.deleteUser = { message: text };
     await renderThenFakeTimers();
     await commitLevel('5');
-    await screen.findByText('已设等级: 5');
+    await screen.findByText('onebot:123 等级已更新为 5');
 
     await act(async () => {
       vi.advanceTimersByTime(1000);

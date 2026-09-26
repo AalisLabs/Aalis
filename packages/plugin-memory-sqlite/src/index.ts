@@ -425,7 +425,7 @@ export default definePlugin({
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`);
+      throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`, { cause: err });
     }
 
     caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
