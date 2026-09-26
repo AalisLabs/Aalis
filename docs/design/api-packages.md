@@ -108,7 +108,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-vectorstore` | — | `vectorstore` | — | `VectorStoreService` |
 | `api-tools` | — | `tools` | — | `ToolService`；绑定门面含 `register` / `registerGroup`，另导出 `withToolGroups` |
 | `api-commands` | — | `commands` | — | `CommandService` |
-| `api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
+| `api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
 | `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；绑定门面 `registerPage` / `registerAction`；向 `PluginMeta` 注入 `extends`，向 schema-config 注入 SchemaField 表单交互属性 |
 | `api-authority` | — | `authority` | — | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
