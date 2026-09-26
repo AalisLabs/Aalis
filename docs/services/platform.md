@@ -61,7 +61,7 @@ export interface PlatformAdapter {
 
 ### 参考实现（provider）
 
-- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了全部可选方法（`getSelfIdentity`、`callAction`），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
+- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `getSelfIdentity`、`callAction`（未实现 `canHandle`，按会话 ID 前缀路由），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
 - **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；`sessionTypes: []` 表示单会话不区分类型。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。

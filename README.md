@@ -58,6 +58,8 @@ npm start
 
 在本仓库里开发：`pnpm install && pnpm build`，`pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
 
+从仓库源码运行时，仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由模型判定群消息要不要回复，侧车不随仓库分发）与其它插件一样默认启用，并优先于 trigger-policy 接管群聊判定；本机没有侧车时群里只回点名（@、叫名字、戳一戳）。不用它就写进配置文件的 `disabledPlugins`，或在 WebUI 插件管理里停用，说明见 [该包 README](packages/plugin-trigger-laya/README.md)。
+
 ## 写一个插件
 
 入口必须默认导出 `definePlugin` 的产物：加载器只认它。用到的能力写进 `uses`，提供的服务写进 `provides`（描述符，不是字符串）：

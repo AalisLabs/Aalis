@@ -135,10 +135,11 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     expect(svc.getPersonaName({ persona: 'missing' })).toBe('Main');
   });
 
-  it('nick_name 写成单个字符串按一个昵称取、不拆成单字；列表各项去空白、滤掉非字符串与空串；其它类型忽略并记 warn', async () => {
+  it('nick_name 写成单个字符串按一个昵称取、不拆成单字；列表各项去空白、滤掉非字符串与空串；留空不告警；其它类型忽略并记 warn', async () => {
     writeCard('main.yaml', 'name: Main\nnick_name: 小明同学\ndescription: m\nprompt: m\n');
     writeCard('b.yaml', "name: Bob\nnick_name: [' 阿B ', '', '  ', 233, 阿波]\ndescription: b\nprompt: b\n");
     writeCard('c.yaml', 'name: Cat\nnick_name: {a: 1}\ndescription: c\nprompt: c\n');
+    writeCard('d.yaml', 'name: Dan\nnick_name:\ndescription: d\nprompt: d\n');
     const logHub = new LogHub();
     const logs: LogEntry[] = [];
     logHub.onEntry(e => logs.push(e));
@@ -147,6 +148,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     expect(svc.getNickNames?.()).toEqual(['小明同学']);
     expect(svc.getNickNames?.({ persona: 'b' })).toEqual(['阿B', '阿波']);
     expect(svc.getNickNames?.({ persona: 'c' })).toEqual([]);
+    expect(svc.getNickNames?.({ persona: 'd' }), '留空（null）与不写相同').toEqual([]);
     const warns = logs.filter(e => e.level === 'warn').map(e => e.message);
     expect(warns.some(m => m.includes('nick_name 应为字符串列表') && m.includes('c.yaml'))).toBe(true);
     expect(

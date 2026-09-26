@@ -24,7 +24,7 @@ import { freePort } from '../helpers/net.js';
 // plugin-trigger-laya：自成一体的模型触发插件。
 //
 // 侧车一律用本地 http.createServer 做的假侧车（不碰真实侧车）；memory、flow-control、message-archive、
-// media、persona、doctor 用内存替身。经 inbound:trigger 钩子链驱动，验证宿主各步骤、请求体、阈值、
+// media、persona、doctor 用内存替身。经 inbound:trigger 钩子链驱动，验证判定各步骤、请求体、阈值、
 // 兜底（只回点名）与熔断告警、诊断项；末段是运行期自检（判定时的 cur 与归档正文比对），联调用真实
 // message-archive 与内存 memory。与 trigger-policy 二选一的联调见 trigger-select.test.ts。
 // ════════════════════════════════════════════════════════════
@@ -299,6 +299,13 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect(body.replyTo).toEqual({ userId: '30002', nickname: '乙' });
   });
 
+  it('当前消息没有昵称时 curNick 回落 userId，与历史行的 nick 和训练导出同一口径', async () => {
+    const { send } = await setup();
+    await send(groupMsg('[戳一戳: 30009 戳了你]', { userId: '30009', nickname: undefined, noticeType: 'poke' }));
+    await send(groupMsg('有人在吗', { userId: '30010', nickname: '' }));
+    expect(sidecar.requests.map(r => r.body.curNick)).toEqual(['30009', '30010']);
+  });
+
   it('孤代理：请求体里的字符串先换成 U+FFFD 再发（侧车分词器不收孤代理，整条只能兜底）', async () => {
     const lone = '😀'.slice(0, 1); // 截在 emoji 中间
     const mem = fakeMemory([
@@ -400,7 +407,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
   });
 });
 
-describe('plugin-trigger-laya：宿主各步骤', () => {
+describe('plugin-trigger-laya：判定各步骤', () => {
   it('带 source 的内部注入：不判定，triggerType 原样保留', async () => {
     const { send } = await setup();
     const r = await send(groupMsg('委派任务', { source: 'delegate', triggerType: 'proactive' }));
@@ -870,6 +877,37 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect(byLevel(logs, 'error')).toEqual([]);
   });
 
+  it('熔断到期后先回 422 / 413：不算恢复，诊断仍报尚未确认恢复；之后再攒满 3 次失败属同一次故障，不另记 error', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let next: Reply = { status: 500, body: { error: 'internal' } };
+    sidecar.reply = () => next;
+    const { send, logs, diagnose } = await setup();
+    for (let i = 0; i < 3; i++) await send(groupMsg(`失败 ${i}`));
+    vi.setSystemTime(Date.now() + 30_001);
+
+    next = { status: 422, body: { error: 'system_notice' } };
+    await send(groupMsg('[系统通知] x'));
+    expect(sidecar.requests).toHaveLength(4);
+    expect(
+      byLevel(logs, 'warn').filter(m => m.includes('判定恢复')),
+      '422 没有经过推理',
+    ).toEqual([]);
+    const stale = await diagnose();
+    expect(stale.level).toBe('warn');
+    expect(stale.message).toContain('尚未经请求确认恢复');
+
+    next = { status: 500, body: { error: 'internal' } };
+    for (let i = 0; i < 3; i++) await send(groupMsg(`又失败 ${i}`));
+    expect(sidecar.requests, '422 清零了失败计数：要再攒满 3 次才重新熔断').toHaveLength(7);
+    expect(byLevel(logs, 'error'), '同一次故障只在转入时告警').toHaveLength(1);
+
+    vi.setSystemTime(Date.now() + 30_001);
+    next = score(1);
+    expect((await send(groupMsg('恢复'))).reached).toBe(true);
+    expect(byLevel(logs, 'warn').filter(m => m.includes('判定恢复'))).toHaveLength(1);
+    expect((await diagnose()).level).toBe('ok');
+  });
+
   it('请求体超过侧车上限（1 MiB，按 UTF-8 字节计）：不发请求，本条只回点名并记 info，不计失败', async () => {
     // 40 万个汉字：字符数不到 1 MiB，UTF-8 编码后约 1.2 MB
     const big: Message = { role: 'user', content: '字'.repeat(400_000), name: '30002', metadata: { userId: '30002' } };
@@ -1058,6 +1096,28 @@ describe('plugin-trigger-laya：诊断项', () => {
       // 第 21 条把最早的一条挤出窗口
       await image('再一条');
       expect(await diagnose()).toMatchObject({ level: 'ok', message: 'Laya 触发判定生效中：侧车在线（版本 v-test）' });
+    });
+
+    it('一条消息带多张图：每张都只有指针才算一条只有指针，有一张带描述就不算', async () => {
+      const described = '[图片: 一只猫 | ref:data/images/b.png]';
+      let descs: Array<string | undefined> = [];
+      const svc = {
+        async processMessage(msg: IncomingMessage) {
+          msg._attachmentDescriptions = descs;
+          return {};
+        },
+      };
+      const { send, diagnose } = await setup({ media: svc });
+      const twoImages = (content: string) => send(groupMsg(content, { attachments: [IMAGE, IMAGE] }));
+
+      for (let i = 0; i < 10; i++) {
+        descs = i % 2 === 0 ? [POINTER, described] : [described, undefined];
+        await twoImages(`一张有描述 ${i}`);
+      }
+      expect((await diagnose()).level, '有一张带描述的不计为只有指针').toBe('ok');
+      descs = [POINTER, undefined];
+      for (let i = 0; i < 10; i++) await twoImages(`两张都只有指针 ${i}`);
+      expect((await diagnose()).message).toContain(`近 20 条带图消息有 10 ${BLIND}`);
     });
 
     it('不计入：附件识别超过 mediaWaitMs 还没写回、media 缺席', async () => {

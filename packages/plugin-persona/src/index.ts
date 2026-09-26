@@ -506,7 +506,8 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 角色卡的 nick_name → 昵称列表：字符串列表的各项去空白，滤掉非字符串与空串；单个字符串按一个昵称取（不拆字：
-   * 名字表把昵称逐个展开做点名识别，拆成单字会让含其中任一个字的消息都算点名）；其它类型忽略并记一条 warn
+   * 名字表把昵称逐个展开做点名识别，拆成单字会让含其中任一个字的消息都算点名）；留空（null）与不写相同，不告警；
+   * 其它类型忽略并记一条 warn
    */
   function asNickNames(value: unknown, uri: string): string[] | undefined {
     if (value === undefined || value === null) return undefined;

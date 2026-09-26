@@ -30,13 +30,19 @@ import {
   markTriggered,
   type TriggerService,
   trigger,
-  waitForAttachmentDescriptions,
 } from '@aalis/api-trigger';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { buildIncomingContent, type IncomingMessage, type Message, parseAttachmentRefs } from '@aalis/schema-message';
+import {
+  buildIncomingContent,
+  getMessageName,
+  type IncomingMessage,
+  type Message,
+  parseAttachmentRefs,
+} from '@aalis/schema-message';
 import { toWellFormedText } from '@aalis/util-text-normalize';
+import { waitForAttachmentDescriptions } from './attachments.js';
 import { defaultLayaConfig, resolveLayaConfig } from './config.js';
 import { createSelfCheck } from './self-check.js';
 
@@ -93,8 +99,7 @@ const configSchema: ConfigSchema = {
     type: 'number',
     label: '历史行数',
     default: defaultLayaConfig.historyRows,
-    description:
-      '窗口的行数，只算 user / assistant 行：从 memory 多取一倍，过滤后留最后这么多行，与侧车渲染回归的取法一致。',
+    description: '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
   },
   priority: {
     type: 'number',
@@ -144,7 +149,11 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined;
 }
 
-/** 历史 → 侧车窗口：只留 user / assistant 且正文是字符串的行，取最后 limit 行；nick 取 metadata.nickname，缺失回落 name */
+/**
+ * 历史 → 侧车窗口：只留 user / assistant 且正文是字符串的行，取最后 limit 行；nick 取 metadata.nickname，缺失回落
+ * name（归档时为 userId）。先滤掉正文不是字符串的行再取行：正文为空的工具调用行不占名额（侧车本来也丢弃它们），
+ * 这一点与侧车渲染回归 replay_data.py 只按角色过滤不同，差别只在侧车建昵称表时看到多少行
+ */
 function toRows(history: Message[], limit: number): LayaRow[] {
   const rows: LayaRow[] = [];
   for (const m of history) {
@@ -189,8 +198,9 @@ const POINTER_ONLY_WARN = 10;
 /**
  * 判定时这条消息的图片是否都只有指针、没有内容描述。只有指针：描述位为空（识别跑完了但没有描述，如没有可用的
  * 识别模型），或只有不带描述的附件引用 `[图片 | ref:…]`（media 关了图片到达即识别时写的）。识别失败的占位不算
- * （media 每次失败另记 warn）。附件识别还没写回（超过 mediaWaitMs、识别抛错、media 缺席）或没有图片附件时返回
- * undefined，不计入：前者由自检汇总的「缺附件描述」反映，media 缺席见依赖说明
+ * （media 每次失败另记 warn）；动图走视频的抽帧识别，没有识别模型时写的是抽帧失败的说明，也不算，所以只覆盖
+ * 静态图。多张图时每张都只有指针才算。附件识别还没写回（超过 mediaWaitMs、识别抛错、media 缺席）或没有图片
+ * 附件时返回 undefined，不计入：前者由自检汇总的「缺附件描述」反映，media 缺席见依赖说明
  */
 function imagesPointerOnly(message: IncomingMessage): boolean | undefined {
   const descs = message._attachmentDescriptions;
@@ -295,7 +305,8 @@ function run(caps: Caps): void {
     logger.debug(`[laya] 侧车请求失败: ${why}`);
     if (failures < CIRCUIT_FAILURES) return;
     openUntil = Date.now() + CIRCUIT_OPEN_MS;
-    // 失败计数只在 healthy() 清零，恰好等于门限的那次就是这次故障的转入
+    // 失败计数在侧车正常作答时清零（成功的判定与 422 / 413），恰好等于门限的那次是转入熔断。判定不可用期间
+    // 回过 422 / 413 又攒满门限的，仍是同一次故障：goDown 只在由可用转入时记 error
     if (failures === CIRCUIT_FAILURES) {
       goDown(`侧车连续 ${failures} 次失败，最近一次: ${why}；熔断 ${CIRCUIT_OPEN_MS / 1000}s 后重试`);
     } else {
@@ -303,7 +314,7 @@ function run(caps: Caps): void {
     }
   }
 
-  /** 侧车正常作答（含 422、413）：失败计数清零；不可用过则记恢复 */
+  /** 一次成功的判定：失败计数清零；不可用过则记恢复 */
   function healthy(): void {
     failures = 0;
     if (down === undefined) return;
@@ -394,12 +405,12 @@ function run(caps: Caps): void {
     if (circuitOpen()) return fallback('侧车熔断中');
 
     const sid = message.sessionId;
-    // 窗口是最近 historyRows 条 user / assistant 行：多取一倍，过滤后再取，与侧车渲染回归的取法一致
+    // 窗口是最近 historyRows 条 user / assistant 且正文是字符串的行：多取一倍，过滤后再取（见 toRows）
     const fetched = cfg.historyRows * 2;
     const history = await (mem.getFullHistory?.(sid, fetched) ?? mem.getHistory(sid, fetched));
     // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等识别（有上限，超时照常判定）；
     // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
-    await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger, '[laya]');
+    await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger);
     const pointerOnly = imagesPointerOnly(message);
     if (pointerOnly !== undefined) {
       recentImages.push(pointerOnly);
@@ -415,7 +426,8 @@ function run(caps: Caps): void {
         rows: toRows(history, cfg.historyRows),
         cur,
         curUserId: message.userId,
-        curNick: message.nickname,
+        // 与历史行同一口径：昵称缺失时回落 userId（归档时的 name），训练导出同样如此
+        curNick: str(message.nickname) ?? getMessageName(message.userId),
         replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
         selfId,
         // 超过侧车上限的名字不发（截断后的名字会误换正文），超出个数的取前面的：别名在前，人设按服务解析顺序
@@ -456,9 +468,9 @@ function run(caps: Caps): void {
     }
 
     // 422：这条消息不适合交给模型（系统通知、空消息等）；413：请求体超限（发前已按上限判过，这里兜底）。
-    // 侧车本身正常，不计失败
+    // 侧车本身正常，不计失败，失败计数清零；这条没有经过推理，不算成功的判定，不清除判定不可用
     if (status === 422 || status === 413) {
-      healthy();
+      failures = 0;
       return fallback(`侧车 ${status}${errorCode(text)}`);
     }
     if (status < 200 || status >= 300) {
@@ -539,7 +551,7 @@ function run(caps: Caps): void {
         `耗时=${Date.now() - started}ms${superseded ? ' | 作废=同会话更晚到的消息已放行' : ''}`,
     );
 
-    // 放行与吞掉都不等判定期间启动的附件识别（见 waitForAttachmentDescriptions）
+    // 放行与吞掉都不等判定期间启动的附件识别（见 attachments.ts）
     if (!verdict.speak || superseded) {
       await archiveSwallowed(message, caps.messageArchive, logger, '[laya]');
       return; // swallow
@@ -578,8 +590,8 @@ function run(caps: Caps): void {
         problems.length > 0
           ? [`${problems.join('；')}${active ? '，判定按兜底只回点名' : ''}`]
           : [`侧车在线（版本 ${'version' in health ? health.version : '?'}）`];
-      // down 只由成功的判定清除：熔断已到期、memory 已回来，但还没有请求确认恢复（本插件不生效时一直如此）。
-      // 探活正常不代表 /v1/score 正常，照实报成上次的故障
+      // down 只由成功的判定清除（422 / 413 不算）：熔断已到期、memory 已回来，但还没有请求确认恢复（本插件
+      // 不生效时一直如此）。探活正常不代表 /v1/score 正常，照实报成上次的故障
       const stale = down !== undefined && !circuitOpen() && caps.memory.current !== undefined;
       if (stale) parts.push(`上次判定不可用（${down}），尚未经请求确认恢复`);
       // 生效时近期带图消息大多只有图片指针：模型判定带图消息时不知道图里是什么

@@ -438,6 +438,10 @@ const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const CONNECT_TIMEOUT = 15000;
 
+// ===== 请求事件 =====
+/** 好友申请、入群邀请与加群申请合成的系统通知的 IncomingMessage.source */
+const REQUEST_SOURCE = 'onebot-request';
+
 // ===== 消息分条逻辑 =====
 
 /**
@@ -1774,6 +1778,8 @@ function runAdapter(caps: Caps): void {
   }
 
   // ===== 请求事件处理（加好友 / 加群 / 邀请入群）=====
+  // 合成的系统通知带 source：属于系统侧注入，不经触发判定、不过回复后冷却（禁言与限速照常），
+  // agent 按「会话 + 来源」分道，与同一会话的真人消息互不打断
 
   function handleRequestEvent(state: ConnectionState, raw: OneBotRawEvent): void {
     if (!state.protocol) return;
@@ -1809,6 +1815,7 @@ function runAdapter(caps: Caps): void {
           platform: 'onebot',
           userId: req.userId,
           sessionType: 'private',
+          source: REQUEST_SOURCE,
         })
         .catch((err: unknown) => logger.warn(`请求事件处理失败: ${err}`));
     } else if (req.requestType === 'group') {
@@ -1836,6 +1843,7 @@ function runAdapter(caps: Caps): void {
             userId: req.userId,
             sessionType: 'group',
             groupId: req.groupId,
+            source: REQUEST_SOURCE,
           })
           .catch((err: unknown) => logger.warn(`群申请事件处理失败: ${err}`));
         return;
@@ -1848,6 +1856,7 @@ function runAdapter(caps: Caps): void {
           platform: 'onebot',
           userId: req.userId,
           sessionType: 'private',
+          source: REQUEST_SOURCE,
         })
         .catch((err: unknown) => logger.warn(`邀请事件处理失败: ${err}`));
     }

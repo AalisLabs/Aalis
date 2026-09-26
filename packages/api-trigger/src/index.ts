@@ -6,14 +6,13 @@
 // inbound:trigger 相位挂中间件。服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一：
 // 其余触发插件对每条消息直接放行，什么都不做。一个都不在时这个相位不做判定，消息照常往下走。
 //
-// 本包另含触发插件共用的宿主函数：生效者判断、禁言关键词、名字表与点名识别、附件识别限时等待、
-// 放行收尾与吞掉时的影子归档。模块状态只有 isActiveTrigger 按每次入站记下的胜者；createBotNames
+// 本包另含触发插件共用的函数：生效者判断、禁言关键词、名字表与点名识别、放行收尾与吞掉时的影子归档。
+// 模块状态只有 isActiveTrigger 按每次入站记下的胜者（进程内全部副本共用一张表）；createBotNames
 // 返回的名字表各自记着告警过的故障，归调用方的激活所有。日志前缀由调用方传入（如 '[laya]'）。
 //
 // 服务名：'trigger'
 // ============================================================
 
-import type { MediaService } from '@aalis/api-media';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionManagerService } from '@aalis/api-session-manager';
@@ -38,12 +37,19 @@ type AllOf<P> = Pick<ServiceRef<P>, 'all'>;
 
 // ----- 生效者 -----
 
-/** 每次入站取下的胜者，以 inbound:trigger 的相位数据对象为键 */
-const judgedBy = new WeakMap<object, TriggerService | undefined>();
+/**
+ * 每次入站取下的胜者，以 inbound:trigger 的相位数据对象为键。进程内全部 api-trigger 副本共用一张表（经全局
+ * 符号表取同一个对象）：契约包可能装了两份，两个触发插件各用一份时各记各的，同一条消息就可能被两个都判，
+ * 或两个都不判
+ */
+const JUDGED_BY = Symbol.for('@aalis/api-trigger.judgedBy');
+const shared = globalThis as Record<symbol, WeakMap<object, TriggerService | undefined> | undefined>;
+shared[JUDGED_BY] ??= new WeakMap();
+const judgedBy = shared[JUDGED_BY];
 
 /**
  * 这次入站是否由 self 判定。胜者每次入站只取一次：相位里先跑到的触发插件取下 trigger.current，
- * 以这次的相位数据为键记在本模块的表里，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，
+ * 以这次的相位数据为键记在共用的表里，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，
  * 同一条消息不会被两个触发插件各判一次。
  */
 export function isActiveTrigger(phase: object, ref: CurrentOf<TriggerService>, self: TriggerService): boolean {
@@ -168,41 +174,6 @@ export function isAddressed(
   if (message.noticeType === WellKnownNoticeTypes.Poke) return opts.triggerOnPoke;
   if (opts.triggerOnAt && mentionsSelf(message.content)) return true;
   return names.some(name => name && message.content.includes(name));
-}
-
-// ----- 附件识别 -----
-
-/**
- * 等这条消息的附件识别写好 `_attachmentDescriptions`，最多 waitMs 毫秒。带附件、尚无描述且 media 在场
- * 才启动识别；超时照常返回（识别在后台继续，描述可能仍缺），识别失败记 warn，永不抛错。
- *
- * 放行与吞掉都不必等识别跑完：agent 预处理器与归档对同一个消息对象调 processMessage，media 按消息
- * 对象记忆命中这次识别（在途则等它），不再识别第二遍。
- */
-export async function waitForAttachmentDescriptions(
-  message: IncomingMessage,
-  media: CurrentOf<MediaService>,
-  waitMs: number,
-  logger: Logger,
-  tag: string,
-): Promise<void> {
-  const svc = media.current;
-  if (!svc || !message.attachments?.length || message._attachmentDescriptions) return;
-  const recognition = Promise.resolve()
-    .then(() => svc.processMessage(message))
-    .then(
-      () => undefined,
-      err => logger.warn(`${tag} 附件识别失败: ${err}`),
-    );
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>(resolve => {
-    timer = setTimeout(resolve, waitMs);
-  });
-  try {
-    await Promise.race([recognition, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 // ----- 放行与吞掉 -----

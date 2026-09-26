@@ -1,5 +1,4 @@
-import { gateway } from '@aalis/api-gateway';
-import { App, events, logger } from '@aalis/core';
+import { App, logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowControlService } from '../../packages/api-flow-control/src/index.js';
@@ -30,8 +29,7 @@ interface FakeFlow {
 
 function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
-  // 调度器要的能力由宿主侧绑定给出；无 gateway 提供者时它回落到直接发入站事件
-  const bound = app.bind({ logger, events, gateway });
+  const bound = app.bind({ logger });
   const flow: FakeFlow = { muted: new Set(), cooling: new Set(), limited: new Set() };
   const trigger = { active: true };
   const service: FlowControlService = {
@@ -40,18 +38,23 @@ function setup() {
     isRateLimited: sid => flow.limited.has(sid),
     setMuted: () => {},
   };
+  // gateway 用记录型替身：注入走它的 ingressMessage（与生产同一条路），hold 可卡住注入
+  const seen: IncomingMessage[] = [];
+  const gw = { hold: async (_msg: IncomingMessage): Promise<void> => {} };
   const caps: IdleCaps = {
     logger: bound.logger,
-    events: bound.events,
-    gateway: bound.gateway,
+    gateway: {
+      current: {
+        async ingressMessage(msg: IncomingMessage) {
+          seen.push(msg);
+          await gw.hold(msg);
+        },
+      } as never,
+    },
     flowControl: { current: service },
     isActive: () => trigger.active,
   };
-  const seen: IncomingMessage[] = [];
-  bound.events.on('inbound:message', (msg: IncomingMessage) => {
-    seen.push(msg);
-  });
-  return { app, caps, seen, flow, bound, trigger };
+  return { app, caps, seen, flow, gw, trigger };
 }
 
 /** 造一个「很久没动过」的状态（满足 all-quiet） */
@@ -279,16 +282,12 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
   });
 
   it('tick 飞行中 stop() 后不再重排（无僵尸定时器）', async () => {
-    const { app, caps, bound } = setup();
+    const { app, caps, seen, gw } = setup();
     let release!: () => void;
     const inFlight = new Promise<void>(r => {
       release = r;
     });
-    let injected = 0;
-    bound.events.on('inbound:message', async () => {
-      injected++;
-      await inFlight; // 卡住注入，制造「tick 飞行中」的窗口
-    });
+    gw.hold = () => inFlight; // 卡住注入，制造「tick 飞行中」的窗口
     const cfg = resolveTriggerPolicyConfig({
       idleTriggerScope: 'platform',
       idleTriggerStrategy: 'all-quiet',
@@ -299,7 +298,7 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
     sched.start();
 
     await vi.advanceTimersByTimeAsync(1_100);
-    expect(injected, 'tick 应已进入注入并卡住').toBe(1);
+    expect(seen, 'tick 应已进入注入并卡住').toHaveLength(1);
 
     sched.stop();
     expect(vi.getTimerCount(), 'stop() 应清掉当前定时器').toBe(0);
@@ -309,7 +308,7 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
     expect(vi.getTimerCount(), 'stop() 后飞行中的 tick 不得再排新定时器').toBe(0);
 
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(injected, 'stop() 后不该再有新一轮').toBe(1);
+    expect(seen, 'stop() 后不该再有新一轮').toHaveLength(1);
     await app.stop();
   });
 });

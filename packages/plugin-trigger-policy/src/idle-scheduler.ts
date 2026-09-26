@@ -6,16 +6,15 @@
 
 import type { FlowControlService } from '@aalis/api-flow-control';
 import { type GatewayService, resolveEffectiveConfig } from '@aalis/api-gateway';
-import type { Events, Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import type { TriggerPolicyConfig } from './config.js';
 import { lastActivityOf, type TriggerSessionState } from './state.js';
 
-/** 调度器用到的能力：日志、入站事件、网关引用、流控闸门（只读当前提供者），以及本插件此刻是否生效 */
+/** 调度器用到的能力：日志、网关与流控闸门（只读当前提供者），以及本插件此刻是否生效 */
 export interface IdleCaps {
   logger: Logger;
-  events: Events;
-  gateway: ServiceRef<GatewayService>;
+  gateway: Pick<ServiceRef<GatewayService>, 'current'>;
   flowControl: Pick<ServiceRef<FlowControlService>, 'current'>;
   isActive(): boolean;
 }
@@ -33,13 +32,17 @@ function buildIdleMessage(sessionId: string, platform: string, prompt: string): 
   };
 }
 
+/**
+ * 经 gateway 注入，走完整入站相位链。gateway 是本插件的必需依赖，只在它丢失到调度收敛之间可能短暂缺席；
+ * 那时 inbound:message 同样无人消费（消费方就是 gateway 插件），这次注入只记一条 debug 放弃
+ */
 async function injectIdle(caps: IdleCaps, msg: IncomingMessage): Promise<void> {
   const gateway = caps.gateway.current;
-  if (gateway) {
-    await gateway.ingressMessage(msg);
-  } else {
-    await caps.events.emit('inbound:message', msg);
+  if (!gateway) {
+    caps.logger.debug(`[trigger] 空闲触发放弃（gateway 缺席）: session=${msg.sessionId}`);
+    return;
   }
+  await gateway.ingressMessage(msg);
 }
 
 // ===== session 范围调度 =====

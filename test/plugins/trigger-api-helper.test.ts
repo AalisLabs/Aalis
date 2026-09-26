@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PersonaService, PersonaSessionOptions } from '../../packages/api-persona/src/index.js';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
 import {
@@ -10,15 +10,13 @@ import {
   isAddressed,
   markTriggered,
   type TriggerService,
-  waitForAttachmentDescriptions,
 } from '../../packages/api-trigger/src/index.js';
 import type { Logger, ServiceView } from '../../packages/core/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// @aalis/api-trigger 的共用宿主函数：两个触发插件（规则 trigger-policy、模型 trigger-laya）
-// 的生效者判断、禁言关键词、名字表与点名识别、附件识别等待、放行收尾与吞掉归档都走这里。
+// @aalis/api-trigger 里触发插件共用的函数：两个触发插件（规则 trigger-policy、模型 trigger-laya）
+// 的生效者判断、禁言关键词、名字表与点名识别、放行收尾与吞掉归档都走这里。
 // ════════════════════════════════════════════════════════════
 
 /** 名字表枚举 persona 的全部提供者：给出 all 即可 */
@@ -44,8 +42,6 @@ function recordingLogger() {
   const logger = { warn: (m: string) => warns.push(m), info: () => {}, debug: () => {} } as unknown as Logger;
   return { logger, warns };
 }
-
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 describe('isAddressed：@ 自己', () => {
   it('只认 <at self> 标记', () => {
@@ -284,76 +280,6 @@ describe('markTriggered', () => {
   });
 });
 
-describe('waitForAttachmentDescriptions', () => {
-  const image = (extra: Partial<IncomingMessage> = {}): IncomingMessage => ({
-    content: '看图',
-    platform: 'onebot',
-    sessionId: 'onebot:10000:group:20001',
-    attachments: [{ kind: 'image', data: 'https://example.invalid/a.jpg' }],
-    ...extra,
-  });
-
-  function fakeMedia(finish: () => Promise<void> = async () => {}) {
-    const calls: IncomingMessage[] = [];
-    const svc = {
-      async processMessage(msg: IncomingMessage) {
-        calls.push(msg);
-        await finish();
-        msg._attachmentDescriptions = ['[图片: 一只猫]'];
-        return { total: 1, successCount: 1, items: [] };
-      },
-    };
-    return { ref: { current: svc as never }, calls };
-  }
-
-  it('识别在上限内写好描述：等到描述', async () => {
-    const { ref, calls } = fakeMedia(() => sleep(5));
-    const m = image();
-    await waitForAttachmentDescriptions(m, ref, 1000, recordingLogger().logger, '[t]');
-    expect(calls).toEqual([m]);
-    expect(m._attachmentDescriptions).toEqual(['[图片: 一只猫]']);
-  });
-
-  it('没有 media、没有附件、已有描述：不启动识别，立即返回', async () => {
-    const { ref, calls } = fakeMedia();
-    const { logger } = recordingLogger();
-    await waitForAttachmentDescriptions(image(), { current: undefined }, 1000, logger, '[t]');
-    await waitForAttachmentDescriptions(image({ attachments: [] }), ref, 1000, logger, '[t]');
-    await waitForAttachmentDescriptions(
-      image({ _attachmentDescriptions: ['[图片: 早就有了]'] }),
-      ref,
-      1000,
-      logger,
-      '[t]',
-    );
-    expect(calls).toHaveLength(0);
-  });
-
-  it('超过上限照常返回，识别在后台继续写到同一个消息对象上', async () => {
-    const gate = deferred();
-    const { ref } = fakeMedia(() => gate.promise);
-    const m = image();
-    await waitForAttachmentDescriptions(m, ref, 20, recordingLogger().logger, '[t]');
-    expect(m._attachmentDescriptions).toBeUndefined();
-    gate.resolve();
-    await sleep(5);
-    expect(m._attachmentDescriptions).toEqual(['[图片: 一只猫]']);
-  });
-
-  it('识别失败：记 warn（前缀由调用方给），不抛错', async () => {
-    const { logger, warns } = recordingLogger();
-    const failing = {
-      current: {
-        processMessage: async () => {
-          throw new Error('识别模型不可用');
-        },
-      } as never,
-    };
-    await expect(waitForAttachmentDescriptions(image(), failing, 1000, logger, '[laya]')).resolves.toBeUndefined();
-    expect(warns).toEqual(['[laya] 附件识别失败: Error: 识别模型不可用']);
-  });
-});
-
 describe('archiveSwallowed', () => {
   const msg: IncomingMessage = { content: 'x', platform: 'onebot', sessionId: 'onebot:10000:group:20001' };
 
@@ -389,5 +315,22 @@ describe('isActiveTrigger', () => {
   it('没有胜者时谁都不判', () => {
     const self: TriggerService = { label: '规则' };
     expect(isActiveTrigger({}, { current: undefined }, self)).toBe(false);
+  });
+
+  it('进程内装了两份 api-trigger：两个触发插件各用一份时，同一次入站仍只取一次胜者', async () => {
+    vi.resetModules();
+    const copyA = await import('../../packages/api-trigger/src/index.js');
+    vi.resetModules();
+    const copyB = await import('../../packages/api-trigger/src/index.js');
+    expect(copyA.isActiveTrigger, '确是两份模块').not.toBe(copyB.isActiveTrigger);
+
+    const rule: TriggerService = { label: '规则' };
+    const other: TriggerService = { label: '第三方' };
+    const ref: { current: TriggerService | undefined } = { current: rule };
+    const phase = {};
+    // 第三方插件用副本 B 先跑到，取下胜者（规则）；随后偏好切到第三方，规则插件用副本 A 判
+    expect(copyB.isActiveTrigger(phase, ref, other)).toBe(false);
+    ref.current = other;
+    expect(copyA.isActiveTrigger(phase, ref, rule), '各记各的表时这条消息谁都不判').toBe(true);
   });
 });

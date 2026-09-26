@@ -32,7 +32,7 @@ interface LayaConfig {
   endpoint: string;
   /** 单次请求的超时（毫秒），含读完响应体 */
   timeoutMs: number;
-  /** 窗口行数，只算 user / assistant 行（从 memory 多取一倍，过滤后留最后这么多行，与侧车渲染回归的取法一致） */
+  /** 窗口行数，只算 user / assistant 且正文是字符串的行（从 memory 多取一倍，过滤后留最后这么多行；取法见 toRows） */
   historyRows: number;
   /** 在 trigger 服务里的优先级，越大越优先；规则判定 trigger-policy 为 0 */
   priority: number;

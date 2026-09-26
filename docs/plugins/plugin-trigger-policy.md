@@ -56,7 +56,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 [trigger] 人设「<提供者>」读名字失败，点名识别跳过它的名字: <错误>
 ```
 
-判定是同步的，同一会话接连到达的消息逐条按计数判定：`fixedInterval` 为 2 时同一时刻到达的 4 条放行第 2、4 条。
+判定是同步的，同一会话接连到达的消息按到达顺序逐条判定：`intervalMode` 为 `fixed`、`fixedInterval` 为 2 时，同一时刻到达的 4 条放行第 2、4 条（默认的 `both` 下第 1 条的活跃指数已达下限，放行第 1、3 条）。
 
 计数在判定放行时即复位。放行后若被 flow 相位的冷却或限速吞掉，这次触发作废，动态阈值也回到上限；冷却通常只有十秒量级，这期间再次攒够阈值的概率很低，因此不做预判。
 
@@ -94,7 +94,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 - `session`：每会话一个定时器，真人消息到来时退避复位为 1 并重排。到点时会话处于禁言期则跳过并按原退避重排；否则 `gateway.ingressMessage` 注入一条 `source='idle-trigger'` 消息，`exponential` 风格下退避翻倍（上限 `idleTriggerMaxMinutes`）。只有真人消息复位退避，agent 回复（包括回复闲置提示）不复位。
 - `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最近活动最早的一个注入闲置触发消息。候选还要过分作用域覆盖：该会话有效配置的 `idleTriggerScope` 不是 `platform`（被单独关成 `off` 或改成 `session`）就跳过，提示词也按候选会话的有效 `idleTriggerPrompt` 取。节奏只看顶层配置，`idleTriggerMinutes` 与 `idleTriggerStrategy` 在 `platform` 档下不吃分作用域覆盖。每轮之间至少隔一个阈值量级（`idleTriggerMinutes`，下限 60 秒）。进程内还没有任何活动记录时，以启动时刻为静默起点。
 
-会话的"最近活动"取真人消息与 bot 开口中较晚者；bot 开口指 agent 的真实回复或闲置注入本身。因此 agent 对闲置提示沉默时，刚被注入的会话在下一轮也不会再次当选。
+会话的"最近活动"取真人消息与 bot 开口中较晚者；bot 开口指 agent 的真实回复或闲置注入本身。因此 agent 对闲置提示沉默时，刚被注入的会话在下一轮也不会再次当选。禁言期内的真人消息不算活动（判定流程第 3 步在记入站之前就放行给 flow 相位）：session 档的闲置计时不因它们重排，platform 档的静默计时与挑选候选看的最近活动也停在禁言前，所以解禁后闲置提示可能在群里刚有人说过话不久就发出。
 
 注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`：本相位跳过策略判定；flow 相位对它不查回复后冷却，禁言照常生效，会话落在 flow-control 作用域内时限速也照常生效（消息不带会话类型，flow-control 按会话已记下的类型或会话 ID 约定推断判作用域，默认 `*:group` 下发往群的闲置提示在限速窗口已满时被吞，闲置提示不做影子归档）。
 
