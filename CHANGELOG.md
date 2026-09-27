@@ -10,15 +10,18 @@
 
 ## 未发布
 
-回复闸门职责重组、模型触发插件与随之的修复。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
+回复闸门职责重组、模型触发插件与随之的修复，以及 0.18 推迟的低危缺陷修复（从「core 的插件状态机与日志」一节起）。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬；`@aalis/api-memory`（`clearMetadataNamespaces`）由 plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-todo-list、plugin-adapter-onebot 抬，它们在运行时导入这个函数，不抬会在装到旧版 api-memory 时加载失败；`@aalis/util-network-guard`（`assertPortAllowed`）由 plugin-tool-browser 抬；plugin-webui-server 与 runtime 的 `@aalis/core` peer 下限抬到本批 core 版本（禁用插件带配置的 `updateConfig` 只换配置、保持禁用，webui-server 的插件配置接口与 runtime 的配置热重载依赖这一语义）。用到 api-memory 结果行 `type` 或可选方法 `listMetadataKeys` 的 plugin-commands、plugin-memory-vector、plugin-checkpoint、plugin-persona 与三家记忆后端（plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-inmemory）虽只是类型上的加法，也一并抬到新版。其余新用到的接口在已发布版本里都有，也不必抬：plugin-llm-openai、plugin-llm-ollama 新依赖的 `@aalis/util-text-normalize`（`truncateChars`，0.5.2）；plugin-tool-browser 用到的 `pinnedLookup`、`assertAddressesSafe`（util-network-guard 0.6.2 已导出）；plugin-image-sender 用到的 `@aalis/api-storage` 的 `isStorageNotFound`、`isStorageUri` 与网关的 `readFileRange`（0.7.0）。
 
 待发布的包：
 
-- 有代码或契约改动（14 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
+- 有代码或契约改动（40 个）：core、runtime、schema-config、schema-message、util-network-guard、api-flow-control、api-gateway、api-media、api-memory、api-persona、api-platform、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-commands、plugin-file-reader、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai、plugin-media、plugin-memory-inmemory、plugin-memory-mongodb、plugin-memory-sqlite、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-tool-browser、plugin-tool-session、plugin-trigger-policy、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server
+- 按次版本发布（13 个）：core（禁用插件带配置的 `updateConfig` / `bounce` 改为收下配置并返回 true，required 依赖反复缺失时转 `error`）、runtime（插件入口改按 `import()` 的条件解析，只写 `require` 条件的插件改为跳过；配置热重载须配本批 core）、plugin-commands（删除 `/clear list`，指令解析规则，`CLEAR_TYPES` 的类型）、plugin-tool-browser（被拒连接的报错改为 `net::ERR_SOCKS_CONNECTION_FAILED`，`blockPrivate=true` 时不再使用系统代理）、plugin-memory-sqlite（公开导出的 `SQLiteMemoryService` 构造参数须带 `logger`）、plugin-user-relation（公开导出的 `RelationStore`、`RelationService` 的 `clearAll` 须传 `logger`）、plugin-image-sender（`send_attachment` 的拒收规则）、plugin-llm-openai、plugin-llm-ollama、plugin-llm-deepseek（读配置时拒绝带凭据或解析不了的 `baseUrl`，对话报错改写）、plugin-package-manager（`install` 的回执，`PackageManagerDeps.pluginStatus` 须返回 `instanceId`）、plugin-webui-server（管理接口的回执与状态码）、plugin-webui-client（读 webui-server 新增的 `appName`，须与它同批升级）
+- 按 patch 发布（13 个）：schema-config（只改 `name` 的说明文字）、util-network-guard（只新增公开 API：`pinnedLookup` 转为公开、新增 `assertPortAllowed`，`assertSafeUrl` 行为不变）、api-memory（只新增可选的结果行字段 `type`、可选方法 `listMetadataKeys` 与函数 `clearMetadataNamespaces`）、plugin-agent、plugin-checkpoint、plugin-memory-inmemory、plugin-memory-mongodb（`MongoMemoryService` 标了 `@internal`，构造参数的变化不算公开 API）、plugin-memory-summary、plugin-memory-vector、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-user-profile
+- 回复闸门线的 14 个包（api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy）在发布时按源码与 npm 实况定档。其中 plugin-adapter-onebot、plugin-flow-control、plugin-persona 另有本批的低危修复，这部分只够 patch，不影响它们的档位。
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
-- plugin-commands、plugin-scheduler、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
+- plugin-scheduler、plugin-workflow 只改了注释，api-llm 只改了 `refresh` 的注释，api-authority 只改了 `network` 的注释，plugin-authority 只改了上报器失败来源的注释，本批不单独发布。
 
 ### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
 
@@ -81,6 +84,147 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 - plugin-flow-control 与 plugin-trigger-policy 同批升级：新版 flow-control 提供的服务已删除旧版 trigger-policy 调用的 `getStateSnapshot` / `recordTriggered` 等方法；相位顺序常量在 `@aalis/api-gateway`，它升到本节的新版本后，已发布的旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这四个包须同一批勾选更新。
 - 暂不升级本节各包的项目注意反方向：`npm update` 或无锁文件重装可能把传递依赖 `@aalis/api-gateway` 升到本节的新版本（多个依赖方写的是 `>=0.7.0 <1.0.0`），已发布的旧版 flow-control 与 trigger-policy 随即按新顺序失常，请用 `package.json` 的 `overrides` 把 `@aalis/api-gateway` 固定在已发布的 0.7.0。
+
+### core 的插件状态机与日志（@aalis/core）
+
+- `disable` 清掉上一次激活失败留下的 `error`。此前从 `error` 态停用后，`getStatus()`、`getPlugin()` 与 WebUI 的 `/api/plugins` 仍带着旧的错误说明。停用本身超过宽限、转为 `error` 的，照旧写「未在宽限内停止」。
+- 插件处于禁用态时，带配置的 `bounce(id, { config })` 与 `updateConfig(id, config)` 收下新配置、保持禁用、返回 true、不记 warn，启用时按新配置激活；不带配置的 `bounce` 照旧记 warn 并返回 false。此前两者对禁用插件一律记一条 WARN「处于 disabled 态，跳过」、返回 false、不换配置：配置文件热重载时每次都再记一次，之后启用插件仍按旧配置运行，要等下次热重载或重启才与文件一致。
+- 初始化期间 required 依赖缺失的自动重试改为按插件计、跨重算累计：`apply` 里 required 绑定抛出不可用错误，与后台激活因 required 依赖下线被拆，两条路径记入同一份额度（首次取额时的 2×插件数+8）。用尽转 `error`，错误说明为「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），自动重试未收敛，已停止；enable 或 bounce 后重试」，点名用尽那一次缺的 required 服务，记一条 error，不再自动重试；激活成功、`enable`、`bounce` / `updateConfig` 时额度清零。此前额度只在单次重算任务内有效，用尽后停在 `pending`，下一次重算从头再计；后台激活被拆这条路径完全不计，慢 `apply` 里让自己的 required 依赖下线又恢复的插件每个阈值周期重试一次，没有上限。
+- 慢激活转入后台时只记一条 warn，删去此后每隔 `slowThresholdMs` 一次的「仍在激活（已超过 N ms）」提醒。后台状态照旧经 `getStatus()` 的 `slow`、WebUI 的「激活中（超过阈值）」与 doctor 的 `plugins.slow` 查看。此前提醒定时器一直重排，嵌入 core、不调 `stop()` 就等进程自然退出的宿主会被永不落定的激活拖住，进程不退出；现在至多拖到阈值到点。
+- `LogHub` 逐个隔离监听器：单个监听器抛错（含返回被拒的 Promise）不影响其余监听器，也不让日志调用抛出；监听器本身就是日志的去处，它的错误不再上报。此前一个抛错的 sink 会让日志调用本身抛出、排在后面的 sink 收不到这条日志，core 里直接调用日志的步骤（如插件登记）随之中断。
+- 文档写明现状：重算逐个激活，每个慢激活单独等满一个阈值；排在前面的慢插件有 N 个时，后面插件的激活与 `register` / `pluginAll` / `idle()` 的返回约晚 N×阈值。
+
+**行为变化与迁移**：
+- 初始化期间 required 依赖持续失稳、自动重试用尽的插件停在 `error`，依赖恢复后不再自动激活，需 `enable` 或 `bounce`（WebUI 里用插件卡片的开关先禁用再启用，或点「编辑配置」原样保存）；此前停在 `pending`，下一次重算自动重试。doctor 的 `plugins.errored` 会把这类插件列为出错。
+- 靠禁用插件的 `updateConfig` / `bounce` 返回 false 判断「插件已禁用」的调用方，改为先读 `getStatus()` 或 `getPlugin()` 的 `state`。依赖新语义的包（plugin-webui-server 的插件配置接口、runtime 的配置热重载）须把 `@aalis/core` 的 peer 下限抬到本版。
+- 按「仍在激活（已超过」筛日志的，改看 `getStatus()` 的 `slow` 或 doctor 的 `plugins.slow`。
+- 用 `vi.useFakeTimers()` 测插件的：阈值到点后激活转入后台，不再挂定时器，`vi.runAllTimers()` 不会再在提醒定时器上空转。
+
+### 浏览器工具的私网拦截改为连接级网络闸，页面与启动的修复（@aalis/plugin-tool-browser、@aalis/util-network-guard）
+
+- `blockPrivate=true`（默认）时，私网与本机拦截从 CDP `Fetch` 请求拦截改为插件进程内的网络闸：插件在 `127.0.0.1` 的随机端口起一个只支持无认证 CONNECT 的 SOCKS5 服务，浏览器以 `--proxy-server` 把全部 TCP 连接交给它，并以 `--proxy-bypass-list=<-loopback>` 撤掉 Chrome 让 localhost、回环与链路本地地址默认绕过代理的规则。此前 WebSocket 连接不经拦截，页面可以连到本机与内网的 WebSocket 服务；现在与 http(s) 请求一样逐个判定。
+- 域名只解析一次：闸用 `pinnedLookup` 解析并判定全部地址，连接只用这次解析的结果；IP 字面量须是规范写法（含 zone id 或不是规范写法的 IPv6 字面量直接拒绝），再经 `assertAddressesSafe` 判定；`allowedHosts` 里的主机照旧按名字直连。此前判定时由插件解析一次、连接时由 Chrome 再解析一次，TTL 为 0、公网与内网地址交替应答的域名能在两次解析之间换成内网地址（DNS 重绑定），`browser_navigate` 会把本机或内网服务的页面内容交给模型。
+- 闸按进程级网络策略（宿主配置文档 `network` 字段）的 `allowedPorts` 判定目标端口，与 `safeFetch` 一致，`allowedHosts` 里的主机也不例外；不在列表里的端口回失败应答。此前的 CDP `Fetch` 拦截只判定主机，配了 `allowedPorts` 时页面照样能连到任意端口。
+- `blockPrivate=true` 时 WebRTC 以 `--webrtc-ip-handling-policy=disable_non_proxied_udp` 启动，不再发不经代理的 UDP（以随附的 Chrome 实测）。此前页面可以经 WebRTC 向本机与内网的 UDP 端口发包。
+- 被拒的连接在浏览器侧的报错由 `net::ERR_BLOCKED_BY_CLIENT` 改为 `net::ERR_SOCKS_CONNECTION_FAILED`，目标无法解析或连不上时也报这个错误；`browser_navigate` 遇到它时在报错后附一句说明，指出目标可能被 `blockPrivate` 拦截（只在 `blockPrivate=true`、起了闸时附）。删除「判定超过 10 秒按拒绝处理」：判定随连接进行，解析卡住时由浏览器的连接超时收尾。
+- 闸在浏览器启动之前起好，起不来时报错、不启动浏览器，下次调用重试；此前「请求拦截开启失败时关闭浏览器」的路径随之删除。插件停用时先关闭闸并断开全部在途连接，再关闭页面与浏览器，浏览器关闭挂住时闸照样关闭。闸不做认证，本机进程都能连到它，经它连接的目标同样按上述规则判定；问候与请求 10 秒内没有收齐的连接会被断开，与 CONNECT 请求同包到达的数据在接通后交给上游。
+- 浏览器的全部流量经插件所在进程转发，打开重页面、视频时会多占该进程的 CPU，闸解析域名用的 `dns.lookup` 占用 libuv 线程池，域名多的页面可能与同进程的文件 I/O 争用线程；走代理后 Chrome 不使用 QUIC。Chrome 自带的本地网络访问限制对经闸的连接不再起作用（浏览器不知道目标地址），私网防护完全由闸承担。
+- 每个页面（`pageId`）独占一个浏览器窗口，`browser_click`、`browser_type`、`browser_screenshot` 操作前先把页面切到前台。此前页面自己开出窗口或标签页（`window.open`、`target=_blank`，带不带 `noopener` 都一样）或插件再开一页之后，原页面被压到后台，在它上面点击、默认先清空的输入、按选择器截图一直不返回，所在回合随之挂住。`headless=false` 时每个页面是一个独立的系统窗口，不再是同一窗口里的标签页。`puppeteer` 依赖下限抬到 `^24.40.0`（`newPage({ type: 'window' })`）。
+- 浏览器启动改为单飞，并发的首次调用共用同一次启动。此前并发调用各起一个 Chromium，先起的那个被覆盖后没人关，一直留到进程退出，Chrome 未下载时还会同时下载两份。启动途中插件被停用时，这一代浏览器启动完成后随即关闭（不等关闭落定，关闭失败记一条 warn），调用返回「浏览器工具已停用」；此前它仍被交出、从此没人关，调用在停用之后返回页面内容。
+- util-network-guard：`pinnedLookup` 转为公开 API（此前标 `@internal`），供自管连接作为 `net.connect` 的 `lookup` 传入；新增 `assertPortAllowed(port)`，按 `allowedPorts` 判定端口，`assertSafeUrl` 与浏览器网络闸共用这一判定；文档补上 `pinnedLookup` 与 `assertAddressesSafe`（写明传入的 IP 字面量须是规范形式），并更正 `assertSafeHost` 的说明：它只预检、不连接，单用它封不住 DNS 重绑定。
+
+**行为变化与迁移**：
+
+- 按 `net::ERR_BLOCKED_BY_CLIENT` 判断「被拦截」的调用方，改为匹配 `net::ERR_SOCKS_CONNECTION_FAILED`（它同时覆盖目标无法解析或连不上的情况）。
+- `blockPrivate=true` 时浏览器不再使用系统代理设置：此前 Chrome 按系统代理（macOS 的网络设置、Linux 上的 `*_proxy` 环境变量等）出网，现在出站连接一律由插件所在进程直连目标。要经上游代理才能出网的部署，需让插件所在进程的直连可达（如透明代理），或把 `blockPrivate` 设为 `false`（同时失去私网拦截）。
+- 配了 `network.allowedPorts` 的部署，`blockPrivate=true` 时浏览器也只能连到列表里的端口：页面或它的子资源用了其它端口（如 `:8080`、`:8443`）时以 `net::ERR_SOCKS_CONNECTION_FAILED` 失败，需要时把端口加进 `allowedPorts`。
+- `headless=false` 的使用者会看到每个页面各开一个窗口。
+- 锁定了 24.40 以前的 puppeteer 的部署，升级本插件后 puppeteer 随之升级，绑定的 Chrome 版本通常也会变，需要重新下载一份 Chrome：npm 安装（含插件市场的安装与更新）会跑 puppeteer 的安装脚本，在安装时下载；跳过安装脚本时（pnpm 10 起默认、`--ignore-scripts`）在首次调用浏览器工具时下载，最长等 300 秒。可预先执行 `npx puppeteer browsers install chrome`，或用 `executablePath` 指向已装的 Chrome。
+
+### WebUI 管理接口按实际状态回报（@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-package-manager、@aalis/schema-config）
+
+- 新建实例（`POST /api/plugins/:name/instances`）后激活失败、实例转为 `error` 态时，实例与配置照样保留并写入配置文件，但返回 500 并附失败原因（「已创建实例 X，但激活失败，已转为 error 态（原因）；配置已写入配置文件」），与启用、改配置两条路由同一写法。此前固定回 200「已创建实例」。前端建实例失败时同样刷新插件列表，显示出这个 `error` 态实例。
+- 市场安装的插件装上后，package-manager 的 `install` 等插件状态机静置（`plugins.idle()`）再读主实例状态：激活失败时仍回 `ok: true`（包已装上、进了插件列表，改好配置即可重试），`message` 为「已安装 X，但激活失败，已转为 error 态（原因）」；慢激活转入后台仍在进行时为「已安装 X，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准」；在等 required 依赖时为「已安装 X，尚未激活，正在等待 required 依赖满足」。此前一律回「已安装并加载」；安装时另有重算在飞，rescan 的登记只排队、立即返回，主实例还是 pending，随后的激活失败同样被报成「已安装并加载」。`PackageManagerDeps` 新增可选的 `idle()`，生产接线接 `plugins.idle()`；`pluginStatus` 的返回值须带 `instanceId` 与 `error`，自己实现 `PackageManagerDeps` 的代码要补上。
+- 启用（`POST /api/plugins/:name/enable`）、改插件配置（`PUT /api/plugins/:name/config`）与新建实例（`POST /api/plugins/:name/instances`）在管理动作之后同样等插件状态机静置，再按实例状态回执。此前动作撞上在飞的重算时只排队、立即返回，路由立刻读到 pending，回 200 成功，随后的激活失败不出现在回执里。转入后台的慢激活不等（重算对单个激活至多等到慢激活阈值），回执附「仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准」；在等 required 依赖的附「尚未激活，正在等待 required 依赖满足」；两者都回 200。前端启停与建实例成功后的提示改为显示服务端回执，此前是固定的「已启用」「已创建实例 X」。
+- 启停、改插件配置与新建实例的落盘失败时（被拒 409、写入失败 500，均带 `applied: true`），插件在动作之后没有进入预期状态的（激活失败、未在宽限内停止、仍在激活、在等依赖，或对禁用插件改配置后保持禁用、按禁用标记登记的新实例），`error` 开头先说明这一点，再说明未写入配置文件。此前只说明落盘，激活失败的原因被丢掉。
+- 删除实例（`DELETE /api/plugins/:instanceId/instance`）改为先从配置文件删掉配置段与禁用标记并落盘，落盘成功后再卸载。此前先卸载后落盘：卸载途中有人改了配置文件时，热重载会按仍带配置段的文件把实例重新登记，落盘随后删掉配置段，回 200「已删除」，实例却在运行、文件里没有它。落盘成功而随后卸载失败时回 500 与 `{ error }`：「已从配置文件删除实例 X，但卸载失败（原因）；重启后不再登记」。此前卸载失败回 400 与原始错误，配置段未删。
+- 改插件配置（`PUT /api/plugins/:name/config`）对已禁用的插件照样换上新配置并写回配置文件，插件保持禁用，启用时按新配置激活，回执附「插件已禁用，启用时按新配置激活」。此前回 409「先启用插件再修改配置」，配置不写入。
+- 新建实例时，配置文件的 `disabledPlugins` 里已有该实例（手改配置文件留下）的，照旧以禁用态登记，回执改为「已创建实例 X；配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活」。此前只说「已创建实例 X」。
+- 模型选择框旁的「刷新」（`POST /api/llm-providers/:contextId/refresh`）改为按模型条目的 `providerId` 找提供者，与 `/api/llm-providers` 的聚合同一口径。此前按条目的 `contextId` 找，而 llm-openai、llm-ollama 的每个模型条目以「<实例 id>/<模型 id>」登记，永远对不上，刷新一律回 404。找不到可刷新的条目时回执改为中文并区分两种情况：提供者名下有模型但都不提供运行时刷新时为「提供者 X 不支持运行时刷新模型列表（例如关闭了模型发现 discoverModels）」，名下没有已注册的模型时为「提供者 X 当前没有已注册的模型，无法刷新」。此前两种情况都是半英文的「no refreshable LLM provider registered for contextId=… (provider 可能为静态注册型，不支持运行时刷新)」。
+- `GET /api/status` 新增 `appName`（全局配置里的应用名称）；`name` 仍是对话对象的显示名，装有人设时为人设名。仪表盘的「应用名称」卡片改显示 `appName`：此前显示的是人设名，装了人设（standard 档默认装）以后改应用名称在界面上看不出变化。设置页里全局配置 `name` 的说明（schema-config）同步改为「装有人设时仪表盘仍显示它，聊天显示人设名」。
+- `autoOpen` 只在访问 token 为新生成时打开浏览器：persist 模式首次生成 token 时打开一次，之后的重启与插件重载读回同一 token，不再打开；ephemeral 模式每次激活都换 token，照旧每次打开；fixed 模式用配置的 fixedToken，不打开，`fixedToken` 为空时按 persist 处理。此前每次激活都打开，在 WebUI 里改 webui-server 的配置、配置文件热重载、`/restart` 与市场更新引起的重启，都会多开一个标签页。默认值仍为 `true`。
+- 市场检索源不可达、降级为本地已装列表时，同样按搜索词 `q` 过滤。此前降级列表忽略 `q`，直接调用接口时拿到全部已装包；内置前端在本地过滤，界面不受影响。
+
+**迁移**：
+
+- 靠 `PUT /api/plugins/:name/config` 回 409 判断插件已禁用的调用方，改读 `/api/plugins` 的 `state`。这条依赖本批 core 的新语义（禁用态 `updateConfig` 收下配置、返回 true）：配合旧版 core 时，对禁用插件的 PUT 会回 404「插件不存在」。发布时 plugin-webui-server 的 `@aalis/core` peer 下限抬到本批 core 的版本。
+- 新建实例回 500 时实例已登记、配置已写入配置文件：调用方不要按「没建成」重试同名实例（会回「已存在」），改好配置经 `PUT /api/plugins/:name/config` 保存即重试激活。
+- 删除实例落盘失败时回 409 或 500 与 `{ error }`（不带 `applied`），实例不卸载，文档里的配置段与禁用标记还原，文案为「未删除实例 X：未写入配置文件（原因）」；此前回 `applied: true`，实例已在运行态卸载。
+- 习惯每次启动都自动弹出页面的，persist 模式下改从 `data/webui/access.txt` 取一键登录链接，或直接访问已登录过的地址（cookie 仍有效）；要每次都换 token 并打开，用 `tokenMode: ephemeral`。
+- plugin-webui-client 读 `appName`：只升级客户端、服务端仍是旧版时，仪表盘「应用名称」显示「-」。两个包同批发布。
+- 启用、改插件配置、新建实例与市场安装的回执要等重算落定：动作撞上在飞的重算或别的插件正在前台激活时，请求会等到它们落定才返回（每个前台激活至多等到慢激活阈值，默认 60 秒；阈值设为 0 时不设限）。按回执 200 判断「已激活」的调用方，改为同时看 `message` 或 `/api/plugins` 的 `state`：200 也可能是仍在激活或在等依赖。
+
+### /clear 回执与清理并发（@aalis/plugin-commands、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-vector、@aalis/plugin-persona、@aalis/plugin-checkpoint、@aalis/plugin-user-profile、@aalis/plugin-user-relation）
+
+- api-memory：`memory:clear` 的结果行新增可选字段 `type`，即这一行所属的清理类型（取值同 `/clear --type`）。处理某个清理类型的中间件须在各行标注它，成败都标。memory-summary、memory-vector、persona、checkpoint、user-profile、user-relation 与 plugin-commands 自己的消息历史行、附件行都已标注。`listMetadata` 与 `MetadataEntry.updatedAt` 的说明写明后端约定：读不出的条目跳过并记 warn（点名 namespace 与 key），不让整个命名空间读失败；读不到写入时间时 `updatedAt` 为 0。
+- `/clear` 与 `/clear all` 用 `--type` 显式指定的类型没有插件处理（插件未安装或未激活）时，回执另加一行说明该类型未清理；此前不提，单独 `-t vector` 回「无可清除的记忆模块。」。会话级 `/clear` 显式指定 `user-profile` 或 `user-relation` 时，说明它们只在 `/clear all` 时清理。不指定类型时不加说明。
+- 要清消息历史（指定了 `context` 或不指定类型）而记忆服务不可用，或 `/clear all` 时记忆后端没有实现 `clearAll`，整条指令不执行、不清任何类型，回执说明原因。此前 `memory:clear` 链上的其它中间件照常执行，按所选类型清掉能清的部分（如摘要、待办、转发原文；不带类型时还有附件、向量、档案、关系图），消息历史却没清，留下「消息还在、其余已清」的半截状态。不含 `context` 的类型照常清理。
+- 删除只读的 `/clear list` 子指令：它沿点路径继承 `/clear` 的确认，列类型也要真人点确认。类型说明并进 `--type` 选项，用 `/help clear` 查看；未知类型的提示末尾指向 `/help clear`。
+- 指令解析：有子指令、自身不接收位置参数的指令收到多余的词时，回「未知子指令或多余参数: <词>。输入 /help <指令> 查看用法。」（前缀随 `commandPrefix`），不执行，也不进入权限确认。此前多余的词被忽略、按父指令执行：`/clear list`（删除子指令后）或把 `/clear all` 敲成 `/clear al`，会进入 `/clear` 的确认，点了确认就清掉当前会话；`/clear -t context vector`（`-t` 只取下一个词）确认后只清 `context`。第一方指令里同样适用的还有 `/session`（plugin-agent）、`/profile`、`/profile clear`、`/profile self`、`/instruct`（plugin-user-profile）与 `/maimai`（plugin-maimai），如 `/session 看看` 此前照常显示会话配置、`/profile clear 我` 此前照常清掉自己的档案，现在都回上述提示、不执行。其余指令多出的位置参数仍忽略。
+- memory-summary：摘要已过清理比对、正在落库（写摘要、裁切、写分隔线）时开始的清理，先等这次落库完成再删；此前在 mongodb 等异步后端上，这次写入可能晚于清理落地，摘要被写回。
+- memory-vector：存量模型标记的读写与全局清空向量库时的删除排成一队，清空时在途的读写先完成再删；此前在异步后端上，清空前读到的旧标记可能在删除之后进缓存，在途的写入可能在删除之后落库。
+- user-relation：清空关系图前先等已发出的写入落定再列举删除；此前清空提交当口正在落库的那一条可能晚于删除落地，被删的键复活。清空开始之后，不看清空代数的路径新发出的写入不受此约束（与此前相同）。
+- `/clear` 与删除会话因此可能多等一次在途的数据库写入，时长受后端超时约束。
+
+**破坏性变更与迁移**：
+
+- **`/clear list` 删除**：改用 `/help clear` 查看可清理类型。定时任务或 workflow 里发 `/clear list` 的，改发 `/help clear`；继续发 `/clear list` 会收到「未知子指令或多余参数」与 `/help clear` 的提示，不会清理。
+- **指令多余参数**：第三方插件注册的指令若有子指令、自身不声明位置参数、又依赖「多出的词被忽略、执行父指令」，现在会回「未知子指令或多余参数」。需要接收自由文本的，给父指令声明位置参数（如 `[tail:text]`）。
+- **`CLEAR_TYPES` 类型**：plugin-commands 导出的 `CLEAR_TYPES` 由字面量元组（`as const`）改为 `ReadonlyArray<{ id: string; label: string; globalOnly?: boolean }>`；`user-profile`、`user-relation` 的 `label` 去掉「（仅全局清理）」，改由 `globalOnly: true` 表示。按字面量类型使用 `id` 的代码改用 `string`。
+- **第三方 `memory:clear` 中间件**：处理内置清理类型（如自带的向量或档案实现）的，在 `results` 各行加上 `type`，否则用户显式指定该类型时，回执会多一行「没有已启用的插件处理这一类型」。
+- **同批升级**：plugin-commands 与 memory-summary、memory-vector、persona、checkpoint、user-profile、user-relation 同批升级。只升级 plugin-commands 时，旧版插件的结果行不带 `type`，显式指定它们的类型会多出「没有已启用的插件处理」一行（该插件自己的清理结果照常显示）。
+- **第三方记忆后端**：没有实现 `clearAll` 的，含 `context` 的 `/clear all`（含不带类型的）整条拒绝执行。要支持全局清理消息历史，实现 `clearAll`。
+
+### 记忆后端的同库检测、元数据读取与清理（@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-manager、@aalis/api-memory、@aalis/plugin-memory-inmemory、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-memory-summary、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot）
+
+- memory-sqlite 判断两个实例是否打开了同一个库，改按文件身份（设备号与 inode）比较，文件系统不提供 inode 时退回按本地路径比较。此前按本地路径字符串比较：大小写不敏感的卷上（macOS 默认的 APFS 等）`data/aalis.db` 与 `data/AALIS.db` 是同一个文件，硬链接同理，两个实例都能激活并共写同一个库。现在后激活的那个以一行 `ConfigError` 失败，两边路径写法不同时，消息一并给出占用者打开的路径。为取文件身份，冲突的实例会先打开这个文件再立即关闭，不设 WAL、不建表。plugin-memory-sqlite 因此直接使用 `node:fs` 的 `statSync`，理由登记在 `docs/architecture/node-usage-policy.md`。`biome.json` 没有对它整条关掉 `noRestrictedImports`，而是为这个文件单独写了一段规则：`node:fs` 只放行 `statSync`，其余受限的 `node:*` 照常报错。
+- memory-sqlite 激活时开库之后的任何一步失败（取文件身份、撞库、设 WAL、建表、发布服务），都先关掉刚打开的数据库连接再报错。此前设 WAL 或建表失败时连接不关，一直留到进程退出。
+- memory-sqlite 与 memory-mongodb 的 `listMetadata` 逐条容错：读不出的条目（sqlite 里 `data` 不是 JSON 对象的行，mongodb 里 `data` 不是对象的文档）跳过，并记一条 warn 点名命名空间与键，同一命名空间的其余条目照常返回。此前一行坏数据会让整个命名空间读取失败，会话表、关系图、用户画像、待办等按命名空间全量读取的插件一起失效。`/clear` 整体清空命名空间时这些条目一并删除，见下一条。读不出写入时间的条目照常返回，`updatedAt` 记为 0：memory-sqlite 里 `updatedAt` 被改成无法解析的文本或 BLOB 的行，memory-mongodb 里缺 `updatedAt` 或它不是日期的文档。此前 sqlite 对前一种文本返回 NaN（按写入时间回收的消费方，如合并转发缓存的 7 天回收，因此永远不回收这一条），对 BLOB 抛 TypeError，整个命名空间读取失败；mongodb 对这类文档抛 TypeError。这两类数据只会来自手工修改或外部写入，本插件写入的数据不受影响。
+- api-memory 新增可选方法 `listMetadataKeys(namespace)`：只列键、不读 `data`，读不出的条目也列出，memory-sqlite、memory-mongodb、memory-inmemory 都已实现。另新增函数 `clearMetadataNamespaces(mem, namespaces, logger)`：在一次 `commitMetadata` 里整体清空若干命名空间，返回各命名空间删掉的键；后端实现了 `listMetadataKeys` 时，读不出的条目一并删除，并记一条 info「清理时一并删除了 N 条读不出的数据：namespace/key、…」（超过 10 条只列前 10 条）。user-profile（用户档案与第三方行为指令）、user-relation（关系图与其向量）、memory-summary、todo-list、adapter-onebot（合并转发原文）的全局清理（`/clear all`，以及 `/profile clear nuke`、`/relation cleanup all`）改用它，读不出的条目一并删除，带条数的回执包含它们。与 0.18 相比：sqlite 里 `data` 不是合法 JSON 的行，此前会让所在命名空间的这一类清理整体失败、回执报失败，现在一并删除并计入条数；`data` 是合法 JSON 但不是对象的条目，此前随清理照常删除，现在仍一并删除。
+- session-manager 读会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标；重试用尽仍失败才按原来的方式降级（记 error，会话列表为空，改动不落盘）。此前只读一次，一次连接抖动就要等 memory 换人或进程重启才恢复。本插件激活时（启动时，或随 memory 胜者卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在它之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。运行中另一个后端成为胜者时（新装或切换偏好）服务不中断，重试在后台进行。换后端、停用或停机会中止重试等待，停机不被拖住，停用或停机时尚未读完的激活不再发布服务与登记；被中止时只记一行 info，不记 error。
+
+**迁移**：
+
+- 有两个 memory-sqlite 实例通过只差大小写的路径或硬链接指向同一个库文件的，升级后后激活的那个会报配置错误，请给它另配 `path`。此前这两个实例一直在共写同一个库。
+- 第三方 memory 后端请按 `@aalis/api-memory` 里 `listMetadata` 与 `MetadataEntry.updatedAt` 的说明实现：读不出的条目跳过并记 warn，不让整个命名空间读失败；读不到写入时间时 `updatedAt` 为 0。要让 `/clear` 连读不出的条目一并删除，再实现 `listMetadataKeys`（只列键、不读 `data`，读不出的条目也列出）；不实现时，插件整体清理命名空间按 `listMetadata` 枚举键，读不出的条目留在库里。
+- 直接构造 `SQLiteMemoryService`（plugin-memory-sqlite 从包入口导出）的代码，第二个参数须带 `logger`（至少有 `warn` 方法），`listMetadata` 跳过读不出的行时用它点名。此前第二个参数可以省略。
+- 在元数据里存数据的第三方插件，整体清空自己的命名空间可改用 `clearMetadataNamespaces`，读不出的条目一并删除。
+- plugin-user-relation 从包入口导出的实现类：`RelationStore.clearAll` 与 `RelationService.clearAll` 改为必须传入 `logger`（至少有 `info`），用来记下清理时一并删除的读不出的条目。直接调用它们的代码补上这个参数。
+
+### LLM 提供者的模型发现与错误信息（@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/plugin-llm-deepseek、@aalis/plugin-agent）
+
+- 一个模型都没有时（模型发现失败且未配置 `customModels`，或已连接但模型列表为空），实例的错误信息改为真实原因，如「未配置 customModels，没有可注册的模型；模型发现失败 <地址>/models: fetch failed ← connect ECONNREFUSED …」或「已连接 <地址>，但未发现任何可用模型；可在 customModels 里写明要用的模型」（llm-ollama 另提示先 `ollama pull`），激活失败日志只有一行、不带堆栈。实例照旧转为出错、不自动重试。llm-ollama 发现的模型都不是对话模型（如只装了嵌入模型）、一个条目都没注册时同样如此，错误信息为「Ollama 已连接 <地址>，但没有可用的对话模型：<模型> 都没有报告对话能力（如嵌入模型）；先用 ollama pull 下载对话模型」。此前错误信息是 core 的通用文案「声明 provides [llm] 但未实际注册这些服务」，真实原因只在前一行 warn 里（非对话模型的情形只有一行 info「注册 0 个 model entry」）；那条「不注册任何 LLM entry」的 warn 随之删除。
+- agent 在一个 LLM 都解析不到时发回会话的提示只点名出错的实例，原因指向 `/doctor`：「未找到任何具备 chat 能力的 LLM —— 以下 LLM 插件激活失败：<实例>、<实例>。用 /doctor 查看原因。」出错的实例全部列出。此前提示带每个实例错误信息的前 120 个字符，至多列 3 个实例，末尾是「改好配置后重启即可，详情见 /doctor。」；上一条改为真实原因后，错误信息里的发现地址与网络层原因（如内网地址与端口）会随这条提示发进群聊。原因见日志、WebUI 与 `/doctor` 的 `plugins.errored`。
+- 新增配置 `discoverModels`（默认 `true`，行为不变）。网关不提供模型列表接口（llm-openai、llm-deepseek 为 `/models`，llm-ollama 为 `/api/tags`）时关闭：启动时不发发现请求、不记 warn，只注册 `customModels`，记一行 info「未开启模型发现: …」；llm-openai、llm-ollama 的模型条目不提供 `refresh`，WebUI 的「刷新」提示该 provider 不支持运行时刷新。关闭时 `customModels` 必填，留空则实例转为出错，错误为 `ConfigError: 缺少配置项 customModels（关闭 discoverModels 时必填）…`。开着且发现失败时照旧记一条 warn，只注册 `customModels`。
+- llm-deepseek 的模型发现失败与另两家一致：warn 只有一行、不带堆栈，写作「启动时只注册 customModels 里的模型；模型发现失败 <地址>: <原因>」，底层原因（如 `connect ECONNREFUSED`）内联在消息里。此前是「fetchRemoteModelIds 异常 <地址>:」后接整段堆栈与因果链，HTTP 非 2xx 时附带整个响应体。llm-openai、llm-ollama 的这条 warn 同样改为提示在前，此前是「模型发现失败 <地址>: <原因>；启动时只注册 customModels 里的模型」。
+- 非 2xx 响应体先把换行与连续空白折叠成一个空格，再截断到 500 个字符并以「…」收尾（按代理对安全截断），才写进模型发现失败的原因与 warn 日志；对话请求的错误信息不再带响应体，见下一条。此前网关的 HTML 错误页会整页（可达数十 KB、多行）进入日志、WebUI「刷新模型」的报错，以及经 agent 以「[错误] …」发回的会话。内容审查关键词与 llm-ollama 音频路径的 `unknown format` 诊断仍按完整响应体判断。
+- 对话请求（`chat`、`chatStream`，以及 llm-ollama 带音频的请求）失败时抛出的错误会经 agent 发回会话，改为只写状态码与原因。非 2xx 写作「<提供者> API 错误 (<状态码>)：<提示>；上游说明：<说明>」：401 与 403 提示「密钥无效或没有权限」，402 提示「余额不足或需要付费」，404 提示「模型或地址不对」，429 提示「请求过多或额度不足」，5xx 提示「上游服务故障」，其它状态码不加提示；说明取上游 JSON 里的 `error.message`、`error` 字符串（Ollama 的写法）或顶层 `message`，折成一行、截断到 500 个字符，取不到（不是 JSON、没有这些字段或说明为空）时写「详情见日志」。<提供者> 在 llm-openai 为 `LLM`，另两家为 `DeepSeek`、`Ollama`。超时写作「<提供者> 请求超时：<timeout> 秒内没有完成，可在配置里调大 timeout」，连不上写作「<提供者> 连不上服务：检查 baseUrl 与网络，详情见日志」；非流式请求（llm-ollama 带音频的请求一律走非流式）的应答是 200 但不是 JSON 时写作「<提供者> 应答不是 JSON (200)；详情见日志」，流式请求不在此列。响应体摘录，或底层原因（如 `fetch failed ← connect ECONNREFUSED <地址>`）连同耗时，各记一条 warn。调用方中止时原样抛出、不记 warn；读流时连接被断开（`terminated`）等其它错误记 warn 后原样抛出。内容审查类错误的固定提示不变。此前错误信息带着响应体；超时与连不上是 fetch 的英文原文（「The operation was aborted due to timeout」「fetch failed」），不带原因，非流式请求也不记日志；非流式请求遇到 200 的 HTML 应答报的是 JSON 解析的 SyntaxError，带着响应体开头与其中的换行。
+- 模型发现的响应是 200 但不是模型列表时（llm-openai、llm-deepseek 缺 `data` 数组或列表项缺字符串 `id`，llm-ollama 缺 `models` 数组或列表项缺字符串 `name`），原因写作「响应不是模型列表（需要 data 数组，每项带字符串 id）: <响应摘录>」（llm-ollama 为 models 与 name），摘录同样折叠空白、截断到 500 个字符，网关用 200 返回的错误说明会留在摘录里。按发现失败处理：有 `customModels` 时记 warn、只注册它们，没有时实例转为出错，刷新时报错且不增删条目。此前原因是 JS 内部报错，如「Cannot read properties of undefined (reading 'map')」。响应不是 JSON 时（如网关用 200 返回门户页），原因写作「响应不是 JSON: <响应摘录>」，摘录同样折叠空白、截断；此前是 JSON 解析的 SyntaxError，带着响应体开头与其中的换行，实例的错误信息与激活失败日志会断成两行。
+- 模型发现的报错与启动日志里，URL 去掉查询串再显示（有的网关把密钥写在查询串里）；没有查询串时照配置原样显示。
+- `baseUrl` 带用户名或密码（`user:pass@`，含只写用户名或只写密码、协议后少写斜杠等写法）或解析不了时，读配置即抛配置错误：实例转为出错、不发请求，错误信息不带地址。llm-openai、llm-deepseek 为「baseUrl 不能带用户名或密码（user:pass@），密钥请填在 apiKey」，llm-ollama 为「baseUrl 不能带用户名或密码（user:pass@），本插件不支持带凭据访问 Ollama」，解析不了时为「baseUrl 不是有效的 URL，需写成完整地址，如 <该插件的默认地址>」。此前带凭据的地址每次请求都被 fetch 拒发，凭据却会出现在模型发现的报错、模型条目的名称（WebUI 的模型下拉）与日志里，对话失败时还会以「[错误] Request cannot be constructed from a URL that includes credentials: <完整地址>」发回会话；解析不了的地址同样每次请求都失败，报错原文带着整个地址。
+- llm-ollama 在「刷新模型」时并行探测新模型的能力，与启动时一致，新增条目仍按发现顺序登记。此前逐个探测，每个新模型最长要等 10 秒。
+- llm-openai、llm-ollama 新增依赖 `@aalis/util-text-normalize`（`>=0.5.2 <1.0.0`，已发布的版本即可）。
+
+**迁移**：网关不提供模型列表、只靠 `customModels` 配模型的，把 `discoverModels` 设为 `false`，启动时不再记发现失败的 warn，也不再白等发现请求超时（最长 10 秒）。
+
+`baseUrl` 写了 `user:pass@` 的（此前请求本就发不出去）：llm-openai、llm-deepseek 去掉地址里的凭据，把密钥填在 `apiKey`；llm-ollama 不支持带凭据的地址，改用不需要凭据的地址。解析不了的 `baseUrl` 改成完整地址（带 `http://` 或 `https://`）。
+
+### 零散修复（@aalis/plugin-flow-control、@aalis/plugin-storage-local、@aalis/runtime）
+
+storage-local 按 patch 发布；runtime 因下面所列入口解析的反方向变化，并须配本批 core（见开头的下限说明），按次版本发布；flow-control 本节这一项是修复，它的档位随回复闸门职责重组一节定。
+
+- flow-control 的禁言表写盘在飞时 storage 换人（或同一 storage 重载）触发重读，读到的文件可能不含这次写。此前写一成功就清掉「未落盘改动」记录，随后读回的旧禁言按较晚的到期时刻合并回内存，解禁被撤回，新 storage 上的文件也不再补写，群里按旧禁言沉默到原到期时刻。现在写盘期间开始了重读的，这次写成功也不清记录：重读时这些会话以内存为准，读完补写到当前 storage。写链在等上一次读回时又开始了重读的，现在接着等新的一次读回再写；此前这一步直接写整表，会冲掉新 storage 文件里其它会话的禁言，解禁同样可能被撤回。
+- storage-local 的 `storage.delete` 审计日志由 warn 改为 info，与写入、重命名、移动同级；`/clear`、市场更新预检、checkpoint 清理等正常删除不再输出一串 WARN。
+- runtime 的 `createNodeModulesPluginLoader` 改按 `import()` 的规则定位插件：包目录按 `node_modules` 逐级上溯定位，直接读其中的 `package.json`；入口有 `exports` 时取 `"."` 的 import 条件目标（`node` / `import` / `default`，Node 启用 require(esm) 时另有 `module-sync`，与 `import()` 一致），没有 `exports` 时按 `main`，依次试 `main`、`main.js`、`main/index.js`，最后 `index.js`。此前用 CommonJS 的 `require.resolve`：`exports` 没开放 `./package.json` 的包读不到元数据，报「exports 映射未导出 "./package.json"」并跳过；开放了的，`exports` 只写 `import` 条件时报「入口无法解析」并跳过，同时写了 `import` 与 `require` 的双入口包加载的是 `require` 条件的产物。入口解析失败的告警改为写明可能的原因。
+- runtime 在配置热重载时登记新出现的 `name:suffix` 段，模块定义改取该模块在册实例的（主实例优先）。此前只按主实例取：主实例被 `unload`、同模块的后缀实例还在册时，新加的后缀段被报「对应的模块未找到」并跳过，而冷启动会照常登记。第一方路径（WebUI 不允许删主实例，市场卸载连同全部实例一起卸掉）不会走到这里，影响的是经 plugins 服务直接卸载主实例的第三方插件或嵌入宿主。
+
+**行为变化与迁移**：
+
+- 此前因上述原因被跳过的插件（`keywords` 含 `aalis-plugin`，且 `exports` 只写 `import` 条件或没开放 `./package.json`），升级 runtime 后会被发现，并像其它插件一样默认启用。不想启用的，在配置里禁用，或从项目依赖中移除。双入口插件改为加载 `import` 条件的产物，两份产物行为不一致的，以 ESM 产物为准修正。
+- 反方向：`exports` 的 `"."` 只写 `require` 条件（没有 `node`、`import`、`default` 可用的目标，且开放了 `./package.json`）的插件，此前能加载，升级 runtime 后报「入口无法解析」并跳过，与 `import()` 包名的行为一致。插件作者给 `"."` 加 `default` 或 `import` 条件，或把目标直接写成字符串（如 `"exports": "./index.cjs"`）；CommonJS 产物照样能被 `import()` 加载。
+- 按 WARN 级筛查删除记录的，改看 info 级的 `storage.delete` 行；默认 `logLevel: info` 下照常输出。
+
+### send_attachment 发送前核对文件格式（@aalis/plugin-image-sender）
+
+- `send_attachment` 按 `storage_uri` 或 `history_ref` 从存储库取文件时，先按字节区间读文件开头 4 KiB（不整份载入），按 `kind` 的内置白名单核对格式签名：`image` 认 PNG、JPEG、GIF、WebP、BMP、AVIF、HEIC；`audio` 认 MP3（ID3v2 标签或 Layer III 帧头）、WAV、OGG、FLAC、AMR、SILK、M4A；`video` 认 MP4、MOV、WebM、MKV、AVI。AVIF、HEIC、M4A、MOV 与 MP4 按 ftyp 盒的品牌区分，WebM 与 MKV 按 EBML 的 DocType 区分。不是这些格式的文件拒发，工具结果说明不能按该类型发送；是别类媒体时说出检测到的格式与该用的 `kind`，模型可以改 `kind` 重发。此前这两条来源只确认文件存在就转成本地路径发出，onebot 适配器把文件按 base64 内联当图片发送、不看内容；工具是公开的，群里任何人都能诱导模型把存储根里的配置、令牌、记忆库、日志当图片发到群里。工具仍保持公开、不加确认；白名单内置、不做配置；不限定目录；`url` 来源不变。
+- `history_ref` 解析到不在存储库内的来源（`file://` 路径、`/root/…` 或 `C:\…` 这类宿主机绝对路径，或历史附件里的 data URI 等）时拒发：这类来源读不了文件头，无从核对。此前这些来源原样发出，其中 `file://` 路径与宿主机绝对路径能外发存储根以外的任意本机文件。
+- `storage_uri` 读取失败时如实报原因：只有文件不存在才报「存储资源不存在」，未知存储根、根不可读、目标是目录等报各自的错误。此前一律报「存储资源不存在」。
+
+**行为变化**：
+
+- 以 `storage_uri` 或 `history_ref` 发送白名单以外格式的文件（如 SVG、TIFF、ICO、裸 AAC、FLV），或 `kind` 与文件格式不符（如把 GIF 按 `video` 发、把只有音轨但品牌为 `isom` / `mp42` 的 MP4 按 `audio` 发）的调用现在会被拒。
+- `history_ref` 不再接受 `file://` 引用，也不再发送历史附件里不在存储库内的来源（宿主机绝对路径、`file://` 路径、data URI）。onebot 入站落盘失败时，语音等附件会退回平台给的本机路径，这类历史附件不能再用 `history_ref` 重发。
+- 存储提供者须实现 `readFileRange`（字节区间读取）：未实现的根上，`storage_uri` 与 `history_ref` 的发送会失败并报「不支持 readFileRange」。第一方 plugin-storage-local 已实现。
 
 ## 2026-09-27（core 0.18.0 minor；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
 
