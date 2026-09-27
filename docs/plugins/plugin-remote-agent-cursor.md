@@ -35,8 +35,8 @@ export default definePlugin({
 | `model.params` | map | `{ reasoning_effort: 'high', context: '256k', fast: 'false' }` | 模型参数，值一律按字符串交给接口（yaml 里没加引号的 `false`、数字会转成字符串）。须写全，并等于 `/v1/models` 列出的某个变体 |
 | `egressMode` | select | `'unknown'` | owner 在 Cursor 后台给云端代理设的出网方式：`none` / `allowlist` / `open` / `unknown`。接口读不到它，Aalis 无法核实 |
 | `createTimeoutSeconds` | number | `30` | 建代理请求的超时（最小 5）。建代理约 60 秒才回，超时后用同一 agentId 取回，不会重复建 |
-| `requestTimeoutSeconds` | number | `30` | 其余请求的超时（最小 5） |
-| `streamIdleSeconds` | number | `60` | 事件流与下载的读空闲超时（最小 20）。远端约 15 秒发一次心跳 |
+| `requestTimeoutSeconds` | number | `30` | 其余请求的超时（最小 15）。实测单次请求有时要 5 秒以上 |
+| `streamIdleSeconds` | number | `60` | 事件流与下载的读空闲超时（最小 45）。事件流连上后约 30 秒才有第一次心跳，之后每 15 到 30 秒一次，设得更短会在每段安静期断线重连 |
 | `reconcileIgnoreNames` | list | `[]` | owner 自管的代理名。`listAgents` 不列出这些代理，消费方对账时不把它们当成账本外的代理 |
 
 三个超时的最小值由配置校验告警把关；值不是正数时退回默认值。
@@ -71,7 +71,7 @@ plugins:
 
 ### 建代理与开轮
 
-- 建代理：`POST /v1/agents`，body 带消费方给的 `agentId`、代理名、前言与模型参数，不带 `envVars`，key 不进入云端虚拟机。超时或临时故障时用同一 `agentId` 重发一次；远端回 409 `agent_id_conflict` 就按 id 取回首轮的 `runId`。首轮开跑的时刻取建代理响应里 `run.createdAt`，按 id 取回时取代理的 `createdAt`：实测两者相同，都是请求到达远端的时刻。
+- 建代理：`POST /v1/agents`，body 带消费方给的 `agentId`、代理名、前言与模型参数，不带 `envVars`，key 不进入云端虚拟机。超时或临时故障时用同一 `agentId` 重发一次（建代理约 60 秒才回，默认超时 30 秒，首个请求超时是常态，只记 debug；两次都不成时抛出，由消费方记）；远端回 409 `agent_id_conflict` 就按 id 取回首轮的 `runId`。首轮开跑的时刻取建代理响应里 `run.createdAt`，按 id 取回时取代理的 `createdAt`：实测两者相同，都是请求到达远端的时刻。
 - 开新一轮：`POST /v1/agents/{id}/runs`。409 `agent_busy` 映射为 `busy`，409 `agent_archived` 映射为 `archived`。
 - 无参 POST（取消、归档、恢复）一律发 `{}` 加 JSON 头：只带头不带 body 时远端回 400。
 - 两种错误体都解析：业务错误 `{error:{code,message}}` 与框架层的 `{code:'error',message}`。
@@ -111,7 +111,7 @@ plugins:
 
 ### 凭据与日志
 
-key 只放在发往 `baseUrl` 的请求头里。错误信息与日志先去掉 key 的 8 字以上片段（远端可能在错误信息里回显 key 的一段），再去掉 URL 的查询串（预签名链接的签名在查询串里）；错误信息里的请求路径也去掉查询串（取下载链接的查询串带远端可控的成品路径）。所有请求都受本次调用的超时与插件激活的取消信号约束。
+key 只放在发往 `baseUrl` 的请求头里。错误信息与日志先去掉 key 的 8 字以上片段（远端可能在错误信息里回显 key 的一段），再去掉 URL 的查询串（预签名链接的签名在查询串里）；错误信息里的请求路径也去掉查询串（取下载链接的查询串带远端可控的成品路径，翻页请求带远端给的标记），超时与断线的错误同样如此。所有请求都受本次调用的超时与插件激活的取消信号约束。
 
 ## 注意事项
 

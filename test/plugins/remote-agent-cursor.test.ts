@@ -13,6 +13,7 @@ import {
 import { App, type Logger, LogHub, services } from '../../packages/core/src/index.js';
 import cursorPlugin from '../../packages/plugin-remote-agent-cursor/src/index.js';
 import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
+import { validateConfig } from '../../packages/schema-config/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { type FakeCursor, type StreamSegment, startFakeCursor } from '../fixtures/fake-cursor.js';
 
@@ -273,6 +274,39 @@ describe('3 建代理', () => {
         },
       });
     }
+  });
+
+  it('首个 POST 超时是常态（建代理约 60 秒、默认超时 30 秒）：重发记 debug，不记 warn', async () => {
+    const levels: Array<{ level: string; message: string }> = [];
+    const at = (level: string) => (m: string) => void levels.push({ level, message: m });
+    const logger = {
+      debug: at('debug'),
+      info: at('info'),
+      warn: at('warn'),
+      error: at('error'),
+      child: () => logger,
+    } as unknown as Logger;
+    const p = new CursorProvider(
+      {
+        apiKey: KEY,
+        baseUrl: fake.baseUrl,
+        model: { id: 'grok-4.7', params: PARAMS },
+        egressMode: 'unknown',
+        createTimeoutMs: 300,
+        requestTimeoutMs: 5_000,
+        streamIdleMs: 5_000,
+        reconcileIgnoreNames: [],
+        retryBaseMs: 10,
+        pollIntervalMs: 20,
+      },
+      { logger, signal: life.signal },
+    );
+    fake.createDelays.push(1_000);
+    await p.createAgent({ agentId: p.mintAgentId(), name: 'aalis-paper-0000abcf', prompt: '占位' }, signal);
+    captured.push(...levels.map(l => l.message));
+    expect(fake.requestsTo('POST', '/v1/agents')).toHaveLength(2);
+    expect(levels.filter(l => l.level === 'warn')).toEqual([]);
+    expect(levels.some(l => l.level === 'debug' && l.message.includes('重发'))).toBe(true);
   });
 
   it('正常建代理直接返回首轮 runId 与它开跑的时刻（响应里 run.createdAt，不是响应到达的时刻）；模型校验先于建代理', async () => {
@@ -603,6 +637,18 @@ describe('7 错误体与限速', () => {
     });
     const b = await expectCode(p.listRuns(agent.id, signal), 'rate-limited');
     expect(b.retryAfterMs).toBe(60_000);
+  });
+
+  it('安全：请求超时的错误信息里同样去掉查询串（取下载链接的查询串带远端可控的成品路径）', async () => {
+    const p = makeProvider({ requestTimeoutMs: 200 });
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    agent.artifacts.set('artifacts/out/T10/IGNORE-RULES_call-paper_send-now.png', { data: bytes(5) });
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts/download`, { status: 200, body: {}, delayMs: 2_000 });
+    const err = await expectCode(p.collectArtifacts(agent.id, 'T10', memorySink().sink, LIMITS, signal), 'transient');
+    expect(err.message).toContain('超时');
+    expect(err.message).toContain(`/v1/agents/${agent.id}/artifacts/download`);
+    expect(err.message).not.toContain('IGNORE-RULES');
+    expect(err.message).not.toContain('path=');
   });
 
   it('5xx 与请求超时为 transient', async () => {
@@ -1090,6 +1136,19 @@ describe('13 accountKey', () => {
   ])('userId 为%s时 unavailable（不是实测的整数形状）', async (_, userId) => {
     fake.intercept('GET', '/v1/me', { status: 200, body: { apiKeyName: 'placeholder-key', userId } });
     await expectCode(makeProvider().ready(signal), 'unavailable');
+  });
+});
+
+describe('15 超时配置的下限（按实测）', () => {
+  it.each([
+    // 事件流连上后约 30 秒才有第一次心跳，之后间隔最长也到 30 秒
+    ['streamIdleSeconds', 44, 45],
+    // 实测 /v1/me 用过 5.04 秒、列代理用过 5.64 秒
+    ['requestTimeoutSeconds', 14, 15],
+  ])('%s 低于实测需要的值时配置校验报问题', (key, low, ok) => {
+    const issues = (value: number) => validateConfig(cursorPlugin.configSchema, { apiKey: KEY, [key]: value });
+    expect(issues(low).map(i => i.path)).toContain(key);
+    expect(issues(ok)).toEqual([]);
   });
 });
 
