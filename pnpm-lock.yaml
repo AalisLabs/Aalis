@@ -1810,6 +1810,43 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-paper:
+    dependencies:
+      '@aalis/api-doctor':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-doctor
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-gateway
+      '@aalis/api-remote-agent':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-remote-agent
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/api-storage':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-storage
+      '@aalis/api-tools':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-tools
+      '@aalis/schema-config':
+        specifier: workspace:>=0.13.0 <1.0.0
+        version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-persona:
     dependencies:
       '@aalis/api-gateway':
