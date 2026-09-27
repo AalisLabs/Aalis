@@ -5,7 +5,7 @@ import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
-import { prepareLLMMessages, toLLMRole, WellKnownKinds } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
 import { parseDsmlToolCalls } from './dsml-parser.js';
 
@@ -203,10 +203,11 @@ export function normalizeSystemPlacement(messages: Message[]): Message[] {
   while (leadingEnd < messages.length && messages[leadingEnd].role === 'system') leadingEnd++;
   return messages.map((m, i) => {
     if (i < leadingEnd || m.role !== 'system') return m;
-    // proactive 代发任务（如 workflow agent 节点）的指令豁免：它必须以 system 呈现，转 user
+    // 本轮指令块（proactive 代发任务、宿主通知）豁免：它必须以 system 呈现，转 user
     // 会复发「把代发任务当真实用户在指挥」的历史 BUG（plugin-agent buildMessages 注释记录在案）。
     // 这类回合低频，牺牲该轮缓存可接受。injector 只存在于请求期构造的消息上，不会命中历史记录。
-    if (m.metadata?.injector === WellKnownKinds.CrossSessionDelegation) return m;
+    const injector = m.metadata?.injector;
+    if (typeof injector === 'string' && DIRECTIVE_KINDS.includes(injector)) return m;
     const content = m.content ?? '';
     // 空内容块保持原样，不产出「[系统提示] 」空壳 user 消息
     if (!content.trim()) return m;
