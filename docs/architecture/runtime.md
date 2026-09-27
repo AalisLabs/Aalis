@@ -41,6 +41,12 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 `startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
 `process.cwd()`）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`subcommands`。
 
+文件日志默认写 `data/latest.log`，`fileLog` 传字符串可改路径。启动时先轮转旧日志：上一轮的改名为
+`latest.1.log`（编号插在扩展名前），已有的依次后移，保留 5 份，更早的删除。每次守护进程启动都算一轮，
+`/restart`、市场更新引起的重启与更新失败后的回滚重启也各算一轮。轮转失败不影响启动：照旧覆盖写
+`latest.log`，并记一条告警写明原因。不接在原内容后面写，是因为一个文件只装一轮、seq 随文件位置单调递增，
+WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
+
 `startAalis` 在加载器导入定义后、Core 注册之前同步插件配置：从 `configSchema` 补齐默认值，
 默认裁剪未知字段，再让首次 `apply` 读取该配置。主实例与已配置的复用实例使用同一规则；
 `configSync.trimUnknownFields: false` 可保留未知字段。首次加载批次合并为一次保存，后续市场
@@ -54,7 +60,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 子命令进程是完整加载全部插件、但与正在运行的守护进程零通信的一次性实例，由此有三条边界：
 
-- 不写 `data/latest.log`（否则会截断守护进程正在写的日志）；日志走 stderr，stdout 只有命令结果，便于脚本消费；
+- 不写 `data/latest.log`，也不轮转（否则会把守护进程正在写的日志改名移走）；日志走 stderr，stdout 只有命令结果，便于脚本消费；
 - 没有重启能力：不注入重启策略，`restart` 子命令返回「不可用」而非重启守护进程；
 - `status` / `shutdown` 只作用于这个临时实例。写数据的指令按数据落在哪分两类：落在 `aalis.config.yaml`
   的（如 `auto`）经保存触发守护进程的配置热重载，会生效；落在各插件自己内存态并各自落盘的

@@ -849,7 +849,9 @@ class CliTui {
     out.push(row('↑ / ↓', '历史记录回溯（chat 视图）'));
     out.push('');
     out.push(sec('提示'));
-    out.push(`    ${chalk.gray('• 完整日志写入 data/latest.log（每次启动覆盖）；可用 tail -f 查看。')}`);
+    out.push(
+      `    ${chalk.gray('• 完整日志写入 data/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。')}`,
+    );
     out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
     out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
     out.push(

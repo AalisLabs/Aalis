@@ -14,9 +14,9 @@
 
 待发布的包：
 
-- 有代码或契约改动（41 个）：core、runtime、schema-config、schema-message、util-network-guard、api-flow-control、api-gateway、api-media、api-memory、api-persona、api-platform、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-commands、plugin-doctor、plugin-file-reader、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai、plugin-media、plugin-memory-inmemory、plugin-memory-mongodb、plugin-memory-sqlite、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-tool-browser、plugin-tool-session、plugin-trigger-policy、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server
-- 按次版本发布（14 个）：core（禁用插件带配置的 `updateConfig` / `bounce` 改为收下配置并返回 true，required 依赖反复缺失时转 `error`）、runtime（插件入口改按 `import()` 的条件解析，只写 `require` 条件的插件改为跳过；配置热重载须配本批 core）、plugin-commands（删除 `/clear list`，指令解析规则，`CLEAR_TYPES` 的类型）、plugin-doctor（`/doctor` 改为受限，等级 2 以下的用户不能再运行）、plugin-tool-browser（被拒连接的报错改为 `net::ERR_SOCKS_CONNECTION_FAILED`，`blockPrivate=true` 时不再使用系统代理）、plugin-memory-sqlite（公开导出的 `SQLiteMemoryService` 构造参数须带 `logger`）、plugin-user-relation（公开导出的 `RelationStore`、`RelationService` 的 `clearAll` 须传 `logger`）、plugin-image-sender（`send_attachment` 的拒收规则）、plugin-llm-openai、plugin-llm-ollama、plugin-llm-deepseek（读配置时拒绝带凭据或解析不了的 `baseUrl`，对话报错改写）、plugin-package-manager（`install` 的回执，`PackageManagerDeps.pluginStatus` 须返回 `instanceId`）、plugin-webui-server（管理接口的回执与状态码）、plugin-webui-client（读 webui-server 新增的 `appName`，须与它同批升级）
-- 按 patch 发布（13 个）：schema-config（只改 `name` 的说明文字）、util-network-guard（只新增公开 API：`pinnedLookup` 转为公开、新增 `assertPortAllowed`，`assertSafeUrl` 行为不变）、api-memory（只新增可选的结果行字段 `type`、可选方法 `listMetadataKeys` 与函数 `clearMetadataNamespaces`）、plugin-agent、plugin-checkpoint、plugin-memory-inmemory、plugin-memory-mongodb（`MongoMemoryService` 标了 `@internal`，构造参数的变化不算公开 API）、plugin-memory-summary、plugin-memory-vector、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-user-profile
+- 有代码或契约改动（43 个）：core、runtime、schema-config、schema-message、util-network-guard、api-flow-control、api-gateway、api-media、api-memory、api-persona、api-platform、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-cli、plugin-commands、plugin-doctor、plugin-draw、plugin-file-reader、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai、plugin-media、plugin-memory-inmemory、plugin-memory-mongodb、plugin-memory-sqlite、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-tool-browser、plugin-tool-session、plugin-trigger-policy、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server
+- 按次版本发布（14 个）：core（禁用插件带配置的 `updateConfig` / `bounce` 改为收下配置并返回 true，required 依赖反复缺失时转 `error`）、runtime（插件入口改按 `import()` 的条件解析，只写 `require` 条件的插件改为跳过；启动时把上一轮的日志改名保留，公开导出的 `setupFileLogger` 同样先轮转；配置热重载须配本批 core）、plugin-commands（删除 `/clear list`，指令解析规则，`CLEAR_TYPES` 的类型）、plugin-doctor（`/doctor` 改为受限，等级 2 以下的用户不能再运行）、plugin-tool-browser（被拒连接的报错改为 `net::ERR_SOCKS_CONNECTION_FAILED`，`blockPrivate=true` 时不再使用系统代理）、plugin-memory-sqlite（公开导出的 `SQLiteMemoryService` 构造参数须带 `logger`）、plugin-user-relation（公开导出的 `RelationStore`、`RelationService` 的 `clearAll` 须传 `logger`）、plugin-image-sender（`send_attachment` 的拒收规则）、plugin-llm-openai、plugin-llm-ollama、plugin-llm-deepseek（读配置时拒绝带凭据或解析不了的 `baseUrl`，对话报错改写）、plugin-package-manager（`install` 的回执，`PackageManagerDeps.pluginStatus` 须返回 `instanceId`）、plugin-webui-server（管理接口的回执与状态码）、plugin-webui-client（读 webui-server 新增的 `appName`，须与它同批升级）
+- 按 patch 发布（15 个）：schema-config（只改 `name` 的说明文字）、util-network-guard（只新增公开 API：`pinnedLookup` 转为公开、新增 `assertPortAllowed`，`assertSafeUrl` 行为不变）、api-memory（只新增可选的结果行字段 `type`、可选方法 `listMetadataKeys` 与函数 `clearMetadataNamespaces`）、plugin-agent、plugin-checkpoint、plugin-cli（只改帮助页的日志提示）、plugin-draw、plugin-memory-inmemory、plugin-memory-mongodb（`MongoMemoryService` 标了 `@internal`，构造参数的变化不算公开 API）、plugin-memory-summary、plugin-memory-vector、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-user-profile
 - 回复闸门线的 14 个包（api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy）在发布时按源码与 npm 实况定档。其中 plugin-adapter-onebot、plugin-flow-control、plugin-persona 另有本批的低危修复，这部分只够 patch，不影响它们的档位。
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
@@ -111,6 +111,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 - 浏览器的全部流量经插件所在进程转发，打开重页面、视频时会多占该进程的 CPU，闸解析域名用的 `dns.lookup` 占用 libuv 线程池，域名多的页面可能与同进程的文件 I/O 争用线程；走代理后 Chrome 不使用 QUIC。Chrome 自带的本地网络访问限制对经闸的连接不再起作用（浏览器不知道目标地址），私网防护完全由闸承担。
 - 每个页面（`pageId`）独占一个浏览器窗口，`browser_click`、`browser_type`、`browser_screenshot` 操作前先把页面切到前台。此前页面自己开出窗口或标签页（`window.open`、`target=_blank`，带不带 `noopener` 都一样）或插件再开一页之后，原页面被压到后台，在它上面点击、默认先清空的输入、按选择器截图一直不返回，所在回合随之挂住。`headless=false` 时每个页面是一个独立的系统窗口，不再是同一窗口里的标签页。`puppeteer` 依赖下限抬到 `^24.40.0`（`newPage({ type: 'window' })`）。
 - 浏览器启动改为单飞，并发的首次调用共用同一次启动。此前并发调用各起一个 Chromium，先起的那个被覆盖后没人关，一直留到进程退出，Chrome 未下载时还会同时下载两份。启动途中插件被停用时，这一代浏览器启动完成后随即关闭（不等关闭落定，关闭失败记一条 warn），调用返回「浏览器工具已停用」；此前它仍被交出、从此没人关，调用在停用之后返回页面内容。
+- `browser_screenshot`（含切到前台与按选择器找元素）限时 `defaultTimeout`。截图卡住（如页面的渲染进程卡死）时，到时限返回「截图超过 N ms 未完成，已关闭浏览器，全部页面随之关闭；下次调用时重新启动，需重新 browser_navigate 打开页面」，并关掉这一代浏览器（不等关闭落定），页面表随之清空，下次调用重新启动。此前截图没有自己的时限，挂住的截图命令持有浏览器级的锁，要等到 puppeteer 默认的 CDP 命令时限（180 秒）才返回，其间同一浏览器里开新页、关页面与其它页面的截图都排在它后面。启动浏览器时显式设 `protocolTimeout` 为 `defaultTimeout` 的两倍（默认 60 秒），其余操作里挂住的单条 CDP 命令以此为上限，此前同样是 180 秒。`defaultTimeout` 为 0 时两者都不设时限，与 puppeteer 对 0 的约定一致。
 - util-network-guard：`pinnedLookup` 转为公开 API（此前标 `@internal`），供自管连接作为 `net.connect` 的 `lookup` 传入；新增 `assertPortAllowed(port)`，按 `allowedPorts` 判定端口，`assertSafeUrl` 与浏览器网络闸共用这一判定；文档补上 `pinnedLookup` 与 `assertAddressesSafe`（写明传入的 IP 字面量须是规范形式），并更正 `assertSafeHost` 的说明：它只预检、不连接，单用它封不住 DNS 重绑定。
 
 **行为变化与迁移**：
@@ -119,7 +120,15 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 - `blockPrivate=true` 时浏览器不再使用系统代理设置：此前 Chrome 按系统代理（macOS 的网络设置、Linux 上的 `*_proxy` 环境变量等）出网，现在出站连接一律由插件所在进程直连目标。要经上游代理才能出网的部署，需让插件所在进程的直连可达（如透明代理），或把 `blockPrivate` 设为 `false`（同时失去私网拦截）。
 - 配了 `network.allowedPorts` 的部署，`blockPrivate=true` 时浏览器也只能连到列表里的端口：页面或它的子资源用了其它端口（如 `:8080`、`:8443`）时以 `net::ERR_SOCKS_CONNECTION_FAILED` 失败，需要时把端口加进 `allowedPorts`。
 - `headless=false` 的使用者会看到每个页面各开一个窗口。
+- `browser_screenshot` 超时会关闭浏览器里的全部页面（含其它会话打开的），此前的 `pageId` 随之失效，需重新 `browser_navigate`。把 `defaultTimeout` 调得很小的部署，大页面的整页截图可能因此超时，需要时调大。
 - 锁定了 24.40 以前的 puppeteer 的部署，升级本插件后 puppeteer 随之升级，绑定的 Chrome 版本通常也会变，需要重新下载一份 Chrome：npm 安装（含插件市场的安装与更新）会跑 puppeteer 的安装脚本，在安装时下载；跳过安装脚本时（pnpm 10 起默认、`--ignore-scripts`）在首次调用浏览器工具时下载，最长等 300 秒。可预先执行 `npx puppeteer browsers install chrome`，或用 `executablePath` 指向已装的 Chrome。
+
+### 绘图渲染卡住时按时返回（@aalis/plugin-draw）
+
+plugin-draw 按 patch 发布。
+
+- 等字体、量内容高与截图（动图为逐帧截图）任一步超过 15 秒时，工具返回「渲染步骤超时（…）」，并关掉这一代 Chromium（不等关页面，也不等关闭落定），同一代里其它在飞的渲染随之失败并报错，下次渲染重新启动。此前 15 秒的步骤时限只让等待方先报错，挂住的截图仍持有浏览器级的锁，收尾关页面要等它，一次卡住的渲染要到 puppeteer 默认的 CDP 命令时限（180 秒）之后才返回，其间占着渲染槽，同一浏览器里其它渲染开新页也被挡住。
+- 启动 Chromium 时显式设 `protocolTimeout` 为步骤时限的两倍（30 秒）：没套步骤时限的浏览器调用（开页、设视口、动图的时长探测与逐帧定格、关页面）挂住时以此为上限，此前是 180 秒。
 
 ### WebUI 管理接口按实际状态回报（@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-package-manager、@aalis/schema-config）
 
@@ -205,20 +214,24 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 **迁移**：需要让某些用户使用 `/doctor` 的，给他们等级 2，或在 WebUI 的权限管理页经 `authorityOverrides` 调低能力键 `command:doctor` 的门槛。反过来，只让 owner 使用的，把这个门槛调到比任何已授予的等级都高的整数，如 99。未装或未启用 `@aalis/plugin-authority` 的部署，指令没有执行守卫，受限指令一律被拒，`/doctor` 与 `aalis doctor` 因此不再可用（WebUI 的「系统诊断」页不受影响）；需要时安装 `@aalis/plugin-authority`（create-aalis 的 minimal 及以上各档已包含）。
 
-### 零散修复（@aalis/plugin-flow-control、@aalis/plugin-storage-local、@aalis/runtime）
+### 零散修复（@aalis/plugin-cli、@aalis/plugin-flow-control、@aalis/plugin-storage-local、@aalis/runtime）
 
-storage-local 按 patch 发布；runtime 因下面所列入口解析的反方向变化，并须配本批 core（见开头的下限说明），按次版本发布；flow-control 本节这一项是修复，它的档位随回复闸门职责重组一节定。
+storage-local 与 plugin-cli 按 patch 发布；runtime 因下面所列入口解析的反方向变化，并须配本批 core（见开头的下限说明），按次版本发布；flow-control 本节这一项是修复，它的档位随回复闸门职责重组一节定。
 
 - flow-control 的禁言表写盘在飞时 storage 换人（或同一 storage 重载）触发重读，读到的文件可能不含这次写。此前写一成功就清掉「未落盘改动」记录，随后读回的旧禁言按较晚的到期时刻合并回内存，解禁被撤回，新 storage 上的文件也不再补写，群里按旧禁言沉默到原到期时刻。现在写盘期间开始了重读的，这次写成功也不清记录：重读时这些会话以内存为准，读完补写到当前 storage。写链在等上一次读回时又开始了重读的，现在接着等新的一次读回再写；此前这一步直接写整表，会冲掉新 storage 文件里其它会话的禁言，解禁同样可能被撤回。
 - storage-local 的 `storage.delete` 审计日志由 warn 改为 info，与写入、重命名、移动同级；`/clear`、市场更新预检、checkpoint 清理等正常删除不再输出一串 WARN。
 - runtime 的 `createNodeModulesPluginLoader` 改按 `import()` 的规则定位插件：包目录按 `node_modules` 逐级上溯定位，直接读其中的 `package.json`；入口有 `exports` 时取 `"."` 的 import 条件目标（`node` / `import` / `default`，Node 启用 require(esm) 时另有 `module-sync`，与 `import()` 一致），没有 `exports` 时按 `main`，依次试 `main`、`main.js`、`main/index.js`，最后 `index.js`。此前用 CommonJS 的 `require.resolve`：`exports` 没开放 `./package.json` 的包读不到元数据，报「exports 映射未导出 "./package.json"」并跳过；开放了的，`exports` 只写 `import` 条件时报「入口无法解析」并跳过，同时写了 `import` 与 `require` 的双入口包加载的是 `require` 条件的产物。入口解析失败的告警改为写明可能的原因。
 - runtime 在配置热重载时登记新出现的 `name:suffix` 段，模块定义改取该模块在册实例的（主实例优先）。此前只按主实例取：主实例被 `unload`、同模块的后缀实例还在册时，新加的后缀段被报「对应的模块未找到」并跳过，而冷启动会照常登记。第一方路径（WebUI 不允许删主实例，市场卸载连同全部实例一起卸掉）不会走到这里，影响的是经 plugins 服务直接卸载主实例的第三方插件或嵌入宿主。
+- runtime 的文件日志在启动时不再覆盖上一轮：守护进程写 `data/latest.log` 之前，先把旧文件改名为 `data/latest.1.log`，已有的依次后移（`latest.1.log` 改为 `latest.2.log`，依此类推），保留 5 份，更早的删除；`fileLog` 传了自定义路径的，编号同样插在扩展名前。此前每次启动直接覆盖 `latest.log`，上一轮运行的日志连同崩溃时写进去的错误全部丢失。轮转失败（如日志目录没有写权限，或 Windows 上文件被别的程序占用）不拦启动：照旧覆盖写 `latest.log`，并记一条 warn 写明原因。不接在原内容后面写，是为了保持一个文件只装一轮，WebUI 的历史分页与 CLI 的启动恢复依赖这一点。子命令进程（`aalis doctor` 等）照旧不写、也不轮转文件日志。公开导出的 `setupFileLogger` 同样先轮转。
+- plugin-cli 帮助页的日志提示随之更正：`latest.log` 每次启动时上一轮改名为 `latest.1.log`，保留 5 份，跨重启持续跟随用 `tail -F`。此前写的是「每次启动覆盖」「可用 tail -f 查看」。
 
 **行为变化与迁移**：
 
 - 此前因上述原因被跳过的插件（`keywords` 含 `aalis-plugin`，且 `exports` 只写 `import` 条件或没开放 `./package.json`），升级 runtime 后会被发现，并像其它插件一样默认启用。不想启用的，在配置里禁用，或从项目依赖中移除。双入口插件改为加载 `import` 条件的产物，两份产物行为不一致的，以 ESM 产物为准修正。
 - 反方向：`exports` 的 `"."` 只写 `require` 条件（没有 `node`、`import`、`default` 可用的目标，且开放了 `./package.json`）的插件，此前能加载，升级 runtime 后报「入口无法解析」并跳过，与 `import()` 包名的行为一致。插件作者给 `"."` 加 `default` 或 `import` 条件，或把目标直接写成字符串（如 `"exports": "./index.cjs"`）；CommonJS 产物照样能被 `import()` 加载。
 - 按 WARN 级筛查删除记录的，改看 info 级的 `storage.delete` 行；默认 `logLevel: info` 下照常输出。
+- 日志目录（默认 `data/`）下多出 `latest.1.log` 到 `latest.5.log`，文件日志占用的磁盘最多为 6 轮运行的日志之和；份数固定，没有配置项。每次守护进程启动都算一轮，`/restart`、市场更新引起的重启与更新失败后的回滚重启也各算一轮。WebUI 日志页与 CLI 历史日志照旧只读 `latest.log`。自行备份或清理日志的脚本要把这几个文件算进去。
+- 用 `tail -f` 跟日志的，改用 `tail -F`。此前每次启动截断 `latest.log`，`tail -f` 会从头接着读；现在旧文件被改名，`tail -f` 跟着它停在 `latest.1.log` 上，看不到新一轮的日志。
 
 ### send_attachment 发送前核对文件格式（@aalis/plugin-image-sender）
 
