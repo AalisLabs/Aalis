@@ -20,8 +20,17 @@ interface SessionConfig {
   maxToolIterations?: number;   // 覆盖 agent 全局值（正整数；非正整数视为未设置）
   disableOutputFormat?: boolean;
   clientSideJsonRendering?: boolean;
+  paperEnabled?: boolean;              // 本房间开启白纸（默认关）
+  paperName?: string;                  // 白纸名；不写则每个房间各一块
+  remoteAgentTypes?: string[];         // 允许的远端代理类型（提供者实例 id）；空或缺省 = 关
+  remoteAgentUserDailyCents?: number;  // 每人每天金额上限（美分）；缺省不按人限制
+  remoteAgentUserDailyTasks?: number;  // 每人每天件数上限；缺省不按人限制
+  remoteAgentRoomDailyCents?: number;  // 本房间每天金额上限（美分）；缺省按 0
+  memoryRecallScope?: MemoryRecallScope; // 记忆召回范围，只能比记忆插件的配置更窄
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>; // 子会话默认
 }
+
+type MemoryRecallScope = 'session' | 'platform' | 'all';
 
 type PlatformProfile = SessionConfig;   // 平台默认模板（写在插件配置 platformProfiles，无运行时写接口）
 
@@ -55,6 +64,20 @@ interface SessionTreeNode {
 2. 父会话 `sessionDefaults`（递归继承）
 3. 平台默认 `platformProfiles[platform]`
 4. 全局默认值（各插件 configSchema 派生）
+
+## 房间键
+
+白纸与远端代理的六个键（`paperEnabled`、`paperName`、`remoteAgentTypes` 与三项上限）由白纸枢纽 [plugin-paper](../plugins/plugin-paper.md) 读取，含义见该页。它们只经继承链实时解析，不随建会话复制：
+
+```ts
+const ROOM_ONLY_CONFIG_KEYS: readonly ['paperEnabled', 'paperName', 'remoteAgentTypes',
+  'remoteAgentUserDailyCents', 'remoteAgentUserDailyTasks', 'remoteAgentRoomDailyCents'];
+function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (typeof ROOM_ONLY_CONFIG_KEYS)[number]>;
+```
+
+建会话时复制生效配置（WebUI 建会话、`create_subtask` 建子会话）会把复制时的值冻结进新会话，此后房间或平台档改了也不跟着变，子会话还会凭冻结的值继续开远端任务。复制一律经 `omitRoomOnlyKeys`，返回去掉这六个键的新对象。
+
+`memoryRecallScope` 不在其中，随子会话复制：子会话不带上更窄的召回范围，经子任务就绕过了收窄。它的取值：`session` 只召回本会话，`platform` 最多同平台，`all` 不限。它只能收窄、不能放宽各插件自己的范围配置，写得比插件配置宽时按插件配置。消费方各自的收窄方式见 [plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-memory-history](../plugins/plugin-memory-history.md)、`session-history` 服务（[plugin-tool-session](../plugins/plugin-tool-session.md)）与 [plugin-user-relation](../plugins/user-relation.md)（只认 `session`）；plugin-user-profile 不读它。
 
 ## 服务接口（节选）
 

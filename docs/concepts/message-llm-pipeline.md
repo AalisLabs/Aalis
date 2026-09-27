@@ -46,6 +46,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `OutboundImage` | `'outbound-image'` | assistant 已发出的图片占位 | assistant |
 | `OutboundAudio` | `'outbound-audio'` | assistant 已发出的语音占位 | assistant |
 | `OutboundVideo` | `'outbound-video'` | assistant 已发出的视频占位 | assistant |
+| `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
 
 第三方插件可以定义自己的 kind 字符串，但应避开上表已占用的语义。
 
@@ -68,7 +69,7 @@ if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
 
 对插件作者而言，这意味着：如果你自己拼一份 `Message[]` 喂给 `resolveLLMModel(...).chat()`，你有责任先过滤掉 `CONTROL_KINDS`。`prepareLLMMessages` 只做 role 转译与前缀拼接，不剔除 event-marker。
 
-`CrossSessionDelegation` 不在 `CONTROL_KINDS` 内，它会进入上下文（带 `[跨会话委派]` 前缀，见 §3）。不过许多抽取器（如用户关系、用户画像抽取器）会显式排除它，因为它不是真实用户发言。
+`CrossSessionDelegation` 与 `HostNotice` 不在 `CONTROL_KINDS` 内，它们会进入上下文（分别带 `[跨会话委派]`、`[宿主通知]` 前缀，见 §3）。两者合称指令类 kind，由常量 `DIRECTIVE_KINDS` 列出：它们是宿主或系统撰写的，不是任何人的发言，用户关系、用户档案的抽取窗口与向量记忆的扩窗都按这个常量排除它们。自己拼历史做抽取的插件也应如此。
 
 ---
 
@@ -89,7 +90,7 @@ export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content' | 
 
 前缀映射分两级：
 
-- kind 级（优先）：`CrossSessionDelegation` → `'[跨会话委派]'`（`KIND_PREFIX`）
+- kind 级（优先）：`CrossSessionDelegation` → `'[跨会话委派]'`，`HostNotice` → `'[宿主通知]'`（`KIND_PREFIX`）
 - role 级（次之）：`'notice'` → `'[系统通知]'`（`CUSTOM_ROLE_PREFIX`）
 
 前缀只在 `content` 是非空字符串时拼接。函数不修改原对象，返回浅拷贝数组，必要时浅拷贝单条消息。
@@ -296,7 +297,7 @@ await handle?.chat({ messages });   // entry 已知道是哪个 model
 └────────────── 历史之前：会话级稳定 ──────────────┘ └─────────── 历史之后：按当前轮取材 ───────────┘
 ```
 
-`turn-context` 的落点由组装器按三级规则确定（proactive 任务块之前，其次易变块之前，最后回退到当前 user 消息之前），保证材料落在历史结束处、当前轮诸块之前——焦点指引与平台提示仍与当前消息保持原有的邻接关系。
+`turn-context` 的落点由组装器按三级规则确定（本轮指令块之前，其次易变块之前，最后回退到当前 user 消息之前），保证材料落在历史结束处、当前轮诸块之前——焦点指引与平台提示仍与当前消息保持原有的邻接关系。`turn-hint` 同样先找指令块、落在它之前，没有指令块时落在最后一条 user 消息之前。指令块指 `metadata.injector` 属于 `DIRECTIVE_KINDS` 的消息（proactive 代发任务块、宿主通知块）：这类回合没有当前 user 消息，历史里却有旧的 user 消息，按「最后一条 user」定位会把材料插进历史内部，既割裂转录，又在只增不改的历史区制造新的缓存断点。
 
 锚位的分界标准是**内容每轮变不变**，而非题材归类。这个标准来自 provider 前缀缓存的工作方式：缓存从第一个 token 起逐位比对，断在首个不同处，其后全部按未命中计费。历史消息在压缩机制（`plugin-memory-summary` 归档旧消息、活跃窗口只增不移）配合下是请求中最大的稳定区段；任何每轮变化的内容一旦排在历史之前，历史整段就不再可能命中。此前向量检索、跨会话片段、发言者档案等按当前轮取材的贡献落在历史之前，实测命中率仅 12.7%——恰为历史前静态头部占请求的比例。
 
@@ -307,7 +308,7 @@ await handle?.chat({ messages });   // entry 已知道是哪个 model
 
 给贡献者作者的判定方法：问自己「相邻两轮，这个 build 的返回值逐字节相同吗」。答案是否定的就用 `turn-context`。完整锚位语义见 `@aalis/api-agent` 的 `PromptAnchor` 契约注释；同槽内多块按全局键码元序排布，顺序确定但无语义，互相不得有先后依赖。
 
-注意布局图描述的是**数组位置**，不保证等于 provider 的渲染位置。DeepSeek 会把 messages 里所有 system 消息提升合并到上下文最前部——数组位置在历史后的 system 块，渲染后仍落在历史前。因此 `@aalis/plugin-llm-deepseek` 在出口做角色归一化：首个非 system 消息之后的 system 一律转为 `user`（补 `[系统提示]` 标记；proactive 代发任务指令豁免）。编写新的 provider 插件时，需按目标 API 的渲染语义自行判断是否需要同类归一化，锚位布局的缓存收益才能真正落地。
+注意布局图描述的是**数组位置**，不保证等于 provider 的渲染位置。DeepSeek 会把 messages 里所有 system 消息提升合并到上下文最前部——数组位置在历史后的 system 块，渲染后仍落在历史前。因此 `@aalis/plugin-llm-deepseek` 在出口做角色归一化：首个非 system 消息之后的 system 一律转为 `user`（补 `[系统提示]` 标记；本轮指令块，即 proactive 代发任务与宿主通知，豁免）。编写新的 provider 插件时，需按目标 API 的渲染语义自行判断是否需要同类归一化，锚位布局的缓存收益才能真正落地。
 
 ## 10. 边界与注意事项
 

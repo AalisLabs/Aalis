@@ -58,4 +58,20 @@ export default definePlugin({
 
 从左到右优先级递增，右侧覆盖左侧；值为 `undefined` 或 `null` 的字段视为未设置，沿用上一层的值。
 
-平台 profile 可以设置 persona、默认模型（`llm`）、启用的工具分组、think 等字段。工具分组写 `'*'` 表示全部分组；不写则该平台只有无分组的通用工具（带分组的工具默认不暴露）。`npm create aalis` 生成的配置只给 owner 专用的 `cli`、`webui` 两个平台写了 `enabledToolGroups: ['*']`。解析会话生效配置时，按调用方传入的平台叠加对应 profile，结果不写回会话。WebUI 新建根会话且未指定配置时，会把 webui 平台的 profile 拷贝为初始配置。
+平台 profile 可以设置 persona、默认模型（`llm`）、启用的工具分组、think 等字段。工具分组写 `'*'` 表示全部分组；不写则该平台只有无分组的通用工具（带分组的工具默认不暴露）。`npm create aalis` 生成的配置只给 owner 专用的 `cli`、`webui` 两个平台写了 `enabledToolGroups: ['*']`。解析会话生效配置时，按调用方传入的平台叠加对应 profile，结果不写回会话。WebUI 新建根会话且未指定配置时，会把 webui 平台的 profile 拷贝为初始配置；新建子会话时拷贝父会话的生效配置。两种拷贝都去掉白纸与远端代理的房间键（`ROOM_ONLY_CONFIG_KEYS`，见 [api-session-manager](../api/api-session-manager.md)），这些键只经继承链实时解析；`memoryRecallScope` 照常拷贝。
+
+平台 profile 还能写白纸与远端代理的六个键（`paperEnabled`、`paperName`、`remoteAgentTypes`、`remoteAgentUserDailyCents`、`remoteAgentUserDailyTasks`、`remoteAgentRoomDailyCents`）与记忆召回范围 `memoryRecallScope`。这七个键关系到费用与召回范围，加载时逐键核对类型：布尔只收布尔，`paperName` 只收非空字符串，`remoteAgentTypes` 只收字符串数组（非字符串与空串项滤掉），三项上限只收有限且不小于 0 的数，`memoryRecallScope` 只收 `session` / `platform` / `all`。类型不对的丢弃并记 warn；`null` 与空串按未设置处理，不告警。房间键写在平台档里，这个平台的所有房间都会继承，一般只写在单个房间的会话配置里。
+
+## 页面动作
+
+会话页经页面动作读写会话。取继承值用 `getInheritance({ sessionId })`，返回：
+
+```ts
+{
+  platform: string;                                    // 会话所属平台，由服务端推出
+  values: Omit<SessionConfig, 'sessionDefaults'>;      // 不含会话自身 config 的继承值
+  sources: Partial<Record<keyof SessionConfig, 'defaults' | 'platform' | 'parent'>>; // 每个键最终来自哪一层
+}
+```
+
+平台按以下顺序推出，动作不收平台参数：会话 metadata 记下的平台 → 接管这个会话 id 的平台适配器 → `webui`。因此 onebot 群会话显示的是 onebot 平台档的继承值。原来的 `getInheritedDefaults` 已删除（它由调用方传平台，WebUI 写死为 `webui`，也不回来源层）。

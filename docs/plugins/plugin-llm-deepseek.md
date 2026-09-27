@@ -48,3 +48,4 @@ definePlugin({
 - **SSE 流式解析**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
 - **模型发现**: 启动时 `fetchRemoteModelIds()` 请求 `/models` 获取远端模型列表（停用或停机时中止），与 `customModels` 合并后为每个模型注册一个独立的 `llm` 服务条目
 - **能力覆盖**: `modelCapabilities` 每行按**最后一个**冒号切分模型 id 与能力段，`baseUrl` 指向兼容网关时带冒号的模型 id（如 `qwen3:8b`）照原样写即可
+- **system 位置归一化**: DeepSeek 把请求里所有 system 消息提升到上下文最前部，排在历史之后的每轮材料会让历史的前缀缓存失效。出口因此把首个非 system 消息之后的 system 消息改为 `user`，内容不以 `[` 开头的补 `[系统提示]` 标记，空内容保持原样。本轮指令块豁免：`metadata.injector` 属于 `DIRECTIVE_KINDS`（workflow 代发的任务、宿主通知）的消息保持 system，改成 user 会被模型当成真实用户在指挥；这类回合低频，牺牲该轮缓存（见[消息到 LLM 的处理流水线](../concepts/message-llm-pipeline.md) §9）
