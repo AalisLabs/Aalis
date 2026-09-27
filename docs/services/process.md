@@ -97,7 +97,7 @@ interface TempDirHandle {
 
 `plugin-tool-system`、`plugin-tool-code-runner`、`plugin-code-sandbox-os`、`plugin-media`、`plugin-office`、`plugin-adapter-onebot`、`plugin-asr-*`、`plugin-llm-ollama`、`plugin-package-manager`、`plugin-tool-browser`、`plugin-webui-server`。
 
-传 `signal` 的消费点：`plugin-tool-system` 的 `exec` 与 `plugin-tool-code-runner` 的无沙箱路径传回合的中止信号（停止键即停掉命令），`plugin-code-sandbox-os` 的沙箱内运行转交调用方的信号、启动探测传本次激活的 `lifecycle.signal`。
+传 `signal` 的消费点：`plugin-tool-system` 的 `exec` 与 `plugin-tool-code-runner` 的无沙箱路径传回合的中止信号（停止键即停掉命令），`exec_background` 传本次激活的 `lifecycle.signal` 与每个后台进程自己的中止信号（插件停用、`process_kill`、删除会话都经它收整组，停止键不杀后台进程），`plugin-code-sandbox-os` 的沙箱内运行转交调用方的信号、启动探测传本次激活的 `lifecycle.signal`。
 
 ---
 
@@ -191,7 +191,7 @@ process 是框架里**权限最高的能力**之一。约束分两层：
 
 ### Consumer 侧
 
-process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。`plugin-tool-system` 的 `exec` / `exec_background` / `process_kill` 都设 `visibility: 'restricted'` + `confirm: 'session'`。shell 工具**继承宿主完整环境**。需要环境隔离的执行走 code-sandbox-os。
+process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。`plugin-tool-system` 的 `exec` / `exec_background` 设 `visibility: 'restricted'` + `confirm: 'session'`；`process_kill` 为 restricted、不需确认，只能按中止契约终止同一会话里与调用者同一身份起的后台进程组（owner 除外），没有别的信号可发。shell 工具**继承宿主完整环境**。需要环境隔离的执行走 code-sandbox-os。
 
 ### 不是沙箱
 
