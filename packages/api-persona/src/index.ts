@@ -79,11 +79,6 @@ export interface PersonaService {
    * 返回 undefined 表示角色卡未声明白名单（应全开）；返回 [] 表示该角色禁用所有 skill。
    */
   getPersonaSkills?(options?: PersonaSessionOptions): string[] | undefined;
-  /**
-   * 读取目标会话最近一次保存的 persona 结构化输出状态（如 mood / state / desire / current_action）。
-   * 用于 delegate_to_session 等跨会话工具在目标会话没有产生可见消息时，仍能把目标 agent 的「内心情况」回报给调用方。
-   */
-  getSessionState?(sessionId: string): Record<string, unknown> | undefined;
 }
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----

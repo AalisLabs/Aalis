@@ -107,15 +107,15 @@ function createArchiveService({ memory, media, events, logger, config }: Caps): 
       if (fileAttachments.length > 0) {
         meta.fileNames = fileAttachments.map(a => a.name ?? '未知文件').filter(Boolean);
       }
-      // 触发与来源溯源：用于区分真实用户消息 vs proactive 委派/调度等系统注入，
+      // 触发与来源溯源：用于区分真实用户消息 vs proactive 代发任务/调度等系统注入，
       // 也方便事后审计"agent 在 X 群做过什么"
       if (working.triggerType) meta.triggerType = working.triggerType;
       if (working.source) meta.source = working.source;
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
-      // proactive 跨会话委派消息：作为 notice 角色 + kind='cross-session-delegation' 落盘，
-      // 与 plugin-agent 的 buildMessages 保持一致，避免 B 下次回看历史时
+      // proactive 代发任务（如 workflow agent 节点）：作为 notice 角色 + kind='cross-session-delegation' 落盘，
+      // 与 plugin-agent 的 buildMessages 保持一致，避免目标会话下次回看历史时
       // 把派发任务误读为「曾经有用户说过这个」。
       const isProactive = working.triggerType === 'proactive';
 

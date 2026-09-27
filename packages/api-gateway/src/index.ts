@@ -187,7 +187,7 @@ export function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | '
 
 /**
  * 按 `<platform>:<self>:<type>:<target>` 约定从会话 ID 推断会话类型与作用域里的 targetId，供消息上
- * 没有 sessionType 的场合（定时任务、委派等合成回合）使用。这是适配器的命名约定而非契约：只认前缀等于
+ * 没有 sessionType 的场合（定时任务、workflow 等合成回合）使用。这是适配器的命名约定而非契约：只认前缀等于
  * platform 的 id，不符合约定返回 undefined；推断结果只供调用方自己判断，不要写回消息。
  * 子任务会话（`<父会话 id>::<uuid>`）不推断：它沿用父会话的 platform，按段切分会把父会话的类型连同
  * 带后缀的假目标安到子任务头上。targetId 与 {@link extractTargetId} 同口径：群聊取群号、私聊取对方 id，

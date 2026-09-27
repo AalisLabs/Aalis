@@ -1285,33 +1285,20 @@ class DefaultAgent implements AgentService {
     const fallbackBody = senderLabel ? `[${senderLabel}]: ${incoming.content}` : incoming.content;
     const currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
 
-    // 3a. proactive 委派分支：跨会话由「同一 agent 在另一会话的实例」派发过来的任务
+    // 3a. proactive 分支：系统代发给本会话的任务指令（如 workflow 的 agent 节点）
     //
-    // 这条消息不是用户请求，必须作为 system 指令呈现给 LLM，否则 B 会把它当成
-    // 真实用户在指挥（典型 BUG：源会话 agent 决定派发，目标会话 agent 看到 user
-    // 角色的消息，回复时使用「您」「您好」等措辞，把 agent 当成了用户）。
-    //
-    // 同时附上源会话 ID，并明确告诉 B：如需了解源会话上下文，按需调用
-    // session_get_history(sessionId="<源>") —— 把"是否需要上下文"的决策权
-    // 交给 B 的 LLM，避免无差别拼接源历史造成 token 浪费。
+    // 这条消息不是用户请求，必须作为 system 指令呈现给 LLM，否则 agent 会把它当成
+    // 真实用户在指挥（典型 BUG：agent 看到 user 角色的任务指令，回复时使用「您」
+    // 「您好」等措辞，把派发方当成了用户）。
     if (incoming.triggerType === 'proactive') {
-      const sourceMatch = incoming.source?.match(/^proactive:from:(.+)$/);
-      const sourceSessionId = sourceMatch?.[1];
-      const sourceLine = sourceSessionId ? `源会话 ID: ${sourceSessionId}\n` : '';
-      // 不在 hint 里写死 limit，让 LLM 按 plugin-tool-session 的 defaultLimit / 自身判断决定
-      const hintLine = sourceSessionId
-        ? `如需了解源会话上下文（例如「按之前讨论的方案」之类的引用），调用 \`session_get_history(sessionId="${sourceSessionId}")\` 自行查阅（可按需附加 limit）。\n`
-        : '';
       messages.push({
         role: 'system',
         content:
           `[跨会话委派 — 非用户消息]\n` +
-          sourceLine +
           `任务: ${incoming.content}\n\n` +
           `说明: 这是你（作为同一 agent 在另一会话的实例）派发给本会话的任务指令，` +
-          `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n` +
-          hintLine,
-        metadata: { injector: WellKnownKinds.CrossSessionDelegation, sourceSessionId },
+          `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n`,
+        metadata: { injector: WellKnownKinds.CrossSessionDelegation },
       });
       return messages;
     }

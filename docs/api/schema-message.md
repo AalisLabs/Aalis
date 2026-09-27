@@ -27,7 +27,6 @@ interface IncomingMessage {
   replyTo?: { messageId; content?; userId?; nickname? };
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-  proactiveDepth?: number;             // 跨会话委派跳数，首跳为 1；真人消息不带，缺省视为 0
   // 内部字段（preprocessor 写入）
   _imageDescriptions?: string[];
   _imageRecognitionInfo?: { imageCount; successCount; descriptions; transformedContent };
@@ -43,7 +42,7 @@ interface IncomingMessage {
 | `immediate` | 群聊被 @/名字主动触发 |
 | `interval` | 群聊因频率/活跃度被动触发，userId 仅是"最后一条" |
 | `idle` | 空闲自动触发，无 userId |
-| `proactive` | 另一会话的 agent 经跨会话委派发起，content 是任务描述而非用户消息 |
+| `proactive` | 系统代发给 agent 的任务指令，如 workflow 的 agent 节点；content 是任务描述而非用户消息 |
 
 真人消息的 `triggerType` 由 `inbound:trigger` 相位生效的触发插件写入（`immediate` / `interval`），平台适配器不设置；`idle`、`proactive` 由注入方自带。flow 相位对 `immediate` 不查回复后冷却与限速，入站消息上预设的 `immediate` 在触发插件的作用域外（或没装触发插件时）会原样生效。
 

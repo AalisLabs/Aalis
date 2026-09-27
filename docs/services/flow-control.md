@@ -46,7 +46,6 @@ export interface FlowControlService {
 - `@aalis/plugin-trigger-policy`：`isMuted` 决定禁言期不计数、不识别关键词；命中禁言关键词时 `setMuted`；session 档闲置到点前查 `isMuted`，platform 档挑候选时排除 `isMuted` / `isCoolingDown` / `isRateLimited` 为真的会话（`packages/plugin-trigger-policy/src/index.ts`、`packages/plugin-trigger-policy/src/idle-scheduler.ts`）。
 - `@aalis/plugin-trigger-laya`（仓库内私有插件）：`isMuted` 为真时放行给 flow 相位吞掉，不识别关键词；命中禁言关键词时 `setMuted`（`packages/plugin-trigger-laya/src/index.ts`）。
 - `@aalis/plugin-adapter-onebot`：bot 自身被禁言/解禁的 notice、重连后按 `shut_up_timestamp` 恢复时调 `setMuted`（`packages/plugin-adapter-onebot/src/index.ts`）。
-- `@aalis/plugin-tool-session`：`delegate_to_session` 派发前查目标会话，`isMuted` 或 `isRateLimited` 为真即拒绝（`packages/plugin-tool-session/src/index.ts`）。只检不记：限速按目标会话的真实回复计，派发到回复落地之间对同一目标的突发委派不占槽，可能越过限速。
 
 ## 4. 写一个 provider
 
@@ -111,19 +110,21 @@ export default definePlugin({
 按 [concepts/lazy-service-access](../concepts/lazy-service-access.md)：**每次用都 `current` 现取，不缓存引用**。缺席时按"不设闸"处理：
 
 ```ts
-// 委派派发前（packages/plugin-tool-session/src/index.ts）
-const flow = flowControl.current;
-if (flow?.isMuted(targetSessionId)) return JSON.stringify({ error: '委派被拒：目标会话处于禁言期' });
-if (flow?.isRateLimited(targetSessionId)) return JSON.stringify({ error: '委派被拒：目标会话已达流控限速上限' });
+// platform 档闲置挑候选时（packages/plugin-trigger-policy/src/idle-scheduler.ts）
+const flow = this.caps.flowControl.current;
+for (const [sid, s] of this.states) {
+  if (flow?.isMuted(sid) || flow?.isCoolingDown(sid) || flow?.isRateLimited(sid)) continue;
+  // ...
+}
 ```
 
 ## 6. 行为不变量
 
-- **禁言不看作用域、不看来源**。`inbound:flow` 先查禁言：闲置触发、跨会话委派、定时任务注入的消息在禁言期同样被吞。禁言状态只由关键词或平台禁言针对具体会话写入，所以不会误伤作用域外的会话。禁言只在入站把关，挡的是禁言之后才开始的回合，禁言写入时正在生成的回复照常发出（见插件页「已知局限」）。
-- **immediate 穿透冷却与限速**。被 @、戳一戳、叫名字时即使处于冷却或限速窗口也放行；禁言期除外。带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）不受冷却约束，但仍受禁言与限速约束（限速只在作用域内时）。不带会话类型的内部注入判作用域与回复记账同一口径（自带会话类型的，如 OneBot 请求通知，按自身类型判）：先用会话已记下的类型，没有再按会话 ID 约定推断，所以默认 `*:group` 下 bot 在某个群的限速窗口已满时，发往该群的内部注入同样被挡下。
+- **禁言不看作用域、不看来源**。`inbound:flow` 先查禁言：闲置触发、定时任务注入的消息在禁言期同样被吞。禁言状态只由关键词或平台禁言针对具体会话写入，所以不会误伤作用域外的会话。禁言只在入站把关，挡的是禁言之后才开始的回合，禁言写入时正在生成的回复照常发出（见插件页「已知局限」）。
+- **immediate 穿透冷却与限速**。被 @、戳一戳、叫名字时即使处于冷却或限速窗口也放行；禁言期除外。带 `source` 的内部注入（闲置触发、定时任务、workflow）不受冷却约束，但仍受禁言与限速约束（限速只在作用域内时）。不带会话类型的内部注入判作用域与回复记账同一口径（自带会话类型的，如 OneBot 请求通知，按自身类型判）：先用会话已记下的类型，没有再按会话 ID 约定推断，所以默认 `*:group` 下 bot 在某个群的限速窗口已满时，发往该群的内部注入同样被挡下。
 - **作用域先于关键词**。`scopes` / `overrides` 用 `platform:sessionType[:targetId]` 三段通配匹配（匹配函数在 `packages/api-gateway/src/index.ts`，默认 `*:group`）。触发插件在识别禁言关键词之前先判作用域，否则群聊的禁言关键词会作用到 WebUI、私聊等不在作用域内的会话。
 - **禁言态要持久化**。禁言可能是小时级的用户意图，参考实现把 `mutedUntil` 落盘到 `data:/flow-control-mutes.json`，冷却与限速不落盘。该文件读不懂（不存在以外的读取错误、解析失败、顶层不是对象）时，本次运行不再整表回写，禁言改动只在内存生效，storage 换人重读时重新判定。换 provider 时若不持久化，重启会让被禁言的群立即恢复发言。
-- **限速是防刷屏与平台风控的护栏**。冷却与限速记在 agent 真实回复上，只对作用域内会话记账：按会话已记下的类型判；没有流控状态或状态缺类型的会话（如重启后没人说话的群、只有禁言记录的群）按会话 ID 的 `<platform>:<self>:<type>:<target>` 约定推断类型与目标（`inferSessionScope`，在 `packages/api-gateway/src/index.ts`），推断结果只写进流控自己的状态、不回写消息，入站带 `source` 的内部注入判作用域也用这一口径；会话 ID 不符合约定的（如 WebUI）类型未知，只有会话类型段为通配的作用域（`onebot:*`、`*`）命中。委派闸门读的就是这份记账，作用域外的会话不设限。自建主动发送通道应发 `source: 'agent'` 的 `outbound:message`，才能被计入。
+- **限速是防刷屏与平台风控的护栏**。冷却与限速记在 agent 真实回复上，只对作用域内会话记账：按会话已记下的类型判；没有流控状态或状态缺类型的会话（如重启后没人说话的群、只有禁言记录的群）按会话 ID 的 `<platform>:<self>:<type>:<target>` 约定推断类型与目标（`inferSessionScope`，在 `packages/api-gateway/src/index.ts`），推断结果只写进流控自己的状态、不回写消息，入站带 `source` 的内部注入判作用域也用这一口径；会话 ID 不符合约定的（如 WebUI）类型未知，只有会话类型段为通配的作用域（`onebot:*`、`*`）命中。自建主动发送通道应发 `source: 'agent'` 的 `outbound:message`，才能被计入。
 
 ## 7. 注意事项与边界情形
 

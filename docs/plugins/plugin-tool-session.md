@@ -5,7 +5,7 @@
 
 ## 概述
 
-注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索；启用跨会话委派时另注册 `list_known_sessions` 与 `delegate_to_session`，用于向其他已存在的会话派发任务。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。
+注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。
 
 ## 插件声明
 
@@ -16,15 +16,10 @@ export default definePlugin({
   provides: [sessionHistory],
   uses: {
     tools: optional(tools),
-    events,
-    hooks,
     logger,
     config,
     provide,
     memory: optional(memory),
-    platform: optional(platform),
-    persona: optional(persona),
-    flowControl: optional(flowControl),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -35,21 +30,8 @@ export default definePlugin({
 | 工具组 | 工具 | 说明 |
 |---|---|---|
 | `session-history` | `session_get_history` | 按 sessionId 读取近期消息（受 scope 限制） |
-| `session-delegate` | `list_known_sessions` | 列出最近活跃过的会话，供派发前发现目标 sessionId |
-| `session-delegate` | `delegate_to_session` | 向指定目标会话派发一次任务，可选等待结果 |
 
-`session-delegate` 组仅在 `enabled` 与 `crossSessionEnabled` 均为 true 时注册；`enabled` 为 false 时本插件不注册任何服务与工具。
-
-## 跨会话委派的防雪崩
-
-委派深度随消息走：`delegate_to_session` 给目标会话注入的 `IncomingMessage` 带 `proactiveDepth`（首跳为 1），目标会话处理这条消息的那一个回合内不能再委派，调用会以「本回合由委派消息驱动，不能再委派」被拒。回合结束（`agent:turn:after`）即解除；该会话之后由下一条不带 `proactiveDepth` 的入站消息（真人消息、idle/interval 自动触发都算）驱动的回合不受影响。没有时间窗——等多久都不会自动解除，解除只来自回合结束或该会话的下一条不带 `proactiveDepth` 的入站消息。登记点在 `agent:input:before`，因此经 `inbound:message` 事件与直接调 `gateway.ingressMessage()` 两条投递路径同样生效。
-
-锁按 sessionId 记，是按会话近似回合：同会话不同 source 的并行回合共用同一把锁，后开始的回合会覆盖前一个的登记，先结束的回合会替所有人解锁。
-
-另有两道与深度无关的闸门：
-
-- **流控约束**：派发前查 `flow-control`，目标会话处于禁言期或限速窗口已满即拒绝，错误信息区分禁言与限速；限速只对 flow-control 作用域内的会话生效（默认 `*:group`），作用域外的目标只受禁言约束；`flow-control` 未加载时不设此闸。只检不记：限速按目标会话 agent 的真实回复计，派发到回复落地之间（通常 5~30 秒）对同一目标的突发委派不占限速槽，可能越过限速。
-- **重复提醒**：同一目标会话 60 秒内的重复派发会在任务前注入 META 提醒（提醒型，不拦截派发本身）。
+`enabled` 为 false 时本插件不注册任何服务与工具。
 
 ## 配置
 
@@ -61,8 +43,6 @@ export default definePlugin({
 | `scope` | select | `'platform'` | 允许读取范围 |
 | `includeArchivedDefault` | boolean | `false` | 默认包含已归档消息 |
 | `perMessageMaxChars` | number | `0` | 每条消息截断字数：返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。 |
-| `crossSessionEnabled` | boolean | `true` | 启用跨会话委派 (delegate_to_session / list_known_sessions)：允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护；限速只对 flow-control 作用域内的会话生效（默认 *:group）。 |
-| `crossSessionDefaultTimeoutSec` | number | `60` | 跨会话委派默认等待秒数：delegate_to_session 在未显式指定 timeout_seconds 时使用的等待上限。 |
 
 ## 提供的服务
 
@@ -89,3 +69,5 @@ interface SessionHistoryService {
 ## 历史
 
 本包由原 `plugin-session-tools` 拆分而来（另一部分为 `plugin-subtask`），跨会话委派工具随后也并入本包。
+
+跨会话委派工具组 `session-delegate`（`list_known_sessions` 与 `delegate_to_session`）与配置项 `crossSessionEnabled` / `crossSessionDefaultTimeoutSec` 已删除：`list_known_sessions` 不按调用者过滤，把各会话的最近一条消息交给任何触发者；`delegate_to_session` 让多人平台上的任何人都能把任务派进其他会话（包括 owner 的 WebUI 会话），并把目标会话的回复带回来源会话。会话之间的协作将以「会话间消息」重新设计：权限跟随消息链的源头，工具取接收会话自己的，会话之间互不信任。迁移说明见 CHANGELOG。

@@ -41,7 +41,7 @@ export default definePlugin({
 2. 回退到当前会话的 OneBot 上下文（如果当前会话恰好是 onebot 群/私聊）
 3. `self_id` 还有一层兜底：优先取任一在线 OneBot 连接的 selfId，没有在线连接时取任一已知连接的 selfId；都没有则报错。
 
-这意味着 LLM 不需要先调 `delegate_to_session` 切到目标群再调工具——一次性把目标 ID 传进来即可。
+这意味着 LLM 不需要切到目标群的会话再调工具——一次性把目标 ID 传进来即可。
 
 ## 注册工具
 

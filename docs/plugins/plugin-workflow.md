@@ -71,7 +71,7 @@ export default definePlugin({
 ## `agent` 节点：确定性的多智能体编排
 
 `agent` 节点是 `send-message` 的「等回复」版：派发前注册 `agent:turn:after` 监听，按目标
-`sessionId` 捕获本轮回复（与 `delegate_to_session` 相同的 join 方式），把回复经 `out` 存入
+`sessionId` 捕获本轮回复，把回复经 `out` 存入
 `outputs`。配合 `deps` + 插值，单个 DAG 即可表达「分解 → 依赖 → 串/并行 → 管道 → 聚合」的确定性编排流程。
 
 - 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow:agent:<runId>:<nodeId>`，

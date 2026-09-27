@@ -203,9 +203,9 @@ export function normalizeSystemPlacement(messages: Message[]): Message[] {
   while (leadingEnd < messages.length && messages[leadingEnd].role === 'system') leadingEnd++;
   return messages.map((m, i) => {
     if (i < leadingEnd || m.role !== 'system') return m;
-    // 跨会话委派指令豁免：它必须以 system 呈现，转 user 会复发「把委派当真实用户
-    // 在指挥」的历史 BUG（plugin-agent buildMessages 注释记录在案）。委派轮低频，
-    // 牺牲该轮缓存可接受。injector 只存在于请求期构造的消息上，不会命中历史记录。
+    // proactive 代发任务（如 workflow agent 节点）的指令豁免：它必须以 system 呈现，转 user
+    // 会复发「把代发任务当真实用户在指挥」的历史 BUG（plugin-agent buildMessages 注释记录在案）。
+    // 这类回合低频，牺牲该轮缓存可接受。injector 只存在于请求期构造的消息上，不会命中历史记录。
     if (m.metadata?.injector === WellKnownKinds.CrossSessionDelegation) return m;
     const content = m.content ?? '';
     // 空内容块保持原样，不产出「[系统提示] 」空壳 user 消息

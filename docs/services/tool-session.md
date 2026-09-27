@@ -66,7 +66,7 @@ const historyService = createSessionHistoryService(caps, cfg);
 provide(sessionHistory, historyService, { label: '会话历史读取' });
 ```
 
-它还注册了 LLM 工具 `session_get_history`（`index.ts`，handler 转调 `historyService.getHistory`）以及跨会话委派工具组 `session-delegate`（`delegate_to_session` / `list_known_sessions`，`index.ts`，这部分不经本服务接口，是直接的工具实现）。
+它还注册了 LLM 工具 `session_get_history`（`index.ts`，handler 转调 `historyService.getHistory`）。
 
 **消费点**：
 - `@aalis/plugin-tool-onebot`：注入访问规则（`packages/plugin-tool-onebot/src/index.ts`）+ 平台专属工具 `onebot_get_session_history` 转调本服务（`index.ts`）。这是**最完整的「写 provider 之外的消费」范例**。

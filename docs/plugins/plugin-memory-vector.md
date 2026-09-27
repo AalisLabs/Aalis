@@ -58,7 +58,7 @@ export default definePlugin({
    embed 前经 `prefixSender` 加自身发送者前缀；
    AI/系统撰写的伪 incoming 不入库（`source: idle-trigger` / `triggerType: proactive` /
    `source: scheduler` / `source: workflow:*` / `userId: parent:*`，即闲聊主动触发、
-   跨会话委派与定时/工作流/子任务派发）
+   workflow agent 节点与定时/工作流/子任务派发）
 2. **语义检索**: 经 `agent:prompt` 贡献点（turn-context 锚位），组装请求时：
    - 将用户最新消息 embed 为查询向量
    - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 embedding 模型（见下节）、minScore 与跨会话模式过滤后时间衰减加权重排；

@@ -94,7 +94,7 @@ export interface Message {
    *
    * 约定的语义类（详见 `WellKnownKinds` / `CONTROL_KINDS`）：
    * - `'event-marker'`              ：system 控制类标记（如压缩分隔条），不应进入 LLM 上下文。
-   * - `'cross-session-delegation'`  ：notice 子类——来自另一会话的 agent 委派任务。
+   * - `'cross-session-delegation'`  ：notice 子类——系统代发的任务指令（triggerType 为 proactive，如 workflow 的 agent 节点）。
    * - `'outbound-image'`            ：assistant 子类——agent 已发出的图片。
    * - notice 的平台事件类型         ：`'poke' | 'group_recall' | 'group_increase' | ...`（取自 OneBot 等适配器）。
    *
@@ -182,7 +182,7 @@ export interface IncomingMessage {
   /** 会话类型：群聊、私聊、频道等 */
   sessionType?: 'group' | 'private' | 'channel';
   /**
-   * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'、'proactive:from:<sid>'）。
+   * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'）。
    * 平台适配器投递真人消息**不设置**此字段：带 source 的消息被视为内部注入——不经触发策略、
    * 不过回复后冷却（禁言与限速照常生效）。同时用于并发隔离：同一 session 不同来源互不打断。
    */
@@ -223,13 +223,13 @@ export interface IncomingMessage {
    * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）
    * - 'interval'  群聊中因消息频率/活跃度被动触发（无明确主发言者，userId 仅为最后一条消息发送者）
    * - 'idle'      空闲自动触发（无 userId / 无主发言者）
-   * - 'proactive' 由另一会话的 agent 通过工具发起跨会话委派（content 是任务描述而非用户消息）
+   * - 'proactive' 系统代发给 agent 的任务指令，如 workflow 的 agent 节点（content 是任务描述而非用户消息）
    * 未设置时下游插件按 'direct' 兼容处理。
    */
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
   /**
    * 代理身份（与 platform/userId 解耦）：当本条消息并非由人类直接发送，而是由 scheduler、
-   * idle-trigger、proactive 委派等系统侧触发器投递时，记录"AI 应代谁执行"。
+   * idle-trigger、workflow 等系统侧触发器投递时，记录"AI 应代谁执行"。
    *
    * 与 platform/userId 的区别：
    * - platform/userId 表示消息的物理来源（路由+发言者标识），写归档、做用户档案/关系；
@@ -247,12 +247,6 @@ export interface IncomingMessage {
     platform: string;
     userId: string;
   };
-  /**
-   * 委派链深度：跨会话委派（delegate_to_session）注入目标会话时填的「这是第几跳」，
-   * 从 1 起。防雪崩的深度随消息走，不按会话计时——由委派消息驱动的那一个回合内禁止
-   * 再委派，回合结束即解除；真人消息不带此字段，其回合不受影响。缺省视为 0。
-   */
-  proactiveDepth?: number;
 }
 
 /**
@@ -264,7 +258,7 @@ export interface IncomingMessage {
  * 执行。契约（triggerType 注释）与 prompt 侧特判都把 interval 当无主发言者，授权轴应一致。
  *
  * userId 取空串而非缺省：`actor?.userId ?? userId` 回退链遇空串不回退（?? 只认 null/undefined），
- * 由此派生的定时任务/委派/子任务保持匿名，不会漂回物理发言者；authority 的等级查表以空
+ * 由此派生的定时任务/子任务保持匿名，不会漂回物理发言者；authority 的等级查表以空
  * userId 为无键 → 默认等级，owner 判定永不命中空串。
  */
 export function selfInitiatedActor(platform: string): { platform: string; userId: string } {
@@ -353,7 +347,7 @@ declare module '@aalis/core' {
  * 已知的 Message.kind 语义常量。第三方插件可使用新值；本表仅作为框架内的契约。
  *
  * - `EventMarker`：纯 UI/控制标记（如对话压缩分隔条）。LLM 出口与抽取均应排除。
- * - `CrossSessionDelegation`：跨会话委派——另一 agent 通过工具向本会话派发任务。
+ * - `CrossSessionDelegation`：代发任务——triggerType 为 proactive 的入站消息（如 workflow 的 agent 节点）归档时标的 kind。
  * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
  * - `OutboundAudio`：assistant 已发出的语音占位。
  * - `OutboundVideo`：assistant 已发出的视频占位。

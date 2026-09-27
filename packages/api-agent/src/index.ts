@@ -159,8 +159,8 @@ declare module '@aalis/api-hooks' {
  * - `context`：头部 system 区末尾，居 knowledge 之后。**会话级稳定**的对话
  *   上下文（会话摘要）。
  * - `turn-context`：历史结束处——**按当前轮取材**的背景材料（向量检索记忆、
- *   跨会话片段、发言者档案/关系、文件清单）。落点三级取首个命中：跨会话
- *   委派块之前（proactive 轮，历史里有旧 user 消息，不能按 user 定位）>
+ *   跨会话片段、发言者档案/关系、文件清单）。落点三级取首个命中：proactive
+ *   任务块之前（proactive 轮，历史里有旧 user 消息，不能按 user 定位）>
  *   易变块（persona-volatile）之前 > 最后一条 user 之前；全列表无 user 时
  *   落尾（材料不依附于用户消息——这点与 turn-hint 的弃置不同）。
  * - `turn-hint`：最后一条 user 消息之前（居 turn-context 之后，贴用户消息

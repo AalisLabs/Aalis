@@ -73,19 +73,19 @@ async function runTurn(
 }
 
 describe('actor 消费端：agent 把 incoming.actor 折进 ToolCallContext', () => {
-  it('带 actor 的委派消息：actor 到达工具 callCtx，platform/userId 保持会话语义', async () => {
+  it('带 actor 的第三方 proactive 代发消息：actor 到达工具 callCtx，platform/userId 保持会话语义', async () => {
     const callCtx = await runTurn({
       content: '执行任务',
       sessionId: 'onebot:1:group:2',
       platform: 'onebot',
-      source: 'proactive:from:src',
+      source: 'third-party:x',
       triggerType: 'proactive',
       actor: { platform: 'webui', userId: 'console' },
     });
     expect(callCtx, '工具未被调用——mock LLM 的 toolCalls 回合没走通').toBeDefined();
     expect(callCtx?.actor).toEqual({ platform: 'webui', userId: 'console' });
     expect(callCtx?.platform, 'platform 必须保持会话平台，不被 actor 覆盖').toBe('onebot');
-    expect(callCtx?.userId, 'userId 保持物理来源（委派消息无发言者）').toBeUndefined();
+    expect(callCtx?.userId, 'userId 保持物理来源（代发消息无发言者）').toBeUndefined();
   });
 
   it('无 actor 的普通消息：callCtx.actor 缺省，身份即物理来源', async () => {

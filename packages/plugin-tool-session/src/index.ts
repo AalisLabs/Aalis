@@ -1,9 +1,4 @@
-import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import { flowControl } from '@aalis/api-flow-control';
-import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
-import { persona } from '@aalis/api-persona';
-import { platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   type AccessChecker,
   type AccessCheckerDisposer,
@@ -12,104 +7,9 @@ import {
   sessionHistory,
 } from '@aalis/api-session-history';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
-
-// ===== 跨会话委派：回合深度防雪崩 =====
-// 防止 A→B→C→... 无限链。深度随消息走（IncomingMessage.proactiveDepth），不按会话计时：
-// 由委派消息驱动的那一个回合内禁止再委派，回合结束（agent:turn:after）即解除；
-// 该会话之后由下一条不带 proactiveDepth 的入站消息（真人消息、idle/interval 自动触发都算）
-// 驱动的回合不受影响。
-const PROACTIVE_DEPTH_MAX = 1;
-
-// ===== 跨会话委派：近期派发记录（提醒型，不硬挡） =====
-// 记录每个 (target_session_id, task) 最近一次派发状态。
-// 下一次同目标派发时，在拼装给 target agent 的 task 前注入 META 提醒，
-// 让 target agent 自主判断是否需要重发。不防止派发本身。
-const RECENT_DELEGATION_TTL_MS = 60 * 1000;
-const RECENT_DELEGATION_MAX = 256; // 防止无限增长
-interface RecentDelegationEntry {
-  firedAt: number;
-  expiresAt: number;
-  sourceSessionId: string;
-  taskPreview: string; // 前 80 字
-  status: 'pending' | 'replied' | 'fired-no-wait';
-  lastReplyPreview?: string;
-}
-type RecentDelegations = Map<string, RecentDelegationEntry>;
-
-function recentDelegationKey(targetSessionId: string, taskHash: string): string {
-  return `${targetSessionId}::${taskHash}`;
-}
-
-function hashTask(task: string): string {
-  // djb2 (xor variant)：非密码学，零依赖，仅用于 60s 内区分 task 文本
-  const s = task.trim();
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) {
-    h = (((h << 5) + h) ^ s.charCodeAt(i)) | 0;
-  }
-  return (h >>> 0).toString(16).padStart(8, '0');
-}
-
-function pruneRecentDelegations(store: RecentDelegations, now: number): void {
-  for (const [key, entry] of store) {
-    if (entry.expiresAt <= now) store.delete(key);
-  }
-  // 超上限时删最早的
-  if (store.size > RECENT_DELEGATION_MAX) {
-    const oldest = [...store.entries()].sort((a, b) => a[1].firedAt - b[1].firedAt);
-    for (let i = 0; i < oldest.length - RECENT_DELEGATION_MAX; i++) {
-      store.delete(oldest[i][0]);
-    }
-  }
-}
-
-function findRecentDelegationsForTarget(
-  store: RecentDelegations,
-  targetSessionId: string,
-  now: number,
-): RecentDelegationEntry[] {
-  const prefix = `${targetSessionId}::`;
-  const list: RecentDelegationEntry[] = [];
-  for (const [key, entry] of store) {
-    if (entry.expiresAt <= now) continue;
-    if (!key.startsWith(prefix)) continue;
-    list.push(entry);
-  }
-  list.sort((a, b) => b.firedAt - a.firedAt);
-  return list;
-}
-
-function buildDelegationMetaBlock(
-  sourceSessionId: string,
-  task: string,
-  recents: RecentDelegationEntry[],
-  now: number,
-): string {
-  const lines: string[] = [];
-  lines.push('[跨会话委派 META]');
-  lines.push(`· 来源会话：${sourceSessionId}`);
-  lines.push('· 提醒：你本轮的对外回复内容会原样发送到当前会话所在平台（群/私聊/...）。');
-  lines.push('· 生成回复前请先回看你最近 history：若你认为本任务已经完成、或本轮要写的内容与上一条对外回复实质重复，');
-  lines.push('  请输出空回复（不再对外发送），按你所属 persona / output 约定填写必要的内部状态字段即可。');
-  if (recents.length > 0) {
-    lines.push(`· 检测：60s 内本目标会话 已收到 ${recents.length} 次同/近期任务。最近的：`);
-    for (let i = 0; i < Math.min(recents.length, 3); i++) {
-      const r = recents[i];
-      const ageSec = Math.round((now - r.firedAt) / 1000);
-      const reply = r.lastReplyPreview ? ` reply="${r.lastReplyPreview}"` : '';
-      lines.push(
-        `  - ${ageSec}s 前 · from=${r.sourceSessionId} · status=${r.status}${reply} · task="${r.taskPreview}"`,
-      );
-    }
-    lines.push('  若确认重复，请依上面提醒处理。');
-  }
-  lines.push('[任务正文]');
-  lines.push(task);
-  return lines.join('\n');
-}
+import type { Message } from '@aalis/schema-message';
 
 // ===== 插件元数据与能力声明 =====
 
@@ -144,41 +44,18 @@ const configSchema: ConfigSchema = {
     default: 0,
     description: '返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
   },
-  crossSessionEnabled: {
-    type: 'boolean',
-    label: '启用跨会话委派 (delegate_to_session / list_known_sessions)',
-    default: true,
-    description:
-      '允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护；限速只对 flow-control 作用域内的会话生效（默认 *:group）。',
-  },
-  crossSessionDefaultTimeoutSec: {
-    type: 'number',
-    label: '跨会话委派默认等待秒数',
-    default: 60,
-    description: 'delegate_to_session 在未显式指定 timeout_seconds 时使用的等待上限。',
-  },
 };
 
 const uses = {
   tools: optional(tools),
-  events,
-  hooks,
   logger,
   config,
   provide,
   memory: optional(memory),
-  platform: optional(platform),
-  persona: optional(persona),
-  // 委派闸门：目标会话禁言中或限速已满即拒绝；缺席时不设闸
-  flowControl: optional(flowControl),
 };
 type Caps = BoundOf<typeof uses>;
 type HistoryCaps = Pick<Caps, 'memory' | 'logger'>;
 type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
-type CrossSessionCaps = Pick<
-  Caps,
-  'tools' | 'logger' | 'events' | 'hooks' | 'memory' | 'platform' | 'persona' | 'flowControl'
->;
 
 interface PluginConfig {
   enabled: boolean;
@@ -187,8 +64,6 @@ interface PluginConfig {
   scope: 'current' | 'platform' | 'all';
   includeArchivedDefault: boolean;
   perMessageMaxChars: number;
-  crossSessionEnabled: boolean;
-  crossSessionDefaultTimeoutSec: number;
 }
 
 type SessionHistoryResult = Extract<SessionHistoryReadResult, { ok: true }>;
@@ -280,8 +155,6 @@ function resolveConfig(raw: Readonly<Record<string, unknown>>): PluginConfig {
     scope,
     includeArchivedDefault: raw.includeArchivedDefault === true,
     perMessageMaxChars: Math.max(0, Number(raw.perMessageMaxChars) || 0),
-    crossSessionEnabled: raw.crossSessionEnabled !== false,
-    crossSessionDefaultTimeoutSec: Number(raw.crossSessionDefaultTimeoutSec) || 60,
   };
 }
 
@@ -529,422 +402,6 @@ function registerSessionHistoryTools(
   logger.info('会话历史读取工具已注册');
 }
 
-/**
- * 登记「当前回合由深度 N 的委派消息驱动」。
- *
- * 登记点在 `agent:input:before`——回合真正开始的那一刻，且是所有投递方式的汇合处：
- * 经 `inbound:message` 事件进来的和直接调 `gateway.ingressMessage()` 的都要过这道钩子，
- * 登记因而必然早于本回合的任何工具调用。
- *
- * 入站即写、回合结束（`agent:turn:after`）即清；下一条不带 proactiveDepth 的入站消息
- * （真人消息、idle/interval 自动触发都算）会覆盖清除该会话的登记，所以即使某轮没等到
- * turn:after（被中间件吞、进程重启前残留），这样的下一条消息也能立刻解锁——无需任何超时兜底。
- *
- * 锁按 sessionId 记，是「会话近似回合」：同会话不同 source 的并行回合共用同一把锁，
- * 后开始的那个会覆盖前一个的登记、先结束的那个会替所有人解锁。
- */
-function trackProactiveTurnDepth(hooks: Caps['hooks'], turnProactiveDepth: Map<string, number>): void {
-  hooks.middleware('agent:input:before', async (data, next) => {
-    const depth = typeof data.message.proactiveDepth === 'number' ? data.message.proactiveDepth : 0;
-    if (depth > 0) turnProactiveDepth.set(data.message.sessionId, depth);
-    else turnProactiveDepth.delete(data.message.sessionId);
-    await next();
-  });
-  hooks.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    turnProactiveDepth.delete(data.sessionId);
-  });
-}
-
-function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): void {
-  const { tools, logger, events, hooks, memory, platform, persona, flowControl } = caps;
-
-  /**
-   * sessionId → 该会话当前回合的入站消息所带 proactiveDepth（非委派回合不在表内）。
-   * 随这次激活存亡：锁由本次激活的 `agent:input:before` 中间件写入、由本次激活注册的工具读取，
-   * 插件重载后旧锁必须一并消失，否则新激活会拿着没有对应回合的残留锁拒绝委派。
-   */
-  const turnProactiveDepth = new Map<string, number>();
-  /** (目标会话, task) → 最近一次派发状态；同样随激活存亡（60s 提醒窗，跨重载无保留价值） */
-  const recentDelegations: RecentDelegations = new Map();
-
-  trackProactiveTurnDepth(hooks, turnProactiveDepth);
-
-  tools.registerGroup({
-    name: 'session-delegate',
-    label: '跨会话派发',
-    description: '向已存在的其他会话（如另一个群、另一个 QQ 好友、另一个平台）派发任务并可选等待结果。',
-  });
-
-  // ---- list_known_sessions ----
-  // 列出最近活跃的会话（按平台/最近活跃时间），供 agent 在 delegate 前发现可派发目标，
-  // 避免凭空拼接 sessionId 出错。基于 memory 的 getRecentMessagesAcrossSessions 能力。
-  tools.register({
-    groups: ['session-delegate'],
-    definition: {
-      type: 'function',
-      function: {
-        name: 'list_known_sessions',
-        description: [
-          '列出 agent 最近活跃过的会话，按最近活动时间倒序返回，用于 delegate_to_session 之前发现目标 sessionId。',
-          '',
-          '【返回字段】',
-          '- session_id：完整 sessionId（可直接用于 delegate_to_session 的 target_session_id）',
-          '- platform：所属平台（如 onebot / webui / scheduler）',
-          '- last_activity_ts：最近一条消息的时间戳（毫秒）',
-          '- preview：最近一条消息的内容预览（截断到 80 字）',
-          '',
-          '【注意】',
-          '- 仅返回 memory 中存在历史的会话；从未对话过的群/好友需要用平台专属工具（如 onebot_get_group_list）查询。',
-          '- 默认排除当前会话本身。',
-        ].join('\n'),
-        parameters: {
-          type: 'object',
-          properties: {
-            limit: {
-              type: 'number',
-              description: '最大返回会话数（默认 20，最大 100）',
-            },
-            platform: {
-              type: 'string',
-              description: '仅返回指定平台的会话（如 "onebot"）；省略则不限平台',
-            },
-            since_hours: {
-              type: 'number',
-              description: '仅返回最近 N 小时内有活动的会话（默认 168 小时 = 7 天）',
-            },
-          },
-          required: [],
-          additionalProperties: false,
-        },
-      },
-    },
-    handler: async (args, callCtx) => {
-      const store = memory.current;
-      if (!store?.getRecentMessagesAcrossSessions) {
-        return JSON.stringify({
-          error: '当前 memory 服务不支持 getRecentMessagesAcrossSessions 能力',
-        });
-      }
-      const limit = Math.min(100, Math.max(1, Number(args.limit) || 20));
-      const sinceHours =
-        Number.isFinite(Number(args.since_hours)) && Number(args.since_hours) > 0 ? Number(args.since_hours) : 168;
-      const platformFilter =
-        typeof args.platform === 'string' && args.platform.trim().length > 0 ? args.platform.trim() : undefined;
-      const sinceTs = Date.now() - sinceHours * 3600 * 1000;
-
-      // 多取一些消息再按 session 聚合，确保 limit 个会话能凑齐
-      const records = await store.getRecentMessagesAcrossSessions({
-        limit: Math.max(limit * 10, 200),
-        sinceTs,
-        platform: platformFilter,
-        excludeSessionIds: callCtx.sessionId ? [callCtx.sessionId] : undefined,
-        roles: ['user', 'assistant'],
-      });
-
-      const bySession = new Map<string, { sessionId: string; platform?: string; lastTs: number; preview: string }>();
-      for (const rec of records) {
-        const ts = rec.message.timestamp ?? 0;
-        const existing = bySession.get(rec.sessionId);
-        if (!existing || ts > existing.lastTs) {
-          const content = typeof rec.message.content === 'string' ? rec.message.content : '';
-          const preview = content.length > 80 ? `${content.slice(0, 80)}...` : content;
-          const platformName =
-            (rec.message.metadata as Record<string, unknown> | undefined)?.platform != null
-              ? String((rec.message.metadata as Record<string, unknown>).platform)
-              : rec.sessionId.split(':')[0] || undefined;
-          bySession.set(rec.sessionId, {
-            sessionId: rec.sessionId,
-            platform: platformName,
-            lastTs: ts,
-            preview,
-          });
-        }
-      }
-
-      const items = [...bySession.values()]
-        .sort((a, b) => b.lastTs - a.lastTs)
-        .slice(0, limit)
-        .map(s => ({
-          session_id: s.sessionId,
-          platform: s.platform,
-          last_activity_ts: s.lastTs,
-          preview: s.preview,
-        }));
-
-      return JSON.stringify({
-        count: items.length,
-        since_hours: sinceHours,
-        sessions: items,
-      });
-    },
-  });
-
-  // ---- delegate_to_session ----
-  // 向已存在的目标会话派发一次任务，目标会话的 agent 在自己原本的人设/记忆/工具集下完整推理；
-  // 与 create_subtask 不同：目标不是新建的"子会话"，而是任意已知 sessionId（如群聊、私聊、跨平台）。
-  tools.register({
-    groups: ['session-delegate'],
-    definition: {
-      type: 'function',
-      function: {
-        name: 'delegate_to_session',
-        description: [
-          '向指定的目标会话（target_session_id）派发一次任务，目标会话的 agent 会在它自己的人设、记忆、工具集、',
-          '平台环境下自主完成一次完整推理（可能调用工具、分多段回复等）。',
-          '',
-          '【典型使用场景】',
-          '- 你在私聊里被要求"去 xx 群禁言 yyy"：群管理类工具只能在群聊会话内调用，',
-          '  此时应 delegate 到该群 sessionId，让群里的 agent 执行 onebot_group_ban。',
-          '- 跨平台转告：把消息从 webui 转告到某个 QQ 群。',
-          '- 主动联系某位好友 / 在某个群发布公告。',
-          '',
-          '【与 create_subtask 区别】',
-          '- create_subtask：新建一个"子会话"分支，状态独立、有 parent/child 关系，用于把当前任务拆分成并行子任务。',
-          '- delegate_to_session：目标是已经存在（或将以平台身份存在）的会话，没有 parent/child 关系，',
-          '  对目标会话来说就像收到一条"主动消息"。',
-          '',
-          '【sessionId 怎么拿】',
-          '- OneBot 群/私聊：onebot:<selfId>:group:<群号> 或 onebot:<selfId>:private:<QQ号>，',
-          '  也可先调用 onebot_resolve_session_id 转换。',
-          '- 其他平台：参考各平台 adapter 的 sessionId 约定。',
-          '',
-          '【安全限制】',
-          '- 防雪崩：委派消息驱动的那一个回合内禁止再委派（A→B 允许，B 处理这条委派时不能再 delegate）；',
-          '  回合结束即解除，该会话之后由下一条不带 proactiveDepth 的入站消息',
-          '  （真人消息、idle/interval 自动触发都算）驱动的回合不受影响。',
-          '- 流控约束：目标会话受流控禁言与限速约束，禁言期内或限速窗口已满时委派会被拒绝。',
-          '- 自委派被禁止：target_session_id 不能等于当前 sessionId。',
-          '',
-          '【wait_for_result】',
-          '- true（默认）：同步等待目标 agent 完成一轮回复，把对方 reply 文本返回给你，最长等 timeout_seconds 秒。',
-          '- false：fire-and-forget，立刻返回"已派发"，不阻塞当前会话。',
-          '',
-          '【fire-and-forget 时延 / 重复派发提醒】',
-          '- fire-and-forget 模式下，目标会话从被派发到真正对外发送通常需要 5~30 秒（大群历史多、目标 agent 多轮工具迭代会更慢）。',
-          '- 用户口头说"没收到"不等于目标真的没发；先用 onebot_get_session_history（或对应平台的 history 工具）',
-          '  查目标 sessionId 最近一条 role=assistant 输出，结合该会话所用 persona/output 约定判断是否已发出。',
-          '- 系统会在 60 秒内追踪同一 target_session_id 的多次派发，并在派发给目标 agent 的 task 前注入 META 块；',
-          '  目标 agent 可识别 META 后选择不重发（输出空回复）。但 META 是"提醒"非硬性拦截：',
-          '  调用方仍应避免短时间内对同一目标重复派发同一任务。',
-          '',
-          '【返回值字段】',
-          '- outcome: replied / silent / aborted。silent 表示目标 agent 本轮 reply 为空（可能在执行工具未发文本、',
-          '  或被中间件吞掉、或目标策略层主动静默）；reply="" 不代表任务一定已完成。',
-          '- reply: 目标 agent 真正对外发出的可见文本（可能为空）。',
-          '- personaState: 可选字段。若目标会话挂载了 persona 且本轮产出结构化状态，则附带，用于辅助判断；',
-          '  不挂载或未产出时不出现，不要假设它一定存在。',
-        ].join('\n'),
-        parameters: {
-          type: 'object',
-          properties: {
-            target_session_id: {
-              type: 'string',
-              description: '目标会话完整 sessionId（如 "onebot:10000:group:20002"）',
-            },
-            task: {
-              type: 'string',
-              description:
-                '给目标会话 agent 的任务说明。注意这不是要原样发出的文本，而是"该做什么/该说什么"的指令，' +
-                '目标 agent 会按自己的风格、记忆、工具集组织措辞和动作。',
-            },
-            wait_for_result: {
-              type: 'boolean',
-              description: '是否同步等待目标 agent 完成本轮回复并把内容返回。默认 true。',
-            },
-            timeout_seconds: {
-              type: 'number',
-              description: `wait_for_result=true 时的等待上限，默认 ${cfg.crossSessionDefaultTimeoutSec} 秒，最大 300 秒。`,
-            },
-          },
-          required: ['target_session_id', 'task'],
-          additionalProperties: false,
-        },
-      },
-    },
-    handler: async (args, callCtx) => {
-      const targetSessionId = String(args.target_session_id ?? '').trim();
-      const task = String(args.task ?? '');
-      const waitForResult = args.wait_for_result === undefined ? true : args.wait_for_result === true;
-      const requestedTimeoutSec = Number(args.timeout_seconds);
-      const timeoutSec =
-        Number.isFinite(requestedTimeoutSec) && requestedTimeoutSec > 0
-          ? Math.min(300, requestedTimeoutSec)
-          : cfg.crossSessionDefaultTimeoutSec;
-      const timeoutMs = Math.max(1000, timeoutSec * 1000);
-
-      if (!targetSessionId) return JSON.stringify({ error: 'target_session_id 不能为空' });
-      if (!task.trim()) return JSON.stringify({ error: 'task 不能为空' });
-      if (targetSessionId === callCtx.sessionId) {
-        return JSON.stringify({ error: 'target_session_id 不能等于当前会话；如需自我追问请直接生成下一轮回复。' });
-      }
-
-      // 防雪崩：只看「本回合是不是委派消息驱动的」。深度随消息走，回合结束即解除。
-      const currentDepth = turnProactiveDepth.get(callCtx.sessionId) ?? 0;
-      if (currentDepth >= PROACTIVE_DEPTH_MAX) {
-        return JSON.stringify({ error: '本回合由委派消息驱动，不能再委派' });
-      }
-      const targetDepth = currentDepth + 1;
-
-      // 流控硬闸：只检不记。限速按目标会话的真实回复计（flow-control 监听 outbound:message），
-      // 派发到回复落地之间对同一目标的突发委派不占槽，可能越过限速。
-      const flow = flowControl.current;
-      if (flow?.isMuted(targetSessionId)) {
-        return JSON.stringify({ error: '委派被拒：目标会话处于禁言期' });
-      }
-      if (flow?.isRateLimited(targetSessionId)) {
-        return JSON.stringify({ error: '委派被拒：目标会话已达流控限速上限' });
-      }
-
-      const platformName = (await resolvePlatformBySession(platform, targetSessionId, logger))?.platform;
-
-      // ===== 注入 META 提示（提醒型，不挡派发） =====
-      const now = Date.now();
-      pruneRecentDelegations(recentDelegations, now);
-      const taskHash = hashTask(task);
-      const dedupKey = recentDelegationKey(targetSessionId, taskHash);
-      const recents = findRecentDelegationsForTarget(recentDelegations, targetSessionId, now);
-      const taskWithMeta = buildDelegationMetaBlock(callCtx.sessionId, task, recents, now);
-      const entry: RecentDelegationEntry = {
-        firedAt: now,
-        expiresAt: now + RECENT_DELEGATION_TTL_MS,
-        sourceSessionId: callCtx.sessionId,
-        taskPreview: task.length > 80 ? `${task.slice(0, 80)}...` : task,
-        status: waitForResult ? 'pending' : 'fired-no-wait',
-      };
-      recentDelegations.set(dedupKey, entry);
-      if (recents.length > 0) {
-        logger.info(`[delegate] META 提醒已注入：${targetSessionId} 在 60s 内已收到 ${recents.length} 次同/近期任务`);
-      }
-
-      const incoming: IncomingMessage = {
-        content: taskWithMeta,
-        sessionId: targetSessionId,
-        platform: platformName ?? callCtx.platform ?? 'internal',
-        source: `proactive:from:${callCtx.sessionId}`,
-        triggerType: 'proactive',
-        // 深度随消息走：目标会话处理这条消息的那一个回合内不能再委派
-        proactiveDepth: targetDepth,
-      };
-      // 授权身份透传（schema-message 的 actor 契约）：authority 按发起者 (platform, userId)
-      // 实时查等级——权限跟人走。优先 callCtx.actor（本回合已在代人执行时链式传递），
-      // 否则用物理身份。只透传不发明：强制从 callCtx snapshot、绝不从 args 读
-      // （防 LLM 指定身份提权，同 scheduler 范式）；callCtx 匿名则目标同样匿名。
-      const delegateActor =
-        callCtx.actor ??
-        (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
-      if (delegateActor) incoming.actor = delegateActor;
-
-      const taskPreview =
-        task.length > 80 ? `${task.slice(0, 80)}... (+${task.length - 80}字，全文已完整传递给目标会话)` : task;
-      logger.info(
-        `[delegate] from=${callCtx.sessionId} -> ${targetSessionId} depth=${targetDepth} wait=${waitForResult} task="${taskPreview}"`,
-      );
-
-      if (!waitForResult) {
-        events.emit('inbound:message', incoming).catch(err => {
-          logger.warn(`[delegate] 派发失败 (${targetSessionId}): ${err}`);
-        });
-        logger.info(`[delegate] return -> ${callCtx.sessionId} wait=false (fire-and-forget)`);
-        return JSON.stringify({
-          delegated: true,
-          targetSessionId,
-          wait: false,
-          depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
-          message: '已派发，不等待目标会话结果',
-        });
-      }
-
-      // wait_for_result=true：在派发前注册 agent:turn:after 监听，捕获目标 sessionId 的首条 reply
-      let captured: { reply: string; outcome: string } | undefined;
-      let resolveWait: (() => void) | undefined;
-      const waitPromise = new Promise<void>(resolve => {
-        resolveWait = resolve;
-      });
-      const dispose = hooks.middleware('agent:turn:after', async (data, next) => {
-        await next();
-        if (captured) return;
-        // 只认本次委派那条 incoming：同一目标会话上并发的真实用户消息 source 不同，不会被误当委派结果。
-        // 残留边角——同一源会话对同一目标并发多次委派会共享 source，此处不细分（需关联 id，超出当前范围）。
-        if (data.sessionId !== targetSessionId || data.message?.source !== incoming.source) return;
-        captured = { reply: data.reply ?? '', outcome: data.outcome };
-        resolveWait?.();
-      });
-
-      const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
-      try {
-        await events.emit('inbound:message', incoming);
-        await waitPromise;
-      } finally {
-        clearTimeout(timeoutHandle);
-        dispose();
-      }
-
-      if (!captured) {
-        logger.warn(
-          `[delegate] return -> ${callCtx.sessionId} timedOut=true wait=${timeoutSec}s (未捕获 agent:turn:after)`,
-        );
-        return JSON.stringify({
-          delegated: true,
-          targetSessionId,
-          wait: true,
-          timedOut: true,
-          depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
-          message: `已派发但在 ${timeoutSec}s 内未捕获 agent:turn:after（目标可能仍在执行或被中间件 swallow）`,
-        });
-      }
-      // 更新 recentDelegations entry：写入回复结果，供后续重复派发提醒展示
-      const entryAfter = recentDelegations.get(dedupKey);
-      if (entryAfter) {
-        entryAfter.status = 'replied';
-        const r = captured.reply ?? '';
-        entryAfter.lastReplyPreview =
-          r.length > 60 ? `${r.slice(0, 60).replace(/\n/g, ' ')}...` : r.replace(/\n/g, ' ');
-      }
-      const replyTruncated =
-        captured.reply.length > 2000
-          ? `${captured.reply.slice(0, 2000)}\n...[已截断, 原长 ${captured.reply.length} 字]`
-          : captured.reply;
-
-      // 可选附加：若目标会话挂载了 persona service 且本轮产出结构化状态，附带返回；
-      // 不挂载或未产出时不放该字段，避免上游对「persona 一定存在」做假设。
-      let personaState: Record<string, unknown> | undefined;
-      try {
-        const state = persona.current?.getSessionState?.(targetSessionId);
-        if (state && Object.keys(state).length > 0) {
-          personaState = state;
-        }
-      } catch {
-        // service 未启用 / 未提供接口，静默忽略
-      }
-
-      const payload: Record<string, unknown> = {
-        delegated: true,
-        targetSessionId,
-        wait: true,
-        timedOut: false,
-        outcome: captured.outcome,
-        reply: replyTruncated,
-        depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
-      };
-      if (personaState) payload.personaState = personaState;
-
-      const replyPreview =
-        captured.reply.length === 0
-          ? '<空>'
-          : captured.reply.length > 60
-            ? `"${captured.reply.slice(0, 60).replace(/\n/g, ' ')}..." (+${captured.reply.length - 60}字)`
-            : `"${captured.reply.replace(/\n/g, ' ')}"`;
-      logger.info(
-        `[delegate] return -> ${callCtx.sessionId} outcome=${captured.outcome} reply=${replyPreview}${personaState ? ' personaState=yes' : ''}`,
-      );
-      return JSON.stringify(payload);
-    },
-  });
-
-  logger.info('跨会话协作工具已注册');
-}
-
 // ===== 插件入口 =====
 
 export default definePlugin({
@@ -961,9 +418,5 @@ export default definePlugin({
     const historyService = createSessionHistoryService(caps, cfg);
     caps.provide(sessionHistory, historyService, { label: '会话历史读取' });
     registerSessionHistoryTools(caps, historyService, cfg);
-
-    if (cfg.crossSessionEnabled) {
-      registerCrossSessionTools(caps, cfg);
-    }
   },
 });
