@@ -2373,6 +2373,9 @@ importers:
 
   packages/plugin-tool-system:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-commands':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-commands
@@ -2391,10 +2394,16 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../schema-message
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
     devDependencies:
+      '@aalis/api-session-manager':
+        specifier: workspace:*
+        version: link:../api-session-manager
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
