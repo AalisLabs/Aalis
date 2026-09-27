@@ -5,8 +5,11 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.18.0 <1.0.0';
-/** 带 core peer >=0.18.0 的包：31 api（30 个随 core 0.18 发布，另有未发布的 api-trigger）+ 59 插件 + runtime + schema-config + schema-log。 */
-const CORE_PEER_COUNT = 93;
+/** 带 core peer >=0.18.0 的包：31 api（含随 core 0.19 首发的 api-trigger）+ 58 插件 + schema-config + schema-log。 */
+const CORE_PEER_COUNT = 91;
+/** 依赖 core 0.19 新语义（禁用插件带配置的 updateConfig 只换配置、保持禁用）的包，peer 下限抬到 0.19。 */
+const CORE_PEER_019 = '>=0.19.0 <1.0.0';
+const CORE_PEER_019_DIRS = ['plugin-webui-server', 'runtime'];
 
 interface Manifest {
   name?: string;
@@ -43,7 +46,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('本批发布的 93 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
+  it('带 @aalis/core peer 的包：runtime 与 plugin-webui-server 为 >=0.19.0 <1.0.0，其余 91 个为 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
@@ -57,11 +60,20 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'raised core peer 包数应对齐 93（31 api + 59 插件 + runtime + schema-config + schema-log）',
+      'core peer >=0.18.0 的包数应对齐 91（31 api + 58 插件 + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
-    const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
-    // schema-message 的 core peer 只为类型声明，不抬；五个包本批没有改动、不重发，保持已发布的 >=0.17.0
-    expect(outliers.sort(), '仅 schema-message（type-only）与本批未改动的五个包不在新区间').toEqual([
+    expect(
+      hits
+        .filter(h => h.spec === CORE_PEER_019)
+        .map(h => h.dir)
+        .sort(),
+      '只有依赖 core 0.19 新语义的 runtime 与 plugin-webui-server 抬到 >=0.19.0',
+    ).toEqual(CORE_PEER_019_DIRS);
+    const outliers = hits
+      .filter(h => h.spec !== CORE_PEER && h.spec !== CORE_PEER_019)
+      .map(h => `${h.dir} = ${h.spec}`);
+    // schema-message 的 core peer 只为类型声明，不抬；五个包 0.17 批之后没有改动、未重发，保持已发布的 >=0.17.0
+    expect(outliers.sort(), '仅 schema-message（type-only）与未改动的五个包不在上述两个区间').toEqual([
       'api-code-sandbox = >=0.17.0 <1.0.0',
       'plugin-code-sandbox-os = >=0.17.0 <1.0.0',
       'plugin-maimai = >=0.17.0 <1.0.0',
