@@ -662,6 +662,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-message
+      '@aalis/util-media-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-media-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -1260,6 +1263,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-message
+      '@aalis/util-media-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-media-signature
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -3048,6 +3054,12 @@ importers:
         version: 5.9.3
 
   packages/util-json-repair:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/util-media-signature:
     devDependencies:
       typescript:
         specifier: ^5.7.0

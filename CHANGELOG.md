@@ -19,7 +19,7 @@
 - 按 patch 发布（13 个）：schema-config（只改 `name` 的说明文字）、util-network-guard（只新增公开 API：`pinnedLookup` 转为公开、新增 `assertPortAllowed`，`assertSafeUrl` 行为不变）、api-memory（只新增可选的结果行字段 `type`、可选方法 `listMetadataKeys` 与函数 `clearMetadataNamespaces`）、plugin-agent、plugin-checkpoint、plugin-memory-inmemory、plugin-memory-mongodb（`MongoMemoryService` 标了 `@internal`，构造参数的变化不算公开 API）、plugin-memory-summary、plugin-memory-vector、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-user-profile
 - 回复闸门线的 14 个包（api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy）在发布时按源码与 npm 实况定档。其中 plugin-adapter-onebot、plugin-flow-control、plugin-persona 另有本批的低危修复，这部分只够 patch，不影响它们的档位。
 - 上面按次版本、按 patch 两项的档位是按 0.18 推迟的低危修复定的；这些包在删除跨会话委派工具、`recent_messages` 提档、在线白纸、房间会话钉死出生平台、后台命令结束通知各节里另有改动的，发布时把两部分合起来按源码与 npm 实况定档。
-- 新包：api-trigger 0.1.0、api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0
+- 新包：api-trigger 0.1.0、api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
 - api-agent、api-workflow、plugin-scheduler 只改了注释，api-llm 只改了 `refresh` 的注释，api-authority 只改了 `network` 的注释，plugin-authority 只改了上报器失败来源的注释，本批不单独发布。
@@ -159,14 +159,14 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 - plugin-adapter-onebot：
   - `kind: 'file'` 的出站附件在文字与消息段之后上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`；内容只用 `base64://`，超过 10 MiB 的 storage 文件、超限的 http 链接拒发；文件名去掉 `/` 与 `\`；上传不重试；v12 连接不支持。适配器对象新增非标准扩展方法 `uploadFile`（不进 `@aalis/api-platform` 契约）。此前 file 附件只打 debug 后跳过。
   - 视频不超过 10 MiB 时改为 `base64://` 内联（此前 storage 视频交宿主的 `file://` 路径，http 视频原样交 URL，实现端在容器里时读不到宿主路径）；http 视频现在由 Aalis 流式下载，超过上限的仍交原 URL。storage 附件先量大小再读，超限的不整份读进内存。
-  - 图片、语音、视频内联前按文件头核对格式，不符就拒发并记 warn（见下文破坏性变更）；超过 10 MiB 的 storage 媒体改交宿主路径之前同样核对（按字节区间读出开头）。
-  - 投递失败记录（`outbound-delivery-failed`，只对 `source: 'agent'`）覆盖文字发送、文件物化与上传三处失败，每条出站消息至多一条；正文由「经多次重试仍未能送达」改为「(可能包含图片、媒体或文件)未能送达对方」。媒体附件物化失败或文件头不符只记 warn，不写这条记录。
+  - 图片、语音、视频按文件头分流（格式签名在新包 `@aalis/util-media-signature`，与 `send_attachment` 的白名单是同一份）：能内联的格式走消息段；认得出、但不能内联的（BMP、AVIF、HEIC 图片，MKV、AVI 视频，以及与附件 `kind` 不符的媒体）改经群文件、私聊文件上传，没有名字时文件名为类型加格式（如 `image.bmp`）；都认不出的拒发并记 warn（见下文破坏性变更）。超过 10 MiB 的 storage 媒体改交宿主路径之前同样核对（按字节区间读出开头 4 KiB），超过 10 MiB 又不能内联的不发。依赖加 `@aalis/util-media-signature`。
+  - 投递失败记录（`outbound-delivery-failed`，只对 `source: 'agent'`）覆盖文字发送、附件物化（含文件头不符的拒发）与上传三处失败，每条出站消息至多一条；正文由「经多次重试仍未能送达」改为「(可能包含图片、媒体或文件)未能送达对方」。
 - plugin-webui-client：会话页新增「白纸与远端」一组，每项显示继承值与来源（默认、平台档或父会话），`remoteAgentTypes` 来自平台档时显示告警；取继承值改调 `getInheritance`。声明式表格支持文件单元格：只有 PNG、JPEG、GIF、WebP 能在页面里查看，其余只能下载，下载一律按 `application/octet-stream` 保存。
 
 **破坏性变更与迁移**：
 
 - **plugin-session-manager 删除页面动作 `getInheritedDefaults`**：改用 `getInheritance({ sessionId })`，返回 `{ platform, values, sources }`。会话所属平台由服务端推出（会话 metadata 记下的平台 → 接管这个会话 id 的平台适配器 → `webui`），动作不再收平台参数；`sources` 给出每个键来自全局默认、平台档还是父会话。自己调用过 `getInheritedDefaults` 的 WebUI 客户端改调新动作。同批的「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节又改了三处：IM 房间的平台取出生平台，回包另带 `audience`，来源层多出 `audience`；服务接口上的 `resolveInheritedDefaults` 在那一节删除。
-- **plugin-adapter-onebot 出站媒体按文件头核对**：图片只发 PNG、JPEG、GIF、WebP，语音只发 WAV、MP3、OGG、FLAC、AMR、SILK、M4A，视频只发 MP4 / MOV 与 WebM。其他格式（如 BMP、AVIF、HEIC、SVG 图片）此前照发，现在拒发并记 warn，`send_attachment` 发出的同样受约束。要发这些格式，先转成上面的格式。视频与文件改走 `base64://` 依赖实现端接受这种形态；未确认过的实现端，升级后先在测试会话里发一次视频与文件核对。
+- **plugin-adapter-onebot 出站媒体按文件头分流**：以消息段发出的只有图片 PNG、JPEG、GIF、WebP，语音 WAV、MP3、OGG、FLAC、AMR、SILK、M4A，视频 MP4、MOV、WebM。BMP、AVIF、HEIC 图片与 MKV、AVI 视频此前按图片、视频消息段发出，现在以群文件、私聊文件发出，超过 10 MiB 的不发；认不出的格式（如 SVG、TIFF 图片）此前照发，现在拒发并记 warn。`send_attachment` 发出的同样受约束。要以图片、视频消息发出，先转成上面的格式。视频与文件改走 `base64://` 依赖实现端接受这种形态；未确认过的实现端，升级后先在测试会话里发一次视频与文件核对。
 - **plugin-storage-local 保留根名 `paper`**：`roots` 里名为 `paper` 的用户根会被跳过并记 warn，内部根优先。自建了同名根的，改名后同步修改引用它的 URI。
 - plugin-memory-vector 的扩窗不再带出 workflow 代发的任务指令，proactive 回合的 `turn-hint` 落点前移，都是行为变化，无需迁移。
 
@@ -403,11 +403,12 @@ storage-local 按 patch 发布；runtime 因下面所列入口解析的反方向
 - 反方向：`exports` 的 `"."` 只写 `require` 条件（没有 `node`、`import`、`default` 可用的目标，且开放了 `./package.json`）的插件，此前能加载，升级 runtime 后报「入口无法解析」并跳过，与 `import()` 包名的行为一致。插件作者给 `"."` 加 `default` 或 `import` 条件，或把目标直接写成字符串（如 `"exports": "./index.cjs"`）；CommonJS 产物照样能被 `import()` 加载。
 - 按 WARN 级筛查删除记录的，改看 info 级的 `storage.delete` 行；默认 `logLevel: info` 下照常输出。
 
-### send_attachment 发送前核对文件格式（@aalis/plugin-image-sender）
+### send_attachment 发送前核对文件格式（@aalis/plugin-image-sender、新包 @aalis/util-media-signature）
 
 - `send_attachment` 按 `storage_uri` 或 `history_ref` 从存储库取文件时，先按字节区间读文件开头 4 KiB（不整份载入），按 `kind` 的内置白名单核对格式签名：`image` 认 PNG、JPEG、GIF、WebP、BMP、AVIF、HEIC；`audio` 认 MP3（ID3v2 标签或 Layer III 帧头）、WAV、OGG、FLAC、AMR、SILK、M4A；`video` 认 MP4、MOV、WebM、MKV、AVI。AVIF、HEIC、M4A、MOV 与 MP4 按 ftyp 盒的品牌区分，WebM 与 MKV 按 EBML 的 DocType 区分。不是这些格式的文件拒发，工具结果说明不能按该类型发送；是别类媒体时说出检测到的格式与该用的 `kind`，模型可以改 `kind` 重发。此前这两条来源只确认文件存在就转成本地路径发出，onebot 适配器把文件按 base64 内联当图片发送、不看内容；工具是公开的，群里任何人都能诱导模型把存储根里的配置、令牌、记忆库、日志当图片发到群里。工具仍保持公开、不加确认；白名单内置、不做配置；不限定目录；`url` 来源不变。
 - `history_ref` 解析到不在存储库内的来源（`file://` 路径、`/root/…` 或 `C:\…` 这类宿主机绝对路径，或历史附件里的 data URI 等）时拒发：这类来源读不了文件头，无从核对。此前这些来源原样发出，其中 `file://` 路径与宿主机绝对路径能外发存储根以外的任意本机文件。
 - `storage_uri` 读取失败时如实报原因：只有文件不存在才报「存储资源不存在」，未知存储根、根不可读、目标是目录等报各自的错误。此前一律报「存储资源不存在」。
+- 格式签名表移入新包 `@aalis/util-media-signature` 0.1.0（`detectMediaFormat`、`checkMediaHead`、`MEDIA_HEAD_BYTES`），plugin-adapter-onebot 的出站分流用同一份；plugin-image-sender 依赖加这个包。
 
 **行为变化**：
 

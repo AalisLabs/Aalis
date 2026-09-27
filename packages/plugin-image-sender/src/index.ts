@@ -8,7 +8,7 @@
 //                          发过的图/视频"能被 memory_recall 召回
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
-// 取自存储库的文件发送前读文件头核对格式（见 media-signature.ts）。
+// 取自存储库的文件发送前读文件头核对格式（见 @aalis/util-media-signature）。
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
@@ -34,7 +34,7 @@ import {
   type OutgoingMessage,
   WellKnownKinds,
 } from '@aalis/schema-message';
-import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from './media-signature.js';
+import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
 
 /** preview_image 单张候选识别等待上限。preview 的目的就是"看清"图，
  *  本地视觉模型（如 33B）单图常需 15-25s，必须给足预算，否则必然超时使 preview 形同虚设。 */

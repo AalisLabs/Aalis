@@ -69,7 +69,7 @@ export default definePlugin({
 | `v11.ts` | OneBot v11 协议处理器 |
 | `v12.ts` | OneBot v12 协议处理器 |
 | `attachment-cache.ts` | 入站/出站附件统一落盘缓存（`data/{kind}s/{session}/`，含单文件大小上限） |
-| `attachments.ts` | 出站媒体附件的标记渲染（含文件头核对）与文件附件的上传物化 |
+| `attachments.ts` | 出站附件按文件头分流：能内联的媒体渲染为消息段标记，文件附件与不能内联的媒体物化为上传文件 |
 | `forward.ts` | 合并转发展开与摘要信封构造 |
 | `forward-expand.ts` | 合并转发自动展开器（缓存、媒体识别、LLM 摘要、默认摘要 prompt） |
 | `sent-messages.ts` | 已发送消息记录（供撤回等工具查询） |
@@ -115,9 +115,9 @@ onebot:{selfId}:{detailType}:{targetId}
 
 出站附件的内容读出后以 `base64://` 交给实现端，走 WebSocket 隧道：实现端在容器里（如 Docker 里的 NapCat）时读不到宿主路径，这是最稳的形态。storage URI 先量大小再读，超过 10 MiB 的不整份读进内存。
 
-- **图片、语音、视频**：不超过 10 MiB 的内联为消息段。内联前按文件头核对格式，不符就拒发并记 warn：图片只收 PNG、JPEG、GIF、WebP；语音收 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频收 MP4 / MOV 与 WebM。发送工具接受任意 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。超过 10 MiB 的退回宿主的 `file://` 路径或原 http 链接，实现端读不到时发不出，日志里会说明；storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头，不整份读进内存）。附件本来就是 `file://` 或本机绝对路径、又没能落盘的，原样交给实现端，不经核对。
-- **文件**（`kind: 'file'`）：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的 storage 文件、超限的 http 链接这类物化结果不是 `base64://` 的，一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，没有名字时用 `file`。上传不重试：上传超时多半是文件还在传，重试会在群文件里留两份。v12 连接不支持文件附件，按失败处理。
-- **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、文件物化或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed` 系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。媒体附件物化失败或文件头不符只记 warn，不写这条记录。
+- **图片、语音、视频**：先按文件头认格式（格式签名在 [`@aalis/util-media-signature`](../utils/README.md)，与 `send_attachment` 的白名单是同一份），再分三路。实现端能内联的格式（图片 PNG、JPEG、GIF、WebP；语音 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频 MP4、MOV、WebM）内联为消息段；认得出、但不能内联的媒体（BMP、AVIF、HEIC 图片，MKV、AVI 视频，以及与附件 `kind` 不符的媒体）改经文件上传，规则同下面的文件附件，没有名字时群文件名为类型加格式（如 `image.bmp`）；都认不出的拒发并记 warn。发送工具接受任意 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。能内联、但超过 10 MiB 的退回宿主的 `file://` 路径或原 http 链接，实现端读不到时发不出，日志里会说明；storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头 4 KiB，不整份读进内存），超过 10 MiB 又不能内联的不发。附件本来就是 `file://` 或本机绝对路径、又没能落盘的，原样交给实现端，不经核对。
+- **文件**（`kind: 'file'`）与改走上传的媒体：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的 storage 文件、超限的 http 链接、原样透传的 `file://` 这类物化结果不是 `base64://` 的，一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，文件附件没有名字时用 `file`。上传不重试：上传超时多半是文件还在传，重试会在群文件里留两份。v12 连接不支持文件上传，按失败处理。
+- **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、附件物化（含文件头不符的拒发）或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed` 系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。
 
 文件上传经适配器的非标准扩展方法 `uploadFile(sessionId, file, name)` 完成，它不在 `@aalis/api-platform` 契约里。
 

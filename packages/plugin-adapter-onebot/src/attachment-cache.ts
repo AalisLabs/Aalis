@@ -165,8 +165,8 @@ export async function cacheOneAttachment(
   return await cacheAttachmentBuffer(storage, buf, kind, sessionId, ext, maxBytes);
 }
 
-/** 简易 magic-header 探测：落盘扩展名选择，以及出站内联前的格式核对（见 attachments.ts）。 */
-export function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string {
+/** 简易 magic-header 探测：落盘扩展名选择。出站内联前的格式核对按 @aalis/util-media-signature（见 attachments.ts）。 */
+function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string {
   if (buf.length < 12) return fallback;
   // image
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';

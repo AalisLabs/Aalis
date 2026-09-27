@@ -1,14 +1,21 @@
 // ============================================================
-// media-signature.ts — 按文件头核对附件格式
+// @aalis/util-media-signature — 按文件头认定媒体格式
 //
 // 存储根里除了媒体，还有配置、令牌、记忆库、日志；只凭 kind 与路径发送，
-// 这些文件会被当成图片发出去。send_attachment 从本地取文件时先读文件开头的
-// 字节，按下表的格式签名认定格式，只有落在所请求 kind 的白名单里才放行。
+// 这些文件会被当成图片发出去。发送附件的一方先读文件开头的字节，按下表的
+// 格式签名认定格式，再决定放行、换一种方式发送还是拒发。
 // 签名依据各格式的规范，并与 file(1) 的 magic 库对照（SILK 不在该库里）。
+// 纯函数、无依赖，只用 Uint8Array。
 // ============================================================
 
 /** 可发送的附件类型。 */
 export type MediaKind = 'image' | 'audio' | 'video';
+
+/** 文件头认出的媒体格式：所属类型与格式名（如 PNG、M4A、MKV）。 */
+export interface MediaFormat {
+  kind: MediaKind;
+  format: string;
+}
 
 /**
  * 认定格式要读的文件头长度：与 file(1) 在前 4 KiB 里找 Matroska DocType 的范围一致，也容得下 ftyp 盒的
@@ -66,12 +73,18 @@ const SIGNATURES: readonly MediaSignature[] = [
   { kind: 'video', format: 'AVI', matches: h => isRiff(h, 'AVI ') },
 ];
 
+/** 按文件头认定媒体格式；不是签名表里任何一种格式时返回 null。 */
+export function detectMediaFormat(head: Uint8Array): MediaFormat | null {
+  const detected = SIGNATURES.find(s => s.matches(head));
+  return detected ? { kind: detected.kind, format: detected.format } : null;
+}
+
 /**
  * 核对文件头是否为所请求 kind 的受支持格式。相符返回 null；不符返回给模型的拒发说明：
  * 不是任何受支持的媒体格式时说明不能按该类型发送，是别类媒体时说出检测到的格式与该用的 kind。
  */
 export function checkMediaHead(head: Uint8Array, kind: MediaKind): string | null {
-  const detected = SIGNATURES.find(s => s.matches(head));
+  const detected = detectMediaFormat(head);
   if (!detected) {
     const supported = SIGNATURES.filter(s => s.kind === kind)
       .map(s => s.format)
