@@ -196,7 +196,6 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     isolation,
     cfg,
     signal: controller.signal,
-    now,
     listingFailures: () => driver.listingFailures(),
   });
   driver.start();

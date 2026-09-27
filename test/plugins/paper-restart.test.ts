@@ -200,6 +200,51 @@ describe('重启接回（假时钟）', () => {
       expect(a.count('startRun')).toBe(0);
     });
 
+    it('诊断项与放弃跟踪同一判据：停机 20 分钟后重启、等提供者期间不报开轮中；挂了认领失败的告警才报，这时能放弃跟踪', async () => {
+      const a = new ScriptedRemote();
+      a.seedAgent(AGENT);
+      const files = seedLedger(ledger => {
+        ledger.agents[AGENT] = agentRecord('active');
+        ledger.papers[PAPER_A_ID].binding = AGENT;
+        // 停机前 20 分钟发出的开轮请求：按请求时刻算已开轮 20 分钟，但重启接回还在等提供者、没有认领失败
+        ledger.tasks['t-000000aa'] = seedTask({
+          state: 'starting',
+          agentId: AGENT,
+          start: { path: 'run', requestedAt: Date.now() - 20 * MINUTE },
+        });
+      });
+      const hub = await startDriverHub({
+        remotes: { [REMOTE_A]: a },
+        files,
+        absent: [REMOTE_A],
+        config: { ...DRIVER_CONFIG, maxRunMinutes: 120 },
+      });
+      await advance(MINUTE);
+      expect((await hub.doctor()).message, '重启接回还在等提供者').not.toContain('t-000000aa');
+      expect(await hub.driver.abandon('t-000000aa')).toMatch(/认领失败/);
+
+      await advance(10 * MINUTE);
+      expect(hub.store.data.alerts.map(al => al.kind)).toContain('claim-failed');
+      expect((await hub.doctor()).message).toContain('白纸任务 t-000000aa 认领失败后仍在开轮中');
+      expect(await hub.driver.abandon('t-000000aa')).toBeUndefined();
+    });
+
+    it('path 为 create 的任务停机 20 分钟后重启：等提供者期间诊断项不报开轮中（它按同一个 id 重建）', async () => {
+      const a = new ScriptedRemote();
+      const files = seedLedger(ledger => {
+        ledger.agents[AGENT] = agentRecord('creating');
+        ledger.tasks['t-000000aa'] = seedTask({
+          state: 'starting',
+          agentId: AGENT,
+          start: { path: 'create', requestedAt: Date.now() - 20 * MINUTE },
+        });
+      });
+      const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files, absent: [REMOTE_A] });
+      await advance(MINUTE);
+      expect(hub.task('t-000000aa').state).toBe('starting');
+      expect((await hub.doctor()).message).not.toContain('t-000000aa');
+    });
+
     it('对照：path 为 create 的任务等满上限提供者仍不在场，照旧判失败', async () => {
       const a = new ScriptedRemote();
       const files = seedLedger(ledger => {
