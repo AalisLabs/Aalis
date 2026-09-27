@@ -5,7 +5,7 @@
 
 ## 概述
 
-让纯文本模型画图：模型编写 SVG 或 HTML+内联 CSS 标记，插件用硬化的无头浏览器渲染为 PNG；调用 `draw_animation` 时，带声明式动画（SMIL / CSS `@keyframes`）的标记会被逐帧截图，再由 ffmpeg 合成 GIF。产物落盘 `data:/images/`，由 `send_attachment` 投递进聊天。格式分工：图形、图标、梗图、动画用 SVG；图文卡片、表格、海报用 HTML+内联 CSS。渲染引擎使用独立的 Chromium 实例（懒启动、空闲关停），每次渲染开独立页面，禁用 JavaScript 并默认拦截全部网络请求，只放行 `about:blank` 与 `data:`；引擎与安全设计见 `packages/plugin-draw/src/engine.ts` 头注释。注册工具组 `draw`，含 `draw_image`（PNG）与 `draw_animation`（GIF）两个工具。
+让纯文本模型画图：模型编写 SVG 或 HTML+内联 CSS 标记，插件用硬化的无头浏览器渲染为 PNG；调用 `draw_animation` 时，带声明式动画（SMIL / CSS `@keyframes`）的标记会被逐帧截图，再由 ffmpeg 合成 GIF。产物落盘 `data:/images/`，由 `send_attachment` 投递进聊天。格式分工：图形、图标、梗图、动画用 SVG；图文卡片、表格、海报用 HTML+内联 CSS。渲染引擎使用独立的 Chromium 实例（懒启动、空闲关停），每次渲染开独立页面，禁用 JavaScript 并默认拦截全部网络请求，只放行 `about:blank` 与 `data:`。等字体、量内容高与截图（动图为逐帧截图）各限时 15 秒，超时时工具返回「渲染步骤超时」，并关掉这一代 Chromium，同一代里其它在飞的渲染随之失败，下次渲染重新启动；其余浏览器调用（开页、设视口、动图的时长探测与逐帧定格、关页面）单条以 30 秒为上限。引擎与安全设计见 `packages/plugin-draw/src/engine.ts` 头注释。注册工具组 `draw`，含 `draw_image`（PNG）与 `draw_animation`（GIF）两个工具。
 
 ## 插件声明
 
