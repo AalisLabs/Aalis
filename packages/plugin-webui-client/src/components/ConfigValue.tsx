@@ -1,6 +1,11 @@
 import { useState } from 'react';
+import type { SchemaField } from '../types';
 
-export function ConfigValue({ label, value, depth = 0, secret, description, defaultValue }: { label: string; value: unknown; depth?: number; secret?: boolean; description?: string; defaultValue?: unknown }) {
+/**
+ * fields 是 value 下一层的字段声明：分组传它的 fields，对象数组传 items（逐个元素套用）。
+ * 其中标了 secret 的子字段与顶层的 secret 一样遮蔽；没有 schema 的插件不传，只按字段名判断
+ */
+export function ConfigValue({ label, value, depth = 0, secret, description, defaultValue, fields }: { label: string; value: unknown; depth?: number; secret?: boolean; description?: string; defaultValue?: unknown; fields?: Record<string, SchemaField> }) {
   const [open, setOpen] = useState(depth < 1);
 
   // 数组：每项展开为 #1, #2, ...
@@ -29,7 +34,7 @@ export function ConfigValue({ label, value, depth = 0, secret, description, defa
         {open && (
           <div className="config-nested-body">
             {value.map((item, idx) => (
-              <ConfigValue key={idx} label={`#${idx + 1}`} value={item} depth={depth + 1} secret={secret} />
+              <ConfigValue key={idx} label={`#${idx + 1}`} value={item} depth={depth + 1} secret={secret} fields={fields} />
             ))}
           </div>
         )}
@@ -51,7 +56,8 @@ export function ConfigValue({ label, value, depth = 0, secret, description, defa
           : String(defaultValue)
         : '-'
       : String(value);
-    const display = isSensitive && raw.length > 4 ? raw.slice(0, 4) + '••••••' : raw;
+    // 有值一律换成固定掩码，一个字符都不露：用户自定的短口令露出前几位就等于泄露了大半
+    const display = isSensitive && raw !== '' && (!isMissing || usesDefault) ? '••••••' : raw;
     return (
       <div className="config-item" style={{ paddingLeft: depth * 12 }}>
         <span className="key">
@@ -77,7 +83,7 @@ export function ConfigValue({ label, value, depth = 0, secret, description, defa
       {open && (
         <div className="config-nested-body">
           {entries.map(([k, v]) => (
-            <ConfigValue key={k} label={k} value={v} depth={depth + 1} secret={secret} />
+            <ConfigValue key={k} label={k} value={v} depth={depth + 1} secret={secret || fields?.[k]?.secret} />
           ))}
         </div>
       )}
