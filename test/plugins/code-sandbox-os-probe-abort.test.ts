@@ -9,6 +9,7 @@ import {
 } from '../../packages/api-process/src/index.js';
 import { App, type LifecycleCap, type Logger, type Provide, provide } from '../../packages/core/src/index.js';
 import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
+import { buildBwrapArgs } from '../../packages/plugin-code-sandbox-os/src/sandbox.js';
 import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -234,5 +235,19 @@ describe('code-sandbox-os 探测失败与后端选择', () => {
     expect(calls[0].cmd).toBe(cmd);
     expect(calls[0].opts).toMatchObject({ stdio: 'ignore', timeout: 5000 });
     expect(calls[0].opts.signal).toBe(signal);
+  });
+
+  // 只放开 seccomp 的容器里挂不了 /proc：探测不挂时报 bwrap 可用，之后每次运行都失败；挂上后探测即失败，按无后端
+  it('安全：Linux 探测命令与正式运行的 bwrap 参数一样挂 /dev 与 /proc', async () => {
+    const { service, calls } = fakeProcess({ wait: async () => EXITED });
+    await onPlatform('linux', () => applyWith(service, new AbortController().signal).applying);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual(['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-all', 'true']);
+    // 探测的每一项都是正式参数里原样有的：正式参数改了挂载，这里跟着失败
+    const formal = ` ${buildBwrapArgs({ fsRead: [], fsWrite: [], network: 'deny' }, 'true', [], undefined, {}).args.join(' ')} `;
+    for (const option of ['--ro-bind / /', '--dev /dev', '--proc /proc', '--unshare-all']) {
+      expect(formal, option).toContain(` ${option} `);
+    }
   });
 });

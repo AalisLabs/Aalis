@@ -11,10 +11,17 @@ import { createProcessGateway, type ExecResult, type ProcessService, processServ
 import { definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
 
-/** 各平台的最小沙箱命令：跑通即有该后端 */
+/**
+ * 各平台的最小沙箱命令：跑通即有该后端。Linux 与正式运行（sandbox.ts 的 buildBwrapArgs）一样挂 /dev 与 /proc：
+ * 只放开 seccomp、挂不了 /proc 的容器里，不挂的探测会报 bwrap 可用，之后每次运行都失败
+ */
 const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: string; args: string[] }>> = {
   darwin: { backend: 'seatbelt', cmd: 'sandbox-exec', args: ['-p', '(version 1) (allow default)', 'true'] },
-  linux: { backend: 'bwrap', cmd: 'bwrap', args: ['--ro-bind', '/', '/', '--unshare-all', 'true'] },
+  linux: {
+    backend: 'bwrap',
+    cmd: 'bwrap',
+    args: ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-all', 'true'],
+  },
 };
 
 /**
