@@ -58,9 +58,9 @@ export interface SessionConfig {
   paperName?: string;
   /** 允许的远端代理类型（远端代理插件实例 id）；空或缺省 = 关 */
   remoteAgentTypes?: string[];
-  /** 每人每天金额上限（美分）；缺省按 0，即拒绝 */
+  /** 每人每天金额上限（美分）；缺省不按人限制，只受本房间与全局上限约束 */
   remoteAgentUserDailyCents?: number;
-  /** 每人每天件数上限；缺省按 0 */
+  /** 每人每天件数上限；缺省不按人限制 */
   remoteAgentUserDailyTasks?: number;
   /** 本房间每天金额上限（美分）；缺省按 0 */
   remoteAgentRoomDailyCents?: number;

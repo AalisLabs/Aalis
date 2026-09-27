@@ -108,13 +108,13 @@ const configSchema: ConfigSchema = {
         type: 'number',
         label: '每人每天金额上限（美分）',
         min: 0,
-        description: '留空按 0，即拒绝',
+        description: '留空即不按人限制',
       },
       remoteAgentUserDailyTasks: {
         type: 'number',
         label: '每人每天件数上限',
         min: 0,
-        description: '留空按 0，即拒绝',
+        description: '留空即不按人限制',
       },
       remoteAgentRoomDailyCents: {
         type: 'number',
