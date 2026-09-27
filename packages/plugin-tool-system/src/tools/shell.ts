@@ -128,34 +128,44 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
     visibility: 'restricted',
     // 任意 shell 命令是最强的 confused-deputy 向量 → owner 也需确认（本会话记住）
     confirm: 'session',
-    handler: async (args, _callCtx) => {
+    handler: async (args, callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);
       const timeout = Math.min(Math.max(1000, (args.timeout as number) || config.defaultTimeout), config.maxTimeout);
 
       logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
 
-      // exec 继承宿主完整环境（含代理与密钥类变量）——owner 工具的既定取舍（2026-08-23 拍板，
-      // 曾有的 env 白名单从未生效、已删）。需要环境隔离的执行走 code-sandbox-os（env -i 真清）。
-      const child = proc.spawn(shellCmd, [shellFlag, command], {
-        cwd: cwd.localPath,
-        timeout,
-      });
-
       // 不自起无上限累加器：直接用 process-local wait() 内部有 maxBuffer 上限的 result.stdout/stderr。
       // 自起 `stdout += chunk` 无上限——「超限只停累积不杀进程」语义下会无界增长 → OOM。
       // 超时是 wait() 正常返回(带 SIGKILL 信号)、非抛错，故 result 在超时路径仍可用、带(已截断的)部分输出。
       try {
+        // exec 继承宿主完整环境（含代理与密钥类变量）——owner 工具的既定取舍（2026-08-23 拍板，
+        // 曾有的 env 白名单从未生效、已删）。需要环境隔离的执行走 code-sandbox-os（env -i 真清）。
+        // 回合中止（停止键等）经 signal 由 process 服务按进程组停掉命令；回合已中止时 spawn 同步抛出。
+        const child = proc.spawn(shellCmd, [shellFlag, command], {
+          cwd: cwd.localPath,
+          timeout,
+          signal: callCtx.signal,
+        });
         const result = await child.wait();
-        const timedOut = result.signal === 'SIGKILL' || result.signal === 'SIGTERM';
-        return JSON.stringify({
+        const output = {
           exitCode: result.code ?? -1,
           stdout: truncateOutput(result.stdout, config.maxOutputSize),
           stderr: truncateOutput(result.stderr, config.maxOutputSize),
-          ...(timedOut ? { timedOut: true } : {}),
-        });
+        };
+        if (callCtx.signal?.aborted) {
+          // 被信号结束的才说命令被中止。中止前已正常退出（含孙进程占着管道的收尾窗口）或 Windows 下强制结束
+          // （signal 可能为 null）的按实际退出回报：这条结果随工具调用落库，下一轮看到「已中止」可能把已经生效的命令再跑一遍
+          if (result.signal !== null) return JSON.stringify({ aborted: true, message: '命令已随回合中止', ...output });
+          return JSON.stringify({ ...output, note: '回合已中止' });
+        }
+        const timedOut = result.signal === 'SIGKILL' || result.signal === 'SIGTERM';
+        return JSON.stringify({ ...output, ...(timedOut ? { timedOut: true } : {}) });
       } catch (err) {
-        // 仅 spawn 失败等异常落这里（此时无输出可留）；超时不走此分支。
+        // spawn 失败与回合已中止时 spawn 同步抛出落这里（此时无输出可留）；超时与中止运行中的命令不走此分支。
+        if (callCtx.signal?.aborted) {
+          return JSON.stringify({ aborted: true, message: '命令已随回合中止', exitCode: -1 });
+        }
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
           exitCode: -1,
