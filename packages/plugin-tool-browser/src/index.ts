@@ -258,6 +258,9 @@ function runBrowserTools(caps: Caps): void {
         defaultViewport: { width: config.viewportWidth, height: config.viewportHeight },
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...gateArgs],
         ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+        // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。正常操作里最长的单条命令是等选择器与导航，都受 defaultTimeout 约束；
+        // 取它的两倍，让操作自己的超时先报，挂住的命令以此为上限。defaultTimeout 为 0（不设时限）时它也是 0，同样不设时限
+        protocolTimeout: config.defaultTimeout * 2,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -281,6 +284,48 @@ function runBrowserTools(caps: Caps): void {
     });
     logger.info('浏览器已启动');
     return browser;
+  }
+
+  /**
+   * 关掉这一代浏览器，不等关闭落定（浏览器进程本身卡住时，puppeteer 在 protocolTimeout 后强杀进程），
+   * 页面表一起清，下次调用重新启动。挂着的 CDP 调用随连接断开失败，它们持有的锁随之释放
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
+  function retireBrowser(instance: any, reason: string): void {
+    // 已不是当前这一代（崩溃后已重启、已被关掉）：它的页面已不在表里，关闭也不归这里
+    if (browser !== instance) return;
+    browser = null;
+    pages.clear();
+    logger.warn(`${reason}，关闭这一代浏览器，下次调用时重新启动`);
+    instance
+      .close()
+      .catch((err: unknown) => logger.warn(`关闭浏览器失败: ${err instanceof Error ? err.message : String(err)}`));
+  }
+
+  /**
+   * 截图（含切前台与找元素）的时限，取 defaultTimeout；为 0 时不设时限，与 puppeteer 对 0 的约定一致。
+   * 截图卡住（如渲染进程卡死）时底层调用一直挂着，并持有浏览器级的锁，同一浏览器里开新页、关页面与别的截图
+   * 都排在它后面，所以时限一到就关掉这一代浏览器，而不只是让这次调用先失败
+   */
+  async function withScreenshotTimeout<T>(slot: PageSlot, capture: Promise<T>): Promise<T> {
+    if (!config.defaultTimeout) return capture;
+    const instance = slot.page.browser();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        retireBrowser(instance, `截图超过 ${config.defaultTimeout}ms 未完成`);
+        reject(
+          new Error(
+            `截图超过 ${config.defaultTimeout}ms 未完成，已关闭浏览器，全部页面随之关闭；下次调用时重新启动，需重新 browser_navigate 打开页面`,
+          ),
+        );
+      }, config.defaultTimeout);
+    });
+    try {
+      return await Promise.race([capture, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ── 获取或创建页面 ──
@@ -538,18 +583,18 @@ function runBrowserTools(caps: Caps): void {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
-        let buffer: Buffer;
-        await slot.page.bringToFront(); // 同 browser_click：按选择器截图同样先等元素进入视口
-        if (args.selector) {
-          const el = await slot.page.$(args.selector as string);
-          if (!el) return JSON.stringify({ error: `未找到元素: ${args.selector}` });
-          buffer = await el.screenshot({ encoding: 'binary' });
-        } else {
-          buffer = await slot.page.screenshot({
-            fullPage: args.fullPage === true,
-            encoding: 'binary',
-          });
-        }
+        const buffer: Buffer | null = await withScreenshotTimeout(
+          slot,
+          (async () => {
+            await slot.page.bringToFront(); // 同 browser_click：按选择器截图同样先等元素进入视口
+            if (!args.selector) {
+              return slot.page.screenshot({ fullPage: args.fullPage === true, encoding: 'binary' });
+            }
+            const el = await slot.page.$(args.selector as string);
+            return el ? el.screenshot({ encoding: 'binary' }) : null;
+          })(),
+        );
+        if (!buffer) return JSON.stringify({ error: `未找到元素: ${args.selector}` });
         slot.lastAccess = Date.now();
         const png = Buffer.from(buffer);
         // 交付形态（定死）：base64 绝不进 content——整张 PNG 的 base64 有几十万字符，
