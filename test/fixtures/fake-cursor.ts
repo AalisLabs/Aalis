@@ -82,8 +82,8 @@ export interface InterceptReply {
 export interface FakeCursor {
   baseUrl: string;
   requests: RecordedRequest[];
-  /** key → 账号；userId 缺省时 /v1/me 不带这个字段 */
-  accounts: Map<string, { userId?: string }>;
+  /** key → 账号；userId 与实测一样是整数，缺省时 /v1/me 不带这个字段 */
+  accounts: Map<string, { userId?: number }>;
   models: unknown[];
   agents: Map<string, FakeAgent>;
   /** runId → 依次消费的连接脚本 */
