@@ -10,6 +10,10 @@
 // 默认策略：把 storage URI / data:/http 都转成 base64:// 让数据走 WS 隧道，
 // 最稳。超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
 //
+// image、audio、video 内联前按文件头核对格式，不符就拒发：发送工具接受任意 storage URI，
+// 不核对的话任意可读文件（如含密钥的配置）能冒充媒体经 base64 发出。
+// file 附件不走消息段，经群文件、私聊文件上传，只收 base64://（见 materializeFileAttachment）。
+//
 // file:// 与本地绝对路径不再由本插件直接读取（避免依赖 node:fs），原样透传
 // 给 daemon。生产侧 attachments 几乎都来自 plugin-media / plugin-image-sender
 // 产出的 storage URI / data URI，故此回归仅在裸 file:// 用例下生效。
@@ -20,18 +24,31 @@ import { isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
-import { readBodyCapped } from './attachment-cache.js';
+import { detectExtensionFromBuffer, readBodyCapped } from './attachment-cache.js';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
 
-/** 把 Buffer 包成 base64:// 字符串。 */
-function toBase64Uri(buf: Buffer): string {
+/** 各媒介内联前认的格式（detectExtensionFromBuffer 的结果）；audio 的 mp4 是 M4A，与 MP4 同为 ftyp 容器。 */
+const INLINE_FORMATS: Record<'image' | 'audio' | 'video', ReadonlySet<string>> = {
+  image: new Set(['png', 'jpg', 'gif', 'webp']),
+  audio: new Set(['wav', 'mp3', 'ogg', 'flac', 'amr', 'silk', 'mp4']),
+  video: new Set(['mp4', 'webm']),
+};
+
+/**
+ * 把 Buffer 包成 base64:// 字符串。媒介附件先按文件头核对格式，不符就抛错拒发；
+ * file 附件不核对（群文件本来就收任意类型）。
+ */
+function toBase64Uri(kind: MessageAttachment['kind'], buf: Buffer): string {
+  if (kind !== 'file' && !INLINE_FORMATS[kind].has(detectExtensionFromBuffer(buf, ''))) {
+    throw new Error(`内容不是可发送的 ${kind} 格式（文件头不符），已拒发`);
+  }
   return `base64://${buf.toString('base64')}`;
 }
 
 /**
- * 把附件物化为 OneBot `image.file` 可接受的字符串。
+ * 把附件物化为 OneBot 消息段 `file` 字段或上传接口可接受的字符串。
  */
 async function attachmentToOneBotFile(
   att: MessageAttachment,
@@ -51,7 +68,7 @@ async function attachmentToOneBotFile(
       logger?.warn?.(`OneBot 附件超过 ${MAX_INLINE_BYTES} bytes，无法 base64 内联，已跳过`);
       throw new Error('attachment too large for base64 inline');
     }
-    return toBase64Uri(buf);
+    return toBase64Uri(att.kind, buf);
   }
 
   // http(s):// → 下载后 base64 内联
@@ -65,14 +82,17 @@ async function attachmentToOneBotFile(
       logger?.warn?.('OneBot 远程附件超过内联上限，回退到 URL（依赖 daemon 直拉）');
       return data;
     }
-    return toBase64Uri(capped);
+    return toBase64Uri(att.kind, capped);
   }
 
   // storage URI（如 data:/images/xxx）→ storage.readFile → base64
   if (isStorageUri(data)) {
-    const raw = (await storage.readFile(data)) as Uint8Array;
-    if (raw.byteLength > MAX_INLINE_BYTES) {
-      logger?.warn?.(`OneBot storage 附件 ${raw.byteLength}B 超过内联上限，尝试转 file:// 由 daemon 处理`);
+    // 读前先量：视频也走这里，超限的不整份读进内存
+    const { size } = await storage.stat(data);
+    if (size > MAX_INLINE_BYTES) {
+      logger?.warn?.(
+        `OneBot storage 附件 ${size}B 超过内联上限，改交 file:// 宿主路径（daemon 与 Aalis 不共享文件系统时读不到，如 NapCat 在容器里）`,
+      );
       try {
         const local = await storage.resolveLocalPath?.(data, 'read');
         if (local) return `file://${local}`;
@@ -81,7 +101,8 @@ async function attachmentToOneBotFile(
       }
       throw new Error('attachment too large and not resolvable to local path');
     }
-    return toBase64Uri(Buffer.from(raw));
+    const raw = (await storage.readFile(data)) as Uint8Array;
+    return toBase64Uri(att.kind, Buffer.from(raw));
   }
 
   // file:// 或裸路径：直接交给 daemon 处理（依赖 daemon 与文件系统共享）
@@ -92,12 +113,19 @@ async function attachmentToOneBotFile(
   return `file://${data}`;
 }
 
+/** 媒介附件对应的消息段标记与日志里的称呼 */
+const MARKERS: Record<'image' | 'audio' | 'video', { tag: string; label: string }> = {
+  image: { tag: 'image', label: '图片' },
+  audio: { tag: 'record', label: '语音' },
+  video: { tag: 'video', label: '视频' },
+};
+
 /**
- * 把 attachments[] 渲染为可拼接到 content 的标记串。
- * - image / audio：base64 内联（走 WS 隧道，Docker 部署最稳）→ `<image>` / `<record>`
- * - video：通常过大，不内联，http/file URL 透传 → `<video>`
- * - 其余 kind（file 等）暂未支持，debug 后跳过
- * - 失败的附件 warn 后跳过
+ * 把媒介附件渲染为可拼接到 content 的标记串。
+ * - image / audio / video：物化为 base64://（走 WS 隧道，Docker 部署最稳）→ `<image>` / `<record>` / `<video>`；
+ *   超过内联上限的退回 URL 或 file:// 宿主路径，daemon 读不到时发不出
+ * - file 不走消息段，由调用方经 materializeFileAttachment 物化后上传
+ * - 失败的附件（含文件头不符）warn 后跳过
  */
 export async function renderAttachmentsAsContentMarkers(
   attachments: MessageAttachment[] | undefined,
@@ -107,55 +135,33 @@ export async function renderAttachmentsAsContentMarkers(
   if (!attachments?.length) return '';
   const parts: string[] = [];
   for (const att of attachments) {
-    if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') {
-      logger?.debug?.(`OneBot 跳过 ${att.kind} 附件（暂未支持该结构化发送）`);
-      continue;
-    }
-
-    if (att.kind === 'video') {
-      // 视频不做 base64 内联（文件通常过大）。
-      // http(s) URL 直接透传让 NapCat daemon 自行下载；file:// 原样传出（需 daemon 可访问）。
-      const data = att.data;
-      if (!data) {
-        logger?.warn?.('OneBot 跳过空 video 附件');
-        continue;
-      }
-      let videoUri: string;
-      if (data.startsWith('http://') || data.startsWith('https://') || data.startsWith('file://')) {
-        videoUri = data;
-      } else if (isStorageUri(data)) {
-        try {
-          const local = await storage.resolveLocalPath?.(data, 'read');
-          videoUri = local ? `file://${local}` : data;
-        } catch {
-          logger?.warn?.(`OneBot video storage URI 无法解析为本地路径: ${data.slice(0, 80)}`);
-          continue;
-        }
-      } else {
-        videoUri = `file://${data}`;
-      }
-      parts.push(`<video url="${videoUri}"/>`);
-      continue;
-    }
-
-    if (att.kind === 'audio') {
-      // 语音文件通常较小，与 image 一致走 base64 内联。
-      try {
-        const uri = await attachmentToOneBotFile(att, storage, logger);
-        parts.push(`<record url="${uri}"/>`);
-      } catch (err) {
-        logger?.warn?.(`OneBot 语音附件物化失败: ${err instanceof Error ? err.message : err}`);
-      }
-      continue;
-    }
-
-    // kind === 'image'
+    if (att.kind === 'file') continue;
+    const { tag, label } = MARKERS[att.kind];
     try {
       const uri = await attachmentToOneBotFile(att, storage, logger);
-      parts.push(`<image url="${uri}"/>`);
+      parts.push(`<${tag} url="${uri}"/>`);
     } catch (err) {
-      logger?.warn?.(`OneBot 附件物化失败: ${err instanceof Error ? err.message : err}`);
+      logger?.warn?.(`OneBot ${label}附件物化失败: ${err instanceof Error ? err.message : err}`);
     }
   }
   return parts.join('');
+}
+
+/**
+ * 把 file 附件物化为群文件、私聊文件上传用的 `{ file, name }`，内容只收 `base64://`：
+ * attachmentToOneBotFile 遇到超过内联上限的 storage 文件会退回 `file://<宿主路径>`，
+ * 超限的 http 链接会原样返回，这两种形态容器里的 NapCat 都读不到，一律拒发（抛错）。
+ * `name` 是群文件里显示的文件名，去掉路径分隔符；缺省为 `file`。
+ */
+export async function materializeFileAttachment(
+  att: MessageAttachment,
+  storage: StorageService,
+  logger?: Logger,
+): Promise<{ file: string; name: string }> {
+  const file = await attachmentToOneBotFile(att, storage, logger);
+  if (!file.startsWith('base64://')) {
+    throw new Error('文件附件只能以 base64:// 上传（超过内联上限或来源是宿主路径、原链接时 NapCat 读不到）');
+  }
+  const name = (att.name ?? '').replace(/[/\\]/g, '');
+  return { file, name: name || 'file' };
 }

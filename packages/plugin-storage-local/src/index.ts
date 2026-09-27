@@ -124,6 +124,26 @@ const DEFAULT_ROOTS: RootEntryConfig[] = [
   // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
 ];
 
+/**
+ * 插件内置的内部路由根：不受用户 roots 影响，不在文件页出现。在用户根之后注册；
+ * 用户 roots 里与内部根同名的项被跳过并告警（内部根优先）。
+ * - paper：白纸枢纽存放远端任务成品；kind 为 paper，checkpoint 不给它记账。
+ */
+const INTERNAL_ROOTS: RootEntryConfig[] = [
+  {
+    name: 'paper',
+    path: 'data/stage/paper',
+    label: '白纸',
+    kind: 'paper',
+    browsable: false,
+    readable: true,
+    writable: true,
+    deletable: true,
+  },
+];
+
+const INTERNAL_ROOT_NAMES: ReadonlySet<string> = new Set(INTERNAL_ROOTS.map(r => r.name));
+
 const configSchema: ConfigSchema = {
   roots: {
     type: 'array',
@@ -702,7 +722,36 @@ async function createRoot(
 
 const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
-/** 从 raw config.roots 构造可用根。空/异常时回退到 DEFAULT_ROOTS。 */
+/** 按一条根配置建目录、解析真实路径并打注册日志；失败时告警并返回 undefined */
+async function openRoot(item: RootEntryConfig, logger: Logger): Promise<RootDefinition | undefined> {
+  const { name } = item;
+  try {
+    const root = await createRoot(name, item.label || name, item.kind || 'custom', item.path, {
+      browsable: item.browsable === true,
+      readable: item.readable !== false,
+      writable: item.writable === true,
+      deletable: item.deletable === true,
+    });
+    // 按路径**深度**判定，不按字符串长度：`/x` 只是个普通目录却因为长度 2 被误报，
+    // 而 `/etc`（长度 4）这种真该提醒的反而漏报。深度 ≤ 1 才是「根或根下一层」。
+    // 这只影响日志级别与提示文案，不参与任何 grant/deny —— 能访问什么由 realPath
+    // 加根的 read/write/delete 位决定，与本判断无关。
+    const depth = root.realPath.split('/').filter(Boolean).length;
+    const isHostScope = depth <= 1;
+    const log = isHostScope ? logger.warn.bind(logger) : logger.info.bind(logger);
+    log(
+      `root ${name}:/ -> ${root.realPath}` +
+        ` (browsable=${root.browsable} read=${root.readable} write=${root.writable} delete=${root.deletable})` +
+        (isHostScope ? '  ⚠ 该根接近/等于文件系统根，agent 通过此根可访问宿主机大量文件' : ''),
+    );
+    return root;
+  } catch (err) {
+    logger.warn(`root 注册失败 ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+}
+
+/** 从 raw config.roots 构造用户根。空/异常时回退到 DEFAULT_ROOTS；与内部根同名的项跳过。 */
 async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefinition[]> {
   let entries: RootEntryConfig[] = Array.isArray(rawRoots) ? (rawRoots as RootEntryConfig[]).slice() : [];
   if (entries.length === 0) {
@@ -724,34 +773,17 @@ async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefini
       logger.warn(`roots 跳过非法根名 ${name}（仅允许字母/数字/下划线/连字符，且需以字母开头）`);
       continue;
     }
+    if (INTERNAL_ROOT_NAMES.has(name)) {
+      logger.warn(`roots 跳过 ${name}：与插件内部根同名（内部根优先）`);
+      continue;
+    }
     if (seen.has(name)) {
       logger.warn(`roots 跳过重复根名 ${name}`);
       continue;
     }
     seen.add(name);
-    try {
-      const root = await createRoot(name, item.label || name, item.kind || 'custom', path, {
-        browsable: item.browsable === true,
-        readable: item.readable !== false,
-        writable: item.writable === true,
-        deletable: item.deletable === true,
-      });
-      // 按路径**深度**判定，不按字符串长度：`/x` 只是个普通目录却因为长度 2 被误报，
-      // 而 `/etc`（长度 4）这种真该提醒的反而漏报。深度 ≤ 1 才是「根或根下一层」。
-      // 这只影响日志级别与提示文案，不参与任何 grant/deny —— 能访问什么由 realPath
-      // 加根的 read/write/delete 位决定，与本判断无关。
-      const depth = root.realPath.split('/').filter(Boolean).length;
-      const isHostScope = depth <= 1;
-      const log = isHostScope ? logger.warn.bind(logger) : logger.info.bind(logger);
-      log(
-        `root ${name}:/ -> ${root.realPath}` +
-          ` (browsable=${root.browsable} read=${root.readable} write=${root.writable} delete=${root.deletable})` +
-          (isHostScope ? '  ⚠ 该根接近/等于文件系统根，agent 通过此根可访问宿主机大量文件' : ''),
-      );
-      out.push(root);
-    } catch (err) {
-      logger.warn(`root 注册失败 ${name}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const root = await openRoot({ ...item, name, path }, logger);
+    if (root) out.push(root);
   }
   return out;
 }
@@ -769,6 +801,10 @@ export default definePlugin({
     const logger = caps.logger.child('storage');
     const roots = await buildRoots(caps.config.roots, logger);
     if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
+    for (const item of INTERNAL_ROOTS) {
+      const root = await openRoot(item, logger);
+      if (root) roots.push(root);
+    }
 
     // service-granularity：每个 root 单独注册一个 entry。
     // - entryId = `${实例 id}/${root.name}`，便于在 ServiceContainer 中按根定位、避免跨实例同名冲突；
