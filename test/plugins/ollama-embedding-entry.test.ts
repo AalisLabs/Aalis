@@ -18,13 +18,10 @@ function stubOllama(caps: Record<string, string[] | null>): void {
     'fetch',
     vi.fn(async (url: string | URL, init?: { body?: string }) => {
       const u = String(url);
-      const json = async (): Promise<unknown> => {
-        if (u.includes('/api/tags')) return { models: Object.keys(caps).map(name => ({ name })) };
-        const model = JSON.parse(init?.body ?? '{}').model as string;
-        const c = caps[model];
-        return c === null ? {} : { capabilities: c };
-      };
-      return { ok: true, status: 200, json } as unknown as Response;
+      if (u.includes('/api/tags')) return Response.json({ models: Object.keys(caps).map(name => ({ name })) });
+      const model = JSON.parse(init?.body ?? '{}').model as string;
+      const c = caps[model];
+      return Response.json(c === null ? {} : { capabilities: c });
     }),
   );
 }
