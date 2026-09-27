@@ -168,6 +168,33 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - api-agent（`token:request` 的说明）、api-workflow（`AgentNodeSpec.sessionId` 的说明）在本节只改了注释，列在上文「只改了注释」里；api-platform 在本节也只改了 `canHandle` 的说明，它另有本批的契约改动，照常发布。
 - api-code-sandbox、plugin-process-local、plugin-tool-code-runner 本节有改动，但不用 core 0.18 的接口，`@aalis/core` peer 仍是 `>=0.17.0 <1.0.0`。`test/architecture/release-claims.test.ts` 把它们连同 plugin-maimai 列为「本批没有改动、不重发」的例外，那里的「本批」指已发布的 0.18 批次；发布本节时按实况改写该测试的例外名单与说明。
 
+### 后台命令结束通知（@aalis/plugin-tool-system、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-session-confirm、@aalis/plugin-webui-client）
+
+`exec_background` 起的后台进程在本次运行期间自行退出时，她会自己开口说结果；让她停时她直接停，不再弹确认。不需要改配置。
+
+行为变化：
+
+- 结束通知：在对话回合里起的后台进程自行退出（包括出错退出）时，plugin-tool-system 向起它的会话注入一条宿主通知（`source` 为 `exec-bg:<进程 id>`，`hostNotice.kind` 为 `exec-background`），agent 随即开一轮回复。通知只带进程 id、退出码（或结束它的信号名，或「出错结束」）与用时，命令与输出不进通知，她用 `process_read` 读输出。身份跟起进程的那次调用：`actor` 为那次调用的有效授权身份，`hostNotice.callerUserId` 为那次调用的 `userId`，这一轮的等级、确认由谁应答、会话授予都与起进程的那一轮相同。不在 agent 回合里起的（mcp-server、workflow 的 tool 节点）、在由结束通知开启的回合里起的、被 `process_kill` 终止的、会话已删除的、插件停用或停机时收掉的，都不通知。长驻进程正常运行时不会退出，也就没有通知。
+- `process_kill` 不再需要确认，仍为 restricted；删除 `signal` 参数，按进程中止契约终止整组（POSIX 先 SIGTERM、宽限后 SIGKILL，Windows 立即结束整棵进程树），最多等 3000ms 再如实回报是否已停（`stopped: true` 或 `running: true`）；只能终止与调用者同一身份起的进程，owner 除外。此前需要会话级确认，只发一个信号（默认 SIGTERM，可传任意信号名）、不看是否退出。要恢复确认，在 authority 的 `confirmOverrides` 里给 `tool:process_kill` 配上。
+- 后台进程的收尾：插件停用、bounce 时按中止契约整组收掉（此前只发 SIGTERM、不升级）；删除会话时该会话仍在运行的后台进程一并终止，登记记录清空（此前继续运行，重建的房间还能用 `process_list`、`process_read` 看到删除之前的进程与输出）。停止键仍不杀后台进程。
+- `exec_background` 创建失败（如 cwd 不存在）直接回 `后台进程启动失败：<原因>`，不再先回「已启动」。
+- 后台进程 id 由 `proc_<序号>` 改为 `proc_<本次启动的 6 位十六进制>_<序号>`，Aalis 重启之后不会与历史里的旧 id 撞号。`process_read` 的结果加 `command` 字段。
+- plugin-agent：宿主通知回合的工具调用上下文 `userId` 取 `hostNotice.callerUserId`；真人消息（不带 `source`）到达时，中止同一会话里 `callerUserId` 等于这条消息 `userId` 的通知回合，别人的消息与不延续任何人身份的通知不受影响。
+- plugin-session-confirm：确认相位不再把带 `source` 的内部注入当作应答。此前会话里有一条来自无 userId 回合（定时任务等）的待决确认时，到达的定时任务、宿主通知等内部注入会被吞掉并把那条确认判为拒绝。
+- plugin-webui-client：收到流式片段或工具调用开始时显示停止键，不是从输入框发起的回合（她被结束通知唤起）也能停；工具调用只接到进行中的流式气泡上，上一条回复已完成时另起一条。
+- 通知回合与同一会话的其他回合并行（各占一条 lane）：owner 正在聊，或起进程的那一轮还没结束时，可能两轮各回复一次、各改同一批文件；WebUI 里先结束的一轮的最终消息会覆盖共用的流式气泡，刷新后正确。
+
+新增：
+
+- `@aalis/schema-message`：`IncomingMessage.hostNotice.callerUserId`。宿主通知的 actor 约定改为：不延续某次调用的用 `selfInitiatedActor`、不设 `callerUserId`；延续某次工具调用的沿用那次调用的身份并设 `callerUserId`。
+
+**破坏性变更与迁移**：
+
+- **`process_kill` 删除 `signal` 参数**：工具参数声明了 `additionalProperties: false`，带 `signal` 的调用（如 workflow 的 tool 节点里写死的参数）会被参数校验拒绝，去掉这个参数即可。
+- plugin-tool-system 的插件声明 `required` 加 `events`、`optional` 加 `authority`，依赖加 `@aalis/schema-message` 与 `@aalis/api-authority`。
+
+发布时要抬的包间依赖下限：plugin-tool-system 对 `@aalis/schema-message`（新增依赖，现写 `>=0.9.0`）、plugin-agent 对 `@aalis/schema-message`，都抬到含 `hostNotice.callerUserId` 的版本。
+
 ### 必须同批升级的包
 
 - plugin-flow-control 与 plugin-trigger-policy 同批升级：新版 flow-control 提供的服务已删除旧版 trigger-policy 调用的 `getStateSnapshot` / `recordTriggered` 等方法；相位顺序常量在 `@aalis/api-gateway`，它升到本节的新版本后，已发布的旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这四个包须同一批勾选更新。
@@ -175,7 +202,8 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-process-local 与 plugin-tool-system、plugin-tool-code-runner、plugin-code-sandbox-os 同批升级：中止实现在 process 提供方，旧版 process-local 静默忽略 `signal`，新版 exec 与代码执行照样停不掉，code-sandbox-os 的探测照旧拖满宽限；plugin-tool-code-runner 的沙箱路径还要新版 code-sandbox-os 把 `signal` 转交下去。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
 - plugin-webui-server 与 plugin-agent 同批升级：新版 webui-server 不再给 token 快照填 `platform`，配旧版 agent 时 IM 房间的快照按 webui 算。
-- 走插件市场的，以上三组各自同一批勾选更新。
+- plugin-tool-system 与 plugin-agent、schema-message 同批升级：旧版 agent 不认 `hostNotice.callerUserId`，通知回合里要确认的工具会弹出没人能应答的确认、60 秒后按拒绝结算；旧版 tool-system 不发结束通知。
+- 走插件市场的，以上四组各自同一批勾选更新。
 - 上文用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent：它们要用新版 api-gateway 的 `resolveSessionOrigin`（persona 另要 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
 ## 2026-09-27（core 0.18.0 minor；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）

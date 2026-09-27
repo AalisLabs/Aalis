@@ -137,6 +137,12 @@ class DefaultAgent implements AgentService {
   private activeControllers = new Map<string, AbortController>();
 
   /**
+   * 延续某位发言者身份的宿主通知回合（lane → 会话与 hostNotice.callerUserId）。那位发言者在同一会话发来的真人消息
+   * 中止这些回合；别人的消息与不延续任何人身份的通知（白纸等）不受影响，宿主通知也从不打断别的回合。
+   */
+  private noticeCallers = new Map<string, { sessionId: string; callerUserId: string; controller: AbortController }>();
+
+  /**
    * 在飞回合 Promise。关停时 abort 之后等它们以 AbortError（或正常完成）收尾，
    * 而不是等 LLM 跑完——收尾里的钩子 / 出站事件还要用 memory。
    */
@@ -525,9 +531,22 @@ class DefaultAgent implements AgentService {
     // 仅中止同一 lane（同 session + 同 source）的旧生成；不同来源互不打断
     const prev = this.activeControllers.get(lane);
     if (prev) prev.abort();
+    // 例外：真人消息打断延续其本人身份的宿主通知回合，本人说话就停得下她自己开的那一轮。
+    // 对那一轮确认请求的应答在网关的确认相位就被吞掉，到不了这里。
+    if (incoming.source === undefined && incoming.userId !== undefined) {
+      for (const notice of this.noticeCallers.values()) {
+        if (notice.sessionId === incoming.sessionId && notice.callerUserId === incoming.userId) {
+          notice.controller.abort();
+        }
+      }
+    }
 
     const controller = new AbortController();
     this.activeControllers.set(lane, controller);
+    const callerUserId = incoming.hostNotice?.callerUserId;
+    if (callerUserId !== undefined) {
+      this.noticeCallers.set(lane, { sessionId: incoming.sessionId, callerUserId, controller });
+    }
 
     const turn = (async () => {
       try {
@@ -537,6 +556,7 @@ class DefaultAgent implements AgentService {
         if (this.activeControllers.get(lane) === controller) {
           this.activeControllers.delete(lane);
         }
+        if (this.noticeCallers.get(lane)?.controller === controller) this.noticeCallers.delete(lane);
       }
     })();
     this.inflightTurns.add(turn);
@@ -629,7 +649,9 @@ class DefaultAgent implements AgentService {
           // scheduler/workflow/subtask 等触发的 AI 因此以创建者等级执行而非匿名。
           // 不可再用 actor 覆盖 platform：actor 来自另一平台时（如跨平台的定时任务、workflow）
           // 会把上述四类下游全路由到发起者平台。
-          userId: incoming.userId,
+          // 延续某次工具调用的宿主通知不带发言者，userId 取那次调用的（hostNotice.callerUserId）：确认由起它的人
+          // 应答、会话授予照常命中。只用在这里，归档与提示词钩子仍按消息本身的 userId（没有）。
+          userId: incoming.userId ?? incoming.hostNotice?.callerUserId,
           platform: incoming.platform,
           actor: incoming.actor,
           // 恒为数组：平台档没配分组时给 []（列举面本就等价于「只给无分组工具」），

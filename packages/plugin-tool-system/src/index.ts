@@ -1,10 +1,11 @@
+import { authority } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import { persona } from '@aalis/api-persona';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { CwdState } from './tools/cwd-state.js';
 import { registerFileTools } from './tools/file.js';
@@ -94,8 +95,10 @@ const uses = {
   tools: optional(tools),
   logger,
   lifecycle,
+  events,
   config,
   commands: optional(commands),
+  authority: optional(authority),
   persona: optional(persona),
   storage: optional(storage),
   process: optional(processService),
@@ -137,6 +140,9 @@ function registerSystemToolset(caps: Caps): void {
       registerShellTools(systemTools, {
         logger,
         lifecycle: caps.lifecycle,
+        events: caps.events,
+        // 调用时再取：authority 可能晚于本插件上线或换提供者；不在时只认同一身份
+        isOwner: id => caps.authority.current?.isOwner(id.platform, id.userId) ?? false,
         cwdUri,
         storage: storageGateway,
         proc: createProcessGateway(caps.process),
