@@ -117,6 +117,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     isolation,
     cfg,
     signal: lifecycle.signal,
+    now,
     listingFailures: () => driver.listingFailures(),
   });
   driver.start();

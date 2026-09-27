@@ -74,6 +74,8 @@ export interface DriverHubOptions {
   rooms?: Record<string, SessionConfig>;
   /** 实例 id → 提供者；缺省只有 REMOTE_A 一个 ScriptedRemote */
   remotes?: Record<string, RemoteAgentProvider>;
+  /** remotes 里一开始不在场的实例 id（模拟提供者插件停用）；用 setPresent 让它回来 */
+  absent?: string[];
   /** 账本与白纸文件；跨「重启」复用同一张表 */
   files?: PaperFiles;
 }
@@ -93,6 +95,8 @@ export interface DriverHub {
   doctor(): Promise<CheckResult>;
   /** 真人在房间里交一件任务，返回任务 id（受理失败就抛） */
   accept(room?: string, text?: string, userId?: string): Promise<string>;
+  /** 让 remotes 里的一个提供者实例不在场（模拟插件停用）或回来 */
+  setPresent(type: string, present: boolean): void;
   /** 停机：中止信号并等收尾落盘 */
   stop(): Promise<void>;
 }
@@ -131,7 +135,9 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   await store.load();
   const controller = new AbortController();
   const remotes = opts.remotes ?? { [REMOTE_A]: new ScriptedRemote() };
-  const remote = ref(Object.entries(remotes).map(([contextId, instance]) => ({ instance, contextId, priority: 0 })));
+  const registered = Object.entries(remotes).map(([contextId, instance]) => ({ instance, contextId, priority: 0 }));
+  const present = registered.filter(e => !opts.absent?.includes(e.contextId));
+  const remote = ref(present);
   const rooms = opts.rooms ?? DRIVER_ROOMS;
   const sessionManager = fixedRef({
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
@@ -190,6 +196,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     isolation,
     cfg,
     signal: controller.signal,
+    now,
     listingFailures: () => driver.listingFailures(),
   });
   driver.start();
@@ -223,6 +230,12 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
       const res = await call('paper_task', { text, name: `任务 ${taskSeq}` }, human(userId, roomId));
       if (res.ok !== true) throw new Error(`paper_task 未受理：${String(res.error)}`);
       return String(res.taskId);
+    },
+    setPresent(type, on) {
+      const at = present.findIndex(e => e.contextId === type);
+      if (!on && at >= 0) present.splice(at, 1);
+      const entry = registered.find(e => e.contextId === type);
+      if (on && at < 0 && entry) present.push(entry);
     },
     async stop() {
       if (stopped) return;
