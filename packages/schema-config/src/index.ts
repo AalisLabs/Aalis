@@ -3,8 +3,8 @@
 //
 // 类型部分描述"配置如何呈现为表单"（label / options / textarea …），并由
 // ConfigOf 从同一份 schema 推导配置值类型；
-// 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）、只读
-// 结构校验（validateConfig）、按 schema 键集裁未知字段（removeExtraFields）、
+// 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）与深合并（deepMergeDefaults）、
+// 只读结构校验（validateConfig）、按 schema 键集裁未知字段（removeExtraFields）、
 // 按 schema 解析插件拿到的配置（parseConfig）。
 // 它们都不属于 @aalis/core——core 只把 `PluginMeta.configSchema` 当作
 // opaque 数据透传，不解释任何字段。另有插件因配置问题无法激活时抛的错误（configError / missingConfigError）。
@@ -235,6 +235,33 @@ export function defaultsFrom(schema: ConfigSchema | undefined): Record<string, u
     if ('default' in entry) out[key] = cloneConfigValue(entry.default);
   }
   return out;
+}
+
+/**
+ * 把默认值（通常是 {@link defaultsFrom} 的结果）深合并进配置：只填充缺失的键，已有的值（含显式 null）不覆盖。
+ * 嵌套对象递归合并，只写了半块的分组照样补齐其余默认子键；数组与基础类型按「已存在则保留」处理。
+ * 宿主的配置同步与 WebUI 保存插件配置用同一个合并，两条路径写出的配置形状一致。
+ */
+export function deepMergeDefaults(
+  defaults: Record<string, unknown>,
+  current: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...current };
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (!(key in result)) {
+      result[key] = defaultValue;
+    } else if (
+      defaultValue !== null &&
+      typeof defaultValue === 'object' &&
+      !Array.isArray(defaultValue) &&
+      result[key] !== null &&
+      typeof result[key] === 'object' &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = deepMergeDefaults(defaultValue as Record<string, unknown>, result[key] as Record<string, unknown>);
+    }
+  }
+  return result;
 }
 
 /**
