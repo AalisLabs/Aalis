@@ -87,10 +87,14 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** 删除会话时服务端（plugin-tool-system 收听 session:deleted）一并终止的：用 exec_background 起、仍在运行的进程 */
+const PROCESS_DELETE_NOTICE = '会话里（含子会话）用 exec_background 起、仍在运行的后台进程一并终止。';
+
 /** 删除 IM 房间的确认说明：清掉的不只是消息历史，房间之后再来消息还会回到列表里 */
 const ROOM_DELETE_NOTICE =
   'IM 房间在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等）会被清空，聊天平台（如 QQ）里的消息不受影响；' +
-  '子会话一并删除，无法撤销；房间之后再来消息会重新出现在列表里，记忆从零开始。';
+  '子会话一并删除，无法撤销；房间之后再来消息会重新出现在列表里，记忆从零开始。' +
+  PROCESS_DELETE_NOTICE;
 
 /** 递归收集树中所有会话 ID */
 function collectIds(nodes: TreeNode[]): string[] {
@@ -549,7 +553,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     const roomCount = [...selected].filter(id => roomIds.has(id)).length;
     const message = roomCount > 0
       ? `选中的 ${selected.size} 个会话里有 ${roomCount} 个 IM 房间，确认删除？${ROOM_DELETE_NOTICE}`
-      : `确认删除选中的 ${selected.size} 个会话？这些会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。`;
+      : `确认删除选中的 ${selected.size} 个会话？这些会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。${PROCESS_DELETE_NOTICE}`;
     if (!confirm(message)) return;
     try {
       await pageAction(pluginName, 'batchDelete', { ids: [...selected] });
@@ -658,7 +662,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
             <p>
               {roomIds.has(pendingDeleteId)
                 ? `确定要删除这个 IM 房间吗？${ROOM_DELETE_NOTICE}`
-                : '确定要删除此会话吗？这个会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。'}
+                : `确定要删除此会话吗？这个会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。${PROCESS_DELETE_NOTICE}`}
             </p>
             <div className="delete-confirm-actions">
               <button className="btn btn-sm btn-danger" onClick={() => handleDelete(pendingDeleteId)}>删除</button>

@@ -15,7 +15,7 @@ import type { StorageService } from '@aalis/api-storage';
 import { resolveAgainstCwd } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import type { Events, LifecycleCap, Logger } from '@aalis/core';
-import { type IncomingMessage, selfInitiatedActor } from '@aalis/schema-message';
+import type { IncomingMessage } from '@aalis/schema-message';
 
 /** 授权身份（同 ToolCallContext.actor） */
 interface Identity {
@@ -100,7 +100,11 @@ function pruneDoneProcesses(processes: Map<string, ManagedProcess>): void {
   for (const [id] of toRemove) processes.delete(id);
 }
 
-/** 调用的有效授权身份，与 authority 守卫同一口径 */
+/**
+ * 调用的有效授权身份，与 authority 守卫同一口径。登记表的 starter（process_kill 的比对）与结束通知的 actor 都取它：
+ * 两处必须是同一个值，否则本人在通知回合里停自己起的进程会被拒。没有 actor 也没有 userId 时 userId 为空串，
+ * 即无主体（selfInitiatedActor）
+ */
 function identityOf(ctx: ToolCallContext): Identity {
   return ctx.actor ?? { platform: ctx.platform ?? '', userId: ctx.userId ?? '' };
 }
@@ -115,7 +119,7 @@ function exitNoticeTarget(ctx: ToolCallContext): ExitNoticeTarget | undefined {
   return {
     sessionId: ctx.sessionId,
     platform,
-    actor: ctx.actor ?? (userId !== undefined ? { platform, userId } : selfInitiatedActor(platform)),
+    actor: identityOf(ctx),
     ...(userId !== undefined ? { callerUserId: userId } : {}),
   };
 }
