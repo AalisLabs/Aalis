@@ -26,6 +26,7 @@ import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manag
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
+import { DIRECTIVE_KINDS } from '@aalis/schema-message';
 
 // ===== 配置 schema =====
 
@@ -244,6 +245,8 @@ export default definePlugin({
         platform,
         excludeSessionIds,
         roles: ['user', 'assistant', 'notice'],
+        // 宿主通知与代发任务的指令只对所在会话的那一轮有意义，不带进别的会话（注入与 recent_messages 同一口径）
+        excludeKinds: [...DIRECTIVE_KINDS],
       });
 
       if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
