@@ -226,6 +226,13 @@ export interface SessionConfigData {
   maxToolIterations?: number;
   disableOutputFormat?: boolean;
   clientSideJsonRendering?: boolean;
+  paperEnabled?: boolean;
+  paperName?: string;
+  remoteAgentTypes?: string[];
+  remoteAgentUserDailyCents?: number;
+  remoteAgentUserDailyTasks?: number;
+  remoteAgentRoomDailyCents?: number;
+  memoryRecallScope?: 'session' | 'platform' | 'all';
 }
 
 /** 会话列表项（listSessions 的返回元素）。 */
