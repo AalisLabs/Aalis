@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import { inferSessionScope } from '@aalis/api-gateway';
+import { inferSessionScope, resolveSessionOrigin } from '@aalis/api-gateway';
 import { hooks as hooksCap } from '@aalis/api-hooks';
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 import {
@@ -36,7 +36,10 @@ import { parse as parseYaml } from 'yaml';
 /** 当前处理消息的会话身份（经 AsyncLocalStorage 按异步上下文隔离，杜绝并发会话间串档）。 */
 interface PersonaIdentity {
   sessionId?: string;
+  /** 会话所在的平台：房间会话为出生平台，其余为入口平台 */
   platform?: string;
+  /** 消息的入口平台，只在与房间的出生平台不同时填（如从 WebUI 往群里插话） */
+  entryPlatform?: string;
   sessionType?: 'group' | 'private' | 'channel';
   selfId?: string;
   selfNickname?: string;
@@ -361,6 +364,9 @@ class PersonaServiceImpl implements PersonaService {
         prompt += '会话类型：私聊\n';
       } else if (id.sessionType === 'channel') {
         prompt += '会话类型：频道\n';
+      }
+      if (id.entryPlatform) {
+        prompt += `当前消息经 ${id.entryPlatform} 发来\n`;
       }
       if (id.userId) {
         prompt += `当前消息发送者 ID：${id.userId}\n`;
@@ -703,16 +709,20 @@ async function run(caps: Caps): Promise<void> {
 
   // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
+  // 会话事实（平台、自身账号、会话类型与群号）按房间的出生平台取：从 WebUI 往群里插话时回复发进群里；
+  // 说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
   hooks.middleware('agent:input:before', async (data, next) => {
-    const selfIdentity = getPlatformSelfIdentity(caps.platform, data.message.platform, data.message.sessionId);
+    const origin = resolveSessionOrigin(data.message.sessionId);
+    const sessionPlatform = origin?.platform ?? data.message.platform;
+    const selfIdentity = getPlatformSelfIdentity(caps.platform, sessionPlatform, data.message.sessionId);
     const identity: PersonaIdentity = {
       sessionId: data.message.sessionId,
-      platform: data.message.platform,
-      // 合成回合（scheduler / workflow / idle）不经适配器、没有 sessionType：按会话 ID 约定推断（与上方
+      platform: sessionPlatform,
+      entryPlatform: origin && origin.platform !== data.message.platform ? data.message.platform : undefined,
+      // 合成回合（scheduler / workflow / idle）与经别的入口发来的消息没有 sessionType：按会话 ID 约定推断（与上方
       // 取群号同一约定）。只用于提示词、不回写消息：这时入站相位已跑完（flow-control 判作用域时自己推断），写回
       // 只会让这个按约定的推断随归档写进消息元数据，被下游当成适配器给出的类型
-      sessionType:
-        data.message.sessionType ?? inferSessionScope(data.message.platform, data.message.sessionId)?.sessionType,
+      sessionType: data.message.sessionType ?? inferSessionScope(sessionPlatform, data.message.sessionId)?.sessionType,
       selfId: selfIdentity?.selfId,
       selfNickname: selfIdentity?.nickname,
       userId: data.message.userId,
