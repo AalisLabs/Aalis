@@ -578,7 +578,8 @@ export class PaperDriver {
       const { runId } = await this.#retrying(waits, () =>
         entry.instance.createAgent({ agentId, name: agent.name, prompt }, this.#d.signal),
       );
-      await this.#started(task, runId, this.#d.now());
+      // 远端从建代理请求发出起就在跑，这个请求本身却可能要几十秒才回：用时与单轮时长都从请求时刻算
+      await this.#started(task, runId, task.start?.requestedAt ?? this.#d.now());
       return undefined;
     } catch (err) {
       if (this.#d.signal.aborted || err instanceof GaveUp) throw err;

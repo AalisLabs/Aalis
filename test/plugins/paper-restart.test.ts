@@ -73,15 +73,16 @@ describe('重启接回（假时钟）', () => {
     vi.useRealTimers();
   });
 
-  it('start.path 为 create 的任务以同一 agentId 再调 createAgent，不会建第二个代理', async () => {
+  it('start.path 为 create 的任务以同一 agentId 再调 createAgent，不会建第二个代理；startedAt 取 requestedAt', async () => {
     const a = new ScriptedRemote();
     const firstRun = a.seedAgent(AGENT, 'aalis-paper-0000abcd');
+    const requestedAt = Date.now() - 60_000;
     const files = seedLedger(ledger => {
       ledger.agents[AGENT] = agentRecord('creating');
       ledger.tasks['t-000000aa'] = seedTask({
         state: 'starting',
         agentId: AGENT,
-        start: { path: 'create', requestedAt: Date.now() - 60_000 },
+        start: { path: 'create', requestedAt },
       });
     });
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files });
@@ -90,7 +91,7 @@ describe('重启接回（假时钟）', () => {
       a.calls.filter(c => c.method === 'createAgent').map(c => (c.args[0] as { agentId: string }).agentId),
     ).toEqual([AGENT]);
     expect(a.agents.size).toBe(1);
-    expect(hub.task('t-000000aa').runId).toBe(firstRun);
+    expect(hub.task('t-000000aa')).toMatchObject({ runId: firstRun, startedAt: requestedAt });
     expect(hub.store.data.agents[AGENT].state).toBe('active');
     expect(hub.store.data.papers[PAPER_A_ID].binding).toBe(AGENT);
   });
