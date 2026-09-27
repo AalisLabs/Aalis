@@ -5,7 +5,7 @@
 
 ## 概述
 
-把跨会话最近 N 条消息作为可选上下文注入 agent。数据来源为 `MemoryService.getRecentMessagesAcrossSessions`（直查数据库），插件本身不维护进程内缓冲。注入方式是向 `agent:prompt` 贡献点提交一块内容，锚位为 `turn-context`，并按 `scope` 决定是否按平台过滤。`toolEnabled` 为 true（默认）时，还会把 `recent_messages` 工具注册到 `session-history` 工具分组，供 agent 主动查询跨会话近期消息；`tools` 是可选依赖，服务就绪后才完成注册。与 `agent.historyLimit` 的区别：`historyLimit` 加载的是当前 sessionId 的最近 N 条，本插件注入的是跨 session 聚合的近期片段。默认 `excludeCurrentSession: true` 会把当前会话排除掉，避免两者重复；关闭该项后，两者内容可能重叠。
+把跨会话最近 N 条消息作为可选上下文注入 agent。数据来源为 `MemoryService.getRecentMessagesAcrossSessions`（直查数据库），插件本身不维护进程内缓冲。注入方式是向 `agent:prompt` 贡献点提交一块内容，锚位为 `turn-context`，并按 `scope` 决定是否按平台过滤。`toolEnabled` 为 true（默认）时，还会把 `recent_messages` 工具注册到 `session-history` 工具分组，供 agent 主动查询跨会话近期消息；`tools` 是可选依赖，服务就绪后才完成注册。该工具声明 `risk: 'sensitive'`，与 `session_get_history` 同档：它查到的是其他会话的消息（默认排除当前会话；`same-platform` 含同平台别的群与别人的私聊，`cross-platform` 还含 WebUI），等级 0 的调用者被权限守卫拒绝，等级 1 起可用，不弹确认。被动注入不经工具，不受这一档位约束：是否注入由 `injectEnabled` 决定，范围跟随 `scope`，设为 `cross-platform` 时也会注入 WebUI 等其他平台会话的原文。与 `agent.historyLimit` 的区别：`historyLimit` 加载的是当前 sessionId 的最近 N 条，本插件注入的是跨 session 聚合的近期片段。默认 `excludeCurrentSession: true` 会把当前会话排除掉，避免两者重复；关闭该项后，两者内容可能重叠。
 
 ## 插件声明
 

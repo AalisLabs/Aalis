@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, logger, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 /**
@@ -226,5 +231,68 @@ describe('plugin-memory-history', () => {
     const spamCount = (block.match(/spam-/g) ?? []).length;
     expect(spamCount).toBe(3);
     expect(block).toContain('quiet-only');
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// recent_messages 权限档：它查的是别的会话（默认排除当前会话；same-platform 含同平台别的群与
+// 别人的私聊，cross-platform 含 WebUI），与 session_get_history 同属跨会话读取，同挂
+// risk: 'sensitive'——挡等级 0，朋友档（等级 1）起照常可用、不弹确认。
+// 走真链路：plugin-tools 执行 → plugin-authority 守卫 → 本插件 handler。
+// ════════════════════════════════════════════════════════════
+
+async function bootGuarded() {
+  // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供
+  const { app } = hostedApp();
+  await registerHubs(app);
+  const host = app.bind({ services, authority, tools });
+  await app.plugin(memoryInMemory);
+  await app.plugin(toolsPlugin, {});
+  await app.plugin(authorityPlugin, {});
+  await app.plugin(memoryHistory, { scope: 'cross-platform', maxAgeMinutes: 0 });
+  await app.plugins.idle();
+  // 守卫是 authority 激活时挂上去的：任一插件停在 pending，下面的拒绝断言会退化成恒真或恒假
+  for (const p of [memoryInMemory, toolsPlugin, authorityPlugin, memoryHistory]) {
+    const state = app.plugins.getPlugin(p.name)?.state;
+    if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
+  }
+  const memory = host.services.get(memoryService);
+  const toolSvc = host.tools.current;
+  const authoritySvc = host.authority.current;
+  if (!memory || !toolSvc || !authoritySvc) throw new Error('服务未就绪');
+  await memory.saveMessage('webui:console', {
+    role: 'user',
+    content: 'OWNER-WEBUI-ONLY',
+    timestamp: Date.now() - 1000,
+    metadata: { platform: 'webui' },
+  });
+  return { app, toolSvc, authoritySvc };
+}
+
+/** 群会话里开了 session-history 组：被拒只能来自权限档，不是分组闸 */
+function groupCall(userId: string): ToolCallContext {
+  return {
+    sessionId: 'onebot:10000:group:20000',
+    platform: 'onebot',
+    userId,
+    enabledGroups: ['session-history'],
+  };
+}
+
+describe('recent_messages 权限档（sensitive）', () => {
+  it('等级 0 的群成员调用被拒，拿不到别的会话的内容', async () => {
+    const { app, toolSvc } = await bootGuarded();
+    const out = await toolSvc.execute('recent_messages', { scope: 'cross-platform' }, groupCall('20001'));
+    await app.stop();
+    expect(out.content).toContain('权限不足');
+    expect(out.content).not.toContain('OWNER-WEBUI-ONLY');
+  });
+
+  it('等级 1 的群成员照常调用，且不弹确认（本实例没有确认通道）', async () => {
+    const { app, toolSvc, authoritySvc } = await bootGuarded();
+    authoritySvc.setUserLevel({ platform: 'onebot', userId: '20002' }, 1);
+    const out = await toolSvc.execute('recent_messages', { scope: 'cross-platform' }, groupCall('20002'));
+    await app.stop();
+    expect(out.content).toContain('OWNER-WEBUI-ONLY');
   });
 });
