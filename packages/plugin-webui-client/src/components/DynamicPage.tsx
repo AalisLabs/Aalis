@@ -9,7 +9,7 @@ import { RelationGraph } from './RelationGraph';
 import type {
   WebuiComponent, WebuiStatComponent, WebuiTableComponent,
   WebuiFormComponent, WebuiActionsComponent, WebuiInfoComponent,
-  WebuiMarkdownComponent, WebuiTabsComponent, WebuiPageDef,
+  WebuiMarkdownComponent, WebuiTabsComponent, WebuiPageDef, WebuiFilePayload,
 } from '../types';
 
 const dynStatIconMap: Record<string, ReactElement> = {
@@ -96,6 +96,91 @@ function ExpandableTextCell({ text }: { text: string }) {
         {expanded ? '收起' : '展开'}
       </button>
     </div>
+  );
+}
+
+/** 能在 WebUI 源里查看的位图类型；其余类型（含 HTML、SVG）只给下载，从不在本源渲染 */
+const PREVIEW_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/**
+ * 文件单元格：显示文件名与「查看」「下载」，两个按钮都以整行为参数调列的 method 取回 WebuiFilePayload。
+ * 查看只给位图白名单生成对应类型的 Blob 用 <img> 显示；下载一律生成 application/octet-stream 的 Blob，
+ * 不论服务端回的 mime 是什么。对象 URL 用完即回收。
+ */
+function FileCell({ name, method, row, pluginName }: { name: string; method: string; row: Record<string, unknown>; pluginName: string }) {
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const [note, setNote] = useState('');
+
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview.url);
+  }, [preview]);
+
+  const load = async () => {
+    setNote('');
+    try {
+      const r = await pageAction<Partial<WebuiFilePayload> & { ok?: unknown; error?: unknown }>(pluginName, method, row);
+      if (r?.ok === false) {
+        setNote(typeof r.error === 'string' ? r.error : '读取失败');
+        return undefined;
+      }
+      if (typeof r?.name !== 'string' || typeof r.mime !== 'string' || typeof r.base64 !== 'string') {
+        setNote('返回的不是文件');
+        return undefined;
+      }
+      const bin = atob(r.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return { name: r.name, mime: r.mime, bytes };
+    } catch (err) {
+      setNote(errText(err, '读取失败'));
+      return undefined;
+    }
+  };
+
+  const view = async () => {
+    const file = await load();
+    if (!file) return;
+    if (!PREVIEW_IMAGE_MIMES.has(file.mime)) {
+      setNote('此类型只能下载');
+      return;
+    }
+    setPreview({ url: URL.createObjectURL(new Blob([file.bytes], { type: file.mime })), name: file.name });
+  };
+
+  const download = async () => {
+    const file = await load();
+    if (!file) return;
+    const url = URL.createObjectURL(new Blob([file.bytes], { type: 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name.replace(/[/\\]/g, '');
+    // Firefox / Safari 需要 <a> 附加到 DOM 才会按 download 属性保存
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <span>{name}</span>
+      <button type="button" className="btn btn-sm" onClick={view}>查看</button>
+      <button type="button" className="btn btn-sm" onClick={download}>下载</button>
+      {note && <span className="dyn-action-msg">{note}</span>}
+      {preview && (
+        <div className="dyn-detail-overlay" onClick={() => setPreview(null)}>
+          <div className="dyn-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="dyn-detail-header">
+              <span className="dyn-detail-title">{preview.name}</span>
+              <button type="button" className="dyn-detail-close" title="关闭" onClick={() => setPreview(null)}>×</button>
+            </div>
+            <div className="dyn-detail-body">
+              <img src={preview.url} alt={preview.name} style={{ maxWidth: '100%' }} />
+            </div>
+          </div>
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -247,7 +332,9 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
                           ? <code>{String(row[col.key] ?? '')}</code>
                           : col.render === 'expandable-text'
                             ? <ExpandableTextCell text={String(row[col.key] ?? '')} />
-                            : String(row[col.key] ?? '')}
+                            : col.render === 'file' && col.method
+                              ? <FileCell name={String(row[col.key] ?? '')} method={col.method} row={row} pluginName={pluginName} />
+                              : String(row[col.key] ?? '')}
                   </td>
                 ))}
                 {comp.actions && comp.actions.length > 0 && (

@@ -56,7 +56,17 @@ export interface WebuiTableComponent {
   columns: Array<{
     key: string;
     label: string;
+    /**
+     * 单元格显示方式，不写时按文本显示：`countdown`（值是毫秒时间戳，显示剩余时间）、
+     * `status-badge`、`code`、`expandable-text`、`file`。
+     *
+     * `file`：值作为文件名显示，配「查看」「下载」两个按钮；点击时以整行为参数调本列的 `method`，
+     * 返回 {@link WebuiFilePayload}（业务失败返回 `{ ok: false, error }`）。只有 png、jpeg、gif、webp
+     * 位图能在页面里查看，其他类型（含 HTML、SVG）只能下载；下载一律按 `application/octet-stream` 保存。
+     */
     render?: string;
+    /** `render: 'file'` 时取文件内容的页面动作名 */
+    method?: string;
     nowrap?: boolean;
     minWidth?: number;
     maxWidth?: number;
@@ -73,6 +83,15 @@ export interface WebuiTableComponent {
   searchable?: boolean;
   /** 搜索框 placeholder（searchable=true 时生效） */
   searchPlaceholder?: string;
+}
+
+/** render 为 'file' 的列：点击时以整行为参数调 method，返回这个结构 */
+export interface WebuiFilePayload {
+  /** 保存时的文件名；客户端会去掉其中的路径分隔符 */
+  name: string;
+  mime: string;
+  /** 文件内容的 base64 */
+  base64: string;
 }
 
 /** 配置表单（复用 ConfigSchema） */
