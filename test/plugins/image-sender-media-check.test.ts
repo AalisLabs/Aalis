@@ -250,11 +250,13 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(outbound).toHaveLength(0);
   });
 
-  it('storage_uri 指向合法 PNG → 照常发出本地文件', async () => {
+  it('storage_uri 指向合法 PNG → 照常发出', async () => {
     const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
     expect(out).toEqual({ ok: true, sent: { kind: 'image', via: 'storage_uri', ref: 'data/images/s/cat.png' } });
     expect(outbound).toHaveLength(1);
-    expect(outbound[0].attachments?.[0].data).toMatch(/^file:\/\/.+\/images\/s\/cat\.png$/);
+    expect(outbound[0].attachments?.[0].data, '交出 storage URI，送达形态由平台适配器定').toBe(
+      'data:/images/s/cat.png',
+    );
   });
 
   it('history_ref 直接写存储库内的非媒体文件 → 拒发', async () => {
@@ -267,7 +269,9 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     const out = await send({ kind: 'image', history_ref: 'cat.png' });
     expect(out.ok).toBe(true);
     expect(outbound).toHaveLength(1);
-    expect(outbound[0].attachments?.[0].data).toMatch(/^file:\/\/.+\/images\/s\/cat\.png$/);
+    expect(outbound[0].attachments?.[0].data, '交出 storage URI，送达形态由平台适配器定').toBe(
+      'data:/images/s/cat.png',
+    );
   });
 
   it('history_ref 命中历史里存储库外的 file:// 来源 → 拒发（读不了文件头）', async () => {

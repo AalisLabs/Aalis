@@ -358,9 +358,12 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 - **白纸根不被回滚记账**：成品写在 storage-local 的内部根 `paper:/`（`data/stage/paper`），kind 为 `paper`，
   checkpoint 不给它记账，别的会话回滚不会删掉成品。
 - **onebot 出站按文件头核对**：图片、语音、视频按格式头分流，能内联的走消息段，认得出但不能内联的媒体
-  改经文件上传，都不是就拒发；超过内联上限（10 MiB）的 storage 文件改交宿主路径之前同样核对。发送工具
-  接受任意 storage URI，这道核对挡住了把任意可读文件（如含各家模型 key 的 `aalis.config.yaml`）冒充图片
-  发出。例外见下文「不止血的风险敞口」的大文件一条。
+  改经文件上传，都不是就拒发；超过内联上限（10 MiB）的 storage 文件改交宿主路径之前同样核对（按字节区间
+  读出开头 4 KiB）。发送工具接受任意 storage URI，这道核对挡住了把任意可读文件（如含各家模型 key 的
+  `aalis.config.yaml`）冒充图片发出。`send_attachment` 核对过文件头之后交出的仍是 storage URI，大文件到了
+  适配器照样再核对一次；不经核对的只有插件代码直接交来的 `file://` 路径与本机绝对路径，模型经
+  `send_attachment` 发的走不到这条。交宿主路径是送达方式的限制：实现端在容器里（如 Docker 里的 NapCat）
+  读不到宿主路径，超过 10 MiB 的本机文件发不出去。
 
 ### 召回收窄的范围
 
@@ -406,18 +409,13 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 ### 不止血的风险敞口
 
-以下三条已知、本批不改（前两条等凭据与污点机制上线后处理）：
+以下两条已知、本批不改，等凭据与污点机制上线后处理：
 
 - **白纸文件没有来源标记**：`plugin-tool-system` 的 `file.allowedRoots` 放开 `data` 或写成 `'*'` 时，
   拿得到文件工具的会话（主要是 owner 自己的）能读到白纸目录（`data` 根映射整个 `data/` 时，
   `data:/stage/paper/…` 与 `paper:/…` 是同一批文件；`'*'` 还包括 `paper` 根本身），读到时不计污点。
 - **`send_attachment` 能按路径发白纸根里的媒体**：它接受任意 storage URI、不带分组，别的房间被注入时，
   可以按路径把白纸里的图片与视频发走。
-- **超过落盘上限的大文件以宿主路径交给 daemon、不核对文件头**：`send_attachment` 把解析得到本机路径的
-  storage 文件写成 `file://<宿主路径>`；onebot 出站先把附件落盘到 `data/`（超过 `attachmentCache.maxBytes`，
-  缺省 10 MiB，就落不了盘），落了盘的按上面的文件头核对，落不了盘的 `file://` 原样交给 daemon，不经核对。
-  daemon 与 Aalis 共享文件系统的部署里，任意可读的大文件能以图片、视频发出；NapCat 在容器里、读不到宿主路径时
-  发不出。
 
 ---
 

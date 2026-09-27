@@ -6,8 +6,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import type { Message, MessageAttachment, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -113,8 +115,7 @@ async function until(cond: () => boolean, ms = 8000): Promise<void> {
 }
 
 /** 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在） */
-function memStorage(seed: Record<string, Buffer>) {
-  const files = new Map<string, Buffer>(Object.entries(seed));
+function memStorage(files: Map<string, Buffer>) {
   const root = (name: string, writable: boolean) => ({
     name,
     label: name,
@@ -154,7 +155,10 @@ interface Action {
   params: Record<string, unknown>;
 }
 
-async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buffer> } = {}) {
+type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+
+/** imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment */
+async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buffer>; imageSender?: boolean } = {}) {
   const protocol = opts.protocol ?? 'v11';
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(r => server.once('listening', r));
@@ -186,11 +190,20 @@ async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buf
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events });
-  host.provide(storage, memStorage(opts.files ?? {}) as never);
+  const files = new Map<string, Buffer>(Object.entries(opts.files ?? {}));
+  host.provide(storage, memStorage(files) as never);
   // 转码一律失败：语音附件保留原数据，直接走内联前的文件头核对
   host.provide(processService, {
     async makeTempDir() {
       throw new Error('测试里不转码');
+    },
+    // 同 process-local：先量大小，超过上限就抛错；宿主路径按 memStorage.resolveLocalPath 的写法映射回 storage
+    async readExternalFile(path: string, maxBytes?: number) {
+      const uri = path.replace(/^file:\/\/\/host\//, '').replace('/', ':/');
+      const f = files.get(uri);
+      if (!f) throw new Error(`ENOENT: ${path}`);
+      if (maxBytes !== undefined && f.byteLength > maxBytes) throw new Error('外部文件超过上限');
+      return f;
     },
   } as never);
   const notes: Array<{ sessionId: string; message: Message }> = [];
@@ -204,6 +217,19 @@ async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buf
   });
   await app.plugins.idle();
   if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
+  const toolHandlers = new Map<string, ToolHandler>();
+  if (opts.imageSender) {
+    host.provide(tools, {
+      register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
+        toolHandlers.set(tool.definition.function.name, tool.handler);
+        return () => {};
+      },
+      registerGroup: () => () => {},
+    } as never);
+    await app.plugins.register(imageSenderPlugin);
+    await app.plugins.idle();
+    if (app.plugins.getPlugin(imageSenderPlugin.name)?.state !== 'active') throw new Error('image-sender 未激活');
+  }
   await app.start(); // app:ready 时连接
   const selfInfo = protocol === 'v11' ? 'get_login_info' : 'get_self_info';
   await until(() => actions.some(a => a.action === selfInfo));
@@ -216,7 +242,15 @@ async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buf
     await until(() => JSON.stringify(sent()).includes('哨兵'));
   };
   const failureNotes = () => notes.filter(n => n.message.kind === 'outbound-delivery-failed');
-  return { actions, sent, send, flush, warns, notes, failureNotes };
+  const sendAttachment = async (args: Record<string, unknown>, sessionId = GROUP) => {
+    const handler = toolHandlers.get('send_attachment');
+    if (!handler) throw new Error('send_attachment 未注册');
+    return JSON.parse(await handler(args, { sessionId, platform: 'onebot' } as ToolCallContext)) as Record<
+      string,
+      unknown
+    >;
+  };
+  return { actions, sent, send, flush, warns, notes, failureNotes, sendAttachment };
 }
 
 const decode = (file: unknown) => Buffer.from(String(file).slice('base64://'.length), 'base64');
@@ -422,6 +456,31 @@ describe('onebot 出站：媒体按文件头分流', () => {
       attachments: [{ kind: 'image', data: 'data:/m/big.bmp' }],
       source: 'agent',
     });
+    await until(() => t.failureNotes().length > 0);
+    await t.flush();
+    expect(JSON.stringify(t.actions)).not.toContain('file://');
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+  });
+});
+
+describe('onebot 出站：send_attachment 交来的存储库文件', () => {
+  it('超过 10 MiB 的 PNG：send_attachment 交出 storage URI，适配器按区间读出文件头核对后交宿主路径', async () => {
+    const bigPng = Buffer.concat([PNG, Buffer.alloc(10 * MIB)]);
+    const t = await boot({ imageSender: true, files: { 'data:/images/big.png': bigPng } });
+    expect(await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/big.png' })).toMatchObject({ ok: true });
+    await t.flush();
+    const segments = t
+      .sent()
+      .filter(a => a.action === 'send_group_msg')
+      .flatMap(m => m.params.message as Array<{ type: string; data: { file?: string } }>);
+    expect(segments.find(s => s.type === 'image')?.data.file).toBe('file:///host/data/images/big.png');
+    expect(t.failureNotes()).toEqual([]);
+  });
+
+  it('超过 10 MiB 的 BMP（send_attachment 放行、实现端不能内联）：不以宿主路径发出，留投递失败记录', async () => {
+    const bigBmp = Buffer.concat([BMP, Buffer.alloc(10 * MIB)]);
+    const t = await boot({ imageSender: true, files: { 'data:/images/big.bmp': bigBmp } });
+    expect(await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/big.bmp' })).toMatchObject({ ok: true });
     await until(() => t.failureNotes().length > 0);
     await t.flush();
     expect(JSON.stringify(t.actions)).not.toContain('file://');
