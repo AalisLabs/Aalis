@@ -357,9 +357,10 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
   `application/octet-stream` 下载，不在 WebUI 源里渲染。
 - **白纸根不被回滚记账**：成品写在 storage-local 的内部根 `paper:/`（`data/stage/paper`），kind 为 `paper`，
   checkpoint 不给它记账，别的会话回滚不会删掉成品。
-- **onebot 出站按文件头核对**：图片、语音、视频内联前核对格式头，不符就拒发；超过内联上限（10 MiB）的
-  storage 文件改交宿主路径之前同样核对。发送工具接受任意 storage URI，这道核对挡住了把任意可读文件
-  （如含各家模型 key 的 `aalis.config.yaml`）冒充图片发出。例外见下文「不止血的风险敞口」的大文件一条。
+- **onebot 出站按文件头核对**：图片、语音、视频按格式头分流，能内联的走消息段，认得出但不能内联的媒体
+  改经文件上传，都不是就拒发；超过内联上限（10 MiB）的 storage 文件改交宿主路径之前同样核对。发送工具
+  接受任意 storage URI，这道核对挡住了把任意可读文件（如含各家模型 key 的 `aalis.config.yaml`）冒充图片
+  发出。例外见下文「不止血的风险敞口」的大文件一条。
 
 ### 召回收窄的范围
 
