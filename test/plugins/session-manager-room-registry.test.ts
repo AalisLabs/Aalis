@@ -162,6 +162,22 @@ describe('房间取名与补名', () => {
     await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', nickname: '<乙>' });
     expect(sm.getSession(PRIVATE)?.name).toBe('<乙>');
   });
+
+  it('带 source 的注入回合在未登记的群房间下开子任务：父会话以 id 为名，之后原生群消息补上群名；没有出生平台的父会话照旧', async () => {
+    const { sm, inbound } = await setup();
+
+    await inbound({ sessionId: GROUP, platform: 'onebot', source: 'workflow:<工作流>:<节点>' });
+    expect(sm.getSession(GROUP), '带 source 的注入不登记').toBeUndefined();
+    // create_subtask 的落点：父会话未登记时兜底建档
+    await sm.createChildSession(GROUP, { name: '<子任务>' });
+    expect(sm.getSession(GROUP)?.name, '兜底建档的房间以 id 为名，留给出生平台的入站补名').toBe(GROUP);
+
+    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
+    expect(sm.getSession(GROUP)?.name).toBe('<群名>');
+
+    await sm.createChildSession('cli-default', { name: '<子任务>' });
+    expect(sm.getSession('cli-default')?.name, '没有出生平台的父会话照旧用默认名').toMatch(/^会话 /);
+  });
 });
 
 describe('状态在回合开始时翻 active', () => {

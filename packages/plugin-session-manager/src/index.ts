@@ -541,8 +541,11 @@ class SessionManager implements SessionManagerService {
     >,
   ): Promise<SessionInfo> {
     // 平台派生会话（cli-default、OneBot 会话 id）从不经 createSession 预建，父档缺失是常态；
-    // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。
-    if (!this.sessions.has(parentId)) await this.ensureSession(parentId);
+    // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。有出生平台的房间以 id 为名：带 source 的
+    // 注入回合开子任务时房间还没收录，名字留给出生平台之后的真人入站按「现名等于 id」补上群名或昵称。
+    if (!this.sessions.has(parentId)) {
+      await this.ensureSession(parentId, resolveSessionOrigin(parentId) ? { name: parentId } : {});
+    }
 
     return this.createSession({
       ...opts,
