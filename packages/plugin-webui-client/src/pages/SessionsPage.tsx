@@ -37,11 +37,22 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-/** 页面动作 getInheritance 的回包：会话所属平台、继承值（不含会话自身 config）与每个键来自哪一层 */
+/** 页面动作 getSessionTree 的回包元素：一个分区（owner=我的会话，rooms=IM 房间）与它的根会话，分区由服务端判定 */
+interface TreeSection {
+  key: 'owner' | 'rooms';
+  label: string;
+  nodes: TreeNode[];
+}
+
+/**
+ * 页面动作 getInheritance 的回包：会话所属平台、受众（房间会话才有）、继承值（不含会话自身 config）
+ * 与每个键来自哪一层（audience 为平台档里只对群或只对私聊生效的条目）
+ */
 interface SessionInheritance {
   platform: string;
+  audience?: 'group' | 'private';
   values: SessionConfigData;
-  sources: Partial<Record<keyof SessionConfigData, 'defaults' | 'platform' | 'parent'>>;
+  sources: Partial<Record<keyof SessionConfigData, 'defaults' | 'platform' | 'audience' | 'parent'>>;
 }
 
 interface SessionDetail {
@@ -75,6 +86,15 @@ function truncate(text: string | undefined, max: number): string {
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+
+/** 删除会话时服务端（plugin-tool-system 收听 session:deleted）一并终止的：用 exec_background 起、仍在运行的进程 */
+const PROCESS_DELETE_NOTICE = '会话里（含子会话）用 exec_background 起、仍在运行的后台进程一并终止。';
+
+/** 删除 IM 房间的确认说明：清掉的不只是消息历史，房间之后再来消息还会回到列表里 */
+const ROOM_DELETE_NOTICE =
+  'IM 房间在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等）会被清空，聊天平台（如 QQ）里的消息不受影响；' +
+  '子会话一并删除，无法撤销；房间之后再来消息会重新出现在列表里，记忆从零开始。' +
+  PROCESS_DELETE_NOTICE;
 
 /** 递归收集树中所有会话 ID */
 function collectIds(nodes: TreeNode[]): string[] {
@@ -175,8 +195,11 @@ function SessionConfigEditor({ config, inheritance, options, onSave, onCancel }:
     const value = inherited[field];
     if (value === undefined || value === null) return <small className="session-config-inherit">继承（未设置）</small>;
     const source = inheritance?.sources[field];
+    const profile = `平台档 ${inheritance?.platform}`;
     const from =
-      source === 'platform' ? `平台档 ${inheritance?.platform}` : source === 'parent' ? '父会话' : source === 'defaults' ? '默认' : '';
+      source === 'platform' ? profile
+        : source === 'audience' ? `${profile}（${inheritance?.audience === 'private' ? '私聊' : '群'}）`
+        : source === 'parent' ? '父会话' : source === 'defaults' ? '默认' : '';
     const shown = format(value as NonNullable<SessionConfigData[K]>);
     return <small className="session-config-inherit">{from ? `继承（${shown}，来自 ${from}）` : `继承（${shown}）`}</small>;
   };
@@ -324,8 +347,12 @@ function SessionConfigEditor({ config, inheritance, options, onSave, onCancel }:
             placeholder="继承"
           />
         </label>
-        {inheritance?.sources.remoteAgentTypes === 'platform' && (
-          <span className="session-config-warn">平台档里写了远端类型，这个平台所有房间都会继承</span>
+        {(inheritance?.sources.remoteAgentTypes === 'platform' || inheritance?.sources.remoteAgentTypes === 'audience') && (
+          <span className="session-config-warn">
+            平台档里写了远端类型，这个平台
+            {inheritance.sources.remoteAgentTypes === 'platform' ? '所有房间' : inheritance.audience === 'private' ? '的所有私聊' : '的所有群'}
+            都会继承
+          </span>
         )}
         {REMOTE_LIMIT_FIELDS.map(([key, label]) => (
           <label key={key} className="session-config-field">
@@ -365,7 +392,7 @@ function SessionConfigEditor({ config, inheritance, options, onSave, onCancel }:
 // ===== 主组件 =====
 
 export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onStartNewChat, refreshSignal }: { pluginName: string; activeSessionId?: string; onSwitchSession?: (id: string) => void; onStartNewChat?: () => void; refreshSignal?: number }) {
-  const [tree, setTree] = useState<TreeNode[]>([]);
+  const [sections, setSections] = useState<TreeSection[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -387,8 +414,8 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   const [inheritance, setInheritance] = useState<SessionInheritance | null>(null);
 
   const fetchTree = useCallback(() => {
-    pageAction<TreeNode[]>(pluginName, 'getSessionTree')
-      .then(data => { if (Array.isArray(data)) setTree(data); })
+    pageAction<TreeSection[]>(pluginName, 'getSessionTree')
+      .then(data => { if (Array.isArray(data)) setSections(data); })
       .catch(() => setError('无法加载会话树'));
   }, [pluginName]);
 
@@ -492,6 +519,9 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     }
   };
 
+  // IM 房间：「IM 房间」区的根会话，删除确认按它写清损失（房间下的子任务不算）
+  const roomIds = new Set(sections.filter(sec => sec.key === 'rooms').flatMap(sec => sec.nodes.map(n => n.session.id)));
+
   // ---- 批量操作 ----
 
   const toggleSelect = (id: string) => {
@@ -502,9 +532,9 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     });
   };
 
-  const selectAll = () => {
-    const allIds = collectIds(tree);
-    setSelected(new Set(allIds));
+  /** 全选只作用于所在分区（含子会话），不动其他分区的选中项 */
+  const selectSection = (section: TreeSection) => {
+    setSelected(prev => new Set([...prev, ...collectIds(section.nodes)]));
   };
 
   const deselectAll = () => setSelected(new Set());
@@ -520,7 +550,11 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
 
   const handleBatchDelete = async () => {
     if (selected.size === 0) return;
-    if (!confirm(`确认删除选中的 ${selected.size} 个会话？此操作不可恢复。`)) return;
+    const roomCount = [...selected].filter(id => roomIds.has(id)).length;
+    const message = roomCount > 0
+      ? `选中的 ${selected.size} 个会话里有 ${roomCount} 个 IM 房间，确认删除？${ROOM_DELETE_NOTICE}`
+      : `确认删除选中的 ${selected.size} 个会话？这些会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。${PROCESS_DELETE_NOTICE}`;
+    if (!confirm(message)) return;
     try {
       await pageAction(pluginName, 'batchDelete', { ids: [...selected] });
       setSelected(new Set());
@@ -547,7 +581,6 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
           <div className="tree-header-actions">
             {batchMode ? (
               <>
-                <button className="tree-batch-btn" onClick={selectAll} title="全选">全选</button>
                 <button className="tree-batch-btn" onClick={deselectAll} title="取消全选">取消</button>
                 <button className="tree-batch-btn archive" onClick={handleBatchArchive} disabled={selected.size === 0}>归档 ({selected.size})</button>
                 <button className="tree-batch-btn danger" onClick={handleBatchDelete} disabled={selected.size === 0}>删除 ({selected.size})</button>
@@ -563,36 +596,46 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
           </div>
         </div>
         <div className="tree-visual-body">
-          {tree.length === 0 ? (
+          {sections.length === 0 ? (
             <div className="tree-empty">暂无会话</div>
           ) : (
-            tree.map(node => (
-              <TreeNodeView
-                key={node.session.id}
-                node={node}
-                selectedId={selectedId}
-                activeSessionId={activeSessionId}
-                onSelect={loadDetail}
-                depth={0}
-                batchMode={batchMode}
-                selected={selected}
-                onToggleSelect={toggleSelect}
-                onCreateChild={handleCreateChild}
-                onRename={(id, title) => { setEditingId(id); setEditTitle(title); }}
-                onArchive={handleArchive}
-                onDelete={(id) => setPendingDeleteId(id)}
-                onOpenConfig={handleOpenConfig}
-                editingId={editingId}
-                editTitle={editTitle}
-                onEditTitleChange={setEditTitle}
-                onCommitRename={handleRename}
-                onCancelEdit={() => setEditingId(null)}
-                configEditingId={configEditingId}
-                configOptions={configOptions}
-                inheritance={inheritance}
-                onSaveConfig={handleSaveConfig}
-                onCancelConfig={() => setConfigEditingId(null)}
-              />
+            sections.map(section => (
+              <section key={section.key} className="tree-section" aria-label={section.label}>
+                <div className="tree-section-header">
+                  <h4>{section.label}</h4>
+                  {batchMode && (
+                    <button className="tree-batch-btn" onClick={() => selectSection(section)} title={`全选「${section.label}」`}>全选</button>
+                  )}
+                </div>
+                {section.nodes.map(node => (
+                  <TreeNodeView
+                    key={node.session.id}
+                    node={node}
+                    selectedId={selectedId}
+                    activeSessionId={activeSessionId}
+                    onSelect={loadDetail}
+                    depth={0}
+                    batchMode={batchMode}
+                    selected={selected}
+                    onToggleSelect={toggleSelect}
+                    onCreateChild={handleCreateChild}
+                    onRename={(id, title) => { setEditingId(id); setEditTitle(title); }}
+                    onArchive={handleArchive}
+                    onDelete={(id) => setPendingDeleteId(id)}
+                    onOpenConfig={handleOpenConfig}
+                    editingId={editingId}
+                    editTitle={editTitle}
+                    onEditTitleChange={setEditTitle}
+                    onCommitRename={handleRename}
+                    onCancelEdit={() => setEditingId(null)}
+                    configEditingId={configEditingId}
+                    configOptions={configOptions}
+                    inheritance={inheritance}
+                    onSaveConfig={handleSaveConfig}
+                    onCancelConfig={() => setConfigEditingId(null)}
+                  />
+                ))}
+              </section>
             ))
           )}
         </div>
@@ -616,7 +659,11 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
       {pendingDeleteId && (
         <div className="delete-confirm-overlay" onClick={() => setPendingDeleteId(null)}>
           <div className="delete-confirm-dialog" onClick={e => e.stopPropagation()}>
-            <p>确定要删除此会话吗？子会话也会被一并删除，此操作无法撤销。</p>
+            <p>
+              {roomIds.has(pendingDeleteId)
+                ? `确定要删除这个 IM 房间吗？${ROOM_DELETE_NOTICE}`
+                : `确定要删除此会话吗？这个会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。${PROCESS_DELETE_NOTICE}`}
+            </p>
             <div className="delete-confirm-actions">
               <button className="btn btn-sm btn-danger" onClick={() => handleDelete(pendingDeleteId)}>删除</button>
               <button className="btn btn-sm" onClick={() => setPendingDeleteId(null)}>取消</button>
@@ -679,7 +726,8 @@ function TreeNodeView({
   onSaveConfig: (id: string, config: SessionConfigData) => void;
   onCancelConfig: () => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  // 子会话默认收起，点开才显示
+  const [expanded, setExpanded] = useState(false);
   const s = node.session;
   const hasChildren = node.children.length > 0;
   const isSelected = s.id === selectedId;

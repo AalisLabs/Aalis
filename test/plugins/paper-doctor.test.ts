@@ -18,13 +18,15 @@ import {
 // ════════════════════════════════════════════════════════════
 // 诊断项 paper.config（U10d）：让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题。
 // error：账本读取失败、同账号多块具名白纸、有停开的白纸、有未读的账本外代理告警；
-// warn：平台档写了 remoteAgentTypes、具名白纸引用的提供者不在场、取不到账号标识（按冲突处理）、
-// 一块具名白纸被多个房间共用、globalDailyCents 为 0；出网取自 owner 配置时在说明里标「未核实」。
+// warn：平台档写了 remoteAgentTypes（受众条目不在 getPlatformProfiles 里，经已登记的 IM 房间的继承链看到）、
+// 具名白纸引用的提供者不在场、取不到账号标识（按冲突处理）、一块具名白纸被多个房间共用、globalDailyCents 为 0；
+// 出网取自 owner 配置时在说明里标「未核实」。
 // ════════════════════════════════════════════════════════════
 
 afterEach(stopPaperHubs);
 
 const PAPER_ID = `n:${PAPER}`;
+const PRIVATE_ROOM = 'onebot:10000:private:30001';
 /** 出网来自提供者接口的替身：说明里不该出现「未核实」 */
 const VERIFIED = { [REMOTE]: fakeRemote({ egress: { mode: 'allowlist', source: 'provider-api' } }) };
 
@@ -115,6 +117,55 @@ describe('诊断项 paper.config', () => {
     expect(result.level).toBe('warn');
     expect(result.message).toContain('onebot');
     expect(result.message).toContain('可见');
+  });
+
+  it('受众条目写了 remoteAgentTypes 时 warn（经已登记的 IM 房间看到），写明平台与受众', async () => {
+    const group = await check({
+      listed: { [ROOM]: {} },
+      audienceProfiles: { 'onebot/group': { remoteAgentTypes: [REMOTE] } },
+    });
+    expect(group.level).toBe('warn');
+    expect(group.message).toContain('平台档 onebot 的群条目写了 remoteAgentTypes');
+
+    const priv = await check({
+      listed: { [PRIVATE_ROOM]: {} },
+      audienceProfiles: { 'onebot/private': { remoteAgentTypes: [REMOTE] } },
+    });
+    expect(priv.level).toBe('warn');
+    expect(priv.message).toContain('平台档 onebot 的私聊条目写了 remoteAgentTypes');
+  });
+
+  it('对照：受众条目的 remoteAgentTypes 为空数组时不报；基础条目写了只报基础条目', async () => {
+    const empty = await check({
+      listed: { [ROOM]: {} },
+      audienceProfiles: { 'onebot/group': { remoteAgentTypes: [] } },
+    });
+    expect(empty.level).toBe('ok');
+
+    const base = await check({ listed: { [ROOM]: {} }, profiles: { onebot: { remoteAgentTypes: [REMOTE] } } });
+    expect(base.message).toContain('平台档 onebot 写了 remoteAgentTypes');
+    expect(base.message).not.toContain('条目写了');
+  });
+
+  it('受众条目写了 paperName 时按共用 warn：列出继承它的房间与这个受众的全部房间', async () => {
+    const result = await check({
+      listed: { [ROOM]: {} },
+      audienceProfiles: { 'onebot/group': { paperName: PAPER } },
+    });
+    expect(result.level).toBe('warn');
+    expect(result.message).toContain(ROOM);
+    expect(result.message).toContain('平台档 onebot 的全部群房间');
+    expect(result.message).toContain('可见');
+  });
+
+  it('房间自己的配置盖掉了受众条目的 paperName：这个房间不列入，受众条目覆盖的其余房间照报', async () => {
+    const result = await check({
+      listed: { [ROOM]: { paperName: 'zz-paper-own' } },
+      audienceProfiles: { 'onebot/group': { paperName: PAPER } },
+    });
+    expect(result.level).toBe('warn');
+    expect(result.message).toContain('平台档 onebot 的全部群房间');
+    expect(result.message).not.toContain(ROOM);
   });
 
   it('账本里上次清空之后结束的任务所在的房间也算：另一个房间的任务让它成为共用', async () => {

@@ -87,11 +87,22 @@ describe('persona 合成回合的会话类型推断', () => {
     expect(prompt).not.toContain('会话类型：群聊');
   });
 
-  it('前缀与 platform 不符或段数不足：不推断', async () => {
+  it('目标是群房间、platform 写成 internal 的定时消息：按房间的出生平台推断为群聊', async () => {
+    await boot();
+    const { prompt } = await volatileFor({
+      content: '定时提醒',
+      sessionId: 'onebot:10000:group:20001',
+      platform: 'internal',
+      source: 'scheduler',
+    });
+    expect(prompt).toContain('会话类型：群聊');
+    expect(prompt).toContain('群号：20001');
+  });
+
+  it('非房间 id 或段数不足：不推断', async () => {
     await boot();
     for (const [sessionId, platform] of [
       ['scheduler::group:x', 'internal'],
-      ['onebot:10000:group:20001', 'internal'],
       ['onebot:group:20001', 'onebot'],
     ]) {
       const { prompt } = await volatileFor({ content: 'x', sessionId, platform });

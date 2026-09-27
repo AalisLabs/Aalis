@@ -274,6 +274,21 @@ describe('对账时列表连续失败', () => {
     expect((await hub.doctor()).level).toBe('ok');
   });
 
+  it('提供者停用后连续失败的计数清掉，诊断项不再报', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: CONFIG });
+    a.intercept.listAgents = () => {
+      throw new RemoteAgentError('unavailable', `GET /v1/agents 返回 401：${RAW}`);
+    };
+    for (let i = 0; i < 3; i++) await pass(a);
+    expect(await listWarning(hub)).toContain('3 次');
+
+    hub.setPresent(REMOTE_A, false);
+    await advance(RECONCILE_MS);
+    await advance(1000);
+    expect(await listWarning(hub), '停用后不再报').toBeUndefined();
+  });
+
   it('列代理的轮次失败同样计入：同一次对账里列账号下的代理成功不算恢复', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: CONFIG });

@@ -1,10 +1,12 @@
 import { type CheckResult, type CheckSpec, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
-import { type GatewayService, gateway } from '../../packages/api-gateway/src/index.js';
+import { type GatewayService, gateway, resolveSessionOrigin } from '../../packages/api-gateway/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { type EgressReport, type RemoteAgentProvider, remoteAgent } from '../../packages/api-remote-agent/src/index.js';
 import {
+  type InheritanceSource,
   type SessionConfig,
   type SessionInfo,
+  type SessionInheritance,
   type SessionManagerService,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
@@ -30,7 +32,7 @@ import { registerHubs } from './hubs.js';
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
 // - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
-// - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；
+// - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；平台档分基础条目与受众条目，继承链按参考实现的口径解析；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
 // - tools / gateway / doctor / webui-server：记下登记的工具、出站消息、页面与页面动作，诊断项按需运行；
 // - 钩子与贡献点用默认提供者；入站消息（宿主通知）只记下，没有网关与 agent 消费。
@@ -174,6 +176,48 @@ export function memoryStorage(files: PaperFiles): StorageService {
   } as unknown as StorageService;
 }
 
+/** session-manager 替身回的会话档：种类、出生平台与受众按会话 id 与 parentId 推出，与参考实现同一口径 */
+export function sessionInfoOf(id: string, parentId?: string): SessionInfo {
+  const origin = resolveSessionOrigin(id);
+  return {
+    id,
+    name: id,
+    parentId,
+    children: [],
+    status: 'active',
+    config: {},
+    createdAt: 0,
+    updatedAt: 0,
+    kind: parentId ? 'task' : 'room',
+    originPlatform: origin?.platform,
+    audience: parentId ? undefined : (origin?.audience ?? 'owner'),
+  };
+}
+
+/**
+ * session-manager 替身的继承链解析：与参考实现同一口径，有出生平台的会话按出生平台取基础条目、再按受众叠加受众条目，
+ * 其余按入口平台取基础条目；全局默认与父会话的 sessionDefaults 两层不模拟
+ */
+function inheritanceOf(
+  id: string,
+  platform: string | undefined,
+  opts: Pick<PaperHubOptions, 'profiles' | 'audienceProfiles'>,
+): SessionInheritance {
+  const origin = resolveSessionOrigin(id);
+  const pinned = origin?.platform ?? platform;
+  const values: Record<string, unknown> = {};
+  const sources: SessionInheritance['sources'] = {};
+  const layer = (config: SessionConfig | undefined, source: InheritanceSource) => {
+    for (const [key, value] of Object.entries(config ?? {})) {
+      values[key] = value;
+      sources[key as keyof SessionConfig] = source;
+    }
+  };
+  if (pinned) layer(opts.profiles?.[pinned], 'platform');
+  if (origin) layer(opts.audienceProfiles?.[`${origin.platform}/${origin.audience}`], 'audience');
+  return { platform: pinned, audience: origin?.audience, values, sources };
+}
+
 /** 空账本（与枢纽写出的结构相同），供用例预置 */
 export function emptyLedger(): PaperLedger {
   return { version: 1, papers: {}, agents: {}, tasks: {}, runs: {}, spend: {}, reserves: {}, alerts: [] };
@@ -197,8 +241,10 @@ export interface PaperHubOptions {
   rooms?: Record<string, SessionConfig>;
   /** 子会话 id → 父会话 id */
   children?: Record<string, string>;
-  /** 平台档（getPlatformProfiles 的结果）；缺省没有 */
+  /** 平台档的基础条目（getPlatformProfiles 的结果）；缺省没有 */
   profiles?: Record<string, SessionConfig>;
+  /** 平台档的受众条目，键为 `<平台>/<受众>`（不在 getPlatformProfiles 里，只经 resolveInheritance 看得到）；缺省没有 */
+  audienceProfiles?: Record<string, SessionConfig>;
   /** 会话列表里的会话 id → 会话自身的 config（listSessions 的结果）；缺省没有 */
   listed?: Record<string, SessionConfig>;
   /** 实例 id → 替身提供者；缺省只有 REMOTE 一个 */
@@ -276,26 +322,10 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   host.provide(sessionManager, {
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
     getPlatformProfiles: () => ({ ...(opts.profiles ?? {}) }),
+    resolveInheritance: (id: string, platform?: string) => inheritanceOf(id, platform, opts),
     listSessions: (): SessionInfo[] =>
-      Object.entries(opts.listed ?? {}).map(([id, config]) => ({
-        id,
-        name: id,
-        children: [],
-        status: 'active',
-        config,
-        createdAt: 0,
-        updatedAt: 0,
-      })),
-    getSession: (id: string): SessionInfo => ({
-      id,
-      name: id,
-      parentId: children[id],
-      children: [],
-      status: 'active',
-      config: {},
-      createdAt: 0,
-      updatedAt: 0,
-    }),
+      Object.entries(opts.listed ?? {}).map(([id, config]) => ({ ...sessionInfoOf(id, children[id]), config })),
+    getSession: (id: string): SessionInfo => sessionInfoOf(id, children[id]),
   } as unknown as SessionManagerService);
   host.provide(storage, memoryStorage(files));
   host.provide(gateway, {

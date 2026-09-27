@@ -7,9 +7,9 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
-import { checkMediaHead, type MediaKind } from '../../packages/plugin-image-sender/src/media-signature.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 发送存储库内的文件前按文件头核对格式。
@@ -80,6 +80,10 @@ describe('checkMediaHead：按 kind 的白名单认格式', () => {
     expect(checkMediaHead(head, kind)).toBeNull();
   });
 
+  it.each(HEADS)('detectMediaFormat 认出 %s（%s）', (format, kind, head) => {
+    expect(detectMediaFormat(head)).toEqual({ kind, format });
+  });
+
   it.each(HEADS)('%s 按别的 kind 发送：说出检测到的格式并指向正确的 kind', (format, kind, head) => {
     const message = checkMediaHead(head, OTHER_KIND[kind]);
     expect(message).toContain(`文件是 ${format} `);
@@ -117,6 +121,7 @@ describe('checkMediaHead：按 kind 的白名单认格式', () => {
     expect(checkMediaHead(head, 'video')).toBe(
       '文件不是受支持的视频格式（MP4、MOV、WebM、MKV、AVI），不能按 video 发送',
     );
+    expect(detectMediaFormat(head)).toBeNull();
   });
 });
 
@@ -245,11 +250,13 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(outbound).toHaveLength(0);
   });
 
-  it('storage_uri 指向合法 PNG → 照常发出本地文件', async () => {
+  it('storage_uri 指向合法 PNG → 照常发出', async () => {
     const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
     expect(out).toEqual({ ok: true, sent: { kind: 'image', via: 'storage_uri', ref: 'data/images/s/cat.png' } });
     expect(outbound).toHaveLength(1);
-    expect(outbound[0].attachments?.[0].data).toMatch(/^file:\/\/.+\/images\/s\/cat\.png$/);
+    expect(outbound[0].attachments?.[0].data, '交出 storage URI，送达形态由平台适配器定').toBe(
+      'data:/images/s/cat.png',
+    );
   });
 
   it('history_ref 直接写存储库内的非媒体文件 → 拒发', async () => {
@@ -262,7 +269,9 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     const out = await send({ kind: 'image', history_ref: 'cat.png' });
     expect(out.ok).toBe(true);
     expect(outbound).toHaveLength(1);
-    expect(outbound[0].attachments?.[0].data).toMatch(/^file:\/\/.+\/images\/s\/cat\.png$/);
+    expect(outbound[0].attachments?.[0].data, '交出 storage URI，送达形态由平台适配器定').toBe(
+      'data:/images/s/cat.png',
+    );
   });
 
   it('history_ref 命中历史里存储库外的 file:// 来源 → 拒发（读不了文件头）', async () => {

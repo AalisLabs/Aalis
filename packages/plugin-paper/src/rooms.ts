@@ -6,7 +6,8 @@
 //   有效授权身份的 userId 非空）；查状态与发成品只要求房间会话本身与入站回合。
 // - 远端条件：提供者按白纸写的实例 id 精确取（不用 current，不回落到别的提供者），出网不超过白纸上限，
 //   不违反同账号隔离，账本读取正常，白纸没有停开，提供者实例没有未读的账本外代理告警。
-// - 共用：一块具名白纸被哪些房间共用（WebUI 白纸页与诊断项用），长期代理的对话与工作区对它们都可见。
+// - 共用：一块具名白纸被哪些房间共用（WebUI 白纸页与诊断项用），长期代理的对话与工作区对它们都可见。平台档的
+//   受众条目不在 getPlatformProfiles() 的返回里，经已登记的 IM 房间逐个看继承链（resolveInheritance）。
 // ============================================================
 
 import {
@@ -16,7 +17,13 @@ import {
   type RemoteAgentProvider,
   resolveRemoteAgent,
 } from '@aalis/api-remote-agent';
-import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
+import {
+  type SessionConfig,
+  type SessionInfo,
+  type SessionInheritance,
+  type SessionManagerService,
+  sessionListSection,
+} from '@aalis/api-session-manager';
 import type { ToolCallContext } from '@aalis/api-tools';
 import type { Logger, ServiceRef } from '@aalis/core';
 import type { PaperConfig, PaperSpec } from './config.js';
@@ -58,11 +65,33 @@ export function paperLabel(paperId: string): string {
   return paperId.startsWith('n:') ? paperId.slice(2) : `房间白纸 ${paperId}`;
 }
 
+/** 受众条目在称呼里的写法 */
+export const AUDIENCE_NAMES: Record<NonNullable<SessionInheritance['audience']>, string> = {
+  group: '群',
+  private: '私聊',
+};
+
 /**
- * 共用一块白纸的房间：会话自身配置写了这个白纸名的房间会话、写了它的平台档（这个平台的所有房间），以及账本里
- * 还没结束、或在上次清空之后才结束的任务所在的房间（它们的原文还在代理的对话与工作区里；清空时白纸上没有在跑
- * 的任务，之前结束的随代理一起删了）。房间白纸只有账本里的那个房间。
- * labels 是显示用的称呼（房间会话 id，平台档写成「平台档 X 的全部房间」）；shared：多于一个房间，或有平台档。
+ * 已登记的 IM 房间（根会话，受众为群或私聊）与各自的继承链。平台档的受众条目不在 getPlatformProfiles() 的返回里，
+ * 平台档的某个键落到了哪些房间、来自基础条目（来源 platform）还是受众条目（来源 audience），只能对房间逐个看
+ */
+export function imRoomInheritance(
+  sm: SessionManagerService,
+): Array<{ session: SessionInfo; inheritance: SessionInheritance }> {
+  return sm
+    .listSessions()
+    .filter(session => !session.parentId && sessionListSection(session) === 'rooms')
+    .map(session => ({ session, inheritance: sm.resolveInheritance(session.id) }));
+}
+
+/**
+ * 共用一块白纸的房间：会话自身配置写了这个白纸名的房间会话；已登记的 IM 房间里，自身配置没写白纸名、从平台档
+ * （基础条目或受众条目）继承了这个名字的；写了它的平台档条目（基础条目覆盖这个平台的所有房间，受众条目覆盖这个
+ * 平台的全部群或全部私聊，包括还没登记的）；以及账本里还没结束、或在上次清空之后才结束的任务所在的房间（它们的
+ * 原文还在代理的对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。受众条目只能经已登记的
+ * 房间看到，这个受众还没有房间登记时不列。房间白纸只有账本里的那个房间。
+ * labels 是显示用的称呼（房间会话 id，平台档条目写成「平台档 X 的全部房间」「平台档 X 的全部群房间」）；
+ * shared：多于一个房间，或有平台档条目。
  */
 export function sharingRooms(
   sm: SessionManagerService,
@@ -70,23 +99,31 @@ export function sharingRooms(
   paperId: string,
 ): { labels: string[]; shared: boolean } {
   const rooms = new Set<string>();
-  const platforms: string[] = [];
+  const profiles = new Set<string>();
   if (paperId.startsWith('n:')) {
     const name = paperId.slice(2);
-    const names = (config: SessionConfig) => typeof config.paperName === 'string' && config.paperName.trim() === name;
-    for (const session of sm.listSessions()) if (!session.parentId && names(session.config)) rooms.add(session.id);
+    const names = (value: unknown) => typeof value === 'string' && value.trim() === name;
+    for (const session of sm.listSessions()) {
+      if (!session.parentId && names(session.config.paperName)) rooms.add(session.id);
+    }
     for (const [platform, profile] of Object.entries(sm.getPlatformProfiles())) {
-      if (names(profile)) platforms.push(platform);
+      if (names(profile.paperName)) profiles.add(`平台档 ${platform} 的全部房间`);
+    }
+    for (const { session, inheritance } of imRoomInheritance(sm)) {
+      const source = inheritance.sources.paperName;
+      if ((source !== 'platform' && source !== 'audience') || !names(inheritance.values.paperName)) continue;
+      // 自身配置写了白纸名（空串也算）的，生效的是自己写的
+      if (session.config.paperName === undefined || session.config.paperName === null) rooms.add(session.id);
+      if (source === 'audience' && inheritance.audience) {
+        profiles.add(`平台档 ${inheritance.platform} 的全部${AUDIENCE_NAMES[inheritance.audience]}房间`);
+      }
     }
   }
   const since = ledger.papers[paperId]?.lastClearedAt ?? 0;
   for (const task of Object.values(ledger.tasks)) {
     if (task.paperId === paperId && (task.endedAt === undefined || task.endedAt > since)) rooms.add(task.room);
   }
-  return {
-    labels: [...rooms, ...platforms.map(p => `平台档 ${p} 的全部房间`)],
-    shared: rooms.size > 1 || platforms.length > 0,
-  };
+  return { labels: [...rooms, ...profiles], shared: rooms.size > 1 || profiles.size > 0 };
 }
 
 /** 白纸停开，或它的提供者实例有未读的账本外代理告警时，给出原因（受理时回给她，出队时不出） */

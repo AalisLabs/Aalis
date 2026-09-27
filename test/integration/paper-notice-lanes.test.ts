@@ -35,7 +35,7 @@ import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage, Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { LEDGER_URI, memoryStorage, type PaperFiles } from '../fixtures/paper.js';
+import { LEDGER_URI, memoryStorage, type PaperFiles, sessionInfoOf } from '../fixtures/paper.js';
 import { PNG, ScriptedRemote } from '../fixtures/paper-remote.js';
 
 // ════════════════════════════════════════════════════════════
@@ -149,15 +149,7 @@ async function boot(
 
   host.provide(sessionManager, {
     resolveConfig: (sessionId: string) => (sessionId === ROOM ? { ...ROOM_CONFIG } : {}),
-    getSession: (id: string): SessionInfo => ({
-      id,
-      name: id,
-      children: [],
-      status: 'active',
-      config: {},
-      createdAt: 0,
-      updatedAt: 0,
-    }),
+    getSession: (id: string): SessionInfo => sessionInfoOf(id),
   } as unknown as SessionManagerService);
   host.provide(storage, memoryStorage(files));
   const indexed: Array<Record<string, unknown>> = [];

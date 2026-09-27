@@ -2,9 +2,11 @@
 // 诊断项 paper.config：让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题
 //
 // - error：账本读取失败；同一远端账号下多于一块具名白纸；有停开的白纸；有未读的账本外代理告警。
-// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档写了 remoteAgentTypes（这个平台所有房间都继承）；
-//   具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到
-//   3 次（写类别与次数，不写提供者报错的原文）。
+// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档写了 remoteAgentTypes（这个平台所有房间都继承；
+//   基础条目看 getPlatformProfiles()，受众条目不在其中，经已登记的 IM 房间的继承链看到）；具名白纸引用的提供者
+//   不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到 3 次（写类别与次数，
+//   不写提供者报错的原文）；有任务认领失败后仍在开轮中（与放弃跟踪同一判据：账本里有它的 claim-failed 告警，不论
+//   是否已读；报出时 owner 就能在任务表放弃跟踪）。
 // - 出网方式取自 owner 配置（提供者核实不了）时在说明里标「未核实」，不影响级别。
 // ============================================================
 
@@ -14,7 +16,7 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { ServiceRef } from '@aalis/core';
 import type { PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
-import { type Isolation, paperLabel, sharingRooms } from './rooms.js';
+import { AUDIENCE_NAMES, type Isolation, imRoomInheritance, paperLabel, sharingRooms } from './rooms.js';
 import { describe } from './util.js';
 
 const CHECK_ID = 'paper.config';
@@ -71,6 +73,21 @@ export function registerPaperDoctor(deps: {
             '只写在房间自己的会话配置里即可',
         );
       }
+      // 受众条目：同一条目只报一次
+      const audienceEntries = new Map<string, string>();
+      for (const { inheritance } of imRoomInheritance(sm)) {
+        const types = inheritance.values.remoteAgentTypes;
+        const { platform, audience } = inheritance;
+        if (inheritance.sources.remoteAgentTypes !== 'audience' || !audience) continue;
+        if (!Array.isArray(types) || types.length === 0) continue;
+        const who = AUDIENCE_NAMES[audience];
+        audienceEntries.set(
+          `${platform}/${audience}`,
+          `平台档 ${platform} 的${who}条目写了 remoteAgentTypes（${types.join('、')}），这个平台所有开了白纸的` +
+            `${who}房间都会继承；只写在房间自己的会话配置里即可`,
+        );
+      }
+      warnings.push(...audienceEntries.values());
       for (const [name, spec] of cfg.papers) {
         const type = spec.remoteAgentType;
         if (type && !resolveRemoteAgent(deps.remote, type))
@@ -83,6 +100,14 @@ export function registerPaperDoctor(deps: {
         }
       }
       if (cfg.globalDailyCents <= 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
+      for (const task of Object.values(ledger.data.tasks)) {
+        if (task.state !== 'starting') continue;
+        if (!ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id)) continue;
+        warnings.push(
+          `白纸任务 ${task.id} 认领失败后仍在开轮中（房间 ${task.room}）：开轮结果未知，远端这一轮可能在跑；` +
+            '提供者一直不可用时可在任务表「放弃跟踪」',
+        );
+      }
       for (const { type, count, categories } of deps.listingFailures()) {
         warnings.push(
           `对账时远端代理「${type}」的列表已连续 ${count} 次取不全（${categories.join('、')}），` +

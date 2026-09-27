@@ -52,12 +52,22 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
 | Platforms | 平台连接状态监控 |
 | Files | 文件管理器（浏览、重命名、下载、详情、删除） |
 | Logs | 实时日志流 |
-| Sessions | 会话树与会话配置编辑；每项显示继承值与来源（默认、平台档或父会话），「白纸与远端」一组编辑白纸与远端代理的房间键与记忆召回范围 |
+| Sessions | 会话管理（session-manager 登记的页面，由内置页面渲染，见下文） |
 | DynamicPage | 插件注册的动态页面（技能库、白纸页等） |
 
-会话页取继承值调页面动作 `getInheritance`，会话所属平台由服务端推出（见 [plugin-session-manager](./plugin-session-manager.md)）。「白纸与远端」一组里，`paperEnabled` 是开关，写法与另外两个开关相同：未覆盖时显示继承值，点一下即写成显式的开或关；`paperName` 留空即继承；`remoteAgentTypes` 以逗号分隔输入、保存为数组，留空即继承；三项上限留空即继承；`memoryRecallScope` 可选继承、仅本会话、同平台、全部。`remoteAgentTypes` 来自平台档时显示告警「平台档里写了远端类型，这个平台所有房间都会继承」。
+会话页配置编辑器的「白纸与远端」一组编辑白纸与远端代理的房间键与记忆召回范围：`paperEnabled` 是开关，写法与另外两个开关相同：未覆盖时显示继承值，点一下即写成显式的开或关；`paperName` 留空即继承；`remoteAgentTypes` 以逗号分隔输入、保存为数组，留空即继承；三项上限留空即继承；`memoryRecallScope` 可选继承、仅本会话、同平台、全部。`remoteAgentTypes` 来自平台档时显示告警「平台档里写了远端类型，这个平台所有房间都会继承」，来自受众条目时「所有房间」换成「的所有群」或「的所有私聊」。
 
 DynamicPage 的表格支持文件单元格（`render: 'file'`，契约见 [api-webui](../api/api-webui.md)）：只有 PNG、JPEG、GIF、WebP 位图能在弹窗里查看，其他类型（含 HTML、SVG）只能下载，下载的 Blob 一律为 `application/octet-stream`，保存的文件名去掉路径分隔符，对象 URL 用完即回收。
+
+## 会话管理页
+
+session-manager 登记的「会话管理」页（`renderer: 'sessions'`）由内置的会话页渲染，数据经 session-manager 的页面动作取得：
+
+- **分区**：列表取页面动作 `getSessionTree`，按服务端分好的区画出「我的会话」（owner 的 WebUI、CLI 会话等没有出生平台的会话）与「IM 房间」（群与私聊），空区不显示。分区在服务端判定，客户端只负责画。
+- **子会话**：只挂在发起它的会话下面，默认收起，点开才显示。
+- **批量操作**：批量模式下每个分区标题旁各有一个「全选」，只选中本区的会话（含收起的子会话），不动其他区的选中项；页头只保留「取消」与批量归档、批量删除。
+- **继承来源**：配置编辑器里未覆盖的字段显示继承值与来源（页面动作 `getInheritance`），IM 房间按出生平台显示；值来自受众条目时标为「平台档 `<平台>`（私聊）」或「平台档 `<平台>`（群）」。
+- **删除确认**：删除会经会话级 `memory:clear` 清空会话的消息历史与长期记忆（摘要、向量记忆等），确认框写明这一点，并说明子会话一并删除、无法撤销，会话里（含子会话）用 `exec_background` 起、仍在运行的后台进程一并终止（plugin-tool-system 收听 `session:deleted`）。删除 IM 房间（「IM 房间」区的根会话）时另写明聊天平台里的消息不受影响，房间之后再来消息会重新出现在列表里、记忆从零开始。批量删除的选中项含 IM 房间时，确认框先写出其中 IM 房间的个数，再接 IM 房间的说明。
 
 ## 流恢复 (Stream Resume)
 

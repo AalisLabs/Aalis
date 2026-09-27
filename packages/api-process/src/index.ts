@@ -42,6 +42,14 @@ export interface SpawnOptions {
    * 防失控/恶意输出无上限累积撑爆宿主内存。缺省由实现给安全默认（如 10MB）。
    */
   maxBuffer?: number;
+  /**
+   * 中止信号。中止时实现须终止整个进程组（POSIX）或整棵进程树（Windows）。POSIX：先 SIGTERM，宽限后 SIGKILL，
+   * 宽限由实现定、须明显短于 core 的停机宽限；wait() 照常以 ExecResult 落定（signal 为终止信号），
+   * execFile 按非零退出 reject。Windows 没有优雅终止：趁根进程还活着立即强制结束整棵树，
+   * wait() 照常落定，但 signal 不保证有值（强制结束通常是退出码 1、signal 为 null）。spawn 时已中止：不创建子进程，同步抛出 `signal.reason`。
+   * 子进程创建失败（没有 pid）时不登记监听；子进程退出或出错后实现须摘掉监听，之后再中止不得对任何进程发信号。
+   */
+  signal?: AbortSignal;
 }
 
 export interface ExecResult {
