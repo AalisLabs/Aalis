@@ -1,6 +1,6 @@
 # @aalis/schema-config
 
-配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；对这套词汇的中立解释函数 `defaultsFrom` / `validateConfig` / `removeExtraFields`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
+配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；对这套词汇的中立解释函数 `defaultsFrom` / `deepMergeDefaults` / `validateConfig` / `removeExtraFields`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
 
 `@aalis/core` 把插件的 `configSchema` 当作 opaque 数据透传、不解释任何字段；表单词汇（label / options / textarea …）属呈现层，统一住在本包。同一份 schema 既是表单描述，又是插件配置值类型的来源（`ConfigOf`）和运行时解析规则（`parseConfig`）；渲染宿主（WebUI）与宿主政策（runtime 的配置同步）也用它消费 schema。
 
@@ -75,7 +75,7 @@ export default definePlugin({
 
 `list` 与 `map` 的补充约定：
 
-- **默认值**：`default` 分别写数组与对象，`defaultsFrom` 按值拷贝。runtime 的配置同步合并默认值时递归合并对象，因此顶层或分组里的 `map` 会按键补齐：默认映射中的键总会回到用户配置里，删掉也无效。需要用户可删除的预置条目时，默认值写 `{}`，由插件代码兜底。`list` 不参与合并，用户配置了就整体采用。
+- **默认值**：`default` 分别写数组与对象，`defaultsFrom` 按值拷贝。`deepMergeDefaults` 合并默认值时递归合并对象（runtime 的配置同步与 WebUI 保存插件配置都用它），因此顶层或分组里的 `map` 会按键补齐：默认映射中的键总会回到用户配置里，删掉也无效。需要用户可删除的预置条目时，默认值写 `{}`，由插件代码兜底。`list` 不参与合并，用户配置了就整体采用。
 - **未知字段裁剪**：`removeExtraFields` 把 `map` 当作叶子整体保留，不按键裁剪。
 - **缺省 UI**（WebUI 的 SchemaForm）：两者都渲染为多行文本框。`list` 每行一项，空白行忽略；`map` 每行一条 `KEY=VALUE`，按第一个 `=` 切分，键去掉首尾空白，值原样保留，缺少 `=` 或键为空的行不保存。现有的数字、布尔项或值按字符串显示，编辑后写成字符串；其余无法按这套规则逐行表达的值（项或值本身含换行、`list` 含空白项、`null`、嵌套的数组或对象等）会让该字段只读显示，需在配置文件中编辑。旧版存下的空串按空列表 / 空映射显示，保存时写成 `[]` / `{}`。
 

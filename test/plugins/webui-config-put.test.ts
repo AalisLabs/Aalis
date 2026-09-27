@@ -150,6 +150,24 @@ describe('PUT /api/config 何时重启', () => {
     expect(calls).toEqual(['save', 'restart']);
   });
 
+  it('清空 slowThresholdMs（提交 null）→ 从文档删掉这个键、回到默认值，保存并重启', async () => {
+    const { store, calls, put } = setup();
+    store.slowThresholdMs = 30000;
+    const r = await put({ name: 'Aalis', logLevel: 'info', slowThresholdMs: null });
+    expect(r.status).toBe(200);
+    expect((r.body as { restart?: boolean }).restart).toBe(true);
+    expect(store.slowThresholdMs).toBeUndefined();
+    expect(calls).toEqual(['save', 'restart']);
+  });
+
+  it('文档里本来就没有 slowThresholdMs 时提交 null：不算改动，不重启', async () => {
+    const { store, calls, put } = setup();
+    const r = await put({ name: 'Aalis', logLevel: 'info', slowThresholdMs: null });
+    expect(r.status).toBe(200);
+    expect('slowThresholdMs' in store).toBe(false);
+    expect(calls).toEqual(['save']);
+  });
+
   it('内置前端把文档里缺省的 slowThresholdMs 按默认值回填后回传：不算改动，不写进文档、不重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ ...structuredClone(store), _schema: {}, slowThresholdMs: 60000, name: 'Bot' });
