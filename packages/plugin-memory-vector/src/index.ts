@@ -3,6 +3,7 @@ import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
+import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
@@ -120,6 +121,14 @@ type CrossSessionMode = 'isolated' | 'user' | 'platform' | 'all';
 
 /** 检索的可见范围：session=仅当前会话；platform=同平台所有会话；all=全部 */
 type Visibility = 'session' | 'platform' | 'all';
+
+/** 可见范围由窄到宽的次序 */
+const VISIBILITY_RANK: Record<Visibility, number> = { session: 0, platform: 1, all: 2 };
+
+/** 插件配置的可见范围与房间配置取较窄者；房间未设置或 session-manager 不在场时用插件配置 */
+function effectiveVisibility(cfgVisibility: Visibility, room: MemoryRecallScope | undefined): Visibility {
+  return room && VISIBILITY_RANK[room] < VISIBILITY_RANK[cfgVisibility] ? room : cfgVisibility;
+}
 
 /** 过了准入与可见范围的命中，带时间加权与同用户加权后的终分 */
 type RankedHit = VectorSearchResult & { finalScore: number };
@@ -297,6 +306,8 @@ const uses = {
   embedding,
   memory: optional(memory),
   tools: optional(tools),
+  /** 房间的召回范围（会话配置 memoryRecallScope）；不在场时只按插件配置 */
+  sessionManager: optional(sessionManager),
   events,
   hooks,
   contributions,
@@ -321,6 +332,7 @@ async function run({
   embedding,
   memory,
   tools,
+  sessionManager,
   events,
   hooks,
   contributions,
@@ -397,6 +409,15 @@ async function run({
   /** 插件配置对应的可见范围：user 档是「全库可见 + 同用户加权」，可见范围同 all */
   const cfgVisibility: Visibility =
     cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
+
+  /**
+   * 当前会话的可见范围：插件配置再按房间的召回范围（会话配置 memoryRecallScope）收窄。
+   * 每次检索现算，房间或平台档改了下一轮即生效；session-manager 是可选依赖，同样在调用点取。
+   */
+  function sessionVisibility(sessionId: string | undefined, platform: string): Visibility {
+    const room = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).memoryRecallScope : undefined;
+    return effectiveVisibility(cfgVisibility, room);
+  }
 
   // === embedding 模型（向量空间）===
   // 只有同一模型算出的向量才能互相比较。索引时 metadata 记下提供者的 modelId；本版之前写入的
@@ -809,7 +830,7 @@ async function run({
         const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
         const ranked = await rankCandidates(queryVec, provider.modelId, candidateCount, {
-          visibility: cfgVisibility,
+          visibility: sessionVisibility(curSessionId, curPlatform),
           curSessionId,
           curPlatform,
           boostUserId: cfg.crossSessionMode === 'user' ? curUserId : undefined,
@@ -960,7 +981,7 @@ async function run({
               description:
                 'session=仅当前会话；platform=同平台所有会话；all=全部。' +
                 `默认沿用插件配置（当前=${cfgVisibility}${cfg.crossSessionMode === 'user' ? '，当前用户本人发言或被 @ 的记录优先' : ''}）。` +
-                '为安全起见，scope 只能比插件配置更窄，不能更宽。',
+                '为安全起见，scope 只能比插件配置更窄，不能更宽；所在房间设了更窄的召回范围时再按房间收窄。',
             },
             contextWindow: {
               type: 'number',
@@ -1002,18 +1023,18 @@ async function run({
       const effectiveCrossSession =
         cfg.contextExpand.crossSession && (args.crossSession === undefined ? true : Boolean(args.crossSession));
 
-      // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility），再与请求取较窄者。
+      const curSessionId = callCtx.sessionId;
+      const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+
+      // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility）并按房间收窄，再与请求取较窄者。
       // 两者不能共用一张 rank 表：user 档是「全库可见 + 同用户加权」，作为加权策略它
       // 排在 platform 之前，于是「显式请求 platform」会被静默放宽回 all——与工具描述
       // 承诺的「scope 只能更窄」相反。
-      const visibilityRank: Record<Visibility, number> = { session: 0, platform: 1, all: 2 };
+      const allowedScope = sessionVisibility(curSessionId, curPlatform);
       const effectiveScope: Visibility =
-        requestedScope && visibilityRank[requestedScope] < visibilityRank[cfgVisibility]
+        requestedScope && VISIBILITY_RANK[requestedScope] < VISIBILITY_RANK[allowedScope]
           ? requestedScope
-          : cfgVisibility;
-
-      const curSessionId = callCtx.sessionId;
-      const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+          : allowedScope;
 
       try {
         const storeSize = await vectorstore.require().size();
