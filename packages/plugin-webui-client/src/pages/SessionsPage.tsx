@@ -37,11 +37,15 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-/** 页面动作 getInheritance 的回包：会话所属平台、继承值（不含会话自身 config）与每个键来自哪一层 */
+/**
+ * 页面动作 getInheritance 的回包：会话所属平台、受众（房间会话才有）、继承值（不含会话自身 config）
+ * 与每个键来自哪一层（audience 为平台档里只对群或只对私聊生效的条目）
+ */
 interface SessionInheritance {
   platform: string;
+  audience?: 'group' | 'private';
   values: SessionConfigData;
-  sources: Partial<Record<keyof SessionConfigData, 'defaults' | 'platform' | 'parent'>>;
+  sources: Partial<Record<keyof SessionConfigData, 'defaults' | 'platform' | 'audience' | 'parent'>>;
 }
 
 interface SessionDetail {
@@ -175,8 +179,11 @@ function SessionConfigEditor({ config, inheritance, options, onSave, onCancel }:
     const value = inherited[field];
     if (value === undefined || value === null) return <small className="session-config-inherit">继承（未设置）</small>;
     const source = inheritance?.sources[field];
+    const profile = `平台档 ${inheritance?.platform}`;
     const from =
-      source === 'platform' ? `平台档 ${inheritance?.platform}` : source === 'parent' ? '父会话' : source === 'defaults' ? '默认' : '';
+      source === 'platform' ? profile
+        : source === 'audience' ? `${profile}（${inheritance?.audience === 'private' ? '私聊' : '群'}）`
+        : source === 'parent' ? '父会话' : source === 'defaults' ? '默认' : '';
     const shown = format(value as NonNullable<SessionConfigData[K]>);
     return <small className="session-config-inherit">{from ? `继承（${shown}，来自 ${from}）` : `继承（${shown}）`}</small>;
   };
@@ -324,8 +331,12 @@ function SessionConfigEditor({ config, inheritance, options, onSave, onCancel }:
             placeholder="继承"
           />
         </label>
-        {inheritance?.sources.remoteAgentTypes === 'platform' && (
-          <span className="session-config-warn">平台档里写了远端类型，这个平台所有房间都会继承</span>
+        {(inheritance?.sources.remoteAgentTypes === 'platform' || inheritance?.sources.remoteAgentTypes === 'audience') && (
+          <span className="session-config-warn">
+            平台档里写了远端类型，这个平台
+            {inheritance.sources.remoteAgentTypes === 'platform' ? '所有房间' : inheritance.audience === 'private' ? '的所有私聊' : '的所有群'}
+            都会继承
+          </span>
         )}
         {REMOTE_LIMIT_FIELDS.map(([key, label]) => (
           <label key={key} className="session-config-field">

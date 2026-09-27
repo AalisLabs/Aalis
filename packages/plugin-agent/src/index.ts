@@ -2086,9 +2086,9 @@ function run(caps: Caps): void {
   // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
 
   /**
-   * 组装某会话某字段的视图行：生效值与来源（会话覆盖 / 父会话 / 平台档 <平台> / 默认）；会话有覆盖时另起一行
-   * 列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，与实际回合同一口径
-   * （房间会话按出生平台选档）。pick 从配置里提取并格式化该字段。
+   * 组装某会话某字段的视图行：生效值与来源（会话覆盖 / 父会话 / 平台档 <平台>（<受众>） / 平台档 <平台> / 默认）；
+   * 会话有覆盖时另起一行列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，
+   * 与实际回合同一口径（房间会话按出生平台与受众选档）。pick 从配置里提取并格式化该字段。
    */
   type CfgView = { llm?: { provider: string; model: string }; persona?: string; think?: boolean | null } | undefined;
   function resolutionLines(
@@ -2103,7 +2103,15 @@ function run(caps: Caps): void {
     const inheritance = smSvc.resolveInheritance(sessionId, platform);
     const inherited = pick(inheritance.values);
     const layer = inheritance.sources[key];
-    const from = layer === 'parent' ? '父会话' : layer === 'platform' ? `平台档 ${inheritance.platform}` : '默认';
+    const profile = `平台档 ${inheritance.platform}`;
+    const from =
+      layer === 'parent'
+        ? '父会话'
+        : layer === 'audience'
+          ? `${profile}（${inheritance.audience === 'private' ? '私聊' : '群'}）`
+          : layer === 'platform'
+            ? profile
+            : '默认';
     // null 与 undefined 同义（BSON 持久化读回 null），都表示没有覆盖
     const own = pick(smSvc.getSession(sessionId)?.config);
     if (own == null) return [`${label}: ${inherited ?? '(默认)'}  [来源: ${from}]`];
