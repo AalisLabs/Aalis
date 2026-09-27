@@ -77,9 +77,9 @@ function registerImageSender(caps: Caps): void {
   const { tools, events, logger, media, memory, archive } = caps;
   const storage = createStorageGateway(caps.storage);
 
-  // 把存储库内的文件解析为发送可用的数据串：
-  // - 只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、记忆库等非媒体文件）
-  // - 可解析本地路径时转 file://（供 daemon 直链），否则保留原 URI
+  // 核对存储库内的文件能否按 kind 发送：只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、
+  // 记忆库等非媒体文件）。放行的交出 storage URI，送达形态由平台适配器决定：onebot 读回内容内联，超过内联上限
+  // 时再核对一次文件头才交宿主路径；预先换成 file:// 的话，适配器落不了盘的大文件只能原样透传、无从核对
   async function loadStorageMedia(
     uri: string,
     kind: MediaKind,
@@ -93,8 +93,7 @@ function registerImageSender(caps: Caps): void {
     }
     const rejection = checkMediaHead(head, kind);
     if (rejection) return { ok: false, error: rejection };
-    const local = await tryResolveLocal(storage, uri);
-    return { ok: true, data: local ? `file://${local}` : uri };
+    return { ok: true, data: uri };
   }
 
   // ── preview_image ─────────────────────────────────────────────────────────
@@ -436,15 +435,4 @@ async function resolveHistoryRef(
     }
   }
   return null;
-}
-
-/** 如果 storage 支持 resolveLocalPath，则解析为本地绝对路径供下游 file:// 直链使用。 */
-async function tryResolveLocal(storage: StorageService, uri: string): Promise<string | null> {
-  if (typeof storage.resolveLocalPath !== 'function') return null;
-  try {
-    const p = await storage.resolveLocalPath(uri, 'read');
-    return p ?? null;
-  } catch {
-    return null;
-  }
 }
