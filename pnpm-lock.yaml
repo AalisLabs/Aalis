@@ -433,6 +433,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-publish:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-remote-agent:
     devDependencies:
       '@aalis/core':
@@ -1055,6 +1067,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
+      '@aalis/util-offline-render':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-offline-render
       puppeteer:
         specifier: ^24.0.0
         version: 24.40.0(typescript@5.9.3)
@@ -1833,6 +1848,9 @@ importers:
 
   packages/plugin-paper:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-doctor':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-doctor
@@ -1842,6 +1860,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-publish':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-publish
       '@aalis/api-remote-agent':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-remote-agent
@@ -1957,6 +1978,55 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-publish-review:
+    dependencies:
+      '@aalis/api-code-sandbox':
+        specifier: workspace:>=0.6.0 <1.0.0
+        version: link:../api-code-sandbox
+      '@aalis/api-doctor':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-doctor
+      '@aalis/api-llm':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-llm
+      '@aalis/api-publish':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-publish
+      '@aalis/api-storage':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-storage
+      '@aalis/api-tools':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-tools
+      '@aalis/api-webui':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-webui
+      '@aalis/schema-config':
+        specifier: workspace:>=0.13.1 <1.0.0
+        version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
+      '@aalis/util-json-repair':
+        specifier: workspace:>=0.5.4 <1.0.0
+        version: link:../util-json-repair
+      '@aalis/util-media-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-media-signature
+      '@aalis/util-offline-render':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-offline-render
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -2967,6 +3037,34 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-works-site:
+    dependencies:
+      '@aalis/api-doctor':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-doctor
+      '@aalis/api-publish':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-publish
+      '@aalis/api-storage':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-storage
+      '@aalis/api-webui':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-webui
+      '@aalis/schema-config':
+        specifier: workspace:>=0.13.1 <1.0.0
+        version: link:../schema-config
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/runtime:
     dependencies:
       '@aalis/api-host-config':
@@ -3070,6 +3168,19 @@ importers:
       undici:
         specifier: ^6.0.0
         version: 6.28.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/util-offline-render:
+    dependencies:
+      puppeteer:
+        specifier: ^24.0.0
+        version: 24.40.0(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
