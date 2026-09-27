@@ -102,7 +102,8 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启动时自动打开浏览器',
     default: true,
-    description: '启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭',
+    description:
+      '访问 token 为新生成时（persist 模式首次生成、ephemeral 模式每次生成）以含 token 的 URL 自动开启默认浏览器；沿用已有 token（persist 读回已持久化的 token、fixed 用配置的 fixedToken）时不打开；fixed 模式 fixedToken 为空时按 persist 处理。SSH/headless 环境建议关闭',
   },
   tokenMode: {
     type: 'select',
@@ -414,6 +415,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // follow 对已在线的 storage 同步首挂，晚上线时补读。持久化的那份优先（浏览器里 30 天的 cookie
   // 就是它）；只认第一次成功，之后 storage 换人不再换 token。
   let tokenSettled = uiConfig.tokenMode === 'ephemeral' || fixedToken !== '';
+  // autoOpen 只在 token 是本次新生成时打开浏览器：沿用已有 token（fixed、persist 读回）时浏览器里的 cookie 仍有效，
+  // 再开一页只是重复。app:ready 是粘性事件，本插件每次 bounce 都会重新收到，不按此判断就每次重载多开一个标签页
+  let tokenFresh = fixedToken === '';
   let tokenLoading: Promise<void> | undefined;
   caps.storage.follow(() => {
     if (tokenSettled) return;
@@ -423,6 +427,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         const existing = (typeof raw === 'string' ? raw : raw.toString('utf-8')).trim();
         if (existing) {
           tokenSettled = true;
+          tokenFresh = false;
           if (existing !== authToken) {
             authToken = existing;
             if (listeningUrl) void writeAccessFile(listeningUrl, authToken);
@@ -571,9 +576,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     const hasMedia = services.get('media') !== undefined;
     const llmHasVision = listLLMModels(caps.llm).some(e => e.instance.capabilities.includes('vision'));
     const hasFileReader = services.get('file-reader') !== undefined;
+    const appName = caps.hostConfig.current?.get('name') ?? 'Aalis';
 
     res.json({
-      name: personaSvc?.getPersonaName() ?? caps.hostConfig.current?.get('name') ?? 'Aalis',
+      /** 对话对象的显示名：装有人设时是人设名，否则同 appName */
+      name: personaSvc?.getPersonaName() ?? appName,
+      /** 全局配置里的应用名称，每次实时读配置文档 */
+      appName,
       /** 上传能力：客户端据此决定显示哪些上传按钮 */
       uploadCapabilities: {
         /** 是否支持图片上传（media 可用 或 LLM 声明了 vision） */
@@ -907,14 +916,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 触发指定 provider 重新探测远端模型列表（用于 webui 上的"刷新模型"按钮）
   // 仅对在 LLMModel 上实现了 refresh() 的 provider 生效（远端动态发现型，如 Ollama / OpenAI）。
   // 同 provider 下所有 model entries 共享同一份 refresh 闭包，调任一个 entry 即可。
+  // 按 providerId 找条目，与 /api/llm-providers 的聚合同一口径：条目的 contextId 是 `<provider>/<model>`，不等于 provider
   expressApp.post('/api/llm-providers/:contextId/refresh', gate(), async (req, res) => {
     const contextId = req.params.contextId;
     try {
-      const llmEntries = caps.llm.all();
-      const target = llmEntries.find(e => e.contextId === contextId && typeof e.instance.refresh === 'function');
+      const llmEntries = caps.llm.all().filter(e => e.instance.providerId === contextId);
+      const target = llmEntries.find(e => typeof e.instance.refresh === 'function');
       if (!target) {
         res.status(404).json({
-          error: `no refreshable LLM provider registered for contextId="${contextId}" (provider 可能为静态注册型，不支持运行时刷新)`,
+          error:
+            llmEntries.length > 0
+              ? `提供者 ${contextId} 不支持运行时刷新模型列表（例如关闭了模型发现 discoverModels）`
+              : `提供者 ${contextId} 当前没有已注册的模型，无法刷新`,
         });
         return;
       }
@@ -1729,7 +1742,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         }
         logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
       })();
-      if (uiConfig.autoOpen) openBrowser(accessUrl, createProcessGateway(caps.process));
+      if (uiConfig.autoOpen && tokenFresh) openBrowser(accessUrl, createProcessGateway(caps.process));
     });
   });
 
