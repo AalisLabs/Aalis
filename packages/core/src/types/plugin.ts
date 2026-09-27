@@ -18,7 +18,9 @@ export interface PluginEntry {
   state: PluginState;
   /**
    * 激活失败的说明：错误消息后接 cause 链摘要（各层消息首行，以 ` ← ` 相连，至多 5 层；AggregateError 层之后接子错误首行，
-   * 至多 3 条）。非 Error 的值只取首行、限 200 字符。
+   * 至多 3 条）。非 Error 的值只取首行、限 200 字符。另有两种 core 写入的固定说明：
+   * - abort 后超过宽限仍未停止：「未在宽限内停止（…）」；
+   * - 初始化期间 required 依赖反复缺失、自动重试用尽：「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），…已停止；…」。
    */
   error?: string;
   /** 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务） */

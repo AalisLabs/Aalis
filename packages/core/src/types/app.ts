@@ -48,8 +48,9 @@ export interface PluginStatusEntry {
  *
  * 管理动作（register / unload / enable / disable / bounce / updateConfig）的返回值同一口径：
  * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、
- * 'disposed' 单向终态、disabled 态 bounce、定义或实例 id 校验失败）；**true = 其余，含主体已在目标态的幂等情形**。
- * 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 'disposed' 在途 debug），调用方不必重复。
+ * 'disposed' 单向终态、disabled 态不带配置的 bounce、定义或实例 id 校验失败）；**true = 其余，含主体已在目标态的幂等情形**。
+ * 每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 core 造的对象时按安装问题记 error；主体不存在、
+ * 'disposed' 在途与停机中 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
  * 停机进行中，unload 汇入停机计划后立即返回 true（不等待拆卸完成，拆卸由停机计划执行）；disable 先判 'disposed'
  * 终态再判停机——停机拆卸开始时已把有激活的条目标成 'disposed'，此后对它们 disable 返回 false，其余情形同 unload
@@ -65,12 +66,13 @@ export interface PluginManagerService {
   getPlugin(instanceId: string): PluginEntry | undefined;
   /**
    * 增量重载单个插件：拆掉当前激活 → 转 pending → 重算后重新激活。`opts.config` 换成新的运行配置。
-   * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。
+   * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。disabled 态只换上 `opts.config`、保持禁用，
+   * 启用时按它激活；不带配置时被政策挡下（warn，返回 false）。停机进行中一律返回 false、不换配置（记 debug）。
    * 不得在插件 apply / onDrain / onDispose 内 await 针对自身或自身 required 提供者的本动作：拆卸要等这些回调返回，
    * 两边至多互等到宽限超时，apply 被判「未在宽限内停止」。
    */
   bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean>;
-  /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳，调用约束同 bounce */
+  /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳，调用约束同 bounce；禁用态只换配置、保持禁用 */
   updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean>;
   /** 启用插件 */
   enable(instanceId: string): Promise<boolean>;
