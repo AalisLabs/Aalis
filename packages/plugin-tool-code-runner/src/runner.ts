@@ -36,6 +36,8 @@ export interface RunResult {
   error?: string;
   /** 回合中止且脚本是被信号结束的 */
   aborted?: true;
+  /** 随 aborted 给出的文字说明（与 exec 的「命令已随回合中止」同一口径） */
+  message?: string;
   /** 回合已中止、但脚本不是被信号结束的（中止前已正常退出等）：按实际退出回报并加此注 */
   note?: string;
 }
@@ -134,14 +136,14 @@ export async function runCode(
         if (signal?.aborted) {
           // 判在 timedOut 之前：中止宽限到点的 SIGKILL 也算中止。被信号结束的才说被中止；中止前已退出
           // 或 Windows 下强制结束（signal 可能为 null）的按实际退出回报，免得下一轮把已经生效的脚本再跑一遍
-          if (e.result.signal !== null) return { ...output, aborted: true };
+          if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已随回合中止' };
           return { ...output, note: '回合已中止' };
         }
         const timedOut = e.result.signal === 'SIGKILL';
         return { ...output, ...(timedOut ? { timedOut: true } : {}) };
       }
       // 没有退出结果：spawn 失败，或回合已中止时 spawn 同步抛出（不起进程）
-      if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true };
+      if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已随回合中止' };
       return {
         exitCode: -1,
         stdout: '',
