@@ -11,7 +11,7 @@ import { userRelation } from '@aalis/api-user-relation';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
-import { WellKnownKinds } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 
 // ════════════════════════════════════════════════════════════
@@ -1171,9 +1171,9 @@ function registerUserProfile({
     try {
       if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.historyForExtraction);
-      // proactive 代发任务（kind=CrossSessionDelegation，如 workflow agent 节点）是系统发出的指令，
-      // 不是该用户发言，不能作为他的用户存档提取语料
-      const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
+      // 指令类消息（proactive 代发任务、宿主通知）是宿主或系统撰写的，不是任何人的发言，
+      // 不能作为用户存档的提取语料
+      const history = rawHistory.filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
       const snapshotFacts = (await loadProfile(mem, userKey))?.facts ?? [];
@@ -1305,7 +1305,7 @@ function registerUserProfile({
       const mem = memory.current;
       if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.selfReflectHistory);
-      const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
+      const history = rawHistory.filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
       // 至少需要一些 assistant 发言作为"自反思"的材料
       if (!history.some(m => m.role === 'assistant' && m.content)) return;
       const selfKey = getSelfKey();
@@ -1535,7 +1535,7 @@ function registerUserProfile({
       const mem = memory.current;
       if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.instructionHistoryForExtraction);
-      const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
+      const history = rawHistory.filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
       if (history.length === 0) return;
       const doc = await loadInstructions(mem);
       const ops = await llmExtractInstructions(history, doc.instructions, authorityFn);

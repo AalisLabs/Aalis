@@ -117,13 +117,22 @@ function createArchiveService({ memory, media, events, logger, config }: Caps): 
       // proactive 代发任务（如 workflow agent 节点）：作为 notice 角色 + kind='cross-session-delegation' 落盘，
       // 与 plugin-agent 的 buildMessages 保持一致，避免目标会话下次回看历史时
       // 把派发任务误读为「曾经有用户说过这个」。
-      const isProactive = working.triggerType === 'proactive';
+      //
+      // 宿主通知同样落成 notice，kind='host-notice'。只归档宿主正文：注入方包好的不可信段
+      // （hostNotice.untrusted）不写进消息也不写进 metadata——归档的 notice 出口转成 system，
+      // 之后这个房间每一轮都看得到它，不可信段只能在当轮出现。
+      if (working.hostNotice) meta.hostNoticeKind = working.hostNotice.kind;
+      const kind = working.hostNotice
+        ? WellKnownKinds.HostNotice
+        : working.triggerType === 'proactive'
+          ? WellKnownKinds.CrossSessionDelegation
+          : undefined;
 
       const message: Message = {
-        role: isProactive ? 'notice' : 'user',
-        kind: isProactive ? WellKnownKinds.CrossSessionDelegation : undefined,
+        role: kind ? 'notice' : 'user',
+        kind,
         content,
-        name: isProactive ? undefined : getMessageName(working.userId),
+        name: kind ? undefined : getMessageName(working.userId),
         timestamp: Date.now(),
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
