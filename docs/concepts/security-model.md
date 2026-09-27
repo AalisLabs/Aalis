@@ -140,6 +140,12 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 > 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
 > `npm create aalis` 只给已选装的 `cli` / `webui` 写 `['*']`，多人平台一律不代开。
 >
+> 房间会话按出生平台与受众选档（见 [session-manager 服务](../services/session-manager.md) §2.4），
+> 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。
+> 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`，`workflow_define`
+> 为 sensitive、不需确认），`tool` 节点又不过分组闸，所以房间的平台档不要开 `workflow` 组：
+> 开了之后，房间里等级 1 的成员就能借 workflow 用到分组之外的工具，包括以分组闸为前提维持 public 的 `http_request`。
+>
 > 这道闸此前**只在列举面生效**：`ToolRegistry.execute` 按名直调不校验分组，被提示注入的模型
 > 叫出一个本回合没下发给它的名字即可执行（已实测复现）。现已在执行面补齐同一判据——
 > 调用方传了 `enabledGroups` 时不命中即拒。上面「不在 enabledGroups 里故不可达」的判据
@@ -170,6 +176,8 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 这改变了上面 2026-08-23 维持 public 的裁定。被动注入不经工具，不受档位约束：该插件的 `injectEnabled` 开启
 （默认）时，其他会话的近期消息原文仍会注入每个回合的提示词。注入范围跟随 `scope`，这一项同时是工具的默认作用域：
 默认 `same-platform` 取同平台其他会话，含别人与 bot 的私聊；设为 `cross-platform` 时还包括 WebUI 等其他平台的会话。
+IM 房间的「同平台」按房间的出生平台算：owner 从 WebUI 往群里插话时，被动注入、`recent_messages`、`plugin-memory-vector`
+的同平台召回与 `session_get_history` 的同平台裁决都按该群的平台取，不带入 owner 自己 WebUI 会话的内容。
 注入内容另受 `limit`、`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束。私聊内容经注入进入群回合
 这一点目前维持原样，是否保留尚未定案，它与 `plugin-tool-onebot` 默认不许在群会话里读私聊历史
 （`sessionHistory.allowGroupReadPrivate: false`）并不一致；不需要的关掉 `injectEnabled`。
@@ -186,7 +194,7 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
   写 `remoteAgentTypes`，并有非零的本房间与全局每日金额上限，否则一律拒绝。
 - **真人判据**：交任务与取消只受理由真人当面发起的回合，判据是工具调用上下文的 `inbound`
   （只由 agent 工具循环填写）存在且 `inbound.source` 为空，并且有效授权身份的 `userId` 非空。
-  定时任务、闲置触发、workflow、mcp-server、宿主通知与群聊 interval 回合都被拒。只看 `actor` 不够：
+  定时任务、闲置触发、workflow、子任务、mcp-server、宿主通知与群聊 interval 回合都被拒。只看 `actor` 不够：
   定时任务注入的回合带着创建者的 `actor`。
 - **回显与上限**：受理前在房间里原样回显任务正文，远端收到什么房间里就看到什么；每日金额与队列有上限。
   受理之后房间开关、白纸指向、类型白名单、出网与同账号隔离变了的，排队的任务出队时重核，不过就判失败。
@@ -194,6 +202,19 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 - **封禁**：被封禁的用户（负等级）由执行守卫挡住，handler 不重复查。
 
 工具调用上下文里没有可靠的「本机面」信号，owner 在群里发起的任务同样计入每日上限。
+
+### 宿主通知的身份
+
+宿主通知（`hostNotice`，见 [schema-message](../api/schema-message.md)）不是任何人的发言，默认不带任何人的权限：
+`actor` 为无主体的 `selfInitiatedActor`，按默认等级裁决、永不视为 owner。延续某次工具调用的通知沿用那次调用的
+身份、不高于它：`actor` 取那次调用的有效授权身份，`hostNotice.callerUserId` 取那次调用的 `userId`，agent 用后者
+填这一轮工具调用上下文的 `userId`，确认由起它的人应答、会话授予按那人匹配；等级按 `actor` 实时查，其间被调低
+或封禁的按新值。这一轮的 `inbound.source` 非空，要求真人当面发起的工具照样拒绝。`callerUserId` 与 `actor`
+同一信任面，只有插件能设（平台适配器与 WebUI 服务端都按字段逐个构造入站消息）。
+
+允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 显式登记，现在只有一处：
+`plugin-tool-system` 的后台命令结束通知（`exec_background` 起的进程自行退出时通知起它的会话，由结束通知开的
+回合里再起的进程不再通知，链只延续一层；判据只看本轮来源，通知回合经子任务、workflow 转一手开出的回合里起的进程照常通知，见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。白纸的完成通知不延续任何人的身份。
 
 ---
 
@@ -342,16 +363,20 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
   待交付提示里没有远端说明。任务的失败原因只写宿主撰写的类别，远端报错的原文（可能带远端可控的成品路径）
   只进日志。任务名由她起、群友可以诱导，去掉控制字符、格式字符、行与段分隔符和「」后只占一行，在通知与
   待交付提示里放在「」里，伪造不出另起一行的宿主行。宿主通知不带发言者字段，不进向量记忆，也不进关系图与
-  用户档案的抽取窗口。
+  用户档案的抽取窗口；跨会话近期消息（plugin-memory-history）不把它带进别的会话。
 - **成品按类型发回**：远端给的文件名不进本机路径与会话历史，本机文件名由宿主生成；类型按文件头判定，
   只有 PNG、JPEG、GIF、WebP、MP4 与单个 HTML 能经 `paper_send` 发回，扩展名须与内容一致，压缩包、
   可执行文件、脚本、SVG 等一律拒发。WebUI 只把位图显示在页面里，其余（含 HTML、SVG）只能按
   `application/octet-stream` 下载，不在 WebUI 源里渲染。
 - **白纸根不被回滚记账**：成品写在 storage-local 的内部根 `paper:/`（`data/stage/paper`），kind 为 `paper`，
   checkpoint 不给它记账，别的会话回滚不会删掉成品。
-- **onebot 出站按文件头核对**：图片、语音、视频内联前核对格式头，不符就拒发；超过内联上限（10 MiB）的
-  storage 文件改交宿主路径之前同样核对。发送工具接受任意 storage URI，这道核对挡住了把任意可读文件
-  （如含各家模型 key 的 `aalis.config.yaml`）冒充图片发出。例外见下文「不止血的风险敞口」的大文件一条。
+- **onebot 出站按文件头核对**：图片、语音、视频按格式头分流，能内联的走消息段，认得出但不能内联的媒体
+  改经文件上传，都不是就拒发；超过内联上限（10 MiB）的 storage 文件改交宿主路径之前同样核对（按字节区间
+  读出开头 4 KiB）。发送工具接受任意 storage URI，这道核对挡住了把任意可读文件（如含各家模型 key 的
+  `aalis.config.yaml`）冒充图片发出。`send_attachment` 核对过文件头之后交出的仍是 storage URI，大文件到了
+  适配器照样再核对一次；不经核对的只有插件代码直接交来的 `file://` 路径与本机绝对路径，模型经
+  `send_attachment` 发的走不到这条。交宿主路径是送达方式的限制：实现端在容器里（如 Docker 里的 NapCat）
+  读不到宿主路径，超过 10 MiB 的本机文件发不出去。
 
 ### 召回收窄的范围
 
@@ -397,18 +422,13 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 ### 不止血的风险敞口
 
-以下三条已知、本批不改（前两条等凭据与污点机制上线后处理）：
+以下两条已知、本批不改，等凭据与污点机制上线后处理：
 
 - **白纸文件没有来源标记**：`plugin-tool-system` 的 `file.allowedRoots` 放开 `data` 或写成 `'*'` 时，
   拿得到文件工具的会话（主要是 owner 自己的）能读到白纸目录（`data` 根映射整个 `data/` 时，
   `data:/stage/paper/…` 与 `paper:/…` 是同一批文件；`'*'` 还包括 `paper` 根本身），读到时不计污点。
 - **`send_attachment` 能按路径发白纸根里的媒体**：它接受任意 storage URI、不带分组，别的房间被注入时，
   可以按路径把白纸里的图片与视频发走。
-- **超过落盘上限的大文件以宿主路径交给 daemon、不核对文件头**：`send_attachment` 把解析得到本机路径的
-  storage 文件写成 `file://<宿主路径>`；onebot 出站先把附件落盘到 `data/`（超过 `attachmentCache.maxBytes`，
-  缺省 10 MiB，就落不了盘），落了盘的按上面的文件头核对，落不了盘的 `file://` 原样交给 daemon，不经核对。
-  daemon 与 Aalis 共享文件系统的部署里，任意可读的大文件能以图片、视频发出；NapCat 在容器里、读不到宿主路径时
-  发不出。
 
 ---
 

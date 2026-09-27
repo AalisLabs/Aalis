@@ -199,9 +199,10 @@ const DEFAULT_AGENT_TIMEOUT_SEC = 120;
 async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const instruction = interpolateString(node.instruction, ec.vars, ec.outputs);
   // 省略 sessionId 时为本节点生成一次性隔离子会话，确保并行 agent 节点互不串扰、join 不混淆。
+  // 只用 `::` 分段：带单冒号的 id 会被 api-gateway 的 resolveSessionOrigin 当成房间，按出生平台选档。
   const sessionId = node.sessionId
     ? interpolateString(node.sessionId, ec.vars, ec.outputs)
-    : `workflow:agent:${ec.runId}:${node.id}`;
+    : `workflow::${ec.runId}::${node.id}`;
   const platform = interpolateString(node.platform ?? 'workflow', ec.vars, ec.outputs);
   const timeoutSec = node.timeoutSeconds && node.timeoutSeconds > 0 ? node.timeoutSeconds : DEFAULT_AGENT_TIMEOUT_SEC;
   const timeoutMs = Math.floor(timeoutSec * 1000);

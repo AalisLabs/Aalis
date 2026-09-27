@@ -194,6 +194,7 @@ describe('getInheritance：服务端推出会话所属平台，回继承值与�
     const got = await action('getInheritance')({ sessionId: room, platform: 'webui' });
     expect(got).toEqual({
       platform: 'onebot',
+      audience: 'group',
       values: { persona: 'from-defaults', paperName: '<群白纸名>', remoteAgentTypes: ['<远端代理实例 id>'] },
       sources: { persona: 'defaults', paperName: 'platform', remoteAgentTypes: 'platform' },
     });

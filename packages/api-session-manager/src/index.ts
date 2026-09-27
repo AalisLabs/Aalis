@@ -21,7 +21,7 @@ export type MemoryRecallScope = 'session' | 'platform' | 'all';
  * 配置解析优先级（从高到低）：
  * 1. 会话自身 config（手工覆盖 / /model 指令设置）
  * 2. 父会话默认配置（sessionDefaults，供子会话继承）
- * 3. 平台默认配置（platformProfiles[platform]）
+ * 3. 平台默认配置（platformProfiles[platform]，房间会话另叠加受众条目）
  * 4. 全局默认（getDefaults()，即 @aalis/plugin-session-manager 的 defaults 配置）
  */
 export interface SessionConfig {
@@ -95,11 +95,37 @@ export function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (t
 /**
  * 平台配置模板
  *
- * 为每个平台设定默认的 SessionConfig。
- * 新建会话时，根据消息来源的平台自动应用对应模板。
+ * 为每个平台设定默认的 SessionConfig，经继承链实时生效：房间会话按出生平台选档，其余按入口平台
+ * （见 {@link SessionManagerService.resolveInheritance}）。同一平台可另写只对群或只对私聊生效的受众条目，
+ * 只列与基础档不同的键，叠加在基础档上。
  * 在 session-manager 的 configSchema 中通过 WebUI 配置。
  */
 export type PlatformProfile = SessionConfig;
+
+/** 继承链的层：全局 defaults、平台档、平台档的受众条目、父会话的 sessionDefaults */
+export type InheritanceSource = 'defaults' | 'platform' | 'audience' | 'parent';
+
+/** 继承链的解析结果：选档用的平台与受众、继承值与每个键的来源层 */
+export interface SessionInheritance {
+  /** 选档用的平台：有出生平台的会话为出生平台，否则为调用方传入的入口平台 */
+  platform?: string;
+  /** 选档用的受众：有出生平台的会话为它的受众，owner 面会话没有（不取受众条目） */
+  audience?: Exclude<RoomAudience, 'owner'>;
+  /** 继承值（不含会话自身 config 与 sessionDefaults） */
+  values: Omit<SessionConfig, 'sessionDefaults'>;
+  /** 每个键最终来自哪一层 */
+  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;
+}
+
+/** 会话种类：room 为聊天用的会话（IM 群与私聊、owner 在 WebUI 与 CLI 的聊天）；task 为挂在发起它的会话下面的子会话 */
+export type SessionKind = 'room' | 'task';
+
+/**
+ * 房间受众：private、group 为 IM 房间；owner 只表示「不是 IM 房间」（没有出生平台的根会话，含 mcp-server、
+ * `workflow::<id>` 等），只供列表分区，不代表 owner 在场，按受众定触及上限前须按主体重判。
+ * 非房间会话（含以后的工作会话）的 id 不得含单冒号，否则会被当成房间。
+ */
+export type RoomAudience = 'owner' | 'private' | 'group';
 
 /**
  * 会话信息
@@ -134,6 +160,12 @@ export interface SessionInfo {
   result?: string;
   /** 扩展元数据（供插件自由使用） */
   metadata?: Record<string, unknown>;
+  /** 由 session-manager 按 parentId 推出（有 parentId 为 task），不收调用方传值 */
+  kind: SessionKind;
+  /** 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话为 undefined */
+  originPlatform?: string;
+  /** 只有 room 带：有出生平台的取 group 或 private，其余为 owner */
+  audience?: RoomAudience;
 }
 
 /**
@@ -144,6 +176,23 @@ export interface SessionInfo {
 export interface SessionTreeNode {
   session: SessionInfo;
   children: SessionTreeNode[];
+}
+
+/** 会话列表的分区：owner=我的会话（WebUI、CLI 等 owner 面会话），rooms=IM 房间 */
+export type SessionListSection = 'owner' | 'rooms';
+
+/** 按受众分区的纯函数：private、group 为 rooms，其余为 owner。服务端页面动作与以后的客户端协议共用 */
+export function sessionListSection(session: Pick<SessionInfo, 'audience'>): SessionListSection {
+  return session.audience === 'private' || session.audience === 'group' ? 'rooms' : 'owner';
+}
+
+/** 会话列表的一个分区 */
+export interface SessionTreeSection {
+  key: SessionListSection;
+  /** 显示名：「我的会话」「IM 房间」 */
+  label: string;
+  /** 根会话（子会话挂在各自父节点下） */
+  nodes: SessionTreeNode[];
 }
 
 /**
@@ -161,7 +210,11 @@ export interface SessionManagerService {
   // ---- CRUD ----
 
   /** 创建新会话，返回完整的 SessionInfo */
-  createSession(opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>): Promise<SessionInfo>;
+  createSession(
+    opts?: Partial<
+      Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'>
+    >,
+  ): Promise<SessionInfo>;
   /** 获取指定会话（不存在返回 undefined） */
   getSession(id: string): SessionInfo | undefined;
   /** 列出会话（可按 parentId 和 status 过滤） */
@@ -174,7 +227,8 @@ export interface SessionManagerService {
   /**
    * 按精确 id 幂等 upsert 会话。
    * - 已存在 → 合并式 update（emit `session:updated`）
-   * - 不存在 → 以传入 id（**不自生成**）建 active 记录（emit `session:created`）
+   * - 不存在 → 以传入 id（**不自生成**）建记录（emit `session:created`）；`status` 缺省时，这个会话有回合在跑为
+   *   `active`（回合结束时收口），否则为 `waiting`
    *
    * 用于平台派生 sessionId（如 `onebot:<self>:group:<gid>`）：这些 id 不经
    * createSession 预建，首次设置模型/人设覆盖时需按其原样 id 落档——而 createSession
@@ -192,7 +246,12 @@ export interface SessionManagerService {
   /** 创建子会话 */
   createChildSession(
     parentId: string,
-    opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
+    opts?: Partial<
+      Omit<
+        SessionInfo,
+        'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'
+      >
+    >,
   ): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];
@@ -210,23 +269,25 @@ export interface SessionManagerService {
    * 解析指定会话的最终生效配置
    *
    * 合并优先级：会话 config > 父会话 sessionDefaults > 平台 profile > 全局默认
-   * 返回合并后的完整 SessionConfig（不含 sessionDefaults 字段）
+   * 返回合并后的完整 SessionConfig（不含 sessionDefaults 字段）。平台档的选法同 {@link resolveInheritance}：
+   * 房间会话钉死出生平台，传入的入口平台只对没有出生平台的会话起作用。
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
 
   /**
-   * 解析「继承默认」——即如果当前会话不设置任何字段，会从父/平台 profile 拿到什么。
+   * 继承链解析（不含会话自身 config）：全局 defaults → 平台档 → 平台档的受众条目 → 父会话 sessionDefaults。
+   * 会话有出生平台（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按出生平台选档、忽略传入的 platform，
+   * 并按它的受众（group 或 private）叠加受众条目；没有时（WebUI、CLI 等 owner 面会话）按传入的入口平台，不取受众条目。
    *
-   * 与 resolveConfig 的区别：**不包含** session 自身 config，只合并：
-   * 1. 平台 profile（最低）
-   * 2. 父会话 sessionDefaults（最高）
-   *
-   * 适用场景：WebUI 显示「继承 (xxx)」提示时，应该展示"未覆盖前的默认值"而非当前生效值，
-   * 否则用户一旦覆盖了某字段，"继承"提示就会变成他自己刚刚设置的值，产生迷惑。
+   * WebUI 的「继承 (xxx)」提示与 `/session` 的来源显示用它：只看继承值，才不会把会话自己的覆盖当成继承来的。
    */
-  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+  resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
 
-  /** 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口） */
+  /**
+   * 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口）。
+   * 受众条目不在返回之列；要知道某个房间的某个键是否来自平台档，看 `resolveInheritance(id).sources[键]`
+   * 是 `platform` 还是 `audience`。
+   */
   getPlatformProfiles(): Record<string, PlatformProfile>;
 
   /**

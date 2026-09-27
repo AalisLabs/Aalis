@@ -77,6 +77,8 @@ export default definePlugin({
    （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
    `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
+可见范围为同平台时（`crossSessionMode: platform`、会话配置 `memoryRecallScope` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取房间的出生平台（[api-gateway](../api/api-gateway.md#出生平台解析) 的 `resolveSessionOrigin`），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台，入口也缺省时取会话 ID 第一个 `:` 之前的一段。候选向量记下的平台或其会话 ID 的第一段等于当前平台，即算同平台。
+
 ## 按房间收窄召回
 
 会话配置的 `memoryRecallScope`（`session` / `platform` / `all`，见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间的召回范围收得比 `crossSessionMode` 更窄：被动召回与 `memory_recall` 都取插件配置映出的可见范围与房间范围中较窄的一个，房间写得更宽时按插件配置。`memory_recall` 的 `scope` 参数再与这个结果取较窄者，传 `all` 也放不宽。房间范围每次检索时按会话所属平台现算，写在平台档里的同样生效；房间没设这个键或 session-manager 不在场时，行为与只看插件配置相同。

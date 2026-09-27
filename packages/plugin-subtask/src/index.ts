@@ -24,6 +24,14 @@ import type { IncomingMessage } from '@aalis/schema-message';
 // 子会话内可自行再用 manage_todo_list / load_skill / workflow_run 等工具。
 // =====================================================================
 
+/**
+ * 派发与追问消息的来源：它们是内部注入，不是真人当面发的话。不带 source 时确认相位会把父会话经 send_to_subtask
+ * 发来的 y、ys 当成子任务回合（userId 同为 `parent:<父会话>`）发起的确认的应答，父会话里的模型就能自批；
+ * 要求真人当面发起的工具（白纸交任务等）也会放行子任务回合。派发与追问同一个值，共用一条 lane，追问照旧打断
+ * 子任务在跑的那一轮。
+ */
+const SUBTASK_SOURCE = 'subtask';
+
 const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用子任务工具', default: true },
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
@@ -199,6 +207,7 @@ function registerSubtask(
           platform: callCtx.platform || 'internal',
           userId: `parent:${parentId}`,
           nickname: undefined,
+          source: SUBTASK_SOURCE,
         };
         // 授权身份透传（schema-message 的 actor 契约）：userId 是归档用的物理来源标记
         //（authority 查不到 `parent:*`，等价匿名），授权身份走 actor——子任务工具以创建者的
@@ -353,6 +362,7 @@ function registerSubtask(
         platform: callCtx.platform || 'internal',
         userId: `parent:${callCtx.sessionId}`,
         nickname: undefined,
+        source: SUBTASK_SOURCE,
       };
       // 授权身份透传：与 create_subtask 同源。缺了这一处会造成同一子任务会话的权限
       // 在轮次间跳变——创建轮有创建者等级、追问轮掉回匿名（2026-08-24 审计）。

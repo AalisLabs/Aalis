@@ -23,7 +23,7 @@ import {
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
-import { materializeFileAttachment, renderAttachmentsAsContentMarkers } from './attachments.js';
+import { materializeAttachments } from './attachments.js';
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
@@ -1301,7 +1301,7 @@ function runAdapter(caps: Caps): void {
 
     /**
      * 非标准扩展：把文件传到群文件（群会话）或私聊文件（私聊会话），`file` 只收 base64://
-     * （见 attachments.ts 的 materializeFileAttachment）。连接不可用、v12 连接与其他会话类型一律抛错。
+     * （见 attachments.ts 的 materializeAttachments）。连接不可用、v12 连接与其他会话类型一律抛错。
      * 不重试：上传超时多半是文件还在传，重试会在群文件里留两份。
      */
     async uploadFile(sessionId: string, file: string, name: string): Promise<void> {
@@ -2278,7 +2278,7 @@ function runAdapter(caps: Caps): void {
   events.on('outbound:message', async msg => {
     if (!msg.sessionId.startsWith('onebot:')) return;
 
-    // 把结构化 attachments 渲染为 <image url="base64://..."/> 标记，
+    // 把结构化 attachments 渲染为 <image url="base64://..."/> 标记或上传文件，
     // 远程 URL / 本地文件统一编码为 base64 通过 WS 隧道发送，避免 daemon
     // 与 Aalis 不在同一文件系统时（典型：Docker 部署）发生 ENOENT
     let content = msg.content ?? '';
@@ -2303,7 +2303,7 @@ function runAdapter(caps: Caps): void {
             if (local) {
               rememberLandedAlias(media.current, att.kind, att.data, local);
               // cacheAttachmentBuffer 返回相对路径 "data/images/..."，
-              // 转为 storage URI "data:/images/..."，让 renderAttachmentsAsContentMarkers
+              // 转为 storage URI "data:/images/..."，让 materializeAttachments
               // 走 storage.readFile 读回 buffer，而非兜底成无法访问的相对 file://
               att.data = local.replace(/^([^/]+)\//, '$1:/');
               if (att.kind === 'audio') att.mimeType = 'audio/wav';
@@ -2314,23 +2314,11 @@ function runAdapter(caps: Caps): void {
         }),
       );
 
-      try {
-        const markers = await renderAttachmentsAsContentMarkers(msg.attachments, storage, logger);
-        if (markers) content = content ? `${content}\n${markers}` : markers;
-      } catch (err) {
-        logger.warn(`OneBot 渲染附件失败: ${err}`);
-      }
-
-      // 文件附件不走消息段：物化为 base64:// 后，在文字与消息段发出之后逐个上传
-      for (const att of msg.attachments) {
-        if (att.kind !== 'file') continue;
-        try {
-          uploads.push(await materializeFileAttachment(att, storage, logger));
-        } catch (err) {
-          logger.warn(`OneBot 文件附件未发出: ${err instanceof Error ? err.message : err}`);
-          errors.push(err);
-        }
-      }
+      // 能内联的媒体拼成消息段标记；文件附件与改走上传的媒体物化为 base64:// 后，在文字与消息段发出之后逐个上传
+      const materialized = await materializeAttachments(msg.attachments, storage, logger);
+      if (materialized.markers) content = content ? `${content}\n${materialized.markers}` : materialized.markers;
+      uploads.push(...materialized.uploads);
+      errors.push(...materialized.errors);
     }
 
     const hasText = content.trim() !== '';

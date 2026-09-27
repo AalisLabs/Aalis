@@ -238,6 +238,23 @@ describe('跑完一件任务后的五个表', () => {
   });
 });
 
+describe('白纸表的「共用的房间」', () => {
+  it('受众条目写了 paperName：列出继承它的已登记房间与这个受众的全部房间，标为共用', async () => {
+    const hub = await startPaperHub({
+      listed: { [ROOM]: {} },
+      audienceProfiles: { 'onebot/group': { paperName: PAPER } },
+    });
+    const paper = (await rows(hub, 'listPapers')).find(r => r.paperId === PAPER_ID);
+    expect(paper?.rooms).toBe(`共用（2）：${ROOM}、平台档 onebot 的全部群房间`);
+  });
+
+  it('对照：只有房间自己的配置写了 paperName、没有平台档时不算共用', async () => {
+    const hub = await startPaperHub({ listed: { [ROOM]: { paperName: PAPER } } });
+    const paper = (await rows(hub, 'listPapers')).find(r => r.paperId === PAPER_ID);
+    expect(paper?.rooms).toBe(ROOM);
+  });
+});
+
 describe('readArtifact', () => {
   const html = { id: 'a-0000000a', rel: 'index.html', type: 'html' as const, sizeBytes: HTML.byteLength };
   const svg = { id: 'a-0000000b', rel: 'pic.svg', type: 'other' as const, sizeBytes: SVG.byteLength };

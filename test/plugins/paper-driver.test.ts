@@ -7,6 +7,7 @@ import {
   advance,
   DRIVER_CONFIG,
   DRIVER_ROOMS,
+  type DriverHub,
   FAKE_TIMERS,
   MINUTE,
   PAPER_A,
@@ -526,6 +527,197 @@ describe('认领时列轮次失败', () => {
     await until(() => hub.task(t2).state === 'failed', '判为失败');
     expect(hub.store.data.reserves[t2]).toBeUndefined();
     expect(a.count('startRun')).toBe(1);
+  });
+});
+
+describe('认领失败的告警、诊断与出口', () => {
+  const CLAIM_RAW = 'CLAIM-RAW-invalid-key-0123';
+  const spent = (hub: DriverHub) => Object.values(hub.store.data.spend).reduce((sum, day) => sum + day.global, 0);
+
+  /** 开轮结果未知（POST 已到远端）、认领时列轮次一直失败：任务留在开轮中 */
+  async function stuck() {
+    // 认领时按请求时刻计时：单轮时长放宽，免得认领后立即到点；闲置归档推后，免得归档前的核查也去列轮次
+    const { a, hub, agentId } = await bound({
+      ...DRIVER_CONFIG,
+      maxRunMinutes: 120,
+      papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, idleArchiveMinutes: 24 * 60 }],
+    });
+    let opened: string | undefined;
+    once(a, 'startRun', async ({ proceed }) => {
+      opened = ((await proceed()) as { runId: string }).runId;
+      throw new RemoteAgentError('transient', '读超时');
+    });
+    a.intercept.listRuns = ({ proceed }) => {
+      if (opened === undefined) return proceed();
+      throw new RemoteAgentError('unavailable', `GET /v1/agents/x/runs 返回 401：${CLAIM_RAW}`);
+    };
+    const t2 = await hub.accept();
+    await until(() => hub.store.data.alerts.some(al => al.kind === 'claim-failed'), '认领失败');
+    expect(hub.task(t2).state).toBe('starting');
+    return { a, hub, agentId, t2, opened: opened ?? '' };
+  }
+
+  it('安全：第一次认领失败挂一条 claim-failed 告警（只写类别），之后再失败、标为已读后都不再挂；诊断项对认领失败后仍在开轮中的任务报 warn，标为已读后照报', async () => {
+    const { hub, t2 } = await stuck();
+    const claimAlerts = () => hub.store.data.alerts.filter(al => al.kind === 'claim-failed');
+    expect(claimAlerts()).toEqual([
+      expect.objectContaining({ subject: t2, providerType: REMOTE_A, acknowledged: false }),
+    ]);
+    expect(claimAlerts()[0].message).toContain('提供者不可用');
+    expect(claimAlerts()[0].message).not.toContain(CLAIM_RAW);
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(CLAIM_RAW)),
+      '原文进 warn',
+    ).toBe(true);
+    // 与放弃跟踪同一判据：认领失败过就报，报出时点「放弃跟踪」不会被拒
+    const first = await hub.doctor();
+    expect(first.level).toBe('warn');
+    expect(first.message).toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
+    expect(first.message).toContain('放弃跟踪');
+    expect(first.message).not.toContain(CLAIM_RAW);
+
+    expect(await hub.driver.acknowledge(claimAlerts()[0].id)).toBe(true);
+    await advance(2 * RECONCILE_MS);
+    expect(hub.task(t2).state).toBe('starting');
+    expect(claimAlerts(), '只挂第一次').toHaveLength(1);
+    const result = await hub.doctor();
+    expect(result.level).toBe('warn');
+    expect(result.message, '告警标为已读后照报').toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
+    expect(result.message).not.toContain(CLAIM_RAW);
+  });
+
+  it('安全：放弃跟踪开轮中的任务：判为失败、写明远端可能已开出一轮，预留保留、下一件建新代理；列表恢复后那一轮记到它名下并请远端取消，白纸不停开，费用只入账一次', async () => {
+    const { a, hub, agentId, t2, opened } = await stuck();
+    const before = spent(hub);
+    expect(await hub.driver.abandon(t2)).toBeUndefined();
+    expect(hub.task(t2)).toMatchObject({ state: 'failed', orphanRun: true, agentId });
+    expect(hub.task(t2).error).toContain('远端可能已开出一轮');
+    expect(hub.task(t2).start).toBeUndefined();
+    expect(hub.store.data.reserves[t2], '预留保留到对账确认').toBeDefined();
+    expect(hub.store.data.papers[PAPER_A_ID].rotateNext).toBe(true);
+
+    delete a.intercept.listRuns;
+    await advance(RECONCILE_MS);
+    await until(() => hub.store.data.runs[opened]?.taskId === t2, '对账把那一轮记到它名下');
+    // 没人再跟踪、取回成品，也没有单轮时长的到点取消：记到它名下的同时请远端取消，不让它跑到远端自己的上限
+    await until(() => a.callsOn('cancelRun', agentId).some(c => c.args[1] === opened), '请远端取消那一轮');
+    expect(hub.task(t2).runId).toBe(opened);
+    expect(hub.task(t2).orphanRun).toBeUndefined();
+    expect(hub.store.data.papers[PAPER_A_ID].halted, '不当成自唤醒').toBeUndefined();
+    expect(hub.store.data.alerts.map(al => al.kind)).not.toContain('unknown-run');
+    expect(hub.store.data.alerts).toContainEqual(
+      expect.objectContaining({ kind: 'claim-unverified', subject: opened }),
+    );
+    expect(a.count('deleteAgent')).toBe(0);
+
+    // 取消之后这一轮到终态，费用照常入账后释放预留
+    await advance(RECONCILE_MS);
+    await until(() => hub.store.data.runs[opened].cost.state === 'booked', '费用入账');
+    await advance(2 * RECONCILE_MS);
+    expect(spent(hub) - before, '只入账一次').toBe(10);
+    expect(hub.task(t2)).toMatchObject({ state: 'failed', costCents: 10 });
+    expect(hub.store.data.reserves[t2]).toBeUndefined();
+    expect(a.callsOn('startRun', agentId), '不重发').toHaveLength(1);
+  });
+
+  it('安全：认领途中放弃跟踪：这次列出的那一轮记到它名下，任务不转运行中、不重发', async () => {
+    const { a, hub, agentId, t2, opened } = await stuck();
+    // 下一次认领时列轮次挂住，等放弃跟踪之后再放行
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    a.intercept.listRuns = async ({ proceed }) => {
+      await gate;
+      return proceed();
+    };
+    const listed = a.callsOn('listRuns', agentId).length;
+    await advance(RECONCILE_MS);
+    await until(() => a.callsOn('listRuns', agentId).length > listed, '下一次认领在列轮次');
+    expect(await hub.driver.abandon(t2)).toBeUndefined();
+    release();
+    await until(() => hub.store.data.runs[opened]?.taskId === t2, '列出的那一轮记到它名下');
+    await until(() => a.callsOn('cancelRun', agentId).some(c => c.args[1] === opened), '请远端取消那一轮');
+    await advance(MINUTE);
+    expect(hub.task(t2)).toMatchObject({ state: 'failed', runId: opened });
+    expect(a.callsOn('startRun', agentId), '不重发').toHaveLength(1);
+    expect(hub.store.data.papers[PAPER_A_ID].halted).toBeUndefined();
+  });
+
+  it.each([
+    ['重发成功', false],
+    ['重发被拒', true],
+  ] as const)('安全：远端没有开出这一轮、重发途中放弃跟踪（%s）：任务不转运行中，放弃跟踪写下的失败原因不被改写', async (_, rejected) => {
+    const { a, hub, agentId, t2, opened } = await stuck();
+    // POST 其实没有开出轮次：下一次认领列出来是空的，于是重发；重发挂住，等放弃跟踪之后再放行
+    a.runs.delete(opened);
+    delete a.intercept.listRuns;
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    a.intercept.startRun = async ({ proceed }) => {
+      await gate;
+      if (rejected) throw new RemoteAgentError('rejected', '重发被拒');
+      return proceed();
+    };
+    await advance(RECONCILE_MS);
+    await until(() => a.callsOn('startRun', agentId).length === 2, '重发');
+    expect(await hub.driver.abandon(t2)).toBeUndefined();
+    const error = hub.task(t2).error;
+    release();
+    await advance(MINUTE);
+    expect(hub.task(t2)).toMatchObject({ state: 'failed', error });
+    const resent = a.runsOf(agentId).at(-1)?.runId ?? '';
+    if (rejected) {
+      expect(hub.task(t2).orphanRun, '等列表确认').toBe(true);
+      expect(hub.store.data.reserves[t2], '预留保留到对账确认').toBeDefined();
+    } else {
+      expect(hub.store.data.runs[resent], '重发开出的一轮记到它名下').toMatchObject({ taskId: t2 });
+      expect(
+        a.callsOn('cancelRun', agentId).map(c => c.args[1]),
+        '放弃跟踪之后才开出的一轮请远端取消',
+      ).toContain(resent);
+      expect(hub.task(t2).runId).toBe(resent);
+      expect(hub.task(t2).orphanRun).toBeUndefined();
+      expect(hub.store.data.reserves[t2], '费用入账前预留保留').toBeDefined();
+    }
+    expect(hub.store.data.papers[PAPER_A_ID].halted).toBeUndefined();
+  });
+
+  it('放弃跟踪之后列表恢复、远端没有开出这一轮：释放预留，之后不再等', async () => {
+    const { a, hub, t2, opened } = await stuck();
+    // POST 其实没有开出轮次：远端的轮次表里删掉它
+    a.runs.delete(opened);
+    expect(await hub.driver.abandon(t2)).toBeUndefined();
+    delete a.intercept.listRuns;
+    await advance(RECONCILE_MS);
+    await until(() => hub.task(t2).orphanRun === undefined, '对账确认');
+    expect(hub.store.data.reserves[t2]).toBeUndefined();
+    expect(hub.store.data.papers[PAPER_A_ID].halted).toBeUndefined();
+  });
+
+  it('放弃跟踪之后远端已找不到这个代理：从账本移除，放弃跟踪的任务释放预留', async () => {
+    const { a, hub, agentId, t2 } = await stuck();
+    expect(await hub.driver.abandon(t2)).toBeUndefined();
+    a.intercept.listRuns = () => {
+      throw new RemoteAgentError('not-found', '代理已删除');
+    };
+    await advance(RECONCILE_MS);
+    await until(() => hub.store.data.agents[agentId] === undefined, '从账本移除');
+    expect(hub.task(t2).orphanRun).toBeUndefined();
+    expect(hub.store.data.reserves[t2]).toBeUndefined();
+  });
+
+  it('对照：没有认领失败过的开轮中任务、排队中与已结束的任务不能放弃跟踪', async () => {
+    const { hub, t2 } = await stuck();
+    const t3 = await hub.accept();
+    expect(await hub.driver.abandon(t3)).toMatch(/运行中与开轮中/);
+    expect(hub.task(t3).state).toBe('queued');
+    // 认领失败的记录属于 t2：换一件开轮中、没有失败记录的任务
+    hub.store.data.alerts = hub.store.data.alerts.filter(al => al.kind !== 'claim-failed');
+    expect(await hub.driver.abandon(t2)).toMatch(/认领/);
+    expect(hub.task(t2).state).toBe('starting');
   });
 });
 

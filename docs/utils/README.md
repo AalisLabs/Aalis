@@ -7,6 +7,7 @@
 |---|---|
 | [bounded-map](bounded-map.md) | `createBoundedMap({max, ttlMs, onEvict})` —— 有界 LRU + 滑动 TTL Map，给无界缓存封顶。消费者：media 图片描述缓存、office 文档会话、prompt-budget。 |
 | [json-repair](json-repair.md) | 从脏 LLM 输出里捞出 JSON **对象**（去代码围栏/散文/尾随噪声）：`extractJsonCandidate`/`tryParseJsonObject`/`parseLLMJsonObject`。**仅对象**——顶层数组不解析（这也是 user-relation 顶层数组场景另写解析器的原因）。 |
+| `util-media-signature`（无单独页面） | 按文件开头的字节认定媒体格式：`detectMediaFormat`（返回类型与格式名）/`checkMediaHead`（按所请求类型核对，给出拒发说明）/`MEDIA_HEAD_BYTES`（要读的文件头长度，4 KiB）。图片 PNG、JPEG、GIF、WebP、BMP、AVIF、HEIC，音频 MP3、WAV、OGG、FLAC、AMR、SILK、M4A，视频 MP4、MOV、WebM、MKV、AVI。消费者：image-sender 的 `send_attachment`、onebot 适配器的出站分流。 |
 | [network-guard](network-guard.md) | SSRF 防护出口：`safeFetch`（逐跳重定向复核）/`assertSafeUrl`/`assertSafeHost`/`isPrivateAddress`/`setNetworkPolicy`。**任何用户/LLM 可影响的 URL 都应经它**。威胁模型见[概念层 security-model](../concepts/security-model.md)。 |
 | [text-normalize](text-normalize.md) | 归一 LLM 助手输出：`fixGfmTables`/`stripLeakedSpecialTokens`/`normalizeAssistantContent`（修 GFM 表格、剥泄漏的特殊 token）。 |
 | `util-cron`（无单独页面） | Cron 表达式解析与匹配（POSIX 5 字段 + `@` 别名 + `@every` 间隔）：`validateCronExpr`/`matchesCron`/`parseEverySeconds` 等。消费者：cron-engine、scheduler；`api-cron-engine` 只转发其类型。 |

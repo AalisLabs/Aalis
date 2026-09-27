@@ -75,6 +75,12 @@ export interface TaskRecord {
   lastEventId?: string;
   /** 开轮中：state 为 starting 时必有。path 区分新建代理（可按同 id 重试）与已绑定代理（startRun 不幂等，要先认领） */
   start?: { path: 'create' | 'run'; requestedAt: number };
+  /**
+   * owner 放弃跟踪时开轮结果未知（start.path 为 run、认领失败过）：远端可能已在 agentId 上开出一轮。之后列出这个
+   * 代理的轮次时，账本外恰好一轮就记到本件名下（费用照常入账后释放预留），没有就释放预留，多于一轮释放预留、
+   * 按自唤醒处理；代理确认不存在时释放预留。处理后清掉
+   */
+  orphanRun?: true;
   /** 这一轮实际入账的费用（美分） */
   costCents?: number;
   /** 远端说明，截断到 2000 字；只经 wrapUntrustedContent 出现在当轮通知与 paper_status 里 */
@@ -124,7 +130,9 @@ export interface AlertRecord {
     /** 删除代理前费用仍取不到，按估计入账 */
     | 'cost-estimated'
     /** 开轮结果未知时认领了账本外的唯一一轮，核对不了是不是本件开出的 */
-    | 'claim-unverified';
+    | 'claim-unverified'
+    /** 开轮结果未知、认领不了（列不出轮次或提供者不在场），任务留在开轮中；每件任务只挂第一次 */
+    | 'claim-failed';
   /** agentId 等 */
   subject?: string;
   /** 远端代理插件实例 id */

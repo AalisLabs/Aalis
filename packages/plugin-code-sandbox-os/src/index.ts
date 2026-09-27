@@ -8,31 +8,46 @@
 
 import { type CodeSandboxService, codeSandbox, type SandboxRunRequest } from '@aalis/api-code-sandbox';
 import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
-import { definePlugin, type Logger, logger, provide } from '@aalis/core';
+import { definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
 
 /**
- * 功能性探测：经 process 网关真正跑一次最小沙箱命令，跑通才算可用。
- * 比「命令是否存在」更强——一次覆盖 存在性 + Linux unprivileged userns 是否真能用。
+ * 各平台的最小沙箱命令：跑通即有该后端。Linux 与正式运行（sandbox.ts 的 buildBwrapArgs）一样挂 /dev 与 /proc：
+ * 只放开 seccomp、挂不了 /proc 的容器里，不挂的探测会报 bwrap 可用，之后每次运行都失败
  */
-async function probeBackend(proc: ProcessService, logger: Logger): Promise<SandboxBackend> {
+const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: string; args: string[] }>> = {
+  darwin: { backend: 'seatbelt', cmd: 'sandbox-exec', args: ['-p', '(version 1) (allow default)', 'true'] },
+  linux: {
+    backend: 'bwrap',
+    cmd: 'bwrap',
+    args: ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-all', 'true'],
+  },
+};
+
+/**
+ * 功能性探测：经 process 网关真正跑一次最小沙箱命令，退出码为 0 才算有后端。
+ * 比「命令是否存在」更强——一次覆盖 存在性 + Linux unprivileged userns 是否真能用。
+ * 停用、停机时随 signal 中止并抛出（不落成「无后端」），启动器挂住也不拖满停机宽限。
+ */
+async function probeBackend(proc: ProcessService, logger: Logger, signal: AbortSignal): Promise<SandboxBackend> {
   const platform = process.platform;
-  try {
-    if (platform === 'darwin') {
-      await proc.execFile('sandbox-exec', ['-p', '(version 1) (allow default)', 'true'], { timeout: 5000 });
-      return 'seatbelt';
-    }
-    if (platform === 'linux') {
-      await proc.execFile('bwrap', ['--ro-bind', '/', '/', '--unshare-all', 'true'], { timeout: 5000 });
-      return 'bwrap';
-    }
+  const probe = PROBES[platform];
+  if (!probe) {
     logger.warn(`平台 ${platform} 暂无 OS 沙箱后端，code_runner auto 模式将 fail-closed`);
     return 'none';
-  } catch {
-    // 启动器不存在 / 不可用（如 Linux 未安装 bwrap、或 unprivileged user namespaces 被禁）→ 无后端
-    logger.warn(`OS 沙箱后端探测失败（platform=${platform}）：无可用沙箱，code_runner auto 模式将 fail-closed`);
-    return 'none';
   }
+  let result: ExecResult | undefined;
+  try {
+    result = await proc.spawn(probe.cmd, probe.args, { stdio: 'ignore', timeout: 5000, signal }).wait();
+  } catch {
+    /* 未中止的按无后端，见下 */
+  }
+  // 被中止（spawn 同步抛出、wait 被拒或随中止落定）一律抛出，apply 随之落定
+  signal.throwIfAborted();
+  if (result?.code === 0) return probe.backend;
+  // 启动器不存在 / 不可用（如 Linux 未安装 bwrap、或 unprivileged user namespaces 被禁）/ 超时 → 无后端
+  logger.warn(`OS 沙箱后端探测失败（platform=${platform}）：无可用沙箱，code_runner auto 模式将 fail-closed`);
+  return 'none';
 }
 
 class OsCodeSandboxService implements CodeSandboxService {
@@ -56,7 +71,7 @@ class OsCodeSandboxService implements CodeSandboxService {
     const wrapped = wrapForSandbox(this._backend, req.policy, req.cmd, req.args, req.cwd, req.env ?? {});
     // 经 process 网关 spawn 包好的启动器命令；env 已由 wrapper 的 --clearenv / env -i 注入白名单，
     // 故此处不再传 env（外层启动器进程继承宿主 env 无妨，wrapper 已为内层不可信子进程清空）。
-    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout });
+    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout, signal: req.signal });
   }
 }
 
@@ -64,12 +79,12 @@ export default definePlugin({
   name: '@aalis/plugin-code-sandbox-os',
   displayName: '代码沙箱（OS）',
   provides: [codeSandbox],
-  uses: { processService, logger, provide },
+  uses: { processService, logger, lifecycle, provide },
   async apply(caps) {
     const log = caps.logger.child('code-sandbox-os');
     // 网关每次调用重新解析当前胜者，process 提供者换人后无需重启本插件
     const proc = createProcessGateway(caps.processService);
-    const backend = await probeBackend(proc, log);
+    const backend = await probeBackend(proc, log, caps.lifecycle.signal);
     caps.provide(codeSandbox, new OsCodeSandboxService(proc, backend));
     log.info(
       `code-sandbox-os 就绪（后端: ${backend === 'none' ? '无 —— 沙箱不可用，code_runner 将 fail-closed' : backend}）`,

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
 import { parseContentToSegments } from '../../packages/plugin-adapter-onebot/src/types.js';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import {
@@ -316,6 +317,42 @@ describe('paper_cancel', () => {
     const ledger = hub.ledger();
     expect(ledger.tasks['t-00000002']).toMatchObject({ state: 'running', cancelledVia: 'tool' });
     expect(ledger.reserves['t-00000002']).toBeDefined();
+  });
+
+  it('安全：远端取消失败时交给模型的只有类别，提供者报错的原文只进 warn', async () => {
+    const RAW = 'CANCEL-RAW-10.0.0.1:7890-detail';
+    const remote = fakeRemote();
+    remote.cancelRun = async () => {
+      throw new RemoteAgentError('unavailable', `POST /v1/agents/x/runs/run-1/cancel 返回 401：${RAW}`);
+    };
+    const running = task('t-00000002', {
+      state: 'running',
+      agentId: 'bc-00000001',
+      runId: 'run-1',
+      startedAt: Date.now(),
+    });
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: remote },
+      files: seed([running], ledger => {
+        ledger.agents['bc-00000001'] = {
+          providerType: REMOTE,
+          paperId: PAPER_ID,
+          name: 'aalis-paper-00000000',
+          state: 'active',
+          createdAt: 1,
+          costCents: 0,
+        };
+      }),
+    });
+    const raw = await hub.raw('paper_cancel', { task_id: 't-00000002' });
+    expect(raw).not.toContain(RAW);
+    const res = JSON.parse(raw) as Record<string, unknown>;
+    expect(res).toEqual({ ok: false, error: '远端取消失败（提供者不可用）' });
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(RAW)),
+      '原文进 warn',
+    ).toBe(true);
+    expect(hub.ledger().tasks['t-00000002'].cancelledVia).toBeUndefined();
   });
 });
 

@@ -5,7 +5,7 @@
 
 ## 概述
 
-注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。
+注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。「同平台」比较当前会话的平台与目标会话 ID 第一个 `:` 之前的一段：当前会话是 IM 房间（群与私聊，含其子任务）时取房间的出生平台（[api-gateway](../api/api-gateway.md#出生平台解析) 的 `resolveSessionOrigin`），不论这一轮从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）取入口平台。房间的召回范围（会话配置 `memoryRecallScope`）为 `platform` 时的裁决同一取法。
 
 ## 插件声明
 

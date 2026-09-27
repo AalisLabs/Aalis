@@ -8,7 +8,7 @@ import {
 } from '@aalis/api-agent';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
-import { gateway as gatewayService } from '@aalis/api-gateway';
+import { gateway as gatewayService, resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
@@ -135,6 +135,12 @@ class DefaultAgent implements AgentService {
    * 独立管理，互不打断；同来源新消息会中止旧的生成。
    */
   private activeControllers = new Map<string, AbortController>();
+
+  /**
+   * 延续某位发言者身份的宿主通知回合（lane → 会话与 hostNotice.callerUserId）。那位发言者在同一会话发来的真人消息
+   * 中止这些回合；别人的消息与不延续任何人身份的通知（白纸等）不受影响，宿主通知也从不打断别的回合。
+   */
+  private noticeCallers = new Map<string, { sessionId: string; callerUserId: string; controller: AbortController }>();
 
   /**
    * 在飞回合 Promise。关停时 abort 之后等它们以 AbortError（或正常完成）收尾，
@@ -524,9 +530,22 @@ class DefaultAgent implements AgentService {
     // 仅中止同一 lane（同 session + 同 source）的旧生成；不同来源互不打断
     const prev = this.activeControllers.get(lane);
     if (prev) prev.abort();
+    // 例外：真人消息打断延续其本人身份的宿主通知回合，本人说话就停得下她自己开的那一轮。
+    // 对那一轮确认请求的应答在网关的确认相位就被吞掉，到不了这里。
+    if (incoming.source === undefined && incoming.userId !== undefined) {
+      for (const notice of this.noticeCallers.values()) {
+        if (notice.sessionId === incoming.sessionId && notice.callerUserId === incoming.userId) {
+          notice.controller.abort();
+        }
+      }
+    }
 
     const controller = new AbortController();
     this.activeControllers.set(lane, controller);
+    const callerUserId = incoming.hostNotice?.callerUserId;
+    if (callerUserId !== undefined) {
+      this.noticeCallers.set(lane, { sessionId: incoming.sessionId, callerUserId, controller });
+    }
 
     const turn = (async () => {
       try {
@@ -536,6 +555,7 @@ class DefaultAgent implements AgentService {
         if (this.activeControllers.get(lane) === controller) {
           this.activeControllers.delete(lane);
         }
+        if (this.noticeCallers.get(lane)?.controller === controller) this.noticeCallers.delete(lane);
       }
     })();
     this.inflightTurns.add(turn);
@@ -628,7 +648,9 @@ class DefaultAgent implements AgentService {
           // scheduler/workflow/subtask 等触发的 AI 因此以创建者等级执行而非匿名。
           // 不可再用 actor 覆盖 platform：actor 来自另一平台时（如跨平台的定时任务、workflow）
           // 会把上述四类下游全路由到发起者平台。
-          userId: incoming.userId,
+          // 延续某次工具调用的宿主通知不带发言者，userId 取那次调用的（hostNotice.callerUserId）：确认由起它的人
+          // 应答、会话授予照常命中。只用在这里，归档与提示词钩子仍按消息本身的 userId（没有）。
+          userId: incoming.userId ?? incoming.hostNotice?.callerUserId,
           platform: incoming.platform,
           actor: incoming.actor,
           // 恒为数组：平台档没配分组时给 []（列举面本就等价于「只给无分组工具」），
@@ -1182,7 +1204,6 @@ class DefaultAgent implements AgentService {
           });
 
           // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
-          // session-manager 把会话状态从 active 收口为 completed（否则永远停在"进行中"），
           // checkpoint 关闭当前回合（否则中止后回合不关闭、长期泄漏）。
           // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
           await this.caps.hooks.run('agent:turn:after', {
@@ -1213,9 +1234,7 @@ class DefaultAgent implements AgentService {
           source: 'system',
         });
 
-        // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合、
-        // session-manager 收口状态。dispatchOutbound 已发系统错误消息，状态可被 outbound:message
-        // 与本钩子双路径幂等收口。
+        // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合。
         await this.caps.hooks.run('agent:turn:after', {
           message: incoming,
           reply: '',
@@ -2081,44 +2100,40 @@ function run(caps: Caps): void {
   }
 
   // ===== 会话级配置指令 =====
-  // /session 查（模型+人设+名+解析链） · /session.set 改 · /session.reset 复位 · /model 列可用模型
+  // /session 查（模型+人设+名+来源） · /session.set 改 · /session.reset 复位 · /model 列可用模型
   // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
 
   /**
-   * 组装某会话某字段的「解析」视图行：当前值 + 来源 + 解析链（会话 / 父 sessionDefaults / 平台 profile）。
-   * pick 从各层配置提取并格式化该字段——模型与人设复用同一逻辑，展示对称、直观。
+   * 组装某会话某字段的视图行：生效值与来源（会话覆盖 / 父会话 / 平台档 <平台>（<受众>） / 平台档 <平台> / 默认）；
+   * 会话有覆盖时另起一行列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，
+   * 与实际回合同一口径（房间会话按出生平台与受众选档）。pick 从配置里提取并格式化该字段。
    */
   type CfgView = { llm?: { provider: string; model: string }; persona?: string; think?: boolean | null } | undefined;
   function resolutionLines(
     sessionId: string,
     platform: string,
     label: string,
+    key: 'llm' | 'persona' | 'think',
     pick: (c: CfgView) => string | undefined,
   ): string[] {
     const smSvc = caps.sessionManager.current;
     if (!smSvc) return [`${label}: (session-manager 不可用)`];
-    const session = smSvc.getSession(sessionId);
-    const own = pick(session?.config);
-    const parent = session?.parentId ? smSvc.getSession(session.parentId) : undefined;
-    const parentDefaults = pick(parent?.config?.sessionDefaults);
-    const profile = pick(smSvc.getPlatformProfiles()?.[platform || 'webui']);
-    const resolved = pick(smSvc.resolveConfig(sessionId, platform));
-
-    let source = '默认';
-    if (own) source = '会话覆盖';
-    else if (parentDefaults) source = '父会话 sessionDefaults';
-    else if (profile) source = `平台 profile (${platform})`;
-
-    const lines = [`${label}: ${resolved ?? '(默认)'}  [来源: ${source}]`];
-    const chain: string[] = [];
-    if (own) chain.push(`会话: ${own}`);
-    if (parentDefaults) chain.push(`父 sessionDefaults: ${parentDefaults}`);
-    if (profile) chain.push(`平台 profile: ${profile}`);
-    if (chain.length > 0) {
-      lines.push('  解析链（高优先级在前）:');
-      for (const c of chain) lines.push(`  - ${c}`);
-    }
-    return lines;
+    const inheritance = smSvc.resolveInheritance(sessionId, platform);
+    const inherited = pick(inheritance.values);
+    const layer = inheritance.sources[key];
+    const profile = `平台档 ${inheritance.platform}`;
+    const from =
+      layer === 'parent'
+        ? '父会话'
+        : layer === 'audience'
+          ? `${profile}（${inheritance.audience === 'private' ? '私聊' : '群'}）`
+          : layer === 'platform'
+            ? profile
+            : '默认';
+    // null 与 undefined 同义（BSON 持久化读回 null），都表示没有覆盖
+    const own = pick(smSvc.getSession(sessionId)?.config);
+    if (own == null) return [`${label}: ${inherited ?? '(默认)'}  [来源: ${from}]`];
+    return [`${label}: ${own}  [来源: 会话覆盖]`, `  被覆盖的继承值: ${inherited ?? '(默认)'}  [来源: ${from}]`];
   }
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
@@ -2169,7 +2184,7 @@ function run(caps: Caps): void {
 
   // ---- 会话级「模型 + 人设 + thinking + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
   caps.commands
-    .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源与解析链', { risk: 'sensitive' })
+    .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源', { risk: 'sensitive' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
@@ -2177,9 +2192,9 @@ function run(caps: Caps): void {
       const session = smSvc.getSession(sid);
       return [
         `会话: ${session?.name ?? sid}`,
-        ...resolutionLines(sid, argv.session.platform, '模型', fmtModel),
-        ...resolutionLines(sid, argv.session.platform, '人设', fmtPersona),
-        ...resolutionLines(sid, argv.session.platform, 'thinking', fmtThink),
+        ...resolutionLines(sid, argv.session.platform, '模型', 'llm', fmtModel),
+        ...resolutionLines(sid, argv.session.platform, '人设', 'persona', fmtPersona),
+        ...resolutionLines(sid, argv.session.platform, 'thinking', 'think', fmtThink),
         session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
         '────',
         '改配置: /session.set -m <模型> -p <人设> -t <on|off> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
@@ -2298,8 +2313,9 @@ function run(caps: Caps): void {
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   caps.events.on('token:request', async data => {
     if (!data?.sessionId) return;
-    // 唯一发射方是 WebUI；平台缺省按 'webui' 兜底，否则模型/会话配置解析会绕过平台 profile 层
-    const platform = data.platform ?? 'webui';
+    // platform 是调用方的入口平台（owner 面会话的快照按它选档），唯一发射方 WebUI 不填。缺省时 IM 房间按
+    // 出生平台、其余按 'webui'：它还是提示词贡献方的「当前平台」（按平台取跨会话料），不能缺省成空
+    const platform = data.platform ?? resolveSessionOrigin(data.sessionId)?.platform ?? 'webui';
 
     try {
       const resolved = await agent.resolveLLM(platform, data.sessionId);

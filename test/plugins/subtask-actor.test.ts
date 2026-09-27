@@ -51,6 +51,22 @@ async function setup(): Promise<{
   return { app, handlers, inbound };
 }
 
+describe('子任务消息是内部注入', () => {
+  it("安全：派发与追问都带 source 'subtask'：确认相位不把它们当作应答，真人判据也不把子任务回合当成真人当面发起", async () => {
+    const { app, handlers, inbound } = await setup();
+    await handlers.get('create_subtask')!(
+      { task: '做一件事' },
+      { sessionId: 'parent-1', platform: 'onebot', userId: 'user-a' },
+    );
+    await handlers.get('send_to_subtask')!(
+      { subtask_id: 'child-session-1', message: '继续' },
+      { sessionId: 'parent-1', platform: 'onebot', userId: 'user-a' },
+    );
+    expect(inbound.map(m => m.source)).toEqual(['subtask', 'subtask']);
+    await app.stop();
+  });
+});
+
 describe('create_subtask actor 透传', () => {
   it('有身份的创建者：actor 回填，userId 仍为 parent 标记（物理来源与授权身份分离）', async () => {
     const { app, handlers, inbound } = await setup();
