@@ -15,6 +15,12 @@ import {
   type ToolGroupInfo,
   tools,
 } from '../../packages/api-tools/src/index.js';
+import {
+  type WebUIService,
+  type WebuiActionHandler,
+  type WebuiPage,
+  webuiServer,
+} from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
@@ -26,7 +32,7 @@ import { registerHubs } from './hubs.js';
 // - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
 // - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
-// - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行；
+// - tools / gateway / doctor / webui-server：记下登记的工具、出站消息、页面与页面动作，诊断项按需运行；
 // - 钩子与贡献点用默认提供者；入站消息（宿主通知）只记下，没有网关与 agent 消费。
 // 装好后 app.start()，与宿主一样发出 app:started。不连任何真实服务。
 // ════════════════════════════════════════════════════════════
@@ -190,6 +196,10 @@ export interface PaperHubOptions {
   rooms?: Record<string, SessionConfig>;
   /** 子会话 id → 父会话 id */
   children?: Record<string, string>;
+  /** 平台档（getPlatformProfiles 的结果）；缺省没有 */
+  profiles?: Record<string, SessionConfig>;
+  /** 会话列表里的会话 id → 会话自身的 config（listSessions 的结果）；缺省没有 */
+  listed?: Record<string, SessionConfig>;
   /** 实例 id → 替身提供者；缺省只有 REMOTE 一个 */
   remotes?: Record<string, RemoteAgentProvider>;
   /** services.prefer('remote-agent', …) 指向的实例 id */
@@ -208,6 +218,10 @@ export interface PaperHub {
   hooks: Hooks;
   tools: Map<string, Omit<RegisteredTool, 'pluginName'>>;
   groups: Array<Omit<ToolGroupInfo, 'pluginName'>>;
+  /** 枢纽登记的 WebUI 页面 */
+  pages: WebuiPage[];
+  /** 调一个页面动作（owner 已过权限闸），返回原样的结果 */
+  action(method: string, args?: Record<string, unknown>): Promise<unknown>;
   /** 调工具，返回原样的结果文本 */
   raw(name: string, args: Record<string, unknown>, ctx?: ToolCallContext): Promise<string>;
   /** 调结果为 JSON 的工具 */
@@ -235,6 +249,8 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();
   const groups: Array<Omit<ToolGroupInfo, 'pluginName'>> = [];
   const checks = new Map<string, CheckSpec>();
+  const pages: WebuiPage[] = [];
+  const actions = new Map<string, WebuiActionHandler>();
   const rooms = opts.rooms ?? { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM };
   const children = opts.children ?? {};
 
@@ -253,6 +269,17 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   } as never);
   host.provide(sessionManager, {
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
+    getPlatformProfiles: () => ({ ...(opts.profiles ?? {}) }),
+    listSessions: (): SessionInfo[] =>
+      Object.entries(opts.listed ?? {}).map(([id, config]) => ({
+        id,
+        name: id,
+        children: [],
+        status: 'active',
+        config,
+        createdAt: 0,
+        updatedAt: 0,
+      })),
     getSession: (id: string): SessionInfo => ({
       id,
       name: id,
@@ -278,6 +305,19 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       return () => checks.delete(spec.id);
     },
   } as unknown as DoctorService);
+  host.provide(webuiServer, {
+    getPort: () => 0,
+    getHost: () => '127.0.0.1',
+    getPages: () => pages.map(page => ({ ...page, pluginName: paperPlugin.name })),
+    registerPage(page: WebuiPage) {
+      pages.push(page);
+      return () => void pages.splice(pages.indexOf(page), 1);
+    },
+    registerAction(method: string, handler: WebuiActionHandler) {
+      actions.set(method, handler);
+      return () => actions.delete(method);
+    },
+  } satisfies WebUIService);
 
   for (const [id, provider] of Object.entries(opts.remotes ?? { [REMOTE]: fakeRemote() })) {
     await app.plugin(
@@ -311,6 +351,12 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     hooks: host.hooks,
     tools: registered,
     groups,
+    pages,
+    async action(method, args = {}) {
+      const handler = actions.get(method);
+      if (!handler) throw new Error(`页面动作 ${method} 未登记`);
+      return handler(args, { platform: 'webui', userId: 'console' });
+    },
     raw,
     call: async (name, args, ctx) => JSON.parse(await raw(name, args, ctx)) as Record<string, unknown>,
     async doctor() {
