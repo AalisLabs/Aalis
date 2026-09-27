@@ -21,7 +21,7 @@ export type MemoryRecallScope = 'session' | 'platform' | 'all';
  * 配置解析优先级（从高到低）：
  * 1. 会话自身 config（手工覆盖 / /model 指令设置）
  * 2. 父会话默认配置（sessionDefaults，供子会话继承）
- * 3. 平台默认配置（platformProfiles[platform]）
+ * 3. 平台默认配置（platformProfiles[platform]，房间会话另叠加受众条目）
  * 4. 全局默认（getDefaults()，即 @aalis/plugin-session-manager 的 defaults 配置）
  */
 export interface SessionConfig {
@@ -96,18 +96,21 @@ export function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (t
  * 平台配置模板
  *
  * 为每个平台设定默认的 SessionConfig，经继承链实时生效：房间会话按出生平台选档，其余按入口平台
- * （见 {@link SessionManagerService.resolveInheritance}）。
+ * （见 {@link SessionManagerService.resolveInheritance}）。同一平台可另写只对群或只对私聊生效的受众条目，
+ * 只列与基础档不同的键，叠加在基础档上。
  * 在 session-manager 的 configSchema 中通过 WebUI 配置。
  */
 export type PlatformProfile = SessionConfig;
 
-/** 继承链的层：全局 defaults、平台档、父会话的 sessionDefaults */
-export type InheritanceSource = 'defaults' | 'platform' | 'parent';
+/** 继承链的层：全局 defaults、平台档、平台档的受众条目、父会话的 sessionDefaults */
+export type InheritanceSource = 'defaults' | 'platform' | 'audience' | 'parent';
 
-/** 继承链的解析结果：选档用的平台、继承值与每个键的来源层 */
+/** 继承链的解析结果：选档用的平台与受众、继承值与每个键的来源层 */
 export interface SessionInheritance {
   /** 选档用的平台：有出生平台的会话为出生平台，否则为调用方传入的入口平台 */
   platform?: string;
+  /** 选档用的受众：有出生平台的会话为它的受众，owner 面会话没有（不取受众条目） */
+  audience?: Exclude<RoomAudience, 'owner'>;
   /** 继承值（不含会话自身 config 与 sessionDefaults） */
   values: Omit<SessionConfig, 'sessionDefaults'>;
   /** 每个键最终来自哪一层 */
@@ -254,15 +257,19 @@ export interface SessionManagerService {
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
 
   /**
-   * 继承链解析（不含会话自身 config）：全局 defaults → 平台档 → 父会话 sessionDefaults。
-   * 会话有出生平台（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按出生平台选档、忽略传入的 platform；
-   * 没有时（WebUI、CLI 等 owner 面会话）按传入的入口平台。
+   * 继承链解析（不含会话自身 config）：全局 defaults → 平台档 → 平台档的受众条目 → 父会话 sessionDefaults。
+   * 会话有出生平台（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按出生平台选档、忽略传入的 platform，
+   * 并按它的受众（group 或 private）叠加受众条目；没有时（WebUI、CLI 等 owner 面会话）按传入的入口平台，不取受众条目。
    *
    * WebUI 的「继承 (xxx)」提示与 `/session` 的来源显示用它：只看继承值，才不会把会话自己的覆盖当成继承来的。
    */
   resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
 
-  /** 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口） */
+  /**
+   * 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口）。
+   * 受众条目不在返回之列；要知道某个房间的某个键是否来自平台档，看 `resolveInheritance(id).sources[键]`
+   * 是 `platform` 还是 `audience`。
+   */
   getPlatformProfiles(): Record<string, PlatformProfile>;
 
   /**
