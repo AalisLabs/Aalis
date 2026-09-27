@@ -21,7 +21,7 @@ import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 const configSchema: ConfigSchema = {
   defaults: {
@@ -1165,14 +1165,60 @@ async function run(caps: Caps): Promise<void> {
 
   registerSessionActions(caps, manager);
 
-  // ===== 会话状态自治管理 =====
-  // 监听消息事件，自动维护会话状态（从 Agent 职责中迁出）
+  // ===== IM 房间收录 =====
+  // 有出生平台、不是子任务的会话，首条真人入站（不带 source，触发判定之前）即登记。带 source 的是内部注入
+  //（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。
+  // 名字只采信出生平台自己的入站：群取群名、私聊取对方昵称，缺省用 id（从 WebUI 插话时消息带的是 owner 的昵称；
+  // 群的首条入站可能是不带群名的戳一戳，不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动。
+  const warnedPrefixes = new Set<string>();
+  events.on('inbound:message', (msg: IncomingMessage) => {
+    const { sessionId } = msg;
+    if (!sessionId || msg.source || sessionId.includes('::')) return;
+    const origin = resolveSessionOrigin(sessionId);
+    if (!origin) return;
+    // 前缀既不是发来消息的平台、也不是已注册的平台名：多半是适配器的 id 前缀与平台名不一致，这个前缀的房间
+    // 全部按一份不存在的平台档选档、落到全局默认。每个前缀告警一次；WebUI 驱动已注册平台的房间不在此列
+    if (
+      origin.platform !== msg.platform &&
+      !warnedPrefixes.has(origin.platform) &&
+      !getPlatformNames(caps.platform).includes(origin.platform)
+    ) {
+      warnedPrefixes.add(origin.platform);
+      logger.warn(
+        `会话 id 前缀「${origin.platform}」不是已注册的平台名，消息经平台「${msg.platform}」发来（${sessionId}）：` +
+          `这个前缀的房间按平台档「${origin.platform}」选档，没有这份档就落到全局默认。多人房间的会话 id 须以适配器自己的平台名加冒号开头`,
+      );
+    }
+    const nativeName =
+      msg.platform === origin.platform ? (origin.audience === 'group' ? msg.groupName : msg.nickname) : undefined;
+    const session = manager.getSession(sessionId);
+    if (!session) {
+      manager
+        .ensureSession(sessionId, { name: nativeName || sessionId, createdBy: 'system', status: 'waiting' })
+        .catch(err => logger.warn(`IM 房间登记失败 (${sessionId}):`, err));
+    } else if (nativeName && session.name === sessionId) {
+      manager.updateSession(sessionId, { name: nativeName }).catch(() => {});
+    }
+  });
 
-  events.on('inbound:message', (msg: { sessionId: string }) => {
-    if (!msg.sessionId) return;
-    const session = manager.getSession(msg.sessionId);
+  // ===== 会话状态 =====
+  // 回合真正开始时（agent:input:before）才翻 active：群里只有消息、她没开口的房间不显示「进行中」
+  //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话：next() 返回时整轮已跑完、
+  // agent:turn:after 也已执行；后面的中间件不调 next() 或抛错时 agent 不发回合收尾，由这里兜住。
+  // 子会话由 plugin-subtask 收口。
+  hooks.middleware('agent:input:before', async (data, next) => {
+    const { sessionId } = data.message;
+    const session = manager.getSession(sessionId);
     if (session && session.status !== 'active') {
-      manager.updateSession(msg.sessionId, { status: 'active' }).catch(() => {});
+      manager.updateSession(sessionId, { status: 'active' }).catch(() => {});
+    }
+    try {
+      await next();
+    } finally {
+      const current = manager.getSession(sessionId);
+      if (current && current.status === 'active' && !current.parentId) {
+        manager.updateSession(sessionId, { status: 'completed' }).catch(() => {});
+      }
     }
   });
 
