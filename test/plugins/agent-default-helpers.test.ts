@@ -158,7 +158,9 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
   // → 聊天里却说「请确认已安装并启用」，而装和启用这两条都对得上，用户会顺着错误方向排查一轮。
   it('没有可用 entry 但有 LLM 插件处于 error 态 → 点名实例并指向 /doctor，不再让人去查装没装', () => {
     const s = describeLLMFailure([], undefined, ['@aalis/plugin-llm-deepseek', '@aalis/plugin-llm-openai:main']);
-    expect(s).toMatch(/激活失败：@aalis\/plugin-llm-deepseek、@aalis\/plugin-llm-openai:main。用 \/doctor 查看原因/);
+    expect(s).toMatch(
+      /激活失败：@aalis\/plugin-llm-deepseek、@aalis\/plugin-llm-openai:main。可用 \/doctor 查看原因（需要相应权限）/,
+    );
     expect(s, '不能再指向「装没装/启没启用」这条错误路径').not.toContain('请确认已安装并启用');
   });
 

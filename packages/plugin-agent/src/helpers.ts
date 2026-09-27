@@ -168,9 +168,9 @@ export function describeLLMFailure(
 ): string {
   if (available.length === 0) {
     // 最常见的成因是 LLM 插件装了也启用了、只是缺 apiKey 而激活失败。能点名就点名，省掉用户一轮空转；
-    // 这条文案会**发进聊天**，只点名实例，原因指向 /doctor。
+    // 这条文案会**发进聊天**，只点名实例，原因指向 /doctor。/doctor 是受限指令，收到提示的人不一定能用，故注明要权限。
     if (erroredProviders && erroredProviders.length > 0) {
-      return `未找到任何具备 chat 能力的 LLM —— 以下 LLM 插件激活失败：${erroredProviders.join('、')}。用 /doctor 查看原因。`;
+      return `未找到任何具备 chat 能力的 LLM —— 以下 LLM 插件激活失败：${erroredProviders.join('、')}。可用 /doctor 查看原因（需要相应权限）。`;
     }
     return '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。';
   }
