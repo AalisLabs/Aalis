@@ -433,6 +433,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-remote-agent:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-session-confirm:
     dependencies:
       '@aalis/api-authority':
@@ -1878,6 +1890,31 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-remote-agent-cursor:
+    dependencies:
+      '@aalis/api-remote-agent':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-remote-agent
+      '@aalis/schema-config':
+        specifier: workspace:>=0.13.0 <1.0.0
+        version: link:../schema-config
+      '@aalis/util-network-guard':
+        specifier: workspace:>=0.6.2 <1.0.0
+        version: link:../util-network-guard
+    devDependencies:
+      '@aalis/api-webui':
+        specifier: workspace:*
+        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
