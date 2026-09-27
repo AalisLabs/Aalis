@@ -16,19 +16,19 @@
 
 ```ts
 export interface PlatformAdapter {
-  adapterName: string;                       // 显示名，如 'OneBot' / 'CLI'   (:39)
-  platform: string;                          // 平台标识，如 'onebot'/'cli'/'webui'  (:41)
-  sessionTypes?: readonly string[];          // 本平台可能发出的 sessionType 枚举（消费方据此生成作用域 UI，勿臆造）  (:50)
+  adapterName: string;                       // 显示名，如 'OneBot' / 'CLI'
+  platform: string;                          // 平台标识，如 'onebot'/'cli'/'webui'
+  sessionTypes?: readonly string[];          // 本平台可能发出的 sessionType 枚举（消费方据此生成作用域 UI，勿臆造）
 
-  getConnections(): PlatformConnection[];    // 必须：当前所有连接快照  (:52)
-  sendMessage(                               // 必须：向某 sessionId 发纯文本  (:54)
+  getConnections(): PlatformConnection[];    // 必须：当前所有连接快照
+  sendMessage(                               // 必须：向某 sessionId 发纯文本
     sessionId: string,
     content: string,
     options?: { skipSplit?: boolean },
   ): Promise<void>;
 
-  canHandle?(sessionId: string): boolean | Promise<boolean>;        // 路由用，见下  (:67)
-  getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;  // 自报机器人身份  (:69)
+  canHandle?(sessionId: string): boolean | Promise<boolean>;        // 路由用，见下
+  getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;  // 自报机器人身份
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>; // 平台原生 API
 }
 ```
