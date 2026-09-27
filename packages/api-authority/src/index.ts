@@ -347,7 +347,8 @@ declare module '@aalis/api-host-config' {
      */
     autoConfirmUntil?: number;
     /**
-     * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的 safeFetch 能连到哪。
+     * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的出口能连到哪，即 safeFetch，
+     * 以及 tool-browser 开启 blockPrivate 时的浏览器网络闸（三项都遵循）。
      * 不影响你自己配置的固定本地服务（ollama/onebot daemon 走裸 fetch，不过 safeFetch）。
      */
     network?: {

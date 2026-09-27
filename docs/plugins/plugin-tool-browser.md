@@ -35,7 +35,7 @@ export default definePlugin({
 | `defaultTimeout` | number | `30000` | 默认超时(ms)：页面导航和操作的默认超时时间。 |
 | `viewportWidth` | number | `1280` | 视口宽度 |
 | `viewportHeight` | number | `720` | 视口高度 |
-| `maxPages` | number | `5` | 最大页面数：同时打开的最大标签页数量。超出后关闭最早打开的页面。 |
+| `maxPages` | number | `5` | 最大页面数：同时打开的最大页面数量。超出后关闭最早打开的页面。 |
 | `executablePath` | string | `''` | Chrome 路径：自定义 Chrome/Chromium 可执行文件路径。留空则使用 Puppeteer 内置 Chromium。 |
 | `maxContentLength` | number | `50000` | 最大内容长度：返回给 Agent 的页面文本最大字符数。 |
 | `blockPrivate` | boolean | `true` | 封锁内网与本地：拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。 |
@@ -46,7 +46,7 @@ export default definePlugin({
 
 | 工具 | 说明 |
 |---|---|
-| `browser_navigate` | 打开指定 URL（可用 pageId 复用标签页、用 waitFor 等待 CSS 选择器），返回 pageId、标题、URL 和截断后的页面文本 |
+| `browser_navigate` | 打开指定 URL（可用 pageId 复用已有页面、用 waitFor 等待 CSS 选择器），返回 pageId、标题、URL 和截断后的页面文本 |
 | `browser_get_text` | 获取页面文本，可按 CSS 选择器取特定元素 |
 | `browser_click` | 点击页面元素 |
 | `browser_type` | 在输入框中输入文本（默认先清空，可选回车提交） |
@@ -58,13 +58,21 @@ export default definePlugin({
 
 `browser_navigate` 打开 URL 前先做校验：协议须在 `allowedProtocols` 内；`blockPrivate=true` 时再用 `isPrivateHost` 做字符串级私网判定，这一步不解析域名。
 
-`blockPrivate=true` 时，浏览器启动后在浏览器级开启请求拦截（CDP `Fetch` 域，只拦 http(s) 请求）。页面、页面用 `window.open` 打开的窗口，以及 dedicated / shared / service worker 发出的请求都经过它，包括导航、点击与表单提交、重定向的每一跳、子资源和 `fetch`；运行中新建的标签页与 worker 同样经过它。每个请求经 `assertSafeHost` 做 DNS 级判定，未通过的请求以 `net::ERR_BLOCKED_BY_CLIENT` 失败；判定抛错或 10 秒内未完成，同样按拒绝处理。非 http(s) 请求（`data:`、`blob:`、`about:` 等）不经拦截；WebSocket 连接也不经过这道拦截。拦截内的判定遵循进程级网络策略（core 配置 `network` 的 `blockPrivate` / `denyCidrs`）。拦截开启失败时关闭这次启动的浏览器并报错，下次调用重新启动；浏览器不会在没有拦截的情况下运行。`blockPrivate=false` 时不做私网判定，也不开启请求拦截。
+`blockPrivate=true` 时，插件在本进程的 `127.0.0.1` 随机端口起一道网络闸（只支持无认证 CONNECT 的 SOCKS5 服务），浏览器以 `--proxy-server` 把全部 TCP 连接交给它，并以 `--proxy-bypass-list=<-loopback>` 撤掉 Chrome 让 localhost、回环与链路本地地址默认绕过代理的规则。页面、页面用 `window.open` 打开的窗口，以及 dedicated / shared / service worker 发出的连接都经过它，包括导航、点击与表单提交、重定向的每一跳、子资源、`fetch` 与 WebSocket。每个连接先按进程级网络策略的 `allowedPorts` 判定目标端口（`allowedHosts` 里的主机也不例外），再按目标主机判定：
 
-Chrome 自带的本地网络访问限制也会约束公网来源的页面访问本机与内网，但它只算额外一层，本插件的防护不以它为前提。
+- `allowedHosts` 里的主机按名字直连，不做私网判定；
+- IP 字面量须是规范写法（Chrome 交出的都是），含 zone id 或不是规范写法的 IPv6 字面量直接拒绝，其余经 `assertAddressesSafe` 判定；
+- 域名经 `pinnedLookup` 解析，全部地址通过判定后，连接只用这次解析得到的地址。判定与连接之间不再解析第二次，DNS 重绑定（判定时解析到公网地址、连接时解析到内网地址）因此无效。
 
-两个判定函数均来自 `@aalis/util-network-guard`，私网段清单见 [network-guard](../utils/network-guard.md)。
+判定不过、解析失败或连接失败，浏览器侧的请求都以 `net::ERR_SOCKS_CONNECTION_FAILED` 失败；`browser_navigate` 遇到这个错误时在报错后附一句说明，指出目标可能被 `blockPrivate` 拦截。判定遵循进程级网络策略，即宿主配置文档 `network` 字段的 `blockPrivate`、`denyCidrs` 与 `allowedPorts` 三项。WebRTC 以 `--webrtc-ip-handling-policy=disable_non_proxied_udp` 启动，不发不经代理的 UDP（以随附的 Chrome 实测；`executablePath` 指向较旧的 Chrome 时未核实）。
 
-`allowedHosts` 的条目与小写化后的主机名（不含端口）做精确比较，不支持通配或网段；命中即跳过上述私网判定，仅在 `blockPrivate=true` 时生效。
+闸在首次启动浏览器之前起好，此后一直监听到插件停用；起不来时报错、不启动浏览器，下次调用重试，浏览器不会在没有闸的情况下运行。闸不做认证，本机进程都可以连到它，经它连接的目标同样按上述规则判定；问候与请求 10 秒内没有收齐的连接会被断开。插件停用时先关闭闸并断开全部在途连接，再关闭页面与浏览器，闸的关闭不等浏览器关闭落定。浏览器的全部流量经插件所在进程转发，打开重页面、视频时会多占该进程的 CPU，闸解析域名用的 `dns.lookup` 占用 libuv 线程池，域名多的页面可能与同进程的文件 I/O 争用线程；走代理后 Chrome 不使用 QUIC，也不再使用系统代理设置，出站连接由插件所在进程直连目标。`blockPrivate=false` 时不做私网判定，也不起闸，进程级网络策略不作用于浏览器。
+
+Chrome 自带的本地网络访问限制只对浏览器直连的请求起作用：经闸的连接由闸解析目标，浏览器无从判断目标属于内网还是公网。本插件的防护不以它为前提。
+
+判定函数均来自 `@aalis/util-network-guard`，私网段清单见 [network-guard](../utils/network-guard.md)。
+
+`allowedHosts` 的条目与小写化后的主机名（不含端口）做精确比较，不支持通配或网段；IPv6 字面量带方括号写（如 `[::1]`）。命中即跳过上述私网判定，仅在 `blockPrivate=true` 时生效。
 
 ## 截图的交付形态
 
@@ -76,4 +84,6 @@ base64 任何情况下都不进文本结果：整张 PNG 的 base64 有几十万
 
 ## 浏览器实例
 
-Chromium 按需启动，进程级共享一个实例与一张页面表。取实例时检查连接是否存活：崩溃或被杀之后再调工具会重新启动浏览器，并清空页面表（此前的 `pageId` 随之失效，需重新 `browser_navigate`）。
+Chromium 按需启动，进程级共享一个实例与一张页面表；并发的首次调用共用同一次启动。取实例时检查连接是否存活：崩溃或被杀之后再调工具会重新启动浏览器，并清空页面表（此前的 `pageId` 随之失效，需重新 `browser_navigate`）。插件停用时若浏览器正在启动，启动完成后随即关闭，发起启动的调用返回错误。
+
+每个页面（`pageId`）独占一个浏览器窗口，`headless=false` 时即各自一个系统窗口。`browser_click`、`browser_type` 与 `browser_screenshot` 操作前先把目标页切到前台：页面自己用 `window.open` 或 `target=_blank` 开出的窗口会把原页压到后台，而无头 Chrome 的后台页不做渲染，点击、默认先清空的输入与按选择器截图会一直等不到结果。

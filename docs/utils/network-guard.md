@@ -38,7 +38,7 @@ SSRF 安全的 `fetch` 替代品。它逐跳使用 `redirect:'manual'`，每一�
 export async function assertSafeUrl(rawUrl: string): Promise<URL>
 ```
 
-校验单条 URL，不发起请求。它要求 URL 能被 `new URL()` 解析（否则抛 `非法 URL`）、协议只能是 `http:` 或 `https:`（否则抛 `仅支持 http/https`）、目标端口命中 `allowedPorts` 策略（不在列表时抛 `拒绝访问端口 N`）、host 通过 `assertSafeHost`。全部通过后返回解析出的 `URL` 对象。
+校验单条 URL，不发起请求。它要求 URL 能被 `new URL()` 解析（否则抛 `非法 URL`）、协议只能是 `http:` 或 `https:`（否则抛 `仅支持 http/https`）、目标端口通过 `assertPortAllowed`（不在 `allowedPorts` 列表时抛 `拒绝访问端口 N`）、host 通过 `assertSafeHost`。全部通过后返回解析出的 `URL` 对象。
 
 当你自己管理连接（例如流式代理），只想拿到一个校验过的 URL 时，用它。
 
@@ -53,7 +53,35 @@ export async function assertSafeHost(hostname: string): Promise<void>
 - IPv6 字面量带方括号（如 `[::1]`）时，先剥掉方括号再判定。
 - **字面 IP**：`blockPrivate` 开启时，命中私网、回环或元数据段即拒绝；命中 `denyCidrs` 即拒绝。
 - **`localhost` / `*.localhost` / `*.local` 主机名**：`blockPrivate` 开启时直接拒绝。
-- **其它域名**：用 `dns.lookup(host, { all: true })` 解析出全部 A/AAAA 记录，只要任意一条命中私网或 `denyCidrs` 即拒绝。这一步用于封堵 DNS rebinding——攻击者把一个公网域名解析到内网 IP。
+- **其它域名**：用 `dns.lookup(host, { all: true })` 解析出全部 A/AAAA 记录，只要任意一条命中私网或 `denyCidrs` 即拒绝，挡住解析到内网 IP 的域名。它只预检、不连接：之后按名字连接会再解析一次，要封堵 DNS rebinding，连接时用 `pinnedLookup`。
+
+### `pinnedLookup(hostname, options, callback)` — 判定与连接用同一次解析
+
+```typescript
+export const pinnedLookup: LookupFunction // node:net 的 LookupFunction
+```
+
+自管连接时作为 `net.connect` / `tls.connect`（或 undici `Agent` 的 `connect`）的 `lookup` 传入。它用 `dns.lookup(host, { all: true })` 解析出全部地址，经 `assertAddressesSafe` 判定后，把这次解析的结果交给连接使用；任一地址不过判定时以错误回调，连接失败。判定与连接之间不再解析第二次，因此能封堵 DNS rebinding：先 `assertSafeHost` 再按名字连接会解析两次，低 TTL 的域名可以在两次之间从公网地址换成内网地址。
+
+回调形状跟随 `options.all`：带 `all: true`（Node 20+ 默认开启的 happy-eyeballs）时交回 `{ address, family }[]`，不带时交回单个地址与 family。
+
+它只管域名：目标是 IP 字面量时 Node 不调用 `lookup`，调用方须自行用 `assertAddressesSafe` 判定。`safeFetch` 的 dispatcher 即用它连接。
+
+### `assertAddressesSafe(host, addresses)` — 校验一组已解析地址
+
+```typescript
+export function assertAddressesSafe(host: string, addresses: readonly string[]): void
+```
+
+逐个校验地址：`blockPrivate` 开启时命中私网、回环或元数据段即抛错，命中 `denyCidrs` 即抛错。`host` 只用于错误信息。`assertSafeHost` 与 `pinnedLookup` 共用这一判定。自管连接的目标是 IP 字面量时传 `assertAddressesSafe(ip, [ip])`，传入前须是规范形式：判定按规范写法认段，`0::1`、带 zone id 的 `::1%lo0` 这类写法会被判成公网，连接却照样到达回环。浏览器网络闸的做法是：含 `%`、或与 URL 解析器规范化后的写法不同的 IPv6 字面量一律拒绝。
+
+### `assertPortAllowed(port)` — 校验目标端口
+
+```typescript
+export function assertPortAllowed(port: number): void
+```
+
+策略配置了 `allowedPorts` 时，端口不在列表中即抛 `拒绝访问端口 N（不在允许列表）`；未配置时不限。`assertSafeUrl` 用它判定 URL 的端口。自管连接拿到目标端口后直接调用它，浏览器网络闸即如此。
 
 ### `isPrivateAddress(addr)` — 同步纯判定
 
@@ -148,6 +176,8 @@ await assertSafeHost(parsedUrl.hostname);
 | 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，启动时注入一次 |
 
 其中两处做法值得参考：图片代理显式不带 cookie、只给一个伪 UA；media 与 http 工具在 `safeFetch` 之外自行做体积上限与流式累计——util 只负责校验、不限制体积，详见 §5。
+
+`pinnedLookup`、`assertAddressesSafe` 与 `assertPortAllowed` 另有一个自管连接的消费点：plugin-tool-browser 的浏览器网络闸（本进程内的 SOCKS5 服务，浏览器的全部连接经它判定后转发），见 [plugin-tool-browser](../plugins/plugin-tool-browser.md)。
 
 ---
 
