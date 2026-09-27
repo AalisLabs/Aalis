@@ -16,8 +16,10 @@ export default definePlugin({
     tools: optional(tools),
     logger,
     lifecycle,
+    events,
     config,
     commands: optional(commands),
+    authority: optional(authority),
     persona: optional(persona),
     storage: optional(storage),
     process: optional(processService),
@@ -85,9 +87,39 @@ export default definePlugin({
 | 中止前命令已自行退出（包括孙进程占着管道的收尾窗口），或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '回合已中止'` |
 | 起进程前回合已中止 | 不执行命令，返回 `aborted: true`、同一条 `message` 与 `exitCode: -1` |
 
-`exec_background` 起的后台进程不随回合中止：它们本来就要活过这次调用（开发服务器、文件监视），按停止键或追加一句话都不会杀掉。收掉它们用 `process_kill`（restricted、需确认，只能收同一会话起的进程）；插件停用时对仍在运行的后台进程发 SIGTERM、不升级，忽略 SIGTERM 的进程要到 Aalis 停机时由 process 服务整组 SIGKILL。
+`exec_background` 起的后台进程不随回合中止：它们本来就要活过这次调用（开发服务器、文件监视），按停止键或追加一句话都不会杀掉。命令要按前台写法给出，不要再加 `&` 或 `nohup`：进程已由工具放在后台管理，命令自己放到后台的子进程在 shell 退出之后，`process_kill` 就管不到了。
 
 停止键与超时都只打原进程组：命令里主动脱离进程组的后代（`setsid`、以 `detached: true` 起的子进程等守护化写法）会活下来。
+
+### 后台命令结束通知
+
+在对话回合里起的后台进程，在本次运行期间自行退出（包括出错退出）时，工具向起它的会话注入一条宿主通知（`inbound:message`，`source` 为 `exec-bg:<进程 id>`，`hostNotice.kind` 为 `exec-background`），agent 随即开一轮，她自己说出结果。长驻进程（开发服务器、文件监视）正常运行时不会退出，也就没有通知，是否就绪要用 `process_read` 看输出。
+
+- 通知只放宿主取得的事实：进程 id、退出码（或结束它的信号名，或「出错结束」）与用时，外加一句「它最近的输出用 process_read 查看」。命令与输出不进通知：通知以 system 呈现、会归档，命令由模型写出（可能受过注入），输出受外部内容左右。输出由她用 `process_read` 读，以工具结果进上下文；`process_read` 的结果带 `command`，会话压缩之后也对得上号。
+- 身份跟起进程的那次调用：通知的 `platform` 同那次调用，`actor` 为那次调用的有效授权身份（`actor ?? { platform, userId }`，都没有时为无主体），`hostNotice.callerUserId` 为那次调用的 `userId`。agent 用它填这一轮工具调用上下文的 `userId`，这一轮的等级、确认由谁应答、会话授予都与起进程的那一轮相同。
+- 起进程的那个人在同一会话说话，会打断正在进行的通知回合；别人的消息不会。WebUI 里通知回合同样显示停止键。
+- 进程 id 形如 `proc_<本次启动的 6 位十六进制>_<序号>`，Aalis 重启之后不会与历史里的旧 id 撞号。
+
+不发通知的情形：
+
+| 情形 | 说明 |
+|---|---|
+| 调用不在 agent 回合里（mcp-server、workflow 的 tool 节点等，调用上下文没有 `inbound`） | 没有可回的对话 |
+| 在由结束通知开启的回合里起的进程 | 链只延续一层，工具结果写明不再通知，结局用 `process_list` 查看 |
+| 被 `process_kill` 终止 | 工具结果已说明 |
+| 会话被删除 | 进程随之终止 |
+| 插件停用、bounce，或 Aalis 停机 | 进程随之终止 |
+| 创建失败（如 cwd 不存在） | `exec_background` 直接回 `后台进程启动失败：<原因>`，不登记 |
+
+起进程的那一轮被停止键中止之后，进程照常运行，结束时照常通知。
+
+通知回合与同一会话的其他回合并行（各占 agent 的一条 lane），在通道层的排队上线之前，owner 正在聊或起进程的那一轮还没结束时，可能出现两轮同时回复、各改同一批文件的情况；两轮并行时，WebUI 里先结束的一轮会覆盖共用的流式气泡，刷新后正确。
+
+### 收掉后台进程
+
+`process_kill` 为 restricted、不需确认，只接受 `processId`：按进程中止契约终止整组（POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树），最多等 3000ms，已停就报 `stopped: true`，仍在运行就如实回报（这时结束通知保留，它之后结束照常通知）。只能终止与调用者同一身份起的进程，owner 除外（经 authority 服务判定；没有 authority 服务时只认同一身份），也只在同一会话里找得到。需要确认时，在 authority 的 `confirmOverrides` 里给 `tool:process_kill` 配上。
+
+删除会话时，该会话仍在运行的后台进程一并终止，登记表里这个会话的记录清空；插件停用或 bounce 时，全部后台进程按同一契约终止。
 
 ## file 工具：exclude/include 与 file_search 行为
 
