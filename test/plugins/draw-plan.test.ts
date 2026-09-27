@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allowRequest,
   buildShell,
   classifySource,
+  DRAW_ENTRY,
   type DrawCaps,
   parseSvgCanvas,
+  renderRequest,
   resolveCanvas,
 } from '../../packages/plugin-draw/src/plan.js';
 
 // ════════════════════════════════════════════════════════════
-// 绘图渲染计划（纯函数层）——源分类 / 画布定界 / 请求放行。
-// 画布定界是实测坑的解：内联 SVG 不定死宽高会随视口伸缩；
-// allowRequest 是安全闸的判定芯（default-deny，引擎层用它拦一切外联）。
+// 绘图渲染计划（纯函数层）——源分类 / 画布定界 / 渲染请求。
+// 画布定界是实测坑的解：内联 SVG 不定死宽高会随视口伸缩。
+// 请求放行不在这里：离线渲染库只响应渲染请求里列出的网址（这里只有外壳文档一个），其余一律中止。
 // ════════════════════════════════════════════════════════════
 
 const caps: DrawCaps = { defaultWidth: 800, maxWidth: 1600, maxPixels: 4_000_000, maxSourceBytes: 262144, scale: 2 };
@@ -79,28 +80,31 @@ describe('parseSvgCanvas / resolveCanvas', () => {
   });
 });
 
-describe('allowRequest（default-deny 判定函数）', () => {
-  it('只放 about:blank 与 data:', () => {
-    expect(allowRequest('about:blank')).toBe(true);
-    expect(allowRequest('data:image/png;base64,AAAA')).toBe(true);
-    for (const bad of [
-      'http://169.254.169.254/latest/meta-data/',
-      'https://example.com/a.png',
-      'blob:null/x',
-      'chrome://settings',
-    ]) {
-      expect(allowRequest(bad), bad).toBe(false);
-    }
+describe('renderRequest（交给离线渲染库的请求）', () => {
+  it('外壳文档是唯一的资源，入口是保留域名下的 https 网址', () => {
+    const plan = resolveCanvas('<p>x</p>', 300, caps);
+    const req = renderRequest(plan, 2, caps.maxPixels);
+    expect(req.entry).toBe(DRAW_ENTRY);
+    expect(new URL(DRAW_ENTRY).href).toBe(DRAW_ENTRY);
+    expect([...req.resources.keys()]).toEqual([DRAW_ENTRY]);
+    expect(new TextDecoder().decode(req.resources.get(DRAW_ENTRY)?.body)).toBe(plan.html);
+    expect(req.resources.get(DRAW_ENTRY)?.contentType).toMatch(/^text\/html/);
   });
 
-  // file:// 单列并注明真相（对抗审计 T-2）：本函数对 file:// 返回 false，但真实引擎里
-  // file:// 子资源/导航**根本不触发 request 事件**（puppeteer 拦截器对 file:// 是瞎的）——
-  // file:// 被挡死的真正原因是引擎只用 setContent(about:blank 源)、从不 goto('file://')、
-  // 也不设 --allow-file-access-from-files，Chrome 的 local-resource 同源策略拦死。
-  // 这条断言只表达"判定函数不放 file://"，**不代表** allowRequest 是 file:// 的防线。
-  // 若日后有人给引擎加 file:// 导航面，这道判定抓不到——真防线在 engine.ts 的导航入口纪律。
-  it('file:// 判定为拒（但真实防线是 Chrome 源策略，见注释）', () => {
-    expect(allowRequest('file:///etc/passwd')).toBe(false);
+  it('HTML：视口先按 600 高排版，按 #aalis-draw 量高，限高 = 像素上限 ÷ 宽', () => {
+    const plan = resolveCanvas('<p>x</p>', 500, caps);
+    const req = renderRequest(plan, 2, 1_000_000);
+    expect(req.viewport).toEqual({ width: 500, height: 600, deviceScaleFactor: 2 });
+    expect(req.clip).toEqual({ kind: 'element', selector: '#aalis-draw', maxHeight: 2000 });
+    // 量高下限 16：外壳给画布定最小高
+    expect(plan.html).toContain('min-height:16px');
+  });
+
+  it('SVG：视口与限高都是定好的画布高', () => {
+    const plan = resolveCanvas('<svg viewBox="0 0 10 5"></svg>', 200, caps);
+    const req = renderRequest(plan, 1, caps.maxPixels);
+    expect(req.viewport).toEqual({ width: 200, height: 100, deviceScaleFactor: 1 });
+    expect(req.clip).toEqual({ kind: 'element', selector: '#aalis-draw', maxHeight: 100 });
   });
 });
 

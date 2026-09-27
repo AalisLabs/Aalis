@@ -1,11 +1,13 @@
 // ============================================================
-// plan.ts — 渲染计划（纯函数层：源分类 / 画布定界 / 外壳文档 / 请求放行判定）
+// plan.ts — 渲染计划（纯函数层：源分类 / 画布定界 / 外壳文档 / 渲染请求）
 //
 // 引擎是无头浏览器，SVG 与 HTML 对它是同一件事——真正需要区分的只有
 // 「画布怎么定界」：SVG 有 viewBox/width 的精确尺寸语义，直接算；
 // HTML 交给排版引擎流式布局，宽度取参数、高度渲染后实测。
 // 本文件零 IO 零浏览器依赖，全部可单测。
 // ============================================================
+
+import type { RenderRequest } from '@aalis/util-offline-render';
 
 export interface DrawCaps {
   /** HTML 模式与无宽度 SVG 的默认画布宽（px） */
@@ -20,15 +22,15 @@ export interface DrawCaps {
   scale: number;
 }
 
-export type SourceMode = 'svg' | 'html';
+type SourceMode = 'svg' | 'html';
 
-export interface CanvasPlan {
+interface CanvasPlan {
   mode: SourceMode;
   /** 画布宽（CSS px，已 clamp） */
   width: number;
   /** 画布高：SVG 按尺寸语义先验可知；HTML 需渲染后实测 */
   height: number | 'auto';
-  /** 交给浏览器 setContent 的完整文档 */
+  /** 外壳文档：离线渲染的入口，也是唯一的资源 */
   html: string;
 }
 
@@ -124,7 +126,7 @@ export function resolveCanvas(source: string, requestedWidth: number | undefined
 
 /**
  * 外壳文档：body 归零边距；SVG 模式用定宽定高容器把根 SVG 撑满（杜绝随视口伸缩）；
- * HTML 模式定宽、高度自流。字体栈兜底中文与 emoji（macOS 自带；Linux 需装 Noto CJK 与 Noto Color Emoji，
+ * HTML 模式定宽、高度自流（最低 16）。字体栈兜底中文与 emoji（macOS 自带；Linux 需装 Noto CJK 与 Noto Color Emoji，
  * 见 docs/plugins/plugin-draw.md「系统依赖」；模型可在标记内自定覆盖）。
  */
 export function buildShell(source: string, mode: SourceMode, width: number, height: number | 'auto'): string {
@@ -141,7 +143,7 @@ export function buildShell(source: string, mode: SourceMode, width: number, heig
   }
   return (
     `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${base}` +
-    `#aalis-draw{width:${width}px}</style></head>` +
+    `#aalis-draw{width:${width}px;min-height:16px}</style></head>` +
     `<body><div id="aalis-draw">${source}</div></body></html>`
   );
 }
@@ -189,11 +191,21 @@ export function lintAnimationSource(source: string): string[] {
   return warnings;
 }
 
+/** 外壳文档的网址：保留域名下的 https 网址，离线渲染只响应它、其余请求一律中止 */
+export const DRAW_ENTRY = 'https://draw.invalid/';
+
 /**
- * 请求放行判定（default-deny）：渲染页只允许内联资源。
- * LLM 生成的标记是不可信输入——实测 <script> 会执行、外链会真发请求（SSRF/外泄口），
- * 引擎层禁 JS + 本判定拦一切网络面：只放 about:blank（setContent 的初始导航）与 data:。
+ * 交给离线渲染库的请求：外壳文档是唯一的资源；量 #aalis-draw 的框截图。
+ * HTML 模式视口先按 600 高排版，量高后按像素上限限高（maxPixels ÷ 宽）；SVG 模式视口与限高都是定好的画布高。
  */
-export function allowRequest(url: string): boolean {
-  return url === 'about:blank' || url.startsWith('data:');
+export function renderRequest(plan: CanvasPlan, scale: number, maxPixels: number): RenderRequest {
+  const fixed = plan.height === 'auto' ? null : plan.height;
+  return {
+    entry: DRAW_ENTRY,
+    resources: new Map([
+      [DRAW_ENTRY, { body: new TextEncoder().encode(plan.html), contentType: 'text/html; charset=utf-8' }],
+    ]),
+    viewport: { width: plan.width, height: fixed ?? 600, deviceScaleFactor: scale },
+    clip: { kind: 'element', selector: '#aalis-draw', maxHeight: fixed ?? Math.floor(maxPixels / plan.width) },
+  };
 }

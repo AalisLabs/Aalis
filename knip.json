@@ -8,9 +8,6 @@
       "entry": ["index.html"],
       "project": ["src/**/*.{ts,tsx}"]
     },
-    "packages/plugin-draw": {
-      "ignoreDependencies": ["@aalis/util-offline-render"]
-    },
     "packages/plugin-paper": {
       "ignoreDependencies": ["@aalis/api-authority", "@aalis/api-publish"]
     },
@@ -32,9 +29,6 @@
     },
     "packages/plugin-works-site": {
       "ignoreDependencies": ["@aalis/api-doctor", "@aalis/api-publish", "@aalis/api-storage"]
-    },
-    "packages/util-offline-render": {
-      "ignoreDependencies": ["puppeteer"]
     }
   },
   "ignoreIssues": {
