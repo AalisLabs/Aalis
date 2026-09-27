@@ -19,6 +19,7 @@ export default definePlugin({
     embedding,
     memory: optional(memory),
     tools: optional(tools),
+    sessionManager: optional(sessionManager),
     events,
     hooks,
     contributions,
@@ -56,16 +57,17 @@ export default definePlugin({
    已烘入引用与附件描述，非 webui/cli 平台还带发送者前缀）；assistant 侧 embed 可见正文
    （落库内容是结构化输出信封时取 metadata 的 `visibleContent`，缺省为 `content`），在取得自身身份时
    embed 前经 `prefixSender` 加自身发送者前缀；
-   AI/系统撰写的伪 incoming 不入库（`source: idle-trigger` / `triggerType: proactive` /
-   `source: scheduler` / `source: workflow:*` / `userId: parent:*`，即闲聊主动触发、
-   workflow agent 节点与定时/工作流/子任务派发）
+   AI/系统撰写的伪 incoming 不入库（带 `hostNotice` 的宿主通知 / `source: idle-trigger` /
+   `triggerType: proactive` / `source: scheduler` / `source: workflow:*` / `userId: parent:*`，
+   即宿主通知、闲聊主动触发、workflow agent 节点与定时/工作流/子任务派发）
 2. **语义检索**: 经 `agent:prompt` 贡献点（turn-context 锚位），组装请求时：
    - 将用户最新消息 embed 为查询向量
    - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 embedding 模型（见下节）、minScore 与跨会话模式过滤后时间衰减加权重排；
      `crossSessionMode: user` 时，当前用户本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
      扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；
-     否则只注入命中本身。结果与当前会话已有内容去重
+     否则只注入命中本身。结果与当前会话已有内容去重。指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务、
+     宿主通知）不是任何人的发言，不作为邻居带出
    - 注入为独立 system 消息；assistant/notice/tool 消息按角色标注
      （`Assistant·你自己` 等），AI 自己的历史回复不会以他人发言形态回流；正文优先取 metadata 的
      `visibleContent`，缺省按 `content` 呈现（升级前落库的消息没有该键）
@@ -76,6 +78,10 @@ export default definePlugin({
    `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
 可见范围为同平台时（`crossSessionMode: platform`、会话配置 `memoryRecallScope` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取房间的出生平台（[api-gateway](../api/api-gateway.md#出生平台解析) 的 `resolveSessionOrigin`），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台，入口也缺省时取会话 ID 第一个 `:` 之前的一段。候选向量记下的平台或其会话 ID 的第一段等于当前平台，即算同平台。
+
+## 按房间收窄召回
+
+会话配置的 `memoryRecallScope`（`session` / `platform` / `all`，见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间的召回范围收得比 `crossSessionMode` 更窄：被动召回与 `memory_recall` 都取插件配置映出的可见范围与房间范围中较窄的一个，房间写得更宽时按插件配置。`memory_recall` 的 `scope` 参数再与这个结果取较窄者，传 `all` 也放不宽。房间范围每次检索时按会话所属平台现算，写在平台档里的同样生效；房间没设这个键或 session-manager 不在场时，行为与只看插件配置相同。
 
 ## embedding 模型与存量向量
 
@@ -88,10 +94,11 @@ export default definePlugin({
 
 提供者未声明 `modelId` 时，写入不带该键，检索也不按模型过滤。
 
-存量标记记的是升级后首次检索时的模型，存放在记忆元数据里。只清消息历史（如 `/clear all -t context`）不动它；全局清空向量库（`/clear all -t vector`，或不带类型的 `/clear all`）时，插件一并删除存量标记并复位缓存，之后的检索按当时的模型重新记下；删除失败只记一条 warn，不影响清空结果。以下两种情况存量向量会被记成当时的模型、继续混入检索，需清空向量库：升级时同时换了模型；memory 后端是元数据不持久的 plugin-memory-inmemory 而向量库持久化，换模型后一重启，标记就按新模型重记。
+存量标记记的是升级后首次检索时的模型，存放在记忆元数据里。只清消息历史（如 `/clear all -t context`）不动它；全局清空向量库（`/clear all -t vector`，或不带类型的 `/clear all`）时，插件一并删除存量标记并复位缓存（清空时正在进行的标记读写先完成再删），之后的检索按当时的模型重新记下；删除失败只记一条 warn，不影响清空结果。以下两种情况存量向量会被记成当时的模型、继续混入检索，需清空向量库：升级时同时换了模型；memory 后端是元数据不持久的 plugin-memory-inmemory 而向量库持久化，换模型后一重启，标记就按新模型重记。
 
 ## 依赖
 
 - **vectorstore**: 向量存储服务（如 plugin-vectorstore-flat 或 plugin-vectorstore-lancedb）
 - **embedding**: 文本嵌入服务（如 plugin-embedding-ollama 或 plugin-embedding-openai）
 - **memory**（可选）: 消息存储服务，两个用途：提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身；记忆元数据存放存量标记（见上节），缺失时存量向量按当前模型对待。该服务在调用点惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效。plugin-memory-inmemory 的元数据不持久，与持久化向量库（plugin-vectorstore-flat / plugin-vectorstore-lancedb）搭配时，每次重启都会按当时的模型重记存量标记
+- **session-manager**（可选）: 读房间的 `memoryRecallScope`（见「按房间收窄召回」），在调用点现取；缺失时只按插件配置

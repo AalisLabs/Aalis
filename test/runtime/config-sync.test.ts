@@ -397,6 +397,58 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     await app.stop();
   });
 
+  it('禁用插件的配置段改了：热重载只换配置、保持禁用，日志如实说明；启用时按新配置激活', async () => {
+    let push: ((next: Record<string, unknown>) => void) | undefined;
+    const { app, store } = hostedApp(
+      { plugins: { p1: { known: 1 } }, disabledPlugins: ['p1'] },
+      {
+        provider: {
+          save: () => {},
+          watch: cb => {
+            push = cb as (next: Record<string, unknown>) => void;
+            return () => {};
+          },
+        },
+      },
+    );
+    const seen: Record<string, unknown>[] = [];
+    const mod = definePlugin({
+      name: 'p1',
+      configSchema: { known: { type: 'number', label: 'K', default: 0 } },
+      uses: { config },
+      apply({ config: value }) {
+        seen.push(structuredClone(value));
+      },
+    });
+    await registerFromDoc(app, store, mod);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p1')?.state).toBe('disabled');
+
+    const infos: string[] = [];
+    const origInfo = app.logger.info.bind(app.logger);
+    app.logger.info = (msg: string, ...rest: unknown[]) => {
+      infos.push(String(msg));
+      origInfo(msg, ...rest);
+    };
+    const discovery = createPluginDiscovery(app, NO_PLUGINS, store);
+    let reloading: Promise<void> = Promise.resolve();
+    store.watch(() => {
+      reloading = handleConfigChanged(app, store, discovery);
+    });
+    push?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2 } }, disabledPlugins: ['p1'] });
+    await reloading;
+    await app.plugins.idle();
+
+    expect(app.plugins.getPlugin('p1')?.state).toBe('disabled');
+    expect(seen).toEqual([]);
+    expect(infos.filter(m => m.includes('p1'))).toEqual(['插件 p1 配置已变更；插件已禁用，启用时按新配置激活']);
+
+    await app.plugins.enable('p1');
+    await app.plugins.idle();
+    expect(seen).toEqual([{ known: 2 }]);
+    await app.stop();
+  });
+
   it('外部新增已登记模块的后缀实例：热重载按政策补默认值后直接登记，首次 apply 即带默认值', async () => {
     let push: ((next: Record<string, unknown>) => void) | undefined;
     const { app, store } = hostedApp(

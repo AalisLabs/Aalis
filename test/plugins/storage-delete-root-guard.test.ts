@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, type LogEntry, LogHub } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -19,13 +19,17 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
   let ws: string;
   let app: App;
   let gateway: StorageService;
+  let logs: LogEntry[];
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-delroot-'));
     ws = join(base, 'ws');
     mkdirSync(join(ws, 'sub'), { recursive: true });
     writeFileSync(join(ws, 'keep.txt'), 'survivor');
-    app = new App({ name: 'T', logLevel: 'error' });
+    logs = [];
+    const logHub = new LogHub();
+    logHub.onEntry(entry => void logs.push(entry));
+    app = new App({ name: 'T', logLevel: 'info', logHub });
     await app.plugin(storageLocal, {
       roots: [
         {
@@ -63,10 +67,13 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     expect(existsSync(join(ws, 'sub'))).toBe(true);
   });
 
-  it('正常子路径删除不受影响', async () => {
+  it('正常子路径删除不受影响，按 info 记一行审计日志', async () => {
     writeFileSync(join(ws, 'sub', 'x.txt'), 'x');
     await gateway.delete('ws:/sub/x.txt');
     expect(existsSync(join(ws, 'sub', 'x.txt'))).toBe(false);
     expect(existsSync(join(ws, 'keep.txt'))).toBe(true);
+    // 与 write / rename 同级：/clear、更新预检等正常删除不该出成 WARN
+    const deleteLogs = logs.filter(e => e.message.includes('storage.delete'));
+    expect(deleteLogs.map(e => [e.level, e.message])).toEqual([['info', 'storage.delete ws:/sub/x.txt']]);
   });
 });

@@ -55,8 +55,11 @@ export function PluginConfigPage({
     markBusy(plugin.instanceId);
     const action = plugin.state === 'disabled' ? 'enable' : 'disable';
     try {
-      await api(`/api/plugins/${encodeURIComponent(plugin.instanceId)}/${action}`, { method: 'POST' });
-      showToast(`${plugin.instanceId} 已${action === 'enable' ? '启用' : '禁用'}`);
+      const res = await api<{ message?: string }>(`/api/plugins/${encodeURIComponent(plugin.instanceId)}/${action}`, {
+        method: 'POST',
+      });
+      // 服务端回执可能附带说明（如仍在激活、在等依赖），照原样显示
+      showToast(res.message ?? `${plugin.instanceId} 已${action === 'enable' ? '启用' : '禁用'}`);
       onRefresh();
     } catch (err) {
       showToast(errText(err, '未知错误'));
@@ -133,17 +136,20 @@ export function PluginConfigPage({
     if (!suffix) return;
     markBusy(moduleName);
     try {
-      const res = await api<{ instanceId?: string }>(`/api/plugins/${encodeURIComponent(moduleName)}/instances`, {
-        method: 'POST',
-        body: JSON.stringify({ suffix }),
-      });
-      showToast(`已创建实例 ${res.instanceId}`);
+      const res = await api<{ instanceId?: string; message?: string }>(
+        `/api/plugins/${encodeURIComponent(moduleName)}/instances`,
+        { method: 'POST', body: JSON.stringify({ suffix }) },
+      );
+      // 服务端回执可能附带说明（如按禁用态登记、仍在激活），照原样显示
+      showToast(res.message ?? `已创建实例 ${res.instanceId}`);
       setNewInstanceTarget(null);
       setNewInstanceSuffix('');
       onRefresh();
     } catch (err) {
       showToast(errText(err, '创建失败'));
       setBusySet(prev => { const next = new Set(prev); next.delete(moduleName); return next; });
+      // 激活失败时实例已登记并转为 error 态，刷新以显示它
+      onRefresh();
     }
   };
 

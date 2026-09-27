@@ -388,7 +388,10 @@ export function App() {
     api<Record<string, unknown>>('/api/config').then(setConfig).catch(() => {});
   }, []);
 
-  /** 全局配置保存后：只改应用名称时不重启，名称由 /api/status 实时读取，状态随配置一起重拉，界面上的名字随即更新 */
+  /**
+   * 全局配置保存后：只改应用名称时不重启，名称由 /api/status 实时读取，状态随配置一起重拉，界面上的名字随即更新
+   * （仪表盘的应用名称；装有人设时聊天显示人设名，不随它变）
+   */
   const handleConfigSaved = useCallback(() => {
     refreshConfig();
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});

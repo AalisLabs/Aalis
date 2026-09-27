@@ -16,7 +16,8 @@
  * 不维护倒排索引：关系图体量预期 < 数千节点，全量加载完全可接受；
  * 真要扩到 10k+ 再加索引（届时换 namespace 划分即可）。
  */
-import type { MemoryService } from '@aalis/api-memory';
+import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
+import type { Logger } from '@aalis/core';
 import type { EntityNode, EventNode, PersonNode, RelationEdge, RelationGraphSnapshot } from './types.js';
 
 export const RELATION_NAMESPACE = 'user-relation';
@@ -97,15 +98,26 @@ export class RelationStore {
   constructor(private readonly memory: () => MemoryService) {}
 
   private clearGen = 0;
+  /** 已发出、尚未落定的写入。清空先等它们落定再列举删除，否则晚到的一条会落在删除之后 */
+  private readonly inflightPuts = new Set<Promise<void>>();
 
   /**
    * 清空代数：clearAll 开始与结束（含失败）各加一。按快照逐条回写的长循环（rewriteWeights）开头记下它、
    * 每次落笔前比对，变了即停——开始时加一拦住清空前已在跑的循环，结束时加一拦住清空进行中才启动、
-   * 读到清空前全图的循环；否则它们会把快照里剩下的节点与边写回。比对与落笔是两次 await，
-   * 清空提交当口正在落笔的那一条仍可能写回。
+   * 读到清空前全图的循环；否则它们会把快照里剩下的节点与边写回。比对之后已发出的那一条由 clearAll
+   * 等它落定再删。
    */
   get clearGeneration(): number {
     return this.clearGen;
+  }
+
+  /** 本类的 saveMetadata 都经这里发出，登记在 inflightPuts 直到落定 */
+  private put(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+    const p = this.memory().saveMetadata(namespace, key, data);
+    this.inflightPuts.add(p);
+    const settle = () => this.inflightPuts.delete(p);
+    p.then(settle, settle);
+    return p;
   }
 
   // ----- Person -----
@@ -116,7 +128,7 @@ export class RelationStore {
   }
 
   async upsertPerson(node: PersonNode): Promise<void> {
-    await this.memory().saveMetadata(
+    await this.put(
       RELATION_NAMESPACE,
       personKey(node.platform, node.userId),
       node as unknown as Record<string, unknown>,
@@ -135,7 +147,7 @@ export class RelationStore {
   }
 
   async upsertEvent(node: EventNode): Promise<void> {
-    await this.memory().saveMetadata(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
+    await this.put(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
   }
 
   async deleteEvent(eventId: string): Promise<void> {
@@ -151,11 +163,7 @@ export class RelationStore {
   }
 
   async upsertEntity(node: EntityNode): Promise<void> {
-    await this.memory().saveMetadata(
-      RELATION_NAMESPACE,
-      entityKey(node.id),
-      node as unknown as Record<string, unknown>,
-    );
+    await this.put(RELATION_NAMESPACE, entityKey(node.id), node as unknown as Record<string, unknown>);
   }
 
   async deleteEntity(entityId: string): Promise<void> {
@@ -171,7 +179,7 @@ export class RelationStore {
   }
 
   async upsertEdge(edge: RelationEdge): Promise<void> {
-    await this.memory().saveMetadata(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
+    await this.put(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
   }
 
   async deleteEdge(edgeId: string): Promise<void> {
@@ -186,7 +194,7 @@ export class RelationStore {
   }
 
   async saveMergeReject(record: MergeRejectRecord): Promise<void> {
-    await this.memory().saveMetadata(
+    await this.put(
       RELATION_NAMESPACE,
       mergeRejectKey(record.aId, record.bId),
       record as unknown as Record<string, unknown>,
@@ -237,17 +245,22 @@ export class RelationStore {
    *
    * 批量提交而非逐条删。**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
    * mongodb 只保证按序执行遇错即停。不够原子时的兜底是幂等——再清一次即可，图本来就是要清空的。
+   *
+   * 列举前先等清空开始时已发出的写入落定：mongodb 上晚到的写入可能落在提交删除之后，被删的键就复活了。
+   * 清空开始之后，不看代数的路径新发出的写入不受此约束。
+   *
+   * 读不出的条目一并删除，计入返回的条数；logger 记下它们（见 clearMetadataNamespaces）。
    */
-  async clearAll(): Promise<number> {
+  async clearAll(logger: Pick<Logger, 'info'>): Promise<number> {
     this.clearGen++;
     try {
-      const entries = await this.memory().listMetadata(RELATION_NAMESPACE);
-      const vecEntries = await this.memory().listMetadata(RELATION_VECTOR_NAMESPACE);
-      await this.memory().commitMetadata([
-        ...entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
-        ...vecEntries.map(e => ({ op: 'del' as const, namespace: RELATION_VECTOR_NAMESPACE, key: e.key })),
-      ]);
-      return entries.length;
+      await Promise.allSettled(this.inflightPuts);
+      const [graphKeys] = await clearMetadataNamespaces(
+        this.memory(),
+        [RELATION_NAMESPACE, RELATION_VECTOR_NAMESPACE],
+        logger,
+      );
+      return graphKeys.length;
     } finally {
       this.clearGen++;
     }
@@ -329,7 +342,7 @@ export class RelationStore {
   }
 
   async upsertVector(kind: 'entity' | 'event', nodeId: string, vector: number[], hash?: string): Promise<void> {
-    await this.memory().saveMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId), { v: vector, h: hash });
+    await this.put(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId), { v: vector, h: hash });
   }
 }
 

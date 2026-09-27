@@ -44,7 +44,7 @@ describe('help: 概览', () => {
   const all = [
     mk('clear', '清空当前会话记忆；用 --type 选择类型'),
     mk('clear.all', '清空全部'),
-    mk('clear.list', '列出类型'),
+    mk('clear.demo', '示例子指令'),
     mk('help', '显示指令列表'),
     mk('relation', 'relation 命令组', { isGroup: true, handler: undefined }),
     mk('relation.show', '查看节点'),
@@ -103,7 +103,7 @@ describe('help: 详情', () => {
     examples: ['/clear', '/clear --type context'],
     aliases: ['cls'],
   });
-  const children = [mk('clear.list', '列出可清理类型'), mk('clear.all', '【危险】清空全部会话')];
+  const children = [mk('clear.demo', '示例子指令'), mk('clear.all', '【危险】清空全部会话')];
   const out = renderDetail(cmd, children, '/');
 
   it('标题含完整描述（不截断——用户正为细节而来）', () => {
@@ -120,13 +120,13 @@ describe('help: 详情', () => {
     expect(out).toContain('--type, -t <type>');
     expect(out).toContain('（all | context）');
     expect(out).toContain('--force');
-    expect(out).toContain('/clear list');
+    expect(out).toContain('/clear demo');
     expect(out).toContain('别名：/cls');
     expect(out).toContain('/clear --type context');
   });
 
   it('两列按显示宽度对齐（中英混排下列不歪）', () => {
-    const lines = out.split('\n').filter(l => l.includes('/clear list') || l.includes('/clear all'));
+    const lines = out.split('\n').filter(l => l.includes('/clear demo') || l.includes('/clear all'));
     expect(lines).toHaveLength(2);
     const col = lines.map(l => l.indexOf(l.trim().split(/\s{2,}/)[1]));
     expect(col[0]).toBe(col[1]);

@@ -127,7 +127,7 @@ caps.provide(storage, scoped, {
 
 顶层插件：required 缺席会 pending，恢复后重新激活；胜者替换不一律重启消费者。
 
-`bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中 `bounce` / `register` 返回 false。
+`bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳；插件处于禁用态时只换上新配置、保持禁用，启用时按新配置激活。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中 `bounce` / `register` 返回 false。
 
 关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 

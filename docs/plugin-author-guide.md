@@ -214,7 +214,7 @@ it('required 依赖到场后激活', async () => {
 
 `createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，原样生效：core 不合并 schema 默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
 
-用假定时器（`vi.useFakeTimers()`）时注意：激活在落定前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去；`vi.runAllTimers()` 撞上永不落定的激活会在按轮重排的提醒定时器上空转直到上限。先 `await app.plugins.idle()` 让激活落定再装假定时器，或改用 `vi.runOnlyPendingTimers()`。
+用假定时器（`vi.useFakeTimers()`）时注意：激活在落定或转入后台之前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 会让仍未落定的激活到点转入后台。先 `await app.plugins.idle()` 让激活落定再装假定时器。
 
 ---
 

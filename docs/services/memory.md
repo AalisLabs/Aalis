@@ -50,6 +50,7 @@ getRecentMessagesAcrossSessions?(
 saveMetadata(namespace, key, data): Promise<void>;
 getMetadata(namespace, key): Promise<Record<string,unknown>|undefined>;
 listMetadata(namespace): Promise<MetadataEntry[]>;   // MetadataEntry = { key; data; updatedAt }
+listMetadataKeys?(namespace): Promise<string[]>;      // 只列键、不读 data，读不出的条目也列出（按命名空间整体清理用）
 deleteMetadata(namespace, key): Promise<void>;
 commitMetadata(ops): Promise<void>;                  // 批量提交，原子性按后端分档
 
@@ -72,7 +73,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 `api-memory` 还通过 declaration merging 注入以下钩子与事件（钩子注入 `@aalis/api-hooks` 的 `HookContextMap`，事件注入 `@aalis/core` 的 `AalisEvents`）：
 
-- Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。
+- Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。结果行的可选字段 `type` 是这一行所属的清理类型（取值同 `/clear --type`）：处理某个清理类型的中间件须在各行标注它，成败都标。`/clear` 据此判断显式指定的类型有没有处理者，第三方中间件处理内置类型却不标注，会被回执误报为「没有已启用的插件处理」。
 - Event `'memory:messages-deleted'`：消息被按时间戳删除后广播，下游存储（如向量库）据此同步清理。
 - Event `'history:changed'`：会话历史发生结构性变化，前端据此重新拉取。
 - Event `'session:compress'` / `'session:compressing'`：会话记忆压缩的请求与进度。
@@ -106,10 +107,11 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 - 不实现 `getRecentMessagesAcrossSessions` → 跨会话历史注入功能直接 no-op。
 - 不实现 `trimHistory` → summary 压缩会被跳过。
-- 不实现 `clearAll` → `/clear all` 不清消息历史，回报一条失败结果。
+- 不实现 `clearAll` → 含 `context` 的 `/clear all`（含不带类型的）整条拒绝执行、不清任何类型；不含 `context` 的类型照常清理。
 - 不实现 `deleteMessagesByTimestamps` → checkpoint 回滚失效。
+- 不实现 `listMetadataKeys` → 各插件经 `/clear` 整体清空命名空间时按 `listMetadata` 枚举键，读不出的条目留在库里。
 
-参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。
+参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余八个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。`listMetadata` 遇到读不出的条目（数据损坏、不是对象）要跳过并记一条点名 namespace 与 key 的 warn，不让整个命名空间读失败；读不到写入时间时 `updatedAt` 返回 0。`listMetadataKeys` 只列键、不读 `data`，读不出的条目也要列出：插件整体清空命名空间时经 `clearMetadataNamespaces` 按它列键，连这些条目一并删除（见 [api-memory](../api/api-memory.md)）。
 
 ### 双源元数据必须同步
 

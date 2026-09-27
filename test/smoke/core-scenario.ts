@@ -25,7 +25,7 @@ export interface SmokeResult {
   signal: { beforeStop: boolean[]; afterStop: boolean[]; reasons: string[] };
   /** stop 之后各插件的状态 */
   stopped: Record<string, State>;
-  /** warn 与 error 日志（慢激活每过一个阈值的「仍在激活」提醒次数随负载变化，不收） */
+  /** warn 与 error 日志 */
   warnings: string[];
 }
 
@@ -40,7 +40,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   const hub = new LogHub();
   const warnings: string[] = [];
   hub.onEntry(entry => {
-    if ((entry.level === 'warn' || entry.level === 'error') && !entry.message.includes('仍在激活（已超过')) {
+    if (entry.level === 'warn' || entry.level === 'error') {
       warnings.push(`${entry.level} ${entry.scope} ${entry.message}`);
     }
   });

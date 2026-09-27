@@ -8,6 +8,7 @@
 
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
+import { describe } from './util.js';
 
 const LEDGER_URI = 'pluginData:/paper/ledger.json';
 
@@ -29,11 +30,25 @@ export interface AgentRecord {
   providerType: string;
   paperId: string;
   name: string;
-  state: 'creating' | 'active' | 'archived' | 'retired' | 'deleted';
+  /**
+   * retired：不再绑定，等没有任务在它上面、也不再是别的代理的工程包来源时删除；确认删除后记录连同它的
+   * 轮次一起移出账本
+   */
+  state: 'creating' | 'active' | 'archived' | 'retired';
   createdAt: number;
   costCents: number;
   lastContextTokens?: number;
   lastRunEndedAt?: number;
+  /**
+   * 换新：这个代理接替的旧代理。在它有一轮成功取回之前，每轮前言都带旧代理的工程包链接，旧代理不删；
+   * 成功之后清掉，旧代理随即删除
+   */
+  replaces?: string;
+  /**
+   * 退役后立即删除，不等名下的费用入账（取不到的按估计入账）：自唤醒的代理（定时唤醒的订阅跟着代理走）、
+   * 建代理判为失败的代理（远端若已建出，首轮在白跑）。其余退役的代理等费用入账后再删
+   */
+  deleteNow?: true;
 }
 
 export type TaskState = 'queued' | 'starting' | 'running' | 'collecting' | 'done' | 'failed' | 'cancelled';
@@ -73,10 +88,13 @@ export interface TaskRecord {
     type: 'png' | 'jpeg' | 'gif' | 'webp' | 'mp4' | 'html' | 'other';
     sizeBytes: number;
   }>;
-  bundle?: { sizeBytes: number };
+  /** 白纸被清空时成品文件已删（记录保留） */
+  artifactsCleared?: boolean;
   error?: string;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
-  notified: boolean;
+  /** 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省 */
+  notice?: { id: string; at: number };
+  /** paper_send 已把这件任务的成品交给发送队列（不代表对方已收到） */
   delivered: boolean;
 }
 
@@ -103,7 +121,11 @@ export interface AlertRecord {
     | 'provider'
     | 'delete-failed'
     | 'cancel-failed'
-    | 'storage-full';
+    | 'storage-full'
+    /** 删除代理前费用仍取不到，按估计入账 */
+    | 'cost-estimated'
+    /** 开轮结果未知时认领了账本外的唯一一轮，核对不了是不是本件开出的 */
+    | 'claim-unverified';
   /** agentId 等 */
   subject?: string;
   /** 远端代理插件实例 id */
@@ -118,14 +140,26 @@ export interface PaperLedger {
   /** Aalis 建过、还没确认删除的全部代理 */
   agents: Record<string /* agentId */, AgentRecord>;
   tasks: Record<string /* taskId */, TaskRecord>;
-  /** 保留到对应代理确认删除为止，不随任务记录清理：长寿代理的旧轮次不能在对账时变成「账本外」 */
+  /**
+   * 保留到对应代理确认删除为止，不随任务记录清理：长寿代理的旧轮次不能在对账时变成「账本外」。代理删除前
+   * 名下的费用先结清，取不到的按估计入账（estimated）
+   */
   runs: Record<
     string /* runId */,
-    { agentId: string; taskId?: string; cost: { state: 'pending' | 'booked' | 'missing'; cents?: number } }
+    {
+      agentId: string;
+      taskId?: string;
+      cost: { state: 'pending' | 'booked' | 'missing'; cents?: number; estimated?: true };
+    }
   >;
   spend: Record<string /* 本地日期 YYYY-MM-DD */, DaySpend>;
   reserves: Record<string /* taskId */, ReserveRecord>;
   alerts: AlertRecord[];
+}
+
+/** n 个随机字节的十六进制：任务、产物、告警、代理名的后缀 */
+export function randomHex(bytes: number): string {
+  return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('hex');
 }
 
 /** 还没结束的任务状态：排队、开轮、运行、取回成品 */
@@ -169,14 +203,14 @@ export class LedgerStore {
         this.logger.debug('白纸账本不存在，从空账本起步');
         return;
       }
-      this.fail(`读取失败：${err instanceof Error ? err.message : String(err)}`);
+      this.fail(`读取失败：${describe(err)}`);
       return;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      this.fail(`解析失败：${err instanceof Error ? err.message : String(err)}`);
+      this.fail(`解析失败：${describe(err)}`);
       return;
     }
     if (!isLedger(parsed)) {
@@ -191,10 +225,14 @@ export class LedgerStore {
     this.logger.error(`${this.failure}；远端任务一律不开，原文件不覆盖，请人工修复或移走后重启`);
   }
 
-  /** 整份落盘。写按调用顺序排队，每次写出的都是写那一刻的全量；这一次失败则拒绝 */
+  /**
+   * 整份落盘。写按调用顺序排队，每次写出的是调用这一刻的全量；这一次失败则拒绝。只在 exclusive 里调用并等它
+   * 完成：「写失败就回滚内存」的调用方靠这一点保证被回滚的修改不会经别的写上磁盘
+   */
   save(): Promise<void> {
     if (this.failure) return Promise.reject(new Error(this.failure));
-    const run = this.#writing.then(() => this.storage.writeFile(LEDGER_URI, JSON.stringify(this.data, null, 2)));
+    const body = JSON.stringify(this.data, null, 2);
+    const run = this.#writing.then(() => this.storage.writeFile(LEDGER_URI, body));
     this.#writing = run.catch(() => {});
     return run;
   }
