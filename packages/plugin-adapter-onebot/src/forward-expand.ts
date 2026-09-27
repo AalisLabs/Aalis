@@ -1,6 +1,6 @@
 import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
 import type { MediaService } from '@aalis/api-media';
-import type { MemoryService } from '@aalis/api-memory';
+import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
 import type { ProcessService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
@@ -241,9 +241,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     forwardCache.clear();
     const store = memory.current;
     if (!store) return 0;
-    // 与 sweepPersisted 同样一次批量提交，原子性按后端分档（见 api-memory 契约）
-    const keys = (await store.listMetadata(FORWARD_METADATA_NS)).map(e => e.key);
-    await store.commitMetadata(keys.map(key => ({ op: 'del', namespace: FORWARD_METADATA_NS, key })));
+    // 与 sweepPersisted 同样一次批量提交，原子性按后端分档（见 api-memory 契约）；读不出的条目一并删除，计入条数
+    const [keys] = await clearMetadataNamespaces(store, [FORWARD_METADATA_NS], logger);
     return keys.length;
   }
 

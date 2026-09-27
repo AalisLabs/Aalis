@@ -8,6 +8,9 @@ import { RelationService, RelationStore } from '../../packages/plugin-user-relat
 // 衰减回写（rewriteWeights）与 PageRank 回写（evictByQuota 第 4 步）按快照逐条写库，
 // 生产规模要跑十几秒到数分钟。期间执行 /clear all（或清空进行中才启动回写）回执报「关系图已清空」，
 // 循环却继续把快照里剩下的节点与边写回，关系图部分复活。清空之后的写入一律不得落库。
+// 清空开始时已发出、尚未落库的写入（mongodb 上可能晚于提交删除才落地），清空等它落定再列举删除。
+// 清空因此会等在飞的写入：用例里的钩子若在写入的 Promise 内部 await 清空，就成了自己等自己，
+// 所以钩子只发起清空，由用例在回写返回后再 await。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -17,7 +20,7 @@ afterEach(async () => {
 });
 
 /**
- * 关系图服务 + memory 包装：可在「下一次命中的 saveMetadata 落盘之后」插入动作，
+ * 关系图服务 + memory 包装：可在「下一次命中的 saveMetadata 落盘之前 / 之后」插入动作，
  * 也可在 commitMetadata 执行前 / 执行后、返回前插入动作（让清空停在指定阶段）
  */
 async function makeWorld() {
@@ -30,6 +33,7 @@ async function makeWorld() {
   if (!mem) throw new Error('memory service missing');
   let afterSave: { match: (key: string) => boolean; run: () => Promise<unknown> } | undefined;
   let commitHooks: { before?: () => Promise<unknown>; after?: () => Promise<unknown> } = {};
+  let beforeSave: { match: (key: string) => boolean; run: () => Promise<unknown> } | undefined;
   const wrapped = new Proxy(mem, {
     get(target, prop) {
       if (prop === 'commitMetadata') {
@@ -41,6 +45,11 @@ async function makeWorld() {
       }
       if (prop === 'saveMetadata') {
         return async (ns: string, key: string, data: Record<string, unknown>) => {
+          const lag = beforeSave;
+          if (lag?.match(key)) {
+            beforeSave = undefined;
+            await lag.run();
+          }
           await target.saveMetadata(ns, key, data);
           const hook = afterSave;
           if (hook?.match(key)) {
@@ -61,7 +70,10 @@ async function makeWorld() {
   const onCommit = (hooks: typeof commitHooks) => {
     commitHooks = hooks;
   };
-  return { store, service, onceAfterSave, onCommit };
+  const onceBeforeSave = (match: (key: string) => boolean, run: () => Promise<unknown>) => {
+    beforeSave = { match, run };
+  };
+  return { store, service, onceAfterSave, onCommit, onceBeforeSave };
 }
 
 /** 两个人各参与同样的事件、都提到同样的实体，都不是孤儿（淘汰前的孤儿清理不会删掉它们） */
@@ -102,11 +114,15 @@ describe('user-relation: 批量回写期间清空关系图，不得部分复活'
     const { store, service, onceAfterSave } = await makeWorld();
     await seedGraph(service, store, Date.now() - 100 * 86_400_000);
 
+    let clearing: Promise<number> | undefined;
     onceAfterSave(
       key => key.startsWith(prefix),
-      () => store.clearAll(),
+      async () => {
+        clearing = store.clearAll({ info() {} });
+      },
     );
     await service.rewriteWeights({ halfLifeDays: 30, floor: 0.3 });
+    await clearing;
 
     expect(await graphSize(service)).toEqual(EMPTY);
   });
@@ -130,11 +146,12 @@ describe('user-relation: 批量回写期间清空关系图，不得部分复活'
     onceAfterSave(
       key => key.startsWith('event:'),
       async () => {
-        clearing = store.clearAll();
-        await applied;
+        clearing = store.clearAll({ info() {} });
       },
     );
-    await service.rewriteWeights({ halfLifeDays: 30, floor: 0.3 });
+    const rewriting = service.rewriteWeights({ halfLifeDays: 30, floor: 0.3 });
+    await applied;
+    await rewriting;
     releaseReturn();
 
     expect(await clearing).toBeGreaterThan(0);
@@ -148,7 +165,7 @@ describe('user-relation: 批量回写期间清空关系图，不得部分复活'
     let releaseCommit!: () => void;
     const held = new Promise<void>(r => (releaseCommit = r));
     onCommit({ before: () => held });
-    const clearing = store.clearAll();
+    const clearing = store.clearAll({ info() {} });
     // 回写写完第一个事件时放行提交并等清空完成：此后的写入都落在清空之后
     onceAfterSave(
       key => key.startsWith('event:'),
@@ -167,12 +184,36 @@ describe('user-relation: 批量回写期间清空关系图，不得部分复活'
     const { store, service, onceAfterSave } = await makeWorld();
     await seedGraph(service, store);
 
+    let clearing: Promise<number> | undefined;
     onceAfterSave(
       key => key.startsWith('person:'),
-      () => store.clearAll(),
+      async () => {
+        clearing = store.clearAll({ info() {} });
+      },
     );
     await service.evictByQuota({ maxEvents: 1000, maxEntities: 1000, maxEdges: 10_000 });
+    await clearing;
 
+    expect(await graphSize(service)).toEqual(EMPTY);
+  });
+
+  it('回写的一条已发出、落库晚于清空提交：清空等它落定再删，不写回', async () => {
+    // mongodb 上写入与清空的提交走连接池里的不同连接，先发出的写可能晚于提交落地
+    const { store, service, onceBeforeSave } = await makeWorld();
+    await seedGraph(service, store, Date.now() - 100 * 86_400_000);
+
+    let clearing: Promise<number> | undefined;
+    onceBeforeSave(
+      key => key.startsWith('event:'),
+      async () => {
+        await new Promise(r => setTimeout(r, 0)); // 让出一拍：这次写入已从 store 发出
+        clearing = store.clearAll({ info() {} });
+        await new Promise(r => setTimeout(r, 20)); // 落库晚到
+      },
+    );
+    await service.rewriteWeights({ halfLifeDays: 30, floor: 0.3 });
+
+    expect(await clearing).toBeGreaterThan(0);
     expect(await graphSize(service)).toEqual(EMPTY);
   });
 });

@@ -4,9 +4,9 @@ import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
-import { memory } from '@aalis/api-memory';
+import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import type { BoundOf } from '@aalis/core';
+import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
@@ -211,11 +211,9 @@ class SummaryStore {
     await this.provider.deleteMetadata(SUMMARY_NAMESPACE, sessionId);
   }
 
-  async clearAll(): Promise<void> {
-    const items = await this.provider.listMetadata(SUMMARY_NAMESPACE);
-    await this.provider.commitMetadata(
-      items.map(it => ({ op: 'del' as const, namespace: SUMMARY_NAMESPACE, key: it.key })),
-    );
+  /** 读不出的摘要一并删除，由 logger 记下（见 clearMetadataNamespaces） */
+  async clearAll(logger: Pick<Logger, 'info'>): Promise<void> {
+    await clearMetadataNamespaces(this.provider, [SUMMARY_NAMESPACE], logger);
   }
 }
 
@@ -274,6 +272,7 @@ async function run(caps: Caps): Promise<void> {
   /**
    * 清空代数：memory:clear 清摘要时递增（全局清空递增 clearAllEpoch，会话级递增该会话的代数）。
    * 摘要在读历史前记下代数，模型返回后比对：期间清过就丢弃在途结果，不把已清掉的对话写回摘要。
+   * 已过比对、正在落库的那一段比对拦不住，由清理等它落定（见 committing）。
    */
   let clearAllEpoch = 0;
   const clearEpoch = new Map<string, number>();
@@ -283,6 +282,11 @@ async function run(caps: Caps): Promise<void> {
     const own = clearEpoch.get(sessionId) ?? 0;
     return () => clearAllEpoch !== all || (clearEpoch.get(sessionId) ?? 0) !== own;
   }
+  /**
+   * 已过比对、正在落库（写摘要 → 裁切 → 写标记）的会话。比对与落库之间隔着数据库往返，清理在其间开始时
+   * 比对拦不住：清理先等这一段落定再删，删掉的就包括它刚写进去的
+   */
+  const committing = new Map<string, Promise<unknown>>();
 
   /**
    * 根据 summaryModelMode 解析出用于生成摘要的 LLMModel entry。
@@ -447,15 +451,30 @@ async function run(caps: Caps): Promise<void> {
       logger.debug(`会话在摘要期间被清空，丢弃本次摘要: session=${sessionId}`);
       return '';
     }
+    const commit = commitSummary(provider, store, sessionId, allHistory, existing?.summary, summaryText.trim());
+    committing.set(sessionId, commit);
+    try {
+      return await commit;
+    } finally {
+      committing.delete(sessionId);
+    }
+  }
 
-    const finalSummary = summaryText.trim();
+  /** 摘要落库、裁切活跃历史、写压缩分隔标记：summarizeAndTrim 过了清理比对之后的落库段 */
+  async function commitSummary(
+    provider: MemoryService,
+    store: SummaryStore,
+    sessionId: string,
+    allHistory: Message[],
+    prevSummary: string | undefined,
+    finalSummary: string,
+  ): Promise<string> {
     const summaryTs = Date.now();
     // 摘要先落库、裁切后执行，两步不原子：裁切抛错（SQLITE_BUSY / Mongo 瞬时错，
     // 两个 provider 的 trimHistory 都不内吞异常）时摘要已提交而历史没裁，getHistory
     // 仍取到同一段（archived 没变、totalCount 不降），下一轮切的还是这批内容，而基底
     // 已是刚写进去的新摘要——同一段历史被反复叠进摘要，每轮都花一次模型调用。
-    // 故记下旧摘要，裁切失败就把摘要回滚到落库前的样子，让下一轮从干净基底重摘。
-    const prevSummary = existing?.summary;
+    // 故记下旧摘要（prevSummary），裁切失败就把摘要回滚到落库前的样子，让下一轮从干净基底重摘。
     if (finalSummary) {
       await store.upsertSummary(sessionId, finalSummary);
     }
@@ -703,21 +722,23 @@ async function run(caps: Caps): Promise<void> {
     }
     if (data.scope === 'all') clearAllEpoch++;
     else if (data.sessionId) clearEpoch.set(data.sessionId, (clearEpoch.get(data.sessionId) ?? 0) + 1);
+    // 代数已变，之后不会再有摘要过比对；已在落库的等它落定（成败都算落定，失败由摘要路径自己上报）
+    await Promise.allSettled(data.scope === 'all' ? committing.values() : [committing.get(data.sessionId ?? '')]);
 
     try {
       const store = new SummaryStore(memory.require());
       if (data.scope === 'all') {
-        await store.clearAll();
-        data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
+        await store.clearAll(logger);
+        data.results.push({ source: 'summary', type: 'summary', success: true, message: '所有会话摘要已清空' });
         logger.info('所有会话摘要已清空');
       } else if (data.sessionId) {
         await store.clearSession(data.sessionId);
-        data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
+        data.results.push({ source: 'summary', type: 'summary', success: true, message: '当前会话摘要已清空' });
         logger.info(`会话摘要已清空: session=${data.sessionId}`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'summary', success: false, message: `摘要清空失败: ${msg}` });
+      data.results.push({ source: 'summary', type: 'summary', success: false, message: `摘要清空失败: ${msg}` });
       logger.warn('摘要清空失败:', err);
     }
 

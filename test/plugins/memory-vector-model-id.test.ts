@@ -386,7 +386,7 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
 
     const { completed, results } = await runClear(host, mem.service, 'all', ['vector']);
     expect(completed).toBe(true);
-    expect(results).toEqual([{ source: 'vector', success: true, message: '所有向量记忆已清空' }]);
+    expect(results).toEqual([{ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' }]);
     expect(mem.meta.has(MARKER)).toBe(false);
 
     const after = await injected();
@@ -416,9 +416,113 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
 
     const { completed, results } = await runClear(host, mem.service, 'all', ['vector']);
     expect(completed).toBe(true);
-    expect(results).toEqual([{ source: 'vector', success: true, message: '所有向量记忆已清空' }]);
+    expect(results).toEqual([{ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' }]);
     expect(mem.calls.del).toBe(1);
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain('删除存量向量的模型标记失败');
   });
+
+  // 标记的读写与全局清空的删除在 mongodb 等异步后端上会交错：清空时在途的读写须先落定再删，
+  // 否则读到的旧标记在删除之后进缓存、写入在删除之后落库。放行挂住的操作前先发起清空，
+  // 清空要等它落定，反过来就是测试自己等自己
+  it('清空时标记读取在途：读到的旧标记不在清空之后进缓存，之后按当时的模型重新记下', async () => {
+    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
+    const { host, injected } = await setup({
+      modelId: 'test:B',
+      memory: mem.service,
+      hits: [hit('存量记忆'), hit('新模型记忆', 'test:B', 1)],
+    });
+    const hold = holdFirst(mem.service, 'getMetadata');
+    const searching = injected();
+    await hold.entered;
+    const clearing = runClear(host, mem.service, 'all', ['vector']);
+    await new Promise<void>(r => setTimeout(r, 10));
+    hold.release();
+    await clearing;
+    await searching;
+
+    expect(mem.meta.has(MARKER)).toBe(false);
+    expect(await injected(), '清空后仍按清空前的旧标记排除存量向量').toContain('存量记忆');
+    expect(mem.meta.get(MARKER)).toEqual({ modelId: 'test:B' });
+  });
+
+  it('清空时标记写入在途：清空之后不留下这次写入的标记', async () => {
+    const mem = makeMetaMemory();
+    const { host, injected } = await setup({ modelId: 'test:B', memory: mem.service, hits: [hit('存量记忆')] });
+    const hold = holdFirst(mem.service, 'saveMetadata');
+    const searching = injected();
+    await hold.entered;
+    const clearing = runClear(host, mem.service, 'all', ['vector']);
+    await new Promise<void>(r => setTimeout(r, 10));
+    hold.release();
+    await clearing;
+    await searching;
+
+    expect(mem.meta.has(MARKER), '清空后留下了在途写入的标记').toBe(false);
+  });
+
+  it('并发的首次检索：排在后面的直接用前一次读到的标记，只读一次', async () => {
+    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
+    const { injected } = await setup({
+      modelId: 'test:B',
+      memory: mem.service,
+      hits: [hit('存量记忆'), hit('新模型记忆', 'test:B', 1)],
+    });
+    const hold = holdFirst(mem.service, 'getMetadata');
+    const first = injected();
+    await hold.entered;
+    const second = injected();
+    await new Promise<void>(r => setTimeout(r, 10));
+    hold.release();
+    for (const text of await Promise.all([first, second])) expect(text).not.toContain('存量记忆');
+    expect(mem.calls.get).toBe(1);
+  });
+
+  // 拒绝值是无法转成字符串的 null 原型对象时，告警照常记下：此前拼告警文案时 String() 抛 TypeError，
+  // 告警丢失、这次检索失败，而「已告警」标志已置上，之后同一段失败也不再告警
+  it('标记读取以 null 原型对象拒绝：照常告警一次，本次按当前模型对待，之后照常读取标记', async () => {
+    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
+    const { injected, warns } = await setup({
+      modelId: 'test:B',
+      memory: mem.service,
+      hits: [hit('存量记忆'), hit('新模型记忆', 'test:B', 1)],
+    });
+    const target = mem.service as unknown as { getMetadata: () => Promise<unknown> };
+    const original = target.getMetadata;
+    target.getMetadata = async () => {
+      target.getMetadata = original;
+      throw Object.create(null);
+    };
+    const first = await injected();
+    expect(first).toContain('存量记忆');
+    expect(first).toContain('新模型记忆');
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain('读写存量向量的模型标记失败');
+
+    const after = await injected();
+    expect(mem.calls.get, '之后的检索照常读取标记').toBe(1);
+    expect(after).toContain('新模型记忆');
+    expect(after).not.toContain('存量记忆');
+  });
 });
+
+/**
+ * 挂住记忆替身的下一次元数据读或写：读在取到结果之后挂住（响应晚到），写在落库之前挂住（落库晚到）。
+ * entered 在挂住时兑现，release 后继续
+ */
+function holdFirst(service: MemoryService, method: 'getMetadata' | 'saveMetadata') {
+  let release!: () => void;
+  const gate = new Promise<void>(r => (release = r));
+  let enter!: () => void;
+  const entered = new Promise<void>(r => (enter = r));
+  const target = service as unknown as Record<typeof method, (...args: unknown[]) => Promise<unknown>>;
+  const original = target[method].bind(service);
+  target[method] = async (...args: unknown[]) => {
+    target[method] = original;
+    const read = method === 'getMetadata' ? await original(...args) : undefined;
+    enter();
+    await gate;
+    return method === 'getMetadata' ? read : original(...args);
+  };
+  return { entered, release };
+}
