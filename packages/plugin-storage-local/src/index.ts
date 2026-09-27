@@ -128,6 +128,7 @@ const DEFAULT_ROOTS: RootEntryConfig[] = [
  * 插件内置的内部路由根：不受用户 roots 影响，不在文件页出现。在用户根之后注册；
  * 用户 roots 里与内部根同名的项被跳过并告警（内部根优先）。
  * - paper：白纸枢纽存放远端任务成品；kind 为 paper，checkpoint 不给它记账。
+ * - public：发布服务存放审核通过的作品，作品站从这里读出来部署；kind 为 public，checkpoint 不给它记账。
  */
 const INTERNAL_ROOTS: RootEntryConfig[] = [
   {
@@ -135,6 +136,16 @@ const INTERNAL_ROOTS: RootEntryConfig[] = [
     path: 'data/stage/paper',
     label: '白纸',
     kind: 'paper',
+    browsable: false,
+    readable: true,
+    writable: true,
+    deletable: true,
+  },
+  {
+    name: 'public',
+    path: 'data/stage/public',
+    label: '公开作品',
+    kind: 'public',
     browsable: false,
     readable: true,
     writable: true,
