@@ -172,8 +172,8 @@ interface OneBotOutgoingAttachments {
  *   `<record>` / `<video>`，超过内联上限的退回 URL 或 file:// 宿主路径，daemon 读不到时发不出；认得出但不能内联的
  *   改经文件上传；不是媒体的拒发
  * - file 与改走上传的媒体经群文件、私聊文件上传，内容只收 `base64://`：超过内联上限的文件、原样返回的超限
- *   http 链接与透传的 `file://` 路径，容器里的 NapCat 都读不到，一律拒发。`name` 是群文件里显示的文件名，去掉路径分隔符；缺省时 file 附件叫 `file`，改走上传的媒体按类型与格式
- *   命名（如 `image.bmp`）
+ *   http 链接与透传的 `file://` 路径，容器里的 NapCat 都读不到，一律拒发。`name` 是群文件里显示的文件名，
+ *   去掉路径分隔符；缺省时 file 附件叫 `file`，改走上传的媒体按类型与格式命名（如 `image.bmp`）
  * - 没发出去的附件 warn 后跳过，原因收进 `errors`
  */
 export async function materializeAttachments(
