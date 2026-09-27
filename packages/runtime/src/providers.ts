@@ -16,6 +16,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { type AalisConfig, ConfigSaveRefusedError } from '@aalis/api-host-config';
 import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
+import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { ConfigProvider } from './config-store.js';
 import {
@@ -137,7 +138,9 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
     }
     logger.warn(`配置文件不存在（${absPath}），使用内存默认配置启动`);
     rawYaml = null;
-    return { name: 'Aalis', logLevel: 'info', plugins: {} };
+    // 名称与日志等级取 CORE_CONFIG_SCHEMA 的默认值，与配置文档补缺省同一来源
+    const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
+    return { name: name as string, logLevel: logLevel as string, plugins: {} };
   }
 
   const initialConfig = loadFromDisk();

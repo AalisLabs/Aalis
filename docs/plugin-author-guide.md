@@ -175,7 +175,7 @@ lifecycle.onDispose(() => {
 
 `configSchema` 写在 `definePlugin` 上，是给 WebUI 自动生成表单的元数据。**关键约定**：
 
-- `secret: true` 字段会在 WebUI 中被遮罩 + 写回时跳过空值（防止误清空）
+- `secret: true` 只影响 WebUI 的显示：查看时遮蔽、编辑时用密码框，保存照常写入框里的值；要清空就保存空串
 - `required: true` 仅作前端校验，**core 不强制**——你 apply 内还是要自己判空
 - `default` 就是运行时默认值——configSchema 是配置的唯一声明来源，宿主用 `defaultsFrom(configSchema)` 派生默认配置
 - 嵌套对象用 `SchemaGroup`，数组用 `SchemaArray`，不要用裸 JSON 字符串字段
