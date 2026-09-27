@@ -14,6 +14,8 @@ import type { AddressInfo } from 'node:net';
 //
 // - 鉴权：Bearer key 须在 accounts 里；不在就回 401，错误信息里回显 key 的一段（用来检验提供者去掉了它）。
 // - 建代理：请求到达即登记代理与首轮，之后才按 createDelays 等待回应，所以超时后用同一 agentId 重发会得 409。
+// - 列代理、列轮次：新的在前；limit 缺省 20、超过 100 回 400；还有下一页时带 nextCursor（本页最后一项的 id），
+//   下一页以 cursor 传回，末页不带。
 // - 事件流：按 streams 里给这一轮排好的连接脚本逐次回应；脚本用完后，终态的轮次回 result 加 done，未终态的挂住。
 // - 预签名下载：链接指向本服务的 /s3/...，查询串带哨兵签名 signature；列表的 sizeBytes 可以和实际内容不符。
 // ════════════════════════════════════════════════════════════
@@ -191,6 +193,28 @@ function runJson(r: FakeRun): Record<string, unknown> {
   };
 }
 
+/** 按实测翻页：cursor 是上一页最后一项的 id，从它之后接着列；认不出的 cursor 回 400（实测没覆盖，按拒绝处理） */
+function listPage(res: ServerResponse, url: URL, items: Array<Record<string, unknown>>): void {
+  const raw = url.searchParams.get('limit');
+  const limit = raw === null ? 20 : Number(raw);
+  if (!Number.isInteger(limit) || limit < 1) {
+    apiError(res, 400, 'validation_error', 'Limit must be a positive integer');
+    return;
+  }
+  if (limit > 100) {
+    apiError(res, 400, 'validation_error', 'Limit must be at most 100');
+    return;
+  }
+  const cursor = url.searchParams.get('cursor');
+  const start = cursor === null ? 0 : items.findIndex(i => i.id === cursor) + 1;
+  if (start === 0 && cursor !== null) {
+    apiError(res, 400, 'validation_error', 'Invalid cursor');
+    return;
+  }
+  const page = items.slice(start, start + limit);
+  json(res, 200, { items: page, ...(start + limit < items.length ? { nextCursor: page.at(-1)?.id } : {}) });
+}
+
 function writeSse(res: ServerResponse, e: SseEvent): void {
   if (res.destroyed || res.writableEnded) return;
   const lines: string[] = [];
@@ -332,7 +356,8 @@ export async function startFakeCursor(): Promise<FakeCursor> {
       return;
     }
     if (method === 'GET' && path === '/v1/agents') {
-      json(res, 200, { items: [...fake.agents.values()].map(agentJson) });
+      // 实测按 updatedAt 倒序；假服务的代理不更新，按登记先后倒序
+      listPage(res, url, [...fake.agents.values()].reverse().map(agentJson));
       return;
     }
     if (method === 'POST' && path === '/v1/agents') {
@@ -383,7 +408,7 @@ export async function startFakeCursor(): Promise<FakeCursor> {
       return;
     }
     if (rest === 'runs' && method === 'GET') {
-      json(res, 200, { items: agent.runs.map(runJson) });
+      listPage(res, url, [...agent.runs].reverse().map(runJson));
       return;
     }
     if (rest === 'runs' && method === 'POST') {

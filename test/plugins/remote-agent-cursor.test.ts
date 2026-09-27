@@ -641,9 +641,10 @@ describe('8 费用', () => {
     const agent = fake.seedAgent({
       runs: [{ status: 'FINISHED', durationMs: 7, result: '好' }, { status: 'RUNNING' }],
     });
+    // 列轮次新的在前
     await expect(p.listRuns(agent.id, signal)).resolves.toEqual([
-      { runId: agent.runs[0].id, status: 'finished' },
       { runId: agent.runs[1].id, status: 'running' },
+      { runId: agent.runs[0].id, status: 'finished' },
     ]);
     await expect(p.getRun(agent.id, agent.runs[0].id, signal)).resolves.toEqual({
       runId: agent.runs[0].id,
@@ -854,24 +855,71 @@ describe('11 删除与列举', () => {
     fake.seedAgent({ name: 'owner-own-agent' });
     const list = await p.listAgents(signal);
     expect(list).toEqual([
-      { agentId: mine.id, name: 'aalis-paper-1234abcd' },
       { agentId: archived.id, name: 'aalis-paper-5678abcd' },
+      { agentId: mine.id, name: 'aalis-paper-1234abcd' },
     ]);
     expect(fake.requestsTo('GET', '/v1/agents')[0].path).toBe('/v1/agents?limit=100');
   });
 });
 
 describe('14 列表翻页', () => {
-  it('安全：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不当作完整的列表', async () => {
+  it('安全：列代理、列轮次按 nextCursor 取完所有页，每页 limit=100，下一页带上一页给的 cursor', async () => {
     const p = makeProvider();
-    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
-    fake.intercept('GET', '/v1/agents', { status: 200, body: { items: [], nextCursor: 'page-2' } });
-    const listed = await expectCode(p.listAgents(signal), 'unavailable');
-    expect(listed.message).toContain('nextCursor');
-    fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body: { items: [], hasMore: true } });
-    await expectCode(p.listRuns(agent.id, signal), 'unavailable');
-    // 没有下一页标记时照常
-    await expect(p.listRuns(agent.id, signal)).resolves.toHaveLength(1);
+    const seeded = Array.from({ length: 101 }, (_, i) => fake.seedAgent({ name: `aalis-paper-${1000 + i}` }).id);
+    const agents = await p.listAgents(signal);
+    expect(agents.map(a => a.agentId).sort()).toEqual([...seeded].sort());
+    expect(fake.requestsTo('GET', '/v1/agents').map(r => r.path)).toEqual([
+      '/v1/agents?limit=100',
+      `/v1/agents?limit=100&cursor=${agents[99].agentId}`,
+    ]);
+
+    const agent = fake.seedAgent({ runs: Array.from({ length: 205 }, () => ({ status: 'FINISHED' })) });
+    const runs = await p.listRuns(agent.id, signal);
+    expect(runs.map(r => r.runId).sort()).toEqual(agent.runs.map(r => r.id).sort());
+    expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/runs`).map(r => r.path.split('?')[1])).toEqual([
+      'limit=100',
+      `limit=100&cursor=${runs[99].runId}`,
+      `limit=100&cursor=${runs[199].runId}`,
+    ]);
+  });
+
+  it('跨页重复的项按 id 只算一次', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({});
+    const path = `/v1/agents/${agent.id}/runs`;
+    const run = (id: string) => ({ id, agentId: agent.id, status: 'FINISHED' });
+    fake.intercept('GET', path, { status: 200, body: { items: [run('run-1'), run('run-2')], nextCursor: 'run-2' } });
+    fake.intercept('GET', path, { status: 200, body: { items: [run('run-2'), run('run-3')] } });
+    const runs = await p.listRuns(agent.id, signal);
+    expect(runs.map(r => r.runId)).toEqual(['run-1', 'run-2', 'run-3']);
+  });
+
+  it('安全：下一页标记与上一页相同、或超过 50 页时 unavailable，不把已取到的当完整列表', async () => {
+    const p = makeProvider();
+    const stuck = fake.seedAgent({});
+    const stuckPath = `/v1/agents/${stuck.id}/runs`;
+    const page = { status: 200, body: { items: [{ id: 'run-1', status: 'FINISHED' }], nextCursor: 'run-1' } };
+    fake.intercept('GET', stuckPath, page, 2);
+    await expectCode(p.listRuns(stuck.id, signal), 'unavailable');
+    expect(fake.requestsTo('GET', stuckPath)).toHaveLength(2);
+
+    // 每页都给新的标记：取满 50 页就停
+    const endless = fake.seedAgent({});
+    let n = 0;
+    fake.intercept(
+      'GET',
+      `/v1/agents/${endless.id}/runs`,
+      {
+        status: 200,
+        bodyFrom: () => {
+          n++;
+          return { items: [{ id: `run-${n}`, status: 'FINISHED' }], nextCursor: `run-${n}` };
+        },
+      },
+      60,
+    );
+    await expectCode(p.listRuns(endless.id, signal), 'unavailable');
+    expect(n).toBe(50);
   });
 });
 
