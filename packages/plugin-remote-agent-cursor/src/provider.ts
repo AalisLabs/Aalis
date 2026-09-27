@@ -11,7 +11,9 @@
 // - 无参 POST（cancel、archive、unarchive）发 `{}` 加 JSON 头：只带头不带 body 回 400。
 // - 错误体有两种：业务错误 {error:{code,message}}，框架层的 400/415 为 {code:'error',message}。
 // - 产物列表的 path 以 `artifacts/` 开头，对应虚拟机里的 /opt/cursor/artifacts；下载拿到 15 分钟的
-//   预签名链接，经 safeFetch 下载，边读边计字节。
+//   预签名链接，经 safeFetch 下载，边读边计字节。单个成品取不到下载链接（非临时错误）时只拒收这一件。
+// - 列表的翻页方式没有实测：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不把第一页当完整列表
+//   （对账与开轮认领都依赖列表完整）。
 //
 // key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误与日志一律先去掉 key 的片段与链接的查询串。
 // ============================================================
@@ -89,6 +91,8 @@ const MAX_DETAIL_CHARS = 300;
 const MIN_SECRET_FRAGMENT = 8;
 /** URL 的查询串（预签名链接的签名在这里） */
 const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
+/** 列表响应里的下一页标记：翻页方式没有实测，见到就失败关闭 */
+const NEXT_PAGE_KEYS = ['nextCursor', 'next_cursor', 'nextPageToken', 'next_page_token', 'next'] as const;
 
 const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
   CREATING: 'creating',
@@ -171,6 +175,15 @@ function remoteError(data: unknown): { code?: string; message?: string } {
     return { code: str(inner.code), message: str(inner.message) };
   }
   return { code: str(body.code), message: str(body.message) };
+}
+
+/** 列表响应带的下一页标记（字段名）；没有时 undefined */
+function nextPageMarker(body: Json): string | undefined {
+  const key = NEXT_PAGE_KEYS.find(k => typeof body[k] === 'string' && body[k] !== '');
+  if (key) return key;
+  if (body.hasMore === true) return 'hasMore';
+  if (body.has_more === true) return 'has_more';
+  return undefined;
 }
 
 /** Retry-After 可以是秒数或 HTTP 日期；没有时按 60 秒 */
@@ -557,7 +570,7 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listRuns(agentId: string, signal: AbortSignal): Promise<RemoteRunSummary[]> {
-    const data = asRecord(this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs`, { signal })));
+    const data = this.#wholeList(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs`, { signal }));
     return asArray(data.items)
       .map(asRecord)
       .flatMap(r => {
@@ -623,9 +636,16 @@ export class CursorProvider implements RemoteAgentProvider {
       try {
         data = await this.#download(await this.#downloadLink(agentId, item.path, signal), limit, signal);
       } catch (err) {
-        if (!(err instanceof ArtifactRejected)) throw err;
-        reject(item.path, err.message);
-        continue;
+        if (err instanceof ArtifactRejected) {
+          reject(item.path, err.message);
+          continue;
+        }
+        // 这一件取不到下载链接（已被删、路径过长等）：只拒收这一件；临时故障与限流照抛，由调用方整次重来
+        if (isRemoteAgentError(err) && err.code !== 'transient' && err.code !== 'rate-limited') {
+          reject(item.path, `取不到下载链接：${err.message}`);
+          continue;
+        }
+        throw err;
       }
       try {
         await (isBundle ? sink.putBundle(data) : sink.putFile(rel, data));
@@ -663,7 +683,7 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]> {
-    const data = asRecord(this.#ok(await this.#call('GET', '/v1/agents?limit=100', { signal })));
+    const data = this.#wholeList(await this.#call('GET', '/v1/agents?limit=100', { signal }));
     const ignore = new Set(this.#opt.reconcileIgnoreNames);
     return asArray(data.items)
       .map(asRecord)
@@ -774,9 +794,24 @@ export class CursorProvider implements RemoteAgentProvider {
     throw this.#httpError(res);
   }
 
+  /** 列表响应：带下一页标记时抛 unavailable（列表可能不全） */
+  #wholeList(res: CallResult): Json {
+    const data = asRecord(this.#ok(res));
+    const marker = nextPageMarker(data);
+    if (marker) {
+      throw this.#error(
+        'unavailable',
+        `${res.what.replace(/\?.*$/, '')} 的响应带下一页标记 ${marker}，列表可能不全（翻页方式未实测，按失败处理）`,
+      );
+    }
+    return data;
+  }
+
   #httpError(res: CallResult): RemoteAgentError {
     const { code, message } = remoteError(res.data);
-    const detail = `${res.what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
+    // 请求路径去掉查询串：查询串里可能有远端可控的内容（如成品路径）
+    const what = res.what.replace(/\?.*$/, '');
+    const detail = `${what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
     if (res.status === 429) return this.#error('rate-limited', detail, retryAfterMs(res.headers));
     if (res.status === 401 || res.status === 403) return this.#error('unavailable', detail);
     if (res.status === 404) return this.#error('not-found', detail);

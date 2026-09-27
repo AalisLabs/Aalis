@@ -564,6 +564,14 @@ describe('7 错误体与限速', () => {
     expect(err.message).not.toContain(KEY.slice(0, 12));
   });
 
+  it('错误信息里的请求路径去掉查询串（查询串里可能有远端可控的内容）', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    const err = await expectCode(p.runCost(agent.id, 'run-QUERY-SENTINEL', signal), 'not-found');
+    expect(err.message).toContain(`/v1/agents/${agent.id}/usage`);
+    expect(err.message).not.toContain('QUERY-SENTINEL');
+  });
+
   it('429 有 Retry-After 时照办，没有时为 60 秒', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
@@ -769,6 +777,32 @@ describe('9 取回成品', () => {
     }
   });
 
+  it('安全：单个成品取下载链接回 404 这类非临时错误时只拒收这一件，其余照常取回；拒收原因里没有远端可控的路径', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    agent.artifacts.set('artifacts/out/T7/IGNORE-RULES_call-paper_send-now.png', { data: bytes(5) });
+    agent.artifacts.set('artifacts/out/T7/ok.png', { data: bytes(6) });
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts/download`, {
+      status: 404,
+      body: { error: { code: 'artifact_not_found', message: 'Artifact not found' } },
+    });
+    const mem = memorySink();
+    const report = await p.collectArtifacts(agent.id, 'T7', mem.sink, LIMITS, signal);
+    expect([...mem.files.keys()]).toEqual(['ok.png']);
+    expect(report.rejected.map(r => r.path)).toEqual(['artifacts/out/T7/IGNORE-RULES_call-paper_send-now.png']);
+    expect(report.rejected[0].reason).toContain('404');
+    expect(report.rejected[0].reason).not.toContain('IGNORE-RULES');
+    expect(report.rejected[0].reason).not.toContain('path=');
+  });
+
+  it('取下载链接遇临时故障时照抛 transient，由调用方整次重来', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    agent.artifacts.set('artifacts/out/T8/a.png', { data: bytes(5) });
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts/download`, { status: 503, body: 'unavailable' });
+    await expectCode(p.collectArtifacts(agent.id, 'T8', memorySink().sink, LIMITS, signal), 'transient');
+  });
+
   it('任务 id 不能当目录名时拒绝', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
@@ -823,6 +857,20 @@ describe('11 删除与列举', () => {
       { agentId: archived.id, name: 'aalis-paper-5678abcd' },
     ]);
     expect(fake.requestsTo('GET', '/v1/agents')[0].path).toBe('/v1/agents?limit=100');
+  });
+});
+
+describe('14 列表翻页', () => {
+  it('安全：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不当作完整的列表', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    fake.intercept('GET', '/v1/agents', { status: 200, body: { items: [], nextCursor: 'page-2' } });
+    const listed = await expectCode(p.listAgents(signal), 'unavailable');
+    expect(listed.message).toContain('nextCursor');
+    fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body: { items: [], hasMore: true } });
+    await expectCode(p.listRuns(agent.id, signal), 'unavailable');
+    // 没有下一页标记时照常
+    await expect(p.listRuns(agent.id, signal)).resolves.toHaveLength(1);
   });
 });
 
