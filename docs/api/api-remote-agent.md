@@ -73,7 +73,7 @@ interface RunState { runId: string; status: RunStatus; resultText?: string }
 type RunProgress =
   | { kind: 'progress'; eventId: string }
   | { kind: 'terminal'; state: RunState };
-interface RunCost { cents: number; inputTokens: number; cacheReadTokens: number }
+interface RunCost { cents: number }
 
 interface ArtifactLimits { maxFileBytes: number; maxRunBytes: number; maxRunFiles: number; maxBundleBytes: number }
 interface ArtifactSink {
@@ -88,7 +88,7 @@ interface RemoteAgentSummary { agentId: string; name: string }
 interface RemoteRunSummary { runId: string; status: RunStatus }
 ```
 
-`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。`inputTokens` 与 `cacheReadTokens` 供消费方判断上下文是否过长。
+`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。
 
 ### 出网
 

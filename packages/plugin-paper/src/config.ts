@@ -36,7 +36,6 @@ const NUMBER_DEFAULTS = {
 const SPEC_NUMBER_DEFAULTS = {
   clearAfterDays: 30,
   rotateAfterCents: 300,
-  rotateAfterInputTokens: 200_000,
   idleArchiveMinutes: 30,
 } as const;
 const ARTIFACT_DEFAULTS = { maxFileMB: 25, maxRunMB: 50, maxRunFiles: 200, maxBundleMB: 50, maxPaperMB: 2048 } as const;
@@ -179,14 +178,6 @@ export const configSchema: ConfigSchema = {
         min: 1,
         description: '代理累计花费超过它，下一件任务建新代理（只重置对话，工程包照常带过去）',
       },
-      rotateAfterInputTokens: {
-        type: 'number',
-        label: '换新：上一轮上下文（token）',
-        default: SPEC_NUMBER_DEFAULTS.rotateAfterInputTokens,
-        min: 1,
-        integer: true,
-        description: '上一轮的输入加缓存读取超过它，下一件任务建新代理',
-      },
       idleArchiveMinutes: {
         type: 'number',
         label: '闲置归档（分钟）',
@@ -219,13 +210,6 @@ export const configSchema: ConfigSchema = {
       maxPerUser: { type: 'number', label: '每人未结束任务上限', min: 1, integer: true, description: '留空取默认属性' },
       clearAfterDays: { type: 'number', label: '定期清空（天）', min: 1, description: '留空取默认属性' },
       rotateAfterCents: { type: 'number', label: '换新：代理累计花费（美分）', min: 1, description: '留空取默认属性' },
-      rotateAfterInputTokens: {
-        type: 'number',
-        label: '换新：上一轮上下文（token）',
-        min: 1,
-        integer: true,
-        description: '留空取默认属性',
-      },
       idleArchiveMinutes: { type: 'number', label: '闲置归档（分钟）', min: 1, description: '留空取默认属性' },
     },
   },
@@ -243,7 +227,6 @@ export interface PaperSpec {
   maxPerUser?: number;
   clearAfterDays: number;
   rotateAfterCents: number;
-  rotateAfterInputTokens: number;
   idleArchiveMinutes: number;
 }
 
