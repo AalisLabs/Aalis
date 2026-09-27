@@ -7,7 +7,7 @@ import { createStorageGateway, type StorageService, storage } from '../../packag
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import { cacheOneAttachment } from '../../packages/plugin-adapter-onebot/src/attachment-cache.js';
-import { renderAttachmentsAsContentMarkers } from '../../packages/plugin-adapter-onebot/src/attachments.js';
+import { materializeAttachments } from '../../packages/plugin-adapter-onebot/src/attachments.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import imageSender from '../../packages/plugin-image-sender/src/index.js';
 import processLocal from '../../packages/plugin-process-local/src/index.js';
@@ -118,11 +118,7 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
     });
     expect(local).toMatch(/^data\/images\//);
     const storageUri = (local ?? '').replace(/^([^/]+)\//, '$1:/');
-    const markers = await renderAttachmentsAsContentMarkers(
-      [{ kind: 'image', data: storageUri }],
-      storageGateway,
-      logger,
-    );
+    const { markers } = await materializeAttachments([{ kind: 'image', data: storageUri }], storageGateway, logger);
     const m = markers.match(/<image url="base64:\/\/([A-Za-z0-9+/=]+)"/);
     expect(m, `出站标记形态不符: ${markers.slice(0, 120)}`).toBeTruthy();
 

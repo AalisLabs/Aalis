@@ -62,9 +62,19 @@ definePlugin({
 |---|---|
 | `/model [关键词]` | 列出 / 搜索可用对话模型（分页，`-p <n>` 翻页） |
 | `/persona [关键词]` | 列出 / 搜索可用人设（分页，`-p <n>` 翻页） |
-| `/session` | 查看当前对话生效的模型 / 人设 / thinking / 名称，及各自来源与解析链 |
+| `/session` | 查看当前对话生效的模型 / 人设 / thinking / 名称，及各自的来源 |
 | `/session.set` | 设定**会话级**覆盖（持久化，重启不丢） |
 | `/session.reset` | 复位会话级覆盖：默认清模型 + 人设 + thinking，`-m`/`-p`/`-t` 单独清对应项（显示名不在此列） |
+
+`/session` 对模型、人设、thinking 各给一行：生效值与来源。来源是「会话覆盖」「父会话」「平台档 `<平台>`」「平台档 `<平台>`（私聊）」「平台档 `<平台>`（群）」或「默认」，后两种平台档来源表示值来自该平台只对私聊或只对群生效的受众条目。会话自己有覆盖时，另起一行列出被覆盖的继承值与它的来源；被更高层遮住的下层值不列出。继承值与来源取自 session-manager 的 `resolveInheritance`，与实际回合同一口径：IM 房间按出生平台与受众选档，从 WebUI 对某个群执行 `/session`，显示的是这个群所在平台的档。
+
+```
+会话: <会话名>
+模型: <provider>/<model>  [来源: 平台档 onebot]
+人设: <人设卡>  [来源: 会话覆盖]
+  被覆盖的继承值: <群人设>  [来源: 平台档 onebot（群）]
+thinking: (默认)  [来源: 默认]
+```
 
 `/session.set` 的选项：
 
@@ -114,9 +124,11 @@ definePlugin({
 
 这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-context` 与 `turn-hint` 两个锚位的材料落在指令块之前、全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
 
+回合按「会话 + `source`」分道，同一道的新消息中止旧回合，不同道互不打断，宿主通知也从不打断别的回合。唯一的例外是本人说话打断通知回合：延续某次工具调用身份的宿主通知（带 `hostNotice.callerUserId`，如后台命令结束通知）开的回合，在同一会话收到 `userId` 等于 `callerUserId` 的真人消息（不带 `source`）时被中止，本人说话就停得下她自己开的一轮；别人的消息、不延续任何人身份的通知（白纸等）开的回合都不受影响。
+
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」（见 [api-tools](../api/api-tools.md)）。授权身份仍按 `actor` 裁决。
+工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」（见 [api-tools](../api/api-tools.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`：这一轮确认由起它的人应答、会话授予按那人匹配；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
 
 ## 上下文裁剪算法
 
@@ -154,7 +166,9 @@ definePlugin({
 
 ## Token 预算追踪与日志
 
-首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建：
+首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
+
+`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-webui-server 只带 `sessionId`）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
 
 ```ts
 'token:usage': [{

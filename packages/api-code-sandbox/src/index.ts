@@ -39,6 +39,8 @@ export interface SandboxRunRequest {
   env?: Record<string, string | undefined>;
   /** 超时（毫秒） */
   timeout?: number;
+  /** 中止信号：中止时终止沙箱内进程，语义同 api-process 的 SpawnOptions.signal */
+  signal?: AbortSignal;
   /** 隔离策略 */
   policy: SandboxPolicy;
 }

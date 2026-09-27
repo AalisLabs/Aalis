@@ -39,9 +39,12 @@ export interface SandboxRunRequest {
   cwd?: string;                                 // 工作目录（本地绝对路径）
   env?: Record<string, string | undefined>;    // env 白名单：沙箱内仅这些键可见，其余宿主 env 清零（防 secrets 泄漏）
   timeout?: number;                             // 超时（毫秒）
+  signal?: AbortSignal;                         // 中止信号：中止时终止沙箱内进程，语义同 process 契约的 SpawnOptions.signal
   policy: SandboxPolicy;                        // 隔离策略
 }
 ```
+
+`signal` 的语义与 [process 服务](./process.md) §2.2 的 `SpawnOptions.signal` 相同：调用时已中止则不起进程，`run()` 以 `signal.reason` reject、不带 `.result`；运行中中止时 POSIX 下对进程组先 `SIGTERM`、宽限后 `SIGKILL`，Windows 下立即结束整棵进程树，`run()` 按非零退出 reject，错误对象上挂 `.result`。经 `process` 服务起进程的 provider 把它原样交给 `execFile` 即可。
 
 隔离策略 `SandboxPolicy`：
 
@@ -73,7 +76,7 @@ export interface SandboxPolicy {
 参考实现有几个关键设计，写 provider 时值得参照：
 
 - 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务网关来 spawn（`uses required = ['process']`）。OS 探测同样靠经网关做功能性试跑。
-- 功能性探测（`probeBackend`）：经 `process` 网关真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1)(allow default)' true`、Linux `bwrap --ro-bind / / --unshare-all true`），跑通才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、或 userns 被禁）时，`backend = 'none'`、`available = false`。
+- 功能性探测（`probeBackend`）：经 `process` 网关真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁、容器里挂不了 `/proc` 或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会被判「未在宽限内停止」。
 - 命令改写（`wrapForSandbox()`，纯逻辑、便于单测）：把 `(cmd, args)` 改写为「经沙箱启动器运行」，全程 shell-free，不拼 shell 字符串。
 
 ---
@@ -83,11 +86,12 @@ export interface SandboxPolicy {
 ### 最小契约
 你必须实现 `CodeSandboxService` 的三个成员：`available`（getter）、`backend`（getter）、`run()`。
 
-写 provider 时必须守住三条不变量：
+写 provider 时必须守住下面几条不变量：
 
 1. `available === false` 时 `run()` 不应被调用，但仍要防御性地抛错，而不是裸跑——参考实现在 `backend === 'none'` 时，`run()` 直接 throw。
 2. 强制 `policy`：`fsWrite` 之外只读或拒写、`network === 'deny'` 必须真正断网、`env` 之外的宿主环境变量必须清零。这是契约的安全语义，consumer 依赖它来防「写出工作区 / 联网外泄 / secrets 泄漏」。
 3. `run()` 的错误约定要对齐 `ExecResult`：非零退出 reject，错误对象挂 `.result`（见 §5）。
+4. 转交 `req.signal`：不转交时停止键停不掉沙箱里的脚本，只能等超时。
 
 ### 注册（`provide`）
 参考实现在 `apply` 里先探测后端，再注册单例：
@@ -166,7 +170,7 @@ class MyCodeSandboxService implements CodeSandboxService {
   async run(req: SandboxRunRequest): Promise<ExecResult> {
     if (!this._ok) throw new Error('code-sandbox: 无可用后端，run() 不应被调用');
     // 必须强制：fsWrite 外只读、network==='deny' 断网、env 外宿主变量清零。
-    return this.proc.execFile(req.cmd, req.args, { cwd: req.cwd, timeout: req.timeout });
+    return this.proc.execFile(req.cmd, req.args, { cwd: req.cwd, timeout: req.timeout, signal: req.signal });
   }
 }
 
@@ -209,10 +213,11 @@ if (policy && !config.codeSandbox?.available) {
     error: `代码执行已禁用（沙箱不可用，backend=${config.codeSandbox?.backend ?? 'none'}）：…` };
 }
 
+// signal 是回合的中止信号（工具调用上下文的 callCtx.signal），两条路径都交下去
 const result = policy
   ? await config.codeSandbox!.run({ cmd: interpreter, args: [...extraArgs, scriptPath],
-      cwd: config.cwd, env, timeout: effectiveTimeout, policy })
-  : await proc.execFile(interpreter, [...extraArgs, scriptPath], { cwd: config.cwd, env, timeout });
+      cwd: config.cwd, env, timeout: effectiveTimeout, signal, policy })
+  : await proc.execFile(interpreter, [...extraArgs, scriptPath], { cwd: config.cwd, env, timeout: effectiveTimeout, signal });
 ```
 
 要点是，`policy` 应当用本次运行实际解析出的本地路径来构造：`config.cwd` 来自 `storage.resolveLocalPath`，`tmp.path` 来自 `proc.makeTempDir`。这样路径随运行时变化，将来 storage 按 session 命名空间化后，会自动变成 per-session 隔离。
@@ -222,16 +227,24 @@ const result = policy
 :::
 
 ### 错误边界
-`run()` 与 `ProcessService.execFile` 同约定——非零退出 reject、错误对象挂 `.result`。`code_runner` 的处理如下：
+`run()` 与 `ProcessService.execFile` 同约定——非零退出 reject、错误对象挂 `.result`；被中止的也按非零退出 reject。`code_runner` 的处理如下（节选）：
 
 ```ts
 } catch (err) {
   const e = err as Error & { result?: { code; signal; stdout; stderr } };
   if (e.result) {
+    const output = { exitCode: e.result.code ?? -1, stdout: …, stderr: … };
+    if (signal?.aborted) {
+      // 判在 timedOut 之前：中止宽限到点的 SIGKILL 也算中止；不是被信号结束的按实际退出回报
+      if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已随回合中止' };
+      return { ...output, note: '回合已中止' };
+    }
     const timedOut = e.result.signal === 'SIGKILL';  // 超时被杀
-    return { exitCode: e.result.code ?? -1, stdout: …, stderr: …, ...(timedOut ? { timedOut: true } : {}) };
+    return { ...output, ...(timedOut ? { timedOut: true } : {}) };
   }
-  return { exitCode: -1, stdout: '', stderr: '', error: e.message };  // 进程根本没起来
+  // 没有退出结果：进程根本没起来，或回合已中止时 spawn 同步抛出
+  if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已随回合中止' };
+  return { exitCode: -1, stdout: '', stderr: '', error: e.message };
 }
 ```
 
@@ -260,6 +273,7 @@ provider 实现必须落实这三条强制语义；consumer 也必须传一个�
 - storage 不是沙箱：`resolveLocalPath(uri)` 把 storage URI 解析成 OS 绝对路径交给子进程后，storage 那层的 root 校验对子进程毫无约束力——真正的隔离全靠这里的 OS 沙箱（见 [安全模型 §5](../concepts/security-model.md)、[存储 URI 文法](../concepts/storage-uri-grammar.md)）。
 - 平台覆盖：参考实现只覆盖 macOS（seatbelt）/ Linux（bwrap）。Windows 等其它平台 `backend='none'`，`code_runner` auto 模式会 fail-closed。
 - `env` 不在 `run()` 外层重复传：参考实现把 env 白名单注入交给 wrapper（`env -i` / `--clearenv --setenv`），外层经 `process` 网关 spawn 时不再传 `env`——外层启动器进程继承宿主 env 无妨，因为 wrapper 已为内层不可信子进程清空。写 provider 时不要把宿主 env 透传到内层。
+- 中止与超时打的是外层启动器所在的进程组。Seatbelt 下 `sandbox-exec → env → 解释器` 逐级 exec，是同一个进程，组信号直接打到脚本；主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）不在组里，停不掉。bwrap 带 `--new-session`，内层进程不在我们的进程组里，组信号打到外层 bwrap；它同时带 `--die-with-parent` 与 `--unshare-all`（含 pid 命名空间），外层退出后内层随之结束，脱离进程组的后代也在同一个命名空间里。
 
 ---
 

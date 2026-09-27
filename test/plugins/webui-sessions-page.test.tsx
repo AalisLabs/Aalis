@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
@@ -32,17 +32,23 @@ function makeReplies(): Record<string, unknown> {
   return {
     getSessionTree: [
       {
-        session: {
-          id: 's1',
-          name: 's1',
-          title: '主会话',
-          children: [],
-          status: 'active',
-          createdAt: 1,
-          updatedAt: 2,
-          config: { disableOutputFormat: true },
-        },
-        children: [],
+        key: 'owner',
+        label: '我的会话',
+        nodes: [
+          {
+            session: {
+              id: 's1',
+              name: 's1',
+              title: '主会话',
+              children: [],
+              status: 'active',
+              createdAt: 1,
+              updatedAt: 2,
+              config: { disableOutputFormat: true },
+            },
+            children: [],
+          },
+        ],
       },
     ],
     getConfigOptions: { personas: [], models: [], toolGroups: [] },
@@ -51,19 +57,20 @@ function makeReplies(): Record<string, unknown> {
   };
 }
 
-/** getInheritance 的回包：平台、继承值与每个键的来源层 */
+/** getInheritance 的回包：平台、受众（房间会话才有）、继承值与每个键的来源层 */
 function inheritance(
   values: Record<string, unknown>,
   sources: Record<string, string>,
   platform = 'webui',
-): { platform: string; values: Record<string, unknown>; sources: Record<string, string> } {
-  return { platform, values, sources };
+  audience?: 'group' | 'private',
+): { platform: string; audience?: string; values: Record<string, unknown>; sources: Record<string, string> } {
+  return { platform, audience, values, sources };
 }
 
 /** 把树里唯一的会话换成带某份自身配置的 */
 function withSessionConfig(config: Record<string, unknown>): void {
-  const tree = replies.getSessionTree as Array<{ session: { config: Record<string, unknown> } }>;
-  tree[0].session.config = config;
+  const sections = replies.getSessionTree as Array<{ nodes: Array<{ session: { config: Record<string, unknown> } }> }>;
+  sections[0].nodes[0].session.config = config;
 }
 
 async function openConfig(): Promise<void> {
@@ -239,5 +246,194 @@ describe('会话配置：白纸与远端', () => {
     replies.getInheritance = inheritance({ remoteAgentTypes: ['<实例甲>'] }, { remoteAgentTypes: 'parent' }, 'onebot');
     await openConfig();
     expect(screen.queryByText(/平台档里写了远端类型/)).toBeNull();
+  });
+
+  it('来源为平台档的受众条目时标出受众', async () => {
+    replies.getInheritance = inheritance(
+      { memoryRecallScope: 'session', paperEnabled: true },
+      { memoryRecallScope: 'audience', paperEnabled: 'platform' },
+      'onebot',
+      'private',
+    );
+    await openConfig();
+    expect(await screen.findByText('继承（仅本会话，来自 平台档 onebot（私聊））')).toBeTruthy();
+    expect(screen.getByText('继承（开，来自 平台档 onebot）'), '基础档的键不标受众').toBeTruthy();
+  });
+
+  it('远端类型来自受众条目时同样告警，点明是这个平台的所有私聊或所有群', async () => {
+    replies.getInheritance = inheritance(
+      { remoteAgentTypes: ['<实例甲>'] },
+      { remoteAgentTypes: 'audience' },
+      'onebot',
+      'private',
+    );
+    await openConfig();
+    expect(await screen.findByText(/平台档里写了远端类型，这个平台的所有私聊都会继承/)).toBeTruthy();
+    cleanup();
+
+    replies.getInheritance = inheritance(
+      { remoteAgentTypes: ['<实例甲>'] },
+      { remoteAgentTypes: 'audience' },
+      'onebot',
+      'group',
+    );
+    await openConfig();
+    expect(await screen.findByText(/平台档里写了远端类型，这个平台的所有群都会继承/)).toBeTruthy();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 会话列表分区：服务端回分好区的树，页面按区画标题与节点；批量模式的全选只作用于所在分区；
+// 子会话默认收起；删除 IM 房间的确认写清会清掉什么、房间之后还会回来。
+// ════════════════════════════════════════════════════════════
+
+const GROUP = 'onebot:10000:group:20001';
+const PRIVATE = 'onebot:10000:private:30001';
+
+interface TreeNodeReply {
+  session: Record<string, unknown>;
+  children: TreeNodeReply[];
+}
+
+function node(id: string, title: string, children: TreeNodeReply[] = []): TreeNodeReply {
+  return {
+    session: {
+      id,
+      name: id,
+      title,
+      children: children.map(c => c.session.id),
+      status: 'completed',
+      createdAt: 1,
+      updatedAt: 2,
+      config: {},
+    },
+    children,
+  };
+}
+
+/** 我的会话 [WebUI 会话（带一个子会话）]；IM 房间 [群房间（带一个子任务）、私聊房间] */
+function sectionedTree() {
+  return [
+    {
+      key: 'owner',
+      label: '我的会话',
+      nodes: [node('session-abcd1234', '<WebUI 会话>', [node('session-abcd1234::ef012345', '<子会话>')])],
+    },
+    {
+      key: 'rooms',
+      label: 'IM 房间',
+      nodes: [node(GROUP, '<群名>', [node(`${GROUP}::abcd1234`, '<子任务>')]), node(PRIVATE, '<乙>')],
+    },
+  ];
+}
+
+const rowOf = (title: string) => screen.getByText(title).closest('.tree-node') as HTMLElement;
+
+describe('会话列表分区', () => {
+  beforeEach(() => {
+    replies.getSessionTree = sectionedTree();
+    replies.batchArchive = { success: true };
+  });
+
+  it('两区标题与各自节点都画出；子会话默认收起，点开才显示', async () => {
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    const owner = await screen.findByRole('region', { name: '我的会话' });
+    const rooms = screen.getByRole('region', { name: 'IM 房间' });
+
+    expect(within(owner).getByText('<WebUI 会话>')).toBeTruthy();
+    expect(within(owner).queryByText('<群名>')).toBeNull();
+    expect(within(rooms).getByText('<群名>')).toBeTruthy();
+    expect(within(rooms).getByText('<乙>')).toBeTruthy();
+
+    expect(screen.queryByText('<子会话>'), '子会话默认收起').toBeNull();
+    expect(screen.queryByText('<子任务>'), '子会话默认收起').toBeNull();
+    fireEvent.click(within(rowOf('<群名>')).getByText('▸'));
+    expect(within(rooms).getByText('<子任务>')).toBeTruthy();
+    expect(screen.queryByText('<子会话>'), '只展开点开的那个').toBeNull();
+  });
+
+  it('批量模式的全选只选所在分区（含收起的子会话），不跨区', async () => {
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(await screen.findByTitle('批量管理'));
+    expect(screen.getAllByText('全选'), '每个分区标题旁一个，没有跨区的全选').toHaveLength(2);
+
+    const archivedIds = async () => {
+      fireEvent.click(screen.getByText(/^归档 \(/));
+      await waitFor(() => expect(calls.some(c => c.method === 'batchArchive')).toBe(true));
+      const ids = calls.find(c => c.method === 'batchArchive')!.args.ids as string[];
+      calls.length = 0;
+      return [...ids].sort();
+    };
+
+    fireEvent.click(within(screen.getByRole('region', { name: '我的会话' })).getByText('全选'));
+    expect(await archivedIds()).toEqual(['session-abcd1234', 'session-abcd1234::ef012345']);
+
+    fireEvent.click(within(screen.getByRole('region', { name: 'IM 房间' })).getByText('全选'));
+    expect(await archivedIds()).toEqual([`${GROUP}::abcd1234`, GROUP, PRIVATE].sort());
+  });
+
+  it('删除 IM 房间的确认写清会清掉消息历史与长期记忆、终止后台进程、房间之后会重新出现；我的会话不写重新出现', async () => {
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(within(await waitFor(() => rowOf('<群名>'))).getByTitle('删除'));
+    const dialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
+    expect(dialog.textContent).toContain('消息历史与长期记忆');
+    expect(dialog.textContent).toContain('重新出现');
+    expect(dialog.textContent).toContain('后台进程一并终止');
+    fireEvent.click(within(dialog).getByText('取消'));
+
+    fireEvent.click(within(rowOf('<WebUI 会话>')).getByTitle('删除'));
+    const ownerDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
+    expect(ownerDialog.textContent).not.toContain('重新出现');
+  });
+
+  it('删除我的会话与 IM 房间下的子任务：确认同样写明消息历史与长期记忆会被清空、子会话一并删除、后台进程一并终止', async () => {
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(within(await waitFor(() => rowOf('<WebUI 会话>'))).getByTitle('删除'));
+    const ownerDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
+    expect(ownerDialog.textContent).toContain('消息历史与长期记忆（摘要、向量记忆等）会被清空');
+    expect(ownerDialog.textContent).toContain('子会话一并删除');
+    expect(ownerDialog.textContent).toContain('后台进程一并终止');
+    fireEvent.click(within(ownerDialog).getByText('取消'));
+
+    fireEvent.click(within(rowOf('<群名>')).getByText('▸'));
+    fireEvent.click(within(rowOf('<子任务>')).getByTitle('删除'));
+    const taskDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
+    expect(taskDialog.textContent).toContain('消息历史与长期记忆（摘要、向量记忆等）会被清空');
+    expect(taskDialog.textContent, '子任务不是 IM 房间').not.toContain('重新出现');
+    expect(taskDialog.textContent).toContain('后台进程一并终止');
+  });
+
+  it('批量删除不含 IM 房间：确认同样写明消息历史与长期记忆会被清空、后台进程一并终止', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(await screen.findByTitle('批量管理'));
+    fireEvent.click(screen.getByText('<WebUI 会话>'));
+
+    fireEvent.click(screen.getByText('删除 (1)'));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const text = confirmSpy.mock.calls[0][0] as string;
+    expect(text).toContain('消息历史与长期记忆');
+    expect(text).toContain('后台进程一并终止');
+    expect(text).not.toContain('IM 房间');
+  });
+
+  it('批量删除选中 1 个我的会话与 2 个 IM 房间：确认写出 IM 房间的个数与同一段说明', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(await screen.findByTitle('批量管理'));
+    for (const title of ['<WebUI 会话>', '<群名>', '<乙>']) fireEvent.click(screen.getByText(title));
+
+    fireEvent.click(screen.getByText('删除 (3)'));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const text = confirmSpy.mock.calls[0][0] as string;
+    expect(text).toContain('2 个 IM 房间');
+    expect(text).toContain('消息历史与长期记忆');
+    expect(text).toContain('后台进程一并终止');
+    expect(
+      calls.some(c => c.method === 'batchDelete'),
+      '取消确认就不删',
+    ).toBe(false);
   });
 });

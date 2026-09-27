@@ -290,6 +290,9 @@ export function App() {
       return;
     }
 
+    // 回合在进行：不是从输入框发起的回合（她被后台命令的结束通知等唤起）也要亮出停止键
+    setLoading(true);
+
     // LLM 进入文本/推理生成阶段：清空全部工具调用进度提示
     if (contentDelta || reasoningDelta) {
       setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
@@ -340,12 +343,14 @@ export function App() {
     // 进入工具执行阶段：清空「生成中」提示（占位卡 → ToolCallBlock）
     if (toolPhase === 'start') {
       setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
+      setLoading(true); // 同 handleStream：不是从输入框发起的回合也要亮出停止键
     }
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
         const now = Date.now();
-        if (last && last.role === 'assistant') {
+        // 只接到进行中的流式气泡上；上一条回复已完成时是新的一轮，另起一条
+        if (last && last.role === 'assistant' && streamingRef.current) {
           const segments = appendSegmentToTimeline(last.segments, { type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
           return [...prev.slice(0, -1), { ...last, segments }];
         }
@@ -371,7 +376,7 @@ export function App() {
       }
       return prev;
     });
-  }, [flushStreamBuffer]);
+  }, [flushStreamBuffer, setLoading]);
 
   const refreshPlugins = useCallback(() => {
     api<{ plugins: PluginInfo[] }>('/api/plugins')

@@ -1,24 +1,30 @@
 import { agent } from '@aalis/api-agent';
+import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
+  type InheritanceSource,
   type MemoryRecallScope,
   omitRoomOnlyKeys,
   type PlatformProfile,
   type SessionConfig,
   type SessionInfo,
+  type SessionInheritance,
+  type SessionListSection,
   type SessionManagerService,
   type SessionTreeNode,
+  type SessionTreeSection,
+  sessionListSection,
   sessionManager,
 } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 const configSchema: ConfigSchema = {
   defaults: {
@@ -46,6 +52,17 @@ const configSchema: ConfigSchema = {
         label: '平台标识',
         required: true,
         description: '平台名（如 onebot、webui、cli）',
+      },
+      audience: {
+        type: 'select',
+        label: '受众',
+        options: [
+          { label: '该平台全部房间', value: '' },
+          { label: '群与频道', value: 'group' },
+          { label: '私聊', value: 'private' },
+        ],
+        description:
+          '只对有出生平台的房间会话生效。写了受众的条目只列与同平台基础档（不写受众的那条）不同的键，叠加在基础档上',
       },
       persona: {
         type: 'select',
@@ -142,16 +159,11 @@ const configSchema: ConfigSchema = {
 const METADATA_NAMESPACE = 'sessions';
 /** 读会话表失败后的重试间隔（毫秒）；用尽仍失败按读表失败处理 */
 const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
-
-/** 继承链的层：全局 defaults、平台档、父会话的 sessionDefaults */
-type InheritanceSource = 'defaults' | 'platform' | 'parent';
-
-/** 页面动作 getInheritance 的返回：会话所属平台、继承值（不含会话自身 config）与每个键的来源层 */
-interface SessionInheritance {
-  platform: string;
-  values: Omit<SessionConfig, 'sessionDefaults'>;
-  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;
-}
+/**
+ * owner 面的交互入口：自动标题只给它们的会话生成；它们发进 IM 房间的消息是 owner 插话，不是房间的原生入站，
+ * 不拿来判 id 前缀与平台名是否一致
+ */
+const OWNER_ENTRY_PLATFORMS: ReadonlySet<string> = new Set(['webui', 'cli']);
 
 // ===== WebuiPages（声明式 UI） =====
 
@@ -244,8 +256,15 @@ class SessionManager implements SessionManagerService {
   loading: Promise<void> = Promise.resolve();
   /** 平台 → 默认 SessionConfig 模板 */
   private platformProfiles = new Map<string, PlatformProfile>();
+  /** `<平台>/<受众>` → 平台档的受众条目，叠加在同平台的基础档上 */
+  private audienceProfiles = new Map<string, PlatformProfile>();
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
   private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
+  /**
+   * 各会话在飞的回合数（agent:input:before 进出计数）。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与
+   * 真人回合），根会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
+   */
+  private turnsInFlight = new Map<string, number>();
 
   constructor(caps: ManagerCaps) {
     this.caps = caps;
@@ -291,7 +310,7 @@ class SessionManager implements SessionManagerService {
         sessions = new Map();
         for (const { key, data } of entries) {
           const info = data as unknown as SessionInfo;
-          if (info && info.id === key) sessions.set(key, info);
+          if (info && info.id === key) sessions.set(key, { ...info, ...describeSession(key, info.parentId) });
         }
         break;
       } catch (err) {
@@ -373,7 +392,8 @@ class SessionManager implements SessionManagerService {
 
   /**
    * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），
-   * 未命中以传入 id 建 active 记录（emit `session:created`）。
+   * 未命中以传入 id 建记录（emit `session:created`），状态缺省按有没有回合在跑：有为 active（回合结束时收口），
+   * 没有为 waiting（指令回复等回合之外的出站不改状态，建成 active 就会一直停在进行中）。
    * 平台派生 sessionId（onebot 等）首次落配置覆盖时用——那些 id 不经 createSession 预建。
    */
   async ensureSession(
@@ -394,13 +414,14 @@ class SessionManager implements SessionManagerService {
       title: patch.metadata?.title as string | undefined,
       parentId: undefined,
       children: [],
-      status: patch.status || 'active',
+      status: patch.status || (this.turnsInFlight.has(id) ? 'active' : 'waiting'),
       config: patch.config || {},
       createdAt: now,
       updatedAt: now,
       createdBy: patch.createdBy || 'user',
       inputContext: patch.metadata?.inputContext as string | undefined,
       metadata: patch.metadata,
+      ...describeSession(id, undefined),
     };
     this.sessions.set(id, session);
     this.markDirty();
@@ -412,7 +433,9 @@ class SessionManager implements SessionManagerService {
   // ---- CRUD ----
 
   async createSession(
-    opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>,
+    opts?: Partial<
+      Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'>
+    >,
   ): Promise<SessionInfo> {
     const id = opts?.parentId
       ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
@@ -434,6 +457,7 @@ class SessionManager implements SessionManagerService {
       createdBy: opts?.createdBy || 'user',
       inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext as string | undefined),
       metadata: opts?.metadata,
+      ...describeSession(id, opts?.parentId),
     };
 
     this.sessions.set(id, session);
@@ -552,11 +576,19 @@ class SessionManager implements SessionManagerService {
 
   async createChildSession(
     parentId: string,
-    opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
+    opts?: Partial<
+      Omit<
+        SessionInfo,
+        'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'
+      >
+    >,
   ): Promise<SessionInfo> {
     // 平台派生会话（cli-default、OneBot 会话 id）从不经 createSession 预建，父档缺失是常态；
-    // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。
-    if (!this.sessions.has(parentId)) await this.ensureSession(parentId);
+    // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。有出生平台的房间以 id 为名：带 source 的
+    // 注入回合开子任务时房间还没收录，名字留给出生平台之后的真人入站按「现名等于 id」补上群名或昵称。
+    if (!this.sessions.has(parentId)) {
+      await this.ensureSession(parentId, resolveSessionOrigin(parentId) ? { name: parentId } : {});
+    }
 
     return this.createSession({
       ...opts,
@@ -698,12 +730,12 @@ class SessionManager implements SessionManagerService {
    * 合并优先级（从高到低）：
    * 1. 会话自身 config
    * 2. 父会话的 sessionDefaults
-   * 3. 平台 profile
+   * 3. 平台 profile（房间会话按出生平台，见 {@link resolveInheritance}）
    * 4. 全局 defaults（最低）
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    // 2-4 层即「继承默认」
-    const result = this.resolveInheritedDefaults(sessionId, platform);
+    // 2-4 层即继承链
+    const result = this.resolveInheritance(sessionId, platform).values;
 
     const session = this.sessions.get(sessionId);
     if (!session) return result;
@@ -718,16 +750,13 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 解析「继承默认」：不含 session 自身 config，只算 defaults + platform profile + 父 sessionDefaults。
-   *
-   * WebUI 「继承 (xxx)」提示应该用这个值，否则会显示用户自己的覆盖值。
+   * 继承链解析：不含 session 自身 config，只算 defaults + platform profile + 受众条目 + 父 sessionDefaults，另记下每个键来自哪一层。
+   * 房间会话钉死出生平台：不论从哪个入口驱动都按房间自己的平台档，并按房间的受众叠加受众条目；
+   * 传入的入口平台只对没有出生平台的会话起作用，这类会话不取受众条目。
    */
-  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    return this.resolveInheritance(sessionId, platform).values;
-  }
-
-  /** 同 {@link resolveInheritedDefaults}，另记下每个键最终来自哪一层（会话页显示继承来源用） */
-  resolveInheritance(sessionId: string, platform?: string): Omit<SessionInheritance, 'platform'> {
+  resolveInheritance(sessionId: string, platform?: string): SessionInheritance {
+    const origin = resolveSessionOrigin(sessionId);
+    const pinned = origin?.platform ?? platform;
     const values: Record<string, unknown> = {};
     const sources: SessionInheritance['sources'] = {};
     const layer = (config: object | undefined, source: InheritanceSource) => {
@@ -740,8 +769,9 @@ class SessionManager implements SessionManagerService {
     // 3. 全局 defaults（最低）
     layer(this.defaults, 'defaults');
 
-    // 2. 平台 profile
-    if (platform) layer(this.platformProfiles.get(platform), 'platform');
+    // 2. 平台 profile，房间会话再叠加受众条目
+    if (pinned) layer(this.platformProfiles.get(pinned), 'platform');
+    if (origin) layer(this.audienceProfiles.get(`${origin.platform}/${origin.audience}`), 'audience');
 
     // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
     const session = this.sessions.get(sessionId);
@@ -749,7 +779,7 @@ class SessionManager implements SessionManagerService {
 
     delete values.sessionDefaults;
     delete sources.sessionDefaults;
-    return { values, sources };
+    return { platform: pinned, audience: origin?.audience, values, sources };
   }
 
   getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
@@ -776,11 +806,24 @@ class SessionManager implements SessionManagerService {
     return result;
   }
 
-  /** 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘） */
+  /**
+   * 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘）。
+   * 写了 audience 的条目按 `<平台>/<受众>` 另存；受众不是 group、private 的整条丢弃并告警，
+   * 不当成不限受众去覆盖整个平台的房间。
+   */
   loadPlatformProfiles(raw: unknown): void {
     if (!Array.isArray(raw)) return;
     for (const entry of raw) {
       if (!entry || typeof entry !== 'object' || typeof entry.platform !== 'string') continue;
+      const audience = entry.audience;
+      const unrestricted = audience === undefined || audience === null || audience === '';
+      if (!unrestricted && audience !== 'group' && audience !== 'private') {
+        this.caps.logger.warn(
+          `平台档 ${entry.platform} 的受众取值 ${JSON.stringify(audience)} 无效（只认 group、private），整条已忽略`,
+        );
+        continue;
+      }
+      const key = unrestricted ? entry.platform : `${entry.platform}/${audience}`;
       const profile: PlatformProfile = {};
       if (entry.persona) profile.persona = entry.persona;
       if (entry.llm && typeof entry.llm === 'object' && entry.llm.provider && entry.llm.model) {
@@ -796,14 +839,34 @@ class SessionManager implements SessionManagerService {
       else if (entry.think === false || entry.think === 'off') profile.think = false;
       const invalid = readRoomKeys(entry, profile);
       if (invalid.length > 0) {
-        this.caps.logger.warn(`平台档 ${entry.platform} 的 ${invalid.join('、')} 取值无效，已忽略`);
+        this.caps.logger.warn(`平台档 ${key} 的 ${invalid.join('、')} 取值无效，已忽略`);
       }
-      this.platformProfiles.set(entry.platform, profile);
+      (unrestricted ? this.platformProfiles : this.audienceProfiles).set(key, profile);
     }
-    if (this.platformProfiles.size > 0) {
-      this.caps.logger.info(
-        `已加载 ${this.platformProfiles.size} 个平台配置模板: ${[...this.platformProfiles.keys()].join(', ')}`,
-      );
+    const loaded = [...this.platformProfiles.keys(), ...this.audienceProfiles.keys()];
+    if (loaded.length > 0) {
+      this.caps.logger.info(`已加载 ${loaded.length} 个平台配置模板: ${loaded.join(', ')}`);
+    }
+  }
+
+  /** 回合开始：计数加一；已有记录且不是 active 的翻 active（归档的也翻：她在那里跑一轮就是进行中） */
+  beginTurn(id: string): void {
+    this.turnsInFlight.set(id, (this.turnsInFlight.get(id) ?? 0) + 1);
+    const session = this.sessions.get(id);
+    if (session && session.status !== 'active') this.updateSession(id, { status: 'active' }).catch(() => {});
+  }
+
+  /** 回合结束：计数减一；最后一轮结束时仍为 active 的根会话收口为 completed（子会话由 plugin-subtask 收口） */
+  endTurn(id: string): void {
+    const left = (this.turnsInFlight.get(id) ?? 1) - 1;
+    if (left > 0) {
+      this.turnsInFlight.set(id, left);
+      return;
+    }
+    this.turnsInFlight.delete(id);
+    const session = this.sessions.get(id);
+    if (session?.status === 'active' && !session.parentId) {
+      this.updateSession(id, { status: 'completed' }).catch(() => {});
     }
   }
 
@@ -814,7 +877,7 @@ class SessionManager implements SessionManagerService {
    * 关停打断在飞回合与那条路径同义，沿用同一状态，不新造值。
    * waiting / completed / error / archived 不是在飞，原样保留。
    *
-   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 `agent:turn:after` 收口；
+   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口（{@link endTurn}）处理；
    * 此处兜的是未装 agent 或钩子未挂上的路径。
    * persist 也在这里立刻刷，不走 1s debounce——onDispose 的 shutdown 仍会再刷一次。
    */
@@ -846,6 +909,19 @@ class SessionManager implements SessionManagerService {
 }
 
 // ===== 工具函数 =====
+
+/**
+ * 会话的种类、出生平台与受众，只由 id 与 parentId 推出。新建、建档与加载入表时覆盖写入，调用方传的值与存储里的
+ * 旧值都不采信；三个键都带上（没有的为 undefined），才盖得掉旧值。
+ */
+function describeSession(
+  id: string,
+  parentId: string | undefined,
+): Pick<SessionInfo, 'kind' | 'originPlatform' | 'audience'> {
+  const origin = resolveSessionOrigin(id);
+  if (parentId) return { kind: 'task', originPlatform: origin?.platform, audience: undefined };
+  return { kind: 'room', originPlatform: origin?.platform, audience: origin?.audience ?? 'owner' };
+}
 
 const MEMORY_RECALL_SCOPES: readonly MemoryRecallScope[] = ['session', 'platform', 'all'];
 
@@ -912,6 +988,12 @@ function stripUndefined(obj: object | undefined): Record<string, unknown> {
  */
 type ActionCaps = Pick<Caps, 'webui' | 'memory' | 'persona' | 'llm' | 'tools' | 'platform' | 'logger'>;
 
+/** 会话页的分区与显示名，按显示顺序 */
+const SESSION_LIST_SECTIONS: ReadonlyArray<readonly [SessionListSection, string]> = [
+  ['owner', '我的会话'],
+  ['rooms', 'IM 房间'],
+];
+
 /**
  * 页面动作全是 apply 里的闭包：直接用这次激活的 manager 与能力，
  * 登记随激活存亡（插件不在，WebUI 就调不到这些方法）。
@@ -949,8 +1031,7 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
       parentId,
       config,
       createdBy: 'user',
-      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）。
-      // 否则侧栏新建的会话会一直显示"进行中"——直到首条消息触发 inbound→active→turn:after→completed。
+      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）；回合开始时才翻 active。
       status: 'waiting',
     });
   });
@@ -1010,7 +1091,15 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
     return { success: true, count };
   });
 
-  webui.registerAction('getSessionTree', async () => manager.getTree());
+  /** 会话页的树按区回：我的会话在前、IM 房间在后，空区不回；分区在服务端判定，客户端只负责画 */
+  webui.registerAction('getSessionTree', async (): Promise<SessionTreeSection[]> => {
+    const roots = manager.getTree();
+    return SESSION_LIST_SECTIONS.map(([key, label]) => ({
+      key,
+      label,
+      nodes: roots.filter(n => sessionListSection(n.session) === key),
+    })).filter(section => section.nodes.length > 0);
+  });
 
   /** 获取可选项列表（供前端下拉框使用） */
   webui.registerAction('getConfigOptions', async () => {
@@ -1043,25 +1132,23 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
   });
 
   /**
-   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档与父 sessionDefaults，并回每个键的来源层。
+   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档（含受众条目）与父 sessionDefaults，
+   * 并回选档平台、受众（房间会话才有）与每个键的来源层。
    * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
    *
-   * 会话所属平台由服务端推出，不收平台参数：会话 metadata 记下的平台（子任务建档时写入）→ 接管这个会话 id 的
-   * 平台适配器 → webui（WebUI 建的会话 id 不带平台前缀）。
+   * 会话所属平台由服务端推出，不收平台参数：有出生平台的按出生平台；没有的（owner 面会话）按会话 metadata 记下的
+   * 平台（子任务建档时写入）→ 接管这个会话 id 的平台适配器 → webui（WebUI 建的会话 id 不带平台前缀）。
    */
-  webui.registerAction('getInheritance', async args => {
+  webui.registerAction('getInheritance', async (args): Promise<SessionInheritance> => {
     const sessionId = args.sessionId as string;
     if (!sessionId) throw new Error('缺少 sessionId');
+    if (resolveSessionOrigin(sessionId)) return manager.resolveInheritance(sessionId);
     const recorded = manager.getSession(sessionId)?.metadata?.platform;
-    const sessionPlatform =
+    const entryPlatform =
       typeof recorded === 'string' && recorded
         ? recorded
         : ((await resolvePlatformBySession(platform, sessionId, logger))?.platform ?? 'webui');
-    const inheritance: SessionInheritance = {
-      platform: sessionPlatform,
-      ...manager.resolveInheritance(sessionId, sessionPlatform),
-    };
-    return inheritance;
+    return manager.resolveInheritance(sessionId, entryPlatform);
   });
 
   /** 获取会话详情（含完整消息历史，包括已归档消息） */
@@ -1103,7 +1190,7 @@ const uses = {
   memory,
   /**
    * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
-   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 `agent:turn:after` 收口；
+   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
    * 此处 onDrain 兜的是未装 agent 或钩子未挂上的路径。
    */
   agent: optional(agent),
@@ -1163,44 +1250,63 @@ async function run(caps: Caps): Promise<void> {
 
   registerSessionActions(caps, manager);
 
-  // ===== 会话状态自治管理 =====
-  // 监听消息事件，自动维护会话状态（从 Agent 职责中迁出）
-
-  events.on('inbound:message', (msg: { sessionId: string }) => {
-    if (!msg.sessionId) return;
-    const session = manager.getSession(msg.sessionId);
-    if (session && session.status !== 'active') {
-      manager.updateSession(msg.sessionId, { status: 'active' }).catch(() => {});
+  // ===== IM 房间收录 =====
+  // 有出生平台、不是子任务的会话，首条真人入站（不带 source，触发判定之前）即登记。带 source 的是内部注入
+  //（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。
+  // 名字只采信出生平台自己的入站：群取群名、私聊取对方昵称，缺省用 id（从 WebUI 插话时消息带的是 owner 的昵称；
+  // 群的首条入站可能是不带群名的戳一戳，不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动。
+  const warnedPrefixes = new Set<string>();
+  events.on('inbound:message', (msg: IncomingMessage) => {
+    const { sessionId } = msg;
+    if (!sessionId || msg.source || sessionId.includes('::')) return;
+    const origin = resolveSessionOrigin(sessionId);
+    if (!origin) return;
+    // 原生入站的前缀既不是发来消息的平台、也不是已注册的平台名：多半是适配器的 id 前缀与平台名不一致，这个前缀的
+    // 房间全部按一份不存在的平台档选档、落到全局默认。每个前缀告警一次。WebUI、CLI 往房间插话不在此列：
+    // 房间的适配器停用或还没加载时，它的平台名同样不在已注册之列
+    if (
+      origin.platform !== msg.platform &&
+      !OWNER_ENTRY_PLATFORMS.has(msg.platform) &&
+      !warnedPrefixes.has(origin.platform) &&
+      !getPlatformNames(caps.platform).includes(origin.platform)
+    ) {
+      warnedPrefixes.add(origin.platform);
+      logger.warn(
+        `会话 id 前缀「${origin.platform}」不是已注册的平台名，消息经平台「${msg.platform}」发来（${sessionId}）：` +
+          `这个前缀的房间按平台档「${origin.platform}」选档，没有这份档就落到全局默认。多人房间的会话 id 须以适配器自己的平台名加冒号开头`,
+      );
+    }
+    const nativeName =
+      msg.platform === origin.platform ? (origin.audience === 'group' ? msg.groupName : msg.nickname) : undefined;
+    const session = manager.getSession(sessionId);
+    if (!session) {
+      manager
+        .ensureSession(sessionId, { name: nativeName || sessionId, createdBy: 'system', status: 'waiting' })
+        .catch(err => logger.warn(`IM 房间登记失败 (${sessionId}):`, err));
+    } else if (nativeName && session.name === sessionId) {
+      manager.updateSession(sessionId, { name: nativeName }).catch(() => {});
     }
   });
 
-  events.on('outbound:message', (msg: { sessionId: string }) => {
-    if (!msg.sessionId) return;
-    const session = manager.getSession(msg.sessionId);
-    // 子会话（有 parentId）由 plugin-subtask 的 agent:turn:after 中间件负责完成并提取 result
-    if (session && session.status === 'active' && !session.parentId) {
-      manager.updateSession(msg.sessionId, { status: 'completed' }).catch(() => {});
-    }
-  });
-
-  // 回合终态收口：agent 在 replied/silent/aborted/error 四条路径都会发 agent:turn:after。
-  // 上面的 outbound:message 只覆盖"产生了回复"的情形——用户中途停止生成（aborted）或
-  // 空回复（silent）时不发 outbound:message，会话会永远停在 'active'（即"进行中"）。
-  // 这里订阅生命周期钩子作幂等互补，确保任何回合结束都把根会话收口为 'completed'。
-  hooks.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    if (!data.sessionId) return;
-    const session = manager.getSession(data.sessionId);
-    // 子会话由 plugin-subtask 负责完成并回传 result，这里只收口根会话。
-    if (session && session.status === 'active' && !session.parentId) {
-      manager.updateSession(data.sessionId, { status: 'completed' }).catch(() => {});
+  // ===== 会话状态 =====
+  // 回合真正开始时（agent:input:before）才翻 active：群里只有消息、她没开口的房间不显示「进行中」
+  //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话，这是唯一的收口：next() 返回时
+  // 整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它）；后面的中间件不调 next() 或抛错时
+  // agent 不发回合收尾，同样由这里兜住。按会话计在飞的回合，最后一轮结束才收口，别的 lane 还在跑时不显示已完成；
+  // 回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。子会话由 plugin-subtask 收口。
+  hooks.middleware('agent:input:before', async (data, next) => {
+    const { sessionId } = data.message;
+    manager.beginTurn(sessionId);
+    try {
+      await next();
+    } finally {
+      manager.endTurn(sessionId);
     }
   });
 
   // 监听用户消息事件 → 自动生成会话标题
   // 在用户首次发消息时即生成标题，无需等待 AI 回复
-  // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题
-  const TITLE_PLATFORMS = new Set(['webui', 'cli']);
+  // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题；从 WebUI 往 IM 房间插话同样不生成
   const titleGenerating = new Set<string>();
   events.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
     const { sessionId, platform } = msg;
@@ -1211,7 +1317,9 @@ async function run(caps: Caps): Promise<void> {
     if (titleGenerating.has(sessionId)) return;
     // 仅对指定平台生成标题；非 webui/cli 平台（如 onebot）静默跳过，避免日志污染。
     // platform 缺省同样跳过：白名单是正向门，来路不明的消息不该顺带建档 + 烧一次 LLM 生成标题。
-    if (!platform || !TITLE_PLATFORMS.has(platform)) return;
+    if (!platform || !OWNER_ENTRY_PLATFORMS.has(platform)) return;
+    // 有出生平台的是 IM 房间：不拿 owner 插的话给房间起名，也不经这里建档
+    if (resolveSessionOrigin(sessionId)) return;
     const session = manager.getSession(sessionId);
     // 已有标题或子任务会话跳过（静默）
     if (session && (session.title || session.parentId)) return;
@@ -1227,7 +1335,7 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // 关停收尾：仍 active 的会话在 onDrain 收口并落盘。
-  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
+  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
   // 此处兜的是未装 agent 或钩子未挂上的路径。
   // 持久化仍走 onDispose：覆盖 bounce / unload / updateConfig 等全部拆卸路径
   // （只在全局停机触发的话，热重载即丢会话元数据）。

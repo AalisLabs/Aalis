@@ -4062,6 +4062,22 @@ details[open] > .tool-call-summary::before {
   padding: 16px;
 }
 
+.tree-section + .tree-section {
+  margin-top: 20px;
+}
+.tree-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tree-section-header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 .tree-empty {
   text-align: center;
   color: var(--text-muted);

@@ -34,6 +34,9 @@ type MemoryRecallScope = 'session' | 'platform' | 'all';
 
 type PlatformProfile = SessionConfig;   // 平台默认模板（写在插件配置 platformProfiles，无运行时写接口）
 
+type SessionKind = 'room' | 'task';                  // room=聊天用的会话；task=挂在发起它的会话下面的子会话
+type RoomAudience = 'owner' | 'private' | 'group';   // private、group 为 IM 房间；owner 只表示「不是 IM 房间」
+
 interface SessionInfo {
   id: string;
   name: string;
@@ -48,13 +51,37 @@ interface SessionInfo {
   inputContext?: string;
   result?: string;
   metadata?: Record<string, unknown>;
+  kind: SessionKind;               // 有 parentId 为 task，其余为 room
+  originPlatform?: string;         // 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话没有
+  audience?: RoomAudience;         // 只有 room 带：有出生平台的取 group 或 private，其余为 owner
 }
 
 interface SessionTreeNode {
   session: SessionInfo;
   children: SessionTreeNode[];
 }
+
+/** 继承链的层：全局 defaults、平台档、平台档的受众条目、父会话的 sessionDefaults */
+type InheritanceSource = 'defaults' | 'platform' | 'audience' | 'parent';
+
+interface SessionInheritance {
+  platform?: string;                                   // 选档用的平台：有出生平台的为出生平台，否则为传入的入口平台
+  audience?: 'group' | 'private';                      // 选档用的受众：只有房间会话带
+  values: Omit<SessionConfig, 'sessionDefaults'>;      // 继承值（不含会话自身 config 与 sessionDefaults）
+  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;  // 每个键来自哪一层
+}
+
+type SessionListSection = 'owner' | 'rooms';         // 会话列表的分区：我的会话、IM 房间
+function sessionListSection(session: Pick<SessionInfo, 'audience'>): SessionListSection;  // private、group 为 rooms，其余为 owner
+
+interface SessionTreeSection {
+  key: SessionListSection;
+  label: string;                   // 显示名：「我的会话」「IM 房间」
+  nodes: SessionTreeNode[];        // 本区的根会话，子会话挂在各自父节点下
+}
 ```
+
+`kind`、`originPlatform`、`audience` 由 session-manager 只按会话 ID 与 `parentId` 推出，新建、建档与加载时覆盖写入，调用方传的值与存储里的旧值都不采信；`createSession`、`createChildSession` 的参数类型里没有这三个字段。`audience: 'owner'` 只表示「不是 IM 房间」，凡是没有出生平台的根会话都算，包括 `mcp-server`、`workflow::<id>` 与定时任务指定的目标会话，不代表 owner 本人在场，只供列表分区用。非房间会话的 ID 不得含单冒号，否则会被当成房间。
 
 ## 配置解析优先级
 
@@ -62,8 +89,16 @@ interface SessionTreeNode {
 
 1. 会话自身 `config`（手工 / `/model` 指令设置）
 2. 父会话 `sessionDefaults`（递归继承）
-3. 平台默认 `platformProfiles[platform]`
+3. 平台默认 `platformProfiles[platform]`，房间会话另叠加受众条目（见下文）
 4. 全局默认值（各插件 configSchema 派生）
+
+### 房间会话钉死出生平台
+
+第 3 层按哪个平台选档：会话有出生平台（api-gateway 的 `resolveSessionOrigin`，子任务按父会话算）时按出生平台，忽略调用方传入的 `platform`；没有出生平台的 owner 面会话（WebUI、CLI 等）按传入的入口平台。因此从 WebUI 往 QQ 群插话，这一轮仍按 onebot 的平台档选工具组、人设与模型；入口平台只用来认出说话的人。`resolveConfig` 与 `resolveInheritance` 同一选法。钉死只管继承链，会话自身 `config` 里的覆盖仍优先于平台档。
+
+### 受众条目
+
+平台档可以另写只对群或只对私聊生效的受众条目（插件配置 `platformProfiles` 的条目带 `audience: group` 或 `audience: private`）。受众条目只列与同平台基础档（不写受众的那条）不同的键，叠加在基础档之上，来源层记为 `audience`；只对有出生平台的房间会话生效，owner 面会话不取受众条目。`getPlatformProfiles()` 只回基础档，不含受众条目：要知道某个房间的某个键是否来自平台档，看 `resolveInheritance(id).sources[键]` 是 `platform` 还是 `audience`。
 
 ## 房间键
 
@@ -96,8 +131,9 @@ interface SessionManagerService {
   getTree(rootId?: string): SessionTreeNode[];
   completeSession(id: string, result?: string): Promise<void>;
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
-  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
-  getPlatformProfiles(): Record<string, PlatformProfile>;
+  // 继承链（不含会话自身 config）：defaults → 平台档 → 受众条目 → 父会话 sessionDefaults，另回选档平台、受众与每个键的来源
+  resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
+  getPlatformProfiles(): Record<string, PlatformProfile>;   // 只回基础档，不含受众条目
   getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
   generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
@@ -106,9 +142,13 @@ interface SessionManagerService {
 
 > 完整签名以源码 `index.ts` 为准；上面是消费方最常用的部分。
 
+`resolveInheritance` 供 WebUI 的「继承」提示与 `/session` 的来源显示用：只看继承值，才不会把会话自己的覆盖当成继承来的。
+
+`sessionListSection` 是纯函数，参考实现的页面动作 `getSessionTree` 用它把 `getTree()` 的根会话分成「我的会话」「IM 房间」两区，回 `SessionTreeSection[]`（我的会话在前，空区不回）；服务方法 `getTree()` 仍回不分区的 `SessionTreeNode[]`。
+
 ## 实现者
 
-- [@aalis/plugin-session-manager](../plugins/plugin-session-manager.md) — 元数据持久化到 `MemoryService` 的 `session` namespace
+- [@aalis/plugin-session-manager](../plugins/plugin-session-manager.md) — 元数据持久化到 `MemoryService` 的 `sessions` namespace
 
 ## 相关
 

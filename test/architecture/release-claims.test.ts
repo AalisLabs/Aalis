@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.18.0 <1.0.0';
-/** 带 core peer >=0.18.0 的包：32 api（含随 core 0.19 首发的 api-trigger，另有未发布的 api-remote-agent）+ 60 插件（含未发布的 plugin-remote-agent-cursor 与 plugin-paper）+ schema-config + schema-log。 */
-const CORE_PEER_COUNT = 94;
+/** 带 core peer >=0.18.0 的包：32 api（含随 core 0.19 首发的 api-trigger，另有未发布的 api-remote-agent）+ 61 插件（含未发布的 plugin-remote-agent-cursor 与 plugin-paper，以及探测接 lifecycle.signal 后抬了 peer 的 plugin-code-sandbox-os）+ schema-config + schema-log。 */
+const CORE_PEER_COUNT = 95;
 /** 依赖 core 0.19 新语义（禁用插件带配置的 updateConfig 只换配置、保持禁用）的包，peer 下限抬到 0.19。 */
 const CORE_PEER_019 = '>=0.19.0 <1.0.0';
 const CORE_PEER_019_DIRS = ['plugin-webui-server', 'runtime'];
@@ -46,7 +46,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('带 @aalis/core peer 的包：runtime 与 plugin-webui-server 为 >=0.19.0 <1.0.0，其余 94 个为 >=0.18.0 <1.0.0', () => {
+  it('带 @aalis/core peer 的包：runtime 与 plugin-webui-server 为 >=0.19.0 <1.0.0，其余 95 个为 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
@@ -60,7 +60,7 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'core peer >=0.18.0 的包数应对齐 94（32 api + 60 插件 + schema-config + schema-log）',
+      'core peer >=0.18.0 的包数应对齐 95（32 api + 61 插件 + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     expect(
       hits
@@ -72,10 +72,13 @@ describe('CHANGELOG 未发布节的发布声明', () => {
     const outliers = hits
       .filter(h => h.spec !== CORE_PEER && h.spec !== CORE_PEER_019)
       .map(h => `${h.dir} = ${h.spec}`);
-    // schema-message 的 core peer 只为类型声明，不抬；五个包 0.17 批之后没有改动、未重发，保持已发布的 >=0.17.0
-    expect(outliers.sort(), '仅 schema-message（type-only）与未改动的五个包不在上述两个区间').toEqual([
+    // schema-message 的 core peer 只为类型声明，不抬。api-code-sandbox、plugin-process-local、plugin-tool-code-runner
+    // 本批有改动，但不用 core 0.18 的接口，peer 保持 >=0.17.0；plugin-maimai 0.17 批之后没有改动
+    expect(
+      outliers.sort(),
+      '仅 schema-message（type-only）、不用 core 0.18 接口的三个包与没有改动的 plugin-maimai 不在上述两个区间',
+    ).toEqual([
       'api-code-sandbox = >=0.17.0 <1.0.0',
-      'plugin-code-sandbox-os = >=0.17.0 <1.0.0',
       'plugin-maimai = >=0.17.0 <1.0.0',
       'plugin-process-local = >=0.17.0 <1.0.0',
       'plugin-tool-code-runner = >=0.17.0 <1.0.0',

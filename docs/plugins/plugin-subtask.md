@@ -41,6 +41,8 @@ export default definePlugin({
 ## 工作方式
 
 1. `create_subtask` 在 `session-manager` 中创建子会话：以父会话的 resolved config 为底（去掉白纸与远端代理的房间键 `ROOM_ONLY_CONFIG_KEYS`，它们只经继承链实时解析；`memoryRecallScope` 照常复制，子任务不会绕过房间的召回收窄），`llm` 按「工具参数 provider+model > 插件 `defaultProvider`+`defaultModel` > 继承父会话」的优先级覆盖（provider 与 model 须同时提供才生效），然后发送 `inbound:message` 事件触发子任务 agent 处理。子会话中不能再调用 `create_subtask`
+   - 派发与 `send_to_subtask` 的追问都是内部注入：`source` 为 `subtask`，`userId` 为 `parent:<父会话 id>`（归档用的来源标记，authority 查不到，等价匿名），授权身份走 `actor`（创建者的有效授权身份）。它们不经触发判定、不查回复后冷却，确认相位不把它们当作应答，要求真人当面发起的工具（白纸的交任务与取消）拒绝子任务回合。派发与追问共用一条 lane，追问会打断子任务正在跑的那一轮
+   - 子任务回合发起的确认以 `parent:<父会话 id>` 为应答者，没有真人能应答，60 秒后按拒绝结算（owner 开了自动确认时不弹确认）；需要确认的操作由父会话自己做
 2. 子会话的系统提示由 `agent:llm:before` 中间件注入子任务上下文（任务指令、共享资源规则）
 3. 父会话侧不改动首条系统提示（避免破坏 provider 前缀缓存），而是在消息列表尾部插入一条独立的 system 消息"活跃子任务提醒"，列出进行中、出错和已完成的子任务；最后一条是 user 消息时插在它之前，否则追加到末尾。每轮先移除上一轮的提醒，再按最新状态重新生成
 4. 子任务 agent 本轮以 `replied` 结束、回复非空且子会话尚未完成或出错时，`agent:turn:after` 中间件以该回复为结果调用 `sm.completeSession`；若 `message-archive` 服务可用，调用前还会在子会话历史中合成一条 `report_to_parent` tool call 记录及其结果消息
