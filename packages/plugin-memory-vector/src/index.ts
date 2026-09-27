@@ -820,7 +820,7 @@ async function run({
         // 命中点 + 上下文窗口扩展（合并区间，去重）
         const W = cfg.contextExpand.window;
         const collected = new Map<string, { sessionId: string; msg: Message }>();
-        // sid|ts 占位集：messageKey 含 role，扩窗路径（真实 role，如委派落的 notice）与
+        // sid|ts 占位集：messageKey 含 role，扩窗路径（真实 role，如 proactive 代发任务落的 notice）与
         // 兜底路径（强制 user）会对同一逻辑消息各持一 key、双份注入——兜底以此集判断
         // 该 (sid,ts) 是否已被任一角色覆盖（2026-08-27 审计 blocker）。
         const collectedSidTs = new Set<string>();
@@ -889,7 +889,7 @@ async function run({
           };
           if (!fakeMsg.content) continue;
           if (currentContents.has(fakeMsg.content.trim())) continue;
-          // 该 (sid,ts) 已被扩窗以真实角色收录（可能非 user，如委派 notice）→ 不再造 user 拷贝
+          // 该 (sid,ts) 已被扩窗以真实角色收录（可能非 user，如代发任务 notice）→ 不再造 user 拷贝
           if (collectedSidTs.has(`${sid}|${ts}`)) continue;
           const key = messageKey(sid, fakeMsg);
           if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });

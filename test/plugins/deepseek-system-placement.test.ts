@@ -10,7 +10,7 @@ import { WellKnownKinds } from '../../packages/schema-message/src/index.js';
 // 消息提升合并到渲染流最前部——历史后的每轮易变块与历史中段的通知因此
 // 落在 append-only 历史之前，每轮打穿前缀缓存。归一化规则：首个非 system
 // 之后的 system 一律转 user（无方括号标记者补 [系统提示] 换行前缀）；
-// 跨会话委派指令豁免（必须保持 system，否则复发「把委派当用户指挥」）。
+// proactive 代发任务指令豁免（必须保持 system，否则复发「把代发任务当用户指挥」）。
 // ════════════════════════════════════════════════════════════
 
 /** 典型 agent 请求形状：头部稳定区 + 历史（混通知）+ 尾部每轮材料 + 当前消息 */
@@ -54,7 +54,7 @@ describe('normalizeSystemPlacement', () => {
     expect(out[8].content).toBe('[系统提示]\n# 当前状态\n时间：今天 10:03；上一轮：平静');
   });
 
-  it('跨会话委派指令豁免：保持 system 角色（历史 BUG——转 user 会被当成用户在指挥）', () => {
+  it('proactive 代发任务指令豁免：保持 system 角色（历史 BUG——转 user 会被当成用户在指挥）', () => {
     const out = normalizeSystemPlacement([
       { role: 'system', content: '人设' },
       { role: 'user', content: '(今天 09:00) [张三(10001)]: 旧消息', name: '10001' },

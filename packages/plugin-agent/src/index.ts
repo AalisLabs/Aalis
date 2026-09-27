@@ -626,8 +626,9 @@ class DefaultAgent implements AgentService {
           sessionId: incoming.sessionId,
           // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域、
           // confirm 选路都靠它们）；授权身份单独走 actor——authority 守卫按 actor 查等级，
-          // scheduler/delegate/subtask 等触发的 AI 因此以创建者等级执行而非匿名。
-          // 不可再用 actor 覆盖 platform：跨平台委派会把上述四类下游全路由到发起者平台。
+          // scheduler/workflow/subtask 等触发的 AI 因此以创建者等级执行而非匿名。
+          // 不可再用 actor 覆盖 platform：actor 来自另一平台时（如跨平台的定时任务、workflow）
+          // 会把上述四类下游全路由到发起者平台。
           userId: incoming.userId,
           platform: incoming.platform,
           actor: incoming.actor,

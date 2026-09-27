@@ -2,7 +2,7 @@
 // @aalis/api-flow-control — 流控服务契约
 //
 // 导出运行时描述符 `flowControl`（defineService）与类型。下游消费者
-// （平台 adapter、trigger-policy、tool-session 等）应当 `import { flowControl } from
+// （平台 adapter、trigger-policy 等）应当 `import { flowControl } from
 // '@aalis/api-flow-control'` 写入 uses，而不是依赖 plugin-flow-control
 // 具体实现：实现包可被替换、可被禁用。
 //

@@ -87,8 +87,8 @@ async function run(caps: Caps): Promise<void> {
     const cOv = confOv[capability];
     const confirm = cOv === 'off' ? undefined : (cOv ?? g.confirm);
     // 等级裁决按授权身份（actor 缺省即会话身份）；accessBase 保持会话身份——
-    // confirm 通道按 platform 选路必须落在会话所在平台，否则跨平台委派时
-    // 确认提示会发进无人订阅的发起者平台通道、超时自动拒。
+    // confirm 通道按 platform 选路必须落在会话所在平台，否则 actor 与会话不在同一平台时
+    // （如跨平台的定时任务、workflow）确认提示会发进无人订阅的发起者平台通道、超时自动拒。
     const identity = g.actor ?? { platform: g.platform, userId: g.userId };
     const accessBase = {
       name: g.name,

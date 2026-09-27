@@ -708,7 +708,7 @@ async function run(caps: Caps): Promise<void> {
     const identity: PersonaIdentity = {
       sessionId: data.message.sessionId,
       platform: data.message.platform,
-      // 合成回合（scheduler / workflow / delegate / idle）不经适配器、没有 sessionType：按会话 ID 约定推断（与上方
+      // 合成回合（scheduler / workflow / idle）不经适配器、没有 sessionType：按会话 ID 约定推断（与上方
       // 取群号同一约定）。只用于提示词、不回写消息：这时入站相位已跑完（flow-control 判作用域时自己推断），写回
       // 只会让这个按约定的推断随归档写进消息元数据，被下游当成适配器给出的类型
       sessionType:

@@ -1171,7 +1171,8 @@ function registerUserProfile({
     try {
       if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.historyForExtraction);
-      // 跨会话委派是另一个 agent 实例发出的指令·不是该用户发言，不能作为他的用户存档提取语料
+      // proactive 代发任务（kind=CrossSessionDelegation，如 workflow agent 节点）是系统发出的指令，
+      // 不是该用户发言，不能作为他的用户存档提取语料
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
