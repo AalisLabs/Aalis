@@ -176,6 +176,8 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 这改变了上面 2026-08-23 维持 public 的裁定。被动注入不经工具，不受档位约束：该插件的 `injectEnabled` 开启
 （默认）时，其他会话的近期消息原文仍会注入每个回合的提示词。注入范围跟随 `scope`，这一项同时是工具的默认作用域：
 默认 `same-platform` 取同平台其他会话，含别人与 bot 的私聊；设为 `cross-platform` 时还包括 WebUI 等其他平台的会话。
+IM 房间的「同平台」按房间的出生平台算：owner 从 WebUI 往群里插话时，被动注入、`recent_messages`、`plugin-memory-vector`
+的同平台召回与 `session_get_history` 的同平台裁决都按该群的平台取，不带入 owner 自己 WebUI 会话的内容。
 注入内容另受 `limit`、`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束。私聊内容经注入进入群回合
 这一点目前维持原样，是否保留尚未定案，它与 `plugin-tool-onebot` 默认不许在群会话里读私聊历史
 （`sessionHistory.allowGroupReadPrivate: false`）并不一致；不需要的关掉 `injectEnabled`。

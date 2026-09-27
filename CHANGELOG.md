@@ -10,15 +10,15 @@
 
 ## 未发布
 
-回复闸门职责重组、模型触发插件与随之的修复，删除跨会话委派工具，`recent_messages` 提档，以及房间会话钉死出生平台、会话列表分区与停止键停掉子进程。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节另有要抬的下限，列在该节末尾。
+回复闸门职责重组、模型触发插件与随之的修复，删除跨会话委派工具，`recent_messages` 提档，房间会话钉死出生平台、会话列表分区与停止键停掉子进程，以及后台命令结束通知。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」与「后台命令结束通知」两节另有要抬的下限，列在各节末尾。
 
 待发布的包：
 
-- 有代码或契约改动（27 个）：api-code-sandbox、api-flow-control、api-gateway、api-media、api-persona、api-platform、api-process、api-session-manager、schema-message、plugin-adapter-onebot、plugin-agent、plugin-code-sandbox-os、plugin-file-reader、plugin-flow-control、plugin-media、plugin-memory-history、plugin-message-archive、plugin-persona、plugin-process-local、plugin-session-manager、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-trigger-policy、plugin-webui-client、plugin-webui-server、plugin-workflow
+- 有代码或契约改动（29 个）：api-code-sandbox、api-flow-control、api-gateway、api-media、api-persona、api-platform、api-process、api-session-manager、schema-message、plugin-adapter-onebot、plugin-agent、plugin-code-sandbox-os、plugin-file-reader、plugin-flow-control、plugin-media、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-trigger-policy、plugin-webui-client、plugin-webui-server、plugin-workflow
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
-- api-agent、api-authority、api-tools、api-workflow、plugin-authority、plugin-commands、plugin-llm-deepseek、plugin-memory-vector、plugin-scheduler、plugin-subtask、plugin-user-profile 只改了注释，本批不单独发布。
+- api-agent、api-authority、api-tools、api-workflow、plugin-authority、plugin-commands、plugin-llm-deepseek、plugin-scheduler、plugin-subtask、plugin-user-profile 只改了注释，本批不单独发布。
 
 ### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
 
@@ -121,9 +121,9 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 发布档位：plugin-memory-history 按 minor 发布。这是有意收窄一项经裁定维持 public 的能力，属于要附迁移路径的行为变化；0.9.1 那批按 patch 发布的收紧修的是非预期的默认值，性质不同。本节不需要抬任何包间依赖下限。
 
-### 房间会话钉死出生平台、会话列表分区与停止键停掉子进程（@aalis/api-gateway、@aalis/api-platform、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-workflow、@aalis/api-process、@aalis/plugin-process-local、@aalis/plugin-tool-system、@aalis/api-code-sandbox、@aalis/plugin-code-sandbox-os、@aalis/plugin-tool-code-runner）
+### 房间会话钉死出生平台、会话列表分区与停止键停掉子进程（@aalis/api-gateway、@aalis/api-platform、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-workflow、@aalis/api-process、@aalis/plugin-process-local、@aalis/plugin-tool-system、@aalis/api-code-sandbox、@aalis/plugin-code-sandbox-os、@aalis/plugin-tool-code-runner）
 
-IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的出生平台与受众选平台档，入口平台只用来认出说话的人；会话带上种类、受众与出生平台，WebUI 会话页分「我的会话」「IM 房间」两区，IM 房间按首条真人入站收录；停止键能停掉 exec 与代码执行的子进程；code-sandbox-os 的启动探测不再拖满停机宽限。不需要改配置。
+IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的出生平台与受众选平台档，跨会话召回的同平台也按出生平台算，入口平台只用来认出说话的人；会话带上种类、受众与出生平台，WebUI 会话页分「我的会话」「IM 房间」两区，IM 房间按首条真人入站收录；停止键能停掉 exec 与代码执行的子进程；code-sandbox-os 的启动探测不再拖满停机宽限。不需要改配置。
 
 行为变化：
 
@@ -131,11 +131,12 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - 会话 ID 约定写进 api-platform 的 `PlatformAdapter.canHandle` 说明：多人房间的会话 ID 以 `<平台名>:` 开头，实现了 `canHandle` 的适配器也要遵守；非房间的内部会话 ID 不含单冒号，要分段用 `::`。ID 前缀与平台名不一致的第三方适配器，它的房间按那个前缀对应的平台档选档（多半不存在，落到全局默认），session-manager 按前缀告警一次，不纠正。
 - 平台档新增受众条目：`platformProfiles` 的条目可带 `audience`（`group` 为群与频道，`private` 为私聊），只列与同平台基础档不同的键，叠加在基础档之上，只对有出生平台的房间生效；取值无效的条目整条丢弃并告警。`getPlatformProfiles()` 只回基础档。
 - persona 的会话环境按出生平台取当前平台、自己的账号与会话类型，说话人信息照旧取自消息；入口与出生平台不同时加一行「当前消息经 `<入口平台>` 发来」。此前从 WebUI 往群里插话时写的是「当前平台：webui」，没有会话类型与 bot 在群里的账号。
+- 跨会话召回按出生平台：plugin-memory-history 的被动注入与 `recent_messages` 的 `same-platform`、plugin-memory-vector 被动召回与 `memory_recall` 的同平台可见范围、plugin-tool-session 的 `session-history` 服务的同平台裁决（插件的 `scope: platform` 与会话配置 `memoryRecallScope` 为 `platform` 时），对 IM 房间都取出生平台作当前平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）照旧取入口平台。此前从 WebUI 往群里插话时按 webui 算：同平台注入与 `recent_messages` 取的是 owner 其他 WebUI 会话的原文，同平台别的群反而不在；向量召回取的是 WebUI 会话的记忆，本群与同平台别的会话的记忆被滤掉；`session_get_history` 拒读同平台别的群。消息落库记下的平台仍是入口平台，owner 从 WebUI 往房间插的话与那一轮的回复记为 `webui`，不进同平台别的房间的 memory-history 注入。
 - 自动标题：从 WebUI 往 IM 房间插话不再给房间生成标题，也不经标题路径建档；此前会用 owner 的那句话给房间起标题。
 - IM 房间收录：有出生平台的房间，首条真人入站（不带 `source`）到达即登记（`createdBy: 'system'`、状态 `waiting`）；群取群名、私聊取对方昵称，只采信出生平台自己的入站带的名字，缺省用会话 ID，名字还是 ID 时由后到的原生入站补上。带 `source` 的内部注入（workflow、定时任务、空闲开话题、宿主通知、好友申请等合成通知）不登记。部署后来过真人消息的群与私聊都会列进会话页的「IM 房间」区；此前只有执行过 `/session.set`、开过子任务或从 WebUI 插过话的房间才登记。`createChildSession` 兜底建档的房间以会话 ID 为名。
 - 会话状态：`inbound:message` 不再把会话翻成 `active`，改为回合开始时（`agent:input:before`）翻转，同一个中间件在回合结束时把仍为 `active` 的根会话收口为 `completed`。群里只有消息、bot 没开口的房间不再显示「进行中」；被后面的输入中间件拦下或抛错的回合也不再停在「进行中」。未装 agent 时会话不再翻 `active`。
 - 会话页：分「我的会话」「IM 房间」两区，分区在服务端判定；子会话默认收起；批量模式的「全选」只选所在分区，页头的跨区全选删除；删除确认写明会清空消息历史与长期记忆（摘要、向量记忆等），删除 IM 房间时另写明聊天平台里的消息不受影响、房间之后再来消息会重新出现且记忆从零开始，批量删除含 IM 房间时写出其个数。
-- 停止键停掉子进程：exec、run_python、run_javascript 把回合的中止信号交给子进程，按进程组停掉（POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树），回合随即结束；此前要等命令跑完或超时（`maxTimeout` 默认 300000ms）。被信号结束的结果带 `aborted: true` 与 `message`（exec 为「命令已随回合中止」，代码执行为「代码已随回合中止」），不标 `timedOut`；中止前已自行退出、或结束时没有终止信号的，按实际退出回报并加 `note: '回合已中止'`。`exec_background` 起的后台进程不随回合中止。中止与超时只打原进程组：主动脱离进程组的后代（`setsid` 等守护化写法）在 exec、无沙箱与 macOS 沙箱路径上停不掉，Linux bwrap 路径有 pid 命名空间。Windows 中止路径只有单元用例，未在 Windows 上实测；Linux bwrap 路径的中止也尚未实测。
+- 停止键停掉子进程：exec、run_python、run_javascript 把回合的中止信号交给子进程，按进程组停掉（POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树），回合随即结束；此前要等命令跑完或超时（`maxTimeout` 默认 300000ms）。被信号结束的结果带 `aborted: true` 与 `message`（exec 为「命令已随回合中止」，代码执行为「代码已随回合中止」），不标 `timedOut`；中止前已自行退出、或结束时没有终止信号的，按实际退出回报并加 `note: '回合已中止'`。停止键不杀 `exec_background` 起的后台进程：在对话回合里起的进程自行退出时通知起它的会话，要停时由她用 `process_kill` 直接停，见下文「后台命令结束通知」。中止与超时只打原进程组：主动脱离进程组的后代（`setsid` 等守护化写法）在 exec、无沙箱与 macOS 沙箱路径上停不掉，Linux bwrap 路径有 pid 命名空间。Windows 中止路径只有单元用例，未在 Windows 上实测；Linux bwrap 路径的中止也尚未实测。
 - code-sandbox-os 的启动探测改经 `spawn` 并带本次激活的 `lifecycle.signal`，退出码为 0 才算有后端。启动器挂住时停用或停机随即中止探测，不再等满 5000ms 的探测超时，也不再因此被判「未在宽限内停止」转为 error。
 - token 快照：plugin-webui-server 发 `token:request` 不再带 `platform`；plugin-agent 缺省时依次取会话的出生平台与 `webui`。此前 webui-server 自己按已注册的平台名解析会话 ID 前缀。
 
@@ -161,7 +162,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **plugin-code-sandbox-os 的 `@aalis/core` peer 抬到 `>=0.18.0 <1.0.0`**（用到 `lifecycle.signal`），`package.json` 的 `aalis.service.required` 加了 `lifecycle`：core 0.17 上不能用新版。
 - 回退到旧版时，新版登记的 IM 房间记录会留在会话表里，旧版的入站监听对非 `active` 的会话一律翻成 `active`（包括已归档的），这些房间每来一条消息就显示「进行中」。这只影响会话页的显示；从会话页删除房间会清空它的记忆，不建议用来清理。
 
-发布时要抬的包间依赖下限（抬到本节的新版本）：`@aalis/api-process`（`SpawnOptions.signal`）由 plugin-process-local、plugin-tool-system、plugin-tool-code-runner、plugin-code-sandbox-os 抬；`@aalis/api-code-sandbox`（`SandboxRunRequest.signal`）由 plugin-tool-code-runner、plugin-code-sandbox-os 抬；`@aalis/api-session-manager`（`resolveInheritance`、`SessionInfo` 新字段与分区类型）由 plugin-agent、plugin-session-manager 抬；`@aalis/api-gateway`（`resolveSessionOrigin`）由 plugin-session-manager、plugin-persona、plugin-agent 抬，其中 plugin-session-manager 是本节新增的依赖，现写 `>=0.7.0`。plugin-webui-client 不依赖 api-session-manager，没有下限要抬。版本号与档位发布时按 release 流程定。
+发布时要抬的包间依赖下限（抬到本节的新版本）：`@aalis/api-process`（`SpawnOptions.signal`）由 plugin-process-local、plugin-tool-system、plugin-tool-code-runner、plugin-code-sandbox-os 抬；`@aalis/api-code-sandbox`（`SandboxRunRequest.signal`）由 plugin-tool-code-runner、plugin-code-sandbox-os 抬；`@aalis/api-session-manager`（`resolveInheritance`、`SessionInfo` 新字段与分区类型）由 plugin-agent、plugin-session-manager 抬；`@aalis/api-gateway`（`resolveSessionOrigin`）由 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session 抬，其中 plugin-session-manager 与后三者是本节新增的依赖，现写 `>=0.7.0`。plugin-webui-client 不依赖 api-session-manager，没有下限要抬。版本号与档位发布时按 release 流程定。
 
 其余说明：
 
@@ -204,7 +205,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-webui-server 与 plugin-agent 同批升级：新版 webui-server 不再给 token 快照填 `platform`，配旧版 agent 时 IM 房间的快照按 webui 算。
 - plugin-tool-system 与 plugin-agent、schema-message 同批升级：旧版 agent 不认 `hostNotice.callerUserId`，通知回合里要确认的工具会弹出没人能应答的确认、60 秒后按拒绝结算；旧版 tool-system 不发结束通知。
 - 走插件市场的，以上四组各自同一批勾选更新。
-- 上文用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent：它们要用新版 api-gateway 的 `resolveSessionOrigin`（persona 另要 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
+- 上文用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用新版 api-gateway 的 `resolveSessionOrigin`（persona 另要 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
 ## 2026-09-27（core 0.18.0 minor；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
 

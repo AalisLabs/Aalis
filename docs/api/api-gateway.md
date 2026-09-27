@@ -47,7 +47,7 @@ function resolveEffectiveConfig<T extends { overrides }>(base: T, platform, sess
 
 ## 出生平台解析
 
-`resolveSessionOrigin` 按会话 ID 推出房间会话的出生平台与受众。session-manager 用它选平台档、给会话列表分区、收录 IM 房间，persona 用它取会话环境，agent 用它给 `token:request` 的快照兜底平台。它是同步纯函数，只看 ID，不查已注册的适配器：适配器没加载时结果不变。
+`resolveSessionOrigin` 按会话 ID 推出房间会话的出生平台与受众。session-manager 用它选平台档、给会话列表分区、收录 IM 房间，persona 用它取会话环境，agent 用它给 `token:request` 的快照兜底平台，memory-history、memory-vector 与 tool-session 用它取跨会话召回的当前平台。它是同步纯函数，只看 ID，不查已注册的适配器：适配器没加载时结果不变。
 
 ```ts
 interface SessionOrigin {
