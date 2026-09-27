@@ -214,7 +214,7 @@ async function expectStopsOnAbort(handler: Handler, code: string, onlyAborted = 
   expect(await waitFor(() => heartbeats() >= 2, 10_000)).toBe(true);
   ac.abort();
   const res = await within(pending, 3000);
-  if (onlyAborted || res.note === undefined) expect(res.aborted).toBe(true);
+  if (onlyAborted || res.note === undefined) expect(res).toMatchObject({ aborted: true, message: '代码已随回合中止' });
   else expect(res.note).toBe('回合已中止');
   expect(res.timedOut).toBeUndefined();
   const settled = heartbeats();
@@ -246,7 +246,7 @@ describe('代码执行接住中止：无沙箱路径（POSIX，真实进程）',
     const ac = new AbortController();
     ac.abort();
     const res = await within(call(run_javascript, { code: JS_HEARTBEAT }, ac.signal), 3000);
-    expect(res).toMatchObject({ aborted: true, exitCode: -1 });
+    expect(res).toMatchObject({ aborted: true, message: '代码已随回合中止', exitCode: -1 });
     expect(res.error).toBeUndefined();
     expect(pids).toEqual([]);
     await sleep(300);
@@ -316,6 +316,7 @@ describe('代码执行接住中止：替身沙箱', () => {
     const { run_python } = await applyRunner({ mode: 'auto', sandbox: fake.service });
     const res = await call(run_python, { code: 'print(1)' }, ac.signal);
     expect(res.aborted).toBeUndefined();
+    expect(res.message, '没被中止就不说代码已随回合中止').toBeUndefined();
     expect(res).toMatchObject({ exitCode: 0, stdout: 'zz-slice1-done\n', note: '回合已中止' });
   });
 
@@ -328,7 +329,7 @@ describe('代码执行接住中止：替身沙箱', () => {
     });
     const { run_javascript } = await applyRunner({ mode: 'auto', sandbox: fake.service });
     const res = await call(run_javascript, { code: 'for (;;) {}' }, ac.signal);
-    expect(res.aborted).toBe(true);
+    expect(res).toMatchObject({ aborted: true, message: '代码已随回合中止' });
     expect(res.timedOut).toBeUndefined();
   });
 });
