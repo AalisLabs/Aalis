@@ -37,6 +37,10 @@ const WHITELIST = new Map<string, string>([
   ['spawn plugin-process-local/index.ts', 'ProcessService 实现方，timeout 的武装逻辑在此'],
   ['spawn runtime/providers.ts', '进程自重生与回滚安装：寿命由用户/外部决定，不设超时'],
   ['spawn plugin-webui-server/auth.ts', 'detached 拉起浏览器，fire-and-forget 不等其结束'],
+  [
+    'spawn plugin-trigger-laya/sidecar.ts',
+    '常驻侧车：寿命由托管方管（启动超时后 SIGKILL，停止时先 SIGTERM、超时再 SIGKILL），不设整体超时',
+  ],
 ]);
 
 interface Rule {
