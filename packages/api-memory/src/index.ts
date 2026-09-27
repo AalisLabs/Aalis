@@ -1,7 +1,7 @@
 // ----- 记忆服务接口 -----
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import type {} from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { defineService, type Logger } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 
 /** 跨会话最近消息查询参数 */
@@ -46,6 +46,8 @@ export interface MetadataEntry {
    * 已有消费者：`plugin-adapter-onebot` 的合并转发持久化用它做 7 天惰性回收
    *（forward-expand 的 sweepPersisted），历史上「持久化侧零清理路径、磁盘只增不减」的
    * 状况即由此了结——本注释曾以现状口吻描述该旧况，2026-08-28 如实化。
+   *
+   * 读不到写入时间时为 0（如外部写入、缺该字段的条目），条目本身照常返回。
    */
   updatedAt: number;
 }
@@ -62,14 +64,15 @@ export interface MemoryService {
   // ── 为什么这些是可选、而 metadata 五方法是必填 ──
   //
   // 判据不是「三家后端有没有全实现」（它们对两组都全实现了），而是**消费方缺了它能不能
-  // 降级**：下面这七个的守卫都是有真实降级动作的活分支——`trimHistory` 缺失记 warn 后跳过
-  // 归档、`deleteMessagesByTimestamps` 缺失把 checkpoint 回滚记成一条 error 返回、
-  // `getFullHistory` 缺失回落 `getHistory`、`getRecentMessagesAcrossSessions` 缺失就不注入
-  // 跨会话历史。而 metadata 面没有可用降级：无处存 = 功能坏，守卫只能抛，于是那些守卫全是
-  // 死分支，留着只会教人照抄一套永远进不去的判断。
+  // 降级**：下面这七个与 metadata 段的 `listMetadataKeys` 共八个，守卫都是有真实降级动作的
+  // 活分支——`trimHistory` 缺失记 warn 后跳过归档、`deleteMessagesByTimestamps` 缺失把
+  // checkpoint 回滚记成一条 error 返回、`getFullHistory` 缺失回落 `getHistory`、
+  // `getRecentMessagesAcrossSessions` 缺失就不注入跨会话历史、`listMetadataKeys` 缺失时整体
+  // 清理退回按 `listMetadata` 枚举键。而 metadata 五方法没有可用降级：无处存 = 功能坏，守卫
+  // 只能抛，于是那些守卫全是死分支，留着只会教人照抄一套永远进不去的判断。
   //
-  // 所以「另七个也补齐必填」不是欠债而是**倒退**：那会删掉上述九处真实降级路径，
-  // 并把第三方后端的实现门槛一次抬满。要改这条判据，先说明这九处降级各自该怎么办。
+  // 所以「另八个也补齐必填」不是欠债而是**倒退**：那会删掉这些真实降级路径，
+  // 并把第三方后端的实现门槛一次抬满。要改这条判据，先说明每处降级各自该怎么办。
 
   /**
    * 清空所有会话的所有消息和归档。**不含元数据**：各命名空间由归属插件挂 `memory:clear`
@@ -113,6 +116,7 @@ export interface MemoryService {
   // 五个方法**必填**，不设可选（`?`）：三家后端从来都是全实现，可选性只产生成本——
   // 八个消费方各写各的守卫，写法四种（静默 return / 直接 throw / 自定义错误类型 / 有就存没有
   // 就丢），且都是死分支。第三方 memory 后端本来也必须实现，否则一半插件在它上面跑不起来。
+  // 这一段唯一的可选方法是 `listMetadataKeys`：它只服务按命名空间整体清理，缺了能降级（见上方判据）。
   //
   // ── 这一面**刻意停在 KV**，以下四条是经实测的决定，不是尚未做的待办 ──
   //
@@ -149,8 +153,20 @@ export interface MemoryService {
   saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
   /** 读取元数据 */
   getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
-  /** 列出指定 namespace 下所有元数据条目 */
+  /**
+   * 列出指定 namespace 下所有元数据条目。
+   *
+   * 读不出的条目（数据损坏、不是对象）跳过并由后端记 warn（点名 namespace 与 key），不让整个命名空间读失败。
+   * 按本方法枚举键删不掉这些条目：整体清空命名空间用 {@link clearMetadataNamespaces}。
+   */
   listMetadata(namespace: string): Promise<MetadataEntry[]>;
+  /**
+   * 列出指定 namespace 下全部条目的键，不读 data，读不出的条目也列出。
+   *
+   * 用途是按命名空间整体清理（经 {@link clearMetadataNamespaces}）：listMetadata 跳过读不出的条目，按它枚举键
+   * 会把这些条目留在库里。可选，与上方可选方法同一判据：缺了它清理退回按 listMetadata 枚举，读不出的条目不删。
+   */
+  listMetadataKeys?(namespace: string): Promise<string[]>;
   /** 删除元数据条目 */
   deleteMetadata(namespace: string, key: string): Promise<void>;
   /**
@@ -184,6 +200,48 @@ export interface MemoryService {
   deleteMessagesByTimestamps?(sessionId: string, timestamps: number[]): Promise<number>;
 }
 
+/** clearMetadataNamespaces 的 info 里最多点名几条读不出的条目 */
+const UNREADABLE_NAMED_LIMIT = 10;
+
+/**
+ * 整体清空若干命名空间，返回各命名空间删掉的键（与 namespaces 同序）。全部删除在一次 commitMetadata 里提交，
+ * 原子性按后端分档（见 commitMetadata）。
+ *
+ * 后端实现了 listMetadataKeys 时按它列键，读不出的条目与其余条目一并删除，并记一条 info 点名（namespace/key）。
+ * 「读不出」就是 listMetadata 跳过的那些：列出的键里 listMetadata 没有返回的。列键与读取是两次查询，
+ * 其间被并发删除的条目也会记为读不出。后端没有实现时按 listMetadata 枚举，读不出的条目留在库里。
+ */
+export async function clearMetadataNamespaces(
+  mem: MemoryService,
+  namespaces: readonly string[],
+  logger: Pick<Logger, 'info'>,
+): Promise<string[][]> {
+  const listed: string[][] = [];
+  const unreadable: string[] = [];
+  for (const namespace of namespaces) {
+    const keys = await mem.listMetadataKeys?.(namespace);
+    const readable = (await mem.listMetadata(namespace)).map(e => e.key);
+    if (!keys) {
+      listed.push(readable);
+      continue;
+    }
+    const readableSet = new Set(readable);
+    for (const key of keys) if (!readableSet.has(key)) unreadable.push(`${namespace}/${key}`);
+    listed.push(keys);
+  }
+  await mem.commitMetadata(
+    namespaces.flatMap((namespace, i) => listed[i].map(key => ({ op: 'del' as const, namespace, key }))),
+  );
+  if (unreadable.length > 0) {
+    const omitted = unreadable.length - UNREADABLE_NAMED_LIMIT;
+    logger.info(
+      `清理时一并删除了 ${unreadable.length} 条读不出的数据：${unreadable.slice(0, UNREADABLE_NAMED_LIMIT).join('、')}` +
+        (omitted > 0 ? ` 等（另有 ${omitted} 条未列出）` : ''),
+    );
+  }
+  return listed;
+}
+
 declare module '@aalis/api-hooks' {
   interface HookContextMap {
     /** 记忆清除钩子（统一编排） */
@@ -194,8 +252,14 @@ declare module '@aalis/api-hooks' {
       types?: string[];
       /** 当前会话 ID（scope=session 时必填） */
       sessionId?: string;
-      /** 各子系统报告的结果（由中间件填充） */
-      results: Array<{ source: string; success: boolean; message: string }>;
+      /**
+       * 各子系统报告的结果（由中间件填充）。
+       *
+       * `type` 是这一行所属的清理类型（取值同 `/clear --type`，如 `'vector'`）。处理某个清理类型的中间件
+       * 须在各行标注它，成败都标：`/clear` 对显式要求的每个类型核对有没有标注它的行，没有就回报「没有
+       * 已启用的插件处理这一类型」。第三方中间件处理内置类型却不标注，会被误报为无处理者。
+       */
+      results: Array<{ source: string; type?: string; success: boolean; message: string }>;
     };
   }
 }

@@ -179,11 +179,6 @@ function truncate(text: string | undefined | null, max: number): string {
   return `${s.slice(0, max)}…[已截断，还剩 ${remaining} 个字符未展示]`;
 }
 
-function formatError(err: unknown): string {
-  if (err instanceof Error) return err.stack || err.message;
-  return String(err);
-}
-
 function parsePlatform(sessionId: string): string {
   return sessionId.split(':')[0] ?? '';
 }
@@ -417,8 +412,29 @@ async function run({
    */
   let legacyFailureWarned = false;
 
+  /**
+   * 标记的读写与删除排成一队：全局清空删标记时，在途的读写先落定再删，删之后才轮到的读写看到的是删后的库。
+   * 否则清空前读到的旧标记会在删除之后进缓存，在途的写入会在删除之后落库。队尾只等前一个操作落定：
+   * 某个操作拒绝时拒绝照常交给它的调用方，之后排队的操作照常执行
+   */
+  let markerQueue: Promise<void> = Promise.resolve();
+  function queueMarker<T>(op: () => Promise<T>): Promise<T> {
+    const queued = markerQueue.then(op);
+    markerQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
+  }
+
   /** 存量向量（无 metadata.modelId）的模型；确定不了时返回 undefined，由调用方按当前模型对待 */
   async function legacyModelId(currentModelId: string): Promise<string | undefined> {
+    if (legacyModel) return legacyModel.modelId;
+    return queueMarker(() => loadLegacyModelId(currentModelId));
+  }
+
+  /** 读取或记下存量标记（在标记队列里执行）。排队期间已有别的读写确定了标记，直接用它 */
+  async function loadLegacyModelId(currentModelId: string): Promise<string | undefined> {
     if (legacyModel) return legacyModel.modelId;
     const mem = memory.current;
     if (!mem) return undefined;
@@ -435,7 +451,8 @@ async function run({
       if (!legacyFailureWarned) {
         legacyFailureWarned = true;
         logger.warn(
-          `读写存量向量的模型标记失败，存量向量暂按当前模型对待；之后每次检索都会重试，恢复前不再重复告警: ${formatError(err)}`,
+          '读写存量向量的模型标记失败，存量向量暂按当前模型对待；之后每次检索都会重试，恢复前不再重复告警:',
+          err,
         );
       }
       return undefined;
@@ -446,14 +463,16 @@ async function run({
    * 向量库全局清空后，存量向量已不复存在：删掉存量标记并复位缓存，之后按届时的模型重新确定。
    * 删除失败只记 warn，不影响清空结果（残留的标记只作用于不带 modelId 的向量）。
    */
-  async function dropLegacyModel(): Promise<void> {
-    try {
-      await memory.current?.deleteMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
-    } catch (err) {
-      logger.warn(`删除存量向量的模型标记失败: ${formatError(err)}`);
-    }
-    legacyModel = undefined;
-    legacyFailureWarned = false;
+  function dropLegacyModel(): Promise<void> {
+    return queueMarker(async () => {
+      try {
+        await memory.current?.deleteMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
+      } catch (err) {
+        logger.warn('删除存量向量的模型标记失败:', err);
+      }
+      legacyModel = undefined;
+      legacyFailureWarned = false;
+    });
   }
 
   /**
@@ -656,7 +675,7 @@ async function run({
       await vectorstore.require().add(vec, metadata);
       await vectorstore.require().save();
     } catch (err) {
-      logger.warn(`向量索引失败: ${formatError(err)}`);
+      logger.warn('向量索引失败:', err);
     }
   }
 
@@ -710,7 +729,7 @@ async function run({
       await vectorstore.require().add(vec, metadata);
       await vectorstore.require().save();
     } catch (err) {
-      logger.warn(`assistant 向量索引失败: ${formatError(err)}`);
+      logger.warn('assistant 向量索引失败:', err);
     }
   }
 
@@ -727,14 +746,14 @@ async function run({
       try {
         total += await currentStore.deleteByFilter({ sessionId: data.sessionId, timestamp: ts });
       } catch (err) {
-        logger.warn(`按时间戳删除向量失败 (ts=${ts}): ${formatError(err)}`);
+        logger.warn(`按时间戳删除向量失败 (ts=${ts}):`, err);
       }
     }
     if (total > 0) {
       try {
         await currentStore.save();
       } catch (err) {
-        logger.warn(`向量保存失败: ${formatError(err)}`);
+        logger.warn('向量保存失败:', err);
       }
       logger.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
     }
@@ -753,20 +772,26 @@ async function run({
         await vectorstore.require().clear();
         await vectorstore.require().save();
         await dropLegacyModel();
-        data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
+        data.results.push({ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' });
         logger.info('向量记忆已全部清空');
       } else if (data.sessionId) {
         const currentStore = vectorstore.require();
         if (currentStore.deleteByFilter) {
           const deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
           await currentStore.save();
-          data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
+          data.results.push({
+            source: 'vector',
+            type: 'vector',
+            success: true,
+            message: `向量记忆已清空 (${deleted} 条)`,
+          });
           logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
         } else {
           // 老实报告：不支持会话级删除时不能谎称成功（此前会 push success 且「已清空 0 条」误导用户）。
           logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
           data.results.push({
             source: 'vector',
+            type: 'vector',
             success: false,
             message: '当前向量存储不支持会话级清空，向量记忆未清除（可改用 /clear.all 或换支持按条件删除的后端）',
           });
@@ -774,8 +799,8 @@ async function run({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
-      logger.warn(`向量清空失败: ${formatError(err)}`);
+      data.results.push({ source: 'vector', type: 'vector', success: false, message: `向量清空失败: ${msg}` });
+      logger.warn('向量清空失败:', err);
     }
 
     await next();
@@ -919,7 +944,7 @@ async function run({
         );
       } catch (err) {
         if (data.signal?.aborted) return null;
-        logger.warn(`向量记忆检索失败: ${formatError(err)}`);
+        logger.warn('向量记忆检索失败:', err);
         return null;
       }
     },

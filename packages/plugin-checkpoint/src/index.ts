@@ -201,6 +201,7 @@ function run(caps: Caps): void {
         const n = await service.clearAll();
         data.results.push({
           source: 'checkpoint',
+          type: 'checkpoint',
           success: true,
           message: `所有 checkpoint 已清空（${n} 个 session）`,
         });
@@ -208,13 +209,19 @@ function run(caps: Caps): void {
         const n = await service.clearSession(data.sessionId);
         data.results.push({
           source: 'checkpoint',
+          type: 'checkpoint',
           success: true,
           message: n > 0 ? `当前会话 checkpoint 已清空（${n} 个 turn）` : '当前会话无 checkpoint',
         });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'checkpoint', success: false, message: `checkpoint 清空失败: ${msg}` });
+      data.results.push({
+        source: 'checkpoint',
+        type: 'checkpoint',
+        success: false,
+        message: `checkpoint 清空失败: ${msg}`,
+      });
     }
     await next();
   });
