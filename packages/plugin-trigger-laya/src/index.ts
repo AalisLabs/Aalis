@@ -5,8 +5,9 @@
 // 自成一体：是 trigger 服务的胜者时，本插件在 inbound:trigger 相位判定作用域内的消息（禁言、禁言关键词、
 // 点名识别、附件识别、模型判定），没有计数；不是胜者时对每条消息直接放行，什么都不做。
 // @ 与叫名字不强制开口，开不开口由模型决定；点名只决定开口后的类别、授权主体与兜底。
-// 模型判定不了时兜底：只回点名，其余吞掉并归档，不回退到别的触发插件。判定不可用（侧车熔断、memory 缺席）
-// 由正常转入时记 error、恢复时记 warn，状态也经 doctor 检查项报告。
+// 模型判定不了时兜底：只回点名，其余吞掉并归档，不回退到别的触发插件。判定不可用（侧车熔断、memory 缺席、
+// 托管的侧车退出、没有 process 服务）由正常转入时记 error、恢复时记 warn，状态也经 doctor 检查项报告。
+// 配置了 sidecarDir 时本插件自己托管侧车：生效时拉起、退出后退避重启，不再生效或停用时关掉（sidecar.ts）。
 // 另监听入站归档事件做运行期自检（self-check.ts）。
 // ============================================================
 
@@ -18,6 +19,7 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
+import { type ProcessService, processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
@@ -43,6 +45,7 @@ import { toWellFormedText } from '@aalis/util-text-normalize';
 import { waitForAttachmentDescriptions } from './attachments.js';
 import { defaultLayaConfig, resolveLayaConfig } from './config.js';
 import { createSelfCheck } from './self-check.js';
+import { type Sidecar, sidecarTarget, superviseSidecar } from './sidecar.js';
 
 // ----- 元数据 -----
 
@@ -87,6 +90,14 @@ const configSchema: ConfigSchema = {
     description: '带图片等附件的消息先等识别写好描述再交给模型；超时照常判定，识别在后台继续。',
   },
   endpoint: { type: 'string', label: '侧车地址', default: defaultLayaConfig.endpoint },
+  sidecarDir: {
+    type: 'string',
+    label: '侧车目录（由本插件托管）',
+    default: defaultLayaConfig.sidecarDir,
+    description:
+      '侧车 laya-listener 所在目录的绝对路径。填了则本插件生效时自己拉起侧车、退出后重启，不再生效或停用时关掉，' +
+      '端口取侧车地址的（地址须为 http://127.0.0.1:<端口>）；留空 = 侧车由外部运行，只按侧车地址连接。',
+  },
   timeoutMs: {
     type: 'number',
     label: '请求超时（毫秒）',
@@ -242,6 +253,8 @@ const uses = {
   memory: optional(memory),
   // 缺席时不报诊断项
   doctor: optional(doctor),
+  // 托管侧车时用来拉起它；缺席时拉不起，判定按兜底只回点名
+  process: optional(processService),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -316,6 +329,83 @@ function run(caps: Caps): void {
     return failures >= CIRCUIT_FAILURES && Date.now() < openUntil;
   }
 
+  // ----- 托管侧车 -----
+
+  /** 托管的目标；undefined = 没配 sidecarDir，侧车由外部运行 */
+  const target = cfg.sidecarDir ? sidecarTarget(cfg.sidecarDir, cfg.endpoint) : undefined;
+  const managed = target && !('problem' in target) ? target : undefined;
+  if (target && 'problem' in target) logger.error(`[laya] 不托管侧车：${target.problem}`);
+  /** 正在托管的侧车；本插件不生效、没有 process 服务或停用后为 undefined */
+  let sidecar: Sidecar | undefined;
+
+  if (managed) {
+    let active = false;
+    let proc: ProcessService | undefined;
+    let running: { sidecar: Sidecar; proc: ProcessService } | undefined;
+    let chain = Promise.resolve();
+    /** 按本插件是否生效、当前的 process 服务起停侧车；串行，旧的停完才拉起新的 */
+    const reconcile = (): Promise<void> => {
+      chain = chain
+        .then(async () => {
+          const want = active ? proc : undefined;
+          if (running && running.proc !== want) {
+            const stopping = running.sidecar;
+            running = undefined;
+            sidecar = undefined;
+            await stopping.stop();
+            logger.info('[laya] 已停掉侧车');
+          }
+          if (want && !running) {
+            running = {
+              proc: want,
+              sidecar: superviseSidecar({
+                process: want,
+                dir: managed.dir,
+                port: managed.port,
+                parentPid: process.pid,
+                probe: async () => !('error' in (await probe())),
+                log: logger,
+                // 重启前攒下的失败与熔断作废：否则侧车已就绪，熔断期内仍按兜底
+                onReady: () => {
+                  failures = 0;
+                  openUntil = 0;
+                },
+                onExit: reason => {
+                  if (down !== undefined) logger.debug(`[laya] ${reason}`);
+                  goDown(reason);
+                },
+              }),
+            };
+            sidecar = running.sidecar;
+          }
+        })
+        .catch(err => logger.warn(`[laya] 起停侧车出错: ${err}`));
+      return chain;
+    };
+    caps.trigger.follow(winner => {
+      active = winner === self;
+      void reconcile();
+      return () => {
+        active = false;
+        return reconcile();
+      };
+    });
+    caps.process.follow(p => {
+      proc = p;
+      void reconcile();
+      return () => {
+        proc = undefined;
+        return reconcile();
+      };
+    });
+    // 停机时 process-local 在 app:stopping 里强杀它拉起的全部子进程，早于本插件的清理：先把侧车标为主动停止，
+    // 那一下就不会被当成意外退出（记 error、排重启）。标记是同步的；子进程的退出回调要等下一轮事件循环，
+    // 只要两个监听器之间没有等 I/O 的监听器（目前监听 app:stopping 的只有 process-local），就总在标记之后
+    caps.events.on('app:stopping', () => {
+      void running?.sidecar.stop();
+    });
+  }
+
   /** 近期计入的带图消息（imagesPointerOnly）：图片是否都只有指针，最多 IMAGE_WINDOW 条，先进先出 */
   const recentImages: boolean[] = [];
 
@@ -357,6 +447,16 @@ function run(caps: Caps): void {
       return fallback('memory 缺席');
     }
     if (circuitOpen()) return fallback('侧车熔断中');
+    // 托管的侧车没就绪：不发请求。首次启动是正常过程，不算不可用；重启中的原因已在退出时记下
+    if (managed) {
+      if (!caps.process.current) {
+        goDown('process 服务缺席，拉不起侧车');
+        return fallback('process 服务缺席');
+      }
+      const state = sidecar?.state;
+      if (state?.kind === 'starting') return fallback(state.restarts === 0 ? '侧车启动中' : '侧车重启中');
+      if (state?.kind === 'waiting') return fallback('侧车重启中');
+    }
 
     const sid = message.sessionId;
     // 窗口是最近 historyRows 条 user / assistant 且正文是字符串的行：多取一倍，过滤后再取（见 toRows）
@@ -530,47 +630,75 @@ function run(caps: Caps): void {
     category: 'service',
     async run(): Promise<CheckResult> {
       const current = caps.trigger.current;
-      const active = current === self;
-      const health = await probe();
-      // 当前的故障：探活失败、memory 缺席、熔断期
+      const detail = `endpoint=${cfg.endpoint}${managed ? `; sidecarDir=${managed.dir}` : ''}`;
+      // 不生效时不判定、不拉起侧车，侧车在不在都不影响回复：不检查
+      if (current !== self) {
+        return {
+          id: 'trigger.laya',
+          category: 'service',
+          level: 'ok',
+          message:
+            `Laya 触发判定未生效（${current ? `生效的触发插件是「${current.label}」` : '没有生效的触发插件'}），` +
+            '不检查侧车；要启用它，在配置文件的 servicePreferences 里把 trigger 指向 @aalis/plugin-trigger-laya',
+          detail,
+        };
+      }
+      // 当前判定不了的原因（报 error）与要留意的情况（报 warn）
       const problems: string[] = [];
-      if ('error' in health) problems.push(`侧车不可达（${health.error}）`);
+      const notes: string[] = [];
+      if (target && 'problem' in target) notes.push(`不托管侧车：${target.problem}`);
+      if (managed && !caps.process.current) problems.push('process 服务缺席，拉不起侧车');
+      const state = sidecar?.state;
+      let online: string | undefined;
+      if (state?.kind === 'starting' || state?.kind === 'waiting') {
+        const now = Date.now();
+        if (state.kind === 'waiting') {
+          const wait = Math.max(0, Math.ceil((state.until - now) / 1000));
+          problems.push(`侧车退出（${state.exit}），${wait}s 后重启（连续退出 ${state.restarts} 次）`);
+        } else if (state.restarts > 0) {
+          problems.push(`侧车重启中（已 ${Math.round((now - state.since) / 1000)}s，连续退出 ${state.restarts} 次）`);
+        } else {
+          notes.push(`侧车启动中（已 ${Math.round((now - state.since) / 1000)}s），就绪前判定按兜底只回点名`);
+        }
+      } else {
+        const health = await probe();
+        if ('error' in health) problems.push(`侧车不可达（${health.error}）`);
+        else online = `侧车在线（版本 ${health.version}${state?.kind === 'ready' ? '，由本插件托管' : ''}）`;
+        if (state?.kind === 'external') {
+          notes.push('侧车不由本插件托管：启动时端口上已有别的侧车在运行，停掉它再重启 Aalis 才改由本插件托管');
+        }
+      }
       if (!caps.memory.current) problems.push('memory 缺席');
       if (circuitOpen()) problems.push(`判定不可用（${down}）`);
-      const parts =
-        problems.length > 0
-          ? [`${problems.join('；')}${active ? '，判定按兜底只回点名' : ''}`]
-          : [`侧车在线（版本 ${'version' in health ? health.version : '?'}）`];
-      // down 只由成功的判定清除（422 / 413 不算）：熔断已到期、memory 已回来，但还没有请求确认恢复（本插件
-      // 不生效时一直如此）。探活正常不代表 /v1/score 正常，照实报成上次的故障
-      const stale = down !== undefined && !circuitOpen() && caps.memory.current !== undefined;
+      const parts = problems.length > 0 ? [`${problems.join('；')}，判定按兜底只回点名`] : online ? [online] : [];
+      parts.push(...notes);
+      // down 只由成功的判定清除（422 / 413 不算）：眼下没有故障，但还没有请求确认恢复。探活正常不代表
+      // /v1/score 正常，照实报成上次的故障
+      const stale = problems.length === 0 && down !== undefined;
       if (stale) parts.push(`上次判定不可用（${down}），尚未经请求确认恢复`);
-      // 生效时近期带图消息大多只有图片指针：模型判定带图消息时不知道图里是什么
+      // 近期带图消息大多只有图片指针：模型判定带图消息时不知道图里是什么
       const pointerOnlyCount = recentImages.filter(Boolean).length;
-      const blind = active && pointerOnlyCount >= POINTER_ONLY_WARN;
+      const blind = pointerOnlyCount >= POINTER_ONLY_WARN;
       if (blind) {
         parts.push(
           `近 ${recentImages.length} 条带图消息有 ${pointerOnlyCount} 条判定时只有图片指针、没有内容描述：` +
             'media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型',
         );
       }
-      const role = active
-        ? '生效中'
-        : `未生效（${current ? `生效的触发插件是「${current.label}」` : '没有生效的触发插件'}）`;
       return {
         id: 'trigger.laya',
         category: 'service',
-        // 生效时判定不了会让群里只回点名，报 error；未生效时不影响回复、上次的故障未经确认恢复、
-        // 生效时带图消息判定看不到图片内容，报 warn
-        level: problems.length > 0 ? (active ? 'error' : 'warn') : stale || blind ? 'warn' : 'ok',
-        message: `Laya 触发判定${role}：${parts.join('；')}`,
-        detail: `endpoint=${cfg.endpoint}`,
+        // 判定不了会让群里只回点名，报 error；其余要留意的报 warn
+        level: problems.length > 0 ? 'error' : notes.length > 0 || stale || blind ? 'warn' : 'ok',
+        message: `Laya 触发判定生效中：${parts.join('；')}`,
+        detail,
       };
     },
   });
 
   logger.info(
-    `[laya] 已启用 (阈值=${cfg.threshold ?? '侧车'}, endpoint=${cfg.endpoint}, prio=${cfg.priority}, ` +
+    `[laya] 已启用 (阈值=${cfg.threshold ?? '侧车'}, endpoint=${cfg.endpoint}, ` +
+      `侧车=${managed ? `托管 ${managed.dir}` : '外部运行'}, prio=${cfg.priority}, ` +
       `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,
   );
 }
