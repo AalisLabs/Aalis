@@ -273,9 +273,9 @@ declare module '@aalis/core' {
     'token:usage': [usage: TokenUsageEvent];
     /**
      * 请求 agent 重发某会话的最新 token:usage 快照。
-     * 发射方：plugin-webui-server（客户端刷新/重连时）；消费方：plugin-agent。
-     * platform 缺省时消费方按 'webui' 兜底——只对 webui 自己的会话正确；它参与模型与会话
-     * 配置解析，发射方应带上会话真实所属的平台（WebUI 也订阅 `onebot:` 等他方会话）。
+     * 发射方：plugin-webui-server（客户端刷新/重连、手动压缩之后，不填 platform）；消费方：plugin-agent。
+     * platform 是调用方的入口平台，没有出生平台的会话（WebUI、CLI 等）的快照按它选档；缺省时消费方对
+     * IM 房间按出生平台（api-gateway 的 resolveSessionOrigin）、其余按 'webui' 兜底。
      */
     'token:request': [req: { sessionId: string; platform?: string }];
   }

@@ -8,7 +8,7 @@ import {
 } from '@aalis/api-agent';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
-import { gateway as gatewayService } from '@aalis/api-gateway';
+import { gateway as gatewayService, resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
@@ -2295,8 +2295,9 @@ function run(caps: Caps): void {
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   caps.events.on('token:request', async data => {
     if (!data?.sessionId) return;
-    // 唯一发射方是 WebUI；平台缺省按 'webui' 兜底，否则模型/会话配置解析会绕过平台 profile 层
-    const platform = data.platform ?? 'webui';
+    // platform 是调用方的入口平台（owner 面会话的快照按它选档），唯一发射方 WebUI 不填。缺省时 IM 房间按
+    // 出生平台、其余按 'webui'：它还是提示词贡献方的「当前平台」（按平台取跨会话料），不能缺省成空
+    const platform = data.platform ?? resolveSessionOrigin(data.sessionId)?.platform ?? 'webui';
 
     try {
       const resolved = await agent.resolveLLM(platform, data.sessionId);
