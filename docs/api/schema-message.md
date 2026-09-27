@@ -27,7 +27,7 @@ interface IncomingMessage {
   replyTo?: { messageId; content?; userId?; nickname? };
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-  hostNotice?: { kind: string; id?: string; untrusted?: string }; // 宿主撰写的事件通知，见下文
+  hostNotice?: { kind: string; id?: string; untrusted?: string; callerUserId?: string }; // 宿主撰写的事件通知，见下文
   // 内部字段（preprocessor 写入）
   _imageDescriptions?: string[];
   _imageRecognitionInfo?: { imageCount; successCount; descriptions; transformedContent };
@@ -51,13 +51,15 @@ interface IncomingMessage {
 
 `hostNotice` 标记一条由宿主撰写的事件通知，它不是任何人的发言（如白纸枢纽的任务完成通知）。注入方的约定：
 
-- 必须同时设 `source`；`actor` 用 `selfInitiatedActor(platform)`；不设 `userId`、`nickname`、`sessionType`、`triggerType`。
+- 必须同时设 `source`；不设 `userId`、`nickname`、`sessionType`、`triggerType`。
+- 身份：不延续某次调用的通知（如白纸的完成通知），`actor` 用 `selfInitiatedActor(platform)`，不设 `callerUserId`。延续某次工具调用的通知（如 plugin-tool-system 的后台命令结束通知）沿用那次调用的身份、不高于它：`platform` 同那次调用，`actor` 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为 `selfInitiatedActor`），`callerUserId` 为那次调用的 `userId`。允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记，现在只有后台命令结束通知一处。
 - `kind` 是通知的子类（如 `'paper-task'`），`id` 是注入方生成的通知标识，供日志与注入方自己的记录对位。
 - 宿主撰写的行一律放在 `content` 里。`untrusted` 放注入方已用 `wrapUntrustedContent`（`@aalis/api-tools`）包好的不可信段，如远端代理的说明，放在最后。
+- `callerUserId` 不是发言者：plugin-agent 只用它填这一轮工具调用上下文的 `userId`（确认由谁应答、会话授予按谁匹配、工具眼里是谁在调），并让这位用户在同一会话发来的真人消息中止这一轮；归档、用户档案、关系、提示词钩子与确认应答的判定都不看它。
 
 第一方各插件对它的处理：
 
-- plugin-agent 以一条 system 消息呈现，内容为 `[宿主通知]`、`content`，再接 `untrusted`；不推当前 user 消息。
+- plugin-agent 以一条 system 消息呈现，内容为 `[宿主通知]`、`content`，再接 `untrusted`；不推当前 user 消息。工具调用上下文的 `userId` 取 `callerUserId`（见上）。
 - plugin-message-archive 归档为 `role: 'notice'`、`kind: 'host-notice'`，`metadata.hostNoticeKind` 记子类；只归档 `content`，`untrusted` 不写进消息也不写进 metadata。之后的回合从历史里只看得到宿主正文。
 - 不进向量记忆，不计入关系图与用户档案的抽取计数，也不出现在它们的抽取窗口与记忆扩窗里；plugin-memory-history 的跨会话注入与 `recent_messages` 不带别的会话的宿主通知（见下文 `DIRECTIVE_KINDS`）。
 
