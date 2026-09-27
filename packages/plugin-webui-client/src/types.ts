@@ -181,7 +181,9 @@ export interface ToolGroupDetail {
 // ----- 声明式页面类型 (镜像 @aalis/api-webui) -----
 
 export interface WebuiStatComponent { type: 'stat'; label: string; source: string; icon?: string }
-export interface WebuiTableComponent { type: 'table'; label?: string; source: string; columns: Array<{ key: string; label: string; render?: string; nowrap?: boolean; minWidth?: number; maxWidth?: number }>; actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>; refresh?: number; searchable?: boolean; searchPlaceholder?: string }
+export interface WebuiTableComponent { type: 'table'; label?: string; source: string; columns: Array<{ key: string; label: string; render?: string; method?: string; nowrap?: boolean; minWidth?: number; maxWidth?: number }>; actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>; refresh?: number; searchable?: boolean; searchPlaceholder?: string }
+/** render 为 'file' 的列调 method 返回的文件 */
+export interface WebuiFilePayload { name: string; mime: string; base64: string }
 export interface WebuiFormComponent { type: 'form'; label?: string; source: string; save: string; schema: ConfigSchema }
 export interface WebuiActionsComponent { type: 'actions'; label?: string; items: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }> }
 export interface WebuiInfoComponent { type: 'info'; label?: string; source: string }
