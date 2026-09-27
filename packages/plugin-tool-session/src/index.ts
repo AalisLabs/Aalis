@@ -60,11 +60,13 @@ type Caps = BoundOf<typeof uses>;
 type HistoryCaps = Pick<Caps, 'memory' | 'logger' | 'sessionManager'>;
 type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
 
+type HistoryScope = 'current' | 'platform' | 'all';
+
 interface PluginConfig {
   enabled: boolean;
   maxLimit: number;
   defaultLimit: number;
-  scope: 'current' | 'platform' | 'all';
+  scope: HistoryScope;
   includeArchivedDefault: boolean;
   perMessageMaxChars: number;
 }
@@ -186,46 +188,38 @@ function formatHistoryMessage(message: Message, index: number, perMessageMaxChar
   };
 }
 
+const SCOPE_RANK: Record<HistoryScope, number> = { current: 0, platform: 1, all: 2 };
+
 function canReadSessionHistory(
   currentSessionId: string,
   targetSessionId: string,
   currentPlatform: string | undefined,
-  scope: 'current' | 'platform' | 'all',
+  scope: HistoryScope,
   roomScope: MemoryRecallScope | undefined,
   checkers: readonly AccessChecker[],
   callCtx: ToolCallContext,
 ): { ok: true } | { ok: false; reason: string } {
-  // 0. 房间的召回范围（会话配置 memoryRecallScope）：先于插件范围与平台规则裁决，平台规则只能在它放行之后再收窄
-  if (targetSessionId !== currentSessionId) {
-    if (roomScope === 'session') return { ok: false, reason: '本房间的召回范围限于本会话' };
-    if (roomScope === 'platform') {
-      const current = currentPlatform || parsePlatform(currentSessionId);
-      const target = parsePlatform(targetSessionId);
-      if (!current || !target || current !== target) {
-        return {
-          ok: false,
-          reason: `本房间的召回范围限于同平台会话（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`,
-        };
-      }
-    }
-  }
-
-  // 1. scope 粗筛
+  // 1. 范围粗筛：插件 scope 与房间的召回范围（会话配置 memoryRecallScope，session 即 current）取较窄的一个，
+  //    先于平台规则裁决，平台规则只能在它放行之后再收窄；拒绝原因按是谁收窄的写
+  const fromRoom = roomScope === 'session' ? 'current' : roomScope;
+  const byRoom = fromRoom !== undefined && SCOPE_RANK[fromRoom] < SCOPE_RANK[scope];
+  const effective = byRoom ? fromRoom : scope;
   if (targetSessionId === currentSessionId) {
     // 同会话仍允许平台 checker 表态（防御性）
-  } else if (scope === 'current') {
-    return { ok: false, reason: '当前配置仅允许读取当前会话历史' };
-  } else if (scope === 'platform') {
+  } else if (effective === 'current') {
+    return { ok: false, reason: byRoom ? '本房间的召回范围限于本会话' : '当前配置仅允许读取当前会话历史' };
+  } else if (effective === 'platform') {
     const current = currentPlatform || parsePlatform(currentSessionId);
     const target = parsePlatform(targetSessionId);
     if (!current || !target || current !== target) {
+      const detail = `（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`;
       return {
         ok: false,
-        reason: `当前配置仅允许读取同平台会话历史（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`,
+        reason: byRoom ? `本房间的召回范围限于同平台会话${detail}` : `当前配置仅允许读取同平台会话历史${detail}`,
       };
     }
   }
-  // scope === 'all' 直接走 checker 链
+  // effective === 'all' 直接走 checker 链
 
   // 2. 找匹配目标 platform 的 checker，any-deny 短路；无匹配 checker 默认通过
   const targetPlatform = parsePlatform(targetSessionId);
