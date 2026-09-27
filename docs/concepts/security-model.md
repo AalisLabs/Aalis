@@ -203,6 +203,19 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 
 工具调用上下文里没有可靠的「本机面」信号，owner 在群里发起的任务同样计入每日上限。
 
+### 宿主通知的身份
+
+宿主通知（`hostNotice`，见 [schema-message](../api/schema-message.md)）不是任何人的发言，默认不带任何人的权限：
+`actor` 为无主体的 `selfInitiatedActor`，按默认等级裁决、永不视为 owner。延续某次工具调用的通知沿用那次调用的
+身份、不高于它：`actor` 取那次调用的有效授权身份，`hostNotice.callerUserId` 取那次调用的 `userId`，agent 用后者
+填这一轮工具调用上下文的 `userId`，确认由起它的人应答、会话授予按那人匹配；等级按 `actor` 实时查，其间被调低
+或封禁的按新值。这一轮的 `inbound.source` 非空，要求真人当面发起的工具照样拒绝。`callerUserId` 与 `actor`
+同一信任面，只有插件能设（平台适配器与 WebUI 服务端都按字段逐个构造入站消息）。
+
+允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 显式登记，现在只有一处：
+`plugin-tool-system` 的后台命令结束通知（`exec_background` 起的进程自行退出时通知起它的会话，由结束通知开的
+回合里再起的进程不再通知，链只延续一层）。白纸的完成通知不延续任何人的身份。
+
 ---
 
 ## 3. safeFetch：默认的 SSRF 安全出口
