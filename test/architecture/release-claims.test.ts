@@ -60,8 +60,12 @@ describe('CHANGELOG 未发布节的发布声明', () => {
       'raised core peer 包数应对齐 97（32 api + 62 插件 + runtime + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
-    // schema-message 的 core peer 只为类型声明，不抬；四个包本批没有改动、不重发，保持已发布的 >=0.17.0
-    expect(outliers.sort(), '仅 schema-message（type-only）与本批未改动的四个包不在新区间').toEqual([
+    // schema-message 的 core peer 只为类型声明，不抬。api-code-sandbox、plugin-process-local、plugin-tool-code-runner
+    // 本批有改动，但不用 core 0.18 的接口，peer 保持 >=0.17.0；plugin-maimai 本批没有改动
+    expect(
+      outliers.sort(),
+      '仅 schema-message（type-only）、不用 core 0.18 接口的三个包与没有改动的 plugin-maimai 不在新区间',
+    ).toEqual([
       'api-code-sandbox = >=0.17.0 <1.0.0',
       'plugin-maimai = >=0.17.0 <1.0.0',
       'plugin-process-local = >=0.17.0 <1.0.0',

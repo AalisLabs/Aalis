@@ -76,7 +76,7 @@ export interface SandboxPolicy {
 参考实现有几个关键设计，写 provider 时值得参照：
 
 - 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务网关来 spawn（`uses required = ['process']`）。OS 探测同样靠经网关做功能性试跑。
-- 功能性探测（`probeBackend`）：经 `process` 网关真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --unshare-all true`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会被判「未在宽限内停止」。
+- 功能性探测（`probeBackend`）：经 `process` 网关真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁、容器里挂不了 `/proc` 或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会被判「未在宽限内停止」。
 - 命令改写（`wrapForSandbox()`，纯逻辑、便于单测）：把 `(cmd, args)` 改写为「经沙箱启动器运行」，全程 shell-free，不拼 shell 字符串。
 
 ---

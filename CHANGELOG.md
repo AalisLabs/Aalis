@@ -37,7 +37,6 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 - 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、定时任务注入的消息同样被吞。禁言只在入站把关，挡的是禁言之后才开始的回合：命中禁言关键词时正在生成的回复照常发出。
 - 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow）不经触发策略，不计数，`triggerType` 不被改写（workflow agent 节点的 `proactive` 原样保留）；flow 相位对它不查回复后冷却，禁言与限速照常生效（限速仅在会话落入 flow-control 作用域时）。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：先用会话已记下的平台与类型，没有再按会话 ID 约定推断（见下文回复记账一条）；此前只看消息自带的类型，默认 `*:group` 下算作用域外（作用域配成 `*`，或配成 `onebot:*` 且消息平台为 `onebot` 时本来就在作用域内）。因此默认作用域 `*:group` 下配置了限速时（`rateLimitWindow` 默认 0，即关闭），bot 在某个群的限速窗口已满，发往该群的定时提醒、workflow 输出会被吞掉并做影子归档，定时任务不重试；session 档闲置提示同样被吞（闲置提示不归档）。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`；第三方适配器投递真人消息**不得**设置 `source`（`schema-message` 的字段说明已据此更新），否则会被当作内部注入跳过触发策略与冷却。
 - adapter-onebot 把好友申请、入群邀请与加群申请合成的 `[系统通知]` 消息标上 `source: 'onebot-request'`，按内部注入处理：不经触发判定，不受回复后冷却约束，禁言与限速照常。此前它们不带 `source`，群里的加群申请被当作真人消息计数，计数未满时归档后吞掉，不作为当前消息送达 agent，只在该群下次触发时以历史出现。
-- 第一方 plugin-subtask 派发给子会话的任务消息仍不带 `source`，入站相位按真人消息处理：触发插件的作用域里会话类型段为通配（`*`、`onebot:*` 等）时会被计数判定吞掉、子任务不启动，flow-control 的作用域为通配时子会话冷却期内的追问也会被吞；默认作用域 `*:group` 不受影响。
 - 冷却期内的禁言关键词照常生效；平台禁言期内的关键词不再识别，不会缩短平台禁言。戳一戳通知不做禁言关键词匹配。
 - 禁言期内的消息不累计计数。关键词禁言在命中时即清零本会话的计数与活跃指数；平台禁言在禁言期内有消息到来时清零——平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。禁言期内的消息与命中禁言关键词的那条算闲置触发的会话活动：session 档闲置从这条消息起重排、退避复位为 1；此前 session 档不因禁言期的消息重排，解禁后闲置提示可能在群里刚有人说过话不久就发出。
 - session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
@@ -133,7 +132,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 - `@aalis/api-remote-agent` 0.1.0：`remote-agent` 服务描述符与提供者接口 `RemoteAgentProvider`；`resolveRemoteAgent` 按提供者实例 id 精确取，取不到返回 `undefined`，不回落到偏好胜者或别的提供者；`egressWithin`（出网判定，`unknown` 按 `open` 算）、`artifactRelProblem`（成品相对路径的净化规则，提供者与写入口共用）、`isTerminalRun`、`RemoteAgentError` 与 `isRemoteAgentError`（按 `name` 认，装有两份契约包时也认得）。每轮费用 `RunCost` 只有计入额度的花费 `cents`，不带 token 数。
 - `@aalis/plugin-remote-agent-cursor` 0.1.0：Cursor Cloud Agents API v1 提供者，可多实例。激活时不连网；首次 `ready()` 校验鉴权与模型参数（参数须写全并等于 `/v1/models` 的某个变体，默认 `grok-4.7`、`reasoning_effort: high`、`context: 256k`、`fast: 'false'`）；账号标识取 `/v1/me` 的 `userId`（整数）的哈希；每轮花费取 `chargedCents` 与 `rawCostCents` 的较大者（文档写计划内额度的用量 `chargedCents` 为 0），`/usage` 里的 token 数是一轮里全部模型调用的累计、不是上下文长度，不交出；出网方式取自配置 `egressMode`（默认 `unknown`），标「未核实」。key 只在宿主进程里用，错误与日志去掉 key 片段与查询串；成品经 `safeFetch` 下载、边读边计字节，单个成品取不到下载链接时只拒收这一件。列代理、列轮次按 `nextCursor` 取完所有页（每页 100 条），取不全时整次抛错（响应形状认不出、超过 50 页、下一页标记出现过时抛 `unavailable`，带标记取到空页时抛 `transient`），不把已取到的当完整列表；产物列表形状认不出时同样抛 `unavailable`。
-- `@aalis/plugin-paper` 0.1.0：白纸枢纽。工具 `paper_task`、`paper_status`、`paper_cancel`、`paper_send`（`paper` 分组，不声明 risk）；运行驱动（每块白纸一条队列、出队时重跑受理的核对、先落盘再调远端、开轮认领（结果未知时轮次列不出来、或重启接回时提供者等满上限仍不在场，就留在开轮中等下次认领，不重发、不判失败；第一次认领失败挂 `claim-failed` 告警，owner 可以放弃跟踪，之后列得出轮次时那一轮记到这件任务名下、不当成自唤醒）、单轮时长计时器、对账与自唤醒处置、删代理前结清费用（取不到的按估计入账）、换新（代理累计花费超过 `rotateAfterCents` 或 owner 操作；不按 token 数）、闲置归档、定期清空、重启接回）；完成通知（失败原因与白纸停开的说明只写宿主撰写的类别，提供者报错的原文只进日志）与待交付提示；WebUI 白纸页（白纸、任务、成品、账本、告警；任务表可取消、放弃跟踪、核销预留）与诊断项 `paper.config`（对账时列代理或列轮次连续 3 次失败报 warn，写类别与次数，提供者停用或移除后不再报；开轮中超过 15 分钟的任务报 warn）。`paper_cancel` 远端取消失败时回包只写类别，提供者报错的原文只进日志。账本在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。
+- `@aalis/plugin-paper` 0.1.0：白纸枢纽。工具 `paper_task`、`paper_status`、`paper_cancel`、`paper_send`（`paper` 分组，不声明 risk）；运行驱动（每块白纸一条队列、出队时重跑受理的核对、先落盘再调远端、开轮认领（结果未知时轮次列不出来、或重启接回时提供者等满上限仍不在场，就留在开轮中等下次认领，不重发、不判失败；第一次认领失败挂 `claim-failed` 告警，owner 可以放弃跟踪，之后列得出轮次时那一轮记到这件任务名下、不当成自唤醒，还没到终态的请远端取消）、单轮时长计时器、对账与自唤醒处置、删代理前结清费用（取不到的按估计入账）、换新（代理累计花费超过 `rotateAfterCents` 或 owner 操作；不按 token 数）、闲置归档、定期清空、重启接回）；完成通知（失败原因与白纸停开的说明只写宿主撰写的类别，提供者报错的原文只进日志）与待交付提示；WebUI 白纸页（白纸、任务、成品、账本、告警；任务表可取消、放弃跟踪、核销预留）与诊断项 `paper.config`（对账时列代理或列轮次连续 3 次失败报 warn，写类别与次数，提供者停用或移除后不再报；认领失败后仍在开轮中的任务报 warn，与放弃跟踪同一判据）。`paper_cancel` 远端取消失败时回包只写类别，提供者报错的原文只进日志。账本在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。
 
 契约新增：
 
@@ -193,8 +192,8 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - 跨会话召回按出生平台：plugin-memory-history 的被动注入与 `recent_messages` 的 `same-platform`、plugin-memory-vector 被动召回与 `memory_recall` 的同平台可见范围、plugin-tool-session 的 `session-history` 服务的同平台裁决（插件的 `scope: platform` 与会话配置 `memoryRecallScope` 为 `platform` 时），对 IM 房间都取出生平台作当前平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）照旧取入口平台。此前从 WebUI 往群里插话时按 webui 算：同平台注入与 `recent_messages` 取的是 owner 其他 WebUI 会话的原文，同平台别的群反而不在；向量召回取的是 WebUI 会话的记忆，本群与同平台别的会话的记忆被滤掉；`session_get_history` 拒读同平台别的群。消息落库记下的平台仍是入口平台，owner 从 WebUI 往房间插的话与那一轮的回复记为 `webui`，不进同平台别的房间的 memory-history 注入。
 - 自动标题：从 WebUI 往 IM 房间插话不再给房间生成标题，也不经标题路径建档；此前会用 owner 的那句话给房间起标题。
 - IM 房间收录：有出生平台的房间，首条真人入站（不带 `source`）到达即登记（`createdBy: 'system'`、状态 `waiting`）；群取群名、私聊取对方昵称，只采信出生平台自己的入站带的名字，缺省用会话 ID，名字还是 ID 时由后到的原生入站补上。带 `source` 的内部注入（workflow、定时任务、空闲开话题、宿主通知、好友申请等合成通知）不登记。部署后来过真人消息的群与私聊都会列进会话页的「IM 房间」区；此前只有执行过 `/session.set`、开过子任务或从 WebUI 插过话的房间才登记。`createChildSession` 兜底建档的房间以会话 ID 为名。
-- 会话状态：`inbound:message` 不再把会话翻成 `active`，改为回合开始时（`agent:input:before`）翻转，同一个中间件在回合结束时把仍为 `active` 的根会话收口为 `completed`。群里只有消息、bot 没开口的房间不再显示「进行中」；被后面的输入中间件拦下或抛错的回合也不再停在「进行中」。未装 agent 时会话不再翻 `active`。
-- 会话页：分「我的会话」「IM 房间」两区，分区在服务端判定；子会话默认收起；批量模式的「全选」只选所在分区，页头的跨区全选删除；删除确认写明会清空消息历史与长期记忆（摘要、向量记忆等），删除 IM 房间时另写明聊天平台里的消息不受影响、房间之后再来消息会重新出现且记忆从零开始，批量删除含 IM 房间时写出其个数。
+- 会话状态：`inbound:message` 不再把会话翻成 `active`，改为回合开始时（`agent:input:before`）翻转，同一个中间件在回合结束时把仍为 `active` 的根会话收口为 `completed`，这是唯一的收口。群里只有消息、bot 没开口的房间不再显示「进行中」；被后面的输入中间件拦下或抛错的回合也不再停在「进行中」。未装 agent 时会话不再翻 `active`。同一会话并行多轮（后台命令结束通知、白纸通知与真人回合各占一条 lane）时按会话计在飞的回合，最后一轮结束才收口；回合中途发出的出站消息不再收口。此前 `outbound:message` 与 `agent:turn:after` 也各收口一次：`send_attachment`、`paper_send` 在工具执行中发出附件时会话就显示已完成，并行的另一轮结束时同样提前收口。`ensureSession` 未命中建档时 `status` 缺省按有没有回合在跑定，有为 `active`，否则为 `waiting`（此前一律 `active`，首条消息是指令的 CLI 会话靠指令回复的出站收口）。
+- 会话页：分「我的会话」「IM 房间」两区，分区在服务端判定；子会话默认收起；批量模式的「全选」只选所在分区，页头的跨区全选删除；删除确认写明会清空消息历史与长期记忆（摘要、向量记忆等）、会话里仍在运行的 `exec_background` 后台进程一并终止（见下文「后台命令结束通知」），删除 IM 房间时另写明聊天平台里的消息不受影响、房间之后再来消息会重新出现且记忆从零开始，批量删除含 IM 房间时写出其个数。
 - 停止键停掉子进程：exec、run_python、run_javascript 把回合的中止信号交给子进程，按进程组停掉（POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树），回合随即结束；此前要等命令跑完或超时（`maxTimeout` 默认 300000ms）。被信号结束的结果带 `aborted: true` 与 `message`（exec 为「命令已随回合中止」，代码执行为「代码已随回合中止」），不标 `timedOut`；中止前已自行退出、或结束时没有终止信号的，按实际退出回报并加 `note: '回合已中止'`。停止键不杀 `exec_background` 起的后台进程：在对话回合里起的进程自行退出时通知起它的会话，要停时由她用 `process_kill` 直接停，见下文「后台命令结束通知」。中止与超时只打原进程组：主动脱离进程组的后代（`setsid` 等守护化写法）在 exec、无沙箱与 macOS 沙箱路径上停不掉，Linux bwrap 路径有 pid 命名空间。Windows 中止路径只有单元用例，未在 Windows 上实测；Linux bwrap 路径的中止已在 Docker 容器里实测（arm64，Debian 12 的 bubblewrap 0.8.0，非 root 用户）：外层 bwrap 被 SIGTERM 结束，结果带 aborted，沙箱内的脚本随即停止，用 setsid、detached: true 脱离进程组的后代也一并结束。
 - code-sandbox-os 的启动探测改经 `spawn` 并带本次激活的 `lifecycle.signal`，退出码为 0 才算有后端。启动器挂住时停用或停机随即中止探测，不再等满 5000ms 的探测超时，也不再因此被判「未在宽限内停止」转为 error。Linux 的探测命令补上 `--dev /dev --proc /proc`，与正式运行的挂载一致：只放开 seccomp、挂不了 `/proc` 的容器里此前探测报 bwrap 可用、之后每次运行都失败，现在探测为 none，按规则失败关闭。
 - token 快照：plugin-webui-server 发 `token:request` 不再带 `platform`；plugin-agent 缺省时依次取会话的出生平台与 `webui`。此前 webui-server 自己按已注册的平台名解析会话 ID 前缀。
@@ -214,7 +213,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **`SessionInfo.kind` 为必填字段**：自研 provider 建档时按 `parentId` 填（有为 `task`，否则为 `room`），并按会话 ID 填 `originPlatform`、`audience`；手写 `SessionInfo` 对象的代码（如测试夹具）要补上 `kind`，否则类型检查不过。`createSession`、`createChildSession` 的参数不再接受这三个字段。
 - **页面动作 `getSessionTree` 的回包由 `SessionTreeNode[]` 改为 `SessionTreeSection[]`**（`{ key, label, nodes }`，我的会话在前，空区不回）；服务方法 `getTree()` 不变。自研前端调这个页面动作的，按分区读。
 - **`/session` 输出格式**：每个字段一行「生效值 + 来源」，来源标签为「会话覆盖」「父会话」「平台档 `<平台>`」「平台档 `<平台>`（私聊）」「平台档 `<平台>`（群）」「默认」（原为「父会话 sessionDefaults」「平台 profile (`<平台>`)」）；会话有覆盖时第二行列出被覆盖的继承值；不再列「解析链」。按文本解析 `/session` 输出的脚本要改。
-- **会话状态的翻转时机**：依赖「来消息即 `active`」的第三方代码，改为看回合（`agent:input:before` / `agent:turn:after`）。
+- **会话状态的翻转时机**：依赖「来消息即 `active`」的第三方代码，改为看回合（`agent:input:before` / `agent:turn:after`）。`ensureSession` 建档时 `status` 缺省不再一律为 `active`，要 `active` 的显式传入。
 - **workflow agent 节点的默认会话 ID**：省略 `sessionId` 时由 `workflow:agent:<runId>:<nodeId>` 改为 `workflow::<runId>::<nodeId>`。按旧前缀匹配会话 ID 的代码要改。旧 ID 按新约定会被认作出生平台为 `workflow` 的群房间，此前以旧 ID 建过档的会话（如在其中开过子任务的）会列进「IM 房间」区，可以删除或归档。
 - **plugin-webui-server 删除导出函数 `resolveSessionPlatform`**：`token:request` 的平台兜底移到 plugin-agent。
 - **第三方 process 提供方要实现 `SpawnOptions.signal`，code-sandbox 提供方要转交 `SandboxRunRequest.signal`**：不实现时调用方的中止静默失效，停止键停不掉命令，也不报错。
@@ -226,9 +225,9 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 其余说明：
 
 - api-agent（`token:request` 的说明）、api-workflow（`AgentNodeSpec.sessionId` 的说明）在本节只改了注释，列在上文「只改了注释」里；api-platform 在本节也只改了 `canHandle` 的说明，它另有本批的契约改动，照常发布。
-- api-code-sandbox、plugin-process-local、plugin-tool-code-runner 本节有改动，但不用 core 0.18 的接口，`@aalis/core` peer 仍是 `>=0.17.0 <1.0.0`。`test/architecture/release-claims.test.ts` 把它们连同 plugin-maimai 列为「本批没有改动、不重发」的例外，那里的「本批」指已发布的 0.18 批次；发布本节时按实况改写该测试的例外名单与说明。
+- api-code-sandbox、plugin-process-local、plugin-tool-code-runner 本节有改动，但不用 core 0.18 的接口，`@aalis/core` peer 仍是 `>=0.17.0 <1.0.0`。
 
-### 后台命令结束通知（@aalis/plugin-tool-system、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-session-confirm、@aalis/plugin-webui-client）
+### 后台命令结束通知（@aalis/plugin-tool-system、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-session-confirm、@aalis/plugin-subtask、@aalis/plugin-webui-client）
 
 `exec_background` 起的后台进程在本次运行期间自行退出时，她会自己开口说结果；让她停时她直接停，不再弹确认。不需要改配置。
 
@@ -241,6 +240,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - 后台进程 id 由 `proc_<序号>` 改为 `proc_<本次启动的 6 位十六进制>_<序号>`，Aalis 重启之后不会与历史里的旧 id 撞号。`process_read` 的结果加 `command` 字段。
 - plugin-agent：宿主通知回合的工具调用上下文 `userId` 取 `hostNotice.callerUserId`；真人消息（不带 `source`）到达时，中止同一会话里 `callerUserId` 等于这条消息 `userId` 的通知回合，别人的消息与不延续任何人身份的通知不受影响。
 - plugin-session-confirm：确认相位不再把带 `source` 的内部注入当作应答。此前会话里有一条来自无 userId 回合（定时任务等）的待决确认时，到达的定时任务、宿主通知等内部注入会被吞掉并把那条确认判为拒绝。
+- plugin-subtask：`create_subtask` 派发、`send_to_subtask` 追问的消息带 `source: 'subtask'`，按内部注入处理：确认相位不把它们当作应答，不经触发判定、不查回复后冷却，白纸的交任务与取消拒绝子任务回合。此前它们不带 `source`，入站相位按真人消息处理：子任务回合发起的确认与父会话发来的追问 `userId` 同为 `parent:<父会话 id>`，父会话里的模型用 `send_to_subtask` 发一句 `y` 或 `ys` 就能批准子会话里的确认（包括子会话里后台命令结束通知回合发起的）；触发插件的作用域里会话类型段为通配（`*`、`onebot:*` 等）时派发会被计数判定吞掉、子任务不启动，flow-control 的作用域为通配时子会话冷却期内的追问也会被吞。子任务回合发起的确认仍以 `parent:<父会话 id>` 为应答者，没有真人能应答，60 秒后按拒绝结算。
 - plugin-webui-client：收到流式片段或工具调用开始时显示停止键，不是从输入框发起的回合（她被结束通知唤起）也能停；工具调用只接到进行中的流式气泡上，上一条回复已完成时另起一条。
 - 通知回合与同一会话的其他回合并行（各占一条 lane）：owner 正在聊，或起进程的那一轮还没结束时，可能两轮各回复一次、各改同一批文件；WebUI 里先结束的一轮的最终消息会覆盖共用的流式气泡，刷新后正确。
 
@@ -264,7 +264,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-process-local 与 plugin-tool-system、plugin-tool-code-runner、plugin-code-sandbox-os 同批升级：中止实现在 process 提供方，旧版 process-local 静默忽略 `signal`，新版 exec 与代码执行照样停不掉，code-sandbox-os 的探测照旧拖满宽限；plugin-tool-code-runner 的沙箱路径还要新版 code-sandbox-os 把 `signal` 转交下去。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
 - plugin-webui-server 与 plugin-agent 同批升级：新版 webui-server 不再给 token 快照填 `platform`，配旧版 agent 时 IM 房间的快照按 webui 算。
-- plugin-tool-system 与 plugin-agent、schema-message 同批升级：旧版 agent 不认 `hostNotice.callerUserId`，通知回合里要确认的工具会弹出没人能应答的确认、60 秒后按拒绝结算；旧版 tool-system 不发结束通知。
+- plugin-tool-system 与 plugin-agent、schema-message、plugin-session-confirm、plugin-subtask 同批升级：旧版 agent 不认 `hostNotice.callerUserId`，通知回合里要确认的工具会弹出没人能应答的确认、60 秒后按拒绝结算；旧版 session-confirm 的确认相位不看 `source`，会话里有一条来自无 userId 回合（定时任务等）的待决确认时，结束通知会被当成应答吞掉，通知丢失、她不开口（那条确认本来也没人能应答，60 秒后同样按拒绝结算）；旧版 tool-system 不发结束通知。plugin-subtask 与 plugin-session-confirm 缺一不可：旧版 session-confirm 不看 `source`，旧版 subtask 的消息不带 `source`，只升其中一个时，父会话里的模型仍能用 `send_to_subtask` 批准子会话里的确认。
 - 走插件市场的，以上四组各自同一批勾选更新。
 - 上文用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用新版 api-gateway 的 `resolveSessionOrigin`（persona 另要 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
