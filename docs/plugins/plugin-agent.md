@@ -124,9 +124,11 @@ thinking: (默认)  [来源: 默认]
 
 这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-context` 与 `turn-hint` 两个锚位的材料落在指令块之前、全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
 
+回合按「会话 + `source`」分道，同一道的新消息中止旧回合，不同道互不打断，宿主通知也从不打断别的回合。唯一的例外是本人说话打断通知回合：延续某次工具调用身份的宿主通知（带 `hostNotice.callerUserId`，如后台命令结束通知）开的回合，在同一会话收到 `userId` 等于 `callerUserId` 的真人消息（不带 `source`）时被中止，本人说话就停得下她自己开的一轮；别人的消息、不延续任何人身份的通知（白纸等）开的回合都不受影响。
+
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」（见 [api-tools](../api/api-tools.md)）。授权身份仍按 `actor` 裁决。
+工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」（见 [api-tools](../api/api-tools.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`：这一轮确认由起它的人应答、会话授予按那人匹配；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
 
 ## 上下文裁剪算法
 
