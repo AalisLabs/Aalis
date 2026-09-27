@@ -152,6 +152,7 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 
 - `http_request` / `recent_messages`：曾统一抬档，经用户裁定全部回退——
   读类档位牺牲的是爬网页与跨群感知这类核心体验，且 http_request 有分组闸兜底（见上）。
+  其中 `recent_messages` 已于 2026-09-27 改判为 `sensitive`，见本节末。
 - 定档纪律：引用其他工具档位作判据前先读其注释的真实理由（`browser_navigate` 的 sensitive
   源于共享页面池带登录态、`file_read` 源于本机隐私，均与「出网」无关）。
 
@@ -161,11 +162,17 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 发起会话，任务正文还会永久写进目标会话的历史。会话之间的协作将以「会话间消息」重新设计：权限跟随消息链的源头，
 工具取接收会话自己的，会话之间互不信任。
 
-这次删除没有覆盖跨会话读取。`recent_messages`（`plugin-memory-history`）与 `list_known_sessions` 用同一个后端查询，
-同样不按调用者过滤：模型传 `scope: 'cross-platform'` 时不按平台过滤、只排除当前会话，返回其他会话（含 owner 的
-WebUI 会话）的消息原文，每次最多取到 memory 后端的 `crossSessionMaxLimit` 条（默认 1000）。它的档位按上面的复核
-维持 public，多人平台开着 `session-history` 组时，群成员仍能经它读到 owner 的 WebUI 聊天与其他人的私聊。该插件的
-`injectEnabled` 开启时，同平台其他会话（含别人与 bot 的私聊）的近期消息原文还会注入每个回合的提示词，不经任何工具。
+跨会话读取另行处理。`recent_messages`（`plugin-memory-history`）与 `list_known_sessions` 用同一个后端查询，
+同样不按调用者过滤：默认排除当前会话，查到的都是其他会话的消息原文——`same-platform` 含同平台别的群与别人的私聊，
+模型传 `scope: 'cross-platform'` 时不按平台过滤，含 owner 的 WebUI 会话——每次最多取到 memory 后端的
+`crossSessionMaxLimit` 条（默认 1000）。它与 `session_get_history` 同属跨会话读取，2026-09-27 起声明
+`risk: 'sensitive'`，与后者同档：等级 0 的调用者（多人平台上的普通群成员）被拒，等级 1 起可用，不弹确认。
+这改变了上面 2026-08-23 维持 public 的裁定。被动注入不经工具，不受档位约束：该插件的 `injectEnabled` 开启
+（默认）时，其他会话的近期消息原文仍会注入每个回合的提示词。注入范围跟随 `scope`，这一项同时是工具的默认作用域：
+默认 `same-platform` 取同平台其他会话，含别人与 bot 的私聊；设为 `cross-platform` 时还包括 WebUI 等其他平台的会话。
+注入内容另受 `limit`、`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束。私聊内容经注入进入群回合
+这一点目前维持原样，是否保留尚未定案，它与 `plugin-tool-onebot` 默认不许在群会话里读私聊历史
+（`sessionHistory.allowGroupReadPrivate: false`）并不一致；不需要的关掉 `injectEnabled`。
 
 与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
 cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。

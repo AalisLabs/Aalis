@@ -10,11 +10,11 @@
 
 ## 未发布
 
-回复闸门职责重组、模型触发插件与随之的修复，以及删除跨会话委派工具。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
+回复闸门职责重组、模型触发插件与随之的修复，删除跨会话委派工具，以及 `recent_messages` 提档。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
 
 待发布的包：
 
-- 有代码或契约改动（15 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-agent、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
+- 有代码或契约改动（16 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-agent、plugin-file-reader、plugin-flow-control、plugin-media、plugin-memory-history、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
@@ -88,7 +88,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 对用户的影响：
 
-- 这次删除没有堵住跨会话读取。plugin-memory-history 的 `recent_messages`（`session-history` 组，不声明 risk，开了该组的会话里任何触发者都能调用）与 `list_known_sessions` 用同一个后端查询，同样不按调用者过滤：模型传 `scope: 'cross-platform'` 时不按平台过滤、只排除当前会话，返回其他会话（含 owner 的 WebUI 会话）的消息原文，每次最多取到 memory 后端的 `crossSessionMaxLimit` 条（默认 1000）。该插件的 `injectEnabled` 开启时，同平台其他会话（含别人与 bot 的私聊）的近期消息原文还会注入每个回合的提示词。不想让多人平台读到这些内容的，关掉该插件的 `toolEnabled` 与 `injectEnabled`，或从多人平台的 `enabledToolGroups` 里去掉 `session-history`（`session_get_history` 随之不可用）。
+- 这次删除没有覆盖跨会话读取：plugin-memory-history 的 `recent_messages` 与 `list_known_sessions` 用同一个后端查询，同样不按调用者过滤。它在本批另行提档，见下文「`recent_messages` 提档」。
 - QQ（onebot）与 WebUI 里都不能再列出会话、向别的会话派发任务。在私聊里让 bot「去某个群禁言某人」这类用法随之失效；plugin-tool-onebot 的群管理工具接受 `group_id`，当前会话开了对应工具组时可以直接指定目标群。
 - session-manager 平台档或会话配置的 `enabledToolGroups` 里写着 `session-delegate` 的，这一项变为无效项：启动与热重载都不报错、不告警（数组项不按 schema 裁剪，`multiselect` 只校验元素类型），该项不再匹配任何工具，可以手动删掉。
 - plugin-tool-session 的配置项 `crossSessionEnabled` 与 `crossSessionDefaultTimeoutSec` 删除。runtime 在启动与热重载时按 schema 裁掉这两项并写回配置文件，记一条 warn。
@@ -102,6 +102,24 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 - 调用 `list_known_sessions` / `delegate_to_session` 的 skill、workflow `tool` 节点或提示词需要删掉相应步骤，工具不存在时调用会返回「工具未找到」。
 
 要发布的包与档位（0.x 次版本可删公开 API）：plugin-tool-session、schema-message、api-persona、plugin-persona 按 minor 发布；plugin-agent 按 patch 发布。plugin-flow-control 的 `scopes` 配置说明去掉了「委派闸门」，随本批发布，档位不因此改变。本节不需要抬任何包间依赖下限：删掉的字段与方法在第一方已没有使用方，plugin-tool-session 去掉了对 api-flow-control、api-hooks、api-persona、api-platform 的依赖。暂不升级 plugin-tool-session 的，委派工具仍在，并且在新版 plugin-adapter-onebot 下失去限速闸（见「必须同批升级的包」）。要在旧版里关掉委派，把 plugin-tool-session 的 `crossSessionEnabled` 设为 `false`（旧版默认 `true`），或从多人平台的 `enabledToolGroups` 里去掉 `session-delegate`。
+
+### `recent_messages` 提档（@aalis/plugin-memory-history）
+
+`recent_messages` 改为声明 `risk: 'sensitive'`，与 plugin-tool-session 的 `session_get_history` 同档：等级 0 的调用者被权限守卫拒绝（返回「权限不足」），等级 1 起照常可用，不弹确认。此前不声明 risk，按 public 处理，开了 `session-history` 组的会话里任何触发者都能调用。
+
+原因：这个工具查的是别的会话。它默认排除当前会话；`scope: 'same-platform'`（默认）返回同平台别的群与别人私聊的消息原文，`scope: 'cross-platform'` 不按平台过滤，还包括 owner 的 WebUI 会话，每次最多取到 memory 后端的 `crossSessionMaxLimit` 条（默认 1000）。2026-08-23 的复核曾以跨群感知为由维持 public；删除跨会话委派工具后，owner 改判：它与 `session_get_history` 同属跨会话读取，按读类工具的约定定为 sensitive。
+
+对用户的影响：
+
+- 裁决按授权身份：多人会话里未被点名的 interval 回合，授权身份为无主体，按默认等级裁决，模型在这类回合里同样调不到它。
+- 未装 plugin-authority 的部署，执行守卫缺席时按 fail-closed 处理，`recent_messages` 对所有调用者都不可用，与 `session_get_history` 相同。
+- plugin-workflow 从 WebUI 的运行按钮或 workflow 自己的触发器（cron、interval、once、event）启动时没有调用者，以匿名身份运行，按默认等级裁决：调用 `recent_messages` 的 `tool` 节点被拒，`agent` 节点里的模型同样调不到它。经 `workflow_run` 工具启动的 workflow 以调用者的授权身份运行各节点，由等级 1 起的用户触发时照常可用。
+- plugin-mcp-server 默认不再暴露 `recent_messages`：`sensitive` 展开后的可见性是 `restricted`，而 `allowRestricted` 默认关闭，ListTools 不列出、CallTool 拒绝。只打开 `allowRestricted` 还不够，MCP 调用的身份是 `mcp` / `mcp-client`，默认等级 0，仍会被拒；要用须同时把这个身份设为等级 1，或按下文设置 `authorityOverrides`。
+- 被动注入不变：`injectEnabled` 开启（默认）时，其他会话的近期消息原文照常注入每个回合的提示词，不经工具与权限守卫。注入范围跟随 `scope`，这一项同时是工具的默认作用域：默认 `same-platform` 取同平台其他会话，含别人与 bot 的私聊；设为 `cross-platform` 时还包括 WebUI 等其他平台的会话，这部分同样不受本次提档约束。注入内容另受 `limit`、`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束。私聊内容经注入进入群回合这一点本批维持原样，是否保留尚未定案；不需要的关掉 `injectEnabled`。
+
+**迁移**：要让等级 0 的调用者继续使用，把需要的用户设为等级 1，或在配置文件的 `authorityOverrides` 里把 `tool:recent_messages` 设为 `0`。后者按能力全局生效，会同时对多人平台上等级 0 的群成员放开，等于撤销这次提档。匿名运行的 workflow 没有单独放行的办法，要保留这类用法，改由等级 1 起的用户经 `workflow_run` 触发。
+
+发布档位：plugin-memory-history 按 minor 发布。这是有意收窄一项经裁定维持 public 的能力，属于要附迁移路径的行为变化；0.9.1 那批按 patch 发布的收紧修的是非预期的默认值，性质不同。本节不需要抬任何包间依赖下限。
 
 ### 必须同批升级的包
 
