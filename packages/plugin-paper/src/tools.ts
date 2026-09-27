@@ -1,13 +1,13 @@
 // ============================================================
-// 白纸工具：paper_task 交任务（受理后交给运行驱动出队）、paper_status 查任务、paper_cancel 取消自己发起的任务、
-// paper_send 把成品发回本群
+// 白纸工具：paper_task 交任务（受理后交给运行驱动出队）、paper_status 查任务、paper_cancel 取消自己在本房间
+// 发起的任务、paper_send 把成品发回本群
 //
 // 都在 paper 分组、都不声明 risk（等级 0，群友可用）：门槛由房间配置、真人判据与三层上限承担，
 // 封禁（负等级）由执行守卫挡住，handler 不重复查。返回值不含凭据或链接。
 //
-// paper_send 只发本房间发起的任务的成品（具名白纸被几个房间共用时，别的房间的按「找不到」回），类型按
-// 白名单：位图走 image、MP4 走 video、单个 HTML 按 sendHtml 与大小上限走 file，远端给的原扩展名须与按文件头
-// 判定的类型一致。文件名由宿主按任务名重写，附件指向白纸根里宿主命名的文件。交给网关即标为已交付：
+// paper_status、paper_cancel、paper_send 只认本房间发起的任务（具名白纸被几个房间共用时，别的房间的按「找不到」
+// 回）。paper_send 的类型按白名单：位图与 MP4 按 sendMediaMaxMB、单个 HTML 按 sendHtml 与大小上限，
+// 位图走 image、MP4 走 video、HTML 走 file，远端给的原扩展名须与按文件头判定的类型一致。文件名由宿主按任务名重写，附件指向白纸根里宿主命名的文件。交给网关即标为已交付：
 // 出站是发完即返回，投递失败由适配器写进会话记忆，她之后的回合看得到。
 // ============================================================
 
@@ -95,9 +95,15 @@ function codePoints(s: string): string[] {
   return [...s];
 }
 
-/** 任务名：去掉控制字符与格式字符（含双向控制符、零宽字符），截到 40 字 */
+/**
+ * 任务名：去掉控制字符、格式字符（含双向控制符、零宽字符）、行与段分隔符和「」，连续空白压成一个空格，截到 40 字。
+ * 任务名会写进完成通知与待交付提示（system 消息）的「」里：只能占一行，也不能提前收尾引号。
+ */
 function sanitizeName(value: unknown): string {
-  const cleaned = (typeof value === 'string' ? value : '').replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+  const cleaned = (typeof value === 'string' ? value : '')
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}「」]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
   return codePoints(cleaned).slice(0, MAX_NAME).join('').trim();
 }
 
@@ -132,6 +138,9 @@ function sendRefusal(artifact: Artifact, cfg: PaperConfig): string | undefined {
     if (artifact.sizeBytes > cfg.sendHtmlMaxBytes) {
       return `网页 ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendHtmlMaxBytes)}`;
     }
+  } else if (artifact.sizeBytes > cfg.sendMediaMaxBytes) {
+    const what = artifact.type === 'mp4' ? '视频' : '图片';
+    return `${what} ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendMediaMaxBytes)}（聊天平台只内联发得出这么大的媒体）`;
   }
   if (!TYPE_EXTENSIONS[artifact.type].includes(ext)) {
     return `原文件的扩展名（${ext ? `.${ext}` : '无'}）与文件内容（${artifact.type}）不一致，不发`;
@@ -347,15 +356,21 @@ export function registerPaperTools(deps: PaperToolDeps): void {
   }
 
   async function paperCancel(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
-    const refused = checkEligibility(deps.sessionManager.require(), ctx, 'initiate');
-    if (refused) return fail(refused);
+    const entered = await enter(ctx, 'initiate');
+    if ('refused' in entered) return fail(entered.refused);
     if (ledger.failure) return fail('白纸账本读取失败，等 owner 处理');
     const taskId = typeof args.task_id === 'string' ? args.task_id.trim() : '';
     if (!taskId) return fail('task_id 不能为空');
+    // 别的房间、别的白纸上的任务与不存在的任务回同一句话，不承认它存在
+    const missing = `本房间的白纸上没有任务 ${taskId}`;
+    const ours = (task: TaskRecord | undefined) =>
+      task !== undefined && task.paperId === entered.paper.paperId && task.room === ctx.sessionId;
+    if (!ours(Object.hasOwn(ledger.data.tasks, taskId) ? ledger.data.tasks[taskId] : undefined)) return fail(missing);
     const user = actorKey(effectiveActor(ctx));
-    const result = await deps.cancel(taskId, 'tool', task =>
-      actorKey(task.initiator) === user ? undefined : '只能取消自己发起的任务',
-    );
+    const result = await deps.cancel(taskId, 'tool', task => {
+      if (!ours(task)) return missing;
+      return actorKey(task.initiator) === user ? undefined : '只能取消自己发起的任务';
+    });
     return JSON.stringify(result);
   }
 
@@ -459,7 +474,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       type: 'function',
       function: {
         name: 'paper_cancel',
-        description: '取消自己当面交给白纸的任务：排队中的直接移出；运行中的请远端取消这一轮，已发生的费用照常入账。',
+        description:
+          '取消自己在本房间当面交给白纸的任务：排队中的直接移出；运行中的请远端取消这一轮，已发生的费用照常入账。',
         parameters: {
           type: 'object',
           properties: { task_id: { type: 'string', description: '任务编号（t-开头）' } },

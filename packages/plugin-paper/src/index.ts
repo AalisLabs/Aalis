@@ -65,11 +65,13 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
 
   const now = Date.now;
   const notices = new PaperNotices({ ledger, events: caps.events, logger, now });
+  const isolation = new Isolation(caps.remoteAgent, cfg.papers);
   const driver = new PaperDriver({
     remote: caps.remoteAgent,
     sessionManager: caps.sessionManager,
     storage,
     ledger,
+    isolation,
     cfg,
     logger,
     signal: lifecycle.signal,
@@ -80,7 +82,6 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     await notices.close();
     await driver.drain();
   }, '白纸停止通知与出队并落盘账本');
-  const isolation = new Isolation(caps.remoteAgent, cfg.papers);
   registerPaperTools({
     tools: caps.tools,
     sessionManager: caps.sessionManager,

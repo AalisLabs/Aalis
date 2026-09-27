@@ -119,11 +119,12 @@ export function daySpend(ledger: PaperLedger, day: string): DaySpend {
 /**
  * 按实际费用入账一轮：记进 day 这天的全局花费与代理的累计花费；有对应任务的，再记进发起房间与发起者，
  * 并写进任务的 costCents（{@link reserveFor} 取它）。账本外的轮次（自唤醒）只进全局。预留由调用方释放。
+ * estimated：费用取不到、按估计入账，之后不再补取。
  */
-export function book(ledger: PaperLedger, day: string, runId: string, cents: number): void {
+export function book(ledger: PaperLedger, day: string, runId: string, cents: number, estimated = false): void {
   const run = ledger.runs[runId];
   if (!run) return;
-  run.cost = { state: 'booked', cents };
+  run.cost = estimated ? { state: 'booked', cents, estimated: true } : { state: 'booked', cents };
   const spend = daySpend(ledger, day);
   spend.global += cents;
   const agent = ledger.agents[run.agentId];

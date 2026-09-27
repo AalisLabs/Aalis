@@ -331,3 +331,90 @@ describe('清空', () => {
     expect(hub.task(first.id).state).toBe('done');
   });
 });
+
+describe('删除代理前结清费用', () => {
+  const day = (ledger: PaperLedger) => Object.values(ledger.spend)[0];
+
+  it('安全：自唤醒的轮次取消后费用一直暂缺时，删除代理前按估计记进全局日账，轮次记录随代理移除', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    a.costOf = () => ({ chargedCents: 40, inputTokens: 1, cacheReadTokens: 0 });
+    const first = await runOne(hub, a);
+    const rogue = a.spawnRun(first.agentId);
+    a.costOf = runId => (runId === rogue ? undefined : { chargedCents: 40, inputTokens: 1, cacheReadTokens: 0 });
+
+    await advance(RECONCILE_MS);
+    await advance(2 * MINUTE);
+    await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '删除自唤醒的代理');
+    const ledger = hub.store.data;
+    expect(todaySpend(ledger), '账本外轮次按本白纸一件任务的预留额估计入账').toBe(40 + 40);
+    expect(ledger.runs[rogue]).toBeUndefined();
+    expect(ledger.alerts).toContainEqual(expect.objectContaining({ kind: 'cost-estimated', subject: rogue }));
+  });
+
+  it('安全：本白纸的任务在自唤醒的代理上、费用暂缺时，删除代理前按这件任务的预留入账并释放预留', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    a.costOf = () => undefined;
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    const { agentId, runId } = hub.task(t1);
+    const reserve = hub.store.data.reserves[t1]?.cents ?? 0;
+    expect(reserve).toBeGreaterThan(0);
+    a.spawnRun(agentId ?? '');
+    a.finish(runId ?? '');
+
+    await advance(3 * MINUTE);
+    await until(() => a.callsOn('deleteAgent', agentId ?? '').length === 1, '任务结束后删除代理');
+    const ledger = hub.store.data;
+    expect(hub.task(t1).state).toBe('done');
+    expect(ledger.reserves[t1], '预留释放').toBeUndefined();
+    expect(day(ledger).rooms[ROOM_A], '按预留额记进发起房间').toBe(reserve);
+    expect(todaySpend(ledger), '任务一轮加账本外一轮').toBe(reserve * 2);
+    expect(Object.values(ledger.runs).filter(r => r.agentId === agentId)).toEqual([]);
+  });
+
+  it('换新后旧代理还有费用暂缺的轮次时先不删；定期检查补上费用后再删，预留随之释放', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    a.costOf = () => undefined;
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const first = { id: t1, agentId: hub.task(t1).agentId ?? '' };
+    const firstRun = hub.task(t1).runId ?? '';
+    a.finish(firstRun);
+    await advance(MINUTE);
+    await until(() => hub.task(t1).state === 'done', '首件完成');
+    expect(hub.store.data.runs[firstRun].cost.state).toBe('missing');
+
+    a.costOf = runId => (runId === firstRun ? undefined : { chargedCents: 10, inputTokens: 1, cacheReadTokens: 0 });
+    await hub.driver.resume(PAPER_A_ID);
+    await hub.driver.rotate(PAPER_A_ID);
+    const second = await runOne(hub, a);
+    expect(second.agentId).not.toBe(first.agentId);
+    await advance(1000);
+    expect(a.callsOn('deleteAgent', first.agentId), '费用暂缺时不删').toEqual([]);
+    expect(hub.store.data.reserves[first.id]).toBeDefined();
+
+    a.costOf = () => ({ chargedCents: 30, inputTokens: 1, cacheReadTokens: 0 });
+    await advance(RECONCILE_MS);
+    await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '补上费用后删除旧代理');
+    expect(hub.task(first.id).costCents).toBe(30);
+    expect(hub.store.data.reserves[first.id]).toBeUndefined();
+  });
+
+  it('安全：建代理判为失败、远端其实已建出时，删除前把它的首轮记下并按估计入账', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    once(a, 'createAgent', async ({ proceed }) => {
+      await proceed();
+      throw new RemoteAgentError('rejected', '远端拒绝');
+    });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'failed', '建代理判为失败');
+    const agentId = hub.task(t1).agentId ?? '';
+    await until(() => a.callsOn('deleteAgent', agentId).length === 1, '删除建出的代理');
+    expect(todaySpend(hub.store.data), '首轮按估计记进全局日账').toBeGreaterThan(0);
+    expect(hub.store.data.alerts).toContainEqual(expect.objectContaining({ kind: 'cost-estimated' }));
+  });
+});
