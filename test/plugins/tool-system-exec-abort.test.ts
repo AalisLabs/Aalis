@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProcessService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
-import type { LifecycleCap } from '../../packages/core/src/index.js';
+import type { Events, LifecycleCap } from '../../packages/core/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
 import { registerShellTools } from '../../packages/plugin-tool-system/src/tools/shell.js';
 import { silentLogger } from '../fixtures/authority.js';
@@ -94,7 +94,9 @@ function register(proc: ProcessService): Record<string, Handler> {
   });
   registerShellTools(tools, {
     logger: silentLogger(),
-    lifecycle: { onDispose: () => () => {} } as unknown as LifecycleCap,
+    lifecycle: { signal: new AbortController().signal, onDispose: () => () => {} } as unknown as LifecycleCap,
+    events: { on: () => () => {}, emit: async () => {} } as unknown as Events,
+    isOwner: () => false,
     cwdUri: 'workspace:/',
     proc,
     storage: { resolveLocalPath: async () => dir } as unknown as StorageService,
