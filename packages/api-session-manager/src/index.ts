@@ -178,6 +178,23 @@ export interface SessionTreeNode {
   children: SessionTreeNode[];
 }
 
+/** 会话列表的分区：owner=我的会话（WebUI、CLI 等 owner 面会话），rooms=IM 房间 */
+export type SessionListSection = 'owner' | 'rooms';
+
+/** 按受众分区的纯函数：private、group 为 rooms，其余为 owner。服务端页面动作与以后的客户端协议共用 */
+export function sessionListSection(session: Pick<SessionInfo, 'audience'>): SessionListSection {
+  return session.audience === 'private' || session.audience === 'group' ? 'rooms' : 'owner';
+}
+
+/** 会话列表的一个分区 */
+export interface SessionTreeSection {
+  key: SessionListSection;
+  /** 显示名：「我的会话」「IM 房间」 */
+  label: string;
+  /** 根会话（子会话挂在各自父节点下） */
+  nodes: SessionTreeNode[];
+}
+
 /**
  * 会话管理服务
  *
