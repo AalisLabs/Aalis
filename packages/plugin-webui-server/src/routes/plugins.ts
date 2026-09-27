@@ -11,6 +11,7 @@ import {
   CORE_CONFIG_SCHEMA,
   cloneConfigObject,
   defaultsFrom,
+  parseConfig,
   removeExtraFields,
   validateConfig,
 } from '@aalis/schema-config';
@@ -285,22 +286,18 @@ export function registerPluginRoutes(
     const differs = (k: string) => !isDeepStrictEqual(updates[k], currentOf(k));
     const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
     const changed = allowed.filter(k => k in updates && differs(k));
-    // 与插件配置路径同一把尺子：类型不符的值（如 name 传数字）不落盘。select 的取值范围 validateConfig
-    // 刻意不管（它看不见宿主属性 allowCustom），核心字段没有 allowCustom，在这里按 options 补校验。
+    // 与插件配置路径同一把尺子：类型不符、越界或不在选项里的值（如 logLevel 传 nope）不落盘。
     const picked = Object.fromEntries(changed.map(k => [k, updates[k]]));
     const invalid = validateConfig(CORE_CONFIG_SCHEMA, picked).map(i => `${i.path}: ${i.message}`);
-    for (const k of changed) {
-      const field = CORE_CONFIG_SCHEMA[k] as { type?: string; options?: Array<{ value: unknown }> };
-      if (field.type === 'select' && field.options && !field.options.some(o => o.value === updates[k])) {
-        invalid.push(`${k}: 取值不在可选范围`);
-      }
-    }
     if (invalid.length > 0) {
       res.status(400).json({ error: invalid.join('; ') });
       return;
     }
+    // 写进文档的是按词汇换算后的值（加了引号的数字转成数字、写成数字的名称转成字符串）：runtime 启动时
+    // 直接读这几个键，不经 parseConfig
+    const values = parseConfig(CORE_CONFIG_SCHEMA, picked);
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
-    for (const key of changed) doc.set(key, updates[key]);
+    for (const key of changed) doc.set(key, values[key]);
     // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档（appName），保存即生效。
     // 装有人设时聊天显示人设名，应用名称只在仪表盘上看得到
     const restartNeeded = changed.some(k => k === 'logLevel' || k === 'slowThresholdMs');
@@ -418,10 +415,21 @@ export function registerPluginRoutes(
     // 的 args 数组形态）的插件会在 WebUI 永久存不了任何字段；启动侧 config-sync
     // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
     // 正常中间态。
-    const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
-    const issues = validateConfig(schema, merged).filter(
-      i => i.kind === 'invalid' && !preExisting.has(`${i.path}|${i.message}`),
-    );
+    // 存量按「去掉下标的路径 + 原因」计数，新配置里同类问题的条数超出存量才算新增：list / multiselect /
+    // 数组删掉前面的元素后，存量坏元素的下标会前移，按原路径比会把它误判成新增
+    const issueKey = (i: { path: string; message: string }) => `${i.path.replace(/\[\d+\]/g, '[]')}|${i.message}`;
+    const preExisting = new Map<string, number>();
+    for (const i of validateConfig(schema, stored)) {
+      const key = issueKey(i);
+      preExisting.set(key, (preExisting.get(key) ?? 0) + 1);
+    }
+    const issues = validateConfig(schema, merged).filter(i => {
+      if (i.kind !== 'invalid') return false;
+      const key = issueKey(i);
+      const left = preExisting.get(key) ?? 0;
+      preExisting.set(key, left - 1);
+      return left <= 0;
+    });
     if (issues.length > 0) {
       res.status(400).json({
         error: `配置校验未通过：${issues.map(i => `${i.path}: ${i.message}`).join('；')}`,
