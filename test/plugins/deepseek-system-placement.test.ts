@@ -67,6 +67,19 @@ describe('normalizeSystemPlacement', () => {
     expect(out.map(m => m.role)).toEqual(['system', 'user', 'system']);
   });
 
+  it('宿主通知块同样豁免：保持 system 角色（转 user 会被当成真实用户在指挥）', () => {
+    const out = normalizeSystemPlacement([
+      { role: 'system', content: '人设' },
+      { role: 'user', content: '(今天 09:00) [张三(10001)]: 旧消息', name: '10001' },
+      {
+        role: 'system',
+        content: '[宿主通知]\n白纸任务 T-1 已完成',
+        metadata: { injector: 'host-notice' },
+      },
+    ]);
+    expect(out.map(m => m.role)).toEqual(['system', 'user', 'system']);
+  });
+
   it('空内容 system 块保持原样，不产出空壳 user 消息', () => {
     const out = normalizeSystemPlacement([
       { role: 'system', content: '头' },

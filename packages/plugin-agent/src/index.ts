@@ -639,6 +639,8 @@ class DefaultAgent implements AgentService {
           acceptsImages: true,
           // 回合中止信号：等确认期间被 latest-wins / 手动 abort 掐掉的工具不再执行
           signal,
+          // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入
+          inbound: { source: incoming.source },
         };
 
         // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
@@ -1285,6 +1287,19 @@ class DefaultAgent implements AgentService {
     const archivedBody = archivedIncoming?.content;
     const fallbackBody = senderLabel ? `[${senderLabel}]: ${incoming.content}` : incoming.content;
     const currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
+
+    // 宿主通知分支：宿主撰写的事件通知不是任何人的发言，与 proactive 一样以 system 呈现、
+    // 不推当前 user 消息与易变块。不可信段只在当轮接在宿主正文之后（归档只留正文），
+    // 之后的回合从历史里只看得到宿主正文。
+    if (incoming.hostNotice) {
+      const { untrusted } = incoming.hostNotice;
+      messages.push({
+        role: 'system',
+        content: `[宿主通知]\n${incoming.content}${untrusted ? `\n\n${untrusted}` : ''}`,
+        metadata: { injector: WellKnownKinds.HostNotice },
+      });
+      return messages;
+    }
 
     // 3a. proactive 分支：系统代发给本会话的任务指令（如 workflow 的 agent 节点）
     //

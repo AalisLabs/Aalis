@@ -30,6 +30,7 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
   },
@@ -51,7 +52,8 @@
         "memory"
       ],
       "optional": [
-        "tools"
+        "tools",
+        "session-manager"
       ]
     }
   }

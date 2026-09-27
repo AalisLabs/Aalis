@@ -21,6 +21,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { memory, type RecentMessageRecord } from '@aalis/api-memory';
+import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -105,8 +106,8 @@ interface HistoryConfig {
 const TOOL_NAME = 'recent_messages';
 
 interface QueryOptions {
-  /** 覆盖 scope；不传则用配置默认值 */
-  scope?: HistoryScope;
+  /** 已按房间收窄的作用域（见 effectiveHistoryScope） */
+  scope: HistoryScope;
   currentPlatform?: string;
   currentSessionId?: string;
   limit?: number;
@@ -126,6 +127,16 @@ function normalizeConfig(raw: Readonly<Record<string, unknown>>): HistoryConfig 
     headerText: typeof raw.headerText === 'string' ? raw.headerText : DEFAULT_HEADER_TEXT,
     toolEnabled: raw.toolEnabled !== false,
   };
+}
+
+/**
+ * 按房间的召回范围（会话配置 memoryRecallScope）收窄查询作用域，只收窄不放宽：
+ * 房间为 session 时返回 undefined（不做跨会话查询）；platform 时最多 same-platform；all 或未设置时用传入的作用域。
+ */
+function effectiveHistoryScope(cfgScope: HistoryScope, room: MemoryRecallScope | undefined): HistoryScope | undefined {
+  if (room === 'session') return undefined;
+  if (room === 'platform') return 'same-platform';
+  return cfgScope;
 }
 
 function asString(v: unknown): string | undefined {
@@ -165,7 +176,15 @@ function formatRecords(records: RecentMessageRecord[]): string {
 
 // ===== 入口 =====
 
-const uses = { memory, config, logger, contributions, tools: optional(tools) };
+const uses = {
+  memory,
+  config,
+  logger,
+  contributions,
+  tools: optional(tools),
+  /** 房间的召回范围（会话配置 memoryRecallScope）；不在场时只按插件配置 */
+  sessionManager: optional(sessionManager),
+};
 
 export default definePlugin({
   name: '@aalis/plugin-memory-history',
@@ -173,16 +192,24 @@ export default definePlugin({
   subsystem: 'memory',
   configSchema,
   uses,
-  apply({ memory, config, logger, contributions, tools }) {
+  apply({ memory, config, logger, contributions, tools, sessionManager }) {
     const cfg = normalizeConfig(config);
 
     logger.info(
       `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
     );
 
-    async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
-      const scope: HistoryScope = opts.scope ?? cfg.scope;
+    /** 按当前会话所在房间的召回范围收窄作用域；每次查询现算，房间或平台档改了下一轮即生效 */
+    function roomScope(
+      scope: HistoryScope,
+      sessionId: string | undefined,
+      platform: string | undefined,
+    ): HistoryScope | undefined {
+      const room = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).memoryRecallScope : undefined;
+      return effectiveHistoryScope(scope, room);
+    }
 
+    async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
       // 每次查询取当前提供者：换后端时下一次查询自然走新实例
       const backend = memory.current;
       if (!backend?.getRecentMessagesAcrossSessions) {
@@ -193,7 +220,7 @@ export default definePlugin({
       const limit = Math.max(1, opts.limit ?? cfg.limit);
       const maxAge = opts.maxAgeMinutes ?? cfg.maxAgeMinutes;
       const sinceTs = maxAge > 0 ? Date.now() - maxAge * 60_000 : undefined;
-      const platform = scope === 'same-platform' ? opts.currentPlatform : undefined;
+      const platform = opts.scope === 'same-platform' ? opts.currentPlatform : undefined;
       const excludeSessionIds =
         cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
 
@@ -234,9 +261,13 @@ export default definePlugin({
         id: 'memory-history',
         anchor: 'turn-context',
         async build(view) {
+          const scope = roomScope(cfg.scope, view.sessionId, view.platform);
+          // 房间的召回范围限于本会话：本插件注入的全是其他会话的原文，整块不交
+          if (!scope) return null;
           let records: RecentMessageRecord[];
           try {
             records = await queryRecent({
+              scope,
               currentPlatform: view.platform,
               currentSessionId: view.sessionId,
             });
@@ -246,13 +277,13 @@ export default definePlugin({
           }
           if (records.length === 0) {
             logger.debug(
-              `memory-history: 未找到可注入的跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, session=${view.sessionId ?? '?'})`,
+              `memory-history: 未找到可注入的跨会话消息 (scope=${scope}, platform=${view.platform ?? '?'}, session=${view.sessionId ?? '?'})`,
             );
             return null;
           }
           const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
           logger.debug(
-            `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
+            `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${scope}, platform=${view.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
           );
           return block;
         },
@@ -278,7 +309,7 @@ export default definePlugin({
                 scope: {
                   type: 'string',
                   enum: ['same-platform', 'cross-platform'],
-                  description: `same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。`,
+                  description: `same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。所在房间设了更窄的召回范围时按房间收窄。`,
                 },
                 limit: {
                   type: 'number',
@@ -301,7 +332,9 @@ export default definePlugin({
         // 与 session_get_history 同属跨会话读取：朋友档挡 level-0；不弹确认
         risk: 'sensitive',
         handler: async (args, callCtx) => {
-          const scope = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : undefined;
+          const requested = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : cfg.scope;
+          const scope = roomScope(requested, callCtx.sessionId, callCtx.platform);
+          if (!scope) return '本房间的召回范围限于本会话，不能查询其他会话的近期消息。';
           const records = await queryRecent({
             scope,
             currentPlatform: callCtx.platform,

@@ -665,6 +665,7 @@ a.marketplace-card-name:hover {
 }
 .session-config-field select,
 .session-config-field input[type="number"],
+.session-config-field input[type="text"],
 .session-config-field textarea {
   padding: 3px 6px;
   border: 1px solid var(--border);
@@ -732,6 +733,27 @@ a.marketplace-card-name:hover {
 }
 .session-config-toggles input[type="checkbox"] {
   accent-color: var(--accent, #6366f1);
+}
+
+.session-config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.session-config-group-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.session-config-inherit {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.session-config-warn {
+  font-size: 11px;
+  color: var(--warning);
 }
 
 .session-config-actions {

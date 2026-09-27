@@ -3,12 +3,13 @@ import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
+import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import { prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
@@ -120,6 +121,14 @@ type CrossSessionMode = 'isolated' | 'user' | 'platform' | 'all';
 
 /** 检索的可见范围：session=仅当前会话；platform=同平台所有会话；all=全部 */
 type Visibility = 'session' | 'platform' | 'all';
+
+/** 可见范围由窄到宽的次序 */
+const VISIBILITY_RANK: Record<Visibility, number> = { session: 0, platform: 1, all: 2 };
+
+/** 插件配置的可见范围与房间配置取较窄者；房间未设置或 session-manager 不在场时用插件配置 */
+function effectiveVisibility(cfgVisibility: Visibility, room: MemoryRecallScope | undefined): Visibility {
+  return room && VISIBILITY_RANK[room] < VISIBILITY_RANK[cfgVisibility] ? room : cfgVisibility;
+}
 
 /** 过了准入与可见范围的命中，带时间加权与同用户加权后的终分 */
 type RankedHit = VectorSearchResult & { finalScore: number };
@@ -297,6 +306,8 @@ const uses = {
   embedding,
   memory: optional(memory),
   tools: optional(tools),
+  /** 房间的召回范围（会话配置 memoryRecallScope）；不在场时只按插件配置 */
+  sessionManager: optional(sessionManager),
   events,
   hooks,
   contributions,
@@ -321,6 +332,7 @@ async function run({
   embedding,
   memory,
   tools,
+  sessionManager,
   events,
   hooks,
   contributions,
@@ -397,6 +409,15 @@ async function run({
   /** 插件配置对应的可见范围：user 档是「全库可见 + 同用户加权」，可见范围同 all */
   const cfgVisibility: Visibility =
     cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
+
+  /**
+   * 当前会话的可见范围：插件配置再按房间的召回范围（会话配置 memoryRecallScope）收窄。
+   * 每次检索现算，房间或平台档改了下一轮即生效；session-manager 是可选依赖，同样在调用点取。
+   */
+  function sessionVisibility(sessionId: string | undefined, platform: string): Visibility {
+    const room = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).memoryRecallScope : undefined;
+    return effectiveVisibility(cfgVisibility, room);
+  }
 
   // === embedding 模型（向量空间）===
   // 只有同一模型算出的向量才能互相比较。索引时 metadata 记下提供者的 modelId；本版之前写入的
@@ -612,6 +633,8 @@ async function run({
   }
 
   async function indexUserMessage(msg: IncomingMessage, archived: Message): Promise<void> {
+    // 宿主通知不是任何人的发言，不进长期记忆
+    if (msg.hostNotice) return;
     // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
     //（triggerType 判据；全仓生产者=workflow agent 节点，内容是 AI 撰写的任务文本），
     // 不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」形态回流。
@@ -807,7 +830,7 @@ async function run({
         const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
         const ranked = await rankCandidates(queryVec, provider.modelId, candidateCount, {
-          visibility: cfgVisibility,
+          visibility: sessionVisibility(curSessionId, curPlatform),
           curSessionId,
           curPlatform,
           boostUserId: cfg.crossSessionMode === 'user' ? curUserId : undefined,
@@ -862,6 +885,9 @@ async function run({
                 const m = sorted[i];
                 if (!m.content) continue;
                 if (m.kind === WellKnownKinds.EventMarker) continue;
+                // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出。命中点本身不在此列：
+                // 在这里跳过，下面的兜底会按向量元数据把它补成 user 行
+                if (i !== idx && DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
                 if (currentContents.has((m.content ?? '').trim())) continue;
                 const key = messageKey(sid, m);
                 if (!collected.has(key)) {
@@ -955,7 +981,7 @@ async function run({
               description:
                 'session=仅当前会话；platform=同平台所有会话；all=全部。' +
                 `默认沿用插件配置（当前=${cfgVisibility}${cfg.crossSessionMode === 'user' ? '，当前用户本人发言或被 @ 的记录优先' : ''}）。` +
-                '为安全起见，scope 只能比插件配置更窄，不能更宽。',
+                '为安全起见，scope 只能比插件配置更窄，不能更宽；所在房间设了更窄的召回范围时再按房间收窄。',
             },
             contextWindow: {
               type: 'number',
@@ -997,18 +1023,18 @@ async function run({
       const effectiveCrossSession =
         cfg.contextExpand.crossSession && (args.crossSession === undefined ? true : Boolean(args.crossSession));
 
-      // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility），再与请求取较窄者。
+      const curSessionId = callCtx.sessionId;
+      const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+
+      // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility）并按房间收窄，再与请求取较窄者。
       // 两者不能共用一张 rank 表：user 档是「全库可见 + 同用户加权」，作为加权策略它
       // 排在 platform 之前，于是「显式请求 platform」会被静默放宽回 all——与工具描述
       // 承诺的「scope 只能更窄」相反。
-      const visibilityRank: Record<Visibility, number> = { session: 0, platform: 1, all: 2 };
+      const allowedScope = sessionVisibility(curSessionId, curPlatform);
       const effectiveScope: Visibility =
-        requestedScope && visibilityRank[requestedScope] < visibilityRank[cfgVisibility]
+        requestedScope && VISIBILITY_RANK[requestedScope] < VISIBILITY_RANK[allowedScope]
           ? requestedScope
-          : cfgVisibility;
-
-      const curSessionId = callCtx.sessionId;
-      const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+          : allowedScope;
 
       try {
         const storeSize = await vectorstore.require().size();
@@ -1053,6 +1079,8 @@ async function run({
                 const m = sorted[i];
                 if (!m.content) continue;
                 if (m.kind === WellKnownKinds.EventMarker) continue;
+                // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出
+                if (DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
                 ctxArr.push({
                   ts: m.timestamp ?? 0,
                   role: m.role,
