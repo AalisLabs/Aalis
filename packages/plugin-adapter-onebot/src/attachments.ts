@@ -11,7 +11,9 @@
 // 最稳。超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
 //
 // image、audio、video 内联前按文件头核对格式，不符就拒发：发送工具接受任意 storage URI，
-// 不核对的话任意可读文件（如含密钥的配置）能冒充媒体经 base64 发出。
+// 不核对的话任意可读文件（如含密钥的配置）能冒充媒体经 base64 发出。超过内联上限的 storage 文件退回
+// file://<宿主路径> 之前同样核对（daemon 与 Aalis 共享文件系统时它读得到）。原样透传的 file:// 与裸路径
+// 不经 storage、也不核对。
 // file 附件不走消息段，经群文件、私聊文件上传，只收 base64://（见 materializeFileAttachment）。
 //
 // file:// 与本地绝对路径不再由本插件直接读取（避免依赖 node:fs），原样透传
@@ -36,15 +38,30 @@ const INLINE_FORMATS: Record<'image' | 'audio' | 'video', ReadonlySet<string>> =
   video: new Set(['mp4', 'webm']),
 };
 
-/**
- * 把 Buffer 包成 base64:// 字符串。媒介附件先按文件头核对格式，不符就抛错拒发；
- * file 附件不核对（群文件本来就收任意类型）。
- */
-function toBase64Uri(kind: MessageAttachment['kind'], buf: Buffer): string {
-  if (kind !== 'file' && !INLINE_FORMATS[kind].has(detectExtensionFromBuffer(buf, ''))) {
+/** 文件头读这么多字节（detectExtensionFromBuffer 看的都在前 12 字节里） */
+const HEAD_BYTES = 64;
+
+/** 媒介附件按文件头核对格式，不符就抛错拒发；file 附件不核对（群文件本来就收任意类型） */
+function assertFormat(kind: MessageAttachment['kind'], head: Buffer): void {
+  if (kind !== 'file' && !INLINE_FORMATS[kind].has(detectExtensionFromBuffer(head, ''))) {
     throw new Error(`内容不是可发送的 ${kind} 格式（文件头不符），已拒发`);
   }
+}
+
+/** 把 Buffer 包成 base64:// 字符串，媒介附件先核对文件头 */
+function toBase64Uri(kind: MessageAttachment['kind'], buf: Buffer): string {
+  assertFormat(kind, buf);
   return `base64://${buf.toString('base64')}`;
+}
+
+/**
+ * 读 storage 文件的开头（按字节区间，不整份读进内存）。读不出就抛错拒发：能退回宿主路径的是本机存储，
+ * 本机存储都支持区间读取
+ */
+async function readHead(storage: StorageService, uri: string): Promise<Buffer> {
+  const head = await storage.readFileRange?.(uri, 0, HEAD_BYTES);
+  if (!head) throw new Error('读不出文件头，已拒发');
+  return head;
 }
 
 /**
@@ -90,6 +107,8 @@ async function attachmentToOneBotFile(
     // 读前先量：视频也走这里，超限的不整份读进内存
     const { size } = await storage.stat(data);
     if (size > MAX_INLINE_BYTES) {
+      // 交宿主路径之前同样核对文件头：daemon 读得到宿主路径时，任意可读文件不能借「超过上限」冒充媒体发出
+      assertFormat(att.kind, await readHead(storage, data));
       logger?.warn?.(
         `OneBot storage 附件 ${size}B 超过内联上限，改交 file:// 宿主路径（daemon 与 Aalis 不共享文件系统时读不到，如 NapCat 在容器里）`,
       );
