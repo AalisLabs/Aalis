@@ -54,9 +54,9 @@ export function registerPaperDoctor(deps: {
         );
       }
 
-      for (const { type, papers, reason } of unknown) {
+      for (const { type, papers, detail } of unknown) {
         warnings.push(
-          `取不到提供者「${type}」的远端账号标识（白纸 ${papers.join('、')}；原因：${reason}），` +
+          `取不到提供者「${type}」的远端账号标识（白纸 ${papers.join('、')}；原因：${detail}），` +
             '按冲突处理：引用同类提供者的具名白纸都不开',
         );
       }

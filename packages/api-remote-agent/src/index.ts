@@ -187,7 +187,8 @@ export interface RemoteAgentProvider {
   /**
    * 懒连接：鉴权与模型参数校验，失败抛 unavailable（带原因）。成功结果由提供者缓存，消费方可以频繁调用
    * （受理、出队、诊断都直接调它，不另设缓存）。
-   * accountKey 是远端账号的不透明标识（哈希），同账号的实例返回同一个值；不含账号原文。
+   * accountKey 是远端账号的不透明标识（哈希），同账号的实例返回同一个值；不含账号原文，但账号原文取值范围小时
+   * 可以枚举反推（如 Cursor 取整数账号的哈希），只用于分组比较，不要展示或记录。
    */
   ready(signal: AbortSignal): Promise<{ accountKey: string }>;
   mintAgentId(): string;

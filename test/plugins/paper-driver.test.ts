@@ -540,6 +540,46 @@ describe('失败原因只写宿主撰写的类别', () => {
     ).toBe(true);
   });
 
+  it('安全：出队时同账号隔离核对不过（另一个 shared 实例取不到账号标识）时 task.error 只写类别，原文只进日志', async () => {
+    const a = new ScriptedRemote({ isolation: 'shared', accountKey: 'acct-a' });
+    const b = new ScriptedRemote({ isolation: 'shared', accountKey: 'acct-b' });
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a, [REMOTE_B]: b } });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    // 第二件排队期间，另一个实例的 key 失效
+    b.intercept.ready = () => {
+      throw new RemoteAgentError(
+        'unavailable',
+        `GET /v1/me 返回 401：${SENTINEL}（connect ECONNREFUSED 127.0.0.1:7892）`,
+      );
+    };
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
+    expect(hub.task(t2).error).toMatch(/账号标识.*提供者不可用/);
+    expect(hub.task(t2).error).not.toContain(SENTINEL);
+    expect(hub.task(t2).error).not.toContain('127.0.0.1');
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(SENTINEL)),
+      '原文进日志',
+    ).toBe(true);
+  });
+
+  it('安全：出队时取不到出网方式时 task.error 只写类别', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    a.egress = async () => {
+      throw new RemoteAgentError('transient', `GET /egress 失败：${SENTINEL}`);
+    };
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
+    expect(hub.task(t2).error).toMatch(/出网方式.*远端临时故障/);
+    expect(hub.task(t2).error).not.toContain(SENTINEL);
+  });
+
   it('安全：建代理被拒、开轮被拒时同样只写类别', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });

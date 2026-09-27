@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
@@ -179,17 +180,44 @@ describe('同账号隔离：声明 shared 的提供者，同一账号下只给�
   });
 
   it('安全：ready() 失败、取不到 accountKey 时按冲突算：自己不开，同类的其他具名白纸也不开', async () => {
+    const raw = 'GET /v1/me 返回 401：REMOTE-RAW-SENTINEL（connect ECONNREFUSED 127.0.0.1:7892）';
     const hub = await startPaperHub({
       config: TWO_PAPERS,
       rooms: TWO_ROOMS,
       remotes: {
-        [REMOTE]: fakeRemote({ accountKey: new Error('鉴权失败') }),
+        [REMOTE]: fakeRemote({ accountKey: new RemoteAgentError('unavailable', raw) }),
         'zz-remote-b': fakeRemote({ accountKey: 'acct-2' }),
       },
     });
-    // 拒绝理由写出取不到的原因，两块白纸都写
-    await expectRefused(hub, /账号标识.*鉴权失败/);
-    await expectRefused(hub, /账号标识.*鉴权失败/, human('30001', ROOM2));
+    // 拒绝理由写出宿主撰写的类别，两块白纸都写；提供者报错的原文（远端说明、本机网络细节）不写
+    for (const ctx of [human(), human('30001', ROOM2)]) {
+      const res = await hub.call('paper_task', TASK, ctx);
+      expect(res.ok).toBe(false);
+      expect(String(res.error)).toMatch(/账号标识.*提供者不可用/);
+      expect(String(res.error)).not.toContain('REMOTE-RAW-SENTINEL');
+      expect(String(res.error)).not.toContain('127.0.0.1');
+    }
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes('REMOTE-RAW-SENTINEL')),
+      '原文进日志',
+    ).toBe(true);
+  });
+
+  it('同一实例的报错原文每次不同、类别相同时只记一次 warn', async () => {
+    const flaky = fakeRemote();
+    let n = 0;
+    flaky.ready = async () => {
+      flaky.readyCalls++;
+      throw new RemoteAgentError('transient', `GET /v1/me 返回 503：<html>Ray ID ${++n}</html>`);
+    };
+    const hub = await startPaperHub({ remotes: { [REMOTE]: flaky } });
+    await expectRefused(hub, /账号标识.*远端临时故障/);
+    await hub.call('paper_task', TASK);
+    await hub.doctor();
+    expect(n).toBeGreaterThanOrEqual(3);
+    const warns = hub.logs.filter(l => l.level === 'warn' && l.message.includes('账号标识'));
+    expect(warns).toHaveLength(1);
+    expect(warns[0].message).toContain('Ray ID 1');
   });
 
   it('安全：defaults.remoteAgentType 指向 shared 提供者时，不写名字的房间白纸不开', async () => {
@@ -303,11 +331,11 @@ describe('取不到账号标识的原因（真实的 Cursor 提供者对本机�
       { model: { id: 'grok-4.7', params: { reasoning_effort: 'high', fast: 'false' } } },
       /context/,
     ],
-  ] as const)('%s：拒绝理由、诊断项与 warn 都写出原因，同一原因只记一次 warn，都不含 key 的片段', async (_, overrides, cause) => {
+  ] as const)('%s：拒绝理由只写类别，诊断项与 warn 写出原因，同一原因只记一次 warn，都不含 key 的片段', async (_, overrides, cause) => {
     const hub = await startPaperHub({ remotes: { [REMOTE]: provider(overrides) } });
-    await expectRefused(hub, /账号标识/);
+    await expectRefused(hub, /账号标识.*提供者不可用/);
     const again = await hub.call('paper_task', TASK);
-    expect(String(again.error)).toMatch(cause);
+    expect(String(again.error)).not.toMatch(cause);
     const [check] = await hub.doctor();
     expect(check.level).toBe('warn');
     expect(check.message).toMatch(cause);
