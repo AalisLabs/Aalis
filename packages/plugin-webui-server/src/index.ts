@@ -300,23 +300,6 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
  */
 const LOCAL_SCAN_DIRS = [resolve(process.cwd(), 'packages'), resolve(process.cwd(), 'node_modules/@aalis')];
 
-/**
- * 会话归属的平台名：取 sessionId 首个 `:` 前的前缀，命中**已注册平台名**才采信，否则 `'webui'`。
- *
- * WebUI 是管理面，订阅的会话可以属于任何平台（`onebot:123`）。它发 `token:request` 时若
- * 一律报 `'webui'`，消费方（plugin-agent）就按 webui 档解析模型与会话配置，把别人的预算
- * 快照算进错的上下文窗口。前缀不认识时才落回 `'webui'`——CLI 的 `cli-default` 这类不带
- * 前缀的会话，以及 webui 自己的会话，都归在这一档。
- *
- * 纯函数：平台名集合由调用方从 `getPlatformNames(platform)` 取（adapter 可热插拔，每次现取）。
- */
-export function resolveSessionPlatform(sessionId: string, known: ReadonlySet<string>): string {
-  const idx = sessionId.indexOf(':');
-  if (idx <= 0) return 'webui';
-  const prefix = sessionId.slice(0, idx);
-  return known.has(prefix) ? prefix : 'webui';
-}
-
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
 // 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
 // 暂时消失，webui-server 跟着重启就清空 registeredPages，其他插件的侧边栏页面再也回不来。
@@ -1170,12 +1153,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             ws.send(JSON.stringify(cachedUsage));
           } else {
             // 无缓存（服务重启后），请求 agent 重新计算
-            events
-              .emit('token:request', {
-                sessionId: sid,
-                platform: resolveSessionPlatform(sid, new Set(getPlatformNames(caps.platform))),
-              })
-              .catch(() => {});
+            events.emit('token:request', { sessionId: sid }).catch(() => {});
           }
           return;
         }
@@ -1201,12 +1179,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             .emit('session:compress', { sessionId, reason: 'manual' })
             .then(() => {
               // 压缩完成后重新计算 token 用量并推送给客户端
-              events
-                .emit('token:request', {
-                  sessionId,
-                  platform: resolveSessionPlatform(sessionId, new Set(getPlatformNames(caps.platform))),
-                })
-                .catch(() => {});
+              events.emit('token:request', { sessionId }).catch(() => {});
             })
             .catch(() => {});
           return;
