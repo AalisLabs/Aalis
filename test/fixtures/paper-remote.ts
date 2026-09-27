@@ -2,6 +2,7 @@ import {
   type ArtifactLimits,
   type ArtifactSink,
   type CollectReport,
+  type EgressMode,
   type EgressReport,
   isTerminalRun,
   RemoteAgentError,
@@ -70,6 +71,8 @@ export class ScriptedRemote implements RemoteAgentProvider {
   readonly outputs = new Map<string, Array<{ rel: string; data: Uint8Array }>>();
   /** 代理 id → 工程包；有的代理 collectArtifacts 会交出，bundleLink 会给链接 */
   readonly bundles = new Map<string, Uint8Array>();
+  /** egress() 报告的出网方式（来源恒为 owner 配置） */
+  egressMode: EgressMode = 'allowlist';
   /** 每轮的费用；返回 undefined 即暂缺 */
   costOf: (runId: string) => RunCost | undefined = () => ({
     chargedCents: 10,
@@ -135,7 +138,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
   // ----- RemoteAgentProvider -----
 
   async egress(): Promise<EgressReport> {
-    return { mode: 'allowlist', source: 'owner-config' };
+    return { mode: this.egressMode, source: 'owner-config' };
   }
 
   ready(signal: AbortSignal): Promise<{ accountKey: string }> {

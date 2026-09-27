@@ -28,6 +28,7 @@ const MB = 1024 * 1024;
 const NUMBER_DEFAULTS = {
   maxRunMinutes: 20,
   sendHtmlMaxMB: 5,
+  sendMediaMaxMB: 10,
   pendingHintHours: 24,
   reconcileMinutes: 60,
   taskRetentionDays: 30,
@@ -78,6 +79,15 @@ export const configSchema: ConfigSchema = {
     label: '单个网页的发送上限（MB）',
     default: NUMBER_DEFAULTS.sendHtmlMaxMB,
     min: 1,
+  },
+  sendMediaMaxMB: {
+    type: 'number',
+    label: '图片与视频的发送上限（MB）',
+    default: NUMBER_DEFAULTS.sendMediaMaxMB,
+    min: 1,
+    description:
+      'paper_send 发图片与视频的大小上限。onebot 出站只把不超过 10 MiB 的媒体内联发出，更大的改交宿主路径，' +
+      'NapCat 在容器里时读不到、发不出',
   },
   pendingHintHours: {
     type: 'number',
@@ -251,6 +261,8 @@ export interface PaperConfig {
   /** paper_send 能否发单个 HTML */
   sendHtml: boolean;
   sendHtmlMaxBytes: number;
+  /** paper_send 发图片与视频的大小上限 */
+  sendMediaMaxBytes: number;
   pendingHintHours: number;
   reconcileMinutes: number;
   taskRetentionDays: number;
@@ -391,6 +403,9 @@ export function readConfig(raw: Readonly<Record<string, unknown>>, logger: Logge
     sendHtml: raw.sendHtml !== false,
     sendHtmlMaxBytes: Math.floor(
       readPositive(raw.sendHtmlMaxMB, NUMBER_DEFAULTS.sendHtmlMaxMB, 'sendHtmlMaxMB', logger) * MB,
+    ),
+    sendMediaMaxBytes: Math.floor(
+      readPositive(raw.sendMediaMaxMB, NUMBER_DEFAULTS.sendMediaMaxMB, 'sendMediaMaxMB', logger) * MB,
     ),
     pendingHintHours: readPositive(raw.pendingHintHours, NUMBER_DEFAULTS.pendingHintHours, 'pendingHintHours', logger),
     reconcileMinutes: readPositive(raw.reconcileMinutes, NUMBER_DEFAULTS.reconcileMinutes, 'reconcileMinutes', logger),
