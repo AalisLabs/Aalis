@@ -127,9 +127,9 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 新包：
 
-- `@aalis/api-remote-agent` 0.1.0：`remote-agent` 服务描述符与提供者接口 `RemoteAgentProvider`；`resolveRemoteAgent` 按提供者实例 id 精确取，取不到返回 `undefined`，不回落到偏好胜者或别的提供者；`egressWithin`（出网判定，`unknown` 按 `open` 算）、`isTerminalRun`、`RemoteAgentError` 与 `isRemoteAgentError`（按 `name` 认，装有两份契约包时也认得）。
-- `@aalis/plugin-remote-agent-cursor` 0.1.0：Cursor Cloud Agents API v1 提供者，可多实例。激活时不连网；首次 `ready()` 校验鉴权与模型参数（参数须写全并等于 `/v1/models` 的某个变体，默认 `grok-4.7`、`reasoning_effort: high`、`context: 256k`、`fast: 'false'`）；账号标识取 `/v1/me` 的 `userId` 的哈希；出网方式取自配置 `egressMode`（默认 `unknown`），标「未核实」。key 只在宿主进程里用，错误与日志去掉 key 片段与预签名链接的查询串；成品经 `safeFetch` 下载、边读边计字节。
-- `@aalis/plugin-paper` 0.1.0：白纸枢纽。工具 `paper_task`、`paper_status`、`paper_cancel`、`paper_send`（`paper` 分组，不声明 risk）；运行驱动（每块白纸一条队列、先落盘再调远端、开轮认领、单轮时长计时器、对账与自唤醒处置、换新、闲置归档、定期清空、重启接回）；完成通知与待交付提示；WebUI 白纸页（白纸、任务、成品、账本、告警）与诊断项 `paper.config`。账本在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。
+- `@aalis/api-remote-agent` 0.1.0：`remote-agent` 服务描述符与提供者接口 `RemoteAgentProvider`；`resolveRemoteAgent` 按提供者实例 id 精确取，取不到返回 `undefined`，不回落到偏好胜者或别的提供者；`egressWithin`（出网判定，`unknown` 按 `open` 算）、`artifactRelProblem`（成品相对路径的净化规则，提供者与写入口共用）、`isTerminalRun`、`RemoteAgentError` 与 `isRemoteAgentError`（按 `name` 认，装有两份契约包时也认得）。
+- `@aalis/plugin-remote-agent-cursor` 0.1.0：Cursor Cloud Agents API v1 提供者，可多实例。激活时不连网；首次 `ready()` 校验鉴权与模型参数（参数须写全并等于 `/v1/models` 的某个变体，默认 `grok-4.7`、`reasoning_effort: high`、`context: 256k`、`fast: 'false'`）；账号标识取 `/v1/me` 的 `userId` 的哈希；出网方式取自配置 `egressMode`（默认 `unknown`），标「未核实」。key 只在宿主进程里用，错误与日志去掉 key 片段与查询串；成品经 `safeFetch` 下载、边读边计字节，单个成品取不到下载链接时只拒收这一件。列代理、列轮次的响应带下一页标记时抛 `unavailable`（翻页方式未实测，不把第一页当完整列表）。
+- `@aalis/plugin-paper` 0.1.0：白纸枢纽。工具 `paper_task`、`paper_status`、`paper_cancel`、`paper_send`（`paper` 分组，不声明 risk）；运行驱动（每块白纸一条队列、出队时重跑受理的核对、先落盘再调远端、开轮认领、单轮时长计时器、对账与自唤醒处置、删代理前结清费用（取不到的按估计入账）、换新、闲置归档、定期清空、重启接回）；完成通知（失败原因只写宿主撰写的类别）与待交付提示；WebUI 白纸页（白纸、任务、成品、账本、告警；任务表可取消、放弃跟踪、核销预留）与诊断项 `paper.config`。账本在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。
 
 契约新增：
 
@@ -155,7 +155,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 - plugin-adapter-onebot：
   - `kind: 'file'` 的出站附件在文字与消息段之后上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`；内容只用 `base64://`，超过 10 MiB 的 storage 文件、超限的 http 链接拒发；文件名去掉 `/` 与 `\`；上传不重试；v12 连接不支持。适配器对象新增非标准扩展方法 `uploadFile`（不进 `@aalis/api-platform` 契约）。此前 file 附件只打 debug 后跳过。
   - 视频不超过 10 MiB 时改为 `base64://` 内联（此前 storage 视频交宿主的 `file://` 路径，http 视频原样交 URL，实现端在容器里时读不到宿主路径）；http 视频现在由 Aalis 流式下载，超过上限的仍交原 URL。storage 附件先量大小再读，超限的不整份读进内存。
-  - 图片、语音、视频内联前按文件头核对格式，不符就拒发并记 warn（见下文破坏性变更）。
+  - 图片、语音、视频内联前按文件头核对格式，不符就拒发并记 warn（见下文破坏性变更）；超过 10 MiB 的 storage 媒体改交宿主路径之前同样核对（按字节区间读出开头）。
   - 投递失败记录（`outbound-delivery-failed`，只对 `source: 'agent'`）覆盖文字发送、文件物化与上传三处失败，每条出站消息至多一条；正文由「经多次重试仍未能送达」改为「(可能包含图片、媒体或文件)未能送达对方」。媒体附件物化失败或文件头不符只记 warn，不写这条记录。
 - plugin-webui-client：会话页新增「白纸与远端」一组，每项显示继承值与来源（默认、平台档或父会话），`remoteAgentTypes` 来自平台档时显示告警；取继承值改调 `getInheritance`。声明式表格支持文件单元格：只有 PNG、JPEG、GIF、WebP 能在页面里查看，其余只能下载，下载一律按 `application/octet-stream` 保存。
 

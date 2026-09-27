@@ -18,7 +18,7 @@
 interface RemoteAgentProvider {
   readonly transcriptIsolation: 'shared' | 'per-agent';
   readonly layout: WorkspaceLayout;
-  egress(): EgressReport;
+  egress(signal: AbortSignal): Promise<EgressReport>;
   ready(signal: AbortSignal): Promise<{ accountKey: string }>;
   mintAgentId(): string;
   createAgent(req: { agentId: string; name: string; prompt: string }, signal: AbortSignal): Promise<{ runId: string }>;
@@ -45,16 +45,17 @@ interface RemoteAgentProvider {
   - `outDir`：交付目录，每件任务的成品放在 `${outDir}/<任务 id>/`；
   - `bundlePath`：每轮结束时的工程包路径；
   - `policyNotes`：提供者特有的约束，逐条写进前言，如不改会影响以后各轮的规则文件、不用定时唤醒工具。
-- `egress()`：提供者报告的出网方式，见下文「出网」。
-- `ready()`：懒连接，做鉴权与模型参数校验。失败抛 `unavailable` 并写明原因，成功结果可以缓存。`accountKey` 是远端账号的不透明标识（哈希）：同一账号的实例返回同一个值，值里不含账号原文。
+- `egress()`：提供者报告的出网方式，见下文「出网」。取自 owner 配置的立即返回；要问远端接口或执行环境的按次读取，结果由提供者自己缓存。失败时消费方按取不到处理，不当作放行。
+- `ready()`：懒连接，做鉴权与模型参数校验。失败抛 `unavailable` 并写明原因。成功结果由提供者缓存，消费方可以频繁调用（受理、出队与诊断都直接调它，不另设缓存）。`accountKey` 是远端账号的不透明标识（哈希）：同一账号的实例返回同一个值，值里不含账号原文。
 - `createAgent`：用消费方先 `mintAgentId()` 得到的 id 建代理，返回首轮的 `runId`。同一个 `agentId` 重试是安全的，消费方可以先把 id 记进账本再调用。
 - `startRun`：在已有代理上开新一轮。它不幂等：结果未知时（读超时、临时故障）重发可能开出两轮，消费方应先 `listRuns` 认领。
 - `followRun`：跟踪一轮直到终态，最后一项必为 `{ kind: 'terminal' }`。断线重连、事件流过期后改为轮询都在提供者内部处理；`progress` 的 `eventId` 供消费方落盘，重启后作为 `lastEventId` 续传。
 - `cancelRun`：这一轮已到终态时视为成功。
 - `runCost`：返回 `undefined` 表示费用暂缺（远端还没结算），消费方应稍后重试。
-- `collectArtifacts`：只取这件任务交付目录下的文件与工程包，去掉前缀后交给消费方的写入口 `sink`。路径不合格、超过上限的文件记进 `rejected`，不中断其余文件。
-- `bundleLink`：工程包的临时下载链接，供换新时交给新代理；没有工程包返回 `undefined`。
+- `collectArtifacts`：只取这件任务交付目录下的文件与工程包，去掉前缀后交给消费方的写入口 `sink`。路径不合格、超过上限、取不到下载链接的文件记进 `rejected`，不中断其余文件；临时故障与限流照抛，由消费方整次重来。取回了哪些文件由写入口自己记着。
+- `bundleLink`：旧代理工程包的位置，写进新代理的前言、由新代理自己取得：新代理能访问的链接（如临时下载链接），或执行环境不出网时新代理能读的路径。没有工程包返回 `undefined`。
 - `deleteAgent`：代理不存在时视为成功。
+- `listRuns`、`listAgents`：消费方对账与认领都依赖列表完整；提供者要么翻到底，要么在拿不全时抛错，不能只交出第一页。
 - `listAgents`：列出账号下的代理；提供者可以按 owner 配置排除 owner 自管的代理，消费方对账时不把它们当成账本外的代理。
 
 ## 类型
@@ -68,11 +69,11 @@ interface EgressReport {
 }
 
 type RunStatus = 'creating' | 'running' | 'finished' | 'error' | 'cancelled' | 'expired';
-interface RunState { runId: string; status: RunStatus; durationMs?: number; resultText?: string }
+interface RunState { runId: string; status: RunStatus; resultText?: string }
 type RunProgress =
-  | { kind: 'progress'; eventId: string; label: string }
+  | { kind: 'progress'; eventId: string }
   | { kind: 'terminal'; state: RunState };
-interface RunCost { chargedCents: number; inputTokens: number; cacheReadTokens: number; outputTokens: number }
+interface RunCost { chargedCents: number; inputTokens: number; cacheReadTokens: number }
 
 interface ArtifactLimits { maxFileBytes: number; maxRunBytes: number; maxRunFiles: number; maxBundleBytes: number }
 interface ArtifactSink {
@@ -80,16 +81,14 @@ interface ArtifactSink {
   putBundle(data: Uint8Array): Promise<void>;
 }
 interface CollectReport {
-  files: Array<{ rel: string; sizeBytes: number }>;
-  bundle?: { sizeBytes: number };
   rejected: Array<{ path: string; reason: string }>;
 }
 
-interface RemoteAgentSummary { agentId: string; name: string; archived: boolean }
+interface RemoteAgentSummary { agentId: string; name: string }
 interface RemoteRunSummary { runId: string; status: RunStatus }
 ```
 
-`ArtifactSink` 由消费方提供。写入口不只信提供者：它对 `rel` 再做一次净化与上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。
+`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。`inputTokens` 与 `cacheReadTokens` 供消费方判断上下文是否过长。
 
 ### 出网
 
@@ -125,6 +124,7 @@ class RemoteAgentError extends Error {
 ```ts
 function resolveRemoteAgent(source: ServiceRef<RemoteAgentProvider>, type: string): RemoteAgentEntry | undefined;
 function egressWithin(report: EgressReport, ceiling: EgressCeiling): boolean;
+function artifactRelProblem(rel: string): string | undefined;
 function isTerminalRun(status: RunStatus): boolean;
 function isRemoteAgentError(err: unknown): err is RemoteAgentError;
 
@@ -133,6 +133,7 @@ interface RemoteAgentEntry { instance: RemoteAgentProvider; contextId: string; l
 
 - `resolveRemoteAgent`：在 `source.all()` 里找 `contextId` 与 `type` 完全相同的那一项。找不到返回 `undefined`，不回落到 `current`、`all()[0]` 或别的提供者，也不按前缀匹配。
 - `egressWithin`：报告的出网方式是否不超过上限，`unknown` 按 `open` 算；`source` 不影响判定。认不出的取值一律判为超过。
+- `artifactRelProblem`：成品相对路径（去掉交付目录前缀之后）能否交给写入口，不能时返回原因：空路径、绝对路径、反斜杠、控制字符与不可见的格式字符、`..`、空段与 `.` 段。提供者与写入口都按它判定。
 - `isTerminalRun`：`finished`、`error`、`cancelled`、`expired` 为终态；认不出的状态判为非终态。
 - `isRemoteAgentError`：按 `name` 认提供者抛出的 `RemoteAgentError`。进程里装有两份本包时，提供者抛出的是它解析到的那份类，换一份做 `instanceof` 不成立，消费方应当用这个函数。
 
