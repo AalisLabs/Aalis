@@ -167,11 +167,14 @@ export default definePlugin({
       return { value: `${formatLocalTime(last.generatedAt)} — ok=${s.ok} warn=${s.warn} error=${s.error}` };
     });
 
-    // 注册 /doctor 命令 —— chat 与 CLI 通用入口
-    commands.command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）').action(async () => {
-      const report = await registry.runChecks();
-      return formatReport(report);
-    });
+    // 注册 /doctor 命令 —— chat 与 CLI 通用入口。受限（等级 2）：报告带存储根的宿主路径、
+    // 插件报错原文（其中可能有内网地址与端口），不该让群里人人都能看到
+    commands
+      .command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）', { visibility: 'restricted' })
+      .action(async () => {
+        const report = await registry.runChecks();
+        return formatReport(report);
+      });
   },
 });
 

@@ -141,11 +141,11 @@ export interface LLMModel {
    *
    * - **远端动态发现型** provider（Ollama / OpenAI）应实现：重新拉取模型列表端点（如 `{baseUrl}/models`）等
    *   并合并 `customModels`、按 model id 增删 `'llm'` entries。
-   * - **静态契约型** provider（如 DeepSeek 单 model）可不实现：webui 端检测到无 refresh
-   *   就不显示"刷新"按钮。
-   * - 同一 provider 下所有 model entries 共享同一份 refresh 闭包；webui 按 contextId
-   *   找到任一 entry 调一次即可。
-   * - **失败语义**：发现失败（不可达、超时、非 2xx、响应不是模型列表）时抛错，消息带原因；已注册的
+   * - **静态契约型** provider（如 DeepSeek）可不实现。webui 的"刷新"按钮照常显示，对没有 refresh 的
+   *   provider 由 webui-server 返回 404，提示该 provider 不支持运行时刷新。
+   * - 同一 provider 下所有 model entries 共享同一份 refresh 闭包；webui 按 provider 的 contextId（即各 entry 的
+   *   `providerId`，不是 entry 自己的 contextId `<provider>/<model>`）找到该 provider 的任一 entry，调一次即可。
+   * - **失败语义**：发现失败（不可达、超时、非 2xx、响应不是 JSON 或不是模型列表）时抛错，消息带原因；已注册的
    *   entries 原样保留、不增删——不得把失败当成远端没有模型而注销自动发现的条目。经停用或停机中止时同样抛错。
    */
   refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;

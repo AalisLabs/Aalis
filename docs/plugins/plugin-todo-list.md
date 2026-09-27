@@ -22,6 +22,7 @@ export default definePlugin({
     tools: optional(tools),
     events,
     config,
+    logger,
     memory: optional(memory),
     webui: optional(webuiServer),
     hooks: optional(hooks),

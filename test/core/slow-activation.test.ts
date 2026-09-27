@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   App,
   type AppOptions,
@@ -18,7 +18,7 @@ import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 激活不阻塞与可取消（C1）：
-// - 激活超过 slowThresholdMs 仍未完成：warn 点名、转入后台，flight 接着激活后面的插件，此后按同一间隔提醒；
+// - 激活超过 slowThresholdMs 仍未完成：warn 点名一次、转入后台，flight 接着激活后面的插件，不留提醒定时器；
 //   后台期间它登记的服务不对外，依赖方保持 pending；落定后成功转 active 并上线服务、失败进 error，并补一次重算。
 // - lifecycle.signal：在飞初始化在关闭计划冻完后立即 abort，其余在各自收尾段入口 abort；
 //   停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件，abort 后至多再等 disposeTimeoutMs，到期记 error。
@@ -98,9 +98,6 @@ function world(options: Partial<AppOptions> = {}) {
   return { app, host, trace, at, status };
 }
 
-const reminders = (w: ReturnType<typeof world>, id: string) =>
-  w.at('warn').filter(text => text.startsWith(`插件 "${id}" 仍在激活`));
-
 describe('慢激活转入后台', () => {
   it('永不返回的 apply 不挡其余插件与启动：登记、start、idle 都在阈值处返回，慢插件以 activating + slow 可见', async () => {
     const w = world();
@@ -125,22 +122,54 @@ describe('慢激活转入后台', () => {
     await within(w.app.start(), 2000, 'start');
   });
 
-  it('后台期间按同一间隔提醒「仍在激活」，经过时长是阈值的倍数；落定后不再提醒', async () => {
-    const w = world({ slowThresholdMs: 20 });
-    const gate = deferred();
-    releases.push(gate.resolve);
-    await w.app.plugin(definePlugin({ name: 'stuck', apply: () => gate.promise }));
-    await until(() => reminders(w, 'stuck').length >= 2, '两次提醒');
-    expect(reminders(w, 'stuck').slice(0, 2)).toEqual([
-      '插件 "stuck" 仍在激活（已超过 40ms）',
-      '插件 "stuck" 仍在激活（已超过 60ms）',
-    ]);
-    gate.resolve();
-    await until(() => w.status('stuck')?.state === 'active', '落定为 active');
-    expect(w.status('stuck')?.slow).toBeUndefined();
-    const count = reminders(w, 'stuck').length;
-    await sleep(80);
-    expect(reminders(w, 'stuck')).toHaveLength(count);
+  it('转入后台只告警一次、不留定时器：没调 stop 的宿主不会被它拖住退出', async () => {
+    vi.useFakeTimers();
+    try {
+      const w = world({ slowThresholdMs: 20 });
+      const gate = deferred();
+      releases.push(gate.resolve);
+      const registering = w.app.plugin(definePlugin({ name: 'stuck', apply: () => gate.promise }));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(vi.getTimerCount(), '阈值前挂着阈值定时器').toBe(1);
+      await vi.advanceTimersByTimeAsync(10);
+      await registering;
+      expect(w.status('stuck')).toMatchObject({ state: 'activating', slow: true });
+      expect(vi.getTimerCount(), '转入后台后不再挂提醒定时器').toBe(0);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(w.at('warn')).toEqual([
+        '插件 "stuck" 激活超过 20ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放',
+      ]);
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(w.status('stuck')?.state).toBe('active');
+      expect(w.status('stuck')?.slow).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('重算逐个激活：多个慢插件的等待按个数累加，排在后面的快插件在 N×阈值后才激活', async () => {
+    vi.useFakeTimers();
+    try {
+      const w = world({ slowThresholdMs: 20 });
+      const ids = ['slow-1', 'slow-2', 'slow-3', 'fast'];
+      const registering = w.app.pluginAll([
+        { definition: definePlugin({ name: 'slow-1', apply: () => hang() }) },
+        { definition: definePlugin({ name: 'slow-2', apply: () => hang() }) },
+        { definition: definePlugin({ name: 'slow-3', apply: () => hang() }) },
+        { definition: definePlugin({ name: 'fast', apply() {} }) },
+      ]);
+      const states = () => ids.map(id => (w.status(id)?.slow ? 'slow' : w.status(id)?.state));
+      await vi.advanceTimersByTimeAsync(20);
+      expect(states()).toEqual(['slow', 'activating', 'pending', 'pending']);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(states()).toEqual(['slow', 'slow', 'activating', 'pending']);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(states()).toEqual(['slow', 'slow', 'slow', 'active']);
+      await registering;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('后台期间它登记的服务不对依赖方开放：依赖方保持 pending，动态查询与服务名单都看不到', async () => {
@@ -571,7 +600,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     expect(w.trace.filter(t => t === 'loaded:twice')).toHaveLength(1);
   });
 
-  it('停机有界：不响应的后台激活与在飞激活都在阈值 + 宽限量级内收场；之后不再提醒', async () => {
+  it('停机有界：不响应的后台激活与在飞激活都在阈值 + 宽限量级内收场', async () => {
     const w = world({ slowThresholdMs: 40, disposeTimeoutMs: 40 });
     const secondEntered = deferred();
     const registering = w.app.pluginAll([
@@ -594,19 +623,6 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
       '插件 "inflight" 未在宽限内停止（abort 后收尾段又等了 40ms，初始化仍未落定，不再等待）',
       '插件 "background" 未在宽限内停止（abort 后收尾段又等了 40ms，初始化仍未落定，不再等待）',
     ]);
-    const count = w.at('warn').filter(text => text.includes('仍在激活')).length;
-    await sleep(120);
-    expect(w.at('warn').filter(text => text.includes('仍在激活'))).toHaveLength(count);
-  });
-
-  it('两轮提醒之间停用后台激活：此后不再提醒', async () => {
-    const w = world({ slowThresholdMs: 20, disposeTimeoutMs: 20 });
-    await w.app.plugin(definePlugin({ name: 'deaf', apply: () => hang() }));
-    await until(() => reminders(w, 'deaf').length >= 1, '第一次提醒');
-    await w.app.plugins.disable('deaf');
-    const count = reminders(w, 'deaf').length;
-    await sleep(100);
-    expect(reminders(w, 'deaf')).toHaveLength(count);
   });
 
   it('在飞激活（未到阈值）被停机接手：flight 不陪着等 apply，stop 远早于阈值推进', async () => {

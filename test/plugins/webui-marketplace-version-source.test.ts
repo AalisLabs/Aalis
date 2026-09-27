@@ -78,7 +78,11 @@ afterEach(() => {
   rmSync(project, { recursive: true, force: true });
 });
 
-function mount(packageManager: Pick<PackageManagerService, 'registry' | 'serviceDependents'> | undefined) {
+/** `local`：本地扫描出的包名（检索源不可达时的降级列表从这里取） */
+function mount(
+  packageManager: Pick<PackageManagerService, 'registry' | 'serviceDependents'> | undefined,
+  local: string[] = [],
+) {
   const warns: string[] = [];
   const logger: Logger = {
     debug() {},
@@ -98,7 +102,7 @@ function mount(packageManager: Pick<PackageManagerService, 'registry' | 'service
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     SEARCH,
-    () => new Map(),
+    () => new Map(local.map(name => [name, { deps: [] }])),
     () => {},
   );
   const get = (path: string, query: Record<string, string> = {}) => invoke(`GET ${path}`, { query });
@@ -141,6 +145,19 @@ describe('市场的版本来源与安装源一致', () => {
     const { packages } = (await get('/api/marketplace', { q: 'vector' })).body as { packages: Card[] };
     expect(packages.map(p => p.name)).toEqual(['zz-plugin-a']);
     expect(requested).not.toContain(`${INSTALL}/zz-plugin-c`);
+  });
+
+  it('检索源不可达：降级为本地已装列表，同样按搜索词过滤', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(async () => {
+      throw new TypeError('fetch failed');
+    });
+    const { get } = mount(installSource, ['zz-plugin-a', '@zz/api-b']);
+    const { packages, warning } = (await get('/api/marketplace', { q: 'plugin-a' })).body as {
+      packages: Card[];
+      warning?: string;
+    };
+    expect(warning).toBe('无法连接 npm 仓库（fetch failed），暂时只能管理本地已装插件');
+    expect(packages.map(p => p.name)).toEqual(['zz-plugin-a']);
   });
 
   it('安装源查不到：不给最新版与可更新，响应带 warning 说明，并记一条告警', async () => {

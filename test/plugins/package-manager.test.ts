@@ -4,7 +4,15 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { packageManager } from '../../packages/api-package-manager/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
-import { type App, definePlugin, defineService, lifecycle, provide, services } from '../../packages/core/src/index.js';
+import {
+  type App,
+  definePlugin,
+  defineService,
+  lifecycle,
+  type PluginState,
+  provide,
+  services,
+} from '../../packages/core/src/index.js';
 import packageManagerPlugin, {
   buildUpdateSpecs,
   createPackageManager,
@@ -20,6 +28,7 @@ import packageManagerPlugin, {
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
 import { hostedApp } from '../fixtures/app.js';
+import { deferred } from '../helpers/deferred.js';
 
 // 从被测模块的依赖契约推导类型，避免测试直接 import api 包（knip unlisted-dep）
 type ProcessService = PackageManagerDeps['proc'];
@@ -396,6 +405,55 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(
       warns.some(w => w.includes('plugin-mismatch') && w.includes('other-name') && w.includes('定义的 name')),
     ).toBe(true);
+  });
+
+  const entry = (instanceId: string, state: PluginState, error?: string) => ({
+    name: '@scope/foo',
+    instanceId,
+    state,
+    error,
+    provides: [],
+    requiredServices: [],
+  });
+
+  it('目标已进注册表、但主实例激活失败 → 仍回 ok（包已装上），message 按实际状态说明原因', async () => {
+    const h = makeHarness({ registered: ['@scope/foo'], json: { [rootPkg]: {} } });
+    h.deps.pluginStatus = () => [entry('@scope/foo', 'error', '缺少配置项 apiKey')];
+    expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+      ok: true,
+      message: '已安装 @scope/foo，但激活失败，已转为 error 态（缺少配置项 apiKey）',
+    });
+
+    // 只看主实例：同名的后缀实例出错不算这次安装的结果
+    h.deps.pluginStatus = () => [entry('@scope/foo:b', 'error', '坏配置'), entry('@scope/foo', 'active')];
+    expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+      ok: true,
+      message: '已安装并加载: @scope/foo',
+    });
+  });
+
+  it('读主实例状态前等重算落定；落定后仍在后台激活或在等依赖的，如实说明尚未激活', async () => {
+    const h = makeHarness({ registered: ['@scope/foo'], json: { [rootPkg]: {} } });
+    // rescan 撞上在飞的重算时登记只排队：落定之前主实例是 pending，落定之后才转 error
+    let settled = false;
+    h.deps.idle = async () => {
+      settled = true;
+    };
+    h.deps.pluginStatus = () => [
+      settled ? entry('@scope/foo', 'error', '缺少配置项 apiKey') : entry('@scope/foo', 'pending'),
+    ];
+    expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+      ok: true,
+      message: '已安装 @scope/foo，但激活失败，已转为 error 态（缺少配置项 apiKey）',
+    });
+
+    for (const [state, message] of [
+      ['activating', '已安装 @scope/foo，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准'],
+      ['pending', '已安装 @scope/foo，尚未激活，正在等待 required 依赖满足'],
+    ] as const) {
+      h.deps.pluginStatus = () => [entry('@scope/foo', state)];
+      expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({ ok: true, message });
+    }
   });
 });
 
@@ -835,8 +893,14 @@ describe('uninstall', () => {
   it('卸掉某服务的唯一提供者会打断 required 它的插件 → 服务层拒绝，不跑 npm', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
     h.deps.pluginStatus = () => [
-      { name: '@scope/foo', state: 'active', provides: ['llm'], requiredServices: [] },
-      { name: '@scope/agent', state: 'active', provides: ['agent'], requiredServices: ['llm'] },
+      { name: '@scope/foo', instanceId: '@scope/foo', state: 'active', provides: ['llm'], requiredServices: [] },
+      {
+        name: '@scope/agent',
+        instanceId: '@scope/agent',
+        state: 'active',
+        provides: ['agent'],
+        requiredServices: ['llm'],
+      },
     ];
     const pm = createPackageManager(h.deps);
     expect(pm.serviceDependents('@scope/foo'), '预警查询与闸同一份判定').toEqual(['@scope/agent']);
@@ -851,9 +915,21 @@ describe('uninstall', () => {
   it('服务还有别的提供者 → 服务依赖者闸放行', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
     h.deps.pluginStatus = () => [
-      { name: '@scope/foo', state: 'active', provides: ['llm'], requiredServices: [] },
-      { name: '@scope/other-llm', state: 'active', provides: ['llm'], requiredServices: [] },
-      { name: '@scope/agent', state: 'active', provides: ['agent'], requiredServices: ['llm'] },
+      { name: '@scope/foo', instanceId: '@scope/foo', state: 'active', provides: ['llm'], requiredServices: [] },
+      {
+        name: '@scope/other-llm',
+        instanceId: '@scope/other-llm',
+        state: 'active',
+        provides: ['llm'],
+        requiredServices: [],
+      },
+      {
+        name: '@scope/agent',
+        instanceId: '@scope/agent',
+        state: 'active',
+        provides: ['agent'],
+        requiredServices: ['llm'],
+      },
     ];
     expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
   });
@@ -1194,6 +1270,89 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       await app.plugins.idle();
       expect(app.plugins.getPlugin('other-name')?.state, '定义 name 已落账').toBe('active');
       expect(r.ok, `市场就位判据应对齐运行时身份，实际 message=${r.message}`).toBe(true);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  it('安装时另有重算在飞：回执等它落定再读主实例状态，报出之后的激活失败', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'aalis-pm-inflight-'));
+    try {
+      const pkg = 'zz-pm-inflight';
+      writeFileSync(
+        join(proj, 'package.json'),
+        JSON.stringify({ name: 'host', private: true, dependencies: { [pkg]: '1.0.0' } }),
+      );
+      const dir = join(proj, 'node_modules', pkg);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: pkg, version: '1.0.0', main: 'index.mjs', keywords: ['aalis-plugin'] }),
+      );
+      writeFileSync(
+        join(dir, 'index.mjs'),
+        `export default { name: "${pkg}", apply() { throw new Error("缺少配置项 apiKey"); } };\n`,
+      );
+
+      const { app, store } = hostedApp({ name: 'PM' });
+      productionApps.push(app);
+      const host = app.bind({ provide, services });
+      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
+      const rescanned = deferred();
+      host.provide(pluginSource, {
+        rescan: async () => {
+          const loaded = await discovery.rescan();
+          rescanned.resolve();
+          return loaded;
+        },
+      });
+      host.provide(defineService<object>('process'), {
+        readExternalFile: async (abs: string) => readFileSync(abs),
+        execFile: async (_cmd: string, args: readonly string[]) => ({
+          stdout: args[0] === 'view' ? '["aalis-plugin"]' : '',
+          stderr: '',
+          code: 0,
+        }),
+        makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
+      });
+      await app.plugins.register(packageManagerPlugin, { projectRoot: proj });
+      await app.plugins.idle();
+      const svc = host.services.get(packageManager);
+      if (!svc) throw new Error('package-manager 未就绪');
+
+      // 让一次重算停在别的插件的 apply 里：rescan 的登记只排队、立即返回
+      const entered = deferred();
+      const gate = deferred();
+      const holding = app.plugin(
+        definePlugin({
+          name: 'zz-pm-holder',
+          async apply() {
+            entered.resolve();
+            await gate.promise;
+          },
+        }),
+        {},
+      );
+      await entered.promise;
+
+      let replied = false;
+      const installing = svc.install(pkg);
+      const mark = () => {
+        replied = true;
+      };
+      installing.then(mark, mark);
+      try {
+        await rescanned.promise;
+        await new Promise(r => setTimeout(r, 20));
+        expect(replied, '重算还在飞：回执要等它落定').toBe(false);
+      } finally {
+        gate.resolve();
+        await holding;
+      }
+      expect(await installing).toEqual({
+        ok: true,
+        message: `已安装 ${pkg}，但激活失败，已转为 error 态（缺少配置项 apiKey）`,
+      });
     } finally {
       rmSync(proj, { recursive: true, force: true });
     }

@@ -7,7 +7,8 @@
 //                          由出站归档监听器在后台描述并入档，让"AI 之前
 //                          发过的图/视频"能被 memory_recall 召回
 //
-// send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）
+// send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
+// 取自存储库的文件发送前读文件头核对格式（见 media-signature.ts）。
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
@@ -15,7 +16,14 @@
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import { createStorageGateway, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
+import {
+  createStorageGateway,
+  isStorageNotFound,
+  isStorageUri,
+  type StorageService,
+  storage,
+  toStorageUri,
+} from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import {
@@ -26,9 +34,7 @@ import {
   type OutgoingMessage,
   WellKnownKinds,
 } from '@aalis/schema-message';
-
-/** 可发送的附件类型。 */
-type MediaKind = 'image' | 'audio' | 'video';
+import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from './media-signature.js';
 
 /** preview_image 单张候选识别等待上限。preview 的目的就是"看清"图，
  *  本地视觉模型（如 33B）单图常需 15-25s，必须给足预算，否则必然超时使 preview 形同虚设。 */
@@ -39,6 +45,8 @@ const ARCHIVE_DESCRIBE_TIMEOUT_MS = 25_000;
 const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
+/** 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）。toStorageUri 会把它的首段当成根名，须先认出来挡在存储库外。 */
+const HOST_ABSOLUTE_PATH = /^(?:\/|[a-zA-Z]:[\\/])/;
 
 // tools 不入激活闸：出站附件归档（outbound:message 监听）只靠 archive / media，
 // 没有工具服务时也该照常挂上；工具登记走注册账本，提供者上线后自动补挂。
@@ -69,23 +77,24 @@ function registerImageSender(caps: Caps): void {
   const { tools, events, logger, media, memory, archive } = caps;
   const storage = createStorageGateway(caps.storage);
 
-  // 把 storage URI（含 ':/'）解析为发送可用的数据串：
-  // - stat 验证存在性
+  // 把存储库内的文件解析为发送可用的数据串：
+  // - 只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、记忆库等非媒体文件）
   // - 可解析本地路径时转 file://（供 daemon 直链），否则保留原 URI
-  async function resolveStorageUri(
-    input: string,
-  ): Promise<{ ok: true; data: string; ref: string } | { ok: false; error: string }> {
-    // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
-    // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
-    const uri = toStorageUri(input);
+  async function loadStorageMedia(
+    uri: string,
+    kind: MediaKind,
+  ): Promise<{ ok: true; data: string } | { ok: false; error: string }> {
+    let head: Uint8Array;
     try {
-      await storage.stat(uri);
-    } catch {
-      return { ok: false, error: `存储资源不存在: ${input}` };
+      head = await storage.readFileRange(uri, 0, MEDIA_HEAD_BYTES);
+    } catch (err) {
+      if (isStorageNotFound(err)) return { ok: false, error: `存储资源不存在: ${uri}` };
+      throw err;
     }
+    const rejection = checkMediaHead(head, kind);
+    if (rejection) return { ok: false, error: rejection };
     const local = await tryResolveLocal(storage, uri);
-    // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致，供 history_ref 回查匹配。
-    return { ok: true, data: local ? `file://${local}` : uri, ref: input };
+    return { ok: true, data: local ? `file://${local}` : uri };
   }
 
   // ── preview_image ─────────────────────────────────────────────────────────
@@ -218,15 +227,30 @@ function registerImageSender(caps: Caps): void {
           refTag = url;
           via = 'url';
         } else if (storageUri) {
-          const resolved = await resolveStorageUri(storageUri);
-          if (!resolved.ok) return JSON.stringify({ error: resolved.error });
-          data = resolved.data;
-          refTag = resolved.ref;
+          // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
+          // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
+          const loaded = await loadStorageMedia(toStorageUri(storageUri), kind);
+          if (!loaded.ok) return JSON.stringify({ error: loaded.error });
+          data = loaded.data;
+          // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致，供 history_ref 回查匹配。
+          refTag = storageUri;
           via = 'storage_uri';
         } else if (historyRef) {
           const found = await resolveHistoryRef(memory, storage, callCtx.sessionId, historyRef);
           if (!found) return JSON.stringify({ error: `未在历史中找到引用: ${historyRef}` });
-          data = found;
+          if (found.startsWith('http://') || found.startsWith('https://')) {
+            data = found;
+          } else {
+            // 本地来源只认存储库内的文件：storage URI 或历史相对路径（data/images/…）。宿主机绝对路径、
+            // file://、data URI 等来源不在存储库内，读不了文件头，无从核对格式
+            const uri = toStorageUri(found);
+            if (HOST_ABSOLUTE_PATH.test(found) || !isStorageUri(uri)) {
+              return JSON.stringify({ error: `引用 ${historyRef} 的来源不在存储库内，无法核对格式，不能发送` });
+            }
+            const loaded = await loadStorageMedia(uri, kind);
+            if (!loaded.ok) return JSON.stringify({ error: loaded.error });
+            data = loaded.data;
+          }
           refTag = historyRef.replace(/^ref:/, '').trim();
           via = 'history_ref';
         } else {
@@ -367,7 +391,10 @@ async function archiveOutboundAttachment(
   }
 }
 
-/** 在最近 200 条消息里寻找匹配 historyRef 的图片来源（取本地路径或 URL）。 */
+/**
+ * 在最近 200 条消息里寻找匹配 historyRef 的媒体来源：http(s) URL、存储库内文件的 storage URI，
+ * 或历史附件里的原样数据串（能否发送由调用方判定）。
+ */
 async function resolveHistoryRef(
   memory: Caps['memory'],
   storage: StorageService,
@@ -384,16 +411,13 @@ async function resolveHistoryRef(
   if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
     return normalized;
   }
-  // file:// ref：原样返回
-  if (normalized.startsWith('file://')) return normalized;
   // storage URI / 历史相对路径：归一化后 stat；命中即用，未命中 fallthrough 到子串匹配。
   // 完整相对路径 `data/images/x.jpg` → `data:/images/x.jpg` 能直接命中；
   // 单段 hash（如 `abc123.jpg`）归一化成 `data:/abc123.jpg` stat 失败，正确回落子串匹配。
   const asUri = normalized.includes(':/') ? normalized : toStorageUri(normalized);
   try {
     await storage.stat(asUri);
-    const local = await tryResolveLocal(storage, asUri);
-    return local ? `file://${local}` : asUri;
+    return asUri;
   } catch {
     // fallthrough 到历史子串匹配
   }

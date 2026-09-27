@@ -102,8 +102,8 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     expect(JSON.parse(payloads[1] ?? '{}').users['onebot:alice'].level).toBe(-5);
   });
 
-  // 写链回调里的上报本身也会失败：拒绝值转不成字符串（null 原型对象），或日志订阅者同步抛错。
-  // 链一旦停在 rejected，flushed() 抛、此后的写不再发出，load 收尾那次无人等待的保存还会成为未处理的拒绝。
+  // 写链回调里的上报本身也会失败：拒绝值转不成字符串（null 原型对象），或宿主经 AppOptions.logger 注入的
+  // logger 抛错。链一旦停在 rejected，flushed() 抛、此后的写不再发出，load 收尾那次无人等待的保存还会成为未处理的拒绝。
   it('写失败的拒绝值转不成字符串：照样记 error、置失败标记，flushed() 不抛', async () => {
     const errors: unknown[][] = [];
     const logger = {
@@ -131,7 +131,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     expect(errors, '写失败没有记下 error').toHaveLength(1);
   });
 
-  it('日志订阅者同步抛错：写成功与写失败的上报都不让链停在拒绝', async () => {
+  it('宿主注入的 logger 抛错：写成功与写失败的上报都不让链停在拒绝', async () => {
     const payloads: string[] = [];
     let failing = false;
     const storage = {

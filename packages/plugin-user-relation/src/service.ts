@@ -130,7 +130,7 @@ export class RelationService {
   // 豁免路径：facade 新建/强化、renameNode 等「先单点读活文档再改写」的读改写路径；
   // evictByQuota 内 decay 回写 rewriteWeights（其快照在本函数自身删除动作之前 fresh 加载，只对本函数
   // 自身的删除无复活窗；与清空交叠（回写中开始清空，或清空进行中开始回写）时按 RelationStore.clearGeneration
-  // 停写，仅清空提交当口正在落笔的那一条可能写回；其它并发删除仍可能被写回）。
+  // 停写，已发出的那一条由清空等它落定再删；其它并发删除仍可能被写回）。
   private async writeBackPersonIfLive(node: PersonNode, patch: Partial<PersonNode>): Promise<boolean> {
     const live = await this.store.getPerson(node.platform, node.userId);
     if (!live) return false;
@@ -1060,9 +1060,10 @@ export class RelationService {
    * 走 store 的单次批量提交（原子性按后端分档，见 RelationStore.clearAll），全程只读一次全图。
    * 逐节点级联删是等价的但代价差三个量级：
    * 每次级联付 2 次全图读，实测生产图 1066 个节点即 2132 次 × 中位 177ms ≈ 6 分钟。
+   * 读不出的条目一并删除并计入条数，由 logger 记下（见 RelationStore.clearAll）。
    */
-  clearAll(): Promise<number> {
-    return this.store.clearAll();
+  clearAll(logger: Pick<Logger, 'info'>): Promise<number> {
+    return this.store.clearAll(logger);
   }
 
   /**

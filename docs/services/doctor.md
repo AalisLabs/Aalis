@@ -93,7 +93,7 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
 
-`plugins.status` 在插件管理服务在场时产出四条结果：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因，或停用、重启、后台激活的 required 依赖下线时「未在宽限内停止」；后者依赖恢复后不自动重试，需 `enable`）、`plugins.pending`（逐个列出实例缺少的 required 服务，判据与 runtime 启动收敛后的「依赖未满足」告警相同；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`）与 `plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目；有则 warn）。后台激活的插件提供的服务在它完成前不对外，依赖它的插件会同时出现在 `plugins.pending` 里。缺的服务若由某个仍在激活中（含已转入后台）的插件声明提供，不算缺少，列为「等待 <实例> 激活完成」；runtime 的启动告警按同一规则区分。
+`plugins.status` 在插件管理服务在场时产出四条结果：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因；停用、重启、后台激活的 required 依赖下线时「未在宽限内停止」；或初始化期间 required 依赖反复缺失时「自动重试未收敛，已停止」。后两者依赖恢复后不自动重试，需 `enable` 或 `bounce`）、`plugins.pending`（逐个列出实例缺少的 required 服务，判据与 runtime 启动收敛后的「依赖未满足」告警相同；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`）与 `plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目；有则 warn）。后台激活的插件提供的服务在它完成前不对外，依赖它的插件会同时出现在 `plugins.pending` 里。缺的服务若由某个仍在激活中（含已转入后台）的插件声明提供，不算缺少，列为「等待 <实例> 激活完成」；runtime 的启动告警按同一规则区分。
 
 ---
 
@@ -248,7 +248,7 @@ import type {} from '@aalis/api-doctor';   // 仅引入事件类型增强
 events.on('doctor:updated', () => refresh());
 ```
 
-报告有两个入口。聊天 / CLU 走 `/doctor` 命令，输出经 `formatReport` 按 level 分组排版；WebUI 走 doctor 页面的 `runChecks` / `getReport` / `getLastRunAt` 三个 action。
+报告有两个入口。聊天 / CLI 走 `/doctor` 命令（受限指令，需要等级 2，见第 6 节），输出经 `formatReport` 按 level 分组排版；WebUI 走 doctor 页面的 `runChecks` / `getReport` / `getLastRunAt` 三个 action。
 
 ---
 
@@ -258,8 +258,9 @@ events.on('doctor:updated', () => refresh());
 `run` 在注册方的闭包里执行，能力等于注册插件所能做的一切，doctor 不会替你降权。`runChecks` 由 `/doctor` 命令或 WebUI 触发，本质是「以触发者身份跑一遍所有已注册探测」。因此不要在 `run` 里做带副作用或危险的操作，它应当是只读探测。storage 的 `storage.roots` 检查只写一个临时探针文件、随即删除，这是探测可写性的克制做法。
 :::
 
+- `/doctor` 是受限指令（`visibility: 'restricted'`）：需要等级 2，不需要确认；owner 不受等级限制（本机 CLI 与 WebUI 的 `console` 身份即 owner）。未装或未启用 `@aalis/plugin-authority` 时指令没有执行守卫，受限指令一律被拒，`/doctor` 对 owner 也不可用，WebUI 的 doctor 页面不受影响。报告里有存储根的宿主路径和插件的报错原文，报错原文里可能有内网地址与端口，因此默认等级（0）的用户不能运行。门槛可在 WebUI 的权限管理页按能力键 `command:doctor` 调整（配置项 `authorityOverrides`，见 [plugin-authority](../plugins/plugin-authority.md)）：只让 owner 使用时，调到比任何已授予的等级都高的整数，如 99；要让某些用户使用，给他们等级 2，或调低门槛。
 - 异常会被聚合器吞成 error 级结果，不向上抛出。`run` 抛错只会让该项显示为 error，不会中断其他检查；但不要依赖抛错来传递信息，正常路径应返回带 `level` 的 `CheckResult`。
-- `detail` 会出现在报告、WebUI 表格和聊天输出里。不要把密钥、完整路径这类敏感信息写进 `detail`。它在单 owner 本地场景下默认对 owner 可见，但仍应遵循脱敏惯例，参考 [security-model](../concepts/security-model.md)。
+- `detail` 会出现在报告、WebUI 表格和聊天输出里。不要把密钥、完整路径这类敏感信息写进 `detail`。`/doctor` 只对等级 2 及以上的用户与 owner 开放（见本节第一条），但仍应遵循脱敏惯例，参考 [security-model](../concepts/security-model.md)。
 - 涉及网络探测的检查项，出口请走 `safeFetch`（`@aalis/util-network-guard`）而非裸 `fetch`，避免把诊断端点变成 SSRF 跳板，见 [security-model](../concepts/security-model.md)。
 
 ---
