@@ -65,6 +65,13 @@ interface SessionConfig {
   maxToolIterations?: number;                  // 覆盖 agent 全局值（正整数；非正整数视为未设置）
   disableOutputFormat?: boolean;               // 该会话回复纯文本，不走结构化输出
   clientSideJsonRendering?: boolean;           // 保留完整 JSON 给前端渲染
+  paperEnabled?: boolean;                      // 白纸与远端代理的房间键（这一行到 remoteAgentRoomDailyCents），见 §6.6
+  paperName?: string;
+  remoteAgentTypes?: string[];
+  remoteAgentUserDailyCents?: number;
+  remoteAgentUserDailyTasks?: number;
+  remoteAgentRoomDailyCents?: number;
+  memoryRecallScope?: 'session' | 'platform' | 'all';  // 记忆召回范围，只能比记忆插件的配置更窄；随子会话复制
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>;  // 子会话继承的默认（解析结果里会被剥掉）
 }
 ```
@@ -116,7 +123,9 @@ interface SessionInfo {
 | `plugin-agent` | 每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组；`/session.set`·`/session.reset` 走 `ensureSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
 | `plugin-persona` | `resolveConfig()` 取 `persona/disableOutputFormat/clientSideJsonRendering`（消费侧**窄化类型**，见 §5.2） | `plugin-persona/src/index.ts` |
-| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getInheritedDefaults/...` | `plugin-session-manager/src/index.ts` |
+| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getInheritance/...`（`getInheritance` 由服务端推出会话所属平台，回继承值与每个键的来源层） | `plugin-session-manager/src/index.ts` |
+| `plugin-paper` | `resolveConfig()` 取白纸与远端代理的房间键，决定房间用哪块白纸、每天能花多少 | `plugin-paper/src/rooms.ts` |
+| `plugin-memory-vector` / `plugin-memory-history` / `plugin-tool-session` / `plugin-user-relation` | 每次检索或注入时 `resolveConfig()` 取 `memoryRecallScope`，按房间收窄召回范围（可选依赖，缺席时不收窄） | 各包 `src/` |
 
 ## 4. 写一个 provider（替换实现）
 
@@ -356,6 +365,14 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 `generateTitle` 会真发一次 LLM `chat`（`think:false`，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。第三方平台自动调用前请自行权衡。
 
 平台派生的会话 id（`cli-default` 等）从不经 `createSession` 预建，首条消息到达时**缺档是常态**：参考实现先 `ensureSession` 兜底建档再生成标题（与 `createChildSession` 同一条兜底路），因此这些平台的首条消息一样会拿到标题。兜底是无条件的：`cli` / `webui` 平台上任何带未知 `sessionId` 的入站消息都会建档，包括定时任务投给已删除会话的那种。
+
+### 6.6 房间键不随复制冻结
+
+白纸与远端代理的六个键（`ROOM_ONLY_CONFIG_KEYS`：`paperEnabled`、`paperName`、`remoteAgentTypes` 与三项每日上限）只经继承链实时解析。任何「复制生效配置建新会话」的路径都要先经 `omitRoomOnlyKeys()` 去掉它们：复制会把当时的值冻结进新会话，此后房间或平台档改了不跟着变，子会话还会凭冻结的值继续开远端任务。第一方的两条复制路径（WebUI 页面动作 `createSession`、plugin-subtask 的 `create_subtask`）都已经这样做。
+
+`memoryRecallScope` 相反，必须随子会话复制：子会话不带上更窄的召回范围，经子任务就绕过了收窄。
+
+onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）只有经 `ensureSession` 建档后才出现在会话列表里，才能在 WebUI 会话页编辑这些键；在房间里发一次 `/session.set -n <显示名>` 即可建档。
 
 ## 7. 注意事项与边界情形
 

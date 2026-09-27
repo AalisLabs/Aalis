@@ -20,6 +20,7 @@ export default definePlugin({
     config,
     provide,
     memory: optional(memory),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -65,6 +66,14 @@ interface SessionHistoryService {
 ```
 
 平台插件可用 `registerAccessChecker` 按平台前缀注入访问规则，同平台多个 checker 任一返回 deny 即拒绝。
+
+读取别的会话时依次裁决，前一步拒绝即止：
+
+1. **房间的召回范围**：当前会话的会话配置 `memoryRecallScope`（见 [api-session-manager](../api/api-session-manager.md)）为 `session` 时，目标不是当前会话一律拒绝（「本房间的召回范围限于本会话」）；为 `platform` 时，目标平台与当前平台不同就拒绝。未设置或 session-manager 不在场时跳过这一步。房间范围每次读取时现算。
+2. **插件的 `scope`**：`current` / `platform` / `all` 粗筛。
+3. **平台规则**：匹配目标平台的 checker 链，任一 deny 即拒绝。
+
+平台规则只能在前两步放行之后再收窄。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，房间的召回范围一处管住两个工具。
 
 ## 历史
 

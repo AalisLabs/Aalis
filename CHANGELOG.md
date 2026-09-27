@@ -10,15 +10,15 @@
 
 ## 未发布
 
-回复闸门职责重组、模型触发插件与随之的修复，删除跨会话委派工具，以及 `recent_messages` 提档。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
+回复闸门职责重组、模型触发插件与随之的修复，删除跨会话委派工具，`recent_messages` 提档，以及在线白纸（第一批）。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。在线白纸要抬的下限另列在那一节。
 
 待发布的包：
 
-- 有代码或契约改动（16 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-agent、plugin-file-reader、plugin-flow-control、plugin-media、plugin-memory-history、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
-- 新包：api-trigger 0.1.0
+- 有代码或契约改动（28 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、api-session-manager、api-tools、api-webui、schema-message、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-file-reader、plugin-flow-control、plugin-llm-deepseek、plugin-media、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-session、plugin-trigger-policy、plugin-user-profile、plugin-user-relation、plugin-webui-client
+- 新包：api-trigger 0.1.0、api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
-- api-agent、api-authority、api-tools、plugin-authority、plugin-commands、plugin-llm-deepseek、plugin-memory-vector、plugin-scheduler、plugin-subtask、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
+- api-agent、api-authority、plugin-authority、plugin-commands、plugin-scheduler、plugin-workflow 只改了注释，本批不单独发布。
 
 ### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
 
@@ -121,9 +121,66 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 发布档位：plugin-memory-history 按 minor 发布。这是有意收窄一项经裁定维持 public 的能力，属于要附迁移路径的行为变化；0.9.1 那批按 patch 发布的收紧修的是非预期的默认值，性质不同。本节不需要抬任何包间依赖下限。
 
+### 在线白纸（第一批）（新包 @aalis/api-remote-agent、@aalis/plugin-remote-agent-cursor、@aalis/plugin-paper；@aalis/schema-message、@aalis/api-tools、@aalis/api-session-manager、@aalis/api-webui、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-memory-vector、@aalis/plugin-memory-history、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-user-profile、@aalis/plugin-llm-deepseek、@aalis/plugin-session-manager、@aalis/plugin-subtask、@aalis/plugin-storage-local、@aalis/plugin-checkpoint、@aalis/plugin-adapter-onebot、@aalis/plugin-webui-client）
+
+房间里真人提需求，模型调 `paper_task` 把任务交给远端编码代理（第一个提供者是 Cursor 云端代理）；宿主在房间里回显原文、排队、按天记账，跟踪每一轮到终态、取回成品、按轮入账，完成后以宿主通知回到房间，模型用 `paper_send` 把图片、GIF、MP4 或单个网页发回。说明见 `docs/plugins/plugin-paper.md`，安全边界与残余风险见 `docs/concepts/security-model.md`「远端代理与白纸」一节。
+
+新包：
+
+- `@aalis/api-remote-agent` 0.1.0：`remote-agent` 服务描述符与提供者接口 `RemoteAgentProvider`；`resolveRemoteAgent` 按提供者实例 id 精确取，取不到返回 `undefined`，不回落到偏好胜者或别的提供者；`egressWithin`（出网判定，`unknown` 按 `open` 算）、`isTerminalRun`、`RemoteAgentError` 与 `isRemoteAgentError`（按 `name` 认，装有两份契约包时也认得）。
+- `@aalis/plugin-remote-agent-cursor` 0.1.0：Cursor Cloud Agents API v1 提供者，可多实例。激活时不连网；首次 `ready()` 校验鉴权与模型参数（参数须写全并等于 `/v1/models` 的某个变体，默认 `grok-4.7`、`reasoning_effort: high`、`context: 256k`、`fast: 'false'`）；账号标识取 `/v1/me` 的 `userId` 的哈希；出网方式取自配置 `egressMode`（默认 `unknown`），标「未核实」。key 只在宿主进程里用，错误与日志去掉 key 片段与预签名链接的查询串；成品经 `safeFetch` 下载、边读边计字节。
+- `@aalis/plugin-paper` 0.1.0：白纸枢纽。工具 `paper_task`、`paper_status`、`paper_cancel`、`paper_send`（`paper` 分组，不声明 risk）；运行驱动（每块白纸一条队列、先落盘再调远端、开轮认领、单轮时长计时器、对账与自唤醒处置、换新、闲置归档、定期清空、重启接回）；完成通知与待交付提示；WebUI 白纸页（白纸、任务、成品、账本、告警）与诊断项 `paper.config`。账本在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。
+
+契约新增：
+
+- `@aalis/schema-message`：`IncomingMessage.hostNotice?: { kind; id?; untrusted? }` 标记宿主撰写的事件通知；`WellKnownKinds.HostNotice`（`'host-notice'`），出口前缀 `[宿主通知]`；常量 `DIRECTIVE_KINDS`（`CrossSessionDelegation` 与 `HostNotice`），表示宿主或系统撰写、不是任何人发言的指令类 kind。
+- `@aalis/api-tools`：`ToolCallContext.inbound?: { source?: string }`，只由 plugin-agent 的工具循环填写，`source` 取本回合入站消息的 `source`。workflow 节点、mcp-server 等自造上下文的调用方不填。需要「真人当面发起」判据的工具应把缺省当作不满足。
+- `@aalis/api-session-manager`：`SessionConfig` 新增 `paperEnabled`、`paperName`、`remoteAgentTypes`、`remoteAgentUserDailyCents`、`remoteAgentUserDailyTasks`、`remoteAgentRoomDailyCents` 与 `memoryRecallScope`（类型 `MemoryRecallScope`：`'session' | 'platform' | 'all'`）；导出 `ROOM_ONLY_CONFIG_KEYS`（前六个键）与 `omitRoomOnlyKeys()`。复制生效配置建新会话的路径都要经 `omitRoomOnlyKeys`；`memoryRecallScope` 随子会话复制。
+- `@aalis/api-webui`：表格列新增 `method`，`render` 可取 `'file'`；导出 `WebuiFilePayload { name; mime; base64 }`。
+
+行为变化：
+
+- plugin-agent：带 `hostNotice` 的消息以一条 system 消息呈现（`[宿主通知]`、正文，再接 `untrusted`），不推当前 user 消息；`turn-context` 与 `turn-hint` 两个锚位先找本轮指令块（`metadata.injector` 属于 `DIRECTIVE_KINDS`）、落在它之前。顺带修正：proactive 回合里 `turn-hint` 此前落在最后一条 user 之前，即历史内部，现在落在任务块之前。工具调用上下文填写 `inbound`。
+- plugin-message-archive：宿主通知归档为 `role: 'notice'`、`kind: 'host-notice'`，不带 `name`，`metadata.hostNoticeKind` 记子类；只归档 `content`，`untrusted` 不写进消息与 metadata。flow-control 禁言期的影子归档走同一条路径。
+- plugin-memory-vector：宿主通知不入向量库；被动召回与 `memory_recall` 的上下文扩窗不再把指令类消息作为邻居带出，因此 workflow agent 节点代发的任务指令也不再随扩窗出现。按会话配置 `memoryRecallScope` 收窄召回：取插件配置与房间范围中较窄的一个，`memory_recall` 的 `scope` 参数放不宽。新增可选依赖 `session-manager`。
+- plugin-memory-history：房间 `memoryRecallScope` 为 `session` 时不做跨会话注入，`recent_messages` 返回「本房间的召回范围限于本会话…」；为 `platform` 时插件配置或工具参数写 `cross-platform` 也按 `same-platform` 查。新增可选依赖 `session-manager`。
+- plugin-tool-session：`session-history` 服务在插件 `scope` 与平台规则之前先按当前房间的 `memoryRecallScope` 裁决（`session` 时只能读本会话，`platform` 时跨平台拒绝），一处管住 `session_get_history` 与 `onebot_get_session_history`。新增可选依赖 `session-manager`。
+- plugin-user-relation：宿主通知不计入提取计数；三条读取路径的历史窗口改按 `DIRECTIVE_KINDS` 过滤（跨会话读取的 `excludeKinds` 同样）。房间 `memoryRecallScope` 为 `session` 时，注入只留本会话的事件，不出「所属跨会话话题」与「最近热点（全局）」；人际关系与关注的事物照常注入，查询工具不受影响。新增可选依赖 `session-manager`。
+- plugin-user-profile：用户事实提取、自反思、指令提取三处的历史窗口改按 `DIRECTIVE_KINDS` 过滤。不读 `memoryRecallScope`，参与者事实照常跨会话注入。
+- plugin-llm-deepseek：system 位置归一化的豁免由「injector 为代发任务」扩为「injector 属于 `DIRECTIVE_KINDS`」，宿主通知块保持 system。
+- plugin-session-manager：平台档表单新增上述七个键，加载时逐键核对类型（上限只收有限且不小于 0 的数，`memoryRecallScope` 只收三个取值），类型不对的丢弃并记 warn，`null` 与空串按未设置处理；页面动作 `createSession` 的两种复制都去掉房间键；页面动作 `getInheritance` 取代 `getInheritedDefaults`（见下文破坏性变更）。
+- plugin-subtask：`create_subtask` 复制父会话配置时去掉房间键。
+- plugin-storage-local：新增内部根 `paper`（`<cwd>/data/stage/paper`，kind `paper`，不在文件页出现），在用户根之后注册、不受 `roots` 影响；激活时会建这个目录。
+- plugin-checkpoint：kind 为 `paper` 的根不记账。
+- plugin-adapter-onebot：
+  - `kind: 'file'` 的出站附件在文字与消息段之后上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`；内容只用 `base64://`，超过 10 MiB 的 storage 文件、超限的 http 链接拒发；文件名去掉 `/` 与 `\`；上传不重试；v12 连接不支持。适配器对象新增非标准扩展方法 `uploadFile`（不进 `@aalis/api-platform` 契约）。此前 file 附件只打 debug 后跳过。
+  - 视频不超过 10 MiB 时改为 `base64://` 内联（此前 storage 视频交宿主的 `file://` 路径，http 视频原样交 URL，实现端在容器里时读不到宿主路径）；http 视频现在由 Aalis 流式下载，超过上限的仍交原 URL。storage 附件先量大小再读，超限的不整份读进内存。
+  - 图片、语音、视频内联前按文件头核对格式，不符就拒发并记 warn（见下文破坏性变更）。
+  - 投递失败记录（`outbound-delivery-failed`，只对 `source: 'agent'`）覆盖文字发送、文件物化与上传三处失败，每条出站消息至多一条；正文由「经多次重试仍未能送达」改为「(可能包含图片、媒体或文件)未能送达对方」。媒体附件物化失败或文件头不符只记 warn，不写这条记录。
+- plugin-webui-client：会话页新增「白纸与远端」一组，每项显示继承值与来源（默认、平台档或父会话），`remoteAgentTypes` 来自平台档时显示告警；取继承值改调 `getInheritance`。声明式表格支持文件单元格：只有 PNG、JPEG、GIF、WebP 能在页面里查看，其余只能下载，下载一律按 `application/octet-stream` 保存。
+
+**破坏性变更与迁移**：
+
+- **plugin-session-manager 删除页面动作 `getInheritedDefaults`**：改用 `getInheritance({ sessionId })`，返回 `{ platform, values, sources }`。会话所属平台由服务端推出（会话 metadata 记下的平台 → 接管这个会话 id 的平台适配器 → `webui`），动作不再收平台参数；`sources` 给出每个键来自全局默认、平台档还是父会话。自己调用过 `getInheritedDefaults` 的 WebUI 客户端改调新动作。服务接口上的 `resolveInheritedDefaults` 不变。
+- **plugin-adapter-onebot 出站媒体按文件头核对**：图片只发 PNG、JPEG、GIF、WebP，语音只发 WAV、MP3、OGG、FLAC、AMR、SILK、M4A，视频只发 MP4 / MOV 与 WebM。其他格式（如 BMP、AVIF、HEIC、SVG 图片）此前照发，现在拒发并记 warn，`send_attachment` 发出的同样受约束。要发这些格式，先转成上面的格式。视频与文件改走 `base64://` 依赖实现端接受这种形态；未确认过的实现端，升级后先在测试会话里发一次视频与文件核对。
+- **plugin-storage-local 保留根名 `paper`**：`roots` 里名为 `paper` 的用户根会被跳过并记 warn，内部根优先。自建了同名根的，改名后同步修改引用它的 URI。
+- plugin-memory-vector 的扩窗不再带出 workflow 代发的任务指令，proactive 回合的 `turn-hint` 落点前移，都是行为变化，无需迁移。
+
+要抬的依赖下限：
+
+- `@aalis/schema-message`（`hostNotice`、`WellKnownKinds.HostNotice`、`DIRECTIVE_KINDS`）：plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-llm-deepseek、plugin-paper 抬。`DIRECTIVE_KINDS` 是运行时导入，装到旧版 schema-message 时这些包加载失败。
+- `@aalis/api-tools`（`ToolCallContext.inbound`）：plugin-agent、plugin-paper 抬。
+- `@aalis/api-session-manager`：plugin-session-manager、plugin-subtask 抬（运行时导入 `omitRoomOnlyKeys`，装到旧版时加载失败）；plugin-memory-vector、plugin-memory-history、plugin-tool-session、plugin-user-relation、plugin-paper 抬（新键与 `MemoryRecallScope` 类型）。
+- `@aalis/api-webui`（`render: 'file'`、`method`、`WebuiFilePayload`）：plugin-paper 抬。
+- 三个新包之间与新包对既有包的下限，现写的是开发时的当前版本号（如 plugin-paper 对 api-session-manager 写 `>=0.10.0`），发布时按上面各条一并抬到本批的新版本。
+
+发布档位：三个新包按 0.1.0 首发。plugin-session-manager（删页面动作）、plugin-adapter-onebot（媒体格式收窄）、plugin-storage-local（保留根名）按 minor 发布，附上面的迁移；schema-message、plugin-memory-history、plugin-tool-session 在本节之前已定为 minor。api-tools、api-session-manager、api-webui 只做加法，plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-llm-deepseek、plugin-subtask、plugin-checkpoint、plugin-webui-client 是修复与加法，按 patch 发布。
+
 ### 必须同批升级的包
 
 - plugin-flow-control 与 plugin-trigger-policy 同批升级：新版 flow-control 提供的服务已删除旧版 trigger-policy 调用的 `getStateSnapshot` / `recordTriggered` 等方法；相位顺序常量在 `@aalis/api-gateway`，它升到本节的新版本后，已发布的旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这四个包须同一批勾选更新。
+- plugin-session-manager 与 plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值。
+- 启用 plugin-paper 时，plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-storage-local、plugin-checkpoint 须同批升级，用 DeepSeek 的另加 plugin-llm-deepseek，要发回网页与 MP4 的另加 plugin-adapter-onebot。旧版 plugin-agent 不填 `ToolCallContext.inbound`，白纸工具一律拒绝；旧版的 agent、归档、向量记忆与抽取插件不认识 `hostNotice`，完成通知会按普通消息呈现、归档为 user、进向量库与抽取窗口；旧版 storage-local 没有 `paper` 根，成品取不回；旧版 checkpoint 会给 `paper` 根记账，别的会话回滚时删掉成品；旧版 onebot 适配器跳过文件附件，网页发不出去。
 - 暂不升级本节各包的项目注意反方向：`npm update` 或无锁文件重装可能把传递依赖 `@aalis/api-gateway` 升到本节的新版本（多个依赖方写的是 `>=0.7.0 <1.0.0`），已发布的旧版 flow-control 与 trigger-policy 随即按新顺序失常，请用 `package.json` 的 `overrides` 把 `@aalis/api-gateway` 固定在已发布的 0.7.0。
 
 ## 2026-09-27（core 0.18.0 minor；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
