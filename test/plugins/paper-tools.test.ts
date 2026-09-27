@@ -257,7 +257,13 @@ describe('paper_cancel', () => {
 
   it('取消运行中的任务：调提供者的 cancelRun，费用等终态入账（预留不动）', async () => {
     const remote = fakeRemote();
-    const running = task('t-00000002', { state: 'running', agentId: 'bc-00000001', runId: 'run-1', startedAt: 1 });
+    const running = task('t-00000002', {
+      state: 'running',
+      agentId: 'bc-00000001',
+      runId: 'run-1',
+      // 开轮时刻取现在：开轮已超过单轮时长上限的任务，接回时运行驱动会先把它当超时取消
+      startedAt: Date.now(),
+    });
     const hub = await startPaperHub({
       remotes: { [REMOTE]: remote },
       files: seed([running], ledger => {

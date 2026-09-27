@@ -21,9 +21,9 @@ import type { OutgoingMessage } from '../../packages/schema-message/src/index.js
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
-// - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型），只编排枢纽会调的方法；
+// - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
 // - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；
-// - storage：只有 pluginData 根的内存实现，文件表可跨「重启」复用；
+// - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
 // - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行。
 // 不连任何真实服务。
 // ════════════════════════════════════════════════════════════
@@ -44,7 +44,11 @@ export interface FakeRemote extends RemoteAgentProvider {
   cancelled: Array<{ agentId: string; runId: string }>;
 }
 
-/** 替身提供者：ready 按 accountKey 回（给 Error 则抛出）；枢纽这一段用不到的方法一调就抛 */
+/**
+ * 替身提供者：ready 按 accountKey 回（给 Error 则抛出），其余未编排的方法一调就抛。运行驱动调到它们时
+ * 按临时故障退避，任务停在队列里，所以受理、查状态、取消这些用例看到的队列不会被驱动挪动。
+ * 要让任务真的跑起来用 paper-remote.ts 的 ScriptedRemote。
+ */
 export function fakeRemote(
   opts: { isolation?: 'shared' | 'per-agent'; egress?: EgressReport; accountKey?: string | Error } = {},
 ): FakeRemote {
@@ -83,27 +87,79 @@ export function fakeRemote(
   return fake;
 }
 
-/** 只有 pluginData 根的内存 storage：读不存在的文件抛 ENOENT */
-function memoryPluginData(files: Map<string, string>): StorageService {
+/** 文件表：键是完整 URI；账本以字符串存，白纸根里的成品以字节存 */
+export type PaperFiles = Map<string, string | Uint8Array>;
+
+const notFound = (uri: string) => Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
+const sizeOf = (value: string | Uint8Array) =>
+  typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
+
+/**
+ * pluginData 与 paper 两个根的内存 storage：读写、列目录、stat、按前缀删目录；不存在的一律抛 ENOENT。
+ * 目录不单独存，有文件在它下面就算存在。
+ */
+export function memoryStorage(files: PaperFiles): StorageService {
+  const roots = ['pluginData', 'paper'].map(name => ({
+    name,
+    label: `${name}(内存)`,
+    kind: name,
+    browsable: true,
+    readable: true,
+    writable: true,
+    deletable: true,
+  }));
+  const under = (uri: string) => `${uri.replace(/\/+$/, '')}/`;
+  const rootOf = (uri: string) => roots.find(r => uri.startsWith(`${r.name}:`)) ?? roots[0];
   return {
-    listRoots: () => [
-      {
-        name: 'pluginData',
-        label: 'pluginData(内存)',
-        kind: 'pluginData',
-        browsable: true,
-        readable: true,
-        writable: true,
-        deletable: true,
-      },
-    ],
-    async readFile(uri: string) {
+    listRoots: () => roots,
+    async readFile(uri: string, encoding?: BufferEncoding) {
       const value = files.get(uri);
-      if (value === undefined) throw Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
-      return value;
+      if (value === undefined) throw notFound(uri);
+      const bytes = Buffer.from(value);
+      return encoding ? bytes.toString(encoding) : bytes;
     },
     async writeFile(uri: string, data: string | Buffer) {
-      files.set(uri, typeof data === 'string' ? data : data.toString('utf-8'));
+      files.set(uri, typeof data === 'string' ? data : new Uint8Array(data));
+    },
+    async stat(uri: string) {
+      const value = files.get(uri);
+      const name = uri.split('/').pop() ?? '';
+      if (value !== undefined) return { name, path: uri, uri, isDirectory: false, size: sizeOf(value) };
+      if ([...files.keys()].some(k => k.startsWith(under(uri)))) {
+        return { name, path: uri, uri, isDirectory: true, size: 0 };
+      }
+      throw notFound(uri);
+    },
+    async list(uri: string) {
+      const base = under(uri);
+      const entries = new Map<string, { isDirectory: boolean; size: number }>();
+      for (const [key, value] of files) {
+        if (!key.startsWith(base)) continue;
+        const [head, ...rest] = key.slice(base.length).split('/');
+        entries.set(
+          head,
+          rest.length > 0 ? { isDirectory: true, size: 0 } : { isDirectory: false, size: sizeOf(value) },
+        );
+      }
+      if (entries.size === 0) throw notFound(uri);
+      return {
+        root: rootOf(uri),
+        path: uri,
+        entries: [...entries].map(([name, e]) => ({
+          name,
+          path: `${base}${name}`,
+          uri: `${base}${name}`,
+          isDirectory: e.isDirectory,
+          size: e.size,
+          mtime: '',
+          ext: '',
+        })),
+      };
+    },
+    async delete(uri: string) {
+      const hits = [...files.keys()].filter(k => k === uri || k.startsWith(under(uri)));
+      if (hits.length === 0) throw notFound(uri);
+      for (const key of hits) files.delete(key);
     },
   } as unknown as StorageService;
 }
@@ -136,13 +192,13 @@ export interface PaperHubOptions {
   /** services.prefer('remote-agent', …) 指向的实例 id */
   prefer?: string;
   /** 账本等文件；跨「重启」复用同一张表 */
-  files?: Map<string, string>;
+  files?: PaperFiles;
   gatewayFails?: boolean;
 }
 
 export interface PaperHub {
   app: App;
-  files: Map<string, string>;
+  files: PaperFiles;
   outbound: OutgoingMessage[];
   tools: Map<string, Omit<RegisteredTool, 'pluginName'>>;
   groups: Array<Omit<ToolGroupInfo, 'pluginName'>>;
@@ -167,7 +223,7 @@ export async function stopPaperHubs(): Promise<void> {
 export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHub> {
   const app = new App({ name: 'T', logLevel: 'error' });
   hubs.push(app);
-  const files = opts.files ?? new Map<string, string>();
+  const files: PaperFiles = opts.files ?? new Map();
   const outbound: OutgoingMessage[] = [];
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();
   const groups: Array<Omit<ToolGroupInfo, 'pluginName'>> = [];
@@ -199,7 +255,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       updatedAt: 0,
     }),
   } as unknown as SessionManagerService);
-  host.provide(storage, memoryPluginData(files));
+  host.provide(storage, memoryStorage(files));
   host.provide(gateway, {
     async dispatchOutbound(message: OutgoingMessage) {
       if (opts.gatewayFails) throw new Error('网关替身：发送失败');
@@ -250,7 +306,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       for (const spec of checks.values()) out.push(...[await spec.run()].flat());
       return out;
     },
-    ledger: () => JSON.parse(files.get(LEDGER_URI) ?? 'null') as PaperLedger,
+    ledger: () => JSON.parse(String(files.get(LEDGER_URI) ?? 'null')) as PaperLedger,
     async stop() {
       hubs.splice(hubs.indexOf(app), 1);
       await app.stop();

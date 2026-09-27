@@ -3,9 +3,11 @@
 //
 // 受理与开轮前都要「已花费 + 所有进行中的预留 + 本次预留」不超过每一项上限。每天按 budgetTimeZone
 // 的 0 点换日（缺省宿主进程的本地时区），换日后当天的花费与件数从零算；预留不分日，进行中的都算。
+// 每轮到终态后按实际费用入账（book），再释放预留；费用暂缺时预留保留，按临时花费计。
 // ============================================================
 
 import type { DaySpend, PaperLedger } from './ledger.js';
+import { actorKey } from './rooms.js';
 
 /** 预留额取这块白纸最近几轮的均值 */
 const RESERVE_SAMPLE = 5;
@@ -112,6 +114,27 @@ export function reserveFor(ledger: PaperLedger, paperId: string, defaultCents: n
 export function daySpend(ledger: PaperLedger, day: string): DaySpend {
   ledger.spend[day] ??= { global: 0, rooms: {}, users: {} };
   return ledger.spend[day];
+}
+
+/**
+ * 按实际费用入账一轮：记进 day 这天的全局花费与代理的累计花费；有对应任务的，再记进发起房间与发起者，
+ * 并写进任务的 costCents（{@link reserveFor} 取它）。账本外的轮次（自唤醒）只进全局。预留由调用方释放。
+ */
+export function book(ledger: PaperLedger, day: string, runId: string, cents: number): void {
+  const run = ledger.runs[runId];
+  if (!run) return;
+  run.cost = { state: 'booked', cents };
+  const spend = daySpend(ledger, day);
+  spend.global += cents;
+  const agent = ledger.agents[run.agentId];
+  if (agent) agent.costCents += cents;
+  const task = run.taskId ? ledger.tasks[run.taskId] : undefined;
+  if (!task) return;
+  task.costCents = cents;
+  spend.rooms[task.room] = (spend.rooms[task.room] ?? 0) + cents;
+  const user = actorKey(task.initiator);
+  spend.users[user] ??= { cents: 0, tasks: 0 };
+  spend.users[user].cents += cents;
 }
 
 /** 释放一件任务的预留 */

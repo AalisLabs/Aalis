@@ -1,5 +1,5 @@
 // ============================================================
-// 白纸工具：paper_task 交任务、paper_status 查任务、paper_cancel 取消自己发起的任务
+// 白纸工具：paper_task 交任务（受理后交给运行驱动出队）、paper_status 查任务、paper_cancel 取消自己发起的任务
 //
 // 都在 paper 分组、都不声明 risk（等级 0，群友可用）：门槛由房间配置、真人判据与三层上限承担，
 // 封禁（负等级）由执行守卫挡住，handler 不重复查。返回值不含凭据或链接。
@@ -13,7 +13,7 @@ import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { OutgoingMessage } from '@aalis/schema-message';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
-import { type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import {
   actorKey,
   checkEligibility,
@@ -43,6 +43,8 @@ interface PaperToolDeps {
   logger: Logger;
   signal: AbortSignal;
   now: () => number;
+  /** 受理后交给运行驱动：这块白纸没在跑就开始出队 */
+  kick: (paperId: string) => void;
 }
 
 const fail = (error: string) => JSON.stringify({ ok: false, error });
@@ -77,7 +79,7 @@ function byCreated(a: TaskRecord, b: TaskRecord): number {
 
 function newTaskId(ledger: LedgerStore): string {
   let id: string;
-  do id = `t-${Buffer.from(crypto.getRandomValues(new Uint8Array(4))).toString('hex')}`;
+  do id = `t-${randomHex(4)}`;
   while (ledger.data.tasks[id]);
   return id;
 }
@@ -139,7 +141,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     });
     if ('unavailable' in remote) return fail(remote.unavailable);
 
-    return ledger.exclusive(async () => {
+    let accepted = false;
+    const result = await ledger.exclusive(async () => {
       const now = deps.now();
       const day = dayKey(now, cfg.budgetTimeZone);
       const initiator = effectiveActor(ctx);
@@ -205,8 +208,11 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         return fail('白纸账本写入失败，任务未受理');
       }
       deps.logger.info(`白纸受理任务 ${id}（${paper.paperId}，房间 ${ctx.sessionId}，发起者 ${user}）`);
+      accepted = true;
       return done({ taskId: id, position: queueOf(paper.paperId).findIndex(t => t.id === id) + 1 });
     });
+    if (accepted) deps.kick(paper.paperId);
+    return result;
   }
 
   async function paperStatus(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
