@@ -65,7 +65,15 @@ async function setup(adapters: Partial<PlatformAdapter>[] = []) {
     });
   };
 
-  return { sm, host, inbound, turn, warns };
+  /** 开一轮、回合体由用例控制（不发 agent:turn:after：收口只看输入中间件的 finally） */
+  const running = (sessionId: string, body: () => Promise<void>) =>
+    host.hooks.run(
+      'agent:input:before',
+      { message: { content: '<占位>', sessionId, platform: 'onebot' }, metadata: {} },
+      body,
+    );
+
+  return { sm, host, inbound, turn, running, warns };
 }
 
 describe('IM 房间按首条真人入站登记', () => {
@@ -181,7 +189,7 @@ describe('房间取名与补名', () => {
 });
 
 describe('状态在回合开始时翻 active', () => {
-  it('群里只有消息、没有回合时不是 active；回合中为 active，agent:turn:after 之后为 completed', async () => {
+  it('群里只有消息、没有回合时不是 active；回合中为 active，回合结束后为 completed', async () => {
     const { sm, inbound, turn } = await setup();
 
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
@@ -231,6 +239,67 @@ describe('状态在回合开始时翻 active', () => {
     // 拦下与抛错都发生在翻 active 之后：收口靠的是同一个中间件的 finally
     expect(seen).toEqual(['active', 'active']);
   });
+
+  it('同一会话两轮并行（后台命令结束通知与真人回合各占一条 lane）：先结束的一轮不收口，最后一轮结束才收口', async () => {
+    const { sm, inbound, running } = await setup();
+    await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+
+    const long = running(GROUP, () => gate);
+    await running(GROUP, async () => {});
+    expect(sm.getSession(GROUP)?.status, '另一轮还在跑，不该显示已完成').toBe('active');
+
+    release();
+    await long;
+    expect(sm.getSession(GROUP)?.status).toBe('completed');
+  });
+
+  it('回合中途发出的出站消息（send_attachment、paper_send 在工具执行中直接发）不收口，回合结束才收口', async () => {
+    const { sm, host, inbound, running } = await setup();
+    await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
+    let during: string | undefined;
+
+    await running(GROUP, async () => {
+      await host.events.emit('outbound:message', {
+        content: '<附件>',
+        sessionId: GROUP,
+        platform: 'onebot',
+        source: 'agent',
+      });
+      during = sm.getSession(GROUP)?.status;
+    });
+
+    expect(during, '工具还在执行，回合没结束').toBe('active');
+    expect(sm.getSession(GROUP)?.status).toBe('completed');
+  });
+
+  it('回合之外建档的会话为 waiting（首条消息是被指令相位吞掉的指令时没有回合）；回合中建档的为 active，回合结束收口', async () => {
+    const { sm, host, inbound, running } = await setup();
+
+    // CLI 会话不经 createSession 预建：首条入站由自动标题路径兜底建档
+    await inbound({ sessionId: 'cli-default', platform: 'cli', userId: 'console' });
+    expect(sm.getSession('cli-default')?.status, '还没有回合，不该显示进行中').toBe('waiting');
+    // 指令回复不开回合，也不改状态
+    await host.events.emit('outbound:message', {
+      content: '<指令回复>',
+      sessionId: 'cli-default',
+      platform: 'cli',
+      source: 'command',
+    });
+    expect(sm.getSession('cli-default')?.status).toBe('waiting');
+
+    // 回合里才建档（如 create_subtask 兜底建父会话档）：这时已有回合在跑
+    let during: string | undefined;
+    await running('cli-other', async () => {
+      await sm.ensureSession('cli-other', { config: {} });
+      during = sm.getSession('cli-other')?.status;
+    });
+    expect(during).toBe('active');
+    expect(sm.getSession('cli-other')?.status).toBe('completed');
+  });
 });
 
 describe('id 前缀与平台名不一致的告警', () => {
@@ -243,6 +312,15 @@ describe('id 前缀与平台名不一致的告警', () => {
     const hits = warns.filter(w => w.includes('<缩写>'));
     expect(hits).toHaveLength(1);
     expect(hits[0]).toContain('<平台甲>');
+  });
+
+  it('onebot 适配器停用或还没加载时，WebUI、CLI 往 onebot 房间插话同样不告警：它们不是房间的原生入站', async () => {
+    const { warns, inbound } = await setup();
+
+    await inbound({ sessionId: GROUP, platform: 'webui', userId: 'console' });
+    await inbound({ sessionId: PRIVATE, platform: 'cli', userId: 'console' });
+
+    expect(warns.filter(w => w.includes('onebot'))).toEqual([]);
   });
 
   it('已注册 onebot 适配器时，WebUI 往 onebot 房间插话不告警', async () => {

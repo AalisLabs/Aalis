@@ -1204,7 +1204,6 @@ class DefaultAgent implements AgentService {
           });
 
           // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
-          // session-manager 把会话状态从 active 收口为 completed（否则永远停在"进行中"），
           // checkpoint 关闭当前回合（否则中止后回合不关闭、长期泄漏）。
           // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
           await this.caps.hooks.run('agent:turn:after', {
@@ -1235,9 +1234,7 @@ class DefaultAgent implements AgentService {
           source: 'system',
         });
 
-        // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合、
-        // session-manager 收口状态。dispatchOutbound 已发系统错误消息，状态可被 outbound:message
-        // 与本钩子双路径幂等收口。
+        // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合。
         await this.caps.hooks.run('agent:turn:after', {
           message: incoming,
           reply: '',

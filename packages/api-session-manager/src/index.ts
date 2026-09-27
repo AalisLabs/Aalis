@@ -227,7 +227,8 @@ export interface SessionManagerService {
   /**
    * 按精确 id 幂等 upsert 会话。
    * - 已存在 → 合并式 update（emit `session:updated`）
-   * - 不存在 → 以传入 id（**不自生成**）建 active 记录（emit `session:created`）
+   * - 不存在 → 以传入 id（**不自生成**）建记录（emit `session:created`）；`status` 缺省时，这个会话有回合在跑为
+   *   `active`（回合结束时收口），否则为 `waiting`
    *
    * 用于平台派生 sessionId（如 `onebot:<self>:group:<gid>`）：这些 id 不经
    * createSession 预建，首次设置模型/人设覆盖时需按其原样 id 落档——而 createSession
