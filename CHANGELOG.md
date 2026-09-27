@@ -147,7 +147,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 - plugin-agent：带 `hostNotice` 的消息以一条 system 消息呈现（`[宿主通知]`、正文，再接 `untrusted`），不推当前 user 消息；`turn-context` 与 `turn-hint` 两个锚位先找本轮指令块（`metadata.injector` 属于 `DIRECTIVE_KINDS`）、落在它之前。顺带修正：proactive 回合里 `turn-hint` 此前落在最后一条 user 之前，即历史内部，现在落在任务块之前。工具调用上下文填写 `inbound`。
 - plugin-message-archive：宿主通知归档为 `role: 'notice'`、`kind: 'host-notice'`，不带 `name`，`metadata.hostNoticeKind` 记子类；只归档 `content`，`untrusted` 不写进消息与 metadata。flow-control 禁言期的影子归档走同一条路径。
 - plugin-memory-vector：宿主通知不入向量库；被动召回与 `memory_recall` 的上下文扩窗不再把指令类消息作为邻居带出，因此 workflow agent 节点代发的任务指令也不再随扩窗出现。按会话配置 `memoryRecallScope` 收窄召回：取插件配置与房间范围中较窄的一个，`memory_recall` 的 `scope` 参数放不宽。新增可选依赖 `session-manager`。
-- plugin-memory-history：房间 `memoryRecallScope` 为 `session` 时不做跨会话注入，`recent_messages` 返回「本房间的召回范围限于本会话…」；为 `platform` 时插件配置或工具参数写 `cross-platform` 也按 `same-platform` 查。新增可选依赖 `session-manager`。
+- plugin-memory-history：房间 `memoryRecallScope` 为 `session` 时不做跨会话注入，`recent_messages` 返回「本房间的召回范围限于本会话…」；为 `platform` 时插件配置或工具参数写 `cross-platform` 也按 `same-platform` 查。跨会话注入与 `recent_messages` 按 `DIRECTIVE_KINDS` 排除别的会话的宿主通知与代发任务指令：此前试点群的宿主通知正文会进同平台其他会话（包括 owner 私聊）的注入，workflow 代发的任务指令也一样。新增可选依赖 `session-manager`，依赖加 `@aalis/schema-message`。
 - plugin-tool-session：`session-history` 服务在插件 `scope` 与平台规则之前先按当前房间的 `memoryRecallScope` 裁决（`session` 时只能读本会话，`platform` 时跨平台拒绝），一处管住 `session_get_history` 与 `onebot_get_session_history`。新增可选依赖 `session-manager`。
 - plugin-user-relation：宿主通知不计入提取计数；三条读取路径的历史窗口改按 `DIRECTIVE_KINDS` 过滤（跨会话读取的 `excludeKinds` 同样）。房间 `memoryRecallScope` 为 `session` 时，注入只留本会话的事件，不出「所属跨会话话题」与「最近热点（全局）」；人际关系与关注的事物照常注入，查询工具不受影响。新增可选依赖 `session-manager`。
 - plugin-user-profile：用户事实提取、自反思、指令提取三处的历史窗口改按 `DIRECTIVE_KINDS` 过滤。不读 `memoryRecallScope`，参与者事实照常跨会话注入。
@@ -172,7 +172,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 要抬的依赖下限：
 
-- `@aalis/schema-message`（`hostNotice`、`WellKnownKinds.HostNotice`、`DIRECTIVE_KINDS`）：plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-llm-deepseek、plugin-paper 抬。`DIRECTIVE_KINDS` 是运行时导入，装到旧版 schema-message 时这些包加载失败。
+- `@aalis/schema-message`（`hostNotice`、`WellKnownKinds.HostNotice`、`DIRECTIVE_KINDS`）：plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-memory-history、plugin-user-relation、plugin-user-profile、plugin-llm-deepseek、plugin-paper 抬（plugin-memory-history 是新增依赖，现写 `>=0.9.0`）。`DIRECTIVE_KINDS` 是运行时导入，装到旧版 schema-message 时这些包加载失败。
 - `@aalis/api-tools`（`ToolCallContext.inbound`）：plugin-agent、plugin-paper 抬。
 - `@aalis/api-session-manager`：plugin-session-manager、plugin-subtask 抬（运行时导入 `omitRoomOnlyKeys`，装到旧版时加载失败）；plugin-memory-vector、plugin-memory-history、plugin-tool-session、plugin-user-relation、plugin-paper 抬（新键与 `MemoryRecallScope` 类型）。
 - `@aalis/api-webui`（`render: 'file'`、`method`、`WebuiFilePayload`）：plugin-paper 抬。
@@ -259,7 +259,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 - plugin-flow-control 与 plugin-trigger-policy 同批升级：新版 flow-control 提供的服务已删除旧版 trigger-policy 调用的 `getStateSnapshot` / `recordTriggered` 等方法；相位顺序常量在 `@aalis/api-gateway`，它升到本节的新版本后，已发布的旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这四个包须同一批勾选更新。
 - plugin-session-manager 与 plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值。
-- 启用 plugin-paper 时，plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-storage-local、plugin-checkpoint 须同批升级，用 DeepSeek 的另加 plugin-llm-deepseek，要发回网页与 MP4 的另加 plugin-adapter-onebot。旧版 plugin-agent 不填 `ToolCallContext.inbound`，白纸工具一律拒绝；旧版的 agent、归档、向量记忆与抽取插件不认识 `hostNotice`，完成通知会按普通消息呈现、归档为 user、进向量库与抽取窗口；旧版 storage-local 没有 `paper` 根，成品取不回；旧版 checkpoint 会给 `paper` 根记账，别的会话回滚时删掉成品；旧版 onebot 适配器跳过文件附件，网页发不出去。
+- 启用 plugin-paper 时，plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-memory-history、plugin-user-relation、plugin-user-profile、plugin-storage-local、plugin-checkpoint 须同批升级，用 DeepSeek 的另加 plugin-llm-deepseek，要发回网页与 MP4 的另加 plugin-adapter-onebot。旧版 plugin-agent 不填 `ToolCallContext.inbound`，白纸工具一律拒绝；旧版的 agent、归档、向量记忆与抽取插件不认识 `hostNotice`，完成通知会按普通消息呈现、归档为 user、进向量库与抽取窗口；旧版 memory-history 把完成通知带进同平台其他会话的跨会话注入；旧版 storage-local 没有 `paper` 根，成品取不回；旧版 checkpoint 会给 `paper` 根记账，别的会话回滚时删掉成品；旧版 onebot 适配器跳过文件附件，网页发不出去。
 - 暂不升级本节各包的项目注意反方向：`npm update` 或无锁文件重装可能把传递依赖 `@aalis/api-gateway` 升到本节的新版本（多个依赖方写的是 `>=0.7.0 <1.0.0`），已发布的旧版 flow-control 与 trigger-policy 随即按新顺序失常，请用 `package.json` 的 `overrides` 把 `@aalis/api-gateway` 固定在已发布的 0.7.0。
 - plugin-process-local 与 plugin-tool-system、plugin-tool-code-runner、plugin-code-sandbox-os 同批升级：中止实现在 process 提供方，旧版 process-local 静默忽略 `signal`，新版 exec 与代码执行照样停不掉，code-sandbox-os 的探测照旧拖满宽限；plugin-tool-code-runner 的沙箱路径还要新版 code-sandbox-os 把 `signal` 转交下去。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
