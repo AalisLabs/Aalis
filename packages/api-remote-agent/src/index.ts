@@ -200,6 +200,7 @@ export interface RemoteAgentProvider {
   getRun(agentId: string, runId: string, signal: AbortSignal): Promise<RunState>;
   /** 已到终态视为成功 */
   cancelRun(agentId: string, runId: string, signal: AbortSignal): Promise<void>;
+  /** 这个代理的全部轮次；取不全时抛错，不返回部分结果（消费方的对账与开轮认领依赖列表完整） */
   listRuns(agentId: string, signal: AbortSignal): Promise<RemoteRunSummary[]>;
   /** undefined = 费用暂缺 */
   runCost(agentId: string, runId: string, signal: AbortSignal): Promise<RunCost | undefined>;
@@ -219,7 +220,7 @@ export interface RemoteAgentProvider {
   unarchiveAgent(agentId: string, signal: AbortSignal): Promise<void>;
   /** 不存在视为成功 */
   deleteAgent(agentId: string, signal: AbortSignal): Promise<void>;
-  /** 列出账号下的代理（提供者可按 owner 配置排除 owner 自管的代理） */
+  /** 列出账号下的代理（提供者可按 owner 配置排除 owner 自管的代理）；取不全时抛错，不返回部分结果 */
   listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]>;
 }
 

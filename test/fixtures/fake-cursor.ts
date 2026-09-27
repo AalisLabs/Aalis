@@ -14,8 +14,9 @@ import type { AddressInfo } from 'node:net';
 //
 // - 鉴权：Bearer key 须在 accounts 里；不在就回 401，错误信息里回显 key 的一段（用来检验提供者去掉了它）。
 // - 建代理：请求到达即登记代理与首轮，之后才按 createDelays 等待回应，所以超时后用同一 agentId 重发会得 409。
-// - 列代理、列轮次：新的在前；limit 缺省 20、超过 100 回 400；还有下一页时带 nextCursor（本页最后一项的 id），
-//   下一页以 cursor 传回，末页不带。
+// - 列代理、列轮次：新的在前；limit 超过 100 回 400（缺省 20 取自文档）；还有下一页时带 nextCursor（本页最后一项
+//   的 id），下一页以 cursor 传回，末页不带。认不出的 cursor：列代理回 200 空页、不带 nextCursor，列轮次回 400
+//   validation_error（2026-09-27 实测）。列轮次的项不含 result，GET 单轮才有。
 // - 事件流：按 streams 里给这一轮排好的连接脚本逐次回应；脚本用完后，终态的轮次回 result 加 done，未终态的挂住。
 // - 预签名下载：链接指向本服务的 /s3/...，查询串带哨兵签名 signature；列表的 sizeBytes 可以和实际内容不符。
 // ════════════════════════════════════════════════════════════
@@ -183,18 +184,30 @@ function agentJson(a: FakeAgent): Record<string, unknown> {
   };
 }
 
-function runJson(r: FakeRun): Record<string, unknown> {
+/** 列轮次的项；GET 单轮另带 result */
+function runSummaryJson(r: FakeRun): Record<string, unknown> {
   return {
     id: r.id,
     agentId: r.agentId,
     status: r.status,
     ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}),
-    ...(r.result !== undefined ? { result: r.result } : {}),
   };
 }
 
-/** 按实测翻页：cursor 是上一页最后一项的 id，从它之后接着列；认不出的 cursor 回 400（实测没覆盖，按拒绝处理） */
-function listPage(res: ServerResponse, url: URL, items: Array<Record<string, unknown>>): void {
+function runJson(r: FakeRun): Record<string, unknown> {
+  return { ...runSummaryJson(r), ...(r.result !== undefined ? { result: r.result } : {}) };
+}
+
+/**
+ * 按实测翻页：cursor 是上一页最后一项的 id，从它之后接着列。认不出的 cursor 按 unknownCursor 回：
+ * empty 为 200 空页（列代理），reject 为 400（列轮次）
+ */
+function listPage(
+  res: ServerResponse,
+  url: URL,
+  items: Array<Record<string, unknown>>,
+  unknownCursor: 'empty' | 'reject',
+): void {
   const raw = url.searchParams.get('limit');
   const limit = raw === null ? 20 : Number(raw);
   if (!Number.isInteger(limit) || limit < 1) {
@@ -208,7 +221,8 @@ function listPage(res: ServerResponse, url: URL, items: Array<Record<string, unk
   const cursor = url.searchParams.get('cursor');
   const start = cursor === null ? 0 : items.findIndex(i => i.id === cursor) + 1;
   if (start === 0 && cursor !== null) {
-    apiError(res, 400, 'validation_error', 'Invalid cursor');
+    if (unknownCursor === 'empty') json(res, 200, { items: [] });
+    else apiError(res, 400, 'validation_error', 'Invalid pagination cursor');
     return;
   }
   const page = items.slice(start, start + limit);
@@ -357,7 +371,7 @@ export async function startFakeCursor(): Promise<FakeCursor> {
     }
     if (method === 'GET' && path === '/v1/agents') {
       // 实测按 updatedAt 倒序；假服务的代理不更新，按登记先后倒序
-      listPage(res, url, [...fake.agents.values()].reverse().map(agentJson));
+      listPage(res, url, [...fake.agents.values()].reverse().map(agentJson), 'empty');
       return;
     }
     if (method === 'POST' && path === '/v1/agents') {
@@ -408,7 +422,7 @@ export async function startFakeCursor(): Promise<FakeCursor> {
       return;
     }
     if (rest === 'runs' && method === 'GET') {
-      listPage(res, url, [...agent.runs].reverse().map(runJson));
+      listPage(res, url, [...agent.runs].reverse().map(runSummaryJson), 'reject');
       return;
     }
     if (rest === 'runs' && method === 'POST') {
