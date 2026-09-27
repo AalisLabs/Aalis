@@ -26,7 +26,8 @@
 //   累计，不是上下文长度）；新代理有一轮成功取回之前每轮都带旧工程包链接，成功之后删除旧代理。
 // - 定期检查（reconcileMinutes）：清理过期的任务记录、对账（账本里全部未删除的代理，跳过开轮中的；账号下
 //   账本外的代理）、补取暂缺的费用、删除退役的代理、闲置归档、定期清空。对账里列代理或轮次失败按提供者实例
-//   计连续次数（一次对账里有一次列表失败就算一次，全部列出才清零），到 3 次由诊断项报出。
+//   计连续次数（一次对账里有一次列表失败就算一次，全部列出才清零），到 3 次由诊断项报出；这次没对账的实例
+//   （提供者不在场，或已不在配置与账本里）清掉。
 // - 重启接回在 apply 返回后进行（start）；收尾时停止出队并落盘账本（drain）。不订阅 memory:clear。
 // ============================================================
 
@@ -311,7 +312,9 @@ export class PaperDriver {
       await entry.instance.cancelRun(step.agentId, step.runId, signal);
     } catch (err) {
       await restore();
-      return { ok: false, error: `远端取消失败：${describe(err)}` };
+      // 回包经 paper_cancel 交给模型：只写类别，提供者报错的原文只进日志
+      logger.warn(`白纸任务 ${taskId} 请远端取消轮次 ${step.runId} 失败（${via}）: ${describe(err)}`);
+      return { ok: false, error: `远端取消失败（${category(err)}）` };
     }
     logger.info(`白纸任务 ${taskId} 已请远端取消轮次 ${step.runId}（${via}）`);
     return ledger.exclusive(async () => {
@@ -1324,9 +1327,11 @@ export class PaperDriver {
     this.#reconciling = true;
     try {
       await this.#prune();
+      const reconciled = new Set<string>();
       for (const type of this.#providerTypes()) {
         const entry = resolveRemoteAgent(this.#d.remote, type);
         if (!entry) continue;
+        reconciled.add(type);
         const failed = [...(await this.#reconcileRuns(entry)), ...(await this.#reconcileAgents(entry))];
         if (failed.length === 0) this.#listingFailures.delete(type);
         else {
@@ -1334,6 +1339,8 @@ export class PaperDriver {
           this.#listingFailures.set(type, { count, categories: [...new Set(failed)] });
         }
       }
+      // 这次没对账的（提供者停用、移除，或已不在配置与账本里）：计数不再有意义，诊断项不报
+      for (const type of this.#listingFailures.keys()) if (!reconciled.has(type)) this.#listingFailures.delete(type);
       await this.#retryCosts();
       await this.#reap();
       await this.#archiveIdle();
