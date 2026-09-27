@@ -196,7 +196,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - 会话状态：`inbound:message` 不再把会话翻成 `active`，改为回合开始时（`agent:input:before`）翻转，同一个中间件在回合结束时把仍为 `active` 的根会话收口为 `completed`。群里只有消息、bot 没开口的房间不再显示「进行中」；被后面的输入中间件拦下或抛错的回合也不再停在「进行中」。未装 agent 时会话不再翻 `active`。
 - 会话页：分「我的会话」「IM 房间」两区，分区在服务端判定；子会话默认收起；批量模式的「全选」只选所在分区，页头的跨区全选删除；删除确认写明会清空消息历史与长期记忆（摘要、向量记忆等），删除 IM 房间时另写明聊天平台里的消息不受影响、房间之后再来消息会重新出现且记忆从零开始，批量删除含 IM 房间时写出其个数。
 - 停止键停掉子进程：exec、run_python、run_javascript 把回合的中止信号交给子进程，按进程组停掉（POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树），回合随即结束；此前要等命令跑完或超时（`maxTimeout` 默认 300000ms）。被信号结束的结果带 `aborted: true` 与 `message`（exec 为「命令已随回合中止」，代码执行为「代码已随回合中止」），不标 `timedOut`；中止前已自行退出、或结束时没有终止信号的，按实际退出回报并加 `note: '回合已中止'`。停止键不杀 `exec_background` 起的后台进程：在对话回合里起的进程自行退出时通知起它的会话，要停时由她用 `process_kill` 直接停，见下文「后台命令结束通知」。中止与超时只打原进程组：主动脱离进程组的后代（`setsid` 等守护化写法）在 exec、无沙箱与 macOS 沙箱路径上停不掉，Linux bwrap 路径有 pid 命名空间。Windows 中止路径只有单元用例，未在 Windows 上实测；Linux bwrap 路径的中止也尚未实测。
-- code-sandbox-os 的启动探测改经 `spawn` 并带本次激活的 `lifecycle.signal`，退出码为 0 才算有后端。启动器挂住时停用或停机随即中止探测，不再等满 5000ms 的探测超时，也不再因此被判「未在宽限内停止」转为 error。
+- code-sandbox-os 的启动探测改经 `spawn` 并带本次激活的 `lifecycle.signal`，退出码为 0 才算有后端。启动器挂住时停用或停机随即中止探测，不再等满 5000ms 的探测超时，也不再因此被判「未在宽限内停止」转为 error。Linux 的探测命令补上 `--dev /dev --proc /proc`，与正式运行的挂载一致：只放开 seccomp、挂不了 `/proc` 的容器里此前探测报 bwrap 可用、之后每次运行都失败，现在探测为 none，按规则失败关闭。
 - token 快照：plugin-webui-server 发 `token:request` 不再带 `platform`；plugin-agent 缺省时依次取会话的出生平台与 `webui`。此前 webui-server 自己按已注册的平台名解析会话 ID 前缀。
 
 新增：

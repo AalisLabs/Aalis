@@ -39,6 +39,7 @@ export default definePlugin({
   沙箱相关的逻辑不进 process-api / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经网关的功能性试跑）。
   调用方的中止信号（`SandboxRunRequest.signal`）原样交给 `execFile`，由 process 服务按进程组停掉。
 - **功能性探测**：启动时真跑一次最小沙箱命令（超时 5000ms），退出码为 0 才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
+  Linux 的探测命令是 `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`：只放开 seccomp、挂不了 `/proc` 的容器里探测即失败、按无后端，不会探测报可用、之后每次运行都失败。
   探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测，激活随之落定，不必等满探测超时，也不会被判「未在宽限内停止」。
   因此本插件依赖 `lifecycle`，core peer 为 `>=0.18.0`（`lifecycle.signal` 自 core 0.18 起提供）。
 - **可换可叠**：未来 `-docker` / `-wasm` / `-e2b` 等不同机制各自提供 `code-sandbox`，经优先级/偏好替换。
