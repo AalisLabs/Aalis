@@ -75,6 +75,8 @@ export default definePlugin({
    （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
    `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
+可见范围为同平台时（`crossSessionMode: platform`、会话配置 `memoryRecallScope` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取房间的出生平台（[api-gateway](../api/api-gateway.md#出生平台解析) 的 `resolveSessionOrigin`），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台，入口也缺省时取会话 ID 第一个 `:` 之前的一段。候选向量记下的平台或其会话 ID 的第一段等于当前平台，即算同平台。
+
 ## embedding 模型与存量向量
 
 只有同一 embedding 模型算出的向量才能互相比较。embedding 提供者声明了 `modelId`（向量空间标识，第一方提供者为 `ollama:<model>` / `openai:<model>`）时：
