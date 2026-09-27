@@ -1499,6 +1499,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-memory':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-memory
@@ -1651,6 +1654,9 @@ importers:
       '@aalis/api-embedding':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-embedding
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
@@ -2342,6 +2348,9 @@ importers:
 
   packages/plugin-tool-session:
     dependencies:
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-memory':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-memory
