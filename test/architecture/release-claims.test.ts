@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.18.0 <1.0.0';
-/** 带 core peer >=0.18.0 的包：31 api（30 个随 core 0.18 发布，另有未发布的 api-trigger）+ 59 插件 + runtime + schema-config + schema-log。 */
-const CORE_PEER_COUNT = 93;
+/** 带 core peer >=0.18.0 的包：32 api（30 个随 core 0.18 发布，另有未发布的 api-trigger 与 api-remote-agent）+ 60 插件（含未发布的 plugin-remote-agent-cursor）+ runtime + schema-config + schema-log。 */
+const CORE_PEER_COUNT = 95;
 
 interface Manifest {
   name?: string;
@@ -43,7 +43,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('本批发布的 93 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
+  it('本批发布的 95 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
@@ -57,7 +57,7 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'raised core peer 包数应对齐 93（31 api + 59 插件 + runtime + schema-config + schema-log）',
+      'raised core peer 包数应对齐 95（32 api + 60 插件 + runtime + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
     // schema-message 的 core peer 只为类型声明，不抬；五个包本批没有改动、不重发，保持已发布的 >=0.17.0
