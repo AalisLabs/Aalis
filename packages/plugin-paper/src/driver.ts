@@ -7,9 +7,12 @@
 // - 先落盘再调远端：建代理前账本里已有这个代理（creating）与开轮中的任务（starting，path=create）；已绑定
 //   代理开轮前任务已是 starting（path=run）。startRun 不幂等：结果未知时（读超时、临时故障、重启接回）先列
 //   轮次，账本外的恰好一轮就认领（记一条告警请 owner 核对），没有就重发，多于一轮按自唤醒处理；从没有结果
-//   未知的请求时，busy 加账本外的轮次立即按自唤醒处理。
+//   未知的请求时，busy 加账本外的轮次立即按自唤醒处理。结果未知之后认领不了（列不出轮次，或重启接回时提供者
+//   等满上限仍不在场）：任务留在开轮中、预留保留，等下次触发再认领，第一次挂一条告警（claim-failed）；owner
+//   可以放弃跟踪，任务判为失败，之后列得出这个代理的轮次时那一轮记到它名下（orphanRun）。
 // - 等待上限：开轮之前 busy、transient、rate-limited（含 archived 后的取消归档）的等待每件任务合计不超过
-//   10 分钟，超过就判失败、释放预留；终态之后另算一份，等不到时任务留在取回成品中，下次触发再取。
+//   10 分钟，超过就判失败、释放预留，结果未知之后的认领除外（见上）；终态之后另算一份，等不到时任务留在取回
+//   成品中，下次触发再取。
 // - 单轮时长：每件运行中的任务一个计时器（开轮时刻加 maxRunMinutes），与事件流无关；到点取消，取消按
 //   10、30、60 秒退避仍失败就停开白纸，之后 owner 可以放弃跟踪（任务判为失败，费用等这一轮结束后补记）。
 // - 终态后：核查账本外的轮次、取回成品（写入口见 artifacts.ts）、按实际费用入账（暂缺时 20 秒一次、共 3 次，
@@ -335,22 +338,37 @@ export class PaperDriver {
   }
 
   /**
-   * 放弃跟踪一件取消不了的任务：只在它到点取消失败、白纸因此停开之后可用（提供者长期不可用时，任务会一直
-   * 停在运行中，占着白纸与预留）。任务判为失败并写明远端可能仍在运行；轮次记录与预留保留，这一轮到终态后由
-   * 定期检查补记费用；下一件任务建新代理。不能放弃时返回原因。
+   * 放弃跟踪一件停不下来、也等不到结果的任务（提供者长期不可用时，它会一直占着白纸与预留），两种情形：
+   * - 运行中的任务到点取消失败、白纸因此停开：判为失败并写明远端可能仍在运行；轮次记录与预留保留，这一轮到
+   *   终态后由定期检查补记费用。
+   * - 开轮中、start.path 为 run 的任务认领失败过（见 #claimFailed）：判为失败并写明远端可能已开出一轮；预留保留，
+   *   记下 orphanRun，之后列得出这个代理的轮次时由 #unaccounted 把那一轮记到它名下，不当成自唤醒。运行循环
+   *   若还在认领这件任务，下一步看到它已结束就停下（见 #postRun）。
+   * 两种都让下一件任务建新代理。不能放弃时返回原因。
    */
   async abandon(taskId: string): Promise<string | undefined> {
     const { ledger, logger } = this.#d;
     const refused = await ledger.exclusive(async () => {
       const task = Object.hasOwn(ledger.data.tasks, taskId) ? ledger.data.tasks[taskId] : undefined;
       if (!task) return `没有任务 ${taskId}`;
-      if (task.state !== 'running') return '只有运行中的任务能放弃跟踪';
-      const cancelFailed = ledger.data.alerts.some(a => a.kind === 'cancel-failed' && a.subject === task.agentId);
-      if (!ledger.data.papers[task.paperId]?.halted || !cancelFailed) {
-        return '只在到点取消失败、白纸停开之后才能放弃跟踪；先试「取消」';
+      if (task.state === 'running') {
+        const cancelFailed = ledger.data.alerts.some(a => a.kind === 'cancel-failed' && a.subject === task.agentId);
+        if (!ledger.data.papers[task.paperId]?.halted || !cancelFailed) {
+          return '运行中的任务只在到点取消失败、白纸停开之后才能放弃跟踪；先试「取消」';
+        }
+        task.error = '远端这一轮取消不了，owner 放弃跟踪；远端可能仍在运行，费用等这一轮结束后补记';
+      } else if (task.state === 'starting') {
+        const claimFailed = ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id);
+        if (task.start?.path !== 'run' || !claimFailed) {
+          return '开轮中的任务只在开轮结果未知、认领失败之后才能放弃跟踪';
+        }
+        task.error = '开轮结果未知、认领不了，owner 放弃跟踪；远端可能已开出一轮，列得出轮次后费用记到本件名下';
+        task.orphanRun = true;
+        delete task.start;
+      } else {
+        return '只有运行中与开轮中的任务能放弃跟踪';
       }
       task.state = 'failed';
-      task.error = '远端这一轮取消不了，owner 放弃跟踪；远端可能仍在运行，费用等这一轮结束后补记';
       task.endedAt = this.#d.now();
       this.#paper(task.paperId).rotateNext = true;
       await ledger.save();
@@ -359,7 +377,7 @@ export class PaperDriver {
     if (refused) return refused;
     this.#clearDeadline(taskId);
     this.#following.get(taskId)?.abort();
-    logger.warn(`白纸任务 ${taskId} 已由 owner 放弃跟踪，远端这一轮可能仍在运行`);
+    logger.warn(`白纸任务 ${taskId} 已由 owner 放弃跟踪，远端这一轮可能仍在运行或已开出`);
     this.#d.ended();
     return undefined;
   }
@@ -626,12 +644,23 @@ export class PaperDriver {
     return this.#postRun(task, entry, waits, false);
   }
 
-  /** 重启接回开轮中的任务：新建代理按同一 agentId 重建，已绑定代理先认领 */
+  /**
+   * 重启接回开轮中的任务：新建代理按同一 agentId 重建（提供者等满上限仍不在场就判失败）；已绑定代理先认领，
+   * 提供者等满上限仍不在场时不判失败（远端那一轮可能在跑），按认领失败留在开轮中，与 #finish 的做法一致
+   */
   async #resumeStart(task: TaskRecord, waits: Waits): Promise<Outcome | undefined> {
     const agent = task.agentId ? this.#d.ledger.data.agents[task.agentId] : undefined;
     if (!agent) return this.#fail(task, '账本里找不到开轮中的代理');
-    const entry = await this.#provider(agent.providerType, waits);
-    if (task.start?.path === 'create') return this.#create(task, entry, waits);
+    if (task.start?.path === 'create')
+      return this.#create(task, await this.#provider(agent.providerType, waits), waits);
+    let entry: RemoteAgentEntry;
+    try {
+      entry = await this.#provider(agent.providerType, waits);
+    } catch (err) {
+      if (this.#d.signal.aborted || !(err instanceof GaveUp)) throw err;
+      const absent = `远端代理「${agent.providerType}」不在场`;
+      return this.#claimFailed(task, agent.providerType, absent, `${absent}，等待超过上限`);
+    }
     return this.#postRun(task, entry, waits, true);
   }
 
@@ -640,7 +669,8 @@ export class PaperDriver {
    * busy 时核查是不是账本外的轮次在跑。发出过结果未知的请求之后，账本外恰好一轮就认领（不管这次是
    * 认领核查还是 busy 核查：那一轮很可能是本件开出的）；从没有结果未知的请求时，busy 加账本外的轮次按自唤醒处理。
    * 发出过结果未知的请求之后列不出轮次（远端找不到代理除外）：远端那一轮可能在跑，任务留在开轮中（预留保留），
-   * 等下次触发时按重启接回的路径再认领；列出之前不重发，也不判失败。
+   * 等下次触发时按重启接回的路径再认领；列出之前不重发，也不判失败（见 #claimFailed）。
+   * owner 在这期间放弃跟踪了（任务已不在开轮中）：下一步之前停下，不认领、不重发。
    */
   async #postRun(
     task: TaskRecord,
@@ -654,6 +684,7 @@ export class PaperDriver {
     let unarchive = false;
     let delay = 0;
     for (let attempt = 0; ; attempt++) {
+      if (task.state !== 'starting') return 'next';
       try {
         if (unarchive) {
           await this.#unarchive(entry, agentId, waits);
@@ -666,12 +697,11 @@ export class PaperDriver {
           } catch (err) {
             const gone = isRemoteAgentError(err) && err.code === 'not-found';
             if (!uncertain || gone || this.#d.signal.aborted) throw err;
-            const why = err instanceof GaveUp ? '等待超过上限' : describe(err);
-            this.#d.logger.warn(
-              `白纸任务 ${task.id} 开轮结果未知，认领时列代理 ${agentId} 的轮次失败，留在开轮中等下次认领: ${why}`,
-            );
-            return 'pause';
+            const waited = err instanceof GaveUp;
+            const detail = `列代理 ${agentId} 的轮次失败：${waited ? '等待超过上限' : describe(err)}`;
+            return this.#claimFailed(task, entry.contextId, waited ? '等待超过上限' : category(err), detail);
           }
+          if (task.state !== 'starting') return 'next';
           if (uncertain && unknown.length === 1) {
             await this.#claim(task, entry, unknown[0].runId);
             return undefined;
@@ -691,6 +721,7 @@ export class PaperDriver {
         }
         const replaces = this.#d.ledger.data.agents[agentId]?.replaces;
         const prompt = await this.#prompt(task, entry, replaces, waits);
+        if (task.state !== 'starting') return 'next';
         const { runId } = await entry.instance.startRun(agentId, prompt, this.#d.signal);
         await this.#started(task, runId, this.#d.now());
         return undefined;
@@ -717,6 +748,30 @@ export class PaperDriver {
         }
       }
     }
+  }
+
+  /**
+   * 开轮结果未知、认领不了（列不出轮次，或重启接回时提供者等满上限仍不在场）：任务留在开轮中、预留保留，等下次
+   * 触发再认领，不判失败（远端那一轮可能在跑）。每件任务只在第一次挂一条告警（标为已读后也不再挂），写宿主撰写的
+   * 类别；detail 是提供者报错的原文，只进 warn。提供者一直不可用时 owner 可以放弃跟踪（见 abandon）。
+   */
+  async #claimFailed(task: TaskRecord, providerType: string, cause: string, detail: string): Promise<Outcome> {
+    const { ledger, logger } = this.#d;
+    if (task.state !== 'starting') return 'next';
+    logger.warn(`白纸任务 ${task.id} 开轮结果未知，认领失败，留在开轮中等下次认领: ${detail}`);
+    await ledger.exclusive(async () => {
+      if (ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id)) return;
+      this.#alert({
+        kind: 'claim-failed',
+        subject: task.id,
+        providerType,
+        message:
+          `开轮结果未知，白纸任务 ${task.id} 认领不了（${cause}），留在开轮中、预留保留，远端这一轮可能在跑；` +
+          '提供者一直不可用时，可在任务表「放弃跟踪」',
+      });
+      await ledger.save();
+    });
+    return 'pause';
   }
 
   /**
@@ -767,12 +822,21 @@ export class PaperDriver {
     }
   }
 
-  /** 拿到 runId：记进轮次表，任务转 running；新建的代理转为绑定，原来绑定的退役 */
+  /**
+   * 拿到 runId：记进轮次表，任务转 running；新建的代理转为绑定，原来绑定的退役。owner 在开轮途中放弃跟踪了
+   * （任务已不在开轮中）：这一轮照样记到本件名下，费用照常入账后释放预留，任务不再转 running
+   */
   async #started(task: TaskRecord, runId: string, startedAt: number): Promise<void> {
     const { ledger } = this.#d;
     await ledger.exclusive(async () => {
       const agentId = task.agentId ?? '';
       ledger.data.runs[runId] = { agentId, taskId: task.id, cost: { state: 'pending' } };
+      if (task.state !== 'starting') {
+        task.runId = runId;
+        delete task.orphanRun;
+        await ledger.save();
+        return;
+      }
       task.state = 'running';
       task.runId = runId;
       task.startedAt = startedAt;
@@ -1164,7 +1228,7 @@ export class PaperDriver {
       if (isRemoteAgentError(err) && err.code === 'not-found') return true;
       throw err;
     }
-    const added = listed.filter(r => !ledger.data.runs[r.runId]);
+    const added = await this.#unaccounted(agentId, listed);
     if (added.length > 0) {
       await ledger.exclusive(async () => {
         for (const r of added) ledger.data.runs[r.runId] ??= { agentId, cost: { state: 'pending' } };
@@ -1192,7 +1256,7 @@ export class PaperDriver {
 
   /**
    * 代理已确认不存在：名下还没入账的轮次费用再也取不到了，按估计入账（见 #estimate）；然后连同轮次记录一起从
-   * 账本移除，绑定与引用一并清掉，开轮中的任务回到队列
+   * 账本移除，绑定与引用一并清掉，开轮中的任务回到队列，放弃跟踪时开轮结果未知的任务释放预留
    */
   async #forget(agentId: string, why?: string): Promise<void> {
     const { ledger } = this.#d;
@@ -1214,7 +1278,13 @@ export class PaperDriver {
       for (const paper of Object.values(ledger.data.papers)) if (paper.binding === agentId) delete paper.binding;
       for (const agent of Object.values(ledger.data.agents)) if (agent.replaces === agentId) delete agent.replaces;
       for (const task of Object.values(ledger.data.tasks)) {
-        if (task.agentId !== agentId || task.state !== 'starting') continue;
+        if (task.agentId !== agentId) continue;
+        // 放弃跟踪时开轮结果未知的：代理已不存在，远端不会有这一轮在跑
+        if (task.orphanRun) {
+          delete task.orphanRun;
+          release(ledger.data, task.id);
+        }
+        if (task.state !== 'starting') continue;
         task.state = 'queued';
         delete task.start;
         delete task.agentId;
@@ -1312,7 +1382,7 @@ export class PaperDriver {
       }
       // 列轮次期间可能开了新一轮：以落盘后的账本为准，开轮中的仍然跳过
       if (!ledger.data.agents[agentId] || this.#opening(agentId)) continue;
-      const unknown = runs.filter(r => !ledger.data.runs[r.runId]);
+      const unknown = await this.#unaccounted(agentId, runs);
       if (unknown.length > 0) await this.#selfWake(agentId, unknown);
     }
     return failed;
@@ -1525,8 +1595,52 @@ export class PaperDriver {
   }
 
   async #unknownRuns(entry: RemoteAgentEntry, agentId: string): Promise<RemoteRunSummary[]> {
-    const runs = await entry.instance.listRuns(agentId, this.#d.signal);
-    return runs.filter(r => !this.#d.ledger.data.runs[r.runId]);
+    return this.#unaccounted(agentId, await entry.instance.listRuns(agentId, this.#d.signal));
+  }
+
+  /**
+   * 列出的轮次里账本外的。这个代理上有放弃跟踪时开轮结果未知的任务（orphanRun）时先按它处理：账本外恰好一轮就
+   * 记到它名下（与认领一样分不出是不是本件开出的，记一条 claim-unverified 告警），费用照常入账后释放预留；没有
+   * 就释放预留；多于一轮分不出，释放预留，全部仍算账本外（调用方按自唤醒处理）。
+   */
+  async #unaccounted(agentId: string, runs: RemoteRunSummary[]): Promise<RemoteRunSummary[]> {
+    const { ledger, logger } = this.#d;
+    const unknown = () => runs.filter(r => !ledger.data.runs[r.runId]);
+    const orphanOf = () => Object.values(ledger.data.tasks).find(t => t.orphanRun && t.agentId === agentId);
+    if (!orphanOf()) return unknown();
+    const settled = await ledger.exclusive(async () => {
+      const task = orphanOf();
+      if (!task) return undefined;
+      const found = unknown();
+      delete task.orphanRun;
+      if (found.length === 1) {
+        const runId = found[0].runId;
+        ledger.data.runs[runId] = { agentId, taskId: task.id, cost: { state: 'pending' } };
+        task.runId = runId;
+        this.#alert({
+          kind: 'claim-unverified',
+          subject: runId,
+          providerType: ledger.data.agents[agentId]?.providerType,
+          message:
+            `放弃跟踪的白纸任务 ${task.id} 开轮结果未知，代理 ${agentId} 上唯一一轮账本外的轮次 ${runId} 记到它名下；` +
+            '核对不了它是本件开出的还是代理自己唤醒的，请在远端后台核对',
+        });
+      } else {
+        release(ledger.data, task.id);
+      }
+      await ledger.save();
+      return { taskId: task.id, found };
+    });
+    if (settled?.found.length === 1) {
+      logger.info(`放弃跟踪的白纸任务 ${settled.taskId} 开轮结果未知，远端轮次 ${settled.found[0].runId} 记到它名下`);
+    } else if (settled?.found.length === 0) {
+      logger.info(`放弃跟踪的白纸任务 ${settled.taskId} 开轮结果未知，远端没有开出这一轮，释放预留`);
+    } else if (settled) {
+      logger.warn(
+        `放弃跟踪的白纸任务 ${settled.taskId} 开轮结果未知，代理 ${agentId} 上账本外的轮次不止一轮，释放预留`,
+      );
+    }
+    return unknown();
   }
 
   /** 按实例 id 精确取提供者；不在场时按临时故障等（计入等待上限） */
@@ -1603,7 +1717,9 @@ export class PaperDriver {
 
   async #fail(task: TaskRecord, reason: string): Promise<Outcome> {
     const { ledger } = this.#d;
-    await ledger.exclusive(async () => {
+    // owner 在这期间放弃跟踪了：任务已结束，失败原因与预留不再动
+    const ended = await ledger.exclusive(async () => {
+      if (!UNFINISHED_STATES.has(task.state)) return true;
       // 新建代理没建成：这个代理退役，远端若已建出来由清理立即删掉（首轮在白跑）
       const agent = task.start?.path === 'create' && task.agentId ? ledger.data.agents[task.agentId] : undefined;
       if (agent?.state === 'creating') {
@@ -1616,7 +1732,9 @@ export class PaperDriver {
       delete task.start;
       release(ledger.data, task.id);
       await ledger.save();
+      return false;
     });
+    if (ended) return 'next';
     this.#clearDeadline(task.id);
     this.#d.logger.warn(`白纸任务 ${task.id} 失败：${reason}`);
     this.#d.ended();

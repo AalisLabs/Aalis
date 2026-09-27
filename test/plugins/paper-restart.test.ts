@@ -14,6 +14,7 @@ import {
 } from '../fixtures/paper.js';
 import {
   advance,
+  DRIVER_CONFIG,
   FAKE_TIMERS,
   MINUTE,
   PAPER_A_ID,
@@ -157,6 +158,62 @@ describe('重启接回（假时钟）', () => {
       expect(a.count('createAgent')).toBe(0);
       expect(a.count('startRun')).toBe(1);
       expect(hub.task('t-000000aa').runId).toBe(a.runsOf(AGENT).at(-1)?.runId);
+    });
+  });
+
+  describe('重启接回时提供者不在场', () => {
+    it('安全：path 为 run 的任务等满上限提供者仍不在场：留在开轮中、预留保留、挂认领失败的告警；提供者回来后认领', async () => {
+      const a = new ScriptedRemote();
+      const known = a.seedAgent(AGENT);
+      a.finish(known);
+      // 停机前的 startRun 已到远端
+      const opened = a.spawnRun(AGENT);
+      const files = seedLedger(ledger => {
+        ledger.agents[AGENT] = agentRecord('active');
+        ledger.papers[PAPER_A_ID].binding = AGENT;
+        ledger.runs[known] = { agentId: AGENT, cost: { state: 'booked', cents: 10 } };
+        ledger.tasks['t-000000aa'] = seedTask({
+          state: 'starting',
+          agentId: AGENT,
+          start: { path: 'run', requestedAt: Date.now() - 30_000 },
+        });
+        ledger.reserves['t-000000aa'] = { cents: 50, day: '2026-09-27', room: ROOM_A, user: 'onebot:30001' };
+      });
+      const hub = await startDriverHub({
+        remotes: { [REMOTE_A]: a },
+        files,
+        absent: [REMOTE_A],
+        config: { ...DRIVER_CONFIG, maxRunMinutes: 120 },
+      });
+      await advance(11 * MINUTE);
+      expect(hub.task('t-000000aa').state).toBe('starting');
+      expect(hub.task('t-000000aa').error).toBeUndefined();
+      expect(hub.store.data.reserves['t-000000aa']).toBeDefined();
+      expect(hub.store.data.alerts).toContainEqual(
+        expect.objectContaining({ kind: 'claim-failed', subject: 't-000000aa', acknowledged: false }),
+      );
+
+      hub.setPresent(REMOTE_A, true);
+      await advance(2 * MINUTE);
+      await until(() => hub.task('t-000000aa').state === 'running', '提供者回来后认领');
+      expect(hub.task('t-000000aa').runId).toBe(opened);
+      expect(a.count('startRun')).toBe(0);
+    });
+
+    it('对照：path 为 create 的任务等满上限提供者仍不在场，照旧判失败', async () => {
+      const a = new ScriptedRemote();
+      const files = seedLedger(ledger => {
+        ledger.agents[AGENT] = agentRecord('creating');
+        ledger.tasks['t-000000aa'] = seedTask({
+          state: 'starting',
+          agentId: AGENT,
+          start: { path: 'create', requestedAt: Date.now() - 30_000 },
+        });
+      });
+      const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files, absent: [REMOTE_A] });
+      await advance(11 * MINUTE);
+      expect(hub.task('t-000000aa').state).toBe('failed');
+      expect(hub.store.data.alerts.map(al => al.kind)).not.toContain('claim-failed');
     });
   });
 
