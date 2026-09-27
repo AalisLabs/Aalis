@@ -250,7 +250,10 @@ export interface IncomingMessage {
   };
   /**
    * 宿主撰写的事件通知（不是任何人的发言）。带这个字段的消息：
-   * - 注入方必须同时设 `source`，actor 用 {@link selfInitiatedActor}；不设 userId、nickname、sessionType、triggerType；
+   * - 注入方必须同时设 `source`；不设 userId、nickname、sessionType、triggerType；
+   * - actor：不延续某次调用的通知用 {@link selfInitiatedActor}、不设 `callerUserId`；延续某次工具调用的（如后台命令
+   *   结束通知），platform 同那次调用，actor 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为
+   *   selfInitiatedActor），并设 `callerUserId`。延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记；
    * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
    * - 不进向量记忆、抽取与记忆扩窗。
    *
@@ -258,7 +261,17 @@ export interface IncomingMessage {
    * `untrusted` 是注入方已用 wrapUntrustedContent 包好的不可信段：只在当轮渲染时接在正文之后，
    * 不归档、不进任何存储。宿主撰写的行一律放在 content 里。
    */
-  hostNotice?: { kind: string; id?: string; untrusted?: string };
+  hostNotice?: {
+    kind: string;
+    id?: string;
+    untrusted?: string;
+    /**
+     * 通知延续某次工具调用时，那次调用的 ToolCallContext.userId。plugin-agent 只用它填本轮工具调用上下文的 userId
+     * （确认由谁应答、会话授予按谁匹配、工具眼里是谁在调），并让这位发言者在同一会话的消息打断这一轮；不当作发言者：
+     * 归档、用户档案、关系、提示词钩子与确认应答的判定都不看它。须与 actor 取自同一次调用；不延续某次调用的通知不设。
+     */
+    callerUserId?: string;
+  };
 }
 
 /**
