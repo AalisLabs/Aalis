@@ -25,6 +25,7 @@ import { fixedRef, ref } from './service-ref.js';
 // 两个根的内存实现（文件表可跨「重启」复用），网关记下出站消息。时钟用 vitest 的假时钟：
 // 用例在 beforeEach 里 useFakeTimers（含 Date），驱动的 now 取 Date.now。
 // owner 的管理动作（恢复、换新、清空、标为已读）直接调驱动的方法，WebUI 的接线在白纸页。
+// 完成通知不接（驱动交给它的回调是空的），通知经真实 App 测，见 paper-notices.test.ts。
 // ════════════════════════════════════════════════════════════
 
 export const ROOM_A = 'onebot:10000:group:20001';
@@ -153,6 +154,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     logger,
     signal: controller.signal,
     now,
+    ended: () => {},
   });
   const handlers = new Map<string, RegisteredTool['handler']>();
   registerPaperTools({

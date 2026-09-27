@@ -1,5 +1,6 @@
 import { type CheckResult, type CheckSpec, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import { type GatewayService, gateway } from '../../packages/api-gateway/src/index.js';
+import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { type EgressReport, type RemoteAgentProvider, remoteAgent } from '../../packages/api-remote-agent/src/index.js';
 import {
   type SessionConfig,
@@ -14,18 +15,20 @@ import {
   type ToolGroupInfo,
   tools,
 } from '../../packages/api-tools/src/index.js';
-import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
-import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from './hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
 // - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
 // - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
-// - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行。
-// 不连任何真实服务。
+// - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行；
+// - 钩子与贡献点用默认提供者；入站消息（宿主通知）只记下，没有网关与 agent 消费。
+// 装好后 app.start()，与宿主一样发出 app:started。不连任何真实服务。
 // ════════════════════════════════════════════════════════════
 
 export const LEDGER_URI = 'pluginData:/paper/ledger.json';
@@ -200,6 +203,9 @@ export interface PaperHub {
   app: App;
   files: PaperFiles;
   outbound: OutgoingMessage[];
+  /** 枢纽注入的入站消息（宿主通知） */
+  injected: IncomingMessage[];
+  hooks: Hooks;
   tools: Map<string, Omit<RegisteredTool, 'pluginName'>>;
   groups: Array<Omit<ToolGroupInfo, 'pluginName'>>;
   /** 调工具，返回原样的结果文本 */
@@ -225,13 +231,16 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   hubs.push(app);
   const files: PaperFiles = opts.files ?? new Map();
   const outbound: OutgoingMessage[] = [];
+  const injected: IncomingMessage[] = [];
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();
   const groups: Array<Omit<ToolGroupInfo, 'pluginName'>> = [];
   const checks = new Map<string, CheckSpec>();
   const rooms = opts.rooms ?? { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM };
   const children = opts.children ?? {};
 
-  const host = app.bind({ provide, services });
+  await registerHubs(app);
+  const host = app.bind({ provide, services, events, hooks });
+  host.events.on('inbound:message', message => void injected.push(message));
   host.provide(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       registered.set(tool.definition.function.name, tool);
@@ -286,6 +295,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   await app.plugins.idle();
   const state = app.plugins.getPlugin(paperPlugin.name)?.state;
   if (state !== 'active') throw new Error(`plugin-paper 未激活（state=${state}）`);
+  await app.start();
 
   const raw = async (name: string, args: Record<string, unknown>, ctx: ToolCallContext = human()) => {
     const tool = registered.get(name);
@@ -297,6 +307,8 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     app,
     files,
     outbound,
+    injected,
+    hooks: host.hooks,
     tools: registered,
     groups,
     raw,

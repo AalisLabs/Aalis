@@ -10,7 +10,8 @@
 // - 单轮时长：每件运行中的任务一个计时器（开轮时刻加 maxRunMinutes），与事件流无关；到点取消，取消按
 //   10、30、60 秒退避仍失败就停开白纸。
 // - 终态后：核查账本外的轮次、取回成品（写入口见 artifacts.ts）、按实际费用入账（暂缺时 20 秒一次、共 3 次，
-//   仍缺就停开白纸，预留按临时花费保留，定期检查时再补取）。
+//   仍缺就停开白纸，预留按临时花费保留，定期检查时再补取）。任务到终态（含失败、清空时取消排队的）后交给
+//   完成通知（notices.ts）。
 // - 自唤醒事件（代理上出现账本外的轮次）：取消在跑的、费用记进全局日账、停开白纸、下一次新建代理不带旧工程包；
 //   删除这个代理（不只归档：定时唤醒的订阅跟着代理走），它上面还有本白纸的任务时等任务取回成品后再删。
 // - 换新：代理累计花费、上一轮上下文超过上限或 owner 点了换新时建新代理；新代理有一轮成功取回之前每轮都带
@@ -119,6 +120,8 @@ interface DriverDeps {
   /** 激活的取消信号：停机、停用时中止一切远端调用与等待 */
   signal: AbortSignal;
   now: () => number;
+  /** 有任务到了终态（账本已落盘）：交给完成通知 */
+  ended: () => void;
 }
 
 export class PaperDriver {
@@ -698,6 +701,7 @@ export class PaperDriver {
       await ledger.save();
     });
     logger.info(`白纸任务 ${task.id} 结束：${outcome}，成品 ${collected.artifacts.length} 件`);
+    this.#d.ended();
     await this.#reap();
     return 'next';
   }
@@ -1089,6 +1093,7 @@ export class PaperDriver {
       return undefined;
     });
     if (refused) return refused;
+    this.#d.ended();
     try {
       await storage.delete(paperDirUri(paperId));
     } catch (err) {
@@ -1249,6 +1254,7 @@ export class PaperDriver {
     });
     this.#clearDeadline(task.id);
     this.#d.logger.warn(`白纸任务 ${task.id} 失败：${reason}`);
+    this.#d.ended();
     await this.#reap();
     return 'next';
   }
