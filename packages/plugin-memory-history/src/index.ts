@@ -297,6 +297,9 @@ export default definePlugin({
             },
           },
         },
+        // 读的是别的会话（默认排除当前会话；同平台别的群与私聊，cross-platform 含 WebUI），
+        // 与 session_get_history 同属跨会话读取：朋友档挡 level-0；不弹确认
+        risk: 'sensitive',
         handler: async (args, callCtx) => {
           const scope = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : undefined;
           const records = await queryRecent({
