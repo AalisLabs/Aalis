@@ -46,6 +46,7 @@ export {
 export {
   type BindingPort,
   type BoundOf,
+  type CheckedUses,
   defineService,
   type FollowCleanup,
   type OptionalUse,
