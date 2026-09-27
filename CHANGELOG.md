@@ -14,7 +14,7 @@
 
 待发布的包：
 
-- 有代码或契约改动（20 个）：schema-message、api-persona、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-llm-deepseek、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-session、plugin-user-profile、plugin-user-relation、plugin-webui-client
+- 有代码或契约改动（21 个）：schema-message、api-persona、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-flow-control、plugin-llm-deepseek、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-session、plugin-user-profile、plugin-user-relation、plugin-webui-client
 - 按次版本发布（8 个）：schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`）、plugin-adapter-onebot（出站媒体按文件头核对）、plugin-storage-local（保留根名 `paper`）
 - 按 patch 发布（13 个）：api-tools、api-session-manager、api-webui（只做加法）、plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-llm-deepseek、plugin-subtask、plugin-checkpoint、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
 - 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0
