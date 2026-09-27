@@ -523,7 +523,7 @@ importers:
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-persona':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.8.1 <1.0.0
         version: link:../api-persona
       '@aalis/api-session-manager':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -642,7 +642,7 @@ importers:
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-message-archive':
         specifier: workspace:>=0.7.0 <1.0.0
@@ -857,7 +857,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
@@ -959,7 +959,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
@@ -1165,10 +1165,10 @@ importers:
   packages/plugin-flow-control:
     dependencies:
       '@aalis/api-flow-control':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-flow-control
       '@aalis/api-gateway':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -1534,7 +1534,7 @@ importers:
   packages/plugin-memory-inmemory:
     dependencies:
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/schema-config':
         specifier: workspace:>=0.13.0 <1.0.0
@@ -1556,7 +1556,7 @@ importers:
   packages/plugin-memory-mongodb:
     dependencies:
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/schema-config':
         specifier: workspace:>=0.13.0 <1.0.0
@@ -1581,7 +1581,7 @@ importers:
   packages/plugin-memory-sqlite:
     dependencies:
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
@@ -1621,7 +1621,7 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-message-archive':
         specifier: workspace:>=0.7.0 <1.0.0
@@ -1661,7 +1661,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-session-manager':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -1710,7 +1710,7 @@ importers:
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
       '@aalis/schema-message':
-        specifier: workspace:>=0.9.0 <1.0.0
+        specifier: workspace:>=0.9.1 <1.0.0
         version: link:../schema-message
     devDependencies:
       '@aalis/core':
@@ -1865,13 +1865,13 @@ importers:
   packages/plugin-persona:
     dependencies:
       '@aalis/api-gateway':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-persona':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.8.1 <1.0.0
         version: link:../api-persona
       '@aalis/api-platform':
         specifier: workspace:>=0.8.0 <1.0.0
@@ -2184,7 +2184,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -2224,7 +2224,7 @@ importers:
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
       '@aalis/util-network-guard':
-        specifier: workspace:>=0.6.2 <1.0.0
+        specifier: workspace:>=0.6.3 <1.0.0
         version: link:../util-network-guard
       puppeteer:
         specifier: ^24.40.0
@@ -2448,7 +2448,7 @@ importers:
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-flow-control
       '@aalis/api-gateway':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -2478,7 +2478,7 @@ importers:
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
       '@aalis/schema-message':
-        specifier: workspace:>=0.9.0 <1.0.0
+        specifier: workspace:>=0.9.1 <1.0.0
         version: link:../schema-message
       '@aalis/util-text-normalize':
         specifier: workspace:>=0.5.2 <1.0.0
@@ -2503,7 +2503,7 @@ importers:
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-flow-control
       '@aalis/api-gateway':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -2558,7 +2558,7 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-persona':
         specifier: workspace:>=0.8.0 <1.0.0
@@ -2613,7 +2613,7 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-memory':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
       '@aalis/api-platform':
         specifier: workspace:>=0.8.0 <1.0.0

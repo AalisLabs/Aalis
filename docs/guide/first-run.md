@@ -103,7 +103,7 @@ WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。tok
 
 - **停止**：CLI 里 `Ctrl+C`；或在聊天里 `/shutdown`。
 - **数据**：项目目录下的 `data/`（SQLite 库、会话、人设、技能、WebUI 凭据等），`workspace/` 是文件工具的默认工作根。`data/` 已在生成的 `.gitignore` 里；`workspace/` **不在**，需要的话自己补一行。
-- **完整日志**：`data/latest.log`，即使 CLI 接管了终端也照常写。
+- **完整日志**：`data/latest.log`，即使 CLI 接管了终端也照常写。每次启动时上一轮的日志改名为 `data/latest.1.log`，更早的依次后移，保留最近 5 轮（`latest.1.log` 到 `latest.5.log`），再早的删除；`/restart` 与市场更新引起的重启也各算一次启动。要跨重启持续跟随日志，用 `tail -F`：`tail -f` 跟的是文件本身，改名后停在 `latest.1.log` 上。
 
 ## 下一步
 
