@@ -1,5 +1,5 @@
 // ============================================================
-// engine.ts — 硬化渲染引擎（独立 Chromium 实例，懒启动 + 空闲关停）
+// engine.ts — 硬化渲染引擎（独立 Chromium 实例，懒启动 + 空闲关停 + 步骤超时换代）
 //
 // 刻意不复用 plugin-tool-browser 的共享页面池：那里承载可能带登录态的
 // 真实浏览页，本插件渲染的是 LLM 生成的不可信标记，二者不同进程隔离。
@@ -37,6 +37,9 @@ type InterceptedRequest = {
   continue(): Promise<void>;
   abort(reason?: string): Promise<void>;
 };
+
+/** 渲染步骤超时：底层 CDP 调用仍挂着，这一代浏览器要整体关掉（见 withPage） */
+class StepTimeoutError extends Error {}
 
 interface EngineConfig {
   headless: boolean;
@@ -76,6 +79,9 @@ export class DrawEngine {
           headless: this.cfg.headless,
           ...(this.cfg.executablePath ? { executablePath: this.cfg.executablePath } : {}),
           args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+          // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。取步骤时限的两倍：套了步骤时限的调用总由步骤计时器先判超时；
+          // 没套的调用（开页、设视口、动画的时长探测与逐帧定格、关页面、关浏览器）挂住时以它为上限
+          protocolTimeout: this.cfg.stepTimeoutMs * 2,
         });
         this.logger.info('绘图引擎 Chromium 已启动（独立实例，不与 browser 工具共享）');
         return browser;
@@ -88,14 +94,32 @@ export class DrawEngine {
     return this.launching;
   }
 
-  /** 给 post-load 步骤（evaluate/screenshot——不吃 puppeteer timeout）套墙钟硬上限，防极端 CSS 慢渲染吊死渲染槽。 */
+  /**
+   * 给 post-load 步骤（evaluate/screenshot——不吃 puppeteer timeout）套步骤时限，防极端 CSS 慢渲染吊死渲染槽。
+   * 时限只让等待方先失败，底层 CDP 调用仍挂着；截图还持有浏览器级的锁，关页面与别的渲染开新页都要等它。
+   * 所以超时抛 StepTimeoutError，由 withPage 关掉这一代浏览器。
+   */
   private withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
     return Promise.race([
       p,
       new Promise<T>((_r, reject) =>
-        setTimeout(() => reject(new Error(`渲染步骤超时（${label}）`)), this.cfg.stepTimeoutMs).unref?.(),
+        setTimeout(() => reject(new StepTimeoutError(`渲染步骤超时（${label}）`)), this.cfg.stepTimeoutMs).unref?.(),
       ),
     ]);
+  }
+
+  /**
+   * 关掉这一代浏览器，不等关闭落定（浏览器进程本身卡住时，puppeteer 在 protocolTimeout 后强杀进程）。
+   * 挂着的 CDP 调用随连接断开失败、锁随之释放，同一代里其它在飞的渲染一并失败；下次渲染懒启动新的一代。
+   */
+  private retire(browser: Browser, reason: string): void {
+    // 已不是当前这一代（别的超时已换代、空闲关停或停用）：关闭已由那一方发起
+    if (this.browser !== browser) return;
+    this.browser = null;
+    this.logger.warn(`${reason}，关闭这一代 Chromium，下次渲染时重新启动`);
+    browser
+      .close()
+      .catch(err => this.logger.warn(`关闭 Chromium 失败: ${err instanceof Error ? err.message : String(err)}`));
   }
 
   private async acquireSlot(): Promise<void> {
@@ -128,12 +152,13 @@ export class DrawEngine {
     (this.idleTimer as unknown as { unref?: () => void }).unref?.();
   }
 
-  /** 开一张硬化后的独立 page，执行 fn 后必关。 */
+  /** 开一张硬化后的独立 page，执行 fn 后必关；步骤超时时关掉这一代浏览器，页面随之关闭。 */
   async withPage<T>(plan: CanvasPlan, viewportHeight: number, fn: (page: Page) => Promise<T>): Promise<T> {
     await this.acquireSlot();
+    let browser: Browser | null = null;
     let page: Page | null = null;
     try {
-      const browser = await this.ensureBrowser();
+      browser = await this.ensureBrowser();
       page = await browser.newPage();
       await page.setJavaScriptEnabled(false);
       await page.setRequestInterception(true);
@@ -146,6 +171,13 @@ export class DrawEngine {
       // 等字体就绪（外链字体被拦时会快速 resolve 并回退系统字体，不会挂死——实测行为）
       await this.withTimeout(page.evaluate('document.fonts ? document.fonts.ready.then(() => true) : true'), 'fonts');
       return await fn(page);
+    } catch (err) {
+      if (err instanceof StepTimeoutError && browser) {
+        this.retire(browser, err.message);
+        // 不等 page.close()：它要等挂住的截图释放锁
+        page = null;
+      }
+      throw err;
     } finally {
       if (page) await page.close().catch(() => {});
       this.releaseSlot();
