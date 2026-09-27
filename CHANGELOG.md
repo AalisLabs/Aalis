@@ -15,7 +15,7 @@
 待发布的包：
 
 - 有代码或契约改动（32 个）：schema-message、api-code-sandbox、api-gateway、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-code-sandbox-os、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
-- 按次版本发布（15 个）：schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（保留根名 `paper`）、plugin-agent（`/session` 的输出格式）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
+- 按次版本发布（15 个）：schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（保留根名 `paper`）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
 - 按 patch 发布（17 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
 - 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0
@@ -204,7 +204,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 **行为变化**：
 
-- 第三方平台适配器收到的 `send_attachment` 附件，取自存储库的一律是 storage URI（如 `data:/images/…`），要经 storage 服务读取；此前解析得到本机路径时是 `file://<宿主路径>`。
+- 第三方平台适配器收到的 `send_attachment` 附件，取自存储库的一律是 storage URI（如 `data:/images/…`），要经 storage 服务读取；此前解析得到本机路径时是 `file://<宿主路径>`。`@aalis/schema-message` 的 `MessageAttachment.data` 说明同步补上 storage URI（第一方生产者早已在发这种形式）。
 
 ### 必须同批升级的包
 

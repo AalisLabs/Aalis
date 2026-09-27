@@ -128,7 +128,10 @@ export interface Message {
 export interface MessageAttachment {
   /** 媒介类型 */
   kind: 'image' | 'audio' | 'video' | 'file';
-  /** 内容：base64 data URL / http(s) URL / file:// URI；下游决定如何解析 */
+  /**
+   * 内容：base64 data URL / http(s) URL / file:// URI / storage URI（`<根>:/路径`，如 `data:/images/…`，经 storage 服务读取；
+   * 与 data URL 以有无 `;base64,` 区分）；下游决定如何解析
+   */
   data: string;
   /** MIME 类型，尽量提供以便分发 */
   mimeType?: string;
