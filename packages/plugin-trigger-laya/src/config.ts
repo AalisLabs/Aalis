@@ -30,6 +30,11 @@ interface LayaConfig {
   mediaWaitMs: number;
   /** 侧车地址（不带末尾斜杠） */
   endpoint: string;
+  /**
+   * 侧车目录（绝对路径）。填了则本插件生效时自己拉起侧车、退出后重启，不再生效或停用时关掉，端口取 endpoint 的；
+   * 留空 = 侧车由外部运行，只按 endpoint 连接
+   */
+  sidecarDir: string;
   /** 单次请求的超时（毫秒），含读完响应体 */
   timeoutMs: number;
   /** 窗口行数，只算 user / assistant 且正文是字符串的行（从 memory 多取一倍，过滤后留最后这么多行；取法见 toRows） */
@@ -56,6 +61,7 @@ export const defaultLayaConfig: LayaConfig = {
   muteTimeSeconds: 60,
   mediaWaitMs: 8000,
   endpoint: 'http://127.0.0.1:17878',
+  sidecarDir: '',
   timeoutMs: 1000,
   historyRows: 80,
   priority: -10,
@@ -96,6 +102,7 @@ export function resolveLayaConfig(raw: Record<string, unknown>): LayaConfig {
     mediaWaitMs: mediaWaitMs !== undefined && mediaWaitMs >= 0 ? mediaWaitMs : d.mediaWaitMs,
     endpoint:
       typeof raw.endpoint === 'string' && raw.endpoint.trim() ? raw.endpoint.trim().replace(/\/+$/, '') : d.endpoint,
+    sidecarDir: typeof raw.sidecarDir === 'string' ? raw.sidecarDir.trim().replace(/(.)\/+$/, '$1') : d.sidecarDir,
     timeoutMs: timeoutMs !== undefined && timeoutMs > 0 ? timeoutMs : d.timeoutMs,
     historyRows: Number.isInteger(historyRows) && (historyRows as number) > 0 ? (historyRows as number) : d.historyRows,
     priority: finite(raw.priority) ?? d.priority,

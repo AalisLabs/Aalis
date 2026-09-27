@@ -1,5 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type CheckResult, type CheckSpec, doctor } from '../../packages/api-doctor/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
@@ -8,9 +9,10 @@ import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type PersonaService, type PersonaSessionOptions, persona } from '../../packages/api-persona/src/index.js';
+import { type ExecResult, type ProcessService, processService } from '../../packages/api-process/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { trigger } from '../../packages/api-trigger/src/index.js';
-import { App, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
+import { App, events, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
@@ -57,6 +59,8 @@ interface Sidecar {
   reply: (body: ScoreRequest) => Reply;
   /** GET /health 的应答 */
   health: Reply;
+  /** GET /health 被请求的次数 */
+  healthCalls: number;
 }
 
 const servers: Server[] = [];
@@ -80,13 +84,17 @@ async function startSidecar(): Promise<Sidecar> {
     requests: [],
     reply: () => score(1),
     health: { status: 200, body: { ok: true, version: 'v-test' } },
+    healthCalls: 0,
   };
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
       // 与真实侧车一致：只认 GET /health 与 POST /v1/score，其余 404（不记为一次打分请求）
-      if (req.method === 'GET' && req.url === '/health') return respond(res, state.health);
+      if (req.method === 'GET' && req.url === '/health') {
+        state.healthCalls++;
+        return respond(res, state.health);
+      }
       if (req.method !== 'POST' || req.url !== '/v1/score') {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end('{"error":"not_found"}');
@@ -201,6 +209,10 @@ interface SetupOptions {
   sessionManager?: Pick<SessionManagerService, 'resolveConfig'>;
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
   realArchive?: boolean;
+  /** process 服务替身（托管侧车用） */
+  process?: ProcessService;
+  /** 在 Laya 登记之前对宿主做的事（如先于它挂 app:stopping 监听器） */
+  beforeLaya?: (host: { events: { on(event: 'app:stopping', fn: () => unknown): unknown } }) => void;
 }
 
 async function setup(opts: SetupOptions = {}) {
@@ -210,7 +222,7 @@ async function setup(opts: SetupOptions = {}) {
   const app = new App({ name: 'T', logLevel: 'debug', logHub });
   booted.push(app);
   await registerHubs(app);
-  const host = app.bind({ provide, hooks, services, messageArchive });
+  const host = app.bind({ provide, hooks, services, messageArchive, events });
 
   // flow-control 替身：禁言表与 setMuted 调用（连同 platform：真实实现在会话还没有流控状态时，
   // 不带 platform 就什么都不做）
@@ -251,6 +263,8 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.media) host.provide(media, opts.media as never);
   for (const p of opts.personas ?? []) host.provide(persona, p);
   if (opts.sessionManager) host.provide(sessionManager, opts.sessionManager as SessionManagerService);
+  if (opts.process) host.provide(processService, opts.process);
+  opts.beforeLaya?.(host);
   await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
   await app.plugins.idle();
   // 激活闸：依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -262,6 +276,7 @@ async function setup(opts: SetupOptions = {}) {
   const check = checks.find(c => c.id === 'trigger.laya');
   if (!check) throw new Error('Laya 没有登记诊断项');
   return {
+    app,
     host,
     logs,
     archived,
@@ -893,6 +908,10 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
 });
 
 describe('plugin-trigger-laya：诊断项', () => {
+  const INACTIVE =
+    'Laya 触发判定未生效（生效的触发插件是「规则（计数/评分）」），不检查侧车；' +
+    '要启用它，在配置文件的 servicePreferences 里把 trigger 指向 @aalis/plugin-trigger-laya';
+
   it('侧车在线且生效：ok', async () => {
     const { diagnose } = await setup();
     const result = await diagnose();
@@ -923,7 +942,7 @@ describe('plugin-trigger-laya：诊断项', () => {
     expect(r2.message).toContain('memory 缺席');
   });
 
-  it('熔断到期、还没有请求确认恢复：报探活结果与「上次判定不可用」，降为 warn；切走后侧车修好也不再报当前不可用', async () => {
+  it('熔断到期、还没有请求确认恢复：报探活结果与「上次判定不可用」，降为 warn；切走后不检查侧车、不报上次的故障', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
     const { host, send, diagnose } = await setup();
@@ -943,11 +962,9 @@ describe('plugin-trigger-laya：诊断项', () => {
     const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
     host.services.prefer(trigger, rule?.contextId ?? '');
     vi.setSystemTime(Date.now() + 3_600_000);
-    const inactive = await diagnose();
-    expect(inactive.level).toBe('warn');
-    expect(inactive.message).toMatch(
-      /^Laya 触发判定未生效（生效的触发插件是「规则（计数\/评分）」）：侧车在线（版本 v-test）；上次判定不可用/,
-    );
+    const probes = sidecar.healthCalls;
+    expect(await diagnose()).toMatchObject({ level: 'ok', message: INACTIVE });
+    expect(sidecar.healthCalls, '未生效不探侧车').toBe(probes);
 
     // 切回后一次成功判定即确认恢复
     const laya = host.services.all(trigger).find(v => v.label === LAYA_LABEL);
@@ -1046,17 +1063,264 @@ describe('plugin-trigger-laya：诊断项', () => {
     });
   });
 
-  it('未生效时侧车不可达：warn，并点名当前生效的触发插件', async () => {
+  it('未生效：不探侧车（侧车在不在都不影响回复），报 ok，点名当前生效的触发插件与启用方法', async () => {
     sidecar.health = 'hang';
     const { host, diagnose } = await setup({ laya: { timeoutMs: 100 } });
     host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
     const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
     host.services.prefer(trigger, rule?.contextId ?? '');
+    expect(await diagnose()).toMatchObject({ level: 'ok', message: INACTIVE, detail: `endpoint=${sidecar.url}` });
+    expect(sidecar.healthCalls).toBe(0);
+  });
+});
+
+describe('plugin-trigger-laya：托管侧车', () => {
+  const DIR = '/opt/laya/listener-sidecar';
+  const DOWN = { status: 503, body: { error: 'down' } } as const;
+  const UP = { status: 200, body: { ok: true, version: 'v-test' } } as const;
+  const RULE = '规则（计数/评分）';
+
+  /**
+   * process 替身：拉起的「侧车」不是真进程。ready() 让假侧车的 /health 转为在线并打出就绪行；
+   * exit() 让它退出（/health 随之下线），与真实子进程一样到下一轮事件循环才报告；SIGTERM / SIGKILL 即退出
+   */
+  function fakeProcess() {
+    const children: Array<{
+      args: readonly string[];
+      signals: NodeJS.Signals[];
+      ready(): void;
+      exit(code: number | null, signal?: NodeJS.Signals): void;
+      kill(signal?: NodeJS.Signals): boolean;
+    }> = [];
+    const service = {
+      spawn(_cmd: string, args: readonly string[]) {
+        const done = deferred<ExecResult>();
+        const stdout = new PassThrough();
+        const child = {
+          args,
+          signals: [] as NodeJS.Signals[],
+          ready() {
+            sidecar.health = UP;
+            stdout.write(`${JSON.stringify({ ready: true, version: 'v-test', startup_s: 10.8 })}\n`);
+          },
+          exit(code: number | null, signal?: NodeJS.Signals) {
+            sidecar.health = DOWN;
+            setImmediate(() => done.resolve({ code, signal: signal ?? null, stdout: '', stderr: '' }));
+          },
+          kill(signal: NodeJS.Signals = 'SIGTERM') {
+            child.signals.push(signal);
+            child.exit(null, signal);
+            return true;
+          },
+        };
+        children.push(child);
+        return {
+          pid: 4242,
+          stdin: null,
+          stdout,
+          stderr: new PassThrough(),
+          wait: () => done.promise,
+          kill: child.kill,
+          unref() {},
+        };
+      },
+    } as unknown as ProcessService;
+    return { service, children };
+  }
+
+  const infoLogged = (logs: LogEntry[], prefix: string) => logs.some(e => e.message.startsWith(prefix));
+
+  /** 托管侧车、Laya 生效；返回时侧车已拉起、还没就绪 */
+  async function managed(laya: Record<string, unknown> = {}) {
+    sidecar.health = DOWN;
+    const proc = fakeProcess();
+    const t = await setup({ laya: { sidecarDir: DIR, ...laya }, process: proc.service });
+    await vi.waitFor(() => expect(proc.children).toHaveLength(1));
+    return { ...t, proc };
+  }
+
+  it('生效时拉起侧车，端口取侧车地址；就绪前按兜底只回点名、不发请求、不记 error；就绪后照常判定', async () => {
+    const { send, logs, diagnose, proc } = await managed();
+    const args = proc.children[0].args;
+    expect(args[args.indexOf('--port') + 1]).toBe(new URL(sidecar.url).port);
+    expect(args[args.indexOf('--parent-pid') + 1]).toBe(String(process.pid));
+    expect(args).toContain(`${DIR}/laya_listener.py`);
+
+    const starting = await diagnose();
+    expect(starting.level).toBe('warn');
+    expect(starting.message).toMatch(/^Laya 触发判定生效中：侧车启动中（已 \d+s），就绪前判定按兜底只回点名$/);
+    expect(starting.detail).toBe(`endpoint=${sidecar.url}; sidecarDir=${DIR}`);
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
+    expect((await send(groupMsg(`${AT}在吗`))).reached).toBe(true);
+    expect(sidecar.requests).toHaveLength(0);
+    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车启动中');
+    expect(byLevel(logs, 'error')).toEqual([]);
+
+    proc.children[0].ready();
+    await vi.waitFor(() => expect(infoLogged(logs, '[laya] 侧车就绪（版本 v-test')).toBe(true));
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(true);
+    expect(sidecar.requests).toHaveLength(1);
+    expect(await diagnose()).toMatchObject({
+      level: 'ok',
+      message: 'Laya 触发判定生效中：侧车在线（版本 v-test，由本插件托管）',
+    });
+    expect(byLevel(logs, 'info')).toContainEqual(expect.stringContaining(`侧车=托管 ${DIR}`));
+  });
+
+  it('侧车意外退出：一次故障只记一条 error，重启期间按兜底、不发请求；重启就绪后首次成功判定记恢复', async () => {
+    const { send, logs, diagnose, proc } = await managed();
+    proc.children[0].ready();
+    await vi.waitFor(() => expect(infoLogged(logs, '[laya] 侧车就绪')).toBe(true));
+
+    proc.children[0].exit(4);
+    await vi.waitFor(() => expect(byLevel(logs, 'error')).toHaveLength(1));
+    expect(byLevel(logs, 'error')[0]).toBe(
+      '[laya] 判定不可用（侧车退出（退出码 4，自愈退出：推理连续失败），1s 后重启），' +
+        '已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档',
+    );
+    const waiting = await diagnose();
+    expect(waiting.level).toBe('error');
+    expect(waiting.message).toMatch(
+      /^Laya 触发判定生效中：侧车退出（退出码 4，自愈退出：推理连续失败），\ds 后重启（连续退出 1 次），判定按兜底只回点名$/,
+    );
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
+    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车重启中');
+
+    // 重启后还没就绪又退出：同一次故障，不另记 error
+    await vi.waitFor(() => expect(proc.children).toHaveLength(2), { timeout: 3_000 });
+    expect((await diagnose()).message).toMatch(/侧车重启中（已 \d+s，连续退出 1 次）/);
+    proc.children[1].exit(2);
+    await vi.waitFor(() => expect(proc.children).toHaveLength(3), { timeout: 4_000 });
+    expect(byLevel(logs, 'error')).toHaveLength(1);
+    expect(sidecar.requests).toHaveLength(0);
+
+    proc.children[2].ready();
+    await vi.waitFor(() =>
+      expect(infoLogged(logs, '[laya] 侧车就绪（版本 v-test，启动 10.8s，连续退出 2 次后重启成功）')).toBe(true),
+    );
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(true);
+    expect(byLevel(logs, 'warn')).toContainEqual(
+      expect.stringMatching(
+        /^\[laya\] 判定恢复（不可用 \d+s，最后原因: 侧车退出（退出码 2，启动失败：加载模型或金样自检没过），2s 后重启）$/,
+      ),
+    );
+    expect((await diagnose()).level).toBe('ok');
+  }, 15_000);
+
+  it('重启就绪后此前的失败计数与熔断作废：不用等熔断到期就照常判定', async () => {
+    const { send, logs, proc } = await managed();
+    proc.children[0].ready();
+    await vi.waitFor(() => expect(infoLogged(logs, '[laya] 侧车就绪')).toBe(true));
+    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    for (let i = 0; i < 3; i++) await send(groupMsg(`失败 ${i}`));
+    expect((await send(groupMsg('熔断中'))).reached).toBe(false);
+    expect(sidecar.requests).toHaveLength(3);
+
+    sidecar.reply = () => score(1);
+    proc.children[0].exit(4);
+    await vi.waitFor(() => expect(proc.children).toHaveLength(2), { timeout: 3_000 });
+    proc.children[1].ready();
+    await vi.waitFor(() => expect(byLevel(logs, 'info').filter(m => m.startsWith('[laya] 侧车就绪'))).toHaveLength(2));
+    expect((await send(groupMsg('恢复'))).reached).toBe(true);
+    expect(sidecar.requests).toHaveLength(4);
+  }, 10_000);
+
+  it('不再是生效的触发插件：停掉侧车（SIGTERM）；切回来重新拉起；插件关闭时一并停掉', async () => {
+    const { app, host, logs, diagnose, proc } = await managed();
+    proc.children[0].ready();
+    host.provide(trigger, { label: RULE }, { label: RULE });
+    const rule = host.services.all(trigger).find(v => v.label === RULE);
+    host.services.prefer(trigger, rule?.contextId ?? '');
+    await vi.waitFor(() => expect(infoLogged(logs, '[laya] 已停掉侧车')).toBe(true));
+    expect(proc.children[0].signals).toEqual(['SIGTERM']);
+    expect((await diagnose()).level).toBe('ok');
+
+    const laya = host.services.all(trigger).find(v => v.label === LAYA_LABEL);
+    host.services.prefer(trigger, laya?.contextId ?? '');
+    await vi.waitFor(() => expect(proc.children).toHaveLength(2));
+    proc.children[1].ready();
+    await vi.waitFor(() => expect(byLevel(logs, 'info').filter(m => m.startsWith('[laya] 侧车就绪'))).toHaveLength(2));
+
+    await app.stop();
+    expect(proc.children[1].signals).toEqual(['SIGTERM']);
+    expect(proc.children).toHaveLength(2);
+  });
+
+  it('停机：process 服务在 app:stopping 里先于本插件的清理强杀侧车，不当成意外退出（不记 error、不排重启）', async () => {
+    sidecar.health = DOWN;
+    const proc = fakeProcess();
+    const { app, host, logs } = await setup({
+      laya: { sidecarDir: DIR },
+      process: proc.service,
+      // 与 process-local 一样在 app:stopping 里强杀它拉起的子进程，监听器先于本插件登记
+      beforeLaya: h =>
+        h.events.on('app:stopping', () => {
+          for (const c of proc.children) c.kill('SIGKILL');
+        }),
+    });
+    // 本插件之后还有等 I/O 的停机工作：子进程的退出在这期间报告，早于本插件的清理
+    host.events.on('app:stopping', () => new Promise(r => setTimeout(r, 20)));
+    await vi.waitFor(() => expect(proc.children).toHaveLength(1));
+    proc.children[0].ready();
+    await vi.waitFor(() => expect(infoLogged(logs, '[laya] 侧车就绪')).toBe(true));
+
+    await app.stop();
+    expect(proc.children[0].signals[0]).toBe('SIGKILL');
+    expect(byLevel(logs, 'error')).toEqual([]);
+    expect(proc.children).toHaveLength(1);
+    expect(infoLogged(logs, '[laya] 已停掉侧车')).toBe(true);
+  });
+
+  it('侧车地址上已有侧车：不拉起、直接用它，记 warn；诊断报 warn 并说明怎么改由本插件托管', async () => {
+    const proc = fakeProcess();
+    const { send, logs, diagnose } = await setup({ laya: { sidecarDir: DIR }, process: proc.service });
+    await vi.waitFor(() => expect(byLevel(logs, 'warn')).toHaveLength(1));
+    expect(byLevel(logs, 'warn')[0]).toContain('上已有侧车在运行（系统服务或手动启动的），本插件不再拉起，直接使用它');
+    expect(proc.children).toHaveLength(0);
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(true);
+    expect(await diagnose()).toMatchObject({
+      level: 'warn',
+      message:
+        'Laya 触发判定生效中：侧车在线（版本 v-test）；侧车不由本插件托管：启动时端口上已有别的侧车在运行，' +
+        '停掉它再重启 Aalis 才改由本插件托管',
+    });
+  });
+
+  it('没有 process 服务：拉不起侧车，判定按兜底并记一条 error，诊断报 error', async () => {
+    sidecar.health = DOWN;
+    const { send, logs, diagnose } = await setup({ laya: { sidecarDir: DIR } });
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
+    expect((await send(groupMsg('再聊聊'))).reached).toBe(false);
+    expect(sidecar.requests).toHaveLength(0);
+    expect(byLevel(logs, 'error')).toEqual([
+      '[laya] 判定不可用（process 服务缺席，拉不起侧车），已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），' +
+        '其余消息吞掉并归档',
+    ]);
     const result = await diagnose();
-    expect(result.level).toBe('warn');
-    expect(result.message).toContain('未生效（生效的触发插件是「规则（计数/评分）」）');
-    expect(result.message).toContain('侧车不可达');
-    expect(result.message).not.toContain('只回点名');
+    expect(result.level).toBe('error');
+    expect(result.message).toContain('process 服务缺席，拉不起侧车');
+  });
+
+  it('配置不合要求（目录不是绝对路径、地址不是 127.0.0.1）：记 error、不托管，按侧车地址照常判定，诊断报 warn', async () => {
+    const proc = fakeProcess();
+    const { send, logs, diagnose } = await setup({
+      laya: { sidecarDir: 'models/listener-sidecar' },
+      process: proc.service,
+    });
+    expect(byLevel(logs, 'error')).toEqual([
+      '[laya] 不托管侧车：sidecarDir 须为绝对路径（当前: models/listener-sidecar）',
+    ]);
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(true);
+    expect(proc.children).toHaveLength(0);
+    expect(await diagnose()).toMatchObject({
+      level: 'warn',
+      message:
+        'Laya 触发判定生效中：侧车在线（版本 v-test）；不托管侧车：sidecarDir 须为绝对路径（当前: models/listener-sidecar）',
+    });
+
+    const other = await setup({ laya: { sidecarDir: DIR, endpoint: 'http://localhost:1' }, process: proc.service });
+    expect(byLevel(other.logs, 'error')[0]).toContain('托管侧车时侧车地址须为 http://127.0.0.1:<端口>');
+    expect(proc.children).toHaveLength(0);
   });
 });
 
