@@ -52,7 +52,12 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
 | Platforms | 平台连接状态监控 |
 | Files | 文件管理器（浏览、重命名、下载、详情、删除） |
 | Logs | 实时日志流 |
-| DynamicPage | 插件注册的动态页面（技能库等） |
+| Sessions | 会话树与会话配置编辑；每项显示继承值与来源（默认、平台档或父会话），「白纸与远端」一组编辑白纸与远端代理的房间键与记忆召回范围 |
+| DynamicPage | 插件注册的动态页面（技能库、白纸页等） |
+
+会话页取继承值调页面动作 `getInheritance`，会话所属平台由服务端推出（见 [plugin-session-manager](./plugin-session-manager.md)）。「白纸与远端」一组里，`paperEnabled` 是开关，写法与另外两个开关相同：未覆盖时显示继承值，点一下即写成显式的开或关；`paperName` 留空即继承；`remoteAgentTypes` 以逗号分隔输入、保存为数组，留空即继承；三项上限留空即继承；`memoryRecallScope` 可选继承、仅本会话、同平台、全部。`remoteAgentTypes` 来自平台档时显示告警「平台档里写了远端类型，这个平台所有房间都会继承」。
+
+DynamicPage 的表格支持文件单元格（`render: 'file'`，契约见 [api-webui](../api/api-webui.md)）：只有 PNG、JPEG、GIF、WebP 位图能在弹窗里查看，其他类型（含 HTML、SVG）只能下载，下载的 Blob 一律为 `application/octet-stream`，保存的文件名去掉路径分隔符，对象 URL 用完即回收。
 
 ## 流恢复 (Stream Resume)
 

@@ -29,10 +29,15 @@ export default definePlugin({
     commands: optional(commands),
     webui: optional(webuiServer),
     embedding: optional(embedding),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
+
+宿主通知（`kind: 'host-notice'`）不计入每个会话的提取计数；提取读取历史时（同会话读取、跨会话读取与跨会话降级三条路径）滤掉指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务与宿主通知），它们不是任何人的发言，不交给模型抽关系。
+
+会话配置的 `memoryRecallScope` 为 `session` 时（见 [api-session-manager](../api/api-session-manager.md)），注入只留本会话的内容：近期事件只列 `sessionScope` 等于当前会话的事件（全局事件与别的会话的事件都不列，共现伙伴随之收窄），不出「所属跨会话话题」行，也不出「最近热点（全局）」整节；人际关系与关注的事物照常注入。`platform` 与 `all` 不影响注入。房间范围每轮现算，session-manager 不在场时不收窄。这个键只作用于注入，`user_relation_*` 查询工具不受它约束。
 
 ## 存储结构
 

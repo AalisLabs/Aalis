@@ -105,6 +105,19 @@ definePlugin({
 
 `message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
 
+## 指令类回合
+
+两类入站消息不是任何人的发言，以 system 指令块呈现，不推当前 user 消息，也不推易变上下文与群聊焦点指引：
+
+- **代发任务**（`triggerType: 'proactive'`，如 workflow 的 agent 节点）：以 `[跨会话委派]` 任务块呈现，`metadata.injector` 为 `cross-session-delegation`。
+- **宿主通知**（带 `hostNotice`，见 [schema-message](../api/schema-message.md)）：内容为 `[宿主通知]`、宿主正文，再接注入方包好的不可信段（`hostNotice.untrusted`），`metadata.injector` 为 `host-notice`。不可信段只在这一轮出现；归档只留宿主正文，之后的回合从历史里看不到它。
+
+这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-context` 与 `turn-hint` 两个锚位的材料落在指令块之前、全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
+
+## 工具调用上下文
+
+工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」（见 [api-tools](../api/api-tools.md)）。授权身份仍按 `actor` 裁决。
+
 ## 上下文裁剪算法
 
 估算 token 超过预算（上下文长度 × `trimThresholdRatio` − 最大输出 token − 512，下限 1024）时，`trimMessages()` 按下表各阶段依次裁剪，任一阶段后回到预算内即停止。

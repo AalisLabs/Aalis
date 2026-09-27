@@ -39,10 +39,11 @@
 
 | 符号 | 类别 | file:line | 说明 |
 | --- | --- | --- | --- |
-| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo` |
+| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`HostNotice` |
 | `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
 | `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键：`VisibleContent`（assistant 消息的可见正文，落库内容是结构化输出信封时由 agent 写入；读历史做检索、摘要的一方应优先读它，缺省退回 `content`） |
 | `CONTROL_KINDS` | const 数组 | `index.ts` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼装历史时须自行过滤**（并非 `prepareLLMMessages` 的职责） |
+| `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
 | `prepareLLMMessages(messages)` | function | `index.ts` | **LLM provider 出口必调**：归一 role + 加前缀；不改原对象，返回浅拷贝；幂等 |
 
