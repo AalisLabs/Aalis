@@ -1,12 +1,12 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { LogHub, provide } from '@aalis/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type Logger, LogHub, provide } from '@aalis/core';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
-import type { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 
@@ -329,37 +329,42 @@ async function bootLateStorage(beforeStorage?: (actions: Map<string, WebuiAction
   return { app, actions, release, writes: () => writes };
 }
 
-// users.json 加载结果的上报本身也可能抛（第三方日志订阅者同步抛错），失败的告警与成功的 debug 都算：
+// users.json 加载结果的上报本身也可能抛（宿主经 AppOptions.logger 注入的 logger 抛错），失败的告警与成功的 debug 都算：
 // 不接住的话，storage 已在线时 apply 的 await 抛出、authority 激活失败，受限能力全部 fail-closed。
+// 缺省 logger 经 LogHub 逐个隔离订阅者，订阅者抛错到不了插件，所以这里用会抛错的宿主 logger。
 describe('authority：加载结果的上报自身抛错', () => {
-  it('日志订阅者对本插件的告警同步抛错，authority 照常激活', async () => {
-    const hub = new LogHub();
-    hub.onEntry(entry => {
-      if (entry.scope.includes('plugin-authority')) throw new Error('sink 挂了');
-    });
-    const { app } = hostedApp({ logLevel: 'warn' }, { logHub: hub });
-    const host = app.bind({ provide, authority });
-    host.provide(storage, {
-      listRoots: () => [ROOT],
-      readFile: async () => {
-        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
-      },
-      writeFile: async () => undefined,
-    } as never);
-    await app.plugins.idle();
-    await app.plugin(authorityPlugin, {});
-    const state = app.plugins.getPlugin(authorityPlugin.name)?.state;
-    await app.stop();
+  /** 宿主注入的 logger：child 返回自身，只在指定级别遇到指定消息时抛错 */
+  function throwingLogger(level: 'debug' | 'warn', matches: (message: string) => boolean): Logger {
+    const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
+    logger[level] = (message: string) => {
+      if (matches(message)) throw new Error('宿主 logger 挂了');
+    };
+    return logger;
+  }
 
-    expect(state, '告警抛错让 apply 的加载等待抛出，激活失败').toBe('active');
+  it('宿主注入的 logger 对加载失败的告警抛错，authority 照常激活', async () => {
+    // 读失败时 init 自己接住、不拒绝，走不到告警：让 init 直接失败
+    const init = vi.spyOn(AuthorityManager.prototype, 'init').mockRejectedValueOnce(new Error('x'));
+    try {
+      const logger = throwingLogger('warn', m => m.startsWith('授权用户等级加载失败'));
+      const { app } = hostedApp({}, { logger });
+      const host = app.bind({ provide, authority });
+      host.provide(storage, fsStorage() as never);
+      await app.plugins.idle();
+      await app.plugin(authorityPlugin, {});
+      const state = app.plugins.getPlugin(authorityPlugin.name)?.state;
+      await app.stop();
+
+      expect(init).toHaveBeenCalledTimes(1);
+      expect(state, '告警抛错让 apply 的加载等待抛出，激活失败').toBe('active');
+    } finally {
+      init.mockRestore();
+    }
   });
 
-  it('加载成功后的 debug 日志被订阅者同步抛错，authority 照常激活', async () => {
-    const hub = new LogHub();
-    hub.onEntry(entry => {
-      if (entry.message === '授权用户等级已加载') throw new Error('sink 挂了');
-    });
-    const { app } = hostedApp({ logLevel: 'debug' }, { logHub: hub });
+  it('宿主注入的 logger 对加载成功的 debug 抛错，authority 照常激活', async () => {
+    const logger = throwingLogger('debug', m => m === '授权用户等级已加载');
+    const { app } = hostedApp({}, { logger });
     const host = app.bind({ provide, authority });
     host.provide(storage, fsStorage() as never);
     await app.plugins.idle();
@@ -371,25 +376,23 @@ describe('authority：加载结果的上报自身抛错', () => {
   });
 
   it('加载失败的错误值转不成字符串：告警照样记下', async () => {
+    // LogHub 隔离订阅者后日志调用不再抛出，改由替身让加载直接以转不成字符串的值失败
+    const init = vi.spyOn(AuthorityManager.prototype, 'init').mockRejectedValueOnce(Object.create(null));
     const hub = new LogHub();
     const warned: string[] = [];
     hub.onEntry(entry => {
       if (entry.level === 'warn') warned.push(entry.message);
-      // 等级表那一层的读失败 error 被订阅者抛出 null 原型对象，它随之成为加载失败的错误值
-      if (entry.message.startsWith('读取 users.json 失败')) throw Object.create(null);
     });
-    const { app } = hostedApp({ logLevel: 'warn' }, { logHub: hub });
-    const host = app.bind({ provide, authority });
-    host.provide(storage, {
-      listRoots: () => [ROOT],
-      readFile: async () => {
-        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
-      },
-      writeFile: async () => undefined,
-    } as never);
-    await app.plugins.idle();
-    await app.plugin(authorityPlugin, {});
-    await app.stop();
+    try {
+      const { app } = hostedApp({ logLevel: 'warn' }, { logHub: hub });
+      const host = app.bind({ provide, authority });
+      host.provide(storage, fsStorage() as never);
+      await app.plugins.idle();
+      await app.plugin(authorityPlugin, {});
+      await app.stop();
+    } finally {
+      init.mockRestore();
+    }
 
     expect(
       warned.some(m => m.startsWith('授权用户等级加载失败')),
