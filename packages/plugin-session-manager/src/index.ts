@@ -159,6 +159,11 @@ const configSchema: ConfigSchema = {
 const METADATA_NAMESPACE = 'sessions';
 /** 读会话表失败后的重试间隔（毫秒）；用尽仍失败按读表失败处理 */
 const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
+/**
+ * owner 面的交互入口：自动标题只给它们的会话生成；它们发进 IM 房间的消息是 owner 插话，不是房间的原生入站，
+ * 不拿来判 id 前缀与平台名是否一致
+ */
+const OWNER_ENTRY_PLATFORMS: ReadonlySet<string> = new Set(['webui', 'cli']);
 
 // ===== WebuiPages（声明式 UI） =====
 
@@ -255,6 +260,11 @@ class SessionManager implements SessionManagerService {
   private audienceProfiles = new Map<string, PlatformProfile>();
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
   private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
+  /**
+   * 各会话在飞的回合数（agent:input:before 进出计数）。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与
+   * 真人回合），根会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
+   */
+  private turnsInFlight = new Map<string, number>();
 
   constructor(caps: ManagerCaps) {
     this.caps = caps;
@@ -382,7 +392,8 @@ class SessionManager implements SessionManagerService {
 
   /**
    * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），
-   * 未命中以传入 id 建 active 记录（emit `session:created`）。
+   * 未命中以传入 id 建记录（emit `session:created`），状态缺省按有没有回合在跑：有为 active（回合结束时收口），
+   * 没有为 waiting（指令回复等回合之外的出站不改状态，建成 active 就会一直停在进行中）。
    * 平台派生 sessionId（onebot 等）首次落配置覆盖时用——那些 id 不经 createSession 预建。
    */
   async ensureSession(
@@ -403,7 +414,7 @@ class SessionManager implements SessionManagerService {
       title: patch.metadata?.title as string | undefined,
       parentId: undefined,
       children: [],
-      status: patch.status || 'active',
+      status: patch.status || (this.turnsInFlight.has(id) ? 'active' : 'waiting'),
       config: patch.config || {},
       createdAt: now,
       updatedAt: now,
@@ -838,6 +849,27 @@ class SessionManager implements SessionManagerService {
     }
   }
 
+  /** 回合开始：计数加一；已有记录且不是 active 的翻 active（归档的也翻：她在那里跑一轮就是进行中） */
+  beginTurn(id: string): void {
+    this.turnsInFlight.set(id, (this.turnsInFlight.get(id) ?? 0) + 1);
+    const session = this.sessions.get(id);
+    if (session && session.status !== 'active') this.updateSession(id, { status: 'active' }).catch(() => {});
+  }
+
+  /** 回合结束：计数减一；最后一轮结束时仍为 active 的根会话收口为 completed（子会话由 plugin-subtask 收口） */
+  endTurn(id: string): void {
+    const left = (this.turnsInFlight.get(id) ?? 1) - 1;
+    if (left > 0) {
+      this.turnsInFlight.set(id, left);
+      return;
+    }
+    this.turnsInFlight.delete(id);
+    const session = this.sessions.get(id);
+    if (session?.status === 'active' && !session.parentId) {
+      this.updateSession(id, { status: 'completed' }).catch(() => {});
+    }
+  }
+
   /**
    * 关停收尾：仍 `active` 的会话立即收口并落盘。
    *
@@ -845,7 +877,7 @@ class SessionManager implements SessionManagerService {
    * 关停打断在飞回合与那条路径同义，沿用同一状态，不新造值。
    * waiting / completed / error / archived 不是在飞，原样保留。
    *
-   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 `agent:turn:after` 收口；
+   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口（{@link endTurn}）处理；
    * 此处兜的是未装 agent 或钩子未挂上的路径。
    * persist 也在这里立刻刷，不走 1s debounce——onDispose 的 shutdown 仍会再刷一次。
    */
@@ -999,8 +1031,7 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
       parentId,
       config,
       createdBy: 'user',
-      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）。
-      // 否则侧栏新建的会话会一直显示"进行中"——直到首条消息触发 inbound→active→turn:after→completed。
+      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）；回合开始时才翻 active。
       status: 'waiting',
     });
   });
@@ -1159,7 +1190,7 @@ const uses = {
   memory,
   /**
    * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
-   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 `agent:turn:after` 收口；
+   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
    * 此处 onDrain 兜的是未装 agent 或钩子未挂上的路径。
    */
   agent: optional(agent),
@@ -1230,10 +1261,12 @@ async function run(caps: Caps): Promise<void> {
     if (!sessionId || msg.source || sessionId.includes('::')) return;
     const origin = resolveSessionOrigin(sessionId);
     if (!origin) return;
-    // 前缀既不是发来消息的平台、也不是已注册的平台名：多半是适配器的 id 前缀与平台名不一致，这个前缀的房间
-    // 全部按一份不存在的平台档选档、落到全局默认。每个前缀告警一次；WebUI 驱动已注册平台的房间不在此列
+    // 原生入站的前缀既不是发来消息的平台、也不是已注册的平台名：多半是适配器的 id 前缀与平台名不一致，这个前缀的
+    // 房间全部按一份不存在的平台档选档、落到全局默认。每个前缀告警一次。WebUI、CLI 往房间插话不在此列：
+    // 房间的适配器停用或还没加载时，它的平台名同样不在已注册之列
     if (
       origin.platform !== msg.platform &&
+      !OWNER_ENTRY_PLATFORMS.has(msg.platform) &&
       !warnedPrefixes.has(origin.platform) &&
       !getPlatformNames(caps.platform).includes(origin.platform)
     ) {
@@ -1257,52 +1290,23 @@ async function run(caps: Caps): Promise<void> {
 
   // ===== 会话状态 =====
   // 回合真正开始时（agent:input:before）才翻 active：群里只有消息、她没开口的房间不显示「进行中」
-  //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话：next() 返回时整轮已跑完、
-  // agent:turn:after 也已执行；后面的中间件不调 next() 或抛错时 agent 不发回合收尾，由这里兜住。
-  // 子会话由 plugin-subtask 收口。
+  //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话，这是唯一的收口：next() 返回时
+  // 整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它）；后面的中间件不调 next() 或抛错时
+  // agent 不发回合收尾，同样由这里兜住。按会话计在飞的回合，最后一轮结束才收口，别的 lane 还在跑时不显示已完成；
+  // 回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。子会话由 plugin-subtask 收口。
   hooks.middleware('agent:input:before', async (data, next) => {
     const { sessionId } = data.message;
-    const session = manager.getSession(sessionId);
-    if (session && session.status !== 'active') {
-      manager.updateSession(sessionId, { status: 'active' }).catch(() => {});
-    }
+    manager.beginTurn(sessionId);
     try {
       await next();
     } finally {
-      const current = manager.getSession(sessionId);
-      if (current && current.status === 'active' && !current.parentId) {
-        manager.updateSession(sessionId, { status: 'completed' }).catch(() => {});
-      }
-    }
-  });
-
-  events.on('outbound:message', (msg: { sessionId: string }) => {
-    if (!msg.sessionId) return;
-    const session = manager.getSession(msg.sessionId);
-    // 子会话（有 parentId）由 plugin-subtask 的 agent:turn:after 中间件负责完成并提取 result
-    if (session && session.status === 'active' && !session.parentId) {
-      manager.updateSession(msg.sessionId, { status: 'completed' }).catch(() => {});
-    }
-  });
-
-  // 回合终态收口：agent 在 replied/silent/aborted/error 四条路径都会发 agent:turn:after。
-  // 上面的 outbound:message 只覆盖"产生了回复"的情形——用户中途停止生成（aborted）或
-  // 空回复（silent）时不发 outbound:message，会话会永远停在 'active'（即"进行中"）。
-  // 这里订阅生命周期钩子作幂等互补，确保任何回合结束都把根会话收口为 'completed'。
-  hooks.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    if (!data.sessionId) return;
-    const session = manager.getSession(data.sessionId);
-    // 子会话由 plugin-subtask 负责完成并回传 result，这里只收口根会话。
-    if (session && session.status === 'active' && !session.parentId) {
-      manager.updateSession(data.sessionId, { status: 'completed' }).catch(() => {});
+      manager.endTurn(sessionId);
     }
   });
 
   // 监听用户消息事件 → 自动生成会话标题
   // 在用户首次发消息时即生成标题，无需等待 AI 回复
   // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题；从 WebUI 往 IM 房间插话同样不生成
-  const TITLE_PLATFORMS = new Set(['webui', 'cli']);
   const titleGenerating = new Set<string>();
   events.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
     const { sessionId, platform } = msg;
@@ -1313,7 +1317,7 @@ async function run(caps: Caps): Promise<void> {
     if (titleGenerating.has(sessionId)) return;
     // 仅对指定平台生成标题；非 webui/cli 平台（如 onebot）静默跳过，避免日志污染。
     // platform 缺省同样跳过：白名单是正向门，来路不明的消息不该顺带建档 + 烧一次 LLM 生成标题。
-    if (!platform || !TITLE_PLATFORMS.has(platform)) return;
+    if (!platform || !OWNER_ENTRY_PLATFORMS.has(platform)) return;
     // 有出生平台的是 IM 房间：不拿 owner 插的话给房间起名，也不经这里建档
     if (resolveSessionOrigin(sessionId)) return;
     const session = manager.getSession(sessionId);
@@ -1331,7 +1335,7 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // 关停收尾：仍 active 的会话在 onDrain 收口并落盘。
-  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
+  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
   // 此处兜的是未装 agent 或钩子未挂上的路径。
   // 持久化仍走 onDispose：覆盖 bounce / unload / updateConfig 等全部拆卸路径
   // （只在全局停机触发的话，热重载即丢会话元数据）。

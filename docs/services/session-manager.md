@@ -10,7 +10,7 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 核心职责两件：
 
 - **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`api-session-manager/src/index.ts`、实现 `plugin-session-manager/src/index.ts`）。平台 profile 的选法：IM 房间按出生平台（与受众）选档，不论从哪个入口驱动；传入的入口平台只对没有出生平台的会话起作用（§2.4）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
-- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（回合开始的 `agent:input:before` 中间件翻 `active` 并在回合结束时收口，另有 `outbound:message` / `agent:turn:after` 收口，见 §7.1），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。IM 房间由 `inbound:message` 上的收录监听登记（§6.6）。
+- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（回合开始的 `agent:input:before` 中间件翻 `active`，同一会话的最后一轮结束时由它收口，见 §7.1），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。IM 房间由 `inbound:message` 上的收录监听登记（§6.6）。
 
 它**不是**消息存储——历史消息存在 `memory` 服务里；本服务只把会话元数据持久化到 `memory` 的 metadata 命名空间 `sessions`（`plugin-session-manager/src/index.ts`）。
 
@@ -24,7 +24,7 @@ createSession(opts?: Partial<Omit<SessionInfo, 'id'|'children'|'createdAt'|'upda
 getSession(id: string): SessionInfo | undefined;
 listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
 updateSession(id: string, updates: Partial<Pick<SessionInfo, 'name'|'config'|'status'|'metadata'>>): Promise<SessionInfo>;
-// 按精确 id 幂等 upsert：命中 → 合并式 update（发 session:updated）；未命中 → 以传入 id（不自生成）建记录（状态缺省 active，发 session:created）。
+// 按精确 id 幂等 upsert：命中 → 合并式 update（发 session:updated）；未命中 → 以传入 id（不自生成）建记录（状态缺省：有回合在跑为 active，否则 waiting；发 session:created）。
 // 供平台派生 sessionId（如 onebot:<self>:group:<gid>）首次落配置覆盖时按原样 id 建档——这些 id 不经 createSession 预建。
 // IM 房间主要由参考实现的入站收录登记（§6.6），/session.set 与开子任务时经这里补建。
 ensureSession(id: string, patch?: Partial<Pick<SessionInfo, 'name'|'config'|'status'|'metadata'|'createdBy'>>): Promise<SessionInfo>;
@@ -244,7 +244,7 @@ class MySessionManager implements SessionManagerService {
       id,
       name: patch?.name ?? id,
       children: [],
-      status: patch?.status ?? 'active',
+      status: patch?.status ?? 'waiting',
       config: patch?.config ?? {},
       createdAt: now,
       updatedAt: now,
@@ -427,10 +427,10 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 - 登记：`ensureSession(id, { name, createdBy: 'system', status: 'waiting' })`，得到 `kind: 'room'` 与房间自己的 `audience`、`originPlatform`。收录只登记与补名，不改状态；状态翻转见 §7.1。
 - 取名按受众：群取消息的 `groupName`，私聊取 `nickname`，缺省用会话 id。只采信出生平台自己的入站（`msg.platform` 等于出生平台）带的名字，从 WebUI 插话建档时名字为 id，不会把私聊房间起成 owner 的昵称。群的首条入站可能是不带群名的戳一戳，这时同样用 id，不回退到发送者昵称。
 - 补名：现名还等于 id 时，后到的出生平台原生入站带了群名（群）或昵称（私聊）就补上；现名不是 id 的（如 owner 用 `/session.set -n` 起的名）不改。`createChildSession` 兜底建档的房间同样以 id 为名，由之后的真人入站补名。
-- 前缀告警：出生平台既不是发来消息的平台、也不是已注册的平台名时，按前缀告警一次，多半是适配器的 id 前缀与平台名不一致（见 [platform 服务](platform.md) 的会话 ID 约定）。
+- 前缀告警：出生平台既不是发来消息的平台、也不是已注册的平台名时，按前缀告警一次，多半是适配器的 id 前缀与平台名不一致（见 [platform 服务](platform.md) 的会话 ID 约定）。WebUI、CLI 往房间插话不参与判定：房间的适配器停用或还没加载时，它的平台名同样不在已注册之列。
 - 规模：每个来过真人消息的群与私聊都登记一次，没有上限。会话表按整表快照落盘（§7.3），每次写的条数随房间数线性增长。
 
-删除 IM 房间与删除其他会话相同，走 scope 为 session 的 `memory:clear`（§6.2），清空它在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等），聊天平台里的消息不受影响；房间之后再来真人消息会重新登记，记忆从零开始。
+删除 IM 房间与删除其他会话相同，走 scope 为 session 的 `memory:clear`（§6.2），清空它在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等），聊天平台里的消息不受影响；房间里用 `exec_background` 起、仍在运行的后台进程由 plugin-tool-system 收到 `session:deleted` 后终止；房间之后再来真人消息会重新登记，记忆从零开始。
 
 ### 6.7 房间键不随复制冻结
 
@@ -446,11 +446,13 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 
 参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 把仍为 `active` 的根会话收口为 `completed`（`plugin-session-manager/src/index.ts`）：
 
-- `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行；
-- 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 既不发 `agent:turn:after` 也不发 `outbound:message`，由这里的 `finally` 收口，会话不会停在「进行中」；
+- `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行（agent 只在这个钩子的默认动作里发它）；
+- 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
 - 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 
-正常结束另有两路收口：`outbound:message`（产生了回复）与 `agent:turn:after` 中间件（replied / silent / aborted / error 四种结局都会发）。三路都只收口根会话，重复收口无副作用；子会话由 plugin-subtask 收口。
+这是唯一的收口，只收口根会话；子会话由 plugin-subtask 收口。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合各占一条），中间件按会话计在飞的回合，最后一轮结束才收口，先结束的一轮不会把还在跑的会话显示成已完成。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
+
+回合之外建档的会话（自动标题路径兜底建的 CLI 会话、`/session.set` 建的档）状态为 `waiting`：首条消息是被指令相位吞掉的指令时没有回合，指令回复不改状态。回合中建档的（如 `create_subtask` 给父会话兜底建档）为 `active`，由这一轮结束时收口。
 
 边界：未装 agent 时没有回合，会话不会翻 `active`；非 `active` 的会话（包括已归档的）在新一轮开始时一律翻回 `active`；关停时仍为 `active` 的会话由 `onDrain` 收口（§7.3）。
 
