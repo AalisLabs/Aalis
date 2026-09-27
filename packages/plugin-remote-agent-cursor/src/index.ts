@@ -67,13 +67,19 @@ const configSchema: ConfigSchema = {
     min: 5,
     description: '建代理的请求要约 60 秒才回；超时后用同一 agentId 取回，不会重复建',
   },
-  requestTimeoutSeconds: { type: 'number', label: '请求超时（秒）', default: 30, min: 5 },
+  requestTimeoutSeconds: {
+    type: 'number',
+    label: '请求超时（秒）',
+    default: 30,
+    min: 15,
+    description: '其余请求的超时；实测单次请求有时要 5 秒以上',
+  },
   streamIdleSeconds: {
     type: 'number',
     label: '事件流空闲超时（秒）',
     default: 60,
-    min: 20,
-    description: '远端约 15 秒发一次心跳；超过这么久没有任何数据就断开重连',
+    min: 45,
+    description: '事件流连上后约 30 秒才有第一次心跳，之后每 15 到 30 秒一次；超过这么久没有任何数据就断开重连',
   },
   reconcileIgnoreNames: {
     type: 'list',
