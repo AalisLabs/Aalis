@@ -33,6 +33,7 @@
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-embedding": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-vectorstore": "workspace:>=0.7.0 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
@@ -61,7 +62,8 @@
       ],
       "optional": [
         "memory",
-        "tools"
+        "tools",
+        "session-manager"
       ],
       "provides": [
         "semantic-memory"

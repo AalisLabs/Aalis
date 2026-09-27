@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, logger } from '../../packages/core/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { App, logger, optional } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { registerRelationContribution } from '../../packages/plugin-user-relation/src/middleware.js';
@@ -13,11 +14,12 @@ import { registerHubs } from '../fixtures/hubs.js';
 /**
  * 登记贡献（middleware）与收集贡献（组装器）共用宿主根激活绑定的 contributions + logger，
  * 注入块的 injector 全局键因此冠同一个激活 id；memory 只为给 RelationStore 一个后端。
+ * session-manager 不在场：本文件只测不收窄的注入（房间收窄见 user-relation-room-scope.test.ts）。
  */
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
-  const host = app.bind({ contributions, logger, memory });
+  const host = app.bind({ contributions, logger, memory, sessionManager: optional(sessionManager) });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
   const mem = host.memory.current;

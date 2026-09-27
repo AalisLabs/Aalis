@@ -8,11 +8,15 @@
  * - 仅在 direct/immediate 触发下注入（避免 idle/interval 占用 token）
  * - 与 plugin-user-profile 解耦：profile 侧重"是谁/喜好"，relation 侧重"经历过什么/与谁有关系"
  * - 深度 / 宽度由配置控制；带 visited 防环
+ * - 当前会话所在房间的召回范围（会话配置 memoryRecallScope）为 session 时，跳过全局热点与跨会话事件
+ *   （别的会话里抽出的事件、所属跨会话话题），只留本会话的事件；人际关系与关注的事物照常注入
  * - 失败不阻断 agent 流程：构建抛错由组装器记 warn，本贡献本轮缺席
  */
 
 import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
+import type { SessionManagerService } from '@aalis/api-session-manager';
+import type { ServiceRef } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -48,10 +52,12 @@ interface MiddlewareConfig {
 /** 注入贡献用到的能力 */
 interface ContributionCaps {
   contributions: Contributions;
+  /** 房间的召回范围（可选依赖）；不在场时不收窄 */
+  sessionManager: ServiceRef<SessionManagerService>;
 }
 
 export function registerRelationContribution(
-  { contributions }: ContributionCaps,
+  { contributions, sessionManager }: ContributionCaps,
   service: RelationService,
   cfg: MiddlewareConfig,
 ): void {
@@ -61,7 +67,11 @@ export function registerRelationContribution(
     async build(view) {
       // 干跑(token 快照)跳过关系图查询；幂等/落点/查重由组装器按全局键统一保障
       if (view.dryRun) return null;
-      return buildBlock(service, view, cfg);
+      // 房间的召回范围每轮现算：房间或平台档改了下一轮即生效
+      const sessionOnly =
+        !!view.sessionId &&
+        sessionManager.current?.resolveConfig(view.sessionId, view.platform).memoryRecallScope === 'session';
+      return buildBlock(service, view, cfg, sessionOnly);
     },
   });
 }
@@ -70,6 +80,8 @@ async function buildBlock(
   service: RelationService,
   data: PromptContributionView,
   cfg: MiddlewareConfig,
+  /** 房间的召回范围限于本会话：只留本会话的事件，不出跨会话话题与全局热点 */
+  sessionOnly: boolean,
 ): Promise<string | null> {
   const trigger = data.triggerType ?? 'direct';
   if (trigger !== 'direct' && trigger !== 'immediate') return null;
@@ -108,7 +120,9 @@ async function buildBlock(
   // 自己参与的事件（用于"近期事件"小节）
   const selfEventEdges = personEventEdges.filter(e => e.fromPersonId === personId);
   const selfEventIds = new Set(selfEventEdges.map(e => e.toEventId));
-  const selfEvents = subgraph.events.filter(e => selfEventIds.has(e.id));
+  const selfEvents = subgraph.events.filter(
+    e => selfEventIds.has(e.id) && (!sessionOnly || e.sessionScope === data.sessionId),
+  );
 
   // 自己的人-人边
   const selfPpEdges = personPersonEdges.filter(e => e.fromPersonId === personId || e.toPersonId === personId);
@@ -160,8 +174,10 @@ async function buildBlock(
         const tail = overflow > 0 ? ` +${overflow} 人` : '';
         lines.push(`  └ 参与者: ${parts.join(', ')}${tail}`);
       }
-      // Hub 事件：该事件 part-of 一个 global hub → 暴露 hub 与其他兄弟子事件
-      const partOfEdges = eventEventEdges.filter(e => e.fromEventId === ev.id && e.relationType === 'part-of');
+      // Hub 事件：该事件 part-of 一个 global hub → 暴露 hub 与其他兄弟子事件（兄弟来自别的会话，本会话限定时不出）
+      const partOfEdges = sessionOnly
+        ? []
+        : eventEventEdges.filter(e => e.fromEventId === ev.id && e.relationType === 'part-of');
       for (const pe of partOfEdges) {
         const hub = eventById.get(pe.toEventId);
         if (!hub || hub.sessionScope !== 'global') continue;
@@ -250,8 +266,8 @@ async function buildBlock(
     }
   }
 
-  // ---- 全局热点（与当前用户子图无关，按 lastMentionedAt 全局排序） ----
-  if (cfg.maxGlobalHotEvents > 0 || cfg.maxGlobalHotEntities > 0) {
+  // ---- 全局热点（与当前用户子图无关，按 lastMentionedAt 全局排序；本会话限定时不出） ----
+  if (!sessionOnly && (cfg.maxGlobalHotEvents > 0 || cfg.maxGlobalHotEntities > 0)) {
     const snap = graph;
     const hotEvents =
       cfg.maxGlobalHotEvents > 0

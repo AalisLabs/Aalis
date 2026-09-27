@@ -92,9 +92,10 @@ export interface Message {
    * - 让所有 role 共用同一个子类入口，避免 system.name / notice.metadata.noticeType / assistant.metadata.kind 三套互不相通的"伪子分类"。
    * - 统一过滤/渲染判断：`m.kind === 'event-marker'` 这种写法跨 role 通用。
    *
-   * 约定的语义类（详见 `WellKnownKinds` / `CONTROL_KINDS`）：
+   * 约定的语义类（详见 `WellKnownKinds` / `CONTROL_KINDS` / `DIRECTIVE_KINDS`）：
    * - `'event-marker'`              ：system 控制类标记（如压缩分隔条），不应进入 LLM 上下文。
    * - `'cross-session-delegation'`  ：notice 子类——系统代发的任务指令（triggerType 为 proactive，如 workflow 的 agent 节点）。
+   * - `'host-notice'`               ：notice 子类——宿主撰写的事件通知（入站消息带 hostNotice）。
    * - `'outbound-image'`            ：assistant 子类——agent 已发出的图片。
    * - notice 的平台事件类型         ：`'poke' | 'group_recall' | 'group_increase' | ...`（取自 OneBot 等适配器）。
    *
@@ -247,6 +248,17 @@ export interface IncomingMessage {
     platform: string;
     userId: string;
   };
+  /**
+   * 宿主撰写的事件通知（不是任何人的发言）。带这个字段的消息：
+   * - 注入方必须同时设 `source`，actor 用 {@link selfInitiatedActor}；不设 userId、nickname、sessionType、triggerType；
+   * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
+   * - 不进向量记忆、抽取与记忆扩窗。
+   *
+   * `kind` 是通知的子类（如 'paper-task'），`id` 是注入方生成的对位标识（等 agent:turn:after 用）。
+   * `untrusted` 是注入方已用 wrapUntrustedContent 包好的不可信段：只在当轮渲染时接在正文之后，
+   * 不归档、不进任何存储。宿主撰写的行一律放在 content 里。
+   */
+  hostNotice?: { kind: string; id?: string; untrusted?: string };
 }
 
 /**
@@ -351,6 +363,7 @@ declare module '@aalis/core' {
  * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
  * - `OutboundAudio`：assistant 已发出的语音占位。
  * - `OutboundVideo`：assistant 已发出的视频占位。
+ * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
  */
 export const WellKnownKinds = {
   EventMarker: 'event-marker',
@@ -358,6 +371,7 @@ export const WellKnownKinds = {
   OutboundImage: 'outbound-image',
   OutboundAudio: 'outbound-audio',
   OutboundVideo: 'outbound-video',
+  HostNotice: 'host-notice',
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
@@ -398,6 +412,16 @@ export type WellKnownNoticeType = (typeof WellKnownNoticeTypes)[keyof typeof Wel
  */
 export const CONTROL_KINDS: ReadonlyArray<string> = [WellKnownKinds.EventMarker];
 
+/**
+ * 宿主或系统撰写、不是任何人发言的指令类 kind。
+ * - 归档消息的 kind 属于它：抽取（用户事实、自反思、指令、关系）与记忆扩窗一律跳过；
+ * - 请求期消息的 metadata.injector 属于它：是本轮的指令块（turn-context、turn-hint 落在它之前；DeepSeek 不把它改成 user）。
+ */
+export const DIRECTIVE_KINDS: ReadonlyArray<string> = [
+  WellKnownKinds.CrossSessionDelegation,
+  WellKnownKinds.HostNotice,
+];
+
 /** 自定义 role 转译为 LLM 接受的 WellKnownRole 的默认映射。 */
 const CUSTOM_ROLE_MAP: Record<string, WellKnownRole> = {
   notice: 'system',
@@ -414,6 +438,7 @@ const CUSTOM_ROLE_PREFIX: Record<string, string> = {
  */
 const KIND_PREFIX: Record<string, string> = {
   [WellKnownKinds.CrossSessionDelegation]: '[跨会话委派]',
+  [WellKnownKinds.HostNotice]: '[宿主通知]',
 };
 
 /**

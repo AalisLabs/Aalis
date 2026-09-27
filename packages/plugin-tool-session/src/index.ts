@@ -6,6 +6,7 @@ import {
   type SessionHistoryService,
   sessionHistory,
 } from '@aalis/api-session-history';
+import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -52,9 +53,11 @@ const uses = {
   config,
   provide,
   memory: optional(memory),
+  /** 当前会话所在房间的召回范围（会话配置 memoryRecallScope）；不在场时只按插件范围与平台规则 */
+  sessionManager: optional(sessionManager),
 };
 type Caps = BoundOf<typeof uses>;
-type HistoryCaps = Pick<Caps, 'memory' | 'logger'>;
+type HistoryCaps = Pick<Caps, 'memory' | 'logger' | 'sessionManager'>;
 type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
 
 interface PluginConfig {
@@ -188,10 +191,26 @@ function canReadSessionHistory(
   targetSessionId: string,
   currentPlatform: string | undefined,
   scope: 'current' | 'platform' | 'all',
+  roomScope: MemoryRecallScope | undefined,
   checkers: readonly AccessChecker[],
   callCtx: ToolCallContext,
 ): { ok: true } | { ok: false; reason: string } {
-  // 0. scope 粗筛
+  // 0. 房间的召回范围（会话配置 memoryRecallScope）：先于插件范围与平台规则裁决，平台规则只能在它放行之后再收窄
+  if (targetSessionId !== currentSessionId) {
+    if (roomScope === 'session') return { ok: false, reason: '本房间的召回范围限于本会话' };
+    if (roomScope === 'platform') {
+      const current = currentPlatform || parsePlatform(currentSessionId);
+      const target = parsePlatform(targetSessionId);
+      if (!current || !target || current !== target) {
+        return {
+          ok: false,
+          reason: `本房间的召回范围限于同平台会话（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`,
+        };
+      }
+    }
+  }
+
+  // 1. scope 粗筛
   if (targetSessionId === currentSessionId) {
     // 同会话仍允许平台 checker 表态（防御性）
   } else if (scope === 'current') {
@@ -208,7 +227,7 @@ function canReadSessionHistory(
   }
   // scope === 'all' 直接走 checker 链
 
-  // 1. 找匹配目标 platform 的 checker，any-deny 短路；无匹配 checker 默认通过
+  // 2. 找匹配目标 platform 的 checker，any-deny 短路；无匹配 checker 默认通过
   const targetPlatform = parsePlatform(targetSessionId);
   const matched = checkers.filter(c => c.platform === targetPlatform);
   for (const checker of matched) {
@@ -220,7 +239,10 @@ function canReadSessionHistory(
   return { ok: true };
 }
 
-function createSessionHistoryService({ memory, logger }: HistoryCaps, cfg: PluginConfig): SessionHistoryService {
+function createSessionHistoryService(
+  { memory, logger, sessionManager }: HistoryCaps,
+  cfg: PluginConfig,
+): SessionHistoryService {
   const checkers: AccessChecker[] = [];
 
   return {
@@ -239,11 +261,17 @@ function createSessionHistoryService({ memory, logger }: HistoryCaps, cfg: Plugi
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
+      // 房间的召回范围每次现算：房间或平台档改了下一次读取即生效
+      const roomScope = sessionManager.current?.resolveConfig(
+        callCtx.sessionId,
+        callCtx.platform || parsePlatform(callCtx.sessionId),
+      ).memoryRecallScope;
       const verdict = canReadSessionHistory(
         callCtx.sessionId,
         targetSessionId,
         callCtx.platform,
         cfg.scope,
+        roomScope,
         checkers,
         callCtx,
       );
