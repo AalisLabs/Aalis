@@ -168,7 +168,7 @@ type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | Access
 - `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 强制关闭确认（便于自动化），与等级正交，owner 也吃
 - `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 受限能力临时放行策略（`allow` glob，`['*']` 全放；`duration` 放行时长秒，0=永久）
 - `autoConfirmUntil?: number` —— auto 确认模式（owner 临时免 dangerous 二次确认，便于批处理）：epoch ms 截止；-1=一直；0/缺省=关。仅跳过 owner 自己的 session 确认，不动等级/deny，`always` 不跳
-- `network?: { blockPrivate?: boolean; denyCidrs?: string[]; allowedPorts?: number[] }` —— 网络出口闸（SSRF 防护）：限制由 LLM/用户 URL 触发的 `safeFetch` 能连到哪
+- `network?: { blockPrivate?: boolean; denyCidrs?: string[]; allowedPorts?: number[] }` —— 网络出口闸（SSRF 防护）：限制由 LLM/用户 URL 触发的出口能连到哪，即 `safeFetch`，以及 tool-browser 开启 `blockPrivate` 时的浏览器网络闸（三项都遵循）
 
 ## 管理入口
 

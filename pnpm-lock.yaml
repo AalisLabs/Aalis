@@ -2132,7 +2132,7 @@ importers:
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
       puppeteer:
-        specifier: ^24.0.0
+        specifier: ^24.40.0
         version: 24.40.0(typescript@5.9.3)
     devDependencies:
       '@aalis/core':
