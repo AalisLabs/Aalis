@@ -459,7 +459,7 @@ function run(caps: Caps): void {
     // 不是生效的触发插件：什么都不做（不请求、不识别、不归档），交给生效者或往下走
     if (!isActiveTrigger(data, caps.trigger, self)) return next();
     const { message } = data;
-    // 内部注入（闲置触发、定时任务、workflow、跨会话委派）都带 source，不经判定、不改 triggerType
+    // 内部注入（闲置触发、定时任务、workflow）都带 source，不经判定、不改 triggerType
     if (message.source) return next();
 
     // 作用域外直接放行；必须在禁言关键词之前，否则群聊的关键词会作用到私聊、WebUI 等作用域外的会话

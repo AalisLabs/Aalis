@@ -131,7 +131,7 @@ describe('buildFocusGuidance', () => {
     expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'idle' })).toBeNull();
   });
 
-  it('群聊 + proactive（跨会话委派）→ 返回 null（任务由 system 块传递）', () => {
+  it('群聊 + proactive（代发任务）→ 返回 null（任务由 system 块传递）', () => {
     expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'proactive' })).toBeNull();
   });
 

@@ -19,7 +19,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 ## 判定流程
 
 1. 本插件不是生效的触发插件 → 放行，什么都不做（不请求、不识别、不归档）。
-2. 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）→ 放行，不改 `triggerType`。
+2. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ 放行，不改 `triggerType`。
 3. 不在作用域（`scopes` / `overrides`，默认 `*:group`）→ 放行，不写 `triggerType`，由后面的 flow 与 agent 照常处理。私聊默认不在作用域内。
 4. 会话处于禁言期 → 放行给 flow 相位吞掉；不识别禁言关键词。
 5. 命中禁言关键词（`muteKeywords`；戳一戳的合成文案不算）→ 设自禁言 `muteTimeSeconds` 秒、归档后吞掉，不问模型。

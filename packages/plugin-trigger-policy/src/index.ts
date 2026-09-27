@@ -305,7 +305,7 @@ function run(caps: Caps): void {
     // 不是生效的触发插件：什么都不做（不计数、不识别、不归档），交给生效者或往下走
     if (!isActiveTrigger(data, caps.trigger, self)) return next();
     const { message } = data;
-    // 内部注入（闲置触发、定时任务、workflow、跨会话委派）都带 source，跳过策略：不计数、不改 triggerType。
+    // 内部注入（闲置触发、定时任务、workflow）都带 source，跳过策略：不计数、不改 triggerType。
     // 真人消息由平台适配器投递，不设 source。
     if (message.source) return next();
 

@@ -26,7 +26,6 @@ export interface PersonaService {
   getNickNames?(options?: PersonaSessionOptions): string[];
   isTimeInjectionEnabled?(): boolean;
   getPersonaSkills?(options?: PersonaSessionOptions): string[] | undefined;
-  getSessionState?(sessionId: string): Record<string, unknown> | undefined;
 }
 ```
 
@@ -41,7 +40,6 @@ export interface PersonaService {
 - `getNickNames(options?)` — 返回角色卡的 `nick_name` 列表，供触发检测匹配；按 `options` 取卡，同 `getPersonaName`。
 - `isTimeInjectionEnabled()` — persona 是否已注入当前时间。其它插件据此决定是否还要注册 `system_time` 工具。
 - `getPersonaSkills(options?)` — 返回角色卡的 skill 白名单。约定：返回 `undefined` 表示未声明白名单（全部开放），返回 `[]` 表示禁用所有 skill。
-- `getSessionState(sessionId)` — 读取目标会话最近一次保存的结构化状态（如 mood、state），供 `delegate_to_session` 等跨会话工具回报目标 agent 的「内心情况」。
 
 ### 2.2 重要类型
 
@@ -86,7 +84,6 @@ export const persona = defineService<PersonaService>('persona');
 - `@aalis/plugin-skills` — `getAllowedSkills()` 用 `persona?.getPersonaSkills?.()` 过滤暴露给 LLM 的 skill 列表。
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`（`options.persona` 取自 session-manager 解析的会话配置），收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-tool-system` — 通过 `persona.current` 判断，已注入时间则跳过注册 `system_time` 工具。
-- `@aalis/plugin-tool-session` — `delegate_to_session` 用 `getSessionState?.(targetSessionId)` 把目标会话的结构化状态附在委托结果里。
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
 - `@aalis/plugin-webui-server` — 用 `getPersonaName()` 作展示名，用 `persona.current` 探测上报能力，`listModels()` 走通用的 `/models` 枚举。
 - `@aalis/plugin-cli` — 多处用 `persona.current?.getPersonaName() ?? 'Aalis'` 做命令行标题。
@@ -164,20 +161,20 @@ export default definePlugin({
 - persona 是可选依赖。在 `uses optional` 里声明它（agent、session-manager、tool-system 都如此），使用前用 `if (!persona) ...` 判断并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
 - 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`、`persona?.getPersonaSkills?.()`，因为第三方 provider 可能没有实现。
 - 用类型窄化避免包循环。如果只用一两个方法，按消费侧的需要声明窄类型（`persona.current`），不必 import 全量的 `PersonaService`。
-- 注意错误边界。跨会话与可选读取统一用 `try/catch` 后静默忽略（tool-session、persona 自身读 session-manager 都这么处理），不要让 persona 不可用拖垮主链路。
+- 注意错误边界。跨会话与可选读取统一用 `try/catch` 后静默忽略（persona 自身读 session-manager 就这么处理），不要让 persona 不可用拖垮主链路。
 - 区分 `getPersonaSkills` 的三态语义：`undefined` 表示全开，`[]` 表示全禁，`['a','b']` 表示白名单。消费者必须区分 `undefined` 与 `[]`——skills 插件的判断是 `if (whitelist === undefined) return all`。
 
 ## 6. 能力 / 风险 → 影响
 
 **`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时走 `createStorageGateway(storage)` 网关，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
-**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、委派、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时按 `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断会话类型（只认前缀等于 platform 的 id；子任务会话 `<父会话 id>::<uuid>` 沿用父会话的 platform，不推断），推断结果只用于提示词，不写回消息。
+**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时按 `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断会话类型（只认前缀等于 platform 的 id；子任务会话 `<父会话 id>::<uuid>` 沿用父会话的 platform，不推断），推断结果只用于提示词，不写回消息。
 
 ::: warning 安全要点
 这是一处安全约束。第三方 provider 若也注入会话上下文，必须保证同等的隔离——不要用裸实例字段存储「当前会话」。
 :::
 
-**状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：当 scope 为 session 或 all、且 type 含 `context` 或 `persona` 时会被清除。`getSessionState()` 只读内存、按 sessionId 隔离，provider 不应跨会话泄漏。
+**状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：当 scope 为 session 或 all、且 type 含 `context` 或 `persona` 时会被清除。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
 
 **outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自 `OutputFormat.retries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
 
@@ -200,5 +197,5 @@ export default definePlugin({
 ## 8. 交叉链接
 
 - 概念：`docs/concepts/service-model.md`（按名 DI、优先级胜者）、`docs/concepts/lazy-service-access.md`（每次读取 `.current`、不缓存）、`docs/concepts/manifest-metadata.md`（aalis.service 与 definePlugin provides/uses 双源）、`docs/concepts/storage-uri-grammar.md`（`<root>:/path` 与 `personasDir`）、`docs/concepts/message-llm-pipeline.md`（`agent:input:before` 与 `agent:reply:before` 钩子的时序，以及 persona 在其中的位置）。
-- 服务：`docs/services/agent.md`（主消费者，system prompt 组装与重试循环）、`docs/services/storage.md`（角色卡的读取后端与 root 权限）、`docs/services/tools.md` 与 `docs/services/tool-session.md`（`system_time` 跳过、`delegate_to_session` 读 `getSessionState`）、`docs/services/commands.md`（session 与 persona 配置）。
+- 服务：`docs/services/agent.md`（主消费者，system prompt 组装与重试循环）、`docs/services/storage.md`（角色卡的读取后端与 root 权限）、`docs/services/tools.md`（`system_time` 跳过）、`docs/services/commands.md`（session 与 persona 配置）。
 - 核心：`docs/core/service.md`、`docs/core/context.md`、`docs/core/plugin.md`。
