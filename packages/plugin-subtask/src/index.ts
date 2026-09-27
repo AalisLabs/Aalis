@@ -678,7 +678,7 @@ function registerSubtask(
           }
 
           lines.push('--- 活跃子任务提醒结束 ---');
-          // 首轮（最后一条是当前 user 消息）插它前面；工具轮/委派轮（尾部是
+          // 首轮（最后一条是当前 user 消息）插它前面；工具轮/proactive 轮（尾部是
           // tool/assistant/system）追加到末尾 = 决策点前，状态最新鲜的位置
           const insertAt = messages[messages.length - 1]?.role === 'user' ? messages.length - 1 : messages.length;
           messages.splice(insertAt, 0, {
