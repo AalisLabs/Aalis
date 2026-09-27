@@ -115,7 +115,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 出站附件的内容读出后以 `base64://` 交给实现端，走 WebSocket 隧道：实现端在容器里（如 Docker 里的 NapCat）时读不到宿主路径，这是最稳的形态。storage URI 先量大小再读，超过 10 MiB 的不整份读进内存。
 
-- **图片、语音、视频**：不超过 10 MiB 的内联为消息段。内联前按文件头核对格式，不符就拒发并记 warn：图片只收 PNG、JPEG、GIF、WebP；语音收 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频收 MP4 / MOV 与 WebM。发送工具接受任意 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。超过 10 MiB 的退回宿主的 `file://` 路径或原 http 链接，实现端读不到时发不出，日志里会说明。
+- **图片、语音、视频**：不超过 10 MiB 的内联为消息段。内联前按文件头核对格式，不符就拒发并记 warn：图片只收 PNG、JPEG、GIF、WebP；语音收 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频收 MP4 / MOV 与 WebM。发送工具接受任意 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。超过 10 MiB 的退回宿主的 `file://` 路径或原 http 链接，实现端读不到时发不出，日志里会说明；storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头，不整份读进内存）。附件本来就是 `file://` 或本机绝对路径、又没能落盘的，原样交给实现端，不经核对。
 - **文件**（`kind: 'file'`）：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的 storage 文件、超限的 http 链接这类物化结果不是 `base64://` 的，一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，没有名字时用 `file`。上传不重试：上传超时多半是文件还在传，重试会在群文件里留两份。v12 连接不支持文件附件，按失败处理。
 - **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、文件物化或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed` 系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。媒体附件物化失败或文件头不符只记 warn，不写这条记录。
 
