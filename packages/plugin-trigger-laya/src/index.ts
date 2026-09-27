@@ -19,7 +19,7 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
-import { type ProcessService, processService } from '@aalis/api-process';
+import { processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
@@ -283,7 +283,7 @@ function run(caps: Caps): void {
 
   let failures = 0;
   let openUntil = 0;
-  /** 判定不可用的原因（侧车熔断、memory 缺席）；undefined = 可用 */
+  /** 判定不可用的原因（侧车熔断、memory 缺席、托管的侧车退出或没能拉起）；undefined = 可用 */
   let down: string | undefined;
   let downSince = 0;
 
@@ -335,53 +335,49 @@ function run(caps: Caps): void {
   const target = cfg.sidecarDir ? sidecarTarget(cfg.sidecarDir, cfg.endpoint) : undefined;
   const managed = target && !('problem' in target) ? target : undefined;
   if (target && 'problem' in target) logger.error(`[laya] 不托管侧车：${target.problem}`);
-  /** 正在托管的侧车；本插件不生效、没有 process 服务或停用后为 undefined */
+  /** 正在托管的侧车；没配托管、应用还没就绪（如 CLI 子命令进程）、本插件不生效或停用后为 undefined */
   let sidecar: Sidecar | undefined;
 
   if (managed) {
+    // 应用就绪后才托管：激活期间 trigger 的胜者还没定（规则插件激活得比本插件晚），CLI 子命令进程也不走到这一步
+    let appReady = false;
     let active = false;
-    let proc: ProcessService | undefined;
-    let running: { sidecar: Sidecar; proc: ProcessService } | undefined;
     let chain = Promise.resolve();
-    /** 按本插件是否生效、当前的 process 服务起停侧车；串行，旧的停完才拉起新的 */
+    /** 按应用是否就绪、本插件是否生效起停侧车；串行，旧的停完才拉起新的 */
     const reconcile = (): Promise<void> => {
       chain = chain
         .then(async () => {
-          const want = active ? proc : undefined;
-          if (running && running.proc !== want) {
-            const stopping = running.sidecar;
-            running = undefined;
+          const want = appReady && active;
+          if (sidecar && !want) {
+            const stopping = sidecar;
             sidecar = undefined;
             await stopping.stop();
-            logger.info('[laya] 已停掉侧车');
           }
-          if (want && !running) {
-            running = {
-              proc: want,
-              sidecar: superviseSidecar({
-                process: want,
-                dir: managed.dir,
-                port: managed.port,
-                parentPid: process.pid,
-                probe: async () => !('error' in (await probe())),
-                log: logger,
-                // 重启前攒下的失败与熔断作废：否则侧车已就绪，熔断期内仍按兜底
-                onReady: () => {
-                  failures = 0;
-                  openUntil = 0;
-                },
-                onExit: reason => {
-                  if (down !== undefined) logger.debug(`[laya] ${reason}`);
-                  goDown(reason);
-                },
-              }),
-            };
-            sidecar = running.sidecar;
+          if (want && !sidecar) {
+            sidecar = superviseSidecar({
+              process: () => caps.process.current,
+              dir: managed.dir,
+              port: managed.port,
+              parentPid: process.pid,
+              probe: async () => !('error' in (await probe())),
+              log: logger,
+              onExit: (reason, newRound) => {
+                // 失败计数属于退出了的那个进程，作废；新一轮故障（就绪后稳定运行过才退出）另记一条 error
+                failures = 0;
+                if (newRound) down = undefined;
+                else if (down !== undefined) logger.debug(`[laya] ${reason}`);
+                goDown(reason);
+              },
+            });
           }
         })
         .catch(err => logger.warn(`[laya] 起停侧车出错: ${err}`));
       return chain;
     };
+    caps.events.on('app:ready', () => {
+      appReady = true;
+      void reconcile();
+    });
     caps.trigger.follow(winner => {
       active = winner === self;
       void reconcile();
@@ -390,19 +386,13 @@ function run(caps: Caps): void {
         return reconcile();
       };
     });
-    caps.process.follow(p => {
-      proc = p;
-      void reconcile();
-      return () => {
-        proc = undefined;
-        return reconcile();
-      };
-    });
-    // 停机时 process-local 在 app:stopping 里强杀它拉起的全部子进程，早于本插件的清理：先把侧车标为主动停止，
-    // 那一下就不会被当成意外退出（记 error、排重启）。标记是同步的；子进程的退出回调要等下一轮事件循环，
-    // 只要两个监听器之间没有等 I/O 的监听器（目前监听 app:stopping 的只有 process-local），就总在标记之后
+    // 停机时 process-local 在 app:stopping 里强杀它拉起的全部子进程，早于本插件的清理：同步打上停止标记，
+    // 那一下就不会被当成意外退出（记 error、排重启），之后也不再拉起。子进程的退出回调要等下一轮事件循环，
+    // 只要两个监听器之间没有等 I/O 的监听器（目前其余的监听器都是同步的），就总在标记之后
     caps.events.on('app:stopping', () => {
-      void running?.sidecar.stop();
+      appReady = false;
+      void sidecar?.stop();
+      void reconcile();
     });
   }
 
@@ -448,15 +438,9 @@ function run(caps: Caps): void {
     }
     if (circuitOpen()) return fallback('侧车熔断中');
     // 托管的侧车没就绪：不发请求。首次启动是正常过程，不算不可用；重启中的原因已在退出时记下
-    if (managed) {
-      if (!caps.process.current) {
-        goDown('process 服务缺席，拉不起侧车');
-        return fallback('process 服务缺席');
-      }
-      const state = sidecar?.state;
-      if (state?.kind === 'starting') return fallback(state.restarts === 0 ? '侧车启动中' : '侧车重启中');
-      if (state?.kind === 'waiting') return fallback('侧车重启中');
-    }
+    const state = sidecar?.state;
+    if (state?.kind === 'starting') return fallback(state.restarts === 0 ? '侧车启动中' : '侧车重启中');
+    if (state?.kind === 'waiting') return fallback('侧车重启中');
 
     const sid = message.sessionId;
     // 窗口是最近 historyRows 条 user / assistant 且正文是字符串的行：多取一倍，过滤后再取（见 toRows）
@@ -647,16 +631,17 @@ function run(caps: Caps): void {
       const problems: string[] = [];
       const notes: string[] = [];
       if (target && 'problem' in target) notes.push(`不托管侧车：${target.problem}`);
-      if (managed && !caps.process.current) problems.push('process 服务缺席，拉不起侧车');
       const state = sidecar?.state;
       let online: string | undefined;
       if (state?.kind === 'starting' || state?.kind === 'waiting') {
         const now = Date.now();
         if (state.kind === 'waiting') {
           const wait = Math.max(0, Math.ceil((state.until - now) / 1000));
-          problems.push(`侧车退出（${state.exit}），${wait}s 后重启（连续退出 ${state.restarts} 次）`);
+          problems.push(`${state.reason}，${wait}s 后重启（连续 ${state.restarts} 次）`);
         } else if (state.restarts > 0) {
-          problems.push(`侧车重启中（已 ${Math.round((now - state.since) / 1000)}s，连续退出 ${state.restarts} 次）`);
+          problems.push(
+            `侧车重启中（已 ${Math.round((now - state.since) / 1000)}s，此前连续 ${state.restarts} 次没起来）`,
+          );
         } else {
           notes.push(`侧车启动中（已 ${Math.round((now - state.since) / 1000)}s），就绪前判定按兜底只回点名`);
         }
@@ -665,7 +650,10 @@ function run(caps: Caps): void {
         if ('error' in health) problems.push(`侧车不可达（${health.error}）`);
         else online = `侧车在线（版本 ${health.version}${state?.kind === 'ready' ? '，由本插件托管' : ''}）`;
         if (state?.kind === 'external') {
-          notes.push('侧车不由本插件托管：启动时端口上已有别的侧车在运行，停掉它再重启 Aalis 才改由本插件托管');
+          notes.push(
+            '侧车不由本插件托管：首次拉起前端口上已有别的侧车在运行；要改由本插件托管，先停掉它（系统服务要卸载），' +
+              '再重启 Aalis 或把 trigger 偏好切走再切回',
+          );
         }
       }
       if (!caps.memory.current) problems.push('memory 缺席');
