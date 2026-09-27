@@ -111,8 +111,10 @@ const configSchema: ConfigSchema = {
       prefer: {
         type: 'select',
         label: '处理后端',
-        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPrefer）。
+        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPrefer）；
+        // 静态列表不全，allowCustom 让校验与解析不按它查取值范围。
         options: [{ label: '自动（按优先级）', value: '' }],
+        allowCustom: true,
         default: '',
         description: 'Whisper/ASR 与「能识别音频的 LLM」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。',
       },
