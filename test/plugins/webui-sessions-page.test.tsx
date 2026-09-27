@@ -51,13 +51,14 @@ function makeReplies(): Record<string, unknown> {
   };
 }
 
-/** getInheritance 的回包：平台、继承值与每个键的来源层 */
+/** getInheritance 的回包：平台、受众（房间会话才有）、继承值与每个键的来源层 */
 function inheritance(
   values: Record<string, unknown>,
   sources: Record<string, string>,
   platform = 'webui',
-): { platform: string; values: Record<string, unknown>; sources: Record<string, string> } {
-  return { platform, values, sources };
+  audience?: 'group' | 'private',
+): { platform: string; audience?: string; values: Record<string, unknown>; sources: Record<string, string> } {
+  return { platform, audience, values, sources };
 }
 
 /** 把树里唯一的会话换成带某份自身配置的 */
@@ -239,5 +240,38 @@ describe('会话配置：白纸与远端', () => {
     replies.getInheritance = inheritance({ remoteAgentTypes: ['<实例甲>'] }, { remoteAgentTypes: 'parent' }, 'onebot');
     await openConfig();
     expect(screen.queryByText(/平台档里写了远端类型/)).toBeNull();
+  });
+
+  it('来源为平台档的受众条目时标出受众', async () => {
+    replies.getInheritance = inheritance(
+      { memoryRecallScope: 'session', paperEnabled: true },
+      { memoryRecallScope: 'audience', paperEnabled: 'platform' },
+      'onebot',
+      'private',
+    );
+    await openConfig();
+    expect(await screen.findByText('继承（仅本会话，来自 平台档 onebot（私聊））')).toBeTruthy();
+    expect(screen.getByText('继承（开，来自 平台档 onebot）'), '基础档的键不标受众').toBeTruthy();
+  });
+
+  it('远端类型来自受众条目时同样告警，点明是这个平台的所有私聊或所有群', async () => {
+    replies.getInheritance = inheritance(
+      { remoteAgentTypes: ['<实例甲>'] },
+      { remoteAgentTypes: 'audience' },
+      'onebot',
+      'private',
+    );
+    await openConfig();
+    expect(await screen.findByText(/平台档里写了远端类型，这个平台的所有私聊都会继承/)).toBeTruthy();
+    cleanup();
+
+    replies.getInheritance = inheritance(
+      { remoteAgentTypes: ['<实例甲>'] },
+      { remoteAgentTypes: 'audience' },
+      'onebot',
+      'group',
+    );
+    await openConfig();
+    expect(await screen.findByText(/平台档里写了远端类型，这个平台的所有群都会继承/)).toBeTruthy();
   });
 });

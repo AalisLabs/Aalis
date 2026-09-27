@@ -25,12 +25,14 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
+const PRIVATE = 'onebot:10000:private:30001';
 const REPLY = '<回复占位>';
 
 const PROFILES = {
   platformProfiles: [
     { platform: 'webui', enabledToolGroups: ['system'], persona: '<webui 人设>' },
     { platform: 'onebot', enabledToolGroups: ['search'], persona: '<群人设>' },
+    { platform: 'onebot', audience: 'private', persona: '<私聊人设>' },
   ],
 };
 
@@ -122,5 +124,13 @@ describe('WebUI 驱动 IM 房间按出生平台选档', () => {
     const overridden = await commands.execute('session', input);
     expect(overridden).toContain(`人设: ${sm.resolveConfig(GROUP, 'webui').persona}  [来源: 会话覆盖]`);
     expect(overridden).toContain('被覆盖的继承值: <群人设>  [来源: 平台档 onebot]');
+  });
+
+  it('/session 对私聊房间：来源标出平台档的私聊条目', async () => {
+    const { commands } = await loadStack();
+    const input = { sessionId: PRIVATE, platform: 'webui', userId: 'console', args: [], raw: '' };
+
+    const shown = await commands.execute('session', input);
+    expect(shown).toContain('人设: <私聊人设>  [来源: 平台档 onebot（私聊）]');
   });
 });

@@ -50,6 +50,17 @@ const configSchema: ConfigSchema = {
         required: true,
         description: '平台名（如 onebot、webui、cli）',
       },
+      audience: {
+        type: 'select',
+        label: '受众',
+        options: [
+          { label: '该平台全部房间', value: '' },
+          { label: '群与频道', value: 'group' },
+          { label: '私聊', value: 'private' },
+        ],
+        description:
+          '只对有出生平台的房间会话生效。写了受众的条目只列与同平台基础档（不写受众的那条）不同的键，叠加在基础档上',
+      },
       persona: {
         type: 'select',
         label: '人设文件',
@@ -222,6 +233,8 @@ class SessionManager implements SessionManagerService {
   loading: Promise<void> = Promise.resolve();
   /** 平台 → 默认 SessionConfig 模板 */
   private platformProfiles = new Map<string, PlatformProfile>();
+  /** `<平台>/<受众>` → 平台档的受众条目，叠加在同平台的基础档上 */
+  private audienceProfiles = new Map<string, PlatformProfile>();
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
   private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
 
@@ -688,11 +701,13 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 继承链解析：不含 session 自身 config，只算 defaults + platform profile + 父 sessionDefaults，另记下每个键来自哪一层。
-   * 房间会话钉死出生平台：不论从哪个入口驱动都按房间自己的平台档，传入的入口平台只对没有出生平台的会话起作用。
+   * 继承链解析：不含 session 自身 config，只算 defaults + platform profile + 受众条目 + 父 sessionDefaults，另记下每个键来自哪一层。
+   * 房间会话钉死出生平台：不论从哪个入口驱动都按房间自己的平台档，并按房间的受众叠加受众条目；
+   * 传入的入口平台只对没有出生平台的会话起作用，这类会话不取受众条目。
    */
   resolveInheritance(sessionId: string, platform?: string): SessionInheritance {
-    const pinned = resolveSessionOrigin(sessionId)?.platform ?? platform;
+    const origin = resolveSessionOrigin(sessionId);
+    const pinned = origin?.platform ?? platform;
     const values: Record<string, unknown> = {};
     const sources: SessionInheritance['sources'] = {};
     const layer = (config: object | undefined, source: InheritanceSource) => {
@@ -705,8 +720,9 @@ class SessionManager implements SessionManagerService {
     // 3. 全局 defaults（最低）
     layer(this.defaults, 'defaults');
 
-    // 2. 平台 profile
+    // 2. 平台 profile，房间会话再叠加受众条目
     if (pinned) layer(this.platformProfiles.get(pinned), 'platform');
+    if (origin) layer(this.audienceProfiles.get(`${origin.platform}/${origin.audience}`), 'audience');
 
     // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
     const session = this.sessions.get(sessionId);
@@ -714,7 +730,7 @@ class SessionManager implements SessionManagerService {
 
     delete values.sessionDefaults;
     delete sources.sessionDefaults;
-    return { platform: pinned, values, sources };
+    return { platform: pinned, audience: origin?.audience, values, sources };
   }
 
   getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
@@ -741,11 +757,24 @@ class SessionManager implements SessionManagerService {
     return result;
   }
 
-  /** 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘） */
+  /**
+   * 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘）。
+   * 写了 audience 的条目按 `<平台>/<受众>` 另存；受众不是 group、private 的整条丢弃并告警，
+   * 不当成不限受众去覆盖整个平台的房间。
+   */
   loadPlatformProfiles(raw: unknown): void {
     if (!Array.isArray(raw)) return;
     for (const entry of raw) {
       if (!entry || typeof entry !== 'object' || typeof entry.platform !== 'string') continue;
+      const audience = entry.audience;
+      const unrestricted = audience === undefined || audience === null || audience === '';
+      if (!unrestricted && audience !== 'group' && audience !== 'private') {
+        this.caps.logger.warn(
+          `平台档 ${entry.platform} 的受众取值 ${JSON.stringify(audience)} 无效（只认 group、private），整条已忽略`,
+        );
+        continue;
+      }
+      const key = unrestricted ? entry.platform : `${entry.platform}/${audience}`;
       const profile: PlatformProfile = {};
       if (entry.persona) profile.persona = entry.persona;
       if (entry.llm && typeof entry.llm === 'object' && entry.llm.provider && entry.llm.model) {
@@ -761,14 +790,13 @@ class SessionManager implements SessionManagerService {
       else if (entry.think === false || entry.think === 'off') profile.think = false;
       const invalid = readRoomKeys(entry, profile);
       if (invalid.length > 0) {
-        this.caps.logger.warn(`平台档 ${entry.platform} 的 ${invalid.join('、')} 取值无效，已忽略`);
+        this.caps.logger.warn(`平台档 ${key} 的 ${invalid.join('、')} 取值无效，已忽略`);
       }
-      this.platformProfiles.set(entry.platform, profile);
+      (unrestricted ? this.platformProfiles : this.audienceProfiles).set(key, profile);
     }
-    if (this.platformProfiles.size > 0) {
-      this.caps.logger.info(
-        `已加载 ${this.platformProfiles.size} 个平台配置模板: ${[...this.platformProfiles.keys()].join(', ')}`,
-      );
+    const loaded = [...this.platformProfiles.keys(), ...this.audienceProfiles.keys()];
+    if (loaded.length > 0) {
+      this.caps.logger.info(`已加载 ${loaded.length} 个平台配置模板: ${loaded.join(', ')}`);
     }
   }
 
@@ -1021,7 +1049,8 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
   });
 
   /**
-   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档与父 sessionDefaults，并回选档平台与每个键的来源层。
+   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档（含受众条目）与父 sessionDefaults，
+   * 并回选档平台、受众（房间会话才有）与每个键的来源层。
    * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
    *
    * 会话所属平台由服务端推出，不收平台参数：有出生平台的按出生平台；没有的（owner 面会话）按会话 metadata 记下的
