@@ -575,11 +575,15 @@ export class PaperDriver {
     if (!agent) return this.#fail(task, '账本里找不到开轮中的代理');
     try {
       const prompt = await this.#prompt(task, entry, agent.replaces, waits);
-      const { runId } = await this.#retrying(waits, () =>
+      const { runId, startedAt } = await this.#retrying(waits, () =>
         entry.instance.createAgent({ agentId, name: agent.name, prompt }, this.#d.signal),
       );
-      // 远端从建代理请求发出起就在跑，这个请求本身却可能要几十秒才回：用时与单轮时长都从请求时刻算
-      await this.#started(task, runId, task.start?.requestedAt ?? this.#d.now());
+      // 用时与单轮时长从远端这一轮开跑时算：建代理的响应要几十秒才回，建出之前又可能有取工程包链接与退避的等待，
+      // 重启接回时远端可能刚建出。提供者给的时刻限在请求时刻与现在之间（两边时钟可能有偏差），没给时按请求时刻
+      const now = this.#d.now();
+      const requestedAt = task.start?.requestedAt ?? now;
+      const at = startedAt === undefined ? requestedAt : Math.min(Math.max(startedAt, requestedAt), now);
+      await this.#started(task, runId, at);
       return undefined;
     } catch (err) {
       if (this.#d.signal.aborted || err instanceof GaveUp) throw err;

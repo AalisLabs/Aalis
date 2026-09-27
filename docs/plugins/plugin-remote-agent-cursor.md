@@ -71,7 +71,7 @@ plugins:
 
 ### 建代理与开轮
 
-- 建代理：`POST /v1/agents`，body 带消费方给的 `agentId`、代理名、前言与模型参数，不带 `envVars`，key 不进入云端虚拟机。超时或临时故障时用同一 `agentId` 重发一次；远端回 409 `agent_id_conflict` 就按 id 取回首轮的 `runId`。
+- 建代理：`POST /v1/agents`，body 带消费方给的 `agentId`、代理名、前言与模型参数，不带 `envVars`，key 不进入云端虚拟机。超时或临时故障时用同一 `agentId` 重发一次；远端回 409 `agent_id_conflict` 就按 id 取回首轮的 `runId`。首轮开跑的时刻取建代理响应里 `run.createdAt`，按 id 取回时取代理的 `createdAt`：实测两者相同，都是请求到达远端的时刻。
 - 开新一轮：`POST /v1/agents/{id}/runs`。409 `agent_busy` 映射为 `busy`，409 `agent_archived` 映射为 `archived`。
 - 无参 POST（取消、归档、恢复）一律发 `{}` 加 JSON 头：只带头不带 body 时远端回 400。
 - 两种错误体都解析：业务错误 `{error:{code,message}}` 与框架层的 `{code:'error',message}`。

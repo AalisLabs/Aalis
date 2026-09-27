@@ -188,29 +188,75 @@ describe('单轮时长上限', () => {
     expect(hub.store.data.runs[runId ?? ''].cost).toEqual({ state: 'booked', cents: 10 });
   });
 
-  it('安全：新建代理的一轮从发出建代理请求时算：startedAt 取请求时刻，建代理慢时计时器照样按请求时刻到点', async () => {
+  it('安全：新建代理的一轮从远端开跑时算：建代理的响应几十秒才回时，startedAt 与计时器不按响应时刻', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
-    let requestedAt: number | undefined;
+    let arrivedAt: number | undefined;
     a.intercept.createAgent = async ({ proceed }) => {
-      requestedAt = Object.values(hub.store.data.tasks)[0]?.start?.requestedAt;
-      // 远端从 POST 起就在跑，建代理的响应却可能要几十秒才回
+      // 远端收到 POST 就建出这一轮开跑，响应却要 40 秒才回
+      arrivedAt = Date.now();
+      const out = await proceed();
       await new Promise(resolve => setTimeout(resolve, 40_000));
-      return proceed();
+      return out;
     };
     const t1 = await hub.accept();
     await advance(40_000);
     await until(() => hub.task(t1).state === 'running', '开轮');
-    expect(requestedAt).toBeDefined();
-    expect(hub.task(t1).startedAt).toBe(requestedAt);
-    expect(Date.now() - (requestedAt ?? 0)).toBeGreaterThanOrEqual(40_000);
+    expect(arrivedAt).toBeDefined();
+    expect(hub.task(t1).startedAt).toBe(arrivedAt);
+    expect(Date.now() - (arrivedAt ?? 0)).toBeGreaterThanOrEqual(40_000);
 
-    // 请求时刻起 20 分钟到点；按响应时刻算要再晚 40 秒
-    await advance(20 * MINUTE - (Date.now() - (requestedAt ?? 0)) - 5_000);
+    // 开跑起 20 分钟到点；按响应时刻算要再晚 40 秒
+    await advance(20 * MINUTE - (Date.now() - (arrivedAt ?? 0)) - 5_000);
     expect(a.count('cancelRun')).toBe(0);
     await advance(10_000);
     await until(() => hub.task(t1).state === 'cancelled', '到点取消');
-    expect(Date.now() - (requestedAt ?? 0)).toBeLessThan(20 * MINUTE + 40_000);
+    expect(Date.now() - (arrivedAt ?? 0)).toBeLessThan(20 * MINUTE + 40_000);
+  });
+
+  it('安全：建代理先遇限流、退避 5 分钟后才建出：计时从远端开跑时算，退避的等待不占单轮时长', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    once(a, 'createAgent', async () => {
+      throw new RemoteAgentError('rate-limited', '限流', { retryAfterMs: 5 * MINUTE });
+    });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'starting', '开轮中');
+    const requestedAt = hub.task(t1).start?.requestedAt ?? 0;
+    await advance(5 * MINUTE);
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    const created = a.runs.get(hub.task(t1).runId ?? '')?.createdAt ?? 0;
+    expect(created - requestedAt).toBeGreaterThanOrEqual(5 * MINUTE);
+    expect(hub.task(t1).startedAt).toBe(created);
+
+    // 开跑起 20 分钟到点；按请求时刻算会早 5 分钟
+    await advance(20 * MINUTE - (Date.now() - created) - 5_000);
+    expect(a.count('cancelRun')).toBe(0);
+    await advance(10_000);
+    await until(() => hub.task(t1).state === 'cancelled', '到点取消');
+  });
+
+  it('提供者给的开跑时刻超出请求时刻到现在的范围（两边时钟有偏差）时，限在这个范围里；没给时按请求时刻', async () => {
+    for (const skew of [-10 * MINUTE, 10 * MINUTE, undefined]) {
+      const a = new ScriptedRemote();
+      const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+      let requestedAt = 0;
+      let returnedAt = 0;
+      a.intercept.createAgent = async ({ proceed }) => {
+        requestedAt = Object.values(hub.store.data.tasks)[0]?.start?.requestedAt ?? 0;
+        const out = (await proceed()) as { runId: string };
+        await new Promise(resolve => setTimeout(resolve, 30_000));
+        returnedAt = Date.now();
+        return skew === undefined ? { runId: out.runId } : { runId: out.runId, startedAt: returnedAt + skew };
+      };
+      const t1 = await hub.accept();
+      await advance(30_000);
+      await until(() => hub.task(t1).state === 'running', '开轮');
+      expect(returnedAt - requestedAt).toBe(30_000);
+      const expected = skew !== undefined && skew > 0 ? returnedAt : requestedAt;
+      expect(hub.task(t1).startedAt, `偏差 ${skew}`).toBe(expected);
+      await hub.stop();
+    }
   });
 
   it('安全：重启时已超时的任务立即被取消', async () => {
