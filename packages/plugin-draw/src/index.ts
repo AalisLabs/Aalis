@@ -1,9 +1,10 @@
 // ============================================================
 // @aalis/plugin-draw — 让纯文本模型画图
 //
-// LLM 写标记（SVG 或 HTML+内联 CSS），本插件用硬化的无头浏览器渲染成
-// PNG，或把声明式动画（CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘
-// data:/images/ 后由 send_attachment 投递进聊天。引擎与安全设计见 engine.ts 头注。
+// LLM 写标记（SVG 或 HTML+内联 CSS），本插件经离线渲染库（@aalis/util-offline-render：
+// 开沙箱、禁脚本、零网络、每次渲染全新上下文，见该包头注释）渲染成 PNG，或把声明式动画
+// （CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘 data:/images/ 后由 send_attachment 投递进聊天。
+// 标记是不可信输入；渲染请求里只有外壳文档一个资源（见 plan.renderRequest）。
 //
 // 格式分工（工具描述同步教给模型）：
 //   图形/图标/梗图/动画 → SVG（viewBox 定界精确、声明式动画现成）
@@ -16,9 +17,9 @@ import { createStorageGateway, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { DrawEngine } from './engine.js';
+import { OfflineRenderer } from '@aalis/util-offline-render';
 import { framesToGif } from './gif.js';
-import { type DrawCaps, lintAnimationSource, resolveCanvas } from './plan.js';
+import { type DrawCaps, lintAnimationSource, renderRequest, resolveCanvas } from './plan.js';
 
 const configSchema: ConfigSchema = {
   defaultWidth: {
@@ -136,6 +137,12 @@ function resolveConfig(raw: Readonly<Record<string, unknown>>): DrawConfig {
   };
 }
 
+/** PNG 的 IHDR 在第 16–24 字节（宽、高，大端）；按缩放倍率折回 CSS 像素。 */
+function cssSize(png: Uint8Array, scale: number): { width: number; height: number } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  return { width: Math.round(view.getUint32(16) / scale), height: Math.round(view.getUint32(20) / scale) };
+}
+
 /** sessionId → 文件系统安全目录名（与 adapter 附件缓存同规，另中和 .. 与前导点做纵深防御）。 */
 function safeSessionDir(sessionId: string): string {
   return (
@@ -147,7 +154,7 @@ function safeSessionDir(sessionId: string): string {
 }
 
 // 三项服务都是 optional：缺 tools 时登记排队、缺 storage/process 时落盘与编码在调用点报错，
-// 插件本身照常激活（渲染引擎不依赖它们启动）。
+// 插件本身照常激活（离线渲染不依赖它们启动）。
 const uses = {
   tools: optional(tools),
   storage: optional(storage),
@@ -174,14 +181,17 @@ function registerDraw(caps: Caps): void {
   const proc = createProcessGateway(caps.processService);
   const { tools } = caps;
 
-  const engine = new DrawEngine(logger, {
+  // 沙箱起不来时回落到不带沙箱（任何平台）：draw 的输入是模型写的标记，回落的理由与平台无关
+  const renderer = new OfflineRenderer({
+    sandbox: 'preferred',
     headless: cfg.headless,
     executablePath: cfg.executablePath || undefined,
-    idleShutdownMs: cfg.idleShutdownSec * 1000,
-    stepTimeoutMs: 15_000,
     maxConcurrency: cfg.maxConcurrency,
+    idleShutdownSec: cfg.idleShutdownSec,
+    stepTimeoutMs: 15_000,
+    logger,
   });
-  caps.lifecycle.onDispose(() => engine.dispose());
+  caps.lifecycle.onDispose(() => renderer.dispose());
 
   tools.registerGroup({
     name: 'draw',
@@ -227,7 +237,8 @@ function registerDraw(caps: Caps): void {
         // 用折算后的 CSS 像素预算让设备像素峰值不超过 maxPixels 的既定内存含义
         const cssPixelBudget = Math.floor(cfg.maxPixels / (cfg.scale * cfg.scale));
         const plan = resolveCanvas(source, args.width as number | undefined, { ...cfg, maxPixels: cssPixelBudget });
-        const { png, width, height } = await engine.renderPng(plan, cfg.scale, cssPixelBudget);
+        const png = Buffer.from(await renderer.renderPng(renderRequest(plan, cfg.scale, cssPixelBudget)));
+        const { width, height } = cssSize(png, cfg.scale);
 
         const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(png));
         const hash = Buffer.from(digest).toString('hex').slice(0, 16);
@@ -292,17 +303,18 @@ function registerDraw(caps: Caps): void {
         const reqFps = Number(args.fps);
         const fps = Number.isFinite(reqFps) && reqFps > 0 ? Math.min(Math.floor(reqFps), 25) : cfg.animDefaultFps;
 
-        const r = await engine.renderAnimation(plan, {
+        // 动图按 1x：帧数×像素才是体积主宰，清晰度靠画布宽
+        const r = await renderer.renderFrames(renderRequest(plan, 1, cfg.maxPixels), {
           fps,
-          requestedDurationMs: Number.isFinite(reqDur) && reqDur > 0 ? Math.round(reqDur * 1000) : undefined,
+          durationMs: Number.isFinite(reqDur) && reqDur > 0 ? Math.round(reqDur * 1000) : undefined,
           defaultDurationMs: 3000,
           maxDurationMs: cfg.animMaxDurationSec * 1000,
           maxFrames: cfg.animMaxFrames,
-          scale: 1, // 动图按 1x：帧数×像素才是体积主宰，清晰度靠画布宽
-          maxPixels: cfg.maxPixels,
         });
+        const frames = r.frames.map(f => Buffer.from(f));
+        const { width, height } = cssSize(frames[0], 1);
 
-        const gif = await framesToGif(proc, storage, r.frames, fps);
+        const gif = await framesToGif(proc, storage, frames, fps);
         if (gif.byteLength > cfg.animMaxOutputMB * 1024 * 1024) {
           return JSON.stringify({
             error:
@@ -319,19 +331,19 @@ function registerDraw(caps: Caps): void {
         // 检查帧：首帧+中帧落盘，供 agent 在没把握时**可选**用 analyze_image 核对——
         // 不是默认路径。本地视觉推理慢（33b 单张可达数分钟），默认自检会把 2 秒的动图
         // 拖成几分钟、还挤占入站识别的产能（实测已踩），故降级为提示、由模型按需取用。
-        const midIdx = Math.floor(r.frames.length / 2);
+        const midIdx = Math.floor(frames.length / 2);
         const checkFrames: string[] = [];
         for (const [tag, idx] of [
           ['f0', 0],
           ['fmid', midIdx],
         ] as const) {
           const fUri = `data:/images/${dir}/draw-${hash}-${tag}.png`;
-          await storage.writeFile(fUri, r.frames[idx]);
+          await storage.writeFile(fUri, frames[idx]);
           checkFrames.push(fUri);
         }
         const lintWarnings = lintAnimationSource(source);
         logger.info(
-          `draw_animation 渲染完成 mode=${plan.mode} ${r.width}x${r.height} ${r.frames.length}帧@${fps}fps ` +
+          `draw_animation 渲染完成 mode=${plan.mode} ${width}x${height} ${frames.length}帧@${fps}fps ` +
             `${(gif.byteLength / 1024).toFixed(0)}KB anims=${r.animationCount} → ${uri}`,
         );
         const warnings = [
@@ -342,9 +354,9 @@ function registerDraw(caps: Caps): void {
         ];
         return JSON.stringify({
           uri,
-          width: r.width,
-          height: r.height,
-          frames: r.frames.length,
+          width,
+          height,
+          frames: frames.length,
           fps,
           duration_seconds: r.durationMs / 1000,
           size_kb: Math.round(gif.byteLength / 1024),

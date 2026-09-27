@@ -14,7 +14,6 @@ export default defineConfig({
       ['**/test/plugins/draw-render.test.ts', 'threads'],
       ['**/test/plugins/draw-animation.test.ts', 'threads'],
       ['**/test/plugins/draw-delivery-chain.test.ts', 'threads'],
-      ['**/test/plugins/draw-step-timeout.test.ts', 'threads'],
       ['**/test/plugins/tool-browser-ssrf-gate.test.ts', 'threads'],
       ['**/test/plugins/tool-browser-background-page.test.ts', 'threads'],
       ['**/test/plugins/tool-browser-screenshot.test.ts', 'threads'],
