@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type {} from '../../packages/api-memory/src/index.js'; // declaration merging：memory:clear 钩子类型
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
-import { registerHubs } from '../fixtures/hubs.js';
 import {
   emptyLedger,
   human,
@@ -44,7 +43,6 @@ function seedTask(over: Partial<TaskRecord>): TaskRecord {
     state: 'queued',
     createdAt: Date.now() - 120_000,
     artifacts: [],
-    notified: false,
     delivered: false,
     ...over,
   };
@@ -188,7 +186,6 @@ describe('插件接线（真实 App，真实时钟）', () => {
     await hub.stop();
 
     const restarted = await startPaperHub({ remotes: { [REMOTE]: a }, files, config: PILOT_CONFIG });
-    await registerHubs(restarted.app);
     await waitFor(() => a.count('followRun') === 2, '重启后接着跟踪');
     a.finish(runId);
     await waitFor(() => restarted.ledger().tasks[taskId]?.state === 'done', '完成');

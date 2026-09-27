@@ -27,6 +27,8 @@ const MB = 1024 * 1024;
 /** 数值型配置的缺省值：全局的与白纸属性的 */
 const NUMBER_DEFAULTS = {
   maxRunMinutes: 20,
+  sendHtmlMaxMB: 5,
+  pendingHintHours: 24,
   reconcileMinutes: 60,
   taskRetentionDays: 30,
 } as const;
@@ -64,6 +66,25 @@ export const configSchema: ConfigSchema = {
     default: NUMBER_DEFAULTS.maxRunMinutes,
     min: 1,
     description: '远端一轮从开轮起超过这么久就取消；由计时器执行，远端只发心跳时也照样到点',
+  },
+  sendHtml: {
+    type: 'boolean',
+    label: '允许发单个网页',
+    default: true,
+    description: 'paper_send 能否把单个 HTML 成品作为文件发回房间（在对方本地以 file:// 打开，没有沙箱）',
+  },
+  sendHtmlMaxMB: {
+    type: 'number',
+    label: '单个网页的发送上限（MB）',
+    default: NUMBER_DEFAULTS.sendHtmlMaxMB,
+    min: 1,
+  },
+  pendingHintHours: {
+    type: 'number',
+    label: '待交付提示保留（小时）',
+    default: NUMBER_DEFAULTS.pendingHintHours,
+    min: 1,
+    description: '已完成、成品还没发回的任务，结束后这么久之内每次对话都提示她用 paper_send 发回',
   },
   reconcileMinutes: {
     type: 'number',
@@ -232,6 +253,10 @@ export interface PaperConfig {
   /** 缺省取宿主进程的本地时区 */
   budgetTimeZone?: string;
   maxRunMinutes: number;
+  /** paper_send 能否发单个 HTML */
+  sendHtml: boolean;
+  sendHtmlMaxBytes: number;
+  pendingHintHours: number;
   reconcileMinutes: number;
   taskRetentionDays: number;
   artifacts: ArtifactCaps;
@@ -363,6 +388,11 @@ export function readConfig(raw: Readonly<Record<string, unknown>>, logger: Logge
     reserveDefaultCents,
     budgetTimeZone: validTimeZone(raw.budgetTimeZone, logger),
     maxRunMinutes: readPositive(raw.maxRunMinutes, NUMBER_DEFAULTS.maxRunMinutes, 'maxRunMinutes', logger),
+    sendHtml: raw.sendHtml !== false,
+    sendHtmlMaxBytes: Math.floor(
+      readPositive(raw.sendHtmlMaxMB, NUMBER_DEFAULTS.sendHtmlMaxMB, 'sendHtmlMaxMB', logger) * MB,
+    ),
+    pendingHintHours: readPositive(raw.pendingHintHours, NUMBER_DEFAULTS.pendingHintHours, 'pendingHintHours', logger),
     reconcileMinutes: readPositive(raw.reconcileMinutes, NUMBER_DEFAULTS.reconcileMinutes, 'reconcileMinutes', logger),
     taskRetentionDays: readPositive(
       raw.taskRetentionDays,

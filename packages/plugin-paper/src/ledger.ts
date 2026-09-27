@@ -87,7 +87,9 @@ export interface TaskRecord {
   artifactsCleared?: boolean;
   error?: string;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
-  notified: boolean;
+  /** 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省 */
+  notice?: { id: string; at: number };
+  /** paper_send 已把这件任务的成品交给发送队列（不代表对方已收到） */
   delivered: boolean;
 }
 
