@@ -372,12 +372,13 @@ describe('会话列表分区', () => {
     expect(await archivedIds()).toEqual([`${GROUP}::abcd1234`, GROUP, PRIVATE].sort());
   });
 
-  it('删除 IM 房间的确认写清会清掉消息历史与长期记忆、房间之后会重新出现；我的会话不写重新出现', async () => {
+  it('删除 IM 房间的确认写清会清掉消息历史与长期记忆、终止后台进程、房间之后会重新出现；我的会话不写重新出现', async () => {
     render(<SessionsPage pluginName="plugin-session-manager" />);
     fireEvent.click(within(await waitFor(() => rowOf('<群名>'))).getByTitle('删除'));
     const dialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
     expect(dialog.textContent).toContain('消息历史与长期记忆');
     expect(dialog.textContent).toContain('重新出现');
+    expect(dialog.textContent).toContain('后台进程一并终止');
     fireEvent.click(within(dialog).getByText('取消'));
 
     fireEvent.click(within(rowOf('<WebUI 会话>')).getByTitle('删除'));
@@ -385,12 +386,13 @@ describe('会话列表分区', () => {
     expect(ownerDialog.textContent).not.toContain('重新出现');
   });
 
-  it('删除我的会话与 IM 房间下的子任务：确认同样写明消息历史与长期记忆会被清空、子会话一并删除', async () => {
+  it('删除我的会话与 IM 房间下的子任务：确认同样写明消息历史与长期记忆会被清空、子会话一并删除、后台进程一并终止', async () => {
     render(<SessionsPage pluginName="plugin-session-manager" />);
     fireEvent.click(within(await waitFor(() => rowOf('<WebUI 会话>'))).getByTitle('删除'));
     const ownerDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
     expect(ownerDialog.textContent).toContain('消息历史与长期记忆（摘要、向量记忆等）会被清空');
     expect(ownerDialog.textContent).toContain('子会话一并删除');
+    expect(ownerDialog.textContent).toContain('后台进程一并终止');
     fireEvent.click(within(ownerDialog).getByText('取消'));
 
     fireEvent.click(within(rowOf('<群名>')).getByText('▸'));
@@ -398,9 +400,10 @@ describe('会话列表分区', () => {
     const taskDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
     expect(taskDialog.textContent).toContain('消息历史与长期记忆（摘要、向量记忆等）会被清空');
     expect(taskDialog.textContent, '子任务不是 IM 房间').not.toContain('重新出现');
+    expect(taskDialog.textContent).toContain('后台进程一并终止');
   });
 
-  it('批量删除不含 IM 房间：确认同样写明消息历史与长期记忆会被清空', async () => {
+  it('批量删除不含 IM 房间：确认同样写明消息历史与长期记忆会被清空、后台进程一并终止', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<SessionsPage pluginName="plugin-session-manager" />);
     fireEvent.click(await screen.findByTitle('批量管理'));
@@ -411,6 +414,7 @@ describe('会话列表分区', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     const text = confirmSpy.mock.calls[0][0] as string;
     expect(text).toContain('消息历史与长期记忆');
+    expect(text).toContain('后台进程一并终止');
     expect(text).not.toContain('IM 房间');
   });
 
@@ -426,6 +430,7 @@ describe('会话列表分区', () => {
     const text = confirmSpy.mock.calls[0][0] as string;
     expect(text).toContain('2 个 IM 房间');
     expect(text).toContain('消息历史与长期记忆');
+    expect(text).toContain('后台进程一并终止');
     expect(
       calls.some(c => c.method === 'batchDelete'),
       '取消确认就不删',
