@@ -76,11 +76,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
   /** egress() 报告的出网方式（来源恒为 owner 配置） */
   egressMode: EgressMode = 'allowlist';
   /** 每轮的费用；返回 undefined 即暂缺 */
-  costOf: (runId: string) => RunCost | undefined = () => ({
-    cents: 10,
-    inputTokens: 1000,
-    cacheReadTokens: 500,
-  });
+  costOf: (runId: string) => RunCost | undefined = () => ({ cents: 10 });
 
   constructor(opts: { isolation?: 'shared' | 'per-agent'; accountKey?: string } = {}) {
     this.transcriptIsolation = opts.isolation ?? 'per-agent';

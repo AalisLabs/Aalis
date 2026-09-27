@@ -37,7 +37,6 @@ export interface AgentRecord {
   state: 'creating' | 'active' | 'archived' | 'retired';
   createdAt: number;
   costCents: number;
-  lastContextTokens?: number;
   lastRunEndedAt?: number;
   /**
    * 换新：这个代理接替的旧代理。在它有一轮成功取回之前，每轮前言都带旧代理的工程包链接，旧代理不删；

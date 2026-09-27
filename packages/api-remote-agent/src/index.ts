@@ -73,12 +73,10 @@ export interface RunState {
 export type RunProgress = { kind: 'progress'; eventId: string } | { kind: 'terminal'; state: RunState };
 /**
  * 一轮的费用。cents 是计入额度的花费（美分），消费方的日上限与换新都按它判：远端不另收费的用量（如计划内额度）
- * 也按实际消耗计，不能写 0。输入与缓存读取的 token 数供消费方判断上下文是否过长
+ * 也按实际消耗计，不能写 0
  */
 export interface RunCost {
   cents: number;
-  inputTokens: number;
-  cacheReadTokens: number;
 }
 
 // ----- 成品 -----
