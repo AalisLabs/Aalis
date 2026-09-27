@@ -74,8 +74,9 @@ export default definePlugin({
 `sessionId` 捕获本轮回复，把回复经 `out` 存入
 `outputs`。配合 `deps` + 插值，单个 DAG 即可表达「分解 → 依赖 → 串/并行 → 管道 → 聚合」的确定性编排流程。
 
-- 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow:agent:<runId>:<nodeId>`，
-  并行 agent 节点互不串扰，适合子任务场景。
+- 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow::<runId>::<nodeId>`，
+  并行 agent 节点互不串扰，适合子任务场景。这个 id 只用 `::` 分段、不含单冒号，不会被当成 IM 房间，
+  按节点的 `platform` 选平台档；显式指向 IM 房间（`<平台>:...`）时按房间的出生平台选档，节点的 `platform` 不影响选档。
 - `timeoutSeconds`（默认 120）内未收到回复 → 节点失败；`outcome=error/aborted` → 节点失败；
   `outcome=silent`（agent 选择不回复）是合法结果，节点成功、输出空串。
 

@@ -29,7 +29,7 @@ interface InboundPhaseData {
 
 ## 会话作用域匹配
 
-按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。`inferSessionScope` 用于消息上没有 sessionType 的场合（定时任务、workflow 等合成回合）：会话 ID 的这一约定来自适配器（如 OneBot），不是框架契约，推断结果只供调用方自己判断，不要写回消息（flow-control 用它给回复记账、给入站不带会话类型的内部注入判作用域，persona 用它写提示词里的会话类型）。
+按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。`inferSessionScope` 用于消息上没有 sessionType 的场合（定时任务、workflow 等合成回合）：会话 ID 的四段约定来自适配器（如 OneBot），不是框架契约（框架只约定前缀，见下文「出生平台解析」），推断结果只供调用方自己判断，不要写回消息（flow-control 用它给回复记账、给入站不带会话类型的内部注入判作用域，persona 用它写提示词里的会话类型）。
 
 ```ts
 /** 群聊取 groupId，私聊取 userId，其他为空串 */
@@ -44,6 +44,34 @@ function isScopeEnabled(cfg: { scopes; overrides }, platform, sessionType, targe
 /** 取命中且最具体的一项 override 按键叠加到 base（跳过 scope 与 undefined）；具体度 targetId > sessionType > platform */
 function resolveEffectiveConfig<T extends { overrides }>(base: T, platform, sessionType, targetId?): T;
 ```
+
+## 出生平台解析
+
+`resolveSessionOrigin` 按会话 ID 推出房间会话的出生平台与受众。session-manager 用它选平台档、给会话列表分区、收录 IM 房间，persona 用它取会话环境，agent 用它给 `token:request` 的快照兜底平台。它是同步纯函数，只看 ID，不查已注册的适配器：适配器没加载时结果不变。
+
+```ts
+interface SessionOrigin {
+  /** 出生平台：会话 ID（子任务取第一个 `::` 之前）第一个 `:` 之前的一段 */
+  platform: string;
+  /** 类型段为 private 的是私聊；group、channel 与不认识的类型段一律按群 */
+  audience: 'group' | 'private';
+}
+function resolveSessionOrigin(sessionId: string): SessionOrigin | undefined;
+```
+
+判法：先截掉第一个 `::` 及之后的部分（子任务 `<父会话>::<后缀>` 按父会话算），再取第一个 `:` 之前的一段作为出生平台；截掉之后不含 `:`、或以 `:` 开头的 ID 不是房间，返回 undefined。受众看第三段，只有 `private` 算私聊，其余（含缺失的类型段）按群算。不要求四段：只要 ID 以 `<平台名>:` 开头就能认出平台。
+
+| 会话 ID | 结果 |
+|---|---|
+| `onebot:<self>:group:<群号>` | `{ platform: 'onebot', audience: 'group' }` |
+| `onebot:<self>:private:<QQ号>` | `{ platform: 'onebot', audience: 'private' }` |
+| `onebot:<self>:channel:<频道组>:<频道>` | `{ platform: 'onebot', audience: 'group' }` |
+| `onebot:<self>:group:<群号>::<8位>` | 与父会话相同 |
+| `session-<8位>`、`webui-default`、`cli-default`、`mcp-server`、`workflow::<runId>::<nodeId>` | `undefined` |
+
+它依赖的会话 ID 约定写在 api-platform 的 `PlatformAdapter.canHandle` 说明里（见 [platform 服务](../services/platform.md)）：多人房间的会话 ID 以 `<平台名>:` 开头；非房间的内部会话 ID 不含单冒号，要分段用 `::`。返回 undefined 的会话由调用方按入口平台处理。
+
+与 `inferSessionScope` 回答的问题不同，两者不互相替代：`inferSessionScope` 回答会话自己在触发与流控的作用域里算群、私聊还是频道，只认前缀等于传入平台且符合四段约定的 ID，子任务返回 undefined；`resolveSessionOrigin` 回答房间属于哪个平台、面向哪类受众，子任务按父会话算。
 
 ## 服务接口
 

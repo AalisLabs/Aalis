@@ -24,6 +24,7 @@ export default definePlugin({
   uses: {
     processService,
     logger,
+    lifecycle,
     provide,
   },
   apply(caps) { /* 见源码 */ },
@@ -35,8 +36,11 @@ export default definePlugin({
 - **独立服务，不污染通用 `process` 契约**：「隔离执行不可信代码」是 code_runner 独有诉求，故自成
   `code-sandbox` 服务，而非给所有子进程共享的 `ProcessService` 加字段。
 - **经 `process` 网关 spawn**：把命令包成 `bwrap …` / `sandbox-exec …` 后交给现有 `process` 服务执行——
-  **零改** process-api / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经网关的功能性试跑）。
-- **功能性探测**：启动时真跑一次最小沙箱命令，跑通才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
+  沙箱相关的逻辑不进 process-api / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经网关的功能性试跑）。
+  调用方的中止信号（`SandboxRunRequest.signal`）原样交给 `execFile`，由 process 服务按进程组停掉。
+- **功能性探测**：启动时真跑一次最小沙箱命令（超时 5000ms），退出码为 0 才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
+  探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测，激活随之落定，不必等满探测超时，也不会被判「未在宽限内停止」。
+  因此本插件依赖 `lifecycle`，core peer 为 `>=0.18.0`（`lifecycle.signal` 自 core 0.18 起提供）。
 - **可换可叠**：未来 `-docker` / `-wasm` / `-e2b` 等不同机制各自提供 `code-sandbox`，经优先级/偏好替换。
 
 ## 隔离语义（v1）
@@ -48,8 +52,16 @@ export default definePlugin({
 | 网络 | 默认断网（`code_runner` 的 `sandbox.network=deny`）；可整体放开，但**无法按域名过滤** |
 | 环境变量 | 仅放行白名单（`--clearenv`/`env -i`），宿主 secrets 不进沙箱 |
 | 资源/超时 | 沿用 code_runner 的 timeout（SIGKILL） |
+| 停止键 | 回合中止时按 process 服务的中止语义停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，打的是外层启动器所在的进程组 |
 
 **一句话**：防「写出工作区 / 联网外泄 / 篡改系统」，是对原「裸子进程」的实打实安全升级；不防本机文件读取。
+
+## 停止键与超时的边界
+
+停止键与超时都只打外层启动器所在的进程组：
+
+- macOS（Seatbelt）：`sandbox-exec → env → 解释器` 逐级 exec，是同一个进程，脚本与它起的普通子进程在组里，能停干净。主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）不在组里，停止键与超时都停不掉。
+- Linux（bwrap）：bwrap 带 `--new-session`，内层进程不在我们的进程组里，信号打到外层 bwrap；它同时带 `--die-with-parent` 与 `--unshare-all`（含 pid 命名空间），外层退出后命名空间里的进程随之结束，脱离进程组的后代也包括在内。
 
 ## 服务接口（`code-sandbox`）
 
@@ -57,7 +69,7 @@ export default definePlugin({
 interface CodeSandboxService {
   readonly available: boolean;  // 无后端 → 调用方应 fail-closed
   readonly backend: string;     // 'bwrap' | 'seatbelt' | 'none'
-  run(req: { cmd; args; cwd?; env?; timeout?; policy }): Promise<ExecResult>;
+  run(req: { cmd; args; cwd?; env?; timeout?; signal?; policy }): Promise<ExecResult>;
 }
 ```
 

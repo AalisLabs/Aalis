@@ -84,6 +84,14 @@ export interface PlatformAdapter {
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，`sendPlatformMessage` / `callPlatformAction` 都找不到你的 adapter。
 **按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`sessionTypes`（让 UI 能列出你的真实会话类型）。
 
+### 会话 ID 约定
+
+多人房间（群、私聊、频道）的会话 ID 必须以本适配器的平台名加冒号开头，即 `<platform>:<...>`；实现了 `canHandle()` 的适配器也要遵守。session-manager 经 api-gateway 的 `resolveSessionOrigin` 按这个前缀认出房间的出生平台：房间不论从哪个入口驱动（包括 owner 从 WebUI 往群里插话），都按出生平台的平台档选工具组、人设与模型，并列进会话页的「IM 房间」区。路由仍优先 `canHandle()`，选档只看前缀。
+
+- 不带前缀的 ID 只适合单用户会话（如 CLI 的 `cli-default`），且不要含单冒号：带单冒号的 ID 一律按第一个 `:` 之前的一段认作出生平台。内部会话 ID 要分段时用 `::`（如 workflow 的 `workflow::<runId>::<nodeId>`）。
+- ID 前缀与平台名不一致时（平台名为 `<平台甲>`，ID 写成 `<缩写>:...`、靠 `canHandle()` 认领），这个平台的全部房间（包括原生入站）都按 `<缩写>` 这份多半不存在的平台档选档，落到全局默认。session-manager 收到这类真人入站（不带 `source`）时，若前缀既不是发来消息的平台、也不是已注册的平台名，按前缀告警一次，不纠正。
+- 多人房间的 ID 不带冒号时出生平台认不出来：从 WebUI 驱动时按入口平台选档，登记后列在「我的会话」区。
+
 ### 入站消息：出站接口之外还需 emit
 
 `PlatformAdapter` 只覆盖**出站**与查询。**入站**不在接口里——adapter 收到平台消息后须 `events.emit('inbound:message', msg)`（msg 为 `IncomingMessage`，`packages/schema-message/src/index.ts`），由 `plugin-gateway`（`src/index.ts` 监听）接管路由到 agent。OneBot 见 `src/index.ts` 一带的 `events.emit('inbound:message', …)`；CLI 见 `src/index.ts`。出站文本回显则可订阅 `events.on('outbound:message', …)`（CLI `src/index.ts`）。详见 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。
