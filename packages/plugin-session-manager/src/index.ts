@@ -13,8 +13,11 @@ import {
   type SessionConfig,
   type SessionInfo,
   type SessionInheritance,
+  type SessionListSection,
   type SessionManagerService,
   type SessionTreeNode,
+  type SessionTreeSection,
+  sessionListSection,
   sessionManager,
 } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
@@ -918,6 +921,12 @@ function stripUndefined(obj: object | undefined): Record<string, unknown> {
  */
 type ActionCaps = Pick<Caps, 'webui' | 'memory' | 'persona' | 'llm' | 'tools' | 'platform' | 'logger'>;
 
+/** 会话页的分区与显示名，按显示顺序 */
+const SESSION_LIST_SECTIONS: ReadonlyArray<readonly [SessionListSection, string]> = [
+  ['owner', '我的会话'],
+  ['rooms', 'IM 房间'],
+];
+
 /**
  * 页面动作全是 apply 里的闭包：直接用这次激活的 manager 与能力，
  * 登记随激活存亡（插件不在，WebUI 就调不到这些方法）。
@@ -1016,7 +1025,15 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
     return { success: true, count };
   });
 
-  webui.registerAction('getSessionTree', async () => manager.getTree());
+  /** 会话页的树按区回：我的会话在前、IM 房间在后，空区不回；分区在服务端判定，客户端只负责画 */
+  webui.registerAction('getSessionTree', async (): Promise<SessionTreeSection[]> => {
+    const roots = manager.getTree();
+    return SESSION_LIST_SECTIONS.map(([key, label]) => ({
+      key,
+      label,
+      nodes: roots.filter(n => sessionListSection(n.session) === key),
+    })).filter(section => section.nodes.length > 0);
+  });
 
   /** 获取可选项列表（供前端下拉框使用） */
   webui.registerAction('getConfigOptions', async () => {
