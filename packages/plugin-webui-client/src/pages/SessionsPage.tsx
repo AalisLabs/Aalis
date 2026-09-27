@@ -549,7 +549,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     const roomCount = [...selected].filter(id => roomIds.has(id)).length;
     const message = roomCount > 0
       ? `选中的 ${selected.size} 个会话里有 ${roomCount} 个 IM 房间，确认删除？${ROOM_DELETE_NOTICE}`
-      : `确认删除选中的 ${selected.size} 个会话？此操作不可恢复。`;
+      : `确认删除选中的 ${selected.size} 个会话？这些会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。`;
     if (!confirm(message)) return;
     try {
       await pageAction(pluginName, 'batchDelete', { ids: [...selected] });
@@ -658,7 +658,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
             <p>
               {roomIds.has(pendingDeleteId)
                 ? `确定要删除这个 IM 房间吗？${ROOM_DELETE_NOTICE}`
-                : '确定要删除此会话吗？子会话也会被一并删除，此操作无法撤销。'}
+                : '确定要删除此会话吗？这个会话的消息历史与长期记忆（摘要、向量记忆等）会被清空，子会话一并删除，无法撤销。'}
             </p>
             <div className="delete-confirm-actions">
               <button className="btn btn-sm btn-danger" onClick={() => handleDelete(pendingDeleteId)}>删除</button>

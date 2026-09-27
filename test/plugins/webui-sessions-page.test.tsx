@@ -372,7 +372,7 @@ describe('会话列表分区', () => {
     expect(await archivedIds()).toEqual([`${GROUP}::abcd1234`, GROUP, PRIVATE].sort());
   });
 
-  it('删除 IM 房间的确认写清会清掉消息历史与长期记忆、房间之后会重新出现；我的会话照旧', async () => {
+  it('删除 IM 房间的确认写清会清掉消息历史与长期记忆、房间之后会重新出现；我的会话不写重新出现', async () => {
     render(<SessionsPage pluginName="plugin-session-manager" />);
     fireEvent.click(within(await waitFor(() => rowOf('<群名>'))).getByTitle('删除'));
     const dialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
@@ -383,6 +383,35 @@ describe('会话列表分区', () => {
     fireEvent.click(within(rowOf('<WebUI 会话>')).getByTitle('删除'));
     const ownerDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
     expect(ownerDialog.textContent).not.toContain('重新出现');
+  });
+
+  it('删除我的会话与 IM 房间下的子任务：确认同样写明消息历史与长期记忆会被清空、子会话一并删除', async () => {
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(within(await waitFor(() => rowOf('<WebUI 会话>'))).getByTitle('删除'));
+    const ownerDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
+    expect(ownerDialog.textContent).toContain('消息历史与长期记忆（摘要、向量记忆等）会被清空');
+    expect(ownerDialog.textContent).toContain('子会话一并删除');
+    fireEvent.click(within(ownerDialog).getByText('取消'));
+
+    fireEvent.click(within(rowOf('<群名>')).getByText('▸'));
+    fireEvent.click(within(rowOf('<子任务>')).getByTitle('删除'));
+    const taskDialog = document.querySelector('.delete-confirm-dialog') as HTMLElement;
+    expect(taskDialog.textContent).toContain('消息历史与长期记忆（摘要、向量记忆等）会被清空');
+    expect(taskDialog.textContent, '子任务不是 IM 房间').not.toContain('重新出现');
+  });
+
+  it('批量删除不含 IM 房间：确认同样写明消息历史与长期记忆会被清空', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<SessionsPage pluginName="plugin-session-manager" />);
+    fireEvent.click(await screen.findByTitle('批量管理'));
+    fireEvent.click(screen.getByText('<WebUI 会话>'));
+
+    fireEvent.click(screen.getByText('删除 (1)'));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const text = confirmSpy.mock.calls[0][0] as string;
+    expect(text).toContain('消息历史与长期记忆');
+    expect(text).not.toContain('IM 房间');
   });
 
   it('批量删除选中 1 个我的会话与 2 个 IM 房间：确认写出 IM 房间的个数与同一段说明', async () => {
