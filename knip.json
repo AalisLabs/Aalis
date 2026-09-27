@@ -31,13 +31,7 @@
       ]
     },
     "packages/plugin-works-site": {
-      "ignoreDependencies": [
-        "@aalis/api-doctor",
-        "@aalis/api-publish",
-        "@aalis/api-storage",
-        "@aalis/api-webui",
-        "@aalis/schema-config"
-      ]
+      "ignoreDependencies": ["@aalis/api-doctor", "@aalis/api-publish", "@aalis/api-storage"]
     },
     "packages/util-offline-render": {
       "ignoreDependencies": ["puppeteer"]
