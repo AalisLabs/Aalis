@@ -174,7 +174,7 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 
 ## 7. 能力 / 风险 → 影响
 
-- **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。`triggerType: 'proactive'` 的代发任务（如 workflow 的 agent 节点）被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免目标会话回看历史时把派发任务误读为「曾有用户说过」。
+- **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。`triggerType: 'proactive'` 的代发任务（如 workflow 的 agent 节点）被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免目标会话回看历史时把派发任务误读为「曾有用户说过」。宿主通知（带 `hostNotice`）同理标成 `role:'notice'` + `kind:'host-notice'`，且只归档 `content`：注入方包好的不可信段 `hostNotice.untrusted` 不写进消息与 metadata，provider 也不得把它落库。
 - **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`，用于区分真实用户消息 vs 系统注入，是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
 - **本服务无 authority/SSRF/沙盒语义**：它不发起网络请求、不做权限判定。但若你的归档实现要落到外部存储，写文件请走 `storage` 的 `'<root>:/path'` 文法（注意 storage 不是沙箱，见 `docs/concepts/storage-uri-grammar.md`），拉远端资源请走 `safeFetch`（SSRF 防护，见 `docs/concepts/security-model.md`）。
 - **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口。文件附件已被 `plugin-file-reader` 替换 `att.data` 为 `aalis-file://ID`，归档只保留 `att.name` 进 `metadata.fileNames`，避免 inline 内容污染气泡显示。

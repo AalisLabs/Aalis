@@ -3,9 +3,10 @@ import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
-import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
+import { type ConfigSchema, configError, missingConfigError } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
+import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
 
@@ -18,13 +19,94 @@ const CONTENT_FILTER_PATTERNS = [
   'risk control',
 ];
 
-/** 解析 API 错误，对内容审查类错误返回友好提示 */
+/** 错误信息与日志里附带的摘录上限（字符）。网关的 HTML 错误页可达数十 KB；截断按代理对安全，不留孤代理 */
+const ERROR_BODY_MAX_CHARS = 500;
+
+/** 错误信息与日志里附带的摘录：空白（含 HTML 错误页的换行）折叠成一个空格后截断，不把换行带进错误信息与日志 */
+function bodyExcerpt(body: string): string {
+  return truncateChars(body.replace(/\s+/g, ' ').trim(), ERROR_BODY_MAX_CHARS, '…');
+}
+
+/**
+ * 读配置时校验 baseUrl，解析不了的与带用户名或密码的抛配置错误。带凭据的 URL fetch 拒发，凭据还会随报错与
+ * 条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不出去。消息不带 URL
+ */
+function checkBaseUrl(baseUrl: string): void {
+  if (!URL.canParse(baseUrl)) {
+    throw configError('baseUrl 不是有效的 URL，需写成完整地址，如 https://api.openai.com/v1');
+  }
+  const { username, password } = new URL(baseUrl);
+  if (username || password) {
+    throw configError('baseUrl 不能带用户名或密码（user:pass@），密钥请填在 apiKey');
+  }
+}
+
+/**
+ * 错误信息与日志里显示的 URL：去掉查询串（有的网关把密钥写在查询串里）。没有查询串时原样返回，保留配置里的写法。
+ * 带用户名或密码的 baseUrl 读配置时已拒绝（见 checkBaseUrl）
+ */
+function redactUrl(url: string): string {
+  const parsed = new URL(url);
+  if (!parsed.search) return url;
+  parsed.search = '';
+  return parsed.href;
+}
+
+/**
+ * 错误消息连同底层原因，写成一行。fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）在
+ * cause 上；连 localhost 时两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
+ */
+function describeError(err: unknown): string {
+  const cause = err instanceof Error ? err.cause : undefined;
+  const reasons: unknown[] = cause instanceof AggregateError ? cause.errors : cause instanceof Error ? [cause] : [];
+  const detail = reasons.map(e => (e instanceof Error ? e.message : String(e))).join('; ');
+  return `${err instanceof Error ? err.message : String(err)}${detail ? ` ← ${detail}` : ''}`;
+}
+
+/** 常见状态码的一句提示 */
+function statusHint(status: number): string | undefined {
+  if (status === 401 || status === 403) return '密钥无效或没有权限';
+  if (status === 402) return '余额不足或需要付费';
+  if (status === 404) return '模型或地址不对';
+  if (status === 429) return '请求过多或额度不足';
+  if (status >= 500) return '上游服务故障';
+  return undefined;
+}
+
+/**
+ * 上游 JSON 错误体里的说明：OpenAI 风格的 error.message、Ollama 风格的 error 字符串，或顶层 message，折成一行并截断。
+ * 不是 JSON、没有这些字段或说明是空白时返回空串
+ */
+function upstreamMessage(body: string): string {
+  let data: { error?: string | { message?: unknown }; message?: unknown } | null;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    return '';
+  }
+  const error = data?.error;
+  const message =
+    typeof error === 'string' ? error : typeof error?.message === 'string' ? error.message : data?.message;
+  return typeof message === 'string' ? bodyExcerpt(message) : '';
+}
+
+/**
+ * 非 2xx 应答的错误信息（会经 agent 发回会话）：状态码、常见状态码的一句提示与上游 JSON 里的说明；没有说明时
+ * （不是 JSON 或没有说明字段）写「详情见日志」。响应体本身只进日志，由调用方记
+ */
+function httpErrorMessage(provider: string, status: number, body: string): string {
+  const hint = statusHint(status);
+  const message = upstreamMessage(body);
+  return `${provider} API 错误 (${status})${hint ? `：${hint}` : ''}；${message ? `上游说明：${message}` : '详情见日志'}`;
+}
+
+/** 解析 API 错误：内容审查类错误按完整响应体识别，给固定提示；其余见 httpErrorMessage */
 function parseApiError(provider: string, status: number, body: string): string {
   const lower = body.toLowerCase();
   if (status === 400 && CONTENT_FILTER_PATTERNS.some(p => lower.includes(p))) {
     return `${provider} 拒绝了此次请求（内容安全策略），请尝试换一个话题或缩短上下文`;
   }
-  return `${provider} API 错误 (${status}): ${body}`;
+  return httpErrorMessage(provider, status, body);
 }
 
 const configSchema: ConfigSchema = {
@@ -43,6 +125,13 @@ const configSchema: ConfigSchema = {
     default: '',
     description:
       '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
+  },
+  discoverModels: {
+    type: 'boolean',
+    label: '自动发现模型',
+    default: true,
+    description:
+      '启动时请求 /models 发现可用模型，WebUI 可刷新模型列表。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填），也不支持刷新。',
   },
   modelCapabilities: {
     type: 'textarea',
@@ -85,6 +174,7 @@ interface OpenAIConfig {
   apiKey: string;
   baseUrl: string;
   customModels: string[];
+  discoverModels: boolean;
   modelCapabilities: Map<string, LLMCapability[]>;
   providerCapabilities: LLMCapability[];
   timeout?: number;
@@ -198,8 +288,40 @@ class OpenAIClient {
     return h;
   }
 
+  /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 parseApiError */
+  private apiError(status: number, body: string): Error {
+    this.logger.warn(`LLM API 错误 (${status}): ${bodyExcerpt(body)}`);
+    return new Error(parseApiError('LLM', status, body));
+  }
+
   /**
-   * 发现远端模型列表（仅含 id）。不可达、超时、非 2xx、响应不是模型列表时抛出，消息带 URL 与原因
+   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时与连不上各换成一句说明，其它错误
+   * 原样返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾
+   */
+  private requestError(err: unknown, request: ChatModelRequest, startedAt: number): unknown {
+    if (request.signal?.aborted) return err;
+    this.logger.warn(`LLM 请求失败 (耗时 ${Date.now() - startedAt}ms): ${describeError(err)}`);
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      return new Error(`LLM 请求超时：${this.timeout / 1000} 秒内没有完成，可在配置里调大 timeout`);
+    }
+    if (err instanceof TypeError && err.message === 'fetch failed') {
+      return new Error('LLM 连不上服务：检查 baseUrl 与网络，详情见日志');
+    }
+    return err;
+  }
+
+  /** 对话应答按 JSON 解析；不是 JSON 时截断后的应答体记 warn，抛出一行说明 */
+  private parseJsonBody(status: number, text: string): unknown {
+    try {
+      return JSON.parse(text);
+    } catch {
+      this.logger.warn(`LLM 应答不是 JSON (${status}): ${bodyExcerpt(text)}`);
+      throw new Error(`LLM 应答不是 JSON (${status})；详情见日志`);
+    }
+  }
+
+  /**
+   * 发现远端模型列表（仅含 id）。不可达、超时、非 2xx、响应不是 JSON 或不是模型列表时抛出，消息带 URL 与原因
    * （由调用方决定按空列表继续还是报错）；经 signal 中止时抛中止原因
    */
   async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[]> {
@@ -214,21 +336,24 @@ class OpenAIClient {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} ${res.statusText} - ${body}`);
+        throw new Error(`HTTP ${res.status} ${res.statusText} - ${bodyExcerpt(body)}`);
       }
-      const data = (await res.json()) as { data: { id: string }[] };
-      return data.data.map(m => m.id);
+      // 先读成文本再解析：res.json() 的 SyntaxError 会把响应体开头连同换行带进消息
+      const text = await res.text();
+      let data: { data?: unknown } | null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`响应不是 JSON: ${bodyExcerpt(text)}`);
+      }
+      const list = data?.data;
+      if (!Array.isArray(list) || !list.every(m => typeof m?.id === 'string')) {
+        throw new Error(`响应不是模型列表（需要 data 数组，每项带字符串 id）: ${bodyExcerpt(JSON.stringify(data))}`);
+      }
+      return list.map(m => m.id);
     } catch (err) {
       signal?.throwIfAborted();
-      // fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）在 cause 上；连 localhost 时
-      // 两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
-      const cause = err instanceof Error ? err.cause : undefined;
-      const reasons: unknown[] = cause instanceof AggregateError ? cause.errors : cause instanceof Error ? [cause] : [];
-      const detail = reasons.map(e => (e instanceof Error ? e.message : String(e))).join('; ');
-      throw new Error(
-        `模型发现失败 ${url}: ${err instanceof Error ? err.message : String(err)}${detail ? ` ← ${detail}` : ''}`,
-        { cause: err },
-      );
+      throw new Error(`模型发现失败 ${redactUrl(url)}: ${describeError(err)}`, { cause: err });
     }
   }
 
@@ -256,19 +381,24 @@ class OpenAIClient {
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.any(signals),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(parseApiError('LLM', response.status, errorText));
+    const startedAt = Date.now();
+    let response: Response;
+    let text: string;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.any(signals),
+      });
+      text = await response.text();
+    } catch (err) {
+      throw this.requestError(err, request, startedAt);
     }
 
-    const data = (await response.json()) as APIChatResponse;
+    if (!response.ok) throw this.apiError(response.status, text);
+
+    const data = this.parseJsonBody(response.status, text) as APIChatResponse;
     const choice = data.choices[0];
 
     if (!choice) {
@@ -343,17 +473,16 @@ class OpenAIClient {
       });
     } catch (err) {
       clearTimeout(slowConnectTimer);
-      const elapsed = Date.now() - reqStart;
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`LLM fetch 失败 (耗时 ${elapsed}ms): ${msg}`);
-      throw err;
+      throw this.requestError(err, request, reqStart);
     }
     clearTimeout(slowConnectTimer);
     this.logger.debug(`LLM 响应头到达: status=${response.status}, 耗时 ${Date.now() - reqStart}ms`);
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(parseApiError('LLM', response.status, errorText));
+      const errorText = await response.text().catch((err: unknown) => {
+        throw this.requestError(err, request, reqStart);
+      });
+      throw this.apiError(response.status, errorText);
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
@@ -452,6 +581,9 @@ class OpenAIClient {
           }
         }
       }
+    } catch (err) {
+      // 读流时超时或连接中断
+      throw this.requestError(err, request, reqStart);
     } finally {
       clearTimeout(streamStallTimer);
       // cancel 而非仅 releaseLock：中止/提前退出时要主动关闭响应体。releaseLock 只是放锁，
@@ -651,10 +783,10 @@ class OpenAIModelHandle implements LLMModel {
     readonly providerId: string,
     readonly contextLength: number,
     readonly maxOutputTokens: number,
-    /** Provider 级共享的 refresh 闭包；webui 按 contextId 找到任一 entry 调一次即可。 */
-    readonly refresh: () => Promise<{ added: string[]; removed: string[]; total: number }>,
     /** 该 model 的能力元数据（供 media 发现/下拉展示读取，非 DI 选择机制）。 */
     readonly capabilities: readonly LLMCapability[],
+    /** Provider 级共享的 refresh 闭包；webui 按 providerId 找到该 provider 的任一 entry 调一次即可。关闭模型发现时没有 */
+    readonly refresh?: () => Promise<{ added: string[]; removed: string[]; total: number }>,
   ) {}
 
   chat(request: ChatModelRequest): Promise<ChatResponse> {
@@ -687,6 +819,7 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com/v1',
     customModels: parseCustomModels(config.customModels),
+    discoverModels: config.discoverModels !== false,
     modelCapabilities: parseModelCapabilities(config.modelCapabilities),
     providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
     timeout: (config.timeout as number) ?? 120,
@@ -696,31 +829,25 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     thinkingParam: config.thinkingParam === true,
   };
 
+  checkBaseUrl(openaiConfig.baseUrl);
   // 官方端点判定按 URL host（前缀字符串匹配会误伤 api.openai.com.cn 等镜像域名）
-  const isOfficialOpenAI = (() => {
-    try {
-      return new URL(openaiConfig.baseUrl).hostname === 'api.openai.com';
-    } catch {
-      return false;
-    }
-  })();
+  const isOfficialOpenAI = new URL(openaiConfig.baseUrl).hostname === 'api.openai.com';
   if (!openaiConfig.apiKey && isOfficialOpenAI) {
     throw missingConfigError('apiKey', '使用 OpenAI 官方 API 时必填');
+  }
+  if (!openaiConfig.discoverModels && openaiConfig.customModels.length === 0) {
+    throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
   const client = new OpenAIClient(openaiConfig, logger);
   const baseLabel = `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})`;
+  const shownBaseUrl = redactUrl(openaiConfig.baseUrl);
 
   // 已注册 model entry 的句柄表：modelId → dispose（来自 provide 返回值）
   const registered = new Map<string, () => void>();
 
-  // refresh 闭包：apply 末尾装配；先占位以打破环依赖。
-  let refreshFn: () => Promise<{ added: string[]; removed: string[]; total: number }> = async () => ({
-    added: [],
-    removed: [],
-    total: registered.size,
-  });
-  const refresh = (): Promise<{ added: string[]; removed: string[]; total: number }> => refreshFn();
+  // 关闭模型发现时不提供 refresh：没有可重新发现的列表
+  const refresh = openaiConfig.discoverModels ? refreshModels : undefined;
 
   function registerOne(modelId: string): void {
     if (registered.has(modelId)) return;
@@ -735,8 +862,8 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
       lifecycle.id,
       openaiConfig.contextLength,
       openaiConfig.maxTokens,
-      refresh,
       capabilities,
+      refresh,
     );
     const dispose = provide(llm, handle, {
       label: `${baseLabel} / ${modelId}`,
@@ -767,35 +894,42 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     return [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
   }
 
-  // 初次注册。停用或停机时中止探测（中止即抛出）；发现失败记 warn 后按未发现远端模型继续，customModels 照常注册
-  let discovered = true;
-  const remoteIds = await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
-    lifecycle.signal.throwIfAborted();
-    discovered = false;
-    // 只记消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
-    logger.warn(`${err instanceof Error ? err.message : String(err)}；启动时只注册 customModels 里的模型`);
-    return [];
-  });
+  // 初次注册。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels 照常注册；
+  // 关闭模型发现时只注册 customModels。发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），
+  // err 交给 logger 会按因果链把原因再记一遍
+  let discoveryError: string | undefined;
+  const remoteIds = openaiConfig.discoverModels
+    ? await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
+        discoveryError = err instanceof Error ? err.message : String(err);
+        return [];
+      })
+    : [];
   lifecycle.signal.throwIfAborted();
   const initialIds = withCustomModels(remoteIds);
+  // 一个模型都没有时抛配置错误，原因成为实例的错误信息；否则只剩 core 的「声明 provides [llm] 但未实际注册」。
+  // 提示写在原因之前：原因里可能带着一段响应体
   if (initialIds.length === 0) {
-    logger.warn(
-      discovered
-        ? `已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`
-        : `模型发现失败且未配置 customModels: ${openaiConfig.baseUrl}，不注册任何 LLM entry`,
-    );
-  } else {
-    for (const modelId of initialIds) registerOne(modelId);
-    logger.info(
-      discovered
-        ? `已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`
-        : `模型发现失败: ${openaiConfig.baseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`,
+    throw configError(
+      discoveryError
+        ? `未配置 customModels，没有可注册的模型；${discoveryError}`
+        : `已连接 ${shownBaseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
     );
   }
+  if (discoveryError) logger.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
+  for (const modelId of initialIds) registerOne(modelId);
+  logger.info(
+    !openaiConfig.discoverModels
+      ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
+      : discoveryError
+        ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
+        : `已连接: ${shownBaseUrl}，注册 ${initialIds.length} 个 model entry`,
+  );
 
-  // 装配 refresh 真实实现。与初次注册一样随停用或停机中止：中止即抛出，不再增删条目。
-  // 发现失败同样抛出（WebUI 据此报错）、不增删条目：按空列表处理会把自动发现的条目全部注销
-  refreshFn = async () => {
+  /**
+   * 重新发现并按差异增删条目（WebUI 触发）。与初次注册一样随停用或停机中止：中止即抛出，不再增删条目。
+   * 发现失败同样抛出（WebUI 据此报错）、不增删条目：按空列表处理会把自动发现的条目全部注销
+   */
+  async function refreshModels(): Promise<{ added: string[]; removed: string[]; total: number }> {
     const next = withCustomModels(await client.fetchRemoteModelIds(lifecycle.signal));
     lifecycle.signal.throwIfAborted();
     const nextSet = new Set(next);
@@ -821,5 +955,5 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
       logger.debug(`OpenAI 模型列表已刷新: 无变化 (共 ${registered.size})`);
     }
     return { added, removed, total: registered.size };
-  };
+  }
 }

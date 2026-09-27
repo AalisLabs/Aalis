@@ -4,7 +4,7 @@ import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { llm, resolveLLMModel } from '@aalis/api-llm';
-import { type MemoryService, memory } from '@aalis/api-memory';
+import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
@@ -1887,28 +1887,42 @@ function registerUserProfile({
       // 批量提交：逐条 delete 中途失败会留下「删了一半」的档案，而用户看到的是报了成功。
       // 注意 commitMetadata 的原子性**按后端分档**（见 api-memory 契约）——sqlite/inmemory
       // 是真原子，mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。批量的确定收益是
-      // 一次往返 + 遇错即停，不是无条件的「要么全成」。
-      const items = await mem.listMetadata(PROFILE_NS);
-      await mem.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
-      data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });
+      // 一次往返 + 遇错即停，不是无条件的「要么全成」。读不出的条目一并删除，计入条数。
+      const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger);
+      data.results.push({
+        source: 'user-profile',
+        type: 'user-profile',
+        success: true,
+        message: `用户档案已清空 (${keys.length} 条)`,
+      });
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'user-profile', success: false, message: `用户档案清空失败: ${m}` });
+      data.results.push({
+        source: 'user-profile',
+        type: 'user-profile',
+        success: false,
+        message: `用户档案清空失败: ${m}`,
+      });
     }
     // 同步清空第三方行为指令档案（per-persona）。指令是档案的兄弟概念，
     // memory:clear scope='all' 时一并清理；types 默认包含 user-profile 即也清。
     // 不看 enableInstructions：开关管功能用不用，不管已有数据能不能清。
     try {
-      const insItems = await mem.listMetadata(INSTRUCTIONS_NS);
-      await mem.commitMetadata(insItems.map(it => ({ op: 'del' as const, namespace: INSTRUCTIONS_NS, key: it.key })));
+      const [insKeys] = await clearMetadataNamespaces(mem, [INSTRUCTIONS_NS], logger);
       data.results.push({
         source: 'user-profile-instructions',
+        type: 'user-profile',
         success: true,
-        message: `第三方行为指令已清空 (${insItems.length} 条)`,
+        message: `第三方行为指令已清空 (${insKeys.length} 条)`,
       });
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'user-profile-instructions', success: false, message: `指令清空失败: ${m}` });
+      data.results.push({
+        source: 'user-profile-instructions',
+        type: 'user-profile',
+        success: false,
+        message: `指令清空失败: ${m}`,
+      });
     }
     await next();
   });
@@ -2097,9 +2111,8 @@ function registerUserProfile({
       return '记忆服务不支持档案批量删除。';
     }
     try {
-      const items = await mem.listMetadata(PROFILE_NS);
-      await mem.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
-      return `✅ 已清空全部用户档案（${items.length} 条）`;
+      const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger);
+      return `✅ 已清空全部用户档案（${keys.length} 条）`;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       return `❌ 清空失败：${m}`;

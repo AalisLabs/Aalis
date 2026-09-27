@@ -212,17 +212,16 @@ class DefaultAgent implements AgentService {
     return describeLLMFailure(available, wanted, this.erroredLLMPlugins());
   }
 
-  /** 激活失败且声明提供 llm 的插件——「一个模型都没有」时，病因通常就在它们身上（多为缺 apiKey）。 */
+  /** 激活失败且声明提供 llm 的插件实例名——「一个模型都没有」时，病因通常就在它们身上（多为缺 apiKey）。 */
   private erroredLLMPlugins(): string[] {
     const pm = this.caps.plugins.current;
     if (!pm) return [];
-    // 这串会拼进**发到聊天**的文案里，原因文本来自插件自抛的 error，长度不可控：
-    // 与同文件 describeLLMFailure 对模型列表设 LIST_MAX 同理，这里也要封顶。
+    // 只取实例名：这串会拼进**发到聊天**（含群聊）的文案里，error 原文可能带内网地址与端口等部署细节，
+    // 原因留在日志、WebUI 与 /doctor
     return pm
       .getStatus()
       .filter(p => p.state === 'error' && p.provides?.includes('llm'))
-      .slice(0, 3)
-      .map(p => (p.error ? `${p.instanceId}（${truncateChars(p.error, 120)}）` : p.instanceId));
+      .map(p => p.instanceId);
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */ private laneKey(

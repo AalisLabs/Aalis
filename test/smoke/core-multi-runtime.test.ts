@@ -81,7 +81,6 @@ describe('core 多运行时冒烟', () => {
 
   describe('无头 Chromium', () => {
     let browser: Browser | undefined;
-    let cdp: CdpSession | undefined;
     let page: Page;
 
     beforeAll(async () => {
@@ -93,17 +92,15 @@ describe('core 多运行时冒烟', () => {
       });
       // 拦截开在浏览器级：页面级拦截（page.setRequestInterception）接不全 Worker 里的模块请求，Worker 会卡在加载
       const session = await browser.target().createCDPSession();
-      cdp = session;
       session.on('Fetch.requestPaused', ({ requestId, request }) => void serve(session, requestId, request.url));
       await session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
       page = await browser.newPage();
       await page.goto(`${ORIGIN}/`);
     }, 60_000);
 
-    // 全量测试的负载下 browser.close() 曾 30 秒不返回（单跑与同批浏览器测试并跑都复现不了，原因未查明）：
-    // 先停掉浏览器级拦截再关，10 秒仍未关掉就直接杀进程，不留残余 Chrome
+    // 外部进程的收尾须有界：10 秒仍未关掉就直接杀进程，不留残余 Chrome。browser.close() 曾在全量测试的负载下
+    // 30 秒不返回，原因未查明；浏览器测试改为串行（单线程池）后多轮高负载未再复现
     afterAll(async () => {
-      await cdp?.send('Fetch.disable', {}).catch(() => {});
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         browser?.close().catch(() => {}),

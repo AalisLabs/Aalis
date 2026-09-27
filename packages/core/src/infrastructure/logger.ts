@@ -1,3 +1,5 @@
+import { reportQuietly } from '../kernel/disposable-chain.js';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
@@ -24,7 +26,8 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
  * 设计原则：
  * - **零 I/O 知识**：LogHub 不感知 stdout / 文件 / TTY / 染色等任何渲染细节
  * - **零状态**：不持有任何 buffer。启动期日志暂存由 runtime 的 bootstrap-buffer 负责
- * - **写一次，多处订阅**：`push` 同步广播给所有 `onEntry` 订阅者
+ * - **写一次，多处订阅**：`push` 同步广播给所有 `onEntry` 订阅者；单个订阅者抛错（含返回被拒的 Promise）不影响
+ *   其余订阅者，也不让日志调用抛出。订阅者本身就是日志的去处，它的失败无处可报，就此丢弃（见 reportQuietly）
  *
  * 每个 `App` 拥有自己的 LogHub（沙盒、集成测试可独立通道）；
  * `LogHub.default` 是进程级共享中枢，供未注入自定义 hub 的 Logger 使用。
@@ -51,7 +54,7 @@ export class LogHub {
 
   /** 接收一条日志（Logger 内部调用） */
   push(entry: LogEntry): void {
-    for (const fn of this.#listeners) fn(entry);
+    for (const fn of this.#listeners) reportQuietly(() => fn(entry));
   }
 }
 

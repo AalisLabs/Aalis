@@ -184,6 +184,10 @@ class InMemoryFallbackService implements MemoryService {
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }
 
+  async listMetadataKeys(namespace: string): Promise<string[]> {
+    return [...(this.metadata.get(namespace)?.keys() ?? [])].sort();
+  }
+
   async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
     // 先把全部 op 序列化一遍再落，任一条不可序列化就整批不生效 —— 与 sqlite（事务内
     // JSON.stringify 抛错则回滚）、mongodb（BSON 序列化抛错则一条不执行）语义一致。

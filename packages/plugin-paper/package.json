@@ -30,14 +30,17 @@
   "dependencies": {
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-remote-agent": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.0 <1.0.0"
   },
   "devDependencies": {
+    "@aalis/api-agent": "workspace:*",
     "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
@@ -50,6 +53,7 @@
       "required": [
         "config",
         "events",
+        "hooks",
         "lifecycle",
         "logger",
         "session-manager",
@@ -59,7 +63,8 @@
       "optional": [
         "doctor",
         "gateway",
-        "remote-agent"
+        "remote-agent",
+        "webui-server"
       ]
     }
   }
