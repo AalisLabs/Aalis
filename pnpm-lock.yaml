@@ -1490,6 +1490,9 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-memory
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools
@@ -1642,6 +1645,9 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-memory
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools
@@ -2265,6 +2271,9 @@ importers:
       '@aalis/api-session-history':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-session-history
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools
@@ -2520,6 +2529,9 @@ importers:
       '@aalis/api-platform':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-platform
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools

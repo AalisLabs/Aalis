@@ -22,6 +22,7 @@ import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
+import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
@@ -581,7 +582,7 @@ function start(caps: Caps): void {
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (config.agentInjection !== false) {
-    registerRelationContribution({ contributions: caps.contributions }, service, {
+    registerRelationContribution({ contributions: caps.contributions, sessionManager: caps.sessionManager }, service, {
       maxDepth: numCfg(config.injectionMaxDepth, 2),
       maxBreadth: numCfg(config.injectionMaxBreadth, 10),
       maxEvents: numCfg(config.maxInjectedEvents, 5),
@@ -692,6 +693,8 @@ const uses = {
   commands: optional(commands),
   webui: optional(webuiServer),
   embedding: optional(embedding),
+  /** 房间的召回范围（会话配置 memoryRecallScope），注入时收窄跨会话内容；不在场时不收窄 */
+  sessionManager: optional(sessionManager),
 };
 type Caps = BoundOf<typeof uses>;
 
