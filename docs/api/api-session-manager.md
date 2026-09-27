@@ -148,7 +148,7 @@ interface SessionManagerService {
 
 ## 实现者
 
-- [@aalis/plugin-session-manager](../plugins/plugin-session-manager.md) — 元数据持久化到 `MemoryService` 的 `session` namespace
+- [@aalis/plugin-session-manager](../plugins/plugin-session-manager.md) — 元数据持久化到 `MemoryService` 的 `sessions` namespace
 
 ## 相关
 
