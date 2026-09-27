@@ -1,0 +1,57 @@
+{
+  "name": "@aalis/plugin-remote-agent-cursor",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-remote-agent-cursor"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "远端代理 —— Cursor Cloud Agents API 提供者",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-remote-agent": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@aalis/api-webui": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "provides": [
+        "remote-agent"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger",
+        "provide"
+      ]
+    }
+  }
+}
