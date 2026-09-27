@@ -62,7 +62,7 @@ plugins:
 
 `ready()` 依次请求 `/v1/me` 与 `/v1/models`：
 
-- `accountKey` 取 `/v1/me` 响应里 `userId` 的 SHA-256 前 16 位十六进制。同一账号的不同 key 得到同一个值，值里不含账号原文与 key。响应里没有 `userId` 时抛 `unavailable`，不按 key 计。
+- `accountKey` 取 `/v1/me` 响应里 `userId`（整数）的十进制写法的 SHA-256 前 16 位十六进制。同一账号的不同 key 得到同一个值，值里不含账号原文与 key。响应里没有 `userId`，或它不是安全范围内的整数时抛 `unavailable`，不按 key 计。
 - 模型不存在、参数少写或多写、参数组合不等于 `/v1/models` 列出的任何一个变体，都抛 `unavailable` 并写明原因。只写模型 id 时远端按默认变体（fast、500k）计费，价格是写全参数时的数倍，所以参数不成立时提供者不可用。
 - 鉴权失败抛 `unavailable`；断线、超时、5xx 抛 `transient`。
 - 成功结果缓存 10 分钟，失败不缓存。

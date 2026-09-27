@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   type ArtifactLimits,
@@ -28,8 +29,8 @@ const KEY_SAME_ACCOUNT = 'pk-placeholder-same-account-0002';
 const KEY_OTHER_ACCOUNT = 'pk-placeholder-other-account-0003';
 const KEY_UNREGISTERED = 'pk-placeholder-unregistered-0004';
 const KEY_NO_USER_ID = 'pk-placeholder-no-user-id-0005';
-const USER_ID = 'user-placeholder-0001';
-const OTHER_USER_ID = 'user-placeholder-0002';
+const USER_ID = 100000001;
+const OTHER_USER_ID = 100000002;
 const PARAMS = { reasoning_effort: 'high', context: '256k', fast: 'false' };
 
 const captured: string[] = [];
@@ -884,10 +885,15 @@ describe('13 accountKey', () => {
     expect(a.accountKey).toBe(c.accountKey);
     expect(d.accountKey).not.toBe(a.accountKey);
     for (const v of [a.accountKey, d.accountKey]) {
-      expect(v).not.toContain(USER_ID);
+      expect(v).not.toContain(String(USER_ID));
       expect(v).not.toContain('placeholder');
       expect(KEY).not.toContain(v.slice(0, 8));
     }
+  });
+
+  it('userId 按实测是整数：accountKey 取它的十进制写法的 SHA-256 前 16 位十六进制', async () => {
+    const { accountKey } = await makeProvider().ready(signal);
+    expect(accountKey).toBe(createHash('sha256').update(String(USER_ID)).digest('hex').slice(0, 16));
   });
 
   it('/v1/me 没有账号标识时 unavailable（按冲突处理，不回落到别的来源）', async () => {
@@ -897,6 +903,15 @@ describe('13 accountKey', () => {
     } finally {
       fake.accounts.delete(KEY_NO_USER_ID);
     }
+  });
+
+  it.each([
+    ['字符串', String(USER_ID)],
+    ['小数', 100000001.5],
+    ['超出安全整数', 2 ** 53],
+  ])('userId 为%s时 unavailable（不是实测的整数形状）', async (_, userId) => {
+    fake.intercept('GET', '/v1/me', { status: 200, body: { apiKeyName: 'placeholder-key', userId } });
+    await expectCode(makeProvider().ready(signal), 'unavailable');
   });
 });
 

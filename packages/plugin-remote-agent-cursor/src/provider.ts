@@ -317,11 +317,14 @@ export class CursorProvider implements RemoteAgentProvider {
     const cached = this.#ready;
     if (cached && Date.now() - cached.at < READY_TTL_MS) return { accountKey: cached.accountKey };
     const me = asRecord(this.#ok(await this.#call('GET', '/v1/me', { signal })));
-    const userId = str(me.userId);
-    if (!userId) throw this.#error('unavailable', '/v1/me 的响应里没有账号标识 userId，判不出哪些实例属于同一账号');
+    // 实测是整数；按十进制写法取哈希，超出安全整数的已经丢了精度，同样按取不到处理
+    const userId = num(me.userId);
+    if (userId === undefined || !Number.isSafeInteger(userId)) {
+      throw this.#error('unavailable', '/v1/me 的响应里没有整数的账号标识 userId，判不出哪些实例属于同一账号');
+    }
     const problem = modelProblem(this.#ok(await this.#call('GET', '/v1/models', { signal })), this.#opt.model);
     if (problem) throw this.#error('unavailable', problem);
-    const accountKey = await accountKeyOf(userId);
+    const accountKey = await accountKeyOf(String(userId));
     this.#ready = { accountKey, at: Date.now() };
     return { accountKey };
   }
