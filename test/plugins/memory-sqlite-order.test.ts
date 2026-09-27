@@ -13,7 +13,7 @@ import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/ind
 const SESSION = 'test:order:session';
 
 function makeService(): SQLiteMemoryService {
-  return new SQLiteMemoryService(new Database(':memory:'));
+  return new SQLiteMemoryService(new Database(':memory:'), { logger: { warn() {} } });
 }
 
 async function seedSameMsToolPair(svc: SQLiteMemoryService): Promise<void> {

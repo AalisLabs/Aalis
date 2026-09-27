@@ -38,8 +38,9 @@ export default definePlugin({
 ## 特性
 
 - `apply` 为异步函数，启动时连接数据库（停用或停机时关闭客户端，中止连接与建索引），在消息集合上创建 `{ sessionId: 1, timestamp: 1 }`、`{ archived: 1, timestamp: -1 }`、`{ 'metadata.platform': 1, timestamp: -1 }` 三个索引；结构化元数据存放在同库固定名为 `metadata` 的集合中（不受 `collection` 配置影响），并建有 `{ namespace: 1, key: 1 }` 唯一索引
-- 完整实现 `MemoryService`：消息读写（`saveMessage`、`getHistory`、`getFullHistory`、`clearSession`、`clearAll`，其中 `clearAll` 只清空消息集合，`metadata` 集合由各命名空间的归属插件经 `memory:clear` 自行清理）、区间与跨会话查询（`getMessagesBySessionRange` 受 `rangeQueryLimit` 限制，`getRecentMessagesAcrossSessions` 受 `crossSessionMaxLimit` 限制）、`trimHistory`（将较早的未归档消息标记为 `archived`，不删除）、`updateMessageContent`、`deleteMessagesByTimestamps`，以及结构化元数据（`saveMetadata` / `getMetadata` / `listMetadata` / `commitMetadata` / `deleteMetadata`）
+- 完整实现 `MemoryService`：消息读写（`saveMessage`、`getHistory`、`getFullHistory`、`clearSession`、`clearAll`，其中 `clearAll` 只清空消息集合，`metadata` 集合由各命名空间的归属插件经 `memory:clear` 自行清理）、区间与跨会话查询（`getMessagesBySessionRange` 受 `rangeQueryLimit` 限制，`getRecentMessagesAcrossSessions` 受 `crossSessionMaxLimit` 限制）、`trimHistory`（将较早的未归档消息标记为 `archived`，不删除）、`updateMessageContent`、`deleteMessagesByTimestamps`，以及结构化元数据（`saveMetadata` / `getMetadata` / `listMetadata` / `listMetadataKeys` / `commitMetadata` / `deleteMetadata`）
 - `commitMetadata` 用有序 `bulkWrite` 批量写入，不是事务：遇错即停，失败点之前的写已生效
+- `listMetadata` 逐条检查：`data` 不是对象的文档跳过并记一条 warn，点名命名空间与键；缺少 `updatedAt` 或它不是日期的文档照常返回，`updatedAt` 记为 0。这两种文档只会来自手工导入等外部写入，本插件写入时总会带上这两个字段。`listMetadataKeys` 只取键、不读 `data`，跳过的文档也在其中：各插件经 `/clear` 整体清空命名空间时连同它们一并删除
 - 可多实例（`@aalis/plugin-memory-mongodb:<后缀>`）。`database` 留空时按实例派生：主实例用 `aalis`，带后缀的实例在库名上加后缀（如 `:b` 实例用 `aalis-b`）；配置里写明的库名照用。`metadata` 集合与消息集合同库，所以同一连接串（按字面比较）下两个实例用同一个库时，即使 `collection` 不同也算共用：后激活的那个激活失败，报一行 `ConfigError`，点名占用该库的实例，不发起连接
 - dispose 时关闭 MongoDB 连接
 - 连接或建索引失败时关闭客户端，并抛出 `MongoDB 连接失败: <原因>`，不回退到其它存储

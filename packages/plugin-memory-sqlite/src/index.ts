@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import {
   type MemoryService,
   type MetadataEntry,
@@ -7,7 +8,16 @@ import {
   type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
 import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
-import { config, definePlugin, type LifecycleCap, lifecycle, logger, parseInstanceId, provide } from '@aalis/core';
+import {
+  config,
+  definePlugin,
+  type LifecycleCap,
+  type Logger,
+  lifecycle,
+  logger,
+  parseInstanceId,
+  provide,
+} from '@aalis/core';
 import { type ConfigSchema, configError } from '@aalis/schema-config';
 import type { ContentSegment, Message } from '@aalis/schema-message';
 import Database from 'better-sqlite3';
@@ -21,10 +31,11 @@ function toUri(input: string, instanceId: string): string {
 }
 
 /**
- * 本进程里各数据库文件（本地路径）由哪次激活打开。两个实例开同一个库会共写同一份消息与元数据，
- * 后激活的那个以配置错误失败；激活关闭时撤下自己的登记。
+ * 本进程里各数据库文件由哪次激活打开，键是文件身份（设备号 + inode）：大小写不同的路径、硬链接都指向同一个文件，
+ * 按路径字符串认不出来。两个实例开同一个库会共写同一份消息与元数据，后激活的那个以配置错误失败；
+ * 激活关闭时撤下自己的登记。
  */
-const openedBy = new Map<string, LifecycleCap>();
+const openedBy = new Map<string, { lifecycle: LifecycleCap; path: string }>();
 
 /**
  * 开库失败的说明。better-sqlite3 在首次构造 Database 时才加载原生绑定，加载失败报 ERR_DLOPEN_FAILED：
@@ -76,9 +87,15 @@ export class SQLiteMemoryService implements MemoryService {
   private db: Database.Database;
   private readonly rangeQueryLimit: number;
   private readonly crossSessionMaxLimit: number;
+  /** listMetadata 跳过读不出的行时由它点名 */
+  private readonly logger: Pick<Logger, 'warn'>;
 
-  constructor(db: Database.Database, opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number } = {}) {
+  constructor(
+    db: Database.Database,
+    opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number; logger: Pick<Logger, 'warn'> },
+  ) {
     this.db = db;
+    this.logger = opts.logger;
     this.rangeQueryLimit = Math.max(1, opts.rangeQueryLimit ?? 500);
     this.crossSessionMaxLimit = Math.max(1, opts.crossSessionMaxLimit ?? 1000);
 
@@ -334,12 +351,29 @@ export class SQLiteMemoryService implements MemoryService {
     // updatedAt 存的是 `datetime('now','subsec')` 的 UTC 文本（如 `2026-08-01 03:04:05`），无时区后缀。
     // 直接 Date.parse 会被当本地时间解析而偏移，故补 `Z` 明确按 UTC 读。
     const stmt = this.db.prepare('SELECT key, data, updatedAt FROM metadata WHERE namespace = ?');
-    const rows = stmt.all(namespace) as Array<{ key: string; data: string; updatedAt: string }>;
-    return rows.map(row => ({
-      key: row.key,
-      data: JSON.parse(row.data),
-      updatedAt: Date.parse(`${row.updatedAt.replace(' ', 'T')}Z`),
-    }));
+    const rows = stmt.all(namespace) as Array<{ key: string; data: string; updatedAt: unknown }>;
+    // 读不出的行（手改或损坏：不是 JSON 对象）跳过并点名键，不让整个命名空间读失败。代价是指向它们的关系边
+    // 可能被当作悬空边清掉；各插件整体清空命名空间时经 listMetadataKeys 列键，这些行照样删掉。
+    // 写入时间读不出（手改成别的文本或 BLOB）的行照常返回，updatedAt 记 0
+    const entries: MetadataEntry[] = [];
+    for (const row of rows) {
+      const data = SQLiteMemoryService.parseMetadata(row.data);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        this.logger.warn(`元数据 ${namespace}/${row.key} 不是 JSON 对象，已跳过`);
+        continue;
+      }
+      const updatedAt =
+        typeof row.updatedAt === 'string' ? Date.parse(`${row.updatedAt.replace(' ', 'T')}Z`) : Number.NaN;
+      entries.push({ key: row.key, data, updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0 });
+    }
+    return entries;
+  }
+
+  async listMetadataKeys(namespace: string): Promise<string[]> {
+    const rows = this.db.prepare('SELECT key FROM metadata WHERE namespace = ?').all(namespace) as Array<{
+      key: string;
+    }>;
+    return rows.map(row => row.key);
   }
 
   async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
@@ -439,42 +473,60 @@ export default definePlugin({
       throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`, { cause: err });
     }
 
-    const holder = openedBy.get(dbPath);
-    if (holder && holder.id !== caps.lifecycle.id) {
-      throw configError(
-        `数据库文件 ${dbPath} 已被实例 ${holder.id} 使用，两个实例不能共用一个库：请给 ${caps.lifecycle.id} 另配 path`,
-      );
-    }
-    openedBy.set(dbPath, caps.lifecycle);
-    caps.lifecycle.onDispose(() => {
-      if (openedBy.get(dbPath) === caps.lifecycle) openedBy.delete(dbPath);
-    });
-
     caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
 
+    let db: Database.Database;
     try {
-      const db = new Database(dbPath);
-      // 设置 WAL 模式提升并发性能
-      db.pragma('journal_mode = WAL');
-
-      const service = new SQLiteMemoryService(db, {
-        rangeQueryLimit: caps.config.rangeQueryLimit as number | undefined,
-        crossSessionMaxLimit: caps.config.crossSessionMaxLimit as number | undefined,
-      });
-
-      caps.provide(memory, service, {
-        priority: 10,
-      });
-
-      caps.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
-
-      // 开库跨了 await：激活可能已在关闭，迟到的清理照样会被执行，句柄不会漏
-      caps.lifecycle.onDispose(() => {
-        service.close();
-        caps.logger.info('SQLite 数据库已关闭');
-      });
+      db = new Database(dbPath);
     } catch (err) {
       throw new Error(`SQLite 打开失败: ${describeOpenError(err)}`, { cause: err });
+    }
+
+    // 开库之后任何一步失败（取文件身份、撞库、设 WAL、建表、发布服务），都先关掉刚开的句柄再抛
+    try {
+      // 文件身份要等开库建出文件后才取得到。开库、取身份、查占用之间没有 await，两个并发激活不会交错；
+      // 文件系统不提供 inode（ino 为 0）时退回按路径认
+      const { dev, ino } = statSync(dbPath, { bigint: true });
+      const fileKey = ino === 0n ? dbPath : `${dev}:${ino}`;
+      const holder = openedBy.get(fileKey);
+      if (holder && holder.lifecycle.id !== caps.lifecycle.id) {
+        const via = holder.path === dbPath ? '' : `（经路径 ${holder.path} 打开）`;
+        throw configError(
+          `数据库文件 ${dbPath} 已被实例 ${holder.lifecycle.id} 使用${via}，两个实例不能共用一个库：请给 ${caps.lifecycle.id} 另配 path`,
+        );
+      }
+      openedBy.set(fileKey, { lifecycle: caps.lifecycle, path: dbPath });
+      caps.lifecycle.onDispose(() => {
+        if (openedBy.get(fileKey)?.lifecycle === caps.lifecycle) openedBy.delete(fileKey);
+      });
+
+      try {
+        // 设置 WAL 模式提升并发性能
+        db.pragma('journal_mode = WAL');
+
+        const service = new SQLiteMemoryService(db, {
+          rangeQueryLimit: caps.config.rangeQueryLimit as number | undefined,
+          crossSessionMaxLimit: caps.config.crossSessionMaxLimit as number | undefined,
+          logger: caps.logger,
+        });
+
+        caps.provide(memory, service, {
+          priority: 10,
+        });
+
+        caps.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
+
+        // 开库跨了 await：激活可能已在关闭，迟到的清理照样会被执行，句柄不会漏
+        caps.lifecycle.onDispose(() => {
+          service.close();
+          caps.logger.info('SQLite 数据库已关闭');
+        });
+      } catch (err) {
+        throw new Error(`SQLite 打开失败: ${describeOpenError(err)}`, { cause: err });
+      }
+    } catch (err) {
+      db.close();
+      throw err;
     }
   },
 });
