@@ -8,9 +8,6 @@
       "entry": ["index.html"],
       "project": ["src/**/*.{ts,tsx}"]
     },
-    "packages/api-publish": {
-      "ignoreDependencies": ["@aalis/core"]
-    },
     "packages/plugin-draw": {
       "ignoreDependencies": ["@aalis/util-offline-render"]
     },
