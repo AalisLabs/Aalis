@@ -236,7 +236,7 @@ export function registerRelationCommands(
       // 一次批量提交（sqlite/inmemory 原子，mongodb 仅按序遇错即停、可幂等重清），
       // 不逐节点级联：后者每删一个节点付 2 次全图读，
       // 生产图规模下要跑数分钟且中途失败会留下半张图（见 service.clearAll 的注释）。
-      const cleared = await service.clearAll();
+      const cleared = await service.clearAll(logger);
       return `✓ 已清空关系图（删除 ${cleared} 条记录：人物 / 事件 / 实体 / 边 / 合并否决缓存）`;
     });
 

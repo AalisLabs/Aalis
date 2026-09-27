@@ -38,7 +38,7 @@ Builder 链式追加 `alias / option / action / usage / example`。`commands.com
 重要类型：
 
 - **命令名 = 完整点路径**（`'memory.clear.all'`）。名字段必须匹配 `^[a-z][a-z0-9-]*$`。
-- **inline DSL**：`<name:type>` 或 `[name:type]`，`type ∈ string|number|boolean|text`。`text` 会吞掉剩余 token。
+- **inline DSL**：`<name:type>` 或 `[name:type]`，`type ∈ string|number|boolean|text`。`text` 会吞掉剩余 token。有子指令的父指令不声明位置参数时，多余的 token 不被忽略，回「未知子指令或多余参数」、不执行（见 [api-commands](../api/api-commands.md) 的「子指令」一节）。
 - **CommandHandler**：`(argv: CommandArgv, ...positionals: unknown[]) => ...`。返回字符串即回复，`undefined` 则静默。
 - **ExecutionInput.skipConfirm**：供 scheduler 等跳过交互确认，不绕过授权。
 

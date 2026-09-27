@@ -52,7 +52,8 @@
       ],
       "required": [
         "config",
-        "events"
+        "events",
+        "logger"
       ]
     }
   }
