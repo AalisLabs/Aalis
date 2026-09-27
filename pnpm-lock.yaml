@@ -1520,6 +1520,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/api-agent':
         specifier: workspace:*

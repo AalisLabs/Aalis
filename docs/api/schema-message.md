@@ -59,7 +59,7 @@ interface IncomingMessage {
 
 - plugin-agent 以一条 system 消息呈现，内容为 `[宿主通知]`、`content`，再接 `untrusted`；不推当前 user 消息。
 - plugin-message-archive 归档为 `role: 'notice'`、`kind: 'host-notice'`，`metadata.hostNoticeKind` 记子类；只归档 `content`，`untrusted` 不写进消息也不写进 metadata。之后的回合从历史里只看得到宿主正文。
-- 不进向量记忆，不计入关系图与用户档案的抽取计数，也不出现在它们的抽取窗口与记忆扩窗里（见下文 `DIRECTIVE_KINDS`）。
+- 不进向量记忆，不计入关系图与用户档案的抽取计数，也不出现在它们的抽取窗口与记忆扩窗里；plugin-memory-history 的跨会话注入与 `recent_messages` 不带别的会话的宿主通知（见下文 `DIRECTIVE_KINDS`）。
 
 带 `source` 的消息不经触发判定、不查回复后冷却，禁言与限速照常：禁言期被吞掉的通知经影子归档落成 notice，同样不含 `untrusted`。
 
@@ -113,7 +113,7 @@ const DIRECTIVE_KINDS: ReadonlyArray<string>; // [CrossSessionDelegation, HostNo
 
 `DIRECTIVE_KINDS` 是宿主或系统撰写、不是任何人发言的指令类 kind：
 
-- 归档消息的 `kind` 属于它时，抽取（用户事实、自反思、指令、关系）与记忆扩窗一律跳过；
+- 归档消息的 `kind` 属于它时，抽取（用户事实、自反思、指令、关系）与记忆扩窗一律跳过，跨会话读取（plugin-memory-history 的注入与 `recent_messages`、plugin-user-relation 的跨会话窗口）不带别的会话的这类消息；
 - 请求期消息的 `metadata.injector` 属于它时，就是本轮的指令块：`turn-context`、`turn-hint` 两个锚位落在它之前，DeepSeek 提供者不把它改成 user。
 
 自己拼历史交给模型抽取的插件，应按这个常量过滤，不要只写其中一个 kind。
