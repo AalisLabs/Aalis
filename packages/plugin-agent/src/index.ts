@@ -1286,6 +1286,19 @@ class DefaultAgent implements AgentService {
     const fallbackBody = senderLabel ? `[${senderLabel}]: ${incoming.content}` : incoming.content;
     const currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
 
+    // 宿主通知分支：宿主撰写的事件通知不是任何人的发言，与 proactive 一样以 system 呈现、
+    // 不推当前 user 消息与易变块。不可信段只在当轮接在宿主正文之后（归档只留正文），
+    // 之后的回合从历史里只看得到宿主正文。
+    if (incoming.hostNotice) {
+      const { untrusted } = incoming.hostNotice;
+      messages.push({
+        role: 'system',
+        content: `[宿主通知]\n${incoming.content}${untrusted ? `\n\n${untrusted}` : ''}`,
+        metadata: { injector: WellKnownKinds.HostNotice },
+      });
+      return messages;
+    }
+
     // 3a. proactive 分支：系统代发给本会话的任务指令（如 workflow 的 agent 节点）
     //
     // 这条消息不是用户请求，必须作为 system 指令呈现给 LLM，否则 agent 会把它当成

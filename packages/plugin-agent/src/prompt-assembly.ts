@@ -14,7 +14,7 @@
 import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
 import type { Logger } from '@aalis/core';
-import { type Message, WellKnownKinds } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, type Message } from '@aalis/schema-message';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */
 const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context', 'turn-context', 'turn-hint'];
@@ -78,6 +78,17 @@ async function buildWithTimeout(
   }
 }
 
+/**
+ * 本轮指令块（proactive 任务块、宿主通知块）的位置；没有返回 -1。
+ * 这类回合没有当前 user 消息与易变块，历史里却有旧 user 消息。
+ */
+function directiveIndex(messages: readonly Message[]): number {
+  return messages.findIndex(m => {
+    const injector = m.metadata?.injector;
+    return typeof injector === 'string' && DIRECTIVE_KINDS.includes(injector);
+  });
+}
+
 /** 各锚位在 messages 中的插入位置；返回 -1 = 本轮弃置该槽 */
 function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): number {
   switch (anchor) {
@@ -95,9 +106,9 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
     case 'turn-context': {
       // 每轮取材的背景材料：落在历史结束处（缓存断点之后）、当前轮诸块之前。
       // 三级定位，取首个命中：
-      // 1. proactive 任务块之前——proactive 轮没有当前 user 消息，历史里却有
-      //    旧 user 消息；若按「最后一条 user」定位会把材料 splice 进历史
-      //    **内部**，既割裂转录又在 append-only 区制造新的缓存断点。
+      // 1. 指令块（proactive 任务块、宿主通知块）之前——这类回合没有当前 user
+      //    消息，历史里却有旧 user 消息；若按「最后一条 user」定位会把材料 splice
+      //    进历史**内部**，既割裂转录又在 append-only 区制造新的缓存断点。
       // 2. 易变块（persona-volatile）之前——普通轮的历史/当前轮分界线。
       //    材料在此刻事实（时间/状态）之前、focus 与 turn-hint 之前：焦点
       //    指引与平台提示（「本轮上下文中的群聊历史记录」）保持与改动前相同
@@ -107,8 +118,8 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
       // 注意 ANCHOR_ORDER 的「turn-context 先于 turn-hint」只在**同一次组装
       // 内**成立：工具循环第二轮才物化的迟到材料按当轮规则重新定位，与首轮
       // 已物化块的相对次序不保证。
-      const delegation = messages.findIndex(m => m.metadata?.injector === WellKnownKinds.CrossSessionDelegation);
-      if (delegation >= 0) return delegation;
+      const directive = directiveIndex(messages);
+      if (directive >= 0) return directive;
       const volatileIdx = messages.findIndex(m => m.metadata?.injector === VOLATILE_INJECTOR);
       if (volatileIdx >= 0) return volatileIdx;
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -117,6 +128,10 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
       return messages.length;
     }
     case 'turn-hint': {
+      // 指令块之前（理由同 turn-context 第 1 级；同一次组装内 turn-context 已先落在它之前，
+      // hint 因此紧贴指令块）；没有指令块时落在最后一条 user 之前
+      const directive = directiveIndex(messages);
+      if (directive >= 0) return directive;
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'user') return i;
       }

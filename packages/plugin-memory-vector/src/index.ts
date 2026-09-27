@@ -8,7 +8,7 @@ import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import { prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
@@ -612,6 +612,8 @@ async function run({
   }
 
   async function indexUserMessage(msg: IncomingMessage, archived: Message): Promise<void> {
+    // 宿主通知不是任何人的发言，不进长期记忆
+    if (msg.hostNotice) return;
     // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
     //（triggerType 判据；全仓生产者=workflow agent 节点，内容是 AI 撰写的任务文本），
     // 不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」形态回流。
@@ -862,6 +864,9 @@ async function run({
                 const m = sorted[i];
                 if (!m.content) continue;
                 if (m.kind === WellKnownKinds.EventMarker) continue;
+                // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出。命中点本身不在此列：
+                // 在这里跳过，下面的兜底会按向量元数据把它补成 user 行
+                if (i !== idx && DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
                 if (currentContents.has((m.content ?? '').trim())) continue;
                 const key = messageKey(sid, m);
                 if (!collected.has(key)) {
@@ -1053,6 +1058,8 @@ async function run({
                 const m = sorted[i];
                 if (!m.content) continue;
                 if (m.kind === WellKnownKinds.EventMarker) continue;
+                // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出
+                if (DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
                 ctxArr.push({
                   ts: m.timestamp ?? 0,
                   role: m.role,

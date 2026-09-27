@@ -22,7 +22,7 @@ import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
-import { WellKnownKinds } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, WellKnownKinds } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import type { RelationService } from './service.js';
 import type {
@@ -354,6 +354,8 @@ export class RelationExtractor {
     const handler = (...args: unknown[]) => {
       const data = args[0] as ArchivedEventData | undefined;
       if (!data?.sessionId) return;
+      // 宿主通知不是任何人的发言，不算作会话里的新消息
+      if (data.archivedMessage?.kind === WellKnownKinds.HostNotice) return;
       const n = (this.counts.get(data.sessionId) ?? 0) + 1;
       this.counts.set(data.sessionId, n);
       if (this.cfg.triggerEveryNMessages <= 0) return;
@@ -401,9 +403,7 @@ export class RelationExtractor {
       let messageIdToSessionId: Map<string, string>;
       const crossSession = readScope !== 'same-session';
       if (!crossSession) {
-        const raw = (await memory.getHistory(sessionId, limit)).filter(
-          m => m.kind !== WellKnownKinds.CrossSessionDelegation,
-        );
+        const raw = (await memory.getHistory(sessionId, limit)).filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
         history = raw;
         messageIdToSessionId = new Map();
         for (const m of raw) {
@@ -416,9 +416,7 @@ export class RelationExtractor {
             this.caps.logger.debug(
               `[user-relation] readScope=${readScope} 但 memory 后端不支持 getRecentMessagesAcrossSessions，降级到 same-session`,
             );
-          history = (await memory.getHistory(sessionId, limit)).filter(
-            m => m.kind !== WellKnownKinds.CrossSessionDelegation,
-          );
+          history = (await memory.getHistory(sessionId, limit)).filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
           messageIdToSessionId = new Map();
           for (const m of history) {
             const meta = (m.metadata as { messageId?: string } | undefined) ?? {};
@@ -435,7 +433,7 @@ export class RelationExtractor {
             sinceTs,
             platform: readScope === 'same-platform' ? currentPlatform : undefined,
             roles: ['user', 'assistant', 'notice'],
-            excludeKinds: [WellKnownKinds.CrossSessionDelegation],
+            excludeKinds: [...DIRECTIVE_KINDS],
           });
           messageIdToSessionId = new Map();
           // 把 sessionId 注入到 message.metadata.__extractorSessionId（运行时临时字段，仅用于渲染/反查）
