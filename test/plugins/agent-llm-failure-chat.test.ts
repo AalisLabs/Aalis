@@ -76,6 +76,6 @@ describe('LLM 全部激活失败：发回会话的提示只点名实例', () => 
     expect(text, '聊天提示带出了内网地址').not.toContain('192.0.2.10');
     expect(text, '聊天提示带出了网络层原因').not.toContain('ECONNREFUSED');
     expect(text, '出错的实例要全部点名').toContain(`以下 LLM 插件激活失败：${instances.join('、')}。`);
-    expect(text).toContain('用 /doctor 查看原因');
+    expect(text, '/doctor 是受限指令，提示要注明需要权限').toContain('可用 /doctor 查看原因（需要相应权限）');
   });
 });
