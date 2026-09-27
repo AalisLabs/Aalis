@@ -1052,7 +1052,7 @@ export class PaperDriver {
     await ledger.exclusive(async () => {
       const run = ledger.data.runs[runId];
       if (!run || run.cost.state === 'booked') return;
-      book(ledger.data, dayKey(this.#d.now(), cfg.budgetTimeZone), runId, cost.chargedCents);
+      book(ledger.data, dayKey(this.#d.now(), cfg.budgetTimeZone), runId, cost.cents);
       if (run.taskId) release(ledger.data, run.taskId);
       const agent = ledger.data.agents[run.agentId];
       if (agent && latest) agent.lastContextTokens = cost.inputTokens + cost.cacheReadTokens;

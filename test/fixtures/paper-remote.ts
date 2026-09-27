@@ -75,7 +75,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
   egressMode: EgressMode = 'allowlist';
   /** 每轮的费用；返回 undefined 即暂缺 */
   costOf: (runId: string) => RunCost | undefined = () => ({
-    chargedCents: 10,
+    cents: 10,
     inputTokens: 1000,
     cacheReadTokens: 500,
   });
