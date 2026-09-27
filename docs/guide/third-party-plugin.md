@@ -168,11 +168,12 @@ export default definePlugin({
 });
 ```
 
-> `secret`（以及 `dynamicOptions` / `allowCustom` 等表单属性）不是 `SchemaField` 的自带字段——
-> `@aalis/schema-config` 只声明各宿主共需的中立字段（`type` / `label` / `description` /
-> `default` / `required` / `options`），渲染相关属性由 `@aalis/api-webui` 经
-> declaration merging 注入。用到这些属性时**必须** `import type {} from '@aalis/api-webui'`。
-> 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`。
+> `secret` 不是 `SchemaField` 的自带字段——`@aalis/schema-config` 只声明各宿主共需的字段
+> （`type` / `label` / `description` / `default` / `required` / `options` 与约束键）和影响取值判定的
+> `dynamicOptions` / `allowCustom`；`secret` 只影响 WebUI 呈现，由 `@aalis/api-webui` 经
+> declaration merging 注入。用到它时**必须** `import type {} from '@aalis/api-webui'`。
+> 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`，
+> 值写该类型的取值类型（如 `'llm-ref': ModelRef`）。
 
 WebUI 会自动根据 schema 渲染配置表单。
 
