@@ -6,6 +6,7 @@
 //   有效授权身份的 userId 非空）；查状态与发成品只要求房间会话本身与入站回合。
 // - 远端条件：提供者按白纸写的实例 id 精确取（不用 current，不回落到别的提供者），出网不超过白纸上限，
 //   不违反同账号隔离，账本读取正常，白纸没有停开，提供者实例没有未读的账本外代理告警。
+// - 共用：一块具名白纸被哪些房间共用（WebUI 白纸页与诊断项用），长期代理的对话与工作区对它们都可见。
 // ============================================================
 
 import {
@@ -18,7 +19,7 @@ import type { SessionConfig, SessionManagerService } from '@aalis/api-session-ma
 import type { ToolCallContext } from '@aalis/api-tools';
 import type { ServiceRef } from '@aalis/core';
 import type { PaperConfig, PaperSpec } from './config.js';
-import type { LedgerStore } from './ledger.js';
+import type { LedgerStore, PaperLedger } from './ledger.js';
 
 /** ready() 报告的账号标识缓存多久 */
 const ACCOUNT_KEY_TTL_MS = 10 * 60_000;
@@ -51,6 +52,38 @@ export async function resolveRoomPaper(
   const spec = cfg.papers.get(name);
   if (!spec) return { unavailable: `本房间写的白纸「${name}」不存在（白纸插件配置的 papers 里没有这个名字）` };
   return { paperId: `n:${name}`, spec, room };
+}
+
+/** 白纸在页面与诊断里的称呼：具名白纸用名字，房间白纸用 id */
+export function paperLabel(paperId: string): string {
+  return paperId.startsWith('n:') ? paperId.slice(2) : `房间白纸 ${paperId}`;
+}
+
+/**
+ * 共用一块白纸的房间：会话自身配置写了这个白纸名的房间会话、写了它的平台档（这个平台的所有房间），以及账本里
+ * 还没结束、或在上次清空之后才结束的任务所在的房间（它们的原文还在代理的对话与工作区里；清空时白纸上没有在跑
+ * 的任务，之前结束的随代理一起删了）。房间白纸只有账本里的那个房间。
+ */
+export function sharingRooms(
+  sm: SessionManagerService,
+  ledger: PaperLedger,
+  paperId: string,
+): { rooms: string[]; platforms: string[] } {
+  const rooms = new Set<string>();
+  const platforms: string[] = [];
+  if (paperId.startsWith('n:')) {
+    const name = paperId.slice(2);
+    const names = (config: SessionConfig) => typeof config.paperName === 'string' && config.paperName.trim() === name;
+    for (const session of sm.listSessions()) if (!session.parentId && names(session.config)) rooms.add(session.id);
+    for (const [platform, profile] of Object.entries(sm.getPlatformProfiles())) {
+      if (names(profile)) platforms.push(platform);
+    }
+  }
+  const since = ledger.papers[paperId]?.lastClearedAt ?? 0;
+  for (const task of Object.values(ledger.tasks)) {
+    if (task.paperId === paperId && (task.endedAt === undefined || task.endedAt > since)) rooms.add(task.room);
+  }
+  return { rooms: [...rooms], platforms };
 }
 
 /** 有效授权身份：actor 缺省时就是会话语义的 (platform, userId) */

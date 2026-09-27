@@ -43,7 +43,8 @@ export function artifactUri(paperId: string, taskId: string, artifact: Pick<Arti
   return `${taskOutUri(paperId, taskId)}/${artifact.id}.${EXTENSIONS[artifact.type]}`;
 }
 
-function bundleUri(paperId: string): string {
+/** 白纸的工程包 */
+export function bundleUri(paperId: string): string {
   return `${paperDirUri(paperId)}/workspace.tar.gz`;
 }
 
@@ -89,7 +90,7 @@ export function sniffType(rel: string, data: Uint8Array): ArtifactType {
 }
 
 /** 目录（或文件）的实际占用：列目录逐层求和；不存在按 0 */
-async function usageOf(storage: StorageService, uri: string): Promise<number> {
+export async function usageOf(storage: StorageService, uri: string): Promise<number> {
   let listing: Awaited<ReturnType<StorageService['list']>>;
   try {
     listing = await storage.list(uri);

@@ -36,7 +36,7 @@ import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
 import { openCollector, paperDirUri, type RunCollector } from './artifacts.js';
 import { book, canStart, dayKey, release, reserveFor } from './budget.js';
-import type { PaperConfig, PaperSpec } from './config.js';
+import { type PaperConfig, specOf } from './config.js';
 import {
   type AlertRecord,
   type LedgerStore,
@@ -214,6 +214,104 @@ export class PaperDriver {
     return this.#clear(paperId, false);
   }
 
+  /** 归档这块白纸在用的代理（下一件任务开轮前自动取消归档）；不能归档时返回原因 */
+  async archive(paperId: string): Promise<string | undefined> {
+    const agentId = this.#d.ledger.data.papers[paperId]?.binding;
+    if (!agentId || this.#d.ledger.data.agents[agentId]?.state !== 'active') return '这块白纸没有在用的代理';
+    // 白纸锁被占着就是有任务在出队或在跑：不等它（可能要等一整轮），直接回原因
+    if (this.#hasUnfinished(paperId) || this.#locks.has(paperId)) return '这块白纸有任务未结束，等做完再归档';
+    return this.#locked(paperId, () => this.#archive(paperId, agentId, 'owner 要求'));
+  }
+
+  /**
+   * 取消一件任务（paper_cancel 与 WebUI 共用，via 记取消来源）。排队中的直接移出并释放预留；运行中的先记下
+   * 取消来源再请远端取消这一轮：远端可能在取消请求返回之前就交出终态，那时再记就晚了（经工具取消的不通知，
+   * 被 owner 取消的通知里要写明）。取消失败时还原；这一轮最终不是 cancelled 时由 #finish 清掉。开轮中、
+   * 取回成品中与已结束的不取消。gate 在账本锁里核对这件任务能不能由调用方取消，不能时返回原因。
+   * 远端调用不占账本锁；费用照常等终态入账，预留到那时再释放。
+   */
+  async cancel(
+    taskId: string,
+    via: 'tool' | 'webui',
+    gate?: (task: TaskRecord) => string | undefined,
+  ): Promise<{ ok: true; taskId: string; state?: 'cancelled'; message?: string } | { ok: false; error: string }> {
+    const { ledger, logger, signal } = this.#d;
+    type Running = { agentId: string; runId: string; previous: TaskRecord['cancelledVia'] };
+    const step = await ledger.exclusive(async () => {
+      const task = Object.hasOwn(ledger.data.tasks, taskId) ? ledger.data.tasks[taskId] : undefined;
+      if (!task) return { ok: false as const, error: `没有任务 ${taskId}` };
+      const refused = gate?.(task);
+      if (refused) return { ok: false as const, error: refused };
+      switch (task.state) {
+        case 'queued': {
+          const reserve = ledger.data.reserves[taskId];
+          task.state = 'cancelled';
+          task.endedAt = this.#d.now();
+          task.cancelledVia = via;
+          release(ledger.data, taskId);
+          try {
+            await ledger.save();
+          } catch (err) {
+            task.state = 'queued';
+            delete task.endedAt;
+            delete task.cancelledVia;
+            if (reserve) ledger.data.reserves[taskId] = reserve;
+            logger.error(`白纸账本写入失败，任务未取消: ${describe(err)}`);
+            return { ok: false as const, error: '白纸账本写入失败，任务未取消' };
+          }
+          return { ok: true as const, taskId, state: 'cancelled' as const };
+        }
+        case 'running': {
+          if (!task.agentId || !task.runId) {
+            return { ok: false as const, error: '这件任务的远端轮次未知，取消不了，请 owner 在 WebUI 处理' };
+          }
+          const running: Running = { agentId: task.agentId, runId: task.runId, previous: task.cancelledVia };
+          task.cancelledVia = via;
+          return running;
+        }
+        case 'starting':
+          return { ok: false as const, error: '这件任务正在开轮，稍后再取消' };
+        case 'collecting':
+          return { ok: false as const, error: '这一轮已经结束，正在取回成品，取消不了' };
+        default:
+          return { ok: false as const, error: `这件任务已经结束（${task.state}）` };
+      }
+    });
+    if ('ok' in step) {
+      if (step.ok) {
+        logger.info(`白纸任务 ${taskId} 已取消（${via}）`);
+        this.#d.ended();
+      }
+      return step;
+    }
+
+    const restore = () =>
+      ledger.exclusive(async () => {
+        const task = ledger.data.tasks[taskId];
+        if (task && UNFINISHED_STATES.has(task.state) && task.cancelledVia === via) task.cancelledVia = step.previous;
+      });
+    const providerType = ledger.data.agents[step.agentId]?.providerType ?? '';
+    const entry = resolveRemoteAgent(this.#d.remote, providerType);
+    if (!entry) {
+      await restore();
+      return { ok: false, error: `远端代理「${providerType}」不在场，取消不了` };
+    }
+    try {
+      await entry.instance.cancelRun(step.agentId, step.runId, signal);
+    } catch (err) {
+      await restore();
+      return { ok: false, error: `远端取消失败：${describe(err)}` };
+    }
+    logger.info(`白纸任务 ${taskId} 已请远端取消轮次 ${step.runId}（${via}）`);
+    return ledger.exclusive(async () => {
+      const task = ledger.data.tasks[taskId];
+      if (task && UNFINISHED_STATES.has(task.state)) {
+        await ledger.save().catch(err => logger.error(`白纸账本写入失败（取消标记）: ${describe(err)}`));
+      }
+      return { ok: true as const, taskId, message: '已请远端取消这一轮；费用按实际发生的入账' };
+    });
+  }
+
   /** 标为已读；账本外代理的告警标为已读后，用这个提供者实例的白纸解除停开 */
   async acknowledge(alertId: string): Promise<boolean> {
     const { ledger } = this.#d;
@@ -283,7 +381,7 @@ export class PaperDriver {
     const { ledger, cfg } = this.#d;
     const paper = this.#paper(task.paperId);
     if (paper.halted) return 'pause';
-    const spec = this.#spec(task.paperId);
+    const spec = specOf(this.#d.cfg, task.paperId);
     if (!spec?.remoteAgentType) return this.#fail(task, '这块白纸已不在配置里，或没有配置远端代理类型');
     const type = spec.remoteAgentType;
     if (ledger.data.alerts.some(a => a.kind === 'unknown-agent' && !a.acknowledged && a.providerType === type)) {
@@ -1017,46 +1115,48 @@ export class PaperDriver {
     for (const [paperId, paper] of Object.entries(ledger.data.papers)) {
       const agent = paper.binding ? ledger.data.agents[paper.binding] : undefined;
       if (!agent || agent.state !== 'active' || agent.lastRunEndedAt === undefined) continue;
-      const spec = this.#spec(paperId) ?? cfg.defaults;
+      const spec = specOf(cfg, paperId) ?? cfg.defaults;
       if (this.#d.now() - agent.lastRunEndedAt < spec.idleArchiveMinutes * MINUTE) continue;
       if (this.#hasUnfinished(paperId) || this.#locks.has(paperId)) continue;
-      await this.#locked(paperId, () => this.#archive(paperId, paper.binding ?? ''));
+      await this.#locked(paperId, () => this.#archive(paperId, paper.binding ?? '', '闲置'));
     }
   }
 
-  async #archive(paperId: string, agentId: string): Promise<void> {
+  /** 先核查账本外的轮次，再归档（持白纸锁调用）；没有归档时返回原因，why 只进日志 */
+  async #archive(paperId: string, agentId: string, why: string): Promise<string | undefined> {
     const { ledger, logger, signal } = this.#d;
     const agent = ledger.data.agents[agentId];
     // 拿到锁之后再核对一次：这期间可能来了新任务，或代理已不再绑定
-    if (ledger.data.papers[paperId]?.binding !== agentId || agent?.state !== 'active') return;
-    if (this.#hasUnfinished(paperId)) return;
+    if (ledger.data.papers[paperId]?.binding !== agentId || agent?.state !== 'active') return '这块白纸没有在用的代理';
+    if (this.#hasUnfinished(paperId)) return '这块白纸有任务未结束，等做完再归档';
     const entry = resolveRemoteAgent(this.#d.remote, agent.providerType);
-    if (!entry) return;
+    if (!entry) return `远端代理「${agent.providerType}」不在场`;
     try {
       const unknown = await this.#unknownRuns(entry, agentId);
       if (unknown.length > 0) {
         await this.#selfWake(agentId, unknown);
-        return;
+        return '代理上有账本外的轮次，已按自唤醒处理（白纸停开，代理删除）';
       }
       await entry.instance.archiveAgent(agentId, signal);
     } catch (err) {
       if (signal.aborted) throw err;
-      logger.warn(`闲置归档代理 ${agentId} 失败，下次检查再试: ${describe(err)}`);
-      return;
+      logger.warn(`归档代理 ${agentId}（${why}）失败: ${describe(err)}`);
+      return `归档失败：${describe(err)}`;
     }
     await ledger.exclusive(async () => {
       if (agent.state !== 'active') return;
       agent.state = 'archived';
       await ledger.save();
     });
-    logger.info(`代理 ${agent.name}（${agentId}）闲置，已归档`);
+    logger.info(`代理 ${agent.name}（${agentId}）已归档（${why}）`);
+    return undefined;
   }
 
   /** 定期清空：距上次清空满 clearAfterDays、且白纸上没有未结束的任务（在账本锁里判） */
   async #clearDue(): Promise<void> {
     const { ledger, cfg } = this.#d;
     for (const [paperId, paper] of Object.entries(ledger.data.papers)) {
-      const spec = this.#spec(paperId) ?? cfg.defaults;
+      const spec = specOf(cfg, paperId) ?? cfg.defaults;
       if (this.#d.now() - paper.lastClearedAt < spec.clearAfterDays * DAY) continue;
       await this.#clear(paperId, true);
     }
@@ -1130,11 +1230,6 @@ export class PaperDriver {
     const papers = this.#d.ledger.data.papers;
     papers[paperId] ??= { lastClearedAt: this.#d.now() };
     return papers[paperId];
-  }
-
-  /** n:<名> 取具名白纸（配置里没有了返回 undefined），r:<哈希> 取默认属性 */
-  #spec(paperId: string): PaperSpec | undefined {
-    return paperId.startsWith('n:') ? this.#d.cfg.papers.get(paperId.slice(2)) : this.#d.cfg.defaults;
   }
 
   #hasUnfinished(paperId: string): boolean {

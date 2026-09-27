@@ -264,6 +264,11 @@ export interface PaperConfig {
   papers: ReadonlyMap<string, PaperSpec>;
 }
 
+/** 一块白纸的属性：n:<名> 取具名白纸（配置里没有了返回 undefined），r:<哈希> 取默认属性 */
+export function specOf(cfg: PaperConfig, paperId: string): PaperSpec | undefined {
+  return paperId.startsWith('n:') ? cfg.papers.get(paperId.slice(2)) : cfg.defaults;
+}
+
 function isUnset(value: unknown): boolean {
   return value === undefined || value === null || value === '';
 }

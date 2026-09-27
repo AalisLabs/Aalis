@@ -12,7 +12,7 @@
 // ============================================================
 
 import type { GatewayService } from '@aalis/api-gateway';
-import { type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
+import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
@@ -20,6 +20,7 @@ import type { OutgoingMessage } from '@aalis/schema-message';
 import { artifactUri, EXTENSIONS } from './artifacts.js';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
+import type { PaperDriver } from './driver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { formatSize } from './notices.js';
 import {
@@ -92,6 +93,8 @@ interface PaperToolDeps {
   now: () => number;
   /** 受理后交给运行驱动：这块白纸没在跑就开始出队 */
   kick: (paperId: string) => void;
+  /** 取消一件任务（运行驱动的 cancel，与 WebUI 共用） */
+  cancel: PaperDriver['cancel'];
 }
 
 const fail = (error: string) => JSON.stringify({ ok: false, error });
@@ -364,74 +367,10 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     const taskId = typeof args.task_id === 'string' ? args.task_id.trim() : '';
     if (!taskId) return fail('task_id 不能为空');
     const user = actorKey(effectiveActor(ctx));
-
-    type Running = { agentId: string; runId: string; via: TaskRecord['cancelledVia'] };
-    const step = await ledger.exclusive(async (): Promise<string | Running> => {
-      const task = ledger.data.tasks[taskId];
-      if (!task) return fail(`没有任务 ${taskId}`);
-      if (actorKey(task.initiator) !== user) return fail('只能取消自己发起的任务');
-      switch (task.state) {
-        case 'queued': {
-          const reserve = ledger.data.reserves[taskId];
-          task.state = 'cancelled';
-          task.endedAt = deps.now();
-          task.cancelledVia = 'tool';
-          release(ledger.data, taskId);
-          try {
-            await ledger.save();
-          } catch (err) {
-            task.state = 'queued';
-            delete task.endedAt;
-            delete task.cancelledVia;
-            if (reserve) ledger.data.reserves[taskId] = reserve;
-            deps.logger.error(`白纸账本写入失败，任务未取消: ${err}`);
-            return fail('白纸账本写入失败，任务未取消');
-          }
-          return done({ taskId, state: 'cancelled' });
-        }
-        case 'running': {
-          if (!task.agentId || !task.runId) return fail('这件任务的远端轮次未知，取消不了，请 owner 在 WebUI 处理');
-          // 先记下取消来源（同到点取消）：远端可能在取消请求返回之前就交出终态，那时再记就晚了，这件会被
-          // 当成别处取消而发出通知。取消失败时还原；这一轮最终不是 cancelled 时由运行驱动清掉
-          const via = task.cancelledVia;
-          task.cancelledVia = 'tool';
-          return { agentId: task.agentId, runId: task.runId, via };
-        }
-        case 'starting':
-          return fail('这件任务正在开轮，稍后再取消');
-        case 'collecting':
-          return fail('这一轮已经结束，正在取回成品，取消不了');
-        default:
-          return fail(`这件任务已经结束（${task.state}）`);
-      }
-    });
-    if (typeof step === 'string') return step;
-
-    // 运行中：请远端取消这一轮。网络调用不占账本锁；费用照常等终态入账，预留到那时再释放
-    const restore = () =>
-      ledger.exclusive(async () => {
-        const task = ledger.data.tasks[taskId];
-        if (task && UNFINISHED_STATES.has(task.state) && task.cancelledVia === 'tool') task.cancelledVia = step.via;
-      });
-    const providerType = ledger.data.agents[step.agentId]?.providerType ?? '';
-    const provider = resolveRemoteAgent(deps.remote, providerType);
-    if (!provider) {
-      await restore();
-      return fail(`远端代理「${providerType}」不在场，取消不了`);
-    }
-    try {
-      await provider.instance.cancelRun(step.agentId, step.runId, deps.signal);
-    } catch (err) {
-      await restore();
-      return fail(`远端取消失败：${err instanceof Error ? err.message : String(err)}`);
-    }
-    return ledger.exclusive(async () => {
-      const task = ledger.data.tasks[taskId];
-      if (task && UNFINISHED_STATES.has(task.state)) {
-        await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（取消标记）: ${err}`));
-      }
-      return done({ taskId, message: '已请远端取消这一轮；费用按实际发生的入账' });
-    });
+    const result = await deps.cancel(taskId, 'tool', task =>
+      actorKey(task.initiator) === user ? undefined : '只能取消自己发起的任务',
+    );
+    return JSON.stringify(result);
   }
 
   async function paperSend(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {

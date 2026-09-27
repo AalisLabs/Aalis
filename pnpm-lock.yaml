@@ -1833,6 +1833,9 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools
+      '@aalis/api-webui':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-webui
       '@aalis/schema-config':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../schema-config

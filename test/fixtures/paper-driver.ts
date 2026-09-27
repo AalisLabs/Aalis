@@ -170,6 +170,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     signal: controller.signal,
     now,
     kick: paperId => driver.kick(paperId),
+    cancel: (taskId, via, gate) => driver.cancel(taskId, via, gate),
   });
   driver.start();
 
