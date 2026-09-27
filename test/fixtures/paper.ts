@@ -1,5 +1,5 @@
 import { type CheckResult, type CheckSpec, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
-import { type GatewayService, gateway } from '../../packages/api-gateway/src/index.js';
+import { type GatewayService, gateway, resolveSessionOrigin } from '../../packages/api-gateway/src/index.js';
 import { type EgressReport, type RemoteAgentProvider, remoteAgent } from '../../packages/api-remote-agent/src/index.js';
 import {
   type SessionConfig,
@@ -188,16 +188,22 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   } as never);
   host.provide(sessionManager, {
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
-    getSession: (id: string): SessionInfo => ({
-      id,
-      name: id,
-      parentId: children[id],
-      children: [],
-      status: 'active',
-      config: {},
-      createdAt: 0,
-      updatedAt: 0,
-    }),
+    getSession: (id: string): SessionInfo => {
+      const origin = resolveSessionOrigin(id);
+      return {
+        id,
+        name: id,
+        parentId: children[id],
+        children: [],
+        status: 'active',
+        config: {},
+        createdAt: 0,
+        updatedAt: 0,
+        kind: children[id] ? 'task' : 'room',
+        originPlatform: origin?.platform,
+        audience: children[id] ? undefined : (origin?.audience ?? 'owner'),
+      };
+    },
   } as unknown as SessionManagerService);
   host.provide(storage, memoryPluginData(files));
   host.provide(gateway, {

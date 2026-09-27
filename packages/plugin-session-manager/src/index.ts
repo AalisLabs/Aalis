@@ -1,4 +1,5 @@
 import { agent } from '@aalis/api-agent';
+import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
@@ -268,7 +269,7 @@ class SessionManager implements SessionManagerService {
     try {
       for (const { key, data } of await instance.listMetadata(METADATA_NAMESPACE)) {
         const info = data as unknown as SessionInfo;
-        if (info && info.id === key) sessions.set(key, info);
+        if (info && info.id === key) sessions.set(key, { ...info, ...describeSession(key, info.parentId) });
       }
     } catch (err) {
       sessions = undefined;
@@ -369,6 +370,7 @@ class SessionManager implements SessionManagerService {
       createdBy: patch.createdBy || 'user',
       inputContext: patch.metadata?.inputContext as string | undefined,
       metadata: patch.metadata,
+      ...describeSession(id, undefined),
     };
     this.sessions.set(id, session);
     this.markDirty();
@@ -380,7 +382,9 @@ class SessionManager implements SessionManagerService {
   // ---- CRUD ----
 
   async createSession(
-    opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>,
+    opts?: Partial<
+      Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'>
+    >,
   ): Promise<SessionInfo> {
     const id = opts?.parentId
       ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
@@ -402,6 +406,7 @@ class SessionManager implements SessionManagerService {
       createdBy: opts?.createdBy || 'user',
       inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext as string | undefined),
       metadata: opts?.metadata,
+      ...describeSession(id, opts?.parentId),
     };
 
     this.sessions.set(id, session);
@@ -520,7 +525,12 @@ class SessionManager implements SessionManagerService {
 
   async createChildSession(
     parentId: string,
-    opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
+    opts?: Partial<
+      Omit<
+        SessionInfo,
+        'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'
+      >
+    >,
   ): Promise<SessionInfo> {
     // 平台派生会话（cli-default、OneBot 会话 id）从不经 createSession 预建，父档缺失是常态；
     // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。
@@ -814,6 +824,19 @@ class SessionManager implements SessionManagerService {
 }
 
 // ===== 工具函数 =====
+
+/**
+ * 会话的种类、出生平台与受众，只由 id 与 parentId 推出。新建、建档与加载入表时覆盖写入，调用方传的值与存储里的
+ * 旧值都不采信；三个键都带上（没有的为 undefined），才盖得掉旧值。
+ */
+function describeSession(
+  id: string,
+  parentId: string | undefined,
+): Pick<SessionInfo, 'kind' | 'originPlatform' | 'audience'> {
+  const origin = resolveSessionOrigin(id);
+  if (parentId) return { kind: 'task', originPlatform: origin?.platform, audience: undefined };
+  return { kind: 'room', originPlatform: origin?.platform, audience: origin?.audience ?? 'owner' };
+}
 
 const MEMORY_RECALL_SCOPES: readonly MemoryRecallScope[] = ['session', 'platform', 'all'];
 
