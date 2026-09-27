@@ -39,7 +39,9 @@ export default definePlugin({
 
 > `keywords` 里的 `"aalis-plugin"` 是**加载硬门**而非检索装饰：加载器只认它，漏写则插件
 > 装上后永远不会被发现（启动日志会有「疑似插件缺关键词」提示，但不会加载）；`files` 须含
-> 构建产物，否则入口解析失败同样不加载。
+> 构建产物，否则入口解析失败同样不加载。入口与 `import()` 包名得到的是同一个文件：写了 `exports` 时取
+> `"."` 按 import 条件（`node` / `import` / `default`，Node 启用 require(esm) 时另有 `module-sync`；`require` 不参与）
+> 取到的目标，没写时取 `main`。
 >
 > `@aalis/core` 用 **peerDependency** 引用：core 在一个进程里只能装一份，写进 `dependencies` 时只要范围与宿主的
 > core 不相容，包管理器就会给插件另装一份，插件随即在加载时被拒绝（见 [第 7 节](#two-cores)）。范围用 **`>=0.17.0 <1.0.0`**：

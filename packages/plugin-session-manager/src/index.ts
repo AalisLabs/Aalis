@@ -140,6 +140,8 @@ const configSchema: ConfigSchema = {
 // ===== 常量 =====
 
 const METADATA_NAMESPACE = 'sessions';
+/** 读会话表失败后的重试间隔（毫秒）；用尽仍失败按读表失败处理 */
+const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
 
 /** 继承链的层：全局 defaults、平台档、父会话的 sessionDefaults */
 type InheritanceSource = 'defaults' | 'platform' | 'parent';
@@ -194,6 +196,19 @@ async function archiveRecursively(sm: SessionManagerService, id: string): Promis
   await sm.updateSession(id, { status: 'archived' });
 }
 
+/** 等待 ms 毫秒，signal 中止时提前返回。不用 node:timers/promises：全局定时器测试里能用假时钟推进 */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
 function formatConfigSummary(config: SessionConfig): string {
   const parts: string[] = [];
   if (config.llm?.model) parts.push(`${config.llm.provider}/${config.llm.model}`);
@@ -205,8 +220,8 @@ function formatConfigSummary(config: SessionConfig): string {
 
 // ===== SessionManager 实现 =====
 
-/** SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM */
-type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm'>;
+/** SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM、中止读表重试的 lifecycle */
+type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle'>;
 
 class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
@@ -248,11 +263,13 @@ class SessionManager implements SessionManagerService {
 
   /**
    * memory 胜者的 follow 挂接：从这个实例读会话表并整体替换内存里的这份。
-   * 返回的清理在换人或关闭时执行：等本次加载落定，再把未落盘的变更写回这个实例。
+   * 返回的清理在换人或关闭时执行：中止读表重试的等待，等本次加载落定，再把未落盘的变更写回这个实例。
    */
   attach(instance: MemoryService): () => Promise<void> {
-    this.loading = this.load(instance);
+    const detached = new AbortController();
+    this.loading = this.load(instance, AbortSignal.any([detached.signal, this.caps.lifecycle.signal]));
     return async () => {
+      detached.abort();
       await this.loading;
       if (this.persistTimer) {
         clearTimeout(this.persistTimer);
@@ -262,17 +279,32 @@ class SessionManager implements SessionManagerService {
     };
   }
 
-  /** 从 memory 元数据加载持久化会话列表，加载完成后以它为会话表与落盘目标；读表失败时会话表为空且不落盘 */
-  private async load(instance: MemoryService): Promise<void> {
-    let sessions: Map<string, SessionInfo> | undefined = new Map();
-    try {
-      for (const { key, data } of await instance.listMetadata(METADATA_NAMESPACE)) {
-        const info = data as unknown as SessionInfo;
-        if (info && info.id === key) sessions.set(key, info);
+  /**
+   * 从 memory 元数据加载持久化会话列表，加载完成后以它为会话表与落盘目标。读表失败按 {@link LOAD_RETRY_DELAYS}
+   * 有限重试，其间仍用原来的会话表与落盘目标；用尽或被中止（换人、停机）时会话表为空且不落盘。
+   */
+  private async load(instance: MemoryService, signal: AbortSignal): Promise<void> {
+    let sessions: Map<string, SessionInfo> | undefined;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const entries = await instance.listMetadata(METADATA_NAMESPACE);
+        sessions = new Map();
+        for (const { key, data } of entries) {
+          const info = data as unknown as SessionInfo;
+          if (info && info.id === key) sessions.set(key, info);
+        }
+        break;
+      } catch (err) {
+        const delay = LOAD_RETRY_DELAYS[attempt];
+        if (delay !== undefined && !signal.aborted) {
+          this.caps.logger.warn(`加载会话数据失败，${delay}ms 后重试:`, err);
+          await wait(delay, signal);
+          if (!signal.aborted) continue;
+        }
+        if (signal.aborted) this.caps.logger.info('已中止加载会话数据（停用、停机或换后端）');
+        else this.caps.logger.error('加载会话数据失败，在这个后端上的会话改动不落盘（以免覆盖原有记录）:', err);
+        break;
       }
-    } catch (err) {
-      sessions = undefined;
-      this.caps.logger.error('加载会话数据失败，在这个后端上的会话改动不落盘（以免覆盖原有记录）:', err);
     }
     // 加载窗口里旧表的改动：落盘目标此前仍是旧实例，换表前取快照，换表后写回
     const previous = this.store;
@@ -1118,6 +1150,8 @@ async function run(caps: Caps): Promise<void> {
   // 会话表跟随 memory 胜者：首次挂接即加载；运行中胜者换人时先写回旧后端再读新后端
   memory.follow(instance => manager.attach(instance));
   await manager.loading;
+  // 读表（含重试等待）期间停用或停机的，不再发布服务与登记
+  lifecycle.signal.throwIfAborted();
 
   // 加载平台 profiles
   manager.loadPlatformProfiles(caps.config.platformProfiles);

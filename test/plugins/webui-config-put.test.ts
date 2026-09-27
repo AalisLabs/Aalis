@@ -131,7 +131,7 @@ describe('PUT /api/config 顶层键白名单', () => {
 });
 
 describe('PUT /api/config 何时重启', () => {
-  // logLevel 只在启动时读取；name 由 /api/status 每次实时读文档（装有人设时显示人设名），不值得整进程重启
+  // logLevel 只在启动时读取；name 由 /api/status 每次实时读文档（appName），仪表盘的应用名称随即更新，不值得整进程重启
   it('只改 name → 保存即生效，不重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ name: 'Bot' });

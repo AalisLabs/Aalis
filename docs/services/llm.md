@@ -91,7 +91,7 @@ interface ChatModelRequest {
 | `chat()` | 必须 | 非流式契约 |
 | `chatStream()` | 强烈建议 | 不实现则该 model 无 `streaming` 能力，agent 会跳过它（agent 直接调 `chatStream!`，见 §7） |
 | `maxOutputTokens` | 建议 | 否则消费方回退默认值，token 预算估算变粗 |
-| `refresh()` | 可选 | 仅远端动态发现型需要；webui 据此显示「刷新」按钮 |
+| `refresh()` | 可选 | 仅远端动态发现型需要；没有时 webui 的「刷新」按钮照常显示，点击后提示该 provider 不支持运行时刷新 |
 
 ### 双源 manifest 必须同步
 

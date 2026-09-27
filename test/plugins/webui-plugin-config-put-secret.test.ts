@@ -58,6 +58,7 @@ function setup() {
           received = cfg;
           return true;
         },
+        idle: async () => {},
       }),
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },

@@ -111,7 +111,7 @@ describe('向量独立命名空间：读写与生命周期', () => {
     const { store, mem } = await makeStore();
     await mem.saveMetadata(RELATION_NAMESPACE, 'entity:e1', rawEntity('e1'));
     await store.upsertVector('entity', 'e1', VEC);
-    await store.clearAll();
+    await store.clearAll({ info() {} });
     expect(await store.getVector('entity', 'e1'), '向量命名空间残留=重建图后撞旧向量').toBeUndefined();
     expect((await mem.listMetadata(RELATION_VECTOR_NAMESPACE)).length).toBe(0);
   });

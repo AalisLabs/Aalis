@@ -46,7 +46,8 @@ async function removeDirCounted(storage: StorageService, dirUri: string): Promis
   }
 }
 
-export const CLEAR_TYPES = [
+/** 可清理类型。globalOnly：跨会话数据，只在 /clear all 时清理 */
+export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: string; globalOnly?: boolean }> = [
   { id: 'context', label: '消息历史与会话上下文（含摘要与待办）' },
   { id: 'summary', label: '会话摘要' },
   { id: 'vector', label: '向量记忆' },
@@ -56,9 +57,9 @@ export const CLEAR_TYPES = [
   { id: 'file', label: '文件缓存' },
   { id: 'persona', label: '会话角色状态' },
   { id: 'checkpoint', label: '检查点（对话回滚存档）' },
-  { id: 'user-profile', label: '用户档案与第三方行为指令（仅全局清理）' },
-  { id: 'user-relation', label: '用户关系图谱（仅全局清理）' },
-] as const;
+  { id: 'user-profile', label: '用户档案与第三方行为指令', globalOnly: true },
+  { id: 'user-relation', label: '用户关系图谱', globalOnly: true },
+];
 
 /**
  * 附件缓存种类 → `data:/` 目录 + 中文标签。
@@ -80,7 +81,7 @@ const CLEAR_TYPE_ALIASES: Record<string, string> = {
   profiles: 'user-profile',
 };
 
-function normalizeClearTypes(raw: unknown): string[] | undefined {
+function normalizeClearTypes(raw: unknown, prefix: string): string[] | undefined {
   const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
   const types = values
     .flatMap(v => String(v).split(','))
@@ -89,22 +90,13 @@ function normalizeClearTypes(raw: unknown): string[] | undefined {
     .map(v => CLEAR_TYPE_ALIASES[v] ?? v);
   if (types.length === 0 || types.includes('all')) return undefined;
   const known = new Set(CLEAR_TYPES.map(t => t.id));
-  const unknown = types.find(t => !known.has(t as (typeof CLEAR_TYPES)[number]['id']));
-  if (unknown) throw new Error(`未知清理类型: ${unknown}。可用类型: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`);
+  const unknown = types.find(t => !known.has(t));
+  if (unknown) {
+    throw new Error(
+      `未知清理类型: ${unknown}。可用类型: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}。说明见 ${prefix}help clear`,
+    );
+  }
   return [...new Set(types)];
-}
-
-function renderClearTypeList(): string {
-  return [
-    '**可清理类型：**',
-    '',
-    ...CLEAR_TYPES.map(type => `- ${type.id}: ${type.label}`),
-    '',
-    '示例：',
-    '- /clear --type context,vector',
-    '- /clear -t vector -t image',
-    '- /clear all --type all',
-  ].join('\n');
 }
 
 // ===== 插件入口 =====
@@ -183,6 +175,7 @@ function registerCommands({
           const removed = await removeDirCounted(storageGateway, `data:/${k.dir}`);
           data.results.push({
             source: `${k.type}-cache`,
+            type: k.type,
             success: true,
             message:
               removed >= 0 ? `所有${k.label}缓存已清空（${removed} 个会话目录）` : `${k.label}缓存目录不存在，无需清空`,
@@ -191,13 +184,19 @@ function registerCommands({
           const removed = await removeDirCounted(storageGateway, `data:/${k.dir}/${safeSessionId}`);
           data.results.push({
             source: `${k.type}-cache`,
+            type: k.type,
             success: true,
             message: removed >= 0 ? `当前会话${k.label}缓存已清空（${removed} 个）` : `当前会话无${k.label}缓存`,
           });
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: `${k.type}-cache`, success: false, message: `${k.label}缓存清空失败: ${msg}` });
+        data.results.push({
+          source: `${k.type}-cache`,
+          type: k.type,
+          success: false,
+          message: `${k.label}缓存清空失败: ${msg}`,
+        });
       }
     }
     await next();
@@ -357,6 +356,14 @@ function registerCommands({
     types: string[] | undefined,
   ): Promise<string> {
     const isGlobal = scope === 'all';
+    // 预检：消息历史清不了就整条不执行。各插件的 memory:clear 中间件先于消息清理运行，放行就会清掉摘要、待办、
+    // 附件等，留下「消息还在、其余已清」的半截状态。预检只决定执行与否，清理时另取当时的记忆后端
+    const clearsMessages = !types || types.includes('context');
+    const memoryAtStart = memory.current;
+    if (clearsMessages && !memoryAtStart) return '⚠ 记忆服务不可用，本次未清理任何内容。';
+    if (clearsMessages && isGlobal && !memoryAtStart?.clearAll) {
+      return '⚠ 记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。';
+    }
     const clearData: HookContextMap['memory:clear'] = {
       scope,
       types,
@@ -365,31 +372,33 @@ function registerCommands({
     };
 
     await hooks.run('memory:clear', clearData, async () => {
-      const memoryService = memory.current;
-      if (!memoryService) {
-        clearData.results.push({ source: 'memory', success: false, message: '记忆服务不可用' });
-        return;
-      }
-
-      if (!types || types.includes('context')) {
-        try {
-          if (!isGlobal) {
-            await memoryService.clearSession(cmdCtx.sessionId);
-            clearData.results.push({ source: 'memory', success: true, message: '当前会话消息历史已清空' });
-          } else if (memoryService.clearAll) {
-            await memoryService.clearAll();
-            clearData.results.push({ source: 'memory', success: true, message: '所有消息历史和归档已清空' });
-          } else {
-            clearData.results.push({
-              source: 'memory',
-              success: false,
-              message: '记忆后端不支持全局清空，消息历史未清理',
-            });
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          clearData.results.push({ source: 'memory', success: false, message: `清空失败: ${msg}` });
+      if (!clearsMessages) return;
+      try {
+        // 中间件链可能要等一阵（在途落库、向量清空与保存），期间 memory 胜者可能已更换：按此刻的胜者清理，
+        // 不复用预检取到的实例，免得清到已下线的旧后端
+        const memoryService = memory.current;
+        if (!memoryService) throw new Error('记忆服务在清理期间下线');
+        if (isGlobal) {
+          if (!memoryService.clearAll) throw new Error('清理期间换上的记忆后端不支持全局清空');
+          await memoryService.clearAll();
+          clearData.results.push({
+            source: 'memory',
+            type: 'context',
+            success: true,
+            message: '所有消息历史和归档已清空',
+          });
+        } else {
+          await memoryService.clearSession(cmdCtx.sessionId);
+          clearData.results.push({
+            source: 'memory',
+            type: 'context',
+            success: true,
+            message: '当前会话消息历史已清空',
+          });
         }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        clearData.results.push({ source: 'memory', type: 'context', success: false, message: `清空失败: ${msg}` });
       }
 
       // 图片缓存与 vectorstore/persona/user-profile 等子系统的清理
@@ -397,8 +406,18 @@ function registerCommands({
       // runClear 仅负责调度 hook 与处理 memory 主体。
     });
 
-    if (clearData.results.length === 0) return '无可清除的记忆模块。';
-    return clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`).join('\n');
+    const lines = clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`);
+    // 显式要求的类型逐个核对：没有任何一行标注该类型，就是没有已启用的插件处理它，照实说明
+    for (const t of CLEAR_TYPES) {
+      if (!types?.includes(t.id) || clearData.results.some(r => r.type === t.id)) continue;
+      lines.push(
+        !isGlobal && t.globalOnly
+          ? `⚠ ${t.label}只在 ${registry.prefix}clear all 时清理，本次未清理`
+          : `⚠ ${t.label}：没有已启用的插件处理这一类型，未清理`,
+      );
+    }
+    if (lines.length === 0) return '无可清除的记忆模块。';
+    return lines.join('\n');
   }
 
   /**
@@ -411,7 +430,7 @@ function registerCommands({
   async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string> {
     let types: string[] | undefined;
     try {
-      types = normalizeClearTypes(argv.options.type);
+      types = normalizeClearTypes(argv.options.type, registry.prefix);
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
     }
@@ -429,7 +448,9 @@ function registerCommands({
     return runClear({ sessionId: argv.session.sessionId }, scope, types);
   }
 
-  const clearTypeOptDesc = `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`;
+  const clearTypeOptDesc = `清理类型，可重复或用逗号分隔；all 为全部类型。${CLEAR_TYPES.map(
+    t => `${t.id}：${t.label}${t.globalOnly ? '（仅全局清理）' : ''}`,
+  ).join('；')}`;
 
   commands
     // 清空**当前会话**的记忆。风险随会话归属而变，静态声明取「最松的安全默认」：
@@ -446,8 +467,6 @@ function registerCommands({
     .example('/clear -t vector -t image')
     .example('/clear all --type all')
     .action(async argv => runClearFromOptions(argv, 'session'));
-
-  commands.command('clear.list', '列出可清理类型').action(async () => renderClearTypeList());
 
   commands
     // 全局清空，比 /clear 更重：同样 dangerous（等级 2 + 二次确认）。

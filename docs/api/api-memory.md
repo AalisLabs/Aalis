@@ -30,6 +30,7 @@ interface MemoryService {
   saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
   getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
   listMetadata(namespace: string): Promise<MetadataEntry[]>;
+  listMetadataKeys?(namespace: string): Promise<string[]>;
   deleteMetadata(namespace: string, key: string): Promise<void>;
   commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
@@ -64,11 +65,13 @@ export default definePlugin({
   scope: 'session' | 'all';
   types?: string[];
   sessionId?: string;
-  results: Array<{ source; success; message }>;
+  results: Array<{ source; type?; success; message }>;
 }
 ```
 
-`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。`clearAll` 只清消息与归档、不清元数据：在元数据里存了数据的插件，要挂这个中间件按 `scope` 与 `types` 清理自己的命名空间。
+`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。`clearAll` 只清消息与归档、不清元数据：在元数据里存了数据的插件，要挂这个中间件按 `scope` 与 `types` 清理自己的命名空间。结果行的 `type` 是这一行所属的清理类型（取值同 `/clear --type`），处理某个清理类型的中间件须在各行标注它，成败都标：`/clear` 据此判断显式指定的类型有没有处理者，不标注会被回执误报为「没有已启用的插件处理」。
+
+整体清空自己的命名空间用 `clearMetadataNamespaces(mem, namespaces, logger)`，它在一次 `commitMetadata` 里删掉这些命名空间的全部条目，返回各命名空间删掉的键（与传入顺序相同）。`listMetadata` 会跳过读不出的条目（数据损坏、不是对象），按它枚举键删不掉这些条目；后端实现了只列键的 `listMetadataKeys` 时，这个函数按它列键，读不出的条目一并删除、计入返回的键，并经 `logger` 记一条 info 点名（`namespace/key`，超过 10 条只列前 10 条）。后端没有实现时退回 `listMetadata`，读不出的条目留在库里。
 
 ## 实现者
 

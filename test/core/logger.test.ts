@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DefaultLogger, LogHub } from '../../packages/core/src/index.js';
+import { App, DefaultLogger, definePlugin, LogHub } from '../../packages/core/src/index.js';
 
 describe('LogHub', () => {
   it('Logger 写入 → LogHub.push → 触发 onEntry 监听器', () => {
@@ -53,6 +53,43 @@ describe('LogHub', () => {
     new DefaultLogger('t', 'debug', hub).info('x');
     expect(seen).toEqual([1]);
     expect(hub.allocSeq()).toBe(2);
+  });
+
+  it('监听器抛错（同步或返回被拒的 Promise）不影响其余监听器，也不让日志调用抛出', async () => {
+    const escaped: unknown[] = [];
+    const onEscape = (reason: unknown) => void escaped.push(reason);
+    process.on('unhandledRejection', onEscape);
+    try {
+      const hub = new LogHub();
+      const seen: string[] = [];
+      hub.onEntry(() => {
+        throw new Error('sink down');
+      });
+      hub.onEntry(async () => {
+        throw new Error('async sink down');
+      });
+      hub.onEntry(e => seen.push(e.message));
+      const log = new DefaultLogger('t', 'debug', hub);
+      expect(() => log.warn('hello')).not.toThrow();
+      log.info('again');
+      expect(seen).toEqual(['hello', 'again']);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(escaped).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onEscape);
+    }
+  });
+
+  it('日志监听器抛错不打断 core 自己的日志调用点（登记、激活照常完成）', async () => {
+    const hub = new LogHub();
+    hub.onEntry(() => {
+      throw new Error('sink down');
+    });
+    const app = new App({ name: 'T', logLevel: 'debug', logHub: hub });
+    expect(await app.plugin(definePlugin({ name: 'p', apply() {} }))).toBe(true);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    await app.stop();
   });
 
   it('onEntry 返回 dispose 函数解除订阅', () => {
