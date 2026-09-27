@@ -111,7 +111,7 @@ const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
 type Json = Record<string, unknown>;
 
 interface CallResult {
-  /** 方法与路径，用于错误信息 */
+  /** 方法与不带查询串的路径，用于错误信息 */
   what: string;
   status: number;
   data: unknown;
@@ -357,7 +357,8 @@ export class CursorProvider implements RemoteAgentProvider {
       },
     };
     let lastError: RemoteAgentError | undefined;
-    // 超时或临时故障时代理可能已经建出来了：同一 agentId 重发是安全的，已有就得 409，再按 id 取回
+    // 超时或临时故障时代理可能已经建出来了：同一 agentId 重发是安全的，已有就得 409，再按 id 取回。
+    // 首个请求超时是常态（建代理约 60 秒才回，默认超时 30 秒），重发只记 debug；两次都不成时照抛，由调用方记
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const res = await this.#call('POST', '/v1/agents', { signal, body, timeoutMs: this.#opt.createTimeoutMs });
@@ -372,7 +373,7 @@ export class CursorProvider implements RemoteAgentProvider {
         if (!isRemoteAgentError(err) || err.code !== 'transient') throw err;
         lastError = err;
         if (attempt === 0)
-          this.#note('warn', `建代理 ${req.agentId} 没有得到结果（${err.message}），用同一 agentId 重发`);
+          this.#note('debug', `建代理 ${req.agentId} 没有得到结果（${err.message}），用同一 agentId 重发`);
       }
     }
     return this.#createdRun(req.agentId, signal, lastError);
@@ -826,7 +827,8 @@ export class CursorProvider implements RemoteAgentProvider {
     path: string,
     opts: { signal: AbortSignal; body?: unknown; timeoutMs?: number },
   ): Promise<CallResult> {
-    const what = `${method} ${path}`;
+    // 报错用的路径去掉查询串：查询串里可能有远端可控的内容（如成品路径、翻页标记）
+    const what = `${method} ${path.replace(/\?.*$/, '')}`;
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? this.#opt.requestTimeoutMs);
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.#opt.apiKey}`,
@@ -854,9 +856,7 @@ export class CursorProvider implements RemoteAgentProvider {
 
   #httpError(res: CallResult): RemoteAgentError {
     const { code, message } = remoteError(res.data);
-    // 请求路径去掉查询串：查询串里可能有远端可控的内容（如成品路径）
-    const what = res.what.replace(/\?.*$/, '');
-    const detail = `${what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
+    const detail = `${res.what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
     if (res.status === 429) return this.#error('rate-limited', detail, retryAfterMs(res.headers));
     if (res.status === 401 || res.status === 403) return this.#error('unavailable', detail);
     if (res.status === 404) return this.#error('not-found', detail);
