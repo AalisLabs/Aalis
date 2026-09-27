@@ -13,8 +13,8 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 依赖
 
-- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`session-manager`（按会话取人设的名字，缺席时取全局默认的卡）、`message-archive`（吞掉时归档）、`media`（附件识别，缺席时带附件的消息判定时没有描述）、`doctor`（诊断项）。
-- 侧车 laya-listener：本机 HTTP 服务，只监听 127.0.0.1，由 launchd 守护。构建、部署、换版本与回滚见本机 `models/listener-sidecar/README.md`（`models/` 在 `.gitignore` 里，不随仓库分发）。
+- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`session-manager`（按会话取人设的名字，缺席时取全局默认的卡）、`message-archive`（吞掉时归档）、`media`（附件识别，缺席时带附件的消息判定时没有描述）、`doctor`（诊断项）、`process`（托管侧车时用来拉起它，缺席时判定不可用）。
+- 侧车 laya-listener：本机 HTTP 服务，只监听 127.0.0.1。配置了 `sidecarDir` 时由本插件托管（见「托管侧车」），否则由外部运行，本插件只按 `endpoint` 连接。构建、换版本与回滚见本机 `models/listener-sidecar/README.md`（`models/` 在 `.gitignore` 里，不随仓库分发）。
 
 ## 判定流程
 
@@ -24,7 +24,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 4. 会话处于禁言期 → 放行给 flow 相位吞掉；不识别禁言关键词。
 5. 命中禁言关键词（`muteKeywords`；戳一戳的合成文案不算）→ 设自禁言 `muteTimeSeconds` 秒、归档后吞掉，不问模型。
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。名字表是 `triggerNames` 与全部已登记人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）。人设按会话取，与 agent 同一取法：session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给人设的 `getPersonaName` / `getNickNames`；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。session-manager 缺席时取全局默认的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）。
-7. 判定前检查：只接受 onebot 的群聊与私聊（从会话 ID `onebot:{selfId}:{group|private}:{targetId}` 取 bot 自己的账号作为 `selfId`），其它会话兜底，每类会话（平台与会话类型）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底。
+7. 判定前检查：只接受 onebot 的群聊与私聊（从会话 ID `onebot:{selfId}:{group|private}:{targetId}` 取 bot 自己的账号作为 `selfId`），其它会话兜底，每类会话（平台与会话类型）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底；托管侧车时，没有 process 服务、侧车还在启动或等重启时兜底（见「托管侧车」）。
 8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致：只有工具调用的 assistant 行以空串落库，两边都计入窗口，到侧车渲染时才丢弃；正文不是字符串的行只有本插件滤掉，目前只有 subtask 在子任务会话里合成的 report 行是这样。最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）与正文不是字符串的行多于 `historyRows` 条时，窗口不足 `historyRows` 行。
 9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两者不一致的情况见「已知局限」。放行与吞掉都不等识别跑完，agent 预处理器与归档复用这次识别，不再识别第二遍。
 10. 取历史与等识别期间侧车已熔断的，本条兜底、不发请求。第 6 步的名字表作为 `selfNames` 随请求发出（见「侧车接口」）。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理：整条回 422 `bad_text`，这一条只能兜底；更早的侧车回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条兜底；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
@@ -59,15 +59,28 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 422、413 与请求体超限是"这条消息不适合交给模型"，不是侧车故障，所以只让这一条走兜底，不计入熔断。不改为放行给 agent：请求体超限要等窗口里的大行滚出窗口才恢复，期间同一会话的每条消息都会命中，放行就等于这段时间逐条回复。
 
+## 托管侧车
+
+配置了 `sidecarDir`（侧车目录的绝对路径）时，侧车由本插件托管，不用另装系统服务：
+
+- 本插件是生效的触发插件、且有 process 服务时才拉起侧车：`<sidecarDir>/.venv-run/bin/python -u <sidecarDir>/laya_listener.py --model-dir <sidecarDir>/models/current --port <端口> --parent-pid <Aalis 的进程号>`，工作目录是侧车目录。端口取 `endpoint` 的，所以 `endpoint` 须为 `http://127.0.0.1:<端口>`；`sidecarDir` 不是绝对路径或 `endpoint` 不合要求时记一条 error，不托管，照常按 `endpoint` 连接。
+- 本插件不生效时不拉起；不再生效（偏好切走）、停用或 Aalis 停机时关掉侧车：先发 SIGTERM，5 秒内没退出再发 SIGKILL。
+- 拉起前先探一次 `GET /health`：地址上已有侧车在答（系统服务、手动启动的），就不再拉起、直接用它，记一条 warn。要改由本插件托管，先停掉它，再重启 Aalis。
+- 启动（加载模型、金样自检与预热，约 11 秒）期间判定按兜底只回点名、不发请求，不算判定不可用。侧车往标准输出打出就绪行后照常判定，记一条 info。120 秒内没有就绪，按启动超时杀掉重启。
+- 侧车意外退出（崩溃、自愈退出、启动失败、启动超时）后重启，间隔从 1 秒起每次翻倍，封顶 60 秒；就绪后稳定运行满 60 秒才退出的，间隔回到 1 秒。退出算判定不可用（见「兜底与故障观测」），原因里写明退出码的含义与侧车的最后一行输出。重启期间判定按兜底、不发请求；重启就绪后，此前的失败计数与熔断作废。
+- Aalis 被强杀、来不及关侧车时，侧车发现父进程已不在（被系统收养），约 0.5 秒内自行退出，不留孤儿进程。
+- 侧车的输出只含事件名、计数、耗时与错误码，不含消息内容，按行记为 debug 日志。
+- 改本插件的配置会重载插件，侧车随之重启，期间约 11 秒只回点名。
+
 ## 兜底与故障观测
 
-连续 3 次失败后熔断 30 秒，期间不发请求，直接兜底；熔断到期后照常请求（这时并发到达的请求都会发出），再失败一次即重新熔断；其间侧车回过 422 / 413 的，失败计数已清零，要再连续失败 3 次才重新熔断。熔断与 memory 缺席都算**判定不可用**：
+连续 3 次失败后熔断 30 秒，期间不发请求，直接兜底；熔断到期后照常请求（这时并发到达的请求都会发出），再失败一次即重新熔断；其间侧车回过 422 / 413 的，失败计数已清零，要再连续失败 3 次才重新熔断。熔断、memory 缺席，以及托管的侧车意外退出、没有 process 服务，都算**判定不可用**：
 
 - 由可用转为不可用时记一条 **error**：`[laya] 判定不可用（<原因>），已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档`。一次故障只记这一条，其间的并发失败与重新熔断记 debug。
 - 转为不可用后第一次成功的判定（200，且 `logit` 与阈值都是有限数）记一条 **warn**：`[laya] 判定恢复（不可用 <秒>s，最后原因: <原因>）`。
-- 诊断项 `trigger.laya`（WebUI 的诊断页、`/doctor` 命令）：运行时探一次 `GET /health`（超时同 `timeoutMs`），并报 memory 是否在场、侧车是否处于熔断期、本插件是否生效。都正常为 ok；有问题时，本插件生效报 error（群里只回点名），不生效报 warn（不影响回复），并点名当前生效的触发插件。
+- 诊断项 `trigger.laya`（WebUI 的诊断页、`/doctor` 命令）：本插件不生效时不检查侧车（侧车在不在都不影响回复），报 ok，点名当前生效的触发插件并说明怎么启用。生效时探一次 `GET /health`（超时同 `timeoutMs`；托管的侧车在启动或等重启时不探，直接报这个状态），并报 memory 是否在场、侧车是否处于熔断期。判定不了（群里只回点名）报 error；托管的侧车首次启动中、侧车不由本插件托管（地址上已有别的侧车，或 `sidecarDir` 配置不合要求）报 warn；都正常为 ok。
 - 带图消息判定时只有图片指针：第 9 步等完附件识别后，按消息记下图片有没有内容描述，只留最近 20 条。计入的是带图片、且附件识别已写回描述的消息，只覆盖静态图：动图走视频的抽帧识别，没有可用的识别模型时写回的是抽帧失败的说明（`[视频] 已收到视频文件但未能抽取关键帧或音轨…`），不计为只有指针；它的图片都只有指针（描述位为空，或只有不带描述的 `[图片 | ref:…]`）即算一条「只有指针」，识别失败的占位（`[图片：获取或识别失败，内容未知]`，media 每次失败另记 warn）不算。识别超过 `mediaWaitMs` 还没写回的不计入（反映在自检汇总的 `不一致:缺附件描述`）；media 缺席时带附件的消息本来就没有描述（见「依赖」），同样不计入。本插件生效、且最近 20 条里只有指针的达到 10 条时，诊断项报 warn：「近 <n> 条带图消息有 <m> 条判定时只有图片指针、没有内容描述：media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型」，这时模型判定带图消息时不知道图里是什么。只在本插件判定时记（第 7 步就兜底的不记），计数自插件激活起；原因排除后，要等后来的带图消息把最近 20 条里只有指针的挤到 10 条以下，warn 才消失。
-- 判定不可用只由一次成功的判定清除；422 / 413 只清零失败计数，不算恢复（这条没有经过推理）。熔断已到期或 memory 已回来、但还没有请求确认恢复时（本插件不生效时一直是这样），诊断项报 warn，写明探活结果与「上次判定不可用（<原因>），尚未经请求确认恢复」：`/health` 正常不代表 `/v1/score` 正常。切到 trigger-policy 修好侧车后，在诊断项里看到侧车在线再切回：切回后第一次成功判定记恢复；仍失败则重新熔断（立即，或其间回过 422 / 413 时再攒满 3 次），属同一次故障，不另记 error。
+- 判定不可用只由一次成功的判定清除；422 / 413 只清零失败计数，不算恢复（这条没有经过推理）。熔断已到期或 memory 已回来、但还没有请求确认恢复时，诊断项报 warn，写明探活结果与「上次判定不可用（<原因>），尚未经请求确认恢复」：`/health` 正常不代表 `/v1/score` 正常。切到 trigger-policy 修好侧车后再切回（托管的侧车在切回时重新拉起；外部运行的，可先 `curl http://127.0.0.1:<端口>/health` 确认在线）：切回后第一次成功判定记恢复；仍失败则重新熔断（立即，或其间回过 422 / 413 时再攒满 3 次），属同一次故障，不另记 error。
 
 不算判定不可用、不记转入的 error、诊断项也不反映的兜底：
 
@@ -90,6 +103,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `muteTimeSeconds` | number | `60` | 禁言关键词命中时长（秒） |
 | `mediaWaitMs` | number | `8000` | 带附件的消息等识别写好描述的上限（毫秒），超时照常判定 |
 | `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车地址 |
+| `sidecarDir` | string | `''` | 侧车目录的绝对路径。填了则由本插件托管侧车，端口取 `endpoint` 的（见「托管侧车」）；留空 = 侧车由外部运行 |
 | `timeoutMs` | number | `1000` | 单次请求的超时（毫秒），含读完响应体；超时计一次失败。诊断项探活用同一个超时 |
 | `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（取法见「判定流程」第 8 步） |
 | `priority` | number | `-10` | 在 `trigger` 服务里的优先级；trigger-policy 为 0。默认低于它，两者都启用、没有偏好时由 trigger-policy 生效；要用本插件，改服务偏好（见「切换与回滚」），或把它配到大于 0 |
@@ -108,8 +122,9 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
   [laya] 判定 | session=<会话> | speak=<true|false> | addressed=<true|false> | 兜底=<原因> | 耗时=<n>ms
   ```
 
-  耗时是整次判定：取历史、等附件识别与侧车往返。兜底原因：`会话不适用`、`memory 缺席`、`侧车熔断中`、`请求体超限`、`侧车请求失败`、`侧车 422 <错误码>` / `侧车 413 <错误码>`、`判定异常`。
+  耗时是整次判定：取历史、等附件识别与侧车往返。兜底原因：`会话不适用`、`memory 缺席`、`侧车熔断中`、`process 服务缺席`、`侧车启动中`、`侧车重启中`、`请求体超限`、`侧车请求失败`、`侧车 422 <错误码>` / `侧车 413 <错误码>`、`判定异常`。
 - 判定不可用（error）与恢复（warn），见「兜底与故障观测」。
+- 托管侧车（见「托管侧车」）：正在拉起、就绪、已停掉（info）；地址上已有侧车、不再拉起（warn）；配置不合要求、不托管（error，激活时一次）；侧车的输出、重启，以及判定不可用期间再次退出（debug）。
 - 请求体超限（info，每条一行）；单次请求失败、熔断期间的重新熔断（debug）；取历史等意外异常（warn，本条兜底）；人设读名字失败（warn，同一提供者同一原因一次）；解析会话配置失败、名字表改按全局默认的卡取（warn，同一原因一次）；附件识别失败、吞掉时归档失败（warn，每次一行）；模型没见过的会话（warn，每类会话一次）。
 - 运行期自检汇总（info，每结清 200 条记一行，计数自插件激活起累计）：
 
@@ -134,8 +149,8 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 切换与回滚
 
-- **启用模型判定**：默认由 trigger-policy 判定。WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」，下一条消息起由本插件判定，trigger-policy 什么都不做（偏好同时写回配置文件的 `servicePreferences`）；也可以手改配置文件，在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，重启生效。
-- **切到规则判定（即时）**：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，下一条消息起由 trigger-policy 判定，本插件什么都不做。切回同理。
+- **启用模型判定**：默认由 trigger-policy 判定。WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」，下一条消息起由本插件判定，trigger-policy 什么都不做（偏好同时写回配置文件的 `servicePreferences`）；也可以手改配置文件，在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，重启生效。托管侧车时，切过来才拉起侧车，就绪前约 11 秒只回点名。
+- **切到规则判定（即时）**：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，下一条消息起由 trigger-policy 判定，本插件什么都不做，托管的侧车随之关掉。切回同理。
 - **停用本插件**：WebUI 插件管理里停用，trigger-policy 在下一条消息接手。
 - **让某些会话不走模型**：把它们移出 `scopes`（作用域是白名单，要排除单个群就改为列出其余的群）。移出后这些消息直接放行、不经任何触发判定；要按规则判定，只能整体切到 trigger-policy。
 - 手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。

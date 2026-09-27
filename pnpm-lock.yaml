@@ -2382,6 +2382,9 @@ importers:
       '@aalis/api-persona':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-persona
+      '@aalis/api-process':
+        specifier: workspace:>=0.8.0 <1.0.0
+        version: link:../api-process
       '@aalis/api-session-manager':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-session-manager
