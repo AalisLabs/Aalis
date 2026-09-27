@@ -41,7 +41,6 @@ function task(id: string, over: Partial<TaskRecord> = {}): TaskRecord {
     state: 'queued',
     createdAt: Date.now(),
     artifacts: [],
-    notified: false,
     delivered: false,
     ...over,
   };
@@ -173,7 +172,7 @@ describe('paper_status', () => {
     costCents: 37,
     resultText: `${'说'.repeat(500)}TAIL-SENTINEL`,
     artifacts: [{ id: 'a-0000000a', rel: 'SECRET-REL-NAME.png', type: 'png', sizeBytes: 2048 }],
-    notified: true,
+    notice: { id: 'n-0000000a', at: now - 60_000 },
   });
   const theirs = [
     task('t-0000000b', {

@@ -1818,6 +1818,9 @@ importers:
       '@aalis/api-gateway':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-remote-agent':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-remote-agent
@@ -1837,6 +1840,9 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-message
     devDependencies:
+      '@aalis/api-agent':
+        specifier: workspace:*
+        version: link:../api-agent
       '@aalis/core':
         specifier: workspace:*
         version: link:../core

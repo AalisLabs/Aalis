@@ -17,7 +17,8 @@ import { randomHex, type TaskRecord } from './ledger.js';
 type Artifact = TaskRecord['artifacts'][number];
 type ArtifactType = Artifact['type'];
 
-const EXTENSIONS: Record<ArtifactType, string> = {
+/** 各判定类型落盘用的扩展名（paper_send 重写的文件名也用它） */
+export const EXTENSIONS: Record<ArtifactType, string> = {
   png: 'png',
   jpeg: 'jpg',
   gif: 'gif',
@@ -35,6 +36,11 @@ export function paperDirUri(paperId: string): string {
 /** 一件任务的成品目录 */
 function taskOutUri(paperId: string, taskId: string): string {
   return `${paperDirUri(paperId)}/tasks/${taskId}/out`;
+}
+
+/** 一件成品在白纸根里的位置：文件名是宿主生成的产物 id 加判定类型的扩展名 */
+export function artifactUri(paperId: string, taskId: string, artifact: Pick<Artifact, 'id' | 'type'>): string {
+  return `${taskOutUri(paperId, taskId)}/${artifact.id}.${EXTENSIONS[artifact.type]}`;
 }
 
 function bundleUri(paperId: string): string {
@@ -170,7 +176,7 @@ export class RunCollector implements ArtifactSink {
     do id = `a-${randomHex(4)}`;
     while (this.takenIds.has(id));
     this.takenIds.add(id);
-    await this.storage.writeFile(`${taskOutUri(this.paperId, this.taskId)}/${id}.${EXTENSIONS[type]}`, toBuffer(data));
+    await this.storage.writeFile(artifactUri(this.paperId, this.taskId, { id, type }), toBuffer(data));
     this.used += size;
     this.#runBytes += size;
     this.artifacts.push({ id, rel, type, sizeBytes: size });

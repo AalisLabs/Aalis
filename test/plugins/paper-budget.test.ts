@@ -138,7 +138,6 @@ describe('reserveFor：这块白纸最近 5 轮已记账费用的均值', () => 
     endedAt,
     costCents,
     artifacts: [],
-    notified: true,
     delivered: false,
   });
 

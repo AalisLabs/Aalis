@@ -254,7 +254,7 @@ export interface IncomingMessage {
    * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
    * - 不进向量记忆、抽取与记忆扩窗。
    *
-   * `kind` 是通知的子类（如 'paper-task'），`id` 是注入方生成的对位标识（等 agent:turn:after 用）。
+   * `kind` 是通知的子类（如 'paper-task'），`id` 是注入方生成的通知标识（日志与账本对位用）。
    * `untrusted` 是注入方已用 wrapUntrustedContent 包好的不可信段：只在当轮渲染时接在正文之后，
    * 不归档、不进任何存储。宿主撰写的行一律放在 content 里。
    */
