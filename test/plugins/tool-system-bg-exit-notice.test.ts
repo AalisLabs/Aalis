@@ -347,7 +347,7 @@ describe('结束通知的身份：权限跟链源头', () => {
         platform: 'webui',
         userId: `parent:${OTHER}`,
         actor: { platform: 'webui', userId: 'console' },
-        inbound: {},
+        inbound: { source: 'subtask' },
       },
       platform: 'webui',
       actor: { platform: 'webui', userId: 'console' },

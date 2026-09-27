@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { type AccessConfirmHandler, type AccessRequest, authority } from '../../packages/api-authority/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import sessionConfirmPlugin from '../../packages/plugin-session-confirm/src/index.js';
+import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+
+type ToolHandler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;
 
 // ════════════════════════════════════════════════════════════
 // 端到端：统一会话确认环路（轴 B 的交互通道）
@@ -229,6 +234,63 @@ describe('plugin-session-confirm 端到端确认环路', () => {
       expect(swallowed, '通知不应被确认相位吞掉').toBe(false);
       expect(settled, '确认不应被通知结算').toBe(false);
       host.events.emit('inbound:message', { content: 'n', sessionId: 'sess-src', platform: 'onebot' });
+      expect(await pending).toBe(false);
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
+
+  it('安全：父会话经 send_to_subtask 发来的 ys 不批准子会话里的确认（子任务回合与这条中继同为 parent:<父会话>）', async () => {
+    const { app, host, getHandler } = await setup();
+    try {
+      const PARENT = 'cli-default';
+      const CHILD = `${PARENT}::abcd1234`;
+      const handlers = new Map<string, ToolHandler>();
+      host.provide(tools, {
+        register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
+          handlers.set(tool.definition.function.name, tool.handler);
+          return () => void handlers.delete(tool.definition.function.name);
+        },
+        registerGroup: () => () => {},
+      } as never);
+      host.provide(sessionManager, {
+        getSession: (id: string) => (id === CHILD ? { id, parentId: PARENT, status: 'active' } : undefined),
+        updateSession: async () => {},
+      } as never);
+      await app.plugins.register(subtaskPlugin, {});
+      await app.plugins.idle();
+
+      let swallowed = false;
+      let dispatched = false;
+      host.events.on('gateway:phase:done', d => {
+        if (d.phase === 'inbound:confirm' && d.reachedEnd === false) swallowed = true;
+        if (d.phase === 'inbound:dispatch') dispatched = true;
+      });
+      // 子任务回合里的工具确认：工具调用上下文的 userId 是子任务消息的 userId
+      let settled = false;
+      const pending = getHandler()!({ ...req(CHILD), platform: 'cli', userId: `parent:${PARENT}` }).then(d => {
+        settled = true;
+        return d;
+      });
+      await tick();
+
+      const sent = await handlers.get('send_to_subtask')!(
+        { subtask_id: CHILD, message: 'ys' },
+        { sessionId: PARENT, platform: 'cli', userId: 'console' },
+      );
+      expect(JSON.parse(sent)).toMatchObject({ sent: true });
+      await tick();
+      await tick();
+      expect(swallowed, '中继消息不应被确认相位当作应答吞掉').toBe(false);
+      expect(settled, '确认不应被父会话的中继批准').toBe(false);
+      expect(dispatched, '中继消息照常送达子任务').toBe(true);
+
+      host.events.emit('inbound:message', {
+        content: 'n',
+        sessionId: CHILD,
+        platform: 'cli',
+        userId: `parent:${PARENT}`,
+      });
       expect(await pending).toBe(false);
     } finally {
       await app.stop().catch(() => {});

@@ -195,7 +195,8 @@ export default definePlugin({
     });
 
     // inbound:confirm 相位（最前）：命中未决确认即喂入解析并吞掉，避免触达 agent（防 abort 在途生成）。
-    // 带 source 的内部注入（定时任务、宿主通知等）不可能是应答：两边都没有 userId 时 feed 会当成本人，先挡在这里。
+    // 带 source 的内部注入（定时任务、宿主通知、子任务的派发与追问等）不可能是应答：两边都没有 userId 时、子任务回合的
+    // 确认与父会话经 send_to_subtask 发来的追问同为 parent:<父会话> 时，feed 都会当成本人，先挡在这里。
     hooks.middleware(INBOUND_PHASE.CONFIRM, async (data, next) => {
       const { message } = data;
       if (message.source === undefined && busChannel.feed(message.sessionId, message.content ?? '', message.userId)) {
