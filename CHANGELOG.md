@@ -8,19 +8,21 @@
 
 ---
 
-## 未发布
+## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 
-回复闸门职责重组、模型触发插件与随之的修复，以及 0.18 推迟的低危缺陷修复（从「core 的插件状态机与日志」一节起）。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬；`@aalis/api-memory`（`clearMetadataNamespaces`）由 plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-todo-list、plugin-adapter-onebot 抬，它们在运行时导入这个函数，不抬会在装到旧版 api-memory 时加载失败；`@aalis/util-network-guard`（`assertPortAllowed`）由 plugin-tool-browser 抬；plugin-webui-server 与 runtime 的 `@aalis/core` peer 下限抬到本批 core 版本（禁用插件带配置的 `updateConfig` 只换配置、保持禁用，webui-server 的插件配置接口与 runtime 的配置热重载依赖这一语义）。用到 api-memory 结果行 `type` 或可选方法 `listMetadataKeys` 的 plugin-commands、plugin-memory-vector、plugin-checkpoint、plugin-persona 与三家记忆后端（plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-inmemory）虽只是类型上的加法，也一并抬到新版。其余新用到的接口在已发布版本里都有，也不必抬：plugin-llm-openai、plugin-llm-ollama 新依赖的 `@aalis/util-text-normalize`（`truncateChars`，0.5.2）；plugin-tool-browser 用到的 `pinnedLookup`、`assertAddressesSafe`（util-network-guard 0.6.2 已导出）；plugin-image-sender 用到的 `@aalis/api-storage` 的 `isStorageNotFound`、`isStorageUri` 与网关的 `readFileRange`（0.7.0）。
+回复闸门职责重组、模型触发插件与随之的修复，以及 0.18 推迟的低危缺陷修复（从「core 的插件状态机与日志」一节起）。用到本节新增接口的包间依赖下限已抬到本批的新版本：`@aalis/schema-message` 0.9.1（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway` 0.8.0（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona` 0.8.1（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬；`@aalis/api-memory` 0.7.1（`clearMetadataNamespaces`）由 plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-todo-list、plugin-adapter-onebot 抬，它们在运行时导入这个函数，不抬会在装到旧版 api-memory 时加载失败；`@aalis/util-network-guard` 0.6.3（`assertPortAllowed`）由 plugin-tool-browser 抬；plugin-flow-control 提供的是收窄后的 `FlowControlService`，`@aalis/api-flow-control` 的下限抬到 0.8.0；plugin-webui-server 与 runtime 的 `@aalis/core` peer 下限抬到 `>=0.19.0 <1.0.0`（禁用插件带配置的 `updateConfig` 只换配置、保持禁用，webui-server 的插件配置接口与 runtime 的配置热重载依赖这一语义），本批其余带 core peer 的包仍为 `>=0.18.0 <1.0.0`。用到 api-memory 结果行 `type` 或可选方法 `listMetadataKeys` 的 plugin-commands、plugin-memory-vector、plugin-checkpoint 与三家记忆后端（plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-inmemory）虽只是类型上的加法，也一并抬到 0.7.1；plugin-persona 只在开发依赖里引用 api-memory 的类型，发布的依赖里没有 api-memory，不涉及下限。其余新用到的接口在已发布版本里都有，也不必抬：plugin-llm-openai、plugin-llm-ollama 新依赖的 `@aalis/util-text-normalize`（`truncateChars`，0.5.2）；plugin-tool-browser 用到的 `pinnedLookup`、`assertAddressesSafe`（util-network-guard 0.6.2 已导出）；plugin-image-sender 用到的 `@aalis/api-storage` 的 `isStorageNotFound`、`isStorageUri` 与网关的 `readFileRange`（0.7.0）。
 
-待发布的包：
+本批共 45 个包：22 个 minor、22 个 patch、1 个新包。
 
-- 有代码或契约改动（43 个）：core、runtime、schema-config、schema-message、util-network-guard、api-flow-control、api-gateway、api-media、api-memory、api-persona、api-platform、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-cli、plugin-commands、plugin-doctor、plugin-draw、plugin-file-reader、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai、plugin-media、plugin-memory-inmemory、plugin-memory-mongodb、plugin-memory-sqlite、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-tool-browser、plugin-tool-session、plugin-trigger-policy、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server
-- 按次版本发布（14 个）：core（禁用插件带配置的 `updateConfig` / `bounce` 改为收下配置并返回 true，required 依赖反复缺失时转 `error`）、runtime（插件入口改按 `import()` 的条件解析，只写 `require` 条件的插件改为跳过；启动时把上一轮的日志改名保留，公开导出的 `setupFileLogger` 同样先轮转；配置热重载须配本批 core）、plugin-commands（删除 `/clear list`，指令解析规则，`CLEAR_TYPES` 的类型）、plugin-doctor（`/doctor` 改为受限，等级 2 以下的用户不能再运行）、plugin-tool-browser（被拒连接的报错改为 `net::ERR_SOCKS_CONNECTION_FAILED`，`blockPrivate=true` 时不再使用系统代理）、plugin-memory-sqlite（公开导出的 `SQLiteMemoryService` 构造参数须带 `logger`）、plugin-user-relation（公开导出的 `RelationStore`、`RelationService` 的 `clearAll` 须传 `logger`）、plugin-image-sender（`send_attachment` 的拒收规则）、plugin-llm-openai、plugin-llm-ollama、plugin-llm-deepseek（读配置时拒绝带凭据或解析不了的 `baseUrl`，对话报错改写）、plugin-package-manager（`install` 的回执，`PackageManagerDeps.pluginStatus` 须返回 `instanceId`）、plugin-webui-server（管理接口的回执与状态码）、plugin-webui-client（读 webui-server 新增的 `appName`，须与它同批升级）
-- 按 patch 发布（15 个）：schema-config（只改 `name` 的说明文字）、util-network-guard（只新增公开 API：`pinnedLookup` 转为公开、新增 `assertPortAllowed`，`assertSafeUrl` 行为不变）、api-memory（只新增可选的结果行字段 `type`、可选方法 `listMetadataKeys` 与函数 `clearMetadataNamespaces`）、plugin-agent、plugin-checkpoint、plugin-cli（只改帮助页的日志提示）、plugin-draw、plugin-memory-inmemory、plugin-memory-mongodb（`MongoMemoryService` 标了 `@internal`，构造参数的变化不算公开 API）、plugin-memory-summary、plugin-memory-vector、plugin-session-manager、plugin-storage-local、plugin-todo-list、plugin-user-profile
-- 回复闸门线的 14 个包（api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy）在发布时按源码与 npm 实况定档。其中 plugin-adapter-onebot、plugin-flow-control、plugin-persona 另有本批的低危修复，这部分只够 patch，不影响它们的档位。
+- 按次版本发布（22 个）：
+  - 低危修复：core 0.19.0（禁用插件带配置的 `updateConfig` / `bounce` 改为收下配置并返回 true，required 依赖反复缺失时转 `error`）、runtime 0.15.0（插件入口改按 `import()` 的条件解析，只写 `require` 条件的插件改为跳过；启动时把上一轮的日志改名保留，公开导出的 `setupFileLogger` 同样先轮转；配置热重载须配本批 core）、plugin-commands 0.13.0（删除 `/clear list`，指令解析规则，`CLEAR_TYPES` 的类型）、plugin-doctor 0.8.0（`/doctor` 改为受限，等级 2 以下的用户不能再运行）、plugin-tool-browser 0.13.0（被拒连接的报错改为 `net::ERR_SOCKS_CONNECTION_FAILED`，`blockPrivate=true` 时不再使用系统代理）、plugin-memory-sqlite 0.12.0（公开导出的 `SQLiteMemoryService` 构造参数须带 `logger`）、plugin-user-relation 0.15.0（公开导出的 `RelationStore`、`RelationService` 的 `clearAll` 须传 `logger`）、plugin-image-sender 0.8.0（`send_attachment` 的拒收规则）、plugin-llm-openai 0.14.0、plugin-llm-ollama 0.12.0、plugin-llm-deepseek 0.14.0（读配置时拒绝带凭据或解析不了的 `baseUrl`，对话报错改写）、plugin-package-manager 0.8.0（`install` 的回执，`PackageManagerDeps.pluginStatus` 须返回 `instanceId`）、plugin-webui-server 0.14.0（管理接口的回执与状态码）、plugin-webui-client 0.14.0（读 webui-server 新增的 `appName`，须与它同批升级）
+  - 回复闸门线：api-flow-control 0.8.0（`FlowControlService` 收窄，删除 `FlowSessionStateSnapshot`）、api-gateway 0.8.0（入站相位顺序改为 trigger 先于 flow）、api-platform 0.9.0（删除 `PlatformAdapter.checkAndRecordProactiveSend`）、plugin-adapter-onebot 0.15.0（删除适配器的 `checkAndRecordProactiveSend`，须与 plugin-tool-session 同批升级；请求事件合成的系统通知改带 `source`）、plugin-flow-control 0.12.0（闲置触发与计数的配置字段移出，服务收窄，须与 plugin-trigger-policy 同批升级）、plugin-persona 0.12.0（在运行时导入 api-gateway 0.8.0 新增的 `inferSessionScope`，升级它会把 api-gateway 一并带到新版，须与 plugin-flow-control、plugin-trigger-policy 同批升级）、plugin-tool-session 0.14.0（`delegate_to_session` 的拒收规则改由流控的禁言与限速判定，须与 plugin-adapter-onebot 同批升级）、plugin-trigger-policy 0.14.0（不再注册 `trigger-policy` 服务，删除 `TriggerPolicyService` 等类型，闲置触发与计数的配置字段迁入）
+- 按 patch 发布（22 个）：
+  - 低危修复：schema-config 0.13.1（只改 `name` 的说明文字）、util-network-guard 0.6.3（只新增公开 API：`pinnedLookup` 转为公开、新增 `assertPortAllowed`，`assertSafeUrl` 行为不变）、api-memory 0.7.1（只新增可选的结果行字段 `type`、可选方法 `listMetadataKeys` 与函数 `clearMetadataNamespaces`）、plugin-agent 0.15.1、plugin-checkpoint 0.13.1、plugin-cli 0.12.1（只改帮助页的日志提示）、plugin-draw 0.3.1、plugin-memory-inmemory 0.11.1、plugin-memory-mongodb 0.11.1（`MongoMemoryService` 标了 `@internal`，构造参数的变化不算公开 API）、plugin-memory-summary 0.12.1、plugin-memory-vector 0.13.1、plugin-session-manager 0.13.1、plugin-storage-local 0.12.1、plugin-todo-list 0.11.1、plugin-user-profile 0.13.1
+  - 回复闸门线：api-media 0.11.1（只改 `processMessage` 的说明）、api-persona 0.8.1（`getPersonaName` / `getNickNames` 新增可选参数）、schema-message 0.9.1（新增 `buildIncomingContent`，更新 `source` 与 `triggerType` 的字段说明）、plugin-file-reader 0.13.1、plugin-media 0.15.1、plugin-message-archive 0.12.1（附件识别的写回与去重修复，接口不变）、plugin-gateway 0.7.1（只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正）
+- plugin-adapter-onebot、plugin-flow-control、plugin-persona 另有本批的低危修复，这部分只够 patch，档位由回复闸门线定。
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
-- plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
 - plugin-scheduler、plugin-workflow 只改了注释，api-llm 只改了 `refresh` 的注释，api-authority 只改了 `network` 的注释，plugin-authority 只改了上报器失败来源的注释，本批不单独发布。
 
 ### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
@@ -82,8 +84,8 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 ### 必须同批升级的包
 
-- plugin-flow-control 与 plugin-trigger-policy 同批升级：新版 flow-control 提供的服务已删除旧版 trigger-policy 调用的 `getStateSnapshot` / `recordTriggered` 等方法；相位顺序常量在 `@aalis/api-gateway`，它升到本节的新版本后，已发布的旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这四个包须同一批勾选更新。
-- 暂不升级本节各包的项目注意反方向：`npm update` 或无锁文件重装可能把传递依赖 `@aalis/api-gateway` 升到本节的新版本（多个依赖方写的是 `>=0.7.0 <1.0.0`），已发布的旧版 flow-control 与 trigger-policy 随即按新顺序失常，请用 `package.json` 的 `overrides` 把 `@aalis/api-gateway` 固定在已发布的 0.7.0。
+- plugin-flow-control 与 plugin-trigger-policy 同批升级：新版 flow-control 提供的服务已删除旧版 trigger-policy 调用的 `getStateSnapshot` / `recordTriggered` 等方法；相位顺序常量在 `@aalis/api-gateway`，它升到 0.8.0 后，已发布的旧版二者会按新顺序运行而失常。plugin-persona 与这两个包同批升级：新版 persona 在运行时导入 api-gateway 0.8.0 新增的 `inferSessionScope`，依赖下限为 0.8.0，单独升级它同样会把 api-gateway 带到新版。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这五个包须同一批勾选更新。
+- 暂不升级本节各包的项目注意反方向：`npm update` 或无锁文件重装可能把传递依赖 `@aalis/api-gateway` 升到 0.8.0（多个依赖方写的是 `>=0.7.0 <1.0.0`），已发布的旧版 flow-control 与 trigger-policy 随即按新顺序失常，请用 `package.json` 的 `overrides` 把 `@aalis/api-gateway` 固定在已发布的 0.7.0；这样固定时也不能单独升级 plugin-persona，它要求 api-gateway 0.8.0。
 
 ### core 的插件状态机与日志（@aalis/core）
 
@@ -96,7 +98,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 **行为变化与迁移**：
 - 初始化期间 required 依赖持续失稳、自动重试用尽的插件停在 `error`，依赖恢复后不再自动激活，需 `enable` 或 `bounce`（WebUI 里用插件卡片的开关先禁用再启用，或点「编辑配置」原样保存）；此前停在 `pending`，下一次重算自动重试。doctor 的 `plugins.errored` 会把这类插件列为出错。
-- 靠禁用插件的 `updateConfig` / `bounce` 返回 false 判断「插件已禁用」的调用方，改为先读 `getStatus()` 或 `getPlugin()` 的 `state`。依赖新语义的包（plugin-webui-server 的插件配置接口、runtime 的配置热重载）须把 `@aalis/core` 的 peer 下限抬到本版。
+- 靠禁用插件的 `updateConfig` / `bounce` 返回 false 判断「插件已禁用」的调用方，改为先读 `getStatus()` 或 `getPlugin()` 的 `state`。依赖新语义的包须把 `@aalis/core` 的 peer 下限抬到本版：plugin-webui-server（插件配置接口）与 runtime（配置热重载）已抬到 `>=0.19.0 <1.0.0`。
 - 按「仍在激活（已超过」筛日志的，改看 `getStatus()` 的 `slow` 或 doctor 的 `plugins.slow`。
 - 用 `vi.useFakeTimers()` 测插件的：阈值到点后激活转入后台，不再挂定时器，`vi.runAllTimers()` 不会再在提醒定时器上空转。
 
@@ -146,7 +148,7 @@ plugin-draw 按 patch 发布。
 
 **迁移**：
 
-- 靠 `PUT /api/plugins/:name/config` 回 409 判断插件已禁用的调用方，改读 `/api/plugins` 的 `state`。这条依赖本批 core 的新语义（禁用态 `updateConfig` 收下配置、返回 true）：配合旧版 core 时，对禁用插件的 PUT 会回 404「插件不存在」。发布时 plugin-webui-server 的 `@aalis/core` peer 下限抬到本批 core 的版本。
+- 靠 `PUT /api/plugins/:name/config` 回 409 判断插件已禁用的调用方，改读 `/api/plugins` 的 `state`。这条依赖本批 core 的新语义（禁用态 `updateConfig` 收下配置、返回 true）：配合旧版 core 时，对禁用插件的 PUT 会回 404「插件不存在」。plugin-webui-server 的 `@aalis/core` peer 下限已抬到 `>=0.19.0 <1.0.0`。
 - 新建实例回 500 时实例已登记、配置已写入配置文件：调用方不要按「没建成」重试同名实例（会回「已存在」），改好配置经 `PUT /api/plugins/:name/config` 保存即重试激活。
 - 删除实例落盘失败时回 409 或 500 与 `{ error }`（不带 `applied`），实例不卸载，文档里的配置段与禁用标记还原，文案为「未删除实例 X：未写入配置文件（原因）」；此前回 `applied: true`，实例已在运行态卸载。
 - 习惯每次启动都自动弹出页面的，persist 模式下改从 `data/webui/access.txt` 取一键登录链接，或直接访问已登录过的地址（cookie 仍有效）；要每次都换 token 并打开，用 `tokenMode: ephemeral`。
@@ -216,7 +218,7 @@ plugin-draw 按 patch 发布。
 
 ### 零散修复（@aalis/plugin-cli、@aalis/plugin-flow-control、@aalis/plugin-storage-local、@aalis/runtime）
 
-storage-local 与 plugin-cli 按 patch 发布；runtime 因下面所列入口解析的反方向变化，并须配本批 core（见开头的下限说明），按次版本发布；flow-control 本节这一项是修复，它的档位随回复闸门职责重组一节定。
+storage-local 与 plugin-cli 按 patch 发布；runtime 因下面所列入口解析的反方向变化，并须配本批 core（见开头的下限说明），按次版本发布；flow-control 本节这一项是修复，它随回复闸门职责重组按次版本发布。
 
 - flow-control 的禁言表写盘在飞时 storage 换人（或同一 storage 重载）触发重读，读到的文件可能不含这次写。此前写一成功就清掉「未落盘改动」记录，随后读回的旧禁言按较晚的到期时刻合并回内存，解禁被撤回，新 storage 上的文件也不再补写，群里按旧禁言沉默到原到期时刻。现在写盘期间开始了重读的，这次写成功也不清记录：重读时这些会话以内存为准，读完补写到当前 storage。写链在等上一次读回时又开始了重读的，现在接着等新的一次读回再写；此前这一步直接写整表，会冲掉新 storage 文件里其它会话的禁言，解禁同样可能被撤回。
 - storage-local 的 `storage.delete` 审计日志由 warn 改为 info，与写入、重命名、移动同级；`/clear`、市场更新预检、checkpoint 清理等正常删除不再输出一串 WARN。

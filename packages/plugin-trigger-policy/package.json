@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-trigger-policy",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,7 +30,7 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-flow-control": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-gateway": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-gateway": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
