@@ -20,6 +20,13 @@ const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
  */
 const CLOSE_GRACE_MS = 200;
 
+/**
+ * 中止（SpawnOptions.signal）后从 SIGTERM 升级到整组 SIGKILL 的宽限（毫秒，仅 POSIX）。
+ * 加上 CLOSE_GRACE_MS 须明显短于 core 的停机宽限（默认 5000ms）：随 lifecycle.signal 中止的子进程
+ * 即使忽略 SIGTERM，停用也能在宽限内落定。
+ */
+export const ABORT_KILL_GRACE_MS = 2000;
+
 const isWindows = process.platform === 'win32';
 
 /**
@@ -79,6 +86,33 @@ function groupAlive(pid: number): boolean {
   }
 }
 
+/**
+ * 随 SpawnOptions.signal 中止子进程。POSIX 对整组发 SIGTERM，宽限后组里还有成员就整组 SIGKILL；升级定时器
+ * 不因直接子进程退出而取消（孙进程可能还在）。Windows 没有优雅终止，趁根进程还活着立即 taskkill 整棵树：
+ * 根进程一死，孙进程就不在它的树上了，之后再 `/T` 找不到它们，pid 被复用时还会误杀无关的进程树。
+ * 'exit' 或 'error' 任一到达即摘监听，之后再中止不对任何进程发信号。监听器不得抛错（lifecycle.signal 的
+ * 监听器同步执行，异常按未捕获处理），killGroup 与 killTree 自带兜底。
+ */
+function killOnAbort(child: ChildProcess, signal: AbortSignal): void {
+  const pid = child.pid;
+  // 创建失败：Node 只发 'error' 不发 'exit'，没有 pid 时不登记，免得监听一直挂在长寿的 signal 上
+  if (pid === undefined) return;
+  const onAbort = (): void => {
+    if (isWindows) {
+      killTree(child);
+      return;
+    }
+    killGroup(child, 'SIGTERM');
+    setTimeout(() => {
+      if (groupAlive(pid)) killTree(child);
+    }, ABORT_KILL_GRACE_MS).unref();
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  const unlisten = (): void => signal.removeEventListener('abort', onAbort);
+  child.once('exit', unlisten);
+  child.once('error', unlisten);
+}
+
 export class LocalProcessService implements ProcessService {
   /**
    * 存活进程组登记表（键 = 直接子进程 pid = pgid）。detached 后终端 Ctrl+C 不再直达子进程，改由 killAll
@@ -95,6 +129,7 @@ export class LocalProcessService implements ProcessService {
   }
 
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
+    opts.signal?.throwIfAborted(); // 已中止：不创建子进程，同步抛出 signal.reason
     const stdioMode = opts.stdio ?? 'pipe';
     const child = nodeSpawn(cmd, [...args], {
       cwd: opts.cwd,
@@ -131,6 +166,7 @@ export class LocalProcessService implements ProcessService {
     child.on('exit', () => {
       if (timer) clearTimeout(timer);
     });
+    if (opts.signal) killOnAbort(child, opts.signal);
     const handle: SpawnHandle = {
       pid: child.pid,
       stdin: child.stdin,
