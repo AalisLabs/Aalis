@@ -21,7 +21,7 @@ function stubModels(ids: string[]): void {
     'fetch',
     vi.fn(async (url: string | URL) => {
       if (!String(url).endsWith('/models')) throw new Error(`意外请求 ${url}`);
-      return { ok: true, status: 200, json: async () => ({ data: ids.map(id => ({ id })) }) } as unknown as Response;
+      return Response.json({ data: ids.map(id => ({ id })) });
     }),
   );
 }
