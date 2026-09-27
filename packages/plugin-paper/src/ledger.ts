@@ -29,11 +29,20 @@ export interface AgentRecord {
   providerType: string;
   paperId: string;
   name: string;
-  state: 'creating' | 'active' | 'archived' | 'retired' | 'deleted';
+  /**
+   * retired：不再绑定，等没有任务在它上面、也不再是别的代理的工程包来源时删除；确认删除后记录连同它的
+   * 轮次一起移出账本
+   */
+  state: 'creating' | 'active' | 'archived' | 'retired';
   createdAt: number;
   costCents: number;
   lastContextTokens?: number;
   lastRunEndedAt?: number;
+  /**
+   * 换新：这个代理接替的旧代理。在它有一轮成功取回之前，每轮前言都带旧代理的工程包链接，旧代理不删；
+   * 成功之后清掉，旧代理随即删除
+   */
+  replaces?: string;
 }
 
 export type TaskState = 'queued' | 'starting' | 'running' | 'collecting' | 'done' | 'failed' | 'cancelled';
@@ -74,6 +83,8 @@ export interface TaskRecord {
     sizeBytes: number;
   }>;
   bundle?: { sizeBytes: number };
+  /** 白纸被清空时成品文件已删（记录保留） */
+  artifactsCleared?: boolean;
   error?: string;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
   notified: boolean;
@@ -126,6 +137,11 @@ export interface PaperLedger {
   spend: Record<string /* 本地日期 YYYY-MM-DD */, DaySpend>;
   reserves: Record<string /* taskId */, ReserveRecord>;
   alerts: AlertRecord[];
+}
+
+/** n 个随机字节的十六进制：任务、产物、告警、代理名的后缀 */
+export function randomHex(bytes: number): string {
+  return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('hex');
 }
 
 /** 还没结束的任务状态：排队、开轮、运行、取回成品 */
