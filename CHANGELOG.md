@@ -409,12 +409,14 @@ storage-local 按 patch 发布；runtime 因下面所列入口解析的反方向
 - `history_ref` 解析到不在存储库内的来源（`file://` 路径、`/root/…` 或 `C:\…` 这类宿主机绝对路径，或历史附件里的 data URI 等）时拒发：这类来源读不了文件头，无从核对。此前这些来源原样发出，其中 `file://` 路径与宿主机绝对路径能外发存储根以外的任意本机文件。
 - `storage_uri` 读取失败时如实报原因：只有文件不存在才报「存储资源不存在」，未知存储根、根不可读、目标是目录等报各自的错误。此前一律报「存储资源不存在」。
 - 格式签名表移入新包 `@aalis/util-media-signature` 0.1.0（`detectMediaFormat`、`checkMediaHead`、`MEDIA_HEAD_BYTES`），plugin-adapter-onebot 的出站分流用同一份；plugin-image-sender 依赖加这个包。
+- 核对通过的文件以 storage URI 交给平台适配器，不再预先换成 `file://<宿主路径>`：超过 onebot 适配器落盘上限（`attachmentCache.maxBytes`，缺省 10 MiB）的文件，此前 `file://` 原样交给实现端、适配器不核对，现在适配器按字节区间读出文件头再核对一次才交宿主路径。实现端在容器里时读不到宿主路径，超过 10 MiB 的本机文件照旧发不出去（送达方式未变）。
 
 **行为变化**：
 
 - 以 `storage_uri` 或 `history_ref` 发送白名单以外格式的文件（如 SVG、TIFF、ICO、裸 AAC、FLV），或 `kind` 与文件格式不符（如把 GIF 按 `video` 发、把只有音轨但品牌为 `isom` / `mp42` 的 MP4 按 `audio` 发）的调用现在会被拒。
 - `history_ref` 不再接受 `file://` 引用，也不再发送历史附件里不在存储库内的来源（宿主机绝对路径、`file://` 路径、data URI）。onebot 入站落盘失败时，语音等附件会退回平台给的本机路径，这类历史附件不能再用 `history_ref` 重发。
 - 存储提供者须实现 `readFileRange`（字节区间读取）：未实现的根上，`storage_uri` 与 `history_ref` 的发送会失败并报「不支持 readFileRange」。第一方 plugin-storage-local 已实现。
+- 第三方平台适配器收到的 `send_attachment` 附件，取自存储库的一律是 storage URI（如 `data:/images/…`），要经 storage 服务读取；此前解析得到本机路径时是 `file://<宿主路径>`。
 
 ## 2026-09-27（core 0.18.0 minor；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
 
