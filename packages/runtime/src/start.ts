@@ -27,7 +27,7 @@ import { installTerminalStateRestorer } from './terminal.js';
 // 命中即执行并退出，未命中报错退出（exit 2），**两种情况都不进守护进程**。宿主自己解析 argv 时传
 // `subcommands: []` 或显式数组。
 //
-// 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会截断守护进程正在写的 latest.log）、
+// 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会把守护进程正在写的 latest.log 轮转走）、
 // 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
 //
 // 宿主的「I/O 那一层」（日志 sink / 终端复原 / 子命令分发）全在本包，core 只产生 LogEntry。
@@ -47,6 +47,7 @@ export interface StartAalisOptions {
   consoleSink?: boolean;
   /**
    * 文件日志：true→data/latest.log，string→自定义路径，false→关。默认 true（webui/cli 尾读此文件）。
+   * 启动时先把上一轮的日志改名保留（编号插在扩展名前：latest.1.log），更早的依次后移，保留 5 份。
    * 子命令模式（argv 非空）一律不写文件日志。
    */
   fileLog?: boolean | string;
@@ -101,7 +102,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
     : installConsoleSink({ target: 'stderr', minLevel: 'warn' });
 
-  // 子命令进程不写文件日志：setupFileLogger 会截断 latest.log，而守护进程可能正在写它（webui 历史日志
+  // 子命令进程不写文件日志：setupFileLogger 会把 latest.log 轮转走，而守护进程可能正在写它（webui 历史日志
   // 以该文件为单一数据源）。
   const fileLogTarget =
     fileLog === false || subcommandMode ? undefined : typeof fileLog === 'string' ? fileLog : DEFAULT_LOG_FILE;

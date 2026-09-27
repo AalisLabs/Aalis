@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -14,12 +14,12 @@ import { parse } from 'yaml';
 // 计时相关的用例（慢激活）都留足余量。
 //
 // 三条被守的不变量（对应曾实测出的故障）：
-// 1. 子命令进程不碰 data/latest.log——否则守护进程正在写的日志被截断；
+// 1. 子命令进程不碰 data/latest.log，也不轮转——否则守护进程正在写的日志被改名移走；
 // 2. 未命中的子命令报错退出（exit 2），绝不进守护进程——否则打错字就起第二个实例；
 // 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
 //
-// 守护路径（argv 为空）作为对照：文件日志照常写、SIGTERM 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
+// 守护路径（argv 为空）作为对照：旧日志轮转为 latest.1.log、文件日志照常写、SIGTERM 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
 // 提供者」与「缺少」分开报。
 // ════════════════════════════════════════════════════════════
 
@@ -82,6 +82,7 @@ function makeProject(): string {
 }
 
 const readLog = (dir: string) => readFileSync(join(dir, 'data', 'latest.log'), 'utf-8');
+const hasRotated = (dir: string) => existsSync(join(dir, 'data', 'latest.1.log'));
 const readGen = (dir: string) => readFileSync(join(dir, 'gen.txt'), 'utf-8').trim();
 
 describe('startAalis 子命令模式（真实子进程）', () => {
@@ -103,6 +104,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('probe ok a b');
     expect(readLog(dir)).toBe(SENTINEL);
+    expect(hasRotated(dir)).toBe(false);
     expect(readGen(dir)).toBe('1');
   });
 
@@ -164,6 +166,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('未知子命令「nope」');
     expect(readLog(dir)).toBe(SENTINEL);
+    expect(hasRotated(dir)).toBe(false);
   });
 
   it('restart 子命令：无重启策略，慢拆卸下也不 spawn 第二代', async () => {
@@ -178,7 +181,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(readLog(dir)).toBe(SENTINEL);
   }, 20_000);
 
-  it('对照·守护路径：显式 subcommands: [] 压过非空 argv，照常写文件日志，宿主提供插件来源与配置文档，SIGTERM 优雅退出', async () => {
+  it('对照·守护路径：显式 subcommands: [] 压过非空 argv，旧日志轮转为 latest.1.log、照常写文件日志，宿主提供插件来源与配置文档，SIGTERM 优雅退出', async () => {
     const dir = project();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
@@ -190,6 +193,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.code).toBe(0);
     const log = readLog(dir);
     expect(log).not.toContain(SENTINEL.trim());
+    expect(readFileSync(join(dir, 'data', 'latest.1.log'), 'utf-8')).toBe(SENTINEL);
     expect(log).toContain('启动完成');
     expect(log).toContain('已停止');
     // 宿主在根上提供了 plugin-source：重扫可调，插件都已注册，新登记名单为空
