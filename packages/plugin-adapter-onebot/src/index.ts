@@ -17,12 +17,13 @@ import {
   formatAttachmentRef,
   getSenderLabel,
   type Message,
+  type OutgoingMessage,
   WellKnownNoticeTypes,
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
-import { renderAttachmentsAsContentMarkers } from './attachments.js';
+import { materializeFileAttachment, renderAttachmentsAsContentMarkers } from './attachments.js';
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
@@ -1145,7 +1146,7 @@ function runAdapter(caps: Caps): void {
 
   // ----- PlatformAdapter 实现 -----
 
-  const adapter: PlatformAdapter = {
+  const adapter = {
     adapterName: 'OneBot',
     platform: 'onebot',
     sessionTypes: ['group', 'private'],
@@ -1298,6 +1299,29 @@ function runAdapter(caps: Caps): void {
       sentTracker.forget(sessionId, messageId);
     },
 
+    /**
+     * 非标准扩展：把文件传到群文件（群会话）或私聊文件（私聊会话），`file` 只收 base64://
+     * （见 attachments.ts 的 materializeFileAttachment）。连接不可用、v12 连接与其他会话类型一律抛错。
+     * 不重试：上传超时多半是文件还在传，重试会在群文件里留两份。
+     */
+    async uploadFile(sessionId: string, file: string, name: string): Promise<void> {
+      const parsed = parseSessionId(sessionId);
+      if (!parsed) throw new Error(`无法解析 sessionId: ${sessionId}`);
+      const state = findStateBySelfId(parsed.selfId);
+      if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
+        throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
+      }
+      if (state.protocol.version !== 'v11') throw new Error('OneBot v12 连接不支持文件附件');
+      const targetId = Number(parsed.targetId) || parsed.targetId;
+      if (parsed.detailType === 'group') {
+        await sendAction(state, 'upload_group_file', { group_id: targetId, file, name });
+      } else if (parsed.detailType === 'private') {
+        await sendAction(state, 'upload_private_file', { user_id: targetId, file, name });
+      } else {
+        throw new Error(`会话类型 ${parsed.detailType} 不支持文件附件`);
+      }
+    },
+
     /** 处理好友请求：approve=true 同意，remark 为备注（同意时有效） */
     async handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string> {
       const pending = pendingFriendRequests.get(userId);
@@ -1338,6 +1362,7 @@ function runAdapter(caps: Caps): void {
     getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
     getSentMessages(sessionId: string, limit?: number): Array<{ messageId: string; ts: number; preview: string }>;
     forgetSentMessage(sessionId: string, messageId: string): void;
+    uploadFile(sessionId: string, file: string, name: string): Promise<void>;
     handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
     handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
   };
@@ -2232,6 +2257,24 @@ function runAdapter(caps: Caps): void {
 
   // ----- 监听消息回复事件 -----
 
+  /**
+   * 投递失败回报给 agent：写一条系统提示进会话记忆，让它下一轮知晓「刚才那条没送达」，
+   * 而不是误以为已发成功。被动记录，不立即触发回复；每条出站消息至多一条。
+   */
+  function reportUndelivered(msg: OutgoingMessage, errors: unknown[]): void {
+    if (msg.source !== 'agent') return;
+    const note: Message = {
+      role: 'system',
+      kind: 'outbound-delivery-failed',
+      content:
+        '[投递回报] 你刚才发送的内容(可能包含图片、媒体或文件)未能送达对方。' +
+        '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。',
+      timestamp: Date.now(),
+      metadata: { source: 'adapter-onebot', error: errors.map(String).join('; ') },
+    };
+    messageArchive.current?.saveMessage(msg.sessionId, note).catch(e => logger.debug(`投递失败提示入档失败: ${e}`));
+  }
+
   events.on('outbound:message', async msg => {
     if (!msg.sessionId.startsWith('onebot:')) return;
 
@@ -2239,6 +2282,8 @@ function runAdapter(caps: Caps): void {
     // 远程 URL / 本地文件统一编码为 base64 通过 WS 隧道发送，避免 daemon
     // 与 Aalis 不在同一文件系统时（典型：Docker 部署）发生 ENOENT
     let content = msg.content ?? '';
+    const uploads: Array<{ file: string; name: string }> = [];
+    const errors: unknown[] = [];
     if (msg.attachments?.length) {
       // 出站附件也统一落盘 data/{kind}s/{session}/ —— 让 agent 自己发出去的
       // 图/音/视频能进入后续历史回放与归档检索，行为与入站对称。
@@ -2275,34 +2320,45 @@ function runAdapter(caps: Caps): void {
       } catch (err) {
         logger.warn(`OneBot 渲染附件失败: ${err}`);
       }
+
+      // 文件附件不走消息段：物化为 base64:// 后，在文字与消息段发出之后逐个上传
+      for (const att of msg.attachments) {
+        if (att.kind !== 'file') continue;
+        try {
+          uploads.push(await materializeFileAttachment(att, storage, logger));
+        } catch (err) {
+          logger.warn(`OneBot 文件附件未发出: ${err instanceof Error ? err.message : err}`);
+          errors.push(err);
+        }
+      }
     }
 
-    if (!content.trim()) {
-      logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
+    const hasText = content.trim() !== '';
+    if (!hasText && uploads.length === 0) {
+      if (errors.length > 0) reportUndelivered(msg, errors);
+      else logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
       return;
     }
-    logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
+    if (hasText) logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
 
     // 冷却与限速由 plugin-flow-control、idle 调度由 plugin-trigger-policy 各自监听 outbound:message 处理
 
-    adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
-      logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
-      // 反馈给 agent:多次重试仍失败 → 写一条系统提示进会话记忆,让 agent 下一轮知晓
-      // 「刚才那条(可能含图片)没送达」,而不是误以为已发成功。被动记录,不立即触发回复。
-      if (msg.source === 'agent') {
-        const archive = messageArchive.current;
-        const note: Message = {
-          role: 'system',
-          kind: 'outbound-delivery-failed',
-          content:
-            '[投递回报] 你刚才发送的内容(可能包含图片/媒体)经多次重试仍未能送达对方。' +
-            '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。',
-          timestamp: Date.now(),
-          metadata: { source: 'adapter-onebot', error: String(err) },
-        };
-        archive?.saveMessage(msg.sessionId, note).catch(e => logger.debug(`投递失败提示入档失败: ${e}`));
+    // 不等投递结果：emit 串行等各监听器，等在这里会拖住其他出站监听
+    void (async () => {
+      if (hasText) {
+        await adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
+          logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
+          errors.push(err);
+        });
       }
-    });
+      for (const { file, name } of uploads) {
+        await adapter.uploadFile(msg.sessionId, file, name).catch(err => {
+          logger.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
+          errors.push(err);
+        });
+      }
+      if (errors.length > 0) reportUndelivered(msg, errors);
+    })();
   });
 
   // ----- 生命周期 -----

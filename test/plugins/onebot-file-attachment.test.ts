@@ -1,0 +1,341 @@
+import { Buffer } from 'node:buffer';
+import { createServer, type Server } from 'node:http';
+import { createRequire } from 'node:module';
+import type { AddressInfo } from 'node:net';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import type { Message, MessageAttachment, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
+
+// ════════════════════════════════════════════════════════════
+// onebot 出站的文件附件与内联前的文件头核对。
+//
+// file 附件经 upload_group_file / upload_private_file 发出，内容只收 base64://：超过内联上限时
+// attachmentToOneBotFile 会退回 file://<宿主路径> 或原 http 链接，容器里的 NapCat 读不到，一律拒发。
+// image、audio、video 内联前按文件头核对格式，免得任意可读文件（如配置文本）冒充媒体发出。
+// 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
+// ════════════════════════════════════════════════════════════
+
+type WsServer = {
+  on(event: 'connection', cb: (socket: WsSocket) => void): void;
+  once(event: 'listening', cb: () => void): void;
+  address(): AddressInfo;
+  clients: Set<WsSocket>;
+  close(cb: () => void): void;
+};
+type WsSocket = { on(event: 'message', cb: (raw: Buffer) => void): void; send(data: string): void; terminate(): void };
+
+const { WebSocketServer } = createRequire(
+  new URL('../../packages/plugin-adapter-onebot/package.json', import.meta.url),
+)('ws') as { WebSocketServer: new (opts: { host: string; port: number }) => WsServer };
+
+const MIB = 1024 * 1024;
+const SELF = '10000';
+const GROUP = `onebot:${SELF}:group:20001`;
+const PRIVATE = `onebot:${SELF}:private:30001`;
+
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(24)]);
+const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVEfmt '), Buffer.alloc(24)]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(24)]);
+const HTML = Buffer.from('<!doctype html><title>占位成品</title><p>占位</p>');
+const CONFIG = Buffer.from('llm:\n  apiKey: <占位 key>\n');
+
+let httpServer: Server;
+let httpBase: string;
+
+beforeAll(async () => {
+  setNetworkPolicy({ blockPrivate: false }); // 只为连本机测试服务；afterAll 复原
+  httpServer = createServer((req, res) => {
+    if (req.url === '/big.html') {
+      const body = Buffer.alloc(10 * MIB + 1, 0x61);
+      res.writeHead(200, { 'content-type': 'text/html', 'content-length': String(body.byteLength) });
+      res.end(body);
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>(resolve => httpServer.listen(0, '127.0.0.1', resolve));
+  httpBase = `http://127.0.0.1:${(httpServer.address() as AddressInfo).port}`;
+});
+
+afterAll(async () => {
+  setNetworkPolicy({ blockPrivate: true });
+  httpServer.closeAllConnections();
+  await new Promise<void>(resolve => httpServer.close(() => resolve()));
+});
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const c of cleanups.splice(0).reverse()) await c();
+});
+
+async function until(cond: () => boolean, ms = 8000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > ms) throw new Error('等待超时');
+    await new Promise(r => setTimeout(r, 10));
+  }
+}
+
+/** 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在） */
+function memStorage(seed: Record<string, Buffer>) {
+  const files = new Map<string, Buffer>(Object.entries(seed));
+  const root = (name: string, writable: boolean) => ({
+    name,
+    label: name,
+    kind: name,
+    browsable: true,
+    readable: true,
+    writable,
+    deletable: false,
+  });
+  const get = (uri: string) => {
+    const f = files.get(uri);
+    if (!f) throw Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
+    return f;
+  };
+  return {
+    listRoots: () => [root('data', true), root('aalis', false)],
+    async stat(uri: string) {
+      return { size: get(uri).byteLength, isDirectory: false };
+    },
+    async readFile(uri: string) {
+      return get(uri);
+    },
+    async writeFile(uri: string, data: Uint8Array) {
+      files.set(uri, Buffer.from(data));
+    },
+    async resolveLocalPath(uri: string) {
+      return `/host/${uri.replace(':/', '/')}`;
+    },
+  };
+}
+
+interface Action {
+  action: string;
+  params: Record<string, unknown>;
+}
+
+async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buffer> } = {}) {
+  const protocol = opts.protocol ?? 'v11';
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>(r => server.once('listening', r));
+  cleanups.push(
+    () =>
+      new Promise<void>(r => {
+        for (const c of server.clients) c.terminate();
+        server.close(() => r());
+      }),
+  );
+  const actions: Action[] = [];
+  server.on('connection', ws => {
+    ws.on('message', raw => {
+      const req = JSON.parse(raw.toString()) as Action & { echo?: string };
+      actions.push({ action: req.action, params: req.params });
+      if (req.echo) ws.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: SELF }, echo: req.echo }));
+    });
+  });
+
+  const warns: string[] = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+    error: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+    child: () => logger,
+  } as unknown as Logger;
+  const app = new App({ name: 'T', logLevel: 'error', logger });
+  cleanups.push(() => app.stop());
+  await registerHubs(app);
+  const host = app.bind({ provide, events });
+  host.provide(storage, memStorage(opts.files ?? {}) as never);
+  // 转码一律失败：语音附件保留原数据，直接走内联前的文件头核对
+  host.provide(processService, {
+    async makeTempDir() {
+      throw new Error('测试里不转码');
+    },
+  } as never);
+  const notes: Array<{ sessionId: string; message: Message }> = [];
+  host.provide(messageArchive, {
+    async saveMessage(sessionId: string, message: Message) {
+      notes.push({ sessionId, message });
+    },
+  } as never);
+  await app.plugins.register(onebotPlugin, {
+    connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol, selfId: SELF }],
+  });
+  await app.plugins.idle();
+  if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
+  await app.start(); // app:ready 时连接
+  const selfInfo = protocol === 'v11' ? 'get_login_info' : 'get_self_info';
+  await until(() => actions.some(a => a.action === selfInfo));
+
+  const sent = () => actions.filter(a => /^(send_|upload_)/.test(a.action));
+  const send = (msg: OutgoingMessage) => host.events.emit('outbound:message', msg);
+  /** 发一条哨兵文字并等它到达：在它之前交出的消息该发的都已发出 */
+  const flush = async (sessionId = GROUP) => {
+    await send({ sessionId, content: '哨兵' });
+    await until(() => JSON.stringify(sent()).includes('哨兵'));
+  };
+  const failureNotes = () => notes.filter(n => n.message.kind === 'outbound-delivery-failed');
+  return { actions, sent, send, flush, warns, notes, failureNotes };
+}
+
+const decode = (file: unknown) => Buffer.from(String(file).slice('base64://'.length), 'base64');
+
+describe('onebot 出站：文件附件', () => {
+  it('群会话：文字与消息段先发，文件随后经 upload_group_file 以 base64:// 上传，不进消息段', async () => {
+    const t = await boot({ files: { 'data:/paper-out/a.html': HTML, 'data:/paper-out/a.png': PNG } });
+    await t.send({
+      sessionId: GROUP,
+      content: '成品在这',
+      attachments: [
+        { kind: 'image', data: 'data:/paper-out/a.png' },
+        { kind: 'file', data: 'data:/paper-out/a.html', name: '占位成品.html' },
+      ],
+    });
+    await until(() => t.sent().some(a => a.action === 'upload_group_file'));
+
+    const sent = t.sent();
+    const upload = sent.find(a => a.action === 'upload_group_file');
+    expect(upload?.params.group_id).toBe(20001);
+    expect(String(upload?.params.file).startsWith('base64://')).toBe(true);
+    expect(decode(upload?.params.file).equals(HTML)).toBe(true);
+    expect(upload?.params.name).toBe('占位成品.html');
+
+    const messages = sent.filter(a => a.action === 'send_group_msg');
+    expect(messages.length).toBeGreaterThan(0);
+    expect(sent.indexOf(upload as Action), '文件在文字与消息段之后上传').toBeGreaterThan(
+      sent.indexOf(messages[messages.length - 1]),
+    );
+    const segmentTypes = messages.flatMap(m => (m.params.message as Array<{ type: string }>).map(s => s.type));
+    expect(segmentTypes).toContain('image');
+    expect(segmentTypes, '文件不以消息段发出').not.toContain('file');
+    expect(JSON.stringify(messages)).not.toContain(HTML.toString('base64'));
+  });
+
+  it('私聊：经 upload_private_file 上传，文件名去掉路径分隔符', async () => {
+    const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
+    await t.send({
+      sessionId: PRIVATE,
+      content: '',
+      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: '../占位/目录\\成品.html' }],
+    });
+    await until(() => t.sent().some(a => a.action === 'upload_private_file'));
+    const upload = t.sent().find(a => a.action === 'upload_private_file');
+    expect(upload?.params.user_id).toBe(30001);
+    expect(decode(upload?.params.file).equals(HTML)).toBe(true);
+    expect(upload?.params.name).toBe('..占位目录成品.html');
+    expect(t.sent().some(a => a.action === 'upload_group_file')).toBe(false);
+  });
+
+  it('超过内联上限的文件附件不发、warn，agent 发出的在会话记忆里留投递失败记录', async () => {
+    const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [{ kind: 'file', data: 'data:/paper-out/big.html', name: 'big.html' }],
+      source: 'agent',
+    });
+    await until(() => t.failureNotes().length > 0);
+    await t.flush();
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+    expect(t.warns.some(w => w.includes('文件附件'))).toBe(true);
+    expect(t.failureNotes().map(n => [n.sessionId, n.message.role])).toEqual([[GROUP, 'system']]);
+  });
+
+  it('上传失败按投递失败处理', async () => {
+    const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
+    // 连接不可用的会话（selfId 对不上）：上传抛错
+    const other = `onebot:99999:group:20001`;
+    await t.send({
+      sessionId: other,
+      content: '',
+      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+      source: 'agent',
+    });
+    await until(() => t.failureNotes().length > 0);
+    expect(t.failureNotes()[0].sessionId).toBe(other);
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+  });
+
+  it('回归：图片、语音照旧以 base64:// 消息段发出；不超过上限的视频也改走 base64://', async () => {
+    const t = await boot({
+      files: { 'data:/m/a.png': PNG, 'data:/m/a.wav': WAV, 'data:/m/a.mp4': MP4 },
+    });
+    const attachments: MessageAttachment[] = [
+      { kind: 'image', data: 'data:/m/a.png' },
+      { kind: 'audio', data: 'data:/m/a.wav' },
+      { kind: 'video', data: 'data:/m/a.mp4' },
+    ];
+    await t.send({ sessionId: GROUP, content: '', attachments });
+    await t.flush();
+    const segments = t
+      .sent()
+      .filter(a => a.action === 'send_group_msg')
+      .flatMap(m => m.params.message as Array<{ type: string; data: { file?: string } }>);
+    const byType = (type: string) => segments.find(s => s.type === type)?.data.file;
+    expect(decode(byType('image')).equals(PNG)).toBe(true);
+    expect(decode(byType('record')).equals(WAV)).toBe(true);
+    expect(String(byType('video')).startsWith('base64://')).toBe(true);
+    expect(decode(byType('video')).equals(MP4)).toBe(true);
+  });
+
+  it('v12 连接：文件附件不支持，warn 并按投递失败处理', async () => {
+    const t = await boot({ protocol: 'v12', files: { 'data:/paper-out/a.html': HTML } });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+      source: 'agent',
+    });
+    await until(() => t.failureNotes().length > 0);
+    await t.flush();
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+    expect(t.warns.some(w => w.includes('v12'))).toBe(true);
+  });
+});
+
+describe('onebot 出站：安全', () => {
+  it('超限的 storage 文件与超限的 http 文件：发出的 action 里没有 file:// 与 http 形态，按失败处理', async () => {
+    const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [
+        { kind: 'file', data: 'data:/paper-out/big.html', name: 'big.html' },
+        { kind: 'file', data: `${httpBase}/big.html`, name: 'remote.html' },
+      ],
+      source: 'agent',
+    });
+    // 等到有定论：拒发时留投递失败记录；防线失守时两个文件都会被上传
+    await until(() => t.failureNotes().length > 0 || t.sent().filter(a => a.action.startsWith('upload_')).length === 2);
+    await t.flush();
+    const wire = JSON.stringify(t.actions);
+    expect(wire).not.toContain('file://');
+    expect(wire).not.toContain(httpBase);
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+  });
+
+  it('不是对应格式的文件（占位的配置文本）以 image、audio、video 发出：不内联、不发出，并有 warn', async () => {
+    const t = await boot({ files: { 'aalis:/aalis.config.yaml': CONFIG } });
+    for (const kind of ['image', 'audio', 'video'] as const) {
+      await t.send({ sessionId: GROUP, content: '', attachments: [{ kind, data: 'aalis:/aalis.config.yaml' }] });
+    }
+    await t.flush();
+    const wire = JSON.stringify(t.actions);
+    expect(wire).not.toContain(CONFIG.toString('base64'));
+    const segmentTypes = t
+      .sent()
+      .flatMap(m => (m.params.message as Array<{ type: string }> | undefined)?.map(s => s.type) ?? []);
+    expect(segmentTypes).not.toContain('image');
+    expect(segmentTypes).not.toContain('record');
+    expect(segmentTypes).not.toContain('video');
+    expect(t.warns.filter(w => w.includes('文件头')).length).toBe(3);
+  });
+});
