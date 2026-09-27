@@ -101,6 +101,16 @@ export function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (t
  */
 export type PlatformProfile = SessionConfig;
 
+/** 会话种类：room 为聊天用的会话（IM 群与私聊、owner 在 WebUI 与 CLI 的聊天）；task 为挂在发起它的会话下面的子会话 */
+export type SessionKind = 'room' | 'task';
+
+/**
+ * 房间受众：private、group 为 IM 房间；owner 只表示「不是 IM 房间」（没有出生平台的根会话，含 mcp-server、
+ * `workflow::<id>` 等），只供列表分区，不代表 owner 在场，按受众定触及上限前须按主体重判。
+ * 非房间会话（含以后的工作会话）的 id 不得含单冒号，否则会被当成房间。
+ */
+export type RoomAudience = 'owner' | 'private' | 'group';
+
 /**
  * 会话信息
  *
@@ -134,6 +144,12 @@ export interface SessionInfo {
   result?: string;
   /** 扩展元数据（供插件自由使用） */
   metadata?: Record<string, unknown>;
+  /** 由 session-manager 按 parentId 推出（有 parentId 为 task），不收调用方传值 */
+  kind: SessionKind;
+  /** 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话为 undefined */
+  originPlatform?: string;
+  /** 只有 room 带：有出生平台的取 group 或 private，其余为 owner */
+  audience?: RoomAudience;
 }
 
 /**
@@ -161,7 +177,11 @@ export interface SessionManagerService {
   // ---- CRUD ----
 
   /** 创建新会话，返回完整的 SessionInfo */
-  createSession(opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>): Promise<SessionInfo>;
+  createSession(
+    opts?: Partial<
+      Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'>
+    >,
+  ): Promise<SessionInfo>;
   /** 获取指定会话（不存在返回 undefined） */
   getSession(id: string): SessionInfo | undefined;
   /** 列出会话（可按 parentId 和 status 过滤） */
@@ -192,7 +212,12 @@ export interface SessionManagerService {
   /** 创建子会话 */
   createChildSession(
     parentId: string,
-    opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
+    opts?: Partial<
+      Omit<
+        SessionInfo,
+        'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'
+      >
+    >,
   ): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];
