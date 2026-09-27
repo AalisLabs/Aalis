@@ -1,6 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
+import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
@@ -195,6 +196,16 @@ function formatError(err: unknown): string {
 
 function parsePlatform(sessionId: string): string {
   return sessionId.split(':')[0] ?? '';
+}
+
+/**
+ * 检索的当前平台（platform 可见范围与房间的召回范围按它算）：房间会话按出生平台（api-gateway 的
+ * resolveSessionOrigin），不论从哪个入口驱动，owner 从 WebUI 往群里插话时不召回 owner 自己的 WebUI 会话；
+ * 没有出生平台的会话按入口平台，入口也缺省时按会话 id 推
+ */
+function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string {
+  if (!sessionId) return entryPlatform ?? '';
+  return resolveSessionOrigin(sessionId)?.platform ?? entryPlatform ?? parsePlatform(sessionId);
 }
 
 /** 从消息文本中抽取 @提及的用户 ID（各 adapter 输出统一 <at id="X"> 标签） */
@@ -819,7 +830,7 @@ async function run({
 
       try {
         const curSessionId = data.sessionId;
-        const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+        const curPlatform = currentPlatformOf(curSessionId, data.platform);
         const curUserId = data.userId ?? '';
 
         const candidateCount = Math.min(cfg.search.topK * candidateOversample, await vectorstore.require().size());
@@ -1024,7 +1035,7 @@ async function run({
         cfg.contextExpand.crossSession && (args.crossSession === undefined ? true : Boolean(args.crossSession));
 
       const curSessionId = callCtx.sessionId;
-      const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+      const curPlatform = currentPlatformOf(curSessionId, callCtx.platform);
 
       // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility）并按房间收窄，再与请求取较窄者。
       // 两者不能共用一张 rank 表：user 档是「全库可见 + 同用户加权」，作为加权策略它

@@ -1,3 +1,4 @@
+import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { memory } from '@aalis/api-memory';
 import {
   type AccessChecker,
@@ -261,15 +262,17 @@ function createSessionHistoryService(
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
+      // 当前平台：房间会话按出生平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）按入口平台
+      const currentPlatform = resolveSessionOrigin(callCtx.sessionId)?.platform ?? callCtx.platform;
       // 房间的召回范围每次现算：房间或平台档改了下一次读取即生效
       const roomScope = sessionManager.current?.resolveConfig(
         callCtx.sessionId,
-        callCtx.platform || parsePlatform(callCtx.sessionId),
+        currentPlatform || parsePlatform(callCtx.sessionId),
       ).memoryRecallScope;
       const verdict = canReadSessionHistory(
         callCtx.sessionId,
         targetSessionId,
-        callCtx.platform,
+        currentPlatform,
         cfg.scope,
         roomScope,
         checkers,
