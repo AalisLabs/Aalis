@@ -557,7 +557,7 @@ describe('认领失败的告警、诊断与出口', () => {
     return { a, hub, agentId, t2, opened: opened ?? '' };
   }
 
-  it('安全：第一次认领失败挂一条 claim-failed 告警（只写类别），之后再失败、标为已读后都不再挂；诊断项对开轮中超过 15 分钟的任务报 warn', async () => {
+  it('安全：第一次认领失败挂一条 claim-failed 告警（只写类别），之后再失败、标为已读后都不再挂；诊断项对认领失败后仍在开轮中的任务报 warn，标为已读后照报', async () => {
     const { hub, t2 } = await stuck();
     const claimAlerts = () => hub.store.data.alerts.filter(al => al.kind === 'claim-failed');
     expect(claimAlerts()).toEqual([
@@ -569,7 +569,12 @@ describe('认领失败的告警、诊断与出口', () => {
       hub.logs.some(l => l.level === 'warn' && l.message.includes(CLAIM_RAW)),
       '原文进 warn',
     ).toBe(true);
-    expect((await hub.doctor()).message).not.toContain('开轮中已超过');
+    // 与放弃跟踪同一判据：认领失败过就报，报出时点「放弃跟踪」不会被拒
+    const first = await hub.doctor();
+    expect(first.level).toBe('warn');
+    expect(first.message).toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
+    expect(first.message).toContain('放弃跟踪');
+    expect(first.message).not.toContain(CLAIM_RAW);
 
     expect(await hub.driver.acknowledge(claimAlerts()[0].id)).toBe(true);
     await advance(2 * RECONCILE_MS);
@@ -577,12 +582,13 @@ describe('认领失败的告警、诊断与出口', () => {
     expect(claimAlerts(), '只挂第一次').toHaveLength(1);
     const result = await hub.doctor();
     expect(result.level).toBe('warn');
-    expect(result.message).toContain(`白纸任务 ${t2} 开轮中已超过 15 分钟`);
+    expect(result.message, '告警标为已读后照报').toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
     expect(result.message).not.toContain(CLAIM_RAW);
   });
 
-  it('安全：放弃跟踪开轮中的任务：判为失败、写明远端可能已开出一轮，预留保留、下一件建新代理；列表恢复后那一轮记到它名下，白纸不停开，费用只入账一次', async () => {
+  it('安全：放弃跟踪开轮中的任务：判为失败、写明远端可能已开出一轮，预留保留、下一件建新代理；列表恢复后那一轮记到它名下并请远端取消，白纸不停开，费用只入账一次', async () => {
     const { a, hub, agentId, t2, opened } = await stuck();
+    const before = spent(hub);
     expect(await hub.driver.abandon(t2)).toBeUndefined();
     expect(hub.task(t2)).toMatchObject({ state: 'failed', orphanRun: true, agentId });
     expect(hub.task(t2).error).toContain('远端可能已开出一轮');
@@ -593,6 +599,8 @@ describe('认领失败的告警、诊断与出口', () => {
     delete a.intercept.listRuns;
     await advance(RECONCILE_MS);
     await until(() => hub.store.data.runs[opened]?.taskId === t2, '对账把那一轮记到它名下');
+    // 没人再跟踪、取回成品，也没有单轮时长的到点取消：记到它名下的同时请远端取消，不让它跑到远端自己的上限
+    await until(() => a.callsOn('cancelRun', agentId).some(c => c.args[1] === opened), '请远端取消那一轮');
     expect(hub.task(t2).runId).toBe(opened);
     expect(hub.task(t2).orphanRun).toBeUndefined();
     expect(hub.store.data.papers[PAPER_A_ID].halted, '不当成自唤醒').toBeUndefined();
@@ -601,10 +609,8 @@ describe('认领失败的告警、诊断与出口', () => {
       expect.objectContaining({ kind: 'claim-unverified', subject: opened }),
     );
     expect(a.count('deleteAgent')).toBe(0);
-    expect(hub.store.data.reserves[t2], '费用入账前预留保留').toBeDefined();
 
-    const before = spent(hub);
-    a.finish(opened);
+    // 取消之后这一轮到终态，费用照常入账后释放预留
     await advance(RECONCILE_MS);
     await until(() => hub.store.data.runs[opened].cost.state === 'booked', '费用入账');
     await advance(2 * RECONCILE_MS);
@@ -631,6 +637,7 @@ describe('认领失败的告警、诊断与出口', () => {
     expect(await hub.driver.abandon(t2)).toBeUndefined();
     release();
     await until(() => hub.store.data.runs[opened]?.taskId === t2, '列出的那一轮记到它名下');
+    await until(() => a.callsOn('cancelRun', agentId).some(c => c.args[1] === opened), '请远端取消那一轮');
     await advance(MINUTE);
     expect(hub.task(t2)).toMatchObject({ state: 'failed', runId: opened });
     expect(a.callsOn('startRun', agentId), '不重发').toHaveLength(1);
@@ -667,6 +674,10 @@ describe('认领失败的告警、诊断与出口', () => {
       expect(hub.store.data.reserves[t2], '预留保留到对账确认').toBeDefined();
     } else {
       expect(hub.store.data.runs[resent], '重发开出的一轮记到它名下').toMatchObject({ taskId: t2 });
+      expect(
+        a.callsOn('cancelRun', agentId).map(c => c.args[1]),
+        '放弃跟踪之后才开出的一轮请远端取消',
+      ).toContain(resent);
       expect(hub.task(t2).runId).toBe(resent);
       expect(hub.task(t2).orphanRun).toBeUndefined();
       expect(hub.store.data.reserves[t2], '费用入账前预留保留').toBeDefined();

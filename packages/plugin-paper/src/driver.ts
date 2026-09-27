@@ -9,7 +9,8 @@
 //   轮次，账本外的恰好一轮就认领（记一条告警请 owner 核对），没有就重发，多于一轮按自唤醒处理；从没有结果
 //   未知的请求时，busy 加账本外的轮次立即按自唤醒处理。结果未知之后认领不了（列不出轮次，或重启接回时提供者
 //   等满上限仍不在场）：任务留在开轮中、预留保留，等下次触发再认领，第一次挂一条告警（claim-failed）；owner
-//   可以放弃跟踪，任务判为失败，之后列得出这个代理的轮次时那一轮记到它名下（orphanRun）。
+//   可以放弃跟踪，任务判为失败，之后列得出这个代理的轮次时那一轮记到它名下（orphanRun）；放弃之后才认领到或开出的
+//   一轮没人跟踪，请远端取消。
 // - 等待上限：开轮之前 busy、transient、rate-limited（含 archived 后的取消归档）的等待每件任务合计不超过
 //   10 分钟，超过就判失败、释放预留，结果未知之后的认领除外（见上）；终态之后另算一份，等不到时任务留在取回
 //   成品中，下次触发再取。
@@ -827,18 +828,19 @@ export class PaperDriver {
 
   /**
    * 拿到 runId：记进轮次表，任务转 running；新建的代理转为绑定，原来绑定的退役。owner 在开轮途中放弃跟踪了
-   * （任务已不在开轮中）：这一轮照样记到本件名下，费用照常入账后释放预留，任务不再转 running
+   * （任务已不在开轮中）：这一轮照样记到本件名下，费用照常入账后释放预留，任务不再转 running，并请远端取消这一轮
+   * （见 #cancelOrphan）
    */
   async #started(task: TaskRecord, runId: string, startedAt: number): Promise<void> {
     const { ledger } = this.#d;
-    await ledger.exclusive(async () => {
+    const abandoned = await ledger.exclusive(async () => {
       const agentId = task.agentId ?? '';
       ledger.data.runs[runId] = { agentId, taskId: task.id, cost: { state: 'pending' } };
       if (task.state !== 'starting') {
         task.runId = runId;
         delete task.orphanRun;
         await ledger.save();
-        return;
+        return true;
       }
       task.state = 'running';
       task.runId = runId;
@@ -857,8 +859,34 @@ export class PaperDriver {
         delete paper.noBundleNext;
       }
       await ledger.save();
+      return false;
     });
+    if (abandoned) {
+      await this.#cancelOrphan(task.id, task.agentId ?? '', runId);
+      return;
+    }
     this.#d.logger.info(`白纸任务 ${task.id} 开轮（代理 ${task.agentId}，轮次 ${runId}）`);
+  }
+
+  /**
+   * 记到放弃跟踪的任务名下的一轮（放弃之后才认领到或开出）：没人再跟踪、取回成品，单轮时长的到点取消也只管运行中
+   * 的任务，尽力请远端取消，免得它跑到远端自己的上限。取消失败只记 warn（提供者报错的原文只进日志），费用照常
+   * 等这一轮到终态后入账
+   */
+  async #cancelOrphan(taskId: string, agentId: string, runId: string): Promise<void> {
+    const { ledger, logger, signal } = this.#d;
+    const providerType = ledger.data.agents[agentId]?.providerType ?? '';
+    try {
+      const entry = resolveRemoteAgent(this.#d.remote, providerType);
+      if (!entry) throw new Error(`远端代理「${providerType}」不在场`);
+      await entry.instance.cancelRun(agentId, runId, signal);
+      logger.info(`放弃跟踪的白纸任务 ${taskId} 名下的轮次 ${runId} 已请远端取消`);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      logger.warn(
+        `放弃跟踪的白纸任务 ${taskId} 名下的轮次 ${runId} 请远端取消失败（${category(err)}）: ${describe(err)}`,
+      );
+    }
   }
 
   async #requeue(task: TaskRecord): Promise<void> {
@@ -1607,8 +1635,9 @@ export class PaperDriver {
 
   /**
    * 列出的轮次里账本外的。这个代理上有放弃跟踪时开轮结果未知的任务（orphanRun）时先按它处理：账本外恰好一轮就
-   * 记到它名下（与认领一样分不出是不是本件开出的，记一条 claim-unverified 告警），费用照常入账后释放预留；没有
-   * 就释放预留；多于一轮分不出，释放预留，全部仍算账本外（调用方按自唤醒处理）。
+   * 记到它名下（与认领一样分不出是不是本件开出的，记一条 claim-unverified 告警），还没到终态的请远端取消（见
+   * #cancelOrphan），费用照常入账后释放预留；没有就释放预留；多于一轮分不出，释放预留，全部仍算账本外（调用方按
+   * 自唤醒处理）。
    */
   async #unaccounted(agentId: string, runs: RemoteRunSummary[]): Promise<RemoteRunSummary[]> {
     const { ledger, logger } = this.#d;
@@ -1639,7 +1668,9 @@ export class PaperDriver {
       return { taskId: task.id, found };
     });
     if (settled?.found.length === 1) {
-      logger.info(`放弃跟踪的白纸任务 ${settled.taskId} 开轮结果未知，远端轮次 ${settled.found[0].runId} 记到它名下`);
+      const [run] = settled.found;
+      logger.info(`放弃跟踪的白纸任务 ${settled.taskId} 开轮结果未知，远端轮次 ${run.runId} 记到它名下`);
+      if (!isTerminalRun(run.status)) await this.#cancelOrphan(settled.taskId, agentId, run.runId);
     } else if (settled?.found.length === 0) {
       logger.info(`放弃跟踪的白纸任务 ${settled.taskId} 开轮结果未知，远端没有开出这一轮，释放预留`);
     } else if (settled) {

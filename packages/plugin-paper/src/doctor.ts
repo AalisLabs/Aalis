@@ -5,7 +5,8 @@
 // - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档写了 remoteAgentTypes（这个平台所有房间都继承；
 //   基础条目看 getPlatformProfiles()，受众条目不在其中，经已登记的 IM 房间的继承链看到）；具名白纸引用的提供者
 //   不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到 3 次（写类别与次数，
-//   不写提供者报错的原文）；有任务开轮中超过 15 分钟（开轮结果未知、认领不了时会一直留在开轮中）。
+//   不写提供者报错的原文）；有任务认领失败后仍在开轮中（与放弃跟踪同一判据：账本里有它的 claim-failed 告警，不论
+//   是否已读；报出时 owner 就能在任务表放弃跟踪）。
 // - 出网方式取自 owner 配置（提供者核实不了）时在说明里标「未核实」，不影响级别。
 // ============================================================
 
@@ -19,8 +20,6 @@ import { AUDIENCE_NAMES, type Isolation, imRoomInheritance, paperLabel, sharingR
 import { describe } from './util.js';
 
 const CHECK_ID = 'paper.config';
-/** 开轮中超过这么久报 warn：开轮的等待上限是 10 分钟，只有认领不了的任务会停这么久 */
-const STALE_START_MINUTES = 15;
 
 export function registerPaperDoctor(deps: {
   doctor: BoundDoctor;
@@ -30,7 +29,6 @@ export function registerPaperDoctor(deps: {
   isolation: Isolation;
   cfg: PaperConfig;
   signal: AbortSignal;
-  now: () => number;
   /** 对账里列表连续失败到 3 次的提供者实例（见 PaperDriver.listingFailures） */
   listingFailures: () => Array<{ type: string; count: number; categories: string[] }>;
 }): void {
@@ -103,14 +101,11 @@ export function registerPaperDoctor(deps: {
       }
       if (cfg.globalDailyCents <= 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
       for (const task of Object.values(ledger.data.tasks)) {
-        if (task.state !== 'starting' || !task.start) continue;
-        const minutes = Math.floor((deps.now() - task.start.requestedAt) / 60_000);
-        if (minutes < STALE_START_MINUTES) continue;
+        if (task.state !== 'starting') continue;
+        if (!ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id)) continue;
         warnings.push(
-          `白纸任务 ${task.id} 开轮中已超过 ${STALE_START_MINUTES} 分钟（${minutes} 分钟，房间 ${task.room}）` +
-            (task.start.path === 'run'
-              ? '：开轮结果未知、认领不了，远端这一轮可能在跑；提供者一直不可用时可在任务表「放弃跟踪」'
-              : ''),
+          `白纸任务 ${task.id} 认领失败后仍在开轮中（房间 ${task.room}）：开轮结果未知，远端这一轮可能在跑；` +
+            '提供者一直不可用时可在任务表「放弃跟踪」',
         );
       }
       for (const { type, count, categories } of deps.listingFailures()) {
