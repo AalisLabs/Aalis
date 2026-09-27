@@ -149,18 +149,18 @@ describe('完成通知', () => {
     expect(untrusted).not.toContain('TAIL-SENTINEL');
   });
 
-  it('失败的任务通知写明原因，没有成品时不叫她发', async () => {
+  it('失败的任务通知写明宿主撰写的原因类别（远端报错的原文不进通知），没有成品时不叫她发', async () => {
     const a = new ScriptedRemote();
     once(a, 'createAgent', () => {
-      throw new RemoteAgentError('rejected', '模型参数不成立');
+      throw new RemoteAgentError('rejected', '模型参数不成立 REMOTE-TEXT-SENTINEL');
     });
     const hub = await hubWith(a);
     const taskId = await accept(hub, '像素猫');
     await waitFor(() => hub.injected.length === 1, '注入失败通知');
     const { content } = hub.injected[0];
     expect(content).toContain(taskId);
-    expect(content).toContain('失败');
-    expect(content).toContain('模型参数不成立');
+    expect(content).toContain('失败：建远端代理失败（远端拒绝了请求）');
+    expect(content).not.toContain('REMOTE-TEXT-SENTINEL');
     expect(content).not.toContain('paper_send');
   });
 

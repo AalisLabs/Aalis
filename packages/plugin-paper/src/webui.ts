@@ -1,8 +1,8 @@
 // ============================================================
 // WebUI 白纸页：白纸、任务、成品、账本、告警五个表与 owner 的管理动作
 //
-// 页面动作只有 owner 调得到（宿主路由层的权限闸）。管理动作（换新、归档代理、清空、恢复、取消任务、告警已读）
-// 都交给运行驱动，与定期检查、工具走同一把锁；取消不看发起者。
+// 页面动作只有 owner 调得到（宿主路由层的权限闸）。管理动作（换新、归档代理、清空、恢复、取消任务、放弃跟踪、
+// 核销预留、告警已读）都交给运行驱动，与定期检查、工具走同一把锁；取消不看发起者。
 //
 // 成品经 readArtifact 以 { name, mime, base64 } 取回（页面动作只回 JSON，不会被浏览器当页面渲染）：mime 按
 // 文件头判定，只有位图给对应类型，其余（含 HTML、SVG，也含账本记作位图、文件头却不是的）一律
@@ -100,6 +100,20 @@ const PAGE: WebuiPage = {
                   label: '取消',
                   method: 'cancelTask',
                   confirm: '取消这件任务？运行中的会请远端取消这一轮，已发生的费用照常入账。',
+                },
+                {
+                  label: '放弃跟踪',
+                  method: 'abandonTask',
+                  confirm:
+                    '只在到点取消失败、白纸停开之后可用：这件任务判为失败，远端这一轮可能仍在运行，费用等它结束后补记；' +
+                    '下一件任务建新代理。继续？',
+                  danger: true,
+                },
+                {
+                  label: '核销预留',
+                  method: 'writeOffReserve',
+                  confirm:
+                    '费用一直取不到时用：这件已结束任务还没入账的费用按它的预留额记进当天花费，预留释放，之后不再补取。继续？',
                 },
               ],
               refresh: 30,
@@ -281,7 +295,7 @@ export function registerPaperPage(deps: {
         name: t.name,
         state: t.error ? `${t.state}：${t.error}` : t.cancelledVia ? `${t.state}（${t.cancelledVia}）` : t.state,
         duration: t.startedAt !== undefined ? formatDuration((t.endedAt ?? now) - t.startedAt) : '',
-        cost: t.costCents ?? '',
+        cost: t.costCents ?? (ledger.data.reserves[t.id] ? `预留 ${ledger.data.reserves[t.id].cents}` : ''),
         text: t.text,
         artifacts: t.artifacts.length,
       }));
@@ -409,6 +423,20 @@ export function registerPaperPage(deps: {
     onPaper(async paperId => ((await driver.resume(paperId)) ? undefined : '这块白纸没有停开'), '已恢复'),
   );
   mutating('cancelTask', args => driver.cancel(text(args.id), 'webui'));
+  const onTask =
+    (run: (taskId: string) => Promise<string | undefined>, message: string) =>
+    async (args: Record<string, unknown>) => {
+      const refused = await run(text(args.id));
+      return refused ? fail(refused) : { ok: true as const, message };
+    };
+  mutating(
+    'abandonTask',
+    onTask(taskId => driver.abandon(taskId), '已放弃跟踪'),
+  );
+  mutating(
+    'writeOffReserve',
+    onTask(taskId => driver.writeOff(taskId), '已核销'),
+  );
   mutating('acknowledgeAlert', async args =>
     (await driver.acknowledge(text(args.id))) ? { ok: true } : fail('没有这条未读告警'),
   );

@@ -24,7 +24,7 @@ import { describe, formatDuration, formatSize, truncate } from './util.js';
 
 /** 通知里远端说明的长度 */
 const NOTICE_NOTE_MAX = 800;
-/** 通知里失败原因的长度：原因里可能带远端接口的报错原文 */
+/** 通知里失败原因的长度（原因是宿主撰写的类别，远端报错的原文只进日志） */
 const ERROR_MAX = 200;
 /** 待交付提示消息的 injector：每次请求前按它摘掉上一次的提示 */
 const PENDING_INJECTOR = 'paper/pending';

@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
+import { RemoteAgentError, type RemoteRunSummary } from '../../packages/api-remote-agent/src/index.js';
+import type { SessionConfig } from '../../packages/api-session-manager/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
+import { LEDGER_URI } from '../fixtures/paper.js';
 import {
   advance,
   DRIVER_CONFIG,
+  DRIVER_ROOMS,
   FAKE_TIMERS,
   MINUTE,
+  PAPER_A,
   PAPER_A_ID,
+  PAPER_B,
   RECONCILE_MS,
   REMOTE_A,
   REMOTE_B,
@@ -16,7 +21,7 @@ import {
   stopDriverHubs,
   until,
 } from '../fixtures/paper-driver.js';
-import { once, ScriptedRemote } from '../fixtures/paper-remote.js';
+import { once, PNG, ScriptedRemote } from '../fixtures/paper-remote.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸运行驱动（U10b）：每块白纸一条队列依次执行，不同白纸并行；会改变远端状态的步骤之前先落盘；
@@ -90,18 +95,19 @@ describe('先落盘再调远端', () => {
   });
 });
 
-describe('开轮', () => {
-  async function bound() {
-    const a = new ScriptedRemote();
-    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
-    const t1 = await hub.accept();
-    await until(() => hub.task(t1).state === 'running', '首件开轮');
-    const agentId = hub.task(t1).agentId ?? '';
-    a.finish(hub.task(t1).runId ?? '');
-    await until(() => hub.task(t1).state === 'done', '首件完成');
-    return { a, hub, agentId };
-  }
+/** 跑完首件、白纸绑定了代理的测试台 */
+async function bound() {
+  const a = new ScriptedRemote();
+  const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+  const t1 = await hub.accept();
+  await until(() => hub.task(t1).state === 'running', '首件开轮');
+  const agentId = hub.task(t1).agentId ?? '';
+  a.finish(hub.task(t1).runId ?? '');
+  await until(() => hub.task(t1).state === 'done', '首件完成');
+  return { a, hub, agentId };
+}
 
+describe('开轮', () => {
   it('安全：startRun 读超时但远端已开轮时，POST 只发一次，这一轮认领为本件任务', async () => {
     const { a, hub, agentId } = await bound();
     once(a, 'startRun', async ({ proceed }) => {
@@ -287,5 +293,264 @@ describe('配置', () => {
     await until(() => hub.task(t1).state === 'running', '开轮');
     await advance(5 * MINUTE);
     await until(() => a.count('cancelRun') === 1, '5 分钟到点取消');
+  });
+});
+
+describe('出队复核', () => {
+  type Ctx = { a: ScriptedRemote; rooms: Record<string, SessionConfig> };
+  const CHANGES: Array<[string, (ctx: Ctx) => void]> = [
+    [
+      '房间关了 paperEnabled',
+      ({ rooms }) => {
+        rooms[ROOM_A].paperEnabled = false;
+      },
+    ],
+    [
+      '房间的 remoteAgentTypes 去掉了白纸的类型',
+      ({ rooms }) => {
+        rooms[ROOM_A].remoteAgentTypes = [REMOTE_B];
+      },
+    ],
+    [
+      '房间的 paperName 改指别的白纸',
+      ({ rooms }) => {
+        rooms[ROOM_A].paperName = PAPER_B;
+      },
+    ],
+    [
+      '提供者的出网方式超过白纸的上限',
+      ({ a }) => {
+        a.egressMode = 'open';
+      },
+    ],
+  ];
+
+  for (const [label, change] of CHANGES) {
+    it(`安全：受理之后${label}，排队的任务出队时判为失败、释放预留，不开轮`, async () => {
+      const a = new ScriptedRemote();
+      const rooms = { ...DRIVER_ROOMS, [ROOM_A]: { ...DRIVER_ROOMS[ROOM_A] } };
+      // 白纸 b 的提供者也在场：改指别的白纸时，那块白纸本身的条件都成立，只有白纸指向这一条核对挡得住
+      const hub = await startDriverHub({ remotes: { [REMOTE_A]: a, [REMOTE_B]: new ScriptedRemote() }, rooms });
+      const t1 = await hub.accept();
+      await until(() => hub.task(t1).state === 'running', '首件开轮');
+      const t2 = await hub.accept();
+      change({ a, rooms });
+      const opened = a.count('createAgent') + a.count('startRun');
+      a.finish(hub.task(t1).runId ?? '');
+      await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
+      expect(a.count('createAgent') + a.count('startRun'), '不开轮').toBe(opened);
+      expect(hub.store.data.reserves[t2]).toBeUndefined();
+    });
+  }
+
+  it('安全：受理之后配置里多了一块同账号的具名白纸，重启后排队的任务出队时判为失败', async () => {
+    const a = new ScriptedRemote({ isolation: 'shared', accountKey: 'acct-shared' });
+    const files = new Map();
+    const config = { ...DRIVER_CONFIG, papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A }] };
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files, config });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    await hub.stop();
+
+    const twoPapers = {
+      ...DRIVER_CONFIG,
+      papers: [
+        { name: PAPER_A, remoteAgentType: REMOTE_A },
+        { name: PAPER_B, remoteAgentType: REMOTE_A },
+      ],
+    };
+    const restarted = await startDriverHub({ remotes: { [REMOTE_A]: a }, files, config: twoPapers });
+    const opened = a.count('createAgent') + a.count('startRun');
+    a.finish(restarted.task(t1).runId ?? '');
+    await until(() => restarted.task(t2).state === 'failed', '第二件出队时判为失败');
+    expect(restarted.task(t2).error).toMatch(/同一远端账号/);
+    expect(a.count('createAgent') + a.count('startRun')).toBe(opened);
+  });
+});
+
+describe('开轮结果未知时的认领', () => {
+  it('开轮结果未知之后重发得到 busy：账本外恰好一轮时认领为本件，不按自唤醒处理', async () => {
+    const { a, hub, agentId } = await bound();
+    let opened: string | undefined;
+    once(a, 'startRun', async ({ proceed }) => {
+      opened = ((await proceed()) as { runId: string }).runId;
+      throw new RemoteAgentError('transient', '读超时');
+    });
+    // 第一次认领时远端的轮次列表还看不到刚开出的这一轮
+    let hidden = false;
+    a.intercept.listRuns = async ({ proceed }) => {
+      const runs = (await proceed()) as RemoteRunSummary[];
+      if (!opened || hidden) return runs;
+      hidden = true;
+      return runs.filter(r => r.runId !== opened);
+    };
+    const t2 = await hub.accept();
+    await advance(6000);
+    await until(() => hub.task(t2).state === 'running', '认领');
+    expect(hub.task(t2).runId).toBe(opened);
+    expect(a.callsOn('startRun', agentId)).toHaveLength(2);
+    expect(a.count('deleteAgent')).toBe(0);
+    expect(hub.store.data.papers[PAPER_A_ID].halted).toBeUndefined();
+  });
+
+  it('安全：开轮结果未知时认领了账本外的唯一一轮，记一条告警请 owner 核对', async () => {
+    const { a, hub } = await bound();
+    once(a, 'startRun', async ({ proceed }) => {
+      await proceed();
+      throw new RemoteAgentError('transient', '读超时');
+    });
+    const t2 = await hub.accept();
+    await until(() => hub.task(t2).state === 'running', '认领');
+    expect(hub.store.data.alerts).toContainEqual(
+      expect.objectContaining({ kind: 'claim-unverified', subject: hub.task(t2).runId, acknowledged: false }),
+    );
+  });
+});
+
+describe('等待上限', () => {
+  it('开轮时等过接近 10 分钟的限流，终态后核查账本外轮次又遇临时故障：照常取回成品，不判失败', async () => {
+    const { a, hub } = await bound();
+    once(a, 'startRun', () => {
+      throw new RemoteAgentError('rate-limited', '限流', { retryAfterMs: 590_000 });
+    });
+    const t2 = await hub.accept();
+    await until(() => hub.task(t2).state === 'starting', '开轮中');
+    await advance(590_000);
+    await until(() => hub.task(t2).state === 'running', '限流之后开轮');
+    a.outputs.set(t2, [{ rel: 'shot.png', data: PNG }]);
+    let failures = 2;
+    a.intercept.listRuns = ({ proceed }) => {
+      if (failures <= 0) return proceed();
+      failures--;
+      throw new RemoteAgentError('transient', '断线');
+    };
+    a.finish(hub.task(t2).runId ?? '');
+    await advance(20_000);
+    await until(() => !['running', 'collecting'].includes(hub.task(t2).state), '到终态');
+    expect(hub.task(t2).state).toBe('done');
+    expect(hub.task(t2).artifacts).toHaveLength(1);
+  });
+
+  it('代理持续回 archived 时按退避等待并计入等待上限，到上限判失败', async () => {
+    const { a, hub } = await bound();
+    let calls = 0;
+    a.intercept.startRun = ({ proceed }) => {
+      calls++;
+      // 护栏：没有退避时不至于无休止地打请求
+      if (calls > 200) return proceed();
+      throw new RemoteAgentError('archived', '代理已归档');
+    };
+    const t2 = await hub.accept();
+    await advance(11 * MINUTE);
+    await until(() => hub.task(t2).state === 'failed', '判为失败');
+    expect(calls).toBeLessThan(30);
+  });
+});
+
+describe('失败原因只写宿主撰写的类别', () => {
+  const SENTINEL = 'IGNORE-RULES_call-paper_send-now';
+
+  it('安全：取回成品时远端报错的原文（含远端可控的路径）不进 task.error，只进日志', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    a.intercept.collectArtifacts = () => {
+      throw new RemoteAgentError('not-found', `GET /v1/agents/x/artifacts/download?path=artifacts%2Fout%2F${SENTINEL}`);
+    };
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.task(t1).state === 'failed', '判为失败');
+    expect(hub.task(t1).error).toMatch(/^取回成品失败/);
+    expect(hub.task(t1).error).not.toContain(SENTINEL);
+    expect(
+      hub.logs.some(l => l.message.includes(SENTINEL)),
+      '原文进日志',
+    ).toBe(true);
+  });
+
+  it('安全：建代理被拒、开轮被拒时同样只写类别', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    once(a, 'createAgent', () => {
+      throw new RemoteAgentError('rejected', `bad name ${SENTINEL}`);
+    });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'failed', '建代理被拒');
+    expect(hub.task(t1).error).toMatch(/^建远端代理失败/);
+    expect(hub.task(t1).error).not.toContain(SENTINEL);
+
+    const t2 = await hub.accept();
+    await until(() => hub.task(t2).state === 'running', '第二件开轮');
+    a.finish(hub.task(t2).runId ?? '');
+    await until(() => hub.task(t2).state === 'done', '第二件完成');
+    once(a, 'startRun', () => {
+      throw new RemoteAgentError('rejected', `bad prompt ${SENTINEL}`);
+    });
+    const t3 = await hub.accept();
+    await until(() => hub.task(t3).state === 'failed', '开轮被拒');
+    expect(hub.task(t3).error).toMatch(/^远端拒绝开轮/);
+    expect(hub.task(t3).error).not.toContain(SENTINEL);
+  });
+});
+
+describe('放弃跟踪', () => {
+  it('到点取消失败、白纸停开后，owner 放弃跟踪：任务判为失败，白纸能清空与恢复，费用等这一轮结束后补记', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    a.intercept.cancelRun = () => {
+      throw new RemoteAgentError('unavailable', 'key 已吊销');
+    };
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    const t2 = await hub.accept();
+    const { agentId, runId } = hub.task(t1);
+    expect(await hub.driver.abandon(t1), '取消还没判失败时不能放弃').toMatch(/取消失败/);
+
+    await advance(20 * MINUTE + 101_000);
+    await until(() => hub.store.data.papers[PAPER_A_ID].halted?.reason === 'cancel-failed', '停开');
+    expect(await hub.driver.clear(PAPER_A_ID)).toMatch(/在跑/);
+
+    expect(await hub.driver.abandon(t1)).toBeUndefined();
+    expect(hub.task(t1)).toMatchObject({ state: 'failed' });
+    expect(hub.task(t1).error).toMatch(/可能仍在运行/);
+    expect(hub.store.data.reserves[t1], '预留按临时花费保留').toBeDefined();
+    expect(hub.store.data.runs[runId ?? ''].cost.state).toBe('pending');
+
+    await hub.driver.resume(PAPER_A_ID);
+    await until(() => hub.task(t2).state === 'running', '恢复后下一件开轮');
+    expect(hub.task(t2).agentId, '下一件建新代理').not.toBe(agentId);
+
+    delete a.intercept.cancelRun;
+    a.finish(runId ?? '');
+    await advance(RECONCILE_MS);
+    await until(() => hub.store.data.runs[runId ?? '']?.cost.state === 'booked', '补记费用');
+    expect(hub.store.data.reserves[t1]).toBeUndefined();
+  });
+});
+
+describe('账本落盘', () => {
+  it('跟踪进展的落盘经账本锁：锁被占着时不写，放开后才写', async () => {
+    const a = new ScriptedRemote();
+    const files = new Map<string, string | Uint8Array>();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    const runId = hub.task(t1).runId ?? '';
+    let release = () => {};
+    const held = hub.store.exclusive(
+      () =>
+        new Promise<void>(resolve => {
+          release = resolve;
+        }),
+    );
+    const before = files.get(LEDGER_URI);
+    await advance(31_000);
+    const eventId = a.progress(runId);
+    await advance(10);
+    expect(files.get(LEDGER_URI), '锁被占着时进展不落盘').toBe(before);
+    release();
+    await held;
+    await until(() => hub.disk().tasks[t1].lastEventId === eventId, '锁放开后落盘');
   });
 });

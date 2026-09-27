@@ -145,11 +145,13 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     async ingressMessage() {},
   });
   const now = () => Date.now();
+  const isolation = new Isolation(remote, cfg.papers);
   const driver = new PaperDriver({
     remote,
     sessionManager,
     storage,
     ledger: store,
+    isolation,
     cfg,
     logger,
     signal: controller.signal,
@@ -164,7 +166,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     gateway,
     events: { emit: async () => {} } as unknown as Events,
     ledger: store,
-    isolation: new Isolation(remote, cfg.papers),
+    isolation,
     cfg,
     logger,
     signal: controller.signal,

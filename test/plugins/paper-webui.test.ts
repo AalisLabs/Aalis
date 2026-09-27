@@ -151,7 +151,7 @@ describe('页面登记', () => {
     expect(clear?.confirm).toMatch(/远端代理/);
 
     const tasks = tableOf(hub, '任务');
-    expect(tasks.actions?.map(a => a.label)).toEqual(['取消']);
+    expect(tasks.actions?.map(a => a.label)).toEqual(['取消', '放弃跟踪', '核销预留']);
     expect(tasks.columns.find(c => c.key === 'text')?.render).toBe('expandable-text');
 
     const artifacts = tableOf(hub, '成品');
@@ -432,6 +432,55 @@ describe('取消任务（owner，任何任务）', () => {
     expect(await hub.action('cancelTask', { id: 't-00000001' })).toMatchObject({ ok: false });
     expect(await hub.action('cancelTask', { id: 't-0000000f' })).toMatchObject({ ok: false });
     expect(hub.ledger().tasks['t-00000001'].state).toBe('done');
+  });
+});
+
+describe('核销预留', () => {
+  it('费用取不到、预留一直占着的已结束任务：按预留额估计入账并释放预留，之后不再补取', async () => {
+    const files = seeded(
+      [
+        {
+          task: doneTask('t-00000001', [], { costCents: undefined, agentId: 'bc-00000001', runId: 'run-1' }),
+          bytes: {},
+        },
+      ],
+      ledger => {
+        ledger.reserves['t-00000001'] = { cents: 70, day: '2026-09-27', room: ROOM, user: 'onebot:30001' };
+        ledger.runs['run-1'] = { agentId: 'bc-00000001', taskId: 't-00000001', cost: { state: 'missing' } };
+      },
+    );
+    const hub = await startPaperHub({ files });
+    const [row] = await rows(hub, 'listTasks');
+    expect(row.cost).toBe('预留 70');
+
+    expect(await hub.action('writeOffReserve', { id: 't-00000001' })).toMatchObject({ ok: true });
+    const ledger = hub.ledger();
+    expect(ledger.reserves['t-00000001']).toBeUndefined();
+    expect(ledger.runs['run-1'].cost).toEqual({ state: 'booked', cents: 70, estimated: true });
+    expect(Object.values(ledger.spend)[0]).toMatchObject({ global: 70, rooms: { [ROOM]: 70 } });
+    expect(ledger.tasks['t-00000001'].costCents).toBe(70);
+    expect(await hub.action('writeOffReserve', { id: 't-00000001' }), '没有预留了').toMatchObject({ ok: false });
+  });
+
+  it('还没结束的任务不能核销', async () => {
+    const files = seeded([{ task: doneTask('t-00000001', [], { state: 'queued' }), bytes: {} }], ledger => {
+      ledger.reserves['t-00000001'] = { cents: 70, day: '2026-09-27', room: ROOM, user: 'onebot:30001' };
+    });
+    const hub = await startPaperHub({ files });
+    expect(await hub.action('writeOffReserve', { id: 't-00000001' })).toMatchObject({ ok: false });
+    expect(hub.ledger().reserves['t-00000001']).toBeDefined();
+  });
+});
+
+describe('放弃跟踪', () => {
+  it('没有到点取消失败的运行中任务不能放弃跟踪', async () => {
+    const a = new ScriptedRemote();
+    const hub = await hubWith(a);
+    const taskId = await accept(hub, '任务一');
+    await running(hub, taskId);
+    const res = await hub.action('abandonTask', { id: taskId });
+    expect(res).toMatchObject({ ok: false });
+    expect(hub.ledger().tasks[taskId].state).toBe('running');
   });
 });
 

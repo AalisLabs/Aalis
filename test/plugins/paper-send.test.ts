@@ -71,6 +71,9 @@ const MINE = done('t-00000001', [
   art('a-0000000d', 'app.msi', 'other'),
   art('a-0000000e', 'open.lnk', 'other'),
   art('a-0000000f', 'anim.webp', 'webp'),
+  art('a-00000010', 'preview.mp4', 'mp4', 15 * 1024 * 1024),
+  art('a-00000011', 'anim.gif', 'gif', 12 * 1024 * 1024),
+  art('a-00000012', 'small.mp4', 'mp4', 10 * 1024 * 1024),
 ]);
 const OTHER_ROOM = done('t-00000002', [art('a-00000021', 'x.png', 'png')], { room: ROOM2 });
 const OTHER_PAPER = done('t-00000003', [art('a-00000031', 'x.png', 'png')], { paperId: 'n:zz-other' });
@@ -231,6 +234,25 @@ describe('paper_send：文件名', () => {
     const names = h.outbound.map(m => m.attachments?.[0].name ?? '');
     expect(names).toEqual(['报gnp.exe..告.png', `${'长'.repeat(40)}.png`, 'aalis-paper.png']);
     for (const name of names) expect(name).not.toMatch(/[‮​/\\:*?"<>|]/);
+  });
+});
+
+describe('paper_send：媒体大小', () => {
+  it('超过 10 MiB 的视频与图片被拒（聊天平台只内联发得出这么大的），拒绝时不标为已交付', async () => {
+    const h = await hub();
+    for (const id of ['a-00000010', 'a-00000011']) {
+      const res = await h.call('paper_send', { artifact_id: id });
+      expect(res.ok, id).toBe(false);
+      expect(String(res.error), id).toContain('10.0 MB');
+    }
+    expect(h.outbound).toEqual([]);
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    expect(await h.call('paper_send', { artifact_id: 'a-00000012' }), '正好 10 MiB 照发').toMatchObject({ ok: true });
+  });
+
+  it('上限取插件配置 sendMediaMaxMB', async () => {
+    const h = await hub({ config: { ...PILOT_CONFIG, sendMediaMaxMB: 20 } });
+    expect(await h.call('paper_send', { artifact_id: 'a-00000010' })).toMatchObject({ ok: true });
   });
 });
 
