@@ -103,6 +103,47 @@ function ExpandableTextCell({ text }: { text: string }) {
 const PREVIEW_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 /**
+ * 以整行为参数调列的 method 取回 WebuiFilePayload，解成字节。文件列与图片列共用；
+ * 业务失败（`{ ok: false, error }`）、结构不对与抛错都换成给用户看的原因。
+ */
+async function fetchFile(
+  pluginName: string,
+  method: string,
+  row: Record<string, unknown>,
+): Promise<{ file: { name: string; mime: string; bytes: Uint8Array<ArrayBuffer> } } | { error: string }> {
+  try {
+    const r = await pageAction<Partial<WebuiFilePayload> & { ok?: unknown; error?: unknown }>(pluginName, method, row);
+    if (r?.ok === false) return { error: typeof r.error === 'string' ? r.error : '读取失败' };
+    if (typeof r?.name !== 'string' || typeof r.mime !== 'string' || typeof r.base64 !== 'string') {
+      return { error: '返回的不是文件' };
+    }
+    const bin = atob(r.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { file: { name: r.name, mime: r.mime, bytes } };
+  } catch (err) {
+    return { error: errText(err, '读取失败') };
+  }
+}
+
+/** 看图弹窗：文件列的「查看」与图片列的放大共用；地址由调用方持有并回收 */
+function ImageModal({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+  return (
+    <div className="dyn-detail-overlay" onClick={onClose}>
+      <div className="dyn-detail-modal" onClick={e => e.stopPropagation()}>
+        <div className="dyn-detail-header">
+          <span className="dyn-detail-title">{name}</span>
+          <button type="button" className="dyn-detail-close" title="关闭" onClick={onClose}>×</button>
+        </div>
+        <div className="dyn-detail-body">
+          <img src={url} alt={name} style={{ maxWidth: '100%' }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * 文件单元格：显示文件名与「查看」「下载」，两个按钮都以整行为参数调列的 method 取回 WebuiFilePayload。
  * 查看只给位图白名单生成对应类型的 Blob 用 <img> 显示；下载一律生成 application/octet-stream 的 Blob，
  * 不论服务端回的 mime 是什么。对象 URL 用完即回收。
@@ -117,24 +158,12 @@ function FileCell({ name, method, row, pluginName }: { name: string; method: str
 
   const load = async () => {
     setNote('');
-    try {
-      const r = await pageAction<Partial<WebuiFilePayload> & { ok?: unknown; error?: unknown }>(pluginName, method, row);
-      if (r?.ok === false) {
-        setNote(typeof r.error === 'string' ? r.error : '读取失败');
-        return undefined;
-      }
-      if (typeof r?.name !== 'string' || typeof r.mime !== 'string' || typeof r.base64 !== 'string') {
-        setNote('返回的不是文件');
-        return undefined;
-      }
-      const bin = atob(r.base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return { name: r.name, mime: r.mime, bytes };
-    } catch (err) {
-      setNote(errText(err, '读取失败'));
+    const r = await fetchFile(pluginName, method, row);
+    if ('error' in r) {
+      setNote(r.error);
       return undefined;
     }
+    return r.file;
   };
 
   const view = async () => {
@@ -167,20 +196,56 @@ function FileCell({ name, method, row, pluginName }: { name: string; method: str
       <button type="button" className="btn btn-sm" onClick={view}>查看</button>
       <button type="button" className="btn btn-sm" onClick={download}>下载</button>
       {note && <span className="dyn-action-msg">{note}</span>}
-      {preview && (
-        <div className="dyn-detail-overlay" onClick={() => setPreview(null)}>
-          <div className="dyn-detail-modal" onClick={e => e.stopPropagation()}>
-            <div className="dyn-detail-header">
-              <span className="dyn-detail-title">{preview.name}</span>
-              <button type="button" className="dyn-detail-close" title="关闭" onClick={() => setPreview(null)}>×</button>
-            </div>
-            <div className="dyn-detail-body">
-              <img src={preview.url} alt={preview.name} style={{ maxWidth: '100%' }} />
-            </div>
-          </div>
-        </div>
-      )}
+      {preview && <ImageModal url={preview.url} name={preview.name} onClose={() => setPreview(null)} />}
     </span>
+  );
+}
+
+/**
+ * 行内图片单元格：挂载时以整行为参数调列的 method 取回 WebuiFilePayload，位图白名单内的类型以缩略图显示
+ * （最大宽 240 像素，点击放大），其余显示「不可预览」、不生成 Blob。一个实例只对应一个值：调用方以值为 key，
+ * 值变了就换新实例重取（旧图随卸载回收，不会有新值配旧图的一帧）；表格每次刷新都给新的行对象，值不变就沿用
+ * 已取回的图。对象 URL 在卸载时回收。
+ */
+function ImageCell({ alt, method, row, pluginName }: { alt: string; method: string; row: Record<string, unknown>; pluginName: string }) {
+  const [shown, setShown] = useState<{ url: string } | { note: string } | null>(null);
+  const [enlarged, setEnlarged] = useState(false);
+
+  // 依赖里没有 row：只用挂载时的行取一次
+  useEffect(() => {
+    let cancelled = false;
+    let url: string | undefined;
+    fetchFile(pluginName, method, row).then(r => {
+      if (cancelled) return;
+      if ('error' in r) {
+        setShown({ note: r.error });
+      } else if (!PREVIEW_IMAGE_MIMES.has(r.file.mime)) {
+        setShown({ note: '不可预览' });
+      } else {
+        url = URL.createObjectURL(new Blob([r.file.bytes], { type: r.file.mime }));
+        setShown({ url });
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [pluginName, method]);
+
+  if (!shown) return <span className="dyn-action-msg">加载中...</span>;
+  if ('note' in shown) return <span className="dyn-action-msg">{shown.note}</span>;
+  return (
+    <>
+      <button
+        type="button"
+        title="放大"
+        onClick={() => setEnlarged(true)}
+        style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in' }}
+      >
+        <img src={shown.url} alt={alt} style={{ display: 'block', maxWidth: 240 }} />
+      </button>
+      {enlarged && <ImageModal url={shown.url} name={alt} onClose={() => setEnlarged(false)} />}
+    </>
   );
 }
 
@@ -334,7 +399,9 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
                             ? <ExpandableTextCell text={String(row[col.key] ?? '')} />
                             : col.render === 'file' && col.method
                               ? <FileCell name={String(row[col.key] ?? '')} method={col.method} row={row} pluginName={pluginName} />
-                              : String(row[col.key] ?? '')}
+                              : col.render === 'image' && col.method
+                                ? <ImageCell key={String(row[col.key] ?? '')} alt={String(row[col.key] ?? '')} method={col.method} row={row} pluginName={pluginName} />
+                                : String(row[col.key] ?? '')}
                   </td>
                 ))}
                 {comp.actions && comp.actions.length > 0 && (

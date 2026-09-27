@@ -58,14 +58,19 @@ export interface WebuiTableComponent {
     label: string;
     /**
      * 单元格显示方式，不写时按文本显示：`countdown`（值是毫秒时间戳，显示剩余时间）、
-     * `status-badge`、`code`、`expandable-text`、`file`。
+     * `status-badge`、`code`、`expandable-text`、`file`、`image`。
      *
      * `file`：值作为文件名显示，配「查看」「下载」两个按钮；点击时以整行为参数调本列的 `method`，
      * 返回 {@link WebuiFilePayload}（业务失败返回 `{ ok: false, error }`）。只有 png、jpeg、gif、webp
      * 位图能在页面里查看，其他类型（含 HTML、SVG）只能下载；下载一律按 `application/octet-stream` 保存。
+     *
+     * `image`：行内图片。值作为替代文字；单元格挂载时以整行为参数调本列的 `method`，返回
+     * {@link WebuiFilePayload}（业务失败返回 `{ ok: false, error }`）。只有 png、jpeg、gif、webp 在行内显示
+     * （最大宽 240 像素，点击放大），其他类型显示「不可预览」。表格刷新时值不变就不重取，所以值要能区分
+     * 不同的图（例如带上编号或文件名）。每一行都会随页面取图，`method` 应返回缩略图一类的小图、不返回原图。
      */
     render?: string;
-    /** `render: 'file'` 时取文件内容的页面动作名 */
+    /** `render` 为 `file` 或 `image` 时取文件内容的页面动作名 */
     method?: string;
     nowrap?: boolean;
     minWidth?: number;
@@ -85,7 +90,7 @@ export interface WebuiTableComponent {
   searchPlaceholder?: string;
 }
 
-/** render 为 'file' 的列：点击时以整行为参数调 method，返回这个结构 */
+/** render 为 'file' 或 'image' 的列以整行为参数调 method，返回这个结构 */
 export interface WebuiFilePayload {
   /** 保存时的文件名；客户端会去掉其中的路径分隔符 */
   name: string;
