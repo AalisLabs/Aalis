@@ -21,7 +21,7 @@ import {
   type WebuiPage,
   webuiServer,
 } from '../../packages/api-webui/src/index.js';
-import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, LogHub, provide, services } from '../../packages/core/src/index.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
@@ -34,6 +34,7 @@ import { registerHubs } from './hubs.js';
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
 // - tools / gateway / doctor / webui-server：记下登记的工具、出站消息、页面与页面动作，诊断项按需运行；
 // - 钩子与贡献点用默认提供者；入站消息（宿主通知）只记下，没有网关与 agent 消费。
+// - 日志：每个测试台一个独立的 LogHub，warn 与 error 记进 logs。
 // 装好后 app.start()，与宿主一样发出 app:started。不连任何真实服务。
 // ════════════════════════════════════════════════════════════
 
@@ -216,6 +217,8 @@ export interface PaperHub {
   /** 枢纽注入的入站消息（宿主通知） */
   injected: IncomingMessage[];
   hooks: Hooks;
+  /** warn 与 error 级的日志 */
+  logs: Array<{ level: string; message: string }>;
   tools: Map<string, Omit<RegisteredTool, 'pluginName'>>;
   groups: Array<Omit<ToolGroupInfo, 'pluginName'>>;
   /** 枢纽登记的 WebUI 页面 */
@@ -241,7 +244,10 @@ export async function stopPaperHubs(): Promise<void> {
 }
 
 export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHub> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const logs: Array<{ level: string; message: string }> = [];
+  const logHub = new LogHub();
+  logHub.onEntry(entry => void logs.push({ level: entry.level, message: entry.message }));
+  const app = new App({ name: 'T', logLevel: 'warn', logHub });
   hubs.push(app);
   const files: PaperFiles = opts.files ?? new Map();
   const outbound: OutgoingMessage[] = [];
@@ -349,6 +355,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     outbound,
     injected,
     hooks: host.hooks,
+    logs,
     tools: registered,
     groups,
     pages,
