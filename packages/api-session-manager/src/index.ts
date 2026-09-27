@@ -9,6 +9,9 @@
 import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 
+/** 记忆召回范围：session=仅本会话，platform=同平台，all=不限 */
+export type MemoryRecallScope = 'session' | 'platform' | 'all';
+
 /**
  * 会话级配置覆盖
  *
@@ -49,8 +52,44 @@ export interface SessionConfig {
   disableOutputFormat?: boolean;
   /** JSON 内容由客户端渲染，服务端不提取回复字段 */
   clientSideJsonRendering?: boolean;
+  /** 本房间开启白纸（默认关） */
+  paperEnabled?: boolean;
+  /** 白纸名；不写则每个房间各一块，属性取白纸枢纽的 defaults */
+  paperName?: string;
+  /** 允许的远端代理类型（远端代理插件实例 id）；空或缺省 = 关 */
+  remoteAgentTypes?: string[];
+  /** 每人每天金额上限（美分）；缺省按 0，即拒绝 */
+  remoteAgentUserDailyCents?: number;
+  /** 每人每天件数上限；缺省按 0 */
+  remoteAgentUserDailyTasks?: number;
+  /** 本房间每天金额上限（美分）；缺省按 0 */
+  remoteAgentRoomDailyCents?: number;
+  /** 记忆召回范围，只能比记忆插件的配置更窄；随子会话复制，否则经子任务就绕过了收窄 */
+  memoryRecallScope?: MemoryRecallScope;
   /** 子会话默认配置（创建子会话时自动继承，子会话可进一步覆盖） */
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>;
+}
+
+/**
+ * 只经继承链实时解析、不随建会话复制的键。
+ *
+ * 建会话时复制生效配置（WebUI 建会话、create_subtask 建子会话）会把复制时的值冻结进新会话，
+ * 此后房间或平台档改了也不跟着变；子会话还会凭冻结的值继续开远端任务。复制一律经 {@link omitRoomOnlyKeys}。
+ */
+export const ROOM_ONLY_CONFIG_KEYS = [
+  'paperEnabled',
+  'paperName',
+  'remoteAgentTypes',
+  'remoteAgentUserDailyCents',
+  'remoteAgentUserDailyTasks',
+  'remoteAgentRoomDailyCents',
+] as const satisfies readonly (keyof SessionConfig)[];
+
+/** 去掉 {@link ROOM_ONLY_CONFIG_KEYS}，返回新对象 */
+export function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (typeof ROOM_ONLY_CONFIG_KEYS)[number]> {
+  const out = { ...config };
+  for (const key of ROOM_ONLY_CONFIG_KEYS) delete out[key];
+  return out;
 }
 
 /**
