@@ -18,10 +18,10 @@ import {
 } from '@aalis/api-remote-agent';
 import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
 import type { ToolCallContext } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import type { PaperConfig, PaperSpec } from './config.js';
 import type { LedgerStore, PaperLedger } from './ledger.js';
-import { describe } from './util.js';
+import { category, describe } from './util.js';
 
 export interface RoomPaper {
   /** n:<名> 或 r:<房间会话 id 的 sha256 前 12 位> */
@@ -133,50 +133,73 @@ export function checkEligibility(
  * 所以同一 accountKey 下最多一块具名白纸。账号按 ready() 报告的 accountKey 计（隔离边界是账号，
  * 不是插件实例）；取不到 accountKey 的实例按冲突算：它可能与任何一块在同一账号下，
  * 这时所有这类具名白纸都不开。每次都直接调 ready()：成功结果由提供者自己缓存。
+ * 取不到时分开给出两样：拒绝理由（会写进任务与完成通知，也交给模型）只用宿主撰写的类别；提供者报错的原文
+ * （按契约已去掉凭据与查询串，但可能有远端说明与本机网络细节）只进 warn 与诊断项。同一实例同一类别只记一次 warn
+ * （原文每次可能不同，如带请求号）。
  */
 export class Isolation {
+  /** 提供者实例 id → 上次记 warn 的类别；取到 accountKey 后清掉 */
+  readonly #warned = new Map<string, string>();
+
   constructor(
     private readonly remote: ServiceRef<RemoteAgentProvider>,
     private readonly papers: ReadonlyMap<string, PaperSpec>,
+    private readonly logger: Logger,
   ) {}
 
-  async #accountKey(entry: RemoteAgentEntry, signal: AbortSignal): Promise<string | undefined> {
+  async #accountKey(
+    entry: RemoteAgentEntry,
+    signal: AbortSignal,
+  ): Promise<{ key: string } | { category: string; detail: string }> {
+    let failure: { category: string; detail: string };
     try {
       const { accountKey } = await entry.instance.ready(signal);
-      return accountKey || undefined;
-    } catch {
-      return undefined;
+      if (accountKey) {
+        this.#warned.delete(entry.contextId);
+        return { key: accountKey };
+      }
+      failure = { category: '账号标识为空', detail: 'ready() 报告的 accountKey 为空' };
+    } catch (err) {
+      failure = { category: category(err), detail: describe(err) };
     }
+    if (this.#warned.get(entry.contextId) !== failure.category) {
+      this.#warned.set(entry.contextId, failure.category);
+      this.logger.warn(`取不到提供者「${entry.contextId}」的远端账号标识，按冲突处理：${failure.detail}`);
+    }
+    return failure;
   }
 
   /**
-   * 引用 shared 提供者的具名白纸各自能不能开：blocked 为白纸名到原因；
-   * collisions 是确认同账号的几块白纸，unknown 是取不到账号标识的提供者实例及引用它的白纸。
+   * 引用 shared 提供者的具名白纸各自能不能开：blocked 为白纸名到原因（只含类别）；collisions 是确认同账号的
+   * 几块白纸，unknown 是取不到账号标识的提供者实例、引用它的白纸、类别与提供者报错的原文（只给诊断项）。
    */
   async report(signal: AbortSignal): Promise<{
     blocked: Map<string, string>;
     collisions: string[][];
-    unknown: Array<{ type: string; papers: string[] }>;
+    unknown: Array<{ type: string; papers: string[]; category: string; detail: string }>;
   }> {
-    const byType = new Map<string, string[]>();
+    const byType = new Map<string, { entry: RemoteAgentEntry; names: string[] }>();
     for (const [name, spec] of this.papers) {
       const entry = resolveRemoteAgent(this.remote, spec.remoteAgentType);
       if (entry?.instance.transcriptIsolation !== 'shared') continue;
-      byType.set(entry.contextId, [...(byType.get(entry.contextId) ?? []), name]);
+      const group = byType.get(entry.contextId) ?? { entry, names: [] };
+      group.names.push(name);
+      byType.set(entry.contextId, group);
     }
     const byAccount = new Map<string, string[]>();
-    const unknown: Array<{ type: string; papers: string[] }> = [];
+    const unknown: Array<{ type: string; papers: string[]; category: string; detail: string }> = [];
     await Promise.all(
-      [...byType].map(async ([type, names]) => {
-        const entry = resolveRemoteAgent(this.remote, type);
-        const key = entry && (await this.#accountKey(entry, signal));
-        if (key === undefined) unknown.push({ type, papers: names });
-        else byAccount.set(key, [...(byAccount.get(key) ?? []), ...names]);
+      [...byType].map(async ([type, { entry, names }]) => {
+        const result = await this.#accountKey(entry, signal);
+        if ('key' in result) byAccount.set(result.key, [...(byAccount.get(result.key) ?? []), ...names]);
+        else unknown.push({ type, papers: names, ...result });
       }),
     );
     const blocked = new Map<string, string>();
-    for (const { type, papers } of unknown) {
-      for (const name of papers) blocked.set(name, `取不到提供者「${type}」的远端账号标识，按与其他白纸同账号处理`);
+    for (const { type, papers, category } of unknown) {
+      for (const name of papers) {
+        blocked.set(name, `取不到提供者「${type}」的远端账号标识（${category}），按与其他白纸同账号处理`);
+      }
     }
     const collisions = [...byAccount.values()].filter(names => names.length > 1);
     for (const names of byAccount.values()) {
@@ -184,8 +207,8 @@ export class Isolation {
         if (names.length > 1) {
           blocked.set(name, `白纸 ${names.join('、')} 用的提供者在同一远端账号下（同账号的代理能互读对话）`);
         } else if (unknown.length > 0) {
-          const types = unknown.map(u => `「${u.type}」`).join('、');
-          blocked.set(name, `取不到提供者${types}的远端账号标识，按与本白纸同账号处理`);
+          const causes = unknown.map(u => `「${u.type}」的远端账号标识（${u.category}）`).join('、');
+          blocked.set(name, `取不到提供者${causes}，按与本白纸同账号处理`);
         }
       }
     }
@@ -217,7 +240,7 @@ export async function checkRemote(deps: {
     egress = await provider.instance.egress(deps.signal);
   } catch (err) {
     deps.signal.throwIfAborted();
-    return { unavailable: `取不到远端代理「${type}」的出网方式：${describe(err)}` };
+    return { unavailable: `取不到远端代理「${type}」的出网方式（${category(err)}）` };
   }
   if (!egressWithin(egress, spec.remoteAgentEgress)) {
     return {

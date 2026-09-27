@@ -38,6 +38,8 @@ export interface FakeRun {
   runId: string;
   agentId: string;
   status: RunStatus;
+  /** 远端建出这一轮的时刻（假时钟下取 Date.now()） */
+  createdAt: number;
   resultText?: string;
   /** 已发出但还没被 followRun 取走的事件 */
   queue: RunProgress[];
@@ -74,11 +76,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
   /** egress() 报告的出网方式（来源恒为 owner 配置） */
   egressMode: EgressMode = 'allowlist';
   /** 每轮的费用；返回 undefined 即暂缺 */
-  costOf: (runId: string) => RunCost | undefined = () => ({
-    chargedCents: 10,
-    inputTokens: 1000,
-    cacheReadTokens: 500,
-  });
+  costOf: (runId: string) => RunCost | undefined = () => ({ cents: 10 });
 
   constructor(opts: { isolation?: 'shared' | 'per-agent'; accountKey?: string } = {}) {
     this.transcriptIsolation = opts.isolation ?? 'per-agent';
@@ -129,10 +127,12 @@ export class ScriptedRemote implements RemoteAgentProvider {
     this.agents.set(agentId, { agentId, name, archived: false, prompts: [] });
   }
 
-  /** 直接在远端建好一个代理和它的首轮（模拟崩溃前请求已落到远端） */
-  seedAgent(agentId: string, name = 'aalis-paper-seeded'): string {
+  /** 直接在远端建好一个代理和它的首轮（模拟崩溃前请求已落到远端）；createdAt 为远端建出首轮的时刻 */
+  seedAgent(agentId: string, name = 'aalis-paper-seeded', createdAt = Date.now()): string {
     this.agents.set(agentId, { agentId, name, archived: false, prompts: [] });
-    return this.#newRun(agentId, 'running').runId;
+    const run = this.#newRun(agentId, 'running');
+    run.createdAt = createdAt;
+    return run.runId;
   }
 
   // ----- RemoteAgentProvider -----
@@ -150,16 +150,21 @@ export class ScriptedRemote implements RemoteAgentProvider {
     return `bc-${String(++agentSeq).padStart(8, '0')}`;
   }
 
-  createAgent(req: { agentId: string; name: string; prompt: string }, signal: AbortSignal): Promise<{ runId: string }> {
+  /** 像真实提供者一样报告远端这一轮的开始时刻（已建出的代理取首轮的） */
+  createAgent(
+    req: { agentId: string; name: string; prompt: string },
+    signal: AbortSignal,
+  ): Promise<{ runId: string; startedAt?: number }> {
     return this.#call('createAgent', [req], signal, async () => {
       const existing = this.agents.get(req.agentId);
       if (existing) {
         const first = this.runsOf(req.agentId)[0];
         if (!first) throw new RemoteAgentError('rejected', '代理已存在但没有首轮');
-        return { runId: first.runId };
+        return { runId: first.runId, startedAt: first.createdAt };
       }
       this.agents.set(req.agentId, { agentId: req.agentId, name: req.name, archived: false, prompts: [req.prompt] });
-      return { runId: this.#newRun(req.agentId, 'running').runId };
+      const run = this.#newRun(req.agentId, 'running');
+      return { runId: run.runId, startedAt: run.createdAt };
     });
   }
 
@@ -316,7 +321,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
   }
 
   #newRun(agentId: string, status: RunStatus): FakeRun {
-    const run: FakeRun = { runId: `run-${++runSeq}-${agentId}`, agentId, status, queue: [] };
+    const run: FakeRun = { runId: `run-${++runSeq}-${agentId}`, agentId, status, createdAt: Date.now(), queue: [] };
     this.runs.set(run.runId, run);
     return run;
   }

@@ -96,9 +96,9 @@ describe('先落盘再调远端', () => {
 });
 
 /** 跑完首件、白纸绑定了代理的测试台 */
-async function bound() {
+async function bound(config?: Record<string, unknown>) {
   const a = new ScriptedRemote();
-  const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+  const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config });
   const t1 = await hub.accept();
   await until(() => hub.task(t1).state === 'running', '首件开轮');
   const agentId = hub.task(t1).agentId ?? '';
@@ -186,6 +186,77 @@ describe('单轮时长上限', () => {
     expect(a.calls.filter(c => c.method === 'cancelRun').map(c => c.args)).toEqual([[agentId, runId]]);
     expect(hub.task(t1)).toMatchObject({ cancelledVia: 'timeout', costCents: 10 });
     expect(hub.store.data.runs[runId ?? ''].cost).toEqual({ state: 'booked', cents: 10 });
+  });
+
+  it('安全：新建代理的一轮从远端开跑时算：建代理的响应几十秒才回时，startedAt 与计时器不按响应时刻', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    let arrivedAt: number | undefined;
+    a.intercept.createAgent = async ({ proceed }) => {
+      // 远端收到 POST 就建出这一轮开跑，响应却要 40 秒才回
+      arrivedAt = Date.now();
+      const out = await proceed();
+      await new Promise(resolve => setTimeout(resolve, 40_000));
+      return out;
+    };
+    const t1 = await hub.accept();
+    await advance(40_000);
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    expect(arrivedAt).toBeDefined();
+    expect(hub.task(t1).startedAt).toBe(arrivedAt);
+    expect(Date.now() - (arrivedAt ?? 0)).toBeGreaterThanOrEqual(40_000);
+
+    // 开跑起 20 分钟到点；按响应时刻算要再晚 40 秒
+    await advance(20 * MINUTE - (Date.now() - (arrivedAt ?? 0)) - 5_000);
+    expect(a.count('cancelRun')).toBe(0);
+    await advance(10_000);
+    await until(() => hub.task(t1).state === 'cancelled', '到点取消');
+    expect(Date.now() - (arrivedAt ?? 0)).toBeLessThan(20 * MINUTE + 40_000);
+  });
+
+  it('安全：建代理先遇限流、退避 5 分钟后才建出：计时从远端开跑时算，退避的等待不占单轮时长', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    once(a, 'createAgent', async () => {
+      throw new RemoteAgentError('rate-limited', '限流', { retryAfterMs: 5 * MINUTE });
+    });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'starting', '开轮中');
+    const requestedAt = hub.task(t1).start?.requestedAt ?? 0;
+    await advance(5 * MINUTE);
+    await until(() => hub.task(t1).state === 'running', '开轮');
+    const created = a.runs.get(hub.task(t1).runId ?? '')?.createdAt ?? 0;
+    expect(created - requestedAt).toBeGreaterThanOrEqual(5 * MINUTE);
+    expect(hub.task(t1).startedAt).toBe(created);
+
+    // 开跑起 20 分钟到点；按请求时刻算会早 5 分钟
+    await advance(20 * MINUTE - (Date.now() - created) - 5_000);
+    expect(a.count('cancelRun')).toBe(0);
+    await advance(10_000);
+    await until(() => hub.task(t1).state === 'cancelled', '到点取消');
+  });
+
+  it('提供者给的开跑时刻超出请求时刻到现在的范围（两边时钟有偏差）时，限在这个范围里；没给时按请求时刻', async () => {
+    for (const skew of [-10 * MINUTE, 10 * MINUTE, undefined]) {
+      const a = new ScriptedRemote();
+      const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+      let requestedAt = 0;
+      let returnedAt = 0;
+      a.intercept.createAgent = async ({ proceed }) => {
+        requestedAt = Object.values(hub.store.data.tasks)[0]?.start?.requestedAt ?? 0;
+        const out = (await proceed()) as { runId: string };
+        await new Promise(resolve => setTimeout(resolve, 30_000));
+        returnedAt = Date.now();
+        return skew === undefined ? { runId: out.runId } : { runId: out.runId, startedAt: returnedAt + skew };
+      };
+      const t1 = await hub.accept();
+      await advance(30_000);
+      await until(() => hub.task(t1).state === 'running', '开轮');
+      expect(returnedAt - requestedAt).toBe(30_000);
+      const expected = skew !== undefined && skew > 0 ? returnedAt : requestedAt;
+      expect(hub.task(t1).startedAt, `偏差 ${skew}`).toBe(expected);
+      await hub.stop();
+    }
   });
 
   it('安全：重启时已超时的任务立即被取消', async () => {
@@ -408,6 +479,56 @@ describe('开轮结果未知时的认领', () => {
   });
 });
 
+describe('认领时列轮次失败', () => {
+  it.each([
+    ['提供者不可用', () => new RemoteAgentError('unavailable', 'GET /v1/agents/x/runs 返回 401')],
+    ['临时故障等满上限', () => new RemoteAgentError('transient', '断线')],
+  ])('安全：开轮结果未知、认领时列轮次失败（%s）：任务留在开轮中，不重发、不判失败、预留保留；列表恢复后下次认领', async (_, error) => {
+    // 认领时按请求时刻计时：单轮时长放宽，免得认领后立即到点
+    const { a, hub, agentId } = await bound({ ...DRIVER_CONFIG, maxRunMinutes: 120 });
+    let opened: string | undefined;
+    once(a, 'startRun', async ({ proceed }) => {
+      opened = ((await proceed()) as { runId: string }).runId;
+      throw new RemoteAgentError('transient', '读超时');
+    });
+    // 开轮前的核查照常列出；开轮之后的认领列不出来
+    a.intercept.listRuns = ({ proceed }) => {
+      if (opened === undefined) return proceed();
+      throw error();
+    };
+    const t2 = await hub.accept();
+    await until(() => opened !== undefined, 'POST 已到远端');
+    await advance(25 * MINUTE);
+    expect(hub.task(t2).state).toBe('starting');
+    expect(hub.task(t2).error).toBeUndefined();
+    expect(hub.store.data.reserves[t2], '预留保留').toBeDefined();
+    expect(a.callsOn('startRun', agentId), '不重发').toHaveLength(1);
+    expect(a.callsOn('listRuns', agentId).length, '之后的触发接着认领').toBeGreaterThan(1);
+
+    delete a.intercept.listRuns;
+    await advance(RECONCILE_MS);
+    await until(() => hub.task(t2).state === 'running', '下次认领');
+    expect(hub.task(t2).runId).toBe(opened);
+    expect(a.callsOn('startRun', agentId)).toHaveLength(1);
+    expect(a.runsOf(agentId)).toHaveLength(2);
+  });
+
+  it('对照：从没发出过结果未知的请求（开轮得到 busy）时列轮次失败，照旧判失败并释放预留', async () => {
+    const { a, hub } = await bound();
+    once(a, 'startRun', () => {
+      throw new RemoteAgentError('busy', '代理上有一轮在跑');
+    });
+    a.intercept.listRuns = ({ proceed }) => {
+      if (a.count('startRun') === 0) return proceed();
+      throw new RemoteAgentError('unavailable', 'GET /v1/agents/x/runs 返回 401');
+    };
+    const t2 = await hub.accept();
+    await until(() => hub.task(t2).state === 'failed', '判为失败');
+    expect(hub.store.data.reserves[t2]).toBeUndefined();
+    expect(a.count('startRun')).toBe(1);
+  });
+});
+
 describe('等待上限', () => {
   it('开轮时等过接近 10 分钟的限流，终态后核查账本外轮次又遇临时故障：照常取回成品，不判失败', async () => {
     const { a, hub } = await bound();
@@ -465,6 +586,82 @@ describe('失败原因只写宿主撰写的类别', () => {
     expect(hub.task(t1).error).not.toContain(SENTINEL);
     expect(
       hub.logs.some(l => l.message.includes(SENTINEL)),
+      '原文进日志',
+    ).toBe(true);
+  });
+
+  it('安全：出队时同账号隔离核对不过（另一个 shared 实例取不到账号标识）时 task.error 只写类别，原文只进日志', async () => {
+    const a = new ScriptedRemote({ isolation: 'shared', accountKey: 'acct-a' });
+    const b = new ScriptedRemote({ isolation: 'shared', accountKey: 'acct-b' });
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a, [REMOTE_B]: b } });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    // 第二件排队期间，另一个实例的 key 失效
+    b.intercept.ready = () => {
+      throw new RemoteAgentError(
+        'unavailable',
+        `GET /v1/me 返回 401：${SENTINEL}（connect ECONNREFUSED 127.0.0.1:7892）`,
+      );
+    };
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
+    expect(hub.task(t2).error).toMatch(/账号标识.*提供者不可用/);
+    expect(hub.task(t2).error).not.toContain(SENTINEL);
+    expect(hub.task(t2).error).not.toContain('127.0.0.1');
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(SENTINEL)),
+      '原文进日志',
+    ).toBe(true);
+  });
+
+  it('安全：出队时取不到出网方式时 task.error 只写类别', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    a.egress = async () => {
+      throw new RemoteAgentError('transient', `GET /egress 失败：${SENTINEL}`);
+    };
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
+    expect(hub.task(t2).error).toMatch(/出网方式.*远端临时故障/);
+    expect(hub.task(t2).error).not.toContain(SENTINEL);
+  });
+
+  it('安全：出队时提供者不可用而停开：停开说明、告警与 paper_task 的拒绝理由只写类别，原文只进日志', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    a.intercept.ready = () => {
+      throw new RemoteAgentError(
+        'unavailable',
+        `GET /v1/me 返回 401：${SENTINEL}（connect ECONNREFUSED 127.0.0.1:7892）`,
+      );
+    };
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.store.data.papers[PAPER_A_ID].halted !== undefined, '停开');
+    const halted = hub.store.data.papers[PAPER_A_ID].halted;
+    expect(halted?.reason).toBe('provider');
+    expect(halted?.detail).toMatch(/提供者不可用/);
+    expect(hub.task(t2).state, '任务留在队列里').toBe('queued');
+    const alert = hub.store.data.alerts.find(x => x.kind === 'provider');
+    for (const shown of [halted?.detail, alert?.message]) {
+      expect(shown).not.toContain(SENTINEL);
+      expect(shown).not.toContain('127.0.0.1');
+    }
+
+    delete a.intercept.ready;
+    const refused = await hub.call('paper_task', { text: '再来一件', name: '再来' });
+    expect(refused.ok).toBe(false);
+    expect(String(refused.error)).toMatch(/停开.*提供者不可用/);
+    expect(String(refused.error)).not.toContain(SENTINEL);
+    expect(String(refused.error)).not.toContain('127.0.0.1');
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(SENTINEL)),
       '原文进日志',
     ).toBe(true);
   });
