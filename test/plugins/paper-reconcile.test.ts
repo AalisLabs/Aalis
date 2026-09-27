@@ -54,7 +54,7 @@ describe('自唤醒事件', () => {
     const first = await runOne(hub, a);
     const rogue = a.spawnRun(first.agentId);
     a.costOf = runId => ({
-      chargedCents: runId === rogue ? 77 : 10,
+      cents: runId === rogue ? 77 : 10,
       inputTokens: 1,
       cacheReadTokens: 0,
     });
@@ -178,9 +178,9 @@ describe('对账的范围', () => {
       remotes: { [REMOTE_A]: a },
       config: { ...DRIVER_CONFIG, papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, rotateAfterCents: 15 }] },
     });
-    a.costOf = () => ({ chargedCents: 20, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 20, inputTokens: 1, cacheReadTokens: 0 });
     const first = await runOne(hub, a);
-    a.costOf = () => ({ chargedCents: 1, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 1, inputTokens: 1, cacheReadTokens: 0 });
     const second = await runOne(hub, a, 'error');
     expect(hub.store.data.papers[PAPER_A_ID].binding).toBe(second.agentId);
     expect(hub.store.data.agents[first.agentId].state, '旧代理退役但还没删').toBe('retired');
@@ -338,10 +338,10 @@ describe('删除代理前结清费用', () => {
   it('安全：自唤醒的轮次取消后费用一直暂缺时，删除代理前按估计记进全局日账，轮次记录随代理移除', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
-    a.costOf = () => ({ chargedCents: 40, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 40, inputTokens: 1, cacheReadTokens: 0 });
     const first = await runOne(hub, a);
     const rogue = a.spawnRun(first.agentId);
-    a.costOf = runId => (runId === rogue ? undefined : { chargedCents: 40, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = runId => (runId === rogue ? undefined : { cents: 40, inputTokens: 1, cacheReadTokens: 0 });
 
     await advance(RECONCILE_MS);
     await advance(2 * MINUTE);
@@ -387,7 +387,7 @@ describe('删除代理前结清费用', () => {
     await until(() => hub.task(t1).state === 'done', '首件完成');
     expect(hub.store.data.runs[firstRun].cost.state).toBe('missing');
 
-    a.costOf = runId => (runId === firstRun ? undefined : { chargedCents: 10, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = runId => (runId === firstRun ? undefined : { cents: 10, inputTokens: 1, cacheReadTokens: 0 });
     await hub.driver.resume(PAPER_A_ID);
     await hub.driver.rotate(PAPER_A_ID);
     const second = await runOne(hub, a);
@@ -396,7 +396,7 @@ describe('删除代理前结清费用', () => {
     expect(a.callsOn('deleteAgent', first.agentId), '费用暂缺时不删').toEqual([]);
     expect(hub.store.data.reserves[first.id]).toBeDefined();
 
-    a.costOf = () => ({ chargedCents: 30, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 30, inputTokens: 1, cacheReadTokens: 0 });
     await advance(RECONCILE_MS);
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '补上费用后删除旧代理');
     expect(hub.task(first.id).costCents).toBe(30);

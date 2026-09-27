@@ -615,7 +615,7 @@ describe('7 错误体与限速', () => {
 });
 
 describe('8 费用', () => {
-  it('有 cost 时返回 chargedCents 与 token；缺 cost 返回 undefined', async () => {
+  it('有 cost 时返回花费与 token；缺 cost 返回 undefined', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({
       runs: [
@@ -628,12 +628,23 @@ describe('8 费用', () => {
       ],
     });
     await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toEqual({
-      chargedCents: 2.5536,
+      cents: 2.5536,
       inputTokens: 8724,
       cacheReadTokens: 14592,
     });
     await expect(p.runCost(agent.id, agent.runs[1].id, signal)).resolves.toBeUndefined();
     expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/usage`)[0].path).toContain(`runId=${agent.runs[0].id}`);
+  });
+
+  it.each([
+    ['计划内额度、BYOK、赠送额度（文档：chargedCents 为 0）', { rawCostCents: 5.9622, chargedCents: 0 }, 5.9622],
+    ['按请求计价（文档：rawCostCents 为 0）', { rawCostCents: 0, chargedCents: 4 }, 4],
+    ['折扣与服务费使两者不同', { rawCostCents: 3, chargedCents: 3.3 }, 3.3],
+  ])('安全：计入额度的花费取 chargedCents 与 rawCostCents 的较大者——%s', async (_, cost, cents) => {
+    const p = makeProvider();
+    const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED', cost, usage }] });
+    await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toMatchObject({ cents });
   });
 
   it('listRuns 与 getRun 把大写状态映射为小写枚举', async () => {

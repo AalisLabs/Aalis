@@ -573,17 +573,23 @@ export class CursorProvider implements RemoteAgentProvider {
     return items.map(([id, r]) => ({ runId: id, status: this.#status(r.status, id) }));
   }
 
+  /**
+   * 计入额度的花费取 chargedCents 与 rawCostCents 的较大者：文档写计划内额度、BYOK、赠送额度的用量 chargedCents
+   * 为 0，按请求计价的用量 rawCostCents 为 0（试点账号实测两者恒等，不能依赖）。
+   */
   async runCost(agentId: string, runId: string, signal: AbortSignal): Promise<RunCost | undefined> {
     const path = `/v1/agents/${enc(agentId)}/usage?runId=${enc(runId)}`;
     const data = asRecord(this.#ok(await this.#call('GET', path, { signal })));
     const run = asArray(data.runs)
       .map(asRecord)
       .find(r => r.id === runId);
-    const chargedCents = num(asRecord(run?.cost).chargedCents);
-    if (!run || chargedCents === undefined) return undefined;
+    const cost = asRecord(run?.cost);
+    const charged = num(cost.chargedCents);
+    const raw = num(cost.rawCostCents);
+    if (!run || (charged === undefined && raw === undefined)) return undefined;
     const usage = asRecord(run.usage);
     return {
-      chargedCents,
+      cents: Math.max(charged ?? 0, raw ?? 0),
       inputTokens: num(usage.inputTokens) ?? 0,
       cacheReadTokens: num(usage.cacheReadTokens) ?? 0,
     };
