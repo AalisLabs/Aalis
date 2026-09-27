@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.18.0 <1.0.0';
-/** 带 core peer >=0.18.0 的包：32 api（30 个随 core 0.18 发布，另有未发布的 api-trigger 与 api-remote-agent）+ 61 插件（含未发布的 plugin-remote-agent-cursor 与 plugin-paper）+ runtime + schema-config + schema-log。 */
-const CORE_PEER_COUNT = 96;
+/** 带 core peer >=0.18.0 的包：32 api（30 个随 core 0.18 发布，另有未发布的 api-trigger 与 api-remote-agent）+ 62 插件（含未发布的 plugin-remote-agent-cursor 与 plugin-paper，以及探测接 lifecycle.signal 后抬了 peer 的 plugin-code-sandbox-os）+ runtime + schema-config + schema-log。 */
+const CORE_PEER_COUNT = 97;
 
 interface Manifest {
   name?: string;
@@ -43,7 +43,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('本批发布的 96 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
+  it('本批发布的 97 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
@@ -57,13 +57,12 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'raised core peer 包数应对齐 96（32 api + 61 插件 + runtime + schema-config + schema-log）',
+      'raised core peer 包数应对齐 97（32 api + 62 插件 + runtime + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
-    // schema-message 的 core peer 只为类型声明，不抬；五个包本批没有改动、不重发，保持已发布的 >=0.17.0
-    expect(outliers.sort(), '仅 schema-message（type-only）与本批未改动的五个包不在新区间').toEqual([
+    // schema-message 的 core peer 只为类型声明，不抬；四个包本批没有改动、不重发，保持已发布的 >=0.17.0
+    expect(outliers.sort(), '仅 schema-message（type-only）与本批未改动的四个包不在新区间').toEqual([
       'api-code-sandbox = >=0.17.0 <1.0.0',
-      'plugin-code-sandbox-os = >=0.17.0 <1.0.0',
       'plugin-maimai = >=0.17.0 <1.0.0',
       'plugin-process-local = >=0.17.0 <1.0.0',
       'plugin-tool-code-runner = >=0.17.0 <1.0.0',
