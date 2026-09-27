@@ -1,19 +1,27 @@
 // ============================================================
-// 白纸工具：paper_task 交任务、paper_status 查任务、paper_cancel 取消自己发起的任务
+// 白纸工具：paper_task 交任务（受理后交给运行驱动出队）、paper_status 查任务、paper_cancel 取消自己在本房间
+// 发起的任务、paper_send 把成品发回本群
 //
 // 都在 paper 分组、都不声明 risk（等级 0，群友可用）：门槛由房间配置、真人判据与三层上限承担，
 // 封禁（负等级）由执行守卫挡住，handler 不重复查。返回值不含凭据或链接。
+//
+// paper_status、paper_cancel、paper_send 只认本房间发起的任务（具名白纸被几个房间共用时，别的房间的按「找不到」
+// 回）。paper_send 的类型按白名单：位图与 MP4 按 sendMediaMaxMB、单个 HTML 按 sendHtml 与大小上限，
+// 位图走 image、MP4 走 video、HTML 走 file，远端给的原扩展名须与按文件头判定的类型一致。文件名由宿主按任务名重写，附件指向白纸根里宿主命名的文件。交给网关即标为已交付：
+// 出站是发完即返回，投递失败由适配器写进会话记忆，她之后的回合看得到。
 // ============================================================
 
 import type { GatewayService } from '@aalis/api-gateway';
-import { type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
+import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { OutgoingMessage } from '@aalis/schema-message';
+import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
-import { type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import type { PaperDriver } from './driver.js';
+import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import {
   actorKey,
   checkEligibility,
@@ -23,6 +31,7 @@ import {
   type RoomPaper,
   resolveRoomPaper,
 } from './rooms.js';
+import { describe, formatSize, truncate } from './util.js';
 
 const MAX_TEXT = 1000;
 const MAX_NAME = 40;
@@ -30,6 +39,36 @@ const MAX_NAME = 40;
 const RECENT_MS = 24 * 3600_000;
 /** paper_status 里远端说明的长度 */
 const STATUS_NOTE_MAX = 500;
+
+type Artifact = TaskRecord['artifacts'][number];
+type SendableType = Exclude<Artifact['type'], 'other'>;
+
+/** 各类型认的原扩展名：远端给的文件名与按文件头判定的类型不一致时不发 */
+const TYPE_EXTENSIONS: Record<SendableType, readonly string[]> = {
+  png: ['png'],
+  jpeg: ['jpg', 'jpeg'],
+  gif: ['gif'],
+  webp: ['webp'],
+  mp4: ['mp4'],
+  html: ['html', 'htm'],
+};
+
+/** 不发的成品按原扩展名说明原因 */
+const REFUSED_EXTENSIONS: ReadonlyArray<{ exts: readonly string[]; reason: string }> = [
+  {
+    exts: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst'],
+    reason: '压缩包（包括工程包）不发，里面可能夹带可执行文件',
+  },
+  { exts: ['exe', 'dll', 'so', 'dylib', 'com', 'scr', 'jar'], reason: '可执行文件不发' },
+  { exts: ['msi', 'dmg', 'pkg', 'apk', 'ipa', 'deb', 'rpm', 'appimage'], reason: '安装包不发' },
+  {
+    exts: ['sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1', 'vbs', 'js', 'mjs', 'cjs', 'py', 'rb', 'pl', 'php'],
+    reason: '脚本不发，打开就可能被执行',
+  },
+  { exts: ['lnk', 'url', 'webloc', 'desktop'], reason: '快捷方式不发，它可能指向别的程序或网址' },
+  { exts: ['docm', 'dotm', 'xlsm', 'xltm', 'xlam', 'pptm', 'potm', 'ppam'], reason: '带宏的 Office 文档不发' },
+  { exts: ['svg', 'svgz'], reason: 'SVG 能内嵌脚本，不发；要图请让远端另导出 PNG' },
+];
 
 interface PaperToolDeps {
   tools: BoundTools;
@@ -43,6 +82,10 @@ interface PaperToolDeps {
   logger: Logger;
   signal: AbortSignal;
   now: () => number;
+  /** 受理后交给运行驱动：这块白纸没在跑就开始出队 */
+  kick: (paperId: string) => void;
+  /** 取消一件任务（运行驱动的 cancel，与 WebUI 共用） */
+  cancel: PaperDriver['cancel'];
 }
 
 const fail = (error: string) => JSON.stringify({ ok: false, error });
@@ -52,9 +95,15 @@ function codePoints(s: string): string[] {
   return [...s];
 }
 
-/** 任务名：去掉控制字符与格式字符（含双向控制符、零宽字符），截到 40 字 */
+/**
+ * 任务名：去掉控制字符、格式字符（含双向控制符、零宽字符）、行与段分隔符和「」，连续空白压成一个空格，截到 40 字。
+ * 任务名会写进完成通知与待交付提示（system 消息）的「」里：只能占一行，也不能提前收尾引号。
+ */
 function sanitizeName(value: unknown): string {
-  const cleaned = (typeof value === 'string' ? value : '').replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+  const cleaned = (typeof value === 'string' ? value : '')
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}「」]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
   return codePoints(cleaned).slice(0, MAX_NAME).join('').trim();
 }
 
@@ -66,18 +115,52 @@ function neutralize(s: string): string {
   return s.replace(/</g, '＜').replace(/>/g, '＞');
 }
 
-function truncate(s: string, max: number): string {
-  const chars = codePoints(s);
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : s;
-}
-
 function byCreated(a: TaskRecord, b: TaskRecord): number {
   return a.createdAt - b.createdAt;
 }
 
+/** 远端给的相对路径里文件名的扩展名（小写，没有则为空串） */
+function extensionOf(rel: string): string {
+  const base = rel.split('/').pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/** 这件成品能不能发；不能时返回原因 */
+function sendRefusal(artifact: Artifact, cfg: PaperConfig): string | undefined {
+  const ext = extensionOf(artifact.rel);
+  if (artifact.type === 'other') {
+    const refused = REFUSED_EXTENSIONS.find(r => r.exts.includes(ext));
+    return refused?.reason ?? '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页，这件成品不是这几种';
+  }
+  if (artifact.type === 'html') {
+    if (!cfg.sendHtml) return 'owner 没有开启发送网页（sendHtml），这件成品不发';
+    if (artifact.sizeBytes > cfg.sendHtmlMaxBytes) {
+      return `网页 ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendHtmlMaxBytes)}`;
+    }
+  } else if (artifact.sizeBytes > cfg.sendMediaMaxBytes) {
+    const what = artifact.type === 'mp4' ? '视频' : '图片';
+    return `${what} ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendMediaMaxBytes)}（聊天平台只内联发得出这么大的媒体）`;
+  }
+  if (!TYPE_EXTENSIONS[artifact.type].includes(ext)) {
+    return `原文件的扩展名（${ext ? `.${ext}` : '无'}）与文件内容（${artifact.type}）不一致，不发`;
+  }
+  return undefined;
+}
+
+/**
+ * 发出去的文件名：任务名去掉控制与格式字符（含双向控制符、零宽字符）、路径分隔符与 :*?"<>|，
+ * 首尾去点和空格，截到 40 字；空了用 aalis-paper
+ */
+function fileBaseName(name: string): string {
+  const trim = (s: string) => s.replace(/^[.\s]+|[.\s]+$/gu, '');
+  const cleaned = trim(name.replace(/[\p{Cc}\p{Cf}/\\:*?"<>|]/gu, ''));
+  return trim(codePoints(cleaned).slice(0, MAX_NAME).join('')) || 'aalis-paper';
+}
+
 function newTaskId(ledger: LedgerStore): string {
   let id: string;
-  do id = `t-${Buffer.from(crypto.getRandomValues(new Uint8Array(4))).toString('hex')}`;
+  do id = `t-${randomHex(4)}`;
   while (ledger.data.tasks[id]);
   return id;
 }
@@ -103,20 +186,24 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     return 'unavailable' in paper ? { refused: paper.unavailable } : { paper };
   };
 
-  async function echo(ctx: ToolCallContext, name: string, text: string): Promise<void> {
-    const message: OutgoingMessage = {
-      sessionId: ctx.sessionId,
-      platform: ctx.platform,
-      content: neutralize(`交给远端：${name}\n${text}`),
-      source: 'system',
-    };
+  /** 经网关发出；网关不在场时改走 outbound:message 事件（出站中间件链被跳过） */
+  async function dispatch(message: OutgoingMessage): Promise<void> {
     const gateway = deps.gateway.current;
     if (gateway) {
       await gateway.dispatchOutbound(message);
       return;
     }
-    deps.logger.warn('gateway 服务不在场，回显改走 outbound:message 事件（出站中间件链被跳过）');
+    deps.logger.warn('gateway 服务不在场，白纸出站改走 outbound:message 事件（出站中间件链被跳过）');
     await deps.events.emit('outbound:message', message);
+  }
+
+  async function echo(ctx: ToolCallContext, name: string, text: string): Promise<void> {
+    await dispatch({
+      sessionId: ctx.sessionId,
+      platform: ctx.platform,
+      content: neutralize(`交给远端：${name}\n${text}`),
+      source: 'system',
+    });
   }
 
   async function paperTask(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
@@ -139,7 +226,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     });
     if ('unavailable' in remote) return fail(remote.unavailable);
 
-    return ledger.exclusive(async () => {
+    let accepted = false;
+    const result = await ledger.exclusive(async () => {
       const now = deps.now();
       const day = dayKey(now, cfg.budgetTimeZone);
       const initiator = effectiveActor(ctx);
@@ -172,7 +260,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       try {
         await echo(ctx, name, text);
       } catch (err) {
-        return fail(`回显没有发出去，任务未受理：${err instanceof Error ? err.message : String(err)}`);
+        return fail(`回显没有发出去，任务未受理：${describe(err)}`);
       }
 
       const id = newTaskId(ledger);
@@ -187,7 +275,6 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         state: 'queued',
         createdAt: now,
         artifacts: [],
-        notified: false,
         delivered: false,
       };
       ledger.data.reserves[id] = { cents: reserve, day, room: ctx.sessionId, user };
@@ -201,12 +288,15 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         delete ledger.data.tasks[id];
         release(ledger.data, id);
         counts.tasks -= 1;
-        deps.logger.error(`白纸账本写入失败，任务未受理: ${err}`);
+        deps.logger.error(`白纸账本写入失败，任务未受理: ${describe(err)}`);
         return fail('白纸账本写入失败，任务未受理');
       }
       deps.logger.info(`白纸受理任务 ${id}（${paper.paperId}，房间 ${ctx.sessionId}，发起者 ${user}）`);
+      accepted = true;
       return done({ taskId: id, position: queueOf(paper.paperId).findIndex(t => t.id === id) + 1 });
     });
+    if (accepted) deps.kick(paper.paperId);
+    return result;
   }
 
   async function paperStatus(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
@@ -266,65 +356,70 @@ export function registerPaperTools(deps: PaperToolDeps): void {
   }
 
   async function paperCancel(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
-    const refused = checkEligibility(deps.sessionManager.require(), ctx, 'initiate');
-    if (refused) return fail(refused);
+    const entered = await enter(ctx, 'initiate');
+    if ('refused' in entered) return fail(entered.refused);
     if (ledger.failure) return fail('白纸账本读取失败，等 owner 处理');
     const taskId = typeof args.task_id === 'string' ? args.task_id.trim() : '';
     if (!taskId) return fail('task_id 不能为空');
+    // 别的房间、别的白纸上的任务与不存在的任务回同一句话，不承认它存在
+    const missing = `本房间的白纸上没有任务 ${taskId}`;
+    const ours = (task: TaskRecord | undefined) =>
+      task !== undefined && task.paperId === entered.paper.paperId && task.room === ctx.sessionId;
+    if (!ours(Object.hasOwn(ledger.data.tasks, taskId) ? ledger.data.tasks[taskId] : undefined)) return fail(missing);
     const user = actorKey(effectiveActor(ctx));
-
-    const step = await ledger.exclusive(async (): Promise<string | { agentId: string; runId: string }> => {
-      const task = ledger.data.tasks[taskId];
-      if (!task) return fail(`没有任务 ${taskId}`);
-      if (actorKey(task.initiator) !== user) return fail('只能取消自己发起的任务');
-      switch (task.state) {
-        case 'queued': {
-          const reserve = ledger.data.reserves[taskId];
-          task.state = 'cancelled';
-          task.endedAt = deps.now();
-          task.cancelledVia = 'tool';
-          release(ledger.data, taskId);
-          try {
-            await ledger.save();
-          } catch (err) {
-            task.state = 'queued';
-            delete task.endedAt;
-            delete task.cancelledVia;
-            if (reserve) ledger.data.reserves[taskId] = reserve;
-            deps.logger.error(`白纸账本写入失败，任务未取消: ${err}`);
-            return fail('白纸账本写入失败，任务未取消');
-          }
-          return done({ taskId, state: 'cancelled' });
-        }
-        case 'running':
-          if (!task.agentId || !task.runId) return fail('这件任务的远端轮次未知，取消不了，请 owner 在 WebUI 处理');
-          return { agentId: task.agentId, runId: task.runId };
-        case 'starting':
-          return fail('这件任务正在开轮，稍后再取消');
-        case 'collecting':
-          return fail('这一轮已经结束，正在取回成品，取消不了');
-        default:
-          return fail(`这件任务已经结束（${task.state}）`);
-      }
+    const result = await deps.cancel(taskId, 'tool', task => {
+      if (!ours(task)) return missing;
+      return actorKey(task.initiator) === user ? undefined : '只能取消自己发起的任务';
     });
-    if (typeof step === 'string') return step;
+    return JSON.stringify(result);
+  }
 
-    // 运行中：请远端取消这一轮。网络调用不占账本锁；费用照常等终态入账，预留到那时再释放
-    const providerType = ledger.data.agents[step.agentId]?.providerType ?? '';
-    const provider = resolveRemoteAgent(deps.remote, providerType);
-    if (!provider) return fail(`远端代理「${providerType}」不在场，取消不了`);
+  async function paperSend(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
+    const artifactId = typeof args.artifact_id === 'string' ? args.artifact_id.trim() : '';
+    if (!artifactId) return fail('artifact_id 不能为空');
+    const entered = await enter(ctx, 'use');
+    if ('refused' in entered) return fail(entered.refused);
+    if (ledger.failure) return fail('白纸账本读取失败，等 owner 处理');
+    // 别的白纸上的、同一具名白纸上别的房间发起的任务的成品，一律按「找不到」回，不承认它存在
+    const task = tasksOn(entered.paper.paperId).find(
+      t => t.room === ctx.sessionId && t.artifacts.some(a => a.id === artifactId),
+    );
+    const artifact = task?.artifacts.find(a => a.id === artifactId);
+    if (!task || !artifact) return fail(`本房间的白纸上没有成品 ${artifactId}`);
+    if (task.artifactsCleared) return fail(`成品 ${artifactId} 已随白纸清空删除`);
+    const refused = sendRefusal(artifact, cfg);
+    if (refused) return fail(refused);
+
+    const type = artifact.type as SendableType;
+    const message: OutgoingMessage = {
+      sessionId: ctx.sessionId,
+      platform: ctx.platform,
+      content: '',
+      attachments: [
+        {
+          kind: type === 'mp4' ? 'video' : type === 'html' ? 'file' : 'image',
+          data: artifactUri(task.paperId, task.id, artifact),
+          name: `${fileBaseName(task.name)}.${EXTENSIONS[type]}`,
+          mimeType: MIME_TYPES[type],
+        },
+      ],
+      source: 'agent',
+    };
     try {
-      await provider.instance.cancelRun(step.agentId, step.runId, deps.signal);
+      await dispatch(message);
     } catch (err) {
-      return fail(`远端取消失败：${err instanceof Error ? err.message : String(err)}`);
+      return fail(`没有交给发送队列：${describe(err)}`);
     }
-    return ledger.exclusive(async () => {
-      const task = ledger.data.tasks[taskId];
-      if (task && UNFINISHED_STATES.has(task.state)) {
-        task.cancelledVia = 'tool';
-        await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（取消标记）: ${err}`));
-      }
-      return done({ taskId, message: '已请远端取消这一轮；费用按实际发生的入账' });
+    await ledger.exclusive(async () => {
+      if (task.delivered) return;
+      task.delivered = true;
+      await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${describe(err)}`));
+    });
+    deps.logger.info(`白纸任务 ${task.id} 的成品 ${artifactId} 已交给发送队列（房间 ${ctx.sessionId}）`);
+    return done({
+      taskId: task.id,
+      artifactId,
+      message: '已交给发送队列；不代表对方已收到，投递失败时之后的回合会看到投递失败记录',
     });
   }
 
@@ -379,7 +474,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       type: 'function',
       function: {
         name: 'paper_cancel',
-        description: '取消自己当面交给白纸的任务：排队中的直接移出；运行中的请远端取消这一轮，已发生的费用照常入账。',
+        description:
+          '取消自己在本房间当面交给白纸的任务：排队中的直接移出；运行中的请远端取消这一轮，已发生的费用照常入账。',
         parameters: {
           type: 'object',
           properties: { task_id: { type: 'string', description: '任务编号（t-开头）' } },
@@ -388,5 +484,24 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       },
     },
     handler: paperCancel,
+  });
+
+  tools.register({
+    groups: ['paper'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'paper_send',
+        description:
+          '把白纸成品发回本群：artifact_id 用完成通知、待交付提示或 paper_status 里的成品编号。' +
+          '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页；结果只表示已交给发送队列，不代表对方已收到。',
+        parameters: {
+          type: 'object',
+          properties: { artifact_id: { type: 'string', description: '成品编号（a-开头）' } },
+          required: ['artifact_id'],
+        },
+      },
+    },
+    handler: paperSend,
   });
 }

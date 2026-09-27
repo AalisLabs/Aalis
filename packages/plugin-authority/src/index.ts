@@ -67,8 +67,8 @@ async function run(caps: Caps): Promise<void> {
         // err 作参数交给 logger 渲染：模板字符串遇到转不成字符串的值会抛，被下面的兜底吞掉、一条告警都不留
         err => logger.warn('授权用户等级加载失败:', err),
       )
-      // 上报器自身失败（日志订阅者同步抛错）不再外抛，成败两条回调都算：storage 已在线时下面的 await
-      // 会让激活失败，晚上线时没人等这个 Promise，未处理的拒绝会被宿主当致命错误退出进程
+      // 上报器自身失败（宿主经 AppOptions 注入的 logger 或时钟抛错）不再外抛，成败两条回调都算：
+      // storage 已在线时下面的 await 会让激活失败，晚上线时没人等这个 Promise，未处理的拒绝会被宿主当致命错误退出进程
       .catch(() => {});
   });
   // storage 已在线时 follow 是同步首挂：把加载等完再让 apply 返回，避免「等级表还空着

@@ -38,7 +38,7 @@ async function expectMessagesGoneMetadataKept(mem: MemoryService): Promise<void>
 
 describe('clearAll 只清消息与归档', () => {
   it('sqlite', async () => {
-    const mem = new SQLiteMemoryService(new Database(':memory:'));
+    const mem = new SQLiteMemoryService(new Database(':memory:'), { logger: { warn() {} } });
     await seed(mem);
     expect(await mem.getFullHistory('s1')).toHaveLength(3);
     await expectMessagesGoneMetadataKept(mem);
@@ -72,7 +72,9 @@ describe('clearAll 只清消息与归档', () => {
         },
       );
     type Ctor = ConstructorParameters<typeof MongoMemoryService>;
-    const mem = new MongoMemoryService(recorder('messages') as Ctor[0], recorder('meta') as Ctor[1]);
+    const mem = new MongoMemoryService(recorder('messages') as Ctor[0], recorder('meta') as Ctor[1], {
+      logger: { warn() {} },
+    });
     await mem.clearAll();
     expect(calls).toEqual(['messages.deleteMany([{}])']);
   });

@@ -21,10 +21,21 @@ export default definePlugin({
     logger,
     contributions,
     tools: optional(tools),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
+
+## 按房间收窄
+
+会话配置的 `memoryRecallScope`（见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间收得比 `scope` 更窄，被动注入与 `recent_messages` 都照它：
+
+- `session`：本插件注入的全是其他会话的原文，这个房间整块不注入；`recent_messages` 返回「本房间的召回范围限于本会话，不能查询其他会话的近期消息。」
+- `platform`：最多查同平台，插件配置或工具参数写了 `cross-platform` 也按 `same-platform` 查。
+- `all` 或未设置：按插件配置与工具参数。
+
+房间范围在每次查询时按会话所属平台现算；session-manager 不在场时不收窄。
 
 ## 配置
 

@@ -1,6 +1,5 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pluginDefinitionOf } from '@aalis/api-plugin-source';
@@ -13,9 +12,9 @@ import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 // ============================================================
 //
 // 独立部署（纯 npm 装 Aalis）用的加载器：不扫描 packages/ 目录，而是读项目
-// package.json 的 dependencies，逐个用 node 模块解析（require.resolve）定位已装的
-// @aalis 插件并 dynamic import。与 monorepo 的 createFsPluginLoader 是「两种部署
-// 模型的两个加载器」，非重复：前者扫目录，后者走 node 解析。
+// package.json 的 dependencies，逐个按 Node 的 ESM 解析规则（node_modules 上溯定位包目录、
+// 入口取 import 条件）找到已装的插件并 dynamic import。与 monorepo 的 createFsPluginLoader 是
+// 「两种部署模型的两个加载器」，非重复：前者扫目录，后者走 node 解析。
 //
 // 插件识别（纯正向关键词门）：
 //   - 唯一标准：package.json 的 keywords 含 'aalis-plugin'。
@@ -59,15 +58,56 @@ export function loadPluginDefinition(ns: unknown, pkgName: string, logger: Logge
 }
 
 /**
- * 按 Node 的 node_modules 逐级上溯规则，找出从 `start` 目录解析到的 `@aalis/core` 包目录（realpath）。
- * 只看目录布局、不走 exports，结果不受入口条件影响；找不到返回 undefined。
+ * 按 Node 的 node_modules 逐级上溯规则，找出从 `start` 目录解析到的包 `name` 的目录（realpath）。
+ * 只看目录布局、不走 exports，结果不受入口条件与 exports 是否开放 `./package.json` 影响；找不到返回 undefined。
  */
-function coreDirFrom(start: string): string | undefined {
+function packageDirFrom(start: string, name: string): string | undefined {
   for (let dir = realpathSync(start); ; dir = dirname(dir)) {
-    const candidate = join(dir, 'node_modules', '@aalis', 'core');
+    const candidate = join(dir, 'node_modules', name);
     if (existsSync(join(candidate, 'package.json'))) return realpathSync(candidate);
     if (dirname(dir) === dir) return undefined;
   }
+}
+
+/** import() 解析包入口时匹配的条件：Node 的默认条件，module-sync 随 require(esm) 启用 */
+const IMPORT_CONDITIONS = new Set([
+  'node',
+  'import',
+  'default',
+  ...(process.features.require_module ? ['module-sync'] : []),
+]);
+
+/** exports 目标按 import 条件取值：条件对象依键序、数组依次回退，目标须以 `./` 开头 */
+function exportTarget(target: unknown): string | undefined {
+  if (typeof target === 'string') return target.startsWith('./') ? target : undefined;
+  if (!target || typeof target !== 'object') return undefined;
+  const branches = Array.isArray(target)
+    ? target
+    : Object.entries(target).flatMap(([condition, value]) => (IMPORT_CONDITIONS.has(condition) ? [value] : []));
+  for (const branch of branches) {
+    const hit = exportTarget(branch);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+
+/**
+ * 包入口的绝对路径，与 import() 对包名解析到的是同一个文件：有 exports 时取 `"."` 的 import 条件目标；
+ * 没有时按 legacy main 规则依次试 main、main.js、main/index.js，最后 index.js。文件不存在返回 undefined。
+ */
+function packageEntry(dir: string, meta: Record<string, unknown>): string | undefined {
+  const { exports, main } = meta;
+  if (exports !== undefined && exports !== null) {
+    // 键以 . 开头的是子路径表，取其中的 "."；否则 exports 本身就是 "." 的目标（字符串、数组或条件对象）
+    const subpaths =
+      typeof exports === 'object' && !Array.isArray(exports) && Object.keys(exports).some(k => k.startsWith('.'));
+    const target = exportTarget(subpaths ? (exports as Record<string, unknown>)['.'] : exports);
+    return target && isFile(join(dir, target)) ? join(dir, target) : undefined;
+  }
+  const guesses = typeof main === 'string' && main ? [main, `${main}.js`, join(main, 'index.js')] : [];
+  return [...guesses, 'index.js'].map(file => join(dir, file)).find(isFile);
 }
 
 /**
@@ -76,7 +116,7 @@ function coreDirFrom(start: string): string | undefined {
  */
 export const HOST_CORE_DIR: string | undefined = (() => {
   try {
-    return coreDirFrom(dirname(fileURLToPath(import.meta.url)));
+    return packageDirFrom(dirname(fileURLToPath(import.meta.url)), '@aalis/core');
   } catch {
     return undefined;
   }
@@ -95,7 +135,7 @@ export const HOST_CORE_DIR: string | undefined = (() => {
  */
 function assertSameCore(hostCoreDir: string | undefined, pluginDir: unknown, pluginName: string): void {
   if (!hostCoreDir || typeof pluginDir !== 'string') return;
-  const theirs = coreDirFrom(pluginDir);
+  const theirs = packageDirFrom(pluginDir, '@aalis/core');
   if (!theirs || theirs === hostCoreDir) return;
   const version = (dir: string) => String(readJson(join(dir, 'package.json'))?.version ?? '版本未知');
   throw new Error(
@@ -147,8 +187,8 @@ export function warnLikelyPluginMissingKeyword(logger: Logger, name: string, met
  * @param opts.hostCoreDir 宿主那份 @aalis/core 的包目录，默认 {@link HOST_CORE_DIR}；插件解析到的 core 与它不同即拒绝加载
  *
  * - `discover()`：读 projectDir/package.json 的 dependencies + optionalDependencies，
- *   用 require.resolve 定位每个依赖的 package.json，按标记过滤出可加载插件。
- * - `load()`：先经 {@link assertSameCore} 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import（entry = require.resolve(包名)）。
+ *   按 node_modules 上溯定位每个依赖的包目录并读其 package.json，按标记过滤出可加载插件；入口见 {@link packageEntry}。
+ * - `load()`：先经 {@link assertSameCore} 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import。
  * - `reload()`：用入口文件 mtime 作 import URL query 强制 ESM 缓存失效。
  */
 export function createNodeModulesPluginLoader(
@@ -157,8 +197,6 @@ export function createNodeModulesPluginLoader(
 ): PluginLoader {
   const root = resolve(projectDir);
   const hostCoreDir = opts.hostCoreDir === undefined ? HOST_CORE_DIR : realpathSync(opts.hostCoreDir);
-  // 以项目 package.json 为基准创建 require，确保从项目 node_modules 解析
-  const req = createRequire(pathToFileURL(resolve(root, 'package.json')));
   const logger = new DefaultLogger('aalis:loader');
 
   return {
@@ -172,35 +210,23 @@ export function createNodeModulesPluginLoader(
 
       const discovered: PluginDescriptor[] = [];
       for (const dep of Object.keys(deps)) {
-        let metaPath: string;
-        try {
-          metaPath = req.resolve(`${dep}/package.json`);
-        } catch (err) {
-          // 未安装保持安静；但 exports 映射屏蔽 package.json 的包（装了却读不到
-          // 元数据）是链上最早的静默死点——无法判定是否插件，必须出声。
-          if ((err as NodeJS.ErrnoException).code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
-            logger.warn(`依赖 "${dep}" 的 exports 映射未导出 "./package.json"，无法读取元数据判定是否插件，跳过`);
-          }
-          continue;
-        }
-        const meta = readJson(metaPath);
+        // 未安装保持安静
+        const dir = packageDirFrom(root, dep);
+        if (!dir) continue;
+        const meta = readJson(join(dir, 'package.json'));
         if (!meta) continue;
         if (!isLoadablePlugin(meta)) {
           warnLikelyPluginMissingKeyword(logger, dep, meta);
           continue;
         }
-        let entry: string;
-        try {
-          entry = req.resolve(dep);
-        } catch {
-          logger.warn(`插件 "${dep}" 入口无法解析（缺 main/exports 或产物未打进 files），跳过`);
+        const entry = packageEntry(dir, meta);
+        if (!entry) {
+          logger.warn(
+            `插件 "${dep}" 入口无法解析（exports 的 "." 没有 import 条件可用的目标，或入口文件不存在：main 写错、产物未打进 files），跳过`,
+          );
           continue;
         }
-        discovered.push({
-          name: (meta.name as string) ?? dep,
-          source: entry,
-          metadata: { dir: dirname(metaPath) },
-        });
+        discovered.push({ name: (meta.name as string) ?? dep, source: entry, metadata: { dir } });
       }
       return discovered;
     },

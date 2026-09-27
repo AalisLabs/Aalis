@@ -11,7 +11,9 @@
 // - 无参 POST（cancel、archive、unarchive）发 `{}` 加 JSON 头：只带头不带 body 回 400。
 // - 错误体有两种：业务错误 {error:{code,message}}，框架层的 400/415 为 {code:'error',message}。
 // - 产物列表的 path 以 `artifacts/` 开头，对应虚拟机里的 /opt/cursor/artifacts；下载拿到 15 分钟的
-//   预签名链接，经 safeFetch 下载，边读边计字节。
+//   预签名链接，经 safeFetch 下载，边读边计字节。单个成品取不到下载链接（非临时错误）时只拒收这一件。
+// - 列表的翻页方式没有实测：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不把第一页当完整列表
+//   （对账与开轮认领都依赖列表完整）。
 //
 // key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误与日志一律先去掉 key 的片段与链接的查询串。
 // ============================================================
@@ -19,6 +21,7 @@
 import {
   type ArtifactLimits,
   type ArtifactSink,
+  artifactRelProblem,
   type CollectReport,
   type EgressMode,
   type EgressReport,
@@ -88,6 +91,8 @@ const MAX_DETAIL_CHARS = 300;
 const MIN_SECRET_FRAGMENT = 8;
 /** URL 的查询串（预签名链接的签名在这里） */
 const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
+/** 列表响应里的下一页标记：翻页方式没有实测，见到就失败关闭 */
+const NEXT_PAGE_KEYS = ['nextCursor', 'next_cursor', 'nextPageToken', 'next_page_token', 'next'] as const;
 
 const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
   CREATING: 'creating',
@@ -113,8 +118,6 @@ interface StreamCursor {
   lastId: string | undefined;
   /** 已交出的简化事件 id（重放时跳过） */
   seen: Set<string>;
-  /** 上一条交出的进展文字：思考与回复的连续片段只报一次 */
-  label: string | undefined;
 }
 
 type StreamOutcome =
@@ -156,10 +159,8 @@ function toRunStatus(raw: unknown): RunStatus | undefined {
   return typeof raw === 'string' && Object.hasOwn(RUN_STATUS, raw) ? RUN_STATUS[raw] : undefined;
 }
 
-function runState(runId: string, status: RunStatus, durationMs: unknown, text: unknown): RunState {
+function runState(runId: string, status: RunStatus, text: unknown): RunState {
   const state: RunState = { runId, status };
-  const duration = num(durationMs);
-  if (duration !== undefined) state.durationMs = duration;
   const resultText = str(text);
   if (resultText !== undefined) state.resultText = resultText;
   return state;
@@ -174,6 +175,15 @@ function remoteError(data: unknown): { code?: string; message?: string } {
     return { code: str(inner.code), message: str(inner.message) };
   }
   return { code: str(body.code), message: str(body.message) };
+}
+
+/** 列表响应带的下一页标记（字段名）；没有时 undefined */
+function nextPageMarker(body: Json): string | undefined {
+  const key = NEXT_PAGE_KEYS.find(k => typeof body[k] === 'string' && body[k] !== '');
+  if (key) return key;
+  if (body.hasMore === true) return 'hasMore';
+  if (body.has_more === true) return 'has_more';
+  return undefined;
 }
 
 /** Retry-After 可以是秒数或 HTTP 日期；没有时按 60 秒 */
@@ -216,18 +226,6 @@ function redactFragments(text: string, secret: string): string {
   return out;
 }
 
-/** 远端给的相对路径能否交给写入口；不能时返回原因 */
-function relProblem(rel: string): string | undefined {
-  if (rel === '') return '路径为空';
-  if (rel.startsWith('/')) return '绝对路径';
-  if (rel.includes('\\')) return '路径含反斜杠';
-  if (/[\p{Cc}\p{Cf}]/u.test(rel)) return '路径含控制字符或不可见的格式字符';
-  const segments = rel.split('/');
-  if (segments.includes('..')) return '路径含 .. 段';
-  if (segments.some(s => s === '' || s === '.')) return '路径含空段或 . 段';
-  return undefined;
-}
-
 /** 模型是否在列表里、参数是否写全且等于某个变体；不成立时返回原因 */
 function modelProblem(listing: unknown, model: CursorProviderOptions['model']): string | undefined {
   const item = asArray(asRecord(listing).items)
@@ -265,16 +263,6 @@ function modelProblem(listing: unknown, model: CursorProviderOptions['model']): 
 async function accountKeyOf(userId: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId)));
   return [...digest.subarray(0, 8)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function progressLabel(msg: SseMessage): string {
-  if (msg.event === 'thinking') return '思考中';
-  if (msg.event === 'assistant') return '撰写回复';
-  const data = asRecord(parseJson(msg.data));
-  const oneLine = (s: string) => s.replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 60);
-  const name = oneLine(str(data.name) ?? '工具');
-  const status = oneLine(str(data.status) ?? '');
-  return status ? `调用 ${name}（${status}）` : `调用 ${name}`;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -321,7 +309,7 @@ export class CursorProvider implements RemoteAgentProvider {
     this.#base = options.baseUrl.replace(/\/+$/, '');
   }
 
-  egress(): EgressReport {
+  async egress(): Promise<EgressReport> {
     return { mode: this.#opt.egressMode, source: 'owner-config' };
   }
 
@@ -403,7 +391,7 @@ export class CursorProvider implements RemoteAgentProvider {
     opts: { lastEventId?: string; signal: AbortSignal },
   ): AsyncGenerator<RunProgress, void, undefined> {
     const { signal } = opts;
-    const cursor: StreamCursor = { lastId: opts.lastEventId, seen: new Set(), label: undefined };
+    const cursor: StreamCursor = { lastId: opts.lastEventId, seen: new Set() };
     const streamPath = `/v1/agents/${enc(agentId)}/runs/${enc(runId)}/stream`;
     let backoff = this.#opt.retryBaseMs;
     for (;;) {
@@ -532,17 +520,14 @@ export class CursorProvider implements RemoteAgentProvider {
         if (msg.id === undefined || cursor.seen.has(msg.id)) return undefined;
         cursor.seen.add(msg.id);
         cursor.lastId = msg.id;
-        const label = progressLabel(msg);
-        if (msg.event !== 'tool_call' && label === cursor.label) return undefined;
-        cursor.label = label;
-        return { kind: 'progress', eventId: msg.id, label };
+        return { kind: 'progress', eventId: msg.id };
       }
       case 'result': {
         const data = asRecord(parseJson(msg.data));
         const status = toRunStatus(data.status);
         // 认不出或不是终态的 result 不作数，连接结束后以 GET run 为准
         if (!status || !isTerminalRun(status)) return undefined;
-        return { kind: 'terminal', state: runState(runId, status, data.durationMs, data.text) };
+        return { kind: 'terminal', state: runState(runId, status, data.text) };
       }
       case 'done':
         return 'done';
@@ -575,7 +560,7 @@ export class CursorProvider implements RemoteAgentProvider {
       this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs/${enc(runId)}`, { signal })),
     );
     const id = str(data.id) ?? runId;
-    return runState(id, this.#status(data.status, id), data.durationMs, data.result);
+    return runState(id, this.#status(data.status, id), data.result);
   }
 
   async cancelRun(agentId: string, runId: string, signal: AbortSignal): Promise<void> {
@@ -585,7 +570,7 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listRuns(agentId: string, signal: AbortSignal): Promise<RemoteRunSummary[]> {
-    const data = asRecord(this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs`, { signal })));
+    const data = this.#wholeList(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs`, { signal }));
     return asArray(data.items)
       .map(asRecord)
       .flatMap(r => {
@@ -607,7 +592,6 @@ export class CursorProvider implements RemoteAgentProvider {
       chargedCents,
       inputTokens: num(usage.inputTokens) ?? 0,
       cacheReadTokens: num(usage.cacheReadTokens) ?? 0,
-      outputTokens: num(usage.outputTokens) ?? 0,
     };
   }
 
@@ -618,11 +602,12 @@ export class CursorProvider implements RemoteAgentProvider {
     limits: ArtifactLimits,
     signal: AbortSignal,
   ): Promise<CollectReport> {
-    const idProblem = taskId.includes('/') ? '含 /' : relProblem(taskId);
+    const idProblem = taskId.includes('/') ? '含 /' : artifactRelProblem(taskId);
     if (idProblem) throw this.#error('rejected', `任务 id ${taskId} 不能用作目录名（${idProblem}）`);
     const prefix = `${LISTED_OUT}${taskId}/`;
-    const report: CollectReport = { files: [], rejected: [] };
+    const report: CollectReport = { rejected: [] };
     const reject = (path: string, reason: string) => report.rejected.push({ path, reason: this.#scrub(reason) });
+    let runFiles = 0;
     let runBytes = 0;
     for (const item of await this.#listArtifacts(agentId, signal)) {
       const isBundle = item.path === LISTED_BUNDLE;
@@ -631,12 +616,12 @@ export class CursorProvider implements RemoteAgentProvider {
       if (!isBundle) {
         if (!item.path.startsWith(prefix)) continue;
         rel = item.path.slice(prefix.length);
-        const problem = relProblem(rel);
+        const problem = artifactRelProblem(rel);
         if (problem) {
           reject(item.path, problem);
           continue;
         }
-        if (report.files.length >= limits.maxRunFiles) {
+        if (runFiles >= limits.maxRunFiles) {
           reject(item.path, `超过本轮文件数上限 ${limits.maxRunFiles}`);
           continue;
         }
@@ -651,9 +636,16 @@ export class CursorProvider implements RemoteAgentProvider {
       try {
         data = await this.#download(await this.#downloadLink(agentId, item.path, signal), limit, signal);
       } catch (err) {
-        if (!(err instanceof ArtifactRejected)) throw err;
-        reject(item.path, err.message);
-        continue;
+        if (err instanceof ArtifactRejected) {
+          reject(item.path, err.message);
+          continue;
+        }
+        // 这一件取不到下载链接（已被删、路径过长等）：只拒收这一件；临时故障与限流照抛，由调用方整次重来
+        if (isRemoteAgentError(err) && err.code !== 'transient' && err.code !== 'rate-limited') {
+          reject(item.path, `取不到下载链接：${err.message}`);
+          continue;
+        }
+        throw err;
       }
       try {
         await (isBundle ? sink.putBundle(data) : sink.putFile(rel, data));
@@ -662,10 +654,8 @@ export class CursorProvider implements RemoteAgentProvider {
         reject(item.path, `写入口拒收：${errorText(err)}`);
         continue;
       }
-      if (isBundle) {
-        report.bundle = { sizeBytes: data.byteLength };
-      } else {
-        report.files.push({ rel, sizeBytes: data.byteLength });
+      if (!isBundle) {
+        runFiles++;
         runBytes += data.byteLength;
       }
     }
@@ -693,14 +683,14 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]> {
-    const data = asRecord(this.#ok(await this.#call('GET', '/v1/agents?limit=100', { signal })));
+    const data = this.#wholeList(await this.#call('GET', '/v1/agents?limit=100', { signal }));
     const ignore = new Set(this.#opt.reconcileIgnoreNames);
     return asArray(data.items)
       .map(asRecord)
       .flatMap(a => {
         const agentId = str(a.id);
         const name = str(a.name) ?? '';
-        return agentId && !ignore.has(name) ? [{ agentId, name, archived: a.status === 'ARCHIVED' }] : [];
+        return agentId && !ignore.has(name) ? [{ agentId, name }] : [];
       });
   }
 
@@ -804,9 +794,24 @@ export class CursorProvider implements RemoteAgentProvider {
     throw this.#httpError(res);
   }
 
+  /** 列表响应：带下一页标记时抛 unavailable（列表可能不全） */
+  #wholeList(res: CallResult): Json {
+    const data = asRecord(this.#ok(res));
+    const marker = nextPageMarker(data);
+    if (marker) {
+      throw this.#error(
+        'unavailable',
+        `${res.what.replace(/\?.*$/, '')} 的响应带下一页标记 ${marker}，列表可能不全（翻页方式未实测，按失败处理）`,
+      );
+    }
+    return data;
+  }
+
   #httpError(res: CallResult): RemoteAgentError {
     const { code, message } = remoteError(res.data);
-    const detail = `${res.what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
+    // 请求路径去掉查询串：查询串里可能有远端可控的内容（如成品路径）
+    const what = res.what.replace(/\?.*$/, '');
+    const detail = `${what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
     if (res.status === 429) return this.#error('rate-limited', detail, retryAfterMs(res.headers));
     if (res.status === 401 || res.status === 403) return this.#error('unavailable', detail);
     if (res.status === 404) return this.#error('not-found', detail);

@@ -107,6 +107,9 @@ function memStorage(seed: Record<string, Buffer>) {
     async readFile(uri: string) {
       return get(uri);
     },
+    async readFileRange(uri: string, start: number, end: number) {
+      return get(uri).subarray(start, end);
+    },
     async writeFile(uri: string, data: Uint8Array) {
       files.set(uri, Buffer.from(data));
     },
@@ -337,5 +340,20 @@ describe('onebot 出站：安全', () => {
     expect(segmentTypes).not.toContain('record');
     expect(segmentTypes).not.toContain('video');
     expect(t.warns.filter(w => w.includes('文件头')).length).toBe(3);
+  });
+
+  it('超过内联上限的 storage 文件退回宿主路径之前也核对文件头：不是对应格式的不发，真的图片照旧交宿主路径', async () => {
+    const bigText = Buffer.concat([CONFIG, Buffer.alloc(10 * MIB, 0x61)]);
+    const bigPng = Buffer.concat([PNG, Buffer.alloc(10 * MIB)]);
+    const t = await boot({ files: { 'aalis:/big.log': bigText, 'data:/images/big.png': bigPng } });
+    for (const kind of ['image', 'video'] as const) {
+      await t.send({ sessionId: GROUP, content: '', attachments: [{ kind, data: 'aalis:/big.log' }] });
+    }
+    await t.send({ sessionId: GROUP, content: '', attachments: [{ kind: 'image', data: 'data:/images/big.png' }] });
+    await t.flush();
+    const wire = JSON.stringify(t.actions);
+    expect(wire).not.toContain('big.log');
+    expect(wire).toContain('file:///host/data/images/big.png');
+    expect(t.warns.filter(w => w.includes('文件头')).length).toBe(2);
   });
 });

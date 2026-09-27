@@ -80,7 +80,7 @@ WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。tok
 
 启动日志出于安全**不打印 token 本身**——它只给出该文件的绝对路径（「访问凭据已写入: …」那行，CLI 里按 `Ctrl+L` 看）。
 
-本机启动时默认会自动用带 token 的链接打开浏览器（`autoOpen`）；SSH / 容器 / 远程访问时把它关掉，手工复制链接即可。
+首次启动时默认会自动用带 token 的链接打开浏览器（`autoOpen`）；之后沿用同一个 token，浏览器里的登录仍然有效，不再自动打开。SSH / 容器 / 远程访问时把它关掉，手工复制链接即可。
 
 > **持有 token 的人等同 owner**。把 `host` 改成 `0.0.0.0` 对外暴露之前，先读 [plugin-webui-server 的「登录身份与权限」](../plugins/plugin-webui-server.md)。
 

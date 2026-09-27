@@ -246,4 +246,11 @@ describe('plugin-memory-inmemory: 与另两家后端的语义对齐', () => {
     for (const k of ['c', 'a', 'b']) await mem.saveMetadata('ord', k, { k });
     expect((await mem.listMetadata('ord')).map(e => e.key)).toEqual(['a', 'b', 'c']);
   });
+
+  it('listMetadataKeys 只列本命名空间的键，按 key 升序；命名空间不存在时为空', async () => {
+    for (const k of ['c', 'a', 'b']) await mem.saveMetadata('ord', k, { k });
+    await mem.saveMetadata('other', 'x', {});
+    expect(await mem.listMetadataKeys!('ord')).toEqual(['a', 'b', 'c']);
+    expect(await mem.listMetadataKeys!('none')).toEqual([]);
+  });
 });

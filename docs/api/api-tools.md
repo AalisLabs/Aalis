@@ -49,6 +49,29 @@ interface RegisteredTool {
 
 `CapabilityVisibility` / `CapabilityConfirm` / `CapabilityRisk` 从 `@aalis/api-authority` 导入。
 
+## ToolCallContext
+
+`handler` 的第二参，描述这次调用发生在哪里、以谁的身份：
+
+```ts
+interface ToolCallContext {
+  sessionId: string;
+  userId?: string;                                  // 消息物理来源的发言者（会话语义）
+  platform?: string;                                // 会话所属平台
+  actor?: { platform: string; userId: string };    // 授权身份；缺省即 (platform, userId)
+  enabledGroups?: string[];                         // 当前会话启用的工具分组
+  acceptsImages?: boolean;                          // 调用方能把结果里的图片交给主模型
+  signal?: AbortSignal;                             // 调用方回合的中止信号
+  inbound?: { source?: string };                    // 调用所在的入站回合，只由 agent 工具循环填写
+}
+```
+
+`inbound` 用来正向判断「这次调用来自由入站消息驱动的 agent 回合」：
+
+- 只有 plugin-agent 的工具循环填写它，`source` 取那条入站消息的 `IncomingMessage.source`：真人消息为 `undefined`，定时任务、闲置触发、宿主通知等内部注入为注入方标识。
+- workflow 的 tool 节点、mcp-server 等自己构造上下文的调用方不填，`inbound` 缺省。
+- 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看 `actor` 分不出来：定时任务注入的回合带着创建者的 `actor`。
+
 ## 描述符与绑定门面
 
 ```ts

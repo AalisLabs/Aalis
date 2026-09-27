@@ -66,17 +66,16 @@ export function isTerminalRun(status: RunStatus): boolean {
 export interface RunState {
   runId: string;
   status: RunStatus;
-  durationMs?: number;
   /** 代理这一轮最后的文字说明 */
   resultText?: string;
 }
-/** progress 的 eventId 供断线后续传，label 是给人看的一行进展 */
-export type RunProgress = { kind: 'progress'; eventId: string; label: string } | { kind: 'terminal'; state: RunState };
+/** progress 的 eventId 供断线后续传 */
+export type RunProgress = { kind: 'progress'; eventId: string } | { kind: 'terminal'; state: RunState };
+/** 一轮的实际费用；输入与缓存读取的 token 数供消费方判断上下文是否过长 */
 export interface RunCost {
   chargedCents: number;
   inputTokens: number;
   cacheReadTokens: number;
-  outputTokens: number;
 }
 
 // ----- 成品 -----
@@ -87,15 +86,29 @@ export interface ArtifactLimits {
   maxRunFiles: number;
   maxBundleBytes: number;
 }
+/**
+ * 远端给的成品相对路径（去掉交付目录前缀之后）能否交给写入口；不能时返回原因。提供者与写入口都按它判定：
+ * 写入口不只信提供者，自己再判一次。
+ */
+export function artifactRelProblem(rel: string): string | undefined {
+  if (rel === '') return '路径为空';
+  if (rel.startsWith('/')) return '绝对路径';
+  if (rel.includes('\\')) return '路径含反斜杠';
+  if (/[\p{Cc}\p{Cf}]/u.test(rel)) return '路径含控制字符或不可见的格式字符';
+  const segments = rel.split('/');
+  if (segments.includes('..')) return '路径含 .. 段';
+  if (segments.some(s => s === '' || s === '.')) return '路径含空段或 . 段';
+  return undefined;
+}
+
 /** 枢纽给的写入口：rel 由提供者去掉前缀后交来，写入口再做一次净化与上限检查，不合格就抛错 */
 export interface ArtifactSink {
   putFile(rel: string, data: Uint8Array): Promise<void>;
   putBundle(data: Uint8Array): Promise<void>;
 }
+/** 取回了哪些文件由写入口自己记着，这里只报没有取回的 */
 export interface CollectReport {
-  files: Array<{ rel: string; sizeBytes: number }>;
-  bundle?: { sizeBytes: number };
-  /** 没有取回的文件与原因（路径不合格、超过上限等） */
+  /** 没有取回的文件与原因（路径不合格、超过上限、取不到下载链接等） */
   rejected: Array<{ path: string; reason: string }>;
 }
 
@@ -104,7 +117,6 @@ export interface CollectReport {
 export interface RemoteAgentSummary {
   agentId: string;
   name: string;
-  archived: boolean;
 }
 export interface RemoteRunSummary {
   runId: string;
@@ -164,9 +176,14 @@ export interface RemoteAgentProvider {
   /** shared：同账号下的代理能互读对话；枢纽按 ready() 报告的 accountKey 限制使用它的白纸数 */
   readonly transcriptIsolation: 'shared' | 'per-agent';
   readonly layout: WorkspaceLayout;
-  egress(): EgressReport;
   /**
-   * 懒连接：鉴权与模型参数校验，失败抛 unavailable（带原因）；成功结果可缓存。
+   * 出网方式。取自 owner 配置的立即返回；要问远端接口或执行环境的（source 为 provider-api）按次读取，
+   * 结果由提供者自己缓存。失败抛 {@link RemoteAgentError}，消费方按取不到处理（不当作放行）。
+   */
+  egress(signal: AbortSignal): Promise<EgressReport>;
+  /**
+   * 懒连接：鉴权与模型参数校验，失败抛 unavailable（带原因）。成功结果由提供者缓存，消费方可以频繁调用
+   * （受理、出队、诊断都直接调它，不另设缓存）。
    * accountKey 是远端账号的不透明标识（哈希），同账号的实例返回同一个值；不含账号原文。
    */
   ready(signal: AbortSignal): Promise<{ accountKey: string }>;
@@ -193,7 +210,10 @@ export interface RemoteAgentProvider {
     limits: ArtifactLimits,
     signal: AbortSignal,
   ): Promise<CollectReport>;
-  /** 工程包的临时下载链接（交给新代理用）；没有工程包返回 undefined */
+  /**
+   * 旧代理工程包的位置，写进新代理的前言、由新代理自己取得：新代理能访问的链接（如临时下载链接），或新代理
+   * 能读的路径（执行环境不出网时）。没有工程包返回 undefined
+   */
   bundleLink(agentId: string, signal: AbortSignal): Promise<string | undefined>;
   archiveAgent(agentId: string, signal: AbortSignal): Promise<void>;
   unarchiveAgent(agentId: string, signal: AbortSignal): Promise<void>;

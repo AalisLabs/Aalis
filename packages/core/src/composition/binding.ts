@@ -17,26 +17,23 @@ class ServiceUnavailableError extends Error {
     this.#origin = required ? { resources: scope.resources, name } : undefined;
   }
 
-  static belongsTo(error: unknown, resources: Resources, required: readonly string[]): boolean {
-    return (
-      error instanceof ServiceUnavailableError &&
-      #origin in error &&
-      error.#origin?.resources === resources &&
-      required.includes(error.#origin.name)
-    );
+  static missingIn(error: unknown, resources: Resources, required: readonly string[]): string | undefined {
+    const origin = error instanceof ServiceUnavailableError && #origin in error ? error.#origin : undefined;
+    return origin?.resources === resources && required.includes(origin.name) ? origin.name : undefined;
   }
 }
 
 /**
- * 初始化失败归因：来源身份随激活变化，重抛上一轮错误不能触发下一轮重试。
+ * 初始化失败归因：本次激活的 required 端口抛出的不可用错误，返回所缺的服务名；其余错误返回 undefined。
+ * 来源身份随激活变化，重抛上一轮错误不能触发下一轮重试。
  * @internal
  */
-export function isRequiredServiceUnavailable(
+export function missingRequiredService(
   error: unknown,
   resources: Resources,
   required: readonly string[],
-): boolean {
-  return ServiceUnavailableError.belongsTo(error, resources, required);
+): string | undefined {
+  return ServiceUnavailableError.missingIn(error, resources, required);
 }
 
 /** 绑定只需要资源账与服务读取，不持有整个激活或插件管理器。 */

@@ -605,6 +605,13 @@ export class CommandRegistry implements CommandService {
         if (o.required && options[o.name] === undefined) return `缺少必填选项: --${o.name}`;
       }
 
+      // 有子指令、自身不收位置参数的指令，多出来的词是写错或不存在的子指令名，或是写多了的选项值
+      // （`/clear -t context vector`）：报错并指向 /help，不忽略后执行本指令（否则 `/clear alll`
+      // 会在确认后清掉当前会话）
+      if (cmd.positionalArgs.length === 0 && positionalTokens.length > 0 && this.directChildren(cmd.name).length > 0) {
+        return `未知子指令或多余参数: ${positionalTokens[0]}。输入 ${this.prefix}help ${cmd.name.replace(/\./g, ' ')} 查看用法。`;
+      }
+
       const positionals: unknown[] = [];
       let cursor = 0;
       for (const def of cmd.positionalArgs) {

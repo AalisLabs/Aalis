@@ -125,7 +125,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 强制关闭确认 |
 | `restrictedPolicy?: { allow?: string[]; duration?: number }` | 受限能力临时白名单放行（自动化免确认）；`['*']` 全放 |
 | `autoConfirmUntil?: number` | owner 临时免 session 确认的截止 epoch ms；`-1` 一直/缺省 关 |
-| `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级 `safeFetch` 策略（见第 6 节） |
+| `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级网络策略，`safeFetch` 与 tool-browser 的浏览器网络闸都按它判定（见第 6 节） |
 
 ## 3. 谁提供 / 谁消费
 
@@ -315,7 +315,7 @@ confirm 与等级**正交**，**只对已授权操作做意图确认**（不是�
 
 ### 6.4 网络出口（SSRF）
 
-authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略：`setNetworkPolicy(config.get('network') ?? {})`（`packages/plugin-authority/src/index.ts`）。SSRF 防护归属在权限域，但实际守卫在 `@aalis/util-network-guard` 的 `safeFetch`——**由 LLM/用户 URL 触发的出口必须走 `safeFetch`**，本地固定服务（ollama/onebot daemon）走裸 fetch 不受影响。详见 docs/concepts/security-model.md。
+authority 在 `apply` 时把 `config.network` 注入进程级网络策略：`setNetworkPolicy(config.get('network') ?? {})`（`packages/plugin-authority/src/index.ts`）。SSRF 防护归属在权限域，但实际守卫在 `@aalis/util-network-guard` 的 `safeFetch`——**由 LLM/用户 URL 触发的出口必须走 `safeFetch`**，本地固定服务（ollama/onebot daemon）走裸 fetch 不受影响。tool-browser 开启 `blockPrivate` 时，浏览器网络闸对每个连接同样按这份策略判定（插件的 `allowedHosts` 只跳过地址判定，端口照判），见 docs/plugins/plugin-tool-browser.md。详见 docs/concepts/security-model.md。
 
 ## 7. 边界与注意事项
 

@@ -4,6 +4,7 @@ import { type AddressInfo, getDefaultAutoSelectFamily, setDefaultAutoSelectFamil
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertAddressesSafe,
+  assertPortAllowed,
   assertSafeUrl,
   isPrivateAddress,
   isPrivateHost,
@@ -111,6 +112,13 @@ describe('可配网络出口策略（setNetworkPolicy）', () => {
     await expect(assertSafeUrl('https://1.1.1.1/')).resolves.toBeInstanceOf(URL); // 默认 443
     await expect(assertSafeUrl('http://1.1.1.1/')).resolves.toBeInstanceOf(URL); // 默认 80
     await expect(assertSafeUrl('http://1.1.1.1:6379/')).rejects.toThrow(/端口/); // 内网常见 Redis 口被拦
+  });
+
+  it('assertPortAllowed：未配置 allowedPorts 时不限；配置后只放行列表里的端口（自管连接直接调用）', () => {
+    expect(() => assertPortAllowed(6379)).not.toThrow();
+    setNetworkPolicy({ allowedPorts: [443] });
+    expect(() => assertPortAllowed(443)).not.toThrow();
+    expect(() => assertPortAllowed(6379)).toThrow('拒绝访问端口 6379（不在允许列表）');
   });
 
   it('blockPrivate:false：放行私网/localhost（本地自动化场景的总开关）', async () => {

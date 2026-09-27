@@ -53,3 +53,16 @@ it('没有激活中的插件时不显示该卡片', () => {
   render(<DashboardPage status={null} connected servicesData={null} plugins={[row('a', {})]} />);
   expect(screen.queryByText('激活中插件')).toBeNull();
 });
+
+// 「应用名称」卡片显示全局配置里的名字：装有人设时状态里的 name 是人设名，改应用名称在界面上曾看不出任何变化
+it('应用名称卡片显示 appName，不显示人设名', () => {
+  render(
+    <DashboardPage
+      status={{ name: '人设名', appName: '应用名', tools: [], commands: [] }}
+      connected
+      servicesData={null}
+      plugins={[]}
+    />,
+  );
+  expect(cardValue('应用名称')).toBe('应用名');
+});

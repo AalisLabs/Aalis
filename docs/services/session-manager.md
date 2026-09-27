@@ -67,6 +67,13 @@ interface SessionConfig {
   maxToolIterations?: number;                  // 覆盖 agent 全局值（正整数；非正整数视为未设置）
   disableOutputFormat?: boolean;               // 该会话回复纯文本，不走结构化输出
   clientSideJsonRendering?: boolean;           // 保留完整 JSON 给前端渲染
+  paperEnabled?: boolean;                      // 白纸与远端代理的房间键（这一行到 remoteAgentRoomDailyCents），见 §6.7
+  paperName?: string;
+  remoteAgentTypes?: string[];
+  remoteAgentUserDailyCents?: number;
+  remoteAgentUserDailyTasks?: number;
+  remoteAgentRoomDailyCents?: number;
+  memoryRecallScope?: 'session' | 'platform' | 'all';  // 记忆召回范围，只能比记忆插件的配置更窄；随子会话复制
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>;  // 子会话继承的默认（解析结果里会被剥掉）
 }
 ```
@@ -147,7 +154,9 @@ interface SessionInheritance {
 | `plugin-agent` | 每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组；`/session.set`·`/session.reset` 走 `ensureSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
 | `plugin-persona` | `resolveConfig()` 取 `persona/disableOutputFormat/clientSideJsonRendering`（消费侧**窄化类型**，见 §5.2） | `plugin-persona/src/index.ts` |
-| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getSessionTree/getInheritance/...`；`getSessionTree` 回分区的 `SessionTreeSection[]`（§2.2），`listSessions` 照旧回全部会话（含 IM 房间） | `plugin-session-manager/src/index.ts` |
+| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getSessionTree/getInheritance/...`；`getSessionTree` 回分区的 `SessionTreeSection[]`（§2.2），`listSessions` 照旧回全部会话（含 IM 房间）；`getInheritance` 由服务端推出会话所属平台（§2.4），回继承值与每个键的来源层 | `plugin-session-manager/src/index.ts` |
+| `plugin-paper` | `resolveConfig()` 取白纸与远端代理的房间键，决定房间用哪块白纸、每天能花多少 | `plugin-paper/src/rooms.ts` |
+| `plugin-memory-vector` / `plugin-memory-history` / `plugin-tool-session` / `plugin-user-relation` | 每次检索或注入时 `resolveConfig()` 取 `memoryRecallScope`，按房间收窄召回范围（可选依赖，缺席时不收窄） | 各包 `src/` |
 
 ## 4. 写一个 provider（替换实现）
 
@@ -423,6 +432,14 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 删除 IM 房间与删除其他会话相同，走 scope 为 session 的 `memory:clear`（§6.2），清空它在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等），聊天平台里的消息不受影响；房间之后再来真人消息会重新登记，记忆从零开始。
 
+### 6.7 房间键不随复制冻结
+
+白纸与远端代理的六个键（`ROOM_ONLY_CONFIG_KEYS`：`paperEnabled`、`paperName`、`remoteAgentTypes` 与三项每日上限）只经继承链实时解析。任何「复制生效配置建新会话」的路径都要先经 `omitRoomOnlyKeys()` 去掉它们：复制会把当时的值冻结进新会话，此后房间或平台档改了不跟着变，子会话还会凭冻结的值继续开远端任务。第一方的两条复制路径（WebUI 页面动作 `createSession`、plugin-subtask 的 `create_subtask`）都已经这样做。
+
+`memoryRecallScope` 相反，必须随子会话复制：子会话不带上更窄的召回范围，经子任务就绕过了收窄。
+
+onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首条真人入站到达时由 §6.6 的收录登记，之后就出现在会话列表里，能在 WebUI 会话页编辑这些键。
+
 ## 7. 注意事项与边界情形
 
 ### 7.1 会话状态：回合开始时翻 `active`，同一个中间件收口
@@ -443,7 +460,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
-写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随 memory 的当前胜者：运行中胜者换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时记 error，会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随 memory 的当前胜者：运行中胜者换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随 memory 胜者卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ## 8. 交叉链接
 

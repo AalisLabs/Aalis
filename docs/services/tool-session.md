@@ -161,7 +161,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ## A.6 能力 / 风险
 
-- **访问控制是跨会话读取的唯一闸门**，分两段（实现 `plugin-tool-session/src/index.ts`）：①service 自带的 `scope` 配置粗筛（`current` / `platform` / `all`，默认 `platform`，`index.ts`）；②匹配 `targetPlatform` 的 checker 链 any-deny 精筛。`scope=all` 时只剩 checker 链兜底——平台插件若未注册 checker，`all` 模式下跨会话读取便失去精筛防线。
+- **访问控制是跨会话读取的唯一闸门**，分三段（实现 `plugin-tool-session/src/index.ts`）：⓪当前会话所在房间的召回范围（会话配置 `memoryRecallScope`，经可选的 session-manager 每次现算）：`session` 时目标不是当前会话一律拒绝，`platform` 时跨平台拒绝，未设置或 session-manager 不在场时跳过；①service 自带的 `scope` 配置粗筛（`current` / `platform` / `all`，默认 `platform`，`index.ts`）；②匹配 `targetPlatform` 的 checker 链 any-deny 精筛。平台 checker 只能在前两段放行之后再收窄。`scope=all` 且房间未设召回范围时只剩 checker 链兜底——平台插件若未注册 checker，`all` 模式下跨会话读取便失去精筛防线。
 - 这与 [鉴权系统](../plugins/plugin-authority.md) 的 level/risk 是两套机制：`session_get_history` 工具本身的 minLevel 由工具的 risk 决定（见 [工具](../plugins/plugin-tools.md)），而**跨会话边界**则由本服务的 scope+checker 决定。二者叠加，缺一不可。
 - 本服务**不做** SSRF / 沙箱：它只读已落库的会话消息，无外部 egress。
 
@@ -253,7 +253,7 @@ if (reader?.deleteFile) await reader.deleteFile(fileId);
 ## 6. 会话隔离 / 访问控制（provider + consumer 必守）
 
 两服务共同的不变量：**`sessionId` 是会话隔离边界**。
-- `session-history`：跨 `sessionId` 读取必须过 scope 粗筛 + platform checker 链；provider 重写时**必须**自己跑 checker 链。
+- `session-history`：跨 `sessionId` 读取必须过房间召回范围 + scope 粗筛 + platform checker 链；provider 重写时**必须**自己跑这三段。
 - `file-reader`：`fileId` 以会话加盐（`sha256(sessionId + '\0' + content)` 前 16 hex）但仍可预测，凡按 `fileId` 取数据的 LLM 工具路径**必须**校验 `entry.sessionId === callCtx.sessionId`。
 - 两者都从 `callCtx.sessionId`（`ToolCallContext`）拿「当前会话」，从不信任入参里的会话身份。
 

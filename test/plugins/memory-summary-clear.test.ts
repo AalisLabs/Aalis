@@ -33,7 +33,7 @@ describe('plugin-memory-summary: 摘要随 context 清理', () => {
       const { clear, has } = await world();
       const results = await clear('session', types);
       expect(results, JSON.stringify(types)).toEqual([
-        { source: 'summary', success: true, message: '当前会话摘要已清空' },
+        { source: 'summary', type: 'summary', success: true, message: '当前会话摘要已清空' },
       ]);
       expect(await has('s1'), JSON.stringify(types)).toBe(false);
       expect(await has('s2'), JSON.stringify(types)).toBe(true);
@@ -43,7 +43,7 @@ describe('plugin-memory-summary: 摘要随 context 清理', () => {
   it('全局：context 删全部摘要', async () => {
     const { clear, has } = await world();
     expect(await clear('all', ['context'])).toEqual([
-      { source: 'summary', success: true, message: '所有会话摘要已清空' },
+      { source: 'summary', type: 'summary', success: true, message: '所有会话摘要已清空' },
     ]);
     expect(await has('s1')).toBe(false);
     expect(await has('s2')).toBe(false);
@@ -80,10 +80,23 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
     return { model, state, release };
   }
 
-  async function inFlight(start: 'turn' | 'compress') {
+  /** holdWrite 给出时，summary 命名空间的写入先兑现 writing、再等 holdWrite 放行（模拟晚到的数据库往返） */
+  async function inFlight(start: 'turn' | 'compress', holdWrite?: Promise<void>) {
     const { model, state, release } = gatedModel();
     const env = await setupSummary({ threshold: 30, keepRecent: 20 }, model);
     apps.push(env.app);
+    let writeStarted!: () => void;
+    const writing = new Promise<void>(r => (writeStarted = r));
+    if (holdWrite) {
+      const save = env.memory.saveMetadata.bind(env.memory);
+      env.memory.saveMetadata = async (namespace, key, data) => {
+        if (namespace === 'summary') {
+          writeStarted();
+          await holdWrite;
+        }
+        return save(namespace, key, data);
+      };
+    }
     for (let i = 0; i < 35; i++)
       await env.memory.saveMessage('s1', { role: i % 2 === 0 ? 'user' : 'assistant', content: `第 ${i} 条` });
     const statuses: string[] = [];
@@ -111,7 +124,7 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
         statuses,
       };
     };
-    return { clear, finish };
+    return { clear, finish, release, writing };
   }
 
   it.each([
@@ -140,5 +153,23 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
     expect(summary).toBeUndefined();
     expect(remaining).toBe(35);
     expect(statuses).toEqual(['start', 'error']);
+  });
+
+  // 已过比对、写入正在往返时开始清理：mongodb 上写入与清理的删除走不同连接，先发出的写入可能晚于删除落地。
+  // /clear all 可以从任意会话发起（带的是发起者所在的会话），全局清理从别的会话发起，要等全部会话的落库
+  it.each([
+    ['会话级清理', 'session', 's1'],
+    ['从别的会话发起的全局清理', 'all', 's-other'],
+  ] as const)('%s发生在摘要写入往返途中：清理等这次落库完成再删，摘要不留下', async (_label, scope, from) => {
+    let releaseWrite!: () => void;
+    const { clear, finish, release, writing } = await inFlight('turn', new Promise<void>(r => (releaseWrite = r)));
+    release();
+    await writing;
+    const clearing = clear(scope, from);
+    await new Promise<void>(r => setTimeout(r, 10));
+    releaseWrite();
+    await clearing;
+    const { summary } = await finish();
+    expect(summary).toBeUndefined();
   });
 });

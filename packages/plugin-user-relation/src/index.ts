@@ -654,17 +654,23 @@ function start(caps: Caps): void {
       // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量提交
       // （原子性按后端分档，见 store.clearAll），
       // 逐条删会在中途失败时留下半张图。
-      const cleared = await store.clearAll();
+      const cleared = await store.clearAll(caps.logger);
       caps.logger.info(`[user-relation] 关系图已清空 (${cleared} 条)`);
       data.results.push({
         source: 'user-relation',
+        type: 'user-relation',
         success: true,
         message: `关系图已清空 (${cleared} 条)`,
       });
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       caps.logger.warn(`[user-relation] 清空失败: ${m}`);
-      data.results.push({ source: 'user-relation', success: false, message: `关系图清空失败: ${m}` });
+      data.results.push({
+        source: 'user-relation',
+        type: 'user-relation',
+        success: false,
+        message: `关系图清空失败: ${m}`,
+      });
     }
     await next();
   });

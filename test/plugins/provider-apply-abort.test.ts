@@ -80,6 +80,25 @@ const cases: Array<{ name: string; plugin: PluginDefinition; config: Record<stri
   { name: 'llm-ollama 能力探测', plugin: llmOllama, config: OLLAMA, hangOn: '/api/show' },
   { name: 'llm-openai 模型发现', plugin: llmOpenai, config: GATEWAY, hangOn: '/models' },
   { name: 'llm-deepseek 模型发现', plugin: deepseek, config: GATEWAY, hangOn: '/models' },
+  // 配了 customModels 时，发现失败本会接着注册 customModels：中止要在发现落定后立即生效
+  {
+    name: 'llm-ollama 模型发现（配了 customModels）',
+    plugin: llmOllama,
+    config: { ...OLLAMA, customModels: 'mine' },
+    hangOn: '/api/tags',
+  },
+  {
+    name: 'llm-openai 模型发现（配了 customModels）',
+    plugin: llmOpenai,
+    config: { ...GATEWAY, customModels: 'mine' },
+    hangOn: '/models',
+  },
+  {
+    name: 'llm-deepseek 模型发现（配了 customModels）',
+    plugin: deepseek,
+    config: { ...GATEWAY, customModels: 'mine' },
+    hangOn: '/models',
+  },
 ];
 
 describe('启动探测随 lifecycle.signal 中止', () => {

@@ -35,6 +35,7 @@
 | [api-memory](./api-memory.md) | `memory` 描述符 | plugin-memory-inmemory / sqlite / mongodb / vector |
 | [api-package-manager](./api-package-manager.md) | `packageManager` 描述符（服务名 `package-manager`）+ `PackageManagerService` | plugin-package-manager |
 | [api-plugin-source](./api-plugin-source.md) | `pluginSource` 描述符（服务名 `plugin-source`）+ 插件入口判定 `pluginDefinitionOf` | 宿主提供（`@aalis/runtime`） |
+| [api-remote-agent](./api-remote-agent.md) | `remoteAgent` 描述符（服务名 `remote-agent`）+ 提供者接口 `RemoteAgentProvider` + 按实例 id 精确取的 `resolveRemoteAgent` | plugin-remote-agent-cursor |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符 | plugin-session-manager |

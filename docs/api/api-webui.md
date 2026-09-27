@@ -116,6 +116,24 @@ type WebuiComponent =
 }
 ```
 
+### 文件单元格
+
+表格列写 `render: 'file'` 与 `method` 时，单元格把值作为文件名显示，配「查看」「下载」两个按钮。点击时以整行为参数调这一列的 `method`，页面动作返回：
+
+```ts
+interface WebuiFilePayload {
+  name: string;    // 保存时的文件名；客户端去掉其中的 / 与 \
+  mime: string;
+  base64: string;  // 文件内容
+}
+```
+
+- 「查看」只在 `mime` 为 `image/png`、`image/jpeg`、`image/gif`、`image/webp` 时生成同类型的 Blob，用 `<img>` 显示在弹窗里；其他类型（含 HTML、SVG）只提示「此类型只能下载」，不在 WebUI 源里渲染。
+- 「下载」一律生成 `application/octet-stream` 的 Blob 保存，与返回的 `mime` 无关。对象 URL 用完即回收。
+- 业务失败返回 `{ ok: false, error }`，抛错或返回的结构不对时，原因显示在单元格旁边。写了 `render: 'file'` 但没写 `method` 的列按文本显示。
+
+页面动作只回 JSON，不会被浏览器当页面渲染；插件不能登记自己的 HTTP 文件路由，需要让 owner 取文件时用这种单元格。
+
 ### 示例：表单复用 ConfigSchema
 
 ```ts

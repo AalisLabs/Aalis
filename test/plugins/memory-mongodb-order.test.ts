@@ -48,7 +48,7 @@ function fakeCollection() {
 
 async function seededService(): Promise<MongoMemoryService> {
   type Col = ConstructorParameters<typeof MongoMemoryService>[0];
-  const svc = new MongoMemoryService(fakeCollection() as unknown as Col, {} as never);
+  const svc = new MongoMemoryService(fakeCollection() as unknown as Col, {} as never, { logger: { warn() {} } });
   await svc.saveMessage(SESSION, { role: 'user', content: '帮我查下天气', timestamp: 1000 });
   await svc.saveMessage(SESSION, {
     role: 'assistant',
