@@ -248,7 +248,7 @@ export function deepMergeDefaults(
 ): Record<string, unknown> {
   const result = { ...current };
   for (const [key, defaultValue] of Object.entries(defaults)) {
-    if (!(key in result)) {
+    if (!Object.hasOwn(result, key)) {
       result[key] = defaultValue;
     } else if (
       defaultValue !== null &&
@@ -373,7 +373,8 @@ export function removeExtraFields(
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) {
+    // 只认 schema 的自有键：配置里的 toString、valueOf 这类键不能靠原型上的同名属性逃过裁剪
+    if (!Object.hasOwn(schema, key)) {
       removed?.push(prefix + key);
       continue;
     }
