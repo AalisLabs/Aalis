@@ -75,6 +75,20 @@ export default definePlugin({
 
 > **shell / file / system / http 是配置开关与源码模块名，不是分组名。** 平台档的 `enabledToolGroups` 只认 `system` 这一个组名：写 `['file']` 匹配不到本插件的任何工具（静默、无告警；无分组的通用工具不受分组闸影响，仍照常可见）；写 `['system']` 则一次放开 exec、file_write、http_request 等全部工具。要按类收窄，用上表的配置开关关掉整类，而不是在平台档里按模块名列。
 
+## shell 工具：停止键与后台进程
+
+`exec` 把回合的中止信号交给 process 服务。WebUI 按停止键（或同一会话的新消息打断在途回合）时，命令按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树；回合随即结束，不必等命令跑完或超时。结果只在命令确实是被信号结束时标为中止，因为这条结果随工具调用落库，下一轮模型看到「已中止」可能把已经生效的命令（如 `git push`）再跑一遍：
+
+| 情形 | 结果 |
+|---|---|
+| 回合中止，命令被信号结束 | `aborted: true`、`message: '命令已随回合中止'`，带已收集的输出；不标 `timedOut` |
+| 中止前命令已自行退出（包括孙进程占着管道的收尾窗口），或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '回合已中止'` |
+| 起进程前回合已中止 | 不执行命令，返回 `aborted: true`、同一条 `message` 与 `exitCode: -1` |
+
+`exec_background` 起的后台进程不随回合中止：它们本来就要活过这次调用（开发服务器、文件监视），按停止键或追加一句话都不会杀掉。收掉它们用 `process_kill`（restricted、需确认，只能收同一会话起的进程）；插件停用时对仍在运行的后台进程发 SIGTERM、不升级，忽略 SIGTERM 的进程要到 Aalis 停机时由 process 服务整组 SIGKILL。
+
+停止键与超时都只打原进程组：命令里主动脱离进程组的后代（`setsid`、以 `detached: true` 起的子进程等守护化写法）会活下来。
+
 ## file 工具：exclude/include 与 file_search 行为
 
 `file_search` 与 `file_tree` 接受可选参数 `exclude`、`include`（数组，glob 字符串）。

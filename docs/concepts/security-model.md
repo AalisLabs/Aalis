@@ -140,6 +140,12 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 > 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
 > `npm create aalis` 只给已选装的 `cli` / `webui` 写 `['*']`，多人平台一律不代开。
 >
+> 房间会话按出生平台与受众选档（见 [session-manager 服务](../services/session-manager.md) §2.4），
+> 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。
+> 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`，`workflow_define`
+> 为 sensitive、不需确认），`tool` 节点又不过分组闸，所以房间的平台档不要开 `workflow` 组：
+> 开了之后，房间里等级 1 的成员就能借 workflow 用到分组之外的工具，包括以分组闸为前提维持 public 的 `http_request`。
+>
 > 这道闸此前**只在列举面生效**：`ToolRegistry.execute` 按名直调不校验分组，被提示注入的模型
 > 叫出一个本回合没下发给它的名字即可执行（已实测复现）。现已在执行面补齐同一判据——
 > 调用方传了 `enabledGroups` 时不命中即拒。上面「不在 enabledGroups 里故不可达」的判据

@@ -143,7 +143,7 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、改�
 | `subscribe_logs` | 订阅实时日志推送 |
 | `subscribe_session` | 订阅指定会话更新 |
 | `unsubscribe_session` | 取消会话订阅 |
-| `abort` | 中断当前生成 |
+| `abort` | 中断当前生成；回合里正在跑的 `exec` 与代码执行随之停掉（见 [plugin-tool-system](./plugin-tool-system.md)、[plugin-tool-code-runner](./plugin-tool-code-runner.md)） |
 | `compress` | 手动触发会话上下文压缩 |
 
 ### 出站消息类型 (Server → Client)
@@ -165,6 +165,10 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、改�
 | `page_refresh` | 通知前端刷新某插件的动态页面数据（`pluginName` 缺省表示全部） |
 | `confirm` | 受限操作的交互式确认请求（由 session-confirm 服务驱动；用户在聊天框回复即作答） |
 | `log` | 实时日志推送 |
+
+### token 用量快照
+
+客户端订阅会话而服务端没有缓存的用量时，以及手动压缩完成后，服务端发 `token:request` 请 agent 重算快照，结果经 `token_usage` 推给客户端。请求只带 `sessionId`，不带 `platform`：WebUI 能订阅任何平台的会话，快照按哪个平台算由 plugin-agent 决定（IM 房间按出生平台，其余按 `webui`，见 [plugin-agent](./plugin-agent.md) 的「Token 预算追踪与日志」），webui-server 不自己解析会话 id 猜平台。
 
 ## 流式缓冲管理
 

@@ -61,6 +61,20 @@ export default definePlugin({
 | `run_python` | 执行 Python 代码 |
 | `run_javascript` | 执行 JavaScript 代码 |
 
+## 停止键与中止结果
+
+两个工具都把回合的中止信号（工具调用上下文的 `signal`）交给执行路径：沙箱路径经 `code-sandbox` 服务的 `SandboxRunRequest.signal`，无沙箱路径经 process 服务的 `SpawnOptions.signal`。WebUI 按停止键（或同一会话的新消息打断在途回合）时，脚本按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，回合随即结束。
+
+结果只在脚本确实是被信号结束时标为中止，免得下一轮模型把已经生效的脚本再跑一遍：
+
+| 情形 | 结果 |
+|---|---|
+| 回合中止，脚本被信号结束（含宽限到点的 SIGKILL） | `aborted: true`、`message: '代码已随回合中止'`，带已收集的输出；不标 `timedOut` |
+| 回合中止前脚本已自行退出，或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '回合已中止'` |
+| 起脚本进程前回合已中止 | 不运行脚本，返回 `aborted: true` 与同一条 `message` |
+
+边界：停止键与超时都只打原进程组。无沙箱路径（`sandbox.mode: none`）与 macOS Seatbelt 路径上，主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）会活下来；Linux bwrap 路径有 pid 命名空间，外层 bwrap 退出后它们随之结束。详见 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md) 的「停止键与超时的边界」。
+
 ## 工作目录解析
 
 `workingDirectory` 必须是 storage URI（`workspace:/project`、`pluginData:/...` 等）或相对 `workspace:/` 的路径。**不接受宿主机绝对路径**。
