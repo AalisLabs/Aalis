@@ -20,9 +20,32 @@ import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 //      时再把图随结果附上；两种情况 content 都不含 base64，note 按有没有附图分写。
 //   2) ensureBrowser 只判句柄非空，Chromium 崩溃/被杀后所有 browser_* 永久失效
 //      到插件 bounce，pages 表还列着死页面。
+//
+// 不外发：测试启动的 Chrome 不走系统代理，Chrome 自己的后台请求出不了本机（见下方 launch 替身）。
 // ════════════════════════════════════════════════════════════
 
 type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
+
+// 测试里启动的 Chrome 追加两个参数：不走系统代理；除 127.0.0.1 外的主机一律映射到 127.0.0.1:1。
+// 不映射成「解析不到」：导航因解析失败出错时，Chrome 会拿公网域名做一次 DNS 探测
+vi.mock(
+  '../../packages/plugin-tool-browser/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
+  async importOriginal => {
+    // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
+    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+    const launch: Launch = options =>
+      actual.launch({
+        ...options,
+        args: [
+          ...(options?.args ?? []),
+          '--no-proxy-server',
+          '--host-resolver-rules=MAP * 127.0.0.1:1, EXCLUDE 127.0.0.1',
+        ],
+      });
+    return { ...actual, default: { ...actual.default, launch }, launch };
+  },
+);
 
 const PAGE_HTML = '<html><title>截图页</title><body style="background:#3b82f6"><h1>hello</h1></body></html>';
 
@@ -94,7 +117,7 @@ beforeAll(async () => {
       return () => void actions.delete(method);
     },
   } as never);
-  // blockPrivate:false 才连得上本机测试服务（同时省掉请求拦截）
+  // blockPrivate:false 才连得上本机测试服务（同时不起网络闸）
   await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false });
   await app.plugins.idle();
 }, 60_000);

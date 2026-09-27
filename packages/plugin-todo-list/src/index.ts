@@ -1,8 +1,8 @@
 import { hooks } from '@aalis/api-hooks';
-import { memory } from '@aalis/api-memory';
+import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 const configSchema: ConfigSchema = {
@@ -35,6 +35,7 @@ const uses = {
   tools: optional(tools),
   events,
   config,
+  logger,
   memory: optional(memory),
   webui: optional(webuiServer),
   hooks: optional(hooks),
@@ -53,7 +54,7 @@ export default definePlugin({
   },
 });
 
-function registerTodoList({ tools, events, memory, webui, hooks }: Caps): void {
+function registerTodoList({ tools, events, logger, memory, webui, hooks }: Caps): void {
   /**
    * sessionId → TodoItem[]：随这次激活存亡，插件重载后不会命中陈旧条目。
    * 只在没有 memory 时充当存储，有 memory 时不作读缓存：memory 是 optional，胜者换人时
@@ -211,8 +212,8 @@ function registerTodoList({ tools, events, memory, webui, hooks }: Caps): void {
       const mem = memory.current;
       let cleared: string[] = [];
       if (data.scope === 'all') {
-        const keys = mem ? (await mem.listMetadata(TODO_NAMESPACE)).map(e => e.key) : [];
-        await mem?.commitMetadata(keys.map(key => ({ op: 'del' as const, namespace: TODO_NAMESPACE, key })));
+        // 读不出的条目一并删除，计入会话数
+        const [keys] = mem ? await clearMetadataNamespaces(mem, [TODO_NAMESPACE], logger) : [[]];
         cleared = [...new Set([...keys, ...store.keys()])];
         store.clear();
         data.results.push({

@@ -132,6 +132,24 @@ describe('commands v2 — 链式 builder', () => {
     expect(await r.execute('profile', input(['clear', 'nuke']))).toBe('nuked');
   });
 
+  it('有子指令、自身不收位置参数的指令收到多余的词：不执行，按当前前缀指向 /help 下该指令的完整路径', async () => {
+    const r = new CommandRegistry(makeLogger());
+    const ran: string[] = [];
+    r.command('profile.clear', '清除自己档案').action(async () => {
+      ran.push('clear');
+      return 'cleared';
+    });
+    r.command('profile.clear.nuke', '清空所有').action(async () => 'nuked');
+    expect(await r.execute('profile', input(['clear', 'nuk']))).toBe(
+      '未知子指令或多余参数: nuk。输入 /help profile clear 查看用法。',
+    );
+    r.prefix = '#';
+    expect(await r.execute('profile', input(['clear', 'me']))).toBe(
+      '未知子指令或多余参数: me。输入 #help profile clear 查看用法。',
+    );
+    expect(ran).toEqual([]);
+  });
+
   it('visibility 声明 + 继承到子节点（restricted 父 → restricted 子）', () => {
     const r = new CommandRegistry(makeLogger());
     r.command('a.b', '', { visibility: 'restricted' }).action(async () => 'b');

@@ -2,7 +2,8 @@
 // @aalis/util-network-guard — SSRF / 私网地址防护纯函数
 //
 // 由 LLM / 用户 / 入站消息触发的远程下载应走 safeFetch（逐跳复核 + pin 已校验 IP）；
-// assertSafeUrl / assertSafeHost 只用于自管连接的预检。
+// assertSafeUrl / assertSafeHost 只用于自管连接的预检；自管连接要让判定与连接用同一次解析，把 pinnedLookup
+// 作为 lookup 传给 net.connect。
 // 除 safeFetch 外不做下载、不做缓存，其余只提供同步/异步校验，方便不同子系统按各自架构
 // （流式代理 / 全 buffer 下载 / 内联 fetch）复用。
 // ============================================================
@@ -133,6 +134,16 @@ export function assertAddressesSafe(host: string, addresses: readonly string[]):
 }
 
 /**
+ * 校验目标端口：配置了 allowedPorts 时不在其中即抛错，未配置时不限。
+ * assertSafeUrl 与自管连接（如浏览器网络闸）共用此判定。
+ */
+export function assertPortAllowed(port: number): void {
+  if (policy.allowedPorts && !policy.allowedPorts.has(port)) {
+    throw new Error(`拒绝访问端口 ${port}（不在允许列表）`);
+  }
+}
+
+/**
  * 校验 hostname 是否安全可下载。
  *  - 字面 IP：判私网[可配] + denyCidrs。
  *  - 'localhost' / '*.localhost' / '*.local'：拦（受 blockPrivate 控）。
@@ -170,10 +181,7 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`仅支持 http/https，收到 ${parsed.protocol}`);
   }
-  if (policy.allowedPorts) {
-    const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
-    if (!policy.allowedPorts.has(port)) throw new Error(`拒绝访问端口 ${port}（不在允许列表）`);
-  }
+  assertPortAllowed(parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80);
   await assertSafeHost(parsed.hostname);
   return parsed;
 }
@@ -195,7 +203,8 @@ const MAX_REDIRECTS = 5;
  *
  * 全部地址都过同一道校验，故 all 模式整份交回既安全又保住多 IP 容错。
  *
- * @internal 导出仅为让契约可被直接断言，非公开面。
+ * 自管连接时作为 `net.connect` / `tls.connect` 的 `lookup` 传入（safeFetch 的 dispatcher 即如此）。
+ * 只管域名：目标是 IP 字面量时 Node 不调 lookup，调用方须自行用 assertAddressesSafe 判定。
  */
 export const pinnedLookup: LookupFunction = (hostname, options, callback) => {
   dns

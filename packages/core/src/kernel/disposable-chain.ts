@@ -238,7 +238,7 @@ export async function awaitWithTimeout(
  * （logger 的 sink 可能是 stdout / 文件 / WebUI），它自身失败不得中断清理或拆卸，也不得逃逸成
  * unhandledRejection——这里是防泄漏的最后一道防线，连报告都失败时只能静默。
  *
- * 供 core 内部（清理链、事件总线、激活拆卸路径）复用，不从包根导出。
+ * 供 core 内部（清理链、事件总线、日志中枢、激活拆卸路径）复用，不从包根导出。
  * @internal
  */
 export function reportQuietly(call: () => unknown): void {

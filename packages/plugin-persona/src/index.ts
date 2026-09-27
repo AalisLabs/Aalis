@@ -689,14 +689,14 @@ async function run(caps: Caps): Promise<void> {
     try {
       if (data.scope === 'all') {
         service.clearAllStates();
-        data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
+        data.results.push({ source: 'persona', type: 'persona', success: true, message: '所有会话角色状态已清空' });
       } else if (data.sessionId) {
         service.clearSessionState(data.sessionId);
-        data.results.push({ source: 'persona', success: true, message: '当前会话角色状态已清空' });
+        data.results.push({ source: 'persona', type: 'persona', success: true, message: '当前会话角色状态已清空' });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
+      data.results.push({ source: 'persona', type: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
     }
     await next();
   });

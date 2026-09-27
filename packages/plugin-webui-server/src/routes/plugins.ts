@@ -5,7 +5,7 @@ import { type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
-import type { AppService, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, PluginState, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
@@ -23,7 +23,7 @@ function errorMessage(err: unknown): string {
 
 /**
  * 落盘被拒后运行态怎样与文件对齐：插件配置与新建的实例随配置文件热重载（文件里没有配置段的后缀实例会被卸载）；
- * 启停、实例删除与服务偏好只在重启时按文件登记
+ * 启停与服务偏好只在重启时按文件登记
  */
 const RECONCILE = {
   reload: '修好配置文件后会按文件内容重载',
@@ -34,29 +34,49 @@ const RECONCILE = {
  * 管理动作改完运行态之后落盘；失败时回 `applied: true` 并返回 false：改动已在运行态生效、只是没写进文件，
  * 调用方别当成「没改成」去重试。宿主拒写（配置文件有尚未生效的外部修改）回 409，之后以文件为准对账；
  * 其它失败（权限、磁盘写满等）回 500，文件没变也不会触发重载，改动留在文档里，下一次成功保存时一并写入。
+ * `outcome` 是动作之后插件没有落在预期状态的说明（如激活失败转 error、仍在激活、保持禁用）：落盘也失败时放在回执开头，
+ * 两件事一并说明。
  */
 export async function saveAfterApply(
   doc: Pick<HostConfig, 'save'>,
   res: express.Response,
   reconcile: keyof typeof RECONCILE,
+  outcome?: string,
 ): Promise<boolean> {
   try {
     await doc.save();
     return true;
   } catch (err) {
+    const lead = outcome ? `${outcome}；` : '';
     if (isConfigSaveRefused(err)) {
       res.status(409).json({
-        error: `已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
+        error: `${lead}已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
         applied: true,
       });
     } else {
       res.status(500).json({
-        error: `已在运行态生效，但写入配置文件失败（${errorMessage(err)}）；改动保留在文档里，下次保存成功时一并写入`,
+        error: `${lead}已在运行态生效，但写入配置文件失败（${errorMessage(err)}）；改动保留在文档里，下次保存成功时一并写入`,
         applied: true,
       });
     }
     return false;
   }
+}
+
+/**
+ * 管理动作受理后等重算落定，再读实例状态写回执：动作撞上在飞的重算时只排队、立即返回，立即读到的还是 pending，
+ * 之后的激活失败就漏报了。idle 不等转入后台的慢激活：重算对单个激活至多等到慢激活阈值。
+ */
+async function settledEntry(pm: PluginManagerService, instanceId: string) {
+  await pm.idle();
+  return pm.getPlugin(instanceId);
+}
+
+/** 落定后既没激活也没失败的说明：慢激活转入后台仍在进行，或在等 required 依赖满足；其余状态由各路由自己说明 */
+function notYetActive(state: PluginState | undefined): string | undefined {
+  if (state === 'activating') return '仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准';
+  if (state === 'pending') return '尚未激活，正在等待 required 依赖满足';
+  return undefined;
 }
 
 /** 插件管理 + 全局配置路由用到的能力 */
@@ -281,7 +301,8 @@ export function registerPluginRoutes(
     }
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     for (const key of changed) doc.set(key, updates[key]);
-    // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档，保存即生效
+    // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档（appName），保存即生效。
+    // 装有人设时聊天显示人设名，应用名称只在仪表盘上看得到
     const restartNeeded = changed.some(k => k === 'logLevel' || k === 'slowThresholdMs');
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
@@ -396,8 +417,7 @@ export function registerPluginRoutes(
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
     // 的 args 数组形态）的插件会在 WebUI 永久存不了任何字段；启动侧 config-sync
     // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
-    // 正常中间态。禁用插件的 PUT 走下方 updateConfig 失败分支，在那里区分
-    // 「已禁用」（409，提示先启用）与「真不存在」（404）。
+    // 正常中间态。
     const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
     const issues = validateConfig(schema, merged).filter(
       i => i.kind === 'invalid' && !preExisting.has(`${i.path}|${i.message}`),
@@ -427,22 +447,27 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
-      // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），但按实际状态回报
-      const after = pm.getPlugin(pluginName);
-      const failure = after?.state === 'error' ? (after.error ?? '详见日志') : undefined;
       // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
       doc.setPluginConfig(pluginName, merged);
-      if (!(await saveAfterApply(doc, res, 'reload'))) return;
+      // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），但按实际状态回报。
+      // 禁用态只换上新配置、保持禁用，启用时按它激活
+      const after = await settledEntry(pm, pluginName);
+      const failure =
+        after?.state === 'error'
+          ? `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
+          : undefined;
+      const aside = after?.state === 'disabled' ? '插件已禁用，启用时按新配置激活' : notYetActive(after?.state);
+      if (!(await saveAfterApply(doc, res, 'reload', failure ?? aside))) return;
       if (failure !== undefined) {
-        res.status(500).json({
-          error: `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${failure}）；配置已写入配置文件${note}`,
-        });
+        res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
         return;
       }
-      res.json({ ok: true, message: `插件 ${pluginName} 配置已更新${note}`, ignored, removed });
-    } else if (pm.getPlugin(pluginName)?.state === 'disabled') {
-      // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
-      res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
+      res.json({
+        ok: true,
+        message: `插件 ${pluginName} 配置已更新${note}${aside ? `；${aside}` : ''}`,
+        ignored,
+        removed,
+      });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
     }
@@ -466,18 +491,20 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
-      // 激活失败、转为 error：照样记为启用（重启时再激活），但按实际状态回报
-      const after = pm.getPlugin(pluginName);
-      const failure = after?.state === 'error' ? (after.error ?? '详见日志') : undefined;
       doc.setPluginEnabled(pluginName, true);
-      if (!(await saveAfterApply(doc, res, 'restart'))) return;
+      // 激活失败、转为 error：照样记为启用（重启时再激活），但按实际状态回报
+      const after = await settledEntry(pm, pluginName);
+      const failure =
+        after?.state === 'error'
+          ? `插件 ${pluginName} 激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
+          : undefined;
+      const aside = notYetActive(after?.state);
+      if (!(await saveAfterApply(doc, res, 'restart', failure ?? aside))) return;
       if (failure !== undefined) {
-        res
-          .status(500)
-          .json({ error: `插件 ${pluginName} 激活失败，已转为 error 态（${failure}）；配置文件已记为启用` });
+        res.status(500).json({ error: `${failure}；配置文件已记为启用` });
         return;
       }
-      res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
+      res.json({ ok: true, message: `插件 ${pluginName} 已启用${aside ? `；${aside}` : ''}` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
     }
@@ -502,13 +529,14 @@ export function registerPluginRoutes(
     }
     if (success) {
       // 仍在初始化、不响应 abort 的插件，宽限到期转 error 而非 disabled：照样记为禁用（重启时不再激活），但按实际状态回报
-      const stuck = pm.getPlugin(pluginName)?.state === 'error';
+      const stuck =
+        pm.getPlugin(pluginName)?.state === 'error'
+          ? `插件 ${pluginName} 未在宽限内停止，已转为 error 态，详见日志`
+          : undefined;
       doc.setPluginEnabled(pluginName, false);
-      if (!(await saveAfterApply(doc, res, 'restart'))) return;
-      if (stuck) {
-        res
-          .status(500)
-          .json({ error: `插件 ${pluginName} 未在宽限内停止，已转为 error 态，详见日志；配置文件已记为禁用` });
+      if (!(await saveAfterApply(doc, res, 'restart', stuck))) return;
+      if (stuck !== undefined) {
+        res.status(500).json({ error: `${stuck}；配置文件已记为禁用` });
         return;
       }
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
@@ -590,8 +618,22 @@ export function registerPluginRoutes(
       res.status(409).json({ error: `实例 ${instanceId} 未登记（停机中或被拒，见日志），配置未写入` });
       return;
     }
-    if (!(await saveAfterApply(doc, res, 'reload'))) return;
-    res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
+    // 激活失败、转为 error：实例与配置照样保留并落盘（改配置保存即重试激活），但按实际状态回报
+    const after = await settledEntry(pm, instanceId);
+    const failure =
+      after?.state === 'error'
+        ? `已创建实例 ${instanceId}，但激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
+        : undefined;
+    const aside =
+      after?.state === 'disabled'
+        ? '配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活'
+        : notYetActive(after?.state);
+    if (!(await saveAfterApply(doc, res, 'reload', failure ?? aside))) return;
+    if (failure !== undefined) {
+      res.status(500).json({ error: `${failure}；配置已写入配置文件` });
+      return;
+    }
+    res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}${aside ? `；${aside}` : ''}` });
   });
 
   // 删除插件多实例
@@ -604,21 +646,37 @@ export function registerPluginRoutes(
     }
     const doc = docOr503(res);
     if (!doc) return;
-    // 实例删除编排：主实例保护 → unload（内部含级联重算）→ 移除配置条目与禁用标记（同名重建时不再以禁用态登记）。
+    // 实例删除编排：主实例保护 → 移除配置条目与禁用标记（同名重建时不再以禁用态登记）并落盘 → unload（内部含级联重算）。
+    // 与其它管理路由「先生效后落盘」相反：后缀实例由配置段定义，热重载也按文件登记。先卸载后落盘时，卸载途中外部改动
+    // 触发的热重载会按仍带配置段的文件把实例重新登记，落盘随后删掉配置段，留下文件里没有的在跑实例
     const { suffix } = parseInstanceId(instanceId);
     if (!suffix || !pm.getPlugin(instanceId)) {
       res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
       return;
     }
+    const previous = Object.hasOwn(doc.getAll().plugins, instanceId) ? doc.getPluginConfig(instanceId) : undefined;
+    const wasDisabled = doc.isPluginDisabled(instanceId);
+    doc.removePluginConfig(instanceId);
+    doc.setPluginEnabled(instanceId, true);
     try {
-      await pm.unload(instanceId);
-      doc.removePluginConfig(instanceId);
-      doc.setPluginEnabled(instanceId, true);
+      await doc.save();
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      // 没写进文件就不卸载，并撤回文档里的改动，免得下一次任意保存把这次没删成的删除写进文件
+      if (previous) doc.setPluginConfig(instanceId, previous);
+      doc.setPluginEnabled(instanceId, !wasDisabled);
+      res
+        .status(isConfigSaveRefused(err) ? 409 : 500)
+        .json({ error: `未删除实例 ${instanceId}：未写入配置文件（${errorMessage(err)}）` });
       return;
     }
-    if (!(await saveAfterApply(doc, res, 'restart'))) return;
+    try {
+      await pm.unload(instanceId);
+    } catch (err) {
+      res.status(500).json({
+        error: `已从配置文件删除实例 ${instanceId}，但卸载失败（${errorMessage(err)}）；重启后不再登记`,
+      });
+      return;
+    }
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 

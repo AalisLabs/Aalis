@@ -117,8 +117,8 @@ export class UserStore {
           this.logger.error('保存用户等级数据失败，改动仍只在内存生效，下次保存时重试:', err);
         },
       )
-      // 上报器自身失败（日志订阅者同步抛错）不再外抛：链停在拒绝时 flushed() 与拆卸都会抛，此后的写也不再发出；
-      // load 收尾那次保存无人等待，还会成为未处理的拒绝、被宿主当致命错误退出进程
+      // 上报器自身失败（宿主经 AppOptions 注入的 logger 或时钟抛错）不再外抛：链停在拒绝时 flushed() 与拆卸都会抛，
+      // 此后的写也不再发出；load 收尾那次保存无人等待，还会成为未处理的拒绝、被宿主当致命错误退出进程
       .catch(() => {});
   }
 
@@ -157,7 +157,7 @@ export class UserStore {
       this.save();
     };
     const run: Promise<void> = this.readUsersFile().then(settle, err => {
-      // readUsersFile 自己的兜底也抛了（storage 抛出转不成字符串的值、日志订阅者同步抛错等）：
+      // readUsersFile 自己的兜底也抛了（storage 抛出转不成字符串的值、宿主注入的 logger 抛错等）：
       // 文件状态不明，按读不懂拒写；推迟照常解除，否则 save 与 flushed 会一直等这次 load。错误交还调用方
       settle(true);
       throw err;

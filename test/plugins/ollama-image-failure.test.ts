@@ -47,10 +47,12 @@ function captureBody(): { get: () => Record<string, unknown> | undefined } {
     vi.fn(async (_url: string, init: { body: string }) => {
       body = JSON.parse(init.body);
       const ndjson = `${JSON.stringify({ message: { content: 'ok' }, done: true })}\n`;
+      const reply = { message: { content: 'ok' }, done: true, choices: [{ message: { content: 'ok' } }] };
       return {
         ok: true,
         status: 200,
-        json: async () => ({ message: { content: 'ok' }, done: true, choices: [{ message: { content: 'ok' } }] }),
+        json: async () => reply,
+        text: async () => JSON.stringify(reply),
         body: new ReadableStream<Uint8Array>({
           start(c) {
             c.enqueue(new TextEncoder().encode(ndjson));

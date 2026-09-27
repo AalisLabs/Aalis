@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node:net';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
@@ -8,12 +9,13 @@ import {
   type BoundOf,
   config as configService,
   definePlugin,
+  type Logger,
   lifecycle as lifecycleService,
   logger as loggerService,
   optional,
 } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { assertSafeHost, isPrivateHost } from '@aalis/util-network-guard';
+import { assertAddressesSafe, assertPortAllowed, isPrivateHost, pinnedLookup } from '@aalis/util-network-guard';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tool-browser — 浏览器自动化工具
@@ -66,7 +68,7 @@ const configSchema: ConfigSchema = {
     type: 'number',
     label: '最大页面数',
     default: 5,
-    description: '同时打开的最大标签页数量。超出后关闭最早打开的页面。',
+    description: '同时打开的最大页面数量。超出后关闭最早打开的页面。',
   },
   executablePath: {
     type: 'string',
@@ -173,6 +175,9 @@ function runBrowserTools(caps: Caps): void {
 
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   let browser: any = null;
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
+  let launching: Promise<any> | null = null;
+  let gate: NetworkGate | null = null;
   const pages = new Map<string, PageSlot>();
   let pageCounter = 0;
 
@@ -205,12 +210,42 @@ function runBrowserTools(caps: Caps): void {
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  async function ensureBrowser(): Promise<any> {
-    // 只判句柄非空不够：Chromium 崩溃/被杀后句柄常驻，所有 browser_* 会永久失效到插件 bounce；
-    // 页面表也一起清，否则列出的是已经不存在的死页面。
-    if (browser?.connected) return browser;
+  function ensureBrowser(): Promise<any> {
+    // 只判句柄非空不够：Chromium 崩溃/被杀后句柄常驻，所有 browser_* 会永久失效到插件 bounce
+    if (browser?.connected) return Promise.resolve(browser);
+    // 单飞：并发的调用共用同一次启动，不各起一个 Chromium（后赋值的会盖掉前一个，前一个就没人关了）
+    launching ??= launchBrowser().finally(() => {
+      launching = null;
+    });
+    return launching;
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
+  async function launchBrowser(): Promise<any> {
+    // 停用后才到的调用不再起闸与浏览器：onDispose 已经收过尾，这时起的东西没人关
+    if (lifecycle.signal.aborted) throw new Error('浏览器工具已停用');
+    // 重新启动时页面表一起清，否则列出的是已经不存在的死页面
     browser = null;
     pages.clear();
+    // 仅 blockPrivate 时起网络闸（关掉即零开销、本地全通，便于 owner 测本地）。
+    // 闸先于浏览器起好，起不来就不启动浏览器：浏览器不会在没有闸的情况下运行
+    const gateArgs: string[] = [];
+    if (config.blockPrivate) {
+      try {
+        gate ??= await openNetworkGate(config.allowedHosts, logger);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`浏览器网络闸启动失败: ${msg}`);
+        throw new Error(`浏览器网络闸启动失败，未启动浏览器: ${msg}`);
+      }
+      gateArgs.push(
+        `--proxy-server=socks5://127.0.0.1:${gate.port}`,
+        // Chrome 默认让 localhost、回环与链路本地地址绕过代理，<-loopback> 撤掉这条默认，它们同样经闸
+        '--proxy-bypass-list=<-loopback>',
+        // WebRTC 的 UDP 不走代理：只许它经代理连接（即只剩经闸的 TCP）
+        '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+      );
+    }
     let instance: import('puppeteer').Browser;
     try {
       if (!config.executablePath) {
@@ -221,7 +256,7 @@ function runBrowserTools(caps: Caps): void {
       instance = await launchFn({
         headless: config.headless,
         defaultViewport: { width: config.viewportWidth, height: config.viewportHeight },
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...gateArgs],
         ...(config.executablePath ? { executablePath: config.executablePath } : {}),
       });
     } catch (err) {
@@ -229,17 +264,13 @@ function runBrowserTools(caps: Caps): void {
       logger.error(`启动浏览器失败: ${msg}`);
       throw new Error(`浏览器启动失败: ${msg}。请确保已安装 Chrome: npx puppeteer browsers install chrome`);
     }
-    // 仅 blockPrivate 时装闸（关掉即零开销、本地全通，便于 owner 测本地）。
-    // 闸装不上就不交出这一代浏览器：先关掉再报错，不给后续调用留一个没有闸的实例
-    if (config.blockPrivate) {
-      try {
-        await installRequestGate(instance);
-      } catch (err) {
-        await instance.close().catch(() => {});
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error(`开启请求拦截失败，已关闭浏览器: ${msg}`);
-        throw new Error(`浏览器请求拦截开启失败，已关闭浏览器: ${msg}`);
-      }
+    // 启动期间插件被停用：onDispose 只关得到已交出的实例，这一代在这里关掉。
+    // 不等关闭落定：onDispose 要等这次启动落定才关闸，关闭挂住会把闸一起拖住
+    if (lifecycle.signal.aborted) {
+      instance
+        .close()
+        .catch(err => logger.warn(`停用时关闭新启动的浏览器失败: ${err instanceof Error ? err.message : String(err)}`));
+      throw new Error('浏览器工具已停用');
     }
     browser = instance;
     instance.on('disconnected', () => {
@@ -250,49 +281,6 @@ function runBrowserTools(caps: Caps): void {
     });
     logger.info('浏览器已启动');
     return browser;
-  }
-
-  // ── SSRF 闸：浏览器级请求拦截 ──
-  // 在浏览器目标上开 Fetch 拦截：页面、页面自己 window.open 出的窗口，以及 dedicated / shared /
-  // service worker 的 http(s) 请求（导航、点击与表单提交、重定向的每一跳、子资源、fetch）都先暂停在这里，
-  // 逐个判定后放行或拒绝，运行中新建的标签页与 worker 同样经过它。validateUrl 只管 browser_navigate 的入口，
-  // 其余路径都靠这道闸。页面级拦截（page.setRequestInterception）管不到 SharedWorker、Service Worker
-  // 与 window.open 出的窗口，所以不用它。WebSocket 连接不经过 Fetch 拦截，不在闸内。
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  async function installRequestGate(b: any): Promise<void> {
-    const session = await b.target().createCDPSession();
-    session.on('Fetch.requestPaused', ({ requestId, request }: { requestId: string; request: { url: string } }) => {
-      // 暂停的请求必须回应；判定抛错或超时一律拒绝（失败关闭）
-      void judgeRequest(request.url)
-        .then(
-          () => session.send('Fetch.continueRequest', { requestId }),
-          (err: unknown) => {
-            logger.debug(`已拦截 ${request.url}: ${err instanceof Error ? err.message : String(err)}`);
-            return session.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' });
-          },
-        )
-        // 回应失败多是请求已随页面关闭或浏览器断开而取消，没有可回应的对象了
-        .catch((err: unknown) =>
-          logger.debug(`回应暂停的请求失败 ${request.url}: ${err instanceof Error ? err.message : String(err)}`),
-        );
-    });
-    await session.send('Fetch.enable', { patterns: [{ urlPattern: 'http://*' }, { urlPattern: 'https://*' }] });
-  }
-
-  /** 单个请求的判定：放行则正常返回，拒绝则抛错；超过 REQUEST_JUDGE_TIMEOUT_MS 未判完同样按拒绝抛出 */
-  async function judgeRequest(url: string): Promise<void> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`判定超过 ${REQUEST_JUDGE_TIMEOUT_MS}ms 未完成`)),
-        REQUEST_JUDGE_TIMEOUT_MS,
-      );
-    });
-    try {
-      await Promise.race([assertRequestAllowed(url, config), timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   // ── 获取或创建页面 ──
@@ -323,7 +311,8 @@ function runBrowserTools(caps: Caps): void {
     }
 
     const b = await ensureBrowser();
-    const page = await b.newPage();
+    // 每页独占一个窗口：同一窗口里的标签页会互相压到后台，而后台页上的点击等操作会一直挂住（见 browser_click）
+    const page = await b.newPage({ type: 'window' });
     page.setDefaultTimeout(config.defaultTimeout);
     const newId = `page_${++pageCounter}`;
     const slot: PageSlot = { page, url: 'about:blank', title: '', lastAccess: Date.now() };
@@ -353,7 +342,7 @@ function runBrowserTools(caps: Caps): void {
     groups: ['browser'],
     // 浏览器页面池是**进程级共享**、取页时不校验会话归属：拿到 pageId 就能操作
     // 别人（含 owner）打开的页面，那页面可能带着登录态。写类浏览器操作一律 sensitive(L1)。
-    // 导航本身有 SSRF 闸（assertSafeHost/isPrivateHost），但仍会占用与复用共享页面槽位。
+    // 导航本身有 SSRF 闸（入口 isPrivateHost 快判 + 浏览器网络闸），但仍会占用与复用共享页面槽位。
     risk: 'sensitive',
     definition: {
       type: 'function',
@@ -364,7 +353,7 @@ function runBrowserTools(caps: Caps): void {
           type: 'object',
           properties: {
             url: { type: 'string', description: '要访问的 URL' },
-            pageId: { type: 'string', description: '页面 ID（可选，复用已有标签页）' },
+            pageId: { type: 'string', description: '页面 ID（可选，复用已有页面）' },
             waitFor: { type: 'string', description: '等待的 CSS 选择器（可选）' },
           },
           required: ['url'],
@@ -391,7 +380,14 @@ function runBrowserTools(caps: Caps): void {
           text: wrapUntrustedContent(truncate(text), `网页 ${slot.url}`),
         });
       } catch (err) {
-        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        const msg = err instanceof Error ? err.message : String(err);
+        // 起了网络闸时，闸的拒绝与目标连不上在浏览器侧是同一个错误码，补一句说明
+        return JSON.stringify({
+          error:
+            config.blockPrivate && msg.includes('net::ERR_SOCKS_CONNECTION_FAILED')
+              ? `${msg}（浏览器网络闸未接通：目标是内网或本机地址时被 blockPrivate 拦截，目标无法解析或无法连接时也报此错）`
+              : msg,
+        });
       }
     },
   });
@@ -459,6 +455,8 @@ function runBrowserTools(caps: Caps): void {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
+        // 页面自己开出的窗口或标签页会把它压到后台，后台页不跑渲染，puppeteer 的点击等它进入视口会一直挂住
+        await slot.page.bringToFront();
         await slot.page.click(args.selector as string);
         await slot.page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {});
         slot.url = slot.page.url();
@@ -499,6 +497,7 @@ function runBrowserTools(caps: Caps): void {
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         const selector = args.selector as string;
+        await slot.page.bringToFront(); // 同 browser_click
         if (args.clear !== false) {
           await slot.page.click(selector, { clickCount: 3 });
         }
@@ -540,6 +539,7 @@ function runBrowserTools(caps: Caps): void {
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         let buffer: Buffer;
+        await slot.page.bringToFront(); // 同 browser_click：按选择器截图同样先等元素进入视口
         if (args.selector) {
           const el = await slot.page.$(args.selector as string);
           if (!el) return JSON.stringify({ error: `未找到元素: ${args.selector}` });
@@ -706,6 +706,12 @@ function runBrowserTools(caps: Caps): void {
   // ── 清理 ──
 
   lifecycle.onDispose(async () => {
+    // 在途的启动先落定：它看到信号已断会自己关掉那一代浏览器；它的失败已经交给发起它的那次工具调用
+    await launching?.catch(() => {});
+    // 闸先关，不排在页面与浏览器的关闭后面（那两步没有时限，挂住时闸就一直开着）。
+    // 浏览器固定经闸连网，闸关了连接即失败，不会改为直连
+    await gate?.close();
+    gate = null;
     for (const [, slot] of pages) {
       try {
         await slot.page.close();
@@ -760,7 +766,7 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   if (config.blockPrivate) {
     const host = parsed.hostname.toLowerCase();
     if (config.allowedHosts.includes(host)) return null; // 白名单跳过
-    // 仅字符串级快判（不做 DNS 解析）；DNS 级判定由浏览器级请求闸 assertRequestAllowed 负责。
+    // 仅字符串级快判（不做 DNS 解析）；DNS 级判定由浏览器网络闸（openNetworkGate）负责。
     if (isPrivateHost(host)) {
       return `拒绝访问内网/本地地址 "${host}"（blockPrivate=true）`;
     }
@@ -768,17 +774,134 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   return null;
 }
 
-/** 浏览器级请求闸对单个请求的判定时限：DNS 解析卡住时也要按时回应暂停的请求 */
-const REQUEST_JUDGE_TIMEOUT_MS = 10_000;
+// ── SSRF 闸：浏览器的全部连接经本进程的网络闸 ──
+
+interface NetworkGate {
+  readonly port: number;
+  /** 停止监听并断开全部在途连接 */
+  close(): Promise<void>;
+}
+
+const SOCKS_SUCCESS = Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+/** 失败应答一律回「一般性失败」：浏览器对任何失败应答都报 net::ERR_SOCKS_CONNECTION_FAILED */
+const SOCKS_FAILURE = Buffer.from([5, 1, 0, 1, 0, 0, 0, 0, 0, 0]);
+/** 问候与请求须在这个时限内收齐，否则断开：只连不发的连接不能一直占着闸 */
+const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /**
- * 浏览器级请求闸的判定（Fetch 拦截只暂停 http(s) 请求）：放行则正常返回，拒绝则抛错。
- * 复用 validateUrl 的同一套 blockPrivate + allowedHosts 规则：白名单主机直接放行，其余交 assertSafeHost
- * 做 DNS 级判定——IP 字面量直接判私网，域名解析全部 A/AAAA 后逐一判，堵住「域名解析到内网/元数据 IP」
- * 的 SSRF（字符串级 isPrivateHost 判定挡不住这类域名）；解析失败同样抛错，按拒绝处理。
+ * 在 127.0.0.1 的随机端口起浏览器网络闸：浏览器经 `--proxy-server` 把全部 TCP 连接交给它，页面、弹出窗口、
+ * 各类 worker 的 http(s) 请求、重定向的每一跳与 WebSocket 都在内。只实现浏览器用到的那部分 SOCKS5：无认证 + CONNECT，
+ * 目标只收域名形式（ATYP=3）——Chrome 一律以这种形式交出目标，IP 字面量也是（IPv6 不带方括号、已是规范写法）。
+ *
+ * 端口先经 assertPortAllowed 判定，allowedHosts 里的主机也不例外。主机判定沿用 validateUrl 的 blockPrivate + allowedHosts：
+ * allowedHosts 里的主机按名字直连；IP 字面量须是规范写法，再经 assertAddressesSafe 判定；域名经 pinnedLookup 解析并判定
+ * 全部地址，连接只用这次解析的结果，堵住 DNS 重绑定（判定时解析到公网、连接时再解析到内网）。判定遵循进程级网络策略
+ * （blockPrivate、denyCidrs 与 allowedPorts）；判定不过、解析失败或连不上都回失败应答。
  */
-async function assertRequestAllowed(rawUrl: string, config: BrowserConfig): Promise<void> {
-  const host = new URL(rawUrl).hostname.toLowerCase();
-  if (config.allowedHosts.includes(host)) return;
-  await assertSafeHost(host);
+async function openNetworkGate(allowedHosts: readonly string[], logger: Logger): Promise<NetworkGate> {
+  const sockets = new Set<Socket>();
+  const track = (socket: Socket): Socket => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+    // 接通后的连接层错误（对端重置等）随 close 拆掉两端，浏览器侧以网络错误呈现
+    socket.on('error', () => {});
+    return socket;
+  };
+
+  function openUpstream(host: string, port: number): Socket {
+    assertPortAllowed(port);
+    const family = isIP(host);
+    // allowedHosts 与 validateUrl 同一写法比较：IPv6 字面量带方括号
+    if (allowedHosts.includes(family === 6 ? `[${host}]` : host)) return connect({ host, port });
+    if (family) {
+      // 判定按规范写法认段：0::1、带 zone id 的 ::1%lo0 会被判成公网，连接却照样到 ::1。Chrome 交出的都是规范写法
+      if (family === 6 && (host.includes('%') || new URL(`http://[${host}]`).hostname !== `[${host}]`)) {
+        throw new Error(`IPv6 字面量不是规范写法: ${host}`);
+      }
+      assertAddressesSafe(host, [host]);
+      return connect({ host, port });
+    }
+    return connect({ host, port, lookup: pinnedLookup });
+  }
+
+  function serve(client: Socket): void {
+    let buf = Buffer.alloc(0);
+    let greeted = false;
+    // 问候与请求限时收齐；请求收齐即清掉，接通后的连接不受这个时限约束
+    const handshake = setTimeout(() => client.destroy(), HANDSHAKE_TIMEOUT_MS);
+    client.once('close', () => clearTimeout(handshake));
+    // 回失败应答后关闭连接：写完即销毁，不等对端关写端，否则对端不关时连接会半开留到停用
+    const refuse = (reply: Buffer): void => {
+      client.off('data', onData);
+      client.end(reply, () => client.destroy());
+    };
+    const onData = (chunk: Buffer): void => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!greeted) {
+        // 问候：VER NMETHODS METHODS…，只接受无认证（0x00）
+        if (buf.length < 2 || buf.length < 2 + buf[1]) return;
+        if (buf[0] !== 5 || !buf.subarray(2, 2 + buf[1]).includes(0)) {
+          refuse(Buffer.from([5, 0xff]));
+          return;
+        }
+        client.write(Buffer.from([5, 0]));
+        buf = buf.subarray(2 + buf[1]);
+        greeted = true;
+      }
+      // 请求：VER CMD RSV ATYP LEN HOST PORT，只接受 CONNECT + 域名形式
+      if (buf.length < 5) return;
+      if (buf[0] !== 5 || buf[1] !== 1 || buf[3] !== 3) {
+        refuse(SOCKS_FAILURE);
+        return;
+      }
+      if (buf.length < 7 + buf[4]) return;
+      clearTimeout(handshake);
+      client.off('data', onData);
+      client.pause();
+      const host = buf.toString('latin1', 5, 5 + buf[4]);
+      const port = buf.readUInt16BE(5 + buf[4]);
+      // 与请求同包到达、排在请求之后的数据，接通后先交给上游再接上转发
+      const early = buf.subarray(7 + buf[4]);
+      const fail = (err: unknown): void => {
+        logger.debug(`浏览器网络闸未接通 ${host}:${port}: ${err instanceof Error ? err.message : String(err)}`);
+        refuse(SOCKS_FAILURE);
+      };
+      let upstream: Socket;
+      try {
+        upstream = track(openUpstream(host, port));
+      } catch (err) {
+        fail(err);
+        return;
+      }
+      // 浏览器先断开时（解析或连接还在途）一并销毁上游，不让它迟到接通后悬空
+      client.once('close', () => upstream.destroy());
+      upstream.once('error', fail);
+      upstream.once('connect', () => {
+        upstream.off('error', fail);
+        upstream.once('close', () => client.destroy());
+        client.write(SOCKS_SUCCESS);
+        if (early.length > 0) upstream.write(early);
+        client.pipe(upstream).pipe(client);
+      });
+    };
+    client.on('data', onData);
+  }
+
+  const server = createServer(client => serve(track(client)));
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  server.on('error', err => logger.warn(`浏览器网络闸出错: ${err.message}`));
+  return {
+    port: (server.address() as AddressInfo).port,
+    close: () =>
+      new Promise<void>(resolve => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
 }
