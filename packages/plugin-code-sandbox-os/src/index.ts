@@ -56,7 +56,7 @@ class OsCodeSandboxService implements CodeSandboxService {
     const wrapped = wrapForSandbox(this._backend, req.policy, req.cmd, req.args, req.cwd, req.env ?? {});
     // 经 process 网关 spawn 包好的启动器命令；env 已由 wrapper 的 --clearenv / env -i 注入白名单，
     // 故此处不再传 env（外层启动器进程继承宿主 env 无妨，wrapper 已为内层不可信子进程清空）。
-    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout });
+    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout, signal: req.signal });
   }
 }
 
