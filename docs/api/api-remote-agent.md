@@ -51,7 +51,7 @@ interface RemoteAgentProvider {
 - `startRun`：在已有代理上开新一轮。它不幂等：结果未知时（读超时、临时故障）重发可能开出两轮，消费方应先 `listRuns` 认领。
 - `followRun`：跟踪一轮直到终态，最后一项必为 `{ kind: 'terminal' }`。断线重连、事件流过期后改为轮询都在提供者内部处理；`progress` 的 `eventId` 供消费方落盘，重启后作为 `lastEventId` 续传。
 - `cancelRun`：这一轮已到终态时视为成功。
-- `runCost`：返回 `undefined` 表示费用暂缺（远端还没结算），消费方应稍后重试。
+- `runCost`：返回 `undefined` 表示费用暂缺（远端还没结算），消费方应稍后重试。`cents` 是计入额度的花费（美分），消费方的日上限与换新都按它判：远端不另收费的用量（如计划内额度）也按实际消耗计，不能写 0。
 - `collectArtifacts`：只取这件任务交付目录下的文件与工程包，去掉前缀后交给消费方的写入口 `sink`。路径不合格、超过上限、取不到下载链接的文件记进 `rejected`，不中断其余文件；临时故障与限流照抛，由消费方整次重来。取回了哪些文件由写入口自己记着。
 - `bundleLink`：旧代理工程包的位置，写进新代理的前言、由新代理自己取得：新代理能访问的链接（如临时下载链接），或执行环境不出网时新代理能读的路径。没有工程包返回 `undefined`。
 - `deleteAgent`：代理不存在时视为成功。
@@ -73,7 +73,7 @@ interface RunState { runId: string; status: RunStatus; resultText?: string }
 type RunProgress =
   | { kind: 'progress'; eventId: string }
   | { kind: 'terminal'; state: RunState };
-interface RunCost { chargedCents: number; inputTokens: number; cacheReadTokens: number }
+interface RunCost { cents: number; inputTokens: number; cacheReadTokens: number }
 
 interface ArtifactLimits { maxFileBytes: number; maxRunBytes: number; maxRunFiles: number; maxBundleBytes: number }
 interface ArtifactSink {

@@ -47,7 +47,7 @@ describe('换新', () => {
   it('安全：累计花费超过 rotateAfterCents 后建新代理，首轮前言带旧工程包链接；首轮成功后旧代理被删除', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 300 }) });
-    a.costOf = () => ({ chargedCents: 400, inputTokens: 10, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 400, inputTokens: 10, cacheReadTokens: 0 });
     const first = await runOne(hub, a);
     expect(hub.store.data.agents[first.agentId].costCents).toBe(400);
 
@@ -64,9 +64,9 @@ describe('换新', () => {
   it('新代理首轮失败时不删旧代理；下一轮仍带旧工程包，成功后才删', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 15 }) });
-    a.costOf = () => ({ chargedCents: 20, inputTokens: 10, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 20, inputTokens: 10, cacheReadTokens: 0 });
     const first = await runOne(hub, a);
-    a.costOf = () => ({ chargedCents: 1, inputTokens: 10, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 1, inputTokens: 10, cacheReadTokens: 0 });
     const second = await runOne(hub, a, 'error');
     expect(hub.task(second.id).state).toBe('failed');
     expect(second.agentId).not.toBe(first.agentId);
