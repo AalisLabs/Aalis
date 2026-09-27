@@ -30,7 +30,6 @@ import {
   isRemoteAgentError,
   isTerminalRun,
   type RemoteAgentEntry,
-  type RemoteAgentErrorCode,
   type RemoteAgentProvider,
   type RemoteRunSummary,
   type RunCost,
@@ -53,7 +52,7 @@ import {
 } from './ledger.js';
 import { buildPrompt } from './prompt.js';
 import { actorKey, checkRemote, type Isolation, pausedReason, resolveRoomPaper } from './rooms.js';
-import { describe, truncate } from './util.js';
+import { category, describe, truncate } from './util.js';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -77,23 +76,6 @@ const ON_AGENT: ReadonlySet<TaskRecord['state']> = new Set(['starting', 'running
 /** 退避：5 秒起翻倍，封顶 60 秒 */
 function backoff(attempt: number): number {
   return Math.min(5 * SECOND * 2 ** attempt, 60 * SECOND);
-}
-
-/** 远端错误的类别（写进任务的失败原因）：远端报错的原文可能带远端可控的内容，只进日志 */
-const ERROR_CATEGORIES: Record<RemoteAgentErrorCode, string> = {
-  unavailable: '提供者不可用',
-  busy: '代理忙',
-  archived: '代理已归档',
-  'not-found': '远端找不到',
-  'rate-limited': '远端限流',
-  rejected: '远端拒绝了请求',
-  transient: '远端临时故障',
-};
-
-function category(err: unknown): string {
-  return isRemoteAgentError(err) && Object.hasOwn(ERROR_CATEGORIES, err.code)
-    ? ERROR_CATEGORIES[err.code]
-    : '本机处理出错';
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
