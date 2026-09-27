@@ -639,6 +639,8 @@ class DefaultAgent implements AgentService {
           acceptsImages: true,
           // 回合中止信号：等确认期间被 latest-wins / 手动 abort 掐掉的工具不再执行
           signal,
+          // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入
+          inbound: { source: incoming.source },
         };
 
         // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
