@@ -243,7 +243,7 @@ export default definePlugin({
           },
         },
         visibility: 'restricted',
-        handler: async args => {
+        handler: async (args, callCtx) => {
           const code = args.code as string;
           const timeout = args.timeout as number | undefined;
           logger.debug(`run_python: ${code.length} 字符`);
@@ -256,6 +256,8 @@ export default definePlugin({
             '.py',
             runnerConfig,
             timeout,
+            [],
+            callCtx.signal,
           );
           return JSON.stringify(result);
         },
@@ -302,7 +304,7 @@ export default definePlugin({
           },
         },
         visibility: 'restricted',
-        handler: async args => {
+        handler: async (args, callCtx) => {
           const code = args.code as string;
           const timeout = args.timeout as number | undefined;
           logger.debug(`run_javascript: ${code.length} 字符`);
@@ -315,6 +317,8 @@ export default definePlugin({
             '.mjs',
             runnerConfig,
             timeout,
+            [],
+            callCtx.signal,
           );
           return JSON.stringify(result);
         },
