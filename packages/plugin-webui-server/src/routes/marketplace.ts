@@ -372,11 +372,13 @@ export function toMarketplacePackages(
 /**
  * npm 检索不可达时的降级卡片：只用本地实况拼。
  * 国内多数镜像不支持 search API，这是常态而非边角情形——降级必须仍能管理已装插件，
- * 而不是给一句 warning 配一张空列表。分类走本地 keywords，与在线路径同一判据。纯函数，便于单测。
+ * 而不是给一句 warning 配一张空列表。分类走本地 keywords，与在线路径同一判据；搜索词同样按 {@link matchesQuery}
+ * 在包名、描述、原始 keywords 上过滤。纯函数，便于单测。
  */
-export function toLocalPackages(local: ReadonlyMap<string, LocalPkgInfo>): MarketplacePackage[] {
+export function toLocalPackages(local: ReadonlyMap<string, LocalPkgInfo>, q = ''): MarketplacePackage[] {
   return [...local.entries()]
     .filter(([, info]) => (info.keywords ?? []).some(k => AALIS_KEYWORDS.includes(k)))
+    .filter(([name, info]) => matchesQuery({ name, description: info.description, keywords: info.keywords }, q))
     .map(([name, info]) => ({
       name,
       // 离线拿不到 npm latest，用本地版本占位。
@@ -552,7 +554,7 @@ export function registerMarketplaceRoutes(
       const names = new Set([...localPkgs.keys(), ...status.map(p => p.name)]);
       for (const n of names) localOf(n);
       res.json({
-        packages: toLocalPackages(localCache),
+        packages: toLocalPackages(localCache, q),
         warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件`,
       });
       return;

@@ -257,6 +257,9 @@ function createService(caps: Caps): PackageManagerService {
     // 也不要在真没装上时谎报成功。
     isPluginRegistered: name => caps.plugins.current?.getStatus().some(p => p.name === name) ?? false,
     pluginStatus: () => caps.plugins.current?.getStatus() ?? [],
+    idle: async () => {
+      await caps.plugins.current?.idle();
+    },
     resolveDefinitionName: pkgName => resolveInstalledDefinitionName(projectRoot(), pkgName),
     listPluginInstanceIds: definitionName =>
       (caps.plugins.current?.getStatus() ?? []).filter(p => p.name === definitionName).map(p => p.instanceId),
@@ -325,8 +328,18 @@ export interface PackageManagerDeps {
    * 不是 npm 包名——二者可以不同。
    */
   isPluginRegistered(name: string): boolean;
-  /** 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）。缺省视为没有活跃插件。 */
-  pluginStatus?(): ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'state' | 'provides' | 'requiredServices'>>;
+  /**
+   * 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）与装后回执（按主实例状态说明）。
+   * 缺省视为没有活跃插件。
+   */
+  pluginStatus?(): ReadonlyArray<
+    Pick<PluginStatusEntry, 'name' | 'instanceId' | 'state' | 'error' | 'provides' | 'requiredServices'>
+  >;
+  /**
+   * 等插件状态机静置（plugins 服务的 `idle()`），装后回执读状态之前调用：rescan 登记新插件时若已有重算在飞，
+   * 登记只排队、立即返回，主实例还是 pending。不等转入后台的慢激活。缺省不等。
+   */
+  idle?(): Promise<void>;
   /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
   unloadPlugin(name: string): Promise<void>;
   /**
@@ -626,7 +639,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   /**
    * 装完的统一判定：rescan 出新插件即成功；没出新插件时按目标是否**声明自己是插件**分流。
    * 「声明了插件却没被发现」正是那条静默假成功——必须报失败，否则用户看到 ok 却什么也没装上。
-   * 就位查的是加载器解析出的定义 name，不是 npm 包名。
+   * 就位查的是加载器解析出的定义 name，不是 npm 包名。就位但主实例没有激活时仍回 ok：包确实装上、已进插件列表；
+   * message 按重算落定后的状态说明——激活失败（如缺配置，改好配置即可重试）、慢激活转入后台仍在进行、等待 required 依赖。
    */
   async function settleInstall(
     npmPkg: string,
@@ -637,7 +651,19 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
     const defName = await definitionNameFor(target);
-    if (deps.isPluginRegistered(defName)) return { ok: true, message: `已安装并加载: ${target}` };
+    if (deps.isPluginRegistered(defName)) {
+      await deps.idle?.();
+      const main = deps.pluginStatus?.().find(p => p.instanceId === defName);
+      switch (main?.state) {
+        case 'error':
+          return { ok: true, message: `已安装 ${target}，但激活失败，已转为 error 态（${main.error ?? '详见日志'}）` };
+        case 'activating':
+          return { ok: true, message: `已安装 ${target}，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准` };
+        case 'pending':
+          return { ok: true, message: `已安装 ${target}，尚未激活，正在等待 required 依赖满足` };
+      }
+      return { ok: true, message: `已安装并加载: ${target}` };
+    }
     const meta = await readJson(installedPkgJsonPath);
     if (declaresPlugin(meta)) {
       return { ok: false, message: `已装到 ${where}，但它声明为插件却未被加载——请检查其 keywords 与入口导出` };

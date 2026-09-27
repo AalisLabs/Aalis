@@ -367,6 +367,20 @@ describe('toLocalPackages（npm 检索不可达时的降级卡片）', () => {
     for (const p of toLocalPackages(local)) expect(p.installed).toBe(true);
     expect(toLocalPackages(local).every(p => p.official)).toBe(true);
   });
+
+  it('搜索词与在线路径同一判据：按包名、描述、原始关键词收窄，空搜索词全部保留', () => {
+    const described = new Map<string, LocalPkgInfo>([
+      ['@aalis/plugin-a', { origin: 'registry', keywords: ['aalis-plugin'], description: 'Vector memory' }],
+      ['@aalis/plugin-b', { origin: 'registry', keywords: ['aalis-plugin', 'browser'] }],
+      ['@aalis/api-c', { origin: 'transitive', keywords: ['aalis-api'] }],
+    ]);
+    const names = (q: string) => toLocalPackages(described, q).map(p => p.name);
+    expect(names('plugin-a')).toEqual(['@aalis/plugin-a']);
+    expect(names('VECTOR memory')).toEqual(['@aalis/plugin-a']);
+    expect(names('browser')).toEqual(['@aalis/plugin-b']);
+    expect(names('aalis-api')).toEqual(['@aalis/api-c']);
+    expect(names('')).toEqual(['@aalis/api-c', '@aalis/plugin-a', '@aalis/plugin-b']);
+  });
 });
 
 describe('toMarketplacePackages 的本地实况注入', () => {

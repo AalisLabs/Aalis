@@ -50,7 +50,10 @@ export interface CommandInfo {
 }
 
 export interface SystemStatus {
+  /** 对话对象的显示名：装有人设时是人设名，否则同 appName */
   name: string;
+  /** 全局配置里的应用名称（旧版服务端不返回） */
+  appName?: string;
   uploadCapabilities?: {
     image: boolean;
     file: boolean;

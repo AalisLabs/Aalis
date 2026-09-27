@@ -90,7 +90,7 @@ export function DashboardPage({
           <div className="overview-card-icon"><Sparkles size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">应用名称</div>
-            <div className="overview-card-value">{status?.name ?? '-'}</div>
+            <div className="overview-card-value">{status?.appName ?? '-'}</div>
           </div>
         </div>
         <div className="overview-card">

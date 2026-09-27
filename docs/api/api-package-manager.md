@@ -32,7 +32,7 @@ interface UpdateResult {
 }
 ```
 
-- `install`：装进根 `dependencies` 与 node_modules，随后经宿主的 `plugin-source` 热扫描让加载器发现它。只接受插件（`aalis-plugin`）与前端界面（`aalis-interface`）包。
+- `install`：装进根 `dependencies` 与 node_modules，随后经宿主的 `plugin-source` 热扫描让加载器发现它。只接受插件（`aalis-plugin`）与前端界面（`aalis-interface`）包。装后等插件状态机静置（`plugins.idle()`）再读主实例状态：激活失败、转为 `error` 态（如缺配置）时仍返回 `ok: true`，`message` 说明激活失败及原因；慢激活转入后台仍在进行（`idle` 不等它）、或在等 required 依赖时同样返回 `ok: true`，`message` 说明尚未激活。
 - `uninstall`：从根 `dependencies` 摘掉并执行 npm uninstall。类型、撤销通道、来源与服务依赖者几道闸都在服务层，被拒时返回 `{ ok: false, message }`。
 - `serviceDependents(name)`：卸载 `name` 会打断的插件——`name` 提供的某个服务没有别的插件正在提供（已激活或激活中；已禁用、激活失败或等待依赖的同类提供者不算），而这些插件 required 该服务（已禁用的不算）。`name` 是插件定义名；市场的卸载前预警按 npm 包名近似查询，定义名与包名不同的插件预警为空，卸载闸按解析出的定义名查，不受影响。卸载闸与市场的卸载前预警共用这一份判定。
 - `registry()`：安装与更新实际使用的 npm 源，即在项目根执行 `npm config get registry` 的结果（去掉尾部斜杠），首次成功后缓存；查询失败时拒绝且不缓存，下次调用重查。市场的最新版与「可更新」按它查，才与真正装到的版本一致。作用域源（`@scope:registry`）不在此列。
