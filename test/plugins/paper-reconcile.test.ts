@@ -57,7 +57,6 @@ describe('自唤醒事件', () => {
       chargedCents: runId === rogue ? 77 : 10,
       inputTokens: 1,
       cacheReadTokens: 0,
-      outputTokens: 1,
     });
 
     await advance(RECONCILE_MS);
@@ -179,9 +178,9 @@ describe('对账的范围', () => {
       remotes: { [REMOTE_A]: a },
       config: { ...DRIVER_CONFIG, papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, rotateAfterCents: 15 }] },
     });
-    a.costOf = () => ({ chargedCents: 20, inputTokens: 1, cacheReadTokens: 0, outputTokens: 1 });
+    a.costOf = () => ({ chargedCents: 20, inputTokens: 1, cacheReadTokens: 0 });
     const first = await runOne(hub, a);
-    a.costOf = () => ({ chargedCents: 1, inputTokens: 1, cacheReadTokens: 0, outputTokens: 1 });
+    a.costOf = () => ({ chargedCents: 1, inputTokens: 1, cacheReadTokens: 0 });
     const second = await runOne(hub, a, 'error');
     expect(hub.store.data.papers[PAPER_A_ID].binding).toBe(second.agentId);
     expect(hub.store.data.agents[first.agentId].state, '旧代理退役但还没删').toBe('retired');

@@ -80,7 +80,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     await notices.close();
     await driver.drain();
   }, '白纸停止通知与出队并落盘账本');
-  const isolation = new Isolation(caps.remoteAgent, cfg.papers, now);
+  const isolation = new Isolation(caps.remoteAgent, cfg.papers);
   registerPaperTools({
     tools: caps.tools,
     sessionManager: caps.sessionManager,
@@ -105,6 +105,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     remote: caps.remoteAgent,
     sessionManager: caps.sessionManager,
     cfg,
+    signal: lifecycle.signal,
     now,
   });
   registerPaperDoctor({

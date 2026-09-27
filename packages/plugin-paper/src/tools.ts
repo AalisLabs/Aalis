@@ -17,12 +17,11 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { OutgoingMessage } from '@aalis/schema-message';
-import { artifactUri, EXTENSIONS } from './artifacts.js';
+import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
 import type { PaperDriver } from './driver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
-import { formatSize } from './notices.js';
 import {
   actorKey,
   checkEligibility,
@@ -32,6 +31,7 @@ import {
   type RoomPaper,
   resolveRoomPaper,
 } from './rooms.js';
+import { describe, formatSize, truncate } from './util.js';
 
 const MAX_TEXT = 1000;
 const MAX_NAME = 40;
@@ -42,15 +42,6 @@ const STATUS_NOTE_MAX = 500;
 
 type Artifact = TaskRecord['artifacts'][number];
 type SendableType = Exclude<Artifact['type'], 'other'>;
-
-const MIME_TYPES: Record<SendableType, string> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  mp4: 'video/mp4',
-  html: 'text/html',
-};
 
 /** 各类型认的原扩展名：远端给的文件名与按文件头判定的类型不一致时不发 */
 const TYPE_EXTENSIONS: Record<SendableType, readonly string[]> = {
@@ -116,11 +107,6 @@ function sanitizeName(value: unknown): string {
  */
 function neutralize(s: string): string {
   return s.replace(/</g, '＜').replace(/>/g, '＞');
-}
-
-function truncate(s: string, max: number): string {
-  const chars = codePoints(s);
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : s;
 }
 
 function byCreated(a: TaskRecord, b: TaskRecord): number {
@@ -265,7 +251,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       try {
         await echo(ctx, name, text);
       } catch (err) {
-        return fail(`回显没有发出去，任务未受理：${err instanceof Error ? err.message : String(err)}`);
+        return fail(`回显没有发出去，任务未受理：${describe(err)}`);
       }
 
       const id = newTaskId(ledger);
@@ -293,7 +279,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         delete ledger.data.tasks[id];
         release(ledger.data, id);
         counts.tasks -= 1;
-        deps.logger.error(`白纸账本写入失败，任务未受理: ${err}`);
+        deps.logger.error(`白纸账本写入失败，任务未受理: ${describe(err)}`);
         return fail('白纸账本写入失败，任务未受理');
       }
       deps.logger.info(`白纸受理任务 ${id}（${paper.paperId}，房间 ${ctx.sessionId}，发起者 ${user}）`);
@@ -407,12 +393,12 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     try {
       await dispatch(message);
     } catch (err) {
-      return fail(`没有交给发送队列：${err instanceof Error ? err.message : String(err)}`);
+      return fail(`没有交给发送队列：${describe(err)}`);
     }
     await ledger.exclusive(async () => {
       if (task.delivered) return;
       task.delivered = true;
-      await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${err}`));
+      await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${describe(err)}`));
     });
     deps.logger.info(`白纸任务 ${task.id} 的成品 ${artifactId} 已交给发送队列（房间 ${ctx.sessionId}）`);
     return done({

@@ -8,6 +8,7 @@
 
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
+import { describe } from './util.js';
 
 const LEDGER_URI = 'pluginData:/paper/ledger.json';
 
@@ -82,7 +83,6 @@ export interface TaskRecord {
     type: 'png' | 'jpeg' | 'gif' | 'webp' | 'mp4' | 'html' | 'other';
     sizeBytes: number;
   }>;
-  bundle?: { sizeBytes: number };
   /** 白纸被清空时成品文件已删（记录保留） */
   artifactsCleared?: boolean;
   error?: string;
@@ -187,14 +187,14 @@ export class LedgerStore {
         this.logger.debug('白纸账本不存在，从空账本起步');
         return;
       }
-      this.fail(`读取失败：${err instanceof Error ? err.message : String(err)}`);
+      this.fail(`读取失败：${describe(err)}`);
       return;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      this.fail(`解析失败：${err instanceof Error ? err.message : String(err)}`);
+      this.fail(`解析失败：${describe(err)}`);
       return;
     }
     if (!isLedger(parsed)) {

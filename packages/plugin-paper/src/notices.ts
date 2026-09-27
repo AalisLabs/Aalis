@@ -20,6 +20,7 @@ import type { Events, Logger } from '@aalis/core';
 import { type IncomingMessage, selfInitiatedActor } from '@aalis/schema-message';
 import type { PaperConfig } from './config.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import { describe, formatDuration, formatSize, truncate } from './util.js';
 
 /** 通知里远端说明的长度 */
 const NOTICE_NOTE_MAX = 800;
@@ -28,29 +29,6 @@ const ERROR_MAX = 200;
 /** 待交付提示消息的 injector：每次请求前按它摘掉上一次的提示 */
 const PENDING_INJECTOR = 'paper/pending';
 const HOUR = 3_600_000;
-
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function truncate(s: string, max: number): string {
-  const chars = [...s];
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : s;
-}
-
-/** 字节数的可读写法：B、KB、MB */
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** 时长的可读写法：秒，或分加秒 */
-export function formatDuration(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `${minutes} 分 ${seconds % 60} 秒` : `${seconds} 秒`;
-}
 
 function artifactList(task: TaskRecord): string {
   return task.artifacts.map(a => `${a.id}（${a.type}，${formatSize(a.sizeBytes)}）`).join('、');
