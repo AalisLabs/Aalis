@@ -175,14 +175,13 @@ function syncPluginConfig(
     merged = removeExtraFields(merged, schema, removed);
     if (removed.length > 0) app.logger.warn(`配置同步：${id} 裁掉 schema 外字段 [${removed.join(', ')}]`);
   }
-  // 脏值只告警不拒载；禁用实例的休眠配置不产生必填缺失噪音。
+  // 脏值在这里只告警、不改文档也不拦登记，读取时怎么处置归插件（parseConfig 回落默认值、忽略或拒绝激活）；
+  // 禁用实例的休眠配置不产生必填缺失噪音。
   if (!store.isPluginDisabled(id)) {
     const problems = validateConfig(schema, merged);
     if (problems.length > 0) {
-      app.logger.warn(
-        `配置校验：${id} 有 ${problems.length} 处问题（仅告警，不影响加载）：` +
-          problems.map(p => `${p.path}: ${p.message}`).join('；'),
-      );
+      const detail = problems.map(p => `${p.path}: ${p.message}`).join('；');
+      app.logger.warn(`配置校验：${id} 有 ${problems.length} 处问题：${detail}`);
     }
   }
   if (JSON.stringify(merged) === JSON.stringify(fileConfig)) return false;

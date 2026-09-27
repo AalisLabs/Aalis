@@ -45,6 +45,8 @@ const configSchema: ConfigSchema = {
     label: '启用作用域',
     description:
       '仅在匹配下列 platform:sessionType 的会话中参与 turn 生命周期（建 checkpoint）。格式举例：`webui:*` / `onebot:group` / `*` 表示全部。默认仅 `webui:*`：onebot 等聊天平台不会为每条消息创建 checkpoint。留空数组 = 禁用 checkpoint（仅允许手动 rollback）。',
+    // 选项只列常用组合，任意 platform:sessionType 都合法（如 onebot:*），须能手填
+    allowCustom: true,
     options: [
       { label: '所有会话', value: '*' },
       { label: 'WebUI 会话（推荐）', value: 'webui:*' },
