@@ -122,13 +122,17 @@ export async function handleConfigChanged(
     const synced = syncPluginDefaults(app, store, opts);
     for (const id of synced) app.logger.debug(`热重载配置同步: ${id}`);
 
-    // 每次 updateConfig 收尾的重算都会发 plugins:changed，这里不必再补发
+    // 启用中的插件由 updateConfig 收尾的重算发 plugins:changed；禁用插件只换配置、状态不变，这里都不必再补发
     for (const status of app.plugins.getStatus()) {
       const entry = app.plugins.getPlugin(status.instanceId);
       if (!entry) continue;
       const newConfig = store.getPluginConfig(status.instanceId);
       if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
-        app.logger.info(`插件 ${status.instanceId} 配置已变更，正在重新加载...`);
+        app.logger.info(
+          entry.state === 'disabled'
+            ? `插件 ${status.instanceId} 配置已变更；插件已禁用，启用时按新配置激活`
+            : `插件 ${status.instanceId} 配置已变更，正在重新加载...`,
+        );
         await app.plugins.updateConfig(status.instanceId, newConfig);
       }
     }

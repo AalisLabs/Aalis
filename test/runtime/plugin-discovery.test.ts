@@ -327,6 +327,50 @@ describe('热重载登记配置里的后缀实例', () => {
     await d.registerConfiguredInstances();
     expect(warns.filter(w => w.includes('已注册'))).toEqual([]);
   });
+
+  it('主实例已卸载、后缀实例还在册：新出现的后缀段取在册实例的定义照常登记，不报模块未找到', async () => {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (message: string) => void warns.push(message),
+      error() {},
+      child: () => logger,
+    };
+    const { app, store, discovery } = world({}, logger);
+    await app.plugin(definePlugin({ name: 'rs-main', reusable: true, apply() {} }));
+    const d = discovery(memoryLoader([]));
+    store.setPluginConfig('rs-main:a', {});
+    await d.registerConfiguredInstances();
+    await app.plugins.idle();
+    await app.plugins.unload('rs-main');
+
+    store.setPluginConfig('rs-main:b', {});
+    await d.registerConfiguredInstances();
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('rs-main:b')?.state).toBe('active');
+    expect(warns).toEqual([]);
+  });
+
+  it('同模块在册实例的定义不一致（主实例换过代码）：取主实例的', async () => {
+    const { app, store, discovery } = world();
+    const v1 = definePlugin({ name: 'rs-ver', reusable: true, apply() {} });
+    const v2 = definePlugin({ name: 'rs-ver', reusable: true, apply() {} });
+    await app.plugin(v1);
+    const d = discovery(memoryLoader([]));
+    store.setPluginConfig('rs-ver:a', {});
+    await d.registerConfiguredInstances();
+    await app.plugins.idle();
+    // 换代码走 unload + register：rs-ver:a 仍是旧定义；rs-ver:c 以旧定义登记在主实例之后，
+    // 注册表里主实例前后都有旧定义，按先到或后到取都会拿到 v1
+    await app.plugins.unload('rs-ver');
+    await app.plugins.register(v2);
+    await app.plugins.register(v1, {}, 'rs-ver:c');
+
+    store.setPluginConfig('rs-ver:b', {});
+    await d.registerConfiguredInstances();
+    expect(app.plugins.getPlugin('rs-ver:b')?.definition).toBe(v2);
+  });
 });
 
 describe('按配置文档登记', () => {

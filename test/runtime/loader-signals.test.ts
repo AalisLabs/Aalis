@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { pluginDefinitionOf } from '../../packages/api-plugin-source/src/index.js';
 import { App, type Logger, LogHub } from '../../packages/core/src/index.js';
@@ -162,6 +164,94 @@ describe('加载链信号', () => {
     const desc = (await loader.discover()).find(d => d.name === 'plugin-mismatch');
     await loader.load?.(desc as never);
     expect(warns.some(w => w.includes('plugin-mismatch') && w.includes('定义 name'))).toBe(true);
+  });
+});
+
+// 入口与宿主 import() 包名解析到的是同一个文件：exports 取 "." 的 import 条件目标，没有 exports 按 legacy main 规则。
+// 以 Node 自己对包名的解析（在项目根执行 import.meta.resolve）作对照，不手写期望路径。
+describe('插件入口按 import 条件解析', () => {
+  let proj: string;
+  let warns: string[];
+  let offHub: () => void;
+  const entry = (name: string) => `export default { name: ${JSON.stringify(name)}, apply() {} };\n`;
+  /** [包名, package.json 字段, 包内文件] */
+  const shapes: Array<[string, Record<string, unknown>, string[]]> = [
+    ['plugin-import-only', { exports: { '.': { import: './esm.mjs' } } }, ['esm.mjs']],
+    ['plugin-dual', { exports: { '.': { require: './cjs.cjs', import: './esm.mjs' } } }, ['cjs.cjs', 'esm.mjs']],
+    // exports 没开放 ./package.json：包目录按 node_modules 布局定位，元数据照读
+    ['plugin-exports-string', { exports: './entry.mjs' }, ['entry.mjs']],
+    ['plugin-conditions-sugar', { exports: { import: './esm.mjs', default: './cjs.cjs' } }, ['cjs.cjs', 'esm.mjs']],
+    ['plugin-array-fallback', { exports: { '.': [{ worker: './w.mjs' }, './esm.mjs'] } }, ['w.mjs', 'esm.mjs']],
+    ['plugin-module-sync', { exports: { 'module-sync': './sync.mjs', import: './esm.mjs' } }, ['sync.mjs', 'esm.mjs']],
+    [
+      'plugin-default-only',
+      { type: 'module', exports: { '.': { types: './index.d.ts', default: './dist/index.js' } } },
+      ['dist/index.js'],
+    ],
+    ['plugin-main-noext', { type: 'module', main: 'dist/index' }, ['dist/index.js']],
+    ['plugin-main-dir', { type: 'module', main: 'lib' }, ['lib/index.js']],
+    ['plugin-index-fallback', { type: 'module' }, ['index.js']],
+  ];
+  /** 入口解不出的写法：[包名, package.json 字段]，包内都有 index.mjs */
+  const unresolvable: Array<[string, Record<string, unknown>]> = [
+    ['plugin-no-dot', { exports: { './sub': './index.mjs' } }],
+    ['plugin-require-only', { exports: { '.': { require: './index.mjs' } } }],
+    ['plugin-target-missing', { exports: './missing.mjs' }],
+    ['plugin-target-bare', { exports: { '.': 'index.mjs' } }],
+  ];
+
+  beforeEach(() => {
+    proj = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-loader-entry-')));
+    const nm = join(proj, 'node_modules');
+    const deps: Record<string, string> = {};
+    for (const [name, fields, files] of shapes) {
+      writePkg(nm, name, { keywords: ['aalis-plugin'], ...fields });
+      for (const file of files) {
+        mkdirSync(dirname(join(nm, name, file)), { recursive: true });
+        writeFileSync(join(nm, name, file), file.endsWith('.cjs') ? 'module.exports = {};\n' : entry(name));
+      }
+      deps[name] = '1.0.0';
+    }
+    for (const [name, fields] of unresolvable) {
+      writePkg(nm, name, { keywords: ['aalis-plugin'], ...fields }, entry(name));
+      deps[name] = '1.0.0';
+    }
+    writeFileSync(join(proj, 'package.json'), JSON.stringify({ name: 'proj', dependencies: deps }));
+    warns = [];
+    offHub = LogHub.default.onEntry(e => {
+      if (e.level === 'warn' && e.scope === 'aalis:loader') warns.push(e.message);
+    });
+  });
+
+  afterEach(() => {
+    offHub();
+    rmSync(proj, { recursive: true, force: true });
+  });
+
+  it('各种 exports / main 写法：入口与 Node 对包名 import 解析到的是同一个文件，且能加载', async () => {
+    const loader = createNodeModulesPluginLoader(proj);
+    const found = await loader.discover();
+    const names = shapes.map(([name]) => name);
+    const script = `for (const n of ${JSON.stringify(names)}) console.log(import.meta.resolve(n))`;
+    const resolvedByNode = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: proj,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .trim()
+      .split('\n');
+    expect(found.map(d => d.name)).toEqual(names);
+    expect(found.map(d => pathToFileURL(d.source).href)).toEqual(resolvedByNode);
+    for (const desc of found) expect((await loader.load(desc))?.name).toBe(desc.name);
+    expect(warns.filter(w => !unresolvable.some(([name]) => w.includes(`"${name}"`)))).toEqual([]);
+  });
+
+  it('exports 解不出可用目标（没有 "."、只有 require 条件、目标文件不存在、目标不以 ./ 开头）：逐个 warn 入口无法解析并跳过', async () => {
+    const found = await createNodeModulesPluginLoader(proj).discover();
+    for (const [name] of unresolvable) {
+      expect(found.some(d => d.name === name)).toBe(false);
+      expect(warns.filter(w => w.includes(`"${name}"`) && w.includes('入口无法解析'))).toHaveLength(1);
+    }
   });
 });
 
