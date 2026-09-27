@@ -17,7 +17,9 @@ import { registerHubs } from '../fixtures/hubs.js';
 //
 // file 附件经 upload_group_file / upload_private_file 发出，内容只收 base64://：超过内联上限时
 // attachmentToOneBotFile 会退回 file://<宿主路径> 或原 http 链接，容器里的 NapCat 读不到，一律拒发。
-// image、audio、video 内联前按文件头核对格式，免得任意可读文件（如配置文本）冒充媒体发出。
+// image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
+// （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
+// 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -43,6 +45,34 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
 const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVEfmt '), Buffer.alloc(24)]);
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(24)]);
 const HTML = Buffer.from('<!doctype html><title>占位成品</title><p>占位</p>');
+const le32 = (n: number) => Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]);
+const be32 = (n: number) => Buffer.from([n >>> 24, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]);
+/** ISO 基础媒体文件的 ftyp 盒：主品牌、次版本 0、兼容品牌表，后面补零 */
+const ftyp = (major: string, ...compatible: string[]) =>
+  Buffer.concat([
+    be32(16 + 4 * compatible.length),
+    Buffer.from(`ftyp${major}`),
+    Buffer.alloc(4),
+    Buffer.from(compatible.join('')),
+    Buffer.alloc(24),
+  ]);
+/** EBML 头：版本字段后接 DocType（0x4282 + 一字节长度 + 名字），后面补零 */
+const ebml = (docType: string) =>
+  Buffer.concat([
+    Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, 0x01]),
+    Buffer.from([0x42, 0x82, 0x80 | docType.length]),
+    Buffer.from(docType),
+    Buffer.alloc(24),
+  ]);
+const BMP = Buffer.concat([Buffer.from('BM'), le32(58), Buffer.alloc(4), le32(54), le32(40), Buffer.alloc(24)]);
+const AVIF = ftyp('avif', 'avif', 'mif1', 'miaf', 'MA1B');
+const HEIC = ftyp('heic', 'mif1', 'heic');
+const MKV = ebml('matroska');
+const AVI = Buffer.concat([Buffer.from('RIFF'), le32(4096), Buffer.from('AVI LIST'), Buffer.alloc(24)]);
+const MOV = ftyp('qt  ', 'qt  ');
+const WEBM = ebml('webm');
+const M4A = ftyp('M4A ', 'M4A ', 'mp42', 'isom');
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.from('JFIF'), Buffer.alloc(24)]);
 const CONFIG = Buffer.from('llm:\n  apiKey: <占位 key>\n');
 
 let httpServer: Server;
@@ -304,6 +334,101 @@ describe('onebot 出站：文件附件', () => {
   });
 });
 
+describe('onebot 出站：媒体按文件头分流', () => {
+  it('认得出但不能内联的媒体（BMP、AVIF、HEIC、MKV、AVI）改经群文件上传，不进消息段，不留投递失败记录', async () => {
+    const files = {
+      'data:/m/a.bmp': BMP,
+      'data:/m/a.avif': AVIF,
+      'data:/m/a.heic': HEIC,
+      'data:/m/a.mkv': MKV,
+      'data:/m/a.avi': AVI,
+    };
+    const t = await boot({ files });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [
+        { kind: 'image', data: 'data:/m/a.bmp' },
+        { kind: 'image', data: 'data:/m/a.avif' },
+        { kind: 'image', data: 'data:/m/a.heic' },
+        { kind: 'video', data: 'data:/m/a.mkv' },
+        { kind: 'video', data: 'data:/m/a.avi' },
+      ],
+      source: 'agent',
+    });
+    await until(() => t.sent().filter(a => a.action === 'upload_group_file').length === 5);
+    await t.flush();
+    const uploads = t.sent().filter(a => a.action === 'upload_group_file');
+    expect(uploads.map(u => u.params.name)).toEqual([
+      'image.bmp',
+      'image.avif',
+      'image.heic',
+      'video.mkv',
+      'video.avi',
+    ]);
+    expect(uploads.map(u => decode(u.params.file))).toEqual([BMP, AVIF, HEIC, MKV, AVI]);
+    const segmentTypes = t
+      .sent()
+      .flatMap(m => (m.params.message as Array<{ type: string }> | undefined)?.map(s => s.type) ?? []);
+    expect(segmentTypes).not.toContain('image');
+    expect(segmentTypes).not.toContain('video');
+    expect(t.failureNotes()).toEqual([]);
+  });
+
+  it('私聊：改走上传的媒体经 upload_private_file 发出，附件自带名字时用它', async () => {
+    const t = await boot({ files: { 'data:/m/a.heic': HEIC } });
+    await t.send({
+      sessionId: PRIVATE,
+      content: '',
+      attachments: [{ kind: 'image', data: 'data:/m/a.heic', name: '占位/照片.heic' }],
+    });
+    await until(() => t.sent().some(a => a.action === 'upload_private_file'));
+    const upload = t.sent().find(a => a.action === 'upload_private_file');
+    expect(upload?.params.name).toBe('占位照片.heic');
+    expect(decode(upload?.params.file).equals(HEIC)).toBe(true);
+  });
+
+  it('回归：能内联的格式（JPEG、MOV、WebM、M4A）照旧以 base64:// 消息段发出，不上传', async () => {
+    const t = await boot({
+      files: { 'data:/m/a.jpg': JPEG, 'data:/m/a.mov': MOV, 'data:/m/a.webm': WEBM, 'data:/m/a.m4a': M4A },
+    });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [
+        { kind: 'image', data: 'data:/m/a.jpg' },
+        { kind: 'video', data: 'data:/m/a.mov' },
+        { kind: 'video', data: 'data:/m/a.webm' },
+        { kind: 'audio', data: 'data:/m/a.m4a' },
+      ],
+    });
+    await t.flush();
+    const segments = t
+      .sent()
+      .filter(a => a.action === 'send_group_msg')
+      .flatMap(m => m.params.message as Array<{ type: string; data: { file?: string } }>);
+    const files = (type: string) => segments.filter(s => s.type === type).map(s => decode(s.data.file));
+    expect(files('image')).toEqual([JPEG]);
+    expect(files('video')).toEqual([MOV, WEBM]);
+    expect(files('record')).toEqual([M4A]);
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+  });
+
+  it('超过内联上限、又不能内联的媒体：上传只收 base64://，不发、不交宿主路径，留投递失败记录', async () => {
+    const t = await boot({ files: { 'data:/m/big.bmp': Buffer.concat([BMP, Buffer.alloc(10 * MIB)]) } });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [{ kind: 'image', data: 'data:/m/big.bmp' }],
+      source: 'agent',
+    });
+    await until(() => t.failureNotes().length > 0);
+    await t.flush();
+    expect(JSON.stringify(t.actions)).not.toContain('file://');
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+  });
+});
+
 describe('onebot 出站：安全', () => {
   it('超限的 storage 文件与超限的 http 文件：发出的 action 里没有 file:// 与 http 形态，按失败处理', async () => {
     const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
@@ -339,7 +464,26 @@ describe('onebot 出站：安全', () => {
     expect(segmentTypes).not.toContain('image');
     expect(segmentTypes).not.toContain('record');
     expect(segmentTypes).not.toContain('video');
+    expect(
+      t.sent().some(a => a.action.startsWith('upload_')),
+      '不是媒体的也不改走文件上传',
+    ).toBe(false);
     expect(t.warns.filter(w => w.includes('文件头')).length).toBe(3);
+  });
+
+  it('agent 发出的非媒体附件拒发之后留投递失败记录，不当作已发出', async () => {
+    const t = await boot({ files: { 'aalis:/aalis.config.yaml': CONFIG } });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      attachments: [{ kind: 'image', data: 'aalis:/aalis.config.yaml' }],
+      source: 'agent',
+    });
+    await until(() => t.failureNotes().length > 0);
+    await t.flush();
+    expect(JSON.stringify(t.actions)).not.toContain(CONFIG.toString('base64'));
+    expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+    expect(t.failureNotes().map(n => n.sessionId)).toEqual([GROUP]);
   });
 
   it('超过内联上限的 storage 文件退回宿主路径之前也核对文件头：不是对应格式的不发，真的图片照旧交宿主路径', async () => {
