@@ -160,6 +160,18 @@ function parseJson(text: string): unknown {
   }
 }
 
+/** 远端的 ISO 时刻转成毫秒时间戳；认不出时 undefined */
+function timeOf(value: unknown): number | undefined {
+  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(at) ? at : undefined;
+}
+
+/** 首轮与它开跑的时刻（createdAt 认不出时不报） */
+function firstRun(runId: string, createdAt: unknown): { runId: string; startedAt?: number } {
+  const startedAt = timeOf(createdAt);
+  return startedAt === undefined ? { runId } : { runId, startedAt };
+}
+
 function toRunStatus(raw: unknown): RunStatus | undefined {
   return typeof raw === 'string' && Object.hasOwn(RUN_STATUS, raw) ? RUN_STATUS[raw] : undefined;
 }
@@ -332,7 +344,7 @@ export class CursorProvider implements RemoteAgentProvider {
   async createAgent(
     req: { agentId: string; name: string; prompt: string },
     signal: AbortSignal,
-  ): Promise<{ runId: string }> {
+  ): Promise<{ runId: string; startedAt?: number }> {
     // 模型参数没校验过就不建代理：参数不全会按默认变体（贵数倍）计费
     await this.ready(signal);
     const body = {
@@ -352,9 +364,10 @@ export class CursorProvider implements RemoteAgentProvider {
         if (res.status === 409 && remoteError(res.data).code === 'agent_id_conflict') {
           return await this.#createdRun(req.agentId, signal);
         }
-        const runId = str(asRecord(asRecord(this.#ok(res)).run).id);
+        const run = asRecord(asRecord(this.#ok(res)).run);
+        const runId = str(run.id);
         if (!runId) throw this.#error('transient', '建代理的响应里没有 run.id');
-        return { runId };
+        return firstRun(runId, run.createdAt);
       } catch (err) {
         if (!isRemoteAgentError(err) || err.code !== 'transient') throw err;
         lastError = err;
@@ -365,13 +378,21 @@ export class CursorProvider implements RemoteAgentProvider {
     return this.#createdRun(req.agentId, signal, lastError);
   }
 
-  /** 按 id 取回已建出的代理的首轮；代理不存在时抛 notCreated（没有就是 transient：可以同一 agentId 再建） */
-  async #createdRun(agentId: string, signal: AbortSignal, notCreated?: RemoteAgentError): Promise<{ runId: string }> {
+  /**
+   * 按 id 取回已建出的代理的首轮，开跑时刻取代理的 createdAt（实测与首轮的相同，都是请求到达的时刻）；
+   * 代理不存在时抛 notCreated（没有就是 transient：可以同一 agentId 再建）
+   */
+  async #createdRun(
+    agentId: string,
+    signal: AbortSignal,
+    notCreated?: RemoteAgentError,
+  ): Promise<{ runId: string; startedAt?: number }> {
     const res = await this.#call('GET', `/v1/agents/${enc(agentId)}`, { signal });
     if (res.status === 404) throw notCreated ?? this.#error('transient', `代理 ${agentId} 还没有建出来`);
-    const runId = str(asRecord(this.#ok(res)).latestRunId);
+    const agent = asRecord(this.#ok(res));
+    const runId = str(agent.latestRunId);
     if (!runId) throw this.#error('transient', `代理 ${agentId} 已建出，但还没有首轮`);
-    return { runId };
+    return firstRun(runId, agent.createdAt);
   }
 
   async startRun(agentId: string, prompt: string, signal: AbortSignal): Promise<{ runId: string }> {

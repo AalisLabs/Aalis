@@ -191,8 +191,14 @@ export interface RemoteAgentProvider {
    */
   ready(signal: AbortSignal): Promise<{ accountKey: string }>;
   mintAgentId(): string;
-  /** 同 agentId 重试是安全的；返回这一代理的首轮 runId */
-  createAgent(req: { agentId: string; name: string; prompt: string }, signal: AbortSignal): Promise<{ runId: string }>;
+  /**
+   * 同 agentId 重试是安全的；返回这一代理的首轮 runId，以及远端首轮开跑的时刻 startedAt（毫秒时间戳，远端的时钟；
+   * 取不到时省略）：远端收到请求就开跑，响应可能要几十秒才回，消费方按它计这一轮的用时与时长上限
+   */
+  createAgent(
+    req: { agentId: string; name: string; prompt: string },
+    signal: AbortSignal,
+  ): Promise<{ runId: string; startedAt?: number }>;
   startRun(agentId: string, prompt: string, signal: AbortSignal): Promise<{ runId: string }>;
   /** 跟踪一轮直到终态；最后一项必为 terminal。断线、重连、410 回退都在提供者内部处理 */
   followRun(

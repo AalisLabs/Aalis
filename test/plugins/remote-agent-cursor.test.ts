@@ -238,15 +238,22 @@ describe('2 ready()', () => {
 });
 
 describe('3 建代理', () => {
-  it('首个 POST 超时后用同一 agentId 重发得 409，再按 id 取回首轮；只建了 1 个代理', async () => {
+  it('首个 POST 超时后用同一 agentId 重发得 409，再按 id 取回首轮与它开跑的时刻；只建了 1 个代理', async () => {
     const p = makeProvider({ createTimeoutMs: 500 });
     fake.createDelays.push(2_000);
     const agentId = p.mintAgentId();
-    const { runId } = await p.createAgent({ agentId, name: 'aalis-paper-0000abcd', prompt: '占位任务' }, signal);
+    const before = Date.now();
+    const { runId, startedAt } = await p.createAgent(
+      { agentId, name: 'aalis-paper-0000abcd', prompt: '占位任务' },
+      signal,
+    );
 
     expect(fake.agents.size).toBe(1);
     const agent = fake.agents.get(agentId);
     expect(runId).toBe(agent?.runs[0].id);
+    // 远端从首个 POST 到达时起就在跑：取代理的 createdAt，不是取回的时刻
+    expect(startedAt).toBe(Date.parse(agent?.createdAt ?? ''));
+    expect((startedAt ?? 0) - before).toBeLessThan(500);
     const posts = fake.requestsTo('POST', '/v1/agents');
     expect(posts).toHaveLength(2);
     expect(fake.requestsTo('GET', `/v1/agents/${agentId}`)).toHaveLength(1);
@@ -268,11 +275,17 @@ describe('3 建代理', () => {
     }
   });
 
-  it('正常建代理直接返回首轮 runId；模型校验先于建代理', async () => {
+  it('正常建代理直接返回首轮 runId 与它开跑的时刻（响应里 run.createdAt，不是响应到达的时刻）；模型校验先于建代理', async () => {
     const p = makeProvider();
     const agentId = p.mintAgentId();
-    const { runId } = await p.createAgent({ agentId, name: 'aalis-paper-0000abce', prompt: '占位' }, signal);
-    expect(runId).toBe(fake.agents.get(agentId)?.runs[0].id);
+    fake.createDelays.push(400);
+    const before = Date.now();
+    const { runId, startedAt } = await p.createAgent({ agentId, name: 'aalis-paper-0000abce', prompt: '占位' }, signal);
+    expect(Date.now() - before).toBeGreaterThanOrEqual(400);
+    const run = fake.agents.get(agentId)?.runs[0];
+    expect(runId).toBe(run?.id);
+    expect(startedAt).toBe(Date.parse(run?.createdAt ?? ''));
+    expect((startedAt ?? 0) - before).toBeLessThan(400);
     expect(fake.requestsTo('GET', '/v1/models')).toHaveLength(1);
 
     const bad = makeProvider({ model: { id: 'no-such-model', params: {} } });
@@ -600,6 +613,17 @@ describe('7 错误体与限速', () => {
     fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body: { items: [] }, delayMs: 2_000 });
     const err = await expectCode(p.listRuns(agent.id, signal), 'transient');
     expect(err.message).toContain('超时');
+  });
+
+  it('建代理的响应没有可解析的 createdAt 时不报开跑时刻', async () => {
+    const p = makeProvider();
+    fake.intercept('POST', '/v1/agents', {
+      status: 201,
+      body: { agent: { id: 'bc-x' }, run: { id: 'run-no-time', status: 'CREATING', createdAt: 'not-a-time' } },
+    });
+    await expect(p.createAgent({ agentId: p.mintAgentId(), name: 'n', prompt: 'p' }, signal)).resolves.toEqual({
+      runId: 'run-no-time',
+    });
   });
 
   it('建代理两次都未得到回应、按 id 也查不到时抛 transient（可用同一 agentId 再试）', async () => {

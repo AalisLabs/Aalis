@@ -13,7 +13,8 @@ import type { AddressInfo } from 'node:net';
 // 预签名下载。只用于测试，不连真实账号。
 //
 // - 鉴权：Bearer key 须在 accounts 里；不在就回 401，错误信息里回显 key 的一段（用来检验提供者去掉了它）。
-// - 建代理：请求到达即登记代理与首轮，之后才按 createDelays 等待回应，所以超时后用同一 agentId 重发会得 409。
+// - 建代理：请求到达即登记代理与首轮（createdAt 取到达时刻，与实测一致），之后才按 createDelays 等待回应，
+//   所以超时后用同一 agentId 重发会得 409。
 // - 列代理、列轮次：新的在前；limit 超过 100 回 400（缺省 20 取自文档）；还有下一页时带 nextCursor（本页最后一项
 //   的 id），下一页以 cursor 传回，末页不带。认不出的 cursor：列代理回 200 空页、不带 nextCursor，列轮次回 400
 //   validation_error（2026-09-27 实测）。列轮次的项不含 result，GET 单轮才有。
@@ -50,6 +51,8 @@ export interface FakeRun {
   id: string;
   agentId: string;
   status: string;
+  /** ISO 时间；建出这一轮的时刻 */
+  createdAt: string;
   result?: string;
   durationMs?: number;
   cost?: { rawCostCents: number; chargedCents: number };
@@ -66,6 +69,8 @@ export interface FakeAgent {
   id: string;
   name: string;
   status: string;
+  /** ISO 时间；建出代理（与首轮）的时刻 */
+  createdAt: string;
   runs: FakeRun[];
   /** 键为列表里的 path（`artifacts/...`） */
   artifacts: Map<string, FakeArtifact>;
@@ -179,8 +184,8 @@ function agentJson(a: FakeAgent): Record<string, unknown> {
     env: { type: 'cloud' },
     repos: [],
     latestRunId: a.runs.at(-1)?.id,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
+    createdAt: a.createdAt,
+    updatedAt: a.createdAt,
   };
 }
 
@@ -190,6 +195,8 @@ function runSummaryJson(r: FakeRun): Record<string, unknown> {
     id: r.id,
     agentId: r.agentId,
     status: r.status,
+    createdAt: r.createdAt,
+    updatedAt: r.createdAt,
     ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}),
   };
 }
@@ -263,11 +270,13 @@ export async function startFakeCursor(): Promise<FakeCursor> {
     },
     seedAgent({ name = 'aalis-paper-00000000', status = 'IDLE', runs = [] }) {
       const id = `bc-${randomUUID()}`;
+      const createdAt = new Date().toISOString();
       const agent: FakeAgent = {
         id,
         name,
         status,
-        runs: runs.map(r => ({ id: `run-${randomUUID()}`, agentId: id, status: 'FINISHED', ...r })),
+        createdAt,
+        runs: runs.map(r => ({ id: `run-${randomUUID()}`, agentId: id, status: 'FINISHED', createdAt, ...r })),
         artifacts: new Map(),
         body: {},
       };
@@ -385,11 +394,13 @@ export async function startFakeCursor(): Promise<FakeCursor> {
         apiError(res, 409, 'agent_id_conflict', 'An agent with this agentId already exists.');
         return;
       }
-      const run: FakeRun = { id: `run-${randomUUID()}`, agentId, status: 'RUNNING' };
+      const createdAt = new Date().toISOString();
+      const run: FakeRun = { id: `run-${randomUUID()}`, agentId, status: 'RUNNING', createdAt };
       const agent: FakeAgent = {
         id: agentId,
         name: String(b.name ?? ''),
         status: 'ACTIVE',
+        createdAt,
         runs: [run],
         artifacts: new Map(),
         body: b,
@@ -435,7 +446,12 @@ export async function startFakeCursor(): Promise<FakeCursor> {
         apiError(res, 409, 'agent_busy', 'Agent already has an active run');
         return;
       }
-      const run: FakeRun = { id: `run-${randomUUID()}`, agentId: agent.id, status: 'CREATING' };
+      const run: FakeRun = {
+        id: `run-${randomUUID()}`,
+        agentId: agent.id,
+        status: 'CREATING',
+        createdAt: new Date().toISOString(),
+      };
       agent.runs.push(run);
       json(res, 201, { run: runJson(run) });
       return;

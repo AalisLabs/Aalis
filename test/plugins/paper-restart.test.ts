@@ -13,7 +13,9 @@ import {
   stopPaperHubs,
 } from '../fixtures/paper.js';
 import {
+  advance,
   FAKE_TIMERS,
+  MINUTE,
   PAPER_A_ID,
   REMOTE_A,
   ROOM_A,
@@ -73,10 +75,11 @@ describe('重启接回（假时钟）', () => {
     vi.useRealTimers();
   });
 
-  it('start.path 为 create 的任务以同一 agentId 再调 createAgent，不会建第二个代理；startedAt 取 requestedAt', async () => {
+  it('start.path 为 create 的任务以同一 agentId 再调 createAgent，不会建第二个代理；startedAt 取远端首轮开跑的时刻', async () => {
     const a = new ScriptedRemote();
-    const firstRun = a.seedAgent(AGENT, 'aalis-paper-0000abcd');
     const requestedAt = Date.now() - 60_000;
+    // 停机前建代理的请求已到达远端：首轮从那时起就在跑，不从接回时算
+    const firstRun = a.seedAgent(AGENT, 'aalis-paper-0000abcd', requestedAt + 2_000);
     const files = seedLedger(ledger => {
       ledger.agents[AGENT] = agentRecord('creating');
       ledger.tasks['t-000000aa'] = seedTask({
@@ -91,9 +94,30 @@ describe('重启接回（假时钟）', () => {
       a.calls.filter(c => c.method === 'createAgent').map(c => (c.args[0] as { agentId: string }).agentId),
     ).toEqual([AGENT]);
     expect(a.agents.size).toBe(1);
-    expect(hub.task('t-000000aa')).toMatchObject({ runId: firstRun, startedAt: requestedAt });
+    expect(hub.task('t-000000aa')).toMatchObject({ runId: firstRun, startedAt: requestedAt + 2_000 });
     expect(hub.store.data.agents[AGENT].state).toBe('active');
     expect(hub.store.data.papers[PAPER_A_ID].binding).toBe(AGENT);
+  });
+
+  it('安全：建代理的请求没到达远端就停机、停机超过单轮时长：接回后新建的一轮从远端开跑时计时，不立即取消', async () => {
+    const a = new ScriptedRemote();
+    const requestedAt = Date.now() - 30 * MINUTE;
+    const files = seedLedger(ledger => {
+      ledger.agents[AGENT] = agentRecord('creating');
+      ledger.tasks['t-000000aa'] = seedTask({
+        state: 'starting',
+        agentId: AGENT,
+        start: { path: 'create', requestedAt },
+      });
+    });
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files });
+    await until(() => hub.task('t-000000aa').state === 'running', '接回后开轮');
+    const created = a.runs.get(hub.task('t-000000aa').runId ?? '')?.createdAt;
+    expect(hub.task('t-000000aa').startedAt).toBe(created);
+    expect(created).toBeGreaterThanOrEqual(requestedAt + 30 * MINUTE);
+    await advance(MINUTE);
+    expect(a.count('cancelRun')).toBe(0);
+    expect(hub.task('t-000000aa').state).toBe('running');
   });
 
   describe('安全：start.path 为 run 的任务不调 createAgent，先认领', () => {
