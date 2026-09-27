@@ -95,11 +95,24 @@ export function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (t
 /**
  * 平台配置模板
  *
- * 为每个平台设定默认的 SessionConfig。
- * 新建会话时，根据消息来源的平台自动应用对应模板。
+ * 为每个平台设定默认的 SessionConfig，经继承链实时生效：房间会话按出生平台选档，其余按入口平台
+ * （见 {@link SessionManagerService.resolveInheritance}）。
  * 在 session-manager 的 configSchema 中通过 WebUI 配置。
  */
 export type PlatformProfile = SessionConfig;
+
+/** 继承链的层：全局 defaults、平台档、父会话的 sessionDefaults */
+export type InheritanceSource = 'defaults' | 'platform' | 'parent';
+
+/** 继承链的解析结果：选档用的平台、继承值与每个键的来源层 */
+export interface SessionInheritance {
+  /** 选档用的平台：有出生平台的会话为出生平台，否则为调用方传入的入口平台 */
+  platform?: string;
+  /** 继承值（不含会话自身 config 与 sessionDefaults） */
+  values: Omit<SessionConfig, 'sessionDefaults'>;
+  /** 每个键最终来自哪一层 */
+  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;
+}
 
 /** 会话种类：room 为聊天用的会话（IM 群与私聊、owner 在 WebUI 与 CLI 的聊天）；task 为挂在发起它的会话下面的子会话 */
 export type SessionKind = 'room' | 'task';
@@ -235,21 +248,19 @@ export interface SessionManagerService {
    * 解析指定会话的最终生效配置
    *
    * 合并优先级：会话 config > 父会话 sessionDefaults > 平台 profile > 全局默认
-   * 返回合并后的完整 SessionConfig（不含 sessionDefaults 字段）
+   * 返回合并后的完整 SessionConfig（不含 sessionDefaults 字段）。平台档的选法同 {@link resolveInheritance}：
+   * 房间会话钉死出生平台，传入的入口平台只对没有出生平台的会话起作用。
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
 
   /**
-   * 解析「继承默认」——即如果当前会话不设置任何字段，会从父/平台 profile 拿到什么。
+   * 继承链解析（不含会话自身 config）：全局 defaults → 平台档 → 父会话 sessionDefaults。
+   * 会话有出生平台（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按出生平台选档、忽略传入的 platform；
+   * 没有时（WebUI、CLI 等 owner 面会话）按传入的入口平台。
    *
-   * 与 resolveConfig 的区别：**不包含** session 自身 config，只合并：
-   * 1. 平台 profile（最低）
-   * 2. 父会话 sessionDefaults（最高）
-   *
-   * 适用场景：WebUI 显示「继承 (xxx)」提示时，应该展示"未覆盖前的默认值"而非当前生效值，
-   * 否则用户一旦覆盖了某字段，"继承"提示就会变成他自己刚刚设置的值，产生迷惑。
+   * WebUI 的「继承 (xxx)」提示与 `/session` 的来源显示用它：只看继承值，才不会把会话自己的覆盖当成继承来的。
    */
-  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+  resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
 
   /** 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口） */
   getPlatformProfiles(): Record<string, PlatformProfile>;

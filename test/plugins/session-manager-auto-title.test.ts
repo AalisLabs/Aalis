@@ -73,6 +73,24 @@ describe('自动标题：平台派生会话缺档时先兜底建档', () => {
     expect(llmCalls.chats, '缺 platform 不该烧一次 LLM 生成标题').toBe(0);
   });
 
+  it('WebUI 入口往 IM 房间发消息：不生成标题（房间不拿 owner 的话起名）', async () => {
+    const { app, host, sm, llmCalls } = await setup();
+    const group = 'onebot:10000:group:20001';
+    const priv = 'onebot:10000:private:30001';
+    // 已登记、还没有标题的房间同样跳过
+    await sm.ensureSession(priv, { name: priv });
+
+    for (const sessionId of [group, priv]) {
+      await host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId, platform: 'webui' });
+    }
+    await new Promise(r => setTimeout(r, 30));
+    const titles = [sm.getSession(group)?.title, sm.getSession(priv)?.title];
+    await app.stop();
+
+    expect(titles).toEqual([undefined, undefined]);
+    expect(llmCalls.chats, '房间不该为起标题烧一次 LLM').toBe(0);
+  });
+
   it('已建档且已有标题的会话不重复生成', async () => {
     const { app, host, sm, llmCalls } = await setup();
     await sm.ensureSession('cli-default', { name: 'CLI' });
