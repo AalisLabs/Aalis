@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { removeExtraFields } from '../../packages/schema-config/src/index.js';
+import { deepMergeDefaults, removeExtraFields } from '../../packages/schema-config/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // removeExtraFields：按 schema 键集裁未知字段。runtime config-sync 与
@@ -38,5 +38,24 @@ describe('removeExtraFields', () => {
     const out = removeExtraFields({ hosts }, schema, removed);
     expect(out.hosts).toBe(hosts);
     expect(removed).toEqual([]);
+  });
+
+  it('只认 schema 的自有键：与原型同名的配置键（toString、valueOf）照样裁掉', () => {
+    const removed: string[] = [];
+    const out = removeExtraFields(
+      { known: 1, toString: 'x', valueOf: 2 },
+      { known: { type: 'number', label: 'K' } },
+      removed,
+    );
+    expect(out).toEqual({ known: 1 });
+    expect(removed).toEqual(['toString', 'valueOf']);
+  });
+});
+
+describe('deepMergeDefaults', () => {
+  it('只填缺失的自有键：默认值里与原型同名的键（valueOf）照样补上，已有值（含 null）不覆盖', () => {
+    const out = deepMergeDefaults({ valueOf: 1, a: 2, g: { x: 1, y: 2 } }, { a: null, g: { x: 9 } });
+    expect(Object.hasOwn(out, 'valueOf')).toBe(true);
+    expect(out).toEqual({ valueOf: 1, a: null, g: { x: 9, y: 2 } });
   });
 });
