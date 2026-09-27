@@ -32,8 +32,7 @@
     "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/util-offline-render": "workspace:>=0.1.0 <1.0.0",
-    "puppeteer": "^24.0.0"
+    "@aalis/util-offline-render": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
