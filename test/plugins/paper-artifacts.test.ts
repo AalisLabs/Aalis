@@ -129,12 +129,10 @@ describe('写入口', () => {
     a.bundles.set(agentId, text('bundle-v1'));
     a.finish(hub.task(first).runId ?? '');
     await until(() => hub.task(first).state === 'done', '完成');
-    expect(hub.task(first).bundle).toEqual({ sizeBytes: 9 });
     expect(files.get(`${PAPER_A_DIR}/workspace.tar.gz`)).toEqual(text('bundle-v1'));
 
     a.bundles.set(agentId, bytes(KB + 1));
-    const second = await collect(hub, a, []);
-    expect(hub.task(second).bundle).toBeUndefined();
+    await collect(hub, a, []);
     expect(files.get(`${PAPER_A_DIR}/workspace.tar.gz`), '超限的工程包不覆盖旧的').toEqual(text('bundle-v1'));
   });
 

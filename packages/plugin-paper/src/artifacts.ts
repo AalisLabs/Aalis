@@ -5,11 +5,11 @@
 // 目录名 n-<名> 或 r-<哈希前 12 位>。远端给的相对路径（rel）只记进账本供 WebUI 显示，不出现在白纸根的
 // 路径里：出站附件的 data 会被写进会话历史，远端控制的文件名不能借此进入历史与记忆。
 //
-// 写入口不只信提供者：rel 再按同样的规则净化一次，单文件、单轮总量、文件数、工程包与白纸目录总占用
+// 写入口不只信提供者：rel 再按契约的 artifactRelProblem 净化一次，单文件、单轮总量、文件数、工程包与白纸目录总占用
 // 各有上限，不合格就抛错（提供者把它记进 rejected）。白纸目录超过总占用上限后，本轮余下的文件一律拒收。
 // ============================================================
 
-import type { ArtifactSink } from '@aalis/api-remote-agent';
+import { type ArtifactSink, artifactRelProblem } from '@aalis/api-remote-agent';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { ArtifactCaps } from './config.js';
 import { randomHex, type TaskRecord } from './ledger.js';
@@ -26,6 +26,16 @@ export const EXTENSIONS: Record<ArtifactType, string> = {
   mp4: 'mp4',
   html: 'html',
   other: 'bin',
+};
+
+/** 能发出的判定类型的 MIME（paper_send 发出时用；WebUI 只把其中的位图显示在页面里） */
+export const MIME_TYPES: Record<Exclude<ArtifactType, 'other'>, string> = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  mp4: 'video/mp4',
+  html: 'text/html',
 };
 
 /** 白纸在白纸根里的目录 */
@@ -46,18 +56,6 @@ export function artifactUri(paperId: string, taskId: string, artifact: Pick<Arti
 /** 白纸的工程包 */
 export function bundleUri(paperId: string): string {
   return `${paperDirUri(paperId)}/workspace.tar.gz`;
-}
-
-/** 远端给的相对路径能否落账；不能时返回原因（与提供者同一套规则） */
-function relProblem(rel: string): string | undefined {
-  if (rel === '') return '路径为空';
-  if (rel.startsWith('/')) return '绝对路径';
-  if (rel.includes('\\')) return '路径含反斜杠';
-  if (/[\p{Cc}\p{Cf}]/u.test(rel)) return '路径含控制字符或不可见的格式字符';
-  const segments = rel.split('/');
-  if (segments.includes('..')) return '路径含 .. 段';
-  if (segments.some(s => s === '' || s === '.')) return '路径含空段或 . 段';
-  return undefined;
 }
 
 function startsWith(data: Uint8Array, offset: number, magic: readonly number[]): boolean {
@@ -140,7 +138,6 @@ export async function openCollector(opts: {
 
 export class RunCollector implements ArtifactSink {
   readonly artifacts: Artifact[] = [];
-  bundle?: { sizeBytes: number };
   /** 白纸目录超过了总占用上限：本轮余下的文件一律拒收 */
   full = false;
   #runBytes = 0;
@@ -164,7 +161,7 @@ export class RunCollector implements ArtifactSink {
   }
 
   async putFile(rel: string, data: Uint8Array): Promise<void> {
-    const problem = relProblem(rel);
+    const problem = artifactRelProblem(rel);
     if (problem) throw new Error(`路径不合格：${problem}`);
     const size = data.byteLength;
     if (this.artifacts.length >= this.caps.maxRunFiles) throw new Error(`超过本轮文件数上限 ${this.caps.maxRunFiles}`);
@@ -190,6 +187,5 @@ export class RunCollector implements ArtifactSink {
     await this.storage.writeFile(bundleUri(this.paperId), toBuffer(data));
     this.used += size - this.previousBundle;
     this.previousBundle = size;
-    this.bundle = { sizeBytes: size };
   }
 }

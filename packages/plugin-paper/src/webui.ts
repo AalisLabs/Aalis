@@ -10,26 +10,21 @@
 // 位图显示在页面里，其余只能下载。超过单文件上限的不读。工程包不经 WebUI 下载，白纸表里显示它在本机的位置。
 // ============================================================
 
-import { type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
+import { type EgressReport, type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundWebui, WebuiFilePayload, WebuiPage } from '@aalis/api-webui';
 import type { ServiceRef } from '@aalis/core';
-import { artifactUri, bundleUri, EXTENSIONS, paperDirUri, sniffType, usageOf } from './artifacts.js';
+import { artifactUri, bundleUri, EXTENSIONS, MIME_TYPES, paperDirUri, sniffType, usageOf } from './artifacts.js';
 import { dayKey } from './budget.js';
 import { type PaperConfig, specOf } from './config.js';
 import type { PaperDriver } from './driver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
-import { formatDuration, formatSize } from './notices.js';
 import { actorKey, paperLabel, sharingRooms } from './rooms.js';
+import { describe, formatDuration, formatSize } from './util.js';
 
 /** 能在页面里显示的位图；其余一律按下载处理 */
-const BITMAP_MIMES: Partial<Record<TaskRecord['artifacts'][number]['type'], string>> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-};
+const BITMAPS: ReadonlySet<TaskRecord['artifacts'][number]['type']> = new Set(['png', 'jpeg', 'gif', 'webp']);
 const OCTET_STREAM = 'application/octet-stream';
 
 const PAPER_ICON =
@@ -171,10 +166,6 @@ const PAGE: WebuiPage = {
 
 const fail = (error: string) => ({ ok: false as const, error });
 
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -187,6 +178,7 @@ export function registerPaperPage(deps: {
   remote: ServiceRef<RemoteAgentProvider>;
   sessionManager: ServiceRef<SessionManagerService>;
   cfg: PaperConfig;
+  signal: AbortSignal;
   now: () => number;
 }): void {
   const { webui, driver, ledger, storage, cfg } = deps;
@@ -213,12 +205,17 @@ export function registerPaperPage(deps: {
   const knownPaper = (value: unknown): string | undefined =>
     typeof value === 'string' && paperIds().includes(value) ? value : undefined;
 
-  function egressText(paperId: string): string {
+  async function egressText(paperId: string): Promise<string> {
     const spec = specOf(cfg, paperId);
     if (!spec?.remoteAgentType) return '';
     const provider = resolveRemoteAgent(deps.remote, spec.remoteAgentType);
     if (!provider) return '提供者不在场';
-    const egress = provider.instance.egress();
+    let egress: EgressReport;
+    try {
+      egress = await provider.instance.egress(deps.signal);
+    } catch (err) {
+      return `读取失败：${describe(err)}`;
+    }
     const source = egress.source === 'owner-config' ? '（owner 配置，未核实）' : '';
     return `${egress.mode}${source}；上限 ${spec.remoteAgentEgress}`;
   }
@@ -252,16 +249,15 @@ export function registerPaperPage(deps: {
   async function paperRow(paperId: string): Promise<Record<string, unknown>> {
     const state = ledger.data.papers[paperId];
     const spec = specOf(cfg, paperId);
-    const { rooms, platforms } = sharingRooms(deps.sessionManager.require(), ledger.data, paperId);
-    const where = [...rooms, ...platforms.map(p => `平台档 ${p} 的全部房间`)];
+    const { labels, shared } = sharingRooms(deps.sessionManager.require(), ledger.data, paperId);
     const agent = state?.binding ? ledger.data.agents[state.binding] : undefined;
     return {
       paperId,
       name: paperLabel(paperId),
-      rooms: where.length > 1 || platforms.length > 0 ? `共用（${where.length}）：${where.join('、')}` : where.join(''),
+      rooms: shared ? `共用（${labels.length}）：${labels.join('、')}` : labels.join(''),
       remoteAgentType: spec ? spec.remoteAgentType || '（未配置）' : '（配置里已没有这块白纸）',
       agent: agent ? `${agent.name}（${agent.state}）` : '',
-      egress: egressText(paperId),
+      egress: await egressText(paperId),
       usage: await usageText(paperId),
       bundle: await bundleText(paperId),
       halted: state?.halted ? `${state.halted.detail}（${formatTime(state.halted.at)}）` : '',
@@ -368,9 +364,10 @@ export function registerPaperPage(deps: {
     } catch (err) {
       return fail(`读取失败：${describe(err)}`);
     }
+    const sniffed = sniffType('', data);
     const payload: WebuiFilePayload = {
       name: `${artifact.id}.${EXTENSIONS[artifact.type]}`,
-      mime: BITMAP_MIMES[sniffType('', data)] ?? OCTET_STREAM,
+      mime: sniffed !== 'other' && BITMAPS.has(sniffed) ? MIME_TYPES[sniffed] : OCTET_STREAM,
       base64: data.toString('base64'),
     };
     return payload;

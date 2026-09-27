@@ -151,7 +151,7 @@ describe('1 激活', () => {
     const provider = app.bind({ services }).services.get(remoteAgent) as RemoteAgentProvider;
     expect(provider).toBeDefined();
     expect(provider.transcriptIsolation).toBe('shared');
-    expect(provider.egress()).toEqual({ mode: 'allowlist', source: 'owner-config' });
+    await expect(provider.egress(signal)).resolves.toEqual({ mode: 'allowlist', source: 'owner-config' });
     expect(provider.layout).toMatchObject({
       workDir: '/agent',
       outDir: '/opt/cursor/artifacts/out',
@@ -182,7 +182,7 @@ describe('1 激活', () => {
       await app.plugins.register(cursorPlugin, { apiKey: KEY, baseUrl: fake.baseUrl, egressMode });
       await app.plugins.idle();
       const provider = app.bind({ services }).services.get(remoteAgent) as RemoteAgentProvider;
-      expect(provider.egress()).toEqual({ mode: 'unknown', source: 'owner-config' });
+      await expect(provider.egress(signal)).resolves.toEqual({ mode: 'unknown', source: 'owner-config' });
     }
     expect(fake.requests).toHaveLength(0);
   });
@@ -347,10 +347,9 @@ describe('5 followRun', () => {
 
     const progress = items.filter(i => i.kind === 'progress');
     expect(progress.map(i => i.eventId)).toEqual(['100-1', '101-0', '103-0']);
-    expect(progress.every(i => i.label.length > 0)).toBe(true);
     expect(items.at(-1)).toEqual({
       kind: 'terminal',
-      state: { runId: run.id, status: 'finished', durationMs: 1234, resultText: '成品已放好' },
+      state: { runId: run.id, status: 'finished', resultText: '成品已放好' },
     });
   });
 
@@ -409,7 +408,7 @@ describe('5 followRun', () => {
     ]);
     const items = await collect(p.followRun(agent.id, run.id, { signal }));
     expect(fake.requestsTo('GET', streamPath(agent.id, run.id))).toHaveLength(1);
-    expect(items.at(-1)).toMatchObject({ kind: 'terminal', state: { status: 'error', durationMs: 10 } });
+    expect(items.at(-1)).toMatchObject({ kind: 'terminal', state: { status: 'error' } });
   });
 
   it('410 时改为定时 GET run，直到终态', async () => {
@@ -440,7 +439,7 @@ describe('5 followRun', () => {
       },
     ]);
     const items = await collect(p.followRun(agent.id, run.id, { signal }));
-    expect(items.at(-1)).toEqual({ kind: 'terminal', state: { runId: run.id, status: 'cancelled', durationMs: 5 } });
+    expect(items.at(-1)).toEqual({ kind: 'terminal', state: { runId: run.id, status: 'cancelled' } });
   });
 
   it('400 invalid_last_event_id：不带 id 从头重放，跳过已见过的事件', async () => {
@@ -623,7 +622,6 @@ describe('8 费用', () => {
       chargedCents: 2.5536,
       inputTokens: 8724,
       cacheReadTokens: 14592,
-      outputTokens: 132,
     });
     await expect(p.runCost(agent.id, agent.runs[1].id, signal)).resolves.toBeUndefined();
     expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/usage`)[0].path).toContain(`runId=${agent.runs[0].id}`);
@@ -641,7 +639,6 @@ describe('8 费用', () => {
     await expect(p.getRun(agent.id, agent.runs[0].id, signal)).resolves.toEqual({
       runId: agent.runs[0].id,
       status: 'finished',
-      durationMs: 7,
       resultText: '好',
     });
   });
@@ -689,14 +686,10 @@ describe('9 取回成品', () => {
     const mem = memorySink();
     const report = await p.collectArtifacts(agent.id, 'T1', mem.sink, LIMITS, signal);
 
-    expect([...mem.files.keys()].sort()).toEqual(['img/a.png', 'index.html']);
+    expect([...mem.files.keys()]).toEqual(['index.html', 'img/a.png']);
+    expect(mem.files.get('index.html')).toEqual(bytes(100));
     expect(mem.files.get('img/a.png')).toEqual(bytes(200, 0x62));
     expect(mem.bundle()).toEqual(bytes(300, 0x63));
-    expect(report.files).toEqual([
-      { rel: 'index.html', sizeBytes: 100 },
-      { rel: 'img/a.png', sizeBytes: 200 },
-    ]);
-    expect(report.bundle).toEqual({ sizeBytes: 300 });
     expect(report.rejected.map(r => r.path).sort()).toEqual(
       [
         'artifacts/out/T1/../x',
@@ -728,10 +721,10 @@ describe('9 取回成品', () => {
     agent.artifacts.set('artifacts/out/T2/c.txt', { data: bytes(5) });
     const mem = memorySink();
     const report = await p.collectArtifacts(agent.id, 'T2', mem.sink, { ...LIMITS, maxRunFiles: 2 }, signal);
-    expect(report.files.map(f => f.rel)).toEqual(['a.txt', 'b.txt']);
+    expect([...mem.files.keys()]).toEqual(['a.txt', 'b.txt']);
     expect(report.rejected.map(r => r.path)).toEqual(['artifacts/out/T2/huge.mp4', 'artifacts/out/T2/c.txt']);
     expect(report.rejected[0].reason).toContain('上限');
-    expect(report.bundle).toBeUndefined();
+    expect(mem.bundle()).toBeUndefined();
     expect(fake.requests.filter(r => r.path.includes('huge.mp4'))).toHaveLength(0);
   });
 
@@ -742,7 +735,7 @@ describe('9 取回成品', () => {
     agent.artifacts.set('artifacts/out/T3/b.bin', { data: bytes(40 * 1024), declaredSize: 10 });
     const mem = memorySink();
     const report = await p.collectArtifacts(agent.id, 'T3', mem.sink, { ...LIMITS, maxRunBytes: 64 * 1024 }, signal);
-    expect(report.files.map(f => f.rel)).toEqual(['a.bin']);
+    expect([...mem.files.keys()]).toEqual(['a.bin']);
     expect(report.rejected.map(r => r.path)).toEqual(['artifacts/out/T3/b.bin']);
   });
 
@@ -753,7 +746,7 @@ describe('9 取回成品', () => {
     agent.artifacts.set('artifacts/out/T4/b.png', { data: bytes(5) });
     const mem = memorySink({ reject: rel => (rel.endsWith('.exe') ? '类型不在白名单' : undefined) });
     const report = await p.collectArtifacts(agent.id, 'T4', mem.sink, LIMITS, signal);
-    expect(report.files.map(f => f.rel)).toEqual(['b.png']);
+    expect([...mem.files.keys()]).toEqual(['b.png']);
     expect(report.rejected).toEqual([
       { path: 'artifacts/out/T4/a.exe', reason: expect.stringContaining('类型不在白名单') },
     ]);
@@ -765,9 +758,10 @@ describe('9 取回成品', () => {
     agent.artifacts.set('artifacts/out/T5/a.png', { data: bytes(5) });
     fake.downloadOrigin = 'http://[not-a-host';
     try {
-      const report = await p.collectArtifacts(agent.id, 'T5', memorySink().sink, LIMITS, signal);
+      const mem = memorySink();
+      const report = await p.collectArtifacts(agent.id, 'T5', mem.sink, LIMITS, signal);
       captured.push(render(report));
-      expect(report.files).toEqual([]);
+      expect(mem.files.size).toBe(0);
       expect(report.rejected).toHaveLength(1);
       expect(report.rejected[0].reason).not.toContain(fake.signature);
     } finally {
@@ -802,8 +796,7 @@ describe('10 默认网络策略', () => {
     const mem = memorySink();
     const report = await p.collectArtifacts(agent.id, 'T6', mem.sink, LIMITS, signal);
     captured.push(render(report));
-    expect(report.files).toEqual([]);
-    expect(report.bundle).toBeUndefined();
+    expect(mem.bundle()).toBeUndefined();
     expect(report.rejected.map(r => r.path).sort()).toEqual(['artifacts/out/T6/a.png', 'artifacts/workspace.tar.gz']);
     expect(mem.files.size).toBe(0);
     expect(fake.requests.filter(r => r.path.startsWith('/s3/'))).toHaveLength(0);
@@ -819,15 +812,15 @@ describe('11 删除与列举', () => {
     await expect(p.deleteAgent(agent.id, signal)).resolves.toBeUndefined();
   });
 
-  it('listAgents 不含 reconcileIgnoreNames 里的名字，归档状态如实', async () => {
+  it('listAgents 不含 reconcileIgnoreNames 里的名字，归档的照列', async () => {
     const p = makeProvider({ reconcileIgnoreNames: ['owner-own-agent'] });
     const mine = fake.seedAgent({ name: 'aalis-paper-1234abcd' });
     const archived = fake.seedAgent({ name: 'aalis-paper-5678abcd', status: 'ARCHIVED' });
     fake.seedAgent({ name: 'owner-own-agent' });
     const list = await p.listAgents(signal);
     expect(list).toEqual([
-      { agentId: mine.id, name: 'aalis-paper-1234abcd', archived: false },
-      { agentId: archived.id, name: 'aalis-paper-5678abcd', archived: true },
+      { agentId: mine.id, name: 'aalis-paper-1234abcd' },
+      { agentId: archived.id, name: 'aalis-paper-5678abcd' },
     ]);
     expect(fake.requestsTo('GET', '/v1/agents')[0].path).toBe('/v1/agents?limit=100');
   });

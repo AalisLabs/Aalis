@@ -14,6 +14,7 @@ import type { ServiceRef } from '@aalis/core';
 import type { PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
 import { type Isolation, paperLabel, sharingRooms } from './rooms.js';
+import { describe } from './util.js';
 
 const CHECK_ID = 'paper.config';
 
@@ -70,19 +71,26 @@ export function registerPaperDoctor(deps: {
         const type = spec.remoteAgentType;
         if (type && !resolveRemoteAgent(deps.remote, type))
           warnings.push(`白纸 ${name} 引用的远端代理「${type}」不在场`);
-        const { rooms, platforms } = sharingRooms(sm, ledger.data, `n:${name}`);
-        if (rooms.length > 1 || platforms.length > 0) {
-          const where = [...rooms, ...platforms.map(p => `平台档 ${p} 的全部房间`)].join('、');
-          warnings.push(`白纸 ${name} 被多个房间共用（${where}）：长期代理的对话与工作区对所有这些房间可见`);
+        const { labels, shared } = sharingRooms(sm, ledger.data, `n:${name}`);
+        if (shared) {
+          warnings.push(
+            `白纸 ${name} 被多个房间共用（${labels.join('、')}）：长期代理的对话与工作区对所有这些房间可见`,
+          );
         }
       }
       if (cfg.globalDailyCents <= 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
 
       const types = new Set([cfg.defaults.remoteAgentType, ...[...cfg.papers.values()].map(s => s.remoteAgentType)]);
       for (const type of types) {
-        const egress = type ? resolveRemoteAgent(deps.remote, type)?.instance.egress() : undefined;
-        if (egress?.source === 'owner-config')
-          notes.push(`远端代理「${type}」的出网方式（${egress.mode}）取自 owner 配置，未核实`);
+        const provider = type ? resolveRemoteAgent(deps.remote, type) : undefined;
+        if (!provider) continue;
+        try {
+          const egress = await provider.instance.egress(deps.signal);
+          if (egress.source === 'owner-config')
+            notes.push(`远端代理「${type}」的出网方式（${egress.mode}）取自 owner 配置，未核实`);
+        } catch (err) {
+          warnings.push(`取不到远端代理「${type}」的出网方式，用它的白纸不开：${describe(err)}`);
+        }
       }
 
       const level: CheckLevel = errors.length > 0 ? 'error' : warnings.length > 0 ? 'warn' : 'ok';

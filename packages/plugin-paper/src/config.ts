@@ -6,7 +6,7 @@
 // 不在这里。
 // ============================================================
 
-import type { EgressCeiling } from '@aalis/api-remote-agent';
+import type { ArtifactLimits, EgressCeiling } from '@aalis/api-remote-agent';
 import type { Logger } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
@@ -237,13 +237,8 @@ export interface PaperSpec {
   idleArchiveMinutes: number;
 }
 
-/** 取回成品的上限（字节与文件数） */
-export interface ArtifactCaps {
-  maxFileBytes: number;
-  maxRunBytes: number;
-  maxRunFiles: number;
-  maxBundleBytes: number;
-  /** 每块白纸目录的总占用 */
+/** 取回成品的上限：交给提供者的那几项，加上只由写入口把关的白纸目录总占用 */
+export interface ArtifactCaps extends ArtifactLimits {
   maxPaperBytes: number;
 }
 

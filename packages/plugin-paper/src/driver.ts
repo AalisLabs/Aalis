@@ -46,7 +46,8 @@ import {
   UNFINISHED_STATES,
 } from './ledger.js';
 import { buildPrompt } from './prompt.js';
-import { actorKey } from './rooms.js';
+import { actorKey, pausedReason } from './rooms.js';
+import { describe, truncate } from './util.js';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -70,15 +71,6 @@ const ON_AGENT: ReadonlySet<TaskRecord['state']> = new Set(['starting', 'running
 /** 退避：5 秒起翻倍，封顶 60 秒 */
 function backoff(attempt: number): number {
   return Math.min(5 * SECOND * 2 ** attempt, 60 * SECOND);
-}
-
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function truncate(s: string, max: number): string {
-  const chars = [...s];
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : s;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -380,13 +372,10 @@ export class PaperDriver {
   async #dequeue(task: TaskRecord, waits: Waits): Promise<Outcome | undefined> {
     const { ledger, cfg } = this.#d;
     const paper = this.#paper(task.paperId);
-    if (paper.halted) return 'pause';
     const spec = specOf(this.#d.cfg, task.paperId);
     if (!spec?.remoteAgentType) return this.#fail(task, '这块白纸已不在配置里，或没有配置远端代理类型');
     const type = spec.remoteAgentType;
-    if (ledger.data.alerts.some(a => a.kind === 'unknown-agent' && !a.acknowledged && a.providerType === type)) {
-      return 'pause';
-    }
+    if (pausedReason(ledger.data, task.paperId, type)) return 'pause';
 
     // 出队时预算可能已变：去掉本件原来的预留再判，通过就按现在的均值重记
     const refused = await ledger.exclusive(async () => {
@@ -447,7 +436,7 @@ export class PaperDriver {
   ): Promise<Outcome | undefined> {
     const { ledger } = this.#d;
     const paper = this.#paper(task.paperId);
-    const agentId = await this.#retrying(waits, async () => entry.instance.mintAgentId());
+    const agentId = entry.instance.mintAgentId();
     const replaces = paper.noBundleNext ? undefined : old;
     const written = await ledger.exclusive(async () => {
       if (task.state !== 'queued' || paper.halted || paper.binding !== old) return false;
@@ -789,7 +778,6 @@ export class PaperDriver {
       task.endedAt = this.#d.now();
       if (state.resultText) task.resultText = truncate(state.resultText, RESULT_TEXT_MAX);
       task.artifacts = collected.artifacts;
-      if (collected.bundle) task.bundle = collected.bundle;
       const agent = ledger.data.agents[agentId];
       if (agent) {
         agent.lastRunEndedAt = task.endedAt;
@@ -819,7 +807,7 @@ export class PaperDriver {
     task: TaskRecord,
     entry: RemoteAgentEntry,
     waits: Waits,
-  ): Promise<{ artifacts: TaskRecord['artifacts']; bundle?: { sizeBytes: number }; error?: string }> {
+  ): Promise<{ artifacts: TaskRecord['artifacts']; error?: string }> {
     const { ledger, logger, signal, storage, cfg } = this.#d;
     const takenIds = new Set(Object.values(ledger.data.tasks).flatMap(t => t.artifacts.map(a => a.id)));
     for (let attempt = 0; ; attempt++) {
@@ -856,7 +844,7 @@ export class PaperDriver {
         const detail = `白纸目录超过总占用上限 ${cfg.artifacts.maxPaperBytes} 字节，任务 ${task.id} 余下的成品已拒收`;
         await this.#haltPaper(task.paperId, 'storage-full', detail, { kind: 'storage-full' });
       }
-      return { artifacts: collector.artifacts, bundle: collector.bundle };
+      return { artifacts: collector.artifacts };
     }
   }
 
