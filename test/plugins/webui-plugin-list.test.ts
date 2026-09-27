@@ -289,19 +289,38 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     );
   });
 
-  it('GET /api/plugins 列表把 schema.secret 换成固定掩码；编辑器 GET 保持未脱敏', async () => {
+  it('GET /api/plugins 列表给配置原值：secret 字段（顶层、分组内、数组元素内）不改写，遮蔽留给前端显示', async () => {
     const def = definePlugin({
       name: 'secret-probe',
       configSchema: {
         apiKey: { type: 'string', label: 'API Key', secret: true },
+        auth: {
+          label: '认证',
+          fields: {
+            user: { type: 'string', label: '用户' },
+            credential: { type: 'string', label: '凭据', secret: true },
+          },
+        },
+        connections: {
+          type: 'array',
+          label: '连接',
+          items: {
+            url: { type: 'string', label: '地址' },
+            accessToken: { type: 'string', label: '令牌', secret: true },
+          },
+        },
         timeoutMs: { type: 'number', label: '超时', default: 30 },
       },
       uses: { config },
       apply() {},
     });
-    const { app, store } = hostedApp({
-      plugins: { 'secret-probe': { apiKey: 'sk-REAL-SECRET', timeoutMs: 30 } },
-    });
+    const stored = {
+      apiKey: 'sk-PLACEHOLDER-TOP',
+      auth: { user: 'placeholder-user', credential: 'cred-PLACEHOLDER-GROUP' },
+      connections: [{ url: 'ws://127.0.0.1:0', accessToken: 'tok-PLACEHOLDER-ITEM' }],
+      timeoutMs: 30,
+    };
+    const { app, store } = hostedApp({ plugins: { 'secret-probe': structuredClone(stored) } });
     apps.push(app);
     await registerFromDoc(app, store, def);
     await app.plugins.idle();
@@ -310,18 +329,14 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     const { invoke } = mountPluginRoutes(app);
     const list = await invoke('GET /api/plugins');
     expect(list.status).toBe(200);
-    const payload = JSON.stringify(list.body);
-    expect(payload, '列表不得回显明文密钥').not.toContain('sk-REAL-SECRET');
     const row = (list.body as { plugins: Array<{ instanceId: string; config: Record<string, unknown> }> }).plugins.find(
       p => p.instanceId === 'secret-probe',
     );
-    expect(row?.config.apiKey).toBe('••••••');
-    expect(row?.config.timeoutMs).toBe(30);
+    expect(row?.config, '列表不改写配置值，前端据它建草稿、整份保存').toEqual(stored);
+    expect(JSON.stringify(list.body)).not.toContain('••••••');
 
     const editor = await invoke('GET /api/plugins/:name/config', { params: { name: 'secret-probe' } });
     expect(editor.status).toBe(200);
-    expect((editor.body as { config: { apiKey: string } }).config.apiKey, '编辑器 GET 必须是原文').toBe(
-      'sk-REAL-SECRET',
-    );
+    expect((editor.body as { config: Record<string, unknown> }).config).toEqual(stored);
   });
 });

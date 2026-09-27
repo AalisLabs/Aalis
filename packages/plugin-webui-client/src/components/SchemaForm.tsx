@@ -4,8 +4,9 @@ import type { ConfigSchema, SchemaField, SchemaFieldType, SchemaGroup, SchemaArr
 // ===== 数字输入框（解决小数输入被截断问题） =====
 // 受控 number input 在输入 0.0x 时会被 Number() 取整覆盖，
 // 用本地字符串状态隔离，只在值合法且"完整"时才向外 onChange。
-// 清空发 undefined（不是 ''）：undefined 键被 JSON.stringify 丢弃，服务端按
-// schema 默认值合并回落——"留空 = 走默认"。'' 会被服务端校验判为 invalid 拒存。
+// 清空发 undefined（不是 ''，'' 会被服务端校验判为 invalid 拒存）：插件配置页保存时把顶层的 undefined
+// 换成 null，分组里的随 JSON 丢掉，服务端都按 schema 默认值补齐——"留空 = 走默认"（数组元素不补默认值，
+// 丢掉的键由插件按缺省处理）。
 function NumberInput({ value, onChange, className }: { value: unknown; onChange: (v: number | undefined) => void; className?: string }) {
   const externalStr = value === undefined || value === null || value === '' ? '' : String(value);
   const [inputStr, setInputStr] = useState(externalStr);
