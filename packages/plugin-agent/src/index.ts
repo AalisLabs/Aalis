@@ -2082,44 +2082,32 @@ function run(caps: Caps): void {
   }
 
   // ===== 会话级配置指令 =====
-  // /session 查（模型+人设+名+解析链） · /session.set 改 · /session.reset 复位 · /model 列可用模型
+  // /session 查（模型+人设+名+来源） · /session.set 改 · /session.reset 复位 · /model 列可用模型
   // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
 
   /**
-   * 组装某会话某字段的「解析」视图行：当前值 + 来源 + 解析链（会话 / 父 sessionDefaults / 平台 profile）。
-   * pick 从各层配置提取并格式化该字段——模型与人设复用同一逻辑，展示对称、直观。
+   * 组装某会话某字段的视图行：生效值与来源（会话覆盖 / 父会话 / 平台档 <平台> / 默认）；会话有覆盖时另起一行
+   * 列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，与实际回合同一口径
+   * （房间会话按出生平台选档）。pick 从配置里提取并格式化该字段。
    */
   type CfgView = { llm?: { provider: string; model: string }; persona?: string; think?: boolean | null } | undefined;
   function resolutionLines(
     sessionId: string,
     platform: string,
     label: string,
+    key: 'llm' | 'persona' | 'think',
     pick: (c: CfgView) => string | undefined,
   ): string[] {
     const smSvc = caps.sessionManager.current;
     if (!smSvc) return [`${label}: (session-manager 不可用)`];
-    const session = smSvc.getSession(sessionId);
-    const own = pick(session?.config);
-    const parent = session?.parentId ? smSvc.getSession(session.parentId) : undefined;
-    const parentDefaults = pick(parent?.config?.sessionDefaults);
-    const profile = pick(smSvc.getPlatformProfiles()?.[platform || 'webui']);
-    const resolved = pick(smSvc.resolveConfig(sessionId, platform));
-
-    let source = '默认';
-    if (own) source = '会话覆盖';
-    else if (parentDefaults) source = '父会话 sessionDefaults';
-    else if (profile) source = `平台 profile (${platform})`;
-
-    const lines = [`${label}: ${resolved ?? '(默认)'}  [来源: ${source}]`];
-    const chain: string[] = [];
-    if (own) chain.push(`会话: ${own}`);
-    if (parentDefaults) chain.push(`父 sessionDefaults: ${parentDefaults}`);
-    if (profile) chain.push(`平台 profile: ${profile}`);
-    if (chain.length > 0) {
-      lines.push('  解析链（高优先级在前）:');
-      for (const c of chain) lines.push(`  - ${c}`);
-    }
-    return lines;
+    const inheritance = smSvc.resolveInheritance(sessionId, platform);
+    const inherited = pick(inheritance.values);
+    const layer = inheritance.sources[key];
+    const from = layer === 'parent' ? '父会话' : layer === 'platform' ? `平台档 ${inheritance.platform}` : '默认';
+    // null 与 undefined 同义（BSON 持久化读回 null），都表示没有覆盖
+    const own = pick(smSvc.getSession(sessionId)?.config);
+    if (own == null) return [`${label}: ${inherited ?? '(默认)'}  [来源: ${from}]`];
+    return [`${label}: ${own}  [来源: 会话覆盖]`, `  被覆盖的继承值: ${inherited ?? '(默认)'}  [来源: ${from}]`];
   }
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
@@ -2170,7 +2158,7 @@ function run(caps: Caps): void {
 
   // ---- 会话级「模型 + 人设 + thinking + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
   caps.commands
-    .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源与解析链', { risk: 'sensitive' })
+    .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源', { risk: 'sensitive' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
@@ -2178,9 +2166,9 @@ function run(caps: Caps): void {
       const session = smSvc.getSession(sid);
       return [
         `会话: ${session?.name ?? sid}`,
-        ...resolutionLines(sid, argv.session.platform, '模型', fmtModel),
-        ...resolutionLines(sid, argv.session.platform, '人设', fmtPersona),
-        ...resolutionLines(sid, argv.session.platform, 'thinking', fmtThink),
+        ...resolutionLines(sid, argv.session.platform, '模型', 'llm', fmtModel),
+        ...resolutionLines(sid, argv.session.platform, '人设', 'persona', fmtPersona),
+        ...resolutionLines(sid, argv.session.platform, 'thinking', 'think', fmtThink),
         session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
         '────',
         '改配置: /session.set -m <模型> -p <人设> -t <on|off> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',

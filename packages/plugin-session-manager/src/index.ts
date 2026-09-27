@@ -6,11 +6,13 @@ import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
+  type InheritanceSource,
   type MemoryRecallScope,
   omitRoomOnlyKeys,
   type PlatformProfile,
   type SessionConfig,
   type SessionInfo,
+  type SessionInheritance,
   type SessionManagerService,
   type SessionTreeNode,
   sessionManager,
@@ -141,16 +143,6 @@ const configSchema: ConfigSchema = {
 // ===== 常量 =====
 
 const METADATA_NAMESPACE = 'sessions';
-
-/** 继承链的层：全局 defaults、平台档、父会话的 sessionDefaults */
-type InheritanceSource = 'defaults' | 'platform' | 'parent';
-
-/** 页面动作 getInheritance 的返回：会话所属平台、继承值（不含会话自身 config）与每个键的来源层 */
-interface SessionInheritance {
-  platform: string;
-  values: Omit<SessionConfig, 'sessionDefaults'>;
-  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;
-}
 
 // ===== WebuiPages（声明式 UI） =====
 
@@ -676,12 +668,12 @@ class SessionManager implements SessionManagerService {
    * 合并优先级（从高到低）：
    * 1. 会话自身 config
    * 2. 父会话的 sessionDefaults
-   * 3. 平台 profile
+   * 3. 平台 profile（房间会话按出生平台，见 {@link resolveInheritance}）
    * 4. 全局 defaults（最低）
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    // 2-4 层即「继承默认」
-    const result = this.resolveInheritedDefaults(sessionId, platform);
+    // 2-4 层即继承链
+    const result = this.resolveInheritance(sessionId, platform).values;
 
     const session = this.sessions.get(sessionId);
     if (!session) return result;
@@ -696,16 +688,11 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 解析「继承默认」：不含 session 自身 config，只算 defaults + platform profile + 父 sessionDefaults。
-   *
-   * WebUI 「继承 (xxx)」提示应该用这个值，否则会显示用户自己的覆盖值。
+   * 继承链解析：不含 session 自身 config，只算 defaults + platform profile + 父 sessionDefaults，另记下每个键来自哪一层。
+   * 房间会话钉死出生平台：不论从哪个入口驱动都按房间自己的平台档，传入的入口平台只对没有出生平台的会话起作用。
    */
-  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    return this.resolveInheritance(sessionId, platform).values;
-  }
-
-  /** 同 {@link resolveInheritedDefaults}，另记下每个键最终来自哪一层（会话页显示继承来源用） */
-  resolveInheritance(sessionId: string, platform?: string): Omit<SessionInheritance, 'platform'> {
+  resolveInheritance(sessionId: string, platform?: string): SessionInheritance {
+    const pinned = resolveSessionOrigin(sessionId)?.platform ?? platform;
     const values: Record<string, unknown> = {};
     const sources: SessionInheritance['sources'] = {};
     const layer = (config: object | undefined, source: InheritanceSource) => {
@@ -719,7 +706,7 @@ class SessionManager implements SessionManagerService {
     layer(this.defaults, 'defaults');
 
     // 2. 平台 profile
-    if (platform) layer(this.platformProfiles.get(platform), 'platform');
+    if (pinned) layer(this.platformProfiles.get(pinned), 'platform');
 
     // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
     const session = this.sessions.get(sessionId);
@@ -727,7 +714,7 @@ class SessionManager implements SessionManagerService {
 
     delete values.sessionDefaults;
     delete sources.sessionDefaults;
-    return { values, sources };
+    return { platform: pinned, values, sources };
   }
 
   getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
@@ -1034,25 +1021,22 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
   });
 
   /**
-   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档与父 sessionDefaults，并回每个键的来源层。
+   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档与父 sessionDefaults，并回选档平台与每个键的来源层。
    * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
    *
-   * 会话所属平台由服务端推出，不收平台参数：会话 metadata 记下的平台（子任务建档时写入）→ 接管这个会话 id 的
-   * 平台适配器 → webui（WebUI 建的会话 id 不带平台前缀）。
+   * 会话所属平台由服务端推出，不收平台参数：有出生平台的按出生平台；没有的（owner 面会话）按会话 metadata 记下的
+   * 平台（子任务建档时写入）→ 接管这个会话 id 的平台适配器 → webui（WebUI 建的会话 id 不带平台前缀）。
    */
-  webui.registerAction('getInheritance', async args => {
+  webui.registerAction('getInheritance', async (args): Promise<SessionInheritance> => {
     const sessionId = args.sessionId as string;
     if (!sessionId) throw new Error('缺少 sessionId');
+    if (resolveSessionOrigin(sessionId)) return manager.resolveInheritance(sessionId);
     const recorded = manager.getSession(sessionId)?.metadata?.platform;
-    const sessionPlatform =
+    const entryPlatform =
       typeof recorded === 'string' && recorded
         ? recorded
         : ((await resolvePlatformBySession(platform, sessionId, logger))?.platform ?? 'webui');
-    const inheritance: SessionInheritance = {
-      platform: sessionPlatform,
-      ...manager.resolveInheritance(sessionId, sessionPlatform),
-    };
-    return inheritance;
+    return manager.resolveInheritance(sessionId, entryPlatform);
   });
 
   /** 获取会话详情（含完整消息历史，包括已归档消息） */
@@ -1188,7 +1172,7 @@ async function run(caps: Caps): Promise<void> {
 
   // 监听用户消息事件 → 自动生成会话标题
   // 在用户首次发消息时即生成标题，无需等待 AI 回复
-  // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题
+  // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题；从 WebUI 往 IM 房间插话同样不生成
   const TITLE_PLATFORMS = new Set(['webui', 'cli']);
   const titleGenerating = new Set<string>();
   events.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
@@ -1201,6 +1185,8 @@ async function run(caps: Caps): Promise<void> {
     // 仅对指定平台生成标题；非 webui/cli 平台（如 onebot）静默跳过，避免日志污染。
     // platform 缺省同样跳过：白名单是正向门，来路不明的消息不该顺带建档 + 烧一次 LLM 生成标题。
     if (!platform || !TITLE_PLATFORMS.has(platform)) return;
+    // 有出生平台的是 IM 房间：不拿 owner 插的话给房间起名，也不经这里建档
+    if (resolveSessionOrigin(sessionId)) return;
     const session = manager.getSession(sessionId);
     // 已有标题或子任务会话跳过（静默）
     if (session && (session.title || session.parentId)) return;
