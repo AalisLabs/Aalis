@@ -490,7 +490,7 @@ class ScopedStorageService implements StorageService {
     if (abs === (await realpath(this.root.realPath))) throw new Error('不能删除根目录');
     await this.snapshot(toUri(this.root.name, relPath), 'delete', abs);
     await rm(abs, { recursive: true, force: false });
-    this.logger.warn(`storage.delete ${toUri(this.root.name, relPath)}`);
+    this.logger.info(`storage.delete ${toUri(this.root.name, relPath)}`);
   }
 
   async resolveLocalPath(uri: string, access: 'read' | 'write' | 'delete' = 'read'): Promise<string> {

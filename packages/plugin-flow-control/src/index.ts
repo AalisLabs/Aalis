@@ -106,6 +106,12 @@ async function run(caps: Caps): Promise<void> {
    */
   const unsavedMutes = new Map<string, number>();
   let muteRev = 0;
+  /**
+   * follow 重读的代数。写链等读回的期间又开始了重读就接着等，写出的整表总是已并进最近一次读回。
+   * 写盘在飞期间开始了重读时，读到的文件未必含这次写（storage 已换人，或读先于写落盘），
+   * 这次写成功也不清 unsavedMutes：重读以内存为准，由读完后的补写落到当前 storage。
+   */
+  let loadGen = 0;
 
   async function loadMuteState(): Promise<void> {
     loadFailed = false;
@@ -151,6 +157,7 @@ async function run(caps: Caps): Promise<void> {
   // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
   let loading: Promise<void> | undefined;
   caps.storage.follow(() => {
+    loadGen++;
     // 读完补写一次：离线期间的改动写盘失败过，还没进文件
     loading = loadMuteState().then(() => {
       if (!loadFailed && unsavedMutes.size > 0) saveMuteState();
@@ -161,8 +168,12 @@ async function run(caps: Caps): Promise<void> {
   function saveMuteState(): void {
     saveChain = saveChain
       .then(async () => {
-        // 写的是整表：禁言表还在读时先等它并进内存，否则这次写会冲掉磁盘上的其它会话
-        if (loading) await loading;
+        // 写的是整表：禁言表还在读时先等它并进内存，等的期间又开始了重读就接着等，否则这次写会冲掉磁盘上的其它会话
+        let gen: number;
+        do {
+          gen = loadGen;
+          await loading;
+        } while (gen !== loadGen);
         if (loadFailed) {
           logger.warn('[flow] 禁言表加载失败，跳过写入以免覆盖（本次改动仅在内存生效）');
           return;
@@ -174,6 +185,7 @@ async function run(caps: Caps): Promise<void> {
         }
         const upTo = muteRev;
         await storage.writeFile(muteStateUri, JSON.stringify(out, null, 2));
+        if (gen !== loadGen) return;
         for (const [sessionId, rev] of unsavedMutes) if (rev <= upTo) unsavedMutes.delete(sessionId);
       })
       .catch(err => {

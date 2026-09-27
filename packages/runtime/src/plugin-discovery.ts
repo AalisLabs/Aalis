@@ -42,7 +42,7 @@ export interface PluginDiscovery extends PluginSourceService {
   /** 冷启动：发现并导入全部插件，整批注册，返回时已静置 */
   loadAll(): Promise<void>;
   /**
-   * 登记配置文档里尚未注册的 `name:suffix` 实例，模块取注册表里已登记的定义；判据与冷启动、热扫描相同。
+   * 登记配置文档里尚未注册的 `name:suffix` 实例，模块取注册表里该模块在册实例的定义（主实例优先）；判据与冷启动、热扫描相同。
    * 配置热重载在同步文档之后调用。不等静置。
    */
   registerConfiguredInstances(): Promise<void>;
@@ -140,7 +140,13 @@ export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<
     },
 
     async registerConfiguredInstances() {
-      await app.pluginAll(configuredInstances(name => app.plugins.getPlugin(name)?.definition));
+      const known = new Map<string, PluginDefinition>();
+      for (const { name, instanceId } of app.plugins.getStatus()) {
+        const definition = app.plugins.getPlugin(instanceId)?.definition;
+        // 主实例的定义优先；主实例已卸载时用同模块任一在册实例的，与冷启动时这一段照常登记一致
+        if (definition && (instanceId === name || !known.has(name))) known.set(name, definition);
+      }
+      await app.pluginAll(configuredInstances(name => known.get(name)));
     },
   };
 }
