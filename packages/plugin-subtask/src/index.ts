@@ -1,7 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
-import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
+import { omitRoomOnlyKeys, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -168,8 +168,8 @@ function registerSubtask(
         : `子任务 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
 
       try {
-        // 子会话复制父会话的 resolved config
-        const inheritedConfig = sm.resolveConfig(parentId, callCtx.platform);
+        // 子会话复制父会话的 resolved config；房间专属键（白纸与远端代理）不随复制冻结，只经继承链实时解析
+        const inheritedConfig = omitRoomOnlyKeys(sm.resolveConfig(parentId, callCtx.platform));
 
         // 模型优先级：工具参数 > 插件默认 > 父会话继承
         // 仅当 provider 和 model 同时提供才覆盖，避免半填产生歧义

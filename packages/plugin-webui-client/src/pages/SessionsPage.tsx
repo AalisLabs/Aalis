@@ -37,6 +37,13 @@ interface TreeNode {
   children: TreeNode[];
 }
 
+/** 页面动作 getInheritance 的回包：会话所属平台、继承值（不含会话自身 config）与每个键来自哪一层 */
+interface SessionInheritance {
+  platform: string;
+  values: SessionConfigData;
+  sources: Partial<Record<keyof SessionConfigData, 'defaults' | 'platform' | 'parent'>>;
+}
+
 interface SessionDetail {
   session: SessionInfo;
   messages: RawMessage[];
@@ -88,18 +95,33 @@ function withRemovalsAsNull(draft: SessionConfigData, original: SessionConfigDat
   return out as SessionConfigData;
 }
 
-function SessionConfigEditor({ config, inheritedConfig, options, onSave, onCancel }: {
+const RECALL_SCOPE_LABEL: Record<NonNullable<SessionConfigData['memoryRecallScope']>, string> = {
+  session: '仅本会话',
+  platform: '同平台',
+  all: '全部',
+};
+
+/** 远端上限三项：留空为继承 */
+const REMOTE_LIMIT_FIELDS = [
+  ['remoteAgentUserDailyCents', '每人每天金额上限（美分）'],
+  ['remoteAgentUserDailyTasks', '每人每天件数上限'],
+  ['remoteAgentRoomDailyCents', '本房间每天金额上限（美分）'],
+] as const;
+
+function SessionConfigEditor({ config, inheritance, options, onSave, onCancel }: {
   config: SessionConfigData;
-  inheritedConfig?: SessionConfigData | null;
+  inheritance?: SessionInheritance | null;
   options: ConfigOptions | null;
   onSave: (config: SessionConfigData) => void;
   onCancel: () => void;
 }) {
   // draft 始终基于会话自身 config（非生效值），保证保存时只写覆盖值。
   const [draft, setDraft] = useState<SessionConfigData>({ ...config });
-  // inherited = platform profile + 父 sessionDefaults（不含 session 自身）：既用于「继承 (xxx)」
+  // 远端类型按逗号分隔的文本编辑，保存为数组；文本单独存，否则输入到一半的逗号会被解析吞掉
+  const [agentTypesText, setAgentTypesText] = useState((config.remoteAgentTypes ?? []).join(', '));
+  // inherited = 全局 defaults + platform profile + 父 sessionDefaults（不含 session 自身）：既用于「继承 (xxx)」
   // 提示，也是各控件的回落值——draft 已是会话自身覆盖，两者合起来就是当前生效值。
-  const inherited = inheritedConfig || {};
+  const inherited = inheritance?.values || {};
 
   const update = <K extends keyof SessionConfigData>(key: K, value: SessionConfigData[K]) => {
     setDraft(prev => ({ ...prev, [key]: value }));
@@ -143,6 +165,21 @@ function SessionConfigEditor({ config, inheritedConfig, options, onSave, onCance
 
   const inheritLabel = (field: keyof SessionConfigData, inheritedVal: unknown) =>
     !draft[field] && inheritedVal ? ` (继承: ${inheritedVal})` : '';
+
+  /** 未覆盖的键显示「继承（值，来自 层）」；会话自身已覆盖时不显示 */
+  const inheritHint = <K extends keyof SessionConfigData>(
+    field: K,
+    format: (value: NonNullable<SessionConfigData[K]>) => string = String,
+  ) => {
+    if (draft[field] !== undefined) return null;
+    const value = inherited[field];
+    if (value === undefined || value === null) return <small className="session-config-inherit">继承（未设置）</small>;
+    const source = inheritance?.sources[field];
+    const from =
+      source === 'platform' ? `平台档 ${inheritance?.platform}` : source === 'parent' ? '父会话' : source === 'defaults' ? '默认' : '';
+    const shown = format(value as NonNullable<SessionConfigData[K]>);
+    return <small className="session-config-inherit">{from ? `继承（${shown}，来自 ${from}）` : `继承（${shown}）`}</small>;
+  };
 
   // === 模型 select（单级摊平：跨 provider 一级列表，value=`${provider}/${model}`）===
   const selectedLlmKey = draft.llm?.provider && draft.llm?.model
@@ -253,6 +290,70 @@ function SessionConfigEditor({ config, inheritedConfig, options, onSave, onCance
           <span>客户端 JSON 渲染{draft.clientSideJsonRendering === undefined && inherited.clientSideJsonRendering ? ' (继承)' : ''}</span>
         </label>
       </div>
+      <div className="session-config-group">
+        <span className="session-config-group-title">白纸与远端</span>
+        {/* 三态，写法同上面两个开关 */}
+        <div className="session-config-toggles">
+          <label>
+            <input type="checkbox"
+              checked={draft.paperEnabled ?? inherited.paperEnabled ?? false}
+              onChange={e => update('paperEnabled', e.target.checked)}
+            />
+            <span>开启白纸 {inheritHint('paperEnabled', v => (v ? '开' : '关'))}</span>
+          </label>
+        </div>
+        <label className="session-config-field">
+          <span>白纸名 {inheritHint('paperName')}</span>
+          <input
+            type="text"
+            value={draft.paperName ?? ''}
+            onChange={e => update('paperName', e.target.value || undefined)}
+            placeholder="继承"
+          />
+        </label>
+        <label className="session-config-field">
+          <span>远端代理类型（逗号分隔） {inheritHint('remoteAgentTypes', v => v.join(', '))}</span>
+          <input
+            type="text"
+            value={agentTypesText}
+            onChange={e => {
+              setAgentTypesText(e.target.value);
+              const types = e.target.value.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+              update('remoteAgentTypes', types.length > 0 ? types : undefined);
+            }}
+            placeholder="继承"
+          />
+        </label>
+        {inheritance?.sources.remoteAgentTypes === 'platform' && (
+          <span className="session-config-warn">平台档里写了远端类型，这个平台所有房间都会继承</span>
+        )}
+        {REMOTE_LIMIT_FIELDS.map(([key, label]) => (
+          <label key={key} className="session-config-field">
+            <span>{label} {inheritHint(key)}</span>
+            <input
+              type="number"
+              min={0}
+              value={draft[key] ?? ''}
+              onChange={e => update(key, e.target.value === '' ? undefined : Number(e.target.value))}
+              placeholder="继承"
+            />
+          </label>
+        ))}
+        <label className="session-config-field">
+          <span>记忆召回范围 {inheritHint('memoryRecallScope', v => RECALL_SCOPE_LABEL[v])}</span>
+          <select
+            value={draft.memoryRecallScope ?? ''}
+            onChange={e =>
+              update('memoryRecallScope', (e.target.value || undefined) as SessionConfigData['memoryRecallScope'])
+            }
+          >
+            <option value="">继承</option>
+            {Object.entries(RECALL_SCOPE_LABEL).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="session-config-actions">
         <button className="session-config-btn save" onClick={() => onSave(withRemovalsAsNull(draft, config))}>保存</button>
         <button className="session-config-btn cancel" onClick={onCancel}>取消</button>
@@ -281,9 +382,9 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [configEditingId, setConfigEditingId] = useState<string | null>(null);
   const [configOptions, setConfigOptions] = useState<ConfigOptions | null>(null);
-  // 「继承默认」包 - 不含 session 自身 config，仅 platform profile + 父 sessionDefaults。
-  // 用于 UI 「继承 (xxx)」提示，避免显示用户自己的覆盖值。
-  const [inheritedConfig, setInheritedConfig] = useState<SessionConfigData | null>(null);
+  // 「继承默认」包 - 不含 session 自身 config，仅全局 defaults、platform profile 与父 sessionDefaults，另带各键来源层。
+  // 用于 UI 「继承 (xxx)」提示，避免显示用户自己的覆盖值。会话所属平台由服务端推出。
+  const [inheritance, setInheritance] = useState<SessionInheritance | null>(null);
 
   const fetchTree = useCallback(() => {
     pageAction<TreeNode[]>(pluginName, 'getSessionTree')
@@ -303,8 +404,8 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     fetchTree();
     // 如果配置编辑器打开中，重新拉取继承默认值
     if (configEditingId) {
-      pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: configEditingId, platform: 'webui' })
-        .then(inh => { if (inh) setInheritedConfig(inh); })
+      pageAction<SessionInheritance>(pluginName, 'getInheritance', { sessionId: configEditingId })
+        .then(inh => { if (inh) setInheritance(inh); })
         .catch(() => {});
     }
   }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -366,16 +467,16 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   };
 
   const handleOpenConfig = async (id: string) => {
-    if (configEditingId === id) { setConfigEditingId(null); setInheritedConfig(null); return; }
+    if (configEditingId === id) { setConfigEditingId(null); setInheritance(null); return; }
     setConfigEditingId(id);
-    setInheritedConfig(null);
+    setInheritance(null);
     try {
       const [opts, inherited] = await Promise.all([
         configOptions ? Promise.resolve(configOptions) : pageAction<ConfigOptions>(pluginName, 'getConfigOptions'),
-        pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: id, platform: 'webui' }),
+        pageAction<SessionInheritance>(pluginName, 'getInheritance', { sessionId: id }),
       ]);
       if (opts && !configOptions) setConfigOptions(opts);
-      if (inherited) setInheritedConfig(inherited);
+      if (inherited) setInheritance(inherited);
     } catch { /* ignore */ }
   };
 
@@ -488,7 +589,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
                 onCancelEdit={() => setEditingId(null)}
                 configEditingId={configEditingId}
                 configOptions={configOptions}
-                inheritedConfig={inheritedConfig}
+                inheritance={inheritance}
                 onSaveConfig={handleSaveConfig}
                 onCancelConfig={() => setConfigEditingId(null)}
               />
@@ -550,7 +651,7 @@ function TreeNodeView({
   onCancelEdit,
   configEditingId,
   configOptions,
-  inheritedConfig,
+  inheritance,
   onSaveConfig,
   onCancelConfig,
 }: {
@@ -574,7 +675,7 @@ function TreeNodeView({
   onCancelEdit: () => void;
   configEditingId: string | null;
   configOptions: ConfigOptions | null;
-  inheritedConfig: SessionConfigData | null;
+  inheritance: SessionInheritance | null;
   onSaveConfig: (id: string, config: SessionConfigData) => void;
   onCancelConfig: () => void;
 }) {
@@ -662,7 +763,7 @@ function TreeNodeView({
         <div style={{ marginLeft: depth * 24 + 24 }}>
           <SessionConfigEditor
             config={s.config || {}}
-            inheritedConfig={inheritedConfig}
+            inheritance={inheritance}
             options={configOptions}
             onSave={(config) => onSaveConfig(s.id, config)}
             onCancel={onCancelConfig}
@@ -702,7 +803,7 @@ function TreeNodeView({
                 onCancelEdit={onCancelEdit}
                 configEditingId={configEditingId}
                 configOptions={configOptions}
-                inheritedConfig={inheritedConfig}
+                inheritance={inheritance}
                 onSaveConfig={onSaveConfig}
                 onCancelConfig={onCancelConfig}
               />

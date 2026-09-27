@@ -70,6 +70,12 @@ export interface ToolCallContext {
    * 已死的回合执行写操作。缺省 = 不可中止。
    */
   signal?: AbortSignal;
+  /**
+   * 调用所在的入站回合（只由 agent 工具循环填写）。`source` 同 IncomingMessage.source：
+   * 真人消息为 undefined，内部注入为注入方标识。缺省 = 调用不在由入站消息驱动的 agent 回合里
+   * （workflow 节点、mcp-server 等）；需要「真人发起」判据的工具应把缺省当作不满足。
+   */
+  inbound?: { source?: string };
 }
 
 /** 工具调用状态通知（WebUI 等前端订阅展示用） */
