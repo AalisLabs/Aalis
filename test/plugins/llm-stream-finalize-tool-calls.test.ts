@@ -44,7 +44,7 @@ function stubProvider(chatBody: string): void {
         : u.includes('/api/show')
           ? { capabilities: ['completion', 'tools'] }
           : { data: [{ id: 'm' }] };
-      return { ok: true, status: 200, json: async () => json } as unknown as Response;
+      return Response.json(json);
     }),
   );
 }
