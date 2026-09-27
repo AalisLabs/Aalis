@@ -11,6 +11,7 @@ import {
   config,
   definePlugin,
   type LifecycleCap,
+  type Logger,
   lifecycle,
   logger,
   parseInstanceId,
@@ -94,7 +95,8 @@ interface MetadataDocument {
   namespace: string;
   key: string;
   data: Record<string, unknown>;
-  updatedAt: Date;
+  /** 本插件写入时总会带上；手工导入等外部写入的文档可能缺 */
+  updatedAt?: Date;
 }
 
 /** @internal 只为测试导出：以替身集合直接构造（经 apply 会连真实的 mongod），不是公开 API */
@@ -103,14 +105,17 @@ export class MongoMemoryService implements MemoryService {
   private meta: Collection<MetadataDocument>;
   private readonly rangeQueryLimit: number;
   private readonly crossSessionMaxLimit: number;
+  /** listMetadata 跳过读不出的文档时由它点名 */
+  private readonly logger: Pick<Logger, 'warn'>;
 
   constructor(
     collection: Collection<MessageDocument>,
     meta: Collection<MetadataDocument>,
-    opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number } = {},
+    opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number; logger: Pick<Logger, 'warn'> },
   ) {
     this.collection = collection;
     this.meta = meta;
+    this.logger = opts.logger;
     this.rangeQueryLimit = Math.max(1, opts.rangeQueryLimit ?? 500);
     this.crossSessionMaxLimit = Math.max(1, opts.crossSessionMaxLimit ?? 1000);
   }
@@ -251,7 +256,23 @@ export class MongoMemoryService implements MemoryService {
 
   async listMetadata(namespace: string): Promise<MetadataEntry[]> {
     const docs = await this.meta.find({ namespace }).toArray();
-    return docs.map(d => ({ key: d.key, data: d.data, updatedAt: d.updatedAt.getTime() }));
+    // 外部写入的文档可能缺字段：data 不是对象的跳过并点名键，不让整个命名空间读失败（各插件整体清空命名空间时
+    // 经 listMetadataKeys 列键，这些文档照样删掉）；写入时间缺失或不是日期的照常返回，updatedAt 记 0
+    const entries: MetadataEntry[] = [];
+    for (const d of docs) {
+      const data: unknown = d.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        this.logger.warn(`元数据 ${namespace}/${d.key} 的 data 不是对象，已跳过`);
+        continue;
+      }
+      entries.push({ key: d.key, data: d.data, updatedAt: d.updatedAt instanceof Date ? d.updatedAt.getTime() : 0 });
+    }
+    return entries;
+  }
+
+  async listMetadataKeys(namespace: string): Promise<string[]> {
+    const docs = await this.meta.find({ namespace }).project<{ key: string }>({ _id: 0, key: 1 }).toArray();
+    return docs.map(d => d.key);
   }
 
   async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
@@ -400,6 +421,7 @@ export async function openAndProvide(
     const service = new MongoMemoryService(collection, metaCollection, {
       rangeQueryLimit: mongoConfig.rangeQueryLimit,
       crossSessionMaxLimit: mongoConfig.crossSessionMaxLimit,
+      logger,
     });
     provide(memory, service, {
       // priority 与同类 memory provider 自文档化对照：
