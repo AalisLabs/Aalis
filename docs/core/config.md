@@ -8,7 +8,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 | 运行态 | 写入口 | 读入口 |
 |---|---|---|
-| 实例配置 | 登记时传入（`app.plugin` / `app.pluginAll` / `plugins.register`）；`plugins.updateConfig` / `bounce(id, { config })` 替换 | 插件经内置服务 `config`（本激活的只读视图）；管理面经 `plugins.getPlugin(id).config` |
+| 实例配置 | 登记时传入（`app.plugin` / `app.pluginAll` / `plugins.register`）；`plugins.updateConfig` / `bounce(id, { config })` 替换（禁用态同样替换、保持禁用，启用时按新配置激活） | 插件经内置服务 `config`（本激活的只读视图）；管理面经 `plugins.getPlugin(id).config` |
 | 禁用态 | 登记时的 `{ disabled }`；`plugins.enable` / `disable` | `plugins.getStatus()`、`plugins.getPlugin(id).state` |
 | 服务偏好 | `services.prefer` / `unprefer` | `services.preferred` |
 

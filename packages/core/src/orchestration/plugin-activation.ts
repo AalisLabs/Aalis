@@ -17,12 +17,14 @@ import type { ServiceContainer } from '../primitives/services.js';
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
-import { isRequiredServiceUnavailable } from '../composition/binding.js';
+import { missingRequiredService } from '../composition/binding.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
-/** 注册表内部的记录：公开的 {@link PluginEntry} 加上这次激活（不进公开类型） */
+/** 注册表内部的记录：公开的 {@link PluginEntry} 加上这次激活与重试余额（不进公开类型） */
 export interface PluginRecord extends PluginEntry {
   activation?: Activation;
+  /** 初始化期 required 缺失的自动重试余额，跨重算累计；未取额时为 undefined（见 PluginManager 的 spendRetry） */
+  retriesLeft?: number;
 }
 
 /**
@@ -34,6 +36,11 @@ export interface ActivationDeps {
   logger: Logger;
   /** 拆卸时单个异步清理项的等待上限，也是 abort 后等在飞初始化落定的宽限（毫秒；缺省不设限） */
   disposeTimeoutMs?: number;
+  /**
+   * 初始化期 required 缺失时记一次重试（missing 为这次缺的服务），返回这次拆卸的目标态：余额未用尽为 pending，
+   * 用尽为 error（已写原因，点名 missing）
+   */
+  spendRetry: (entry: PluginRecord, missing: string) => 'pending' | 'error';
 }
 
 /**
@@ -49,7 +56,8 @@ export interface ActivationDeps {
  *   signal 立即 abort，收尾段至多再等 disposeTimeoutMs 让 apply 落定（Resources.drain）；
  *   到期仍未落定的不再等，记 error 点名「未在宽限内停止」。目标态为 disabled / pending 的（停用 / 重启的主体、
  *   同批下游、required 依赖丢失被拆的后台激活）转 error 态：apply 仍在跑，不能再起新实例，依赖恢复也不自动
- *   重试；卸载与停机的 'disposed' 是单向终态，只记日志。
+ *   重试；目标态本身为 error 的（后台激活被拆时用尽重试预算），错误说明改写为「未在宽限内停止」；卸载与停机的
+ *   'disposed' 是单向终态，只记日志。
  * - 拆激活统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
  *   重激活闸永挂、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
@@ -111,8 +119,8 @@ export function requiredSatisfied(entry: PluginRecord, services: ServiceContaine
  * 尝试激活一个 pending 插件：建激活 → 挂载定义 → provides 校验（依赖与旧激活已清由调用方在同一拍判定，
  * 见前置条件）。
  *
- * 本次 required 引用缺席：清理失败激活后回到 pending，并让重算继续观察可能已恢复的依赖。
- * 其余失败转为 error 态（带 message），外层 recompute 不会重试。
+ * 本次 required 引用缺席：记一次重试（deps.spendRetry），清理失败激活后回到 pending，并让重算继续观察可能已恢复的
+ * 依赖；重试余额用尽则转 error。其余失败转为 error 态（带 message），外层 recompute 不会重试。
  * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
  * 旧激活已清，required 依赖都有提供者且胜者都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
@@ -171,6 +179,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
 
     entry.state = 'active';
     entry.error = undefined;
+    entry.retriesLeft = undefined;
     // 转入过后台的激活此刻上线服务：先写 active，上线触发的重算才看得到它已激活
     for (const name of services.release(activation.owner)) host.runtime.notify('service:registered', name);
     logger.info(`插件已激活: ${entry.instanceId}`);
@@ -183,11 +192,15 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
     }
-    if (isRequiredServiceUnavailable(err, activation.resources, entry.required)) {
-      logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
+    const missing = missingRequiredService(err, activation.resources, entry.required);
+    if (missing !== undefined) {
       entry.error = undefined;
-      await retireBatch([entry], 'pending', deps);
-      return 'retry';
+      const target = deps.spendRetry(entry, missing);
+      // 用尽时 spendRetry 已记 error「已停止」，不再说等待恢复
+      if (target === 'pending')
+        logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
+      await retireBatch([entry], target, deps);
+      return target === 'pending' ? 'retry' : undefined;
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
     // retireBatch 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的

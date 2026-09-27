@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { App, definePlugin, LogHub, lifecycle, type PluginDefinition } from '../../packages/core/src/index.js';
+import {
+  App,
+  config,
+  definePlugin,
+  events,
+  LogHub,
+  lifecycle,
+  type PluginDefinition,
+} from '../../packages/core/src/index.js';
 
 // 管理动作返回值的统一口径（PluginManagerService 的 JSDoc）：
 //   false = 主体不在注册表，或本次动作被状态 / 政策规则挡下；true = 其余，含幂等。
@@ -155,12 +163,70 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     await app.stop();
   });
 
-  it('被规则挡下：disabled 态 bounce 为 false', async () => {
+  it('被规则挡下：disabled 态不带配置的 bounce 为 false', async () => {
     const app = silentApp();
     await app.plugins.register(plugin('p'));
     await app.plugins.idle();
     expect(await app.plugins.disable('p')).toBe(true);
     expect(await app.plugins.bounce('p'), 'disabled 态 bounce').toBe(false);
+    await app.stop();
+  });
+
+  it('disabled 态带配置的 updateConfig / bounce：只换配置、保持禁用、不记 warn，返回 true；启用时按新配置激活', async () => {
+    const hub = new LogHub();
+    const warns: string[] = [];
+    hub.onEntry(e => void (e.level === 'warn' && warns.push(e.message)));
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const seen: unknown[] = [];
+    await app.plugins.register(
+      definePlugin({ name: 'p', uses: { config }, apply: ({ config }) => void seen.push(config.v) }),
+      { v: 1 },
+    );
+    await app.plugins.idle();
+    expect(await app.plugins.disable('p')).toBe(true);
+
+    expect(await app.plugins.updateConfig('p', { v: 2 })).toBe(true);
+    expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'disabled', config: { v: 2 } });
+    expect(await app.plugins.bounce('p', { config: { v: 3 } })).toBe(true);
+    expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'disabled', config: { v: 3 } });
+    await app.plugins.idle();
+    expect(seen, '禁用期间不激活').toEqual([1]);
+    expect(warns).toEqual([]);
+
+    expect(await app.plugins.enable('p')).toBe(true);
+    await app.plugins.idle();
+    expect(seen).toEqual([1, 3]);
+    await app.stop();
+  });
+
+  it('停机进行中：disabled 态带配置的 bounce 同样为 false，不换配置', async () => {
+    const app = silentApp();
+    await app.plugins.register(plugin('p'), { v: 1 }, undefined, { disabled: true });
+    let bounced: boolean | undefined;
+    app.bind({ events }).events.on('app:stopping', async () => {
+      bounced = await app.plugins.bounce('p', { config: { v: 2 } });
+    });
+    await app.stop();
+    expect(bounced).toBe(false);
+    expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'disabled', config: { v: 1 } });
+  });
+
+  it('disable 清掉上一次激活失败的 error', async () => {
+    const app = silentApp();
+    await app.plugins.register(
+      definePlugin({
+        name: 'p',
+        apply() {
+          throw new Error('boom');
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'error', error: 'boom' });
+    expect(await app.plugins.disable('p')).toBe(true);
+    expect(app.plugins.getPlugin('p')?.state).toBe('disabled');
+    expect(app.plugins.getPlugin('p')?.error).toBeUndefined();
+    expect(app.plugins.getStatus()[0].error).toBeUndefined();
     await app.stop();
   });
 

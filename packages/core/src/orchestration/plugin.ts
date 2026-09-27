@@ -50,9 +50,9 @@ export class PluginManager implements PluginManagerService {
   readonly #host: ActivationHost;
   /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
   readonly #disposeTimeoutMs: number;
-  /** 激活超过它仍未完成即转入后台，此后每隔同样时长提醒一次（毫秒；非正数=不设限），由 App 注入 */
+  /** 激活超过它仍未完成即转入后台（毫秒；非正数=不设限），由 App 注入 */
   readonly #slowMs: number;
-  /** 已转入后台、尚未落定也未被接手的激活（getStatus 据此给出 slow） */
+  /** 已转入后台、尚未落定也未被接手的激活（getStatus 据此给出 slow；abort 时据此判断 flight 是否早已放开它） */
   readonly #background = new Set<Activation>();
   /** 交给编排层自由函数（activatePlugin / retireBatch）的宿主注入件，构造一次 */
   readonly #deps: ActivationDeps;
@@ -135,7 +135,7 @@ export class PluginManager implements PluginManagerService {
     this.#disposeTimeoutMs = disposeTimeoutMs;
     this.#slowMs = slowMs;
     this.#logger = logger.child('plugins');
-    this.#deps = { host, logger: this.#logger, disposeTimeoutMs };
+    this.#deps = { host, logger: this.#logger, disposeTimeoutMs, spendRetry: (...args) => this.#spendRetry(...args) };
 
     // 监听服务注册/注销，路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
@@ -158,7 +158,8 @@ export class PluginManager implements PluginManagerService {
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
    * @param options.disabled 以禁用态登记，不激活；之后经 enable 启用
    * @returns 口径见 {@link PluginManagerService}：false = 重名、未声明 reusable 却要多实例、或定义 / 实例 id 校验失败
-   *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId；各记一笔 warn）；true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
+   *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId；各记一笔 warn，定义里有另一份 core 造的对象时记 error）；
+   *   true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
    */
   async register(
     definition: PluginDefinition,
@@ -286,8 +287,9 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 管理动作的 false 分支之一：主体不在注册表，或处于 'disposed' 单向终态。记 debug 而非 warn——
-   * 这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测；被政策挡下的分支各自就地 warn。
+   * 管理动作的 false 分支之一：主体不在注册表、处于 'disposed' 单向终态，或停机中（register / bounce）。记 debug
+   * 而非 warn——这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测，停机中的请求常见于收尾路径；被政策挡下的
+   * 其余分支各自就地 warn。
    */
   #refuse(action: string, instanceId: string, why: string): false {
     this.#logger.debug(`${action}: 插件 "${instanceId}" ${why}`);
@@ -336,6 +338,7 @@ export class PluginManager implements PluginManagerService {
     // 其间转 pending 会被激活侧的「旧激活未清」闸跳过——回滚完成后补跑的重算会把它接上。
     entry.state = 'pending';
     entry.error = undefined;
+    entry.retriesLeft = undefined;
     this.#logger.info(`插件已启用: ${instanceId}`);
     await this.recompute();
     return true;
@@ -360,6 +363,7 @@ export class PluginManager implements PluginManagerService {
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
     this.#suspendDepth++;
     try {
+      entry.error = undefined;
       await this.#retire(entry, 'disabled');
       // 宽限内没停下来的已转 error，上一条 error 日志已说明
       if (entry.state !== 'error') this.#logger.info(`插件已禁用: ${instanceId}`);
@@ -414,7 +418,7 @@ export class PluginManager implements PluginManagerService {
 
   /**
    * 更新插件配置：`bounce(instanceId, { config })` 的薄壳，独立成名只为让调用点
-   * （WebUI / 配置文件热重载）语义清晰。
+   * （WebUI / 配置文件热重载）语义清晰。禁用态只换配置、保持禁用，启用时按新配置激活。
    */
   async updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
     return this.bounce(instanceId, { config });
@@ -426,17 +430,13 @@ export class PluginManager implements PluginManagerService {
    *
    * 正在用本插件所提供服务的 required 下游随之重启：先于本插件收尾、关闭，本插件重新激活后按拓扑序
    * 重新激活；optional 依赖经 follow 在换人时交接。不换代码：跑的仍是注册时的那份定义。要换代码走
-   * `unload` + `register`。
+   * `unload` + `register`。disabled 态只换上新 config、保持禁用（启用时按它激活），不重建。
    *
-   * @returns false 表示找不到 entry、处于 disabled 态或 'disposed' 终态，或停机进行中（拒绝重建）。
+   * @returns false 表示找不到 entry、disabled 态且不带 config、'disposed' 终态，或停机进行中（拒绝重建）。
    */
   async bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean> {
     const entry = this.#plugins.get(instanceId);
     if (!entry) return this.#refuse('bounce', instanceId, '不在注册表');
-    if (entry.state === 'disabled') {
-      this.#logger.warn(`bounce: 插件 "${instanceId}" 处于 disabled 态，跳过`);
-      return false;
-    }
     // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
     // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无激活可拆，
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
@@ -449,12 +449,18 @@ export class PluginManager implements PluginManagerService {
       // entry 持有自己的拷贝：插件经内置 config 就地改嵌套不得写穿调用方的对象。
       entry.config = cloneConfigObject(newConfig);
     }
+    if (entry.state === 'disabled') {
+      if (newConfig) return true;
+      this.#logger.warn(`bounce: 插件 "${instanceId}" 处于 disabled 态，跳过`);
+      return false;
+    }
 
     // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
     this.#suspendDepth++;
     try {
       entry.error = undefined;
+      entry.retriesLeft = undefined;
       await this.#retire(entry, 'pending');
     } finally {
       this.#suspendDepth--;
@@ -511,14 +517,11 @@ export class PluginManager implements PluginManagerService {
     }
 
     this.#reloading = true;
-    // 只约束 required 缺失触发的自动重试。按 entry 记整个 flight 的余量，`#queued` / 管理段收尾的重算
-    // 不能给同一失败者补满预算；暂停它不妨碍其他插件或管理状态收敛。flight 结束即释放。
-    const retryBudget = new Map<PluginRecord, number>();
     try {
       while (this.#queued) {
         const current = this.#queued;
         this.#queued = null;
-        await this.#recomputeOnce(current, retryBudget);
+        await this.#recomputeOnce(current);
       }
     } finally {
       this.#reloading = false;
@@ -526,8 +529,31 @@ export class PluginManager implements PluginManagerService {
     }
   }
 
+  /**
+   * 按图规模取 2N+8（+8 为小图垫底），不暴露调优旋钮：重算的轮数上限，也是初始化期 required 缺失的重试额度。
+   * 每次现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在 `#recomputeOnce` 在飞时追加
+   * entry（每轮快照重取），上限须随图同步增长，否则合法的增量注册流会被按旧规模误判为振荡。
+   */
+  #maxRounds(): number {
+    return this.#plugins.size * 2 + 8;
+  }
+
+  /**
+   * 初始化期 required 缺失的自动重试预算。两条路径记同一本账：激活时 required 绑定抛不可用，后台激活的 required
+   * 依赖下线被拆。按条目跨重算累计（`#queued` 补跑、落定后补的重算都不重置），首次按当时的 {@link #maxRounds}
+   * 取额；激活成功、enable、bounce 时清零。返回这次拆卸的目标态：未用尽回 pending，用尽转 error、不再自动重试，
+   * 说明里点名这次缺的服务 missing。在拆卸之前调用（写终态的是随后的 retireBatch），日志经 reportQuietly，不抛。
+   */
+  #spendRetry(entry: PluginRecord, missing: string): 'pending' | 'error' {
+    entry.retriesLeft = (entry.retriesLeft ?? this.#maxRounds()) - 1;
+    if (entry.retriesLeft > 0) return 'pending';
+    entry.error = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
+    reportQuietly(() => this.#logger.error(`插件 "${entry.instanceId}" ${entry.error}`));
+    return 'error';
+  }
+
   /** 单次完整重算：fixed-point 状态转移 + （非关机）plugins:changed 通知 */
-  async #recomputeOnce(kind: RecomputeKind, retryBudget: Map<PluginRecord, number>): Promise<void> {
+  async #recomputeOnce(kind: RecomputeKind): Promise<void> {
     // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
     if (kind === 'shutdown') {
       const live = [...this.#plugins.values()].filter(entry => entry.activation !== undefined).reverse();
@@ -541,17 +567,12 @@ export class PluginManager implements PluginManagerService {
 
     let changed = true;
     let rounds = 0;
-    // 普通依赖级联的拆除波、激活波按图规模取 2N+8 轮（+8 为小图垫底），不暴露调优旋钮。
-    // 初始化期间 required 再次消失不属于单调级联：它的自动重试另用整段 flight 的 entry 预算，
-    // 防止 `#queued` 补跑不断重置本函数的轮数。这里仍保留普通状态振荡的点名上限。
-    // 每轮现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在本
-    // `#recomputeOnce` 在飞时追加 entry（每轮快照重取），上限须随图同步增长，否则合法的增量注册流会被按
-    // 旧规模误判为振荡。
-    const maxRounds = (): number => this.#plugins.size * 2 + 8;
+    // 普通依赖级联的拆除波、激活波至多 {@link #maxRounds} 轮，超出即点名振荡。初始化期间 required 再次消失
+    // 不属于单调级联，它的自动重试另按条目计预算（{@link #spendRetry}），`#queued` 补跑重置本函数的轮数也放不开它。
     let lastRoundFlips: string[] = [];
 
     // 停机后不再做普通状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
-    converge: while (changed && rounds < maxRounds() && !this.#shuttingDown) {
+    converge: while (changed && rounds < this.#maxRounds() && !this.#shuttingDown) {
       changed = false;
       rounds++;
       lastRoundFlips = [];
@@ -560,18 +581,19 @@ export class PluginManager implements PluginManagerService {
       const order = this.#order;
 
       // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定。
-      // 后台激活同样看：required 不在了，它 apply 里拿到的已是旧实例（本 flight 此刻没有在飞的激活）
-      const retiring: PluginRecord[] = [];
+      // 后台激活同样看：required 不在了，它 apply 里拿到的已是旧实例（本 flight 此刻没有在飞的激活，
+      // activating 即后台），拆它记入重试预算
+      const retiring = new Map<PluginRecord, PluginState>();
       for (const entry of [...order].reverse()) {
         if (!running(entry)) continue;
         if (requiredSatisfied(entry, this.#host.runtime.services)) continue;
-        const unmet = entry.required.find(name => this.#host.runtime.services.get(name) === undefined);
+        const unmet = entry.required.find(name => this.#host.runtime.services.get(name) === undefined)!;
         this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
-        retiring.push(entry);
+        retiring.set(entry, entry.state === 'activating' ? this.#spendRetry(entry, unmet) : 'pending');
         lastRoundFlips.push(entry.instanceId);
       }
-      if (retiring.length > 0) {
-        await retireBatch(retiring, 'pending', this.#deps);
+      if (retiring.size > 0) {
+        await retireBatch([...retiring.keys()], e => retiring.get(e)!, this.#deps);
         changed = true;
       }
 
@@ -583,35 +605,24 @@ export class PluginManager implements PluginManagerService {
         // 会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，等管理路径
         // 收尾后的 recompute 重新调度
         if (entry.state !== 'pending' || entry.activation) continue;
-        if (retryBudget.get(entry) === 0) continue;
         if (!requiredSatisfied(entry, this.#host.runtime.services)) continue;
         // required 胜者已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它上面拿到的是正在
         // 关闭的实例。等它关完、服务下线触发重算再判定
         if (entry.required.some(name => this.#host.closing(this.#host.runtime.services.ownerOf(name)!))) continue;
-        const result = await this.#activate(entry);
-        if (result === 'retry') {
-          // 首次失败按当时图规模取额；后续新增插件也不能让失稳 entry 不断扩额。
-          const remaining = (retryBudget.get(entry) ?? maxRounds()) - 1;
-          retryBudget.set(entry, remaining);
-          if (remaining === 0) {
-            this.#logger.warn(`插件 "${entry.instanceId}" required 依赖重试未收敛，本轮暂缓自动激活，保持 pending`);
-            continue;
-          }
-          changed = true;
-          lastRoundFlips.push(entry.instanceId);
-        } else if ((entry.state as PluginState) === 'active') {
+        // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
+        if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') {
           changed = true;
           lastRoundFlips.push(entry.instanceId);
         }
       }
     }
 
-    if (changed && rounds >= maxRounds()) {
+    if (changed && rounds >= this.#maxRounds()) {
       // 静态 required 环由 topoSortByDeps 检出并另行告警；到这里仍在翻转的
       // 状态变化已超出本轮收敛上限。点名末轮仍在翻转的插件——矛盾对必在其中。
       // 每处 changed = true 都登记了翻转者，走到这里名单必不为空。
       this.#logger.warn(
-        `recompute ${rounds} 轮未收敛（上限 ${maxRounds()} = 2×插件数+8），` +
+        `recompute ${rounds} 轮未收敛（上限 ${this.#maxRounds()} = 2×插件数+8），` +
           `疑似插件间状态振荡。最后一轮仍在翻转: ${lastRoundFlips.join(', ')}`,
       );
     }
@@ -624,8 +635,8 @@ export class PluginManager implements PluginManagerService {
    * 接手（signal 已断）时也不再等，拆卸方按宽限处理。flight 不再等的激活落定后补一次重算（成功、失败转 error、
    * 回到 pending 都未必有服务事件触发重算）。
    *
-   * 一个 abort 监听器、一个自我重排的定时器从激活开始一直看到落定或 abort：转入后台之后按同一间隔提醒
-   * 「仍在激活」，轮与轮之间没有空隙，不会漏掉 abort 而对已被接手的激活一直提醒。计时只用定时器，经过时长按轮数算。
+   * 一个 abort 监听器、一个只触发一次的阈值定时器看到落定或 abort 为止：到点转入后台、记一条 warn，此后不再提醒，
+   * 后台状态经 getStatus 的 slow 查看。不留周期定时器，没调 stop 的嵌入式宿主至多被它拖到阈值到点才退出。
    */
   #activate(entry: PluginRecord): Promise<'retry' | undefined> {
     const landing = activatePlugin(entry, this.#deps);
@@ -635,7 +646,6 @@ export class PluginManager implements PluginManagerService {
     // 没有待落定的 apply（同步段里就失败了，正在回滚）：照旧等它收尾
     if (!activation.resources.initializing) return landing;
     return new Promise((resolve, reject) => {
-      let rounds = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const letGo = (): void => {
         resolve(undefined);
@@ -651,28 +661,21 @@ export class PluginManager implements PluginManagerService {
       // 只看 apply 在飞的阶段：apply 已落定时，abort 与到点都来自它自己的收尾（失败回滚，有界），照旧等落定
       const onAbort = (): void => {
         if (!activation.resources.initializing) return;
+        if (!this.#background.has(activation)) letGo(); // 已转入后台的早已放开 flight
         unwatch();
-        if (rounds === 0) letGo(); // 已转入后台的早已放开 flight
-      };
-      const arm = (): void => {
-        timer = setTimeout(() => {
-          if (!activation.resources.initializing) return;
-          arm();
-          if (++rounds === 1) {
-            letGo();
-            this.#toBackground(entry, activation);
-          } else {
-            const elapsed = rounds * this.#slowMs;
-            reportQuietly(() => this.#logger.warn(`插件 "${entry.instanceId}" 仍在激活（已超过 ${elapsed}ms）`));
-          }
-        }, this.#slowMs);
       };
       // 落定（含拒绝）原样交给 flight（已放开时无效果），并停止看守
       landing.then(resolve, reject);
       landing.then(unwatch, unwatch);
       if (signal.aborted) return onAbort();
       signal.addEventListener('abort', onAbort, { once: true });
-      if (this.#slowMs > 0) arm();
+      if (this.#slowMs > 0) {
+        timer = setTimeout(() => {
+          if (!activation.resources.initializing) return;
+          letGo();
+          this.#toBackground(entry, activation);
+        }, this.#slowMs);
+      }
     });
   }
 
