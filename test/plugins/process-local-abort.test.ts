@@ -100,14 +100,25 @@ describe('process-local 中止信号（POSIX，真实进程）', () => {
     expect(probe(run.pid)).toBe('ESRCH');
   });
 
-  it.skipIf(!posix)('孙进程同死：中止后 3 秒内整个进程组不存在', async () => {
-    const ac = new AbortController();
-    const run = start('sh', ['-c', 'sleep 30 & sleep 30'], { signal: ac.signal });
-    await sleep(150);
-    expect(probe(-run.pid)).toBeUndefined(); // 防空跑：进程组确实起来了
-    ac.abort();
-    expect(await waitFor(() => probe(-run.pid) === 'ESRCH', 3000)).toBe(true);
-    await within(run.done, 3000);
+  it.skipIf(!posix)('孙进程同死：中止后 3 秒内整个进程组不存在，孙进程收到的是 SIGTERM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zz-slice1-abort-'));
+    try {
+      // 孙进程（后台子 shell）收到 SIGTERM 就写标记：只打直接子进程的话，孙进程要等宽限后的 SIGKILL，
+      // 同样在 3 秒内消失，只看组空分不出来
+      const marker = join(dir, 'zz-slice1-term');
+      const ac = new AbortController();
+      const run = start('sh', ['-c', '(trap \'touch "$0"; exit 0\' TERM; sleep 30 & wait) & sleep 30', marker], {
+        signal: ac.signal,
+      });
+      await sleep(150);
+      expect(probe(-run.pid)).toBeUndefined(); // 防空跑：进程组确实起来了
+      ac.abort();
+      expect(await waitFor(() => probe(-run.pid) === 'ESRCH', 3000)).toBe(true);
+      await within(run.done, 3000);
+      expect(existsSync(marker)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it.skipIf(!posix)('忽略 SIGTERM 的进程组：宽限后整组 SIGKILL，wait 从中止到落定小于 4 秒', async () => {
