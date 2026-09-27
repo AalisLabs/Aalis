@@ -533,7 +533,8 @@ describe('process_kill', () => {
     const killed = await call(s.handlers.process_kill, { processId: started.processId });
     expect(Date.now() - t0).toBeLessThan(3500);
     expect(killed.stopped).toBe(true);
-    expect(probe(-pid)).toBe('ESRCH');
+    // macOS 上刚被 SIGKILL、还没被回收的成员仍在组里时，0 号信号报 EPERM：与上面两条一样轮询等到 ESRCH
+    expect(await waitFor(() => probe(-pid) === 'ESRCH', 3000), '进程组应被收掉').toBe(true);
   });
 
   it('安全：终止后仍未落定：如实报仍在运行，通知目标放回，之后自行结束照常通知', async () => {
