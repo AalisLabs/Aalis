@@ -9,8 +9,8 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 
 核心职责两件：
 
-- **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`api-session-manager/src/index.ts`、实现 `plugin-session-manager/src/index.ts`）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
-- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（监听 `inbound:message` / `outbound:message` / `agent:turn:after`），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。
+- **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`api-session-manager/src/index.ts`、实现 `plugin-session-manager/src/index.ts`）。平台 profile 的选法：IM 房间按出生平台（与受众）选档，不论从哪个入口驱动；传入的入口平台只对没有出生平台的会话起作用（§2.4）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
+- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（回合开始的 `agent:input:before` 中间件翻 `active` 并在回合结束时收口，另有 `outbound:message` / `agent:turn:after` 收口，见 §7.1），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。IM 房间由 `inbound:message` 上的收录监听登记（§6.6）。
 
 它**不是**消息存储——历史消息存在 `memory` 服务里；本服务只把会话元数据持久化到 `memory` 的 metadata 命名空间 `sessions`（`plugin-session-manager/src/index.ts`）。
 
@@ -19,37 +19,39 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 ### 2.1 服务接口 `SessionManagerService`（`index.ts`）
 
 ```ts
-// CRUD
-createSession(opts?: Partial<Omit<SessionInfo, 'id'|'children'|'createdAt'|'updatedAt'>>): Promise<SessionInfo>;
+// CRUD（kind、originPlatform、audience 由服务推出，不收调用方传值）
+createSession(opts?: Partial<Omit<SessionInfo, 'id'|'children'|'createdAt'|'updatedAt'|'kind'|'originPlatform'|'audience'>>): Promise<SessionInfo>;
 getSession(id: string): SessionInfo | undefined;
 listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
 updateSession(id: string, updates: Partial<Pick<SessionInfo, 'name'|'config'|'status'|'metadata'>>): Promise<SessionInfo>;
-// 按精确 id 幂等 upsert：命中 → 合并式 update（发 session:updated）；未命中 → 以传入 id（不自生成）建 active 记录（发 session:created）。
+// 按精确 id 幂等 upsert：命中 → 合并式 update（发 session:updated）；未命中 → 以传入 id（不自生成）建记录（状态缺省 active，发 session:created）。
 // 供平台派生 sessionId（如 onebot:<self>:group:<gid>）首次落配置覆盖时按原样 id 建档——这些 id 不经 createSession 预建。
+// IM 房间主要由参考实现的入站收录登记（§6.6），/session.set 与开子任务时经这里补建。
 ensureSession(id: string, patch?: Partial<Pick<SessionInfo, 'name'|'config'|'status'|'metadata'|'createdBy'>>): Promise<SessionInfo>;
 deleteSession(id: string): Promise<void>;            // 同时清理其消息历史
 
 // 树形
-  // 父会话未建档时（平台派生 id 从不经 createSession 预建）先按原样 id 兜底建档，再挂子会话
-createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id'|'parentId'|'children'|'createdAt'|'updatedAt'>>): Promise<SessionInfo>;
+  // 父会话未建档时（平台派生 id 从不经 createSession 预建）先按原样 id 兜底建档，再挂子会话；有出生平台的房间以会话 id 为名
+createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id'|'parentId'|'children'|'createdAt'|'updatedAt'|'kind'|'originPlatform'|'audience'>>): Promise<SessionInfo>;
 getChildren(parentId: string): SessionInfo[];
 getTree(rootId?: string): SessionTreeNode[];
 
 // 生命周期
 completeSession(id: string, result?: string): Promise<void>;   // 触发 session:completed
 
-// 配置解析（同步，非 Promise）
+// 配置解析（同步，非 Promise）；平台档的选法见 §2.4
 resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
-resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+// 继承链（不含会话自身 config），另回选档平台、受众与每个键的来源层；WebUI「继承」提示与 /session 的来源显示用它
+resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
 getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
-getPlatformProfiles(): Record<string, PlatformProfile>;
+getPlatformProfiles(): Record<string, PlatformProfile>;   // 只回基础档，不含受众条目
 
 // 标题
 generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;  // 调 LLM 总结
 updateSessionTitle(sessionId: string, title: string): Promise<void>;
 ```
 
-`resolveConfig` / `resolveInheritedDefaults` / `getDefaults` / `getPlatformProfiles` 是**同步**方法（直接读内存 Map），不要 `await`。
+`resolveConfig` / `resolveInheritance` / `getDefaults` / `getPlatformProfiles` 是**同步**方法（直接读内存 Map），不要 `await`。
 
 ### 2.2 重要类型
 
@@ -69,7 +71,7 @@ interface SessionConfig {
 }
 ```
 
-`PlatformProfile = SessionConfig`（`index.ts`）——每个平台一份模板。**平台档只从插件配置 `platformProfiles` 加载，没有运行时写接口**：改平台档就是改配置（WebUI 配置页 / `aalis.config.yaml`），改完经热重载生效。
+`PlatformProfile = SessionConfig`（`index.ts`）——每个平台一份模板，同一平台可另写只对群或只对私聊生效的受众条目（§2.4）。**平台档只从插件配置 `platformProfiles` 加载，没有运行时写接口**：改平台档就是改配置（WebUI 配置页 / `aalis.config.yaml`），改完经热重载生效。
 
 `SessionInfo`（`index.ts`）——会话本体：
 
@@ -87,10 +89,27 @@ interface SessionInfo {
   inputContext?: string;           // 父会话传入的指令 / 上下文（见 §6.3）
   result?: string;                 // 子会话完成后填，供向父会话汇报
   metadata?: Record<string, unknown>;
+  kind: 'room' | 'task';           // SessionKind：有 parentId 为 task（挂在发起它的会话下面的子会话），其余为 room
+  originPlatform?: string;         // 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话没有
+  audience?: 'owner' | 'private' | 'group';  // RoomAudience，只有 room 带：有出生平台的取 group 或 private，其余为 owner
 }
 ```
 
-`SessionTreeNode = { session: SessionInfo; children: SessionTreeNode[] }`（`index.ts`，递归）。
+`kind`、`originPlatform`、`audience` 只按会话 id 与 `parentId` 推出（参考实现的私有函数 `describeSession`），新建、建档与加载入表时覆盖写入，调用方传的值与存储里的旧值都不采信。`audience: 'owner'` 只表示「不是 IM 房间」：凡是没有出生平台的根会话都落在这里，包括 `mcp-server`、`workflow::<id>` 与定时任务指定的目标会话，并不都是 owner 本人在说话，只供列表分区用，不能拿来判断「owner 在场」。非房间会话的 id 不得含单冒号，否则会被当成房间（会话 id 约定见 [platform 服务](platform.md)）。
+
+`SessionTreeNode = { session: SessionInfo; children: SessionTreeNode[] }`（`index.ts`，递归）。服务方法 `getTree()` 回不分区的根会话列表。会话页用的是分区形状：`SessionTreeSection = { key: 'owner' | 'rooms'; label: string; nodes: SessionTreeNode[] }`，分区由纯函数 `sessionListSection(session)` 判定（`audience` 为 `private`、`group` 的进 `rooms`「IM 房间」，其余进 `owner`「我的会话」），参考实现的页面动作 `getSessionTree` 按「我的会话」「IM 房间」的顺序回，空区不回，子会话只挂在各自父节点下、不作为任何区的根。
+
+`SessionInheritance`（`index.ts`）——`resolveInheritance` 的返回：
+
+```ts
+type InheritanceSource = 'defaults' | 'platform' | 'audience' | 'parent';
+interface SessionInheritance {
+  platform?: string;                               // 选档用的平台：有出生平台的为出生平台，否则为传入的入口平台
+  audience?: 'group' | 'private';                  // 选档用的受众：只有房间会话带
+  values: Omit<SessionConfig, 'sessionDefaults'>;  // 继承值（不含会话自身 config 与 sessionDefaults）
+  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;  // 每个键最终来自哪一层
+}
+```
 
 ### 2.3 事件 augmentation（`index.ts`）
 
@@ -105,6 +124,18 @@ interface SessionInfo {
 
 **只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/api-session-manager'`（`plugin-file-reader/src/index.ts`）。
 
+### 2.4 平台档的选法：钉死出生平台与受众条目
+
+`resolveConfig` 与 `resolveInheritance` 的平台档层按下面的规则选档（契约写在 `resolveInheritance` 的说明里）：
+
+- 会话有出生平台（api-gateway 的 `resolveSessionOrigin(sessionId)` 有值，子任务按父会话算）：按出生平台选档，忽略传入的 `platform`；适配器没加载时同样如此。IM 房间不论从哪个入口驱动都按自己的平台档运行：owner 从 WebUI 往 QQ 群插话，这一轮的工具组、人设与模型仍取 onebot 的档，入口平台只用来认出说话的人。
+- 会话没有出生平台（WebUI 的 `session-<8位>`、CLI 的 `cli-default` 等 owner 面会话）：按调用方传入的入口平台选档。
+- 受众条目：插件配置 `platformProfiles` 的条目可以带 `audience`（`group` 为群与频道，`private` 为私聊，不写为该平台全部房间）。带受众的条目只列与同平台基础档不同的键，叠加在基础档之上，来源层记为 `audience`，只对有出生平台的会话生效。受众取值不是 `group`、`private` 的条目整条丢弃并告警，不当成不限受众。`getPlatformProfiles()` 只回基础档（它的返回会被页面动作整份复制进新会话的 config），要知道某个键是否来自平台档，看 `resolveInheritance(id).sources[键]` 是 `platform` 还是 `audience`。
+
+继承链从低到高：全局 defaults → 平台档 → 受众条目 → 父会话 `sessionDefaults`，`resolveConfig` 再叠上会话自身 config。钉死只管继承链：会话自身 config 里的覆盖仍优先于平台档。
+
+参考实现的页面动作 `getInheritance`（WebUI「继承」提示用）对有出生平台的会话直接回 `resolveInheritance(sessionId)`；没有出生平台的会话先按「会话 metadata 记下的平台 → 接管这个 id 的平台适配器 → webui」推出入口平台，再解析。plugin-agent 的 `/session` 同样读 `resolveInheritance`，每个字段显示生效值与来源（会话覆盖、父会话、平台档 `<平台>`、平台档 `<平台>`（私聊或群）、默认）。
+
 ## 3. 谁提供 / 谁消费
 
 **提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`、`optional = ['agent','platform','persona','llm']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
@@ -116,38 +147,50 @@ interface SessionInfo {
 | `plugin-agent` | 每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组；`/session.set`·`/session.reset` 走 `ensureSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
 | `plugin-persona` | `resolveConfig()` 取 `persona/disableOutputFormat/clientSideJsonRendering`（消费侧**窄化类型**，见 §5.2） | `plugin-persona/src/index.ts` |
-| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getInheritedDefaults/...` | `plugin-session-manager/src/index.ts` |
+| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getSessionTree/getInheritance/...`；`getSessionTree` 回分区的 `SessionTreeSection[]`（§2.2），`listSessions` 照旧回全部会话（含 IM 房间） | `plugin-session-manager/src/index.ts` |
 
 ## 4. 写一个 provider（替换实现）
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期 + 配置解析语义。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `createChildSession` / `completeSession` / `resolveConfig` / `getPlatformProfiles`。其余（`getTree` / `resolveInheritedDefaults` / `generateTitle` / ...）主要服务于 WebUI，可保守实现。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `createChildSession` / `completeSession` / `resolveConfig` / `getPlatformProfiles`。其余（`getTree` / `resolveInheritance` / `generateTitle` / ...）主要服务于 WebUI 与 `/session`，可保守实现。`SessionInfo.kind` 是必填字段，建档时要按 `parentId` 填上。
 
-**配置解析的合并语义必须复刻**（否则 Agent 会拿错 LLM）：`resolveConfig` 优先级从高到低 = 会话自身 config > 父会话 `sessionDefaults` > 平台 profile > 全局 defaults，且**返回结果必须删除 `sessionDefaults` 字段**（不传递给消费方）（`plugin-session-manager/src/index.ts`）。
+**配置解析的合并语义必须复刻**（否则 Agent 会拿错 LLM）：`resolveConfig` 优先级从高到低 = 会话自身 config > 父会话 `sessionDefaults` > 平台 profile > 全局 defaults，平台 profile 按 §2.4 钉死出生平台，且**返回结果必须删除 `sessionDefaults` 字段**（不传递给消费方）（`plugin-session-manager/src/index.ts`）。不钉死时，从 WebUI 驱动 IM 房间会拿到 webui 平台档的工具组。
 
 **配置补丁是三态，不是二态**：键不出现 = 不改；键为 `null` = 删除该键、恢复继承；键为 `false` = **显式覆盖**，不等于未设置。参考实现里 `normalizeSessionConfigPatch` 把 `null` 转成 `undefined` 再交给 `updateSession` 删键，而 `stripUndefined` 只剔 `undefined` 与 `null`——因此显式 `false` 会一路压过继承来的 `true`（`plugin-session-manager/src/index.ts`）。WebUI 会话配置页的两个开关只写显式 `true` / `false` 两档：点一下就落成显式值，页面不提供回到「未设置」的入口，恢复继承要把该键从会话配置里清掉（补丁置 `null`）。
 
 ```ts
+import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { sessionManager } from '@aalis/api-session-manager';
 import type {
+  InheritanceSource,
   PlatformProfile,
   SessionConfig,
   SessionInfo,
+  SessionInheritance,
   SessionManagerService,
   SessionTreeNode,
 } from '@aalis/api-session-manager';
 import { type Events, definePlugin, events, logger, optional, provide } from '@aalis/core';
+
+type Derived = 'kind' | 'originPlatform' | 'audience';
+
+/** 种类、出生平台与受众只按 id 与 parentId 推出，不收调用方传值 */
+function describe(id: string, parentId?: string): Pick<SessionInfo, Derived> {
+  const origin = resolveSessionOrigin(id);
+  if (parentId) return { kind: 'task', originPlatform: origin?.platform };
+  return { kind: 'room', originPlatform: origin?.platform, audience: origin?.audience ?? 'owner' };
+}
 
 class MySessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
   private profiles = new Map<string, PlatformProfile>();
   events!: Events;
 
-  async createSession(opts: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>> = {}): Promise<SessionInfo> {
+  async createSession(opts: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | Derived>> = {}): Promise<SessionInfo> {
     const now = Date.now();
     const id = opts.parentId
       ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
@@ -164,6 +207,7 @@ class MySessionManager implements SessionManagerService {
       createdBy: opts.createdBy ?? 'user',
       inputContext: opts.inputContext,
       metadata: opts.metadata,
+      ...describe(id, opts.parentId),
     };
     this.sessions.set(id, s);
     if (s.parentId) this.sessions.get(s.parentId)?.children.push(id);
@@ -197,6 +241,7 @@ class MySessionManager implements SessionManagerService {
       updatedAt: now,
       createdBy: patch?.createdBy ?? 'user',
       metadata: patch?.metadata,
+      ...describe(id),
     };
     this.sessions.set(id, s);
     await this.events.emit('session:created', s);
@@ -206,7 +251,7 @@ class MySessionManager implements SessionManagerService {
     this.sessions.delete(id);
     await this.events.emit('session:deleted', id);
   }
-  async createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>) {
+  async createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | Derived>>) {
     return this.createSession({ ...opts, parentId });
   }
   getChildren(parentId: string) {
@@ -231,21 +276,30 @@ class MySessionManager implements SessionManagerService {
     await this.events.emit('session:completed', s);
   }
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    const out: Record<string, unknown> = {};
-    if (platform) Object.assign(out, this.profiles.get(platform) ?? {});
+    const out: Record<string, unknown> = { ...this.resolveInheritance(sessionId, platform).values };
     const s = this.sessions.get(sessionId);
-    if (s?.parentId) Object.assign(out, this.sessions.get(s.parentId)?.config.sessionDefaults ?? {});
     if (s) Object.assign(out, s.config);
     delete out.sessionDefaults;
     return out;
   }
-  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    const out: Record<string, unknown> = {};
-    if (platform) Object.assign(out, this.profiles.get(platform) ?? {});
+  resolveInheritance(sessionId: string, platform?: string): SessionInheritance {
+    // 房间会话钉死出生平台，传入的入口平台只对没有出生平台的会话起作用（受众条目与全局 defaults 从略）
+    const pinned = resolveSessionOrigin(sessionId)?.platform ?? platform;
+    const values: Record<string, unknown> = {};
+    const sources: SessionInheritance['sources'] = {};
+    const layer = (config: object | undefined, source: InheritanceSource) => {
+      for (const [key, value] of Object.entries(config ?? {})) {
+        if (value === undefined || value === null) continue;
+        values[key] = value;
+        sources[key as keyof SessionConfig] = source;
+      }
+    };
+    if (pinned) layer(this.profiles.get(pinned), 'platform');
     const s = this.sessions.get(sessionId);
-    if (s?.parentId) Object.assign(out, this.sessions.get(s.parentId)?.config.sessionDefaults ?? {});
-    delete out.sessionDefaults;
-    return out;
+    if (s?.parentId) layer(this.sessions.get(s.parentId)?.config.sessionDefaults, 'parent');
+    delete values.sessionDefaults;
+    delete sources.sessionDefaults;
+    return { platform: pinned, values, sources };
   }
   getPlatformProfiles(): Record<string, PlatformProfile> {
     return Object.fromEntries(this.profiles);
@@ -355,26 +409,33 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 `generateTitle` 会真发一次 LLM `chat`（`think:false`，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。第三方平台自动调用前请自行权衡。
 
-平台派生的会话 id（`cli-default` 等）从不经 `createSession` 预建，首条消息到达时**缺档是常态**：参考实现先 `ensureSession` 兜底建档再生成标题（与 `createChildSession` 同一条兜底路），因此这些平台的首条消息一样会拿到标题。兜底是无条件的：`cli` / `webui` 平台上任何带未知 `sessionId` 的入站消息都会建档，包括定时任务投给已删除会话的那种。
+平台派生的会话 id（`cli-default` 等）从不经 `createSession` 预建，首条消息到达时**缺档是常态**：参考实现先 `ensureSession` 兜底建档再生成标题（与 `createChildSession` 同一条兜底路），因此这些平台的首条消息一样会拿到标题。兜底只看入口平台：`cli` / `webui` 平台上带未知 `sessionId` 的入站消息都会建档，包括定时任务投给已删除会话的那种；有出生平台的 IM 房间除外，从 WebUI 往房间插话既不生成标题，也不经这里建档（房间由 §6.6 的收录登记）。
+
+### 6.6 IM 房间收录
+
+参考实现在 `inbound:message` 上收录 IM 房间：有出生平台、不是子任务（id 不含 `::`）的会话，首条真人入站（不带 `source`）到达即登记，与是否执行过 `/session.set`、开过子任务无关。带 `source` 的是内部注入（workflow 的 send-message 与 agent 节点、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不触发登记，每次 workflow 运行不会多出一个持久的房间。
+
+- 登记：`ensureSession(id, { name, createdBy: 'system', status: 'waiting' })`，得到 `kind: 'room'` 与房间自己的 `audience`、`originPlatform`。收录只登记与补名，不改状态；状态翻转见 §7.1。
+- 取名按受众：群取消息的 `groupName`，私聊取 `nickname`，缺省用会话 id。只采信出生平台自己的入站（`msg.platform` 等于出生平台）带的名字，从 WebUI 插话建档时名字为 id，不会把私聊房间起成 owner 的昵称。群的首条入站可能是不带群名的戳一戳，这时同样用 id，不回退到发送者昵称。
+- 补名：现名还等于 id 时，后到的出生平台原生入站带了群名（群）或昵称（私聊）就补上；现名不是 id 的（如 owner 用 `/session.set -n` 起的名）不改。`createChildSession` 兜底建档的房间同样以 id 为名，由之后的真人入站补名。
+- 前缀告警：出生平台既不是发来消息的平台、也不是已注册的平台名时，按前缀告警一次，多半是适配器的 id 前缀与平台名不一致（见 [platform 服务](platform.md) 的会话 ID 约定）。
+- 规模：每个来过真人消息的群与私聊都登记一次，没有上限。会话表按整表快照落盘（§7.3），每次写的条数随房间数线性增长。
+
+删除 IM 房间与删除其他会话相同，走 scope 为 session 的 `memory:clear`（§6.2），清空它在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等），聊天平台里的消息不受影响；房间之后再来真人消息会重新登记，记忆从零开始。
 
 ## 7. 注意事项与边界情形
 
-### 7.1 被中间件拦截的群消息会让会话卡在 `active`（审计标注）
+### 7.1 会话状态：回合开始时翻 `active`，同一个中间件收口
 
-会话状态由本插件**根据事件自治推进**：`inbound:message` 把会话翻到 `active`，再靠 `outbound:message` 或 `agent:turn:after` 翻回 `completed`（`plugin-session-manager/src/index.ts`）。但 Agent 的消息处理跑在 `agent:input:before` 中间件的 `next()` 内——**任何中间件不调用 `next()` 即可拦截整条消息**（`plugin-agent/src/index.ts`）。
+参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 把仍为 `active` 的根会话收口为 `completed`（`plugin-session-manager/src/index.ts`）：
 
-群聊场景常见：一个「是否被 @ / 是否该响应」的门控中间件判定本条群消息不该回，于是**不调用 `next()` 直接拦截**。此时：
+- `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行；
+- 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 既不发 `agent:turn:after` 也不发 `outbound:message`，由这里的 `finally` 收口，会话不会停在「进行中」；
+- 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 
-- `inbound:message` 已经把会话置为 `active`；
-- 但既没有 `outbound:message`（没回复），也没有 `agent:turn:after`（默认动作根本没进入，turn 没开始）；
+正常结束另有两路收口：`outbound:message`（产生了回复）与 `agent:turn:after` 中间件（replied / silent / aborted / error 四种结局都会发）。三路都只收口根会话，重复收口无副作用；子会话由 plugin-subtask 收口。
 
-→ 会话**永远停在 `active`（"进行中"）**。这与 silent/aborted 不同——后两者 Agent 仍会发 `agent:turn:after(outcome=silent|aborted)`，由 `agent:turn:after` 中间件兜底收口（`plugin-session-manager/src/index.ts`、`plugin-agent/src/index.ts`）；而**被中间件拦截的消息连 turn 都没开始，没有任何终态事件**。
-
-规避：
-
-- **门控插件**应当尽量让该响应判定**发生在 `inbound:message` 流转之前**，或在拦截路径上补一个状态收口（例如显式把会话改回先前状态）。
-- **自定义 provider** 不要把 `active` 当作「正在跑」的强保证；可加超时清扫或在 `getTree`/列表渲染侧对长时间 `active` 容错。
-- 该缺陷的范围限于「平台门控拦截消息」这类极少数路径；正常用户对话（webui/cli/被 @ 的群消息）四条终态路径都覆盖到位。
+边界：未装 agent 时没有回合，会话不会翻 `active`；非 `active` 的会话（包括已归档的）在新一轮开始时一律翻回 `active`；关停时仍为 `active` 的会话由 `onDrain` 收口（§7.3）。
 
 ### 7.2 配置解析是同步快照
 
