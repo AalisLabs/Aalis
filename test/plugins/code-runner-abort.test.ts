@@ -7,7 +7,7 @@ import type { CodeSandboxService, SandboxRunRequest } from '../../packages/api-c
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
-import type { Provide } from '../../packages/core/src/index.js';
+import type { LifecycleCap, Provide } from '../../packages/core/src/index.js';
 import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
 import codeRunner from '../../packages/plugin-tool-code-runner/src/index.js';
@@ -187,7 +187,13 @@ async function applySandbox(proc: ProcessService): Promise<CodeSandboxService> {
     provided = implementation;
     return () => {};
   }) as unknown as Provide;
-  await codeSandboxOs.apply({ processService: ref(view(proc)), logger: silentLogger(), provide });
+  const lifecycle: LifecycleCap = {
+    id: codeSandboxOs.name,
+    signal: new AbortController().signal,
+    onDrain: () => () => {},
+    onDispose: () => () => {},
+  };
+  await codeSandboxOs.apply({ processService: ref(view(proc)), logger: silentLogger(), provide, lifecycle });
   if (!provided) throw new Error('code-sandbox-os 没有提供服务');
   return provided;
 }
