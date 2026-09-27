@@ -19,6 +19,7 @@
 import {
   type ArtifactLimits,
   type ArtifactSink,
+  artifactRelProblem,
   type CollectReport,
   type EgressMode,
   type EgressReport,
@@ -113,8 +114,6 @@ interface StreamCursor {
   lastId: string | undefined;
   /** 已交出的简化事件 id（重放时跳过） */
   seen: Set<string>;
-  /** 上一条交出的进展文字：思考与回复的连续片段只报一次 */
-  label: string | undefined;
 }
 
 type StreamOutcome =
@@ -156,10 +155,8 @@ function toRunStatus(raw: unknown): RunStatus | undefined {
   return typeof raw === 'string' && Object.hasOwn(RUN_STATUS, raw) ? RUN_STATUS[raw] : undefined;
 }
 
-function runState(runId: string, status: RunStatus, durationMs: unknown, text: unknown): RunState {
+function runState(runId: string, status: RunStatus, text: unknown): RunState {
   const state: RunState = { runId, status };
-  const duration = num(durationMs);
-  if (duration !== undefined) state.durationMs = duration;
   const resultText = str(text);
   if (resultText !== undefined) state.resultText = resultText;
   return state;
@@ -216,18 +213,6 @@ function redactFragments(text: string, secret: string): string {
   return out;
 }
 
-/** 远端给的相对路径能否交给写入口；不能时返回原因 */
-function relProblem(rel: string): string | undefined {
-  if (rel === '') return '路径为空';
-  if (rel.startsWith('/')) return '绝对路径';
-  if (rel.includes('\\')) return '路径含反斜杠';
-  if (/[\p{Cc}\p{Cf}]/u.test(rel)) return '路径含控制字符或不可见的格式字符';
-  const segments = rel.split('/');
-  if (segments.includes('..')) return '路径含 .. 段';
-  if (segments.some(s => s === '' || s === '.')) return '路径含空段或 . 段';
-  return undefined;
-}
-
 /** 模型是否在列表里、参数是否写全且等于某个变体；不成立时返回原因 */
 function modelProblem(listing: unknown, model: CursorProviderOptions['model']): string | undefined {
   const item = asArray(asRecord(listing).items)
@@ -265,16 +250,6 @@ function modelProblem(listing: unknown, model: CursorProviderOptions['model']): 
 async function accountKeyOf(userId: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId)));
   return [...digest.subarray(0, 8)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function progressLabel(msg: SseMessage): string {
-  if (msg.event === 'thinking') return '思考中';
-  if (msg.event === 'assistant') return '撰写回复';
-  const data = asRecord(parseJson(msg.data));
-  const oneLine = (s: string) => s.replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 60);
-  const name = oneLine(str(data.name) ?? '工具');
-  const status = oneLine(str(data.status) ?? '');
-  return status ? `调用 ${name}（${status}）` : `调用 ${name}`;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -321,7 +296,7 @@ export class CursorProvider implements RemoteAgentProvider {
     this.#base = options.baseUrl.replace(/\/+$/, '');
   }
 
-  egress(): EgressReport {
+  async egress(): Promise<EgressReport> {
     return { mode: this.#opt.egressMode, source: 'owner-config' };
   }
 
@@ -403,7 +378,7 @@ export class CursorProvider implements RemoteAgentProvider {
     opts: { lastEventId?: string; signal: AbortSignal },
   ): AsyncGenerator<RunProgress, void, undefined> {
     const { signal } = opts;
-    const cursor: StreamCursor = { lastId: opts.lastEventId, seen: new Set(), label: undefined };
+    const cursor: StreamCursor = { lastId: opts.lastEventId, seen: new Set() };
     const streamPath = `/v1/agents/${enc(agentId)}/runs/${enc(runId)}/stream`;
     let backoff = this.#opt.retryBaseMs;
     for (;;) {
@@ -532,17 +507,14 @@ export class CursorProvider implements RemoteAgentProvider {
         if (msg.id === undefined || cursor.seen.has(msg.id)) return undefined;
         cursor.seen.add(msg.id);
         cursor.lastId = msg.id;
-        const label = progressLabel(msg);
-        if (msg.event !== 'tool_call' && label === cursor.label) return undefined;
-        cursor.label = label;
-        return { kind: 'progress', eventId: msg.id, label };
+        return { kind: 'progress', eventId: msg.id };
       }
       case 'result': {
         const data = asRecord(parseJson(msg.data));
         const status = toRunStatus(data.status);
         // 认不出或不是终态的 result 不作数，连接结束后以 GET run 为准
         if (!status || !isTerminalRun(status)) return undefined;
-        return { kind: 'terminal', state: runState(runId, status, data.durationMs, data.text) };
+        return { kind: 'terminal', state: runState(runId, status, data.text) };
       }
       case 'done':
         return 'done';
@@ -575,7 +547,7 @@ export class CursorProvider implements RemoteAgentProvider {
       this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs/${enc(runId)}`, { signal })),
     );
     const id = str(data.id) ?? runId;
-    return runState(id, this.#status(data.status, id), data.durationMs, data.result);
+    return runState(id, this.#status(data.status, id), data.result);
   }
 
   async cancelRun(agentId: string, runId: string, signal: AbortSignal): Promise<void> {
@@ -607,7 +579,6 @@ export class CursorProvider implements RemoteAgentProvider {
       chargedCents,
       inputTokens: num(usage.inputTokens) ?? 0,
       cacheReadTokens: num(usage.cacheReadTokens) ?? 0,
-      outputTokens: num(usage.outputTokens) ?? 0,
     };
   }
 
@@ -618,11 +589,12 @@ export class CursorProvider implements RemoteAgentProvider {
     limits: ArtifactLimits,
     signal: AbortSignal,
   ): Promise<CollectReport> {
-    const idProblem = taskId.includes('/') ? '含 /' : relProblem(taskId);
+    const idProblem = taskId.includes('/') ? '含 /' : artifactRelProblem(taskId);
     if (idProblem) throw this.#error('rejected', `任务 id ${taskId} 不能用作目录名（${idProblem}）`);
     const prefix = `${LISTED_OUT}${taskId}/`;
-    const report: CollectReport = { files: [], rejected: [] };
+    const report: CollectReport = { rejected: [] };
     const reject = (path: string, reason: string) => report.rejected.push({ path, reason: this.#scrub(reason) });
+    let runFiles = 0;
     let runBytes = 0;
     for (const item of await this.#listArtifacts(agentId, signal)) {
       const isBundle = item.path === LISTED_BUNDLE;
@@ -631,12 +603,12 @@ export class CursorProvider implements RemoteAgentProvider {
       if (!isBundle) {
         if (!item.path.startsWith(prefix)) continue;
         rel = item.path.slice(prefix.length);
-        const problem = relProblem(rel);
+        const problem = artifactRelProblem(rel);
         if (problem) {
           reject(item.path, problem);
           continue;
         }
-        if (report.files.length >= limits.maxRunFiles) {
+        if (runFiles >= limits.maxRunFiles) {
           reject(item.path, `超过本轮文件数上限 ${limits.maxRunFiles}`);
           continue;
         }
@@ -662,10 +634,8 @@ export class CursorProvider implements RemoteAgentProvider {
         reject(item.path, `写入口拒收：${errorText(err)}`);
         continue;
       }
-      if (isBundle) {
-        report.bundle = { sizeBytes: data.byteLength };
-      } else {
-        report.files.push({ rel, sizeBytes: data.byteLength });
+      if (!isBundle) {
+        runFiles++;
         runBytes += data.byteLength;
       }
     }
@@ -700,7 +670,7 @@ export class CursorProvider implements RemoteAgentProvider {
       .flatMap(a => {
         const agentId = str(a.id);
         const name = str(a.name) ?? '';
-        return agentId && !ignore.has(name) ? [{ agentId, name, archived: a.status === 'ARCHIVED' }] : [];
+        return agentId && !ignore.has(name) ? [{ agentId, name }] : [];
       });
   }
 

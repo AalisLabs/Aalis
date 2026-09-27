@@ -75,7 +75,6 @@ export class ScriptedRemote implements RemoteAgentProvider {
     chargedCents: 10,
     inputTokens: 1000,
     cacheReadTokens: 500,
-    outputTokens: 100,
   });
 
   constructor(opts: { isolation?: 'shared' | 'per-agent'; accountKey?: string } = {}) {
@@ -99,10 +98,10 @@ export class ScriptedRemote implements RemoteAgentProvider {
   }
 
   /** 推一条进展事件 */
-  progress(runId: string, label = 'working'): string {
+  progress(runId: string): string {
     const run = this.#run(runId);
     const eventId = `ev-${run.queue.length + 1}-${runId}`;
-    run.queue.push({ kind: 'progress', eventId, label });
+    run.queue.push({ kind: 'progress', eventId });
     run.wake?.();
     return eventId;
   }
@@ -135,7 +134,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
 
   // ----- RemoteAgentProvider -----
 
-  egress(): EgressReport {
+  async egress(): Promise<EgressReport> {
     return { mode: 'allowlist', source: 'owner-config' };
   }
 
@@ -236,11 +235,10 @@ export class ScriptedRemote implements RemoteAgentProvider {
     signal: AbortSignal,
   ): Promise<CollectReport> {
     return this.#call('collectArtifacts', [agentId, taskId], signal, async () => {
-      const report: CollectReport = { files: [], rejected: [] };
+      const report: CollectReport = { rejected: [] };
       for (const { rel, data } of this.outputs.get(taskId) ?? []) {
         try {
           await sink.putFile(rel, data);
-          report.files.push({ rel, sizeBytes: data.byteLength });
         } catch (err) {
           report.rejected.push({ path: rel, reason: err instanceof Error ? err.message : String(err) });
         }
@@ -249,7 +247,6 @@ export class ScriptedRemote implements RemoteAgentProvider {
       if (bundle) {
         try {
           await sink.putBundle(bundle);
-          report.bundle = { sizeBytes: bundle.byteLength };
         } catch (err) {
           report.rejected.push({ path: 'bundle', reason: err instanceof Error ? err.message : String(err) });
         }
@@ -288,7 +285,7 @@ export class ScriptedRemote implements RemoteAgentProvider {
 
   listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]> {
     return this.#call('listAgents', [], signal, async () =>
-      [...this.agents.values()].map(a => ({ agentId: a.agentId, name: a.name, archived: a.archived })),
+      [...this.agents.values()].map(a => ({ agentId: a.agentId, name: a.name })),
     );
   }
 

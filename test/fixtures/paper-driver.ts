@@ -164,7 +164,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     gateway,
     events: { emit: async () => {} } as unknown as Events,
     ledger: store,
-    isolation: new Isolation(remote, cfg.papers, now),
+    isolation: new Isolation(remote, cfg.papers),
     cfg,
     logger,
     signal: controller.signal,

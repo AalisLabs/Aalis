@@ -55,7 +55,7 @@ export interface FakeRemote extends RemoteAgentProvider {
 
 /**
  * 替身提供者：ready 按 accountKey 回（给 Error 则抛出），其余未编排的方法一调就抛。运行驱动调到它们时
- * 按临时故障退避，任务停在队列里，所以受理、查状态、取消这些用例看到的队列不会被驱动挪动。
+ * 按临时故障退避或记一条错误，任务停在队列里，所以受理、查状态、取消这些用例看到的队列不会被驱动挪动。
  * 要让任务真的跑起来用 paper-remote.ts 的 ScriptedRemote。
  */
 export function fakeRemote(
@@ -69,7 +69,7 @@ export function fakeRemote(
     cancelled: [],
     transcriptIsolation: opts.isolation ?? 'shared',
     layout: { workDir: '/work', outDir: '/work/out', bundlePath: '/work/bundle.tar.gz', policyNotes: [] },
-    egress: () => opts.egress ?? { mode: 'allowlist', source: 'owner-config' },
+    egress: async () => opts.egress ?? { mode: 'allowlist', source: 'owner-config' },
     async ready() {
       fake.readyCalls++;
       const key = opts.accountKey ?? 'acct-1';
