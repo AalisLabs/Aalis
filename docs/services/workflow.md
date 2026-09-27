@@ -304,7 +304,7 @@ await events.emit('trigger:fired', {
 
 ### agent 节点：join 串扰与隔离
 
-`agent` 节点复用 `delegate_to_session` 的 join 机制——emit `inbound:message`（`triggerType: 'proactive'`）前先注册 `agent:turn:after` middleware，按 `sessionId` 捕获首条回复（`engine.ts`）。约束：
+`agent` 节点在 emit `inbound:message`（`triggerType: 'proactive'`）前先注册 `agent:turn:after` middleware，按 `sessionId` 捕获首条回复（`engine.ts`）。约束：
 - **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow:agent:<runId>:<nodeId>`（`engine.ts`；契约 `AgentNodeSpec.sessionId` 的注释同此）。
 - `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane，避免同会话两回合互相 abort（`engine.ts`）。
 - 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts`）。

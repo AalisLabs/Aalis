@@ -95,7 +95,7 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
     case 'turn-context': {
       // 每轮取材的背景材料：落在历史结束处（缓存断点之后）、当前轮诸块之前。
       // 三级定位，取首个命中：
-      // 1. 跨会话委派块之前——proactive 轮没有当前 user 消息，历史里却有
+      // 1. proactive 任务块之前——proactive 轮没有当前 user 消息，历史里却有
       //    旧 user 消息；若按「最后一条 user」定位会把材料 splice 进历史
       //    **内部**，既割裂转录又在 append-only 区制造新的缓存断点。
       // 2. 易变块（persona-volatile）之前——普通轮的历史/当前轮分界线。

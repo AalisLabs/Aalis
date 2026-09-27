@@ -184,7 +184,7 @@ async function execWait(node: WaitNodeSpec): Promise<string> {
 const DEFAULT_AGENT_TIMEOUT_SEC = 120;
 
 /**
- * agent 节点：派发指令给 agent 并等待本轮回复（复用 delegate_to_session 的 join 机制）。
+ * agent 节点：派发指令给 agent 并等待本轮回复。
  * 在 emit 前注册 `agent:turn:after` 监听，按目标 sessionId 捕获首条回复；超时或
  * outcome=error/aborted 抛错（=> 节点失败）。回复文本作为节点结果，可被 `{{outputs.X}}` 下游引用。
  *

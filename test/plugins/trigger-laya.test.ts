@@ -420,7 +420,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
 describe('plugin-trigger-laya：判定各步骤', () => {
   it('带 source 的内部注入：不判定，triggerType 原样保留', async () => {
     const { send } = await setup();
-    const r = await send(groupMsg('委派任务', { source: 'delegate', triggerType: 'proactive' }));
+    const r = await send(groupMsg('代发任务', { source: 'third-party:x', triggerType: 'proactive' }));
     expect(r.reached).toBe(true);
     expect(r.message.triggerType).toBe('proactive');
     expect(sidecar.requests).toHaveLength(0);

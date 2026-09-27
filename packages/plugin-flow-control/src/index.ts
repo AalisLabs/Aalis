@@ -26,7 +26,7 @@ const configSchema: ConfigSchema = {
     dynamicOptions: 'gateway-scopes',
     allowCustom: true,
     description:
-      '冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（委派闸门、闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group；默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。',
+      '冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group；默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。',
   },
   cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
   rateLimitWindow: {
@@ -207,7 +207,7 @@ async function run(caps: Caps): Promise<void> {
   /**
    * 手里没有会话类型时判作用域用的平台、类型与目标：先用状态里记下的，状态没有或缺类型（没有真人消息经过本相位的群、
    * 只有禁言记录的群）再按会话 ID 约定推断，平台也先用状态里的。入站带 source 且不带会话类型的内部注入（定时任务、
-   * workflow、委派、闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
+   * workflow、闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
    * （如 WebUI）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
    */
   function knownScope(
@@ -296,7 +296,7 @@ async function run(caps: Caps): Promise<void> {
     const { message } = data;
     const sessionId = message.sessionId;
 
-    // 禁言期一律吞：不看作用域、不看来源（idle、委派、调度消息同样不说话）。
+    // 禁言期一律吞：不看作用域、不看来源（idle、调度消息同样不说话）。
     // 禁言状态只由关键词或平台禁言针对具体会话写入，作用域之外的会话不会被误伤。
     // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
     if (loading) await loading;
@@ -316,8 +316,8 @@ async function run(caps: Caps): Promise<void> {
 
     getOrCreate(sessionId, scope.platform, scope.sessionType, scope.targetId);
 
-    // immediate（@/戳一戳/名字）穿透冷却与限速。内部注入（带 source：闲置触发、定时任务、workflow、
-    // 跨会话委派）不过冷却——定时提醒等不该被回复后冷却静默吞掉——但仍受限速约束（防刷屏护栏）。
+    // immediate（@/戳一戳/名字）穿透冷却与限速。内部注入（带 source：闲置触发、定时任务、workflow）
+    // 不过冷却——定时提醒等不该被回复后冷却静默吞掉——但仍受限速约束（防刷屏护栏）。
     if (message.triggerType !== 'immediate') {
       if (!message.source && service.isCoolingDown(sessionId)) {
         logger.debug(`[flow] 冷却中 → 吞噬 | session=${sessionId}`);
@@ -333,7 +333,7 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // agent 真实回复后记冷却与限速，只对作用域内会话，委派闸门与闲置选会话读的就是这份记账。作用域与入站带 source 的
+  // agent 真实回复后记冷却与限速，只对作用域内会话，闲置选会话读的就是这份记账。作用域与入站带 source 的
   // 内部注入同一口径（knownScope）
   events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;

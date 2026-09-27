@@ -496,7 +496,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(block).toContain('标注 Assistant·你自己');
   });
 
-  it('索引侧：triggerType=proactive 的伪 incoming（委派/工作流派发的 AI 文本）不入向量库', async () => {
+  it('索引侧：triggerType=proactive 的伪 incoming（第三方 proactive 代发的 AI 文本）不入向量库', async () => {
     const { host, store } = await setup({});
     // 事件键经 declaration merging 声明，测试从源码路径导入拿不到增广——
     // 以宽签名断言 emit（同文件 POINT 常量的 never 技法对双参 emit 会把实参也打成 never）
@@ -509,13 +509,13 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       });
 
     // 顺序关键：proactive 先入队。索引队列 concurrency=1 FIFO——若守卫失效，
-    // META 会先于真人发言落库，下方全等断言即红。此前「先真人后 META + 轮询
+    // 代发文本会先于真人发言落库，下方全等断言即红。此前「先真人后代发文本 + 轮询
     // length===0 即退出」的写法对守卫零敏感（2026-08-27 审计变异实测存活）。
     await emitArchived({
-      content: '[跨会话委派 META]\nAI 撰写的任务文本',
+      content: 'AI 撰写的任务文本',
       sessionId: 's2',
       platform: 'onebot',
-      source: 'proactive:from:s0',
+      source: 'third-party:x',
       triggerType: 'proactive',
     });
     // 三漏路径（2026-08-28 用户裁定全堵）：scheduler / workflow send_message / subtask 派发

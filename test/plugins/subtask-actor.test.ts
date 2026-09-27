@@ -11,7 +11,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 //
 // 子任务消息的 userId 是归档用的物理来源标记（`parent:<id>`，authority 查不到，
 // 等价匿名）；授权身份走 actor——子任务工具以创建者的权限等级执行。
-// 不变量与 delegate_to_session 同：有身份透传 / 匿名不发明 / 只认 callCtx snapshot。
+// 不变量：有身份透传 / 匿名不发明 / 只认 callCtx snapshot。
 // ════════════════════════════════════════════════════════════
 
 type Handler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;

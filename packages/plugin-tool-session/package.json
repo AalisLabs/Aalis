@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "会话工具：让 AI 读写当前会话状态",
+  "description": "会话工具：按 sessionId 读取会话历史，提供 session_get_history 工具与 session-history 服务",
   "type": "module",
   "keywords": [
     "aalis",
@@ -29,17 +29,12 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
-    "@aalis/api-flow-control": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-platform": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-history": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-agent": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
@@ -51,18 +46,13 @@
     "service": {
       "optional": [
         "tools",
-        "memory",
-        "platform",
-        "persona",
-        "flow-control"
+        "memory"
       ],
       "provides": [
         "session-history"
       ],
       "required": [
         "config",
-        "events",
-        "hooks",
         "logger",
         "provide"
       ]

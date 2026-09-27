@@ -10,17 +10,17 @@
 
 ## 未发布
 
-回复闸门职责重组、模型触发插件与随之的修复。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
+回复闸门职责重组、模型触发插件与随之的修复，以及删除跨会话委派工具。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
 
 待发布的包：
 
-- 有代码或契约改动（14 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
+- 有代码或契约改动（15 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-agent、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
-- plugin-commands、plugin-scheduler、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
+- api-agent、api-authority、plugin-authority、plugin-commands、plugin-llm-deepseek、plugin-memory-vector、plugin-scheduler、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
 
-### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
+### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
 
 trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳一戳 / 名字直通、计数与活跃指数判定、闲置主动开口。flow-control 只做节流硬闸：禁言（含落盘与平台禁言同步）、回复后冷却、限速。入站相位随之对调为 `confirm → command → trigger → flow → dispatch`（顺序常量 `INBOUND_PHASE_ORDER` 在 `@aalis/api-gateway`）。
 
@@ -30,15 +30,15 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 - 被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速；禁言期除外。
 - 名字检测取 `triggerNames` 与全部已登记人设（`persona` 服务的全部提供者）的名字、昵称的并集，人设按会话取：与 agent 同一取法，经 session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给 `getPersonaName` / `getNickNames`。会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响；session-manager 缺席时取全局默认的卡，解析抛错时同样取全局默认的卡并记一条 warn（同一原因只记一次）。此前只取当前生效人设的主卡，会话改用别的卡时那张卡的名字不算点名。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字、照常判定，记一条 warn（同一提供者同一原因只记一次）；此前整条判定异常，记 warn 后放行、不写 `triggerType`。
-- 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、跨会话委派、定时任务注入的消息同样被吞。禁言只在入站把关，挡的是禁言之后才开始的回合：命中禁言关键词时正在生成的回复照常发出。
-- 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow、跨会话委派）不经触发策略，不计数，`triggerType` 不被改写（委派的 `proactive` 原样保留）；flow 相位对它不查回复后冷却，禁言与限速照常生效（限速仅在会话落入 flow-control 作用域时）。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：先用会话已记下的平台与类型，没有再按会话 ID 约定推断（见下文回复记账一条）；此前只看消息自带的类型，默认 `*:group` 下算作用域外（作用域配成 `*`，或配成 `onebot:*` 且消息平台为 `onebot` 时本来就在作用域内）。因此默认作用域 `*:group` 下配置了限速时（`rateLimitWindow` 默认 0，即关闭），bot 在某个群的限速窗口已满，发往该群的定时提醒、workflow 输出会被吞掉并做影子归档，定时任务不重试；session 档闲置提示同样被吞（闲置提示不归档）；委派在派发前就被限速闸拒绝。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`；第三方适配器投递真人消息**不得**设置 `source`（`schema-message` 的字段说明已据此更新），否则会被当作内部注入跳过触发策略与冷却。
+- 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、定时任务注入的消息同样被吞。禁言只在入站把关，挡的是禁言之后才开始的回合：命中禁言关键词时正在生成的回复照常发出。
+- 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow）不经触发策略，不计数，`triggerType` 不被改写（workflow agent 节点的 `proactive` 原样保留）；flow 相位对它不查回复后冷却，禁言与限速照常生效（限速仅在会话落入 flow-control 作用域时）。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：先用会话已记下的平台与类型，没有再按会话 ID 约定推断（见下文回复记账一条）；此前只看消息自带的类型，默认 `*:group` 下算作用域外（作用域配成 `*`，或配成 `onebot:*` 且消息平台为 `onebot` 时本来就在作用域内）。因此默认作用域 `*:group` 下配置了限速时（`rateLimitWindow` 默认 0，即关闭），bot 在某个群的限速窗口已满，发往该群的定时提醒、workflow 输出会被吞掉并做影子归档，定时任务不重试；session 档闲置提示同样被吞（闲置提示不归档）。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`；第三方适配器投递真人消息**不得**设置 `source`（`schema-message` 的字段说明已据此更新），否则会被当作内部注入跳过触发策略与冷却。
 - adapter-onebot 把好友申请、入群邀请与加群申请合成的 `[系统通知]` 消息标上 `source: 'onebot-request'`，按内部注入处理：不经触发判定，不受回复后冷却约束，禁言与限速照常。此前它们不带 `source`，群里的加群申请被当作真人消息计数，计数未满时归档后吞掉，不作为当前消息送达 agent，只在该群下次触发时以历史出现。
 - 第一方 plugin-subtask 派发给子会话的任务消息仍不带 `source`，入站相位按真人消息处理：触发插件的作用域里会话类型段为通配（`*`、`onebot:*` 等）时会被计数判定吞掉、子任务不启动，flow-control 的作用域为通配时子会话冷却期内的追问也会被吞；默认作用域 `*:group` 不受影响。
 - 冷却期内的禁言关键词照常生效；平台禁言期内的关键词不再识别，不会缩短平台禁言。戳一戳通知不做禁言关键词匹配。
 - 禁言期内的消息不累计计数。关键词禁言在命中时即清零本会话的计数与活跃指数；平台禁言在禁言期内有消息到来时清零——平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。禁言期内的消息与命中禁言关键词的那条算闲置触发的会话活动：session 档闲置从这条消息起重排、退避复位为 1；此前 session 档不因禁言期的消息重排，解禁后闲置提示可能在群里刚有人说过话不久就发出。
 - session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
 - platform 档闲置触发把注入本身记为 bot 开口，agent 沉默时不会反复挑中同一会话；禁言期内 session 档到点跳过。
-- 冷却与限速只按 agent 的真实回复计，且只对 flow-control 作用域内的会话记账：按会话已记下的类型判；没有流控状态或状态缺类型的会话（重启后没人说话的群、消息都被 trigger 吞掉的群、只有禁言记录的群）按会话 ID 的 `<platform>:<self>:<type>:<target>` 约定推断类型与目标，推断结果只写进 flow-control 自己的会话状态，不回写消息；会话 ID 不符合约定的（如 WebUI）类型未知，只有会话类型段为通配的作用域（`onebot:*`、`*`）命中。默认 `*:group` 下委派、定时任务发往群的回复照常计入，前提是会话已有记下类型的流控状态，或状态里记下的平台（没有则用出站平台）与会话 ID 前缀一致（WebUI 与配置文件里建的定时任务平台默认是 `internal`，发往没有流控状态的群时不推断、不计）；发往私聊或 WebUI 的不计入，委派闸门对后者不设限；需要限制的在 `scopes` 里纳入。委派派发时不再预记一次回复，同一次委派不会被计两次，也不会在回复落地前给目标会话预设冷却。
+- 冷却与限速只按 agent 的真实回复计，且只对 flow-control 作用域内的会话记账：按会话已记下的类型判；没有流控状态或状态缺类型的会话（重启后没人说话的群、消息都被 trigger 吞掉的群、只有禁言记录的群）按会话 ID 的 `<platform>:<self>:<type>:<target>` 约定推断类型与目标，推断结果只写进 flow-control 自己的会话状态，不回写消息；会话 ID 不符合约定的（如 WebUI）类型未知，只有会话类型段为通配的作用域（`onebot:*`、`*`）命中。默认 `*:group` 下定时任务、workflow 发往群的回复照常计入，前提是会话已有记下类型的流控状态，或状态里记下的平台（没有则用出站平台）与会话 ID 前缀一致（WebUI 与配置文件里建的定时任务平台默认是 `internal`，发往没有流控状态的群时不推断、不计）；发往私聊或 WebUI 的不计入；需要限制的在 `scopes` 里纳入。
 - plugin-media 的 `processMessage` 按消息对象只处理一次：同一条消息再次调用（进行中则等它）返回同一份报告，不重复识别。写回 `_attachmentDescriptions` 时保留本插件不写的位：此前 file-reader 的预处理器先于 media 运行时（两者先后取决于登记次序），文件描述会被整表覆盖冲掉。写回 `attachments` 时不再整表替换，只给写回那一刻的数组逐项补 `mimeType`，识别期间 file-reader 换好的 `aalis-file://` 引用不会被改回原始数据；plugin-file-reader 的预处理器结尾同样只写文件附件自己的描述位，不再整表写回开头读到的描述，换 `aalis-file://` 引用时也按写回那一刻的附件展开，不丢识别期间补上的 `mimeType`。
 - plugin-message-archive 的 `archiveIncoming` 对传入的消息对象调 `processMessage`，识别结果（附件描述、补齐的 `mimeType`）写回入参；此前对内部拷贝识别，入参不变。触发判定已启动的识别在归档时命中，不再识别第二遍。
 
@@ -56,7 +56,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 - **作用域归属**：计数、活跃指数与闲置触发改按 trigger-policy 的 `scopes` / `overrides` 生效，不再看 flow-control 的作用域。把 override 从 flow-control 搬到 trigger-policy 会顺带在 trigger-policy 启用该作用域（写一条 override 即视为启用）。trigger-policy 里已有同一 `scope` 的条目时应合并进去，不要另起一条：具体度相同时只取先出现的一项。flow-control `overrides` 里残留的旧字段不会被 runtime 裁剪（数组项不按 schema 裁），插件也不告警，需手动删除。
 - **minimal 模板档**（只装 flow-control、未装 trigger-policy）配置过闲置触发的，升级后须装 plugin-trigger-policy 才有闲置触发。装上后默认按计数与活跃指数判定是否开口；要保持此前逐条回复的节奏，设 `intervalMode: fixed`、`fixedInterval: 1`。注意授权主体不同：群聊里未被 @ 的消息走 interval 判定，授权身份回填为无主体（工具按匿名等级执行），此前按发言者等级执行。
 - **`@aalis/api-flow-control` 收窄**：`FlowControlService` 只剩 `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted`；删除 `getStateSnapshot` / `recordIncoming` / `recordTriggered` / `recordReply` / `getThreshold` / `rescheduleIdle` 与 `FlowSessionStateSnapshot`。计数与阈值归 trigger-policy 内部；冷却与限速由 flow-control 监听 `outbound:message` 自行记账，自建主动发送通道发 `source: 'agent'` 的 `outbound:message` 即被计入。
-- **`@aalis/api-platform` 删除 `PlatformAdapter.checkAndRecordProactiveSend`**：跨会话委派改由 plugin-tool-session 直接查 flow-control（目标会话禁言中或限速已满即拒绝），适配器无需实现任何方法；自研适配器删掉该方法即可。自己调用过该方法做委派限速的第三方代码，改用 `flowControl.current?.isMuted(sessionId)` / `isRateLimited(sessionId)`（只检不记，限速按目标会话的真实回复计）。
+- **`@aalis/api-platform` 删除 `PlatformAdapter.checkAndRecordProactiveSend`**：它只服务跨会话委派的限速，委派工具已随本批删除（见下文「删除跨会话委派工具」），适配器无需实现任何方法；自研适配器删掉该方法即可。自己调用过该方法做委派限速的第三方代码，改用 `flowControl.current?.isMuted(sessionId)` / `isRateLimited(sessionId)`（只检不记，限速按目标会话的真实回复计）。
 - **plugin-trigger-policy 不再注册 `trigger-policy` 服务**：运行时描述符 `triggerPolicy` 与类型 `TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除，原服务没有外部消费者。判定结果仍写在 `message.triggerType`。本插件改为向新服务 `trigger` 提供自己的实例（见本节开头）。
 - **相位顺序**：注册在 `inbound:flow` 的第三方 handler 现在运行在 `inbound:trigger` 之后，能读到 `triggerType`；注册在 `inbound:trigger` 的第三方 handler 现在先于禁言、冷却、限速执行。依赖"flow 先于 trigger"的 handler 需改挂相位。
 
@@ -76,6 +76,32 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 - adapter-onebot 合并转发的摘要不可用、信封退化为截断的原文时，改为代理安全截断：截断边界落在 emoji 中间时整字符丢弃，信封不再以孤代理结尾。此前孤代理随信封归档，再随历史窗口进入模型请求，会被严格的 JSON 解析器或分词器拒收。
 
 **迁移**：自定义 persona 实现支持按会话选卡的，`getPersonaName` / `getNickNames` 按 `options.persona` 返回那张卡的名字、昵称；不支持的忽略参数即可（名字表按主卡取）。
+
+### 删除跨会话委派工具（@aalis/plugin-tool-session、@aalis/schema-message、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-agent）
+
+plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两个工具，出于安全原因，不提供开关：
+
+- `list_known_sessions` 不按调用者过滤，把最近活跃的全部会话连同各自最后一条消息的前 80 字交给任何触发者。群成员让 bot 列出会话，owner 的 WebUI 聊天和其他人私聊的最新一句都会显示出来。
+- `delegate_to_session` 让多人平台上的任何人都能把任务派进任意已知会话，包括 owner 的 WebUI 会话。目标会话按自己的记忆与工具组推理，回复最多 2000 字原样交回发起会话。按发起者回填的授权身份（`actor`）只挡住需要等级的工具，目标会话里不需要等级的工具和它的聊天内容照样可达。它还能借 bot 向别的群或私聊发消息（私聊默认不在 flow-control 的限速作用域内），任务正文会永久写进目标会话的历史。
+
+会话之间的协作将以「会话间消息」重新设计：权限跟随消息链的源头，工具取接收会话自己的，会话之间互不信任。新接口按那时的形态提供，不恢复这两个工具。
+
+对用户的影响：
+
+- 这次删除没有堵住跨会话读取。plugin-memory-history 的 `recent_messages`（`session-history` 组，不声明 risk，开了该组的会话里任何触发者都能调用）与 `list_known_sessions` 用同一个后端查询，同样不按调用者过滤：模型传 `scope: 'cross-platform'` 时不按平台过滤、只排除当前会话，返回其他会话（含 owner 的 WebUI 会话）的消息原文，每次最多取到 memory 后端的 `crossSessionMaxLimit` 条（默认 1000）。该插件的 `injectEnabled` 开启时，同平台其他会话（含别人与 bot 的私聊）的近期消息原文还会注入每个回合的提示词。不想让多人平台读到这些内容的，关掉该插件的 `toolEnabled` 与 `injectEnabled`，或从多人平台的 `enabledToolGroups` 里去掉 `session-history`（`session_get_history` 随之不可用）。
+- QQ（onebot）与 WebUI 里都不能再列出会话、向别的会话派发任务。在私聊里让 bot「去某个群禁言某人」这类用法随之失效；plugin-tool-onebot 的群管理工具接受 `group_id`，当前会话开了对应工具组时可以直接指定目标群。
+- session-manager 平台档或会话配置的 `enabledToolGroups` 里写着 `session-delegate` 的，这一项变为无效项：启动与热重载都不报错、不告警（数组项不按 schema 裁剪，`multiselect` 只校验元素类型），该项不再匹配任何工具，可以手动删掉。
+- plugin-tool-session 的配置项 `crossSessionEnabled` 与 `crossSessionDefaultTimeoutSec` 删除。runtime 在启动与热重载时按 schema 裁掉这两项并写回配置文件，记一条 warn。
+- plugin-tool-session 不再依赖 `events`、`hooks`、`platform`、`persona`、`flow-control` 服务，也不再挂 `agent:input:before` / `agent:turn:after` 中间件。
+- plugin-agent 对 `triggerType: 'proactive'` 的消息不再解析 `proactive:from:<sid>` 形式的 `source`：系统块里不再有「源会话 ID」一行和读取源会话历史的提示，消息 `metadata` 不再带 `sourceSessionId`（第一方没有读取方）。workflow agent 节点的消息不带这种 `source`，呈现不变。
+
+**破坏性变更与迁移**：
+
+- **`@aalis/schema-message` 删除 `IncomingMessage.proactiveDepth`**：委派链深度，唯一的写入方与读取方都是委派工具。读写它的代码删掉该字段。`source` 字段说明里的 `'proactive:from:<sid>'` 示例一并删除。`triggerType: 'proactive'` 保留，第一方的生产者现在只有 workflow 的 agent 节点。
+- **`@aalis/api-persona` 删除 `PersonaService.getSessionState`**：唯一的调用方是委派工具，用来把目标会话的结构化状态附在委派结果里；plugin-persona 的实现一并删除。会话状态持久化（`statePersistence`）与「上一轮状态」注入不变。自研 persona 实现可以删掉这个方法；调用过它的第三方代码改为自己保存需要的状态。
+- 调用 `list_known_sessions` / `delegate_to_session` 的 skill、workflow `tool` 节点或提示词需要删掉相应步骤，工具不存在时调用会返回「工具未找到」。
+
+要发布的包与档位（0.x 次版本可删公开 API）：plugin-tool-session、schema-message、api-persona、plugin-persona 按 minor 发布；plugin-agent 按 patch 发布。plugin-flow-control 的 `scopes` 配置说明去掉了「委派闸门」，随本批发布，档位不因此改变。本节不需要抬任何包间依赖下限：删掉的字段与方法在第一方已没有使用方，plugin-tool-session 去掉了对 api-flow-control、api-hooks、api-persona、api-platform 的依赖。暂不升级 plugin-tool-session 的，委派工具仍在，并且在新版 plugin-adapter-onebot 下失去限速闸（见「必须同批升级的包」）。要在旧版里关掉委派，把 plugin-tool-session 的 `crossSessionEnabled` 设为 `false`（旧版默认 `true`），或从多人平台的 `enabledToolGroups` 里去掉 `session-delegate`。
 
 ### 必须同批升级的包
 

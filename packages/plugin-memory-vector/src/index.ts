@@ -613,9 +613,8 @@ async function run({
 
   async function indexUserMessage(msg: IncomingMessage, archived: Message): Promise<void> {
     // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
-    //（triggerType 判据；全仓生产者=跨会话委派 + workflow agent 节点，内容是 AI 撰写的
-    // 任务与 META 文本），不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」
-    // 形态回流。
+    //（triggerType 判据；全仓生产者=workflow agent 节点，内容是 AI 撰写的任务文本），
+    // 不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」形态回流。
     if (msg.source === 'idle-trigger') return;
     if (msg.triggerType === 'proactive') return;
     // 2026-08-28 用户裁定「三条全堵」：以下伪 incoming 同为 AI/系统撰写文本，不带

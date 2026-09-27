@@ -134,7 +134,7 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 
 > 注：`http_request`（`plugin-tool-system` 的 `system` 组）也未声明 risk，解析为 public。
 > 它**不在** onebot 的 enabledGroups 里（onebot 只开 search / onebot-* / browser / math /
-> session-* / scheduler / user-relation），故当前 bot 部署下不可达。与同文件 `http_download`
+> session-history / scheduler / user-relation），故当前 bot 部署下不可达。与同文件 `http_download`
 >（`restricted + confirm`）的不对称是有意的：后者上闸因为**写 storage**，与出网无关。
 >
 > 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
@@ -144,18 +144,28 @@ commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { r
 > 叫出一个本回合没下发给它的名字即可执行（已实测复现）。现已在执行面补齐同一判据——
 > 调用方传了 `enabledGroups` 时不命中即拒。上面「不在 enabledGroups 里故不可达」的判据
 > 因此才真正成立；引用它作为维持 public 的理由时，前提是执行面的闸在。
-> 分组闸有一个旁路：多人平台开了 `session-delegate` 组时，群成员可以用 `delegate_to_session` 把任务派进
-> owner 平台（webui / cli）的会话，目标会话按**它自己的**工具集推理，授权身份仍是发起者（actor）。
-> 此时 owner 平台开放的 public 带组工具（包括 `http_request`）对发起者可达。
+> 分组闸曾有一个旁路：多人平台开了 `session-delegate` 组时，群成员可以用 `delegate_to_session` 把任务派进
+> owner 平台（webui / cli）的会话，目标会话按**它自己的**工具集推理，owner 平台开放的 public 带组工具
+> （包括 `http_request`）因此对发起者可达。该工具组已删除，这条旁路随之消失。
 
 2026-08-23 复核补充（逐条对码核验后维持不声明，勿再报）：
 
-- `http_request` / `recent_messages` / `list_known_sessions`：曾统一抬档，经用户裁定全部回退——
+- `http_request` / `recent_messages`：曾统一抬档，经用户裁定全部回退——
   读类档位牺牲的是爬网页与跨群感知这类核心体验，且 http_request 有分组闸兜底（见上）。
-- `delegate_to_session`：维持 public，但按 schema-message 的 actor 契约回填授权身份——
-  权限跟发起者走（owner 委派出去才有 owner 能力，匿名委派只有等级 0），比抬档位精确。
 - 定档纪律：引用其他工具档位作判据前先读其注释的真实理由（`browser_navigate` 的 sensitive
   源于共享页面池带登录态、`file_read` 源于本机隐私，均与「出网」无关）。
+
+跨会话委派工具组 `session-delegate`（`list_known_sessions` 与 `delegate_to_session`）已删除，问题不在档位：
+`list_known_sessions` 不按调用者过滤，把各会话最近一条消息的前 80 字交给任何触发者；`delegate_to_session`
+按 actor 回填授权身份，只挡住了需要等级的工具，目标会话里不需要等级的工具照常可用，目标会话的回复原样带回
+发起会话，任务正文还会永久写进目标会话的历史。会话之间的协作将以「会话间消息」重新设计：权限跟随消息链的源头，
+工具取接收会话自己的，会话之间互不信任。
+
+这次删除没有覆盖跨会话读取。`recent_messages`（`plugin-memory-history`）与 `list_known_sessions` 用同一个后端查询，
+同样不按调用者过滤：模型传 `scope: 'cross-platform'` 时不按平台过滤、只排除当前会话，返回其他会话（含 owner 的
+WebUI 会话）的消息原文，每次最多取到 memory 后端的 `crossSessionMaxLimit` 条（默认 1000）。它的档位按上面的复核
+维持 public，多人平台开着 `session-history` 组时，群成员仍能经它读到 owner 的 WebUI 聊天与其他人的私聊。该插件的
+`injectEnabled` 开启时，同平台其他会话（含别人与 bot 的私聊）的近期消息原文还会注入每个回合的提示词，不经任何工具。
 
 与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
 cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。
