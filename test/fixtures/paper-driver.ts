@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { BoundDoctor, CheckResult, CheckSpec } from '../../packages/api-doctor/src/index.js';
 import type { GatewayService } from '../../packages/api-gateway/src/index.js';
 import type { RemoteAgentProvider } from '../../packages/api-remote-agent/src/index.js';
 import type {
@@ -9,6 +10,7 @@ import type {
 import type { RegisteredTool, ToolCallContext } from '../../packages/api-tools/src/index.js';
 import type { Events, Logger } from '../../packages/core/src/index.js';
 import { readConfig } from '../../packages/plugin-paper/src/config.js';
+import { registerPaperDoctor } from '../../packages/plugin-paper/src/doctor.js';
 import { PaperDriver } from '../../packages/plugin-paper/src/driver.js';
 import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { Isolation } from '../../packages/plugin-paper/src/rooms.js';
@@ -24,7 +26,8 @@ import { fixedRef, ref } from './service-ref.js';
 // 周边一律替身——远端用 ScriptedRemote，会话管理按会话 id 给房间配置，storage 是 pluginData 与 paper
 // 两个根的内存实现（文件表可跨「重启」复用），网关记下出站消息。时钟用 vitest 的假时钟：
 // 用例在 beforeEach 里 useFakeTimers（含 Date），驱动的 now 取 Date.now。
-// owner 的管理动作（恢复、换新、清空、标为已读）直接调驱动的方法，WebUI 的接线在白纸页。
+// owner 的管理动作（恢复、换新、清空、标为已读）直接调驱动的方法，WebUI 的接线在白纸页。诊断项 paper.config
+// 与驱动接在同一份账本上（doctor() 跑一次），会话管理的替身没有平台档、会话列表为空。
 // 完成通知不接（驱动交给它的回调是空的），通知经真实 App 测，见 paper-notices.test.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -90,6 +93,8 @@ export interface DriverHub {
   /** 内存里的一件任务 */
   task(id: string): TaskRecord;
   call(name: string, args: Record<string, unknown>, ctx?: ToolCallContext): Promise<Record<string, unknown>>;
+  /** 跑一次诊断项 paper.config */
+  doctor(): Promise<CheckResult>;
   /** 真人在房间里交一件任务，返回任务 id（受理失败就抛） */
   accept(room?: string, text?: string, userId?: string): Promise<string>;
   /** 停机：中止信号并等收尾落盘 */
@@ -136,6 +141,8 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
     getSession: (id: string) =>
       ({ id, name: id, children: [], status: 'active', config: {}, createdAt: 0, updatedAt: 0 }) as SessionInfo,
+    getPlatformProfiles: () => ({}),
+    listSessions: () => [],
   } as unknown as SessionManagerService);
   const outbound: OutgoingMessage[] = [];
   const gateway = fixedRef<GatewayService>({
@@ -174,6 +181,22 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     kick: paperId => driver.kick(paperId),
     cancel: (taskId, via, gate) => driver.cancel(taskId, via, gate),
   });
+  let check: CheckSpec | undefined;
+  registerPaperDoctor({
+    doctor: {
+      registerCheck(spec: CheckSpec) {
+        check = spec;
+        return () => {};
+      },
+    } as unknown as BoundDoctor,
+    sessionManager,
+    remote,
+    ledger: store,
+    isolation,
+    cfg,
+    signal: controller.signal,
+    listingFailures: () => driver.listingFailures(),
+  });
   driver.start();
 
   const call = async (name: string, args: Record<string, unknown>, ctx: ToolCallContext = human('30001', ROOM_A)) => {
@@ -196,6 +219,11 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
       return task;
     },
     call,
+    async doctor() {
+      if (!check) throw new Error('诊断项未登记');
+      const out = await check.run();
+      return Array.isArray(out) ? out[0] : out;
+    },
     async accept(roomId = ROOM_A, text = `任务原文 ${++taskSeq}`, userId = '30001') {
       const res = await call('paper_task', { text, name: `任务 ${taskSeq}` }, human(userId, roomId));
       if (res.ok !== true) throw new Error(`paper_task 未受理：${String(res.error)}`);

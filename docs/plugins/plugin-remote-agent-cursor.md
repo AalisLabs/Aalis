@@ -99,7 +99,7 @@ plugins:
 
 ### 其他接口
 
-- `runCost`：`GET /v1/agents/{id}/usage?runId=<runId>`，在 `runs[]` 里按 `runId` 找对应项，花费取 `cost.chargedCents` 与 `cost.rawCostCents` 的较大者，另带 token 用量；没有 `cost` 时返回 `undefined`（费用暂缺）。取较大者是因为文档写计划内额度、BYOK、赠送额度的用量 `chargedCents` 为 0，按请求计价的用量 `rawCostCents` 为 0；只取 `chargedCents` 时，计划内额度的用量按 0 入账，白纸的日上限与换新都不再生效。试点账号实测两者恒等，不能依赖。
+- `runCost`：`GET /v1/agents/{id}/usage?runId=<runId>`，在 `runs[]` 里按 `runId` 找对应项，花费取 `cost.chargedCents` 与 `cost.rawCostCents` 的较大者；同一项里的 `usage` 是这一轮全部模型调用的累计 token 数，不是上下文长度，不交出。没有 `cost` 时返回 `undefined`（费用暂缺）。取较大者是因为文档写计划内额度、BYOK、赠送额度的用量 `chargedCents` 为 0，按请求计价的用量 `rawCostCents` 为 0；只取 `chargedCents` 时，计划内额度的用量按 0 入账，白纸的日上限与换新都不再生效。试点账号实测两者恒等，不能依赖。
 - `cancelRun`：409 `run_not_cancellable` 表示已到终态，视为成功。
 - `deleteAgent`：404 视为已删。
 - `listAgents`：`GET /v1/agents`（默认含已归档的代理），排除 `reconcileIgnoreNames` 里的名字。

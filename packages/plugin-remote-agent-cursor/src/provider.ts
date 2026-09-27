@@ -597,7 +597,8 @@ export class CursorProvider implements RemoteAgentProvider {
 
   /**
    * 计入额度的花费取 chargedCents 与 rawCostCents 的较大者：文档写计划内额度、BYOK、赠送额度的用量 chargedCents
-   * 为 0，按请求计价的用量 rawCostCents 为 0（试点账号实测两者恒等，不能依赖）。
+   * 为 0，按请求计价的用量 rawCostCents 为 0（试点账号实测两者恒等，不能依赖）。同一项里 usage 的 token 数是这一轮
+   * 全部模型调用的累计，不是上下文长度，不交出。
    */
   async runCost(agentId: string, runId: string, signal: AbortSignal): Promise<RunCost | undefined> {
     const path = `/v1/agents/${enc(agentId)}/usage?runId=${enc(runId)}`;
@@ -609,12 +610,7 @@ export class CursorProvider implements RemoteAgentProvider {
     const charged = num(cost.chargedCents);
     const raw = num(cost.rawCostCents);
     if (!run || (charged === undefined && raw === undefined)) return undefined;
-    const usage = asRecord(run.usage);
-    return {
-      cents: Math.max(charged ?? 0, raw ?? 0),
-      inputTokens: num(usage.inputTokens) ?? 0,
-      cacheReadTokens: num(usage.cacheReadTokens) ?? 0,
-    };
+    return { cents: Math.max(charged ?? 0, raw ?? 0) };
   }
 
   async collectArtifacts(

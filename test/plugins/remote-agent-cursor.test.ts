@@ -685,7 +685,7 @@ describe('7 错误体与限速', () => {
 });
 
 describe('8 费用', () => {
-  it('有 cost 时返回花费与 token；缺 cost 返回 undefined', async () => {
+  it('有 cost 时只返回花费（usage 的 token 数是这一轮全部模型调用的累计，不交出）；缺 cost 返回 undefined', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({
       runs: [
@@ -697,11 +697,7 @@ describe('8 费用', () => {
         { status: 'FINISHED', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } },
       ],
     });
-    await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toEqual({
-      cents: 2.5536,
-      inputTokens: 8724,
-      cacheReadTokens: 14592,
-    });
+    await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toEqual({ cents: 2.5536 });
     await expect(p.runCost(agent.id, agent.runs[1].id, signal)).resolves.toBeUndefined();
     expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/usage`)[0].path).toContain(`runId=${agent.runs[0].id}`);
   });

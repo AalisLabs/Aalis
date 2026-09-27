@@ -96,9 +96,9 @@ describe('先落盘再调远端', () => {
 });
 
 /** 跑完首件、白纸绑定了代理的测试台 */
-async function bound() {
+async function bound(config?: Record<string, unknown>) {
   const a = new ScriptedRemote();
-  const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+  const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config });
   const t1 = await hub.accept();
   await until(() => hub.task(t1).state === 'running', '首件开轮');
   const agentId = hub.task(t1).agentId ?? '';
@@ -479,6 +479,56 @@ describe('开轮结果未知时的认领', () => {
   });
 });
 
+describe('认领时列轮次失败', () => {
+  it.each([
+    ['提供者不可用', () => new RemoteAgentError('unavailable', 'GET /v1/agents/x/runs 返回 401')],
+    ['临时故障等满上限', () => new RemoteAgentError('transient', '断线')],
+  ])('安全：开轮结果未知、认领时列轮次失败（%s）：任务留在开轮中，不重发、不判失败、预留保留；列表恢复后下次认领', async (_, error) => {
+    // 认领时按请求时刻计时：单轮时长放宽，免得认领后立即到点
+    const { a, hub, agentId } = await bound({ ...DRIVER_CONFIG, maxRunMinutes: 120 });
+    let opened: string | undefined;
+    once(a, 'startRun', async ({ proceed }) => {
+      opened = ((await proceed()) as { runId: string }).runId;
+      throw new RemoteAgentError('transient', '读超时');
+    });
+    // 开轮前的核查照常列出；开轮之后的认领列不出来
+    a.intercept.listRuns = ({ proceed }) => {
+      if (opened === undefined) return proceed();
+      throw error();
+    };
+    const t2 = await hub.accept();
+    await until(() => opened !== undefined, 'POST 已到远端');
+    await advance(25 * MINUTE);
+    expect(hub.task(t2).state).toBe('starting');
+    expect(hub.task(t2).error).toBeUndefined();
+    expect(hub.store.data.reserves[t2], '预留保留').toBeDefined();
+    expect(a.callsOn('startRun', agentId), '不重发').toHaveLength(1);
+    expect(a.callsOn('listRuns', agentId).length, '之后的触发接着认领').toBeGreaterThan(1);
+
+    delete a.intercept.listRuns;
+    await advance(RECONCILE_MS);
+    await until(() => hub.task(t2).state === 'running', '下次认领');
+    expect(hub.task(t2).runId).toBe(opened);
+    expect(a.callsOn('startRun', agentId)).toHaveLength(1);
+    expect(a.runsOf(agentId)).toHaveLength(2);
+  });
+
+  it('对照：从没发出过结果未知的请求（开轮得到 busy）时列轮次失败，照旧判失败并释放预留', async () => {
+    const { a, hub } = await bound();
+    once(a, 'startRun', () => {
+      throw new RemoteAgentError('busy', '代理上有一轮在跑');
+    });
+    a.intercept.listRuns = ({ proceed }) => {
+      if (a.count('startRun') === 0) return proceed();
+      throw new RemoteAgentError('unavailable', 'GET /v1/agents/x/runs 返回 401');
+    };
+    const t2 = await hub.accept();
+    await until(() => hub.task(t2).state === 'failed', '判为失败');
+    expect(hub.store.data.reserves[t2]).toBeUndefined();
+    expect(a.count('startRun')).toBe(1);
+  });
+});
+
 describe('等待上限', () => {
   it('开轮时等过接近 10 分钟的限流，终态后核查账本外轮次又遇临时故障：照常取回成品，不判失败', async () => {
     const { a, hub } = await bound();
@@ -578,6 +628,42 @@ describe('失败原因只写宿主撰写的类别', () => {
     await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
     expect(hub.task(t2).error).toMatch(/出网方式.*远端临时故障/);
     expect(hub.task(t2).error).not.toContain(SENTINEL);
+  });
+
+  it('安全：出队时提供者不可用而停开：停开说明、告警与 paper_task 的拒绝理由只写类别，原文只进日志', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const t1 = await hub.accept();
+    await until(() => hub.task(t1).state === 'running', '首件开轮');
+    const t2 = await hub.accept();
+    a.intercept.ready = () => {
+      throw new RemoteAgentError(
+        'unavailable',
+        `GET /v1/me 返回 401：${SENTINEL}（connect ECONNREFUSED 127.0.0.1:7892）`,
+      );
+    };
+    a.finish(hub.task(t1).runId ?? '');
+    await until(() => hub.store.data.papers[PAPER_A_ID].halted !== undefined, '停开');
+    const halted = hub.store.data.papers[PAPER_A_ID].halted;
+    expect(halted?.reason).toBe('provider');
+    expect(halted?.detail).toMatch(/提供者不可用/);
+    expect(hub.task(t2).state, '任务留在队列里').toBe('queued');
+    const alert = hub.store.data.alerts.find(x => x.kind === 'provider');
+    for (const shown of [halted?.detail, alert?.message]) {
+      expect(shown).not.toContain(SENTINEL);
+      expect(shown).not.toContain('127.0.0.1');
+    }
+
+    delete a.intercept.ready;
+    const refused = await hub.call('paper_task', { text: '再来一件', name: '再来' });
+    expect(refused.ok).toBe(false);
+    expect(String(refused.error)).toMatch(/停开.*提供者不可用/);
+    expect(String(refused.error)).not.toContain(SENTINEL);
+    expect(String(refused.error)).not.toContain('127.0.0.1');
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(SENTINEL)),
+      '原文进日志',
+    ).toBe(true);
   });
 
   it('安全：建代理被拒、开轮被拒时同样只写类别', async () => {
