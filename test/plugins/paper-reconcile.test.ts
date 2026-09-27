@@ -53,11 +53,7 @@ describe('自唤醒事件', () => {
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
     const first = await runOne(hub, a);
     const rogue = a.spawnRun(first.agentId);
-    a.costOf = runId => ({
-      chargedCents: runId === rogue ? 77 : 10,
-      inputTokens: 1,
-      cacheReadTokens: 0,
-    });
+    a.costOf = runId => ({ cents: runId === rogue ? 77 : 10 });
 
     await advance(RECONCILE_MS);
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '删除自唤醒的代理');
@@ -178,9 +174,9 @@ describe('对账的范围', () => {
       remotes: { [REMOTE_A]: a },
       config: { ...DRIVER_CONFIG, papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, rotateAfterCents: 15 }] },
     });
-    a.costOf = () => ({ chargedCents: 20, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 20 });
     const first = await runOne(hub, a);
-    a.costOf = () => ({ chargedCents: 1, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 1 });
     const second = await runOne(hub, a, 'error');
     expect(hub.store.data.papers[PAPER_A_ID].binding).toBe(second.agentId);
     expect(hub.store.data.agents[first.agentId].state, '旧代理退役但还没删').toBe('retired');
@@ -225,6 +221,72 @@ describe('对账的范围', () => {
     expect(await hub.driver.acknowledge(alerts[0].id)).toBe(true);
     await until(() => hub.task(t3).state === 'running', '标为已读后出队');
     expect((await hub.call('paper_task', { text: '再来一件', name: '再来' })).ok).toBe(true);
+  });
+});
+
+describe('对账时列表连续失败', () => {
+  const RAW = 'LIST-RAW-invalid-key-0123';
+  /** 闲置归档推到对账之后，免得归档前的核查也去列轮次 */
+  const CONFIG = {
+    ...DRIVER_CONFIG,
+    papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, idleArchiveMinutes: 24 * 60 }],
+  };
+  const listWarning = async (hub: DriverHub) =>
+    (await hub.doctor()).message.split('；').find(part => part.includes('连续'));
+
+  /** 推过一次对账并等它跑完（列账号下的代理是每次对账里最后一次列表） */
+  async function pass(a: ScriptedRemote) {
+    const listed = a.count('listAgents');
+    await advance(RECONCILE_MS);
+    await until(() => a.count('listAgents') > listed, '对账列代理');
+    await advance(1000);
+  }
+
+  it('列账号下的代理连续失败 3 次时诊断项报 warning，写类别与次数、不写原文；成功一次即清零', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: CONFIG });
+    a.intercept.listAgents = () => {
+      throw new RemoteAgentError('unavailable', `GET /v1/agents 返回 401：${RAW}`);
+    };
+    await pass(a);
+    await pass(a);
+    expect(await listWarning(hub), '两次不报').toBeUndefined();
+    expect((await hub.doctor()).level).toBe('ok');
+
+    await pass(a);
+    const result = await hub.doctor();
+    expect(result.level).toBe('warn');
+    const warning = await listWarning(hub);
+    expect(warning).toContain(REMOTE_A);
+    expect(warning).toContain('3 次');
+    expect(warning).toContain('提供者不可用');
+    expect(result.message).not.toContain(RAW);
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes(RAW)),
+      '原文进日志',
+    ).toBe(true);
+    await pass(a);
+    expect(await listWarning(hub)).toContain('4 次');
+
+    delete a.intercept.listAgents;
+    await pass(a);
+    expect(await listWarning(hub), '成功一次即清零').toBeUndefined();
+    expect((await hub.doctor()).level).toBe('ok');
+  });
+
+  it('列代理的轮次失败同样计入：同一次对账里列账号下的代理成功不算恢复', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: CONFIG });
+    const first = await runOne(hub, a);
+    a.intercept.listRuns = () => {
+      throw new RemoteAgentError('rejected', `GET /v1/agents/x/runs 返回 400：${RAW}`);
+    };
+    for (let i = 0; i < 3; i++) await pass(a);
+    expect(a.callsOn('listRuns', first.agentId).length).toBeGreaterThanOrEqual(3);
+    const warning = await listWarning(hub);
+    expect(warning).toContain('3 次');
+    expect(warning).toContain('远端拒绝了请求');
+    expect(warning).not.toContain(RAW);
   });
 });
 
@@ -338,10 +400,10 @@ describe('删除代理前结清费用', () => {
   it('安全：自唤醒的轮次取消后费用一直暂缺时，删除代理前按估计记进全局日账，轮次记录随代理移除', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
-    a.costOf = () => ({ chargedCents: 40, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 40 });
     const first = await runOne(hub, a);
     const rogue = a.spawnRun(first.agentId);
-    a.costOf = runId => (runId === rogue ? undefined : { chargedCents: 40, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = runId => (runId === rogue ? undefined : { cents: 40 });
 
     await advance(RECONCILE_MS);
     await advance(2 * MINUTE);
@@ -387,7 +449,7 @@ describe('删除代理前结清费用', () => {
     await until(() => hub.task(t1).state === 'done', '首件完成');
     expect(hub.store.data.runs[firstRun].cost.state).toBe('missing');
 
-    a.costOf = runId => (runId === firstRun ? undefined : { chargedCents: 10, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = runId => (runId === firstRun ? undefined : { cents: 10 });
     await hub.driver.resume(PAPER_A_ID);
     await hub.driver.rotate(PAPER_A_ID);
     const second = await runOne(hub, a);
@@ -396,7 +458,7 @@ describe('删除代理前结清费用', () => {
     expect(a.callsOn('deleteAgent', first.agentId), '费用暂缺时不删').toEqual([]);
     expect(hub.store.data.reserves[first.id]).toBeDefined();
 
-    a.costOf = () => ({ chargedCents: 30, inputTokens: 1, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 30 });
     await advance(RECONCILE_MS);
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '补上费用后删除旧代理');
     expect(hub.task(first.id).costCents).toBe(30);

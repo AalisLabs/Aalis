@@ -2,8 +2,9 @@
 // 诊断项 paper.config：让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题
 //
 // - error：账本读取失败；同一远端账号下多于一块具名白纸；有停开的白纸；有未读的账本外代理告警。
-// - warn：取不到提供者的账号标识（按冲突处理）；平台档写了 remoteAgentTypes（这个平台所有房间都继承）；
-//   具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0。
+// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档写了 remoteAgentTypes（这个平台所有房间都继承）；
+//   具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到
+//   3 次（写类别与次数，不写提供者报错的原文）。
 // - 出网方式取自 owner 配置（提供者核实不了）时在说明里标「未核实」，不影响级别。
 // ============================================================
 
@@ -26,6 +27,8 @@ export function registerPaperDoctor(deps: {
   isolation: Isolation;
   cfg: PaperConfig;
   signal: AbortSignal;
+  /** 对账里列表连续失败到 3 次的提供者实例（见 PaperDriver.listingFailures） */
+  listingFailures: () => Array<{ type: string; count: number; categories: string[] }>;
 }): void {
   deps.doctor.registerCheck({
     id: CHECK_ID,
@@ -54,9 +57,10 @@ export function registerPaperDoctor(deps: {
         );
       }
 
-      for (const { type, papers } of unknown) {
+      for (const { type, papers, detail } of unknown) {
         warnings.push(
-          `取不到提供者「${type}」的远端账号标识（白纸 ${papers.join('、')}），按冲突处理：引用同类提供者的具名白纸都不开`,
+          `取不到提供者「${type}」的远端账号标识（白纸 ${papers.join('、')}；原因：${detail}），` +
+            '按冲突处理：引用同类提供者的具名白纸都不开',
         );
       }
       for (const [platform, profile] of Object.entries(sm.getPlatformProfiles())) {
@@ -79,6 +83,12 @@ export function registerPaperDoctor(deps: {
         }
       }
       if (cfg.globalDailyCents <= 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
+      for (const { type, count, categories } of deps.listingFailures()) {
+        warnings.push(
+          `对账时远端代理「${type}」的列表已连续 ${count} 次取不全（${categories.join('、')}），` +
+            '这期间账本外的代理与轮次查不出来',
+        );
+      }
 
       const types = new Set([cfg.defaults.remoteAgentType, ...[...cfg.papers.values()].map(s => s.remoteAgentType)]);
       for (const type of types) {

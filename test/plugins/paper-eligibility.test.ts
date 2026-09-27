@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
+import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import { type FakeCursor, startFakeCursor } from '../fixtures/fake-cursor.js';
 import {
   emptyLedger,
   fakeRemote,
@@ -176,16 +180,44 @@ describe('同账号隔离：声明 shared 的提供者，同一账号下只给�
   });
 
   it('安全：ready() 失败、取不到 accountKey 时按冲突算：自己不开，同类的其他具名白纸也不开', async () => {
+    const raw = 'GET /v1/me 返回 401：REMOTE-RAW-SENTINEL（connect ECONNREFUSED 127.0.0.1:7892）';
     const hub = await startPaperHub({
       config: TWO_PAPERS,
       rooms: TWO_ROOMS,
       remotes: {
-        [REMOTE]: fakeRemote({ accountKey: new Error('鉴权失败') }),
+        [REMOTE]: fakeRemote({ accountKey: new RemoteAgentError('unavailable', raw) }),
         'zz-remote-b': fakeRemote({ accountKey: 'acct-2' }),
       },
     });
-    await expectRefused(hub, /账号标识/);
-    await expectRefused(hub, /账号标识/, human('30001', ROOM2));
+    // 拒绝理由写出宿主撰写的类别，两块白纸都写；提供者报错的原文（远端说明、本机网络细节）不写
+    for (const ctx of [human(), human('30001', ROOM2)]) {
+      const res = await hub.call('paper_task', TASK, ctx);
+      expect(res.ok).toBe(false);
+      expect(String(res.error)).toMatch(/账号标识.*提供者不可用/);
+      expect(String(res.error)).not.toContain('REMOTE-RAW-SENTINEL');
+      expect(String(res.error)).not.toContain('127.0.0.1');
+    }
+    expect(
+      hub.logs.some(l => l.level === 'warn' && l.message.includes('REMOTE-RAW-SENTINEL')),
+      '原文进日志',
+    ).toBe(true);
+  });
+
+  it('同一实例的报错原文每次不同、类别相同时只记一次 warn', async () => {
+    const flaky = fakeRemote();
+    let n = 0;
+    flaky.ready = async () => {
+      flaky.readyCalls++;
+      throw new RemoteAgentError('transient', `GET /v1/me 返回 503：<html>Ray ID ${++n}</html>`);
+    };
+    const hub = await startPaperHub({ remotes: { [REMOTE]: flaky } });
+    await expectRefused(hub, /账号标识.*远端临时故障/);
+    await hub.call('paper_task', TASK);
+    await hub.doctor();
+    expect(n).toBeGreaterThanOrEqual(3);
+    const warns = hub.logs.filter(l => l.level === 'warn' && l.message.includes('账号标识'));
+    expect(warns).toHaveLength(1);
+    expect(warns[0].message).toContain('Ray ID 1');
   });
 
   it('安全：defaults.remoteAgentType 指向 shared 提供者时，不写名字的房间白纸不开', async () => {
@@ -254,6 +286,70 @@ describe('停开与账本外代理告警', () => {
       files: seeded(l => void l.alerts.push({ ...alert, providerType: 'zz-remote-other' })),
     });
     await expectAccepted(other);
+  });
+});
+
+describe('取不到账号标识的原因（真实的 Cursor 提供者对本机假服务）', () => {
+  const KEY = 'sk-sentinel-paper-Q7w3Zr9Lx2Vb8Nt5Kp1Hd6';
+  const UNREGISTERED = 'sk-sentinel-paper-unregistered-Fj4Gs0Ym';
+  const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
+  const life = new AbortController();
+  let cursor: FakeCursor;
+
+  beforeAll(async () => {
+    cursor = await startFakeCursor();
+    cursor.accounts.set(KEY, { userId: 100000001 });
+  });
+  afterAll(async () => {
+    life.abort();
+    await cursor.close();
+  });
+
+  function provider(overrides: Partial<CursorProviderOptions>): CursorProvider {
+    return new CursorProvider(
+      {
+        apiKey: KEY,
+        baseUrl: cursor.baseUrl,
+        model: { id: 'grok-4.7', params: { context: '256k', reasoning_effort: 'high', fast: 'false' } },
+        egressMode: 'allowlist',
+        createTimeoutMs: 5_000,
+        requestTimeoutMs: 5_000,
+        streamIdleMs: 5_000,
+        reconcileIgnoreNames: [],
+        retryBaseMs: 10,
+        pollIntervalMs: 20,
+        ...overrides,
+      },
+      { logger: silent, signal: life.signal },
+    );
+  }
+
+  it.each([
+    ['key 无效（401）', { apiKey: UNREGISTERED }, /返回 401/],
+    [
+      '模型参数不是列出的变体',
+      { model: { id: 'grok-4.7', params: { reasoning_effort: 'high', fast: 'false' } } },
+      /context/,
+    ],
+  ] as const)('%s：拒绝理由只写类别，诊断项与 warn 写出原因，同一原因只记一次 warn，都不含 key 的片段', async (_, overrides, cause) => {
+    const hub = await startPaperHub({ remotes: { [REMOTE]: provider(overrides) } });
+    await expectRefused(hub, /账号标识.*提供者不可用/);
+    const again = await hub.call('paper_task', TASK);
+    expect(String(again.error)).not.toMatch(cause);
+    const [check] = await hub.doctor();
+    expect(check.level).toBe('warn');
+    expect(check.message).toMatch(cause);
+
+    const warns = hub.logs.filter(l => l.level === 'warn' && l.message.includes('账号标识'));
+    expect(warns, '受理两次、诊断一次，同一原因只记一次').toHaveLength(1);
+    expect(warns[0].message).toMatch(cause);
+    expect(warns[0].message).toContain(REMOTE);
+
+    const key = 'apiKey' in overrides ? overrides.apiKey : KEY;
+    const text = [String(again.error), check.message, ...hub.logs.map(l => l.message)].join('\n');
+    for (let i = 0; i + 8 <= key.length; i++) {
+      expect(text.includes(key.slice(i, i + 8)), `出现了 key 的片段 ${key.slice(i, i + 8)}`).toBe(false);
+    }
   });
 });
 

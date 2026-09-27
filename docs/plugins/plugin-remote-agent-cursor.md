@@ -35,8 +35,8 @@ export default definePlugin({
 | `model.params` | map | `{ reasoning_effort: 'high', context: '256k', fast: 'false' }` | 模型参数，值一律按字符串交给接口（yaml 里没加引号的 `false`、数字会转成字符串）。须写全，并等于 `/v1/models` 列出的某个变体 |
 | `egressMode` | select | `'unknown'` | owner 在 Cursor 后台给云端代理设的出网方式：`none` / `allowlist` / `open` / `unknown`。接口读不到它，Aalis 无法核实 |
 | `createTimeoutSeconds` | number | `30` | 建代理请求的超时（最小 5）。建代理约 60 秒才回，超时后用同一 agentId 取回，不会重复建 |
-| `requestTimeoutSeconds` | number | `30` | 其余请求的超时（最小 5） |
-| `streamIdleSeconds` | number | `60` | 事件流与下载的读空闲超时（最小 20）。远端约 15 秒发一次心跳 |
+| `requestTimeoutSeconds` | number | `30` | 其余请求的超时（最小 15）。实测单次请求有时要 5 秒以上 |
+| `streamIdleSeconds` | number | `60` | 事件流与下载的读空闲超时（最小 45）。事件流连上后约 30 秒才有第一次心跳，之后每 15 到 30 秒一次，设得更短会在每段安静期断线重连 |
 | `reconcileIgnoreNames` | list | `[]` | owner 自管的代理名。`listAgents` 不列出这些代理，消费方对账时不把它们当成账本外的代理 |
 
 三个超时的最小值由配置校验告警把关；值不是正数时退回默认值。
@@ -62,7 +62,7 @@ plugins:
 
 `ready()` 依次请求 `/v1/me` 与 `/v1/models`：
 
-- `accountKey` 取 `/v1/me` 响应里 `userId` 的 SHA-256 前 16 位十六进制。同一账号的不同 key 得到同一个值，值里不含账号原文与 key。响应里没有 `userId` 时抛 `unavailable`，不按 key 计。
+- `accountKey` 取 `/v1/me` 响应里 `userId`（整数）的十进制写法的 SHA-256 前 16 位十六进制。同一账号的不同 key 得到同一个值，值里不含账号原文与 key。响应里没有 `userId`，或它不是安全范围内的整数时抛 `unavailable`，不按 key 计。
 - 模型不存在、参数少写或多写、参数组合不等于 `/v1/models` 列出的任何一个变体，都抛 `unavailable` 并写明原因。只写模型 id 时远端按默认变体（fast、500k）计费，价格是写全参数时的数倍，所以参数不成立时提供者不可用。
 - 鉴权失败抛 `unavailable`；断线、超时、5xx 抛 `transient`。
 - 成功结果缓存 10 分钟，失败不缓存。
@@ -71,7 +71,7 @@ plugins:
 
 ### 建代理与开轮
 
-- 建代理：`POST /v1/agents`，body 带消费方给的 `agentId`、代理名、前言与模型参数，不带 `envVars`，key 不进入云端虚拟机。超时或临时故障时用同一 `agentId` 重发一次；远端回 409 `agent_id_conflict` 就按 id 取回首轮的 `runId`。
+- 建代理：`POST /v1/agents`，body 带消费方给的 `agentId`、代理名、前言与模型参数，不带 `envVars`，key 不进入云端虚拟机。超时或临时故障时用同一 `agentId` 重发一次（建代理约 60 秒才回，默认超时 30 秒，首个请求超时是常态，只记 debug；两次都不成时抛出，由消费方记）；远端回 409 `agent_id_conflict` 就按 id 取回首轮的 `runId`。首轮开跑的时刻取建代理响应里 `run.createdAt`，按 id 取回时取代理的 `createdAt`：实测两者相同，都是请求到达远端的时刻。
 - 开新一轮：`POST /v1/agents/{id}/runs`。409 `agent_busy` 映射为 `busy`，409 `agent_archived` 映射为 `archived`。
 - 无参 POST（取消、归档、恢复）一律发 `{}` 加 JSON 头：只带头不带 body 时远端回 400。
 - 两种错误体都解析：业务错误 `{error:{code,message}}` 与框架层的 `{code:'error',message}`。
@@ -95,19 +95,23 @@ plugins:
 - 路径含 `..`、绝对路径、反斜杠、控制字符或 Unicode Cf 类字符（含双向控制符）、空段或 `.` 段的，拒收并记进 `rejected`；任务 id 本身不能用作目录名时整次抛 `rejected`。
 - 文件数超过上限的多余项拒收。列表报的 `sizeBytes` 只用于预检；下载时按实际读到的字节计量，超过单文件或本轮合计上限就中止并拒收。
 - 下载先取 `GET …/artifacts/download?path=<列表给的 path>` 返回的预签名链接（约 15 分钟有效），再经 `safeFetch` 下载，逐跳核对私网与重定向，不带 Authorization。
-- 列产物出错时整次取回失败。单个文件的问题只记进 `rejected`，不中断其余文件：取下载链接遇到非临时错误（404、400、414 等，如文件已被删、路径过长）、下载失败、实际大小超限、写入口拒收。取下载链接遇到临时故障或限流时照抛，由消费方整次重来。
+- 列产物出错时整次取回失败；产物列表不分页，响应没有 `items` 数组或带了下一页标记时抛 `unavailable`，不当作只有已列出的这些。单个文件的问题只记进 `rejected`，不中断其余文件：取下载链接遇到非临时错误（404、400、414 等，如文件已被删、路径过长）、下载失败、实际大小超限、写入口拒收。取下载链接遇到临时故障或限流时照抛，由消费方整次重来。
 
 ### 其他接口
 
-- `runCost`：`GET /v1/agents/{id}/usage?runId=<runId>`，在 `runs[]` 里按 `runId` 找对应项，取 `cost.chargedCents` 与 token 用量；没有 `cost` 时返回 `undefined`（费用暂缺）。
+- `runCost`：`GET /v1/agents/{id}/usage?runId=<runId>`，在 `runs[]` 里按 `runId` 找对应项，花费取 `cost.chargedCents` 与 `cost.rawCostCents` 的较大者；同一项里的 `usage` 是这一轮全部模型调用的累计 token 数，不是上下文长度，不交出。没有 `cost` 时返回 `undefined`（费用暂缺）。取较大者是因为文档写计划内额度、BYOK、赠送额度的用量 `chargedCents` 为 0，按请求计价的用量 `rawCostCents` 为 0；只取 `chargedCents` 时，计划内额度的用量按 0 入账，白纸的日上限与换新都不再生效。试点账号实测两者恒等，不能依赖。
 - `cancelRun`：409 `run_not_cancellable` 表示已到终态，视为成功。
 - `deleteAgent`：404 视为已删。
-- `listAgents`：`GET /v1/agents?limit=100`（默认含已归档的代理），排除 `reconcileIgnoreNames` 里的名字。
-- 翻页：`listRuns` 与 `listAgents` 只读第一页，翻页方式没有实测。响应带下一页标记（`nextCursor`、`hasMore` 等）时抛 `unavailable`，不把第一页当完整列表：白纸枢纽的对账与开轮认领都依赖列表完整。上线前按真实接口核一次翻页与排序。
+- `listAgents`：`GET /v1/agents`（默认含已归档的代理），排除 `reconcileIgnoreNames` 里的名字。
+- 翻页：`listRuns` 与 `listAgents` 每页带 `limit=100`（接口上限，超过回 400；文档写不带 `limit` 时默认 20 条）。响应带 `nextCursor` 时以 `cursor` 取下一页，直到末页；跨页重复的项按 id 只算一次。取不全时整次抛错，不把已取到的当完整列表，白纸枢纽的对账与开轮认领都依赖列表完整：
+  - 任何一页出错都照抛；
+  - 响应没有 `items` 数组、`nextCursor` 不是非空字符串、超过 50 页、下一页标记出现过（不会前进）时抛 `unavailable`；
+  - 带着 `cursor` 取到空页又没有下一页标记时抛 `transient`：实测列代理遇到认不出的 `cursor` 回 200 空页（列轮次回 400），标记指向的代理在翻页期间被删就是这样，重新列举即可。
+- 列表不是快照：列代理按 `updatedAt` 倒序，翻页期间更新的代理会挪到已读过的头部，这一次可能漏掉，下一次对账再补上。只有账号下超过 100 个代理、要翻页时才会出现。
 
 ### 凭据与日志
 
-key 只放在发往 `baseUrl` 的请求头里。错误信息与日志先去掉 key 的 8 字以上片段（远端可能在错误信息里回显 key 的一段），再去掉 URL 的查询串（预签名链接的签名在查询串里）；错误信息里的请求路径也去掉查询串（取下载链接的查询串带远端可控的成品路径）。所有请求都受本次调用的超时与插件激活的取消信号约束。
+key 只放在发往 `baseUrl` 的请求头里。错误信息与日志先去掉 key 的 8 字以上片段（远端可能在错误信息里回显 key 的一段），再去掉 URL 的查询串（预签名链接的签名在查询串里）；错误信息里的请求路径也去掉查询串（取下载链接的查询串带远端可控的成品路径，翻页请求带远端给的标记），超时与断线的错误同样如此。所有请求都受本次调用的超时与插件激活的取消信号约束。
 
 ## 注意事项
 

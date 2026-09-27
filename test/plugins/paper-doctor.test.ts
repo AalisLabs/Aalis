@@ -86,9 +86,10 @@ describe('诊断项 paper.config', () => {
     expect(result.message).toContain('zz-remote-gone');
   });
 
-  it('取不到账号标识时 warn，说明按冲突处理', async () => {
-    const result = await check({ remotes: { [REMOTE]: fakeRemote({ accountKey: new Error('ready 失败') }) } });
+  it('取不到账号标识时 warn，写明原因，说明按冲突处理', async () => {
+    const result = await check({ remotes: { [REMOTE]: fakeRemote({ accountKey: new Error('READY-CAUSE-401') }) } });
     expect(result.level).toBe('warn');
+    expect(result.message).toContain('READY-CAUSE-401');
     expect(result.message).toContain('按冲突处理');
   });
 

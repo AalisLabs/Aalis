@@ -19,10 +19,11 @@
 //   删除这个代理（不只归档：定时唤醒的订阅跟着代理走），它上面还有本白纸的任务时等任务取回成品后再删。
 // - 删除代理之前结清它名下的费用（删掉之后就取不到了）：自唤醒与建代理判为失败的代理照删，取不到的按估计
 //   入账；其余的等费用入账后再删。
-// - 换新：代理累计花费、上一轮上下文超过上限或 owner 点了换新时建新代理；新代理有一轮成功取回之前每轮都带
-//   旧工程包链接，成功之后删除旧代理。
+// - 换新：代理累计花费超过上限或 owner 点了换新时建新代理（不按 token 数：提供者报的是一轮里全部模型调用的
+//   累计，不是上下文长度）；新代理有一轮成功取回之前每轮都带旧工程包链接，成功之后删除旧代理。
 // - 定期检查（reconcileMinutes）：清理过期的任务记录、对账（账本里全部未删除的代理，跳过开轮中的；账号下
-//   账本外的代理）、补取暂缺的费用、删除退役的代理、闲置归档、定期清空。
+//   账本外的代理）、补取暂缺的费用、删除退役的代理、闲置归档、定期清空。对账里列代理或轮次失败按提供者实例
+//   计连续次数（一次对账里有一次列表失败就算一次，全部列出才清零），到 3 次由诊断项报出。
 // - 重启接回在 apply 返回后进行（start）；收尾时停止出队并落盘账本（drain）。不订阅 memory:clear。
 // ============================================================
 
@@ -30,7 +31,6 @@ import {
   isRemoteAgentError,
   isTerminalRun,
   type RemoteAgentEntry,
-  type RemoteAgentErrorCode,
   type RemoteAgentProvider,
   type RemoteRunSummary,
   type RunCost,
@@ -53,7 +53,7 @@ import {
 } from './ledger.js';
 import { buildPrompt } from './prompt.js';
 import { actorKey, checkRemote, type Isolation, pausedReason, resolveRoomPaper } from './rooms.js';
-import { describe, truncate } from './util.js';
+import { category, describe, truncate } from './util.js';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -71,29 +71,14 @@ const CANCEL_RETRY_MS = [10 * SECOND, 30 * SECOND, 60 * SECOND];
 /** 进展的 lastEventId 至少这么久落盘一次 */
 const PROGRESS_SAVE_MS = 30 * SECOND;
 const RESULT_TEXT_MAX = 2000;
+/** 对账里列表连续失败到这么多次，诊断项报出 */
+const LISTING_FAILURE_REPORT = 3;
 /** 占着代理的任务状态（排队的不占） */
 const ON_AGENT: ReadonlySet<TaskRecord['state']> = new Set(['starting', 'running', 'collecting']);
 
 /** 退避：5 秒起翻倍，封顶 60 秒 */
 function backoff(attempt: number): number {
   return Math.min(5 * SECOND * 2 ** attempt, 60 * SECOND);
-}
-
-/** 远端错误的类别（写进任务的失败原因）：远端报错的原文可能带远端可控的内容，只进日志 */
-const ERROR_CATEGORIES: Record<RemoteAgentErrorCode, string> = {
-  unavailable: '提供者不可用',
-  busy: '代理忙',
-  archived: '代理已归档',
-  'not-found': '远端找不到',
-  'rate-limited': '远端限流',
-  rejected: '远端拒绝了请求',
-  transient: '远端临时故障',
-};
-
-function category(err: unknown): string {
-  return isRemoteAgentError(err) && Object.hasOwn(ERROR_CATEGORIES, err.code)
-    ? ERROR_CATEGORIES[err.code]
-    : '本机处理出错';
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -157,6 +142,8 @@ export class PaperDriver {
   readonly #reaping = new Set<string>();
   /** 本次运行里确认删除的代理：列账号下的代理时迟到的旧结果不算账本外 */
   readonly #forgotten = new Set<string>();
+  /** 提供者实例 id → 对账里列表连续失败的次数与最近一次对账里失败的类别 */
+  readonly #listingFailures = new Map<string, { count: number; categories: string[] }>();
   #interval?: ReturnType<typeof setInterval>;
   #reconciling = false;
   #draining = false;
@@ -399,6 +386,16 @@ export class PaperDriver {
     return refused;
   }
 
+  /**
+   * 对账里列代理或轮次连续失败到 3 次的提供者实例（诊断项用）：账本外的代理与轮次这期间查不出来。
+   * categories 只有宿主撰写的类别，不带提供者报错的原文
+   */
+  listingFailures(): Array<{ type: string; count: number; categories: string[] }> {
+    return [...this.#listingFailures]
+      .filter(([, f]) => f.count >= LISTING_FAILURE_REPORT)
+      .map(([type, f]) => ({ type, ...f }));
+  }
+
   // ----- 运行循环 -----
 
   async #loop(paperId: string): Promise<void> {
@@ -478,8 +475,9 @@ export class PaperDriver {
       await this.#retrying(waits, () => present.instance.ready(signal));
     } catch (err) {
       if (signal.aborted || err instanceof GaveUp) throw err;
-      const detail = `远端代理「${type}」不可用：${describe(err)}`;
-      await this.#haltPaper(task.paperId, 'provider', detail, { kind: 'provider', providerType: type });
+      // 停开说明经受理的拒绝理由交给模型：只写类别，提供者报错的原文只进日志
+      const detail = `远端代理「${type}」不可用（${category(err)}）`;
+      await this.#haltPaper(task.paperId, 'provider', detail, { kind: 'provider', providerType: type }, describe(err));
       return 'pause';
     }
     const remote = await checkRemote({
@@ -529,8 +527,7 @@ export class PaperDriver {
       paper.rotateNext ||
       paper.noBundleNext ||
       bound.providerType !== type ||
-      bound.costCents > spec.rotateAfterCents ||
-      (bound.lastContextTokens ?? 0) > spec.rotateAfterInputTokens;
+      bound.costCents > spec.rotateAfterCents;
     if (rotate) return this.#createPath(task, entry, paper.binding, waits);
     return this.#runPath(task, entry, paper.binding ?? '', waits);
   }
@@ -575,10 +572,15 @@ export class PaperDriver {
     if (!agent) return this.#fail(task, '账本里找不到开轮中的代理');
     try {
       const prompt = await this.#prompt(task, entry, agent.replaces, waits);
-      const { runId } = await this.#retrying(waits, () =>
+      const { runId, startedAt } = await this.#retrying(waits, () =>
         entry.instance.createAgent({ agentId, name: agent.name, prompt }, this.#d.signal),
       );
-      await this.#started(task, runId, this.#d.now());
+      // 用时与单轮时长从远端这一轮开跑时算：建代理的响应要几十秒才回，建出之前又可能有取工程包链接与退避的等待，
+      // 重启接回时远端可能刚建出。提供者给的时刻限在请求时刻与现在之间（两边时钟可能有偏差），没给时按请求时刻
+      const now = this.#d.now();
+      const requestedAt = task.start?.requestedAt ?? now;
+      const at = startedAt === undefined ? requestedAt : Math.min(Math.max(startedAt, requestedAt), now);
+      await this.#started(task, runId, at);
       return undefined;
     } catch (err) {
       if (this.#d.signal.aborted || err instanceof GaveUp) throw err;
@@ -637,6 +639,8 @@ export class PaperDriver {
    * 在已绑定的代理上开一轮。startRun 不幂等：结果未知（resumed、临时故障或认不出的错误）时先列轮次认领；
    * busy 时核查是不是账本外的轮次在跑。发出过结果未知的请求之后，账本外恰好一轮就认领（不管这次是
    * 认领核查还是 busy 核查：那一轮很可能是本件开出的）；从没有结果未知的请求时，busy 加账本外的轮次按自唤醒处理。
+   * 发出过结果未知的请求之后列不出轮次（远端找不到代理除外）：远端那一轮可能在跑，任务留在开轮中（预留保留），
+   * 等下次触发时按重启接回的路径再认领；列出之前不重发，也不判失败。
    */
   async #postRun(
     task: TaskRecord,
@@ -656,7 +660,18 @@ export class PaperDriver {
           unarchive = false;
         }
         if (check) {
-          const unknown = await this.#retrying(waits, () => this.#unknownRuns(entry, agentId));
+          let unknown: RemoteRunSummary[];
+          try {
+            unknown = await this.#retrying(waits, () => this.#unknownRuns(entry, agentId));
+          } catch (err) {
+            const gone = isRemoteAgentError(err) && err.code === 'not-found';
+            if (!uncertain || gone || this.#d.signal.aborted) throw err;
+            const why = err instanceof GaveUp ? '等待超过上限' : describe(err);
+            this.#d.logger.warn(
+              `白纸任务 ${task.id} 开轮结果未知，认领时列代理 ${agentId} 的轮次失败，留在开轮中等下次认领: ${why}`,
+            );
+            return 'pause';
+          }
           if (uncertain && unknown.length === 1) {
             await this.#claim(task, entry, unknown[0].runId);
             return undefined;
@@ -927,7 +942,7 @@ export class PaperDriver {
     }
 
     const collected = await this.#collect(task, entry, waits);
-    await this.#settleCost(runId, entry, true, true);
+    await this.#settleCost(runId, entry, true);
 
     const outcome: TaskRecord['state'] =
       state.status === 'cancelled' ? 'cancelled' : state.status === 'finished' && !collected.error ? 'done' : 'failed';
@@ -1015,7 +1030,7 @@ export class PaperDriver {
    * 按实际费用入账；暂缺时 20 秒一次、共 3 次，仍缺就停开白纸（预留保留）。terminal：已知这一轮到了终态；
    * 否则每次先确认终态再取（刚请求取消的一轮可能还在收尾，不拿收尾前的部分金额）
    */
-  async #settleCost(runId: string, entry: RemoteAgentEntry, latest: boolean, terminal: boolean): Promise<void> {
+  async #settleCost(runId: string, entry: RemoteAgentEntry, terminal: boolean): Promise<void> {
     const { ledger, logger, signal } = this.#d;
     const run = ledger.data.runs[runId];
     if (!run || run.cost.state === 'booked') return;
@@ -1031,7 +1046,7 @@ export class PaperDriver {
         logger.warn(`取轮次 ${runId} 的费用失败: ${describe(err)}`);
       }
       if (cost) {
-        await this.#book(runId, cost, latest);
+        await this.#book(runId, cost);
         return;
       }
     }
@@ -1046,15 +1061,13 @@ export class PaperDriver {
     logger.warn(detail);
   }
 
-  async #book(runId: string, cost: RunCost, latest: boolean): Promise<void> {
+  async #book(runId: string, cost: RunCost): Promise<void> {
     const { ledger, cfg } = this.#d;
     await ledger.exclusive(async () => {
       const run = ledger.data.runs[runId];
       if (!run || run.cost.state === 'booked') return;
-      book(ledger.data, dayKey(this.#d.now(), cfg.budgetTimeZone), runId, cost.chargedCents);
+      book(ledger.data, dayKey(this.#d.now(), cfg.budgetTimeZone), runId, cost.cents);
       if (run.taskId) release(ledger.data, run.taskId);
-      const agent = ledger.data.agents[run.agentId];
-      if (agent && latest) agent.lastContextTokens = cost.inputTokens + cost.cacheReadTokens;
       await ledger.save();
     });
   }
@@ -1099,7 +1112,7 @@ export class PaperDriver {
           });
         }
       }
-      for (const r of unknown) await this.#settleCost(r.runId, entry, false, false);
+      for (const r of unknown) await this.#settleCost(r.runId, entry, false);
     }
     await this.#reap();
   }
@@ -1162,7 +1175,7 @@ export class PaperDriver {
     for (const runId of this.#unbooked(agentId)) {
       try {
         const cost = await this.#finalCost(entry, agentId, runId);
-        if (cost) await this.#book(runId, cost, false);
+        if (cost) await this.#book(runId, cost);
       } catch (err) {
         if (signal.aborted) throw err;
         logger.warn(`删除代理前补取轮次 ${runId} 的费用失败: ${describe(err)}`);
@@ -1244,8 +1257,12 @@ export class PaperDriver {
       for (const type of this.#providerTypes()) {
         const entry = resolveRemoteAgent(this.#d.remote, type);
         if (!entry) continue;
-        await this.#reconcileRuns(entry);
-        await this.#reconcileAgents(entry);
+        const failed = [...(await this.#reconcileRuns(entry)), ...(await this.#reconcileAgents(entry))];
+        if (failed.length === 0) this.#listingFailures.delete(type);
+        else {
+          const count = (this.#listingFailures.get(type)?.count ?? 0) + 1;
+          this.#listingFailures.set(type, { count, categories: [...new Set(failed)] });
+        }
       }
       await this.#retryCosts();
       await this.#reap();
@@ -1273,9 +1290,10 @@ export class PaperDriver {
     });
   }
 
-  /** 账本里这个提供者的全部未删除代理（跳过开轮中的）：有账本外的轮次就按自唤醒处理 */
-  async #reconcileRuns(entry: RemoteAgentEntry): Promise<void> {
+  /** 账本里这个提供者的全部未删除代理（跳过开轮中的）：有账本外的轮次就按自唤醒处理。返回列不出来的类别 */
+  async #reconcileRuns(entry: RemoteAgentEntry): Promise<string[]> {
     const { ledger, logger, signal } = this.#d;
+    const failed: string[] = [];
     for (const [agentId, agent] of Object.entries(ledger.data.agents)) {
       if (agent.providerType !== entry.contextId || this.#opening(agentId)) continue;
       let runs: RemoteRunSummary[];
@@ -1286,7 +1304,10 @@ export class PaperDriver {
         const idle = !Object.values(ledger.data.tasks).some(t => t.agentId === agentId && ON_AGENT.has(t.state));
         if (isRemoteAgentError(err) && err.code === 'not-found' && idle)
           await this.#forget(agentId, '远端已找不到这个代理');
-        else logger.warn(`对账：列代理 ${agentId} 的轮次失败: ${describe(err)}`);
+        else {
+          logger.warn(`对账：列代理 ${agentId} 的轮次失败: ${describe(err)}`);
+          failed.push(`列轮次：${category(err)}`);
+        }
         continue;
       }
       // 列轮次期间可能开了新一轮：以落盘后的账本为准，开轮中的仍然跳过
@@ -1294,10 +1315,11 @@ export class PaperDriver {
       const unknown = runs.filter(r => !ledger.data.runs[r.runId]);
       if (unknown.length > 0) await this.#selfWake(agentId, unknown);
     }
+    return failed;
   }
 
-  /** 账号下账本外的代理：同一 agentId 只建一条告警；未读期间每次对账都记 warn */
-  async #reconcileAgents(entry: RemoteAgentEntry): Promise<void> {
+  /** 账号下账本外的代理：同一 agentId 只建一条告警；未读期间每次对账都记 warn。返回列不出来的类别 */
+  async #reconcileAgents(entry: RemoteAgentEntry): Promise<string[]> {
     const { ledger, logger, signal } = this.#d;
     let listed: Awaited<ReturnType<RemoteAgentProvider['listAgents']>>;
     try {
@@ -1305,7 +1327,7 @@ export class PaperDriver {
     } catch (err) {
       if (signal.aborted) throw err;
       logger.warn(`对账：列远端代理「${entry.contextId}」账号下的代理失败: ${describe(err)}`);
-      return;
+      return [`列代理：${category(err)}`];
     }
     let added = false;
     for (const summary of listed) {
@@ -1326,6 +1348,7 @@ export class PaperDriver {
       added = true;
     }
     if (added) await ledger.exclusive(() => ledger.save());
+    return [];
   }
 
   /** 补取暂缺的费用（包括结束时没来得及取的） */
@@ -1340,7 +1363,7 @@ export class PaperDriver {
       if (!entry) continue;
       try {
         const cost = await this.#finalCost(entry, run.agentId, runId);
-        if (cost) await this.#book(runId, cost, false);
+        if (cost) await this.#book(runId, cost);
       } catch (err) {
         if (signal.aborted) throw err;
         logger.warn(`对账：补取轮次 ${runId} 的费用失败: ${describe(err)}`);
@@ -1538,11 +1561,13 @@ export class PaperDriver {
     await sleep(ms, this.#d.signal);
   }
 
+  /** 停开并告警；cause 是提供者报错的原文，只进日志 */
   async #haltPaper(
     paperId: string,
     reason: NonNullable<PaperState['halted']>['reason'],
     detail: string,
     alert: Pick<AlertRecord, 'kind' | 'subject' | 'providerType'>,
+    cause?: string,
   ): Promise<void> {
     const { ledger } = this.#d;
     await ledger.exclusive(async () => {
@@ -1550,10 +1575,13 @@ export class PaperDriver {
       this.#alert({ ...alert, message: detail });
       await ledger.save();
     });
-    this.#d.logger.warn(`白纸 ${paperId} 停开：${detail}`);
+    this.#d.logger.warn(`白纸 ${paperId} 停开：${detail}${cause ? `: ${cause}` : ''}`);
   }
 
-  /** 停开；已经停开的保留最早的原因 */
+  /**
+   * 停开；已经停开的保留最早的原因。detail 经受理的拒绝理由（pausedReason）交给模型，也进诊断项与白纸页：
+   * 只写宿主撰写的说明，不带提供者报错的原文
+   */
   #halt(paperId: string, reason: NonNullable<PaperState['halted']>['reason'], detail: string): void {
     this.#paper(paperId).halted ??= { reason, detail, at: this.#d.now() };
   }

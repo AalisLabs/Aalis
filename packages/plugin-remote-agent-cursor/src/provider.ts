@@ -12,8 +12,11 @@
 // - 错误体有两种：业务错误 {error:{code,message}}，框架层的 400/415 为 {code:'error',message}。
 // - 产物列表的 path 以 `artifacts/` 开头，对应虚拟机里的 /opt/cursor/artifacts；下载拿到 15 分钟的
 //   预签名链接，经 safeFetch 下载，边读边计字节。单个成品取不到下载链接（非临时错误）时只拒收这一件。
-// - 列表的翻页方式没有实测：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不把第一页当完整列表
-//   （对账与开轮认领都依赖列表完整）。
+// - 列表翻页：响应是 {items, nextCursor?}，还有下一页时 nextCursor 为本页最后一项的 id，下一页以 cursor 传回，
+//   末页不带；limit 上限 100（超过回 400；不带时默认 20 取自文档）。认不出的 cursor：列代理回 200 空页，
+//   列轮次回 400。列代理按 updatedAt 倒序，翻页期间更新的代理会挪到已读过的头部，这一次可能漏掉。
+//   列代理、列轮次都取完所有页，取不全时抛错，不把已取到的当完整列表（对账与开轮认领都依赖列表完整）。
+//   产物列表不分页（文档与实测都只有 items）。
 //
 // key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误与日志一律先去掉 key 的片段与链接的查询串。
 // ============================================================
@@ -91,8 +94,10 @@ const MAX_DETAIL_CHARS = 300;
 const MIN_SECRET_FRAGMENT = 8;
 /** URL 的查询串（预签名链接的签名在这里） */
 const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
-/** 列表响应里的下一页标记：翻页方式没有实测，见到就失败关闭 */
-const NEXT_PAGE_KEYS = ['nextCursor', 'next_cursor', 'nextPageToken', 'next_page_token', 'next'] as const;
+/** 列表每页的条数（接口上限） */
+const PAGE_LIMIT = 100;
+/** 列表最多取这么多页，超过按取不完处理 */
+const MAX_PAGES = 50;
 
 const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
   CREATING: 'creating',
@@ -106,7 +111,7 @@ const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
 type Json = Record<string, unknown>;
 
 interface CallResult {
-  /** 方法与路径，用于错误信息 */
+  /** 方法与不带查询串的路径，用于错误信息 */
   what: string;
   status: number;
   data: unknown;
@@ -155,6 +160,18 @@ function parseJson(text: string): unknown {
   }
 }
 
+/** 远端的 ISO 时刻转成毫秒时间戳；认不出时 undefined */
+function timeOf(value: unknown): number | undefined {
+  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(at) ? at : undefined;
+}
+
+/** 首轮与它开跑的时刻（createdAt 认不出时不报） */
+function firstRun(runId: string, createdAt: unknown): { runId: string; startedAt?: number } {
+  const startedAt = timeOf(createdAt);
+  return startedAt === undefined ? { runId } : { runId, startedAt };
+}
+
 function toRunStatus(raw: unknown): RunStatus | undefined {
   return typeof raw === 'string' && Object.hasOwn(RUN_STATUS, raw) ? RUN_STATUS[raw] : undefined;
 }
@@ -175,15 +192,6 @@ function remoteError(data: unknown): { code?: string; message?: string } {
     return { code: str(inner.code), message: str(inner.message) };
   }
   return { code: str(body.code), message: str(body.message) };
-}
-
-/** 列表响应带的下一页标记（字段名）；没有时 undefined */
-function nextPageMarker(body: Json): string | undefined {
-  const key = NEXT_PAGE_KEYS.find(k => typeof body[k] === 'string' && body[k] !== '');
-  if (key) return key;
-  if (body.hasMore === true) return 'hasMore';
-  if (body.has_more === true) return 'has_more';
-  return undefined;
 }
 
 /** Retry-After 可以是秒数或 HTTP 日期；没有时按 60 秒 */
@@ -317,11 +325,14 @@ export class CursorProvider implements RemoteAgentProvider {
     const cached = this.#ready;
     if (cached && Date.now() - cached.at < READY_TTL_MS) return { accountKey: cached.accountKey };
     const me = asRecord(this.#ok(await this.#call('GET', '/v1/me', { signal })));
-    const userId = str(me.userId);
-    if (!userId) throw this.#error('unavailable', '/v1/me 的响应里没有账号标识 userId，判不出哪些实例属于同一账号');
+    // 实测是整数；按十进制写法取哈希，超出安全整数的已经丢了精度，同样按取不到处理
+    const userId = num(me.userId);
+    if (userId === undefined || !Number.isSafeInteger(userId)) {
+      throw this.#error('unavailable', '/v1/me 的响应里没有整数的账号标识 userId，判不出哪些实例属于同一账号');
+    }
     const problem = modelProblem(this.#ok(await this.#call('GET', '/v1/models', { signal })), this.#opt.model);
     if (problem) throw this.#error('unavailable', problem);
-    const accountKey = await accountKeyOf(userId);
+    const accountKey = await accountKeyOf(String(userId));
     this.#ready = { accountKey, at: Date.now() };
     return { accountKey };
   }
@@ -333,7 +344,7 @@ export class CursorProvider implements RemoteAgentProvider {
   async createAgent(
     req: { agentId: string; name: string; prompt: string },
     signal: AbortSignal,
-  ): Promise<{ runId: string }> {
+  ): Promise<{ runId: string; startedAt?: number }> {
     // 模型参数没校验过就不建代理：参数不全会按默认变体（贵数倍）计费
     await this.ready(signal);
     const body = {
@@ -346,33 +357,43 @@ export class CursorProvider implements RemoteAgentProvider {
       },
     };
     let lastError: RemoteAgentError | undefined;
-    // 超时或临时故障时代理可能已经建出来了：同一 agentId 重发是安全的，已有就得 409，再按 id 取回
+    // 超时或临时故障时代理可能已经建出来了：同一 agentId 重发是安全的，已有就得 409，再按 id 取回。
+    // 首个请求超时是常态（建代理约 60 秒才回，默认超时 30 秒），重发只记 debug；两次都不成时照抛，由调用方记
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const res = await this.#call('POST', '/v1/agents', { signal, body, timeoutMs: this.#opt.createTimeoutMs });
         if (res.status === 409 && remoteError(res.data).code === 'agent_id_conflict') {
           return await this.#createdRun(req.agentId, signal);
         }
-        const runId = str(asRecord(asRecord(this.#ok(res)).run).id);
+        const run = asRecord(asRecord(this.#ok(res)).run);
+        const runId = str(run.id);
         if (!runId) throw this.#error('transient', '建代理的响应里没有 run.id');
-        return { runId };
+        return firstRun(runId, run.createdAt);
       } catch (err) {
         if (!isRemoteAgentError(err) || err.code !== 'transient') throw err;
         lastError = err;
         if (attempt === 0)
-          this.#note('warn', `建代理 ${req.agentId} 没有得到结果（${err.message}），用同一 agentId 重发`);
+          this.#note('debug', `建代理 ${req.agentId} 没有得到结果（${err.message}），用同一 agentId 重发`);
       }
     }
     return this.#createdRun(req.agentId, signal, lastError);
   }
 
-  /** 按 id 取回已建出的代理的首轮；代理不存在时抛 notCreated（没有就是 transient：可以同一 agentId 再建） */
-  async #createdRun(agentId: string, signal: AbortSignal, notCreated?: RemoteAgentError): Promise<{ runId: string }> {
+  /**
+   * 按 id 取回已建出的代理的首轮，开跑时刻取代理的 createdAt（实测与首轮的相同，都是请求到达的时刻）；
+   * 代理不存在时抛 notCreated（没有就是 transient：可以同一 agentId 再建）
+   */
+  async #createdRun(
+    agentId: string,
+    signal: AbortSignal,
+    notCreated?: RemoteAgentError,
+  ): Promise<{ runId: string; startedAt?: number }> {
     const res = await this.#call('GET', `/v1/agents/${enc(agentId)}`, { signal });
     if (res.status === 404) throw notCreated ?? this.#error('transient', `代理 ${agentId} 还没有建出来`);
-    const runId = str(asRecord(this.#ok(res)).latestRunId);
+    const agent = asRecord(this.#ok(res));
+    const runId = str(agent.latestRunId);
     if (!runId) throw this.#error('transient', `代理 ${agentId} 已建出，但还没有首轮`);
-    return { runId };
+    return firstRun(runId, agent.createdAt);
   }
 
   async startRun(agentId: string, prompt: string, signal: AbortSignal): Promise<{ runId: string }> {
@@ -570,29 +591,26 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listRuns(agentId: string, signal: AbortSignal): Promise<RemoteRunSummary[]> {
-    const data = this.#wholeList(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs`, { signal }));
-    return asArray(data.items)
-      .map(asRecord)
-      .flatMap(r => {
-        const id = str(r.id);
-        return id ? [{ runId: id, status: this.#status(r.status, id) }] : [];
-      });
+    const items = await this.#listAll(`/v1/agents/${enc(agentId)}/runs`, signal);
+    return items.map(([id, r]) => ({ runId: id, status: this.#status(r.status, id) }));
   }
 
+  /**
+   * 计入额度的花费取 chargedCents 与 rawCostCents 的较大者：文档写计划内额度、BYOK、赠送额度的用量 chargedCents
+   * 为 0，按请求计价的用量 rawCostCents 为 0（试点账号实测两者恒等，不能依赖）。同一项里 usage 的 token 数是这一轮
+   * 全部模型调用的累计，不是上下文长度，不交出。
+   */
   async runCost(agentId: string, runId: string, signal: AbortSignal): Promise<RunCost | undefined> {
     const path = `/v1/agents/${enc(agentId)}/usage?runId=${enc(runId)}`;
     const data = asRecord(this.#ok(await this.#call('GET', path, { signal })));
     const run = asArray(data.runs)
       .map(asRecord)
       .find(r => r.id === runId);
-    const chargedCents = num(asRecord(run?.cost).chargedCents);
-    if (!run || chargedCents === undefined) return undefined;
-    const usage = asRecord(run.usage);
-    return {
-      chargedCents,
-      inputTokens: num(usage.inputTokens) ?? 0,
-      cacheReadTokens: num(usage.cacheReadTokens) ?? 0,
-    };
+    const cost = asRecord(run?.cost);
+    const charged = num(cost.chargedCents);
+    const raw = num(cost.rawCostCents);
+    if (!run || (charged === undefined && raw === undefined)) return undefined;
+    return { cents: Math.max(charged ?? 0, raw ?? 0) };
   }
 
   async collectArtifacts(
@@ -683,25 +701,62 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]> {
-    const data = this.#wholeList(await this.#call('GET', '/v1/agents?limit=100', { signal }));
     const ignore = new Set(this.#opt.reconcileIgnoreNames);
-    return asArray(data.items)
-      .map(asRecord)
-      .flatMap(a => {
-        const agentId = str(a.id);
-        const name = str(a.name) ?? '';
-        return agentId && !ignore.has(name) ? [{ agentId, name }] : [];
-      });
+    return (await this.#listAll('/v1/agents', signal)).flatMap(([agentId, a]) => {
+      const name = str(a.name) ?? '';
+      return ignore.has(name) ? [] : [{ agentId, name }];
+    });
   }
 
+  /**
+   * 取完一个列表的所有页，按 id 去重（没有 id 的项不要），返回 [id, 项]。任何一页出错都整次照抛；此外：
+   * - 响应形状认不出（items 不是数组、nextCursor 不是非空字符串）、页数超过 {@link MAX_PAGES}、下一页标记出现过
+   *   （不会前进）时抛 unavailable；
+   * - 带着标记取到空页、又没有下一页标记时抛 transient：标记指向的代理在翻页期间被删了，重新列举即可。
+   */
+  async #listAll(path: string, signal: AbortSignal): Promise<Array<[string, Json]>> {
+    const items = new Map<string, Json>();
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const query = `limit=${PAGE_LIMIT}${cursor === undefined ? '' : `&cursor=${enc(cursor)}`}`;
+      const data = asRecord(this.#ok(await this.#call('GET', `${path}?${query}`, { signal })));
+      if (!Array.isArray(data.items)) throw this.#error('unavailable', `GET ${path} 的响应没有 items 数组，列表取不全`);
+      for (const item of data.items.map(asRecord)) {
+        const id = str(item.id);
+        if (id && !items.has(id)) items.set(id, item);
+      }
+      const next: unknown = data.nextCursor;
+      if (next === undefined || next === null) {
+        if (cursor !== undefined && data.items.length === 0) {
+          throw this.#error('transient', `GET ${path} 翻页途中下一页标记失效（回了空页），列表取不全`);
+        }
+        return [...items];
+      }
+      if (typeof next !== 'string' || next === '') {
+        throw this.#error('unavailable', `GET ${path} 的下一页标记认不出，列表取不全`);
+      }
+      if (cursors.has(next)) throw this.#error('unavailable', `GET ${path} 的下一页标记没有前进，列表取不全`);
+      cursors.add(next);
+      cursor = next;
+    }
+    throw this.#error('unavailable', `GET ${path} 超过 ${MAX_PAGES} 页，列表取不全`);
+  }
+
+  /** 产物列表不分页：响应没有 items 数组或带了下一页标记时抛 unavailable，不把已取到的当完整列表 */
   async #listArtifacts(agentId: string, signal: AbortSignal): Promise<Array<{ path: string; sizeBytes: number }>> {
-    const data = asRecord(this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/artifacts`, { signal })));
-    return asArray(data.items)
-      .map(asRecord)
-      .flatMap(i => {
-        const path = str(i.path);
-        return path ? [{ path, sizeBytes: num(i.sizeBytes) ?? 0 }] : [];
-      });
+    const path = `/v1/agents/${enc(agentId)}/artifacts`;
+    const data = asRecord(this.#ok(await this.#call('GET', path, { signal })));
+    if (!Array.isArray(data.items) || (data.nextCursor !== undefined && data.nextCursor !== null)) {
+      throw this.#error(
+        'unavailable',
+        `GET ${path} 的响应形状认不出（没有 items 数组或带了下一页标记），产物列表取不全`,
+      );
+    }
+    return data.items.map(asRecord).flatMap(i => {
+      const listed = str(i.path);
+      return listed ? [{ path: listed, sizeBytes: num(i.sizeBytes) ?? 0 }] : [];
+    });
   }
 
   /** 产物的预签名下载链接；path 原样用列表给出的 `artifacts/...` */
@@ -768,7 +823,8 @@ export class CursorProvider implements RemoteAgentProvider {
     path: string,
     opts: { signal: AbortSignal; body?: unknown; timeoutMs?: number },
   ): Promise<CallResult> {
-    const what = `${method} ${path}`;
+    // 报错用的路径去掉查询串：查询串里可能有远端可控的内容（如成品路径、翻页标记）
+    const what = `${method} ${path.replace(/\?.*$/, '')}`;
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? this.#opt.requestTimeoutMs);
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.#opt.apiKey}`,
@@ -794,24 +850,9 @@ export class CursorProvider implements RemoteAgentProvider {
     throw this.#httpError(res);
   }
 
-  /** 列表响应：带下一页标记时抛 unavailable（列表可能不全） */
-  #wholeList(res: CallResult): Json {
-    const data = asRecord(this.#ok(res));
-    const marker = nextPageMarker(data);
-    if (marker) {
-      throw this.#error(
-        'unavailable',
-        `${res.what.replace(/\?.*$/, '')} 的响应带下一页标记 ${marker}，列表可能不全（翻页方式未实测，按失败处理）`,
-      );
-    }
-    return data;
-  }
-
   #httpError(res: CallResult): RemoteAgentError {
     const { code, message } = remoteError(res.data);
-    // 请求路径去掉查询串：查询串里可能有远端可控的内容（如成品路径）
-    const what = res.what.replace(/\?.*$/, '');
-    const detail = `${what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
+    const detail = `${res.what} 返回 ${res.status}${code ? ` ${code}` : ''}${message ? `：${message.slice(0, MAX_DETAIL_CHARS)}` : ''}`;
     if (res.status === 429) return this.#error('rate-limited', detail, retryAfterMs(res.headers));
     if (res.status === 401 || res.status === 403) return this.#error('unavailable', detail);
     if (res.status === 404) return this.#error('not-found', detail);

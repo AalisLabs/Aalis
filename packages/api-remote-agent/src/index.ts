@@ -71,11 +71,12 @@ export interface RunState {
 }
 /** progress 的 eventId 供断线后续传 */
 export type RunProgress = { kind: 'progress'; eventId: string } | { kind: 'terminal'; state: RunState };
-/** 一轮的实际费用；输入与缓存读取的 token 数供消费方判断上下文是否过长 */
+/**
+ * 一轮的费用。cents 是计入额度的花费（美分），消费方的日上限与换新都按它判：远端不另收费的用量（如计划内额度）
+ * 也按实际消耗计，不能写 0
+ */
 export interface RunCost {
-  chargedCents: number;
-  inputTokens: number;
-  cacheReadTokens: number;
+  cents: number;
 }
 
 // ----- 成品 -----
@@ -184,12 +185,19 @@ export interface RemoteAgentProvider {
   /**
    * 懒连接：鉴权与模型参数校验，失败抛 unavailable（带原因）。成功结果由提供者缓存，消费方可以频繁调用
    * （受理、出队、诊断都直接调它，不另设缓存）。
-   * accountKey 是远端账号的不透明标识（哈希），同账号的实例返回同一个值；不含账号原文。
+   * accountKey 是远端账号的不透明标识（哈希），同账号的实例返回同一个值；不含账号原文，但账号原文取值范围小时
+   * 可以枚举反推（如 Cursor 取整数账号的哈希），只用于分组比较，不要展示或记录。
    */
   ready(signal: AbortSignal): Promise<{ accountKey: string }>;
   mintAgentId(): string;
-  /** 同 agentId 重试是安全的；返回这一代理的首轮 runId */
-  createAgent(req: { agentId: string; name: string; prompt: string }, signal: AbortSignal): Promise<{ runId: string }>;
+  /**
+   * 同 agentId 重试是安全的；返回这一代理的首轮 runId，以及远端首轮开跑的时刻 startedAt（毫秒时间戳，远端的时钟；
+   * 取不到时省略）：远端收到请求就开跑，响应可能要几十秒才回，消费方按它计这一轮的用时与时长上限
+   */
+  createAgent(
+    req: { agentId: string; name: string; prompt: string },
+    signal: AbortSignal,
+  ): Promise<{ runId: string; startedAt?: number }>;
   startRun(agentId: string, prompt: string, signal: AbortSignal): Promise<{ runId: string }>;
   /** 跟踪一轮直到终态；最后一项必为 terminal。断线、重连、410 回退都在提供者内部处理 */
   followRun(
@@ -200,6 +208,7 @@ export interface RemoteAgentProvider {
   getRun(agentId: string, runId: string, signal: AbortSignal): Promise<RunState>;
   /** 已到终态视为成功 */
   cancelRun(agentId: string, runId: string, signal: AbortSignal): Promise<void>;
+  /** 这个代理的全部轮次；取不全时抛错，不返回部分结果（消费方的对账与开轮认领依赖列表完整） */
   listRuns(agentId: string, signal: AbortSignal): Promise<RemoteRunSummary[]>;
   /** undefined = 费用暂缺 */
   runCost(agentId: string, runId: string, signal: AbortSignal): Promise<RunCost | undefined>;
@@ -219,7 +228,7 @@ export interface RemoteAgentProvider {
   unarchiveAgent(agentId: string, signal: AbortSignal): Promise<void>;
   /** 不存在视为成功 */
   deleteAgent(agentId: string, signal: AbortSignal): Promise<void>;
-  /** 列出账号下的代理（提供者可按 owner 配置排除 owner 自管的代理） */
+  /** 列出账号下的代理（提供者可按 owner 配置排除 owner 自管的代理）；取不全时抛错，不返回部分结果 */
   listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]>;
 }
 

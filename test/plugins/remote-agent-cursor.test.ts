@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   type ArtifactLimits,
@@ -12,6 +13,7 @@ import {
 import { App, type Logger, LogHub, services } from '../../packages/core/src/index.js';
 import cursorPlugin from '../../packages/plugin-remote-agent-cursor/src/index.js';
 import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
+import { validateConfig } from '../../packages/schema-config/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { type FakeCursor, type StreamSegment, startFakeCursor } from '../fixtures/fake-cursor.js';
 
@@ -28,8 +30,8 @@ const KEY_SAME_ACCOUNT = 'pk-placeholder-same-account-0002';
 const KEY_OTHER_ACCOUNT = 'pk-placeholder-other-account-0003';
 const KEY_UNREGISTERED = 'pk-placeholder-unregistered-0004';
 const KEY_NO_USER_ID = 'pk-placeholder-no-user-id-0005';
-const USER_ID = 'user-placeholder-0001';
-const OTHER_USER_ID = 'user-placeholder-0002';
+const USER_ID = 100000001;
+const OTHER_USER_ID = 100000002;
 const PARAMS = { reasoning_effort: 'high', context: '256k', fast: 'false' };
 
 const captured: string[] = [];
@@ -237,15 +239,22 @@ describe('2 ready()', () => {
 });
 
 describe('3 建代理', () => {
-  it('首个 POST 超时后用同一 agentId 重发得 409，再按 id 取回首轮；只建了 1 个代理', async () => {
+  it('首个 POST 超时后用同一 agentId 重发得 409，再按 id 取回首轮与它开跑的时刻；只建了 1 个代理', async () => {
     const p = makeProvider({ createTimeoutMs: 500 });
     fake.createDelays.push(2_000);
     const agentId = p.mintAgentId();
-    const { runId } = await p.createAgent({ agentId, name: 'aalis-paper-0000abcd', prompt: '占位任务' }, signal);
+    const before = Date.now();
+    const { runId, startedAt } = await p.createAgent(
+      { agentId, name: 'aalis-paper-0000abcd', prompt: '占位任务' },
+      signal,
+    );
 
     expect(fake.agents.size).toBe(1);
     const agent = fake.agents.get(agentId);
     expect(runId).toBe(agent?.runs[0].id);
+    // 远端从首个 POST 到达时起就在跑：取代理的 createdAt，不是取回的时刻
+    expect(startedAt).toBe(Date.parse(agent?.createdAt ?? ''));
+    expect((startedAt ?? 0) - before).toBeLessThan(500);
     const posts = fake.requestsTo('POST', '/v1/agents');
     expect(posts).toHaveLength(2);
     expect(fake.requestsTo('GET', `/v1/agents/${agentId}`)).toHaveLength(1);
@@ -267,11 +276,50 @@ describe('3 建代理', () => {
     }
   });
 
-  it('正常建代理直接返回首轮 runId；模型校验先于建代理', async () => {
+  it('首个 POST 超时是常态（建代理约 60 秒、默认超时 30 秒）：重发记 debug，不记 warn', async () => {
+    const levels: Array<{ level: string; message: string }> = [];
+    const at = (level: string) => (m: string) => void levels.push({ level, message: m });
+    const logger = {
+      debug: at('debug'),
+      info: at('info'),
+      warn: at('warn'),
+      error: at('error'),
+      child: () => logger,
+    } as unknown as Logger;
+    const p = new CursorProvider(
+      {
+        apiKey: KEY,
+        baseUrl: fake.baseUrl,
+        model: { id: 'grok-4.7', params: PARAMS },
+        egressMode: 'unknown',
+        createTimeoutMs: 300,
+        requestTimeoutMs: 5_000,
+        streamIdleMs: 5_000,
+        reconcileIgnoreNames: [],
+        retryBaseMs: 10,
+        pollIntervalMs: 20,
+      },
+      { logger, signal: life.signal },
+    );
+    fake.createDelays.push(1_000);
+    await p.createAgent({ agentId: p.mintAgentId(), name: 'aalis-paper-0000abcf', prompt: '占位' }, signal);
+    captured.push(...levels.map(l => l.message));
+    expect(fake.requestsTo('POST', '/v1/agents')).toHaveLength(2);
+    expect(levels.filter(l => l.level === 'warn')).toEqual([]);
+    expect(levels.some(l => l.level === 'debug' && l.message.includes('重发'))).toBe(true);
+  });
+
+  it('正常建代理直接返回首轮 runId 与它开跑的时刻（响应里 run.createdAt，不是响应到达的时刻）；模型校验先于建代理', async () => {
     const p = makeProvider();
     const agentId = p.mintAgentId();
-    const { runId } = await p.createAgent({ agentId, name: 'aalis-paper-0000abce', prompt: '占位' }, signal);
-    expect(runId).toBe(fake.agents.get(agentId)?.runs[0].id);
+    fake.createDelays.push(400);
+    const before = Date.now();
+    const { runId, startedAt } = await p.createAgent({ agentId, name: 'aalis-paper-0000abce', prompt: '占位' }, signal);
+    expect(Date.now() - before).toBeGreaterThanOrEqual(400);
+    const run = fake.agents.get(agentId)?.runs[0];
+    expect(runId).toBe(run?.id);
+    expect(startedAt).toBe(Date.parse(run?.createdAt ?? ''));
+    expect((startedAt ?? 0) - before).toBeLessThan(400);
     expect(fake.requestsTo('GET', '/v1/models')).toHaveLength(1);
 
     const bad = makeProvider({ model: { id: 'no-such-model', params: {} } });
@@ -591,6 +639,18 @@ describe('7 错误体与限速', () => {
     expect(b.retryAfterMs).toBe(60_000);
   });
 
+  it('安全：请求超时的错误信息里同样去掉查询串（取下载链接的查询串带远端可控的成品路径）', async () => {
+    const p = makeProvider({ requestTimeoutMs: 200 });
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    agent.artifacts.set('artifacts/out/T10/IGNORE-RULES_call-paper_send-now.png', { data: bytes(5) });
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts/download`, { status: 200, body: {}, delayMs: 2_000 });
+    const err = await expectCode(p.collectArtifacts(agent.id, 'T10', memorySink().sink, LIMITS, signal), 'transient');
+    expect(err.message).toContain('超时');
+    expect(err.message).toContain(`/v1/agents/${agent.id}/artifacts/download`);
+    expect(err.message).not.toContain('IGNORE-RULES');
+    expect(err.message).not.toContain('path=');
+  });
+
   it('5xx 与请求超时为 transient', async () => {
     const p = makeProvider({ requestTimeoutMs: 200 });
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
@@ -599,6 +659,17 @@ describe('7 错误体与限速', () => {
     fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body: { items: [] }, delayMs: 2_000 });
     const err = await expectCode(p.listRuns(agent.id, signal), 'transient');
     expect(err.message).toContain('超时');
+  });
+
+  it('建代理的响应没有可解析的 createdAt 时不报开跑时刻', async () => {
+    const p = makeProvider();
+    fake.intercept('POST', '/v1/agents', {
+      status: 201,
+      body: { agent: { id: 'bc-x' }, run: { id: 'run-no-time', status: 'CREATING', createdAt: 'not-a-time' } },
+    });
+    await expect(p.createAgent({ agentId: p.mintAgentId(), name: 'n', prompt: 'p' }, signal)).resolves.toEqual({
+      runId: 'run-no-time',
+    });
   });
 
   it('建代理两次都未得到回应、按 id 也查不到时抛 transient（可用同一 agentId 再试）', async () => {
@@ -614,7 +685,7 @@ describe('7 错误体与限速', () => {
 });
 
 describe('8 费用', () => {
-  it('有 cost 时返回 chargedCents 与 token；缺 cost 返回 undefined', async () => {
+  it('有 cost 时只返回花费（usage 的 token 数是这一轮全部模型调用的累计，不交出）；缺 cost 返回 undefined', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({
       runs: [
@@ -626,13 +697,20 @@ describe('8 费用', () => {
         { status: 'FINISHED', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } },
       ],
     });
-    await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toEqual({
-      chargedCents: 2.5536,
-      inputTokens: 8724,
-      cacheReadTokens: 14592,
-    });
+    await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toEqual({ cents: 2.5536 });
     await expect(p.runCost(agent.id, agent.runs[1].id, signal)).resolves.toBeUndefined();
     expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/usage`)[0].path).toContain(`runId=${agent.runs[0].id}`);
+  });
+
+  it.each([
+    ['计划内额度、BYOK、赠送额度（文档：chargedCents 为 0）', { rawCostCents: 5.9622, chargedCents: 0 }, 5.9622],
+    ['按请求计价（文档：rawCostCents 为 0）', { rawCostCents: 0, chargedCents: 4 }, 4],
+    ['折扣与服务费使两者不同', { rawCostCents: 3, chargedCents: 3.3 }, 3.3],
+  ])('安全：计入额度的花费取 chargedCents 与 rawCostCents 的较大者——%s', async (_, cost, cents) => {
+    const p = makeProvider();
+    const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED', cost, usage }] });
+    await expect(p.runCost(agent.id, agent.runs[0].id, signal)).resolves.toMatchObject({ cents });
   });
 
   it('listRuns 与 getRun 把大写状态映射为小写枚举', async () => {
@@ -640,9 +718,10 @@ describe('8 费用', () => {
     const agent = fake.seedAgent({
       runs: [{ status: 'FINISHED', durationMs: 7, result: '好' }, { status: 'RUNNING' }],
     });
+    // 列轮次新的在前
     await expect(p.listRuns(agent.id, signal)).resolves.toEqual([
-      { runId: agent.runs[0].id, status: 'finished' },
       { runId: agent.runs[1].id, status: 'running' },
+      { runId: agent.runs[0].id, status: 'finished' },
     ]);
     await expect(p.getRun(agent.id, agent.runs[0].id, signal)).resolves.toEqual({
       runId: agent.runs[0].id,
@@ -809,6 +888,19 @@ describe('9 取回成品', () => {
     await expectCode(p.collectArtifacts(agent.id, '../T1', memorySink().sink, LIMITS, signal), 'rejected');
   });
 
+  it.each([
+    ['没有 items 数组', { artifacts: [] }],
+    ['带了下一页标记', { items: [{ path: 'artifacts/out/T9/a.png', sizeBytes: 5 }], nextCursor: 'more' }],
+  ])('安全：产物列表形状认不出（%s）时 unavailable，不当作只有这些成品', async (_, body) => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    agent.artifacts.set('artifacts/workspace.tar.gz', { data: bytes(3) });
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts`, { status: 200, body });
+    await expectCode(p.collectArtifacts(agent.id, 'T9', memorySink().sink, LIMITS, signal), 'unavailable');
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts`, { status: 200, body });
+    await expectCode(p.bundleLink(agent.id, signal), 'unavailable');
+  });
+
   it('bundleLink：有工程包时回预签名链接，没有时 undefined', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
@@ -853,24 +945,153 @@ describe('11 删除与列举', () => {
     fake.seedAgent({ name: 'owner-own-agent' });
     const list = await p.listAgents(signal);
     expect(list).toEqual([
-      { agentId: mine.id, name: 'aalis-paper-1234abcd' },
       { agentId: archived.id, name: 'aalis-paper-5678abcd' },
+      { agentId: mine.id, name: 'aalis-paper-1234abcd' },
     ]);
     expect(fake.requestsTo('GET', '/v1/agents')[0].path).toBe('/v1/agents?limit=100');
   });
 });
 
 describe('14 列表翻页', () => {
-  it('安全：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不当作完整的列表', async () => {
+  it('安全：列代理、列轮次按 nextCursor 取完所有页，每页 limit=100，下一页带上一页给的 cursor', async () => {
+    const p = makeProvider();
+    const seeded = Array.from({ length: 101 }, (_, i) => fake.seedAgent({ name: `aalis-paper-${1000 + i}` }).id);
+    const agents = await p.listAgents(signal);
+    expect(agents.map(a => a.agentId).sort()).toEqual([...seeded].sort());
+    expect(fake.requestsTo('GET', '/v1/agents').map(r => r.path)).toEqual([
+      '/v1/agents?limit=100',
+      `/v1/agents?limit=100&cursor=${agents[99].agentId}`,
+    ]);
+
+    const agent = fake.seedAgent({ runs: Array.from({ length: 205 }, () => ({ status: 'FINISHED' })) });
+    const runs = await p.listRuns(agent.id, signal);
+    expect(runs.map(r => r.runId).sort()).toEqual(agent.runs.map(r => r.id).sort());
+    expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/runs`).map(r => r.path.split('?')[1])).toEqual([
+      'limit=100',
+      `limit=100&cursor=${runs[99].runId}`,
+      `limit=100&cursor=${runs[199].runId}`,
+    ]);
+  });
+
+  it('跨页重复的项按 id 只算一次', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({});
+    const path = `/v1/agents/${agent.id}/runs`;
+    const run = (id: string) => ({ id, agentId: agent.id, status: 'FINISHED' });
+    fake.intercept('GET', path, { status: 200, body: { items: [run('run-1'), run('run-2')], nextCursor: 'run-2' } });
+    fake.intercept('GET', path, { status: 200, body: { items: [run('run-2'), run('run-3')] } });
+    const runs = await p.listRuns(agent.id, signal);
+    expect(runs.map(r => r.runId)).toEqual(['run-1', 'run-2', 'run-3']);
+  });
+
+  it('安全：下一页标记与上一页相同、或超过 50 页时 unavailable，不把已取到的当完整列表', async () => {
+    const p = makeProvider();
+    const stuck = fake.seedAgent({});
+    const stuckPath = `/v1/agents/${stuck.id}/runs`;
+    const page = { status: 200, body: { items: [{ id: 'run-1', status: 'FINISHED' }], nextCursor: 'run-1' } };
+    fake.intercept('GET', stuckPath, page, 2);
+    await expectCode(p.listRuns(stuck.id, signal), 'unavailable');
+    expect(fake.requestsTo('GET', stuckPath)).toHaveLength(2);
+
+    // 每页都给新的标记：取满 50 页就停
+    const endless = fake.seedAgent({});
+    let n = 0;
+    fake.intercept(
+      'GET',
+      `/v1/agents/${endless.id}/runs`,
+      {
+        status: 200,
+        bodyFrom: () => {
+          n++;
+          return { items: [{ id: `run-${n}`, status: 'FINISHED' }], nextCursor: `run-${n}` };
+        },
+      },
+      60,
+    );
+    await expectCode(p.listRuns(endless.id, signal), 'unavailable');
+    expect(n).toBe(50);
+  });
+
+  it('安全：下一页标记循环出现（A→B→A）时立即 unavailable，不等到页数上限', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({});
+    const path = `/v1/agents/${agent.id}/runs`;
+    const page = (id: string, next: string) => ({
+      status: 200,
+      body: { items: [{ id, status: 'FINISHED' }], nextCursor: next },
+    });
+    fake.intercept('GET', path, page('run-1', 'run-a'));
+    fake.intercept('GET', path, page('run-2', 'run-b'));
+    fake.intercept('GET', path, page('run-3', 'run-a'));
+    fake.intercept('GET', path, page('run-4', 'run-b'), 60);
+    await expectCode(p.listRuns(agent.id, signal), 'unavailable');
+    expect(fake.requestsTo('GET', path)).toHaveLength(3);
+  });
+
+  it.each([
+    ['没有 items 数组', { runs: [] }],
+    ['items 不是数组', { items: { id: 'run-1' } }],
+    ['nextCursor 是数字', { items: [{ id: 'run-1', status: 'FINISHED' }], nextCursor: 2 }],
+    ['nextCursor 是空串', { items: [{ id: 'run-1', status: 'FINISHED' }], nextCursor: '' }],
+  ])('安全：响应形状认不出（%s）时 unavailable，不当作空列表或末页', async (_, body) => {
     const p = makeProvider();
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
-    fake.intercept('GET', '/v1/agents', { status: 200, body: { items: [], nextCursor: 'page-2' } });
-    const listed = await expectCode(p.listAgents(signal), 'unavailable');
-    expect(listed.message).toContain('nextCursor');
-    fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body: { items: [], hasMore: true } });
+    fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body });
     await expectCode(p.listRuns(agent.id, signal), 'unavailable');
-    // 没有下一页标记时照常
-    await expect(p.listRuns(agent.id, signal)).resolves.toHaveLength(1);
+    fake.intercept('GET', '/v1/agents', { status: 200, body });
+    await expectCode(p.listAgents(signal), 'unavailable');
+  });
+
+  it.each([
+    [502, 'transient'],
+    [401, 'unavailable'],
+    [404, 'not-found'],
+  ] as const)('安全：第 2 页回 %s 时整次抛 %s，不交出第 1 页', async (status, code) => {
+    const p = makeProvider();
+    const seeded = Array.from({ length: 101 }, (_, i) => fake.seedAgent({ name: `aalis-paper-${2000 + i}` }));
+    const body = { error: { code: 'x', message: '翻页失败' } };
+    fake.intercept('GET', '/v1/agents', { status: 200, body: { items: [], nextCursor: seeded[0].id } });
+    fake.intercept('GET', '/v1/agents', { status, body });
+    await expectCode(p.listAgents(signal), code);
+
+    const agent = fake.seedAgent({ runs: Array.from({ length: 101 }, () => ({ status: 'FINISHED' })) });
+    const path = `/v1/agents/${agent.id}/runs`;
+    fake.intercept('GET', path, { status: 200, body: { items: [], nextCursor: agent.runs[0].id } });
+    fake.intercept('GET', path, { status, body });
+    await expectCode(p.listRuns(agent.id, signal), code);
+  });
+
+  it('安全：列代理的下一页标记指向已被删的代理时，接口按实测回 200 空页；这时抛 transient，不当作取完', async () => {
+    const p = makeProvider();
+    const seeded = Array.from({ length: 101 }, (_, i) => fake.seedAgent({ name: `aalis-paper-${3000 + i}` }));
+    // 第 1 页之后、第 2 页之前，第 1 页末项（下一页标记）被删了
+    fake.intercept('GET', '/v1/agents', {
+      status: 200,
+      bodyFrom: () => {
+        const newestFirst = seeded.slice().reverse().slice(0, 100);
+        fake.agents.delete(newestFirst[99].id);
+        return { items: newestFirst.map(a => ({ id: a.id, name: a.name })), nextCursor: newestFirst[99].id };
+      },
+    });
+    await expectCode(p.listAgents(signal), 'transient');
+    const pages = fake.requestsTo('GET', '/v1/agents');
+    expect(pages).toHaveLength(2);
+    expect(pages[1].path).toContain('cursor=');
+  });
+
+  it('列轮次的下一页标记无效时接口按实测回 400，整次抛 rejected', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    const path = `/v1/agents/${agent.id}/runs`;
+    fake.intercept('GET', path, {
+      status: 200,
+      body: {
+        items: [{ id: agent.runs[0].id, status: 'FINISHED' }],
+        nextCursor: 'run-00000000-0000-0000-0000-000000000000',
+      },
+    });
+    const err = await expectCode(p.listRuns(agent.id, signal), 'rejected');
+    expect(err.message).toContain('Invalid pagination cursor');
   });
 });
 
@@ -884,10 +1105,15 @@ describe('13 accountKey', () => {
     expect(a.accountKey).toBe(c.accountKey);
     expect(d.accountKey).not.toBe(a.accountKey);
     for (const v of [a.accountKey, d.accountKey]) {
-      expect(v).not.toContain(USER_ID);
+      expect(v).not.toContain(String(USER_ID));
       expect(v).not.toContain('placeholder');
       expect(KEY).not.toContain(v.slice(0, 8));
     }
+  });
+
+  it('userId 按实测是整数：accountKey 取它的十进制写法的 SHA-256 前 16 位十六进制', async () => {
+    const { accountKey } = await makeProvider().ready(signal);
+    expect(accountKey).toBe(createHash('sha256').update(String(USER_ID)).digest('hex').slice(0, 16));
   });
 
   it('/v1/me 没有账号标识时 unavailable（按冲突处理，不回落到别的来源）', async () => {
@@ -897,6 +1123,28 @@ describe('13 accountKey', () => {
     } finally {
       fake.accounts.delete(KEY_NO_USER_ID);
     }
+  });
+
+  it.each([
+    ['字符串', String(USER_ID)],
+    ['小数', 100000001.5],
+    ['超出安全整数', 2 ** 53],
+  ])('userId 为%s时 unavailable（不是实测的整数形状）', async (_, userId) => {
+    fake.intercept('GET', '/v1/me', { status: 200, body: { apiKeyName: 'placeholder-key', userId } });
+    await expectCode(makeProvider().ready(signal), 'unavailable');
+  });
+});
+
+describe('15 超时配置的下限（按实测）', () => {
+  it.each([
+    // 事件流连上后约 30 秒才有第一次心跳，之后间隔最长也到 30 秒
+    ['streamIdleSeconds', 44, 45],
+    // 实测 /v1/me 用过 5.04 秒、列代理用过 5.64 秒
+    ['requestTimeoutSeconds', 14, 15],
+  ])('%s 低于实测需要的值时配置校验报问题', (key, low, ok) => {
+    const issues = (value: number) => validateConfig(cursorPlugin.configSchema, { apiKey: KEY, [key]: value });
+    expect(issues(low).map(i => i.path)).toContain(key);
+    expect(issues(ok)).toEqual([]);
   });
 });
 

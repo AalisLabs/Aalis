@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RunCost } from '../../packages/api-remote-agent/src/index.js';
 import {
   DRIVER_CONFIG,
   type DriverHub,
@@ -13,9 +14,9 @@ import {
 import { ScriptedRemote, text } from '../fixtures/paper-remote.js';
 
 // ════════════════════════════════════════════════════════════
-// 白纸的换新（U10b）：代理累计花费超过 rotateAfterCents、上一轮上下文超过 rotateAfterInputTokens，
-// 或 owner 点了换新，下一件任务建新代理；旧代理的工程包链接写进新代理的前言；新代理这一轮成功取回之后
-// 删除旧代理（不只归档），首轮失败时不删，下一轮仍带旧工程包。
+// 白纸的换新（U10b）：代理累计花费超过 rotateAfterCents，或 owner 点了换新，下一件任务建新代理；不按 token 数
+// 换新（提供者报的 token 数是一轮里全部模型调用的累计，不是上下文长度）。旧代理的工程包链接写进新代理的前言；
+// 新代理这一轮成功取回之后删除旧代理（不只归档），首轮失败时不删，下一轮仍带旧工程包。
 // ════════════════════════════════════════════════════════════
 
 beforeEach(() => {
@@ -47,7 +48,7 @@ describe('换新', () => {
   it('安全：累计花费超过 rotateAfterCents 后建新代理，首轮前言带旧工程包链接；首轮成功后旧代理被删除', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 300 }) });
-    a.costOf = () => ({ chargedCents: 400, inputTokens: 10, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 400 });
     const first = await runOne(hub, a);
     expect(hub.store.data.agents[first.agentId].costCents).toBe(400);
 
@@ -64,9 +65,9 @@ describe('换新', () => {
   it('新代理首轮失败时不删旧代理；下一轮仍带旧工程包，成功后才删', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 15 }) });
-    a.costOf = () => ({ chargedCents: 20, inputTokens: 10, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 20 });
     const first = await runOne(hub, a);
-    a.costOf = () => ({ chargedCents: 1, inputTokens: 10, cacheReadTokens: 0 });
+    a.costOf = () => ({ cents: 1 });
     const second = await runOne(hub, a, 'error');
     expect(hub.task(second.id).state).toBe('failed');
     expect(second.agentId).not.toBe(first.agentId);
@@ -79,16 +80,17 @@ describe('换新', () => {
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '成功后删旧代理');
   });
 
-  it('上一轮的上下文（input 加 cacheRead）超过 rotateAfterInputTokens 时建新代理', async () => {
+  it('远端报的累计输入很大、花费没到 rotateAfterCents 时不换新', async () => {
     const a = new ScriptedRemote();
-    const hub = await startDriverHub({
-      remotes: { [REMOTE_A]: a },
-      config: withPaper({ rotateAfterInputTokens: 1200 }),
-    });
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    // Cursor 的 /usage 按轮报 token 数：一轮里全部模型调用的累计，多步的一轮远超单次上下文。替身把它原样多带
+    a.costOf = () => ({ cents: 1, inputTokens: 5_000_000, cacheReadTokens: 5_000_000 }) as RunCost;
     const first = await runOne(hub, a);
-    expect(hub.store.data.agents[first.agentId].lastContextTokens).toBe(1500);
     const second = await runOne(hub, a);
-    expect(second.agentId).not.toBe(first.agentId);
+    const third = await runOne(hub, a);
+    expect([second.agentId, third.agentId]).toEqual([first.agentId, first.agentId]);
+    expect(a.count('createAgent')).toBe(1);
+    expect(hub.store.data.agents[first.agentId], '账本不记 token 数').not.toHaveProperty('lastContextTokens');
   });
 
   it('owner 点了换新，下一件任务建新代理', async () => {

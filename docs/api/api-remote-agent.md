@@ -21,7 +21,7 @@ interface RemoteAgentProvider {
   egress(signal: AbortSignal): Promise<EgressReport>;
   ready(signal: AbortSignal): Promise<{ accountKey: string }>;
   mintAgentId(): string;
-  createAgent(req: { agentId: string; name: string; prompt: string }, signal: AbortSignal): Promise<{ runId: string }>;
+  createAgent(req: { agentId: string; name: string; prompt: string }, signal: AbortSignal): Promise<{ runId: string; startedAt?: number }>;
   startRun(agentId: string, prompt: string, signal: AbortSignal): Promise<{ runId: string }>;
   followRun(agentId: string, runId: string, opts: { lastEventId?: string; signal: AbortSignal }): AsyncIterable<RunProgress>;
   getRun(agentId: string, runId: string, signal: AbortSignal): Promise<RunState>;
@@ -46,12 +46,12 @@ interface RemoteAgentProvider {
   - `bundlePath`：每轮结束时的工程包路径；
   - `policyNotes`：提供者特有的约束，逐条写进前言，如不改会影响以后各轮的规则文件、不用定时唤醒工具。
 - `egress()`：提供者报告的出网方式，见下文「出网」。取自 owner 配置的立即返回；要问远端接口或执行环境的按次读取，结果由提供者自己缓存。失败时消费方按取不到处理，不当作放行。
-- `ready()`：懒连接，做鉴权与模型参数校验。失败抛 `unavailable` 并写明原因。成功结果由提供者缓存，消费方可以频繁调用（受理、出队与诊断都直接调它，不另设缓存）。`accountKey` 是远端账号的不透明标识（哈希）：同一账号的实例返回同一个值，值里不含账号原文。
-- `createAgent`：用消费方先 `mintAgentId()` 得到的 id 建代理，返回首轮的 `runId`。同一个 `agentId` 重试是安全的，消费方可以先把 id 记进账本再调用。
+- `ready()`：懒连接，做鉴权与模型参数校验。失败抛 `unavailable` 并写明原因。成功结果由提供者缓存，消费方可以频繁调用（受理、出队与诊断都直接调它，不另设缓存）。`accountKey` 是远端账号的不透明标识（哈希）：同一账号的实例返回同一个值，值里不含账号原文；账号原文取值范围小时可以枚举反推（如 Cursor 取整数账号的哈希），只用于分组比较，不要展示或记录。
+- `createAgent`：用消费方先 `mintAgentId()` 得到的 id 建代理，返回首轮的 `runId`，以及远端首轮开跑的时刻 `startedAt`（毫秒时间戳，远端的时钟；取不到时省略）。远端收到请求就开跑，响应可能要几十秒才回，消费方按 `startedAt` 计这一轮的用时与时长上限。同一个 `agentId` 重试是安全的，消费方可以先把 id 记进账本再调用。
 - `startRun`：在已有代理上开新一轮。它不幂等：结果未知时（读超时、临时故障）重发可能开出两轮，消费方应先 `listRuns` 认领。
 - `followRun`：跟踪一轮直到终态，最后一项必为 `{ kind: 'terminal' }`。断线重连、事件流过期后改为轮询都在提供者内部处理；`progress` 的 `eventId` 供消费方落盘，重启后作为 `lastEventId` 续传。
 - `cancelRun`：这一轮已到终态时视为成功。
-- `runCost`：返回 `undefined` 表示费用暂缺（远端还没结算），消费方应稍后重试。
+- `runCost`：返回 `undefined` 表示费用暂缺（远端还没结算），消费方应稍后重试。`cents` 是计入额度的花费（美分），消费方的日上限与换新都按它判：远端不另收费的用量（如计划内额度）也按实际消耗计，不能写 0。
 - `collectArtifacts`：只取这件任务交付目录下的文件与工程包，去掉前缀后交给消费方的写入口 `sink`。路径不合格、超过上限、取不到下载链接的文件记进 `rejected`，不中断其余文件；临时故障与限流照抛，由消费方整次重来。取回了哪些文件由写入口自己记着。
 - `bundleLink`：旧代理工程包的位置，写进新代理的前言、由新代理自己取得：新代理能访问的链接（如临时下载链接），或执行环境不出网时新代理能读的路径。没有工程包返回 `undefined`。
 - `deleteAgent`：代理不存在时视为成功。
@@ -73,7 +73,7 @@ interface RunState { runId: string; status: RunStatus; resultText?: string }
 type RunProgress =
   | { kind: 'progress'; eventId: string }
   | { kind: 'terminal'; state: RunState };
-interface RunCost { chargedCents: number; inputTokens: number; cacheReadTokens: number }
+interface RunCost { cents: number }
 
 interface ArtifactLimits { maxFileBytes: number; maxRunBytes: number; maxRunFiles: number; maxBundleBytes: number }
 interface ArtifactSink {
@@ -88,7 +88,7 @@ interface RemoteAgentSummary { agentId: string; name: string }
 interface RemoteRunSummary { runId: string; status: RunStatus }
 ```
 
-`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。`inputTokens` 与 `cacheReadTokens` 供消费方判断上下文是否过长。
+`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。
 
 ### 出网
 
