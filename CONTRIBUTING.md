@@ -56,14 +56,14 @@ warnings 不阻断但会审阅。
 仓库装了 husky，`pnpm install` 时会自动启用 `.husky/pre-push` hook：
 
 ```
-git push   →   build → test → biome → knip   全过才放行
+git push   →   build → test → core 覆盖率 → biome → knip   全过才放行
 ```
 
-这等价于本地复现 CI 的所有阻断项，所以**只要本地能 push，CI 基本就过**。
+这覆盖了 CI 的所有阻断项，另加 core 覆盖率门槛（四项 100%，CI 不跑），所以**只要本地能 push，CI 基本就过**。
 任何一步失败 push 被拒绝。手动想跑相同检查：
 
 ```sh
-pnpm preflight     # = build + test + biome + knip
+pnpm preflight     # = clean + build + test + core 覆盖率 + biome + knip
 ```
 
 紧急情况绕过：`git push --no-verify`（请确认 CI 仍会兜底 fail）。
