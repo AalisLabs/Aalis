@@ -102,8 +102,8 @@ plugins:
 - `runCost`：`GET /v1/agents/{id}/usage?runId=<runId>`，在 `runs[]` 里按 `runId` 找对应项，取 `cost.chargedCents` 与 token 用量；没有 `cost` 时返回 `undefined`（费用暂缺）。
 - `cancelRun`：409 `run_not_cancellable` 表示已到终态，视为成功。
 - `deleteAgent`：404 视为已删。
-- `listAgents`：`GET /v1/agents?limit=100`（默认含已归档的代理），排除 `reconcileIgnoreNames` 里的名字。
-- 翻页：`listRuns` 与 `listAgents` 只读第一页，翻页方式没有实测。响应带下一页标记（`nextCursor`、`hasMore` 等）时抛 `unavailable`，不把第一页当完整列表：白纸枢纽的对账与开轮认领都依赖列表完整。上线前按真实接口核一次翻页与排序。
+- `listAgents`：`GET /v1/agents`（默认含已归档的代理），排除 `reconcileIgnoreNames` 里的名字。
+- 翻页：`listRuns` 与 `listAgents` 每页带 `limit=100`（接口上限，超过回 400；列轮次不带 `limit` 时只回 20 条）。响应带 `nextCursor` 时以 `cursor` 取下一页，直到末页；跨页重复的项按 id 只算一次。超过 50 页、或下一页标记与上一页相同时抛 `unavailable`，不把已取到的当完整列表：白纸枢纽的对账与开轮认领都依赖列表完整。
 
 ### 凭据与日志
 
