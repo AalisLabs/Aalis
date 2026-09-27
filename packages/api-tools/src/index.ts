@@ -48,10 +48,11 @@ export interface ToolCallContext {
   platform?: string;
   /**
    * 授权身份（与 platform/userId 解耦，语义同 schema-message 的 IncomingMessage.actor）：
-   * scheduler/delegate/subtask 等触发器代人执行时，authority 按 actor 的
+   * scheduler/workflow/subtask 等触发器代人执行时，authority 按 actor 的
    * (platform, userId) 实时查等级；platform/userId 保持**会话**语义不被覆盖——
-   * 否则跨平台委派会把定时任务归属、平台档继承、记忆平台域、confirm 通道选路
-   * 全部路由到发起者平台（2026-08-24 审计确认的四处错配）。
+   * 否则 actor 与会话不在同一平台时（如以 webui 身份发往 QQ 群的定时任务、WebUI 会话里
+   * 经 workflow_run 调起、节点投向 onebot 会话的 workflow）会把定时任务归属、平台档继承、
+   * 记忆平台域、confirm 通道选路全部路由到发起者平台（2026-08-24 审计确认的四处错配）。
    * 缺省 = 授权身份就是 (platform, userId) 本身。
    */
   actor?: { platform: string; userId: string };

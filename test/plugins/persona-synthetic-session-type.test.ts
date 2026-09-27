@@ -7,7 +7,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 合成回合（scheduler / workflow / delegate / idle）不经适配器，消息上没有 sessionType，
+// 合成回合（scheduler / workflow / idle）不经适配器，消息上没有 sessionType，
 // persona 的群聊段（会话类型、群号、身份判定规则）曾因此整段缺席：LLM 不知道自己在群里。
 // 现按 `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断，只用于提示词、不回写消息
 // （这时入站相位已跑完，回写只会让推断随归档写进消息元数据）。

@@ -18,7 +18,7 @@
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
 - plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
-- api-agent、api-authority、plugin-authority、plugin-commands、plugin-llm-deepseek、plugin-memory-vector、plugin-scheduler、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
+- api-agent、api-authority、api-tools、plugin-authority、plugin-commands、plugin-llm-deepseek、plugin-memory-vector、plugin-scheduler、plugin-subtask、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
 
 ### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
 

@@ -344,7 +344,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     expect(message.actor).toBeUndefined();
   });
 
-  it('interval 但消息已带 actor（委派等系统投递）：不覆盖既有授权身份', async () => {
+  it('interval 但消息已带 actor：不覆盖既有授权身份', async () => {
     const { app, host } = await setupPolicy(EVERY_MESSAGE);
     const msg = groupMsg('派发任务');
     msg.actor = { platform: 'webui', userId: 'console' };

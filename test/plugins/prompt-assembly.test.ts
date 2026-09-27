@@ -95,8 +95,8 @@ describe('assemblePromptContributions', () => {
     expect(layouts[1]).toEqual(layouts[0]);
   });
 
-  it('turn-context 三级落点：委派块前 > 易变块前 > 最后 user 前 > 落尾', async () => {
-    // proactive 委派轮：历史里有旧 user 消息、没有当前 user 消息。
+  it('turn-context 三级落点：proactive 任务块前 > 易变块前 > 最后 user 前 > 落尾', async () => {
+    // proactive 轮：历史里有旧 user 消息、没有当前 user 消息。
     // 若按「最后一条 user」定位，材料会 splice 进历史内部——既割裂转录，
     // 又在 append-only 区制造新的缓存断点（对抗审查实测抓到的回归）。
     {
