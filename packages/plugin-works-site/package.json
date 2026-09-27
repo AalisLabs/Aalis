@@ -1,18 +1,18 @@
 {
-  "name": "@aalis/plugin-draw",
-  "version": "0.3.1",
+  "name": "@aalis/plugin-works-site",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/plugin-draw"
+    "directory": "packages/plugin-works-site"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "让纯文本模型画图：SVG/HTML 标记渲染为图片与 GIF 动图（无头浏览器 + ffmpeg）",
+  "description": "作品站 —— 把已发布的作品部署到 Cloudflare Pages：按隔离组分支、部署前后核对、撤下与墓碑",
   "type": "module",
   "keywords": [
     "aalis",
@@ -28,12 +28,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
-    "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-publish": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/util-offline-render": "workspace:>=0.1.0 <1.0.0",
-    "puppeteer": "^24.0.0"
+    "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.13.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -42,19 +41,5 @@
   },
   "peerDependencies": {
     "@aalis/core": ">=0.18.0 <1.0.0"
-  },
-  "aalis": {
-    "service": {
-      "optional": [
-        "tools",
-        "storage",
-        "process"
-      ],
-      "required": [
-        "config",
-        "lifecycle",
-        "logger"
-      ]
-    }
   }
 }

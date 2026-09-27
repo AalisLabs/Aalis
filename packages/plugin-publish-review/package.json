@@ -1,18 +1,18 @@
 {
-  "name": "@aalis/plugin-paper",
+  "name": "@aalis/plugin-publish-review",
   "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/plugin-paper"
+    "directory": "packages/plugin-publish-review"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "白纸 —— 把群里的任务交给远端代理去做，排队、记账、取回成品",
+  "description": "作品审核 —— publish 服务的提供者：提名的静态检查、剥元数据、渲染与分类审核、owner 裁决、发布账本与撤下",
   "type": "module",
   "keywords": [
     "aalis",
@@ -28,46 +28,25 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-code-sandbox": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-gateway": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-publish": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-remote-agent": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.9.0 <1.0.0"
+    "@aalis/schema-config": "workspace:>=0.13.1 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
+    "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
+    "@aalis/util-media-signature": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/util-offline-render": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
-    "@aalis/api-agent": "workspace:*",
     "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
     "@aalis/core": ">=0.18.0 <1.0.0"
-  },
-  "aalis": {
-    "service": {
-      "required": [
-        "config",
-        "events",
-        "hooks",
-        "lifecycle",
-        "logger",
-        "session-manager",
-        "storage",
-        "tools"
-      ],
-      "optional": [
-        "doctor",
-        "gateway",
-        "remote-agent",
-        "webui-server"
-      ]
-    }
   }
 }

@@ -7,6 +7,43 @@
     "packages/plugin-webui-client": {
       "entry": ["index.html"],
       "project": ["src/**/*.{ts,tsx}"]
+    },
+    "packages/api-publish": {
+      "ignoreDependencies": ["@aalis/core"]
+    },
+    "packages/plugin-draw": {
+      "ignoreDependencies": ["@aalis/util-offline-render"]
+    },
+    "packages/plugin-paper": {
+      "ignoreDependencies": ["@aalis/api-authority", "@aalis/api-publish"]
+    },
+    "packages/plugin-publish-review": {
+      "ignoreDependencies": [
+        "@aalis/api-code-sandbox",
+        "@aalis/api-doctor",
+        "@aalis/api-llm",
+        "@aalis/api-publish",
+        "@aalis/api-storage",
+        "@aalis/api-tools",
+        "@aalis/api-webui",
+        "@aalis/schema-config",
+        "@aalis/schema-message",
+        "@aalis/util-json-repair",
+        "@aalis/util-media-signature",
+        "@aalis/util-offline-render"
+      ]
+    },
+    "packages/plugin-works-site": {
+      "ignoreDependencies": [
+        "@aalis/api-doctor",
+        "@aalis/api-publish",
+        "@aalis/api-storage",
+        "@aalis/api-webui",
+        "@aalis/schema-config"
+      ]
+    },
+    "packages/util-offline-render": {
+      "ignoreDependencies": ["puppeteer"]
     }
   },
   "ignoreIssues": {
