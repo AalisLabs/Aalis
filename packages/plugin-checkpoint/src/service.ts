@@ -2,14 +2,17 @@ import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
 
-/** 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）与回合结束前就清掉的临时目录（tmp）。 */
-const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'pluginData', 'logs']);
+/**
+ * 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）、回合结束前就清掉的临时目录（tmp），
+ * 以及白纸根（paper：枢纽在任意会话的回合进行中写入远端成品，记进那一轮的话回滚会删掉无关的成品）。
+ */
+const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'pluginData', 'logs', 'paper']);
 
 /**
  * Checkpoint 服务
  *
  * 在 LLM 一次回合（assistant turn）期间记录受控存储中的写入/删除/重命名操作（data / tmp / pluginData /
- * logs 这几类共享根与临时根除外，见 beforeMutate），
+ * logs / paper 这几类共享根、临时根与白纸根除外，见 beforeMutate），
  * 在改动发生前自动备份原始文件内容，使用户可以从 WebUI 一键回滚整轮操作。
  *
  * 协作模型：
@@ -215,7 +218,8 @@ export class CheckpointServiceImpl implements CheckpointService {
     // data / pluginData / logs 是多会话、多平台共享的写入区：既有别处落盘的附件与插件状态，也有本回合自己
     // 经工具产生的 skill / persona / 图片，storage 写入没有会话归属、无法分辨——记进本回合，回滚就会误删
     // 别人刚落盘的文件、把插件状态写回旧版，故整根不记账（这些改动不可回滚）；tmp 是回合结束前就清掉的
-    // 临时目录，记账只会让回滚必报 ENOENT。其余根（workspace 与用户自建的 custom 等）照常记账。
+    // 临时目录，记账只会让回滚必报 ENOENT；paper 是白纸根，枢纽在任意会话的回合进行中写入远端成品，
+    // 这些写入不属于那一轮。其余根（workspace 与用户自建的 custom 等）照常记账。
     if (this.isUnprotectedRootUri(uri)) return;
     // 回滚自身的改动不是任何回合的改动：记进其它会话的活跃回合，那边一回滚就把这次回滚再撤掉
     if (this.rollingBack.has(uri)) return;
