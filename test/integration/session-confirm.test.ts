@@ -203,6 +203,38 @@ describe('plugin-session-confirm 端到端确认环路', () => {
     }
   });
 
+  it('安全：带 source 的内部注入不当作确认应答：无 userId 的待决确认不被它结算，注入照常放行', async () => {
+    const { app, host, getHandler } = await setup();
+    try {
+      let swallowed = false;
+      host.events.on('gateway:phase:done', d => {
+        if (d.phase === 'inbound:confirm' && d.reachedEnd === false) swallowed = true;
+      });
+      // 定时任务等无 userId 的回合发起的确认：应答者同为 undefined 时才算本人
+      let settled = false;
+      const pending = getHandler()!(req('sess-src')).then(d => {
+        settled = true;
+        return d;
+      });
+      await tick();
+      // 后台命令的结束通知（宿主通知，带 source、不带 userId）到达
+      host.events.emit('inbound:message', {
+        content: '后台进程 proc_0a1b2c_1 已退出：退出码 0，用时 3 秒。它最近的输出用 process_read 查看。',
+        sessionId: 'sess-src',
+        platform: 'onebot',
+        source: 'exec-bg:proc_0a1b2c_1',
+      });
+      await tick();
+      await tick();
+      expect(swallowed, '通知不应被确认相位吞掉').toBe(false);
+      expect(settled, '确认不应被通知结算').toBe(false);
+      host.events.emit('inbound:message', { content: 'n', sessionId: 'sess-src', platform: 'onebot' });
+      expect(await pending).toBe(false);
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
+
   it('发起回合中止：撤回未决确认并按取消结算，队列推进到下一个', async () => {
     const { app, host, getHandler } = await setup();
     try {
