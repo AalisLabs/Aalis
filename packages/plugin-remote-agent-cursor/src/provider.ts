@@ -12,8 +12,9 @@
 // - 错误体有两种：业务错误 {error:{code,message}}，框架层的 400/415 为 {code:'error',message}。
 // - 产物列表的 path 以 `artifacts/` 开头，对应虚拟机里的 /opt/cursor/artifacts；下载拿到 15 分钟的
 //   预签名链接，经 safeFetch 下载，边读边计字节。单个成品取不到下载链接（非临时错误）时只拒收这一件。
-// - 列表的翻页方式没有实测：列代理、列轮次的响应带下一页标记时失败关闭（unavailable），不把第一页当完整列表
-//   （对账与开轮认领都依赖列表完整）。
+// - 列表翻页：响应是 {items, nextCursor?}，还有下一页时 nextCursor 为本页最后一项的 id，下一页以 cursor 传回，
+//   末页不带；limit 上限 100（超过回 400），列轮次不带 limit 时只回 20 条。列代理、列轮次都取完所有页，
+//   取不完（页数超限、标记不前进）时抛 unavailable，不把已取到的当完整列表（对账与开轮认领都依赖列表完整）。
 //
 // key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误与日志一律先去掉 key 的片段与链接的查询串。
 // ============================================================
@@ -91,8 +92,10 @@ const MAX_DETAIL_CHARS = 300;
 const MIN_SECRET_FRAGMENT = 8;
 /** URL 的查询串（预签名链接的签名在这里） */
 const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
-/** 列表响应里的下一页标记：翻页方式没有实测，见到就失败关闭 */
-const NEXT_PAGE_KEYS = ['nextCursor', 'next_cursor', 'nextPageToken', 'next_page_token', 'next'] as const;
+/** 列表每页的条数（接口上限） */
+const PAGE_LIMIT = 100;
+/** 列表最多取这么多页，超过按取不完处理 */
+const MAX_PAGES = 50;
 
 const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
   CREATING: 'creating',
@@ -175,15 +178,6 @@ function remoteError(data: unknown): { code?: string; message?: string } {
     return { code: str(inner.code), message: str(inner.message) };
   }
   return { code: str(body.code), message: str(body.message) };
-}
-
-/** 列表响应带的下一页标记（字段名）；没有时 undefined */
-function nextPageMarker(body: Json): string | undefined {
-  const key = NEXT_PAGE_KEYS.find(k => typeof body[k] === 'string' && body[k] !== '');
-  if (key) return key;
-  if (body.hasMore === true) return 'hasMore';
-  if (body.has_more === true) return 'has_more';
-  return undefined;
 }
 
 /** Retry-After 可以是秒数或 HTTP 日期；没有时按 60 秒 */
@@ -573,13 +567,8 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listRuns(agentId: string, signal: AbortSignal): Promise<RemoteRunSummary[]> {
-    const data = this.#wholeList(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs`, { signal }));
-    return asArray(data.items)
-      .map(asRecord)
-      .flatMap(r => {
-        const id = str(r.id);
-        return id ? [{ runId: id, status: this.#status(r.status, id) }] : [];
-      });
+    const items = await this.#listAll(`/v1/agents/${enc(agentId)}/runs`, signal);
+    return items.map(([id, r]) => ({ runId: id, status: this.#status(r.status, id) }));
   }
 
   async runCost(agentId: string, runId: string, signal: AbortSignal): Promise<RunCost | undefined> {
@@ -686,15 +675,33 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   async listAgents(signal: AbortSignal): Promise<RemoteAgentSummary[]> {
-    const data = this.#wholeList(await this.#call('GET', '/v1/agents?limit=100', { signal }));
     const ignore = new Set(this.#opt.reconcileIgnoreNames);
-    return asArray(data.items)
-      .map(asRecord)
-      .flatMap(a => {
-        const agentId = str(a.id);
-        const name = str(a.name) ?? '';
-        return agentId && !ignore.has(name) ? [{ agentId, name }] : [];
-      });
+    return (await this.#listAll('/v1/agents', signal)).flatMap(([agentId, a]) => {
+      const name = str(a.name) ?? '';
+      return ignore.has(name) ? [] : [{ agentId, name }];
+    });
+  }
+
+  /**
+   * 取完一个列表的所有页，按 id 去重（没有 id 的项不要），返回 [id, 项]。页数超过 {@link MAX_PAGES}、
+   * 或下一页标记与上一页相同（不会前进）时抛 unavailable。
+   */
+  async #listAll(path: string, signal: AbortSignal): Promise<Array<[string, Json]>> {
+    const items = new Map<string, Json>();
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const query = `limit=${PAGE_LIMIT}${cursor === undefined ? '' : `&cursor=${enc(cursor)}`}`;
+      const data = asRecord(this.#ok(await this.#call('GET', `${path}?${query}`, { signal })));
+      for (const item of asArray(data.items).map(asRecord)) {
+        const id = str(item.id);
+        if (id && !items.has(id)) items.set(id, item);
+      }
+      const next = str(data.nextCursor);
+      if (!next) return [...items];
+      if (next === cursor) throw this.#error('unavailable', `GET ${path} 的下一页标记没有前进，列表取不全`);
+      cursor = next;
+    }
+    throw this.#error('unavailable', `GET ${path} 超过 ${MAX_PAGES} 页，列表取不全`);
   }
 
   async #listArtifacts(agentId: string, signal: AbortSignal): Promise<Array<{ path: string; sizeBytes: number }>> {
@@ -795,19 +802,6 @@ export class CursorProvider implements RemoteAgentProvider {
   #ok(res: CallResult): unknown {
     if (res.status >= 200 && res.status < 300) return res.data;
     throw this.#httpError(res);
-  }
-
-  /** 列表响应：带下一页标记时抛 unavailable（列表可能不全） */
-  #wholeList(res: CallResult): Json {
-    const data = asRecord(this.#ok(res));
-    const marker = nextPageMarker(data);
-    if (marker) {
-      throw this.#error(
-        'unavailable',
-        `${res.what.replace(/\?.*$/, '')} 的响应带下一页标记 ${marker}，列表可能不全（翻页方式未实测，按失败处理）`,
-      );
-    }
-    return data;
   }
 
   #httpError(res: CallResult): RemoteAgentError {
