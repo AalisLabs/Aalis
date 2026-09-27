@@ -145,7 +145,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     async ingressMessage() {},
   });
   const now = () => Date.now();
-  const isolation = new Isolation(remote, cfg.papers);
+  const isolation = new Isolation(remote, cfg.papers, logger);
   const driver = new PaperDriver({
     remote,
     sessionManager,

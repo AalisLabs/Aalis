@@ -65,7 +65,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
 
   const now = Date.now;
   const notices = new PaperNotices({ ledger, events: caps.events, logger, now });
-  const isolation = new Isolation(caps.remoteAgent, cfg.papers);
+  const isolation = new Isolation(caps.remoteAgent, cfg.papers, logger);
   const driver = new PaperDriver({
     remote: caps.remoteAgent,
     sessionManager: caps.sessionManager,
