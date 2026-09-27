@@ -3,8 +3,10 @@ import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
-import { getPlatformNames, platform } from '@aalis/api-platform';
+import { getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
+  type MemoryRecallScope,
+  omitRoomOnlyKeys,
   type PlatformProfile,
   type SessionConfig,
   type SessionInfo,
@@ -86,6 +88,51 @@ const configSchema: ConfigSchema = {
         ],
         description: '该平台会话的深度思考默认档。留空=各 LLM provider 自行决定；会话可用 /session.set -t 进一步覆盖。',
       },
+      paperEnabled: {
+        type: 'boolean',
+        label: '开启白纸',
+        description: '该平台房间默认开启白纸；一般只在单个房间的会话配置里开',
+      },
+      paperName: {
+        type: 'string',
+        label: '白纸名',
+        description: '留空则每个房间各一块白纸，属性取白纸枢纽的 defaults',
+      },
+      remoteAgentTypes: {
+        type: 'multiselect',
+        label: '远端代理类型',
+        allowCustom: true,
+        description: '允许的远端代理插件实例 id；空=关。写在平台档里，这个平台的所有房间都会继承',
+      },
+      remoteAgentUserDailyCents: {
+        type: 'number',
+        label: '每人每天金额上限（美分）',
+        min: 0,
+        description: '留空按 0，即拒绝',
+      },
+      remoteAgentUserDailyTasks: {
+        type: 'number',
+        label: '每人每天件数上限',
+        min: 0,
+        description: '留空按 0，即拒绝',
+      },
+      remoteAgentRoomDailyCents: {
+        type: 'number',
+        label: '每房间每天金额上限（美分）',
+        min: 0,
+        description: '留空按 0，即拒绝',
+      },
+      memoryRecallScope: {
+        type: 'select',
+        label: '记忆召回范围',
+        options: [
+          { label: '继承记忆插件配置', value: '' },
+          { label: '仅本会话', value: 'session' },
+          { label: '同平台', value: 'platform' },
+          { label: '全部', value: 'all' },
+        ],
+        description: '只能比记忆插件的配置更窄，写宽了按插件配置',
+      },
     },
   },
 };
@@ -93,6 +140,16 @@ const configSchema: ConfigSchema = {
 // ===== 常量 =====
 
 const METADATA_NAMESPACE = 'sessions';
+
+/** 继承链的层：全局 defaults、平台档、父会话的 sessionDefaults */
+type InheritanceSource = 'defaults' | 'platform' | 'parent';
+
+/** 页面动作 getInheritance 的返回：会话所属平台、继承值（不含会话自身 config）与每个键的来源层 */
+interface SessionInheritance {
+  platform: string;
+  values: Omit<SessionConfig, 'sessionDefaults'>;
+  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;
+}
 
 // ===== WebuiPages（声明式 UI） =====
 
@@ -634,28 +691,33 @@ class SessionManager implements SessionManagerService {
    * WebUI 「继承 (xxx)」提示应该用这个值，否则会显示用户自己的覆盖值。
    */
   resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    const result: Omit<SessionConfig, 'sessionDefaults'> = {};
+    return this.resolveInheritance(sessionId, platform).values;
+  }
+
+  /** 同 {@link resolveInheritedDefaults}，另记下每个键最终来自哪一层（会话页显示继承来源用） */
+  resolveInheritance(sessionId: string, platform?: string): Omit<SessionInheritance, 'platform'> {
+    const values: Record<string, unknown> = {};
+    const sources: SessionInheritance['sources'] = {};
+    const layer = (config: object | undefined, source: InheritanceSource) => {
+      for (const [key, value] of Object.entries(stripUndefined(config))) {
+        values[key] = value;
+        sources[key as keyof SessionConfig] = source;
+      }
+    };
 
     // 3. 全局 defaults（最低）
-    Object.assign(result, stripUndefined(this.defaults));
+    layer(this.defaults, 'defaults');
 
     // 2. 平台 profile
-    if (platform) {
-      const profile = this.platformProfiles.get(platform);
-      if (profile) Object.assign(result, stripUndefined(profile));
-    }
+    if (platform) layer(this.platformProfiles.get(platform), 'platform');
 
     // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
     const session = this.sessions.get(sessionId);
-    if (session?.parentId) {
-      const parent = this.sessions.get(session.parentId);
-      if (parent?.config?.sessionDefaults) {
-        Object.assign(result, stripUndefined(parent.config.sessionDefaults));
-      }
-    }
+    if (session?.parentId) layer(this.sessions.get(session.parentId)?.config?.sessionDefaults, 'parent');
 
-    delete (result as Record<string, unknown>).sessionDefaults;
-    return result;
+    delete values.sessionDefaults;
+    delete sources.sessionDefaults;
+    return { values, sources };
   }
 
   getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
@@ -700,6 +762,10 @@ class SessionManager implements SessionManagerService {
       // null / 空串 = 未设置（继承 provider 全局配置），维持 null≡undefined 契约。
       if (entry.think === true || entry.think === 'on') profile.think = true;
       else if (entry.think === false || entry.think === 'off') profile.think = false;
+      const invalid = readRoomKeys(entry, profile);
+      if (invalid.length > 0) {
+        this.caps.logger.warn(`平台档 ${entry.platform} 的 ${invalid.join('、')} 取值无效，已忽略`);
+      }
       this.platformProfiles.set(entry.platform, profile);
     }
     if (this.platformProfiles.size > 0) {
@@ -749,6 +815,44 @@ class SessionManager implements SessionManagerService {
 
 // ===== 工具函数 =====
 
+const MEMORY_RECALL_SCOPES: readonly MemoryRecallScope[] = ['session', 'platform', 'all'];
+
+/**
+ * 读平台档里白纸、远端代理与召回范围这七个键，合法的写进 profile，返回取值无效被丢弃的键名。
+ *
+ * 这些键关系到费用与召回范围，类型不对一律丢弃，不做宽松转换。null 与空串按未设置处理（YAML 裸键、
+ * WebUI 表单留空），不算无效；远端类型数组里的非字符串项与空串被滤掉，也记为无效。
+ */
+function readRoomKeys(entry: Record<string, unknown>, profile: PlatformProfile): string[] {
+  const invalid: string[] = [];
+  const isUnset = (v: unknown) => v === undefined || v === null || v === '';
+  const isLimit = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+  if (typeof entry.paperEnabled === 'boolean') profile.paperEnabled = entry.paperEnabled;
+  else if (!isUnset(entry.paperEnabled)) invalid.push('paperEnabled');
+
+  if (typeof entry.paperName === 'string' && entry.paperName) profile.paperName = entry.paperName;
+  else if (!isUnset(entry.paperName)) invalid.push('paperName');
+
+  if (Array.isArray(entry.remoteAgentTypes)) {
+    const types = entry.remoteAgentTypes.filter((t): t is string => typeof t === 'string' && t !== '');
+    if (types.length !== entry.remoteAgentTypes.length) invalid.push('remoteAgentTypes');
+    profile.remoteAgentTypes = types;
+  } else if (!isUnset(entry.remoteAgentTypes)) invalid.push('remoteAgentTypes');
+
+  for (const key of ['remoteAgentUserDailyCents', 'remoteAgentUserDailyTasks', 'remoteAgentRoomDailyCents'] as const) {
+    const value = entry[key];
+    if (isLimit(value)) profile[key] = value;
+    else if (!isUnset(value)) invalid.push(key);
+  }
+
+  const scope = entry.memoryRecallScope;
+  if (MEMORY_RECALL_SCOPES.includes(scope as MemoryRecallScope)) profile.memoryRecallScope = scope as MemoryRecallScope;
+  else if (!isUnset(scope)) invalid.push('memoryRecallScope');
+
+  return invalid;
+}
+
 /**
  * 移除值为 undefined / null 的键。
  *
@@ -770,15 +874,18 @@ function stripUndefined(obj: object | undefined): Record<string, unknown> {
 
 // ===== 页面动作 =====
 
-/** 页面动作用到的能力：登记口 webui、读历史的 memory，以及供下拉框枚举选项的 persona / llm / tools / platform */
-type ActionCaps = Pick<Caps, 'webui' | 'memory' | 'persona' | 'llm' | 'tools' | 'platform'>;
+/**
+ * 页面动作用到的能力：登记口 webui、读历史的 memory，供下拉框枚举选项的 persona / llm / tools / platform
+ * （platform 另用于推出会话所属平台），以及记录适配器认领出错的 logger
+ */
+type ActionCaps = Pick<Caps, 'webui' | 'memory' | 'persona' | 'llm' | 'tools' | 'platform' | 'logger'>;
 
 /**
  * 页面动作全是 apply 里的闭包：直接用这次激活的 manager 与能力，
  * 登记随激活存亡（插件不在，WebUI 就调不到这些方法）。
  */
 function registerSessionActions(caps: ActionCaps, manager: SessionManager): void {
-  const { webui, memory, persona, llm, tools, platform } = caps;
+  const { webui, memory, persona, llm, tools, platform, logger } = caps;
 
   webui.registerAction('listSessions', async () =>
     manager.listSessions().map(s => ({
@@ -791,16 +898,16 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
 
   webui.registerAction('createSession', async args => {
     const parentId = (args.parentId as string) || undefined;
-    // 新建会话时复制当前生效配置，而非留空继承
+    // 新建会话时复制当前生效配置，而非留空继承；房间专属键不随复制冻结，留给继承链实时解析
     let config = (args.config as SessionConfig) || {};
     if (Object.keys(config).length === 0) {
       if (parentId) {
         // 子会话：复制父会话的 resolved config
-        config = { ...manager.resolveConfig(parentId, 'webui') };
+        config = omitRoomOnlyKeys(manager.resolveConfig(parentId, 'webui'));
       } else {
         // 根会话：复制 webui 平台 profile 作为初始配置
         const profiles = manager.getPlatformProfiles();
-        if (profiles.webui) config = { ...profiles.webui };
+        if (profiles.webui) config = omitRoomOnlyKeys(profiles.webui);
       }
     }
     return manager.createSession({
@@ -904,13 +1011,25 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
   });
 
   /**
-   * 获取「继承默认」——不含 session 自身 config，只算 platform profile + 父 sessionDefaults。
+   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档与父 sessionDefaults，并回每个键的来源层。
    * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
+   *
+   * 会话所属平台由服务端推出，不收平台参数：会话 metadata 记下的平台（子任务建档时写入）→ 接管这个会话 id 的
+   * 平台适配器 → webui（WebUI 建的会话 id 不带平台前缀）。
    */
-  webui.registerAction('getInheritedDefaults', async args => {
+  webui.registerAction('getInheritance', async args => {
     const sessionId = args.sessionId as string;
     if (!sessionId) throw new Error('缺少 sessionId');
-    return manager.resolveInheritedDefaults(sessionId, args.platform as string | undefined);
+    const recorded = manager.getSession(sessionId)?.metadata?.platform;
+    const sessionPlatform =
+      typeof recorded === 'string' && recorded
+        ? recorded
+        : ((await resolvePlatformBySession(platform, sessionId, logger))?.platform ?? 'webui');
+    const inheritance: SessionInheritance = {
+      platform: sessionPlatform,
+      ...manager.resolveInheritance(sessionId, sessionPlatform),
+    };
+    return inheritance;
   });
 
   /** 获取会话详情（含完整消息历史，包括已归档消息） */
