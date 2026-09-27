@@ -6,15 +6,15 @@ import { createProcessGateway, processService } from '../../packages/api-process
 import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
-import { DrawEngine } from '../../packages/plugin-draw/src/engine.js';
 import { ffmpegEncodeArgs, ffmpegPaletteArgs, framesToGif } from '../../packages/plugin-draw/src/gif.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
-import { type DrawCaps, resolveCanvas } from '../../packages/plugin-draw/src/plan.js';
+import { type DrawCaps, renderRequest, resolveCanvas } from '../../packages/plugin-draw/src/plan.js';
 import processLocal from '../../packages/plugin-process-local/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// 动图路径真机 E2E：真 Chromium 逐帧 + 真 ffmpeg 编码。
+// 动图路径真机 E2E：draw 的渲染计划经离线渲染库逐帧（真 Chromium）+ 真 ffmpeg 编码。
 // 锚三件事：
 //   1) 动画真的在动（首帧 ≠ 中帧，SMIL 与 CSS 双机制都被步进）；
 //   2) 逐帧确定性（两次完整渲染字节一致——暂停时钟成立）；
@@ -23,7 +23,7 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const caps: DrawCaps = { defaultWidth: 800, maxWidth: 1600, maxPixels: 4_000_000, maxSourceBytes: 262144, scale: 2 };
-const logger = { info: () => {}, warn: () => {}, debug: () => {}, error: () => {}, child: () => logger } as never;
+const logger = { info: () => {}, warn: () => {}, debug: () => {} };
 
 type ToolHandler = (args: Record<string, unknown>, callCtx: { sessionId: string }) => Promise<string>;
 
@@ -66,7 +66,7 @@ describe('gif 参数（纯函数）', () => {
   });
 });
 
-describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
+describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
   let base: string;
   let app: App;
   let storageGateway: StorageService;
@@ -111,42 +111,37 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
   });
 
   it('SMIL+CSS 双机制被步进：首帧≠中帧；两次渲染字节级一致；GIF 合法', async () => {
-    const engine = new DrawEngine(logger, {
-      headless: true,
-      idleShutdownMs: 0,
-      stepTimeoutMs: 15_000,
-      maxConcurrency: 4,
-    });
+    const renderer = new OfflineRenderer({ sandbox: 'preferred', idleShutdownSec: 0, maxConcurrency: 4, logger });
     try {
       const plan = resolveCanvas(ANIMATED_SVG, 200, caps);
-      const opts = {
-        fps: 10,
-        defaultDurationMs: 3000,
-        maxDurationMs: 8000,
-        maxFrames: 160,
-        scale: 1,
-        maxPixels: caps.maxPixels,
-      };
-      const a = await engine.renderAnimation(plan, opts);
+      const req = renderRequest(plan, 1, caps.maxPixels);
+      const opts = { fps: 10, defaultDurationMs: 3000, maxDurationMs: 8000, maxFrames: 160 };
+      const a = await renderer.renderFrames(req, opts);
       expect(a.animationCount).toBeGreaterThanOrEqual(2); // SMIL 圆 + CSS 文本
       expect(a.durationMs).toBe(2000); // 自动探测到声明的 2s
       expect(a.frames.length).toBe(20); // 2s × 10fps
+      const same = (x: Uint8Array, y: Uint8Array) => Buffer.from(x).equals(Buffer.from(y));
       // 动画真的在动
-      expect(a.frames[0].equals(a.frames[10])).toBe(false);
+      expect(same(a.frames[0], a.frames[10])).toBe(false);
       // 确定性：完整重渲一遍逐帧字节一致
-      const b = await engine.renderAnimation(plan, opts);
+      const b = await renderer.renderFrames(req, opts);
       expect(b.frames.length).toBe(a.frames.length);
       for (let i = 0; i < a.frames.length; i += 5) {
-        expect(a.frames[i].equals(b.frames[i]), `frame ${i}`).toBe(true);
+        expect(same(a.frames[i], b.frames[i]), `frame ${i}`).toBe(true);
       }
 
       const proc = createProcessGateway(app.bind({ processService }).processService);
-      const gif = await framesToGif(proc, storageGateway, a.frames, opts.fps);
+      const gif = await framesToGif(
+        proc,
+        storageGateway,
+        a.frames.map(f => Buffer.from(f)),
+        opts.fps,
+      );
       expect(gif.subarray(0, 6).toString('ascii')).toBe('GIF89a');
       expect(gif.byteLength).toBeGreaterThan(5000);
       expect(existsSync(join(base, 'tmp'))).toBe(true); // 临时目录已清（目录在、内容清）
     } finally {
-      await engine.dispose();
+      await renderer.dispose();
     }
   }, 60_000);
 });
@@ -269,6 +264,44 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     } finally {
       await app4.stop();
       rmSync(base4, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('draw_image：结果里的宽高是画布的 CSS 尺寸，落盘的 PNG 像素 = 宽高×scale', async () => {
+    const base5 = mkdtempSync(join(tmpdir(), 'aalis-draw-png-'));
+    for (const d of ['data', 'tmp']) mkdirSync(join(base5, d), { recursive: true });
+    const app5 = new App({ name: 'T', logLevel: 'error' });
+    try {
+      await app5.plugin(storageLocal, {
+        roots: ['data', 'tmp'].map(name => ({
+          name,
+          path: join(base5, name),
+          label: name,
+          kind: name,
+          browsable: false,
+          readable: true,
+          writable: true,
+          deletable: true,
+        })),
+      });
+      await app5.plugin(processLocal);
+      const storage5 = createStorageGateway(app5.bind({ storage }).storage);
+      const captured = provideCapturingTools(app5);
+      await app5.plugin(drawPlugin, { idleShutdownSec: 0, scale: 2 });
+      await app5.plugins.idle();
+      const out = JSON.parse(
+        await captured.draw_image(
+          { source: '<div style="height:37px;background:#123">卡片</div>', width: 150 },
+          { sessionId: 'onebot:t:group:1' },
+        ),
+      );
+      expect(out.error).toBeUndefined();
+      expect(out).toMatchObject({ width: 150, height: 37, mode: 'html' });
+      const png = Buffer.from((await storage5.readFile(out.uri)) as Uint8Array);
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([300, 74]);
+    } finally {
+      await app5.stop();
+      rmSync(base5, { recursive: true, force: true });
     }
   }, 60_000);
 
