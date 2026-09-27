@@ -63,22 +63,26 @@
 |  |  | `plugin-webui-server` | `existsSync` 探测前端 dist 目录（位于工作区外、由 webui-client 提供） |
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
 |  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
+|  |  | `plugin-memory-sqlite/src/index.ts` | `statSync` 取数据库文件的设备号与 inode，判断两个实例是否打开了同一个库 |
 | `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
+| `node:net` | 出站建议用 fetch（受用户或 LLM 影响的 URL 走 `safeFetch`） | `plugin-tool-browser` | 浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标 |
 | `node:os` | 走 `system_info` 工具聚合返回 | `plugin-tool-system/src/tools/system.ts` | 该工具的本意就是暴露系统信息 |
-| `node:crypto` | 推荐 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`） | — | 当前无例外 |
+| `node:crypto` | 推荐 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`） | `plugin-tool-browser` | `createHash` 取截图 PNG 内容的 sha256 作文件名 |
+|  |  | `plugin-storage-local` | `randomBytes` 生成原子写临时文件名里的随机段 |
+|  |  | `runtime/src/providers.ts` | `randomBytes` 生成配置文件原子写临时文件名里的随机段 |
 | `node:buffer` / `node:path` | 直接使用 | 全部 | 纯函数 / Web 标准不覆盖，无 I/O |
 | `node:url` | `fileURLToPath` / `pathToFileURL` 推荐使用；`URL` 用全局 | 全部 | 仅用作路径互转时引入 |
 
 ## 3. 直接持有 node:* 的插件清单（白名单）
 
-每行格式：`插件 — 引入的 node:* — 用途`。biome.json `overrides[1].includes` 与此清单保持一致即可让 lint 通过。
+每行格式：`插件 — 引入的 node:* — 用途`。biome.json `overrides[1].includes` 与此清单保持一致即可让 lint 通过（plugin-memory-sqlite 除外，见其条目）。
 
 ### 基础设施（网关实现）
 
-- **`plugin-storage-local`** — `node:fs`（`createReadStream` / `watch`）+ `node:fs/promises`（CRUD）
-  本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `createStorageGateway(storage)` 即可，无需绕过它。
+- **`plugin-storage-local`** — `node:fs`（`createReadStream` / `watch`）+ `node:fs/promises`（CRUD）+ `node:crypto`（`randomBytes`）
+  本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `createStorageGateway(storage)` 即可，无需绕过它。`randomBytes` 为原子写的临时文件名生成随机段，避免同进程同一毫秒并发写同一路径时临时文件重名。
 
 - **`plugin-process-local`** — `node:child_process`（`spawn`）+ `node:fs/promises`（`readFile`）
   `ProcessService` 的当前实现：负责 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`。`readExternalFile` 用于 OneBot 等推流场景，源端给的是 OS 直读路径（如 `/tmp/xxx.jpg`），不属于任何 storage 根，所以刻意绕过 storage 沙箱直接 `fs.readFile`；该方法不受沙箱约束，调用方自行保证路径安全。
@@ -106,13 +110,18 @@
 
 ### 浏览器自动化
 
-- **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）
-  动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 网关覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。
+- **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）+ `node:crypto`（`createHash`）+ `node:net`（`createServer` / `connect` / `isIP`）
+  动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 网关覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
+
+### 记忆后端
+
+- **`plugin-memory-sqlite/src/index.ts`** — `node:fs`（`statSync`）
+  better-sqlite3 本来就直接打开 `resolveLocalPath` 给出的本地文件，取这个文件的身份与开库属于同一层。开库后用 `statSync` 取设备号与 inode，按文件身份判断两个实例是否打开了同一个库：大小写不敏感的卷上只差大小写的两个路径、指向同一文件的硬链接，按路径字符串比较都认不出来。没有为此给 `StorageService` 增加文件身份字段，因为目前只有这一个消费者。这个文件不在 `overrides[1]` 里整条关掉 `noRestrictedImports`：`biome.json` 为它单独写了一段 override，`node:fs` 用 `allowImportNames` 只放行 `statSync`，其余受限的 `node:*` 照常报错。biome 的 override 会整体替换规则选项，这段 override 因此重抄了 `overrides[0]` 的全部路径，改 `overrides[0]` 时要一并改它。
 
 ### 宿主运行时
 
-- **`@aalis/runtime`** — `node:fs` / `node:fs/promises`（文件日志、`node_modules` 插件加载、配置读写与监听）+ `node:child_process`（`spawn`）+ `node:module`（`createRequire`）+ `node:path` / `node:url`
-  独立部署宿主：从 `node_modules` 加载插件、读 YAML 配置、注入时钟 / 存储 / 进程等环境专有件。它本身就是宿主，直接使用 `node:*` 是本职——core 的环境无关红线正是靠它把副作用兜在外层。
+- **`@aalis/runtime`** — `node:fs` / `node:fs/promises`（文件日志、`node_modules` 插件加载、配置读写与监听）+ `node:child_process`（`spawn`）+ `node:module`（`createRequire`）+ `node:crypto`（`randomBytes`）+ `node:path` / `node:url`
+  独立部署宿主：从 `node_modules` 加载插件、读 YAML 配置、注入时钟 / 存储 / 进程等环境专有件。它本身就是宿主，直接使用 `node:*` 是本职——core 的环境无关红线正是靠它把副作用兜在外层。`randomBytes`（`providers.ts`）为配置文件原子写的临时文件名生成随机段。
 
 > 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-llm-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService.execFile`。新代码不要再加入直接动态 import `node:fs|crypto|child_process`——如有需要，请按 § 4 流程申报新的例外。
 
