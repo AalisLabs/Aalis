@@ -285,9 +285,9 @@ describe('workflow agent 节点', () => {
     expect(res.outputs.bOut).toBe('聚合完成');
     // 下游 b 的指令应已插值上游结果
     expect(emitted[1].content).toContain('子任务结果X');
-    // 省略 sessionId → 一次性隔离子会话 workflow:agent:<runId>:<nodeId>
-    expect(emitted[0].sessionId).toBe('workflow:agent:rA:a');
-    expect(emitted[1].sessionId).toBe('workflow:agent:rA:b');
+    // 省略 sessionId → 一次性隔离子会话 workflow::<runId>::<nodeId>（不含单冒号，不会被当成房间）
+    expect(emitted[0].sessionId).toBe('workflow::rA::a');
+    expect(emitted[1].sessionId).toBe('workflow::rA::b');
   });
 
   it('显式 sessionId/platform + vars 插值', async () => {

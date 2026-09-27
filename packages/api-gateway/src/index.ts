@@ -205,6 +205,29 @@ export function inferSessionScope(
   return { sessionType: t, targetId: t === 'channel' ? '' : parts.slice(3).join(':') };
 }
 
+/** 房间会话的出生：平台与受众 */
+export interface SessionOrigin {
+  /** 出生平台：会话 id（子任务取第一个 `::` 之前）第一个 `:` 之前的一段 */
+  platform: string;
+  /** 类型段为 private 的是私聊；group、channel 与不认识的类型段一律按群 */
+  audience: 'group' | 'private';
+}
+
+/**
+ * 按会话 id 推出房间会话的出生平台与受众，供选档与会话分区用。同步，只看 id，不查已注册的适配器
+ * （适配器没加载时同样钉死）。子任务 `<父会话>::<后缀>` 按父会话算。约定：多人房间的会话 id 以
+ * `<platform>:` 开头；非房间的内部会话 id 不含单冒号（要分段用 `::`），截掉 `::` 之后不含 `:` 的 id
+ * 返回 undefined，由调用方按入口平台处理。
+ * 与 {@link inferSessionScope} 回答的问题不同（那个回答会话自己在触发闸门里算群还是私聊，子任务不推断），不要互相替代。
+ */
+export function resolveSessionOrigin(sessionId: string): SessionOrigin | undefined {
+  const cut = sessionId.indexOf('::');
+  const root = cut === -1 ? sessionId : sessionId.slice(0, cut);
+  const colon = root.indexOf(':');
+  if (colon <= 0) return undefined;
+  return { platform: root.slice(0, colon), audience: root.split(':')[2] === 'private' ? 'private' : 'group' };
+}
+
 /** `(platform, sessionType, targetId)` 是否命中 `scopes` 或任一 `overrides[].scope`。 */
 export function isScopeEnabled(
   cfg: { scopes: readonly string[]; overrides: readonly { scope: string }[] },
