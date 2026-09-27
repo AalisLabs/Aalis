@@ -1070,9 +1070,6 @@ importers:
       '@aalis/util-offline-render':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-offline-render
-      puppeteer:
-        specifier: ^24.0.0
-        version: 24.40.0(typescript@5.9.3)
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

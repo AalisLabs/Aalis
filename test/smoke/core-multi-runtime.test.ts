@@ -84,8 +84,10 @@ describe('core 多运行时冒烟', () => {
     let page: Page;
 
     beforeAll(async () => {
-      // 根目录不直接依赖 puppeteer，从 plugin-draw 的依赖里取
-      const puppeteer = createRequire(join(ROOT, 'packages/plugin-draw/package.json'))('puppeteer') as Puppeteer;
+      // 根目录不直接依赖 puppeteer，从 util-offline-render 的依赖里取
+      const puppeteer = createRequire(join(ROOT, 'packages/util-offline-render/package.json'))(
+        'puppeteer',
+      ) as Puppeteer;
       browser = await puppeteer.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
@@ -177,7 +179,7 @@ interface Run {
   result: SmokeResult;
 }
 
-// puppeteer 不在根目录的依赖里，只声明用到的部分（与 plugin-draw 的做法相同）
+// puppeteer 不在根目录的依赖里，只声明用到的部分
 interface Puppeteer {
   launch(options: Record<string, unknown>): Promise<Browser>;
 }
