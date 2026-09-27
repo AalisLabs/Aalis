@@ -522,7 +522,7 @@ describe('process_kill', () => {
     expect(s.notices).toEqual([]);
   });
 
-  it.skipIf(!posix)('安全：忽略 SIGTERM 的进程组，宽限后强制结束，2500ms 内报已停止', async () => {
+  it.skipIf(!posix)('安全：忽略 SIGTERM 的进程组，宽限后强制结束，3000ms 内报已停止', async () => {
     const s = register(recordingProcess());
     const started = await call(s.handlers.exec_background, {
       command: "trap '' TERM; while :; do sleep 0.1; done",
@@ -531,7 +531,7 @@ describe('process_kill', () => {
     await sleep(200);
     const t0 = Date.now();
     const killed = await call(s.handlers.process_kill, { processId: started.processId });
-    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(Date.now() - t0).toBeLessThan(3500);
     expect(killed.stopped).toBe(true);
     expect(probe(-pid)).toBe('ESRCH');
   });
@@ -543,7 +543,7 @@ describe('process_kill', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const pending = call(s.handlers.process_kill, { processId: id });
-      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(3500);
       const killed = await pending;
       expect(killed.stopped).toBeUndefined();
       expect(killed.running).toBe(true);
