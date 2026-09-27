@@ -811,6 +811,19 @@ describe('9 取回成品', () => {
     await expectCode(p.collectArtifacts(agent.id, '../T1', memorySink().sink, LIMITS, signal), 'rejected');
   });
 
+  it.each([
+    ['没有 items 数组', { artifacts: [] }],
+    ['带了下一页标记', { items: [{ path: 'artifacts/out/T9/a.png', sizeBytes: 5 }], nextCursor: 'more' }],
+  ])('安全：产物列表形状认不出（%s）时 unavailable，不当作只有这些成品', async (_, body) => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    agent.artifacts.set('artifacts/workspace.tar.gz', { data: bytes(3) });
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts`, { status: 200, body });
+    await expectCode(p.collectArtifacts(agent.id, 'T9', memorySink().sink, LIMITS, signal), 'unavailable');
+    fake.intercept('GET', `/v1/agents/${agent.id}/artifacts`, { status: 200, body });
+    await expectCode(p.bundleLink(agent.id, signal), 'unavailable');
+  });
+
   it('bundleLink：有工程包时回预签名链接，没有时 undefined', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
@@ -920,6 +933,88 @@ describe('14 列表翻页', () => {
     );
     await expectCode(p.listRuns(endless.id, signal), 'unavailable');
     expect(n).toBe(50);
+  });
+
+  it('安全：下一页标记循环出现（A→B→A）时立即 unavailable，不等到页数上限', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({});
+    const path = `/v1/agents/${agent.id}/runs`;
+    const page = (id: string, next: string) => ({
+      status: 200,
+      body: { items: [{ id, status: 'FINISHED' }], nextCursor: next },
+    });
+    fake.intercept('GET', path, page('run-1', 'run-a'));
+    fake.intercept('GET', path, page('run-2', 'run-b'));
+    fake.intercept('GET', path, page('run-3', 'run-a'));
+    fake.intercept('GET', path, page('run-4', 'run-b'), 60);
+    await expectCode(p.listRuns(agent.id, signal), 'unavailable');
+    expect(fake.requestsTo('GET', path)).toHaveLength(3);
+  });
+
+  it.each([
+    ['没有 items 数组', { runs: [] }],
+    ['items 不是数组', { items: { id: 'run-1' } }],
+    ['nextCursor 是数字', { items: [{ id: 'run-1', status: 'FINISHED' }], nextCursor: 2 }],
+    ['nextCursor 是空串', { items: [{ id: 'run-1', status: 'FINISHED' }], nextCursor: '' }],
+  ])('安全：响应形状认不出（%s）时 unavailable，不当作空列表或末页', async (_, body) => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    fake.intercept('GET', `/v1/agents/${agent.id}/runs`, { status: 200, body });
+    await expectCode(p.listRuns(agent.id, signal), 'unavailable');
+    fake.intercept('GET', '/v1/agents', { status: 200, body });
+    await expectCode(p.listAgents(signal), 'unavailable');
+  });
+
+  it.each([
+    [502, 'transient'],
+    [401, 'unavailable'],
+    [404, 'not-found'],
+  ] as const)('安全：第 2 页回 %s 时整次抛 %s，不交出第 1 页', async (status, code) => {
+    const p = makeProvider();
+    const seeded = Array.from({ length: 101 }, (_, i) => fake.seedAgent({ name: `aalis-paper-${2000 + i}` }));
+    const body = { error: { code: 'x', message: '翻页失败' } };
+    fake.intercept('GET', '/v1/agents', { status: 200, body: { items: [], nextCursor: seeded[0].id } });
+    fake.intercept('GET', '/v1/agents', { status, body });
+    await expectCode(p.listAgents(signal), code);
+
+    const agent = fake.seedAgent({ runs: Array.from({ length: 101 }, () => ({ status: 'FINISHED' })) });
+    const path = `/v1/agents/${agent.id}/runs`;
+    fake.intercept('GET', path, { status: 200, body: { items: [], nextCursor: agent.runs[0].id } });
+    fake.intercept('GET', path, { status, body });
+    await expectCode(p.listRuns(agent.id, signal), code);
+  });
+
+  it('安全：列代理的下一页标记指向已被删的代理时，接口按实测回 200 空页；这时抛 transient，不当作取完', async () => {
+    const p = makeProvider();
+    const seeded = Array.from({ length: 101 }, (_, i) => fake.seedAgent({ name: `aalis-paper-${3000 + i}` }));
+    // 第 1 页之后、第 2 页之前，第 1 页末项（下一页标记）被删了
+    fake.intercept('GET', '/v1/agents', {
+      status: 200,
+      bodyFrom: () => {
+        const newestFirst = seeded.slice().reverse().slice(0, 100);
+        fake.agents.delete(newestFirst[99].id);
+        return { items: newestFirst.map(a => ({ id: a.id, name: a.name })), nextCursor: newestFirst[99].id };
+      },
+    });
+    await expectCode(p.listAgents(signal), 'transient');
+    const pages = fake.requestsTo('GET', '/v1/agents');
+    expect(pages).toHaveLength(2);
+    expect(pages[1].path).toContain('cursor=');
+  });
+
+  it('列轮次的下一页标记无效时接口按实测回 400，整次抛 rejected', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    const path = `/v1/agents/${agent.id}/runs`;
+    fake.intercept('GET', path, {
+      status: 200,
+      body: {
+        items: [{ id: agent.runs[0].id, status: 'FINISHED' }],
+        nextCursor: 'run-00000000-0000-0000-0000-000000000000',
+      },
+    });
+    const err = await expectCode(p.listRuns(agent.id, signal), 'rejected');
+    expect(err.message).toContain('Invalid pagination cursor');
   });
 });
 

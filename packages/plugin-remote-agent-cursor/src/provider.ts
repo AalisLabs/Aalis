@@ -13,8 +13,10 @@
 // - 产物列表的 path 以 `artifacts/` 开头，对应虚拟机里的 /opt/cursor/artifacts；下载拿到 15 分钟的
 //   预签名链接，经 safeFetch 下载，边读边计字节。单个成品取不到下载链接（非临时错误）时只拒收这一件。
 // - 列表翻页：响应是 {items, nextCursor?}，还有下一页时 nextCursor 为本页最后一项的 id，下一页以 cursor 传回，
-//   末页不带；limit 上限 100（超过回 400），列轮次不带 limit 时只回 20 条。列代理、列轮次都取完所有页，
-//   取不完（页数超限、标记不前进）时抛 unavailable，不把已取到的当完整列表（对账与开轮认领都依赖列表完整）。
+//   末页不带；limit 上限 100（超过回 400；不带时默认 20 取自文档）。认不出的 cursor：列代理回 200 空页，
+//   列轮次回 400。列代理按 updatedAt 倒序，翻页期间更新的代理会挪到已读过的头部，这一次可能漏掉。
+//   列代理、列轮次都取完所有页，取不全时抛错，不把已取到的当完整列表（对账与开轮认领都依赖列表完整）。
+//   产物列表不分页（文档与实测都只有 items）。
 //
 // key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误与日志一律先去掉 key 的片段与链接的查询串。
 // ============================================================
@@ -683,35 +685,54 @@ export class CursorProvider implements RemoteAgentProvider {
   }
 
   /**
-   * 取完一个列表的所有页，按 id 去重（没有 id 的项不要），返回 [id, 项]。页数超过 {@link MAX_PAGES}、
-   * 或下一页标记与上一页相同（不会前进）时抛 unavailable。
+   * 取完一个列表的所有页，按 id 去重（没有 id 的项不要），返回 [id, 项]。任何一页出错都整次照抛；此外：
+   * - 响应形状认不出（items 不是数组、nextCursor 不是非空字符串）、页数超过 {@link MAX_PAGES}、下一页标记出现过
+   *   （不会前进）时抛 unavailable；
+   * - 带着标记取到空页、又没有下一页标记时抛 transient：标记指向的代理在翻页期间被删了，重新列举即可。
    */
   async #listAll(path: string, signal: AbortSignal): Promise<Array<[string, Json]>> {
     const items = new Map<string, Json>();
+    const cursors = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
       const query = `limit=${PAGE_LIMIT}${cursor === undefined ? '' : `&cursor=${enc(cursor)}`}`;
       const data = asRecord(this.#ok(await this.#call('GET', `${path}?${query}`, { signal })));
-      for (const item of asArray(data.items).map(asRecord)) {
+      if (!Array.isArray(data.items)) throw this.#error('unavailable', `GET ${path} 的响应没有 items 数组，列表取不全`);
+      for (const item of data.items.map(asRecord)) {
         const id = str(item.id);
         if (id && !items.has(id)) items.set(id, item);
       }
-      const next = str(data.nextCursor);
-      if (!next) return [...items];
-      if (next === cursor) throw this.#error('unavailable', `GET ${path} 的下一页标记没有前进，列表取不全`);
+      const next: unknown = data.nextCursor;
+      if (next === undefined || next === null) {
+        if (cursor !== undefined && data.items.length === 0) {
+          throw this.#error('transient', `GET ${path} 翻页途中下一页标记失效（回了空页），列表取不全`);
+        }
+        return [...items];
+      }
+      if (typeof next !== 'string' || next === '') {
+        throw this.#error('unavailable', `GET ${path} 的下一页标记认不出，列表取不全`);
+      }
+      if (cursors.has(next)) throw this.#error('unavailable', `GET ${path} 的下一页标记没有前进，列表取不全`);
+      cursors.add(next);
       cursor = next;
     }
     throw this.#error('unavailable', `GET ${path} 超过 ${MAX_PAGES} 页，列表取不全`);
   }
 
+  /** 产物列表不分页：响应没有 items 数组或带了下一页标记时抛 unavailable，不把已取到的当完整列表 */
   async #listArtifacts(agentId: string, signal: AbortSignal): Promise<Array<{ path: string; sizeBytes: number }>> {
-    const data = asRecord(this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/artifacts`, { signal })));
-    return asArray(data.items)
-      .map(asRecord)
-      .flatMap(i => {
-        const path = str(i.path);
-        return path ? [{ path, sizeBytes: num(i.sizeBytes) ?? 0 }] : [];
-      });
+    const path = `/v1/agents/${enc(agentId)}/artifacts`;
+    const data = asRecord(this.#ok(await this.#call('GET', path, { signal })));
+    if (!Array.isArray(data.items) || (data.nextCursor !== undefined && data.nextCursor !== null)) {
+      throw this.#error(
+        'unavailable',
+        `GET ${path} 的响应形状认不出（没有 items 数组或带了下一页标记），产物列表取不全`,
+      );
+    }
+    return data.items.map(asRecord).flatMap(i => {
+      const listed = str(i.path);
+      return listed ? [{ path: listed, sizeBytes: num(i.sizeBytes) ?? 0 }] : [];
+    });
   }
 
   /** 产物的预签名下载链接；path 原样用列表给出的 `artifacts/...` */
