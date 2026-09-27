@@ -75,8 +75,8 @@ const RUN_TAG = Buffer.from(crypto.getRandomValues(new Uint8Array(3))).toString(
 
 const EXIT_NOTICE_KIND = 'exec-background';
 const EXIT_NOTICE_SOURCE_PREFIX = 'exec-bg:';
-/** process_kill 等进程落定的上限：中止契约在宽限后整组强制结束（process-local 为 2000ms），再留 500ms 收尾 */
-const KILL_WAIT_MS = 2500;
+/** process_kill 等进程落定的上限：中止契约在宽限后整组强制结束（process-local 为 2000ms），再留 1000ms 收尾 */
+const KILL_WAIT_MS = 3000;
 
 /** 每个 session 最多保留多少条已完成进程记录 */
 const MAX_DONE_PROCESSES_PER_SESSION = 20;
