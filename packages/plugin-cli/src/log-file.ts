@@ -1,4 +1,4 @@
-// latest.log 是 runtime 约定的"持久化日志单一数据源"（每次启动覆盖）；
+// latest.log 是 runtime 约定的"持久化日志单一数据源"（只装当前这一轮，上一轮在启动时改名保留）；
 // CLI 启动时尾读它来恢复 boot 期早期日志（plugin apply 时 LogHub 已 emit 过若干
 // 早期 entry 但 CLI 还未订阅）。与 webui-server 走相同契约，避免插件直连 runtime。
 //
