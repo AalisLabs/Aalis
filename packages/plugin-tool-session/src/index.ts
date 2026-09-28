@@ -13,7 +13,7 @@ import {
 } from '@aalis/api-session-history';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 // ===== 跨会话委派：回合深度防雪崩 =====
@@ -113,8 +113,8 @@ function buildDelegationMetaBlock(
 
 // ===== 插件元数据与能力声明 =====
 
-const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true },
+const configSchema = defineConfig({
+  enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true, onInvalid: 'error' },
   maxLimit: {
     type: 'number',
     label: '单次最多读取条数',
@@ -131,6 +131,7 @@ const configSchema: ConfigSchema = {
     type: 'select',
     label: '允许读取范围',
     default: 'platform',
+    onInvalid: 'error',
     options: [
       { label: '仅当前会话', value: 'current' },
       { label: '同平台会话', value: 'platform' },
@@ -148,6 +149,7 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启用跨会话委派 (delegate_to_session / list_known_sessions)',
     default: true,
+    onInvalid: 'error',
     description:
       '允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护；限速只对 flow-control 作用域内的会话生效（默认 *:group）。',
   },
@@ -157,7 +159,7 @@ const configSchema: ConfigSchema = {
     default: 60,
     description: 'delegate_to_session 在未显式指定 timeout_seconds 时使用的等待上限。',
   },
-};
+});
 
 const uses = {
   tools: optional(tools),
@@ -180,16 +182,7 @@ type CrossSessionCaps = Pick<
   'tools' | 'logger' | 'events' | 'hooks' | 'memory' | 'platform' | 'persona' | 'flowControl'
 >;
 
-interface PluginConfig {
-  enabled: boolean;
-  maxLimit: number;
-  defaultLimit: number;
-  scope: 'current' | 'platform' | 'all';
-  includeArchivedDefault: boolean;
-  perMessageMaxChars: number;
-  crossSessionEnabled: boolean;
-  crossSessionDefaultTimeoutSec: number;
-}
+type PluginConfig = ConfigOf<typeof configSchema>;
 
 type SessionHistoryResult = Extract<SessionHistoryReadResult, { ok: true }>;
 
@@ -266,23 +259,6 @@ export function resolveTimeRange(
   }
 
   return null;
-}
-
-function resolveConfig(raw: Readonly<Record<string, unknown>>): PluginConfig {
-  const scopeRaw = raw.scope;
-  const scope = scopeRaw === 'current' || scopeRaw === 'all' ? scopeRaw : 'platform';
-  const maxLimit = Math.max(1, Math.min(1000, Number(raw.maxLimit) || 100));
-  const defaultLimitRaw = Math.max(1, Math.floor(Number(raw.defaultLimit) || 20));
-  return {
-    enabled: raw.enabled !== false,
-    maxLimit,
-    defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-    scope,
-    includeArchivedDefault: raw.includeArchivedDefault === true,
-    perMessageMaxChars: Math.max(0, Number(raw.perMessageMaxChars) || 0),
-    crossSessionEnabled: raw.crossSessionEnabled !== false,
-    crossSessionDefaultTimeoutSec: Number(raw.crossSessionDefaultTimeoutSec) || 60,
-  };
 }
 
 function parsePlatform(sessionId: string): string {
@@ -955,7 +931,19 @@ export default definePlugin({
   provides: [sessionHistory],
   uses,
   apply(caps) {
-    const cfg = resolveConfig(caps.config);
+    const parsed = parseConfig(configSchema, caps.config, caps.logger);
+    const maxLimit = Math.max(1, Math.min(1000, parsed.maxLimit || configSchema.maxLimit.default));
+    const cfg: PluginConfig = {
+      ...parsed,
+      maxLimit,
+      defaultLimit: Math.min(
+        Math.max(1, Math.floor(parsed.defaultLimit || configSchema.defaultLimit.default)),
+        maxLimit,
+      ),
+      perMessageMaxChars: Math.max(0, parsed.perMessageMaxChars),
+      crossSessionDefaultTimeoutSec:
+        parsed.crossSessionDefaultTimeoutSec || configSchema.crossSessionDefaultTimeoutSec.default,
+    };
     if (!cfg.enabled) return;
 
     const historyService = createSessionHistoryService(caps, cfg);

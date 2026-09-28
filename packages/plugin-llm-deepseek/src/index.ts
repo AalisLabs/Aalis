@@ -1,9 +1,9 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
 import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
-import { type ConfigSchema, configError, missingConfigError } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole, WellKnownKinds } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
@@ -112,12 +112,20 @@ function parseApiError(provider: string, status: number, body: string): string {
 
 // ===== 配置 schema =====
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'DeepSeek API 密钥' },
+const configSchema = defineConfig({
+  apiKey: {
+    type: 'string',
+    label: 'API Key',
+    required: true,
+    secret: true,
+    onInvalid: 'error',
+    description: 'DeepSeek API 密钥',
+  },
   baseUrl: {
     type: 'string',
     label: 'API 地址',
     default: 'https://api.deepseek.com',
+    onInvalid: 'error',
     description: 'API 端点完整前缀（官方无版本段）；插件只在其后拼 /chat/completions 与 /models',
   },
   customModels: {
@@ -194,25 +202,11 @@ const configSchema: ConfigSchema = {
     description:
       '思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。',
   },
-};
+});
 
 // ===== 配置 =====
 
-interface DeepSeekConfig {
-  apiKey: string;
-  baseUrl: string;
-  customModels: string[];
-  discoverModels: boolean;
-  modelCapabilities: Map<string, LLMCapability[]>;
-  providerCapabilities: LLMCapability[];
-  timeout?: number;
-  temperature: number;
-  maxTokens: number;
-  contextLength: number;
-  strictToolCalls: boolean;
-  forceJsonOutput: boolean;
-  reasoningEffort: 'auto' | 'high' | 'max';
-}
+type DeepSeekConfig = ConfigOf<typeof configSchema>;
 
 // ===== DeepSeek API 消息格式 =====
 
@@ -884,8 +878,7 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
 // ===== 配置解析 =====
 
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
-function parseCustomModels(raw: unknown): string[] {
-  if (!raw || typeof raw !== 'string') return [];
+function parseCustomModels(raw: string): string[] {
   return raw
     .split(/[,\n]/)
     .map(s => s.trim())
@@ -899,9 +892,8 @@ function parseCustomModels(raw: unknown): string[] {
  * `xxx:free`），按首个冒号切会把 id 截断、能力段变成 `8b: chat`，这行覆盖永远不命中。
  * 能力名本身不含冒号，故末位冒号即分隔符。
  */
-function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
+function parseModelCapabilities(raw: string): Map<string, LLMCapability[]> {
   const out = new Map<string, LLMCapability[]>();
-  if (!raw || typeof raw !== 'string') return out;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -919,8 +911,7 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
 }
 
 /** 解析适配器级别默认能力（逗号/空格/换行分隔） */
-function parseProviderCapabilities(raw: unknown): LLMCapability[] {
-  if (!raw || typeof raw !== 'string') return [];
+function parseProviderCapabilities(raw: string): LLMCapability[] {
   return raw
     .split(/[,\s\n]/)
     .map(s => s.trim())
@@ -967,42 +958,25 @@ export default definePlugin({
 });
 
 async function registerModels({ config, logger, lifecycle, provide }: Caps): Promise<void> {
-  const deepseekConfig: DeepSeekConfig = {
-    apiKey: (config.apiKey as string) ?? '',
-    baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
-    customModels: parseCustomModels(config.customModels),
-    discoverModels: config.discoverModels !== false,
-    modelCapabilities: parseModelCapabilities(config.modelCapabilities),
-    providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
-    timeout: (config.timeout as number) ?? 120,
-    temperature: (config.temperature as number) ?? 0.7,
-    maxTokens: (config.maxTokens as number) ?? 8192,
-    contextLength: (config.contextLength as number) ?? 131072,
-    strictToolCalls: (config.strictToolCalls as boolean) ?? false,
-    forceJsonOutput: (config.forceJsonOutput as boolean) ?? false,
-    reasoningEffort: (() => {
-      const v = config.reasoningEffort as string | undefined;
-      return v === 'high' || v === 'max' ? v : 'auto';
-    })(),
-  };
+  const cfg = parseConfig(configSchema, config, logger);
+  const customModels = parseCustomModels(cfg.customModels);
+  const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
+  const providerCapabilities = parseProviderCapabilities(cfg.providerCapabilities);
 
-  checkBaseUrl(deepseekConfig.baseUrl);
-  if (!deepseekConfig.apiKey) {
-    throw missingConfigError('apiKey');
-  }
-  if (!deepseekConfig.discoverModels && deepseekConfig.customModels.length === 0) {
+  checkBaseUrl(cfg.baseUrl);
+  if (!cfg.discoverModels && customModels.length === 0) {
     throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
-  const thinkingMode = (config.thinkingMode as string) ?? 'auto';
-  const client = new DeepSeekClient(deepseekConfig, logger);
-  const shownBaseUrl = redactUrl(deepseekConfig.baseUrl);
+  const thinkingMode = cfg.thinkingMode;
+  const client = new DeepSeekClient(cfg, logger);
+  const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 探测远端 + 合并自定义模型。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels
   // 照常注册；关闭模型发现时只注册 customModels。发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），
   // err 交给 logger 会按因果链把原因再记一遍
   let discoveryError: string | undefined;
-  const remoteIds = deepseekConfig.discoverModels
+  const remoteIds = cfg.discoverModels
     ? await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
         discoveryError = err instanceof Error ? err.message : String(err);
         return [];
@@ -1010,12 +984,12 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     : [];
   lifecycle.signal.throwIfAborted();
   const remoteSet = new Set(remoteIds);
-  for (const cm of deepseekConfig.customModels) {
+  for (const cm of customModels) {
     if (remoteSet.has(cm)) {
       logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
     }
   }
-  const allModelIds = [...remoteIds, ...deepseekConfig.customModels.filter(id => !remoteSet.has(id))];
+  const allModelIds = [...remoteIds, ...customModels.filter(id => !remoteSet.has(id))];
 
   // 一个模型都没有时抛配置错误，原因成为实例的错误信息；否则只剩 core 的「声明 provides [llm] 但未实际注册」。
   // 提示写在原因之前：原因里可能带着一段响应体
@@ -1028,15 +1002,11 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   }
   if (discoveryError) logger.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
 
-  const baseLabel = `DeepSeek (${deepseekConfig.baseUrl.replace(/^https?:\/\//, '')})`;
+  const baseLabel = `DeepSeek (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
 
   // 为每个 model 注册独立的 LLMModel entry
   for (const modelId of allModelIds) {
-    const capabilities = resolveCapabilities(
-      modelId,
-      deepseekConfig.modelCapabilities.get(modelId),
-      deepseekConfig.providerCapabilities,
-    );
+    const capabilities = resolveCapabilities(modelId, modelCapabilities.get(modelId), providerCapabilities);
     // 思考开关：auto → 由模型 capability 决定；enabled/disabled → 强制覆盖
     let enableThinking: boolean;
     if (thinkingMode === 'enabled') {
@@ -1051,8 +1021,8 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
       client,
       modelId,
       lifecycle.id,
-      deepseekConfig.contextLength,
-      deepseekConfig.maxTokens,
+      cfg.contextLength,
+      cfg.maxTokens,
       enableThinking,
       capabilities,
     );
@@ -1063,7 +1033,7 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   }
 
   logger.info(
-    !deepseekConfig.discoverModels
+    !cfg.discoverModels
       ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`
       : discoveryError
         ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`

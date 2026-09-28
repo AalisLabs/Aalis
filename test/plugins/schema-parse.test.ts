@@ -547,3 +547,166 @@ describe('parseConfig 畸形 schema 不抛错', () => {
     expect(() => parse(weird, 42)).not.toThrow();
   });
 });
+
+describe("parseConfig onInvalid: 'error'", () => {
+  const strict = field('number', { default: 80, onInvalid: 'error' });
+
+  it('缺省和 null 仍用 default；显式坏值即使有 default 也在副作用前拒绝，且不泄露值', () => {
+    const schema: ConfigSchema = { port: strict };
+    expect(parse(schema, {}).config).toEqual({ port: 80 });
+    expect(parse(schema, { port: null }).config).toEqual({ port: 80 });
+    let sideEffects = 0;
+    const apply = (raw: unknown) => {
+      parseConfig(schema, raw);
+      sideEffects++;
+    };
+    const err = thrown(() => apply({ port: SECRET }));
+    expect(sideEffects).toBe(0);
+    expect(err.name).toBe('ConfigError');
+    expect(err.message).toContain('port');
+    expect(err.message).not.toContain(SECRET);
+  });
+
+  it('required 仍只决定缺省：严格可选字段缺省省略，严格必填缺省仍报 missing', () => {
+    const optional: ConfigSchema = { token: field('string', { onInvalid: 'error' }) };
+    expect(parse(optional, {}).config).toEqual({});
+    expect(thrown(() => parse(optional, { token: false })).message).toContain('配置项 token');
+    const required: ConfigSchema = { token: field('string', { required: true, onInvalid: 'error' }) };
+    expect(thrown(() => parse(required, {})).message).toContain('缺少配置项 token');
+  });
+
+  it('list、map、multiselect 的坏成员不能部分丢弃后成功', () => {
+    const options = [{ label: 'A', value: 'a' }];
+    const cases: Array<[SchemaField, unknown]> = [
+      [field('list', { default: ['fallback'], onInvalid: 'error' }), ['ok', false]],
+      [field('map', { default: { A: 'fallback' }, onInvalid: 'error' }), { A: 'ok', [SECRET]: false }],
+      [field('multiselect', { default: ['a'], options, onInvalid: 'error' }), ['a', SECRET]],
+    ];
+    for (const [definition, value] of cases) {
+      const err = thrown(() => parse({ choice: definition }, { choice: value }));
+      expect(err.name).toBe('ConfigError');
+      expect(err.message).toContain('choice');
+      expect(err.message).not.toContain(SECRET);
+    }
+  });
+
+  it('map 保留键与稀疏 list/multiselect 位置同样触发严格拒绝，普通字段逐项告警', () => {
+    const unsafeMap = JSON.parse('{"GOOD":"ok","__proto__":"bad"}') as Record<string, unknown>;
+    const list = ['first'];
+    list[2] = 'third';
+    const choices = ['a'];
+    choices[2] = 'b';
+    const strictCases: Array<[SchemaField, unknown, string]> = [
+      [field('map', { onInvalid: 'error' }), unsafeMap, 'env'],
+      [field('list', { onInvalid: 'error' }), list, 'env[1]'],
+      [field('multiselect', { onInvalid: 'error' }), choices, 'env[1]'],
+    ];
+    for (const [definition, value, path] of strictCases) {
+      const err = thrown(() => parse({ env: definition }, { env: value }));
+      expect(err.name).toBe('ConfigError');
+      expect(err.message).toContain(path);
+    }
+    expect(parse({ env: field('map') }, { env: unsafeMap })).toEqual({
+      config: { env: { GOOD: 'ok' } },
+      warns: ['配置项 env.__proto__ 保留键不可用，已忽略'],
+    });
+    expect(parse({ env: field('list') }, { env: list })).toEqual({
+      config: { env: ['first', 'third'] },
+      warns: ['配置项 env[1] 期望 string 元素，得到 undefined，已忽略'],
+    });
+    expect(parse({ env: field('multiselect') }, { env: choices })).toEqual({
+      config: { env: ['a', 'b'] },
+      warns: ['配置项 env[1] 期望 string 或 number 元素，得到 undefined，已忽略'],
+    });
+  });
+
+  it('数组元素内的严格字段只丢该元素，邻居 server 仍能成功', () => {
+    const schema: ConfigSchema = {
+      servers: {
+        type: 'array',
+        label: 'S',
+        items: {
+          port: strict,
+          host: field('string', { default: 'local' }),
+        },
+      },
+    };
+    const { config, warns } = parse(schema, { servers: [{ port: SECRET }, { port: 81 }, {}] });
+    expect(config.servers).toEqual([
+      { port: 81, host: 'local' },
+      { port: 80, host: 'local' },
+    ]);
+    expect(warns).toEqual(['配置项 servers[0] 已忽略：port 期望有限数值，得到 string']);
+    expect(JSON.stringify(warns)).not.toContain(SECRET);
+  });
+
+  it('严格数组不把坏根丢成空数组后启动默认根；普通数组仍可逐项恢复', () => {
+    const roots = {
+      type: 'array' as const,
+      label: 'Roots',
+      onInvalid: 'error' as const,
+      default: [{ path: 'workspace' }],
+      items: { path: field('string', { required: true, onInvalid: 'error' }) },
+    };
+    for (const value of [false, [false], [{}], [{ path: false }], [{ path: 'valid' }, {}], new Array(1)]) {
+      expect(() => parse({ roots }, { roots: value })).toThrow();
+    }
+    expect(() => parse({ roots }, false)).toThrow();
+    expect(parse({ roots }, {}).config.roots).toEqual([{ path: 'workspace' }]);
+    expect(parse({ roots }, { roots: [] }).config.roots).toEqual([]);
+    expect(
+      parse({ roots: { ...roots, onInvalid: undefined } }, { roots: [{ path: false }, { path: 'valid' }] }).config
+        .roots,
+    ).toEqual([{ path: 'valid' }]);
+  });
+
+  it('显式无效的整体、分组与数组容器不能绕过严格字段；缺省容器仍正常', () => {
+    const schema: ConfigSchema = {
+      server: { fields: { port: strict } },
+      servers: { type: 'array', label: 'S', items: { port: strict } },
+    };
+    expect(parse(schema, {}).config).toEqual({ server: { port: 80 } });
+    expect(parse(schema, { server: null }).config).toEqual({ server: { port: 80 } });
+    for (const [raw, path] of [
+      ['bad', '配置整体'],
+      [{ server: SECRET }, 'server'],
+      [{ servers: SECRET }, 'servers'],
+    ] as const) {
+      const err = thrown(() => parse(schema, raw));
+      expect(err.message).toContain(path);
+      expect(err.message).not.toContain(SECRET);
+    }
+  });
+
+  it('严格错误指出安全的判定原因，不列出静态选项、正则或无效数值', () => {
+    const selected = thrown(() =>
+      parse(
+        {
+          mode: field('select', {
+            onInvalid: 'error',
+            options: [{ label: 'Secret', value: SECRET }],
+          }),
+        },
+        { mode: 'other' },
+      ),
+    );
+    expect(selected.message).toContain('mode 不是可选值');
+    expect(selected.message).not.toContain(SECRET);
+    const pattern = thrown(() =>
+      parse(
+        {
+          token: field('string', {
+            onInvalid: 'error',
+            pattern: SECRET,
+          }),
+        },
+        { token: 'other' },
+      ),
+    );
+    expect(pattern.message).toContain('token 不匹配模式');
+    expect(pattern.message).not.toContain(SECRET);
+    const nan = thrown(() => parse({ port: strict }, { port: Number.NaN }));
+    expect(nan.message).toContain('期望有限数值，得到 number');
+    expect(nan.message).not.toContain('NaN');
+  });
+});

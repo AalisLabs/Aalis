@@ -1,16 +1,18 @@
 import { connect } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
-import mcpServer from '../../packages/plugin-mcp-server/src/index.js';
-import { validateConfig } from '../../packages/schema-config/src/index.js';
+import mcpServer, { buildMcpServer } from '../../packages/plugin-mcp-server/src/index.js';
+import { parseConfig, validateConfig } from '../../packages/schema-config/src/index.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // toolGroups 是分组名的字符串数组（multiselect）。此前 schema 声明成对象数组 [{ name }]，
 // 与文档的 string[] 不一致：按文档写的配置每次启动都报 invalid，WebUI 编辑会把字符串展开成对象；
-// 代码两种都收，null / '*' 这类裸值则在 .map 上抛 TypeError。
-// 空数组 = 全部暴露，所以认不出的形态必须拒绝启动，不能退化成空数组（fail-open）。
+// 空数组 = 全部暴露；null 按统一配置契约视为缺省，历史配置需人工确认暴露范围。
+// 对象、布尔成员等非法形态必须拒绝启动，不能退化成空数组。
 // 拒绝启动即激活失败、实例转 error：只记日志的话插件显示运行中、doctor 全绿，实际没有监听。
 // ════════════════════════════════════════════════════════════
 
@@ -80,20 +82,69 @@ describe('plugin-mcp-server toolGroups', () => {
   for (const [label, value] of [
     ['旧版 WebUI 的 [{ name }]', [{ name: 'search' }]],
     ["裸字符串 '*'", '*'],
-    ['null（YAML 裸键）', null],
-    ['含非字符串元素', ['search', 1]],
+    ['含布尔元素', ['search', true]],
   ] as const) {
     it(`${label}：激活失败且不监听，不退化成全部暴露`, async () => {
       const r = await start(value);
       expect(r.state, '配置错误只记了日志，插件显示运行中').toBe('error');
-      expect(r.error).toContain('toolGroups 非法');
+      expect(r.error).toContain('toolGroups');
       expect(await isListening(r.port)).toBe(false);
     });
   }
 
+  it('null 按缺省空白名单运行；旧配置需在离线迁移时人工确认暴露范围', async () => {
+    const r = await start(null);
+    expect(r.state).toBe('active');
+    expect(await isListening(r.port)).toBe(true);
+  });
+
+  it('数字分组名转换为字符串，白名单不退化为全部暴露', async () => {
+    const r = await start(['search', 1]);
+    expect(r.state).toBe('active');
+    expect(r.infos.some(info => info.includes('groups=search,1'))).toBe(true);
+  });
+
+  it('数字分组仅匹配同名字符串分组，不能打开其它分组', async () => {
+    const parsed = parseConfig(mcpServer.configSchema!, { toolGroups: ['search', 1] });
+    const execute = vi.fn(async () => ({ content: 'ok' }));
+    const entries = [
+      { name: 'search_tool', groups: ['search'] },
+      { name: 'numeric_tool', groups: ['1'] },
+      { name: 'secret_tool', groups: ['secret'] },
+    ];
+    const server = buildMcpServer(
+      {
+        getAll: () => entries.map(entry => ({ ...entry, description: entry.name, pluginName: 'test' })),
+        getDefinitions: () =>
+          entries.map(entry => ({
+            type: 'function' as const,
+            function: { name: entry.name, description: entry.name, parameters: { type: 'object', properties: {} } },
+          })),
+        execute,
+      } as never,
+      parsed as never,
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0.0.1' }, { capabilities: {} });
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['search_tool', 'numeric_tool']);
+      expect((await client.callTool({ name: 'numeric_tool', arguments: {} })).isError).not.toBe(true);
+      expect(execute).toHaveBeenCalledOnce();
+      execute.mockClear();
+      const denied = await client.callTool({ name: 'secret_tool', arguments: {} });
+      expect(denied.isError).toBe(true);
+      expect(denied.content).toEqual([{ type: 'text', text: '工具不可用或未暴露: secret_tool' }]);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it('端口非法：激活失败，原因可见', async () => {
     const r = await start([], 0);
     expect(r.state, '配置错误只记了日志，插件显示运行中').toBe('error');
-    expect(r.error).toContain('端口非法');
+    expect(r.error).toContain('port');
   });
 });

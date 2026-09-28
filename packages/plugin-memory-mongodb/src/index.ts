@@ -17,27 +17,29 @@ import {
   parseInstanceId,
   provide,
 } from '@aalis/core';
-import { type ConfigSchema, configError } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { type Collection, type Db, MongoClient } from 'mongodb';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   uri: {
     type: 'string',
     label: 'MongoDB URI',
     required: true,
     default: 'mongodb://localhost:27017',
+    onInvalid: 'error',
     description: 'MongoDB 连接字符串',
   },
   database: {
     type: 'string',
     label: '数据库名',
     default: '',
+    onInvalid: 'error',
     description:
       '存储消息历史与元数据（固定名为 metadata 的集合）的数据库。留空按实例派生：主实例用 aalis，' +
       '带后缀的实例在库名上加后缀（如 `:b` 实例用 aalis-b）。同一连接串下两个实例不能用同一个库，后激活的那个会报配置错误',
   },
-  collection: { type: 'string', label: '集合名', default: 'messages', description: '消息集合名称' },
+  collection: { type: 'string', label: '集合名', default: 'messages', onInvalid: 'error', description: '消息集合名称' },
   connectTimeoutMs: {
     type: 'number',
     label: '连接超时（毫秒）',
@@ -56,19 +58,12 @@ const configSchema: ConfigSchema = {
     default: 1000,
     description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
   },
-};
+});
 
 // ===== 配置 =====
 
-interface MongoMemoryConfig {
-  uri: string;
-  /** 空串按实例派生（见 openAndProvide） */
-  database: string;
-  collection?: string;
-  connectTimeoutMs?: number;
-  rangeQueryLimit?: number;
-  crossSessionMaxLimit?: number;
-}
+type MongoMemoryConfig = Pick<ConfigOf<typeof configSchema>, 'uri' | 'database'> &
+  Partial<Omit<ConfigOf<typeof configSchema>, 'uri' | 'database'>>;
 
 // ===== 数据库文档类型 =====
 
@@ -351,15 +346,10 @@ export default definePlugin({
   apply: connectAndProvide,
 });
 
-async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): Promise<void> {
-  const mongoConfig: MongoMemoryConfig = {
-    uri: (config.uri as string) ?? 'mongodb://localhost:27017',
-    database: String(config.database ?? '').trim(),
-    collection: (config.collection as string) ?? 'messages',
-    connectTimeoutMs: (config.connectTimeoutMs as number) ?? 5000,
-    rangeQueryLimit: config.rangeQueryLimit as number | undefined,
-    crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
-  };
+async function connectAndProvide(caps: Caps): Promise<void> {
+  const { logger, lifecycle, provide } = caps;
+  const cfg = parseConfig(configSchema, caps.config, logger);
+  const mongoConfig: MongoMemoryConfig = { ...cfg, database: cfg.database.trim() };
 
   logger.info(`正在连接 MongoDB: ${redactMongoUri(mongoConfig.uri)} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
 

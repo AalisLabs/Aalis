@@ -149,21 +149,22 @@ for (const root of roots) {
 ## 3. 配置 schema
 
 ```ts
-import { definePlugin, config } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { definePlugin, config, logger } from '@aalis/core';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type {} from '@aalis/api-webui'; // SchemaField 表单属性（secret 等）
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
-  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.example.com' },
-};
+const configSchema = defineConfig({
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
+  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.example.com', onInvalid: 'error' },
+});
 
 export default definePlugin({
   name: '@your-scope/plugin-x',
   configSchema,
-  uses: { config },
-  apply({ config }) {
-    // config 已含 schema 派生默认值（宿主在登记前把默认值深合并进配置；core 登记时拷贝纯对象/数组）
+  uses: { config, logger },
+  apply({ config, logger }) {
+    const cfg = parseConfig(configSchema, config, logger);
+    // 使用 cfg.apiKey / cfg.baseUrl；发送请求前继续校验 URL 等业务约束
   },
 });
 ```

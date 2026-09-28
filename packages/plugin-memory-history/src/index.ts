@@ -23,7 +23,7 @@ import { contributions } from '@aalis/api-contributions';
 import { memory, type RecentMessageRecord } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 
 // ===== 配置 schema =====
 
@@ -32,9 +32,10 @@ export type HistoryScope = 'same-platform' | 'cross-platform';
 const DEFAULT_HEADER_TEXT =
   '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   injectEnabled: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '被动注入 prompt',
     default: true,
     description:
@@ -70,6 +71,7 @@ const configSchema: ConfigSchema = {
   },
   excludeCurrentSession: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '排除当前会话',
     default: true,
     description: '注入时排除当前 sessionId（避免与 agent.historyLimit 重复）。',
@@ -82,24 +84,16 @@ const configSchema: ConfigSchema = {
   },
   toolEnabled: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '注册 recent_messages 工具',
     default: true,
     description: '是否注册 recent_messages 工具供 agent 主动按需查询跨会话近期消息。',
   },
-};
+});
 
 // ===== 内部类型 / 工具 =====
 
-interface HistoryConfig {
-  injectEnabled: boolean;
-  scope: HistoryScope;
-  limit: number;
-  maxAgeMinutes: number;
-  perSessionLimit: number;
-  excludeCurrentSession: boolean;
-  headerText: string;
-  toolEnabled: boolean;
-}
+type HistoryConfig = ConfigOf<typeof configSchema>;
 
 /** 工具名硬编码：避免运行期改名导致 prompt/agent hardcode 失效，与其他插件（subtask/scheduler/todo 等）保持一致 */
 const TOOL_NAME = 'recent_messages';
@@ -115,16 +109,12 @@ interface QueryOptions {
   perSessionLimit?: number;
 }
 
-function normalizeConfig(raw: Readonly<Record<string, unknown>>): HistoryConfig {
+function normalizeConfig(raw: HistoryConfig): HistoryConfig {
   return {
-    injectEnabled: raw.injectEnabled !== false,
-    scope: raw.scope === 'cross-platform' ? 'cross-platform' : 'same-platform',
-    limit: Math.max(1, Number(raw.limit ?? 30)),
-    maxAgeMinutes: Math.max(0, Number(raw.maxAgeMinutes ?? 180)),
-    perSessionLimit: Math.max(0, Number(raw.perSessionLimit ?? 5)),
-    excludeCurrentSession: raw.excludeCurrentSession !== false,
-    headerText: typeof raw.headerText === 'string' ? raw.headerText : DEFAULT_HEADER_TEXT,
-    toolEnabled: raw.toolEnabled !== false,
+    ...raw,
+    limit: Math.max(1, raw.limit),
+    maxAgeMinutes: Math.max(0, raw.maxAgeMinutes),
+    perSessionLimit: Math.max(0, raw.perSessionLimit),
   };
 }
 
@@ -174,7 +164,7 @@ export default definePlugin({
   configSchema,
   uses,
   apply({ memory, config, logger, contributions, tools }) {
-    const cfg = normalizeConfig(config);
+    const cfg = normalizeConfig(parseConfig(configSchema, config, logger));
 
     logger.info(
       `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,

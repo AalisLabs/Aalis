@@ -46,6 +46,8 @@ export default definePlugin({
 | `sandbox.mode` | select | `'auto'` | 隔离模式：auto：经 code-sandbox 服务（Linux bubblewrap / macOS sandbox-exec）把代码限制在「工作区 + 本次临时目录」、默认断网、只放行白名单环境变量；无可用沙箱后端时拒绝执行（fail-closed）。none：退回无隔离裸进程，每次告警。说明：v1 读放开（解释器需系统库），防的是写出工作区/联网外泄/篡改系统，不防读取本机其它文件。 |
 | `sandbox.network` | select | `'deny'` | 子进程网络：仅 auto 模式生效。deny：脚本内联网（含 fetch）会失败。allow：放开子进程网络（无法按域名白名单过滤）。 |
 
+解释器、工作目录、启用开关以及沙箱模式/网络选项若显式给出无效值，插件会拒绝激活，不会以默认解释器或更宽的执行方式启动。
+
 ## 沙箱（隔离执行）
 
 `auto` 模式下取 `code-sandbox` 服务执行：每次运行按本次工作目录与临时目录构造隔离策略

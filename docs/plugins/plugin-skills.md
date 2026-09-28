@@ -59,3 +59,7 @@ export default definePlugin({
 1. Discovery：`discoveryEnabled` 开启时，通过 `agent:prompt` 贡献点向 system prompt 注入一行静态路标，提示 agent 用 `list_skills` 检索、`load_skill` 加载；不注入技能清单本身
 2. Activation：调用 `load_skill(name)`，或在 `triggersEnabled` 开启时由 `agent:input:before` 中间件以 frontmatter `triggers` 正则匹配用户消息自动激活
 3. Execution：`discoveryEnabled` 开启时，已激活技能的 SKILL.md 正文与附属资源清单经 `agent:prompt` 贡献注入该会话后续的模型调用，agent 按指令使用 scripts/references；关闭时不注入激活正文
+
+## 配置校验
+
+`skillsUri` 必须是 storage URI；显式无效类型或非法 URI 在扫描与工具注册前报配置错误。数字字符串上限按数值解析，其余错误类型回落默认值并告警。

@@ -19,7 +19,6 @@ import {
   storage as storageService,
   toStorageUri,
 } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import {
   type BoundOf,
   config as configCap,
@@ -29,7 +28,7 @@ import {
   optional,
   provide as provideCap,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
 
@@ -51,12 +50,13 @@ interface PersonaIdentity {
 
 // ===== 插件元数据 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   persona: {
     type: 'select',
     label: '人设',
     description: '人设文件名（不含后缀）',
     default: 'default',
+    onInvalid: 'error',
     dynamicOptions: 'persona',
   },
   personasDir: {
@@ -65,6 +65,7 @@ const configSchema: ConfigSchema = {
     description:
       "人设文件所在目录的 storage URI（如 data:/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
     default: 'data/personas',
+    onInvalid: 'error',
   },
   statePersistence: {
     type: 'boolean',
@@ -84,7 +85,7 @@ const configSchema: ConfigSchema = {
     description: '例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。',
     default: '',
   },
-};
+});
 
 // ===== 角色卡格式 =====
 
@@ -472,11 +473,10 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { provide, config, logger, events, hooks } = caps;
-  const personaName = (config.persona as string) || 'default';
-  const personasDirRaw = (config.personasDir as string) || 'data/personas';
-  const statePersistence = (config.statePersistence as boolean) ?? false;
-  const timeInjection = (config.timeInjection as boolean) ?? true;
-  const timeZone = (config.timeZone as string) ?? '';
+  const cfg = parseConfig(configSchema, config, logger);
+  const personaName = cfg.persona || configSchema.persona.default;
+  const personasDirRaw = cfg.personasDir || configSchema.personasDir.default;
+  const { statePersistence, timeInjection, timeZone } = cfg;
 
   const storage = createStorageGateway(caps.storage);
 

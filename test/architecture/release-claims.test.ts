@@ -117,18 +117,20 @@ describe('CHANGELOG 未发布节的发布声明', () => {
     expect(deps['@aalis/api-webui']).toBeTruthy();
   });
 
-  it('dependencies 里的 @aalis/schema-config 下限 >=0.12.0', () => {
-    const floor: [number, number, number] = [0, 12, 0];
+  it.each([
+    ['@aalis/schema-config', [0, 14, 0] as [number, number, number]],
+    ['@aalis/api-llm', [0, 13, 0] as [number, number, number]],
+  ])('dependencies 里的 %s 满足配置类型契约最低版本', (name, floor) => {
     const bad: string[] = [];
     let n = 0;
     for (const dir of dirs()) {
-      const spec = readManifest(dir).dependencies?.['@aalis/schema-config'];
+      const spec = readManifest(dir).dependencies?.[name];
       if (spec === undefined) continue;
       n += 1;
       const parsed = parseFloor(spec);
       if (!parsed || !gte(parsed, floor)) bad.push(`${dir} = ${spec}`);
     }
-    expect(n, '应扫到 schema-config 消费方').toBeGreaterThan(0);
+    expect(n, `应扫到 ${name} 消费方`).toBeGreaterThan(0);
     expect(bad).toEqual([]);
   });
 

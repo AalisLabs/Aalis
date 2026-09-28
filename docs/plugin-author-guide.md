@@ -123,8 +123,8 @@ plugins:
 **方案 B：单实例 apply 内传 `options.entryId` 拆子粒度**——适合「单插件实例、但对外提供多个 entry」：
 
 ```typescript
-apply({ provide, lifecycle, config }) {
-  const cfg = config as { models: Array<{ id: string }> };
+apply({ provide, lifecycle, config, logger }) {
+  const cfg = parseConfig(configSchema, config, logger);
   for (const model of cfg.models) {
     provide(llm, new LLMBackend(model), {
       entryId: `${lifecycle.id}/${model.id}`,
@@ -173,11 +173,13 @@ lifecycle.onDispose(() => {
 
 ## 6. 配置 schema：能力比形式重要
 
-`configSchema` 写在 `definePlugin` 上，是给 WebUI 自动生成表单的元数据。**关键约定**：
+`configSchema` 写在 `definePlugin` 上，同时描述表单、配置类型与解析规则。使用 `@aalis/schema-config` 的 `defineConfig` 保留类型信息，在 apply 开头调用 `parseConfig(configSchema, config, logger)`，后续只使用解析结果。Core 不解释 schema。
 
 - `secret: true` 只影响 WebUI 的显示：查看时遮蔽、编辑时用密码框，保存照常写入框里的值；要清空就保存空串
-- `required: true` 仅作前端校验，**core 不强制**——你 apply 内还是要自己判空
-- `default` 就是运行时默认值——configSchema 是配置的唯一声明来源，宿主用 `defaultsFrom(configSchema)` 派生默认配置
+- `required: true` 且没有默认值的字段未填时，`parseConfig` 抛出配置错误；数组元素中此类错误只丢弃该元素并告警。跨字段、条件必填等语义仍由插件核对
+- `default` 是唯一默认值来源；宿主用 `defaultsFrom` 回填文档，插件用 `parseConfig` 取得默认值，不依赖宿主是否做过回填
+- 普通字段无效时回落默认值并告警；`onInvalid: 'error'` 的字段拒绝无效值，即使有默认值也不回落。地址、启动参数、访问边界等字段应显式声明这一策略；缺省规则不变
+- 用 `ConfigOf<typeof configSchema>` 推导配置类型；解析后的派生列表等另行计算，不重复维护默认值对象或取值断言
 - 嵌套对象用 `SchemaGroup`，数组用 `SchemaArray`，不要用裸 JSON 字符串字段
 
 ### 配置变更如何触发 reload
@@ -212,7 +214,7 @@ it('required 依赖到场后激活', async () => {
 });
 ```
 
-`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，原样生效：core 不合并 schema 默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
+`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，core 不合并 schema 默认值；插件的 parseConfig 负责解析与默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
 
 用假定时器（`vi.useFakeTimers()`）时注意：激活在落定或转入后台之前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 会让仍未落定的激活到点转入后台。先 `await app.plugins.idle()` 让激活落定再装假定时器。
 

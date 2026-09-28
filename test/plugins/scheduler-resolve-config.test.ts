@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveConfig } from '../../packages/plugin-scheduler/src/index.js';
+import { configSchema, resolveConfig } from '../../packages/plugin-scheduler/src/index.js';
+import { parseConfig } from '../../packages/schema-config/src/index.js';
+
+const resolveParsedConfig = (raw: Record<string, unknown>) => resolveConfig(parseConfig(configSchema, raw));
 
 // ════════════════════════════════════════════════════════════
 // scheduler resolveConfig：静态 YAML job 的 runAt/actor/timeZone 透传
@@ -8,7 +11,7 @@ import { resolveConfig } from '../../packages/plugin-scheduler/src/index.js';
 
 describe('resolveConfig 静态任务字段透传', () => {
   it('保留 runAt / actorPlatform / actorUserId / timeZone（此前被丢弃）', () => {
-    const cfg = resolveConfig({
+    const cfg = resolveParsedConfig({
       jobs: [
         {
           name: 'j1',
@@ -33,7 +36,7 @@ describe('resolveConfig 静态任务字段透传', () => {
   // resolveConfig 只做透传，不填默认——静态 YAML 的 owner 缺省补在配置载入处（见 apply()），
   // 触发路径不再为空 actor 发明身份。守这条的是 scheduler-actor-identity.test.ts。
   it('缺省字段不报错、actor 留空（默认由配置载入处补，非透传层）', () => {
-    const cfg = resolveConfig({ jobs: [{ name: 'j2', interval: 60, content: 'x' }] });
+    const cfg = resolveParsedConfig({ jobs: [{ name: 'j2', interval: 60, content: 'x' }] });
     expect(cfg.jobs[0].actorPlatform).toBeUndefined();
     expect(cfg.jobs[0].timeZone).toBeUndefined();
   });
@@ -46,7 +49,7 @@ describe('resolveConfig 静态任务字段透传', () => {
   // 这类用例此前整类缺失：写测试时手上是 TS 类型，就只喂合法值。凡是「schema 声明
   // string、来源是 YAML/JSON」的字段，都该有一条非字符串的用例。
   it('数字型 actorUserId（YAML 里不带引号的 QQ 号）被转成字符串，不留给下游 .trim() 去炸', () => {
-    const cfg = resolveConfig({
+    const cfg = resolveParsedConfig({
       jobs: [{ name: 'j3', interval: 60, content: 'x', actorPlatform: 'onebot', actorUserId: 10001 }],
     });
     expect(cfg.jobs[0].actorUserId).toBe('10001');
@@ -54,7 +57,7 @@ describe('resolveConfig 静态任务字段透传', () => {
   });
 
   it('null 不被转成字符串 "null"（那会变成一个真实存在的、谁也不是的身份）', () => {
-    const cfg = resolveConfig({
+    const cfg = resolveParsedConfig({
       jobs: [{ name: 'j4', interval: 60, content: 'x', actorPlatform: null, actorUserId: null }],
     });
     expect(cfg.jobs[0].actorPlatform).toBeUndefined();
@@ -67,16 +70,16 @@ describe('resolveConfig 静态任务字段透传', () => {
 // 否则读写都抛「URI 不合法」，动态任务静默不加载、新建的只在内存里。未设或留空仍用默认值。
 // ════════════════════════════════════════════════════════════
 describe('resolveConfig persistPath', () => {
-  it('storage URI 原样采用；未设、留空或非字符串用默认值', () => {
-    expect(resolveConfig({ persistPath: 'data:/jobs/a.json' }).persistPath).toBe('data:/jobs/a.json');
-    expect(resolveConfig({ persistPath: ' data:/a.json ' }).persistPath).toBe('data:/a.json');
-    expect(resolveConfig({}).persistPath).toBe('data:/scheduler-jobs.json');
-    expect(resolveConfig({ persistPath: '' }).persistPath).toBe('data:/scheduler-jobs.json');
-    expect(resolveConfig({ persistPath: 7 }).persistPath).toBe('data:/scheduler-jobs.json');
+  it('storage URI 原样采用；未设、留空用 schema 默认值', () => {
+    expect(resolveParsedConfig({ persistPath: 'data:/jobs/a.json' }).persistPath).toBe('data:/jobs/a.json');
+    expect(resolveParsedConfig({ persistPath: ' data:/a.json ' }).persistPath).toBe('data:/a.json');
+    expect(resolveParsedConfig({}).persistPath).toBe('data:/scheduler-jobs.json');
+    expect(resolveParsedConfig({ persistPath: '' }).persistPath).toBe('data:/scheduler-jobs.json');
+    expect(() => resolveParsedConfig({ persistPath: { path: 'data:/a.json' } })).toThrow(/persistPath/);
   });
 
   it.each(['data/scheduler-jobs.json', 'scheduler-jobs.json'])('非 URI 写法（%s）报错，文案给出正确写法', input => {
-    expect(() => resolveConfig({ persistPath: input })).toThrow(
+    expect(() => resolveParsedConfig({ persistPath: input })).toThrow(
       /persistPath=.*不是 storage URI.*data:\/scheduler-jobs\.json/,
     );
   });
