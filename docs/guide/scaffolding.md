@@ -303,23 +303,24 @@ export default definePlugin({
 
 ### 2. 加配置
 
-需要 API key / 地址等参数时，把 `configSchema` 写在 `definePlugin` 上（WebUI 据此自动渲染表单），并 `uses: { config }`：
+需要 API key / 地址等参数时，把 `configSchema` 写在 `definePlugin` 上（WebUI 据此自动渲染表单），声明 `config` 与 `logger` 并在 apply 中解析：
 
 ```ts
-import { config, definePlugin } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { config, definePlugin, logger } from '@aalis/core';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type {} from '@aalis/api-webui';
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
-};
+const configSchema = defineConfig({
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
+});
 
 export default definePlugin({
   name: 'my-plugin',
   configSchema,
-  uses: { config },
-  apply({ config }) {
-    // config 已含 schema 派生默认值
+  uses: { config, logger },
+  apply({ config, logger }) {
+    const cfg = parseConfig(configSchema, config, logger);
+    // 使用 cfg.apiKey；必填缺失会在解析时报告
   },
 });
 ```

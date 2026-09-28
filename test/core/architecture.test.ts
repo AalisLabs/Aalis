@@ -647,7 +647,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2640 → 2630：2026-09-27 用户批准的 0.19 必修低危修复批（fix-019）——停用时清掉上一次激活失败的 error；禁用态带配置的
 // bounce / updateConfig 只换配置、保持禁用；初始化期 required 缺失的自动重试改为按插件跨重算累计、用尽转 error（删去按
 // flight 的预算），用尽的说明点名最后一次缺的服务；慢激活的阈值定时器只触发一次（删去周期提醒）；LogHub 逐个隔离监听器。
-const CORE_CODE_LINE_CEILING = 2630;
+// 2630 → 2634：2026-09-27 用户批准「uses 那个如果很好修，顺便做了」——definePlugin 逐项核对 uses（CheckedUses），
+// 写错的一项只报它自己，其余绑定不再连带退化成 never；CheckedUses 出现在公开签名里，从包根导出。
+const CORE_CODE_LINE_CEILING = 2634;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

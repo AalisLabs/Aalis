@@ -2,55 +2,46 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { DocSessionManager } from './session.js';
 import { registerDocxTools } from './tools/docx.js';
 import { registerPdfTools } from './tools/pdf.js';
 import { registerPptTools } from './tools/pptx.js';
 import { registerExcelTools } from './tools/xlsx.js';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   outputDir: {
     type: 'string',
     label: '输出目录',
     description: '文档保存目录（storage URI，如 workspace:/ 或 data:/docs）。',
     default: 'workspace:/',
+    onInvalid: 'error',
   },
   docx: {
     label: 'Word 文档',
     fields: {
-      enabled: { type: 'boolean', label: '启用 Word 工具', default: true },
+      enabled: { type: 'boolean', label: '启用 Word 工具', default: true, onInvalid: 'error' },
     },
   },
   xlsx: {
     label: 'Excel 工作簿',
     fields: {
-      enabled: { type: 'boolean', label: '启用 Excel 工具', default: true },
+      enabled: { type: 'boolean', label: '启用 Excel 工具', default: true, onInvalid: 'error' },
     },
   },
   pptx: {
     label: 'PPT 演示文稿',
     fields: {
-      enabled: { type: 'boolean', label: '启用 PPT 工具', default: true },
+      enabled: { type: 'boolean', label: '启用 PPT 工具', default: true, onInvalid: 'error' },
     },
   },
   pdf: {
     label: 'PDF 文档',
     fields: {
-      enabled: { type: 'boolean', label: '启用 PDF 工具', default: true },
+      enabled: { type: 'boolean', label: '启用 PDF 工具', default: true, onInvalid: 'error' },
     },
   },
-};
-
-// ===== 配置类型 =====
-
-interface OfficeConfig {
-  outputDir: string;
-  docx: { enabled: boolean };
-  xlsx: { enabled: boolean };
-  pptx: { enabled: boolean };
-  pdf: { enabled: boolean };
-}
+});
 
 // ===== 插件入口 =====
 
@@ -69,12 +60,12 @@ export default definePlugin({
 
 function registerOffice(caps: Caps): void {
   const { logger } = caps;
-  const cfg = resolveConfig(caps.config);
-  if (!isStorageUri(cfg.outputDir)) {
-    throw new Error(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${cfg.outputDir}"`);
+  const cfg = parseConfig(configSchema, caps.config, logger);
+  const outputUri = cfg.outputDir || configSchema.outputDir.default;
+  if (!isStorageUri(outputUri)) {
+    throw new Error(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${outputUri}"`);
   }
   const storage = createStorageGateway(caps.storage);
-  const outputUri = cfg.outputDir;
   const sessions = new DocSessionManager();
 
   caps.tools.registerGroup({
@@ -110,20 +101,4 @@ function registerOffice(caps: Caps): void {
 
   caps.lifecycle.onDispose(() => sessions.clear());
   logger.info(`Office 文档工具插件已启动 (输出 URI: ${outputUri})`);
-}
-
-// ===== 辅助函数 =====
-
-function resolveConfig(config: Readonly<Record<string, unknown>>): OfficeConfig {
-  const docx = config.docx as Record<string, unknown> | undefined;
-  const xlsx = config.xlsx as Record<string, unknown> | undefined;
-  const pptx = config.pptx as Record<string, unknown> | undefined;
-  const pdf = config.pdf as Record<string, unknown> | undefined;
-  return {
-    outputDir: String(config.outputDir || 'workspace:/'),
-    docx: { enabled: docx?.enabled !== false },
-    xlsx: { enabled: xlsx?.enabled !== false },
-    pptx: { enabled: pptx?.enabled !== false },
-    pdf: { enabled: pdf?.enabled !== false },
-  };
 }

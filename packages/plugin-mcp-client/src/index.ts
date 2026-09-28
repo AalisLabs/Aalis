@@ -27,27 +27,9 @@ import {
   pluginsService,
   type ServiceRef,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-
-/** server 级档位：auto 按工具注解分档；其余三档显式覆盖全部工具。 */
-type McpServerTier = 'auto' | 'public' | 'sensitive' | 'restricted';
-
-interface ServerSpec {
-  /** 唯一 id，用于工具命名空间 */
-  id: string;
-  /** 可执行命令（如 npx / node / python） */
-  command: string;
-  /** 命令行参数 */
-  args?: string[];
-  /** 环境变量 */
-  env?: Record<string, string>;
-  /** 是否启用，默认 true */
-  enabled?: boolean;
-  /** 该 server 工具的档位，默认 'auto'（按注解分档，见 deriveMcpToolPolicy）。 */
-  visibility?: McpServerTier;
-}
 
 const PLUGIN_NAME = '@aalis/plugin-mcp-client';
 
@@ -64,7 +46,7 @@ interface Caps extends BridgeCaps {
   hostConfig: ServiceRef<HostConfig>;
 }
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   servers: {
     type: 'array',
     label: 'MCP 服务器列表',
@@ -87,18 +69,21 @@ const configSchema: ConfigSchema = {
         label: '命令参数',
         description: '按顺序传给命令的参数列表，每项一个参数（可含空格）。',
         default: [],
+        onInvalid: 'error',
       },
       env: {
         type: 'map',
         label: '环境变量',
         description: '额外传给子进程的环境变量（KEY → VALUE）。',
         default: {},
+        onInvalid: 'error',
       },
       enabled: {
         type: 'boolean',
         label: '启用',
         description: '关闭可临时跳过该 server 而不删除整条配置。',
         default: true,
+        onInvalid: 'error',
       },
       visibility: {
         type: 'select',
@@ -107,6 +92,7 @@ const configSchema: ConfigSchema = {
           '该 server 全部工具的档位。auto=按工具注解分档：自称只读→sensitive（等级 1），' +
           '有破坏提示或未声明→restricted（等级 2）。public 恢复等级 0 全开（0.x 旧默认）。',
         default: 'auto',
+        onInvalid: 'error',
         options: [
           { label: 'auto（按注解分档）', value: 'auto' },
           { label: 'public（等级 0 全开）', value: 'public' },
@@ -117,7 +103,13 @@ const configSchema: ConfigSchema = {
     },
     default: [],
   },
-};
+});
+
+/** 一条 server 配置（parseConfig 解析后的形状） */
+type ServerSpec = ConfigOf<typeof configSchema>['servers'][number];
+
+/** server 级档位：auto 按工具注解分档；其余三档显式覆盖全部工具。 */
+type McpServerTier = ServerSpec['visibility'];
 
 interface ToolMeta {
   name: string;
@@ -154,14 +146,14 @@ export function deriveMcpToolPolicy(
 }
 
 async function run(caps: Caps): Promise<void> {
-  const rawServers = ((caps.config as { servers?: unknown }).servers ?? []) as unknown[];
-  const servers: ServerSpec[] = rawServers
-    .map((s, i) => normalizeServerSpec(s, i, caps.logger))
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  const servers = cfg.servers
+    .map(s => normalizeServerSpec(s, caps.logger))
     .filter((s): s is ServerSpec => s !== undefined);
 
   if (servers.length === 0) {
     caps.logger.info('未配置任何 MCP server，仅注册元数据工具');
-    registerSelfServiceTools(caps);
+    registerSelfServiceTools(caps, servers);
     return;
   }
 
@@ -191,14 +183,14 @@ async function run(caps: Caps): Promise<void> {
   // 注册 agent 自服务工具：只读列表 + toggle 已配置 server 的启用开关。
   // 故意不提供「新增 server」工具——那等价于让 agent 任意 spawn 子进程，授权风险过大。
   // 若要新增 server，应在 WebUI / yaml 手工配置。
-  registerSelfServiceTools(caps);
+  registerSelfServiceTools(caps, servers);
 }
 
 /**
  * 在 ToolService 中注册 mcp_list_servers / mcp_set_server_enabled 两个 agent 自服务工具。
  * 二者都属于 `mcp:_meta` 分组，便于平台按需开放。
  */
-function registerSelfServiceTools(caps: Caps): void {
+function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[]): void {
   const { tools } = caps;
   tools.registerGroup({
     name: 'mcp:_meta',
@@ -218,18 +210,14 @@ function registerSelfServiceTools(caps: Caps): void {
     groups: ['mcp:_meta'],
     visibility: 'public',
     handler: async () => {
-      const cfg = caps.config as { servers?: unknown[] };
-      const list = (cfg.servers ?? []).map((s, i) => {
-        const r = (s as Record<string, unknown>) ?? {};
-        return {
-          index: i,
-          id: typeof r.id === 'string' ? r.id : `(\u7f3a\u5931 id)`,
-          command: typeof r.command === 'string' ? r.command : '',
-          enabled: r.enabled !== false,
-          // \u6863\u4f4d\u662f\u6838\u5fc3\u5b89\u5168\u65cb\u94ae\uff0c\u5217\u8868\u987b\u53ef\u89c1\uff08\u53ea\u8bfb\u56de\u663e\uff0c\u4e0d\u542b env/args \u7b49\u654f\u611f\u9879\uff09
-          visibility: typeof r.visibility === 'string' ? r.visibility : 'auto',
-        };
-      });
+      const list = configured.map((s, i) => ({
+        index: i,
+        id: s.id,
+        command: s.command,
+        enabled: s.enabled,
+        // 档位是核心安全旋钮，列表须可见（只读回显，不含 env/args 等敏感项）
+        visibility: s.visibility,
+      }));
       return JSON.stringify(list, null, 2);
     },
   });
@@ -257,19 +245,25 @@ function registerSelfServiceTools(caps: Caps): void {
     visibility: 'restricted',
     handler: async args => {
       const id = typeof args.id === 'string' ? args.id : '';
-      const enabled = args.enabled === true;
       if (!id) return '失败：参数 id 必填';
+      if (typeof args.enabled !== 'boolean') return '失败：参数 enabled 必须是布尔值';
+      const enabled = args.enabled;
+      if (!configured.some(s => s.id === id)) return `失败：没有 id="${id}" 的 server，请先用 mcp_list_servers 查看`;
 
       // 缺任一服务就不动运行态：改了却存不下，重启后会悄悄回退
       const pm = caps.plugins.current;
       const doc = caps.hostConfig.current;
       if (!pm || !doc) return '失败：plugins/host-config 服务不可用';
 
-      const current = caps.config as { servers?: unknown[] };
+      // 以配置文档为底改写：解析后的配置补了默认值、丢了坏值，以它为底会把这些永久写进配置文件
+      const current = doc.getPluginConfig(PLUGIN_NAME);
       const servers = Array.isArray(current.servers) ? [...current.servers] : [];
       const idx = servers.findIndex(s => {
-        const r = (s as Record<string, unknown>) ?? {};
-        return r.id === id;
+        const raw = (s as Record<string, unknown> | null)?.id;
+        // 与解析同一口径：不加引号的数字 id 按字符串认，mcp_list_servers 列出的也是字符串
+        return (
+          (typeof raw === 'string' || (typeof raw === 'number' && Number.isFinite(raw))) && String(raw).trim() === id
+        );
       });
       if (idx < 0) return `失败：没有 id="${id}" 的 server，请先用 mcp_list_servers 查看`;
 
@@ -299,63 +293,25 @@ function registerSelfServiceTools(caps: Caps): void {
 }
 
 /**
- * 把一条 server 配置项统一成 ServerSpec。
- * 非法条目（缺 id 或 command、args 不是数组、env 不是对象）跳过并日志警告，避免整插件挂掉。
- * 旧版 WebUI 存下的 args / env 多行文本不再解析：按行、按空白切分会拆坏带空格的参数，
- * 换成列表又会悄悄改变含义，所以要求用户改写，而不是猜。
+ * 解析之后的规范化：id / command 去掉首尾空白，只剩空白的条目跳过并告警（只跳这一条，其它 server 照常）；
+ * args 原样保留（空字符串也是合法的独立参数）。
  */
-function normalizeServerSpec(raw: unknown, index: number, logger: Logger): ServerSpec | undefined {
-  if (!raw || typeof raw !== 'object') {
-    logger.warn(`servers[${index}] 不是对象，跳过`);
-    return undefined;
-  }
-  const r = raw as Record<string, unknown>;
-  const id = typeof r.id === 'string' ? r.id.trim() : '';
-  const command = typeof r.command === 'string' ? r.command.trim() : '';
+function normalizeServerSpec(spec: ServerSpec, logger: Logger): ServerSpec | undefined {
+  const id = spec.id.trim();
+  const command = spec.command.trim();
   if (!id || !command) {
-    logger.warn(`servers[${index}] 缺少 id 或 command，跳过`);
+    // 解析丢掉的条目不占下标，按下标报会对不上配置文件，所以报两个字段本身
+    logger.warn(`servers 中有一条 id 或 command 只有空白（id「${id}」，command「${command}」），跳过`);
     return undefined;
   }
-
-  let args: string[] | undefined;
-  if (Array.isArray(r.args)) {
-    args = r.args.map(x => String(x)).filter(Boolean);
-  } else if (r.args !== undefined && r.args !== null) {
-    logger.warn(
-      `servers[${index}]（${id}）的 args 必须是字符串数组，得到 ${typeof r.args}，该 server 不启动。` +
-        '旧版 WebUI 存下的多行文本请改写为数组，每项一个参数，例如 args: ["-y", "@scope/pkg"]',
-    );
-    return undefined;
-  }
-
-  let env: Record<string, string> | undefined;
-  if (r.env && typeof r.env === 'object' && !Array.isArray(r.env)) {
-    env = Object.fromEntries(Object.entries(r.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
-  } else if (r.env !== undefined && r.env !== null) {
-    logger.warn(
-      `servers[${index}]（${id}）的 env 必须是 KEY: VALUE 映射，得到 ${Array.isArray(r.env) ? 'array' : typeof r.env}，该 server 不启动。` +
-        '旧版 WebUI 存下的 KEY=VALUE 多行文本请改写为映射，例如 env: { TOKEN: "xxx" }',
-    );
-    return undefined;
-  }
-
-  const visibility: McpServerTier | undefined =
-    r.visibility === 'restricted' ||
-    r.visibility === 'public' ||
-    r.visibility === 'sensitive' ||
-    r.visibility === 'auto'
-      ? r.visibility
-      : undefined;
-  const enabled = r.enabled !== false;
-
-  return { id, command, args, env, enabled, visibility };
+  return { ...spec, id, command };
 }
 
 async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
   const { signal } = caps.lifecycle;
   const transport = new StdioClientTransport({
     command: spec.command,
-    args: spec.args ?? [],
+    args: spec.args,
     env: spec.env,
   });
 
@@ -368,7 +324,7 @@ async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
   signal.addEventListener('abort', onAbort, { once: true });
   try {
     await client.connect(transport, { signal: bridge.signal });
-    caps.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${(spec.args ?? []).join(' ')})`);
+    caps.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${spec.args.join(' ')})`);
 
     // 连接生命周期：激活关闭时关闭。握手跨 await，关闭可能已开始——迟到的清理仍会被执行
     caps.lifecycle.onDispose(async () => {
@@ -388,12 +344,12 @@ async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
 
 /**
  * 把一个已连接的 MCP Client 上暴露的所有工具桥接进 Aalis ToolService。
- * 导出以便集成测试直接传入 InMemoryTransport 配对的 client。
+ * 导出以便集成测试直接传入 InMemoryTransport 配对的 client；spec 只用到 id 与 visibility（缺省按 auto）。
  */
 export async function bridgeClientToTools(
   caps: BridgeCaps,
   client: Client,
-  spec: ServerSpec,
+  spec: Pick<ServerSpec, 'id'> & Partial<ServerSpec>,
   signal?: AbortSignal,
 ): Promise<void> {
   const { tools: mcpTools } = (await client.listTools(undefined, { signal })) as { tools: ToolMeta[] };

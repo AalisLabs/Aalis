@@ -50,7 +50,7 @@ import {
   services,
 } from '@aalis/core';
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type LogEntry, parseLogLine } from '@aalis/schema-log';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
 import express from 'express';
@@ -89,19 +89,27 @@ const webuiPages: WebuiPage[] = [
   { key: 'logs', label: '日志', icon: 'logs', order: 60, renderer: 'logs' },
 ];
 
-const configSchema: ConfigSchema = {
-  port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
-  host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
+const configSchema = defineConfig({
+  port: { type: 'number', label: '端口', default: 3000, onInvalid: 'error', description: 'Web 管理界面的 HTTP 端口' },
+  host: {
+    type: 'string',
+    label: '监听地址',
+    default: '127.0.0.1',
+    onInvalid: 'error',
+    description: '绑定的 IP 地址，0.0.0.0 可对外访问',
+  },
   fileRoot: {
     type: 'string',
     label: '文件浏览根',
     default: 'workspace',
+    onInvalid: 'error',
     description: '文件管理页面使用的 storage 根 ID，默认 workspace',
   },
   autoOpen: {
     type: 'boolean',
     label: '启动时自动打开浏览器',
     default: true,
+    onInvalid: 'error',
     description:
       '访问 token 为新生成时（persist 模式首次生成、ephemeral 模式每次生成）以含 token 的 URL 自动开启默认浏览器；沿用已有 token（persist 读回已持久化的 token、fixed 用配置的 fixedToken）时不打开；fixed 模式 fixedToken 为空时按 persist 处理。SSH/headless 环境建议关闭',
   },
@@ -109,6 +117,7 @@ const configSchema: ConfigSchema = {
     type: 'select',
     label: 'Token 策略',
     default: 'persist',
+    onInvalid: 'error',
     options: [
       { label: '每次启动随机生成（重启即轮换）', value: 'ephemeral' },
       { label: '首次生成后持久化（重启不掉登录）', value: 'persist' },
@@ -121,6 +130,7 @@ const configSchema: ConfigSchema = {
     type: 'string',
     label: '固定 Token（仅 tokenMode=fixed 生效）',
     default: '',
+    onInvalid: 'error',
     description: '请使用足够长的随机字符串；配置文件不支持环境变量插值，占位符会被原样当作字面量。',
   },
   relationGraphDefaultSpacing: {
@@ -134,24 +144,17 @@ const configSchema: ConfigSchema = {
     type: 'string',
     label: '插件市场 npm 源',
     default: 'https://registry.npmjs.org',
+    onInvalid: 'error',
     description:
       '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。',
   },
   // 活跃前端不在此配置：前端即 `webui-client` 服务的多 provider，活跃者由「服务偏好」
   // （servicePreferences['webui-client']）决定——在 WebUI「服务」页的下拉框切换。
-};
+});
 
 // ===== 配置 =====
 
-interface WebUIConfig {
-  port: number;
-  host: string;
-  fileRoot: string;
-  autoOpen: boolean;
-  tokenMode: 'ephemeral' | 'persist' | 'fixed';
-  fixedToken: string;
-  marketplaceRegistry: string;
-}
+type WebUIConfig = ConfigOf<typeof configSchema>;
 
 // ===== WebSocket 消息协议 =====
 
@@ -359,18 +362,17 @@ export default definePlugin({
 
 async function startWebuiServer(caps: Caps): Promise<void> {
   const { events, logger, lifecycle, provide, services } = caps;
-  const config = caps.config;
+  const cfg = parseConfig(configSchema, caps.config, logger);
   const uiConfig: WebUIConfig = {
-    port: (config.port as number) ?? 3000,
-    host: (config.host as string) ?? '127.0.0.1',
-    fileRoot: (config.fileRoot as string) || 'workspace',
-    autoOpen: (config.autoOpen as boolean | undefined) ?? true,
-    tokenMode: ['ephemeral', 'fixed'].includes(config.tokenMode as string)
-      ? (config.tokenMode as 'ephemeral' | 'fixed')
-      : 'persist',
-    fixedToken: (config.fixedToken as string) ?? '',
-    marketplaceRegistry: (config.marketplaceRegistry as string)?.trim() || 'https://registry.npmjs.org',
+    ...cfg,
+    fileRoot: cfg.fileRoot || configSchema.fileRoot.default,
+    marketplaceRegistry: cfg.marketplaceRegistry.trim() || configSchema.marketplaceRegistry.default,
   };
+  if (!uiConfig.host.trim()) throw configError('host 不能为空');
+  if (!Number.isInteger(uiConfig.port) || uiConfig.port < 0 || uiConfig.port > 65535) {
+    throw configError('port 必须是 0-65535 的整数');
+  }
+  if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
   const storage: StorageService = createStorageGateway(caps.storage);

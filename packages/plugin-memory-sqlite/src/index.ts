@@ -18,7 +18,7 @@ import {
   parseInstanceId,
   provide,
 } from '@aalis/core';
-import { type ConfigSchema, configError } from '@aalis/schema-config';
+import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ContentSegment, Message } from '@aalis/schema-message';
 import Database from 'better-sqlite3';
 
@@ -57,11 +57,12 @@ function describeOpenError(err: unknown): string {
   return message;
 }
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   path: {
     type: 'string',
     label: '数据库路径',
     default: '',
+    onInvalid: 'error',
     description:
       "SQLite 数据库文件的 storage URI（如 data:/aalis.db；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）。" +
       '留空按实例派生：主实例用 data:/aalis.db，带后缀的实例在文件名上加后缀（如 `:b` 实例用 data:/aalis-b.db）。' +
@@ -79,7 +80,7 @@ const configSchema: ConfigSchema = {
     default: 1000,
     description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
   },
-};
+});
 
 // ===== SQLite MemoryService 实现 =====
 
@@ -462,9 +463,10 @@ export default definePlugin({
     config,
   },
   async apply(caps) {
+    const cfg = parseConfig(configSchema, caps.config, caps.logger);
     // 解析数据库路径：storage URI → 本地路径
     const gateway = createStorageGateway(caps.storage);
-    const dbUri = toUri(caps.config.path as string, caps.lifecycle.id);
+    const dbUri = toUri(cfg.path, caps.lifecycle.id);
     let dbPath: string;
     try {
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');
@@ -505,8 +507,8 @@ export default definePlugin({
         db.pragma('journal_mode = WAL');
 
         const service = new SQLiteMemoryService(db, {
-          rangeQueryLimit: caps.config.rangeQueryLimit as number | undefined,
-          crossSessionMaxLimit: caps.config.crossSessionMaxLimit as number | undefined,
+          rangeQueryLimit: cfg.rangeQueryLimit,
+          crossSessionMaxLimit: cfg.crossSessionMaxLimit,
           logger: caps.logger,
         });
 

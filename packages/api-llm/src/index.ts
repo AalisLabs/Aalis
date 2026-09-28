@@ -187,12 +187,12 @@ import type {} from '@aalis/schema-config';
 declare module '@aalis/schema-config' {
   interface SchemaFieldTypes {
     /**
-     * LLM 模型引用：值形如 `{ provider: string; model: string }`，前端渲染为
+     * LLM 模型引用：值为 {@link ModelRef}，前端渲染为
      * 联动 select（provider 列表来自 `/api/models/llm` 的 contextId 聚合；
      * model 列表由所选 provider 决定）。运行时由消费方用
-     * `resolveLLMModel(llm, value, caps)` 解析。
+     * `resolveLLMModel(llm, value, caps)` 解析。parseConfig 不校验这个类型的取值，除 `''`（未选）外原样透传。
      */
-    'llm-ref': true;
+    'llm-ref': ModelRef;
   }
 }
 

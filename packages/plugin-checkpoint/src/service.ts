@@ -1,6 +1,7 @@
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
+import { type CheckpointConfig, configSchema } from './config.js';
 
 /** 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）与回合结束前就清掉的临时目录（tmp）。 */
 const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'pluginData', 'logs']);
@@ -601,32 +602,21 @@ function encodeSegment(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]/g, c => `_${c.charCodeAt(0).toString(16)}`);
 }
 
-export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
-  const rawScopes = raw.scopes;
-  const scopes: string[] = Array.isArray(rawScopes)
-    ? rawScopes.filter((x): x is string => typeof x === 'string' && x.length > 0)
-    : typeof rawScopes === 'string' && rawScopes.length > 0
-      ? rawScopes
-          .split(/[,\s]+/)
-          .map(s => s.trim())
-          .filter(Boolean)
-      : ['webui:*'];
+export function normalizeConfig(cfg: CheckpointConfig): ServiceConfig {
   return {
-    rootUri: resolveRootUri(raw.rootDir),
-    maxFileSize: typeof raw.maxFileSize === 'number' ? Math.max(1024, raw.maxFileSize) : 10 * 1024 * 1024,
-    keepSessions: typeof raw.keepSessions === 'number' ? Math.max(0, Math.floor(raw.keepSessions)) : 20,
-    scopes,
+    rootUri: resolveRootUri(cfg.rootDir),
+    maxFileSize: Math.max(1024, cfg.maxFileSize),
+    keepSessions: Math.max(0, Math.floor(cfg.keepSessions)),
+    scopes: cfg.scopes.filter(s => s.trim() !== ''),
   };
 }
 
-/** rootDir 只接受 storage URI；未设、留空或非字符串用默认值，其它写法（如相对路径 data/checkpoints）拒绝激活。 */
-function resolveRootUri(input: unknown): string {
-  const s = typeof input === 'string' ? input.trim() : '';
-  if (!s) return 'data:/checkpoints';
+/** rootDir 只接受 storage URI；留空使用默认值，非 URI 在副作用前拒绝。 */
+function resolveRootUri(input: string): string {
+  const s = input.trim();
+  if (!s) return configSchema.rootDir.default;
   if (!isStorageUri(s)) {
-    throw new Error(
-      `plugin-checkpoint 配置错误: rootDir="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/checkpoints），或删掉该键使用默认值`,
-    );
+    throw new Error('plugin-checkpoint 配置错误: rootDir 不是 storage URI，请写成 <根名>:/<路径>');
   }
   return s;
 }
