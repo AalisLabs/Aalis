@@ -69,3 +69,7 @@ CLI 接管终端后的按键（程序内按 `Ctrl+G` 可随时查看）：
 | `Enter` | 提交输入 |
 | `Ctrl+J` | 插入换行（macOS 下的 Ctrl+Enter） |
 | `Shift+Enter` | 插入换行（终端支持时） |
+
+## 配置校验
+
+`startupView` 还支持 `help`。`sessionId` 的显式无效值会拒绝激活，避免改接默认会话；`maxLogEntries` 接受数字字符串，0 仍取默认值，小于 1000 时仍夹到 1000。`lastView` 不在已知视图内时仍回落 `chat`。

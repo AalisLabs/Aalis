@@ -1,194 +1,205 @@
-// ----- 触发策略配置 -----
+import { type ConfigOf, defineConfig } from '@aalis/schema-config';
 
-export type IdleTriggerScope = 'off' | 'session' | 'platform';
-export type IdleTriggerStrategy = 'all-quiet' | 'fixed';
-export type IdleTriggerStyle = 'exponential' | 'fixed';
+export const configSchema = defineConfig({
+  scopes: {
+    type: 'multiselect',
+    label: '生效作用域',
+    default: ['*:group'],
+    dynamicOptions: 'gateway-scopes',
+    allowCustom: true,
+    description:
+      '格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认 *:group；默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。',
+  },
+  intervalMode: {
+    type: 'select',
+    label: '间隔模式',
+    default: 'both',
+    options: [
+      { label: 'fixed (仅按计数)', value: 'fixed' },
+      { label: 'dynamic (仅按评分阈值)', value: 'dynamic' },
+      { label: 'both (任一满足)', value: 'both' },
+    ],
+  },
+  triggerOnAt: {
+    type: 'boolean',
+    label: '检测 @ 提及',
+    default: true,
+    description: '@ 自己算"被点名"（戳一戳、名字同理）：点名直接开口，回合记为 immediate，点名者即授权主体。',
+  },
+  triggerOnPoke: {
+    type: 'boolean',
+    label: '戳一戳直触发',
+    default: true,
+    description: '戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。',
+  },
+  triggerNames: { type: 'string', label: '触发名别名（逗号或换行分隔）', default: '' },
+  muteKeywords: { type: 'string', label: '禁言关键词（逗号或换行分隔）', default: '' },
+  muteTimeSeconds: {
+    type: 'number',
+    label: '禁言关键词命中时长（秒）',
+    default: 60,
+  },
+  fixedInterval: {
+    type: 'number',
+    label: '固定间隔（每 N 条触发）',
+    default: 5,
+  },
+  activityScoreLower: { type: 'number', label: '活跃指数下限', default: 0.3 },
+  activityScoreUpper: { type: 'number', label: '活跃指数上限', default: 0.85 },
+  activityDecayMinutes: {
+    type: 'number',
+    label: '阈值衰减分钟',
+    default: 10,
+  },
+  scoreDecayMinutes: {
+    type: 'number',
+    label: '评分衰减分钟（0=不衰减）',
+    default: 0,
+  },
+  idleTriggerScope: {
+    type: 'select',
+    label: '闲置触发范围',
+    default: 'off',
+    options: [
+      { label: 'off (关闭)', value: 'off' },
+      { label: 'session (每会话独立定时)', value: 'session' },
+      { label: 'platform (跨会话选举)', value: 'platform' },
+    ],
+  },
+  idleTriggerStrategy: {
+    type: 'select',
+    label: '闲置触发策略',
+    default: 'all-quiet',
+    options: [
+      { label: 'all-quiet (所有会话都静默时)', value: 'all-quiet' },
+      { label: 'fixed (固定间隔)', value: 'fixed' },
+    ],
+  },
+  idleTriggerMinutes: {
+    type: 'number',
+    label: '闲置触发分钟',
+    default: 180,
+  },
+  idleTriggerStyle: {
+    type: 'select',
+    label: '闲置触发风格',
+    default: 'exponential',
+    options: [
+      { label: 'exponential (指数退避)', value: 'exponential' },
+      { label: 'fixed (固定)', value: 'fixed' },
+    ],
+  },
+  idleTriggerMaxMinutes: {
+    type: 'number',
+    label: '闲置触发上限分钟',
+    default: 1440,
+  },
+  idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动', default: true },
+  idleTriggerPrompt: {
+    type: 'string',
+    label: '闲置触发系统提示',
+    default: '',
+  },
+  overrides: {
+    type: 'array',
+    label: '分作用域覆盖',
+    description:
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。写一条 override 自动启用该 scope。',
+    default: [],
+    items: {
+      scope: {
+        type: 'string',
+        label: '作用域',
+        description: '格式 platform:sessionType[:targetId]，支持 *',
+        required: true,
+      },
+      intervalMode: {
+        type: 'select',
+        label: '间隔模式',
+        options: [
+          { label: 'fixed', value: 'fixed' },
+          { label: 'dynamic', value: 'dynamic' },
+          { label: 'both', value: 'both' },
+        ],
+      },
+      triggerOnAt: { type: 'boolean', label: '检测 @ 提及' },
+      triggerOnPoke: { type: 'boolean', label: '戳一戳直触发' },
+      triggerNames: { type: 'string', label: '触发名别名（逗号或换行分隔）' },
+      muteKeywords: { type: 'string', label: '禁言关键词（逗号或换行分隔）' },
+      muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）' },
+      fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）' },
+      activityScoreLower: { type: 'number', label: '活跃指数下限' },
+      activityScoreUpper: { type: 'number', label: '活跃指数上限' },
+      activityDecayMinutes: { type: 'number', label: '阈值衰减分钟' },
+      scoreDecayMinutes: { type: 'number', label: '评分衰减分钟' },
+      idleTriggerScope: {
+        type: 'select',
+        label: '闲置触发范围',
+        options: [
+          { label: 'off', value: 'off' },
+          { label: 'session', value: 'session' },
+          { label: 'platform', value: 'platform' },
+        ],
+      },
+      idleTriggerMinutes: { type: 'number', label: '闲置触发分钟' },
+      idleTriggerStyle: {
+        type: 'select',
+        label: '闲置触发风格',
+        options: [
+          { label: 'exponential', value: 'exponential' },
+          { label: 'fixed', value: 'fixed' },
+        ],
+      },
+      idleTriggerMaxMinutes: { type: 'number', label: '闲置触发上限分钟' },
+      idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动' },
+      idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示' },
+    },
+  },
+});
 
-export interface TriggerPolicyConfig {
-  /**
-   * 统一作用域名单：platform:sessionType[:targetId]，支持 *。
-   * 默认 ['*:group']；空数组 = 不生效（等于禁用触发策略）。
-   * 若存在任一 overrides[].scope 命中也视为启用。
-   */
-  scopes: string[];
-  /**
-   * 分作用域覆盖：每条针对一个 scope，仅在命中时覆盖列出的字段；未列字段穿透到顶层默认。
-   * 最具体匹配优先（targetId > sessionType > platform > 通配）。
-   * 写一条 override 即自动启用该 scope，无需重复在 scopes 中列出。
-   */
-  overrides: TriggerScopeOverride[];
-  /** 模式：fixed=按计数，dynamic=按评分阈值，both=任一满足 */
-  intervalMode: 'fixed' | 'dynamic' | 'both';
-  // 以下三项决定"被点名"：点名直接开口，回合记为 immediate（点名者即授权主体），否则按计数与评分判定、记为 interval
-  /** 是否检测 @ 提及作为即时触发 */
-  triggerOnAt: boolean;
-  /** 戳一戳等注意力动作（noticeType=poke）是否视同 @ 即时触发；关闭后落回正常意愿评估 */
-  triggerOnPoke: boolean;
-  /** 额外的触发名（除 persona 名字外的别名） */
-  triggerNames: string[];
-  /** mute 关键词（命中时设置自禁言） */
-  muteKeywords: string[];
-  /** mute 关键词命中时通知 flow-control 设置的禁言时长（秒） */
-  muteTimeSeconds: number;
-
-  /** 固定间隔：每 N 条消息累计一次触发 */
-  fixedInterval: number;
-  /** 动态阈值上下限（刚触发后高、长时间未触发后低） */
-  activityScoreLower: number;
-  activityScoreUpper: number;
-  /** 阈值衰减分钟数：距上次触发越久，阈值越低 */
-  activityDecayMinutes: number;
-  /** 评分本身的衰减分钟数（0 表示评分不主动衰减） */
-  scoreDecayMinutes: number;
-
-  /** 闲置触发范围 */
-  idleTriggerScope: IdleTriggerScope;
-  idleTriggerStrategy: IdleTriggerStrategy;
-  idleTriggerMinutes: number;
-  idleTriggerStyle: IdleTriggerStyle;
-  idleTriggerMaxMinutes: number;
-  idleTriggerJitter: boolean;
-  /** 闲置触发注入的 system 提示文本 */
-  idleTriggerPrompt: string;
-}
-
-export interface TriggerScopeOverride {
-  scope: string;
-  intervalMode?: 'fixed' | 'dynamic' | 'both';
-  triggerOnAt?: boolean;
-  triggerOnPoke?: boolean;
+type ParsedConfig = ConfigOf<typeof configSchema>;
+export type TriggerScopeOverride = Omit<ParsedConfig['overrides'][number], 'triggerNames' | 'muteKeywords'> & {
   triggerNames?: string[];
   muteKeywords?: string[];
-  muteTimeSeconds?: number;
-  fixedInterval?: number;
-  activityScoreLower?: number;
-  activityScoreUpper?: number;
-  activityDecayMinutes?: number;
-  scoreDecayMinutes?: number;
-  idleTriggerScope?: IdleTriggerScope;
-  idleTriggerMinutes?: number;
-  idleTriggerStyle?: IdleTriggerStyle;
-  idleTriggerMaxMinutes?: number;
-  idleTriggerJitter?: boolean;
-  idleTriggerPrompt?: string;
-}
-
-export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
-  scopes: ['*:group'],
-  overrides: [],
-  intervalMode: 'both',
-  triggerOnAt: true,
-  triggerOnPoke: true,
-  triggerNames: [],
-  muteKeywords: [],
-  muteTimeSeconds: 60,
-  fixedInterval: 5,
-  activityScoreLower: 0.3,
-  activityScoreUpper: 0.85,
-  activityDecayMinutes: 10,
-  scoreDecayMinutes: 0,
-  idleTriggerScope: 'off',
-  idleTriggerStrategy: 'all-quiet',
-  idleTriggerMinutes: 180,
-  idleTriggerStyle: 'exponential',
-  idleTriggerMaxMinutes: 1440,
-  idleTriggerJitter: true,
-  idleTriggerPrompt: '',
+};
+export type TriggerPolicyConfig = Omit<ParsedConfig, 'triggerNames' | 'muteKeywords' | 'overrides'> & {
+  triggerNames: string[];
+  muteKeywords: string[];
+  overrides: TriggerScopeOverride[];
 };
 
-function parseStringList(val: unknown): string[] {
-  if (Array.isArray(val)) return val.filter(Boolean).map(String);
-  if (typeof val === 'string' && val.trim()) {
-    return val
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-  }
-  return [];
+function splitNames(value: string): string[] {
+  return value
+    .split(/[,\r\n]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
 }
 
-export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): TriggerPolicyConfig {
-  const d = defaultTriggerPolicyConfig;
+/** 表单文本派生为名字列表；覆盖项的留空字段不覆盖顶层。 */
+export function normalizeConfig(cfg: ParsedConfig, logger?: { warn(message: string): void }): TriggerPolicyConfig {
+  const scopes = cfg.scopes.filter(s => s.trim() !== '');
+  if (scopes.length !== cfg.scopes.length) logger?.warn('配置项 scopes 含空白作用域，已忽略');
+  const overrides: TriggerScopeOverride[] = [];
+  for (const item of cfg.overrides) {
+    const scope = item.scope.trim();
+    if (!scope) {
+      logger?.warn('配置项 overrides 中有一项 scope 只含空白，已忽略该项');
+      continue;
+    }
+    const { triggerNames, muteKeywords, muteTimeSeconds, idleTriggerPrompt, ...rest } = item;
+    const normalized: TriggerScopeOverride = { ...rest, scope };
+    if (triggerNames?.trim()) normalized.triggerNames = splitNames(triggerNames);
+    if (muteKeywords?.trim()) normalized.muteKeywords = splitNames(muteKeywords);
+    if (muteTimeSeconds !== undefined && muteTimeSeconds > 0) normalized.muteTimeSeconds = Math.floor(muteTimeSeconds);
+    if (idleTriggerPrompt) normalized.idleTriggerPrompt = idleTriggerPrompt;
+    overrides.push(normalized);
+  }
   return {
-    scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
-    overrides: parseOverrides(raw.overrides),
-    intervalMode: ((): TriggerPolicyConfig['intervalMode'] => {
-      const v = raw.intervalMode;
-      return v === 'fixed' || v === 'dynamic' || v === 'both' ? v : d.intervalMode;
-    })(),
-    triggerOnAt: (raw.triggerOnAt as boolean) ?? d.triggerOnAt,
-    triggerOnPoke: (raw.triggerOnPoke as boolean) ?? d.triggerOnPoke,
-    triggerNames: parseStringList(raw.triggerNames),
-    muteKeywords: parseStringList(raw.muteKeywords),
-    muteTimeSeconds:
-      typeof raw.muteTimeSeconds === 'number' && raw.muteTimeSeconds > 0
-        ? Math.floor(raw.muteTimeSeconds)
-        : d.muteTimeSeconds,
-    fixedInterval: (raw.fixedInterval as number) ?? d.fixedInterval,
-    activityScoreLower: (raw.activityScoreLower as number) ?? d.activityScoreLower,
-    activityScoreUpper: (raw.activityScoreUpper as number) ?? d.activityScoreUpper,
-    activityDecayMinutes: (raw.activityDecayMinutes as number) ?? d.activityDecayMinutes,
-    scoreDecayMinutes: (raw.scoreDecayMinutes as number) ?? d.scoreDecayMinutes,
-    idleTriggerScope: ((): IdleTriggerScope => {
-      const v = raw.idleTriggerScope;
-      return v === 'off' || v === 'session' || v === 'platform' ? v : d.idleTriggerScope;
-    })(),
-    idleTriggerStrategy: raw.idleTriggerStrategy === 'fixed' ? 'fixed' : 'all-quiet',
-    idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? d.idleTriggerMinutes,
-    idleTriggerStyle: (raw.idleTriggerStyle as IdleTriggerStyle) ?? d.idleTriggerStyle,
-    idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? d.idleTriggerMaxMinutes,
-    idleTriggerJitter: (raw.idleTriggerJitter as boolean) ?? d.idleTriggerJitter,
-    idleTriggerPrompt: (raw.idleTriggerPrompt as string) || d.idleTriggerPrompt,
+    ...cfg,
+    scopes,
+    overrides,
+    triggerNames: splitNames(cfg.triggerNames),
+    muteKeywords: splitNames(cfg.muteKeywords),
+    muteTimeSeconds: cfg.muteTimeSeconds > 0 ? Math.floor(cfg.muteTimeSeconds) : configSchema.muteTimeSeconds.default,
   };
-}
-
-function parseOverrides(raw: unknown): TriggerScopeOverride[] {
-  if (!Array.isArray(raw)) return [];
-  const out: TriggerScopeOverride[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const obj = item as Record<string, unknown>;
-    if (typeof obj.scope !== 'string' || !obj.scope.trim()) continue;
-    const o: TriggerScopeOverride = { scope: obj.scope.trim() };
-    const mode = obj.intervalMode;
-    if (mode === 'fixed' || mode === 'dynamic' || mode === 'both') o.intervalMode = mode;
-    if (typeof obj.triggerOnAt === 'boolean') o.triggerOnAt = obj.triggerOnAt;
-    if (typeof obj.triggerOnPoke === 'boolean') o.triggerOnPoke = obj.triggerOnPoke;
-    // 字符串字段：仅在非空时视为覆盖；空串/未填 → 穿透到顶层默认
-    if (typeof obj.triggerNames === 'string' && obj.triggerNames.trim() !== '') {
-      o.triggerNames = parseStringList(obj.triggerNames);
-    } else if (Array.isArray(obj.triggerNames) && obj.triggerNames.length > 0) {
-      o.triggerNames = parseStringList(obj.triggerNames);
-    }
-    if (typeof obj.muteKeywords === 'string' && obj.muteKeywords.trim() !== '') {
-      o.muteKeywords = parseStringList(obj.muteKeywords);
-    } else if (Array.isArray(obj.muteKeywords) && obj.muteKeywords.length > 0) {
-      o.muteKeywords = parseStringList(obj.muteKeywords);
-    }
-    if (typeof obj.muteTimeSeconds === 'number' && obj.muteTimeSeconds > 0) {
-      o.muteTimeSeconds = Math.floor(obj.muteTimeSeconds);
-    }
-    for (const k of [
-      'fixedInterval',
-      'activityScoreLower',
-      'activityScoreUpper',
-      'activityDecayMinutes',
-      'scoreDecayMinutes',
-      'idleTriggerMinutes',
-      'idleTriggerMaxMinutes',
-    ] as const) {
-      const v = obj[k];
-      if (typeof v === 'number') o[k] = v;
-    }
-    if (typeof obj.idleTriggerJitter === 'boolean') o.idleTriggerJitter = obj.idleTriggerJitter;
-    if (typeof obj.idleTriggerPrompt === 'string' && obj.idleTriggerPrompt !== '') {
-      o.idleTriggerPrompt = obj.idleTriggerPrompt;
-    }
-    const sScope = obj.idleTriggerScope;
-    if (sScope === 'off' || sScope === 'session' || sScope === 'platform') o.idleTriggerScope = sScope;
-    const sStyle = obj.idleTriggerStyle;
-    if (sStyle === 'exponential' || sStyle === 'fixed') o.idleTriggerStyle = sStyle;
-    out.push(o);
-  }
-  return out;
 }

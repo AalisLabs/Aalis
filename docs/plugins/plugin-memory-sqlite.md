@@ -39,6 +39,7 @@ export default definePlugin({
 ## 特性
 
 - `path` 按 storage URI 解析：首段路径视为存储根名（如 `data/aalis.db` 即 `data:/aalis.db`），也可以直接写 `data:/xxx.db`；对应存储根须支持写入和本地路径解析（`resolveLocalPath`），否则启动时报错
+- `path` 缺省或为 `null` 时仍按实例派生；显式给出布尔值、数组或对象等无效类型时拒绝激活，不会回落到默认数据库文件。
 - 可多实例（`@aalis/plugin-memory-sqlite:<后缀>`）。`path` 留空时按实例派生：主实例用 `data:/aalis.db`，带后缀的实例在文件名上加后缀（如 `:b` 实例用 `data:/aalis-b.db`）；配置里写明的 `path` 照用。两个实例打开的是同一个文件时，后激活的那个激活失败，报一行 `ConfigError`，点名占用该文件的实例；两边路径写法不同时一并给出占用者打开的路径。是否同一个文件按文件身份（设备号与 inode）判断，大小写不敏感的卷上只差大小写的路径、硬链接都算同一个文件；文件系统不提供 inode 时退回按本地路径比较
 - `better-sqlite3` 是原生模块，按装依赖时的 Node 版本编译。换了 Node 大版本后启动，插件激活失败并提示两条出路：用装依赖时的 Node 启动，或在项目根执行 `npm rebuild better-sqlite3`（pnpm 工程用 `pnpm rebuild better-sqlite3`），报错末尾附原始错误的首行。CPU 架构不符、缺系统库等其它原生加载失败不给这条提示，报错照录原始错误
 - 自动创建 `messages` 表（含 `(sessionId, timestamp)` 与 `(archived, timestamp)` 两个索引）和 `metadata` 表

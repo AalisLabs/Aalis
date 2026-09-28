@@ -178,6 +178,44 @@ describe('validateConfig required 与缺失语义', () => {
   });
 });
 
+describe("validateConfig onInvalid: 'error'", () => {
+  it('严格策略不改变判定与缺省报告，集合坏成员仍逐个定位', () => {
+    const schema: ConfigSchema = {
+      port: field('number', { default: 80, onInvalid: 'error' }),
+      args: field('list', { onInvalid: 'error' }),
+    };
+    expect(validateConfig(schema, {})).toEqual([]);
+    expect(validateConfig(schema, { port: null })).toEqual([]);
+    expect(validateConfig(schema, { port: 'bad', args: ['ok', false] })).toEqual([
+      { path: 'port', message: '期望有限数值，得到 string', kind: 'invalid' },
+      { path: 'args[1]', message: '期望 string 元素，得到 boolean', kind: 'invalid' },
+    ]);
+  });
+
+  it('map 保留键与稀疏集合位置判为 invalid', () => {
+    const schema: ConfigSchema = {
+      env: field('map', { onInvalid: 'error' }),
+      args: field('list', { onInvalid: 'error' }),
+      choices: field('multiselect', { onInvalid: 'error' }),
+    };
+    const args = ['first'];
+    args[2] = 'third';
+    const choices = ['a'];
+    choices[2] = 'b';
+    expect(
+      validateConfig(schema, {
+        env: JSON.parse('{"GOOD":"ok","__proto__":"bad"}'),
+        args,
+        choices,
+      }),
+    ).toEqual([
+      { path: 'env.__proto__', message: '保留键不可用', kind: 'invalid' },
+      { path: 'args[1]', message: '期望 string 元素，得到 undefined', kind: 'invalid' },
+      { path: 'choices[1]', message: '期望 string 或 number 元素，得到 undefined', kind: 'invalid' },
+    ]);
+  });
+});
+
 describe('validateConfig 开放词汇表', () => {
   it('外来类型（declaration merging 注入，如 llm-ref）一律跳过放行', () => {
     const schema = { ref: { type: 'llm-ref', label: '模型' } } as unknown as ConfigSchema;

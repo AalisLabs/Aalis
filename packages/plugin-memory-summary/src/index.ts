@@ -8,7 +8,7 @@ import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -82,7 +82,7 @@ function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, s
 
 // ===== 插件元数据 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   threshold: {
     type: 'number',
     label: '摘要触发阈值',
@@ -131,26 +131,11 @@ const configSchema: ConfigSchema = {
     label: '摘要模型',
     description: '仅当 summaryModelMode=custom 时生效；provider 为 LLM 插件实例 contextId，model 为实例内某个模型名。',
   },
-};
+});
 
 // ===== 配置 =====
 
-interface SummaryConfig {
-  /** 当会话消息 > threshold 时，触发摘要生成 */
-  threshold: number;
-  /** 摘要时保留最近 N 条消息不参与摘要 */
-  keepRecent: number;
-  /** 摘要占模型上下文窗口的比例 (0~1) */
-  summaryTokenRatio: number;
-  /** Token 使用率超过此比例时启动后台压缩 (0~1)，0 表示禁用 */
-  autoCompressThreshold: number;
-  /** 自定义摘要提示词 */
-  summaryPrompt: string;
-  /** 摘要模型来源：global=全局默认 LLM；custom=指定 provider+model */
-  summaryModelMode: 'global' | 'custom';
-  /** custom 模式下的 LLM ref */
-  summaryLLM?: { provider: string; model: string };
-}
+type SummaryConfig = ConfigOf<typeof configSchema>;
 
 // ===== 默认摘要生成提示词 =====
 
@@ -242,20 +227,16 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { memory, llm, messageArchive, config, logger, events, hooks, contributions, lifecycle } = caps;
+  const { memory, llm, messageArchive, logger, events, hooks, contributions, lifecycle } = caps;
+  const parsed = parseConfig(configSchema, caps.config, logger);
   const cfg: SummaryConfig = {
-    threshold: (config.threshold as number) ?? 30,
-    keepRecent: (config.keepRecent as number) ?? 20,
-    summaryTokenRatio: (config.summaryTokenRatio as number) ?? 0.05,
-    autoCompressThreshold: (config.autoCompressThreshold as number) ?? 0.7,
-    summaryPrompt: (config.summaryPrompt as string) ?? '',
-    summaryModelMode: (config.summaryModelMode as string) === 'custom' ? 'custom' : 'global',
+    ...parsed,
     summaryLLM:
-      config.summaryLLM &&
-      typeof config.summaryLLM === 'object' &&
-      (config.summaryLLM as { provider?: unknown }).provider &&
-      (config.summaryLLM as { model?: unknown }).model
-        ? (config.summaryLLM as { provider: string; model: string })
+      parsed.summaryLLM &&
+      typeof parsed.summaryLLM === 'object' &&
+      parsed.summaryLLM.provider &&
+      parsed.summaryLLM.model
+        ? parsed.summaryLLM
         : undefined,
   };
 
