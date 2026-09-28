@@ -1,40 +1,45 @@
 import { type CommandArgv, commands } from '@aalis/api-commands';
 import { memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   developerToken: {
     type: 'string',
     label: '开发者 API Token',
     default: '',
     description: '在 https://maimai.lxns.net 申请的开发者 token，必须配置',
     secret: true,
+    onInvalid: 'error',
   },
   baseUrl: {
     type: 'string',
     label: 'API Base URL',
     default: 'https://maimai.lxns.net',
+    onInvalid: 'error',
     description: '查分器域名，一般无需修改',
   },
   enableTools: {
     type: 'boolean',
     label: '注册 Agent 工具',
     default: true,
+    onInvalid: 'error',
     description: '为 LLM Agent 注册结构化工具（推荐保持开启）',
   },
   enableCommands: {
     type: 'boolean',
     label: '注册斜杠指令',
     default: true,
+    onInvalid: 'error',
     description: '为用户注册 /maimai 等斜杠指令',
   },
   defaultBindOnPrivateChat: {
     type: 'boolean',
     label: '私聊缺省绑定',
     default: true,
+    onInvalid: 'error',
     description: '在 OneBot 私聊中，若调用者未绑定但其 QQ 已注册查分器账号，自动以其 QQ 查分',
   },
   timeoutMs: {
@@ -43,16 +48,9 @@ const configSchema: ConfigSchema = {
     default: 30000,
     description: '查分器 API 单次请求上限。工具执行面没有外层超时，对端不应答会把整轮对话挂住',
   },
-};
+});
 
-interface MaimaiConfig {
-  developerToken: string;
-  baseUrl: string;
-  enableTools: boolean;
-  enableCommands: boolean;
-  defaultBindOnPrivateChat: boolean;
-  timeoutMs: number;
-}
+type MaimaiConfig = ConfigOf<typeof configSchema>;
 
 // ===== 类型（仅声明常用字段，其余以 unknown 透传） =====
 
@@ -410,18 +408,13 @@ export default definePlugin({
   configSchema,
   uses,
   apply({ tools, commands, memory, logger, config }) {
-    const cfg: MaimaiConfig = {
-      developerToken: String(config.developerToken ?? ''),
-      baseUrl: String(config.baseUrl ?? 'https://maimai.lxns.net'),
-      enableTools: config.enableTools !== false,
-      enableCommands: config.enableCommands !== false,
-      defaultBindOnPrivateChat: config.defaultBindOnPrivateChat !== false,
-      timeoutMs: Number(config.timeoutMs ?? 30000),
-    };
-
+    const cfg = parseConfig(configSchema, config, logger);
     if (!cfg.developerToken) {
       logger.warn('[maimai] 未配置 developerToken，插件不会注册任何工具/指令');
       return;
+    }
+    if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
+      throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
 
     const client = new MaimaiClient(cfg, logger);

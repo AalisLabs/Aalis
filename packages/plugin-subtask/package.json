@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-subtask",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",

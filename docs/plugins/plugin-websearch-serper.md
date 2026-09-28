@@ -65,3 +65,7 @@ export default definePlugin({
 - 并发数限制
 
 `web_search` 与 `search_images` 共用同一个限流器，超限时返回 JSON 错误信息，不抛异常；`web-search` 服务的 `search()` 不经过此限流器。
+
+## 配置校验
+
+`apiKey` 缺失或显式无效时实例进入错误态，搜索请求不会发出。数字字符串按数值解析；其余错误类型回落默认值并告警。不完整的 `compressionLLM` 引用仍沿用默认模型。

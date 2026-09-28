@@ -14,7 +14,7 @@ import {
   optional,
   provide,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
 
@@ -137,13 +137,14 @@ export const scheduler = defineService<SchedulerService>('scheduler');
 
 // ──────────── 插件元数据 ────────────
 
-const configSchema: ConfigSchema = {
+export const configSchema = defineConfig({
   jobs: {
     type: 'array',
+    onInvalid: 'error',
     label: '计划任务列表',
     description: '配置定时/周期性任务，让 AI 主动执行计划。',
     items: {
-      name: { type: 'string', label: '任务名称', required: true },
+      name: { type: 'string', label: '任务名称' },
       cron: {
         type: 'string',
         label: 'Cron 表达式',
@@ -154,14 +155,19 @@ const configSchema: ConfigSchema = {
         label: '固定间隔(秒)',
         description: '每隔 N 秒执行一次。与"Cron 表达式"二选一。',
       },
+      runAt: {
+        type: 'string',
+        label: '一次性运行时间',
+        description: 'ISO 字符串；执行一次后自动禁用。',
+      },
       sessionId: {
         type: 'string',
         label: '目标会话 ID',
-        required: true,
         description: '任务消息发往的会话 ID。可以是真实群/用户会话，也可以自定义（如 scheduler::daily）。',
       },
       platform: {
         type: 'string',
+        onInvalid: 'error',
         label: '目标平台',
         required: true,
         description: '任务消息的平台标识（如 internal、webui、onebot）。仅用于消息路由。',
@@ -172,21 +178,19 @@ const configSchema: ConfigSchema = {
         label: '执行身份-平台',
         description:
           '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合裁决能力。留空 = webui。',
-        default: 'webui',
       },
       actorUserId: {
         type: 'string',
         label: '执行身份-用户 ID',
         description: '代理身份的 userId。留空 = console（与 actorPlatform=webui 组合即 owner，拥有一切能力）。',
-        default: 'console',
       },
       content: {
         type: 'string',
         label: '消息内容',
-        required: true,
+        default: '',
         description: '发送给 Agent 的指令/提示内容。',
       },
-      enabled: { type: 'boolean', label: '启用', default: true },
+      enabled: { type: 'boolean', label: '启用', default: true, onInvalid: 'error' },
       timeZone: {
         type: 'string',
         label: '时区 (IANA)',
@@ -197,11 +201,12 @@ const configSchema: ConfigSchema = {
   },
   persistPath: {
     type: 'string',
+    onInvalid: 'error',
     label: '动态任务存储路径',
     default: 'data:/scheduler-jobs.json',
     description: '通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。',
   },
-};
+});
 
 // ──────────── WebUI 页面 ────────────
 
@@ -312,8 +317,9 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
   const { cronEngine, storage, webui, events, lifecycle, logger, provide, tools } = caps;
-  const config = resolveConfig(caps.config);
+  const config = resolveConfig(cfg);
 
   for (const page of webuiPages) webui.registerPage(page);
 
@@ -1114,39 +1120,21 @@ async function run(caps: Caps): Promise<void> {
 
 // ──────────── 辅助函数 ────────────
 
-export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
-  const rawJobs = Array.isArray(raw.jobs) ? raw.jobs : [];
-  /**
-   * 可选字符串字段的归一化：**不能只写 `as string | undefined`**。
-   * 这些值来自 YAML 反序列化，不受 TS 约束，而 `as` 不产生任何运行时转换 ——
-   * QQ 号天然写成不带引号的 `actorUserId: 10001`、时区写成 `timeZone: 8`，
-   * 拿到的都是 number，下游 `.trim()` 直接抛 "is not a function"，
-   * 而那些 .trim() 在 apply() 顶层无 try，一抛整个 scheduler 服务就不注册。
-   */
-  const str = (v: unknown): string | undefined => (v === undefined || v === null ? undefined : String(v));
+export function resolveConfig(cfg: ConfigOf<typeof configSchema>): SchedulerConfig {
   return {
-    // biome-ignore lint/suspicious/noExplicitAny: 从 YAML 反序列化的原始字段，手动校验转型
-    jobs: rawJobs.map((j: any) => ({
-      name: String(j.name ?? 'unnamed'),
-      cron: str(j.cron),
-      interval: j.interval === undefined || j.interval === null ? undefined : Number(j.interval),
-      runAt: str(j.runAt),
-      sessionId: String(j.sessionId ?? `scheduler::${j.name ?? 'default'}`),
-      platform: String(j.platform ?? 'internal'),
-      actorPlatform: str(j.actorPlatform),
-      actorUserId: str(j.actorUserId),
-      timeZone: str(j.timeZone),
-      content: String(j.content ?? ''),
-      enabled: j.enabled !== false,
+    jobs: cfg.jobs.map(j => ({
+      ...j,
+      name: j.name ?? 'unnamed',
+      sessionId: j.sessionId ?? `scheduler::${j.name ?? 'default'}`,
     })),
-    persistPath: resolvePersistPath(raw.persistPath),
+    persistPath: resolvePersistPath(cfg.persistPath),
   };
 }
 
-/** persistPath 只接受 storage URI；未设、留空或非字符串用默认值，其它写法（如相对路径 data/scheduler-jobs.json）拒绝激活。 */
-function resolvePersistPath(input: unknown): string {
-  const s = typeof input === 'string' ? input.trim() : '';
-  if (!s) return 'data:/scheduler-jobs.json';
+/** persistPath 只接受 storage URI；留空用 schema 默认值，其它写法拒绝激活。 */
+function resolvePersistPath(input: string): string {
+  const s = input.trim();
+  if (!s) return configSchema.persistPath.default;
   if (!isStorageUri(s)) {
     throw new Error(
       `plugin-scheduler 配置错误: persistPath="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/scheduler-jobs.json），或删掉该键使用默认值`,

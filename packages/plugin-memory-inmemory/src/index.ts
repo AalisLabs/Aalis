@@ -7,7 +7,7 @@ import {
   type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
 import { config, definePlugin, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 
 // ===== InMemoryFallbackService 实现 =====
@@ -251,7 +251,7 @@ class InMemoryFallbackService implements MemoryService {
 
 // ===== 插件入口 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   rangeQueryLimit: {
     type: 'number',
     label: '范围查询返回上限',
@@ -264,7 +264,7 @@ const configSchema: ConfigSchema = {
     default: 1000,
     description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
   },
-};
+});
 
 export default definePlugin({
   name: '@aalis/plugin-memory-inmemory',
@@ -274,9 +274,10 @@ export default definePlugin({
   provides: [memory],
   uses: { config, logger, provide },
   apply(caps) {
+    const cfg = parseConfig(configSchema, caps.config, caps.logger);
     const service = new InMemoryFallbackService({
-      rangeQueryLimit: caps.config.rangeQueryLimit as number | undefined,
-      crossSessionMaxLimit: caps.config.crossSessionMaxLimit as number | undefined,
+      rangeQueryLimit: cfg.rangeQueryLimit,
+      crossSessionMaxLimit: cfg.crossSessionMaxLimit,
     });
     // 负优先级：本后端是兜底，任何持久化后端在场都该压过它
     caps.provide(memory, service, { priority: -100 });

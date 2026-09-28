@@ -44,6 +44,8 @@ export default definePlugin({
 | `animMaxFrames` | number | `160` | 动图帧数上限：时长×帧率超出时按帧数反推有效时长 |
 | `animMaxOutputMB` | number | `9` | GIF 体积上限 (MB)：超出即报错（OneBot 内联投递上限 10MB，留余量） |
 
+显式给出无效的 `executablePath` 或 `headless` 时，插件拒绝激活，不会启动浏览器。画布与动画数值仍按既有规则取整、夹到上限；低于有效下限时取字段默认值。
+
 ## 系统依赖
 
 - **中文与 emoji 字体**：外壳文档的字体栈为 PingFang SC / Hiragino Sans GB / Noto Sans CJK SC / Apple Color Emoji，macOS 自带前两者与 Apple Color Emoji。Linux 需自行安装 Noto CJK 与 Noto Color Emoji，否则中文与 emoji 会渲染成方块。Debian / Ubuntu：`apt install fonts-noto-cjk fonts-noto-color-emoji`。

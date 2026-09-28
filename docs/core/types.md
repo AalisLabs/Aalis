@@ -15,7 +15,7 @@
 ```typescript
 interface PluginMeta {} // core 内字面为空；额外字段由契约包 declaration merging 挂上
 
-interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
+interface PluginDefinition<U = {}> extends PluginMeta {
   name: string;
   displayName?: string;
   subsystem?: string;
@@ -25,10 +25,14 @@ interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   apply(caps: BoundOf<U>): void | Promise<void>;
 }
 
-function definePlugin<U extends Uses>(definition: PluginDefinition<U>): PluginDefinition<U>;
+function definePlugin<U extends object = {}>(
+  definition: PluginDefinition<U> & { uses?: CheckedUses<U> },
+): PluginDefinition<U>;
 ```
 
 `name` 须为非空字符串，不含保留字符 `#`，也不含 `:suffix`（只用于 instanceId）。
+
+`uses` 逐项核对：某一项不是描述符（也不是 `optional()` 的返回值）时，编译错误只落在这一项上，其余绑定照常推导，apply 里不会连带出现「类型为 never」的报错。
 
 ### PluginMeta 增强
 
@@ -110,7 +114,7 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 既登记又被调用的服务，把登记方法作为第二参传入：`serviceRef(port, { registerX })`。不要对象展开——`current` 是 getter，展开会求值成一次性快照。
 
-`ProviderOf<D>` / `BoundOf<U>` / `Uses` 是推导载体。`OptionalUse<P, B>` 是 `optional()` 的返回类型，`FollowCleanup`（`void | (() => unknown)`）是 `follow` 回调的返回类型，两者都从包根导出。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
+`ProviderOf<D>` / `BoundOf<U>` / `CheckedUses<U>` / `Uses` 是推导载体。`OptionalUse<P, B>` 是 `optional()` 的返回类型，`FollowCleanup`（`void | (() => unknown)`）是 `follow` 回调的返回类型，两者都从包根导出。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 
 `BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），也是以这次激活名义调用提供者的凭据，见 [资源身份](service.md#资源身份)。
 

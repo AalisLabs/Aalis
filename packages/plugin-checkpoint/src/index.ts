@@ -14,47 +14,13 @@ import {
   optional,
   provide,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
-import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
+import { parseConfig } from '@aalis/schema-config';
+import { configSchema } from './config.js';
+import { type CheckpointService, CheckpointServiceImpl, normalizeConfig } from './service.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-checkpoint — 文件操作快照与回滚
 // ════════════════════════════════════════════════════════════
-
-const configSchema: ConfigSchema = {
-  rootDir: {
-    type: 'string',
-    label: '存储目录',
-    description: '存储 URI（默认 data:/checkpoints）。所有 checkpoint blob 和 manifest 写入此位置。',
-    default: 'data:/checkpoints',
-  },
-  maxFileSize: {
-    type: 'number',
-    label: '单文件大小上限（字节）',
-    description: '超过此大小的文件不做内容快照，只在 manifest 里记录为 skipped。',
-    default: 10 * 1024 * 1024,
-  },
-  keepSessions: {
-    type: 'number',
-    label: '保留的会话数',
-    description: 'GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。',
-    default: 20,
-  },
-  scopes: {
-    type: 'multiselect',
-    label: '启用作用域',
-    description:
-      '仅在匹配下列 platform:sessionType 的会话中参与 turn 生命周期（建 checkpoint）。格式举例：`webui:*` / `onebot:group` / `*` 表示全部。默认仅 `webui:*`：onebot 等聊天平台不会为每条消息创建 checkpoint。留空数组 = 禁用 checkpoint（仅允许手动 rollback）。',
-    options: [
-      { label: '所有会话', value: '*' },
-      { label: 'WebUI 会话（推荐）', value: 'webui:*' },
-      { label: 'OneBot 群聊', value: 'onebot:group' },
-      { label: 'OneBot 私聊', value: 'onebot:private' },
-      { label: 'CLI', value: 'cli:*' },
-    ],
-    default: ['webui:*'],
-  },
-};
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const checkpoint = defineService<CheckpointService>('checkpoint');
@@ -95,7 +61,7 @@ function run(caps: Caps): void {
   const { storage, memory, webui, events, hooks, lifecycle, provide } = caps;
   /** 服务内部的 commitTurn / gc / flush 都写这个 source，日志页按 `…:checkpoint` 归组 */
   const logger = caps.logger.child('checkpoint');
-  const cfg = resolveConfig(caps.config);
+  const cfg = normalizeConfig(parseConfig(configSchema, caps.config, logger));
   const gateway = createStorageGateway(storage);
 
   const service = new CheckpointServiceImpl(cfg, logger, gateway);

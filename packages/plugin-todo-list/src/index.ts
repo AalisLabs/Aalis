@@ -3,11 +3,11 @@ import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 
-const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用任务计划工具', default: true },
-};
+const configSchema = defineConfig({
+  enabled: { type: 'boolean', label: '启用任务计划工具', default: true, onInvalid: 'error' },
+});
 
 // ===== 内部存储 =====
 
@@ -49,7 +49,8 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    if (caps.config.enabled === false) return;
+    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    if (!cfg.enabled) return;
     registerTodoList(caps);
   },
 });

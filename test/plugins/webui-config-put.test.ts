@@ -150,6 +150,24 @@ describe('PUT /api/config 何时重启', () => {
     expect(calls).toEqual(['save', 'restart']);
   });
 
+  it('清空 slowThresholdMs（提交 null）→ 从文档删掉这个键、回到默认值，保存并重启', async () => {
+    const { store, calls, put } = setup();
+    store.slowThresholdMs = 30000;
+    const r = await put({ name: 'Aalis', logLevel: 'info', slowThresholdMs: null });
+    expect(r.status).toBe(200);
+    expect((r.body as { restart?: boolean }).restart).toBe(true);
+    expect(store.slowThresholdMs).toBeUndefined();
+    expect(calls).toEqual(['save', 'restart']);
+  });
+
+  it('文档里本来就没有 slowThresholdMs 时提交 null：不算改动，不重启', async () => {
+    const { store, calls, put } = setup();
+    const r = await put({ name: 'Aalis', logLevel: 'info', slowThresholdMs: null });
+    expect(r.status).toBe(200);
+    expect('slowThresholdMs' in store).toBe(false);
+    expect(calls).toEqual(['save']);
+  });
+
   it('内置前端把文档里缺省的 slowThresholdMs 按默认值回填后回传：不算改动，不写进文档、不重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ ...structuredClone(store), _schema: {}, slowThresholdMs: 60000, name: 'Bot' });
@@ -193,7 +211,7 @@ describe('PUT /api/config 何时重启', () => {
 });
 
 describe('PUT /api/config 值校验', () => {
-  it.each(['60000', -1])('slowThresholdMs 不是不小于 0 的数字（%j）→ 400，不落盘、不重启', async value => {
+  it.each(['abc', -1, ' '])('slowThresholdMs 不是不小于 0 的数字（%j）→ 400，不落盘、不重启', async value => {
     const { store, calls, put } = setup();
     const r = await put({ slowThresholdMs: value });
     expect(r.status).toBe(400);
@@ -213,11 +231,20 @@ describe('PUT /api/config 值校验', () => {
 
   it('类型不符 → 400，不落盘、不重启', async () => {
     const { store, calls, put } = setup();
-    const r = await put({ name: 5 });
+    const r = await put({ name: true });
     expect(r.status).toBe(400);
     expect((r.body as { error: string }).error).toMatch(/name/);
     expect(store.name).toBe('Aalis');
     expect(calls).toEqual([]);
+  });
+
+  it('加了引号的数字与写成数字的名称照收，文档里存换算后的值（启动时直接读这几个键）', async () => {
+    const { store, calls, put } = setup();
+    const r = await put({ slowThresholdMs: ' 30000 ', name: 5 });
+    expect(r.status).toBe(200);
+    expect(store.slowThresholdMs).toBe(30000);
+    expect(store.name).toBe('5');
+    expect(calls).toEqual(['save', 'restart']);
   });
   it('宿主拒写 → 409、撤回文档里的改动且不重启（返回时已落盘的契约在消费侧兑现）', async () => {
     const { store, calls, put } = setup({

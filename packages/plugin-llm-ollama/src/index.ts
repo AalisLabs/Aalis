@@ -3,7 +3,7 @@ import { LLMCapabilities, llm } from '@aalis/api-llm';
 import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, optional, provide } from '@aalis/core';
-import { type ConfigSchema, configError, missingConfigError } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
@@ -123,11 +123,12 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
   return Buffer.concat(chunks);
 }
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   baseUrl: {
     type: 'string',
     label: 'Ollama 地址',
     default: 'http://localhost:11434',
+    onInvalid: 'error',
     description: '本地 Ollama 服务的 HTTP 地址',
   },
   customModels: {
@@ -184,23 +185,11 @@ const configSchema: ConfigSchema = {
     default: true,
     description: '为支持思考的模型启用扩展思考（think 参数）。无 thinking 能力的模型该参数无效。',
   },
-};
+});
 
 // ===== 配置 =====
 
-interface OllamaConfig {
-  baseUrl: string;
-  customModels: string[];
-  discoverModels: boolean;
-  modelCapabilities: Map<string, LLMCapability[]>;
-  providerCapabilities: LLMCapability[];
-  timeout?: number;
-  temperature: number;
-  maxTokens: number;
-  contextLength: number;
-  keepAlive: string;
-  thinking: boolean;
-}
+type OllamaConfig = ConfigOf<typeof configSchema>;
 
 // ===== Ollama API 消息格式 =====
 
@@ -1132,8 +1121,7 @@ function resolveCapabilities(
 }
 
 /** 解析适配器级别默认能力（逗号/空格/换行分隔） */
-function parseProviderCapabilities(raw: unknown): LLMCapability[] {
-  if (!raw || typeof raw !== 'string') return [];
+function parseProviderCapabilities(raw: string): LLMCapability[] {
   return raw
     .split(/[,\s\n]/)
     .map(s => s.trim())
@@ -1143,8 +1131,7 @@ function parseProviderCapabilities(raw: unknown): LLMCapability[] {
 // ===== 插件入口 =====
 
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
-function parseCustomModels(raw: unknown): string[] {
-  if (!raw || typeof raw !== 'string') return [];
+function parseCustomModels(raw: string): string[] {
   return raw
     .split(/[,\n]/)
     .map(s => s.trim())
@@ -1158,9 +1145,8 @@ function parseCustomModels(raw: unknown): string[] {
  * 按首个冒号切会把 id 截成 `qwen3`、能力段变成 `8b: chat`，整行报废。
  * 能力名本身不含冒号，故末位冒号即分隔符。
  */
-function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
+function parseModelCapabilities(raw: string): Map<string, LLMCapability[]> {
   const out = new Map<string, LLMCapability[]>();
-  if (!raw || typeof raw !== 'string') return out;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -1217,43 +1203,30 @@ export default definePlugin({
 });
 
 async function start({ config, logger, lifecycle, provide, proc }: Caps): Promise<void> {
-  const ollamaConfig: OllamaConfig = {
-    baseUrl: (config.baseUrl as string) ?? 'http://localhost:11434',
-    customModels: parseCustomModels(config.customModels),
-    discoverModels: config.discoverModels !== false,
-    modelCapabilities: parseModelCapabilities(config.modelCapabilities),
-    providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
-    timeout: (config.timeout as number) ?? 120,
-    temperature: (config.temperature as number) ?? 0.7,
-    maxTokens: (config.maxTokens as number) ?? 4096,
-    contextLength: (config.contextLength as number) ?? 8192,
-    keepAlive: (config.keepAlive as string) ?? '5m',
-    thinking: config.thinking !== false,
-  };
-  checkBaseUrl(ollamaConfig.baseUrl);
-  if (!ollamaConfig.discoverModels && ollamaConfig.customModels.length === 0) {
+  const cfg = parseConfig(configSchema, config, logger);
+  const customModels = parseCustomModels(cfg.customModels);
+  const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
+  const providerCapabilities = parseProviderCapabilities(cfg.providerCapabilities);
+
+  checkBaseUrl(cfg.baseUrl);
+  if (!cfg.discoverModels && customModels.length === 0) {
     throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
-  const client = new OllamaClient(ollamaConfig, logger, createProcessGateway(proc));
-  const baseLabel = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
-  const shownBaseUrl = redactUrl(ollamaConfig.baseUrl);
+  const client = new OllamaClient(cfg, logger, createProcessGateway(proc));
+  const baseLabel = `Ollama (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
+  const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 已注册 model entry 的句柄表：modelId → 该 entry 的退订
   const registered = new Map<string, () => void>();
 
   // 同 provider 下所有 OllamaModelHandle 共享同一份 refresh。关闭模型发现时不提供：没有可重新发现的列表
-  const refresh = ollamaConfig.discoverModels ? refreshModels : undefined;
+  const refresh = cfg.discoverModels ? refreshModels : undefined;
 
   /** 登记一个 model entry；已登记（如并发的另一次刷新先登记了）或被跳过时返回 false */
   function registerOne(modelId: string, detected?: string[] | null): boolean {
     if (registered.has(modelId)) return false;
-    const capabilities = resolveCapabilities(
-      modelId,
-      ollamaConfig.modelCapabilities.get(modelId),
-      ollamaConfig.providerCapabilities,
-      detected,
-    );
+    const capabilities = resolveCapabilities(modelId, modelCapabilities.get(modelId), providerCapabilities, detected);
     if (capabilities.length === 0) {
       logger.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
       return false;
@@ -1262,9 +1235,9 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
       client,
       modelId,
       lifecycle.id,
-      ollamaConfig.contextLength,
-      ollamaConfig.maxTokens,
-      ollamaConfig.thinking,
+      cfg.contextLength,
+      cfg.maxTokens,
+      cfg.thinking,
       capabilities,
       refresh,
     );
@@ -1290,19 +1263,19 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
   /** 自动发现的模型并上 customModels（与自动发现重复的告警） */
   function withCustomModels(remoteIds: string[]): string[] {
     const remoteSet = new Set(remoteIds);
-    for (const cm of ollamaConfig.customModels) {
+    for (const cm of customModels) {
       if (remoteSet.has(cm)) {
         logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
       }
     }
-    return [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
+    return [...remoteIds, ...customModels.filter(id => !remoteSet.has(id))];
   }
 
   // 初次注册。停用或停机时中止探测：模型发现中止即抛出，能力探测把中止吞成空结果，所以每次 await 之后自己查。
   // 模型发现失败按未发现远端模型继续，customModels 照常注册；关闭模型发现时只注册 customModels。
   // 发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
   let discoveryError: string | undefined;
-  const remoteIds = ollamaConfig.discoverModels
+  const remoteIds = cfg.discoverModels
     ? await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
         discoveryError = err instanceof Error ? err.message : String(err);
         return [];
@@ -1331,7 +1304,7 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
     );
   }
   logger.info(
-    !ollamaConfig.discoverModels
+    !cfg.discoverModels
       ? `Ollama 未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
       : discoveryError
         ? `Ollama 模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
