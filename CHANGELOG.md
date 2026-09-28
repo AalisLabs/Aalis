@@ -8,9 +8,10 @@
 
 ---
 
-## 未发布（Core 停机修复）
+## 未发布（Core 停机与服务归属修复）
 
 - `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
+- `provides` 校验同时核对实际登记的激活身份与条目的逻辑 id。由其他激活代登记同名 id 的服务，不再替当前插件满足声明；声明方应自己登记服务，纯代理登记方不要把代登记项写进自己的 `provides`。
 
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 

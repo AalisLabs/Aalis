@@ -34,9 +34,9 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
    */
   uses?: U;
   /**
-   * 本插件提供的服务（激活后按本次激活的 instanceId 校验确已提供）。
-   * `provide(..., { onBehalfOf })` 代登记的条目归属被代者身份，不计入代理人：
-   * 若把代登记的服务写进本清单，会以「声明 provides 但未实际注册」进入 error。
+   * 本插件提供的服务（激活后同时按本次激活的 owner 与 instanceId 校验确已提供）。
+   * `provide(..., { onBehalfOf })` 以其他身份代登记的条目不计入代理人，也不替被代者满足清单：
+   * 若清单中的服务只有代登记，会以「声明 provides 但未实际注册」进入 error。
    */
   // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
   provides?: ServiceDescriptor<any, any>[];
