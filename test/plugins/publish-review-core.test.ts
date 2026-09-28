@@ -83,15 +83,18 @@ describe('作品审核核心', () => {
     expect(seed.get('pluginData:/publish-review/state.json')).toBe(source);
   });
 
-  it('人工审核默认关：自动拿不准不发布；开启后自动通过仍须人工批准', async () => {
+  it('人工审核默认关：自动拿不准转人工且不发布；开启后自动通过仍须人工批准', async () => {
     const unsure = await setup({
       run: async () => ({ verdict: { verdict: 'unsure', reasons: ['拿不准'] }, files: input().files }),
     });
     const a = await unsure.service.nominate(input());
-    expect('id' in a).toBe(true);
+    if (!('id' in a)) throw new Error(a.refused);
     await unsure.service.processNext();
+    expect(unsure.service.get(a.id)?.state).toBe('awaiting-owner');
+    expect(unsure.store.data.queue[a.id].awaitingReason).toBe('fallback');
     expect(unsure.service.listPublished('works')).toEqual([]);
-    await vi.waitFor(() => expect(unsure.notices.join(' ')).toContain('不会发布'));
+    expect(unsure.seed.has(`public:/${a.id}/files/work.png`)).toBe(false);
+    await vi.waitFor(() => expect(unsure.notices.join(' ')).toContain('owner'));
 
     const manual = await setup(
       { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
@@ -101,7 +104,123 @@ describe('作品审核核心', () => {
     if (!('id' in b)) throw new Error(b.refused);
     await manual.service.processNext();
     expect(manual.service.get(b.id)?.state).toBe('awaiting-owner');
+    expect(manual.store.data.queue[b.id].awaitingReason).toBe('required');
     expect(manual.service.listPublished('works')).toEqual([]);
+  });
+
+  it.each(['reject', 'unsure'] as const)('默认设置下 %s 审核结果可由人工批准，且重启对账不重跑', async verdict => {
+    const seed = new Map<string, string | Uint8Array>();
+    const run = vi.fn(async () => ({
+      verdict: { verdict, reasons: ['模型审核证据'] },
+      files: input().files,
+      evidence: {
+        flags: ['需确认'],
+        reasons: ['模型审核证据'],
+        images: [{ name: 'image-1.png', bytes: new Uint8Array([1, 2]) }],
+        classification: verdict,
+      },
+    }));
+    const first = await setup({ run }, false, seed);
+    const nomination = await first.service.nominate(input());
+    if (!('id' in nomination)) throw new Error(nomination.refused);
+    const { id } = nomination;
+    await first.service.processNext();
+    expect(first.store.data.queue[id]).toMatchObject({
+      state: 'awaiting-owner',
+      awaitingReason: 'fallback',
+      review: { flags: ['需确认'], reasons: ['模型审核证据'], classification: verdict },
+    });
+    expect(seed.get(`pluginData:/publish-review/items/${id}/review/image-1.png`)).toEqual(new Uint8Array([1, 2]));
+    expect(seed.has(`public:/${id}/files/work.png`)).toBe(false);
+    expect(first.notices.join(' ')).not.toContain('https://works.invalid');
+
+    const resumed = await setup({ run }, false, seed);
+    await resumed.service.reconcile();
+    await resumed.service.processNext();
+    expect(run).toHaveBeenCalledOnce();
+    expect(resumed.store.data.queue[id]).toMatchObject({
+      state: 'awaiting-owner',
+      awaitingReason: 'fallback',
+      review: { reasons: ['模型审核证据'], classification: verdict },
+    });
+    expect(await resumed.service.approve(id)).toBe(true);
+    expect(resumed.service.listPublished('works')).toHaveLength(1);
+    expect(seed.get(`public:/${id}/files/work.png`)).toEqual(image);
+    expect(await resumed.service.approve(id)).toBe(false);
+    expect(await resumed.service.reject(id)).toBe(false);
+  });
+
+  it('自动审核拒绝转人工后可拒绝一次，释放待审槽但仍占每日提名额', async () => {
+    const h = await setup({
+      run: async () => ({ verdict: { verdict: 'reject', reasons: ['其他'] }, files: input().files }),
+    });
+    const nomination = await h.service.nominate(input());
+    if (!('id' in nomination)) throw new Error(nomination.refused);
+    await h.service.processNext();
+    expect(h.store.data.queue[nomination.id]?.state).toBe('awaiting-owner');
+    expect(await h.service.reject(nomination.id)).toBe(true);
+    expect(await h.service.reject(nomination.id)).toBe(false);
+    expect(await h.service.approve(nomination.id)).toBe(false);
+    expect(h.store.data.queue[nomination.id]).toBeUndefined();
+    expect(h.store.data.nominations).toHaveLength(1);
+    expect(h.service.listPublished('works')).toEqual([]);
+  });
+
+  it('模型拒绝类别保留在待裁决详情，即使图像证据未提供原因', async () => {
+    const h = await setup({
+      run: async () => ({
+        verdict: { verdict: 'reject', reasons: ['个人信息'] },
+        files: input().files,
+        evidence: { flags: [], reasons: [], images: [], classification: 'reject' },
+      }),
+    });
+    const nomination = await h.service.nominate(input());
+    if (!('id' in nomination)) throw new Error(nomination.refused);
+    await h.service.processNext();
+    expect(h.store.data.queue[nomination.id].review?.reasons).toContain('个人信息');
+    expect(h.service.listPublished('works')).toEqual([]);
+  });
+
+  it('默认设置下自动审核不确定的待裁决项超时后不发布，也不能再批准', async () => {
+    const clock = { now: 1000 };
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'unsure', reasons: ['模型不可用'] }, files: input().files }) },
+      false,
+      new Map(),
+      clock,
+    );
+    const nomination = await h.service.nominate(input());
+    if (!('id' in nomination)) throw new Error(nomination.refused);
+    await h.service.processNext();
+    expect(h.service.get(nomination.id)?.state).toBe('awaiting-owner');
+    clock.now += 12 * 3_600_000 + 1;
+    await h.service.reconcile();
+    expect(h.service.get(nomination.id)).toBeUndefined();
+    expect(await h.service.approve(nomination.id)).toBe(false);
+    expect(h.service.listPublished('works')).toEqual([]);
+    expect(h.seed.has(`public:/${nomination.id}/files/work.png`)).toBe(false);
+    await vi.waitFor(() => expect(h.notices.join(' ')).toContain('超过 12 小时'));
+  });
+
+  it('处理失败和输出文件校验失败不可人工批准', async () => {
+    const failed = await setup({
+      run: async () => ({ verdict: { verdict: 'failed', reasons: ['文件处理失败'] }, files: input().files }),
+    });
+    const first = await failed.service.nominate(input());
+    if (!('id' in first)) throw new Error(first.refused);
+    await failed.service.processNext();
+    expect(failed.service.get(first.id)).toBeUndefined();
+    expect(await failed.service.approve(first.id)).toBe(false);
+
+    const invalid = await setup({
+      run: async () => ({ verdict: { verdict: 'reject', reasons: ['其他'] }, files: [] }),
+    });
+    const second = await invalid.service.nominate(input());
+    if (!('id' in second)) throw new Error(second.refused);
+    await invalid.service.processNext();
+    expect(invalid.service.get(second.id)).toBeUndefined();
+    expect(await invalid.service.approve(second.id)).toBe(false);
+    expect(invalid.service.listPublished('works')).toEqual([]);
   });
 
   it('审核在途时撤回，晚到的 allow 不得发布', async () => {
@@ -184,7 +303,10 @@ describe('作品审核核心', () => {
       const result = await h.service.nominate(noRoom(`task-${i}`));
       if (!('id' in result)) throw new Error(result.refused);
       if (i % 2 === 0) await h.service.withdraw(result.id, { kind: 'origin' }, '撤回');
-      else await h.service.processNext();
+      else {
+        await h.service.processNext();
+        expect(await h.service.reject(result.id)).toBe(true);
+      }
     }
     expect(await h.service.nominate(noRoom('task-11'))).toMatchObject({ refused: expect.stringContaining('今天') });
   });

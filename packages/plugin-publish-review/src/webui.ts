@@ -47,9 +47,10 @@ const PAGE: WebuiPage = {
                 { key: 'title', label: '标题' },
                 { key: 'kind', label: '类型' },
                 { key: 'source', label: '来源' },
+                { key: 'awaitingReason', label: '待人工原因' },
                 { key: 'flags', label: '标记', render: 'expandable-text' },
                 { key: 'classification', label: '分类结论', render: 'expandable-text' },
-                { key: 'reasons', label: '转 owner 理由', render: 'expandable-text' },
+                { key: 'reasons', label: '自动审核理由', render: 'expandable-text' },
                 { key: 'deadline', label: '剩余时间', render: 'countdown' },
               ],
               actions: [
@@ -138,7 +139,6 @@ export function registerReviewPage(deps: {
   store: ReviewStore;
   storage: StorageService;
   preview: ReviewPreviewServer;
-  manualReview: boolean;
   ownerTimeoutHours: number;
   now?: () => number;
 }): void {
@@ -190,6 +190,7 @@ export function registerReviewPage(deps: {
         title: item.title,
         kind: item.kind === 'html' ? '网页' : '媒体',
         source: item.origin.label,
+        awaitingReason: item.awaitingReason === 'fallback' ? '自动审核未通过，需人工裁决' : '配置要求人工审核',
         render: item.review?.hasRender ? `${item.id}/render.png` : item.thumbnailHash ? `${item.id}/thumb.png` : '',
         flags: item.review?.flags.join('、') ?? '',
         classification: item.review?.classification ?? '',
@@ -271,7 +272,6 @@ export function registerReviewPage(deps: {
     }
   });
   action('reviewApprove', async args => {
-    if (!deps.manualReview) return fail('人工审核未开启');
     const item = known(args.id);
     if (!item) return fail('没有这件待裁决作品');
     const ok = await service.approve(item.id);
@@ -280,7 +280,6 @@ export function registerReviewPage(deps: {
     return { ok: true as const, message: '已批准' };
   });
   action('reviewReject', async args => {
-    if (!deps.manualReview) return fail('人工审核未开启');
     const item = known(args.id);
     if (!item) return fail('没有这件待裁决作品');
     const ok = await service.reject(item.id);
@@ -289,7 +288,6 @@ export function registerReviewPage(deps: {
     return { ok: true as const, message: '已拒绝' };
   });
   action('reviewOpenPreview', async args => {
-    if (!deps.manualReview) return fail('人工审核未开启');
     const item = known(args.id);
     if (!item || item.kind !== 'html') return fail('没有这件待裁决网页作品');
     try {

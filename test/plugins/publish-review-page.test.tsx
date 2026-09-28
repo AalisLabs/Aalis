@@ -35,7 +35,6 @@ it('真实审核页和作品站页在后台变化后自动刷新全页；切页�
   registerReviewPage({
     store: reviewStore,
     storage: {} as never,
-    manualReview: true,
     ownerTimeoutHours: 12,
     service: {} as never,
     preview: { active: [] } as never,
@@ -89,13 +88,20 @@ it('真实审核页面显示统计和说明；点击预览后出现可点链接�
     hasCover: false,
     nominatedAt: Date.now(),
     awaitingSince: Date.now(),
+    awaitingReason: 'fallback',
+    review: {
+      flags: ['模型拒绝'],
+      reasons: ['包含不适合公开的内容'],
+      images: [],
+      hasRender: false,
+      classification: '模型建议拒绝',
+    },
   };
   const active: Array<{ id: string; url: string }> = [];
   let page!: WebuiPage;
   registerReviewPage({
     store,
     storage: {} as never,
-    manualReview: true,
     ownerTimeoutHours: 12,
     service: {
       approve: async () => {
@@ -129,6 +135,8 @@ it('真实审核页面显示统计和说明；点击预览后出现可点链接�
     <DynamicPage page={{ ...page, plugin: '@aalis/plugin-publish-review' } as WebuiPageDef} />,
   );
   await screen.findByText('网页作品');
+  await screen.findByText('自动审核未通过，需人工裁决');
+  await screen.findByText('包含不适合公开的内容');
   await screen.findByText(/撤下后，已打开页面/);
   await waitFor(() => expect(container.querySelector('.dyn-stat-value')?.textContent).toBe('1'));
   fireEvent.click(screen.getByRole('button', { name: '隔离预览' }));
