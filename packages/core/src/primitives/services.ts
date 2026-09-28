@@ -180,16 +180,16 @@ export class ServiceContainer {
   }
 
   /**
-   * 检查指定 contextId 是否注册了某个服务。
+   * 检查指定激活是否以自身逻辑身份注册了某个服务。
    *
-   * "拥有" 语义：同时匹配 `contextId === ownerId` 和 per-entry 拆粒度的
-   * `contextId` 以 `ownerId + '/'` 为前缀的子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
+   * owner 必须相同；逻辑身份匹配 contextId 本身或以 `contextId + '/'` 为前缀的
+   * per-entry 子条目（如 `@aalis/plugin-llm-ollama:main/llama3`），不计代其他身份登记的条目。
    */
-  hasByContext(name: string, contextId: string): boolean {
+  hasByContext(name: string, contextId: string, owner: symbol): boolean {
     const list = this.#entries.get(name);
     if (!list) return false;
     const prefix = `${contextId}/`;
-    return list.some(e => e.contextId === contextId || e.contextId.startsWith(prefix));
+    return list.some(e => e.owner === owner && (e.contextId === contextId || e.contextId.startsWith(prefix)));
   }
 
   /**

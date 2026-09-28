@@ -157,7 +157,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     }
 
     const provides = entry.definition.provides?.map(descriptor => descriptor.name) ?? [];
-    const missing = provides.filter(name => !services.hasByContext(name, entry.instanceId));
+    const missing = provides.filter(name => !services.hasByContext(name, entry.instanceId, activation.owner));
     if (missing.length > 0) {
       throw new Error(`声明 provides [${missing.join(', ')}] 但未实际注册这些服务`);
     }
@@ -167,7 +167,9 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     // 注：是否 dev 由宿主通过 `App({ devMode })` 显式注入，core 不读 process.env
     if (host.runtime.devMode) {
       const declared = new Set(provides);
-      const actuallyProvided = services.getServiceNames().filter(name => services.hasByContext(name, entry.instanceId));
+      const actuallyProvided = services
+        .getServiceNames()
+        .filter(name => services.hasByContext(name, entry.instanceId, activation.owner));
       const undeclared = actuallyProvided.filter(name => !declared.has(name));
       if (undeclared.length > 0) {
         logger.warn(
