@@ -32,6 +32,8 @@ export interface QueueItem {
   hasCover: boolean;
   nominatedAt: number;
   awaitingSince?: number;
+  /** 缺省是旧版的全量人工待审；fallback 不因关闭全量人工而重新排队。 */
+  awaitingReason?: 'required' | 'fallback';
   outHashes?: Record<string, string>;
   thumbnailHash?: string;
   review?: { flags: string[]; reasons: string[]; images: string[]; hasRender: boolean; classification?: string };
@@ -157,6 +159,7 @@ function valid(value: unknown): value is ReviewState {
       !files(entry.files, false) ||
       typeof entry.hasCover !== 'boolean' ||
       (entry.awaitingSince !== undefined && !time(entry.awaitingSince)) ||
+      (entry.awaitingReason !== undefined && !['required', 'fallback'].includes(String(entry.awaitingReason))) ||
       (entry.thumbnailHash !== undefined && !digest(entry.thumbnailHash))
     )
       return false;

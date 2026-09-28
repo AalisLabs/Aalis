@@ -80,7 +80,6 @@ export default definePlugin({
       store,
       storage,
       preview,
-      manualReview: cfg.manualReview,
       ownerTimeoutHours: cfg.ownerTimeoutHours,
     });
     registerReviewDoctor({

@@ -13,7 +13,7 @@ import type { StorageService } from '@aalis/api-storage';
 import { checkNomination, contentType } from './checks.js';
 import type { ReviewConfig } from './config.js';
 import type { ReviewPipeline } from './pipeline.js';
-import { decideReview, REVIEW_CATEGORIES } from './policy.js';
+import { decideReview } from './policy.js';
 import { ITEM_ROOT, type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore } from './state.js';
 
 const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
@@ -209,13 +209,13 @@ export class PublishReviewService implements PublishService {
       });
     } catch {
       if (this.#stopped) return;
-      await this.#finishWithoutPublish(item.id, 'failed', '审核步骤不可用');
+      await this.#finishWithoutPublish(item.id, '审核步骤不可用');
       return;
     }
     if (this.#stopped || this.#d.store.data.queue[item.id]?.state !== 'checking') return;
     const decision = decideReview(this.#d.config, result.verdict);
-    if (decision.state === 'failed' || decision.state === 'rejected') {
-      await this.#finishWithoutPublish(item.id, decision.state, decision.reasons[0] ?? '自动审核没有通过');
+    if (decision.state === 'failed') {
+      await this.#finishWithoutPublish(item.id, decision.reasons[0] ?? '审核步骤不可用');
       return;
     }
     // 出来的字节只接受原提名的路径集合；不能让步骤替身或未来模型增删未审文件。
@@ -241,7 +241,7 @@ export class PublishReviewService implements PublishService {
       [...actualPaths].some(path => !expectedPaths.has(path)) ||
       'refused' in outputCheck
     ) {
-      await this.#finishWithoutPublish(item.id, 'failed', '审核输出文件集合不符');
+      await this.#finishWithoutPublish(item.id, '审核输出文件集合不符');
       return;
     }
     const hashes: Record<string, string> = {};
@@ -257,7 +257,7 @@ export class PublishReviewService implements PublishService {
             image.bytes.length > 25 * 1024 * 1024,
         ))
     ) {
-      await this.#finishWithoutPublish(item.id, 'failed', '审核图像集合不符');
+      await this.#finishWithoutPublish(item.id, '审核图像集合不符');
       return;
     }
     try {
@@ -276,7 +276,7 @@ export class PublishReviewService implements PublishService {
         await storage.writeFile(out(item.id, '_thumb.png'), Buffer.from(result.thumbnail));
       }
     } catch {
-      await this.#finishWithoutPublish(item.id, 'failed', '审核输出无法保存');
+      await this.#finishWithoutPublish(item.id, '审核输出无法保存');
       return;
     }
     const accepted = await store.exclusive(async () => {
@@ -284,17 +284,17 @@ export class PublishReviewService implements PublishService {
       const next = store.copy();
       next.queue[item.id].outHashes = hashes;
       next.queue[item.id].thumbnailHash = hashes['_thumb.png'];
-      if (review)
-        next.queue[item.id].review = {
-          flags: [...review.flags],
-          reasons: [...review.reasons],
-          images: review.images.map(image => image.name),
-          hasRender: !!review.render,
-          classification: review.classification,
-        };
+      next.queue[item.id].review = {
+        flags: [...(review?.flags ?? [])],
+        reasons: [...new Set([...(review?.reasons ?? []), ...result.verdict.reasons])],
+        images: review?.images.map(image => image.name) ?? [],
+        hasRender: !!review?.render,
+        classification: review?.classification,
+      };
       if (decision.state === 'awaiting-owner') {
         next.queue[item.id].state = 'awaiting-owner';
         next.queue[item.id].awaitingSince = this.#now();
+        next.queue[item.id].awaitingReason = result.verdict.verdict === 'allow' ? 'required' : 'fallback';
       }
       if (decision.state === 'awaiting-owner')
         this.#queueNotice(
@@ -312,14 +312,12 @@ export class PublishReviewService implements PublishService {
   }
 
   async approve(id: string): Promise<boolean> {
-    if (!WORK_ID_PATTERN.test(id)) return false;
-    if (!this.#d.config.manualReview || this.#d.store.data.queue[id]?.state !== 'awaiting-owner') return false;
-    return this.#publish(id);
+    return this.#publish(id, 'awaiting-owner');
   }
 
   async reject(id: string): Promise<boolean> {
-    const { store, storage, config } = this.#d;
-    if (!WORK_ID_PATTERN.test(id) || !config.manualReview || this.#stopped) return false;
+    const { store, storage } = this.#d;
+    if (!WORK_ID_PATTERN.test(id) || this.#stopped) return false;
     return store.exclusive(async () => {
       const item = store.data.queue[id];
       if (this.#stopped || store.failure || item?.state !== 'awaiting-owner') return false;
@@ -347,9 +345,10 @@ export class PublishReviewService implements PublishService {
       const duplicateIds: string[] = [];
       const delayed: LedgerItem[] = [];
       for (const [id, item] of Object.entries(next.queue)) {
-        if (!this.#d.config.manualReview && item.state === 'awaiting-owner') {
+        if (!this.#d.config.manualReview && item.state === 'awaiting-owner' && item.awaitingReason !== 'fallback') {
           item.state = 'queued';
           delete item.awaitingSince;
+          delete item.awaitingReason;
           delete item.outHashes;
           delete item.thumbnailHash;
           delete item.review;
@@ -422,17 +421,17 @@ export class PublishReviewService implements PublishService {
     });
   }
 
-  async #publish(id: string): Promise<boolean> {
+  async #publish(id: string, expectedState: 'checking' | 'awaiting-owner' = 'checking'): Promise<boolean> {
     if (!WORK_ID_PATTERN.test(id)) return false;
     const { store, storage } = this.#d;
     return store.exclusive(async () => {
       const item = store.data.queue[id];
+      if (store.failure || this.#stopped || !item || item.state !== expectedState || !item.outHashes) return false;
       if (
-        store.failure ||
-        this.#stopped ||
-        !item ||
-        !['checking', 'awaiting-owner'].includes(item.state) ||
-        !item.outHashes
+        item.state === 'awaiting-owner' &&
+        ((!this.#d.config.manualReview && item.awaitingReason !== 'fallback') ||
+          item.awaitingSince === undefined ||
+          item.awaitingSince + this.#d.config.ownerTimeoutHours * HOUR <= this.#now())
       )
         return false;
       const records: LedgerItem['files'] = [];
@@ -489,19 +488,16 @@ export class PublishReviewService implements PublishService {
     });
   }
 
-  async #finishWithoutPublish(id: string, kind: 'failed' | 'rejected', reason: string): Promise<void> {
+  async #finishWithoutPublish(id: string, reason: string): Promise<void> {
     const { store, storage } = this.#d;
     await store.exclusive(async () => {
       const item = store.data.queue[id];
       if (this.#stopped || !item || item.state !== 'checking') return;
       const next = store.copy();
       delete next.queue[id];
-      const message =
-        kind === 'failed'
-          ? `作品 ${id} 暂时没法审核（审核步骤不可用），这次不发布`
-          : `作品 ${id} 没有通过审核（${REVIEW_CATEGORIES.has(reason) ? reason : '其他'}），不会发布`;
+      const message = `作品 ${id} 暂时没法审核（审核步骤不可用），这次不发布`;
       this.#queueNotice(next, item.origin, message, id);
-      await store.save(next, this.#event(id, kind, REVIEW_CATEGORIES.has(reason) ? reason : '其他'));
+      await store.save(next, this.#event(id, 'failed', reason));
       await storage.delete(itemRoot(id)).catch(() => {});
     });
   }

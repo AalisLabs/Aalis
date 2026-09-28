@@ -95,8 +95,13 @@ describe('审核入口使用的管理操作', () => {
     expect(h.store.data.queue[nomination.id].outHashes).toBeUndefined();
     await service.processNext();
     expect(run).toHaveBeenCalledOnce();
-    expect(service.get(nomination.id)).toBeUndefined();
+    expect(h.store.data.queue[nomination.id]).toMatchObject({ state: 'awaiting-owner', awaitingReason: 'fallback' });
+    await service.reconcile();
+    await service.processNext();
+    expect(run).toHaveBeenCalledOnce();
     expect(service.listPublished('works')).toHaveLength(0);
+    expect(await service.approve(nomination.id)).toBe(true);
+    expect(service.listPublished('works')).toHaveLength(1);
   });
 
   it('已停止的实例拒收且不启动流水', async () => {
