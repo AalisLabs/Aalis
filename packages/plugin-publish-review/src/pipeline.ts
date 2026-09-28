@@ -65,7 +65,7 @@ function exactModel(
   return resolveLLMModel(source, ref, vision ? ['vision'] : undefined)?.instance;
 }
 
-/** Real review steps. Anything not fully observed yields unsure, which policy rejects unless manual review is enabled. */
+/** Real review steps. Anything not fully observed yields unsure and waits for human review before publication. */
 export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
   return {
     async run(input) {

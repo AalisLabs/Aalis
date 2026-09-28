@@ -10,7 +10,7 @@
 
 ## 未发布（schema-config 0.14.0；core 0.20.0）
 
-作品提名与上站新增 `api-publish`、`plugin-publish-review`、`plugin-works-site` 和 `util-offline-render`。白纸增加提名与撤下工具；审核、隔离预览和作品站操作有 WebUI 入口。`manualReview` **默认关闭**，开启才等待人工裁决；关闭时自动审核不确定或失败不会发布。先前施工方案中的强制人工与跳过自动分类选项未作为兼容配置保留。详见[审核配置](docs/plugins/plugin-publish-review.md)与[作品站配置](docs/plugins/plugin-works-site.md)。启用作品站后才会在后台部署，此处的本机测试不代表真实项目已经上线。
+作品提名与上站新增 `api-publish`、`plugin-publish-review`、`plugin-works-site` 和 `util-offline-render`。白纸增加提名与撤下工具；审核、隔离预览和作品站操作有 WebUI 入口。`manualReview` **默认关闭**，自动通过可继续发布；自动拒绝、不确定或模型调用失败先拦截并等待人工裁决。开启后，自动通过也须等待人工。结构检查与内容净化失败始终阻断。先前施工方案中的跳过自动分类选项未作为兼容配置保留。详见[审核配置](docs/plugins/plugin-publish-review.md)与[作品站配置](docs/plugins/plugin-works-site.md)。启用作品站后才会在后台部署，此处的本机测试不代表真实项目已经上线。
 
 
 - **存储根保留名**：新增内部 `public` 根（`data/stage/public`），与 `paper` 一样不参与会话 checkpoint；自建同名用户根会被跳过并告警，升级前请改名。白纸提名的文件仍先走独立审核，不因位于该目录就自动上线。

@@ -16,7 +16,7 @@
 | `listPublished(surface)` | 某展示面的已审核作品清单；返回快照 |
 | `readFile(id, path)` / `readThumbnail(id)` | 只读账本中的公开文件，核对摘要；文件不符会撤下该作品并抛 `IntegrityError` |
 
-`NominateInput` 包含 `origin`、`group`、`groupLabel`、`surfaces`、`title`、`summary`、`credit`、`files` 与可选 `cover`。调用方仍负责自己的用户授权；服务负责审核和发布边界。人工审核是提供者的 `manualReview` 配置，提名方不能覆盖它。
+`NominateInput` 包含 `origin`、`group`、`groupLabel`、`surfaces`、`title`、`summary`、`credit`、`files` 与可选 `cover`。调用方仍负责自己的用户授权；服务负责审核和发布边界。审核提供者默认让自动通过的作品继续发布，自动拒绝、拿不准或模型调用失败时转人工；`manualReview: true` 进一步要求每件作品人工批准。结构检查与净化失败不能由人工覆盖，提名方不能绕过审核规则。
 
 ## 展示面
 
