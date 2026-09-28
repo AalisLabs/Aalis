@@ -52,3 +52,7 @@ definePlugin({
 - **`baseUrl` 校验**: 带用户名或密码（`user:pass@`）或解析不了的 `baseUrl` 在读配置时报配置错误，实例转为出错、不发请求，错误信息不带 URL；密钥填在 `apiKey`。带凭据的 URL 本就发不出请求（fetch 拒绝），凭据还会出现在报错与 WebUI 的模型下拉里
 - **能力覆盖**: `modelCapabilities` 每行按**最后一个**冒号切分模型 id 与能力段，`baseUrl` 指向兼容网关时带冒号的模型 id（如 `qwen3:8b`）照原样写即可
 - **system 位置归一化**: DeepSeek 把请求里所有 system 消息提升到上下文最前部，排在历史之后的每轮材料会让历史的前缀缓存失效。出口因此把首个非 system 消息之后的 system 消息改为 `user`，内容不以 `[` 开头的补 `[系统提示]` 标记，空内容保持原样。本轮指令块豁免：`metadata.injector` 属于 `DIRECTIVE_KINDS`（workflow 代发的任务、宿主通知）的消息保持 system，改成 user 会被模型当成真实用户在指挥；这类回合低频，牺牲该轮缓存（见[消息到 LLM 的处理流水线](../concepts/message-llm-pipeline.md) §9）
+
+## 配置校验
+
+`baseUrl` 和 `apiKey` 的显式无效值会使实例进入错误态；地址格式及 URL 内的用户名、密码在模型发现前校验。缺省地址仍用官方端点。其余数字、布尔字段按 schema 解析，错误类型回落默认值并告警。

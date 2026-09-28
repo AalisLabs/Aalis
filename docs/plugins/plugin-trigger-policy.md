@@ -111,8 +111,8 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 | `intervalMode` | select | `'both'` | 间隔模式：`fixed` / `dynamic` / `both` |
 | `triggerOnAt` | boolean | `true` | 检测 @ 提及：@ 自己算被点名，点名直接开口，回合记为 immediate |
 | `triggerOnPoke` | boolean | `true` | 戳一戳直触发：戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。 |
-| `triggerNames` | string | `''` | 触发名别名（逗号分隔） |
-| `muteKeywords` | string | `''` | 禁言关键词（逗号分隔） |
+| `triggerNames` | string | `''` | 触发名别名（逗号或换行分隔） |
+| `muteKeywords` | string | `''` | 禁言关键词（逗号或换行分隔） |
 | `muteTimeSeconds` | number | `60` | 禁言关键词命中时长（秒） |
 | `fixedInterval` | number | `5` | 固定间隔（每 N 条触发） |
 | `activityScoreLower` | number | `0.3` | 活跃指数阈值下限 |
@@ -127,6 +127,8 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 | `idleTriggerJitter` | boolean | `true` | 闲置触发抖动（±10%，不低于 60 秒） |
 | `idleTriggerPrompt` | string | `''` | 闲置触发系统提示（留空用内置提示） |
 | `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。写一条 override 自动启用该 scope。 |
+
+`scopes` 的 `null` 与未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用。空白成员被忽略，旧的逗号字符串由配置迁移工具一次性转换。覆盖项中留空的 `triggerNames`、`muteKeywords` 与提示词继续继承顶层值。
 
 计数、评分与闲置触发字段原属 flow-control，字段名与默认值不变，迁移方法见根目录 `CHANGELOG.md`。
 

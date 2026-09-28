@@ -74,6 +74,8 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 | `rateLimitMaxReplies` | number | `10` | 窗口内最大回复数 |
 | `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段（`cooldownSeconds` / `rateLimitWindow` / `rateLimitMaxReplies`）；字段留空（或不填）= 沿用上方默认。最具体匹配优先（targetId &gt; sessionType &gt; platform &gt; 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却。类型与目标都未知的会话不吃按类型或目标写的覆盖，见「出站联动」。 |
 
+`scopes` 用数组表示：`null` 或未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用作用域。空串与纯空白成员会被忽略，避免扩大到所有会话。旧的逗号字符串由配置迁移工具一次性转换。
+
 评分类字段（`fixedInterval` / `activityScore*` / `*DecayMinutes`）与闲置触发字段（`idleTrigger*`）已移到 trigger-policy，迁移方法见根目录 `CHANGELOG.md`。
 
 ## 状态清理

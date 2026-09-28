@@ -1,126 +1,135 @@
-// ----- Laya 触发判定配置 -----
+import { type ConfigOf, defineConfig } from '@aalis/schema-config';
 
-interface LayaConfig {
-  /**
-   * 作用域名单：platform:sessionType[:targetId]，支持 *。默认 ['*:group']；空数组 = 不判定任何会话。
-   * 作用域外的消息直接放行（私聊默认不在内：放行后由 flow 与 agent 照常处理）。
-   * 若存在任一 overrides[].scope 命中也视为启用。
-   */
-  scopes: string[];
-  /**
-   * 分作用域覆盖 threshold：最具体匹配优先（targetId > sessionType > platform > 通配）。
-   * 写一条 override 即自动启用该 scope，无需重复在 scopes 中列出。
-   */
-  overrides: LayaScopeOverride[];
-  /** 开口阈值：logit ≥ 阈值即开口。undefined = 用侧车随响应返回的模型阈值 */
-  threshold?: number;
-  // 以下三项决定"被点名"。点名不决定开不开口（由模型判定），只决定开口后的类别（immediate / interval）
-  // 与授权主体，以及判定不可用时的兜底（只回点名）
-  /** @ 自己算点名 */
-  triggerOnAt: boolean;
-  /** 戳一戳等注意力动作（noticeType=poke）算点名 */
-  triggerOnPoke: boolean;
-  /** 额外的点名名字（除 persona 名字与昵称外的别名） */
+export const configSchema = defineConfig({
+  scopes: {
+    type: 'multiselect',
+    label: '生效作用域',
+    default: ['*:group'],
+    dynamicOptions: 'gateway-scopes',
+    allowCustom: true,
+    description:
+      '格式 platform:sessionType，支持通配 *。作用域外的消息直接放行，由后面的流控与 agent 照常处理（默认不含私聊：模型只用群聊训练）。',
+  },
+  threshold: {
+    type: 'number',
+    label: '开口阈值',
+    description: 'logit ≥ 阈值即开口。留空 = 用侧车返回的模型阈值（随模型版本给出）。',
+  },
+  triggerOnAt: {
+    type: 'boolean',
+    label: '检测 @ 提及',
+    default: true,
+    description:
+      '@ 自己算"被点名"（戳一戳、名字同理）。点名不强制开口，由模型判定；开口的回合记为 immediate，点名者即授权主体。判定不可用时只回点名。',
+  },
+  triggerOnPoke: {
+    type: 'boolean',
+    label: '戳一戳算点名',
+    default: true,
+  },
+  triggerNames: { type: 'string', label: '点名别名（逗号或换行分隔）', default: '' },
+  muteKeywords: { type: 'string', label: '禁言关键词（逗号或换行分隔）', default: '' },
+  muteTimeSeconds: {
+    type: 'number',
+    label: '禁言关键词命中时长（秒）',
+    default: 60,
+  },
+  mediaWaitMs: {
+    type: 'number',
+    label: '附件识别等待上限（毫秒）',
+    default: 8000,
+    description: '带图片等附件的消息先等识别写好描述再交给模型；超时照常判定，识别在后台继续。',
+  },
+  endpoint: { type: 'string', label: '侧车地址', default: 'http://127.0.0.1:17878', onInvalid: 'error' },
+  sidecarDir: {
+    type: 'string',
+    label: '侧车目录（由本插件托管）',
+    default: '',
+    description:
+      '侧车 laya-listener 所在目录的绝对路径。填了则本插件生效时自己拉起侧车、退出后重启，不再生效或停用时关掉，' +
+      '端口取侧车地址的（地址须为 http://127.0.0.1:<端口>）；留空 = 侧车由外部运行，只按侧车地址连接。',
+  },
+  timeoutMs: {
+    type: 'number',
+    label: '请求超时（毫秒）',
+    default: 1000,
+    description: '含读完响应体。超时计一次失败，本条按兜底只回点名。',
+  },
+  historyRows: {
+    type: 'number',
+    label: '历史行数',
+    default: 80,
+    description: '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
+  },
+  priority: {
+    type: 'number',
+    label: '优先级 (越大越优先)',
+    default: -10,
+    description: 'trigger 服务按偏好 > 优先级 > 注册顺序选出生效的触发插件；规则判定 trigger-policy 为 0。',
+  },
+  overrides: {
+    type: 'array',
+    label: '分作用域覆盖',
+    description:
+      '每项 {scope: "platform:sessionType[:targetId]", threshold} 仅在该 scope 命中时覆盖阈值，最具体者胜；留空 = 沿用上方设置。写一条 override 自动启用该 scope。',
+    default: [],
+    items: {
+      scope: {
+        type: 'string',
+        label: '作用域',
+        description: '格式 platform:sessionType[:targetId]，支持 *',
+        required: true,
+      },
+      threshold: { type: 'number', label: '开口阈值' },
+    },
+  },
+});
+
+type ParsedConfig = ConfigOf<typeof configSchema>;
+type LayaConfig = Omit<ParsedConfig, 'triggerNames' | 'muteKeywords'> & {
   triggerNames: string[];
-  /** 禁言关键词（命中时设置自禁言、吞掉本条） */
   muteKeywords: string[];
-  /** 禁言关键词命中时通知 flow-control 设置的禁言时长（秒） */
-  muteTimeSeconds: number;
-  /** 带附件的消息等识别写好描述的上限（毫秒），超时照常判定、识别在后台继续 */
-  mediaWaitMs: number;
-  /** 侧车地址（不带末尾斜杠） */
-  endpoint: string;
-  /**
-   * 侧车目录（绝对路径）。填了则本插件生效时自己拉起侧车、退出后重启，不再生效或停用时关掉，端口取 endpoint 的；
-   * 留空 = 侧车由外部运行，只按 endpoint 连接
-   */
-  sidecarDir: string;
-  /** 单次请求的超时（毫秒），含读完响应体 */
-  timeoutMs: number;
-  /** 窗口行数，只算 user / assistant 且正文是字符串的行（从 memory 多取一倍，过滤后留最后这么多行；取法见 toRows） */
-  historyRows: number;
-  /**
-   * 在 trigger 服务里的优先级，越大越优先；规则判定 trigger-policy 为 0。默认 -10 低于它：从源码运行时本插件
-   * 被自动发现并启用，但两者都启用时默认由 trigger-policy 生效，要用本插件靠服务偏好
-   */
-  priority: number;
-}
-
-interface LayaScopeOverride {
-  scope: string;
-  threshold?: number;
-}
-
-export const defaultLayaConfig: LayaConfig = {
-  scopes: ['*:group'],
-  overrides: [],
-  triggerOnAt: true,
-  triggerOnPoke: true,
-  triggerNames: [],
-  muteKeywords: [],
-  muteTimeSeconds: 60,
-  mediaWaitMs: 8000,
-  endpoint: 'http://127.0.0.1:17878',
-  sidecarDir: '',
-  timeoutMs: 1000,
-  historyRows: 80,
-  priority: -10,
 };
 
-/** 有限数原样返回；留空（undefined / null / ''）与非法值都返回 undefined */
-function finite(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+function splitNames(value: string): string[] {
+  return value
+    .split(/[,\r\n]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
 }
 
-function parseStringList(val: unknown): string[] {
-  if (Array.isArray(val)) return val.filter(Boolean).map(String);
-  if (typeof val === 'string' && val.trim()) {
-    return val
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
+/** 文本名单与运行参数在解析后派生；无效地址在注册服务或托管侧车前拒绝。 */
+export function normalizeConfig(cfg: ParsedConfig, logger?: { warn(message: string): void }): LayaConfig {
+  const scopes = cfg.scopes.filter(s => s.trim() !== '');
+  if (scopes.length !== cfg.scopes.length) logger?.warn('配置项 scopes 含空白作用域，已忽略');
+  const overrides: ParsedConfig['overrides'] = [];
+  for (const item of cfg.overrides) {
+    const scope = item.scope.trim();
+    if (scope) overrides.push({ ...item, scope });
+    else logger?.warn('配置项 overrides 中有一项 scope 只含空白，已忽略该项');
   }
-  return [];
-}
-
-export function resolveLayaConfig(raw: Record<string, unknown>): LayaConfig {
-  const d = defaultLayaConfig;
-  const muteTimeSeconds = finite(raw.muteTimeSeconds);
-  const mediaWaitMs = finite(raw.mediaWaitMs);
-  const timeoutMs = finite(raw.timeoutMs);
-  const historyRows = raw.historyRows;
+  const endpoint = cfg.endpoint.trim().replace(/\/+$/, '') || configSchema.endpoint.default;
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error('plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.search || url.hash) {
+    throw new Error('plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址');
+  }
   return {
-    scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
-    overrides: parseOverrides(raw.overrides),
-    threshold: finite(raw.threshold),
-    triggerOnAt: typeof raw.triggerOnAt === 'boolean' ? raw.triggerOnAt : d.triggerOnAt,
-    triggerOnPoke: typeof raw.triggerOnPoke === 'boolean' ? raw.triggerOnPoke : d.triggerOnPoke,
-    triggerNames: parseStringList(raw.triggerNames),
-    muteKeywords: parseStringList(raw.muteKeywords),
-    muteTimeSeconds:
-      muteTimeSeconds !== undefined && muteTimeSeconds > 0 ? Math.floor(muteTimeSeconds) : d.muteTimeSeconds,
-    mediaWaitMs: mediaWaitMs !== undefined && mediaWaitMs >= 0 ? mediaWaitMs : d.mediaWaitMs,
-    endpoint:
-      typeof raw.endpoint === 'string' && raw.endpoint.trim() ? raw.endpoint.trim().replace(/\/+$/, '') : d.endpoint,
-    sidecarDir: typeof raw.sidecarDir === 'string' ? raw.sidecarDir.trim().replace(/(.)\/+$/, '$1') : d.sidecarDir,
-    timeoutMs: timeoutMs !== undefined && timeoutMs > 0 ? timeoutMs : d.timeoutMs,
-    historyRows: Number.isInteger(historyRows) && (historyRows as number) > 0 ? (historyRows as number) : d.historyRows,
-    priority: finite(raw.priority) ?? d.priority,
+    ...cfg,
+    scopes,
+    overrides,
+    endpoint,
+    sidecarDir: cfg.sidecarDir.trim().replace(/(.)\/+$/, '$1'),
+    triggerNames: splitNames(cfg.triggerNames),
+    muteKeywords: splitNames(cfg.muteKeywords),
+    muteTimeSeconds: cfg.muteTimeSeconds > 0 ? Math.floor(cfg.muteTimeSeconds) : configSchema.muteTimeSeconds.default,
+    mediaWaitMs: cfg.mediaWaitMs >= 0 ? cfg.mediaWaitMs : configSchema.mediaWaitMs.default,
+    timeoutMs: cfg.timeoutMs > 0 ? cfg.timeoutMs : configSchema.timeoutMs.default,
+    historyRows:
+      Number.isInteger(cfg.historyRows) && cfg.historyRows > 0 ? cfg.historyRows : configSchema.historyRows.default,
   };
-}
-
-function parseOverrides(raw: unknown): LayaScopeOverride[] {
-  if (!Array.isArray(raw)) return [];
-  const out: LayaScopeOverride[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const obj = item as Record<string, unknown>;
-    if (typeof obj.scope !== 'string' || !obj.scope.trim()) continue;
-    // 留空的字段不写键：resolveEffectiveConfig 只叠加有值的键，未列字段穿透到顶层
-    const o: LayaScopeOverride = { scope: obj.scope.trim() };
-    const threshold = finite(obj.threshold);
-    if (threshold !== undefined) o.threshold = threshold;
-    out.push(o);
-  }
-  return out;
 }

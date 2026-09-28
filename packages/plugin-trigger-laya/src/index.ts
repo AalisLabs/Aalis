@@ -31,9 +31,8 @@ import {
   type TriggerService,
   trigger,
 } from '@aalis/api-trigger';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { parseConfig } from '@aalis/schema-config';
 import {
   buildIncomingContent,
   getMessageName,
@@ -43,96 +42,11 @@ import {
 } from '@aalis/schema-message';
 import { toWellFormedText } from '@aalis/util-text-normalize';
 import { waitForAttachmentDescriptions } from './attachments.js';
-import { defaultLayaConfig, resolveLayaConfig } from './config.js';
+import { configSchema, normalizeConfig } from './config.js';
 import { createSelfCheck } from './self-check.js';
 import { type Sidecar, sidecarTarget, superviseSidecar } from './sidecar.js';
 
 // ----- 元数据 -----
-
-const configSchema: ConfigSchema = {
-  scopes: {
-    type: 'multiselect',
-    label: '生效作用域',
-    default: defaultLayaConfig.scopes,
-    dynamicOptions: 'gateway-scopes',
-    allowCustom: true,
-    description:
-      '格式 platform:sessionType，支持通配 *。作用域外的消息直接放行，由后面的流控与 agent 照常处理（默认不含私聊：模型只用群聊训练）。',
-  },
-  threshold: {
-    type: 'number',
-    label: '开口阈值',
-    description: 'logit ≥ 阈值即开口。留空 = 用侧车返回的模型阈值（随模型版本给出）。',
-  },
-  triggerOnAt: {
-    type: 'boolean',
-    label: '检测 @ 提及',
-    default: defaultLayaConfig.triggerOnAt,
-    description:
-      '@ 自己算"被点名"（戳一戳、名字同理）。点名不强制开口，由模型判定；开口的回合记为 immediate，点名者即授权主体。判定不可用时只回点名。',
-  },
-  triggerOnPoke: {
-    type: 'boolean',
-    label: '戳一戳算点名',
-    default: defaultLayaConfig.triggerOnPoke,
-  },
-  triggerNames: { type: 'string', label: '点名别名（逗号分隔）', default: '' },
-  muteKeywords: { type: 'string', label: '禁言关键词（逗号分隔）', default: '' },
-  muteTimeSeconds: {
-    type: 'number',
-    label: '禁言关键词命中时长（秒）',
-    default: defaultLayaConfig.muteTimeSeconds,
-  },
-  mediaWaitMs: {
-    type: 'number',
-    label: '附件识别等待上限（毫秒）',
-    default: defaultLayaConfig.mediaWaitMs,
-    description: '带图片等附件的消息先等识别写好描述再交给模型；超时照常判定，识别在后台继续。',
-  },
-  endpoint: { type: 'string', label: '侧车地址', default: defaultLayaConfig.endpoint },
-  sidecarDir: {
-    type: 'string',
-    label: '侧车目录（由本插件托管）',
-    default: defaultLayaConfig.sidecarDir,
-    description:
-      '侧车 laya-listener 所在目录的绝对路径。填了则本插件生效时自己拉起侧车、退出后重启，不再生效或停用时关掉，' +
-      '端口取侧车地址的（地址须为 http://127.0.0.1:<端口>）；留空 = 侧车由外部运行，只按侧车地址连接。',
-  },
-  timeoutMs: {
-    type: 'number',
-    label: '请求超时（毫秒）',
-    default: defaultLayaConfig.timeoutMs,
-    description: '含读完响应体。超时计一次失败，本条按兜底只回点名。',
-  },
-  historyRows: {
-    type: 'number',
-    label: '历史行数',
-    default: defaultLayaConfig.historyRows,
-    description: '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
-  },
-  priority: {
-    type: 'number',
-    label: '优先级 (越大越优先)',
-    default: defaultLayaConfig.priority,
-    description: 'trigger 服务按偏好 > 优先级 > 注册顺序选出生效的触发插件；规则判定 trigger-policy 为 0。',
-  },
-  overrides: {
-    type: 'array',
-    label: '分作用域覆盖',
-    description:
-      '每项 {scope: "platform:sessionType[:targetId]", threshold} 仅在该 scope 命中时覆盖阈值，最具体者胜；留空 = 沿用上方设置。写一条 override 自动启用该 scope。',
-    default: [],
-    items: {
-      scope: {
-        type: 'string',
-        label: '作用域',
-        description: '格式 platform:sessionType[:targetId]，支持 *',
-        required: true,
-      },
-      threshold: { type: 'number', label: '开口阈值' },
-    },
-  },
-};
 
 // ----- 侧车请求 -----
 
@@ -270,7 +184,7 @@ export default definePlugin({
 
 function run(caps: Caps): void {
   const { logger } = caps;
-  const cfg = resolveLayaConfig(caps.config);
+  const cfg = normalizeConfig(parseConfig(configSchema, caps.config, logger), logger);
   const url = `${cfg.endpoint}/v1/score`;
 
   // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行

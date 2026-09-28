@@ -5,7 +5,9 @@
 
 ## 概述
 
-让纯文本模型画图：模型编写 SVG 或 HTML+内联 CSS 标记，插件用硬化的无头浏览器渲染为 PNG；调用 `draw_animation` 时，带声明式动画（SMIL / CSS `@keyframes`）的标记会被逐帧截图，再由 ffmpeg 合成 GIF。产物落盘 `data:/images/`，由 `send_attachment` 投递进聊天。格式分工：图形、图标、梗图、动画用 SVG；图文卡片、表格、海报用 HTML+内联 CSS。渲染引擎使用独立的 Chromium 实例（懒启动、空闲关停），每次渲染开独立页面，禁用 JavaScript 并默认拦截全部网络请求，只放行 `about:blank` 与 `data:`。等字体、量内容高与截图（动图为逐帧截图）各限时 15 秒，超时时工具返回「渲染步骤超时」，并关掉这一代 Chromium，同一代里其它在飞的渲染随之失败，下次渲染重新启动；其余浏览器调用（开页、设视口、动图的时长探测与逐帧定格、关页面）单条以 30 秒为上限。引擎与安全设计见 `packages/plugin-draw/src/engine.ts` 头注释。注册工具组 `draw`，含 `draw_image`（PNG）与 `draw_animation`（GIF）两个工具。
+让纯文本模型画图：模型编写 SVG 或 HTML+内联 CSS 标记，插件用硬化的无头浏览器渲染为 PNG；调用 `draw_animation` 时，带声明式动画（SMIL / CSS `@keyframes`）的标记会被逐帧截图，再由 ffmpeg 合成 GIF。产物落盘 `data:/images/`，由 `send_attachment` 投递进聊天。格式分工：图形、图标、梗图、动画用 SVG；图文卡片、表格、海报用 HTML+内联 CSS。渲染引擎由 [util-offline-render](../utils/util-offline-render.md) 提供，使用独立 Chromium 实例（懒启动、空闲关停），每次渲染开独立浏览器上下文，禁用页面 JavaScript。资源只从调用者提供的内存映射读取，`data:` / `blob:` 可用；其余请求被拦截，解析规则与代理再把漏过的连接送往本机死端口。绘图默认尝试启用 Chromium 沙箱，启动失败后告警并回落到无沙箱模式；作品审核使用同一库时要求沙箱，不允许此回落。
+
+加载、等字体、量内容高与截图各限时 15 秒，超时会关闭这一代 Chromium，同一代其他在飞任务也会失败，下次渲染重新启动；其余单条浏览器协议调用上限 30 秒。浏览器随插件生命周期关闭，不接管宿主的 SIGINT 退出。注册工具组 `draw`，含 `draw_image`（PNG）与 `draw_animation`（GIF）两个工具。
 
 ## 插件声明
 
@@ -43,6 +45,8 @@ export default definePlugin({
 | `animDefaultFps` | number | `15` | 动图默认帧率：未显式指定 fps 时使用；上限 25 |
 | `animMaxFrames` | number | `160` | 动图帧数上限：时长×帧率超出时按帧数反推有效时长 |
 | `animMaxOutputMB` | number | `9` | GIF 体积上限 (MB)：超出即报错（OneBot 内联投递上限 10MB，留余量） |
+
+显式给出无效的 `executablePath` 或 `headless` 时，插件拒绝激活，不会启动浏览器。画布与动画数值仍按既有规则取整、夹到上限；低于有效下限时取字段默认值。
 
 ## 系统依赖
 

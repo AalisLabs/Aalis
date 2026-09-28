@@ -92,3 +92,7 @@ outputFormat:
 - `getPersonaSkills(options?)`: 返回角色卡的 `skills` 白名单；未声明时返回 undefined
 - `isTimeInjectionEnabled()`: 返回是否启用时间注入，供其它插件判断是否需要注册时间相关工具
 - `listModels()`: 列出可用的人设文件供 WebUI 下拉选择
+
+## 配置校验
+
+`persona` 与 `personasDir` 的显式无效类型会报配置错误；两者的空字符串仍按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则。

@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
 import {
-  defaultTriggerPolicyConfig,
-  resolveTriggerPolicyConfig,
-} from '../../packages/plugin-trigger-policy/src/config.js';
-import {
   applyScoreDecay,
   calculateScoreIncrement,
   createState,
@@ -12,6 +8,7 @@ import {
   SESSION_TTL_MS,
   sweepStaleStates,
 } from '../../packages/plugin-trigger-policy/src/state.js';
+import { defaultTriggerPolicyConfig, resolveTriggerPolicyConfig } from './trigger-policy-config.js';
 
 describe('trigger-policy config', () => {
   it('resolve 默认值', () => {
@@ -41,13 +38,19 @@ describe('trigger-policy config', () => {
   });
 
   it('resolve 逗号分隔 triggerNames', () => {
-    const c = resolveTriggerPolicyConfig({ triggerNames: 'aalis, alice ,bob' });
+    const c = resolveTriggerPolicyConfig({ triggerNames: 'aalis, alice\nbob' });
     expect(c.triggerNames).toEqual(['aalis', 'alice', 'bob']);
   });
 
   it('resolve 逗号分隔 muteKeywords', () => {
     const c = resolveTriggerPolicyConfig({ muteKeywords: '闭嘴,别说话' });
     expect(c.muteKeywords).toEqual(['闭嘴', '别说话']);
+  });
+
+  it('scopes 的 null 取默认，[] 保持空；旧逗号串不在运行时拆分', () => {
+    expect(resolveTriggerPolicyConfig({ scopes: null }).scopes).toEqual(['*:group']);
+    expect(resolveTriggerPolicyConfig({ scopes: [] }).scopes).toEqual([]);
+    expect(resolveTriggerPolicyConfig({ scopes: 'onebot:group,cli:*' }).scopes).toEqual(['*:group']);
   });
 
   it('intervalMode 非法值回退', () => {
@@ -196,6 +199,17 @@ const pokeMsg = (platform = 'onebot'): IncomingMessage =>
   }) as unknown as IncomingMessage;
 
 describe('trigger-policy inbound:trigger（poke）', () => {
+  it('真实激活时纯空白 scopes 不扩大到所有会话', async () => {
+    const { app, host } = await setupPolicy({ scopes: ['   '], ...EVERY_MESSAGE });
+    try {
+      const { reached, message } = await runTriggerPhase(host.hooks, pokeMsg());
+      expect(reached).toBe(true);
+      expect(message.triggerType).toBeUndefined();
+    } finally {
+      await app.stop();
+    }
+  });
+
   it('默认：poke 直触发（immediate）', async () => {
     const { app, host } = await setupPolicy();
     const { reached, message } = await runTriggerPhase(host.hooks, pokeMsg());

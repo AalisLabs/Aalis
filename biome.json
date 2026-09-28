@@ -63,7 +63,7 @@
                   "node:child_process": "推荐走 @aalis/api-process（`spawn`/`execFile`）；目前仅 plugin-process-local 作为实现直接使用。详见 docs/architecture/node-usage-policy.md。",
                   "node:crypto": "推荐使用全局 Web Crypto API（`crypto.subtle` / `crypto.randomUUID` / `crypto.getRandomValues`），能覆盖绝大多数场景；确有 Web Crypto 不覆盖的需求可按 docs/architecture/node-usage-policy.md § 4 流程申报例外。",
                   "node:os": "推荐使用 process.platform 或 @aalis/api-process；目前仅 plugin-tool-system 的 system 工具直接使用（系统信息工具）。",
-                  "node:http": "出站调用请用 fetch；目前仅 plugin-webui-server / plugin-mcp-server 作为 HTTP 入站服务使用。",
+                  "node:http": "出站调用请用 fetch；目前仅 plugin-webui-server / plugin-mcp-server 以及 plugin-publish-review/src/preview.ts（仅回环）作为 HTTP 入站服务使用。",
                   "node:https": "出站调用请用 fetch；目前仅 plugin-webui-server / plugin-mcp-server 作为 HTTPS 入站服务使用。",
                   "node:url": "如仅需 `URL` 请用全局 `URL`；node:url 推荐仅用于 `fileURLToPath` / `pathToFileURL`。详见 docs/architecture/node-usage-policy.md。"
                 }
@@ -79,6 +79,7 @@
         "packages/plugin-process-local/src/**",
         "packages/plugin-webui-server/src/**",
         "packages/plugin-mcp-server/src/**",
+        "packages/plugin-publish-review/src/preview.ts",
         "packages/plugin-tool-system/src/tools/system.ts",
         "packages/plugin-tool-browser/src/index.ts",
         "packages/create-aalis-plugin/src/**",
@@ -110,7 +111,7 @@
                   "node:child_process": "推荐走 @aalis/api-process（`spawn`/`execFile`）；目前仅 plugin-process-local 作为实现直接使用。详见 docs/architecture/node-usage-policy.md。",
                   "node:crypto": "推荐使用全局 Web Crypto API（`crypto.subtle` / `crypto.randomUUID` / `crypto.getRandomValues`），能覆盖绝大多数场景；确有 Web Crypto 不覆盖的需求可按 docs/architecture/node-usage-policy.md § 4 流程申报例外。",
                   "node:os": "推荐使用 process.platform 或 @aalis/api-process；目前仅 plugin-tool-system 的 system 工具直接使用（系统信息工具）。",
-                  "node:http": "出站调用请用 fetch；目前仅 plugin-webui-server / plugin-mcp-server 作为 HTTP 入站服务使用。",
+                  "node:http": "出站调用请用 fetch；目前仅 plugin-webui-server / plugin-mcp-server 以及 plugin-publish-review/src/preview.ts（仅回环）作为 HTTP 入站服务使用。",
                   "node:https": "出站调用请用 fetch；目前仅 plugin-webui-server / plugin-mcp-server 作为 HTTPS 入站服务使用。",
                   "node:url": "如仅需 `URL` 请用全局 `URL`；node:url 推荐仅用于 `fileURLToPath` / `pathToFileURL`。详见 docs/architecture/node-usage-policy.md。"
                 }

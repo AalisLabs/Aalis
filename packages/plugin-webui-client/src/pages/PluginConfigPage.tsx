@@ -112,7 +112,11 @@ export function PluginConfigPage({
   };
 
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
-    const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
+    // 清空的顶层字段（数字留空、llm-ref 选「继承默认」）在草稿里是 undefined，JSON 会丢掉这个键，服务端当作没提交、
+    // 保留原值；换成 null 发出，服务端据此删除它、按默认值补齐。分组与数组整块提交、整块替换，里面丢掉的键本来就能清掉
+    const parsed = hasSchema
+      ? Object.fromEntries(Object.entries(schemaDraft).map(([k, v]) => [k, v === undefined ? null : v]))
+      : unflattenConfig(editBuffer);
     markBusy(instanceId);
     let res: { message?: string };
     try {
@@ -241,8 +245,11 @@ export function PluginConfigPage({
   const handleSaveGlobal = async () => {
     setSaving(true);
     // 只回传 schema 里的键：globalDraft 为兼容旧表单保留了 config 的其余键（plugins 等），
-    // 那些是可能过期的快照，服务端不应用也不该被它们干扰。
-    const body = Object.fromEntries(Object.keys(coreSchema ?? {}).map(k => [k, globalDraft[k]]));
+    // 那些是可能过期的快照，服务端不应用也不该被它们干扰。清空的数字框在草稿里是 undefined，
+    // JSON 会丢掉这个键，换成 null 发出，服务端据此回到默认值。
+    const body = Object.fromEntries(
+      Object.keys(coreSchema ?? {}).map(k => [k, globalDraft[k] === undefined ? null : globalDraft[k]]),
+    );
     try {
       const res = await api<{ restart?: boolean; message?: string }>('/api/config', {
         method: 'PUT',
@@ -531,7 +538,10 @@ export function PluginConfigPage({
                           : schemaEntry && 'label' in schemaEntry ? (schemaEntry as SchemaField).label
                           : undefined;
                         const defaultValue = schemaEntry && 'default' in schemaEntry ? (schemaEntry as SchemaField).default : undefined;
-                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} description={fieldDesc} defaultValue={defaultValue} />;
+                        const nestedFields = schemaEntry && 'fields' in schemaEntry ? schemaEntry.fields
+                          : schemaEntry && 'items' in schemaEntry ? schemaEntry.items
+                          : undefined;
+                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} description={fieldDesc} defaultValue={defaultValue} fields={nestedFields} />;
                       })}
                     </div>
                     <button className="btn btn-sm" onClick={() => startEdit(p)}>编辑配置</button>

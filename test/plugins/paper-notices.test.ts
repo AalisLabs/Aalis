@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {} from '../../packages/api-agent/src/index.js'; // declaration merging：agent:llm:before 钩子类型
 import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
@@ -166,12 +166,19 @@ describe('完成通知', () => {
 
   it('超时取消的任务通知写明超过单轮时长上限', async () => {
     const a = new ScriptedRemote();
-    // 单轮 0.12 秒
-    const hub = await hubWith(a, { ...ROOMY_CONFIG, maxRunMinutes: 0.002 });
-    const taskId = await accept(hub, '像素猫');
-    await waitFor(() => hub.injected.length === 1, '注入超时通知');
-    expect(hub.ledger().tasks[taskId]).toMatchObject({ state: 'cancelled', cancelledVia: 'timeout' });
-    expect(hub.injected[0].content).toContain('超过单轮时长上限');
+    const hub = await hubWith(a, { ...ROOMY_CONFIG, maxRunMinutes: 1 });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const taskId = await accept(hub, '像素猫');
+      await waitFor(() => hub.ledger().tasks[taskId]?.state === 'running', '任务开轮');
+      await vi.advanceTimersByTimeAsync(60_000);
+      await waitFor(() => hub.injected.length === 1, '注入超时通知');
+      expect(hub.ledger().tasks[taskId]).toMatchObject({ state: 'cancelled', cancelledVia: 'timeout' });
+      expect(hub.injected[0].content).toContain('超过单轮时长上限');
+    } finally {
+      await hub.stop();
+      vi.useRealTimers();
+    }
   });
 
   it('经 paper_cancel 取消的任务（排队中与运行中）不通知', async () => {

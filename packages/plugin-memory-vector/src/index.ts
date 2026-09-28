@@ -8,14 +8,14 @@ import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manag
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   search: {
     label: '搜索设置',
     fields: {
@@ -59,10 +59,12 @@ const configSchema: ConfigSchema = {
         type: 'number',
         label: '扩展窗口（前后各 N 条消息）',
         default: 2,
+        onInvalid: 'error',
         description: '0 = 仅命中本身。建议 2~5。负数会报错',
       },
       crossSession: {
         type: 'boolean',
+        onInvalid: 'error',
         label: '跨会话也扩展',
         default: true,
         description: '若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文',
@@ -114,11 +116,9 @@ const configSchema: ConfigSchema = {
       { label: '全部打通（所有平台所有会话）', value: 'all' },
     ],
   },
-};
+});
 
 // ===== 配置 =====
-
-type CrossSessionMode = 'isolated' | 'user' | 'platform' | 'all';
 
 /** 检索的可见范围：session=仅当前会话；platform=同平台所有会话；all=全部 */
 type Visibility = 'session' | 'platform' | 'all';
@@ -142,25 +142,7 @@ interface PivotWindow {
   idxByPivot: Map<number, number>;
 }
 
-interface VectorMemoryConfig {
-  search: {
-    topK: number;
-    timeWeight: number;
-    userPriorityBoost: number;
-    perItemMaxChars: number;
-    minScore: number;
-  };
-  contextExpand: {
-    window: number;
-    crossSession: boolean;
-  };
-  indexing: {
-    concurrency: number;
-    maxQueueSize: number;
-  };
-  crossSessionMode: CrossSessionMode;
-  recallRoles: 'all' | 'others-only';
-}
+type VectorMemoryConfig = ConfigOf<typeof configSchema>;
 
 // ===== 工具 =====
 
@@ -352,18 +334,10 @@ async function run({
     return !!memory.current?.getMessagesBySessionRange;
   }
 
-  const searchRaw = (config.search ?? {}) as Record<string, unknown>;
-  const expandRaw = (config.contextExpand ?? {}) as Record<string, unknown>;
-  const indexingRaw = (config.indexing ?? {}) as Record<string, unknown>;
+  const parsed = parseConfig(configSchema, config, logger);
 
   // 配置校验
-  const windowRaw = expandRaw.window;
-  const windowNum = typeof windowRaw === 'number' ? windowRaw : Number(windowRaw ?? 2);
-  if (Number.isNaN(windowNum) || !Number.isFinite(windowNum)) {
-    throw new Error(
-      'memory-vector 配置错误: contextExpand.window 必须为非负整数（0 表示仅命中本身，N>0 表示前后各 N 条）',
-    );
-  }
+  const windowNum = parsed.contextExpand.window;
   if (windowNum < 0) {
     throw new Error(`memory-vector 配置错误: contextExpand.window=${windowNum} 不能为负数`);
   }
@@ -373,22 +347,22 @@ async function run({
 
   const cfg: VectorMemoryConfig = {
     search: {
-      topK: (searchRaw.topK as number) ?? 5,
-      timeWeight: Math.max(0, Math.min(1, (searchRaw.timeWeight as number) ?? 0.3)),
-      userPriorityBoost: Math.max(1, (searchRaw.userPriorityBoost as number) ?? 2.0),
-      perItemMaxChars: Math.max(0, (searchRaw.perItemMaxChars as number) ?? 0),
-      minScore: Math.max(0, Math.min(1, (searchRaw.minScore as number) ?? 0)),
+      ...parsed.search,
+      timeWeight: Math.max(0, Math.min(1, parsed.search.timeWeight)),
+      userPriorityBoost: Math.max(1, parsed.search.userPriorityBoost),
+      perItemMaxChars: Math.max(0, parsed.search.perItemMaxChars),
+      minScore: Math.max(0, Math.min(1, parsed.search.minScore)),
     },
     contextExpand: {
+      ...parsed.contextExpand,
       window: Math.floor(windowNum),
-      crossSession: expandRaw.crossSession !== false,
     },
     indexing: {
-      concurrency: Math.floor((indexingRaw.concurrency as number) ?? 10),
-      maxQueueSize: Math.floor((indexingRaw.maxQueueSize as number) ?? 500),
+      concurrency: Math.floor(parsed.indexing.concurrency),
+      maxQueueSize: Math.floor(parsed.indexing.maxQueueSize),
     },
-    crossSessionMode: (config.crossSessionMode as CrossSessionMode) ?? 'all',
-    recallRoles: (config.recallRoles as 'all' | 'others-only') ?? 'all',
+    crossSessionMode: parsed.crossSessionMode,
+    recallRoles: parsed.recallRoles,
   };
 
   // 启动日志与下方 warn 都是启动时刻的快照（此后按调用点现算，不再据此判定）
