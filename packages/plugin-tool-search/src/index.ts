@@ -3,11 +3,10 @@ import { hooks } from '@aalis/api-hooks';
 import type {} from '@aalis/api-memory'; // declaration merging：memory:clear 钩子类型
 import type { ToolCallContext, ToolDefinition, ToolSummary } from '@aalis/api-tools';
 import { tools } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   enabled: {
     type: 'boolean',
     label: '启用工具搜索层',
@@ -50,7 +49,7 @@ const configSchema: ConfigSchema = {
       '从消息历史推断出的“已发现工具”最多保留 N 个（按最近使用时间倒序保留，0 = 不限）。' +
       '避免长会话里 discovered 集合无限膨胀，使搜索层失去瘦身价值。',
   },
-};
+});
 
 // ===== 常量 =====
 
@@ -245,14 +244,8 @@ export function extractDiscoveredTools(
   return new Set(ordered.keys());
 }
 
-function normalizeToolNames(value: unknown): Set<string> {
-  if (!Array.isArray(value)) return new Set();
-  return new Set(
-    value
-      .filter((item): item is string => typeof item === 'string')
-      .map(item => item.trim())
-      .filter(Boolean),
-  );
+function normalizeToolNames(value: string[]): Set<string> {
+  return new Set(value.map(item => item.trim()).filter(Boolean));
 }
 
 // ===== 插件入口 =====
@@ -271,12 +264,13 @@ export default definePlugin({
 });
 
 function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
-  const enabled = (config.enabled as boolean) ?? true;
-  const showToolNames = (config.showToolNames as boolean) ?? true;
-  const maxDirectTools = (config.maxDirectTools as number) ?? 5;
-  const maxSearchResults = (config.maxSearchResults as number) ?? 5;
-  const alwaysDirectTools = normalizeToolNames(config.alwaysDirectTools);
-  const maxDiscoveredKeep = Math.max(0, Math.floor(Number(config.maxDiscoveredKeep ?? 20)));
+  const cfg = parseConfig(configSchema, config, logger);
+  const enabled = cfg.enabled;
+  const showToolNames = cfg.showToolNames;
+  const maxDirectTools = cfg.maxDirectTools;
+  const maxSearchResults = cfg.maxSearchResults;
+  const alwaysDirectTools = normalizeToolNames(cfg.alwaysDirectTools);
+  const maxDiscoveredKeep = Math.max(0, Math.floor(cfg.maxDiscoveredKeep));
   const discoveredRegistry = new DiscoveredToolsRegistry(maxDiscoveredKeep);
   // /clear 等记忆清除时同步遗忘发现集,与"会话重新开始"的语义对齐;发现集属会话上下文,只随 context 清
   hooks.middleware('memory:clear', async (data, next) => {

@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-flow-control",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-flow-control": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
@@ -38,7 +38,6 @@
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/schema-message": "workspace:*",
-    "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

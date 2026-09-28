@@ -10,11 +10,11 @@ import { createStorageGateway, type StorageService, storage } from '@aalis/api-s
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   groupManagement: {
     label: '群管理工具',
     fields: {
@@ -22,6 +22,7 @@ const configSchema: ConfigSchema = {
         type: 'boolean',
         label: '启用群管理工具',
         default: true,
+        onInvalid: 'error',
         description: '禁言、踢人、设置群名片、撤回消息等',
       },
     },
@@ -29,19 +30,37 @@ const configSchema: ConfigSchema = {
   groupInfo: {
     label: '群信息查询',
     fields: {
-      enabled: { type: 'boolean', label: '启用群信息查询', default: true, description: '查询群/成员信息' },
+      enabled: {
+        type: 'boolean',
+        label: '启用群信息查询',
+        default: true,
+        onInvalid: 'error',
+        description: '查询群/成员信息',
+      },
     },
   },
   account: {
     label: '账号与好友',
     fields: {
-      enabled: { type: 'boolean', label: '启用账号与好友查询', default: true, description: '群列表、好友列表等' },
+      enabled: {
+        type: 'boolean',
+        label: '启用账号与好友查询',
+        default: true,
+        onInvalid: 'error',
+        description: '群列表、好友列表等',
+      },
     },
   },
   interaction: {
     label: '特殊交互',
     fields: {
-      enabled: { type: 'boolean', label: '启用特殊交互', default: true, description: '戳一戳、群打卡等' },
+      enabled: {
+        type: 'boolean',
+        label: '启用特殊交互',
+        default: true,
+        onInvalid: 'error',
+        description: '戳一戳、群打卡等',
+      },
     },
   },
   sessionHistory: {
@@ -51,6 +70,7 @@ const configSchema: ConfigSchema = {
         type: 'boolean',
         label: '启用 OneBot 专属历史工具',
         default: true,
+        onInvalid: 'error',
         description:
           '注册 onebot_resolve_session_id / onebot_get_session_history（按群号/QQ 号读取近期历史）。只管这两个工具：下面的访问规则始终生效，同样约束通用的 session_get_history。',
       },
@@ -70,29 +90,33 @@ const configSchema: ConfigSchema = {
         type: 'boolean',
         label: '允许群聊读取私聊历史',
         default: false,
+        onInvalid: 'error',
         description: '在群会话中调用历史读取工具时，是否允许目标是某个私聊。',
       },
       allowCrossSelf: {
         type: 'boolean',
         label: '允许跨机器人账号读取',
         default: false,
+        onInvalid: 'error',
         description: '不同 selfId 之间跨读。多账号部署才需要。',
       },
       allowCrossGroup: {
         type: 'boolean',
         label: '允许群聊读取其他群聊历史',
         default: true,
+        onInvalid: 'error',
         description: '群会话 → 另一个群会话。默认允许（便于跨群取上下文）。',
       },
       allowCrossPrivate: {
         type: 'boolean',
         label: '允许私聊读取其他私聊历史',
         default: false,
+        onInvalid: 'error',
         description: '私聊会话 → 另一个 QQ 的私聊。默认拒绝（隐私敏感）。',
       },
     },
   },
-};
+});
 
 // ===== 能力声明 =====
 
@@ -546,7 +570,8 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    const { tools, events, logger, platform, config } = caps;
+    const { tools, events, logger, platform } = caps;
+    const cfg = parseConfig(configSchema, caps.config, logger);
     const storage = createStorageGateway(caps.storage);
     const bundle: OneBotToolBundle = {
       daily: withToolGroups(tools, ['onebot-daily']),
@@ -554,32 +579,15 @@ export default definePlugin({
       personal: withToolGroups(tools, ['onebot-personal']),
     };
 
-    const cfg = {
-      groupManagement: { enabled: true, ...((config.groupManagement as Record<string, unknown>) ?? {}) },
-      groupInfo: { enabled: true, ...((config.groupInfo as Record<string, unknown>) ?? {}) },
-      account: { enabled: true, ...((config.account as Record<string, unknown>) ?? {}) },
-      interaction: { enabled: true, ...((config.interaction as Record<string, unknown>) ?? {}) },
-      sessionHistory: {
-        enabled: true,
-        maxLimit: 100,
-        defaultLimit: 20,
-        allowGroupReadPrivate: false,
-        allowCrossSelf: false,
-        allowCrossGroup: true,
-        allowCrossPrivate: false,
-        ...((config.sessionHistory as Record<string, unknown>) ?? {}),
-      },
-    };
-
-    const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
-    const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
+    const maxLimit = Math.max(1, Math.min(1000, cfg.sessionHistory.maxLimit || 100));
+    const defaultLimitRaw = Math.max(1, Math.floor(cfg.sessionHistory.defaultLimit || 20));
     const historyCfg: OneBotSessionHistoryConfig = {
       maxLimit,
       defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-      allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
-      allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
-      allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
-      allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
+      allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate,
+      allowCrossSelf: cfg.sessionHistory.allowCrossSelf,
+      allowCrossGroup: cfg.sessionHistory.allowCrossGroup,
+      allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate,
     };
     // 访问规则始终注册：它同样约束通用的 session_get_history，不随专属工具开关撤掉（关掉工具不能反倒放宽读取）。
     // 规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关：不进下面的平台闸。

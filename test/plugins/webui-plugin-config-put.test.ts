@@ -361,6 +361,94 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
   });
 });
 
+describe('PUT /api/plugins/:name/config 保存前校验：拦新不追旧', () => {
+  const CHECKED: ConfigSchema = {
+    mode: {
+      type: 'select',
+      label: '模式',
+      default: 'a',
+      options: [
+        { label: 'A', value: 'a' },
+        { label: 'B', value: 'b' },
+      ],
+    },
+    tags: {
+      type: 'multiselect',
+      label: '标签',
+      default: [],
+      options: [
+        { label: 'X', value: 'x' },
+        { label: 'Y', value: 'y' },
+      ],
+    },
+    token: { type: 'string', label: '口令', required: true },
+    port: { type: 'number', label: '端口', default: 8080 },
+    note: { type: 'string', label: '备注' },
+  };
+
+  async function boot(stored: Record<string, unknown>) {
+    const { app, store } = silentApp({ config: { plugins: { target: stored } } });
+    await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: CHECKED, apply() {} }));
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
+    return { store, api };
+  }
+
+  it('新写入选项外的 select 值：400，响应带 issues，不落盘', async () => {
+    const { store, api } = await boot({ token: 't', mode: 'a' });
+    const reply = await api.putPlugin('target', { mode: 'zzz' });
+    expect(reply.status).toBe(400);
+    expect((reply.body as { issues: unknown }).issues).toEqual([
+      { path: 'mode', message: '不是可选值（"a"、"b"）之一', kind: 'invalid' },
+    ]);
+    expect(store.getPluginConfig('target').mode).toBe('a');
+  });
+
+  it('文档里存着选项外的旧值：只改别的字段照常保存，旧值原样保留', async () => {
+    const { store, api } = await boot({ token: 't', mode: 'legacy' });
+    const reply = await api.putPlugin('target', { note: 'n' });
+    expect(reply.status).toBe(200);
+    expect(store.getPluginConfig('target')).toMatchObject({ mode: 'legacy', note: 'n' });
+  });
+
+  it('本次编辑造成必填字段缺失（没配全）：放行落盘', async () => {
+    const { store, api } = await boot({ token: 't' });
+    // 顶层 null 表示清空：没有默认值的键从配置里删掉
+    const reply = await api.putPlugin('target', { token: null });
+    expect(reply.status).toBe(200);
+    expect(Object.hasOwn(store.getPluginConfig('target'), 'token')).toBe(false);
+  });
+
+  it('number 字段提交加引号的数字：放行，按提交的原样落盘（插件读取时由 parseConfig 换算）', async () => {
+    const { store, api } = await boot({ token: 't' });
+    const reply = await api.putPlugin('target', { port: '9090' });
+    expect(reply.status).toBe(200);
+    expect(store.getPluginConfig('target').port).toBe('9090');
+  });
+
+  it('删掉存量坏元素前面的元素、它的下标随之前移：仍算存量，照常保存', async () => {
+    const { store, api } = await boot({ token: 't', tags: ['x', 'legacy'] });
+    const reply = await api.putPlugin('target', { tags: ['legacy'] });
+    expect(reply.status).toBe(200);
+    expect(store.getPluginConfig('target').tags).toEqual(['legacy']);
+  });
+
+  it('在存量坏元素之外再加一个选项外元素：多出的那条算新增，400', async () => {
+    const { store, api } = await boot({ token: 't', tags: ['legacy'] });
+    const reply = await api.putPlugin('target', { tags: ['legacy', 'other'] });
+    expect(reply.status).toBe(400);
+    expect((reply.body as { issues: unknown }).issues).toEqual([
+      { path: 'tags[1]', message: '不是可选值（"x"、"y"）之一', kind: 'invalid' },
+    ]);
+    expect(store.getPluginConfig('target').tags).toEqual(['legacy']);
+  });
+});
+
 describe('PUT /api/plugins/:name/config 保留配置块键序', () => {
   it('文档里原有的键保持原顺序，缺的默认键追加到末尾', async () => {
     // 默认值的声明顺序是 baseUrl、timeoutMs；文档里是 timeoutMs、apiKey，且没有 baseUrl
@@ -378,6 +466,102 @@ describe('PUT /api/plugins/:name/config 保留配置块键序', () => {
 
     expect((await api.putPlugin('target', { timeoutMs: 60000 })).status).toBe(200);
     expect(Object.keys(store.getPluginConfig('target'))).toEqual(['timeoutMs', 'apiKey', 'baseUrl']);
+  });
+});
+
+describe('PUT /api/plugins/:name/config 清空顶层字段', () => {
+  const NESTED: ConfigSchema = {
+    apiKey: { type: 'string', label: 'API Key' },
+    timeoutMs: { type: 'number', label: '超时', default: 30000 },
+    retry: {
+      label: '重试',
+      fields: {
+        delayMs: { type: 'number', label: '间隔', default: 100 },
+        maxTries: { type: 'number', label: '次数' },
+      },
+    },
+    hosts: {
+      type: 'array',
+      label: '主机',
+      items: { url: { type: 'string', label: '地址' }, port: { type: 'number', label: '端口', default: 80 } },
+    },
+  };
+
+  async function bootNested(target: Record<string, unknown>) {
+    const { app, store } = silentApp({ config: { plugins: { target } } });
+    await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: NESTED, apply() {} }));
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
+    return { app, store, api };
+  }
+
+  it('值为 null 的顶层键删除后按默认值处理；分组整块替换并补齐默认子键，数组整块替换', async () => {
+    const { app, store, api } = await bootNested({
+      apiKey: 'sk-PLACEHOLDER',
+      timeoutMs: 60000,
+      retry: { delayMs: 500, maxTries: 3 },
+      hosts: [{ url: 'ws://127.0.0.1:0', port: 8080 }],
+    });
+
+    const reply = await api.putPlugin('target', {
+      apiKey: null,
+      timeoutMs: null,
+      retry: { maxTries: 5 },
+      hosts: [{ url: 'ws://127.0.0.1:1' }],
+    });
+    expect(reply.status).toBe(200);
+    const expected = {
+      timeoutMs: 30000,
+      retry: { maxTries: 5, delayMs: 100 },
+      hosts: [{ url: 'ws://127.0.0.1:1' }],
+    };
+    expect(store.getPluginConfig('target'), '没有默认值的删掉，有默认值的回到默认值').toEqual(expected);
+    expect(Object.keys(store.getPluginConfig('target')), '回到默认值的键留在原位').toEqual([
+      'timeoutMs',
+      'retry',
+      'hosts',
+    ]);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('target')?.config).toEqual(expected);
+  });
+
+  it('提交里没有的键保持原值：只有显式 null 才删除', async () => {
+    const { store, api } = await bootNested({ apiKey: 'sk-PLACEHOLDER', timeoutMs: 60000 });
+
+    expect((await api.putPlugin('target', { retry: { maxTries: 1 } })).status).toBe(200);
+    expect(store.getPluginConfig('target')).toEqual({
+      apiKey: 'sk-PLACEHOLDER',
+      timeoutMs: 60000,
+      retry: { maxTries: 1, delayMs: 100 },
+    });
+  });
+});
+
+describe('PUT /api/plugins/:name/config 请求体', () => {
+  it('config 是数组时 400，配置文档与运行态不变：数组会被展开成下标键写进配置', async () => {
+    const stored = { apiKey: 'sk-PLACEHOLDER', timeoutMs: 30000 };
+    const { app, store } = silentApp({ config: { plugins: { loose: structuredClone(stored) } } });
+    // 不带 schema：没有裁剪兜底，下标键会原样写进配置文件
+    await registerFromDoc(app, store, definePlugin({ name: 'loose', apply() {} }));
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
+
+    expect(await api.putPlugin('loose', [{ timeoutMs: 5 }])).toEqual({
+      status: 400,
+      body: { error: 'config 字段必须是对象' },
+    });
+    expect(store.getPluginConfig('loose')).toEqual(stored);
+    expect(app.plugins.getPlugin('loose')?.config).toEqual(stored);
   });
 });
 

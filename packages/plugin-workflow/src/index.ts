@@ -15,7 +15,7 @@ import { webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { parse, stringify } from 'yaml';
 
 import { runDag, validateGraph } from './engine.js';
@@ -25,24 +25,19 @@ import { TriggerManager } from './triggers.js';
 
 // ─── 配置 ───
 
-interface WorkflowConfig {
-  defsDir: string;
-  runsFile: string;
-  maxRuns: number;
-  enableTools: boolean;
-}
-
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   defsDir: {
     type: 'string',
     label: '工作流定义目录',
     default: 'workspace:/workflows',
+    onInvalid: 'error',
     description: '加载存储下的 *.yaml 定义（storage URI）；AI 通过 workflow_define 创建的定义也写入此处。',
   },
   runsFile: {
     type: 'string',
     label: '运行历史文件',
     default: 'data:/workflow-runs.json',
+    onInvalid: 'error',
     description: '保存最近 N 条运行实例（storage URI）。',
   },
   maxRuns: {
@@ -55,9 +50,10 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '注册 AI 工具',
     default: true,
+    onInvalid: 'error',
     description: '开启后向 LLM 暴露 workflow_define / workflow_run 等工具。',
   },
-};
+});
 
 // ─── WebUI ───
 
@@ -309,9 +305,9 @@ nodes:
   });
 }
 
-/** 路径配置只接受 storage URI；未设、留空或非字符串用默认值，其它写法（如相对路径 workspace/workflows）拒绝激活。 */
-function resolveUri(key: 'defsDir' | 'runsFile', input: unknown, fallback: string): string {
-  const s = typeof input === 'string' ? input.trim() : '';
+/** 路径配置只接受 storage URI；留空用默认值，其它写法（如相对路径 workspace/workflows）拒绝激活。 */
+function resolveUri(key: 'defsDir' | 'runsFile', input: string, fallback: string): string {
+  const s = input.trim();
   if (!s) return fallback;
   if (!isStorageUri(s)) {
     throw new Error(
@@ -319,15 +315,6 @@ function resolveUri(key: 'defsDir' | 'runsFile', input: unknown, fallback: strin
     );
   }
   return s;
-}
-
-function resolveConfig(raw: Record<string, unknown>): WorkflowConfig {
-  return {
-    defsDir: resolveUri('defsDir', raw.defsDir, 'workspace:/workflows'),
-    runsFile: resolveUri('runsFile', raw.runsFile, 'data:/workflow-runs.json'),
-    maxRuns: typeof raw.maxRuns === 'number' && raw.maxRuns > 0 ? raw.maxRuns : 200,
-    enableTools: raw.enableTools !== false,
-  };
 }
 
 // ─── 插件入口 ───
@@ -366,7 +353,13 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { events, hooks, lifecycle, provide, tools, webui } = caps;
-  const config = resolveConfig(caps.config);
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  const config = {
+    ...cfg,
+    defsDir: resolveUri('defsDir', cfg.defsDir, configSchema.defsDir.default),
+    runsFile: resolveUri('runsFile', cfg.runsFile, configSchema.runsFile.default),
+    maxRuns: cfg.maxRuns > 0 ? cfg.maxRuns : configSchema.maxRuns.default,
+  };
   const logger = caps.logger.child('workflow');
   const storageGateway = createStorageGateway(caps.storage);
 

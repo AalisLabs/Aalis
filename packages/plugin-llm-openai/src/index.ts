@@ -1,9 +1,9 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
 import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 的 secret 属性
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
-import { type ConfigSchema, configError, missingConfigError } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -109,12 +109,19 @@ function parseApiError(provider: string, status: number, body: string): string {
   return httpErrorMessage(provider, status, body);
 }
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', secret: true, description: 'OpenAI API 密钥（本地服务可留空）' },
+const configSchema = defineConfig({
+  apiKey: {
+    type: 'string',
+    label: 'API Key',
+    secret: true,
+    onInvalid: 'error',
+    description: 'OpenAI API 密钥（本地服务可留空）',
+  },
   baseUrl: {
     type: 'string',
     label: 'API 地址',
     default: 'https://api.openai.com/v1',
+    onInvalid: 'error',
     description:
       'API 端点完整前缀（含版本段，如 https://api.openai.com/v1）；插件只在其后拼 /chat/completions 与 /models。' +
       '可替换为任何兼容服务（如 Gemini 的 https://generativelanguage.googleapis.com/v1beta/openai）。',
@@ -166,23 +173,9 @@ const configSchema: ConfigSchema = {
       '仅在端点是 DeepSeek 或会原样透传该字段的中转时开启——OpenAI 官方端点不认此字段会拒收请求。' +
       '请求未指定 think 时不发送该字段（沿用端点默认）。',
   },
-};
+});
 
-// ===== 配置 =====
-
-interface OpenAIConfig {
-  apiKey: string;
-  baseUrl: string;
-  customModels: string[];
-  discoverModels: boolean;
-  modelCapabilities: Map<string, LLMCapability[]>;
-  providerCapabilities: LLMCapability[];
-  timeout?: number;
-  temperature: number;
-  maxTokens: number;
-  contextLength: number;
-  thinkingParam: boolean;
-}
+type OpenAIConfig = ConfigOf<typeof configSchema>;
 
 // ===== OpenAI-compatible 消息格式 =====
 
@@ -251,7 +244,7 @@ function isReasoningModel(model: string): boolean {
 // ===== OpenAI 客户端（不是 service、仅是底层 fetch 封装，多个 ModelHandle 共享） =====
 
 class OpenAIClient {
-  private apiKey: string;
+  private apiKey: string | undefined;
   readonly baseUrl: string;
   private timeout: number;
   readonly temperature: number;
@@ -259,14 +252,14 @@ class OpenAIClient {
   private thinkingParam: boolean;
   private logger;
 
-  constructor(config: OpenAIConfig, logger: Logger) {
-    this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-    // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
-    this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
-    this.temperature = config.temperature;
-    this.maxTokens = config.maxTokens;
-    this.thinkingParam = config.thinkingParam;
+  constructor(cfg: OpenAIConfig, logger: Logger) {
+    this.apiKey = cfg.apiKey;
+    this.baseUrl = cfg.baseUrl.replace(/\/+$/, '');
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数视为不限制 → 用一个非常大的值
+    this.timeout = cfg.timeout > 0 ? cfg.timeout * 1000 : 2_147_483_647;
+    this.temperature = cfg.temperature;
+    this.maxTokens = cfg.maxTokens;
+    this.thinkingParam = cfg.thinkingParam;
     this.logger = logger;
   }
 
@@ -728,8 +721,7 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
 // ===== 插件入口 =====
 
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
-function parseCustomModels(raw: unknown): string[] {
-  if (!raw || typeof raw !== 'string') return [];
+function parseCustomModels(raw: string): string[] {
   return raw
     .split(/[,\n]/)
     .map(s => s.trim())
@@ -744,9 +736,8 @@ function parseCustomModels(raw: unknown): string[] {
  * OpenRouter 的 `xxx:free`、OpenAI 微调模型 `ft:gpt-4o-mini:org::id`），按首个冒号切会把 id
  * 截断、能力段变成 `8b: chat`，这行覆盖永远不命中。能力名本身不含冒号，故末位冒号即分隔符。
  */
-function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
+function parseModelCapabilities(raw: string): Map<string, LLMCapability[]> {
   const out = new Map<string, LLMCapability[]>();
-  if (!raw || typeof raw !== 'string') return out;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -766,8 +757,7 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
 /**
  * 解析适配器级别默认能力（逗号/空格/换行分隔）。
  */
-function parseProviderCapabilities(raw: unknown): LLMCapability[] {
-  if (!raw || typeof raw !== 'string') return [];
+function parseProviderCapabilities(raw: string): LLMCapability[] {
   return raw
     .split(/[,\s\n]/)
     .map(s => s.trim())
@@ -815,53 +805,40 @@ export default definePlugin({
 });
 
 async function registerModels({ config, logger, lifecycle, provide }: Caps): Promise<void> {
-  const openaiConfig: OpenAIConfig = {
-    apiKey: (config.apiKey as string) ?? '',
-    baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com/v1',
-    customModels: parseCustomModels(config.customModels),
-    discoverModels: config.discoverModels !== false,
-    modelCapabilities: parseModelCapabilities(config.modelCapabilities),
-    providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
-    timeout: (config.timeout as number) ?? 120,
-    temperature: (config.temperature as number) ?? 0.7,
-    maxTokens: (config.maxTokens as number) ?? 4096,
-    contextLength: (config.contextLength as number) ?? 128000,
-    thinkingParam: config.thinkingParam === true,
-  };
+  const cfg = parseConfig(configSchema, config, logger);
+  const customModels = parseCustomModels(cfg.customModels);
+  const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
+  const providerCapabilities = parseProviderCapabilities(cfg.providerCapabilities);
 
-  checkBaseUrl(openaiConfig.baseUrl);
+  checkBaseUrl(cfg.baseUrl);
   // 官方端点判定按 URL host（前缀字符串匹配会误伤 api.openai.com.cn 等镜像域名）
-  const isOfficialOpenAI = new URL(openaiConfig.baseUrl).hostname === 'api.openai.com';
-  if (!openaiConfig.apiKey && isOfficialOpenAI) {
+  const isOfficialOpenAI = new URL(cfg.baseUrl).hostname === 'api.openai.com';
+  if (!cfg.apiKey && isOfficialOpenAI) {
     throw missingConfigError('apiKey', '使用 OpenAI 官方 API 时必填');
   }
-  if (!openaiConfig.discoverModels && openaiConfig.customModels.length === 0) {
+  if (!cfg.discoverModels && customModels.length === 0) {
     throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
-  const client = new OpenAIClient(openaiConfig, logger);
-  const baseLabel = `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})`;
-  const shownBaseUrl = redactUrl(openaiConfig.baseUrl);
+  const client = new OpenAIClient(cfg, logger);
+  const baseLabel = `OpenAI (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
+  const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 已注册 model entry 的句柄表：modelId → dispose（来自 provide 返回值）
   const registered = new Map<string, () => void>();
 
   // 关闭模型发现时不提供 refresh：没有可重新发现的列表
-  const refresh = openaiConfig.discoverModels ? refreshModels : undefined;
+  const refresh = cfg.discoverModels ? refreshModels : undefined;
 
   function registerOne(modelId: string): void {
     if (registered.has(modelId)) return;
-    const capabilities = resolveCapabilities(
-      modelId,
-      openaiConfig.modelCapabilities.get(modelId),
-      openaiConfig.providerCapabilities,
-    );
+    const capabilities = resolveCapabilities(modelId, modelCapabilities.get(modelId), providerCapabilities);
     const handle = new OpenAIModelHandle(
       client,
       modelId,
       lifecycle.id,
-      openaiConfig.contextLength,
-      openaiConfig.maxTokens,
+      cfg.contextLength,
+      cfg.maxTokens,
       capabilities,
       refresh,
     );
@@ -886,19 +863,19 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   /** 自动发现的模型并上 customModels（与自动发现重复的告警） */
   function withCustomModels(remoteIds: string[]): string[] {
     const remoteSet = new Set(remoteIds);
-    for (const cm of openaiConfig.customModels) {
+    for (const cm of customModels) {
       if (remoteSet.has(cm)) {
         logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
       }
     }
-    return [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
+    return [...remoteIds, ...customModels.filter(id => !remoteSet.has(id))];
   }
 
   // 初次注册。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels 照常注册；
   // 关闭模型发现时只注册 customModels。发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），
   // err 交给 logger 会按因果链把原因再记一遍
   let discoveryError: string | undefined;
-  const remoteIds = openaiConfig.discoverModels
+  const remoteIds = cfg.discoverModels
     ? await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
         discoveryError = err instanceof Error ? err.message : String(err);
         return [];
@@ -918,7 +895,7 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   if (discoveryError) logger.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
   for (const modelId of initialIds) registerOne(modelId);
   logger.info(
-    !openaiConfig.discoverModels
+    !cfg.discoverModels
       ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
       : discoveryError
         ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`

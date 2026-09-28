@@ -8,11 +8,15 @@ import {
   type StorageService,
   storage as storageService,
 } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
+import { configSchema } from '../../packages/plugin-checkpoint/src/config.js';
 import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
-import { CheckpointServiceImpl, resolveConfig } from '../../packages/plugin-checkpoint/src/service.js';
+import { CheckpointServiceImpl, normalizeConfig } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { parseConfig } from '../../packages/schema-config/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+
+const parseServiceConfig = (raw: unknown) => normalizeConfig(parseConfig(configSchema, raw));
 
 // ════════════════════════════════════════════════════════════
 // checkpoint × storage-local 真 fs 集成：回滚承诺必须与磁盘实况一致。
@@ -265,7 +269,7 @@ describe('checkpoint × storage (真 fs)', () => {
     };
     const logger = { debug() {}, info() {}, warn() {}, error() {} };
     const faultySvc = new CheckpointServiceImpl(
-      resolveConfig({ rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 }),
+      parseServiceConfig({ rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 }),
       logger as never,
       faulty,
     );
@@ -368,12 +372,14 @@ describe('checkpoint × storage (真 fs)', () => {
 // 否则回合内每次写 blob 都抛「URI 不合法」，连带让那次存储写入失败。未设或留空仍用默认值。
 // ════════════════════════════════════════════════════════════
 describe('checkpoint rootDir 配置', () => {
-  it('storage URI 原样采用；未设、留空或非字符串用默认值', () => {
-    expect(resolveConfig({ rootDir: 'ws:/cp' }).rootUri).toBe('ws:/cp');
-    expect(resolveConfig({ rootDir: '  data:/cp  ' }).rootUri).toBe('data:/cp');
-    expect(resolveConfig({}).rootUri).toBe('data:/checkpoints');
-    expect(resolveConfig({ rootDir: '   ' }).rootUri).toBe('data:/checkpoints');
-    expect(resolveConfig({ rootDir: 42 }).rootUri).toBe('data:/checkpoints');
+  it('storage URI 原样采用；未设、null 或留空用默认值，显式错误类型拒绝', () => {
+    expect(parseServiceConfig({ rootDir: 'ws:/cp' }).rootUri).toBe('ws:/cp');
+    expect(parseServiceConfig({ rootDir: '  data:/cp  ' }).rootUri).toBe('data:/cp');
+    expect(parseServiceConfig({}).rootUri).toBe('data:/checkpoints');
+    expect(parseServiceConfig({ rootDir: null }).rootUri).toBe('data:/checkpoints');
+    expect(parseServiceConfig({ rootDir: '   ' }).rootUri).toBe('data:/checkpoints');
+    expect(() => parseServiceConfig({ rootDir: 42 })).toThrow(/rootDir 不是 storage URI/);
+    expect(() => parseServiceConfig({ rootDir: { token: 'secret-value' } })).toThrow(/rootDir/);
   });
 
   it.each([
@@ -381,6 +387,30 @@ describe('checkpoint rootDir 配置', () => {
     'checkpoints',
     './data/checkpoints',
   ])('非 URI 写法（%s）报错，文案给出正确写法', input => {
-    expect(() => resolveConfig({ rootDir: input })).toThrow(/rootDir=.*不是 storage URI.*data:\/checkpoints/);
+    expect(() => parseServiceConfig({ rootDir: input })).toThrow(/rootDir 不是 storage URI/);
+  });
+
+  it('scopes null 取默认、[] 禁用；数值哨兵仍夹紧', () => {
+    expect(parseServiceConfig({ scopes: null }).scopes).toEqual(['webui:*']);
+    expect(parseServiceConfig({ scopes: [] }).scopes).toEqual([]);
+    expect(parseServiceConfig({ scopes: ['   ', 'onebot:group'] }).scopes).toEqual(['onebot:group']);
+    expect(parseServiceConfig({ maxFileSize: 2, keepSessions: -1 })).toMatchObject({
+      maxFileSize: 1024,
+      keepSessions: 0,
+    });
+  });
+
+  it('真实 App 激活在注册 checkpoint 服务前拒绝错误 rootDir', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    try {
+      await registerHubs(app);
+      app.bind({ provide }).provide(storageService, {} as never);
+      await app.plugins.register(checkpointPlugin, { rootDir: 'relative/path' });
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin(checkpointPlugin.name)?.state).toBe('error');
+      expect(app.bind({ services }).services.get(checkpoint)).toBeUndefined();
+    } finally {
+      await app.stop();
+    }
   });
 });

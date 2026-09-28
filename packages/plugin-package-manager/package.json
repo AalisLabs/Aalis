@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-package-manager",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,7 +32,8 @@
     "@aalis/util-dep-spec": "workspace:>=0.1.1 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

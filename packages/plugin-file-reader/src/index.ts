@@ -18,13 +18,13 @@ import {
   optional,
   provide,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { formatImageSection, recognizeImages } from './doc-images.js';
 
 // ===== 插件元数据 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   maxFileSizeMB: {
     type: 'number',
     label: '最大文件大小 (MB)',
@@ -77,7 +77,7 @@ const configSchema: ConfigSchema = {
     default: 8,
     description: '超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。',
   },
-};
+});
 
 // ===== 支持的文件类型 =====
 
@@ -237,16 +237,17 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { config, logger, lifecycle, events, hooks, contributions, provide, tools, agent, memory, media } = caps;
+  const { logger, lifecycle, events, hooks, contributions, provide, tools, agent, memory, media } = caps;
+  const cfg = parseConfig(configSchema, caps.config, logger);
 
-  const maxFileSize = ((config.maxFileSizeMB as number) ?? 20) * 1024 * 1024;
-  const autoInlineLimit = (config.autoInlineLimit as number) ?? 100000;
-  const toolDefaultMaxLength = (config.toolDefaultMaxLength as number) ?? 50000;
-  const retentionDays = (config.retentionDays as number) ?? 30;
-  const lruMaxTotalBytes = ((config.lruMaxTotalMB as number) ?? 500) * 1024 * 1024;
-  const historyHintEnabled = (config.historyHintEnabled as boolean | undefined) ?? true;
-  const recognizeDocImages = (config.recognizeDocImages as boolean | undefined) ?? true;
-  const maxDocImages = Math.max(0, Math.floor((config.maxDocImages as number) ?? 8));
+  const maxFileSize = cfg.maxFileSizeMB * 1024 * 1024;
+  const autoInlineLimit = cfg.autoInlineLimit;
+  const toolDefaultMaxLength = cfg.toolDefaultMaxLength;
+  const retentionDays = cfg.retentionDays;
+  const lruMaxTotalBytes = cfg.lruMaxTotalMB * 1024 * 1024;
+  const historyHintEnabled = cfg.historyHintEnabled;
+  const recognizeDocImages = cfg.recognizeDocImages;
+  const maxDocImages = Math.max(0, Math.floor(cfg.maxDocImages));
   const HISTORY_HINT_SOURCE = 'file-reader-history';
 
   // 每个 storage root 是独立 entry；file-reader 跳跨使用 pluginData:/ 必须走 gateway

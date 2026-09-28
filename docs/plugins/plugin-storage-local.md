@@ -34,6 +34,8 @@ export default definePlugin({
 |---|---|---|---|
 | `roots` | array | `[{"name":"workspace","path":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true},{"name":"data","path":"data","label":"Data","kind":"data","browsable":false,"readable":true,"writable":true,"deletable":true},{"name":"tmp","path":"workspace/.tmp","label":"临时文件","kind":"tmp","browsable":false,"readable":true,"writable":true,"deletable":true},{"name":"pluginData","path":"data/plugins","label":"插件数据","kind":"pluginData","browsable":false,"readable":true,"writable":true,"deletable":true},{"name":"logs","path":"data","label":"日志","kind":"logs","browsable":false,"readable":true,"writable":false,"deletable":false}]` | 存储根目录：所有可用根都在这里声明（包括 workspace/data/tmp 等内置根）。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，其它根仅作为工具/agent 寻址使用）。 |
 
+`roots` 缺省或显式为 `[]` 时使用内置五根。显式数组中的根必须有 `name` 和 `path`；路径、权限位或数组元素形态无效时整组配置拒绝激活，不会把坏条目删光后误用内置根。
+
 ## 相关
 
 - 存储服务契约：[api/api-storage.md](../api/api-storage.md)

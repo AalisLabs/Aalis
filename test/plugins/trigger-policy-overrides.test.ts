@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveEffectiveConfig } from '../../packages/api-gateway/src/index.js';
-import { resolveTriggerPolicyConfig } from '../../packages/plugin-trigger-policy/src/config.js';
+import { resolveTriggerPolicyConfig } from './trigger-policy-config.js';
 
 describe('trigger-policy overrides (resolve)', () => {
   it('overrides 默认空数组', () => {

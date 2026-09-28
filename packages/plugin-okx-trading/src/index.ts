@@ -1,7 +1,7 @@
 import { tools } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { OkxClient } from './client.js';
 import { registerAccountTools } from './tools/account.js';
 import { registerAlgoTools } from './tools/algo.js';
@@ -11,7 +11,7 @@ import { registerRubikTools } from './tools/rubik.js';
 import { registerTradeTools } from './tools/trade.js';
 import { registerTransferTools } from './tools/transfer.js';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   apiKey: {
     type: 'string',
     label: 'API Key',
@@ -19,8 +19,9 @@ const configSchema: ConfigSchema = {
     secret: true,
     description: '在 OKX 设置中创建的 API Key',
     default: '',
+    onInvalid: 'error',
   },
-  secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true, default: '' },
+  secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true, default: '', onInvalid: 'error' },
   passphrase: {
     type: 'string',
     label: 'Passphrase',
@@ -28,23 +29,27 @@ const configSchema: ConfigSchema = {
     secret: true,
     description: '创建 API 时设定的口令',
     default: '',
+    onInvalid: 'error',
   },
   baseUrl: {
     type: 'string',
     label: 'API 地址',
     default: 'https://www.okx.com',
+    onInvalid: 'error',
     description: '默认实盘地址，可改为自定义域名',
   },
   demo: {
     type: 'boolean',
     label: '模拟盘',
     default: true,
+    onInvalid: 'error',
     description: '启用后将使用模拟交易环境，强烈建议先在模拟盘测试',
   },
   confirmRealMoney: {
     type: 'boolean',
     label: '确认实盘风险',
     default: false,
+    onInvalid: 'error',
     description:
       '仅当关闭模拟盘(demo:false)、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。',
   },
@@ -53,10 +58,23 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启用交易工具',
     default: true,
+    onInvalid: 'error',
     description: '关闭后仅保留查询类工具，不暴露下单/撤单操作',
   },
-  enableAlgo: { type: 'boolean', label: '启用策略委托', default: false, description: '启用止盈止损 / 计划委托工具' },
-  enableTransfer: { type: 'boolean', label: '启用资金划转', default: false, description: '启用资金账户划转工具' },
+  enableAlgo: {
+    type: 'boolean',
+    label: '启用策略委托',
+    default: false,
+    onInvalid: 'error',
+    description: '启用止盈止损 / 计划委托工具',
+  },
+  enableTransfer: {
+    type: 'boolean',
+    label: '启用资金划转',
+    default: false,
+    onInvalid: 'error',
+    description: '启用资金账户划转工具',
+  },
   defaultPageLimit: {
     type: 'number',
     label: '分页查询默认条数',
@@ -70,41 +88,7 @@ const configSchema: ConfigSchema = {
     description:
       'LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。',
   },
-};
-
-interface PluginConfig {
-  apiKey: string;
-  secretKey: string;
-  passphrase: string;
-  baseUrl: string;
-  demo: boolean;
-  confirmRealMoney: boolean;
-  timeoutMs: number;
-  enableTrading: boolean;
-  enableAlgo: boolean;
-  enableTransfer: boolean;
-  defaultPageLimit: number;
-  maxPageLimit: number;
-}
-
-function resolveConfig(config: Readonly<Record<string, unknown>>): PluginConfig {
-  const maxPageLimit = Math.max(1, Math.min(1000, Number(config.maxPageLimit) || 100));
-  const defaultPageLimitRaw = Math.max(1, Math.floor(Number(config.defaultPageLimit) || 20));
-  return {
-    apiKey: (config.apiKey as string) ?? '',
-    secretKey: (config.secretKey as string) ?? '',
-    passphrase: (config.passphrase as string) ?? '',
-    baseUrl: (config.baseUrl as string) ?? 'https://www.okx.com',
-    demo: (config.demo as boolean) ?? true,
-    confirmRealMoney: (config.confirmRealMoney as boolean) ?? false,
-    timeoutMs: (config.timeoutMs as number) ?? 15000,
-    enableTrading: (config.enableTrading as boolean) ?? true,
-    enableAlgo: (config.enableAlgo as boolean) ?? false,
-    enableTransfer: (config.enableTransfer as boolean) ?? false,
-    defaultPageLimit: Math.min(defaultPageLimitRaw, maxPageLimit),
-    maxPageLimit,
-  };
-}
+});
 
 // ===== 工具权限三分名单（模块级导出，测试做补集断言防漏网）=====
 
@@ -186,12 +170,21 @@ export default definePlugin({
 });
 
 function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
-  const cfg = resolveConfig(config);
+  const parsed = parseConfig(configSchema, config, logger);
 
-  if (!cfg.apiKey || !cfg.secretKey || !cfg.passphrase) {
+  if (!parsed.apiKey || !parsed.secretKey || !parsed.passphrase) {
     logger.warn('OKX 交易插件缺少 API 凭证，已跳过初始化');
     return;
   }
+  if (!URL.canParse(parsed.baseUrl) || new URL(parsed.baseUrl).username || new URL(parsed.baseUrl).password) {
+    throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+  }
+  const maxPageLimit = Math.max(1, Math.min(1000, parsed.maxPageLimit || 100));
+  const cfg = {
+    ...parsed,
+    maxPageLimit,
+    defaultPageLimit: Math.min(Math.max(1, Math.floor(parsed.defaultPageLimit || 20)), maxPageLimit),
+  };
 
   const client = new OkxClient({
     credentials: { apiKey: cfg.apiKey, secretKey: cfg.secretKey, passphrase: cfg.passphrase },

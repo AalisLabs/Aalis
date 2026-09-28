@@ -93,3 +93,7 @@ outputFormat:
 - `isTimeInjectionEnabled()`: 返回是否启用时间注入，供其它插件判断是否需要注册时间相关工具
 - `getSessionState(sessionId)`: 返回该会话最近一次保存的结构化输出状态（仅 `statePersistence` 启用时有值）
 - `listModels()`: 列出可用的人设文件供 WebUI 下拉选择
+
+## 配置校验
+
+`persona` 与 `personasDir` 的显式无效类型会报配置错误；两者的空字符串仍按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则。

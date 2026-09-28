@@ -37,6 +37,8 @@ export default definePlugin({
 | `jobs` | array | `[]` | 计划任务列表：配置定时/周期性任务，让 AI 主动执行计划。 |
 | `persistPath` | string | `'data:/scheduler-jobs.json'` | 动态任务存储路径：通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。 |
 
+静态 `jobs` 支持 `runAt` 指定一次性执行时间。省略 `name`、`sessionId` 或 `content` 时，分别使用 `unnamed`、`scheduler::<任务名>` 和空内容；省略代理身份时按静态配置任务的规则使用 `webui:console`。身份平台与用户 ID 只填写其一时仍按整组缺省处理。显式非法的启用状态或持久化路径会阻止插件激活。
+
 ## 注册工具
 
 | 工具 | 说明 |
