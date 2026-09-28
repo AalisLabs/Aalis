@@ -8,7 +8,7 @@
 
 import type { ArtifactLimits, EgressCeiling } from '@aalis/api-remote-agent';
 import type { Logger } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig } from '@aalis/schema-config';
 
 const PAPER_NAME_PATTERN = '^[a-z0-9][a-z0-9-]{0,31}$';
 const EGRESS_CEILINGS: readonly EgressCeiling[] = ['none', 'allowlist', 'open'];
@@ -40,7 +40,7 @@ const SPEC_NUMBER_DEFAULTS = {
 } as const;
 const ARTIFACT_DEFAULTS = { maxFileMB: 25, maxRunMB: 50, maxRunFiles: 200, maxBundleMB: 50, maxPaperMB: 2048 } as const;
 
-export const configSchema: ConfigSchema = {
+export const configSchema = defineConfig({
   globalDailyCents: {
     type: 'number',
     label: '全局每天金额上限（美分）',
@@ -108,6 +108,12 @@ export const configSchema: ConfigSchema = {
     default: NUMBER_DEFAULTS.taskRetentionDays,
     min: 1,
     description: '已结束的任务在账本里保留多久；轮次记录另按代理保留到代理删除为止',
+  },
+  worksCredit: {
+    type: 'string',
+    label: '作品署名',
+    default: '来自群友的点子',
+    description: '作品站公开显示的署名措辞',
   },
   artifacts: {
     label: '成品上限',
@@ -213,7 +219,9 @@ export const configSchema: ConfigSchema = {
       idleArchiveMinutes: { type: 'number', label: '闲置归档（分钟）', min: 1, description: '留空取默认属性' },
     },
   },
-};
+});
+
+type ParsedPaperConfig = ConfigOf<typeof configSchema>;
 
 /** 一块白纸的属性 */
 export interface PaperSpec {
@@ -249,6 +257,7 @@ export interface PaperConfig {
   pendingHintHours: number;
   reconcileMinutes: number;
   taskRetentionDays: number;
+  worksCredit: string;
   artifacts: ArtifactCaps;
   defaults: PaperSpec;
   papers: ReadonlyMap<string, PaperSpec>;
@@ -259,30 +268,6 @@ export function specOf(cfg: PaperConfig, paperId: string): PaperSpec | undefined
   return paperId.startsWith('n:') ? cfg.papers.get(paperId.slice(2)) : cfg.defaults;
 }
 
-function isUnset(value: unknown): boolean {
-  return value === undefined || value === null || value === '';
-}
-
-function positiveInt(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined;
-}
-
-function positive(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-/**
- * 读一个正数配置：没写取缺省，写坏的告警后取缺省。下限（min）只由 schema 与宿主的配置校验告警把关，
- * 这里不强行抬到下限。
- */
-function readPositive(value: unknown, fallback: number, key: string, logger: Logger): number {
-  if (isUnset(value)) return fallback;
-  const n = positive(value);
-  if (n !== undefined) return n;
-  logger.warn(`${key} 的值无效，改用 ${fallback}`);
-  return fallback;
-}
-
 const DEFAULT_SPEC: PaperSpec = {
   remoteAgentType: '',
   remoteAgentEgress: DEFAULT_EGRESS,
@@ -290,115 +275,71 @@ const DEFAULT_SPEC: PaperSpec = {
   ...SPEC_NUMBER_DEFAULTS,
 };
 
-/** 读一组白纸属性；没写的字段取 fallback，写坏的字段告警后按没写处理 */
-function readSpec(raw: Record<string, unknown>, fallback: PaperSpec, where: string, logger: Logger): PaperSpec {
+type SpecFields = ParsedPaperConfig['defaults'] | ParsedPaperConfig['papers'][number];
+
+/** 具名白纸只覆盖显式填写的字段；空的出网上限沿用 defaults。 */
+function readSpec(raw: SpecFields, fallback: PaperSpec): PaperSpec {
   const spec: PaperSpec = { ...fallback };
-  const bad = (key: string) => logger.warn(`${where}.${key} 的值无效，按没写处理`);
-  if (!isUnset(raw.remoteAgentType)) {
-    if (typeof raw.remoteAgentType === 'string') spec.remoteAgentType = raw.remoteAgentType.trim();
-    else bad('remoteAgentType');
-  }
-  if (!isUnset(raw.remoteAgentEgress)) {
-    const egress = EGRESS_CEILINGS.find(e => e === raw.remoteAgentEgress);
-    if (egress) spec.remoteAgentEgress = egress;
-    else bad('remoteAgentEgress');
-  }
-  for (const key of ['maxWaiting', 'maxPerUser'] as const) {
-    if (isUnset(raw[key])) continue;
-    const n = positiveInt(raw[key]);
-    if (n === undefined) bad(key);
-    else spec[key] = n;
-  }
-  for (const key of Object.keys(SPEC_NUMBER_DEFAULTS) as Array<keyof typeof SPEC_NUMBER_DEFAULTS>) {
-    if (isUnset(raw[key])) continue;
-    const n = positive(raw[key]);
-    if (n === undefined) bad(key);
-    else spec[key] = n;
+  if (raw.remoteAgentType !== undefined && raw.remoteAgentType !== '')
+    spec.remoteAgentType = raw.remoteAgentType.trim();
+  const egress = EGRESS_CEILINGS.find(value => value === raw.remoteAgentEgress);
+  if (egress) spec.remoteAgentEgress = egress;
+  for (const key of ['maxWaiting', 'maxPerUser', 'clearAfterDays', 'rotateAfterCents', 'idleArchiveMinutes'] as const) {
+    const value = raw[key];
+    if (value !== undefined) spec[key] = value;
   }
   return spec;
 }
 
-function readArtifactCaps(raw: Record<string, unknown>, logger: Logger): ArtifactCaps {
-  const mb = (key: 'maxFileMB' | 'maxRunMB' | 'maxBundleMB' | 'maxPaperMB') =>
-    Math.floor(readPositive(raw[key], ARTIFACT_DEFAULTS[key], `artifacts.${key}`, logger) * MB);
+function readArtifactCaps(raw: ParsedPaperConfig['artifacts']): ArtifactCaps {
+  const mb = (key: 'maxFileMB' | 'maxRunMB' | 'maxBundleMB' | 'maxPaperMB') => Math.floor(raw[key] * MB);
   return {
     maxFileBytes: mb('maxFileMB'),
     maxRunBytes: mb('maxRunMB'),
-    maxRunFiles: Math.floor(
-      readPositive(raw.maxRunFiles, ARTIFACT_DEFAULTS.maxRunFiles, 'artifacts.maxRunFiles', logger),
-    ),
+    maxRunFiles: raw.maxRunFiles,
     maxBundleBytes: mb('maxBundleMB'),
     maxPaperBytes: mb('maxPaperMB'),
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function validTimeZone(value: unknown, logger: Logger): string | undefined {
-  if (isUnset(value)) return undefined;
-  if (typeof value === 'string') {
-    try {
-      new Intl.DateTimeFormat('en-CA', { timeZone: value.trim() });
-      return value.trim();
-    } catch {
-      // 落到下面的告警
-    }
+function validTimeZone(value: string | undefined, logger: Logger): string | undefined {
+  if (!value) return undefined;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: value.trim() });
+    return value.trim();
+  } catch {
+    // 落到下面的告警
   }
   logger.warn(`budgetTimeZone「${String(value)}」不是有效的时区名，按宿主进程的本地时区换日`);
   return undefined;
 }
 
-export function readConfig(raw: Readonly<Record<string, unknown>>, logger: Logger): PaperConfig {
-  const global = raw.globalDailyCents;
-  let globalDailyCents = 0;
-  if (typeof global === 'number' && Number.isFinite(global) && global >= 0) globalDailyCents = global;
-  else if (!isUnset(global)) logger.warn('globalDailyCents 的值无效，按 0 处理（远端任务不开）');
-
-  const reserve = raw.reserveDefaultCents;
-  let reserveDefaultCents = DEFAULT_RESERVE_CENTS;
-  if (typeof reserve === 'number' && Number.isFinite(reserve) && reserve >= 1) reserveDefaultCents = Math.ceil(reserve);
-  else if (!isUnset(reserve)) logger.warn(`reserveDefaultCents 的值无效，改用 ${DEFAULT_RESERVE_CENTS}`);
-
-  const defaults = readSpec(isRecord(raw.defaults) ? raw.defaults : {}, DEFAULT_SPEC, 'defaults', logger);
+export function readConfig(raw: ParsedPaperConfig, logger: Logger): PaperConfig {
+  const defaults = readSpec(raw.defaults, DEFAULT_SPEC);
 
   const papers = new Map<string, PaperSpec>();
-  const pattern = new RegExp(PAPER_NAME_PATTERN);
-  for (const [i, item] of (Array.isArray(raw.papers) ? raw.papers : []).entries()) {
-    if (!isRecord(item) || typeof item.name !== 'string' || !pattern.test(item.name)) {
-      logger.warn(`papers[${i}] 的 name 不合规（${PAPER_NAME_PATTERN}），这一项不生效`);
-      continue;
-    }
+  for (const [i, item] of raw.papers.entries()) {
     const name = item.name;
     if (papers.has(name)) {
       logger.warn(`papers[${i}] 与前面的白纸重名（${name}），这一项不生效`);
       continue;
     }
-    papers.set(name, { ...readSpec(item, defaults, `papers[${i}]`, logger), name });
+    papers.set(name, { ...readSpec(item, defaults), name });
   }
 
   return {
-    globalDailyCents,
-    reserveDefaultCents,
+    globalDailyCents: raw.globalDailyCents,
+    reserveDefaultCents: Math.ceil(raw.reserveDefaultCents),
     budgetTimeZone: validTimeZone(raw.budgetTimeZone, logger),
-    maxRunMinutes: readPositive(raw.maxRunMinutes, NUMBER_DEFAULTS.maxRunMinutes, 'maxRunMinutes', logger),
-    sendHtml: raw.sendHtml !== false,
-    sendHtmlMaxBytes: Math.floor(
-      readPositive(raw.sendHtmlMaxMB, NUMBER_DEFAULTS.sendHtmlMaxMB, 'sendHtmlMaxMB', logger) * MB,
-    ),
-    sendMediaMaxBytes: Math.floor(
-      readPositive(raw.sendMediaMaxMB, NUMBER_DEFAULTS.sendMediaMaxMB, 'sendMediaMaxMB', logger) * MB,
-    ),
-    pendingHintHours: readPositive(raw.pendingHintHours, NUMBER_DEFAULTS.pendingHintHours, 'pendingHintHours', logger),
-    reconcileMinutes: readPositive(raw.reconcileMinutes, NUMBER_DEFAULTS.reconcileMinutes, 'reconcileMinutes', logger),
-    taskRetentionDays: readPositive(
-      raw.taskRetentionDays,
-      NUMBER_DEFAULTS.taskRetentionDays,
-      'taskRetentionDays',
-      logger,
-    ),
-    artifacts: readArtifactCaps(isRecord(raw.artifacts) ? raw.artifacts : {}, logger),
+    maxRunMinutes: raw.maxRunMinutes,
+    sendHtml: raw.sendHtml,
+    sendHtmlMaxBytes: Math.floor(raw.sendHtmlMaxMB * MB),
+    sendMediaMaxBytes: Math.floor(raw.sendMediaMaxMB * MB),
+    pendingHintHours: raw.pendingHintHours,
+    reconcileMinutes: raw.reconcileMinutes,
+    taskRetentionDays: raw.taskRetentionDays,
+    worksCredit: raw.worksCredit,
+    artifacts: readArtifactCaps(raw.artifacts),
     defaults,
     papers,
   };

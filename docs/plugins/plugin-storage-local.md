@@ -41,12 +41,16 @@ export default definePlugin({
 | 根 | 路径 | kind | 权限 | 用途 |
 |---|---|---|---|---|
 | `paper` | `<cwd>/data/stage/paper` | `paper` | 可读、可写、可删，`browsable: false` | 白纸枢纽（[plugin-paper](./plugin-paper.md)）存放远端任务的成品与工程包 |
+| `public` | `<cwd>/data/stage/public` | `public` | 可读、可写、可删，`browsable: false` | [作品审核](./plugin-publish-review.md)存放审核通过的公开文件，作品站据此部署 |
 
 - 内部根在用户根之后注册，不会成为 storage 的默认根；激活时建好目录，建目录失败只告警并跳过，不影响用户根。
-- `roots` 里与内部根同名的项被跳过并记 warn，内部根优先；被跳过的项不会建目录。原来自建了名为 `paper` 的根的，要改名。
+- `roots` 里与内部根同名的项被跳过并记 warn，内部根优先；被跳过的项不会建目录。原来自建了名为 `paper` 或 `public` 的根的，要改名。
 - 「没有任何可用根」的报错只看用户根：`roots` 全部无效时照样报错。
 - `kind: 'paper'` 的根不被 checkpoint 记账：枢纽在任意会话的回合进行中写入成品，记进那一轮的话，回滚会删掉无关的成品（见 [plugin-checkpoint](./plugin-checkpoint.md)）。
 - `data` 根映射整个 `data/` 时，`data:/stage/paper/…` 与 `paper:/…` 指向同一批文件。
+- `kind: 'public'` 同样不参与 checkpoint：审核、部署与撤下不属于正在运行的聊天回合，回滚会话不能把公开作品恢复或删除。`public:` 是内部存储根，不意味着文件自动通过 HTTP 公开；只有审核服务认可的文件才会交给作品站。
+
+`roots` 缺省或显式为 `[]` 时使用内置五根。显式数组中的根必须有 `name` 和 `path`；路径、权限位或数组元素形态无效时整组配置拒绝激活，不会把坏条目删光后误用内置根。
 
 ## 相关
 

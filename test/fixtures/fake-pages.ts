@@ -12,8 +12,7 @@ import type { AddressInfo } from 'node:net';
 // Cloudflare Pages（Direct Upload）API 的本机假服务：照 2026-09-27 在临时项目上的实测
 // （works-site-20260927/pretest.md）回应各端点。只用于测试，不连真实账号。
 //
-// 本文件现在只有 API 与资产存储；按 Host 分发的站点服务（加载 _worker.js、模拟 Pages 的规范化与 _headers、
-// 边缘缓存等开关）由后续单元补在同一个文件里，用这里记下的部署（manifest、_headers、中间件源码）与资产。
+// 站点按 Host 分发，使用同一份部署清单和资产存储；只监听本机。
 //
 // - 基址：`<origin>/client/v4`，与真实 API 同一前缀。API 端点认 `Authorization: Bearer <token>`（tokens 里登记，
 //   且路径里的账号须与登记的一致）；资产端点只认上传 JWT，拿 API token 去调一律 401，反之亦然。错误信息里回显
@@ -123,6 +122,12 @@ export interface FakePages {
   nextOutcomes: Array<'success' | 'failure' | 'stuck'>;
   /** 上传 JWT 的有效期 */
   jwtTtlMs: number;
+  /** 模拟边缘保留已缓存、后来从部署中删除的路径。 */
+  edgeCache: boolean;
+  /** 规范网址内容改变后仍返回旧内容的时长；新查询串绕过。 */
+  contentLagMs: number;
+  /** 模拟 Functions 额度用尽时跳过 Worker。 */
+  workerQuotaExhausted: boolean;
   /** 按分支给出别名网址（返回 undefined 时按实测规则） */
   aliasFor?: (branch: string) => string | undefined;
   intercept(method: string, path: string | RegExp, reply: FakeReply, times?: number): void;
@@ -131,7 +136,13 @@ export interface FakePages {
   /** 已发的上传 JWT 全部失效 */
   expireJwts(): void;
   /** 直接登记一份已完成的部署（不经 API），如组表之外分支上的账外部署 */
-  seedDeployment(opts: { branch: string; manifest?: Record<string, string>; createdAt?: number }): FakeDeployment;
+  seedDeployment(opts: {
+    branch: string;
+    manifest?: Record<string, string>;
+    headers?: string;
+    worker?: string;
+    createdAt?: number;
+  }): FakeDeployment;
   /** 分支当前的别名名字（第一次部署这个分支时分配） */
   aliasLabel(branch: string): string | undefined;
   requestsTo(method: string, path: string | RegExp): FakePagesRequest[];
@@ -203,6 +214,12 @@ export async function startFakePages(
   const intercepts: Array<{ method: string; path: string | RegExp; reply: FakeReply; left: number }> = [];
   const jwts = new Map<string, number>(); // jwt → 过期时刻
   const branchAlias = new Map<string, string>();
+  const cachedPaths = new Map<string, { deploymentId: string; response: Response }>();
+  const changedPaths = new Map<string, { until: number; prior: Response }>();
+  const workerModules = new Map<
+    string,
+    { fetch(request: Request, env: { ASSETS: { fetch(request: Request): Promise<Response> } }): Promise<Response> }
+  >();
   const matches = (p: string | RegExp, path: string) => (typeof p === 'string' ? path === p : p.test(path));
 
   const fake: FakePages = {
@@ -242,6 +259,9 @@ export async function startFakePages(
     queuedMs: 300,
     nextOutcomes: [],
     jwtTtlMs: 30 * 60_000,
+    edgeCache: false,
+    contentLagMs: 0,
+    workerQuotaExhausted: false,
     intercept(method, path, reply, times = 1) {
       intercepts.push({ method, path, reply, left: times });
     },
@@ -251,8 +271,20 @@ export async function startFakePages(
     expireJwts() {
       for (const k of jwts.keys()) jwts.set(k, 0);
     },
-    seedDeployment({ branch, manifest = {}, createdAt = Date.now() }) {
-      return addDeployment(branch, manifest, undefined, undefined, createdAt, 'success');
+    seedDeployment({ branch, manifest = {}, headers, worker, createdAt = Date.now() }) {
+      return addDeployment(
+        branch,
+        manifest,
+        headers,
+        worker
+          ? {
+              metadata: { main_module: '_worker.js' },
+              modules: { '_worker.js': { type: 'application/javascript', content: worker } },
+            }
+          : undefined,
+        createdAt,
+        'success',
+      );
     },
     aliasLabel(branch) {
       return branchAlias.get(branch);
@@ -523,12 +555,119 @@ export async function startFakePages(
     ok(res, null);
   }
 
+  function siteDeployment(host: string): FakeDeployment | undefined {
+    const suffix = fake.hostSuffix.toLowerCase();
+    const normalized = host.toLowerCase();
+    if (normalized === suffix.slice(1)) return latestOf(fake.project.production_branch);
+    if (!normalized.endsWith(suffix)) return undefined;
+    const label = normalized.slice(0, -suffix.length);
+    const exact = live().find(d => d.shortId === label);
+    if (exact) return exact;
+    for (const [branch, alias] of branchAlias) if (alias === label) return latestOf(branch);
+    return undefined;
+  }
+
+  function applySiteHeaders(response: Response, source: string | undefined): Response {
+    if (!source) return response;
+    const headers = new Headers(response.headers);
+    let wildcard = false;
+    for (const line of source.split(/\r?\n/)) {
+      if (line.trim() === '/*') {
+        wildcard = true;
+        continue;
+      }
+      if (!wildcard || !/^\s+/.test(line)) continue;
+      const value = line.trim();
+      if (value.startsWith('! ')) {
+        headers.delete(value.slice(2).trim());
+        continue;
+      }
+      const colon = value.indexOf(':');
+      if (colon > 0) headers.set(value.slice(0, colon).trim(), value.slice(colon + 1).trim());
+    }
+    return new Response(response.body, { status: response.status, headers });
+  }
+
+  async function staticAsset(d: FakeDeployment, request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const normalized = path.endsWith('/') ? `${path}index.html` : path;
+    const decoded = decodeURIComponent(normalized);
+    if (
+      !path.endsWith('/') &&
+      (Object.hasOwn(d.manifest, `${decoded}/index.html`) || decoded.endsWith('/index.html'))
+    ) {
+      const target = decoded.endsWith('/index.html') ? decoded.slice(0, -'index.html'.length) : `${decoded}/`;
+      return new Response(null, { status: 308, headers: { Location: `${target}${url.search}` } });
+    }
+    const key = d.manifest[decoded];
+    const asset = key ? fake.assets.get(key) : undefined;
+    if (asset) {
+      return new Response(request.method === 'HEAD' ? null : new Uint8Array(asset.bytes), {
+        status: 200,
+        headers: { 'Content-Type': asset.contentType },
+      });
+    }
+    const fallbackKey = d.manifest['/404.html'];
+    const fallback = fallbackKey ? fake.assets.get(fallbackKey) : undefined;
+    return new Response(request.method === 'HEAD' ? null : fallback ? new Uint8Array(fallback.bytes) : null, {
+      status: 404,
+      headers: fallback ? { 'Content-Type': fallback.contentType } : {},
+    });
+  }
+
+  async function siteResponse(d: FakeDeployment, request: Request): Promise<Response> {
+    if (d.worker && !fake.workerQuotaExhausted) {
+      let module = workerModules.get(d.id);
+      if (!module) {
+        const main = d.worker.metadata.main_module;
+        if (typeof main !== 'string' || !d.worker.modules[main]) throw new Error('worker main module missing');
+        const source = d.worker.modules[main].content;
+        const imported = (await import(`data:text/javascript,${encodeURIComponent(source)}`)) as {
+          default: typeof module;
+        };
+        if (!imported.default) throw new Error('worker default export missing');
+        module = imported.default;
+        workerModules.set(d.id, module);
+      }
+      return module.fetch(request, { ASSETS: { fetch: inner => staticAsset(d, inner) } });
+    }
+    return applySiteHeaders(await staticAsset(d, request), d.headers);
+  }
+
+  async function handleSite(req: IncomingMessage, res: ServerResponse, d: FakeDeployment): Promise<void> {
+    const method = req.method ?? 'GET';
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? ''}`);
+    const request = new Request(url, { method, headers: req.headers as HeadersInit });
+    const cacheKey = `${req.headers.host}${url.pathname}`;
+    const old = cachedPaths.get(cacheKey);
+    let response = await siteResponse(d, request);
+    if (old && old.deploymentId !== d.id && fake.edgeCache && response.status === 404) {
+      response = old.response.clone();
+    } else if (old && old.deploymentId !== d.id && fake.contentLagMs > 0 && !url.search) {
+      const lag = changedPaths.get(cacheKey) ?? { until: Date.now() + fake.contentLagMs, prior: old.response };
+      changedPaths.set(cacheKey, lag);
+      if (Date.now() < lag.until) response = lag.prior.clone();
+    }
+    if (!url.search && response.status === 200 && (!old || old.deploymentId !== d.id)) {
+      cachedPaths.set(cacheKey, { deploymentId: d.id, response: response.clone() });
+    }
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(method === 'HEAD' ? undefined : Buffer.from(await response.arrayBuffer()));
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://fake');
     const body = await readBody(req);
     const method = req.method ?? 'GET';
     fake.requests.push({ method, path: url.pathname + url.search, headers: req.headers, body });
     const path = url.pathname;
+
+    const deployment = siteDeployment(req.headers.host ?? '');
+    if (deployment) {
+      await handleSite(req, res, deployment);
+      return;
+    }
 
     for (const it of intercepts) {
       if (it.left > 0 && it.method === method && matches(it.path, path)) {

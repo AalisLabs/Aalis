@@ -30,12 +30,11 @@
   "dependencies": {
     "@aalis/api-code-sandbox": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-llm": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-publish": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.13.1 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.11.1 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
     "@aalis/util-media-signature": "workspace:>=0.1.0 <1.0.0",
@@ -48,5 +47,26 @@
   },
   "peerDependencies": {
     "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "provides": [
+        "publish"
+      ],
+      "required": [
+        "config",
+        "events",
+        "lifecycle",
+        "logger",
+        "provide",
+        "storage"
+      ],
+      "optional": [
+        "code-sandbox",
+        "doctor",
+        "llm",
+        "webui-server"
+      ]
+    }
   }
 }

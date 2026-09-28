@@ -63,7 +63,14 @@ describe('登记', () => {
       expect(tool?.risk, name).toBeUndefined();
       expect(tool?.visibility, name).toBeUndefined();
     }
-    expect(hub.groups).toEqual([expect.objectContaining({ name: 'paper', label: '白纸' })]);
+    expect(hub.groups).toEqual([
+      expect.objectContaining({ name: 'paper', label: '白纸', description: '把任务交给远端代理并取回成品' }),
+      expect.objectContaining({
+        name: 'works',
+        label: '作品',
+        description: '把白纸成品提名到作品页、撤下本房间的作品',
+      }),
+    ]);
   });
 });
 

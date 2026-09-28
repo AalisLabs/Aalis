@@ -1,16 +1,24 @@
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
+import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
 // ===== 配置 =====
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'OpenAI API 密钥' },
+const configSchema = defineConfig({
+  apiKey: {
+    type: 'string',
+    label: 'API Key',
+    required: true,
+    secret: true,
+    onInvalid: 'error',
+    description: 'OpenAI API 密钥',
+  },
   baseUrl: {
     type: 'string',
     label: 'API 地址',
     default: 'https://api.openai.com/v1',
+    onInvalid: 'error',
     description: 'API 端点完整前缀（含版本段）；插件只在其后拼 /embeddings 与 /models',
   },
   model: {
@@ -26,7 +34,7 @@ const configSchema: ConfigSchema = {
     default: 30000,
     description: '单次 embedding 请求超时时间。不设上限时启动探测会把插件激活链整条钉住。',
   },
-};
+});
 
 // ===== 服务实现 =====
 
@@ -93,28 +101,22 @@ export default definePlugin({
   provides: [embedding],
   uses: { config, logger, lifecycle, provide },
   async apply({ config, logger, lifecycle, provide }) {
-    const apiKey = config.apiKey as string;
-    if (!apiKey) {
-      throw missingConfigError('apiKey');
+    const cfg = parseConfig(configSchema, config, logger);
+    if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
+      throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
-
-    const baseUrl = (config.baseUrl as string) ?? 'https://api.openai.com/v1';
-    const model = (config.model as string) ?? 'text-embedding-3-small';
-
-    const timeoutMs = (config.timeoutMs as number) ?? 30000;
-
-    const service = new OpenAIEmbeddingService(baseUrl, model, apiKey, timeoutMs);
+    const service = new OpenAIEmbeddingService(cfg.baseUrl, cfg.model, cfg.apiKey, cfg.timeoutMs);
 
     // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
     try {
       await service.embed('ping', { signal: lifecycle.signal });
-      logger.info(`OpenAI Embedding 已就绪: ${model} @ ${baseUrl}`);
+      logger.info(`OpenAI Embedding 已就绪: ${cfg.model} @ ${cfg.baseUrl}`);
     } catch (err) {
       lifecycle.signal.throwIfAborted();
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`OpenAI Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
+      logger.warn(`OpenAI Embedding 连通性检查失败 (${cfg.baseUrl}, model=${cfg.model}): ${msg}，服务仍将注册`);
     }
 
-    provide(embedding, service, { label: `OpenAI / ${model}` });
+    provide(embedding, service, { label: `OpenAI / ${cfg.model}` });
   },
 });

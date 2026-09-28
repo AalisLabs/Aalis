@@ -23,7 +23,7 @@ import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig, type SchemaField } from '@aalis/schema-config';
 import {
   clearDescriptionCache,
   DESCRIPTION_KINDS,
@@ -42,7 +42,7 @@ const name = '@aalis/plugin-media';
 /** /clear 回执里描述缓存类型的称呼 */
 const DESCRIPTION_KIND_LABELS: Record<DescriptionKind, string> = { image: '图片', video: '视频' };
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   vision: {
     label: '图像识别',
     fields: {
@@ -111,8 +111,10 @@ const configSchema: ConfigSchema = {
       prefer: {
         type: 'select',
         label: '处理后端',
-        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPrefer）。
-        options: [{ label: '自动（按优先级）', value: '' }],
+        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPrefer）；
+        // 静态列表不全，allowCustom 让校验与解析不按它查取值范围。
+        options: [{ label: '自动（按优先级）', value: '' }] as Array<{ label: string; value: string }>,
+        allowCustom: true,
         default: '',
         description: 'Whisper/ASR 与「能识别音频的 LLM」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。',
       },
@@ -230,52 +232,45 @@ const configSchema: ConfigSchema = {
       },
     },
   },
-};
+});
 
-function resolveCfg(raw: Readonly<Record<string, unknown>>): MediaConfigResolved {
-  const vision = (raw.vision ?? {}) as Record<string, unknown>;
-  const audio = (raw.audio ?? {}) as Record<string, unknown>;
-  const video = (raw.video ?? {}) as Record<string, unknown>;
-  const delivery = vision.delivery;
+function resolveCfg(cfg: ConfigOf<typeof configSchema>): MediaConfigResolved {
   return {
     vision: {
-      recognizeOnArrival: vision.recognizeOnArrival !== false,
-      delivery: delivery === 'passthrough' || delivery === 'describe' ? delivery : 'auto',
-      prefer: (vision.prefer as MediaConfigResolved['vision']['prefer']) || undefined,
-      maxTokens: (vision.maxTokens as number) ?? 300,
-      think: vision.think === true,
-      prompt: (vision.prompt as string) || undefined,
-      batchPrompt: (vision.batchPrompt as string) || undefined,
+      recognizeOnArrival: cfg.vision.recognizeOnArrival,
+      delivery: cfg.vision.delivery,
+      prefer: cfg.vision.prefer || undefined,
+      maxTokens: cfg.vision.maxTokens,
+      think: cfg.vision.think,
+      prompt: cfg.vision.prompt || undefined,
+      batchPrompt: cfg.vision.batchPrompt || undefined,
     },
     audio: {
-      mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'passthrough' | 'disabled',
-      prefer: (audio.prefer as string) || undefined,
-      language: (audio.language as string) || undefined,
-      maxTokens: (audio.maxTokens as number) ?? 1024,
-      think: audio.think !== false,
-      prompt: (audio.prompt as string) || undefined,
+      mode: cfg.audio.mode,
+      prefer: cfg.audio.prefer || undefined,
+      language: cfg.audio.language || undefined,
+      maxTokens: cfg.audio.maxTokens,
+      think: cfg.audio.think,
+      prompt: cfg.audio.prompt || undefined,
     },
     video: {
-      mode: ((video.mode as string) ?? 'frames+asr') as MediaConfigResolved['video']['mode'],
-      maxFrames: Math.max(1, (video.maxFrames as number) ?? 5),
-      framesHint: (video.framesHint as string) || undefined,
-      animatedPrompt: (video.animatedPrompt as string) || undefined,
-      framePrefix: (video.framePrefix as string) ?? '[画面] ',
-      audioTrackPrefix: (video.audioTrackPrefix as string) ?? '[音轨] ',
+      mode: cfg.video.mode,
+      maxFrames: Math.max(1, cfg.video.maxFrames),
+      framesHint: cfg.video.framesHint || undefined,
+      animatedPrompt: cfg.video.animatedPrompt || undefined,
+      framePrefix: cfg.video.framePrefix,
+      audioTrackPrefix: cfg.video.audioTrackPrefix,
     },
     animatedImage: {
-      maxFrames: Math.max(1, (((raw.animatedImage ?? {}) as Record<string, unknown>).maxFrames as number) ?? 5),
+      maxFrames: Math.max(1, cfg.animatedImage.maxFrames),
     },
     contextHistory: {
-      enabled: ((raw.contextHistory ?? {}) as Record<string, unknown>).enabled !== false,
-      maxMessages: Math.max(0, Number(((raw.contextHistory ?? {}) as Record<string, unknown>).maxMessages ?? 4)),
+      enabled: cfg.contextHistory.enabled,
+      maxMessages: Math.max(0, cfg.contextHistory.maxMessages),
     },
     senderContext: {
-      enabled: ((raw.senderContext ?? {}) as Record<string, unknown>).enabled !== false,
-      profileMaxChars: Math.max(
-        0,
-        Number(((raw.senderContext ?? {}) as Record<string, unknown>).profileMaxChars ?? 200),
-      ),
+      enabled: cfg.senderContext.enabled,
+      profileMaxChars: Math.max(0, cfg.senderContext.profileMaxChars),
     },
   };
 }
@@ -309,8 +304,8 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const raw = caps.config;
-  const cfg = resolveCfg(raw);
+  const parsed = parseConfig(configSchema, caps.config, caps.logger);
+  const cfg = resolveCfg(parsed);
   const logger = caps.logger;
   setMediaRuntime({ proc: createProcessGateway(caps.proc), storage: createStorageGateway(caps.storage) });
   const svc = new MediaServiceImpl(caps, cfg);
@@ -386,7 +381,7 @@ function run(caps: Caps): void {
   const refreshAudioPrefer = (): void => {
     const group = configSchema.audio;
     if (group && 'fields' in group && group.fields.prefer) {
-      group.fields.prefer.options = [
+      (group.fields.prefer as SchemaField).options = [
         { label: '自动（按优先级）', value: '' },
         ...svc.listProcessors('audio').map(p => ({ label: p.displayName ?? p.name, value: p.name })),
       ];

@@ -28,6 +28,7 @@ export default definePlugin({
     sessionManager,
     storage,
     remoteAgent: optional(remoteAgent),
+    publish: optional(publish),
     gateway: optional(gateway),
     webui: optional(webuiServer),
     doctor: optional(doctor),
@@ -81,6 +82,7 @@ remoteAgentRoomDailyCents: 1000
 | `sendHtml` | boolean | `true` | `paper_send` 能否把单个 HTML 成品作为文件发回 |
 | `sendHtmlMaxMB` | number | `5` | 单个网页的发送上限 |
 | `sendMediaMaxMB` | number | `10` | 图片与视频的发送上限。onebot 出站只把不超过 10 MiB 的媒体内联发出，更大的改交宿主路径，NapCat 在容器里时读不到、发不出 |
+| `worksCredit` | string | `来自群友的点子` | 提名作品时的公开署名，不自动填入房间或个人信息 |
 | `pendingHintHours` | number | `24` | 待交付提示保留时长 |
 | `reconcileMinutes` | number | `60` | 定期检查间隔（最小 10）：对账、补取费用、闲置归档、定期清空 |
 | `taskRetentionDays` | number | `30` | 已结束的任务在账本里保留多久；轮次记录另按代理保留到代理删除为止 |
@@ -153,6 +155,15 @@ plugins:
 - 其余一律拒发并说明原因：压缩包（含工程包）、可执行文件、安装包、脚本、快捷方式、带宏的 Office 文档、SVG 各有一句原因，其他类型给出通用说明。
 - 发出的文件名由宿主按任务名重写：去掉控制字符与格式字符（含双向控制符与零宽字符）、路径分隔符与 `:*?"<>|`，首尾去点和空格，截到 40 字，空了用 `aalis-paper`。附件指向白纸根里宿主命名的文件，远端给的文件名不进入会话历史。
 - 交给网关即标为已交付，结果写「已交给发送队列」，不代表对方已收到。投递失败由平台适配器写一条投递失败记录进会话记忆，之后的回合看得到。同一成品可以重发。
+
+## 作品提名与撤下
+
+`works` 分组提供 `works_nominate` 和 `works_takedown`，需要在会话的 `enabledToolGroups` 中开启。发布服务是可选依赖；未安装时两工具明确返回「作品发布服务不可用」。工具只提交审核，提交成功不代表已经公开。
+
+- `works_nominate`：真人当面发起的回合可以提名本人在本房间白纸上已完成任务的成品。传入任务编号、成品编号列表、标题和简介，可选同一任务的图片作封面。提名复制成品字节，之后白纸清空不影响已交给发布服务的审核副本。
+- `works_takedown`：用作品编号或作品网址撤下本房间提名的作品；允许内部通知回合调用，子会话与没有入站上下文的调用仍拒绝。展示面异常时回执会说明线上副本可能尚未撤掉。
+- 人工审核由审核插件的 `manualReview` 配置控制，默认关闭；提名者身份和 HTML 类型不另设强制人工关卡。自动检查通过才可继续发布；无法判断或检查失败时不发布并说明。开启人工审核时，通过或待人工判断的作品须等待批准。
+- `paper_send` 把文件发回原房间，不经过公开作品审核。
 
 ## 运行驱动
 

@@ -11,7 +11,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 // 会话配置的按房间键：白纸与远端代理的房间设置、召回范围，进同一条继承链。
 //
-// - 平台档读得到这七个键，类型不对的丢弃并告警（它们关系到费用与召回范围，不做宽松转换）；
+// - 平台档读得到这七个键；数字标量按统一配置契约转换，真正不合法的类型与越界值丢弃并告警；
 // - 房间只覆盖其中一个键时，其余照常继承平台档；
 // - 建会话时复制配置（WebUI 的 createSession）不冻结房间专属键，召回范围照常带上；
 // - 会话页取继承值时由服务端推出会话所属平台，并回每个键来自哪一层。
@@ -106,17 +106,17 @@ describe('按房间键进继承链', () => {
     await app.stop();
   });
 
-  it('类型不对的丢弃并告警：远端类型写成字符串、上限为负、召回范围不在三档里', async () => {
+  it('非法类型与越界值丢弃并告警，不给房间继承更宽的配置', async () => {
     const { app, sm, warns } = await setup({
       platformProfiles: [
         {
           platform: 'onebot',
           paperEnabled: 'yes',
-          paperName: 42,
+          paperName: { name: '42' },
           remoteAgentTypes: '<远端代理实例 id>',
           remoteAgentUserDailyCents: -1,
           remoteAgentUserDailyTasks: Number.POSITIVE_INFINITY,
-          remoteAgentRoomDailyCents: '500',
+          remoteAgentRoomDailyCents: true,
           memoryRecallScope: 'x',
         },
       ],
@@ -137,12 +137,39 @@ describe('按房间键进继承链', () => {
     await app.stop();
   });
 
-  it('远端类型数组里的非字符串项被滤掉并告警', async () => {
+  it('数字标量兼容转换；远端类型数组里的对象、布尔成员被滤掉并告警', async () => {
     const { app, sm, warns } = await setup({
-      platformProfiles: [{ platform: 'onebot', remoteAgentTypes: ['<实例甲>', 7, null, '<实例乙>'] }],
+      platformProfiles: [
+        {
+          platform: 'onebot',
+          paperName: 42,
+          remoteAgentRoomDailyCents: '500',
+          remoteAgentTypes: ['<实例甲>', 7, { id: 'bad' }, false, null, '<实例乙>'],
+        },
+      ],
     });
-    expect(sm.getPlatformProfiles().onebot).toEqual({ remoteAgentTypes: ['<实例甲>', '<实例乙>'] });
+    expect(sm.getPlatformProfiles().onebot).toEqual({
+      paperName: '42',
+      remoteAgentRoomDailyCents: 500,
+      remoteAgentTypes: ['<实例甲>', '7', '<实例乙>'],
+    });
     expect(warns.join('\n')).toContain('remoteAgentTypes');
+    await app.stop();
+  });
+
+  it('无效受众条目不能回落成不限受众的平台档', async () => {
+    const { app, sm, warns } = await setup({
+      platformProfiles: [
+        { platform: 'onebot', remoteAgentTypes: ['<基础实例>'] },
+        { platform: 'onebot', audience: 'admins', remoteAgentTypes: ['<不应生效的实例>'] },
+        { platform: 'onebot', audience: true, remoteAgentTypes: ['<也不应生效的实例>'] },
+      ],
+    });
+    expect(sm.getPlatformProfiles().onebot.remoteAgentTypes).toEqual(['<基础实例>']);
+    for (const room of ['onebot:bot:group:g1', 'onebot:bot:private:u1']) {
+      expect(sm.resolveConfig(room, 'onebot').remoteAgentTypes).toEqual(['<基础实例>']);
+    }
+    expect(warns.join('\n')).toContain('audience');
     await app.stop();
   });
 

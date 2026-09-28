@@ -43,3 +43,7 @@ export default definePlugin({
 - 该检查项的探测自带上限，取 5 秒与 `timeoutMs`（下限 1 秒，与服务自身的 clamp 一致）中的小者：doctor 顺序执行各检查项且不设超时，一条网络探测不应拖住整个 `/doctor`
 - 请求失败的错误消息带上 Ollama 响应体里的 `error` 字段：模型没 pull 与端点不存在都是 404，只有响应体能区分（前者是 `model "..." not found, try pulling it first`）
 - `listModels()` 从 `/api/tags` 获取本地已下载的模型，原样返回、不按名字筛 embedding：`model` 是 select 字段、没有自由输入，按名筛会让 `bge-m3` 这类名称不含 `embed` 的合法嵌入模型无法从下拉里选到。因此候选里会混有对话模型，选错模型导致的不可用由上面那条 doctor 检查项报出
+
+## 配置校验
+
+`baseUrl` 的错误类型、非法地址或 URL 内的用户名、密码会使实例进入错误态，启动连通性探测不会发请求。`timeoutMs` 小于 1000 时仍夹到 1000 毫秒，`retries` 仍取整并夹到非负数。

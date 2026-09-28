@@ -39,7 +39,7 @@ import {
   type Services,
   services,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 
 const PLUGIN_NAME = '@aalis/plugin-storage-local';
 
@@ -155,7 +155,7 @@ const INTERNAL_ROOTS: RootEntryConfig[] = [
 
 const INTERNAL_ROOT_NAMES: ReadonlySet<string> = new Set(INTERNAL_ROOTS.map(r => r.name));
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   roots: {
     type: 'array',
     label: '存储根目录',
@@ -165,15 +165,20 @@ const configSchema: ConfigSchema = {
       'browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，' +
       '其它根仅作为工具/agent 寻址使用）。',
     default: DEFAULT_ROOTS,
+    onInvalid: 'error',
     items: {
       name: {
         type: 'string',
         label: '根名 (URI scheme)',
+        required: true,
+        onInvalid: 'error',
         description: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share',
       },
       path: {
         type: 'string',
         label: '本机路径',
+        required: true,
+        onInvalid: 'error',
         description: '可绝对，亦可相对项目根；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
       },
       label: { type: 'string', label: '展示名称', default: '' },
@@ -187,14 +192,15 @@ const configSchema: ConfigSchema = {
         type: 'boolean',
         label: 'WebUI 浏览器可见 (hint)',
         default: false,
+        onInvalid: 'error',
         description: 'hint：当前实现下仅当 webui-server.fileRoot 指向本根时此开关才生效',
       },
-      readable: { type: 'boolean', label: '允许读', default: true },
-      writable: { type: 'boolean', label: '允许写', default: false },
-      deletable: { type: 'boolean', label: '允许删除', default: false },
+      readable: { type: 'boolean', label: '允许读', default: true, onInvalid: 'error' },
+      writable: { type: 'boolean', label: '允许写', default: false, onInvalid: 'error' },
+      deletable: { type: 'boolean', label: '允许删除', default: false, onInvalid: 'error' },
     },
   },
-};
+});
 
 interface RootEntryConfig {
   name: string;
@@ -756,15 +762,15 @@ async function openRoot(item: RootEntryConfig, logger: Logger): Promise<RootDefi
         (isHostScope ? '  ⚠ 该根接近/等于文件系统根，agent 通过此根可访问宿主机大量文件' : ''),
     );
     return root;
-  } catch (err) {
-    logger.warn(`root 注册失败 ${name}: ${err instanceof Error ? err.message : String(err)}`);
+  } catch {
+    logger.warn(`root ${name} 注册失败，请检查 path 与目录权限`);
     return undefined;
   }
 }
 
-/** 从 raw config.roots 构造用户根。空/异常时回退到 DEFAULT_ROOTS；与内部根同名的项跳过。 */
-async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefinition[]> {
-  let entries: RootEntryConfig[] = Array.isArray(rawRoots) ? (rawRoots as RootEntryConfig[]).slice() : [];
+/** 从已校验的 roots 构造用户根；空数组沿用内置根，与内部根同名的项跳过。 */
+async function buildRoots(parsedRoots: RootEntryConfig[], logger: Logger): Promise<RootDefinition[]> {
+  let entries = parsedRoots.slice();
   if (entries.length === 0) {
     logger.warn('storage roots 配置为空，将注册默认 5 个内置根（workspace/data/tmp/pluginData/logs）');
     entries = DEFAULT_ROOTS.slice();
@@ -773,15 +779,14 @@ async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefini
   const out: RootDefinition[] = [];
   const seen = new Set<string>();
   for (const item of entries) {
-    if (!item || typeof item !== 'object') continue;
-    const name = String(item.name || '').trim();
-    const path = String(item.path ?? '').trim();
+    const name = item.name.trim();
+    const path = item.path.trim();
     if (!name || !path) {
-      logger.warn(`roots 跳过无效项 (name/path 为空): ${JSON.stringify(item)}`);
+      logger.warn('roots 跳过无效项：name/path 为空');
       continue;
     }
     if (!ROOT_NAME_RE.test(name)) {
-      logger.warn(`roots 跳过非法根名 ${name}（仅允许字母/数字/下划线/连字符，且需以字母开头）`);
+      logger.warn('roots 跳过非法根名（仅允许字母/数字/下划线/连字符，且需以字母开头）');
       continue;
     }
     if (INTERNAL_ROOT_NAMES.has(name)) {
@@ -810,7 +815,8 @@ export default definePlugin({
   uses,
   async apply(caps) {
     const logger = caps.logger.child('storage');
-    const roots = await buildRoots(caps.config.roots, logger);
+    const cfg = parseConfig(configSchema, caps.config, logger);
+    const roots = await buildRoots(cfg.roots, logger);
     if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
     for (const item of INTERNAL_ROOTS) {
       const root = await openRoot(item, logger);

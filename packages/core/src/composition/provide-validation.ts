@@ -23,10 +23,10 @@ import type { Logger } from '../infrastructure/logger.js';
  * 失败模式：均为 warn（提示但不阻断）。
  */
 export function validateProvide(
-  subject: { ctxId: string; name: string; entryId: string; explicitEntryId: boolean },
+  subject: { ctxId: string; owner: symbol; name: string; entryId: string; explicitEntryId: boolean },
   deps: { services: ServiceContainer; logger: Logger },
 ): void {
-  const { ctxId, name, entryId, explicitEntryId } = subject;
+  const { ctxId, owner, name, entryId, explicitEntryId } = subject;
   const { services, logger } = deps;
 
   if (explicitEntryId && entryId !== ctxId && !entryId.startsWith(`${ctxId}/`)) {
@@ -37,7 +37,7 @@ export function validateProvide(
     );
   }
 
-  if (!explicitEntryId && services.hasByContext(name, ctxId)) {
+  if (!explicitEntryId && services.hasByContext(name, ctxId, owner)) {
     logger.warn(
       `服务 "${name}" 已被当前上下文 "${ctxId}" provide 过一次。容器允许多 entry，` +
         `但下游按 contextId 路由时仅能命中首个，后续注册将静默失效。` +

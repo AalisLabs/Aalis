@@ -1,20 +1,24 @@
-# Pre-push 守门：本地完整复现 CI 的检查项。
+# Pre-push 守门：本地完整复现 CI 的检查项，另加 core 覆盖率门槛。
 #
-# 跑的项目 = .github/workflows/ci.yml 中 build / unit-tests / biome / knip
+# 跑的项目 = .github/workflows/ci.yml 中 build / unit-tests / biome / knip，
+# 外加 coverage:core（只跑 test/core，四项 100%；CI 不跑这一项）。
 # 任何一项失败立即阻止 push（exit 非零）。
 #
 # 紧急绕过：git push --no-verify （仅在确认 CI 会自动 fail-safe 时使用）
 
-echo "[pre-push] 1/4 构建 ..."
+echo "[pre-push] 1/5 构建 ..."
 pnpm -r build || exit 1
 
-echo "[pre-push] 2/4 单元测试 ..."
+echo "[pre-push] 2/5 单元测试 ..."
 pnpm test || exit 1
 
-echo "[pre-push] 3/4 Biome ..."
+echo "[pre-push] 3/5 core 覆盖率 ..."
+pnpm run coverage:core || exit 1
+
+echo "[pre-push] 4/5 Biome ..."
 pnpm exec biome check . || exit 1
 
-echo "[pre-push] 4/4 Knip ..."
+echo "[pre-push] 5/5 Knip ..."
 pnpm exec knip --no-progress || exit 1
 
 echo "[pre-push] OK"

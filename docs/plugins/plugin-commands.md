@@ -102,3 +102,7 @@ export default definePlugin({
 /clear -t vector -t image
 /clear all --type user-profile
 ```
+
+## 配置校验
+
+`commandPrefix` 可为空字符串以触发纯关键词指令；显式无效类型会在注册指令前报配置错误，避免悄悄改用 `/`。

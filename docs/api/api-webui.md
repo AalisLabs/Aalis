@@ -43,7 +43,7 @@ interface BoundWebui extends ServiceRef<WebUIService> {
 
 本包向 `PluginMeta` 注入 `extends?: ExtendDeclaration`（core 不读，仅 WebUI 展示）。`subsystem` 是 `PluginDefinition` 上的展示字段，写在 `definePlugin({ subsystem })`。
 
-向 `@aalis/schema-config` 的 `SchemaField` 注入 `secret` / `dynamicOptions` / `allowCustom`。
+向 `@aalis/schema-config` 的 `SchemaField` 注入 `secret`。`dynamicOptions` / `allowCustom` 影响取值判定，由 `@aalis/schema-config` 自己声明。
 
 页面与页面动作**不是**静态模块字段：在 `apply` 里经 `webui.registerPage` / `webui.registerAction` 登记。
 
@@ -69,7 +69,7 @@ export default definePlugin({
   uses: { webui: optional(webuiServer) },
   apply({ webui }) {
     webui.registerPage(page);
-    webui.registerAction('stats', async () => ({ total: 42 }));
+    webui.registerAction('stats', async () => ({ value: 42 }));
   },
 });
 ```
@@ -134,6 +134,14 @@ interface WebuiFilePayload {
 
 页面动作只回 JSON，不会被浏览器当页面渲染；插件不能登记自己的 HTTP 文件路由，需要让 owner 取文件时用这种单元格。
 
+### 图片单元格与刷新
+
+列写 `render: 'image'` 和 `method` 时，挂载后以整行为参数调用动作，接收相同的 `WebuiFilePayload` 并在表格内显示缩略图。只接受 PNG、JPEG、GIF、WebP，并核对文件签名；HTML 和 SVG 不在 WebUI 的源下内联执行。替代文字取该列的值；卸载或更新时释放对象 URL。
+
+`stat` 的动作返回 `{ value: number | string }`，`markdown` 的动作返回 `{ content: string }`。表格操作成功会刷新整页的数据组件，使统计、说明和预览链接与表格保持一致。
+
+页面设 `refresh: 30` 可每 30 秒刷新当前页的数据组件；切页与卸载后定时器关闭，表单未保存的编辑不被重置。页面级刷新覆盖统计、说明、信息和当前可见表格，不必在每张表重复声明。表格自己的 `refresh` 仍只刷新本表。
+
 ### 示例：表单复用 ConfigSchema
 
 ```ts
@@ -155,6 +163,7 @@ interface WebuiPage {
   icon?: string;
   order?: number;
   renderer?: string;
+  refresh?: number; // 全页刷新间隔（秒），0/缺省关闭
   content?: WebuiComponent[];
 }
 ```
@@ -173,5 +182,5 @@ interface WebuiPage {
 
 ## 相关
 
-- ConfigSchema 来自 `@aalis/schema-config`（本包经 declaration merging 向其 `SchemaField` 注入 `secret` / `dynamicOptions` / `allowCustom` 等表单属性）
+- ConfigSchema 来自 `@aalis/schema-config`（本包经 declaration merging 向其 `SchemaField` 注入 `secret`）
 - 事件 `'tool:execute'` 与 `'token:usage'` 都被 webui-server 转 WebSocket 推送给前端

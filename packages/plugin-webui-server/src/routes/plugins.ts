@@ -9,8 +9,10 @@ import type { AppService, Logger, PluginManagerService, PluginState, ServiceRef 
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
-  cloneConfigObject,
+  type ConfigSchema,
+  deepMergeDefaults,
   defaultsFrom,
+  parseConfig,
   removeExtraFields,
   validateConfig,
 } from '@aalis/schema-config';
@@ -115,6 +117,45 @@ export function registerPluginRoutes(
     return doc;
   };
 
+  /**
+   * 把提交的插件配置合进基线（改配置时是配置文档里的原配置，建实例时是空对象），改配置与建实例同一套：
+   * 提交里的顶层键整键替换基线的同名键（分组、数组整块替换），没提交的保持原值；值为 null 的顶层键视为删除，
+   * 有默认值的回到默认值、没有的不写（前端清空数字、llm-ref 选「继承默认」时发 null，JSON 丢掉的键只是没提交）。
+   * 之后按 schema 默认值深合并补齐缺的键，只写了半块的分组也补齐其余默认子键。基线的键在前、缺的默认键追加到末尾，
+   * 写回时保留配置文件里原有的键序。
+   * 宿主裁剪且有 schema 时再裁掉未知键并 warn（与宿主的配置同步同一政策，host-config 的 trimUnknownFields）：
+   * 本次提交里的记 ignored，基线里原有、本次没提交的记 removed，由调用方回给请求方，不静默吞掉却回复成功
+   */
+  const mergeSubmittedConfig = (
+    doc: HostConfig,
+    instanceId: string,
+    schema: ConfigSchema | undefined,
+    base: Record<string, unknown>,
+    submitted: Record<string, unknown>,
+  ): { merged: Record<string, unknown>; ignored: string[]; removed: string[] } => {
+    const defaults = defaultsFrom(schema);
+    const replaced: Record<string, unknown> = { ...base, ...submitted };
+    for (const [key, value] of Object.entries(submitted)) {
+      if (value !== null) continue;
+      if (Object.hasOwn(defaults, key)) replaced[key] = defaults[key];
+      else delete replaced[key];
+    }
+    let merged = deepMergeDefaults(defaults, replaced);
+    const ignored: string[] = [];
+    const removed: string[] = [];
+    if (doc.trimUnknownFields !== false && schema && Object.keys(schema).length > 0) {
+      const shape = schema as Record<string, unknown>;
+      for (const [key, value] of Object.entries(merged)) {
+        removeExtraFields({ [key]: value }, shape, Object.hasOwn(submitted, key) ? ignored : removed);
+      }
+      merged = removeExtraFields(merged, shape);
+      if (ignored.length + removed.length > 0) {
+        caps.logger?.warn(`配置同步：${instanceId} 裁掉 schema 外字段 [${[...ignored, ...removed].join(', ')}]`);
+      }
+    }
+    return { merged, ignored, removed };
+  };
+
   // 获取插件列表及状态
   expressApp.get('/api/plugins', gate(), (_req, res) => {
     const app = getApp();
@@ -152,9 +193,6 @@ export function registerPluginRoutes(
     }
     const plugins = pm.getStatus().map(p => {
       const entry = pm.getPlugin(p.instanceId);
-      const schema = entry?.definition?.configSchema as Record<string, unknown> | undefined;
-      // 列表给概览用：schema.secret 字段换成固定掩码。编辑器走 GET /api/plugins/:name/config，那条不脱敏。
-      const config = maskSecretFields(cloneConfigObject((entry?.config ?? {}) as Record<string, unknown>), schema);
       return {
         name: p.name,
         instanceId: p.instanceId,
@@ -172,8 +210,9 @@ export function registerPluginRoutes(
         reusable: p.reusable ?? false,
         // extends / config / configSchema / defaultConfig 非内核状态摘要字段
         // （getStatus 只含内核事实）：从 entry.config / entry.definition 补齐给前端。
+        // 配置按原值给出：前端据它建编辑草稿、整份保存，secret 字段只在显示时遮蔽
         extends: entry?.definition?.extends,
-        config,
+        config: entry?.config ?? {},
         configSchema: entry?.definition?.configSchema,
         defaultConfig: defaultsFrom(entry?.definition?.configSchema),
         error: p.error,
@@ -278,29 +317,28 @@ export function registerPluginRoutes(
     // 所以不能按键报错：其余键一律不应用，但把真有改动的点名回给调用方——不静默吞掉却回复「已保存」。
     const allowed = Object.keys(CORE_CONFIG_SCHEMA);
     const current = doc.getAll() as Record<string, unknown>;
+    const defaultOf = (k: string) => (CORE_CONFIG_SCHEMA[k] as { default?: unknown } | undefined)?.default;
     // 文档里没写的核心键按 schema 默认值比较：内置前端把默认值回填进草稿后整份回传，不能据此判成改动（否则只改
     // 名字也会把默认值写进文件并触发重启）
-    const currentOf = (k: string) =>
-      current[k] ?? (CORE_CONFIG_SCHEMA[k] as { default?: unknown } | undefined)?.default;
+    const currentOf = (k: string) => current[k] ?? defaultOf(k);
     const differs = (k: string) => !isDeepStrictEqual(updates[k], currentOf(k));
+    // 核心键提交 null 表示清空（前端清空数字框时发 null）：回到默认值，并从文档里删掉这个键，不把默认值写死进文件
+    const submittedOf = (k: string) => (updates[k] === null ? defaultOf(k) : updates[k]);
     const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
-    const changed = allowed.filter(k => k in updates && differs(k));
-    // 与插件配置路径同一把尺子：类型不符的值（如 name 传数字）不落盘。select 的取值范围 validateConfig
-    // 刻意不管（它看不见宿主属性 allowCustom），核心字段没有 allowCustom，在这里按 options 补校验。
-    const picked = Object.fromEntries(changed.map(k => [k, updates[k]]));
+    const changed = allowed.filter(k => k in updates && !isDeepStrictEqual(submittedOf(k), currentOf(k)));
+    // 与插件配置路径同一把尺子：类型不符、越界或不在选项里的值（如 logLevel 传 nope）不落盘。
+    const picked = Object.fromEntries(changed.map(k => [k, submittedOf(k)]));
     const invalid = validateConfig(CORE_CONFIG_SCHEMA, picked).map(i => `${i.path}: ${i.message}`);
-    for (const k of changed) {
-      const field = CORE_CONFIG_SCHEMA[k] as { type?: string; options?: Array<{ value: unknown }> };
-      if (field.type === 'select' && field.options && !field.options.some(o => o.value === updates[k])) {
-        invalid.push(`${k}: 取值不在可选范围`);
-      }
-    }
     if (invalid.length > 0) {
       res.status(400).json({ error: invalid.join('; ') });
       return;
     }
+    // 写进文档的是按词汇换算后的值（加了引号的数字转成数字、写成数字的名称转成字符串）：runtime 启动时
+    // 直接读这几个键，不经 parseConfig
+    const values = parseConfig(CORE_CONFIG_SCHEMA, picked);
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
-    for (const key of changed) doc.set(key, updates[key]);
+    // 提交 null 的键置为 undefined，写文件时省略
+    for (const key of changed) doc.set(key, updates[key] === null ? undefined : values[key]);
     // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档（appName），保存即生效。
     // 装有人设时聊天显示人设名，应用名称只在仪表盘上看得到
     const restartNeeded = changed.some(k => k === 'logLevel' || k === 'slowThresholdMs');
@@ -335,8 +373,7 @@ export function registerPluginRoutes(
     res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
   });
 
-  // 获取单个插件的原始配置（未脱敏，给编辑器回写用）。
-  // 列表 GET /api/plugins 已把 schema.secret 换成固定掩码；本接口必须是原文，否则保存会把掩码写回。
+  // 获取单个插件在配置文档里的配置
   expressApp.get('/api/plugins/:name/config', gate(), (req, res) => {
     const pluginName = req.params.name;
     const doc = docOr503(res);
@@ -353,7 +390,7 @@ export function registerPluginRoutes(
   expressApp.put('/api/plugins/:name/config', gate(), async (req, res) => {
     const pluginName = req.params.name;
     const newConfig = req.body?.config;
-    if (!newConfig || typeof newConfig !== 'object') {
+    if (!newConfig || typeof newConfig !== 'object' || Array.isArray(newConfig)) {
       res.status(400).json({ error: 'config 字段必须是对象' });
       return;
     }
@@ -366,45 +403,28 @@ export function registerPluginRoutes(
     const doc = docOr503(res);
     if (!doc) return;
 
-    // 补默认值再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
-    // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
-    // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
+    // 合进原配置再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
+    // entry.config = newConfig 直接顶掉）。基线取配置文档里的原配置而非裸默认值：defaultsFrom 只收录声明了
+    // default 的键，而 apiKey / accessToken 这类 secret 多数**没有** default（deepseek、embedding-openai、
+    // llm-openai、serper、onebot 皆是），以裸默认值打底时请求里没带 apiKey，整体替换后用户的密钥就从内存态与
+    // yaml 一起消失。叠上原配置后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式提交。
     const entry = pm.getPlugin(pluginName);
     const schema = entry?.definition?.configSchema;
-    const defaults = defaultsFrom(schema);
-    // 基线取「默认值叠已存值」而非裸默认值：defaultsFrom 只收录声明了 default 的键，
-    // 而 apiKey / accessToken 这类 secret 多数**没有** default（deepseek、embedding-openai、
-    // llm-openai、serper、onebot 皆是）。用裸 defaults 打底时，请求里没带 apiKey 就等于
-    // merged 里根本没有这个键，整体替换后用户的密钥从内存态与 yaml 一起消失。
-    // 叠上已存值后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式传空串。
     let docConfig: Record<string, unknown>;
     let stored: Record<string, unknown>;
     let merged: Record<string, unknown>;
-    const ignored: string[] = [];
-    const removed: string[] = [];
+    let ignored: string[];
+    let removed: string[];
     try {
       docConfig = doc.getPluginConfig(pluginName);
-      // 先铺文档里的原配置、缺的默认键追加到末尾：写回时保留配置文件里原有的键序
-      stored = { ...docConfig };
-      for (const [key, value] of Object.entries(defaults)) {
-        if (!Object.hasOwn(stored, key)) stored[key] = value;
-      }
-      const submitted = newConfig as Record<string, unknown>;
-      merged = { ...stored, ...submitted };
-      // 与宿主的配置同步同一政策（host-config 的 trimUnknownFields）：宿主裁剪且有 schema 时裁掉未知键并 warn，
-      // 避免 WebUI 把手滑字段写进 stored，而 YAML watch 路径却会裁掉；宿主保留未知字段时这里也不裁。
-      // 被裁的字段按来源回给调用方，不静默吞掉却回复「已更新」：本次提交里的记 ignored（与 PUT /api/config
-      // 同一口径）；文档里原有、本次没提交的不是用户这次写的，随整份写回从配置文件删掉，记 removed
-      if (doc.trimUnknownFields !== false && schema && Object.keys(schema).length > 0) {
-        const shape = schema as Record<string, unknown>;
-        for (const [key, value] of Object.entries(merged)) {
-          removeExtraFields({ [key]: value }, shape, Object.hasOwn(submitted, key) ? ignored : removed);
-        }
-        merged = removeExtraFields(merged, shape);
-        if (ignored.length + removed.length > 0) {
-          caps.logger?.warn(`配置同步：${pluginName} 裁掉 schema 外字段 [${[...ignored, ...removed].join(', ')}]`);
-        }
-      }
+      stored = deepMergeDefaults(defaultsFrom(schema), docConfig);
+      ({ merged, ignored, removed } = mergeSubmittedConfig(
+        doc,
+        pluginName,
+        schema,
+        docConfig,
+        newConfig as Record<string, unknown>,
+      ));
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
@@ -418,10 +438,21 @@ export function registerPluginRoutes(
     // 的 args 数组形态）的插件会在 WebUI 永久存不了任何字段；启动侧 config-sync
     // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
     // 正常中间态。
-    const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
-    const issues = validateConfig(schema, merged).filter(
-      i => i.kind === 'invalid' && !preExisting.has(`${i.path}|${i.message}`),
-    );
+    // 存量按「去掉下标的路径 + 原因」计数，新配置里同类问题的条数超出存量才算新增：list / multiselect /
+    // 数组删掉前面的元素后，存量坏元素的下标会前移，按原路径比会把它误判成新增
+    const issueKey = (i: { path: string; message: string }) => `${i.path.replace(/\[\d+\]/g, '[]')}|${i.message}`;
+    const preExisting = new Map<string, number>();
+    for (const i of validateConfig(schema, stored)) {
+      const key = issueKey(i);
+      preExisting.set(key, (preExisting.get(key) ?? 0) + 1);
+    }
+    const issues = validateConfig(schema, merged).filter(i => {
+      if (i.kind !== 'invalid') return false;
+      const key = issueKey(i);
+      const left = preExisting.get(key) ?? 0;
+      preExisting.set(key, left - 1);
+      return left <= 0;
+    });
     if (issues.length > 0) {
       res.status(400).json({
         error: `配置校验未通过：${issues.map(i => `${i.path}: ${i.message}`).join('；')}`,
@@ -574,6 +605,10 @@ export function registerPluginRoutes(
       res.status(400).json({ error: 'suffix 只能包含字母、数字、下划线和连字符' });
       return;
     }
+    if (typeof config !== 'object' || Array.isArray(config)) {
+      res.status(400).json({ error: 'config 字段必须是对象' });
+      return;
+    }
     const pm = getPluginMgr();
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
@@ -582,7 +617,7 @@ export function registerPluginRoutes(
     const doc = docOr503(res);
     if (!doc) return;
     // 实例创建编排（配置文件编排属管理面,内核只出 register 机制）：
-    // 查同名 module → reusable/查重校验 → 合并默认配置写入 → register 激活。
+    // 查同名 module → reusable/查重校验 → 合并默认配置、裁剪与校验 → 写入 → register 激活。
     const sourceModule = pm
       .getStatus()
       .map(p => pm.getPlugin(p.instanceId)?.definition)
@@ -600,7 +635,25 @@ export function registerPluginRoutes(
       res.status(400).json({ error: `无法创建实例："${instanceId}" 已存在` });
       return;
     }
-    const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
+    // 与改配置同一套合并与裁剪，基线是空对象。校验不分存量：新实例没有历史配置，类型不符的值一律拒绝，
+    // missing 照样放行（半成品配置是配到一半的正常中间态）
+    const schema = sourceModule.configSchema;
+    const { merged: mergedConfig, ignored } = mergeSubmittedConfig(
+      doc,
+      instanceId,
+      schema,
+      {},
+      config as Record<string, unknown>,
+    );
+    const issues = validateConfig(schema, mergedConfig).filter(i => i.kind === 'invalid');
+    if (issues.length > 0) {
+      res.status(400).json({
+        error: `配置校验未通过：${issues.map(i => `${i.path}: ${i.message}`).join('；')}`,
+        issues,
+      });
+      return;
+    }
+    const note = ignored.length > 0 ? `（已忽略未声明的配置字段: ${ignored.join(', ')}）` : '';
     let registered: boolean;
     try {
       doc.setPluginConfig(instanceId, mergedConfig);
@@ -630,10 +683,10 @@ export function registerPluginRoutes(
         : notYetActive(after?.state);
     if (!(await saveAfterApply(doc, res, 'reload', failure ?? aside))) return;
     if (failure !== undefined) {
-      res.status(500).json({ error: `${failure}；配置已写入配置文件` });
+      res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
       return;
     }
-    res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}${aside ? `；${aside}` : ''}` });
+    res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}${note}${aside ? `；${aside}` : ''}`, ignored });
   });
 
   // 删除插件多实例
@@ -692,45 +745,4 @@ export function registerPluginRoutes(
       res.status(isConfigSaveRefused(err) ? 409 : 500).json({ error: errorMessage(err) });
     }
   });
-}
-
-/** 列表 payload 用的固定掩码。与 PUT 响应「不回显密钥」同一政策：概览面看不到明文。 */
-const SECRET_MASK = '••••••';
-
-/**
- * 把 schema.secret === true 的字段换成固定掩码。入参须已是拷贝——就地改，避免写穿现场 config。
- * 分组递归；数组元素若是对象则按 items 再走一遍。缺席的键不补掩码。
- */
-function maskSecretFields(
-  config: Record<string, unknown>,
-  schema: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!schema) return config;
-  for (const [key, raw] of Object.entries(schema)) {
-    if (!raw || typeof raw !== 'object') continue;
-    const def = raw as Record<string, unknown>;
-    if (def.secret === true) {
-      if (Object.hasOwn(config, key)) config[key] = SECRET_MASK;
-      continue;
-    }
-    const nested = config[key];
-    if (
-      def.fields &&
-      typeof def.fields === 'object' &&
-      nested &&
-      typeof nested === 'object' &&
-      !Array.isArray(nested)
-    ) {
-      maskSecretFields(nested as Record<string, unknown>, def.fields as Record<string, unknown>);
-      continue;
-    }
-    if (def.type === 'array' && Array.isArray(nested) && def.items && typeof def.items === 'object') {
-      for (const item of nested) {
-        if (item && typeof item === 'object' && !Array.isArray(item)) {
-          maskSecretFields(item as Record<string, unknown>, def.items as Record<string, unknown>);
-        }
-      }
-    }
-  }
-  return config;
 }

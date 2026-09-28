@@ -259,7 +259,7 @@ function successNote(r: unknown): string | undefined {
   return ok === true && typeof message === 'string' && message ? message : undefined;
 }
 
-function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent; pluginName: string; refreshTick: number }) {
+function DynTable({ comp, pluginName, refreshTick, onRefresh }: { comp: WebuiTableComponent; pluginName: string; refreshTick: number; onRefresh: () => void }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
@@ -306,7 +306,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
     if (isDetail) {
       setDetail(result);
     } else {
-      fetchData();
+      onRefresh();
     }
   };
 
@@ -646,7 +646,7 @@ function DynTabs({ comp, pluginName, refreshTick, onRefresh }: { comp: WebuiTabs
 function DynamicComponent({ component, pluginName, refreshTick, onRefresh }: { component: WebuiComponent; pluginName: string; refreshTick: number; onRefresh: () => void }) {
   switch (component.type) {
     case 'stat': return <DynStat comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
-    case 'table': return <DynTable comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
+    case 'table': return <DynTable comp={component} pluginName={pluginName} refreshTick={refreshTick} onRefresh={onRefresh} />;
     case 'form': return <DynForm comp={component} pluginName={pluginName} />;
     case 'actions': return <DynActions comp={component} pluginName={pluginName} onRefresh={onRefresh} />;
     case 'info': return <DynInfo comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
@@ -660,6 +660,12 @@ function DynamicComponent({ component, pluginName, refreshTick, onRefresh }: { c
 export function DynamicPage({ page }: { page: WebuiPageDef }) {
   const [refreshTick, setRefreshTick] = useState(0);
   const bump = useCallback(() => setRefreshTick(t => t + 1), []);
+
+  useEffect(() => {
+    if (!page.refresh || !Number.isFinite(page.refresh) || page.refresh <= 0) return;
+    const timer = setInterval(bump, page.refresh * 1000);
+    return () => clearInterval(timer);
+  }, [page.plugin, page.key, page.refresh, bump]);
 
   // 监听 WS 推送：当某插件后端发生需要前端同步的事件（如 /doctor 命令完成后 plugin-doctor 广播）
   // 自动 bump 当前页（如 pluginName 匹配或缺省）。其它页面不显示故无副作用。

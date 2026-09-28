@@ -3,18 +3,18 @@ import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive } from '@aalis/api-message-archive';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { buildIncomingContent, getMessageName, WellKnownKinds } from '@aalis/schema-message';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   debugLogs: {
     type: 'boolean',
     label: '归档调试日志',
     default: true,
     description: '记录图片解释完成和消息写入记忆等调试日志。',
   },
-};
+});
 
 /** 从消息文本中抽取 @提及的用户 ID 列表（平台无关：依赖各 adapter 输出统一的 <at id="X"> 标签） */
 function extractMentions(text: string): string[] {
@@ -41,13 +41,12 @@ export default definePlugin({
   provides: [messageArchive],
   uses,
   apply(caps) {
-    caps.provide(messageArchive, createArchiveService(caps));
+    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    caps.provide(messageArchive, createArchiveService(caps, cfg.debugLogs));
   },
 });
 
-function createArchiveService({ memory, media, events, logger, config }: Caps): MessageArchiveService {
-  const debugLogs = config.debugLogs !== false;
-
+function createArchiveService({ memory, media, events, logger }: Caps, debugLogs: boolean): MessageArchiveService {
   // 不缓存 memory 引用，每次调用现取：一次激活内胜者也可能换人（偏好变更、更高优先级的
   // 提供者登场），ServiceRef 的契约就是每次解析当前值。多一次查表的开销可忽。
   return {

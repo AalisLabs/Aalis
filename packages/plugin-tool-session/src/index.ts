@@ -10,13 +10,13 @@ import {
 import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 
 // ===== 插件元数据与能力声明 =====
 
-const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true },
+const configSchema = defineConfig({
+  enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true, onInvalid: 'error' },
   maxLimit: {
     type: 'number',
     label: '单次最多读取条数',
@@ -33,6 +33,7 @@ const configSchema: ConfigSchema = {
     type: 'select',
     label: '允许读取范围',
     default: 'platform',
+    onInvalid: 'error',
     options: [
       { label: '仅当前会话', value: 'current' },
       { label: '同平台会话', value: 'platform' },
@@ -46,7 +47,7 @@ const configSchema: ConfigSchema = {
     default: 0,
     description: '返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
   },
-};
+});
 
 const uses = {
   tools: optional(tools),
@@ -63,14 +64,7 @@ type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
 
 type HistoryScope = 'current' | 'platform' | 'all';
 
-interface PluginConfig {
-  enabled: boolean;
-  maxLimit: number;
-  defaultLimit: number;
-  scope: HistoryScope;
-  includeArchivedDefault: boolean;
-  perMessageMaxChars: number;
-}
+type PluginConfig = ConfigOf<typeof configSchema>;
 
 type SessionHistoryResult = Extract<SessionHistoryReadResult, { ok: true }>;
 
@@ -147,21 +141,6 @@ export function resolveTimeRange(
   }
 
   return null;
-}
-
-function resolveConfig(raw: Readonly<Record<string, unknown>>): PluginConfig {
-  const scopeRaw = raw.scope;
-  const scope = scopeRaw === 'current' || scopeRaw === 'all' ? scopeRaw : 'platform';
-  const maxLimit = Math.max(1, Math.min(1000, Number(raw.maxLimit) || 100));
-  const defaultLimitRaw = Math.max(1, Math.floor(Number(raw.defaultLimit) || 20));
-  return {
-    enabled: raw.enabled !== false,
-    maxLimit,
-    defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-    scope,
-    includeArchivedDefault: raw.includeArchivedDefault === true,
-    perMessageMaxChars: Math.max(0, Number(raw.perMessageMaxChars) || 0),
-  };
 }
 
 function parsePlatform(sessionId: string): string {
@@ -437,7 +416,17 @@ export default definePlugin({
   provides: [sessionHistory],
   uses,
   apply(caps) {
-    const cfg = resolveConfig(caps.config);
+    const parsed = parseConfig(configSchema, caps.config, caps.logger);
+    const maxLimit = Math.max(1, Math.min(1000, parsed.maxLimit || configSchema.maxLimit.default));
+    const cfg: PluginConfig = {
+      ...parsed,
+      maxLimit,
+      defaultLimit: Math.min(
+        Math.max(1, Math.floor(parsed.defaultLimit || configSchema.defaultLimit.default)),
+        maxLimit,
+      ),
+      perMessageMaxChars: Math.max(0, parsed.perMessageMaxChars),
+    };
     if (!cfg.enabled) return;
 
     const historyService = createSessionHistoryService(caps, cfg);

@@ -9,9 +9,9 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import {
   AttachmentRefKind,
   formatAttachmentRef,
@@ -40,33 +40,22 @@ import { OneBotV11 } from './v11.js';
 /**
  * 从原始配置对象中解析出 forward 子配置。
  */
-function parseForwardConfig(raw: Readonly<Record<string, unknown>>): ForwardConfig {
-  const fwdRaw = (raw.forward ?? {}) as Record<string, unknown>;
+function parseForwardConfig(fwdRaw: ConfigOf<typeof configSchema>['forward']): ForwardConfig {
   return {
-    enabled: fwdRaw.enabled !== false,
-    maxDepth: typeof fwdRaw.maxDepth === 'number' ? Math.max(1, Math.floor(fwdRaw.maxDepth)) : 3,
-    maxNodesPerLevel:
-      typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
-    imageRecognition: fwdRaw.imageRecognition !== false,
-    imageRecognitionConcurrency:
-      typeof fwdRaw.imageRecognitionConcurrency === 'number'
-        ? Math.max(1, Math.floor(fwdRaw.imageRecognitionConcurrency))
-        : 8,
-    recognitionMaxItems:
-      typeof fwdRaw.recognitionMaxItems === 'number' ? Math.max(0, Math.floor(fwdRaw.recognitionMaxItems)) : 32,
-    summarize: fwdRaw.summarize !== false,
+    enabled: fwdRaw.enabled,
+    maxDepth: Math.max(1, Math.floor(fwdRaw.maxDepth)),
+    maxNodesPerLevel: Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)),
+    imageRecognition: fwdRaw.imageRecognition,
+    imageRecognitionConcurrency: Math.max(1, Math.floor(fwdRaw.imageRecognitionConcurrency)),
+    recognitionMaxItems: Math.max(0, Math.floor(fwdRaw.recognitionMaxItems)),
+    summarize: fwdRaw.summarize,
     summaryLLM:
-      fwdRaw.summaryLLM &&
-      typeof fwdRaw.summaryLLM === 'object' &&
-      (fwdRaw.summaryLLM as { provider?: unknown }).provider &&
-      (fwdRaw.summaryLLM as { model?: unknown }).model
-        ? (fwdRaw.summaryLLM as { provider: string; model: string })
+      fwdRaw.summaryLLM?.provider && fwdRaw.summaryLLM.model
+        ? { provider: fwdRaw.summaryLLM.provider, model: fwdRaw.summaryLLM.model }
         : undefined,
-    summaryMaxChars:
-      typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 600,
-    summaryInputLimit:
-      typeof fwdRaw.summaryInputLimit === 'number' ? Math.max(0, Math.floor(fwdRaw.summaryInputLimit)) : 8000,
-    summaryPrompt: typeof fwdRaw.summaryPrompt === 'string' ? fwdRaw.summaryPrompt : '',
+    summaryMaxChars: Math.max(80, Math.floor(fwdRaw.summaryMaxChars)),
+    summaryInputLimit: Math.max(0, Math.floor(fwdRaw.summaryInputLimit)),
+    summaryPrompt: fwdRaw.summaryPrompt,
   };
 }
 
@@ -74,20 +63,38 @@ import { OneBotV12 } from './v12.js';
 
 // ===== 插件元数据 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   connections: {
     type: 'array',
+    onInvalid: 'error',
     label: '连接列表',
     description: '配置一个或多个 OneBot WebSocket 连接',
     items: {
-      url: { type: 'string', label: 'WebSocket 地址', required: true, description: '如 ws://127.0.0.1:8080' },
-      accessToken: { type: 'string', label: '鉴权 Token', secret: true, description: '可选，与 OneBot 实现端一致' },
+      url: {
+        type: 'string',
+        label: 'WebSocket 地址',
+        required: true,
+        onInvalid: 'error',
+        description: '如 ws://127.0.0.1:8080',
+      },
+      accessToken: {
+        type: 'string',
+        label: '鉴权 Token',
+        secret: true,
+        onInvalid: 'error',
+        description: '可选，与 OneBot 实现端一致',
+      },
       selfId: { type: 'string', label: '机器人 ID', description: '可选，连接后自动获取' },
       protocol: {
-        type: 'string',
+        type: 'select',
         label: '协议版本',
         description: '选择 OneBot 协议版本：v11、v12 或 auto（自动检测）',
         default: 'auto',
+        options: [
+          { label: '自动检测', value: 'auto' },
+          { label: 'OneBot v11', value: 'v11' },
+          { label: 'OneBot v12', value: 'v12' },
+        ],
       },
     },
     default: [],
@@ -115,6 +122,7 @@ const configSchema: ConfigSchema = {
         description:
           '在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\\n"）则要整段匹配到才切。支持转义：\\n=换行，\\t=制表符，\\r=回车，\\\\=反斜杠。',
         allowCustom: true,
+        onInvalid: 'error',
         options: [
           { label: '。 中文句号', value: '。' },
           { label: '！ 中文感叹号', value: '！' },
@@ -238,7 +246,7 @@ const configSchema: ConfigSchema = {
       },
     },
   },
-};
+});
 
 // ===== 内部类型 =====
 
@@ -449,8 +457,7 @@ const REQUEST_SOURCE = 'onebot-request';
  * 解析「切割模式列表」：每项是一个字符串，按 JS 风格解码转义序列
  * （\\n→换行、\\t→制表符、\\r→回车、\\\\→反斜杠）。空串与重复项被忽略。
  */
-function resolveSplitPatterns(items: unknown): string[] {
-  if (!Array.isArray(items)) return [];
+function resolveSplitPatterns(items: readonly string[]): string[] {
   const out: string[] = [];
   for (const raw of items) {
     if (typeof raw !== 'string' || raw.length === 0) continue;
@@ -599,40 +606,37 @@ type Caps = BoundOf<typeof uses>;
 
 function runAdapter(caps: Caps): void {
   const { contributions, events, lifecycle, logger, media, messageArchive, flowControl } = caps;
-  const config = caps.config;
+  const cfg = parseConfig(configSchema, caps.config, logger);
   const storage = createStorageGateway(caps.storage);
   const proc = createProcessGateway(caps.processService);
-  const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
-    ? (config.connections as OneBotConnectionConfig[])
-    : [];
+  const connections: OneBotConnectionConfig[] = cfg.connections;
+  for (const conn of connections) {
+    if (!URL.canParse(conn.url) || !['ws:', 'wss:'].includes(new URL(conn.url).protocol)) {
+      throw configError('connections.url 必须是 ws 或 wss URL');
+    }
+  }
 
   // 消息分条配置
-  const splitCfg = (config.splitMessage ?? {}) as {
-    enabled?: boolean;
-    delayPerChar?: number;
-    maxDelay?: number;
-    patterns?: unknown;
-  };
-  const splitEnabled = splitCfg.enabled === true;
-  const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
-  const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
-  const splitPatterns = resolveSplitPatterns(splitCfg.patterns ?? ['。', '！', '？', '.', '!', '?', '\\n']);
+  const splitEnabled = cfg.splitMessage.enabled;
+  const splitDelayPerChar = Math.max(0, cfg.splitMessage.delayPerChar);
+  const splitMaxDelay = Math.max(0, cfg.splitMessage.maxDelay);
+  const splitPatterns = resolveSplitPatterns(cfg.splitMessage.patterns);
 
   // 聊天流控配置已迁移至 plugin-flow-control / plugin-trigger-policy。
 
   // 合并转发处理配置。
-  const forwardCfg = parseForwardConfig(config);
+  const forwardCfg = parseForwardConfig(cfg.forward);
 
   // 引用消息处理配置
-  const replyRaw = (config.reply ?? {}) as Record<string, unknown>;
   const replyCfg = {
-    maxDepth: typeof replyRaw.maxDepth === 'number' ? Math.max(1, Math.floor(replyRaw.maxDepth)) : 5,
+    maxDepth: Math.max(1, Math.floor(cfg.reply.maxDepth)),
   };
 
   // 附件落盘上限（image / audio / video / file 共用同一阈值）
-  const attCacheRaw = (config.attachmentCache ?? {}) as Record<string, unknown>;
   const attachmentMaxBytes =
-    typeof attCacheRaw.maxBytes === 'number' && attCacheRaw.maxBytes > 0 ? attCacheRaw.maxBytes : 10 * 1024 * 1024;
+    cfg.attachmentCache.maxBytes > 0
+      ? cfg.attachmentCache.maxBytes
+      : configSchema.attachmentCache.fields.maxBytes.default;
 
   if (connections.length === 0) {
     logger.info('OneBot 适配器未配置任何连接');

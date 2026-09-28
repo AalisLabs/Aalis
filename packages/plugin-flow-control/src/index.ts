@@ -9,55 +9,11 @@ import {
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
-import { defaultFlowControlConfig, type FlowControlConfig, resolveFlowControlConfig } from './config.js';
+import { configSchema, type FlowControlConfig, normalizeScopes } from './config.js';
 import { createState, type MutableFlowSessionState, rateLimitUsedNow, sweepStaleStates } from './state.js';
-
-// ----- 元数据 -----
-
-const configSchema: ConfigSchema = {
-  scopes: {
-    type: 'multiselect',
-    label: '生效作用域',
-    default: defaultFlowControlConfig.scopes,
-    dynamicOptions: 'gateway-scopes',
-    allowCustom: true,
-    description:
-      '冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group；默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。',
-  },
-  cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
-  rateLimitWindow: {
-    type: 'number',
-    label: '限速窗口（秒，0=关闭）',
-    default: defaultFlowControlConfig.rateLimitWindow,
-  },
-  rateLimitMaxReplies: {
-    type: 'number',
-    label: '窗口内最大回复数',
-    default: defaultFlowControlConfig.rateLimitMaxReplies,
-  },
-  overrides: {
-    type: 'array',
-    label: '分作用域覆盖',
-    description:
-      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。从未有真人消息经过本相位的会话，入站带 source 的内部注入（定时任务等）与回复记账都按会话 ID 约定（platform:self:type:target）推断类型与目标；不符合约定的（如 WebUI）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
-    default: [],
-    items: {
-      scope: {
-        type: 'string',
-        label: '作用域',
-        description: '格式 platform:sessionType[:targetId]，支持 *',
-        required: true,
-      },
-      cooldownSeconds: { type: 'number', label: '回复后冷却（秒）' },
-      rateLimitWindow: { type: 'number', label: '限速窗口（秒）' },
-      rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数' },
-    },
-  },
-};
 
 // ----- 入口 -----
 
@@ -86,7 +42,7 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { logger, events, hooks, lifecycle, provide, messageArchive } = caps;
-  const cfg = resolveFlowControlConfig(caps.config);
+  const cfg = normalizeScopes(parseConfig(configSchema, caps.config, logger), logger);
   const states = new Map<string, MutableFlowSessionState>();
 
   // ===== mutedUntil 持久化（仅此字段） =====

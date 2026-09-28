@@ -85,7 +85,7 @@ describe('works-site 配置', () => {
 
   it('写坏的开关与文字告警后取缺省', () => {
     warnings.length = 0;
-    const cfg = read({ ...REQUIRED, failOpen: 'yes', siteTitle: 42 });
+    const cfg = read({ ...REQUIRED, failOpen: 'yes', siteTitle: { invalid: true } });
     expect(cfg.failOpen).toBe(false);
     expect(cfg.siteTitle).toBe(read(REQUIRED).siteTitle);
     expect(warnings.length).toBe(2);
@@ -94,6 +94,12 @@ describe('works-site 配置', () => {
       siteTitle: '作品集标题',
       siteIntro: '简介',
     });
+  });
+
+  it('原始配置不预合并默认值也能解析，数字标题遵循通用标量契约', () => {
+    expect(readConfig(REQUIRED, logger).siteOrigin).toBe('https://aalis.pages.dev');
+    expect(read({ ...REQUIRED, siteTitle: 42 }).siteTitle).toBe('42');
+    expectConfigError(() => read({ ...REQUIRED, siteOrigin: { invalid: true } }), 'siteOrigin');
   });
 
   it('schema 自身能过配置校验（缺省值加两个密钥）', () => {

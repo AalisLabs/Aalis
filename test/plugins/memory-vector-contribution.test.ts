@@ -158,6 +158,13 @@ async function setup(opts: SetupOptions = {}) {
   return { app, host, assembly, embedder, store, toolHandlers };
 }
 
+describe('plugin-memory-vector 配置窗口', () => {
+  it.each([-1, 1.5, 'bad'])('无效 window=%s 激活失败，不能按默认窗口继续检索', async window => {
+    await expect(setup({ contextExpand: { window } })).rejects.toThrow('未激活');
+    expect(apps.at(-1)?.plugins.getPlugin(memoryVector.name)?.state).toBe('error');
+  });
+});
+
 function baseMessages(userText = '还记得我上次说的吗'): Message[] {
   return [
     { role: 'system', content: '人设' },
