@@ -11,7 +11,7 @@
 
 import { isConfigSaveRefused } from '@aalis/api-host-config';
 import { type App, events, type PluginDefinition, parseInstanceId } from '@aalis/core';
-import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
+import { deepMergeDefaults, defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import type { ConfigStore } from './config-store.js';
 import type { PluginDiscovery, PluginLoader } from './plugin-discovery.js';
 
@@ -175,14 +175,13 @@ function syncPluginConfig(
     merged = removeExtraFields(merged, schema, removed);
     if (removed.length > 0) app.logger.warn(`配置同步：${id} 裁掉 schema 外字段 [${removed.join(', ')}]`);
   }
-  // 脏值只告警不拒载；禁用实例的休眠配置不产生必填缺失噪音。
+  // 脏值在这里只告警、不改文档也不拦登记，读取时怎么处置归插件（parseConfig 回落默认值、忽略或拒绝激活）；
+  // 禁用实例的休眠配置不产生必填缺失噪音。
   if (!store.isPluginDisabled(id)) {
     const problems = validateConfig(schema, merged);
     if (problems.length > 0) {
-      app.logger.warn(
-        `配置校验：${id} 有 ${problems.length} 处问题（仅告警，不影响加载）：` +
-          problems.map(p => `${p.path}: ${p.message}`).join('；'),
-      );
+      const detail = problems.map(p => `${p.path}: ${p.message}`).join('；');
+      app.logger.warn(`配置校验：${id} 有 ${problems.length} 处问题：${detail}`);
     }
   }
   if (JSON.stringify(merged) === JSON.stringify(fileConfig)) return false;
@@ -196,30 +195,4 @@ function saveSyncedConfig(app: App, store: ConfigStore): void {
     if (isConfigSaveRefused(err)) app.logger.warn(`配置同步未落盘：${err.message}`);
     else app.logger.warn('配置同步落盘失败:', err);
   });
-}
-
-/**
- * 深度合并默认值：只填充缺失的键，不覆盖已有值。
- * 嵌套对象会递归合并；数组与基础类型按"已存在则保留"处理。
- */
-function deepMergeDefaults(
-  defaults: Record<string, unknown>,
-  current: Record<string, unknown>,
-): Record<string, unknown> {
-  const result = { ...current };
-  for (const [key, defaultValue] of Object.entries(defaults)) {
-    if (!(key in result)) {
-      result[key] = defaultValue;
-    } else if (
-      defaultValue !== null &&
-      typeof defaultValue === 'object' &&
-      !Array.isArray(defaultValue) &&
-      result[key] !== null &&
-      typeof result[key] === 'object' &&
-      !Array.isArray(result[key])
-    ) {
-      result[key] = deepMergeDefaults(defaultValue as Record<string, unknown>, result[key] as Record<string, unknown>);
-    }
-  }
-  return result;
 }

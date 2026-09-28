@@ -149,30 +149,32 @@ for (const root of roots) {
 ## 3. 配置 schema
 
 ```ts
-import { definePlugin, config } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { definePlugin, config, logger } from '@aalis/core';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type {} from '@aalis/api-webui'; // SchemaField 表单属性（secret 等）
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
-  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.example.com' },
-};
+const configSchema = defineConfig({
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
+  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.example.com', onInvalid: 'error' },
+});
 
 export default definePlugin({
   name: '@your-scope/plugin-x',
   configSchema,
-  uses: { config },
-  apply({ config }) {
-    // config 已含 schema 派生默认值（宿主在登记前把默认值深合并进配置；core 登记时拷贝纯对象/数组）
+  uses: { config, logger },
+  apply({ config, logger }) {
+    const cfg = parseConfig(configSchema, config, logger);
+    // 使用 cfg.apiKey / cfg.baseUrl；发送请求前继续校验 URL 等业务约束
   },
 });
 ```
 
-> `secret`（以及 `dynamicOptions` / `allowCustom` 等表单属性）不是 `SchemaField` 的自带字段——
-> `@aalis/schema-config` 只声明各宿主共需的中立字段（`type` / `label` / `description` /
-> `default` / `required` / `options`），渲染相关属性由 `@aalis/api-webui` 经
-> declaration merging 注入。用到这些属性时**必须** `import type {} from '@aalis/api-webui'`。
-> 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`。
+> `secret` 不是 `SchemaField` 的自带字段——`@aalis/schema-config` 只声明各宿主共需的字段
+> （`type` / `label` / `description` / `default` / `required` / `options` 与约束键）和影响取值判定的
+> `dynamicOptions` / `allowCustom`；`secret` 只影响 WebUI 呈现，由 `@aalis/api-webui` 经
+> declaration merging 注入。用到它时**必须** `import type {} from '@aalis/api-webui'`。
+> 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`，
+> 值写该类型的取值类型（如 `'llm-ref': ModelRef`）。
 
 WebUI 会自动根据 schema 渲染配置表单。
 

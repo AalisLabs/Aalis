@@ -21,6 +21,7 @@ import {
   provide,
   services,
 } from '@aalis/core';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 实现 =====
@@ -196,6 +197,16 @@ export function validatePackageSpec(spec: unknown): string | undefined {
 
 // ===== 插件入口 =====
 
+const configSchema = defineConfig({
+  projectRoot: {
+    type: 'string',
+    label: '项目目录',
+    description: '安装插件的项目目录，留空使用当前工作目录；须与宿主的插件加载目录一致。',
+    default: '',
+    onInvalid: 'error',
+  },
+});
+
 const uses = {
   proc: processService,
   logger,
@@ -210,6 +221,7 @@ const uses = {
 type Caps = BoundOf<typeof uses>;
 
 function createService(caps: Caps): PackageManagerService {
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
   const log = caps.logger;
   const proc = createProcessGateway(caps.proc);
 
@@ -219,17 +231,13 @@ function createService(caps: Caps): PackageManagerService {
     return app;
   }
 
-  /** 把配置里的相对/绝对路径归一成绝对路径；未配置则用 fallback。 */
-  function resolveConfigured(key: 'projectRoot', fallback: string): string {
-    const override = caps.config[key];
-    if (typeof override === 'string' && override.length > 0) {
+  /** 把配置里的相对/绝对路径归一成绝对路径；未配置则用当前工作目录。 */
+  function projectRoot(): string {
+    const override = cfg.projectRoot;
+    if (override.length > 0) {
       return override.startsWith('/') ? override : `${process.cwd()}/${override.replace(/^\.?\/+/, '')}`;
     }
-    return fallback;
-  }
-
-  function projectRoot(): string {
-    return resolveConfigured('projectRoot', process.cwd());
+    return process.cwd();
   }
 
   return createPackageManager({
@@ -1061,6 +1069,7 @@ export default definePlugin({
   name: '@aalis/plugin-package-manager',
   displayName: '包管理器',
   subsystem: 'system',
+  configSchema,
   provides: [packageManager],
   uses,
   apply(caps) {

@@ -42,3 +42,7 @@ export default definePlugin({
 - apiKey 缺失时抛错
 - 启动时用 `embed('ping')` 做一次连通性检查。apply 会等检查结束，停用或停机时中止；检查失败只记警告，服务照常注册
 - 修改 `baseUrl` 可对接兼容 OpenAI 格式的其他 Embedding 服务（须写到完整前缀，如 `http://host/v1`）
+
+## 配置校验
+
+`apiKey` 的显式无效值、`baseUrl` 的错误类型或非法地址会使实例进入错误态，启动连通性探测不会发请求。缺省地址仍用官方端点；`timeoutMs` 小于 1000 时仍夹到 1000 毫秒。

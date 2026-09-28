@@ -32,7 +32,7 @@ describe('ServiceContainer', () => {
     expect(c.get('c')).toEqual({ v: 3 });
   });
 
-  it('hasByContext 按 id 前缀查询（逻辑身份）；unregisterByOwner 按归属清掉 per-entry 子粒度', () => {
+  it('hasByContext 同时核对 owner 与 id 前缀；unregisterByOwner 清掉同归属的所有条目', () => {
     const c = new ServiceContainer();
     const x = Symbol('plug-x');
     const y = Symbol('plug-y');
@@ -40,9 +40,11 @@ describe('ServiceContainer', () => {
     c.register('__t:llm', { v: 2 }, 'plug-x/m2', x);
     c.register('__t:llm', { v: 3 }, 'plug-y', y);
     c.register('__t:llm', { v: 4 }, 'elsewhere/m3', x); // 不带 plug-x 前缀但同 owner：也要被清
-    expect(c.hasByContext('__t:llm', 'plug-x')).toBe(true);
-    expect(c.hasByContext('__t:llm', 'plug-y')).toBe(true);
-    expect(c.hasByContext('__t:llm', 'plug-z')).toBe(false);
+    expect(c.hasByContext('__t:llm', 'plug-x', x)).toBe(true);
+    expect(c.hasByContext('__t:llm', 'plug-y', y)).toBe(true);
+    expect(c.hasByContext('__t:llm', 'plug-z', x)).toBe(false);
+    expect(c.hasByContext('__t:llm', 'plug-x', y)).toBe(false);
+    expect(c.hasByContext('__t:llm', 'plug-y', x)).toBe(false);
     c.unregisterByOwner(x);
     expect(c.getAll('__t:llm')).toHaveLength(1);
     expect(c.get<{ v: number }>('__t:llm')?.v).toBe(3);

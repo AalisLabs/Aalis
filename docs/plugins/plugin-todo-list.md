@@ -58,3 +58,7 @@ export default definePlugin({
 | `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入、`clearTodos` 清空或 `memory:clear` 清理时触发（后两者 `items` 为 `[]`，全局清理时每个被清的会话各触发一次） |
 
 WebUI 前端通过 WebSocket 接收 `todo_updated` 推送，实时显示任务进度面板。
+
+## 配置校验
+
+`enabled` 显式写成非布尔值时会报配置错误，避免无效值把已关闭的工具意外启用。

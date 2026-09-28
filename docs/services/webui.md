@@ -9,7 +9,7 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 - `'webui-server'` —— 后端服务，契约 `WebUIService`。描述符 `webuiServer`，绑定接口 `BoundWebui`（`packages/api-webui/src/index.ts`）。
 - `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，绑定接口是普通 `ServiceRef`。
 
-契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它导出运行时服务契约、声明式页面组件类型、以及向 `PluginMeta` 注入的 `extends`、向 `@aalis/schema-config` 的 `SchemaField` 注入的 `secret/dynamicOptions/allowCustom`。
+契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它导出运行时服务契约、声明式页面组件类型、以及向 `PluginMeta` 注入的 `extends`、向 `@aalis/schema-config` 的 `SchemaField` 注入的 `secret`。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
@@ -81,11 +81,11 @@ action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 
 declare module '@aalis/schema-config' {
   interface SchemaField {
     secret?: boolean;
-    dynamicOptions?: string;
-    allowCustom?: boolean;
   }
 }
 ```
+
+`dynamicOptions` / `allowCustom` 影响取值判定（`parseConfig` / `validateConfig` 据此决定是否查选项成员资格），由 `@aalis/schema-config` 自己声明。
 
 `subsystem` 写在 `definePlugin({ subsystem })`（`PluginDefinition` 字段，core 不读）。`extends` 经本包 declaration merging 挂到 `PluginMeta`。
 

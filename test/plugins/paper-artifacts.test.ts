@@ -27,7 +27,7 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-const KB = 1024;
+const MB = 1024 * 1024;
 const bytes = (n: number, head: Uint8Array = PNG) => {
   const out = new Uint8Array(n);
   out.set(head.subarray(0, Math.min(n, head.byteLength)));
@@ -54,7 +54,7 @@ describe('写入口', () => {
     const hub = await startDriverHub({
       remotes: { [REMOTE_A]: a },
       files,
-      config: withArtifacts({ maxFileMB: 1 / 1024 }),
+      config: withArtifacts({ maxFileMB: 1 }),
     });
     const id = await collect(hub, a, [
       { rel: 'ok.png', data: PNG },
@@ -69,7 +69,7 @@ describe('写入口', () => {
       { rel: 'dir\\win.png', data: PNG },
       { rel: 'evil‮gnp.exe', data: PNG },
       { rel: 'ctl\u0007.png', data: PNG },
-      { rel: 'big.png', data: bytes(KB + 1) },
+      { rel: 'big.png', data: bytes(MB + 1) },
     ]);
     const artifacts = hub.task(id).artifacts;
     expect(artifacts.map(x => [x.rel, x.type])).toEqual([
@@ -95,12 +95,12 @@ describe('写入口', () => {
     const a = new ScriptedRemote();
     const total = await startDriverHub({
       remotes: { [REMOTE_A]: a },
-      config: withArtifacts({ maxRunMB: 40 / (1024 * 1024) }),
+      config: withArtifacts({ maxRunMB: 1 }),
     });
     const id = await collect(total, a, [
-      { rel: '1.png', data: bytes(16) },
-      { rel: '2.png', data: bytes(16) },
-      { rel: '3.png', data: bytes(16) },
+      { rel: '1.png', data: bytes(MB / 2) },
+      { rel: '2.png', data: bytes(MB / 2) },
+      { rel: '3.png', data: bytes(MB / 2) },
     ]);
     expect(total.task(id).artifacts.map(x => x.rel)).toEqual(['1.png', '2.png']);
     await total.stop();
@@ -121,7 +121,7 @@ describe('写入口', () => {
     const hub = await startDriverHub({
       remotes: { [REMOTE_A]: a },
       files,
-      config: withArtifacts({ maxBundleMB: 1 / 1024 }),
+      config: withArtifacts({ maxBundleMB: 1 }),
     });
     const first = await hub.accept();
     await until(() => hub.task(first).state === 'running', '开轮');
@@ -131,7 +131,7 @@ describe('写入口', () => {
     await until(() => hub.task(first).state === 'done', '完成');
     expect(files.get(`${PAPER_A_DIR}/workspace.tar.gz`)).toEqual(text('bundle-v1'));
 
-    a.bundles.set(agentId, bytes(KB + 1));
+    a.bundles.set(agentId, bytes(MB + 1));
     await collect(hub, a, []);
     expect(files.get(`${PAPER_A_DIR}/workspace.tar.gz`), '超限的工程包不覆盖旧的').toEqual(text('bundle-v1'));
   });
@@ -139,12 +139,12 @@ describe('写入口', () => {
   it('安全：白纸目录已有占用加本轮成品超过 maxPaperMB 时，超出的与余下的文件被拒收，白纸停开并告警', async () => {
     const a = new ScriptedRemote();
     const files = new Map<string, string | Uint8Array>([
-      [`${PAPER_A_DIR}/tasks/t-00000001/out/a-00000001.png`, bytes(80)],
+      [`${PAPER_A_DIR}/tasks/t-00000001/out/a-00000001.png`, bytes(MB - 24)],
     ]);
     const hub = await startDriverHub({
       remotes: { [REMOTE_A]: a },
       files,
-      config: withArtifacts({ maxPaperMB: 104 / (1024 * 1024) }),
+      config: withArtifacts({ maxPaperMB: 1 }),
     });
     const id = await collect(hub, a, [
       { rel: '1.png', data: bytes(16) },

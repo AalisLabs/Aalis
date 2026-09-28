@@ -4,6 +4,14 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 **源码**: `packages/core/src/orchestration/plugin.ts`（运行态）、`packages/api-host-config/src/index.ts`（文档契约）、`packages/runtime/src/config-store.ts`、`packages/runtime/src/config-sync.ts`
 
+## 插件配置解析
+
+插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config, logger)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务仍提供原始只读视图，不依赖 schema-config。
+
+缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。
+
+解析返回新对象，不改配置文档。写回配置时以 host-config 原文为底修改目标字段，避免把解析时补入的默认值、裁剪结果持久化。旧作用域配置升级见 [配置迁移](../guide/config-migration.md)。
+
 ## 运行态（core）
 
 | 运行态 | 写入口 | 读入口 |

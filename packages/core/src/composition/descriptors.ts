@@ -133,7 +133,10 @@ export interface OptionalUse<P, B> {
 // biome-ignore lint/suspicious/noExplicitAny: 声明表的值类型只作推导载体
 export type Uses = Record<string, ServiceDescriptor<any, any> | OptionalUse<any, any>>;
 
-export type BoundOf<U extends Uses> = {
+/** 逐项核对声明表：写错的那一项要求改成描述符，报错只落在它身上，其余绑定照常推导 */
+export type CheckedUses<U> = { [K in keyof U]: U[K] extends Uses[string] ? U[K] : Uses[string] };
+
+export type BoundOf<U> = {
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   [K in keyof U]: U[K] extends ServiceDescriptor<any, infer B>
     ? B

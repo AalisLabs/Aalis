@@ -44,3 +44,7 @@ definePlugin({
 
 - 服务契约 `@aalis/api-asr`：[services/asr.md](../services/asr.md)
 - 消费方 `media` 服务：[services/media.md](../services/media.md)
+
+## 配置校验
+
+`apiKey` 的显式无效值、`baseUrl` 的错误类型或非法地址会在服务注册前报配置错误。未填 `apiKey` 仍报缺失；`timeoutMs` 小于 1000 时仍夹到 1000 毫秒。

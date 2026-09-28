@@ -48,3 +48,7 @@ export default definePlugin({
 - 压实、`deleteByFilter`、`clear` 三种表结构操作串行执行
 - 自动持久化，`save()` 为空操作
 - dispose 时关闭表句柄
+
+## 配置校验
+
+`path` 和 `tableName` 的显式无效类型会在解析本地路径或打开数据库前报配置错误；空表名也会拒绝激活。空路径仍按默认 `data:/lancedb` 处理，合法裸名和相对路径继续归一。`optimizeEvery` 的 0 或负数仍关闭压实。

@@ -31,8 +31,8 @@
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-publish": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.13.1 <1.0.0"
+    "@aalis/api-webui": "workspace:>=0.11.1 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -41,5 +41,21 @@
   },
   "peerDependencies": {
     "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "config",
+        "events",
+        "lifecycle",
+        "logger",
+        "storage"
+      ],
+      "optional": [
+        "doctor",
+        "publish",
+        "webui-server"
+      ]
+    }
   }
 }

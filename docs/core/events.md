@@ -45,7 +45,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 | `app:ready` | — | 启动第一相位（sticky） |
 | `app:started` | — | 启动第二相位：全部 `app:ready` 监听器完成之后（sticky）；CLI / TUI 在此接管终端 |
 | `app:restarting` | — | `restart()` 先发本事件，监听器全部完成后才把控制交给宿主的 `RestartStrategy` |
-| `app:stopping` | — | `stop()` 先 `beginShutdown()` 再 `idle()` 之后发出；监听器全部返回后才执行停机计划。再次调用 `stop()` 返回完整停机的同一 Promise，监听器不能 await 或返回它 |
+| `app:stopping` | — | `stop()` 先 `beginShutdown()`（丢弃旧普通重算）再 `idle()`（等待已在飞的重算与手动 dispose 段）之后发出；监听器全部返回后才执行停机计划。再次调用 `stop()` 返回完整停机的同一 Promise，监听器不能 await 或返回它 |
 
 **通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方不等监听器。发射点要么是同步的注册 / 拆卸收尾，
 要么在 `PluginManager` 的 recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。
@@ -68,7 +68,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 后台激活期间它登记的服务不对外，服务事件按「对外可见」计：阈值前已登记的在转入后台时发一次 `service:unregistered`，
 后台期间的登记与退订不发事件，激活成功时对仍在的服务发 `service:registered`，失败或被拆卸时不再发。
 
-`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。本事件发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true；`register` / `bounce` 返回 false。`stop()` 在任何阶段都返回完整停机的同一 Promise。监听器不能 `await stop()` 或返回它，否则停机与正在执行的屏障监听器会互等；调用 `void stop()` 不会重复启动停机。
+`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 都立即返回 false，不改条目状态或配置，也不加入额外拆卸；已有停机计划负责清理。`stop()` 在任何阶段都返回完整停机的同一 Promise。监听器不能 `await stop()` 或返回它，否则停机与正在执行的屏障监听器会互等；调用 `void stop()` 不会重复启动停机。
 
 ### 扩展自定义事件
 

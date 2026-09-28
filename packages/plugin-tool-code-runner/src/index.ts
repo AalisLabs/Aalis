@@ -3,18 +3,20 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, resolveAgainstCwd, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type RunnerConfig, runCode } from './runner.js';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   python: {
     label: 'Python',
     fields: {
-      enabled: { type: 'boolean', label: '启用 run_python', default: true },
+      enabled: { type: 'boolean', label: '启用 run_python', default: true, onInvalid: 'error' },
       interpreter: {
         type: 'string',
         label: '解释器路径',
         default: 'python3',
+        required: true,
+        onInvalid: 'error',
         description: 'Python 解释器路径或命令名，如 python3、/usr/bin/python3',
       },
     },
@@ -22,11 +24,13 @@ const configSchema: ConfigSchema = {
   javascript: {
     label: 'JavaScript (Node.js)',
     fields: {
-      enabled: { type: 'boolean', label: '启用 run_javascript', default: true },
+      enabled: { type: 'boolean', label: '启用 run_javascript', default: true, onInvalid: 'error' },
       interpreter: {
         type: 'string',
         label: '解释器路径',
         default: 'node',
+        required: true,
+        onInvalid: 'error',
         description: 'Node.js 解释器路径或命令名',
       },
     },
@@ -53,6 +57,7 @@ const configSchema: ConfigSchema = {
     type: 'string',
     label: '逻辑工作目录',
     default: 'workspace:/',
+    onInvalid: 'error',
     description: '脚本执行时的 storage URI 工作目录，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
   },
   sandbox: {
@@ -62,6 +67,7 @@ const configSchema: ConfigSchema = {
         type: 'select',
         label: '隔离模式',
         default: 'auto',
+        onInvalid: 'error',
         options: [
           { label: '自动（有沙箱则强制隔离，无则拒绝运行）', value: 'auto' },
           { label: '无隔离（裸进程，危险，仅信任环境）', value: 'none' },
@@ -75,6 +81,7 @@ const configSchema: ConfigSchema = {
         type: 'select',
         label: '子进程网络',
         default: 'deny',
+        onInvalid: 'error',
         options: [
           { label: '断网（推荐）', value: 'deny' },
           { label: '放开（粗粒度，无法按域名过滤）', value: 'allow' },
@@ -84,43 +91,11 @@ const configSchema: ConfigSchema = {
       },
     },
   },
-};
+});
 
 // ===== 配置解析 =====
 
-interface CodeRunnerConfig {
-  python: { enabled: boolean; interpreter: string };
-  javascript: { enabled: boolean; interpreter: string };
-  defaultTimeout: number;
-  maxTimeout: number;
-  maxOutputSize: number;
-  workingDirectory: string;
-  sandbox: { mode: 'auto' | 'none'; network: 'deny' | 'allow' };
-}
-
-function resolveConfig(config: Readonly<Record<string, unknown>>): CodeRunnerConfig {
-  const py = config.python as Record<string, unknown> | undefined;
-  const js = config.javascript as Record<string, unknown> | undefined;
-  const sb = config.sandbox as Record<string, unknown> | undefined;
-  return {
-    python: {
-      enabled: (py?.enabled as boolean) ?? true,
-      interpreter: (py?.interpreter as string) || 'python3',
-    },
-    javascript: {
-      enabled: (js?.enabled as boolean) ?? true,
-      interpreter: (js?.interpreter as string) || 'node',
-    },
-    defaultTimeout: (config.defaultTimeout as number) ?? 60000,
-    maxTimeout: (config.maxTimeout as number) ?? 300000,
-    maxOutputSize: (config.maxOutputSize as number) ?? 131072,
-    workingDirectory: (config.workingDirectory as string) ?? 'workspace:/',
-    sandbox: {
-      mode: sb?.mode === 'none' ? 'none' : 'auto',
-      network: sb?.network === 'allow' ? 'allow' : 'deny',
-    },
-  };
-}
+type CodeRunnerConfig = ConfigOf<typeof configSchema>;
 
 function toRunnerCwdUri(input: string | undefined): string {
   return resolveAgainstCwd(input, 'workspace:/');
@@ -177,8 +152,8 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    const { tools, proc, storage, codeSandbox, logger, config } = caps;
-    const cfg = resolveConfig(config);
+    const { tools, proc, storage, codeSandbox, logger } = caps;
+    const cfg = parseConfig(configSchema, caps.config, logger);
     if (cfg.sandbox.mode === 'none') {
       logger.warn(
         '⚠️ code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',

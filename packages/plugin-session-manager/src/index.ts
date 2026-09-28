@@ -23,10 +23,10 @@ import {
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   defaults: {
     label: '全局默认配置',
     description:
@@ -56,6 +56,8 @@ const configSchema: ConfigSchema = {
       audience: {
         type: 'select',
         label: '受众',
+        allowCustom: true,
+        onInvalid: 'error',
         options: [
           { label: '该平台全部房间', value: '' },
           { label: '群与频道', value: 'group' },
@@ -86,13 +88,11 @@ const configSchema: ConfigSchema = {
       disableOutputFormat: {
         type: 'boolean',
         label: '禁用结构化输出',
-        default: false,
         description: '禁用 JSON 结构化输出，回复纯文本',
       },
       clientSideJsonRendering: {
         type: 'boolean',
         label: '客户端渲染 JSON',
-        default: false,
         description: '保留完整 JSON 给前端渲染，不提取回复字段',
       },
       think: {
@@ -152,7 +152,7 @@ const configSchema: ConfigSchema = {
       },
     },
   },
-};
+});
 
 // ===== 常量 =====
 
@@ -787,11 +787,9 @@ class SessionManager implements SessionManagerService {
   }
 
   /** 从配置加载全局 defaults */
-  loadDefaults(raw: unknown): void {
-    if (!raw || typeof raw !== 'object') return;
-    const r = raw as Record<string, unknown>;
+  loadDefaults(cfg: ConfigOf<typeof configSchema>['defaults']): void {
     const next: Omit<SessionConfig, 'sessionDefaults'> = {};
-    if (typeof r.persona === 'string' && r.persona) next.persona = r.persona;
+    if (cfg.persona) next.persona = cfg.persona;
     this.defaults = next;
     if (Object.keys(next).length > 0) {
       this.caps.logger.info(`已加载全局 defaults: ${Object.keys(next).join(', ')}`);
@@ -811,12 +809,10 @@ class SessionManager implements SessionManagerService {
    * 写了 audience 的条目按 `<平台>/<受众>` 另存；受众不是 group、private 的整条丢弃并告警，
    * 不当成不限受众去覆盖整个平台的房间。
    */
-  loadPlatformProfiles(raw: unknown): void {
-    if (!Array.isArray(raw)) return;
-    for (const entry of raw) {
-      if (!entry || typeof entry !== 'object' || typeof entry.platform !== 'string') continue;
+  loadPlatformProfiles(profiles: ConfigOf<typeof configSchema>['platformProfiles']): void {
+    for (const entry of profiles) {
       const audience = entry.audience;
-      const unrestricted = audience === undefined || audience === null || audience === '';
+      const unrestricted = audience === undefined || audience === '';
       if (!unrestricted && audience !== 'group' && audience !== 'private') {
         this.caps.logger.warn(
           `平台档 ${entry.platform} 的受众取值 ${JSON.stringify(audience)} 无效（只认 group、private），整条已忽略`,
@@ -829,14 +825,12 @@ class SessionManager implements SessionManagerService {
       if (entry.llm && typeof entry.llm === 'object' && entry.llm.provider && entry.llm.model) {
         profile.llm = { provider: String(entry.llm.provider), model: String(entry.llm.model) };
       }
-      if (Array.isArray(entry.enabledToolGroups)) profile.enabledToolGroups = entry.enabledToolGroups;
-      if (entry.disableOutputFormat !== undefined) profile.disableOutputFormat = !!entry.disableOutputFormat;
-      if (entry.clientSideJsonRendering !== undefined)
-        profile.clientSideJsonRendering = !!entry.clientSideJsonRendering;
-      // think 三态：布尔（yaml 手写）与 'on'/'off'（WebUI select 存字符串）都认；
-      // null / 空串 = 未设置（继承 provider 全局配置），维持 null≡undefined 契约。
-      if (entry.think === true || entry.think === 'on') profile.think = true;
-      else if (entry.think === false || entry.think === 'off') profile.think = false;
+      if (entry.enabledToolGroups !== undefined) profile.enabledToolGroups = entry.enabledToolGroups;
+      if (entry.disableOutputFormat !== undefined) profile.disableOutputFormat = entry.disableOutputFormat;
+      if (entry.clientSideJsonRendering !== undefined) profile.clientSideJsonRendering = entry.clientSideJsonRendering;
+      // 空串表示继承 provider 全局配置。
+      if (entry.think === 'on') profile.think = true;
+      else if (entry.think === 'off') profile.think = false;
       const invalid = readRoomKeys(entry, profile);
       if (invalid.length > 0) {
         this.caps.logger.warn(`平台档 ${key} 的 ${invalid.join('、')} 取值无效，已忽略`);
@@ -1222,6 +1216,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
   const { memory, webui, events, hooks, lifecycle, logger, provide } = caps;
 
   // 注册 WebUI 页面
@@ -1241,9 +1236,9 @@ async function run(caps: Caps): Promise<void> {
   lifecycle.signal.throwIfAborted();
 
   // 加载平台 profiles
-  manager.loadPlatformProfiles(caps.config.platformProfiles);
+  manager.loadPlatformProfiles(cfg.platformProfiles);
   // 加载全局 defaults
-  manager.loadDefaults(caps.config.defaults);
+  manager.loadDefaults(cfg.defaults);
 
   // 注册服务
   provide(sessionManager, manager, { label: '会话管理' });

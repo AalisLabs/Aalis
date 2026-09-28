@@ -99,11 +99,11 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `threshold` | number | 留空 | 开口阈值，`logit ≥ 阈值` 即开口；留空用侧车返回的模型阈值（随模型版本给出） |
 | `triggerOnAt` | boolean | `true` | @ 自己算点名 |
 | `triggerOnPoke` | boolean | `true` | 戳一戳算点名 |
-| `triggerNames` | string | `''` | 点名别名（逗号分隔），全部已登记人设按本会话取的名字与昵称自动合并；同一份名字表作为 `selfNames` 发给侧车 |
-| `muteKeywords` | string | `''` | 禁言关键词（逗号分隔） |
+| `triggerNames` | string | `''` | 点名别名（逗号或换行分隔），全部已登记人设按本会话取的名字与昵称自动合并；同一份名字表作为 `selfNames` 发给侧车 |
+| `muteKeywords` | string | `''` | 禁言关键词（逗号或换行分隔） |
 | `muteTimeSeconds` | number | `60` | 禁言关键词命中时长（秒） |
 | `mediaWaitMs` | number | `8000` | 带附件的消息等识别写好描述的上限（毫秒），超时照常判定 |
-| `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车地址 |
+| `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车 HTTP 地址；显式无效值在激活时拒绝，不连接侧车 |
 | `sidecarDir` | string | `''` | 侧车目录的绝对路径。填了则由本插件托管侧车，端口取 `endpoint` 的（见「托管侧车」）；留空 = 侧车由外部运行 |
 | `timeoutMs` | number | `1000` | 单次请求的超时（毫秒），含读完响应体；超时计一次失败。诊断项探活用同一个超时 |
 | `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（取法见「判定流程」第 8 步） |
@@ -111,6 +111,8 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `overrides` | array | `[]` | 分作用域覆盖阈值：每项 `{scope, threshold}`，`scope` 格式同上；只取命中的最具体一条，留空沿用顶层。写一条覆盖即启用该作用域 |
 
 点名与禁言关键词的字段只看顶层，不按作用域覆盖。
+
+`scopes` 的 `null` 与未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用。空白成员被忽略，旧的逗号字符串由配置迁移工具一次性转换。`sidecarDir` 留空仍表示由外部运行侧车。
 
 ## 日志
 

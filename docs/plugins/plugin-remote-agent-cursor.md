@@ -32,7 +32,7 @@ export default definePlugin({
 | `apiKey` | string | 必填 | Cursor 后台生成的 API key（secret）。只在宿主进程里用，不传给远端代理；缺失时 apply 抛错，插件转 error 态 |
 | `baseUrl` | string | `'https://api.cursor.com'` | Cloud Agents API 的根地址，插件在其后拼 `/v1/…` |
 | `model.id` | string | `'grok-4.7'` | 建代理用的模型 id，按 `/v1/models` 的 id 严格匹配，不认别名 |
-| `model.params` | map | `{ reasoning_effort: 'high', context: '256k', fast: 'false' }` | 模型参数，值一律按字符串交给接口（yaml 里没加引号的 `false`、数字会转成字符串）。须写全，并等于 `/v1/models` 列出的某个变体 |
+| `model.params` | map | `{ reasoning_effort: 'high', context: '256k', fast: 'false' }` | 模型参数，值一律按字符串交给接口（数字按 schema 转为字符串；布尔值须加引号，例如 `fast: 'false'`，否则拒绝激活，避免丢掉参数后意外采用远端默认档位）。须写全，并等于 `/v1/models` 列出的某个变体 |
 | `egressMode` | select | `'unknown'` | owner 在 Cursor 后台给云端代理设的出网方式：`none` / `allowlist` / `open` / `unknown`。接口读不到它，Aalis 无法核实 |
 | `createTimeoutSeconds` | number | `30` | 建代理请求的超时（最小 5）。建代理约 60 秒才回，超时后用同一 agentId 取回，不会重复建 |
 | `requestTimeoutSeconds` | number | `30` | 其余请求的超时（最小 15）。实测单次请求有时要 5 秒以上 |

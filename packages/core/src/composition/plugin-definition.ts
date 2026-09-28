@@ -5,7 +5,7 @@
 // 调度器挂载时：写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
 // ============================================================
 
-import { assertOwnCopy, type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './descriptors.js';
+import { assertOwnCopy, type BoundOf, type CheckedUses, isOptional, type ServiceDescriptor } from './descriptors.js';
 import { isPlainConfigObject, isUnsafeConfigKey } from '../infrastructure/config-values.js';
 
 /**
@@ -15,7 +15,7 @@ import { isPlainConfigObject, isUnsafeConfigKey } from '../infrastructure/config
 export interface PluginMeta {}
 
 // biome-ignore lint/complexity/noBannedTypes: 无声明时的空声明表
-export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
+export interface PluginDefinition<U = {}> extends PluginMeta {
   /**
    * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
    * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，
@@ -34,9 +34,9 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
    */
   uses?: U;
   /**
-   * 本插件提供的服务（激活后按本次激活的 instanceId 校验确已提供）。
-   * `provide(..., { onBehalfOf })` 代登记的条目归属被代者身份，不计入代理人：
-   * 若把代登记的服务写进本清单，会以「声明 provides 但未实际注册」进入 error。
+   * 本插件提供的服务（激活后同时按本次激活的 owner 与 instanceId 校验确已提供）。
+   * `provide(..., { onBehalfOf })` 以其他身份代登记的条目不计入代理人，也不替被代者满足清单：
+   * 若清单中的服务只有代登记，会以「声明 provides 但未实际注册」进入 error。
    */
   // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
   provides?: ServiceDescriptor<any, any>[];
@@ -122,7 +122,9 @@ export function validateDefinition(definition: PluginDefinition): void {
  * 并把写错的声明（例如被 apply 解构出的同名绑定遮住的描述符）在模块加载时就报出来。
  */
 // biome-ignore lint/complexity/noBannedTypes: 同上
-export function definePlugin<U extends Uses = {}>(definition: PluginDefinition<U>): PluginDefinition<U> {
+export function definePlugin<U extends object = {}>(
+  definition: PluginDefinition<U> & { uses?: CheckedUses<U> },
+): PluginDefinition<U> {
   validateDefinition(definition);
   return definition;
 }

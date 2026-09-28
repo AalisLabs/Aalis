@@ -97,8 +97,8 @@ type AnyDescriptor = ServiceDescriptor<any, any>;
 /**
  * 发布服务：唯一的发布入口。实现按描述符的提供者类型约束；返回退订，随这次激活撤回。
  *
- * `options.onBehalfOf`：条目的逻辑身份取被代者 id（偏好、服务页、provides 校验的 hasByContext 都认这个 id），
- * 清理仍归本激活。代登记不计入代理人的 `provides`；写进去会按「未提供」让本次激活进入 error。
+ * `options.onBehalfOf`：条目的逻辑身份取被代者 id（用于偏好与服务页），清理仍归本激活。
+ * 以其他身份代登记不计入代理人的 `provides`，也不能替被代者满足 `provides`；校验同时核对 owner 与逻辑身份。
  */
 export type Provide = <D extends AnyDescriptor>(
   descriptor: D,
@@ -173,7 +173,7 @@ export function coreProviders(
     const entryId = options?.onBehalfOf ?? options?.entryId ?? c.id;
     if (runtime.devMode && options?.onBehalfOf === undefined)
       validateProvide(
-        { ctxId: c.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
+        { ctxId: c.id, owner: c.owner, name, entryId, explicitEntryId: options?.entryId !== undefined },
         { services: container, logger: c.logger },
       );
     const off = container.register(name, implementation, entryId, c.owner, options);

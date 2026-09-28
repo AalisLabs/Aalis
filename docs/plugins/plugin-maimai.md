@@ -39,3 +39,7 @@ export default definePlugin({
 - 工具注册与工具组：[plugin-tools](./plugin-tools.md)
 - 斜杠指令注册：[plugin-commands](./plugin-commands.md)
 - 记忆服务元数据接口：[services/memory](../services/memory.md)
+
+## 配置校验
+
+未填 `developerToken` 时仍只告警并不注册工具或指令。显式无效的 token、地址或功能开关会报配置错误；有 token 时地址格式在注册前校验。数字字符串 `timeoutMs` 按数值解析。

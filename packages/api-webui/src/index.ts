@@ -211,6 +211,8 @@ export interface WebuiPage {
   order?: number;
   /** 自定义渲染器标识（非声明式 content 场景） */
   renderer?: string;
+  /** 全页数据刷新间隔（秒）；0 / undefined = 关闭，不重置表单中的编辑内容 */
+  refresh?: number;
   /** 声明式页面内容（不提供则使用客户端内置页面） */
   content?: WebuiComponent[];
 }
@@ -228,16 +230,12 @@ declare module '@aalis/core' {
 
 declare module '@aalis/schema-config' {
   /**
-   * WebUI 表单交互属性 —— 由本包注入（config-api 的 SchemaField 只声明各宿主共需字段）。
-   * 这些属性只被 WebUI 配置表单消费；其他宿主可以忽略。
+   * WebUI 表单交互属性 —— 由本包注入（schema-config 的 SchemaField 只声明各宿主共需的字段与影响取值判定的字段）。
+   * 只被 WebUI 配置表单消费；其他宿主可以忽略。
    */
   interface SchemaField {
     /** 标记为敏感字段，前端显示时自动遮蔽 */
     secret?: boolean;
-    /** select / multiselect 动态选项来源：服务名（前端经 webui-server 调该服务的 listModels() 或等价方法获取选项） */
-    dynamicOptions?: string;
-    /** multiselect 是否允许用户手动输入自定义值（不限于选项列表） */
-    allowCustom?: boolean;
   }
 }
 

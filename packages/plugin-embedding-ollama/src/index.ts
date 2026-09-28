@@ -1,18 +1,18 @@
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 
 const name = '@aalis/plugin-embedding-ollama';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   baseUrl: {
     type: 'string',
     label: 'Ollama 地址',
     default: 'http://localhost:11434',
+    onInvalid: 'error',
     description: '本地 Ollama 服务的 HTTP 地址',
   },
   model: {
@@ -24,7 +24,7 @@ const configSchema: ConfigSchema = {
   },
   timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 30000, description: '单次 embedding 请求超时时间' },
   retries: { type: 'number', label: '失败重试次数', default: 1, description: 'fetch 失败或 5xx 时的重试次数' },
-};
+});
 
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -210,12 +210,12 @@ export default definePlugin({
 });
 
 async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor }: Caps): Promise<void> {
-  const baseUrl = (config.baseUrl as string) ?? 'http://localhost:11434';
-  const model = (config.model as string) ?? 'nomic-embed-text';
-  const timeoutMs = (config.timeoutMs as number) ?? 30000;
-  const retries = (config.retries as number) ?? 1;
-
-  const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, retries);
+  const cfg = parseConfig(configSchema, config, logger);
+  if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
+    throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+  }
+  const { baseUrl, model, timeoutMs } = cfg;
+  const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, cfg.retries);
 
   // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
   try {

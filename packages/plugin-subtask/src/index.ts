@@ -4,7 +4,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { omitRoomOnlyKeys, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 // =====================================================================
@@ -32,38 +32,27 @@ import type { IncomingMessage } from '@aalis/schema-message';
  */
 const SUBTASK_SOURCE = 'subtask';
 
-const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用子任务工具', default: true },
+const configSchema = defineConfig({
+  enabled: { type: 'boolean', label: '启用子任务工具', default: true, onInvalid: 'error' },
+
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
   defaultProvider: {
     type: 'string',
     label: '子任务默认 LLM provider',
     default: '',
+    onInvalid: 'error',
     description: '不填则继承父会话。建议填轻量本地模型（如 ollama）让子任务跑在更便宜的模型上，节省 token',
   },
   defaultModel: {
     type: 'string',
     label: '子任务默认模型名',
     default: '',
+    onInvalid: 'error',
     description: '与 defaultProvider 配套。例如 qwen3:8b、deepseek-chat。两个都不填则继承父会话模型。',
   },
-};
+});
 
-interface PluginConfig {
-  enabled: boolean;
-  maxWaitMs: number;
-  defaultProvider: string;
-  defaultModel: string;
-}
-
-function resolveConfig(raw: Readonly<Record<string, unknown>>): PluginConfig {
-  return {
-    enabled: raw.enabled !== false,
-    maxWaitMs: Number(raw.maxWaitMs) || 300000,
-    defaultProvider: String(raw.defaultProvider ?? '').trim(),
-    defaultModel: String(raw.defaultModel ?? '').trim(),
-  };
-}
+type PluginConfig = ConfigOf<typeof configSchema>;
 
 // ===== 插件入口 =====
 
@@ -85,7 +74,13 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    const cfg = resolveConfig(caps.config);
+    const parsed = parseConfig(configSchema, caps.config, caps.logger);
+    const cfg = {
+      ...parsed,
+      maxWaitMs: parsed.maxWaitMs || configSchema.maxWaitMs.default,
+      defaultProvider: parsed.defaultProvider.trim(),
+      defaultModel: parsed.defaultModel.trim(),
+    };
     if (!cfg.enabled) return;
     registerSubtask(caps, cfg);
   },

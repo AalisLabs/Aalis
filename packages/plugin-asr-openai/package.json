@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-asr-openai",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@aalis/api-asr": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0"

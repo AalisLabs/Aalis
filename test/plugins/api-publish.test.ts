@@ -167,11 +167,19 @@ describe('workHeaders', () => {
     }
   });
 
-  it('头恰为五个：带 Vary 与 DNS 预取开关，不带 Cross-Origin-Resource-Policy', () => {
+  it('头恰为六个：含匿名模块资源 CORS、Vary 与 DNS 预取开关，不带 CORP', () => {
     const h = workHeaders({ scope: 'self', frameAncestors: ANCESTORS });
     expect(Object.keys(h).sort()).toEqual(
-      ['Content-Security-Policy', 'Referrer-Policy', 'Vary', 'X-Content-Type-Options', 'X-DNS-Prefetch-Control'].sort(),
+      [
+        'Access-Control-Allow-Origin',
+        'Content-Security-Policy',
+        'Referrer-Policy',
+        'Vary',
+        'X-Content-Type-Options',
+        'X-DNS-Prefetch-Control',
+      ].sort(),
     );
+    expect(h['Access-Control-Allow-Origin']).toBe('*');
     expect(h.Vary).toBe('Sec-Fetch-Dest');
     expect(h['X-DNS-Prefetch-Control']).toBe('off');
     expect(h['Referrer-Policy']).toBe('no-referrer');

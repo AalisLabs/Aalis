@@ -2,7 +2,6 @@ import { App, logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowControlService } from '../../packages/api-flow-control/src/index.js';
-import { resolveTriggerPolicyConfig } from '../../packages/plugin-trigger-policy/src/config.js';
 import {
   clearSessionIdle,
   type IdleCaps,
@@ -10,6 +9,7 @@ import {
   scheduleSessionIdle,
 } from '../../packages/plugin-trigger-policy/src/idle-scheduler.js';
 import { createState, type TriggerSessionState } from '../../packages/plugin-trigger-policy/src/state.js';
+import { resolveTriggerPolicyConfig } from './trigger-policy-config.js';
 
 // 背景（A30）：platform 档 all-quiet 策略在「已达标但无候选」和「压根没有活动记录」两种情形下
 // 都把重排间隔压成 1s，形成 1 Hz 死转（每秒一个 timer + 一条 debug）。契约是**每轮之间至少隔

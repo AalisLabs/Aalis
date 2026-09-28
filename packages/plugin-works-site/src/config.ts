@@ -11,7 +11,7 @@
 
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import type { Logger } from '@aalis/core';
-import { type ConfigSchema, configError, defaultsFrom, missingConfigError } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
 /** Pages 项目名：小写字母、数字与连字符，最长 58 个字符 */
 const PROJECT_PATTERN = '^[a-z0-9][a-z0-9-]{0,57}$';
@@ -19,7 +19,7 @@ const PROJECT_PATTERN = '^[a-z0-9][a-z0-9-]{0,57}$';
 const WORK_BRANCH_PREFIX = /^p-/i;
 const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
-export const configSchema: ConfigSchema = {
+export const configSchema = defineConfig({
   accountId: {
     type: 'string',
     label: 'Cloudflare 账号 ID',
@@ -33,24 +33,26 @@ export const configSchema: ConfigSchema = {
     required: true,
     secret: true,
     description:
-      '建议新建只给 Pages Write、带过期时间的账号级 token；离过期不到 14 天诊断项提醒。在 WebUI 修好密钥掩码之前，只在配置文件里写这一项',
+      '建议新建只给 Pages Write、带过期时间的账号级 token；离过期不到 14 天诊断项提醒。密钥只用于部署请求，不写入站点文件',
   },
   projectName: {
     type: 'string',
     label: 'Pages 项目名',
     default: 'aalis',
-    pattern: PROJECT_PATTERN,
+    onInvalid: 'error',
     description: '已建好的 Direct Upload 项目。不要删掉它：删了名字会被释放，旧链接可能指向别人的内容',
   },
   productionBranch: {
     type: 'string',
     label: '生产分支',
     default: 'main',
+    onInvalid: 'error',
     description: '与项目设置一致；主站部署到这个分支。不能以 p- 开头（作品分支用这个前缀）',
   },
   siteOrigin: {
     type: 'string',
     label: '主站网址',
+    onInvalid: 'error',
     default: '',
     description:
       '作品链接的前缀，形如 https://example.com，不带路径；留空为 https://<项目名>.pages.dev。链接发出去之后要一直能打开，定下后不要再改',
@@ -73,9 +75,9 @@ export const configSchema: ConfigSchema = {
     default: '',
     description: '显示在作品集首页标题下',
   },
-};
+});
 
-interface WorksSiteConfig {
+export interface WorksSiteConfig {
   accountId: string;
   apiToken: string;
   projectName: string;
@@ -89,16 +91,8 @@ interface WorksSiteConfig {
   siteIntro: string;
 }
 
-const DEFAULTS = defaultsFrom(configSchema) as { siteTitle: string; siteIntro: string };
-
-function requiredText(value: unknown, key: string, note: string): string {
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (!text) throw missingConfigError(key, note);
-  return text;
-}
-
-function readOrigin(value: unknown, projectName: string): string {
-  const raw = typeof value === 'string' ? value.trim() : '';
+function readOrigin(value: string, projectName: string): string {
+  const raw = value.trim();
   if (!raw) return `https://${projectName}.pages.dev`;
   let url: URL | undefined;
   try {
@@ -122,32 +116,23 @@ function readOrigin(value: unknown, projectName: string): string {
   return url.origin;
 }
 
-function readText(value: unknown, key: string, fallback: string, logger: Pick<Logger, 'warn'>): string {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value === 'string') return value.trim();
-  logger.warn(`${key} 不是文字，改用缺省值`);
-  return fallback;
-}
-
-export function readConfig(raw: Readonly<Record<string, unknown>>, logger: Pick<Logger, 'warn'>): WorksSiteConfig {
-  const accountId = requiredText(raw.accountId, 'accountId', 'Cloudflare 控制台里的账号 ID');
-  const apiToken = requiredText(raw.apiToken, 'apiToken', '建议只给 Pages Write、带过期时间');
-
-  const projectName = typeof raw.projectName === 'string' ? raw.projectName.trim() : '';
+/** 把 schema 解析结果转成客户端需要的规范配置；不重复解释原始值。 */
+export function resolveConfig(parsed: ConfigOf<typeof configSchema>): WorksSiteConfig {
+  const accountId = parsed.accountId.trim();
+  const apiToken = parsed.apiToken.trim();
+  if (!accountId) throw configError('accountId 必须填写');
+  if (!apiToken) throw configError('apiToken 必须填写');
+  const projectName = parsed.projectName.trim();
   if (!new RegExp(PROJECT_PATTERN).test(projectName)) {
     throw configError('projectName 不合规：只能是小写字母、数字与连字符，以字母或数字开头，最长 58 个字符');
   }
-  const productionBranch = typeof raw.productionBranch === 'string' ? raw.productionBranch.trim() : '';
+  const productionBranch = parsed.productionBranch.trim();
   if (!BRANCH_PATTERN.test(productionBranch) || WORK_BRANCH_PREFIX.test(productionBranch)) {
     throw configError('productionBranch 不合规：须是分支名，且不能以 p- 开头（作品分支用这个前缀）');
   }
 
-  const siteOrigin = readOrigin(raw.siteOrigin, projectName);
+  const siteOrigin = readOrigin(parsed.siteOrigin, projectName);
   const pagesDev = `https://${projectName}.pages.dev`;
-
-  let failOpen = false;
-  if (typeof raw.failOpen === 'boolean') failOpen = raw.failOpen;
-  else if (raw.failOpen !== undefined && raw.failOpen !== null) logger.warn('failOpen 不是开关值，按关闭处理');
 
   return {
     accountId,
@@ -156,8 +141,12 @@ export function readConfig(raw: Readonly<Record<string, unknown>>, logger: Pick<
     productionBranch,
     siteOrigin,
     mainOrigins: siteOrigin === pagesDev ? [siteOrigin] : [siteOrigin, pagesDev],
-    failOpen,
-    siteTitle: readText(raw.siteTitle, 'siteTitle', DEFAULTS.siteTitle, logger) || DEFAULTS.siteTitle,
-    siteIntro: readText(raw.siteIntro, 'siteIntro', DEFAULTS.siteIntro, logger),
+    failOpen: parsed.failOpen,
+    siteTitle: parsed.siteTitle.trim() || configSchema.siteTitle.default,
+    siteIntro: parsed.siteIntro.trim(),
   };
+}
+
+export function readConfig(raw: Readonly<Record<string, unknown>>, logger: Pick<Logger, 'warn'>): WorksSiteConfig {
+  return resolveConfig(parseConfig(configSchema, raw, logger));
 }

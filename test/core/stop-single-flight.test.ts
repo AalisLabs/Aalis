@@ -13,7 +13,7 @@ import { deferred } from '../helpers/deferred.js';
 
 // stop() 单飞：重入汇入同一 Promise；app:stopping 派发期间再调不得无界重入。
 // 已静置时先冻 shuttingDown 再 await idle，避免微任务窗口里 bounce 抢跑留下 pending 幽灵。
-// 停机中 unload 在 disposed-join 之前汇入计划并立即 true。
+// 停机中 unload 在 disposed-join 之前立即拒绝，不与已有计划互等。
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -245,7 +245,7 @@ describe('App.stop() 单飞与停机窗口', () => {
     });
   });
 
-  it('onDrain 窗口内 unload 提供者：立即 true 且消费者仍交接，不得 join 互等', async () => {
+  it('onDrain 窗口内 unload 提供者：立即 false 且消费者仍交接，不得 join 互等', async () => {
     const { app } = capturingApp({ disposeTimeoutMs: 800 });
     apps.push(app);
     const store = defineService<Box>('sf-drain-unl');
@@ -291,8 +291,8 @@ describe('App.stop() 单飞与停机窗口', () => {
     const unloaded = await app.plugins.unload('store');
     const unloadMs = Date.now() - t0;
     const outcome = await Promise.race([stopping.then(() => 'ok' as const), sleep(4000).then(() => 'hung' as const)]);
-    expect({ outcome, unloaded, saved }, 'unload 应立即 true 且不得把 writer 交接拖过 disposeTimeout').toEqual(
-      expect.objectContaining({ outcome: 'ok', unloaded: true, saved: ['writer:last'] }),
+    expect({ outcome, unloaded, saved }, 'unload 应立即 false 且不得把 writer 交接拖过 disposeTimeout').toEqual(
+      expect.objectContaining({ outcome: 'ok', unloaded: false, saved: ['writer:last'] }),
     );
     expect(unloadMs, `unload join 了在飞计划 unloadMs=${unloadMs}`).toBeLessThan(400);
   });

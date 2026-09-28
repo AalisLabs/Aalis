@@ -6,7 +6,11 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 // 否则名称要等 30 秒一次的轮询才更新。这里渲染真 App，只替换网络层、WebSocket、会话管理与两块首屏重组件；
 // 聊天面板的替身把 App 传给它的 status.name 原样显示出来。
 
-const server = vi.hoisted(() => ({ name: 'OldName' }));
+const server = vi.hoisted(() => ({
+  name: 'OldName',
+  slow: undefined as number | undefined,
+  lastPut: undefined as unknown,
+}));
 const session = vi.hoisted(() => ({
   messages: [],
   setMessages: () => {},
@@ -32,12 +36,17 @@ vi.mock('../../packages/plugin-webui-client/src/api', () => ({
       return {
         name: server.name,
         logLevel: 'info',
+        slowThresholdMs: server.slow,
         plugins: {},
-        _schema: { name: { type: 'string', label: '应用名称' } },
+        _schema: {
+          name: { type: 'string', label: '应用名称' },
+          slowThresholdMs: { type: 'number', label: '慢操作阈值（毫秒）' },
+        },
       };
     }
     if (url === '/api/config' && method === 'PUT') {
-      server.name = (JSON.parse(String(opts?.body)) as { name: string }).name;
+      server.lastPut = JSON.parse(String(opts?.body));
+      server.name = (server.lastPut as { name: string }).name;
       return { ok: true, message: '全局配置已更新并保存', ignored: [] };
     }
     if (url === '/api/pages')
@@ -86,4 +95,17 @@ it('只改应用名称并保存：不等轮询，界面上的名称随即更新'
 
   expect(await screen.findByText('全局配置已更新并保存'), '前置：保存走的是不重启的分支').toBeTruthy();
   await vi.waitFor(() => expect(screen.getByTestId('app-name').textContent).toBe('NewName'));
+});
+
+it('清空慢操作阈值后保存：这一项以 null 发出（JSON 会丢掉 undefined，服务端据 null 回到默认值）', async () => {
+  server.slow = 30000;
+  window.location.hash = '#plugin-config';
+  render(<App />);
+
+  fireEvent.click(await screen.findByText('编辑'));
+  fireEvent.change(await screen.findByDisplayValue('30000'), { target: { value: '' } });
+  fireEvent.click(screen.getByText('保存'));
+
+  await vi.waitFor(() => expect(server.lastPut).toBeDefined());
+  expect((server.lastPut as Record<string, unknown>).slowThresholdMs).toBeNull();
 });

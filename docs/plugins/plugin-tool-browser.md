@@ -89,3 +89,7 @@ Chromium 按需启动，进程级共享一个实例与一张页面表；并发�
 每个页面（`pageId`）独占一个浏览器窗口，`headless=false` 时即各自一个系统窗口。`browser_click`、`browser_type` 与 `browser_screenshot` 操作前先把目标页切到前台：页面自己用 `window.open` 或 `target=_blank` 开出的窗口会把原页压到后台，而无头 Chrome 的后台页不做渲染，点击、默认先清空的输入与按选择器截图会一直等不到结果。
 
 `browser_screenshot`（含切到前台与按选择器找元素）限时 `defaultTimeout`。截图卡住（如页面的渲染进程卡死）时，底层的截图命令一直挂着，并持有浏览器级的锁，同一浏览器里开新页、关页面与其它页面的截图都排在它后面；到时限后工具返回超时错误，并关掉这一代浏览器（不等关闭落定），页面表随之清空，此前的 `pageId` 全部失效，下次调用重新启动浏览器。其余操作里的单条 CDP 命令以 `defaultTimeout` 的两倍为上限（启动时设为 `protocolTimeout`，puppeteer 默认 180 秒），挂住时返回 puppeteer 的超时错误。`defaultTimeout` 为 0 时两者都不设时限。
+
+## 配置校验
+
+`blockPrivate`、`allowedProtocols`、`allowedHosts` 和 `executablePath` 的显式无效值使实例进入错误态，不会注册浏览器工具。协议只接受 `http` 与 `https`；白名单必须是字符串数组。其他错误类型回落默认值并告警。

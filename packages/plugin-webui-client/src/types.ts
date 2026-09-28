@@ -95,8 +95,8 @@ export interface PluginInfo {
 }
 
 // ----- ConfigSchema 类型 -----
-// 镜像 server 侧合并后的 SchemaField（@aalis/schema-config 的基础字段 + @aalis/api-webui 注入的
-// secret/dynamicOptions/allowCustom + @aalis/api-llm 注入的 'llm-ref' 类型）。
+// 镜像 server 侧合并后的 SchemaField（@aalis/schema-config 的字段，含 dynamicOptions/allowCustom
+// + @aalis/api-webui 注入的 secret + @aalis/api-llm 注入的 'llm-ref' 类型）。
 // 前端不依赖服务端契约包：schema 经 JSON 传输后用镜像类型接住（仅以 type-only 或纯函数方式
 // 引用 schema-log / util-text-normalize）；server 侧合并声明变更时需手动同步本镜像。
 
@@ -216,6 +216,7 @@ export interface WebuiPageDef {
   plugin: string;
   pluginDisplayName?: string;
   renderer?: string;
+  refresh?: number;
   content?: WebuiComponent[];
 }
 

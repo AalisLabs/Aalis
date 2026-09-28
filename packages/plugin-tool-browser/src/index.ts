@@ -3,7 +3,6 @@ import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
-// WebuiPage 一并带来 declaration merging：SchemaField 表单属性（allowCustom）
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
@@ -14,7 +13,7 @@ import {
   logger as loggerService,
   optional,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { assertAddressesSafe, assertPortAllowed, isPrivateHost, pinnedLookup } from '@aalis/util-network-guard';
 
 // ════════════════════════════════════════════════════════════
@@ -26,19 +25,6 @@ import { assertAddressesSafe, assertPortAllowed, isPrivateHost, pinnedLookup } f
 
 // ──────────── 类型 ────────────
 
-interface BrowserConfig {
-  headless: boolean;
-  defaultTimeout: number;
-  viewportWidth: number;
-  viewportHeight: number;
-  maxPages: number;
-  executablePath: string;
-  maxContentLength: number;
-  allowedProtocols: string[];
-  blockPrivate: boolean;
-  allowedHosts: string[];
-}
-
 interface PageSlot {
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Page 类型动态导入，避免在顶层 import puppeteer 增加启动负担
   page: any; // puppeteer Page
@@ -49,7 +35,7 @@ interface PageSlot {
 
 // ──────────── 插件元数据 ────────────
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   headless: {
     type: 'boolean',
     label: '无头模式',
@@ -75,6 +61,7 @@ const configSchema: ConfigSchema = {
     label: 'Chrome 路径',
     description: '自定义 Chrome/Chromium 可执行文件路径。留空则使用 Puppeteer 内置 Chromium。',
     default: '',
+    onInvalid: 'error',
   },
   maxContentLength: {
     type: 'number',
@@ -86,12 +73,14 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '封锁内网与本地',
     default: true,
+    onInvalid: 'error',
     description: '拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。',
   },
   allowedProtocols: {
     type: 'multiselect',
     label: '允许的协议',
     default: ['http', 'https'],
+    onInvalid: 'error',
     options: [
       { label: 'http', value: 'http' },
       { label: 'https', value: 'https' },
@@ -102,10 +91,13 @@ const configSchema: ConfigSchema = {
     type: 'multiselect',
     label: '主机白名单',
     default: [],
+    onInvalid: 'error',
+    // 主机名由使用者填写，静态选项无法穷举。
     allowCustom: true,
     description: '允许访问的主机（含内网时需在此显式列出）。留空 = 仅按 blockPrivate 判定。',
   },
-};
+});
+type BrowserConfig = ConfigOf<typeof configSchema>;
 
 // ──────────── WebUI 页面 ────────────
 
@@ -165,7 +157,7 @@ export default definePlugin({
 
 function runBrowserTools(caps: Caps): void {
   const { tools, webui, lifecycle } = caps;
-  const config = resolveConfig(caps.config);
+  const config = parseConfig(configSchema, caps.config, caps.logger);
   const logger = caps.logger.child('browser');
   const proc = createProcessGateway(caps.proc);
   const storage = createStorageGateway(caps.storage);
@@ -776,21 +768,6 @@ function runBrowserTools(caps: Caps): void {
 
 // ──────────── 辅助函数 ────────────
 
-function resolveConfig(raw: Readonly<Record<string, unknown>>): BrowserConfig {
-  return {
-    headless: (raw.headless as boolean) ?? true,
-    defaultTimeout: (raw.defaultTimeout as number) ?? 30000,
-    viewportWidth: (raw.viewportWidth as number) ?? 1280,
-    viewportHeight: (raw.viewportHeight as number) ?? 720,
-    maxPages: (raw.maxPages as number) ?? 5,
-    executablePath: (raw.executablePath as string) ?? '',
-    maxContentLength: (raw.maxContentLength as number) ?? 50000,
-    allowedProtocols: Array.isArray(raw.allowedProtocols) ? (raw.allowedProtocols as string[]) : ['http', 'https'],
-    blockPrivate: (raw.blockPrivate as boolean | undefined) ?? true,
-    allowedHosts: Array.isArray(raw.allowedHosts) ? (raw.allowedHosts as string[]) : [],
-  };
-}
-
 /**
  * URL 安全校验：协议白名单 + 内网/本地封锁
  * @returns 错误描述字符串；null 表示通过
@@ -804,7 +781,7 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   }
 
   const protocol = parsed.protocol.replace(/:$/, '').toLowerCase();
-  if (!config.allowedProtocols.includes(protocol)) {
+  if (!config.allowedProtocols.some(allowed => allowed === protocol)) {
     return `协议 "${protocol}" 不在允许列表 [${config.allowedProtocols.join(', ')}]`;
   }
 

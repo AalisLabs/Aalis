@@ -51,6 +51,8 @@ export default definePlugin({
 | `http.defaultTimeout` | number | `30000` | 默认超时 (ms) |
 | `http.maxResponseSize` | number | `1048576` | 最大响应字节 |
 
+工作目录、各工具启用开关及 `file.allowedRoots` 显式值无效时，插件拒绝激活；不丢弃坏根名后继续提供文件工具。显式 `allowedRoots: []` 沿用默认的 `workspace` / `tmp` 两根。
+
 ## 路径与 cwd 心智模型
 
 所有 `file_*` 工具的 `path` 参数遵循 unix shell 风格：

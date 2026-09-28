@@ -17,12 +17,14 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { doctor } from '@aalis/api-doctor';
 import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
+import { publish } from '@aalis/api-publish';
 import { remoteAgent } from '@aalis/api-remote-agent';
 import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { parseConfig } from '@aalis/schema-config';
 import { configSchema, readConfig } from './config.js';
 import { registerPaperDoctor } from './doctor.js';
 import { PaperDriver } from './driver.js';
@@ -31,12 +33,14 @@ import { PaperNotices, registerPendingHint } from './notices.js';
 import { Isolation } from './rooms.js';
 import { registerPaperTools } from './tools.js';
 import { registerPaperPage } from './webui.js';
+import { registerWorksTools } from './works.js';
 
 const uses = {
   tools,
   sessionManager,
   storage,
   remoteAgent: optional(remoteAgent),
+  publish: optional(publish),
   gateway: optional(gateway),
   webui: optional(webuiServer),
   doctor: optional(doctor),
@@ -58,7 +62,7 @@ export default definePlugin({
 
 async function run(caps: BoundOf<typeof uses>): Promise<void> {
   const { logger, lifecycle } = caps;
-  const cfg = readConfig(caps.config, logger);
+  const cfg = readConfig(parseConfig(configSchema, caps.config, logger), logger);
   const storage = createStorageGateway(caps.storage);
   const ledger = new LedgerStore(storage, logger);
   await ledger.load();
@@ -96,6 +100,16 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     now,
     kick: paperId => driver.kick(paperId),
     cancel: (taskId, via, gate) => driver.cancel(taskId, via, gate),
+  });
+  registerWorksTools({
+    producer: lifecycle.id,
+    signal: lifecycle.signal,
+    tools: caps.tools,
+    sessionManager: caps.sessionManager,
+    publish: caps.publish,
+    storage,
+    ledger,
+    cfg,
   });
   registerPendingHint({ hooks: caps.hooks, ledger, cfg, now });
   registerPaperPage({

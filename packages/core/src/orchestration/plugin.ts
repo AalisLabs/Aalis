@@ -91,11 +91,13 @@ export class PluginManager implements PluginManagerService {
 
   /**
    * 停机截止点：置 `#shuttingDown`，并把根激活整棵树冻进一张计划。
-   * 之后 register 拒绝；对本树的 disposeAsync 汇入该计划。真正的 drain/close 由 stopAll 执行。
+   * 之后管理动作拒绝；对本树的 disposeAsync 汇入该计划。真正的 drain/close 由 stopAll 执行。
    */
   beginShutdown(): void {
     if (this.#shuttingDown) return;
     this.#shuttingDown = true;
+    // 普通重算已失效；清掉排队项，让在飞重算/手动拆卸结束后 idle 能落定。
+    this.#queued = null;
     this.#shutdownSettle = freezeActivations([this.#host.root]);
   }
 
@@ -236,21 +238,17 @@ export class PluginManager implements PluginManagerService {
   /**
    * 卸载一个插件
    *
-   * @returns 口径见 {@link PluginManagerService}：false = 注册表里没有这个实例；true = 其余（含卸载
+   * @returns 口径见 {@link PluginManagerService}：false = 注册表里没有这个实例或已进入停机态；true = 其余（含卸载
    *   已在途时 join 它——返回时该实例已拆卸并离开注册表）
    */
   async unload(instanceId: string): Promise<boolean> {
     const entry = this.#plugins.get(instanceId);
     if (!entry) return this.#refuse('unload', instanceId, '不在注册表');
 
-    if (this.#shuttingDown) {
-      // 停机中 unload 必须在 disposed-join 之前：retireBatch 会先把条目标 disposed，
-      // 若走 join #closing，drain 里再 unload 会与计划互等。beginShutdown 已把整棵树冻进停机计划，这里直接 true。
-      this.#logger.debug(`unload: 插件 "${instanceId}" 停机中已汇入停机计划`);
-      return true;
-    }
+    // 必须在 disposed-join 之前拒绝，否则清理回调中的 unload 会与停机计划互等。
+    if (this.#shuttingDown) return this.#refuse('unload', instanceId, '处于停机终态');
 
-    // 'disposed' 单向化的 unload 侧：已有卸载在途（或停机遗留终态）时不再二次
+    // 'disposed' 单向化的 unload 侧：已有卸载在途时不再二次
     // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
     // 带恒等卫：并发首个 unload 完成后同 id 可能已重新注册，按名盲删会把无辜的
     // 新 entry 扫出注册表，留下注册表外的活实例。
@@ -287,7 +285,7 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 管理动作的 false 分支之一：主体不在注册表、处于 'disposed' 单向终态，或停机中（register / bounce）。记 debug
+   * 管理动作的 false 分支之一：主体不在注册表、处于 'disposed' 单向终态，或已进入停机态。记 debug
    * 而非 warn——这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测，停机中的请求常见于收尾路径；被政策挡下的
    * 其余分支各自就地 warn。
    */
@@ -330,6 +328,7 @@ export class PluginManager implements PluginManagerService {
   async enable(instanceId: string): Promise<boolean> {
     const entry = this.#plugins.get(instanceId);
     if (!entry) return this.#refuse('enable', instanceId, '不在注册表');
+    if (this.#shuttingDown) return this.#refuse('enable', instanceId, '处于停机终态');
     // 'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state === 'disposed') return this.#refuse('enable', instanceId, '处于 disposed 终态');
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
@@ -350,15 +349,11 @@ export class PluginManager implements PluginManagerService {
   async disable(instanceId: string): Promise<boolean> {
     const entry = this.#plugins.get(instanceId);
     if (!entry) return this.#refuse('disable', instanceId, '不在注册表');
+    if (this.#shuttingDown) return this.#refuse('disable', instanceId, '处于停机终态');
 
     // 'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state === 'disposed') return this.#refuse('disable', instanceId, '处于 disposed 终态');
     if (entry.state === 'disabled') return true; // 已经禁用
-
-    if (this.#shuttingDown) {
-      this.#logger.debug(`disable: 插件 "${instanceId}" 停机中已汇入停机计划`);
-      return true;
-    }
 
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
     this.#suspendDepth++;

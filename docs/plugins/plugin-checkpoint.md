@@ -9,6 +9,8 @@
 
 ## 插件声明
 
+作品发布使用的 `public` 根也不记 checkpoint。审核通过、人工裁决与撤下可能发生在任意会话回合期间，这些文件变更不属于当时的回合；回滚聊天不会撤回或恢复已发布作品。公开根由 [plugin-storage-local](./plugin-storage-local.md) 提供。
+
 ```ts
 definePlugin({
   name: '@aalis/plugin-checkpoint',
@@ -39,6 +41,8 @@ definePlugin({
 | `maxFileSize` | number | `10485760` | 单文件大小上限（字节）：超过此大小的文件不做内容快照，只在 manifest 里记录为 skipped。 |
 | `keepSessions` | number | `20` | 保留的会话数：GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。 |
 | `scopes` | multiselect | `["webui:*"]` | 启用作用域：仅在匹配下列 platform:sessionType 的会话中参与 turn 生命周期（建 checkpoint）。格式举例：`webui:*` / `onebot:group` / `*` 表示全部。默认仅 `webui:*`：onebot 等聊天平台不会为每条消息创建 checkpoint。留空数组 = 禁用 checkpoint（仅允许手动 rollback）。 |
+
+`rootDir` 的显式错误类型或非 storage URI 会在插件注册服务前拒绝；留空仍取默认目录。`scopes` 的 `null` 与未填都取默认，`[]` 禁用自动 checkpoint；空白成员会被忽略。旧字符串作用域由配置迁移工具转换为数组。
 
 ## 相关
 

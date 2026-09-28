@@ -88,6 +88,19 @@ interface PaperToolDeps {
   cancel: PaperDriver['cancel'];
 }
 
+/** 白纸工具与作品工具共用房间、回合和白纸归属检查。 */
+export async function enterPaperRoom(
+  deps: Pick<PaperToolDeps, 'sessionManager' | 'cfg'>,
+  ctx: ToolCallContext,
+  kind: 'initiate' | 'use',
+): Promise<{ paper: RoomPaper } | { refused: string }> {
+  const sm = deps.sessionManager.require();
+  const refused = checkEligibility(sm, ctx, kind);
+  if (refused) return { refused };
+  const paper = await resolveRoomPaper(sm, deps.cfg, ctx.sessionId, ctx.platform);
+  return 'unavailable' in paper ? { refused: paper.unavailable } : { paper };
+}
+
 const fail = (error: string) => JSON.stringify({ ok: false, error });
 const done = (fields: Record<string, unknown>) => JSON.stringify({ ok: true, ...fields });
 
@@ -174,17 +187,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       .filter(t => t.state === 'queued')
       .sort(byCreated);
 
-  /** 房间与资格；不满足时给出失败结果 */
-  const enter = async (
-    ctx: ToolCallContext,
-    kind: 'initiate' | 'use',
-  ): Promise<{ paper: RoomPaper } | { refused: string }> => {
-    const sm = deps.sessionManager.require();
-    const refused = checkEligibility(sm, ctx, kind);
-    if (refused) return { refused };
-    const paper = await resolveRoomPaper(sm, cfg, ctx.sessionId, ctx.platform);
-    return 'unavailable' in paper ? { refused: paper.unavailable } : { paper };
-  };
+  const enter = (ctx: ToolCallContext, kind: 'initiate' | 'use') => enterPaperRoom(deps, ctx, kind);
 
   /** 经网关发出；网关不在场时改走 outbound:message 事件（出站中间件链被跳过） */
   async function dispatch(message: OutgoingMessage): Promise<void> {

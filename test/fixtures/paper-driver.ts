@@ -5,12 +5,13 @@ import type { RemoteAgentProvider } from '../../packages/api-remote-agent/src/in
 import type { SessionConfig, SessionManagerService } from '../../packages/api-session-manager/src/index.js';
 import type { RegisteredTool, ToolCallContext } from '../../packages/api-tools/src/index.js';
 import type { Events, Logger } from '../../packages/core/src/index.js';
-import { readConfig } from '../../packages/plugin-paper/src/config.js';
+import { configSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
 import { registerPaperDoctor } from '../../packages/plugin-paper/src/doctor.js';
 import { PaperDriver } from '../../packages/plugin-paper/src/driver.js';
 import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { Isolation } from '../../packages/plugin-paper/src/rooms.js';
 import { registerPaperTools } from '../../packages/plugin-paper/src/tools.js';
+import { parseConfig } from '../../packages/schema-config/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { stubBoundTools } from './bound-tools.js';
 import { human, LEDGER_URI, memoryStorage, type PaperFiles, sessionInfoOf } from './paper.js';
@@ -129,7 +130,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   const files: PaperFiles = opts.files ?? new Map();
   const logs: Array<{ level: string; message: string }> = [];
   const logger = recordingLogger(logs);
-  const cfg = readConfig(opts.config ?? DRIVER_CONFIG, logger);
+  const cfg = readConfig(parseConfig(configSchema, opts.config ?? DRIVER_CONFIG, logger), logger);
   const storage = memoryStorage(files);
   const store = new LedgerStore(storage, logger);
   await store.load();

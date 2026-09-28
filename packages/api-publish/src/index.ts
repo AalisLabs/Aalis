@@ -108,8 +108,6 @@ export interface NominateInput {
   files: PublishFile[];
   /** 封面（只收位图）：照常审核，只用来生成缩略图，不作为作品文件上站 */
   cover?: Uint8Array;
-  /** 提名方要求这件作品由 owner 批准，值是理由；有值时不经自动放行（任何审核模式下都一样） */
-  requireOwner?: string;
 }
 
 /** refused 只写类别，不含路径与文件名；fileIndex 是出问题的 files 下标（从 0 起），-1 为封面 */
@@ -299,6 +297,8 @@ export function workHeaders(p: {
   ].join('; ');
   return {
     'Content-Security-Policy': csp,
+    // Sandboxed work documents have an opaque origin; module scripts need CORS even for their own directory.
+    'Access-Control-Allow-Origin': '*',
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
     // 同一网址在框里取与顶层打开时响应不同（顶层打开回 302），浏览器缓存不能混用

@@ -16,43 +16,26 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, isStorageUri, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, provide } from '@aalis/core';
-import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 
-interface Cfg {
-  binaryPath: string;
-  modelPath: string;
-  language: string;
-  threads: number;
-  priority: number;
-  /** 子进程超时（ms）。不设就永不 settle：process-local 只在 timeout>0 时才武装 killTree */
-  timeoutMs: number;
-}
-
-const configSchema: ConfigSchema = {
-  binaryPath: { type: 'string', label: 'whisper-cli 路径', default: 'whisper-cli' },
-  modelPath: { type: 'string', label: '模型文件路径 (.bin)', default: '' },
-  language: { type: 'string', label: '默认语种', default: 'auto' },
-  threads: { type: 'number', label: '线程数', default: 4 },
+const configSchema = defineConfig({
+  binaryPath: { type: 'string', label: 'whisper-cli 路径', default: 'whisper-cli', onInvalid: 'error' },
+  modelPath: { type: 'string', label: '模型文件路径 (.bin)', default: '', onInvalid: 'error' },
+  language: { type: 'string', label: '默认语种', default: 'auto', onInvalid: 'error' },
+  threads: { type: 'number', label: '线程数', default: 4, onInvalid: 'error' },
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 80 },
   timeoutMs: {
     type: 'number',
     label: '子进程超时 (ms)',
     default: 600000,
+    onInvalid: 'error',
     description:
       '转码与识别子进程的最长运行时间。这道闸是为了掐断真正卡死的子进程，不是为了给识别限速——' +
       'CPU 上跑长语音本来就慢，默认给到 10 分钟。设 0 表示不限（届时卡住的子进程会把整轮对话一起挂住）。',
   },
-};
-
-const defaultConfig: Cfg = {
-  binaryPath: 'whisper-cli',
-  modelPath: '',
-  language: 'auto',
-  threads: 4,
-  priority: 80,
-  timeoutMs: 600000,
-};
+});
+type Cfg = ConfigOf<typeof configSchema>;
 
 /**
  * 猜音频文件扩展名（只用来拼临时文件名，ffmpeg 按内容探测格式）。
@@ -179,7 +162,7 @@ export default definePlugin({
   provides: [asr],
   uses,
   apply(caps) {
-    const cfg: Cfg = { ...defaultConfig, ...(caps.config as Partial<Cfg>) };
+    const cfg = parseConfig(configSchema, caps.config, caps.logger);
 
     if (!cfg.modelPath) {
       // 缺必填配置抛清晰错误（而非静默 return），避免声明了提供 asr 却不注册触发难懂的校验错

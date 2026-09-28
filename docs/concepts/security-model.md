@@ -458,3 +458,13 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 - 相关插件文档：[`plugin-tool-code-runner`](../plugins/plugin-tool-code-runner.md) ·
   [`plugin-code-sandbox-os`](../plugins/plugin-code-sandbox-os.md) · [`plugin-authority`](../plugins/plugin-authority.md)
 - 多用户 / 云端：搁置（未实现）
+
+## 公开作品与审核预览
+
+作品发布是显式启用的插件链：白纸提名提供不可变字节快照，审核服务执行静态检查、媒体元数据清理、离线渲染与独立分类，作品站只读取已发布账本。人工审核默认关闭，可用 `manualReview` 开启；关闭时自动审核不确定的作品不会直接发布。
+
+审核预览使用只监听回环地址的独立 HTTP 服务、短期随机令牌和 sandbox 页面，不复用 WebUI 的登录源；预览页面不是公开作品的安全证明。公开 HTML 在独立作品分支中运行，主站只放包装页与已清理的媒体。顶层导航、跨作品路径和普通 HTTP 外联分别由 iframe、CSP 与分支中间件限制。
+
+这些措施不能保证浏览器绝对断网。WebRTC 不完全受 CSP 的 `connect-src` 管制；真实 Chrome 的本地测试还观察到 `preconnect` 建立 TCP 连接而没有 HTTP 请求。以 IP 地址进行的这项测试不能证明 DNS 预取被阻止。需要严格无网络执行时，应使用操作系统或网络层隔离，而不能单凭网页响应头。
+
+撤下会更新路径清单、部署墓碑并删除旧部署，但不保证立即清除浏览器、边缘缓存或已保持的连接。审核和部署的故障都必须在 WebUI/诊断中可见，不能将“提名成功”或“部署请求已提交”当作“公开网址已经上线”。

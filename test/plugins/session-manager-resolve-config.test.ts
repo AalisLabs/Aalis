@@ -27,7 +27,8 @@ async function setup() {
         platform: 'onebot',
         persona: 'aalis',
         llm: { provider: '@aalis/plugin-llm-ollama', model: 'qwen3.6:35b-mlx' },
-        think: true,
+        // 手写 YAML 的旧布尔值经一次性迁移写作 on；会话内的布尔覆盖仍保持原状。
+        think: 'on',
       },
     ],
   });

@@ -126,4 +126,4 @@ interface Services {
 
 宿主要用内置六项的接口经 `app.bind`，如 `app.bind({ events }).events`；动态查询与登记元数据经 `app.bind({ services })`。
 
-`hasByContext(name, contextId)` 的「拥有」语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
+内部校验 `hasByContext(name, contextId, owner)` 同时核对实际登记激活的 owner 与逻辑身份：条目 id 等于 contextId，或以 `contextId + '/'` 为前缀（如 `@aalis/plugin-llm-ollama:main/llama3`）。其他激活即使登记了相同 id，也不能替本激活满足 `provides`。

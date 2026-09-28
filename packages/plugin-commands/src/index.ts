@@ -16,18 +16,19 @@ import {
   provide,
   services,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { CommandRegistry } from './commands.js';
 import { renderDetail, renderOverview } from './help.js';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   commandPrefix: {
     type: 'string',
     label: '指令前缀',
     default: '/',
+    onInvalid: 'error',
     description: '指令触发前缀，设为空字符串可使用纯关键词触发',
   },
-};
+});
 
 /**
  * 删除目录及内部所有内容，返回顶层子项数（用于"清了 N 张/N 个会话"提示）。
@@ -146,6 +147,7 @@ function registerCommands({
   provide,
   services,
 }: Caps): void {
+  const cfg = parseConfig(configSchema, config, logger);
   // 创建指令注册表并注册为服务
   const registry = new CommandRegistry(logger);
   const storageGateway = createStorageGateway(storage);
@@ -153,7 +155,7 @@ function registerCommands({
   // 可见性的运行时覆盖（authorityOverrides）现归 authority 配置，不在指令注册表加载。
 
   // 配置指令系统
-  registry.prefix = (config.commandPrefix as string) ?? '/';
+  registry.prefix = cfg.commandPrefix;
 
   // 注册服务
   provide(commandsService, registry);

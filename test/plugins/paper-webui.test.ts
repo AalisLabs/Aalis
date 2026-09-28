@@ -294,12 +294,15 @@ describe('readArtifact', () => {
   });
 
   it('找不到的任务或成品、已随清空删除的、超过单文件上限的都拒绝', async () => {
-    const big = { id: 'a-0000000e', rel: 'big.png', type: 'png' as const, sizeBytes: 64 };
+    const big = { id: 'a-0000000e', rel: 'big.png', type: 'png' as const, sizeBytes: 1024 * 1024 + 1 };
     const cleared = doneTask('t-00000002', [realPng], { artifactsCleared: true });
     const hub = await startPaperHub({
-      config: { ...PILOT_CONFIG, artifacts: { maxFileMB: 32 / (1024 * 1024) } },
+      config: { ...PILOT_CONFIG, artifacts: { maxFileMB: 1 } },
       files: seeded([
-        { task: doneTask('t-00000001', [realPng, big]), bytes: { [realPng.id]: PNG, [big.id]: new Uint8Array(64) } },
+        {
+          task: doneTask('t-00000001', [realPng, big]),
+          bytes: { [realPng.id]: PNG, [big.id]: new Uint8Array(big.sizeBytes) },
+        },
         { task: cleared, bytes: { [realPng.id]: PNG } },
       ]),
     });

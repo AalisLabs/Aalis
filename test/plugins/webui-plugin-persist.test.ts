@@ -495,6 +495,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
       ok: true,
       instanceId: 'multi:x',
       message: '已创建实例 multi:x；配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活',
+      ignored: [],
     });
     await w.app.plugins.idle();
     expect(w.app.plugins.getPlugin('multi:x')?.state, '残留的禁用标记要随登记生效').toBe('disabled');
