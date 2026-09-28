@@ -51,9 +51,13 @@ plugins:
 |---|---|---|---|
 | `servers` | array | `[]` | MCP 服务器列表：通过 stdio 连接的 MCP 服务器。每条目至少需要 id 与 command；安全级别按需调整。 |
 
-条目里的 `args` 是字符串数组（schema 类型 `list`，每项一个参数，可含空格），`env` 是 `KEY: VALUE` 映射（schema 类型 `map`）。旧版 WebUI 把两者存成多行文本；遇到字符串（含空串）或其它形态时，该 server 记录警告且不启动，需按上面的示例改写。
+条目里的 `args` 是字符串数组（schema 类型 `list`，每项一个参数，可含空格或为空串），`env` 是 `KEY: VALUE` 映射（schema 类型 `map`），两者中不加引号的有限数字按字符串处理。条目按 schema 逐项解析，问题都记录警告：
 
-旧版 WebUI 建的条目常带 `args: ''` / `env: ''`，请删除该键或改为 `[]` / `{}`。改写多行文本时按旧版的解析规则拆分：`args` 先按行、再按空白切分，如 `args: "-y @scope/pkg"` 应改为 `["-y", "@scope/pkg"]`；`env` 每行一条 `KEY=VALUE`，忽略 `#` 开头的注释行，值去首尾空白。
+- 缺少 `id` 或 `command`（含空串），或其中之一只有空白的条目跳过，其它 server 不受影响。`id` 与 `command` 去掉首尾空白后使用。
+- 缺省的 `args` / `env` 分别补 `[]` / `{}`；显式给出错误形态，或数组、映射中有不能转换为字符串的成员时，整条 server 跳过，绝不截短参数后启动。
+- `visibility` 不是四个取值之一、`enabled` 不是布尔值时，整条 server 跳过。
+
+旧版 WebUI 把 `args` / `env` 存成多行文本；该 server 不会启动，需按示例改写：`args` 先按行、再按空白切分，如 `args: "-y @scope/pkg"` 应改为 `["-y", "@scope/pkg"]`；`env` 每行一条 `KEY=VALUE`，忽略 `#` 开头的注释行，值去首尾空白。旧版条目常带的 `args: ''` / `env: ''` 也要删除该键或改为 `[]` / `{}`。
 
 ## 行为
 
@@ -63,7 +67,7 @@ plugins:
 - `inputSchema` 顶层非 `type: 'object'` 时自动包装为 `{ input: schema }`。
 - 启动时的握手与列工具在停用或停机时中止，中止不记连接失败。每个 server 连接成功后，经 `lifecycle.onDispose` 注册 `client.close()`；插件关闭时断开所有已连接的 server，关闭时抛出的错误被忽略，仅记 debug 日志。
 - 远端工具的返回文本经 `wrapUntrustedContent` 套上不可信内容边界；返回 `isError` 时不套边界，加 `MCP 工具返回错误:` 前缀返回。
-- 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出已配置 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。后者先经 `plugins.updateConfig` 改运行态，成功后经 `host-config` 写配置文档并 `save()`；`plugins` 或 `host-config` 任一缺席时返回失败，不改运行态。`save()` 失败（如配置文件有尚未生效的外部修改而拒写）时运行态已经切换、插件照常 bounce，返回的文本注明这一点与写入失败的原因：配置文件里仍是原值，重启或配置重新载入后可能回退（拒写时配置重新载入以文件为准；其它写入错误时改动仍留在配置文档里，之后别处保存成功会一并写进文件）。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
+- 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出有效 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换列表中已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。后者先经 `plugins.updateConfig` 改运行态，成功后经 `host-config` 写回插件的原配置文档并 `save()`，只改目标条目的 `enabled`；`plugins` 或 `host-config` 任一缺席时返回失败，不改运行态。`save()` 失败（如配置文件有尚未生效的外部修改而拒写）时运行态已经切换、插件照常 bounce，返回的文本注明这一点与写入失败的原因：配置文件里仍是原值，重启或配置重新载入后可能回退（拒写时配置重新载入以文件为准；其它写入错误时改动仍留在配置文档里，之后别处保存成功会一并写进文件）。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
 
 ## 安全注意事项
 

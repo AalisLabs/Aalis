@@ -40,6 +40,8 @@ definePlugin({
 | `keepSessions` | number | `20` | 保留的会话数：GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。 |
 | `scopes` | multiselect | `["webui:*"]` | 启用作用域：仅在匹配下列 platform:sessionType 的会话中参与 turn 生命周期（建 checkpoint）。格式举例：`webui:*` / `onebot:group` / `*` 表示全部。默认仅 `webui:*`：onebot 等聊天平台不会为每条消息创建 checkpoint。留空数组 = 禁用 checkpoint（仅允许手动 rollback）。 |
 
+`rootDir` 的显式错误类型或非 storage URI 会在插件注册服务前拒绝；留空仍取默认目录。`scopes` 的 `null` 与未填都取默认，`[]` 禁用自动 checkpoint；空白成员会被忽略。旧字符串作用域由配置迁移工具转换为数组。
+
 ## 相关
 
 - 存储服务与 URI 语法：[services/storage.md](../services/storage.md)、[concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)

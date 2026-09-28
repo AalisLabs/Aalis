@@ -9,7 +9,7 @@ import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
@@ -52,7 +52,7 @@ const DEFAULT_PERSONA_NAME = 'Aalis';
  *  同名 persona（如 onebot 与 webui 两张都叫 Aalis）共享准则；不同 persona（如 Babel）各自独立。 */
 const INSTRUCTIONS_NS = 'aalis:instructions';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   extractEveryNMessages: {
     type: 'number',
     label: '每 N 条消息提取一次',
@@ -137,6 +137,7 @@ const configSchema: ConfigSchema = {
   },
   allowGlobalBackfill: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '允许跨会话补齐副档案',
     description:
       '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
@@ -144,6 +145,7 @@ const configSchema: ConfigSchema = {
   },
   enableSelfProfile: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '启用 Aalis 自档案',
     description:
       '让 Aalis 周期性地反思自身，提炼「关于自己的事实」（近期心情走向、在意的事、自我观察）。注入到所有 LLM 调用的 system prompt 早段，提供跨会话的人格延续性。' +
@@ -171,6 +173,7 @@ const configSchema: ConfigSchema = {
   },
   enableInstructions: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '启用第三方行为指令',
     description:
       '让 Aalis 记录第三方（管理员/操作者）对其行为的客观指令（如「不要长时间封禁」「按严重程度分层禁言」），作为跨会话的行为约束。' +
@@ -211,7 +214,7 @@ const configSchema: ConfigSchema = {
     description: '超出会被裁断',
     default: 120,
   },
-};
+});
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
 type FactCategory =
@@ -308,32 +311,7 @@ interface InstructionDoc {
   updatedAt: number;
 }
 
-interface UserProfileConfig {
-  extractEveryNMessages: number;
-  historyForExtraction: number;
-  maxFactsPerUser: number;
-  maxFactCharsPerItem: number;
-  maxOtherParticipants: number;
-  maxFactsForOthers: number;
-  temporaryFactMaxAgeDays: number;
-  relationScoreDecayPerDay: number;
-  relationIncrementDirect: number;
-  relationIncrementImmediate: number;
-  relationIncrementInterval: number;
-  relationIncrementWitness: number;
-  extractLLM?: { provider: string; model: string };
-  allowGlobalBackfill: boolean;
-  enableSelfProfile: boolean;
-  selfReflectEveryNMessages: number;
-  selfReflectHistory: number;
-  maxSelfFacts: number;
-  enableInstructions: boolean;
-  instructionMinAuthority: number;
-  instructionExtractEveryNMessages: number;
-  instructionHistoryForExtraction: number;
-  maxInstructions: number;
-  maxInstructionCharsPerItem: number;
-}
+type UserProfileConfig = ConfigOf<typeof configSchema>;
 
 /** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低）；前缀 'f' 为事实、'i' 为指令 */
 function genShortId(prefix: 'f' | 'i', existing: Set<string>): string {
@@ -468,37 +446,35 @@ function registerUserProfile({
   persona,
   userRelation,
 }: Caps): void {
+  const parsed = parseConfig(configSchema, config, logger);
   const cfg: UserProfileConfig = {
-    extractEveryNMessages: (config.extractEveryNMessages as number) ?? 5,
-    historyForExtraction: Math.max(2, (config.historyForExtraction as number) ?? 8),
-    maxFactsPerUser: Math.max(5, (config.maxFactsPerUser as number) ?? 30),
-    maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
-    maxOtherParticipants: Math.max(0, (config.maxOtherParticipants as number) ?? 3),
-    maxFactsForOthers: Math.max(1, (config.maxFactsForOthers as number) ?? 5),
-    temporaryFactMaxAgeDays: Math.max(0, (config.temporaryFactMaxAgeDays as number) ?? 90),
-    relationScoreDecayPerDay: Math.max(0, (config.relationScoreDecayPerDay as number) ?? 0.5),
-    relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
-    relationIncrementImmediate: Math.max(0, (config.relationIncrementImmediate as number) ?? 1.5),
-    relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
-    relationIncrementWitness: Math.max(0, (config.relationIncrementWitness as number) ?? 0.1),
+    ...parsed,
+    historyForExtraction: Math.max(2, parsed.historyForExtraction),
+    maxFactsPerUser: Math.max(5, parsed.maxFactsPerUser),
+    maxFactCharsPerItem: Math.max(20, parsed.maxFactCharsPerItem),
+    maxOtherParticipants: Math.max(0, parsed.maxOtherParticipants),
+    maxFactsForOthers: Math.max(1, parsed.maxFactsForOthers),
+    temporaryFactMaxAgeDays: Math.max(0, parsed.temporaryFactMaxAgeDays),
+    relationScoreDecayPerDay: Math.max(0, parsed.relationScoreDecayPerDay),
+    relationIncrementDirect: Math.max(0, parsed.relationIncrementDirect),
+    relationIncrementImmediate: Math.max(0, parsed.relationIncrementImmediate),
+    relationIncrementInterval: Math.max(0, parsed.relationIncrementInterval),
+    relationIncrementWitness: Math.max(0, parsed.relationIncrementWitness),
     extractLLM:
-      config.extractLLM &&
-      typeof config.extractLLM === 'object' &&
-      (config.extractLLM as { provider?: unknown }).provider &&
-      (config.extractLLM as { model?: unknown }).model
-        ? (config.extractLLM as { provider: string; model: string })
+      parsed.extractLLM &&
+      typeof parsed.extractLLM === 'object' &&
+      parsed.extractLLM.provider &&
+      parsed.extractLLM.model
+        ? parsed.extractLLM
         : undefined,
-    allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
-    enableSelfProfile: (config.enableSelfProfile as boolean) ?? false,
-    selfReflectEveryNMessages: Math.max(0, (config.selfReflectEveryNMessages as number) ?? 25),
-    selfReflectHistory: Math.max(4, (config.selfReflectHistory as number) ?? 16),
-    maxSelfFacts: Math.max(5, (config.maxSelfFacts as number) ?? 20),
-    enableInstructions: (config.enableInstructions as boolean) ?? true,
-    instructionMinAuthority: Math.max(0, (config.instructionMinAuthority as number) ?? 2),
-    instructionExtractEveryNMessages: Math.max(0, (config.instructionExtractEveryNMessages as number) ?? 40),
-    instructionHistoryForExtraction: Math.max(4, (config.instructionHistoryForExtraction as number) ?? 20),
-    maxInstructions: Math.max(3, (config.maxInstructions as number) ?? 12),
-    maxInstructionCharsPerItem: Math.max(20, (config.maxInstructionCharsPerItem as number) ?? 120),
+    selfReflectEveryNMessages: Math.max(0, parsed.selfReflectEveryNMessages),
+    selfReflectHistory: Math.max(4, parsed.selfReflectHistory),
+    maxSelfFacts: Math.max(5, parsed.maxSelfFacts),
+    instructionMinAuthority: Math.max(0, parsed.instructionMinAuthority),
+    instructionExtractEveryNMessages: Math.max(0, parsed.instructionExtractEveryNMessages),
+    instructionHistoryForExtraction: Math.max(4, parsed.instructionHistoryForExtraction),
+    maxInstructions: Math.max(3, parsed.maxInstructions),
+    maxInstructionCharsPerItem: Math.max(20, parsed.maxInstructionCharsPerItem),
   };
 
   /** 每会话每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */

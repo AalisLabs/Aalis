@@ -38,7 +38,7 @@ import {
   provide,
   services,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import {
   CONTROL_KINDS,
@@ -159,17 +159,16 @@ class DefaultAgent implements AgentService {
   /** 已注册的预处理器（name → { dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
-  constructor(caps: AgentCaps) {
+  constructor(caps: AgentCaps, cfg: ConfigOf<typeof configSchema>) {
     this.caps = caps;
     this.logger = caps.logger.child('agent');
-    const config = caps.config;
-    this.systemPrompt = (config.systemPrompt as string) || '';
-    this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
-    this.historyLimit = (config.historyLimit as number) ?? 50;
-    this.maxToolIterations = (config.maxToolIterations as number) ?? 30;
-    this.promptBuildTimeoutMs = (config.promptBuildTimeoutMs as number) ?? 10000;
-    this.toolResultMaxRatio = (config.toolResultMaxRatio as number) ?? 0.15;
-    this.trimThresholdRatio = (config.trimThresholdRatio as number) ?? 1.0;
+    this.systemPrompt = cfg.systemPrompt;
+    this.memoryTokenBudget = cfg.memoryTokenBudget;
+    this.historyLimit = cfg.historyLimit;
+    this.maxToolIterations = cfg.maxToolIterations;
+    this.promptBuildTimeoutMs = cfg.promptBuildTimeoutMs;
+    this.toolResultMaxRatio = cfg.toolResultMaxRatio;
+    this.trimThresholdRatio = cfg.trimThresholdRatio;
     this.logger.info('默认对话代理已初始化');
   }
 
@@ -1983,7 +1982,7 @@ class DefaultAgent implements AgentService {
 
 // ----- 插件导出 -----
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   defaultLLM: {
     type: 'llm-ref',
     label: '默认对话模型',
@@ -2034,7 +2033,7 @@ const configSchema: ConfigSchema = {
     description:
       '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
   },
-};
+});
 
 // 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
@@ -2056,7 +2055,8 @@ type InternalAgent = {
 };
 
 function run(caps: Caps): void {
-  const agentImpl = new DefaultAgent(caps);
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  const agentImpl = new DefaultAgent(caps, cfg);
   caps.provide(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。
   // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
@@ -2072,7 +2072,7 @@ function run(caps: Caps): void {
   // 全局默认 LLM：通过 ServicePreference 锁定 llm 服务的首选 entry。
   // 偏好的持久化在宿主配置文档（servicePreferences 字段，WebUI 切换时写入）；这里只是开机时按 agent
   // 自己的 cfg.defaultLLM 覆写一次，便于纯文件配置流（无 webui 干预）也能生效。
-  const defaultLLM = caps.config.defaultLLM as { provider?: string; model?: string } | undefined;
+  const defaultLLM = cfg.defaultLLM;
   if (defaultLLM?.provider && defaultLLM?.model) {
     caps.services.prefer(llmService, `${defaultLLM.provider}/${defaultLLM.model}`);
   }

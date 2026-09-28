@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-trigger-laya",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "author": "Ace Nyan <ace@acenyan.com>",
@@ -31,13 +31,12 @@
     "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-trigger": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

@@ -8,6 +8,18 @@
 
 ---
 
+## 未发布（schema-config 0.14.0；core 0.19.1）
+
+插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 本批只有 `uses` 类型错误定位修复。
+
+- **字段类型扩展**：`SchemaFieldTypes` 的值由占位标记改为实际取值类型。自定义字段将 `custom: true` 改为 `custom: MyValue`；`api-llm` 0.13.0 已将 `llm-ref` 改为 `ModelRef`。依赖新版类型的消费者必须同步升级。`dynamicOptions` / `allowCustom` 由 schema-config 声明，`secret` 仍由 api-webui 声明；api-webui 0.11.1 的最终字段形状不变。
+- **配置解析行为**：`undefined` / `null` 表示缺省；有限数字和数字字符串按中立标量规则转换。普通无效字段按 schema 默认值回落或省略并告警；敏感地址、命令参数与启用边界使用 `onInvalid: 'error'`，显式无效时拒绝。MCP client 的坏 server 单独跳过，合法空字符串 argv 保留；storage-local 与 OneBot 的连接/根数组按整体严格策略处理，不会把坏项丢成默认配置后运行。
+- **旧作用域与平台模板**：flow-control 0.13.0、trigger-policy 0.15.0、trigger-laya 0.2.0、checkpoint 0.14.0 的 `scopes` 统一为数组。前三者旧 `null` 表示空范围，需转换为 `[]`；旧字符串按原分隔规则转换。session-manager 0.14.0 的平台 `think: true/false` 转为 `on/off`。提供离线工具与检查模式，不能跳过检查直接启动；详见 [配置迁移](docs/guide/config-migration.md)。
+- **MCP 暴露范围**：mcp-server 0.13.0 的 `toolGroups: null` 按缺省解析为 `[]`（全部组），旧版对此会拒绝启动。离线工具将其标为需人工处理，升级前明确允许的组或先禁用插件。数字组名会归一为字符串后精确匹配。mcp-client 0.13.0 的 args/env 使用数组/映射，旧文本须手工核对参数边界。
+- **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留半指定 actor 身份的拒绝及原有 sessionId 派生规则。
+- **安装下限**：55 个 schema-config 运行时消费者下限抬至 0.14.0；api-llm 消费者下限抬至 0.13.0。其余未删除有效配置形式或公开 API 的迁移包按 patch 准备。版本准备不代表已经发布。
+- **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。
+
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 
 回复闸门职责重组、模型触发插件与随之的修复，以及 0.18 推迟的低危缺陷修复（从「core 的插件状态机与日志」一节起）。用到本节新增接口的包间依赖下限已抬到本批的新版本：`@aalis/schema-message` 0.9.1（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway` 0.8.0（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona` 0.8.1（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬；`@aalis/api-memory` 0.7.1（`clearMetadataNamespaces`）由 plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-todo-list、plugin-adapter-onebot 抬，它们在运行时导入这个函数，不抬会在装到旧版 api-memory 时加载失败；`@aalis/util-network-guard` 0.6.3（`assertPortAllowed`）由 plugin-tool-browser 抬；plugin-flow-control 提供的是收窄后的 `FlowControlService`，`@aalis/api-flow-control` 的下限抬到 0.8.0；plugin-webui-server 与 runtime 的 `@aalis/core` peer 下限抬到 `>=0.19.0 <1.0.0`（禁用插件带配置的 `updateConfig` 只换配置、保持禁用，webui-server 的插件配置接口与 runtime 的配置热重载依赖这一语义），本批其余带 core peer 的包仍为 `>=0.18.0 <1.0.0`。用到 api-memory 结果行 `type` 或可选方法 `listMetadataKeys` 的 plugin-commands、plugin-memory-vector、plugin-checkpoint 与三家记忆后端（plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-inmemory）虽只是类型上的加法，也一并抬到 0.7.1；plugin-persona 只在开发依赖里引用 api-memory 的类型，发布的依赖里没有 api-memory，不涉及下限。其余新用到的接口在已发布版本里都有，也不必抬：plugin-llm-openai、plugin-llm-ollama 新依赖的 `@aalis/util-text-normalize`（`truncateChars`，0.5.2）；plugin-tool-browser 用到的 `pinnedLookup`、`assertAddressesSafe`（util-network-guard 0.6.2 已导出）；plugin-image-sender 用到的 `@aalis/api-storage` 的 `isStorageNotFound`、`isStorageUri` 与网关的 `readFileRange`（0.7.0）。

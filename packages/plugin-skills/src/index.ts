@@ -3,11 +3,17 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { persona } from '@aalis/api-persona';
-import { createStorageGateway, isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
+import {
+  createStorageGateway,
+  isStorageNotFound,
+  isStorageUri,
+  type StorageService,
+  storage,
+} from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 // ════════════════════════════════════════════════════════════
@@ -53,16 +59,6 @@ interface SkillDefinition {
   assets: string[];
   /** 完整 SKILL.md 原始内容（用于 WebUI 查看） */
   raw: string;
-}
-
-interface SkillsConfig {
-  skillsUri: string;
-  maxSkillBytes: number;
-  maxSkills: number;
-  /** 启用启动时 Discovery 注入（默认 true） */
-  discoveryEnabled: boolean;
-  /** 启用 triggers regex 自动激活（默认 true） */
-  triggersEnabled: boolean;
 }
 
 export interface SkillFileInput {
@@ -124,11 +120,12 @@ export const skills = defineService<SkillsService>('skills');
 
 // ──────────── 插件元数据 ────────────
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   skillsUri: {
     type: 'string',
     label: '技能存储 URI',
     default: 'data:/skills',
+    onInvalid: 'error',
     description: '技能文件夹 storage URI（默认 data:/skills）。每个 skill 为一个子目录，含 SKILL.md。',
   },
   maxSkillBytes: {
@@ -156,15 +153,8 @@ const configSchema: ConfigSchema = {
     default: true,
     description: '匹配 SKILL.md frontmatter 中的 triggers regex 时自动加载该 skill。',
   },
-};
-
-const defaultConfig = {
-  skillsUri: 'data:/skills',
-  maxSkillBytes: 200_000,
-  maxSkills: 200,
-  discoveryEnabled: true,
-  triggersEnabled: true,
-};
+});
+type SkillsConfig = ConfigOf<typeof configSchema>;
 
 // ──────────── WebUI 页面 ────────────
 
@@ -247,16 +237,6 @@ function buildSkillMd(fm: SkillFrontmatter, body: string): string {
 }
 
 // ──────────── 辅助 ────────────
-
-function resolveConfig(raw: Readonly<Record<string, unknown>>): SkillsConfig {
-  return {
-    skillsUri: (raw.skillsUri as string) ?? defaultConfig.skillsUri,
-    maxSkillBytes: (raw.maxSkillBytes as number) ?? defaultConfig.maxSkillBytes,
-    maxSkills: (raw.maxSkills as number) ?? defaultConfig.maxSkills,
-    discoveryEnabled: (raw.discoveryEnabled as boolean) ?? defaultConfig.discoveryEnabled,
-    triggersEnabled: (raw.triggersEnabled as boolean) ?? defaultConfig.triggersEnabled,
-  };
-}
 
 function sanitizeFolderName(name: string): string {
   // 文件夹名仅允许 ASCII 字母数字 / -_，其他字符替换为 _；中文保留为 _
@@ -350,7 +330,8 @@ export default definePlugin({
 function run(caps: Caps): void {
   const { tools, webui, persona, contributions, hooks, events, provide } = caps;
   const logger = caps.logger.child('skills');
-  const config = resolveConfig(caps.config);
+  const config: SkillsConfig = parseConfig(configSchema, caps.config, logger);
+  if (!isStorageUri(config.skillsUri)) throw configError('skillsUri 必须是 storage URI');
 
   // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
   const storage = createStorageGateway(caps.storage);

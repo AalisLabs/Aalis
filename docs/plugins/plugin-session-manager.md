@@ -42,6 +42,8 @@ export default definePlugin({
 | `defaults.persona` | select | — | 默认人设：所有平台未单独指定时使用的默认人设 |
 | `platformProfiles` | array | `[]` | 平台默认配置：为每个平台设置默认的会话配置模板。新会话创建时自动应用对应平台的模板。 |
 
+`platformProfiles[].think` 使用 `on`、`off` 或空串（继承）。旧配置中布尔 `true`、`false` 应分别转换为 `on`、`off`；会话运行态的 `think` 覆盖仍是布尔值。
+
 ## 功能
 
 - **会话 CRUD**: 创建、查询、更新、归档、删除会话（删除会递归删除子会话，并经 `memory:clear` 钩子以会话级、不带类型清理，该会话的消息历史、摘要、待办与向量随之清空）

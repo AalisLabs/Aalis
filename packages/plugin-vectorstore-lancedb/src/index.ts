@@ -1,22 +1,23 @@
 import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
 import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';
 
 function toUri(input: string): string {
-  const s = String(input ?? '').trim();
-  return s ? toStorageUri(s) : 'data:/lancedb';
+  const s = input.trim();
+  return s ? toStorageUri(s) : configSchema.path.default;
 }
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   path: {
     type: 'string',
     label: '数据库目录',
     default: 'data:/lancedb',
+    onInvalid: 'error',
     description: 'LanceDB 数据存储 storage URI（也兼容裸名/相对路径）',
   },
-  tableName: { type: 'string', label: '表名', default: 'vectors', description: '向量表名称' },
+  tableName: { type: 'string', label: '表名', default: 'vectors', onInvalid: 'error', description: '向量表名称' },
   optimizeEvery: {
     type: 'number',
     label: '压实间隔',
@@ -33,20 +34,11 @@ const configSchema: ConfigSchema = {
       '压实时回收「此分钟数以前」的作废数据文件。比它更新的文件（含可能在途的写入）一律保留，故对单进程写入安全。' +
       '默认 LanceDB 保留 7 天，高频压实下会让 data/ 累到数百 GB —— 收紧到分钟级即可把库压回真实大小。调大更保守、更占盘。',
   },
-};
+});
 
 // ===== 配置 =====
 
-interface LanceDBConfig {
-  /** 数据库存储目录 */
-  path: string;
-  /** 表名 */
-  tableName: string;
-  /** 每写入多少条后台压实一次；<=0 关闭 */
-  optimizeEvery: number;
-  /** 压实时回收多久以前的作废数据文件（分钟）；带时间缓冲保护在途写入 */
-  cleanupRetentionMinutes: number;
-}
+type LanceDBConfig = ConfigOf<typeof configSchema>;
 
 /**
  * 构造匹配 metadata_json 里某个 JSON 字段的 SQL LIKE 谓词（供 LanceDB 原生 delete 用，不载入 JS）。
@@ -324,12 +316,8 @@ export default definePlugin({
   provides: [vectorstore],
   uses,
   async apply({ storage, provide, config, logger, lifecycle }) {
-    const cfg: LanceDBConfig = {
-      path: (config.path as string) ?? 'data:/lancedb',
-      tableName: (config.tableName as string) ?? 'vectors',
-      optimizeEvery: (config.optimizeEvery as number) ?? 500,
-      cleanupRetentionMinutes: (config.cleanupRetentionMinutes as number) ?? 60,
-    };
+    const cfg: LanceDBConfig = parseConfig(configSchema, config, logger);
+    if (!cfg.tableName.trim()) throw configError('tableName 不能为空');
 
     const gateway = createStorageGateway(storage);
     const dbUri = toUri(cfg.path);

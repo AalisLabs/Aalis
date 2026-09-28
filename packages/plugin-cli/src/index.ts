@@ -17,7 +17,7 @@ import {
   provide,
   services,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { LogEntry } from '@aalis/schema-log';
 import type { StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
@@ -46,11 +46,12 @@ export const cli = defineService<CLIService>('cli');
 
 const name = '@aalis/plugin-cli';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   sessionId: {
     type: 'string',
     label: '默认会话 ID',
     default: 'cli-default',
+    onInvalid: 'error',
     description: 'CLI 聊天所在的会话标识。',
   },
   lastView: {
@@ -76,26 +77,14 @@ const configSchema: ConfigSchema = {
       { label: '聊天', value: 'chat' },
       { label: '日志', value: 'logs' },
       { label: '状态', value: 'status' },
+      { label: '帮助', value: 'help' },
     ],
   },
-};
-
-const defaultConfig = {
-  prompt: 'You',
-  sessionId: 'cli-default',
-  maxLogEntries: 50000,
-};
+});
 
 type CLIView = 'chat' | 'logs' | 'status' | 'help';
 
-interface CLIConfig {
-  prompt: string;
-  sessionId: string;
-  startupView: 'last' | CLIView;
-  lastView: CLIView;
-  /** 日志内存缓冲上限（条）；超出后从最旧成块丢弃，完整日志在 data/latest.log */
-  maxLogEntries: number;
-}
+type CLIConfig = Omit<ConfigOf<typeof configSchema>, 'lastView'> & { lastView: CLIView };
 
 // ===== 插件入口 =====
 
@@ -129,12 +118,13 @@ export default definePlugin({
 
 function startCli(caps: Caps): void {
   const { config, events, logger } = caps;
+  const cfg = parseConfig(configSchema, config, logger);
   const cliConfig: CLIConfig = {
-    prompt: (config.prompt as string) ?? defaultConfig.prompt,
-    sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
-    startupView: parseStartupView(config.startupView),
-    lastView: parseView(config.lastView, 'chat'),
-    maxLogEntries: Math.max(1000, Number(config.maxLogEntries) || defaultConfig.maxLogEntries),
+    prompt: cfg.prompt,
+    sessionId: cfg.sessionId,
+    startupView: cfg.startupView,
+    lastView: parseView(cfg.lastView, 'chat'),
+    maxLogEntries: Math.max(1000, cfg.maxLogEntries || configSchema.maxLogEntries.default),
   };
 
   const sessionId = cliConfig.sessionId;
@@ -225,12 +215,6 @@ function startCli(caps: Caps): void {
 
 function parseView(value: unknown, fallback: CLIView): CLIView {
   return value === 'chat' || value === 'logs' || value === 'status' || value === 'help' ? value : fallback;
-}
-
-function parseStartupView(value: unknown): 'last' | CLIView {
-  if (value === 'last') return 'last';
-  if (value === 'chat' || value === 'logs' || value === 'status' || value === 'help') return value;
-  return 'last';
 }
 
 class CliTui {

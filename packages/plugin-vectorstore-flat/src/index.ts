@@ -7,23 +7,17 @@ import {
 } from '@aalis/api-storage';
 import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   path: {
     type: 'string',
     label: '存储目录',
     default: 'data:/vectorstore',
+    onInvalid: 'error',
     description: 'JSON 向量文件存储目录（storage URI）。也兼容旧格式 “data/vectorstore”。',
   },
-};
-
-// ===== 配置 =====
-
-interface VectorStoreConfig {
-  /** 数据存储目录 */
-  path: string;
-}
+});
 
 // ===== 向量计算 =====
 
@@ -198,12 +192,10 @@ export default definePlugin({
   provides: [vectorstore],
   uses,
   async apply(caps) {
-    const storeConfig: VectorStoreConfig = {
-      path: (caps.config.path as string) ?? 'data:/vectorstore',
-    };
+    const cfg = parseConfig(configSchema, caps.config, caps.logger);
 
     // toStorageUri 兼容旧格式 “data/vectorstore”
-    const dirUri = toStorageUri(storeConfig.path);
+    const dirUri = toStorageUri(cfg.path);
     const dataUri = dirUri.endsWith('/') ? `${dirUri}vectors.json` : `${dirUri}/vectors.json`;
     const store = new FlatVectorStore(createStorageGateway(caps.storage), dataUri, caps.logger);
     await store.init();

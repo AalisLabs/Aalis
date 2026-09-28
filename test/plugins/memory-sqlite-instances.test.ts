@@ -127,6 +127,17 @@ const clash = (path: string, holder: string, id: string, via = '') =>
   `数据库文件 ${path} 已被实例 ${holder} 使用${via}，两个实例不能共用一个库：请给 ${id} 另配 path`;
 
 describe('plugin-memory-sqlite 多实例的数据库位置', () => {
+  it('显式坏 path 拒绝激活，不用默认文件开库；缺省 path 仍按实例派生', async () => {
+    const { state } = await start([
+      [NAME, { path: false }],
+      [`${NAME}:b`, {}],
+    ]);
+    expect(state(NAME)?.state).toBe('error');
+    expect(state(NAME)?.error).toContain('path');
+    expect(state(`${NAME}:b`)?.state).toBe('active');
+    expect(native.opened).toEqual([join(dir, 'aalis-b.db')]);
+  });
+
   it('path 留空按实例派生：主实例用原默认文件，带后缀的实例在文件名上加后缀；写明的 path 照用', async () => {
     const { state } = await start([
       [NAME, { path: '' }],

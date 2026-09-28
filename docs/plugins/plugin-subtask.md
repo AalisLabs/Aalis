@@ -58,3 +58,7 @@ export default definePlugin({
 ## 相关插件
 
 会话历史读取已拆分到独立插件：[plugin-tool-session](./plugin-tool-session.md)。
+
+## 配置校验
+
+`enabled`、默认 provider 和模型名的显式无效类型会报配置错误，避免悄悄启用工具或改用父会话模型。`maxWaitMs` 接受数字字符串；0 仍取默认值，负数仍保留现有超时语义。

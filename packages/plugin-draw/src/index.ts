@@ -15,12 +15,12 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { DrawEngine } from './engine.js';
 import { framesToGif } from './gif.js';
 import { type DrawCaps, lintAnimationSource, resolveCanvas } from './plan.js';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   defaultWidth: {
     type: 'number',
     label: '默认画布宽 (px)',
@@ -57,12 +57,14 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '无头模式',
     default: true,
+    onInvalid: 'error',
     description: '调试时可关闭以观察渲染页面',
   },
   executablePath: {
     type: 'string',
     label: 'Chrome 路径（留空自动探测）',
     default: '',
+    onInvalid: 'error',
     description: '留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立）',
   },
   idleShutdownSec: {
@@ -101,7 +103,7 @@ const configSchema: ConfigSchema = {
     default: 9,
     description: '超出即报错（OneBot 内联投递上限 10MB，留余量）',
   },
-};
+});
 
 interface DrawConfig extends DrawCaps {
   headless: boolean;
@@ -114,25 +116,23 @@ interface DrawConfig extends DrawCaps {
   animMaxOutputMB: number;
 }
 
-function resolveConfig(raw: Readonly<Record<string, unknown>>): DrawConfig {
-  const num = (v: unknown, dflt: number, lo: number, hi: number): number => {
-    const n = Number(v);
-    return Number.isFinite(n) && n >= lo ? Math.min(hi, Math.floor(n)) : dflt;
-  };
+function resolveConfig(raw: ConfigOf<typeof configSchema>): DrawConfig {
+  const num = (value: number, fallback: number, lo: number, hi: number): number =>
+    value >= lo ? Math.min(hi, Math.floor(value)) : fallback;
   return {
-    defaultWidth: num(raw.defaultWidth, 800, 16, 4096),
-    maxWidth: num(raw.maxWidth, 1600, 16, 4096),
-    maxPixels: num(raw.maxPixels, 4_000_000, 65536, 16_000_000),
-    maxSourceBytes: num(raw.maxSourceKB, 256, 1, 4096) * 1024,
-    scale: num(raw.scale, 2, 1, 3),
-    headless: (raw.headless as boolean) ?? true,
-    executablePath: (raw.executablePath as string) ?? '',
-    idleShutdownSec: num(raw.idleShutdownSec, 300, 0, 86400),
-    maxConcurrency: num(raw.maxConcurrency, 2, 1, 8),
-    animMaxDurationSec: num(raw.animMaxDurationSec, 8, 1, 30),
-    animDefaultFps: num(raw.animDefaultFps, 15, 1, 25),
-    animMaxFrames: num(raw.animMaxFrames, 160, 2, 600),
-    animMaxOutputMB: num(raw.animMaxOutputMB, 9, 1, 9),
+    defaultWidth: num(raw.defaultWidth, configSchema.defaultWidth.default, 16, 4096),
+    maxWidth: num(raw.maxWidth, configSchema.maxWidth.default, 16, 4096),
+    maxPixels: num(raw.maxPixels, configSchema.maxPixels.default, 65536, 16_000_000),
+    maxSourceBytes: num(raw.maxSourceKB, configSchema.maxSourceKB.default, 1, 4096) * 1024,
+    scale: num(raw.scale, configSchema.scale.default, 1, 3),
+    headless: raw.headless,
+    executablePath: raw.executablePath,
+    idleShutdownSec: num(raw.idleShutdownSec, configSchema.idleShutdownSec.default, 0, 86400),
+    maxConcurrency: num(raw.maxConcurrency, configSchema.maxConcurrency.default, 1, 8),
+    animMaxDurationSec: num(raw.animMaxDurationSec, configSchema.animMaxDurationSec.default, 1, 30),
+    animDefaultFps: num(raw.animDefaultFps, configSchema.animDefaultFps.default, 1, 25),
+    animMaxFrames: num(raw.animMaxFrames, configSchema.animMaxFrames.default, 2, 600),
+    animMaxOutputMB: num(raw.animMaxOutputMB, configSchema.animMaxOutputMB.default, 1, 9),
   };
 }
 
@@ -168,7 +168,7 @@ export default definePlugin({
 });
 
 function registerDraw(caps: Caps): void {
-  const cfg = resolveConfig(caps.config);
+  const cfg = resolveConfig(parseConfig(configSchema, caps.config, caps.logger));
   const logger = caps.logger.child('draw');
   const storage = createStorageGateway(caps.storage);
   const proc = createProcessGateway(caps.processService);

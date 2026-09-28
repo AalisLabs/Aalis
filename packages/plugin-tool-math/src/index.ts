@@ -1,6 +1,6 @@
 import { type BoundTools, tools, withToolGroups } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { registerBaseConvertTools } from './tools/base-convert.js';
 import { registerCalculusTools } from './tools/calculus.js';
 import { registerConversionTools } from './tools/conversion.js';
@@ -15,7 +15,7 @@ import { registerSymbolicTools } from './tools/symbolic.js';
 
 // ===== 插件配置 =====
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   evaluate: {
     label: '表达式计算',
     fields: {
@@ -87,21 +87,7 @@ const configSchema: ConfigSchema = {
       },
     },
   },
-};
-
-interface ToolMathConfig {
-  evaluate: { enabled: boolean };
-  statistics: { enabled: boolean };
-  matrix: { enabled: boolean };
-  numberTheory: { enabled: boolean };
-  geometry: { enabled: boolean };
-  conversion: { enabled: boolean };
-  financial: { enabled: boolean };
-  calculus: { enabled: boolean };
-  equation: { enabled: boolean };
-  baseConvert: { enabled: boolean };
-  symbolic: { enabled: boolean };
-}
+});
 
 // ===== 插件入口 =====
 
@@ -116,7 +102,7 @@ export default definePlugin({
   configSchema,
   uses,
   apply({ tools, config, logger }) {
-    const cfg = resolveConfig(config);
+    const cfg = parseConfig(configSchema, config, logger);
 
     tools.registerGroup({
       name: 'math',
@@ -184,25 +170,3 @@ export default definePlugin({
     logger.info('数学工具插件已启动');
   },
 });
-
-// ===== 辅助函数 =====
-
-function resolveConfig(config: Readonly<Record<string, unknown>>): ToolMathConfig {
-  const get = (key: string) => {
-    const section = config[key] as Record<string, unknown> | undefined;
-    return { enabled: section?.enabled !== false };
-  };
-  return {
-    evaluate: get('evaluate'),
-    statistics: get('statistics'),
-    matrix: get('matrix'),
-    numberTheory: get('numberTheory'),
-    geometry: get('geometry'),
-    conversion: get('conversion'),
-    financial: get('financial'),
-    calculus: get('calculus'),
-    equation: get('equation'),
-    baseConvert: get('baseConvert'),
-    symbolic: get('symbolic'),
-  };
-}

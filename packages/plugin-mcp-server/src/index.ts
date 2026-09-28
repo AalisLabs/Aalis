@@ -14,7 +14,6 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import {
   type BoundOf,
   config as configService,
@@ -22,23 +21,12 @@ import {
   lifecycle as lifecycleService,
   logger as loggerService,
 } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
-interface Config {
-  /** 监听端口（必须 1-65535）。要暂停服务请在插件列表里禁用本插件。 */
-  port: number;
-  /** 监听地址，默认 127.0.0.1 */
-  bind: string;
-  /** 仅暴露这些工具分组（空 = 全部允许，但仍受 allowRestricted 约束） */
-  toolGroups: string[];
-  /** 是否允许暴露 visibility='restricted' 的工具 */
-  allowRestricted: boolean;
-}
-
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   port: {
     type: 'number',
     label: '监听端口',
@@ -47,8 +35,9 @@ const configSchema: ConfigSchema = {
     min: 1,
     max: 65535,
     integer: true,
-  } as ConfigSchema[string],
-  bind: { type: 'string', label: '监听地址', default: '127.0.0.1' } as ConfigSchema[string],
+    onInvalid: 'error',
+  },
+  bind: { type: 'string', label: '监听地址', default: '127.0.0.1', onInvalid: 'error' },
   toolGroups: {
     type: 'multiselect',
     label: '允许的工具分组（空=全部，受受限开关约束）',
@@ -56,13 +45,16 @@ const configSchema: ConfigSchema = {
     dynamicOptions: 'toolGroups',
     allowCustom: true,
     default: [],
+    onInvalid: 'error',
   },
   allowRestricted: {
     type: 'boolean',
     label: '允许暴露 restricted（受限）工具',
     default: false,
-  } as ConfigSchema[string],
-};
+    onInvalid: 'error',
+  },
+});
+type Config = ConfigOf<typeof configSchema>;
 
 const uses = {
   tools: toolsService,
@@ -73,24 +65,8 @@ const uses = {
 type Caps = BoundOf<typeof uses>;
 
 async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promise<void> {
-  const config = rawConfig as unknown as Config;
-
-  // 配置非法时抛出、激活失败：实例转入 error，WebUI 与 doctor 直接看得到原因（只记日志的话显示运行中，实际没有监听）
-  if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
-    throw new Error(
-      `plugin-mcp-server 端口非法：port=${config.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
-    );
-  }
-
-  // 空数组 = 全部暴露，所以任何认不出的形态都不能退化成空数组（那是 fail-open）：
-  // 非数组、含非字符串元素（包括旧版 WebUI 存下的 [{ name }]）一律报错不启动。
-  const toolGroups: unknown = config.toolGroups;
-  if (!Array.isArray(toolGroups) || toolGroups.some(g => typeof g !== 'string')) {
-    throw new Error(
-      `plugin-mcp-server toolGroups 非法：必须是分组名的字符串数组（如 ['search', 'system']；全部暴露写 [] 或 ['*']），` +
-        `当前值 ${JSON.stringify(toolGroups)}。旧版 WebUI 存下的 [{ name: ... }] 请改写为字符串数组。`,
-    );
-  }
+  const config: Config = parseConfig(configSchema, rawConfig, logger);
+  if (!config.bind.trim()) throw configError('bind 不能为空');
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的
   let currentTransport: SSEServerTransport | undefined;

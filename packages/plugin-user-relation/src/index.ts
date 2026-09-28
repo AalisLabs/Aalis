@@ -26,7 +26,7 @@ import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { registerRelationActions } from './actions.js';
 import { type EvictionConfig, registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
@@ -36,10 +36,11 @@ import { RelationService } from './service.js';
 import { RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
 
-const configSchema: ConfigSchema = {
+const configSchema = defineConfig({
   // ────── 抽取（写入）侧 ──────
   extractionEnabled: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '允许从对话中提取新关系（写入总开关）',
     description:
       '**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。彻底卸载请整体停用该插件。',
@@ -139,6 +140,7 @@ const configSchema: ConfigSchema = {
   },
   consolidationAutoLink: {
     type: 'boolean',
+    onInvalid: 'error',
     label: 'Consolidate autoLink',
     description:
       '为 true 时自动合并别名实体、建层级边（结合 consolidationModel 可由 LLM 核验）；false 仅打印候选不动数据。',
@@ -160,6 +162,7 @@ const configSchema: ConfigSchema = {
   },
   consolidateAfterEviction: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '淘汰时自动 consolidate',
     description:
       '每次触发容量淘汰时，先自动运行一次 consolidate（去重 / 整理 / 层级推断），再执行淘汰。与 /relation maintain 顺序一致，使 PageRank 入出度更完整。',
@@ -169,6 +172,7 @@ const configSchema: ConfigSchema = {
   // ────── 自动老化（写后顺手扫，profile 风格，不开独立调度器）──────
   evictionEnabled: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '启用自动老化',
     description:
       '每次提取完成后扫一遍当前图：先删孤儿节点（无任何边），再按"超出配额"逐项删除"老旧 + 低权重 + PageRank 边缘"的人物/事件/实体/边。不再有硬豁免，重要性完全由 PageRank 、weight 衰减与 mentionCount 表达。配额设为 0 则允许该类节点无限增长。',
@@ -258,6 +262,7 @@ const configSchema: ConfigSchema = {
   // ────── Middleware 注入侧 ──────
   agentInjection: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '向 agent 注入关系上下文',
     description: '把当前用户的子图速览作为 agent:prompt 贡献注入（turn-context 槽，历史之后、当前消息之前）',
     default: true,
@@ -310,6 +315,7 @@ const configSchema: ConfigSchema = {
   },
   groupOnly: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '仅在群聊中注入',
     description: '私聊一般无需关系图上下文',
     default: false,
@@ -318,6 +324,7 @@ const configSchema: ConfigSchema = {
   // ────── Agent 工具侧 ──────
   toolsEnabled: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '向 Agent 暴露 dig 工具',
     description:
       '允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等）',
@@ -325,6 +332,7 @@ const configSchema: ConfigSchema = {
   },
   commandsEnabled: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '注册 /relation 指令',
     description:
       '注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予）',
@@ -332,6 +340,7 @@ const configSchema: ConfigSchema = {
   },
   strictSelfAssertion: {
     type: 'boolean',
+    onInvalid: 'error',
     label: '严格自证模式',
     description:
       '开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。',
@@ -386,7 +395,7 @@ const configSchema: ConfigSchema = {
     description: '开启后会输出提取/工具调用的详细日志',
     default: false,
   },
-};
+});
 
 const webuiPages: WebuiPage[] = [
   {
@@ -493,7 +502,7 @@ const webuiPages: WebuiPage[] = [
 ];
 
 function start(caps: Caps): void {
-  const config = caps.config;
+  const cfg = parseConfig(configSchema, caps.config, caps.logger);
   const store = new RelationStore(() => caps.memory.require());
   const service = new RelationService(store, caps.logger, caps.embedding);
 
@@ -503,29 +512,27 @@ function start(caps: Caps): void {
   // 改名也应反映到已存在的 Person 节点（仅同步，不创建新节点）。
   startRenameWatcher({ events: caps.events, logger: caps.logger }, service);
 
-  const debug = config.debug === true;
+  const debug = cfg.debug;
 
   // 容量淘汰配置只解析一次，extractor 的自动淘汰与 /relation 指令共用
-  const rawCommunityAlgorithm = config.communityAlgorithm as string | undefined;
   const eviction: EvictionConfig = {
-    maxPersons: numCfg(config.maxPersons, 1500),
-    maxEvents: numCfg(config.maxEvents, 2500),
-    maxEntities: numCfg(config.maxEntities, 1500),
-    maxEdges: numCfg(config.maxEdges, 10000),
-    pagerankDamping: numCfg(config.pagerankDamping, 0.85),
-    pagerankIterations: numCfg(config.pagerankIterations, 20),
-    pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
-    hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
-    targetPct: numCfg(config.evictTargetPct, 0.8),
-    weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
-    weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-    communityAlgorithm:
-      rawCommunityAlgorithm === 'leiden' || rawCommunityAlgorithm === 'slpa' ? rawCommunityAlgorithm : 'louvain',
+    maxPersons: cfg.maxPersons,
+    maxEvents: cfg.maxEvents,
+    maxEntities: cfg.maxEntities,
+    maxEdges: cfg.maxEdges,
+    pagerankDamping: cfg.pagerankDamping,
+    pagerankIterations: cfg.pagerankIterations,
+    pagerankEpsilon: cfg.pagerankEpsilon,
+    hysteresisPct: cfg.evictHysteresisPct,
+    targetPct: cfg.evictTargetPct,
+    weightDecayHalfLifeDays: cfg.weightDecayHalfLifeDays,
+    weightDecayFloor: cfg.weightDecayFloor,
+    communityAlgorithm: cfg.communityAlgorithm,
   };
 
   // ─── 提取（写入）─── 受 extractionEnabled 控制；triggerEveryNMessages ≤ 0 即关闭自动提取，不挂监听
-  const extractionEnabled = config.extractionEnabled !== false;
-  const triggerEveryN = numCfg(config.triggerEveryNMessages, 20);
+  const extractionEnabled = cfg.extractionEnabled;
+  const triggerEveryN = cfg.triggerEveryNMessages;
   if (extractionEnabled && triggerEveryN > 0) {
     const extractor = new RelationExtractor(
       {
@@ -538,23 +545,18 @@ function start(caps: Caps): void {
       service,
       {
         triggerEveryNMessages: triggerEveryN,
-        readWindowSize: numCfg(config.readWindowSize, 30),
-        mode: config.mode === 'all-new' ? 'all-new' : 'incremental',
-        allNewMaxMessages: numCfg(config.allNewMaxMessages, 200),
-        readScope:
-          config.readScope === 'cross-platform'
-            ? 'cross-platform'
-            : config.readScope === 'same-platform'
-              ? 'same-platform'
-              : 'same-session',
-        crossSessionMaxAgeMinutes: numCfg(config.crossSessionMaxAgeMinutes, 60),
-        candidateEventDays: numCfg(config.candidateEventDays, 7),
-        candidateEventLimit: numCfg(config.candidateEventLimit, 20),
-        senderNeighborhoodEdgeLimit: numCfg(config.senderNeighborhoodEdgeLimit, 8),
-        extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
-        disableThinking: config.extractionDisableThinking !== false,
-        strictSelfAssertion: config.strictSelfAssertion !== false,
-        evictionEnabled: config.evictionEnabled !== false,
+        readWindowSize: cfg.readWindowSize,
+        mode: cfg.mode,
+        allNewMaxMessages: cfg.allNewMaxMessages,
+        readScope: cfg.readScope,
+        crossSessionMaxAgeMinutes: cfg.crossSessionMaxAgeMinutes,
+        candidateEventDays: cfg.candidateEventDays,
+        candidateEventLimit: cfg.candidateEventLimit,
+        senderNeighborhoodEdgeLimit: cfg.senderNeighborhoodEdgeLimit,
+        extractionModel: cfg.extractionModel,
+        disableThinking: cfg.extractionDisableThinking,
+        strictSelfAssertion: cfg.strictSelfAssertion,
+        evictionEnabled: cfg.evictionEnabled,
         maxPersons: eviction.maxPersons,
         maxEvents: eviction.maxEvents,
         maxEntities: eviction.maxEntities,
@@ -567,12 +569,12 @@ function start(caps: Caps): void {
         weightDecayHalfLifeDays: eviction.weightDecayHalfLifeDays,
         weightDecayFloor: eviction.weightDecayFloor,
         communityAlgorithm: eviction.communityAlgorithm,
-        consolidateAfterEviction: config.consolidateAfterEviction !== false,
-        consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
-        consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
-        consolidateAutoLink: config.consolidationAutoLink === true,
-        consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
-        consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
+        consolidateAfterEviction: cfg.consolidateAfterEviction,
+        consolidateLLMModelRef: cfg.consolidationModel,
+        consolidateLLMDisableThinking: cfg.consolidationDisableThinking,
+        consolidateAutoLink: cfg.consolidationAutoLink,
+        consolidateSkipLowScorePairs: cfg.consolidationSkipLowScorePairs,
+        consolidateLowScoreThreshold: cfg.consolidationLowScoreThreshold,
         debug,
       },
     );
@@ -580,31 +582,31 @@ function start(caps: Caps): void {
   }
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
-  if (config.agentInjection !== false) {
+  if (cfg.agentInjection) {
     registerRelationContribution({ contributions: caps.contributions }, service, {
-      maxDepth: numCfg(config.injectionMaxDepth, 2),
-      maxBreadth: numCfg(config.injectionMaxBreadth, 10),
-      maxEvents: numCfg(config.maxInjectedEvents, 5),
-      maxRelations: numCfg(config.maxInjectedRelations, 8),
-      maxParticipantsPerEvent: numCfg(config.maxParticipantsPerEvent, 5),
-      maxCooccurrencePartners: numCfg(config.maxCooccurrencePartners, 5),
-      maxGlobalHotEvents: numCfg(config.maxGlobalHotEvents, 5),
-      maxGlobalHotEntities: numCfg(config.maxGlobalHotEntities, 5),
-      groupOnly: config.groupOnly === true,
+      maxDepth: cfg.injectionMaxDepth,
+      maxBreadth: cfg.injectionMaxBreadth,
+      maxEvents: cfg.maxInjectedEvents,
+      maxRelations: cfg.maxInjectedRelations,
+      maxParticipantsPerEvent: cfg.maxParticipantsPerEvent,
+      maxCooccurrencePartners: cfg.maxCooccurrencePartners,
+      maxGlobalHotEvents: cfg.maxGlobalHotEvents,
+      maxGlobalHotEntities: cfg.maxGlobalHotEntities,
+      groupOnly: cfg.groupOnly,
     });
   }
 
   // ─── Agent 工具 ─── 受 toolsEnabled 控制
-  if (config.toolsEnabled !== false) {
+  if (cfg.toolsEnabled) {
     registerRelationTools({ tools: caps.tools, logger: caps.logger }, service, {
-      defaultMaxDepth: numCfg(config.digToolDefaultMaxDepth, 2),
-      defaultMaxBreadth: numCfg(config.digToolDefaultMaxBreadth, 8),
-      hardMaxDepth: numCfg(config.digToolHardMaxDepth, 4),
-      hardMaxBreadth: numCfg(config.digToolHardMaxBreadth, 20),
-      findPathDefaultMaxDepth: numCfg(config.findPathDefaultMaxDepth, 4),
-      findPathHardMaxDepth: numCfg(config.findPathHardMaxDepth, 6),
-      searchEventsDefaultLimit: numCfg(config.searchEventsDefaultLimit, 10),
-      searchEventsHardMaxLimit: numCfg(config.searchEventsHardMaxLimit, 50),
+      defaultMaxDepth: cfg.digToolDefaultMaxDepth,
+      defaultMaxBreadth: cfg.digToolDefaultMaxBreadth,
+      hardMaxDepth: cfg.digToolHardMaxDepth,
+      hardMaxBreadth: cfg.digToolHardMaxBreadth,
+      findPathDefaultMaxDepth: cfg.findPathDefaultMaxDepth,
+      findPathHardMaxDepth: cfg.findPathHardMaxDepth,
+      searchEventsDefaultLimit: cfg.searchEventsDefaultLimit,
+      searchEventsHardMaxLimit: cfg.searchEventsHardMaxLimit,
       communityAlgorithm: eviction.communityAlgorithm,
       debug,
     });
@@ -615,8 +617,9 @@ function start(caps: Caps): void {
   registerRelationActions(caps.webui, service, caps.logger);
 
   // /relation 指令
-  if (config.commandsEnabled !== false) {
-    const consolidateModel = config.consolidationModel as { provider: string; model: string } | undefined;
+  if (cfg.commandsEnabled) {
+    const ref = cfg.consolidationModel;
+    const consolidateModel = ref?.provider && ref.model ? { provider: ref.provider, model: ref.model } : undefined;
     registerRelationCommands(
       { commands: caps.commands, platform: caps.platform, llm: caps.llm, logger: caps.logger },
       service,
@@ -625,14 +628,14 @@ function start(caps: Caps): void {
           ? {
               consolidateLLM: {
                 modelRef: consolidateModel,
-                disableThinking: config.consolidationDisableThinking !== false,
+                disableThinking: cfg.consolidationDisableThinking,
               },
             }
           : {}),
         eviction,
-        consolidateAutoLink: config.consolidationAutoLink === true,
-        consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
-        consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
+        consolidateAutoLink: cfg.consolidationAutoLink,
+        consolidateSkipLowScorePairs: cfg.consolidationSkipLowScorePairs,
+        consolidateLowScoreThreshold: cfg.consolidationLowScoreThreshold,
       },
     );
   }
@@ -673,11 +676,6 @@ function start(caps: Caps): void {
     }
     await next();
   });
-}
-
-function numCfg(v: unknown, fallback: number): number {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  return fallback;
 }
 
 export { RelationService } from './service.js';

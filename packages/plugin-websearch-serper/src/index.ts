@@ -1,8 +1,8 @@
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { tools, wrapUntrustedContent } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
-import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
 
@@ -16,8 +16,15 @@ export type {
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const webSearch = defineService<WebSearchService>('web-search');
 
-const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'Serper API Key', required: true, secret: true, description: 'Serper.dev API 密钥' },
+const configSchema = defineConfig({
+  apiKey: {
+    type: 'string',
+    label: 'Serper API Key',
+    required: true,
+    secret: true,
+    onInvalid: 'error',
+    description: 'Serper.dev API 密钥',
+  },
   maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10, description: '频率限制：每分钟最多搜索次数' },
   maxPerDay: { type: 'number', label: '每天最大次数', default: 100, description: '频率限制：每天最多搜索次数' },
   maxConcurrent: { type: 'number', label: '最大并发', default: 3, description: '同时进行的搜索请求数上限' },
@@ -39,39 +46,11 @@ const configSchema: ConfigSchema = {
     default: '',
     description: '自定义压缩搜索结果的提示词。留空使用默认提示。提示词中可使用 {query} 代表搜索关键词。',
   },
-};
+});
 
 // ===== 配置 =====
 
-interface WebSearchConfig {
-  apiKey: string;
-  maxPerMinute: number;
-  maxPerDay: number;
-  maxConcurrent: number;
-  defaultNumResults: number;
-  enableCompression: boolean;
-  compressionLLM?: { provider: string; model: string };
-  compressionPrompt: string;
-}
-
-function readConfig(raw: Readonly<Record<string, unknown>>): WebSearchConfig {
-  return {
-    apiKey: (raw.apiKey as string) ?? '',
-    maxPerMinute: (raw.maxPerMinute as number) ?? 10,
-    maxPerDay: (raw.maxPerDay as number) ?? 100,
-    maxConcurrent: (raw.maxConcurrent as number) ?? 3,
-    defaultNumResults: (raw.defaultNumResults as number) ?? 5,
-    enableCompression: (raw.enableCompression as boolean) ?? false,
-    compressionLLM:
-      raw.compressionLLM &&
-      typeof raw.compressionLLM === 'object' &&
-      (raw.compressionLLM as { provider?: unknown }).provider &&
-      (raw.compressionLLM as { model?: unknown }).model
-        ? (raw.compressionLLM as { provider: string; model: string })
-        : undefined,
-    compressionPrompt: (raw.compressionPrompt as string) ?? '',
-  };
-}
+type WebSearchConfig = ConfigOf<typeof configSchema>;
 
 // ===== 速率限制器 =====
 
@@ -239,11 +218,9 @@ export default definePlugin({
 });
 
 function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
-  const cfg = readConfig(config);
-
-  if (!cfg.apiKey) {
-    throw missingConfigError('apiKey');
-  }
+  const cfg = parseConfig(configSchema, config, logger);
+  // 部分引用沿用默认模型，不把不完整的对象传入解析器。
+  const compressionLLM = cfg.compressionLLM?.provider && cfg.compressionLLM.model ? cfg.compressionLLM : undefined;
 
   const limiter = new RateLimiter(cfg);
 
@@ -254,7 +231,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
 
   /** 使用 LLM 压缩搜索结果 */
   async function compressResults(query: string, rawResults: string): Promise<string> {
-    const entry = resolveLLMModel(llm, cfg.compressionLLM, ['chat']);
+    const entry = resolveLLMModel(llm, compressionLLM, ['chat']);
     if (!entry) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;

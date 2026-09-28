@@ -63,15 +63,18 @@ export default definePlugin({
 ## parseConfig 的处置
 
 - **缺失**：`undefined` 与 `null`（YAML 裸键）；`required` 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填），外来类型的 `''` 一律当作缺失（WebUI 给未选的 `llm-ref` 存 `''`）。有 `default` 用 `default` 的拷贝；无 `default` 且 `required` 不可恢复；否则省略该键。
-- **无效**（不符合上表的判定）：有 `default` 回落并告警；无 `default` 且 `required` 不可恢复；否则省略并告警。
-- **list / map / multiselect**：坏元素、坏值逐个丢弃并告警，其余保留。
-- **分组**：值不是对象时告警，整组按空对象解析，子字段各取默认值。
-- **数组**：值不是数组按无效处理；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警；元素字段的默认值逐元素补齐（runtime 的配置同步不补数组元素的默认值）。
+- **无效**（不符合上表的判定）：未声明 `onInvalid` 时保持宽容处置：有 `default` 回落并告警；无 `default` 且 `required` 不可恢复；否则省略并告警。字段声明 `onInvalid: 'error'` 时，显式无效值即使有 `default` 也抛 `ConfigError`；它不改变 `required` 的缺省含义，`undefined` / `null` 仍走上述缺省规则。
+- **list / map / multiselect**：默认坏元素、坏值逐个丢弃并告警，其余保留；稀疏数组的空位和 map 的保留键也属于坏成员。严格字段只要含一个坏成员就拒绝整个值，不返回部分结果。
+- **分组**：值不是对象时默认告警，整组按空对象解析，子字段各取默认值。显式给非对象且分组含严格字段时拒绝；`undefined` / `null` 仍视为缺省。
+- **数组**：值不是数组按无效处理，含严格元素字段时显式无效的数组值会被拒绝；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警，邻居元素照常解析；元素字段的默认值逐元素补齐（runtime 的配置同步不补数组元素的默认值）。
+- **整体配置**：显式非对象且 schema 含严格字段时拒绝；`undefined` / `null` 仍视为缺省。严格错误说明字段路径与安全的类型或约束原因；集合的下标可定位，map 的键可能含密钥，因此错误只定位到 map 字段，不写用户值或键。
 - **schema 外的键**：丢弃并告警。runtime 已先裁掉顶层与分组内的，这里主要覆盖数组元素，以及不经 runtime 的宿主。
 - **不可恢复**（顶层或分组内）：缺失抛 `missingConfigError`，无效抛 `configError`，插件随之进 error 态，在 WebUI 保存或配置文件热重载后重试激活。
 - **告警文案**：`配置项 <路径> <原因>，改用默认值 <JSON>`、`配置项 <路径> <原因>，已忽略`、`配置项 <数组路径>[i] 已忽略：<字段> <原因>`。只写路径、类型名与约束，不写原值（可能是密钥）；默认值会写出。
 
-`validateConfig(schema, config)` 用同一份判定做只读检查，返回问题清单（`kind` 为 `missing` 或 `invalid`），不转换、不回填、不裁剪；它只把 `undefined` / `null` 当作未配置，只在 `required` 且无 `default` 时报缺。宿主用它告警或拦截保存：runtime 的配置同步对启用中的插件打告警，WebUI 保存插件配置时拒绝本次新引入的 `invalid`。
+数组也可声明 `onInvalid: 'error'`：非对象元素或元素内不可恢复的字段会拒绝整个数组，避免丢弃坏项后触发空数组的业务默认；元素内普通字段仍按自身的回落策略解析。未声明时继续逐项跳过，适合相互独立的 server 列表。
+
+`validateConfig(schema, config)` 用同一份判定做只读检查，返回问题清单（`kind` 为 `missing` 或 `invalid`），不转换、不回填、不裁剪；它只把 `undefined` / `null` 当作未配置，只在 `required` 且无 `default` 时报缺。`onInvalid` 改变 `parseConfig` 的处置，不改变校验器的判定或报告。宿主用它告警或拦截保存：runtime 的配置同步对启用中的插件打告警，WebUI 保存插件配置时拒绝本次新引入的 `invalid`。
 
 `list` 与 `map` 的补充约定：
 
@@ -93,3 +96,5 @@ export default definePlugin({
 就是一次 minor，届时所有已发布消费者的范围会拒收新版，node_modules 里出现两份副本——而
 declaration merging 是按模块副本生效的，`SchemaFieldTypes` / `SchemaField` 的合并面会就此裂开
 （一份合并了 `'llm-ref'`，另一份没有）。宽区间让整个 0.x 段自由流动，加词汇零级联。
+
+解析以调用方传入的值为准。宿主与 Core 的配置拷贝会移除 `__proto__` / `constructor` / `prototype` 保留键，`parseConfig` 无法诊断在上游已被删除的条目；配置字典（含 env）不能使用这些键。

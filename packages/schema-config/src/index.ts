@@ -64,6 +64,8 @@ export interface SchemaField {
   description?: string;
   default?: unknown;
   required?: boolean;
+  /** 显式配置的值无效时拒绝激活；缺省仍按 default / required 处理，省略时保持宽容回落 */
+  onInvalid?: 'error';
   /**
    * select / multiselect 类型的静态选项。没有 dynamicOptions、allowCustom 不为 true 时即取值范围：
    * 值按字符串与选项值比较，parseConfig 取选项声明的原值（数字选项存成字符串也能归位）
@@ -105,6 +107,8 @@ export interface SchemaArray {
   /** 数组每个元素的字段定义 */
   items: Record<string, SchemaField>;
   default?: unknown[];
+  /** 遇到非对象元素或元素内不可恢复的字段时拒绝整个数组；默认只丢弃该元素。 */
+  onInvalid?: 'error';
 }
 
 /** 配置 Schema：顶层 key 可以是字段、分组或数组 */
@@ -327,12 +331,13 @@ export function validateConfig(schema: ConfigSchema | undefined, config: Record<
  * - **缺失**：undefined 与 null；required 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填），
  *   外来类型的 `''` 一律当作缺失。有 default 用 default（拷贝），无 default 且 required 不可恢复，否则省略该键。
  * - **无效**：逐字段判定与 validateConfig 共用（标量宽容、选项即取值范围、约束键）。
- *   有 default 回落并告警；无 default 且 required 不可恢复；否则省略并告警。
+ *   默认有 default 回落并告警；无 default 且 required 不可恢复；否则省略并告警。
+ *   `onInvalid: 'error'` 的字段遇到显式无效值或坏集合成员时，即使有 default 也不可恢复。
  * - **外来类型**：除 `''` 外原样透传，不校验。
- * - **list / map / multiselect**：坏元素、坏值逐个丢弃并告警，其余保留。
- * - **分组**：值不是对象时告警，整组按空对象解析（子字段各取默认值）。
- * - **数组**：值不是数组按无效处理；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警；
- *   元素字段的默认值逐元素补齐。
+ * - **list / map / multiselect**：默认坏元素、坏值逐个丢弃并告警；严格字段拒绝整个值。
+ * - **分组**：值不是对象时默认告警并按空对象解析；含严格字段时拒绝显式无效的分组值。
+ * - **数组**：值不是数组按无效处理，含严格元素字段时拒绝显式无效的数组值；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警；
+ *   数组自身声明 `onInvalid: 'error'` 时不丢元素而是拒绝整个数组。元素字段的默认值逐元素补齐。
  * - **schema 外的键**：丢弃并告警。
  * - **不可恢复**（顶层或分组内）：缺失抛 {@link missingConfigError}，无效抛 {@link configError}，插件随之进 error 态。
  *
@@ -346,7 +351,10 @@ export function parseConfig<S extends ConfigSchema>(
   const warn = (message: string) => logger?.warn(message);
   let source: Record<string, unknown> = {};
   if (isRecord(raw)) source = raw;
-  else if (raw !== undefined && raw !== null) warn(`配置整体期望对象，得到 ${describeType(raw)}，已忽略`);
+  else if (raw !== undefined && raw !== null) {
+    if (hasStrictField(schema)) throw configError('配置整体期望对象，在 WebUI 或配置文件中改正后生效');
+    warn(`配置整体期望对象，得到 ${describeType(raw)}，已忽略`);
+  }
   try {
     return parseEntries(schema, source, '', warn) as ConfigOf<S>;
   } catch (err) {
@@ -525,31 +533,31 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
       const options = field.allowCustom === true ? undefined : choiceOptions(field);
       const kept: Array<string | number> = [];
       const dropped: Array<{ at: string; reason: string }> = [];
-      value.forEach((item, i) => {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
         const text = asText(item);
         if (text === undefined) {
           dropped.push({ at: `[${i}]`, reason: `期望 string 或 number 元素，得到 ${describeType(item)}` });
-          return;
-        }
-        if (!options) {
+        } else if (!options) {
           kept.push(text);
-          return;
+        } else {
+          const hit = options.find(o => String(o.value) === text);
+          if (hit) kept.push(hit.value);
+          else dropped.push({ at: `[${i}]`, reason: notAnOption(options) });
         }
-        const hit = options.find(o => String(o.value) === text);
-        if (hit) kept.push(hit.value);
-        else dropped.push({ at: `[${i}]`, reason: notAnOption(options) });
-      });
+      }
       return { value: kept, dropped };
     }
     case 'list': {
       if (!Array.isArray(value)) return { invalid: `期望数组，得到 ${describeType(value)}` };
       const kept: string[] = [];
       const dropped: Array<{ at: string; reason: string }> = [];
-      value.forEach((item, i) => {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
         const text = asText(item);
         if (text === undefined) dropped.push({ at: `[${i}]`, reason: `期望 string 元素，得到 ${describeType(item)}` });
         else kept.push(text);
-      });
+      }
       return { value: kept, dropped };
     }
     case 'map': {
@@ -560,7 +568,8 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
         const text = asText(v);
         if (text === undefined) dropped.push({ at: `.${k}`, reason: `期望 string 值，得到 ${describeType(v)}` });
         // 危险键不进结果对象：写 `__proto__` 会改掉结果的原型
-        else if (!isUnsafeConfigKey(k)) kept[k] = text;
+        else if (isUnsafeConfigKey(k)) dropped.push({ at: `.${k}`, reason: '保留键不可用' });
+        else kept[k] = text;
       }
       return { value: kept, dropped };
     }
@@ -631,6 +640,18 @@ class UnrecoverableField extends Error {
   }
 }
 
+/** 只在祖先值显式无效时检查；缺省的容器仍按字段原有的缺省规则解析。 */
+function hasStrictField(schema: unknown): boolean {
+  if (!isRecord(schema)) return false;
+  return Object.values(schema).some(entry => {
+    if (!isRecord(entry)) return false;
+    if (entry.onInvalid === 'error') return true;
+    if ('fields' in entry) return hasStrictField(entry.fields);
+    if (entry.type === 'array') return hasStrictField(entry.items);
+    return false;
+  });
+}
+
 function parseEntries(schema: unknown, source: Record<string, unknown>, prefix: string, warn: Warn) {
   // 畸形 schema（分组 fields 为 null、数组缺 items、条目为原始值）按空处理，不抛错
   const entries = isRecord(schema) ? schema : {};
@@ -655,8 +676,10 @@ function parseEntries(schema: unknown, source: Record<string, unknown>, prefix: 
 function parseGroup(fields: unknown, value: unknown, path: string, warn: Warn): Record<string, unknown> {
   let source: Record<string, unknown> = {};
   if (isRecord(value)) source = value;
-  else if (value !== undefined && value !== null)
+  else if (value !== undefined && value !== null) {
+    if (hasStrictField(fields)) throw new UnrecoverableField(path, '期望对象（分组）', false);
     warn(`配置项 ${path} 期望对象（分组），得到 ${describeType(value)}，已忽略`);
+  }
   return parseEntries(fields, source, `${path}.`, warn);
 }
 
@@ -670,6 +693,12 @@ function parseField(field: SchemaField, value: unknown, path: string, warn: Warn
   if (!neutral) return cloneConfigValue(value);
   const verdict = judgeField(field, value);
   if ('invalid' in verdict) return fallBack(field, path, verdict.invalid, warn);
+  if (field.onInvalid === 'error' && verdict.dropped.length > 0) {
+    const first = verdict.dropped[0];
+    // map 键来自配置，可能本身是密钥；集合下标则可安全指出。
+    const memberPath = field.type === 'map' ? path : path + first.at;
+    throw new UnrecoverableField(memberPath, safeInvalidReason(first.reason), false);
+  }
   for (const d of verdict.dropped) warn(`配置项 ${path}${d.at} ${d.reason}，已忽略`);
   return verdict.value;
 }
@@ -679,16 +708,19 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
   if (value === undefined || value === null) {
     list = entry.default;
   } else if (!Array.isArray(value)) {
+    if (hasStrictField(entry.items)) throw new UnrecoverableField(path, '期望数组', false);
     list = fallBack(entry, path, `期望数组，得到 ${describeType(value)}`, warn);
   }
   // 默认值同样逐元素解析：元素字段的默认值要补齐；default 本身不是数组（畸形 schema）按未配置处理
   if (!Array.isArray(list)) return undefined;
   const out: unknown[] = [];
-  list.forEach((item, i) => {
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
     const at = `${path}[${i}]`;
     if (!isRecord(item)) {
+      if (entry.onInvalid === 'error') throw new UnrecoverableField(at, '期望对象元素', false);
       warn(`配置项 ${at} 已忽略：期望对象元素，得到 ${describeType(item)}`);
-      return;
+      continue;
     }
     // 元素内的告警先攒着：这条元素整条丢弃时只报丢弃原因
     const pending: string[] = [];
@@ -696,16 +728,23 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
       out.push(parseEntries(entry.items, item, `${at}.`, message => pending.push(message)));
     } catch (err) {
       if (!(err instanceof UnrecoverableField)) throw err;
+      if (entry.onInvalid === 'error') throw err;
       warn(`配置项 ${at} 已忽略：${err.path.slice(at.length + 1)} ${err.reason}`);
-      return;
+      continue;
     }
     for (const message of pending) warn(message);
-  });
+  }
   return out;
 }
 
 /** 无效值的处置：有 default 回落并告警；无 default 且 required 不可恢复；否则省略并告警 */
-function fallBack(entry: { default?: unknown; required?: boolean }, path: string, reason: string, warn: Warn): unknown {
+function fallBack(
+  entry: { default?: unknown; required?: boolean; onInvalid?: 'error' },
+  path: string,
+  reason: string,
+  warn: Warn,
+): unknown {
+  if (entry.onInvalid === 'error') throw new UnrecoverableField(path, safeInvalidReason(reason), false);
   if (entry.default !== undefined) {
     warn(`配置项 ${path} ${reason}，改用默认值 ${describeDefault(entry.default)}`);
     return cloneConfigValue(entry.default);
@@ -713,6 +752,13 @@ function fallBack(entry: { default?: unknown; required?: boolean }, path: string
   if (entry.required) throw new UnrecoverableField(path, reason, false);
   warn(`配置项 ${path} ${reason}，已忽略`);
   return undefined;
+}
+
+/** 错误可说明类型与约束，但不列出用户值、静态选项值或正则文本。 */
+function safeInvalidReason(reason: string): string {
+  if (reason.startsWith('不是可选值')) return '不是可选值';
+  if (reason.startsWith('不匹配模式')) return '不匹配模式';
+  return reason.replace(/得到 (?:NaN|-?Infinity)/g, '得到 number');
 }
 
 function describeDefault(value: unknown): string {
