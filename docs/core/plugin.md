@@ -77,7 +77,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 - `'changed'`（默认）：服务上下线、注册、启停、bounce、配置更新。合并处理。
 - `'shutdown'`：覆盖整批；`App.stop()` 经 `stopAll()` 走这一条。
 
-在飞 recompute 或手动 dispose 段期间到来的请求合并成一次，停机覆盖普通变化。目标态只看容器里此刻有没有服务。
+在飞 recompute 或手动 dispose 段期间到来的普通请求合并成一次。`beginShutdown()` 丢弃尚未消费的普通重算；`idle()` 仍等待已在飞的重算与手动 dispose 段完成，随后由停机计划拆卸。正常重算的目标态只看容器里此刻有没有服务。
 
 每轮（非 shutdown）：
 
@@ -88,7 +88,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 `disabled` / `disposed` / `error` 是显式态，recompute 不动它们；active / pending 条目的目标态只看 required 依赖此刻是否都有提供者（`requiredSatisfied`）：不满足 → `pending`，满足 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-管理动作收尾时调用 `recompute('changed')`；`stopAll()` 是 `recompute('shutdown')` 的薄壳。停机置位后普通重算不再做状态转移，拆卸全归停机计划。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` 汇入已冻计划后立即返回 true；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
+管理动作收尾时调用 `recompute('changed')`；`stopAll()` 是 `recompute('shutdown')` 的薄壳。停机置位后普通重算不再做状态转移，拆卸全归停机计划。`App.stop()` 单飞：先 `beginShutdown()`（置停机态、丢弃旧普通重算并冻计划）再 `idle()`（仍等待已在飞的重算和手动 dispose 段），然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。从 `beginShutdown()` 起，新发起的六个管理动作一律立即返回 false，不改变条目状态或配置，也不加入额外拆卸；清理由已有停机计划负责。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
 停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。这项保证覆盖动作发起时处于 `active` 或仍在初始化（在飞或后台）的 required 下游；仍在初始化的下游被 abort，按上文的宽限处理，不响应 abort 的会因此进 `error`。仍在 `pending` 的下游不会在提供者关闭期间开始激活（见上文 Phase B）；并发的另一个管理动作里已在收尾的下游、管理动作进行中发生的停机，与本次管理动作彼此不排序。
 
@@ -96,11 +96,11 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 六个管理动作（`register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig`）一律返回 `Promise<boolean>`：
 
-**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态不带配置的 bounce、**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）、停机中的 `register` / `bounce`）。
+**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下，例如重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态不带配置的 bounce，以及**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）。从 `beginShutdown()` 起，新发起的六个动作都立即返回 false，不改状态或配置。
 
-**true** = 其余，含主体已在目标态的幂等情形。停机进行中，`unload` 汇入停机计划后立即返回 true——不等待拆卸完成，拆卸由停机计划执行（在 `app:stopping` 监听器里等待会与屏障事件死锁）。`disable` 先判 `disposed` 终态再判停机：停机拆卸开始时已把有激活的条目标成 `disposed`，此后对它们 `disable` 返回 false，其余情形同 `unload` 返回 true。
+**true** = 正常运行中其余已受理的请求，含主体已在目标态的幂等情形。正常运行中，对已在途卸载再次 `unload` 会 join 首次卸载，返回时该实例已拆卸并离开注册表；进入停机后不再 join 或新增拆卸。
 
-每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 `@aalis/core` 造的对象时按安装问题记 error；主体不存在、`disposed` 在途与停机中 debug）。true 只说明请求已受理，不说明激活已落定——那看 `idle()`。`enable` / `updateConfig` 对已 `disposed` 的插件返回 false 不变。
+每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 `@aalis/core` 造的对象时按安装问题记 error；主体不存在、`disposed` 终态与停机中 debug）。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
 
 管理动作只改运行态（实例配置、禁用态），不写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档并 `save()`，见 [运行态与配置文档](config.md)。
 
@@ -110,15 +110,15 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 ### `register(definition, config?, instanceId?, options?)`
 
-注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false；定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装时同样返回 false，按安装问题记 error。停机中拒绝新登记。
+注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false；定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装时同样返回 false，按安装问题记 error。停机中立即返回 false，不落账。
 
 ### `unload(instanceId)`
 
-拆掉激活并从注册表移除。撞上在途卸载时 join 它，返回时该实例已离开注册表。并发首个 unload 完成后同 id 可能已重新注册，删除带恒等卫，不会按名盲删新 entry。停机中把该激活汇入已冻计划后立即返回 true，不在这里等待拆卸。
+正常运行中拆掉激活并从注册表移除；撞上在途卸载时 join 它，返回时该实例已离开注册表。并发首个 unload 完成后同 id 可能已重新注册，删除带恒等卫，不会按名盲删新 entry。停机中立即返回 false，不改条目，也不加入额外拆卸；等待完整停机用 `app.stop()`。
 
 ### `enable(instanceId)` / `disable(instanceId)`
 
-启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。`disable` 清掉上一次激活失败留下的 `error`；停用本身超过宽限的仍转 `error`，见上文。停机中 `disable` 汇入已冻计划后立即返回 true；停机拆卸开始后，被标成 `disposed` 的条目返回 false。
+正常运行中启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。`disable` 清掉上一次激活失败留下的 `error`；停用本身超过宽限的仍转 `error`，见上文。停机中两个动作都立即返回 false，`enable` 不会把禁用或错误条目转回 `pending`。
 
 ### `bounce(instanceId, opts?: { config? })`
 
@@ -126,13 +126,13 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 - 正在用本插件所提供服务的 required 下游随之重启（先收尾、先关，本插件重新激活后按拓扑序重新激活）；optional 依赖经 `follow` 在换人时交接。
 - 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
-- `disposed`、停机进行中拒绝 bounce。
+- `disposed`、停机进行中拒绝 bounce；停机中也不更换配置。
 - `disabled` 态带 `config` 时只换上新配置、保持禁用，返回 true，启用时按新配置激活；不带 `config` 时拒绝（warn，返回 false）。
 - `error` 态会被重置为 pending 重试。
 
 ### `updateConfig(instanceId, config)`
 
-`bounce(instanceId, { config })` 的薄壳，禁用态同样收下新配置、保持禁用。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象。
+`bounce(instanceId, { config })` 的薄壳，正常运行中禁用态同样收下新配置、保持禁用。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象。停机中返回 false，不更换配置。
 
 ## 反应式监听
 

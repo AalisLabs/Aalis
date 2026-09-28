@@ -8,6 +8,10 @@
 
 ---
 
+## 未发布（Core 停机修复）
+
+- `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
+
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 
 回复闸门职责重组、模型触发插件与随之的修复，以及 0.18 推迟的低危缺陷修复（从「core 的插件状态机与日志」一节起）。用到本节新增接口的包间依赖下限已抬到本批的新版本：`@aalis/schema-message` 0.9.1（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway` 0.8.0（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona` 0.8.1（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬；`@aalis/api-memory` 0.7.1（`clearMetadataNamespaces`）由 plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-todo-list、plugin-adapter-onebot 抬，它们在运行时导入这个函数，不抬会在装到旧版 api-memory 时加载失败；`@aalis/util-network-guard` 0.6.3（`assertPortAllowed`）由 plugin-tool-browser 抬；plugin-flow-control 提供的是收窄后的 `FlowControlService`，`@aalis/api-flow-control` 的下限抬到 0.8.0；plugin-webui-server 与 runtime 的 `@aalis/core` peer 下限抬到 `>=0.19.0 <1.0.0`（禁用插件带配置的 `updateConfig` 只换配置、保持禁用，webui-server 的插件配置接口与 runtime 的配置热重载依赖这一语义），本批其余带 core peer 的包仍为 `>=0.18.0 <1.0.0`。用到 api-memory 结果行 `type` 或可选方法 `listMetadataKeys` 的 plugin-commands、plugin-memory-vector、plugin-checkpoint 与三家记忆后端（plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-inmemory）虽只是类型上的加法，也一并抬到 0.7.1；plugin-persona 只在开发依赖里引用 api-memory 的类型，发布的依赖里没有 api-memory，不涉及下限。其余新用到的接口在已发布版本里都有，也不必抬：plugin-llm-openai、plugin-llm-ollama 新依赖的 `@aalis/util-text-normalize`（`truncateChars`，0.5.2）；plugin-tool-browser 用到的 `pinnedLookup`、`assertAddressesSafe`（util-network-guard 0.6.2 已导出）；plugin-image-sender 用到的 `@aalis/api-storage` 的 `isStorageNotFound`、`isStorageUri` 与网关的 `readFileRange`（0.7.0）。
