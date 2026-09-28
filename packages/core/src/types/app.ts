@@ -52,9 +52,8 @@ export interface PluginStatusEntry {
  * 每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 core 造的对象时按安装问题记 error；主体不存在、
  * 'disposed' 在途与停机中 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
- * 停机进行中，unload 汇入停机计划后立即返回 true（不等待拆卸完成，拆卸由停机计划执行）；disable 先判 'disposed'
- * 终态再判停机——停机拆卸开始时已把有激活的条目标成 'disposed'，此后对它们 disable 返回 false，其余情形同 unload
- * 返回 true；register / bounce 返回 false。
+ * beginShutdown 后（含停机完成后）新发起的六个管理动作一律立即返回 false，不修改状态或配置。
+ * 清理由已有停机计划负责，等待完整停机应在外部 await App.stop()，不要在清理回调里等待自身。
  *
  * 管理动作只改运行态，不写配置文档。要跨重启保留（启停、新配置），调用方在动作成功后经 host-config
  * 写文档并落盘。

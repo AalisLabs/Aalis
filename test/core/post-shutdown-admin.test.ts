@@ -10,8 +10,8 @@ import {
 } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
-// 停机后管理动作：disposed 单向终态，register / enable / updateConfig / bounce 一律 false。
-// app:stopping 时停机已冻结，disable / unload / bounce 汇入停机计划，不得抢关提供者。
+// 停机后六个管理动作一律 false，不再更改状态或配置。
+// app:stopping 时停机已冻结，清理由已有计划负责，管理动作不得抢关提供者。
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -351,10 +351,10 @@ describe('app:stopping 窗口', () => {
 });
 
 describe('停机中 unload 快路径', () => {
-  it('stopAll 进行中外部 await unload 再放 drainHold：交接仍在、unload 立即 true、不撞 disposeTimeout', async () => {
+  it('stopAll 进行中外部 await unload 再放 drainHold：交接仍在、unload 立即 false、不撞 disposeTimeout', async () => {
     // retireBatch 先把条目标 disposed。若 unload 先 join #closing，会与仍持 hold 的
     // 消费者 drain 互等：writer:last 丢，撞 disposeTimeoutMs。shuttingDown 快路径须在
-    // disposed-join 之前，立即 true；beginShutdown 已把整棵树冻进计划，不再发起 disposeAsync。
+    // disposed-join 之前，立即 false；beginShutdown 已把整棵树冻进计划，不再发起 disposeAsync。
     const { app, warnings } = capturingApp({ disposeTimeoutMs: 800 });
     const hold = deferred();
     const entered = deferred();
@@ -377,7 +377,7 @@ describe('停机中 unload 快路径', () => {
     hold.resolve();
     const outcome = await Promise.race([stopping.then(() => 'ok' as const), sleep(4000).then(() => 'hung' as const)]);
 
-    expect({ outcome, unloaded, saved }).toEqual({ outcome: 'ok', unloaded: true, saved: ['writer:last'] });
+    expect({ outcome, unloaded, saved }).toEqual({ outcome: 'ok', unloaded: false, saved: ['writer:last'] });
     expect(unloadMs, `unload 应立即返回，实际 ${unloadMs}ms`).toBeLessThan(400);
     expect(
       warnings.filter(x => x.includes('超过 800ms') || x.includes('等待在飞拆卸超过')),
