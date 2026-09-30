@@ -12,14 +12,30 @@
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import type { Logger } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { canonicalBasePath } from './site/paths.js';
 
 /** Pages 项目名：小写字母、数字与连字符，最长 58 个字符 */
 const PROJECT_PATTERN = '^[a-z0-9][a-z0-9-]{0,57}$';
 /** 作品分支的形状（p- 加随机串）：生产分支不能是这个样子 */
 const WORK_BRANCH_PREFIX = /^p-/i;
 const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const TARGET_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export const configSchema = defineConfig({
+  targetId: {
+    type: 'string',
+    label: '发布目标 ID',
+    default: 'works',
+    onInvalid: 'error',
+    description: '宿主内唯一的小写标识；白纸按此 ID 选择发布目标，发布后不可随意修改',
+  },
+  basePath: {
+    type: 'string',
+    label: '发布目录',
+    default: '/',
+    onInvalid: 'error',
+    description: '作品集所在目录，如 /draw/；不能填写域名，留根目录用 /',
+  },
   accountId: {
     type: 'string',
     label: 'Cloudflare 账号 ID',
@@ -78,6 +94,8 @@ export const configSchema = defineConfig({
 });
 
 export interface WorksSiteConfig {
+  targetId: string;
+  basePath: string;
   accountId: string;
   apiToken: string;
   projectName: string;
@@ -89,6 +107,14 @@ export interface WorksSiteConfig {
   failOpen: boolean;
   siteTitle: string;
   siteIntro: string;
+}
+
+function readBasePath(value: string): string {
+  try {
+    return canonicalBasePath(value.trim());
+  } catch {
+    throw configError('basePath 须是安全的绝对目录，如 /draw/，不能含保留路由或编码分隔符');
+  }
 }
 
 function readOrigin(value: string, projectName: string): string {
@@ -118,6 +144,9 @@ function readOrigin(value: string, projectName: string): string {
 
 /** 把 schema 解析结果转成客户端需要的规范配置；不重复解释原始值。 */
 export function resolveConfig(parsed: ConfigOf<typeof configSchema>): WorksSiteConfig {
+  const targetId = parsed.targetId.trim();
+  if (!TARGET_PATTERN.test(targetId)) throw configError('targetId 须是小写字母或数字开头的小写标识');
+  const basePath = readBasePath(parsed.basePath);
   const accountId = parsed.accountId.trim();
   const apiToken = parsed.apiToken.trim();
   if (!accountId) throw configError('accountId 必须填写');
@@ -135,6 +164,8 @@ export function resolveConfig(parsed: ConfigOf<typeof configSchema>): WorksSiteC
   const pagesDev = `https://${projectName}.pages.dev`;
 
   return {
+    targetId,
+    basePath,
     accountId,
     apiToken,
     projectName,

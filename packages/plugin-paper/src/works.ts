@@ -3,13 +3,19 @@
 // 工具回执不含成品相对路径或白纸存储 URI，公开路径由发布服务再次校验。
 // ============================================================
 
-import { type PublishFile, type PublishService, WORK_ID_PATTERN } from '@aalis/api-publish';
+import {
+  type PublishFile,
+  type PublishService,
+  type PublishSurfaceInfo,
+  publicPathProblem,
+  WORK_ID_PATTERN,
+} from '@aalis/api-publish';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import type { ServiceRef } from '@aalis/core';
 import { artifactUri, EXTENSIONS } from './artifacts.js';
-import type { PaperConfig } from './config.js';
+import { type PaperConfig, specOf } from './config.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
 import { actorKey, checkEligibility, effectiveActor, paperLabel } from './rooms.js';
 import { enterPaperRoom } from './tools.js';
@@ -23,6 +29,8 @@ interface WorksDeps {
   storage: StorageService;
   ledger: LedgerStore;
   cfg: PaperConfig;
+  /** 手动修正转为待提交后唤醒后台协调器，确保异常与重启前也有定时补偿。 */
+  onPublicationChange?: () => void;
 }
 
 type Artifact = TaskRecord['artifacts'][number];
@@ -43,6 +51,31 @@ function publishedPaths(artifacts: readonly Artifact[]): string[] {
   let common = 0;
   while (paths.every(parts => parts.length > common + 1 && parts[common] === paths[0][common])) common++;
   return paths.map(parts => parts.slice(common).join('/'));
+}
+
+/** 自动投稿只认明确的作品根；其它成品留给发起人显式挑选。 */
+export function automaticPublicationArtifacts(
+  task: TaskRecord,
+): { artifacts: Artifact[]; paths: string[] } | { reason: string } {
+  const candidates = task.artifacts.filter(a => a.type === 'html' || MEDIA_TYPES.has(a.type));
+  if (task.artifacts.length === 1 && candidates.length === 1) {
+    return { artifacts: [candidates[0]], paths: publishedPaths(candidates) };
+  }
+  const roots = task.artifacts.filter(a => a.type === 'html' && a.rel.split('/').pop()?.toLowerCase() === 'index.html');
+  if (roots.length !== 1) return { reason: '无法确定唯一的网页入口，请手动选择成品' };
+  const root = roots[0].rel.split('/').slice(0, -1).join('/');
+  const prefix = root ? `${root}/` : '';
+  const artifacts = task.artifacts.filter(a => a.rel.startsWith(prefix));
+  if (artifacts.length !== task.artifacts.length) return { reason: '成品分属不同目录，请手动选择成品' };
+  const paths = artifacts.map(a => a.rel.slice(prefix.length));
+  const lowered = new Set<string>();
+  for (const path of paths) {
+    if (publicPathProblem(path) || lowered.has(path.toLowerCase())) {
+      return { reason: '作品路径不符合发布要求，请手动选择成品' };
+    }
+    lowered.add(path.toLowerCase());
+  }
+  return { artifacts, paths };
 }
 
 function workId(value: unknown): string | undefined {
@@ -70,6 +103,41 @@ function refusal(reason: string, artifacts: readonly Artifact[]): string {
 export function registerWorksTools(deps: WorksDeps): void {
   const { tools, ledger } = deps;
 
+  /** 服务目录按当前白纸的授权名单裁剪；不要让别纸的站点名称或地址进入工具回执。 */
+  function allowedSurfaces(service: PublishService, paperId: string): PublishSurfaceInfo[] {
+    const allowed = specOf(deps.cfg, paperId)?.publishTargets ?? [];
+    return service.listSurfaces().filter(surface => allowed.includes(surface.name));
+  }
+
+  async function targets(_args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
+    if (deps.signal.aborted) return fail('白纸已停止');
+    const entered = await enterPaperRoom(deps, ctx, 'initiate');
+    if (deps.signal.aborted) return fail('白纸已停止');
+    if ('refused' in entered) return fail(entered.refused);
+    const service = deps.publish.current;
+    if (!service) return fail('作品发布服务不可用');
+    try {
+      const spec = specOf(deps.cfg, entered.paper.paperId);
+      const listed = allowedSurfaces(service, entered.paper.paperId);
+      const configuredDefault =
+        spec?.defaultPublishTarget ?? (spec?.publishTargets.length === 1 ? spec.publishTargets[0] : undefined);
+      return done({
+        ...(configuredDefault && listed.some(surface => surface.name === configuredDefault)
+          ? { defaultTarget: configuredDefault }
+          : {}),
+        targets: listed.map(({ name, label, baseUrl, available, reason }) => ({
+          name,
+          label,
+          baseUrl,
+          available,
+          ...(reason ? { reason } : {}),
+        })),
+      });
+    } catch {
+      return fail('读取发布目标失败，等 owner 检查发布服务');
+    }
+  }
+
   async function nominate(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
     if (deps.signal.aborted) return fail('白纸已停止');
     const entered = await enterPaperRoom(deps, ctx, 'initiate');
@@ -78,6 +146,22 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (ledger.failure) return fail('白纸账本读取失败，等 owner 处理');
     const service = deps.publish.current;
     if (!service) return fail('作品发布服务不可用');
+    const spec = specOf(deps.cfg, entered.paper.paperId);
+    const allowed = spec?.publishTargets ?? [];
+    if (allowed.length === 0) return fail('这块白纸未获准发布作品');
+    if (args.target !== undefined && typeof args.target !== 'string') return fail('发布目标须为目标 ID');
+    const requested = typeof args.target === 'string' ? args.target.trim() : '';
+    const target = requested || spec?.defaultPublishTarget || (allowed.length === 1 ? allowed[0] : '');
+    if (!target) return fail('这块白纸有多个发布目标，请明确选择 target');
+    if (!allowed.includes(target)) return fail('这块白纸未获准使用该发布目标');
+    let selectedSurface: PublishSurfaceInfo | undefined;
+    try {
+      selectedSurface = allowedSurfaces(service, entered.paper.paperId).find(surface => surface.name === target);
+    } catch {
+      return fail('读取发布目标失败，等 owner 检查发布服务');
+    }
+    if (!selectedSurface) return fail('发布目标未登记');
+    if (!selectedSurface.available) return fail('发布目标当前不可用');
 
     const taskId = typeof args.task_id === 'string' ? args.task_id.trim() : '';
     if (!/^t-[0-9a-f]{8}$/.test(taskId)) return fail('请提供任务编号');
@@ -88,6 +172,12 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (actorKey(effectiveActor(ctx)) !== actorKey(task.initiator)) return fail('只能提名自己发起的任务');
     if (task.state !== 'done') return fail('这件任务还没有完成');
     if (task.artifactsCleared) return fail('这件任务的成品已随白纸清空删除');
+    if (task.publication?.workId) {
+      return done({ workId: task.publication.workId, message: '这件任务已提交发布处理' });
+    }
+    if (task.publication && task.publication.state !== 'failed') {
+      return fail('这件任务的自动发布正在处理，请稍后查看结果');
+    }
 
     const ids = args.artifact_ids;
     if (
@@ -116,6 +206,35 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (chars(summary) > 300) return fail('简介不能超过 300 字');
 
     const paths = publishedPaths(selected);
+    let repair = task.publication;
+    if (repair) {
+      try {
+        await ledger.exclusive(async () => {
+          if (task.publication !== repair || task.state !== 'done' || task.artifactsCleared)
+            throw new Error('任务状态已变化');
+          task.publication = {
+            target,
+            title,
+            summary,
+            state: 'pending',
+            artifactIds: selected.map(a => a.id),
+            paths,
+            ...(coverArtifact ? { coverArtifactId: coverArtifact.id } : {}),
+            nextAttemptAt: Date.now() + 30_000,
+          };
+          try {
+            await ledger.save();
+          } catch (err) {
+            task.publication = repair;
+            throw err;
+          }
+          repair = task.publication;
+        });
+        deps.onPublicationChange?.();
+      } catch {
+        return fail('白纸账本保存失败，请稍后重试');
+      }
+    }
     const files: PublishFile[] = [];
     let cover: Uint8Array | undefined;
     try {
@@ -131,26 +250,53 @@ export function registerWorksTools(deps: WorksDeps): void {
       return fail('读取成品失败，等 owner 检查白纸存储');
     }
 
+    if (deps.publish.current !== service || !specOf(deps.cfg, task.paperId)?.publishTargets.includes(target)) {
+      return fail('发布目标状态已变化，请重试');
+    }
+    if (repair && (task.publication !== repair || task.state !== 'done' || task.artifactsCleared)) {
+      return fail('任务状态已变化，请重试');
+    }
+
     try {
       if (deps.signal.aborted) return fail('白纸已停止');
       const result = await service.nominate({
+        ...(repair ? { submissionKey: `paper:${task.id}` } : {}),
         origin: {
           producer: deps.producer,
           ref: `${task.paperId}/${task.id}`,
-          label: ctx.sessionId,
-          notify: { sessionId: ctx.sessionId, platform: ctx.platform ?? task.platform },
-          actorKey: actorKey(effectiveActor(ctx)),
+          label: task.room,
+          notify: { sessionId: task.room, platform: task.platform },
+          actorKey: actorKey(task.initiator),
         },
         group: task.paperId,
         groupLabel: paperLabel(task.paperId),
-        surfaces: ['works'],
+        surfaces: [target],
         title,
         summary,
-        credit: deps.cfg.worksCredit,
         files,
         cover,
       });
+      if (deps.publish.current !== service || task.state !== 'done' || task.artifactsCleared) {
+        return fail('任务或发布服务状态已变化，请稍后重试');
+      }
       if ('refused' in result) {
+        if (repair && task.publication === repair) {
+          await ledger.exclusive(async () => {
+            if (task.publication !== repair) return;
+            task.publication = {
+              ...task.publication!,
+              state: 'failed',
+              reason: '作品未通过发布检查',
+              nextAttemptAt: undefined,
+            };
+            try {
+              await ledger.save();
+            } catch (err) {
+              task.publication = repair;
+              throw err;
+            }
+          });
+        }
         const item =
           result.fileIndex === -1
             ? '封面'
@@ -161,9 +307,21 @@ export function registerWorksTools(deps: WorksDeps): void {
           `${item ? (item === '封面' ? '封面' : `成品 ${item}`) : '作品'}：${refusal(result.refused, selected)}`,
         );
       }
+      if (repair && task.publication === repair) {
+        await ledger.exclusive(async () => {
+          if (task.publication !== repair) return;
+          task.publication = { ...task.publication!, state: 'submitted', workId: result.id, nextAttemptAt: undefined };
+          try {
+            await ledger.save();
+          } catch (err) {
+            task.publication = repair;
+            throw err;
+          }
+        });
+      }
       return done({
         workId: result.id,
-        message: '已提交审核；通过并上线后会在本房间通知网址，需要 owner 审核时也会先说一声',
+        message: '已提交发布处理；上线后会在本房间通知网址，若需人工处理也会告知',
       });
     } catch {
       return fail('提交作品失败，等 owner 检查发布服务');
@@ -204,8 +362,22 @@ export function registerWorksTools(deps: WorksDeps): void {
     definition: {
       type: 'function',
       function: {
+        name: 'works_targets',
+        description:
+          '查询当前房间这块白纸获准且已登记的发布目标。只在真人当面发起的回合里使用；返回目标 ID、站点地址与可用状态。',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
+    },
+    handler: targets,
+  });
+  tools.register({
+    groups: ['works'],
+    definition: {
+      type: 'function',
+      function: {
         name: 'works_nominate',
-        description: '把自己在本房间白纸上已完成任务的成品提名给作品站审核。只在真人当面发起的回合里使用。',
+        description:
+          '把自己在本房间白纸上已完成任务的成品提名给获准的单个发布目标审核。只在真人当面发起的回合里使用。先用 works_targets 查询可选目标 ID。',
         parameters: {
           type: 'object',
           properties: {
@@ -214,6 +386,7 @@ export function registerWorksTools(deps: WorksDeps): void {
             cover_artifact_id: { type: 'string', description: '可选：同一任务的图片成品编号' },
             title: { type: 'string', description: '作品标题，1–40 字' },
             summary: { type: 'string', description: '作品简介，0–300 字' },
+            target: { type: 'string', description: '发布目标 ID（不是网址）；单目标或配置了默认目标时可省略' },
           },
           required: ['task_id', 'artifact_ids', 'title', 'summary'],
           additionalProperties: false,

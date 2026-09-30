@@ -45,6 +45,7 @@ const configSchema = defineConfig({
     type: 'array',
     label: '平台默认配置',
     default: [],
+    onInvalid: 'error',
     description: '为每个平台设置默认的会话配置模板。新会话创建时自动应用对应平台的模板。',
     items: {
       platform: {
@@ -125,7 +126,8 @@ const configSchema = defineConfig({
         type: 'number',
         label: '每人每天金额上限（美分）',
         min: 0,
-        description: '留空即不按人限制',
+        onInvalid: 'error',
+        description: '留空不增加每人金额限制，0 禁止新远端任务；无效金额拒绝启用会话管理',
       },
       remoteAgentUserDailyTasks: {
         type: 'number',
@@ -137,7 +139,8 @@ const configSchema = defineConfig({
         type: 'number',
         label: '每房间每天金额上限（美分）',
         min: 0,
-        description: '留空按 0，即拒绝',
+        onInvalid: 'error',
+        description: '留空不增加房间金额限制，0 禁止新远端任务；无效金额拒绝启用会话管理',
       },
       memoryRecallScope: {
         type: 'select',

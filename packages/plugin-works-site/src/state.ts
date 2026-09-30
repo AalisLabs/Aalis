@@ -1,9 +1,19 @@
 import type { PublishedItem } from '@aalis/api-publish';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import { newAssetSalt } from './cloudflare/hash.js';
+import type { WorksSiteConfig } from './config.js';
 import type { Tombstone } from './site/build.js';
+import { sha256 } from './verify.js';
 
 export const STATE_URI = 'pluginData:/works-site/state.json';
+const DEFAULT_INSTANCE = '@aalis/plugin-works-site';
+
+export function stateUriForInstance(instanceId: string): string {
+  if (instanceId === DEFAULT_INSTANCE) return STATE_URI;
+  if (!instanceId.startsWith(`${DEFAULT_INSTANCE}:`)) throw new TypeError('作品站实例 ID 不合法');
+  const encoded = Array.from(new TextEncoder().encode(instanceId), byte => byte.toString(16).padStart(2, '0')).join('');
+  return `pluginData:/works-site/instances/${encoded}/state.json`;
+}
 
 export interface CurrentDeployment {
   id: string;
@@ -43,6 +53,7 @@ export interface SiteAlert {
 
 export interface WorksState {
   version: 1;
+  scope?: string;
   assetSalt: string;
   groups: Record<string, { branch: string; alias?: string; createdAt: number }>;
   current: Record<string, CurrentDeployment>;
@@ -53,6 +64,25 @@ export interface WorksState {
   lastFailure?: 'auth' | 'deploy-failed';
   alerts: SiteAlert[];
   history: Array<{ at: number; branch: string; deployment: string; result: string }>;
+}
+
+async function scopeFingerprint(config: WorksSiteConfig): Promise<string> {
+  const { targetId, accountId, projectName, productionBranch, siteOrigin, basePath } = config;
+  return sha256(
+    new TextEncoder().encode(
+      JSON.stringify([targetId, accountId, projectName, productionBranch, siteOrigin, basePath]),
+    ),
+  );
+}
+
+function hasRemoteHistory(state: WorksState): boolean {
+  return (
+    Object.keys(state.current).length > 0 ||
+    Object.keys(state.known).length > 0 ||
+    Object.keys(state.groups).length > 0 ||
+    state.inFlight !== undefined ||
+    state.tombstones.length > 0
+  );
 }
 
 const record = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -109,6 +139,7 @@ function valid(v: unknown): v is WorksState {
     !Array.isArray(v.history)
   )
     return false;
+  if (v.scope !== undefined && (!string(v.scope) || !/^[a-f0-9]{64}$/.test(v.scope))) return false;
   if (
     Object.values(v.groups).some(
       g => !record(g) || !branch(g.branch) || !time(g.createdAt) || (g.alias !== undefined && !string(g.alias)),
@@ -153,11 +184,18 @@ export class WorksStore {
   data?: WorksState;
   failure?: string;
   #writing: Promise<void> = Promise.resolve();
-  constructor(readonly storage: StorageService) {}
+  #closed = false;
+  readonly uri: string;
+  constructor(
+    readonly storage: StorageService,
+    instanceId = DEFAULT_INSTANCE,
+  ) {
+    this.uri = stateUriForInstance(instanceId);
+  }
 
   async load(): Promise<void> {
     try {
-      const raw = await this.storage.readFile(STATE_URI, 'utf8');
+      const raw = await this.storage.readFile(this.uri, 'utf8');
       const parsed: unknown = JSON.parse(String(raw));
       if (!valid(parsed)) throw new Error('结构不合法');
       this.data = parsed;
@@ -180,11 +218,30 @@ export class WorksStore {
     }
   }
 
+  /** Once a remote deployment exists, never reinterpret its ledger under another public scope. */
+  async bindScope(config: WorksSiteConfig): Promise<void> {
+    if (this.failure) return; // Existing unreadable-state behavior keeps this instance disabled.
+    const next = await scopeFingerprint(config);
+    await this.update(state => {
+      if (hasRemoteHistory(state)) {
+        if (state.scope) {
+          if (state.scope !== next) throw new Error('作品站发布范围与已部署账本不符');
+        } else if (this.uri === STATE_URI && (config.targetId !== 'works' || config.basePath !== '/')) {
+          // Before scope was persisted, the only instance was the default root target.
+          throw new Error('作品站发布范围与旧版根目录账本不符');
+        }
+      }
+      state.scope = next;
+    });
+  }
+
   /** One serialized whole-state write; memory advances only after durable write succeeds. */
   save(next: WorksState): Promise<void> {
+    if (this.#closed) return Promise.reject(new Error('作品站状态实例已停止'));
     if (this.failure) return Promise.reject(new Error(this.failure));
     const run = this.#writing.then(async () => {
-      await this.storage.writeFile(STATE_URI, JSON.stringify(next));
+      if (this.#closed) throw new Error('作品站状态实例已停止');
+      await this.storage.writeFile(this.uri, JSON.stringify(next));
       this.data = next;
     });
     this.#writing = run.catch(() => {});
@@ -193,12 +250,14 @@ export class WorksStore {
 
   /** Serial read-modify-write: concurrent WebUI, timer and deploy callbacks never commit stale snapshots. */
   update<T>(change: (draft: WorksState) => T): Promise<T> {
+    if (this.#closed) return Promise.reject(new Error('作品站状态实例已停止'));
     if (this.failure) return Promise.reject(new Error(this.failure));
     const run = this.#writing.then(async () => {
+      if (this.#closed) throw new Error('作品站状态实例已停止');
       if (!this.data) throw new Error('作品站状态尚未加载');
       const draft = structuredClone(this.data);
       const result = change(draft);
-      await this.storage.writeFile(STATE_URI, JSON.stringify(draft));
+      await this.storage.writeFile(this.uri, JSON.stringify(draft));
       this.data = draft;
       return result;
     });
@@ -207,6 +266,12 @@ export class WorksStore {
       () => {},
     );
     return run;
+  }
+
+  /** Stop accepting writes and wait only for already started local writes, never remote requests. */
+  close(): Promise<void> {
+    this.#closed = true;
+    return this.#writing;
   }
 
   copy(): WorksState {

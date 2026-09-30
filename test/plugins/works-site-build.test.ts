@@ -12,7 +12,6 @@ const item: PublishedItem = {
   kind: 'html',
   title: '<script>"\u202e</iframe>',
   summary: '<img onerror="x">',
-  credit: 'A & B',
   publishedAt: Date.UTC(2026, 0, 2),
   files: [
     { path: 'index.html', size: 4, contentType: 'text/html; charset=utf-8' },
@@ -47,8 +46,14 @@ describe('works site build', () => {
     const index = textOf(out.files, '/index.html');
     const wrapper = textOf(out.files, `/w/${id}/index.html`);
     expect(index).toContain(`src="/t/${id}.png" loading="lazy"`);
+    expect(index).toContain('<small>');
     expect(index).not.toContain('<script>');
     expect(index).not.toContain('\u202e');
+    expect(wrapper).toContain('<title>&lt;script&gt;&quot;&lt;/iframe&gt;</title>');
+    expect(wrapper).not.toContain('<h1>');
+    expect(wrapper).not.toContain('<small>');
+    expect(wrapper).not.toContain('<p>');
+    expect(wrapper).not.toContain('onerror');
     expect(wrapper).toContain(`sandbox="allow-scripts"`);
     expect(wrapper).toContain('referrerpolicy="no-referrer"');
     expect(wrapper).toContain(`frame-src https://p-abc.aalis.pages.dev`);
@@ -56,6 +61,61 @@ describe('works site build', () => {
     expect(out.headers).toContain('X-Robots-Tag: noarchive, noimageindex');
     expect(out.headers).toContain('frame-src https://p-abc.aalis.pages.dev');
     expect(out.headers).not.toContain('Access-Control-Allow-Origin: *');
+  });
+
+  it('builds a gallery entirely below /draw/ while the isolated branch keeps its own root', async () => {
+    const out = await buildGallery({
+      ...base,
+      basePath: '/draw/',
+      siteTitle: 'Draw',
+      siteIntro: '',
+      aliases: { opaque: 'https://p-abc.aalis.pages.dev' },
+    });
+    const paths = out.files.map(file => file.path);
+    expect(paths).toContain('/draw/index.html');
+    expect(paths).toContain('/draw/assets/site.css');
+    expect(paths).toContain(`/draw/w/${id}/index.html`);
+    expect(paths).toContain(`/draw/t/${id}.png`);
+    expect(paths).not.toContain(`/w/${id}/index.html`);
+    const index = textOf(out.files, '/draw/index.html');
+    const wrapper = textOf(out.files, `/draw/w/${id}/index.html`);
+    expect(index).toContain(`href="/draw/w/${id}/"`);
+    expect(index).toContain(`src="/draw/t/${id}.png"`);
+    expect(index).toContain('href="/draw/assets/site.css"');
+    expect(wrapper).toContain(`src="https://p-abc.aalis.pages.dev/${id}/"`);
+    const branch = await buildBranch({
+      ...base,
+      group: 'opaque',
+      mainOrigin: 'https://aalis2.example',
+      mainBasePath: '/draw/',
+      frameAncestors: ['https://aalis2.example'],
+    });
+    expect(branch?.files.map(file => file.path)).toContain(`/${id}/index.html`);
+    const worker = (await import(`data:text/javascript,${encodeURIComponent(branch?.worker ?? '')}`)).default as {
+      fetch(request: Request, env: { ASSETS: { fetch: (request: Request) => Promise<Response> } }): Promise<Response>;
+    };
+    const top = await worker.fetch(
+      new Request(`https://p-abc.aalis.pages.dev/${id}/`, { headers: { 'Sec-Fetch-Dest': 'document' } }),
+      { ASSETS: { fetch: async () => new Response('asset') } },
+    );
+    expect(top.status).toBe(302);
+    expect(top.headers.get('location')).toBe(`https://aalis2.example/draw/w/${id}/`);
+  });
+
+  it('accepts main tombstones under /draw/ while building the withdrawn HTML branch', async () => {
+    const out = await buildBranch({
+      ...base,
+      items: [],
+      group: 'opaque',
+      mainOrigin: 'https://aalis2.example',
+      mainBasePath: '/draw/',
+      frameAncestors: ['https://aalis2.example'],
+      tombstones: [
+        { branch: 'main', path: `/draw/w/${id}/index.html`, until: base.now + 1 },
+        { branch: 'opaque', path: `/${id}/index.html`, until: base.now + 1 },
+      ],
+    });
+    expect(textOf(out?.files ?? [], `/${id}/index.html`)).toContain('该作品已下架');
   });
 
   it('validates the whole manifest before reading assets', async () => {

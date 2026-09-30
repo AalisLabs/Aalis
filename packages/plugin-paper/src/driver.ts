@@ -56,8 +56,10 @@ import {
   type TaskRecord,
   UNFINISHED_STATES,
 } from './ledger.js';
+import { normalizeActivity, progressLabel } from './progress.js';
 import { buildPrompt } from './prompt.js';
 import { actorKey, checkRemote, type Isolation, pausedReason, resolveRoomPaper } from './rooms.js';
+import { TaskJournal } from './task-journal.js';
 import { category, describe, truncate } from './util.js';
 
 const SECOND = 1000;
@@ -76,6 +78,7 @@ const CANCEL_RETRY_MS = [10 * SECOND, 30 * SECOND, 60 * SECOND];
 /** 进展的 lastEventId 至少这么久落盘一次 */
 const PROGRESS_SAVE_MS = 30 * SECOND;
 const RESULT_TEXT_MAX = 2000;
+const MISSING_WORKSPACE = '无法取得旧工程包，已停止换新并保留旧代理；先在旧工作区保存工程包再重试';
 /** 对账里列表连续失败到这么多次，诊断项报出 */
 const LISTING_FAILURE_REPORT = 3;
 /** 占着代理的任务状态（排队的不占） */
@@ -116,6 +119,7 @@ interface Waits {
 type Outcome = 'next' | 'pause' | 'idle';
 
 interface DriverDeps {
+  journal?: TaskJournal;
   remote: ServiceRef<RemoteAgentProvider>;
   sessionManager: ServiceRef<SessionManagerService>;
   storage: StorageService;
@@ -132,6 +136,7 @@ interface DriverDeps {
 }
 
 export class PaperDriver {
+  readonly journal: TaskJournal;
   readonly #d: DriverDeps;
   /** 各白纸的运行循环 */
   readonly #loops = new Map<string, Promise<void>>();
@@ -155,6 +160,7 @@ export class PaperDriver {
 
   constructor(deps: DriverDeps) {
     this.#d = deps;
+    this.journal = deps.journal ?? new TaskJournal(deps.storage, deps.logger, deps.now);
   }
 
   /** 接回进行中的任务并开始定期检查；账本读取失败时什么都不做（远端任务一律不开） */
@@ -192,6 +198,7 @@ export class PaperDriver {
       await ledger.exclusive(() => ledger.save()).catch(err => logger.error(`白纸账本落盘失败: ${describe(err)}`));
     }
     await ledger.flush();
+    await this.journal.flush();
   }
 
   // ----- owner 的管理动作（WebUI 白纸页调用）-----
@@ -318,6 +325,7 @@ export class PaperDriver {
       return { ok: false, error: `远端取消失败（${category(err)}）` };
     }
     logger.info(`白纸任务 ${taskId} 已请远端取消轮次 ${step.runId}（${via}）`);
+    await this.journal.record(taskId, undefined, { type: 'cancel_requested', runId: step.runId, via });
     return ledger.exclusive(async () => {
       const task = ledger.data.tasks[taskId];
       if (task && UNFINISHED_STATES.has(task.state)) {
@@ -382,6 +390,7 @@ export class PaperDriver {
     this.#clearDeadline(taskId);
     this.#following.get(taskId)?.abort();
     logger.warn(`白纸任务 ${taskId} 已由 owner 放弃跟踪，远端这一轮可能仍在运行或已开出`);
+    await this.journal.record(taskId, undefined, { type: 'tracking_abandoned' });
     this.#d.ended();
     return undefined;
   }
@@ -445,6 +454,16 @@ export class PaperDriver {
       .sort((a, b) => a.createdAt - b.createdAt);
     const task = tasks.find(t => ON_AGENT.has(t.state)) ?? tasks.find(t => t.state === 'queued');
     if (!task) return 'idle';
+    await this.journal.record(task.id, 'task', {
+      type: 'task',
+      name: task.name,
+      text: task.text,
+      room: task.room,
+      paperId: task.paperId,
+      createdAt: task.createdAt,
+      observedState: task.state,
+      note: task.state === 'queued' ? '任务开始跟踪' : '接回既有任务；启用任务日志前的事件可能未收录',
+    });
     const waits: Waits = { spent: 0 };
     try {
       return await this.#advance(task, waits);
@@ -526,17 +545,18 @@ export class PaperDriver {
       const cents = reserveFor(ledger.data, task.paperId, cfg.reserveDefaultCents);
       const limits = {
         globalCents: cfg.globalDailyCents,
+        paperCents: roomPaper.spec.dailyCents,
         roomCents: room.remoteAgentRoomDailyCents,
         userCents: room.remoteAgentUserDailyCents,
         // 按人件数是受理时的上限，本件受理时已计入
         userTasks: undefined,
       };
-      const verdict = canStart(ledger.data, day, task.room, user, limits, cents);
+      const verdict = canStart(ledger.data, day, task.paperId, task.room, user, limits, cents);
       if (!verdict.ok) {
         if (held) ledger.data.reserves[task.id] = held;
         return verdict.reason;
       }
-      ledger.data.reserves[task.id] = { cents, day, room: task.room, user };
+      ledger.data.reserves[task.id] = { cents, day, paperId: task.paperId, room: task.room, user };
       await ledger.save();
       return undefined;
     });
@@ -563,8 +583,17 @@ export class PaperDriver {
   ): Promise<Outcome | undefined> {
     const { ledger } = this.#d;
     const paper = this.#paper(task.paperId);
-    const agentId = entry.instance.mintAgentId();
     const replaces = paper.noBundleNext ? undefined : old;
+    const prompt = await this.#prompt(task, entry, replaces, waits);
+    if (prompt === undefined) {
+      // 换新前还没向远端发创建请求；同一提供者可留在原工作区继续，等产出工程包再换新。
+      if (replaces && ledger.data.agents[replaces]?.providerType === entry.contextId) {
+        this.#d.logger.warn(`白纸 ${task.paperId} 没有可用的工程包，暂缓换新，在原工作区继续制作`);
+        return this.#runPath(task, entry, replaces, waits);
+      }
+      return this.#fail(task, MISSING_WORKSPACE);
+    }
+    const agentId = entry.instance.mintAgentId();
     const written = await ledger.exclusive(async () => {
       if (task.state !== 'queued' || paper.halted || paper.binding !== old) return false;
       const now = this.#d.now();
@@ -584,16 +613,27 @@ export class PaperDriver {
       return true;
     });
     if (!written) return 'next';
-    return this.#create(task, entry, waits);
+    return this.#create(task, entry, waits, prompt);
   }
 
   /** 建代理（同一 agentId 重试是安全的：提供者按 id 取回已建的） */
-  async #create(task: TaskRecord, entry: RemoteAgentEntry, waits: Waits): Promise<Outcome | undefined> {
+  async #create(
+    task: TaskRecord,
+    entry: RemoteAgentEntry,
+    waits: Waits,
+    preparedPrompt?: string,
+  ): Promise<Outcome | undefined> {
     const agentId = task.agentId ?? '';
     const agent = this.#d.ledger.data.agents[agentId];
     if (!agent) return this.#fail(task, '账本里找不到开轮中的代理');
     try {
-      const prompt = await this.#prompt(task, entry, agent.replaces, waits);
+      const prompt = preparedPrompt ?? (await this.#prompt(task, entry, agent.replaces, waits));
+      if (prompt === undefined) return this.#fail(task, MISSING_WORKSPACE);
+      await this.journal.record(task.id, `prompt:${task.start?.requestedAt}`, {
+        type: 'prompt',
+        agentId,
+        text: prompt,
+      });
       const { runId, startedAt } = await this.#retrying(waits, () =>
         entry.instance.createAgent({ agentId, name: agent.name, prompt }, this.#d.signal),
       );
@@ -726,6 +766,12 @@ export class PaperDriver {
         const replaces = this.#d.ledger.data.agents[agentId]?.replaces;
         const prompt = await this.#prompt(task, entry, replaces, waits);
         if (task.state !== 'starting') return 'next';
+        if (prompt === undefined) return this.#fail(task, MISSING_WORKSPACE);
+        await this.journal.record(task.id, `prompt:${task.start?.requestedAt}`, {
+          type: 'prompt',
+          agentId,
+          text: prompt,
+        });
         const { runId } = await entry.instance.startRun(agentId, prompt, this.#d.signal);
         await this.#started(task, runId, this.#d.now());
         return undefined;
@@ -810,7 +856,15 @@ export class PaperDriver {
   /** 前言；新代理在第一轮成功取回之前带旧代理的工程包链接 */
   async #prompt(task: TaskRecord, entry: RemoteAgentEntry, replaces: string | undefined, waits: Waits) {
     const bundleUrl = replaces ? await this.#bundleUrl(replaces, waits) : undefined;
-    return buildPrompt({ layout: entry.instance.layout, taskId: task.id, text: task.text, bundleUrl });
+    if (replaces && !bundleUrl) return undefined;
+    return buildPrompt({
+      layout: entry.instance.layout,
+      taskId: task.id,
+      text: task.text,
+      maxRunMinutes: this.#d.cfg.maxRunMinutes,
+      bundleUrl,
+      publication: task.publication !== undefined,
+    });
   }
 
   async #bundleUrl(agentId: string, waits: Waits): Promise<string | undefined> {
@@ -821,7 +875,7 @@ export class PaperDriver {
       return await this.#retrying(waits, () => entry.instance.bundleLink(agentId, this.#d.signal));
     } catch (err) {
       if (this.#d.signal.aborted || err instanceof GaveUp) throw err;
-      this.#d.logger.warn(`取旧代理 ${agentId} 的工程包链接失败，新代理这一轮从空工作区开始: ${describe(err)}`);
+      this.#d.logger.warn(`取旧代理 ${agentId} 的工程包链接失败，停止换新并保留旧代理: ${describe(err)}`);
       return undefined;
     }
   }
@@ -847,6 +901,7 @@ export class PaperDriver {
       task.startedAt = startedAt;
       delete task.start;
       delete task.lastEventId;
+      delete task.progress;
       const agent = ledger.data.agents[agentId];
       if (agent?.state === 'creating') {
         const paper = this.#paper(task.paperId);
@@ -866,6 +921,7 @@ export class PaperDriver {
       return;
     }
     this.#d.logger.info(`白纸任务 ${task.id} 开轮（代理 ${task.agentId}，轮次 ${runId}）`);
+    await this.journal.record(task.id, `start:${runId}`, { type: 'started', agentId: task.agentId, runId, startedAt });
   }
 
   /**
@@ -914,6 +970,7 @@ export class PaperDriver {
     const signal = AbortSignal.any([this.#d.signal, stop.signal]);
     this.#armDeadline(task);
     let savedAt = this.#d.now();
+    let journalHealthy = true;
     try {
       for (let attempt = 0; ; attempt++) {
         const entry = resolveRemoteAgent(this.#d.remote, providerType);
@@ -921,8 +978,38 @@ export class PaperDriver {
           try {
             const events = entry.instance.followRun(agentId, runId, { lastEventId: task.lastEventId, signal });
             for await (const event of events) {
-              if (event.kind === 'terminal') return event.state;
-              task.lastEventId = event.eventId;
+              if (event.kind === 'terminal') {
+                await this.journal.flush(task.id);
+                await this.journal.record(task.id, `terminal:${runId}`, { type: 'terminal', ...event.state });
+                await this.journal.flush(task.id);
+                return event.state;
+              }
+              if (event.kind === 'log') {
+                await this.journal.record(task.id, undefined, { type: 'remote', runId, record: event.record });
+                continue;
+              }
+              if (!journalHealthy) journalHealthy = await this.journal.flush(task.id);
+              const logged = await this.journal.record(task.id, `${runId}:${event.eventId}`, {
+                type: 'progress',
+                runId,
+                eventId: event.eventId,
+                ...(event.activity ? { activity: normalizeActivity(event.activity) } : {}),
+                ...(event.record ? { record: event.record } : {}),
+              });
+              journalHealthy &&= logged;
+              if (journalHealthy) task.lastEventId = event.eventId;
+              if (event.activity) {
+                const activity = normalizeActivity(event.activity);
+                const label = activity && progressLabel(activity, true);
+                const previous = task.progress?.activity;
+                if (label && activity && JSON.stringify(previous) !== JSON.stringify(activity)) {
+                  task.progress = {
+                    activity,
+                    at: this.#d.now(),
+                  };
+                  logger.info(`白纸任务 ${task.id} 进展：${label}`);
+                }
+              }
               attempt = 0;
               if (this.#d.now() - savedAt >= PROGRESS_SAVE_MS) {
                 savedAt = this.#d.now();
@@ -937,6 +1024,7 @@ export class PaperDriver {
             if (signal.aborted) throw err;
             if (isRemoteAgentError(err) && err.code === 'not-found') return { runId, status: 'error' };
             logger.warn(`跟踪白纸任务 ${task.id} 的轮次 ${runId} 出错，稍后重连: ${describe(err)}`);
+            await this.journal.record(task.id, undefined, { type: 'reconnect', runId, reason: category(err) });
           }
         } else {
           logger.warn(`远端代理「${providerType}」不在场，稍后再跟踪白纸任务 ${task.id}`);
@@ -976,6 +1064,11 @@ export class PaperDriver {
     const agentId = task.agentId ?? '';
     const providerType = ledger.data.agents[agentId]?.providerType ?? '';
     logger.warn(`白纸任务 ${task.id} 到了单轮时长上限（${cfg.maxRunMinutes} 分钟），取消这一轮`);
+    await this.journal.record(task.id, `timeout:${runId}`, {
+      type: 'timeout',
+      runId,
+      maxRunMinutes: cfg.maxRunMinutes,
+    });
     for (let i = 0; i <= CANCEL_RETRY_MS.length; i++) {
       if (i > 0) await sleep(CANCEL_RETRY_MS[i - 1], signal);
       if (task.state !== 'running' || task.runId !== runId) return;
@@ -1010,6 +1103,7 @@ export class PaperDriver {
     const agentId = task.agentId ?? '';
     const runId = task.runId ?? '';
     if (task.state === 'running') {
+      await this.journal.record(task.id, `collecting:${runId}`, { type: 'collecting', runId });
       await ledger.exclusive(async () => {
         task.state = 'collecting';
         await ledger.save();
@@ -1059,6 +1153,16 @@ export class PaperDriver {
       await ledger.save();
     });
     logger.info(`白纸任务 ${task.id} 结束：${outcome}，成品 ${collected.artifacts.length} 件`);
+    await this.journal.record(task.id, `finished:${runId}`, {
+      type: 'finished',
+      runId,
+      state: outcome,
+      error: task.error,
+      costCents: task.costCents,
+      artifacts: task.artifacts,
+      resultText: state.resultText,
+    });
+    await this.journal.flush(task.id);
     this.#d.ended();
     await this.#reap();
     return 'next';
@@ -1386,7 +1490,12 @@ export class PaperDriver {
     await ledger.exclusive(async () => {
       let removed = 0;
       for (const [id, task] of Object.entries(ledger.data.tasks)) {
-        if (UNFINISHED_STATES.has(task.state) || ledger.data.reserves[id]) continue;
+        if (
+          UNFINISHED_STATES.has(task.state) ||
+          ledger.data.reserves[id] ||
+          (task.state === 'done' && (task.publication?.state === 'pending' || task.publication?.state === 'submitted'))
+        )
+          continue;
         if ((task.endedAt ?? task.createdAt) >= cutoff) continue;
         delete ledger.data.tasks[id];
         removed++;
@@ -1534,6 +1643,12 @@ export class PaperDriver {
     const { ledger, logger, storage } = this.#d;
     const refused = await ledger.exclusive(async () => {
       const tasks = Object.values(ledger.data.tasks).filter(t => t.paperId === paperId);
+      if (
+        tasks.some(
+          t => t.state === 'done' && (t.publication?.state === 'pending' || t.publication?.state === 'submitted'),
+        )
+      )
+        return '这块白纸有待提交或已提交发布的作品，等发布流程结束后再清空';
       const busy = periodic ? UNFINISHED_STATES : ON_AGENT;
       if (tasks.some(t => busy.has(t.state))) return '这块白纸有任务在跑，等它结束或先取消再清空';
       const now = this.#d.now();
@@ -1775,6 +1890,7 @@ export class PaperDriver {
     if (ended) return 'next';
     this.#clearDeadline(task.id);
     this.#d.logger.warn(`白纸任务 ${task.id} 失败：${reason}`);
+    await this.journal.record(task.id, undefined, { type: 'failed', reason });
     this.#d.ended();
     await this.#reap();
     return 'next';

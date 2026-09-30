@@ -1,6 +1,7 @@
 import { PUBLIC_CONTENT_TYPES, type PublishedItem, publicPathProblem, WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { DeployFile } from '../cloudflare/client.js';
 import { branchHeaderFile, galleryHeaderFile } from './headers.js';
+import { canonicalBasePath, sitePath } from './paths.js';
 import { encode, indexPage, notFoundPage, removedPage, SITE_CSS, wrapperPage } from './templates.js';
 import { buildWorker } from './worker.js';
 
@@ -19,6 +20,9 @@ export interface Tombstone {
 }
 
 interface BuildBase {
+  basePath?: string;
+  /** Main site path when this build is for an isolated branch. */
+  mainBasePath?: string;
   /** The exact selected snapshot: withdrawal callers pass current works minus withdrawn IDs. */
   items: readonly PublishedItem[];
   tombstones: readonly Tombstone[];
@@ -48,6 +52,8 @@ export interface SiteBuild {
 }
 
 function validate(input: BuildBase): void {
+  canonicalBasePath(input.basePath ?? '/');
+  const mainBasePath = canonicalBasePath(input.mainBasePath ?? input.basePath ?? '/');
   if (!NONCE.test(input.nonce) || !Number.isFinite(input.now)) throw new TypeError('站点构建参数不合法');
   const ids = new Set<string>();
   for (const item of input.items) {
@@ -86,7 +92,10 @@ function validate(input: BuildBase): void {
     const branchMatch = /^\/([a-z2-7]{10})\/(.+)$/.exec(tombstone.path);
     const validPath =
       tombstone.branch === 'main'
-        ? MAIN_TOMBSTONE.test(tombstone.path)
+        ? mainBasePath === '/'
+          ? MAIN_TOMBSTONE.test(tombstone.path)
+          : tombstone.path.startsWith(mainBasePath) &&
+            MAIN_TOMBSTONE.test(tombstone.path.slice(mainBasePath.length - 1))
         : !!branchMatch && !publicPathProblem(branchMatch[2]);
     if (!tombstone.branch || !validPath || !Number.isFinite(tombstone.until))
       throw new TypeError('墓碑路径或期限不合法');
@@ -120,6 +129,8 @@ function addTombstones(files: DeployFile[], tombstones: readonly Tombstone[], br
 
 export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild> {
   validate(input);
+  const basePath = canonicalBasePath(input.basePath ?? '/');
+  const at = (relative: string) => sitePath(basePath, relative);
   for (const origin of Object.values(input.aliases)) {
     try {
       const url = new URL(origin);
@@ -135,32 +146,32 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
   const frameOrigins = [...new Set(htmlItems.map(item => input.aliases[item.group]))];
   const headers = galleryHeaderFile(frameOrigins); // validate CSP before any asset read
   validatePlannedPaths([
-    '/index.html',
-    '/404.html',
-    '/assets/site.css',
+    at('index.html'),
+    at('404.html'),
+    at('assets/site.css'),
     `/v/${input.nonce}.txt`,
     ...input.items.flatMap(item => [
-      `/w/${item.id}/index.html`,
-      ...(item.kind === 'media' ? [`/m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`] : []),
-      ...(item.hasThumbnail ? [`/t/${item.id}.png`] : []),
+      at(`w/${item.id}/index.html`),
+      ...(item.kind === 'media' ? [at(`m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`)] : []),
+      ...(item.hasThumbnail ? [at(`t/${item.id}.png`)] : []),
     ]),
     ...input.tombstones.filter(t => t.branch === 'main' && t.until > input.now).map(t => t.path),
   ]);
   const files: DeployFile[] = [];
   add(
     files,
-    '/index.html',
-    encode(indexPage(input.siteTitle, input.siteIntro, input.items)),
+    at('index.html'),
+    encode(indexPage(input.siteTitle, input.siteIntro, input.items, basePath)),
     'text/html; charset=utf-8',
   );
-  add(files, '/404.html', encode(notFoundPage()), 'text/html; charset=utf-8');
-  add(files, '/assets/site.css', encode(SITE_CSS), 'text/css; charset=utf-8');
+  add(files, at('404.html'), encode(notFoundPage(basePath)), 'text/html; charset=utf-8');
+  add(files, at('assets/site.css'), encode(SITE_CSS), 'text/css; charset=utf-8');
   add(files, `/v/${input.nonce}.txt`, encode(input.nonce), 'text/plain; charset=utf-8');
   for (const item of input.items) {
     add(
       files,
-      `/w/${item.id}/index.html`,
-      encode(wrapperPage(item, input.aliases[item.group])),
+      at(`w/${item.id}/index.html`),
+      encode(wrapperPage(item, input.aliases[item.group], basePath)),
       'text/html; charset=utf-8',
     );
     if (item.kind === 'media') {
@@ -168,9 +179,9 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
       const ext = file.path.slice(file.path.lastIndexOf('.') + 1).toLowerCase();
       const bytes = await input.readFile(item.id, file.path);
       if (bytes.byteLength !== file.size) throw new TypeError('媒体文件大小与清单不符');
-      add(files, `/m/${item.id}.${ext}`, bytes, file.contentType);
+      add(files, at(`m/${item.id}.${ext}`), bytes, file.contentType);
     }
-    if (item.hasThumbnail) add(files, `/t/${item.id}.png`, await input.readThumbnail(item.id), 'image/png');
+    if (item.hasThumbnail) add(files, at(`t/${item.id}.png`), await input.readThumbnail(item.id), 'image/png');
   }
   addTombstones(files, input.tombstones, 'main', input.now);
   return { files, headers };
@@ -188,6 +199,7 @@ export async function buildBranch(input: BranchBuildInput): Promise<SiteBuild | 
   const worker = buildWorker({
     nonce: input.nonce,
     mainOrigin: input.mainOrigin,
+    mainBasePath: input.mainBasePath,
     frameAncestors: input.frameAncestors,
     works,
   });

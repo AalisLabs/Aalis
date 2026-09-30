@@ -75,7 +75,7 @@ export function hitsMuteKeyword(
 export interface AddressOptions {
   /** @ 自己算点名 */
   triggerOnAt: boolean;
-  /** 戳一戳等注意力动作（noticeType=poke）算点名 */
+  /** 指向机器人的戳一戳等注意力动作（noticeType=poke）算点名 */
   triggerOnPoke: boolean;
 }
 
@@ -160,18 +160,18 @@ export function createBotNames(
 }
 
 /**
- * 是否被点名。戳一戳（能进到这里说明 adapter 已判断过目标是 bot：私聊戳全转入站，群聊戳仅目标是
- * 自己才转）只看 triggerOnPoke，**不做** @ 与名字检测：它的正文是合成文案，内嵌戳者昵称，昵称含
+ * 是否被点名。戳一戳按适配器标记的目标与 triggerOnPoke 判定，**不做** @ 与名字检测：它的正文是合成文案，内嵌戳者昵称，昵称含
  * bot 名会被名字检测误判成提及——关掉 triggerOnPoke 后用户改个名就能让开关对自己失效（对抗审计
  * 实测）。其余消息看 triggerOnAt 的 @ 自己，以及名字检测（names 里任一个出现在正文里即命中，
  * names 通常取自 createBotNames）。
  */
 export function isAddressed(
-  message: Pick<IncomingMessage, 'content' | 'noticeType'>,
+  message: Pick<IncomingMessage, 'content' | 'noticeType' | 'noticeTargetIsSelf'>,
   names: readonly string[],
   opts: AddressOptions,
 ): boolean {
-  if (message.noticeType === WellKnownNoticeTypes.Poke) return opts.triggerOnPoke;
+  if (message.noticeType === WellKnownNoticeTypes.Poke)
+    return opts.triggerOnPoke && message.noticeTargetIsSelf !== false;
   if (opts.triggerOnAt && mentionsSelf(message.content)) return true;
   return names.some(name => name && message.content.includes(name));
 }

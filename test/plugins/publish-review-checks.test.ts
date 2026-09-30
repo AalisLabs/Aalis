@@ -7,6 +7,7 @@ const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const jpeg = new Uint8Array([255, 216, 255]);
 const html = new TextEncoder().encode('<!doctype html><html></html>');
 const config: ReviewConfig = {
+  reviewEnabled: true,
   manualReview: false,
   ownerTimeoutHours: 12,
   ffmpegPath: 'ffmpeg',
@@ -28,7 +29,6 @@ const input = (files: Array<{ path: string; bytes: Uint8Array }>): NominateInput
   surfaces: ['works'],
   title: '作品',
   summary: '',
-  credit: '署名',
   files,
 });
 const check = (files: Array<{ path: string; bytes: Uint8Array }>) => checkNomination(input(files), config, surfaces);
@@ -79,15 +79,15 @@ describe('发布提名同步检查', () => {
     ).toHaveProperty('ok', true);
   });
 
-  it('标题简介和署名去控制/格式字符再判长度', () => {
+  it('标题简介去控制/格式字符再判长度', () => {
     const cleaned = checkNomination(
-      { ...input([{ path: 'work.png', bytes: png }]), title: 'A\u202eB', summary: 'X\u0001Y', credit: 'C\u2028D' },
+      { ...input([{ path: 'work.png', bytes: png }]), title: 'A\u202eB', summary: 'X\u0001Y' },
       config,
       surfaces,
     );
-    expect(cleaned).toMatchObject({ ok: true, title: 'AB', summary: 'XY', credit: 'CD' });
+    expect(cleaned).toMatchObject({ ok: true, title: 'AB', summary: 'XY' });
     expect(
-      checkNomination({ ...input([{ path: 'work.png', bytes: png }]), credit: 'x'.repeat(41) }, config, surfaces),
+      checkNomination({ ...input([{ path: 'work.png', bytes: png }]), title: 'x'.repeat(41) }, config, surfaces),
     ).toHaveProperty('refused');
   });
 });

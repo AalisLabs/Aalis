@@ -305,7 +305,8 @@ async function run(caps: Caps): Promise<void> {
   // 内部注入同一口径（knownScope）
   events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
-    if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
+    // 宿主通知的固定正文代替了 Agent 转述，同样占用回复额度；普通命令/系统提示不计。
+    if (msg.source !== 'agent' && !(msg.source === 'system' && msg.hostNotice)) return;
     const scope = knownScope(msg.sessionId, msg.platform);
     if (!isScopeEnabled(cfg, scope.platform, scope.sessionType, scope.targetId)) return;
     recordReply(msg.sessionId, scope.platform, scope.sessionType, scope.targetId);

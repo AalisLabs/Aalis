@@ -529,6 +529,24 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(r.message.triggerType).toBe('interval');
   });
 
+  it('群友互戳照常问模型，但不算点名；模型不可用时不按点名兜底', async () => {
+    const { send, archived } = await setup();
+    const message = () =>
+      groupMsg('[戳一戳: 甲(30001) 戳了30002]', {
+        noticeType: 'poke',
+        noticeTargetIsSelf: false,
+      });
+    const result = await send(message());
+    expect(sidecar.requests).toHaveLength(1);
+    expect(result.reached).toBe(true);
+    expect(result.message.triggerType).toBe('interval');
+    expect(result.message.actor).toEqual({ platform: 'onebot', userId: '' });
+    sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
+    expect((await send(message())).reached).toBe(false);
+    expect(archived).toEqual([message().content]);
+    expect((await send({ ...message(), noticeTargetIsSelf: true })).reached).toBe(true);
+  });
+
   it('名字表是别名与全部人设的名字、昵称：叫任何一个都算点名，同一份作为 selfNames 发给侧车', async () => {
     const card = (name: string, nicks: string[]): PersonaService => ({
       getSystemPrompt: () => '',

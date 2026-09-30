@@ -32,7 +32,6 @@ function fixture() {
     surfaces: ['works'],
     title: '作品',
     summary: '',
-    credit: '群友',
     kind: 'html',
     files: [{ path: 'index.html', size: html.length, contentType: 'text/html; charset=utf-8' }],
     hasCover: false,

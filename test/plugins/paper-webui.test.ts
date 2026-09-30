@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { type PublishService, publish } from '../../packages/api-publish/src/index.js';
 import type {
   WebuiComponent,
   WebuiFilePayload,
   WebuiTableComponent,
   WebuiTabsComponent,
 } from '../../packages/api-webui/src/index.js';
+import { provide } from '../../packages/core/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import {
   emptyLedger,
@@ -17,6 +19,7 @@ import {
   PILOT_ROOM,
   REMOTE,
   ROOM,
+  ROOM2,
   startPaperHub,
   stopPaperHubs,
 } from '../fixtures/paper.js';
@@ -56,7 +59,7 @@ async function hubWith(remote: ScriptedRemote, extra: { files?: PaperFiles; conf
 }
 
 async function accept(hub: PaperHub, name: string): Promise<string> {
-  const res = await hub.call('paper_task', { text: `${name}的原文`, name }, human('30001'));
+  const res = await hub.call('paper_task', { text: `${name}的原文`, name, publish: false }, human('30001'));
   if (res.ok !== true) throw new Error(`paper_task 未受理：${String(res.error)}`);
   return String(res.taskId);
 }
@@ -128,10 +131,119 @@ const HTML = text('<!doctype html><html><body><script>alert(1)</script></body></
 const SVG = text('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><rect/></svg>');
 
 describe('页面登记', () => {
+  it('白纸表显示具名留空、显式额度与零值；无名房间纸才用 defaults 金额', async () => {
+    const configured = await startPaperHub({
+      config: {
+        ...PILOT_CONFIG,
+        budgetTimeZone: 'UTC',
+        defaults: { dailyCents: 120 },
+        papers: [
+          { name: PAPER, remoteAgentType: REMOTE },
+          { name: 'capped', dailyCents: 120 },
+          { name: 'closed', dailyCents: 0 },
+        ],
+      },
+    });
+    const rowsWithDefault = await rows(configured, 'listPapers');
+    expect(String(rowsWithDefault.find(row => row.paperId === PAPER_ID)?.dailyBudget)).toContain('不单独限额');
+    expect(String(rowsWithDefault.find(row => row.paperId === 'n:capped')?.dailyBudget)).toContain('上限 120 美分');
+    expect(String(rowsWithDefault.find(row => row.paperId === 'n:closed')?.dailyBudget)).toContain('0 美分（禁任务）');
+    expect(tableOf(configured, '白纸').columns.map(col => col.key)).toContain('dailyBudget');
+
+    const anonymous = await startPaperHub({
+      config: { defaults: { dailyCents: 120 } },
+      files: seeded([], ledger => {
+        ledger.papers['r:abcdef012345'] = { lastClearedAt: 0 };
+      }),
+    });
+    const roomPaper = (await rows(anonymous, 'listPapers')).find(row => String(row.paperId).startsWith('r:'));
+    expect(String(roomPaper?.dailyBudget)).toContain('上限 120 美分');
+
+    const unlimited = await startPaperHub({ config: { ...PILOT_CONFIG, budgetTimeZone: 'UTC' } });
+    const [paper] = await rows(unlimited, 'listPapers');
+    expect(String(paper.dailyBudget)).toContain('不单独限额');
+    expect((await rows(unlimited, 'listSpend'))[0]?.scope).toContain('全局');
+  });
+
+  it('全局金额上限留空时，账本页写明未设限而不显示 undefined 美分', async () => {
+    const hub = await startPaperHub({
+      config: { papers: [{ name: PAPER, remoteAgentType: REMOTE }] },
+    });
+    const [global] = await rows(hub, 'listSpend');
+    expect(global.scope).toContain('全局');
+    expect(global.scope).toContain('未设金额上限');
+    expect(global.scope).not.toContain('undefined');
+  });
+
+  it('共用白纸合并两个房间的费用与预留，并明确计入未归属旧日账', async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const files = seeded([], ledger => {
+      ledger.spend[day] = {
+        global: 120,
+        rooms: { [ROOM]: 50, [ROOM2]: 70 },
+        users: {},
+        papers: { [PAPER_ID]: 20, 'n:other': 30 },
+      };
+      ledger.reserves['t-11111111'] = { cents: 15, day, room: ROOM, user: 'onebot:30001', paperId: PAPER_ID };
+      ledger.reserves['t-22222222'] = { cents: 8, day, room: ROOM2, user: 'onebot:30002', paperId: 'n:other' };
+      ledger.reserves['t-33333333'] = { cents: 5, day, room: ROOM2, user: 'onebot:30003' };
+    });
+    const hub = await startPaperHub({
+      files,
+      config: {
+        ...PILOT_CONFIG,
+        budgetTimeZone: 'UTC',
+        papers: [{ name: PAPER, remoteAgentType: REMOTE, dailyCents: 200 }],
+      },
+      rooms: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
+      listed: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
+    });
+    const [paper] = await rows(hub, 'listPapers');
+    expect(String(paper.rooms)).toContain('共用（2）');
+    expect(String(paper.rooms)).toContain(ROOM);
+    expect(String(paper.rooms)).toContain(ROOM2);
+    expect(String(paper.dailyBudget)).toContain('上限 200 美分');
+    expect(String(paper.dailyBudget)).toContain('已记 20 美分');
+    expect(String(paper.dailyBudget)).toContain('预留 20 美分');
+    expect(String(paper.dailyBudget)).toContain('未归属费用（含旧账）70 美分，保守计入每块白纸额度');
+    expect((await rows(hub, 'listSpend'))[0]).toMatchObject({ cents: 120, reserved: 28 });
+  });
+
+  it('白纸页只显示获准发布目标的地址与状态，显式空显示禁发布', async () => {
+    const hub = await startPaperHub({
+      config: {
+        ...PILOT_CONFIG,
+        papers: [
+          { name: PAPER, publishTargets: 'one, two', defaultPublishTarget: 'two' },
+          { name: 'closed', publishTargets: '' },
+        ],
+      },
+    });
+    hub.app.bind({ provide }).provide(publish, {
+      listSurfaces: () => [
+        { name: 'one', label: '主站', baseUrl: 'https://aalis1.example.test', available: true },
+        { name: 'two', label: '画板', baseUrl: 'https://aalis2.example.test/draw', available: false, reason: '暂停' },
+        { name: 'secret', baseUrl: 'https://secret.example.test', available: true },
+      ],
+    } as unknown as PublishService);
+    const papers = await rows(hub, 'listPapers');
+    const open = papers.find(row => row.paperId === PAPER_ID);
+    const closed = papers.find(row => row.paperId === 'n:closed');
+    expect(String(open?.publishTargets)).toContain('https://aalis2.example.test/draw');
+    expect(String(open?.publishTargets)).toContain('不可用：暂停');
+    expect(String(open?.publishTargets)).not.toContain('secret.example.test');
+    expect(open?.defaultPublishTarget).toBe('two');
+    expect(closed?.publishTargets).toBe('（禁止发布）');
+    expect(closed?.defaultPublishTarget).toBe('（禁止发布）');
+    expect(tableOf(hub, '白纸').columns.map(col => col.key)).toEqual(
+      expect.arrayContaining(['publishTargets', 'defaultPublishTarget']),
+    );
+  });
+
   it('白纸页含白纸、任务、成品、账本、告警五个表；数据源、行动作与文件列都指向已登记的页面动作', async () => {
     const hub = await startPaperHub();
     const tabs = tabsOf(hub);
-    expect(tabs.items.map(i => i.label)).toEqual(['白纸', '任务', '成品', '账本', '告警']);
+    expect(tabs.items.map(i => i.label)).toEqual(['白纸', '任务', '创作日志', '成品', '账本', '告警']);
 
     const tables = tabs.items.map(i => tableOf(hub, i.label));
     for (const table of tables) {
@@ -152,6 +264,8 @@ describe('页面登记', () => {
 
     const tasks = tableOf(hub, '任务');
     expect(tasks.actions?.map(a => a.label)).toEqual(['取消', '放弃跟踪', '核销预留']);
+    expect(tasks.columns.map(c => c.key)).toContain('progress');
+    expect(tasks.columns.map(c => c.key)).toContain('progressAt');
     expect(tasks.columns.find(c => c.key === 'text')?.render).toBe('expandable-text');
 
     const artifacts = tableOf(hub, '成品');
@@ -164,6 +278,28 @@ describe('页面登记', () => {
 });
 
 describe('跑完一件任务后的五个表', () => {
+  it('任务表显示运行中的最近动作与时间，结束后不再显示旧动作', async () => {
+    const remote = new ScriptedRemote();
+    const hub = await hubWith(remote);
+    const taskId = await accept(hub, '进展');
+    const runId = await running(hub, taskId);
+    const run = remote.runs.get(runId);
+    if (!run) throw new Error('没有轮次');
+    run.queue.push({ kind: 'progress', eventId: 'progress-webui', activity: { action: 'tool', status: 'running' } });
+    run.wake?.();
+    let active: Row | undefined;
+    for (let i = 0; i < 400; i++) {
+      active = (await rows(hub, 'listTasks')).find(row => row.id === taskId);
+      if (active?.progress === '使用工具（进行中）') break;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(active).toMatchObject({ progress: '使用工具（进行中）', progressAt: expect.any(String) });
+    remote.finish(runId);
+    await waitFor(() => hub.ledger().tasks[taskId]?.state === 'done', '任务完成');
+    const finished = (await rows(hub, 'listTasks')).find(row => row.id === taskId);
+    expect(finished).toMatchObject({ progress: '', progressAt: '' });
+  });
+
   it('白纸、任务、成品、账本各行对得上；位图成品按 image/png 取回', async () => {
     const a = new ScriptedRemote();
     const hub = await hubWith(a);

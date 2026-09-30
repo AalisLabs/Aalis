@@ -8,7 +8,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import type { Message, OutboundDeliveryResult } from '../../packages/schema-message/src/index.js';
 import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -149,6 +149,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   let app: App;
   let handlers: Record<string, ToolHandler>;
   let outbound: Array<{ attachments?: Array<{ kind: string; data: string }> }>;
+  let deliveryResult: OutboundDeliveryResult | null;
 
   const send = async (args: Record<string, unknown>) =>
     JSON.parse(await handlers.send_attachment(args, { sessionId: session }));
@@ -199,8 +200,11 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     app = started.app;
     handlers = started.handlers;
     outbound = [];
+    deliveryResult = { ok: true };
+    // 本组只验证文件头与来源选择，平台发送由显式模拟确认。
     started.host.events.on('outbound:message', m => {
       outbound.push(m as (typeof outbound)[number]);
+      if (deliveryResult) m.delivery = Promise.resolve(deliveryResult);
     });
     await app.plugins.register(storageLocalPlugin, {
       roots: [
@@ -308,6 +312,14 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(out.ok).toBe(true);
     expect(outbound[0].attachments?.[0].data).toBe('https://example.invalid/cat.png');
   });
+
+  it('平台明确拒绝时，合法 PNG 也不能报告成功', async () => {
+    deliveryResult = { ok: false, error: '模拟平台拒绝' };
+    const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
+    expect(out.ok).toBeUndefined();
+    expect(out.error).toBe('模拟平台拒绝');
+    expect(outbound).toHaveLength(1);
+  });
 });
 
 describe('send_attachment 只读文件头，不整份载入', () => {
@@ -336,6 +348,10 @@ describe('send_attachment 只读文件头，不整份载入', () => {
       },
     };
     started.host.provide(storage, fake as StorageService);
+    // 大文件测试只量区间读取；平台 ACK 在此显式模拟。
+    started.host.events.on('outbound:message', msg => {
+      msg.delivery = Promise.resolve({ ok: true });
+    });
     await app.plugins.register(imageSenderPlugin, {});
     await app.plugins.idle();
 

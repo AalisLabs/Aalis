@@ -70,7 +70,7 @@ export default definePlugin({
 
 钉死只管继承链：会话自身 config 里的覆盖仍然优先。
 
-平台 profile 还能写白纸与远端代理的六个键（`paperEnabled`、`paperName`、`remoteAgentTypes`、`remoteAgentUserDailyCents`、`remoteAgentUserDailyTasks`、`remoteAgentRoomDailyCents`）与记忆召回范围 `memoryRecallScope`。这七个键关系到费用与召回范围，加载时逐键核对类型：布尔只收布尔，`paperName` 只收非空字符串，`remoteAgentTypes` 只收字符串数组（非字符串与空串项滤掉），三项上限只收有限且不小于 0 的数，`memoryRecallScope` 只收 `session` / `platform` / `all`。类型不对的丢弃并记 warn；`null` 与空串按未设置处理，不告警。房间键写在平台档里，这个平台的所有房间都会继承，一般只写在单个房间的会话配置里。
+平台 profile 还能写白纸与远端代理的六个键（`paperEnabled`、`paperName`、`remoteAgentTypes`、`remoteAgentUserDailyCents`、`remoteAgentUserDailyTasks`、`remoteAgentRoomDailyCents`）与记忆召回范围 `memoryRecallScope`。这七个键关系到费用与召回范围，加载时逐键核对类型：布尔只收布尔，`paperName` 只收非空字符串，`remoteAgentTypes` 只收字符串数组（非字符串与空串项滤掉），三项上限只收有限且不小于 0 的数，`memoryRecallScope` 只收 `session` / `platform` / `all`。平台档中的两项金额上限若明确写了非法值，会拒绝启用会话管理，避免非法值被丢弃后放宽成不限额；数组中其他不可恢复的错误（如无效受众或缺少平台标识）也会使整组平台档拒绝装载。其余可恢复的无效键仍按原规则丢弃并记 warn。两项金额的 `undefined` 或 `null` 表示未设置；显式空字符串不是合法金额。房间与每人金额未设置时不增加该层限制，显式 0 禁止新远端任务；会话自身不写覆盖值时仍继承上层。房间键写在平台档里，这个平台的所有房间都会继承，一般只写在单个房间的会话配置里。
 
 ### 受众条目
 
@@ -86,7 +86,7 @@ export default definePlugin({
       enabledToolGroups: [<分组>, <另一分组>]
 ```
 
-`audience` 取 `group`（群与频道）或 `private`（私聊），WebUI 配置页里是「受众」下拉框，留空为「该平台全部房间」。受众条目只对有出生平台的房间生效，owner 面会话不取。取值不是 `group`、`private` 的条目整条丢弃并告警，不当成不限受众去覆盖整个平台。同一平台同一受众写了多条时，后写的覆盖先写的。服务方法 `getPlatformProfiles()` 只回基础档；会话页的继承来源对受众条目显示为「平台档 `<平台>`（私聊）」或「平台档 `<平台>`（群）」。
+`audience` 取 `group`（群与频道）或 `private`（私聊），WebUI 配置页里是「受众」下拉框，留空为「该平台全部房间」。受众条目只对有出生平台的房间生效，owner 面会话不取。取值不是 `group`、`private` 时拒绝装载整组平台档，不当成不限受众去覆盖整个平台。同一平台同一受众写了多条时，后写的覆盖先写的。服务方法 `getPlatformProfiles()` 只回基础档；会话页的继承来源对受众条目显示为「平台档 `<平台>`（私聊）」或「平台档 `<平台>`（群）」。
 
 ## 页面动作
 

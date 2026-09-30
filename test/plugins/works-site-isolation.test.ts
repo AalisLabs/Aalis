@@ -199,7 +199,6 @@ describe('Chromium work iframe', () => {
       kind: 'html',
       title: 'browser',
       summary: '',
-      credit: 'author',
       publishedAt: Date.now(),
       files: [...payload].map(([path, bytes]) => ({ path, size: bytes.byteLength, contentType: types[path] })),
       hasThumbnail: false,

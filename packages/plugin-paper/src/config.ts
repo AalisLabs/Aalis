@@ -2,7 +2,7 @@
 // 配置：全局上限、换日时区、白纸的默认属性与具名白纸
 //
 // 配置表单只能表达字段、分组与「数组项全是基础字段」的对象数组，所以白纸的属性拍平成 papers[] 项的
-// 同名字段；具名白纸没写的字段取 defaults 分组。房间级的开关与上限在会话配置里（paperEnabled 等），
+// 同名字段；具名白纸除日额度外，没写的字段取 defaults 分组。房间级的开关与上限在会话配置里（paperEnabled 等），
 // 不在这里。
 // ============================================================
 
@@ -11,6 +11,7 @@ import type { Logger } from '@aalis/core';
 import { type ConfigOf, defineConfig } from '@aalis/schema-config';
 
 const PAPER_NAME_PATTERN = '^[a-z0-9][a-z0-9-]{0,31}$';
+const PUBLISH_TARGET_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const EGRESS_CEILINGS: readonly EgressCeiling[] = ['none', 'allowlist', 'open'];
 
 const EGRESS_OPTIONS = [
@@ -44,16 +45,18 @@ export const configSchema = defineConfig({
   globalDailyCents: {
     type: 'number',
     label: '全局每天金额上限（美分）',
-    default: 0,
     min: 0,
-    description: '所有白纸合计每天能花多少；0 即不开远端任务。房间自己的上限在会话配置 remoteAgentRoomDailyCents',
+    integer: true,
+    onInvalid: 'error',
+    description:
+      '所有白纸合计每天能花多少；留空不限制，0 禁止开新任务。房间自己的上限在会话配置 remoteAgentRoomDailyCents',
   },
   reserveDefaultCents: {
     type: 'number',
     label: '默认预留额（美分）',
     default: DEFAULT_RESERVE_CENTS,
     min: 1,
-    description: '受理一件任务时先按这块白纸最近 5 轮的平均费用预留额度，没有历史时用这个值',
+    description: '受理一件任务时先按这块白纸最近 5 件已记账任务的平均费用预留额度，没有历史时用这个值',
   },
   budgetTimeZone: {
     type: 'string',
@@ -109,12 +112,6 @@ export const configSchema = defineConfig({
     min: 1,
     description: '已结束的任务在账本里保留多久；轮次记录另按代理保留到代理删除为止',
   },
-  worksCredit: {
-    type: 'string',
-    label: '作品署名',
-    default: '来自群友的点子',
-    description: '作品站公开显示的署名措辞',
-  },
   artifacts: {
     label: '成品上限',
     description: '取回成品时的上限；超过的文件拒收',
@@ -140,8 +137,16 @@ export const configSchema = defineConfig({
   },
   defaults: {
     label: '白纸默认属性',
-    description: '不写名字的房间白纸用这组；具名白纸没写的字段也取这组',
+    description: '不写名字的房间白纸用这组；具名白纸除日额度外，没写的字段也取这组',
     fields: {
+      dailyCents: {
+        type: 'number',
+        label: '每块白纸每天金额上限（美分）',
+        min: 0,
+        integer: true,
+        onInvalid: 'error',
+        description: '共用这块白纸的所有房间合计；留空不额外限制，0 禁止开任务，始终受全局与房间额度限制',
+      },
       remoteAgentType: {
         type: 'string',
         label: '远端代理类型',
@@ -191,6 +196,18 @@ export const configSchema = defineConfig({
         min: 1,
         description: '代理最后一轮结束后这么久没有新任务就归档（在定期检查时执行）',
       },
+      publishTargets: {
+        type: 'string',
+        label: '允许发布到的目标',
+        default: 'works',
+        description: '逗号分隔的目标 ID（不是网址）；默认 works。留空则这块白纸禁止发布',
+      },
+      defaultPublishTarget: {
+        type: 'string',
+        label: '默认发布目标',
+        default: '',
+        description: '留空时单个获准目标自动选用；多个目标须每次明确选择。填写时必须属于允许名单',
+      },
     },
   },
   papers: {
@@ -206,6 +223,14 @@ export const configSchema = defineConfig({
         pattern: PAPER_NAME_PATTERN,
         description: '小写字母、数字与连字符，最长 32 个字符',
       },
+      dailyCents: {
+        type: 'number',
+        label: '这块白纸每天金额上限（美分）',
+        min: 0,
+        integer: true,
+        onInvalid: 'error',
+        description: '留空不设单纸上限，不继承默认日额度；共用此白纸的房间合计，0 禁止开任务，仍受全局与房间额度限制',
+      },
       remoteAgentType: { type: 'string', label: '远端代理类型', description: '留空取默认属性' },
       remoteAgentEgress: {
         type: 'select',
@@ -217,6 +242,16 @@ export const configSchema = defineConfig({
       clearAfterDays: { type: 'number', label: '定期清空（天）', min: 1, description: '留空取默认属性' },
       rotateAfterCents: { type: 'number', label: '换新：代理累计花费（美分）', min: 1, description: '留空取默认属性' },
       idleArchiveMinutes: { type: 'number', label: '闲置归档（分钟）', min: 1, description: '留空取默认属性' },
+      publishTargets: {
+        type: 'string',
+        label: '允许发布到的目标',
+        description: '逗号分隔的目标 ID；未填写取默认属性，显式留空禁止这块白纸发布',
+      },
+      defaultPublishTarget: {
+        type: 'string',
+        label: '默认发布目标',
+        description: '未填写取默认属性；显式留空取消默认目标',
+      },
     },
   },
 });
@@ -227,6 +262,8 @@ type ParsedPaperConfig = ConfigOf<typeof configSchema>;
 export interface PaperSpec {
   /** 具名白纸的名字；房间白纸没有 */
   name?: string;
+  /** 这块白纸每天的额度（美分）；缺省不额外限制，0 禁止开任务。 */
+  dailyCents?: number;
   /** 远端代理插件实例 id；空即不开远端任务 */
   remoteAgentType: string;
   remoteAgentEgress: EgressCeiling;
@@ -236,6 +273,10 @@ export interface PaperSpec {
   clearAfterDays: number;
   rotateAfterCents: number;
   idleArchiveMinutes: number;
+  /** 这块白纸允许发布到的展示面 ID；空数组禁止发布。 */
+  publishTargets: readonly string[];
+  /** 可选默认目标，必须属于 publishTargets。 */
+  defaultPublishTarget?: string;
 }
 
 /** 取回成品的上限：交给提供者的那几项，加上只由写入口把关的白纸目录总占用 */
@@ -244,7 +285,7 @@ export interface ArtifactCaps extends ArtifactLimits {
 }
 
 export interface PaperConfig {
-  globalDailyCents: number;
+  globalDailyCents?: number;
   reserveDefaultCents: number;
   /** 缺省取宿主进程的本地时区 */
   budgetTimeZone?: string;
@@ -257,7 +298,6 @@ export interface PaperConfig {
   pendingHintHours: number;
   reconcileMinutes: number;
   taskRetentionDays: number;
-  worksCredit: string;
   artifacts: ArtifactCaps;
   defaults: PaperSpec;
   papers: ReadonlyMap<string, PaperSpec>;
@@ -273,13 +313,14 @@ const DEFAULT_SPEC: PaperSpec = {
   remoteAgentEgress: DEFAULT_EGRESS,
   maxWaiting: DEFAULT_MAX_WAITING,
   ...SPEC_NUMBER_DEFAULTS,
+  publishTargets: ['works'],
 };
 
 type SpecFields = ParsedPaperConfig['defaults'] | ParsedPaperConfig['papers'][number];
 
-/** 具名白纸只覆盖显式填写的字段；空的出网上限沿用 defaults。 */
-function readSpec(raw: SpecFields, fallback: PaperSpec): PaperSpec {
-  const spec: PaperSpec = { ...fallback };
+/** 具名白纸日额度独立填写，其他字段继承默认属性；发布目标的显式空值表示禁发布。 */
+function readSpec(raw: SpecFields, fallback: PaperSpec, logger: Logger, where: string): PaperSpec {
+  const spec: PaperSpec = { ...fallback, dailyCents: raw.dailyCents };
   if (raw.remoteAgentType !== undefined && raw.remoteAgentType !== '')
     spec.remoteAgentType = raw.remoteAgentType.trim();
   const egress = EGRESS_CEILINGS.find(value => value === raw.remoteAgentEgress);
@@ -287,6 +328,28 @@ function readSpec(raw: SpecFields, fallback: PaperSpec): PaperSpec {
   for (const key of ['maxWaiting', 'maxPerUser', 'clearAfterDays', 'rotateAfterCents', 'idleArchiveMinutes'] as const) {
     const value = raw[key];
     if (value !== undefined) spec[key] = value;
+  }
+  if (raw.publishTargets !== undefined) {
+    const names = raw.publishTargets
+      .split(',')
+      .map(name => name.trim())
+      .filter(Boolean);
+    const valid: string[] = [];
+    for (const name of names) {
+      if (!PUBLISH_TARGET_PATTERN.test(name)) {
+        logger.warn(`${where}.publishTargets 含无效目标 ID，已忽略`);
+        continue;
+      }
+      if (!valid.includes(name)) valid.push(name);
+    }
+    spec.publishTargets = valid;
+  }
+  if (raw.defaultPublishTarget !== undefined) {
+    spec.defaultPublishTarget = raw.defaultPublishTarget.trim() || undefined;
+  }
+  if (spec.defaultPublishTarget && !spec.publishTargets.includes(spec.defaultPublishTarget)) {
+    logger.warn(`${where}.defaultPublishTarget 不在允许发布目标名单，已取消默认目标`);
+    spec.defaultPublishTarget = undefined;
   }
   return spec;
 }
@@ -315,7 +378,7 @@ function validTimeZone(value: string | undefined, logger: Logger): string | unde
 }
 
 export function readConfig(raw: ParsedPaperConfig, logger: Logger): PaperConfig {
-  const defaults = readSpec(raw.defaults, DEFAULT_SPEC);
+  const defaults = readSpec(raw.defaults, DEFAULT_SPEC, logger, 'defaults');
 
   const papers = new Map<string, PaperSpec>();
   for (const [i, item] of raw.papers.entries()) {
@@ -324,7 +387,7 @@ export function readConfig(raw: ParsedPaperConfig, logger: Logger): PaperConfig 
       logger.warn(`papers[${i}] 与前面的白纸重名（${name}），这一项不生效`);
       continue;
     }
-    papers.set(name, { ...readSpec(item, defaults), name });
+    papers.set(name, { ...readSpec(item, defaults, logger, `papers[${i}]`), name });
   }
 
   return {
@@ -338,7 +401,6 @@ export function readConfig(raw: ParsedPaperConfig, logger: Logger): PaperConfig 
     pendingHintHours: raw.pendingHintHours,
     reconcileMinutes: raw.reconcileMinutes,
     taskRetentionDays: raw.taskRetentionDays,
-    worksCredit: raw.worksCredit,
     artifacts: readArtifactCaps(raw.artifacts),
     defaults,
     papers,

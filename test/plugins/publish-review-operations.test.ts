@@ -13,7 +13,6 @@ const item = () => ({
   surfaces: ['works'],
   title: '作品',
   summary: '',
-  credit: '群友',
   files: [{ path: 'index.html', bytes: html }],
 });
 async function world() {

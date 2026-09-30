@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { NominateInput } from '../../packages/api-publish/src/index.js';
 import { isIntegrityError } from '../../packages/api-publish/src/index.js';
@@ -15,11 +16,11 @@ const input = (): NominateInput => ({
   surfaces: ['works'],
   title: '测试作品',
   summary: '',
-  credit: '来自群友的点子',
   files: [{ path: 'work.png', bytes: image }],
 });
 
 const config = (manualReview = false): ReviewConfig => ({
+  reviewEnabled: true,
   manualReview,
   ownerTimeoutHours: 12,
   ffmpegPath: 'ffmpeg',
@@ -61,6 +62,340 @@ async function setup(
 }
 
 describe('作品审核核心', () => {
+  it('旧待发通知没有独立标题字段仍可读取', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup({ run: vi.fn() }, false, seed);
+    const old = h.store.copy();
+    old.notices.legacy = { id: 'abcdefghij', origin: input().origin, content: '作品已上线：旧链接', live: false };
+    await h.store.save(old);
+    const reloaded = new ReviewStore(memoryStorage(seed));
+    await reloaded.load();
+    expect(reloaded.failure).toBeUndefined();
+    expect(reloaded.data.notices.legacy).toMatchObject({ content: '作品已上线：旧链接' });
+    expect(reloaded.data.notices.legacy).not.toHaveProperty('title');
+  });
+
+  it('旧账本多余署名可读，相同提交键按旧指纹重试且新公开契约不返回署名', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+      seed,
+    );
+    const keyed = { ...input(), submissionKey: 'paper:legacy' };
+    const result = await h.service.nominate(keyed);
+    if (!('id' in result)) throw new Error(result.refused);
+    expect(h.store.data.queue[result.id]).not.toHaveProperty('credit');
+    const legacy = h.store.copy();
+    const legacyCredit = '旧版作者';
+    Object.assign(legacy.queue[result.id], { credit: legacyCredit });
+    const fileHash = createHash('sha256').update(image).digest('hex');
+    const payload = {
+      origin: { ...keyed.origin, actorKey: null },
+      group: keyed.group,
+      groupLabel: keyed.groupLabel,
+      surfaces: keyed.surfaces,
+      title: keyed.title,
+      summary: keyed.summary,
+      credit: legacyCredit,
+      files: [['work.png', fileHash]],
+      cover: null,
+    };
+    const slot = JSON.stringify([keyed.origin.producer, keyed.submissionKey]);
+    legacy.submissions[slot].fingerprint = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    await h.store.save(legacy);
+    const resumed = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+      seed,
+    );
+    expect(await resumed.service.nominate(keyed)).toEqual({ id: result.id });
+    expect(await resumed.service.nominate({ ...keyed, title: '改过的标题' })).toEqual({
+      refused: '提交键对应的作品内容已变更',
+    });
+    expect(resumed.store.data.queue[result.id]).toHaveProperty('credit', legacyCredit);
+    await resumed.service.processNext();
+    expect(resumed.store.data.ledger[result.id]).toHaveProperty('credit', legacyCredit);
+    expect(resumed.service.listPublished('works')[0]).not.toHaveProperty('credit');
+    expect(await resumed.service.nominate(keyed)).toEqual({ id: result.id });
+  });
+
+  it('同一提交键并发及重启只收一次，变更来源或字节会拒绝，普通提名仍可重复', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup({ run: vi.fn() }, false, seed);
+    const keyed = { ...input(), submissionKey: 'paper:task-1' };
+    const results = await Promise.all(Array.from({ length: 12 }, () => h.service.nominate(keyed)));
+    expect(results.every(result => 'id' in result && result.id === (results[0] as { id: string }).id)).toBe(true);
+    expect(h.store.data.nominations).toHaveLength(1);
+    expect(Object.keys(h.store.data.queue)).toHaveLength(1);
+    const id = (results[0] as { id: string }).id;
+    const resumed = await setup({ run: vi.fn() }, false, seed);
+    expect(await resumed.service.nominate(keyed)).toEqual({ id });
+    expect(resumed.store.data.nominations).toHaveLength(1);
+    expect(await resumed.service.nominate({ ...keyed, origin: { ...keyed.origin, ref: 'task-2' } })).toEqual({
+      refused: '提交键对应的作品内容已变更',
+    });
+    expect(
+      await resumed.service.nominate({ ...keyed, files: [{ path: 'work.png', bytes: new Uint8Array([...image, 1]) }] }),
+    ).toHaveProperty('refused');
+    const independent = await resumed.service.nominate({ ...keyed, origin: { ...keyed.origin, producer: 'other' } });
+    expect(independent).toHaveProperty('id');
+    expect(independent).not.toEqual({ id });
+    const plain = await resumed.service.nominate(input());
+    expect(plain).toHaveProperty('id');
+    expect(plain).not.toEqual({ id });
+  });
+
+  it('带提交键的拒绝终态可追踪且不能复活；上线只在展示面回执后为真', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      true,
+      seed,
+    );
+    const keyed = { ...input(), submissionKey: 'paper:task-1' };
+    const nominated = await h.service.nominate(keyed);
+    if (!('id' in nominated)) throw new Error(nominated.refused);
+    expect(h.service.get(nominated.id)?.live).not.toBe(true);
+    await h.service.processNext();
+    expect(await h.service.reject(nominated.id)).toBe(true);
+    expect(h.service.get(nominated.id)?.state).toBe('rejected');
+    const resumed = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      true,
+      seed,
+    );
+    expect(await resumed.service.nominate(keyed)).toEqual({ id: nominated.id });
+    expect(resumed.service.get(nominated.id)?.state).toBe('rejected');
+    expect(resumed.store.data.nominations).toHaveLength(1);
+
+    const next = await resumed.service.nominate({ ...keyed, submissionKey: 'paper:task-2' });
+    if (!('id' in next)) throw new Error(next.refused);
+    await resumed.service.processNext();
+    expect(resumed.service.get(next.id)?.state).toBe('awaiting-owner');
+    expect(resumed.service.get(next.id)?.live).not.toBe(true);
+    expect(await resumed.service.approve(next.id)).toBe(true);
+    expect(resumed.service.get(next.id)).toMatchObject({ state: 'published' });
+    expect(resumed.service.get(next.id)?.live).not.toBe(true);
+    resumed.service
+      .attachSurface({ name: 'works', urlFor: id => `https://works.invalid/w/${id}/`, health: () => ({ ok: true }) })
+      .live([next.id]);
+    await vi.waitFor(() => expect(resumed.service.get(next.id)?.live).toBe(true));
+    await vi.waitFor(() => expect(resumed.notices.some(text => text.includes('已上线：'))).toBe(true));
+    const notice = resumed.notices.find(text => text.includes('已上线：'))!;
+    expect(notice).toContain('作品已上线：');
+    expect(notice).not.toContain('测试作品');
+    expect(notice).not.toContain(`作品 ${next.id}`);
+    const liveResumed = await setup({ run: vi.fn() }, true, seed);
+    expect(liveResumed.service.get(next.id)?.live).toBe(true);
+  });
+
+  it('超时、审核失败和待审撤回都保留带键终态', async () => {
+    const clock = { now: 1000 };
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'unsure', reasons: [] }, files: input().files }) },
+      false,
+      seed,
+      clock,
+    );
+    const first = { ...input(), submissionKey: 'paper:expire' };
+    const expired = await h.service.nominate(first);
+    if (!('id' in expired)) throw new Error(expired.refused);
+    await h.service.processNext();
+    clock.now += 12 * 3_600_000 + 1;
+    await h.service.reconcile();
+    expect(h.service.get(expired.id)?.state).toBe('expired');
+    expect(await h.service.nominate(first)).toEqual({ id: expired.id });
+
+    const second = { ...input(), submissionKey: 'paper:withdraw' };
+    const withdrawn = await h.service.nominate(second);
+    if (!('id' in withdrawn)) throw new Error(withdrawn.refused);
+    expect(await h.service.withdraw(withdrawn.id, { kind: 'origin' }, '取消')).toMatchObject({ ok: true });
+    expect(h.service.get(withdrawn.id)?.state).toBe('withdrawn');
+    expect(await h.service.nominate(second)).toEqual({ id: withdrawn.id });
+
+    const failSeed = new Map<string, string | Uint8Array>();
+    const failedReview = await setup(
+      {
+        run: async () => {
+          throw new Error('offline');
+        },
+      },
+      false,
+      failSeed,
+    );
+    const third = { ...input(), submissionKey: 'paper:fail' };
+    const failed = await failedReview.service.nominate(third);
+    if (!('id' in failed)) throw new Error(failed.refused);
+    await failedReview.service.processNext();
+    const restarted = await setup({ run: vi.fn() }, false, failSeed);
+    expect(restarted.service.get(failed.id)?.state).toBe('failed');
+    expect(await restarted.service.nominate(third)).toEqual({ id: failed.id });
+  });
+
+  it('没有通知房间也能记录展示面核验；撤回后不再显示在线', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+      seed,
+    );
+    const draft = input();
+    delete draft.origin.notify;
+    draft.submissionKey = 'paper:no-notify';
+    const result = await h.service.nominate(draft);
+    if (!('id' in result)) throw new Error(result.refused);
+    await h.service.processNext();
+    expect(h.service.get(result.id)).toMatchObject({ state: 'published' });
+    expect(h.service.get(result.id)?.live).not.toBe(true);
+    h.service
+      .attachSurface({ name: 'works', urlFor: id => `https://works.invalid/w/${id}/`, health: () => ({ ok: true }) })
+      .live([result.id]);
+    await vi.waitFor(() => expect(h.service.get(result.id)?.live).toBe(true));
+    expect(await h.service.withdraw(result.id, { kind: 'origin' }, '撤回')).toMatchObject({ ok: true });
+    expect(h.service.get(result.id)).toMatchObject({ state: 'withdrawn', live: undefined });
+  });
+
+  it('多目标逐项持久核验，全部上线后才回报并一次通知完整地址；通知失败可重试', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+      seed,
+    );
+    const first = h.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://works.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    h.service.attachSurface({
+      name: 'draw',
+      urlFor: id => `https://draw.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    const nominated = await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] });
+    if (!('id' in nominated)) throw new Error(nominated.refused);
+    await h.service.processNext();
+    first.live([nominated.id]);
+    await h.store.exclusive(async () => {});
+    expect(h.service.get(nominated.id)?.live).toBe(false);
+    expect(h.store.data.ledger[nominated.id].liveSurfaces).toEqual({
+      works: `https://works.invalid/w/${nominated.id}/`,
+    });
+    expect(h.notices).toEqual([]);
+
+    const restarted = new ReviewStore(memoryStorage(seed));
+    await restarted.load();
+    const emit = vi.fn().mockRejectedValue(new Error('temporary'));
+    const service = new PublishReviewService({
+      storage: restarted.storage,
+      store: restarted,
+      config: config(),
+      pipeline: { run: vi.fn() },
+      notice: emit,
+    });
+    service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://works.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    const draw = service.attachSurface({
+      name: 'draw',
+      urlFor: id => `https://draw.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    draw.live([nominated.id]);
+    await restarted.exclusive(async () => {});
+    await service.flushNotices();
+    expect(service.get(nominated.id)?.live).toBe(true);
+    expect(restarted.data.ledger[nominated.id].notice).toBe('pending');
+    expect(restarted.data.notices[`${nominated.id}:live`]?.content).toContain(
+      `https://works.invalid/w/${nominated.id}/、https://draw.invalid/w/${nominated.id}/`,
+    );
+    draw.live([nominated.id]);
+    await restarted.exclusive(async () => {});
+    expect(restarted.data.history.filter(entry => entry.event === 'live')).toHaveLength(2);
+    const relocated = service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://new-works.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    expect(service.get(nominated.id)?.live).toBe(false);
+    await service.flushNotices();
+    expect(restarted.data.notices[`${nominated.id}:live`]?.content).toContain('https://works.invalid/');
+    relocated.live([nominated.id]);
+    await restarted.exclusive(async () => {});
+    expect(service.get(nominated.id)?.live).toBe(true);
+    expect(restarted.data.notices[`${nominated.id}:live`]?.content).toContain('https://new-works.invalid/');
+    expect(restarted.data.notices[`${nominated.id}:live`]?.content).not.toContain('https://works.invalid/');
+    await service.close();
+
+    const delivered = await setup({ run: vi.fn() }, false, seed);
+    delivered.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://new-works.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    delivered.service.attachSurface({
+      name: 'draw',
+      urlFor: id => `https://draw.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    await delivered.service.flushNotices();
+    await vi.waitFor(() => expect(delivered.notices).toHaveLength(1));
+    expect(delivered.notices[0]).toContain(`https://new-works.invalid/w/${nominated.id}/`);
+    expect(delivered.notices[0]).toContain(`https://draw.invalid/w/${nominated.id}/`);
+    expect(delivered.notices[0]).not.toContain('https://works.invalid/');
+    expect(delivered.store.data.ledger[nominated.id].notice).toBe('sent');
+    expect(delivered.store.data.notices[`${nominated.id}:live`]).toBeUndefined();
+    expect(await delivered.service.withdraw(nominated.id, { kind: 'origin' }, '撤回')).toMatchObject({ ok: true });
+    expect(delivered.store.data.ledger[nominated.id].liveSurfaces).toEqual({});
+    expect(delivered.service.get(nominated.id)).toMatchObject({ state: 'withdrawn', live: undefined });
+  });
+
+  it('目标换址后旧回执不能与新目标回执拼成上线证明', async () => {
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+    );
+    const oldA = h.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://old.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    const b = h.service.attachSurface({
+      name: 'draw',
+      urlFor: id => `https://draw.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    const nominated = await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] });
+    if (!('id' in nominated)) throw new Error(nominated.refused);
+    await h.service.processNext();
+    oldA.live([nominated.id]);
+    await h.store.exclusive(async () => {});
+    const newA = h.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://new.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    b.live([nominated.id]);
+    await h.store.exclusive(async () => {});
+    expect(h.service.get(nominated.id)?.live).toBe(false);
+    expect(h.store.data.ledger[nominated.id].liveSurfaces).toEqual({
+      draw: `https://draw.invalid/w/${nominated.id}/`,
+    });
+    expect(h.notices).toEqual([]);
+    oldA.live([nominated.id]);
+    await h.store.exclusive(async () => {});
+    expect(h.service.get(nominated.id)?.live).toBe(false);
+    newA.live([nominated.id]);
+    await vi.waitFor(() => expect(h.service.get(nominated.id)?.live).toBe(true));
+    await vi.waitFor(() => expect(h.notices).toHaveLength(1));
+    expect(h.notices[0]).toContain(`https://new.invalid/w/${nominated.id}/`);
+    expect(h.notices[0]).toContain(`https://draw.invalid/w/${nominated.id}/`);
+    expect(h.notices[0]).not.toContain('old.invalid');
+  });
   it('坏状态文件失败关闭且原字节不被覆盖', async () => {
     const seed = new Map<string, string | Uint8Array>([['pluginData:/publish-review/state.json', '{bad-json']]);
     const h = await setup({ run: vi.fn() }, false, seed);
@@ -288,10 +623,65 @@ describe('作品审核核心', () => {
   it('待审配额按来源限制，撤回后释放待审槽', async () => {
     const h = await setup({ run: vi.fn() });
     for (let i = 0; i < 3; i++) expect(await h.service.nominate(input())).toHaveProperty('id');
-    expect(await h.service.nominate(input())).toMatchObject({ refused: expect.stringContaining('待审') });
+    expect(await h.service.nominate(input())).toEqual({
+      refused: '这个来源待审作品已达上限',
+      retryAfterMs: 30_000,
+    });
     const id = Object.keys(h.store.data.queue)[0];
     expect(await h.service.withdraw(id, { kind: 'origin' }, '撤回')).toEqual({ ok: true });
     expect(await h.service.nominate(input())).toHaveProperty('id');
+  });
+
+  it('总待审限额是临时拒绝；滚动每日限额返回确切释放时间，静态错误不带重试标记', async () => {
+    const clock = { now: 1000 };
+    const global = await setup({ run: vi.fn() }, false, new Map(), clock);
+    for (let index = 0; index < 20; index++) {
+      const draft = input();
+      draft.origin.notify!.sessionId = `room-${index}`;
+      expect(await global.service.nominate(draft)).toHaveProperty('id');
+    }
+    const another = input();
+    another.origin.notify!.sessionId = 'room-extra';
+    expect(await global.service.nominate(another)).toEqual({ refused: '待审总数已达上限', retryAfterMs: 30_000 });
+
+    const daily = await setup({ run: vi.fn() }, false, new Map(), clock);
+    for (let index = 0; index < 10; index++) {
+      const draft = input();
+      draft.origin.ref = `task-${index}`;
+      const accepted = await daily.service.nominate(draft);
+      if (!('id' in accepted)) throw new Error(accepted.refused);
+      await daily.service.withdraw(accepted.id, { kind: 'origin' }, 'test');
+    }
+    expect(await daily.service.nominate(input())).toEqual({
+      refused: '这个来源今天提名数已达上限',
+      retryAfterMs: 86_400_001,
+    });
+    clock.now += 86_400_000;
+    expect(await daily.service.nominate(input())).toMatchObject({ retryAfterMs: 1 });
+    clock.now++;
+    expect(await daily.service.nominate(input())).toHaveProperty('id');
+    expect(await daily.service.nominate({ ...input(), title: '' })).toEqual({ refused: '标题或简介不合规' });
+  });
+
+  it('服务停机和快照暂时写失败可重试，失败时不占提交键', async () => {
+    const h = await setup({ run: vi.fn() });
+    const original = h.storage.writeFile.bind(h.storage);
+    h.storage.writeFile = async (uri, value) => {
+      if (uri.includes('/items/')) throw new Error('temporary storage failure');
+      return original(uri, value);
+    };
+    const keyed = { ...input(), submissionKey: 'retryable-write' };
+    expect(await h.service.nominate(keyed)).toEqual({ refused: '提名快照无法保存', retryAfterMs: 30_000 });
+    expect(h.store.data.submissions).toEqual({});
+    expect(h.store.data.queue).toEqual({});
+    h.storage.writeFile = original;
+    expect(await h.service.nominate(keyed)).toHaveProperty('id');
+    await h.service.close();
+    expect(await h.service.nominate({ ...input(), submissionKey: 'after-stop' })).toEqual({
+      refused: '作品审核已停止',
+      retryAfterMs: 30_000,
+    });
+    expect(h.store.data.submissions).not.toHaveProperty(JSON.stringify(['paper', 'after-stop']));
   });
 
   it('拒绝与撤回仍计入每日配额；无房间来源按 producer 合并不同 ref', async () => {

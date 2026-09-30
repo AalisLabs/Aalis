@@ -27,6 +27,8 @@ function setup(fake: FakePages, signal: AbortSignal) {
   fake.customDomains.push('aalis.localhost');
   const siteOrigin = `http://aalis.localhost:${fake.port}`;
   const config: WorksSiteConfig = {
+    targetId: 'works',
+    basePath: '/',
     accountId: fake.accountId,
     apiToken: token,
     projectName: fake.projectName,
@@ -54,6 +56,136 @@ function setup(fake: FakePages, signal: AbortSignal) {
 }
 
 describe('作品站独立故障交接审计', () => {
+  it('非根目录部署仅服务所选目标，撤下墓碑也留在同一目录', async () => {
+    const fake = await startFakePages();
+    const store = new WorksStore(memoryStorage(new Map()));
+    await store.load();
+    const controller = new AbortController();
+    const deps = setup(fake, controller.signal);
+    deps.config.targetId = 'draw';
+    deps.config.basePath = '/draw/';
+    let published: PublishedItem[] = [
+      {
+        id: 'abcdefghij',
+        group: 'opaque',
+        groupLabel: '朋友',
+        surfaces: ['draw'],
+        kind: 'media',
+        title: '画',
+        summary: '',
+        publishedAt: 1,
+        files: [{ path: 'image.png', size: 1, contentType: 'image/png' }],
+        hasThumbnail: false,
+      },
+    ];
+    const listPublished = vi.fn((surface: string) => (surface === 'draw' ? published : []));
+    const live = vi.fn();
+    const deployer = new WorksDeployer({
+      ...deps,
+      store,
+      publish: () => ({
+        listPublished,
+        readFile: async () => new Uint8Array([1]),
+        readThumbnail: async () => new Uint8Array(),
+      }),
+      live,
+      logger: { info: () => {}, warn: () => {} },
+      signal: controller.signal,
+      debounceMs: 1,
+      retryBaseMs: 20,
+    });
+    try {
+      deployer.start();
+      await eventually(() => store.data?.current.main?.works.some(work => work.id === 'abcdefghij') ?? false);
+      expect(listPublished).toHaveBeenCalledWith('draw');
+      const current = fake.deployments.find(item => !item.deleted && item.branch === 'main');
+      expect(current?.manifest).toHaveProperty('/draw/index.html');
+      expect(current?.manifest).toHaveProperty('/draw/w/abcdefghij/index.html');
+      expect(current?.manifest).not.toHaveProperty('/w/abcdefghij/index.html');
+      // current 先落盘，完成旧部署清理后才发出上线回调。
+      await eventually(() => live.mock.calls.length > 0);
+      expect(live).toHaveBeenCalledWith(['abcdefghij']);
+      published = [];
+      deployer.change();
+      await eventually(() => store.data?.current.main?.works.length === 0);
+      expect(store.data?.tombstones).toContainEqual(
+        expect.objectContaining({ branch: 'main', path: '/draw/w/abcdefghij/index.html' }),
+      );
+      expect(store.data?.current.main?.files).toHaveProperty('/draw/w/abcdefghij/index.html');
+    } finally {
+      controller.abort();
+      await deployer.stop();
+      await fake.close();
+    }
+  }, 10000);
+
+  it('非根 HTML 先建隔离分支，撤下后主站与分支墓碑均完成', async () => {
+    const fake = await startFakePages();
+    const store = new WorksStore(memoryStorage(new Map()));
+    await store.load();
+    const controller = new AbortController();
+    const deps = setup(fake, controller.signal);
+    deps.config.targetId = 'draw';
+    deps.config.basePath = '/draw/';
+    const bytes = new TextEncoder().encode('<!doctype html><html><body>ok</body></html>');
+    let published: PublishedItem[] = [
+      {
+        id: 'abcdefghij',
+        group: 'opaque',
+        groupLabel: '朋友',
+        surfaces: ['draw'],
+        kind: 'html',
+        title: '网页',
+        summary: '',
+        publishedAt: 1,
+        files: [{ path: 'index.html', size: bytes.length, contentType: 'text/html; charset=utf-8' }],
+        hasThumbnail: false,
+      },
+    ];
+    const deployer = new WorksDeployer({
+      ...deps,
+      store,
+      publish: () => ({
+        listPublished: () => published,
+        readFile: async () => bytes,
+        readThumbnail: async () => new Uint8Array(),
+      }),
+      live: () => {},
+      logger: { info: () => {}, warn: () => {} },
+      signal: controller.signal,
+      debounceMs: 1,
+      retryBaseMs: 20,
+    });
+    try {
+      deployer.start();
+      await eventually(
+        () =>
+          store.data?.current.main?.verified === true &&
+          Object.values(store.data?.current ?? {}).some(item => item.branch.startsWith('p-') && item.verified),
+      );
+      published = [];
+      deployer.change();
+      await eventually(
+        () =>
+          store.data?.current.main?.works.length === 0 &&
+          Object.values(store.data?.current ?? {})
+            .filter(item => item.branch.startsWith('p-'))
+            .every(item => item.works.length === 0),
+      );
+      expect(store.data?.tombstones).toContainEqual(
+        expect.objectContaining({ branch: 'main', path: '/draw/w/abcdefghij/index.html' }),
+      );
+      expect(store.data?.tombstones).toContainEqual(
+        expect.objectContaining({ branch: 'opaque', path: '/abcdefghij/index.html' }),
+      );
+      expect(store.data?.paused).toBeUndefined();
+    } finally {
+      controller.abort();
+      await deployer.stop();
+      await fake.close();
+    }
+  }, 10000);
+
   it('注册的 doctor 检查在 token 距过期不足十四天时给 warn', async () => {
     const store = new WorksStore(memoryStorage(new Map()));
     await store.load();
@@ -252,7 +384,6 @@ describe('作品站独立故障交接审计', () => {
         kind: 'media',
         title: '画',
         summary: '',
-        credit: '群友',
         publishedAt: 1,
         files: [{ path: 'image.png', size: 1, contentType: 'image/png' }],
         hasThumbnail: false,
@@ -298,6 +429,8 @@ describe('作品站独立故障交接审计', () => {
     const client = { waitForDeployment } as unknown as PagesClient;
     const controller = new AbortController();
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -352,7 +485,6 @@ describe('作品站独立故障交接审计', () => {
       kind: 'media',
       title: '画',
       summary: '',
-      credit: '群友',
       publishedAt: 1,
       files: [{ path: 'image.png', size: 1, contentType: 'image/png' }],
       hasThumbnail: false,
@@ -423,7 +555,6 @@ describe('作品站独立故障交接审计', () => {
       kind: 'html',
       title: '网页',
       summary: '',
-      credit: '群友',
       publishedAt: 1,
       files: [{ path: 'index.html', size: html.length, contentType: 'text/html; charset=utf-8' }],
       hasThumbnail: false,
@@ -526,7 +657,6 @@ describe('作品站独立故障交接审计', () => {
             kind: 'media',
             title: '画',
             summary: '',
-            credit: '群友',
             publishedAt: 1,
             files: [{ path: 'image.png', size: 1, contentType: 'image/png' }],
             hasThumbnail: false,

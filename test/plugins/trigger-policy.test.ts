@@ -199,6 +199,20 @@ const pokeMsg = (platform = 'onebot'): IncomingMessage =>
   }) as unknown as IncomingMessage;
 
 describe('trigger-policy inbound:trigger（poke）', () => {
+  it('群友互戳按普通入站累计计数，不享受点名直触发', async () => {
+    const { app, host } = await setupPolicy({ intervalMode: 'fixed', fixedInterval: 2 });
+    try {
+      const message = () => ({ ...pokeMsg(), noticeTargetIsSelf: false });
+      expect((await runTriggerPhase(host.hooks, message())).reached).toBe(false);
+      const second = await runTriggerPhase(host.hooks, message());
+      expect(second.reached).toBe(true);
+      expect(second.message.triggerType).toBe('interval');
+      expect(second.message.actor).toEqual({ platform: 'onebot', userId: '' });
+    } finally {
+      await app.stop();
+    }
+  });
+
   it('真实激活时纯空白 scopes 不扩大到所有会话', async () => {
     const { app, host } = await setupPolicy({ scopes: ['   '], ...EVERY_MESSAGE });
     try {

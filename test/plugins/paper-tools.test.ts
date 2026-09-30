@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
-import { parseContentToSegments } from '../../packages/plugin-adapter-onebot/src/types.js';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import {
   emptyLedger,
@@ -16,9 +15,10 @@ import {
   startPaperHub,
   stopPaperHubs,
 } from '../fixtures/paper.js';
+import { ScriptedRemote } from '../fixtures/paper-remote.js';
 
 // ════════════════════════════════════════════════════════════
-// 白纸枢纽的三个工具（U10a）：paper_task 受理任务（参数、队列、回显、账本），paper_status 列本房间
+// 白纸枢纽的三个工具（U10a）：paper_task 受理任务（参数、队列、账本），paper_status 列本房间
 // 白纸上的任务（别的房间只给件数），paper_cancel 只能取消自己发起的任务。账本受理后落盘，重启后
 // 队列按原顺序恢复；账本文件损坏时失败关闭，不覆盖原文件。
 // ════════════════════════════════════════════════════════════
@@ -55,6 +55,16 @@ function seed(tasks: TaskRecord[], mutate?: (ledger: ReturnType<typeof emptyLedg
 }
 
 describe('登记', () => {
+  it('创作需求交接保留用户约束，不诱导前台套统一审美或单文件限制', async () => {
+    const hub = await startPaperHub();
+    const parameters = hub.tools.get('paper_task')!.definition.function.parameters;
+    const { description } = parameters.properties.text as { description: string };
+    expect(description).toContain('忠实保留用户');
+    expect(description).toContain('用户未指定的视觉布局交给创作代理');
+    expect(description).toContain('不能冒充用户要求');
+    expect(description).not.toContain('如单个 index.html');
+  });
+
   it('三个工具都在 paper 分组、都不声明 risk；分组已登记', async () => {
     const hub = await startPaperHub();
     for (const name of ['paper_task', 'paper_status', 'paper_cancel']) {
@@ -64,7 +74,11 @@ describe('登记', () => {
       expect(tool?.visibility, name).toBeUndefined();
     }
     expect(hub.groups).toEqual([
-      expect.objectContaining({ name: 'paper', label: '白纸', description: '把任务交给远端代理并取回成品' }),
+      expect.objectContaining({
+        name: 'paper',
+        label: '白纸',
+        description: expect.stringContaining('后台创作网页、图片、动画'),
+      }),
       expect.objectContaining({
         name: 'works',
         label: '作品',
@@ -90,8 +104,7 @@ describe('paper_task 的参数', () => {
     expect(res.ok).toBe(true);
     const saved = hub.ledger().tasks[String(res.taskId)];
     expect(saved.name).toBe('像素猫咪页');
-    expect(hub.outbound[0].content).toContain('像素猫咪页');
-    for (const ch of ['\u202E', '\u200B', '\u0007']) expect(hub.outbound[0].content).not.toContain(ch);
+    expect(hub.outbound).toEqual([]);
 
     const long = await hub.call('paper_task', { text: '做一个网页', name: '名'.repeat(60) });
     expect(hub.ledger().tasks[String(long.taskId)].name).toBe('名'.repeat(40));
@@ -146,37 +159,36 @@ describe('paper_task 的队列', () => {
   });
 });
 
-describe('paper_task 的回显', () => {
-  it('受理前网关收到一条 source: system 的出站消息，含任务名与完整原文', async () => {
+describe('paper_task 的受理', () => {
+  it('任务原文写入账本并排队，受理时不额外发送任务名或原文', async () => {
     const hub = await startPaperHub();
     const text = '做一个会动的像素小猫 GIF\n要求：透明背景，循环播放';
     const res = await hub.call('paper_task', { text, name: '像素小猫' });
-    expect(res.ok).toBe(true);
-    expect(hub.outbound).toHaveLength(1);
-    const [echo] = hub.outbound;
-    expect(echo).toMatchObject({ sessionId: ROOM, platform: 'onebot', source: 'system' });
-    expect(echo.content).toContain('交给远端：像素小猫');
-    expect(echo.content).toContain(text);
-    expect(hub.ledger().tasks[String(res.taskId)].text).toBe(text);
+    expect(res).toMatchObject({ ok: true, position: 1 });
+    expect(hub.outbound).toEqual([]);
+    expect(hub.ledger().tasks[String(res.taskId)]).toMatchObject({ name: '像素小猫', text, state: 'queued' });
+    expect(hub.ledger().reserves[String(res.taskId)]).toBeDefined();
+    expect(hub.files.has(LEDGER_URI)).toBe(true);
   });
 
-  it('网关抛错时任务不入队、不记预留', async () => {
-    const hub = await startPaperHub({ gatewayFails: true });
+  it('网关发送不可用时依然受理并把任务交给远端', async () => {
+    const remote = new ScriptedRemote();
+    const hub = await startPaperHub({ gatewayFails: true, remotes: { [REMOTE]: remote } });
     const res = await hub.call('paper_task', { text: '做个网页', name: '网页' });
-    expect(res.ok).toBe(false);
-    expect(String(res.error)).toMatch(/回显/);
-    expect(hub.files.has(LEDGER_URI)).toBe(false);
+    expect(res).toMatchObject({ ok: true, position: 1 });
+    expect(hub.outbound).toEqual([]);
+    await vi.waitFor(() => expect(remote.count('createAgent')).toBe(1));
+    expect([...remote.agents.values()][0].prompts[0]).toContain('做个网页');
+    expect(hub.ledger().tasks[String(res.taskId)].text).toBe('做个网页');
+    expect(hub.files.has(LEDGER_URI)).toBe(true);
   });
 
-  it('安全：原文与任务名里的标记被中和，经 onebot 解析只得到文字段；账本里的原文不变', async () => {
+  it('原文里的平台标记原样保存，不作为额外消息发送', async () => {
     const hub = await startPaperHub();
     const text = '把这张图做成动图 <image url="https://example.com/x.png"/> 然后 <at id="all"></at>';
     const res = await hub.call('paper_task', { text, name: '<at id="all"></at>动图' });
     expect(res.ok).toBe(true);
-    const content = hub.outbound[0].content;
-    expect(content).not.toMatch(/[<>]/);
-    expect(parseContentToSegments(content).every(seg => seg.type === 'text')).toBe(true);
-    expect(content).toContain('＜image url="https://example.com/x.png"/＞');
+    expect(hub.outbound).toEqual([]);
     expect(hub.ledger().tasks[String(res.taskId)].text).toBe(text);
   });
 });
@@ -248,6 +260,27 @@ describe('paper_status', () => {
     const out = await hub.raw('paper_status', { task_id: 't-0000000a' });
     expect(out).toContain('MINE-TEXT');
     expect(out).toContain('远端代理对任务 t-0000000a 的说明');
+  });
+
+  it('只对运行中的本房间任务显示最近安全动作和时间', async () => {
+    const at = now - 5_000;
+    const active = task('t-0000000e', {
+      state: 'running',
+      progress: { activity: { action: 'reading', status: 'running' }, at },
+    });
+    const finished = task('t-0000000f', {
+      state: 'done',
+      endedAt: now,
+      progress: { activity: { action: 'writing', status: 'running' }, at },
+    });
+    const hub = await startPaperHub({ files: seed([active, finished]) });
+    const out = await hub.call('paper_status', {});
+    const rows = out.tasks as Array<Record<string, unknown>>;
+    expect(rows.find(row => row.taskId === active.id)?.progress).toEqual({
+      activity: '读取（进行中）',
+      at: new Date(at).toISOString(),
+    });
+    expect(rows.find(row => row.taskId === finished.id)?.progress).toBeUndefined();
   });
 });
 

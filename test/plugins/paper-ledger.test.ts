@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
+import { paperBudgetUsage } from '../../packages/plugin-paper/src/budget.js';
 import { LedgerStore, type PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
 
 // ════════════════════════════════════════════════════════════
@@ -17,6 +18,28 @@ const quiet: Logger = {
 } as unknown as Logger;
 
 describe('账本落盘', () => {
+  it('旧版本 1 日账没有 papers、旧预留没有 paperId 仍可加载并保守计费', async () => {
+    const legacy: PaperLedger = {
+      version: 1,
+      papers: {},
+      agents: {},
+      tasks: {},
+      runs: {},
+      alerts: [],
+      spend: { '2026-09-27': { global: 80, rooms: {}, users: {} } },
+      reserves: { 't-00000001': { cents: 20, day: '2026-09-26', room: 'room', user: 'user' } },
+    };
+    const storage = { readFile: async () => JSON.stringify(legacy) } as unknown as StorageService;
+    const store = new LedgerStore(storage, quiet);
+    await store.load();
+    expect(store.failure).toBeUndefined();
+    expect(paperBudgetUsage(store.data, '2026-09-27', 'n:paper-a')).toEqual({
+      spentCents: 0,
+      unattributedCents: 80,
+      reservedCents: 20,
+    });
+  });
+
   it('每次写出的是调用 save 那一刻的账本：排在前面的写不会带出之后才做的修改', async () => {
     const written: PaperLedger[] = [];
     let release = () => {};

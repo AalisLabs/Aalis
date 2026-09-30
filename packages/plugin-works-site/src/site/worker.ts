@@ -1,8 +1,10 @@
 import { publicPathProblem, WORK_ID_PATTERN, workHeaders } from '@aalis/api-publish';
+import { canonicalBasePath } from './paths.js';
 
 interface WorkerInput {
   nonce: string;
   mainOrigin: string;
+  mainBasePath?: string;
   frameAncestors: readonly string[];
   works: Readonly<Record<string, readonly string[]>>;
 }
@@ -28,6 +30,7 @@ export function buildWorker(input: WorkerInput): string {
     throw new TypeError('主站来源格式不对');
   }
   const works: Record<string, string[]> = Object.create(null);
+  const mainBasePath = canonicalBasePath(input.mainBasePath ?? '/');
   const headers: Record<string, Record<string, string>> = Object.create(null);
   for (const [id, paths] of Object.entries(input.works)) {
     if (!WORK_ID_PATTERN.test(id)) throw new TypeError('作品编号格式不对');
@@ -46,7 +49,7 @@ export function buildWorker(input: WorkerInput): string {
     headers[id] = workHeaders({ scope: { origin: PLACEHOLDER, basePath: base }, frameAncestors: input.frameAncestors });
   }
   const fallback = workHeaders({ scope: 'self', frameAncestors: input.frameAncestors });
-  const manifest = { nonce: input.nonce, main: input.mainOrigin, works, headers, fallback };
+  const manifest = { nonce: input.nonce, main: input.mainOrigin + mainBasePath, works, headers, fallback };
   return `const M = ${JSON.stringify(manifest)};\n${WORKER_TEMPLATE}`;
 }
 
@@ -77,11 +80,11 @@ export default {
     const dest = request.headers.get('Sec-Fetch-Dest');
     if (dest === 'document') {
       const h = headers(url, id);
-      h.set('Location', M.main + '/w/' + id + '/');
+      h.set('Location', M.main + 'w/' + id + '/');
       return new Response(null, { status: 302, headers: h });
     }
     if (dest === null && !SUBRESOURCE_ONLY.test(path)) {
-      const notice = '<!doctype html><meta charset="utf-8"><p>请用较新的浏览器打开 ' + M.main + '/w/' + id + '/</p>';
+      const notice = '<!doctype html><meta charset="utf-8"><p>请用较新的浏览器打开 ' + M.main + 'w/' + id + '/</p>';
       return reply(200, url, request.method === 'HEAD' ? undefined : notice, id);
     }
     const asset = await env.ASSETS.fetch(new Request(url.origin + path + url.search, { method: request.method, headers: request.headers, signal: request.signal }));

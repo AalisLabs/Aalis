@@ -43,7 +43,13 @@ const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
 
 async function setup(
   tasks: TaskRecord[] = [task()],
-  options: { paperEnabled?: boolean; withPublish?: boolean; children?: Record<string, string> } = {},
+  options: {
+    paperEnabled?: boolean;
+    withPublish?: boolean;
+    children?: Record<string, string>;
+    paperConfig?: Record<string, unknown>;
+    surfaces?: Array<{ name: string; label?: string; baseUrl?: string; available: boolean; reason?: string }>;
+  } = {},
 ) {
   const ledger: PaperLedger = emptyLedger();
   ledger.papers[paperId] = { lastClearedAt: Date.now() };
@@ -55,7 +61,7 @@ async function setup(
   files.set(LEDGER_URI, JSON.stringify(ledger));
   const hub = await startPaperHub({
     files,
-    config: { ...PILOT_CONFIG, worksCredit: '群友作品' },
+    config: { ...PILOT_CONFIG, ...options.paperConfig },
     rooms: { [ROOM]: { ...PILOT_ROOM, paperEnabled: options.paperEnabled ?? true }, [ROOM2]: PILOT_ROOM },
     children: options.children,
   });
@@ -66,13 +72,91 @@ async function setup(
     title: '小猫',
   }));
   const withdraw = vi.fn(async (): Promise<{ ok: true; degraded?: string } | { refused: string }> => ({ ok: true }));
+  const listSurfaces = vi.fn(
+    () =>
+      options.surfaces ?? [{ name: 'works', label: '作品站', baseUrl: 'https://one.example.test', available: true }],
+  );
   if (options.withPublish !== false) {
-    hub.app.bind({ provide }).provide(publish, { nominate, get, withdraw } as unknown as PublishService);
+    hub.app.bind({ provide }).provide(publish, { nominate, get, withdraw, listSurfaces } as unknown as PublishService);
   }
-  return { hub, nominate, get, withdraw };
+  return { hub, nominate, get, withdraw, listSurfaces };
 }
 
 describe('白纸作品工具', () => {
+  it('同一白纸只能选择白名单中已登记的单个目标；查询只显示获准目标与目录地址', async () => {
+    const { hub, nominate, listSurfaces } = await setup(undefined, {
+      paperConfig: { papers: [{ name: PAPER, publishTargets: 'one, two' }] },
+      surfaces: [
+        { name: 'one', label: '一站', baseUrl: 'https://aalis1.example.test', available: true },
+        { name: 'two', label: '画板', baseUrl: 'https://aalis2.example.test/draw', available: true },
+        { name: 'secret', label: '别纸站', baseUrl: 'https://secret.example.test', available: true },
+      ],
+    });
+    const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' };
+    expect(await hub.call('works_nominate', args)).toMatchObject({ ok: false });
+    expect(await hub.call('works_nominate', { ...args, target: 'secret' })).toMatchObject({ ok: false });
+    expect(await hub.call('works_nominate', { ...args, target: 'https://aalis1.example.test' })).toMatchObject({
+      ok: false,
+    });
+    expect(nominate).not.toHaveBeenCalled();
+    const targets = await hub.call('works_targets', {});
+    expect(targets).toMatchObject({
+      ok: true,
+      targets: [
+        { name: 'one', baseUrl: 'https://aalis1.example.test' },
+        { name: 'two', baseUrl: 'https://aalis2.example.test/draw' },
+      ],
+    });
+    expect(JSON.stringify(targets)).not.toContain('secret.example.test');
+    expect(await hub.call('works_nominate', { ...args, target: 'two' })).toMatchObject({ ok: true });
+    expect(nominate.mock.calls[0][0].surfaces).toEqual(['two']);
+    listSurfaces.mockReturnValue([{ name: 'one', available: true }] as never);
+    expect(await hub.call('works_nominate', { ...args, target: 'two' })).toMatchObject({ ok: false });
+    expect((await hub.call('works_targets', {})).targets).toEqual([{ name: 'one', available: true }]);
+    listSurfaces.mockReturnValue([{ name: 'two', available: false, reason: '暂停' }] as never);
+    expect(await hub.call('works_nominate', { ...args, target: 'two' })).toMatchObject({ ok: false });
+  });
+
+  it('显式空白名单禁发布；默认目标不在名单时不会代选；单目标延续旧 works', async () => {
+    const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' };
+    const empty = await setup(undefined, { paperConfig: { papers: [{ name: PAPER, publishTargets: '' }] } });
+    expect(await empty.hub.call('works_nominate', args)).toMatchObject({ ok: false });
+    expect(await empty.hub.call('works_targets', {})).toMatchObject({ ok: true, targets: [] });
+    expect(empty.nominate).not.toHaveBeenCalled();
+    const invalidDefault = await setup(undefined, {
+      paperConfig: { papers: [{ name: PAPER, publishTargets: 'one, two', defaultPublishTarget: 'works' }] },
+      surfaces: [
+        { name: 'one', available: true },
+        { name: 'two', available: true },
+      ],
+    });
+    expect(await invalidDefault.hub.call('works_nominate', args)).toMatchObject({ ok: false });
+    const legacy = await setup();
+    expect(await legacy.hub.call('works_nominate', args)).toMatchObject({ ok: true });
+    expect(legacy.nominate.mock.calls[0][0].surfaces).toEqual(['works']);
+    const defaulted = await setup(undefined, {
+      paperConfig: { papers: [{ name: PAPER, publishTargets: 'one, two', defaultPublishTarget: 'two' }] },
+      surfaces: [
+        { name: 'one', available: true },
+        { name: 'two', available: true },
+      ],
+    });
+    expect(await defaulted.hub.call('works_nominate', args)).toMatchObject({ ok: true });
+    expect(defaulted.nominate.mock.calls[0][0].surfaces).toEqual(['two']);
+  });
+
+  it('目标查询沿用白纸发起守卫，停开的房间和内部来源看不到站点目录', async () => {
+    const { hub } = await setup();
+    expect(await hub.call('works_targets', {}, { ...human(), inbound: { source: 'notice' } })).toMatchObject({
+      ok: false,
+    });
+    expect(await hub.call('works_targets', {}, { ...human(), inbound: undefined })).toMatchObject({ ok: false });
+    const disabled = await setup(undefined, { paperEnabled: false });
+    expect(await disabled.hub.call('works_targets', {})).toMatchObject({ ok: false });
+    const child = await setup(undefined, { children: { [ROOM]: 'parent' } });
+    expect(await child.hub.call('works_targets', {})).toMatchObject({ ok: false });
+  });
+
   it('发布来源记录真实插件实例，停用后撤掉工具且旧句柄不能再提交', async () => {
     const instanceId = '@aalis/plugin-paper';
     const { hub, nominate } = await setup();
@@ -84,15 +168,16 @@ describe('白纸作品工具', () => {
     await hub.app.plugins.disable(instanceId);
     expect(hub.tools.has('works_nominate')).toBe(false);
     expect(hub.tools.has('works_takedown')).toBe(false);
+    expect(hub.tools.has('works_targets')).toBe(false);
     nominate.mockClear();
     expect(JSON.parse((await old.handler(args, human())) as string)).toMatchObject({ ok: false });
     expect(nominate).not.toHaveBeenCalled();
   });
 
-  it('登记两个零风险 works 工具；成品以字节快照和去共同目录的路径提名', async () => {
+  it('登记三个零风险 works 工具；成品以字节快照和去共同目录的路径提名', async () => {
     const { hub, nominate } = await setup();
     expect(hub.groups).toContainEqual(expect.objectContaining({ name: 'works' }));
-    for (const name of ['works_nominate', 'works_takedown']) {
+    for (const name of ['works_targets', 'works_nominate', 'works_takedown']) {
       expect(hub.tools.get(name)?.groups).toEqual(['works']);
       expect(hub.tools.get(name)?.risk).toBeUndefined();
     }
@@ -107,7 +192,6 @@ describe('白纸作品工具', () => {
       expect.objectContaining({
         group: paperId,
         title: '猫站',
-        credit: '群友作品',
         surfaces: ['works'],
         files: [
           { path: 'index.html', bytes: new Uint8Array([1, 2, 3]) },
@@ -290,10 +374,10 @@ describe('白纸作品工具', () => {
   });
 
   it('发布服务晚到时同一工具恢复可用，封面拒绝映射为封面且不回显相对路径', async () => {
-    const { hub, nominate, get, withdraw } = await setup(undefined, { withPublish: false });
+    const { hub, nominate, get, withdraw, listSurfaces } = await setup(undefined, { withPublish: false });
     const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' };
     expect(await hub.call('works_nominate', args)).toMatchObject({ ok: false, error: '作品发布服务不可用' });
-    hub.app.bind({ provide }).provide(publish, { nominate, get, withdraw } as unknown as PublishService);
+    hub.app.bind({ provide }).provide(publish, { nominate, get, withdraw, listSurfaces } as unknown as PublishService);
     expect(await hub.call('works_nominate', args)).toMatchObject({ ok: true });
     nominate.mockResolvedValueOnce({ refused: '封面不合格', fileIndex: -1 } as never);
     const denied = await hub.call('works_nominate', args);

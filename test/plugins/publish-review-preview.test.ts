@@ -32,7 +32,6 @@ function fixture() {
     surfaces: ['works'],
     title: '<x>',
     summary: '',
-    credit: 'c',
     kind: 'html',
     files: [
       { path: 'index.html', size: html.length, contentType: 'text/html; charset=utf-8' },

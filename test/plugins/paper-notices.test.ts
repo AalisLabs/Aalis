@@ -45,7 +45,7 @@ async function waitFor(pred: () => boolean, label: string): Promise<void> {
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function accept(hub: PaperHub, name: string, userId = '30001'): Promise<string> {
-  const res = await hub.call('paper_task', { text: `${name}的原文`, name }, human(userId));
+  const res = await hub.call('paper_task', { text: `${name}的原文`, name, publish: false }, human(userId));
   if (res.ok !== true) throw new Error(`paper_task 未受理：${String(res.error)}`);
   return String(res.taskId);
 }
@@ -313,6 +313,50 @@ describe('待交付提示', () => {
   }
 
   const hint = (messages: Message[]) => messages.filter(m => m.metadata?.injector === 'paper/pending');
+
+  it.each([
+    'publish:work-1',
+    'scheduler:test',
+    `paper:${PAPER_ID}:t-00000007`,
+  ])('%s 通知回合不会夹带其他任务的待发送提示，已有提示也会撤掉', async source => {
+    const hub = await hubWith(new ScriptedRemote(), ROOMY_CONFIG, seed());
+    const data: HookContextMap['agent:llm:before'] = {
+      messages: [
+        { role: 'system', content: 'persona' },
+        { role: 'system', content: '旧提示', metadata: { injector: 'paper/pending' } },
+        { role: 'user', content: '本件作品已上线' },
+      ],
+      tools: [],
+      sessionId: ROOM,
+      platform: 'onebot',
+      source,
+    };
+    await hub.hooks.run('agent:llm:before', data);
+    expect(hint(data.messages)).toEqual([]);
+    expect(data.messages).toHaveLength(2);
+  });
+
+  it('白纸完成通知只提示本件成品，真人回合仍能看到本房间的历史待交付任务', async () => {
+    const files = seed();
+    const ledger = JSON.parse(String(files.get(LEDGER_URI))) as PaperLedger;
+    const other = done('t-00000007', { name: '另一件' });
+    ledger.tasks[other.id] = other;
+    files.set(LEDGER_URI, JSON.stringify(ledger));
+    const hub = await hubWith(new ScriptedRemote(), ROOMY_CONFIG, files);
+    const data: HookContextMap['agent:llm:before'] = {
+      messages: [{ role: 'system', content: 'persona' }],
+      tools: [],
+      sessionId: ROOM,
+      platform: 'onebot',
+      source: `paper:${PAPER_ID}:t-00000001`,
+    };
+    await hub.hooks.run('agent:llm:before', data);
+    expect(String(hint(data.messages)[0]?.content)).toContain('a-00000001');
+    expect(String(hint(data.messages)[0]?.content)).not.toContain('a-00000007');
+    delete data.source;
+    await hub.hooks.run('agent:llm:before', data);
+    expect(String(hint(data.messages)[0]?.content)).toContain('a-00000007');
+  });
 
   it('安全：独立的 system 消息、不碰 messages[0]、每次请求前刷新；只列任务 id、任务名与成品，不含远端说明与原文件名', async () => {
     const hub = await hubWith(new ScriptedRemote(), ROOMY_CONFIG, seed());
