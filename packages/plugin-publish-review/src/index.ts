@@ -1,6 +1,8 @@
 import { dirname, join } from 'node:path';
 import { codeSandbox } from '@aalis/api-code-sandbox';
 import { doctor } from '@aalis/api-doctor';
+import { gateway } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { publish } from '@aalis/api-publish';
 import { createStorageGateway, storage } from '@aalis/api-storage';
@@ -31,6 +33,8 @@ export default definePlugin({
     logger,
     provide,
     storage,
+    hooks,
+    gateway: optional(gateway),
     llm: optional(llm),
     sandbox: optional(codeSandbox),
     webui: optional(webuiServer),
@@ -57,14 +61,14 @@ export default definePlugin({
       ffmpegPath: cfg.ffmpegPath,
       ffprobePath,
     });
-    const notices = new ReviewNotices(caps.events, caps.logger);
+    const notices = new ReviewNotices(caps.events, caps.logger, caps.gateway, caps.hooks);
     const service = new PublishReviewService({
       storage,
       store,
       config: cfg,
       pipeline,
       signal: caps.lifecycle.signal,
-      notice: (origin, content, id) => notices.enqueue(origin, content, id),
+      notice: (origin, content, id, title) => notices.enqueue(origin, content, id, title),
     });
     const driver = new ReviewDriver(service, store, caps.lifecycle.signal, caps.logger);
     const preview = new ReviewPreviewServer({ store, storage, signal: caps.lifecycle.signal });
@@ -81,6 +85,7 @@ export default definePlugin({
       storage,
       preview,
       ownerTimeoutHours: cfg.ownerTimeoutHours,
+      reviewEnabled: cfg.reviewEnabled,
     });
     registerReviewDoctor({
       doctor: caps.doctor,

@@ -17,6 +17,8 @@ import {
   formatAttachmentRef,
   getSenderLabel,
   type Message,
+  type MessageAttachment,
+  type OutboundDeliveryResult,
   type OutgoingMessage,
   WellKnownNoticeTypes,
 } from '@aalis/schema-message';
@@ -1186,8 +1188,7 @@ function runAdapter(caps: Caps): void {
     async sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void> {
       const parsed = parseSessionId(sessionId);
       if (!parsed) {
-        logger.warn(`无法解析 sessionId: ${sessionId}`);
-        return;
+        throw new Error(`无法解析 sessionId: ${sessionId}`);
       }
 
       const state = findStateBySelfId(parsed.selfId);
@@ -1200,8 +1201,7 @@ function runAdapter(caps: Caps): void {
             : !state.ws
               ? 'ws 为空'
               : '协议未初始化';
-        logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
-        return;
+        throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
       }
 
       // 消息分条发送（指令回复等短消息可跳过）
@@ -1910,51 +1910,29 @@ function runAdapter(caps: Caps): void {
       `OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`,
     );
 
-    // 戳一戳 → 仅在目标是 bot 时触发 agent 回复
+    // 所有用户戳一戳共用入站链路；触发插件按目标区分点名与旁观互动。
     if (notice.noticeType === WellKnownNoticeTypes.Poke) {
       const selfId = notice.selfId;
-      const targetIsBot = notice.targetId === selfId;
-
-      if (notice.groupId) {
-        // 群聊 poke：只有被戳的是 bot 才回复
-        if (!targetIsBot) {
-          logger.debug(`群聊戳一戳: ${notice.userId} → ${notice.targetId}（非 bot，忽略）`);
-          return;
-        }
-        (async () => {
-          const nick = await resolveNickname(state, notice.userId, notice.groupId);
-          const who = nick ? `${nick}(${notice.userId})` : notice.userId;
-          const content = `[戳一戳: ${who} 戳了你]`;
-          const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
-          events.emit('inbound:message', {
-            content,
-            sessionId,
-            platform: 'onebot',
-            userId: notice.userId,
-            nickname: nick,
-            sessionType: 'group',
-            groupId: notice.groupId,
-            noticeType: WellKnownNoticeTypes.Poke,
-          });
-        })().catch(err => logger.warn(`poke 处理异常: ${err}`));
-      } else if (notice.userId) {
-        // 私聊 poke：始终回复
-        (async () => {
-          const nick = await resolveNickname(state, notice.userId);
-          const who = nick ? `${nick}(${notice.userId})` : notice.userId;
-          const content = `[戳一戳: ${who} 戳了你]`;
-          const sessionId = makeSessionId(selfId, 'private', notice.userId);
-          events.emit('inbound:message', {
-            content,
-            sessionId,
-            platform: 'onebot',
-            userId: notice.userId,
-            nickname: nick,
-            sessionType: 'private',
-            noticeType: WellKnownNoticeTypes.Poke,
-          });
-        })().catch(err => logger.warn(`poke 处理异常: ${err}`));
-      }
+      // 自己发出的动作是工具回显，不作为新用户输入再次触发。
+      if (notice.userId === selfId || (!notice.groupId && !notice.userId)) return;
+      const sessionType = notice.groupId ? 'group' : 'private';
+      const targetIsBot = notice.targetId === selfId || (!notice.groupId && notice.targetId == null);
+      (async () => {
+        const nick = await resolveNickname(state, notice.userId, notice.groupId);
+        const who = nick ? `${nick}(${notice.userId})` : (notice.userId ?? '某人');
+        const target = targetIsBot ? '你' : (notice.targetId ?? '某人');
+        await events.emit('inbound:message', {
+          content: `[戳一戳: ${who} 戳了${target}]`,
+          sessionId: makeSessionId(selfId, sessionType, notice.userId, notice.groupId),
+          platform: 'onebot',
+          userId: notice.userId,
+          nickname: nick,
+          sessionType,
+          groupId: notice.groupId,
+          noticeType: WellKnownNoticeTypes.Poke,
+          noticeTargetIsSelf: targetIsBot,
+        });
+      })().catch(err => logger.warn(`poke 处理异常: ${err}`));
       return;
     }
 
@@ -2199,7 +2177,7 @@ function runAdapter(caps: Caps): void {
   const noticePatterns: Array<{ pattern: RegExp; hint: string }> = [
     {
       pattern: /^\[戳一戳:/,
-      hint: '这条消息不是用户手动输入的文字，而是一个「戳一戳」互动事件——有人戳了你。请根据戳一戳的情境做出自然、俏皮的反应，而不是直接回复消息内容。',
+      hint: '这条消息是平台的「戳一戳」互动通知，不是用户输入的文字。请根据正文中的发起者和被戳对象理解事件，不要把群友互戳当成有人戳你。',
     },
     { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
   ];
@@ -2276,82 +2254,100 @@ function runAdapter(caps: Caps): void {
       timestamp: Date.now(),
       metadata: { source: 'adapter-onebot', error: errors.map(String).join('; ') },
     };
-    messageArchive.current?.saveMessage(msg.sessionId, note).catch(e => logger.debug(`投递失败提示入档失败: ${e}`));
+    void Promise.resolve()
+      .then(() => messageArchive.current?.saveMessage(msg.sessionId, note))
+      .catch(e => logger.debug(`投递失败提示入档失败: ${e}`));
   }
 
-  events.on('outbound:message', async msg => {
-    if (!msg.sessionId.startsWith('onebot:')) return;
+  events.on('outbound:message', msg => {
+    if (!msg.sessionId.startsWith('onebot:') || msg.delivery) return;
+    const parsed = parseSessionId(msg.sessionId);
+    // 多个适配器实例只认领自己的连接；离线的已知连接仍需返回明确失败。
+    if (!parsed || !findStateBySelfId(parsed.selfId)) return;
+    // 同步交出回执，实际发送可在后台执行，不阻塞出站旁观者。
+    msg.delivery = deliverOutbound(msg);
+  });
 
-    // 把结构化 attachments 渲染为 <image url="base64://..."/> 标记或上传文件，
-    // 远程 URL / 本地文件统一编码为 base64 通过 WS 隧道发送，避免 daemon
-    // 与 Aalis 不在同一文件系统时（典型：Docker 部署）发生 ENOENT
-    let content = msg.content ?? '';
-    const uploads: Array<{ file: string; name: string }> = [];
+  async function deliverOutbound(msg: OutgoingMessage): Promise<OutboundDeliveryResult> {
     const errors: unknown[] = [];
-    if (msg.attachments?.length) {
-      // 出站附件也统一落盘 data/{kind}s/{session}/ —— 让 agent 自己发出去的
-      // 图/音/视频能进入后续历史回放与归档检索，行为与入站对称。
-      // 落盘失败（超大 / 无法解码）不阻塞发送，保留原 data 继续走 renderer。
-      await Promise.all(
-        msg.attachments.map(async att => {
-          try {
-            const local = await cacheOneAttachment(
-              storage,
-              proc,
-              att.kind,
-              att.data,
-              msg.sessionId,
-              attachmentMaxBytes,
-              logger,
-            );
-            if (local) {
-              rememberLandedAlias(media.current, att.kind, att.data, local);
-              // cacheAttachmentBuffer 返回相对路径 "data/images/..."，
-              // 转为 storage URI "data:/images/..."，让 materializeAttachments
-              // 走 storage.readFile 读回 buffer，而非兜底成无法访问的相对 file://
-              att.data = local.replace(/^([^/]+)\//, '$1:/');
-              if (att.kind === 'audio') att.mimeType = 'audio/wav';
+    const delivered: MessageAttachment[] = [];
+    let textSent = false;
+    try {
+      let content = msg.content ?? '';
+      let inlineAttachments: MessageAttachment[] = [];
+      const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
+      if (msg.attachments?.length) {
+        // 缓存与发送仍经 storage 和受保护下载；稳定 ref 不随落盘改写。
+        await Promise.all(
+          msg.attachments.map(async att => {
+            try {
+              const local = await cacheOneAttachment(
+                storage,
+                proc,
+                att.kind,
+                att.data,
+                msg.sessionId,
+                attachmentMaxBytes,
+                logger,
+              );
+              if (local) {
+                rememberLandedAlias(media.current, att.kind, att.data, local);
+                att.data = local.replace(/^([^/]+)\//, '$1:/');
+                if (att.kind === 'audio') att.mimeType = 'audio/wav';
+              }
+            } catch (err) {
+              logger.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
             }
-          } catch (err) {
-            logger.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
-          }
-        }),
-      );
+          }),
+        );
+        const materialized = await materializeAttachments(msg.attachments, storage, logger);
+        if (materialized.markers) content = content ? `${content}\n${materialized.markers}` : materialized.markers;
+        inlineAttachments = materialized.inlineAttachments;
+        uploads.push(...materialized.uploads);
+        errors.push(...materialized.errors);
+      }
 
-      // 能内联的媒体拼成消息段标记；文件附件与改走上传的媒体物化为 base64:// 后，在文字与消息段发出之后逐个上传
-      const materialized = await materializeAttachments(msg.attachments, storage, logger);
-      if (materialized.markers) content = content ? `${content}\n${materialized.markers}` : materialized.markers;
-      uploads.push(...materialized.uploads);
-      errors.push(...materialized.errors);
-    }
-
-    const hasText = content.trim() !== '';
-    if (!hasText && uploads.length === 0) {
-      if (errors.length > 0) reportUndelivered(msg, errors);
-      else logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
-      return;
-    }
-    if (hasText) logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
-
-    // 冷却与限速由 plugin-flow-control、idle 调度由 plugin-trigger-policy 各自监听 outbound:message 处理
-
-    // 不等投递结果：emit 串行等各监听器，等在这里会拖住其他出站监听
-    void (async () => {
-      if (hasText) {
-        await adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
+      if (content.trim()) {
+        logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
+        try {
+          await adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' });
+          textSent = true;
+          delivered.push(...inlineAttachments);
+        } catch (err) {
           logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
           errors.push(err);
-        });
+        }
       }
-      for (const { file, name } of uploads) {
-        await adapter.uploadFile(msg.sessionId, file, name).catch(err => {
+      for (const { file, name, attachment } of uploads) {
+        try {
+          await adapter.uploadFile(msg.sessionId, file, name);
+          delivered.push(attachment);
+        } catch (err) {
           logger.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
           errors.push(err);
-        });
+        }
       }
-      if (errors.length > 0) reportUndelivered(msg, errors);
-    })();
-  });
+    } catch (err) {
+      // 交出回执后的所有异常都转为结果，防止后台 Promise 拒绝或调用方永远等不到。
+      errors.push(err);
+    }
+
+    if (textSent || delivered.length) {
+      // 只交成功附件的快照；失败的图片不能写成“已发送”历史。
+      void events.emit('outbound:delivered', {
+        ...msg,
+        delivery: undefined,
+        content: textSent ? msg.content : '',
+        attachments: delivered.map(att => ({ ...att })),
+      });
+    }
+    if (errors.length) {
+      reportUndelivered(msg, errors);
+      return { ok: false, error: `附件或消息未获完整发送确认：${errors.map(String).join('; ')}` };
+    }
+    if (!textSent && !delivered.length) return { ok: false, error: '没有可发送的内容' };
+    return { ok: true };
+  }
 
   // ----- 生命周期 -----
 

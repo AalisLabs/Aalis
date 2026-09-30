@@ -47,7 +47,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | 钩子 | 时机 | payload |
 |---|---|---|
 | `agent:input:before` | 进入 Agent 之前 | `{ message, metadata }` |
-| `agent:llm:before` | 调用 LLM 之前 | `{ messages, tools, sessionId, ... }` |
+| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, sessionId, source?, ... }`；`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后 | `{ name, result, toolCallContext }` |

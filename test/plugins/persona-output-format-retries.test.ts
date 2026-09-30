@@ -105,6 +105,60 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     expect(data.retryRequested).toBe(true);
   });
 
+  it('纯文本作品链接触发重试时，只要求修正格式并保留应传达的正文', async () => {
+    await boot('zz-default');
+    const url = 'https://example.com/works/new-story';
+    const data: Record<string, unknown> = {
+      sessionId: 'zz-work',
+      platform: 'test',
+      content: `作品已完成：${url}`,
+      attempt: 0,
+    };
+    await host.hooks.run('agent:reply:before', data as never);
+
+    expect(data.retryRequested).toBe(true);
+    expect(data.retryFeedback).toContain('只修正格式');
+    expect(data.retryFeedback).toContain('保留本来需要传达的正文');
+    expect(data.retryFeedback).not.toContain('汇报已完成 / 不想再对外发送新内容');
+
+    const corrected: Record<string, unknown> = {
+      sessionId: 'zz-work',
+      platform: 'test',
+      content: JSON.stringify({ message: `作品已完成：${url}`, mood: '开心' }),
+      attempt: 1,
+    };
+    await host.hooks.run('agent:reply:before', corrected as never);
+
+    expect(corrected.content).toBe(`作品已完成：${url}`);
+    expect(corrected.visibleContent).toBe(`作品已完成：${url}`);
+    expect(corrected.retryRequested).not.toBe(true);
+  });
+
+  it('显式空 message 可以静默；最终仍不合格则丢弃原始内容', async () => {
+    await boot('zz-default');
+    const silent: Record<string, unknown> = {
+      sessionId: 'zz-silent',
+      platform: 'test',
+      content: '{"message":"","mood":"平静"}',
+      attempt: 0,
+    };
+    await host.hooks.run('agent:reply:before', silent as never);
+    expect(silent.content).toBe('');
+    expect(silent.visibleContent).toBe('');
+    expect(silent.retryRequested).not.toBe(true);
+
+    const invalid: Record<string, unknown> = {
+      sessionId: 'zz-invalid',
+      platform: 'test',
+      content: '作品已完成：https://example.com/works/new-story',
+      attempt: 1,
+    };
+    await host.hooks.run('agent:reply:before', invalid as never);
+    expect(invalid.retryRequested).toBe(false);
+    expect(invalid.content).toBe('');
+    expect(invalid.archiveContent).not.toContain('https://example.com/works/new-story');
+  });
+
   // 负数会让重试闸永不放行（maxRetries < 0），小数/字符串则一路带进比较——
   // 清洗只在 asCard 一处，破了就没有第二道。
   it.each([

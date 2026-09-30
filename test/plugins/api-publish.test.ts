@@ -265,6 +265,7 @@ function makeProvider() {
   const surfaces = new Set<PublishSurface>();
   const live: Array<{ surface: string; ids: string[] }> = [];
   const svc: PublishService = {
+    listSurfaces: () => [...surfaces].map(surface => ({ name: surface.name, available: true })),
     nominate: async () => ({ refused: '桩' }),
     get: () => undefined,
     listPublished: () => [],

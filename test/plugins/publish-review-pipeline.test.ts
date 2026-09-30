@@ -30,7 +30,12 @@ const make = (textClassifier: { provider?: string; model?: string }) => {
   }));
   const llm = { all: () => [{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } }] };
   const renderer = { renderPng: vi.fn(async (_request: RenderRequest) => png) };
-  const config = { ffmpegPath: 'ffmpeg', textClassifier, imageClassifier: textClassifier } as ReviewConfig;
+  const config = {
+    ffmpegPath: 'ffmpeg',
+    reviewEnabled: true,
+    textClassifier,
+    imageClassifier: textClassifier,
+  } as ReviewConfig;
   const pipeline = createReviewPipeline({
     config,
     llm: llm as never,
@@ -45,7 +50,6 @@ describe('publish review pipeline', () => {
     id: 'abcdefghijklmnop',
     title: '作品',
     summary: '简介',
-    credit: '署名',
     files: [
       {
         path: 'index.html',
@@ -70,6 +74,34 @@ describe('publish review pipeline', () => {
     const result = await pipeline.run(input);
     expect(result.verdict.verdict).toBe('unsure');
     expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('when review is disabled, strips files and approves without marking, rendering, or calling models', async () => {
+    const { chat, renderer } = make({ provider: 'provider', model: 'model' });
+    const pipeline = createReviewPipeline({
+      config: {
+        ffmpegPath: 'ffmpeg',
+        reviewEnabled: false,
+        textClassifier: { provider: 'provider', model: 'model' },
+      } as ReviewConfig,
+      llm: { all: () => [{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } }] } as never,
+      renderer: renderer as never,
+      storage: {} as never,
+    });
+    const result = await pipeline.run({
+      ...input,
+      title: '色情',
+      files: [{ path: 'index.html', bytes: new TextEncoder().encode('<!doctype html><html><body>色情</body></html>') }],
+    });
+    expect(result.verdict).toEqual({ verdict: 'allow', reasons: [] });
+    expect(result.files[0].bytes).toEqual(new TextEncoder().encode('<!doctype html><html><body>色情</body></html>'));
+    expect(result.evidence?.flags).toEqual([]);
+    expect(chat).not.toHaveBeenCalled();
+    expect(renderer.renderPng).not.toHaveBeenCalled();
+    const aborted = new AbortController();
+    aborted.abort();
+    const stopped = await pipeline.run({ ...input, signal: aborted.signal });
+    expect(stopped.verdict.verdict).not.toBe('allow');
   });
 
   it('fails closed for MP4 stripping without a sandbox and stays unsure for GIF frame extraction', async () => {

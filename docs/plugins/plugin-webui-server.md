@@ -47,7 +47,7 @@ export default definePlugin({
 | `port` | number | `3000` | 端口：Web 管理界面的 HTTP 端口 |
 | `host` | string | `'127.0.0.1'` | 监听地址：绑定的 IP 地址，0.0.0.0 可对外访问。**改绑非回环地址前先读下文「登录身份与权限」**——持有 token 的人等同 owner |
 | `fileRoot` | string | `'workspace'` | 文件浏览根：文件管理页面使用的 storage 根 ID，默认 workspace |
-| `autoOpen` | boolean | `true` | 启动时自动打开浏览器：访问 token 为新生成时（persist 模式首次生成、ephemeral 模式每次生成）以含 token 的 URL 自动开启默认浏览器；沿用已有 token（persist 读回已持久化的 token、fixed 用配置的 fixedToken）时不打开；fixed 模式 fixedToken 为空时按 persist 处理。SSH/headless 环境建议关闭 |
+| `autoOpen` | boolean | `true` | 每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭 |
 | `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
 | `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：请使用足够长的随机字符串；配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |
 | `relationGraphDefaultSpacing` | number | `120` | 关系图默认密度：关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。 |
@@ -103,7 +103,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 
 `autoOpen=true` 时在监听成功后经 process 服务以 detached、`stdio:'ignore'` 方式启动系统默认浏览器（macOS `open`、Windows `cmd /c start ""`、其它平台 `xdg-open`），参数为带 token 的访问 URL，随后 `unref()`；process 服务缺失或启动失败时静默忽略。
 
-只有本次激活用的是新生成的 token 时才打开：persist 模式在没有 token 文件、本次生成并写入时打开，此后的重启与插件重载读回已持久化的 token，浏览器里的 cookie 仍然有效，不再打开；ephemeral 模式每次激活都换 token，旧页面随之失效，每次都打开；fixed 模式用配置的 fixedToken，不打开，fixedToken 为空时按 persist 处理。token 文件写入失败时，persist 模式每次激活都生成新 token，同样每次都打开。
+每次应用启动都打开一次，包括 persist 读回已有 token 和 fixed 使用配置 token 的情况。同一应用内插件重载沿用 token 时不重复打开；ephemeral 每次激活生成新 token，旧页面失效，因此重载也会打开。persist 写入 token 失败、下次激活重新生成时同样再次打开。去重按 App 身份独立记录；自定义宿主若不提供 app 服务，则每次监听成功都会尝试打开。`autoOpen=false` 时全部不打开。
 
 ## REST API
 

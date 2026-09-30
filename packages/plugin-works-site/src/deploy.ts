@@ -4,14 +4,16 @@ import type { PagesClient, PagesDeployment } from './cloudflare/client.js';
 import { PagesApiError } from './cloudflare/client.js';
 import type { WorksSiteConfig } from './config.js';
 import { buildBranch, buildGallery, type SiteBuild } from './site/build.js';
+import { sitePath } from './site/paths.js';
 import type { CurrentDeployment, InFlightDeployment, SiteAlert, WorksState, WorksStore } from './state.js';
 import {
   ContentMismatchError,
   checkPreflight,
+  contentMismatchDetail,
   hashFiles,
   type ProbeFetch,
   sha256,
-  verifyContent,
+  verifyContentUntilMatch,
   waitForSwitch,
 } from './verify.js';
 
@@ -21,20 +23,6 @@ const RETRY_BASE = 30_000;
 const MAX_RETRIES = 5;
 const CHECK_INTERVAL = 60 * 60_000;
 const CLEANUP_INTERVAL = 24 * 60 * 60_000;
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal.removeEventListener('abort', stop);
-      resolve();
-    }
-    function stop() {
-      clearTimeout(timer);
-      reject(signal.reason);
-    }
-    signal.addEventListener('abort', stop, { once: true });
-  });
 const nonce = () => crypto.randomUUID().replaceAll('-', '');
 const branchName = () =>
   `p-${Array.from(crypto.getRandomValues(new Uint8Array(4)), x => x.toString(16).padStart(2, '0')).join('')}`;
@@ -137,7 +125,7 @@ export class WorksDeployer {
     this.#pending = true;
     if (!this.#started) return;
     const state = this.#store.data;
-    const published = this.#publish()?.listPublished('works') ?? [];
+    const published = this.#publish()?.listPublished(this.#config.targetId) ?? [];
     const live = Object.values(state?.current ?? {}).flatMap(item => item.works);
     this.#newDue = this.#now() + this.#debounce;
     if (live.some(item => !published.some(next => next.id === item.id))) {
@@ -214,13 +202,15 @@ export class WorksDeployer {
   }
 
   async stop(): Promise<void> {
+    const localWrites = this.#store.close();
     this.#stop.abort();
     this.#started = false;
     this.#pending = false;
     if (this.#timer) clearTimeout(this.#timer);
     if (this.#checkTimer) clearInterval(this.#checkTimer);
     if (this.#cleanupTimer) clearInterval(this.#cleanupTimer);
-    // In-flight requests receive the combined abort signal; drain never waits for network.
+    // Drain local writes before releasing ownership; never wait for an uncooperative network request.
+    await localWrites;
   }
 
   #schedule(ms: number): void {
@@ -291,7 +281,7 @@ export class WorksDeployer {
       await this.#pruneKnownCurrent();
       return false;
     }
-    const published = source.listPublished('works');
+    const published = source.listPublished(this.#config.targetId);
     const initial = this.#store.copy();
     const withdrawn = [
       ...new Map(
@@ -352,7 +342,7 @@ export class WorksDeployer {
 
   #hasWithdrawal(): boolean {
     const live = Object.values(this.#store.data?.current ?? {}).flatMap(item => item.works);
-    const published = this.#publish()?.listPublished('works') ?? [];
+    const published = this.#publish()?.listPublished(this.#config.targetId) ?? [];
     return live.some(item => !published.some(next => next.id === item.id));
   }
 
@@ -378,9 +368,13 @@ export class WorksDeployer {
           if (!state.tombstones.some(t => t.branch === branch && t.path === path))
             state.tombstones.push({ branch, path, until: this.#now() + TOMBSTONE_LIFE });
         };
-        add('main', `/w/${item.id}/index.html`);
-        if (item.kind === 'media') add('main', `/m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`);
-        if (item.hasThumbnail) add('main', `/t/${item.id}.png`);
+        add('main', sitePath(this.#config.basePath, `w/${item.id}/index.html`));
+        if (item.kind === 'media')
+          add(
+            'main',
+            sitePath(this.#config.basePath, `m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`),
+          );
+        if (item.hasThumbnail) add('main', sitePath(this.#config.basePath, `t/${item.id}.png`));
         if (item.kind === 'html') for (const file of item.files) add(item.group, `/${item.id}/${file.path}`);
       }
     });
@@ -418,6 +412,7 @@ export class WorksDeployer {
       tombstones: state.tombstones,
       nonce: token,
       now: this.#now(),
+      basePath: job.group ? '/' : this.#config.basePath,
       readFile: source.readFile.bind(source),
       readThumbnail: source.readThumbnail.bind(source),
     };
@@ -426,6 +421,7 @@ export class WorksDeployer {
         ...common,
         group: job.group,
         mainOrigin: this.#config.siteOrigin,
+        mainBasePath: this.#config.basePath,
         frameAncestors: this.#config.mainOrigins,
       });
     const aliases: Record<string, string> = Object.create(null);
@@ -567,18 +563,20 @@ export class WorksDeployer {
           );
       const canonical = (path: string) =>
         !main && /^\/[a-z2-7]{10}\/index\.html$/.test(path) ? path.slice(0, -'index.html'.length) : path;
-      await verifyContent(
+      await verifyContentUntilMatch(
         this.#fetch,
         origin,
         contentFiles.map(file => ({ ...file, path: canonical(file.path) })),
         inflight.changed.map(canonical),
         !main,
         this.#signal,
+        { now: this.#now, timeoutMs: this.#convergenceMs, pauseMs: this.#convergencePauseMs, alsoCanonical: true },
       );
       await this.#probe(inflight, deployed, origin);
       if (this.#signal.aborted) return;
     } catch (err) {
       if (this.#signal.aborted) return;
+      if (err instanceof ContentMismatchError) this.#logger.warn(`作品站内容核验：${contentMismatchDetail(err)}`);
       await this.#alert(err instanceof ContentMismatchError ? 'content' : 'probe', '部署后线上核对失败', true);
       let cleaned = false;
       try {
@@ -648,8 +646,7 @@ export class WorksDeployer {
       this.#needCleanupRetry();
       return;
     }
-    if (main) this.#live(inflight.works.map(item => item.id));
-    if (main) void this.#converge(inflight, origin, built).catch(() => this.#backgroundFailure());
+    if (main && !this.#signal.aborted) this.#live(inflight.works.map(item => item.id));
   }
 
   async #deleteOlder(branch: string, latestId: string): Promise<void> {
@@ -728,7 +725,7 @@ export class WorksDeployer {
     }
     this.#retryDue = 0;
     const main = this.#store.data?.current[this.#config.productionBranch];
-    if (main?.verified) this.#live(main.works.map(item => item.id));
+    if (main?.verified && !this.#signal.aborted) this.#live(main.works.map(item => item.id));
     return true;
   }
 
@@ -773,7 +770,7 @@ export class WorksDeployer {
       if (missing.status !== 404 || !missing.headers.get('content-security-policy'))
         throw new Error('未知路径探测失败');
       if (main) {
-        const home = await this.#fetch(`${base}/?c=${nonce()}`, { signal: this.#signal });
+        const home = await this.#fetch(`${base}${this.#config.basePath}?c=${nonce()}`, { signal: this.#signal });
         if (
           home.status !== 200 ||
           !home.headers.get('content-security-policy') ||
@@ -782,7 +779,9 @@ export class WorksDeployer {
         )
           throw new Error('主站探测失败');
         for (const item of inflight.works) {
-          const wrapper = await this.#fetch(`${base}/w/${item.id}/?c=${nonce()}`, { signal: this.#signal });
+          const wrapper = await this.#fetch(`${base}${sitePath(this.#config.basePath, `w/${item.id}/`)}?c=${nonce()}`, {
+            signal: this.#signal,
+          });
           if (wrapper.status !== 200 || !wrapper.headers.get('content-security-policy'))
             throw new Error('主站作品页探测失败');
         }
@@ -816,7 +815,11 @@ export class WorksDeployer {
           headers: { 'Sec-Fetch-Dest': 'document' },
           redirect: 'manual',
         });
-        if (document.status !== 302 || !document.headers.get('location')?.startsWith(this.#config.siteOrigin))
+        if (
+          document.status !== 302 ||
+          document.headers.get('location') !==
+            `${this.#config.siteOrigin}${sitePath(this.#config.basePath, `w/${id}/`)}`
+        )
           throw new Error('作品顶层跳转探测失败');
         const notice = await this.#fetch(`${base}/${id}/?c=${nonce()}`, { signal: this.#signal });
         if (notice.status !== 200 || !notice.headers.get('content-security-policy'))
@@ -837,35 +840,6 @@ export class WorksDeployer {
         }
       }
     }
-  }
-
-  async #converge(inflight: InFlightDeployment, origin: string, built: SiteBuild): Promise<void> {
-    const changed = new Set(inflight.changed);
-    const files = built.files.filter(
-      file => changed.has(file.path) && (file.path === '/index.html' || /\/(?:w|m|t)\//.test(file.path)),
-    );
-    if (!files.length) return;
-    const deadline = this.#now() + this.#convergenceMs;
-    while (!this.#signal.aborted && this.#now() < deadline) {
-      try {
-        let ready = true;
-        for (const file of files) {
-          const response = await this.#fetch(`${origin}${file.path}`, { signal: this.#signal });
-          if (
-            response.status !== 200 ||
-            (await sha256(new Uint8Array(await response.arrayBuffer()))) !== (await sha256(file.bytes))
-          ) {
-            ready = false;
-            break;
-          }
-        }
-        if (ready) return;
-        await sleep(this.#convergencePauseMs, this.#signal);
-      } catch {
-        return;
-      }
-    }
-    if (!this.#signal.aborted) await this.#alert('cache-lag', '访客缓存三分钟内未收敛', false);
   }
 
   async checkPeriodic(): Promise<void> {

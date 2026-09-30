@@ -71,7 +71,6 @@ beforeAll(async () => {
     surfaces: ['works'],
     title: 'preview',
     summary: '',
-    credit: 'c',
     kind: 'html',
     files: [...fileMap].map(([path, file]) => ({ path, size: file.data.length, contentType: file.type })),
     outHashes: Object.fromEntries([...fileMap].map(([path, file]) => [path, hash(file.data)])),

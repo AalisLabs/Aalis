@@ -160,8 +160,10 @@ const LABELS: Record<MessageAttachment['kind'], string> = { image: '图片', aud
 interface OneBotOutgoingAttachments {
   /** 拼到文字后面的消息段标记（`<image url="base64://…"/>` 等） */
   markers: string;
+  /** markers 中对应的成功物化附件；只有平台发送成功后才可归档。 */
+  inlineAttachments: MessageAttachment[];
   /** 文字与消息段发出之后逐个上传的文件：file 附件与改走上传的媒体 */
-  uploads: Array<{ file: string; name: string }>;
+  uploads: Array<{ file: string; name: string; attachment: MessageAttachment }>;
   /** 没发出去的附件各自的原因（已记 warn），调用方据此留投递失败记录 */
   errors: unknown[];
 }
@@ -182,24 +184,26 @@ export async function materializeAttachments(
   logger?: Logger,
 ): Promise<OneBotOutgoingAttachments> {
   const markers: string[] = [];
-  const uploads: Array<{ file: string; name: string }> = [];
+  const inlineAttachments: MessageAttachment[] = [];
+  const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
   const errors: unknown[] = [];
   for (const att of attachments) {
     try {
       const { file, uploadExt } = await attachmentToOneBotFile(att, storage, logger);
       if (att.kind !== 'file' && uploadExt === undefined) {
         markers.push(`<${SEGMENT_TAGS[att.kind]} url="${file}"/>`);
+        inlineAttachments.push(att);
         continue;
       }
       if (!file.startsWith('base64://')) {
         throw new Error('文件上传只收 base64://（超过内联上限或来源是宿主路径、原链接时 NapCat 读不到）');
       }
       const name = (att.name ?? '').replace(/[/\\]/g, '');
-      uploads.push({ file, name: name || (uploadExt ? `${att.kind}.${uploadExt}` : 'file') });
+      uploads.push({ file, name: name || (uploadExt ? `${att.kind}.${uploadExt}` : 'file'), attachment: att });
     } catch (err) {
       logger?.warn?.(`OneBot ${LABELS[att.kind]}附件未发出: ${err instanceof Error ? err.message : err}`);
       errors.push(err);
     }
   }
-  return { markers: markers.join(''), uploads, errors };
+  return { markers: markers.join(''), inlineAttachments, uploads, errors };
 }
