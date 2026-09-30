@@ -80,6 +80,9 @@ function descSummary(d?: string): string | undefined {
 
 const name = '@aalis/plugin-webui-server';
 
+// 按宿主身份记打开记录：插件 bounce 保留，新 App 独立；弱引用不延长宿主寿命。
+const browserOpenedFor = new WeakSet<object>();
+
 const webuiPages: WebuiPage[] = [
   { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10, renderer: 'dashboard' },
   { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20, renderer: 'marketplace' },
@@ -111,7 +114,7 @@ const configSchema = defineConfig({
     default: true,
     onInvalid: 'error',
     description:
-      '访问 token 为新生成时（persist 模式首次生成、ephemeral 模式每次生成）以含 token 的 URL 自动开启默认浏览器；沿用已有 token（persist 读回已持久化的 token、fixed 用配置的 fixedToken）时不打开；fixed 模式 fixedToken 为空时按 persist 处理。SSH/headless 环境建议关闭',
+      '每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭',
   },
   tokenMode: {
     type: 'select',
@@ -400,8 +403,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // follow 对已在线的 storage 同步首挂，晚上线时补读。持久化的那份优先（浏览器里 30 天的 cookie
   // 就是它）；只认第一次成功，之后 storage 换人不再换 token。
   let tokenSettled = uiConfig.tokenMode === 'ephemeral' || fixedToken !== '';
-  // autoOpen 只在 token 是本次新生成时打开浏览器：沿用已有 token（fixed、persist 读回）时浏览器里的 cookie 仍有效，
-  // 再开一页只是重复。app:ready 是粘性事件，本插件每次 bounce 都会重新收到，不按此判断就每次重载多开一个标签页
+  // token 重新生成后旧页面失效，即使同一 App 已打开过，也要给出新的登录页。
   let tokenFresh = fixedToken === '';
   let tokenLoading: Promise<void> | undefined;
   caps.storage.follow(() => {
@@ -1351,6 +1353,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 监听 AI 回复
   events.on('outbound:message', (msg: OutgoingMessage) => {
+    // WebUI 也会镜像展示其他平台的会话；镜像不构成该平台消息的送达确认。
+    // platform 可能是入口 WebUI，而 sessionId 仍指向外部群聊；会话目的地优先。
+    const sessionRoot = msg.sessionId.split('::')[0];
+    const colon = sessionRoot.indexOf(':');
+    const externalTarget = colon >= 0 && sessionRoot.slice(0, colon) !== 'webui';
+    const ownsDelivery =
+      !msg.delivery && !externalTarget && (msg.platform === 'webui' || (!msg.platform && sessions.has(msg.sessionId)));
     // 生成完成，延迟清理缓冲区（给客户端重连拉取历史留出时间窗口）
     const buf = streamBuffers.get(msg.sessionId);
     if (buf) {
@@ -1360,7 +1369,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       scheduleBufferCleanup(msg.sessionId, buf);
     }
     const sockets = sessions.get(msg.sessionId);
-    if (!sockets) return;
+    if (!sockets && !ownsDelivery) return;
 
     // 仅信任 msg 本身携带的 segments。不要回退到 buf?.segments：
     // 工具循环中 agent tool（如 send_attachment / commands 回复）会直接 emit 'outbound:message'，
@@ -1385,12 +1394,48 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         : undefined,
       modelInfo: msg.modelInfo,
     };
-    const json = JSON.stringify(payload);
+    if (ownsDelivery) {
+      // 同步挂上确认 Promise；真正的结果由 ws.send 回调报告。Promise 始终 resolve，
+      // 即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
+      msg.delivery = (async () => {
+        try {
+          const attachmentsSnapshot = msg.attachments?.map(att => ({ ...att }));
+          const json = JSON.stringify(payload);
+          const sends = [...(sockets ?? [])]
+            .filter(ws => ws.readyState === WebSocket.OPEN)
+            .map(
+              ws =>
+                new Promise<boolean>(resolve => {
+                  try {
+                    ws.send(json, error => resolve(!error));
+                  } catch {
+                    resolve(false);
+                  }
+                }),
+            );
+          if (sends.length === 0) return { ok: false as const, error: 'WebUI 会话没有在线收件方' };
+          const results = await Promise.all(sends);
+          if (!results.some(Boolean)) return { ok: false as const, error: 'WebUI 消息发送失败' };
+          if (attachmentsSnapshot?.length) {
+            // 发送成功时保存快照：下游处理不应受生产者或其他适配器后续改写影响。
+            void events.emit('outbound:delivered', {
+              ...msg,
+              attachments: attachmentsSnapshot,
+              delivery: undefined,
+            });
+          }
+          return { ok: true as const };
+        } catch (error) {
+          return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+        }
+      })();
+      return;
+    }
 
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
+    // 非 WebUI 目标照旧镜像到已订阅的客户端，但不认领发送结果。
+    const json = JSON.stringify(payload);
+    for (const ws of sockets ?? []) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(json);
     }
   });
 
@@ -1717,7 +1762,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         }
         logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
       })();
-      if (uiConfig.autoOpen && tokenFresh) openBrowser(accessUrl, createProcessGateway(caps.process));
+      const host = caps.app.current;
+      if (uiConfig.autoOpen && (tokenFresh || !host || !browserOpenedFor.has(host))) {
+        if (host) browserOpenedFor.add(host);
+        openBrowser(accessUrl, createProcessGateway(caps.process));
+      }
     });
   });
 

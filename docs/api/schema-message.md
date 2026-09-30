@@ -26,6 +26,7 @@ interface IncomingMessage {
   groupId?: string;
   replyTo?: { messageId; content?; userId?; nickname? };
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
+  noticeTargetIsSelf?: boolean;        // poke 是否指向机器人；false 按未点名互动判断，省略沿用戳机器人的语义
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
   hostNotice?: { kind: string; id?: string; untrusted?: string; callerUserId?: string }; // 宿主撰写的事件通知，见下文
   // 内部字段（preprocessor 写入）
@@ -72,13 +73,21 @@ interface OutgoingMessage {
   content: string;
   sessionId: string;
   platform?: string;
+  hostNotice?: { kind: string; id?: string }; // 最终通知关联，工具中途发消息不带
   reasoningContent?: string;
   segments?: ContentSegment[];        // 与协议层 Message.segments 一致
   source?: 'agent' | 'system' | 'command';
+  delivery?: Promise<{ ok: true } | { ok: false; error: string }>;
 }
 ```
 
 `source='agent'` 表示由 AI 生成，可被分条延迟发送以模拟自然节奏；其它来源默认整条立即发送。
+
+`delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受，WebUI 成功表示至少一个在线客户端的 WebSocket 接受数据，均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
+
+`outbound:delivered` 在传输确认后发出，携带成功附件的快照；部分失败不包含失败附件。附件归档监听此事件，识图仍在后台处理；`outbound:message` 是发送请求，不能用它判断送达。
+
+宿主通知可在入站的 `hostNotice` 中设 `reportOnly: true`：Agent 保留人设与对话，移除本轮请求中的历史工具协议，明确要求直接转述宿主结果，不暴露或执行工具。误调用工具、空回复或遗漏正文链接先纠正，与人设格式纠正共用重试预算（至少一次），用尽才由注入方兜底。客户端只收到校验后的正文，不流出生成中或失败轮的原文。模型失败通过 `agent:turn:after` 的 `error` 结果报告，不向会话发通用错误提示。需要工具后续行动的通知不设置此项。最终转述与宿主兜底的出站 `hostNotice` 只携带 `kind`、`id`，不携带入站的不可信说明或调用者身份；它用于关联派发，不代表平台送达。
 
 ## 事件（AalisEvents）
 
@@ -86,6 +95,7 @@ interface OutgoingMessage {
 'inbound:message':           [message: IncomingMessage]
 'inbound:message:archived':  [message: IncomingMessage]   // 已写入 memory
 'outbound:message':          [message: OutgoingMessage]
+'outbound:delivered':        [message: OutgoingMessage]
 'outbound:stream':           [chunk: StreamChunkMessage]
 ```
 

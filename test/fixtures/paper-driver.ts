@@ -227,7 +227,8 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
       return Array.isArray(out) ? out[0] : out;
     },
     async accept(roomId = ROOM_A, text = `任务原文 ${++taskSeq}`, userId = '30001') {
-      const res = await call('paper_task', { text, name: `任务 ${taskSeq}` }, human(userId, roomId));
+      // 此测试台只装运行驱动；默认发布的完整链另由 works-publish-flow 覆盖。
+      const res = await call('paper_task', { text, name: `任务 ${taskSeq}`, publish: false }, human(userId, roomId));
       if (res.ok !== true) throw new Error(`paper_task 未受理：${String(res.error)}`);
       return String(res.taskId);
     },

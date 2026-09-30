@@ -45,6 +45,7 @@
   "aalis": {
     "service": {
       "required": [
+        "app",
         "config",
         "events",
         "lifecycle",

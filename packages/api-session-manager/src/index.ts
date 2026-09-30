@@ -58,11 +58,11 @@ export interface SessionConfig {
   paperName?: string;
   /** 允许的远端代理类型（远端代理插件实例 id）；空或缺省 = 关 */
   remoteAgentTypes?: string[];
-  /** 每人每天金额上限（美分）；缺省不按人限制，只受本房间与全局上限约束 */
+  /** 每人每天金额上限（美分）；缺省不增加该层限制，显式 0 禁止新远端任务 */
   remoteAgentUserDailyCents?: number;
   /** 每人每天件数上限；缺省不按人限制 */
   remoteAgentUserDailyTasks?: number;
-  /** 本房间每天金额上限（美分）；缺省按 0 */
+  /** 本房间每天金额上限（美分）；缺省不增加该层限制，显式 0 禁止新远端任务 */
   remoteAgentRoomDailyCents?: number;
   /** 记忆召回范围，只能比记忆插件的配置更窄；随子会话复制，否则经子任务就绕过了收窄 */
   memoryRecallScope?: MemoryRecallScope;

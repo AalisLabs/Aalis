@@ -30,9 +30,13 @@
   "dependencies": {
     "@aalis/api-code-sandbox": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-agent": "workspace:>=0.9.1 <1.0.0",
+    "@aalis/api-gateway": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-publish": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.11.1 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
@@ -56,6 +60,7 @@
       "required": [
         "config",
         "events",
+        "hooks",
         "lifecycle",
         "logger",
         "provide",
@@ -64,6 +69,7 @@
       "optional": [
         "code-sandbox",
         "doctor",
+        "gateway",
         "llm",
         "webui-server"
       ]

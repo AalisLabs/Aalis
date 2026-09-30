@@ -16,6 +16,8 @@
 
 import { defineService, type ServiceRef } from '@aalis/core';
 
+export { sanitizeRunLog } from './log.js';
+
 // ----- 出网 -----
 
 /** 远端代理的出网方式：不出网、只到白名单、不限；unknown = 提供者说不清 */
@@ -69,8 +71,30 @@ export interface RunState {
   /** 代理这一轮最后的文字说明 */
   resultText?: string;
 }
-/** progress 的 eventId 供断线后续传 */
-export type RunProgress = { kind: 'progress'; eventId: string } | { kind: 'terminal'; state: RunState };
+/** 管理端用的单行、限长、已脱敏的动作摘要。 */
+export type RunActivity = {
+  action: 'planning' | 'responding' | 'reading' | 'writing' | 'command' | 'tool';
+  status: 'running' | 'completed' | 'failed';
+  tool?: string;
+  target?: string;
+  summary?: string;
+  exitCode?: number;
+};
+/** 公开执行日志。input/output 保留完整结构，仅对敏感值脱敏。 */
+export type RunLogEntry = {
+  type: 'assistant' | 'tool' | 'connection';
+  text?: string;
+  callId?: string;
+  tool?: string;
+  status?: 'running' | 'completed' | 'failed';
+  input?: unknown;
+  output?: unknown;
+};
+/** progress 的 eventId 供断线后续传；log 没有 SSE id，不改变续传位置。 */
+export type RunProgress =
+  | { kind: 'progress'; eventId: string; activity?: RunActivity; record?: RunLogEntry }
+  | { kind: 'log'; record: RunLogEntry }
+  | { kind: 'terminal'; state: RunState };
 /**
  * 一轮的费用。cents 是计入额度的花费（美分），消费方的日上限与换新都按它判：远端不另收费的用量（如计划内额度）
  * 也按实际消耗计，不能写 0

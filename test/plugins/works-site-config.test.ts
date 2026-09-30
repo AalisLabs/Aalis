@@ -36,10 +36,28 @@ describe('works-site 配置', () => {
       projectName: 'aalis',
       productionBranch: 'main',
       siteOrigin: 'https://aalis.pages.dev',
+      targetId: 'works',
+      basePath: '/',
       failOpen: false,
     });
     expect(cfg.mainOrigins).toEqual(['https://aalis.pages.dev']);
     expect(cfg.siteTitle).not.toBe('');
+  });
+
+  it('目标 ID 和发布目录独立于 origin，目录末尾规范为斜杠', () => {
+    expect(
+      read({ ...REQUIRED, targetId: 'draw-1', siteOrigin: 'https://aalis2.example', basePath: '/draw' }),
+    ).toMatchObject({
+      targetId: 'draw-1',
+      siteOrigin: 'https://aalis2.example',
+      basePath: '/draw/',
+    });
+    for (const targetId of ['Works', 'a/b', '../draw', '']) {
+      expectConfigError(() => read({ ...REQUIRED, targetId }), 'targetId');
+    }
+    for (const basePath of ['/draw/../x', '/draw//x', '/draw%2fx', '/draw?x=1', '/draw#x', '/w']) {
+      expectConfigError(() => read({ ...REQUIRED, basePath }), 'basePath');
+    }
   });
 
   it('两个密钥标 secret、必填；缺了按配置错误报，不回显值', () => {

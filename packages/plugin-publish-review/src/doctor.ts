@@ -24,11 +24,14 @@ export function registerReviewDoctor(deps: {
       if (deps.store.failure)
         return { id: 'publish-review.tools', category: 'service', level: 'error', message: deps.store.failure };
       if (deps.store.auditFailure) warnings.push(deps.store.auditFailure);
-      const text = deps.config.textClassifier;
-      if (!text?.provider || !text.model || !resolveLLMModel(deps.llm, text)) warnings.push('文本分类器未配置或不在场');
-      const image = deps.config.imageClassifier ?? text;
-      if (!image?.provider || !image.model || !resolveLLMModel(deps.llm, image, ['vision']))
-        warnings.push('图像分类器不可用或没有视觉能力');
+      if (deps.config.reviewEnabled) {
+        const text = deps.config.textClassifier;
+        if (!text?.provider || !text.model || !resolveLLMModel(deps.llm, text))
+          warnings.push('文本分类器未配置或不在场');
+        const image = deps.config.imageClassifier ?? text;
+        if (!image?.provider || !image.model || !resolveLLMModel(deps.llm, image, ['vision']))
+          warnings.push('图像分类器不可用或没有视觉能力');
+      }
       const sandbox = deps.sandbox.current;
       if (!sandbox?.available) warnings.push('代码沙箱不可用，不能处理媒体');
       else
@@ -48,25 +51,27 @@ export function registerReviewDoctor(deps: {
             warnings.push(`${label} 不可用`);
           }
         }
-      try {
-        const entry = 'https://render.invalid/diagnostic/';
-        await deps.renderer.renderPng({
-          entry,
-          resources: new Map([
-            [
-              entry,
-              {
-                body: new TextEncoder().encode('<!doctype html><html><body>ok</body></html>'),
-                contentType: 'text/html',
-              },
-            ],
-          ]),
-          viewport: { width: 1, height: 1 },
-          clip: { kind: 'viewport' },
-          signal: deps.signal,
-        });
-      } catch {
-        warnings.push('带沙箱的离线渲染不可用');
+      if (deps.config.reviewEnabled) {
+        try {
+          const entry = 'https://render.invalid/diagnostic/';
+          await deps.renderer.renderPng({
+            entry,
+            resources: new Map([
+              [
+                entry,
+                {
+                  body: new TextEncoder().encode('<!doctype html><html><body>ok</body></html>'),
+                  contentType: 'text/html',
+                },
+              ],
+            ]),
+            viewport: { width: 1, height: 1 },
+            clip: { kind: 'viewport' },
+            signal: deps.signal,
+          });
+        } catch {
+          warnings.push('带沙箱的离线渲染不可用');
+        }
       }
       try {
         if ((await deps.store.storage.stat('pluginData:/publish-review/audit.jsonl')).size > 5 * 1024 * 1024)
@@ -78,9 +83,11 @@ export function registerReviewDoctor(deps: {
         id: 'publish-review.tools',
         category: 'service',
         level: warnings.length ? 'warn' : 'ok',
-        message: warnings.length
-          ? warnings.join('；')
-          : `审核能力就绪；待审 ${Object.keys(deps.store.data.queue).length} 件`,
+        message: deps.config.reviewEnabled
+          ? warnings.length
+            ? warnings.join('；')
+            : `审核能力就绪；待审 ${Object.keys(deps.store.data.queue).length} 件`
+          : `内容审核已关闭；待处理 ${Object.keys(deps.store.data.queue).length} 件${warnings.length ? `；${warnings.join('；')}` : ''}`,
       };
     },
   });

@@ -12,7 +12,6 @@ const input = () => ({
   surfaces: ['works'],
   title: 'work',
   summary: '',
-  credit: 'writer',
   files: [{ path: 'index.html', bytes: new TextEncoder().encode('<!doctype html><p>hi</p>') }],
 });
 
@@ -168,7 +167,7 @@ describe('作品审核停机交错', () => {
       notice: replayed,
     });
     await resumed.flushNotices();
-    expect(replayed).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining('已通过审核并上线'), second.id);
+    expect(replayed).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining('已上线'), second.id, 'work');
     expect(restarted.data.notices).toEqual({});
     expect(restarted.data.ledger[second.id]?.notice).toBe('sent');
   });

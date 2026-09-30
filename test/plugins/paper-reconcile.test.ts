@@ -306,6 +306,51 @@ describe('对账时列表连续失败', () => {
 });
 
 describe('任务记录保留与轮次记录', () => {
+  it('待提交或已提交作品跨保留期不删账本和成品；达到上线终态后可按原保留期清理', async () => {
+    const a = new ScriptedRemote();
+    const files = new Map();
+    const hub = await startDriverHub({
+      remotes: { [REMOTE_A]: a },
+      files,
+      config: {
+        ...DRIVER_CONFIG,
+        taskRetentionDays: 1,
+        papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, clearAfterDays: 1 }],
+      },
+    });
+    const id = await hub.accept();
+    await until(() => hub.task(id).state === 'running', '开轮');
+    const agentId = hub.task(id).agentId ?? '';
+    a.outputs.set(id, [{ rel: 'index.html', data: text('<!doctype html><title>作品</title>') }]);
+    a.bundles.set(agentId, text('bundle'));
+    a.finish(hub.task(id).runId ?? '');
+    await until(() => hub.task(id).state === 'done', '完成');
+    await hub.store.exclusive(async () => {
+      hub.task(id).publication = { target: 'works', title: '作品', summary: '', state: 'pending' };
+      await hub.store.save();
+    });
+    const before = [...files.keys()].filter(key => key.startsWith(`${PAPER_A_DIR}/`));
+    expect(before.length).toBeGreaterThan(0);
+    await advance(24 * 60 * MINUTE + RECONCILE_MS);
+    expect(hub.task(id).publication?.state).toBe('pending');
+    expect([...files.keys()].filter(key => key.startsWith(`${PAPER_A_DIR}/`))).toEqual(before);
+    expect(await hub.driver.clear(PAPER_A_ID)).toMatch(/发布|提交/);
+    expect(hub.task(id).artifactsCleared).not.toBe(true);
+    await hub.store.exclusive(async () => {
+      hub.task(id).publication = { ...hub.task(id).publication!, state: 'submitted', workId: 'abcdefghij' };
+      await hub.store.save();
+    });
+    await advance(RECONCILE_MS);
+    expect(hub.task(id).publication?.state).toBe('submitted');
+    expect([...files.keys()].filter(key => key.startsWith(`${PAPER_A_DIR}/`))).toEqual(before);
+    await hub.store.exclusive(async () => {
+      hub.task(id).publication = { ...hub.task(id).publication!, state: 'live' };
+      await hub.store.save();
+    });
+    await advance(RECONCILE_MS);
+    await until(() => hub.store.data.tasks[id] === undefined, '上线终态后按保留期清理');
+  });
+
   it('安全：任务记录按保留天数清理后，对账不把这个代理的旧轮次当成账本外；代理确认删除后它的轮次才移除', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({
@@ -314,6 +359,15 @@ describe('任务记录保留与轮次记录', () => {
     });
     const first = await runOne(hub, a);
     const runId = a.runsOf(first.agentId)[0].runId;
+    await until(
+      () =>
+        [...hub.files].some(
+          ([uri, value]) =>
+            uri.startsWith(hub.driver.journal.uri(first.id)) && String(value).includes('"type":"finished"'),
+        ),
+      '创作日志落盘',
+    );
+    const creationLog = await hub.driver.journal.read(first.id);
     await advance(24 * 60 * MINUTE + RECONCILE_MS);
     await until(() => hub.store.data.tasks[first.id] === undefined, '任务记录被清理');
     await advance(RECONCILE_MS);
@@ -324,6 +378,11 @@ describe('任务记录保留与轮次记录', () => {
     expect(await hub.driver.clear(PAPER_A_ID)).toBeUndefined();
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '清空时删除代理');
     expect(hub.store.data.runs[runId]).toBeUndefined();
+    expect(await hub.driver.journal.read(first.id), '任务过期和清空白纸均不删除创作日志').toBe(creationLog);
+    expect(await hub.driver.journal.list()).toContainEqual({
+      taskId: first.id,
+      entries: creationLog.trim().split('\n').length,
+    });
   });
 });
 
@@ -344,6 +403,17 @@ describe('闲置归档', () => {
 });
 
 describe('清空', () => {
+  it('失败任务残留 pending 发布意图不阻止清空', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const failed = await runOne(hub, a, 'error');
+    await hub.store.exclusive(async () => {
+      hub.task(failed.id).publication = { target: 'works', title: '作品', summary: '', state: 'pending' };
+      await hub.store.save();
+    });
+    expect(await hub.driver.clear(PAPER_A_ID)).toBeUndefined();
+  });
+
   it('owner 清空：取消排队任务、删除代理与白纸目录，账本任务记录保留并标为已清空', async () => {
     const a = new ScriptedRemote();
     const files = new Map();
@@ -459,6 +529,7 @@ describe('删除代理前结清费用', () => {
     await until(() => hub.task(t1).state === 'running', '首件开轮');
     const first = { id: t1, agentId: hub.task(t1).agentId ?? '' };
     const firstRun = hub.task(t1).runId ?? '';
+    a.bundles.set(first.agentId, text('saved workspace'));
     a.finish(firstRun);
     await advance(MINUTE);
     await until(() => hub.task(t1).state === 'done', '首件完成');

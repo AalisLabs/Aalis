@@ -12,6 +12,7 @@
 //   pendingHintHours 的任务时，再插一条独立的 system 消息（最后一条是 user 时插在它前面，否则追加在末尾，
 //   不碰 messages[0]）。工具循环的每一轮都重新判定，paper_send 之后下一次请求就不再提示。只列任务 id、
 //   她起的任务名与成品的编号、类型、大小，不含远端说明，也不含远端给的文件名。
+//   白纸通知只提示本件任务；作品上线及其他内部通知不夹带旧任务的待发提示。
 // ============================================================
 
 import type { Hooks } from '@aalis/api-hooks';
@@ -35,6 +36,8 @@ function artifactList(task: TaskRecord): string {
 }
 
 function outcomeOf(task: TaskRecord): string {
+  if (task.state === 'done' && task.publication?.state === 'failed')
+    return `未能上线：${task.publication.reason ?? '发布处理失败'}`;
   if (task.state === 'done') return '已完成';
   if (task.state === 'failed') {
     // 压成一行：原因里的换行不能在通知里另起一行冒充宿主行
@@ -54,6 +57,7 @@ function noticeContent(task: TaskRecord): string {
   if (task.costCents !== undefined) facts.push(`花费 ${task.costCents} 美分`);
   else if (task.runId) facts.push('费用还没入账');
   const lines = [`[白纸] 任务 ${task.id}「${task.name}」${outcomeOf(task)}。${facts.map(f => `${f}。`).join('')}`];
+  if (task.publication) return lines.join('\n');
   lines.push(task.artifacts.length > 0 ? `成品：${artifactList(task)}` : '没有取回成品。');
   if (task.resultText) lines.push(`远端说明见 paper_status ${task.id}。`);
   if (task.artifacts.length > 0) lines.push('用 paper_send 按成品编号发回本群。');
@@ -103,6 +107,9 @@ export class PaperNotices {
       if (ledger.failure) return [];
       const tasks = Object.values(ledger.data.tasks)
         .filter(t => !UNFINISHED_STATES.has(t.state) && !t.notice && t.cancelledVia !== 'tool')
+        .filter(
+          t => !t.publication || t.state !== 'done' || (t.publication.state === 'failed' && !t.publication.workId),
+        )
         .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
       if (tasks.length === 0) return [];
       const at = this.#d.now();
@@ -122,9 +129,10 @@ export class PaperNotices {
   async #inject(task: TaskRecord): Promise<void> {
     const { logger } = this.#d;
     const id = task.notice?.id ?? '';
-    const untrusted = task.resultText
-      ? wrapUntrustedContent(truncate(task.resultText, NOTICE_NOTE_MAX), `远端代理对任务 ${task.id} 的说明`)
-      : undefined;
+    const untrusted =
+      task.resultText && !task.publication
+        ? wrapUntrustedContent(truncate(task.resultText, NOTICE_NOTE_MAX), `远端代理对任务 ${task.id} 的说明`)
+        : undefined;
     const message: IncomingMessage = {
       content: noticeContent(task),
       sessionId: task.room,
@@ -143,12 +151,14 @@ export class PaperNotices {
 }
 
 /** 房间里待交付的任务：已完成、成品还没发回也没被清空、结束时刻不早于 since */
-function pendingHint(ledger: LedgerStore, room: string, since: number): string | undefined {
+function pendingHint(ledger: LedgerStore, room: string, since: number, source?: string): string | undefined {
   const tasks = Object.values(ledger.data.tasks)
     .filter(
       t =>
         t.room === room &&
+        (!source || source === `paper:${t.paperId}:${t.id}`) &&
         t.state === 'done' &&
+        !t.publication &&
         !t.delivered &&
         !t.artifactsCleared &&
         t.artifacts.length > 0 &&
@@ -174,7 +184,7 @@ export function registerPendingHint(deps: {
       if (messages[i].metadata?.injector === PENDING_INJECTOR) messages.splice(i, 1);
     }
     const since = deps.now() - deps.cfg.pendingHintHours * HOUR;
-    const hint = data.sessionId ? pendingHint(deps.ledger, data.sessionId, since) : undefined;
+    const hint = data.sessionId ? pendingHint(deps.ledger, data.sessionId, since, data.source) : undefined;
     if (hint) {
       const insertAt = messages.at(-1)?.role === 'user' ? messages.length - 1 : messages.length;
       messages.splice(insertAt, 0, { role: 'system', content: hint, metadata: { injector: PENDING_INJECTOR } });

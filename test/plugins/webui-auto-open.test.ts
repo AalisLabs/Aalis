@@ -4,10 +4,9 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
-// autoOpen 只在访问 token 是本次新生成时打开浏览器。沿用已有 token（persist 读回、fixed）时浏览器里的 cookie 仍有效，
-// 再开一页只是重复；而 app:ready 是粘性事件，插件每次 bounce（改它的配置、配置文件热重载）重新订阅都会再收到一次，
-// 不按 token 判断就每重载一次多开一个标签页。这里替换 process 服务记下每次打开，storage 用内存表代替磁盘，
-// 同一张表跨两次启动即模拟 token 文件留在盘上。
+// 每个 App 首次监听成功都应打开，不能把「token 已持久化」误当成「本次已经开过浏览器」。
+// 同一 App 的普通 bounce 不重复打开；ephemeral 换 token 后仍要重新登录。
+// process 用计数替身、storage 用内存表，同一张表跨两次启动模拟磁盘 token。
 
 const ACCESS = 'data:/webui/access.txt';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -25,7 +24,11 @@ async function until(cond: () => boolean, what: string): Promise<void> {
 }
 
 /** 启动一次、再 bounce 一次，返回两个时点累计打开浏览器的次数 */
-async function opensOverStartAndBounce(tokenMode: string, disk: Map<string, string>): Promise<number[]> {
+async function opensOverStartAndBounce(
+  tokenMode: string,
+  disk: Map<string, string>,
+  autoOpen = true,
+): Promise<number[]> {
   let opened = 0;
   let listened = 0;
   const fakeProcess = {
@@ -60,7 +63,7 @@ async function opensOverStartAndBounce(tokenMode: string, disk: Map<string, stri
   await app.plugin(webuiServer, {
     port: 0,
     host: '127.0.0.1',
-    autoOpen: true,
+    autoOpen,
     tokenMode,
     fixedToken: tokenMode === 'fixed' ? 'zz-fixed-token-placeholder' : '',
   });
@@ -74,18 +77,22 @@ async function opensOverStartAndBounce(tokenMode: string, disk: Map<string, stri
   return [afterStart, opened];
 }
 
-describe('webui-server autoOpen：只在 token 新生成时打开浏览器', () => {
-  it('persist：首次启动生成并写入 token 时打开一次，bounce 与再次启动读回同一 token，不再打开', async () => {
+describe('webui-server autoOpen：每次应用启动打开，同 token 热重载不重复', () => {
+  it('persist：首次启动和再次启动各打开一次，bounce 读回同一 token 不再打开', async () => {
     const disk = new Map<string, string>();
     expect(await opensOverStartAndBounce('persist', disk)).toEqual([1, 1]);
-    expect(await opensOverStartAndBounce('persist', disk), '再次启动').toEqual([0, 0]);
+    expect(await opensOverStartAndBounce('persist', disk), '再次启动').toEqual([1, 1]);
   });
 
   it('ephemeral：每次激活都换 token、旧页面失效，每次都打开', async () => {
     expect(await opensOverStartAndBounce('ephemeral', new Map())).toEqual([1, 2]);
   });
 
-  it('fixed：token 来自配置，不打开', async () => {
-    expect(await opensOverStartAndBounce('fixed', new Map())).toEqual([0, 0]);
+  it('fixed：启动打开一次，bounce 不重复打开', async () => {
+    expect(await opensOverStartAndBounce('fixed', new Map())).toEqual([1, 1]);
+  });
+
+  it.each(['persist', 'ephemeral', 'fixed'])('%s：autoOpen=false 始终不打开', async tokenMode => {
+    expect(await opensOverStartAndBounce(tokenMode, new Map(), false)).toEqual([0, 0]);
   });
 });

@@ -6,6 +6,7 @@
 // 等 owner 处理。从空账本起步会让当天的花费与预留清零、所有在用的代理变成「账本外」。
 // ============================================================
 
+import type { RunActivity } from '@aalis/api-remote-agent';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import { describe } from './util.js';
@@ -64,7 +65,7 @@ export interface TaskRecord {
   initiator: { platform: string; userId: string };
   /** 她起的任务名（净化后） */
   name: string;
-  /** 宿主回显并发出的原文 */
+  /** 交给远端代理的任务原文 */
   text: string;
   state: TaskState;
   createdAt: number;
@@ -73,6 +74,8 @@ export interface TaskRecord {
   agentId?: string;
   runId?: string;
   lastEventId?: string;
+  /** 最近一次安全活动枚举；不是任务完成百分比或远端正文。 */
+  progress?: { activity: RunActivity; at: number };
   /** 开轮中：state 为 starting 时必有。path 区分新建代理（可按同 id 重试）与已绑定代理（startRun 不幂等，要先认领） */
   start?: { path: 'create' | 'run'; requestedAt: number };
   /**
@@ -95,6 +98,21 @@ export interface TaskRecord {
   }>;
   /** 白纸被清空时成品文件已删（记录保留） */
   artifactsCleared?: boolean;
+  /** 受理时确定的发布意图（新任务默认发布）；显式不发布与历史普通任务没有此字段。 */
+  publication?: {
+    target: string;
+    title: string;
+    summary: string;
+    state: 'pending' | 'submitted' | 'failed' | 'live';
+    workId?: string;
+    reason?: string;
+    /** 首次提交前固定选中的成品，供同键重试重建相同字节。 */
+    artifactIds?: string[];
+    /** 与 artifactIds 同序的公开相对路径；提交前固定。 */
+    paths?: string[];
+    coverArtifactId?: string;
+    nextAttemptAt?: number;
+  };
   error?: string;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
   /** 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省 */
@@ -105,6 +123,8 @@ export interface TaskRecord {
 
 export interface DaySpend {
   global: number;
+  /** 能明确归属到白纸的费用；旧日账可能没有这张表。 */
+  papers?: Record<string, number>;
   rooms: Record<string, number>;
   users: Record<string, { cents: number; tasks: number }>;
 }
@@ -112,6 +132,8 @@ export interface DaySpend {
 export interface ReserveRecord {
   cents: number;
   day: string;
+  /** 新预留写入白纸 ID；旧预留可用任务记录回查。 */
+  paperId?: string;
   room: string;
   user: string;
 }

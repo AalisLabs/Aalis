@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoundPublish, PublishedItem } from '../../packages/api-publish/src/index.js';
 import type { BoundWebui } from '../../packages/api-webui/src/index.js';
@@ -10,7 +11,15 @@ import { assetKey } from '../../packages/plugin-works-site/src/cloudflare/hash.j
 import type { WorksSiteConfig } from '../../packages/plugin-works-site/src/config.js';
 import { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
 import { STATE_URI, WorksStore } from '../../packages/plugin-works-site/src/state.js';
-import { ContentMismatchError, checkPreflight, verifyContent } from '../../packages/plugin-works-site/src/verify.js';
+import {
+  abortablePause,
+  ContentMismatchError,
+  checkPreflight,
+  contentMismatchDetail,
+  verifyContent,
+  verifyContentUntilMatch,
+  waitForSwitch,
+} from '../../packages/plugin-works-site/src/verify.js';
 import { registerWorksPage } from '../../packages/plugin-works-site/src/webui.js';
 import { startFakePages } from '../fixtures/fake-pages.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -110,6 +119,8 @@ describe('作品站持久状态与内容核对', () => {
       deploy,
     } as unknown as PagesClient;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -174,6 +185,8 @@ describe('作品站持久状态与内容核对', () => {
       deleteDeployment,
     } as unknown as PagesClient;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -228,6 +241,8 @@ describe('作品站持久状态与内容核对', () => {
       .mockResolvedValue(undefined);
     const client = { listDeployments: vi.fn(async () => [deployment]), deleteDeployment } as unknown as PagesClient;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -284,6 +299,8 @@ describe('作品站持久状态与内容核对', () => {
       deleteDeployment,
     } as unknown as PagesClient;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -326,7 +343,6 @@ describe('作品站持久状态与内容核对', () => {
       kind: 'html',
       title: '网页',
       summary: '',
-      credit: '群友',
       publishedAt: 1,
       files: [{ path: 'index.html', size: 1, contentType: 'text/html; charset=utf-8' }],
       hasThumbnail: false,
@@ -363,6 +379,8 @@ describe('作品站持久状态与内容核对', () => {
       deleteDeployment,
     } as unknown as PagesClient;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -429,6 +447,256 @@ describe('作品站持久状态与内容核对', () => {
     expect(called[0]).toMatch(/\?c=[0-9a-f-]+$/);
   });
 
+  it('用户规范路径仍是旧内容时不视为核验成功，收敛后才通过且分支入口带 iframe 头', async () => {
+    const expected = new TextEncoder().encode('<!doctype html>new');
+    const path = '/abcdefghij/';
+    let clock = 0;
+    let canonical = 0;
+    let busted = 0;
+    await verifyContentUntilMatch(
+      async (input, init) => {
+        const url = new URL(String(input));
+        expect(new Headers(init?.headers).get('Sec-Fetch-Dest')).toBe('iframe');
+        if (url.search) {
+          busted++;
+          return new Response(expected);
+        }
+        canonical++;
+        return new Response(canonical < 3 ? 'old html' : expected);
+      },
+      'https://example.test',
+      [{ path, bytes: expected }],
+      [path],
+      true,
+      new AbortController().signal,
+      {
+        now: () => clock,
+        pause: async ms => {
+          clock += ms;
+        },
+        timeoutMs: 30,
+        pauseMs: 10,
+        alsoCanonical: true,
+      },
+    );
+    expect(canonical).toBe(3);
+    expect(busted).toBe(3);
+  });
+
+  it('分支资源按访客类型核对无查询串缓存变体', async () => {
+    const paths = ['/abcdefghij/', '/abcdefghij/style.css', '/abcdefghij/app.js', '/abcdefghij/photo.png'];
+    const destinations = ['iframe', 'style', 'script', 'image'];
+    const files = paths.map(path => ({ path, bytes: new TextEncoder().encode(path) }));
+    const visited: string[] = [];
+    await verifyContentUntilMatch(
+      async (input, init) => {
+        const url = new URL(String(input));
+        const index = paths.indexOf(url.pathname);
+        expect(new Headers(init?.headers).get('Sec-Fetch-Dest')).toBe(destinations[index]);
+        visited.push(String(input));
+        return new Response(files[index].bytes);
+      },
+      'https://example.test',
+      files,
+      paths,
+      true,
+      new AbortController().signal,
+      { alsoCanonical: true },
+    );
+    expect(visited.filter(url => !new URL(url).search)).toHaveLength(files.length);
+  });
+
+  it('主站首页和作品包装页还须核对访客无查询串目录入口', async () => {
+    const files = ['/draw/index.html', '/draw/w/abcdefghij/index.html'].map(path => ({
+      path,
+      bytes: new TextEncoder().encode(`new ${path}`),
+    }));
+    let clock = 0;
+    const aliases = new Map<string, number>();
+    await verifyContentUntilMatch(
+      async input => {
+        const url = new URL(String(input));
+        const file = files.find(item => item.path === `${url.pathname}index.html` || item.path === url.pathname);
+        if (!file) throw new Error(`unexpected ${url.pathname}`);
+        if (url.pathname.endsWith('/')) {
+          const count = (aliases.get(url.pathname) ?? 0) + 1;
+          aliases.set(url.pathname, count);
+          if (count < 2) return new Response('old cached page');
+        }
+        return new Response(file.bytes);
+      },
+      'https://example.test',
+      files,
+      files.map(file => file.path),
+      false,
+      new AbortController().signal,
+      {
+        now: () => clock,
+        pause: async ms => {
+          clock += ms;
+        },
+        timeoutMs: 30,
+        pauseMs: 10,
+        alsoCanonical: true,
+      },
+    );
+    expect(aliases.get('/draw/')).toBeGreaterThanOrEqual(2);
+    expect(aliases.get('/draw/w/abcdefghij/')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('首次核验短暂 404 和旧字节后仍需全部匹配才成功', async () => {
+    const files = [
+      { path: '/index.html', bytes: new TextEncoder().encode('new index') },
+      { path: '/assets/site.css', bytes: new TextEncoder().encode('new css') },
+    ];
+    const seen: string[] = [];
+    let clock = 0;
+    let indexCalls = 0;
+    let cssCalls = 0;
+    await verifyContentUntilMatch(
+      async input => {
+        const url = new URL(String(input));
+        seen.push(String(input));
+        if (url.pathname === '/index.html') {
+          indexCalls++;
+          return indexCalls === 1 ? new Response('', { status: 404 }) : new Response(files[0].bytes);
+        }
+        cssCalls++;
+        return cssCalls === 1 ? new Response('old css') : new Response(files[1].bytes);
+      },
+      'https://example.test',
+      files,
+      ['/index.html'],
+      false,
+      new AbortController().signal,
+      {
+        now: () => clock,
+        pause: async ms => {
+          clock += ms;
+        },
+        timeoutMs: 30,
+        pauseMs: 10,
+      },
+    );
+    expect(indexCalls).toBe(3);
+    expect(cssCalls).toBe(2);
+    expect(new Set(seen)).toHaveProperty('size', seen.length);
+    expect(seen.every(url => url.includes('?c='))).toBe(true);
+  });
+
+  it('随机抽样变化时仍保留上次不符的文件', async () => {
+    const files = Array.from({ length: 22 }, (_, index) => ({
+      path: `/assets/${index}.txt`,
+      bytes: new TextEncoder().encode(`new-${index}`),
+    }));
+    let reverse = false;
+    let failedCalls = 0;
+    let clock = 0;
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => (reverse ? 0 : 0.5));
+    try {
+      await verifyContentUntilMatch(
+        async input => {
+          const path = new URL(String(input)).pathname;
+          const file = files.find(item => item.path === path)!;
+          if (path === files[0].path) {
+            failedCalls++;
+            reverse = true;
+            if (failedCalls < 3) return new Response('old');
+          }
+          return new Response(file.bytes);
+        },
+        'https://example.test',
+        files,
+        [],
+        false,
+        new AbortController().signal,
+        {
+          now: () => clock,
+          pause: async ms => {
+            clock += ms;
+          },
+          timeoutMs: 30,
+          pauseMs: 10,
+        },
+      );
+      expect(failedCalls).toBe(3);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('持续错误到期限仍失败，诊断不泄漏网址、标记或正文', async () => {
+    const marker = 'private-marker';
+    let clock = 0;
+    let calls = 0;
+    let failure: unknown;
+    try {
+      await verifyContentUntilMatch(
+        async () => {
+          calls++;
+          return new Response('sensitive-response-body', { status: 200 });
+        },
+        'https://secret.example.test',
+        [{ path: `/v/${marker}.txt`, bytes: new TextEncoder().encode(marker) }],
+        [`/v/${marker}.txt`],
+        false,
+        new AbortController().signal,
+        {
+          now: () => clock,
+          pause: async ms => {
+            clock += ms;
+          },
+          timeoutMs: 20,
+          pauseMs: 10,
+        },
+      );
+    } catch (err) {
+      failure = err;
+    }
+    expect(failure).toBeInstanceOf(ContentMismatchError);
+    expect(calls).toBe(3);
+    const detail = contentMismatchDetail(failure as ContentMismatchError);
+    expect(detail).toMatch(/\/v\/\[marker\]\.txt HTTP 200.*SHA-256/);
+    expect(detail).not.toMatch(/private-marker|secret\.example|sensitive-response-body|\?c=/);
+  });
+
+  it('非根目录版本标记在内容核验诊断中也脱敏', () => {
+    const detail = contentMismatchDetail(
+      new ContentMismatchError('/draw/v/private-marker.txt', 404, 1, 'a'.repeat(64)),
+    );
+    expect(detail).toContain('/draw/v/[marker].txt');
+    expect(detail).not.toContain('private-marker');
+  });
+
+  it('核验等待可取消，切换等待不会遗留 abort 监听', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stopped');
+    const pending = verifyContentUntilMatch(
+      async () => new Response('', { status: 404 }),
+      'https://example.test',
+      [{ path: '/index.html', bytes: new TextEncoder().encode('new') }],
+      ['/index.html'],
+      false,
+      controller.signal,
+      { timeoutMs: 10_000, pauseMs: 10_000 },
+    );
+    queueMicrotask(() => controller.abort(reason));
+    await expect(pending).rejects.toBe(reason);
+
+    const signal = new AbortController().signal;
+    let switchCalls = 0;
+    await waitForSwitch(
+      async () => new Response(++switchCalls < 5 ? 'old' : 'right'),
+      'https://example.test',
+      'right',
+      signal,
+      { pause: ms => abortablePause(Math.min(ms, 1), signal) },
+    );
+    expect(getEventListeners(signal, 'abort')).toHaveLength(0);
+    await abortablePause(0, signal);
+    expect(getEventListeners(signal, 'abort')).toHaveLength(0);
+  });
+
   it('并发页面告警已读与部署更新不互相覆盖', async () => {
     const store = new WorksStore(memoryStorage(new Map()));
     await store.load();
@@ -459,7 +727,6 @@ describe('作品站持久状态与内容核对', () => {
       kind: 'media',
       title: '画',
       summary: '',
-      credit: '来自群友的点子',
       publishedAt: 1,
       files: [{ path: 'image.png', size: 3, contentType: 'image/png' }],
       hasThumbnail: true,
@@ -478,6 +745,8 @@ describe('作品站持久状态与内容核对', () => {
     const readThumbnail = vi.fn(async () => new Uint8Array([1, 2, 3]));
     const publish = { current: { readThumbnail } } as unknown as BoundPublish;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: '0'.repeat(32),
       apiToken: 'sentinel',
       projectName: 'aalis',
@@ -532,6 +801,8 @@ describe('作品站编排与假 Pages', () => {
     });
     const siteOrigin = `http://aalis.localhost:${fake.port}`;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: fake.accountId,
       apiToken: token,
       projectName: fake.projectName,
@@ -594,6 +865,8 @@ describe('作品站编排与假 Pages', () => {
     const store = new WorksStore(memoryStorage(new Map()));
     await store.load();
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: 'invalid-account',
       apiToken: 'token',
       projectName: 'aalis',
@@ -653,6 +926,8 @@ describe('作品站编排与假 Pages', () => {
     fake.customDomains.push('aalis.localhost');
     const siteOrigin = `http://aalis.localhost:${fake.port}`;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: fake.accountId,
       apiToken: token,
       projectName: fake.projectName,
@@ -678,6 +953,8 @@ describe('作品站编排与假 Pages', () => {
       deployTimeoutMs: 2000,
     });
     const live = vi.fn();
+    let transient404 = 0;
+    let staleCss = 0;
     const deployer = new WorksDeployer({
       config,
       store,
@@ -688,13 +965,25 @@ describe('作品站编排与假 Pages', () => {
         readThumbnail: async () => new Uint8Array(),
       }),
       live,
+      fetch: (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/index.html' && transient404++ === 0) return Promise.resolve(new Response('', { status: 404 }));
+        if (path === '/assets/site.css' && staleCss++ === 0) return Promise.resolve(new Response('old css'));
+        return fetch(input, init);
+      },
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,
+      convergenceMs: 100,
+      convergencePauseMs: 5,
     });
     try {
       deployer.start();
       await eventually(() => !!store.data?.current.main || !!store.data?.lastFailure);
       expect(store.data?.current.main).toBeDefined();
+      expect(transient404).toBeGreaterThan(1);
+      expect(staleCss).toBeGreaterThan(1);
+      expect(store.data?.paused).toBeUndefined();
+      await eventually(() => live.mock.calls.some(([ids]) => Array.isArray(ids) && ids.length === 0));
       expect(live).toHaveBeenCalledWith([]);
       expect(fake.requestsTo('GET', /^\/v\//).some(request => request.path.includes('?t='))).toBe(true);
       expect(files.get('pluginData:/works-site/state.json')).not.toContain(token);
@@ -719,6 +1008,8 @@ describe('作品站编排与假 Pages', () => {
     fake.queuedMs = 10;
     const siteOrigin = `http://aalis.localhost:${fake.port}`;
     const config: WorksSiteConfig = {
+      targetId: 'works',
+      basePath: '/',
       accountId: fake.accountId,
       apiToken: token,
       projectName: fake.projectName,
@@ -754,13 +1045,14 @@ describe('作品站编排与假 Pages', () => {
       kind: 'html',
       title: `作品 ${id}`,
       summary: '',
-      credit: '来自群友的点子',
       publishedAt: Date.now(),
       files: [{ path: 'index.html', size: html.length, contentType: 'text/html; charset=utf-8' }],
       hasThumbnail: false,
     });
     let published: PublishedItem[] = [];
     let lagOn = false;
+    const warn = vi.fn();
+    const live = vi.fn();
     const deployer = new WorksDeployer({
       config,
       store,
@@ -774,12 +1066,12 @@ describe('作品站编排与假 Pages', () => {
         readFile: async id => (id === firstId ? html : html2),
         readThumbnail: async () => new Uint8Array(),
       }),
-      live: () => {},
+      live,
       fetch: (input, init) =>
         lagOn && String(input) === `${siteOrigin}/index.html`
           ? Promise.resolve(new Response('old cached page', { status: 200 }))
           : fetch(input, init),
-      logger: { info: () => {}, warn: () => {} },
+      logger: { info: () => {}, warn },
       signal: controller.signal,
     });
     try {
@@ -787,18 +1079,27 @@ describe('作品站编排与假 Pages', () => {
       await eventually(() => !!store.data?.current.main);
       await new Promise(resolve => setTimeout(resolve, 60));
       expect(store.data?.alerts.some(alert => alert.kind === 'cache-lag')).toBe(false);
+      live.mockClear();
       lagOn = true;
       const first = make(firstId);
       published = [first];
       deployer.change();
-      await eventually(() => store.data?.current.main?.works.some(item => item.id === first.id) === true, 6000);
-      await eventually(() => store.data?.alerts.some(alert => alert.kind === 'cache-lag') === true, 2000);
+      await eventually(() => !!store.data?.paused, 6000);
+      expect(live).not.toHaveBeenCalledWith([first.id]);
+      expect(store.data?.current.main?.works.some(item => item.id === first.id)).toBe(false);
+      expect(store.data?.alerts.some(alert => alert.kind === 'content')).toBe(true);
       lagOn = false;
+      for (const alert of store.data?.alerts ?? []) if (!alert.acknowledged) await deployer.acknowledge(alert.id);
+      expect(await deployer.resume()).toBe(true);
+      await eventually(() => store.data?.current.main?.works.some(item => item.id === first.id) === true, 6000);
+      await eventually(() => live.mock.calls.some(([ids]) => Array.isArray(ids) && ids.includes(first.id)));
       expect(store.data?.paused).toBeUndefined();
-      expect(fake.deployments.slice(-2).map(item => item.branch)).toEqual([
-        store.data?.groups[first.group].branch,
-        'main',
-      ]);
+      const groupDeployment = fake.deployments.findIndex(
+        item => item.branch === store.data?.groups[first.group].branch,
+      );
+      const mainDeployment = fake.deployments.findLastIndex(item => item.branch === 'main');
+      expect(groupDeployment).toBeGreaterThanOrEqual(0);
+      expect(mainDeployment).toBeGreaterThan(groupDeployment);
       const oldMainId = store.data!.current.main.id;
       fake.intercept(
         'DELETE',
@@ -830,6 +1131,14 @@ describe('作品站编排与假 Pages', () => {
       await eventually(() => !!store.data?.paused, 6000);
       expect(store.data?.alerts.some(alert => alert.kind === 'content')).toBe(true);
       expect(store.data?.history.some(entry => entry.result === 'rolled-back')).toBe(true);
+      const diagnostics = warn.mock.calls
+        .map(([message]) => String(message))
+        .filter(message => message.includes('内容核验'));
+      expect(diagnostics).toHaveLength(2);
+      for (const diagnostic of diagnostics) {
+        expect(diagnostic).toMatch(/文件 \/.* HTTP 200.*SHA-256/);
+        expect(diagnostic).not.toMatch(/test-token-sentinel|\?c=|<script>poisoned<\/script>/);
+      }
     } finally {
       controller.abort();
       await deployer.stop();

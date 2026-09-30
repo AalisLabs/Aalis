@@ -50,6 +50,7 @@ interface RemoteAgentProvider {
 - `createAgent`：用消费方先 `mintAgentId()` 得到的 id 建代理，返回首轮的 `runId`，以及远端首轮开跑的时刻 `startedAt`（毫秒时间戳，远端的时钟；取不到时省略）。远端收到请求就开跑，响应可能要几十秒才回，消费方按 `startedAt` 计这一轮的用时与时长上限。同一个 `agentId` 重试是安全的，消费方可以先把 id 记进账本再调用。
 - `startRun`：在已有代理上开新一轮。它不幂等：结果未知时（读超时、临时故障）重发可能开出两轮，消费方应先 `listRuns` 认领。
 - `followRun`：跟踪一轮直到终态，最后一项必为 `{ kind: 'terminal' }`。断线重连、事件流过期后改为轮询都在提供者内部处理；`progress` 的 `eventId` 供消费方落盘，重启后作为 `lastEventId` 续传。
+  进展可附带 `activity`：`action` 为 `planning`、`responding`、`reading`、`writing`、`command` 或 `tool`，`status` 为 `running`、`completed` 或 `failed`；可选 `tool`、`target`、`summary`、`exitCode` 提供管理端详细动作。它描述最近动作，不表示整件任务的完成比例；旧提供者可省略此字段。`record` 是公开执行日志，可记录代理回复、工具调用和连接事件；消费方应限制它向聊天暴露。
 - `cancelRun`：这一轮已到终态时视为成功。
 - `runCost`：返回 `undefined` 表示费用暂缺（远端还没结算），消费方应稍后重试。`cents` 是计入额度的花费（美分），消费方的日上限与换新都按它判：远端不另收费的用量（如计划内额度）也按实际消耗计，不能写 0。
 - `collectArtifacts`：只取这件任务交付目录下的文件与工程包，去掉前缀后交给消费方的写入口 `sink`。路径不合格、超过上限、取不到下载链接的文件记进 `rejected`，不中断其余文件；临时故障与限流照抛，由消费方整次重来。取回了哪些文件由写入口自己记着。
@@ -70,8 +71,20 @@ interface EgressReport {
 
 type RunStatus = 'creating' | 'running' | 'finished' | 'error' | 'cancelled' | 'expired';
 interface RunState { runId: string; status: RunStatus; resultText?: string }
+interface RunActivity {
+  action: 'planning' | 'responding' | 'reading' | 'writing' | 'command' | 'tool';
+  status: 'running' | 'completed' | 'failed';
+  tool?: string; target?: string; summary?: string; exitCode?: number;
+}
+interface RunLogEntry {
+  type: 'assistant' | 'tool' | 'connection';
+  text?: string; callId?: string; tool?: string;
+  status?: 'running' | 'completed' | 'failed';
+  input?: unknown; output?: unknown;
+}
 type RunProgress =
-  | { kind: 'progress'; eventId: string }
+  | { kind: 'progress'; eventId: string; activity?: RunActivity; record?: RunLogEntry }
+  | { kind: 'log'; record: RunLogEntry }
   | { kind: 'terminal'; state: RunState };
 interface RunCost { cents: number }
 
@@ -88,7 +101,7 @@ interface RemoteAgentSummary { agentId: string; name: string }
 interface RemoteRunSummary { runId: string; status: RunStatus }
 ```
 
-`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。
+`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。`RunLogEntry` 的工具 `input` / `output` 保留结构与细节，仅清洗已知密钥和常见凭据；`sanitizeRunLog` 不能识别任意秘密。`log` 事件没有 SSE id，不推进续传位置。
 
 ### 出网
 

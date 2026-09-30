@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RemoteAgentError, type RemoteRunSummary } from '../../packages/api-remote-agent/src/index.js';
+import {
+  RemoteAgentError,
+  type RemoteRunSummary,
+  type RunActivity,
+} from '../../packages/api-remote-agent/src/index.js';
 import type { SessionConfig } from '../../packages/api-session-manager/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
 import { LEDGER_URI } from '../fixtures/paper.js';
@@ -174,18 +178,21 @@ describe('开轮', () => {
 });
 
 describe('单轮时长上限', () => {
-  it('安全：远端开轮后只发心跳，到 maxRunMinutes 仍调用 cancelRun；终态后费用照常入账', async () => {
+  it('安全：远端开轮后只发心跳，到 maxRunMinutes 仍取消；已有成品与费用照常取回', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
     const t1 = await hub.accept();
     await until(() => hub.task(t1).state === 'running', '开轮');
     const { agentId, runId } = hub.task(t1);
+    a.outputs.set(t1, [{ rel: 'index.html', data: new TextEncoder().encode('<!doctype html><title>第一版</title>') }]);
     await advance(19 * MINUTE);
     expect(a.count('cancelRun')).toBe(0);
     await advance(MINUTE);
     await until(() => hub.task(t1).state === 'cancelled', '到点取消');
     expect(a.calls.filter(c => c.method === 'cancelRun').map(c => c.args)).toEqual([[agentId, runId]]);
     expect(hub.task(t1)).toMatchObject({ cancelledVia: 'timeout', costCents: 10 });
+    expect(a.callsOn('collectArtifacts', agentId ?? '')[0]?.args[1]).toBe(t1);
+    expect(hub.task(t1).artifacts.map(x => x.rel)).toEqual(['index.html']);
     expect(hub.store.data.runs[runId ?? ''].cost).toEqual({ state: 'booked', cents: 10 });
   });
 
@@ -300,6 +307,25 @@ describe('单轮时长上限', () => {
 });
 
 describe('前言', () => {
+  it('驱动从持久发布意图给远端使用可部署成品提示', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const first = await hub.accept();
+    await until(() => hub.task(first).state === 'running', '首件开轮');
+    const second = await hub.accept();
+    expect(hub.task(second).state).toBe('queued');
+    await hub.store.exclusive(async () => {
+      hub.task(second).publication = { target: 'works', title: '作品', summary: '', state: 'pending' };
+      await hub.store.save();
+    });
+    a.finish(hub.task(first).runId ?? '');
+    await until(() => hub.task(second).state === 'running', '发布任务开轮');
+    const prompt = String(a.callsOn('startRun', hub.task(second).agentId ?? '')[0]?.args[1] ?? '');
+    expect(prompt).toContain('最终可部署');
+    expect(prompt).toContain('相对路径');
+    expect(prompt).not.toContain('另附一份预览');
+  });
+
   it('含工作目录、本件交付目录、工程包路径、全部 policyNotes 与原文；不含凭据', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
@@ -363,6 +389,9 @@ describe('配置', () => {
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: { ...DRIVER_CONFIG, maxRunMinutes: 5 } });
     const t1 = await hub.accept();
     await until(() => hub.task(t1).state === 'running', '开轮');
+    const prompt = a.agents.get(hub.task(t1).agentId ?? '')?.prompts[0] ?? '';
+    expect(prompt).toContain('这一轮总时长上限为 5 分钟');
+    expect(prompt).toContain(`尽早把第一版可用成品写入 /opt/out/${t1}/`);
     await advance(5 * MINUTE);
     await until(() => a.count('cancelRun') === 1, '5 分钟到点取消');
   });
@@ -895,6 +924,7 @@ describe('放弃跟踪', () => {
     const t2 = await hub.accept();
     const { agentId, runId } = hub.task(t1);
     expect(await hub.driver.abandon(t1), '取消还没判失败时不能放弃').toMatch(/取消失败/);
+    a.bundles.set(agentId ?? '', new TextEncoder().encode('saved workspace'));
 
     await advance(20 * MINUTE + 101_000);
     await until(() => hub.store.data.papers[PAPER_A_ID].halted?.reason === 'cancel-failed', '停开');
@@ -919,6 +949,47 @@ describe('放弃跟踪', () => {
 });
 
 describe('账本落盘', () => {
+  it('只在动作或状态变化时记录安全进展；旧提供者的无 activity 事件仍续传', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    const taskId = await hub.accept();
+    await until(() => hub.task(taskId).state === 'running', '开轮');
+    const runId = hub.task(taskId).runId ?? '';
+    let eventNumber = 0;
+    const send = (activity?: RunActivity) => {
+      const run = a.runs.get(runId);
+      if (!run) throw new Error('没有轮次');
+      const eventId = `ev-${++eventNumber}`;
+      run.queue.push({ kind: 'progress', eventId, ...(activity ? { activity } : {}) });
+      run.wake?.();
+      return eventId;
+    };
+    const logs = () => hub.logs.filter(l => l.level === 'info' && l.message.includes(`白纸任务 ${taskId} 进展：`));
+    const planning: RunActivity = { action: 'planning', status: 'running' };
+    send(planning);
+    await until(() => hub.task(taskId).progress?.activity.action === 'planning', '规划活动');
+    const firstAt = hub.task(taskId).progress?.at;
+    expect(logs().map(l => l.message)).toEqual([`白纸任务 ${taskId} 进展：规划（进行中）`]);
+    await advance(1000);
+    send(planning);
+    const legacyId = send();
+    await until(() => hub.task(taskId).lastEventId === legacyId, '旧进展事件');
+    expect(hub.task(taskId).progress?.at).toBe(firstAt);
+    expect(logs()).toHaveLength(1);
+    send({ action: 'writing', status: 'running' });
+    await until(() => hub.task(taskId).progress?.activity.action === 'writing', '写入活动');
+    send({ action: 'writing', status: 'completed' });
+    await until(() => hub.task(taskId).progress?.activity.status === 'completed', '写入完成');
+    expect(logs().map(l => l.message)).toEqual([
+      `白纸任务 ${taskId} 进展：规划（进行中）`,
+      `白纸任务 ${taskId} 进展：写入（进行中）`,
+      `白纸任务 ${taskId} 进展：写入（已完成）`,
+    ]);
+    a.finish(runId);
+    await until(() => hub.task(taskId).state === 'done', '任务完成');
+    expect(hub.task(taskId).progress?.activity.status).toBe('completed');
+  });
+
   it('跟踪进展的落盘经账本锁：锁被占着时不写，放开后才写', async () => {
     const a = new ScriptedRemote();
     const files = new Map<string, string | Uint8Array>();

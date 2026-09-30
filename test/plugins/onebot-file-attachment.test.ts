@@ -83,6 +83,15 @@ let httpBase: string;
 beforeAll(async () => {
   setNetworkPolicy({ blockPrivate: false }); // 只为连本机测试服务；afterAll 复原
   httpServer = createServer((req, res) => {
+    if (req.url === '/ok.png') {
+      res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(PNG.byteLength) });
+      res.end(PNG);
+      return;
+    }
+    if (req.url === '/method.png') {
+      res.writeHead(405).end();
+      return;
+    }
     if (req.url === '/big.html') {
       const body = Buffer.alloc(10 * MIB + 1, 0x61);
       res.writeHead(200, { 'content-type': 'text/html', 'content-length': String(body.byteLength) });
@@ -158,7 +167,14 @@ interface Action {
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
 
 /** imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment */
-async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buffer>; imageSender?: boolean } = {}) {
+async function boot(
+  opts: {
+    protocol?: 'v11' | 'v12';
+    files?: Record<string, Buffer>;
+    imageSender?: boolean;
+    replyToSend?: 'ok' | 'fail' | 'hold';
+  } = {},
+) {
   const protocol = opts.protocol ?? 'v11';
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(r => server.once('listening', r));
@@ -170,11 +186,25 @@ async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buf
       }),
   );
   const actions: Action[] = [];
+  const heldReplies: Array<() => void> = [];
   server.on('connection', ws => {
     ws.on('message', raw => {
       const req = JSON.parse(raw.toString()) as Action & { echo?: string };
       actions.push({ action: req.action, params: req.params });
-      if (req.echo) ws.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: SELF }, echo: req.echo }));
+      if (req.echo) {
+        const reply = (status: 'ok' | 'failed') =>
+          ws.send(
+            JSON.stringify({
+              status,
+              retcode: status === 'ok' ? 0 : 100,
+              message: status === 'ok' ? undefined : 'fake send failure',
+              data: { user_id: SELF },
+              echo: req.echo,
+            }),
+          );
+        if (/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'hold') heldReplies.push(() => reply('ok'));
+        else reply(/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'fail' ? 'failed' : 'ok');
+      }
     });
   });
 
@@ -242,6 +272,7 @@ async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buf
     await until(() => JSON.stringify(sent()).includes('哨兵'));
   };
   const failureNotes = () => notes.filter(n => n.message.kind === 'outbound-delivery-failed');
+  const imageNotes = () => notes.filter(n => n.message.kind === 'outbound-image');
   const sendAttachment = async (args: Record<string, unknown>, sessionId = GROUP) => {
     const handler = toolHandlers.get('send_attachment');
     if (!handler) throw new Error('send_attachment 未注册');
@@ -250,7 +281,7 @@ async function boot(opts: { protocol?: 'v11' | 'v12'; files?: Record<string, Buf
       unknown
     >;
   };
-  return { actions, sent, send, flush, warns, notes, failureNotes, sendAttachment };
+  return { actions, sent, send, flush, warns, notes, failureNotes, imageNotes, heldReplies, sendAttachment };
 }
 
 const decode = (file: unknown) => Buffer.from(String(file).slice('base64://'.length), 'base64');
@@ -316,9 +347,9 @@ describe('onebot 出站：文件附件', () => {
     expect(t.failureNotes().map(n => [n.sessionId, n.message.role])).toEqual([[GROUP, 'system']]);
   });
 
-  it('上传失败按投递失败处理', async () => {
+  it('selfId 无匹配连接时不误发到其他机器人', async () => {
     const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
-    // 连接不可用的会话（selfId 对不上）：上传抛错
+    // selfId 对不上：当前适配器不认领该会话
     const other = `onebot:99999:group:20001`;
     await t.send({
       sessionId: other,
@@ -326,8 +357,8 @@ describe('onebot 出站：文件附件', () => {
       attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
       source: 'agent',
     });
-    await until(() => t.failureNotes().length > 0);
-    expect(t.failureNotes()[0].sessionId).toBe(other);
+    await t.flush();
+    expect(t.failureNotes()).toEqual([]);
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
   });
 
@@ -480,11 +511,94 @@ describe('onebot 出站：send_attachment 交来的存储库文件', () => {
   it('超过 10 MiB 的 BMP（send_attachment 放行、实现端不能内联）：不以宿主路径发出，留投递失败记录', async () => {
     const bigBmp = Buffer.concat([BMP, Buffer.alloc(10 * MIB)]);
     const t = await boot({ imageSender: true, files: { 'data:/images/big.bmp': bigBmp } });
-    expect(await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/big.bmp' })).toMatchObject({ ok: true });
+    expect(await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/big.bmp' })).toHaveProperty('error');
     await until(() => t.failureNotes().length > 0);
     await t.flush();
     expect(JSON.stringify(t.actions)).not.toContain('file://');
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+    expect(t.imageNotes()).toEqual([]);
+  });
+});
+
+describe('onebot 出站：send_attachment 投递结果', () => {
+  const imageOnWire = (actions: Action[]) =>
+    actions
+      .filter(a => a.action === 'send_group_msg')
+      .flatMap(a => a.params.message as Array<{ type: string; data: { file?: string } }>)
+      .filter(s => s.type === 'image');
+
+  it('HTTP 405：工具返回错误，平台没有发图，也没有成功归档', async () => {
+    const t = await boot({ imageSender: true });
+    const result = await t.sendAttachment({ kind: 'image', url: `${httpBase}/method.png` });
+    expect(result).toHaveProperty('error');
+    await t.flush();
+    expect(imageOnWire(t.sent())).toEqual([]);
+    expect(t.imageNotes()).toEqual([]);
+  });
+
+  it('拒绝连接：工具返回错误，平台没有发图，也没有成功归档', async () => {
+    const t = await boot({ imageSender: true });
+    const result = await t.sendAttachment({ kind: 'image', url: 'http://127.0.0.1:1/unreachable.png' });
+    expect(result).toHaveProperty('error');
+    await t.flush();
+    expect(imageOnWire(t.sent())).toEqual([]);
+    expect(t.imageNotes()).toEqual([]);
+  });
+
+  it('HTTP PNG：实际 WebSocket 图片消息段携带原字节，OneBot ACK 后工具才成功', async () => {
+    const t = await boot({ imageSender: true, replyToSend: 'hold' });
+    let settled = false;
+    const resultPromise = t.sendAttachment({ kind: 'image', url: `${httpBase}/ok.png` }).then(result => {
+      settled = true;
+      return result;
+    });
+    await until(() => imageOnWire(t.sent()).length > 0);
+    expect(imageOnWire(t.sent())).toHaveLength(1);
+    expect(decode(imageOnWire(t.sent())[0].data.file)).toEqual(PNG);
+    expect(settled, '平台尚未确认时工具不能报告成功').toBe(false);
+    expect(t.imageNotes(), '平台尚未确认时不能成功归档').toEqual([]);
+    for (const ack of t.heldReplies.splice(0)) ack();
+    expect(await resultPromise).toMatchObject({ ok: true });
+    await until(() => t.imageNotes().length > 0);
+    expect(t.imageNotes()).toHaveLength(1);
+  });
+
+  it('OneBot action 返回失败：工具不报告成功，也不成功归档', async () => {
+    const t = await boot({ imageSender: true, replyToSend: 'fail', files: { 'data:/images/a.png': PNG } });
+    const result = await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/a.png' });
+    expect(result).toHaveProperty('error');
+    expect(t.imageNotes()).toEqual([]);
+  });
+
+  it('连接不可用：工具不报告成功，也不成功归档', async () => {
+    const t = await boot({ imageSender: true, files: { 'data:/images/a.png': PNG } });
+    const result = await t.sendAttachment(
+      { kind: 'image', storage_uri: 'data:/images/a.png' },
+      'onebot:99999:group:20001',
+    );
+    expect(result).toHaveProperty('error');
+    expect(t.imageNotes()).toEqual([]);
+    expect(imageOnWire(t.sent())).toEqual([]);
+  });
+
+  it('混合附件部分失败：只归档已投递的 PNG', async () => {
+    const t = await boot({ imageSender: true });
+    const goodRef = `${httpBase}/ok.png`;
+    const badRef = `${httpBase}/method.png`;
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      source: 'agent',
+      attachments: [
+        { kind: 'image', data: goodRef, ref: goodRef },
+        { kind: 'image', data: badRef, ref: badRef },
+      ],
+    });
+    await until(() => imageOnWire(t.sent()).length > 0);
+    await until(() => t.imageNotes().length > 0);
+    expect(imageOnWire(t.sent())).toHaveLength(1);
+    expect(decode(imageOnWire(t.sent())[0].data.file)).toEqual(PNG);
+    expect(t.imageNotes().map(n => n.message.metadata?.ref)).toEqual([goodRef]);
   });
 });
 

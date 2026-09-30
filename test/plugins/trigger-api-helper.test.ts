@@ -209,6 +209,15 @@ describe('createBotNames', () => {
 });
 
 describe('isAddressed：戳一戳', () => {
+  it('旁观互戳不算点名，即使正文中出现 bot 名或 @；戳 bot 才按开关判定', () => {
+    const message = { ...poke('Aalis <at self>'), noticeTargetIsSelf: false };
+    expect(isAddressed(message, ['Aalis'], opts())).toBe(false);
+    expect(isAddressed({ ...message, noticeTargetIsSelf: true }, ['Aalis'], opts())).toBe(true);
+    expect(isAddressed({ ...message, noticeTargetIsSelf: true }, ['Aalis'], opts({ triggerOnPoke: false }))).toBe(
+      false,
+    );
+  });
+
   it('按 triggerOnPoke', () => {
     expect(isAddressed(poke(), NO_NAMES, opts())).toBe(true);
     expect(isAddressed(poke(), NO_NAMES, opts({ triggerOnPoke: false }))).toBe(false);

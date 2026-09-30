@@ -91,6 +91,27 @@ async function hub(opts: { config?: Record<string, unknown>; tasks?: TaskRecord[
 }
 
 describe('paper_send：发出', () => {
+  it.each([
+    'publish:work-1',
+    `paper:${PAPER_ID}:t-00000007`,
+  ])('%s 通知不能发送本房间另一件任务的文件，真人后续仍能主动发送', async source => {
+    const h = await hub();
+    const refused = await h.call(
+      'paper_send',
+      { artifact_id: 'a-00000001' },
+      {
+        sessionId: ROOM,
+        platform: 'onebot',
+        inbound: { source },
+      },
+    );
+    expect(refused.ok).toBe(false);
+    expect(h.outbound).toHaveLength(0);
+    expect(h.ledger().tasks[MINE.id].delivered).toBe(false);
+    expect(await h.call('paper_send', { artifact_id: 'a-00000001' }, human())).toMatchObject({ ok: true });
+    expect(h.outbound).toHaveLength(1);
+  });
+
   it('登记在 paper 分组、不声明 risk', async () => {
     const h = await hub();
     const tool = h.tools.get('paper_send');

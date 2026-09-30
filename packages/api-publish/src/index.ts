@@ -93,6 +93,8 @@ export interface PublishOrigin {
 
 export interface NominateInput {
   origin: PublishOrigin;
+  /** 同一 producer 内稳定的提交键；重试须交付完全相同的来源、文字与文件字节。 */
+  submissionKey?: string;
   /** 隔离组键（不透明）：同组作品可以同源，不同组绝不同源 */
   group: string;
   /** owner 可见的组称呼 */
@@ -103,15 +105,14 @@ export interface NominateInput {
   title: string;
   /** 0–300 字 */
   summary: string;
-  /** 署名，由提名方给 */
-  credit: string;
   files: PublishFile[];
   /** 封面（只收位图）：照常审核，只用来生成缩略图，不作为作品文件上站 */
   cover?: Uint8Array;
 }
 
-/** refused 只写类别，不含路径与文件名；fileIndex 是出问题的 files 下标（从 0 起），-1 为封面 */
-export type NominateResult = { id: string } | { refused: string; fileIndex?: number };
+/** refused 只写类别，不含路径与文件名；fileIndex 是出问题的 files 下标（从 0 起），-1 为封面。
+ * retryAfterMs 仅用于临时拒绝（配额、服务停机、快照暂时写失败），表示从本次响应起至少等待的毫秒数；缺省表示永久拒绝。 */
+export type NominateResult = { id: string } | { refused: string; fileIndex?: number; retryAfterMs?: number };
 
 export type WorkKind = 'media' | 'html';
 
@@ -123,7 +124,6 @@ export interface PublishedItem {
   kind: WorkKind;
   title: string;
   summary: string;
-  credit: string;
   publishedAt: number;
   files: Array<{ path: string; size: number; contentType: string }>;
   /** 生成得了缩略图时为真 */
@@ -145,14 +145,27 @@ export type ItemState =
 export interface PublishSurface {
   /** 展示面名，与 NominateInput.surfaces、listPublished 的参数对应 */
   name: string;
+  /** 管理界面与发布目标选择器中的名称。 */
+  label?: string;
+  /** 已配置的 https 发布目录，末尾带 /；有值时上线网址必须严格落在该目录的 w/<id>/。 */
+  baseUrl?: string;
   /** 作品在这个展示面上的公开网址（上线通知里给出） */
   urlFor(id: string): string;
   /** 现在能不能把变化送上线；暂停、鉴权失败、状态文件读失败、连续部署失败时给类别 */
   health(): { ok: true } | { ok: false; reason: string };
 }
 
+/** 发布目标的只读快照；不包含部署凭据或内部调用句柄。 */
+export interface PublishSurfaceInfo {
+  name: string;
+  label?: string;
+  baseUrl?: string;
+  available: boolean;
+  reason?: string;
+}
+
 export interface SurfaceBinding {
-  /** 展示面确认这些作品已经在线（部署的切换确认与内容核对都通过）；可重复报，发布服务只处理还没通知过的 */
+  /** 展示面确认这些作品已经在线（部署的切换确认与内容核对都通过）；可重复报，发布服务逐目标只处理一次 */
   live(ids: readonly string[]): void;
   /** 撤下这个展示面；幂等 */
   detach(): void;
@@ -162,10 +175,12 @@ export interface SurfaceBinding {
 
 /** 提供者契约。变更订阅与展示面不直接在这里登记：经 {@link publish} 的绑定门面登记，随激活撤回 */
 export interface PublishService {
+  /** 当前已登记的发布目标；调用方仍须按自己的授权范围筛选。 */
+  listSurfaces(): PublishSurfaceInfo[];
   /** 同步做静态检查，不合格直接拒；合格即入审核队列 */
   nominate(input: NominateInput): Promise<NominateResult>;
-  /** 队列与账本里的条目（待审、已发布、已撤下）；拒绝、超时、失败的只在审计里 */
-  get(id: string): { state: ItemState; origin: PublishOrigin; title: string } | undefined;
+  /** 队列、账本和有提交键的终态；live 仅在所有选定展示面核验上线后为 true。调用方须核对来源。 */
+  get(id: string): { state: ItemState; origin: PublishOrigin; title: string; live?: boolean } | undefined;
   /** 这个展示面上已发布的作品 */
   listPublished(surface: string): PublishedItem[];
   /** 按账本 sha256 核对；不符时把这件作品撤下（by: integrity）并抛 {@link IntegrityError} */
@@ -258,6 +273,23 @@ export const WORK_IFRAME_SANDBOX = 'allow-scripts';
 const ORIGIN = /^https?:\/\/[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;
 /** 以斜杠开头与结尾的目录；段只含非保留字符，不是点段 */
 const BASE_PATH = /^\/(?:(?!\.{1,2}\/)[A-Za-z0-9._~-]+\/)*$/;
+
+/** 从受控发布目录构造作品地址；拒绝凭据、查询串、片段、非规范路径与非法作品编号。 */
+export function publicWorkUrl(baseUrl: string, id: string): string {
+  const url = new URL(baseUrl);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    baseUrl.includes('?') ||
+    baseUrl.includes('#') ||
+    url.href !== baseUrl ||
+    !BASE_PATH.test(url.pathname) ||
+    !WORK_ID_PATTERN.test(id)
+  )
+    throw new TypeError('发布目录或作品编号不合法');
+  return `${baseUrl}w/${id}/`;
+}
 
 function origin(value: string): string {
   if (!ORIGIN.test(value)) throw new TypeError('来源不是 http(s)://主机[:端口]，拼不进响应头');

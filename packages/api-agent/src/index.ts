@@ -137,6 +137,11 @@ declare module '@aalis/api-hooks' {
       platform?: string;
       triggerType?: IncomingMessage['triggerType'];
       /**
+       * 本回合入站消息的系统侧来源标识；真人消息缺省。
+       * 与 IncomingMessage.source 同义，供钩子区分内部注入与真人回合。
+       */
+      source?: IncomingMessage['source'];
+      /**
        * 干跑标记:本次只为估算上下文体积(token:request 快照),不会真正调用 LLM。
        * 昂贵/有副作用的注入者(向量检索、档案加载)据此跳过——代价是快照略微
        * 低估这些块的体积,真实回合的统计不受影响。

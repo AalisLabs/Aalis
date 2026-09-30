@@ -10,12 +10,58 @@ function read(raw: Record<string, unknown>) {
 }
 
 describe('paper 配置契约', () => {
-  it('无效预算按关闭远端任务处理，低于时长下限回落默认值', () => {
-    const { cfg, warn } = read({ globalDailyCents: -1, reserveDefaultCents: 0, maxRunMinutes: 0.002 });
-    expect(cfg.globalDailyCents).toBe(0);
+  it('每纸日额度缺省不额外限制，具名纸不继承默认日额度，可单独设限或设零禁用', () => {
+    expect(read({}).cfg.defaults.dailyCents).toBeUndefined();
+    const { cfg } = read({
+      defaults: { dailyCents: 5000 },
+      papers: [{ name: 'inherit' }, { name: 'small', dailyCents: 1000 }, { name: 'closed', dailyCents: 0 }],
+    });
+    expect(cfg.defaults.dailyCents).toBe(5000);
+    expect(cfg.papers.get('inherit')?.dailyCents).toBeUndefined();
+    expect(cfg.papers.get('small')?.dailyCents).toBe(1000);
+    expect(cfg.papers.get('closed')?.dailyCents).toBe(0);
+  });
+
+  it.each([
+    -1,
+    0.5,
+    'bad',
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])('错误的每纸额度 %s 拒绝配置或具名项，不能回退成无限制', value => {
+    expect(() => read({ defaults: { dailyCents: value } })).toThrow();
+    expect(() => read({ globalDailyCents: value })).toThrow();
+    const { cfg, warn } = read({ papers: [{ name: 'wrong', dailyCents: value }] });
+    expect(cfg.papers.has('wrong')).toBe(false);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('发布目标按纸继承，显式空禁止发布，默认目标必须留在白名单内', () => {
+    const { cfg } = read({
+      defaults: { publishTargets: 'works, works-east, works', defaultPublishTarget: 'works-east' },
+      papers: [
+        { name: 'inherit' },
+        { name: 'none', publishTargets: '', defaultPublishTarget: '' },
+        { name: 'other', publishTargets: 'works-west', defaultPublishTarget: 'works-east' },
+      ],
+    });
+    expect(cfg.defaults.publishTargets).toEqual(['works', 'works-east']);
+    expect(cfg.defaults.defaultPublishTarget).toBe('works-east');
+    expect(cfg.papers.get('inherit')?.publishTargets).toEqual(['works', 'works-east']);
+    expect(cfg.papers.get('none')?.publishTargets).toEqual([]);
+    expect(cfg.papers.get('none')?.defaultPublishTarget).toBeUndefined();
+    expect(cfg.papers.get('other')?.publishTargets).toEqual(['works-west']);
+    expect(cfg.papers.get('other')?.defaultPublishTarget).toBeUndefined();
+  });
+
+  it('全局金额缺省不限制，零不被当作缺省；预留和时长仍有默认值', () => {
+    const { cfg, warn } = read({ reserveDefaultCents: 0, maxRunMinutes: 0.002 });
+    expect(cfg.globalDailyCents).toBeUndefined();
+    expect(read({ globalDailyCents: null }).cfg.globalDailyCents).toBeUndefined();
+    expect(read({ globalDailyCents: 0 }).cfg.globalDailyCents).toBe(0);
     expect(cfg.reserveDefaultCents).toBe(50);
     expect(cfg.maxRunMinutes).toBe(20);
-    expect(cfg.worksCredit).toBe('来自群友的点子');
+    expect(cfg).not.toHaveProperty('worksCredit');
     expect(warn).toHaveBeenCalled();
   });
 

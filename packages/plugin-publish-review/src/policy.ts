@@ -18,7 +18,11 @@ export interface ReviewResult {
 
 type ReviewDecision = { state: 'approved' | 'awaiting-owner' } | { state: 'failed'; reasons: readonly string[] };
 
-export function decideReview(config: { manualReview: boolean }, result: ReviewResult): ReviewDecision {
+export function decideReview(
+  config: { manualReview: boolean; reviewEnabled?: boolean },
+  result: ReviewResult,
+): ReviewDecision {
   if (result.verdict === 'failed') return { state: 'failed', reasons: result.reasons };
+  if (config.reviewEnabled === false) return { state: 'approved' };
   return !config.manualReview && result.verdict === 'allow' ? { state: 'approved' } : { state: 'awaiting-owner' };
 }

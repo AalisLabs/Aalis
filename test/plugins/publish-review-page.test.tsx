@@ -82,7 +82,6 @@ it('真实审核页面显示统计和说明；点击预览后出现可点链接�
     surfaces: ['works'],
     title: '网页作品',
     summary: '',
-    credit: '',
     kind: 'html',
     files: [],
     hasCover: false,

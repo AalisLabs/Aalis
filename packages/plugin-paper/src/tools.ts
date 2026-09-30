@@ -22,6 +22,7 @@ import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
 import type { PaperDriver } from './driver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import { currentProgress } from './progress.js';
 import {
   actorKey,
   checkEligibility,
@@ -31,6 +32,7 @@ import {
   type RoomPaper,
   resolveRoomPaper,
 } from './rooms.js';
+import type { TaskJournal } from './task-journal.js';
 import { describe, formatSize, truncate } from './util.js';
 
 const MAX_TEXT = 1000;
@@ -71,6 +73,7 @@ const REFUSED_EXTENSIONS: ReadonlyArray<{ exts: readonly string[]; reason: strin
 ];
 
 interface PaperToolDeps {
+  journal?: TaskJournal;
   tools: BoundTools;
   sessionManager: ServiceRef<SessionManagerService>;
   remote: ServiceRef<RemoteAgentProvider>;
@@ -118,14 +121,6 @@ function sanitizeName(value: unknown): string {
     .replace(/\s+/gu, ' ')
     .trim();
   return codePoints(cleaned).slice(0, MAX_NAME).join('').trim();
-}
-
-/**
- * 回显中和尖括号：onebot 出站对所有来源都按 `<image url>`、`<video url>`、`<at>` 等标记解析，
- * 不中和的话回显会被渲染成图片、视频或 @（包括 `<at id="all">`），群里看到的就和发给远端的正文不一致。
- */
-function neutralize(s: string): string {
-  return s.replace(/</g, '＜').replace(/>/g, '＞');
 }
 
 function byCreated(a: TaskRecord, b: TaskRecord): number {
@@ -200,15 +195,6 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     await deps.events.emit('outbound:message', message);
   }
 
-  async function echo(ctx: ToolCallContext, name: string, text: string): Promise<void> {
-    await dispatch({
-      sessionId: ctx.sessionId,
-      platform: ctx.platform,
-      content: neutralize(`交给远端：${name}\n${text}`),
-      source: 'system',
-    });
-  }
-
   async function paperTask(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
     if (!text) return fail('text 不能为空');
@@ -216,10 +202,25 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     if (length > MAX_TEXT) return fail(`text 最多 ${MAX_TEXT} 字，现在 ${length} 字`);
     const name = sanitizeName(args.name);
     if (!name) return fail('name 不能为空（去掉控制字符之后）');
+    if (args.publish !== undefined && typeof args.publish !== 'boolean') return fail('publish 须为布尔值');
+    if (args.target !== undefined && typeof args.target !== 'string') return fail('target 须为发布目标 ID');
+    if (args.target !== undefined && args.publish === false) return fail('指定 target 时不能设置 publish: false');
 
     const entered = await enter(ctx, 'initiate');
     if ('refused' in entered) return fail(entered.refused);
     const { paper } = entered;
+    let publication: TaskRecord['publication'];
+    if (args.publish !== false) {
+      const allowed = paper.spec.publishTargets;
+      if (allowed.length === 0) return fail('这块白纸未获准发布作品');
+      const target =
+        (typeof args.target === 'string' ? args.target.trim() : '') ||
+        paper.spec.defaultPublishTarget ||
+        (allowed.length === 1 ? allowed[0] : '');
+      if (!target) return fail('这块白纸有多个发布目标，请明确选择 target');
+      if (!allowed.includes(target)) return fail('这块白纸未获准使用该发布目标');
+      publication = { target, title: name, summary: '', state: 'pending' };
+    }
     const remote = await checkRemote({
       paper,
       remote: deps.remote,
@@ -229,7 +230,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     });
     if ('unavailable' in remote) return fail(remote.unavailable);
 
-    let accepted = false;
+    let accepted: string | undefined;
     const result = await ledger.exclusive(async () => {
       const now = deps.now();
       const day = dayKey(now, cfg.budgetTimeZone);
@@ -239,10 +240,12 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       const budget = canStart(
         ledger.data,
         day,
+        paper.paperId,
         ctx.sessionId,
         user,
         {
           globalCents: cfg.globalDailyCents,
+          paperCents: paper.spec.dailyCents,
           roomCents: paper.room.remoteAgentRoomDailyCents,
           userCents: paper.room.remoteAgentUserDailyCents,
           userTasks: paper.room.remoteAgentUserDailyTasks,
@@ -260,12 +263,6 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         return fail(`你在这块白纸上已有 ${maxPerUser} 件未结束的任务（每人上限 ${maxPerUser}），等做完再交`);
       }
 
-      try {
-        await echo(ctx, name, text);
-      } catch (err) {
-        return fail(`回显没有发出去，任务未受理：${describe(err)}`);
-      }
-
       const id = newTaskId(ledger);
       ledger.data.tasks[id] = {
         id,
@@ -279,8 +276,9 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         createdAt: now,
         artifacts: [],
         delivered: false,
+        ...(publication ? { publication } : {}),
       };
-      ledger.data.reserves[id] = { cents: reserve, day, room: ctx.sessionId, user };
+      ledger.data.reserves[id] = { cents: reserve, day, paperId: paper.paperId, room: ctx.sessionId, user };
       const users = daySpend(ledger.data, day).users;
       users[user] ??= { cents: 0, tasks: 0 };
       const counts = users[user];
@@ -295,10 +293,30 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         return fail('白纸账本写入失败，任务未受理');
       }
       deps.logger.info(`白纸受理任务 ${id}（${paper.paperId}，房间 ${ctx.sessionId}，发起者 ${user}）`);
-      accepted = true;
-      return done({ taskId: id, position: queueOf(paper.paperId).findIndex(t => t.id === id) + 1 });
+      accepted = id;
+      return done({
+        taskId: id,
+        position: queueOf(paper.paperId).findIndex(t => t.id === id) + 1,
+        ...(publication
+          ? {
+              publication: { target: publication.target, state: publication.state },
+              message: '后台将自动创作、按配置审核并上线；线上核验通过后通知本会话，无需再调用提名或发布工具。',
+            }
+          : {}),
+      });
     });
-    if (accepted) deps.kick(paper.paperId);
+    if (accepted) {
+      await deps.journal?.record(accepted, 'task', {
+        type: 'task',
+        name,
+        text,
+        room: ctx.sessionId,
+        paperId: paper.paperId,
+        createdAt: ledger.data.tasks[accepted]?.createdAt,
+        publication,
+      });
+      deps.kick(paper.paperId);
+    }
     return result;
   }
 
@@ -335,10 +353,21 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         name: t.name,
         text: t.text,
         state: t.state,
+        ...(currentProgress(t) ? { progress: currentProgress(t) } : {}),
+        ...(t.publication
+          ? {
+              publication: {
+                target: t.publication.target,
+                state: t.publication.state,
+                ...(t.publication.workId ? { workId: t.publication.workId } : {}),
+                ...(t.publication.reason ? { reason: t.publication.reason } : {}),
+              },
+            }
+          : {}),
         ...(position > 0 ? { position } : {}),
         ...(t.startedAt !== undefined ? { durationSec: Math.round(((t.endedAt ?? now) - t.startedAt) / 1000) } : {}),
         ...(t.costCents !== undefined ? { costCents: t.costCents } : {}),
-        ...(t.artifacts.length > 0
+        ...(t.artifacts.length > 0 && (!t.publication || (t.publication.state === 'failed' && !t.publication.workId))
           ? { artifacts: t.artifacts.map(a => ({ id: a.id, type: a.type, sizeBytes: a.sizeBytes })) }
           : {}),
         ...(t.error ? { error: t.error } : {}),
@@ -353,7 +382,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     }
     // 远端说明放在所有宿主写的内容之后：不可信框声明正文延续到结果末尾
     const notes = mine
-      .filter(t => t.resultText)
+      .filter(t => t.resultText && !t.publication)
       .map(t => wrapUntrustedContent(truncate(t.resultText ?? '', STATUS_NOTE_MAX), `远端代理对任务 ${t.id} 的说明`));
     return [JSON.stringify(summary, null, 2), ...notes].join('\n\n');
   }
@@ -389,6 +418,11 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     );
     const artifact = task?.artifacts.find(a => a.id === artifactId);
     if (!task || !artifact) return fail(`本房间的白纸上没有成品 ${artifactId}`);
+    const source = ctx.inbound?.source;
+    if (source?.startsWith('publish:')) return fail('作品上线通知回合只交付对应作品链接，不发送其他任务的文件');
+    if (source?.startsWith('paper:') && source !== `paper:${task.paperId}:${task.id}`)
+      return fail('白纸完成通知只能发送本次通知对应任务的成品，不能夹带其他任务的文件');
+    if (task.publication) return fail('这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件');
     if (task.artifactsCleared) return fail(`成品 ${artifactId} 已随白纸清空删除`);
     const refused = sendRefusal(artifact, cfg);
     if (refused) return fail(refused);
@@ -426,7 +460,12 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     });
   }
 
-  tools.registerGroup({ name: 'paper', label: '白纸', description: '把任务交给远端代理并取回成品' });
+  tools.registerGroup({
+    name: 'paper',
+    label: '白纸',
+    description:
+      '委托远端代理后台创作网页、图片、动画等项目，也可继续修改已有工程；默认按白纸配置审核并发布，显式选择只创作可取回成品',
+  });
 
   tools.register({
     groups: ['paper'],
@@ -435,16 +474,27 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       function: {
         name: 'paper_task',
         description:
-          '把一件要写代码、做网页、做图或动画的任务交给远端代理（白纸）去做。只在群友当面提出需求时用；' +
-          '原文会先在本群回显，完成后宿主会在本群通知你，再用 paper_send 按成品编号发回。每件任务都花钱，有每日上限。',
+          '把一件要写代码、做网页、做图或动画的任务交给远端代理（白纸）去做。只在用户当面提出需求时用；' +
+          '默认自动创作、按配置审核、发布并核验，成功后通知作品链接，无需再调提名或发布工具。' +
+          '用户明确要求私下交付、交付文件或仅修改工程，或成品不适合站点发布时，显式传 publish:false；完成后通知，再用 paper_send 发可发送的成品。' +
+          '受理后自然告知用户任务已提交，不复述完整任务原文。每件任务都花钱，有每日上限。',
         parameters: {
           type: 'object',
           properties: {
             text: {
               type: 'string',
-              description: `交给远端的任务原文，最多 ${MAX_TEXT} 字：写清要做什么、交付什么（如单个 index.html、GIF、MP4）`,
+              description: `本次创作需求，最多 ${MAX_TEXT} 字：忠实保留用户的目标、明确风格与交付要求，补充完成任务必需的事实；用户未指定的视觉布局交给创作代理，不擅加固定审美、单文件或无外部资源限制。你的设计建议须标明为建议，不能冒充用户要求。`,
             },
             name: { type: 'string', description: `简短的任务名，最多 ${MAX_NAME} 字` },
+            publish: {
+              type: 'boolean',
+              description:
+                '省略或 true 默认按配置审核并发布；只有显式 false 才只创作、不公开（私下/文件交付、仅修改工程或不适合站点发布时）',
+            },
+            target: {
+              type: 'string',
+              description: '可选发布目标 ID；省略使用白纸默认目标，只有多个目标且未设默认时才需选择',
+            },
           },
           required: ['text', 'name'],
         },
@@ -461,7 +511,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         name: 'paper_status',
         description:
           '查看本房间所用白纸上排队、进行中与 24 小时内结束的任务：原文、状态、用时、费用与成品清单。' +
-          '同一块白纸上别的房间的任务只给件数。给 task_id 时只看本房间的这一件（含远端说明）。',
+          '自动上线任务另外显示发布进度，done 只代表创作结束；发布任务不返回原始说明。' +
+          '同一块白纸上别的房间的任务只给件数。给 task_id 时只看本房间的这一件。',
         parameters: {
           type: 'object',
           properties: { task_id: { type: 'string', description: '可选：任务编号（t-开头）' } },

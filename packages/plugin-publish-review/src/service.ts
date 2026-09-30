@@ -6,6 +6,8 @@ import {
   type PublishOrigin,
   type PublishService,
   type PublishSurface,
+  type PublishSurfaceInfo,
+  publicWorkUrl,
   type SurfaceBinding,
   WORK_ID_PATTERN,
 } from '@aalis/api-publish';
@@ -20,6 +22,7 @@ const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const DELAY_NOTICE_MS = 30 * 60_000;
+const QUOTA_RETRY_MS = 30_000;
 const bytes = (value: string | Buffer) => new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value);
 const itemRoot = (id: string) => `${ITEM_ROOT}/${id}`;
 const src = (id: string, path: string) => `${itemRoot(id)}/src/${path}`;
@@ -27,6 +30,14 @@ const out = (id: string, path: string) => `${itemRoot(id)}/out/${path}`;
 const publicFile = (id: string, path: string) => `${PUBLIC_ROOT}/${id}/files/${path}`;
 const publicThumb = (id: string) => `${PUBLIC_ROOT}/${id}/thumb.png`;
 const sourceKey = (origin: PublishOrigin) => origin.notify?.sessionId ?? origin.producer;
+const SUBMISSION_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const submissionSlot = (producer: string, key: string) => JSON.stringify([producer, key]);
+const outputPolicy = (config: ReviewConfig): NonNullable<QueueItem['outputPolicy']> =>
+  !config.reviewEnabled ? 'off' : config.manualReview ? 'manual' : 'auto';
+const allSurfacesLive = (item: LedgerItem): boolean =>
+  item.liveSurfaces
+    ? item.surfaces.every(name => Object.hasOwn(item.liveSurfaces!, name))
+    : item.surfaces.length === 1 && item.live === true;
 
 async function hash(value: Uint8Array): Promise<string> {
   const copy = new Uint8Array(value.length);
@@ -34,6 +45,37 @@ async function hash(value: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', copy)), byte =>
     byte.toString(16).padStart(2, '0'),
   ).join('');
+}
+
+async function nominationFingerprint(input: NominateInput, oldCredit?: string): Promise<string> {
+  const files = await Promise.all(input.files.map(async file => [file.path, await hash(file.bytes)]));
+  const cover = input.cover ? await hash(input.cover) : null;
+  return hash(
+    Buffer.from(
+      JSON.stringify({
+        origin: {
+          producer: input.origin.producer,
+          ref: input.origin.ref,
+          label: input.origin.label,
+          notify: input.origin.notify
+            ? {
+                sessionId: input.origin.notify.sessionId,
+                platform: input.origin.notify.platform,
+              }
+            : null,
+          actorKey: input.origin.actorKey ?? null,
+        },
+        group: input.group,
+        groupLabel: input.groupLabel,
+        surfaces: input.surfaces,
+        title: input.title,
+        summary: input.summary,
+        ...(oldCredit === undefined ? {} : { credit: oldCredit }),
+        files,
+        cover,
+      }),
+    ),
+  );
 }
 
 function newId(): string {
@@ -49,7 +91,7 @@ interface ReviewServiceDeps {
   now?: () => number;
   signal?: AbortSignal;
   /** 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。 */
-  notice?: (origin: PublishOrigin, content: string, id: string) => unknown;
+  notice?: (origin: PublishOrigin, content: string, id: string, title?: string) => unknown;
 }
 
 /** 审核账本与发布边界：流水经构造注入，宿主负责调度与能力装配。 */
@@ -74,7 +116,7 @@ export class PublishReviewService implements PublishService {
   async nominate(input: NominateInput): Promise<NominateResult> {
     const { store, storage, config } = this.#d;
     return store.exclusive(async () => {
-      if (this.#stopped) return { refused: '作品审核已停止' };
+      if (this.#stopped) return { refused: '作品审核已停止', retryAfterMs: QUOTA_RETRY_MS };
       if (store.failure) return { refused: store.failure };
       // 验证与异步落盘必须读同一份字节；调用方仍可持有并修改原 Uint8Array。
       const snapshot: NominateInput = {
@@ -84,19 +126,44 @@ export class PublishReviewService implements PublishService {
         files: input.files.map(file => ({ path: file.path, bytes: new Uint8Array(file.bytes) })),
         cover: input.cover ? new Uint8Array(input.cover) : undefined,
       };
+      if (snapshot.submissionKey !== undefined && !SUBMISSION_KEY.test(snapshot.submissionKey))
+        return { refused: '提交键不合规' };
+      const slot =
+        snapshot.submissionKey === undefined
+          ? undefined
+          : submissionSlot(snapshot.origin.producer, snapshot.submissionKey);
+      const fingerprint = slot === undefined ? undefined : await nominationFingerprint(snapshot);
+      if (slot !== undefined) {
+        const previous = store.data.submissions[slot];
+        if (previous) {
+          if (previous.fingerprint === fingerprint) return { id: previous.id };
+          // 旧账本的指纹包含署名；只从旧记录读取一次以识别相同投稿。
+          const oldItem = store.data.queue[previous.id] ?? store.data.ledger[previous.id];
+          const oldCredit = oldItem && 'credit' in oldItem ? oldItem.credit : undefined;
+          if (
+            typeof oldCredit === 'string' &&
+            previous.fingerprint === (await nominationFingerprint(snapshot, oldCredit))
+          )
+            return { id: previous.id };
+          return { refused: '提交键对应的作品内容已变更' };
+        }
+      }
       const checked = checkNomination(snapshot, config, new Set(this.#surfaces.keys()));
       if ('refused' in checked) return checked;
       const queued = Object.values(store.data.queue);
       const originKey = sourceKey(snapshot.origin);
-      if (queued.length >= config.limits.maxPending) return { refused: '待审总数已达上限' };
+      if (queued.length >= config.limits.maxPending)
+        return { refused: '待审总数已达上限', retryAfterMs: QUOTA_RETRY_MS };
       if (queued.filter(item => sourceKey(item.origin) === originKey).length >= config.limits.maxPendingPerOrigin)
-        return { refused: '这个来源待审作品已达上限' };
-      const recent = store.data.nominations.filter(
-        entry => entry.source === originKey && entry.at >= this.#now() - DAY,
-      );
-      if (recent.length >= config.limits.maxDailyPerOrigin) return { refused: '这个来源今天提名数已达上限' };
+        return { refused: '这个来源待审作品已达上限', retryAfterMs: QUOTA_RETRY_MS };
+      const now = this.#now();
+      const recent = store.data.nominations.filter(entry => entry.source === originKey && entry.at >= now - DAY);
+      if (recent.length >= config.limits.maxDailyPerOrigin) {
+        const expiry = [...recent].sort((a, b) => a.at - b.at)[recent.length - config.limits.maxDailyPerOrigin].at;
+        return { refused: '这个来源今天提名数已达上限', retryAfterMs: Math.max(1, expiry + DAY - now + 1) };
+      }
       let id = newId();
-      while (store.data.queue[id] || store.data.ledger[id]) id = newId();
+      while (store.data.queue[id] || store.data.ledger[id] || store.data.terminal[id]) id = newId();
       const item: QueueItem = {
         id,
         state: 'queued',
@@ -106,7 +173,6 @@ export class PublishReviewService implements PublishService {
         surfaces: snapshot.surfaces,
         title: checked.title,
         summary: checked.summary,
-        credit: checked.credit,
         kind: checked.kind,
         files: snapshot.files.map(file => ({
           path: file.path,
@@ -114,19 +180,20 @@ export class PublishReviewService implements PublishService {
           contentType: contentType(file.path),
         })),
         hasCover: !!snapshot.cover,
-        nominatedAt: this.#now(),
+        nominatedAt: now,
       };
       try {
         for (const file of snapshot.files) await storage.writeFile(src(id, file.path), Buffer.from(file.bytes));
         if (snapshot.cover) await storage.writeFile(src(id, '_cover'), Buffer.from(snapshot.cover));
         const next = store.copy();
         next.queue[id] = item;
-        next.nominations = next.nominations.filter(entry => entry.at >= this.#now() - DAY);
+        if (slot !== undefined && fingerprint !== undefined) next.submissions[slot] = { id, fingerprint };
+        next.nominations = next.nominations.filter(entry => entry.at >= now - DAY);
         next.nominations.push({ source: originKey, at: item.nominatedAt });
         await store.save(next, this.#event(id, 'nominated'));
       } catch {
         await storage.delete(itemRoot(id)).catch(() => {});
-        return { refused: '提名快照无法保存' };
+        return { refused: '提名快照无法保存', retryAfterMs: QUOTA_RETRY_MS };
       }
       return { id };
     });
@@ -134,8 +201,19 @@ export class PublishReviewService implements PublishService {
 
   get(id: string) {
     if (!WORK_ID_PATTERN.test(id)) return undefined;
-    const item = this.#d.store.data.queue[id] ?? this.#d.store.data.ledger[id];
-    return item ? { state: item.state, origin: structuredClone(item.origin), title: item.title } : undefined;
+    const { queue, ledger, terminal } = this.#d.store.data;
+    const item = queue[id] ?? ledger[id] ?? terminal[id];
+    return item
+      ? {
+          state: item.state,
+          origin: structuredClone(item.origin),
+          title: item.title,
+          live:
+            ledger[id]?.state === 'published'
+              ? allSurfacesLive(ledger[id]) && this.#currentSurfacesMatch(ledger[id])
+              : undefined,
+        }
+      : undefined;
   }
 
   listPublished(surface: string): PublishedItem[] {
@@ -150,11 +228,22 @@ export class PublishReviewService implements PublishService {
         kind: item.kind,
         title: item.title,
         summary: item.summary,
-        credit: item.credit,
         publishedAt: item.publishedAt,
         files: item.files.map(({ path, size, contentType }) => ({ path, size, contentType })),
         hasThumbnail: item.hasThumbnail,
       }));
+  }
+
+  listSurfaces(): PublishSurfaceInfo[] {
+    return [...this.#surfaces.values()].map(({ surface }) => {
+      const info = { name: surface.name, label: surface.label, baseUrl: surface.baseUrl };
+      try {
+        const health = surface.health();
+        return health.ok ? { ...info, available: true } : { ...info, available: false, reason: health.reason };
+      } catch {
+        return { ...info, available: false, reason: '发布目标状态暂不可核对' };
+      }
+    });
   }
 
   processNext(): Promise<void> {
@@ -180,8 +269,14 @@ export class PublishReviewService implements PublishService {
       if (!first) return undefined;
       const next = store.copy();
       next.queue[first.id].state = 'checking';
+      if (next.queue[first.id].outHashes && next.queue[first.id].outputPolicy !== outputPolicy(this.#d.config)) {
+        delete next.queue[first.id].outHashes;
+        delete next.queue[first.id].thumbnailHash;
+        delete next.queue[first.id].review;
+        delete next.queue[first.id].outputPolicy;
+      }
       await store.save(next);
-      return first;
+      return next.queue[first.id];
     });
     if (!item || this.#stopped) return;
     if (item.outHashes) {
@@ -202,7 +297,6 @@ export class PublishReviewService implements PublishService {
         id: item.id,
         title: item.title,
         summary: item.summary,
-        credit: item.credit,
         files,
         cover,
         signal: this.#d.signal ?? new AbortController().signal,
@@ -229,7 +323,6 @@ export class PublishReviewService implements PublishService {
         surfaces: item.surfaces,
         title: item.title,
         summary: item.summary,
-        credit: item.credit,
         files: result.files,
       },
       this.#d.config,
@@ -283,6 +376,7 @@ export class PublishReviewService implements PublishService {
       if (this.#stopped || store.data.queue[item.id]?.state !== 'checking') return false;
       const next = store.copy();
       next.queue[item.id].outHashes = hashes;
+      next.queue[item.id].outputPolicy = outputPolicy(this.#d.config);
       next.queue[item.id].thumbnailHash = hashes['_thumb.png'];
       next.queue[item.id].review = {
         flags: [...(review?.flags ?? [])],
@@ -300,8 +394,9 @@ export class PublishReviewService implements PublishService {
         this.#queueNotice(
           next,
           item.origin,
-          `作品 ${item.id} 要等 owner 审核，最长 ${this.#d.config.ownerTimeoutHours} 小时，有结果会再通知`,
+          `作品要等 owner 审核，最长 ${this.#d.config.ownerTimeoutHours} 小时，有结果会再通知`,
           item.id,
+          item.title,
         );
       await store.save(next, this.#event(item.id, decision.state === 'awaiting-owner' ? 'awaiting-owner' : 'approved'));
       return true;
@@ -323,7 +418,8 @@ export class PublishReviewService implements PublishService {
       if (this.#stopped || store.failure || item?.state !== 'awaiting-owner') return false;
       const next = store.copy();
       delete next.queue[id];
-      this.#queueNotice(next, item.origin, `作品 ${id} 未获批准，这次不发布`, id);
+      this.#rememberTerminal(next, item, 'rejected');
+      this.#queueNotice(next, item.origin, '作品未获批准，这次不发布', id, item.title);
       await store.save(next, this.#event(id, 'rejected', '人工拒绝'));
       await storage.delete(itemRoot(id)).catch(() => {});
       return true;
@@ -345,11 +441,15 @@ export class PublishReviewService implements PublishService {
       const duplicateIds: string[] = [];
       const delayed: LedgerItem[] = [];
       for (const [id, item] of Object.entries(next.queue)) {
-        if (!this.#d.config.manualReview && item.state === 'awaiting-owner' && item.awaitingReason !== 'fallback') {
+        if (
+          item.state === 'awaiting-owner' &&
+          (!this.#d.config.reviewEnabled || (!this.#d.config.manualReview && item.awaitingReason !== 'fallback'))
+        ) {
           item.state = 'queued';
           delete item.awaitingSince;
           delete item.awaitingReason;
           delete item.outHashes;
+          delete item.outputPolicy;
           delete item.thumbnailHash;
           delete item.review;
           this.#clearNotices(next, id);
@@ -362,7 +462,10 @@ export class PublishReviewService implements PublishService {
             item.awaitingSince + this.#d.config.ownerTimeoutHours * HOUR <= this.#now())
         ) {
           if (next.ledger[id]) duplicateIds.push(id);
-          else expired.push(item);
+          else {
+            expired.push(item);
+            this.#rememberTerminal(next, item, 'expired');
+          }
           delete next.queue[id];
         }
       }
@@ -381,15 +484,17 @@ export class PublishReviewService implements PublishService {
         this.#queueNotice(
           next,
           item.origin,
-          `作品 ${item.id} 等 owner 审核超过 ${this.#d.config.ownerTimeoutHours} 小时，这次不发布，需要的话可以重新提名`,
+          `作品等 owner 审核超过 ${this.#d.config.ownerTimeoutHours} 小时，这次不发布，需要的话可以重新提名`,
           item.id,
+          item.title,
         );
       for (const item of delayed)
         this.#queueNotice(
           next,
           item.origin,
-          `作品 ${item.id} 已通过审核，但作品站暂时没能上线，owner 会处理；上线后会再通知`,
+          '作品已获准发布，但作品站暂时没能上线，owner 会处理；上线后会再通知',
           item.id,
+          item.title,
         );
       if (
         requeued ||
@@ -427,9 +532,11 @@ export class PublishReviewService implements PublishService {
     return store.exclusive(async () => {
       const item = store.data.queue[id];
       if (store.failure || this.#stopped || !item || item.state !== expectedState || !item.outHashes) return false;
+      if (item.state === 'checking' && item.outputPolicy !== outputPolicy(this.#d.config)) return false;
       if (
         item.state === 'awaiting-owner' &&
-        ((!this.#d.config.manualReview && item.awaitingReason !== 'fallback') ||
+        (!this.#d.config.reviewEnabled ||
+          (!this.#d.config.manualReview && item.awaitingReason !== 'fallback') ||
           item.awaitingSince === undefined ||
           item.awaitingSince + this.#d.config.ownerTimeoutHours * HOUR <= this.#now())
       )
@@ -458,7 +565,8 @@ export class PublishReviewService implements PublishService {
         if (this.#stopped) return false;
         const next = store.copy();
         delete next.queue[id];
-        this.#queueNotice(next, item.origin, `作品 ${id} 暂时没法审核（文件完整性校验失败），这次不发布`, id);
+        this.#rememberTerminal(next, item, 'failed');
+        this.#queueNotice(next, item.origin, '作品暂时没法审核（文件完整性校验失败），这次不发布', id, item.title);
         await store.save(next, this.#event(id, 'integrity-failed'));
         await storage.delete(`${PUBLIC_ROOT}/${id}`).catch(() => {});
         await storage.delete(itemRoot(id)).catch(() => {});
@@ -475,12 +583,21 @@ export class PublishReviewService implements PublishService {
         hasThumbnail: !!thumbnail,
         thumbnail,
         notice: item.origin.notify ? 'pending' : 'none',
+        liveSurfaces: {},
       };
       // 账本写失败不是文件完整性问题；保留 checking/outHashes 和公开根，等重试或重启对账。
       if (this.#stopped) return false;
       await store.save(
         next,
-        this.#event(id, 'published', item.state === 'awaiting-owner' ? '人工批准' : '自动审核通过'),
+        this.#event(
+          id,
+          'published',
+          item.state === 'awaiting-owner'
+            ? '人工批准'
+            : this.#d.config.reviewEnabled
+              ? '自动审核通过'
+              : '内容审核关闭，文件校验通过',
+        ),
       );
       await storage.delete(itemRoot(id)).catch(() => {});
       this.#changed();
@@ -495,8 +612,9 @@ export class PublishReviewService implements PublishService {
       if (this.#stopped || !item || item.state !== 'checking') return;
       const next = store.copy();
       delete next.queue[id];
-      const message = `作品 ${id} 暂时没法审核（审核步骤不可用），这次不发布`;
-      this.#queueNotice(next, item.origin, message, id);
+      this.#rememberTerminal(next, item, 'failed');
+      const message = '作品暂时没法审核（审核步骤不可用），这次不发布';
+      this.#queueNotice(next, item.origin, message, id, item.title);
       await store.save(next, this.#event(id, 'failed', reason));
       await storage.delete(itemRoot(id)).catch(() => {});
     });
@@ -546,9 +664,14 @@ export class PublishReviewService implements PublishService {
       if (!queued && !published) return { refused: '作品不存在' };
       if (published?.state === 'withdrawn') return { ok: true };
       const next = store.copy();
-      if (queued) delete next.queue[id];
+      if (queued) {
+        delete next.queue[id];
+        this.#rememberTerminal(next, queued, 'withdrawn');
+      }
       if (published) {
         next.ledger[id].state = 'withdrawn';
+        next.ledger[id].live = false;
+        next.ledger[id].liveSurfaces = {};
         next.ledger[id].withdrawn = { at: this.#now(), by: by.kind, actorKey: by.actorKey, reason };
       }
       this.#clearNotices(next, id);
@@ -587,8 +710,19 @@ export class PublishReviewService implements PublishService {
   }
 
   attachSurface(surface: PublishSurface): SurfaceBinding {
+    if (surface.baseUrl !== undefined) publicWorkUrl(surface.baseUrl, 'aaaaaaaaaa');
+    // 固定登记时的地址范围；调用方修改原对象不能把已登记目标悄悄改指其他域名。
+    const source = surface;
+    surface = {
+      name: source.name,
+      label: source.label,
+      baseUrl: source.baseUrl,
+      urlFor: id => source.urlFor(id),
+      health: () => source.health(),
+    };
     const token = Symbol(surface.name);
     this.#surfaces.set(surface.name, { surface, token });
+    if (Object.keys(this.#d.store.data.notices).length) void this.flushNotices().catch(() => {});
     return {
       live: ids => {
         void this.#live(surface, token, ids).catch(() => {});
@@ -599,6 +733,38 @@ export class PublishReviewService implements PublishService {
     };
   }
 
+  #verifiedAddress(surface: PublishSurface, id: string): string | undefined {
+    try {
+      const address = surface.urlFor(id);
+      if (Array.from(address).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return;
+      const parsed = new URL(address);
+      if (
+        parsed.protocol !== 'https:' ||
+        parsed.username ||
+        parsed.password ||
+        parsed.search ||
+        parsed.hash ||
+        (surface.baseUrl !== undefined
+          ? address !== publicWorkUrl(surface.baseUrl, id)
+          : parsed.pathname !== `/w/${id}/`)
+      )
+        return;
+      return address;
+    } catch {
+      return;
+    }
+  }
+
+  #currentSurfacesMatch(item: LedgerItem): boolean {
+    if (!item.liveSurfaces) return item.surfaces.length === 1;
+    return item.surfaces.every(name => {
+      const surface = this.#surfaces.get(name)?.surface;
+      // 单目标旧回执在重启、展示面尚未重挂时仍可供提名方查询。
+      if (!surface) return item.surfaces.length === 1;
+      return this.#verifiedAddress(surface, item.id) === item.liveSurfaces?.[name];
+    });
+  }
+
   async #live(surface: PublishSurface, token: symbol, ids: readonly string[]): Promise<void> {
     const { store } = this.#d;
     for (const id of ids)
@@ -606,36 +772,43 @@ export class PublishReviewService implements PublishService {
         if (!WORK_ID_PATTERN.test(id)) return;
         if (this.#stopped || store.failure || this.#surfaces.get(surface.name)?.token !== token) return;
         const item = store.data.ledger[id];
-        if (
-          item?.state !== 'published' ||
-          !item.surfaces.includes(surface.name) ||
-          item.notice === 'none' ||
-          item.notice === 'sent'
-        )
-          return;
-        let address: string;
-        try {
-          address = surface.urlFor(id);
-          if (Array.from(address).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return;
-          const parsed = new URL(address);
-          if (
-            parsed.protocol !== 'https:' ||
-            parsed.username ||
-            parsed.password ||
-            parsed.search ||
-            parsed.hash ||
-            parsed.pathname !== `/w/${id}/`
-          )
-            return;
-        } catch {
-          return;
+        if (item?.state !== 'published' || !item.surfaces.includes(surface.name)) return;
+        if (!item.liveSurfaces && allSurfacesLive(item)) return;
+        const address = this.#verifiedAddress(surface, id);
+        if (!address) return;
+        const confirmed: Record<string, string> = Object.assign(Object.create(null), item.liveSurfaces);
+        let invalidated = false;
+        for (const name of item.surfaces) {
+          if (!Object.hasOwn(confirmed, name)) continue;
+          const current = this.#surfaces.get(name)?.surface;
+          if (current && this.#verifiedAddress(current, id) !== confirmed[name]) {
+            delete confirmed[name];
+            invalidated = true;
+          }
         }
+        const same = Object.hasOwn(confirmed, surface.name) && confirmed[surface.name] === address;
+        confirmed[surface.name] = address;
         const next = store.copy();
-        this.#queueNotice(next, item.origin, `作品 ${id} 已通过审核并上线：${address}`, id, true);
+        const previousNotices = Object.entries(store.data.notices).filter(([, notice]) => notice.id === id);
+        next.ledger[id].liveSurfaces = confirmed;
+        const completed = allSurfacesLive(next.ledger[id]) && this.#currentSurfacesMatch(next.ledger[id]);
+        if (same && !invalidated && completed === item.live) return;
+        next.ledger[id].live = completed;
+        if (completed) {
+          const addresses = item.surfaces.map(name => next.ledger[id].liveSurfaces![name]);
+          if (item.origin.notify) next.ledger[id].notice = 'pending';
+          this.#queueNotice(next, item.origin, `作品已上线：${addresses.join('、')}`, id, item.title, true);
+        } else if (invalidated) {
+          delete next.notices[`${id}:live`];
+        }
         await store.save(next, this.#event(id, 'live'));
         if (this.#stopped || this.#surfaces.get(surface.name)?.token !== token) {
           const restored = store.copy();
-          delete restored.notices[`${id}:live`];
+          this.#clearNotices(restored, id);
+          for (const [key, notice] of previousNotices) restored.notices[key] = notice;
+          restored.ledger[id].live = item.live;
+          restored.ledger[id].liveSurfaces = item.liveSurfaces;
+          restored.ledger[id].notice = item.notice;
           await store.save(restored);
           return;
         }
@@ -653,15 +826,31 @@ export class PublishReviewService implements PublishService {
     return { at: this.#now(), id, event, detail };
   }
 
+  #rememberTerminal(
+    next: ReviewStore['data'],
+    item: QueueItem,
+    state: 'rejected' | 'expired' | 'failed' | 'withdrawn',
+  ): void {
+    if (!Object.values(next.submissions).some(entry => entry.id === item.id)) return;
+    next.terminal[item.id] = { state, origin: structuredClone(item.origin), title: item.title };
+  }
+
   #clearNotices(next: ReviewStore['data'], id: string): void {
     for (const [key, notice] of Object.entries(next.notices)) if (notice.id === id) delete next.notices[key];
   }
 
-  #queueNotice(next: ReviewStore['data'], origin: PublishOrigin, content: string, id: string, live = false): void {
+  #queueNotice(
+    next: ReviewStore['data'],
+    origin: PublishOrigin,
+    content: string,
+    id: string,
+    title?: string,
+    live = false,
+  ): void {
     if (!origin.notify) return;
     this.#clearNotices(next, id);
     const key = live ? `${id}:live` : crypto.randomUUID();
-    next.notices[key] = { id, origin: structuredClone(origin), content, live };
+    next.notices[key] = { id, origin: structuredClone(origin), content, ...(title ? { title } : {}), live };
     // 入队与业务状态在同一次 save 内提交。此处只排调度，发送始终在锁外。
     void this.flushNotices().catch(() => {});
   }
@@ -690,16 +879,23 @@ export class PublishReviewService implements PublishService {
     if (!notice) return;
     while (!this.#stopped) {
       const entry = await store.exclusive(async () =>
-        this.#stopped || store.failure ? undefined : Object.entries(store.data.notices)[0],
+        this.#stopped || store.failure
+          ? undefined
+          : Object.entries(store.data.notices).find(([, notice]) => {
+              if (!notice.live) return true;
+              const ledger = store.data.ledger[notice.id];
+              return ledger?.state === 'published' && allSurfacesLive(ledger) && this.#currentSurfacesMatch(ledger);
+            }),
       );
       if (!entry || this.#stopped) return;
       const [key, item] = entry;
       try {
-        await notice(item.origin, item.content, item.id);
+        await notice(item.origin, item.content, item.id, item.title);
       } catch {
         return;
       }
-      // 发送成功后才确认。发送已成功而落盘失败时可重发，不能承诺跨进程 exactly-once。
+      // 通知实现确认已进入出站总线后才记 sent；这不是平台送达回执。
+      // 出站后落盘失败仍可重发，不能承诺跨进程 exactly-once。
       await store.exclusive(async () => {
         if (store.data.notices[key]?.content !== item.content) return;
         const next = store.copy();

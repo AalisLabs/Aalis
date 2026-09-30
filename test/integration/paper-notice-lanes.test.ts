@@ -228,7 +228,7 @@ async function boot(
         .require()
         .execute(
           'paper_task',
-          { text: `${name}的原文`, name },
+          { text: `${name}的原文`, name, publish: false },
           { sessionId: ROOM, platform: 'onebot', userId: '30001', inbound: {}, enabledGroups: ['paper'] },
         );
       const parsed = JSON.parse(res.content) as { ok: boolean; taskId?: string; error?: string };

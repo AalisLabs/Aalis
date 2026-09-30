@@ -14,12 +14,12 @@ import processLocal from '../../packages/plugin-process-local/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// 画→发→编码 全链交接测试（真 App/storage/process/Chromium/ffmpeg）：
+// 画→出站请求→编码 链路测试（真 App/storage/process/Chromium/ffmpeg）：
 //   draw_animation 出 GIF storage_uri
-//   → send_attachment(storage_uri) 解析并 emit outbound:message
+//   → send_attachment(storage_uri) 解析并 emit outbound:message（平台确认由 fixture 模拟）
 //   → adapter 出站两步（cacheOneAttachment 落盘改写 + 渲染 base64:// 内联标记）
 //   → 标记里的 base64 解出来是合法 GIF89a。
-// 这是投递到 OneBot 之前的最后一段本地链路；WS 之外的每一步都在这里被真实走过。
+// 这是进入 OneBot WebSocket 之前的本地编码链路，不验证实际平台送达。
 // ════════════════════════════════════════════════════════════
 
 const logger = { info: () => {}, warn: () => {}, debug: () => {}, error: () => {}, child: () => logger } as never;
@@ -31,7 +31,7 @@ const SPIN_SVG =
   '<g transform="translate(60,60)"><circle r="8" fill="#38bdf8">' +
   '<animateMotion dur="1s" repeatCount="indefinite" path="M 30 0 A 30 30 0 1 1 29.99 0"/></circle></g></svg>';
 
-describe('绘图产物 → OneBot 出站编码全链', () => {
+describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
   let base: string;
   let app: App;
   let storageGateway: StorageService;
@@ -98,10 +98,11 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
     expect(drawn.error).toBeUndefined();
     expect(drawn.uri).toMatch(/^data:\/images\//);
 
-    // 2. 发（捕获 outbound:message）
+    // 2. 捕获出站请求；模拟适配器确认，让本测试继续验证后续本地编码。
     const outbound: Array<{ sessionId: string; attachments?: Array<{ kind: string; data: string }> }> = [];
     app.bind({ events }).events.on('outbound:message', msg => {
       outbound.push(msg as (typeof outbound)[number]);
+      msg.delivery = Promise.resolve({ ok: true });
     });
     const sent = JSON.parse(
       await handlers.send_attachment({ kind: 'image', storage_uri: drawn.uri }, { sessionId: session }),

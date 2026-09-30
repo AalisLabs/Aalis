@@ -48,7 +48,7 @@ const PREVIEW_MAX_CANDIDATES = 8;
 /** 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）。toStorageUri 会把它的首段当成根名，须先认出来挡在存储库外。 */
 const HOST_ABSOLUTE_PATH = /^(?:\/|[a-zA-Z]:[\\/])/;
 
-// tools 不入激活闸：出站附件归档（outbound:message 监听）只靠 archive / media，
+// tools 不入激活闸：出站附件归档（outbound:delivered 监听）只靠 archive / media，
 // 没有工具服务时也该照常挂上；工具登记走注册账本，提供者上线后自动补挂。
 const uses = {
   tools: optional(tools),
@@ -183,6 +183,7 @@ function registerImageSender(caps: Caps): void {
           '  - history_ref：历史消息中已识别的引用（[图片/语音/视频: ... | ref:xxx] 中 xxx 部分），\n' +
           '    用于"把之前那条媒体重发/转发回去"。\n' +
           '建议流程（图片）：search_images 拿候选 URL →（有 preview_image 时可先看清内容）→ send_attachment 选其一发出。\n' +
+          '只有返回 ok:true 才能说已发送；返回 error 时没有成功确认，下载失败可改选另一张图片，不要反复重发同一失效地址。\n' +
           '若想重发自己之前发过的媒体，先用 memory_recall 按描述检索历史，从命中消息里找到 ref 再传 history_ref。\n' +
           '注意：本工具不发送任何文字。如需配文，请把文字写在你本轮最终输出的 message 字段里——' +
           '不要在 message 中重复媒体描述。',
@@ -256,25 +257,27 @@ function registerImageSender(caps: Caps): void {
           return JSON.stringify({ error: '必须提供 url / storage_uri / history_ref 之一' });
         }
 
-        // 不在发送路径上同步做 vision 描述：本地视觉模型单图常需 15-25s，
-        // 而 emit 串行 await 各监听器，同步等待会直接拖慢真正的出站（onebot/webui 发送）。
-        // 描述改由全局出站归档监听器在后台计算（见下方 outbound:message 监听），
-        // 不阻塞发送，且用稳定 ref 规避平台落盘改写 data 的竞态。
+        // 等待传输确认，但不等 vision：描述由成功归档监听器在后台计算。
+        // 用稳定 ref 规避平台落盘改写 data 的竞态。
         const attachment: MessageAttachment = {
           kind,
           data,
-          // 归档承载：ref 随事件携带，由全局出站归档统一入档（见下方 outbound:message 监听）。
+          // 归档承载：ref 随事件携带，成功投递后才入档。
           // history_ref 重发标记 skipArchive，避免重复入档 / 向量库膨胀。
           ref: refTag ?? data,
           skipArchive: via === 'history_ref',
         };
         const outgoing: OutgoingMessage = {
           sessionId: callCtx.sessionId,
+          platform: callCtx.platform,
           content: '',
           attachments: [attachment],
           source: 'agent',
         };
-        events.emit('outbound:message', outgoing);
+        await events.emit('outbound:message', outgoing);
+        if (!outgoing.delivery) return JSON.stringify({ error: '没有目标适配器确认附件发送，请勿声称已发出' });
+        const result = await outgoing.delivery;
+        if (!result.ok) return JSON.stringify({ error: result.error });
 
         return JSON.stringify({ ok: true, sent: { kind, via, ref: refTag } });
       } catch (err) {
@@ -286,11 +289,11 @@ function registerImageSender(caps: Caps): void {
   logger.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
 
   // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
-  // 监听唯一出站汇聚点 outbound:message，对所有 agent 出站附件统一入档，
+  // 只归档传输端确认后的附件，出站请求本身不代表发送成功。
   // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
   // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
   // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过 history_ref 重发。
-  events.on('outbound:message', msg => {
+  events.on('outbound:delivered', msg => {
     if (msg.source !== 'agent' || !msg.attachments?.length) return;
     if (!archive.current?.saveMessage) return;
     for (const att of msg.attachments) {

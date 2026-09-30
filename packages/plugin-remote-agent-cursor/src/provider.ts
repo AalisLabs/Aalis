@@ -35,10 +35,13 @@ import {
   type RemoteAgentProvider,
   type RemoteAgentSummary,
   type RemoteRunSummary,
+  type RunActivity,
   type RunCost,
+  type RunLogEntry,
   type RunProgress,
   type RunState,
   type RunStatus,
+  sanitizeRunLog,
   type WorkspaceLayout,
 } from '@aalis/api-remote-agent';
 import type { Logger } from '@aalis/core';
@@ -92,6 +95,7 @@ const RETRY_CAP_MS = 30_000;
 const MAX_DETAIL_CHARS = 300;
 /** 错误与日志里出现 key 的这么长的片段就去掉 */
 const MIN_SECRET_FRAGMENT = 8;
+const ACTIVITY_CHARS = 180;
 /** URL 的查询串（预签名链接的签名在这里） */
 const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
 /** 列表每页的条数（接口上限） */
@@ -106,6 +110,13 @@ const RUN_STATUS: Readonly<Record<string, RunStatus>> = {
   ERROR: 'error',
   CANCELLED: 'cancelled',
   EXPIRED: 'expired',
+};
+
+const TOOL_ACTION: Readonly<Record<string, RunActivity['action']>> = {
+  read_file: 'reading',
+  edit_file: 'writing',
+  write_file: 'writing',
+  run_terminal_cmd: 'command',
 };
 
 type Json = Record<string, unknown>;
@@ -419,10 +430,15 @@ export class CursorProvider implements RemoteAgentProvider {
       const outcome = yield* this.#streamOnce(streamPath, runId, cursor, signal);
       if (outcome.kind === 'terminal') return;
       if (outcome.kind === 'expired') {
+        yield {
+          kind: 'log',
+          record: { type: 'connection', text: '事件流已过期；正在轮询轮次状态，期间执行日志可能缺失' },
+        };
         yield { kind: 'terminal', state: await this.#pollUntilTerminal(agentId, runId, signal) };
         return;
       }
       if (outcome.kind === 'restart') {
+        yield { kind: 'log', record: { type: 'connection', text: '续传位置失效；从头读取事件并跳过已见事件' } };
         this.#note('warn', `续传位置不属于轮次 ${runId}，不带位置从头重放，已见过的事件跳过`);
         cursor.lastId = undefined;
         continue;
@@ -435,6 +451,10 @@ export class CursorProvider implements RemoteAgentProvider {
         return;
       }
       const wait = outcome.waitMs ?? backoff;
+      yield {
+        kind: 'log',
+        record: { type: 'connection', text: this.#logText(`事件流断开（${outcome.reason}），${wait} 毫秒后重连`) },
+      };
       this.#note('debug', `轮次 ${runId} 的事件流断开（${outcome.reason}），${wait} 毫秒后重连`);
       await sleep(wait, AbortSignal.any([signal, this.#life]));
       backoff = Math.min(backoff * 2, RETRY_CAP_MS);
@@ -541,14 +561,67 @@ export class CursorProvider implements RemoteAgentProvider {
         if (msg.id === undefined || cursor.seen.has(msg.id)) return undefined;
         cursor.seen.add(msg.id);
         cursor.lastId = msg.id;
-        return { kind: 'progress', eventId: msg.id };
+        if (msg.event === 'thinking') {
+          return { kind: 'progress', eventId: msg.id, activity: { action: 'planning', status: 'running' } };
+        }
+        if (msg.event === 'assistant') {
+          const data = asRecord(parseJson(msg.data));
+          const reply = str(data.text);
+          return {
+            kind: 'progress',
+            eventId: msg.id,
+            activity: { action: 'responding', status: 'running' },
+            ...(reply === undefined ? {} : { record: { type: 'assistant' as const, text: this.#logText(reply) } }),
+          };
+        }
+        const data = asRecord(parseJson(msg.data));
+        const name = str(data.name);
+        const action = name && Object.hasOwn(TOOL_ACTION, name) ? TOOL_ACTION[name] : 'tool';
+        const result = asRecord(data.result);
+        const success = asRecord(result.success);
+        const failure = asRecord(result.failure);
+        const exitCode = num(success.exitCode) ?? num(failure.exitCode) ?? num(result.exitCode);
+        const failed =
+          data.status === 'failed' ||
+          result.failure !== undefined ||
+          result.error !== undefined ||
+          result.spawnError !== undefined ||
+          (exitCode !== undefined && exitCode !== 0);
+        const status = failed ? 'failed' : data.status === 'completed' ? 'completed' : 'running';
+        const args = asRecord(data.args);
+        const tool = name === undefined ? undefined : this.#summary(name);
+        const target = str(args.path) ?? str(success.path) ?? str(failure.path);
+        const lines =
+          num(success.linesAdded) !== undefined || num(success.linesRemoved) !== undefined
+            ? `+${num(success.linesAdded) ?? 0} / -${num(success.linesRemoved) ?? 0} 行`
+            : undefined;
+        const detail =
+          str(args.description) ??
+          lines ??
+          str(args.command)?.split(/\r?\n/, 1)[0] ??
+          str(failure.error) ??
+          str(asRecord(result.error).errorMessage);
+        const activity: RunActivity = { action, status };
+        if (tool) activity.tool = tool;
+        if (target) activity.target = this.#summary(target);
+        if (detail) activity.summary = this.#summary(detail);
+        if (exitCode !== undefined) activity.exitCode = exitCode;
+        const record: RunLogEntry = { type: 'tool', status };
+        if (data.callId !== undefined) record.callId = this.#logText(String(data.callId));
+        if (name !== undefined) record.tool = this.#logText(name);
+        if (data.args !== undefined) record.input = this.#sanitize(data.args);
+        if (data.result !== undefined) record.output = this.#sanitize(data.result);
+        return { kind: 'progress', eventId: msg.id, activity, record };
       }
       case 'result': {
         const data = asRecord(parseJson(msg.data));
         const status = toRunStatus(data.status);
         // 认不出或不是终态的 result 不作数，连接结束后以 GET run 为准
         if (!status || !isTerminalRun(status)) return undefined;
-        return { kind: 'terminal', state: runState(runId, status, data.text) };
+        return {
+          kind: 'terminal',
+          state: runState(runId, status, typeof data.text === 'string' ? this.#logText(data.text) : undefined),
+        };
       }
       case 'done':
         return 'done';
@@ -581,7 +654,11 @@ export class CursorProvider implements RemoteAgentProvider {
       this.#ok(await this.#call('GET', `/v1/agents/${enc(agentId)}/runs/${enc(runId)}`, { signal })),
     );
     const id = str(data.id) ?? runId;
-    return runState(id, this.#status(data.status, id), data.result);
+    return runState(
+      id,
+      this.#status(data.status, id),
+      typeof data.result === 'string' ? this.#logText(data.result) : undefined,
+    );
   }
 
   async cancelRun(agentId: string, runId: string, signal: AbortSignal): Promise<void> {
@@ -885,6 +962,21 @@ export class CursorProvider implements RemoteAgentProvider {
 
   #scrub(text: string): string {
     return redactFragments(text.replace(URL_QUERY, '$1?<查询串已去除>'), this.#opt.apiKey);
+  }
+
+  #logText(text: string): string {
+    return sanitizeRunLog(text, value => this.#scrub(value)) as string;
+  }
+
+  #summary(text: string): string {
+    return Array.from(this.#logText(text), c => (c.charCodeAt(0) <= 31 || c.charCodeAt(0) === 127 ? ' ' : c))
+      .join('')
+      .trim()
+      .slice(0, ACTIVITY_CHARS);
+  }
+
+  #sanitize(value: unknown): unknown {
+    return sanitizeRunLog(value, text => this.#scrub(text));
   }
 
   #note(level: 'debug' | 'warn', message: string): void {

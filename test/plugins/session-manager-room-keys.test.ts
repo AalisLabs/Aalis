@@ -72,7 +72,10 @@ async function setup(pluginConfig: Record<string, unknown>) {
   await app.plugins.idle();
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
-  if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
+  if (state !== 'active') {
+    await app.stop();
+    throw new Error(`session-manager 未激活（state=${state}）`);
+  }
   const action = (method: string) => {
     const handler = actions.get(method);
     if (!handler) throw new Error(`页面动作 ${method} 未登记`);
@@ -106,7 +109,7 @@ describe('按房间键进继承链', () => {
     await app.stop();
   });
 
-  it('非法类型与越界值丢弃并告警，不给房间继承更宽的配置', async () => {
+  it('非金额房间键的非法类型仍丢弃并告警', async () => {
     const { app, sm, warns } = await setup({
       platformProfiles: [
         {
@@ -114,9 +117,7 @@ describe('按房间键进继承链', () => {
           paperEnabled: 'yes',
           paperName: { name: '42' },
           remoteAgentTypes: '<远端代理实例 id>',
-          remoteAgentUserDailyCents: -1,
           remoteAgentUserDailyTasks: Number.POSITIVE_INFINITY,
-          remoteAgentRoomDailyCents: true,
           memoryRecallScope: 'x',
         },
       ],
@@ -127,14 +128,39 @@ describe('按房间键进继承链', () => {
       'paperEnabled',
       'paperName',
       'remoteAgentTypes',
-      'remoteAgentUserDailyCents',
       'remoteAgentUserDailyTasks',
-      'remoteAgentRoomDailyCents',
       'memoryRecallScope',
     ]) {
       expect(joined, `${key} 被丢弃时应告警`).toContain(key);
     }
     await app.stop();
+  });
+
+  it.each([
+    ['remoteAgentUserDailyCents', -1],
+    ['remoteAgentUserDailyCents', Number.POSITIVE_INFINITY],
+    ['remoteAgentRoomDailyCents', true],
+    ['remoteAgentRoomDailyCents', 'bad'],
+  ] as const)('平台档明确非法金额 %s=%s 拒绝启动，不能退成未填不限', async (key, value) => {
+    await expect(setup({ platformProfiles: [{ platform: 'onebot', [key]: value }] })).rejects.toThrow();
+  });
+
+  it('未填与明确 0 的平台金额保留区别', async () => {
+    const { app, sm } = await setup({
+      platformProfiles: [{ platform: 'onebot', remoteAgentRoomDailyCents: 0, remoteAgentUserDailyCents: null }],
+    });
+    expect(sm.getPlatformProfiles().onebot).toEqual({ remoteAgentRoomDailyCents: 0 });
+    await app.stop();
+  });
+
+  it('显式空字符串不是数值字段的未填写法，拒绝启用', async () => {
+    await expect(
+      setup({ platformProfiles: [{ platform: 'onebot', remoteAgentRoomDailyCents: '' }] }),
+    ).rejects.toThrow();
+  });
+
+  it('平台档缺少必填平台标识时整组拒绝装载', async () => {
+    await expect(setup({ platformProfiles: [{ remoteAgentRoomDailyCents: 100 }] })).rejects.toThrow();
   });
 
   it('数字标量兼容转换；远端类型数组里的对象、布尔成员被滤掉并告警', async () => {
@@ -157,20 +183,16 @@ describe('按房间键进继承链', () => {
     await app.stop();
   });
 
-  it('无效受众条目不能回落成不限受众的平台档', async () => {
-    const { app, sm, warns } = await setup({
-      platformProfiles: [
-        { platform: 'onebot', remoteAgentTypes: ['<基础实例>'] },
-        { platform: 'onebot', audience: 'admins', remoteAgentTypes: ['<不应生效的实例>'] },
-        { platform: 'onebot', audience: true, remoteAgentTypes: ['<也不应生效的实例>'] },
-      ],
-    });
-    expect(sm.getPlatformProfiles().onebot.remoteAgentTypes).toEqual(['<基础实例>']);
-    for (const room of ['onebot:bot:group:g1', 'onebot:bot:private:u1']) {
-      expect(sm.resolveConfig(room, 'onebot').remoteAgentTypes).toEqual(['<基础实例>']);
-    }
-    expect(warns.join('\n')).toContain('audience');
-    await app.stop();
+  it('不可恢复的受众值使整组平台档拒绝装载，不能回落成不限受众', async () => {
+    await expect(
+      setup({
+        platformProfiles: [
+          { platform: 'onebot', remoteAgentTypes: ['<基础实例>'] },
+          { platform: 'onebot', audience: 'admins', remoteAgentTypes: ['<不应生效的实例>'] },
+          { platform: 'onebot', audience: true, remoteAgentTypes: ['<也不应生效的实例>'] },
+        ],
+      }),
+    ).rejects.toThrow();
   });
 
   it('空串与 null 按未设置处理，不告警（WebUI 表单留空、YAML 裸键）', async () => {

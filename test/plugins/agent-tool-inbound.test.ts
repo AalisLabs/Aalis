@@ -42,7 +42,7 @@ async function agentTurn(incoming: IncomingMessage): Promise<ToolCallContext | u
   return (await observedAgentTurn(incoming)).ctx;
 }
 
-/** 同 agentTurn，另记下 agent:llm:before 看到的 userId 与本会话归档的消息 */
+/** 同 agentTurn，另记下 agent:llm:before 看到的入站身份与本会话归档的消息 */
 async function observedAgentTurn(incoming: IncomingMessage) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
@@ -71,19 +71,21 @@ async function observedAgentTurn(incoming: IncomingMessage) {
     },
   });
   const llmBeforeUserIds: Array<string | undefined> = [];
+  const llmBeforeSources: Array<string | undefined> = [];
   host.hooks.middleware('agent:llm:before', async (data, next) => {
     llmBeforeUserIds.push(data.userId);
+    llmBeforeSources.push(data.source);
     await next();
   });
   await host.agent.require().handleMessage(incoming);
   expect(seen, '探针工具应在本回合被调用').toBeDefined();
   const history = (await host.memory.require().getHistory(incoming.sessionId, 20)) as Message[];
-  return { ctx: seen, llmBeforeUserIds, history };
+  return { ctx: seen, llmBeforeUserIds, llmBeforeSources, history };
 }
 
 describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站来源', () => {
   it('真人消息回合：inbound 存在，source 为 undefined', async () => {
-    const ctx = await agentTurn({
+    const { ctx, llmBeforeSources } = await observedAgentTurn({
       content: '帮我查一下',
       sessionId: SESSION,
       platform: 'test',
@@ -92,6 +94,7 @@ describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站�
     });
     expect(ctx?.inbound).toBeDefined();
     expect(ctx?.inbound?.source).toBeUndefined();
+    expect(llmBeforeSources).toEqual([undefined, undefined]);
   });
 
   it('定时任务注入回合：inbound.source 为 scheduler（actor 非空也分得出来）', async () => {
@@ -123,13 +126,14 @@ describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具�
   });
 
   it('安全：带 callerUserId：探针上下文的 userId 为它，actor、platform、inbound.source 原样；提示词钩子与归档不认它', async () => {
-    const { ctx, llmBeforeUserIds, history } = await observedAgentTurn(notice(QQ));
+    const { ctx, llmBeforeUserIds, llmBeforeSources, history } = await observedAgentTurn(notice(QQ));
     expect(ctx?.userId).toBe(QQ);
     expect(ctx?.actor).toEqual({ platform: 'onebot', userId: QQ });
     expect(ctx?.platform).toBe('onebot');
     expect(ctx?.inbound?.source).toBe('exec-bg:proc_0a1b2c_1');
     expect(llmBeforeUserIds.length).toBeGreaterThan(0);
     expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
+    expect(llmBeforeSources).toEqual(['exec-bg:proc_0a1b2c_1', 'exec-bg:proc_0a1b2c_1']);
     const archived = history.find(m => m.role === 'notice');
     expect(archived, '通知应归档为 notice').toBeDefined();
     expect(archived?.name).toBeUndefined();

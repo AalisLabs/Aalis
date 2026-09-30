@@ -395,9 +395,161 @@ describe('5 followRun', () => {
 
     const progress = items.filter(i => i.kind === 'progress');
     expect(progress.map(i => i.eventId)).toEqual(['100-1', '101-0', '103-0']);
+    expect(progress.map(i => i.activity)).toEqual([
+      { action: 'planning', status: 'running' },
+      { action: 'command', status: 'completed', tool: 'run_terminal_cmd' },
+      { action: 'responding', status: 'running' },
+    ]);
     expect(items.at(-1)).toEqual({
       kind: 'terminal',
       state: { runId: run.id, status: 'finished', resultText: '成品已放好' },
+    });
+  });
+
+  it('公开回复与工具完整日志递归脱敏，结果失败覆盖 completed，thinking 不泄漏', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    const run = agent.runs[0];
+    const secret = 'SENSITIVE_PROMPT_OR_COMMAND';
+    const url = 'https://example.test/file?signature=private-value';
+    fake.streams.set(run.id, [
+      {
+        events: [
+          { id: '1-0', event: 'thinking', data: { text: secret, prompt: secret } },
+          { id: '2-0', event: 'assistant', data: { text: secret } },
+          {
+            id: '3-0',
+            event: 'tool_call',
+            data: { callId: 'c1', name: 'read_file', status: 'running', args: { path: '/agent/a.txt' } },
+          },
+          {
+            id: '4-0',
+            event: 'tool_call',
+            data: {
+              callId: 'c2',
+              name: 'edit_file',
+              status: 'completed',
+              args: { path: '/agent/a.txt', description: 'Edit a' },
+              result: { success: { path: '/agent/a.txt', linesAdded: 3, linesRemoved: 1 } },
+            },
+          },
+          {
+            id: '5-0',
+            event: 'tool_call',
+            data: {
+              callId: 'c3',
+              name: 'write_file',
+              status: 'completed',
+              args: { path: '/agent/b.txt' },
+              result: { failure: { error: 'disk full' } },
+            },
+          },
+          {
+            id: '6-0',
+            event: 'tool_call',
+            data: {
+              callId: 'c4',
+              name: 'run_terminal_cmd',
+              status: 'completed',
+              args: {
+                command: 'echo hi\necho bye',
+                description: 'Run command',
+                headers: { Authorization: 'Bearer private-token' },
+                apiKey: 'private-api-key',
+                url,
+                nested: [{ password: 'private-password', value: `Bearer ${secret}` }],
+              },
+              result: { success: { stdout: 'full output', exitCode: 2 } },
+            },
+          },
+          { id: '7-0', event: 'tool_call', data: { name: secret, status: 'completed', args: { command: secret } } },
+          { id: '8-0', event: 'tool_call', data: { name: '__proto__', status: 'UNKNOWN', text: secret } },
+          { id: '9-0', event: 'tool_call', data: '{invalid-json' },
+          { id: '10-0', event: 'tool_call', data: null },
+        ],
+      },
+    ]);
+
+    const items = await collect(p.followRun(agent.id, run.id, { signal }));
+    const progress = items.filter(i => i.kind === 'progress');
+    expect(progress.map(i => i.eventId)).toEqual(Array.from({ length: 10 }, (_, i) => `${i + 1}-0`));
+    expect(progress[0].record).toBeUndefined();
+    expect(progress[1].record).toEqual({ type: 'assistant', text: secret });
+    expect(progress[2]).toMatchObject({
+      activity: { action: 'reading', status: 'running', tool: 'read_file', target: '/agent/a.txt' },
+      record: { type: 'tool', callId: 'c1', tool: 'read_file', status: 'running', input: { path: '/agent/a.txt' } },
+    });
+    expect(progress[3]).toMatchObject({
+      activity: { action: 'writing', status: 'completed', summary: 'Edit a' },
+      record: {
+        type: 'tool',
+        status: 'completed',
+        output: { success: { path: '/agent/a.txt', linesAdded: 3, linesRemoved: 1 } },
+      },
+    });
+    expect(progress[4]).toMatchObject({
+      activity: { status: 'failed' },
+      record: { status: 'failed', output: { failure: { error: 'disk full' } } },
+    });
+    expect(progress[5]).toMatchObject({
+      activity: { action: 'command', status: 'failed', exitCode: 2, summary: 'Run command' },
+      record: {
+        status: 'failed',
+        input: { command: 'echo hi\necho bye' },
+        output: { success: { stdout: 'full output', exitCode: 2 } },
+      },
+    });
+    const exposed = JSON.stringify(progress[5]);
+    for (const value of [
+      'private-token',
+      'private-api-key',
+      'private-password',
+      'signature=private-value',
+      `Bearer ${secret}`,
+    ])
+      expect(exposed).not.toContain(value);
+    expect(items.at(-1)).toMatchObject({ kind: 'terminal', state: { status: 'finished' } });
+  });
+
+  it('嵌套 error 与 spawnError 标失败；摘要限长而执行日志保留全文', async () => {
+    const p = makeProvider();
+    const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
+    const run = agent.runs[0];
+    const long = 'x'.repeat(300);
+    fake.streams.set(run.id, [
+      {
+        events: [
+          {
+            id: '1-0',
+            event: 'tool_call',
+            data: {
+              name: 'run_terminal_cmd',
+              status: 'completed',
+              args: { command: `${long}\necho done` },
+              result: { error: { errorMessage: 'cannot start' } },
+            },
+          },
+          {
+            id: '2-0',
+            event: 'tool_call',
+            data: { name: 'run_terminal_cmd', status: 'completed', result: { spawnError: 'no process' } },
+          },
+        ],
+      },
+    ]);
+    const progress = (await collect(p.followRun(agent.id, run.id, { signal }))).filter(i => i.kind === 'progress');
+    expect(progress[0]).toMatchObject({
+      activity: { status: 'failed' },
+      record: {
+        status: 'failed',
+        input: { command: `${long}\necho done` },
+        output: { error: { errorMessage: 'cannot start' } },
+      },
+    });
+    expect(progress[0].activity?.summary).toHaveLength(180);
+    expect(progress[1]).toMatchObject({
+      activity: { status: 'failed' },
+      record: { status: 'failed', output: { spawnError: 'no process' } },
     });
   });
 
@@ -470,8 +622,9 @@ describe('5 followRun', () => {
     const items = await collect(p.followRun(agent.id, run.id, { signal }));
     expect(fake.requestsTo('GET', streamPath(agent.id, run.id))).toHaveLength(1);
     expect(fake.requestsTo('GET', `/v1/agents/${agent.id}/runs/${run.id}`).length).toBeGreaterThanOrEqual(2);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: 'terminal', state: { status: 'finished' } });
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ kind: 'log', record: { type: 'connection' } });
+    expect(items[1]).toMatchObject({ kind: 'terminal', state: { status: 'finished' } });
   });
 
   it('status 写 FINISHED、result 写 CANCELLED 时终态为 cancelled', async () => {

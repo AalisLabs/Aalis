@@ -218,6 +218,8 @@ export interface IncomingMessage {
   };
   /** 通知子类型（如 poke、group_upload 等非消息事件） */
   noticeType?: string;
+  /** 通知动作是否指向机器人；poke 为 false 时按未点名互动判断，省略沿用戳机器人的语义。 */
+  noticeTargetIsSelf?: boolean;
   /**
    * 触发类型（下游插件可据此区分主发言者语义）。真人消息由 inbound:trigger 相位生效的触发插件写入
    * （immediate / interval），平台适配器不设置；内部注入由注入方自带（idle、proactive）。flow 相位对
@@ -269,6 +271,15 @@ export interface IncomingMessage {
     id?: string;
     untrusted?: string;
     /**
+     * 仅转述状态：保留人设、提供本轮结果，不续跑历史工具链，不提供或执行工具。
+     * 误调用工具、空回复或遗漏正文链接与格式纠正共用重试预算（至少一次）；用尽才由注入方兜底。
+     * 客户端只收到校验后的正文，不流出生成中或失败轮的原文。
+     * 模型错误只记日志并报告 agent:turn:after(error)，
+     * 不向会话发通用错误提示；注入方负责根据回合结果派发固定正文或保留待发。
+     * 需要 Agent 后续行动的通知不设置此项。
+     */
+    reportOnly?: boolean;
+    /**
      * 通知延续某次工具调用时，那次调用的 ToolCallContext.userId。plugin-agent 只用它填本轮工具调用上下文的 userId
      * （确认由谁应答、会话授予按谁匹配、工具眼里是谁在调），并让这位发言者在同一会话的消息打断这一轮；不当作发言者：
      * 归档、用户档案、关系、提示词钩子与确认应答的判定都不看它。须与 actor 取自同一次调用；不延续某次调用的通知不设。
@@ -295,10 +306,21 @@ export function selfInitiatedActor(platform: string): { platform: string; userId
 
 // ----- 出站消息 -----
 
+/** 传输端确认已接受消息，不代表收件人已阅读；失败也 resolve，避免无人等待时产生拒绝。 */
+export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string };
+
 export interface OutgoingMessage {
   content: string;
   sessionId: string;
   platform?: string;
+  /**
+   * 仅进程内：目标适配器在出站监听器中同步认领并填写，发起方 await emit 后可等待它。
+   * 不存在表示没有适配器提供确认，不能当作发送成功。旁观/镜像客户端不得认领其他平台的消息。
+   * 所有发送分支都须结算；不序列化、不持久化，也不把事件广播完成当成投递完成。
+   */
+  delivery?: Promise<OutboundDeliveryResult>;
+  /** 宿主通知的最终转述或宿主正文兜底；用于关联通知派发，不给回合中的工具消息附带此标记。 */
+  hostNotice?: { kind: string; id?: string };
   reasoningContent?: string;
   /** 助手输出的有序时间线（与 Message.segments 含义一致），存在时为 webui 等消费者顺序渲染的依据 */
   segments?: ContentSegment[];
@@ -363,6 +385,8 @@ declare module '@aalis/core' {
      */
     'inbound:message:archived': [data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }];
     'outbound:message': [message: OutgoingMessage];
+    /** 传输端确认后的消息快照；attachments 只包含成功的附件，供归档等旁观者使用。 */
+    'outbound:delivered': [message: OutgoingMessage];
     'outbound:stream': [chunk: StreamChunkMessage];
   }
 }
@@ -413,9 +437,8 @@ export const WellKnownMetadataKeys = {
  */
 export const WellKnownNoticeTypes = {
   /**
-   * 用户对 bot 的"戳/逗弄"类注意力动作（QQ 戳一戳等）。
-   * adapter 映射约定：群聊场景仅当动作指向 bot 时才转为 inbound（旁观他人互戳不转）；
-   * 私聊场景全部转入（不校验目标）。
+   * "戳/逗弄"类互动动作（QQ 戳一戳等）。
+   * adapter 把群友互戳与戳机器人都转为 inbound，并用 noticeTargetIsSelf 区分是否点名机器人。
    */
   Poke: 'poke',
 } as const;

@@ -121,14 +121,19 @@ export function registerWorksPage(deps: {
   const state = () => deps.store.data;
   const ready = () =>
     deps.store.failure ? fail(deps.store.failure) : !deps.deployer.active ? fail('作品站尚未启动或已停止') : undefined;
-  deps.webui.registerPage(PAGE);
+  deps.webui.registerPage({
+    ...PAGE,
+    key: deps.config.targetId === 'works' ? PAGE.key : `works-site:${deps.config.targetId}`,
+    label:
+      deps.config.targetId === 'works' ? PAGE.label : `作品站 · ${deps.config.siteTitle} (${deps.config.targetId})`,
+  });
   deps.webui.registerAction('worksStatus', async () => {
     const snapshot = state();
     const health = deps.deployer.health();
     const last = snapshot?.history[0];
     return {
       content:
-        `主站：${deps.config.siteOrigin}\n\n健康：${health.ok ? '正常' : health.reason}\n\n` +
+        `发布目标：${deps.config.targetId}\n\n主站：${deps.config.siteOrigin}${deps.config.basePath}\n\n健康：${health.ok ? '正常' : health.reason}\n\n` +
         `上次部署：${last ? `${new Date(last.at).toISOString()} ${last.result}` : '尚无'}\n\n` +
         `暂停：${snapshot?.paused?.reason ?? '否'}\n\nfail_open：期望 ${deps.config.failOpen}，线上 ` +
         `${deps.deployer.onlineFailOpen ?? '未核对'}\n\ntoken 到期：` +
@@ -147,7 +152,7 @@ export function registerWorksPage(deps: {
           kind: work.kind,
           branch: state()?.groups[work.group]?.branch ?? '主站',
           alias: state()?.groups[work.group]?.alias ?? '',
-          url: `${deps.config.siteOrigin}/w/${work.id}/`,
+          url: `${deps.config.siteOrigin}${deps.config.basePath}w/${work.id}/`,
           at: item.at,
         })),
       ),

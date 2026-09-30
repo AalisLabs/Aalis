@@ -140,6 +140,7 @@ export function registerReviewPage(deps: {
   storage: StorageService;
   preview: ReviewPreviewServer;
   ownerTimeoutHours: number;
+  reviewEnabled?: boolean;
   now?: () => number;
 }): void {
   const { webui, service, store, storage, preview } = deps;
@@ -180,7 +181,7 @@ export function registerReviewPage(deps: {
   webui.registerAction('reviewStatus', async () => ({
     content: store.failure
       ? `**作品账本读取失败，所有裁决和预览已停用。** ${store.failure}`
-      : '撤下后，已打开页面且连接没断的人可能在十分钟以上仍能取到。',
+      : `${deps.reviewEnabled === false ? '**内容审核已关闭，作品通过文件处理后自动发布；不运行模型或人工内容审核。**\n\n' : ''}撤下后，已打开页面且连接没断的人可能在十分钟以上仍能取到。`,
   }));
   webui.registerAction('reviewPending', async () =>
     pending()

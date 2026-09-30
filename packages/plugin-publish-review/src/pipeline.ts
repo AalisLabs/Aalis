@@ -25,7 +25,6 @@ export interface ReviewPipeline {
     id: string;
     title: string;
     summary: string;
-    credit: string;
     files: readonly PublishFile[];
     cover?: Uint8Array;
     signal: AbortSignal;
@@ -121,7 +120,10 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
         return { verdict: { verdict: 'failed', reasons: ['文件元数据无法安全剥离'] }, files: [] };
       }
 
-      const marked = markContent(`${input.title}\n${input.summary}\n${input.credit}`, textsForReview);
+      input.signal.throwIfAborted();
+      if (!deps.config.reviewEnabled) return { verdict: { verdict: 'allow', reasons: [] }, files, evidence };
+
+      const marked = markContent(`${input.title}\n${input.summary}`, textsForReview);
       evidence.flags.push(...marked.flags);
       reasons.push(...marked.reasons);
       if (audio) reasons.push('含音轨，审核不听声音');

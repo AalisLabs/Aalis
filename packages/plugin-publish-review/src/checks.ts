@@ -66,15 +66,11 @@ export function checkNomination(
   input: NominateInput,
   cfg: ReviewConfig,
   surfaces: ReadonlySet<string>,
-):
-  | { ok: true; kind: WorkKind; title: string; summary: string; credit: string }
-  | { refused: string; fileIndex?: number } {
+): { ok: true; kind: WorkKind; title: string; summary: string } | { refused: string; fileIndex?: number } {
   const clean = (value: string) => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim();
   const title = clean(input.title);
   const summary = clean(input.summary);
-  const credit = clean(input.credit);
-  if (!title || title.length > 40 || summary.length > 300 || !credit || credit.length > 40)
-    return { refused: '标题、简介或署名不合规' };
+  if (!title || title.length > 40 || summary.length > 300) return { refused: '标题或简介不合规' };
   if (!input.surfaces.length || input.surfaces.some(name => !surfaces.has(name))) return { refused: '展示面未登记' };
   if (!input.files.length || input.files.length > cfg.limits.maxWorkFiles) return { refused: '文件数量超限' };
   const paths = new Set<string>();
@@ -106,12 +102,12 @@ export function checkNomination(
       return { refused: '封面不是可接收的静态位图', fileIndex: -1 };
   }
   const only = input.files.length === 1 ? extension(input.files[0].path) : undefined;
-  if (only && media.has(only)) return { ok: true, kind: 'media', title, summary, credit };
+  if (only && media.has(only)) return { ok: true, kind: 'media', title, summary };
   if (only === 'svg') return { refused: 'SVG 请放进网页作品里' };
   if (!paths.has('index.html')) return { refused: '网页作品缺少 index.html' };
   if (input.files.some(file => extension(file.path) === 'html' && file.path !== 'index.html'))
     return { refused: '网页文件只能是 index.html' };
-  return { ok: true, kind: 'html', title, summary, credit };
+  return { ok: true, kind: 'html', title, summary };
 }
 
 export function contentType(path: string): string {

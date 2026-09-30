@@ -1,4 +1,5 @@
 import {
+  type ItemState,
   PUBLIC_CONTENT_TYPES,
   type PublishedItem,
   type PublishOrigin,
@@ -26,7 +27,6 @@ export interface QueueItem {
   surfaces: string[];
   title: string;
   summary: string;
-  credit: string;
   kind: WorkKind;
   files: FileRecord[];
   hasCover: boolean;
@@ -35,6 +35,8 @@ export interface QueueItem {
   /** 缺省是旧版的全量人工待审；fallback 不因关闭全量人工而重新排队。 */
   awaitingReason?: 'required' | 'fallback';
   outHashes?: Record<string, string>;
+  /** 与审核输出一同持久化；旧记录缺少此标记时必须重新处理。 */
+  outputPolicy?: 'off' | 'auto' | 'manual';
   thumbnailHash?: string;
   review?: { flags: string[]; reasons: string[]; images: string[]; hasRender: boolean; classification?: string };
 }
@@ -44,6 +46,10 @@ export interface LedgerItem extends PublishedItem {
   files: Array<{ path: string; size: number; contentType: string; sha256: string }>;
   thumbnail?: { size: number; sha256: string };
   notice: 'pending' | 'delayed' | 'sent' | 'none';
+  /** 展示面完成部署与内容核对后才为真，独立于通知是否送达。 */
+  live?: boolean;
+  /** 已完成线上核验的展示面及其核验过的公开地址；旧账本可缺省。 */
+  liveSurfaces?: Record<string, string>;
   nominatedAt: number;
   withdrawn?: { at: number; by: 'origin' | 'owner' | 'integrity'; actorKey?: string; reason: string };
 }
@@ -53,12 +59,28 @@ interface ReviewState {
   ledger: Record<string, LedgerItem>;
   /** 24 小时内的提名流水；失败、拒绝、撤回也占每日配额。 */
   nominations: Array<{ source: string; at: number }>;
+  /** JSON.stringify([producer, submissionKey]) -> 已持久收件；长期保存以免终态被重用。 */
+  submissions: Record<string, { id: string; fingerprint: string }>;
+  /** 仅保存带提交键的终态，供自动提名方可靠追踪。 */
+  terminal: Record<
+    string,
+    { state: Extract<ItemState, 'rejected' | 'expired' | 'failed' | 'withdrawn'>; origin: PublishOrigin; title: string }
+  >;
   history: Array<{ at: number; id: string; event: string; detail: string }>;
-  notices: Record<string, { id: string; origin: PublishOrigin; content: string; live: boolean }>;
+  notices: Record<string, { id: string; origin: PublishOrigin; content: string; title?: string; live: boolean }>;
 }
 
 function empty(): ReviewState {
-  return { version: 1, queue: {}, ledger: {}, nominations: [], history: [], notices: {} };
+  return {
+    version: 1,
+    queue: {},
+    ledger: {},
+    nominations: [],
+    submissions: {},
+    terminal: {},
+    history: [],
+    notices: {},
+  };
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -67,6 +89,24 @@ const time = (value: unknown) => typeof value === 'number' && Number.isFinite(va
 const string = (value: unknown) => typeof value === 'string';
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(string);
 const digest = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+function liveUrl(value: unknown, id: string): boolean {
+  if (!string(value) || Array.from(value).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
+    return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === 'https:' &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.search &&
+      !parsed.hash &&
+      parsed.href === value &&
+      parsed.pathname.endsWith(`/w/${id}/`)
+    );
+  } catch {
+    return false;
+  }
+}
 function origin(value: unknown): boolean {
   if (!record(value) || !string(value.producer) || !string(value.ref) || !string(value.label)) return false;
   if (value.actorKey !== undefined && !string(value.actorKey)) return false;
@@ -104,7 +144,6 @@ function common(value: Record<string, unknown>, id: string): boolean {
     value.surfaces.length > 0 &&
     string(value.title) &&
     string(value.summary) &&
-    string(value.credit) &&
     (value.kind === 'media' || value.kind === 'html') &&
     time(value.nominatedAt)
   );
@@ -129,6 +168,27 @@ function valid(value: unknown): value is ReviewState {
   )
     return false;
   if (
+    value.submissions !== undefined &&
+    (!record(value.submissions) ||
+      Object.values(value.submissions).some(
+        entry => !record(entry) || !string(entry.id) || !/^[a-z2-7]{10}$/.test(entry.id) || !digest(entry.fingerprint),
+      ))
+  )
+    return false;
+  if (
+    value.terminal !== undefined &&
+    (!record(value.terminal) ||
+      Object.entries(value.terminal).some(
+        ([id, entry]) =>
+          !/^[a-z2-7]{10}$/.test(id) ||
+          !record(entry) ||
+          !['rejected', 'expired', 'failed', 'withdrawn'].includes(String(entry.state)) ||
+          !origin(entry.origin) ||
+          !string(entry.title),
+      ))
+  )
+    return false;
+  if (
     value.history !== undefined &&
     (!Array.isArray(value.history) ||
       value.history.some(
@@ -146,6 +206,7 @@ function valid(value: unknown): value is ReviewState {
           !string(entry.id) ||
           !origin(entry.origin) ||
           !string(entry.content) ||
+          (entry.title !== undefined && !string(entry.title)) ||
           typeof entry.live !== 'boolean',
       ))
   )
@@ -160,6 +221,7 @@ function valid(value: unknown): value is ReviewState {
       typeof entry.hasCover !== 'boolean' ||
       (entry.awaitingSince !== undefined && !time(entry.awaitingSince)) ||
       (entry.awaitingReason !== undefined && !['required', 'fallback'].includes(String(entry.awaitingReason))) ||
+      (entry.outputPolicy !== undefined && !['off', 'auto', 'manual'].includes(String(entry.outputPolicy))) ||
       (entry.thumbnailHash !== undefined && !digest(entry.thumbnailHash))
     )
       return false;
@@ -192,6 +254,12 @@ function valid(value: unknown): value is ReviewState {
       !files(entry.files, true) ||
       !time(entry.publishedAt) ||
       typeof entry.hasThumbnail !== 'boolean' ||
+      (entry.live !== undefined && typeof entry.live !== 'boolean') ||
+      (entry.liveSurfaces !== undefined &&
+        (!record(entry.liveSurfaces) ||
+          Object.entries(entry.liveSurfaces).some(
+            ([name, url]) => !(entry.surfaces as string[]).includes(name) || !liveUrl(url, id),
+          ))) ||
       !['pending', 'delayed', 'sent', 'none'].includes(String(entry.notice))
     )
       return false;
@@ -211,6 +279,32 @@ function valid(value: unknown): value is ReviewState {
     )
       return false;
   }
+  if (value.submissions !== undefined) {
+    const seen = new Set<string>();
+    for (const [slot, submission] of Object.entries(value.submissions)) {
+      if (!record(submission) || !string(submission.id)) return false;
+      let parts: unknown;
+      try {
+        parts = JSON.parse(slot);
+      } catch {
+        return false;
+      }
+      if (
+        !Array.isArray(parts) ||
+        parts.length !== 2 ||
+        !parts.every(string) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(parts[1]) ||
+        seen.has(submission.id)
+      )
+        return false;
+      seen.add(submission.id);
+      const item =
+        value.queue[submission.id] ??
+        value.ledger[submission.id] ??
+        (record(value.terminal) ? value.terminal[submission.id] : undefined);
+      if (!record(item) || !record(item.origin) || item.origin.producer !== parts[0]) return false;
+    }
+  }
   return true;
 }
 
@@ -228,7 +322,13 @@ export class ReviewStore {
       const source = await this.storage.readFile(STATE_URI, 'utf8');
       const parsed: unknown = JSON.parse(String(source));
       if (!valid(parsed)) throw new Error('结构不合法');
-      this.data = { ...parsed, history: parsed.history ?? [], notices: parsed.notices ?? {} };
+      this.data = {
+        ...parsed,
+        submissions: parsed.submissions ?? {},
+        terminal: parsed.terminal ?? {},
+        history: parsed.history ?? [],
+        notices: parsed.notices ?? {},
+      };
       for (const item of Object.values(this.data.queue)) if (item.state === 'checking') item.state = 'queued';
     } catch (err) {
       if (isStorageNotFound(err)) return;

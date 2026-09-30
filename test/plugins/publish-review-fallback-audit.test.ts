@@ -15,7 +15,6 @@ const nomination = (): NominateInput => ({
   surfaces: ['works'],
   title: '测试作品',
   summary: '',
-  credit: '来自群友的点子',
   files: [{ path: 'work.png', bytes: data }],
 });
 
@@ -25,6 +24,8 @@ async function open(
   verdict: 'allow' | 'reject' | 'unsure',
   clock: { now: number },
   run = vi.fn(),
+  reviewEnabled = true,
+  signal?: AbortSignal,
 ) {
   const storage = memoryStorage(files);
   const store = new ReviewStore(storage);
@@ -38,9 +39,10 @@ async function open(
   const service = new PublishReviewService({
     storage,
     store,
-    config: parseConfig(configSchema, { manualReview, ownerTimeoutHours: 1 }),
+    config: parseConfig(configSchema, { reviewEnabled, manualReview, ownerTimeoutHours: 1 }),
     pipeline,
     now: () => clock.now,
+    signal,
     notice: async () => {},
   });
   service.attachSurface({
@@ -52,6 +54,47 @@ async function open(
 }
 
 describe('默认人工回退的时间与配置交接', () => {
+  it.each([false, true])('旧审核模式 reviewEnabled=%s 的输出不得在开启人工审核后直接发布', async reviewEnabled => {
+    const files = new Map<string, string | Uint8Array>();
+    const clock = { now: 1000 };
+    const stop = new AbortController();
+    const first = await open(files, false, 'allow', clock, vi.fn(), reviewEnabled, stop.signal);
+    const proposed = await first.service.nominate(nomination());
+    if (!('id' in proposed)) throw new Error(proposed.refused);
+    first.store.onChange(() => {
+      if (first.store.data.queue[proposed.id]?.outHashes) stop.abort();
+    });
+    await first.service.processNext();
+    expect(first.store.data.queue[proposed.id]?.outHashes).toBeDefined();
+    expect(first.store.data.ledger[proposed.id]).toBeUndefined();
+    await first.service.close();
+
+    const rerun = vi.fn();
+    const restarted = await open(files, true, 'allow', clock, rerun, true);
+    await restarted.service.processNext();
+    expect(rerun).toHaveBeenCalledTimes(1);
+    expect(restarted.store.data.queue[proposed.id]?.state).toBe('awaiting-owner');
+    expect(restarted.store.data.ledger[proposed.id]).toBeUndefined();
+  });
+  it('关闭内容审核后，旧 fallback 待审项重新处理并自动发布', async () => {
+    const files = new Map<string, string | Uint8Array>();
+    const clock = { now: 1000 };
+    const first = await open(files, false, 'reject', clock);
+    const proposed = await first.service.nominate(nomination());
+    if (!('id' in proposed)) throw new Error(proposed.refused);
+    await first.service.processNext();
+    expect(first.store.data.queue[proposed.id]?.awaitingReason).toBe('fallback');
+    await first.service.close();
+    const run = vi.fn();
+    const restarted = await open(files, true, 'allow', clock, run, false);
+    expect(await restarted.service.approve(proposed.id)).toBe(false);
+    await restarted.service.reconcile();
+    expect(restarted.store.data.queue[proposed.id]?.state).toBe('queued');
+    await restarted.service.processNext();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(restarted.store.data.ledger[proposed.id]?.state).toBe('published');
+    expect(restarted.store.data.queue[proposed.id]).toBeUndefined();
+  });
   it('全人工关闭后，旧 required 待审项在重跑前不能直接批准', async () => {
     const files = new Map<string, string | Uint8Array>();
     const clock = { now: 1000 };

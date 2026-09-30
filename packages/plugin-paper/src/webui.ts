@@ -10,16 +10,18 @@
 // 位图显示在页面里，其余只能下载。超过单文件上限的不读。工程包不经 WebUI 下载，白纸表里显示它在本机的位置。
 // ============================================================
 
+import type { PublishService } from '@aalis/api-publish';
 import { type EgressReport, type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundWebui, WebuiFilePayload, WebuiPage } from '@aalis/api-webui';
 import type { ServiceRef } from '@aalis/core';
 import { artifactUri, bundleUri, EXTENSIONS, MIME_TYPES, paperDirUri, sniffType, usageOf } from './artifacts.js';
-import { dayKey } from './budget.js';
+import { dayKey, paperBudgetUsage } from './budget.js';
 import { type PaperConfig, specOf } from './config.js';
 import type { PaperDriver } from './driver.js';
-import type { LedgerStore, TaskRecord } from './ledger.js';
+import { type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import { currentProgress } from './progress.js';
 import { actorKey, paperLabel, sharingRooms } from './rooms.js';
 import { describe, formatDuration, formatSize } from './util.js';
 
@@ -52,6 +54,9 @@ const PAGE: WebuiPage = {
                 { key: 'remoteAgentType', label: '远端类型', nowrap: true },
                 { key: 'agent', label: '绑定代理', nowrap: true },
                 { key: 'egress', label: '出网', minWidth: 140 },
+                { key: 'publishTargets', label: '可用发布目标', minWidth: 220 },
+                { key: 'defaultPublishTarget', label: '默认发布目标', minWidth: 140 },
+                { key: 'dailyBudget', label: '每日额度 / 已记 / 预留', minWidth: 240 },
                 { key: 'usage', label: '目录占用 / 上限', nowrap: true },
                 { key: 'bundle', label: '工程包（本机位置）', minWidth: 160 },
                 { key: 'halted', label: '停开原因', minWidth: 160 },
@@ -90,10 +95,14 @@ const PAGE: WebuiPage = {
                 { key: 'initiator', label: '发起者', nowrap: true },
                 { key: 'name', label: '任务名', minWidth: 120 },
                 { key: 'state', label: '状态', minWidth: 100 },
+                { key: 'progress', label: '最近动作', minWidth: 160 },
+                { key: 'progressAt', label: '动作时间', nowrap: true },
+                { key: 'creationLog', label: '创作日志', render: 'file', method: 'readTaskLog' },
                 { key: 'duration', label: '用时', nowrap: true },
                 { key: 'cost', label: '花费（美分）', nowrap: true },
                 { key: 'text', label: '原文', minWidth: 200, maxWidth: 360, render: 'expandable-text' },
                 { key: 'artifacts', label: '成品数', nowrap: true },
+                { key: 'publication', label: '上线进度', minWidth: 150 },
               ],
               actions: [
                 {
@@ -117,6 +126,34 @@ const PAGE: WebuiPage = {
                 },
               ],
               refresh: 30,
+            },
+          ],
+        },
+        {
+          key: 'logs',
+          label: '创作日志',
+          content: [
+            {
+              type: 'table',
+              source: 'listTaskLogs',
+              searchable: true,
+              columns: [
+                { key: 'taskId', label: '任务 ID', nowrap: true },
+                { key: 'name', label: '任务名', minWidth: 120 },
+                { key: 'entries', label: '记录数', nowrap: true },
+                { key: 'recent', label: '最近记录', render: 'expandable-text', minWidth: 240, maxWidth: 480 },
+                { key: 'file', label: '完整记录（JSONL）', render: 'file', method: 'readTaskLog' },
+                { key: 'location', label: '本机存储位置', minWidth: 240 },
+              ],
+              actions: [
+                {
+                  label: '删除日志',
+                  method: 'clearTaskLog',
+                  confirm: '只删除这件任务的创作日志，不删除工程或作品。继续？',
+                  danger: true,
+                },
+              ],
+              refresh: 0,
             },
           ],
         },
@@ -190,6 +227,7 @@ export function registerPaperPage(deps: {
   ledger: LedgerStore;
   storage: StorageService & Required<Pick<StorageService, 'resolveLocalPath'>>;
   remote: ServiceRef<RemoteAgentProvider>;
+  publish: ServiceRef<PublishService>;
   sessionManager: ServiceRef<SessionManagerService>;
   cfg: PaperConfig;
   signal: AbortSignal;
@@ -263,8 +301,50 @@ export function registerPaperPage(deps: {
   async function paperRow(paperId: string): Promise<Record<string, unknown>> {
     const state = ledger.data.papers[paperId];
     const spec = specOf(cfg, paperId);
+    const { spentCents, unattributedCents, reservedCents } = paperBudgetUsage(
+      ledger.data,
+      dayKey(deps.now(), cfg.budgetTimeZone),
+      paperId,
+    );
+    const budgetLimit = !spec
+      ? '配置里已没有这块白纸'
+      : spec.dailyCents === undefined
+        ? '不单独限额（仍受全局与房间限制）'
+        : spec.dailyCents === 0
+          ? '上限 0 美分（禁任务）'
+          : `上限 ${spec.dailyCents} 美分`;
+    const dailyBudget =
+      `${budgetLimit}；已记 ${spentCents} 美分；预留 ${reservedCents} 美分` +
+      (unattributedCents > 0 ? `；未归属费用（含旧账）${unattributedCents} 美分，保守计入每块白纸额度` : '');
     const { labels, shared } = sharingRooms(deps.sessionManager.require(), ledger.data, paperId);
     const agent = state?.binding ? ledger.data.agents[state.binding] : undefined;
+    let publishTargets = '（配置里已没有这块白纸）';
+    if (spec) {
+      if (spec.publishTargets.length === 0) publishTargets = '（禁止发布）';
+      else if (!deps.publish.current)
+        publishTargets = spec.publishTargets.map(name => `${name}（发布服务不在场）`).join('、');
+      else {
+        try {
+          const allowed = new Set(spec.publishTargets);
+          const byName = new Map(
+            deps.publish.current
+              .listSurfaces()
+              .filter(surface => allowed.has(surface.name))
+              .map(surface => [surface.name, surface]),
+          );
+          publishTargets = spec.publishTargets
+            .map(name => {
+              const surface = byName.get(name);
+              if (!surface) return `${name}（未登记）`;
+              const title = surface.label && surface.label !== name ? `${name}／${surface.label}` : name;
+              return `${title}${surface.baseUrl ? `：${surface.baseUrl}` : ''}（${surface.available ? '可用' : `不可用${surface.reason ? `：${surface.reason}` : ''}`}）`;
+            })
+            .join('、');
+        } catch {
+          publishTargets = '（发布目标读取失败）';
+        }
+      }
+    }
     return {
       paperId,
       name: paperLabel(paperId),
@@ -272,6 +352,11 @@ export function registerPaperPage(deps: {
       remoteAgentType: spec ? spec.remoteAgentType || '（未配置）' : '（配置里已没有这块白纸）',
       agent: agent ? `${agent.name}（${agent.state}）` : '',
       egress: await egressText(paperId),
+      publishTargets,
+      defaultPublishTarget: !spec?.publishTargets.length
+        ? '（禁止发布）'
+        : (spec.defaultPublishTarget ?? (spec.publishTargets.length === 1 ? spec.publishTargets[0] : '（每次选择）')),
+      dailyBudget,
       usage: await usageText(paperId),
       bundle: await bundleText(paperId),
       halted: state?.halted ? `${state.halted.detail}（${formatTime(state.halted.at)}）` : '',
@@ -294,11 +379,63 @@ export function registerPaperPage(deps: {
         initiator: actorKey(t.initiator),
         name: t.name,
         state: t.error ? `${t.state}：${t.error}` : t.cancelledVia ? `${t.state}（${t.cancelledVia}）` : t.state,
+        progress: currentProgress(t, true)?.activity ?? '',
+        progressAt: currentProgress(t)?.at ?? '',
+        creationLog: '下载创作日志',
         duration: t.startedAt !== undefined ? formatDuration((t.endedAt ?? now) - t.startedAt) : '',
         cost: t.costCents ?? (ledger.data.reserves[t.id] ? `预留 ${ledger.data.reserves[t.id].cents}` : ''),
         text: t.text,
         artifacts: t.artifacts.length,
+        publication: t.publication
+          ? `${t.publication.target}：${{ pending: '等待自动提交', submitted: '发布处理中', live: '已上线', failed: '未能上线' }[t.publication.state]}${t.publication.reason ? `（${t.publication.reason}）` : ''}`
+          : '不发布',
       }));
+  });
+
+  webui.registerAction('listTaskLogs', async () =>
+    Promise.all(
+      (await deps.driver.journal.list()).map(async row => ({
+        ...row,
+        recent: await deps.driver.journal.recent(row.taskId, 5),
+        name: ledger.data.tasks[row.taskId]?.name ?? '（任务记录已归档）',
+        file: '下载',
+        location: deps.driver.journal.uri(row.taskId),
+      })),
+    ),
+  );
+  const logTaskId = (args: Record<string, unknown>) => {
+    const id = text(args.taskId) || text(args.id);
+    return /^t-[a-f0-9]{8}$/.test(id) ? id : undefined;
+  };
+  webui.registerAction('readTaskLog', async args => {
+    const id = logTaskId(args);
+    if (!id) return fail('任务 ID 无效');
+    try {
+      const content = await deps.driver.journal.read(id, 20 * 1024 * 1024);
+      if (!content) return fail('尚未记录创作日志；旧任务不会伪造补录');
+      const data = Buffer.from(content);
+      return { name: `${id}.jsonl`, mime: OCTET_STREAM, base64: data.toString('base64') } satisfies WebuiFilePayload;
+    } catch (err) {
+      return fail(`读取创作日志失败：${describe(err)}。完整记录位置：${deps.driver.journal.uri(id)}`);
+    }
+  });
+  webui.registerAction('clearTaskLog', async args => {
+    const id = logTaskId(args);
+    if (!id) return fail('任务 ID 无效');
+    const task = ledger.data.tasks[id];
+    if (
+      task &&
+      (UNFINISHED_STATES.has(task.state) ||
+        task.publication?.state === 'pending' ||
+        task.publication?.state === 'submitted')
+    )
+      return fail('任务仍在创作或发布中，不能删除日志');
+    try {
+      await deps.driver.journal.remove(id);
+      return { ok: true };
+    } catch (err) {
+      return fail(`删除创作日志失败：${describe(err)}`);
+    }
   });
 
   webui.registerAction('listArtifacts', async () =>
@@ -330,7 +467,7 @@ export function registerPaperPage(deps: {
     ]);
     return [
       {
-        scope: `全局（${day}，上限 ${cfg.globalDailyCents} 美分）`,
+        scope: `全局（${day}，${cfg.globalDailyCents === undefined ? '未设金额上限' : `上限 ${cfg.globalDailyCents} 美分`}）`,
         cents: spend.global,
         tasks: today.length,
         reserved: sum(reserves),

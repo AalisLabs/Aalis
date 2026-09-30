@@ -110,6 +110,8 @@ type AgentCaps = Omit<Caps, 'provide' | 'services' | 'commands' | 'lifecycle'>;
 
 /** 统一读取 LLM 单次最大输出 token；缺省回退 4096（与各 adapter 默认一致）。 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+// 宿主通知的公开链接须在最终正文保留；同时识别普通文本和 Markdown 链接的边界。
+const NOTICE_URL = /https?:\/\/[^\s<>()[\]"'`*“”‘’，。！？；、]+/gu;
 function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
   return llm.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 }
@@ -346,6 +348,7 @@ class DefaultAgent implements AgentService {
     request: ChatModelRequest,
     sessionId: string,
     platform: string,
+    emitProgress = true,
   ): Promise<ChatResponse & { segments: ContentSegment[] }> {
     let content = '';
     let reasoningContent = '';
@@ -369,22 +372,24 @@ class DefaultAgent implements AgentService {
       if (chunk.contentDelta) {
         content += chunk.contentDelta;
         appendDelta('text', chunk.contentDelta);
-        await this.caps.events.emit('outbound:stream', {
-          sessionId,
-          platform,
-          contentDelta: chunk.contentDelta,
-        });
+        if (emitProgress)
+          await this.caps.events.emit('outbound:stream', {
+            sessionId,
+            platform,
+            contentDelta: chunk.contentDelta,
+          });
       }
       if (chunk.reasoningDelta) {
         reasoningContent += chunk.reasoningDelta;
         appendDelta('reasoning_text', chunk.reasoningDelta);
-        await this.caps.events.emit('outbound:stream', {
-          sessionId,
-          platform,
-          reasoningDelta: chunk.reasoningDelta,
-        });
+        if (emitProgress)
+          await this.caps.events.emit('outbound:stream', {
+            sessionId,
+            platform,
+            reasoningDelta: chunk.reasoningDelta,
+          });
       }
-      if (chunk.toolCallProgress) {
+      if (emitProgress && chunk.toolCallProgress) {
         await this.caps.events.emit('outbound:stream', {
           sessionId,
           platform,
@@ -580,6 +585,8 @@ class DefaultAgent implements AgentService {
       // ===== defaultAction: 全部消息处理逻辑在此 =====
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
+      const reportOnly = incoming.hostNotice?.reportOnly === true;
+      const noticeLinks = reportOnly ? (incoming.content.match(NOTICE_URL) ?? []) : [];
 
       const archivedIncoming = await this.archiveIncomingMessageInOrder(lane, incoming);
 
@@ -587,11 +594,20 @@ class DefaultAgent implements AgentService {
       if (!resolved) {
         const why = this.explainLLMFailure(incoming.platform, incoming.sessionId);
         this.logger.warn(`LLM 解析失败，无法处理消息：${why}`);
-        await this.dispatchOutbound({
-          content: `[系统] ${why}`,
+        if (!reportOnly) {
+          await this.dispatchOutbound({
+            content: `[系统] ${why}`,
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            source: 'system',
+          });
+        }
+        await this.caps.hooks.run('agent:turn:after', {
+          message: incoming,
+          reply: '',
+          outcome: signal.aborted ? 'aborted' : 'error',
           sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          source: 'system',
+          metadata: msgHookData.metadata,
         });
         return;
       }
@@ -638,8 +654,9 @@ class DefaultAgent implements AgentService {
         this.logger.debug(
           `工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`,
         );
-        const tools =
-          this.caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
+        const tools = reportOnly
+          ? []
+          : (this.caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? []);
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域、
@@ -674,6 +691,7 @@ class DefaultAgent implements AgentService {
           userId: incoming.userId,
           platform: incoming.platform,
           triggerType: incoming.triggerType,
+          source: incoming.source,
         };
         // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
         await assemblePromptContributions(this.caps, llmBeforeData, {
@@ -681,6 +699,25 @@ class DefaultAgent implements AgentService {
           signal,
         });
         await this.caps.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+        if (reportOnly) {
+          llmBeforeData.tools = [];
+          // 这是结果汇报，不续跑历史工具链。保留人设与对话，去掉会诱发继续查任务的工具协议。
+          llmBeforeData.messages = llmBeforeData.messages.filter(
+            message =>
+              message.role !== 'tool' &&
+              !message.toolCalls?.length &&
+              message.metadata?.injector !== WellKnownKinds.HostNotice,
+          );
+          // 放在钩子之后、消息末尾，确保裁剪仍保留本次结果及转述要求。
+          llmBeforeData.messages.push({
+            role: 'system',
+            content:
+              `[宿主通知]\n${incoming.content}${incoming.hostNotice?.untrusted ? `\n\n${incoming.hostNotice.untrusted}` : ''}\n\n` +
+              '本轮只转述以上已确认的结果。沿用当前人设和回复格式，向当前会话自然地说明结果，保留通知中的链接；' +
+              '不要调用工具、重新查询状态或继续制作，不把编号、内部流程当成回复正文，也不要编造未提供的作品细节。请给出非空回复。',
+            metadata: { injector: WellKnownKinds.HostNotice },
+          });
+        }
 
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
@@ -733,6 +770,7 @@ class DefaultAgent implements AgentService {
           },
           incoming.sessionId,
           incoming.platform,
+          !reportOnly,
         );
         accUsage(firstResult.usage);
 
@@ -762,7 +800,7 @@ class DefaultAgent implements AgentService {
 
         // 工具调用循环
         let iterations = 0;
-        while (response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
+        while (!reportOnly && response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
           if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
           iterations++;
           this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
@@ -965,6 +1003,7 @@ class DefaultAgent implements AgentService {
             userId: incoming.userId,
             platform: incoming.platform,
             triggerType: incoming.triggerType,
+            source: incoming.source,
           };
           // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
           await assemblePromptContributions(this.caps, nextLlmData, {
@@ -1036,7 +1075,25 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
           attempt: 0,
         };
-        await this.caps.hooks.run('agent:reply:before', responseData);
+        const validateReply = async (): Promise<void> => {
+          const attemptedTools = reportOnly && !!response.toolCalls?.length;
+          if (attemptedTools) responseData.content = '';
+          await this.caps.hooks.run('agent:reply:before', responseData);
+          // 误调用工具或静默先给模型一次纠正机会，复用格式重试预算，不能无限尝试或执行工具。
+          const replyLinks: string[] = reportOnly ? (responseData.content.match(NOTICE_URL) ?? []) : [];
+          const missingLink = noticeLinks.some(
+            link => !replyLinks.some(candidate => candidate === link || candidate.replace(/[.!;:]+$/u, '') === link),
+          );
+          if (reportOnly && (attemptedTools || !responseData.content.trim() || missingLink)) {
+            responseData.content = '';
+            responseData.maxRetries = Math.max(1, responseData.maxRetries ?? 0);
+            responseData.retryRequested = true;
+            responseData.retryFeedback =
+              `${responseData.retryFeedback ?? ''}\n本轮只需转述已给出的宿主结果，不要调用工具或查询状态。` +
+              '请沿用当前人设和规定的回复格式，给出包含结果与已有链接的非空回复。';
+          }
+        };
+        await validateReply();
 
         // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
         // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
@@ -1067,6 +1124,7 @@ class DefaultAgent implements AgentService {
             },
             incoming.sessionId,
             incoming.platform,
+            !reportOnly,
           );
           turnSegments.push(...retryResult.segments);
           response = retryResult;
@@ -1081,7 +1139,7 @@ class DefaultAgent implements AgentService {
           responseData.retryRequested = false;
           responseData.retryFeedback = undefined;
           responseData.attempt = attempt;
-          await this.caps.hooks.run('agent:reply:before', responseData);
+          await validateReply();
         }
 
         // 双保险：循环结束后若 hook 仍标记 retryRequested（理论上 persona 已在用尽时自动走兜底），
@@ -1123,7 +1181,9 @@ class DefaultAgent implements AgentService {
         if (replyContent.trim().length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
-          const combinedReasoning = allReasoning.length > 0 ? allReasoning.join('\n\n---\n\n') : undefined;
+          const combinedReasoning =
+            !reportOnly && allReasoning.length > 0 ? allReasoning.join('\n\n---\n\n') : undefined;
+          const visibleSegments = !reportOnly && turnSegments.length > 0 ? turnSegments : undefined;
 
           // 在 assistant 最终持久化时记录 modelInfo：前端从消息历史可还原 "这条回复
           // 由哪个 model 生成、用了多少 token、耗时多久"，方便用户验证模型切换是否生效。
@@ -1149,10 +1209,10 @@ class DefaultAgent implements AgentService {
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
             content: archiveContent,
-            reasoningContent: response.reasoningContent,
+            reasoningContent: reportOnly ? undefined : response.reasoningContent,
             timestamp: Date.now(),
             metadata: finalAssistantMetadata,
-            segments: turnSegments.length > 0 ? turnSegments : undefined,
+            segments: visibleSegments,
           });
 
           // 发送给流式客户端时使用合并版本（统一时间线 segments 同时给出，前端按到达顺序渲染）
@@ -1160,9 +1220,12 @@ class DefaultAgent implements AgentService {
             content: replyContent,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
+            ...(incoming.hostNotice
+              ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
+              : {}),
             reasoningContent: combinedReasoning,
             source: 'agent',
-            segments: turnSegments.length > 0 ? turnSegments : undefined,
+            segments: visibleSegments,
             modelInfo: turnModelInfo,
           });
         }
@@ -1226,12 +1289,14 @@ class DefaultAgent implements AgentService {
           platform: incoming.platform,
           done: true,
         });
-        await this.dispatchOutbound({
-          content: `[错误] ${message}`,
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          source: 'system',
-        });
+        if (!reportOnly) {
+          await this.dispatchOutbound({
+            content: `[错误] ${message}`,
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            source: 'system',
+          });
+        }
 
         // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合。
         await this.caps.hooks.run('agent:turn:after', {

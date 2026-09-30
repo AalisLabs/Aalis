@@ -102,8 +102,58 @@ export async function hashFiles(
 
 export type ProbeFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
+/** 分支 Worker 按 Sec-Fetch-Dest 分流；校验要命中访客实际使用的缓存变体。 */
+function branchHeaders(path: string): Record<string, string> | undefined {
+  const dest = path.endsWith('/')
+    ? 'iframe'
+    : /\.css$/i.test(path)
+      ? 'style'
+      : /\.(?:js|mjs)$/i.test(path)
+        ? 'script'
+        : /\.(?:png|jpe?g|gif|webp|svg)$/i.test(path)
+          ? 'image'
+          : /\.woff2$/i.test(path)
+            ? 'font'
+            : /\.mp4$/i.test(path)
+              ? 'video'
+              : undefined;
+  return dest ? { 'Sec-Fetch-Dest': dest } : undefined;
+}
+
 export class ContentMismatchError extends Error {
   override name = 'ContentMismatchError';
+
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    readonly expectedBytes: number,
+    readonly expectedSha256: string,
+    readonly actualBytes?: number,
+    readonly actualSha256?: string,
+  ) {
+    super('线上文件内容与构建结果不符');
+  }
+}
+
+export function contentMismatchDetail(error: ContentMismatchError): string {
+  const path = error.path.replace(/(^|\/)v\/[^/]+\.txt$/, '$1v/[marker].txt');
+  return `文件 ${path} HTTP ${error.status}，期望 ${error.expectedBytes} 字节 SHA-256 ${error.expectedSha256}，实际 ${error.actualBytes ?? '未知'} 字节 SHA-256 ${error.actualSha256 ?? '未知'}`;
+}
+
+export function abortablePause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal.removeEventListener('abort', stop);
+      resolve();
+    }
+    function stop() {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }
+    signal.addEventListener('abort', stop, { once: true });
+  });
 }
 
 export async function waitForSwitch(
@@ -114,23 +164,11 @@ export async function waitForSwitch(
   options: { now?: () => number; pause?: (ms: number, signal: AbortSignal) => Promise<void>; timeoutMs?: number } = {},
 ): Promise<void> {
   const now = options.now ?? Date.now;
-  const pause =
-    options.pause ??
-    ((ms, s) =>
-      new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, ms);
-        s.addEventListener(
-          'abort',
-          () => {
-            clearTimeout(timer);
-            reject(s.reason);
-          },
-          { once: true },
-        );
-      }));
+  const pause = options.pause ?? abortablePause;
   const deadline = now() + (options.timeoutMs ?? 60_000);
   while (!signal.aborted && now() < deadline) {
     const response = await fetcher(`${origin}/v/${nonce}.txt?t=${now()}`, { signal });
+    if (signal.aborted) throw signal.reason;
     if (response.status === 200 && (await response.text()).trim() === nonce) return;
     await pause(Math.min(1000, deadline - now()), signal);
   }
@@ -148,21 +186,75 @@ export async function verifyContent(
   changed: readonly string[],
   branch: boolean,
   signal: AbortSignal,
+  retryRequired: readonly string[] = [],
+  alsoCanonical = false,
 ): Promise<void> {
-  const required = new Set(changed);
+  const required = new Set([...changed, ...retryRequired]);
   const unchanged = files.filter(file => !required.has(file.path));
   for (const file of unchanged.sort(() => Math.random() - 0.5).slice(0, 20)) required.add(file.path);
   for (const file of files) {
     if (!required.has(file.path)) continue;
-    const response = await fetcher(`${origin}${file.path}?c=${crypto.randomUUID()}`, {
-      signal,
-      headers: branch ? { 'Sec-Fetch-Dest': 'iframe' } : undefined,
-    });
-    if (
-      response.status !== 200 ||
-      (await sha256(new Uint8Array(await response.arrayBuffer()))) !== (await sha256(file.bytes))
-    ) {
-      throw new ContentMismatchError('线上文件内容与构建结果不符');
+    const expectedSha256 = await sha256(file.bytes);
+    const directory = file.path.endsWith('/index.html') ? file.path.slice(0, -'index.html'.length) : undefined;
+    for (const address of [
+      `${origin}${file.path}?c=${crypto.randomUUID()}`,
+      ...(alsoCanonical ? [`${origin}${file.path}`, ...(directory ? [`${origin}${directory}`] : [])] : []),
+    ]) {
+      if (signal.aborted) throw signal.reason;
+      const response = await fetcher(address, {
+        signal,
+        headers: branch ? branchHeaders(file.path) : undefined,
+      });
+      if (signal.aborted) throw signal.reason;
+      if (response.status !== 200)
+        throw new ContentMismatchError(file.path, response.status, file.bytes.byteLength, expectedSha256);
+      const actual = new Uint8Array(await response.arrayBuffer());
+      const actualSha256 = await sha256(actual);
+      if (signal.aborted) throw signal.reason;
+      if (actualSha256 !== expectedSha256)
+        throw new ContentMismatchError(
+          file.path,
+          response.status,
+          file.bytes.byteLength,
+          expectedSha256,
+          actual.byteLength,
+          actualSha256,
+        );
+    }
+  }
+}
+
+export async function verifyContentUntilMatch(
+  fetcher: ProbeFetch,
+  origin: string,
+  files: readonly { path: string; bytes: Uint8Array }[],
+  changed: readonly string[],
+  branch: boolean,
+  signal: AbortSignal,
+  options: {
+    now?: () => number;
+    pause?: (ms: number, signal: AbortSignal) => Promise<void>;
+    timeoutMs?: number;
+    pauseMs?: number;
+    /** 同一轮还核对访客实际请求的无查询串路径；两类地址共用截止时间与失败重试集合。 */
+    alsoCanonical?: boolean;
+  } = {},
+): Promise<void> {
+  const now = options.now ?? Date.now;
+  const deadline = now() + (options.timeoutMs ?? 3 * 60_000);
+  const failedPaths = new Set<string>();
+  while (true) {
+    if (signal.aborted) throw signal.reason;
+    try {
+      await verifyContent(fetcher, origin, files, changed, branch, signal, [...failedPaths], options.alsoCanonical);
+      return;
+    } catch (err) {
+      if (signal.aborted) throw signal.reason;
+      if (!(err instanceof ContentMismatchError)) throw err;
+      failedPaths.add(err.path);
+      const remaining = deadline - now();
+      if (remaining <= 0) throw err;
+      await (options.pause ?? abortablePause)(Math.min(options.pauseMs ?? 3000, remaining), signal);
     }
   }
 }

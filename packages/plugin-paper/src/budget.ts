@@ -1,5 +1,5 @@
 // ============================================================
-// 每日上限：按房间金额与全局金额两项必有，按人金额与按人件数可选
+// 每日上限：全局、白纸、房间、按人金额与按人件数均可选；金额未填不设该层限制，显式 0 禁开新任务
 //
 // 受理与开轮前都要「已花费 + 所有进行中的预留 + 本次预留」不超过每一项上限。每天按 budgetTimeZone
 // 的 0 点换日（缺省宿主进程的本地时区），换日后当天的花费与件数从零算；预留不分日，进行中的都算。
@@ -24,10 +24,12 @@ export function dayKey(now: number, timeZone?: string): string {
 }
 
 interface BudgetLimits {
-  /** 全局每天金额（插件配置，已规整） */
-  globalCents: number;
-  /** 本房间每天金额（会话配置原值）：缺失或写坏按 0 */
-  roomCents: unknown;
+  /** 全局每天金额；缺失即不额外限制，坏值按 0。 */
+  globalCents?: unknown;
+  /** 同一块白纸跨房间每天合计金额；缺失即不额外限制，坏值按 0。 */
+  paperCents?: unknown;
+  /** 本房间每天金额；缺失即不额外限制，坏值按 0。 */
+  roomCents?: unknown;
   /** 每人每天金额（会话配置原值）：缺失即不按人限制，写坏按 0 */
   userCents: unknown;
   /** 每人每天件数（会话配置原值）：缺失即不按人限制，写坏按 0 */
@@ -42,7 +44,25 @@ function optionalAmount(value: unknown): number | undefined {
   return value === undefined || value === null ? undefined : amount(value);
 }
 
-const NO_SPEND: DaySpend = { global: 0, rooms: {}, users: {} };
+const NO_SPEND: DaySpend = { global: 0, papers: {}, rooms: {}, users: {} };
+
+/** 本纸的明确花费、旧日账未归属花费及所有尚未释放的相关预留。 */
+export function paperBudgetUsage(
+  ledger: PaperLedger,
+  day: string,
+  paperId: string,
+): { spentCents: number; unattributedCents: number; reservedCents: number } {
+  const today = ledger.spend[day] ?? NO_SPEND;
+  const papers = today.papers ?? {};
+  const spentCents = papers[paperId] ?? 0;
+  const unattributedCents = Math.max(0, today.global - Object.values(papers).reduce((sum, cents) => sum + cents, 0));
+  let reservedCents = 0;
+  for (const [taskId, reserve] of Object.entries(ledger.reserves)) {
+    const owner = reserve.paperId || ledger.tasks[taskId]?.paperId;
+    if (!owner || owner === paperId) reservedCents += reserve.cents;
+  }
+  return { spentCents, unattributedCents, reservedCents };
+}
 
 /**
  * 能否再开一件（受理时与出队开轮前各判一次）。reserveCents 是本次要预留的额度（{@link reserveFor}）。
@@ -51,6 +71,7 @@ const NO_SPEND: DaySpend = { global: 0, rooms: {}, users: {} };
 export function canStart(
   ledger: PaperLedger,
   day: string,
+  paperId: string,
   room: string,
   user: string,
   limits: BudgetLimits,
@@ -63,20 +84,34 @@ export function canStart(
   const deny = (reason: string) => ({ ok: false as const, reason });
 
   const global = today.global + reserved(() => true);
-  if (global + reserveCents > limits.globalCents) {
+  const globalLimit = optionalAmount(limits.globalCents);
+  if (globalLimit !== undefined && global + reserveCents > globalLimit) {
     return deny(
-      limits.globalCents <= 0
+      globalLimit <= 0
         ? '全局每天金额上限为 0，远端任务不开'
-        : `今天全局的远端任务额度不够（已用加预留 ${global} 美分，本件预留 ${reserveCents}，上限 ${limits.globalCents}）`,
+        : `今天全局的远端任务额度不够（已用加预留 ${global} 美分，本件预留 ${reserveCents}，上限 ${globalLimit}）`,
     );
   }
 
-  const roomLimit = amount(limits.roomCents);
+  const paperLimit = optionalAmount(limits.paperCents);
+  if (paperLimit !== undefined) {
+    const usage = paperBudgetUsage(ledger, day, paperId);
+    const paperUsed = usage.spentCents + usage.unattributedCents + usage.reservedCents;
+    if (paperUsed + reserveCents > paperLimit) {
+      return deny(
+        paperLimit <= 0
+          ? '这块白纸的每天金额上限为 0，远端任务不开'
+          : `这块白纸今天的额度不够（已用加预留 ${paperUsed} 美分，本件预留 ${reserveCents}，上限 ${paperLimit}）`,
+      );
+    }
+  }
+
+  const roomLimit = optionalAmount(limits.roomCents);
   const roomUsed = (today.rooms[room] ?? 0) + reserved(r => r.room === room);
-  if (roomUsed + reserveCents > roomLimit) {
+  if (roomLimit !== undefined && roomUsed + reserveCents > roomLimit) {
     return deny(
       roomLimit <= 0
-        ? '本房间的每天金额上限（remoteAgentRoomDailyCents）没有设或为 0，远端任务不开'
+        ? '本房间的每天金额上限（remoteAgentRoomDailyCents）为 0，远端任务不开'
         : `本房间今天的额度不够（已用加预留 ${roomUsed} 美分，本件预留 ${reserveCents}，上限 ${roomLimit}）`,
     );
   }
@@ -112,13 +147,13 @@ export function reserveFor(ledger: PaperLedger, paperId: string, defaultCents: n
 
 /** 当天的花费表（没有就建） */
 export function daySpend(ledger: PaperLedger, day: string): DaySpend {
-  ledger.spend[day] ??= { global: 0, rooms: {}, users: {} };
+  ledger.spend[day] ??= { global: 0, papers: {}, rooms: {}, users: {} };
   return ledger.spend[day];
 }
 
 /**
- * 按实际费用入账一轮：记进 day 这天的全局花费与代理的累计花费；有对应任务的，再记进发起房间与发起者，
- * 并写进任务的 costCents（{@link reserveFor} 取它）。账本外的轮次（自唤醒）只进全局。预留由调用方释放。
+ * 按实际费用入账一轮：记进 day 这天的全局花费与代理的累计花费；可归属时计入白纸，
+ * 有对应任务的再记进发起房间与发起者，并写进任务的 costCents（{@link reserveFor} 取它）。预留由调用方释放。
  * estimated：费用取不到、按估计入账，之后不再补取。
  */
 export function book(ledger: PaperLedger, day: string, runId: string, cents: number, estimated = false): void {
@@ -130,6 +165,11 @@ export function book(ledger: PaperLedger, day: string, runId: string, cents: num
   const agent = ledger.agents[run.agentId];
   if (agent) agent.costCents += cents;
   const task = run.taskId ? ledger.tasks[run.taskId] : undefined;
+  const paperId = task?.paperId ?? agent?.paperId;
+  if (paperId) {
+    spend.papers ??= {};
+    spend.papers[paperId] = (spend.papers[paperId] ?? 0) + cents;
+  }
   if (!task) return;
   task.costCents = cents;
   spend.rooms[task.room] = (spend.rooms[task.room] ?? 0) + cents;

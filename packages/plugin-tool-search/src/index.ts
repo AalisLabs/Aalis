@@ -1,7 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { hooks } from '@aalis/api-hooks';
 import type {} from '@aalis/api-memory'; // declaration merging：memory:clear 钩子类型
-import type { ToolCallContext, ToolDefinition, ToolSummary } from '@aalis/api-tools';
+import type { ToolCallContext, ToolDefinition, ToolGroupInfo, ToolSummary } from '@aalis/api-tools';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
@@ -15,10 +15,10 @@ const configSchema = defineConfig({
   },
   showToolNames: {
     type: 'boolean',
-    label: '展示工具名称列表',
+    label: '展示可用能力目录',
     default: true,
     description:
-      '开启后，系统提示中会附带所有可用工具的名称列表（不含说明），' +
+      '开启后，search_tools 的描述中会概括本轮可用分组、能力说明与工具名示例，' +
       '模型需要调用 search_tools 查询具体用法后才能使用对应工具。' +
       '关闭后模型只看到 search_tools，需要先搜索才能发现工具。',
   },
@@ -32,6 +32,8 @@ const configSchema = defineConfig({
     type: 'number',
     label: '搜索结果上限',
     default: 5,
+    min: 0,
+    integer: true,
     description: '单次搜索返回的最大工具数量，0 表示不限制',
   },
   alwaysDirectTools: {
@@ -55,27 +57,29 @@ const configSchema = defineConfig({
 
 /** search_tools 自身的工具名 */
 const SEARCH_TOOL_NAME = 'search_tools';
+const CATALOG_MAX_CHARS = 3200;
+const SUMMARY_MAX_CHARS = 90;
+const GROUP_TOOL_EXAMPLES = 3;
 
 // ===== 工具搜索逻辑 =====
 
 /**
  * 构建 search_tools 的工具定义
- * 当 showToolNames 开启时，description 中会附带所有可用工具的名称列表
+ * 当 showToolNames 开启时，description 中会附带本轮可用能力目录。
  */
-function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
+function buildSearchToolDef(catalog?: string): ToolDefinition {
   let description =
     '发现并激活系统中的功能工具。搜索到的工具会被系统自动激活，你可以直接调用它们（搜索结果直接包含完整参数定义）。' +
     '\n本工具仅用于发现可调用的功能工具，不会返回任何实际内容。' +
     '\n能直接回答的简单问题无需调用工具；需要工具时，先搜索再直接调用即可。';
 
-  if (toolNames && toolNames.length > 0) {
+  if (catalog) {
     description +=
-      '\n\n下方"可用工具名清单"仅用于让你知道哪些功能存在，' +
-      '便于你想出合适的搜索关键词。' +
-      '\n**严禁**仅凭名字直接调用清单里的工具——它们的参数 schema 你并不知道，' +
+      '\n\n下方能力目录仅用于了解本轮可用功能、寻找搜索词。' +
+      '\n**严禁**仅凭目录直接调用工具——它们的参数 schema 你并不知道，' +
       '凭名字直接调用会产生参数幻觉、危险副作用或意外失败。' +
-      '\n要使用清单中的任何工具，必须先调用 search_tools 拿到完整 parameters 定义后再调用。' +
-      `\n\n当前可用工具名清单（仅供搜索参考，禁止直接调用）:\n${toolNames.map(n => `- ${n}`).join('\n')}`;
+      '\n要使用目录中的任何工具，必须先调用 search_tools 拿到完整 parameters 定义后再调用。' +
+      `\n\n当前可用能力目录（仅供搜索参考，禁止直接调用）:\n${catalog}`;
   }
 
   return {
@@ -108,17 +112,89 @@ function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
 /**
  * 在工具摘要列表中按关键词搜索
  */
-function searchTools(summaries: ToolSummary[], query: string): ToolSummary[] {
+function searchTools(summaries: ToolSummary[], query: string, groups: readonly ToolGroupInfo[]): ToolSummary[] {
   // 排除 search_tools 自身
   const pool = summaries.filter(s => s.name !== SEARCH_TOOL_NAME);
 
   if (!query.trim()) return pool;
 
   const keywords = query.toLowerCase().split(/\s+/).filter(Boolean);
-  return pool.filter(tool => {
-    const text = `${tool.name} ${tool.description}`.toLowerCase();
-    return keywords.some(kw => text.includes(kw));
-  });
+  const groupByName = new Map(groups.map(group => [group.name, group]));
+  return pool
+    .map((tool, index) => {
+      const name = tool.name.toLowerCase();
+      const description = tool.description.toLowerCase();
+      const groupText = (tool.groups ?? [])
+        .map(key => groupByName.get(key))
+        .filter((group): group is ToolGroupInfo => !!group)
+        .map(group => `${group.name} ${group.label} ${group.description ?? ''}`.toLowerCase())
+        .join(' ');
+      const score = Math.max(
+        ...keywords.map(keyword => {
+          if (name === keyword) return 6;
+          if (name.startsWith(keyword)) return 5;
+          if (name.includes(keyword)) return 4;
+          if (groupText.includes(keyword)) return 3;
+          if (description.includes(keyword)) return 1;
+          return 0;
+        }),
+      );
+      return { tool, index, score };
+    })
+    .filter(entry => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(entry => entry.tool);
+}
+
+function short(value: string): string {
+  const clean = value.replace(/\s+/g, ' ').trim();
+  return [...clean].slice(0, SUMMARY_MAX_CHARS).join('') + ([...clean].length > SUMMARY_MAX_CHARS ? '…' : '');
+}
+
+/** 只使用本轮原始工具定义里的名字；多分组工具不能单独证明某个分组已启用。 */
+function capabilityCatalog(
+  defs: readonly ToolDefinition[],
+  summaries: readonly ToolSummary[],
+  groups: readonly ToolGroupInfo[],
+): string {
+  const byName = new Map(summaries.map(summary => [summary.name, summary]));
+  const visible = defs
+    .filter(def => def.function.name !== SEARCH_TOOL_NAME)
+    .map(
+      (def): ToolSummary =>
+        byName.get(def.function.name) ?? { name: def.function.name, description: def.function.description },
+    );
+  const provenGroups = new Set(
+    visible.filter(summary => summary.groups?.length === 1).map(summary => summary.groups![0]),
+  );
+  const assigned = new Set<string>();
+  const lines: string[] = [];
+  for (const group of groups) {
+    if (!provenGroups.has(group.name)) continue;
+    const members = visible.filter(summary => summary.groups?.includes(group.name));
+    if (members.length === 0) continue;
+    for (const member of members) assigned.add(member.name);
+    const examples = members
+      .slice(0, GROUP_TOOL_EXAMPLES)
+      .map(item => item.name)
+      .join('、');
+    const more = members.length > GROUP_TOOL_EXAMPLES ? `等 ${members.length} 个` : '';
+    lines.push(`- ${group.label}（${group.name}）：${short(group.description ?? '')}；工具 ${examples}${more}`);
+  }
+  for (const summary of visible) {
+    if (assigned.has(summary.name)) continue;
+    lines.push(`- ${summary.name}：${short(summary.description)}`);
+  }
+  let result = '';
+  for (let i = 0; i < lines.length; i++) {
+    const next = result ? `${result}\n${lines[i]}` : lines[i];
+    if (next.length > CATALOG_MAX_CHARS) {
+      const suffix = '\n- 更多可用工具：用 search_tools 空 query 分页查看。';
+      return `${result.slice(0, CATALOG_MAX_CHARS - suffix.length)}${suffix}`;
+    }
+    result = next;
+  }
+  return result;
 }
 
 /**
@@ -293,13 +369,13 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
     async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
-      // limit: 优先用模型传入值，否则用配置的 maxSearchResults
-      const effectiveLimit =
-        typeof args.limit === 'number' && args.limit > 0
-          ? Math.floor(args.limit)
-          : maxSearchResults > 0
-            ? maxSearchResults
-            : Infinity;
+      // 模型可以收窄单次结果，但不能越过宿主配置的正上限。
+      const defaultLimit = maxSearchResults > 0 ? maxSearchResults : Infinity;
+      const requestedLimit =
+        typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0
+          ? Math.max(1, Math.floor(args.limit))
+          : defaultLimit;
+      const effectiveLimit = Math.min(defaultLimit, requestedLimit);
 
       // handler 由 tools 提供者自己调起，正常情况下它必然在场；缺席只可能是拆卸竞态
       const service = tools.current;
@@ -308,7 +384,9 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
       const summaries = service.getSummaries(filter);
-      const allResults = searchTools(summaries, query);
+      const enabled = callCtx.enabledGroups ?? [];
+      const groups = service.getGroups().filter(group => enabled.includes('*') || enabled.includes(group.name));
+      const allResults = searchTools(summaries, query, groups);
       const paged = allResults.slice(offset, offset + effectiveLimit);
       // 搜索结果直接包含完整参数定义（parameters schema），配合 getDefinitions 提供
 
@@ -388,9 +466,13 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
       extractDiscoveredTools(data.messages, maxDiscoveredKeep),
     );
 
-    // 构建 search_tools 定义（showToolNames 时附带工具名列表）
+    // 本轮工具已由 agent 按 enabledToolGroups 过滤；仅取这些名字的摘要。
     const otherToolNames = allDefs.map(d => d.function.name).filter(n => n !== SEARCH_TOOL_NAME);
-    const searchDef = buildSearchToolDef(showToolNames ? otherToolNames : undefined);
+    const service = tools.current;
+    const catalog = showToolNames
+      ? capabilityCatalog(allDefs, service?.getSummaries({ groups: ['*'] }) ?? [], service?.getGroups() ?? [])
+      : undefined;
+    const searchDef = buildSearchToolDef(catalog);
 
     // 构建筛选后的工具列表：search_tools + 直出工具 + 已发现工具完整定义
     const filtered: ToolDefinition[] = [searchDef];
@@ -422,7 +504,7 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
     data.tools = filtered;
     logger.debug(
       `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个` +
-        ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discoveredVisibleCount}/${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
+        ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discoveredVisibleCount}/${discovered.size}, 能力目录: ${showToolNames ? '是' : '否'})`,
     );
 
     await next();

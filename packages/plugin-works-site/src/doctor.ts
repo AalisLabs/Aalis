@@ -10,24 +10,27 @@ export function registerWorksDoctor(deps: {
   store: WorksStore;
   now?: () => number;
 }): void {
+  const id =
+    deps.config.targetId && deps.config.targetId !== 'works'
+      ? `works-site.config.${deps.config.targetId}`
+      : 'works-site.config';
   deps.doctor.registerCheck({
-    id: 'works-site.config',
+    id,
     category: 'config',
     run(): CheckResult {
       const now = deps.now?.() ?? Date.now();
-      if (deps.store.failure)
-        return { id: 'works-site.config', category: 'config', level: 'error', message: deps.store.failure };
+      if (deps.store.failure) return { id, category: 'config', level: 'error', message: deps.store.failure };
       const health = deps.deployer.health();
-      if (!health.ok) return { id: 'works-site.config', category: 'config', level: 'error', message: health.reason };
+      if (!health.ok) return { id, category: 'config', level: 'error', message: health.reason };
       if (deps.deployer.onlineFailOpen !== undefined && deps.deployer.onlineFailOpen !== deps.config.failOpen) {
-        return { id: 'works-site.config', category: 'config', level: 'error', message: '线上 fail_open 与配置不符' };
+        return { id, category: 'config', level: 'error', message: '线上 fail_open 与配置不符' };
       }
       if (deps.deployer.tokenExpiresOn !== undefined) {
         if (deps.deployer.tokenExpiresOn <= now)
-          return { id: 'works-site.config', category: 'config', level: 'error', message: 'Cloudflare token 已过期' };
+          return { id, category: 'config', level: 'error', message: 'Cloudflare token 已过期' };
         if (deps.deployer.tokenExpiresOn - now < 14 * 24 * 60 * 60_000) {
           return {
-            id: 'works-site.config',
+            id,
             category: 'config',
             level: 'warn',
             message: 'Cloudflare token 将在 14 天内过期',
@@ -37,7 +40,7 @@ export function registerWorksDoctor(deps: {
       const state = deps.store.data;
       const unread = state?.alerts.filter(alert => !alert.acknowledged) ?? [];
       return {
-        id: 'works-site.config',
+        id,
         category: 'config',
         level: unread.length ? 'warn' : 'ok',
         message: unread.length ? `作品站有 ${unread.length} 条未读告警` : '作品站配置与已核对状态正常',

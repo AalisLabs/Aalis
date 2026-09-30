@@ -27,9 +27,9 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `enabled` | boolean | `true` | 启用工具搜索层：关闭后所有工具将直接发送给 LLM，不经过搜索层 |
-| `showToolNames` | boolean | `true` | 展示工具名称列表：开启后，系统提示中会附带所有可用工具的名称列表（不含说明），模型需要调用 search_tools 查询具体用法后才能使用对应工具。关闭后模型只看到 search_tools，需要先搜索才能发现工具。 |
+| `showToolNames` | boolean | `true` | 展示本轮可用能力目录：按组列名称、简短组说明与最多 3 个可用工具名示例；没有可用分组元数据的工具列简短摘要。关闭后模型只看到 search_tools，需要先搜索才能发现工具。 |
 | `maxDirectTools` | number | `5` | 直传阈值：当注册的工具总数不超过此值时，跳过搜索层，直接将全部工具发送给 LLM |
-| `maxSearchResults` | number | `5` | 搜索结果上限：单次搜索返回的最大工具数量，0 表示不限制 |
+| `maxSearchResults` | 非负整数 | `5` | 宿主设置的单次搜索硬上限，模型的 `limit` 只能缩小它；0 表示宿主主动不限制 |
 | `alwaysDirectTools` | multiselect | `[]` | 直出工具名单：即使启用工具搜索层，也始终直接暴露这些工具的完整定义。填写工具名，如 web_search。 |
 | `maxDiscoveredKeep` | number | `20` | 已发现工具队列上限：从消息历史推断出的“已发现工具”最多保留 N 个（按最近使用时间倒序保留，0 = 不限）。避免长会话里 discovered 集合无限膨胀，使搜索层失去瘦身价值。 |
 
@@ -41,7 +41,7 @@ export default definePlugin({
 2. **应用直出名单**: `alwaysDirectTools` 中的工具只要出现在本轮工具列表里，就保留完整定义；名单中未注册或当前不可用的工具名会记录一次警告日志
 3. **替换工具列表**: 将 `data.tools` 替换为 `search_tools` 定义 + 直出工具定义 + 已发现工具定义
 4. **追踪已发现工具**: 从消息历史中提取已发现工具（`search_tools` 结果中返回过的工具，以及实际调用过且收到了结果的工具），并入会话级的已发现工具集（进程内存，按最近使用保留最多 `maxDiscoveredKeep` 个，上下文裁剪后仍保留）
-5. **名称清单（`showToolNames`）**: 在 `search_tools` 的工具描述中附上其余工具的名称清单，仅供构造搜索关键词；描述中明确要求先搜索拿到参数定义再调用
+5. **能力目录（`showToolNames`）**: 在 `search_tools` 描述中概括本轮已过滤的工具。目录优先使用工具分组的名称和说明，每组最多展示 3 个工具名示例及总数；没有可用分组元数据时用工具的短摘要。目录最多 3200 字符，超出时提示用空查询分页。目录不含参数定义，调用前仍须搜索。
 
 另注册 `memory:clear` 中间件：清理类型为空或包含 `context` 时，清空对应会话（scope 为 `all` 时清空全部）的已发现工具集，其它类型的清理不动它。
 
@@ -60,6 +60,6 @@ plugins:
 
 ### `search_tools` 工具
 
-参数: `{ query: string; limit?: number; offset?: number }`。`query` 为空字符串时匹配全部工具；`limit` 缺省时取 `maxSearchResults` 的值（配置为 0 时不限数量）；`offset` 用于翻页。
+参数: `{ query: string; limit?: number; offset?: number }`。`query` 为空字符串时匹配全部工具；有效的正数 `limit` 可缩小单次结果数，正小数至少取 1，超过正的 `maxSearchResults` 时按宿主上限截断。无效、非有限或非正的 `limit` 使用宿主默认值；`maxSearchResults: 0` 时宿主不设上限。`offset` 用于翻页。
 
-按空白切分关键词，对工具名与描述做不区分大小写的子串匹配（任一关键词命中即可），结果按调用时的启用分组过滤。返回 JSON：`found`、`tools`（含 name、description、parameters 完整定义）、结果被截断时的 `pagination`、同组其它工具名 `related`、以及 `hint`。返回的工具会记入已发现集，后续轮次可以直接调用。
+按空白切分关键词，不区分大小写。搜索只考虑调用时启用分组内的工具与分组说明；精确工具名优先，其次是工具名前缀、名称包含、分组名/说明、工具描述，同分保留注册顺序。返回 JSON：`found`、`tools`（含 name、description、parameters 完整定义）、结果被截断时的 `pagination`、同组其它工具名 `related`、以及 `hint`。返回的工具会记入已发现集，后续轮次可以直接调用。分组目录与搜索均不能让未启用的分组变成可调用工具。

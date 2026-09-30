@@ -23,9 +23,9 @@ interface SessionConfig {
   paperEnabled?: boolean;              // 本房间开启白纸（默认关）
   paperName?: string;                  // 白纸名；不写则每个房间各一块
   remoteAgentTypes?: string[];         // 允许的远端代理类型（提供者实例 id）；空或缺省 = 关
-  remoteAgentUserDailyCents?: number;  // 每人每天金额上限（美分）；缺省不按人限制
+  remoteAgentUserDailyCents?: number;  // 每人每天金额上限（美分）；不填不额外限制，0 禁止开新任务
   remoteAgentUserDailyTasks?: number;  // 每人每天件数上限；缺省不按人限制
-  remoteAgentRoomDailyCents?: number;  // 本房间每天金额上限（美分）；缺省按 0
+  remoteAgentRoomDailyCents?: number;  // 本房间每天金额上限（美分）；不填不额外限制，0 禁止开新任务
   memoryRecallScope?: MemoryRecallScope; // 记忆召回范围，只能比记忆插件的配置更窄
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>; // 子会话默认
 }

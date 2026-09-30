@@ -22,6 +22,7 @@ describe('send_attachment storage_uri 归一化', () => {
   let app: App;
   let hostEvents: Events;
   let handlers: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>>;
+  let confirmDelivery: boolean;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-'));
@@ -32,6 +33,11 @@ describe('send_attachment storage_uri 归一化', () => {
     handlers = {};
     const host = app.bind({ provide, events });
     hostEvents = host.events;
+    confirmDelivery = true;
+    // 本文件只验证 storage_uri 解析；模拟平台适配器确认，不声称走过真实 OneBot。
+    hostEvents.on('outbound:message', msg => {
+      if (confirmDelivery) msg.delivery = Promise.resolve({ ok: true });
+    });
     host.provide(tools, {
       register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
         handlers[t.definition.function.name] = t.handler;
@@ -98,5 +104,17 @@ describe('send_attachment storage_uri 归一化', () => {
       ),
     );
     expect(out.error).toMatch(/存储资源不存在/);
+  });
+
+  it('没有适配器确认时，即使路径正确也不报告已发送', async () => {
+    confirmDelivery = false;
+    const out = JSON.parse(
+      await handlers.send_attachment(
+        { kind: 'image', storage_uri: 'data/images/onebot_x_group_1/abcd1234.jpg' },
+        { sessionId: 'onebot:x:group:1' },
+      ),
+    );
+    expect(out.ok).toBeUndefined();
+    expect(out.error).toMatch(/没有目标适配器确认/);
   });
 });
