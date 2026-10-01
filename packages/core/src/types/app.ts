@@ -48,7 +48,7 @@ export interface PluginStatusEntry {
  *
  * 管理动作（register / unload / enable / disable / bounce / updateConfig）的返回值同一口径：
  * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、
- * 'disposed' 单向终态、disabled 态不带配置的 bounce、定义或实例 id 校验失败）；**true = 其余，含主体已在目标态的幂等情形**。
+ * 'disposed' 单向终态、disabled 态不带配置的 bounce、定义或实例 id 校验失败、配置无法拷贝）；**true = 其余，含主体已在目标态的幂等情形**。
  * 每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 core 造的对象时按安装问题记 error；主体不存在、
  * 'disposed' 在途与停机中 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。

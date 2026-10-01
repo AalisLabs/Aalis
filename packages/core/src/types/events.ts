@@ -57,7 +57,7 @@ export interface AalisEvents {
    *
    * 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await 两次 emit，
    * 全部 `app:ready` 监听器完成之后才发 `app:started`。要在别人都就绪之后才动手（如 CLI 接管终端），
-   * 挂 `app:started`。两者都是 sticky：晚注册的监听器（如 bounce 出来的新实例）会在下一个微任务被补发一次。
+   * 挂 `app:started`。两者都是 sticky：晚注册的监听器（如 bounce 出来的新实例）会在下一个微任务被补发一次；派发进行中登记的由本轮派发送达，同样只收到一次。
    */
   'app:ready': [];
   /** 屏障：应用启动的第二相位，全部 `app:ready` 监听器已完成，适合 CLI / TUI 等用户交互入口接管终端 */
