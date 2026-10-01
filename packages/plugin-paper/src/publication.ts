@@ -10,6 +10,8 @@ import { automaticPublicationArtifacts } from './works.js';
 
 type Publication = NonNullable<TaskRecord['publication']>;
 const RETRY_MS = 30_000;
+/** 待提交最长等多久：发布目标或发布服务一直不可用时，到期转失败并通知，不让任务一直挂着 */
+const PENDING_DEADLINE_MS = 24 * 3_600_000;
 
 interface PaperPublicationDeps {
   journal?: TaskJournal;
@@ -133,9 +135,21 @@ export class PaperPublication {
         continue;
       }
       if (task.state !== 'done' || task.artifactsCleared) continue;
-      if (pub.state === 'pending' && (pub.nextAttemptAt ?? 0) > this.#now()) {
-        nearest = Math.min(nearest, pub.nextAttemptAt!);
-        continue;
+      if (pub.state === 'pending') {
+        const deadline = (task.endedAt ?? task.createdAt) + PENDING_DEADLINE_MS;
+        if (this.#now() >= deadline) {
+          await this.#update(task.id, pub, {
+            state: 'failed',
+            reason: '24 小时内没能提交发布（发布目标或发布服务一直不可用）',
+            nextAttemptAt: undefined,
+          });
+          continue;
+        }
+        // 只在推迟重试时把期限算进唤醒时刻；其余情况 #advance 每 30 秒重试一次，期限到了自然会查到
+        if ((pub.nextAttemptAt ?? 0) > this.#now()) {
+          nearest = Math.min(nearest, pub.nextAttemptAt!, deadline);
+          continue;
+        }
       }
       try {
         await this.#advance(task, pub);

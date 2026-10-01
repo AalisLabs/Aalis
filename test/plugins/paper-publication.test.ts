@@ -22,13 +22,16 @@ const task = (artifacts: TaskRecord['artifacts'], target = 'works'): TaskRecord 
   name: '作品',
   text: '制作作品',
   state: 'done',
-  createdAt: 1,
+  createdAt: Date.now(),
   artifacts,
   delivered: false,
   publication: { target, title: '作品', summary: '', state: 'pending' },
 });
 
-function setup(t: TaskRecord, options: { surface?: boolean; target?: boolean; failReceipt?: boolean } = {}) {
+function setup(
+  t: TaskRecord,
+  options: { surface?: boolean; target?: boolean; failReceipt?: boolean; now?: () => number } = {},
+) {
   const files = new Map(t.artifacts.map(a => [artifactUri(t.paperId, t.id, a), new Uint8Array([1, 2, 3])]));
   const storage = {
     readFile: vi.fn(async (uri: string) => {
@@ -102,6 +105,7 @@ function setup(t: TaskRecord, options: { surface?: boolean; target?: boolean; fa
     signal: controller.signal,
     logger,
     onChange: changed,
+    ...(options.now ? { now: options.now } : {}),
   });
   const connect = () => {
     current = service;
@@ -150,6 +154,22 @@ describe('PaperPublication', () => {
     });
     h.setState('published', true);
     await vi.waitFor(() => expect(t.publication?.state).toBe('live'));
+    await h.coordinator.close();
+  });
+
+  it('gives up a pending submission 24 hours after the task ended when the target never comes back', async () => {
+    const t = { ...task([artifact('a-00000001', 'page.html', 'html')]), endedAt: 0 };
+    let now = 24 * 3_600_000 - 1;
+    const h = setup(t, { surface: false, now: () => now });
+    h.connect();
+    h.coordinator.open();
+    await settled();
+    expect(t.publication?.state).toBe('pending');
+    now = 24 * 3_600_000;
+    h.notify();
+    await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
+    expect(t.publication?.reason).toContain('24 小时');
+    expect(h.nominate).not.toHaveBeenCalled();
     await h.coordinator.close();
   });
 
