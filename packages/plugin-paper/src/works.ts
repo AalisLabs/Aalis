@@ -173,6 +173,10 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (task.state !== 'done') return fail('这件任务还没有完成');
     if (task.artifactsCleared) return fail('这件任务的成品已随白纸清空删除');
     if (task.publication?.workId) {
+      // 提交键固定为任务 ID，已提交过的任务不能另投一次；失败时只报原因，不带回失效的编号。
+      if (task.publication.state === 'failed') {
+        return fail(`这件任务的发布没有成功（${task.publication.reason ?? '原因未记录'}），不能再次提名`);
+      }
       return done({ workId: task.publication.workId, message: '这件任务已提交发布处理' });
     }
     if (task.publication && task.publication.state !== 'failed') {
