@@ -13,14 +13,19 @@ import { createProcessRespawnStrategy, type RestartRollback } from '../../packag
 // 只 mock 不抛的话，执行会越过 exit 继续跑进回滚分支。
 // ════════════════════════════════════════════════════════════
 
-const spawned = vi.hoisted(() => ({ calls: 0, scripts: [] as Array<(child: EventEmitter) => void> }));
+const spawned = vi.hoisted(() => ({
+  calls: 0,
+  cwds: [] as Array<string | undefined>,
+  scripts: [] as Array<(child: EventEmitter) => void>,
+}));
 vi.mock('node:child_process', async importOriginal => {
   const cp = await importOriginal<typeof import('node:child_process')>();
   const { EventEmitter } = await import('node:events');
   return {
     ...cp,
-    spawn: () => {
+    spawn: (_cmd: string, _args: string[], opts?: { cwd?: string }) => {
       spawned.calls++;
+      spawned.cwds.push(opts?.cwd);
       const child = Object.assign(new EventEmitter(), { disconnect() {}, unref() {} });
       const script = spawned.scripts.shift();
       if (script) setImmediate(() => script(child));
@@ -41,6 +46,7 @@ let errors: string[];
 
 beforeEach(() => {
   spawned.calls = 0;
+  spawned.cwds = [];
   spawned.scripts = [];
   dir = mkdtempSync(join(tmpdir(), 'aalis-respawn-'));
   file = join(dir, 'package.json');
@@ -60,7 +66,7 @@ afterEach(() => {
 });
 
 function restart(rollback: RestartRollback): Promise<void> {
-  const strategy = createProcessRespawnStrategy({ readyTimeoutMs: 10 });
+  const strategy = createProcessRespawnStrategy({ appDir: '/nonexistent-app', cwd: '/launch-dir', readyTimeoutMs: 10 });
   return (async () => strategy.restart({ stop: async () => {}, rollback }))();
 }
 
@@ -71,6 +77,8 @@ describe('createProcessRespawnStrategy', () => {
       code: 0,
     });
     expect(spawned.calls).toBe(1);
+    // 新进程在启动时的 cwd 里起：命令行里相对的 --home 才解析到同一个家目录，不随重启时的 cwd 漂移
+    expect(spawned.cwds).toEqual(['/launch-dir']);
     expect(readFileSync(file, 'utf-8')).toBe('NEW');
   });
 

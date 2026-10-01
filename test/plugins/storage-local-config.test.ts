@@ -1,17 +1,27 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // 无效 roots 在 createRoot/mkdir 之前拒绝；空数组只检查解析结果，避免在工作区创建默认目录。
 const apps: App[] = [];
+let home: string;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'aalis-storage-cfg-'));
+});
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
+  rmSync(home, { recursive: true, force: true });
 });
 
 async function start(roots: unknown) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
+  provideHostPaths(app, home);
   await app.plugin(storageLocal, { roots });
   await app.plugins.idle();
   return app.plugins.getStatus().find(p => p.instanceId === storageLocal.name);
@@ -43,6 +53,7 @@ describe('plugin-storage-local roots 配置', () => {
     };
     const app = new App({ name: 'T', logger });
     apps.push(app);
+    provideHostPaths(app, home);
     await app.plugin(storageLocal, { roots: [{ name: 'bad/name', path: '/private/canary', readable: true }] });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(storageLocal.name)?.state).toBe('error');

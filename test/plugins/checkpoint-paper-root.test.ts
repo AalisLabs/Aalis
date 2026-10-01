@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createStorageGateway,
   type StorageService,
@@ -11,6 +11,7 @@ import { App } from '../../packages/core/src/index.js';
 import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -27,11 +28,11 @@ describe('checkpoint × 白纸根', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-cp-paper-'));
-    vi.spyOn(process, 'cwd').mockReturnValue(base);
     const ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
@@ -56,7 +57,6 @@ describe('checkpoint × 白纸根', () => {
 
   afterEach(async () => {
     await app.stop();
-    vi.restoreAllMocks();
     rmSync(base, { recursive: true, force: true });
   });
 

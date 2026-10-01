@@ -91,6 +91,14 @@ export interface SchemaField {
   step?: number;
   /** string / textarea：正则约束（RegExp 源文本，test() 子串语义——要整串匹配请显式 ^…$），validateConfig 与 parseConfig 强制；模式本身非法则跳过该检查 */
   pattern?: string;
+  /**
+   * string / textarea：宿主文件路径的写法，validateConfig 与 parseConfig 强制；判定忽略首尾空白，空串照常表示未填，不查。
+   * 配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以路径一律写绝对路径：
+   * - `absolute-path`：绝对路径（`/…`、`C:\…` 或 `\\…`）；
+   * - `executable`：可执行文件，绝对路径或不含路径分隔符的命令名（按 PATH 查找；`C:foo` 这类带盘符的相对写法不算）。
+   * 只按写法判定、与宿主平台无关：Windows 形状的绝对路径在 POSIX 宿主上也算通过。
+   */
+  format?: 'absolute-path' | 'executable';
 }
 
 export interface SchemaGroup {
@@ -308,7 +316,7 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
  * - **options 即取值范围**：select 有静态 options、没有 dynamicOptions 且 allowCustom 不为 true 时，值须是
  *   某个选项值（按字符串比较）；multiselect 同样逐元素判定。
  * - **约束键**：number 强制 min/max（含边界）与 integer，string/textarea 强制
- *   pattern（模式非法则跳过该检查）；step 是纯 UI 提示不校验。约束只在类型
+ *   pattern（模式非法则跳过该检查）与 format（空串不查）；step 是纯 UI 提示不校验。约束只在类型
  *   检查通过后评估——类型都不对时报类型错，不叠报约束错。
  * - **list / map**：list 须为数组、map 须为对象，逐元素 / 逐值报错，路径形如 `args[1]`、`env.KEY`。
  * - **宽容缺失**：undefined 与 null（YAML 裸键）视为"未配置"，required 字段的 `''` 也算未配置（WebUI 与脚手架
@@ -506,6 +514,9 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
       if (field.pattern !== undefined && !matchesPattern(field.pattern, text)) {
         return { invalid: `不匹配模式 ${field.pattern}` };
       }
+      if (field.format !== undefined && text.trim() !== '' && !matchesFormat(field.format, text.trim())) {
+        return { invalid: field.format === 'executable' ? '须为绝对路径或命令名（不含路径分隔符）' : '须为绝对路径' };
+      }
       return { value: text, dropped: [] };
     }
     case 'number': {
@@ -612,6 +623,16 @@ function matchesPattern(pattern: string, text: string): boolean {
   } catch {
     return true;
   }
+}
+
+/** POSIX 绝对路径、Windows 盘符路径或 UNC 路径 */
+const ABSOLUTE_PATH = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/;
+
+function matchesFormat(format: string, text: string): boolean {
+  if (ABSOLUTE_PATH.test(text)) return true;
+  if (format === 'executable') return !/[\\/]/.test(text) && !/^[A-Za-z]:/.test(text);
+  // 不认识的写法（作者的 schema bug）同 pattern 一样跳过
+  return format !== 'absolute-path';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

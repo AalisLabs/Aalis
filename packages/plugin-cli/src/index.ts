@@ -77,7 +77,7 @@ const configSchema = defineConfig({
     type: 'number',
     label: '日志内存缓冲上限（条）',
     default: 50000,
-    description: '日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在 data/latest.log',
+    description: '日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在家目录的 logs/latest.log',
   },
   startupView: {
     type: 'select',
@@ -234,7 +234,7 @@ function startCli(caps: Caps): void {
 
   // 临时缓冲：插件装配早于 app:started，但晚于 bootstrap-buffer.dispose()；
   // 我们订阅一个 onEntry 把这段窗口的实时 entry 留住，并在 app:started 时合并
-  // data/latest.log 尾部（覆盖装配之前的早期 boot 日志）。
+  // logs/latest.log 尾部（覆盖装配之前的早期 boot 日志）。
   const liveBuffer: LogEntry[] = [];
   let liveBufferActive = true;
   const stopLiveBuffer = LogHub.default.onEntry(entry => {
@@ -313,7 +313,7 @@ class CliTui {
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    // 启动期日志由插件入口通过尾读 data/latest.log + 实时 buffer 合并后注入，
+    // 启动期日志由插件入口通过尾读 logs/latest.log + 实时 buffer 合并后注入，
     // 之后通过 LogHub.onEntry 实时累积；按 seq 单调，下方 onEntry 用 lastSeq 去重避免与 initial 重复。
     this.logLines = initialEntries.slice();
   }
@@ -792,7 +792,7 @@ class CliTui {
   }
 
   /** 内存环形上限：超限时从最旧丢弃约 10% 一块（摊销 O(1)），格式化缓存按 lineCounts
-   * 对齐裁剪而非整体失效——避免每次裁剪都 O(全量) 重建。完整日志始终在 data/latest.log。 */
+   * 对齐裁剪而非整体失效——避免每次裁剪都 O(全量) 重建。完整日志始终在 logs/latest.log。 */
   private trimLogHead(): void {
     const drop = Math.max(1, Math.ceil(this.config.maxLogEntries / 10));
     this.logLines.splice(0, drop);
@@ -899,7 +899,7 @@ class CliTui {
     out.push('');
     out.push(sec('提示'));
     out.push(
-      `    ${chalk.gray('• 完整日志写入 data/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。')}`,
+      `    ${chalk.gray('• 完整日志写入家目录的 logs/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。')}`,
     );
     out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
     out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);

@@ -32,8 +32,8 @@
     "@aalis/util-dep-spec": "workspace:>=0.1.1 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0"
+    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -46,7 +46,7 @@
   "aalis": {
     "service": {
       "required": [
-        "config",
+        "host-paths",
         "logger",
         "process",
         "provide",

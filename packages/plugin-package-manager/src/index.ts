@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { hostConfig } from '@aalis/api-host-config';
+import { hostPaths } from '@aalis/api-host-paths';
 import {
   type PackageManagerService,
   packageManager,
@@ -12,7 +13,6 @@ import {
   type AppService,
   appService,
   type BoundOf,
-  config,
   definePlugin,
   logger,
   optional,
@@ -21,7 +21,6 @@ import {
   provide,
   services,
 } from '@aalis/core';
-import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 实现 =====
@@ -197,20 +196,10 @@ export function validatePackageSpec(spec: unknown): string | undefined {
 
 // ===== 插件入口 =====
 
-const configSchema = defineConfig({
-  projectRoot: {
-    type: 'string',
-    label: '项目目录',
-    description: '安装插件的项目目录，留空使用当前工作目录；须与宿主的插件加载目录一致。',
-    default: '',
-    onInvalid: 'error',
-  },
-});
-
 const uses = {
   proc: processService,
+  paths: hostPaths,
   logger,
-  config,
   provide,
   services,
   app: optional(appService),
@@ -221,7 +210,6 @@ const uses = {
 type Caps = BoundOf<typeof uses>;
 
 function createService(caps: Caps): PackageManagerService {
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
   const log = caps.logger;
   const proc = createProcessGateway(caps.proc);
 
@@ -231,23 +219,11 @@ function createService(caps: Caps): PackageManagerService {
     return app;
   }
 
-  /** 把配置里的相对/绝对路径归一成绝对路径；未配置则用当前工作目录。 */
-  function projectRoot(): string {
-    const override = cfg.projectRoot;
-    if (override.length > 0) {
-      return override.startsWith('/') ? override : `${process.cwd()}/${override.replace(/^\.?\/+/, '')}`;
-    }
-    return process.cwd();
-  }
-
   return createPackageManager({
     proc,
     log,
-    // 项目根：默认 cwd，与 createNodeModulesPluginLoader(projectDir = process.cwd()) 的
-    // 默认值同源——两者必须指同一处，否则「我们写的 package.json」与「加载器读的
-    // package.json」是两份，装了永远不加载。
-    // 宿主若给 startAalis 传了非 cwd 的 projectDir（公开选项），必须用本配置项对齐。
-    projectRoot,
+    // 装到宿主的安装集：与插件加载器读的是同一份 package.json，否则装了永远不加载
+    projectRoot: () => caps.paths.require().app,
     // 经 process 网关的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
     // lockfile、node_modules/<pkg>/package.json）在 storage 沙盒之外，而 readExternalFile
     // 正是文档给这一场景指定的「OS 直通读外部路径」通道——本插件也不在 biome 的 node:* 例外清单里。
@@ -268,7 +244,7 @@ function createService(caps: Caps): PackageManagerService {
     idle: async () => {
       await caps.plugins.current?.idle();
     },
-    resolveDefinitionName: pkgName => resolveInstalledDefinitionName(projectRoot(), pkgName),
+    resolveDefinitionName: pkgName => resolveInstalledDefinitionName(caps.paths.require().app, pkgName),
     listPluginInstanceIds: definitionName =>
       (caps.plugins.current?.getStatus() ?? []).filter(p => p.name === definitionName).map(p => p.instanceId),
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
@@ -587,7 +563,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   /** 路径存在性：`test -d|-f <abs>`（不存在 → exit 1 → 抛 → false）。绝对路径，cwd 无关。 */
   async function pathExists(absPath: string, kind: 'd' | 'f'): Promise<boolean> {
     try {
-      await proc.execFile('test', [`-${kind}`, absPath], { cwd: process.cwd(), timeout: 10_000 });
+      await proc.execFile('test', [`-${kind}`, absPath], { cwd: deps.projectRoot(), timeout: 10_000 });
       return true;
     } catch {
       return false;
@@ -1069,7 +1045,6 @@ export default definePlugin({
   name: '@aalis/plugin-package-manager',
   displayName: '包管理器',
   subsystem: 'system',
-  configSchema,
   provides: [packageManager],
   uses,
   apply(caps) {

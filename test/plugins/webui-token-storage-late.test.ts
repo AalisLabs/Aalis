@@ -6,6 +6,7 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -83,6 +84,7 @@ describe('webui-server token：storage 晚于本插件上线', () => {
     mkdirSync(join(base, 'workspace'), { recursive: true });
     port = await freePort();
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
   });
 
   afterEach(async () => {

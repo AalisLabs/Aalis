@@ -11,6 +11,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -64,6 +65,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
     writeFileSync(join(base, 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: [
         {

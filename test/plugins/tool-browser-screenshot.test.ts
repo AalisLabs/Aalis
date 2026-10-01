@@ -10,6 +10,7 @@ import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/s
 import { App, type BoundOf, provide, services } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器工具的两条实证缺陷（真 Chromium + 真本机 http 服务 + 真 fs）：
@@ -91,6 +92,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 
   app = new App({ name: 'T', logLevel: 'error' });
+  provideHostPaths(app, base);
   await app.plugins.register(storageLocal, {
     roots: [
       {

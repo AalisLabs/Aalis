@@ -59,8 +59,9 @@ const configSchema = defineConfig({
   executablePath: {
     type: 'string',
     label: 'Chrome 路径',
-    description: '自定义 Chrome/Chromium 可执行文件路径。留空则使用 Puppeteer 内置 Chromium。',
+    description: '自定义 Chrome/Chromium 可执行文件的绝对路径。留空则使用 Puppeteer 内置 Chromium。',
     default: '',
+    format: 'absolute-path',
     onInvalid: 'error',
   },
   maxContentLength: {

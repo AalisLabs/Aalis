@@ -47,7 +47,7 @@ export default definePlugin({
 
 | type | 取值类型（`ConfigOf`） | 判定 |
 |---|---|---|
-| `string` / `textarea` | `string` | 字符串；有限数字按字符串收；声明了 `pattern` 时按正则匹配 |
+| `string` / `textarea` | `string` | 字符串；有限数字按字符串收；声明了 `pattern` 时按正则匹配；声明了 `format` 时按路径写法判定 |
 | `number` | `number` | 有限数值；去掉首尾空白后非空、能完整解析为有限数的字符串按数字收；`min` / `max` / `integer` |
 | `boolean` | `boolean` | 类型，不做转换 |
 | `select` | 选项值的字面量联合，否则 `string` | 字符串或有限数字；有静态 `options`、没有 `dynamicOptions` 且 `allowCustom` 不为 `true` 时须是某个选项值 |
@@ -56,6 +56,7 @@ export default definePlugin({
 | `map` | `Record<string, string>` | 对象，每个值按字符串判定（如环境变量表） |
 
 - **标量宽容**：YAML 里不加引号的纯数字（QQ 号、口令、端口、环境变量值）在期望字符串的位置照常可用，加了引号的数字在期望数字的位置照常可用；`parseConfig` 返回换算后的值。
+- **`format`**：写宿主文件路径的 `string` / `textarea` 字段声明。`'absolute-path'` 只收绝对路径（`/…`、`C:\…` 或 `\\…`）；`'executable'` 另收不含路径分隔符的命令名（按 PATH 查找），`C:foo` 这类带盘符的相对写法不算。判定忽略首尾空白，空串照常表示未填、不查；只按写法判定、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以不收。
 - **选项即取值范围**：选项按字符串比较，`parseConfig` 取选项声明的原值（WebUI 把数字选项存成字符串，读出时归位成数字）。
 - **`dynamicOptions` / `allowCustom`**：两者影响取值判定，由本包声明。`dynamicOptions` 是动态选项来源的服务名（WebUI 经 webui-server 调该服务的 `listModels()` 或等价方法获取选项），声明后静态 `options` 不再是取值范围，只查取值是字符串或数字；`allowCustom` 表示接受选项之外的值，不查是否在选项内：WebUI 给 multiselect 提供手动输入；select 用它表示静态选项不全（例如由插件在运行时补全选项的字段）。只影响 WebUI 呈现的 `secret` 由 `@aalis/api-webui` 注入。
 - **扩展字段类型**：api 包经 declaration merging 往 `SchemaFieldTypes` 登记类型名与取值类型（如 `'llm-ref': ModelRef`），`ConfigOf` 据此推导。本包不校验外来类型的取值：`validateConfig` 跳过，`parseConfig` 除把 `''` 当作未配置外原样透传。

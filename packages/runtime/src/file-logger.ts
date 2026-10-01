@@ -3,9 +3,7 @@ import { dirname, extname } from 'node:path';
 import { DefaultLogger, LogHub } from '@aalis/core';
 import { formatLogLine } from '@aalis/schema-log';
 import { getBootstrapBuffer } from './bootstrap-buffer.js';
-
-/** 默认日志文件路径。webui-server 等下游目前各自硬编码同一相对路径。 */
-export const DEFAULT_LOG_FILE = 'data/latest.log';
+import { assertAbsolute } from './home.js';
 
 const RUNTIME_SCOPE = 'aalis:runtime';
 
@@ -26,7 +24,7 @@ function formatUnknownError(err: unknown): string {
   return typeof err === 'string' ? err : JSON.stringify(err);
 }
 
-export async function appendCrashLog(label: string, err: unknown, logFile = DEFAULT_LOG_FILE): Promise<void> {
+export async function appendCrashLog(label: string, err: unknown, logFile: string): Promise<void> {
   await mkdir(dirname(logFile), { recursive: true });
   await appendFile(
     logFile,
@@ -40,7 +38,7 @@ export async function appendCrashLog(label: string, err: unknown, logFile = DEFA
   );
 }
 
-/** 第 n 份历史日志的路径，编号插在扩展名前：data/latest.log → data/latest.1.log。 */
+/** 第 n 份历史日志的路径，编号插在扩展名前：logs/latest.log → logs/latest.1.log。 */
 function historyPath(logFile: string, n: number): string {
   const ext = extname(logFile);
   return `${logFile.slice(0, logFile.length - ext.length)}.${n}${ext}`;
@@ -65,7 +63,8 @@ async function rotateLogs(logFile: string): Promise<void> {
  * 轮转失败不拦启动：照旧覆盖写 logFile，并记一条告警写明原因。不接在原内容后面写：一个文件只装一轮，
  * seq 从 0 起随文件位置单调递增，webui 的历史分页与 CLI 的启动恢复都以此为前提。
  */
-export async function setupFileLogger(logFile = DEFAULT_LOG_FILE): Promise<FileLoggerHandle> {
+export async function setupFileLogger(logFile: string): Promise<FileLoggerHandle> {
+  assertAbsolute('日志文件路径', logFile);
   let queue: Promise<void> = Promise.resolve();
 
   await mkdir(dirname(logFile), { recursive: true });

@@ -27,21 +27,21 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 | 导出 | 作用 |
 |---|---|
-| `startAalis(opts?)` | **一行启动**：读 `aalis.config.yaml` → 组装 `App` 并接上配置文档 → 从 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。装配顺序见下节。 |
-| `createNodeModulesPluginLoader(projectDir?)` | **独立部署**插件加载器：读项目 `package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。包目录按 `node_modules` 逐级上溯定位，入口按 `import()` 的规则解析（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 时按 `main`）。 |
-| `createFsPluginLoader` | **monorepo 自托管**加载器：扫 `<cwd>/packages`，复用同一 `aalis-plugin` 纯关键词正向门。 |
+| `startAalis(opts?)` | **一行启动**：解析家目录 → 读家目录里的 `aalis.config.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。家目录见「家目录」一节，装配顺序见「startAalis 的装配顺序」。 |
+| `createNodeModulesPluginLoader(appDir)` | **独立部署**插件加载器：读安装集（绝对路径）`package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。包目录按 `node_modules` 逐级上溯定位，入口按 `import()` 的规则解析（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 时按 `main`）。 |
+| `createFsPluginLoader(packagesDir)` | **monorepo 自托管**加载器：扫给定的 packages 目录（绝对路径，本仓库入口传 `<仓库>/packages`），复用同一 `aalis-plugin` 纯关键词正向门。 |
 | `createPluginDiscovery(app, loader, doc)` | 发现驱动：`loadAll()` 发现并导入全部插件，按文档取各实例的配置与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）由本包导出。 |
-| `createFsYamlConfigProvider(configPath?)` | 文件系统 + YAML 配置 provider（返回 `{config, provider}`，交给 `createConfigStore`）。 |
+| `createFsYamlConfigProvider(configPath)` | 文件系统 + YAML 配置 provider（`configPath` 为绝对路径；返回 `{config, provider}`，交给 `createConfigStore`）。 |
+| `parseHostArgs` / `resolveHome` / `derivePaths` / `isHomeInitialized` / `initHome` | 家目录的解析、路径派生与初始化，`startAalis` 用的就是这一套；参数有误时抛 `HomeArgsError`。 |
 | `createConfigStore(initial, provider?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。本身不碰文件。 |
 | `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
 | `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余差异经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
-| `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |
+| `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 
-`startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
-`process.cwd()`）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`subcommands`。
+`startAalis` 的 `opts`：`appDir`（安装集，绝对路径，缺省 `<家目录>/app`）、`defaultHome`（宿主代码给的兜底家目录，绝对路径）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
 
-文件日志默认写 `data/latest.log`，`fileLog` 传字符串可改路径。启动时先轮转旧日志：上一轮的改名为
+文件日志写家目录的 `logs/latest.log`，`fileLog: false` 关掉。启动时先轮转旧日志：上一轮的改名为
 `latest.1.log`（编号插在扩展名前），已有的依次后移，保留 5 份，更早的删除。每次守护进程启动都算一轮，
 `/restart`、市场更新引起的重启与更新失败后的回滚重启也各算一轮。轮转失败不影响启动：照旧覆盖写
 `latest.log`，并记一条告警写明原因。不接在原内容后面写，是因为一个文件只装一轮、seq 随文件位置单调递增，
@@ -53,14 +53,51 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 重扫描也在激活前同步并保存。配置热重载复用相同规则，通过 `updateConfig` 重建有变更的插件（禁用插件只换配置、保持禁用，启用时按新配置激活），卸载文件里已没有配置段的后缀实例，并登记新出现的后缀实例。
 直接组装 `App` 的宿主仍自行决定配置政策；Core 不解释 schema，也不替运行中的实例改配置。
 
+## 家目录
+
+家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、舞台。runtime 在启动时解析一次，之后不变；进程的 cwd 不带任何语义，`startAalis` 也不切换 cwd。覆盖顺序：
+
+1. 命令行 `--home <目录>`；
+2. 环境变量 `AALIS_HOME`；
+3. `--profile <名>` 或 `AALIS_PROFILE`，得到并列的 `~/.aalis-<名>`（名字只能用小写字母、数字与连字符，以字母或数字开头，最长 32 个字符）；
+4. 宿主代码传的 `defaultHome`；
+5. `~/.aalis`（Windows 为 `%USERPROFILE%\.aalis`）。
+
+`AALIS_HOME`、`AALIS_PROFILE` 设为空串时视同未设。profile 与更高优先级的 `--home` / `AALIS_HOME` 同时给出时报错退出，不静默挑一个。`--home` 与 `AALIS_HOME` 开头的 `~` 展开为用户主目录；命令行与环境变量里写的相对路径按启动时的 cwd 解析一次，之后全程用绝对路径。
+
+家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600）、建布局里的子目录，然后退出。目标目录已存在时，里面只能有布局自己的条目（`state`、`logs`、`cache`、`run`、`tmp`、`self`、`stage`、`secrets.yaml`），有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
+
+宿主参数（`--home`、`--profile`、`--init`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。
+
+安装集（`appDir`）是放 `package.json` 与 `node_modules` 的目录，缺省为 `<家目录>/app`。这个缺省位置留给将来的全局启动器，目前还没有这样的启动器，因此实际使用时由入口显式传 `appDir`：脚手架生成的 `index.mjs` 传它所在的项目目录，本仓库的 `src/index.ts` 传仓库根。没有传自定义 `pluginLoader`、而 `<安装集>/package.json` 不存在时，`startAalis` 拒绝启动（exit 1），提示把入口文件所在的目录作为 `appDir` 传入。
+
+解析结果作为 `host-paths` 服务（`@aalis/api-host-paths`）独占登记在根上，插件要定位安装集或家目录布局时在 `uses` 里声明它，不读 `process.cwd()`（有 architecture 守卫）。布局：
+
+```
+<家目录>/
+  aalis.config.yaml            主配置，密钥目前也写在这里
+  secrets.yaml                 预留给密钥，目前不读取
+  logs/                        文件日志 latest.log
+  data/  workspace/            实例数据与文件工具的工作根（存储根，激活时建出）
+  state/  cache/  run/  tmp/   预留
+  self/personas  self/skills  self/workflows   预留
+  stage/drafts  stage/public  stage/paper      预留
+```
+
+目前实例的数据仍经 `@aalis/plugin-storage-local` 的存储根落在家目录的 `data/` 与 `workspace/` 下（白纸与公开作品在 `data/stage/` 下），日志在 `logs/`。`state/`、`cache/`、`run/`、`tmp/`、`self/`、`stage/` 由 `--init` 建出，暂未使用，留给之后把存储根迁入这套布局时启用。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。
+
+配置里写宿主文件路径的字段声明 `format: 'absolute-path'` 或 `'executable'`（见 `@aalis/schema-config`）：相对路径没有可靠的基准，一律不收。
+
+## 子命令
+
 子命令分发是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` 等价于聊天里的
 `/<name> args`，在 `app.start()` 之前短路执行并退出；首项不是已注册命令时报错退出（exit 2）。两种情况
 都不会启动守护进程（打错的命令名若照常起守护，就是与运行中实例并存的第二个实例）。argv 为空才进守护进程。
-`subcommands` 只用于宿主自己解析 argv 的场合，传要分发的数组（`[]` 即不分发），默认 `process.argv.slice(2)`。
+`argv` 只用于宿主自己解析命令行的场合，传显式数组（`[]` 即守护进程），默认 `process.argv.slice(2)`；开头的宿主参数照样先取走。
 
 子命令进程是完整加载全部插件、但与正在运行的守护进程零通信的一次性实例，由此有三条边界：
 
-- 不写 `data/latest.log`，也不轮转（否则会把守护进程正在写的日志改名移走）；日志走 stderr，stdout 只有命令结果，便于脚本消费；
+- 不写 `logs/latest.log`，也不轮转（否则会把守护进程正在写的日志改名移走）；日志走 stderr，stdout 只有命令结果，便于脚本消费；
 - 没有重启能力：不注入重启策略，`restart` 子命令返回「不可用」而非重启守护进程；
 - `status` / `shutdown` 只作用于这个临时实例。写数据的指令按数据落在哪分两类：落在 `aalis.config.yaml`
   的（如 `auto`）经保存触发守护进程的配置热重载，会生效；落在各插件自己内存态并各自落盘的
@@ -72,20 +109,22 @@ mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 sc
 
 ## startAalis 的装配顺序
 
-1. **文档**：`createFsYamlConfigProvider(configPath)` 读 YAML，`createConfigStore(config, provider)` 建配置文档。
+0. **家目录与安装集**：解析家目录（见「家目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。之后才装日志 sink、读写任何文件。
+1. **文档**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createConfigStore(config, provider)` 建配置文档。
 2. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
-3. **host-config**：`installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
-4. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(projectDir)`）。
+3. **host-paths 与 host-config**：在根上独占提供 `host-paths`，再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
+4. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。
 5. **发现**：`createPluginDiscovery(app, loader, store)` 建发现驱动，`startAalis` 以它的 `rescan` 在根上独占提供 `plugin-source`；`loadAll()` 整批登记全部插件，随后 `finishInitialLoad()` 落盘首批规范化结果。子命令模式在此分发并退出，否则 `app.start()`。
 6. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；`app:stopping` 时停止监听。
 
 ## 两种部署模型（同一套契约，两个加载器）
 
 - **独立（纯 npm/pnpm）**：`npm create aalis@latest <dir>` 生成项目——`package.json` 含所选 @aalis 插件、
-  `index.mjs` 仅 `import { startAalis } from '@aalis/runtime'; startAalis()`、`aalis.config.yaml`。
-  运行时 `createNodeModulesPluginLoader` 从 `node_modules` 发现插件。
-- **monorepo 自托管**：本仓库自身，入口 `src/index.ts` 直接从 `@aalis/runtime` 引入
-  `createFsPluginLoader` 扫 `packages/`。FS 系列（`createFsPluginLoader` /
+  `index.mjs`（`startAalis({ appDir: <项目目录>, defaultHome: <项目目录>/home })`）与家目录 `home/`。
+  运行时 `createNodeModulesPluginLoader` 从项目的 `node_modules` 发现插件。
+- **monorepo 自托管**：本仓库自身，入口 `src/index.ts` 以仓库根为安装集，从 `@aalis/runtime` 引入
+  `createFsPluginLoader` 扫 `packages/`。`pnpm dev` 用仓库里的 `.aalis-dev/` 作家目录（第一次先 `pnpm dev --init`），
+  从源码运行的生产实例用 `AALIS_HOME` 或缺省的 `~/.aalis`。FS 系列（`createFsPluginLoader` /
   `createFsYamlConfigProvider` / `createProcessRespawnStrategy`）只在 `@aalis/runtime` 定义一处，
   monorepo 与独立部署共用，无重复实现。
 
@@ -107,9 +146,15 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 - **重启策略**：实现 `RestartStrategy`，经 `AppOptions.restartStrategy` 注入（例：浏览器里「重启」改为重建实例）；
   不注入时 `app.restart()` 抛错。
 
-两项服务按需提供，都经根绑定 `app.bind({ provide })` 登记：要让管理类插件读写配置文档，提供
-`hostConfig`（`@aalis/api-host-config`）；能在运行中重新发现插件时，提供 `pluginSource`
-（`@aalis/api-plugin-source`）。不提供时，以 `optional` 声明它们的插件自行降级：市场视同没有新插件，
-WebUI 读写配置文档与扫描插件的接口返回 503。
+三项宿主服务都经根绑定 `app.bind({ provide })` 登记：
+
+- `hostPaths`（`@aalis/api-host-paths`）：家目录与安装集的绝对路径。`@aalis/plugin-storage-local` 与
+  `@aalis/plugin-package-manager` 以 required 声明它，不提供时两者停在 pending；WebUI 以 `optional` 声明，
+  缺席时市场与系统组件接口返回 503，也发现不到前端。
+- `hostConfig`（`@aalis/api-host-config`）：要让管理类插件读写配置文档时提供。
+- `pluginSource`（`@aalis/api-plugin-source`）：能在运行中重新发现插件时提供。
+
+`hostPaths` 与 `hostConfig` 都要在登记任何插件之前就位，顺序为先提供 `hostPaths`，再 `installHostConfig`。
+后两项不提供时，以 `optional` 声明它们的插件自行降级：市场视同没有新插件，WebUI 读写配置文档与扫描插件的接口返回 503。
 
 在此之上再写一个等价的 `startXxx`。**core 与各插件契约不变**——这正是把 runtime 单独成包的目的。

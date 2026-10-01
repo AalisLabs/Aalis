@@ -6,6 +6,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Events, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 的 storage_uri 归一化——「图明明在却报找不到」回归。
@@ -45,6 +46,7 @@ describe('send_attachment storage_uri 归一化', () => {
       },
       registerGroup: () => () => {},
     } as never);
+    provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         {

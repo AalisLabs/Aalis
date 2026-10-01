@@ -1,11 +1,23 @@
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { join, normalize } from 'node:path';
+import { hostPaths } from '@aalis/api-host-paths';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { App, events, type LogLevel, provide, services } from '@aalis/core';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
-import { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
+import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
+import {
+  derivePaths,
+  HomeArgsError,
+  initHome,
+  isFullyAbsolute,
+  isHomeInitialized,
+  parseHostArgs,
+  resolveHome,
+} from './home.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
 import { createPluginDiscovery, type PluginLoader } from './plugin-discovery.js';
 import { createFsYamlConfigProvider, createProcessRespawnStrategy, READY_MESSAGE } from './providers.js';
@@ -23,9 +35,11 @@ import { installTerminalStateRestorer } from './terminal.js';
 // monorepo 自托管（src/index.ts）传 monorepo 风味配置：
 //   startAalis({ pluginLoader: createFsPluginLoader() });
 //
-// 子命令是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，
-// 命中即执行并退出，未命中报错退出（exit 2），**两种情况都不进守护进程**。宿主自己解析 argv 时传
-// `subcommands: []` 或显式数组。
+// 命令行开头的宿主参数（`--home`、`--profile`、`--init`）先取走，用来定家目录；余下的 argv 非空即子命令
+// 模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，命中即执行并退出，未命中报错退出
+// （exit 2），**两种情况都不进守护进程**。宿主自己解析命令行时传 `argv: []` 或显式数组。
+//
+// 家目录没初始化就拒绝启动，只提示怎样初始化：绝不在找不到家目录时静默起一个空的家。
 //
 // 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会把守护进程正在写的 latest.log 轮转走）、
 // 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
@@ -33,11 +47,17 @@ import { installTerminalStateRestorer } from './terminal.js';
 // 宿主的「I/O 那一层」（日志 sink / 终端复原 / 子命令分发）全在本包，core 只产生 LogEntry。
 
 export interface StartAalisOptions {
-  /** aalis.config.yaml 路径，默认 cwd 下的 aalis.config.yaml */
-  configPath?: string;
-  /** 项目根目录（含 package.json + node_modules），默认 process.cwd() */
-  projectDir?: string;
-  /** 插件加载器，默认 createNodeModulesPluginLoader(projectDir)；monorepo 传 createFsPluginLoader() 扫 packages/ */
+  /**
+   * 安装集目录（package.json 与 node_modules 所在，源码形态另有 packages/），必须是绝对路径。
+   * 缺省为 `<家目录>/app`（npm 形态）；源码形态的入口传仓库根，脚手架生成的入口传项目目录。
+   */
+  appDir?: string;
+  /**
+   * 宿主代码给的兜底家目录，必须是绝对路径。优先级最低：`--home`、`AALIS_HOME`、`--profile` / `AALIS_PROFILE`
+   * 都没给时才用它，再没有就是 `~/.aalis`。
+   */
+  defaultHome?: string;
+  /** 插件加载器，默认 createNodeModulesPluginLoader(安装集)；monorepo 传 createFsPluginLoader(<仓库>/packages) */
   pluginLoader?: PluginLoader;
   /**
    * 彩色控制台日志，默认 true（独立部署即有全量级别）。webui-only/嵌入式/测试夹具可传 false：
@@ -46,18 +66,19 @@ export interface StartAalisOptions {
    */
   consoleSink?: boolean;
   /**
-   * 文件日志：true→data/latest.log，string→自定义路径，false→关。默认 true（webui/cli 尾读此文件）。
+   * 文件日志写到家目录的 `logs/latest.log`，默认开（WebUI 与 CLI 的日志页尾读这个文件）。
    * 启动时先把上一轮的日志改名保留（编号插在扩展名前：latest.1.log），更早的依次后移，保留 5 份。
-   * 子命令模式（argv 非空）一律不写文件日志。
+   * 子命令模式一律不写文件日志。
    */
-  fileLog?: boolean | string;
+  fileLog?: boolean;
   /** 退出时复原终端 raw-mode/alt-screen，默认 true */
   terminalRestore?: boolean;
   /**
-   * 要分发的子命令 argv，默认 `process.argv.slice(2)`；宿主自管 argv 时传显式数组（`[]` 即不分发）。
-   * 非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
+   * 命令行参数，默认 `process.argv.slice(2)`。开头的宿主参数先取走：`--home <目录>`、`--profile <名>`、
+   * `--init`（初始化家目录后退出）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
+   * 宿主自管命令行时传显式数组（`[]` 即守护进程）。
    */
-  subcommands?: string[];
+  argv?: string[];
   /** 覆盖 dev/prod 判定，默认按 NODE_ENV !== 'production' */
   devMode?: boolean;
   /**
@@ -89,7 +110,56 @@ function readCoreVersion(): string | undefined {
  */
 export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
-  const subcommands = opts.subcommands ?? process.argv.slice(2);
+
+  // ── 家目录：在任何日志与文件写入之前定下来 ──
+  // 命令行与环境变量里写的相对路径按启动时的 cwd 解析一次：那是用户在 shell 里的意图。
+  // 启动目录可能已被删除，这时 process.cwd() 会抛错；只有遇到相对路径才需要它。
+  let startCwd: string | undefined;
+  try {
+    startCwd = process.cwd();
+  } catch {
+    startCwd = undefined;
+  }
+  let hostArgs: ReturnType<typeof parseHostArgs>;
+  let home: ReturnType<typeof resolveHome>;
+  try {
+    hostArgs = parseHostArgs(opts.argv ?? process.argv.slice(2));
+    home = resolveHome({ args: hostArgs, env: process.env, defaultHome: opts.defaultHome, cwd: startCwd });
+    if (opts.appDir !== undefined && !isFullyAbsolute(opts.appDir)) {
+      throw new HomeArgsError(`appDir 必须是绝对路径：${opts.appDir}`);
+    }
+  } catch (err) {
+    if (!(err instanceof HomeArgsError)) throw err;
+    console.error(`[aalis] ${err.message}`);
+    process.exit(2);
+  }
+  const paths = derivePaths(home.home, opts.appDir ? normalize(opts.appDir) : join(home.home, 'app'), home.profile);
+  if (hostArgs.init) {
+    try {
+      initHome(paths);
+    } catch (err) {
+      console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    console.log(`[aalis] 已初始化家目录：${paths.home}`);
+    process.exit(0);
+  }
+  if (!isHomeInitialized(paths)) {
+    console.error(
+      `[aalis] 家目录还没有初始化：${paths.home}\n[aalis] 在启动命令里、子命令之前加上 --init 运行一次即可初始化。`,
+    );
+    process.exit(1);
+  }
+  // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」。
+  // 缺省的 <家目录>/app 留给以后的全局启动器，现在的入口都要自己传 appDir。
+  if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
+    console.error(
+      `[aalis] 安装集 ${paths.app} 里没有 package.json，找不到要加载的插件。\n` +
+        '[aalis] 把入口文件所在的目录作为 appDir 传给 startAalis，例如 startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) })。',
+    );
+    process.exit(1);
+  }
+  const subcommands = hostArgs.rest;
 
   // ── 最早期：任何日志之前先装 bootstrap buffer，再装 terminal / console sink ──
   const bootstrap = installBootstrapBuffer();
@@ -104,8 +174,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
 
   // 子命令进程不写文件日志：setupFileLogger 会把 latest.log 轮转走，而守护进程可能正在写它（webui 历史日志
   // 以该文件为单一数据源）。
-  const fileLogTarget =
-    fileLog === false || subcommandMode ? undefined : typeof fileLog === 'string' ? fileLog : DEFAULT_LOG_FILE;
+  const fileLogTarget = fileLog && !subcommandMode ? join(paths.logs, 'latest.log') : undefined;
 
   // ── fatal handler（覆盖整个 async 启动过程）──
   let fileLogger: FileLoggerHandle | undefined;
@@ -131,7 +200,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   bootstrap.dispose();
 
   // ── 组装 App：YAML 配置文档、按 loader 发现插件、用 spawn 重启 ──
-  const { config, provider } = createFsYamlConfigProvider(opts.configPath);
+  const { config, provider } = createFsYamlConfigProvider(paths.config);
   const store = createConfigStore(config, provider);
   // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认
   // （启动时读取，改了要重启）
@@ -146,7 +215,9 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
     // 注入的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
     // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
-    restartStrategy: subcommandMode ? undefined : createProcessRespawnStrategy(),
+    restartStrategy: subcommandMode
+      ? undefined
+      : createProcessRespawnStrategy({ appDir: paths.app, cwd: startCwd ?? paths.home }),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
     // 宿主注入时钟：日志时间戳的权威时间来源在此层，core 逻辑不主动取墙上时间。
@@ -161,17 +232,18 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     app.logger.warn(`配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒），收到 ${received}，按默认值处理`);
   }
 
-  // 配置文档先于任何插件接上：文档里的服务偏好要在全部提供者上线前生效
+  // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
+  const host = app.bind({ events, provide, services });
+  // 宿主路径与配置文档先于任何插件接上：插件激活时就要用到，文档里的服务偏好要在全部提供者上线前生效
+  host.provide(hostPaths, paths, { exclusive: true });
   installHostConfig(app, store, opts.configSync);
   // 默认值从 configSchema 派生（唯一声明来源），导入定义后、登记前深合并进文档；登记时原样交给 core
   const configLoader = withPluginConfigSync(
-    opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
+    opts.pluginLoader ?? createNodeModulesPluginLoader(paths.app),
     app,
     store,
     opts.configSync,
   );
-  // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
-  const host = app.bind({ events, provide, services });
   const discovery = createPluginDiscovery(app, configLoader.loader, store);
   host.provide(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。

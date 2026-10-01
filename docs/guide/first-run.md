@@ -17,7 +17,7 @@
 
 插件激活失败**不会中断启动**——进程照常起来，日志里留下 `插件 "..." 激活失败: ...` 的 ERROR。聊天里收到 `[系统] …激活失败…` 开头的回复就是这种情况，多半是没填 key；`/doctor` 可看完整清单。
 
-把 key 填进项目根的 `aalis.config.yaml`（该文件已在生成的 `.gitignore` 里，不入库）：
+把 key 填进项目里家目录的 `home/aalis.config.yaml`（`home/` 已在生成的 `.gitignore` 里，不入库）：
 
 ```yaml
 plugins:
@@ -76,7 +76,7 @@ npm start
 
 ### 浏览器：WebUI 需要 token
 
-WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。token 只写在文件 `data/webui/access.txt`（含完整的一键登录链接）。
+WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。token 只写在文件 `home/data/webui/access.txt`（含完整的一键登录链接）。
 
 启动日志出于安全**不打印 token 本身**——它只给出该文件的绝对路径（「访问凭据已写入: …」那行，CLI 里按 `Ctrl+L` 看）。
 
@@ -102,8 +102,8 @@ WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。tok
 ## 停止、数据与日志
 
 - **停止**：CLI 里 `Ctrl+C`；或在聊天里 `/shutdown`。
-- **数据**：项目目录下的 `data/`（SQLite 库、会话、人设、技能、WebUI 凭据等），`workspace/` 是文件工具的默认工作根。`data/` 已在生成的 `.gitignore` 里；`workspace/` **不在**，需要的话自己补一行。
-- **完整日志**：`data/latest.log`，即使 CLI 接管了终端也照常写。每次启动时上一轮的日志改名为 `data/latest.1.log`，更早的依次后移，保留最近 5 轮（`latest.1.log` 到 `latest.5.log`），再早的删除；`/restart` 与市场更新引起的重启也各算一次启动。要跨重启持续跟随日志，用 `tail -F`：`tail -f` 跟的是文件本身，改名后停在 `latest.1.log` 上。
+- **数据**：都在家目录 `home/` 里：`home/data/`（SQLite 库、会话、人设、技能、WebUI 凭据等），`home/workspace/` 是文件工具的默认工作根。`home/` 整个在生成的 `.gitignore` 里。
+- **完整日志**：`home/logs/latest.log`，即使 CLI 接管了终端也照常写。每次启动时上一轮的日志改名为 `home/logs/latest.1.log`，更早的依次后移，保留最近 5 轮（`latest.1.log` 到 `latest.5.log`），再早的删除；`/restart` 与市场更新引起的重启也各算一次启动。要跨重启持续跟随日志，用 `tail -F`：`tail -f` 跟的是文件本身，改名后停在 `latest.1.log` 上。
 
 ## 下一步
 

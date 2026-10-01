@@ -18,13 +18,22 @@ export const configSchema = defineConfig({
       '内容审核启用时，开启后每件作品须经人工批准。关闭时自动通过即可发布；自动拒绝、拿不准或模型不可用时仍会拦截并转人工。文件处理失败须先修复。',
   },
   ownerTimeoutHours: { type: 'number', label: '人工审核等待时限（小时）', default: 12, min: 1, max: 168 },
-  ffmpegPath: { type: 'string', label: 'ffmpeg 路径', default: 'ffmpeg', onInvalid: 'error' },
+  ffmpegPath: {
+    type: 'string',
+    label: 'ffmpeg 路径',
+    description: '绝对路径，或 PATH 里能找到的命令名。',
+    default: 'ffmpeg',
+    // 必填加默认值：留空时用默认的命令名，不会拿空串去执行
+    required: true,
+    format: 'executable',
+    onInvalid: 'error',
+  },
   chrome: {
     type: 'group',
     label: '离线渲染浏览器',
     fields: {
       headless: { type: 'boolean', label: '无头模式', default: true },
-      executablePath: { type: 'string', label: '浏览器路径', default: '', onInvalid: 'error' },
+      executablePath: { type: 'string', label: '浏览器路径', default: '', format: 'absolute-path', onInvalid: 'error' },
     },
   },
   textClassifier: { type: 'llm-ref', label: '文本审核模型' },

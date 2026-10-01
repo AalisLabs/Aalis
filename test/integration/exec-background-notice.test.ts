@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import {
@@ -24,6 +24,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 import toolSystemPlugin from '../../packages/plugin-tool-system/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage, Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -121,8 +122,6 @@ const pids: number[] = [];
 
 beforeEach(() => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'zz-slice1-bgint-')));
-  // storage-local 的内部根按 cwd 解析，指到临时目录，不在工作树里建目录
-  vi.spyOn(process, 'cwd').mockReturnValue(base);
 });
 
 afterEach(async () => {
@@ -135,7 +134,6 @@ afterEach(async () => {
       /* 已退出 */
     }
   }
-  vi.restoreAllMocks();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -164,6 +162,8 @@ async function boot(decide: (request: ChatModelRequest) => ChatResponse) {
       apply: ({ provide }) => void provide(llm, model, { entryId: `${model.providerId}/${model.id}` }),
     }),
   );
+  // storage-local 的内部根按 host-paths 提供的家目录解析，指到临时目录，不在工作树里建目录
+  provideHostPaths(app, base);
   await app.plugin(storageLocalPlugin, {
     roots: [
       {

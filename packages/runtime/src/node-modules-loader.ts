@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pluginDefinitionOf } from '@aalis/api-plugin-source';
 import type { Logger, PluginDefinition } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
+import { assertAbsolute } from './home.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 
 // ============================================================
@@ -183,7 +184,7 @@ export function warnLikelyPluginMissingKeyword(logger: Logger, name: string, met
 /**
  * 创建一个从项目 node_modules 解析插件的 PluginLoader。
  *
- * @param projectDir 项目根目录（含 package.json 与 node_modules），默认 process.cwd()
+ * @param projectDir 安装集目录（含 package.json 与 node_modules）的绝对路径
  * @param opts.hostCoreDir 宿主那份 @aalis/core 的包目录，默认 {@link HOST_CORE_DIR}；插件解析到的 core 与它不同即拒绝加载
  *
  * - `discover()`：读 projectDir/package.json 的 dependencies + optionalDependencies，
@@ -191,18 +192,19 @@ export function warnLikelyPluginMissingKeyword(logger: Logger, name: string, met
  * - `load()`：先经 {@link assertSameCore} 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import。
  * - `reload()`：用入口文件 mtime 作 import URL query 强制 ESM 缓存失效。
  */
-export function createNodeModulesPluginLoader(
-  projectDir: string = process.cwd(),
-  opts: { hostCoreDir?: string } = {},
-): PluginLoader {
-  const root = resolve(projectDir);
+export function createNodeModulesPluginLoader(projectDir: string, opts: { hostCoreDir?: string } = {}): PluginLoader {
+  assertAbsolute('安装集目录', projectDir);
+  const root = projectDir;
   const hostCoreDir = opts.hostCoreDir === undefined ? HOST_CORE_DIR : realpathSync(opts.hostCoreDir);
   const logger = new DefaultLogger('aalis:loader');
 
   return {
     async discover(): Promise<PluginDescriptor[]> {
       const rootPkg = readJson(resolve(root, 'package.json'));
-      if (!rootPkg) return [];
+      if (!rootPkg) {
+        logger.warn(`安装集 ${root} 里没有可读的 package.json，没有可加载的插件`);
+        return [];
+      }
       const deps = {
         ...((rootPkg.dependencies as Record<string, string>) ?? {}),
         ...((rootPkg.optionalDependencies as Record<string, string>) ?? {}),

@@ -25,7 +25,7 @@
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。
 
 一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
-`contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `llm` / `media` /
+`contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `host-paths` / `llm` / `media` /
 `memory` / `message-archive` / `package-manager` / `persona` / `platform` / `plugin-source` / `process` / `session-confirm` /
 `session-history` / `session-manager` / `storage` / `tools` / `trigger` / `user-relation` / `vectorstore` / `workflow`），一个例外：
 `@aalis/api-webui` 导出 `webui-server` 与 `webui-client` 两条。
@@ -43,7 +43,7 @@
 | `@aalis/plugin-websearch-serper` | `web-search` |
 
 宿主管理面（须显式 uses）：`app` / `plugins` 由 core 在根激活上提供（`packages/core/src/orchestration/host-services.ts`）；
-`host-config` 与 `plugin-source` 由宿主提供，Node 宿主 `@aalis/runtime` 两项都提供。
+`host-paths`、`host-config` 与 `plugin-source` 由宿主提供，Node 宿主 `@aalis/runtime` 三项都提供。
 
 ---
 

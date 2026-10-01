@@ -9,6 +9,7 @@ import { App, definePlugin, events, provide, services } from '../../packages/cor
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 
@@ -119,6 +120,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.pluginAll([storageLocal()]);
     await app.plugins.idle();
     await app.pluginAll([
@@ -137,6 +139,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -165,6 +168,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.pluginAll([
       { definition: flowControlPlugin, config: {} },
       { definition: gatewayPlugin, config: {} },
@@ -186,6 +190,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(gatewayPlugin, {});
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -206,6 +211,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(gatewayPlugin, {});
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -240,6 +246,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(gatewayPlugin, {});
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -267,6 +274,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     );
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -291,6 +299,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     );
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -423,6 +432,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     );
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(gatewayPlugin, {});
     await app.plugin(flowControlPlugin, {});
     await app.plugins.idle();
@@ -447,6 +457,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     const bootStorageFirst = async () => {
       app = new App({ name: 'T', logLevel: 'error' });
       await registerHubs(app);
+      provideHostPaths(app, base);
       await app.pluginAll([storageLocal()]);
       await app.plugins.idle();
       await app.pluginAll([
@@ -493,6 +504,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
       app = new App({ name: 'T', logLevel: 'error' });
       await registerHubs(app);
+      provideHostPaths(app, base);
       await app.plugin(gatewayPlugin, {});
       await app.plugin(flowControlPlugin, {});
       await app.plugins.idle();

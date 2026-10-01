@@ -8,6 +8,7 @@ import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（storage 不在场时网关抛
@@ -67,6 +68,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     mkdirSync(join(base, 'data'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
   });
 
   afterEach(async () => {
@@ -151,6 +153,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     await app.stop();
     rmSync(join(base, jobsFile));
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     await registerStorage();
     await registerScheduler();
     expect(await create('zz-new')).not.toContain('未写入');

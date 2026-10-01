@@ -13,6 +13,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -58,6 +59,7 @@ async function loadStack(
       writable: true,
       deletable: true,
     });
+    provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, { roots: [root('workspace'), root('data')] });
   } else if (opts.storage !== false) {
     const fakeStorage = {

@@ -6,6 +6,7 @@ import { type PersonaService, persona } from '../../packages/api-persona/src/ind
 import { App, type LogEntry, LogHub, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -77,6 +78,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
       config: { roots: [root('workspace', join(base, 'workspace')), root('data', join(base, 'data'))] },
     };
     app = new App({ name: 'T', logLevel: logHub ? 'warn' : 'error', logHub });
+    provideHostPaths(app, base);
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),
       ...(storageFirst ? [storageEntry, personaEntry] : [personaEntry, storageEntry]),

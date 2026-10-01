@@ -9,6 +9,7 @@ import {
 } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // watch 文件 URI 分支：曾直接 fs.watch 文件本身——回调给的 filename 是文件自己的名字，
@@ -39,6 +40,7 @@ describe('storage-local watch', () => {
     mkdirSync(join(base, 'data', 'notes'), { recursive: true });
     writeFileSync(join(base, 'data', 'notes', 'a.txt'), 'v0');
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
         {

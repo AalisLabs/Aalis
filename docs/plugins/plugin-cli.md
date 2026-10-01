@@ -36,7 +36,7 @@ export default definePlugin({
 | `sessionId` | string | `'cli-default'` | 默认会话 ID：CLI 聊天所在的会话标识。 |
 | `lastView` | string | `'chat'` | 上次视图：运行时自动写回；startupView=last 时启动恢复到这里记录的视图。 |
 | `prompt` | string | `'You'` | 提示符：命令行输入提示符前缀 |
-| `maxLogEntries` | number | `50000` | 日志内存缓冲上限（条）：日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在 data/latest.log |
+| `maxLogEntries` | number | `50000` | 日志内存缓冲上限（条）：日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在家目录的 logs/latest.log |
 | `startupView` | select | `'last'` | 启动视图：CLI 接管终端后的默认视图。last 表示恢复上次视图 |
 
 ## 特性

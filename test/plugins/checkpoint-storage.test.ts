@@ -14,6 +14,7 @@ import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/s
 import { CheckpointServiceImpl, normalizeConfig } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 const parseServiceConfig = (raw: unknown) => normalizeConfig(parseConfig(configSchema, raw));
@@ -44,6 +45,7 @@ describe('checkpoint × storage (真 fs)', () => {
     mkdirSync(ws, { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },

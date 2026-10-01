@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -10,11 +10,11 @@ import { parse } from 'yaml';
 //
 // startAalis 的编排（文件日志装载时机、重启策略注入、子命令命中/未命中后的退出）在进程内
 // 无法单测：它挂全局 fatal handler、最终 process.exit。这里用 tsx 跑 test/fixtures/subcommand-entry.ts
-// （只走 runtime 源码），每个用例一个临时 cwd，断言全部基于「进程退出后」的退出码 / 输出 / 文件内容，
+// （只走 runtime 源码），每个用例一个临时目录，既是 cwd 也经 AALIS_HOME 当家目录，断言全部基于「进程退出后」的退出码 / 输出 / 文件内容，
 // 计时相关的用例（慢激活）都留足余量。
 //
 // 三条被守的不变量（对应曾实测出的故障）：
-// 1. 子命令进程不碰 data/latest.log，也不轮转——否则守护进程正在写的日志被改名移走；
+// 1. 子命令进程不碰 logs/latest.log，也不轮转——否则守护进程正在写的日志被改名移走；
 // 2. 未命中的子命令报错退出（exit 2），绝不进守护进程——否则打错字就起第二个实例；
 // 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
@@ -40,9 +40,14 @@ function run(cwd: string, argv: string[], env: Record<string, string> = {}, time
     // detached：让 tsx 包装脚本自成进程组。`.bin/tsx` 会再起一个真正跑夹具的 node 子进程，超时时
     // 只杀包装层会留下孤儿守护进程（变异验证时实测），必须按进程组整体 SIGKILL。
     // 与进程内测试同一源码映射，避免 runtime 源码搭配陈旧的 core dist。
+    // 家目录取这个临时目录，用户主目录也指到这里：解析一旦回退到 ~/.aalis，也落在临时目录里，不碰开发者自己的实例。
+    // 外面环境里的 AALIS_PROFILE 会与 AALIS_HOME 冲突，先去掉，用例显式传的照样生效。
+    const inherited: Record<string, string | undefined> = { ...process.env };
+    delete inherited.AALIS_PROFILE;
+    const childEnv = { ...inherited, HOME: cwd, USERPROFILE: cwd, AALIS_HOME: cwd, ...env };
     const child = spawn(tsxBin, ['--tsconfig', join(repoRoot, 'tsconfig.test.json'), fixture, ...argv], {
       cwd,
-      env: { ...process.env, ...env },
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
@@ -76,13 +81,13 @@ function run(cwd: string, argv: string[], env: Record<string, string> = {}, time
 function makeProject(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-subcommand-e2e-'));
   writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-  mkdirSync(join(dir, 'data'));
-  writeFileSync(join(dir, 'data', 'latest.log'), SENTINEL);
+  mkdirSync(join(dir, 'logs'));
+  writeFileSync(join(dir, 'logs', 'latest.log'), SENTINEL);
   return dir;
 }
 
-const readLog = (dir: string) => readFileSync(join(dir, 'data', 'latest.log'), 'utf-8');
-const hasRotated = (dir: string) => existsSync(join(dir, 'data', 'latest.1.log'));
+const readLog = (dir: string) => readFileSync(join(dir, 'logs', 'latest.log'), 'utf-8');
+const hasRotated = (dir: string) => existsSync(join(dir, 'logs', 'latest.1.log'));
 const readGen = (dir: string) => readFileSync(join(dir, 'gen.txt'), 'utf-8').trim();
 
 describe('startAalis 子命令模式（真实子进程）', () => {
@@ -97,7 +102,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('命中：执行并打印结果、exit 0，不碰 data/latest.log', async () => {
+  it('命中：执行并打印结果、exit 0，不碰 logs/latest.log', async () => {
     const dir = project();
     const r = await run(dir, ['probe', 'a', 'b']);
     expect(r.signal).toBeNull();
@@ -159,7 +164,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     }
   }, 45_000);
 
-  it('未命中：报错 exit 2，不进守护进程，不碰 data/latest.log', async () => {
+  it('未命中：报错 exit 2，不进守护进程，不碰 logs/latest.log', async () => {
     const dir = project();
     const r = await run(dir, ['nope']);
     expect(r.signal).toBeNull();
@@ -181,7 +186,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(readLog(dir)).toBe(SENTINEL);
   }, 20_000);
 
-  it('对照·守护路径：显式 subcommands: [] 压过非空 argv，旧日志轮转为 latest.1.log、照常写文件日志，宿主提供插件来源与配置文档，SIGTERM 优雅退出', async () => {
+  it('对照·守护路径：显式 argv: [] 压过非空的命令行参数，旧日志轮转为 latest.1.log、照常写文件日志，宿主提供插件来源与配置文档，SIGTERM 优雅退出', async () => {
     const dir = project();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
@@ -193,7 +198,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.code).toBe(0);
     const log = readLog(dir);
     expect(log).not.toContain(SENTINEL.trim());
-    expect(readFileSync(join(dir, 'data', 'latest.1.log'), 'utf-8')).toBe(SENTINEL);
+    expect(readFileSync(join(dir, 'logs', 'latest.1.log'), 'utf-8')).toBe(SENTINEL);
     expect(log).toContain('启动完成');
     expect(log).toContain('已停止');
     // 宿主在根上提供了 plugin-source：重扫可调，插件都已注册，新登记名单为空
@@ -220,5 +225,102 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.stderr).toContain(
       '插件 "e2e-waiting" 依赖未满足，未激活（缺少服务: e2e-missing-svc；等待 e2e-slow 激活完成）',
     );
+  });
+});
+
+describe('startAalis 家目录（真实子进程）', () => {
+  const dirs: string[] = [];
+  const tempDir = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-home-e2e-'));
+    dirs.push(dir);
+    return dir;
+  };
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('家目录没初始化：一行说明怎样初始化后 exit 1，不起空的家、不写任何文件', async () => {
+    const dir = tempDir();
+    const r = await run(dir, ['probe']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`家目录还没有初始化：${dir}`);
+    expect(r.stderr).toContain('--init');
+    expect(existsSync(join(dir, 'aalis.config.yaml'))).toBe(false);
+    expect(existsSync(join(dir, 'logs'))).toBe(false);
+    expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
+  });
+
+  it('--init：建家目录（0700）、主配置与空的 secrets.yaml（0600）后退出，不加载插件；随后能正常启动', async () => {
+    const dir = tempDir();
+    const home = join(dir, 'home');
+    const r = await run(dir, ['--init'], { AALIS_HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`已初始化家目录：${home}`);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+    expect(statSync(join(home, 'secrets.yaml')).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(home, 'secrets.yaml'), 'utf-8')).toBe('');
+    expect(parse(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8'))).toEqual({
+      name: 'Aalis',
+      logLevel: 'info',
+      plugins: {},
+    });
+    for (const sub of ['state', 'logs', 'run', 'tmp', 'self/skills', 'stage/paper']) {
+      expect(existsSync(join(home, sub)), sub).toBe(true);
+    }
+    expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
+    rmSync(join(dir, 'gen.txt'));
+    const started = await run(dir, ['probe'], { AALIS_HOME: home });
+    expect(started.code).toBe(0);
+    expect(started.stdout).toContain('probe ok');
+  }, 30_000);
+
+  it('--init 遇到已初始化的家目录：拒绝并 exit 1，不覆盖', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: mine\nlogLevel: info\nplugins: {}\n');
+    const r = await run(dir, ['--init']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('已经初始化过');
+    expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf-8')).toBe('name: mine\nlogLevel: info\nplugins: {}\n');
+  });
+
+  it('--home 写在子命令之前：压过 AALIS_HOME，相对路径按启动时的 cwd 解析', async () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'other'));
+    writeFileSync(
+      join(dir, 'other', 'aalis.config.yaml'),
+      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 5\n',
+    );
+    const r = await run(dir, ['--home', 'other', 'probe', 'x'], { AALIS_HOME: join(dir, 'missing') });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('probe ok x');
+    expect(JSON.parse(readFileSync(join(dir, 'first-config.json'), 'utf8')).known).toBe(5);
+  });
+
+  it('默认加载器的安装集里没有 package.json：说明要传 appDir 后 exit 1，不带着零个插件起来', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader' });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`安装集 ${join(dir, 'app')} 里没有 package.json`);
+    expect(r.stderr).toContain('appDir');
+    expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
+    // 安装集有 package.json 就照常往下走：没有插件提供指令服务，子命令按「commands 服务不可用」退出
+    const app = join(dir, 'install');
+    mkdirSync(app);
+    writeFileSync(join(app, 'package.json'), '{"name":"x","private":true}');
+    rmSync(join(dir, 'gen.txt'));
+    const ok = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader', AALIS_E2E_APP_DIR: app });
+    expect(ok.code).toBe(2);
+    expect(ok.stderr).toContain('commands 服务不可用');
+  }, 30_000);
+
+  it('同时给了 profile 与 AALIS_HOME：报冲突、exit 2，不静默挑一个', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    const r = await run(dir, ['--profile', 'test', 'probe']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('同时指定了 AALIS_HOME 与 --profile');
+    expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
   });
 });
