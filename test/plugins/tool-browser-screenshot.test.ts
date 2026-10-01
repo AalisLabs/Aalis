@@ -68,7 +68,12 @@ function killChromium(): number {
     .filter(Boolean);
   let killed = 0;
   for (const pid of children) {
-    const cmd = execFileSync('ps', ['-p', pid, '-o', 'command='], { encoding: 'utf8' });
+    let cmd: string;
+    try {
+      cmd = execFileSync('ps', ['-p', pid, '-o', 'command='], { encoding: 'utf8' });
+    } catch {
+      continue; // 列出之后、查询之前已经退出的短命子进程：ps 找不到它会报错
+    }
     if (!/Chrom(e|ium)/i.test(cmd)) continue;
     process.kill(Number(pid), 'SIGKILL');
     killed++;
