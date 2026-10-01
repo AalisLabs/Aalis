@@ -18,7 +18,7 @@
 - **配置解析行为**：`undefined` / `null` 表示缺省；有限数字和数字字符串按中立标量规则转换。普通无效字段按 schema 默认值回落或省略并告警；敏感地址、命令参数与启用边界使用 `onInvalid: 'error'`，显式无效时拒绝。提供拒绝规则的插件例外：tool-onebot 的开关写坏时按默认值处理并告警，插件照常激活，以免 OneBot 会话历史的访问限制随插件一起消失。MCP client 的坏 server 单独跳过，合法空字符串 argv 保留；storage-local 与 OneBot 的连接/根数组按整体严格策略处理，不会把坏项丢成默认配置后运行。
 - **旧作用域与平台模板**：flow-control 0.13.0、trigger-policy 0.15.0、trigger-laya 0.2.0、checkpoint 0.14.0 的 `scopes` 统一为数组。前三者旧 `null` 表示空范围，需转换为 `[]`；旧字符串按原分隔规则转换。session-manager 0.14.0 的平台 `think: true/false` 转为 `on/off`。提供离线工具与检查模式，不能跳过检查直接启动；详见 [配置迁移](docs/guide/config-migration.md)。
 - **MCP 暴露范围**：mcp-server 0.13.0 的 `toolGroups: null` 按缺省解析为 `[]`（全部组），旧版对此会拒绝启动。离线工具将其标为需人工处理，升级前明确允许的组或先禁用插件。数字组名会归一为字符串后精确匹配。mcp-client 0.13.0 的 args/env 使用数组/映射，旧文本须手工核对参数边界。
-- **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留半指定 actor 身份的拒绝及原有 sessionId 派生规则。
+- **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留原有 sessionId 派生规则，只写一半的 actor 照旧告警后按未指定处理（owner）；静态任务的 `actorPlatform` / `actorUserId` 写成布尔、数组、对象时拒绝激活（数字按字符串处理），不按留空处理成 owner 身份。
 - **安装下限**：55 个 schema-config 运行时消费者下限抬至 0.14.0；api-llm 消费者下限抬至 0.13.0。其余未删除有效配置形式或公开 API 的迁移包按 patch 准备。版本准备不代表已经发布。
 - **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。
 
