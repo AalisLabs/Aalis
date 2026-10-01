@@ -19,13 +19,20 @@ import {
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { LogEntry } from '@aalis/schema-log';
-import type { StreamChunkMessage } from '@aalis/schema-message';
+import type { MessageAttachment, OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
 import { ChatBuffer } from './chat-buffer.js';
 import { readLogFileTail } from './log-file.js';
 import type { CLIService } from './types.js';
+
+/** 附件说明里的大小 */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 export type { CLIService } from './types.js';
 
@@ -155,8 +162,54 @@ function startCli(caps: Caps): void {
   };
   caps.provide(cli, cliService);
 
+  // 附件：终端就是这个会话的平台，显示不了图片本身，写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档。
+  // 路径在支持超链接的终端里可以点开
+  const attachmentStorage = createStorageGateway(caps.storage);
+  const KIND_LABELS: Record<MessageAttachment['kind'], string> = {
+    image: '图片',
+    audio: '语音',
+    video: '视频',
+    file: '文件',
+  };
+  async function attachmentLine(att: MessageAttachment): Promise<string> {
+    const label = `[${KIND_LABELS[att.kind] ?? '附件'}]`;
+    if (/^https?:\/\//i.test(att.data)) return `${label} ${att.name ?? ''} ${att.data}`.replace(/\s+/g, ' ').trim();
+    if (att.data.startsWith('data:') && att.data.includes(';base64,')) {
+      const bytes = Math.floor(((att.data.length - att.data.indexOf(',') - 1) * 3) / 4);
+      return `${label} ${att.name ?? '内联数据'} · ${formatBytes(bytes)}`;
+    }
+    let path = att.data;
+    let size = '';
+    try {
+      path = await attachmentStorage.resolveLocalPath(att.data, 'read');
+      size = formatBytes((await attachmentStorage.stat(att.data)).size);
+    } catch {
+      // 取不到本机路径时照写存储地址
+    }
+    return [`${label} ${att.name ?? path.split('/').pop() ?? ''}`, size, path].filter(Boolean).join(' · ');
+  }
+  function sendAttachments(msg: OutgoingMessage): void {
+    const attachments = (msg.attachments ?? []).map(att => ({ ...att }));
+    // 同步认领：发起方 await emit 之后就要能等到它
+    msg.delivery = (async () => {
+      try {
+        for (const att of attachments) adapter.sendMessage(msg.sessionId, await attachmentLine(att));
+        void events.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });
+        return { ok: true as const };
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      }
+    })();
+  }
+
   events.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
+    if (msg.attachments?.length) {
+      sendAttachments(msg);
+      // 附件消息里的文字照常显示；它不是流式正文的整条重复，不消耗流式标记
+      if (msg.content.trim()) adapter.sendMessage(msg.sessionId, msg.content);
+      return;
+    }
     // 同一轮已流式输出时，agent 的整条回复是重复；系统/指令消息不是流式正文，照常显示
     if (msg.source === 'agent' && tui?.consumeStreamedSend()) return;
     adapter.sendMessage(msg.sessionId, msg.content);
