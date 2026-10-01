@@ -76,7 +76,7 @@ npm start
 
 ### 浏览器：WebUI 需要 token
 
-WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。token 只写在文件 `home/data/webui/access.txt`（含完整的一键登录链接）。
+WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。token 只写在文件 `home/state/webui/access.txt`（含完整的一键登录链接）。
 
 启动日志出于安全**不打印 token 本身**——它只给出该文件的绝对路径（「访问凭据已写入: …」那行，CLI 里按 `Ctrl+L` 看）。
 
@@ -102,7 +102,7 @@ WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。tok
 ## 停止、数据与日志
 
 - **停止**：CLI 里 `Ctrl+C`；或在聊天里 `/shutdown`。
-- **数据**：都在家目录 `home/` 里：`home/data/`（SQLite 库、会话、人设、技能、WebUI 凭据等），`home/workspace/` 是文件工具的默认工作根。`home/` 整个在生成的 `.gitignore` 里。
+- **数据**：都在家目录 `home/` 里：`home/state/`（SQLite 库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`home/self/`（人设与技能）、`home/stage/`（白纸成品与发布的作品）、`home/tmp/`（临时文件），`home/workspace/` 是文件工具的默认工作根。`home/` 整个在生成的 `.gitignore` 里。
 - **完整日志**：`home/logs/latest.log`，即使 CLI 接管了终端也照常写。每次启动时上一轮的日志改名为 `home/logs/latest.1.log`，更早的依次后移，保留最近 5 轮（`latest.1.log` 到 `latest.5.log`），再早的删除；`/restart` 与市场更新引起的重启也各算一次启动。要跨重启持续跟随日志，用 `tail -F`：`tail -f` 跟的是文件本身，改名后停在 `latest.1.log` 上。
 
 ## 下一步

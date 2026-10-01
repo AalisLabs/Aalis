@@ -90,16 +90,6 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
           writable: true,
           deletable: true,
         },
-        {
-          name: 'tmp',
-          path: join(base, 'tmp'),
-          label: 'tmp',
-          kind: 'tmp',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
       ],
     });
     await app.plugin(processLocal);
@@ -153,34 +143,11 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     const base2 = mkdtempSync(join(tmpdir(), 'aalis-draw-tool-'));
     mkdirSync(join(base2, 'ws'), { recursive: true });
     mkdirSync(join(base2, 'tmp'), { recursive: true });
-    mkdirSync(join(base2, 'data'), { recursive: true });
+    mkdirSync(join(base2, 'state'), { recursive: true });
     const app2 = new App({ name: 'T', logLevel: 'error' });
     try {
       provideHostPaths(app2, base2);
-      await app2.plugin(storageLocal, {
-        roots: [
-          {
-            name: 'data',
-            path: join(base2, 'data'),
-            label: 'data',
-            kind: 'data',
-            browsable: false,
-            readable: true,
-            writable: true,
-            deletable: true,
-          },
-          {
-            name: 'tmp',
-            path: join(base2, 'tmp'),
-            label: 'tmp',
-            kind: 'tmp',
-            browsable: false,
-            readable: true,
-            writable: true,
-            deletable: true,
-          },
-        ],
-      });
+      await app2.plugin(storageLocal, {});
       await app2.plugin(processLocal);
       const storage2 = createStorageGateway(app2.bind({ storage }).storage);
       const captured = provideCapturingTools(app2);
@@ -216,34 +183,11 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
 
   it('降级引导：结果 message 引导直接发送，不把自检设为默认路径（延迟根因治理）', async () => {
     const base4 = mkdtempSync(join(tmpdir(), 'aalis-draw-msg-'));
-    for (const d of ['data', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
+    for (const d of ['state', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
     const app4 = new App({ name: 'T', logLevel: 'error' });
     try {
       provideHostPaths(app4, base4);
-      await app4.plugin(storageLocal, {
-        roots: [
-          {
-            name: 'data',
-            path: join(base4, 'data'),
-            label: 'data',
-            kind: 'data',
-            browsable: false,
-            readable: true,
-            writable: true,
-            deletable: true,
-          },
-          {
-            name: 'tmp',
-            path: join(base4, 'tmp'),
-            label: 'tmp',
-            kind: 'tmp',
-            browsable: false,
-            readable: true,
-            writable: true,
-            deletable: true,
-          },
-        ],
-      });
+      await app4.plugin(storageLocal, {});
       await app4.plugin(processLocal);
       const captured = provideCapturingTools(app4);
       await app4.plugin(drawPlugin, { idleShutdownSec: 0 });
@@ -273,22 +217,11 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
 
   it('draw_image：结果里的宽高是画布的 CSS 尺寸，落盘的 PNG 像素 = 宽高×scale', async () => {
     const base5 = mkdtempSync(join(tmpdir(), 'aalis-draw-png-'));
-    for (const d of ['data', 'tmp']) mkdirSync(join(base5, d), { recursive: true });
+    for (const d of ['state', 'tmp']) mkdirSync(join(base5, d), { recursive: true });
     const app5 = new App({ name: 'T', logLevel: 'error' });
     try {
       provideHostPaths(app5, base5);
-      await app5.plugin(storageLocal, {
-        roots: ['data', 'tmp'].map(name => ({
-          name,
-          path: join(base5, name),
-          label: name,
-          kind: name,
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        })),
-      });
+      await app5.plugin(storageLocal, {});
       await app5.plugin(processLocal);
       const storage5 = createStorageGateway(app5.bind({ storage }).storage);
       const captured = provideCapturingTools(app5);
@@ -312,34 +245,11 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
 
   it('source 超字节上限：handler 拒绝、不触发渲染（删掉检查→此锚红）', async () => {
     const base3 = mkdtempSync(join(tmpdir(), 'aalis-draw-cap-'));
-    for (const d of ['data', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
+    for (const d of ['state', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
     const app3 = new App({ name: 'T', logLevel: 'error' });
     try {
       provideHostPaths(app3, base3);
-      await app3.plugin(storageLocal, {
-        roots: [
-          {
-            name: 'data',
-            path: join(base3, 'data'),
-            label: 'data',
-            kind: 'data',
-            browsable: false,
-            readable: true,
-            writable: true,
-            deletable: true,
-          },
-          {
-            name: 'tmp',
-            path: join(base3, 'tmp'),
-            label: 'tmp',
-            kind: 'tmp',
-            browsable: false,
-            readable: true,
-            writable: true,
-            deletable: true,
-          },
-        ],
-      });
+      await app3.plugin(storageLocal, {});
       await app3.plugin(processLocal);
       const captured = provideCapturingTools(app3);
       await app3.plugin(drawPlugin, { maxSourceKB: 1, idleShutdownSec: 0 }); // 1KB 上限

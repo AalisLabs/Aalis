@@ -18,7 +18,7 @@ import { HUB_PLUGINS } from '../fixtures/hubs.js';
 //      热改非主卡的 outputFormat 要重启才生效（此时 outputFormatPrompt 已是新文本，两边对不上）。
 //      现按卡对象缓存，重扫换入新卡对象后旧缓存自然失效。
 //   3. 热改主卡：监听触发重扫，经 reloadPrimaryCardFromCache 换入新卡，人设名与提示词不必重启即更新。
-// 真 storage-local（workspace + data 两个根）+ 真 persona。
+// 真 storage-local（workspace 根 + 内置 personas 根）+ 真 persona。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -59,7 +59,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   let base: string;
   let app: App;
 
-  const personasDir = (): string => join(base, 'data', 'personas');
+  const personasDir = (): string => join(base, 'self', 'personas');
   const writeCard = (file: string, text: string): void => writeFileSync(join(personasDir(), file), text);
   const getService = (): PersonaService => {
     const svc = app.bind({ services }).services.get(persona);
@@ -71,11 +71,12 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   async function boot(primary: string, storageFirst: boolean, logHub?: LogHub): Promise<PersonaService> {
     const personaEntry = {
       definition: personaPlugin,
-      config: { persona: primary, personasDir: 'data/personas', timeInjection: false },
+      // 不传 personasDir：走默认的 personas:/，即家目录的 self/personas
+      config: { persona: primary, timeInjection: false },
     };
     const storageEntry = {
       definition: storageLocal,
-      config: { roots: [root('workspace', join(base, 'workspace')), root('data', join(base, 'data'))] },
+      config: { roots: [root('workspace', join(base, 'workspace'))] },
     };
     app = new App({ name: 'T', logLevel: logHub ? 'warn' : 'error', logHub });
     provideHostPaths(app, base);

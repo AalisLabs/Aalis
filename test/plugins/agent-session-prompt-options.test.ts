@@ -46,26 +46,13 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
-    await app.plugin(storageLocalPlugin, {
-      roots: [
-        {
-          name: 'data',
-          path: base,
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugin(storageLocalPlugin, {});
     const recorder: ChatModelRequest[] = [];
     await app.plugin(createMockLLMPlugin({ responses: [{ content: '{"mood":"平静","message":"好"}' }], recorder }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     await app.plugin(sessionManagerPlugin, {});
-    await app.plugin(personaPlugin, { persona: 'zz-card', personasDir: 'data/personas', timeInjection: false });
+    await app.plugin(personaPlugin, { persona: 'zz-card', personasDir: 'personas:/', timeInjection: false });
     await app.plugin(agentPlugin, {
       systemPrompt: '',
       historyLimit: 50,
@@ -96,8 +83,8 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-session-prompt-'));
-    mkdirSync(join(base, 'personas'), { recursive: true });
-    writeFileSync(join(base, 'personas', 'zz-card.yaml'), CARD);
+    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
+    writeFileSync(join(base, 'self', 'personas', 'zz-card.yaml'), CARD);
   });
 
   afterEach(async () => {

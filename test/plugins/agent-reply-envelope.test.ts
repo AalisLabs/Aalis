@@ -61,25 +61,12 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
-    await app.plugin(storageLocalPlugin, {
-      roots: [
-        {
-          name: 'data',
-          path: base,
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugin(storageLocalPlugin, {});
     const recorder: ChatModelRequest[] = [];
     await app.plugin(createMockLLMPlugin({ responses, recorder }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'data/personas' });
+    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'personas:/' });
     await app.plugin(agentPlugin, AGENT_CONFIG);
     await app.plugins.idle();
     // 依赖没凑齐的插件停在 pending 而不报错，会让「钩子根本没跑」伪装成绿
@@ -109,10 +96,13 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-reply-envelope-'));
-    mkdirSync(join(base, 'personas'), { recursive: true });
-    writeFileSync(join(base, 'personas', 'zz-fmt.yaml'), fmtCard(false));
-    writeFileSync(join(base, 'personas', 'zz-client.yaml'), fmtCard(true).replace('name: zz-fmt', 'name: zz-client'));
-    writeFileSync(join(base, 'personas', 'zz-plain.yaml'), plainCard);
+    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
+    writeFileSync(join(base, 'self', 'personas', 'zz-fmt.yaml'), fmtCard(false));
+    writeFileSync(
+      join(base, 'self', 'personas', 'zz-client.yaml'),
+      fmtCard(true).replace('name: zz-fmt', 'name: zz-client'),
+    );
+    writeFileSync(join(base, 'self', 'personas', 'zz-plain.yaml'), plainCard);
   });
 
   afterEach(async () => {

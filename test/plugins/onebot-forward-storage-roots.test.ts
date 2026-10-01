@@ -65,8 +65,8 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
     });
     app = new App({ name: 'T', logLevel: 'error' });
     provideHostPaths(app, base);
-    // workspace 排第一：与默认配置同序，胜者即 workspace
-    await app.plugins.register(storageLocalPlugin, { roots: [root('workspace'), root('data'), root('tmp')] });
+    // workspace 排第一：与默认配置同序，胜者即 workspace；data、tmp 是内置根（data 映射到家目录的 state/），排在用户根之后
+    await app.plugins.register(storageLocalPlugin, { roots: [root('workspace')] });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(storageLocalPlugin.name)?.state, 'storage-local 未激活').toBe('active');
     storageRef = app.bind({ storage }).storage;
@@ -119,7 +119,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
 
     expect(described, '识别应拿到落盘后的 ref，而非原始 src').toHaveLength(1);
     expect(described[0]).toMatch(/^data\/images\/onebot_t_group_1\/[0-9a-f]{16}\.png$/);
-    expect(readdirSync(join(base, 'data', 'images', 'onebot_t_group_1'))).toHaveLength(1);
+    expect(readdirSync(join(base, 'state', 'images', 'onebot_t_group_1'))).toHaveLength(1);
     expect(existsSync(join(base, 'workspace', 'images'))).toBe(false);
     expect(out).toContain('[图片: 述]');
   });

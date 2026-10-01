@@ -93,20 +93,8 @@ beforeAll(async () => {
 
   app = new App({ name: 'T', logLevel: 'error' });
   provideHostPaths(app, base);
-  await app.plugins.register(storageLocal, {
-    roots: [
-      {
-        name: 'tmp',
-        path: join(base, 'tmp'),
-        label: 'tmp',
-        kind: 'tmp',
-        browsable: false,
-        readable: true,
-        writable: true,
-        deletable: true,
-      },
-    ],
-  });
+  // tmp 是 storage-local 的内置根，映射到家目录的 tmp/
+  await app.plugins.register(storageLocal, {});
   host = app.bind(hostUses);
   handlers = {};
   actions = new Map();
@@ -190,8 +178,11 @@ describe('browser_screenshot 的交付形态', () => {
 
   it('落盘失败：接得住图的仍拿到图（只丢 storage_uri），只读 content 的拿到明确错误而非 base64', async () => {
     const pageId = await navigate();
-    // 真 storage 的写口上挂失败：落盘那一步失败，其余全真
-    const storageSvc = host.services.get(storage)!;
+    // 真 storage 的写口上挂失败：落盘那一步失败，其余全真。storage-local 按根逐条提供，取登记了 tmp 根的那个
+    const storageSvc = host.services
+      .all(storage)
+      .map(view => view.instance)
+      .find(instance => instance.listRoots().some(r => r.name === 'tmp'))!;
     const spy = vi.spyOn(storageSvc, 'writeFile').mockRejectedValue(new Error('zz-写盘失败'));
     try {
       const withImg = (await handlers.browser_screenshot(

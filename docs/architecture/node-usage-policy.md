@@ -27,7 +27,7 @@
 基于这条红线，对插件层给出以下默认建议：
 
 - **业务插件**（agent、memory、tools、persona、scheduler、websearch、image-recognition、…）建议**优先**通过以下网关访问宿主能力，而不是直接 import `node:*`：
-  - 文件系统 → `@aalis/api-storage`（`createStorageGateway(storage)`，`storage` 为 `uses` 里声明的 ServiceRef；沙箱根 workspace/data/tmp/pluginData/logs）
+  - 文件系统 → `@aalis/api-storage`（`createStorageGateway(storage)`，`storage` 为 `uses` 里声明的 ServiceRef；命名根如 workspace、data、pluginData、tmp、cache、logs、personas、skills）
   - 子进程 / 外部文件 / 临时目录 → `@aalis/api-process`（`createProcessGateway(proc)`，`proc` 为 `uses` 里声明的 ServiceRef；方法含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`）
   - 出站网络 → `useNetwork()` / fetch
   - 入站网络 → 服务端类插件（webui-server / mcp-server）

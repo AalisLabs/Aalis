@@ -33,7 +33,6 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-wf-dispose-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
   });
 
@@ -47,16 +46,19 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
-      roots: ['data', 'workspace'].map(name => ({
-        name,
-        path: join(base, name),
-        label: name,
-        kind: name === 'data' ? 'data' : 'workspace',
-        browsable: true,
-        readable: true,
-        writable: true,
-        deletable: true,
-      })),
+      // data:/ 是内置根（家目录的 state/），用户 roots 里只声明工作根
+      roots: [
+        {
+          name: 'workspace',
+          path: join(base, 'workspace'),
+          label: 'workspace',
+          kind: 'workspace',
+          browsable: true,
+          readable: true,
+          writable: true,
+          deletable: true,
+        },
+      ],
     });
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});

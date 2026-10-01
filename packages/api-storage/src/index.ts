@@ -59,7 +59,7 @@ export interface StorageReadStreamResult {
  */
 export interface StorageWatchEvent {
   type: 'change';
-  /** 完整 storage URI，如 `data:/skills/foo/SKILL.md` */
+  /** 完整 storage URI，如 `skills:/foo/SKILL.md` */
   uri: string;
   /** 根内相对路径 */
   path: string;
@@ -127,7 +127,7 @@ export interface StorageService {
   /**
    * 监听某个 URI（文件或目录）下的变化。返回取消监听的函数。
    *
-   * - 目录 URI（如 `data:/skills`）：递归监听其下所有文件/子目录。
+   * - 目录 URI（如 `skills:/`）：递归监听其下所有文件/子目录。
    * - 文件 URI（如 `data:/persona.yaml`）：仅监听该文件本身。
    * - 后端可能对事件做去抖处理；调用方不应假定一次写操作必定对应一次事件。
    * - 远程/纯虚拟根可能不支持，此时方法本身可能不存在或调用抛错。

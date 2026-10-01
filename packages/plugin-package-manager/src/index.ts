@@ -1033,7 +1033,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
       return {
         ok: true,
-        message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）。它写入 data/ 等存储根的数据不会删除，需要时请手动清理。`,
+        message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）。它写在家目录 state/ 等处的数据不会删除，需要时请手动清理。`,
       };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };

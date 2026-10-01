@@ -18,20 +18,20 @@ interface HostPaths {
   readonly profile?: string;  // 由 --profile 或 AALIS_PROFILE 选出家目录时才有
   readonly app: string;       // 安装集
   readonly config: string;    // <家目录>/aalis.config.yaml
-  readonly secrets: string;   // <家目录>/secrets.yaml（预留，目前不读取）
-  readonly state: string;     // 预留：数据库、向量库、checkpoint、各插件的数据目录
+  readonly secrets: string;   // <家目录>/secrets.yaml（目前不读取）
+  readonly state: string;     // 插件状态：数据库、向量库、checkpoint、各插件的数据目录
   readonly logs: string;      // 文件日志 latest.log 所在目录
-  readonly cache: string;     // 预留
+  readonly cache: string;     // 缓存
   readonly run: string;       // 实例锁（runtime 自用）；以后还放 socket
-  readonly tmp: string;       // 预留：按会话分子目录
-  readonly self: { personas: string; skills: string; workflows: string };  // 预留
-  readonly stage: { drafts: string; public: string; paper: string };       // 预留
+  readonly tmp: string;       // 临时区
+  readonly self: { personas: string; skills: string; workflows: string };  // 人设卡、技能、编排定义
+  readonly stage: { drafts: string; public: string; paper: string };       // 草稿（未使用）、发布的作品、白纸
 }
 ```
 
 全部是绝对路径。宿主在登记任何插件之前提供，运行中不会替换，所以插件可以在激活时取一次留用。
 
-标为预留的目录由 `--init` 建出，目前还没有插件使用：实例的数据仍经 `@aalis/plugin-storage-local` 的存储根落在家目录的 `data/` 与 `workspace/` 下（白纸与公开作品在 `data/stage/` 下），之后把存储根迁入这套布局时才启用它们。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。
+第一方插件不直接拼这些路径，而是经 `@aalis/plugin-storage-local` 按它们派生的内部根访问：`state` 是 `data:/`（`state/plugins` 是 `pluginData:/`），`tmp`、`cache`、`logs` 是同名的根，`self.*` 是 `personas:/`、`skills:/`、`workflows:/`，`stage.paper` 与 `stage.public` 是 `paper:/` 与 `public:/`。`stage.drafts` 目前没有对应的根，还没有插件使用。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里；经 storage 读写 `secrets.yaml`、改写 `config` 都会被拒绝。
 
 ## 使用
 
@@ -54,6 +54,6 @@ export default definePlugin({
 
 | 插件 | 用途 | 宿主不提供时 |
 |---|---|---|
-| `plugin-storage-local` | 存储根的相对路径按家目录解析；内部根 `logs` 指向 `logs` 目录 | 停在 pending（required） |
+| `plugin-storage-local` | 用户根的相对路径按家目录解析；内部根按 `state`、`tmp`、`cache`、`logs`、`self.*`、`stage.paper`、`stage.public` 派生；拦住经存储访问 `secrets` 与改写 `config` | 停在 pending（required） |
 | `plugin-package-manager` | 往安装集里装卸插件（与插件加载器读同一份 `package.json`） | 停在 pending（required） |
 | `plugin-webui-server` | 市场、系统组件与前端发现读安装集（可选依赖） | 市场与系统组件接口回 503，发现不到前端，只剩 HTTP 接口 |

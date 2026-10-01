@@ -37,14 +37,14 @@ interface MemoryStorage extends StorageService {
 
 /**
  * 最小内存 storage：只实现 skills 用到的 list / stat / readFile / writeFile /
- * delete，单根 `data`。不落真实文件系统。
+ * delete，单根 `skills`（skills 的缺省 skillsUri 是 skills:/）。不落真实文件系统。
  */
 function createMemoryStorage(): MemoryStorage {
   const files = new Map<string, string>();
   const root: StorageRootInfo = {
-    name: 'data',
-    label: 'data(内存)',
-    kind: 'data',
+    name: 'skills',
+    label: 'skills(内存)',
+    kind: 'self',
     browsable: true,
     readable: true,
     writable: true,
@@ -247,7 +247,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
     expect(messages.some(isDiscovery)).toBe(false);
 
-    store.seed('data:/skills/gamma/SKILL.md', '---\nname: gamma\ndescription: 外部放入的技能\n---\n\nGAMMA-BODY\n');
+    store.seed('skills:/gamma/SKILL.md', '---\nname: gamma\ndescription: 外部放入的技能\n---\n\nGAMMA-BODY\n');
     await skills.rescan();
     expect(skills.listSkills().map(s => s.name)).toEqual(['gamma']);
 
@@ -346,7 +346,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(content).toContain('scripts/: run.sh');
     expect(content).toContain('references/: api.md');
     expect(content).toContain('assets/: tpl.json');
-    expect(content).toContain('data:/skills/alpha');
+    expect(content).toContain('skills:/alpha');
   });
 
   it('回合中途再 load 第二个技能：增量出现第二块，第一块不重复', async () => {
@@ -374,9 +374,9 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     const { store, skills, assembly } = await setup();
     // 必须 seed 两个不同目录：createSkill 会把 'a/b' 与 'a_b' sanitize 成同一
     // 文件夹名先撞目录，隔离不出贡献键碰撞本身
-    store.seed('data:/skills/slash-skill/SKILL.md', '---\nname: a/b\ndescription: 名字带斜杠\n---\n\nSLASH-BODY\n');
+    store.seed('skills:/slash-skill/SKILL.md', '---\nname: a/b\ndescription: 名字带斜杠\n---\n\nSLASH-BODY\n');
     store.seed(
-      'data:/skills/underscore-skill/SKILL.md',
+      'skills:/underscore-skill/SKILL.md',
       '---\nname: a_b\ndescription: 名字带下划线\n---\n\nUNDERSCORE-BODY\n',
     );
     await skills.rescan();
