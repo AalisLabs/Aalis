@@ -425,7 +425,8 @@ describe('作品审核核心', () => {
     works.detach();
     draw.live([nominated.id]);
     await h.store.exclusive(async () => {});
-    expect(h.service.get(nominated.id)?.live).toBe(false);
+    // 展示面暂时缺席：沿用上次核验过的地址，作品仍算已上线
+    expect(h.service.get(nominated.id)?.live).toBe(true);
     const back = h.service.attachSurface({
       name: 'works',
       urlFor: id => `https://works.invalid/w/${id}/`,

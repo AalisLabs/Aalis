@@ -100,6 +100,8 @@ export function registerPaperDoctor(deps: {
         }
       }
       if (cfg.globalDailyCents === 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
+      if (cfg.globalDailyCents === undefined)
+        notes.push('全局每日额度没填，不限额：远端任务按实际花费计费，要设上限就填金额');
       for (const task of Object.values(ledger.data.tasks)) {
         if (task.state !== 'starting') continue;
         if (!ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id)) continue;

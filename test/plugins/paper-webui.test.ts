@@ -165,14 +165,16 @@ describe('页面登记', () => {
     expect((await rows(unlimited, 'listSpend'))[0]?.scope).toContain('全局');
   });
 
-  it('全局金额上限留空时，账本页写明未设限而不显示 undefined 美分', async () => {
+  it('全局金额上限留空时，账本页与白纸表写明不限额而不显示 undefined 美分', async () => {
     const hub = await startPaperHub({
       config: { papers: [{ name: PAPER, remoteAgentType: REMOTE }] },
     });
     const [global] = await rows(hub, 'listSpend');
     expect(global.scope).toContain('全局');
-    expect(global.scope).toContain('未设金额上限');
+    expect(global.scope).toContain('不限额');
     expect(global.scope).not.toContain('undefined');
+    const [paper] = await rows(hub, 'listPapers');
+    expect(String(paper.dailyBudget)).toContain('不限额（这块白纸与全局都没设上限）');
   });
 
   it('共用白纸合并两个房间的费用与预留，并明确计入未归属旧日账', async () => {
