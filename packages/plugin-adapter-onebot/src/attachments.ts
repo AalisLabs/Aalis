@@ -105,7 +105,8 @@ async function attachmentToOneBotFile(
   // http(s):// → 下载后 base64 内联
   if (data.startsWith('http://') || data.startsWith('https://')) {
     logger?.debug?.(`OneBot 下载远程附件: ${data.slice(0, 120)}`);
-    const res = await safeFetch(data);
+    // 与入站缓存同一上限：慢源不能把发送这条消息的回合拖住几分钟。
+    const res = await safeFetch(data, { signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`download failed (${res.status}): ${data}`);
     // 流式限额读取：不先全量 arrayBuffer 再判大小（避免无 Content-Length 时撑爆内存，与入站对称）。
     const capped = await readBodyCapped(res, MAX_INLINE_BYTES);

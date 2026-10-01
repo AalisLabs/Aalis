@@ -444,6 +444,8 @@ const protocolV12 = new OneBotV12();
 // ===== 重连配置 =====
 const RECONNECT_INTERVAL = 5000;
 const ACTION_TIMEOUT = 30000;
+/** action 在 ACTION_TIMEOUT 内没有回执：实现端可能已经执行，结果未知，不能当作没发出。 */
+class ActionTimeoutError extends Error {}
 const INVITE_CARD_SUPPRESS_WINDOW = 2 * 60 * 1000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
@@ -1078,7 +1080,7 @@ function runAdapter(caps: Caps): void {
       const echo = nextEcho();
       const timer = setTimeout(() => {
         state.pendingActions.delete(echo);
-        reject(new Error(`Action ${action} 超时`));
+        reject(new ActionTimeoutError(`Action ${action} 超时`));
       }, ACTION_TIMEOUT);
 
       state.pendingActions.set(echo, { resolve, reject, timer });
@@ -2243,16 +2245,23 @@ function runAdapter(caps: Caps): void {
    * 投递失败回报给 agent：写一条系统提示进会话记忆，让它下一轮知晓「刚才那条没送达」，
    * 而不是误以为已发成功。被动记录，不立即触发回复；每条出站消息至多一条。
    */
-  function reportUndelivered(msg: OutgoingMessage, errors: unknown[]): void {
+  function reportUndelivered(msg: OutgoingMessage, errors: unknown[], unconfirmed: string[]): void {
     if (msg.source !== 'agent') return;
+    let content = '[投递回报] ';
+    if (errors.length) {
+      content +=
+        '你刚才发送的内容(可能包含图片、媒体或文件)未能送达对方。' +
+        '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。';
+    }
+    if (unconfirmed.length) {
+      content += `文件 ${unconfirmed.join('、')} 上传超时,结果未知,可能已经送达;不要重发,以免出现两份。`;
+    }
     const note: Message = {
       role: 'system',
       kind: 'outbound-delivery-failed',
-      content:
-        '[投递回报] 你刚才发送的内容(可能包含图片、媒体或文件)未能送达对方。' +
-        '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。',
+      content,
       timestamp: Date.now(),
-      metadata: { source: 'adapter-onebot', error: errors.map(String).join('; ') },
+      metadata: { source: 'adapter-onebot', error: errors.map(String).join('; '), unconfirmed },
     };
     void Promise.resolve()
       .then(() => messageArchive.current?.saveMessage(msg.sessionId, note))
@@ -2270,6 +2279,8 @@ function runAdapter(caps: Caps): void {
 
   async function deliverOutbound(msg: OutgoingMessage): Promise<OutboundDeliveryResult> {
     const errors: unknown[] = [];
+    /** 上传超时的文件名：实现端可能已经收下，只能报「结果未知」，不能劝重发。 */
+    const unconfirmed: string[] = [];
     const delivered: MessageAttachment[] = [];
     let textSent = false;
     try {
@@ -2324,7 +2335,8 @@ function runAdapter(caps: Caps): void {
           delivered.push(attachment);
         } catch (err) {
           logger.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
-          errors.push(err);
+          if (err instanceof ActionTimeoutError) unconfirmed.push(name);
+          else errors.push(err);
         }
       }
     } catch (err) {
@@ -2341,9 +2353,14 @@ function runAdapter(caps: Caps): void {
         attachments: delivered.map(att => ({ ...att })),
       });
     }
-    if (errors.length) {
-      reportUndelivered(msg, errors);
-      return { ok: false, error: `附件或消息未获完整发送确认：${errors.map(String).join('; ')}` };
+    if (errors.length || unconfirmed.length) {
+      reportUndelivered(msg, errors, unconfirmed);
+      const problems: string[] = [];
+      if (errors.length) problems.push(`附件或消息未获完整发送确认：${errors.map(String).join('; ')}`);
+      if (unconfirmed.length) {
+        problems.push(`文件 ${unconfirmed.join('、')} 上传超时，结果未知，可能已经送达，请勿重发`);
+      }
+      return { ok: false, error: problems.join('；') };
     }
     if (!textSent && !delivered.length) return { ok: false, error: '没有可发送的内容' };
     return { ok: true };
