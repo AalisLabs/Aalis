@@ -26,7 +26,7 @@ import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
-import { configSchema, readConfig } from './config.js';
+import { configSchema, paperAuditSchema, readConfig } from './config.js';
 import { registerPaperDoctor } from './doctor.js';
 import { PaperDriver } from './driver.js';
 import { LedgerStore } from './ledger.js';
@@ -65,7 +65,12 @@ export default definePlugin({
 
 async function run(caps: BoundOf<typeof uses>): Promise<void> {
   const { logger, lifecycle } = caps;
-  const cfg = readConfig(parseConfig(configSchema, caps.config, logger), logger, caps.config.papers);
+  const cfg = readConfig(
+    parseConfig(configSchema, caps.config, logger),
+    logger,
+    // 只为认出写错的具名白纸；不传日志器，告警已由上面的正式解析报过
+    parseConfig(paperAuditSchema, caps.config).papers,
+  );
   const storage = createStorageGateway(caps.storage);
   const ledger = new LedgerStore(storage, logger);
   await ledger.load();
