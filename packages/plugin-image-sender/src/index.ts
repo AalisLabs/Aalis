@@ -276,7 +276,8 @@ function registerImageSender(caps: Caps): void {
         };
         await events.emit('outbound:message', outgoing);
         if (!outgoing.delivery) return JSON.stringify({ error: '没有目标适配器确认附件发送，请勿声称已发出' });
-        const result = await outgoing.delivery;
+        const result = await untilSettledOrAborted(outgoing.delivery, callCtx.signal);
+        if (!result) return JSON.stringify({ error: '回合已中止，附件仍在发送，结果未确认，请勿重发' });
         if (!result.ok) return JSON.stringify({ error: result.error });
 
         return JSON.stringify({ ok: true, sent: { kind, via, ref: refTag } });
@@ -313,6 +314,29 @@ function registerImageSender(caps: Caps): void {
         await archiveOutboundAttachment({ archive, logger }, msg.sessionId, ref, desc, kind);
       })();
     }
+  });
+}
+
+/**
+ * 等传输确认，但回合中止（latest-wins / 手动 abort）时不再等。
+ * 适配器的发送不随之取消，所以中止只能报「未确认」（返回 undefined），不能报「未发送」。
+ */
+function untilSettledOrAborted<T>(delivery: Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
+  if (!signal) return delivery;
+  if (signal.aborted) return Promise.resolve(undefined);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => resolve(undefined);
+    signal.addEventListener('abort', onAbort, { once: true });
+    delivery.then(
+      value => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
   });
 }
 
