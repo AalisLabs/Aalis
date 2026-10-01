@@ -16,7 +16,7 @@ import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
-import type { OutgoingMessage } from '@aalis/schema-message';
+import { awaitDelivery, type OutgoingMessage } from '@aalis/schema-message';
 import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
@@ -445,19 +445,31 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     try {
       await dispatch(message);
     } catch (err) {
-      return fail(`没有交给发送队列：${describe(err)}`);
+      return fail(`没有发出：${describe(err)}`);
     }
-    await ledger.exclusive(async () => {
-      if (task.delivered) return;
-      task.delivered = true;
-      await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${describe(err)}`));
-    });
-    deps.logger.info(`白纸任务 ${task.id} 的成品 ${artifactId} 已交给发送队列（房间 ${ctx.sessionId}）`);
-    return done({
-      taskId: task.id,
-      artifactId,
-      message: '已交给发送队列；不代表对方已收到，投递失败时之后的回合会看到投递失败记录',
-    });
+    // 平台确认收下才算交付：交给网关不等于发出，适配器下载或上传失败时 delivery 结算为失败
+    const delivery = message.delivery;
+    if (!delivery) return fail('没有平台适配器接手这条消息，成品没有发出');
+    const markDelivered = () =>
+      ledger.exclusive(async () => {
+        const current = ledger.data.tasks[task.id];
+        if (!current || current.delivered) return;
+        current.delivered = true;
+        await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${describe(err)}`));
+      });
+    const result = await awaitDelivery(delivery, ctx.signal);
+    if (!result) {
+      // 迟到的确认照样记为已交付，待交付提示随之消失
+      void delivery.then(
+        late => (late.ok ? markDelivered() : undefined),
+        () => undefined,
+      );
+      return fail('成品仍在发送，结果未确认，请勿重发');
+    }
+    if (!result.ok) return fail(`发送失败：${result.error}`);
+    await markDelivered();
+    deps.logger.info(`白纸任务 ${task.id} 的成品 ${artifactId} 已由平台确认收下（房间 ${ctx.sessionId}）`);
+    return done({ taskId: task.id, artifactId, message: '平台已确认收下；不代表对方已经看到' });
   }
 
   tools.registerGroup({
@@ -548,7 +560,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         name: 'paper_send',
         description:
           '把白纸成品发回本群：artifact_id 用完成通知、待交付提示或 paper_status 里的成品编号。' +
-          '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页；结果只表示已交给发送队列，不代表对方已收到。',
+          '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页；等平台确认收下才返回成功，结果未确认时不要重发。',
         parameters: {
           type: 'object',
           properties: { artifact_id: { type: 'string', description: '成品编号（a-开头）' } },

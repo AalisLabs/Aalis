@@ -26,7 +26,11 @@ import {
 import { App, definePlugin, events, LogHub, provide, services } from '../../packages/core/src/index.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
-import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import type {
+  IncomingMessage,
+  OutboundDeliveryResult,
+  OutgoingMessage,
+} from '../../packages/schema-message/src/index.js';
 import { registerHubs } from './hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -35,6 +39,7 @@ import { registerHubs } from './hubs.js';
 // - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；平台档分基础条目与受众条目，继承链按参考实现的口径解析；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
 // - tools / gateway / doctor / webui-server：记下登记的工具、出站消息、页面与页面动作，诊断项按需运行；
+//   网关替身像目标适配器一样填 delivery，缺省立即确认收下；
 // - 钩子与贡献点用默认提供者；入站消息（宿主通知）只记下，没有网关与 agent 消费。
 // - 日志：每个测试台一个独立的 LogHub，warn 与 error 记进 logs。
 // 装好后 app.start()，与宿主一样发出 app:started。不连任何真实服务。
@@ -254,6 +259,11 @@ export interface PaperHubOptions {
   /** 账本等文件；跨「重启」复用同一张表 */
   files?: PaperFiles;
   gatewayFails?: boolean;
+  /**
+   * 目标适配器对出站消息的确认（填进 message.delivery）；缺省立即确认收下。
+   * 'unclaimed' 表示没有适配器认领，不填 delivery。
+   */
+  delivery?: (message: OutgoingMessage) => Promise<OutboundDeliveryResult> | 'unclaimed';
 }
 
 export interface PaperHub {
@@ -331,7 +341,9 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   host.provide(gateway, {
     async dispatchOutbound(message: OutgoingMessage) {
       if (opts.gatewayFails) throw new Error('网关替身：发送失败');
-      outbound.push(message);
+      outbound.push({ ...message });
+      const delivery = opts.delivery ? opts.delivery(message) : Promise.resolve({ ok: true as const });
+      if (delivery !== 'unclaimed') message.delivery = delivery;
     },
     async ingressMessage() {},
   } satisfies GatewayService);

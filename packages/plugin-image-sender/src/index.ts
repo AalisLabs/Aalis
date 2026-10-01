@@ -28,6 +28,7 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import {
   AttachmentRefKind,
+  awaitDelivery,
   formatAttachmentRef,
   type Message,
   type MessageAttachment,
@@ -276,7 +277,7 @@ function registerImageSender(caps: Caps): void {
         };
         await events.emit('outbound:message', outgoing);
         if (!outgoing.delivery) return JSON.stringify({ error: '没有目标适配器确认附件发送，请勿声称已发出' });
-        const result = await untilSettledOrAborted(outgoing.delivery, callCtx.signal);
+        const result = await awaitDelivery(outgoing.delivery, callCtx.signal);
         if (!result) return JSON.stringify({ error: '附件仍在发送，结果未确认，请勿重发' });
         if (!result.ok) return JSON.stringify({ error: result.error });
 
@@ -314,35 +315,6 @@ function registerImageSender(caps: Caps): void {
         await archiveOutboundAttachment({ archive, logger }, msg.sessionId, ref, desc, kind);
       })();
     }
-  });
-}
-
-/**
- * 等待传输确认的上限。适配器自身的重试窗口可能更长（OneBot 单个附件最坏约 150 秒：缓存与兜底
- * 下载各 30 秒，send_msg 三次各 30 秒），超过上限时报「未确认、请勿重发」而不是失败，不会引起重发；
- * 上限只为不带回合中止信号的调用方（mcp-server、workflow）不至于一等两三分钟。
- */
-const DELIVERY_WAIT_MS = 90_000;
-
-/**
- * 等传输确认；回合中止（latest-wins / 手动 abort）或到 DELIVERY_WAIT_MS 时不再等。
- * 适配器的发送不随之取消，所以这两种情况只能报「未确认」（返回 undefined），不能报「未发送」。
- */
-function untilSettledOrAborted<T>(delivery: Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
-  if (signal?.aborted) return Promise.resolve(undefined);
-  return new Promise((resolve, reject) => {
-    const settle = (finish: () => void) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', stop);
-      finish();
-    };
-    const stop = () => settle(() => resolve(undefined));
-    const timer = setTimeout(stop, DELIVERY_WAIT_MS);
-    signal?.addEventListener('abort', stop, { once: true });
-    delivery.then(
-      value => settle(() => resolve(value)),
-      error => settle(() => reject(error)),
-    );
   });
 }
 
