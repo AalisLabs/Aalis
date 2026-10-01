@@ -58,7 +58,8 @@ export interface WebuiTableComponent {
     label: string;
     /**
      * 单元格显示方式，不写时按文本显示：`countdown`（值是毫秒时间戳，显示剩余时间）、
-     * `status-badge`、`code`、`expandable-text`、`file`、`image`。
+     * `time`（值是毫秒时间戳或 ISO 字符串，显示为本地日期时间）、`link`（http(s) 网址显示为新标签页打开的链接，
+     * 其他值按文本）、`status-badge`、`code`、`expandable-text`、`file`、`image`。
      *
      * `file`：值作为文件名显示，配「查看」「下载」两个按钮；点击时以整行为参数调本列的 `method`，
      * 返回 {@link WebuiFilePayload}（业务失败返回 `{ ok: false, error }`）。只有 png、jpeg、gif、webp

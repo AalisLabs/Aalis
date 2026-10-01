@@ -96,7 +96,7 @@ const PAGE: WebuiPage = {
                 { key: 'name', label: '任务名', minWidth: 120 },
                 { key: 'state', label: '状态', minWidth: 100 },
                 { key: 'progress', label: '最近动作', minWidth: 160 },
-                { key: 'progressAt', label: '动作时间', nowrap: true },
+                { key: 'progressAt', label: '动作时间', render: 'time', nowrap: true },
                 { key: 'creationLog', label: '创作日志', render: 'file', method: 'readTaskLog' },
                 { key: 'duration', label: '用时', nowrap: true },
                 { key: 'cost', label: '花费（美分）', nowrap: true },
