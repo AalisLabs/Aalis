@@ -247,6 +247,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 ### 必须同批升级的包
 
+- plugin-paper、plugin-image-sender 与 schema-message 同批升级：两者改用 schema-message 新增的 `awaitDelivery`，发布时它们对 schema-message 的依赖下限要抬到含这个导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
 - plugin-adapter-onebot 与 api-trigger、schema-message 同批升级：新版适配器把群友之间的戳一戳也转为入站，并以 `noticeTargetIsSelf: false` 标明不是戳机器人；旧版 api-trigger 的 `isAddressed` 不看这个标记，会把每次群友互戳都当作点名。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值；新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
 - 启用 plugin-paper 时，plugin-agent、plugin-session-manager、plugin-message-archive、plugin-memory-vector、plugin-memory-history、plugin-user-relation、plugin-user-profile、plugin-storage-local、plugin-checkpoint 须同批升级，用 DeepSeek 的另加 plugin-llm-deepseek，要发回网页与 MP4 的另加 plugin-adapter-onebot。旧版 plugin-agent 不填 `ToolCallContext.inbound`，白纸工具一律拒绝；旧版 session-manager 没有 `resolveInheritance`，诊断项与白纸页的白纸表抛 TypeError；旧版的 agent、归档、向量记忆与抽取插件不认识 `hostNotice`，完成通知会按普通消息呈现、归档为 user、进向量库与抽取窗口；旧版 memory-history 把完成通知带进同平台其他会话的跨会话注入；旧版 storage-local 没有 `paper` 根，成品取不回；旧版 checkpoint 会给 `paper` 根记账，别的会话回滚时删掉成品；旧版 onebot 适配器跳过文件附件，网页发不出去。
