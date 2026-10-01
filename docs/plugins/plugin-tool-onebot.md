@@ -131,7 +131,7 @@ export default definePlugin({
 | `sessionHistory.allowCrossGroup` | boolean | `true` | 允许群聊读取其他群聊历史：群会话 → 另一个群会话。默认允许（便于跨群取上下文）。 |
 | `sessionHistory.allowCrossPrivate` | boolean | `false` | 允许私聊读取其他私聊历史：私聊会话 → 另一个 QQ 的私聊。默认拒绝（隐私敏感）。 |
 
-工具启用开关及 `sessionHistory.allow*` 访问开关若显式给出非布尔值，插件拒绝激活；缺省值仍按表中设置。历史条数仍按既有上下限收口。
+工具启用开关及 `sessionHistory.allow*` 访问开关若显式给出非布尔值（如 YAML 的 `no`、带引号的 `'false'`），按表中默认值处理并告警，插件照常激活。这里不拒绝激活：本插件同时提供 OneBot 会话历史的拒绝规则，插件不在场时 `session_get_history` 对 OneBot 会话不做这些限制。历史条数仍按既有上下限收口。
 
 > `allow*` 规则以访问检查器（AccessChecker）的形式注册到 `session-history` 服务，通用的 `session_get_history` 和 `onebot_get_session_history` 都会经过它；规则只在调用方处于 OneBot 会话时生效。规则不受 `sessionHistory.enabled` 影响：关掉专属工具后，通用工具读取 OneBot 会话仍受这些规则约束。群管理等工具不要求在目标群的会话内调用；除 `checkAdminPermission` 检查机器人在群内的角色外，插件本身不对调用者做访问控制。
 
