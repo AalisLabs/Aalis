@@ -32,7 +32,7 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `persona` | select | `'default'` | 人设：人设文件名（不含后缀） |
-| `personasDir` | string | `'data/personas'` | 人设目录：人设文件所在目录的 storage URI（如 `data:/personas`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
+| `personasDir` | string | `'personas:/'` | 人设目录：人设文件所在目录的 storage URI（默认 `personas:/`，即家目录的 `self/personas`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
 | `statePersistence` | boolean | `false` | 状态持久化：启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中 |
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
 | `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。 |

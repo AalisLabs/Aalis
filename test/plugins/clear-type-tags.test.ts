@@ -28,19 +28,7 @@ async function world() {
   cleanups.push(() => app.stop());
   await registerHubs(app);
   provideHostPaths(app, base);
-  await app.plugins.register(storageLocal, {
-    roots: [
-      {
-        name: 'data',
-        path: join(base, 'data'),
-        kind: 'data',
-        browsable: false,
-        readable: true,
-        writable: true,
-        deletable: true,
-      },
-    ],
-  });
+  await app.plugins.register(storageLocal, {});
   await app.plugins.register(personaPlugin, {});
   await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
   await app.plugins.idle();

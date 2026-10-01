@@ -135,7 +135,8 @@ describe('workflow：once 记账读不出时不安排 once', () => {
   /** 桩 webui 截下的页面动作登记表：按名调用，看 WebUI 回执 */
   let actions: Map<string, WebuiActionHandler>;
 
-  const runsPath = () => join(base, 'data', 'workflow-runs.json');
+  // data 是 storage-local 的内置根，映射到家目录的 state/
+  const runsPath = () => join(base, 'state', 'workflow-runs.json');
 
   const boot = async (enableTools = false): Promise<WorkflowService> => {
     app = new App({ name: 'T', logLevel: 'error' });
@@ -150,7 +151,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     } as never);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
-      roots: ['workspace', 'data'].map(name => ({
+      roots: ['workspace'].map(name => ({
         name,
         path: join(base, name),
         label: name,
@@ -182,7 +183,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-wf-ledger-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
+    mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace', 'workflows'), { recursive: true });
     writeFileSync(join(base, 'workspace', 'workflows', 'zz-once.yaml'), ONCE_YAML);
     calls = 0;

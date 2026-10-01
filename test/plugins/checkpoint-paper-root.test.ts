@@ -36,15 +36,6 @@ describe('checkpoint × 白纸根', () => {
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
-        {
-          name: 'data',
-          path: join(base, 'data'),
-          kind: 'data',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
       ],
     });
     await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
@@ -61,7 +52,7 @@ describe('checkpoint × 白纸根', () => {
   });
 
   it('回合进行中写入、删除 paper:/ 不记账，回滚不动白纸文件', async () => {
-    const paperDir = join(base, 'data', 'stage', 'paper');
+    const paperDir = join(base, 'stage', 'paper');
     mkdirSync(join(paperDir, 'old'), { recursive: true });
     writeFileSync(join(paperDir, 'old', 'prev.png'), 'prev');
     writeFileSync(join(base, 'ws', 'keep.txt'), 'orig');

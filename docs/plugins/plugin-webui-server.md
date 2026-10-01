@@ -72,10 +72,10 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 ### 访问凭据文件
 
 - **URI**: `data:/webui/access.txt`
-- **物理路径**: `data` 存储根对应目录下的 `webui/access.txt`，启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
+- **物理路径**: `data` 存储根对应目录下的 `webui/access.txt`，即家目录的 `state/webui/access.txt`；启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
 - **内容**: 注释 + `URL:` + `Token:` + `一键登录:`（带 `?token=` 的完整 URL）
 
-> 不要再读历史路径 `data/webui-access.txt`，已被 `data/webui/access.txt` 取代。
+> 历史路径 `data/webui-access.txt` 早已被 `data/webui/access.txt` 取代；家目录布局调整后 `data` 根映射到 `state/`，现行文件是 `<家目录>/state/webui/access.txt`（URI 仍是 `data:/webui/access.txt`），不要再读家目录 `data/` 下的旧文件。
 
 ### 登录方式
 

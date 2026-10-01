@@ -41,15 +41,6 @@ describe('checkpoint × 公开根', () => {
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
-        {
-          name: 'data',
-          path: join(base, 'data'),
-          kind: 'data',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
       ],
     });
     await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
@@ -66,7 +57,7 @@ describe('checkpoint × 公开根', () => {
   });
 
   it('回合进行中写入、删除 public:/ 不记账，回滚不动公开根里的文件', async () => {
-    const publicDir = join(base, 'data', 'stage', 'public');
+    const publicDir = join(base, 'stage', 'public');
     mkdirSync(join(publicDir, OLD_WORK_ID, 'files'), { recursive: true });
     writeFileSync(join(publicDir, OLD_WORK_ID, 'files', 'work.png'), 'prev');
     writeFileSync(join(base, 'ws', 'keep.txt'), 'orig');

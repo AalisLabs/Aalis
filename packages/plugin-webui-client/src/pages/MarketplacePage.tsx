@@ -363,7 +363,7 @@ export function MarketplacePage({
       body: (
         <>
           {graph && <UninstallDepWarning graph={graph} />}
-          <div className="dep-note">将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。插件写入 data/ 等存储根的数据不会被删除，需要时请手动清理。</div>
+          <div className="dep-note">将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。插件写在家目录 state/ 等处的数据不会被删除，需要时请手动清理。</div>
         </>
       ),
       confirmLabel: '卸载',

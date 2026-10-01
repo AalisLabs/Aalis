@@ -14,7 +14,7 @@ import { freePort } from '../helpers/net.js';
 // webui-server 可以先于 storage-local 激活。曾经只在 apply 里读一次：那一刻没有 storage，
 // 内存里是新随机 token，持久化的那份被晾在一边——旧 cookie 与 `?token=<持久化>` 一律 401，
 // access.txt 写成新 token；没有 token 文件时也永远建不起来，persist 退化成 ephemeral。
-// 真 storage-local 多根（workspace 在前、data 在后），token 落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），token 落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const PERSISTED = 'zz-persisted-token-placeholder';
@@ -25,10 +25,10 @@ describe('webui-server token：storage 晚于本插件上线', () => {
   let app: App;
   let port: number;
 
-  const tokenFile = () => join(base, 'data', 'webui', 'token');
-  const accessFile = () => join(base, 'data', 'webui', 'access.txt');
+  const tokenFile = () => join(base, 'state', 'webui', 'token');
+  const accessFile = () => join(base, 'state', 'webui', 'access.txt');
   const seedToken = () => {
-    mkdirSync(join(base, 'data', 'webui'), { recursive: true });
+    mkdirSync(join(base, 'state', 'webui'), { recursive: true });
     writeFileSync(tokenFile(), PERSISTED);
   };
   const accessToken = (): string | undefined => {
@@ -39,7 +39,7 @@ describe('webui-server token：storage 晚于本插件上线', () => {
   const storageLocal = () => ({
     definition: storageLocalPlugin,
     config: {
-      roots: ['workspace', 'data'].map(name => ({
+      roots: ['workspace'].map(name => ({
         name,
         path: join(base, name),
         label: name,
@@ -80,7 +80,7 @@ describe('webui-server token：storage 晚于本插件上线', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-webui-token-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
+    mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     port = await freePort();
     app = new App({ name: 'T', logLevel: 'error' });

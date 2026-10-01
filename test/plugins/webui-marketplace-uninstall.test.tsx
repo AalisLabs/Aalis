@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
-// 卸载只删代码目录与残留配置；插件写进存储根的数据没有插件归属、不会被清理，
+// 卸载只删代码目录与残留配置；插件写在家目录 state/ 等处的数据没有插件归属、不会被清理，
 // 插件市场与插件配置页两个卸载入口的确认弹窗都要把这一点说出来，免得用户以为卸载即清干净。
 
 vi.mock('../../packages/plugin-webui-client/src/api', () => ({
@@ -26,13 +26,13 @@ import type { PluginInfo } from '../../packages/plugin-webui-client/src/types.js
 
 afterEach(cleanup);
 
-it('卸载确认弹窗提示存储根里的插件数据不会被删除', async () => {
+it('卸载确认弹窗提示家目录里的插件数据不会被删除', async () => {
   render(<MarketplacePage plugins={[]} onRefresh={() => {}} />);
   fireEvent.click(await screen.findByText('卸载'));
-  expect(await screen.findByText(/存储根的数据不会被删除/)).toBeTruthy();
+  expect(await screen.findByText(/家目录 state\/ 等处的数据不会被删除/)).toBeTruthy();
 });
 
-it('插件配置页的卸载确认弹窗同样提示存储根里的插件数据不会被删除', async () => {
+it('插件配置页的卸载确认弹窗同样提示家目录里的插件数据不会被删除', async () => {
   const plugin: PluginInfo = {
     name: '@example/plugin-demo',
     instanceId: '@example/plugin-demo',
@@ -52,5 +52,5 @@ it('插件配置页的卸载确认弹窗同样提示存储根里的插件数据�
     />,
   );
   fireEvent.click(screen.getByText('卸载'));
-  expect(await screen.findByText(/存储根的数据不会被删除/)).toBeTruthy();
+  expect(await screen.findByText(/家目录 state\/ 等处的数据不会被删除/)).toBeTruthy();
 });

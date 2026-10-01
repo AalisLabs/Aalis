@@ -6,7 +6,7 @@
 
 ## 概述
 
-`StorageService` 把家目录里几个目录（workspace / data / tmp / pluginData / logs，以及用户自定义根）映射成具名 storage URI（`name:/path`），上层用 URI 而非绝对路径访问文件。
+`StorageService` 把家目录里的若干目录（文件工具的工作根 workspace、插件数据用的 data / pluginData / tmp / cache / logs / personas / skills / workflows / paper / public，以及用户自定义根）映射成具名 storage URI（`name:/path`），上层用 URI 而非绝对路径访问文件。
 
 定位：
 
@@ -107,7 +107,7 @@ watch         .watch()
 
 ## 实现者
 
-- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里为每个 `roots[]` 条目独立 `provide(storage, scoped, { entryId, label })`。
+- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里为每个根（`roots[]` 里的用户根与按家目录布局派生的内部根）独立 `provide(storage, scoped, { entryId, label })`。
 
 ## Helper
 

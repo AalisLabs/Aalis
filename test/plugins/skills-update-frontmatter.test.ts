@@ -34,28 +34,15 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-skills-fm-'));
-    mkdirSync(join(base, 'skills', 'zz-demo'), { recursive: true });
-    writeFileSync(join(base, 'skills', 'zz-demo', 'SKILL.md'), SKILL_MD);
+    mkdirSync(join(base, 'self', 'skills', 'zz-demo'), { recursive: true });
+    writeFileSync(join(base, 'self', 'skills', 'zz-demo', 'SKILL.md'), SKILL_MD);
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
-    await app.plugins.register(storageLocal, {
-      roots: [
-        {
-          name: 'data',
-          path: base,
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugins.register(storageLocal, {});
     await app.plugins.register(toolsPlugin, {});
-    await app.plugins.register(skillsPlugin, { skillsUri: 'data:/skills' });
+    await app.plugins.register(skillsPlugin, { skillsUri: 'skills:/' });
     await app.plugins.idle();
     svc = app.bind({ services }).services.get(skills)!;
     await svc.rescan();
@@ -66,7 +53,7 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  const onDisk = (): string => readFileSync(join(base, 'skills', 'zz-demo', 'SKILL.md'), 'utf-8');
+  const onDisk = (): string => readFileSync(join(base, 'self', 'skills', 'zz-demo', 'SKILL.md'), 'utf-8');
 
   it('已存在的自定义键被新值覆盖，未提到的键保留', async () => {
     const ok = await svc.updateSkill('zz-demo', { frontmatter: { compatibility: 'new', extra: 'x' } });

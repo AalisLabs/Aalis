@@ -12,7 +12,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 技能删除失败要报出来：以前删不掉（根不可删、EACCES、文件锁）只记 warn，
 // deleteSkill 照常移除缓存并返回 true，技能从列表消失，重扫或重启后又回来；
 // removeSkillFile 返回 false，工具回「skill 不存在或文件不存在」，把权限失败说成不存在。
-// 真 fs storage，data 根配成 deletable:false，删除必然失败。
+// 真 fs storage，技能放在自定义根 store 下并配成 deletable:false，删除必然失败（内置的 skills 根可删，用不上）。
 // ════════════════════════════════════════════════════════════
 
 describe('skills 删除失败（真 fs，根不可删）', () => {
@@ -32,10 +32,10 @@ describe('skills 删除失败（真 fs，根不可删）', () => {
     await app.plugins.register(storageLocal, {
       roots: [
         {
-          name: 'data',
+          name: 'store',
           path: base,
-          label: 'data',
-          kind: 'data',
+          label: 'store',
+          kind: 'custom',
           browsable: true,
           readable: true,
           writable: true,
@@ -43,7 +43,7 @@ describe('skills 删除失败（真 fs，根不可删）', () => {
         },
       ],
     });
-    await app.plugins.register(skillsPlugin, { skillsUri: 'data:/skills' });
+    await app.plugins.register(skillsPlugin, { skillsUri: 'store:/skills' });
     await app.plugins.idle();
     svc = app.bind({ services }).services.get(skills)!;
     await svc.rescan();

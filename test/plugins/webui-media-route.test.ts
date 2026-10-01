@@ -28,33 +28,18 @@ describe('WebUI 媒体路由', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-media-route-'));
-    mkdirSync(join(base, 'data', 'images'), { recursive: true });
-    writeFileSync(join(base, 'data', 'images', 'cat.png'), PNG);
-    writeFileSync(join(base, 'data', 'images', 'page.png'), '<!doctype html><script>alert(1)</script>');
-    writeFileSync(join(base, 'data', 'ledger.json'), '{"secret":"zz-not-media"}');
+    // data 是 storage-local 的内置根，映射到家目录的 state/
+    mkdirSync(join(base, 'state', 'images'), { recursive: true });
+    writeFileSync(join(base, 'state', 'images', 'cat.png'), PNG);
+    writeFileSync(join(base, 'state', 'images', 'page.png'), '<!doctype html><script>alert(1)</script>');
+    writeFileSync(join(base, 'state', 'ledger.json'), '{"secret":"zz-not-media"}');
     // 根外的一张真图：路径穿越真的读到它时会以图片回 200
     writeFileSync(join(base, 'outside.png'), PNG);
     port = await freePort();
     app = new App({ name: 'media route test', logLevel: 'error' });
     provideHostPaths(app, base);
     await app.pluginAll([
-      {
-        definition: storageLocalPlugin,
-        config: {
-          roots: [
-            {
-              name: 'data',
-              path: join(base, 'data'),
-              label: 'data',
-              kind: 'data',
-              browsable: true,
-              readable: true,
-              writable: true,
-              deletable: true,
-            },
-          ],
-        },
-      },
+      { definition: storageLocalPlugin, config: {} },
       {
         definition: webuiServerPlugin,
         config: { port, host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN },

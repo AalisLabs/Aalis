@@ -50,21 +50,8 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
     await registerHubs(app);
     provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
-    await app.plugin(storageLocal, {
-      roots: [
-        {
-          name: 'data',
-          path: base,
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
-    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'data/personas' });
+    await app.plugin(storageLocal, {});
+    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'personas:/' });
     await app.plugins.idle();
     // 停在 pending 的插件一行都不跑，日志断言会退化成「什么都没发生」的假绿
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
@@ -76,11 +63,11 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-persona-bad-'));
-    mkdirSync(join(base, 'personas'), { recursive: true });
+    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
     // 语法坏卡（未闭合流式映射）、合法但非对象的卡、一张好卡
-    writeFileSync(join(base, 'personas', 'zz-broken.yaml'), 'name: {unclosed\nprompt: 你好\n');
-    writeFileSync(join(base, 'personas', 'zz-scalar.yaml'), '只是一行字符串\n');
-    writeFileSync(join(base, 'personas', 'zz-good.yaml'), 'name: 好卡\ndescription: d\nprompt: p\n');
+    writeFileSync(join(base, 'self', 'personas', 'zz-broken.yaml'), 'name: {unclosed\nprompt: 你好\n');
+    writeFileSync(join(base, 'self', 'personas', 'zz-scalar.yaml'), '只是一行字符串\n');
+    writeFileSync(join(base, 'self', 'personas', 'zz-good.yaml'), 'name: 好卡\ndescription: d\nprompt: p\n');
   });
 
   afterEach(async () => {
@@ -91,7 +78,7 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
   it('主卡 YAML 语法坏：点名 warn 含 uri 与原因，且不说"未找到角色卡"', async () => {
     await bootPersona('zz-broken');
     const warns = logs.filter(l => l.level === 'warn').map(l => l.text);
-    expect(warns.some(t => t.includes('解析失败') && t.includes('data:/personas/zz-broken.yaml'))).toBe(true);
+    expect(warns.some(t => t.includes('解析失败') && t.includes('personas:/zz-broken.yaml'))).toBe(true);
     expect(warns.some(t => t.includes('存在但解析失败'))).toBe(true);
     expect(logs.some(l => l.text.includes('未找到角色卡'))).toBe(false);
   });

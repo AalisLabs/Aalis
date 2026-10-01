@@ -40,33 +40,10 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-chain-'));
-    for (const d of ['data', 'tmp']) mkdirSync(join(base, d), { recursive: true });
+    for (const d of ['state', 'tmp']) mkdirSync(join(base, d), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
     provideHostPaths(app, base);
-    await app.plugin(storageLocal, {
-      roots: [
-        {
-          name: 'data',
-          path: join(base, 'data'),
-          label: 'data',
-          kind: 'data',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-        {
-          name: 'tmp',
-          path: join(base, 'tmp'),
-          label: 'tmp',
-          kind: 'tmp',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugin(storageLocal, {});
     await app.plugin(processLocal);
     storageGateway = createStorageGateway(app.bind({ storage }).storage);
 

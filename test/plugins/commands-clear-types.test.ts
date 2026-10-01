@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 /**
- * 装 plugin-commands 与只有 clear/clearAll 的记忆替身；附件缓存放在临时目录的 data 根下，
+ * 装 plugin-commands 与只有 clear/clearAll 的记忆替身；附件缓存放在 storage-local 的内置 data 根（临时家目录的 state/），
  * noDataRoot 时不注册存储根（附件清理走失败行）；vectorHandler 时另装一个标注 vector 的清理中间件
  */
 async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {}) {
@@ -40,19 +40,7 @@ async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {
     const base = mkdtempSync(join(tmpdir(), 'aalis-clear-types-'));
     cleanups.push(() => rmSync(base, { recursive: true, force: true }));
     provideHostPaths(app, base);
-    await app.plugin(storageLocal, {
-      roots: [
-        {
-          name: 'data',
-          path: join(base, 'data'),
-          kind: 'data',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugin(storageLocal, {});
   }
   const clearSession = vi.fn(async (_sessionId: string) => {});
   host.provide(memory, { clearSession, clearAll: async () => {} } as unknown as MemoryService);

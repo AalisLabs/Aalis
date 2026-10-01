@@ -105,12 +105,12 @@ my-bot/
 ├── index.mjs           # 一行 startAalis() 启动
 ├── home/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
 │   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins / disabledPlugins，密钥也写在这里
-│   └── secrets.yaml        # 预留给密钥（生成时为空，0600），目前不读取
+│   └── secrets.yaml        # 留给密钥（生成时为空，0600），目前不读取
 ├── .gitignore          # node_modules/ home/ *.log dist/
 └── README.md           # 启动/配置/装更多插件指引
 ```
 
-首次启动后，`home/` 里还会出现 `data/`（数据库、会话、人设、技能、WebUI 凭据等）、`workspace/`（文件工具的默认工作根）与 `logs/`（`latest.log`）。
+首次启动后，`home/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`stage/`（白纸成品与发布的作品）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。布局见 [runtime 的「家目录」](../architecture/runtime.md#家目录)。
 
 入口 `index.mjs`（`renderEntry`，`cli.ts`）：
 

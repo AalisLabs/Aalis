@@ -64,7 +64,7 @@ afterEach(async () => {
 
 async function boot() {
   base = mkdtempSync(join(tmpdir(), 'aalis-trigger-persona-session-'));
-  const personasDir = join(base, 'data', 'personas');
+  const personasDir = join(base, 'self', 'personas');
   mkdirSync(join(base, 'workspace'), { recursive: true });
   mkdirSync(personasDir, { recursive: true });
   writeFileSync(join(personasDir, 'main.yaml'), 'name: 主卡名\nnick_name: [主卡昵称]\ndescription: d\nprompt: p\n');
@@ -76,11 +76,11 @@ async function boot() {
     ...HUB_PLUGINS.map(definition => ({ definition })),
     {
       definition: storageLocal,
-      config: { roots: [root('workspace', join(base, 'workspace')), root('data', join(base, 'data'))] },
+      config: { roots: [root('workspace', join(base, 'workspace'))] },
     },
     {
       definition: personaPlugin,
-      config: { persona: 'main', personasDir: 'data/personas', timeInjection: false },
+      config: { persona: 'main', personasDir: 'personas:/', timeInjection: false },
     },
   ]);
   await app.plugins.idle();

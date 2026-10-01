@@ -36,7 +36,7 @@ const REL_REF = 'data/images/onebot_t_group_1/0123456789abcdef.png';
 const HTTP_URL = 'https://example.invalid/pic.jpg';
 
 /**
- * `storageRoots` 给出目录时改用真实 storage-local，在其下配 workspace（排第一）/data 两根；
+ * `storageRoots` 给出目录时改用真实 storage-local，以它为家目录：用户根只配 workspace（排第一），data 是内置根（映射到 state/）；
  * 否则按 `storage` 决定是否提供单根假 storage。
  */
 async function loadStack(
@@ -60,7 +60,7 @@ async function loadStack(
       deletable: true,
     });
     provideHostPaths(app, base);
-    await app.plugin(storageLocalPlugin, { roots: [root('workspace'), root('data')] });
+    await app.plugin(storageLocalPlugin, { roots: [root('workspace')] });
   } else if (opts.storage !== false) {
     const fakeStorage = {
       // agent 经网关按根路由读取，假 storage 须声明自己服务 data 根
@@ -150,7 +150,7 @@ describe('media 缺席时的 images 兜底（真实 storage-local 多根）', ()
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-agent-img-roots-'));
-    const dir = join(base, 'data', 'images', 'onebot_t_group_1');
+    const dir = join(base, 'state', 'images', 'onebot_t_group_1');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, '0123456789abcdef.png'), PNG_BYTES);
   });

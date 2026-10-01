@@ -17,7 +17,7 @@ import { memoryStorage } from '../fixtures/memory-storage.js';
 // 禁言表持久化跟随 storage 上线：storage 是 optional，不参与激活拓扑，按字母序整批登记时
 // flow-control 先于 storage-local 激活。曾经只在 apply 里读一次：那一刻没有 storage，
 // 读失败被当成空表，之后第一次 setMuted 整表写回，磁盘上只剩这一次写入的会话。
-// 真 storage-local 多根（workspace 在前、data 在后），禁言表落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），禁言表落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const MUTES = 'flow-control-mutes.json';
@@ -29,7 +29,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   const storageLocal = () => ({
     definition: storageLocalPlugin,
     config: {
-      roots: ['workspace', 'data'].map(name => ({
+      roots: ['workspace'].map(name => ({
         name,
         path: join(base, name),
         label: name,
@@ -43,11 +43,11 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   });
 
   const readMutes = (): Record<string, { mutedUntil: number }> =>
-    JSON.parse(readFileSync(join(base, 'data', MUTES), 'utf-8'));
+    JSON.parse(readFileSync(join(base, 'state', MUTES), 'utf-8'));
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-flow-mute-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
+    mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
   });
 
@@ -114,7 +114,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('storage 先上线：apply 返回时禁言表已读回，激活后立即可判禁言', async () => {
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
 
@@ -133,7 +133,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('拆卸时仍有写在排队：等写链落完再清表，磁盘保留全部会话', async () => {
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
 
@@ -164,7 +164,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('按字母序整批登记（flow-control 先于 storage-local）：禁言能恢复，setMuted 后磁盘保留原有会话', async () => {
     const until = Date.now() + 3600_000;
-    writeFileSync(join(base, 'data', MUTES), JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: until } }));
+    writeFileSync(join(base, 'state', MUTES), JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: until } }));
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
@@ -186,7 +186,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('storage 上线后读回完成前就 setMuted：写盘等读回合并完，磁盘仍保留原有会话', async () => {
     const until = Date.now() + 3600_000;
-    writeFileSync(join(base, 'data', MUTES), JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: until } }));
+    writeFileSync(join(base, 'state', MUTES), JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: until } }));
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
@@ -205,7 +205,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('storage 上线后读回完成前的入站消息：等读回再判禁言，已禁言会话照样被吞', async () => {
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
 
@@ -237,7 +237,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   it('读回前 setMuted 过的会话以内存为准', async () => {
     const soon = Date.now() + 60_000;
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({
         'zz-a': { platform: 'onebot', mutedUntil: soon },
         'zz-b': { platform: 'onebot', mutedUntil: soon },
@@ -269,7 +269,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('storage 离线期间解禁：恢复后重读不把文件里的旧禁言撤回，并补写落盘', async () => {
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
     app = new App({ name: 'T', logLevel: 'error' });
@@ -294,7 +294,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('写盘在飞时又解禁、下一次写盘失败：成功的那次只清它快照以内的改动，重读不恢复旧禁言', async () => {
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
     app = new App({ name: 'T', logLevel: 'error' });
@@ -427,7 +427,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
   it('storage 晚上线、读回前解禁尚无状态的会话：读回不恢复它的旧禁言', async () => {
     writeFileSync(
-      join(base, 'data', MUTES),
+      join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
     app = new App({ name: 'T', logLevel: 'error' });
@@ -453,7 +453,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   describe('禁言表读失败不回写', () => {
     /** 被拒的写不会有任何可等的信号：给一次本地落盘足够的时间再读 */
     const settle = () => new Promise(r => setTimeout(r, 150));
-    const mutesPath = () => join(base, 'data', MUTES);
+    const mutesPath = () => join(base, 'state', MUTES);
     const bootStorageFirst = async () => {
       app = new App({ name: 'T', logLevel: 'error' });
       await registerHubs(app);

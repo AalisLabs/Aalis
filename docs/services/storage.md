@@ -80,7 +80,7 @@ export interface StorageRootInfo {
 
 ### 提供者（参考实现）
 
-`@aalis/plugin-storage-local`——把 `config.roots` 里声明的若干本机目录注册为命名根。**每个 root 一个实例 + 一个容器 entry**。
+`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`personas`、`skills`、`workflows`、`paper`、`public`）注册为命名根。**每个 root 一个实例 + 一个容器 entry**。
 
 ### 典型消费点
 
@@ -236,7 +236,11 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 
 ### data 根：可删 + 持久化原子写
 
-内置 `data` 根默认 `deletable: true`——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖。
+内部根 `data`（家目录的 `state/`）可删——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖。
+
+### 宿主控制文件
+
+参考实现在执行点兜底：不管经哪个根，家目录的 `secrets.yaml` 读写都拒绝，`aalis.config.yaml` 拒绝写入（可以读）；按 (dev, ino) 比对，硬链接与符号链接都挡得住。删除、移动、改名目录，或经 `resolveLocalPath` 以写、删的方式交出目录的本地路径时，子树里含受保护的文件也拒绝（以读的方式交出目录不查子树）。细节见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)。
 
 ---
 
@@ -246,7 +250,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 2. **rename 仅同目录改名**。同根跨目录移动改用 `move`。
 3. **同名 root 静默遮蔽**：用 `getStorageRootConflicts(storage)` 暴露。
 4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。参考实现的监听器归提供者的这次激活所有，提供者关闭（重启、改配置、卸载）时一并关闭；需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
-5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子。checkpoint 按根的 `kind` 决定是否记账：`data` / `tmp` / `pluginData` / `logs` / `paper` 不记账。
+5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子。checkpoint 按根的 `kind` 决定是否记账：`data` / `pluginData` / `tmp` / `cache` / `logs` / `paper` / `public` / `self` 不记账，其余（如 `workspace`、`custom`）记账。
 
 ---
 

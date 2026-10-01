@@ -32,7 +32,7 @@ describe('plugin-storage-local roots 配置', () => {
     [{ name: 'custom', path: false }],
     [{ name: 'custom', path: '/tmp/x', readable: 'false' }],
     [[null]],
-  ])('显式坏条目拒绝整个数组，不回落默认五根：%j', async roots => {
+  ])('显式坏条目拒绝整个数组，不回落默认根：%j', async roots => {
     const state = await start(roots);
     expect(state?.state).toBe('error');
     expect(state?.error).toContain('roots');
@@ -56,7 +56,9 @@ describe('plugin-storage-local roots 配置', () => {
     provideHostPaths(app, home);
     await app.plugin(storageLocal, { roots: [{ name: 'bad/name', path: '/private/canary', readable: true }] });
     await app.plugins.idle();
-    expect(app.plugins.getPlugin(storageLocal.name)?.state).toBe('error');
+    // 用户根一个都不剩时照常激活（插件自己的数据在内置根里），只告警缺了文件工具的工作根
+    expect(app.plugins.getPlugin(storageLocal.name)?.state).toBe('active');
+    expect(warnings.some(w => w.includes('没有可用的用户根'))).toBe(true);
     expect(warnings.some(w => w.includes('非法根名'))).toBe(true);
     expect(warnings.join('\n')).not.toContain('/private/canary');
     expect(warnings.join('\n')).not.toContain('bad/name');

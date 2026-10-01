@@ -162,13 +162,14 @@ async function boot(decide: (request: ChatModelRequest) => ChatResponse) {
       apply: ({ provide }) => void provide(llm, model, { entryId: `${model.providerId}/${model.id}` }),
     }),
   );
-  // storage-local 的内部根按 host-paths 提供的家目录解析，指到临时目录，不在工作树里建目录
+  // storage-local 的内部根按 host-paths 提供的家目录解析，指到临时目录，不在工作树里建目录。
+  // workspace 与生产同形放在家目录的 workspace/ 下：家目录里有密钥与主配置，存储不把家目录交出去当命令的工作目录
   provideHostPaths(app, base);
   await app.plugin(storageLocalPlugin, {
     roots: [
       {
         name: 'workspace',
-        path: base,
+        path: join(base, 'workspace'),
         kind: 'workspace',
         browsable: true,
         readable: true,

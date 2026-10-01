@@ -62,28 +62,15 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
   let host: ReturnType<typeof bindHost>;
 
   const boot = async (clientSide: boolean): Promise<{ sent: OutgoingMessage[]; sessionId: string }> => {
-    writeFileSync(join(base, 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
+    writeFileSync(join(base, 'self', 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
-    await app.plugin(storageLocalPlugin, {
-      roots: [
-        {
-          name: 'data',
-          path: base,
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugin(storageLocalPlugin, {});
     await app.plugin(createMockLLMPlugin({ responses: [{ content: RAW_JSON }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(personaPlugin, { persona: 'zz-fmt', personasDir: 'data/personas' });
+    await app.plugin(personaPlugin, { persona: 'zz-fmt', personasDir: 'personas:/' });
     await app.plugin(agentPlugin, AGENT_CONFIG);
     await app.plugins.idle();
     // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「守卫根本没跑」伪装成绿
@@ -113,7 +100,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-dup-reply-'));
-    mkdirSync(join(base, 'personas'), { recursive: true });
+    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
   });
 
   afterEach(async () => {
