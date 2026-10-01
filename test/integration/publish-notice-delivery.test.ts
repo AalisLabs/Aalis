@@ -12,12 +12,16 @@ import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import { configSchema } from '../../packages/plugin-publish-review/src/config.js';
-import { ReviewNotices } from '../../packages/plugin-publish-review/src/notices.js';
+import { isNoticeUndelivered, ReviewNotices } from '../../packages/plugin-publish-review/src/notices.js';
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
-import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import type {
+  IncomingMessage,
+  OutboundDeliveryResult,
+  OutgoingMessage,
+} from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin, type MockLLMOptions } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -36,7 +40,12 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function boot(responses: ChatResponse[] = [{ content: '' }], modelOptions: MockLLMOptions = {}) {
+async function boot(
+  responses: ChatResponse[] = [{ content: '' }],
+  modelOptions: MockLLMOptions = {},
+  /** 目标平台适配器对每条出站消息的回执；缺省立即确认收下，返回 undefined 表示没有适配器认领 */
+  deliver: (message: OutgoingMessage) => Promise<OutboundDeliveryResult> | undefined = async () => ({ ok: true }),
+) {
   const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
@@ -60,6 +69,9 @@ async function boot(responses: ChatResponse[] = [{ content: '' }], modelOptions:
   const outgoing: OutgoingMessage[] = [];
   host.events.on('outbound:message', message => {
     outgoing.push(message);
+    // 充当目标平台适配器：同步认领并给出回执（作品通知等它确认收下才算发出）
+    const receipt = deliver(message);
+    if (receipt) message.delivery = receipt;
   });
   const notices = new ReviewNotices(host.events, app.logger, host.gateway, host.hooks);
   notices.open();
@@ -155,6 +167,42 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     expect(h.outgoing).toHaveLength(1);
     expect(h.outgoing[0]).toMatchObject({ content: `[作品通知] ${CONTENT}`, source: 'system', sessionId: ROOM });
     expect(h.outgoing[0].content).not.toContain('模型私有状态');
+  });
+
+  it('平台没收下她的转述：报没送达；重发直接派发宿主原文、不再调用模型，平台确认后才算发出', async () => {
+    let accept = false;
+    const h = await boot([{ content: JSON.stringify({ message: `可以玩了：${URL}`, mood: '高兴' }) }], {}, async () =>
+      accept ? { ok: true } : { ok: false, error: '上传超时' },
+    );
+    const err = await h.send().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isNoticeUndelivered(err)).toBe(true);
+    expect(String((err as Error).message)).toContain('上传超时');
+    const calls = h.recorder.length;
+    accept = true;
+    await h.notices.enqueue(origin, CONTENT, 'test-work', undefined, { direct: true });
+    expect(h.recorder, '重发不再跑一轮模型').toHaveLength(calls);
+    expect(h.outgoing.at(-1)).toMatchObject({
+      content: `[作品通知] ${CONTENT}`,
+      source: 'system',
+      hostNotice: { kind: 'publish-review', id: 'test-work' },
+    });
+  });
+
+  it('没有平台适配器认领通知：报没送达，留待重发', async () => {
+    const h = await boot(
+      [{ content: JSON.stringify({ message: `可以玩了：${URL}`, mood: '高兴' }) }],
+      {},
+      () => undefined,
+    );
+    const err = await h.send().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isNoticeUndelivered(err)).toBe(true);
+    expect(h.outgoing).toHaveLength(1);
   });
 
   it('合法转述只发一次，消息对象被中间件复制也不影响确认', async () => {
