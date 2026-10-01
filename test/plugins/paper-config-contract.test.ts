@@ -54,6 +54,20 @@ describe('paper 配置契约', () => {
     expect(cfg.papers.get('other')?.defaultPublishTarget).toBeUndefined();
   });
 
+  it.each([
+    ['defaults.publishTargets 写成数组', { defaults: { publishTargets: ['blog'] } }],
+    ['defaults.publishTargets 写成空数组', { defaults: { publishTargets: [] } }],
+    ['defaults.remoteAgentEgress 写错', { defaults: { remoteAgentEgress: 'closed' } }],
+    ['sendHtml 写成字符串', { sendHtml: 'no' }],
+  ])('%s：拒绝配置，不回落到更宽的默认值', (_label, raw) => {
+    expect(() => read(raw)).toThrow();
+  });
+
+  it('defaults.publishTargets 只写键名不写值按未填写取默认，只有空字符串禁止发布', () => {
+    expect(read({ defaults: { publishTargets: null } }).cfg.defaults.publishTargets).toEqual(['works']);
+    expect(read({ defaults: { publishTargets: '' } }).cfg.defaults.publishTargets).toEqual([]);
+  });
+
   it('全局金额缺省不限制，零不被当作缺省；预留和时长仍有默认值', () => {
     const { cfg, warn } = read({ reserveDefaultCents: 0, maxRunMinutes: 0.002 });
     expect(cfg.globalDailyCents).toBeUndefined();
