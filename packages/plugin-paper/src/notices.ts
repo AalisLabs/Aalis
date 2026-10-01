@@ -72,8 +72,13 @@ function noticeContent(task: TaskRecord, direct?: DirectSend): string {
   if (task.publication) {
     // 自动发布在提交之前失败：说清直接发送的结果，并列出成品编号，交给她处理
     if (rawDeliveryAllowed(task) && task.artifacts.length > 0) {
-      if (direct?.outcome.ok) {
-        lines.push(`成品已直接发到本群：${direct.sent.map(a => a.id).join('、')}。`);
+      const unconfirmed = direct && !direct.outcome.ok && direct.outcome.unconfirmed === true;
+      if (direct && (direct.outcome.ok || unconfirmed)) {
+        lines.push(
+          direct.outcome.ok
+            ? `成品已直接发到本群：${direct.sent.map(a => a.id).join('、')}。`
+            : `成品已直接发出：${direct.sent.map(a => a.id).join('、')}，平台还没确认，不要重发。`,
+        );
         const rest = task.artifacts.filter(a => !direct.sent.includes(a));
         if (rest.length > 0) lines.push(`另有成品：${artifactList(rest)}，需要时用 paper_send 按编号发。`);
       } else {
