@@ -452,7 +452,13 @@ export class WorksDeployer {
       });
     const aliases: Record<string, string> = Object.create(null);
     for (const [group, value] of Object.entries(state.groups)) if (value.alias) aliases[group] = value.alias;
-    return buildGallery({ ...common, aliases, siteTitle: this.#config.siteTitle, siteIntro: this.#config.siteIntro });
+    return buildGallery({
+      ...common,
+      aliases,
+      siteTitle: this.#config.siteTitle,
+      siteIntro: this.#config.siteIntro,
+      siteOrigin: this.#config.siteOrigin,
+    });
   }
 
   async #deployJob(source: PublishPort, job: Job, force: boolean): Promise<void> {
