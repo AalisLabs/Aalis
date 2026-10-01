@@ -8,9 +8,13 @@
 
 ---
 
-## 未发布（schema-config 0.14.0；core 0.20.0）
+## 2026-10-01（core 0.19.1 patch；schema-config 0.14.0 minor；60 个包：9 minor / 51 patch）
 
-插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列和服务归属校验，并统一停机后的管理回执；因管理回执契约变化按 minor 准备。
+插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列、服务归属校验、sticky 事件重复送达与配置拷贝失败的回执，并统一停机后的管理回执。停机回执的变化修的是「返回 true 却没有做任何事」的缺陷，core 按 patch 发布 0.19.1；core 0.20 留给内核全面简化。
+
+- 按次版本发布（9 个）：schema-config 0.14.0（字段类型表改为取值类型，`dynamicOptions` / `allowCustom` 移入）、api-llm 0.13.0（`llm-ref` 改为 `ModelRef`）、plugin-checkpoint 0.14.0、plugin-flow-control 0.13.0、plugin-trigger-policy 0.15.0（`scopes` 统一为数组，删除默认对象与 resolver）、plugin-mcp-client 0.13.0、plugin-mcp-server 0.13.0（args/env 与 `toolGroups` 的解析）、plugin-scheduler 0.14.0（`resolveConfig` 输入改为解析后的配置）、plugin-session-manager 0.14.0（平台 `think` 改为选项）。
+- 按 patch 发布（51 个）：core 0.19.1、runtime 0.15.1、api-agent 0.9.1、api-media 0.11.2、api-webui 0.11.1、create-aalis-plugin 0.11.1，以及其余 45 个只迁移配置读取或修复解析的插件。plugin-webui-server 0.14.1 与 plugin-webui-client 0.14.1 须同批升级。
+- plugin-trigger-laya 0.2.0 是 `private` 包，不发布到 npm。
 
 - `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
 - `provides` 校验同时核对实际登记的激活身份与条目的逻辑 id。由其他激活代登记同名 id 的服务，不再替当前插件满足声明；声明方应自己登记服务，纯代理登记方不要把代登记项写进自己的 `provides`。
