@@ -506,6 +506,45 @@ describe('作品审核核心', () => {
     await service.close();
   });
 
+  it('通知通道没就绪（网关缺席或尚未开放）时本轮不发，也不计入单条退避', async () => {
+    const store = new ReviewStore(memoryStorage(new Map()));
+    await store.load();
+    const seeded = store.copy();
+    for (const [key, id, sessionId] of [
+      ['first', 'aaaaaaaaaa', 'room-1'],
+      ['second', 'bbbbbbbbbb', 'room-2'],
+    ] as const)
+      seeded.notices[key] = {
+        id,
+        origin: { ...input().origin, notify: { sessionId, platform: 'onebot' } },
+        content: '作品未获批准，这次不发布',
+        live: false,
+      };
+    await store.save(seeded);
+    let ready = false;
+    const sent: string[] = [];
+    const emit = vi.fn(async (origin: NominateInput['origin']) => {
+      if (!ready) throw new Error('作品通知等待消息网关');
+      sent.push(origin.notify!.sessionId);
+    });
+    const service = new PublishReviewService({
+      storage: store.storage,
+      store,
+      config: config(),
+      pipeline: { run: vi.fn() },
+      now: () => 1000,
+      notice: emit,
+      noticeReady: () => ready,
+    });
+    await service.flushNotices();
+    expect(emit).not.toHaveBeenCalled();
+    ready = true;
+    await service.flushNotices();
+    expect(sent.sort()).toEqual(['room-1', 'room-2']);
+    expect(store.data.notices).toEqual({});
+    await service.close();
+  });
+
   it('坏状态文件失败关闭且原字节不被覆盖', async () => {
     const seed = new Map<string, string | Uint8Array>([['pluginData:/publish-review/state.json', '{bad-json']]);
     const h = await setup({ run: vi.fn() }, false, seed);

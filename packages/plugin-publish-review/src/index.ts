@@ -69,6 +69,7 @@ export default definePlugin({
       pipeline,
       signal: caps.lifecycle.signal,
       notice: (origin, content, id, title) => notices.enqueue(origin, content, id, title),
+      noticeReady: () => notices.ready(),
     });
     const driver = new ReviewDriver(service, store, caps.lifecycle.signal, caps.logger);
     const preview = new ReviewPreviewServer({ store, storage, signal: caps.lifecycle.signal });
