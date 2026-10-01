@@ -25,7 +25,7 @@ export interface HostPaths {
   readonly state: string;
   readonly logs: string;
   readonly cache: string;
-  /** 运行期文件：实例锁、socket */
+  /** 运行期文件：runtime 的实例锁，以后还放 socket */
   readonly run: string;
   /** 临时区，按会话分子目录 */
   readonly tmp: string;

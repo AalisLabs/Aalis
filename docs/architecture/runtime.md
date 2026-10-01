@@ -38,6 +38,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
 | `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余差异经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
+| `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
 
 `startAalis` 的 `opts`：`appDir`（安装集，绝对路径，缺省 `<家目录>/app`）、`defaultHome`（宿主代码给的兜底家目录，绝对路径）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
 
@@ -67,7 +68,7 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600）、建布局里的子目录，然后退出。目标目录已存在时，里面只能有布局自己的条目（`state`、`logs`、`cache`、`run`、`tmp`、`self`、`stage`、`secrets.yaml`），有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
-宿主参数（`--home`、`--profile`、`--init`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。
+宿主参数（`--home`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。
 
 安装集（`appDir`）是放 `package.json` 与 `node_modules` 的目录，缺省为 `<家目录>/app`。这个缺省位置留给将来的全局启动器，目前还没有这样的启动器，因此实际使用时由入口显式传 `appDir`：脚手架生成的 `index.mjs` 传它所在的项目目录，本仓库的 `src/index.ts` 传仓库根。没有传自定义 `pluginLoader`、而 `<安装集>/package.json` 不存在时，`startAalis` 拒绝启动（exit 1），提示把入口文件所在的目录作为 `appDir` 传入。
 
@@ -79,14 +80,29 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
   secrets.yaml                 预留给密钥，目前不读取
   logs/                        文件日志 latest.log
   data/  workspace/            实例数据与文件工具的工作根（存储根，激活时建出）
-  state/  cache/  run/  tmp/   预留
+  run/                         实例锁（以后还放 socket）
+  state/  cache/  tmp/         预留
   self/personas  self/skills  self/workflows   预留
   stage/drafts  stage/public  stage/paper      预留
 ```
 
-目前实例的数据仍经 `@aalis/plugin-storage-local` 的存储根落在家目录的 `data/` 与 `workspace/` 下（白纸与公开作品在 `data/stage/` 下），日志在 `logs/`。`state/`、`cache/`、`run/`、`tmp/`、`self/`、`stage/` 由 `--init` 建出，暂未使用，留给之后把存储根迁入这套布局时启用。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。
+目前实例的数据仍经 `@aalis/plugin-storage-local` 的存储根落在家目录的 `data/` 与 `workspace/` 下（白纸与公开作品在 `data/stage/` 下），日志在 `logs/`。`state/`、`cache/`、`tmp/`、`self/`、`stage/` 由 `--init` 建出，暂未使用，留给之后把存储根迁入这套布局时启用。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。
 
 配置里写宿主文件路径的字段声明 `format: 'absolute-path'` 或 `'executable'`（见 `@aalis/schema-config`）：相对路径没有可靠的基准，一律不收。
+
+## 实例锁
+
+同一家目录只许一个守护进程：没有锁时，手动在终端再起一份会与服务并存，每条消息回两遍。锁放在家目录的 `run/` 里，文件名 `instance.<n>.lock`，代号 n 最大的那份是现行锁。
+
+- **取锁**：先把完整内容写进临时文件，再 link 成下一个代号。link 在目标已存在时原子失败，同一代号只有一个进程拿得到，读到的锁内容也总是完整的；所以家目录所在的文件系统要支持硬链接（exFAT、部分 SMB 挂载不行，启动时一行报错退出）。link 成功后再看一遍更低的代号：还有活着的持有者就让出刚建的这一代并报占用，代号最低的活持有者胜出。确认之后删掉更低代号的旧文件。
+- **释放**：进程退出时删掉自己这一代，只在锁文件的内容仍是自己那份时才删，同名的锁可能已是别的实例的。
+- **判活**：锁里记 pid、本次开机的标识（Linux 的 boot_id、macOS 的 kern.bootsessionuuid）、pid 命名空间（Linux）、进程启动标识（Linux 是 `/proc/<pid>/stat` 的启动滴答数，其它 POSIX 是 UTC 下的 `ps -o lstart=`）与交接令牌的哈希。这些都与墙上时钟无关，NTP 步进时钟、夏令时回拨都不影响判断。开机标识不同判残留；pid 命名空间不同（另一个容器共用这个家目录）判不了，按占用处理；pid 不在、或启动标识不同（pid 被复用）判残留。SIGKILL 或服务管理器超时强杀留下的锁，下次启动时按残留接手。
+- **查不了启动标识的平台**：Windows 与没有 `ps` 的精简 Linux 镜像只看 pid。强杀留下的锁、pid 又恰好被别的进程占用时，启动会一直报占用；确认没有实例在运行时删掉报错里点名的锁文件即可。
+- **被占用**：打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。以 `--service` 启动（服务单元带上）时以 0 退出：配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会每隔几秒被拉起、抢锁失败地循环。锁文件读不了（权限）时不猜它是残留，报错退出。
+- **前台重启的交接**：取锁时生成一个随机令牌，锁里只记它的哈希。`/restart` 与市场更新引起的前台重启，把令牌经环境变量 `AALIS_LOCK_HANDOFF` 交给新进程；新进程看到锁里的哈希对得上就接手，并立即把它从环境里删掉，不让插件起的子进程与侧车继承。
+- **服务形态的重启**：以 `--service` 运行时，`/restart` 与市场更新停掉 App 后以 75 退出，由服务管理器（launchd 的 KeepAlive、systemd 的 `Restart=on-failure`）拉起新进程；不自己起新进程，否则它会脱离服务管理器的监管。服务形态下没有「新版起不来就回滚」，市场更新照常退出并记一条说明。
+- **子命令不取锁**：子命令是一次性实例，与守护进程并存是预期的。
+- **只有 `startAalis` 取锁**：自己组装 App 的宿主不经过这一步，需要时自行保证同一家目录只起一份。
 
 ## 子命令
 
@@ -109,13 +125,14 @@ mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 sc
 
 ## startAalis 的装配顺序
 
-0. **家目录与安装集**：解析家目录（见「家目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。之后才装日志 sink、读写任何文件。
-1. **文档**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createConfigStore(config, provider)` 建配置文档。
-2. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
-3. **host-paths 与 host-config**：在根上独占提供 `host-paths`，再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
-4. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。
-5. **发现**：`createPluginDiscovery(app, loader, store)` 建发现驱动，`startAalis` 以它的 `rescan` 在根上独占提供 `plugin-source`；`loadAll()` 整批登记全部插件，随后 `finishInitialLoad()` 落盘首批规范化结果。子命令模式在此分发并退出，否则 `app.start()`。
-6. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；`app:stopping` 时停止监听。
+0. **家目录与安装集**：解析家目录（见「家目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
+1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
+2. **文档**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createConfigStore(config, provider)` 建配置文档。
+3. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
+4. **host-paths 与 host-config**：在根上独占提供 `host-paths`，再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
+5. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。
+6. **发现**：`createPluginDiscovery(app, loader, store)` 建发现驱动，`startAalis` 以它的 `rescan` 在根上独占提供 `plugin-source`；`loadAll()` 整批登记全部插件，随后 `finishInitialLoad()` 落盘首批规范化结果。子命令模式在此分发并退出，否则 `app.start()`。
+7. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；`app:stopping` 时停止监听。
 
 ## 两种部署模型（同一套契约，两个加载器）
 
