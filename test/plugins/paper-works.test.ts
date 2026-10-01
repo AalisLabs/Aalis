@@ -203,6 +203,23 @@ describe('白纸作品工具', () => {
     expect(JSON.stringify(result)).not.toContain('site/');
   });
 
+  it('已提交后失败的自动发布不再回成功，也不带回失效的作品编号', async () => {
+    const publication = { target: 'works', title: '猫', summary: '', workId: 'abcdefghij' };
+    const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' };
+    const failed = await setup([
+      task({ publication: { ...publication, state: 'failed', reason: '发布处理rejected' } }),
+    ]);
+    const result = await failed.hub.call('works_nominate', args);
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).toContain('发布处理rejected');
+    expect(JSON.stringify(result)).not.toContain('abcdefghij');
+    expect(failed.nominate).not.toHaveBeenCalled();
+
+    const live = await setup([task({ publication: { ...publication, state: 'live' } })]);
+    expect(await live.hub.call('works_nominate', args)).toMatchObject({ ok: true, workId: 'abcdefghij' });
+    expect(live.nominate).not.toHaveBeenCalled();
+  });
+
   it('只允许真人提名自己在本房间完成的任务，撤下只认本房间来源', async () => {
     const { hub, nominate, get, withdraw } = await setup();
     const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫站', summary: '' };

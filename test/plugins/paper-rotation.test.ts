@@ -80,6 +80,20 @@ describe('换新', () => {
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '成功后删旧代理');
   });
 
+  it('已换新、首轮未成功时旧工程包取不到：失败原因如实说明，不说已停止换新', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 15 }) });
+    a.costOf = () => ({ cents: 20 });
+    const first = await runOne(hub, a);
+    a.costOf = () => ({ cents: 1 });
+    await runOne(hub, a, 'error');
+    a.bundles.delete(first.agentId);
+    const id = await hub.accept();
+    await until(() => hub.task(id).state === 'failed', '取不到旧工程包时失败');
+    expect(hub.task(id).error).toContain('上一个代理的工程包');
+    expect(hub.task(id).error).not.toContain('已停止换新');
+  });
+
   it('远端报的累计输入很大、花费没到 rotateAfterCents 时不换新', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
