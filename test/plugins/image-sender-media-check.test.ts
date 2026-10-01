@@ -157,7 +157,8 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-sig-'));
-    const dataDir = join(base, 'data');
+    // data 是 storage-local 的内置根，映射到家目录的 state/
+    const dataDir = join(base, 'state');
     mkdirSync(join(dataDir, 'images', 's'), { recursive: true });
     mkdirSync(join(dataDir, 'secret'), { recursive: true });
     writeFileSync(join(dataDir, 'images', 's', 'cat.png'), HEADS[0][2]);
@@ -208,20 +209,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
       if (deliveryResult) m.delivery = Promise.resolve(deliveryResult);
     });
     provideHostPaths(app, base);
-    await app.plugins.register(storageLocalPlugin, {
-      roots: [
-        {
-          name: 'data',
-          path: dataDir,
-          label: 'data',
-          kind: 'data',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugins.register(storageLocalPlugin, {});
     await app.plugins.register(imageSenderPlugin, {});
     await app.plugins.idle();
     const state = app.plugins.getPlugin(imageSenderPlugin.name)?.state;

@@ -77,16 +77,24 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 ```
 <家目录>/
   aalis.config.yaml            主配置，密钥目前也写在这里
-  secrets.yaml                 预留给密钥，目前不读取
+  secrets.yaml                 留给密钥，目前不读取
+  state/                       实例状态：数据库、向量库、会话、附件、checkpoint、WebUI 凭据等
+  state/plugins/               各插件的私有数据
   logs/                        文件日志 latest.log
-  data/  workspace/            实例数据与文件工具的工作根（存储根，激活时建出）
+  cache/                       缓存
   run/                         实例锁（以后还放 socket）
-  state/  cache/  tmp/         预留
-  self/personas  self/skills  self/workflows   预留
-  stage/drafts  stage/public  stage/paper      预留
+  tmp/                         临时文件
+  self/personas  self/skills  self/workflows   人设卡、技能、编排定义（编排定义目前仍在 workspace/workflows，见下）
+  stage/paper  stage/public    白纸成品、发布的作品
+  stage/drafts                 草稿，目前未使用
+  workspace/                   文件工具的工作根（用户根，激活时建出）
 ```
 
-目前实例的数据仍经 `@aalis/plugin-storage-local` 的存储根落在家目录的 `data/` 与 `workspace/` 下（白纸与公开作品在 `data/stage/` 下），日志在 `logs/`。`state/`、`cache/`、`tmp/`、`self/`、`stage/` 由 `--init` 建出，暂未使用，留给之后把存储根迁入这套布局时启用。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。
+`self/workflows` 暂未使用：plugin-workflow 的 `defsDir` 仍是 `workspace:/workflows`，迁到 `workflows:/` 随工作会话的第二切片一起做。
+
+插件经 `@aalis/plugin-storage-local` 的内部根访问这些目录：`state/` 是 `data:/`，`state/plugins/` 是 `pluginData:/`，`tmp/`、`cache/`、`logs/` 分别是 `tmp:/`、`cache:/`、`logs:/`（`logs:/` 只读），`self/` 下三个目录是 `personas:/`、`skills:/`、`workflows:/`，`stage/paper` 与 `stage/public` 是 `paper:/` 与 `public:/`。内部根的位置不能配置；`stage/drafts` 还没有对应的根，`run/` 归 runtime 自用；`workspace/` 是 `roots` 配置里缺省的那个用户根。见 [plugin-storage-local](../plugins/plugin-storage-local.md)。
+
+`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。这两个文件由 runtime 负责读写：经 storage 读写 `secrets.yaml`、改写 `aalis.config.yaml` 都会被拒绝（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）。
 
 配置里写宿主文件路径的字段声明 `format: 'absolute-path'` 或 `'executable'`（见 `@aalis/schema-config`）：相对路径没有可靠的基准，一律不收。
 

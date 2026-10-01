@@ -309,6 +309,11 @@ symlink realpath 校验。但这层校验的目的是**防止上层代码出 bug
 **它就能访问当前 OS 用户能访问的任何文件**——storage 那层校验对子进程毫无约束力。
 真正的隔离要靠 §4 的 OS 沙箱或 OS 用户权限。
 
+宿主的两个控制文件另有一道执行点兜底：不管经哪个根，storage-local 都拒绝读写家目录的 `secrets.yaml`、
+拒绝改写 `aalis.config.yaml`（读取允许），按 (dev, ino) 比对，硬链接与符号链接都挡得住；要删除、移动、改名的目录
+或 `resolveLocalPath` 以写、删的方式要交出的目录，子树里含受保护的文件时同样拒绝（见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)）。
+它同样只管经 storage 的访问：子进程不受它约束，仍能按 OS 用户权限访问这两个文件。
+
 > 请把 `resolveLocalPath` 的结果当作「工作目录起点」使用，而不是「沙箱边界」。
 > storage URI 文法、保留 scheme（`http` / `https` / `file` 不是 storage URI）见 forward-ref
 > [`docs/concepts/storage-uri-grammar.md`](./storage-uri-grammar.md) 与 [`docs/services/storage.md`](../services/storage.md)。
@@ -368,7 +373,7 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
   只有 PNG、JPEG、GIF、WebP、MP4 与单个 HTML 能经 `paper_send` 发回，扩展名须与内容一致，压缩包、
   可执行文件、脚本、SVG 等一律拒发。WebUI 只把位图显示在页面里，其余（含 HTML、SVG）只能按
   `application/octet-stream` 下载，不在 WebUI 源里渲染。
-- **白纸根不被回滚记账**：成品写在 storage-local 的内部根 `paper:/`（`data/stage/paper`），kind 为 `paper`，
+- **白纸根不被回滚记账**：成品写在 storage-local 的内部根 `paper:/`（家目录的 `stage/paper`），kind 为 `paper`，
   checkpoint 不给它记账，别的会话回滚不会删掉成品。
 - **onebot 出站按文件头核对**：图片、语音、视频按格式头分流，能内联的走消息段，认得出但不能内联的媒体
   改经文件上传，都不是就拒发；超过内联上限（10 MiB）的 storage 文件改交宿主路径之前同样核对（按字节区间
@@ -424,9 +429,8 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 以下两条已知、本批不改，等凭据与污点机制上线后处理：
 
-- **白纸文件没有来源标记**：`plugin-tool-system` 的 `file.allowedRoots` 放开 `data` 或写成 `'*'` 时，
-  拿得到文件工具的会话（主要是 owner 自己的）能读到白纸目录（`data` 根映射整个 `data/` 时，
-  `data:/stage/paper/…` 与 `paper:/…` 是同一批文件；`'*'` 还包括 `paper` 根本身），读到时不计污点。
+- **白纸文件没有来源标记**：`plugin-tool-system` 的 `file.allowedRoots` 写成 `'*'`（包括 `paper` 根）时，
+  拿得到文件工具的会话（主要是 owner 自己的）能读到白纸目录，读到时不计污点。
 - **`send_attachment` 能按路径发白纸根里的媒体**：它接受任意 storage URI、不带分组，别的房间被注入时，
   可以按路径把白纸里的图片与视频发走。
 

@@ -63,7 +63,7 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 
 ### 3. `data:/` 与标准 data-URI（易混淆的一处）
 
-存储根名 `data`（内置 5 根之一，见 `plugin-storage-local` 默认配置 `index.ts`）和
+存储根名 `data`（`plugin-storage-local` 的内部根之一，对应家目录的 `state/`，见 `index.ts`）和
 浏览器/WebUI 上传常见的 base64 **data-URI** 前缀冲突。文法靠 `:/` 天然区分二者：
 
 | 字符串 | 形态 | 是 storage URI？ |
@@ -192,7 +192,7 @@ URI → 根 → entry 的路由由调用方的 `createStorageGateway(storage)` �
 这是审计反复强调、也最容易被插件作者误解的一点，接口注释中已明确写出（`index.ts`、
 `plugin-storage-local/src/index.ts`）：
 
-- 存储层做三件事：**命名根**、**路径解析**（根内 `..` 穿越保护 + symlink realpath 校验）、**审计点**（读写删过 logger）。
+- 存储层做三件事：**命名根**、**路径解析**（根内 `..` 穿越保护 + symlink realpath 校验）、**审计点**（读写删过 logger）。参考实现另有一道宿主控制文件兜底：不能经存储读写家目录的 `secrets.yaml`、改写 `aalis.config.yaml`（见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)）。
 - 路径校验只防**上层代码意外越界的 bug**（如 `workspace:/../../etc/passwd` 会被 `isInside` 拒掉，
   `plugin-storage-local/src/index.ts`），**不是用来对抗恶意子进程**。
 
@@ -242,7 +242,7 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
 
 ## 交叉链接
 
-- 服务用法、内置 5 根的语义与配置：**`docs/services/storage.md`**（forward-ref，存储服务详解）。
+- 服务用法、各根的语义与配置：**`docs/services/storage.md`**（forward-ref，存储服务详解）与 [plugin-storage-local](../plugins/plugin-storage-local.md)。
 - DI 服务模型（同名多 provider 选优、per-entry 粒度、`provide` / `ServiceRef.current|all()` / `services.get` 仅取 name）：
   `docs/core/service.md`。
 - 鉴权（数字等级 + HITL 确认；deniedCapabilities 硬禁；与存储根权限位正交）：

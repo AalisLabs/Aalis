@@ -15,7 +15,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 // 「未知存储根」、文件损坏），曾经一律当成空表，之后第一次增删改把整表写回，原有动态任务全丢。
 // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
 // 拒写期间 scheduler_create_job 的回执注明新任务仅本次运行生效，别让用户以为已经存下。
-// 真 storage-local 多根（workspace 在前、data 在后），任务文件落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），任务文件落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const JOBS = 'scheduler-jobs.json';
@@ -38,7 +38,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
 
   const registerStorage = () =>
     app.plugin(storageLocalPlugin, {
-      roots: ['workspace', 'data'].map(name => ({
+      roots: ['workspace'].map(name => ({
         name,
         path: join(base, name),
         label: name,
@@ -60,12 +60,12 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     if (!svc) throw new Error('scheduler 服务未注册');
     return svc;
   };
-  const jobsFile = join('data', JOBS);
+  const jobsFile = join('state', JOBS);
   const readJobs = () => readFileSync(join(base, jobsFile), 'utf-8');
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-sched-load-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
+    mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
     provideHostPaths(app, base);

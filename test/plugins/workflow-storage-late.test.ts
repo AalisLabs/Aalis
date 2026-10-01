@@ -33,23 +33,26 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
 
   const registerStorage = () =>
     app.plugin(storageLocalPlugin, {
-      roots: ['workspace', 'data'].map(name => ({
-        name,
-        path: join(base, name),
-        label: name,
-        kind: name,
-        browsable: true,
-        readable: true,
-        writable: true,
-        deletable: true,
-      })),
+      roots: [
+        {
+          name: 'workspace',
+          path: join(base, 'workspace'),
+          label: 'workspace',
+          kind: 'workspace',
+          browsable: true,
+          readable: true,
+          writable: true,
+          deletable: true,
+        },
+      ],
     });
   const svcOf = (): WorkflowService => {
     const svc = app.bind({ services }).services.get(workflow);
     if (!svc) throw new Error('workflow 服务未注册');
     return svc;
   };
-  const runsFile = () => join(base, 'data', RUNS);
+  // data:/ 是内置根，按家目录布局在 state/ 下
+  const runsFile = () => join(base, 'state', RUNS);
 
   /** 跑一次只含一个 tool 节点的手动工作流，等它跑完 */
   const runOnce = async () => {
@@ -71,7 +74,7 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-wf-late-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
+    mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);

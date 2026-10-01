@@ -14,7 +14,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
 import {
@@ -45,14 +45,14 @@ import { defineConfig, parseConfig } from '@aalis/schema-config';
 const PLUGIN_NAME = '@aalis/plugin-storage-local';
 
 /**
- * 这个插件不是沙箱。它做三件事：
+ * 这个插件不是沙箱。它做四件事：
  *
- * 1. 给若干本机目录起稳定的名字（roots 数组里声明，包括默认 workspace/data/tmp/
- *    pluginData，以及用户加的任何根；另有内置的 paper/public/logs），让上层用 URI 表示文件，避免到处写
- *    宿主机绝对路径。
+ * 1. 给若干本机目录起稳定的名字：插件自己的数据在按家目录布局派生的内置根里，文件工具用的根在 roots 数组里声明
+ *    （缺省只有 workspace），让上层用 URI 表示文件，避免到处写宿主机绝对路径。
  * 2. 在每条 API 内对 `..` 穿越做规范化与校验，防止"workspace:/../../etc/passwd"
  *    这类逻辑越界 bug。
  * 3. 把所有读/写/删过一道 logger，作为统一审计点。
+ * 4. 宿主控制文件的执行点兜底：不管经哪个根进来，密钥文件读写都拒，主配置拒写（见 {@link HostFileGuard}）。
  *
  * 它无法阻止 run_python / shell 等子进程在拿到 cwd 之后访问 OS 用户可访问的任何文件——
  * 这种隔离只能靠 OS 用户权限或容器层。请按这个边界来理解和配置。
@@ -67,6 +67,7 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
  *     宿主机任何位置（高危，启动时会有 WARN 日志）
  */
 
+/** 用户 roots 缺省时注册的根：只有文件工具的工作根。插件自己的数据都在下面的内部路由根里 */
 const DEFAULT_ROOTS: RootEntryConfig[] = [
   {
     name: 'workspace',
@@ -78,72 +79,30 @@ const DEFAULT_ROOTS: RootEntryConfig[] = [
     writable: true,
     deletable: true,
   },
-  {
-    name: 'data',
-    path: 'data',
-    label: 'Data',
-    kind: 'data',
-    browsable: false,
-    readable: true,
-    writable: true,
-    // 可删：/clear 的附件清理（data/images 等）依赖它，关掉会让开箱用户连手动清理都失败。
-    // deletable 是能力位不是权限闸——agent 侧删除面由各工具自身档位把关
-    // （file_delete=restricted+confirm+allowedRoots、skill_delete=sensitive 等，档位各异）。
-    deletable: true,
-  },
-  {
-    name: 'tmp',
-    path: 'workspace/.tmp',
-    label: '临时文件',
-    kind: 'tmp',
-    browsable: false,
-    readable: true,
-    writable: true,
-    deletable: true,
-  },
-  {
-    name: 'pluginData',
-    path: 'data/plugins',
-    label: '插件数据',
-    kind: 'pluginData',
-    browsable: false,
-    readable: true,
-    writable: true,
-    deletable: true,
-  },
   // 高危直通：取消注释或改 enabled 字段无意义——存在即注册。如需 host:/ 直通根，把下行加进 roots：
   // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
 ];
 
+/** 插件读写、可删的内部根的权限位 */
+const PRIVATE = { browsable: false, readable: true, writable: true, deletable: true } as const;
+
 /**
- * 插件内置的内部路由根：不受用户 roots 影响，不在文件页出现。在用户根之后注册；
- * 用户 roots 里与内部根同名的项被跳过并告警（内部根优先）。
- * - paper：白纸枢纽存放远端任务成品；kind 为 paper，checkpoint 不给它记账。
- * - public：发布服务存放审核通过的作品，作品站从这里读出来部署；kind 为 public，checkpoint 不给它记账。
- * - logs：runtime 写文件日志的目录（host-paths 的 logs），WebUI 与 CLI 的日志页从这里读；只读。
+ * 插件内置的内部路由根：按家目录布局（host-paths）派生，不受用户 roots 影响，不在文件页出现。在用户根之后注册；
+ * 用户 roots 里与内部根同名的项被跳过并告警（内部根优先）。见计划书「插件数据约定」。
+ * - data：插件状态（数据库、向量库、checkpoint、会话与附件……）。附件句柄里的根名 data 保留，映射到 state/，
+ *   不改写历史。可删：/clear 的附件清理依赖它；删除面由各工具自身档位把关。
+ * - pluginData：各插件的私有数据目录 state/plugins。
+ * - tmp、cache：临时区与缓存；logs：runtime 写文件日志的目录，WebUI 与 CLI 的日志页从这里读，只读。
+ * - personas、skills、workflows：self 下按用途分开的三个根，一个根里的路径拼接失误到不了另一个根。
+ * - paper：白纸枢纽存放远端任务成品；public：发布服务存放审核通过的作品，作品站从这里读出来部署。
+ * kind 供 checkpoint 等按类判断：data、pluginData、tmp、cache、logs、paper、public 不记账，self 记账。
  */
 function internalRoots(paths: HostPaths): RootEntryConfig[] {
   return [
-    {
-      name: 'paper',
-      path: 'data/stage/paper',
-      label: '白纸',
-      kind: 'paper',
-      browsable: false,
-      readable: true,
-      writable: true,
-      deletable: true,
-    },
-    {
-      name: 'public',
-      path: 'data/stage/public',
-      label: '公开作品',
-      kind: 'public',
-      browsable: false,
-      readable: true,
-      writable: true,
-      deletable: true,
-    },
+    { name: 'data', path: paths.state, label: '状态', kind: 'data', ...PRIVATE },
+    { name: 'pluginData', path: join(paths.state, 'plugins'), label: '插件数据', kind: 'pluginData', ...PRIVATE },
+    { name: 'tmp', path: paths.tmp, label: '临时文件', kind: 'tmp', ...PRIVATE },
+    { name: 'cache', path: paths.cache, label: '缓存', kind: 'cache', ...PRIVATE },
     {
       name: 'logs',
       path: paths.logs,
@@ -154,17 +113,20 @@ function internalRoots(paths: HostPaths): RootEntryConfig[] {
       writable: false,
       deletable: false,
     },
+    { name: 'personas', path: paths.self.personas, label: '人设卡', kind: 'self', ...PRIVATE },
+    { name: 'skills', path: paths.self.skills, label: '技能', kind: 'self', ...PRIVATE },
+    { name: 'workflows', path: paths.self.workflows, label: '编排定义', kind: 'self', ...PRIVATE },
+    { name: 'paper', path: paths.stage.paper, label: '白纸', kind: 'paper', ...PRIVATE },
+    { name: 'public', path: paths.stage.public, label: '公开作品', kind: 'public', ...PRIVATE },
   ];
 }
-
-const INTERNAL_ROOT_NAMES: ReadonlySet<string> = new Set(['paper', 'public', 'logs']);
 
 const configSchema = defineConfig({
   roots: {
     type: 'array',
     label: '存储根目录',
     description:
-      '所有可用根都在这里声明（包括 workspace/data/tmp 等内置根）。' +
+      '文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public），这里同名的项会被跳过。' +
       '直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。' +
       'browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，' +
       '其它根仅作为工具/agent 寻址使用）。',
@@ -264,9 +226,91 @@ interface CheckpointLike {
  *
  * 自包含设计：URI→root 分发不依赖外部 router 插件，单文件即可理解整条数据流。
  */
+/**
+ * 宿主控制文件的执行点兜底：密钥文件读写都拒，主配置拒写，只许 runtime 自己读写它们（见计划书「执行点兜底」）。
+ * 不管目标经哪个根进来都查：
+ * - 文件本身：按 (dev, ino) 比，硬链接与符号链接都挡得住；文件还不存在时按真实路径比（不分大小写，
+ *   macOS 与 Windows 的卷默认不分），落在控制文件路径之下的也拒（不许把它建成目录）；
+ * - 整个子树：删除、移动、改名一个目录，或以写、删的方式把目录的本地路径交给别的工具时，按目录身份 (dev, ino)
+ *   看它是不是控制文件的祖先目录。按身份而不按路径比：macOS 的 firmlink 与 bind mount 给同一个目录不同的路径。
+ * 控制文件每次现查：主配置保存时整份换掉，inode 会变。
+ */
+class HostFileGuard {
+  constructor(private readonly files: { secrets: string; config: string }) {}
+
+  /**
+   * `read`：读内容（只挡密钥文件）；`write`：写、删、移动（两个都挡）；`subtree`：目标是目录时连子树一起查。
+   */
+  async check(abs: string, mode: 'read' | 'write', subtree = false): Promise<void> {
+    const guarded = mode === 'read' ? [this.files.secrets] : [this.files.secrets, this.files.config];
+    const target = await identify(abs);
+    for (const file of guarded) {
+      const control = await identify(file);
+      const sameFile =
+        target.stat !== undefined &&
+        control.stat !== undefined &&
+        target.stat.dev === control.stat.dev &&
+        target.stat.ino === control.stat.ino;
+      const samePath = foldCase(target.real) === foldCase(control.real);
+      const underControl = isInside(foldCase(control.real), foldCase(target.real));
+      const containsControl =
+        subtree && target.stat?.isDirectory() === true && (await ancestorIds(control.real)).has(idOf(target.stat));
+      if (sameFile || samePath || underControl) {
+        const what = file === this.files.secrets ? '密钥文件（只经宿主读写）' : '主配置（只经宿主修改）';
+        throw new Error(`不能经存储${mode === 'read' ? '读取' : '修改'}宿主的${what}`);
+      }
+      if (containsControl) throw new Error('目录里有宿主的密钥文件或主配置，不能经存储删除、移动或交出写权限');
+    }
+  }
+}
+
+type StatLike = Awaited<ReturnType<typeof stat>>;
+
+const foldCase = (p: string) => p.toLowerCase();
+const idOf = (s: StatLike) => `${s.dev}:${s.ino}`;
+
+/** 路径的真实路径与 stat；不存在时从最近的已存在祖先算真实路径、不给 stat */
+async function identify(abs: string): Promise<{ real: string; stat?: StatLike }> {
+  try {
+    return { real: await realpath(abs), stat: await stat(abs) };
+  } catch {
+    /* 不存在或读不了：往上找 */
+  }
+  const missing: string[] = [];
+  let dir = abs;
+  for (;;) {
+    missing.unshift(basename(dir));
+    const parent = dirname(dir);
+    if (parent === dir) return { real: abs };
+    dir = parent;
+    try {
+      return { real: join(await realpath(dir), ...missing) };
+    } catch {
+      /* 继续往上 */
+    }
+  }
+}
+
+/** 控制文件的各级祖先目录的身份（找得到的那些） */
+async function ancestorIds(real: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let dir = dirname(real);
+  for (;;) {
+    try {
+      ids.add(idOf(await stat(dir)));
+    } catch {
+      /* 不存在的跳过 */
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return ids;
+    dir = parent;
+  }
+}
+
 class ScopedStorageService implements StorageService {
   constructor(
     private readonly root: RootDefinition,
+    private readonly guard: HostFileGuard,
     private readonly logger: Logger,
     private readonly services: Services,
     /** 本次激活的清理登记：watch 建的 fs 监听器归提供者所有，提供者关闭时一并关闭 */
@@ -392,6 +436,7 @@ class ScopedStorageService implements StorageService {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('readable');
     const abs = await this.resolveExisting(relPath);
+    await this.guard.check(abs, 'read');
     const s = await stat(abs);
     if (s.isDirectory()) throw new Error('不能读取目录');
     const dispUri = toUri(this.root.name, relPath);
@@ -404,6 +449,7 @@ class ScopedStorageService implements StorageService {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('readable');
     const abs = await this.resolveExisting(relPath);
+    await this.guard.check(abs, 'read');
     const s = await stat(abs);
     if (s.isDirectory()) throw new Error('不能读取目录');
     const from = Math.max(0, Math.floor(start));
@@ -423,6 +469,7 @@ class ScopedStorageService implements StorageService {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('readable');
     const abs = await this.resolveExisting(relPath);
+    await this.guard.check(abs, 'read');
     const fileStat = await this.statFromAbs(abs, relPath);
     if (fileStat.isDirectory) throw new Error('不能下载目录');
     this.logger.info(`storage.download ${toUri(this.root.name, relPath)} size=${fileStat.size}`);
@@ -434,6 +481,7 @@ class ScopedStorageService implements StorageService {
     this.requirePermission('writable');
     if (!relPath) throw new Error('不能覆盖根目录');
     const abs = await this.resolveForWrite(relPath);
+    await this.guard.check(abs, 'write');
     // 目标是目录 → 在快照之前就拒。写目录反正必失败（rename 覆盖不了非空目录），
     // 但放它走到 snapshot 会让 checkpoint 记一条幽灵 write-new（loadOriginal 对目录返回 null），
     // 回滚时按 write-new 把整棵目录删掉。
@@ -469,6 +517,8 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveExisting(relPath);
     const newRel = normalizeRelPath(`${dirname(relPath) === '.' ? '' : dirname(relPath)}/${newName}`);
     const target = await this.resolveForWrite(newRel);
+    await this.guard.check(abs, 'write', true);
+    await this.guard.check(target, 'write');
     try {
       await lstat(target);
       throw new Error('目标名称已存在');
@@ -494,6 +544,8 @@ class ScopedStorageService implements StorageService {
     if (!toRel) throw new Error('目标不能是根目录');
     const absFrom = await this.resolveExisting(fromRel);
     const absTo = await this.resolveForWrite(toRel);
+    await this.guard.check(absFrom, 'write', true);
+    await this.guard.check(absTo, 'write');
     try {
       await lstat(absTo);
       throw new Error('目标已存在');
@@ -516,6 +568,7 @@ class ScopedStorageService implements StorageService {
     this.requirePermission('writable');
     if (!relPath) throw new Error('根目录已存在，无需创建');
     const abs = await this.resolveForWrite(relPath);
+    await this.guard.check(abs, 'write');
     await mkdir(abs, { recursive: true }); // recursive：建全路径；已存在则 no-op（幂等）
     this.logger.info(`storage.mkdir ${toUri(this.root.name, relPath)}`);
     return toUri(this.root.name, relPath);
@@ -529,6 +582,7 @@ class ScopedStorageService implements StorageService {
     // `sub/..` 这类解析回根本身的路径同样是删根——上面的字面空路径守卫挡不住
     // （isInside 对 rel==='' 判内、normalizeRelPath 不中和 `..`；审计发现的旁路）。
     if (abs === (await realpath(this.root.realPath))) throw new Error('不能删除根目录');
+    await this.guard.check(abs, 'write', true);
     await this.snapshot(toUri(this.root.name, relPath), 'delete', abs);
     await rm(abs, { recursive: true, force: false });
     this.logger.info(`storage.delete ${toUri(this.root.name, relPath)}`);
@@ -539,6 +593,9 @@ class ScopedStorageService implements StorageService {
     const permission = access === 'delete' ? 'deletable' : access === 'write' ? 'writable' : 'readable';
     this.requirePermission(permission);
     const abs = access === 'write' ? await this.resolveForWrite(relPath) : await this.resolveExisting(relPath);
+    // 以写、删的方式交出目录时连子树一起查。以读的方式交出目录（命令的工作目录等）不查子树：拿到目录的工具
+    // 本来就能按绝对路径读任何文件，挡它们靠沙箱的拒读清单，在这里拒只会让家目录的上级目录用不了
+    await this.guard.check(abs, access === 'read' ? 'read' : 'write', access !== 'read');
     this.logger.debug(`storage.resolveLocalPath ${toUri(this.root.name, relPath)} access=${access}`);
     return abs;
   }
@@ -774,11 +831,19 @@ async function openRoot(home: string, item: RootEntryConfig, logger: Logger): Pr
   }
 }
 
-/** 从已校验的 roots 构造用户根；空数组沿用内置根，与内部根同名的项跳过。 */
-async function buildRoots(home: string, parsedRoots: RootEntryConfig[], logger: Logger): Promise<RootDefinition[]> {
+/**
+ * 从已校验的 roots 构造用户根；空数组时注册默认的 workspace 根。与内部根同名的项跳过并告警，告警里写明配置的路径
+ * 与内部根实际指向的位置：升级前把 data、tmp 等根指到别处的配置，那里的数据要搬过去。
+ */
+async function buildRoots(
+  home: string,
+  parsedRoots: RootEntryConfig[],
+  internal: ReadonlyMap<string, string>,
+  logger: Logger,
+): Promise<RootDefinition[]> {
   let entries = parsedRoots.slice();
   if (entries.length === 0) {
-    logger.warn('storage roots 配置为空，将注册默认 4 个根（workspace/data/tmp/pluginData）');
+    logger.warn('storage roots 配置为空，将注册默认根 workspace');
     entries = DEFAULT_ROOTS.slice();
   }
 
@@ -795,8 +860,12 @@ async function buildRoots(home: string, parsedRoots: RootEntryConfig[], logger: 
       logger.warn('roots 跳过非法根名（仅允许字母/数字/下划线/连字符，且需以字母开头）');
       continue;
     }
-    if (INTERNAL_ROOT_NAMES.has(name)) {
-      logger.warn(`roots 跳过 ${name}：与插件内部根同名（内部根优先）`);
+    const internalPath = internal.get(name);
+    if (internalPath !== undefined) {
+      logger.warn(
+        `roots 跳过 ${name}（配置的 path：${path}）：与插件内部根同名，${name}:/ 指向 ${internalPath}；` +
+          '配置里的这一项可以删掉，原来放在别处的数据要搬到这里',
+      );
       continue;
     }
     if (seen.has(name)) {
@@ -824,9 +893,12 @@ export default definePlugin({
     const cfg = parseConfig(configSchema, caps.config, logger);
     const paths = caps.paths.require();
     const home = paths.home;
-    const roots = await buildRoots(home, cfg.roots, logger);
-    if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
-    for (const item of internalRoots(paths)) {
+    const guard = new HostFileGuard({ secrets: paths.secrets, config: paths.config });
+    const internal = internalRoots(paths);
+    const roots = await buildRoots(home, cfg.roots, new Map(internal.map(r => [r.name, r.path])), logger);
+    // 插件自己的数据都在内部根里；用户根一个都没有时只是缺了文件工具的工作根，照常提供存储
+    if (roots.length === 0) logger.warn('没有可用的用户根（文件工具的工作根），请检查 roots 配置');
+    for (const item of internal) {
       const root = await openRoot(home, item, logger);
       if (root) roots.push(root);
     }
@@ -840,7 +912,7 @@ export default definePlugin({
         logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
         continue;
       }
-      const scoped = new ScopedStorageService(root, logger, caps.services, caps.lifecycle.onDispose);
+      const scoped = new ScopedStorageService(root, guard, logger, caps.services, caps.lifecycle.onDispose);
       caps.provide(storage, scoped, {
         entryId: `${caps.lifecycle.id}/${root.name}`,
         label: root.label || `本地根 ${root.name}`,

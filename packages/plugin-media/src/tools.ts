@@ -21,10 +21,15 @@ import type { MediaServiceImpl } from './service.js';
  * - `[图片: desc | ref:xxx]` 占位符 — 提取 ref 后递归解析
  * - 已是 storage URI：`workspace:/foo`、`data:/images/x.jpg` — 原样返回
  * - 裸名以已知 storage root 开头：`data/images/x.jpg`、`tmp/y.png` —
- *   按首段路由到对应根（修复了 agent 传 `data/images/...` 被错误塞进 workspace 的问题）
+ *   按首段路由到对应根（修复了 agent 传 `data/images/...` 被错误塞进 workspace 的问题）。
+ *   插件私有的内置根（人设卡、技能、编排定义、缓存、日志、插件数据、白纸、公开作品）不参与：
+ *   工作目录里同名的子目录（如 `skills/x.png`）照常归到 workspace
  * - 其它相对路径：归到 `workspace:/`（默认）
  */
-function resolveImageStorageUri(input: string): string {
+/** 不参与裸路径首段路由的根类型：插件私有的内置根，agent 给的裸路径不会指向它们 */
+const PRIVATE_ROOT_KINDS: ReadonlySet<string> = new Set(['self', 'cache', 'logs', 'pluginData', 'paper', 'public']);
+
+export function resolveImageStorageUri(input: string): string {
   // [图片(: desc)? | ref:xxx] 占位符 → 提取 ref 后递归
   const refMatch = input.match(/\|\s*ref:([^\]\n]+)\]/);
   if (refMatch) return resolveImageStorageUri(refMatch[1].trim());
@@ -34,7 +39,12 @@ function resolveImageStorageUri(input: string): string {
   if (firstSeg) {
     try {
       const { storage } = getMediaRuntime();
-      const rootNames = new Set(storage.listRoots().map(r => r.name));
+      const rootNames = new Set(
+        storage
+          .listRoots()
+          .filter(r => !PRIVATE_ROOT_KINDS.has(r.kind))
+          .map(r => r.name),
+      );
       if (rootNames.has(firstSeg)) {
         const rest = cleaned.slice(firstSeg.length + 1);
         return `${firstSeg}:/${rest}`;
@@ -96,8 +106,8 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
             image: {
               type: 'string',
               description:
-                '图片来源：本地路径（如 workspace/.tmp/screenshots/xxx.png、data/images/onebot_xxx/xxx.jpg）、' +
-                'storage URI（如 data:/images/...、workspace:/.tmp/x.png）或网络 URL。' +
+                '图片来源：本地路径（如 tmp/screenshots/xxx.png、data/images/onebot_xxx/xxx.jpg）、' +
+                'storage URI（如 data:/images/...、tmp:/x.png）或网络 URL。' +
                 '裸相对路径会按首段匹配 storage 根（如 data/、workspace/、tmp/），未命中时归到 workspace:/ 下。',
             },
             prompt: { type: 'string', description: '分析提示词（可选）。数学/代码/表格类务必写明具体要求。' },

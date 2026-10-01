@@ -19,7 +19,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 // ════════════════════════════════════════════════════════════
 // plugin-skills — Agent Skills（兼容 Anthropic Agent Skills 标准）
 //
-// 每个 skill 是 data/skills/<name>/SKILL.md 文件夹，包含：
+// 每个 skill 是 skills:/<name>/SKILL.md 文件夹（家目录的 self/skills），包含：
 //   - SKILL.md（必需）：YAML frontmatter（name, description, triggers?, license?）
 //     + Markdown 正文
 //   - scripts/（可选）：可执行脚本
@@ -51,7 +51,7 @@ interface SkillDefinition {
   body: string;
   triggers?: string[];
   license?: string;
-  /** skill 文件夹 storage URI（如 data:/skills/foo） */
+  /** skill 文件夹 storage URI（如 skills:/foo） */
   uri: string;
   /** scripts/ 下的相对路径列表（不含 scripts/ 前缀） */
   scripts: string[];
@@ -124,9 +124,10 @@ const configSchema = defineConfig({
   skillsUri: {
     type: 'string',
     label: '技能存储 URI',
-    default: 'data:/skills',
+    default: 'skills:/',
     onInvalid: 'error',
-    description: '技能文件夹 storage URI（默认 data:/skills）。每个 skill 为一个子目录，含 SKILL.md。',
+    description:
+      '技能文件夹 storage URI（默认 skills:/，即家目录的 self/skills）。每个 skill 为一个子目录，含 SKILL.md。',
   },
   maxSkillBytes: {
     type: 'number',
@@ -913,7 +914,7 @@ function run(caps: Caps): void {
       function: {
         name: 'skill_create',
         description:
-          '创建一个新的 Agent Skill（生成 data/skills/<name>/SKILL.md 文件夹）。' +
+          '创建一个新的 Agent Skill（生成 skills:/<name>/SKILL.md 文件夹）。' +
           'name 与 description 必填；description 应包含"何时使用"以提高自动激活准确率。' +
           '可选 files 数组用于一次性写入 scripts/、references/、assets/、LICENSE.txt 等附属资源，' +
           '符合 Anthropic Agent Skills 完整目录结构。',

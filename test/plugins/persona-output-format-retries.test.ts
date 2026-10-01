@@ -29,21 +29,8 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     await registerHubs(app);
     provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
-    await app.plugin(storageLocal, {
-      roots: [
-        {
-          name: 'data',
-          path: base,
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
-    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'data/personas' });
+    await app.plugin(storageLocal, {});
+    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'personas:/' });
     await app.plugins.idle();
     // 停在 pending 的插件既不提供服务也不挂中间件，下面的钩子断言会退化成恒真
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
@@ -59,13 +46,13 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-persona-retries-'));
-    mkdirSync(join(base, 'personas'), { recursive: true });
-    writeFileSync(join(base, 'personas', 'zz-no-retry.yaml'), card('outputFormatRetries: 0\n'));
-    writeFileSync(join(base, 'personas', 'zz-default.yaml'), card(''));
+    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
+    writeFileSync(join(base, 'self', 'personas', 'zz-no-retry.yaml'), card('outputFormatRetries: 0\n'));
+    writeFileSync(join(base, 'self', 'personas', 'zz-default.yaml'), card(''));
     // 脏值三种：负数 / 小数 / 字符串——asCard 的非负整数清洗是唯一防线
-    writeFileSync(join(base, 'personas', 'zz-negative.yaml'), card('outputFormatRetries: -1\n'));
-    writeFileSync(join(base, 'personas', 'zz-fractional.yaml'), card('outputFormatRetries: 2.5\n'));
-    writeFileSync(join(base, 'personas', 'zz-string.yaml'), card("outputFormatRetries: '3'\n"));
+    writeFileSync(join(base, 'self', 'personas', 'zz-negative.yaml'), card('outputFormatRetries: -1\n'));
+    writeFileSync(join(base, 'self', 'personas', 'zz-fractional.yaml'), card('outputFormatRetries: 2.5\n'));
+    writeFileSync(join(base, 'self', 'personas', 'zz-string.yaml'), card("outputFormatRetries: '3'\n"));
   });
 
   afterEach(async () => {

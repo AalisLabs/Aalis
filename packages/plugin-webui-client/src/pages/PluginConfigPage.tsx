@@ -180,7 +180,7 @@ export function PluginConfigPage({
   const handleUninstall = async (p: PluginInfo) => {
     const ok = await confirm({
       title: `卸载插件「${p.displayName ?? p.name}」`,
-      body: `${p.name}\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。插件写入 data/ 等存储根的数据不会被删除，需要时请手动清理。`,
+      body: `${p.name}\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。插件写在家目录 state/ 等处的数据不会被删除，需要时请手动清理。`,
       confirmLabel: '卸载',
       danger: true,
     });

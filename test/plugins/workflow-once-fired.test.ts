@@ -48,17 +48,20 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);
+    // runsFile 落在内置的 data 根（家目录的 state/），定义目录在用户根 workspace
     await app.plugin(storageLocalPlugin, {
-      roots: ['data', 'workspace'].map(name => ({
-        name,
-        path: join(base, name),
-        label: name,
-        kind: name === 'data' ? 'data' : 'workspace',
-        browsable: true,
-        readable: true,
-        writable: true,
-        deletable: name === 'data' || workspaceDeletable,
-      })),
+      roots: [
+        {
+          name: 'workspace',
+          path: join(base, 'workspace'),
+          label: 'workspace',
+          kind: 'workspace',
+          browsable: true,
+          readable: true,
+          writable: true,
+          deletable: workspaceDeletable,
+        },
+      ],
     });
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
@@ -91,7 +94,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
   /** 读 runsFile 里的 once 记账（文件还没落盘视为空） */
   const readLedger = (): Record<string, number> => {
     try {
-      const raw = JSON.parse(readFileSync(join(base, 'data', 'workflow-runs.json'), 'utf-8')) as {
+      const raw = JSON.parse(readFileSync(join(base, 'state', 'workflow-runs.json'), 'utf-8')) as {
         onceFired?: Record<string, number>;
       };
       return raw.onceFired ?? {};
@@ -105,7 +108,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-wf-once-'));
-    mkdirSync(join(base, 'data'), { recursive: true });
+    mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     apps = [];
     calls = 0;

@@ -33,7 +33,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `skillsUri` | string | `'data:/skills'` | 技能存储 URI：技能文件夹 storage URI（默认 data:/skills）。每个 skill 为一个子目录，含 SKILL.md。 |
+| `skillsUri` | string | `'skills:/'` | 技能存储 URI：技能文件夹 storage URI（默认 `skills:/`，即家目录的 `self/skills`）。每个 skill 为一个子目录，含 SKILL.md。 |
 | `maxSkillBytes` | number | `200000` | 单 skill 最大字节数：SKILL.md 单文件最大字节数，避免一次加载过大内容污染上下文。 |
 | `maxSkills` | number | `200` | 技能数量上限：扫描时最多加载的 skill 数量。 |
 | `discoveryEnabled` | boolean | `true` | 启用 Discovery 注入：往 system prompt 注入一行技能库路标，提示 agent 用 list_skills 检索、load_skill 加载技能；关闭时激活正文注入也一并停用。 |

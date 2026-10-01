@@ -27,9 +27,13 @@ describe('send_attachment storage_uri 归一化', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-'));
-    mkdirSync(join(base, 'data', 'images', 'onebot_x_group_1'), { recursive: true });
+    // data 是 storage-local 的内置根，映射到家目录的 state/
+    mkdirSync(join(base, 'state', 'images', 'onebot_x_group_1'), { recursive: true });
     // 落一张真图（内容随意，只验证路径解析）
-    writeFileSync(join(base, 'data', 'images', 'onebot_x_group_1', 'abcd1234.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0]));
+    writeFileSync(
+      join(base, 'state', 'images', 'onebot_x_group_1', 'abcd1234.jpg'),
+      Buffer.from([0xff, 0xd8, 0xff, 0]),
+    );
     app = new App({ name: 'T', logLevel: 'error' });
     handlers = {};
     const host = app.bind({ provide, events });
@@ -47,20 +51,7 @@ describe('send_attachment storage_uri 归一化', () => {
       registerGroup: () => () => {},
     } as never);
     provideHostPaths(app, base);
-    await app.plugins.register(storageLocalPlugin, {
-      roots: [
-        {
-          name: 'data',
-          path: join(base, 'data'),
-          label: 'data',
-          kind: 'data',
-          browsable: false,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugins.register(storageLocalPlugin, {});
     await app.plugins.register(imageSenderPlugin, {});
     await app.plugins.idle();
     const state = app.plugins.getPlugin(imageSenderPlugin.name)?.state;

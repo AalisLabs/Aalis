@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createStorageGateway,
   type StorageService,
   type StorageWatchEvent,
   storage as storageService,
@@ -37,28 +38,17 @@ describe('storage-local watch', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-watch-'));
-    mkdirSync(join(base, 'data', 'notes'), { recursive: true });
-    writeFileSync(join(base, 'data', 'notes', 'a.txt'), 'v0');
+    // data 根是插件内置根，映射到家目录的 state/
+    mkdirSync(join(base, 'state', 'notes'), { recursive: true });
+    writeFileSync(join(base, 'state', 'notes', 'a.txt'), 'v0');
     app = new App({ name: 'T', logLevel: 'error' });
     provideHostPaths(app, base);
-    await app.plugin(storageLocal, {
-      roots: [
-        {
-          name: 'data',
-          path: join(base, 'data'),
-          label: 'data',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-    });
+    await app.plugin(storageLocal, {});
     await app.plugins.idle();
     // 停在 pending 会让「没有事件」看起来像被测行为出错，先把激活闸的结果钉死
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
-    storage = app.bind({ storage: storageService }).storage.require();
+    // 本插件登记多个根（workspace 与各内置根），按 URI 经网关分发到 data 根
+    storage = createStorageGateway(app.bind({ storage: storageService }).storage);
   });
 
   afterEach(async () => {
@@ -105,7 +95,7 @@ describe('storage-local watch', () => {
     // 关闭前 FSEvents 可能迟到投递的事件不算，只看关闭之后
     events.length = 0;
 
-    writeFileSync(join(base, 'data', 'notes', 'after-close.txt'), 'x');
+    writeFileSync(join(base, 'state', 'notes', 'after-close.txt'), 'x');
     await sleep(500);
     expect(events, '旧监听器在提供者关闭后仍在上报').toEqual([]);
     // 已被提供者关掉的监听，调用方再退订是空操作

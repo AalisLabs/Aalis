@@ -66,8 +66,8 @@ const configSchema = defineConfig({
     type: 'string',
     label: '人设目录',
     description:
-      "人设文件所在目录的 storage URI（如 data:/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
-    default: 'data/personas',
+      "人设文件所在目录的 storage URI（默认 personas:/，即家目录的 self/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
+    default: 'personas:/',
     onInvalid: 'error',
   },
   statePersistence: {
