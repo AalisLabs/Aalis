@@ -234,6 +234,11 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **绘图引擎**：plugin-draw 改用 util-offline-render，默认尝试 Chromium 沙箱，失败后告警回落；作品审核要求沙箱。浏览器不再接管宿主 SIGINT，网络由请求拦截、解析规则和代理共同限制。
 - **WebUI 页面契约**：api-webui 新增表格 `render: 'image'` 与页面级 `refresh`（秒）。审核、作品站与对应客户端须同批升级，避免图片单元格不可用或后台状态不刷新。已发布的 api-webui 0.11.1 不含这两项：Harness 发布时 api-webui 须另升版本，审核与作品站的 api-webui 下限随之抬到该版本，不能只升级插件实现。
 
+### paper_send 等平台确认收下（@aalis/plugin-paper、@aalis/schema-message、@aalis/plugin-image-sender）
+
+- `paper_send` 此前交给网关就把成品记为已交付，平台下载或上传失败时她仍会说发出了，待交付提示也随之消失。现在与 `send_attachment` 一样等平台适配器确认：确认收下才记已交付；发送失败返回原因；没有适配器接手时直接报没有发出；等不到确认（最多 90 秒，或这一轮被中止）时返回「结果未确认，请勿重发」，迟到的确认照样记为已交付。
+- 等回执的写法移进 `@aalis/schema-message`：新增 `awaitDelivery` 与 `DELIVERY_WAIT_MS`，plugin-image-sender 改用它，行为不变。
+
 ### 必须同批升级的包
 
 - plugin-adapter-onebot 与 api-trigger、schema-message 同批升级：新版适配器把群友之间的戳一戳也转为入站，并以 `noticeTargetIsSelf: false` 标明不是戳机器人；旧版 api-trigger 的 `isAddressed` 不看这个标记，会把每次群友互戳都当作点名。

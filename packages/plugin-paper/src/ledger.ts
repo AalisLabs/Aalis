@@ -117,7 +117,7 @@ export interface TaskRecord {
   cancelledVia?: 'tool' | 'webui' | 'timeout';
   /** 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省 */
   notice?: { id: string; at: number };
-  /** paper_send 已把这件任务的成品交给发送队列（不代表对方已收到） */
+  /** paper_send 发出的这件任务的成品已由平台确认收下（不代表对方已看到） */
   delivered: boolean;
 }
 
