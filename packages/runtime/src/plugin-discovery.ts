@@ -1,6 +1,7 @@
-import type { HostConfig } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import { type App, type PluginDefinition, type PluginRegistration, parseInstanceId } from '@aalis/core';
+import type { ConfigStore } from './config-store.js';
+import { describeDangling } from './secrets.js';
 
 // ============================================================
 // plugin-discovery —— 插件发现与自动加载（宿主层）
@@ -49,18 +50,21 @@ export interface PluginDiscovery extends PluginSourceService {
 }
 
 /**
- * @param doc 配置文档：登记时按实例 id 取配置与禁用标记，并从中枚举 `name:suffix` 实例。
- *   配置原样交给 core，默认值回填由加载器一侧的政策（withPluginConfigSync）先写进文档。
+ * @param doc 配置文档：登记时按实例 id 取配置（解析密钥引用后交给 core）与禁用标记，并从中枚举 `name:suffix` 实例。
+ *   默认值回填与密钥拆出由加载器一侧的政策（withPluginConfigSync）先写进文档。
  */
-export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<HostConfig, 'save'>): PluginDiscovery {
+export function createPluginDiscovery(
+  app: App,
+  loader: PluginLoader,
+  doc: Pick<ConfigStore, 'get' | 'isPluginDisabled' | 'resolvePluginConfig'>,
+): PluginDiscovery {
   const log = app.logger;
 
-  const registration = (definition: PluginDefinition, instanceId = definition.name): PluginRegistration => ({
-    definition,
-    instanceId,
-    config: doc.getPluginConfig(instanceId),
-    disabled: doc.isPluginDisabled(instanceId),
-  });
+  const registration = (definition: PluginDefinition, instanceId = definition.name): PluginRegistration => {
+    const { config, dangling } = doc.resolvePluginConfig(instanceId, definition.configSchema);
+    if (dangling.length > 0) log.error(describeDangling(instanceId, dangling));
+    return { definition, instanceId, config, disabled: doc.isPluginDisabled(instanceId) };
+  };
 
   /** 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余 */
   async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {

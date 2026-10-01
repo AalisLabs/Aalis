@@ -1,6 +1,5 @@
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { tools, wrapUntrustedContent } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';

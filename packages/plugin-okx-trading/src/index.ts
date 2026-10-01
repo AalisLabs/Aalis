@@ -1,5 +1,4 @@
 import { tools } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { OkxClient } from './client.js';

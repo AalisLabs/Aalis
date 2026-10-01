@@ -494,7 +494,7 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
     expect(unhandled).toEqual([]);
   });
 
-  it('交给插件的只有文档读写、save 与裁剪政策：宿主的 persist / watch / unwatch 不外露', () => {
+  it('交给插件的只有文档读写、applyPluginConfig、save 与裁剪政策：宿主的 persist / watch / 密钥换算不外露', () => {
     const { app } = track(hostedApp());
     const doc = docOf(app) as unknown as Record<string, unknown>;
     expect(Object.keys(doc).sort()).toEqual(
@@ -505,6 +505,7 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
         'set',
         'getPluginConfig',
         'setPluginConfig',
+        'applyPluginConfig',
         'removePluginConfig',
         'isPluginDisabled',
         'setPluginEnabled',

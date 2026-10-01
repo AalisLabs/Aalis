@@ -130,6 +130,7 @@ const configSchema = defineConfig({
     label: 'Token 策略',
     default: 'persist',
     onInvalid: 'error',
+    secret: false,
     options: [
       { label: '每次启动随机生成（重启即轮换）', value: 'ephemeral' },
       { label: '首次生成后持久化（重启不掉登录）', value: 'persist' },
@@ -143,7 +144,8 @@ const configSchema = defineConfig({
     label: '固定 Token（仅 tokenMode=fixed 生效）',
     default: '',
     onInvalid: 'error',
-    description: '请使用足够长的随机字符串；配置文件不支持环境变量插值，占位符会被原样当作字面量。',
+    secret: true,
+    description: '请使用足够长的随机字符串；存进 secrets.yaml，WebUI 不回显。',
   },
   relationGraphDefaultSpacing: {
     type: 'number',

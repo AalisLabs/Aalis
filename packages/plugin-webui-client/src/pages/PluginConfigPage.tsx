@@ -1,19 +1,23 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Radio, Workflow, Loader2 } from 'lucide-react';
 import { api, errText } from '../api';
-import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
+import { SchemaForm, buildDraftFromSchema, flattenConfig, keepStoredSecrets, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
 import { useConfirm } from '../components/ConfirmDialog';
 import type { PluginInfo, ConfigSchema, SchemaField } from '../types';
+import { isMasked } from '../utils/secret';
 
 export function PluginConfigPage({
   plugins,
+  secretRefCounts,
   config,
   onRefresh,
   onConfigSaved,
   onRestart,
 }: {
   plugins: PluginInfo[];
+  /** GET /api/plugins 的 secretRefCounts：配置文档里每个密钥键被引用的处数 */
+  secretRefCounts?: Record<string, number>;
   config: Record<string, unknown> | null;
   onRefresh: () => void;
   onConfigSaved: () => void;
@@ -107,8 +111,10 @@ export function PluginConfigPage({
     }
   }, [llmProviders]);
 
+  // 默认值不含 secret 字段：已存的密钥（引用）照旧保留，不因恢复默认被清掉
   const restoreDefaults = (plugin: PluginInfo) => {
-    setSchemaDraft(buildDraftFromSchema(plugin.configSchema!, plugin.defaultConfig ?? {}));
+    const schema = plugin.configSchema!;
+    setSchemaDraft(buildDraftFromSchema(schema, keepStoredSecrets(schema, plugin.defaultConfig ?? {}, plugin.config ?? {})));
   };
 
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
@@ -556,6 +562,7 @@ export function PluginConfigPage({
                       onFetchModels={fetchModels}
                       llmProviders={llmProviders}
                       onFetchLLMProviders={fetchLLMProviders}
+                      secretRefCounts={secretRefCounts}
                     />
                     <div className="config-edit-actions">
                       <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, true)} disabled={isBusy(iid)}>保存</button>
@@ -573,7 +580,7 @@ export function PluginConfigPage({
                           <label className="config-edit-label">{k}</label>
                           <input
                             className="config-edit-input"
-                            type={/(apiKey|password|secret|token)(?![a-zA-Z])/i.test(k) ? 'password' : 'text'}
+                            type={isMasked(undefined, k) ? 'password' : 'text'}
                             value={editBuffer[k]}
                             onChange={e => setEditBuffer(prev => ({ ...prev, [k]: e.target.value }))}
                           />

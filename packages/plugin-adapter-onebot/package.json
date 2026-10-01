@@ -48,7 +48,6 @@
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/api-agent": "workspace:*",
-    "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "typescript": "^5.7.0"

@@ -34,6 +34,8 @@ const plugin = definePlugin({
   configSchema: {
     known: { type: 'number', label: 'K', default: 7 },
     nested: { label: 'N', fields: { filled: { type: 'number', label: 'F', default: 9 } } },
+    // 密钥字段：值存进 secrets.yaml，first-config.json 记下的是解析后的原值
+    token: { type: 'string', label: 'T', secret: true },
   },
   uses: { provide, lifecycle, services, config },
   apply({ provide, lifecycle, services, config }) {

@@ -9,7 +9,6 @@
 // 防抖、墓碑天数、定时核对间隔这些是常量，不做配置项。
 // ============================================================
 
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import type { Logger } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { canonicalBasePath } from './site/paths.js';

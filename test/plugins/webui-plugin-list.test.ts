@@ -7,7 +7,7 @@ import { contributions } from '../../packages/api-contributions/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
-  type App,
+  App,
   config,
   definePlugin,
   defineService,
@@ -289,54 +289,104 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     );
   });
 
-  it('GET /api/plugins 列表给配置原值：secret 字段（顶层、分组内、数组元素内）不改写，遮蔽留给前端显示', async () => {
+  const SECRET_SCHEMA = {
+    apiKey: { type: 'string', label: 'API Key', secret: true },
+    auth: {
+      label: '认证',
+      fields: {
+        user: { type: 'string', label: '用户' },
+        credential: { type: 'string', label: '凭据', secret: true },
+      },
+    },
+    connections: {
+      type: 'array',
+      label: '连接',
+      items: {
+        url: { type: 'string', label: '地址' },
+        accessToken: { type: 'string', label: '令牌', secret: true },
+      },
+    },
+    timeoutMs: { type: 'number', label: '超时', default: 30 },
+  } as const;
+
+  it('GET /api/plugins 列表给文档形态：密钥字段（顶层、分组内、数组元素内）是引用，原值不出接口；另给各键的引用处数', async () => {
+    const seen: unknown[] = [];
     const def = definePlugin({
       name: 'secret-probe',
-      configSchema: {
-        apiKey: { type: 'string', label: 'API Key', secret: true },
-        auth: {
-          label: '认证',
-          fields: {
-            user: { type: 'string', label: '用户' },
-            credential: { type: 'string', label: '凭据', secret: true },
-          },
-        },
-        connections: {
-          type: 'array',
-          label: '连接',
-          items: {
-            url: { type: 'string', label: '地址' },
-            accessToken: { type: 'string', label: '令牌', secret: true },
-          },
-        },
-        timeoutMs: { type: 'number', label: '超时', default: 30 },
-      },
+      configSchema: SECRET_SCHEMA,
       uses: { config },
-      apply() {},
+      apply({ config: value }) {
+        seen.push(value);
+      },
     });
-    const stored = {
-      apiKey: 'sk-PLACEHOLDER-TOP',
-      auth: { user: 'placeholder-user', credential: 'cred-PLACEHOLDER-GROUP' },
-      connections: [{ url: 'ws://127.0.0.1:0', accessToken: 'tok-PLACEHOLDER-ITEM' }],
+    const doc = {
+      apiKey: { $secret: 'k.top' },
+      auth: { user: 'placeholder-user', credential: { $secret: 'k.group' } },
+      connections: [{ url: 'ws://127.0.0.1:0', accessToken: { $secret: 'k.item' } }],
       timeoutMs: 30,
     };
-    const { app, store } = hostedApp({ plugins: { 'secret-probe': structuredClone(stored) } });
+    const { app, store } = hostedApp(
+      // other 只在文档里、没有登记：它对 k.top 的引用同样计数
+      { plugins: { 'secret-probe': structuredClone(doc), other: { apiKey: { $secret: 'k.top' } } } },
+      {
+        secrets: {
+          values: {
+            'k.top': 'sk-PLACEHOLDER-TOP',
+            'k.group': 'cred-PLACEHOLDER-GROUP',
+            'k.item': 'tok-PLACEHOLDER-ITEM',
+          },
+        },
+      },
+    );
     apps.push(app);
     await registerFromDoc(app, store, def);
     await app.plugins.idle();
     expect(app.plugins.getPlugin('secret-probe')?.state).toBe('active');
+    expect(seen, '插件拿到的是解析后的原值').toEqual([
+      {
+        apiKey: 'sk-PLACEHOLDER-TOP',
+        auth: { user: 'placeholder-user', credential: 'cred-PLACEHOLDER-GROUP' },
+        connections: [{ url: 'ws://127.0.0.1:0', accessToken: 'tok-PLACEHOLDER-ITEM' }],
+        timeoutMs: 30,
+      },
+    ]);
 
     const { invoke } = mountPluginRoutes(app);
     const list = await invoke('GET /api/plugins');
     expect(list.status).toBe(200);
-    const row = (list.body as { plugins: Array<{ instanceId: string; config: Record<string, unknown> }> }).plugins.find(
-      p => p.instanceId === 'secret-probe',
-    );
-    expect(row?.config, '列表不改写配置值，前端据它建草稿、整份保存').toEqual(stored);
-    expect(JSON.stringify(list.body)).not.toContain('••••••');
+    const body = list.body as {
+      plugins: Array<{ instanceId: string; config: Record<string, unknown> }>;
+      secretRefCounts: Record<string, number>;
+    };
+    expect(body.plugins.find(p => p.instanceId === 'secret-probe')?.config).toEqual(doc);
+    expect(JSON.stringify(list.body)).not.toContain('PLACEHOLDER-');
+    expect(body.secretRefCounts).toEqual({ 'k.top': 2, 'k.group': 1, 'k.item': 1 });
 
     const editor = await invoke('GET /api/plugins/:name/config', { params: { name: 'secret-probe' } });
     expect(editor.status).toBe(200);
-    expect((editor.body as { config: Record<string, unknown> }).config).toEqual(stored);
+    expect((editor.body as { config: Record<string, unknown> }).config).toEqual(doc);
+  });
+
+  it('宿主不提供配置文档：给运行态配置，去掉密钥字段（运行态里是原值）', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await app.plugin(definePlugin({ name: 'secret-probe', configSchema: SECRET_SCHEMA, apply() {} }), {
+      apiKey: 'sk-PLACEHOLDER-TOP',
+      auth: { user: 'placeholder-user', credential: 'cred-PLACEHOLDER-GROUP' },
+      connections: [{ url: 'ws://127.0.0.1:0', accessToken: 'tok-PLACEHOLDER-ITEM' }],
+      timeoutMs: 30,
+    });
+    await app.plugins.idle();
+    const { invoke } = mountPluginRoutes(app);
+    const body = (await invoke('GET /api/plugins')).body as {
+      plugins: Array<{ instanceId: string; config: Record<string, unknown> }>;
+      secretRefCounts: Record<string, number>;
+    };
+    expect(body.plugins.find(p => p.instanceId === 'secret-probe')?.config).toEqual({
+      auth: { user: 'placeholder-user' },
+      connections: [{ url: 'ws://127.0.0.1:0' }],
+      timeoutMs: 30,
+    });
+    expect(body.secretRefCounts).toEqual({});
   });
 });

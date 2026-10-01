@@ -20,7 +20,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `app` | `@aalis/core` | App 实例 | n/a | n/a | 由 host 注入，永不 bounce |
 | `plugins` | `@aalis/core` | PluginManager | n/a | n/a | 由 host 注入，永不 bounce |
-| `host-config` | `@aalis/runtime`（宿主） | 配置文档 | `aalis.config.yaml` | n/a | 由宿主在根上提供，永不 bounce；管理动作不写文档，要跨重启保留由调用方写文档后 `save()` |
+| `host-config` | `@aalis/runtime`（宿主） | 配置文档与密钥存储 | `aalis.config.yaml`、`secrets.yaml` | n/a | 由宿主在根上提供，永不 bounce；改插件配置用 `applyPluginConfig`（运行态、文档、密钥与落盘一步完成）；启停等管理动作不写文档，要跨重启保留由调用方写文档后 `save()` |
 | `hooks` | `@aalis/plugin-hooks` | 钩子链 | n/a | 否（由登记方重建） | bounce 时依赖它的插件先关闭，再按拓扑序重新激活并重新登记，链序与冷启动相同 |
 | `contributions` | `@aalis/plugin-contributions` | 贡献登记表 | n/a | 否（由登记方重建） | 同上；`collect` 顺序只由全局键决定，重建后不变 |
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
@@ -52,7 +52,7 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，
    建议先停止依赖工作流再重载。
 
-3. **配置变更走 `updateConfig` 而非换代码**：前者换上新的运行配置后 bounce，只改运行态，要跨重启保留由调用方经 host-config 写文档并 `save()`；换代码走 `unload` + `register`（宿主热加载见 `@aalis/runtime` 的 `PluginLoader.reload` 与 `plugin-source` 的 `rescan()`）。
+3. **配置变更走 `updateConfig` 而非换代码**：前者换上新的运行配置后 bounce，只改运行态；要跨重启保留，改用 host-config 的 `applyPluginConfig`，它在内部调 `updateConfig`，同时写文档、拆出密钥并落盘；换代码走 `unload` + `register`（宿主热加载见 `@aalis/runtime` 的 `PluginLoader.reload` 与 `plugin-source` 的 `rescan()`）。
 
 4. **多实例插件 (`name:suffix`) 仅作用于指定 instanceId**：同 module 的其
    他实例不受影响，需各自调用 `bounce(instanceId)`。

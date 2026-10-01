@@ -3,7 +3,7 @@ import { Menu, MessageSquare } from 'lucide-react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
-import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
+import type { LogEntry, SystemStatus, PluginInfo, PluginListResponse, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
 import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles } from './icons';
 import { useWebSocket } from './useWebSocket';
 import type { TokenUsageData } from './useWebSocket';
@@ -77,6 +77,7 @@ export function App() {
   } | null>(null);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [secretRefCounts, setSecretRefCounts] = useState<Record<string, number>>({});
   const [servicesData, setServicesData] = useState<Record<string, ServiceInfo> | null>(null);
 
   // ---- 多会话管理（封装在 hook 中） ----
@@ -379,8 +380,11 @@ export function App() {
   }, [flushStreamBuffer, setLoading]);
 
   const refreshPlugins = useCallback(() => {
-    api<{ plugins: PluginInfo[] }>('/api/plugins')
-      .then(d => setPlugins(d.plugins ?? []))
+    api<PluginListResponse>('/api/plugins')
+      .then(d => {
+        setPlugins(d.plugins ?? []);
+        setSecretRefCounts(d.secretRefCounts ?? {});
+      })
       .catch(() => {});
   }, []);
 
@@ -769,7 +773,7 @@ export function App() {
     switch (renderer) {
       case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} onRefreshServices={refreshServices} />;
       case 'marketplace': return <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} onRestart={(msg) => { setRestarting(true); setWasDisconnected(false); setRestartMessage(msg); }} />;
-      case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={handleConfigSaved} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
+      case 'plugin-config': return <PluginConfigPage plugins={plugins} secretRefCounts={secretRefCounts} config={config} onRefresh={refreshPlugins} onConfigSaved={handleConfigSaved} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
       case 'platforms': return <PlatformPage />;
       case 'authority': return <AuthorityPage />;
       case 'logs': return <LogPage logs={logs} onLoadOlder={loadOlderLogs} />;

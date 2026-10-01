@@ -4,7 +4,6 @@ import { persona } from '@aalis/api-persona';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { CwdState } from './tools/cwd-state.js';

@@ -1,7 +1,6 @@
 import { type CommandArgv, commands } from '@aalis/api-commands';
 import { memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 

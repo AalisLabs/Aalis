@@ -1,5 +1,4 @@
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
