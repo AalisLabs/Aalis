@@ -14,8 +14,8 @@
 
 ```ts
 interface HostPaths {
-  readonly home: string;      // 家目录
-  readonly profile?: string;  // 由 --profile 或 AALIS_PROFILE 选出家目录时才有
+  readonly home: string;      // 家目录（Node 宿主给真实路径，符号链接已解开）
+  readonly profile?: string;  // 家目录是 ~/.aalis-<profile> 时才有，不论经 --profile 还是 --home 选中
   readonly app: string;       // 安装集
   readonly config: string;    // <家目录>/aalis.config.yaml
   readonly secrets: string;   // <家目录>/secrets.yaml（目前不读取）

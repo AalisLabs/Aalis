@@ -41,6 +41,11 @@ const plugin = definePlugin({
     provide(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
       async execute(name: string, input: { args: string[] }) {
+        // probe paths：交出宿主给插件的家目录与 profile
+        if (name === 'probe' && input.args[0] === 'paths') {
+          const paths = services.get('host-paths') as { home: string; profile?: string };
+          return `paths ${JSON.stringify({ home: paths.home, profile: paths.profile ?? null })}`;
+        }
         if (name === 'probe') return `probe ok ${input.args.join(' ')}`.trim();
         // 镜像 CommandRegistry：handler 抛错折成「指令执行失败」文本，不向上抛。
         try {
