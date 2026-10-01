@@ -8,9 +8,13 @@
 
 ---
 
-## 未发布（schema-config 0.14.0；core 0.20.0）
+## 2026-10-01（core 0.19.1 patch；schema-config 0.14.0 minor；60 个包：9 minor / 51 patch）
 
-插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列和服务归属校验，并统一停机后的管理回执；因管理回执契约变化按 minor 准备。
+插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列、服务归属校验、sticky 事件重复送达与配置拷贝失败的回执，并统一停机后的管理回执。停机回执的变化修的是「返回 true 却没有做任何事」的缺陷，core 按 patch 发布 0.19.1；core 0.20 留给内核全面简化。
+
+- 按次版本发布（9 个）：schema-config 0.14.0（字段类型表改为取值类型，`dynamicOptions` / `allowCustom` 移入）、api-llm 0.13.0（`llm-ref` 改为 `ModelRef`）、plugin-checkpoint 0.14.0、plugin-flow-control 0.13.0、plugin-trigger-policy 0.15.0（`scopes` 统一为数组，删除默认对象与 resolver）、plugin-mcp-client 0.13.0、plugin-mcp-server 0.13.0（args/env 与 `toolGroups` 的解析）、plugin-scheduler 0.14.0（`resolveConfig` 输入改为解析后的配置）、plugin-session-manager 0.14.0（平台 `think` 改为选项）。
+- 按 patch 发布（51 个）：core 0.19.1、runtime 0.15.1、api-agent 0.9.1、api-media 0.11.2、api-webui 0.11.1、create-aalis-plugin 0.11.1，以及其余 45 个只迁移配置读取或修复解析的插件。plugin-webui-server 0.14.1 与 plugin-webui-client 0.14.1 须同批升级。
+- plugin-trigger-laya 0.2.0 是 `private` 包，不发布到 npm。
 
 - `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
 - `provides` 校验同时核对实际登记的激活身份与条目的逻辑 id。由其他激活代登记同名 id 的服务，不再替当前插件满足声明；声明方应自己登记服务，纯代理登记方不要把代登记项写进自己的 `provides`。
@@ -26,7 +30,7 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，以及作品提名与上站。Harness 的发布档位尚待统一确认；当前已合入上节 Core 与配置批次的候选版本，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的三个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，以及作品提名与上站。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的三个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
@@ -228,7 +232,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 - **存储根保留名**：新增内部 `public` 根（`data/stage/public`），与 `paper` 一样不参与会话 checkpoint；自建同名用户根会被跳过并告警，升级前请改名。白纸提名的文件仍先走独立审核，不因位于该目录就自动上线。
 - **绘图引擎**：plugin-draw 改用 util-offline-render，默认尝试 Chromium 沙箱，失败后告警回落；作品审核要求沙箱。浏览器不再接管宿主 SIGINT，网络由请求拦截、解析规则和代理共同限制。
-- **WebUI 页面契约**：api-webui 新增表格 `render: 'image'` 与页面级 `refresh`（秒）。审核、作品站与对应客户端须同批升级，避免图片单元格不可用或后台状态不刷新；本批两插件的 api-webui 下限已抬至 0.11.1 候选版本；发布前仍须核对该版本及对应客户端同批交付，不能只升级插件实现。
+- **WebUI 页面契约**：api-webui 新增表格 `render: 'image'` 与页面级 `refresh`（秒）。审核、作品站与对应客户端须同批升级，避免图片单元格不可用或后台状态不刷新。已发布的 api-webui 0.11.1 不含这两项：Harness 发布时 api-webui 须另升版本，审核与作品站的 api-webui 下限随之抬到该版本，不能只升级插件实现。
 - **本地备份**：忽略 `aalis.config.yaml.*`，避免配置备份进入 Git。
 
 ### 必须同批升级的包
