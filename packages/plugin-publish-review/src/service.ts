@@ -93,6 +93,8 @@ interface ReviewServiceDeps {
   signal?: AbortSignal;
   /** 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。 */
   notice?: (origin: PublishOrigin, content: string, id: string, title?: string) => unknown;
+  /** 通知通道当前能否发送（已开放且网关在场）；缺省视为能发。 */
+  noticeReady?: () => boolean;
 }
 
 /** 审核账本与发布边界：流水经构造注入，宿主负责调度与能力装配。 */
@@ -886,6 +888,8 @@ export class PublishReviewService implements PublishService {
     const { store, notice } = this.#d;
     if (!notice) return;
     while (!this.#stopped) {
+      // 通道整体没就绪是全局状态，不是哪一条的错：本轮不发，也不记进单条退避。
+      if (this.#d.noticeReady?.() === false) return;
       const entry = await store.exclusive(async () => {
         if (this.#stopped || store.failure) return undefined;
         for (const key of this.#noticeRetry.keys())
