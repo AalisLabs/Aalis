@@ -87,12 +87,13 @@ function fileBaseName(name: string): string {
 }
 
 /**
- * 原始成品能不能直接发回聊天：私下交付的任务（没有发布意图）可以；自动发布在提交之前就失败的（没有作品编号）
- * 也可以。已提交给发布服务的，以作品链接交付，不发未经发布处理的原始文件。
+ * 原始成品能不能直接发回聊天：私下交付的任务（没有发布意图）可以；自动发布因发布环节本身的问题（挑不出成品、
+ * 目标未获准、24 小时没能提交）在提交之前失败的也可以。审核没通过的（含发布检查不通过、驳回、撤下）不发出去；
+ * 已提交给发布服务的以作品链接交付。
  */
 export function rawDeliveryAllowed(task: TaskRecord): boolean {
   const pub = task.publication;
-  return !pub || (pub.state === 'failed' && !pub.workId);
+  return !pub || (pub.state === 'failed' && !pub.workId && pub.directSend === true);
 }
 
 interface DeliverDeps {

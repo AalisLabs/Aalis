@@ -340,7 +340,11 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     if (source?.startsWith('paper:') && source !== `paper:${task.paperId}:${task.id}`)
       return fail('白纸完成通知只能发送本次通知对应任务的成品，不能夹带其他任务的文件');
     if (!rawDeliveryAllowed(task))
-      return fail('这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件');
+      return fail(
+        task.publication?.state === 'failed'
+          ? '这件作品没有通过审核或发布检查，成品不发出去'
+          : '这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件',
+      );
     if (task.artifactsCleared) return fail(`成品 ${artifactId} 已随白纸清空删除`);
     const refused = sendRefusal(artifact, cfg);
     if (refused) return fail(refused);
