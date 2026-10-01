@@ -169,7 +169,20 @@ describe('PaperPublication', () => {
     h.notify();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
     expect(t.publication?.reason).toContain('24 小时');
+    expect(t.publication?.directSend).toBe(true);
     expect(h.nominate).not.toHaveBeenCalled();
+    await h.coordinator.close();
+  });
+
+  it('a permanent check refusal fails without direct delivery: that is a verdict, not an outage', async () => {
+    const t = task([artifact('a-00000001', 'page.html', 'html')]);
+    const h = setup(t);
+    h.nominate.mockImplementationOnce(async () => ({ refused: '路径不符合要求' }));
+    h.connect();
+    h.coordinator.open();
+    await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
+    expect(t.publication?.reason).toBe('作品未通过发布检查');
+    expect(t.publication?.directSend).toBeUndefined();
     await h.coordinator.close();
   });
 
@@ -181,6 +194,7 @@ describe('PaperPublication', () => {
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
     expect(t.publication?.reason).toMatch(/手动选择/);
     expect(h.nominate).not.toHaveBeenCalled();
+    expect(t.publication?.directSend, '挑不出成品属于发布环节的问题：通知前先直接发').toBe(true);
     await h.coordinator.close();
   });
 

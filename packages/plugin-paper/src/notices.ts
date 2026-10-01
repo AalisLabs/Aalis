@@ -8,6 +8,9 @@
 //   经 paper_cancel 取消的任务不通知（工具结果已告知）。注入之前先把通知标识与时刻记进账本并落盘，每件至多
 //   注入一次；app:started 之后才开始注入（网关与 agent 此时已就位），重启前已到终态而还没注入的在这时补注。
 //   通知被禁言吞掉或那一轮失败时不重试，由待交付提示在之后的回合补上。
+// - 自动发布在提交之前就失败、而且是发布环节本身的问题（挑不出成品、目标未获准、24 小时没能提交）时，宿主在注入
+//   通知之前先把能发的成品（规则同 paper_send，最多 4 件）作为一条消息直接发回发起房间，等平台确认，结果写进通知。
+//   发布检查不通过的不自动发，只在通知里列出成品编号，要不要发由她判断。
 // - 待交付提示：agent:llm:before 上每次请求前先摘掉上一次的提示；房间里有已完成、成品还没发回、结束不到
 //   pendingHintHours 的任务时，再插一条独立的 system 消息（最后一条是 user 时插在它前面，否则追加在末尾，
 //   不碰 messages[0]）。工具循环的每一轮都重新判定，paper_send 之后下一次请求就不再提示。只列任务 id、
@@ -20,6 +23,7 @@ import { wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
 import { type IncomingMessage, selfInitiatedActor } from '@aalis/schema-message';
 import type { PaperConfig } from './config.js';
+import { type Artifact, type DeliveryOutcome, rawDeliveryAllowed, sendRefusal } from './deliver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { describe, formatDuration, formatSize, truncate } from './util.js';
 
@@ -30,9 +34,17 @@ const ERROR_MAX = 200;
 /** 待交付提示消息的 injector：每次请求前按它摘掉上一次的提示 */
 const PENDING_INJECTOR = 'paper/pending';
 const HOUR = 3_600_000;
+/** 发布失败时直接发回的成品件数上限 */
+const DIRECT_SEND_MAX = 4;
 
-function artifactList(task: TaskRecord): string {
-  return task.artifacts.map(a => `${a.id}（${a.type}，${formatSize(a.sizeBytes)}）`).join('、');
+/** 直接发送的结果：发了哪几件、平台怎么回 */
+interface DirectSend {
+  sent: readonly Artifact[];
+  outcome: DeliveryOutcome;
+}
+
+function artifactList(artifacts: readonly Artifact[]): string {
+  return artifacts.map(a => `${a.id}（${a.type}，${formatSize(a.sizeBytes)}）`).join('、');
 }
 
 function outcomeOf(task: TaskRecord): string {
@@ -49,7 +61,7 @@ function outcomeOf(task: TaskRecord): string {
 }
 
 /** 完成通知的宿主正文：只有宿主撰写的行 */
-function noticeContent(task: TaskRecord): string {
+function noticeContent(task: TaskRecord, direct?: DirectSend): string {
   const facts: string[] = [];
   if (task.startedAt !== undefined && task.endedAt !== undefined) {
     facts.push(`用时 ${formatDuration(task.endedAt - task.startedAt)}`);
@@ -57,8 +69,21 @@ function noticeContent(task: TaskRecord): string {
   if (task.costCents !== undefined) facts.push(`花费 ${task.costCents} 美分`);
   else if (task.runId) facts.push('费用还没入账');
   const lines = [`[白纸] 任务 ${task.id}「${task.name}」${outcomeOf(task)}。${facts.map(f => `${f}。`).join('')}`];
-  if (task.publication) return lines.join('\n');
-  lines.push(task.artifacts.length > 0 ? `成品：${artifactList(task)}` : '没有取回成品。');
+  if (task.publication) {
+    // 自动发布在提交之前失败：说清直接发送的结果，并列出成品编号，交给她处理
+    if (rawDeliveryAllowed(task) && task.artifacts.length > 0) {
+      if (direct?.outcome.ok) {
+        lines.push(`成品已直接发到本群：${direct.sent.map(a => a.id).join('、')}。`);
+        const rest = task.artifacts.filter(a => !direct.sent.includes(a));
+        if (rest.length > 0) lines.push(`另有成品：${artifactList(rest)}，需要时用 paper_send 按编号发。`);
+      } else {
+        if (direct && !direct.outcome.ok) lines.push(`直接发送没有成功：${direct.outcome.error}。`);
+        lines.push(`成品：${artifactList(task.artifacts)}。要不要发回本群由你判断，需要时用 paper_send 按编号发。`);
+      }
+    }
+    return lines.join('\n');
+  }
+  lines.push(task.artifacts.length > 0 ? `成品：${artifactList(task.artifacts)}` : '没有取回成品。');
   if (task.resultText) lines.push(`远端说明见 paper_status ${task.id}。`);
   if (task.artifacts.length > 0) lines.push('用 paper_send 按成品编号发回本群。');
   return lines.join('\n');
@@ -69,6 +94,9 @@ interface NoticeDeps {
   events: Events;
   logger: Logger;
   now: () => number;
+  cfg: PaperConfig;
+  /** 把几件成品直接发回发起房间并等平台确认（自动发布在提交前失败时用）；缺省不直接发 */
+  deliver?: (task: TaskRecord, artifacts: readonly Artifact[]) => Promise<DeliveryOutcome>;
 }
 
 export class PaperNotices {
@@ -127,14 +155,23 @@ export class PaperNotices {
   }
 
   async #inject(task: TaskRecord): Promise<void> {
-    const { logger } = this.#d;
+    const { logger, cfg, deliver } = this.#d;
     const id = task.notice?.id ?? '';
+    let direct: DirectSend | undefined;
+    if (deliver && task.publication?.directSend && rawDeliveryAllowed(task) && !task.delivered) {
+      const sendable = task.artifacts.filter(a => !sendRefusal(a, cfg)).slice(0, DIRECT_SEND_MAX);
+      if (sendable.length > 0) {
+        direct = { sent: sendable, outcome: await deliver(task, sendable) };
+        if (direct.outcome.ok) logger.info(`白纸任务 ${task.id} 发布失败，成品已直接发回房间 ${task.room}`);
+        else logger.warn(`白纸任务 ${task.id} 发布失败后直接发送成品没有成功：${direct.outcome.error}`);
+      }
+    }
     const untrusted =
       task.resultText && !task.publication
         ? wrapUntrustedContent(truncate(task.resultText, NOTICE_NOTE_MAX), `远端代理对任务 ${task.id} 的说明`)
         : undefined;
     const message: IncomingMessage = {
-      content: noticeContent(task),
+      content: noticeContent(task, direct),
       sessionId: task.room,
       platform: task.platform,
       source: `paper:${task.paperId}:${task.id}`,
@@ -158,7 +195,7 @@ function pendingHint(ledger: LedgerStore, room: string, since: number, source?: 
         t.room === room &&
         (!source || source === `paper:${t.paperId}:${t.id}`) &&
         t.state === 'done' &&
-        !t.publication &&
+        rawDeliveryAllowed(t) &&
         !t.delivered &&
         !t.artifactsCleared &&
         t.artifacts.length > 0 &&
@@ -168,7 +205,7 @@ function pendingHint(ledger: LedgerStore, room: string, since: number, source?: 
   if (tasks.length === 0) return undefined;
   return [
     '[白纸] 以下任务的成品还没发回本群，需要时用 paper_send 按成品编号发：',
-    ...tasks.map(t => `- 任务 ${t.id}「${t.name}」：${artifactList(t)}`),
+    ...tasks.map(t => `- 任务 ${t.id}「${t.name}」：${artifactList(t.artifacts)}`),
   ].join('\n');
 }
 
