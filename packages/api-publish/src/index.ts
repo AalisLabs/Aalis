@@ -111,7 +111,7 @@ export interface NominateInput {
 }
 
 /** refused 只写类别，不含路径与文件名；fileIndex 是出问题的 files 下标（从 0 起），-1 为封面。
- * retryAfterMs 仅用于临时拒绝（配额、服务停机、快照暂时写失败），表示从本次响应起至少等待的毫秒数；缺省表示永久拒绝。 */
+ * retryAfterMs 仅用于临时拒绝（配额、服务停机、快照暂时写失败、所选展示面暂未登记），表示从本次响应起至少等待的毫秒数；缺省表示永久拒绝。 */
 export type NominateResult = { id: string } | { refused: string; fileIndex?: number; retryAfterMs?: number };
 
 export type WorkKind = 'media' | 'html';

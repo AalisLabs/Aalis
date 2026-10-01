@@ -416,11 +416,13 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     const storage = memoryStorage(new Map());
     const store = new ReviewStore(storage);
     await store.load();
+    const clock = { now: 1000 };
     const service = new PublishReviewService({
       storage,
       store,
       config: parseConfig(configSchema, { reviewEnabled: false }),
       pipeline: { run: async input => ({ verdict: { verdict: 'allow', reasons: [] }, files: [...input.files] }) },
+      now: () => clock.now,
       notice: (origin, content, id) => h.notices.enqueue(origin, content, id),
     });
     const surface = service.attachSurface({
@@ -450,7 +452,12 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
       expect(persisted.data.notices[`${result.id}:live`]).toBeDefined();
       expect(h.outgoing).toHaveLength(0);
       block();
-      await service.flushNotices();
+      // 失败条目按退避推迟，过了首个退避窗口才重试；补跑中的上一轮可能已错过窗口，轮询到下一轮。
+      clock.now += 30_000;
+      await vi.waitFor(async () => {
+        await service.flushNotices();
+        expect(h.outgoing).toHaveLength(1);
+      });
       await persisted.load();
       expect(persisted.data.ledger[result.id].notice).toBe('sent');
       expect(persisted.data.notices).toEqual({});

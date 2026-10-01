@@ -23,6 +23,7 @@ const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const DELAY_NOTICE_MS = 30 * 60_000;
 const QUOTA_RETRY_MS = 30_000;
+const NOTICE_RETRY_MS = 30_000;
 const bytes = (value: string | Buffer) => new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value);
 const itemRoot = (id: string) => `${ITEM_ROOT}/${id}`;
 const src = (id: string, path: string) => `${itemRoot(id)}/src/${path}`;
@@ -104,6 +105,8 @@ export class PublishReviewService implements PublishService {
   #closed = false;
   #notifying?: Promise<void>;
   #noticeAgain = false;
+  /** 发送失败的待发通知 -> 退避；只在内存里，重启后从头重试。 */
+  readonly #noticeRetry = new Map<string, { failures: number; nextAt: number }>();
   get #stopped(): boolean {
     return this.#closed || !!this.#d.signal?.aborted;
   }
@@ -794,10 +797,15 @@ export class PublishReviewService implements PublishService {
         const completed = allSurfacesLive(next.ledger[id]) && this.#currentSurfacesMatch(next.ledger[id]);
         if (same && !invalidated && completed === item.live) return;
         next.ledger[id].live = completed;
+        // 地址变了要按新地址重新通知；仅某站暂时缺席后回来、地址未变时不重发。
+        // 已通知过的记为 delayed：上线通知待发，但用户已知道作品上线过，不再补发延迟提醒。
+        if (invalidated && next.ledger[id].notice === 'sent') next.ledger[id].notice = 'delayed';
         if (completed) {
-          const addresses = item.surfaces.map(name => next.ledger[id].liveSurfaces![name]);
-          if (item.origin.notify) next.ledger[id].notice = 'pending';
-          this.#queueNotice(next, item.origin, `作品已上线：${addresses.join('、')}`, id, item.title, true);
+          if (next.ledger[id].notice !== 'sent') {
+            const addresses = item.surfaces.map(name => next.ledger[id].liveSurfaces![name]);
+            if (item.origin.notify) next.ledger[id].notice = 'pending';
+            this.#queueNotice(next, item.origin, `作品已上线：${addresses.join('、')}`, id, item.title, true);
+          }
         } else if (invalidated) {
           delete next.notices[`${id}:live`];
         }
@@ -878,22 +886,30 @@ export class PublishReviewService implements PublishService {
     const { store, notice } = this.#d;
     if (!notice) return;
     while (!this.#stopped) {
-      const entry = await store.exclusive(async () =>
-        this.#stopped || store.failure
-          ? undefined
-          : Object.entries(store.data.notices).find(([, notice]) => {
-              if (!notice.live) return true;
-              const ledger = store.data.ledger[notice.id];
-              return ledger?.state === 'published' && allSurfacesLive(ledger) && this.#currentSurfacesMatch(ledger);
-            }),
-      );
+      const entry = await store.exclusive(async () => {
+        if (this.#stopped || store.failure) return undefined;
+        for (const key of this.#noticeRetry.keys())
+          if (!Object.hasOwn(store.data.notices, key)) this.#noticeRetry.delete(key);
+        const now = this.#now();
+        return Object.entries(store.data.notices).find(([key, notice]) => {
+          if ((this.#noticeRetry.get(key)?.nextAt ?? 0) > now) return false;
+          if (!notice.live) return true;
+          const ledger = store.data.ledger[notice.id];
+          return ledger?.state === 'published' && allSurfacesLive(ledger) && this.#currentSurfacesMatch(ledger);
+        });
+      });
       if (!entry || this.#stopped) return;
       const [key, item] = entry;
       try {
         await notice(item.origin, item.content, item.id, item.title);
       } catch {
-        return;
+        // 单个房间发不出去（如被禁言拦截）只推迟这一条，不挡其他房间。
+        const failures = (this.#noticeRetry.get(key)?.failures ?? 0) + 1;
+        const delay = Math.min(NOTICE_RETRY_MS * 2 ** (failures - 1), HOUR);
+        this.#noticeRetry.set(key, { failures, nextAt: this.#now() + delay });
+        continue;
       }
+      this.#noticeRetry.delete(key);
       // 通知实现确认已进入出站总线后才记 sent；这不是平台送达回执。
       // 出站后落盘失败仍可重发，不能承诺跨进程 exactly-once。
       await store.exclusive(async () => {
