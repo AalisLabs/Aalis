@@ -118,6 +118,23 @@ describe('resolveHome', () => {
     });
   });
 
+  it('家目录是 ~/.aalis-<p> 时不论经哪个来源选中都带 profile；别处的同名目录、不合法的名字不带', () => {
+    const test = { home: '/u/.aalis-test', profile: 'test' };
+    expect(resolveHome({ ...base, args: { home: '~/.aalis-test' } })).toEqual(test);
+    expect(resolveHome({ ...base, env: { AALIS_HOME: '/u/.aalis-test/' }, args: {} })).toEqual({
+      ...test,
+      home: '/u/.aalis-test/',
+    });
+    expect(resolveHome({ ...base, args: {}, defaultHome: '/u/.aalis-test' })).toEqual(test);
+    expect(resolveHome({ ...base, cwd: '/u', args: { home: '.aalis-test' } })).toEqual(test);
+    expect(resolveHome({ ...base, args: { home: '.aalis-test' } })).toEqual({ home: '/work/.aalis-test' });
+    expect(resolveHome({ ...base, args: { home: '/elsewhere/.aalis-test' } })).toEqual({
+      home: '/elsewhere/.aalis-test',
+    });
+    expect(resolveHome({ ...base, args: { home: '~/.aalis-Test' } })).toEqual({ home: '/u/.aalis-Test' });
+    expect(resolveHome({ ...base, args: { home: '~/.aalis' } })).toEqual({ home: '/u/.aalis' });
+  });
+
   it('开头的 ~ 展开成用户主目录；「~用户名」写法报错', () => {
     expect(resolveHome({ ...base, args: { home: '~/x' } })).toEqual({ home: '/u/x' });
     expect(resolveHome({ ...base, env: { AALIS_HOME: '~' }, args: {} })).toEqual({ home: '/u' });

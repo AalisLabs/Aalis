@@ -66,6 +66,8 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 `AALIS_HOME`、`AALIS_PROFILE` 设为空串时视同未设。profile 与更高优先级的 `--home` / `AALIS_HOME` 同时给出时报错退出，不静默挑一个。`--home` 与 `AALIS_HOME` 开头的 `~` 展开为用户主目录；命令行与环境变量里写的相对路径按启动时的 cwd 解析一次，之后全程用绝对路径。
 
+profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 profile `<名>`，经 `--home` 或 `AALIS_HOME` 选中它也一样，插件按 profile 派生的名字（如 MongoDB 记忆库的库名）对同一个家目录不变。这一条按路径的写法认，不解符号链接。家目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
+
 家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600）、建布局里的子目录，然后退出。目标目录已存在时，里面只能有布局自己的条目（`state`、`logs`、`cache`、`run`、`tmp`、`self`、`stage`、`secrets.yaml`），有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
 宿主参数（`--home`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。

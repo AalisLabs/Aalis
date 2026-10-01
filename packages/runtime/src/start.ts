@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, normalize } from 'node:path';
 import { hostPaths } from '@aalis/api-host-paths';
@@ -142,23 +142,28 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     console.error(`[aalis] ${err.message}`);
     process.exit(2);
   }
-  const paths = derivePaths(home.home, opts.appDir ? normalize(opts.appDir) : join(home.home, 'app'), home.profile);
+  const appDirOf = (homeDir: string) => (opts.appDir ? normalize(opts.appDir) : join(homeDir, 'app'));
+  const declared = derivePaths(home.home, appDirOf(home.home), home.profile);
   if (hostArgs.init) {
     try {
-      initHome(paths);
+      initHome(declared);
     } catch (err) {
       console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
-    console.log(`[aalis] 已初始化家目录：${paths.home}`);
+    console.log(`[aalis] 已初始化家目录：${declared.home}`);
     process.exit(0);
   }
-  if (!isHomeInitialized(paths)) {
+  if (!isHomeInitialized(declared)) {
     console.error(
-      `[aalis] 家目录还没有初始化：${paths.home}\n[aalis] 在启动命令里、子命令之前加上 --init 运行一次即可初始化。`,
+      `[aalis] 家目录还没有初始化：${declared.home}\n[aalis] 在启动命令里、子命令之前加上 --init 运行一次即可初始化。`,
     );
     process.exit(1);
   }
+  // 交给插件的家目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
+  // （记忆库按它记归属）
+  const realHome = realpathSync.native(declared.home);
+  const paths = derivePaths(realHome, appDirOf(realHome), home.profile);
   // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」。
   // 缺省的 <家目录>/app 留给以后的全局启动器，现在的入口都要自己传 appDir。
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {

@@ -11,9 +11,9 @@ import { defineService } from '@aalis/core';
 
 /** 宿主解析出的路径，全部是绝对路径。 */
 export interface HostPaths {
-  /** 家目录 */
+  /** 家目录。Node 宿主给的是真实路径（符号链接已解开），同一个目录不论怎么写都是同一个字符串 */
   readonly home: string;
-  /** profile 名：家目录由 `--profile` 或 `AALIS_PROFILE` 选出时才有（`~/.aalis-<profile>`） */
+  /** profile 名：家目录是 `~/.aalis-<profile>` 时才有，不论经 `--profile` 还是 `--home` 选中 */
   readonly profile?: string;
   /** 安装集：package.json、node_modules 所在目录（源码形态另有 packages/） */
   readonly app: string;

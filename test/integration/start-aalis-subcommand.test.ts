@@ -7,8 +7,10 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -314,7 +316,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader' });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(`安装集 ${join(dir, 'app')} 里没有 package.json`);
+    expect(r.stderr).toContain(`安装集 ${join(realpathSync.native(dir), 'app')} 里没有 package.json`);
     expect(r.stderr).toContain('appDir');
     expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
     // 安装集有 package.json 就照常往下走：没有插件提供指令服务，子命令按「commands 服务不可用」退出
@@ -376,7 +378,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     try {
       const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain(`无法在 ${join(dir, 'run')} 取实例锁`);
+      expect(r.stderr).toContain(`无法在 ${join(realpathSync.native(dir), 'run')} 取实例锁`);
       expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
     } finally {
       chmodSync(join(dir, 'run'), 0o700);
@@ -431,6 +433,24 @@ describe('startAalis 家目录（真实子进程）', () => {
       selfHolds: true,
     });
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
+
+  it('交给插件的家目录是真实路径；~/.aalis-<p> 不论经 --profile 还是 --home 选中都带 profile，profile 按路径的写法认', async () => {
+    const dir = tempDir();
+    const home = join(dir, '.aalis-e2e');
+    mkdirSync(home);
+    writeFileSync(join(home, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    symlinkSync(home, join(dir, 'link'));
+    const seen = async (argv: string[]) => {
+      rmSync(join(dir, 'gen.txt'), { force: true });
+      const r = await run(dir, [...argv, 'probe', 'paths'], { AALIS_HOME: '' });
+      expect(r.code, r.stderr).toBe(0);
+      return JSON.parse(/paths (\{.*\})/.exec(r.stdout)?.[1] ?? 'null');
+    };
+    const real = realpathSync.native(home);
+    expect(await seen(['--profile', 'e2e'])).toEqual({ home: real, profile: 'e2e' });
+    expect(await seen(['--home', '~/.aalis-e2e/'])).toEqual({ home: real, profile: 'e2e' });
+    expect(await seen(['--home', 'link'])).toEqual({ home: real, profile: null });
   });
 
   it('同时给了 profile 与 AALIS_HOME：报冲突、exit 2，不静默挑一个', async () => {

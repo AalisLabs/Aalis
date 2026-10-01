@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { basename, isAbsolute, join, normalize, resolve } from 'node:path';
 import type { HostPaths } from '@aalis/api-host-paths';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { stringify as stringifyYaml } from 'yaml';
@@ -118,7 +118,7 @@ export function resolveHome(input: ResolveHomeInput): { home: string; profile?: 
     const profileSource = args.profile !== undefined ? '--profile' : 'AALIS_PROFILE';
     throw new HomeArgsError(`同时指定了 ${homeSource} 与 ${profileSource}，只能选一个`);
   }
-  if (explicit !== undefined) return { home: toAbsolute(explicit, userHome, input.cwd) };
+  if (explicit !== undefined) return withProfile(toAbsolute(explicit, userHome, input.cwd), userHome);
   if (profile !== undefined) {
     if (!PROFILE_PATTERN.test(profile)) {
       throw new HomeArgsError(
@@ -127,8 +127,18 @@ export function resolveHome(input: ResolveHomeInput): { home: string; profile?: 
     }
     return { home: join(userHome, `.aalis-${profile}`), profile };
   }
-  if (input.defaultHome !== undefined) return { home: normalize(input.defaultHome) };
+  if (input.defaultHome !== undefined) return withProfile(normalize(input.defaultHome), userHome);
   return { home: join(userHome, '.aalis') };
+}
+
+/**
+ * `~/.aalis-<p>` 就是 profile p 的家目录：经 `--home`、`AALIS_HOME` 或 defaultHome 选中它时同样带上 profile，
+ * 插件按 profile 派生的名字（如记忆库名）对同一个家目录才一样。按路径的写法认，不解符号链接。
+ */
+function withProfile(home: string, userHome: string): { home: string; profile?: string } {
+  const profile = /^\.aalis-(.+)$/.exec(basename(home))?.[1];
+  if (profile === undefined || !PROFILE_PATTERN.test(profile)) return { home };
+  return resolve(home) === resolve(userHome, `.aalis-${profile}`) ? { home, profile } : { home };
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
