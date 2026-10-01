@@ -91,6 +91,8 @@ describe('换新', () => {
     const id = await hub.accept();
     await until(() => hub.task(id).state === 'failed', '取不到旧工程包时失败');
     expect(hub.task(id).error).toContain('上一个代理的工程包');
+    expect(hub.task(id).error).toContain('清空白纸');
+    expect(hub.task(id).error, '新代理每轮都卡在取旧包，等不到它留下工程包').not.toContain('等新代理');
     expect(hub.task(id).error).not.toContain('已停止换新');
   });
 

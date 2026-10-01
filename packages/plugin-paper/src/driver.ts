@@ -81,7 +81,7 @@ const RESULT_TEXT_MAX = 2000;
 const MISSING_WORKSPACE = '无法取得旧工程包，已停止换新并保留旧代理；先在旧工作区保存工程包再重试';
 /** 已经换新、新代理首轮还没成功时取不到上一个代理的工程包：换新已发生，旧代理已退役。 */
 const MISSING_PREVIOUS_WORKSPACE =
-  '无法取得上一个代理的工程包，新代理不能接着原工程继续；owner 可在白纸页清空白纸，或等新代理留下工程包后再换新';
+  '无法取得上一个代理的工程包，新代理不能接着原工程继续；owner 可在白纸页清空白纸，若新代理首轮已留下工程包也可再换新';
 /** 对账里列表连续失败到这么多次，诊断项报出 */
 const LISTING_FAILURE_REPORT = 3;
 /** 占着代理的任务状态（排队的不占） */
@@ -878,7 +878,7 @@ export class PaperDriver {
       return await this.#retrying(waits, () => entry.instance.bundleLink(agentId, this.#d.signal));
     } catch (err) {
       if (this.#d.signal.aborted || err instanceof GaveUp) throw err;
-      this.#d.logger.warn(`取旧代理 ${agentId} 的工程包链接失败，停止换新并保留旧代理: ${describe(err)}`);
+      this.#d.logger.warn(`取旧代理 ${agentId} 的工程包链接失败: ${describe(err)}`);
       return undefined;
     }
   }
