@@ -67,7 +67,20 @@ interface ReviewState {
     { state: Extract<ItemState, 'rejected' | 'expired' | 'failed' | 'withdrawn'>; origin: PublishOrigin; title: string }
   >;
   history: Array<{ at: number; id: string; event: string; detail: string }>;
-  notices: Record<string, { id: string; origin: PublishOrigin; content: string; title?: string; live: boolean }>;
+  notices: Record<
+    string,
+    {
+      id: string;
+      origin: PublishOrigin;
+      content: string;
+      title?: string;
+      live: boolean;
+      /** 第一次发送失败的时刻；发出去之前一直保留，用来算连续失败了多久 */
+      failingSince?: number;
+      /** 连续失败超过期限后放弃的时刻：不再自动重发，在审核页列出，owner 可以手动重发 */
+      abandoned?: number;
+    }
+  >;
 }
 
 function empty(): ReviewState {
@@ -207,7 +220,9 @@ function valid(value: unknown): value is ReviewState {
           !origin(entry.origin) ||
           !string(entry.content) ||
           (entry.title !== undefined && !string(entry.title)) ||
-          typeof entry.live !== 'boolean',
+          typeof entry.live !== 'boolean' ||
+          (entry.failingSince !== undefined && !time(entry.failingSince)) ||
+          (entry.abandoned !== undefined && !time(entry.abandoned)),
       ))
   )
     return false;

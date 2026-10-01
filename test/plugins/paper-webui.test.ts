@@ -174,7 +174,7 @@ describe('页面登记', () => {
     expect(global.scope).toContain('不限额');
     expect(global.scope).not.toContain('undefined');
     const [paper] = await rows(hub, 'listPapers');
-    expect(String(paper.dailyBudget)).toContain('不限额（这块白纸与全局都没设上限）');
+    expect(String(paper.dailyBudget)).toContain('不限额（这块白纸与全局都没设上限；房间上限另算）');
   });
 
   it('共用白纸合并两个房间的费用与预留，并明确计入未归属旧日账', async () => {

@@ -85,7 +85,7 @@ function fixture() {
 }
 
 describe('publish review WebUI', () => {
-  it('exposes the five tabs, safe image columns, review evidence and local-preview action', async () => {
+  it('exposes the six tabs, safe image columns, review evidence and local-preview action', async () => {
     const h = fixture();
     const page = h.pages[0] as {
       key: string;
@@ -94,7 +94,17 @@ describe('publish review WebUI', () => {
     };
     expect(page.key).toBe('publish-review');
     const tabs = page.content.find(component => component.type === 'tabs')?.items ?? [];
-    expect(tabs.map(tab => tab.key)).toEqual(['pending', 'images', 'files', 'checking', 'history']);
+    expect(tabs.map(tab => tab.key)).toEqual([
+      'pending',
+      'images',
+      'files',
+      'checking',
+      'abandoned-notices',
+      'history',
+    ]);
+    const abandoned = tabs[4].content[0] as { source: string; actions: Array<{ method: string }> };
+    expect(abandoned.source).toBe('reviewAbandonedNotices');
+    expect(abandoned.actions.map(a => a.method)).toEqual(['reviewRetryNotice']);
     const pendingTable = tabs[0].content[0] as { refresh: number; columns: Array<{ key: string; render?: string }> };
     expect(page.refresh).toBe(30);
     expect(pendingTable.refresh).toBeUndefined();

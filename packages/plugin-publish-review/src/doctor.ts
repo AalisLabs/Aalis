@@ -24,6 +24,9 @@ export function registerReviewDoctor(deps: {
       if (deps.store.failure)
         return { id: 'publish-review.tools', category: 'service', level: 'error', message: deps.store.failure };
       if (deps.store.auditFailure) warnings.push(deps.store.auditFailure);
+      const abandoned = Object.values(deps.store.data.notices).filter(n => n.abandoned !== undefined).length;
+      if (abandoned > 0)
+        warnings.push(`有 ${abandoned} 条作品通知 24 小时都没发出去，已放弃；在作品审核页「没发出的通知」里可以重发`);
       if (deps.config.reviewEnabled) {
         const text = deps.config.textClassifier;
         if (!text?.provider || !text.model || !resolveLLMModel(deps.llm, text))

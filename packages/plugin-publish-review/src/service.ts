@@ -24,6 +24,8 @@ const HOUR = 3_600_000;
 const DELAY_NOTICE_MS = 30 * 60_000;
 const QUOTA_RETRY_MS = 30_000;
 const NOTICE_RETRY_MS = 30_000;
+/** 一条通知连续发不出去这么久就放弃，等 owner 手动重发 */
+const NOTICE_GIVE_UP_MS = 24 * 3_600_000;
 const bytes = (value: string | Buffer) => new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value);
 const itemRoot = (id: string) => `${ITEM_ROOT}/${id}`;
 const src = (id: string, path: string) => `${itemRoot(id)}/src/${path}`;
@@ -571,7 +573,13 @@ export class PublishReviewService implements PublishService {
         const next = store.copy();
         delete next.queue[id];
         this.#rememberTerminal(next, item, 'failed');
-        this.#queueNotice(next, item.origin, '作品暂时没法审核（文件完整性校验失败），这次不发布', id, item.title);
+        this.#queueNotice(
+          next,
+          item.origin,
+          '作品已通过审核，但上线前的文件完整性校验失败，这次不发布',
+          id,
+          item.title,
+        );
         await store.save(next, this.#event(id, 'integrity-failed'));
         await storage.delete(`${PUBLIC_ROOT}/${id}`).catch(() => {});
         await storage.delete(itemRoot(id)).catch(() => {});
@@ -896,6 +904,7 @@ export class PublishReviewService implements PublishService {
           if (!Object.hasOwn(store.data.notices, key)) this.#noticeRetry.delete(key);
         const now = this.#now();
         return Object.entries(store.data.notices).find(([key, notice]) => {
+          if (notice.abandoned !== undefined) return false;
           if ((this.#noticeRetry.get(key)?.nextAt ?? 0) > now) return false;
           if (!notice.live) return true;
           const ledger = store.data.ledger[notice.id];
@@ -911,6 +920,7 @@ export class PublishReviewService implements PublishService {
         const failures = (this.#noticeRetry.get(key)?.failures ?? 0) + 1;
         const delay = Math.min(NOTICE_RETRY_MS * 2 ** (failures - 1), HOUR);
         this.#noticeRetry.set(key, { failures, nextAt: this.#now() + delay });
+        await this.#recordNoticeFailure(key, item.content);
         continue;
       }
       this.#noticeRetry.delete(key);
@@ -925,6 +935,62 @@ export class PublishReviewService implements PublishService {
       });
     }
   }
+  /** 记下第一次失败的时刻（落盘，重启后照样算）；连续失败超过期限就放弃，等 owner 手动重发 */
+  async #recordNoticeFailure(key: string, content: string): Promise<void> {
+    const { store } = this.#d;
+    await store
+      .exclusive(async () => {
+        const current = store.data.notices[key];
+        if (this.#stopped || store.failure || !current || current.content !== content) return;
+        const now = this.#now();
+        const since = current.failingSince ?? now;
+        const giveUp = now - since >= NOTICE_GIVE_UP_MS;
+        if (current.failingSince !== undefined && !giveUp) return;
+        const next = store.copy();
+        next.notices[key].failingSince = since;
+        if (giveUp) next.notices[key].abandoned = now;
+        await store.save(
+          next,
+          giveUp ? this.#event(current.id, 'notice-abandoned', '通知 24 小时都没发出去，已放弃') : undefined,
+        );
+        if (giveUp) this.#noticeRetry.delete(key);
+      })
+      .catch(() => {});
+  }
+
+  /** 已放弃的通知：owner 在审核页查看与重发 */
+  abandonedNotices(): Array<{ key: string; id: string; title?: string; room: string; content: string; at: number }> {
+    return Object.entries(this.#d.store.data.notices)
+      .filter(([, notice]) => notice.abandoned !== undefined)
+      .map(([key, notice]) => ({
+        key,
+        id: notice.id,
+        ...(notice.title ? { title: notice.title } : {}),
+        room: notice.origin.label,
+        content: notice.content,
+        at: notice.abandoned as number,
+      }));
+  }
+
+  /** owner 手动重发一条已放弃的通知：从头计失败时长 */
+  async retryNotice(key: string): Promise<string | undefined> {
+    const { store } = this.#d;
+    const refused = await store.exclusive(async () => {
+      if (store.failure) return store.failure;
+      const current = store.data.notices[key];
+      if (current?.abandoned === undefined) return '没有这条已放弃的通知';
+      const next = store.copy();
+      delete next.notices[key].abandoned;
+      delete next.notices[key].failingSince;
+      await store.save(next, this.#event(current.id, 'notice-retry', 'owner 手动重发'));
+      return undefined;
+    });
+    if (refused) return refused;
+    this.#noticeRetry.delete(key);
+    void this.flushNotices().catch(() => {});
+    return undefined;
+  }
+
   #changed(): void {
     for (const listener of this.#listeners) {
       try {
