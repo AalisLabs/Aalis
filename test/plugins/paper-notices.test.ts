@@ -329,7 +329,7 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     await notices.close();
   });
 
-  it('安全：发布检查不通过（审核结论）不自动发，只列出成品编号由她判断；她仍能用 paper_send 手动发', async () => {
+  it('安全：发布检查不通过（审核结论）只通知原因，成品不发出去，paper_send 也拒绝，不进待交付提示', async () => {
     const hub = await startPaperHub({
       remotes: { [REMOTE]: new ScriptedRemote() },
       files: seed(failedPublication({ reason: '作品未通过发布检查', directSend: undefined })),
@@ -337,10 +337,15 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     await waitFor(() => hub.injected.length === 1, '注入失败通知');
     await pause(50);
     expect(hub.outbound).toEqual([]);
-    expect(hub.injected[0].content).toContain('要不要发回本群由你判断');
+    const content = hub.injected[0].content;
+    expect(content).toContain('未能上线：作品未通过发布检查');
+    expect(content).not.toContain('paper_send');
+    expect(content).not.toContain('a-000000f1');
     const sent = await hub.call('paper_send', { artifact_id: 'a-000000f1' }, human());
-    expect(sent).toMatchObject({ ok: true });
-    expect(hub.outbound).toHaveLength(1);
+    expect(sent.ok).toBe(false);
+    expect(String(sent.error)).toContain('没有通过审核或发布检查');
+    expect(hub.outbound).toEqual([]);
+    expect(await pendingHintFor(hub)).not.toContain('t-000000f1');
   });
 
   it('对照：已提交给发布服务的任务仍不发原始成品', async () => {
