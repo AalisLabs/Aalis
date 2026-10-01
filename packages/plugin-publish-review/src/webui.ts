@@ -112,6 +112,24 @@ const PAGE: WebuiPage = {
           ],
         },
         {
+          key: 'abandoned-notices',
+          label: '没发出的通知',
+          content: [
+            {
+              type: 'table',
+              source: 'reviewAbandonedNotices',
+              columns: [
+                { key: 'at', label: '放弃时间', render: 'time', nowrap: true },
+                { key: 'id', label: '作品编号', nowrap: true },
+                { key: 'title', label: '标题' },
+                { key: 'room', label: '来源房间' },
+                { key: 'content', label: '通知内容', render: 'expandable-text' },
+              ],
+              actions: [{ label: '重发', method: 'reviewRetryNotice' }],
+            },
+          ],
+        },
+        {
           key: 'history',
           label: '历史',
           content: [
@@ -183,6 +201,11 @@ export function registerReviewPage(deps: {
       ? `**作品账本读取失败，所有裁决和预览已停用。** ${store.failure}`
       : `${deps.reviewEnabled === false ? '**内容审核已关闭，作品通过文件处理后自动发布；不运行模型或人工内容审核。**\n\n' : ''}撤下后，已打开页面且连接没断的人可能在十分钟以上仍能取到。`,
   }));
+  webui.registerAction('reviewAbandonedNotices', async () => deps.service.abandonedNotices());
+  action('reviewRetryNotice', async args => {
+    const refused = await deps.service.retryNotice(typeof args.key === 'string' ? args.key : '');
+    return refused ? fail(refused) : { ok: true, message: '已重新排队发送' };
+  });
   webui.registerAction('reviewPending', async () =>
     pending()
       .sort((a, b) => (a.awaitingSince ?? a.nominatedAt) - (b.awaitingSince ?? b.nominatedAt))

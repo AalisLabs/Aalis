@@ -507,6 +507,63 @@ describe('作品审核核心', () => {
     await service.close();
   });
 
+  it('通知连续发不出去满 24 小时就放弃：落盘、不再自动重发、列给 owner；owner 重发后照常发出', async () => {
+    const clock = { now: 1000 };
+    const seed = new Map<string, string | Uint8Array>();
+    const store = new ReviewStore(memoryStorage(seed));
+    await store.load();
+    const seeded = store.copy();
+    seeded.notices.blocked = {
+      id: 'aaaaaaaaaa',
+      origin: { ...input().origin, notify: { sessionId: 'room-1', platform: 'onebot' } },
+      content: '作品已上线：https://works.invalid/w/aaaaaaaaaa/',
+      title: '蓝色主页',
+      live: false,
+    };
+    await store.save(seeded);
+    let muted = true;
+    const emit = vi.fn(async () => {
+      if (muted) throw new Error('muted');
+    });
+    const service = new PublishReviewService({
+      storage: store.storage,
+      store,
+      config: config(),
+      pipeline: { run: vi.fn() },
+      now: () => clock.now,
+      notice: emit,
+    });
+    await service.flushNotices();
+    expect(store.data.notices.blocked.failingSince).toBe(1000);
+    // 失败时刻落盘：重启后照样从第一次失败算起
+    const reloaded = new ReviewStore(memoryStorage(seed));
+    await reloaded.load();
+    expect(reloaded.data.notices.blocked.failingSince).toBe(1000);
+
+    clock.now = 1000 + 24 * 3_600_000 - 1;
+    await service.flushNotices();
+    expect(store.data.notices.blocked.abandoned).toBeUndefined();
+    // 满 24 小时后的下一次重试仍失败才放弃；先等过这次失败带来的退避
+    clock.now += 60_000;
+    await service.flushNotices();
+    expect(store.data.notices.blocked.abandoned).toBe(clock.now);
+    const calls = emit.mock.calls.length;
+    clock.now += 7 * 24 * 3_600_000;
+    await service.flushNotices();
+    expect(emit, '放弃后不再自动重发').toHaveBeenCalledTimes(calls);
+    expect(service.abandonedNotices()).toEqual([
+      expect.objectContaining({ key: 'blocked', id: 'aaaaaaaaaa', title: '蓝色主页', room: input().origin.label }),
+    ]);
+
+    expect(await service.retryNotice('nope')).toBe('没有这条已放弃的通知');
+    muted = false;
+    expect(await service.retryNotice('blocked')).toBeUndefined();
+    await vi.waitFor(() => expect(store.data.notices).toEqual({}));
+    expect(emit).toHaveBeenCalledTimes(calls + 1);
+    expect(service.abandonedNotices()).toEqual([]);
+    await service.close();
+  });
+
   it('通知通道没就绪（网关缺席或尚未开放）时本轮不发，也不计入单条退避', async () => {
     const store = new ReviewStore(memoryStorage(new Map()));
     await store.load();
