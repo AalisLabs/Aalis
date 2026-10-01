@@ -79,7 +79,7 @@ remoteAgentRoomDailyCents: 1000
 | `reserveDefaultCents` | number | `50` | 受理时按这块白纸最近 5 件已入账任务的平均费用预留额度，没有历史时用这个值（最少 1 美分） |
 | `budgetTimeZone` | string | — | 每日上限在这个时区的 0 点换日（IANA 名，如 `Asia/Shanghai`）；留空取宿主进程的本地时区 |
 | `maxRunMinutes` | number | `20` | 单轮时长上限，从开轮时刻算，到点取消 |
-| `sendHtml` | boolean | `true` | `paper_send` 能否把单个 HTML 成品作为文件发回 |
+| `sendHtml` | boolean | `true` | `paper_send` 能否把单个 HTML 成品作为文件发回；写成非布尔值时拒绝激活 |
 | `sendHtmlMaxMB` | number | `5` | 单个网页的发送上限 |
 | `sendMediaMaxMB` | number | `10` | 图片与视频的发送上限。onebot 出站只把不超过 10 MiB 的媒体内联发出，更大的改交宿主路径，NapCat 在容器里时读不到、发不出 |
 | `pendingHintHours` | number | `24` | 待交付提示保留时长 |
@@ -98,14 +98,14 @@ remoteAgentRoomDailyCents: 1000
 | 字段 | 默认值 | 说明 |
 |---|---|---|
 | `remoteAgentType` | `''` | 远端代理插件实例 id；空即不开远端任务 |
-| `remoteAgentEgress` | `'allowlist'` | 出网上限：`none` / `allowlist` / `open`。提供者报告的出网方式超过它时不开，报告「未知」按不限计 |
+| `remoteAgentEgress` | `'allowlist'` | 出网上限：`none` / `allowlist` / `open`。提供者报告的出网方式超过它时不开，报告「未知」按不限计。`defaults` 里写成其他值时拒绝激活；具名白纸写错时继承 `defaults` |
 | `dailyCents` | — | 这块白纸每天的金额上限（美分）；不填不增加单纸限制，仍受全局与房间额度限制；`0` 禁止这块白纸开任务。`defaults.dailyCents` 只给不写名字的房间白纸使用；具名白纸留空不继承这一项 |
 | `maxWaiting` | `5` | 一块白纸上排队与进行中的任务合计上限 |
 | `maxPerUser` | — | 同一人在一块白纸上未结束的任务上限；不写即不按人限制 |
 | `clearAfterDays` | `30` | 距上次清空这么久、且白纸完全空闲时自动清空 |
 | `rotateAfterCents` | `300` | 代理累计花费超过它，下一件任务建新代理 |
 | `idleArchiveMinutes` | `30` | 代理最后一轮结束后这么久没有新任务就归档（在定期检查时执行） |
-| `publishTargets` | `works` | 这块白纸允许使用的发布目标 ID，插件配置表单里用逗号分隔；具名白纸未填写时继承 `defaults`，显式空字符串禁止发布。目标 ID 不是网址；只接受小写字母、数字和连字符 |
+| `publishTargets` | `works` | 这块白纸允许使用的发布目标 ID，插件配置表单里用逗号分隔；具名白纸未填写时继承 `defaults`，显式空字符串禁止发布；只写键名不写值按未填写处理。`defaults` 里写成非字符串（如数组）时拒绝激活。目标 ID 不是网址；只接受小写字母、数字和连字符 |
 | `defaultPublishTarget` | 空 | 默认目标 ID，须在 `publishTargets` 中。空时若只允许一个目标会自动选它；允许多个目标则每次提名都要明确选 `target`。具名白纸未填写时继承，显式空清除默认目标 |
 
 ```yaml
