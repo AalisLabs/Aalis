@@ -89,10 +89,18 @@ export async function pageAction<T = unknown>(pluginName: string, method: string
  * - data: / blob: / base64 / 已是 /api/... 的本地路径 → 原样返回
  * - file:// → 浏览器无法直接加载，原样返回（让 alt 显示）
  */
+/**
+ * 存储地址：<根名>:/<路径>（如 data:/images/x.png、paper:/…）。真正的 data 网址是 data:<类型>,…，冒号后不是斜杠；
+ * file:// 网址冒号后是两个斜杠，也不算
+ */
+const STORAGE_URI = /^[A-Za-z][\w-]*:\/(?!\/)/;
+
 export function proxiedMediaUrl(raw: string | undefined | null): string {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
     return `/api/proxy/image?url=${encodeURIComponent(raw)}`;
   }
+  // 存储里的媒体经 WebUI 服务按文件头判定类型后提供，浏览器拿存储地址当不了图片地址
+  if (STORAGE_URI.test(raw)) return `/api/media?uri=${encodeURIComponent(raw)}`;
   return raw;
 }
