@@ -175,12 +175,14 @@ export const configSchema = defineConfig({
       },
       actorPlatform: {
         type: 'string',
+        onInvalid: 'error',
         label: '执行身份-平台',
         description:
           '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合裁决能力。留空 = webui。',
       },
       actorUserId: {
         type: 'string',
+        onInvalid: 'error',
         label: '执行身份-用户 ID',
         description: '代理身份的 userId。留空 = console（与 actorPlatform=webui 组合即 owner，拥有一切能力）。',
       },
