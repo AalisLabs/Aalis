@@ -20,7 +20,7 @@
 - **MCP 暴露范围**：mcp-server 0.13.0 的 `toolGroups: null` 按缺省解析为 `[]`（全部组），旧版对此会拒绝启动。离线工具将其标为需人工处理，升级前明确允许的组或先禁用插件。数字组名会归一为字符串后精确匹配。mcp-client 0.13.0 的 args/env 使用数组/映射，旧文本须手工核对参数边界。
 - **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留原有 sessionId 派生规则，只写一半的 actor 照旧告警后按未指定处理（owner）；静态任务的 `actorPlatform` / `actorUserId` 写成布尔、数组、对象时拒绝激活（数字按字符串处理），不按留空处理成 owner 身份。
 - **安装下限**：55 个 schema-config 运行时消费者下限抬至 0.14.0；api-llm 消费者下限抬至 0.13.0。其余未删除有效配置形式或公开 API 的迁移包按 patch 准备。版本准备不代表已经发布。
-- **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。
+- **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。停机中或插件正在卸载时，启用、禁用、改配置被拒绝，返回 409 并说明配置未更改；插件不存在才返回 404。
 
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 
