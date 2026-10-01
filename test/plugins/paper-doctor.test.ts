@@ -64,6 +64,18 @@ describe('诊断项 paper.config', () => {
     expect(result.message).toContain('globalDailyCents');
   });
 
+  it('globalDailyCents 留空时仍是 ok，但写明不限额（付费能力要让人一眼看到）', async () => {
+    const { globalDailyCents: _, ...unlimited } = PILOT_CONFIG;
+    const result = await check({ config: unlimited });
+    expect(result.level).toBe('ok');
+    expect(result.message).toContain('不限额');
+  });
+
+  it('对照：globalDailyCents 填了金额时不提不限额', async () => {
+    const result = await check({ config: PILOT_CONFIG });
+    expect(result.message).not.toContain('不限额');
+  });
+
   it('平台档写了 remoteAgentTypes 时 warn，写明平台', async () => {
     const result = await check({ profiles: { onebot: { remoteAgentTypes: [REMOTE] } } });
     expect(result.level).toBe('warn');

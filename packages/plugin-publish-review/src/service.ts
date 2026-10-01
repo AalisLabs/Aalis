@@ -764,8 +764,8 @@ export class PublishReviewService implements PublishService {
     if (!item.liveSurfaces) return item.surfaces.length === 1;
     return item.surfaces.every(name => {
       const surface = this.#surfaces.get(name)?.surface;
-      // 单目标旧回执在重启、展示面尚未重挂时仍可供提名方查询。
-      if (!surface) return item.surfaces.length === 1;
+      // 展示面暂时缺席（重启、重载还没重挂）时沿用上次核验过的地址：线上部署这期间一直在。
+      if (!surface) return true;
       return this.#verifiedAddress(surface, item.id) === item.liveSurfaces?.[name];
     });
   }

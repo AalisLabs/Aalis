@@ -309,7 +309,9 @@ export function registerPaperPage(deps: {
     const budgetLimit = !spec
       ? '配置里已没有这块白纸'
       : spec.dailyCents === undefined
-        ? '不单独限额（仍受全局与房间限制）'
+        ? cfg.globalDailyCents === undefined
+          ? '不限额（这块白纸与全局都没设上限）'
+          : '不单独限额（仍受全局与房间限制）'
         : spec.dailyCents === 0
           ? '上限 0 美分（禁任务）'
           : `上限 ${spec.dailyCents} 美分`;
@@ -467,7 +469,7 @@ export function registerPaperPage(deps: {
     ]);
     return [
       {
-        scope: `全局（${day}，${cfg.globalDailyCents === undefined ? '未设金额上限' : `上限 ${cfg.globalDailyCents} 美分`}）`,
+        scope: `全局（${day}，${cfg.globalDailyCents === undefined ? '不限额' : `上限 ${cfg.globalDailyCents} 美分`}）`,
         cents: spend.global,
         tasks: today.length,
         reserved: sum(reserves),
