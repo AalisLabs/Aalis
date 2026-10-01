@@ -18,9 +18,15 @@ import {
   parseHostArgs,
   resolveHome,
 } from './home.js';
+import { acquireInstanceLock, type InstanceLock } from './instance-lock.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
 import { createPluginDiscovery, type PluginLoader } from './plugin-discovery.js';
-import { createFsYamlConfigProvider, createProcessRespawnStrategy, READY_MESSAGE } from './providers.js';
+import {
+  createFsYamlConfigProvider,
+  createProcessRespawnStrategy,
+  createServiceRestartStrategy,
+  READY_MESSAGE,
+} from './providers.js';
 import { tryDispatchSubcommand } from './subcommand.js';
 import { installTerminalStateRestorer } from './terminal.js';
 
@@ -35,7 +41,7 @@ import { installTerminalStateRestorer } from './terminal.js';
 // monorepo 自托管（src/index.ts）传 monorepo 风味配置：
 //   startAalis({ pluginLoader: createFsPluginLoader() });
 //
-// 命令行开头的宿主参数（`--home`、`--profile`、`--init`）先取走，用来定家目录；余下的 argv 非空即子命令
+// 命令行开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走，用来定家目录与运行形态；余下的 argv 非空即子命令
 // 模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，命中即执行并退出，未命中报错退出
 // （exit 2），**两种情况都不进守护进程**。宿主自己解析命令行时传 `argv: []` 或显式数组。
 //
@@ -75,7 +81,7 @@ export interface StartAalisOptions {
   terminalRestore?: boolean;
   /**
    * 命令行参数，默认 `process.argv.slice(2)`。开头的宿主参数先取走：`--home <目录>`、`--profile <名>`、
-   * `--init`（初始化家目录后退出）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
+   * `--init`（初始化家目录后退出）、`--service`（由服务管理器拉起：实例锁被占时以 0 退出，重启交给服务管理器）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
    * 宿主自管命令行时传显式数组（`[]` 即守护进程）。
    */
   argv?: string[];
@@ -87,6 +93,9 @@ export interface StartAalisOptions {
    */
   configSync?: ConfigSyncOptions;
 }
+
+/** respawn 时把实例锁的交接令牌交给新进程的环境变量 */
+const HANDOFF_ENV = 'AALIS_LOCK_HANDOFF';
 
 /**
  * 读取 @aalis/core 的实际安装版本，供 App 启动 banner 展示。
@@ -161,6 +170,37 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   }
   const subcommands = hostArgs.rest;
 
+  // ── 实例锁：同一家目录只许一个守护进程。要在写日志之前取到，否则第二个实例一起来就把正在写的 latest.log 轮转走 ──
+  // 交接令牌读到就从环境里删掉，不让插件起的子进程与侧车继承它。子命令进程不取锁（它们以后经 socket 连实例）。
+  const handoffToken = process.env[HANDOFF_ENV];
+  delete process.env[HANDOFF_ENV];
+  let instanceLock: InstanceLock | undefined;
+  if (subcommands.length === 0) {
+    let acquired: ReturnType<typeof acquireInstanceLock>;
+    try {
+      acquired = acquireInstanceLock(paths.run, { handoffToken });
+    } catch (err) {
+      console.error(`[aalis] 无法在 ${paths.run} 取实例锁：${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    if (!acquired.ok) {
+      const { holder, file } = acquired;
+      const occupied =
+        `[aalis] 家目录 ${paths.home} 已有实例在运行：pid ${holder.pid}（锁文件 ${file}）。\n` +
+        '[aalis] 确认没有实例在运行时（例如进程被强制结束、而本机查不了进程启动时间），删掉这个锁文件再启动。';
+      if (hostArgs.service) {
+        // 服务形态按正常退出：配合 KeepAlive={SuccessfulExit=false}，不会被服务管理器反复拉起再抢锁
+        console.error(`${occupied}\n[aalis] 以服务形态启动，按正常退出处理。`);
+        process.exit(0);
+      }
+      console.error(occupied);
+      process.exit(1);
+    }
+    instanceLock = acquired.lock;
+    const lock = acquired.lock;
+    process.on('exit', () => lock.release());
+  }
+
   // ── 最早期：任何日志之前先装 bootstrap buffer，再装 terminal / console sink ──
   const bootstrap = installBootstrapBuffer();
   if (terminalRestore) installTerminalStateRestorer();
@@ -217,7 +257,13 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
     restartStrategy: subcommandMode
       ? undefined
-      : createProcessRespawnStrategy({ appDir: paths.app, cwd: startCwd ?? paths.home }),
+      : hostArgs.service
+        ? createServiceRestartStrategy()
+        : createProcessRespawnStrategy({
+            appDir: paths.app,
+            cwd: startCwd ?? paths.home,
+            ...(instanceLock ? { env: { [HANDOFF_ENV]: instanceLock.handoffToken } } : {}),
+          }),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
     // 宿主注入时钟：日志时间戳的权威时间来源在此层，core 逻辑不主动取墙上时间。

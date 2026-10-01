@@ -28,22 +28,23 @@ const base = { env: {}, cwd: '/work', userHome: '/u' };
 
 describe('parseHostArgs', () => {
   it('取走开头的宿主参数，余下的原样留给子命令', () => {
-    expect(parseHostArgs(['--home', 'h', '--profile=p', '--init', 'probe', '--home', 'x'])).toEqual({
+    expect(parseHostArgs(['--home', 'h', '--profile=p', '--init', '--service', 'probe', '--home', 'x'])).toEqual({
       home: 'h',
       profile: 'p',
       init: true,
+      service: true,
       rest: ['probe', '--home', 'x'],
     });
   });
 
   it('开头的 `--` 跳过（pnpm 会原样传进来）', () => {
-    expect(parseHostArgs(['--home', 'h', '--', '--init'])).toEqual({ home: 'h', init: true, rest: [] });
-    expect(parseHostArgs(['--', 'probe', 'a'])).toEqual({ init: false, rest: ['probe', 'a'] });
+    expect(parseHostArgs(['--home', 'h', '--', '--init'])).toEqual({ home: 'h', init: true, service: false, rest: [] });
+    expect(parseHostArgs(['--', 'probe', 'a'])).toEqual({ init: false, service: false, rest: ['probe', 'a'] });
   });
 
   it('没有宿主参数时全部是子命令；空 argv 是守护进程', () => {
-    expect(parseHostArgs(['probe'])).toEqual({ init: false, rest: ['probe'] });
-    expect(parseHostArgs([])).toEqual({ init: false, rest: [] });
+    expect(parseHostArgs(['probe'])).toEqual({ init: false, service: false, rest: ['probe'] });
+    expect(parseHostArgs([])).toEqual({ init: false, service: false, rest: [] });
   });
 
   it.each([[['--home']], [['--home=']], [['--profile']]])('缺取值报错：%j', argv => {

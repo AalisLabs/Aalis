@@ -11,20 +11,21 @@
 // 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若重启策略在子命令模式下被错误注入，`restart`
 // 子命令会 spawn 一个 argv 仍带 restart 的 detached 子进程——第二代在这里立刻退出，不再往下走，
 // 测试据 gen.txt 断言只有一代。
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config, definePlugin, defineService, lifecycle, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
+import { hostPaths } from '../../packages/api-host-paths/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
 import { startAalis } from '../../packages/runtime/src/start.js';
 
 const GEN_FILE = resolve(process.cwd(), 'gen.txt');
 const gen = (existsSync(GEN_FILE) ? Number(readFileSync(GEN_FILE, 'utf-8').trim() || '0') : 0) + 1;
 writeFileSync(GEN_FILE, String(gen));
-if (gen > 1) process.exit(99);
-
 const mode = process.env.AALIS_E2E_MODE ?? 'subcommand';
+// 'restart' 模式的第一代经 app.restart() 拉起第二代，第二代照常运行；除此之外第二次启动都是被错误拉起的
+if (gen > (mode === 'restart' ? 2 : 1)) process.exit(99);
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
 
 const plugin = definePlugin({
@@ -93,13 +94,32 @@ const app = await startAalis({
   terminalRestore: false,
   ...(mode === 'daemon' ? { argv: [] } : {}),
 });
+// 'restart' 模式的第一代：守护进程起来后调 app.restart()。前台由重启策略拉起第二代并交出实例锁，第二代就绪后
+// 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器拉起（这里没有服务管理器）。
+if (mode === 'restart' && gen === 1) {
+  writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
+  (app.bind({ services }).services.get('app') as { restart(): void }).restart();
+}
 // 守护路径：startAalis 已挂好 SIGTERM 处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
 // 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）；
 // 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用。
-if (mode === 'daemon') {
+if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
   const host = app.bind({ services }).services;
   const rescanned = await host.get(pluginSource)?.rescan();
   writeFileSync(resolve(process.cwd(), 'rescan.json'), JSON.stringify(rescanned ?? null));
+  // 实例锁：交接令牌已从环境里删掉；守护期间 run/ 里只有本进程这一代锁
+  const run = host.get(hostPaths)?.run;
+  const locks = run ? readdirSync(run).filter(n => n.endsWith('.lock')) : [];
+  const holderOf = (name: string) =>
+    (JSON.parse(readFileSync(resolve(run ?? '', name), 'utf-8')) as { pid: number }).pid;
+  writeFileSync(
+    resolve(process.cwd(), 'lock.json'),
+    JSON.stringify({
+      handoffInEnv: process.env.AALIS_LOCK_HANDOFF !== undefined,
+      locks,
+      selfHolds: locks.length === 1 && holderOf(locks[0]!) === process.pid,
+    }),
+  );
   writeFileSync(
     resolve(process.cwd(), 'host.json'),
     JSON.stringify({

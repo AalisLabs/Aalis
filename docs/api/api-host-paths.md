@@ -22,7 +22,7 @@ interface HostPaths {
   readonly state: string;     // 预留：数据库、向量库、checkpoint、各插件的数据目录
   readonly logs: string;      // 文件日志 latest.log 所在目录
   readonly cache: string;     // 预留
-  readonly run: string;       // 预留：实例锁、socket
+  readonly run: string;       // 实例锁（runtime 自用）；以后还放 socket
   readonly tmp: string;       // 预留：按会话分子目录
   readonly self: { personas: string; skills: string; workflows: string };  // 预留
   readonly stage: { drafts: string; public: string; paper: string };       // 预留

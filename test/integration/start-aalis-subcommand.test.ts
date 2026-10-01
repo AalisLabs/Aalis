@@ -1,9 +1,21 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 
 // ════════════════════════════════════════════════════════════
 // startAalis 子命令模式 — 真实子进程 e2e
@@ -314,6 +326,112 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(ok.code).toBe(2);
     expect(ok.stderr).toContain('commands 服务不可用');
   }, 30_000);
+
+  /** 以本测试进程为持有者写一份活着的锁：pid 在、开机与进程启动标识都是真的 */
+  const liveLock = (dir: string, handoffToken = 'not-handed-over') => {
+    mkdirSync(join(dir, 'run'), { recursive: true });
+    const startId = nodeProcessProbe.startId(process.pid);
+    const bootId = nodeProcessProbe.bootId();
+    writeFileSync(
+      join(dir, 'run', 'instance.4.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        ...(startId ? { startId } : {}),
+        ...(bootId ? { bootId } : {}),
+        handoffHash: createHash('sha256').update(handoffToken).digest('hex'),
+      }),
+    );
+  };
+
+  it('实例锁被活着的实例占着：报占用者后 exit 1，不轮转、不写正在用的日志', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    mkdirSync(join(dir, 'logs'));
+    writeFileSync(join(dir, 'logs', 'latest.log'), SENTINEL);
+    liveLock(dir);
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`已有实例在运行：pid ${process.pid}`);
+    expect(r.stderr).toContain(join(dir, 'run', 'instance.4.lock'));
+    expect(readFileSync(join(dir, 'logs', 'latest.log'), 'utf-8')).toBe(SENTINEL);
+    expect(existsSync(join(dir, 'logs', 'latest.1.log'))).toBe(false);
+    expect(readdirSync(join(dir, 'run'))).toEqual(['instance.4.lock']);
+  });
+
+  it('以 --service 启动而锁被占：写一行说明后 exit 0，服务管理器不会反复拉起', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    liveLock(dir);
+    const r = await run(dir, ['--service']);
+    expect(r.code).toBe(0);
+    expect(r.signal).toBeNull();
+    expect(r.stderr).toContain('已有实例在运行');
+    expect(r.stderr).toContain('以服务形态启动，按正常退出处理');
+  });
+
+  it('取不了实例锁（run/ 写不进去）：一行说明后 exit 1，不往下启动', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    mkdirSync(join(dir, 'run'), { mode: 0o500 });
+    try {
+      const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(`无法在 ${join(dir, 'run')} 取实例锁`);
+      expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
+    } finally {
+      chmodSync(join(dir, 'run'), 0o700);
+    }
+  });
+
+  it('子命令不取实例锁：守护进程在跑时照常执行，不碰它的锁', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    liveLock(dir);
+    const before = readFileSync(join(dir, 'run', 'instance.4.lock'), 'utf-8');
+    const r = await run(dir, ['probe']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('probe ok');
+    expect(readdirSync(join(dir, 'run'))).toEqual(['instance.4.lock']);
+    expect(readFileSync(join(dir, 'run', 'instance.4.lock'), 'utf-8')).toBe(before);
+  });
+
+  it('/restart 经重启策略交接实例锁：第二代接手、令牌不留在环境里，第一代退出后只剩第二代持锁', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    // 第一代经 app.restart() 拉起第二代（继承本测试给的管道，run 会等到两代都退出）
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'restart' }, 30_000);
+    expect(r.code).toBe(0);
+    expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('2');
+    expect(JSON.parse(readFileSync(join(dir, 'lock.json'), 'utf8'))).toEqual({
+      handoffInEnv: false,
+      locks: ['instance.2.lock'],
+      selfHolds: true,
+    });
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  }, 45_000);
+
+  it('以 --service 运行时 /restart 交给服务管理器：停掉后以 75 退出、放掉锁，不自己拉起新进程', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    const r = await run(dir, ['--service'], { AALIS_E2E_MODE: 'restart' });
+    expect(r.code).toBe(75);
+    expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('1');
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
+
+  it('respawn 交接：令牌对得上就接手活着的锁；令牌随即从环境里删掉，退出时放掉自己这一代', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    liveLock(dir, 'handoff-token');
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_LOCK_HANDOFF: 'handoff-token' });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, 'lock.json'), 'utf8'))).toEqual({
+      handoffInEnv: false,
+      locks: ['instance.5.lock'],
+      selfHolds: true,
+    });
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
 
   it('同时给了 profile 与 AALIS_HOME：报冲突、exit 2，不静默挑一个', async () => {
     const dir = tempDir();

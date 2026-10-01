@@ -55,23 +55,25 @@ export interface HostArgs {
   profile?: string;
   /** `--init`：初始化家目录后退出 */
   init: boolean;
+  /** `--service`：由服务管理器拉起；实例锁被占时按正常退出，免得被反复拉起 */
+  service: boolean;
   /** 余下的 argv：非空即子命令 */
   rest: string[];
 }
 
 /**
- * 只认开头的宿主参数（`--home <dir>`、`--home=<dir>`、`--profile`、`--init`），遇到第一个别的参数即停：
+ * 只认开头的宿主参数（`--home <dir>`、`--home=<dir>`、`--profile`、`--init`、`--service`），遇到第一个别的参数即停：
  * 之后的都属于子命令，子命令自己的参数里出现同名写法也不会被吃掉。
  * 开头这一段里的 `--` 跳过：`pnpm dev -- --init` 会把 `--` 原样传进来。
  */
 export function parseHostArgs(argv: readonly string[]): HostArgs {
-  const out: HostArgs = { init: false, rest: [] };
+  const out: HostArgs = { init: false, service: false, rest: [] };
   let i = 0;
   for (; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === '--') continue;
-    if (arg === '--init') {
-      out.init = true;
+    if (arg === '--init' || arg === '--service') {
+      out[arg === '--init' ? 'init' : 'service'] = true;
       continue;
     }
     const m = /^--(home|profile)(?:=(.*))?$/.exec(arg);

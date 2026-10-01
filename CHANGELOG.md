@@ -290,6 +290,11 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - 家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。
   - 在启动命令里、子命令之前加上 `--init` 运行一次即可初始化：建目录（0700），写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600），建布局里的子目录。目标目录里已有布局以外的东西时拒绝初始化。
   - `secrets.yaml` 本批只建出来，还不读，密钥照旧写在 `aalis.config.yaml` 里。`state/`、`self/`、`stage/` 等布局目录留给后续部分，本批的数据仍在家目录的 `data/` 与 `workspace/` 下。
+- **实例锁**：同一家目录只许一个守护进程。手动在终端再起一份时，此前会与服务并存、每条消息回两遍；现在打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。
+  - 以 `--service` 启动时改以 0 退出，配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会被反复拉起。
+  - 锁在家目录的 `run/instance.<n>.lock`，按代号 link 取得，两个进程同时启动也只有一个拿到；家目录所在的文件系统要支持硬链接。
+  - 判活用开机标识、pid 与进程启动标识，与墙上时钟无关；SIGKILL 留下的锁下次启动时按残留接手。Windows 与没有 `ps` 的环境只看 pid。
+  - `/restart` 与市场更新引起的前台重启经环境变量 `AALIS_LOCK_HANDOFF` 把锁交给新进程，新进程读到即从环境里删掉。以 `--service` 运行时，重启改为停掉后以 75 退出、由服务管理器拉起，不自己起新进程；服务形态下市场更新没有「新版起不来就回滚」。子命令不取锁。
 - **安装集**：默认的插件加载器从安装集（`appDir`）的 `package.json` 找插件。安装集里没有 `package.json` 时拒绝启动，并说明要传 `appDir`；此前这种情况会一个插件都不加载、照样起来。缺省的 `<家目录>/app` 留给以后的全局启动器，现在的入口都要自己传 `appDir`。
 - **日志**：文件日志改写到家目录的 `logs/latest.log`。plugin-storage-local 的 `logs` 根改为内置根，指向同一个目录：WebUI 与 CLI 的日志页读的就是 runtime 正在写的那份。配置里原有的 `logs` 根会被跳过并告警，可以删掉。
 - **新契约包 `@aalis/api-host-paths`**：服务 `host-paths` 给出家目录、安装集与家目录布局的绝对路径，runtime 在根上独占提供，交给插件的对象是冻结的。
@@ -298,9 +303,9 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - plugin-webui-server 可选依赖它：市场、系统组件与前端发现都读安装集，宿主不提供时这几页回 503、也找不到前端，只剩 HTTP API。
 - **cwd 守卫**：新增 architecture 守卫，runtime 与两个脚手架以外的包不得读 cwd（`process.cwd()`、`process.env.PWD` 等）。
 - **runtime 的接口**
-  - `startAalis` 删掉 `configPath`、`projectDir` 与字符串形态的 `fileLog`，新增 `appDir` 与 `defaultHome`；`subcommands` 改名 `argv`，开头的宿主参数先取走。
+  - `startAalis` 删掉 `configPath`、`projectDir` 与字符串形态的 `fileLog`，新增 `appDir` 与 `defaultHome`；`subcommands` 改名 `argv`，开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走。
   - `createFsYamlConfigProvider`、`createFsPluginLoader`、`createNodeModulesPluginLoader`、`setupFileLogger` 的路径参数改为必填，且必须是绝对路径（相对路径直接抛错）。`appendCrashLog` 的路径参数改为必填。
-  - `createProcessRespawnStrategy` 必须传 `appDir` 与 `cwd`（新进程在启动时的 cwd 里起，命令行里相对的 `--home` 才解析到同一处）。`buildRespawnCommand` 的第一个参数改为 `appDir`。删掉导出常量 `DEFAULT_LOG_FILE`。
+  - `createProcessRespawnStrategy` 必须传 `appDir` 与 `cwd`（新进程在启动时的 cwd 里起，命令行里相对的 `--home` 才解析到同一处），可选 `env`（交给新进程的环境变量，startAalis 用它交接实例锁）。新增 `createServiceRestartStrategy` 与 `SERVICE_RESTART_EXIT_CODE`（75）。`buildRespawnCommand` 的第一个参数改为 `appDir`。删掉导出常量 `DEFAULT_LOG_FILE`。
   - 新增导出 `parseHostArgs`、`resolveHome`、`derivePaths`、`isHomeInitialized`、`initHome`、`HomeArgsError` 与类型 `HostArgs`、`ResolveHomeInput`。
 - **路径字段的 `format`**
   - schema-config 新增字段属性 `format`（string 与 textarea 适用）：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名。判定忽略首尾空白，空串照常表示未填；只按写法判定，与宿主平台无关。plugin-webui-client 的表单给这类字段显示写法提示。
