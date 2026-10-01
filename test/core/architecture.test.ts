@@ -652,7 +652,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2634 → 2632：停机修复（-4）与 provides 归属核对（+2）合入后净减 2 行，实测 2632，当时未同步收紧。
 // 2632 → 2635：2026-10-01 用户授权「如果你觉得有用可以做」的缺陷修复——sticky 事件派发中途登记的监听器只送一次
 // （EventBus 标记正在遍历的登记表）。
-const CORE_CODE_LINE_CEILING = 2635;
+// 2635 → 2647：同一授权下的缺陷修复——配置无法拷贝（环状引用、getter 或 Proxy 抛错）时 register / bounce 返回 false，
+// 不让 registerAll 整批拒绝；拷贝放在停机、重名检查之后，日志点名插件。
+const CORE_CODE_LINE_CEILING = 2647;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
