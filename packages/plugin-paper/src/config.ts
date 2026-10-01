@@ -8,7 +8,7 @@
 
 import type { ArtifactLimits, EgressCeiling } from '@aalis/api-remote-agent';
 import type { Logger } from '@aalis/core';
-import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig } from '@aalis/schema-config';
 
 const PAPER_NAME_PATTERN = '^[a-z0-9][a-z0-9-]{0,31}$';
 const PUBLISH_TARGET_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -240,6 +240,7 @@ export const configSchema = defineConfig({
         type: 'select',
         label: '出网上限',
         options: [{ label: '取默认属性', value: '' }, ...EGRESS_OPTIONS],
+        onInvalid: 'error',
       },
       maxWaiting: { type: 'number', label: '未结束任务上限', min: 1, integer: true, description: '留空取默认属性' },
       maxPerUser: { type: 'number', label: '每人未结束任务上限', min: 1, integer: true, description: '留空取默认属性' },
@@ -249,6 +250,7 @@ export const configSchema = defineConfig({
       publishTargets: {
         type: 'string',
         label: '允许发布到的目标',
+        onInvalid: 'error',
         description: '逗号分隔的目标 ID；未填写（含只写键名不写值）取默认属性，填空字符串禁止这块白纸发布',
       },
       defaultPublishTarget: {
@@ -261,6 +263,26 @@ export const configSchema = defineConfig({
 });
 
 type ParsedPaperConfig = ConfigOf<typeof configSchema>;
+
+/**
+ * 只为认出写错的具名白纸：同一份配置再按这份 schema 解析一次，保留每条的名字与两个放开能力的字段的原样字符串
+ * （不按选项、模式丢弃），别的字段不读。正式解析会把写坏这两个字段、或别的字段不合规则的条目整条丢掉，
+ * 只看正式结果分不出「没写」和「写错」；两份按名字对条数就知道哪个名字有条目被丢了。
+ */
+export const paperAuditSchema = defineConfig({
+  papers: {
+    type: 'array',
+    label: '具名白纸',
+    default: [],
+    items: {
+      name: { type: 'string', label: '名字' },
+      remoteAgentEgress: { type: 'string', label: '出网上限' },
+      publishTargets: { type: 'string', label: '允许发布到的目标' },
+    },
+  },
+});
+
+type PaperAudit = ConfigOf<typeof paperAuditSchema>['papers'];
 
 /** 一块白纸的属性 */
 export interface PaperSpec {
@@ -325,9 +347,8 @@ const DEFAULT_SPEC: PaperSpec = {
 type SpecFields = ParsedPaperConfig['defaults'] | ParsedPaperConfig['papers'][number];
 
 /** 发布目标写法的问题：含无效的目标 ID 时给出原因 */
-function publishTargetsProblem(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') return '发布目标要写成逗号分隔的目标 ID';
+function publishTargetsProblem(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
   const names = value
     .split(',')
     .map(name => name.trim())
@@ -335,20 +356,38 @@ function publishTargetsProblem(value: unknown): string | undefined {
   return names.some(name => !PUBLISH_TARGET_PATTERN.test(name)) ? '发布目标里有无效的目标 ID' : undefined;
 }
 
-/** 具名白纸原样条目的问题：放开能力的字段（出网上限、发布目标）写错，或整条不合配置规则 */
-function rawPaperProblem(item: Record<string, unknown>): string | undefined {
-  try {
-    parseConfig(configSchema.papers.items, item, SILENT);
-  } catch {
-    return '这一条有不合规则的字段（见启动日志）';
+/**
+ * 写错而停用的具名白纸：名字第一条的出网上限或发布目标写错；或者这个名字有条目被正式解析整条丢掉（写坏了类型、
+ * 别的字段不合规则）。丢掉的那条是不是第一条分不出来，所以同名写了多条、其中有被丢的，也整块停用：
+ * 同名的后续条目不能顶替写错的那条。
+ */
+function brokenPaperNames(audit: PaperAudit, parsed: ParsedPaperConfig['papers']): Map<string, string> {
+  const listed = new Map<string, { count: number; first: PaperAudit[number] }>();
+  for (const item of audit) {
+    const name = item.name?.trim();
+    if (!name) continue;
+    const entry = listed.get(name);
+    if (entry) entry.count++;
+    else listed.set(name, { count: 1, first: item });
   }
-  const egress = item.remoteAgentEgress;
-  if (egress !== undefined && egress !== null && egress !== '' && !EGRESS_CEILINGS.includes(egress as EgressCeiling))
-    return '出网上限不是可选值';
-  return publishTargetsProblem(item.publishTargets);
+  const kept = new Map<string, number>();
+  for (const item of parsed) kept.set(item.name, (kept.get(item.name) ?? 0) + 1);
+  const broken = new Map<string, string>();
+  for (const [name, { count, first }] of listed) {
+    const egress = first.remoteAgentEgress;
+    const problem =
+      egress && !EGRESS_CEILINGS.includes(egress as EgressCeiling)
+        ? '出网上限不是可选值'
+        : (publishTargetsProblem(first.publishTargets) ??
+          ((kept.get(name) ?? 0) < count
+            ? count > 1
+              ? '同名写了多条，其中有不合规则的（见启动日志）'
+              : '这一条有不合规则的字段（见启动日志）'
+            : undefined));
+    if (problem) broken.set(name, problem);
+  }
+  return broken;
 }
-
-const SILENT = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
 
 /** 具名白纸日额度独立填写，其他字段继承默认属性；发布目标的显式空值表示禁发布。 */
 function readSpec(raw: SpecFields, fallback: PaperSpec, logger: Logger, where: string): PaperSpec {
@@ -402,28 +441,15 @@ function validTimeZone(value: string | undefined, logger: Logger): string | unde
   return undefined;
 }
 
-/**
- * rawPapers 是配置里原样的 papers：解析会把写错的选项值丢掉、把整条不合规则的条目丢掉，只看解析结果分不出
- * 「没写」和「写错」。按原样逐条核对，每个名字以第一次出现的那一条为准：它写错了，这块白纸就停用，
- * 同名的后续条目也不能顶上来。
- */
-export function readConfig(raw: ParsedPaperConfig, logger: Logger, rawPapers?: unknown): PaperConfig {
+/** audit 是同一份配置按 {@link paperAuditSchema} 解析出的 papers，用来认出写错而停用的具名白纸 */
+export function readConfig(raw: ParsedPaperConfig, logger: Logger, audit: PaperAudit = []): PaperConfig {
   const defaultsProblem = publishTargetsProblem(raw.defaults.publishTargets);
   if (defaultsProblem) throw configError(`defaults.publishTargets：${defaultsProblem}`);
   const defaults = readSpec(raw.defaults, DEFAULT_SPEC, logger, 'defaults');
 
-  const brokenPapers = new Map<string, string>();
-  const seen = new Set<string>();
-  for (const [i, item] of (Array.isArray(rawPapers) ? rawPapers : []).entries()) {
-    if (!item || typeof item !== 'object' || typeof (item as { name?: unknown }).name !== 'string') continue;
-    const name = ((item as { name: string }).name as string).trim();
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    const problem = rawPaperProblem(item as Record<string, unknown>);
-    if (!problem) continue;
-    brokenPapers.set(name, problem);
-    logger.warn(`papers[${i}]（${name}）${problem}：这块白纸停用，用它的房间没有白纸，改对之前同名的后续条目也不生效`);
-  }
+  const brokenPapers = brokenPaperNames(audit, raw.papers);
+  for (const [name, problem] of brokenPapers)
+    logger.warn(`具名白纸 ${name}：${problem}，这块白纸停用，用它的房间没有白纸，改对之前同名的后续条目也不生效`);
 
   const papers = new Map<string, PaperSpec>();
   for (const [i, item] of raw.papers.entries()) {
