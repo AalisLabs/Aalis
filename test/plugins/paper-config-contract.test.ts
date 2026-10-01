@@ -6,7 +6,7 @@ import { parseConfig } from '../../packages/schema-config/src/index.js';
 function read(raw: Record<string, unknown>) {
   const warn = vi.fn();
   const logger = { warn } as unknown as Logger;
-  return { cfg: readConfig(parseConfig(configSchema, raw, logger), logger), warn };
+  return { cfg: readConfig(parseConfig(configSchema, raw, logger), logger, raw.papers), warn };
 }
 
 describe('paper 配置契约', () => {
@@ -79,14 +79,13 @@ describe('paper 配置契约', () => {
     expect(warn).toHaveBeenCalled();
   });
 
-  it('具名白纸继承默认属性；无效名字和出网上限不放宽能力', () => {
+  it('具名白纸继承默认属性；无效名字不生效', () => {
     const { cfg } = read({
       globalDailyCents: 1000,
       defaults: { remoteAgentType: '@aalis/remote-a', remoteAgentEgress: 'none', maxWaiting: 2 },
       papers: [
-        { name: 'valid', remoteAgentEgress: 'wide-open', maxPerUser: 0 },
+        { name: 'valid', maxPerUser: 0 },
         { name: 'bad/name', remoteAgentEgress: 'open' },
-        { name: 'valid', remoteAgentEgress: 'open' },
       ],
     });
     expect(cfg.papers.get('valid')).toMatchObject({
@@ -97,5 +96,33 @@ describe('paper 配置契约', () => {
     expect(cfg.papers.get('valid')?.maxPerUser).toBeUndefined();
     expect(cfg.papers.has('bad/name')).toBe(false);
     expect(cfg.papers.size).toBe(1);
+  });
+
+  it.each([
+    ['出网上限写错', { remoteAgentEgress: 'wide-open' }, '出网上限'],
+    ['发布目标含无效 ID', { publishTargets: 'works, Bad Target' }, '发布目标'],
+    ['发布目标写成数组', { publishTargets: ['works'] }, '发布目标'],
+    ['日额度写错（整条不合规则）', { dailyCents: -1 }, '不合规则'],
+  ])('安全：具名白纸%s时停用，同名的后续条目不能顶替，原因写进 brokenPapers 并告警', (_label, fields, reason) => {
+    const { cfg, warn } = read({
+      defaults: { remoteAgentEgress: 'none' },
+      papers: [
+        { name: 'pilot', ...fields },
+        { name: 'pilot', remoteAgentEgress: 'open', publishTargets: 'works' },
+      ],
+    });
+    expect(cfg.papers.has('pilot')).toBe(false);
+    expect(cfg.brokenPapers.get('pilot')).toContain(reason);
+    expect(warn.mock.calls.flat().join('\n')).toContain('pilot');
+  });
+
+  it('对照：第一条写对时，后面同名写错的条目只按重名忽略，不停用这块白纸', () => {
+    const { cfg } = read({ papers: [{ name: 'pilot' }, { name: 'pilot', remoteAgentEgress: 'wide-open' }] });
+    expect(cfg.papers.has('pilot')).toBe(true);
+    expect(cfg.brokenPapers.size).toBe(0);
+  });
+
+  it('安全：默认属性的发布目标含无效 ID 时拒绝启用，不再忽略后照用', () => {
+    expect(() => read({ defaults: { publishTargets: 'works, Bad Target' } })).toThrow(/发布目标/);
   });
 });

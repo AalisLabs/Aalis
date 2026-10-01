@@ -65,7 +65,7 @@ export default definePlugin({
 
 async function run(caps: BoundOf<typeof uses>): Promise<void> {
   const { logger, lifecycle } = caps;
-  const cfg = readConfig(parseConfig(configSchema, caps.config, logger), logger);
+  const cfg = readConfig(parseConfig(configSchema, caps.config, logger), logger, caps.config.papers);
   const storage = createStorageGateway(caps.storage);
   const ledger = new LedgerStore(storage, logger);
   await ledger.load();

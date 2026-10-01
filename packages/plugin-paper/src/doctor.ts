@@ -99,6 +99,8 @@ export function registerPaperDoctor(deps: {
           );
         }
       }
+      for (const [name, reason] of cfg.brokenPapers)
+        errors.push(`白纸 ${name} 的配置有误（${reason}），已停用：用它的房间没有白纸，改对之前同名的后续条目也不生效`);
       if (cfg.globalDailyCents === 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
       if (cfg.globalDailyCents === undefined)
         notes.push('全局每日额度没填，不限额：远端任务按实际花费计费，要设上限就填金额');

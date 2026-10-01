@@ -8,7 +8,7 @@
 
 import type { ArtifactLimits, EgressCeiling } from '@aalis/api-remote-agent';
 import type { Logger } from '@aalis/core';
-import { type ConfigOf, defineConfig } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
 const PAPER_NAME_PATTERN = '^[a-z0-9][a-z0-9-]{0,31}$';
 const PUBLISH_TARGET_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -305,6 +305,8 @@ export interface PaperConfig {
   artifacts: ArtifactCaps;
   defaults: PaperSpec;
   papers: ReadonlyMap<string, PaperSpec>;
+  /** 写错而停用的具名白纸：名字 → 原因。用它的房间没有白纸，直到改对；同名的后续条目不能顶替 */
+  brokenPapers: ReadonlyMap<string, string>;
 }
 
 /** 一块白纸的属性：n:<名> 取具名白纸（配置里没有了返回 undefined），r:<哈希> 取默认属性 */
@@ -322,6 +324,32 @@ const DEFAULT_SPEC: PaperSpec = {
 
 type SpecFields = ParsedPaperConfig['defaults'] | ParsedPaperConfig['papers'][number];
 
+/** 发布目标写法的问题：含无效的目标 ID 时给出原因 */
+function publishTargetsProblem(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return '发布目标要写成逗号分隔的目标 ID';
+  const names = value
+    .split(',')
+    .map(name => name.trim())
+    .filter(Boolean);
+  return names.some(name => !PUBLISH_TARGET_PATTERN.test(name)) ? '发布目标里有无效的目标 ID' : undefined;
+}
+
+/** 具名白纸原样条目的问题：放开能力的字段（出网上限、发布目标）写错，或整条不合配置规则 */
+function rawPaperProblem(item: Record<string, unknown>): string | undefined {
+  try {
+    parseConfig(configSchema.papers.items, item, SILENT);
+  } catch {
+    return '这一条有不合规则的字段（见启动日志）';
+  }
+  const egress = item.remoteAgentEgress;
+  if (egress !== undefined && egress !== null && egress !== '' && !EGRESS_CEILINGS.includes(egress as EgressCeiling))
+    return '出网上限不是可选值';
+  return publishTargetsProblem(item.publishTargets);
+}
+
+const SILENT = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
+
 /** 具名白纸日额度独立填写，其他字段继承默认属性；发布目标的显式空值表示禁发布。 */
 function readSpec(raw: SpecFields, fallback: PaperSpec, logger: Logger, where: string): PaperSpec {
   const spec: PaperSpec = { ...fallback, dailyCents: raw.dailyCents };
@@ -338,15 +366,8 @@ function readSpec(raw: SpecFields, fallback: PaperSpec, logger: Logger, where: s
       .split(',')
       .map(name => name.trim())
       .filter(Boolean);
-    const valid: string[] = [];
-    for (const name of names) {
-      if (!PUBLISH_TARGET_PATTERN.test(name)) {
-        logger.warn(`${where}.publishTargets 含无效目标 ID，已忽略`);
-        continue;
-      }
-      if (!valid.includes(name)) valid.push(name);
-    }
-    spec.publishTargets = valid;
+    // 无效 ID 已在调用方拦下（默认属性层拒绝启用、具名白纸停用），这里只去重
+    spec.publishTargets = [...new Set(names)];
   }
   if (raw.defaultPublishTarget !== undefined) {
     spec.defaultPublishTarget = raw.defaultPublishTarget.trim() || undefined;
@@ -381,12 +402,33 @@ function validTimeZone(value: string | undefined, logger: Logger): string | unde
   return undefined;
 }
 
-export function readConfig(raw: ParsedPaperConfig, logger: Logger): PaperConfig {
+/**
+ * rawPapers 是配置里原样的 papers：解析会把写错的选项值丢掉、把整条不合规则的条目丢掉，只看解析结果分不出
+ * 「没写」和「写错」。按原样逐条核对，每个名字以第一次出现的那一条为准：它写错了，这块白纸就停用，
+ * 同名的后续条目也不能顶上来。
+ */
+export function readConfig(raw: ParsedPaperConfig, logger: Logger, rawPapers?: unknown): PaperConfig {
+  const defaultsProblem = publishTargetsProblem(raw.defaults.publishTargets);
+  if (defaultsProblem) throw configError(`defaults.publishTargets：${defaultsProblem}`);
   const defaults = readSpec(raw.defaults, DEFAULT_SPEC, logger, 'defaults');
+
+  const brokenPapers = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const [i, item] of (Array.isArray(rawPapers) ? rawPapers : []).entries()) {
+    if (!item || typeof item !== 'object' || typeof (item as { name?: unknown }).name !== 'string') continue;
+    const name = ((item as { name: string }).name as string).trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const problem = rawPaperProblem(item as Record<string, unknown>);
+    if (!problem) continue;
+    brokenPapers.set(name, problem);
+    logger.warn(`papers[${i}]（${name}）${problem}：这块白纸停用，用它的房间没有白纸，改对之前同名的后续条目也不生效`);
+  }
 
   const papers = new Map<string, PaperSpec>();
   for (const [i, item] of raw.papers.entries()) {
     const name = item.name;
+    if (brokenPapers.has(name)) continue;
     if (papers.has(name)) {
       logger.warn(`papers[${i}] 与前面的白纸重名（${name}），这一项不生效`);
       continue;
@@ -408,5 +450,6 @@ export function readConfig(raw: ParsedPaperConfig, logger: Logger): PaperConfig 
     artifacts: readArtifactCaps(raw.artifacts),
     defaults,
     papers,
+    brokenPapers,
   };
 }

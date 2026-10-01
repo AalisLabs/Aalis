@@ -91,7 +91,7 @@ remoteAgentRoomDailyCents: 1000
 | `artifacts.maxBundleMB` | number | `50` | 工程包上限 |
 | `artifacts.maxPaperMB` | number | `2048` | 每块白纸目录的总占用上限；成品在清空之前一直留在本机，超过时拒收余下的文件并停开这块白纸 |
 | `defaults` | 分组 | — | 不写名字的房间白纸用这组属性；具名白纸未写的属性通常取这组，金额额度 `dailyCents` 除外（见下表） |
-| `papers` | array | `[]` | 具名白纸；`name` 必填（小写字母、数字与连字符，最长 32 个字符），其余字段与 `defaults` 同名；`dailyCents` 留空表示这块具名白纸不单独限额，其余未写字段取默认属性 |
+| `papers` | array | `[]` | 具名白纸；`name` 必填（小写字母、数字与连字符，最长 32 个字符），其余字段与 `defaults` 同名；`dailyCents` 留空表示这块具名白纸不单独限额，其余未写字段取默认属性。出网上限、发布目标写错（或整条不合规则）时，这块白纸停用，用它的房间暂时没有白纸，doctor 报错；同名的后续条目不能顶替，改对第一条才恢复 |
 
 白纸属性（`defaults` 与 `papers[]` 的项）：
 
