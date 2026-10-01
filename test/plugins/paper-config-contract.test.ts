@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../packages/core/src/index.js';
-import { configSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
+import { configSchema, paperAuditSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
 
 function read(raw: Record<string, unknown>) {
   const warn = vi.fn();
   const logger = { warn } as unknown as Logger;
-  return { cfg: readConfig(parseConfig(configSchema, raw, logger), logger, raw.papers), warn };
+  return {
+    cfg: readConfig(parseConfig(configSchema, raw, logger), logger, parseConfig(paperAuditSchema, raw).papers),
+    warn,
+  };
 }
 
 describe('paper 配置契约', () => {
@@ -101,7 +104,7 @@ describe('paper 配置契约', () => {
   it.each([
     ['出网上限写错', { remoteAgentEgress: 'wide-open' }, '出网上限'],
     ['发布目标含无效 ID', { publishTargets: 'works, Bad Target' }, '发布目标'],
-    ['发布目标写成数组', { publishTargets: ['works'] }, '发布目标'],
+    ['发布目标写成数组（整条被丢）', { publishTargets: ['works'] }, '不合规则'],
     ['日额度写错（整条不合规则）', { dailyCents: -1 }, '不合规则'],
   ])('安全：具名白纸%s时停用，同名的后续条目不能顶替，原因写进 brokenPapers 并告警', (_label, fields, reason) => {
     const { cfg, warn } = read({
@@ -116,10 +119,22 @@ describe('paper 配置契约', () => {
     expect(warn.mock.calls.flat().join('\n')).toContain('pilot');
   });
 
-  it('对照：第一条写对时，后面同名写错的条目只按重名忽略，不停用这块白纸', () => {
+  it('同名写了多条、其中有写错的：分不出哪条是本意，整块停用', () => {
     const { cfg } = read({ papers: [{ name: 'pilot' }, { name: 'pilot', remoteAgentEgress: 'wide-open' }] });
-    expect(cfg.papers.has('pilot')).toBe(true);
+    expect(cfg.papers.has('pilot')).toBe(false);
+    expect(cfg.brokenPapers.get('pilot')).toContain('同名写了多条');
+  });
+
+  it('对照：同名写了多条但都写对时，照旧以第一条为准，后面的按重名忽略', () => {
+    const { cfg, warn } = read({
+      papers: [
+        { name: 'pilot', maxWaiting: 2 },
+        { name: 'pilot', maxWaiting: 3 },
+      ],
+    });
+    expect(cfg.papers.get('pilot')?.maxWaiting).toBe(2);
     expect(cfg.brokenPapers.size).toBe(0);
+    expect(warn.mock.calls.flat().join('\n')).toContain('重名');
   });
 
   it('安全：默认属性的发布目标含无效 ID 时拒绝启用，不再忽略后照用', () => {
