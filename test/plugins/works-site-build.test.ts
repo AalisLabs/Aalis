@@ -46,7 +46,7 @@ describe('works site build', () => {
     const index = textOf(out.files, '/index.html');
     const wrapper = textOf(out.files, `/w/${id}/index.html`);
     expect(index).toContain(`src="/t/${id}.png" loading="lazy"`);
-    expect(index).toContain('<small>');
+    expect(index).toContain('<p class="date">2026 年 1 月 2 日</p>');
     expect(index).not.toContain('<script>');
     expect(index).not.toContain('\u202e');
     expect(wrapper).toContain('<title>&lt;script&gt;&quot;&lt;/iframe&gt;</title>');
@@ -263,5 +263,113 @@ describe('works site build', () => {
     const src = /\bsrc="([^"]+)"/.exec(wrapper)?.[1];
     expect(src).toBeDefined();
     expect(out.files.find(file => file.path === src)?.bytes).toEqual(bytes);
+  });
+});
+
+describe('works site presentation', () => {
+  const site = 'https://works.example';
+  const html = { ...item, title: '星空主页', summary: '一页自我介绍' };
+  const gif = {
+    ...item,
+    id: 'bcdefghabc',
+    kind: 'media' as const,
+    title: '下雨的窗台',
+    summary: '',
+    hasThumbnail: false,
+    files: [{ path: 'rain.gif', size: 4, contentType: 'image/gif' }],
+  };
+
+  it('index lists cards newest first with kind, date and summary, plus share info with absolute URLs', async () => {
+    const out = await buildGallery({
+      ...base,
+      items: [gif, { ...html, publishedAt: gif.publishedAt + 1 }],
+      aliases: { opaque: 'https://p-abc.aalis.pages.dev' },
+      siteTitle: '她的作品',
+      siteIntro: '群友出点子',
+      siteOrigin: site,
+    });
+    const index = textOf(out.files, '/index.html');
+    expect(index.indexOf('星空主页')).toBeLessThan(index.indexOf('下雨的窗台'));
+    expect(index).toContain('<span class="kind">网页</span>');
+    expect(index).toContain('<span class="kind">动图</span>');
+    expect(index).toContain('<p class="sum">一页自我介绍</p>');
+    expect(index).toContain('共 2 件');
+    // 没有缩略图的作品用标题首字作封面
+    expect(index).toMatch(/<div class="thumb tone-\d"><span class="glyph">下<\/span>/);
+    expect(index).toContain('<meta property="og:title" content="她的作品">');
+    expect(index).toContain('<meta property="og:description" content="群友出点子">');
+    expect(index).toContain(`<meta property="og:url" content="${site}/">`);
+    expect(index).toContain(`<meta property="og:image" content="${site}/t/${id}.png">`);
+  });
+
+  it('work page shares title and thumbnail but not the summary, and still shows nothing around the work', async () => {
+    const out = await buildGallery({
+      ...base,
+      items: [html],
+      aliases: { opaque: 'https://p-abc.aalis.pages.dev' },
+      siteTitle: 'Works',
+      siteIntro: '',
+      siteOrigin: site,
+      basePath: '/draw/',
+    });
+    const wrapper = textOf(out.files, `/draw/w/${id}/index.html`);
+    expect(wrapper).toContain('<meta property="og:title" content="星空主页">');
+    expect(wrapper).toContain(`<meta property="og:url" content="${site}/draw/w/${id}/">`);
+    expect(wrapper).toContain(`<meta property="og:image" content="${site}/draw/t/${id}.png">`);
+    expect(wrapper).not.toContain('og:description');
+    expect(wrapper).not.toContain('一页自我介绍');
+    expect(wrapper).not.toMatch(/<h1|<p[ >]/);
+  });
+
+  it('empty gallery says so; without a site origin no absolute share URLs are written', async () => {
+    const out = await buildGallery({ ...base, items: [], aliases: {}, siteTitle: 'Works', siteIntro: '' });
+    const index = textOf(out.files, '/index.html');
+    expect(index).toContain('还没有作品');
+    expect(index).not.toContain('og:url');
+    expect(index).not.toContain('og:image');
+    expect(index).not.toContain('name="description"');
+  });
+
+  it('404 and the main-site removed page link back to the gallery; the branch removed page does not', async () => {
+    const gallery = await buildGallery({
+      ...base,
+      items: [],
+      aliases: {},
+      siteTitle: 'Works',
+      siteIntro: '',
+      basePath: '/draw/',
+      tombstones: [{ branch: 'main', path: `/draw/w/${id}/index.html`, until: base.now + 1 }],
+    });
+    expect(textOf(gallery.files, '/draw/404.html')).toContain('<a href="/draw/">');
+    const removed = textOf(gallery.files, `/draw/w/${id}/index.html`);
+    expect(removed).toContain('该作品已下架');
+    expect(removed).toContain('<a href="/draw/">');
+    expect(removed).toContain('href="/draw/assets/site.css"');
+    const branch = await buildBranch({
+      ...base,
+      items: [],
+      group: 'opaque',
+      mainOrigin: 'https://aalis.pages.dev',
+      frameAncestors: ['https://aalis.pages.dev'],
+      tombstones: [{ branch: 'opaque', path: `/${id}/index.html`, until: base.now + 1 }],
+    });
+    const framed = textOf(branch?.files ?? [], `/${id}/index.html`);
+    expect(framed).toContain('该作品已下架');
+    expect(framed).not.toContain('<a ');
+    expect(framed).not.toContain('stylesheet');
+  });
+
+  it('rejects a malformed site origin before reading assets', async () => {
+    readFile.mockClear();
+    await expect(
+      buildGallery({
+        ...base,
+        aliases: { opaque: 'https://p-abc.aalis.pages.dev' },
+        siteTitle: 'W',
+        siteIntro: '',
+        siteOrigin: 'https://works.example/x',
+      }),
+    ).rejects.toThrow(/来源不合法/);
+    expect(readFile).not.toHaveBeenCalled();
   });
 });
