@@ -20,7 +20,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 | 禁用态 | 登记时的 `{ disabled }`；`plugins.enable` / `disable` | `plugins.getStatus()`、`plugins.getPlugin(id).state` |
 | 服务偏好 | `services.prefer` / `unprefer` | `services.preferred` |
 
-- 登记时交入的配置原样生效：core 不合并默认值，也不读禁用名单。入参会被拷贝，危险键（`__proto__` / `constructor` / `prototype`）跳过，调用方之后改它不影响实例。
+- 登记时交入的配置原样生效：core 不合并默认值，也不读禁用名单。入参会被拷贝，危险键（`__proto__` / `constructor` / `prototype`）跳过，调用方之后改它不影响实例；拷贝失败（环状引用、读取抛错）时管理动作返回 false。
 - 管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`、`services.prefer` / `unprefer`）只改运行态，不写配置文档。要跨重启保留，见下文[跨重启保留](#跨重启保留)。
 
 ## 配置文档（宿主）
