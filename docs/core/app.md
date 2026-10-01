@@ -90,7 +90,7 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 
 ### `app.plugin(definition, config?, instanceId?, options?)`
 
-注册单个插件，返回值同 `plugins.register`（false = 重名、未声明 `reusable` 的多实例、定义 / 实例 id 校验失败、或停机中）。`instanceId` 缺省用 `definition.name`。
+注册单个插件，返回值同 `plugins.register`（false = 重名、未声明 `reusable` 的多实例、定义 / 实例 id 校验失败、配置无法拷贝、或停机中）。`instanceId` 缺省用 `definition.name`。
 
 - `config` 原样生效：core 不合并默认值，也不读配置文档。入参会被拷贝（危险键 `__proto__` / `constructor` / `prototype` 跳过），调用方之后改它不影响实例。默认值回填是宿主政策：runtime 的 `withPluginConfigSync` 在登记前把 schema 派生默认值深合并进文档。
 - `options.disabled` 为 `true` 时以禁用态登记、不激活，之后经 `plugins.enable` 启用。core 不读禁用名单，由宿主按配置文档传入。

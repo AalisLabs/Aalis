@@ -14,7 +14,7 @@
 // 监听事件（返回 dispose 函数；随这次激活撤回）
 const off = events.on('inbound:message', async (msg) => { ... });
 
-// sticky 事件：注册晚于发出也能在下一个微任务收到补发（'app:ready' / 'app:started'）
+// sticky 事件：注册晚于发出也能在下一个微任务收到补发；派发进行中登记的排在本轮末尾送达，要等前面的监听器返回或超时。每个监听器只收到一次（'app:ready' / 'app:started'）
 events.on('app:ready', () => { ... });
 
 // 发出事件（按注册顺序依次 await 每个 handler，永不拒绝）

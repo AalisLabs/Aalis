@@ -110,7 +110,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 ### `register(definition, config?, instanceId?, options?)`
 
-注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false；定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装时同样返回 false，按安装问题记 error。停机中立即返回 false，不落账。
+注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false；定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装时同样返回 false，按安装问题记 error。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时记 warn 并返回 false，不落账；`registerAll` 的其余条目照常登记。停机中立即返回 false，不落账。
 
 ### `unload(instanceId)`
 
@@ -127,12 +127,12 @@ type RecomputeKind = 'changed' | 'shutdown';
 - 正在用本插件所提供服务的 required 下游随之重启（先收尾、先关，本插件重新激活后按拓扑序重新激活）；optional 依赖经 `follow` 在换人时交接。
 - 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
 - `disposed`、停机进行中拒绝 bounce；停机中也不更换配置。
-- `disabled` 态带 `config` 时只换上新配置、保持禁用，返回 true，启用时按新配置激活；不带 `config` 时拒绝（warn，返回 false）。
+- `disabled` 态带 `config` 时只换上新配置、保持禁用，返回 true，启用时按新配置激活；不带 `config` 时拒绝（warn，返回 false）。新 `config` 无法拷贝时返回 false，保留旧配置。
 - `error` 态会被重置为 pending 重试。
 
 ### `updateConfig(instanceId, config)`
 
-`bounce(instanceId, { config })` 的薄壳，正常运行中禁用态同样收下新配置、保持禁用。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象。停机中返回 false，不更换配置。
+`bounce(instanceId, { config })` 的薄壳，正常运行中禁用态同样收下新配置、保持禁用。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；拷贝失败时返回 false，保留旧配置。停机中返回 false，不更换配置。
 
 ## 反应式监听
 
