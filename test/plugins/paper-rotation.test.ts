@@ -96,6 +96,37 @@ describe('换新', () => {
     expect(hub.task(id).error).not.toContain('已停止换新');
   });
 
+  it('旧工程包永久取不到时，owner 点「不带旧工程继续」：仍用新代理、不再等旧包，成功后旧代理照常删除', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 15 }) });
+    a.costOf = () => ({ cents: 20 });
+    const first = await runOne(hub, a);
+    a.costOf = () => ({ cents: 1 });
+    const second = await runOne(hub, a, 'error');
+    a.bundles.delete(first.agentId);
+    const stuck = await hub.accept();
+    await until(() => hub.task(stuck).state === 'failed', '取不到旧工程包时失败');
+    expect(hub.task(stuck).error).toContain('不带旧工程继续');
+
+    expect(await hub.driver.freshStart(PAPER_A_ID)).toBeUndefined();
+    const next = await runOne(hub, a);
+    expect(hub.task(next.id).state).toBe('done');
+    expect(next.agentId, '仍在新代理上，不再建一个').toBe(second.agentId);
+    const prompt = a.callsOn('startRun', second.agentId).at(-1)?.args[1];
+    expect(String(prompt)).not.toContain(bundleUrl(first.agentId));
+    await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '没人再等它交接，旧代理照常删除');
+    expect(await hub.driver.freshStart(PAPER_A_ID), '交接已放弃，再点就说明没有在等').toContain('没有在等');
+  });
+
+  it('对照：没有在等旧工程包时「不带旧工程继续」拒绝，不改动账本', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
+    await runOne(hub, a);
+    const before = JSON.stringify(hub.store.data.papers[PAPER_A_ID]);
+    expect(await hub.driver.freshStart(PAPER_A_ID)).toContain('没有在等');
+    expect(JSON.stringify(hub.store.data.papers[PAPER_A_ID])).toBe(before);
+  });
+
   it('失败原因里的出路走得通：新代理首轮留下了工程包时，owner 再换新，下一个代理带它的包继续', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 15 }) });

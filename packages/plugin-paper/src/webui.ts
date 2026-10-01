@@ -76,6 +76,12 @@ const PAGE: WebuiPage = {
                   danger: true,
                 },
                 { label: '恢复', method: 'resumePaper' },
+                {
+                  label: '不带旧工程继续',
+                  method: 'freshStartPaper',
+                  confirm:
+                    '旧工程包永久取不到时用：新代理不再等旧工程包，从它自己的工作区（或空工程）继续。白纸上的成品与任务记录保留，旧工程里没交接过来的进度丢失。继续？',
+                },
               ],
               refresh: 30,
             },
@@ -556,6 +562,10 @@ export function registerPaperPage(deps: {
   mutating(
     'clearPaper',
     onPaper(paperId => driver.clear(paperId), '已清空'),
+  );
+  mutating(
+    'freshStartPaper',
+    onPaper(paperId => driver.freshStart(paperId), '下一件任务不再等旧工程包'),
   );
   mutating(
     'resumePaper',
