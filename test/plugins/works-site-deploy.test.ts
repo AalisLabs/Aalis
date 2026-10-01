@@ -1145,4 +1145,193 @@ describe('作品站编排与假 Pages', () => {
       await fake.close();
     }
   }, 20_000);
+
+  it('撤下过的作品又回到发布列表：去掉墓碑，重新上线，不因路径重复卡死', async () => {
+    const html = new TextEncoder().encode('<!doctype html><p>hello</p>');
+    const item: PublishedItem = {
+      id: 'abcdefghij',
+      group: 'opaque-room',
+      groupLabel: '朋友',
+      surfaces: ['works'],
+      kind: 'html',
+      title: '作品',
+      summary: '',
+      publishedAt: Date.now(),
+      files: [{ path: 'index.html', size: html.length, contentType: 'text/html; charset=utf-8' }],
+      hasThumbnail: false,
+    };
+    let published: PublishedItem[] = [item];
+    const site = await fakeSite({
+      listPublished: () => [...published],
+      readFile: async () => html,
+      readThumbnail: async () => new Uint8Array(),
+    });
+    const { store, deployer } = site;
+    try {
+      deployer.start();
+      await eventually(() => store.data?.current.main?.works.some(work => work.id === item.id) === true, 6000);
+      published = [];
+      deployer.change();
+      await eventually(() => store.data?.current.main?.works.length === 0, 6000);
+      expect(store.data?.tombstones.some(t => t.path.includes(item.id))).toBe(true);
+      published = [item];
+      deployer.retry();
+      await eventually(
+        () => store.data?.current.main?.works.some(work => work.id === item.id) === true || !!store.data?.lastFailure,
+        6000,
+      );
+      expect(store.data?.lastFailure).toBeUndefined();
+      expect(store.data?.current.main?.works.map(work => work.id)).toEqual([item.id]);
+      expect(store.data?.tombstones.some(t => t.path.includes(item.id))).toBe(false);
+    } finally {
+      await site.close();
+    }
+  }, 20_000);
+
+  it('重启时在飞计划里的作品已撤下：放弃重建，照常撤下，不反复失败', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const removed: PublishedItem = {
+      id: 'mbcdefghij',
+      group: 'opaque-room',
+      groupLabel: '朋友',
+      surfaces: ['works'],
+      kind: 'media',
+      title: '图',
+      summary: '',
+      publishedAt: Date.now(),
+      files: [{ path: 'cat.png', size: png.length, contentType: 'image/png' }],
+      hasThumbnail: false,
+    };
+    const marker = 'resumenonce';
+    const at = Date.now() - 10_000;
+    const readFile = vi.fn(async (): Promise<Uint8Array> => {
+      throw new Error('作品文件不存在');
+    });
+    const site = await fakeSite(
+      { listPublished: () => [], readFile, readThumbnail: async () => new Uint8Array() },
+      async (fake, store) => {
+        fake.seedDeployment({ branch: 'main', manifest: { [`/v/${marker}.txt`]: 'a'.repeat(32) }, createdAt: at + 1 });
+        await store.update(state => {
+          state.inFlight = { branch: 'main', nonce: marker, at, files: {}, works: [removed], changed: [], kind: 'new' };
+        });
+      },
+    );
+    const { store, deployer } = site;
+    try {
+      deployer.start();
+      await eventually(
+        () => (!store.data?.inFlight && store.data?.current.main?.works.length === 0) || !!store.data?.lastFailure,
+        6000,
+      );
+      expect(store.data?.lastFailure).toBeUndefined();
+      expect(store.data?.tombstones).toContainEqual(
+        expect.objectContaining({ branch: 'main', path: `/w/${removed.id}/index.html` }),
+      );
+      expect(store.data?.tombstones).toContainEqual(
+        expect.objectContaining({ branch: 'main', path: `/m/${removed.id}.png` }),
+      );
+      expect(readFile).not.toHaveBeenCalled();
+    } finally {
+      await site.close();
+    }
+  }, 20_000);
+
+  it('线上核对请求卡住时按单请求上限失败，不把部署循环挂住', async () => {
+    const site = await fakeSite(
+      { listPublished: () => [], readFile: async () => new Uint8Array(), readThumbnail: async () => new Uint8Array() },
+      undefined,
+      {
+        requestTimeoutMs: 50,
+        fetch: (input, init) =>
+          new URL(String(input)).pathname.startsWith('/v/')
+            ? new Promise<Response>((_, reject) =>
+                init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)),
+              )
+            : fetch(input, init),
+      },
+    );
+    const { store, deployer } = site;
+    try {
+      deployer.start();
+      await eventually(() => store.data?.alerts.some(alert => alert.kind === 'probe') === true, 3000);
+      expect(store.data?.current.main).toBeUndefined();
+    } finally {
+      await site.close();
+    }
+  });
 });
+
+/** 假 Pages 上的一套作品站部署器；prepare 在部署器启动前预置假 Pages 与状态。 */
+async function fakeSite(
+  publish: {
+    listPublished: () => PublishedItem[];
+    readFile: (id: string, path: string) => Promise<Uint8Array>;
+    readThumbnail: (id: string) => Promise<Uint8Array>;
+  },
+  prepare?: (fake: Awaited<ReturnType<typeof startFakePages>>, store: WorksStore) => Promise<void>,
+  extra: Partial<ConstructorParameters<typeof WorksDeployer>[0]> = {},
+) {
+  const fake = await startFakePages();
+  const controller = new AbortController();
+  const store = new WorksStore(memoryStorage(new Map()));
+  await store.load();
+  const token = 'test-token-sentinel';
+  fake.tokens.set(token, { kind: 'account' });
+  fake.project.deployment_configs.production.fail_open = false;
+  fake.project.deployment_configs.preview.fail_open = false;
+  fake.customDomains.push('aalis.localhost');
+  fake.queuedMs = 10;
+  await prepare?.(fake, store);
+  const siteOrigin = `http://aalis.localhost:${fake.port}`;
+  const config: WorksSiteConfig = {
+    targetId: 'works',
+    basePath: '/',
+    accountId: fake.accountId,
+    apiToken: token,
+    projectName: fake.projectName,
+    productionBranch: 'main',
+    siteOrigin,
+    mainOrigins: [siteOrigin],
+    failOpen: false,
+    siteTitle: '作品集',
+    siteIntro: '',
+  };
+  const client = new PagesClient({
+    accountId: fake.accountId,
+    apiToken: token,
+    projectName: fake.projectName,
+    logger: { debug: () => {}, info: () => {}, warn: () => {} },
+    signal: controller.signal,
+    apiBase: fake.apiBase,
+    hostSuffix: fake.hostSuffix,
+    protocol: 'http:',
+    ratePerSecond: 1000,
+    retryBaseMs: 10,
+    pollIntervalMs: 10,
+    deployTimeoutMs: 2000,
+  });
+  const deployer = new WorksDeployer({
+    config,
+    store,
+    client,
+    debounceMs: 30,
+    retryBaseMs: 20,
+    convergenceMs: 100,
+    convergencePauseMs: 5,
+    publish: () => publish,
+    live: () => {},
+    logger: { info: () => {}, warn: () => {} },
+    signal: controller.signal,
+    ...extra,
+  });
+  return {
+    fake,
+    store,
+    deployer,
+    async close() {
+      controller.abort();
+      await deployer.stop();
+      await fake.close();
+    },
+  };
+}
