@@ -55,6 +55,8 @@ export async function resolveRoomPaper(
   if (room.paperEnabled !== true) return { unavailable: '本房间没有开启白纸' };
   const name = typeof room.paperName === 'string' ? room.paperName.trim() : '';
   if (!name) return { paperId: await roomPaperId(sessionId), spec: cfg.defaults, room };
+  const broken = cfg.brokenPapers.get(name);
+  if (broken) return { unavailable: `白纸「${name}」的配置有误（${broken}），改对之前不能用` };
   const spec = cfg.papers.get(name);
   if (!spec) return { unavailable: `本房间写的白纸「${name}」不存在（白纸插件配置的 papers 里没有这个名字）` };
   return { paperId: `n:${name}`, spec, room };
