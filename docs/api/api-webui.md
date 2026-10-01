@@ -138,6 +138,8 @@ interface WebuiFilePayload {
 
 列写 `render: 'image'` 和 `method` 时，挂载后以整行为参数调用动作，接收相同的 `WebuiFilePayload` 并在表格内显示缩略图。只接受 PNG、JPEG、GIF、WebP，并核对文件签名；HTML 和 SVG 不在 WebUI 的源下内联执行。替代文字取该列的值；卸载或更新时释放对象 URL。
 
+列写 `render: 'time'` 时，值是毫秒时间戳或 ISO 字符串，显示为本地日期时间（当年的省去年份），悬停显示完整时间；解析不了的值原样显示，空值不显示。列写 `render: 'link'` 时，只有 `http://`、`https://` 开头的值显示为在新标签页打开的链接（不带 opener 与 referrer），其他值按文本显示。
+
 `stat` 的动作返回 `{ value: number | string }`，`markdown` 的动作返回 `{ content: string }`。表格操作成功会刷新整页的数据组件，使统计、说明和预览链接与表格保持一致。
 
 页面设 `refresh: 30` 可每 30 秒刷新当前页的数据组件；切页与卸载后定时器关闭，表单未保存的编辑不被重置。页面级刷新覆盖统计、说明、信息和当前可见表格，不必在每张表重复声明。表格自己的 `refresh` 仍只刷新本表。

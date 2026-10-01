@@ -232,7 +232,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 - **存储根保留名**：新增内部 `public` 根（`data/stage/public`），与 `paper` 一样不参与会话 checkpoint；自建同名用户根会被跳过并告警，升级前请改名。白纸提名的文件仍先走独立审核，不因位于该目录就自动上线。
 - **绘图引擎**：plugin-draw 改用 util-offline-render，默认尝试 Chromium 沙箱，失败后告警回落；作品审核要求沙箱。浏览器不再接管宿主 SIGINT，网络由请求拦截、解析规则和代理共同限制。
-- **WebUI 页面契约**：api-webui 新增表格 `render: 'image'` 与页面级 `refresh`（秒）。审核、作品站与对应客户端须同批升级，避免图片单元格不可用或后台状态不刷新。已发布的 api-webui 0.11.1 不含这两项：Harness 发布时 api-webui 须另升版本，审核与作品站的 api-webui 下限随之抬到该版本，不能只升级插件实现。
+- **WebUI 页面契约**：api-webui 新增表格 `render: 'image'`、`render: 'time'`、`render: 'link'` 与页面级 `refresh`（秒）。作品站、审核历史与白纸任务的时间列改用 `time`（此前直接显示毫秒数），作品网址改用 `link`。审核、作品站、白纸与对应客户端须同批升级，避免图片单元格不可用、时间与网址按原值显示或后台状态不刷新。已发布的 api-webui 0.11.1 不含这几项：Harness 发布时 api-webui 须另升版本，审核与作品站的 api-webui 下限随之抬到该版本，不能只升级插件实现。
 
 ### 作品集重做外观（@aalis/plugin-works-site）
 
