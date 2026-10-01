@@ -6,9 +6,7 @@
 // 封禁（负等级）由执行守卫挡住，handler 不重复查。返回值不含凭据或链接。
 //
 // paper_status、paper_cancel、paper_send 只认本房间发起的任务（具名白纸被几个房间共用时，别的房间的按「找不到」
-// 回）。paper_send 的类型按白名单：位图与 MP4 按 sendMediaMaxMB、单个 HTML 按 sendHtml 与大小上限，
-// 位图走 image、MP4 走 video、HTML 走 file，远端给的原扩展名须与按文件头判定的类型一致。文件名由宿主按任务名重写，附件指向白纸根里宿主命名的文件。交给网关即标为已交付：
-// 出站是发完即返回，投递失败由适配器写进会话记忆，她之后的回合看得到。
+// 回）。paper_send 的白名单、文件名重写与等平台确认见 deliver.ts。
 // ============================================================
 
 import type { GatewayService } from '@aalis/api-gateway';
@@ -16,10 +14,9 @@ import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
-import { awaitDelivery, type OutgoingMessage } from '@aalis/schema-message';
-import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
+import { deliverArtifacts, rawDeliveryAllowed, sendRefusal } from './deliver.js';
 import type { PaperDriver } from './driver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { currentProgress } from './progress.js';
@@ -41,36 +38,6 @@ const MAX_NAME = 40;
 const RECENT_MS = 24 * 3600_000;
 /** paper_status 里远端说明的长度 */
 const STATUS_NOTE_MAX = 500;
-
-type Artifact = TaskRecord['artifacts'][number];
-type SendableType = Exclude<Artifact['type'], 'other'>;
-
-/** 各类型认的原扩展名：远端给的文件名与按文件头判定的类型不一致时不发 */
-const TYPE_EXTENSIONS: Record<SendableType, readonly string[]> = {
-  png: ['png'],
-  jpeg: ['jpg', 'jpeg'],
-  gif: ['gif'],
-  webp: ['webp'],
-  mp4: ['mp4'],
-  html: ['html', 'htm'],
-};
-
-/** 不发的成品按原扩展名说明原因 */
-const REFUSED_EXTENSIONS: ReadonlyArray<{ exts: readonly string[]; reason: string }> = [
-  {
-    exts: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst'],
-    reason: '压缩包（包括工程包）不发，里面可能夹带可执行文件',
-  },
-  { exts: ['exe', 'dll', 'so', 'dylib', 'com', 'scr', 'jar'], reason: '可执行文件不发' },
-  { exts: ['msi', 'dmg', 'pkg', 'apk', 'ipa', 'deb', 'rpm', 'appimage'], reason: '安装包不发' },
-  {
-    exts: ['sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1', 'vbs', 'js', 'mjs', 'cjs', 'py', 'rb', 'pl', 'php'],
-    reason: '脚本不发，打开就可能被执行',
-  },
-  { exts: ['lnk', 'url', 'webloc', 'desktop'], reason: '快捷方式不发，它可能指向别的程序或网址' },
-  { exts: ['docm', 'dotm', 'xlsm', 'xltm', 'xlam', 'pptm', 'potm', 'ppam'], reason: '带宏的 Office 文档不发' },
-  { exts: ['svg', 'svgz'], reason: 'SVG 能内嵌脚本，不发；要图请让远端另导出 PNG' },
-];
 
 interface PaperToolDeps {
   journal?: TaskJournal;
@@ -127,45 +94,6 @@ function byCreated(a: TaskRecord, b: TaskRecord): number {
   return a.createdAt - b.createdAt;
 }
 
-/** 远端给的相对路径里文件名的扩展名（小写，没有则为空串） */
-function extensionOf(rel: string): string {
-  const base = rel.split('/').pop() ?? '';
-  const dot = base.lastIndexOf('.');
-  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
-}
-
-/** 这件成品能不能发；不能时返回原因 */
-function sendRefusal(artifact: Artifact, cfg: PaperConfig): string | undefined {
-  const ext = extensionOf(artifact.rel);
-  if (artifact.type === 'other') {
-    const refused = REFUSED_EXTENSIONS.find(r => r.exts.includes(ext));
-    return refused?.reason ?? '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页，这件成品不是这几种';
-  }
-  if (artifact.type === 'html') {
-    if (!cfg.sendHtml) return 'owner 没有开启发送网页（sendHtml），这件成品不发';
-    if (artifact.sizeBytes > cfg.sendHtmlMaxBytes) {
-      return `网页 ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendHtmlMaxBytes)}`;
-    }
-  } else if (artifact.sizeBytes > cfg.sendMediaMaxBytes) {
-    const what = artifact.type === 'mp4' ? '视频' : '图片';
-    return `${what} ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendMediaMaxBytes)}（聊天平台只内联发得出这么大的媒体）`;
-  }
-  if (!TYPE_EXTENSIONS[artifact.type].includes(ext)) {
-    return `原文件的扩展名（${ext ? `.${ext}` : '无'}）与文件内容（${artifact.type}）不一致，不发`;
-  }
-  return undefined;
-}
-
-/**
- * 发出去的文件名：任务名去掉控制与格式字符（含双向控制符、零宽字符）、路径分隔符与 :*?"<>|，
- * 首尾去点和空格，截到 40 字；空了用 aalis-paper
- */
-function fileBaseName(name: string): string {
-  const trim = (s: string) => s.replace(/^[.\s]+|[.\s]+$/gu, '');
-  const cleaned = trim(name.replace(/[\p{Cc}\p{Cf}/\\:*?"<>|]/gu, ''));
-  return trim(codePoints(cleaned).slice(0, MAX_NAME).join('')) || 'aalis-paper';
-}
-
 function newTaskId(ledger: LedgerStore): string {
   let id: string;
   do id = `t-${randomHex(4)}`;
@@ -183,17 +111,6 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       .sort(byCreated);
 
   const enter = (ctx: ToolCallContext, kind: 'initiate' | 'use') => enterPaperRoom(deps, ctx, kind);
-
-  /** 经网关发出；网关不在场时改走 outbound:message 事件（出站中间件链被跳过） */
-  async function dispatch(message: OutgoingMessage): Promise<void> {
-    const gateway = deps.gateway.current;
-    if (gateway) {
-      await gateway.dispatchOutbound(message);
-      return;
-    }
-    deps.logger.warn('gateway 服务不在场，白纸出站改走 outbound:message 事件（出站中间件链被跳过）');
-    await deps.events.emit('outbound:message', message);
-  }
 
   async function paperTask(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
@@ -422,54 +339,14 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     if (source?.startsWith('publish:')) return fail('作品上线通知回合只交付对应作品链接，不发送其他任务的文件');
     if (source?.startsWith('paper:') && source !== `paper:${task.paperId}:${task.id}`)
       return fail('白纸完成通知只能发送本次通知对应任务的成品，不能夹带其他任务的文件');
-    if (task.publication) return fail('这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件');
+    if (!rawDeliveryAllowed(task))
+      return fail('这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件');
     if (task.artifactsCleared) return fail(`成品 ${artifactId} 已随白纸清空删除`);
     const refused = sendRefusal(artifact, cfg);
     if (refused) return fail(refused);
 
-    const type = artifact.type as SendableType;
-    const message: OutgoingMessage = {
-      sessionId: ctx.sessionId,
-      platform: ctx.platform,
-      content: '',
-      attachments: [
-        {
-          kind: type === 'mp4' ? 'video' : type === 'html' ? 'file' : 'image',
-          data: artifactUri(task.paperId, task.id, artifact),
-          name: `${fileBaseName(task.name)}.${EXTENSIONS[type]}`,
-          mimeType: MIME_TYPES[type],
-        },
-      ],
-      source: 'agent',
-    };
-    try {
-      await dispatch(message);
-    } catch (err) {
-      return fail(`没有发出：${describe(err)}`);
-    }
-    // 平台确认收下才算交付：交给网关不等于发出，适配器下载或上传失败时 delivery 结算为失败
-    const delivery = message.delivery;
-    if (!delivery) return fail('没有平台适配器接手这条消息，成品没有发出');
-    const markDelivered = () =>
-      ledger.exclusive(async () => {
-        // 插件已停（如被重载）时不再写：旧实例整份写盘会盖掉新实例已写进去的账本
-        if (deps.signal.aborted) return;
-        const current = ledger.data.tasks[task.id];
-        if (!current || current.delivered) return;
-        current.delivered = true;
-        await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${describe(err)}`));
-      });
-    const result = await awaitDelivery(delivery, ctx.signal);
-    if (!result) {
-      // 迟到的确认照样记为已交付，待交付提示随之消失
-      void delivery.then(
-        late => (late.ok ? markDelivered() : undefined),
-        () => undefined,
-      );
-      return fail('成品仍在发送，结果未确认，请勿重发');
-    }
-    if (!result.ok) return fail(`发送失败：${result.error}`);
-    await markDelivered();
+    const result = await deliverArtifacts(deps, task, [artifact], ctx.signal);
+    if (!result.ok) return fail(result.error);
     deps.logger.info(`白纸任务 ${task.id} 的成品 ${artifactId} 已由平台确认收下（房间 ${ctx.sessionId}）`);
     return done({ taskId: task.id, artifactId, message: '平台已确认收下；不代表对方已经看到' });
   }

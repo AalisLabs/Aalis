@@ -27,6 +27,7 @@ import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { configSchema, paperAuditSchema, readConfig } from './config.js';
+import { deliverArtifacts } from './deliver.js';
 import { registerPaperDoctor } from './doctor.js';
 import { PaperDriver } from './driver.js';
 import { LedgerStore } from './ledger.js';
@@ -77,7 +78,20 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
 
   const now = Date.now;
   const journal = new TaskJournal(storage, logger, now);
-  const notices = new PaperNotices({ ledger, events: caps.events, logger, now });
+  const notices = new PaperNotices({
+    ledger,
+    events: caps.events,
+    logger,
+    now,
+    cfg,
+    deliver: (task, artifacts) =>
+      deliverArtifacts(
+        { ledger, gateway: caps.gateway, events: caps.events, logger, signal: lifecycle.signal },
+        task,
+        artifacts,
+        lifecycle.signal,
+      ),
+  });
   const publications = new PaperPublication({
     journal,
     ledger,

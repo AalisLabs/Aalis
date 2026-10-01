@@ -142,6 +142,7 @@ export class PaperPublication {
             state: 'failed',
             reason: '24 小时内没能提交发布（发布目标或发布服务一直不可用）',
             nextAttemptAt: undefined,
+            directSend: true,
           });
           continue;
         }
@@ -189,7 +190,7 @@ export class PaperPublication {
         !task.artifactsCleared &&
         !specOf(this.#d.cfg, task.paperId)?.publishTargets.includes(pub.target)
       ) {
-        await this.#update(task.id, pub, { state: 'failed', reason: '这块白纸未获准使用该发布目标' });
+        await this.#update(task.id, pub, { state: 'failed', reason: '这块白纸未获准使用该发布目标', directSend: true });
       }
       return;
     }
@@ -227,7 +228,7 @@ export class PaperPublication {
     if (pub.artifactIds) {
       const artifacts = pub.artifactIds.map(id => task.artifacts.find(a => a.id === id));
       if (artifacts.some(a => !a)) {
-        await this.#update(task.id, pub, { state: 'failed', reason: '已选成品不再存在' });
+        await this.#update(task.id, pub, { state: 'failed', reason: '已选成品不再存在', directSend: true });
         return;
       }
       if (pub.paths) {
@@ -249,7 +250,7 @@ export class PaperPublication {
       selected = automaticPublicationArtifacts(task);
     }
     if ('reason' in selected) {
-      await this.#update(task.id, pub, { state: 'failed', reason: selected.reason });
+      await this.#update(task.id, pub, { state: 'failed', reason: selected.reason, directSend: true });
       return;
     }
     if (!pub.artifactIds) {
@@ -271,7 +272,7 @@ export class PaperPublication {
       if (pub.coverArtifactId) {
         const artifact = task.artifacts.find(a => a.id === pub.coverArtifactId);
         if (!artifact || !['png', 'jpeg', 'gif', 'webp'].includes(artifact.type)) {
-          await this.#update(task.id, pub, { state: 'failed', reason: '已选封面不再存在' });
+          await this.#update(task.id, pub, { state: 'failed', reason: '已选封面不再存在', directSend: true });
           return;
         }
         cover = new Uint8Array(

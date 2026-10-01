@@ -112,6 +112,8 @@ export interface TaskRecord {
     paths?: string[];
     coverArtifactId?: string;
     nextAttemptAt?: number;
+    /** 提交之前失败、而且是发布环节本身的问题（挑不出成品、目标未获准、24 小时没能提交）：完成通知前先直接发成品 */
+    directSend?: boolean;
   };
   error?: string;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
