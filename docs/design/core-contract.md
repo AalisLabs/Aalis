@@ -14,7 +14,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - 监听器错误互相隔离：单个 handler 抛错（同步或异步）不影响其余 handler，也不使 `emit` reject。
 - `emit` 按注册顺序依次调用，但**顺序不构成语义**：监听方不得依赖自己相对其他监听方的位置。
 - 无返回通道、不可变更 payload 语义、不可截停。
-- sticky 事件（`app:ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发。
+- sticky 事件（`app:ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发；派发进行中登记的监听器排在本轮末尾送达，要等前面的监听器返回或超时（未设上限时一直等）。每个监听器只收到一次。
 
 **services（`provide` / `ServiceRef` / `services`）——供需**
 - 解析顺序恒为 **偏好 > 优先级 > 注册顺序**，所有读口（`current` / `require()` / `all()` / `services.get` / `services.all` / `services.inspect` / `services.names`）一致。激活超过 `slowThresholdMs` 转入后台的提供者，在激活完成前不参与解析：所有读口与激活闸都看不到它登记的服务。

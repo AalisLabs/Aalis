@@ -14,6 +14,7 @@
 
 - `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
 - `provides` 校验同时核对实际登记的激活身份与条目的逻辑 id。由其他激活代登记同名 id 的服务，不再替当前插件满足声明；声明方应自己登记服务，纯代理登记方不要把代登记项写进自己的 `provides`。
+- sticky 事件（`app:ready` / `app:started`）派发进行中登记的监听器只收到一次。此前本轮派发与补发各送一次，在 `app:ready` 里建连接的 OneBot 适配器会因此建出两条连接。派发结束后才登记的仍在下一个微任务收到补发。
 - **字段类型扩展**：`SchemaFieldTypes` 的值由占位标记改为实际取值类型。自定义字段将 `custom: true` 改为 `custom: MyValue`；`api-llm` 0.13.0 已将 `llm-ref` 改为 `ModelRef`。依赖新版类型的消费者必须同步升级。`dynamicOptions` / `allowCustom` 由 schema-config 声明，`secret` 仍由 api-webui 声明；api-webui 0.11.1 的最终字段形状不变。
 - **配置解析行为**：`undefined` / `null` 表示缺省；有限数字和数字字符串按中立标量规则转换。普通无效字段按 schema 默认值回落或省略并告警；敏感地址、命令参数与启用边界使用 `onInvalid: 'error'`，显式无效时拒绝。提供拒绝规则的插件例外：tool-onebot 的开关写坏时按默认值处理并告警，插件照常激活，以免 OneBot 会话历史的访问限制随插件一起消失。MCP client 的坏 server 单独跳过，合法空字符串 argv 保留；storage-local 与 OneBot 的连接/根数组按整体严格策略处理，不会把坏项丢成默认配置后运行。
 - **旧作用域与平台模板**：flow-control 0.13.0、trigger-policy 0.15.0、trigger-laya 0.2.0、checkpoint 0.14.0 的 `scopes` 统一为数组。前三者旧 `null` 表示空范围，需转换为 `[]`；旧字符串按原分隔规则转换。session-manager 0.14.0 的平台 `think: true/false` 转为 `on/off`。运行时不拦截旧写法：旧字符串与 `''` 会告警并回落默认值，`null` 不告警、直接取默认值。升级前请用离线工具的检查模式核对配置，并且在升级后第一次经 WebUI 保存这些插件之前完成；详见 [配置迁移](docs/guide/config-migration.md)。

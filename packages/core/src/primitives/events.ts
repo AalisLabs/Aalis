@@ -53,6 +53,7 @@ export class EventBus {
   /**
    * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时
    * 在下一个微任务里用缓存参数补发回调（异步，与 emit 的投递语义一致）。
+   * 派发进行中登记进同一张表的监听器由本轮派发送达，不再补发，每个监听器只收到一次。
    * 用于"应用生命周期里只发一次的里程碑事件"，
    * 让被热重载的插件在 reactivate 后仍能拿到启动通知。
    * 当前标记为 sticky 的事件：'app:ready'、'app:started'。
@@ -64,6 +65,8 @@ export class EventBus {
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   #stickyArgs = new Map<string, any[]>();
   #stickyEvents = new Set<string>();
+  /** 正在被 emit 遍历的登记表：派发中途登记进其中的监听器由本轮遍历送达，不再补发 */
+  readonly #dispatching = new Set<Set<EventEntry>>();
 
   markSticky(event: string): void {
     this.#stickyEvents.add(event);
@@ -78,7 +81,8 @@ export class EventBus {
    *
    * 若该事件已被标记为 sticky 且历史上 emit 过，则在下一个微任务里
    * 立即用缓存的参数调用 handler 一次（保证语义同步：调用方注册完返回后
-   * 再触发，避免 handler 内部的 await 影响调用方流程）。
+   * 再触发，避免 handler 内部的 await 影响调用方流程）。该事件正在派发、
+   * 登记落进正被遍历的表时不补发：本轮遍历会在末尾访问到它，要等前面的监听器返回或超时。
    * @param owner 清理归属（events 能力传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   on<E extends string & keyof AalisEvents>(
@@ -94,7 +98,7 @@ export class EventBus {
     const entry: EventEntry = { handler, owner };
     set.add(entry);
 
-    if (this.#stickyEvents.has(event) && this.#stickyArgs.has(event)) {
+    if (this.#stickyEvents.has(event) && this.#stickyArgs.has(event) && !this.#dispatching.has(set)) {
       const args = this.#stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发
@@ -153,6 +157,8 @@ export class EventBus {
     const set = this.#handlers.get(event);
     if (!set) return;
     const limit = this.handlerLimit?.(event);
+    // 标记的是这张表而不是事件名：派发途中表被清空后重建，新表里的登记仍走补发
+    this.#dispatching.add(set);
     // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
     for (const { handler, owner } of set) {
       try {
@@ -169,5 +175,7 @@ export class EventBus {
         this.#reportHandlerError(event, err, owner);
       }
     }
+    // 循环体逐个接住监听器的错误、本身不抛，摘标记不需要 finally
+    this.#dispatching.delete(set);
   }
 }
