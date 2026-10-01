@@ -649,7 +649,10 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // flight 的预算），用尽的说明点名最后一次缺的服务；慢激活的阈值定时器只触发一次（删去周期提醒）；LogHub 逐个隔离监听器。
 // 2630 → 2634：2026-09-27 用户批准「uses 那个如果很好修，顺便做了」——definePlugin 逐项核对 uses（CheckedUses），
 // 写错的一项只报它自己，其余绑定不再连带退化成 never；CheckedUses 出现在公开签名里，从包根导出。
-const CORE_CODE_LINE_CEILING = 2634;
+// 2634 → 2632：停机修复（-4）与 provides 归属核对（+2）合入后净减 2 行，实测 2632，当时未同步收紧。
+// 2632 → 2635：2026-10-01 用户授权「如果你觉得有用可以做」的缺陷修复——sticky 事件派发中途登记的监听器只送一次
+// （EventBus 标记正在遍历的登记表）。
+const CORE_CODE_LINE_CEILING = 2635;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

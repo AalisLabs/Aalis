@@ -121,7 +121,7 @@ export class App {
     // 一次，但插件配置热重载会触发 bounce → 新插件实例的
     // events.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
     // CLI TUI 等"在启动后才建立"的逻辑在 bounce 后就永远不会重新执行。
-    // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次。
+    // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次（派发进行中登记的由本轮派发送达）。
     this.#events.markSticky('app:ready');
     this.#events.markSticky('app:started');
     const container = new ServiceContainer();
