@@ -379,6 +379,8 @@ export interface RespawnOptions {
   appDir: string;
   /** 新进程的 cwd：启动时的 cwd，命令行里相对的 --home 才能解析到同一处 */
   cwd: string;
+  /** 额外交给新进程的环境变量（实例锁的交接令牌） */
+  env?: Record<string, string>;
   /**
    * 等待子进程 IPC ready 的超时（毫秒，默认 30000）。
    *
@@ -405,6 +407,37 @@ export function buildRespawnCommand(
   // 会在重启后静默失效。
   const [exec, ...rest] = argv;
   return { exec: exec ?? process.execPath, args: [...execArgv, ...rest] };
+}
+
+/** 服务形态下重启以这个退出码结束：服务管理器（launchd 的 KeepAlive={SuccessfulExit=false}、systemd 的 Restart=on-failure）据此重新拉起 */
+export const SERVICE_RESTART_EXIT_CODE = 75;
+
+/**
+ * 服务形态的重启策略：停掉 App 后以 {@link SERVICE_RESTART_EXIT_CODE} 退出，由服务管理器拉起新进程，
+ * 新进程取锁时本进程的锁已随退出释放。不自己 spawn：detached 的新进程会脱离服务管理器的监管
+ * （launchd 不再看着它，systemd 随 cgroup 把它一起杀掉）。
+ * 服务形态下没有「新版起不来就回滚」：带回滚凭据的重启（市场更新）照常退出，并记一条说明。
+ */
+export function createServiceRestartStrategy(): RestartStrategy {
+  let restarting = false;
+  return {
+    async restart({ stop, rollback }) {
+      if (restarting) {
+        console.error('[aalis] 已有重启在进行中，忽略本次请求。');
+        return;
+      }
+      restarting = true;
+      if (isRestartRollback(rollback)) {
+        console.error(`[aalis] 以服务形态运行，重启交给服务管理器；新版本起不来时不会自动回滚（${rollback.reason}）。`);
+      }
+      try {
+        await stop();
+      } catch (err) {
+        console.error('[aalis] 停止应用时出错，仍继续重启:', err);
+      }
+      process.exit(SERVICE_RESTART_EXIT_CODE);
+    },
+  };
 }
 
 /**
@@ -437,6 +470,7 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
     const { exec, args } = buildRespawnCommand(opts.appDir);
     return spawn(exec, args, {
       cwd: opts.cwd,
+      env: { ...process.env, ...opts.env },
       stdio: withIpc ? ['inherit', 'inherit', 'inherit', 'ipc'] : 'inherit',
       detached: true,
     });

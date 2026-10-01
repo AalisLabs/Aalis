@@ -44,10 +44,12 @@ export {
   createFsPluginLoader,
   createFsYamlConfigProvider,
   createProcessRespawnStrategy,
+  createServiceRestartStrategy,
   isRestartRollback,
   READY_MESSAGE,
   type RespawnOptions,
   type RestartRollback,
+  SERVICE_RESTART_EXIT_CODE,
 } from './providers.js';
 export { type StartAalisOptions, startAalis } from './start.js';
 export { tryDispatchSubcommand } from './subcommand.js';

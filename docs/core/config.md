@@ -115,7 +115,7 @@ WebUI 的启停与改配置路由、mcp-client 的自服务开关按这种方式
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，并按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留）。首次 apply 拿到的就是规范化后的配置。
 - `installConfigHotReload(app, store, discovery, opts)`：文档被外部修改后，先卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对配置有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
 
-`startAalis` 的装配序为：家目录 → 文档 → App → host-paths → host-config → 加载政策 → 发现 → 热重载。
+`startAalis` 的装配序为：家目录 → 实例锁（守护模式）→ 文档 → App → host-paths → host-config → 加载政策 → 发现 → 热重载。实例锁只有 `startAalis` 取，自组装宿主不经过这一步。
 
 自组装宿主按同一顺序接线。`host-paths` 要先于登记插件提供：`@aalis/plugin-storage-local` 与 `@aalis/plugin-package-manager` 以 required 声明它，缺了会停在 pending。
 
