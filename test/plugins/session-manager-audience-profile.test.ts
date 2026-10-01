@@ -108,6 +108,22 @@ describe('受众条目叠加在平台档上', () => {
     expect(warned, '点名取值').toBeTruthy();
     expect(warned, '点名平台').toContain('onebot');
   });
+
+  it('没填平台的条目（WebUI 新增一行未填就保存）跳过并告警，不让整个插件起不来', async () => {
+    const { sm, warns } = await setup([
+      BASE,
+      { enabledToolGroups: ['system'], remoteAgentTypes: ['<实例甲>'] },
+      { platform: '', audience: 'private', enabledToolGroups: ['system'] },
+    ]);
+
+    for (const id of [GROUP, PRIVATE]) {
+      const resolved = sm.resolveConfig(id, 'onebot');
+      expect(resolved.enabledToolGroups, id).toEqual(['search']);
+      expect(resolved.remoteAgentTypes, id).toBeUndefined();
+    }
+    expect(sm.getPlatformProfiles()).toEqual({ onebot: { enabledToolGroups: ['search'], persona: '<群人设>' } });
+    expect(warns.filter(w => w.includes('没有填平台'))).toHaveLength(2);
+  });
 });
 
 describe('owner 面会话不受受众条目影响', () => {
