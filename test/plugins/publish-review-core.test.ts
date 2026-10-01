@@ -564,6 +564,46 @@ describe('作品审核核心', () => {
     await service.close();
   });
 
+  it('她转述过、平台却没确认收下：记下并落盘，之后重发直接发宿主原文', async () => {
+    const clock = { now: 1000 };
+    const seed = new Map<string, string | Uint8Array>();
+    const store = new ReviewStore(memoryStorage(seed));
+    await store.load();
+    const seeded = store.copy();
+    seeded.notices.live = {
+      id: 'aaaaaaaaaa',
+      origin: { ...input().origin, notify: { sessionId: 'room-1', platform: 'onebot' } },
+      content: '作品已上线：https://works.invalid/w/aaaaaaaaaa/',
+      live: false,
+    };
+    await store.save(seeded);
+    const calls: Array<{ direct?: boolean } | undefined> = [];
+    const emit = vi.fn(
+      async (_o: NominateInput['origin'], _c: string, _i: string, _t?: string, opts?: { direct?: boolean }) => {
+        calls.push(opts);
+        if (calls.length === 1) throw Object.assign(new Error('平台没有收下这条通知'), { name: 'NoticeUndelivered' });
+      },
+    );
+    const service = new PublishReviewService({
+      storage: store.storage,
+      store,
+      config: config(),
+      pipeline: { run: vi.fn() },
+      now: () => clock.now,
+      notice: emit,
+    });
+    await service.flushNotices();
+    expect(store.data.notices.live.narrated).toBe(true);
+    const reloaded = new ReviewStore(memoryStorage(seed));
+    await reloaded.load();
+    expect(reloaded.data.notices.live.narrated, '落盘，重启后照样直接发').toBe(true);
+    clock.now += 30_000;
+    await service.flushNotices();
+    expect(calls).toEqual([undefined, { direct: true }]);
+    expect(store.data.notices).toEqual({});
+    await service.close();
+  });
+
   it('通知通道没就绪（网关缺席或尚未开放）时本轮不发，也不计入单条退避', async () => {
     const store = new ReviewStore(memoryStorage(new Map()));
     await store.load();
