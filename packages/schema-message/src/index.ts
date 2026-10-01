@@ -317,10 +317,15 @@ export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string }
 export const DELIVERY_WAIT_MS = 90_000;
 
 /**
- * 等 {@link OutgoingMessage.delivery} 结算；回合中止（latest-wins / 手动 abort）或到 {@link DELIVERY_WAIT_MS}
- * 时不再等，返回 undefined。适配器的发送不随之取消，所以 undefined 只能当「未确认」，不能当「未发送」。
+ * 等 {@link OutgoingMessage.delivery} 结算；signal 中止（回合 latest-wins、手动 abort、插件停机）或到 timeoutMs
+ * （缺省 {@link DELIVERY_WAIT_MS}）时不再等，返回 undefined。适配器的发送不随之取消，所以 undefined 只能当
+ * 「未确认」，不能当「未发送」。
  */
-export function awaitDelivery<T>(delivery: Promise<T>, signal?: AbortSignal): Promise<T | undefined> {
+export function awaitDelivery<T>(
+  delivery: Promise<T>,
+  signal?: AbortSignal,
+  timeoutMs: number = DELIVERY_WAIT_MS,
+): Promise<T | undefined> {
   if (signal?.aborted) return Promise.resolve(undefined);
   return new Promise((resolve, reject) => {
     const settle = (finish: () => void) => {
@@ -329,7 +334,7 @@ export function awaitDelivery<T>(delivery: Promise<T>, signal?: AbortSignal): Pr
       finish();
     };
     const stop = () => settle(() => resolve(undefined));
-    const timer = setTimeout(stop, DELIVERY_WAIT_MS);
+    const timer = setTimeout(stop, timeoutMs);
     signal?.addEventListener('abort', stop, { once: true });
     delivery.then(
       value => settle(() => resolve(value)),

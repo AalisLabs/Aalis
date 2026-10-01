@@ -2,12 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {} from '../../packages/api-agent/src/index.js'; // declaration merging：agent:llm:before 钩子类型
 import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
-import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import type { Events, Logger } from '../../packages/core/src/index.js';
+import { configSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
+import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { PaperNotices } from '../../packages/plugin-paper/src/notices.js';
+import { parseConfig } from '../../packages/schema-config/src/index.js';
+import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 import {
   emptyLedger,
   human,
   LEDGER_URI,
+  memoryStorage,
   PAPER,
   type PaperFiles,
   type PaperHub,
@@ -293,6 +298,35 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     expect(hub.ledger().tasks['t-000000f1'].delivered).toBe(false);
     const hint = await pendingHintFor(hub);
     expect(hint).toContain('t-000000f1');
+  });
+
+  it('直接发送等不到平台确认：通知说已发出、不要重发，不附 paper_send 的提示（免得她再发一遍）', async () => {
+    const files = seed(failedPublication());
+    const logger = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
+    const ledger = new LedgerStore(memoryStorage(files), logger);
+    await ledger.load();
+    const injected: IncomingMessage[] = [];
+    const events = {
+      emit: async (_event: string, message: IncomingMessage) => {
+        injected.push(message);
+      },
+    } as unknown as Events;
+    const cfg = readConfig(parseConfig(configSchema, PILOT_CONFIG), logger);
+    const notices = new PaperNotices({
+      ledger,
+      events,
+      logger,
+      now: Date.now,
+      cfg,
+      deliver: async () => ({ ok: false, error: '成品仍在发送，结果未确认，请勿重发', unconfirmed: true }),
+    });
+    notices.open();
+    await waitFor(() => injected.length === 1, '注入失败通知');
+    const content = injected[0].content;
+    expect(content).toContain('成品已直接发出：a-000000f1、a-000000f2，平台还没确认，不要重发');
+    expect(content).not.toContain('要不要发回本群由你判断');
+    expect(content).toContain('另有成品：a-000000f3');
+    await notices.close();
   });
 
   it('安全：发布检查不通过（审核结论）不自动发，只列出成品编号由她判断；她仍能用 paper_send 手动发', async () => {
