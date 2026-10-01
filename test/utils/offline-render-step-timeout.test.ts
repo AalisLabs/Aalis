@@ -169,6 +169,8 @@ describe('渲染步骤卡住（真浏览器）', () => {
 
   it('没套步骤时限的 CDP 调用挂住时，以两倍步骤时限为上限', async () => {
     const r = makeRenderer();
+    // 先渲染一次把 Chromium 启起来：冷启动在机器忙时就要好几秒，不该算进被测的上限
+    await r.renderPng(req);
     probe.hangNextProbe = true;
     const started = Date.now();
     const error = await r.renderFrames(req, { fps: 2, maxFrames: 4, maxDurationMs: 1000 }).then(
@@ -178,7 +180,7 @@ describe('渲染步骤卡住（真浏览器）', () => {
     const elapsed = Date.now() - started;
     expect(error?.message).toContain('timed out');
     expect(elapsed).toBeGreaterThanOrEqual(2 * STEP_MS - 50);
-    // 含冷启动
+    // 含新建上下文与加载入口
     expect(elapsed).toBeLessThan(2 * STEP_MS + 5000);
   }, 60_000);
 });
