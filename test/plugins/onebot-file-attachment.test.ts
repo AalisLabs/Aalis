@@ -610,6 +610,27 @@ describe('onebot 出站：send_attachment 投递结果', () => {
     expect(t.imageNotes(), '中止后平台照常确认的附件仍归档').toHaveLength(1);
   });
 
+  it('没有回合信号的调用方：确认迟迟不来时到等待上限返回未确认', async () => {
+    const t = await boot({ imageSender: true, replyToSend: 'hold' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      let settled = false;
+      const resultPromise = t.sendAttachment({ kind: 'image', url: `${httpBase}/ok.png` }).then(result => {
+        settled = true;
+        return result;
+      });
+      await until(() => imageOnWire(t.sent()).length > 0);
+      await vi.advanceTimersByTimeAsync(80_000);
+      expect(settled, '上限之前照常等待').toBe(false);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await resultPromise;
+      expect(result).not.toHaveProperty('ok');
+      expect(String(result.error)).toContain('未确认');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('OneBot action 返回失败：工具不报告成功，也不成功归档', async () => {
     const t = await boot({ imageSender: true, replyToSend: 'fail', files: { 'data:/images/a.png': PNG } });
     const result = await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/a.png' });
