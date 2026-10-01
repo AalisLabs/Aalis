@@ -41,6 +41,7 @@
     "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/util-dep-spec": "workspace:>=0.1.1 <1.0.0",
+    "@aalis/util-media-signature": "workspace:>=0.1.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0",
     "express": "^5.1.0",
     "ws": "^8.18.0",
