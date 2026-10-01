@@ -159,8 +159,11 @@ describe('按房间键进继承链', () => {
     ).rejects.toThrow();
   });
 
-  it('平台档缺少必填平台标识时整组拒绝装载', async () => {
-    await expect(setup({ platformProfiles: [{ remoteAgentRoomDailyCents: 100 }] })).rejects.toThrow();
+  it('平台档没填平台的条目整条忽略并告警，它的金额不挂到任何房间', async () => {
+    const { app, sm, warns } = await setup({ platformProfiles: [{ remoteAgentRoomDailyCents: 100 }] });
+    expect(sm.getPlatformProfiles()).toEqual({});
+    expect(warns.join('\n')).toContain('没有填平台');
+    await app.stop();
   });
 
   it('数字标量兼容转换；远端类型数组里的对象、布尔成员被滤掉并告警', async () => {

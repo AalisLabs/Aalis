@@ -48,11 +48,12 @@ const configSchema = defineConfig({
     onInvalid: 'error',
     description: '为每个平台设置默认的会话配置模板。新会话创建时自动应用对应平台的模板。',
     items: {
+      // 不设 required：WebUI 新增一行未填就保存时，缺平台的条目由加载时跳过，
+      // 不让整组判无效、整个插件起不来；其余字段仍按整组严格，金额不会因丢条目变宽。
       platform: {
         type: 'string',
         label: '平台标识',
-        required: true,
-        description: '平台名（如 onebot、webui、cli）',
+        description: '平台名（如 onebot、webui、cli）；留空的条目不生效',
       },
       audience: {
         type: 'select',
@@ -810,19 +811,24 @@ class SessionManager implements SessionManagerService {
   /**
    * 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘）。
    * 写了 audience 的条目按 `<平台>/<受众>` 另存；受众不是 group、private 的整条丢弃并告警，
-   * 不当成不限受众去覆盖整个平台的房间。
+   * 不当成不限受众去覆盖整个平台的房间。没填平台的条目对任何房间都不生效，告警后跳过。
    */
   loadPlatformProfiles(profiles: ConfigOf<typeof configSchema>['platformProfiles']): void {
     for (const entry of profiles) {
+      const platform = entry.platform;
+      if (!platform) {
+        this.caps.logger.warn('有一条平台档没有填平台，整条已忽略');
+        continue;
+      }
       const audience = entry.audience;
       const unrestricted = audience === undefined || audience === '';
       if (!unrestricted && audience !== 'group' && audience !== 'private') {
         this.caps.logger.warn(
-          `平台档 ${entry.platform} 的受众取值 ${JSON.stringify(audience)} 无效（只认 group、private），整条已忽略`,
+          `平台档 ${platform} 的受众取值 ${JSON.stringify(audience)} 无效（只认 group、private），整条已忽略`,
         );
         continue;
       }
-      const key = unrestricted ? entry.platform : `${entry.platform}/${audience}`;
+      const key = unrestricted ? platform : `${platform}/${audience}`;
       const profile: PlatformProfile = {};
       if (entry.persona) profile.persona = entry.persona;
       if (entry.llm && typeof entry.llm === 'object' && entry.llm.provider && entry.llm.model) {
