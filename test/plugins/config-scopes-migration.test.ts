@@ -151,6 +151,28 @@ other: *word
     }
   });
 
+  it('写入保留原权限位，不改写未转换的长字符串', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-scopes-'));
+    try {
+      const file = join(dir, 'config.yaml');
+      // 超过 80 列且带空格：折行会让核对差异时打出与转换无关、可能含凭据的行
+      const longArg = `"Authorization: Bearer ${'placeholder '.repeat(10).trim()}"`;
+      const original = `plugins:\n  '@aalis/plugin-flow-control': {scopes: null}\n  '@aalis/plugin-other':\n    args: [${longArg}]\n`;
+      writeFileSync(file, original);
+      chmodSync(file, 0o666);
+      const result = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', resolve('tools/migrate-config-0.14.ts'), '--write', file],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(0);
+      expect(statSync(file).mode & 0o777).toBe(0o666);
+      expect(readFileSync(file, 'utf8')).toContain(longArg);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('遇到需人工检查项时 --write 不进行部分写入', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aalis-scopes-'));
     try {
@@ -172,6 +194,6 @@ other: *word
 });
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

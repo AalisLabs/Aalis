@@ -14,6 +14,8 @@ import { defineConfig, parseConfig } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 
+// 这里的开关都不标 onInvalid:'error'：本插件同时提供 OneBot 会话历史的拒绝规则，插件一进 error，规则跟着消失，
+// 而 session_get_history 对没有规则的平台默认放行。坏值回落到默认值并告警：默认拒绝的跨读开关回落后仍是拒绝。
 const configSchema = defineConfig({
   groupManagement: {
     label: '群管理工具',
@@ -22,7 +24,6 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '启用群管理工具',
         default: true,
-        onInvalid: 'error',
         description: '禁言、踢人、设置群名片、撤回消息等',
       },
     },
@@ -34,7 +35,6 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '启用群信息查询',
         default: true,
-        onInvalid: 'error',
         description: '查询群/成员信息',
       },
     },
@@ -46,7 +46,6 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '启用账号与好友查询',
         default: true,
-        onInvalid: 'error',
         description: '群列表、好友列表等',
       },
     },
@@ -58,7 +57,6 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '启用特殊交互',
         default: true,
-        onInvalid: 'error',
         description: '戳一戳、群打卡等',
       },
     },
@@ -70,7 +68,6 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '启用 OneBot 专属历史工具',
         default: true,
-        onInvalid: 'error',
         description:
           '注册 onebot_resolve_session_id / onebot_get_session_history（按群号/QQ 号读取近期历史）。只管这两个工具：下面的访问规则始终生效，同样约束通用的 session_get_history。',
       },
@@ -90,28 +87,24 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '允许群聊读取私聊历史',
         default: false,
-        onInvalid: 'error',
         description: '在群会话中调用历史读取工具时，是否允许目标是某个私聊。',
       },
       allowCrossSelf: {
         type: 'boolean',
         label: '允许跨机器人账号读取',
         default: false,
-        onInvalid: 'error',
         description: '不同 selfId 之间跨读。多账号部署才需要。',
       },
       allowCrossGroup: {
         type: 'boolean',
         label: '允许群聊读取其他群聊历史',
         default: true,
-        onInvalid: 'error',
         description: '群会话 → 另一个群会话。默认允许（便于跨群取上下文）。',
       },
       allowCrossPrivate: {
         type: 'boolean',
         label: '允许私聊读取其他私聊历史',
         default: false,
-        onInvalid: 'error',
         description: '私聊会话 → 另一个 QQ 的私聊。默认拒绝（隐私敏感）。',
       },
     },

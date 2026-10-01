@@ -92,17 +92,14 @@ describe('执行工具配置边界', () => {
     expect(registry.getAll().map(tool => tool.name)).toContain('draw_image');
   });
 
+  // OneBot 插件同时提供会话历史的拒绝规则，进 error 会连规则一起撤掉，所以坏开关回落默认值、照常注册规则
   it.each([
     { groupManagement: { enabled: 'false' } },
     { sessionHistory: { allowCrossPrivate: 'false' } },
-  ])('OneBot 的坏工具或历史访问开关拒绝激活：%j', async config => {
-    const { state, registerTool, registerGroup, registerChecker } = await start(onebotTools, config);
-    expect(state?.state).toBe('error');
-    expect(state?.error).toContain('配置项');
-    expect(state?.error).toContain(Object.keys(config)[0]);
-    expect(registerTool).not.toHaveBeenCalled();
-    expect(registerGroup).not.toHaveBeenCalled();
-    expect(registerChecker).not.toHaveBeenCalled();
+  ])('OneBot 的坏工具或历史访问开关回落默认值，仍注册访问规则：%j', async config => {
+    const { state, registerChecker } = await start(onebotTools, config);
+    expect(state?.state).toBe('active');
+    expect(registerChecker).toHaveBeenCalledOnce();
   });
 
   it('OneBot 合法配置可激活并注册会话历史访问规则', async () => {

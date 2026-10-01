@@ -1,4 +1,4 @@
-import { linkSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMap, isScalar, isSeq, parseDocument, type YAMLMap } from 'yaml';
@@ -134,7 +134,7 @@ export function migratePluginConfig(source: string): { text: string; changed: st
     replace(pair.value, 'scopes', scopes, path, shared);
   }
   try {
-    return { text: changed.length ? document.toString() : source, changed, manual };
+    return { text: changed.length ? document.toString({ lineWidth: 0 }) : source, changed, manual };
   } catch {
     throw new Error('配置包含无法安全改写的 YAML 引用，请手动迁移');
   }
@@ -172,6 +172,8 @@ function main(args: string[]): void {
     const updated = join(temporary, 'after');
     writeFileSync(backup, source, { flag: 'wx', mode: 0o600 });
     writeFileSync(updated, result.text, { flag: 'wx', mode: info.mode & 0o777 });
+    // 建文件时的 mode 受 umask 收窄，写完再对齐原权限位。
+    chmodSync(updated, info.mode & 0o777);
     // 同文件系统硬链接原子发布完整备份，且已有备份时不会覆盖。
     linkSync(backup, `${file}.before-schema-0.14`);
     renameSync(updated, file);

@@ -68,7 +68,7 @@ export default definePlugin({
 - `priority?: number`
 - `label?: string` —— 供管控视图展示
 - `entryId?: string` —— 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
-- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好、服务页、`provides` 校验的 `hasByContext` 都认这个 id），清理仍归本激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
+- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好与服务页认这个 id），清理仍归本激活。代登记不替被代者满足 `provides`：校验同时核对实际登记的激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
 
 内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
 
@@ -127,11 +127,11 @@ caps.provide(storage, scoped, {
 
 顶层插件：required 缺席会 pending，恢复后重新激活；胜者替换不一律重启消费者。
 
-`bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳；插件处于禁用态时只换上新配置、保持禁用，启用时按新配置激活。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中 `bounce` / `register` 返回 false。
+`bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳；插件处于禁用态时只换上新配置、保持禁用，启用时按新配置激活。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中六个管理动作一律返回 false。
 
 关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 
-`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` 汇入计划后立即返回 true（不等拆卸完成）；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
+`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 
 插件 dispose 时，容器按清理归属撤回本激活登记的全部服务。登记型 hub（工具 / 命令）由描述符的 registrar 在提供者侧按激活身份退订。
 

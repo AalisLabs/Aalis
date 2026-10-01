@@ -89,6 +89,31 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
     expect(actor).toEqual({ platform: 'webui', userId: 'console' });
   });
 
+  it('静态 YAML 任务的 actor 写成非字符串 → 拒绝激活，不按「留空」补成 owner', async () => {
+    for (const bad of [{ actorUserId: [10001] }, { actorPlatform: true }]) {
+      const app = new App({ name: 'T', logLevel: 'error' });
+      try {
+        app.bind({ provide }).provide(storage, memoryStorage().service as never);
+        await app.plugins.register(toolsPlugin, {});
+        await app.plugins.register(cronEnginePlugin, {});
+        await app.plugins.register(schedulerPlugin, { jobs: [{ name: 'j', interval: 3600, content: 'x', ...bad }] });
+        await app.plugins.idle();
+        const entry = app.plugins.getPlugin(schedulerPlugin.name);
+        expect(entry?.state, JSON.stringify(bad)).toBe('error');
+        expect(entry?.error).toContain(Object.keys(bad)[0]);
+      } finally {
+        await app.stop();
+      }
+    }
+  });
+
+  it('静态 YAML 任务的 actor 写成数字 QQ 号 → 按字符串照常使用', async () => {
+    const { actor } = await actorOfTriggeredJob({
+      jobs: [{ name: 'j', interval: 3600, content: 'x', actorPlatform: 'onebot', actorUserId: 10001 }],
+    });
+    expect(actor).toEqual({ platform: 'onebot', userId: '10001' });
+  });
+
   it('静态 YAML 任务显式写了 actor → 用其值（可降权）', async () => {
     const { actor } = await actorOfTriggeredJob({
       jobs: [{ name: 'j', interval: 3600, content: 'x', actorPlatform: 'onebot', actorUserId: '10001' }],
