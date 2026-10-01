@@ -287,14 +287,18 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
     );
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
-    const inner = bound.hostConfig.require();
+    // 落盘计数挂在存储层：applyPluginConfig 在宿主内部落盘，不经插件拿到的 save
     let saves = 0;
-    const counted: HostConfig = Object.create(inner) as HostConfig;
-    counted.save = () => {
+    const persist = store.persist;
+    store.persist = () => {
       saves++;
-      return inner.save();
+      return persist();
     };
-    const api = attachRoutes({ app: bound.app.require(), plugins: bound.plugins.require(), hostConfig: counted });
+    const api = attachRoutes({
+      app: bound.app.require(),
+      plugins: bound.plugins.require(),
+      hostConfig: bound.hostConfig.require(),
+    });
     return { app, store, api, applies: () => applies, saves: () => saves };
   }
 

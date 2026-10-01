@@ -50,8 +50,7 @@
         "tools"
       ],
       "optional": [
-        "host-config",
-        "plugins"
+        "host-config"
       ]
     }
   }

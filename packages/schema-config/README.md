@@ -1,6 +1,6 @@
 # @aalis/schema-config
 
-配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；对这套词汇的中立解释函数 `defaultsFrom` / `deepMergeDefaults` / `validateConfig` / `removeExtraFields`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
+配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；对这套词汇的中立解释函数 `defaultsFrom` / `deepMergeDefaults` / `validateConfig` / `removeExtraFields`，密钥引用的类型与工具 `SecretRef` / `isSecretRef` / `mapSecretFields` / `SecretPosition`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
 
 `@aalis/core` 把插件的 `configSchema` 当作 opaque 数据透传、不解释任何字段；表单词汇（label / options / textarea …）属呈现层，统一住在本包。同一份 schema 既是表单描述，又是插件配置值类型的来源（`ConfigOf`）和运行时解析规则（`parseConfig`）；渲染宿主（WebUI）与宿主政策（runtime 的配置同步）也用它消费 schema。
 
@@ -13,7 +13,7 @@ import { config, definePlugin, logger } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 
 const configSchema = defineConfig({
-  apiKey: { type: 'string', label: 'API Key', required: true },
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
   port: { type: 'number', label: '端口', default: 8080, min: 1, max: 65535, integer: true },
   mode: {
     type: 'select',
@@ -58,8 +58,18 @@ export default definePlugin({
 - **标量宽容**：YAML 里不加引号的纯数字（QQ 号、口令、端口、环境变量值）在期望字符串的位置照常可用，加了引号的数字在期望数字的位置照常可用；`parseConfig` 返回换算后的值。
 - **`format`**：写宿主文件路径的 `string` / `textarea` 字段声明。`'absolute-path'` 只收绝对路径（`/…`、`C:\…` 或 `\\…`）；`'executable'` 另收不含路径分隔符的命令名（按 PATH 查找），`C:foo` 这类带盘符的相对写法不算。判定忽略首尾空白，空串照常表示未填、不查；只按写法判定、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以不收。
 - **选项即取值范围**：选项按字符串比较，`parseConfig` 取选项声明的原值（WebUI 把数字选项存成字符串，读出时归位成数字）。
-- **`dynamicOptions` / `allowCustom`**：两者影响取值判定，由本包声明。`dynamicOptions` 是动态选项来源的服务名（WebUI 经 webui-server 调该服务的 `listModels()` 或等价方法获取选项），声明后静态 `options` 不再是取值范围，只查取值是字符串或数字；`allowCustom` 表示接受选项之外的值，不查是否在选项内：WebUI 给 multiselect 提供手动输入；select 用它表示静态选项不全（例如由插件在运行时补全选项的字段）。只影响 WebUI 呈现的 `secret` 由 `@aalis/api-webui` 注入。
+- **`dynamicOptions` / `allowCustom`**：两者影响取值判定，由本包声明。`dynamicOptions` 是动态选项来源的服务名（WebUI 经 webui-server 调该服务的 `listModels()` 或等价方法获取选项），声明后静态 `options` 不再是取值范围，只查取值是字符串或数字；`allowCustom` 表示接受选项之外的值，不查是否在选项内：WebUI 给 multiselect 提供手动输入；select 用它表示静态选项不全（例如由插件在运行时补全选项的字段）。
 - **扩展字段类型**：api 包经 declaration merging 往 `SchemaFieldTypes` 登记类型名与取值类型（如 `'llm-ref': ModelRef`），`ConfigOf` 据此推导。本包不校验外来类型的取值：`validateConfig` 跳过，`parseConfig` 除把 `''` 当作未配置外原样透传。
+
+## 密钥字段（`secret`）
+
+`secret: true` 表示字段的值是凭据（API key、token、可能带账号密码的连接串），由本包声明，各宿主都按它处理：值不放在配置文档里，存进宿主的密钥存储（Node 宿主 `@aalis/runtime` 用家目录的 `secrets.yaml`），文档里只写引用 `{ $secret: '<键>' }`（类型 `SecretRef`），宿主把配置交给插件之前解析回原值，展示与回传都不给原值。标在 `map`、`list` 等非标量字段上时整个值算一个密钥。名字像凭据却不是凭据的字段（如 `maxTokens`）写 `secret: false` 表明已判断过。本包只声明词汇，不读写密钥存储。
+
+- **`isSecretRef(value)`**：是不是引用，即只有 `$secret` 一个自有键、值为非空字符串的纯对象。只在 `secret: true` 的字段上有这层含义。
+- **`mapSecretFields(schema, config, fn)`**：逐个处理配置里密钥字段上的值（顶层、分组内、数组元素内；值为 `undefined` 的跳过），`fn` 收到值与位置 `SecretPosition`（`path` 是点号路径，数组元素里的不带下标；`inArray` 表示在数组元素里），`fn` 返回 `undefined` 时删掉这个键。不改入参：有改动时返回浅拷贝（没动到的部分与入参共享），没有改动时返回入参本身，调用方要改写结果请先复制。宿主拆出、解析密钥与给呈现方去掉密钥都用它。
+- **`validateConfig`** 校验的是文档：密钥字段上的引用算合法，不查键在不在。
+- **`parseConfig`** 给插件用：密钥字段上仍是引用，说明宿主没能解析它（键不在密钥存储里），一律不可恢复，消息点名键名；不看 `default` 与 `onInvalid`，在数组元素里也让整次解析失败，不只丢这一条元素。回落默认值会悄悄连上别的东西（例如默认的本机数据库），所以不回落。
+- **`defaultsFrom`** 不产出密钥字段：派生结果会被宿主写进配置文档，密钥的默认值不进文档；`parseConfig` 照常补上默认值。
 
 ## parseConfig 的处置
 
@@ -70,7 +80,7 @@ export default definePlugin({
 - **数组**：值不是数组按无效处理，含严格元素字段时显式无效的数组值会被拒绝；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警，邻居元素照常解析；元素字段的默认值逐元素补齐（runtime 的配置同步不补数组元素的默认值）。
 - **整体配置**：显式非对象且 schema 含严格字段时拒绝；`undefined` / `null` 仍视为缺省。严格错误说明字段路径与安全的类型或约束原因；集合的下标可定位，map 的键可能含密钥，因此错误只定位到 map 字段，不写用户值或键。
 - **schema 外的键**：丢弃并告警。runtime 已先裁掉顶层与分组内的，这里主要覆盖数组元素，以及不经 runtime 的宿主。
-- **不可恢复**（顶层或分组内）：缺失抛 `missingConfigError`，无效抛 `configError`，插件随之进 error 态，在 WebUI 保存或配置文件热重载后重试激活。
+- **不可恢复**（顶层或分组内）：缺失抛 `missingConfigError`，无效抛 `configError`，插件随之进 error 态，在 WebUI 保存或配置文件热重载后重试激活。密钥字段上没被解析的引用见上节，在任何位置都不可恢复。
 - **告警文案**：`配置项 <路径> <原因>，改用默认值 <JSON>`、`配置项 <路径> <原因>，已忽略`、`配置项 <数组路径>[i] 已忽略：<字段> <原因>`。只写路径、类型名与约束，不写原值（可能是密钥）；默认值会写出。
 
 数组也可声明 `onInvalid: 'error'`：非对象元素或元素内不可恢复的字段会拒绝整个数组，避免丢弃坏项后触发空数组的业务默认；元素内普通字段仍按自身的回落策略解析。未声明时继续逐项跳过，适合相互独立的 server 列表。
@@ -79,7 +89,7 @@ export default definePlugin({
 
 `list` 与 `map` 的补充约定：
 
-- **默认值**：`default` 分别写数组与对象，`defaultsFrom` 按值拷贝。`deepMergeDefaults` 合并默认值时递归合并对象（runtime 的配置同步与 WebUI 保存插件配置都用它），因此顶层或分组里的 `map` 会按键补齐：默认映射中的键总会回到用户配置里，删掉也无效。需要用户可删除的预置条目时，默认值写 `{}`，由插件代码兜底。`list` 不参与合并，用户配置了就整体采用。
+- **默认值**：`default` 分别写数组与对象，`defaultsFrom` 按值拷贝（`secret: true` 的除外）。`deepMergeDefaults` 合并默认值时递归合并对象（runtime 的配置同步与 WebUI 保存插件配置都用它），因此顶层或分组里的 `map` 会按键补齐：默认映射中的键总会回到用户配置里，删掉也无效。需要用户可删除的预置条目时，默认值写 `{}`，由插件代码兜底。`list` 不参与合并，用户配置了就整体采用。
 - **未知字段裁剪**：`removeExtraFields` 把 `map` 当作叶子整体保留，不按键裁剪。
 - **缺省 UI**（WebUI 的 SchemaForm）：两者都渲染为多行文本框。`list` 每行一项，空白行忽略；`map` 每行一条 `KEY=VALUE`，按第一个 `=` 切分，键去掉首尾空白，值原样保留，缺少 `=` 或键为空的行不保存。现有的数字、布尔项或值按字符串显示，编辑后写成字符串；其余无法按这套规则逐行表达的值（项或值本身含换行、`list` 含空白项、`null`、嵌套的数组或对象等）会让该字段只读显示，需在配置文件中编辑。旧版存下的空串按空列表 / 空映射显示，保存时写成 `[]` / `{}`。
 

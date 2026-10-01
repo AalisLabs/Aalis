@@ -8,6 +8,7 @@ import {
   type ConfigStore,
   createConfigStore,
   installHostConfig,
+  type SecretStoreInit,
 } from '../../packages/runtime/src/config-store.js';
 import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 
@@ -38,28 +39,30 @@ export function tempConfig(yaml: string): TempConfigHandle {
 
 /**
  * 带配置文档的 App：与 startAalis 同一装配（文档 → App → installHostConfig），供要用 host-config 的测试。
- * 文档缺省为 `{ name: 'T', logLevel: 'error', plugins: {} }`；`provider` 接落盘与外部变更。
+ * 文档缺省为 `{ name: 'T', logLevel: 'error', plugins: {} }`；`provider` 接落盘与外部变更；
+ * `secrets` 给出宿主的密钥存储（不给时没有密钥存储，密钥照旧以明文留在文档里）。
  * 登记插件时 core 不再读文档：要按文档登记，用 {@link registerFromDoc}。
  */
 export function hostedApp(
   doc: Partial<AalisConfig> = {},
-  options: Omit<AppOptions, 'name' | 'logLevel'> & { provider?: ConfigProvider } = {},
+  options: Omit<AppOptions, 'name' | 'logLevel'> & { provider?: ConfigProvider; secrets?: SecretStoreInit } = {},
 ): { app: App; store: ConfigStore } {
-  const { provider, ...appOptions } = options;
-  const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...doc }, provider);
+  const { provider, secrets, ...appOptions } = options;
+  const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...doc }, provider, secrets);
   const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel, ...appOptions });
   installHostConfig(app, store);
   return { app, store };
 }
 
-/** 按文档登记：配置与禁用标记取自文档，与 runtime 发现驱动的登记口径相同 */
+/** 按文档登记：配置（解析密钥引用后）与禁用标记取自文档，与 runtime 发现驱动的登记口径相同 */
 export function registerFromDoc(
   app: App,
   store: ConfigStore,
   definition: Parameters<App['plugin']>[0],
   instanceId = definition.name,
 ): Promise<boolean> {
-  return app.plugin(definition, store.getPluginConfig(instanceId), instanceId, {
+  const { config } = store.resolvePluginConfig(instanceId, definition.configSchema);
+  return app.plugin(definition, config, instanceId, {
     disabled: store.isPluginDisabled(instanceId),
   });
 }

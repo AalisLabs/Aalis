@@ -54,9 +54,8 @@ export type SchemaFieldType = keyof SchemaFieldTypes & string;
 /**
  * 单个配置字段。
  *
- * 声明各渲染宿主共需的字段，以及影响取值判定的属性（`dynamicOptions` / `allowCustom`）；
- * 只影响单一宿主呈现的交互属性（如 `secret`）由消费它们的宿主 api 包
- * （@aalis/api-webui）通过 declaration merging 注入。
+ * 声明各渲染宿主共需的字段、影响取值判定的属性（`dynamicOptions` / `allowCustom`）与各宿主都按它处理的
+ * `secret`；只影响单一宿主呈现的交互属性由消费它们的宿主 api 包通过 declaration merging 注入。
  */
 export interface SchemaField {
   type: SchemaFieldType;
@@ -99,6 +98,83 @@ export interface SchemaField {
    * 只按写法判定、与宿主平台无关：Windows 形状的绝对路径在 POSIX 宿主上也算通过。
    */
   format?: 'absolute-path' | 'executable';
+  /**
+   * 值是凭据（API key、token、带账号密码的连接串）。宿主不把它放在配置文档里：值存进宿主的密钥存储
+   * （Node 宿主是家目录的 `secrets.yaml`），文档里只写引用 {@link SecretRef}，交给插件之前解析回原值；
+   * 展示与回传都不给原值。标在 map、list 上时整个值算一个密钥。插件照常经 parseConfig 读到原值；
+   * 引用没被宿主解析（键不在密钥存储里）时 parseConfig 拒绝激活，不回落默认值。
+   * 名字像凭据却不是凭据的字段（如 `maxTokens`）写 `false` 表明已判断过
+   */
+  secret?: boolean;
+}
+
+/**
+ * 配置文档里密钥字段的值：指向宿主密钥存储里的一个键。几个字段可以指向同一个键。
+ * 只在 `secret: true` 的字段上有这层含义；别的字段上它只是一个普通对象。
+ */
+export interface SecretRef {
+  $secret: string;
+}
+
+/** 是不是密钥引用：只有 `$secret` 一个自有键、值为非空字符串的纯对象 */
+export function isSecretRef(value: unknown): value is SecretRef {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 1 && keys[0] === '$secret' && typeof value.$secret === 'string' && value.$secret !== '';
+}
+
+/** 密钥字段在 schema 里的位置，交给 {@link mapSecretFields} 的回调 */
+export interface SecretPosition {
+  /** 点号路径，数组元素里的字段不带下标：`apiKey`、`auth.token`、`connections.accessToken` */
+  path: string;
+  /** 字段在数组元素里（同一个 path 对应多个值） */
+  inArray: boolean;
+}
+
+/**
+ * 逐个处理配置里密钥字段上的值（顶层、分组内、数组元素内；值为 undefined 的不处理），不改入参：有改动时返回浅拷贝
+ * （没动到的部分与入参共享），没有改动时返回入参本身，调用方要改写结果请先复制。回调返回 undefined 时删掉这个键。
+ * 宿主拆出、解析密钥与给呈现方去掉密钥都用它，密钥字段的位置只在这里认。
+ */
+export function mapSecretFields(
+  schema: ConfigSchema | undefined,
+  config: Record<string, unknown>,
+  fn: (value: unknown, at: SecretPosition) => unknown,
+): Record<string, unknown> {
+  const visit = (
+    fields: Record<string, unknown>,
+    source: Record<string, unknown>,
+    prefix: string,
+    inArray: boolean,
+  ): Record<string, unknown> => {
+    let out = source;
+    const put = (key: string, value: unknown) => {
+      if (out === source) out = { ...source };
+      if (value === undefined) delete out[key];
+      else out[key] = value;
+    };
+    for (const [key, entry] of Object.entries(fields)) {
+      if (!isRecord(entry) || isUnsafeConfigKey(key) || !Object.hasOwn(source, key)) continue;
+      const value = source[key];
+      if ('fields' in entry) {
+        if (isRecord(value) && isRecord(entry.fields)) {
+          const next = visit(entry.fields, value, `${prefix}${key}.`, inArray);
+          if (next !== value) put(key, next);
+        }
+      } else if (entry.type === 'array') {
+        if (Array.isArray(value) && isRecord(entry.items)) {
+          const items = entry.items;
+          const next = value.map(item => (isRecord(item) ? visit(items, item, `${prefix}${key}.`, true) : item));
+          if (next.some((item, i) => item !== value[i])) put(key, next);
+        }
+      } else if (entry.secret === true && value !== undefined) {
+        const next = fn(value, { path: prefix + key, inArray });
+        if (next !== value) put(key, next);
+      }
+    }
+    return out;
+  };
+  return visit(isRecord(schema) ? schema : {}, config, '', false);
 }
 
 export interface SchemaGroup {
@@ -224,7 +300,7 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
 };
 
 /**
- * 从 ConfigSchema 派生默认配置。
+ * 从 ConfigSchema 派生默认配置（密钥字段除外）。
  *
  * ConfigSchema 是插件配置的**唯一声明来源**：每个字段的 `default` 就是运行时默认值，
  * 不存在第二份手抄的默认值对象。宿主在注册插件前用本函数派生出默认配置并深合并进配置文档，
@@ -234,6 +310,8 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
  * - SchemaField / SchemaArray：取 `default`（没写 default 的字段不产出键，
  *   等同于「该字段无默认值」——读取方自行处理 undefined）
  * - SchemaGroup：递归 `fields`，总是产出嵌套对象（即使子字段全无默认值）
+ * - `secret: true` 的字段不产出：派生结果会被写进配置文档，密钥的默认值不进文档（map 的默认值还会被深合并进
+ *   引用对象），插件经 parseConfig 照常补上
  */
 export function defaultsFrom(schema: ConfigSchema | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -244,6 +322,7 @@ export function defaultsFrom(schema: ConfigSchema | undefined): Record<string, u
       out[key] = defaultsFrom(entry.fields);
       continue;
     }
+    if ((entry as SchemaField).secret === true) continue;
     if ('default' in entry) out[key] = cloneConfigValue(entry.default);
   }
   return out;
@@ -309,8 +388,9 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
  * - **只读**：不转换、不回填、不裁剪——回填是 defaultsFrom，裁剪是 removeExtraFields，取值是 parseConfig。
  *   逐字段判定与 parseConfig 共用同一份：这里报 invalid 的值，parseConfig 会回落、忽略或拒绝。
  *   校验器出错的最大代价必须始终是"少一条警告"，因此它对畸形 schema 不抛错。
- * - **只解释本包的词汇**：type/required、约束键与影响取值的 dynamicOptions/allowCustom；
- *   宿主经 declaration merging 注入的呈现属性（如 secret）一概不解读。
+ * - **只解释本包的词汇**：type/required、约束键、影响取值的 dynamicOptions/allowCustom 与 secret；
+ *   宿主经 declaration merging 注入的呈现属性一概不解读。
+ * - **校验的是文档**：`secret` 字段上的 {@link SecretRef} 算合法（值在宿主的密钥存储里），不查引用的键在不在。
  * - **标量宽容**：期望字符串的位置（string/textarea、list 元素、map 值、选项比较）接受有限数字；
  *   期望数字的位置接受去掉首尾空白后能完整解析为有限数的字符串。boolean 不做转换。
  * - **options 即取值范围**：select 有静态 options、没有 dynamicOptions 且 allowCustom 不为 true 时，值须是
@@ -342,6 +422,9 @@ export function validateConfig(schema: ConfigSchema | undefined, config: Record<
  *   默认有 default 回落并告警；无 default 且 required 不可恢复；否则省略并告警。
  *   `onInvalid: 'error'` 的字段遇到显式无效值或坏集合成员时，即使有 default 也不可恢复。
  * - **外来类型**：除 `''` 外原样透传，不校验。
+ * - **密钥字段**：宿主交给插件之前已把引用解析成原值；`secret` 字段上仍是 {@link SecretRef}，说明引用的键不在
+ *   宿主的密钥存储里，一律不可恢复（不回落 default，数组元素里的也不只丢这一条），消息点名键名。owner 写了引用，
+ *   引用落空就是配置错误，回落默认值会悄悄连上别的东西（例如默认的本机数据库）。
  * - **list / map / multiselect**：默认坏元素、坏值逐个丢弃并告警；严格字段拒绝整个值。
  * - **分组**：值不是对象时默认告警并按空对象解析；含严格字段时拒绝显式无效的分组值。
  * - **数组**：值不是数组按无效处理，含严格元素字段时拒绝显式无效的数组值；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警；
@@ -486,6 +569,7 @@ function validateFields(
       if (entry.required && !('default' in entry)) issues.push({ path, message: '必填字段缺失', kind: 'missing' });
       continue;
     }
+    if (entry.secret === true && isSecretRef(value)) continue;
     if (!NEUTRAL_FIELD_TYPES.has(entry.type)) continue;
 
     const verdict = judgeField(entry, value);
@@ -650,12 +734,16 @@ function describeType(value: unknown): string {
 
 type Warn = (message: string) => void;
 
-/** 顶层或分组内无法恢复的字段：parseConfig 把它转成 missingConfigError / configError 抛出，数组元素内只丢这一条元素 */
+/**
+ * 顶层或分组内无法恢复的字段：parseConfig 把它转成 missingConfigError / configError 抛出，数组元素内只丢这一条元素；
+ * `fatal` 的（没解析的密钥引用）在数组元素里也让整次解析失败
+ */
 class UnrecoverableField extends Error {
   constructor(
     readonly path: string,
     readonly reason: string,
     readonly missing: boolean,
+    readonly fatal = false,
   ) {
     super(`${path} ${reason}`);
   }
@@ -711,6 +799,9 @@ function parseField(field: SchemaField, value: unknown, path: string, warn: Warn
     if (field.required) throw new UnrecoverableField(path, '必填字段缺失', true);
     return undefined;
   }
+  if (field.secret === true && isSecretRef(value)) {
+    throw new UnrecoverableField(path, `引用的密钥 ${value.$secret} 不在宿主的密钥存储里`, false, true);
+  }
   if (!neutral) return cloneConfigValue(value);
   const verdict = judgeField(field, value);
   if ('invalid' in verdict) return fallBack(field, path, verdict.invalid, warn);
@@ -749,7 +840,7 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
       out.push(parseEntries(entry.items, item, `${at}.`, message => pending.push(message)));
     } catch (err) {
       if (!(err instanceof UnrecoverableField)) throw err;
-      if (entry.onInvalid === 'error') throw err;
+      if (entry.onInvalid === 'error' || err.fatal) throw err;
       warn(`配置项 ${at} 已忽略：${err.path.slice(at.length + 1)} ${err.reason}`);
       continue;
     }

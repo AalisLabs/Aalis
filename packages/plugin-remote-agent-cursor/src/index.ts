@@ -7,7 +7,6 @@
 // ============================================================
 
 import { remoteAgent } from '@aalis/api-remote-agent';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import { CursorProvider, type CursorProviderOptions } from './provider.js';

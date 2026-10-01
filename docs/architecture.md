@@ -30,7 +30,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 | 宿主件 | 接到 core 的方式 | 默认实现（在 `@aalis/runtime`） | 职责 |
 |---|---|---|---|
 | 宿主路径 | `host-paths` 服务（`@aalis/api-host-paths`） | `startAalis` 解析家目录与安装集（`parseHostArgs` / `resolveHome` / `derivePaths`） | 家目录、安装集与家目录布局的绝对路径 |
-| 配置文档 | `host-config` 服务（`@aalis/api-host-config`） | `createFsYamlConfigProvider()` + `createConfigStore()` / `installHostConfig()` | 配置读 / 写 / `fs.watch` 热重载 |
+| 配置文档 | `host-config` 服务（`@aalis/api-host-config`） | `createFsYamlConfigProvider()` + `createFsSecretsProvider()` + `createConfigStore()` / `installHostConfig()` | 配置与密钥文件读 / 写 / `fs.watch` 热重载 |
 | 插件发现 | `app.pluginAll`；热扫描为 `plugin-source` 服务（`@aalis/api-plugin-source`） | `createFsPluginLoader()` / `createNodeModulesPluginLoader()` + `createPluginDiscovery()` | 扫描 `packages/` 或项目依赖 + dynamic import，整批登记 |
 | 重启策略 | `AppOptions.restartStrategy`（`RestartStrategy`） | `createProcessRespawnStrategy()` | `child_process.spawn` 重启进程 |
 | dev 开关 | `AppOptions.devMode`（`boolean`） | `process.env.NODE_ENV !== 'production'` | dev 校验开关 |

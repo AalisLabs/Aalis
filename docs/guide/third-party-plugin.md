@@ -151,7 +151,6 @@ for (const root of roots) {
 ```ts
 import { definePlugin, config, logger } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import type {} from '@aalis/api-webui'; // SchemaField 表单属性（secret 等）
 
 const configSchema = defineConfig({
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
@@ -169,10 +168,12 @@ export default definePlugin({
 });
 ```
 
-> `secret` 不是 `SchemaField` 的自带字段——`@aalis/schema-config` 只声明各宿主共需的字段
-> （`type` / `label` / `description` / `default` / `required` / `options` 与约束键）和影响取值判定的
-> `dynamicOptions` / `allowCustom`；`secret` 只影响 WebUI 呈现，由 `@aalis/api-webui` 经
-> declaration merging 注入。用到它时**必须** `import type {} from '@aalis/api-webui'`。
+> `secret: true` 表示字段的值是凭据，由 `@aalis/schema-config` 声明，不需要引入 `@aalis/api-webui`。
+> 宿主把它的值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只留引用 `{ $secret: '<键>' }`，
+> WebUI 不回显原值；插件经 `parseConfig` 读到的仍是原值。引用的键不在密钥存储里时 `parseConfig` 拒绝激活，
+> 不回落默认值；这一行为在本批新版 schema-config 里，对它的依赖写成范围、下限抬到这个版本。值不是凭据、名字却像凭据的字段（如 `maxTokens`）可以写 `secret: false` 表明已判断过。
+> 要把配置写回配置文件，用 `host-config` 的 `applyPluginConfig`，不要把 `parseConfig` 的结果或 `config`
+> 原样交给 `setPluginConfig`：其中密钥字段是原值，宿主会拒收（见 [运行态与配置文档](../core/config.md#跨重启保留)）。
 > 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`，
 > 值写该类型的取值类型（如 `'llm-ref': ModelRef`）。
 

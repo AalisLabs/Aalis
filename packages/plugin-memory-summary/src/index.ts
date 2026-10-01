@@ -99,6 +99,7 @@ const configSchema = defineConfig({
     type: 'number',
     label: '摘要 Token 占比',
     default: 0.05,
+    secret: false,
     description:
       '摘要占模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。 实际 token 上限 = contextLength × 比例，自动适配不同模型',
   },

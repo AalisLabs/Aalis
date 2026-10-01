@@ -43,7 +43,7 @@ interface BoundWebui extends ServiceRef<WebUIService> {
 
 本包向 `PluginMeta` 注入 `extends?: ExtendDeclaration`（core 不读，仅 WebUI 展示）。`subsystem` 是 `PluginDefinition` 上的展示字段，写在 `definePlugin({ subsystem })`。
 
-向 `@aalis/schema-config` 的 `SchemaField` 注入 `secret`。`dynamicOptions` / `allowCustom` 影响取值判定，由 `@aalis/schema-config` 自己声明。
+本包不向 `@aalis/schema-config` 的 `SchemaField` 注入属性：`secret`（值是凭据，宿主存进密钥存储、WebUI 不回显）与影响取值判定的 `dynamicOptions` / `allowCustom` 都由 `@aalis/schema-config` 声明，插件用它们不必引入本包。
 
 页面与页面动作**不是**静态模块字段：在 `apply` 里经 `webui.registerPage` / `webui.registerAction` 登记。
 
@@ -184,5 +184,5 @@ interface WebuiPage {
 
 ## 相关
 
-- ConfigSchema 来自 `@aalis/schema-config`（本包经 declaration merging 向其 `SchemaField` 注入 `secret`）
+- ConfigSchema 来自 `@aalis/schema-config`（含 `secret` 在内的字段属性都由它声明）
 - 事件 `'tool:execute'` 与 `'token:usage'` 都被 webui-server 转 WebSocket 推送给前端

@@ -176,9 +176,9 @@ lifecycle.onDispose(() => {
 
 `configSchema` 写在 `definePlugin` 上，同时描述表单、配置类型与解析规则。使用 `@aalis/schema-config` 的 `defineConfig` 保留类型信息，在 apply 开头调用 `parseConfig(configSchema, config, logger)`，后续只使用解析结果。Core 不解释 schema。
 
-- `secret: true` 只影响 WebUI 的显示：查看时遮蔽、编辑时用密码框，保存照常写入框里的值；要清空就保存空串
+- `secret: true` 表示值是凭据（API key、token、带账号密码的连接串）：宿主把值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只放引用，WebUI 只显示「已设置」、不回显原值。插件经 `parseConfig` 读到的仍是原值；引用的键不在密钥存储里时 `parseConfig` 拒绝激活，不回落默认值（不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出）。名字像凭据却不是凭据的字段（如 `maxTokens`）写 `secret: false`。存放与写入规则见 [运行态与配置文档](./core/config.md#密钥配置)
 - `required: true` 且没有默认值的字段未填时，`parseConfig` 抛出配置错误；数组元素中此类错误只丢弃该元素并告警。跨字段、条件必填等语义仍由插件核对
-- `default` 是唯一默认值来源；宿主用 `defaultsFrom` 回填文档，插件用 `parseConfig` 取得默认值，不依赖宿主是否做过回填
+- `default` 是唯一默认值来源；宿主用 `defaultsFrom` 回填文档（密钥字段的默认值不写进文档），插件用 `parseConfig` 取得默认值，不依赖宿主是否做过回填
 - 普通字段无效时回落默认值并告警；`onInvalid: 'error'` 的字段拒绝无效值，即使有默认值也不回落。地址、启动参数、访问边界等字段应显式声明这一策略；缺省规则不变。例外：插件自己登记拒绝规则或访问检查器时，相关字段不要声明这一策略，默认值取收紧的一侧，坏值回落并告警。插件进 error 会连规则一起撤掉，没有规则时访问反而放开
 - 写宿主文件路径的 `string` / `textarea` 字段声明 `format`：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名（不含路径分隔符，`C:foo` 这类带盘符的相对写法不算）；判定忽略首尾空白，空串照常表示未填；只看写法、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准：宿主进程的 cwd 不带语义（家目录与安装集经 `host-paths` 取得，见 [api-host-paths](./api/api-host-paths.md)）
 - 用 `ConfigOf<typeof configSchema>` 推导配置类型；解析后的派生列表等另行计算，不重复维护默认值对象或取值断言
@@ -186,7 +186,7 @@ lifecycle.onDispose(() => {
 
 ### 配置变更如何触发 reload
 
-用户在 WebUI 点保存 → WebUI 调 `updateConfig(instanceId, newConfig)`，成功后把新配置写进配置文档并 `save()`。`updateConfig` 本身只改运行态：
+用户在 WebUI 点保存 → WebUI 调 host-config 的 `applyPluginConfig(instanceId, newConfig)`，宿主拆出密钥、以解析后的配置调 `updateConfig`，成功后写配置文档并落盘。`updateConfig` 本身只改运行态：
 
 1. 配置先拷贝再挂进 entry
 2. 如果当前 active：`disposeAsync` 你的激活（`onDrain` 然后 `onDispose`，异步清理会被等待）→ pending → `recompute('changed')` 按拓扑重激活

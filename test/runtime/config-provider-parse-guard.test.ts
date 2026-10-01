@@ -94,7 +94,7 @@ describe('FsYamlConfigProvider 解析守卫', () => {
     expect(await waitFor(() => warns.some(w => w.includes('解析失败')))).toBe(true);
     const msg = warns.find(w => w.includes('解析失败'));
     expect(msg).not.toContain('sk-LEAK');
-    expect(msg).toMatch(/line \d+/);
+    expect(msg).toMatch(/第 \d+ 行/);
   });
 
   it('启动语法错误响亮拒启，且抛错消息同样不携带相邻行源文', () => {
@@ -109,9 +109,29 @@ describe('FsYamlConfigProvider 解析守卫', () => {
     expect(thrown?.message).not.toContain('sk-LEAK');
   });
 
+  it('报错首行本身带原文的写法（yaml 的「Not a YAML token: …」）：只给错误码与行列，启动与监听都不带值', async () => {
+    writeFileSync(file, 'apiKey: >- sk-LEAK-abc123\n', 'utf-8');
+    let thrown: Error | undefined;
+    try {
+      createFsYamlConfigProvider(file);
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown?.message).toMatch(/解析失败：UNEXPECTED_TOKEN（第 1 行第 \d+ 列）/);
+    expect(thrown?.message).not.toContain('sk-LEAK');
+
+    writeFileSync(file, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    const { provider } = createFsYamlConfigProvider(file);
+    unwatch = provider.watch?.(() => {}) ?? null;
+    await settle();
+    atomicWrite(file, 'name: Aalis\napiKey: >- sk-LEAK-abc123\n');
+    expect(await waitFor(() => warns.some(w => w.includes('解析失败')))).toBe(true);
+    expect(warns.find(w => w.includes('解析失败'))).not.toContain('sk-LEAK');
+  });
+
   it('启动时裸标量：响亮拒启，不进 core 摊字符', () => {
     writeFileSync(file, 'foo\n', 'utf-8');
-    expect(() => createFsYamlConfigProvider(file)).toThrowError(/不是一个配置对象（得到 string）/);
+    expect(() => createFsYamlConfigProvider(file)).toThrowError(/不是一个映射（得到 string）/);
   });
 
   it('启动时缺文件：warn 点名绝对路径并回落内存默认（不再无声）', () => {

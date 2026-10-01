@@ -23,7 +23,7 @@ interface PluginSourceService {
 - 返回本次新登记的主实例名（即定义名）。
 - 兑现时新插件已落账并尽力即时激活，不等状态机静置。要判断某个插件是否就位，看 plugins 服务的注册表（`getStatus()`），不看返回值。
 
-Node 宿主里，`startAalis` 用 `createPluginDiscovery(app, loader, doc)` 构造发现驱动：冷启动调用 `loadAll()`，把发现的插件连同配置文档里的配置与禁用标记整批交给 `app.pluginAll`；`rescan` 以本描述符独占登记在根上。扫描范围由加载器决定：`createNodeModulesPluginLoader` 读取项目 `package.json` 的直接依赖，`createFsPluginLoader` 扫描 `packages/` 目录。
+Node 宿主里，`startAalis` 用 `createPluginDiscovery(app, loader, store)` 构造发现驱动：冷启动调用 `loadAll()`，把发现的插件连同配置文档里的配置（解析密钥引用后）与禁用标记整批交给 `app.pluginAll`；`rescan` 以本描述符独占登记在根上。扫描范围由加载器决定：`createNodeModulesPluginLoader` 读取项目 `package.json` 的直接依赖，`createFsPluginLoader` 扫描 `packages/` 目录。
 
 ## 消费方
 

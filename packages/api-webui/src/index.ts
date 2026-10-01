@@ -229,17 +229,6 @@ declare module '@aalis/core' {
   }
 }
 
-declare module '@aalis/schema-config' {
-  /**
-   * WebUI 表单交互属性 —— 由本包注入（schema-config 的 SchemaField 只声明各宿主共需的字段与影响取值判定的字段）。
-   * 只被 WebUI 配置表单消费；其他宿主可以忽略。
-   */
-  interface SchemaField {
-    /** 标记为敏感字段，前端显示时自动遮蔽 */
-    secret?: boolean;
-  }
-}
-
 /**
  * 插件可以声明它对 core 做了哪些扩展，用于前端展示和文档生成。
  *

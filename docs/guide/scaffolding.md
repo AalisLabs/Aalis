@@ -18,7 +18,7 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 | `create-aalis-plugin` | 一个**插件骨架包**（npm 包） | 你要给 Aalis 写并发布一个扩展插件 | `create-aalis-plugin/src/cli.ts` |
 
 心智模型：
-- **项目** = 一个家目录 `home/`（主配置 `aalis.config.yaml`，密钥也写在里面；另有数据与日志）+ 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件（`node-modules-loader.ts`）。
+- **项目** = 一个家目录 `home/`（主配置 `aalis.config.yaml`，密钥字段只放引用；密钥文件 `secrets.yaml`；另有数据与日志）+ 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件（`node-modules-loader.ts`）。
 - **插件** = 一个默认导出 `definePlugin({ name, uses, apply })` 产物的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 runtime 发现、交给 core 注册。
 
 两个脚手架遵循同一条外部兼容约定：**生成的依赖版本写 `"latest"`（或解析到的 `^<最新版>`），绝不写 `workspace:`**——脚手架产物不在本 monorepo 内，`workspace:` 协议在外部装不上（`create-aalis/cli.ts`、`create-aalis-plugin/cli.ts`）。
@@ -51,7 +51,7 @@ npm create aalis@latest my-bot -- --tier minimal --no-install
 
 ```bash
 cd my-bot
-# 若所选插件需要 API key：直接填进 home/aalis.config.yaml（home/ 已在生成的 .gitignore 里）
+# 若所选插件需要 API key：填进 home/aalis.config.yaml，启动时自动移进 home/secrets.yaml（home/ 已在生成的 .gitignore 里）
 npm start
 
 # 一次性子命令：等价于聊天里的 /status，执行完即退出（`@aalis/runtime` 默认行为）；
@@ -104,8 +104,8 @@ my-bot/
 ├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下）
 ├── index.mjs           # 一行 startAalis() 启动
 ├── home/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
-│   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins / disabledPlugins，密钥也写在这里
-│   └── secrets.yaml        # 留给密钥（生成时为空，0600），目前不读取
+│   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins / disabledPlugins；密钥字段只放引用
+│   └── secrets.yaml        # 密钥的值（生成时为空，0600）
 ├── .gitignore          # node_modules/ home/ *.log dist/
 └── README.md           # 启动/配置/装更多插件指引
 ```
@@ -139,7 +139,7 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 
 ### 配置约定
 
-`home/aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填一个空的配置桩（如 `apiKey: ""`），填进去即可；其余用空 `plugins: {}` 默认配置启动。
+`home/aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填一个空的配置桩（如 `apiKey: ""`），填进去即可（空串不算密钥值，留在配置里；填了值的在启动时移进 `secrets.yaml`）；其余用空 `plugins: {}` 默认配置启动。
 
 装了 `plugin-session-manager` 时，还会给已选装的 owner 专用平台（`cli`、`webui`）各写一条平台档，开放全部工具分组：
 
@@ -157,7 +157,7 @@ plugins:
 
 首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 
-**密钥直接写在 `home/aalis.config.yaml` 里，`home/` 在生成的 `.gitignore` 内、不入库。** 曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把家目录本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。`home/secrets.yaml` 目前不读取，密钥写在那里不会生效。
+**密钥的值存在 `home/secrets.yaml` 里**，`home/aalis.config.yaml` 只放引用。填写时直接写进 `aalis.config.yaml` 或在 WebUI 配置页填都可以：启动或热重载时，runtime 把标了 `secret` 的字段上的明文移进 `secrets.yaml`（0600），原处换成 `{ $secret: '<键>' }`，日志只写字段路径与键名。移走之前的明文可能还留在编辑器的备份文件里。`home/` 在生成的 `.gitignore` 内、不入库；备份家目录时连同 `secrets.yaml` 一起备份。规则见 [运行态与配置文档](../core/config.md#密钥配置)。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把家目录本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
 
 > 生态约定的「更多插件不在终端铺列」：长尾插件发现交给 WebUI 的「插件市场」页（`cli.ts`）。装新插件只需 `npm install @aalis/plugin-<name>`，装上即被自动发现加载。
 
@@ -314,7 +314,6 @@ export default definePlugin({
 ```ts
 import { config, definePlugin, logger } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import type {} from '@aalis/api-webui';
 
 const configSchema = defineConfig({
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
@@ -331,7 +330,7 @@ export default definePlugin({
 });
 ```
 
-配置 schema 的字段归属（`secret` 等渲染属性来自 api-webui 而非 core）见 [第三方插件开发者指南](./third-party-plugin.md) 第 3 节。
+`secret: true` 由 `@aalis/schema-config` 声明，表示值是凭据：宿主存进 `secrets.yaml`、WebUI 不回显，插件经 `parseConfig` 读到的仍是原值。字段属性的细节见 [第三方插件开发者指南](./third-party-plugin.md) 第 3 节。
 
 ### 3. 本地验证 → 发布
 

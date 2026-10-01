@@ -36,8 +36,12 @@ export interface AalisConfig {
 /**
  * 插件可见的配置文档读写面。
  *
- * 写方法只改文档，不改运行态；管理动作（plugins.enable / disable / updateConfig、services.prefer）
- * 也只改运行态，不写文档。要跨重启保留，调用方两边都写：先做管理动作，成功后写文档，再 save()。
+ * 文档与运行态是两种形态：schema 里 `secret: true` 的字段在文档里是引用 `{ $secret: '<键>' }`，值在宿主的
+ * 密钥存储里，宿主交给插件（运行态、`caps.config`）之前解析成原值。本接口读写的都是文档形态。
+ *
+ * 改插件配置用 {@link HostConfig.applyPluginConfig}：它一步完成运行态、文档、密钥与落盘。
+ * 其余写方法只改文档，不改运行态；管理动作（plugins.enable / disable、services.prefer）也只改运行态，
+ * 不写文档。要跨重启保留启停与偏好，调用方两边都写：先做管理动作，成功后写文档，再 save()。
  * 按实例 id 取放的方法遇到 `__proto__` / `constructor` / `prototype` 这类 id 抛「插件 id 不合法」。
  */
 export interface HostConfig {
@@ -49,8 +53,31 @@ export interface HostConfig {
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K];
   getAll(): Readonly<AalisConfig>;
   set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void;
+  /**
+   * 实例在文档里的配置：密钥字段上是引用，不是原值（要原值读 `caps.config`）。返回的是文档里的活对象，
+   * 改写请复制后经 {@link HostConfig.applyPluginConfig} 或 setPluginConfig 写回，不要就地修改
+   */
   getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(instanceId: string): T;
+  /**
+   * 只写文档、不改运行态。只收文档形态：宿主查得到实例的 schema 时，密钥字段上的非空明文（例如把 `caps.config`
+   * 原样写回）抛错，不让原值进文档。改配置要连运行态一起生效用 {@link HostConfig.applyPluginConfig}
+   */
   setPluginConfig(instanceId: string, config: Record<string, unknown>): void;
+  /**
+   * 改一个实例的配置并让它生效：拆出密钥、更新运行态（未登记的后缀实例按同模块的定义登记）、写文档、落盘。
+   *
+   * `submitted` 是文档形态，密钥字段上另可写新值：
+   * - 引用 `{ $secret: '<键>' }`：保持（或改指向那个键）；
+   * - 非空明文：顶层与分组里的字段写进该实例当前文档在同一位置引用的键（键被别处共用时一并改到它们），
+   *   没有引用时新建键；数组元素里的字段一律新建键；
+   * - `''`、空 map、空 list：不是密钥值，原样写进文档。
+   *
+   * 运行态不受理（停机中、正在卸载、登记被拒）时返回 `refused`，文档与密钥都不改。
+   * 受理后返回 `applied`：`reloaded` 为 false 表示解析出的配置与运行态相同、实例在 active，没有重启；
+   * `saveError` 是落盘失败（拒写用 {@link isConfigSaveRefused} 判定），此时改动已在运行态与文档里生效，只是没写进文件。
+   * 参数不合法时抛错：id 不合法，或实例没登记、也没有可用来新建它的同模块定义（模块须已登记且声明 reusable）。
+   */
+  applyPluginConfig(instanceId: string, submitted: Record<string, unknown>): Promise<ApplyPluginConfigResult>;
   removePluginConfig(instanceId: string): void;
   isPluginDisabled(instanceId: string): boolean;
   setPluginEnabled(instanceId: string, enabled: boolean): void;
@@ -58,7 +85,7 @@ export interface HostConfig {
   setServicePreference(name: string, contextId: string): void;
   removeServicePreference(name: string): void;
   /**
-   * 持久化当前文档。返回的 Promise 兑现时保存已完成（宿主不持久化时立即兑现、不写盘）；失败以拒绝传出，调用方应 await。
+   * 持久化当前文档（连同宿主的密钥存储，先写密钥）。返回的 Promise 兑现时保存已完成（宿主不持久化时立即兑现、不写盘）；失败以拒绝传出，调用方应 await。
    * 配置源有尚未生效的外部修改而拒写时以 {@link ConfigSaveRefusedError} 拒绝（用 {@link isConfigSaveRefused} 判定），
    * 其它失败（如写入出错）原样传出。
    * 失败时提供方已记一笔日志（拒写记告警，其它记 error）并把拒绝标记为已处理：不 await 的调用不会变成未处理拒绝。
@@ -66,6 +93,11 @@ export interface HostConfig {
    */
   save(): Promise<void>;
 }
+
+/** {@link HostConfig.applyPluginConfig} 的结果 */
+export type ApplyPluginConfigResult =
+  | { status: 'refused' }
+  | { status: 'applied'; reloaded: boolean; saveError?: unknown };
 
 /**
  * 宿主因配置源有尚未生效的外部修改而拒绝保存：可预期的拒绝（盘上内容受保护），不是落盘故障。

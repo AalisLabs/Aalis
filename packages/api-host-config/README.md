@@ -5,7 +5,10 @@
 ## 角色
 
 - `hostConfig`：服务描述符。Node 宿主 `@aalis/runtime` 把配置文档（`aalis.config.yaml`）以它独占登记在根上；别的宿主要让插件读写文档，自己提供。管理类插件（WebUI、市场、CLI、authority）在 `uses` 里声明它。
-- `HostConfig`：文档读写面加 `save()`。写方法只改文档；管理动作只改运行态。要跨重启保留，调用方两边都写。
+- `HostConfig`：文档读写面加 `save()`。读写的是文档形态：schema 里 `secret: true` 的字段在文档里是引用 `{ $secret: '<键>' }`，值在宿主的密钥存储里，插件读原值用自己的 `config`。
+  - 改插件配置用 `applyPluginConfig(instanceId, submitted)`：拆出密钥、更新运行态、写文档并落盘一步完成，返回 `{ status: 'refused' }` 或 `{ status: 'applied', reloaded, saveError? }`。
+  - `setPluginConfig` 只写文档，密钥字段上的非空明文抛错（宿主查得到 schema 时）。
+  - 其余写方法只改文档；启停、服务偏好等管理动作只改运行态，要跨重启保留，调用方两边都写。
 - `AalisConfig`：配置文档类型，也是各域业务字段做 declaration merging 的目标。
 - `ConfigSaveRefusedError` / `isConfigSaveRefused(err)`：配置源有尚未生效的外部修改、宿主为免覆盖而拒写时 `save()` 的拒绝原因，以及用来把它与写入失败区分的判据。判据按错误的 `name` 判定，进程里装有两份本包时也认得。
 

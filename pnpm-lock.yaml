@@ -705,9 +705,6 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -803,9 +800,6 @@ importers:
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1127,9 +1121,6 @@ importers:
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1316,9 +1307,6 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1381,9 +1369,6 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1409,9 +1394,6 @@ importers:
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1811,9 +1793,6 @@ importers:
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -2061,9 +2040,6 @@ importers:
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -2519,9 +2495,6 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -2818,9 +2791,6 @@ importers:
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -3082,6 +3052,9 @@ importers:
 
   packages/runtime:
     dependencies:
+      '@aalis/api-doctor':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-doctor
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config

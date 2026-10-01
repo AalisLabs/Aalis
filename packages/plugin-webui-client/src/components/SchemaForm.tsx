@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import type { ConfigSchema, SchemaField, SchemaFieldType, SchemaGroup, SchemaArray } from '../types';
+import type { ConfigSchema, SchemaField, SchemaFieldType, SchemaGroup, SchemaArray, SecretRef } from '../types';
+import { isMasked, isSecretRef } from '../utils/secret';
 
 // ===== 数字输入框（解决小数输入被截断问题） =====
 // 受控 number input 在输入 0.0x 时会被 Number() 取整覆盖，
@@ -229,16 +230,24 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
           })
         : (entry.default ?? []);
     } else if (isSchemaField(entry)) {
-      draft[key] = isLegacyEmpty(entry, config[key])
-        ? emptyFieldValue(entry.type)
-        : (config[key] ?? entry.default ?? emptyFieldValue(entry.type));
+      // 密钥字段：文档里没有就留空，不填 schema 默认值。宿主不把密钥的默认值写进文档，草稿填进默认值再保存，
+      // 默认值就会被当成新密钥存进 secrets.yaml，插件也会因为配置「变了」被重建
+      draft[key] =
+        entry.secret === true
+          ? config[key]
+          : isLegacyEmpty(entry, config[key])
+            ? emptyFieldValue(entry.type)
+            : (config[key] ?? entry.default ?? emptyFieldValue(entry.type));
     } else {
       const group: Record<string, unknown> = {};
       const src = (config[key] ?? {}) as Record<string, unknown>;
       for (const [fk, field] of Object.entries(entry.fields)) {
-        group[fk] = isLegacyEmpty(field, src[fk])
-          ? emptyFieldValue(field.type)
-          : (src[fk] ?? field.default ?? emptyFieldValue(field.type));
+        group[fk] =
+          field.secret === true
+            ? src[fk]
+            : isLegacyEmpty(field, src[fk])
+              ? emptyFieldValue(field.type)
+              : (src[fk] ?? field.default ?? emptyFieldValue(field.type));
       }
       draft[key] = group;
     }
@@ -247,6 +256,37 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
     if (!(key in draft)) draft[key] = val;
   }
   return draft;
+}
+
+/**
+ * 「恢复默认」的底稿：默认值不含 secret 字段（密钥的默认值不进配置文档），顶层与分组里的 secret 字段沿用
+ * stored（配置文档里这一段）现有的值，引用原样留着即保持原值，不因恢复默认被清掉。
+ * 数组整份换成默认值，原条目连同其中的密钥一并去掉
+ */
+export function keepStoredSecrets(
+  schema: ConfigSchema,
+  defaults: Record<string, unknown>,
+  stored: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...defaults };
+  for (const [key, entry] of Object.entries(schema)) {
+    if (isSchemaArray(entry)) continue;
+    if (isSchemaField(entry)) {
+      if (entry.secret === true && Object.hasOwn(stored, key)) out[key] = stored[key];
+      continue;
+    }
+    const src = stored[key];
+    if (!src || typeof src !== 'object' || Array.isArray(src)) continue;
+    for (const [fk, field] of Object.entries(entry.fields)) {
+      if (field.secret !== true || !Object.hasOwn(src, fk)) continue;
+      const group = out[key];
+      out[key] = {
+        ...(group && typeof group === 'object' && !Array.isArray(group) ? group : {}),
+        [fk]: (src as Record<string, unknown>)[fk],
+      };
+    }
+  }
+  return out;
 }
 
 // ===== SchemaForm 组件 =====
@@ -387,6 +427,125 @@ const FORMAT_PLACEHOLDER: Record<string, string | undefined> = {
   executable: '命令名（按 PATH 查找）或绝对路径',
 };
 
+// ===== secret 字段 =====
+
+const EMPTY_LIST: string[] = [];
+const EMPTY_MAP: Record<string, string> = {};
+
+/** 文本框里显示的值：对象（手改配置文件留下的非引用对象）不显示成 [object Object] */
+function textOf(value: unknown): string {
+  return value === undefined || value === null || typeof value === 'object' ? '' : String(value);
+}
+
+/** 密钥字段上的「没填」：''、空 list、空 map（引用不算） */
+function isBlankSecret(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return typeof value === 'object' && !isSecretRef(value) && Object.keys(value).length === 0;
+}
+
+/**
+ * secret: true 的字段。配置文档里存的是引用 { $secret: 键 }，原值在宿主的密钥存储里，接口不给。
+ * 草稿里：引用 = 保持原值；明文 = 替换（map、list 整份）；'' / [] / {} = 清除。
+ * 有引用时输入框从空开始，留空即保持；输入过再删空也回到保持，所以记住见过的引用（数组条目的 key 跟着条目走，
+ * 删掉前面的条目不会把记住的引用错配给别的条目）。顶层与分组里的字段替换时写进它引用的那个键，键被别处共用时
+ * 一并改到那些地方；数组元素里的另建新键。没有引用（未设置，或宿主没有密钥存储、这里是明文）时照常编辑。
+ * list / map 之外的类型都按文本（密码框）编辑：凭据是文本
+ */
+function SecretField({
+  field,
+  value,
+  onChange,
+  refCounts,
+  inArray,
+}: {
+  field: SchemaField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  refCounts?: Record<string, number>;
+  inArray: boolean;
+}) {
+  const seen = useRef<SecretRef | undefined>(undefined);
+  if (isSecretRef(value)) seen.current = value;
+  const ref = seen.current;
+  const isList = field.type === 'list';
+  const isMap = field.type === 'map';
+
+  const editor = (shown: unknown, change: (v: unknown) => void, placeholder?: string) => {
+    if (isList) {
+      return <LinesInput value={shown} onChange={change} format={formatList} parse={parseList} placeholder={placeholder ?? '每行一项'} />;
+    }
+    if (isMap) {
+      return (
+        <LinesInput value={shown} onChange={change} format={formatMap} parse={parseMap} placeholder={placeholder ?? '每行一条 KEY=VALUE'} />
+      );
+    }
+    if (field.type === 'textarea') {
+      return (
+        <textarea
+          className="config-edit-input config-textarea"
+          value={textOf(shown)}
+          placeholder={placeholder}
+          spellCheck={false}
+          onChange={e => change(e.target.value)}
+          rows={3}
+        />
+      );
+    }
+    // new-password：别让浏览器把保存的登录口令自动填进空着的密钥框（填进去就成了替换）
+    return (
+      <input
+        className="config-edit-input"
+        type="password"
+        autoComplete="new-password"
+        value={textOf(shown)}
+        placeholder={placeholder}
+        onChange={e => change(e.target.value)}
+      />
+    );
+  };
+
+  // 没有引用：照常编辑。留空表示没填（发 undefined，不写进文档），插件按 schema 默认值解析
+  if (!ref) {
+    const fallback = typeof field.default === 'string' && field.default !== '' ? `留空使用默认值 ${field.default}` : undefined;
+    return editor(value, v => onChange(isBlankSecret(v) ? undefined : v), FORMAT_PLACEHOLDER[field.format ?? ''] ?? fallback);
+  }
+
+  const kept = isSecretRef(value);
+  const cleared = !kept && isBlankSecret(value);
+  const count = refCounts?.[ref.$secret] ?? 0;
+  const state = kept ? '' : cleared ? ' · 保存后清除' : inArray ? ' · 保存后存为新键' : ' · 保存后替换这个键的值';
+  return (
+    <div>
+      {kept && (isList || isMap) && <span className="config-edit-hint">已设置（只写，改时整份重填）</span>}
+      {editor(
+        kept ? (isList ? EMPTY_LIST : isMap ? EMPTY_MAP : '') : value,
+        v => onChange(isBlankSecret(v) ? ref : v),
+        kept ? (isList || isMap ? undefined : '已设置（不显示）') : cleared ? '保存后清除' : undefined,
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="config-edit-hint">
+          键 <code>{ref.$secret}</code>
+          {state}
+        </span>
+        <button
+          type="button"
+          className="config-edit-btn"
+          style={{ fontSize: 11, padding: '1px 6px' }}
+          onClick={() => onChange(kept ? (isList ? [] : isMap ? {} : '') : ref)}
+        >
+          {kept ? '清除' : '撤销'}
+        </button>
+      </div>
+      {!inArray && !cleared && count > 1 && (
+        <span className="config-edit-hint" style={{ color: 'var(--warning)' }}>
+          此密钥被 {count} 处引用，替换会同时改到另外 {count - 1} 处
+        </span>
+      )}
+    </div>
+  );
+}
+
 function SchemaFormField({
   field,
   fieldKey,
@@ -396,6 +555,8 @@ function SchemaFormField({
   onFetchModels,
   llmProviders,
   onFetchLLMProviders,
+  secretRefCounts,
+  inArray = false,
 }: {
   field: SchemaField;
   fieldKey: string;
@@ -405,7 +566,13 @@ function SchemaFormField({
   onFetchModels: (service: string) => void;
   llmProviders: LLMProviderEntry[] | undefined;
   onFetchLLMProviders: () => void;
+  secretRefCounts?: Record<string, number>;
+  inArray?: boolean;
 }) {
+  if (field.secret === true) {
+    return <SecretField field={field} value={value} onChange={onChange} refCounts={secretRefCounts} inArray={inArray} />;
+  }
+
   if (field.type === 'boolean') {
     return (
       <label className="config-edit-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -555,18 +722,38 @@ function SchemaFormField({
     );
   }
 
-  // string (default)；路径类字段的写法由服务端按 format 校验，这里只给提示
-  // 字段名正则要求关键词后不接字母，避免 tokenBudget / secretLength 这类合成词被误判。
-  const isSensitive = field.secret || /(apiKey|password|secret|token)(?![a-zA-Z])/i.test(fieldKey);
+  // string (default)；路径类字段的写法由服务端按 format 校验，这里只给提示。
+  // secret: true 的已在上面处理；没写 secret 的按字段名判断是否用密码框，写了 false 的不遮蔽
   return (
     <input
       className="config-edit-input"
-      type={isSensitive ? 'password' : 'text'}
+      type={isMasked(field.secret, fieldKey) ? 'password' : 'text'}
       value={String(value ?? '')}
       onChange={e => onChange(e.target.value)}
       placeholder={FORMAT_PLACEHOLDER[field.format ?? '']}
     />
   );
+}
+
+// 数组条目的 React key 跟着条目对象走，不用下标：删掉前面的条目时，后面条目的输入框状态（含 secret 字段记住的引用）
+// 不会错位到别的条目上。改字段产生的新对象沿用旧对象的 key；草稿重建（开始编辑、恢复默认）即换新 key
+const itemKeys = new WeakMap<object, number>();
+let nextItemKey = 0;
+
+function itemKey(item: unknown, idx: number): string {
+  if (!item || typeof item !== 'object') return `#${idx}`;
+  let key = itemKeys.get(item);
+  if (key === undefined) {
+    key = nextItemKey++;
+    itemKeys.set(item, key);
+  }
+  return String(key);
+}
+
+function keepItemKey<T extends object>(from: object, to: T): T {
+  const key = itemKeys.get(from);
+  if (key !== undefined) itemKeys.set(to, key);
+  return to;
 }
 
 export function SchemaForm({
@@ -577,6 +764,7 @@ export function SchemaForm({
   onFetchModels,
   llmProviders,
   onFetchLLMProviders,
+  secretRefCounts,
 }: {
   schema: ConfigSchema;
   draft: Record<string, unknown>;
@@ -585,6 +773,8 @@ export function SchemaForm({
   onFetchModels: (service: string) => void;
   llmProviders?: LLMProviderEntry[];
   onFetchLLMProviders: () => void;
+  /** 配置文档里每个密钥键被引用的处数（GET /api/plugins 的 secretRefCounts），共用的密钥在替换前提示 */
+  secretRefCounts?: Record<string, number>;
 }) {
   return (
     <div className="config-edit-form">
@@ -607,6 +797,7 @@ export function SchemaForm({
                 onFetchModels={onFetchModels}
                 llmProviders={llmProviders}
                 onFetchLLMProviders={onFetchLLMProviders}
+                secretRefCounts={secretRefCounts}
               />
             </div>
           );
@@ -631,6 +822,8 @@ export function SchemaForm({
             // 后端 parse 只接受类型正确的值，undefined/'' 都会自动穿透到顶层默认。
             const newItem: Record<string, unknown> = {};
             for (const [fk, field] of Object.entries(items)) {
+              // 密钥字段不预填：默认值会被当成新密钥存进 secrets.yaml
+              if (field.secret === true) continue;
               if (field.default !== undefined) {
                 newItem[fk] = field.default;
               } else if (field.required) {
@@ -651,7 +844,7 @@ export function SchemaForm({
           };
 
           const updateItem = (idx: number, fieldKey: string, value: unknown) => {
-            const newArr = arr.map((item, i) => i === idx ? { ...item, [fieldKey]: value } : item);
+            const newArr = arr.map((item, i) => i === idx ? keepItemKey(item, { ...item, [fieldKey]: value }) : item);
             updateArr(newArr);
           };
 
@@ -668,7 +861,7 @@ export function SchemaForm({
               {entry.description && <span className="config-edit-hint" style={{ marginBottom: 8, display: 'block' }}>{entry.description}</span>}
               {arr.length === 0 && <div style={{ color: '#888', fontSize: 13, padding: '4px 0' }}>暂无条目，点击"添加"新建</div>}
               {arr.map((item, idx) => (
-                <div className="config-edit-array-item" key={idx} style={{
+                <div className="config-edit-array-item" key={itemKey(item, idx)} style={{
                   border: '1px solid var(--border, #333)',
                   borderRadius: 6,
                   padding: '8px 12px',
@@ -701,6 +894,8 @@ export function SchemaForm({
                         onFetchModels={onFetchModels}
                         llmProviders={llmProviders}
                         onFetchLLMProviders={onFetchLLMProviders}
+                        secretRefCounts={secretRefCounts}
+                        inArray
                       />
                     </div>
                     );
@@ -736,6 +931,7 @@ export function SchemaForm({
                   onFetchModels={onFetchModels}
                   llmProviders={llmProviders}
                   onFetchLLMProviders={onFetchLLMProviders}
+                  secretRefCounts={secretRefCounts}
                 />
               </div>
               );

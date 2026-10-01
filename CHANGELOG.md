@@ -30,13 +30,14 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，以及家目录（第一部分）。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的七个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，以及家目录（第一部分与第二部分）。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的七个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
-- 有代码或契约改动（44 个）：schema-message、schema-config、runtime、create-aalis、api-code-sandbox、api-gateway、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-asr-whisper-cpp、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-draw、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-mcp-client、plugin-media、plugin-memory-history、plugin-memory-mongodb、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-skills、plugin-storage-local、plugin-subtask、plugin-tool-browser、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
-- 按次版本发布（25 个）：runtime（家目录；删掉 `startAalis` 的 `configPath`、`projectDir`、`subcommands` 等选项）、schema-config（新增字段属性 `format`）、create-aalis（生成的项目带家目录 `home/`）、plugin-package-manager（删掉配置项 `projectRoot`，改为依赖 `host-paths`）、plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-mcp-client（路径类配置不再收相对路径）、plugin-skills（`skillsUri` 默认改为 `skills:/`）、plugin-memory-mongodb（库名加 profile 一段、库的归属记录与新配置项 `claimFrom`）、schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现；`personasDir` 默认改为 `personas:/`）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（依赖 `host-paths`；内置根按家目录布局，保留 data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public 十个根名；宿主控制文件兜底）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
-- 按 patch 发布（19 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执；日志位置的说明）、plugin-media（图片来源的裸路径不再路由到插件私有的内置根；说明里的临时目录）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
+- 有代码或契约改动（46 个）：schema-message、schema-config、runtime、create-aalis、api-code-sandbox、api-gateway、api-host-config、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-asr-whisper-cpp、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-draw、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-mcp-client、plugin-media、plugin-memory-history、plugin-memory-mongodb、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-skills、plugin-storage-local、plugin-subtask、plugin-tool-browser、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
+- 按次版本发布（28 个）：runtime（家目录；删掉 `startAalis` 的 `configPath`、`projectDir`、`subcommands` 等选项；`createConfigStore` 增加密钥存储参数，`createPluginDiscovery` 改收配置存储）、schema-config（新增字段属性 `format`；`secret` 改为语义属性，新增 `SecretRef` 等导出）、api-host-config（`HostConfig` 新增必需的 `applyPluginConfig`，读写改为文档形态）、api-webui（删除向 `SchemaField` 注入的 `secret`）、create-aalis（生成的项目带家目录 `home/`）、plugin-package-manager（删掉配置项 `projectRoot`，改为依赖 `host-paths`）、plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-mcp-client（路径类配置不再收相对路径；`env` 改为密钥字段）、plugin-skills（`skillsUri` 默认改为 `skills:/`）、plugin-memory-mongodb（库名加 profile 一段、库的归属记录与新配置项 `claimFrom`；`uri` 改为密钥字段）、schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现；`personasDir` 默认改为 `personas:/`）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（依赖 `host-paths`；内置根按家目录布局，保留 data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public 十个根名；宿主控制文件兜底）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`；插件配置接口改回引用、不回原值）、plugin-webui-client（密钥字段只显示「已设置」，认引用）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
+- 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执；日志位置的说明）、plugin-media（图片来源的裸路径不再路由到插件私有的内置根；说明里的临时目录）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）、plugin-memory-summary（`summaryTokenRatio` 标 `secret: false`）
+- 不发版：plugin-asr-openai、plugin-embedding-openai、plugin-llm-openai、plugin-maimai、plugin-okx-trading、plugin-websearch-serper 只删了为 `secret` 写的类型导入（编译后擦除）与 api-webui 开发依赖，编译出的 JS 与类型声明不变（只差 source map 行号与 devDependencies），运行行为不变，停在已发布版本。
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
 - 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0
 - plugin-trigger-laya 是 `private` 包，只改了说明与注释，不发布到 npm。
@@ -289,7 +290,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **初始化**
   - 家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。
   - 在启动命令里、子命令之前加上 `--init` 运行一次即可初始化：建目录（0700），写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600），建布局里的子目录。目标目录里已有布局以外的东西时拒绝初始化。
-  - `secrets.yaml` 本批只建出来，还不读，密钥照旧写在 `aalis.config.yaml` 里。
+  - `secrets.yaml` 的读写见「家目录（第二部分）」一节。
 - **实例锁**：同一家目录只许一个守护进程。手动在终端再起一份时，此前会与服务并存、每条消息回两遍；现在打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。
   - 以 `--service` 启动时改以 0 退出，配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会被反复拉起。
   - 锁在家目录的 `run/instance.<n>.lock`，按代号 link 取得，两个进程同时启动也只有一个拿到；家目录所在的文件系统要支持硬链接。
@@ -340,12 +341,59 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   2. 在项目目录里按新布局搬目录：先 `mkdir -p self stage`；`data/` 改名为 `state/`（如果新版已经启动过、建出了空的 `state/`，先删掉它）；再把 `state/stage/paper`、`state/stage/public` 移到 `stage/paper`、`stage/public`，`state/personas` 移到 `self/personas`，`state/skills` 移到 `self/skills`；`workspace/.tmp` 可以删掉（临时区改在 `tmp/`）；`state/latest*.log` 不再使用。
   3. 改 `.gitignore`：原来只忽略 `data/`，现在实例数据在 `state/`、`self/`、`stage/`、`tmp/`、`cache/`、`run/`、`logs/` 里，把这几项加上（`aalis.config.yaml` 照旧忽略，另加 `secrets.yaml`）；下次提交前先看一眼 `git status`，别把数据库、WebUI 凭据与 `users.json` 提交进去。
   4. 改 `aalis.config.yaml`：用 MongoDB 记忆库的，在 `@aalis/plugin-memory-mongodb` 下加 `claimFrom: unowned`（旧库里已有数据、还没有归属记录，不写会拒绝激活），启动一次、日志里出现「归属改到家目录」或「记下归属」后删掉它；同时确认 `@aalis/plugin-memory-sqlite` 与 `@aalis/plugin-memory-inmemory` 在 `disabledPlugins` 里，否则认领失败时记忆会悄悄改由它们提供；`@aalis/plugin-storage-local` 的 `roots` 只留 `workspace` 与自己加的根。data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public 现在是内置根：同名的项会被跳过、它的 `path` 不再生效；以前把 data、pluginData 或 tmp 指到别处的，先把那个目录搬到 `state/`、`state/plugins/` 或 `tmp/`；自己加的根若用了这十个名字之一，改个名字。`@aalis/plugin-persona` 的 `personasDir` 若还是 `data/personas`、`@aalis/plugin-skills` 的 `skillsUri` 若还是 `data:/skills`，删掉这两项用新的默认值；`@aalis/plugin-package-manager` 残留的 `projectRoot` 删掉。
-  5. 家目录的最后一部分（密钥拆出）还会补充升级步骤。
+  5. 密钥不用手动搬：第一次用新版启动时自动从 `aalis.config.yaml` 移进 `secrets.yaml`，其余步骤见「家目录（第二部分）」一节的升级步骤。
 - **发布时要抬的下限**
   - plugin-persona、plugin-skills 对 `@aalis/plugin-storage-local` 没有包依赖，但新的默认目录要新版 storage-local 提供的 `personas`、`skills` 根，见「必须同批升级的包」。
   - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 对 `@aalis/schema-config` 的下限，抬到含 `format` 的新版本：旧版不认这个属性，相对路径会照旧放行。
   - plugin-storage-local、plugin-package-manager、plugin-webui-server、plugin-memory-mongodb 对 `@aalis/api-host-paths` 写 `>=0.1.0`。
-  - runtime 对 schema-config 的下限不变。
+  - runtime 对 schema-config 的下限这一部分不用抬，第二部分要抬，见下一节。
+
+### 家目录（第二部分）：密钥存进 secrets.yaml（@aalis/schema-config、@aalis/api-host-config、@aalis/api-webui、@aalis/runtime、@aalis/create-aalis、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-mcp-client、@aalis/plugin-memory-mongodb、@aalis/plugin-agent、@aalis/plugin-memory-summary、@aalis/plugin-adapter-onebot、@aalis/plugin-asr-openai、@aalis/plugin-embedding-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-maimai、@aalis/plugin-okx-trading、@aalis/plugin-remote-agent-cursor、@aalis/plugin-tool-system、@aalis/plugin-websearch-serper、@aalis/plugin-works-site）
+
+- **`secret` 改为语义属性**
+  - `SchemaField.secret` 此前是 api-webui 经 declaration merging 注入的 WebUI 呈现属性，只让表单遮住值，值照旧以明文写在 `aalis.config.yaml` 里。现在它由 schema-config 声明，表示「这个字段的值是凭据」，各宿主都按它处理：值存进宿主的密钥存储，配置文档里只写引用 `{ $secret: '<键>' }`，展示与回传都不给原值。api-webui 删掉了同名注入。标在 map、list 上时整个值算一个密钥。
+  - schema-config 新增导出 `SecretRef`、`isSecretRef`、`mapSecretFields` 与类型 `SecretPosition`。`validateConfig` 校验的是文档，密钥字段上的引用算合法。`parseConfig` 遇到密钥字段上仍是引用（宿主没能解析，键不在密钥存储里）时一律不可恢复，不看 `default` 与 `onInvalid`，在数组元素里也让整次解析失败，消息点名键名。`defaultsFrom` 不再产出密钥字段：密钥的默认值不写进文档，`parseConfig` 照常补上。
+  - 名字像凭据却不是凭据的字段写 `secret: false` 表明已判断过：plugin-agent 的 `memoryTokenBudget`、plugin-memory-summary 的 `summaryTokenRatio`、plugin-webui-server 的 `tokenMode`。
+- **secrets.yaml**
+  - runtime 启动时读家目录的 `secrets.yaml`（「键 → 值」的映射）并监听改动，把配置交给插件之前解析引用，插件经 `parseConfig` 读到的仍是原值。
+  - 缺省键是 `<实例 id>.<字段路径>`，数组元素里的字段路径不带下标；已被占用（配置里有引用指向它，或 `secrets.yaml` 里已有）时依次加 `-2`、`-3`。几处配置可以手写成指向同一个键。
+  - 引用的键不在 `secrets.yaml` 里时，记一条错误（点名实例、字段与键）。用 `parseConfig` 读取、且装的是新版 schema-config 的插件激活失败，消息点名键名，不回落默认值；不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出（runtime 登记给 doctor，每个有悬空引用的实例报一条 error，点名字段与键）。
+  - 保存时先写 `secrets.yaml`、再写主配置；`secrets.yaml` 的临时文件一律以 0600 创建，不沿用原文件的权限位。与主配置一样，盘上有尚未生效的外部修改时拒写。
+  - 宿主经自己的写入（WebUI 改配置、删除实例、卸载插件、同步裁剪）换掉或删掉引用后，不再被任何配置引用的键在保存时删除；宿主新建、后来又没人引用的键同样删除。删除在主配置写成之后做，这一步写 `secrets.yaml` 失败不让保存报错，键留到下次保存再删。手改配置文件不会触发删除，手加进 `secrets.yaml`、还没被引用的键不动。
+  - 外部修改 `secrets.yaml` 后只重新加载解析结果变了的实例；配置热重载同样改为拿解析后的配置与运行态比较。运行中修好或改动 `secrets.yaml` 时，宿主已提交、还没写成的密钥不会丢，并进新读到的内容，下次保存时写入。运行中把它改成空文件或只剩注释，按空的密钥文件处理，不当作坏内容忽略。
+  - 两个文件的 YAML 解析错误在日志里只写错误码与行列，不再带报错消息的首行（其中可能有原文，原文可能就是密钥）。YAML 的警告（例如把 `!xxx` 当成标签）也不再经 Node 的 process warning 带原文打到 stderr，改为记错误码与行列。
+  - 自组装宿主创建配置存储时不给密钥存储的，密钥照旧以明文留在文档里；没有 `configSchema` 的插件、没标 `secret` 的字段也照旧是明文。没装上或加载失败的插件，宿主不处理它们的配置段，明文原样保留；这类残留段冷启动时逐段告警，要手动删掉，或装好插件后再启动一次。
+- **配置文件里的明文会被自动移走**：配置同步（启动、热重载、市场装载插件）遇到密钥字段上的非空明文，把它移进 `secrets.yaml`、原处换成引用。这会改写用户的 `aalis.config.yaml`，日志只写实例、字段路径与键名，不写值。`''`、空 map、空 list 不算密钥值，原样留着。移走之前的明文仍可能留在编辑器的备份文件、同步盘的历史版本与 git 历史里（配置文件曾经提交过的话），需要自行清理；曾经外泄过的密钥应当轮换。
+- **host-config 读写文档形态**（api-host-config）
+  - 新增 `applyPluginConfig(instanceId, submitted)`，返回 `{ status: 'refused' }` 或 `{ status: 'applied', reloaded, saveError? }`：拆出密钥、更新运行态（未登记的后缀实例按同模块的定义登记，先写文档再登记，没登记上时撤回文档与密钥）、写文档，让共用了被替换的键的其他实例按新值重载，最后落盘。
+  - 写入规则：密钥字段上的引用表示保持；非空明文在顶层与分组字段上写进该实例当前文档在同一位置引用的键（被共用时一并影响共用者），没有引用时新建键；数组元素里的一律新建键；`''` 与空值不是密钥。本次提交新引入的悬空引用（键不在 `secrets.yaml` 里、也不是这次写入的）被拒绝：抛错，WebUI 回 400，运行态与文档都不动；提交前就悬空、原样带回的不拦。
+  - `getPluginConfig` 返回文档形态（引用，不是原值），插件要原值读自己的 `config`。`setPluginConfig` 遇到密钥字段上的非空明文抛错（宿主有密钥存储、且查得到该实例的 schema 时）。`save()` 先写密钥、再写文档。「调用方两边都写」的约定只剩启停与服务偏好。
+- **WebUI**
+  - `GET /api/plugins` 的 `config` 改为文档形态，密钥字段上是引用，不再回原值；顶层新增 `secretRefCounts`（键 → 引用处数）。宿主不提供 host-config 时给运行态配置并去掉密钥字段。`GET /api/config` 与 `GET /api/plugins/:name/config` 读的是文档，同样只有引用。
+  - `PUT /api/plugins/:name/config` 与 `POST /api/plugins/:name/instances` 改经 `applyPluginConfig`。PUT 只改已登记的实例，没登记的照旧返回 404，不借 `applyPluginConfig` 新建（建实例走 POST）。
+  - plugin-webui-client 的配置表单对已设置的密钥字段显示「已设置」和键名，不显示值；输入新值即替换，不动则保持原值，可清除、可撤销；顶层与分组字段的键被几处配置共用时提示替换会一并影响它们（数组元素里的替换另建新键，不提示）；map、list 上的密钥字段整个只写不回显；「恢复默认」保留顶层与分组里已存的密钥（数组整份换成默认值，元素里的密钥随之删除）；密码框不让浏览器自动填入登录口令。
+- **第一方插件补标**
+  - plugin-webui-server 的 `fixedToken` 标 `secret: true`。
+  - plugin-mcp-client 的 `servers[].env` 标 `secret: true`：每个 server 的整份 `env` 是一个密钥，WebUI 里看不到变量名，要改就整份重填。token 放进 `env`，不要放进 `args`：连接成功时的日志会写出全部 `args`。`mcp_set_server_enabled` 改用 `applyPluginConfig`；可选依赖 `plugins` 从 `uses` 与 `package.json` 清单里删掉了。
+  - plugin-memory-mongodb 的 `uri` 标 `secret: true`（连接串可能带账号密码），缺省连接串不再写进配置文档。旧配置里回填过的 `mongodb://localhost:27017` 也算明文，首次启动时同样移进 `secrets.yaml`。
+  - adapter-onebot、asr-openai、embedding-openai、llm-deepseek、llm-openai、maimai、okx-trading、remote-agent-cursor、tool-system、websearch-serper 删掉了只为 `secret` 写的 `import type {} from '@aalis/api-webui'` 与 api-webui 开发依赖；works-site 删掉了这一行导入，api-webui 仍是它的正式依赖。其中 asr-openai、embedding-openai、llm-openai、maimai、okx-trading、websearch-serper 编译出的 JS 与类型声明因此不变（只差 source map 行号与 devDependencies），运行行为不变，本批不发版。
+- **破坏性变更与迁移**
+  - 第三方插件：`secret: true` 现在会让值搬进 `secrets.yaml`。只为了在表单上遮住、值并不是凭据的字段，去掉 `secret`。只为 `secret` 写的 `import type {} from '@aalis/api-webui'` 与 api-webui 开发依赖可以删掉；schema-config 与 api-webui 一起升级，否则类型上可能找不到 `secret`。对 `@aalis/schema-config` 的依赖写成范围、下限抬到本批的新版本：装到旧版时，悬空的引用按普通无效值处理，不会被拒。
+  - 读写配置文档的插件：`getPluginConfig` 拿到的密钥字段是引用。把 `config`（或 `parseConfig` 的结果）经 `setPluginConfig` 写回的会抛错，改用 `applyPluginConfig`，或以 `getPluginConfig` 的文档为底只改目标字段再写回。此前「`updateConfig` 后 `setPluginConfig` 再 `save()`」的改配置写法，改为一次 `applyPluginConfig`。
+  - 自己提供 `host-config` 的宿主要实现 `applyPluginConfig`。
+  - 嵌入式宿主：`createConfigStore(initial, provider?, secrets?)` 的第三个参数是密钥存储 `{ values, provider? }`，`createFsSecretsProvider(absPath)` 是读写 `secrets.yaml` 的实现，类型 `SecretProvider`、`SecretStoreInit` 一并导出；不给第三个参数时行为与此前相同；给了密钥存储却没给它的 `provider.save`、配置又会落盘（给了 `provider.save`）时直接抛错，否则密钥只在内存里，重启后引用落空。`createPluginDiscovery(app, loader, doc)` 的第三个参数改为配置存储（要有 `resolvePluginConfig`，登记时由它解析引用），不再收 `HostConfig` 形状的对象。主配置与密钥文件的读写、拒写与监听改为同一份实现。
+  - 读 `/api/plugins`、`/api/config` 的第三方前端与脚本拿到的是引用，不再是原值。
+- **已有实例的升级步骤**
+  1. 停掉实例，备份整个家目录。
+  2. 按「必须同批升级的包」把 runtime、schema-config、api-host-config、plugin-webui-server、plugin-webui-client、plugin-mcp-client 一起升级。
+  3. 第一次用新版启动时，`aalis.config.yaml` 里密钥字段上的明文自动移进 `secrets.yaml`，日志里每处有一行「配置同步：已把 <实例> 的 <字段> 移进 secrets.yaml（键 <键>）」。启动后看一眼配置文件，确认这些位置已换成引用。没装上或加载失败的插件，配置段不处理、明文原样保留（冷启动时逐段告警）：删掉这些段，或装好插件后再启动一次。
+  4. 删掉明文的旧副本：编辑器的备份文件，同步盘或备份工具里的旧版本，家目录里迁移工具留下的 `aalis.config.yaml.before-schema-0.14` 等备份（启动验证后删掉）；配置文件进过 git 的，历史里仍有明文，应当轮换这些密钥。
+  5. 备份从此要连同 `secrets.yaml`（0600）。只恢复 `aalis.config.yaml` 时引用落空：用 `parseConfig` 读配置的插件激活失败，`/doctor` 的 `config.secrets` 也会点名；按日志或诊断点名的键在 WebUI 重新填写，或在 `secrets.yaml` 里补上即可。
+  6. 手改配置时，密钥照旧可以直接写成明文，下次热重载时会被移走；要让几个插件共用一个密钥，把它们的字段写成指向同一个键的引用。
+- **发布时要抬的下限**
+  - runtime、plugin-webui-server 对 `@aalis/schema-config` 的下限，抬到含 `isSecretRef`、`mapSecretFields` 的新版本：旧版没有这两个导出，加载时报错。
+  - plugin-memory-mongodb 对 `@aalis/schema-config` 的下限可以一并抬到新版本，只为改进报错：旧版的 `parseConfig` 遇到落空的引用同样拒绝激活（`uri` 声明了 `onInvalid: 'error'`），只是报 `uri` 期望 string、得到 object，不点名缺的键。
+  - runtime、plugin-webui-server、plugin-mcp-client 对 `@aalis/api-host-config` 的下限，抬到含 `applyPluginConfig` 的新版本。
 
 ### 必须同批升级的包
 
@@ -359,6 +407,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-persona、plugin-skills 与 plugin-storage-local 同批升级：新的默认目录 `personas:/`、`skills:/` 只有新版 storage-local 提供，配旧版时人设卡与技能读不到。
 - runtime 与 plugin-storage-local、plugin-package-manager、plugin-webui-server 同批升级：新版 storage-local 与 package-manager 依赖 runtime 提供的 `host-paths`，配旧版 runtime 一直停在 pending（存储不可用，几乎所有插件随之挂起）；新版 webui-server 配旧版 runtime 时找不到前端，市场与系统组件页回 503。反过来，新版 runtime 配旧版 storage-local 时，存储根仍按启动目录解析，与家目录分成两处。create-aalis 生成的新项目要新版 runtime：旧版不认 `appDir` 与 `defaultHome`，会到启动目录找配置。
 - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 与 schema-config 同批升级：路径字段的校验在 schema-config 里，配旧版 schema-config 时相对路径照旧放行。
+- runtime、schema-config、api-host-config、plugin-webui-server、plugin-webui-client、plugin-mcp-client 同批升级：新版 webui-server 改配置、新建实例与新版 mcp-client 的 `mcp_set_server_enabled` 都调 host-config 的 `applyPluginConfig`，旧版 runtime 没有这个方法，调用抛 TypeError；旧版 webui-server 配新版 runtime 时，改配置仍按「`updateConfig` 后 `setPluginConfig`」写、混用文档形态与运行态：请求里没带的密钥字段以引用交给插件，插件激活失败，带了原值的被新版 `setPluginConfig` 拒收，列表接口还会回出原值；新版 webui-server 回给前端的是引用，旧版 webui-client 不认识它。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 

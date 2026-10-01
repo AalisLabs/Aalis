@@ -8,7 +8,7 @@ import { captureRoutes } from '../fixtures/webui-routes.js';
 // PUT /api/plugins/:name/config 曾以裸 defaults 打底：`{...defaultsFrom(schema), ...body}`。
 // 而 defaultsFrom 只收录**声明了 default** 的键，apiKey / accessToken 这类 secret 多数没有
 // （deepseek、embedding-openai、llm-openai、serper、onebot 皆是）。于是请求里不带 apiKey 时
-// merged 里根本没有该键，而 updateConfig → bounce 是整体替换——用户的密钥
+// merged 里根本没有该键，而配置交给运行态（updateConfig → bounce）是整体替换——用户的密钥
 // 从内存态与 yaml 一起消失，且接口回 ok。
 // 修法是基线改用「默认值叠已存值」，语义才是真正的部分更新。
 // ════════════════════════════════════════════════════════════
@@ -41,6 +41,12 @@ function setup() {
     setPluginConfig: (_n: string, cfg: Record<string, unknown>) => {
       persisted = cfg;
     },
+    // 宿主一步完成运行态与文档：路由交出的这一份同时进运行态与文档
+    applyPluginConfig: async (_n: string, cfg: Record<string, unknown>) => {
+      received = cfg;
+      persisted = cfg;
+      return { status: 'applied' as const, reloaded: true };
+    },
     save: async () => {},
   };
   registerPluginRoutes(
@@ -54,10 +60,6 @@ function setup() {
           // 诱饵：生产若误读 module，defaultsFrom 会打上 FROM_MODULE，下面用例会红
           module: { configSchema: { ...SCHEMA, trap: { type: 'string', default: 'FROM_MODULE' } } },
         }),
-        updateConfig: async (_n: string, cfg: Record<string, unknown>) => {
-          received = cfg;
-          return true;
-        },
         idle: async () => {},
       }),
       hostConfig: ref<HostConfig>(hostConfig),
@@ -90,7 +92,7 @@ describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () 
       '裸 defaults 打底时该键整条消失——updateConfig 是整体替换，密钥就此从内存与 yaml 一起没了',
     ).toBe('sk-REAL-SECRET');
     expect(got()?.trap, '打底必须读 definition.configSchema，不得读 module').toBeUndefined();
-    expect(persisted(), '管理动作不写文档，路由写进文档的与交给运行态的是同一份').toEqual(got());
+    expect(persisted(), '路由交给宿主应用的就是写进文档的这一份').toEqual(got());
   });
 
   it('显式传空串仍可清空（部分更新不等于改不掉）', async () => {

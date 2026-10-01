@@ -88,15 +88,35 @@ export interface PluginInfo {
   optionalServices?: string[];
   /** 能力披露：该插件触达的敏感能力（工具/指令的 restricted 可见性标记） */
   capabilities?: string[];
+  /**
+   * 配置文档里的这一段：secret 字段上是 {@link SecretRef}（或未填），不是原值；宿主没有密钥存储时那里是明文，
+   * 宿主没有配置文档时给的是运行态、去掉了 secret 字段
+   */
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
+  /** schema 派生的默认值，不含 secret 字段 */
   defaultConfig?: Record<string, unknown>;
   error?: string;
 }
 
+/** GET /api/plugins 的回复 */
+export interface PluginListResponse {
+  plugins: PluginInfo[];
+  /** 整个配置文档里每个密钥键被引用的处数（旧版服务端不返回） */
+  secretRefCounts?: Record<string, number>;
+}
+
+/**
+ * 配置文档里 secret 字段的值：指向宿主密钥存储里的一个键，几个字段可以指向同一个键。
+ * 只有 `$secret` 一个自有键、值为非空字符串的纯对象才是引用（镜像 @aalis/schema-config 的 SecretRef）
+ */
+export interface SecretRef {
+  $secret: string;
+}
+
 // ----- ConfigSchema 类型 -----
-// 镜像 server 侧合并后的 SchemaField（@aalis/schema-config 的字段，含 dynamicOptions/allowCustom
-// + @aalis/api-webui 注入的 secret + @aalis/api-llm 注入的 'llm-ref' 类型）。
+// 镜像 server 侧的 SchemaField（@aalis/schema-config 的字段，含 dynamicOptions/allowCustom/secret
+// + @aalis/api-llm 注入的 'llm-ref' 类型）。
 // 前端不依赖服务端契约包：schema 经 JSON 传输后用镜像类型接住（仅以 type-only 或纯函数方式
 // 引用 schema-log / util-text-normalize）；server 侧合并声明变更时需手动同步本镜像。
 
@@ -108,6 +128,10 @@ export interface SchemaField {
   description?: string;
   default?: unknown;
   required?: boolean;
+  /**
+   * 值是凭据：宿主把值存进密钥存储，配置文档里只放 {@link SecretRef}，列表接口不给原值；标在 map、list 上时
+   * 整个值算一个密钥。`false` 表示插件作者判断过它不是凭据，名字像也不遮蔽；不写时按字段名判断是否遮蔽
+   */
   secret?: boolean;
   options?: Array<{ label: string; value: string | number }>;
   dynamicOptions?: string;

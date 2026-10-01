@@ -30,7 +30,8 @@ const configSchema = defineConfig({
     required: true,
     default: 'mongodb://localhost:27017',
     onInvalid: 'error',
-    description: 'MongoDB 连接字符串',
+    secret: true,
+    description: 'MongoDB 连接字符串（可能带账号密码，存进 secrets.yaml，WebUI 不回显）',
   },
   database: {
     type: 'string',

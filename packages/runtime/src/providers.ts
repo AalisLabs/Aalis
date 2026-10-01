@@ -1,24 +1,13 @@
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import {
-  chmodSync,
-  existsSync,
-  type FSWatcher,
-  watch as fsWatch,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
-import { basename, dirname, resolve } from 'node:path';
-import { type AalisConfig, ConfigSaveRefusedError } from '@aalis/api-host-config';
+import { resolve } from 'node:path';
+import type { AalisConfig } from '@aalis/api-host-config';
 import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { ConfigProvider } from './config-store.js';
+import { stringify as stringifyYaml } from 'yaml';
+import type { ConfigProvider, SecretProvider } from './config-store.js';
 import { assertAbsolute } from './home.js';
 import {
   HOST_CORE_DIR,
@@ -28,6 +17,7 @@ import {
 } from './node-modules-loader.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
+import { openYamlFile } from './yaml-file.js';
 
 // ============================================================
 // FsYamlConfigProvider —— 从 YAML 文件加载+持久化配置
@@ -78,205 +68,52 @@ interface FsYamlConfigProviderResult {
 /**
  * 创建一个基于 YAML 文件的 ConfigProvider。`absPath` 是配置文件的绝对路径（startAalis 传家目录里的 aalis.config.yaml）。
  *
- * - 同步读取 + 解析（值原样加载，不做任何替换——`${VAR}` 插值已随 `.env` 机制删除）
- * - `save()` 同步写回；写前比对盘上内容，有尚未生效的外部修改时拒写（抛 {@link ConfigSaveRefusedError}，只带路径）
- * - `watch()` 监听**配置文件所在目录**（按文件名过滤）+ 300ms debounce，
- *   并通过与 `rawYaml` 的内容比对去重，避免自激；拒写之后的下一次变更不去重；武装后立即对账一次
+ * - 同步读取 + 解析（值原样加载，不做任何替换）；文件不存在时告警并以内存默认配置启动
+ * - `save()` 原子写回；写前比对盘上内容，有尚未生效的外部修改时拒写（抛 `ConfigSaveRefusedError`，只带路径）
+ * - `watch()` 监听配置文件所在目录（按文件名过滤）+ 300ms 去抖，按内容比对去重，避免自激；武装后立即对账一次
  *
- * 返回 config 快照与 provider，供宿主组装 App。
+ * 读写与监听的细节见 {@link openYamlFile}，与密钥文件共用。
  */
 export function createFsYamlConfigProvider(absPath: string): FsYamlConfigProviderResult {
   assertAbsolute('配置文件路径', absPath);
-  const dataDir = dirname(absPath);
-
-  let rawYaml: string | null = null;
-  // 拒写之后调用方手里的配置文档（常连同运行态）已领先于文件：下一次文件变更不论内容是否等于 rawYaml
-  // 都要投递，让宿主按文件重新对账。否则把文件原样改回的「修好」会被当成空变更跳过，文档与运行态从此
-  // 偏离文件，下一次成功保存还会把被拒的改动写进去。
-  let reconcilePending = false;
-  let watcher: FSWatcher | null = null;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  // 走 LogHub 而非 console：file logger 只订阅 LogHub，脱终端部署下 stderr
-  // 进不了 logs/latest.log，console 版的告警等于没加。
+  // 走 LogHub 而非 console：file logger 只订阅 LogHub，脱终端部署下 stderr 进不了 logs/latest.log
   const logger = new DefaultLogger('aalis:config');
-
-  /**
-   * 解析错误只取首行：yaml 的完整消息会内嵌出错位置附近的源码摘录，而配置
-   * 文件里有真实密钥——摘录随日志进 logs/latest.log 即泄漏（WebUI 日志面板、
-   * 崩溃落盘、外贴排查都是暴露面）。诊断种类与行列号都在首行；
-   * **位置进日志，内容不进**（与配置校验消息不带值同一条纪律）。
-   */
-  const parseErrorFirstLine = (err: unknown): string =>
-    (err instanceof Error ? err.message : String(err)).split('\n')[0];
-
-  /** 值必须是纯映射才算配置：裸标量/数组会被下游按 Object.entries 摊开写回垃圾。 */
-  const describeNonMapping = (v: unknown): string | null => {
-    if (v === null) return 'empty';
-    if (Array.isArray(v)) return 'array';
-    if (typeof v !== 'object') return typeof v;
-    return null;
-  };
-
-  function loadFromDisk(): AalisConfig {
-    if (existsSync(absPath)) {
-      rawYaml = readFileSync(absPath, 'utf-8');
-      let parsed: unknown;
-      try {
-        parsed = parseYaml(rawYaml) ?? {};
-      } catch (err) {
-        // 启动语法错误照样响亮拒启，但剥离源码摘录再上抛——崩溃日志同为暴露面。
-        throw new Error(`配置文件解析失败：${parseErrorFirstLine(err)}（${absPath}）`);
-      }
-      // 启动坏就该响亮：语法错误本就上抛，「解析成功但不是配置对象」同样上抛，
-      // 不能放进 core 摊成 "0": f 再写回磁盘。空文件视同缺省（?? {} 已兜）。
-      const kind = describeNonMapping(parsed);
-      if (kind) {
-        throw new Error(`配置文件不是一个配置对象（得到 ${kind}）：${absPath}`);
-      }
-      return parsed as AalisConfig;
-    }
-    logger.warn(`配置文件不存在（${absPath}），使用内存默认配置启动`);
-    rawYaml = null;
-    // 名称与日志等级取 CORE_CONFIG_SCHEMA 的默认值，与配置文档补缺省同一来源
-    const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
-    return { name: name as string, logLevel: logLevel as string, plugins: {} };
-  }
-
-  const initialConfig = loadFromDisk();
-
-  const provider: ConfigProvider = {
-    save(config) {
-      // 写前比对磁盘实况：盘上内容必须仍是本进程最后读入或写出的那份。不是，就有尚未生效的
-      // 外部修改（去抖窗口内、监听未武装、解析失败被搁置、另一个进程写过）——整份覆写会把它
-      // 静默吃掉，所以拒写，让调用方收到拒绝。文件不存在时没有可保护的内容，照写。
-      let onDisk: string | null = null;
-      try {
-        onDisk = readFileSync(absPath, 'utf-8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      }
-      if (onDisk !== null && onDisk !== rawYaml) {
-        reconcilePending = true;
-        throw new ConfigSaveRefusedError(`配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（${absPath}）`);
-      }
-      const yaml = buildSaveYaml(config);
-      // 原子写：先写临时文件再 rename（同目录同分区，rename 原子覆盖）。
-      // 直接 writeFileSync 是 O_CREAT|O_TRUNC——写中断（磁盘写满 / 进程被杀）时截断已经发生、
-      // 写入却没完成，盘上留下 0 字节或半截 YAML。而空文件会被 loadFromDisk 当成「空配置」放行，
-      // 随后 config-sync 按 schema 回填并再次存盘，没有 default 的 apiKey 就此永久消失，
-      // 连「文件坏了」的现场都不留。同仓 plugin-storage-local 早已为同样的理由做原子写。
-      // watch() 守的是目录而非文件（见下），所以 rename 换 inode 不会打断热重载。
-      const tmp = `${absPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
-      // 临时文件建出来就是收紧的权限：沿用原文件的权限位，没有原文件（或取不到）时用 0o600。
-      // 配置文件常含密钥：按默认 umask（通常 0644）建出再 chmod，其间或进程在 rename 前被杀时，
-      // 目录里就有一份权限更宽的密钥副本；rename 让目标继承 tmp 的权限，用户 chmod 600 过的也不能退回 0644。
-      let mode = 0o600;
-      try {
-        mode = statSync(absPath).mode & 0o777;
-      } catch {
-        /* 原文件不存在或取不到权限：按 0o600 建 */
-      }
-      try {
-        writeFileSync(tmp, yaml, { encoding: 'utf-8', mode });
-        // 建文件时的 mode 还会被 umask 收窄；对齐回目标权限位，至多放宽到原文件本就有的程度
-        try {
-          chmodSync(tmp, mode);
-        } catch {
-          /* 对不齐就保持建出时更窄的权限，不拖累写入本身 */
-        }
-        renameSync(tmp, absPath);
-      } catch (err) {
-        // 写入或改名失败：临时文件是整份配置（含密钥），不能留在配置目录里
-        try {
-          rmSync(tmp, { force: true });
-        } catch {
-          /* 删不掉也要把原始错误传出去 */
-        }
-        throw err;
-      }
-      rawYaml = yaml;
-      reconcilePending = false;
+  const file = openYamlFile<AalisConfig>(absPath, {
+    label: '配置文件',
+    logger,
+    serialize: buildSaveYaml,
+    missing: () => {
+      logger.warn(`配置文件不存在（${absPath}），使用内存默认配置启动`);
+      // 名称与日志等级取 CORE_CONFIG_SCHEMA 的默认值，与配置文档补缺省同一来源
+      const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
+      return { name: name as string, logLevel: logLevel as string, plugins: {} };
     },
+  });
+  return { config: file.initial, provider: { save: config => file.save(config), watch: file.watch } };
+}
 
-    watch(onChange) {
-      if (watcher) return () => {};
-      // 守目录而非文件：文件可能尚未落盘（首启前），建出来时也要能接上。
-      if (!existsSync(dataDir)) return () => {};
-      const fileName = basename(absPath);
-      try {
-        const schedule = () => {
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            debounceTimer = null;
-            // 读盘失败与解析失败必须拆开：编辑器先删后建式保存的瞬时 ENOENT
-            // 若与语法错误共用一个 catch，会被误报成「你的 YAML 写错了」——
-            // 比不报还糟。读不到安静返回（下一个事件会来），解析失败才出声。
-            let current: string;
-            try {
-              current = readFileSync(absPath, 'utf-8');
-            } catch {
-              return;
-            }
-            // rawYaml 在装载 / save / 本回调三处维护，比对它一并挡掉自写回、目录里
-            // 无关文件的杂音、touch，以及改完又改回来的空变更。拒写之后的这一次除外（见 reconcilePending）。
-            if (current === rawYaml && !reconcilePending) return;
-            let parsed: unknown;
-            try {
-              parsed = parseYaml(current);
-            } catch (err) {
-              // rawYaml 只在解析成功后推进（不变量=当前生效的那份内容）：
-              // 同一份坏内容每次保存都重新告警，直到改对为止。
-              logger.warn(`配置文件解析失败，本次变更已忽略，仍在使用上一份配置：${parseErrorFirstLine(err)}`);
-              return;
-            }
-            // 空文件 / 裸标量 / 数组：都是「解析不出一个配置对象」的同一问题，
-            // 一道闸拒收——放行会让全部插件按默认值 bounce 或往配置文件写回垃圾。
-            const kind = describeNonMapping(parsed);
-            if (kind) {
-              logger.warn(`配置文件不是一个配置对象（得到 ${kind}），本次变更已忽略`);
-              return;
-            }
-            rawYaml = current;
-            reconcilePending = false;
-            try {
-              onChange(parsed as AalisConfig);
-            } catch (err) {
-              // 变更处理器抛错此前被整段 catch 静默吞掉——保留兜底但必须出声。
-              logger.warn(`配置变更处理器抛错：${err instanceof Error ? err.message : String(err)}`);
-            }
-          }, 300);
-        };
-        // **必须监听目录，不能监听文件本身。** fs.watch 绑的是那一刻的 inode，而编辑器
-        // 保存普遍是「写临时文件 → rename 覆盖」——rename 之后同名文件已是新 inode，
-        // 绑在旧 inode 上的 watcher 从此永不触发，且无异常、无日志、无返回值。
-        // save() 同样是「写临时文件 → rename」（见上），自写回也会换 inode——守文件在
-        // 第一次保存后就失聪；守目录则人改与自写回两种来源都接得住。
-        watcher = fsWatch(dataDir, (_event, filename) => {
-          // filename 平台不保证非空；为空时不敢过滤，交给下面的内容比对兜底。
-          if (filename && basename(filename.toString()) !== fileName) return;
-          schedule();
-        });
-        // 武装即对账一次：武装前（启动期）的外部修改不会再有事件，不补就既不生效、又让 save 一直拒写。
-        schedule();
-      } catch (err) {
-        // 平台或挂载不支持 watch：外部修改从此不会自动生效，save 也会因盘上内容已变而拒写。
-        logger.warn(
-          `无法监听配置文件变更（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
-        );
-      }
+interface FsSecretsProviderResult {
+  /** 当前的键值（交给 `createConfigStore` 的 `secrets.values`） */
+  values: Record<string, unknown>;
+  provider: SecretProvider;
+}
 
-      return () => {
-        if (debounceTimer) {
-          clearTimeout(debounceTimer);
-          debounceTimer = null;
-        }
-        watcher?.close();
-        watcher = null;
-      };
-    },
-  };
-
-  return { config: initialConfig, provider };
+/**
+ * 创建基于家目录 `secrets.yaml` 的密钥存储：顶层是「键 → 值」的映射。读写、拒写与监听同配置文件，
+ * 另有三处不同：文件不存在时按空映射处理、不告警（第一次保存时建出）；运行中改成空文件或只剩注释时按空映射处理；
+ * 原子写的临时文件一律以 0600 创建，不沿用原文件的权限位。
+ */
+export function createFsSecretsProvider(absPath: string): FsSecretsProviderResult {
+  assertAbsolute('密钥文件路径', absPath);
+  const file = openYamlFile<Record<string, unknown>>(absPath, {
+    label: '密钥文件',
+    logger: new DefaultLogger('aalis:secrets'),
+    serialize: values => stringifyYaml(values, { lineWidth: 0 }),
+    missing: () => ({}),
+    mode: 0o600,
+    emptyAsMissing: true,
+  });
+  return { values: file.initial, provider: { save: values => file.save(values), watch: file.watch } };
 }
 
 // ============================================================

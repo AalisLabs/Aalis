@@ -2086,6 +2086,7 @@ const configSchema = defineConfig({
     type: 'number',
     label: '长期记忆预留 Token',
     default: 4096,
+    secret: false,
     description: '为注入的 system 消息预留的 token 额度：超出时先按比例缩减，极端情况下（最后阶段）仍会删除',
   },
   historyLimit: {

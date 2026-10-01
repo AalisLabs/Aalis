@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
-import { type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
+import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
@@ -12,6 +12,8 @@ import {
   type ConfigSchema,
   deepMergeDefaults,
   defaultsFrom,
+  isSecretRef,
+  mapSecretFields,
   parseConfig,
   removeExtraFields,
   validateConfig,
@@ -49,20 +51,38 @@ export async function saveAfterApply(
     await doc.save();
     return true;
   } catch (err) {
-    const lead = outcome ? `${outcome}；` : '';
-    if (isConfigSaveRefused(err)) {
-      res.status(409).json({
-        error: `${lead}已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
-        applied: true,
-      });
-    } else {
-      res.status(500).json({
-        error: `${lead}已在运行态生效，但写入配置文件失败（${errorMessage(err)}）；改动保留在文档里，下次保存成功时一并写入`,
-        applied: true,
-      });
-    }
+    reportSaveFailure(res, err, reconcile, outcome);
     return false;
   }
+}
+
+/** 落盘失败的回执，口径见 {@link saveAfterApply}；applyPluginConfig 带回的 saveError 同样用它 */
+function reportSaveFailure(
+  res: express.Response,
+  err: unknown,
+  reconcile: keyof typeof RECONCILE,
+  outcome?: string,
+): void {
+  const lead = outcome ? `${outcome}；` : '';
+  if (isConfigSaveRefused(err)) {
+    res.status(409).json({
+      error: `${lead}已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
+      applied: true,
+    });
+  } else {
+    res.status(500).json({
+      error: `${lead}已在运行态生效，但写入配置文件失败（${errorMessage(err)}）；改动保留在文档里，下次保存成功时一并写入`,
+      applied: true,
+    });
+  }
+}
+
+/** 文档里每个密钥键被引用的处数：表单据此提示「替换会同时改到另外 N 处」 */
+function countSecretRefs(value: unknown, into: Record<string, number> = {}): Record<string, number> {
+  if (isSecretRef(value)) into[value.$secret] = (into[value.$secret] ?? 0) + 1;
+  else if (Array.isArray(value)) for (const item of value) countSecretRefs(item, into);
+  else if (value !== null && typeof value === 'object') for (const v of Object.values(value)) countSecretRefs(v, into);
+  return into;
 }
 
 /**
@@ -173,7 +193,7 @@ export function registerPluginRoutes(
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
-      res.json({ plugins: [] });
+      res.json({ plugins: [], secretRefCounts: {} });
       return;
     }
     // 反向索引：instanceId -> tools / commands（名字列表 + 聚合敏感能力）。
@@ -203,8 +223,10 @@ export function registerPluginRoutes(
       commandsByPlugin.set(owner, list);
       addCaps(owner, c.visibility);
     }
+    const doc = caps.hostConfig.current;
     const plugins = pm.getStatus().map(p => {
       const entry = pm.getPlugin(p.instanceId);
+      const schema = entry?.definition?.configSchema;
       return {
         name: p.name,
         instanceId: p.instanceId,
@@ -221,16 +243,17 @@ export function registerPluginRoutes(
         commands: commandsByPlugin.get(p.instanceId) ?? [],
         reusable: p.reusable ?? false,
         // extends / config / configSchema / defaultConfig 非内核状态摘要字段
-        // （getStatus 只含内核事实）：从 entry.config / entry.definition 补齐给前端。
-        // 配置按原值给出：前端据它建编辑草稿、整份保存，secret 字段只在显示时遮蔽
+        // （getStatus 只含内核事实）：从配置文档与 entry.definition 补齐给前端。
+        // 配置给文档形态：密钥字段上是引用，不是原值；前端据它建编辑草稿、整份保存，引用原样发回即保持原值。
+        // 宿主不提供配置文档时给运行态，去掉密钥字段（运行态里是原值）
         extends: entry?.definition?.extends,
-        config: entry?.config ?? {},
-        configSchema: entry?.definition?.configSchema,
-        defaultConfig: defaultsFrom(entry?.definition?.configSchema),
+        config: doc ? doc.getPluginConfig(p.instanceId) : mapSecretFields(schema, entry?.config ?? {}, () => undefined),
+        configSchema: schema,
+        defaultConfig: defaultsFrom(schema),
         error: p.error,
       };
     });
-    res.json({ plugins });
+    res.json({ plugins, secretRefCounts: doc ? countSecretRefs(doc.getAll().plugins) : {} });
   });
 
   // 获取可用的 WebUI 页面（由活跃插件经 webui-server 的绑定接口 registerPage 登记）
@@ -415,11 +438,12 @@ export function registerPluginRoutes(
     const doc = docOr503(res);
     if (!doc) return;
 
-    // 合进原配置再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
+    // 合进原配置再交给宿主的 applyPluginConfig：配置是**整体替换**语义（core 的 orchestration/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。基线取配置文档里的原配置而非裸默认值：defaultsFrom 只收录声明了
     // default 的键，而 apiKey / accessToken 这类 secret 多数**没有** default（deepseek、embedding-openai、
     // llm-openai、serper、onebot 皆是），以裸默认值打底时请求里没带 apiKey，整体替换后用户的密钥就从内存态与
     // yaml 一起消失。叠上原配置后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式提交。
+    // 原配置是文档形态，密钥字段上是引用；前端原样发回引用即保持原值，发明文即替换（由宿主拆进密钥存储）。
     const entry = pm.getPlugin(pluginName);
     const schema = entry?.definition?.configSchema;
     let docConfig: Record<string, unknown>;
@@ -439,6 +463,11 @@ export function registerPluginRoutes(
       ));
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
+    // 没登记的实例不经这里新建（宿主的 applyPluginConfig 会按同模块定义登记它），建实例走 POST instances
+    if (!entry) {
+      res.status(404).json({ error: `插件 ${pluginName} 不存在` });
       return;
     }
     const note =
@@ -473,47 +502,51 @@ export function registerPluginRoutes(
       return;
     }
 
-    // 运行态与文档都已是这份配置：不重建插件（updateConfig 即 bounce，会连带重启依赖它所提供服务的下游）。
-    // 仍照常落盘：上一次保存可能写文件失败（500），文档与运行态已是新配置而文件没变，原样重试要能补写；
-    // 自写回不会触发 watch 重载。只认 active：error 态插件靠原样保存来重试激活，照旧走 updateConfig
-    if (entry?.state === 'active' && isDeepStrictEqual(merged, entry.config) && isDeepStrictEqual(merged, docConfig)) {
-      if (!(await saveAfterApply(doc, res, 'reload'))) return;
-      res.json({ ok: true, message: `插件 ${pluginName} 配置无改动，已写回配置文件${note}`, ignored, removed });
-      return;
-    }
-
-    let success: boolean;
+    // 运行态、文档、密钥与落盘由宿主一步完成：解析出的配置与运行态相同、实例在 active 时不重建插件
+    // （updateConfig 即 bounce，会连带重启依赖它所提供服务的下游），照常写回文档并落盘：上一次保存可能写文件失败（500），
+    // 原样重试要能补写；自写回不会触发 watch 重载。error 态插件靠原样保存来重试激活
+    let result: ApplyPluginConfigResult;
     try {
-      success = await pm.updateConfig(pluginName, merged);
+      result = await doc.applyPluginConfig(pluginName, merged);
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
-    if (success) {
-      // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
-      doc.setPluginConfig(pluginName, merged);
-      // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），但按实际状态回报。
-      // 禁用态只换上新配置、保持禁用，启用时按它激活
-      const after = await settledEntry(pm, pluginName);
-      const failure =
-        after?.state === 'error'
-          ? `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
-          : undefined;
-      const aside = after?.state === 'disabled' ? '插件已禁用，启用时按新配置激活' : notYetActive(after?.state);
-      if (!(await saveAfterApply(doc, res, 'reload', failure ?? aside))) return;
-      if (failure !== undefined) {
-        res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
+    if (result.status === 'refused') {
+      refuse(pm, res, pluginName, '配置更新');
+      return;
+    }
+    // 运行态与文档都没变：回「无改动」。只有运行态没变（例如文档里补了配置段）照常按已更新回报，插件没有重建
+    if (!result.reloaded && isDeepStrictEqual(merged, docConfig)) {
+      if (result.saveError !== undefined) {
+        reportSaveFailure(res, result.saveError, 'reload');
         return;
       }
-      res.json({
-        ok: true,
-        message: `插件 ${pluginName} 配置已更新${note}${aside ? `；${aside}` : ''}`,
-        ignored,
-        removed,
-      });
-    } else {
-      refuse(pm, res, pluginName, '配置更新');
+      res.json({ ok: true, message: `插件 ${pluginName} 配置无改动，已写回配置文件${note}`, ignored, removed });
+      return;
     }
+    // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），但按实际状态回报。
+    // 禁用态只换上新配置、保持禁用，启用时按它激活
+    const after = await settledEntry(pm, pluginName);
+    const failure =
+      after?.state === 'error'
+        ? `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
+        : undefined;
+    const aside = after?.state === 'disabled' ? '插件已禁用，启用时按新配置激活' : notYetActive(after?.state);
+    if (result.saveError !== undefined) {
+      reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
+      return;
+    }
+    if (failure !== undefined) {
+      res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
+      return;
+    }
+    res.json({
+      ok: true,
+      message: `插件 ${pluginName} 配置已更新${note}${aside ? `；${aside}` : ''}`,
+      ignored,
+      removed,
+    });
   });
 
   // 启用插件
@@ -666,20 +699,16 @@ export function registerPluginRoutes(
       return;
     }
     const note = ignored.length > 0 ? `（已忽略未声明的配置字段: ${ignored.join(', ')}）` : '';
-    let registered: boolean;
+    // 宿主先写文档再登记（文档里残留的禁用标记照旧生效，以禁用态登记），没登记上时撤回文档与密钥
+    let result: ApplyPluginConfigResult;
     try {
-      doc.setPluginConfig(instanceId, mergedConfig);
-      // 文档里残留的禁用标记（手改配置文件留下的）照旧生效：以禁用态登记
-      registered = await pm.register(sourceModule, mergedConfig, instanceId, {
-        disabled: doc.isPluginDisabled(instanceId),
-      });
+      result = await doc.applyPluginConfig(instanceId, mergedConfig);
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
-    if (!registered) {
+    if (result.status === 'refused') {
       // 前面已查过重名与 reusable，走到这里的实际只有停机进行中：配置不落盘，免得下次启动按文件登记
-      doc.removePluginConfig(instanceId);
       res.status(409).json({ error: `实例 ${instanceId} 未登记（停机中或被拒，见日志），配置未写入` });
       return;
     }
@@ -693,7 +722,10 @@ export function registerPluginRoutes(
       after?.state === 'disabled'
         ? '配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活'
         : notYetActive(after?.state);
-    if (!(await saveAfterApply(doc, res, 'reload', failure ?? aside))) return;
+    if (result.saveError !== undefined) {
+      reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
+      return;
+    }
     if (failure !== undefined) {
       res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
       return;

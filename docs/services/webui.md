@@ -9,7 +9,7 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 - `'webui-server'` —— 后端服务，契约 `WebUIService`。描述符 `webuiServer`，绑定接口 `BoundWebui`（`packages/api-webui/src/index.ts`）。
 - `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，绑定接口是普通 `ServiceRef`。
 
-契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它导出运行时服务契约、声明式页面组件类型、以及向 `PluginMeta` 注入的 `extends`、向 `@aalis/schema-config` 的 `SchemaField` 注入的 `secret`。
+契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它导出运行时服务契约、声明式页面组件类型，以及向 `PluginMeta` 注入的 `extends`。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
@@ -75,17 +75,9 @@ export interface WebuiPage {
 
 action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。成功回执 `{ ok: true, message }` 带非空 `message` 时前端显示它：form 用它代替「已保存」，actions 用它代替「完成」，table 行内操作先弹窗告知再刷新表格——「已保存，但仅本次运行生效」这类附注放在这里。
 
-### SchemaField 注入
+### 配置表单用到的字段属性
 
-```ts
-declare module '@aalis/schema-config' {
-  interface SchemaField {
-    secret?: boolean;
-  }
-}
-```
-
-`dynamicOptions` / `allowCustom` 影响取值判定（`parseConfig` / `validateConfig` 据此决定是否查选项成员资格），由 `@aalis/schema-config` 自己声明。
+本包不向 `SchemaField` 注入属性。`secret`（值是凭据）与影响取值判定的 `dynamicOptions` / `allowCustom`（`parseConfig` / `validateConfig` 据此决定是否查选项成员资格）都由 `@aalis/schema-config` 声明，插件用到它们不必引入本包。`secret` 字段在 WebUI 里的呈现见第 5 节。
 
 `subsystem` 写在 `definePlugin({ subsystem })`（`PluginDefinition` 字段，core 不读）。`extends` 经本包 declaration merging 挂到 `PluginMeta`。
 
@@ -164,6 +156,7 @@ export default definePlugin({
 - **服务缺失**：`webui.current` 在未就绪时为 `undefined`。登记用门面即可。
 - **错误边界**：action handler 抛错会被路由层 catch 成 `500 {error}`，前端展示错误。
 - **动态选项**：表单字段标 `dynamicOptions: '<serviceName>'`，前端经 webui-server 聚合调该服务的 `listModels()`（`llm` 走 per-model entry 枚举）。
+- **密钥字段**：`secret: true` 的字段，宿主提供密钥存储时 `GET /api/plugins` 回的是配置文档里的引用 `{ $secret: '<键>' }`，不回原值（没有密钥存储的自组装宿主，文档里本就是明文，接口原样返回）。表单对已设置的字段显示「已设置」和键名，不显示值；输入新值即替换，不动（或输入后删空、点撤销）则原样回传引用、保持原值，点清除则清空。顶层与分组里的字段，键被几处配置共用时提示替换会一并影响它们；数组元素里的字段替换时另建新键，不影响共用者，不提示。标在 map、list 上的字段整个值算一个密钥，只写不回显，要改就整份重填。存放与写入规则见 [`docs/core/config.md`](../core/config.md#密钥配置) 的「密钥配置」一节。
 
 ## 6. 能力 / 风险 → 影响
 

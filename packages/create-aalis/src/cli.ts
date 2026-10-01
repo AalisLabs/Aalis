@@ -420,7 +420,7 @@ export function renderConfig(enabled: Set<string>): string {
     }
   } else {
     lines.push(
-      '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段直接填写（本文件已在 .gitignore 里，不入库）。',
+      '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写（密钥在启动时移进同目录的 secrets.yaml，本处换成引用；home/ 已在 .gitignore 里，不入库）。',
     );
     lines.push('plugins: {}');
   }
@@ -450,7 +450,7 @@ npm start
 
 - 家目录是 \`home/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_HOME\` 或用 \`npm start -- --home <目录>\` 可换到别处。
 - 编辑 \`home/aalis.config.yaml\` 调整插件与参数。
-- 密钥/令牌：直接填进 \`home/aalis.config.yaml\`${hasWebui ? '，或启动后在 WebUI 配置页填写。' : '。'}
+- 密钥/令牌：填进 \`home/aalis.config.yaml\`${hasWebui ? '，或启动后在 WebUI 配置页填写' : ''}。启动时它们会被移进 \`home/secrets.yaml\`（0600），配置文件里换成引用；备份家目录时连同 \`secrets.yaml\` 一起备份。
 ${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:3000 。\n' : ''}
 ## 装更多插件
 
@@ -676,7 +676,7 @@ async function main(): Promise<void> {
     if (noInstall) console.log(`  cd ${projectName} && npm install`);
     else console.log(`  cd ${projectName}`);
     const needsKey = enabledList.some(n => KNOWN_CONFIG[n]);
-    if (needsKey) console.log('  # 在 home/aalis.config.yaml 里填入 API key（home/ 不入库）');
+    if (needsKey) console.log('  # 在 home/aalis.config.yaml 里填入 API key（启动时移进 secrets.yaml）');
     console.log('  npm start');
     if (tier !== 'full') {
       const hasWebui = enabled.has('@aalis/plugin-webui-server');
