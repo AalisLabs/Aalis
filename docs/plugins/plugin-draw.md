@@ -38,7 +38,7 @@ export default definePlugin({
 | `maxSourceKB` | number | `256` | 输入标记上限 (KB)：source 参数的大小上限 |
 | `scale` | number | `2` | 截图缩放倍率：deviceScaleFactor：2 = 视网膜清晰度（像素翻倍，文件更大） |
 | `headless` | boolean | `true` | 无头模式：调试时可关闭以观察渲染页面 |
-| `executablePath` | string | `''` | Chrome 路径（留空自动探测）：留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立） |
+| `executablePath` | string | `''` | Chrome 路径（留空自动探测）：留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立）；填写时须为绝对路径 |
 | `idleShutdownSec` | number | `300` | 空闲关停 (秒)：渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻 |
 | `maxConcurrency` | number | `2` | 渲染并发上限：同时进行的渲染任务数上限；群内多人并发画图时超出的排队，防无界 page + ffmpeg 拖垮机器 |
 | `animMaxDurationSec` | number | `8` | 动图时长上限 (秒)：draw_animation 的动画时长硬上限 |

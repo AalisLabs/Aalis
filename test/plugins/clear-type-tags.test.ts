@@ -7,6 +7,7 @@ import { App } from '../../packages/core/src/index.js';
 import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -26,6 +27,7 @@ async function world() {
   const app = new App({ name: 'T', logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
+  provideHostPaths(app, base);
   await app.plugins.register(storageLocal, {
     roots: [
       {

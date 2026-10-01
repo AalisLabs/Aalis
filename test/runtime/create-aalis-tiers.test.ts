@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -25,6 +25,7 @@ const HOST_SERVICES = new Set([
   'app',
   'plugins',
   'host-config',
+  'host-paths',
   'plugin-source',
 ]);
 
@@ -74,9 +75,16 @@ describe('create-aalis 对话模板', () => {
         { cwd: dir, timeout: 10_000 },
       );
       const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
-      const config = parse(await readFile(join(dir, 'my-bot', 'aalis.config.yaml'), 'utf-8'));
+      const home = join(dir, 'my-bot', 'home');
+      const config = parse(await readFile(join(home, 'aalis.config.yaml'), 'utf-8'));
+      // 家目录生成时就是初始化过的：配置与空的密钥文件都在，权限收紧
+      expect((await stat(home)).mode & 0o777).toBe(0o700);
+      expect((await stat(join(home, 'secrets.yaml'))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(home, 'aalis.config.yaml'))).mode & 0o777).toBe(0o600);
+      const entry = await readFile(join(dir, 'my-bot', 'index.mjs'), 'utf-8');
+      expect(entry).toContain("startAalis({ appDir: here, defaultHome: join(here, 'home') })");
       const ignored = (await readFile(join(dir, 'my-bot', '.gitignore'), 'utf-8')).split('\n');
-      expect(ignored, '密钥写在 aalis.config.yaml 里，必须忽略').toContain('aalis.config.yaml');
+      expect(ignored, '配置、密钥与数据都在家目录里，必须忽略').toContain('home/');
       for (const name of [
         '@aalis/plugin-agent',
         '@aalis/plugin-memory-sqlite',

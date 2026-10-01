@@ -9,6 +9,7 @@ import {
 } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // storage.move 真 fs 回归:file_move 工具的底座。
@@ -25,9 +26,10 @@ describe('storage.move (真 fs)', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-move-'));
-    ws = join(base, 'ws'); // 绝对根路径（root.path 相对 cwd 解析，故用绝对避免污染项目）
+    ws = join(base, 'ws'); // 绝对根路径（root.path 相对家目录解析，这里直接给临时目录下的绝对路径）
     mkdirSync(ws, { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
         {

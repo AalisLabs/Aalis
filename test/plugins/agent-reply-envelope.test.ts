@@ -11,6 +11,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { type Message, type OutgoingMessage, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -59,6 +60,7 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
   const boot = async (personaName: string, responses: ChatResponse[]) => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: [
         {

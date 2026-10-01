@@ -6,7 +6,7 @@
 
 ## 概述
 
-`StorageService` 把项目里几个目录（workspace / data / tmp / pluginData / logs，以及用户自定义根）映射成具名 storage URI（`name:/path`），上层用 URI 而非绝对路径访问文件。
+`StorageService` 把家目录里几个目录（workspace / data / tmp / pluginData / logs，以及用户自定义根）映射成具名 storage URI（`name:/path`），上层用 URI 而非绝对路径访问文件。
 
 定位：
 

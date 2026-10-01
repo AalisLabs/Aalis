@@ -61,13 +61,15 @@ const configSchema = defineConfig({
       command: {
         type: 'string',
         label: '可执行命令',
-        description: '例如 npx / node / python / 绝对路径。',
+        description: '命令名（如 npx / node / python，按 PATH 查找）或绝对路径。',
         required: true,
+        format: 'executable',
+        onInvalid: 'error',
       },
       args: {
         type: 'list',
         label: '命令参数',
-        description: '按顺序传给命令的参数列表，每项一个参数（可含空格）。',
+        description: '按顺序传给命令的参数列表，每项一个参数（可含空格）。参数里的文件路径请写绝对路径。',
         default: [],
         onInvalid: 'error',
       },

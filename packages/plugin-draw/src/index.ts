@@ -65,6 +65,7 @@ const configSchema = defineConfig({
     type: 'string',
     label: 'Chrome 路径（留空自动探测）',
     default: '',
+    format: 'absolute-path',
     onInvalid: 'error',
     description: '留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立）',
   },

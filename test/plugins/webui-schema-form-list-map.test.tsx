@@ -198,3 +198,25 @@ describe('外部值变化', () => {
     expect(env.value).toBe('');
   });
 });
+
+describe('SchemaForm 路径类字段', () => {
+  it('按 format 给出写法提示，没有 format 的普通字符串不给', () => {
+    const pathSchema: ConfigSchema = {
+      model: { type: 'string', label: '模型', format: 'absolute-path' },
+      bin: { type: 'string', label: '程序', format: 'executable' },
+      name: { type: 'string', label: '名字' },
+    };
+    const { container } = render(
+      <SchemaForm
+        schema={pathSchema}
+        draft={{ model: '', bin: '', name: '' }}
+        onChange={() => {}}
+        modelCache={{}}
+        onFetchModels={() => {}}
+        onFetchLLMProviders={() => {}}
+      />,
+    );
+    const placeholders = [...container.querySelectorAll('input')].map(i => i.getAttribute('placeholder'));
+    expect(placeholders).toEqual(['绝对路径，例如 /opt/models/model.bin', '命令名（按 PATH 查找）或绝对路径', null]);
+  });
+});

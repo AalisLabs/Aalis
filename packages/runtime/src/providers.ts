@@ -19,6 +19,7 @@ import { DefaultLogger } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { ConfigProvider } from './config-store.js';
+import { assertAbsolute } from './home.js';
 import {
   HOST_CORE_DIR,
   importPluginDefinition,
@@ -31,8 +32,6 @@ import { disarmTerminalStateRestorer } from './terminal.js';
 // ============================================================
 // FsYamlConfigProvider —— 从 YAML 文件加载+持久化配置
 // ============================================================
-
-const DEFAULT_CONFIG_FILE = 'aalis.config.yaml';
 
 const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
 
@@ -77,7 +76,7 @@ interface FsYamlConfigProviderResult {
 }
 
 /**
- * 创建一个基于 YAML 文件的 ConfigProvider。
+ * 创建一个基于 YAML 文件的 ConfigProvider。`absPath` 是配置文件的绝对路径（startAalis 传家目录里的 aalis.config.yaml）。
  *
  * - 同步读取 + 解析（值原样加载，不做任何替换——`${VAR}` 插值已随 `.env` 机制删除）
  * - `save()` 同步写回；写前比对盘上内容，有尚未生效的外部修改时拒写（抛 {@link ConfigSaveRefusedError}，只带路径）
@@ -86,8 +85,8 @@ interface FsYamlConfigProviderResult {
  *
  * 返回 config 快照与 provider，供宿主组装 App。
  */
-export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigProviderResult {
-  const absPath = configPath ? resolve(configPath) : resolve(process.cwd(), DEFAULT_CONFIG_FILE);
+export function createFsYamlConfigProvider(absPath: string): FsYamlConfigProviderResult {
+  assertAbsolute('配置文件路径', absPath);
   const dataDir = dirname(absPath);
 
   let rawYaml: string | null = null;
@@ -98,12 +97,12 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   let watcher: FSWatcher | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   // 走 LogHub 而非 console：file logger 只订阅 LogHub，脱终端部署下 stderr
-  // 进不了 data/latest.log，console 版的告警等于没加。
+  // 进不了 logs/latest.log，console 版的告警等于没加。
   const logger = new DefaultLogger('aalis:config');
 
   /**
    * 解析错误只取首行：yaml 的完整消息会内嵌出错位置附近的源码摘录，而配置
-   * 文件里有真实密钥——摘录随日志进 data/latest.log 即泄漏（WebUI 日志面板、
+   * 文件里有真实密钥——摘录随日志进 logs/latest.log 即泄漏（WebUI 日志面板、
    * 崩溃落盘、外贴排查都是暴露面）。诊断种类与行列号都在首行；
    * **位置进日志，内容不进**（与配置校验消息不带值同一条纪律）。
    */
@@ -285,14 +284,14 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
 // ============================================================
 
 /**
- * 创建一个基于 packages 目录扫描的 PluginLoader。
+ * 创建一个基于 packages 目录扫描的 PluginLoader。`rootDir` 是 packages 目录的绝对路径（源码形态的入口传 `<仓库>/packages`）。
  *
  * - `discover()`：读 dir 下每个子目录的 package.json，按 aalis-plugin 关键词收录可加载插件
  * - `load()`：先经 assertSameCore 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import
  * - `reload()`：用入口文件 mtime 作为 import URL 的 query 强制 ESM 缓存失效
  */
-export function createFsPluginLoader(packagesDir?: string): PluginLoader {
-  const rootDir = packagesDir ?? resolve(process.cwd(), 'packages');
+export function createFsPluginLoader(rootDir: string): PluginLoader {
+  assertAbsolute('packages 目录', rootDir);
   // 死门信号与 node_modules 加载器同一套（本仓自托管入口走的正是本加载器，
   // 只在一边出声等于对自己的部署失聪）。
   const loaderLogger = new DefaultLogger('aalis:loader');
@@ -376,6 +375,10 @@ export function isRestartRollback(v: unknown): v is RestartRollback {
 }
 
 export interface RespawnOptions {
+  /** 安装集目录：开发模式（.ts 入口）在这里找本地 tsx */
+  appDir: string;
+  /** 新进程的 cwd：启动时的 cwd，命令行里相对的 --home 才能解析到同一处 */
+  cwd: string;
   /**
    * 等待子进程 IPC ready 的超时（毫秒，默认 30000）。
    *
@@ -387,14 +390,14 @@ export interface RespawnOptions {
 
 /** 组装重生用的 exec + argv。分离出来是为了单测覆盖 execArgv 保留。 */
 export function buildRespawnCommand(
+  appDir: string,
   argv: readonly string[] = process.argv,
   execArgv: readonly string[] = process.execArgv,
-  cwd: string = process.cwd(),
 ): { exec: string; args: string[] } {
   const scriptFile = argv[1];
   if (scriptFile?.endsWith('.ts')) {
     // tsx 是包装脚本，node 层 flag 由它自己转交，不能塞在它前面。
-    const tsxBin = resolve(cwd, 'node_modules', '.bin', 'tsx');
+    const tsxBin = resolve(appDir, 'node_modules', '.bin', 'tsx');
     return { exec: existsSync(tsxBin) ? tsxBin : 'tsx', args: [...argv.slice(1)] };
   }
   // execArgv 不在 argv 里：`node --max-old-space-size=4096 dist/start.js` 的
@@ -426,14 +429,14 @@ export function buildRespawnCommand(
  *
  * 对 .ts 入口（开发模式）会优先使用本地 `tsx` 二进制。
  */
-export function createProcessRespawnStrategy(opts: RespawnOptions = {}): RestartStrategy {
+export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrategy {
   const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
   let restarting = false;
 
   function spawnChild(withIpc: boolean): ReturnType<typeof spawn> {
-    const { exec, args } = buildRespawnCommand();
+    const { exec, args } = buildRespawnCommand(opts.appDir);
     return spawn(exec, args, {
-      cwd: process.cwd(),
+      cwd: opts.cwd,
       stdio: withIpc ? ['inherit', 'inherit', 'inherit', 'ipc'] : 'inherit',
       detached: true,
     });

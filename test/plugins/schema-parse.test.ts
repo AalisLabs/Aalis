@@ -180,6 +180,25 @@ describe('parseConfig 无效值', () => {
     expect(parse(constrained, { port: 0 }).warns).toEqual(['配置项 port 小于下限 1，改用默认值 80']);
   });
 
+  it('format：相对路径按无效处理；onInvalid: error 时拒绝激活，文案不含原值', () => {
+    const schema: ConfigSchema = {
+      model: field('string', { format: 'absolute-path', default: '' }),
+      bin: field('string', { format: 'executable', default: 'whisper-cli' }),
+    };
+    const { config, warns } = parse(schema, { model: 'models/m.bin', bin: 'bin/whisper' });
+    expect(config).toEqual({ model: '', bin: 'whisper-cli' });
+    expect(warns).toEqual([
+      '配置项 model 须为绝对路径，改用默认值 ""',
+      '配置项 bin 须为绝对路径或命令名（不含路径分隔符），改用默认值 "whisper-cli"',
+    ]);
+    expect(parse(schema, { model: '/m/m.bin', bin: 'whisper' }).config).toEqual({ model: '/m/m.bin', bin: 'whisper' });
+    const err = thrown(() =>
+      parse({ model: field('string', { format: 'absolute-path', onInvalid: 'error' }) }, { model: 'private/m.bin' }),
+    );
+    expect(err.message).toContain('model 须为绝对路径');
+    expect(err.message).not.toContain('private');
+  });
+
   it('告警与错误文案都不含原值', () => {
     const secretSchema: ConfigSchema = {
       key: field('number', { default: 0 }),

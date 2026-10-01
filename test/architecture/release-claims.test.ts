@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.18.0 <1.0.0';
-/** 带 core peer >=0.18.0 的包：33 api（含随 core 0.19 首发的 api-trigger，另有未发布的 api-remote-agent 与 api-publish）+ 63 插件（含未发布的 plugin-remote-agent-cursor、plugin-paper、plugin-publish-review 与 plugin-works-site，以及探测接 lifecycle.signal 后抬了 peer 的 plugin-code-sandbox-os）+ schema-config + schema-log。 */
-const CORE_PEER_COUNT = 98;
+/** 带 core peer >=0.18.0 的包：34 api（含随 core 0.19 首发的 api-trigger，另有未发布的 api-remote-agent、api-publish 与 api-host-paths）+ 63 插件（含未发布的 plugin-remote-agent-cursor、plugin-paper、plugin-publish-review 与 plugin-works-site，以及探测接 lifecycle.signal 后抬了 peer 的 plugin-code-sandbox-os）+ schema-config + schema-log。 */
+const CORE_PEER_COUNT = 99;
 /** 依赖 core 0.19 新语义（禁用插件带配置的 updateConfig 只换配置、保持禁用）的包，peer 下限抬到 0.19。 */
 const CORE_PEER_019 = '>=0.19.0 <1.0.0';
 const CORE_PEER_019_DIRS = ['plugin-webui-server', 'runtime'];
@@ -46,7 +46,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('带 @aalis/core peer 的包：runtime 与 plugin-webui-server 为 >=0.19.0 <1.0.0，其余 98 个为 >=0.18.0 <1.0.0', () => {
+  it('带 @aalis/core peer 的包：runtime 与 plugin-webui-server 为 >=0.19.0 <1.0.0，其余 99 个为 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
@@ -60,7 +60,7 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'core peer >=0.18.0 的包数应对齐 98（33 api + 63 插件 + schema-config + schema-log）',
+      'core peer >=0.18.0 的包数应对齐 99（34 api + 63 插件 + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     expect(
       hits

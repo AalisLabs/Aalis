@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { readFile as fsReadFile, stat as fsStat } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
 import { makeTempDirViaStorage, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
@@ -263,6 +264,8 @@ export class LocalProcessService implements ProcessService {
 
   async readExternalFile(path: string, maxBytes?: number): Promise<Uint8Array> {
     const realPath = path.startsWith('file://') ? path.slice('file://'.length) : path;
+    // 契约只收绝对路径或 file://：相对路径会按进程的 cwd 解析，而 cwd 不带语义
+    if (!isAbsolute(realPath)) throw new Error(`外部文件路径必须是绝对路径：${realPath}`);
     // 先看大小再读：调用方（如 onebot 附件缓存）拿到的路径来自外部 daemon，
     // 整份读进堆之后再判限额等于白吃一次峰值内存，大文件足以把进程压垮。
     if (maxBytes !== undefined && Number.isFinite(maxBytes)) {

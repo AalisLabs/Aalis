@@ -7,6 +7,7 @@ import { App, type Logger, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import skillsPlugin, { skills } from '../../packages/plugin-skills/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -86,6 +87,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
   /** 同批登记：消费者排在 storage-local 前面（与按字母序加载的实际顺序一致） */
   async function boot(): Promise<void> {
     app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
+    provideHostPaths(app, base);
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),
       ...consumers(),
@@ -158,6 +160,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     writeSkill(join(base, 'data', 'skills'), 'zz-pre');
     writeCard(join(base, 'data', 'personas'), 'zzpre');
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     await app.pluginAll([...HUB_PLUGINS.map(definition => ({ definition })), ...consumers()]);
     await app.plugins.idle();
     await app.start();

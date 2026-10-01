@@ -12,6 +12,7 @@ import { type DrawCaps, renderRequest, resolveCanvas } from '../../packages/plug
 import processLocal from '../../packages/plugin-process-local/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // 动图路径真机 E2E：draw 的渲染计划经离线渲染库逐帧（真 Chromium）+ 真 ffmpeg 编码。
@@ -76,6 +77,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
     mkdirSync(join(base, 'ws'), { recursive: true });
     mkdirSync(join(base, 'tmp'), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
         {
@@ -154,6 +156,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     mkdirSync(join(base2, 'data'), { recursive: true });
     const app2 = new App({ name: 'T', logLevel: 'error' });
     try {
+      provideHostPaths(app2, base2);
       await app2.plugin(storageLocal, {
         roots: [
           {
@@ -216,6 +219,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     for (const d of ['data', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
     const app4 = new App({ name: 'T', logLevel: 'error' });
     try {
+      provideHostPaths(app4, base4);
       await app4.plugin(storageLocal, {
         roots: [
           {
@@ -272,6 +276,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     for (const d of ['data', 'tmp']) mkdirSync(join(base5, d), { recursive: true });
     const app5 = new App({ name: 'T', logLevel: 'error' });
     try {
+      provideHostPaths(app5, base5);
       await app5.plugin(storageLocal, {
         roots: ['data', 'tmp'].map(name => ({
           name,
@@ -310,6 +315,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     for (const d of ['data', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
     const app3 = new App({ name: 'T', logLevel: 'error' });
     try {
+      provideHostPaths(app3, base3);
       await app3.plugin(storageLocal, {
         roots: [
           {

@@ -5,13 +5,14 @@ import { Buffer } from 'node:buffer';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated 事件
 import { hostConfig } from '@aalis/api-host-config';
+import { hostPaths } from '@aalis/api-host-paths';
 import type { ModelInfo } from '@aalis/api-llm';
 import { listLLMModels, llm } from '@aalis/api-llm';
 import type {} from '@aalis/api-memory'; // declaration merging：session:compress / session:compressing / history:changed 事件
@@ -289,7 +290,7 @@ async function readLogFileTail(storage: StorageService, limit: number): Promise<
 
 async function readLogFileBefore(storage: StorageService, beforeSeq: number, limit: number): Promise<LogEntry[]> {
   // seq 随文件位置单调递增：从尾部向前扫，过滤 seq >= before 的尾段后取 limit 条。
-  // maxBytes 放宽到 16MiB 覆盖较深的向上分页；更深的考古走 data/latest.log 本体。
+  // maxBytes 放宽到 16MiB 覆盖较深的向上分页；更深的考古走 logs/latest.log 本体。
   const lines = await readTailLines(storage, LOG_FILE_URI, limit, {
     maxBytes: 16 * 1024 * 1024,
     filter: line => {
@@ -339,9 +340,8 @@ function inboxRecords(msg: OutgoingMessage): Message[] {
 // ===== 插件入口 =====
 
 /**
- * 本地包扫描目录：项目根的 `packages/` 与 `node_modules/@aalis`。
- *
- * 两者都以 **cwd（项目根）** 为基准——与 `projectRoot()`、node_modules 加载器的默认值同源。
+ * 本地包扫描目录：安装集（host-paths 的 `app`）下的 `packages/` 与 `node_modules/@aalis`，与插件加载器读的是同一处。
+ * 宿主不提供 host-paths 时没有可扫的目录。
  *
  * **不可按本文件位置推算**（如 `resolve(dirname(import.meta.url), '../../')`）：那是个位置
  * 假设，只在 webui-server 恰好躺在 `<根>/packages/<包>/dist` 时成立。装进用户项目后它解析成
@@ -349,7 +349,9 @@ function inboxRecords(msg: OutgoingMessage): Message[] {
  * `packages/` 从来不在范围内** —— 「私有插件放 packages/、第三方插件从 npm 装」这种混合
  * 形态下，本地插件在市场里将不可见。
  */
-const LOCAL_SCAN_DIRS = [resolve(process.cwd(), 'packages'), resolve(process.cwd(), 'node_modules/@aalis')];
+function localScanDirs(appDir: string | undefined): string[] {
+  return appDir ? [join(appDir, 'packages'), join(appDir, 'node_modules', '@aalis')] : [];
+}
 
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
 // 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
@@ -362,6 +364,7 @@ const uses = {
   provide,
   services,
   hostConfig: optional(hostConfig),
+  paths: optional(hostPaths),
   app: optional(appService),
   plugins: optional(pluginsService),
   source: optional(pluginSource),
@@ -671,8 +674,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     (plugin, method) => registeredActions.get(plugin)?.get(method),
   );
   // 市场「已装」判定、依赖图、前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
-  // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。
-  const localScanDirs = LOCAL_SCAN_DIRS;
+  // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。host-paths 由宿主在根上提供，不会中途换。
+  const appDir = caps.paths.current?.app;
+  const scanDirs = localScanDirs(appDir);
   registerMarketplaceRoutes(
     expressApp,
     {
@@ -680,14 +684,15 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       plugins: caps.plugins,
       services,
       packageManager: caps.packageManager,
+      appDir: () => appDir,
     },
     gate,
     uiConfig.marketplaceRegistry,
-    () => collectLocalPackageDeps(localScanDirs, fsScanEnv),
+    () => collectLocalPackageDeps(scanDirs, fsScanEnv),
     () => discoverAndProvideClients(),
   );
 
-  // 历史日志从 data/latest.log 读（lazy load）。
+  // 历史日志从 logs/latest.log 读（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
   // 尾部 N 条（首屏 / 显式刷新）
   expressApp.get('/api/logs/tail', gate(), async (req, res) => {
@@ -1653,8 +1658,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // SPA fallback: 所有非 API 路径返回 index.html
   expressApp.get('{*path}', (_req, res) => {
-    const indexPath = resolve(clientDist, 'index.html');
-    if (existsSync(indexPath)) {
+    // 还没有选中的前端时 clientDist 为空：不能拼出相对 cwd 的 index.html
+    const indexPath = clientDist ? join(clientDist, 'index.html') : undefined;
+    if (indexPath && existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
       res
@@ -1676,29 +1682,31 @@ async function startWebuiServer(caps: Caps): Promise<void> {
    * 他正在用的顶掉。
    */
   function discoverAndProvideClients(): void {
-    const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
+    // 宿主不提供安装集目录时没有依赖表可读，只按扫描目录发现
+    const projectRequire = appDir ? createRequire(pathToFileURL(join(appDir, 'package.json'))) : undefined;
     const env: DiscoveryEnv = {
       ...fsScanEnv,
       dirname,
       resolvePkgJson: id => {
         try {
-          return projectRequire.resolve(`${id}/package.json`);
+          return projectRequire?.resolve(`${id}/package.json`);
         } catch {
           return undefined;
         }
       },
     };
-    const scanDirs = LOCAL_SCAN_DIRS;
     let depIds: string[] = [];
-    try {
-      // 每次重读：装完新包后根 dependencies 已变，缓存会让新前端发现不到。
-      const rootPkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
-        dependencies?: Record<string, string>;
-        optionalDependencies?: Record<string, string>;
-      };
-      depIds = Object.keys({ ...rootPkg.dependencies, ...rootPkg.optionalDependencies });
-    } catch {
-      /* 无项目根 package.json（如 monorepo 直跑），跳过 deps 扫描 */
+    if (appDir) {
+      try {
+        // 每次重读：装完新包后根 dependencies 已变，缓存会让新前端发现不到。
+        const rootPkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf-8')) as {
+          dependencies?: Record<string, string>;
+          optionalDependencies?: Record<string, string>;
+        };
+        depIds = Object.keys({ ...rootPkg.dependencies, ...rootPkg.optionalDependencies });
+      } catch {
+        /* 安装集没有 package.json，跳过 deps 扫描 */
+      }
     }
 
     const scanned = discoverClients(scanDirs, depIds, env);

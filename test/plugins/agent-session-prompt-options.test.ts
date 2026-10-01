@@ -12,6 +12,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -44,6 +45,7 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
   const boot = async (trimThresholdRatio: number) => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: [
         {

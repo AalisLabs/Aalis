@@ -20,8 +20,24 @@ import { type ConfigOf, defineConfig, missingConfigError, parseConfig } from '@a
 import { safeFetch } from '@aalis/util-network-guard';
 
 const configSchema = defineConfig({
-  binaryPath: { type: 'string', label: 'whisper-cli 路径', default: 'whisper-cli', onInvalid: 'error' },
-  modelPath: { type: 'string', label: '模型文件路径 (.bin)', default: '', onInvalid: 'error' },
+  binaryPath: {
+    type: 'string',
+    label: 'whisper-cli 路径',
+    description: '绝对路径，或 PATH 里能找到的命令名。',
+    default: 'whisper-cli',
+    // 必填加默认值：留空时用默认的命令名，不会拿空串去执行
+    required: true,
+    format: 'executable',
+    onInvalid: 'error',
+  },
+  modelPath: {
+    type: 'string',
+    label: '模型文件路径 (.bin)',
+    description: '模型文件的绝对路径。',
+    default: '',
+    format: 'absolute-path',
+    onInvalid: 'error',
+  },
   language: { type: 'string', label: '默认语种', default: 'auto', onInvalid: 'error' },
   threads: { type: 'number', label: '线程数', default: 4, onInvalid: 'error' },
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 80 },

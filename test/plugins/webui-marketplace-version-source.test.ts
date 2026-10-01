@@ -60,7 +60,6 @@ beforeEach(() => {
       JSON.stringify({ name, version, keywords: ['aalis', keyword] }),
     );
   }
-  vi.spyOn(process, 'cwd').mockReturnValue(project);
   requested = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
     const url = String(input);
@@ -99,6 +98,7 @@ function mount(
       plugins: { current: undefined },
       services: { inspect: () => [] },
       packageManager: { current: packageManager as PackageManagerService | undefined },
+      appDir: () => project,
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     SEARCH,

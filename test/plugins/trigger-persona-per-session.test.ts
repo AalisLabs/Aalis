@@ -11,6 +11,7 @@ import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -70,6 +71,7 @@ async function boot() {
   writeFileSync(join(personasDir, 'bob.yaml'), 'name: 副卡名\nnick_name: [副卡昵称]\ndescription: d\nprompt: p\n');
 
   app = new App({ name: 'T', logLevel: 'error' });
+  provideHostPaths(app, base);
   await app.pluginAll([
     ...HUB_PLUGINS.map(definition => ({ definition })),
     {

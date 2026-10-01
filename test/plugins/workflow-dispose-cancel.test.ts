@@ -9,6 +9,7 @@ import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -44,6 +45,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   it('unload 后被阻塞的首节点放行：下游节点 skipped、run 记 cancelled', async () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({
         name,

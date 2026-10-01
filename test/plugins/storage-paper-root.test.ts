@@ -1,20 +1,21 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createStorageGateway, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
-// storage-local 的白纸根 paper：插件内置、只映射 <cwd>/data/stage/paper，不受用户 roots 影响。
+// storage-local 的白纸根 paper：插件内置、只映射 <家目录>/data/stage/paper，不受用户 roots 影响。
 //   - 与生产同形的显式 roots、以及 roots 为空回落默认根，两种配置下都有这个根；
 //   - `..` 逃逸被拒，写入的真实路径前缀是 data/stage/paper/，够不到 data/stage 下的兄弟文件；
 //   - 用户 roots 里同名 paper 的项被跳过（不建它的目录）并告警，内置根生效。
-// 根路径按 process.cwd() 解析，这里把 cwd 指到临时目录，不在仓库里落目录。
+// 根路径按 host-paths 提供的家目录解析，这里把家目录指到临时目录，不在仓库里落目录。
 // ════════════════════════════════════════════════════════════
 
-/** 与生产配置同形：显式列出五个默认根外加一个自定义根，路径都相对 cwd */
+/** 与生产配置同形：显式列出五个默认根外加一个自定义根，路径都相对家目录 */
 const PRODUCTION_SHAPED_ROOTS = [
   {
     name: 'workspace',
@@ -69,14 +70,13 @@ describe('storage-local 白纸根 paper', () => {
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-paper-root-'));
     realBase = realpathSync(base);
-    vi.spyOn(process, 'cwd').mockReturnValue(base);
     logs = [];
     app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
+    provideHostPaths(app, base);
   });
 
   afterEach(async () => {
     await app.stop();
-    vi.restoreAllMocks();
     rmSync(base, { recursive: true, force: true });
   });
 
@@ -87,7 +87,7 @@ describe('storage-local 白纸根 paper', () => {
     return createStorageGateway(app.bind({ storage: storageService }).storage);
   }
 
-  it('与生产同形的显式 roots：paper 根存在，paper:/x/y.txt 落在 <cwd>/data/stage/paper/x/y.txt', async () => {
+  it('与生产同形的显式 roots：paper 根存在，paper:/x/y.txt 落在 <家目录>/data/stage/paper/x/y.txt', async () => {
     const storage = await activate(PRODUCTION_SHAPED_ROOTS);
 
     const paper = storage.listRoots().find(r => r.name === 'paper');

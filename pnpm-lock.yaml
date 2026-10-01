@@ -305,6 +305,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-host-paths:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-llm:
     dependencies:
       '@aalis/api-tools':
@@ -1814,6 +1826,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
       '@aalis/api-package-manager':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-package-manager
@@ -1823,9 +1838,6 @@ importers:
       '@aalis/api-process':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-process
-      '@aalis/schema-config':
-        specifier: workspace:>=0.14.0 <1.0.0
-        version: link:../schema-config
       '@aalis/util-dep-spec':
         specifier: workspace:>=0.1.1 <1.0.0
         version: link:../util-dep-spec
@@ -2212,6 +2224,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-storage
@@ -2899,6 +2914,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
       '@aalis/api-llm':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-llm
@@ -3064,6 +3082,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
       '@aalis/api-plugin-source':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-plugin-source

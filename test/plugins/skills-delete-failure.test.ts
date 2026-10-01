@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App, services } from '../../packages/core/src/index.js';
 import skillsPlugin, { type SkillsService, skills } from '../../packages/plugin-skills/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -27,6 +28,7 @@ describe('skills 删除失败（真 fs，根不可删）', () => {
 
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     await app.plugins.register(storageLocal, {
       roots: [
         {

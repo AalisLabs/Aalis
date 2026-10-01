@@ -10,6 +10,7 @@ import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin, { CLEAR_TYPES } from '../../packages/plugin-commands/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -38,6 +39,7 @@ async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {
   if (!opts.noDataRoot) {
     const base = mkdtempSync(join(tmpdir(), 'aalis-clear-types-'));
     cleanups.push(() => rmSync(base, { recursive: true, force: true }));
+    provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
         {

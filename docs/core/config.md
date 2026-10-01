@@ -1,6 +1,6 @@
 # 运行态与配置文档
 
-core 只持运行态，不持配置文档。运行态有三样：各实例的配置、禁用态、服务偏好，决定「现在怎么跑」。配置文档记的是「下次启动用什么」，由宿主持有并落盘：Node 宿主 `@aalis/runtime` 读写 `aalis.config.yaml`，并把文档作为 `host-config` 服务（契约 `@aalis/api-host-config`）提供给在 `uses` 里声明了它的插件。core 也不解释任何 schema：默认值回填与按 `configSchema` 裁剪未知字段属宿主政策。
+core 只持运行态，不持配置文档。运行态有三样：各实例的配置、禁用态、服务偏好，决定「现在怎么跑」。配置文档记的是「下次启动用什么」，由宿主持有并落盘：Node 宿主 `@aalis/runtime` 读写家目录里的 `aalis.config.yaml`，并把文档作为 `host-config` 服务（契约 `@aalis/api-host-config`）提供给在 `uses` 里声明了它的插件。core 也不解释任何 schema：默认值回填与按 `configSchema` 裁剪未知字段属宿主政策。
 
 **源码**: `packages/core/src/orchestration/plugin.ts`（运行态）、`packages/api-host-config/src/index.ts`（文档契约）、`packages/runtime/src/config-store.ts`、`packages/runtime/src/config-sync.ts`
 
@@ -8,7 +8,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config, logger)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务仍提供原始只读视图，不依赖 schema-config。
 
-缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。
+缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。写宿主文件路径的 `string` / `textarea` 字段声明 `format: 'absolute-path'`（只收绝对路径）或 `'executable'`（绝对路径或按 PATH 查找的命令名），相对路径按无效处理；判定忽略首尾空白，空串照常表示未填，只看写法、与宿主平台无关。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。
 
 解析返回新对象，不改配置文档。写回配置时以 host-config 原文为底修改目标字段，避免把解析时补入的默认值、裁剪结果持久化。旧作用域配置升级见 [配置迁移](../guide/config-migration.md)。
 
@@ -115,18 +115,22 @@ WebUI 的启停与改配置路由、mcp-client 的自服务开关按这种方式
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，并按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留）。首次 apply 拿到的就是规范化后的配置。
 - `installConfigHotReload(app, store, discovery, opts)`：文档被外部修改后，先卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对配置有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
 
-`startAalis` 的装配序为：文档 → App → host-config → 加载政策 → 发现 → 热重载。
+`startAalis` 的装配序为：家目录 → 文档 → App → host-paths → host-config → 加载政策 → 发现 → 热重载。
 
-自组装宿主按同一顺序接线：
+自组装宿主按同一顺序接线。`host-paths` 要先于登记插件提供：`@aalis/plugin-storage-local` 与 `@aalis/plugin-package-manager` 以 required 声明它，缺了会停在 pending。
 
 ```typescript
-import { App, type LogLevel } from '@aalis/core';
-import { createConfigStore, createFsYamlConfigProvider, installHostConfig } from '@aalis/runtime';
+import { hostPaths } from '@aalis/api-host-paths';
+import { App, type LogLevel, provide } from '@aalis/core';
+import { createConfigStore, createFsYamlConfigProvider, derivePaths, installHostConfig } from '@aalis/runtime';
 
-const { config, provider } = createFsYamlConfigProvider();
+// 家目录与安装集，均为绝对路径
+const paths = derivePaths('/srv/aalis/home', '/srv/aalis/app');
+const { config, provider } = createFsYamlConfigProvider(paths.config);
 const store = createConfigStore(config, provider);
 const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel });
-installHostConfig(app, store);
+app.bind({ provide }).provide(hostPaths, paths, { exclusive: true }); // 先 host-paths
+installHostConfig(app, store); // 再 host-config
 // 登记插件时按文档传配置与 { disabled }
 ```
 
@@ -134,7 +138,7 @@ installHostConfig(app, store);
 
 ## 密钥配置
 
-密钥**直接写进 `aalis.config.yaml`**——脚手架生成的 `.gitignore` 已包含此文件，不会入库。
+密钥**直接写进家目录里的 `aalis.config.yaml`**——脚手架生成的 `.gitignore` 已包含整个家目录 `home/`，不会入库。家目录里另有一份 `secrets.yaml`（`--init` 与脚手架建出时为空），目前不读取，密钥写在那里不会生效。
 
 ```yaml
 plugins:

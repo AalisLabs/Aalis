@@ -10,6 +10,7 @@ import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { Message, OutboundDeliveryResult } from '../../packages/schema-message/src/index.js';
 import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 发送存储库内的文件前按文件头核对格式。
@@ -206,6 +207,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
       outbound.push(m as (typeof outbound)[number]);
       if (deliveryResult) m.delivery = Promise.resolve(deliveryResult);
     });
+    provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         {

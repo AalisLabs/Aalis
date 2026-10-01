@@ -30,15 +30,15 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，以及作品提名与上站。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的三个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，以及家目录（第一部分）。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的七个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
-- 有代码或契约改动（33 个）：schema-message、api-code-sandbox、api-gateway、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
-- 按次版本发布（15 个）：schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（保留根名 `paper`）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
-- 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
+- 有代码或契约改动（41 个）：schema-message、schema-config、runtime、create-aalis、api-code-sandbox、api-gateway、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-asr-whisper-cpp、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-draw、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-mcp-client、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-browser、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
+- 按次版本发布（23 个）：runtime（家目录；删掉 `startAalis` 的 `configPath`、`projectDir`、`subcommands` 等选项）、schema-config（新增字段属性 `format`）、create-aalis（生成的项目带家目录 `home/`）、plugin-package-manager（删掉配置项 `projectRoot`，改为依赖 `host-paths`）、plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-mcp-client（路径类配置不再收相对路径）、schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（保留根名 `paper`；依赖 `host-paths`，相对根按家目录解析）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
+- 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执；日志位置的说明）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
-- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0
+- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0
 - plugin-trigger-laya 是 `private` 包，只改了说明与注释，不发布到 npm。
 - 上面的清单没收的：api-trigger、plugin-draw、plugin-tool-search 自上次发布以来也有源码改动（plugin-draw 见「作品提名与上站」；api-trigger、plugin-tool-search 的改动还没有写进本节），发布时按源码与 npm 实况核定档位并补写说明。
 - api-agent、api-authority、api-flow-control、api-platform、api-workflow、plugin-authority、plugin-scheduler、plugin-trigger-policy 只改了注释（去掉跨会话委派的提法；api-platform 写明会话 ID 约定，api-agent、api-workflow 改了 `token:request` 与会话 ID 的说明），本批不单独发布。
@@ -280,6 +280,53 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - `OutboundDeliveryResult` 的失败分支新增可选的 `unconfirmed: true`，表示结果未知、可能已经送达。plugin-adapter-onebot 只在失败全部由上传超时造成时带上它。plugin-paper 按成品记下结果未知：这件成品 paper_send 拒绝再发，同一任务的其他成品照常可发；这件任务不再进待交付提示，宿主也不再直接发送，完成通知写明已发出、平台没确认、不要重发；plugin-publish-review 的作品通知按已发出处理；send_attachment 不报告成功，也不劝重发。
 - 新增 `outboundMediaMessage`：出站图片、音频、视频的归档写法，plugin-image-sender 与 plugin-webui-server 共用，归档格式不变。
 
+### 家目录（第一部分）：从任何目录启动同一个实例（新包 @aalis/api-host-paths；@aalis/runtime、@aalis/schema-config、@aalis/create-aalis、@aalis/plugin-storage-local、@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-process-local、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-draw、@aalis/plugin-tool-browser、@aalis/plugin-publish-review、@aalis/plugin-mcp-client、@aalis/plugin-cli）
+
+- **家目录**
+  - 实例的配置、数据与日志此前放在启动时的当前目录里：换个目录启动就是另一个（空的）实例，生产实例住在仓库里，一次 `git clean -fdx` 就会删掉。现在它们都在家目录里。
+  - runtime 在启动时按 `--home`、`AALIS_HOME`、`--profile` / `AALIS_PROFILE`（`~/.aalis-<名>`）、宿主代码的 `defaultHome`、`~/.aalis` 的顺序解析一次，进程的 cwd 不再带任何语义。
+  - `--home` 与 `AALIS_HOME` 开头的 `~` 展开成用户主目录；环境变量设成空串视同没设。profile 名只能用小写字母、数字与连字符；profile 与 `--home` / `AALIS_HOME` 同时给出时报错退出。
+- **初始化**
+  - 家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。
+  - 在启动命令里、子命令之前加上 `--init` 运行一次即可初始化：建目录（0700），写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600），建布局里的子目录。目标目录里已有布局以外的东西时拒绝初始化。
+  - `secrets.yaml` 本批只建出来，还不读，密钥照旧写在 `aalis.config.yaml` 里。`state/`、`self/`、`stage/` 等布局目录留给后续部分，本批的数据仍在家目录的 `data/` 与 `workspace/` 下。
+- **安装集**：默认的插件加载器从安装集（`appDir`）的 `package.json` 找插件。安装集里没有 `package.json` 时拒绝启动，并说明要传 `appDir`；此前这种情况会一个插件都不加载、照样起来。缺省的 `<家目录>/app` 留给以后的全局启动器，现在的入口都要自己传 `appDir`。
+- **日志**：文件日志改写到家目录的 `logs/latest.log`。plugin-storage-local 的 `logs` 根改为内置根，指向同一个目录：WebUI 与 CLI 的日志页读的就是 runtime 正在写的那份。配置里原有的 `logs` 根会被跳过并告警，可以删掉。
+- **新契约包 `@aalis/api-host-paths`**：服务 `host-paths` 给出家目录、安装集与家目录布局的绝对路径，runtime 在根上独占提供，交给插件的对象是冻结的。
+  - plugin-storage-local 依赖它，存储根的相对路径按家目录解析；
+  - plugin-package-manager 依赖它，往安装集里装卸插件。原来要与宿主手动对齐的配置项 `projectRoot` 删掉了：配置里残留的这一项会被忽略，可以删掉；要装到别处，改由入口给 `startAalis` 传 `appDir`；
+  - plugin-webui-server 可选依赖它：市场、系统组件与前端发现都读安装集，宿主不提供时这几页回 503、也找不到前端，只剩 HTTP API。
+- **cwd 守卫**：新增 architecture 守卫，runtime 与两个脚手架以外的包不得读 cwd（`process.cwd()`、`process.env.PWD` 等）。
+- **runtime 的接口**
+  - `startAalis` 删掉 `configPath`、`projectDir` 与字符串形态的 `fileLog`，新增 `appDir` 与 `defaultHome`；`subcommands` 改名 `argv`，开头的宿主参数先取走。
+  - `createFsYamlConfigProvider`、`createFsPluginLoader`、`createNodeModulesPluginLoader`、`setupFileLogger` 的路径参数改为必填，且必须是绝对路径（相对路径直接抛错）。`appendCrashLog` 的路径参数改为必填。
+  - `createProcessRespawnStrategy` 必须传 `appDir` 与 `cwd`（新进程在启动时的 cwd 里起，命令行里相对的 `--home` 才解析到同一处）。`buildRespawnCommand` 的第一个参数改为 `appDir`。删掉导出常量 `DEFAULT_LOG_FILE`。
+  - 新增导出 `parseHostArgs`、`resolveHome`、`derivePaths`、`isHomeInitialized`、`initHome`、`HomeArgsError` 与类型 `HostArgs`、`ResolveHomeInput`。
+- **路径字段的 `format`**
+  - schema-config 新增字段属性 `format`（string 与 textarea 适用）：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名。判定忽略首尾空白，空串照常表示未填；只按写法判定，与宿主平台无关。plugin-webui-client 的表单给这类字段显示写法提示。
+  - 下面这些字段都声明了它：whisper-cli 与模型路径、绘图 / 浏览器 / 审核渲染用的 Chrome 路径、审核的 ffmpeg 路径、MCP server 的 `command`。它们此前收相对路径并按启动目录解析；现在写了相对路径的插件拒绝激活，MCP 只跳过那一个 server。改成绝对路径即可。whisper-cli 与 ffmpeg 的路径改为必填加默认值，留空时用默认的命令名，不再拿空串去执行。
+- **其余修复**：plugin-process-local 的 `readExternalFile` 拒收相对路径：契约本来只收绝对路径或 `file://`，相对路径此前按 cwd 读。plugin-webui-server 还没有选中前端时，不再按 cwd 找 `index.html`。
+- **脚手架**：create-aalis 生成的项目带家目录 `home/`（配置与空的 `secrets.yaml` 都在里面），入口传 `appDir` 与 `defaultHome`，`.gitignore` 改为忽略整个 `home/`。用 npm 启动时，宿主参数要写在 `--` 之后：`npm start -- --home <目录>`。
+- **从源码运行**：`pnpm dev` 的家目录是仓库里的 `.aalis-dev/`（第一次先 `pnpm dev --init`）；`pnpm start` 不带 `--home`，用 `AALIS_HOME` 或 `~/.aalis`。
+- **旧项目升级**（create-aalis 生成的项目）：
+  1. 把 `index.mjs` 改成按入口所在目录传安装集，并把项目目录本身当家目录，原来的配置与 `data/` 原样可用：
+
+     ```js
+     import { dirname } from 'node:path';
+     import { fileURLToPath } from 'node:url';
+     import { startAalis } from '@aalis/runtime';
+
+     const here = dirname(fileURLToPath(import.meta.url));
+     startAalis({ appDir: here, defaultHome: here });
+     ```
+
+  2. 删掉 `aalis.config.yaml` 里 `@aalis/plugin-storage-local` 的 `roots` 中 `name: logs` 那一项（不删也能用，每次启动告警一次）。日志从此写在 `logs/latest.log`。
+  3. 家目录布局后续还会调整（state、self、stage 等），完整的迁移步骤随家目录的最后一部分给出。
+- **发布时要抬的下限**
+  - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 对 `@aalis/schema-config` 的下限，抬到含 `format` 的新版本：旧版不认这个属性，相对路径会照旧放行。
+  - plugin-storage-local、plugin-package-manager、plugin-webui-server 对 `@aalis/api-host-paths` 写 `>=0.1.0`。
+  - runtime 对 schema-config 的下限不变。
+
 ### 必须同批升级的包
 
 - plugin-paper、plugin-image-sender、plugin-publish-review、plugin-webui-server 与 schema-message 同批升级：前三者在运行时导入 schema-message 新增的 `awaitDelivery`，plugin-image-sender 与 plugin-webui-server 另导入新增的 `outboundMediaMessage`。发布时它们对 schema-message 的依赖下限要抬到含这些导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
@@ -289,6 +336,8 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-process-local 与 plugin-tool-system、plugin-tool-code-runner、plugin-code-sandbox-os 同批升级：中止实现在 process 提供方，旧版 process-local 静默忽略 `signal`，新版 exec 与代码执行照样停不掉，code-sandbox-os 的探测照旧拖满宽限；plugin-tool-code-runner 的沙箱路径还要新版 code-sandbox-os 把 `signal` 转交下去。
 - plugin-webui-server 与 plugin-agent 同批升级：新版 webui-server 不再给 token 快照填 `platform`，配旧版 agent 时 IM 房间的快照按 webui 算。
 - plugin-tool-system 与 plugin-agent、schema-message、plugin-session-confirm、plugin-subtask 同批升级：旧版 agent 不认 `hostNotice.callerUserId`，通知回合里要确认的工具会弹出没人能应答的确认、60 秒后按拒绝结算；旧版 session-confirm 的确认相位不看 `source`，会话里有一条来自无 userId 回合（定时任务等）的待决确认时，结束通知会被当成应答吞掉，通知丢失、她不开口（那条确认本来也没人能应答，60 秒后同样按拒绝结算）；旧版 tool-system 不发结束通知。plugin-subtask 与 plugin-session-confirm 缺一不可：旧版 session-confirm 不看 `source`，旧版 subtask 的消息不带 `source`，只升其中一个时，父会话里的模型仍能用 `send_to_subtask` 批准子会话里的确认。
+- runtime 与 plugin-storage-local、plugin-package-manager、plugin-webui-server 同批升级：新版 storage-local 与 package-manager 依赖 runtime 提供的 `host-paths`，配旧版 runtime 一直停在 pending（存储不可用，几乎所有插件随之挂起）；新版 webui-server 配旧版 runtime 时找不到前端，市场与系统组件页回 503。反过来，新版 runtime 配旧版 storage-local 时，存储根仍按启动目录解析，与家目录分成两处。create-aalis 生成的新项目要新版 runtime：旧版不认 `appDir` 与 `defaultHome`，会到启动目录找配置。
+- plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 与 schema-config 同批升级：路径字段的校验在 schema-config 里，配旧版 schema-config 时相对路径照旧放行。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 

@@ -33,5 +33,5 @@ features:
 npm create aalis@latest my-bot
 ```
 
-进入目录，在 `aalis.config.yaml` 里填好大模型 API 与平台账号，启动即可。
+进入目录，在 `home/aalis.config.yaml` 里填好大模型 API 与平台账号，启动即可。`home/` 是这个实例的家目录，配置、数据与日志都在里面，已写进生成的 `.gitignore`。
 建项目的完整步骤见 [脚手架上手指南](/guide/scaffolding)；启动之后怎么用（要哪些 key、零 key 怎么起、CLI 与 WebUI 两个入口）见 [第一次运行](/guide/first-run)。

@@ -11,6 +11,7 @@ import { createStorageGateway, type StorageService, storage } from '../../packag
 import { App, type Logger, type ServiceRef } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -63,6 +64,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
       deletable: true,
     });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     // workspace 排第一：与默认配置同序，胜者即 workspace
     await app.plugins.register(storageLocalPlugin, { roots: [root('workspace'), root('data'), root('tmp')] });
     await app.plugins.idle();

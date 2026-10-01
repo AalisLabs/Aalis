@@ -329,7 +329,7 @@ describe('validateConfig 声明了 default 即不算缺失（审计修复锁定�
   });
 });
 
-describe('validateConfig 约束键（min/max/integer/pattern/step）', () => {
+describe('validateConfig 约束键（min/max/integer/pattern/format/step）', () => {
   it('min/max 含边界；违约报 invalid 并带界值', () => {
     const schema: ConfigSchema = { port: field('number', { min: 1, max: 65535 }) };
     expect(validateConfig(schema, { port: 1 })).toEqual([]);
@@ -362,6 +362,46 @@ describe('validateConfig 约束键（min/max/integer/pattern/step）', () => {
     expect(validateConfig(schema, { host: 'BAD HOST', body: '123' })).toEqual([
       { path: 'host', message: '不匹配模式 ^[a-z.]+$', kind: 'invalid' },
     ]);
+  });
+
+  it('format：宿主文件路径只收绝对路径，可执行文件另收不带分隔符的命令名；空串不查', () => {
+    const schema: ConfigSchema = {
+      file: field('string', { format: 'absolute-path' }),
+      bin: field('string', { format: 'executable' }),
+    };
+    for (const ok of ['/opt/m.bin', 'C:\\models\\m.bin', 'D:/m.bin', '\\\\nas\\share\\m.bin']) {
+      expect(validateConfig(schema, { file: ok, bin: ok }), ok).toEqual([]);
+    }
+    expect(validateConfig(schema, { file: '', bin: 'ffmpeg' })).toEqual([]);
+    expect(validateConfig(schema, { file: 'models/m.bin', bin: './bin/ffmpeg' })).toEqual([
+      { path: 'file', message: '须为绝对路径', kind: 'invalid' },
+      { path: 'bin', message: '须为绝对路径或命令名（不含路径分隔符）', kind: 'invalid' },
+    ]);
+    expect(validateConfig(schema, { file: 'ffmpeg', bin: 'tools\\ffmpeg.exe' })).toHaveLength(2);
+    expect(validateConfig(schema, { file: '~/m.bin' })).toEqual([
+      { path: 'file', message: '须为绝对路径', kind: 'invalid' },
+    ]);
+  });
+
+  it('format：带盘符的相对写法不算命令名；判定忽略首尾空白；textarea 同规', () => {
+    const schema: ConfigSchema = {
+      bin: field('string', { format: 'executable' }),
+      file: field('textarea', { format: 'absolute-path' }),
+    };
+    expect(validateConfig(schema, { bin: 'C:foo', file: '/x' })).toEqual([
+      { path: 'bin', message: '须为绝对路径或命令名（不含路径分隔符）', kind: 'invalid' },
+    ]);
+    expect(validateConfig(schema, { bin: 'C:', file: '/x' })).toHaveLength(1);
+    expect(validateConfig(schema, { bin: '  /usr/bin/x ', file: ' /x' })).toEqual([]);
+    expect(validateConfig(schema, { bin: 'ffmpeg', file: 'rel/x' })).toEqual([
+      { path: 'file', message: '须为绝对路径', kind: 'invalid' },
+    ]);
+    expect(validateConfig(schema, { bin: '   ', file: '' })).toEqual([]);
+  });
+
+  it('不认识的 format（schema 自身缺陷）：跳过该检查', () => {
+    const schema: ConfigSchema = { s: field('string', { format: 'url' } as Record<string, unknown>) };
+    expect(validateConfig(schema, { s: 'relative/x' })).toEqual([]);
   });
 
   it('非法 pattern（schema 自身缺陷）：跳过该检查，不抛不误伤', () => {

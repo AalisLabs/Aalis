@@ -12,6 +12,7 @@ import { buildRespawnCommand, isRestartRollback } from '../../packages/runtime/s
 describe('buildRespawnCommand（重生命令组装）', () => {
   it('node 入口：execArgv 插在脚本路径之前，用户参数原序保留', () => {
     const { exec, args } = buildRespawnCommand(
+      '/app',
       ['/usr/bin/node', '/app/dist/start.js', '--config', 'aalis.yaml'],
       ['--env-file-if-exists=.env', '--max-old-space-size=4096'],
     );
@@ -26,30 +27,30 @@ describe('buildRespawnCommand（重生命令组装）', () => {
   });
 
   it('node 入口：execArgv 为空时等价于旧行为（argv 去掉可执行文件）', () => {
-    const { exec, args } = buildRespawnCommand(['/usr/bin/node', '/app/dist/start.js'], []);
+    const { exec, args } = buildRespawnCommand('/app', ['/usr/bin/node', '/app/dist/start.js'], []);
     expect(exec).toBe('/usr/bin/node');
     expect(args).toEqual(['/app/dist/start.js']);
   });
 
   it('.ts 入口：走 tsx，且**不**透传 execArgv（tsx 是包装脚本，node flag 由它自己转交，前置会重复注册）', () => {
     const { exec, args } = buildRespawnCommand(
+      '/nonexistent-app', // 安装集里没有 tsx 二进制 → 回落到 PATH 上的 tsx
       ['/usr/bin/node', '/app/src/start.ts', '--dev'],
       ['--import', 'tsx/esm'],
-      '/nonexistent-cwd', // 本地无 tsx 二进制 → 回落到 PATH 上的 tsx
     );
     expect(exec).toBe('tsx');
     expect(args).toEqual(['/app/src/start.ts', '--dev']);
   });
 
   it('argv 缺可执行文件时回落到 process.execPath，不产出 undefined 命令', () => {
-    const { exec } = buildRespawnCommand([], []);
+    const { exec } = buildRespawnCommand('/app', [], []);
     expect(exec).toBe(process.execPath);
   });
 
   it('不改写入参数组（调用方的 process.argv / execArgv 不被污染）', () => {
     const argv = ['/usr/bin/node', '/app/dist/start.js'];
     const execArgv = ['--enable-source-maps'];
-    buildRespawnCommand(argv, execArgv);
+    buildRespawnCommand('/app', argv, execArgv);
     expect(argv).toEqual(['/usr/bin/node', '/app/dist/start.js']);
     expect(execArgv).toEqual(['--enable-source-maps']);
   });
