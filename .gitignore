@@ -10,6 +10,7 @@ dist/
 .env
 .env.local
 data/
+.aalis-dev/
 aalis.config.yaml
 aalis.config.yaml.*
 workspace/

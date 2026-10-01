@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { PackageManagerService } from '@aalis/api-package-manager';
 import type { Logger, PluginManagerService, ServiceRef, Services } from '@aalis/core';
@@ -256,9 +256,9 @@ export function resolveLocalInfo(
  * 读根 package.json 的 dependencies —— 来源判据与系统组件名单的唯一真相源。
  * **每次调用重读**：安装/卸载/更新都会改写它，缓存会让页面显示陈旧来源。
  */
-function readRootDependencies(): Record<string, string> {
+function readRootDependencies(appDir: string): Record<string, string> {
   try {
-    const root = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
+    const root = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf-8')) as {
       dependencies?: Record<string, string>;
     };
     return root.dependencies ?? {};
@@ -470,7 +470,11 @@ interface MarketplaceRoutesCaps {
   services: Pick<Services, 'inspect'>;
   /** 可选依赖：缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。 */
   packageManager: Pick<ServiceRef<PackageManagerService>, 'current'>;
+  /** 宿主的安装集目录（host-paths）；宿主不提供时市场列表与系统组件页回 503 */
+  appDir(): string | undefined;
 }
+
+const NO_APP_DIR = '宿主没有提供安装集目录（host-paths），无法判断已装的包';
 
 /** 注册插件市场 REST 路由 */
 export function registerMarketplaceRoutes(
@@ -513,9 +517,14 @@ export function registerMarketplaceRoutes(
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉不作为插件加载的 api/前端/核心）。
     // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
     // 才能判「可更新」（版本序由服务端算进 updatable 下发，前端不自算）。
+    const appDir = caps.appDir();
+    if (!appDir) {
+      res.status(503).json({ error: NO_APP_DIR });
+      return;
+    }
     const localPkgs = getLocalPackages();
-    const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
-    const rootDeps = readRootDependencies();
+    const projectRequire = createRequire(pathToFileURL(join(appDir, 'package.json')));
+    const rootDeps = readRootDependencies(appDir);
     /** 读本地 package.json。用 resolve+readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。 */
     const readPkgJson = (name: string) => {
       try {
@@ -591,9 +600,14 @@ export function registerMarketplaceRoutes(
   // 在市场里拿到一张「内核」卡片。版本查询按精确包名，故不存在冒名空间。
   // 这一页只提供更新，无安装无卸载：它们要么随脚手架就位，要么是插件的依赖被自动带入。
   expressApp.get('/api/system-components', gate(), async (_req, res) => {
+    const appDir = caps.appDir();
+    if (!appDir) {
+      res.status(503).json({ error: NO_APP_DIR });
+      return;
+    }
     const localPkgs = getLocalPackages();
-    const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
-    const rootDeps = readRootDependencies();
+    const projectRequire = createRequire(pathToFileURL(join(appDir, 'package.json')));
+    const rootDeps = readRootDependencies(appDir);
     /** 候选名单：本地扫描到的 + 根依赖里声明的。两路并集才覆盖两种部署形态。 */
     const candidates = new Set([...localPkgs.keys(), ...Object.keys(rootDeps)]);
 

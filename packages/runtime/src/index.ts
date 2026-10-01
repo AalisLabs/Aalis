@@ -21,7 +21,17 @@ export {
   withPluginConfigSync,
 } from './config-sync.js';
 export { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
-export { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
+export { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
+export {
+  derivePaths,
+  HomeArgsError,
+  type HostArgs,
+  initHome,
+  isHomeInitialized,
+  parseHostArgs,
+  type ResolveHomeInput,
+  resolveHome,
+} from './home.js';
 export { createNodeModulesPluginLoader } from './node-modules-loader.js';
 export {
   createPluginDiscovery,

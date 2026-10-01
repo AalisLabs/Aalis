@@ -9,6 +9,7 @@ import { App } from '../../packages/core/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { registerMediaRoutes } from '../../packages/plugin-webui-server/src/routes/media.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -35,6 +36,7 @@ describe('WebUI 媒体路由', () => {
     writeFileSync(join(base, 'outside.png'), PNG);
     port = await freePort();
     app = new App({ name: 'media route test', logLevel: 'error' });
+    provideHostPaths(app, base);
     await app.pluginAll([
       {
         definition: storageLocalPlugin,

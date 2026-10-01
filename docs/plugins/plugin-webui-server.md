@@ -21,6 +21,7 @@ export default definePlugin({
     provide,
     services,
     hostConfig: optional(hostConfig),
+    paths: optional(hostPaths),
     app: optional(appService),
     plugins: optional(pluginsService),
     source: optional(pluginSource),
@@ -183,6 +184,8 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、改�
 ## 前端挂载与切换
 
 前端不内置在 server 里——它是 `webui-client` 服务的 **provider**：每个前端包用 `package.json` 标 `aalis.client: true` + 构建出 `dist/index.html`，server 启动时由 `client-discovery.ts` 按标记**动态发现**并各注册一个 provider（无硬编码包名，第三方可自带前端）。
+
+扫描的目录是安装集（`host-paths` 的 `app`）下的 `packages/` 与 `node_modules/@aalis`，另按安装集 `package.json` 的依赖解析前端包。宿主不提供 `host-paths` 时没有可扫的目录，发现不到任何前端，整个 WebUI 前端不可用，页面路径回 404「前端未就绪」，只剩 HTTP 接口；同时市场列表（`/api/marketplace`）与系统组件（`/api/system-components`）判断不了已装的包，返回 503。Node 宿主 `@aalis/runtime` 总会提供 `host-paths`。
 
 **挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 注册顺序。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸）后**实时重挂静态目录 + 广播 WebSocket `reload`**，无需重启进程。
 

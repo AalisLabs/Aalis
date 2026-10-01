@@ -7,7 +7,7 @@
 //   npm create aalis@latest my-bot -- --tier minimal --no-install
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
-// index.mjs（一行 startAalis 启动）、aalis.config.yaml、README、.gitignore，
+// index.mjs（一行 startAalis 启动）、家目录 home/（aalis.config.yaml 与 secrets.yaml）、README、.gitignore，
 // 随后自动 npm install。启动：cd my-bot && npm start。
 //
 // 选插件心智：模板（bare/minimal/standard/full）+ 同类适配器组（LLM/平台/记忆/
@@ -139,7 +139,7 @@ export const GROUPS: AdapterGroup[] = [
   },
 ];
 
-// 已知插件的配置桩。密钥留空由用户填 —— 直接写进 aalis.config.yaml，该文件不入库
+// 已知插件的配置桩。密钥留空由用户填 —— 直接写进 home/aalis.config.yaml，home/ 不入库
 // （见 renderGitignore）。不走 `.env` + `${VAR}` 插值：它承载的东西与 config 完全重合，
 // 唯一区别只是「哪个文件进 git」，而配置文件本身已被 ignore，那一层纯属多余。
 // 仅覆盖需密钥/地址的常见适配器；其余插件用默认配置启动。
@@ -375,11 +375,15 @@ function renderPackageJson(projectName: string, enabled: string[], versions: Map
 }
 
 function renderEntry(): string {
-  return `import { startAalis } from '@aalis/runtime';
+  return `import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { startAalis } from '@aalis/runtime';
 
-// 从 aalis.config.yaml 读配置、从 node_modules 加载已装的 @aalis 插件、启动。
-// 默认开启控制台彩色日志 + data/latest.log 文件日志（无 TTY 时自动关闭染色）。
-startAalis().catch(err => {
+// 从本目录的 node_modules 加载已装的 @aalis 插件。家目录（配置、密钥、数据、日志）缺省是本目录下的 home/，
+// 设 AALIS_HOME 或用 npm start -- --home <目录> 可换到别处（npm 要在 -- 之后才把参数传给脚本）。
+// 默认开启控制台彩色日志 + home/logs/latest.log 文件日志（无 TTY 时自动关闭染色）。
+const here = dirname(fileURLToPath(import.meta.url));
+startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
   console.error('Aalis 启动失败:', err);
   process.exit(1);
 });
@@ -425,8 +429,8 @@ export function renderConfig(enabled: Set<string>): string {
 }
 
 function renderGitignore(): string {
-  // `aalis.config.yaml` 必须在列：密钥直接写在里面（不再有 `.env` 那一层），入库即泄露。
-  return `${['node_modules/', 'data/', '*.log', 'aalis.config.yaml', 'dist/'].join('\n')}\n`;
+  // 家目录 home/ 必须在列：配置、密钥与数据都在里面，入库即泄露。
+  return `${['node_modules/', 'home/', '*.log', 'dist/'].join('\n')}\n`;
 }
 
 export function renderReadme(projectName: string, enabled: Set<string>): string {
@@ -444,10 +448,9 @@ npm start
 
 ## 配置
 
-- 编辑 \`aalis.config.yaml\` 调整插件与参数。
-- 密钥/令牌：直接填进 \`aalis.config.yaml\`（该文件已在 \`.gitignore\` 里，不会入库）${
-    hasWebui ? '，或启动后在 WebUI 配置页填写。' : '。'
-  }
+- 家目录是 \`home/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_HOME\` 或用 \`npm start -- --home <目录>\` 可换到别处。
+- 编辑 \`home/aalis.config.yaml\` 调整插件与参数。
+- 密钥/令牌：直接填进 \`home/aalis.config.yaml\`${hasWebui ? '，或启动后在 WebUI 配置页填写。' : '。'}
 ${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:3000 。\n' : ''}
 ## 装更多插件
 
@@ -644,7 +647,11 @@ async function main(): Promise<void> {
     const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabledList], catalog);
     writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabledList, versions), 'utf-8');
     writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
-    writeFileSync(resolve(targetDir, 'aalis.config.yaml'), renderConfig(enabled), 'utf-8');
+    // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
+    const homeDir = resolve(targetDir, 'home');
+    mkdirSync(homeDir, { recursive: true, mode: 0o700 });
+    writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });
+    writeFileSync(resolve(homeDir, 'aalis.config.yaml'), renderConfig(enabled), { encoding: 'utf-8', mode: 0o600 });
     writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
     writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
 
@@ -669,7 +676,7 @@ async function main(): Promise<void> {
     if (noInstall) console.log(`  cd ${projectName} && npm install`);
     else console.log(`  cd ${projectName}`);
     const needsKey = enabledList.some(n => KNOWN_CONFIG[n]);
-    if (needsKey) console.log('  # 在 aalis.config.yaml 里填入 API key（该文件不入库）');
+    if (needsKey) console.log('  # 在 home/aalis.config.yaml 里填入 API key（home/ 不入库）');
     console.log('  npm start');
     if (tier !== 'full') {
       const hasWebui = enabled.has('@aalis/plugin-webui-server');

@@ -195,7 +195,7 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 ### 不是沙箱
 
-`readExternalFile` 显式**绕过 storage root** 读任意 OS 路径——只用于「外部推来的本地路径」。受沙箱约束的读写请走 [storage 服务](./storage.md)。
+`readExternalFile` 显式**绕过 storage root** 读任意 OS 路径——只用于「外部推来的本地路径」。路径必须是绝对路径或 `file://` 加绝对路径，相对路径直接拒绝：宿主进程的 cwd 不带语义，按它解析会因启动目录不同读到不同的文件。受沙箱约束的读写请走 [storage 服务](./storage.md)。
 
 ### detached fire-and-forget
 

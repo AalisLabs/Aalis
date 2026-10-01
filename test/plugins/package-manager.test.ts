@@ -28,6 +28,7 @@ import packageManagerPlugin, {
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { deferred } from '../helpers/deferred.js';
 
 // 从被测模块的依赖契约推导类型，避免测试直接 import api 包（knip unlisted-dep）
@@ -1055,6 +1056,8 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
       makeTempDir: async () => ({ path: '/tmp/fake', cleanup: async () => undefined }),
     });
+    // 安装集只用来拼路径，读写都走上面的假 process 服务
+    provideHostPaths(app, '/fake-app');
     await app.plugins.register(packageManagerPlugin, {});
     await app.plugins.idle();
     const svc = host.services.get(packageManager);
@@ -1151,7 +1154,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       }),
     );
 
-    await app.plugins.register(packageManagerPlugin, { projectRoot: PAGE });
+    provideHostPaths(app, PAGE);
+    await app.plugins.register(packageManagerPlugin, {});
     await app.plugins.idle();
     expect(app.plugins.getPlugin('@aalis/plugin-package-manager')?.state).toBe('active');
     const svc = host.services.get(packageManager);
@@ -1210,7 +1214,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         }),
       }),
     );
-    await app.plugins.register(packageManagerPlugin, { projectRoot: PAGE });
+    provideHostPaths(app, PAGE);
+    await app.plugins.register(packageManagerPlugin, {});
     await app.plugins.idle();
     const svc = host.services.get(packageManager);
     if (!svc) throw new Error('package-manager 未就绪');
@@ -1260,7 +1265,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
       });
 
-      await app.plugins.register(packageManagerPlugin, { projectRoot: proj });
+      provideHostPaths(app, proj);
+      await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
       expect(app.plugins.getPlugin('@aalis/plugin-package-manager')?.state).toBe('active');
       const svc = host.services.get(packageManager);
@@ -1315,7 +1321,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         }),
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
       });
-      await app.plugins.register(packageManagerPlugin, { projectRoot: proj });
+      provideHostPaths(app, proj);
+      await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
       const svc = host.services.get(packageManager);
       if (!svc) throw new Error('package-manager 未就绪');
@@ -1395,7 +1402,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       await app.plugins.idle();
       expect(app.plugins.getPlugin('other-name')).toBeDefined();
 
-      await app.plugins.register(packageManagerPlugin, { projectRoot: proj });
+      provideHostPaths(app, proj);
+      await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
       const svc = host.services.get(packageManager);
       if (!svc) throw new Error('package-manager 未就绪');

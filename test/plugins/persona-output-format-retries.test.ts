@@ -7,6 +7,7 @@ import { type PersonaService, persona } from '../../packages/api-persona/src/ind
 import { App, type BoundOf, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -26,6 +27,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   const boot = async (personaName: string): Promise<PersonaService> => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
+    provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {
       roots: [

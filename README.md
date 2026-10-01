@@ -37,7 +37,7 @@ pnpm monorepo，约 100 个包：
 |---|---|
 | `packages/core` | 内核 |
 | `packages/runtime` | Node 宿主：配置文件、插件发现、进程重启 |
-| `packages/api-*` | 31 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），含接口与描述符 |
+| `packages/api-*` | 35 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），含接口与描述符 |
 | `packages/plugin-*` | 60 余个插件：LLM 与 Embedding 提供者、记忆与向量存储、工具集、平台适配器（OneBot / CLI / WebUI）、调度、权限、技能等，清单见 [docs/plugins/](docs/plugins/README.md) |
 | `packages/create-aalis` / `create-aalis-plugin` | 脚手架：建机器人项目 / 建插件骨架 |
 | `docs/` | 文档站源码 |
@@ -49,14 +49,14 @@ Node.js >= 22。
 ```bash
 npm create aalis@latest my-bot
 cd my-bot
-# 在 aalis.config.yaml 里填大模型 API key 与平台账号
+# 在 home/aalis.config.yaml 里填大模型 API key 与平台账号（home/ 是家目录，已在 .gitignore 里）
 npm start
 ```
 
 要哪些 key、零 key 怎么起（本地 Ollama）、CLI 与 WebUI 两个入口，见 [第一次运行](docs/guide/first-run.md)；
 建项目的完整步骤见 [脚手架上手](docs/guide/scaffolding.md)。
 
-在本仓库里开发：`pnpm install && pnpm build`，`pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
+在本仓库里开发：`pnpm install && pnpm build`，第一次先 `pnpm dev --init` 初始化开发用的家目录 `.aalis-dev/`，之后 `pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
 
 从仓库源码运行时，仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由模型判定群消息要不要回复，侧车不随仓库分发）与其它插件一样默认启用，但默认不生效，群聊判定仍由 trigger-policy 负责。想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页切换 `trigger` 的偏好；它生效而本机没有侧车时群里只回点名（@、叫名字、戳一戳）。说明见 [该包 README](packages/plugin-trigger-laya/README.md)。
 

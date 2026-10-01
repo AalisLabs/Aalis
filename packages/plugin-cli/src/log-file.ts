@@ -9,7 +9,7 @@
 import { readTailLines, type StorageService } from '@aalis/api-storage';
 import { type LogEntry, parseLogLine } from '@aalis/schema-log';
 
-/** 日志单一数据源的 storage URI（logs 根默认落在 data/ 下，与写入方 data/latest.log 对偶）。 */
+/** 日志单一数据源的 storage URI（logs 根默认落在家目录的 logs/，与 runtime 写入的 logs/latest.log 对偶）。 */
 const LOG_FILE_URI = 'logs:/latest.log';
 
 export async function readLogFileTail(storage: StorageService, limit: number): Promise<LogEntry[]> {

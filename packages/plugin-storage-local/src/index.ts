@@ -16,6 +16,7 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
+import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
 import {
   type StorageEntry,
   type StorageListResult,
@@ -47,7 +48,7 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
  * 这个插件不是沙箱。它做三件事：
  *
  * 1. 给若干本机目录起稳定的名字（roots 数组里声明，包括默认 workspace/data/tmp/
- *    pluginData/logs，以及用户加的任何根），让上层用 URI 表示文件，避免到处写
+ *    pluginData，以及用户加的任何根；另有内置的 paper/public/logs），让上层用 URI 表示文件，避免到处写
  *    宿主机绝对路径。
  * 2. 在每条 API 内对 `..` 穿越做规范化与校验，防止"workspace:/../../etc/passwd"
  *    这类逻辑越界 bug。
@@ -60,7 +61,7 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
  * 实际只显示其 fileRoot 配置指向的那一个根（默认 workspace），其它根的 browsable=true
  * 不会让它们出现在文件页里——那些根仅供 agent/工具按 URI 寻址使用。
  *
- * 当 agent 需要访问"内置 5 个根之外"的目录时：
+ * 当 agent 需要访问默认根之外的目录时：
  *   - 推荐：在 roots 里加一条具名根（如 share / project_x），路径限定到目标目录
  *   - 一刀切：在 roots 里加 { name: host, path: '/' }，agent 即可用 host:/绝对路径 访问
  *     宿主机任何位置（高危，启动时会有 WARN 日志）
@@ -110,16 +111,6 @@ const DEFAULT_ROOTS: RootEntryConfig[] = [
     writable: true,
     deletable: true,
   },
-  {
-    name: 'logs',
-    path: 'data',
-    label: '日志',
-    kind: 'logs',
-    browsable: false,
-    readable: true,
-    writable: false,
-    deletable: false,
-  },
   // 高危直通：取消注释或改 enabled 字段无意义——存在即注册。如需 host:/ 直通根，把下行加进 roots：
   // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
 ];
@@ -129,31 +120,44 @@ const DEFAULT_ROOTS: RootEntryConfig[] = [
  * 用户 roots 里与内部根同名的项被跳过并告警（内部根优先）。
  * - paper：白纸枢纽存放远端任务成品；kind 为 paper，checkpoint 不给它记账。
  * - public：发布服务存放审核通过的作品，作品站从这里读出来部署；kind 为 public，checkpoint 不给它记账。
+ * - logs：runtime 写文件日志的目录（host-paths 的 logs），WebUI 与 CLI 的日志页从这里读；只读。
  */
-const INTERNAL_ROOTS: RootEntryConfig[] = [
-  {
-    name: 'paper',
-    path: 'data/stage/paper',
-    label: '白纸',
-    kind: 'paper',
-    browsable: false,
-    readable: true,
-    writable: true,
-    deletable: true,
-  },
-  {
-    name: 'public',
-    path: 'data/stage/public',
-    label: '公开作品',
-    kind: 'public',
-    browsable: false,
-    readable: true,
-    writable: true,
-    deletable: true,
-  },
-];
+function internalRoots(paths: HostPaths): RootEntryConfig[] {
+  return [
+    {
+      name: 'paper',
+      path: 'data/stage/paper',
+      label: '白纸',
+      kind: 'paper',
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: true,
+    },
+    {
+      name: 'public',
+      path: 'data/stage/public',
+      label: '公开作品',
+      kind: 'public',
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: true,
+    },
+    {
+      name: 'logs',
+      path: paths.logs,
+      label: '日志',
+      kind: 'logs',
+      browsable: false,
+      readable: true,
+      writable: false,
+      deletable: false,
+    },
+  ];
+}
 
-const INTERNAL_ROOT_NAMES: ReadonlySet<string> = new Set(INTERNAL_ROOTS.map(r => r.name));
+const INTERNAL_ROOT_NAMES: ReadonlySet<string> = new Set(['paper', 'public', 'logs']);
 
 const configSchema = defineConfig({
   roots: {
@@ -179,7 +183,7 @@ const configSchema = defineConfig({
         label: '本机路径',
         required: true,
         onInvalid: 'error',
-        description: '可绝对，亦可相对项目根；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
+        description: '可绝对，亦可相对家目录；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
       },
       label: { type: 'string', label: '展示名称', default: '' },
       kind: {
@@ -717,13 +721,15 @@ class ScopedStorageService implements StorageService {
 }
 
 async function createRoot(
+  home: string,
   name: string,
   label: string,
   kind: string,
   rootPath: string,
   options: Omit<StorageRootInfo, 'name' | 'label' | 'kind'>,
 ): Promise<RootDefinition> {
-  const abs = resolve(process.cwd(), rootPath);
+  // 相对路径按家目录解析：进程的 cwd 不带语义
+  const abs = resolve(home, rootPath);
   // path 已是文件系统根（'/'）等存在的目录时不需要创建；其它情况 mkdir -p
   if (rootPath !== '/') {
     await mkdir(abs, { recursive: true });
@@ -740,10 +746,10 @@ async function createRoot(
 const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** 按一条根配置建目录、解析真实路径并打注册日志；失败时告警并返回 undefined */
-async function openRoot(item: RootEntryConfig, logger: Logger): Promise<RootDefinition | undefined> {
+async function openRoot(home: string, item: RootEntryConfig, logger: Logger): Promise<RootDefinition | undefined> {
   const { name } = item;
   try {
-    const root = await createRoot(name, item.label || name, item.kind || 'custom', item.path, {
+    const root = await createRoot(home, name, item.label || name, item.kind || 'custom', item.path, {
       browsable: item.browsable === true,
       readable: item.readable !== false,
       writable: item.writable === true,
@@ -769,10 +775,10 @@ async function openRoot(item: RootEntryConfig, logger: Logger): Promise<RootDefi
 }
 
 /** 从已校验的 roots 构造用户根；空数组沿用内置根，与内部根同名的项跳过。 */
-async function buildRoots(parsedRoots: RootEntryConfig[], logger: Logger): Promise<RootDefinition[]> {
+async function buildRoots(home: string, parsedRoots: RootEntryConfig[], logger: Logger): Promise<RootDefinition[]> {
   let entries = parsedRoots.slice();
   if (entries.length === 0) {
-    logger.warn('storage roots 配置为空，将注册默认 5 个内置根（workspace/data/tmp/pluginData/logs）');
+    logger.warn('storage roots 配置为空，将注册默认 4 个根（workspace/data/tmp/pluginData）');
     entries = DEFAULT_ROOTS.slice();
   }
 
@@ -798,13 +804,13 @@ async function buildRoots(parsedRoots: RootEntryConfig[], logger: Logger): Promi
       continue;
     }
     seen.add(name);
-    const root = await openRoot({ ...item, name, path }, logger);
+    const root = await openRoot(home, { ...item, name, path }, logger);
     if (root) out.push(root);
   }
   return out;
 }
 
-const uses = { provide, services, logger, lifecycle, config, doctor: optional(doctor) };
+const uses = { provide, services, logger, lifecycle, config, paths: hostPaths, doctor: optional(doctor) };
 
 export default definePlugin({
   name: PLUGIN_NAME,
@@ -816,10 +822,12 @@ export default definePlugin({
   async apply(caps) {
     const logger = caps.logger.child('storage');
     const cfg = parseConfig(configSchema, caps.config, logger);
-    const roots = await buildRoots(cfg.roots, logger);
+    const paths = caps.paths.require();
+    const home = paths.home;
+    const roots = await buildRoots(home, cfg.roots, logger);
     if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
-    for (const item of INTERNAL_ROOTS) {
-      const root = await openRoot(item, logger);
+    for (const item of internalRoots(paths)) {
+      const root = await openRoot(home, item, logger);
       if (root) roots.push(root);
     }
 

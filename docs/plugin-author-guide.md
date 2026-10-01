@@ -49,6 +49,7 @@ await plugins.require().bounce(lifecycle.id);
 
 - `app`、`plugins`：core 在根激活上提供的宿主管理面。
 - `hostConfig`（配置文档，`@aalis/api-host-config`）：由宿主提供。Node 宿主 `@aalis/runtime` 会提供，别的宿主不一定；缺席时要降级的插件写 `optional(hostConfig)`。
+- `hostPaths`（家目录与安装集的绝对路径，`@aalis/api-host-paths`）：由宿主提供，Node 宿主同样会提供。插件要定位这些目录时声明它，不读 `process.cwd()`。
 - `hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
 
 `uses` 的值是描述符（或 `optional()` 包着的描述符），不是字符串。领域能力（LLM 的 tool-calling、storage 的 local-path）不是 core DI 的一维：用各域 `*-api` helper 按实例 / 句柄元数据过滤（见第 10 节）。
@@ -179,6 +180,7 @@ lifecycle.onDispose(() => {
 - `required: true` 且没有默认值的字段未填时，`parseConfig` 抛出配置错误；数组元素中此类错误只丢弃该元素并告警。跨字段、条件必填等语义仍由插件核对
 - `default` 是唯一默认值来源；宿主用 `defaultsFrom` 回填文档，插件用 `parseConfig` 取得默认值，不依赖宿主是否做过回填
 - 普通字段无效时回落默认值并告警；`onInvalid: 'error'` 的字段拒绝无效值，即使有默认值也不回落。地址、启动参数、访问边界等字段应显式声明这一策略；缺省规则不变。例外：插件自己登记拒绝规则或访问检查器时，相关字段不要声明这一策略，默认值取收紧的一侧，坏值回落并告警。插件进 error 会连规则一起撤掉，没有规则时访问反而放开
+- 写宿主文件路径的 `string` / `textarea` 字段声明 `format`：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名（不含路径分隔符，`C:foo` 这类带盘符的相对写法不算）；判定忽略首尾空白，空串照常表示未填；只看写法、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准：宿主进程的 cwd 不带语义（家目录与安装集经 `host-paths` 取得，见 [api-host-paths](./api/api-host-paths.md)）
 - 用 `ConfigOf<typeof configSchema>` 推导配置类型；解析后的派生列表等另行计算，不重复维护默认值对象或取值断言
 - 嵌套对象用 `SchemaGroup`，数组用 `SchemaArray`，不要用裸 JSON 字符串字段
 

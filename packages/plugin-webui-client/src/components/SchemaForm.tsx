@@ -381,6 +381,12 @@ function LLMRefField({
   );
 }
 
+/** 路径类字段的占位提示（与 schema-config 的 format 对应） */
+const FORMAT_PLACEHOLDER: Record<string, string | undefined> = {
+  'absolute-path': '绝对路径，例如 /opt/models/model.bin',
+  executable: '命令名（按 PATH 查找）或绝对路径',
+};
+
 function SchemaFormField({
   field,
   fieldKey,
@@ -549,7 +555,7 @@ function SchemaFormField({
     );
   }
 
-  // string (default)
+  // string (default)；路径类字段的写法由服务端按 format 校验，这里只给提示
   // 字段名正则要求关键词后不接字母，避免 tokenBudget / secretLength 这类合成词被误判。
   const isSensitive = field.secret || /(apiKey|password|secret|token)(?![a-zA-Z])/i.test(fieldKey);
   return (
@@ -558,6 +564,7 @@ function SchemaFormField({
       type={isSensitive ? 'password' : 'text'}
       value={String(value ?? '')}
       onChange={e => onChange(e.target.value)}
+      placeholder={FORMAT_PLACEHOLDER[field.format ?? '']}
     />
   );
 }

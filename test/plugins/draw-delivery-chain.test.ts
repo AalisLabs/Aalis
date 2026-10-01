@@ -12,6 +12,7 @@ import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import imageSender from '../../packages/plugin-image-sender/src/index.js';
 import processLocal from '../../packages/plugin-process-local/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // 画→出站请求→编码 链路测试（真 App/storage/process/Chromium/ffmpeg）：
@@ -41,6 +42,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-chain-'));
     for (const d of ['data', 'tmp']) mkdirSync(join(base, d), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
         {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, type LogEntry, LogHub } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // delete 的删根守卫——字面空路径与「解析回根」两条路都必须拒。
@@ -30,6 +31,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     const logHub = new LogHub();
     logHub.onEntry(entry => void logs.push(entry));
     app = new App({ name: 'T', logLevel: 'info', logHub });
+    provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
         {

@@ -13,6 +13,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { WorkflowLoader } from '../../packages/plugin-workflow/src/loader.js';
 import { RunStore } from '../../packages/plugin-workflow/src/persistence.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -147,6 +148,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
         return () => void actions.delete(method);
       },
     } as never);
+    provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: ['workspace', 'data'].map(name => ({
         name,

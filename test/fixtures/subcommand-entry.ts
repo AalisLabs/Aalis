@@ -2,7 +2,7 @@
 // 在临时目录（cwd）里以子进程方式运行。只走 runtime **源码**（start.ts），不依赖 runtime dist。
 //
 // 环境变量：
-//   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'daemon'（传 subcommands: []，
+//   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'daemon'（传 argv: []，
 //                      startAalis 返回后自发 SIGTERM，验证守护路径的文件日志与优雅退出仍在）
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
 //   AALIS_E2E_APPLY_MS 设了才多登记两个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
@@ -84,11 +84,14 @@ const pluginLoader = {
   },
 };
 
+// 'default-loader'：不传插件加载器，走默认的 node_modules 加载器；安装集取 AALIS_E2E_APP_DIR（不给则用缺省的 <家目录>/app）
+const appDir = process.env.AALIS_E2E_APP_DIR;
 const app = await startAalis({
-  pluginLoader,
+  ...(mode === 'default-loader' ? {} : { pluginLoader }),
+  ...(appDir ? { appDir } : {}),
   consoleSink: false,
   terminalRestore: false,
-  ...(mode === 'daemon' ? { subcommands: [] } : {}),
+  ...(mode === 'daemon' ? { argv: [] } : {}),
 });
 // 守护路径：startAalis 已挂好 SIGTERM 处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
 // 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）；

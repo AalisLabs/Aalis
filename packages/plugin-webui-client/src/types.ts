@@ -117,6 +117,7 @@ export interface SchemaField {
   integer?: boolean;
   step?: number;
   pattern?: string;
+  format?: 'absolute-path' | 'executable';
 }
 
 export interface SchemaGroup {
