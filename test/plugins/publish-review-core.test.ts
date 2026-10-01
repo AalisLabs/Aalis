@@ -396,6 +396,116 @@ describe('作品审核核心', () => {
     expect(h.notices[0]).toContain(`https://draw.invalid/w/${nominated.id}/`);
     expect(h.notices[0]).not.toContain('old.invalid');
   });
+
+  it('多目标作品某站暂离后回来不重发上线通知；换址后仍重新通知，过渡期不发延迟提醒', async () => {
+    const clock = { now: 1000 };
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+      undefined,
+      clock,
+    );
+    const works = h.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://works.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    const draw = h.service.attachSurface({
+      name: 'draw',
+      urlFor: id => `https://draw.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    const nominated = await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] });
+    if (!('id' in nominated)) throw new Error(nominated.refused);
+    await h.service.processNext();
+    works.live([nominated.id]);
+    draw.live([nominated.id]);
+    await vi.waitFor(() => expect(h.notices).toHaveLength(1));
+    await vi.waitFor(() => expect(h.store.data.ledger[nominated.id].notice).toBe('sent'));
+    works.detach();
+    draw.live([nominated.id]);
+    await h.store.exclusive(async () => {});
+    expect(h.service.get(nominated.id)?.live).toBe(false);
+    const back = h.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://works.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    back.live([nominated.id]);
+    await vi.waitFor(() => expect(h.service.get(nominated.id)?.live).toBe(true));
+    await h.service.flushNotices();
+    expect(h.notices).toHaveLength(1);
+    expect(h.store.data.ledger[nominated.id].notice).toBe('sent');
+
+    const moved = h.service.attachSurface({
+      name: 'works',
+      urlFor: id => `https://moved.invalid/w/${id}/`,
+      health: () => ({ ok: true }),
+    });
+    // 另一站先报 live：works 的旧地址失效、新地址未确认，作品暂不算全部上线
+    draw.live([nominated.id]);
+    await vi.waitFor(() => expect(h.service.get(nominated.id)?.live).toBe(false));
+    clock.now += 31 * 60_000;
+    await h.service.reconcile();
+    await h.service.flushNotices();
+    expect(h.notices, '用户已收到过上线通知，换址过渡期不补发延迟提醒').toHaveLength(1);
+    moved.live([nominated.id]);
+    await vi.waitFor(() => expect(h.notices).toHaveLength(2));
+    expect(h.notices[1]).toContain(`https://moved.invalid/w/${nominated.id}/`);
+    expect(h.notices[1]).toContain(`https://draw.invalid/w/${nominated.id}/`);
+    await vi.waitFor(() => expect(h.store.data.ledger[nominated.id].notice).toBe('sent'));
+  });
+
+  it('一个房间的通知发不出去不挡其他房间，失败条目按指数退避重试且封顶一小时', async () => {
+    const clock = { now: 1000 };
+    const store = new ReviewStore(memoryStorage(new Map()));
+    await store.load();
+    const pending = (id: string, sessionId: string) => ({
+      id,
+      origin: { ...input().origin, notify: { sessionId, platform: 'onebot' } },
+      content: '作品未获批准，这次不发布',
+      live: false,
+    });
+    const seeded = store.copy();
+    seeded.notices.blocked = pending('aaaaaaaaaa', 'room-1');
+    seeded.notices.open = pending('bbbbbbbbbb', 'room-2');
+    await store.save(seeded);
+    let muted = true;
+    const sent: string[] = [];
+    const emit = vi.fn(async (origin: NominateInput['origin']) => {
+      if (muted && origin.notify?.sessionId === 'room-1') throw new Error('muted');
+      sent.push(origin.notify!.sessionId);
+    });
+    const service = new PublishReviewService({
+      storage: store.storage,
+      store,
+      config: config(),
+      pipeline: { run: vi.fn() },
+      now: () => clock.now,
+      notice: emit,
+    });
+    await service.flushNotices();
+    expect(sent).toEqual(['room-2']);
+    expect(store.data.notices.open).toBeUndefined();
+    expect(store.data.notices.blocked).toBeDefined();
+    expect(emit).toHaveBeenCalledTimes(2);
+    let calls = 2;
+    for (const delay of [30_000, 60_000, 120_000, 240_000, 480_000, 960_000, 1_920_000, 3_600_000, 3_600_000]) {
+      clock.now += delay - 1;
+      await service.flushNotices();
+      expect(emit).toHaveBeenCalledTimes(calls);
+      clock.now += 1;
+      await service.flushNotices();
+      expect(emit).toHaveBeenCalledTimes(++calls);
+    }
+    muted = false;
+    clock.now += 3_600_000;
+    await service.flushNotices();
+    expect(sent).toEqual(['room-2', 'room-1']);
+    expect(store.data.notices).toEqual({});
+    await service.close();
+  });
+
   it('坏状态文件失败关闭且原字节不被覆盖', async () => {
     const seed = new Map<string, string | Uint8Array>([['pluginData:/publish-review/state.json', '{bad-json']]);
     const h = await setup({ run: vi.fn() }, false, seed);
@@ -661,6 +771,17 @@ describe('作品审核核心', () => {
     clock.now++;
     expect(await daily.service.nominate(input())).toHaveProperty('id');
     expect(await daily.service.nominate({ ...input(), title: '' })).toEqual({ refused: '标题或简介不合规' });
+  });
+
+  it('选中的展示面暂未登记是临时拒绝；未选展示面仍是永久拒绝', async () => {
+    const h = await setup({ run: vi.fn() });
+    expect(await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] })).toEqual({
+      refused: '展示面暂未登记',
+      retryAfterMs: 30_000,
+    });
+    expect(await h.service.nominate({ ...input(), surfaces: [] })).toEqual({ refused: '展示面未登记' });
+    expect(h.store.data.queue).toEqual({});
+    expect(h.store.data.nominations).toEqual([]);
   });
 
   it('服务停机和快照暂时写失败可重试，失败时不占提交键', async () => {

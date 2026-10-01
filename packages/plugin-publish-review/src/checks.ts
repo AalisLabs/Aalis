@@ -3,6 +3,7 @@ import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature
 import type { ReviewConfig } from './config.js';
 
 const MIB = 1024 * 1024;
+const SURFACE_RETRY_MS = 30_000;
 const media = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4']);
 const text = new Set(['html', 'css', 'js', 'mjs', 'json', 'svg']);
 const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -66,12 +67,17 @@ export function checkNomination(
   input: NominateInput,
   cfg: ReviewConfig,
   surfaces: ReadonlySet<string>,
-): { ok: true; kind: WorkKind; title: string; summary: string } | { refused: string; fileIndex?: number } {
+):
+  | { ok: true; kind: WorkKind; title: string; summary: string }
+  | { refused: string; fileIndex?: number; retryAfterMs?: number } {
   const clean = (value: string) => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim();
   const title = clean(input.title);
   const summary = clean(input.summary);
   if (!title || title.length > 40 || summary.length > 300) return { refused: '标题或简介不合规' };
-  if (!input.surfaces.length || input.surfaces.some(name => !surfaces.has(name))) return { refused: '展示面未登记' };
+  if (!input.surfaces.length) return { refused: '展示面未登记' };
+  // 展示面可能正在重载或重新挂上；名字暂缺按临时拒绝，由提名方稍后重试。
+  if (input.surfaces.some(name => !surfaces.has(name)))
+    return { refused: '展示面暂未登记', retryAfterMs: SURFACE_RETRY_MS };
   if (!input.files.length || input.files.length > cfg.limits.maxWorkFiles) return { refused: '文件数量超限' };
   const paths = new Set<string>();
   let bytesTotal = 0;
