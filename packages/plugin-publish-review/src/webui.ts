@@ -119,7 +119,7 @@ const PAGE: WebuiPage = {
               type: 'table',
               source: 'reviewHistory',
               columns: [
-                { key: 'at', label: '时间' },
+                { key: 'at', label: '时间', render: 'time', nowrap: true },
                 { key: 'id', label: '编号' },
                 { key: 'event', label: '结论' },
                 { key: 'detail', label: '裁决者与理由' },

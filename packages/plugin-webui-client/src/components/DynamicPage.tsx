@@ -80,6 +80,37 @@ function CountdownCell({ target, onZero }: { target: number; onZero?: () => void
   return <span className={diff <= 5 ? 'countdown-imminent' : ''}>{text}</span>;
 }
 
+/** 时间单元格：值是毫秒时间戳或 ISO 字符串；今年的省去年份，悬停显示完整时间。解析不了的原样显示 */
+function TimeCell({ value }: { value: unknown }) {
+  if (value === '' || value == null) return null;
+  const date = new Date(typeof value === 'number' ? value : String(value));
+  if (Number.isNaN(date.getTime())) return <>{String(value)}</>;
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  const text = date.toLocaleString('zh-CN', {
+    ...(sameYear ? {} : { year: 'numeric' }),
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return (
+    <time dateTime={date.toISOString()} title={date.toLocaleString('zh-CN')}>
+      {text}
+    </time>
+  );
+}
+
+/** 链接单元格：只有 http(s) 网址做成新标签页打开的链接，其他值按文本显示 */
+function LinkCell({ value }: { value: unknown }) {
+  const text = String(value ?? '');
+  if (!/^https?:\/\//i.test(text)) return <>{text}</>;
+  return (
+    <a href={text} target="_blank" rel="noopener noreferrer">
+      {text}
+    </a>
+  );
+}
+
 /** 可展开/收起的长文本单元格：默认单行截断，点击展开完整内容（限高 80px） */
 function ExpandableTextCell({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -393,7 +424,11 @@ function DynTable({ comp, pluginName, refreshTick, onRefresh }: { comp: WebuiTab
                       ? <CountdownCell target={Number(row[col.key]) || 0} onZero={fetchData} />
                       : col.render === 'status-badge'
                         ? <span className={`dyn-badge dyn-badge-${String(row[col.key])}`}>{String(row[col.key] ?? '')}</span>
-                        : col.render === 'code'
+                        : col.render === 'time'
+                          ? <TimeCell value={row[col.key]} />
+                          : col.render === 'link'
+                            ? <LinkCell value={row[col.key]} />
+                            : col.render === 'code'
                           ? <code>{String(row[col.key] ?? '')}</code>
                           : col.render === 'expandable-text'
                             ? <ExpandableTextCell text={String(row[col.key] ?? '')} />

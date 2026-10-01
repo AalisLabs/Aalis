@@ -27,8 +27,8 @@ const PAGE: WebuiPage = {
                 { key: 'kind', label: '类型' },
                 { key: 'branch', label: '分支' },
                 { key: 'alias', label: '别名' },
-                { key: 'url', label: '网址' },
-                { key: 'at', label: '上线时刻' },
+                { key: 'url', label: '网址', render: 'link' },
+                { key: 'at', label: '上线时刻', render: 'time', nowrap: true },
               ],
               actions: [
                 {
@@ -52,7 +52,7 @@ const PAGE: WebuiPage = {
                 { key: 'branch', label: '分支' },
                 { key: 'id', label: '部署' },
                 { key: 'nonce', label: 'nonce' },
-                { key: 'at', label: '时刻' },
+                { key: 'at', label: '时刻', render: 'time', nowrap: true },
                 { key: 'count', label: '作品数' },
               ],
             },
@@ -60,7 +60,7 @@ const PAGE: WebuiPage = {
               type: 'table',
               source: 'worksHistory',
               columns: [
-                { key: 'at', label: '时刻' },
+                { key: 'at', label: '时刻', render: 'time', nowrap: true },
                 { key: 'branch', label: '分支' },
                 { key: 'deployment', label: '部署' },
                 { key: 'result', label: '结果' },
@@ -78,7 +78,7 @@ const PAGE: WebuiPage = {
               columns: [
                 { key: 'kind', label: '类型' },
                 { key: 'detail', label: '详情' },
-                { key: 'at', label: '时刻' },
+                { key: 'at', label: '时刻', render: 'time', nowrap: true },
               ],
               actions: [{ label: '标为已读', method: 'worksAcknowledge' }],
             },
