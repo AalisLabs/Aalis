@@ -95,7 +95,7 @@ export function rawDeliveryAllowed(task: TaskRecord): boolean {
   return !pub || (pub.state === 'failed' && !pub.workId);
 }
 
-export interface DeliverDeps {
+interface DeliverDeps {
   ledger: LedgerStore;
   gateway: ServiceRef<GatewayService>;
   events: Events;

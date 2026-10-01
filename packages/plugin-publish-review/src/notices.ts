@@ -5,16 +5,19 @@ import type { HookContextMap, Hooks } from '@aalis/api-hooks';
 import type { PublishOrigin } from '@aalis/api-publish';
 import { wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
-import { type OutgoingMessage, selfInitiatedActor } from '@aalis/schema-message';
+import { awaitDelivery, type OutgoingMessage, selfInitiatedActor } from '@aalis/schema-message';
 
-/** 等平台回执的上限：适配器每个发送分支都会结算，这里只防它一直不结算时卡住整条通知队列 */
+/**
+ * 等平台回执的上限：适配器每个发送分支都会结算（OneBot 单个附件最坏约 150 秒），这里只防它一直不结算时卡住
+ * 整条通知队列；插件停机时立即不等
+ */
 const DELIVERY_WAIT_MS = 5 * 60_000;
 
 /**
  * 通知已进入出站总线、平台却没确认收下（没有适配器接手、发送失败、等不到回执）。服务据此记下「已转述过」，
  * 下次重发直接发宿主原文，不再让她转述一遍。用 {@link isNoticeUndelivered} 认，不用 instanceof
  */
-export class NoticeUndelivered extends Error {
+class NoticeUndelivered extends Error {
   override name = 'NoticeUndelivered';
 }
 
@@ -34,6 +37,8 @@ export class ReviewNotices {
     private readonly logger: Logger,
     private readonly gateway: ServiceRef<GatewayService>,
     private readonly hooks: Hooks,
+    /** 插件的生命周期信号：停机时不再等平台回执，免得拖过清理时限 */
+    private readonly signal?: AbortSignal,
   ) {}
   open(): void {
     this.#open = true;
@@ -149,15 +154,10 @@ export class ReviewNotices {
   async #confirm(message: OutgoingMessage, id: string): Promise<void> {
     const delivery = message.delivery;
     if (!delivery) throw new NoticeUndelivered('没有平台适配器接手这条通知');
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      delivery,
-      new Promise<undefined>(resolve => {
-        timer = setTimeout(() => resolve(undefined), DELIVERY_WAIT_MS);
-        timer.unref?.();
-      }),
-    ]).finally(() => clearTimeout(timer));
-    if (!result) throw new NoticeUndelivered('平台一直没有确认这条通知');
+    const result = await awaitDelivery(delivery, this.signal, DELIVERY_WAIT_MS);
+    if (!result) {
+      throw new NoticeUndelivered(this.signal?.aborted ? '停机时这条通知还没得到平台确认' : '平台一直没有确认这条通知');
+    }
     if (!result.ok) {
       this.logger.warn(`作品 ${id} 的通知平台没有收下：${result.error}`);
       throw new NoticeUndelivered(`平台没有收下这条通知：${result.error}`);

@@ -61,7 +61,7 @@ export default definePlugin({
       ffmpegPath: cfg.ffmpegPath,
       ffprobePath,
     });
-    const notices = new ReviewNotices(caps.events, caps.logger, caps.gateway, caps.hooks);
+    const notices = new ReviewNotices(caps.events, caps.logger, caps.gateway, caps.hooks, caps.lifecycle.signal);
     const service = new PublishReviewService({
       storage,
       store,

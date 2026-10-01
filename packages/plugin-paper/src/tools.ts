@@ -30,7 +30,7 @@ import {
   resolveRoomPaper,
 } from './rooms.js';
 import type { TaskJournal } from './task-journal.js';
-import { describe, formatSize, truncate } from './util.js';
+import { describe, truncate } from './util.js';
 
 const MAX_TEXT = 1000;
 const MAX_NAME = 40;

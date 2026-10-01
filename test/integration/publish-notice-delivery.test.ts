@@ -191,6 +191,27 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     });
   });
 
+  it('停机时不再等平台回执：立即报没送达，不拖过清理时限', async () => {
+    const stop = new AbortController();
+    const h = await boot(
+      [{ content: JSON.stringify({ message: `可以玩了：${URL}`, mood: '高兴' }) }],
+      {},
+      () => new Promise<OutboundDeliveryResult>(() => {}),
+    );
+    const notices = new ReviewNotices(h.host.events, h.app.logger, h.host.gateway, h.host.hooks, stop.signal);
+    notices.open();
+    const pending = notices.enqueue(origin, CONTENT, 'test-work').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    await vi.waitFor(() => expect(h.outgoing).toHaveLength(1));
+    const started = Date.now();
+    stop.abort();
+    const err = await pending;
+    expect(isNoticeUndelivered(err)).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('没有平台适配器认领通知：报没送达，留待重发', async () => {
     const h = await boot(
       [{ content: JSON.stringify({ message: `可以玩了：${URL}`, mood: '高兴' }) }],
