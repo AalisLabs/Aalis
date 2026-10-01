@@ -79,6 +79,8 @@ interface ReviewState {
       failingSince?: number;
       /** 连续失败超过期限后放弃的时刻：不再自动重发，在审核页列出，owner 可以手动重发 */
       abandoned?: number;
+      /** 她已经转述过、平台没确认收下：之后重发直接发宿主原文 */
+      narrated?: boolean;
     }
   >;
 }
@@ -222,7 +224,8 @@ function valid(value: unknown): value is ReviewState {
           (entry.title !== undefined && !string(entry.title)) ||
           typeof entry.live !== 'boolean' ||
           (entry.failingSince !== undefined && !time(entry.failingSince)) ||
-          (entry.abandoned !== undefined && !time(entry.abandoned)),
+          (entry.abandoned !== undefined && !time(entry.abandoned)) ||
+          (entry.narrated !== undefined && typeof entry.narrated !== 'boolean'),
       ))
   )
     return false;

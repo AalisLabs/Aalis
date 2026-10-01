@@ -14,6 +14,7 @@ import {
 import type { StorageService } from '@aalis/api-storage';
 import { checkNomination, contentType } from './checks.js';
 import type { ReviewConfig } from './config.js';
+import { isNoticeUndelivered } from './notices.js';
 import type { ReviewPipeline } from './pipeline.js';
 import { decideReview } from './policy.js';
 import { ITEM_ROOT, type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore } from './state.js';
@@ -93,8 +94,11 @@ interface ReviewServiceDeps {
   pipeline: ReviewPipeline;
   now?: () => number;
   signal?: AbortSignal;
-  /** 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。 */
-  notice?: (origin: PublishOrigin, content: string, id: string, title?: string) => unknown;
+  /**
+   * 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。平台确认收下才 resolve；direct 为真时直接发宿主原文，
+   * 不再让她转述（这条通知已经转述过、平台却没确认）。抛 NoticeUndelivered 表示已转述但平台没确认
+   */
+  notice?: (origin: PublishOrigin, content: string, id: string, title?: string, opts?: { direct?: boolean }) => unknown;
   /** 通知通道当前能否发送（已开放且网关在场）；缺省视为能发。 */
   noticeReady?: () => boolean;
 }
@@ -914,13 +918,13 @@ export class PublishReviewService implements PublishService {
       if (!entry || this.#stopped) return;
       const [key, item] = entry;
       try {
-        await notice(item.origin, item.content, item.id, item.title);
-      } catch {
+        await notice(item.origin, item.content, item.id, item.title, item.narrated ? { direct: true } : undefined);
+      } catch (err) {
         // 单个房间发不出去（如被禁言拦截）只推迟这一条，不挡其他房间。
         const failures = (this.#noticeRetry.get(key)?.failures ?? 0) + 1;
         const delay = Math.min(NOTICE_RETRY_MS * 2 ** (failures - 1), HOUR);
         this.#noticeRetry.set(key, { failures, nextAt: this.#now() + delay });
-        await this.#recordNoticeFailure(key, item.content);
+        await this.#recordNoticeFailure(key, item.content, isNoticeUndelivered(err));
         continue;
       }
       this.#noticeRetry.delete(key);
@@ -935,8 +939,11 @@ export class PublishReviewService implements PublishService {
       });
     }
   }
-  /** 记下第一次失败的时刻（落盘，重启后照样算）；连续失败超过期限就放弃，等 owner 手动重发 */
-  async #recordNoticeFailure(key: string, content: string): Promise<void> {
+  /**
+   * 记下第一次失败的时刻（落盘，重启后照样算）；连续失败超过期限就放弃，等 owner 手动重发。narrated：这次她已经
+   * 转述过、平台却没确认收下，记下来，之后重发直接发宿主原文，不再多跑一轮模型
+   */
+  async #recordNoticeFailure(key: string, content: string, narrated: boolean): Promise<void> {
     const { store } = this.#d;
     await store
       .exclusive(async () => {
@@ -945,9 +952,11 @@ export class PublishReviewService implements PublishService {
         const now = this.#now();
         const since = current.failingSince ?? now;
         const giveUp = now - since >= NOTICE_GIVE_UP_MS;
-        if (current.failingSince !== undefined && !giveUp) return;
+        const markNarrated = narrated && !current.narrated;
+        if (current.failingSince !== undefined && !giveUp && !markNarrated) return;
         const next = store.copy();
         next.notices[key].failingSince = since;
+        if (markNarrated) next.notices[key].narrated = true;
         if (giveUp) next.notices[key].abandoned = now;
         await store.save(
           next,
