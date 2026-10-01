@@ -6,20 +6,20 @@ import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.j
 // ════════════════════════════════════════════════════════════
 // memory-mongodb 的 apply 等连接与建索引（serverSelection 超时默认 5 秒，建索引没有超时）。接上 lifecycle.signal 后，
 // abort 即 client.close()，让在途的操作以错误返回，apply 随之落定、不发布服务。mongodb+srv 在 SRV 解析期间
-// close 不生效，连接会在 abort 之后照常建成：连接后、建索引后各查一次 signal 兜住。
+// close 不生效，连接会在 abort 之后照常建成：连接后、元数据索引（与归属核对）后、消息集合的索引后各查一次 signal 兜住。
 //
 // 客户端用替身直接调用 openAndProvide，不经 apply：apply 会构造真实驱动去连 mongod，
 // test 下 mock mongodb 也拦不住插件目录里解析到的驱动。
 // ════════════════════════════════════════════════════════════
 
-type Stage = 'connect' | 'createIndex';
+type Stage = 'connect' | 'metaIndex' | 'messageIndex';
 type Client = Parameters<typeof openAndProvide>[0];
 type Caps = Parameters<typeof openAndProvide>[2];
 
 /**
  * 客户端替身：hangOn 那一步挂起。closeInterrupts 为真时 close 让挂起的操作以错误返回（真实驱动关拓扑时如此），
  * 为假时 close 不生效，挂起的操作要等 release 才照常完成（SRV 解析期间的 close，或操作恰在 close 前完成）。
- * 只挂起该步的第一次调用。
+ * 只挂起该步的第一次调用。元数据集合的索引最先建，其后是消息集合的三个索引。
  */
 function fakeClient(hangOn: Stage | undefined, closeInterrupts: boolean) {
   const state = { closes: 0, indexes: 0, release: () => {} };
@@ -39,7 +39,7 @@ function fakeClient(hangOn: Stage | undefined, closeInterrupts: boolean) {
       collection: () => ({
         createIndex: async () => {
           state.indexes++;
-          await step('createIndex');
+          await step(state.indexes === 1 ? 'metaIndex' : 'messageIndex');
         },
       }),
     }),
@@ -107,7 +107,11 @@ describe('plugin-memory-mongodb 连接段随 lifecycle.signal 中止', () => {
     expect(getEventListeners(h.abort.signal, 'abort')).toHaveLength(0);
   });
 
-  it.each(['connect', 'createIndex'] as const)('%s 挂起时 abort：close 中断它，apply 落定、不发布服务', async stage => {
+  it.each([
+    'connect',
+    'metaIndex',
+    'messageIndex',
+  ] as const)('%s 挂起时 abort：close 中断它，apply 落定、不发布服务', async stage => {
     const { client, state } = fakeClient(stage, true);
     const h = harness();
     const opening = openAndProvide(client, CONFIG, h.caps);
@@ -122,7 +126,8 @@ describe('plugin-memory-mongodb 连接段随 lifecycle.signal 中止', () => {
 
   it.each([
     'connect',
-    'createIndex',
+    'metaIndex',
+    'messageIndex',
   ] as const)('%s 在 abort 之后照常完成（close 未生效）：不再往下走，关闭客户端、不发布服务', async stage => {
     const { client, state } = fakeClient(stage, false);
     const h = harness();
@@ -133,7 +138,11 @@ describe('plugin-memory-mongodb 连接段随 lifecycle.signal 中止', () => {
     const { error } = await settle(opening);
     expect(error).toBeInstanceOf(Error);
     expect(h.provided).toEqual([]);
-    expect(state.indexes, '连接后即停，不建索引').toBe(stage === 'connect' ? 0 : 4);
+    // 元数据索引先建（库的归属检查靠它的唯一约束），它完成后就检查中止，消息集合的三个索引不再建；
+    // 消息集合的索引一起建完再查一次
+    expect(state.indexes, '在挂起那一步之后的第一个检查点停下').toBe(
+      { connect: 0, metaIndex: 1, messageIndex: 4 }[stage],
+    );
     expect(state.closes, 'abort 时关一次，抛出后 catch 再关一次').toBe(2);
     expect(h.lines).toEqual([]);
   });
