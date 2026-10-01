@@ -21,7 +21,7 @@ function date(timestamp: number): string {
 }
 
 /** 站点信息：标题、简介，以及拼分享信息（og）绝对地址用的主站源；源缺省时不写 og:url 与 og:image */
-export interface SiteInfo {
+interface SiteInfo {
   title: string;
   intro: string;
   origin?: string;
