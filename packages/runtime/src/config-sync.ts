@@ -1,7 +1,7 @@
 // ============================================================
 // config-sync —— 插件配置同步政策 + 配置热重载编排（宿主政策层）
 //
-//   - syncPluginDefaults：schema 派生默认值回填 + 按 configSchema 裁剪未知字段
+//   - syncPluginDefaults：schema 派生默认值回填 + 按 configSchema 裁剪未知字段 + 密钥字段上的明文移进密钥存储
 //   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排（后缀实例随文件增删登记或卸载）
 //
 // 这些是**政策**（要不要裁剪、怎么合并、何时 bounce）。配置文档在 config-store，core 只持有
@@ -14,6 +14,7 @@ import { type App, events, type PluginDefinition, parseInstanceId } from '@aalis
 import { deepMergeDefaults, defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import type { ConfigStore } from './config-store.js';
 import type { PluginDiscovery, PluginLoader } from './plugin-discovery.js';
+import { describeDangling, sameConfig } from './secrets.js';
 
 export interface ConfigSyncOptions {
   /**
@@ -126,8 +127,14 @@ export async function handleConfigChanged(
     for (const status of app.plugins.getStatus()) {
       const entry = app.plugins.getPlugin(status.instanceId);
       if (!entry) continue;
-      const newConfig = store.getPluginConfig(status.instanceId);
-      if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
+      // 拿解析后的配置与运行态比：文档里是引用、运行态是原值，直接比永远不等。密钥文件的变更也走这里，
+      // 只有解析结果变了的实例才重载
+      const { config: newConfig, dangling } = store.resolvePluginConfig(
+        status.instanceId,
+        entry.definition.configSchema,
+      );
+      if (dangling.length > 0) app.logger.error(describeDangling(status.instanceId, dangling));
+      if (!sameConfig(newConfig, entry.config)) {
         app.logger.info(
           entry.state === 'disabled'
             ? `插件 ${status.instanceId} 配置已变更；插件已禁用，启用时按新配置激活`
@@ -174,6 +181,14 @@ function syncPluginConfig(
     const removed: string[] = [];
     merged = removeExtraFields(merged, schema, removed);
     if (removed.length > 0) app.logger.warn(`配置同步：${id} 裁掉 schema 外字段 [${removed.join(', ')}]`);
+  }
+  // 密钥字段上的明文（手写进配置文件的、旧配置里的）移进密钥存储，文档里换成引用。这会改写用户刚编辑过的文件，
+  // 日志只写路径与键，不写值
+  const { doc, writes, placed } = store.splitPluginSecrets(id, schema, merged);
+  if (writes.size > 0) {
+    store.commitSecrets(writes);
+    merged = doc;
+    for (const p of placed) app.logger.info(`配置同步：已把 ${id} 的 ${p.path} 移进 secrets.yaml（键 ${p.key}）`);
   }
   // 脏值在这里只告警、不改文档也不拦登记，读取时怎么处置归插件（parseConfig 回落默认值、忽略或拒绝激活）；
   // 禁用实例的休眠配置不产生必填缺失噪音。

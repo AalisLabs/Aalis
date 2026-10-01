@@ -10,7 +10,6 @@ import { extname } from 'node:path';
 import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
 import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
 import { createStorageGateway, isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';

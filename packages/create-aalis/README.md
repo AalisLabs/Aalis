@@ -12,7 +12,7 @@ pnpm add create-aalis
 
 ## 提供 / 依赖
 
-生成可运行的独立项目：家目录 `home/`（主配置 `aalis.config.yaml`，密钥也填在这里；另有一份空的 `secrets.yaml`，目前不读取）与 `startAalis()` 入口，按模板档写入 `@aalis/core`、`@aalis/runtime` 及所选插件。本包本身不是插件，无 `provides` / `uses`。
+生成可运行的独立项目：家目录 `home/`（主配置 `aalis.config.yaml`，密钥可以先填在这里，启动时移进同目录的 `secrets.yaml`，原处换成引用）与 `startAalis()` 入口，按模板档写入 `@aalis/core`、`@aalis/runtime` 及所选插件。本包本身不是插件，无 `provides` / `uses`。
 
 ## 文档
 

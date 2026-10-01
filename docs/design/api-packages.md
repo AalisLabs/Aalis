@@ -101,7 +101,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | api 包 | 注入到 `HookContextMap` | 描述符（服务名） | 注入到 `ContributionPointMap` | 主要服务接口 |
 |---|---|---|---|---|
 | `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`, `ModelInfo`；导出 `resolveLLMModel` / `listLLMModels` helper（吃 `ServiceRef`，按能力过滤）；向 schema-config 注入 `'llm-ref'` 字段类型 |
-| `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`（零运行时依赖，对 `@aalis/core` 只有 type-only 锚点；另含对词汇的中立解释函数与配置危险键闸；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
+| `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；密钥字段的引用 `SecretRef` 与 `isSecretRef` / `mapSecretFields`（零运行时依赖，对 `@aalis/core` 只有 type-only 锚点；另含对词汇的中立解释函数与配置危险键闸；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
 | `api-memory` | `memory:clear` | `memory` | — | `MemoryService` |
 | `api-storage` | — | `storage` | — | `StorageService`；导出 `resolveStorageByPath` / `createStorageGateway` helper（吃 `ServiceRef`） |
 | `api-embedding` | — | `embedding` | — | `EmbeddingService` |
@@ -109,7 +109,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-tools` | — | `tools` | — | `ToolService`；绑定门面含 `register` / `registerGroup`，另导出 `withToolGroups` |
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
-| `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；绑定门面 `registerPage` / `registerAction`；向 `PluginMeta` 注入 `extends`，向 schema-config 注入 SchemaField 表单交互属性 |
+| `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；绑定门面 `registerPage` / `registerAction`；向 `PluginMeta` 注入 `extends` |
 | `api-authority` | — | `authority` | — | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
 | `api-hooks` | （定义该扩展点） | `hooks` | — | `Hooks`, `HookRegistry`, `MiddlewareFn`, `MiddlewareNext`；默认提供者 plugin-hooks |

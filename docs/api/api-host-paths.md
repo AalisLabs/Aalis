@@ -18,7 +18,7 @@ interface HostPaths {
   readonly profile?: string;  // 家目录是 ~/.aalis-<profile> 时才有，不论经 --profile 还是 --home 选中
   readonly app: string;       // 安装集
   readonly config: string;    // <家目录>/aalis.config.yaml
-  readonly secrets: string;   // <家目录>/secrets.yaml（目前不读取）
+  readonly secrets: string;   // <家目录>/secrets.yaml（密钥的值，由宿主读写）
   readonly state: string;     // 插件状态：数据库、向量库、checkpoint、各插件的数据目录
   readonly logs: string;      // 文件日志 latest.log 所在目录
   readonly cache: string;     // 缓存
@@ -31,7 +31,7 @@ interface HostPaths {
 
 全部是绝对路径。宿主在登记任何插件之前提供，运行中不会替换，所以插件可以在激活时取一次留用。
 
-第一方插件不直接拼这些路径，而是经 `@aalis/plugin-storage-local` 按它们派生的内部根访问：`state` 是 `data:/`（`state/plugins` 是 `pluginData:/`），`tmp`、`cache`、`logs` 是同名的根，`self.*` 是 `personas:/`、`skills:/`、`workflows:/`，`stage.paper` 与 `stage.public` 是 `paper:/` 与 `public:/`。`stage.drafts` 目前没有对应的根，还没有插件使用。`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里；经 storage 读写 `secrets.yaml`、改写 `config` 都会被拒绝。
+第一方插件不直接拼这些路径，而是经 `@aalis/plugin-storage-local` 按它们派生的内部根访问：`state` 是 `data:/`（`state/plugins` 是 `pluginData:/`），`tmp`、`cache`、`logs` 是同名的根，`self.*` 是 `personas:/`、`skills:/`、`workflows:/`，`stage.paper` 与 `stage.public` 是 `paper:/` 与 `public:/`。`stage.drafts` 目前没有对应的根，还没有插件使用。`secrets.yaml` 存配置里密钥字段的值（见 [运行态与配置文档](../core/config.md#密钥配置)），只由宿主读写；经 storage 读写 `secrets.yaml`、改写 `config` 都会被拒绝。
 
 ## 使用
 

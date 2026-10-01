@@ -32,6 +32,7 @@
     "yaml": "^2.7.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/schema-log": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0"

@@ -119,7 +119,6 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
       logger,
       lifecycle,
       config: SERVERS,
-      plugins: { current: undefined } as never,
       hostConfig: { current: undefined } as never,
     });
 

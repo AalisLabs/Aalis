@@ -453,6 +453,22 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(await seen(['--home', 'link'])).toEqual({ home: real, profile: null });
   });
 
+  it('配置文件里手写的密钥：启动时移进 secrets.yaml（0600），插件拿到原值，配置文件里只剩引用', async () => {
+    const dir = tempDir();
+    writeFileSync(
+      join(dir, 'aalis.config.yaml'),
+      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    token: TOK-PLACEHOLDER\n',
+    );
+    const r = await run(dir, ['probe']);
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, 'first-config.json'), 'utf8')).token).toBe('TOK-PLACEHOLDER');
+    const configText = readFileSync(join(dir, 'aalis.config.yaml'), 'utf8');
+    expect(configText).not.toContain('TOK-PLACEHOLDER');
+    expect(parse(configText).plugins['e2e-probe'].token).toEqual({ $secret: 'e2e-probe.token' });
+    expect(parse(readFileSync(join(dir, 'secrets.yaml'), 'utf8'))).toEqual({ 'e2e-probe.token': 'TOK-PLACEHOLDER' });
+    expect(statSync(join(dir, 'secrets.yaml')).mode & 0o777).toBe(0o600);
+  });
+
   it('同时给了 profile 与 AALIS_HOME：报冲突、exit 2，不静默挑一个', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');

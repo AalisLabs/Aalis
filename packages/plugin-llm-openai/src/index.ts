@@ -1,7 +1,6 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
 import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 的 secret 属性
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';

@@ -314,6 +314,12 @@ symlink realpath 校验。但这层校验的目的是**防止上层代码出 bug
 或 `resolveLocalPath` 以写、删的方式要交出的目录，子树里含受保护的文件时同样拒绝（见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)）。
 它同样只管经 storage 的访问：子进程不受它约束，仍能按 OS 用户权限访问这两个文件。
 
+两个文件的分工：schema 里标了 `secret: true` 的字段（API key、token、带账号密码的连接串），值存在 `secrets.yaml`（0600），
+`aalis.config.yaml` 里只有引用 `{ $secret: '<键>' }`，所以经 storage 读主配置读不到这些值；WebUI 的配置接口同样只回引用。
+以上以宿主提供密钥存储为前提（Node 宿主 `startAalis` 总是提供）；没有密钥存储的自组装宿主，文档里本就是明文，WebUI 的配置接口原样返回，表单只遮蔽显示。
+没有 `configSchema` 的插件、没有标 `secret` 的字段，值仍是明文留在 `aalis.config.yaml` 里，可以经 storage 读到。
+这套语义只决定密钥存在哪、怎么显示，不在工具输出与日志里过滤密钥：插件拿到的是原值，自己写进输出的照样可见。
+
 > 请把 `resolveLocalPath` 的结果当作「工作目录起点」使用，而不是「沙箱边界」。
 > storage URI 文法、保留 scheme（`http` / `https` / `file` 不是 storage URI）见 forward-ref
 > [`docs/concepts/storage-uri-grammar.md`](./storage-uri-grammar.md) 与 [`docs/services/storage.md`](../services/storage.md)。
@@ -377,7 +383,7 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
   checkpoint 不给它记账，别的会话回滚不会删掉成品。
 - **onebot 出站按文件头核对**：图片、语音、视频按格式头分流，能内联的走消息段，认得出但不能内联的媒体
   改经文件上传，都不是就拒发；超过内联上限（10 MiB）的 storage 文件改交宿主路径之前同样核对（按字节区间
-  读出开头 4 KiB）。发送工具接受任意 storage URI，这道核对挡住了把任意可读文件（如含各家模型 key 的
+  读出开头 4 KiB）。发送工具接受任意 storage URI，这道核对挡住了把任意可读文件（如
   `aalis.config.yaml`）冒充图片发出。`send_attachment` 核对过文件头之后交出的仍是 storage URI，大文件到了
   适配器照样再核对一次；不经核对的只有插件代码直接交来的 `file://` 路径与本机绝对路径，模型经
   `send_attachment` 发的走不到这条。交宿主路径是送达方式的限制：实现端在容器里（如 Docker 里的 NapCat）

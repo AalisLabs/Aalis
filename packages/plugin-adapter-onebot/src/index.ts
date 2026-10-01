@@ -9,7 +9,6 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import {

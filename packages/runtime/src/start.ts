@@ -22,6 +22,7 @@ import { acquireInstanceLock, type InstanceLock } from './instance-lock.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
 import { createPluginDiscovery, type PluginLoader } from './plugin-discovery.js';
 import {
+  createFsSecretsProvider,
   createFsYamlConfigProvider,
   createProcessRespawnStrategy,
   createServiceRestartStrategy,
@@ -244,9 +245,10 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // sink 全部装好；bootstrap buffer 完成使命，解除订阅并释放内存。
   bootstrap.dispose();
 
-  // ── 组装 App：YAML 配置文档、按 loader 发现插件、用 spawn 重启 ──
+  // ── 组装 App：YAML 配置文档与密钥文件、按 loader 发现插件、用 spawn 重启 ──
   const { config, provider } = createFsYamlConfigProvider(paths.config);
-  const store = createConfigStore(config, provider);
+  const secrets = createFsSecretsProvider(paths.secrets);
+  const store = createConfigStore(config, provider, secrets);
   // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认
   // （启动时读取，改了要重启）
   const slowThresholdMs = store.get('slowThresholdMs') ?? undefined;

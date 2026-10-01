@@ -23,8 +23,6 @@ import {
   lifecycle as lifecycleService,
   logger as loggerService,
   optional,
-  type PluginManagerService,
-  pluginsService,
   type ServiceRef,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -42,7 +40,6 @@ interface BridgeCaps {
 interface Caps extends BridgeCaps {
   lifecycle: LifecycleCap;
   config: Readonly<Record<string, unknown>>;
-  plugins: ServiceRef<PluginManagerService>;
   hostConfig: ServiceRef<HostConfig>;
 }
 
@@ -76,9 +73,12 @@ const configSchema = defineConfig({
       env: {
         type: 'map',
         label: '环境变量',
-        description: '额外传给子进程的环境变量（KEY → VALUE）。',
+        description:
+          '额外传给子进程的环境变量（KEY → VALUE）。整份作为一个密钥存进 secrets.yaml，WebUI 不回显，改时整份重填。' +
+          'token 等凭据放这里，不要放进命令参数（参数会写进日志）。',
         default: {},
         onInvalid: 'error',
+        secret: true,
       },
       enabled: {
         type: 'boolean',
@@ -252,12 +252,12 @@ function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[])
       const enabled = args.enabled;
       if (!configured.some(s => s.id === id)) return `失败：没有 id="${id}" 的 server，请先用 mcp_list_servers 查看`;
 
-      // 缺任一服务就不动运行态：改了却存不下，重启后会悄悄回退
-      const pm = caps.plugins.current;
+      // 没有配置文档就不动运行态：改了却存不下，重启后会悄悄回退
       const doc = caps.hostConfig.current;
-      if (!pm || !doc) return '失败：plugins/host-config 服务不可用';
+      if (!doc) return '失败：host-config 服务不可用';
 
-      // 以配置文档为底改写：解析后的配置补了默认值、丢了坏值，以它为底会把这些永久写进配置文件
+      // 以配置文档为底改写：解析后的配置补了默认值、丢了坏值，以它为底会把这些永久写进配置文件；
+      // 文档里的 env 是密钥引用，原样交回即保持原值
       const current = doc.getPluginConfig(PLUGIN_NAME);
       const servers = Array.isArray(current.servers) ? [...current.servers] : [];
       const idx = servers.findIndex(s => {
@@ -276,14 +276,12 @@ function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[])
       servers[idx] = { ...before, enabled };
 
       const next = { ...current, servers };
-      const ok = await pm.updateConfig(PLUGIN_NAME, next);
-      if (!ok) return `失败：updateConfig 返回 false`;
-      // 管理动作只改运行态；跨重启保留要自己写文档并落盘
-      doc.setPluginConfig(PLUGIN_NAME, next);
+      // 运行态、文档与落盘由宿主一步完成
+      const result = await doc.applyPluginConfig(PLUGIN_NAME, next);
+      if (result.status === 'refused') return '失败：插件当前不接受配置更新（停机中或正在卸载）';
       // 落盘失败时运行态已经切换、插件已在 bounce：如实说明，别报成什么都没发生（save 自己记过日志）
-      try {
-        await doc.save();
-      } catch (err) {
+      if (result.saveError !== undefined) {
+        const err = result.saveError;
         return (
           `已将 server "${id}" 设置为 enabled=${enabled}（运行态已生效，插件会 bounce）；` +
           `写入配置文件失败：${err instanceof Error ? err.message : String(err)}。配置文件里仍是原值，重启或配置重新载入后可能回退`
@@ -453,7 +451,6 @@ export default definePlugin({
     logger: loggerService,
     lifecycle: lifecycleService,
     config: configService,
-    plugins: optional(pluginsService),
     hostConfig: optional(hostConfigService),
   },
   configSchema,

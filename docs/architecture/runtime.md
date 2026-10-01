@@ -27,16 +27,17 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 | 导出 | 作用 |
 |---|---|
-| `startAalis(opts?)` | **一行启动**：解析家目录 → 读家目录里的 `aalis.config.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。家目录见「家目录」一节，装配顺序见「startAalis 的装配顺序」。 |
+| `startAalis(opts?)` | **一行启动**：解析家目录 → 读家目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。家目录见「家目录」一节，装配顺序见「startAalis 的装配顺序」。 |
 | `createNodeModulesPluginLoader(appDir)` | **独立部署**插件加载器：读安装集（绝对路径）`package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。包目录按 `node_modules` 逐级上溯定位，入口按 `import()` 的规则解析（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 时按 `main`）。 |
 | `createFsPluginLoader(packagesDir)` | **monorepo 自托管**加载器：扫给定的 packages 目录（绝对路径，本仓库入口传 `<仓库>/packages`），复用同一 `aalis-plugin` 纯关键词正向门。 |
-| `createPluginDiscovery(app, loader, doc)` | 发现驱动：`loadAll()` 发现并导入全部插件，按文档取各实例的配置与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）由本包导出。 |
+| `createPluginDiscovery(app, loader, store)` | 发现驱动：`loadAll()` 发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）由本包导出。 |
 | `createFsYamlConfigProvider(configPath)` | 文件系统 + YAML 配置 provider（`configPath` 为绝对路径；返回 `{config, provider}`，交给 `createConfigStore`）。 |
+| `createFsSecretsProvider(secretsPath)` | 文件系统 + YAML 密钥存储（`secretsPath` 为绝对路径，`startAalis` 传家目录里的 `secrets.yaml`；返回 `{values, provider}`，作为 `createConfigStore` 的第三个参数）。读写、拒写与监听同配置文件；文件不存在时按空映射处理、第一次保存时建出；临时文件一律以 0600 创建。类型 `SecretProvider`、`SecretStoreInit` 由本包导出。 |
 | `parseHostArgs` / `resolveHome` / `derivePaths` / `isHomeInitialized` / `initHome` | 家目录的解析、路径派生与初始化，`startAalis` 用的就是这一套；参数有误时抛 `HomeArgsError`。 |
-| `createConfigStore(initial, provider?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。本身不碰文件。 |
-| `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）。须在登记任何插件之前调用。 |
-| `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
-| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余差异经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
+| `createConfigStore(initial, provider?, secrets?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。`secrets`（`{ values, provider? }`）是密钥存储：给了才把密钥字段拆进它、文档里只留引用，`resolvePluginConfig(id, schema)` 把文档形态解析成交给 core 的配置；落盘时先写密钥再写文档。不给时密钥照旧以明文留在文档里。本身不碰文件。 |
+| `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）；`applyPluginConfig` 在这里实现，插件拿到的 `setPluginConfig` 拒收密钥字段上的明文。须在登记任何插件之前调用。 |
+| `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
+| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 | `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
 
@@ -50,8 +51,8 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 `startAalis` 在加载器导入定义后、Core 注册之前同步插件配置：从 `configSchema` 补齐默认值，
 默认裁剪未知字段，再让首次 `apply` 读取该配置。主实例与已配置的复用实例使用同一规则；
-`configSync.trimUnknownFields: false` 可保留未知字段。首次加载批次合并为一次保存，后续市场
-重扫描也在激活前同步并保存。配置热重载复用相同规则，通过 `updateConfig` 重建有变更的插件（禁用插件只换配置、保持禁用，启用时按新配置激活），卸载文件里已没有配置段的后缀实例，并登记新出现的后缀实例。
+`configSync.trimUnknownFields: false` 可保留未知字段。同一步把密钥字段上的明文移进 `secrets.yaml`、原处换成引用。首次加载批次合并为一次保存，后续市场
+重扫描也在激活前同步并保存。配置热重载（`aalis.config.yaml` 或 `secrets.yaml` 被外部修改）复用相同规则，通过 `updateConfig` 重建有变更的插件（禁用插件只换配置、保持禁用，启用时按新配置激活），卸载文件里已没有配置段的后缀实例，并登记新出现的后缀实例。
 直接组装 `App` 的宿主仍自行决定配置政策；Core 不解释 schema，也不替运行中的实例改配置。
 
 ## 家目录
@@ -78,8 +79,8 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
 
 ```
 <家目录>/
-  aalis.config.yaml            主配置，密钥目前也写在这里
-  secrets.yaml                 留给密钥，目前不读取
+  aalis.config.yaml            主配置，密钥字段只放引用
+  secrets.yaml                 密钥的值（0600）
   state/                       实例状态：数据库、向量库、会话、附件、checkpoint、WebUI 凭据等
   state/plugins/               各插件的私有数据
   logs/                        文件日志 latest.log
@@ -96,7 +97,7 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
 
 插件经 `@aalis/plugin-storage-local` 的内部根访问这些目录：`state/` 是 `data:/`，`state/plugins/` 是 `pluginData:/`，`tmp/`、`cache/`、`logs/` 分别是 `tmp:/`、`cache:/`、`logs:/`（`logs:/` 只读），`self/` 下三个目录是 `personas:/`、`skills:/`、`workflows:/`，`stage/paper` 与 `stage/public` 是 `paper:/` 与 `public:/`。内部根的位置不能配置；`stage/drafts` 还没有对应的根，`run/` 归 runtime 自用；`workspace/` 是 `roots` 配置里缺省的那个用户根。见 [plugin-storage-local](../plugins/plugin-storage-local.md)。
 
-`secrets.yaml` 建出时为空，目前不读取，密钥仍写在 `aalis.config.yaml` 里。这两个文件由 runtime 负责读写：经 storage 读写 `secrets.yaml`、改写 `aalis.config.yaml` 都会被拒绝（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）。
+`secrets.yaml` 是「键 → 值」的映射，存 schema 里 `secret: true` 的字段的值，`aalis.config.yaml` 里只写引用 `{ $secret: '<键>' }`。runtime 启动时读它并监听改动，把配置交给插件之前解析引用；直接写进 `aalis.config.yaml` 的明文在同步插件配置时被移进来；保存时先写它、再写主配置。引用的键不在里面时记一条错误，用 `parseConfig` 读配置的插件激活失败，诊断检查 `config.secrets` 也会报出。键名、写入与清理规则见 [运行态与配置文档](../core/config.md#密钥配置)。这两个文件由 runtime 负责读写：经 storage 读写 `secrets.yaml`、改写 `aalis.config.yaml` 都会被拒绝（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）。
 
 配置里写宿主文件路径的字段声明 `format: 'absolute-path'` 或 `'executable'`（见 `@aalis/schema-config`）：相对路径没有可靠的基准，一律不收。
 
@@ -131,13 +132,13 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
   覆盖。管理运行中的实例请用聊天指令 / TUI / WebUI。
 
 它仍会完整跑一遍插件 `apply`，因此守护进程运行期间执行子命令会有两处可见副作用：端口型插件（webui-server /
-mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 schema 回填 / 裁剪配置文件，守护进程会因此触发一次热重载。
+mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 schema 回填 / 裁剪配置文件、把明文密钥移进 `secrets.yaml`，守护进程会因此触发一次热重载。
 
 ## startAalis 的装配顺序
 
 0. **家目录与安装集**：解析家目录（见「家目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
-2. **文档**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createConfigStore(config, provider)` 建配置文档。
+2. **文档与密钥**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<家目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。
 3. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
 4. **host-paths 与 host-config**：在根上独占提供 `host-paths`，再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。
@@ -169,7 +170,9 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 - **配置文档**：core 只持运行态（各实例的配置、禁用态、服务偏好），文档的读写与落盘由宿主负责
   （例：浏览器配置走 fetch / IndexedDB）。交给 core 的配置原样生效，schema 默认值要由宿主先深合并进去
   （`withPluginConfigSync` 即此政策）；不能顶层浅合并，否则只写了半块的嵌套组会把默认值整块顶掉。
-  文档里的服务偏好经根绑定的 `services.prefer` 应用，放在登记插件之前。
+  文档里的服务偏好经根绑定的 `services.prefer` 应用，放在登记插件之前。schema 里 `secret: true` 的字段存在哪由宿主定：
+  Node 宿主存进 `secrets.yaml`、文档里只留引用，交给 core 之前解析回原值；不做这一层的宿主把值以明文留在文档里，
+  插件读取的方式不变。
 - **重启策略**：实现 `RestartStrategy`，经 `AppOptions.restartStrategy` 注入（例：浏览器里「重启」改为重建实例）；
   不注入时 `app.restart()` 抛错。
 

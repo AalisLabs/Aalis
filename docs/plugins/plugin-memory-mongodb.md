@@ -29,7 +29,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `uri` | string | `'mongodb://localhost:27017'` | MongoDB URI：MongoDB 连接字符串 |
+| `uri` | string | `'mongodb://localhost:27017'` | MongoDB URI：MongoDB 连接字符串（secret：连接串可能带账号密码，值存进 `secrets.yaml`，WebUI 不回显）。默认值不写进配置文件，没填时插件按默认值连接；引用的键不在 `secrets.yaml` 里时激活失败，不回落到默认的本机库 |
 | `database` | string | `''` | 数据库名：存储消息历史与元数据的数据库。留空按家目录与实例派生，见下 |
 | `claimFrom` | string | `''` | 认领库的归属：平时留空。库已归另一个家目录（例如家目录搬了位置）时，先停掉那个家目录的实例，再填它的路径；库里已有数据却还没有归属记录时填 `unowned`。启动一次就把归属改到这个家目录，认领后删掉这一项：留着的 `unowned` 会让以后指向的任何库都跳过「已有数据」的检查 |
 | `collection` | string | `'messages'` | 集合名：消息集合名称 |

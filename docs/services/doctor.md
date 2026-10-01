@@ -89,6 +89,7 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 | --- | --- | --- |
 | Provider（唯一） | `@aalis/plugin-doctor` | `provide(doctor, registry)`；内置 `env.node` / `env.platform` / `plugins.status`；挂 `/doctor` 命令与 WebUI 页面 |
 | Consumer（注册检查项） | `@aalis/plugin-storage-local` | `doctor.registerCheck({ id: 'storage.roots', ... })` |
+| Consumer（注册检查项） | `@aalis/runtime`（宿主，经根绑定） | `config.secrets`：配置里引用的密钥不在 `secrets.yaml` 里时，每个这样的实例报一条 error（id `config.secrets.<实例 id>`，点名字段与键），都在时报一条 ok。不走 `parseConfig` 的插件拿到悬空引用不会激活失败，靠这一项发现 |
 | Consumer（订阅结果） | `@aalis/plugin-webui-server` | `events.on('doctor:updated', () => broadcastPageRefresh(...))` |
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
