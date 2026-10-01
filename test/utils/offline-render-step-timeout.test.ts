@@ -151,7 +151,8 @@ describe('渲染步骤卡住（真浏览器）', () => {
       () => null,
       (err: Error) => err,
     );
-    await vi.waitFor(() => expect(probe.hungAt).toBeGreaterThan(0));
+    // 机器忙时第二次渲染走到截图那一步可能超过 waitFor 默认的 1 秒；这里只等它卡上，不计时
+    await vi.waitFor(() => expect(probe.hungAt).toBeGreaterThan(0), { timeout: 10_000 });
     await new Promise(res => setTimeout(res, 500));
     // 截图挂着时，同一浏览器里的另一次渲染要等截图锁
     const blocked = r.renderPng(req).then(
@@ -204,7 +205,8 @@ describe('取消', () => {
       () => null,
       (err: Error) => err,
     );
-    await vi.waitFor(() => expect(probe.hungAt).toBeGreaterThan(0));
+    // 机器忙时第二次渲染走到截图那一步可能超过 waitFor 默认的 1 秒；这里只等它卡上，不计时
+    await vi.waitFor(() => expect(probe.hungAt).toBeGreaterThan(0), { timeout: 10_000 });
     const abortedAt = Date.now();
     controller.abort(new Error('works-取消'));
     expect((await pending)?.message).toBe('works-取消');
