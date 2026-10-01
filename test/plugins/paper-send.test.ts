@@ -18,7 +18,7 @@ import {
 // paper_send（U10c）：把本房间发起的任务的成品发回本群。
 // 类型白名单（位图走 image、MP4 走 video、单个 HTML 按开关与大小走 file），原扩展名须与按文件头判定的
 // 类型一致；具名白纸被几个房间共用时，别的房间发起的任务的成品按「找不到」回；文件名由宿主按任务名重写。
-// 交给网关即标为已交付，结果写「已交给发送队列」。
+// 平台适配器确认收下才标为已交付；发送失败、没有适配器接手时不标；等不到确认时报「未确认、请勿重发」，迟到的确认照样记账。
 // ════════════════════════════════════════════════════════════
 
 afterEach(stopPaperHubs);
@@ -119,11 +119,11 @@ describe('paper_send：发出', () => {
     expect(tool?.risk).toBeUndefined();
   });
 
-  it('PNG 走 image：出站附件指向白纸根，文件名按任务名重写，交给网关后标为已交付', async () => {
+  it('PNG 走 image：出站附件指向白纸根，文件名按任务名重写，平台确认收下后标为已交付', async () => {
     const h = await hub();
     const res = await h.call('paper_send', { artifact_id: 'a-00000001' });
     expect(res).toMatchObject({ ok: true });
-    expect(String(res.message)).toContain('已交给发送队列');
+    expect(String(res.message)).toContain('平台已确认收下');
     expect(h.outbound).toEqual([
       {
         sessionId: ROOM,
@@ -148,6 +148,44 @@ describe('paper_send：发出', () => {
       { kind: 'image', data: `${OUT}/t-00000001/out/a-0000000f.webp`, name: '像素猫.webp', mimeType: 'image/webp' },
       { kind: 'video', data: `${OUT}/t-00000001/out/a-00000003.mp4`, name: '像素猫.mp4', mimeType: 'video/mp4' },
     ]);
+  });
+
+  it('平台报发送失败时返回原因，不标为已交付', async () => {
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: async () => ({ ok: false, error: '上传超时' }),
+    });
+    const res = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain('上传超时');
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+  });
+
+  it('没有平台适配器接手时报没有发出，不标为已交付', async () => {
+    const h = await startPaperHub({ files: seed(), delivery: () => 'unclaimed' });
+    const res = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain('没有发出');
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+  });
+
+  it('这一轮被中止、确认还没到时报未确认请勿重发；迟到的确认照样标为已交付', async () => {
+    let confirm: (result: { ok: true }) => void = () => {};
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: () =>
+        new Promise(resolve => {
+          confirm = resolve;
+        }),
+    });
+    const aborted = new AbortController();
+    aborted.abort();
+    const res = await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), signal: aborted.signal });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain('请勿重发');
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    confirm({ ok: true });
+    await expect.poll(() => h.ledger().tasks['t-00000001'].delivered).toBe(true);
   });
 
   it('网关发送失败时不标为已交付', async () => {

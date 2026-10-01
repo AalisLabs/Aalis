@@ -309,6 +309,35 @@ export function selfInitiatedActor(platform: string): { platform: string; userId
 /** 传输端确认已接受消息，不代表收件人已阅读；失败也 resolve，避免无人等待时产生拒绝。 */
 export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * 发起方等待传输确认的上限。适配器自身的重试窗口可能更长（如 OneBot 单个附件最坏约 150 秒），
+ * 超过上限时发起方应报「未确认、请勿重发」而不是失败；上限只为不带回合中止信号的调用方
+ * （mcp-server、workflow）不至于一等两三分钟。
+ */
+export const DELIVERY_WAIT_MS = 90_000;
+
+/**
+ * 等 {@link OutgoingMessage.delivery} 结算；回合中止（latest-wins / 手动 abort）或到 {@link DELIVERY_WAIT_MS}
+ * 时不再等，返回 undefined。适配器的发送不随之取消，所以 undefined 只能当「未确认」，不能当「未发送」。
+ */
+export function awaitDelivery<T>(delivery: Promise<T>, signal?: AbortSignal): Promise<T | undefined> {
+  if (signal?.aborted) return Promise.resolve(undefined);
+  return new Promise((resolve, reject) => {
+    const settle = (finish: () => void) => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      finish();
+    };
+    const stop = () => settle(() => resolve(undefined));
+    const timer = setTimeout(stop, DELIVERY_WAIT_MS);
+    signal?.addEventListener('abort', stop, { once: true });
+    delivery.then(
+      value => settle(() => resolve(value)),
+      error => settle(() => reject(error)),
+    );
+  });
+}
+
 export interface OutgoingMessage {
   content: string;
   sessionId: string;
