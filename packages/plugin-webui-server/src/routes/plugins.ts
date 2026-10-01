@@ -81,6 +81,18 @@ function notYetActive(state: PluginState | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * 管理动作返回 false 时的回执。条目还在注册表里，说明是停机中或正在卸载拒绝了这次操作，回 409；
+ * 只有条目确实不存在才回 404。两种情况都没有写配置文档。
+ */
+function refuse(pm: PluginManagerService, res: express.Response, instanceId: string, action: string): void {
+  if (pm.getPlugin(instanceId)) {
+    res.status(409).json({ error: `插件 ${instanceId} 当前不接受${action}（停机中或正在卸载），配置未更改` });
+  } else {
+    res.status(404).json({ error: `插件 ${instanceId} 不存在` });
+  }
+}
+
 /** 插件管理 + 全局配置路由用到的能力 */
 interface PluginRoutesCaps {
   app: ServiceRef<AppService>;
@@ -500,7 +512,7 @@ export function registerPluginRoutes(
         removed,
       });
     } else {
-      res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+      refuse(pm, res, pluginName, '配置更新');
     }
   });
 
@@ -537,7 +549,7 @@ export function registerPluginRoutes(
       }
       res.json({ ok: true, message: `插件 ${pluginName} 已启用${aside ? `；${aside}` : ''}` });
     } else {
-      res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+      refuse(pm, res, pluginName, '启用');
     }
   });
 
@@ -572,7 +584,7 @@ export function registerPluginRoutes(
       }
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
-      res.status(404).json({ error: `插件 ${pluginName} 不在注册表或已处于终态，无法禁用` });
+      refuse(pm, res, pluginName, '禁用');
     }
   });
 

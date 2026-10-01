@@ -1,4 +1,4 @@
-import type { LookupAddress } from 'node:dns';
+import { ADDRCONFIG, type LookupAddress } from 'node:dns';
 import { createServer } from 'node:http';
 import { type AddressInfo, getDefaultAutoSelectFamily, setDefaultAutoSelectFamily } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -185,7 +185,7 @@ describe('assertAddressesSafe（pin dispatcher 与 assertSafeHost 共用的地�
 // 这正是上面那个缺陷得以逃逸的口子。下面这条起本地服务真连一次堵住它。
 // ════════════════════════════════════════════════════════════
 describe('pinnedLookup 与真实连接', () => {
-  const UNDICI_OPTIONS = { hints: 1024, all: true } as const;
+  const UNDICI_OPTIONS = { hints: ADDRCONFIG, all: true } as const;
 
   it('options.all 时交回 { address, family } 数组，而非裸地址串', async () => {
     setNetworkPolicy({ blockPrivate: false }); // localhost 走 /etc/hosts，不出网；afterEach 复位
@@ -249,7 +249,7 @@ describe('pinnedLookup 与真实连接', () => {
   it('无 options.all 时交回裸地址串 + family（Node 的旧三参形式）', async () => {
     setNetworkPolicy({ blockPrivate: false });
     const { address, family } = await new Promise<{ address: unknown; family: unknown }>((resolve, reject) => {
-      pinnedLookup('localhost', { hints: 1024 }, (err, addr, fam) => {
+      pinnedLookup('localhost', { hints: ADDRCONFIG }, (err, addr, fam) => {
         if (err) reject(err);
         else resolve({ address: addr, family: fam });
       });
