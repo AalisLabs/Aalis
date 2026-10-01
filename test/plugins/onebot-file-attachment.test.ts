@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -265,18 +265,24 @@ async function boot(
   await until(() => actions.some(a => a.action === selfInfo));
 
   const sent = () => actions.filter(a => /^(send_|upload_)/.test(a.action));
-  const send = (msg: OutgoingMessage) => host.events.emit('outbound:message', msg);
-  /** 发一条哨兵文字并等它到达：在它之前交出的消息该发的都已发出 */
+  // 每条出站消息各自在后台投递，先交出的不一定先发完；flush 靠这些回执等它们结束。
+  const deliveries: Array<Promise<unknown>> = [];
+  const send = async (msg: OutgoingMessage) => {
+    await host.events.emit('outbound:message', msg);
+    if (msg.delivery) deliveries.push(msg.delivery);
+  };
+  /** 等此前经 send 交出的消息都有了投递结果，再发一条哨兵文字并等它到达 */
   const flush = async (sessionId = GROUP) => {
+    await Promise.allSettled(deliveries.splice(0));
     await send({ sessionId, content: '哨兵' });
     await until(() => JSON.stringify(sent()).includes('哨兵'));
   };
   const failureNotes = () => notes.filter(n => n.message.kind === 'outbound-delivery-failed');
   const imageNotes = () => notes.filter(n => n.message.kind === 'outbound-image');
-  const sendAttachment = async (args: Record<string, unknown>, sessionId = GROUP) => {
+  const sendAttachment = async (args: Record<string, unknown>, sessionId = GROUP, signal?: AbortSignal) => {
     const handler = toolHandlers.get('send_attachment');
     if (!handler) throw new Error('send_attachment 未注册');
-    return JSON.parse(await handler(args, { sessionId, platform: 'onebot' } as ToolCallContext)) as Record<
+    return JSON.parse(await handler(args, { sessionId, platform: 'onebot', signal } as ToolCallContext)) as Record<
       string,
       unknown
     >;
@@ -396,6 +402,33 @@ describe('onebot 出站：文件附件', () => {
     await t.flush();
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
     expect(t.warns.some(w => w.includes('v12'))).toBe(true);
+  });
+
+  it('上传超时：报结果未知、请勿重发，不说未能送达', async () => {
+    const t = await boot({ replyToSend: 'hold', files: { 'data:/paper-out/a.html': HTML } });
+    // 只伪造计时器、且随真实时间推进：until() 的轮询照常，再一次性跳过 action 的 30 秒上限
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const msg: OutgoingMessage = {
+        sessionId: GROUP,
+        content: '',
+        attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+        source: 'agent',
+      };
+      await t.send(msg);
+      await until(() => t.sent().some(a => a.action === 'upload_group_file'));
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await msg.delivery;
+      expect(result).toMatchObject({ ok: false });
+      expect(result?.ok === false && result.error).toContain('请勿重发');
+      await until(() => t.failureNotes().length > 0);
+      const note = String(t.failureNotes()[0].message.content);
+      expect(note).toContain('可能已经送达');
+      expect(note).not.toContain('未能送达');
+      expect(t.sent().filter(a => a.action === 'upload_group_file')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -561,6 +594,20 @@ describe('onebot 出站：send_attachment 投递结果', () => {
     expect(await resultPromise).toMatchObject({ ok: true });
     await until(() => t.imageNotes().length > 0);
     expect(t.imageNotes()).toHaveLength(1);
+  });
+
+  it('等待 ACK 时回合中止：工具立即返回未确认，不报告成功也不报未发送', async () => {
+    const t = await boot({ imageSender: true, replyToSend: 'hold' });
+    const turn = new AbortController();
+    const resultPromise = t.sendAttachment({ kind: 'image', url: `${httpBase}/ok.png` }, GROUP, turn.signal);
+    await until(() => imageOnWire(t.sent()).length > 0);
+    turn.abort();
+    const result = await resultPromise;
+    expect(result).not.toHaveProperty('ok');
+    expect(String(result.error)).toContain('未确认');
+    for (const ack of t.heldReplies.splice(0)) ack();
+    await until(() => t.imageNotes().length > 0);
+    expect(t.imageNotes(), '中止后平台照常确认的附件仍归档').toHaveLength(1);
   });
 
   it('OneBot action 返回失败：工具不报告成功，也不成功归档', async () => {
