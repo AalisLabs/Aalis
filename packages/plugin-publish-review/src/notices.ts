@@ -23,6 +23,9 @@ export class ReviewNotices {
   close(): void {
     this.#closed = true;
   }
+  ready(): boolean {
+    return this.#open && !this.#closed && !!this.gateway.current;
+  }
   async enqueue(origin: PublishOrigin, content: string, id: string, title?: string): Promise<void> {
     if (!this.#open || this.#closed) throw new Error('作品通知尚未开放');
     if (!origin.notify) return;
