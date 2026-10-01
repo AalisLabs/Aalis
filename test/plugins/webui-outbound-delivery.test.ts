@@ -41,7 +41,7 @@ async function connect(port: number, token: string): Promise<WebSocket> {
 }
 
 describe('WebUI outbound delivery confirmation', () => {
-  it('reports failure when an explicit WebUI target has no subscribed open socket', async () => {
+  it('saves into history and confirms when an explicit WebUI target has no open page (the history is the inbox)', async () => {
     const { app } = await startWebui();
     const delivered: OutgoingMessage[] = [];
     app.bind({ events }).events.on('outbound:delivered', message => {
@@ -56,8 +56,10 @@ describe('WebUI outbound delivery confirmation', () => {
     };
     await app.bind({ events }).events.emit('outbound:message', message);
     expect(message.delivery).toBeDefined();
-    expect(await message.delivery).toMatchObject({ ok: false });
-    expect(delivered).toEqual([]);
+    expect(await message.delivery).toEqual({ ok: true });
+    // 归档咽喉据 outbound:delivered 把附件写进会话历史，页面打开后从历史里看到
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(delivered.map(m => m.attachments?.[0]?.data)).toEqual(['https://example.com/image.png']);
   });
 
   it('confirms an open WebUI socket and emits the successfully sent attachment snapshot', async () => {

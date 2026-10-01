@@ -73,6 +73,25 @@ function stripFileAttachments(content: string): string {
 }
 
 /**
+ * 她发出的附件归档成一条 assistant 消息（kind 为 outbound-image / outbound-video / outbound-audio），正文是
+ * `[图片: 描述 | ref:<存储地址或网址>]` 这样的占位符（格式见 schema-message 的 attachment-ref；本包是独立的浏览器
+ * bundle，不依赖它）。回看历史时把它还原成附件显示，不显示占位符原文。
+ */
+const OUTBOUND_KINDS: Readonly<Record<string, 'image' | 'video' | 'audio'>> = {
+  'outbound-image': 'image',
+  'outbound-video': 'video',
+  'outbound-audio': 'audio',
+};
+const ATTACHMENT_REF = /\[(?:图片|视频|语音)(?:: [^\]\n|]+?)? \| ref:([^\]\n]+?)\]/g;
+
+function outboundAttachments(msg: RawMessage): ChatMessage['attachments'] {
+  const kind = msg.kind ? OUTBOUND_KINDS[msg.kind] : undefined;
+  if (msg.role !== 'assistant' || !kind) return undefined;
+  const refs = [...(msg.content ?? '').matchAll(ATTACHMENT_REF)].map(m => m[1].trim()).filter(Boolean);
+  return refs.length > 0 ? refs.map(data => ({ kind, data })) : undefined;
+}
+
+/**
  * 将后端返回的结构化消息数组（含 assistant/tool/user/system）转换为前端 ChatMessage 数组。
  *
  * 新格式：assistant 消息已带 segments 字段，直接使用，保持模型给出的真实交错顺序。
@@ -128,6 +147,13 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
       continue;
     }
 
+    const sent = outboundAttachments(msg);
+    if (sent) {
+      result.push({ role: 'assistant', content: '', attachments: sent, timestamp: msg.timestamp ?? 0 });
+      i++;
+      continue;
+    }
+
     if (msg.role === 'assistant') {
       // 收集连续的 assistant + tool 消息组成一个 ChatMessage
       const segments: ContentSegment[] = [];
@@ -140,7 +166,7 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
       // 中间 tool-call assistant 通常不带，所以取「最后非 undefined 的那条」。
       let groupModelInfo: ChatMessage['modelInfo'] | undefined;
 
-      while (i < raw.length && (raw[i].role === 'assistant' || raw[i].role === 'tool')) {
+      while (i < raw.length && (raw[i].role === 'assistant' || raw[i].role === 'tool') && !outboundAttachments(raw[i])) {
         const cur = raw[i];
         // 提取 modelInfo（任意 assistant 上都可能存在，取最后一条）
         if (cur.role === 'assistant') {

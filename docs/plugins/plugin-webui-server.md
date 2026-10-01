@@ -132,6 +132,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/files*` · `/api/uploaded-files*` | GET / POST | 工作区文件管理 / 上传文件管理 |
 | `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
 | `/api/proxy/image` | GET | 图片代理 |
+| `/api/media` | GET | 聊天里的图片、视频、音频按存储地址取（`?uri=data:/images/x.png` 这类）：按文件头判定类型，只提供 PNG、JPEG、GIF、WebP、MP4、WebM 与 MP3、WAV、OGG、M4A，其余（含 HTML、SVG、JSON）回 415；响应带 `nosniff` 与 `sandbox` CSP。客户端把消息与会话历史里的存储地址换成这条路由 |
 
 core 的插件管理动作与 `services.prefer` 只改运行态；启停、改配置、实例增删与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、新建实例与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好配置文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停与服务偏好在重启时以文件为准。修好文件的方式不限，原样改回也会触发这次对账。落盘因其它原因失败（如没有写权限、磁盘写满）时，这些路由返回 500 与 `{ error, applied: true }`：文件没有变化，也不会触发重载，改动保留在配置文档里，下一次保存成功时一并写入。这两种情形下，插件在动作之后没有进入预期状态（激活失败、未在宽限内停止、仍在激活、在等依赖或保持禁用）时，`error` 开头先说明这一点。删除实例先落盘、后卸载：后缀实例由配置段定义，热重载也按文件登记，先卸载后落盘时卸载途中的热重载会按仍带配置段的文件把实例重新登记。落盘被拒返回 409、其它失败返回 500，实例不删除，文档里的配置段与禁用标记还原。全局配置（`PUT /api/config`）落盘失败时撤回文档里的改动，被拒返回 409、其它失败返回 500：`logLevel` 与 `slowThresholdMs` 要重启才生效，`name` 由状态接口实时读取，撤回后都回到修改前。`POST /api/config/save` 同样是被拒返回 409、其它失败返回 500。
 
@@ -154,7 +155,7 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、改�
 
 | 类型 | 说明 |
 |---|---|
-| `message` | 完整消息推送 |
+| `message` | 完整消息推送。发往 WebUI 自己会话的消息由本插件认领投递回执：会话历史是收件箱，没有在线页面或推送没成功时照样算送达，附件经 `outbound:delivered` 归档进会话历史，打开页面就能看到 |
 | `stream` | 流式增量推送（contentDelta / reasoningDelta） |
 | `stream_resume` | 页面刷新后恢复中断的流（累积缓冲内容） |
 | `tool_call` | 工具调用开始/结束事件 |

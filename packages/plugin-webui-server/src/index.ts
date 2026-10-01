@@ -61,6 +61,7 @@ import { renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
+import { registerMediaRoutes } from './routes/media.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
@@ -1096,6 +1097,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     gate,
   );
   registerProxyRoutes(expressApp, logger, gate);
+  registerMediaRoutes(expressApp, storage, gate);
 
   // ---------- WebSocket ----------
 
@@ -1413,11 +1415,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
                   }
                 }),
             );
-          if (sends.length === 0) return { ok: false as const, error: 'WebUI 会话没有在线收件方' };
-          const results = await Promise.all(sends);
-          if (!results.some(Boolean)) return { ok: false as const, error: 'WebUI 消息发送失败' };
+          // 会话历史是 WebUI 的收件箱，页面只是查看器：没有在线页面、或推送没成功时照样算送达，附件经
+          // outbound:delivered 归档进会话历史，打开页面就能看到（结果不区分「已推送」与「只保存」）
+          await Promise.all(sends);
           if (attachmentsSnapshot?.length) {
-            // 发送成功时保存快照：下游处理不应受生产者或其他适配器后续改写影响。
+            // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
             void events.emit('outbound:delivered', {
               ...msg,
               attachments: attachmentsSnapshot,
