@@ -316,7 +316,7 @@ export function registerPaperPage(deps: {
       ? '配置里已没有这块白纸'
       : spec.dailyCents === undefined
         ? cfg.globalDailyCents === undefined
-          ? '不限额（这块白纸与全局都没设上限）'
+          ? '不限额（这块白纸与全局都没设上限；房间上限另算）'
           : '不单独限额（仍受全局与房间限制）'
         : spec.dailyCents === 0
           ? '上限 0 美分（禁任务）'
