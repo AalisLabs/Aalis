@@ -24,7 +24,7 @@ export const configSchema = defineConfig({
     label: '离线渲染浏览器',
     fields: {
       headless: { type: 'boolean', label: '无头模式', default: true },
-      executablePath: { type: 'string', label: '浏览器路径', default: '' },
+      executablePath: { type: 'string', label: '浏览器路径', default: '', onInvalid: 'error' },
     },
   },
   textClassifier: { type: 'llm-ref', label: '文本审核模型' },

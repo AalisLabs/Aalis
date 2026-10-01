@@ -29,6 +29,7 @@ const configSchema = defineConfig({
     type: 'string',
     label: 'API 地址',
     default: 'https://api.cursor.com',
+    onInvalid: 'error',
     description: 'Cloud Agents API 的根地址，插件在其后拼 /v1/…',
   },
   model: {

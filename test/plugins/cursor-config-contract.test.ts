@@ -34,4 +34,13 @@ describe('Cursor 配置契约', () => {
       }),
     ).toThrow(/model\.params 期望 string 值/);
   });
+
+  it('API 地址写成非字符串时拒绝激活，不把密钥改发到默认地址', () => {
+    expect(() =>
+      parseConfig(cursorPlugin.configSchema as ConfigSchema, {
+        apiKey: 'test-only-key',
+        baseUrl: ['https://proxy.invalid'],
+      }),
+    ).toThrow();
+  });
 });

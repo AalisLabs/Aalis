@@ -74,6 +74,7 @@ export const configSchema = defineConfig({
     type: 'boolean',
     label: '允许发单个网页',
     default: true,
+    onInvalid: 'error',
     description: 'paper_send 能否把单个 HTML 成品作为文件发回房间（在对方本地以 file:// 打开，没有沙箱）',
   },
   sendHtmlMaxMB: {
@@ -158,6 +159,7 @@ export const configSchema = defineConfig({
         label: '出网上限',
         default: DEFAULT_EGRESS,
         options: EGRESS_OPTIONS,
+        onInvalid: 'error',
         description: '提供者报告的出网方式超过它时不开远端任务；报告「未知」按不限计',
       },
       maxWaiting: {
@@ -200,7 +202,9 @@ export const configSchema = defineConfig({
         type: 'string',
         label: '允许发布到的目标',
         default: 'works',
-        description: '逗号分隔的目标 ID（不是网址）；默认 works。留空则这块白纸禁止发布',
+        onInvalid: 'error',
+        description:
+          '逗号分隔的目标 ID（不是网址）；默认 works。填空字符串禁止这块白纸发布（只写键名不写值按未填写处理）',
       },
       defaultPublishTarget: {
         type: 'string',
@@ -245,7 +249,7 @@ export const configSchema = defineConfig({
       publishTargets: {
         type: 'string',
         label: '允许发布到的目标',
-        description: '逗号分隔的目标 ID；未填写取默认属性，显式留空禁止这块白纸发布',
+        description: '逗号分隔的目标 ID；未填写（含只写键名不写值）取默认属性，填空字符串禁止这块白纸发布',
       },
       defaultPublishTarget: {
         type: 'string',

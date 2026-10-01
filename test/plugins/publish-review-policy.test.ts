@@ -34,4 +34,8 @@ describe('公开作品人工审核策略', () => {
   it('无效的人工审核设置拒绝激活，不能把本想开启的设置静默变成关闭', () => {
     expect(() => parseConfig(configSchema, { manualReview: 'sometimes' })).toThrow();
   });
+
+  it('浏览器路径写成非字符串时拒绝激活，不悄悄换用内置浏览器', () => {
+    expect(() => parseConfig(configSchema, { chrome: { executablePath: ['/opt/chrome'] } })).toThrow();
+  });
 });
