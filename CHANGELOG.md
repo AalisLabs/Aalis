@@ -10,14 +10,6 @@
 
 ## 未发布（schema-config 0.14.0；core 0.20.0）
 
-作品提名与上站新增 `api-publish`、`plugin-publish-review`、`plugin-works-site` 和 `util-offline-render`。白纸增加提名与撤下工具；审核、隔离预览和作品站操作有 WebUI 入口。`manualReview` **默认关闭**，自动通过可继续发布；自动拒绝、不确定或模型调用失败先拦截并等待人工裁决。开启后，自动通过也须等待人工。结构检查与内容净化失败始终阻断。先前施工方案中的跳过自动分类选项未作为兼容配置保留。详见[审核配置](docs/plugins/plugin-publish-review.md)与[作品站配置](docs/plugins/plugin-works-site.md)。启用作品站后才会在后台部署，此处的本机测试不代表真实项目已经上线。
-
-
-- **存储根保留名**：新增内部 `public` 根（`data/stage/public`），与 `paper` 一样不参与会话 checkpoint；自建同名用户根会被跳过并告警，升级前请改名。白纸提名的文件仍先走独立审核，不因位于该目录就自动上线。
-- **绘图引擎**：plugin-draw 改用 util-offline-render，默认尝试 Chromium 沙箱，失败后告警回落；作品审核要求沙箱。浏览器不再接管宿主 SIGINT，网络由请求拦截、解析规则和代理共同限制。
-- **WebUI 页面契约**：api-webui 新增表格 `render: 'image'` 与页面级 `refresh`（秒）。审核、作品站与对应客户端须同批升级，避免图片单元格不可用或后台状态不刷新；本批两插件的 api-webui 下限已抬至 0.11.1 候选版本；发布前仍须核对该版本及对应客户端同批交付，不能只升级插件实现。
-- **本地备份**：忽略 `aalis.config.yaml.*`，避免配置备份进入 Git。
-
 插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列和服务归属校验，并统一停机后的管理回执；因管理回执契约变化按 minor 准备。
 
 - `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
@@ -29,9 +21,10 @@
 - **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留半指定 actor 身份的拒绝及原有 sessionId 派生规则。
 - **安装下限**：55 个 schema-config 运行时消费者下限抬至 0.14.0；api-llm 消费者下限抬至 0.13.0。其余未删除有效配置形式或公开 API 的迁移包按 patch 准备。版本准备不代表已经发布。
 - **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。
+
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，以及 send_attachment 的格式签名移入新包。Harness 的发布档位尚待统一确认；当前已合入上节 Core 与配置批次的候选版本，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的三个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，以及作品提名与上站。Harness 的发布档位尚待统一确认；当前已合入上节 Core 与配置批次的候选版本，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的三个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
@@ -39,7 +32,7 @@
 - 按次版本发布（15 个）：schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（保留根名 `paper`）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
 - 按 patch 发布（17 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
-- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0
+- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0
 - plugin-trigger-laya 是 `private` 包，只改了说明与注释，不发布到 npm。
 - api-agent、api-authority、api-flow-control、api-platform、api-workflow、plugin-authority、plugin-scheduler、plugin-trigger-policy 只改了注释（去掉跨会话委派的提法；api-platform 写明会话 ID 约定，api-agent、api-workflow 改了 `token:request` 与会话 ID 的说明），本批不单独发布。
 
@@ -226,6 +219,15 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 **行为变化**：
 
 - 第三方平台适配器收到的 `send_attachment` 附件，取自存储库的一律是 storage URI（如 `data:/images/…`），要经 storage 服务读取；此前解析得到本机路径时是 `file://<宿主路径>`。`@aalis/schema-message` 的 `MessageAttachment.data` 说明同步补上 storage URI（第一方生产者早已在发这种形式）。
+
+### 作品提名与上站（新包 @aalis/api-publish、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/util-offline-render；@aalis/plugin-paper、@aalis/plugin-draw、@aalis/plugin-storage-local、@aalis/plugin-checkpoint、@aalis/api-webui、@aalis/plugin-webui-client）
+
+作品提名与上站新增 `api-publish`、`plugin-publish-review`、`plugin-works-site` 和 `util-offline-render`。白纸增加提名与撤下工具；审核、隔离预览和作品站操作有 WebUI 入口。`manualReview` **默认关闭**，自动通过可继续发布；自动拒绝、不确定或模型调用失败先拦截并等待人工裁决。开启后，自动通过也须等待人工。结构检查与内容净化失败始终阻断。先前施工方案中的跳过自动分类选项未作为兼容配置保留。详见[审核配置](docs/plugins/plugin-publish-review.md)与[作品站配置](docs/plugins/plugin-works-site.md)。启用作品站后才会在后台部署，此处的本机测试不代表真实项目已经上线。
+
+- **存储根保留名**：新增内部 `public` 根（`data/stage/public`），与 `paper` 一样不参与会话 checkpoint；自建同名用户根会被跳过并告警，升级前请改名。白纸提名的文件仍先走独立审核，不因位于该目录就自动上线。
+- **绘图引擎**：plugin-draw 改用 util-offline-render，默认尝试 Chromium 沙箱，失败后告警回落；作品审核要求沙箱。浏览器不再接管宿主 SIGINT，网络由请求拦截、解析规则和代理共同限制。
+- **WebUI 页面契约**：api-webui 新增表格 `render: 'image'` 与页面级 `refresh`（秒）。审核、作品站与对应客户端须同批升级，避免图片单元格不可用或后台状态不刷新；本批两插件的 api-webui 下限已抬至 0.11.1 候选版本；发布前仍须核对该版本及对应客户端同批交付，不能只升级插件实现。
+- **本地备份**：忽略 `aalis.config.yaml.*`，避免配置备份进入 Git。
 
 ### 必须同批升级的包
 
