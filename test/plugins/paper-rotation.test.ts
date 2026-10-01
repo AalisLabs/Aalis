@@ -96,6 +96,23 @@ describe('换新', () => {
     expect(hub.task(id).error).not.toContain('已停止换新');
   });
 
+  it('失败原因里的出路走得通：新代理首轮留下了工程包时，owner 再换新，下一个代理带它的包继续', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: withPaper({ rotateAfterCents: 15 }) });
+    a.costOf = () => ({ cents: 20 });
+    const first = await runOne(hub, a);
+    a.costOf = () => ({ cents: 1 });
+    const second = await runOne(hub, a, 'error');
+    a.bundles.delete(first.agentId);
+    const stuck = await hub.accept();
+    await until(() => hub.task(stuck).state === 'failed', '取不到旧工程包时失败');
+    await hub.driver.rotate(PAPER_A_ID);
+    const third = await runOne(hub, a);
+    expect(hub.task(third.id).state).toBe('done');
+    expect(third.agentId).not.toBe(second.agentId);
+    expect(a.agents.get(third.agentId)?.prompts[0]).toContain(bundleUrl(second.agentId));
+  });
+
   it('远端报的累计输入很大、花费没到 rotateAfterCents 时不换新', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
