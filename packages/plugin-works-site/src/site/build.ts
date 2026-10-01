@@ -35,6 +35,8 @@ interface BuildBase {
 interface GalleryBuildInput extends BuildBase {
   siteTitle: string;
   siteIntro: string;
+  /** 主站源（https://主机），用来写分享信息里的绝对地址；缺省时不写 og:url 与 og:image */
+  siteOrigin?: string;
   /** Group to validated work-site origin. */
   aliases: Readonly<Record<string, string>>;
 }
@@ -115,13 +117,20 @@ function validatePlannedPaths(paths: readonly string[]): void {
   }
 }
 
-function addTombstones(files: DeployFile[], tombstones: readonly Tombstone[], branch: string, now: number): void {
+/** basePath 只在主站给：主站的下架页套站点样式、带回作品集的链接；作品分支上的只有一句话 */
+function addTombstones(
+  files: DeployFile[],
+  tombstones: readonly Tombstone[],
+  branch: string,
+  now: number,
+  basePath?: string,
+): void {
   for (const tombstone of tombstones) {
     if (tombstone.branch !== branch || tombstone.until <= now) continue;
     add(
       files,
       tombstone.path,
-      tombstone.path.endsWith('/index.html') ? encode(removedPage()) : PLACEHOLDER,
+      tombstone.path.endsWith('/index.html') ? encode(removedPage(basePath)) : PLACEHOLDER,
       tombstone.path.endsWith('/index.html') ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',
     );
   }
@@ -131,7 +140,7 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
   validate(input);
   const basePath = canonicalBasePath(input.basePath ?? '/');
   const at = (relative: string) => sitePath(basePath, relative);
-  for (const origin of Object.values(input.aliases)) {
+  for (const origin of [...Object.values(input.aliases), ...(input.siteOrigin ? [input.siteOrigin] : [])]) {
     try {
       const url = new URL(origin);
       if (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin || url.username || url.password) {
@@ -161,7 +170,9 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
   add(
     files,
     at('index.html'),
-    encode(indexPage(input.siteTitle, input.siteIntro, input.items, basePath)),
+    encode(
+      indexPage({ title: input.siteTitle, intro: input.siteIntro, origin: input.siteOrigin }, input.items, basePath),
+    ),
     'text/html; charset=utf-8',
   );
   add(files, at('404.html'), encode(notFoundPage(basePath)), 'text/html; charset=utf-8');
@@ -171,7 +182,7 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
     add(
       files,
       at(`w/${item.id}/index.html`),
-      encode(wrapperPage(item, input.aliases[item.group], basePath)),
+      encode(wrapperPage(item, input.aliases[item.group], basePath, input.siteOrigin)),
       'text/html; charset=utf-8',
     );
     if (item.kind === 'media') {
@@ -183,7 +194,7 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
     }
     if (item.hasThumbnail) add(files, at(`t/${item.id}.png`), await input.readThumbnail(item.id), 'image/png');
   }
-  addTombstones(files, input.tombstones, 'main', input.now);
+  addTombstones(files, input.tombstones, 'main', input.now, basePath);
   return { files, headers };
 }
 

@@ -291,6 +291,8 @@ describe('作品站独立故障交接审计', () => {
       aliases: {},
       siteTitle: '作品集',
       siteIntro: '',
+      // 与部署器配置一致，才和它重建出的站点逐字节相同
+      siteOrigin: `http://aalis.localhost:${fake.port}`,
       readFile: async () => new Uint8Array(),
       readThumbnail: async () => new Uint8Array(),
     });
