@@ -23,6 +23,8 @@ const RETRY_BASE = 30_000;
 const MAX_RETRIES = 5;
 const CHECK_INTERVAL = 60 * 60_000;
 const CLEANUP_INTERVAL = 24 * 60 * 60_000;
+/** 单个线上核对请求的上限，与 Pages API 请求一致。 */
+const REQUEST_TIMEOUT = 60_000;
 const nonce = () => crypto.randomUUID().replaceAll('-', '');
 const branchName = () =>
   `p-${Array.from(crypto.getRandomValues(new Uint8Array(4)), x => x.toString(16).padStart(2, '0')).join('')}`;
@@ -46,6 +48,7 @@ interface DeployerInput {
   retryBaseMs?: number;
   convergenceMs?: number;
   convergencePauseMs?: number;
+  requestTimeoutMs?: number;
 }
 
 type Job = { kind: 'new' | 'withdraw'; branch: string; group?: string; works: PublishedItem[] };
@@ -88,7 +91,14 @@ export class WorksDeployer {
     this.#client = input.client;
     this.#publish = input.publish;
     this.#live = input.live;
-    this.#fetch = input.fetch ?? fetch;
+    const fetcher = input.fetch ?? fetch;
+    const requestTimeout = input.requestTimeoutMs ?? REQUEST_TIMEOUT;
+    // 部署串行执行：一个卡住的核对请求会把其后的撤下一起拖住，所以每个请求自带上限。
+    this.#fetch = (url, init) =>
+      fetcher(url, {
+        ...init,
+        signal: AbortSignal.any([init?.signal ?? this.#signal, AbortSignal.timeout(requestTimeout)]),
+      });
     this.#logger = input.logger;
     this.#signal = AbortSignal.any([input.signal, this.#stop.signal]);
     this.#now = input.now ?? Date.now;
@@ -282,6 +292,7 @@ export class WorksDeployer {
       return false;
     }
     const published = source.listPublished(this.#config.targetId);
+    await this.#reviveTombstones(published);
     const initial = this.#store.copy();
     const withdrawn = [
       ...new Map(
@@ -361,21 +372,36 @@ export class WorksDeployer {
     });
   }
 
+  #tombstonesFor(item: PublishedItem): Array<{ branch: string; path: string }> {
+    const paths = [{ branch: 'main', path: sitePath(this.#config.basePath, `w/${item.id}/index.html`) }];
+    if (item.kind === 'media')
+      paths.push({
+        branch: 'main',
+        path: sitePath(this.#config.basePath, `m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`),
+      });
+    if (item.hasThumbnail) paths.push({ branch: 'main', path: sitePath(this.#config.basePath, `t/${item.id}.png`) });
+    if (item.kind === 'html')
+      for (const file of item.files) paths.push({ branch: item.group, path: `/${item.id}/${file.path}` });
+    return paths;
+  }
+
+  /** 撤下过的作品又回到发布列表时去掉它的墓碑；留着会与作品路径重复，每次构建都失败。 */
+  async #reviveTombstones(published: readonly PublishedItem[]): Promise<void> {
+    const key = (t: { branch: string; path: string }) => `${t.branch}\n${t.path}`;
+    const revived = new Set(published.flatMap(item => this.#tombstonesFor(item).map(key)));
+    if (!this.#store.data?.tombstones.some(t => revived.has(key(t)))) return;
+    await this.#store.update(state => {
+      state.tombstones = state.tombstones.filter(t => !revived.has(key(t)));
+    });
+  }
+
   async #withdraw(source: PublishPort, removed: PublishedItem[]): Promise<void> {
     await this.#store.update(state => {
       for (const item of removed) {
-        const add = (branch: string, path: string) => {
+        for (const { branch, path } of this.#tombstonesFor(item)) {
           if (!state.tombstones.some(t => t.branch === branch && t.path === path))
             state.tombstones.push({ branch, path, until: this.#now() + TOMBSTONE_LIFE });
-        };
-        add('main', sitePath(this.#config.basePath, `w/${item.id}/index.html`));
-        if (item.kind === 'media')
-          add(
-            'main',
-            sitePath(this.#config.basePath, `m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`),
-          );
-        if (item.hasThumbnail) add('main', sitePath(this.#config.basePath, `t/${item.id}.png`));
-        if (item.kind === 'html') for (const file of item.files) add(item.group, `/${item.id}/${file.path}`);
+        }
       }
     });
     const state = this.#store.copy();
@@ -506,6 +532,26 @@ export class WorksDeployer {
         next.known[inflight.id!] = { branch: inflight.branch, at: inflight.at };
         next.inFlight = inflight;
       });
+    }
+    const published = source.listPublished(this.#config.targetId);
+    if (inflight.works.some(item => !published.some(next => next.id === item.id))) {
+      // 计划里有作品已撤下：重建读不到它的文件，恢复只会反复失败，撤下也永远轮不到。
+      // 与撤下部署核验失败时一样，按未核验的现行部署记下，交给撤下逻辑强制重部署这个分支。
+      await this.#store.update(next => {
+        if (next.inFlight?.nonce !== inflight.nonce) return;
+        next.inFlight = undefined;
+        next.current[inflight.branch] = {
+          id: inflight.id!,
+          branch: inflight.branch,
+          nonce: inflight.nonce,
+          at: this.#now(),
+          files: inflight.files,
+          works: inflight.works,
+          verified: false,
+        };
+      });
+      this.#pending = true;
+      return;
     }
     const group = Object.keys(state.groups).find(key => state.groups[key].branch === inflight.branch);
     const built = await this.#build(
