@@ -452,6 +452,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     if (!delivery) return fail('没有平台适配器接手这条消息，成品没有发出');
     const markDelivered = () =>
       ledger.exclusive(async () => {
+        // 插件已停（如被重载）时不再写：旧实例整份写盘会盖掉新实例已写进去的账本
+        if (deps.signal.aborted) return;
         const current = ledger.data.tasks[task.id];
         if (!current || current.delivered) return;
         current.delivered = true;
