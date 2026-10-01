@@ -88,6 +88,14 @@ describe('诊断项 paper.config', () => {
     expect(result.level).toBe('ok');
   });
 
+  it('具名白纸写错而停用时 error，写明名字与原因', async () => {
+    const result = await check({
+      config: { ...PILOT_CONFIG, papers: [{ ...PILOT_CONFIG.papers[0], publishTargets: 'works, Bad Target' }] },
+    });
+    expect(result.level).toBe('error');
+    expect(result.message).toContain('配置有误（发布目标里有无效的目标 ID）');
+  });
+
   it('具名白纸引用的提供者不在场时 warn', async () => {
     const result = await check({
       config: {

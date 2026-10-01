@@ -98,6 +98,13 @@ describe('房间配置', () => {
     await expectRefused(hub, /远端代理类型/);
   });
 
+  it('安全：房间用的具名白纸写错了出网上限时被拒并说明配置有误，不按默认属性照开', async () => {
+    const hub = await startPaperHub({
+      config: { ...PILOT_CONFIG, papers: [{ ...PILOT_CONFIG.papers[0], remoteAgentEgress: 'wide-open' }] },
+    });
+    await expectRefused(hub, /配置有误（出网上限不是可选值）/);
+  });
+
   it('房间写的白纸名在插件配置里不存在时被拒', async () => {
     const hub = await startPaperHub({ rooms: { [ROOM]: { ...PILOT_ROOM, paperName: 'zz-missing' } } });
     await expectRefused(hub, /不存在/);
