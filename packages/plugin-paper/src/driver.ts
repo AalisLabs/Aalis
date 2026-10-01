@@ -78,10 +78,11 @@ const CANCEL_RETRY_MS = [10 * SECOND, 30 * SECOND, 60 * SECOND];
 /** 进展的 lastEventId 至少这么久落盘一次 */
 const PROGRESS_SAVE_MS = 30 * SECOND;
 const RESULT_TEXT_MAX = 2000;
-const MISSING_WORKSPACE = '无法取得旧工程包，已停止换新并保留旧代理；先在旧工作区保存工程包再重试';
+const MISSING_WORKSPACE =
+  '无法取得旧工程包，已停止换新并保留旧代理；先在旧工作区保存工程包再重试，旧工程包永久取不到时 owner 可在白纸页点「不带旧工程继续」';
 /** 已经换新、新代理首轮还没成功时取不到上一个代理的工程包：换新已发生，旧代理已退役。 */
 const MISSING_PREVIOUS_WORKSPACE =
-  '无法取得上一个代理的工程包，新代理不能接着原工程继续；owner 可在白纸页清空白纸，若新代理首轮已留下工程包也可再换新';
+  '无法取得上一个代理的工程包，新代理不能接着原工程继续；owner 可在白纸页点「不带旧工程继续」（成品与记录保留），或清空白纸';
 /** 对账里列表连续失败到这么多次，诊断项报出 */
 const LISTING_FAILURE_REPORT = 3;
 /** 占着代理的任务状态（排队的不占） */
@@ -230,6 +231,31 @@ export class PaperDriver {
       this.#paper(paperId).rotateNext = true;
       await ledger.save();
     });
+  }
+
+  /**
+   * 不带旧工程继续：旧工程包永久取不到时，owner 放弃交接。在等交接的新代理不再要旧工程包，接着用它自己的工作区
+   * （首轮留下的工程照用）；还没建出新代理（例如换了远端类型）的，下一次新建不带旧工程包。白纸上的成品与任务记录
+   * 都保留，旧代理没人再等它交接，按退役代理照常删除。没有在等交接时返回原因
+   */
+  async freshStart(paperId: string): Promise<string | undefined> {
+    const { ledger, cfg } = this.#d;
+    const refused = await ledger.exclusive(async () => {
+      const paper = ledger.data.papers[paperId];
+      if (!paper) return '账本里没有这块白纸';
+      const waiting = Object.values(ledger.data.agents).filter(a => a.paperId === paperId && a.replaces);
+      const bound = paper.binding ? ledger.data.agents[paper.binding] : undefined;
+      if (waiting.length > 0) for (const agent of waiting) delete agent.replaces;
+      else if (bound && bound.providerType !== specOf(cfg, paperId)?.remoteAgentType) paper.noBundleNext = true;
+      else return '这块白纸没有在等旧工程包';
+      await ledger.save();
+      return undefined;
+    });
+    if (!refused) {
+      this.#d.logger.info(`白纸 ${paperId} 由 owner 选择不带旧工程继续`);
+      this.kick(paperId);
+    }
+    return refused;
   }
 
   /** 清空：取消排队的任务，删除这块白纸的代理与白纸目录；有任务在跑时拒绝并返回原因 */

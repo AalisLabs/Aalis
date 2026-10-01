@@ -257,7 +257,8 @@ describe('页面登记', () => {
     }
 
     const papers = tableOf(hub, '白纸');
-    expect(papers.actions?.map(a => a.label)).toEqual(['换新', '归档代理', '清空', '恢复']);
+    expect(papers.actions?.map(a => a.label)).toEqual(['换新', '归档代理', '清空', '恢复', '不带旧工程继续']);
+    expect(papers.actions?.find(a => a.label === '不带旧工程继续')?.confirm).toContain('成品与任务记录保留');
     const rotate = papers.actions?.find(a => a.label === '换新');
     expect(rotate?.confirm).toContain('只重置对话，工程包照常带到新代理');
     const clear = papers.actions?.find(a => a.label === '清空');
