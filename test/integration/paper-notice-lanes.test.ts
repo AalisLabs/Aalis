@@ -209,7 +209,11 @@ async function boot(
     await next();
   });
   const outbound: OutgoingMessage[] = [];
-  host.events.on('outbound:message', message => void outbound.push(message));
+  host.events.on('outbound:message', message => {
+    outbound.push(message);
+    // 充当目标平台适配器：同步认领并确认收下（paper_send 等这个回执才记已交付）
+    message.delivery = Promise.resolve({ ok: true });
+  });
   await app.start();
 
   const ledger = () => JSON.parse(String(files.get(LEDGER_URI) ?? 'null')) as PaperLedger;

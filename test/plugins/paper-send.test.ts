@@ -188,6 +188,28 @@ describe('paper_send：发出', () => {
     await expect.poll(() => h.ledger().tasks['t-00000001'].delivered).toBe(true);
   });
 
+  it('插件停了以后迟到的确认不再写账本（重载时旧实例不能盖掉新实例的账本）', async () => {
+    let confirm: (result: { ok: true }) => void = () => {};
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: () =>
+        new Promise(resolve => {
+          confirm = resolve;
+        }),
+    });
+    const aborted = new AbortController();
+    aborted.abort();
+    const res = await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), signal: aborted.signal });
+    expect(String(res.error)).toContain('请勿重发');
+    // 只重载白纸插件，存储照常在：旧实例手里那份迟到的确认不能再写盘
+    expect(await h.app.plugins.bounce('@aalis/plugin-paper')).toBe(true);
+    const before = h.files.get(LEDGER_URI);
+    confirm({ ok: true });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(h.files.get(LEDGER_URI)).toBe(before);
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+  });
+
   it('网关发送失败时不标为已交付', async () => {
     const h = await startPaperHub({ files: seed(), gatewayFails: true });
     const res = await h.call('paper_send', { artifact_id: 'a-00000001' });
