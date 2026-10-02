@@ -32,19 +32,14 @@ function setup() {
     timeoutMs: 30000,
   };
   let received: Record<string, unknown> | undefined;
-  let persisted: Record<string, unknown> | undefined;
   const { expressApp, invoke } = captureRoutes();
   const hostConfig = {
     set: () => {},
     getAll: () => ({}),
     getPluginConfig: () => ({ ...pluginConfig }),
-    setPluginConfig: (_n: string, cfg: Record<string, unknown>) => {
-      persisted = cfg;
-    },
-    // 宿主一步完成运行态与文档：路由交出的这一份同时进运行态与文档
+    // 宿主一步完成运行态与文档：路由只把合并后的这一份交给 applyPluginConfig
     applyPluginConfig: async (_n: string, cfg: Record<string, unknown>) => {
       received = cfg;
-      persisted = cfg;
       return { status: 'applied' as const, reloaded: true };
     },
     save: async () => {},
@@ -77,12 +72,12 @@ function setup() {
       body: { config: body },
       headers: {},
     });
-  return { put, got: () => received, persisted: () => persisted };
+  return { put, got: () => received };
 }
 
 describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () => {
   it('请求只改 timeoutMs 时，已存的 apiKey 必须原样保留', async () => {
-    const { put, got, persisted } = setup();
+    const { put, got } = setup();
     const out = await put({ timeoutMs: 60000 });
 
     expect(out.status).toBe(200);
@@ -92,7 +87,6 @@ describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () 
       '裸 defaults 打底时该键整条消失——updateConfig 是整体替换，密钥就此从内存与 yaml 一起没了',
     ).toBe('sk-REAL-SECRET');
     expect(got()?.trap, '打底必须读 definition.configSchema，不得读 module').toBeUndefined();
-    expect(persisted(), '路由交给宿主应用的就是写进文档的这一份').toEqual(got());
   });
 
   it('显式传空串仍可清空（部分更新不等于改不掉）', async () => {

@@ -686,7 +686,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       plugins: caps.plugins,
       services,
       packageManager: caps.packageManager,
-      appDir: () => appDir,
+      appDir,
     },
     gate,
     uiConfig.marketplaceRegistry,

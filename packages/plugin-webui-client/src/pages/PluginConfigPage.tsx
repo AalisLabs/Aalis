@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Radio, Workflow, Loader2 } from 'lucide-react';
-import { api, errText } from '../api';
+import { ApiError, api, errText } from '../api';
 import { SchemaForm, buildDraftFromSchema, flattenConfig, keepStoredSecrets, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
 import { useConfirm } from '../components/ConfirmDialog';
@@ -62,13 +62,13 @@ export function PluginConfigPage({
       const res = await api<{ message?: string }>(`/api/plugins/${encodeURIComponent(plugin.instanceId)}/${action}`, {
         method: 'POST',
       });
-      // 服务端回执可能附带说明（如仍在激活、在等依赖），照原样显示
+      // 服务端回执可能附带说明（如激活失败、仍在激活、在等依赖），照原样显示
       showToast(res.message ?? `${plugin.instanceId} 已${action === 'enable' ? '启用' : '禁用'}`);
       onRefresh();
     } catch (err) {
       showToast(errText(err, '未知错误'));
       setBusySet(prev => { const next = new Set(prev); next.delete(plugin.instanceId); return next; });
-      // 失败时运行态也可能已变（停用超过宽限转 error），刷新以显示实际状态
+      // 落盘失败时运行态已经改了（回执带 applied），刷新以显示实际状态
       onRefresh();
     }
   };
@@ -133,6 +133,8 @@ export function PluginConfigPage({
     } catch (err) {
       showToast(errText(err, '未知错误'));
       setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
+      // 落盘失败时运行态已经改了（回执带 applied），刷新以显示实际状态
+      onRefresh();
       return;
     }
     // 服务端回执可能带附注（如被裁掉的 schema 外字段）或说明本次无改动，照原样显示
@@ -150,7 +152,7 @@ export function PluginConfigPage({
         `/api/plugins/${encodeURIComponent(moduleName)}/instances`,
         { method: 'POST', body: JSON.stringify({ suffix }) },
       );
-      // 服务端回执可能附带说明（如按禁用态登记、仍在激活），照原样显示
+      // 2xx 即实例已登记、配置已写入：收起表单并刷新。回执可能附带说明（如激活失败、按禁用态登记、仍在激活），照原样显示
       showToast(res.message ?? `已创建实例 ${res.instanceId}`);
       setNewInstanceTarget(null);
       setNewInstanceSuffix('');
@@ -158,7 +160,13 @@ export function PluginConfigPage({
     } catch (err) {
       showToast(errText(err, '创建失败'));
       setBusySet(prev => { const next = new Set(prev); next.delete(moduleName); return next; });
-      // 激活失败时实例已登记并转为 error 态，刷新以显示它
+      // 回执带 applied：落盘失败，但实例已在运行态登记。表单同样收起（留着再点「创建」只会得到「已存在」），
+      // 原因已在提示里；其余错误码表单留着供改正
+      if (err instanceof ApiError && err.applied) {
+        setNewInstanceTarget(null);
+        setNewInstanceSuffix('');
+      }
+      // 实例可能已登记，刷新以显示它
       onRefresh();
     }
   };
@@ -179,6 +187,8 @@ export function PluginConfigPage({
     } catch (err) {
       showToast(errText(err, '删除失败'));
       setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
+      // 已从配置文件删除、卸载失败时实例状态可能已变，刷新以显示实际状态
+      onRefresh();
     }
   };
 

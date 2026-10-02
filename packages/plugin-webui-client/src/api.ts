@@ -55,6 +55,19 @@ export function errText(err: unknown, fallback = '请求失败'): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
+/**
+ * api() 在非 2xx 时抛出的错误。`applied` 取自回执：管理动作改完运行态、随后落盘失败时为 true，
+ * 表示改动已经生效、只是没写进配置文件，调用方别当成「没改成」
+ */
+export class ApiError extends Error {
+  readonly applied: boolean;
+
+  constructor(message: string, applied: boolean) {
+    super(message);
+    this.applied = applied;
+  }
+}
+
 export async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -65,8 +78,8 @@ export async function api<T = unknown>(path: string, opts?: RequestInit): Promis
   // 的 {error} 当数据 resolve——调用方照常弹「已删除/重命名成功」，列目录 404 时还会把
   // undefined 塞进渲染路径。调用方要展示服务端理由就 catch 这个 message。
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as { error?: string; applied?: boolean };
+    throw new ApiError(body.error ?? `HTTP ${res.status}`, body.applied === true);
   }
   return res.json() as Promise<T>;
 }

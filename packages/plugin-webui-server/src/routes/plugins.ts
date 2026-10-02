@@ -27,11 +27,11 @@ function errorMessage(err: unknown): string {
 
 /**
  * 落盘被拒后运行态怎样与文件对齐：插件配置与新建的实例随配置文件热重载（文件里没有配置段的后缀实例会被卸载）；
- * 启停与服务偏好只在重启时按文件登记
+ * 启停与服务偏好只在重启时按文件登记。被拒的可能是配置文件，也可能是密钥文件，拒写原因里点了名，这里不指具体哪个文件
  */
 const RECONCILE = {
-  reload: '修好配置文件后会按文件内容重载',
-  restart: '修好配置文件后，重启时以文件内容为准',
+  reload: '修好该文件后会按文件内容重载',
+  restart: '修好该文件后，重启时以文件内容为准',
 } as const;
 
 /**
@@ -525,7 +525,7 @@ export function registerPluginRoutes(
       res.json({ ok: true, message: `插件 ${pluginName} 配置无改动，已写回配置文件${note}`, ignored, removed });
       return;
     }
-    // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），但按实际状态回报。
+    // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），回执按实际状态说明。
     // 禁用态只换上新配置、保持禁用，启用时按它激活
     const after = await settledEntry(pm, pluginName);
     const failure =
@@ -537,13 +537,14 @@ export function registerPluginRoutes(
       reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
       return;
     }
-    if (failure !== undefined) {
-      res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
-      return;
-    }
+    // 写进了配置文件就回 2xx，激活失败也一样：表单据状态码区分「没写成」（留着改）与「写成了」（收起、刷新）。
+    // 写成之后草稿已经过时，例如清除的密钥键已随这次保存从 secrets.yaml 删掉，再「撤销」只会引用不存在的键
     res.json({
       ok: true,
-      message: `插件 ${pluginName} 配置已更新${note}${aside ? `；${aside}` : ''}`,
+      message:
+        failure !== undefined
+          ? `${failure}；配置已写入配置文件${note}`
+          : `插件 ${pluginName} 配置已更新${note}${aside ? `；${aside}` : ''}`,
       ignored,
       removed,
     });
@@ -568,7 +569,7 @@ export function registerPluginRoutes(
     }
     if (success) {
       doc.setPluginEnabled(pluginName, true);
-      // 激活失败、转为 error：照样记为启用（重启时再激活），但按实际状态回报
+      // 激活失败、转为 error：照样记为启用（重启时再激活），回执按实际状态说明。写进了配置文件就回 2xx，口径同改配置
       const after = await settledEntry(pm, pluginName);
       const failure =
         after?.state === 'error'
@@ -576,11 +577,13 @@ export function registerPluginRoutes(
           : undefined;
       const aside = notYetActive(after?.state);
       if (!(await saveAfterApply(doc, res, 'restart', failure ?? aside))) return;
-      if (failure !== undefined) {
-        res.status(500).json({ error: `${failure}；配置文件已记为启用` });
-        return;
-      }
-      res.json({ ok: true, message: `插件 ${pluginName} 已启用${aside ? `；${aside}` : ''}` });
+      res.json({
+        ok: true,
+        message:
+          failure !== undefined
+            ? `${failure}；配置文件已记为启用`
+            : `插件 ${pluginName} 已启用${aside ? `；${aside}` : ''}`,
+      });
     } else {
       refuse(pm, res, pluginName, '启用');
     }
@@ -604,18 +607,18 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
-      // 仍在初始化、不响应 abort 的插件，宽限到期转 error 而非 disabled：照样记为禁用（重启时不再激活），但按实际状态回报
+      // 仍在初始化、不响应 abort 的插件，宽限到期转 error 而非 disabled：照样记为禁用（重启时不再激活），
+      // 回执按实际状态说明。写进了配置文件就回 2xx，口径同改配置
       const stuck =
         pm.getPlugin(pluginName)?.state === 'error'
           ? `插件 ${pluginName} 未在宽限内停止，已转为 error 态，详见日志`
           : undefined;
       doc.setPluginEnabled(pluginName, false);
       if (!(await saveAfterApply(doc, res, 'restart', stuck))) return;
-      if (stuck !== undefined) {
-        res.status(500).json({ error: `${stuck}；配置文件已记为禁用` });
-        return;
-      }
-      res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
+      res.json({
+        ok: true,
+        message: stuck !== undefined ? `${stuck}；配置文件已记为禁用` : `插件 ${pluginName} 已禁用`,
+      });
     } else {
       refuse(pm, res, pluginName, '禁用');
     }
@@ -663,10 +666,14 @@ export function registerPluginRoutes(
     if (!doc) return;
     // 实例创建编排（配置文件编排属管理面,内核只出 register 机制）：
     // 查同名 module → reusable/查重校验 → 合并默认配置、裁剪与校验 → 写入 → register 激活。
-    const sourceModule = pm
-      .getStatus()
-      .map(p => pm.getPlugin(p.instanceId)?.definition)
-      .find(m => m?.name === moduleName);
+    // 模块定义主实例优先、否则取任一在册实例的，与宿主登记新实例时取定义的规则一致：合并、裁剪与校验所用的 schema
+    // 就是登记时的那一份
+    const sourceModule =
+      pm.getPlugin(moduleName)?.definition ??
+      pm
+        .getStatus()
+        .map(p => pm.getPlugin(p.instanceId)?.definition)
+        .find(m => m?.name === moduleName);
     if (!sourceModule) {
       res.status(400).json({ error: `无法创建实例：模块 "${moduleName}" 未找到` });
       return;
@@ -712,7 +719,8 @@ export function registerPluginRoutes(
       res.status(409).json({ error: `实例 ${instanceId} 未登记（停机中或被拒，见日志），配置未写入` });
       return;
     }
-    // 激活失败、转为 error：实例与配置照样保留并落盘（改配置保存即重试激活），但按实际状态回报
+    // 激活失败、转为 error：实例与配置照样保留并落盘（改配置保存即重试激活），回执按实际状态说明。
+    // 写进了配置文件就回 2xx，口径同改配置：实例已登记，表单该收起，留着再点「创建」只会得到「已存在」
     const after = await settledEntry(pm, instanceId);
     const failure =
       after?.state === 'error'
@@ -726,11 +734,15 @@ export function registerPluginRoutes(
       reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
       return;
     }
-    if (failure !== undefined) {
-      res.status(500).json({ error: `${failure}；配置已写入配置文件${note}` });
-      return;
-    }
-    res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}${note}${aside ? `；${aside}` : ''}`, ignored });
+    res.json({
+      ok: true,
+      instanceId,
+      message:
+        failure !== undefined
+          ? `${failure}；配置已写入配置文件${note}`
+          : `已创建实例 ${instanceId}${note}${aside ? `；${aside}` : ''}`,
+      ignored,
+    });
   });
 
   // 删除插件多实例
@@ -766,12 +778,18 @@ export function registerPluginRoutes(
         .json({ error: `未删除实例 ${instanceId}：未写入配置文件（${errorMessage(err)}）` });
       return;
     }
+    let unloaded: boolean;
     try {
-      await pm.unload(instanceId);
+      unloaded = await pm.unload(instanceId);
     } catch (err) {
       res.status(500).json({
         error: `已从配置文件删除实例 ${instanceId}，但卸载失败（${errorMessage(err)}）；重启后不再登记`,
       });
+      return;
+    }
+    // 返回 false 而条目还在：停机中拒绝了卸载，配置段已删、实例仍在跑到停机为止。条目已不在的是别处先卸掉了，照常回已删除
+    if (!unloaded && pm.getPlugin(instanceId)) {
+      res.json({ ok: true, message: `已从配置文件删除实例 ${instanceId}；停机中，未卸载运行中的实例` });
       return;
     }
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });

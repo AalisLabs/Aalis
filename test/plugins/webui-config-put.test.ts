@@ -334,7 +334,7 @@ describe('拒写与写入失败的区分：POST /api/config/save 与其它落盘
     expect(out).toEqual({
       status: 409,
       body: {
-        error: '已在运行态生效，但未写入配置文件（配置文件有尚未生效的外部修改）；修好配置文件后会按文件内容重载',
+        error: '已在运行态生效，但未写入配置文件（配置文件有尚未生效的外部修改）；修好该文件后会按文件内容重载',
         applied: true,
       },
     });

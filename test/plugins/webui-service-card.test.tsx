@@ -13,15 +13,16 @@ import type { ServiceInfo } from '../../packages/plugin-webui-client/src/types.j
 let apiFail: Error | null = null;
 const apiCalls: Array<{ path: string; method?: string }> = [];
 
-vi.mock('../../packages/plugin-webui-client/src/api', () => ({
+vi.mock('../../packages/plugin-webui-client/src/api', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../packages/plugin-webui-client/src/api.js')>()),
   api: vi.fn(async (path: string, init?: { method?: string }) => {
     apiCalls.push({ path, method: init?.method });
     if (apiFail) throw apiFail;
     return {};
   }),
-  errText: (err: unknown, fallback = '请求失败') => (err instanceof Error && err.message ? err.message : fallback),
 }));
 
+import { ApiError } from '../../packages/plugin-webui-client/src/api.js';
 import { ServiceCard } from '../../packages/plugin-webui-client/src/components/ServiceCard.js';
 
 /** 两个提供者 + 已有偏好：下拉切换与「恢复默认」按钮都在 */
@@ -82,5 +83,28 @@ describe('服务偏好切换失败', () => {
     await waitFor(() => expect(onPreferChanged).toHaveBeenCalled());
     expect(alertSpy).not.toHaveBeenCalled();
     expect(apiCalls).toEqual([{ path: '/api/services/llm/prefer', method: 'POST' }]);
+  });
+
+  // 落盘失败时偏好已在运行态生效（回执带 applied）：除了出声，还要通知上层刷新，否则卡片停在旧的提供者上
+  const SAVE_FAILED = '已在运行态生效，但写入配置文件失败（EACCES）；改动保留在文档里，下次保存成功时一并写入';
+
+  it('setPrefer 落盘失败（回执带 applied）：出声告知，并通知上层刷新', async () => {
+    apiFail = new ApiError(SAVE_FAILED, true);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const onPreferChanged = vi.fn();
+    render(<ServiceCard name="llm" info={multi} onPreferChanged={onPreferChanged} />);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'plugin-llm-ollama' } });
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(SAVE_FAILED));
+    expect(onPreferChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearPrefer 落盘失败（回执带 applied）：出声告知，并通知上层刷新', async () => {
+    apiFail = new ApiError(SAVE_FAILED, true);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const onPreferChanged = vi.fn();
+    render(<ServiceCard name="llm" info={multi} onPreferChanged={onPreferChanged} />);
+    fireEvent.click(screen.getByText('恢复默认'));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(SAVE_FAILED));
+    expect(onPreferChanged).toHaveBeenCalledTimes(1);
   });
 });
