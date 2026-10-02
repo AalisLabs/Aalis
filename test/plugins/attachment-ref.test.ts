@@ -5,6 +5,7 @@ import {
   formatAttachmentRef,
   parseAttachmentRefs,
 } from '../../packages/schema-message/src/attachment-ref.js';
+import { outboundMediaMessage } from '../../packages/schema-message/src/index.js';
 
 describe('attachment-ref helpers', () => {
   describe('formatAttachmentRef', () => {
@@ -117,6 +118,33 @@ describe('attachment-ref helpers', () => {
       const text = '[图片 | ref:data/a.png][图片: x | ref:data/t.png]';
       const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
       expect(text.match(re)).toEqual(['[图片: x | ref:data/t.png]']);
+    });
+  });
+
+  describe('outboundMediaMessage（出站媒体的归档写法，image-sender 与 webui-server 共用）', () => {
+    it('图片、音频、视频各对应 outbound-* kind 与同一种占位符；音频写「音频」，客户端回看时才认得出', () => {
+      expect(outboundMediaMessage('image', 'data:/images/cat.png', '一只猫')).toEqual({
+        role: 'assistant',
+        kind: 'outbound-image',
+        content: '[图片: 一只猫 | ref:data:/images/cat.png]',
+      });
+      expect(outboundMediaMessage('audio', 'data:/audio/hello.mp3')).toEqual({
+        role: 'assistant',
+        kind: 'outbound-audio',
+        content: '[音频 | ref:data:/audio/hello.mp3]',
+      });
+      expect(outboundMediaMessage('video', 'https://example.invalid/v.mp4', '')).toEqual({
+        role: 'assistant',
+        kind: 'outbound-video',
+        content: '[视频 | ref:https://example.invalid/v.mp4]',
+      });
+    });
+
+    it('正文能被 parseAttachmentRefs 解析回同一个 ref', () => {
+      const { content } = outboundMediaMessage('audio', 'data:/audio/hello.mp3', '问好');
+      expect(parseAttachmentRefs(String(content))).toEqual([
+        { kind: AttachmentRefKind.Audio, desc: '问好', ref: 'data:/audio/hello.mp3' },
+      ]);
     });
   });
 });
