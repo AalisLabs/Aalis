@@ -163,6 +163,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-checkpoint:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-code-sandbox:
     dependencies:
       '@aalis/api-process':
@@ -516,7 +528,35 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-session-protocol:
+    dependencies:
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-storage:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-todo-list:
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -877,6 +917,9 @@ importers:
 
   packages/plugin-checkpoint:
     dependencies:
+      '@aalis/api-checkpoint':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-checkpoint
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
@@ -2158,6 +2201,61 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-session-server:
+    dependencies:
+      '@aalis/api-agent':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../api-agent
+      '@aalis/api-authority':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-authority
+      '@aalis/api-checkpoint':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-checkpoint
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
+      '@aalis/api-llm':
+        specifier: workspace:>=0.13.0 <1.0.0
+        version: link:../api-llm
+      '@aalis/api-memory':
+        specifier: workspace:>=0.7.1 <1.0.0
+        version: link:../api-memory
+      '@aalis/api-persona':
+        specifier: workspace:>=0.8.1 <1.0.0
+        version: link:../api-persona
+      '@aalis/api-platform':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../api-platform
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/api-session-protocol':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-protocol
+      '@aalis/api-storage':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-storage
+      '@aalis/api-todo-list':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-todo-list
+      '@aalis/api-tools':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-tools
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-skills:
     dependencies:
       '@aalis/api-contributions':
@@ -2200,6 +2298,9 @@ importers:
 
   packages/plugin-storage-local:
     dependencies:
+      '@aalis/api-checkpoint':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-checkpoint
       '@aalis/api-doctor':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-doctor
@@ -2265,6 +2366,9 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
+      '@aalis/api-todo-list':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-todo-list
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools
@@ -2914,6 +3018,9 @@ importers:
       '@aalis/api-session-confirm':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-session-confirm
+      '@aalis/api-session-protocol':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-protocol
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-storage
@@ -2960,12 +3067,12 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager
+      '@aalis/api-todo-list':
+        specifier: workspace:*
+        version: link:../api-todo-list
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-todo-list':
-        specifier: workspace:*
-        version: link:../plugin-todo-list
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6

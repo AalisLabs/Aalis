@@ -5,7 +5,7 @@
 
 ## 概述
 
-Express + WebSocket 实现的 Web 管理后台和聊天平台，提供 REST API 与 WebSocket 实时通信，并作为 `webui` 平台适配器接入聊天。
+Express + WebSocket 实现的 Web 管理后台和聊天平台，提供 REST API 与 WebSocket 实时通信，并作为 `webui` 平台适配器接入聊天。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现。
 
 ## 插件声明
 
@@ -32,6 +32,7 @@ export default definePlugin({
     platform: optional(platform),
     process: optional(processService),
     sessionConfirm: optional(sessionConfirm),
+    sessionProtocol: optional(sessionProtocol),
     tools: optional(tools),
     llm: optional(llm),
     persona: optional(persona),
@@ -142,7 +143,45 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、删�
 
 ## WebSocket
 
-### 入站消息类型 (Client → Server)
+WebSocket 与 HTTP 同端口，两个端点：`/session` 是会话协议，`/ws` 是下文的旧协议。升级请求的认证与 HTTP 相同（cookie 里的 token），没登录或 token 不对回 401；认证之后只认这两个路径（可以带查询串），其他路径回 404。每条连接都有心跳：每 30 秒 ping 一次，30 到 60 秒内没回 pong 的半开连接被踢掉。插件卸载时各端点的连接以 1001「webui 正在卸载」关闭。
+
+### `/session`：会话协议
+
+协议本身（帧、握手、方法、推送、错误码、条目种类）见 [api-session-protocol](../api/api-session-protocol.md)，实现见 [plugin-session-server](./plugin-session-server.md)。本插件只做传输：
+
+- 一条连接接到会话服务的一次 `sessionProtocol.connect`。对端身份取自认证，即 `{ platform: 'webui', userId: 'console' }`，审批面为 `webui`，握手结果里原样给出。
+- 每个文本帧是一个 JSON-RPC 帧，原文转交会话服务；服务端发出的帧原样发回。连接关闭时撤掉会话服务那头的连接。
+- 会话服务在每条连接到达时现取，会话服务晚于本插件上线、停用后重新启用，都不用重启本插件。
+
+关闭码：
+
+| 码 | 原因 | 客户端怎么办 |
+|---|---|---|
+| 1000 | 会话服务断开这条连接，原因由它给出：握手时主版本不合（之前已回 `unsupported` 错误帧），或「会话服务已停止」（停用、重载） | 主版本不合时不重连；其余稍后重连，接到新的提供者 |
+| 1001 | `webui 正在卸载` | 稍后重连 |
+| 1013 | `会话服务不在`：会话服务没装、停用或没激活成功 | 稍后重连 |
+
+关闭帧的原因最多 123 字节，会话服务给的原因更长时按整字截短（例如握手时客户端报的版本号很长）。帧本身不合规时按 WebSocket 标准的关闭码关闭，例如文本帧里不是合法的 UTF-8 为 1007。
+
+浏览器里的客户端：
+
+```ts
+const socket = new WebSocket(`ws://${location.host}/session`); // 同源，cookie 自动带上
+socket.onopen = () =>
+  socket.send(JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '1.0', client: { name: 'my-client', version: '0.1.0' } },
+  }));
+socket.onmessage = event => {
+  const frame = JSON.parse(event.data); // 带 id 的是回应，不带 id 的是推送
+};
+```
+
+### `/ws`：旧协议
+
+#### 入站消息类型 (Client → Server)
 
 | 类型 | 说明 |
 |---|---|
@@ -153,7 +192,7 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、删�
 | `abort` | 中断当前生成；回合里正在跑的 `exec` 与代码执行随之停掉（见 [plugin-tool-system](./plugin-tool-system.md)、[plugin-tool-code-runner](./plugin-tool-code-runner.md)） |
 | `compress` | 手动触发会话上下文压缩 |
 
-### 出站消息类型 (Server → Client)
+#### 出站消息类型 (Server → Client)
 
 | 类型 | 说明 |
 |---|---|
@@ -173,7 +212,7 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、删�
 | `confirm` | 受限操作的交互式确认请求（由 session-confirm 服务驱动；用户在聊天框回复即作答） |
 | `log` | 实时日志推送 |
 
-### token 用量快照
+#### token 用量快照
 
 客户端订阅会话而服务端没有缓存的用量时，以及手动压缩完成后，服务端发 `token:request` 请 agent 重算快照，结果经 `token_usage` 推给客户端。请求只带 `sessionId`，不带 `platform`：WebUI 能订阅任何平台的会话，快照按哪个平台算由 plugin-agent 决定（IM 房间按出生平台，其余按 `webui`，见 [plugin-agent](./plugin-agent.md) 的「Token 预算追踪与日志」），webui-server 不自己解析会话 id 猜平台。
 
