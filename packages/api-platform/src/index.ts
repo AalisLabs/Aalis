@@ -57,9 +57,11 @@ export interface PlatformAdapter {
    *
    * - `resolvePlatformBySession(source, sid)` 枚举所有 adapter 调此方法定位归属
    * - 未实现时 helper 默认 fallback 为 `sessionId.startsWith(this.platform + ':')`
-   *   —— 适合 sessionId 形如 `<platform>:<...>` 的协议平台（如 onebot）
+   *   —— 只适合同一平台只装一个实例的适配器
    * - sessionId 不携带 platform 前缀的 adapter（如 cli 的自定义 sessionId）
    *   **必须**显式实现此方法
+   * - 能装多个实例的适配器（如 onebot）**必须**实现此方法，只认自己实例的会话：
+   *   前缀兜底会让第一个实例接下所有同平台会话
    *
    * 与 LLMService.supportsModel 的设计意图对称：每个 provider 自报"我接不接这个 key"，
    * 路由仍优先本方法，前缀只是未实现时的兜底；选档则只看前缀。
@@ -134,7 +136,10 @@ export function aggregatePlatformDetails(source: ServiceRef<PlatformAdapter>): A
   }));
 }
 
-/** 按平台名查询 adapter 自身身份 */
+/**
+ * 按平台名查询 adapter 自身身份：同平台装了多个实例时，取第一个认得这个会话的实例给出的身份
+ * （多账号适配器按 sessionId 定位自己的连接，认不出时返回 undefined）
+ */
 export function getPlatformSelfIdentity(
   source: ServiceRef<PlatformAdapter>,
   platform: string,
@@ -142,32 +147,50 @@ export function getPlatformSelfIdentity(
 ): PlatformSelfIdentity | undefined {
   for (const a of getPlatformAdapters(source)) {
     if (a.platform !== platform) continue;
-    return a.getSelfIdentity?.(sessionId);
+    const identity = a.getSelfIdentity?.(sessionId);
+    if (identity) return identity;
   }
   return undefined;
 }
 
 /**
- * 按 sessionId 找到接管它的 adapter；优先 `canHandle`，否则 fallback 为
- * `sessionId.startsWith(platform + ':')`（适合协议类平台）。
+ * 按 sessionId 找到接管它的 adapter 条目（带插件实例 id `contextId`）；优先 `canHandle`，否则 fallback 为
+ * `sessionId.startsWith(platform + ':')`（只适合同平台单实例的适配器）。
  */
 export async function resolvePlatformBySession(
   source: ServiceRef<PlatformAdapter>,
   sessionId: string,
   logger?: Pick<Logger, 'warn'>,
-): Promise<PlatformAdapter | undefined> {
-  for (const { instance, contextId } of getPlatformAdapterEntries(source)) {
+): Promise<PlatformAdapterEntry | undefined> {
+  for (const entry of getPlatformAdapterEntries(source)) {
+    const { instance, contextId } = entry;
     try {
       const ok =
         typeof instance.canHandle === 'function'
           ? await instance.canHandle(sessionId)
           : sessionId.startsWith(`${instance.platform}:`);
-      if (ok) return instance;
+      if (ok) return entry;
     } catch (err) {
       logger?.warn(`canHandle 抛错 [${contextId}]:`, err);
     }
   }
   return undefined;
+}
+
+/**
+ * 没有 adapter 接管时的报错。会话 id 带平台前缀时，列出这个平台各实例的已知账号与连接状态，
+ * 分得清是账号写错、账号不属于任何实例，还是连接没上来。
+ */
+function unroutable(source: ServiceRef<PlatformAdapter>, sessionId: string): Error {
+  const prefix = sessionId.split(':')[0];
+  const known = getPlatformAdapterEntries(source)
+    .filter(({ instance }) => instance.platform === prefix)
+    .map(({ instance, contextId }) => {
+      const connections = instance.getConnections().map(c => `${c.selfId ?? '?'}(${c.status})`);
+      return `${contextId}: ${connections.join('、') || '无连接'}`;
+    });
+  const detail = known.length > 0 ? `（已知连接：${known.join('；')}）` : '';
+  return new Error(`没有 platform adapter 能处理 sessionId="${sessionId}"${detail}`);
 }
 
 /** 按 sessionId 路由发送纯文本消息 */
@@ -177,8 +200,8 @@ export async function sendPlatformMessage(
   content: string,
   options?: { skipSplit?: boolean },
 ): Promise<void> {
-  const adapter = await resolvePlatformBySession(source, sessionId);
-  if (!adapter) throw new Error(`没有 platform adapter 能处理 sessionId="${sessionId}"`);
+  const adapter = (await resolvePlatformBySession(source, sessionId))?.instance;
+  if (!adapter) throw unroutable(source, sessionId);
   return adapter.sendMessage(sessionId, content, options);
 }
 
@@ -189,8 +212,8 @@ export async function callPlatformAction(
   action: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
-  const adapter = await resolvePlatformBySession(source, sessionId);
-  if (!adapter) throw new Error(`没有 platform adapter 能处理 sessionId="${sessionId}"`);
+  const adapter = (await resolvePlatformBySession(source, sessionId))?.instance;
+  if (!adapter) throw unroutable(source, sessionId);
   if (typeof adapter.callAction !== 'function') {
     throw new Error(`platform adapter "${adapter.adapterName}" 不支持 callAction`);
   }

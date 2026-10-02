@@ -99,6 +99,8 @@ interface SessionInfo {
   kind: 'room' | 'task';           // SessionKind：有 parentId 为 task（挂在发起它的会话下面的子会话），其余为 room
   originPlatform?: string;         // 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话没有
   audience?: 'owner' | 'private' | 'group';  // RoomAudience，只有 room 带：有出生平台的取 group 或 private，其余为 owner
+  originInstance?: string;         // 有出生平台的房间建档时，接管它的平台适配器的插件实例 id（§6.6），只供列表分组
+  lastReplyAt?: number;            // 她最近一次开口的时间：回合结局为 replied 时写入（§7.1）
 }
 ```
 
@@ -128,6 +130,8 @@ interface SessionInheritance {
 'session:completed': [session: SessionInfo];
 'session:deleted':   [sessionId: string];
 ```
+
+建、删子会话时父会话的子会话列表也变了：子会话的 `session:created` 或 `session:deleted` 之后，父会话随后发一次 `session:updated`。会话列表据此更新父会话的子会话数（[plugin-session-server](../plugins/plugin-session-server.md) 的增量推送）。
 
 **只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/api-session-manager'`（`plugin-file-reader/src/index.ts`）。
 
@@ -425,6 +429,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 参考实现在 `inbound:message` 上收录 IM 房间：有出生平台、不是子任务（id 不含 `::`）的会话，首条真人入站（不带 `source`）到达即登记，与是否执行过 `/session.set`、开过子任务无关。带 `source` 的是内部注入（workflow 的 send-message 与 agent 节点、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不触发登记，每次 workflow 运行不会多出一个持久的房间。
 
 - 登记：`ensureSession(id, { name, createdBy: 'system', status: 'waiting' })`，得到 `kind: 'room'` 与房间自己的 `audience`、`originPlatform`。收录只登记与补名，不改状态；状态翻转见 §7.1。
+- 所属实例：凡是有出生平台的房间建档（收录、owner 从 WebUI 插话、`createChildSession` 兜底、`/session.set`，都经 `ensureSession`），记录建好、发出 `session:created` 之后，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析接管它的适配器，把插件实例 id 记进 `originInstance` 并发 `session:updated`。会话列表据此把同一插件的多个实例（如两个 OneBot 实例）分组显示；路由不读它。先建记录再解析，解析期间别的建档调用走合并更新，不会重复建档；解析期间会话被删的不写回。没有适配器认领的（适配器没装、账号不属于任何实例）不记，之后也不补记；owner 面会话与子任务不记。
 - 取名按受众：群取消息的 `groupName`，私聊取 `nickname`，缺省用会话 id。只采信出生平台自己的入站（`msg.platform` 等于出生平台）带的名字，从 WebUI 插话建档时名字为 id，不会把私聊房间起成 owner 的昵称。群的首条入站可能是不带群名的戳一戳，这时同样用 id，不回退到发送者昵称。
 - 补名：现名还等于 id 时，后到的出生平台原生入站带了群名（群）或昵称（私聊）就补上；现名不是 id 的（如 owner 用 `/session.set -n` 起的名）不改。`createChildSession` 兜底建档的房间同样以 id 为名，由之后的真人入站补名。
 - 前缀告警：出生平台既不是发来消息的平台、也不是已注册的平台名时，按前缀告警一次，多半是适配器的 id 前缀与平台名不一致（见 [platform 服务](platform.md) 的会话 ID 约定）。WebUI、CLI 往房间插话不参与判定：房间的适配器停用或还没加载时，它的平台名同样不在已注册之列。
@@ -444,13 +449,15 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 
 ### 7.1 会话状态：回合开始时翻 `active`，同一个中间件收口
 
-参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 把仍为 `active` 的根会话收口为 `completed`（`plugin-session-manager/src/index.ts`）：
+参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 按这一轮的结局收口仍为 `active` 的根会话：结局为 `error` 的收口为 `error`，其余（`replied`、`silent`、`aborted`，以及消息被拦下、没有结局的一轮）为 `completed`（`plugin-session-manager/src/index.ts`）。结局由另一个挂在 `agent:turn:after` 上的中间件按回合 id 记下：
 
 - `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行（agent 只在这个钩子的默认动作里发它）；
 - 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
 - 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 
-这是唯一的收口，只收口根会话；子会话由 plugin-subtask 收口。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合各占一条），中间件按会话计在飞的回合，最后一轮结束才收口，先结束的一轮不会把还在跑的会话显示成已完成。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
+这是唯一的收口，只收口根会话；子会话由 plugin-subtask 收口。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合各占一条），中间件按回合 id 登记在飞的回合，会话里最后一轮结束才收口，按的是最后结束那一轮的结局；先结束的一轮不会把还在跑的会话显示成已完成。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
+
+结局为 `replied` 的一轮结束时写入 `lastReplyAt`（她最近开口的时间），别的回合还在跑也照写，随 `session:updated` 推出并落盘；`silent`、`aborted`、`error` 不改它。
 
 回合之外建档的会话（自动标题路径兜底建的 CLI 会话、`/session.set` 建的档）状态为 `waiting`：首条消息是被指令相位吞掉的指令时没有回合，指令回复不改状态。回合中建档的（如 `create_subtask` 给父会话兜底建档）为 `active`，由这一轮结束时收口。
 
