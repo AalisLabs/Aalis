@@ -34,12 +34,13 @@
 
 待发布的包：
 
-- 有代码或契约改动（32 个）：schema-message、api-code-sandbox、api-gateway、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-code-sandbox-os、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
+- 有代码或契约改动（33 个）：schema-message、api-code-sandbox、api-gateway、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-persona、plugin-process-local、plugin-session-confirm、plugin-session-manager、plugin-storage-local、plugin-subtask、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
 - 按次版本发布（15 个）：schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（保留根名 `paper`）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
-- 按 patch 发布（17 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
+- 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、api-webui（只做加法）、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-webui-client（修复与加法）、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
 - 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0
 - plugin-trigger-laya 是 `private` 包，只改了说明与注释，不发布到 npm。
+- 上面的清单没收的：api-trigger、plugin-draw、plugin-tool-search 自上次发布以来也有源码改动（plugin-draw 见「作品提名与上站」；api-trigger、plugin-tool-search 的改动还没有写进本节），发布时按源码与 npm 实况核定档位并补写说明。
 - api-agent、api-authority、api-flow-control、api-platform、api-workflow、plugin-authority、plugin-scheduler、plugin-trigger-policy 只改了注释（去掉跨会话委派的提法；api-platform 写明会话 ID 约定，api-agent、api-workflow 改了 `token:request` 与会话 ID 的说明），本批不单独发布。
 
 ### 删除跨会话委派工具（@aalis/plugin-tool-session、@aalis/schema-message、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-agent）
@@ -236,11 +237,16 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 ### 看板已定的几项白纸与发布收尾（@aalis/plugin-paper、@aalis/plugin-publish-review）
 
-- 待提交的自动发布最长等 24 小时：创作结束后一直没能提交（发布目标或发布服务一直不可用）的，转为失败并通知来源房间，不再无限期挂着。
+- 待提交的自动发布最长等 24 小时：创作结束后一直没能提交（发布目标或发布服务一直不可用）的，转为失败并通知来源房间，不再无限期挂着。经 `works_nominate` 重新提名的，24 小时从重新提名时起算；重新提名时发布服务暂时不收（展示面暂未登记、待审额度或每日提名配额用完）的，保留待提交、按发布服务给的时间自动重试，工具回执写明已排队，不记成审核没通过；已写成待提交、随后读不到成品或提交出错的同样回已排队，稍后自动重试。暂时不可用时按 30 秒重试，不被别的任务的长时间等待推迟。
 - 多目标作品的某个展示面暂时缺席（重启、重载还没重新登记）时，沿用它上次核验过的地址，「已上线」保持不变；此前会短暂变成未上线。
 - 全局每日额度留空仍是不限额（语义不变），doctor 给出一条「不限额」提示，白纸页的额度列与账本也写明「不限额」。
 - 具名白纸的出网上限、发布目标写错（或整条不合配置规则）时，这块白纸停用并在日志与 doctor 报错，同名的后续条目不能顶替（同名写了多条、其中有写错的，整块停用）；此前写错的出网上限按默认属性照用，可能比本意宽。默认属性里的发布目标含无效 ID 时拒绝启用（此前忽略无效的 ID 后照用）。
 - 自动发布在提交前就失败、而且是发布环节本身的问题（挑不出成品、目标未获准、24 小时没能提交）时，宿主在失败通知前先把能发的成品（规则同 paper_send，最多 4 件）直接发回发起房间并等平台确认，通知写明结果；审核没通过（含发布检查不通过）只通知原因，成品不发出去、paper_send 也拒绝。发布环节出问题的任务，成品此后也能用 paper_send 发回，并进入待交付提示（此前这些成品既不能提名、也不能发回）。发送逻辑移到新文件 deliver.ts，paper_send 与直接发送共用。
+  - 审核没通过的任务重新提名后即使再次失败，成品仍不发出去（账本记下审核结论，期限与其它提交前失败都不会把它改成可直接发）。
+  - 宿主直接发送成品期间，待交付提示不列这件任务，paper_send 也拒绝，避免同一份成品发两遍。
+  - 重新提名后在后台于提交前再次失败时，来源房间会再收到一条完成通知；成品此前已发出或结果未知的不再直接发，通知写明不要重发。当场被拒的仍只由工具回执告知。
+  - `works_nominate` 在写账本、提交之前核对所选成品的公开路径，不合规的当场拒绝并说明原因。
+  - `paper_status` 只给创作完成、发布在提交前失败的上线任务列成品编号（供重新提名）；创作失败或取消的不列，这类任务 paper_send 的拒绝理由如实写创作没完成，不再说没通过审核。
 - 作品上线等通知以平台确认收下为准：此前进了出站总线就记已发，平台发送失败时通知就丢了。现在等适配器回执，没确认就留待重发；她已经转述过的，重发直接派发宿主原文，不再多跑一轮模型（看板「作品上线通知要不要等平台确认」定甲）。
 - 作品通知连续发不出去满 24 小时后放弃，不再无限重试：审核页新增「没发出的通知」可手动重发，doctor 报出条数（失败起点落盘，重启照算）。批准后复制时完整性失败的通知改为「作品已通过审核，但上线前的文件完整性校验失败」。
 - 白纸页加「不带旧工程继续」：换新后旧工程包永久取不到时，owner 可以放弃交接，新代理接着用自己的工作区（或下一次新建不带旧包），成品与记录保留；此前只能清空白纸。
@@ -253,22 +259,30 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 ### WebUI 里的图片：没开页面照样保存，存储地址能显示，历史里能看到（@aalis/plugin-webui-server、@aalis/plugin-webui-client）
 
-- 发往 WebUI 会话的附件，没有在线页面时此前报「没有在线收件方」、不归档，定时任务、白纸通知或刷新那一刻发的图会丢。现在会话历史就是收件箱：照样算送达，附件经 `outbound:delivered` 归档（看板「WebUI 没开页面时的图片与成品」定甲）。
-- 聊天里附件给的是存储地址（`send_attachment` 发本机文件、`paper_send` 都是）时，浏览器拿它当不了图片地址，图显示不出来。新增 `/api/media`：owner 才能取，按文件头判定类型，只提供图片、视频与浏览器能播的音频；客户端把存储地址换成这条路由。plugin-webui-server 依赖加 `@aalis/util-media-signature`。
-- 回看历史时，她发出的附件此前显示成 `[图片: … | ref:…]` 占位符原文；现在还原成图片、视频或音频。
+- 发往 WebUI 会话的消息，没有在线页面时此前报「没有在线收件方」、不归档，定时任务、白纸通知或刷新那一刻发的图会丢。现在会话历史就是收件箱（看板「WebUI 没开页面时的图片与成品」定甲）：webui-server 先把别处不会存档的部分写进会话历史，写成了才回执送达。
+  - 系统提示、作品通知、指令回复记成事件分隔条（不进模型上下文），文件记一行「[文件] 名称」，图片、视频、音频记成附件，她发出的也由 webui-server 自己记，不再取决于是否装了 image-sender；`history_ref` 重发的不再记一遍。
+  - 她自己的文字仍由 agent 存档。装着 image-sender 时，它不再为发往 WebUI 的媒体另记一条，也不再为其中的网址图片与视频在后台补视觉描述。
+  - 一条消息要写多条记录时逐条写入：中途写入失败、又没有在线页面时回执失败，已写成的几条不撤回，发起方重发会重复记。
+  - 存档服务不在场、也没有在线页面时，回执报失败，不谎报已送达。回执不再等页面写出，页面卡住时作品通知与 paper_send 不会因此被报成未确认。
+  - plugin-webui-server 依赖加 `@aalis/api-message-archive`（可选服务 message-archive），`@aalis/schema-message` 改为运行时依赖。
+- 聊天里附件给的是存储地址（`send_attachment` 发本机文件、`paper_send` 都是）时，浏览器拿它当不了图片地址，图显示不出来。新增 `/api/media`：owner 才能取，按文件头判定类型，只提供图片、视频与浏览器能播的音频；客户端把存储地址换成这条路由。plugin-webui-server 依赖加 `@aalis/util-media-signature`。读文件出错只断开这次请求并记一条警告，页面中途断开不记；文件管理页与已上传文件的下载同样处理，此前这两处读流出错会让进程退出。
+- 回看历史时，她发出的附件此前显示成 `[图片: … | ref:…]` 占位符原文；现在还原成图片、视频或音频，按相对路径（`data/images/…`）记的图片也能显示。
 
 ### CLI 会话里的附件（@aalis/plugin-cli）
 
-- `send_attachment`、`paper_send` 发往 CLI 会话的附件，此前没有平台认领投递回执，工具一律报失败、也不归档。现在终端每件写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档（看板「CLI 会话里发附件」定甲）。
+- `send_attachment`、`paper_send` 发往 CLI 会话的附件，此前没有平台认领投递回执，工具一律报失败、也不归档。现在终端每件写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档（看板「CLI 会话里发附件」定甲）。音频的说明行写作「[音频]」，与归档占位符一致。
+- 发往 CLI 会话的纯文本消息（如作品通知）写到终端即算送达；此前没有认领回执，作品通知会在 24 小时里重复打印约 30 次。plugin-cli 的 `@aalis/schema-message` 改为运行时依赖（用到的导出在已发布的 0.9.1 里都有，不必抬下限）。
 
-### paper_send 等平台确认收下（@aalis/plugin-paper、@aalis/schema-message、@aalis/plugin-image-sender）
+### paper_send 等平台确认收下（@aalis/plugin-paper、@aalis/schema-message、@aalis/plugin-image-sender、@aalis/plugin-adapter-onebot、@aalis/plugin-publish-review、@aalis/plugin-webui-server）
 
-- `paper_send` 此前交给网关就把成品记为已交付，平台下载或上传失败时她仍会说发出了，待交付提示也随之消失。现在与 `send_attachment` 一样等平台适配器确认：确认收下才记已交付；发送失败返回原因；没有适配器接手时直接报没有发出；等不到确认（最多 90 秒，或这一轮被中止）时返回「结果未确认，请勿重发」，迟到的确认照样记为已交付。
+- `paper_send` 此前交给网关就把成品记为已交付，平台下载或上传失败时她仍会说发出了，待交付提示也随之消失。现在与 `send_attachment` 一样等平台适配器确认：确认收下才记已交付；发送失败返回原因；没有适配器接手时直接报没有发出；等不到确认（最多 90 秒，或这一轮被中止）时返回「结果未确认，请勿重发」，当场按结果未知记下；迟到的确认补记已交付，迟到的确定失败撤掉结果未知。
 - 等回执的写法移进 `@aalis/schema-message`：新增 `awaitDelivery` 与 `DELIVERY_WAIT_MS`，plugin-image-sender 改用它，行为不变。
+- `OutboundDeliveryResult` 的失败分支新增可选的 `unconfirmed: true`，表示结果未知、可能已经送达。plugin-adapter-onebot 只在失败全部由上传超时造成时带上它。plugin-paper 按成品记下结果未知：这件成品 paper_send 拒绝再发，同一任务的其他成品照常可发；这件任务不再进待交付提示，宿主也不再直接发送，完成通知写明已发出、平台没确认、不要重发；plugin-publish-review 的作品通知按已发出处理；send_attachment 不报告成功，也不劝重发。
+- 新增 `outboundMediaMessage`：出站图片、音频、视频的归档写法，plugin-image-sender 与 plugin-webui-server 共用，归档格式不变。
 
 ### 必须同批升级的包
 
-- plugin-paper、plugin-image-sender 与 schema-message 同批升级：两者改用 schema-message 新增的 `awaitDelivery`，发布时它们对 schema-message 的依赖下限要抬到含这个导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
+- plugin-paper、plugin-image-sender、plugin-publish-review、plugin-webui-server 与 schema-message 同批升级：前三者在运行时导入 schema-message 新增的 `awaitDelivery`，plugin-image-sender 与 plugin-webui-server 另导入新增的 `outboundMediaMessage`。发布时它们对 schema-message 的依赖下限要抬到含这些导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
 - plugin-adapter-onebot 与 api-trigger、schema-message 同批升级：新版适配器把群友之间的戳一戳也转为入站，并以 `noticeTargetIsSelf: false` 标明不是戳机器人；旧版 api-trigger 的 `isAddressed` 不看这个标记，会把每次群友互戳都当作点名。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值；新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
 - 启用 plugin-paper 时，plugin-agent、plugin-session-manager、plugin-message-archive、plugin-memory-vector、plugin-memory-history、plugin-user-relation、plugin-user-profile、plugin-storage-local、plugin-checkpoint 须同批升级，用 DeepSeek 的另加 plugin-llm-deepseek，要发回网页与 MP4 的另加 plugin-adapter-onebot。旧版 plugin-agent 不填 `ToolCallContext.inbound`，白纸工具一律拒绝；旧版 session-manager 没有 `resolveInheritance`，诊断项与白纸页的白纸表抛 TypeError；旧版的 agent、归档、向量记忆与抽取插件不认识 `hostNotice`，完成通知会按普通消息呈现、归档为 user、进向量库与抽取窗口；旧版 memory-history 把完成通知带进同平台其他会话的跨会话注入；旧版 storage-local 没有 `paper` 根，成品取不回；旧版 checkpoint 会给 `paper` 根记账，别的会话回滚时删掉成品；旧版 onebot 适配器跳过文件附件，网页发不出去。
