@@ -98,7 +98,7 @@ function mount(
       plugins: { current: undefined },
       services: { inspect: () => [] },
       packageManager: { current: packageManager as PackageManagerService | undefined },
-      appDir: () => project,
+      appDir: project,
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     SEARCH,

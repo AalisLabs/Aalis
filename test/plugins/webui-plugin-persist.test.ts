@@ -44,7 +44,8 @@ const target = definePlugin({
  * `provideDoc: false`：宿主持有文档、照它登记，但不把它作为 host-config 交给插件。
  * `rejectSave`：落盘一律被拒（同 runtime 在配置文件有尚未生效的外部修改时拒写）。
  * `failSave`：落盘一律写入失败（权限、磁盘写满等，文件不变）。两个故障开关经返回的 `faults` 可中途改。
- * `faults.unload` 设为一个错误时，路由拿到的 unload 以它拒绝（内核的 unload 实际几乎不抛）。
+ * `faults.unload` 设为一个错误时，路由拿到的 unload 以它拒绝（内核的 unload 实际几乎不抛）；
+ * `faults.unloadedElsewhere` 为 true 时，路由调 unload 之前实例已被别处卸掉（内核这次返回 false）。
  * `timing`：慢激活阈值与拆卸宽限，交给 App。
  * 返回的 `external(next)` 模拟配置文件被外部改成 `next`（provider 的 watch 回调），装了热重载才有反应。
  */
@@ -58,7 +59,10 @@ function world(
   } = {},
 ) {
   const saved: AalisConfig[] = [];
-  const faults: { rejectSave: boolean; failSave: boolean; unload?: Error } = { rejectSave, failSave };
+  const faults: { rejectSave: boolean; failSave: boolean; unload?: Error; unloadedElsewhere?: boolean } = {
+    rejectSave,
+    failSave,
+  };
   let onExternal: ((next: AalisConfig) => void) | undefined;
   const provider: ConfigProvider = {
     save: snapshot => {
@@ -89,7 +93,17 @@ function world(
         ...caps.plugins,
         get current() {
           const pm = caps.plugins.current;
-          return pm && faults.unload ? { ...pm, unload: () => Promise.reject(faults.unload) } : pm;
+          if (pm && faults.unload) return { ...pm, unload: () => Promise.reject(faults.unload) };
+          if (pm && faults.unloadedElsewhere) {
+            return {
+              ...pm,
+              unload: async (id: string) => {
+                await pm.unload(id);
+                return pm.unload(id);
+              },
+            };
+          }
+          return pm;
         },
       };
       registerPluginRoutes(
@@ -222,7 +236,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.saved).toHaveLength(1);
   });
 
-  it('停用时插件未在宽限内停止、以 error 收场：回 500 按实际状态说明，文档仍记为禁用并落盘', async () => {
+  it('停用时插件未在宽限内停止、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；文档记为禁用并落盘', async () => {
     const w = world(
       { name: 'T', logLevel: 'error', plugins: {} },
       { timing: { slowThresholdMs: 20, disposeTimeoutMs: 20 } },
@@ -234,9 +248,10 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
       const reply = await w.disable('deaf');
       expect(w.app.plugins.getPlugin('deaf')?.state).toBe('error');
-      expect(reply.status).toBe(500);
+      expect(reply.status).toBe(200);
       expect(reply.body).toEqual({
-        error: '插件 deaf 未在宽限内停止，已转为 error 态，详见日志；配置文件已记为禁用',
+        ok: true,
+        message: '插件 deaf 未在宽限内停止，已转为 error 态，详见日志；配置文件已记为禁用',
       });
       expect(w.store.isPluginDisabled('deaf')).toBe(true);
       expect(w.saved).toHaveLength(1);
@@ -255,31 +270,35 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     },
   });
 
-  it('启用后激活失败、以 error 收场：回 500 按实际状态说明，文档仍记为启用并落盘', async () => {
+  it('启用后激活失败、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；文档记为启用并落盘', async () => {
     const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] });
     await w.boot(keyed);
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('disabled');
 
     const reply = await w.enable('keyed');
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('error');
-    expect(reply.status).toBe(500);
+    expect(reply.status).toBe(200);
     expect(reply.body).toEqual({
-      error: '插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；配置文件已记为启用',
+      ok: true,
+      message: '插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；配置文件已记为启用',
     });
     expect(w.store.isPluginDisabled('keyed')).toBe(false);
     expect(w.saved).toHaveLength(1);
   });
 
-  it('改配置后重新激活失败、以 error 收场：回 500 按实际状态说明，新配置仍写入文档并落盘', async () => {
+  it('改配置后重新激活失败、以 error 收场：配置写进了文件就回 200，message 按实际状态说明；新配置写入文档并落盘', async () => {
     const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: { apiKey: 'sk-PLACEHOLDER' } } });
     await w.boot(keyed);
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('active');
 
     const reply = await w.put('keyed', { apiKey: '' });
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('error');
-    expect(reply.status).toBe(500);
+    expect(reply.status).toBe(200);
     expect(reply.body).toEqual({
-      error: '插件 keyed 按新配置重新激活失败，已转为 error 态（需要配置 apiKey）；配置已写入配置文件',
+      ok: true,
+      message: '插件 keyed 按新配置重新激活失败，已转为 error 态（需要配置 apiKey）；配置已写入配置文件',
+      ignored: [],
+      removed: [],
     });
     expect(w.store.getPluginConfig('keyed')).toEqual({ apiKey: '' });
     expect(w.saved).toHaveLength(1);
@@ -296,15 +315,18 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     },
   });
 
-  it('建实例后激活失败、以 error 收场：回 500 按实际状态说明，实例与配置仍写入文档并落盘', async () => {
+  it('建实例后激活失败、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；实例与配置写入文档并落盘', async () => {
     const w = world({ name: 'T', logLevel: 'error', plugins: {} });
     await w.boot(fragile);
 
     const reply = await w.createInstance('fragile', 'x', { bad: true });
     expect(w.app.plugins.getPlugin('fragile:x')?.state).toBe('error');
-    expect(reply.status).toBe(500);
+    expect(reply.status).toBe(200);
     expect(reply.body).toEqual({
-      error: '已创建实例 fragile:x，但激活失败，已转为 error 态（坏配置）；配置已写入配置文件',
+      ok: true,
+      instanceId: 'fragile:x',
+      message: '已创建实例 fragile:x，但激活失败，已转为 error 态（坏配置）；配置已写入配置文件',
+      ignored: [],
     });
     expect(w.store.getPluginConfig('fragile:x')).toEqual({ bad: true });
     expect(w.saved).toHaveLength(1);
@@ -321,7 +343,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('error');
     expect(enabled.status).toBe(409);
     expect(enabled.body).toEqual({
-      error: `插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；已在运行态生效，但未写入配置文件（${SAVE_REJECTED}）；修好配置文件后，重启时以文件内容为准`,
+      error: `插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；已在运行态生效，但未写入配置文件（${SAVE_REJECTED}）；修好该文件后，重启时以文件内容为准`,
       applied: true,
     });
 
@@ -329,7 +351,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.app.plugins.getPlugin('fragile:x')?.state).toBe('error');
     expect(created.status).toBe(409);
     expect(created.body).toEqual({
-      error: `已创建实例 fragile:x，但激活失败，已转为 error 态（坏配置）；已在运行态生效，但未写入配置文件（${SAVE_REJECTED}）；修好配置文件后会按文件内容重载`,
+      error: `已创建实例 fragile:x，但激活失败，已转为 error 态（坏配置）；已在运行态生效，但未写入配置文件（${SAVE_REJECTED}）；修好该文件后会按文件内容重载`,
       applied: true,
     });
     expect(w.saved).toHaveLength(0);
@@ -412,18 +434,28 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     await w.boot(keyed, fragile);
 
     expect(await replyDuringFlight(w.app, 'zz-hold-enable', () => w.enable('keyed'))).toEqual({
-      status: 500,
-      body: { error: '插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；配置文件已记为启用' },
+      status: 200,
+      body: { ok: true, message: '插件 keyed 激活失败，已转为 error 态（需要配置 apiKey）；配置文件已记为启用' },
     });
     expect(await replyDuringFlight(w.app, 'zz-hold-put', () => w.put('keyed', { apiKey: '' }))).toEqual({
-      status: 500,
-      body: { error: '插件 keyed 按新配置重新激活失败，已转为 error 态（需要配置 apiKey）；配置已写入配置文件' },
+      status: 200,
+      body: {
+        ok: true,
+        message: '插件 keyed 按新配置重新激活失败，已转为 error 态（需要配置 apiKey）；配置已写入配置文件',
+        ignored: [],
+        removed: [],
+      },
     });
     expect(
       await replyDuringFlight(w.app, 'zz-hold-create', () => w.createInstance('fragile', 'x', { bad: true })),
     ).toEqual({
-      status: 500,
-      body: { error: '已创建实例 fragile:x，但激活失败，已转为 error 态（坏配置）；配置已写入配置文件' },
+      status: 200,
+      body: {
+        ok: true,
+        instanceId: 'fragile:x',
+        message: '已创建实例 fragile:x，但激活失败，已转为 error 态（坏配置）；配置已写入配置文件',
+        ignored: [],
+      },
     });
   });
 
@@ -631,6 +663,35 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     });
     expect(w.saved).toHaveLength(1);
     expect(Object.hasOwn(w.saved[0].plugins, 'multi:x'), '配置段已从文件删掉').toBe(false);
+  });
+
+  it('删实例时实例已被别处卸掉（内核返回 false、条目已不在）：照常回已删除，不说停机中', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
+    await w.boot(multi);
+    await registerFromDoc(w.app, w.store, multi, 'multi:x');
+    w.faults.unloadedElsewhere = true;
+    expect(await w.deleteInstance('multi:x')).toEqual({
+      status: 200,
+      body: { ok: true, message: '已删除实例 multi:x' },
+    });
+    expect(w.app.plugins.getPlugin('multi:x')).toBeUndefined();
+  });
+
+  it('停机进行中删实例：内核拒绝卸载，配置段照样从文件删掉，回 200 并注明没卸载运行中的实例', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
+    await w.boot(multi);
+    await registerFromDoc(w.app, w.store, multi, 'multi:x');
+    const stopping = w.app.stop();
+    try {
+      expect(await w.deleteInstance('multi:x')).toEqual({
+        status: 200,
+        body: { ok: true, message: '已从配置文件删除实例 multi:x；停机中，未卸载运行中的实例' },
+      });
+      expect(w.saved).toHaveLength(1);
+      expect(Object.hasOwn(w.saved[0].plugins, 'multi:x'), '配置段已从文件删掉').toBe(false);
+    } finally {
+      await stopping;
+    }
   });
 
   it('删实例的级联重算期间外部改了配置文件：热重载不会把它按旧文件重新登记成文件里没有的在跑实例', async () => {

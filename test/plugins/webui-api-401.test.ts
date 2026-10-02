@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, pageAction, redirectToLoginOn401 } from '../../packages/plugin-webui-client/src/api.js';
+import { ApiError, api, pageAction, redirectToLoginOn401 } from '../../packages/plugin-webui-client/src/api.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 会话失效(401) 收口：旧行为是 api() 把 {error:'unauthenticated'} 当数据
@@ -62,6 +62,24 @@ describe('webui api() 会话失效(401) → 跳登录页而非白屏', () => {
     );
     await expect(api('/api/files?path=x')).rejects.toThrow('路径不存在');
     expect(replaceMock, '非 401 不该跳登录页').not.toHaveBeenCalled();
+  });
+
+  it('api() 撞非 2xx：抛出的错误带上回执里的 applied（运行态已改、只是没写进配置文件）', async () => {
+    const error = '已在运行态生效，但未写入配置文件（外部修改未生效）；修好该文件后会按文件内容重载';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error, applied: true }), { status: 409 })),
+    );
+    const applied = await api('/api/plugins/multi/instances', { method: 'POST' }).catch((e: unknown) => e);
+    expect(applied).toBeInstanceOf(ApiError);
+    expect(applied).toMatchObject({ message: error, applied: true });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: '无法创建实例："multi:x" 已存在' }), { status: 400 })),
+    );
+    const refused = await api('/api/plugins/multi/instances', { method: 'POST' }).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ message: '无法创建实例："multi:x" 已存在', applied: false });
   });
 
   it('api() 撞非 2xx 且响应体非 JSON：退回 HTTP 状态码文案', async () => {
