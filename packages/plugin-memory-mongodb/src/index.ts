@@ -1,4 +1,4 @@
-import { hostPaths } from '@aalis/api-host-paths';
+import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
 import {
   type MemoryService,
   type MetadataEntry,
@@ -82,12 +82,6 @@ type MongoMemoryConfig = Pick<ConfigOf<typeof configSchema>, 'uri' | 'database'>
 /** 库的归属记录：元数据集合里的一条，命名空间专用，不与插件的元数据混在一起 */
 const OWNER_NAMESPACE = 'aalis.home';
 const OWNER_KEY = 'owner';
-
-/** 本次激活所在的家目录（宿主经 host-paths 给出；宿主不提供时不做归属检查） */
-interface HomeIdentity {
-  home: string;
-  profile?: string;
-}
 
 // ===== 数据库文档类型 =====
 
@@ -381,13 +375,7 @@ async function connectAndProvide(caps: Caps): Promise<void> {
     serverSelectionTimeoutMS: mongoConfig.connectTimeoutMs,
     connectTimeoutMS: mongoConfig.connectTimeoutMs,
   });
-  const paths = caps.paths.current;
-  await openAndProvide(
-    client,
-    mongoConfig,
-    { logger, lifecycle, provide },
-    paths ? { home: paths.home, ...(paths.profile !== undefined ? { profile: paths.profile } : {}) } : undefined,
-  );
+  await openAndProvide(client, mongoConfig, { logger, lifecycle, provide }, caps.paths.current);
 }
 
 /**
@@ -405,7 +393,8 @@ export async function openAndProvide(
   client: MongoClient,
   mongoConfig: MongoMemoryConfig,
   { logger, lifecycle, provide }: Omit<Caps, 'config' | 'paths'>,
-  owner?: HomeIdentity,
+  /** 本次激活所在的家目录（宿主经 host-paths 给出；宿主不提供时不做归属检查） */
+  owner?: Pick<HostPaths, 'home' | 'profile'>,
 ): Promise<void> {
   const { suffix } = parseInstanceId(lifecycle.id);
   const database = mongoConfig.database || deriveDatabase(owner?.profile, suffix);

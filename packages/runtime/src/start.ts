@@ -16,6 +16,7 @@ import {
   isFullyAbsolute,
   isHomeInitialized,
   parseHostArgs,
+  profileOfRealHome,
   resolveHome,
 } from './home.js';
 import { acquireInstanceLock, type InstanceLock } from './instance-lock.js';
@@ -162,9 +163,9 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     process.exit(1);
   }
   // 交给插件的家目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
-  // （记忆库按它记归属）
+  // （记忆库按它记归属）。profile 按写法认不出时按真实路径再认一次，派生的库名才跟着同一个目录走
   const realHome = realpathSync.native(declared.home);
-  const paths = derivePaths(realHome, appDirOf(realHome), home.profile);
+  const paths = derivePaths(realHome, appDirOf(realHome), home.profile ?? profileOfRealHome(realHome));
   // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」。
   // 缺省的 <家目录>/app 留给以后的全局启动器，现在的入口都要自己传 appDir。
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
@@ -193,7 +194,8 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
       const { holder, file } = acquired;
       const occupied =
         `[aalis] 家目录 ${paths.home} 已有实例在运行：pid ${holder.pid}（锁文件 ${file}）。\n` +
-        '[aalis] 确认没有实例在运行时（例如进程被强制结束、而本机查不了进程启动时间），删掉这个锁文件再启动。';
+        '[aalis] 确认没有实例在运行时（例如进程被强制结束、而本机查不了进程启动时间，或容器被强杀后在同一次开机内重启），' +
+        '删掉这个锁文件再启动。';
       if (hostArgs.service) {
         // 服务形态按正常退出：配合 KeepAlive={SuccessfulExit=false}，不会被服务管理器反复拉起再抢锁
         console.error(`${occupied}\n[aalis] 以服务形态启动，按正常退出处理。`);
@@ -246,8 +248,17 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   bootstrap.dispose();
 
   // ── 组装 App：YAML 配置文档与密钥文件、按 loader 发现插件、用 spawn 重启 ──
-  const { config, provider } = createFsYamlConfigProvider(paths.config);
-  const secrets = createFsSecretsProvider(paths.secrets);
+  // 配置或密钥文件读不进来（写坏了、读不了）是环境问题：一行报错退出，不带调用栈（消息不含文件内容）
+  const loadOrExit = <T>(load: () => T): T => {
+    try {
+      return load();
+    } catch (err) {
+      console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  };
+  const { config, provider } = loadOrExit(() => createFsYamlConfigProvider(paths.config));
+  const secrets = loadOrExit(() => createFsSecretsProvider(paths.secrets));
   const store = createConfigStore(config, provider, secrets);
   // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认
   // （启动时读取，改了要重启）

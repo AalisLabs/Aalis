@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   linkSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -29,7 +30,7 @@ import { join } from 'node:path';
 //
 // 判活只用与墙上时钟无关的标识（时钟被 NTP 步进、夏令时回拨都不影响）：
 // - 本次开机的标识不同（重启过）判残留；
-// - pid 命名空间不同（另一个容器）判不了，按占用处理；
+// - pid 命名空间不同（另一个容器，或同一个容器被强杀后重启）判不了，按占用处理；
 // - pid 不在判残留；pid 在时比对进程启动标识，不同判残留（pid 被复用）；
 // - 查不了启动标识（Windows、没有 ps 的精简镜像）时只看 pid。
 
@@ -128,17 +129,12 @@ export const nodeProcessProbe: ProcessProbe = {
   },
 };
 
-/** 取锁时遇到的环境问题（锁文件读不了、文件系统不支持硬链接等）：宿主据此一行报错退出 */
-export class InstanceLockError extends Error {
-  override name = 'InstanceLockError';
-}
-
 export interface InstanceLock {
   /** 本进程持有的锁文件 */
   readonly file: string;
   /** 交接令牌：respawn 时经环境变量交给新进程 */
   readonly handoffToken: string;
-  /** 删掉本进程的锁文件：只在它仍是本进程那份时删（交接后可能已被清掉，同名的也可能是别的实例的）；可重复调用 */
+  /** 删掉本进程的锁文件：只在它仍是本进程那份时删（交接后可能已被清掉，同名的也可能是别的实例的）；靠内容比对，重复调用不会误删 */
   release(): void;
 }
 
@@ -146,14 +142,19 @@ type AcquireResult = { ok: true; lock: InstanceLock } | { ok: false; holder: Loc
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-/** 读锁：文件已不在为 'gone'；内容坏了为 'corrupt'（按残留处理）；别的读错误不猜，抛给宿主 */
+/**
+ * 读锁：文件已不在为 'gone'；内容坏了为 'corrupt'（按残留处理），目录项还在却读不到（悬空的符号链接）同样算坏；
+ * 别的读错误不猜，抛给宿主
+ */
 function readHolder(file: string): LockHolder | 'gone' | 'corrupt' {
   let text: string;
   try {
     text = readFileSync(file, 'utf-8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'gone';
-    throw new InstanceLockError(`读不了锁文件 ${file}：${(err as Error).message}`);
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return lstatSync(file, { throwIfNoEntry: false }) ? 'corrupt' : 'gone';
+    }
+    throw new Error(`读不了锁文件 ${file}：${(err as Error).message}`);
   }
   try {
     const v = JSON.parse(text) as Partial<LockHolder>;
@@ -164,21 +165,22 @@ function readHolder(file: string): LockHolder | 'gone' | 'corrupt' {
   return 'corrupt';
 }
 
-function generations(runDir: string): number[] {
-  const out: number[] = [];
+/** run/ 里的锁按代号从小到大排。读锁用目录里的原文件名，不按代号重拼：`instance.05.lock` 拼不回原名 */
+function generations(runDir: string): Array<{ n: number; name: string }> {
+  const out: Array<{ n: number; name: string }> = [];
   for (const name of readdirSync(runDir)) {
     const m = LOCK_PATTERN.exec(name);
-    if (m) out.push(Number(m[1]));
+    if (m) out.push({ n: Number(m[1]), name });
   }
-  return out.sort((a, b) => a - b);
+  return out.sort((a, b) => a.n - b.n);
 }
 
 /** 持有者是否还在（见文件头的判活规则）；判不了的按在处理 */
 function isHolderAlive(holder: LockHolder, probe: ProcessProbe): boolean {
-  const ns = probe.pidNs();
-  if (holder.pidNs !== undefined && ns !== undefined && holder.pidNs !== ns) return true;
   const boot = probe.bootId();
   if (holder.bootId !== undefined && boot !== undefined && holder.bootId !== boot) return false;
+  const ns = probe.pidNs();
+  if (holder.pidNs !== undefined && ns !== undefined && holder.pidNs !== ns) return true;
   // 锁里记的是本进程的 pid，而本进程还没取过锁：那是 pid 被复用前的上一个进程
   if (holder.pid === probe.pid) return false;
   if (!probe.exists(holder.pid)) return false;
@@ -218,40 +220,37 @@ export function acquireInstanceLock(
     try {
       writeFileSync(temp, JSON.stringify(mine), { mode: 0o600 });
     } catch (err) {
-      throw new InstanceLockError(`写不进 ${runDir}：${(err as Error).message}`);
+      throw new Error(`写不进 ${runDir}：${(err as Error).message}`);
     }
     for (;;) {
       const top = generations(runDir).at(-1);
+      const next = (top?.n ?? 0) + 1;
       if (top !== undefined) {
-        const file = join(runDir, `instance.${top}.lock`);
+        const file = join(runDir, top.name);
         const holder = readHolder(file);
         // 刚被释放：重读一遍
         if (holder === 'gone') continue;
         if (blocks(holder)) return { ok: false, holder, file };
+        // 代号到了 2^53 及以上，加一不再变大：link 会一直撞上已有的文件
+        if (next <= top.n) throw new Error(`锁文件 ${file} 的代号太大，排不出下一代；确认没有实例在运行后删掉它再启动`);
       }
-      const next = (top ?? 0) + 1;
       const file = join(runDir, `instance.${next}.lock`);
       try {
         linkSync(temp, file);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-        throw new InstanceLockError(
-          `建不出锁文件 ${file}（家目录所在的文件系统要支持硬链接）：${(err as Error).message}`,
-        );
+        throw new Error(`建不出锁文件 ${file}（家目录所在的文件系统要支持硬链接）：${(err as Error).message}`);
       }
       // 更低的代号里还有活着的持有者：让出刚建的这一代（读锁出错时同样先让出再抛）
       const blocker = lowerBlocker(runDir, next, blocks, file);
       if (blocker) return { ok: false, ...blocker };
       cleanup(runDir, next, probe);
-      let released = false;
       return {
         ok: true,
         lock: {
           file,
           handoffToken: token,
           release() {
-            if (released) return;
-            released = true;
             try {
               const current = readHolder(file);
               if (typeof current === 'object' && current.handoffHash === mine.handoffHash) unlinkSync(file);
@@ -278,9 +277,9 @@ function lowerBlocker(
   own: string,
 ): { holder: LockHolder; file: string } | undefined {
   try {
-    for (const g of generations(runDir)) {
-      if (g >= next) break;
-      const file = join(runDir, `instance.${g}.lock`);
+    for (const { n, name } of generations(runDir)) {
+      if (n >= next) break;
+      const file = join(runDir, name);
       const holder = readHolder(file);
       if (!blocks(holder)) continue;
       unlinkSync(own);

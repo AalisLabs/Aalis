@@ -64,7 +64,8 @@ async function race(runDir: string, dir: string): Promise<string[]> {
   return outcome.sort();
 }
 
-describe('实例锁：多个进程同时取锁', () => {
+// 收场时按进程组 kill(-pid)，只在 POSIX 上可用
+describe.skipIf(process.platform === 'win32')('实例锁：多个进程同时取锁', () => {
   const dirs: string[] = [];
   afterEach(() => {
     // 失败时也不留孤儿：按进程组杀掉（tsx 包装层另起了真正跑脚本的 node 子进程）

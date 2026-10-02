@@ -1,4 +1,15 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +22,7 @@ import {
   isFullyAbsolute,
   isHomeInitialized,
   parseHostArgs,
+  profileOfRealHome,
   resolveHome,
 } from '../../packages/runtime/src/home.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
@@ -146,6 +158,41 @@ describe('resolveHome', () => {
     expect(resolveHome({ ...noCwd, args: { home: '/abs/h' } })).toEqual({ home: '/abs/h' });
     expect(resolveHome({ ...noCwd, args: {} })).toEqual({ home: '/u/.aalis' });
     expect(() => resolveHome({ ...noCwd, args: { home: 'rel' } })).toThrow('当前目录已不存在');
+  });
+});
+
+// 符号链接在 Windows 上要管理员或开发者模式
+describe.skipIf(process.platform === 'win32')('profileOfRealHome', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  /** 临时目录的真实路径（macOS 的临时目录本身经 /var → /private/var 的链接） */
+  const root = () => {
+    const d = realpathSync.native(mkdtempSync(join(tmpdir(), 'aalis-profile-')));
+    dirs.push(d);
+    return d;
+  };
+
+  it('家目录的真实路径就是 ~/.aalis-<p> 的真实路径时为 p：用户主目录经链接给出也认得出', () => {
+    const r = root();
+    const user = join(r, 'user');
+    mkdirSync(join(user, '.aalis-t'), { recursive: true });
+    symlinkSync(user, join(r, 'user-link'));
+    expect(profileOfRealHome(join(user, '.aalis-t'), user)).toBe('t');
+    expect(profileOfRealHome(join(user, '.aalis-t'), join(r, 'user-link'))).toBe('t');
+  });
+
+  it('别处的同名目录、~/.aalis-<p> 指向的别处、用户主目录不存在：都没有 profile', () => {
+    const r = root();
+    const user = join(r, 'user');
+    mkdirSync(user);
+    mkdirSync(join(r, 'other', '.aalis-t'), { recursive: true });
+    expect(profileOfRealHome(join(r, 'other', '.aalis-t'), user)).toBeUndefined();
+    // ~/.aalis-t 自己是指向别处的链接：经别处的真实路径选中认不出
+    symlinkSync(join(r, 'other', '.aalis-t'), join(user, '.aalis-t'));
+    expect(profileOfRealHome(join(r, 'other', '.aalis-t'), user)).toBeUndefined();
+    expect(profileOfRealHome(join(user, '.aalis-t'), join(r, 'missing'))).toBeUndefined();
   });
 });
 

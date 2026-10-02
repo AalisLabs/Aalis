@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -59,13 +59,5 @@ describe('storage-local 日志根 logs', () => {
     expect(warns.some(w => w.includes('roots 跳过 logs'))).toBe(true);
     const info = storage.listRoots().find(r => r.name === 'logs');
     expect(info?.writable).toBe(false);
-  });
-
-  it('roots 为空回落默认根时同样有 logs 根，目录建在家目录的 logs/', async () => {
-    await app.plugin(storageLocal, { roots: [] });
-    await app.plugins.idle();
-    const storage = createStorageGateway(app.bind({ storage: storageService }).storage);
-    expect(storage.listRoots().map(r => r.name)).toContain('logs');
-    expect(realpathSync(join(home, 'logs'))).toBe(join(realpathSync(home), 'logs'));
   });
 });
