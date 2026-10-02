@@ -2360,7 +2360,9 @@ function runAdapter(caps: Caps): void {
       if (unconfirmed.length) {
         problems.push(`文件 ${unconfirmed.join('、')} 上传超时，结果未知，可能已经送达，请勿重发`);
       }
-      return { ok: false, error: problems.join('；') };
+      const error = problems.join('；');
+      // 只有上传超时、没有别的失败时才整条算结果未知；夹着确定没发出的部分，发起方仍按失败处理
+      return errors.length ? { ok: false, error } : { ok: false, error, unconfirmed: true };
     }
     if (!textSent && !delivered.length) return { ok: false, error: '没有可发送的内容' };
     return { ok: true };

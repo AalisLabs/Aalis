@@ -77,13 +77,15 @@ interface OutgoingMessage {
   reasoningContent?: string;
   segments?: ContentSegment[];        // 与协议层 Message.segments 一致
   source?: 'agent' | 'system' | 'command';
-  delivery?: Promise<{ ok: true } | { ok: false; error: string }>;
+  delivery?: Promise<{ ok: true } | { ok: false; error: string; unconfirmed?: true }>;
 }
 ```
 
 `source='agent'` 表示由 AI 生成，可被分条延迟发送以模拟自然节奏；其它来源默认整条立即发送。
 
-`delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经保存（有在线页面时同时推送，没有时打开页面从历史看到），不区分「已推送」与「只保存」；CLI 成功表示已在终端写出附件说明。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
+`delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经保存（有在线页面时同时推送，没有时打开页面从历史看到），不区分「已推送」与「只保存」，存档服务不在场时只有推送到在线页面才算成功，写入会话历史失败、但已推送到在线页面时仍算成功；CLI 成功表示已在终端写出（附件写一行说明）。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
+
+失败回执带 `unconfirmed: true` 时表示请求已经发出、只是没等到平台确认，消息可能已经送达（如 OneBot 文件上传超时）；发起方不得自动重发，也不得劝模型重发。适配器只在失败全部属于这种情况时才带它，夹着确定没发出的部分时按普通失败报。没有这个标记的失败才是确定没送达。
 
 发起方用 `awaitDelivery(delivery, signal)` 等回执：回合中止或等满 `DELIVERY_WAIT_MS`（90 秒）时返回 `undefined`，只表示未确认，不表示没发出（适配器的发送不随之取消），应告诉模型「结果未确认，请勿重发」。
 
@@ -108,9 +110,10 @@ getSenderLabel(nickname?: string, userId?: string): string | undefined;
 prefixSender(content: string, nickname?: string, userId?: string): string;
 getMessageName(userId?: string): string | undefined;
 buildIncomingContent(incoming: IncomingMessage): string;
+outboundMediaMessage(kind: 'image' | 'audio' | 'video', ref: string, desc?: string): Message;
 ```
 
-前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法。
+前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法。`outboundMediaMessage` 是发出的图片、音频、视频归档进会话历史的写法：一条 assistant 消息，`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`），时间戳与 `metadata` 由调用方补上。
 
 ## kind 常量
 

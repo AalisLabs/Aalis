@@ -320,6 +320,15 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(out.error).toBe('模拟平台拒绝');
     expect(outbound).toHaveLength(1);
   });
+
+  it('平台报结果未知（可能已经送达）：不报告成功，也不劝重发——不靠适配器的措辞', async () => {
+    deliveryResult = { ok: false, error: 'upload timeout', unconfirmed: true };
+    const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
+    expect(out.ok).toBeUndefined();
+    expect(out.error).toContain('可能已经送达');
+    expect(out.error).toContain('请勿重发');
+    expect(outbound).toHaveLength(1);
+  });
 });
 
 describe('send_attachment 只读文件头，不整份载入', () => {

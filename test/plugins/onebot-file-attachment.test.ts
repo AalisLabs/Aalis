@@ -419,13 +419,41 @@ describe('onebot 出站：文件附件', () => {
       await until(() => t.sent().some(a => a.action === 'upload_group_file'));
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await msg.delivery;
-      expect(result).toMatchObject({ ok: false });
+      expect(result, '只有上传超时：结构化地标为结果未知').toMatchObject({ ok: false, unconfirmed: true });
       expect(result?.ok === false && result.error).toContain('请勿重发');
       await until(() => t.failureNotes().length > 0);
       const note = String(t.failureNotes()[0].message.content);
       expect(note).toContain('可能已经送达');
       expect(note).not.toContain('未能送达');
       expect(t.sent().filter(a => a.action === 'upload_group_file')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('上传超时夹着确定没发出的附件：整条按失败报，不标结果未知', async () => {
+    const t = await boot({
+      replyToSend: 'hold',
+      files: { 'data:/paper-out/a.html': HTML, 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) },
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const msg: OutgoingMessage = {
+        sessionId: GROUP,
+        content: '',
+        attachments: [
+          { kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' },
+          { kind: 'file', data: 'data:/paper-out/big.html', name: 'big.html' },
+        ],
+        source: 'agent',
+      };
+      await t.send(msg);
+      await until(() => t.sent().some(a => a.action === 'upload_group_file'));
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await msg.delivery;
+      expect(result).toMatchObject({ ok: false });
+      expect(result && 'unconfirmed' in result).toBe(false);
+      expect(result?.ok === false && result.error).toContain('上传超时');
     } finally {
       vi.useRealTimers();
     }

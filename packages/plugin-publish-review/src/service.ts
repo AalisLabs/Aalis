@@ -95,8 +95,8 @@ interface ReviewServiceDeps {
   now?: () => number;
   signal?: AbortSignal;
   /**
-   * 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。平台确认收下才 resolve；direct 为真时直接发宿主原文，
-   * 不再让她转述（这条通知已经转述过、平台却没确认）。抛 NoticeUndelivered 表示已转述但平台没确认
+   * 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。平台确认收下（或报结果未知、可能已经送达）才 resolve；
+   * direct 为真时直接发宿主原文，不再让她转述（这条通知已经转述过、平台却没确认）。抛 NoticeUndelivered 表示已转述但平台没确认
    */
   notice?: (origin: PublishOrigin, content: string, id: string, title?: string, opts?: { direct?: boolean }) => unknown;
   /** 通知通道当前能否发送（已开放且网关在场）；缺省视为能发。 */

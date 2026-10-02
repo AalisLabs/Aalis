@@ -150,13 +150,20 @@ export class ReviewNotices {
     await this.#confirm(message, id);
   }
 
-  /** 等平台确认收下；没确认就抛 {@link NoticeUndelivered}，留待重发 */
+  /**
+   * 等平台确认收下；没确认就抛 {@link NoticeUndelivered}，留待重发。平台报结果未知（可能已经送达）时不重发，
+   * 按已发出处理，免得同一条通知发两遍
+   */
   async #confirm(message: OutgoingMessage, id: string): Promise<void> {
     const delivery = message.delivery;
     if (!delivery) throw new NoticeUndelivered('没有平台适配器接手这条通知');
     const result = await awaitDelivery(delivery, this.signal, DELIVERY_WAIT_MS);
     if (!result) {
       throw new NoticeUndelivered(this.signal?.aborted ? '停机时这条通知还没得到平台确认' : '平台一直没有确认这条通知');
+    }
+    if (!result.ok && result.unconfirmed) {
+      this.logger.warn(`作品 ${id} 的通知平台结果未知，可能已经送达，不重发：${result.error}`);
+      return;
     }
     if (!result.ok) {
       this.logger.warn(`作品 ${id} 的通知平台没有收下：${result.error}`);

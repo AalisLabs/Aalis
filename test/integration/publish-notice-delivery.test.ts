@@ -191,6 +191,20 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     });
   });
 
+  it('平台报结果未知（可能已经送达）：按已发出处理，不留待重发', async () => {
+    const h = await boot(
+      [{ content: JSON.stringify({ message: `可以玩了：${URL}`, mood: '高兴' }) }],
+      {},
+      async () => ({
+        ok: false,
+        error: '上传超时，结果未知',
+        unconfirmed: true,
+      }),
+    );
+    await expect(h.send()).resolves.toBeUndefined();
+    expect(h.outgoing).toHaveLength(1);
+  });
+
   it('停机时不再等平台回执：立即报没送达，不拖过清理时限', async () => {
     const stop = new AbortController();
     const h = await boot(
