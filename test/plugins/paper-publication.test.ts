@@ -4,6 +4,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
 import { artifactUri } from '../../packages/plugin-paper/src/artifacts.js';
 import type { PaperConfig } from '../../packages/plugin-paper/src/config.js';
+import { rawDeliveryAllowed } from '../../packages/plugin-paper/src/deliver.js';
 import type { LedgerStore, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { PaperPublication } from '../../packages/plugin-paper/src/publication.js';
 
@@ -174,6 +175,34 @@ describe('PaperPublication', () => {
     await h.coordinator.close();
   });
 
+  it('a manual re-nomination counts its 24 hours from the re-nomination, not from the task end', async () => {
+    const t = { ...task([artifact('a-00000001', 'page.html', 'html')]), endedAt: 0 };
+    t.publication = { ...t.publication!, pendingSince: 24 * 3_600_000 };
+    let now = 24 * 3_600_000;
+    const h = setup(t, { surface: false, now: () => now });
+    h.connect();
+    h.coordinator.open();
+    await settled();
+    expect(t.publication?.state).toBe('pending');
+    now = 48 * 3_600_000;
+    h.notify();
+    await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
+    expect(t.publication?.reason).toContain('24 小时');
+    await h.coordinator.close();
+  });
+
+  it('a re-nominated task refused by review earlier stays undeliverable when the retry later fails for an outage', async () => {
+    const t = { ...task([artifact('a-00000001', 'page.html', 'html')]), endedAt: 0 };
+    t.publication = { ...t.publication!, reviewRefused: true };
+    const h = setup(t, { surface: false, now: () => 24 * 3_600_000 });
+    h.connect();
+    h.coordinator.open();
+    await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
+    expect(t.publication?.reason).toContain('24 小时');
+    expect(rawDeliveryAllowed(t), '审核结论不因之后的期限失败被洗成可直接发').toBe(false);
+    await h.coordinator.close();
+  });
+
   it('a permanent check refusal fails without direct delivery: that is a verdict, not an outage', async () => {
     const t = task([artifact('a-00000001', 'page.html', 'html')]);
     const h = setup(t);
@@ -223,6 +252,35 @@ describe('PaperPublication', () => {
     await second.coordinator.close();
   });
 
+  it('checks public paths before submitting: an automatic pick with an unlisted extension, and stored manual paths', async () => {
+    const rooted = task([
+      artifact('a-00000001', 'site/index.html', 'html'),
+      artifact('a-00000002', 'site/workspace.tar.gz', 'other'),
+    ]);
+    const automatic = setup(rooted);
+    automatic.connect();
+    automatic.coordinator.open();
+    await vi.waitFor(() => expect(rooted.publication?.state).toBe('failed'));
+    expect(rooted.publication?.reason).toBe('作品路径不符合发布要求，请手动选择成品');
+    expect(automatic.nominate).not.toHaveBeenCalled();
+    await automatic.coordinator.close();
+
+    // 账本里存着的手选路径只差大小写（公开根可能不分大小写）
+    const manual = task([artifact('a-00000001', 'cat.png', 'png'), artifact('a-00000002', 'cat-2.png', 'png')]);
+    manual.publication = {
+      ...manual.publication!,
+      artifactIds: ['a-00000001', 'a-00000002'],
+      paths: ['Cat.png', 'cat.png'],
+    };
+    const stored = setup(manual);
+    stored.connect();
+    stored.coordinator.open();
+    await vi.waitFor(() => expect(manual.publication?.state).toBe('failed'));
+    expect(manual.publication?.reason).toBe('已选作品路径不符合发布要求');
+    expect(stored.nominate).not.toHaveBeenCalled();
+    await stored.coordinator.close();
+  });
+
   it('enforces the paper target allowlist before reading files or submitting', async () => {
     const t = task([artifact('a-00000001', 'index.html', 'html')]);
     const h = setup(t, { target: false });
@@ -267,6 +325,63 @@ describe('PaperPublication', () => {
     expect(h.nominate).toHaveBeenCalledTimes(2);
     expect(h.nominate.mock.calls[0][0]).toEqual(h.nominate.mock.calls[1][0]);
     await h.coordinator.close();
+  });
+
+  it('retries a failed artifact read after 30 seconds even when another task waits hours for its quota slot', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = task([artifact('a-00000001', 'index.html', 'html')]);
+      const h = setup(t);
+      const waiting: TaskRecord = { ...task([artifact('a-00000002', 'index.html', 'html')]), id: 't-00000002' };
+      waiting.publication = { ...waiting.publication!, nextAttemptAt: Date.now() + 3_600_000 };
+      h.ledger.data.tasks[waiting.id] = waiting;
+      const read = vi.mocked(h.storage.readFile);
+      const original = read.getMockImplementation();
+      read.mockImplementation(async () => {
+        throw new Error('disk unavailable');
+      });
+      h.connect();
+      h.coordinator.open();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(t.publication?.state).toBe('pending');
+      read.mockImplementation(original!);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(t.publication?.state, '读成品失败的重试不被另一件任务的推迟时刻盖掉').toBe('submitted');
+      expect(waiting.publication?.state).toBe('pending');
+      await h.coordinator.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['the publish service is absent', 'absent'],
+    ['listing surfaces throws', 'throws'],
+    ['the surface stays unavailable', 'unavailable'],
+  ] as const)('keeps retrying every 30 seconds while %s, so the 24-hour deadline is reached without any other wake-up', async (_label, outage) => {
+    vi.useFakeTimers();
+    try {
+      const t = { ...task([artifact('a-00000001', 'page.html', 'html')]), endedAt: 0 };
+      let now = 0;
+      const h = setup(t, { surface: outage !== 'unavailable', now: () => now });
+      if (outage === 'throws')
+        vi.mocked(h.service.listSurfaces).mockImplementation(() => {
+          throw new Error('surface registry unavailable');
+        });
+      if (outage !== 'absent') h.connect();
+      h.coordinator.open();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(t.publication?.state).toBe('pending');
+      now = 24 * 3_600_000;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(t.publication?.state, '推进不了时 30 秒后重试，期限到了自然会查到').toBe('failed');
+      expect(t.publication?.reason).toContain('24 小时');
+      expect(h.nominate).not.toHaveBeenCalled();
+      await h.coordinator.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('resumes a manual repair whose publish receipt could not be saved', async () => {
@@ -360,13 +475,68 @@ describe('PaperPublication', () => {
   it.each(['failed', 'cancelled'] as const)('marks a %s creation terminal without a publish provider', async state => {
     const t = task([artifact('a-00000001', 'index.html', 'html')]);
     t.state = state;
+    const notice = { id: 'n-00000001', at: 1 };
+    t.notice = notice;
     const h = setup(t);
     h.coordinator.open();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
     expect(t.publication?.reason).toMatch(/未提交发布/);
+    expect(t.notice, '创作失败的通知已经报过这件任务，不因发布随之失败再报一次').toBe(notice);
     expect(h.ledger.save).toHaveBeenCalled();
     await vi.waitFor(() => expect(h.changed).toHaveBeenCalled());
     expect(h.nominate).not.toHaveBeenCalled();
+    await h.coordinator.close();
+  });
+
+  // 经 works_nominate 重新提名的任务带着上一次失败的通知标记。只有提交之前转为失败才清它（由完成通知报新结果）；
+  // 只是推迟、或已提交之后才失败（作品通知那边报）时标记照旧，写盘失败回滚时标记也一并还原
+  it('keeps the earlier notice marker when a re-nomination is only postponed', async () => {
+    const t = task([artifact('a-00000001', 'index.html', 'html')]);
+    const notice = { id: 'n-00000001', at: 1 };
+    t.notice = notice;
+    const h = setup(t);
+    h.nominate.mockImplementationOnce(async () => ({ refused: '待审额度已满', retryAfterMs: 60_000 }));
+    h.connect();
+    h.coordinator.open();
+    await vi.waitFor(() => expect(t.publication?.nextAttemptAt).toBeTypeOf('number'));
+    expect(t.publication?.state).toBe('pending');
+    expect(t.notice).toBe(notice);
+    await h.coordinator.close();
+  });
+
+  it('keeps the earlier notice marker when a re-nominated work fails after submission', async () => {
+    const t = task([artifact('a-00000001', 'index.html', 'html')]);
+    const notice = { id: 'n-00000001', at: 1 };
+    t.notice = notice;
+    const h = setup(t);
+    h.connect();
+    h.coordinator.open();
+    await vi.waitFor(() => expect(t.publication?.state).toBe('submitted'));
+    h.setState('rejected');
+    await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
+    expect(t.publication?.workId).toBe('abcdefghij');
+    expect(t.notice).toBe(notice);
+    await h.coordinator.close();
+  });
+
+  it('restores the notice marker together with the publication when saving a pre-submission failure fails', async () => {
+    const t = task([artifact('a-00000001', 'index.html', 'html')]);
+    t.publication = { ...t.publication!, artifactIds: ['a-00000001'], paths: ['index.html'] };
+    const pending = t.publication;
+    const notice = { id: 'n-00000001', at: 1 };
+    t.notice = notice;
+    const h = setup(t);
+    h.nominate.mockImplementation(async () => ({ refused: '路径不符合要求' }));
+    // 失败结论一直写不进盘：每次都回滚
+    vi.mocked(h.ledger.save).mockImplementation(async () => {
+      if (t.publication?.state === 'failed') throw new Error('disk unavailable');
+    });
+    h.connect();
+    h.coordinator.open();
+    await vi.waitFor(() => expect(h.ledger.save).toHaveBeenCalled());
+    await settled();
+    expect(t.publication).toBe(pending);
+    expect(t.notice).toBe(notice);
     await h.coordinator.close();
   });
 

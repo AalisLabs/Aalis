@@ -3,8 +3,10 @@
 //
 // 类型按白名单：位图与 MP4 按 sendMediaMaxMB、单个 HTML 按 sendHtml 与大小上限，位图走 image、MP4 走 video、
 // HTML 走 file，远端给的原扩展名须与按文件头判定的类型一致。文件名由宿主按任务名重写，附件指向白纸根里宿主命名的
-// 文件。等平台适配器确认收下（awaitDelivery）才记已交付：没有适配器接手、发送失败都不记；等不到确认时报「未确认，
-// 请勿重发」，迟到的确认照样记账。插件停了（如被重载）就不再写账本，免得旧实例整份写盘盖掉新实例的账本。
+// 文件。等平台适配器确认收下（awaitDelivery）才记已交付：没有适配器接手、发送失败都不记；平台报结果未知（可能已经
+// 送达）时把这次发出的成品记为结果未知，报「请勿重发」；等不到确认（等满或回合中止）时同样当场记下、报「未确认，
+// 请勿重发」，迟到的结果到了再结算：成功补记已交付，确定失败撤掉这几件的结果未知。结果未知按成品记，同一任务的其他
+// 成品照常可发。插件停了（如被重载）就不再写账本，免得旧实例整份写盘盖掉新实例的账本。
 // ============================================================
 
 import type { GatewayService } from '@aalis/api-gateway';
@@ -88,12 +90,20 @@ function fileBaseName(name: string): string {
 
 /**
  * 原始成品能不能直接发回聊天：私下交付的任务（没有发布意图）可以；自动发布因发布环节本身的问题（挑不出成品、
- * 目标未获准、24 小时没能提交）在提交之前失败的也可以。审核没通过的（含发布检查不通过、驳回、撤下）不发出去；
- * 已提交给发布服务的以作品链接交付。
+ * 目标未获准、24 小时没能提交）在提交之前失败的也可以。审核没通过的（含发布检查不通过、驳回、撤下）不发出去，
+ * 没通过之后重新提名、再失败的也不发；已提交给发布服务的以作品链接交付。
  */
 export function rawDeliveryAllowed(task: TaskRecord): boolean {
   const pub = task.publication;
-  return !pub || (pub.state === 'failed' && !pub.workId && pub.directSend === true);
+  return !pub || (pub.state === 'failed' && !pub.workId && pub.directSend === true && !pub.reviewRefused);
+}
+
+/**
+ * 创作完成、自动发布在提交给发布服务之前失败（没有作品编号）：完成通知报这个结果，paper_status 列出成品编号供
+ * 重新提名。发布协调器清通知标记的条件必须与完成通知的筛选一致，两处都用它
+ */
+export function failedBeforeSubmission(task: TaskRecord): boolean {
+  return task.state === 'done' && task.publication?.state === 'failed' && !task.publication.workId;
 }
 
 interface DeliverDeps {
@@ -152,25 +162,44 @@ export async function deliverArtifacts(
   const delivery = message.delivery;
   if (!delivery) return { ok: false, error: '没有平台适配器接手这条消息，成品没有发出' };
   const { ledger } = deps;
-  const markDelivered = () =>
+  const sentIds = artifacts.map(a => a.id);
+  /**
+   * 按这次发出的几件成品记账：平台确认收下记已交付，并把这几件从结果未知里撤掉；报结果未知或等不到确认把这几件并进
+   * unknownArtifacts（paper_send 不再发这几件；非空时待交付提示不再列这件任务）；等不到确认之后迟到的确定失败只撤掉
+   * 这几件。任务已有成品交付过也照样记，账本没有变化时不写盘
+   */
+  const record = (outcome: 'delivered' | 'unknown' | 'failed') =>
     ledger.exclusive(async () => {
       // 插件已停（如被重载）时不再写：旧实例整份写盘会盖掉新实例已写进去的账本
       if (deps.signal.aborted) return;
       const current = ledger.data.tasks[task.id];
-      if (!current || current.delivered) return;
-      current.delivered = true;
-      await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（已交付标记）: ${describe(err)}`));
+      if (!current) return;
+      const before = current.unknownArtifacts ?? [];
+      const unknown =
+        outcome === 'unknown' ? [...new Set([...before, ...sentIds])] : before.filter(id => !sentIds.includes(id));
+      const newlyDelivered = outcome === 'delivered' && !current.delivered;
+      if (!newlyDelivered && unknown.length === before.length) return;
+      if (newlyDelivered) current.delivered = true;
+      if (unknown.length > 0) current.unknownArtifacts = unknown;
+      else delete current.unknownArtifacts;
+      const what = { delivered: '已交付', unknown: '结果未知', failed: '撤掉结果未知' }[outcome];
+      await ledger.save().catch(err => deps.logger.error(`白纸账本写入失败（${what}标记）: ${describe(err)}`));
     });
   const result = await awaitDelivery(delivery, wait);
   if (!result) {
-    // 迟到的确认照样记为已交付，待交付提示随之消失
+    // 等满或回合中止：可能已经送达，当场按结果未知记下；迟到的结果到了再结算
+    await record('unknown');
     void delivery.then(
-      late => (late.ok ? markDelivered() : undefined),
+      late => (late.ok ? record('delivered') : late.unconfirmed ? undefined : record('failed')),
       () => undefined,
     );
     return { ok: false, error: '成品仍在发送，结果未确认，请勿重发', unconfirmed: true };
   }
-  if (!result.ok) return { ok: false, error: `发送失败：${result.error}` };
-  await markDelivered();
+  if (!result.ok) {
+    if (!result.unconfirmed) return { ok: false, error: `发送失败：${result.error}` };
+    await record('unknown');
+    return { ok: false, error: '成品发送结果未知（可能已经送达），请勿重发', unconfirmed: true };
+  }
+  await record('delivered');
   return { ok: true };
 }

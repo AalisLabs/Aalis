@@ -7,13 +7,17 @@
 //   hostNotice.untrusted，只在通知那一轮出现、不归档，所以远端说明伪造不出宿主行，也进不了之后的历史。
 //   经 paper_cancel 取消的任务不通知（工具结果已告知）。注入之前先把通知标识与时刻记进账本并落盘，每件至多
 //   注入一次；app:started 之后才开始注入（网关与 agent 此时已就位），重启前已到终态而还没注入的在这时补注。
-//   通知被禁言吞掉或那一轮失败时不重试，由待交付提示在之后的回合补上。
+//   通知被禁言吞掉或那一轮失败时不重试，由待交付提示在之后的回合补上。经 works_nominate 重新提名之后发布在后台
+//   又于提交前失败的，发布协调器清掉通知标记，这个新结果再通知一次；此前成品已发出或结果未知的，这次不再直接发，
+//   通知说不要重发。当场被拒的由工具回执告知，不另通知。
 // - 自动发布在提交之前就失败、而且是发布环节本身的问题（挑不出成品、目标未获准、24 小时没能提交）时，宿主在注入
-//   通知之前先把能发的成品（规则同 paper_send，最多 4 件）作为一条消息直接发回发起房间，等平台确认，结果写进通知。
+//   通知之前先把能发的成品（规则同 paper_send，最多 4 件）作为一条消息直接发回发起房间，等平台确认，结果写进通知
+//   （发送意外抛错也照常写进通知）。从转为直接发送到这次发送结束，待交付提示不列这件任务、paper_send 也拒绝，
+//   免得同一份成品发两遍。
 //   发布检查不通过属于审核结论：只通知没通过的原因，成品不发出去，paper_send 也拒绝。
-// - 待交付提示：agent:llm:before 上每次请求前先摘掉上一次的提示；房间里有已完成、成品还没发回、结束不到
-//   pendingHintHours 的任务时，再插一条独立的 system 消息（最后一条是 user 时插在它前面，否则追加在末尾，
-//   不碰 messages[0]）。工具循环的每一轮都重新判定，paper_send 之后下一次请求就不再提示。只列任务 id、
+// - 待交付提示：agent:llm:before 上每次请求前先摘掉上一次的提示；房间里有已完成、成品还没发回（平台报结果未知的
+//   也算发过）、结束不到 pendingHintHours 的任务时，再插一条独立的 system 消息（最后一条是 user 时插在它前面，
+//   否则追加在末尾，不碰 messages[0]）。工具循环的每一轮都重新判定，paper_send 之后下一次请求就不再提示。只列任务 id、
 //   她起的任务名与成品的编号、类型、大小，不含远端说明，也不含远端给的文件名。
 //   白纸通知只提示本件任务；作品上线及其他内部通知不夹带旧任务的待发提示。
 // ============================================================
@@ -23,7 +27,13 @@ import { wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
 import { type IncomingMessage, selfInitiatedActor } from '@aalis/schema-message';
 import type { PaperConfig } from './config.js';
-import { type Artifact, type DeliveryOutcome, rawDeliveryAllowed, sendRefusal } from './deliver.js';
+import {
+  type Artifact,
+  type DeliveryOutcome,
+  failedBeforeSubmission,
+  rawDeliveryAllowed,
+  sendRefusal,
+} from './deliver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { describe, formatDuration, formatSize, truncate } from './util.js';
 
@@ -80,7 +90,12 @@ function noticeContent(task: TaskRecord, direct?: DirectSend): string {
             : `成品已直接发出：${direct.sent.map(a => a.id).join('、')}，平台还没确认，不要重发。`,
         );
         const rest = task.artifacts.filter(a => !direct.sent.includes(a));
-        if (rest.length > 0) lines.push(`另有成品：${artifactList(rest)}，需要时用 paper_send 按编号发。`);
+        if (rest.length > 0) {
+          lines.push(`另有成品：${artifactList(rest)}，需要时用 paper_send 按编号发。`);
+        }
+      } else if (!direct && (task.delivered || task.unknownArtifacts?.length)) {
+        // 重新提名之后又于提交前失败：成品此前已发出（或结果未知），这次没有再发
+        lines.push(`成品此前已发出${task.delivered ? '' : '，结果未知'}，不要重发。`);
       } else {
         if (direct && !direct.outcome.ok) lines.push(`直接发送没有成功：${direct.outcome.error}。`);
         lines.push(`成品：${artifactList(task.artifacts)}。要不要发回本群由你判断，需要时用 paper_send 按编号发。`);
@@ -100,8 +115,8 @@ interface NoticeDeps {
   logger: Logger;
   now: () => number;
   cfg: PaperConfig;
-  /** 把几件成品直接发回发起房间并等平台确认（自动发布在提交前失败时用）；缺省不直接发 */
-  deliver?: (task: TaskRecord, artifacts: readonly Artifact[]) => Promise<DeliveryOutcome>;
+  /** 把几件成品直接发回发起房间并等平台确认（自动发布在提交前失败时用） */
+  deliver: (task: TaskRecord, artifacts: readonly Artifact[]) => Promise<DeliveryOutcome>;
 }
 
 export class PaperNotices {
@@ -109,9 +124,19 @@ export class PaperNotices {
   #open = false;
   #closed = false;
   #chain: Promise<void> = Promise.resolve();
+  /** 已记下通知、直接发送还没结束的任务 id */
+  readonly #sending = new Set<string>();
 
   constructor(deps: NoticeDeps) {
     this.#d = deps;
+  }
+
+  /**
+   * 宿主还要或正在直接发送这件任务的成品：转为直接发送而还没注入通知的（通知链可能还在发前一件），或已记下通知、
+   * 直接发送还没结束的
+   */
+  directSending(task: TaskRecord): boolean {
+    return this.#sending.has(task.id) || (!task.notice && task.publication?.directSend === true);
   }
 
   /** app:started：网关与 agent 已就位，开始注入，并补注重启前已到终态而还没注入的 */
@@ -140,37 +165,56 @@ export class PaperNotices {
       if (ledger.failure) return [];
       const tasks = Object.values(ledger.data.tasks)
         .filter(t => !UNFINISHED_STATES.has(t.state) && !t.notice && t.cancelledVia !== 'tool')
-        .filter(
-          t => !t.publication || t.state !== 'done' || (t.publication.state === 'failed' && !t.publication.workId),
-        )
+        .filter(t => !t.publication || t.state !== 'done' || failedBeforeSubmission(t))
         .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
       if (tasks.length === 0) return [];
       const at = this.#d.now();
-      for (const task of tasks) task.notice = { id: `n-${randomHex(4)}`, at };
+      for (const task of tasks) {
+        // 先登记正在直接发送，再记通知：落盘那段时间里待交付提示与 paper_send 仍把它当作在发
+        if (task.publication?.directSend) this.#sending.add(task.id);
+        task.notice = { id: `n-${randomHex(4)}`, at };
+      }
       try {
         await ledger.save();
       } catch (err) {
-        for (const task of tasks) delete task.notice;
+        for (const task of tasks) {
+          delete task.notice;
+          this.#sending.delete(task.id);
+        }
         logger.error(`白纸账本写入失败，完成通知暂不注入: ${describe(err)}`);
         return [];
       }
       return tasks;
     });
-    for (const task of due) await this.#inject(task);
+    try {
+      for (const task of due) await this.#inject(task);
+    } finally {
+      for (const task of due) this.#sending.delete(task.id);
+    }
   }
 
   async #inject(task: TaskRecord): Promise<void> {
     const { logger, cfg, deliver } = this.#d;
     const id = task.notice?.id ?? '';
     let direct: DirectSend | undefined;
-    if (deliver && task.publication?.directSend && rawDeliveryAllowed(task) && !task.delivered) {
+    // 此前已交付或结果未知的（重新提名之后又失败）不再发
+    if (task.publication?.directSend && rawDeliveryAllowed(task) && !task.delivered && !task.unknownArtifacts?.length) {
       const sendable = task.artifacts.filter(a => !sendRefusal(a, cfg)).slice(0, DIRECT_SEND_MAX);
       if (sendable.length > 0) {
-        direct = { sent: sendable, outcome: await deliver(task, sendable) };
+        let outcome: DeliveryOutcome;
+        try {
+          outcome = await deliver(task, sendable);
+        } catch (err) {
+          // 意外抛错照常按没发成写进通知，不丢这一条与同一轮后面的通知
+          outcome = { ok: false, error: describe(err) };
+        }
+        direct = { sent: sendable, outcome };
         if (direct.outcome.ok) logger.info(`白纸任务 ${task.id} 发布失败，成品已直接发回房间 ${task.room}`);
         else logger.warn(`白纸任务 ${task.id} 发布失败后直接发送成品没有成功：${direct.outcome.error}`);
       }
     }
+    // 直接发送结束：从通知那一轮起，没发成的照常列进待交付提示
+    this.#sending.delete(task.id);
     const untrusted =
       task.resultText && !task.publication
         ? wrapUntrustedContent(truncate(task.resultText, NOTICE_NOTE_MAX), `远端代理对任务 ${task.id} 的说明`)
@@ -192,8 +236,17 @@ export class PaperNotices {
   }
 }
 
-/** 房间里待交付的任务：已完成、成品还没发回也没被清空、结束时刻不早于 since */
-function pendingHint(ledger: LedgerStore, room: string, since: number, source?: string): string | undefined {
+/**
+ * 房间里待交付的任务：已完成、成品还没发回（平台报结果未知的算发过）也没被清空、宿主没有在直接发送、结束时刻
+ * 不早于 since
+ */
+function pendingHint(
+  ledger: LedgerStore,
+  room: string,
+  since: number,
+  directSending: (task: TaskRecord) => boolean,
+  source?: string,
+): string | undefined {
   const tasks = Object.values(ledger.data.tasks)
     .filter(
       t =>
@@ -202,6 +255,8 @@ function pendingHint(ledger: LedgerStore, room: string, since: number, source?: 
         t.state === 'done' &&
         rawDeliveryAllowed(t) &&
         !t.delivered &&
+        !t.unknownArtifacts?.length &&
+        !directSending(t) &&
         !t.artifactsCleared &&
         t.artifacts.length > 0 &&
         (t.endedAt ?? 0) >= since,
@@ -219,6 +274,8 @@ export function registerPendingHint(deps: {
   ledger: LedgerStore;
   cfg: PaperConfig;
   now: () => number;
+  /** 宿主还要或正在直接发送这件任务的成品（{@link PaperNotices.directSending}） */
+  directSending: (task: TaskRecord) => boolean;
 }): void {
   deps.hooks.middleware('agent:llm:before', async (data, next) => {
     const { messages } = data;
@@ -226,7 +283,9 @@ export function registerPendingHint(deps: {
       if (messages[i].metadata?.injector === PENDING_INJECTOR) messages.splice(i, 1);
     }
     const since = deps.now() - deps.cfg.pendingHintHours * HOUR;
-    const hint = data.sessionId ? pendingHint(deps.ledger, data.sessionId, since, data.source) : undefined;
+    const hint = data.sessionId
+      ? pendingHint(deps.ledger, data.sessionId, since, deps.directSending, data.source)
+      : undefined;
     if (hint) {
       const insertAt = messages.at(-1)?.role === 'user' ? messages.length - 1 : messages.length;
       messages.splice(insertAt, 0, { role: 'system', content: hint, metadata: { injector: PENDING_INJECTOR } });

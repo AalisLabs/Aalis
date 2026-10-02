@@ -112,15 +112,31 @@ export interface TaskRecord {
     paths?: string[];
     coverArtifactId?: string;
     nextAttemptAt?: number;
+    /** 经 works_nominate 重新提名的时刻：待提交的 24 小时期限从这里起算；缺省从任务结束起算 */
+    pendingSince?: number;
     /** 提交之前失败、而且是发布环节本身的问题（挑不出成品、目标未获准、24 小时没能提交）：完成通知前先直接发成品 */
     directSend?: boolean;
+    /**
+     * 重新提名之前已有审核结论（发布检查没通过）：之后这次提名不管因为什么失败，原始成品都不发出去，
+     * 不因 directSend 变成可直接发
+     */
+    reviewRefused?: true;
   };
   error?: string;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
-  /** 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省 */
+  /**
+   * 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省。经 works_nominate
+   * 重新提名之后发布在后台又于提交前失败时清掉，这个新结果再通知一次
+   */
   notice?: { id: string; at: number };
   /** paper_send 发出的这件任务的成品已由平台确认收下（不代表对方已看到） */
   delivered: boolean;
+  /**
+   * 发出后平台报结果未知（如上传超时）或等不到确认的成品编号，可能已经送达：paper_send 不再发这几件，同一任务的
+   * 其他成品照常可发；非空时待交付提示不再列这件任务、宿主也不再直接发。等不到确认的，迟到的结果到了再结算（成功
+   * 记已交付，确定失败撤掉那一次发出的编号）。空了就删掉这个字段
+   */
+  unknownArtifacts?: string[];
 }
 
 export interface DaySpend {

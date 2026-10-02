@@ -16,6 +16,7 @@ import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import type { ServiceRef } from '@aalis/core';
 import { artifactUri, EXTENSIONS } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
+import { rawDeliveryAllowed } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
 import { actorKey, checkEligibility, effectiveActor, paperLabel } from './rooms.js';
 import { enterPaperRoom } from './tools.js';
@@ -68,14 +69,22 @@ export function automaticPublicationArtifacts(
   const artifacts = task.artifacts.filter(a => a.rel.startsWith(prefix));
   if (artifacts.length !== task.artifacts.length) return { reason: '成品分属不同目录，请手动选择成品' };
   const paths = artifacts.map(a => a.rel.slice(prefix.length));
+  if (pathsProblem(paths)) return { reason: '作品路径不符合发布要求，请手动选择成品' };
+  return { artifacts, paths };
+}
+
+/**
+ * 一组公开路径里第一个不合规的：逐条过 publicPathProblem，按小写比较也不得重复（公开根可能在大小写不敏感的
+ * 文件系统上）。原因只写类别，不回显路径
+ */
+export function pathsProblem(paths: readonly string[]): { index: number; reason: string } | undefined {
   const lowered = new Set<string>();
-  for (const path of paths) {
-    if (publicPathProblem(path) || lowered.has(path.toLowerCase())) {
-      return { reason: '作品路径不符合发布要求，请手动选择成品' };
-    }
+  for (const [index, path] of paths.entries()) {
+    const reason = publicPathProblem(path) ?? (lowered.has(path.toLowerCase()) ? '文件路径重复' : undefined);
+    if (reason) return { index, reason };
     lowered.add(path.toLowerCase());
   }
-  return { artifacts, paths };
+  return undefined;
 }
 
 function workId(value: unknown): string | undefined {
@@ -90,6 +99,12 @@ function workId(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** 临时拒绝（展示面暂未登记、待审额度或每日提名配额用完等）要等的毫秒数；不带等待时间的是永久拒绝，返回 undefined */
+export function retryDelay(result: { retryAfterMs?: number }): number | undefined {
+  const ms = result.retryAfterMs;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? Math.ceil(ms) : undefined;
 }
 
 /** 发布服务的拒绝类别可展示；发现相对路径时不把远端文件名带进工具回执。 */
@@ -210,12 +225,22 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (chars(summary) > 300) return fail('简介不能超过 300 字');
 
     const paths = publishedPaths(selected);
+    // 写账本之前先核对公开路径：不合规的当场拒绝，不写成待提交，也不会在发布服务拒收后记成审核没通过
+    const pathProblem = pathsProblem(paths);
+    if (pathProblem) {
+      return fail(
+        `成品 ${selected[pathProblem.index].id} 的公开路径不符合发布要求（${pathProblem.reason}），请换选成品`,
+      );
+    }
     let repair = task.publication;
     if (repair) {
       try {
         await ledger.exclusive(async () => {
           if (task.publication !== repair || task.state !== 'done' || task.artifactsCleared)
             throw new Error('任务状态已变化');
+          // 原来的失败是审核结论（原始成品不发）时记下来：这次提名之后再失败，也不因发布环节的问题变成可直接发
+          const reviewRefused = !rawDeliveryAllowed(task);
+          const now = Date.now();
           task.publication = {
             target,
             title,
@@ -224,7 +249,9 @@ export function registerWorksTools(deps: WorksDeps): void {
             artifactIds: selected.map(a => a.id),
             paths,
             ...(coverArtifact ? { coverArtifactId: coverArtifact.id } : {}),
-            nextAttemptAt: Date.now() + 30_000,
+            nextAttemptAt: now + 30_000,
+            pendingSince: now,
+            ...(reviewRefused ? { reviewRefused: true as const } : {}),
           };
           try {
             await ledger.save();
@@ -239,6 +266,14 @@ export function registerWorksTools(deps: WorksDeps): void {
         return fail('白纸账本保存失败，请稍后重试');
       }
     }
+    /**
+     * 已写成待提交之后的暂时性失败（读不到成品、提交时出错）：后台协调器会照常接着提交，回执与临时拒绝同一口径。
+     * 待提交已被别的变化替换时照旧回失败
+     */
+    const queued = (fallback: string) =>
+      repair && task.publication === repair
+        ? done({ message: '暂时没能提交，已排队，稍后自动重试；上线或最终失败都会在本房间通知' })
+        : fail(fallback);
     const files: PublishFile[] = [];
     let cover: Uint8Array | undefined;
     try {
@@ -251,7 +286,7 @@ export function registerWorksTools(deps: WorksDeps): void {
         cover = new Uint8Array(bytes as Uint8Array);
       }
     } catch {
-      return fail('读取成品失败，等 owner 检查白纸存储');
+      return queued('读取成品失败，等 owner 检查白纸存储');
     }
 
     if (deps.publish.current !== service || !specOf(deps.cfg, task.paperId)?.publishTargets.includes(target)) {
@@ -284,22 +319,28 @@ export function registerWorksTools(deps: WorksDeps): void {
         return fail('任务或发布服务状态已变化，请稍后重试');
       }
       if ('refused' in result) {
+        // 带等待时间的是临时拒绝，与后台协调器一样保留待提交、到时由它重试，不记成审核结论
+        const retry = retryDelay(result);
         if (repair && task.publication === repair) {
-          await ledger.exclusive(async () => {
-            if (task.publication !== repair) return;
-            task.publication = {
-              ...task.publication!,
-              state: 'failed',
-              reason: '作品未通过发布检查',
-              nextAttemptAt: undefined,
-            };
+          const saved = await ledger.exclusive(async () => {
+            if (task.publication !== repair) return false;
+            task.publication =
+              retry === undefined
+                ? { ...task.publication!, state: 'failed', reason: '作品未通过发布检查', nextAttemptAt: undefined }
+                : { ...task.publication!, nextAttemptAt: Date.now() + retry };
             try {
               await ledger.save();
             } catch (err) {
               task.publication = repair;
               throw err;
             }
+            return true;
           });
+          if (saved && retry !== undefined) {
+            return done({
+              message: `暂时不能提交（${refusal(result.refused, selected)}），已排队，稍后自动重试；上线后会在本房间通知网址，没能提交也会告知`,
+            });
+          }
         }
         const item =
           result.fileIndex === -1
@@ -328,7 +369,7 @@ export function registerWorksTools(deps: WorksDeps): void {
         message: '已提交发布处理；上线后会在本房间通知网址，若需人工处理也会告知',
       });
     } catch {
-      return fail('提交作品失败，等 owner 检查发布服务');
+      return queued('提交作品失败，等 owner 检查发布服务');
     }
   }
 
