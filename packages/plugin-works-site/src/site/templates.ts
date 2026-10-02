@@ -1,5 +1,5 @@
 import { type PublishedItem, WORK_IFRAME_SANDBOX } from '@aalis/api-publish';
-import { canonicalBasePath, sitePath } from './paths.js';
+import { canonicalBasePath, mediaExt, mediaPath, sitePath } from './paths.js';
 
 const encoder = new TextEncoder();
 export const encode = (text: string): Uint8Array => encoder.encode(text);
@@ -20,11 +20,11 @@ function date(timestamp: number): string {
   return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`;
 }
 
-/** 站点信息：标题、简介，以及拼分享信息（og）绝对地址用的主站源；源缺省时不写 og:url 与 og:image */
+/** 站点信息：标题、简介，以及拼分享信息（og）绝对地址用的主站源 */
 interface SiteInfo {
   title: string;
   intro: string;
-  origin?: string;
+  origin: string;
 }
 
 function meta(property: string, content: string): string {
@@ -89,14 +89,9 @@ body.work-page{width:100%;height:100vh;height:100dvh;overflow:hidden}
 .media-page img,.media-page video{display:block;max-width:100%;max-height:100%;object-fit:contain}
 `;
 
-function extOf(item: PublishedItem): string {
-  const path = item.files[0]?.path ?? '';
-  return path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-}
-
 function kindLabel(item: PublishedItem): string {
   if (item.kind === 'html') return '网页';
-  const ext = extOf(item);
+  const ext = mediaExt(item);
   return ext === 'mp4' ? '视频' : ext === 'gif' ? '动图' : '图片';
 }
 
@@ -115,7 +110,7 @@ function card(item: PublishedItem, basePath: string): string {
   return `<li><a class="work" href="${sitePath(basePath, `w/${item.id}/`)}">${thumb}<span class="kind">${kindLabel(item)}</span></div><h2>${escapeHtml(item.title)}</h2><p class="date">${date(item.publishedAt)}</p>${summary}</a></li>`;
 }
 
-export function indexPage(site: SiteInfo, items: readonly PublishedItem[], basePath = '/'): string {
+export function indexPage(site: SiteInfo, items: readonly PublishedItem[], basePath: string): string {
   const sorted = [...items].sort((a, b) => b.publishedAt - a.publishedAt);
   const cover = sorted.find(item => item.hasThumbnail);
   const head = [
@@ -124,8 +119,8 @@ export function indexPage(site: SiteInfo, items: readonly PublishedItem[], baseP
     site.intro
       ? `<meta name="description" content="${escapeHtml(site.intro)}">${meta('og:description', site.intro)}`
       : '',
-    site.origin ? meta('og:url', `${site.origin}${canonicalBasePath(basePath)}`) : '',
-    site.origin && cover ? meta('og:image', `${site.origin}${sitePath(basePath, `t/${cover.id}.png`)}`) : '',
+    meta('og:url', `${site.origin}${canonicalBasePath(basePath)}`),
+    cover ? meta('og:image', `${site.origin}${sitePath(basePath, `t/${cover.id}.png`)}`) : '',
   ].join('');
   const list = sorted.length
     ? `<ul class="grid">${sorted.map(item => card(item, basePath)).join('')}</ul>`
@@ -144,13 +139,18 @@ export function indexPage(site: SiteInfo, items: readonly PublishedItem[], baseP
  * 单件作品页：作品铺满视口，页面上不显示标题、日期、简介与署名（作品以自己的样子出现）。
  * 标题只进浏览器标题与无障碍标签；分享信息只带标题与缩略图，不带简介。
  */
-export function wrapperPage(item: PublishedItem, origin?: string, basePath = '/', siteOrigin?: string): string {
+export function wrapperPage(
+  item: PublishedItem,
+  origin: string | undefined,
+  basePath: string,
+  siteOrigin: string,
+): string {
   let content: string;
   const head = [
     meta('og:type', 'website'),
     meta('og:title', item.title),
-    siteOrigin ? meta('og:url', `${siteOrigin}${sitePath(basePath, `w/${item.id}/`)}`) : '',
-    siteOrigin && item.hasThumbnail ? meta('og:image', `${siteOrigin}${sitePath(basePath, `t/${item.id}.png`)}`) : '',
+    meta('og:url', `${siteOrigin}${sitePath(basePath, `w/${item.id}/`)}`),
+    item.hasThumbnail ? meta('og:image', `${siteOrigin}${sitePath(basePath, `t/${item.id}.png`)}`) : '',
   ];
   if (item.kind === 'html') {
     if (!origin) throw new TypeError('网页作品缺少别名');
@@ -158,10 +158,9 @@ export function wrapperPage(item: PublishedItem, origin?: string, basePath = '/'
     content = `<iframe src="${origin}/${item.id}/" sandbox="${WORK_IFRAME_SANDBOX}" referrerpolicy="no-referrer" title="${escapeHtml(item.title)}"></iframe>`;
   } else {
     if (!item.files[0]?.path) throw new TypeError('媒体作品没有文件');
-    const ext = extOf(item);
-    const src = sitePath(basePath, `m/${item.id}.${ext}`);
+    const src = mediaPath(basePath, item);
     content =
-      ext === 'mp4'
+      mediaExt(item) === 'mp4'
         ? `<video controls playsinline preload="metadata"${item.hasThumbnail ? ` poster="${sitePath(basePath, `t/${item.id}.png`)}"` : ''} src="${src}"></video>`
         : `<img src="${src}" alt="${escapeHtml(item.title)}">`;
   }
@@ -193,4 +192,4 @@ export function removedPage(basePath?: string): string {
   return noticePage('该作品已下架', '这件作品已经从作品集里撤下。', basePath);
 }
 
-export const notFoundPage = (basePath = '/') => noticePage('页面未找到', '这个地址没有内容。', basePath);
+export const notFoundPage = (basePath: string) => noticePage('页面未找到', '这个地址没有内容。', basePath);

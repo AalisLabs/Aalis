@@ -4,7 +4,7 @@ import type { PagesClient, PagesDeployment } from './cloudflare/client.js';
 import { PagesApiError } from './cloudflare/client.js';
 import type { WorksSiteConfig } from './config.js';
 import { buildBranch, buildGallery, type SiteBuild } from './site/build.js';
-import { sitePath } from './site/paths.js';
+import { mediaPath, sitePath } from './site/paths.js';
 import type { CurrentDeployment, InFlightDeployment, SiteAlert, WorksState, WorksStore } from './state.js';
 import {
   ContentMismatchError,
@@ -374,11 +374,7 @@ export class WorksDeployer {
 
   #tombstonesFor(item: PublishedItem): Array<{ branch: string; path: string }> {
     const paths = [{ branch: 'main', path: sitePath(this.#config.basePath, `w/${item.id}/index.html`) }];
-    if (item.kind === 'media')
-      paths.push({
-        branch: 'main',
-        path: sitePath(this.#config.basePath, `m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`),
-      });
+    if (item.kind === 'media') paths.push({ branch: 'main', path: mediaPath(this.#config.basePath, item) });
     if (item.hasThumbnail) paths.push({ branch: 'main', path: sitePath(this.#config.basePath, `t/${item.id}.png`) });
     if (item.kind === 'html')
       for (const file of item.files) paths.push({ branch: item.group, path: `/${item.id}/${file.path}` });
@@ -546,15 +542,7 @@ export class WorksDeployer {
       await this.#store.update(next => {
         if (next.inFlight?.nonce !== inflight.nonce) return;
         next.inFlight = undefined;
-        next.current[inflight.branch] = {
-          id: inflight.id!,
-          branch: inflight.branch,
-          nonce: inflight.nonce,
-          at: this.#now(),
-          files: inflight.files,
-          works: inflight.works,
-          verified: false,
-        };
+        next.current[inflight.branch] = this.#currentFrom(inflight, false);
       });
       this.#pending = true;
       return;
@@ -590,16 +578,7 @@ export class WorksDeployer {
       await this.#store.update(state => {
         state.inFlight = undefined;
         if (inflight.kind === 'new' && cleaned) delete state.known[inflight.id!];
-        if (inflight.kind === 'withdraw')
-          state.current[inflight.branch] = {
-            id: inflight.id!,
-            branch: inflight.branch,
-            nonce: inflight.nonce,
-            at: this.#now(),
-            files: inflight.files,
-            works: inflight.works,
-            verified: false,
-          };
+        if (inflight.kind === 'withdraw') state.current[inflight.branch] = this.#currentFrom(inflight, false);
       });
       throw new Error('部署别名不合格');
     }
@@ -641,16 +620,7 @@ export class WorksDeployer {
       }
       await this.#store.update(state => {
         if (inflight.kind === 'withdraw')
-          state.current[inflight.branch] = {
-            id: inflight.id!,
-            branch: inflight.branch,
-            nonce: inflight.nonce,
-            at: this.#now(),
-            files: inflight.files,
-            works: inflight.works,
-            alias: main ? undefined : origin,
-            verified: false,
-          };
+          state.current[inflight.branch] = this.#currentFrom(inflight, false, main ? undefined : origin);
         else if (!main && cleaned) delete state.known[inflight.id!];
         state.inFlight = undefined;
         state.history.unshift({
@@ -663,16 +633,7 @@ export class WorksDeployer {
       });
       throw err;
     }
-    const current: CurrentDeployment = {
-      id: inflight.id,
-      branch: inflight.branch,
-      nonce: inflight.nonce,
-      at: this.#now(),
-      files: inflight.files,
-      works: inflight.works,
-      alias: main ? undefined : origin,
-      verified: true,
-    };
+    const current = this.#currentFrom(inflight, true, main ? undefined : origin);
     await this.#store.update(state => {
       if (alias?.ok) {
         const group = Object.keys(state.groups).find(key => state.groups[key].branch === inflight.branch);
@@ -699,6 +660,20 @@ export class WorksDeployer {
       return;
     }
     if (main && !this.#signal.aborted) this.#live(inflight.works.map(item => item.id));
+  }
+
+  /** 把已有部署 ID 的在飞部署记作现行部署；kind 与 changed 只属于在飞阶段，不带入。 */
+  #currentFrom(inflight: InFlightDeployment, verified: boolean, alias?: string): CurrentDeployment {
+    return {
+      id: inflight.id!,
+      branch: inflight.branch,
+      nonce: inflight.nonce,
+      at: this.#now(),
+      files: inflight.files,
+      works: inflight.works,
+      alias,
+      verified,
+    };
   }
 
   async #deleteOlder(branch: string, latestId: string): Promise<void> {

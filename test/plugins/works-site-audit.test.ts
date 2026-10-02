@@ -284,6 +284,7 @@ describe('作品站独立故障交接审计', () => {
     await store.load();
     const marker = 'recoverednonce';
     const built = await buildGallery({
+      basePath: '/',
       items: [],
       tombstones: [],
       nonce: marker,
