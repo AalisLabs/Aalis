@@ -23,6 +23,7 @@
 | API 包 | 提供的核心契约 | 已知实现 |
 |---|---|---|
 | [api-agent](./api-agent.md) | `agent` 描述符 + `BoundAgent`（`registerPreprocessor`） | plugin-agent |
+| [api-approval](./api-approval.md) | `approvals` 描述符 + `BoundApprovals`（`registerSurface`）：审批的发起、在场、应答与结算；审批对象类型、`approval:*` 事件与卡片清洗 `sanitizeForCard` | plugin-session-server |
 | [api-authority](./api-authority.md) | `authority` 描述符 + `ExecutionGuard` | plugin-authority |
 | [api-checkpoint](./api-checkpoint.md) | `checkpoint` 描述符 + `CheckpointService`：存储写前快照、按回合回滚 | plugin-checkpoint |
 | [api-commands](./api-commands.md) | `commands` 描述符 + `BoundCommands`（`command` builder） | plugin-commands |

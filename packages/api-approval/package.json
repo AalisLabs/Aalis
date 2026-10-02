@@ -1,18 +1,17 @@
 {
-  "name": "@aalis/api-session-confirm",
-  "version": "0.7.0",
+  "name": "@aalis/api-approval",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/api-session-confirm"
+    "directory": "packages/api-approval"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "会话确认服务契约：createChannel(deliver) → {handler, feed}，让各平台复用同一套确认协调器",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,9 +21,6 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
-  },
-  "dependencies": {
-    "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -37,5 +33,6 @@
   "keywords": [
     "aalis",
     "aalis-api"
-  ]
+  ],
+  "description": "审批契约：approvals 服务描述符（发起、应答、结算、审批面登记与在场）、审批对象的类型与卡片清洗函数"
 }

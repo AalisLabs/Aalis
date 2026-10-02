@@ -129,7 +129,7 @@ describe('save 写前比对磁盘实况', () => {
     const a = createFsYamlConfigProvider(path);
     const b = createFsYamlConfigProvider(path);
     saveOf(a.provider)({ ...a.config, owners: [{ platform: 'p', userId: 'u' }] });
-    expect(() => saveOf(b.provider)({ ...b.config, autoConfirmUntil: -1 })).toThrow(/外部修改/);
+    expect(() => saveOf(b.provider)({ ...b.config, deniedCapabilities: ['tool:x'] })).toThrow(/外部修改/);
     expect(readFileSync(path, 'utf-8')).toContain('owners');
   });
 

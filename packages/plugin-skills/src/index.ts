@@ -1032,7 +1032,6 @@ function run(caps: Caps): void {
   tools.register({
     // 破坏性（递归删除整个 skill 目录）：restricted+confirm 按「写删」约定；
     // 不带 risk——capabilityMinLevel 里 risk 遮蔽 visibility，同标会把门槛从 2 降到 1。
-    // owner 开 auto 确认模式时 session 确认自动跳过，零摩擦。
     visibility: 'restricted',
     confirm: 'session',
     groups: ['skills'],

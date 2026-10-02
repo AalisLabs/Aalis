@@ -81,7 +81,7 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
 // storage 晚于本插件上线时首载是异步的（apply 无从等待）。save 写的是全量快照：首载还没读完时
 // 插进来的一次等级改动若照常落盘，就拿「只有这条改动」的内存表覆盖掉健康的 users.json；
 // 首载随后把原记录并回内存，但 dirty 已清，磁盘上一直缺这些记录。
-// 管理入口还先等首载落定再改：读完之前内存里查不到文件里的记录，原等级按 0 级算，降权该撤的会话授予会漏撤。
+// 管理入口还先等首载落定再改：读完之前内存里查不到文件里的记录。
 describe('authority：storage 晚于本插件上线，首载在飞时的等级改动', () => {
   it('健康的 users.json 不被残缺快照覆盖，改动在首载完成后落盘', async () => {
     const { app, actions, release, writes } = await bootLateStorage();

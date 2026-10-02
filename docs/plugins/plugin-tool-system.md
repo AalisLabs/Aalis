@@ -102,7 +102,7 @@ agent 回合里的 `exec`（工具上下文带 `turnId` 与 `callId`）在命令
 在对话回合里起的后台进程，在本次运行期间自行退出（包括出错退出）时，工具向起它的会话注入一条宿主通知（`inbound:message`，`source` 为 `exec-bg:<进程 id>`，`hostNotice.kind` 为 `exec-background`），agent 随即开一轮，她自己说出结果。长驻进程（开发服务器、文件监视）正常运行时不会退出，也就没有通知，是否就绪要用 `process_read` 看输出。
 
 - 通知只放宿主取得的事实：进程 id、退出码（或结束它的信号名，或「出错结束」）与用时，外加一句「它最近的输出用 process_read 查看」。命令与输出不进通知：通知以 system 呈现、会归档，命令由模型写出（可能受过注入），输出受外部内容左右。输出由她用 `process_read` 读，以工具结果进上下文；`process_read` 的结果带 `command`，会话压缩之后也对得上号。
-- 身份跟起进程的那次调用：通知的 `platform` 同那次调用，`actor` 为那次调用的有效授权身份（`actor ?? { platform, userId }`，都没有时为无主体），`hostNotice.callerUserId` 为那次调用的 `userId`。agent 用它填这一轮工具调用上下文的 `userId`，这一轮的等级、确认由谁应答、会话授予都与起进程的那一轮相同。
+- 身份跟起进程的那次调用：通知的 `platform` 同那次调用，`actor` 为那次调用的有效授权身份（`actor ?? { platform, userId }`，都没有时为无主体），`hostNotice.callerUserId` 为那次调用的 `userId`。agent 用它填这一轮工具调用上下文的 `userId` 与 `inbound.callerUserId`，这一轮的等级与起进程的那一轮相同；起进程的是 owner 在自己会话里发起的一轮时，这一轮算 owner 链的延续，需要确认的工具调用照样能请 owner 审批。
 - 起进程的那个人在同一会话说话，会打断正在进行的通知回合；别人的消息不会。WebUI 里通知回合同样显示停止键。
 - 进程 id 形如 `proc_<本次启动的 6 位十六进制>_<序号>`，Aalis 重启之后不会与历史里的旧 id 撞号。
 
@@ -119,7 +119,7 @@ agent 回合里的 `exec`（工具上下文带 `turnId` 与 `callId`）在命令
 
 起进程的那一轮被停止键中止之后，进程照常运行，结束时照常通知。
 
-「链只延续一层」只看本轮的来源：通知回合里经 `create_subtask`、`send_to_subtask`、`workflow_run` 或定时任务开出的回合不带 `exec-bg:` 来源，在那里起的进程照常通知。子任务不能再建子任务，这一路只多一跳；定时任务每建一个都要真人确认；`workflow_run` 不需确认，但 workflow 回合没有 `userId`，`exec_background` 的确认无人应答、60 秒后按拒绝结算，只有 owner 开了自动确认、或受限策略给它免了确认时，这条链能自己延续下去。沿注入链传递谱系要等会话间消息的链记录（第二切片）。
+「链只延续一层」只看本轮的来源：通知回合里经 `create_subtask`、`send_to_subtask`、`workflow_run` 或定时任务开出的回合不带 `exec-bg:` 来源，在那里起的进程照常通知。子任务不能再建子任务，这一路只多一跳；定时任务每建一个都要 owner 批准；`workflow_run` 不需确认，但 workflow 回合不能产生 owner 审批，`exec_background` 立即被拒，只有受限策略（`restrictedPolicy`）的白名单给它免了确认、或 `confirmOverrides` 把它设为 `off` 时，这条链能自己延续下去。沿注入链传递谱系要等会话间消息的链记录（第二切片）。
 
 通知回合与同一会话的其他回合并行（各占 agent 的一条 lane），在通道层的排队上线之前，owner 正在聊或起进程的那一轮还没结束时，可能出现两轮同时回复、各改同一批文件的情况；两轮并行时，WebUI 里先结束的一轮会覆盖共用的流式气泡，刷新后正确。
 

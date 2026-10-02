@@ -121,7 +121,7 @@ async function disablePersistently(id: string): Promise<boolean> {
 
 | 插件 | 用途 | 宿主未提供时 |
 |---|---|---|
-| plugin-authority | 读 owners 等裁决字段；WebUI 权限页与 `/auto` 指令改动后落盘 | 激活失败（`apply` 内 `require()`） |
+| plugin-authority | 读 owners 等裁决字段；WebUI 权限页改动后落盘 | 激活失败（`apply` 内 `require()`） |
 | plugin-webui-server | 全局配置、插件配置、启停、实例增删与服务偏好路由 | 读写文档的路由与服务偏好路由返回 503 |
 | plugin-cli | 记录最后视图 `lastView` | 不记录，下次启动回到默认视图 |
 | plugin-mcp-client | `mcp_set_server_enabled` 经 `applyPluginConfig` 改配置并落盘 | 工具返回失败，不改运行态 |

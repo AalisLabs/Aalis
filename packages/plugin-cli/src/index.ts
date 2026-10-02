@@ -1,5 +1,14 @@
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
+import {
+  type Approval,
+  type ApprovalAttendance,
+  type ApprovalFacts,
+  type ApprovalSurface,
+  approvals,
+  type SettledState,
+  sanitizeForCard,
+} from '@aalis/api-approval';
 import { hostConfig } from '@aalis/api-host-config';
 import { persona } from '@aalis/api-persona';
 import { getPlatformAdapters, type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
@@ -112,6 +121,8 @@ const uses = {
   platform: optional(platform),
   storage: optional(storage),
   persona: optional(persona),
+  /** 登记 cli 审批面：终端界面在场时审批推到这里，应答记在这个登记身份名下 */
+  approvals: optional(approvals),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -140,6 +151,7 @@ function startCli(caps: Caps): void {
   };
 
   const sessionId = cliConfig.sessionId;
+  const approvalSurface = caps.approvals.registerSurface('cli');
   let tui: CliTui | null = null;
 
   const adapter: PlatformAdapter = {
@@ -273,7 +285,7 @@ function startCli(caps: Caps): void {
     liveBufferActive = false;
     stopLiveBuffer();
 
-    tui = new CliTui(caps, cliConfig, sessionId, merged);
+    tui = new CliTui(caps, cliConfig, sessionId, approvalSurface, merged);
     tui.start();
   });
 }
@@ -305,17 +317,34 @@ class CliTui {
   private renderQueued = false;
   private closing = false;
   private readonly restoreOnExit = () => restoreTerminalState();
+  /** 推到终端、还没结的审批，按推到的先后；卡上显示第一张 */
+  private readonly cards: Approval[] = [];
+  /** 卡上选中的应答。推出时不选：正在打字时按下的回车不会落到卡上 */
+  private choice: ApprovalDecision | undefined;
+  private readonly attendance: ApprovalAttendance;
 
   constructor(
     private caps: TuiCaps,
     private config: CLIConfig,
     private sessionId: string,
+    approvalSurface: ApprovalSurface,
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
     // 启动期日志由插件入口通过尾读 logs/latest.log + 实时 buffer 合并后注入，
     // 之后通过 LogHub.onEntry 实时累积；按 seq 单调，下方 onEntry 用 lastSeq 去重避免与 initial 重复。
     this.logLines = initialEntries.slice();
+    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场
+    this.attendance = approvalSurface.attend(
+      { platform: 'cli', userId: 'console' },
+      {
+        requested: approval => {
+          this.cards.push(approval);
+          this.queueRender();
+        },
+        settled: (approvalId, state) => this.closeCard(approvalId, SETTLED_LINES[state]),
+      },
+    );
   }
 
   isRunning(): boolean {
@@ -357,10 +386,6 @@ class CliTui {
     this.chat.append([
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
     ]);
-
-    // 意图确认不自建通道：走 session-confirm 的公共协调器（authority 的 '*' 回调）——提示以消息
-    // 进聊天区（带参数摘要），在输入框回复 y / ys 即可；回复在 inbound:confirm 相位被拦截，不触达 agent。
-    // 与 WebUI / OneBot 同一份排队、超时、会话授予语义，CLI 不再维护第二套。
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
@@ -460,6 +485,10 @@ class CliTui {
 
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
     if (!this.running) return;
+    // 卡片只接它推出之后的按键：这次按键让终端变为在场而补推来的卡，owner 还没看到，这次按键照常处理
+    const carded = this.cards.length > 0;
+    // 终端有输入即在场：最近一次按键在审批服务的时限内，审批就推到这里
+    this.attendance.presence(true);
 
     if (key.ctrl && key.name === 'c') {
       this.stop();
@@ -485,6 +514,12 @@ class CliTui {
     }
     if (key.name === 'escape') {
       this.switchView(this.previousView);
+      return;
+    }
+
+    // 审批卡是模态的：卡在时除了上面的切换视图与退出，按键只用来应答；打字与回车不算应答，也不进输入框
+    if (carded) {
+      this.handleCardKey(key);
       return;
     }
 
@@ -569,6 +604,38 @@ class CliTui {
       this.queueRender();
     }
   };
+
+  /** ← 选批准、→ 选拒绝，回车确定选中的一项；Ctrl+Y 直接批准、Ctrl+N 直接拒绝 */
+  private handleCardKey(key: readline.Key): void {
+    if (key.ctrl && (key.name === 'y' || key.name === 'n')) {
+      this.answer(key.name === 'y' ? 'approve' : 'deny');
+      return;
+    }
+    if (key.name === 'left' || key.name === 'right') {
+      this.choice = key.name === 'left' ? 'approve' : 'deny';
+      this.queueRender();
+      return;
+    }
+    if (key.name === 'return' && this.choice) this.answer(this.choice);
+  }
+
+  /** 应答卡上的第一张。成功时结算同步推回、卡片随之关掉；被拒的应答（已结算、审批服务不在等）同样关卡并写明原因 */
+  private answer(decision: ApprovalDecision): void {
+    const card = this.cards[0];
+    const reply = this.attendance.respond({ approvalId: card.id, decision, contentHash: card.contentHash });
+    if (!reply.ok) this.closeCard(card.id, `应答没有生效：${reply.message}`);
+  }
+
+  /** 审批结算了：卡片关掉，聊天区留一行 */
+  private closeCard(approvalId: string, line: string): void {
+    const index = this.cards.findIndex(card => card.id === approvalId);
+    if (index < 0) return;
+    const [card] = this.cards.splice(index, 1);
+    if (index === 0) this.choice = undefined;
+    this.chat.append([`${this.formatHead(chalk.yellow('◆ System'))}审批 ${sanitizeForCard(card.tool)}：${line}`]);
+    if (this.view !== 'chat') this.unreadChat++;
+    this.queueRender();
+  }
 
   private handleLogsKey(key: readline.Key): void {
     if (key.ctrl && key.name === 'w') {
@@ -681,22 +748,24 @@ class CliTui {
     if (!this.running) return;
     const width = Math.max(40, output.columns || 100);
     const height = Math.max(14, output.rows || 30);
-    // 输入框可变高度（多行输入）：内容行数 + 上下边框，最多 8 行内容
-    const inputContentLines = this.computeInputDisplayLines(width);
-    const inputBoxHeight = inputContentLines.length + 2;
-    // 布局：header(1) + sep(1) + body + inputBox(inputBoxHeight) + footer(1)
-    const bodyHeight = Math.max(3, height - 3 - inputBoxHeight);
+    // 输入框可变高度（多行输入）：内容行数 + 上下边框，最多 8 行内容。有审批卡时卡片占这个位置
+    const box =
+      this.cards.length > 0
+        ? this.renderCard(width, height)
+        : this.renderInputBox(width, this.computeInputDisplayLines(width));
+    // 布局：header(1) + sep(1) + body + box + footer(1)
+    const bodyHeight = Math.max(3, height - 3 - box.length);
 
     const out: string[] = [];
     out.push(this.renderHeader(width));
     out.push(chalk.gray(LINE_H.repeat(width)));
     out.push(...this.renderBody(width, bodyHeight));
-    out.push(...this.renderInputBox(width, inputContentLines));
+    out.push(...box);
     out.push(this.renderFooter(width));
 
     output.write('\x1b[?25l\x1b[H');
     output.write(out.map(line => clearLine(line, width)).join('\n'));
-    if (this.view === 'chat') {
+    if (this.view === 'chat' && this.cards.length === 0) {
       // 计算光标在多行输入中的 (row, col)
       const { row: cRow, col: cCol } = this.cursorPosInInput();
       // 行号布局（1-based）：1=header, 2=sep, 3..2+bodyHeight=body, 之后是 inputBox(顶/中.../底), 最后是 footer
@@ -897,6 +966,11 @@ class CliTui {
     out.push(row('Shift+Ent', '插入换行（如终端支持）'));
     out.push(row('↑ / ↓', '历史记录回溯（chat 视图）'));
     out.push('');
+    out.push(sec('审批卡（卡在时打字与回车不算应答，也不进输入框）'));
+    out.push(row('← / →', '选批准 / 拒绝，Enter 确定'));
+    out.push(row('Ctrl+Y', '批准'));
+    out.push(row('Ctrl+N', '拒绝'));
+    out.push('');
     out.push(sec('提示'));
     out.push(
       `    ${chalk.gray('• 完整日志写入家目录的 logs/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。')}`,
@@ -955,6 +1029,37 @@ class CliTui {
     return [top, ...mid, bot];
   }
 
+  /**
+   * 审批卡：标题行、事实、应答项，上下边框。卡片最多高到正文只剩 3 行：事实放不下时保留首尾几行，写明省略了多少行。
+   * 事实显示前经 sanitizeForCard 清洗，太长的保留首尾、写明省略了多少字
+   */
+  private renderCard(width: number, height: number): string[] {
+    const card = this.cards[0];
+    const inner = width - 2;
+    const waiting = this.cards.length > 1 ? ` · 还有 ${this.cards.length - 1} 张` : '';
+    const title = `${chalk.bold.yellow('需要批准')} ${sanitizeForCard(card.tool)} · 会话 ${sanitizeForCard(card.sessionId)}${waiting}`;
+    const facts = cardFacts(card.facts).flatMap(([label, text]) => factLines(label, text, inner - 2));
+    // 高度：header、sep、footer 各一行，正文至少 3 行，卡片的上下边框、标题行与应答行
+    const room = height - 10;
+    const shown =
+      facts.length <= room
+        ? facts
+        : [
+            ...facts.slice(0, Math.ceil((room - 1) / 2)),
+            chalk.gray(`…（省略 ${facts.length - room + 1} 行）…`),
+            ...facts.slice(facts.length - Math.floor((room - 1) / 2)),
+          ];
+    const option = (decision: ApprovalDecision, label: string) =>
+      this.choice === decision ? chalk.inverse(`❯ ${label}`) : `  ${label}`;
+    const options = `${option('approve', '批准')}   ${option('deny', '拒绝')}   ${chalk.gray('←/→ 选择 · Enter 确定 · Ctrl+Y 批准 · Ctrl+N 拒绝')}`;
+    const edge = chalk.yellow(BOX_V);
+    return [
+      chalk.yellow(`${BOX_TL}${LINE_H.repeat(inner)}${BOX_TR}`),
+      ...[title, ...shown, options].map(line => `${edge}${padAnsi(` ${line}`, inner)}${edge}`),
+      chalk.yellow(`${BOX_BL}${LINE_H.repeat(inner)}${BOX_BR}`),
+    ];
+  }
+
   private makePrompt(): string {
     return `${chalk.cyan('❯')} ${chalk.bold(this.config.prompt)} `;
   }
@@ -979,6 +1084,42 @@ class CliTui {
     const left = ` ${items} `;
     return padAnsi(chalk.gray.dim(left), width);
   }
+}
+
+// ===== 审批卡 =====
+
+type ApprovalDecision = 'approve' | 'deny';
+
+/** 卡片结算后在聊天区留的话 */
+const SETTLED_LINES: Record<SettledState, string> = {
+  approved: '已批准',
+  denied: '已拒绝',
+  expired: '没有人应答，按拒绝处理',
+  cancelled: '已撤销',
+};
+
+/** 每项事实显示的字数上限，超出的保留首尾 */
+const CARD_FACT_LIMIT = 1000;
+
+/** 卡上的事实：标签与原文 */
+function cardFacts(facts: ApprovalFacts): Array<[label: string, text: string]> {
+  const rows: Array<[string, string]> = [];
+  if (facts.command !== undefined) rows.push(['命令', facts.command]);
+  if (facts.cwd !== undefined) rows.push(['目录', facts.cwd]);
+  if (facts.diff) rows.push(['文件', facts.diff.path], ['改动', facts.diff.patch ?? '疑似含密钥，不显示内容']);
+  if (Object.keys(facts.params).length > 0) rows.push(['参数', JSON.stringify(facts.params)]);
+  return rows;
+}
+
+/** 一项事实：清洗后按换行拆开、按宽度折行，标签只在第一行 */
+function factLines(label: string, text: string, width: number): string[] {
+  const head = `${chalk.gray(label)}  `;
+  const indent = ' '.repeat(visibleLen(head));
+  return sanitizeForCard(text, CARD_FACT_LIMIT)
+    .replace(/\t/g, '    ')
+    .split('\n')
+    .flatMap(line => wrapByVisibleWidth(line, width - indent.length))
+    .map((segment, i) => (i === 0 ? head : indent) + segment);
 }
 
 // ===== 视觉常量 / 工具 =====

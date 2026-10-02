@@ -5,7 +5,7 @@
 
 ## 概述
 
-命令行 REPL 交互平台，同时作为 `CLIService` 和 `PlatformAdapter`。
+命令行 REPL 交互平台，同时作为 `CLIService` 和 `PlatformAdapter`，并登记 `cli` 审批面：终端在场时，需要 owner 批准的操作以审批卡出现在终端里。
 
 ## 插件声明
 
@@ -24,6 +24,7 @@ export default definePlugin({
     platform: optional(platform),
     storage: optional(storage),
     persona: optional(persona),
+    approvals: optional(approvals),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -47,8 +48,9 @@ export default definePlugin({
 - `app:started` 后接管终端进入全屏界面；stdin / stdout 任一不是 TTY（日志重定向、容器、systemd）时不接管、不画界面，控制台日志照常输出，发往 cli 会话的消息退化为一行日志
 - 用户输入经 `inbound:message` 事件发出（`platform: 'cli'`，`userId: 'console'`，即本地终端身份）
 - 斜杠指令不在本插件内解析，由 `commands` 服务（plugin-commands）在 `inbound:command` 相位统一处理（如 `/help`、`/status`），执行结果经 `outbound:message` 回显到终端
-- 意图确认（权限模型轴 B）：CLI 不自建确认通道，走 plugin-session-confirm 的公共协调器（authority 的 `'*'` 回调）——声明了 `confirm` 的操作会把提示（含参数摘要）作为消息发进聊天区，在输入框回复 `y`（仅本次）或 `ys`（本会话放行）后回车，其它输入取消；回复在 `inbound:confirm` 相位被拦截，不会当成对话发给模型；多个并发确认按先到先问排队；确认提示只在 chat 视图可见可答；在 logs/status/help 视图下有消息（含确认提示）进入聊天区时，header 的 CHAT 页签会带计数高亮，Ctrl+T 切回 chat 即可看到并回答，60 秒无回复视为取消
+- 指令的意图确认（权限模型轴 B）：声明了 `confirm` 的指令由 plugin-commands 把确认提示作为消息发进聊天区，在输入框回复 `y` 后回车即确认，其它输入取消，60 秒无回复视为取消；回复在 `inbound:command` 相位被吞掉，不会当成对话发给模型。在 logs/status/help 视图下有消息（含确认提示）进入聊天区时，header 的 CHAT 页签会带计数高亮，Ctrl+T 切回 chat 即可看到并回答
 - sessionId 默认为 `cli-default`
+- 审批面：激活时经 `approvals.registerSurface('cli')` 登记 `cli` 审批面，终端界面启动后以本地终端身份（`platform: 'cli'`，`userId: 'console'`）接入，审计里的审批面记为 `cli` 与本插件实例。详见下文「审批卡」
 - 切换视图时（help 视图除外）经 `host-config` 把 `lastView` 写回配置文档并落盘；宿主未提供配置文档时不记录，下次启动回到默认视图
 
 ## 快捷键
@@ -70,6 +72,18 @@ CLI 接管终端后的按键（程序内按 `Ctrl+G` 可随时查看）：
 | `Enter` | 提交输入 |
 | `Ctrl+J` | 插入换行（macOS 下的 Ctrl+Enter） |
 | `Shift+Enter` | 插入换行（终端支持时） |
+| `←` / `→` | 审批卡在时：选批准 / 拒绝，`Enter` 确定 |
+| `Ctrl+Y` / `Ctrl+N` | 审批卡在时：批准 / 拒绝 |
+
+## 审批卡
+
+需要 owner 批准的工具调用（契约见 [api-approval](../api/api-approval.md)）在终端在场时推到这里：
+
+- **在场**：终端界面里每次按键都向审批服务上报在场，任何视图都算；最近一次按键在审批服务的时限内（默认实现是 10 分钟，见 [plugin-session-server](./plugin-session-server.md#审批)）才算在场。界面刚启动、还没按过键时不算在场。stdin / stdout 不是 TTY、不起界面时，终端不接入审批面，从不算在场。权限服务不认本地终端身份是 owner 时，终端按了键也不算在场，审批不推到这里。没有任何在场的审批面时，审批由审批服务立即按没人在场拒绝，模型收到原因后继续。
+- **显示**：审批推来时，输入框的位置换成审批卡，任何视图都显示。卡上写工具名与会话，下面是事实：命令、工作目录、文件与改动（file_edit、file_write、file_append 的 diff；疑似含密钥的只给文件名）、其余参数。事实显示前一律经 `sanitizeForCard` 清洗：控制符与 ANSI 转义序列转义成 `\x1B` 的样子，双向控制符与零宽字符换成 `⟨U+202E⟩` 的样子，制表符按空格显示，原样的控制符不会写到终端。每项事实超过 1000 字时保留首尾、写明省略了多少字；卡片最多高到聊天区只剩 3 行，放不下的保留首尾几行、写明省略了多少行。
+- **模态应答**：卡片在时，除了切换视图（`Ctrl+T`/`Ctrl+L`/`Ctrl+S`/`Ctrl+G`/`Esc`）与退出（`Ctrl+C`），按键只用来应答。卡片推出时两项都不选中：`←` 选批准、`→` 选拒绝，`Enter` 确定选中的一项；也可以直接按 `Ctrl+Y` 批准、`Ctrl+N` 拒绝。没选中时按 `Enter` 不算应答；打字不进输入框、也不算应答，免得正在打字时误批。终端原本不在场、按键让它变为在场而补推来的卡，不接这次按键（这次按键照常处理），从下一次按键起才算应答。卡片之前输入框里的内容保留，卡片关掉后接着编辑。终端里的拒绝不附说明，要附说明在 WebUI 里应答。
+- **几张卡**：不同会话的审批可以同时在，按推来的先后排，卡上只显示第一张并写明还有几张；答完或它在别处结算后显示下一张，下一张从不选中开始。
+- **结算**：审批结算了（在这里或别的审批面应答、等满时限、回合结束或中止、审批服务停止），卡片关掉，聊天区留一行「审批 工具名：已批准 / 已拒绝 / 没有人应答，按拒绝处理 / 已撤销」。应答被审批服务拒绝时（例如卡片推出之后 owner 名单变了，权限服务不再认本地终端身份是 owner）同样关卡，并写明原因，审批照旧等别的审批面应答。
 
 ## 配置校验
 

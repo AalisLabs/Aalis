@@ -28,6 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.8.0 <1.0.0",
@@ -53,7 +54,8 @@
         "platform",
         "persona",
         "storage",
-        "host-config"
+        "host-config",
+        "approvals"
       ],
       "provides": [
         "cli",

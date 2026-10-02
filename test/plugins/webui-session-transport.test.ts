@@ -1,7 +1,13 @@
 import { Buffer } from 'node:buffer';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
 import type { Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { approvals } from '../../packages/api-approval/src/index.js';
+import { authority } from '../../packages/api-authority/src/index.js';
+import type { HostPaths } from '../../packages/api-host-paths/src/index.js';
 import {
   SESSION_PROTOCOL_VERSION,
   type SessionItem,
@@ -23,6 +29,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -46,10 +53,19 @@ const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: ()
 const apps: App[] = [];
 const sockets: WebSocket[] = [];
 const rawSockets: Socket[] = [];
+/** 每个 App 一个临时家目录：会话服务的审批审计写在它下面 */
+const homes: string[] = [];
+/** 像 runtime 一样在根上提供 host-paths，家目录是新建的临时目录 */
+function provideHome(app: App): HostPaths {
+  const home = mkdtempSync(join(tmpdir(), 'aalis-session-server-'));
+  homes.push(home);
+  return provideHostPaths(app, home);
+}
 afterEach(async () => {
   for (const ws of sockets.splice(0)) ws.close();
   for (const socket of rawSockets.splice(0)) socket.destroy();
   for (const app of apps.splice(0)) await app.stop();
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
 /** webui-server 在 app:ready 时才监听：等登录状态接口答得上来 */
@@ -71,6 +87,7 @@ async function startStack({ withSessionServer = true } = {}) {
   const port = await freePort();
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
+  const paths = provideHome(app);
   await registerHubs(app);
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '你好呀' }] }));
   await app.plugin(toolsPlugin, {});
@@ -91,7 +108,7 @@ async function startStack({ withSessionServer = true } = {}) {
   await app.plugins.idle();
   await app.start();
   await listening(port);
-  return { app, port, sessionServer };
+  return { app, port, paths, sessionServer };
 }
 
 /** 会话服务换成替身：记下每条连接的对端、收到的帧与 close 次数，send 留给用例主动发帧 */
@@ -244,6 +261,46 @@ describe('/session 接上真的会话服务', () => {
     ]);
   });
 
+  it('webui 审批面：在场上报与应答经 /session 连接到达，审计里的审批面是 webui-server 登记的', async () => {
+    const { app, port, paths } = await startStack();
+    const host = app.bind({ provide, approvals });
+    host.provide(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
+    const c = await open(port);
+    expect(await c.init()).toMatchObject({ surface: 'webui' });
+    const { session } = await c.call('session/create', { name: 'S' });
+    await c.call('presence/update', { active: true });
+
+    const outcome = host.approvals.require().request({
+      sessionId: session.id,
+      origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+      tool: 'exec',
+      args: { command: 'ls' },
+      rule: 'tool:exec 声明需确认',
+    });
+    const { approval } = await vi.waitFor(() => {
+      const frame = c.frames().find(f => f.method === 'approval/requested');
+      if (!frame) throw new Error('还没收到审批');
+      return sessionNotifications['approval/requested'].parse(frame.params);
+    });
+    await c.call('approval/respond', {
+      approvalId: approval.id,
+      decision: 'approve',
+      contentHash: approval.contentHash,
+    });
+    expect(await outcome).toEqual({ approvalId: approval.id, approved: true });
+
+    const audit = join(paths.state, 'audit', 'approvals.jsonl');
+    const lines = await vi.waitFor(() => {
+      const read = readFileSync(audit, 'utf8').split('\n').filter(Boolean);
+      expect(read).toHaveLength(2);
+      return read.map(line => JSON.parse(line) as Record<string, unknown>);
+    });
+    expect(lines[1]).toMatchObject({
+      responder: { platform: 'webui', userId: 'console' },
+      surface: { name: 'webui', plugin: '@aalis/plugin-webui-server' },
+    });
+  });
+
   it('会话服务不在：连接以 1013 关闭并写明原因，不挂起；会话服务上线后新连接照常握手，不用重启 webui-server', async () => {
     const { port, sessionServer } = await startStack({ withSessionServer: false });
     const early = await open(port);
@@ -275,12 +332,13 @@ describe('/session 的传输', () => {
     expect((await upgrade(port, '/ws', COOKIE)).status).toBe(101);
   });
 
-  it('连接原样接到会话服务：身份与审批面取自认证，帧原文双向转交，对端关闭时撤掉连接', async () => {
+  it('连接原样接到会话服务：身份取自认证、审批面是登记的 webui，帧原文双向转交，对端关闭时撤掉连接', async () => {
     const { port, links } = await startWithStub();
     const c = await open(port);
     await vi.waitFor(() => expect(links).toHaveLength(1));
     const [link] = links;
-    expect(link.peer).toMatchObject({ identity: { platform: 'webui', userId: 'console' }, surface: 'webui' });
+    expect(link.peer.identity).toEqual({ platform: 'webui', userId: 'console' });
+    expect(link.peer.surface.name).toBe('webui');
 
     c.ws.send('第一帧，不必是 JSON');
     c.ws.send('{"jsonrpc":"2.0"}');

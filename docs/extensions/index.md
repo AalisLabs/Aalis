@@ -26,9 +26,9 @@
 
 一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `checkpoint` / `code-sandbox` / `commands` /
 `contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `host-paths` / `llm` / `media` /
-`memory` / `message-archive` / `package-manager` / `persona` / `platform` / `plugin-source` / `process` / `session-confirm` /
-`session-history` / `session-manager` / `session-protocol` / `storage` / `todo-list` / `tools` / `trigger` / `user-relation` / `vectorstore` / `workflow`），一个例外：
-`@aalis/api-webui` 导出 `webui-server` 与 `webui-client` 两条。
+`memory` / `message-archive` / `package-manager` / `persona` / `platform` / `plugin-source` / `process` /
+`session-history` / `session-manager` / `session-protocol` / `storage` / `todo-list` / `tools` / `trigger` / `user-relation` / `vectorstore` / `workflow`），两个例外：
+`@aalis/api-webui` 导出 `webui-server` 与 `webui-client` 两条；`@aalis/api-approval` 的服务名是 `approvals`。
 
 没有独立契约包、在自己 `src/index.ts` 里就地 `defineService` 的插件：
 
@@ -59,6 +59,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 |---|---|
 | `@aalis/schema-message` | `inbound:message` / `inbound:message:archived` / `assistant:message:archived` / `outbound:message` / `outbound:stream` |
 | `@aalis/api-agent` | `token:usage` / `token:request` |
+| `@aalis/api-approval` | `approval:created` / `approval:settled` |
 | `@aalis/api-doctor` | `doctor:updated` |
 | `@aalis/api-gateway` | `gateway:phase:done` |
 | `@aalis/api-media` | `media:processed` |
@@ -83,7 +84,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 | api 包 | 注入的钩子键 |
 |---|---|
 | `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` |
-| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` |
+| `@aalis/api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` |
 | `@aalis/api-memory` | `memory:clear` |
 
 ---
@@ -117,7 +118,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 
 | api 包 | 注入的字段 |
 |---|---|
-| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `authorityOverrides` / `confirmOverrides` / `restrictedPolicy` / `autoConfirmUntil` / `network` |
+| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `authorityOverrides` / `confirmOverrides` / `restrictedPolicy` / `network` |
 
 ---
 

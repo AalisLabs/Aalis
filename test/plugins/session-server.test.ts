@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
@@ -17,10 +20,11 @@ import { App, definePlugin, events, type Logger, provide } from '../../packages/
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { MockLLMService } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
-import { CLIENT, client, type Frame } from '../fixtures/session-client.js';
+import { CLIENT, client, DETACHED_SURFACE, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -34,9 +38,18 @@ const SEEN_URI = 'pluginData:/session-server/seen.json';
 const MAJOR = Number(SESSION_PROTOCOL_VERSION.split('.')[0]);
 
 const apps: App[] = [];
+/** 每个 App 一个临时家目录：会话服务的审批审计写在它下面 */
+const homes: string[] = [];
+/** 像 runtime 一样在根上提供 host-paths，家目录是新建的临时目录 */
+function provideHome(app: App): void {
+  const home = mkdtempSync(join(tmpdir(), 'aalis-session-server-'));
+  homes.push(home);
+  provideHostPaths(app, home);
+}
 afterEach(async () => {
   vi.useRealTimers();
   for (const app of apps.splice(0)) await app.stop();
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
@@ -86,6 +99,7 @@ async function setup({
   };
   const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
+  provideHome(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager, sessionProtocol });
   host.provide(memory, fakeMemory(stored) as never);
@@ -300,9 +314,9 @@ describe('会话列表', () => {
       ['onebot:10000:group:1', 'onebot-a', true],
     ]);
     const groups = [
-      { platform: 'onebot', instance: 'onebot-a', rooms: 3, accounts: 2 },
-      { platform: 'onebot', instance: 'onebot-b', rooms: 1, accounts: 1 },
-      { platform: 'onebot', rooms: 1, accounts: 1 },
+      { platform: 'onebot', instance: 'onebot-a', rooms: 3, accounts: 2, attention: 0 },
+      { platform: 'onebot', instance: 'onebot-b', rooms: 1, accounts: 1, attention: 0 },
+      { platform: 'onebot', rooms: 1, accounts: 1, attention: 0 },
     ];
     expect(rooms.groups).toEqual(groups);
     const searched = await c.list({ query: 'group:2' });
@@ -415,7 +429,9 @@ describe('watch 增量', () => {
     ).toBe(0);
 
     await sm.ensureSession('onebot:10000:group:1', { name: '群' });
-    expect(changes().at(-1)?.groups).toEqual([{ platform: 'onebot', instance: 'onebot-a', rooms: 1, accounts: 1 }]);
+    expect(changes().at(-1)?.groups).toEqual([
+      { platform: 'onebot', instance: 'onebot-a', rooms: 1, accounts: 1, attention: 0 },
+    ]);
 
     await watcher.call('session/delete', { sessionId: session.id });
     expect(changes().at(-1)).toMatchObject({ upserts: [], removes: [session.id] });
@@ -655,7 +671,10 @@ describe('会话配置', () => {
     });
     expect(room.effective).toMatchObject({ enabledToolGroups: ['onebot'], paperEnabled: true });
 
-    const cli = client(server(), { identity: { platform: 'cli', userId: 'console' }, surface: 'cli' });
+    const cli = client(server(), {
+      identity: { platform: 'cli', userId: 'console' },
+      surface: { ...DETACHED_SURFACE, name: 'cli' },
+    });
     await cli.init();
     expect((await cli.call('session/config/get', { sessionId: 'session-old' })).effective.persona).toBe('aalis-cli');
 

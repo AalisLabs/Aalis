@@ -438,7 +438,7 @@ async function run(caps: Caps): Promise<void> {
         // 运行时身份：经 workflow_run 工具触发时以 actor 透传【调用者】授权身份，使工作流
         // 内部工具与 agent/send_message 节点按【调用者】的权限等级过 authority 闸（而非匿名
         // level-0）；owner 定义、谁调按谁裁决，杜绝借他人 workflow 提权。platform 保持
-        // 'workflow' 会话语义（不再借调用者平台——那会污染定时任务归属/confirm 选路等分流）。
+        // 'workflow' 会话语义（不再借调用者平台——那会污染定时任务归属/审批的发起类别等分流）。
         // cron/event/webui 触发无调用者 → 保持匿名（仅能跑 public 工具）。
         toolCallContext: {
           sessionId: `workflow::${workflowId}`,

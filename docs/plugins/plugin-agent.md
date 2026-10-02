@@ -129,7 +129,7 @@ thinking: (默认)  [来源: 默认]
 
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」（见 [api-tools](../api/api-tools.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`：这一轮确认由起它的人应答、会话授予按那人匹配；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
+工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source, callerUserId: incoming.hostNotice?.callerUserId }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识；延续某次工具调用的宿主通知另带那次调用的发言者。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
 
 ## 上下文裁剪算法
 

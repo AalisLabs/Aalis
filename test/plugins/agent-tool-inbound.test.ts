@@ -125,9 +125,10 @@ describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具�
     },
   });
 
-  it('安全：带 callerUserId：探针上下文的 userId 为它，actor、platform、inbound.source 原样；提示词钩子与归档不认它', async () => {
+  it('安全：带 callerUserId：探针上下文的 userId 与 inbound.callerUserId 为它，actor、platform、inbound.source 原样；提示词钩子与归档不认它', async () => {
     const { ctx, llmBeforeUserIds, llmBeforeSources, history } = await observedAgentTurn(notice(QQ));
     expect(ctx?.userId).toBe(QQ);
+    expect(ctx?.inbound?.callerUserId, '守卫据它认出 owner 链的延续').toBe(QQ);
     expect(ctx?.actor).toEqual({ platform: 'onebot', userId: QQ });
     expect(ctx?.platform).toBe('onebot');
     expect(ctx?.inbound?.source).toBe('exec-bg:proc_0a1b2c_1');
@@ -140,9 +141,10 @@ describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具�
     expect(archived?.metadata?.userId).toBeUndefined();
   });
 
-  it('安全：不带 callerUserId 的宿主通知：探针上下文的 userId 为 undefined', async () => {
+  it('安全：不带 callerUserId 的宿主通知：探针上下文的 userId 与 inbound.callerUserId 为 undefined', async () => {
     const { ctx, llmBeforeUserIds } = await observedAgentTurn(notice());
     expect(ctx?.userId).toBeUndefined();
+    expect(ctx?.inbound?.callerUserId).toBeUndefined();
     expect(ctx?.actor).toEqual({ platform: 'onebot', userId: QQ });
     expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
   });

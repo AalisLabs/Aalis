@@ -56,7 +56,7 @@ interface IncomingMessage {
 - 身份：不延续某次调用的通知（如白纸的完成通知），`actor` 用 `selfInitiatedActor(platform)`，不设 `callerUserId`。延续某次工具调用的通知（如 plugin-tool-system 的后台命令结束通知）沿用那次调用的身份、不高于它：`platform` 同那次调用，`actor` 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为 `selfInitiatedActor`），`callerUserId` 为那次调用的 `userId`。允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记，现在只有后台命令结束通知一处。
 - `kind` 是通知的子类（如 `'paper-task'`），`id` 是注入方生成的通知标识，供日志与注入方自己的记录对位。
 - 宿主撰写的行一律放在 `content` 里。`untrusted` 放注入方已用 `wrapUntrustedContent`（`@aalis/api-tools`）包好的不可信段，如远端代理的说明，放在最后。
-- `callerUserId` 不是发言者：plugin-agent 只用它填这一轮工具调用上下文的 `userId`（确认由谁应答、会话授予按谁匹配、工具眼里是谁在调），并让这位用户在同一会话发来的真人消息中止这一轮；归档、用户档案、关系、提示词钩子与确认应答的判定都不看它。
+- `callerUserId` 不是发言者：plugin-agent 只用它填这一轮工具调用上下文的 `userId`（工具眼里是谁在调）与 `inbound.callerUserId`（执行守卫据此判这一轮是不是 owner 链的延续），并让这位用户在同一会话发来的真人消息中止这一轮；归档、用户档案、关系与提示词钩子都不看它。
 
 第一方各插件对它的处理：
 
