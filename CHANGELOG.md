@@ -442,6 +442,19 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **升级须知**：单元 4 之前，create-aalis 的各档预设里还没有 plugin-session-server，此时需要确认的工具调用一律被拒（审批服务不在时立即拒绝并说明）。
 - **发布档位**：次版本：api-authority、api-gateway、api-commands、api-session-protocol（实验性）、plugin-authority、plugin-commands、plugin-gateway、plugin-cli、plugin-session-server；其余为 patch。
 
+### 管理推送、登录加固与会话文件（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/schema-message）
+
+新 WebUI 的第三部分：会话之外的变化改由推送送达，登录与 WebSocket 握手加固，会话里她发出的文件可以按句柄下载。旧的 `/ws` 与旧前端暂留，随新前端一起删除。
+
+- **管理推送**：WebUI 新增 WebSocket 端点 `/admin`，用现有 token 认证，推四类事件：订阅后的实时日志（`log`）、插件状态或页面登记表变了（`plugins.changed`）、即将重启（`app.restarting`）、换了前端（`client.reload`）。前端发 `log.subscribe`、`log.unsubscribe` 订阅与退订日志。事件只是「变了」的信号，断线期间的不补发，重连后重取。类型 `WebuiAdminEvent`、`WebuiAdminClientMessage` 在 api-webui，第三方前端照 [api-webui](docs/api/api-webui.md) 的「管理面推送」一节实现。
+- **来源校验**：`/ws`、`/session`、`/admin` 的握手与登录接口只收与本服务同源的浏览器请求，同一主机别的端口上的网页也算跨源，回 403；不带 Origin 的客户端（脚本、命令行）照常按 token。Origin 与 Host 去掉默认端口后再比。经反向代理访问时，代理要转发原始的 Host。
+- **token 比较**：cookie、`?token=` 与登录接口都改为定时安全比较，耗时与 token 的内容和长度无关。
+- **登录失败限速**：同一来源地址 10 分钟内登录失败满 10 次（`?token=` 与登录接口合计），到窗口结束前一律回 429，正确的 token 也不收；登录成功清零。本机回环同样计数（经同机反向代理来的请求都是回环地址）。别的网页借浏览器发起的登录（跨源的 POST、从别的站点打开的 `?token=` 链接）不比对也不计数，免得别人替你把地址锁住。带 cookie 的请求不计数，靠 token 的长度防猜。
+- **会话文件**：她发到 WebUI 会话的文件，条目里给会话服务签发的句柄，不给存储地址；`GET /api/session-file?sessionId=&handle=` 按句柄下载，一律以附件、`application/octet-stream`、`nosniff` 下发。句柄绑定会话，只在会话服务这次启动内有效，重启后重新订阅即可拿到新句柄；伪造、改动过或别的会话的句柄回 403，文件已不在回 404。插件状态与插件私有数据两个根里的文件不签发。api-session-protocol 的 `SessionProtocolService` 新增 `resolveFile(sessionId, handle)`，自己实现会话服务的要补上。
+- **WebUI 会话里的文件进入上下文**：发到 WebUI 会话、给的是存储地址的文件，改按 schema-message 新增的 `outbound-file` 记进会话历史（此前只记一行文件名的事件标记），因此会进入这个会话的模型上下文与向量记忆，与图片的做法一致；给的是网址或 data URL 的仍只记文件名。`outboundMediaMessage` 接受 `file`。
+- **破坏性**：`tokenMode` 为 `fixed` 时，`fixedToken` 去掉首尾空白后至少要 32 个字符，短了插件不启动并写明原因（留空仍按 persist 处理）。**升级前配了短 token 的，先换成更长的随机字符串。**
+- **发布档位**：次版本：api-webui、api-session-protocol（实验性）、schema-message、plugin-webui-server；plugin-session-server 为 patch。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -449,6 +462,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-agent、plugin-checkpoint、plugin-session-manager、plugin-storage-local 与 api-agent、api-checkpoint 同批升级：checkpoint 改从 `agent:input:before` 取 agent 的 `turnId` 记回合，配旧版 agent 时拿不到回合 id、写入不再记账；新版 session-manager 按 `turnId` 登记在飞回合；新版 storage-local 经 api-checkpoint 的描述符找 checkpoint，配旧版 checkpoint（描述符在插件包里）时找不到、写入不受保护。
 - plugin-session-manager、plugin-tool-onebot 与 api-platform 同批升级：新版 `resolvePlatformBySession` 返回适配器条目，旧版返回适配器本身。plugin-adapter-onebot 多实例部署时也要同批：旧版没有 `canHandle`，新版 api-platform 按它路由。
 - plugin-paper、plugin-image-sender、plugin-publish-review、plugin-webui-server 与 schema-message 同批升级：前三者在运行时导入 schema-message 新增的 `awaitDelivery`，plugin-image-sender 与 plugin-webui-server 另导入新增的 `outboundMediaMessage`。发布时它们对 schema-message 的依赖下限要抬到含这些导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
+- plugin-webui-server、plugin-session-server 与 api-session-protocol、schema-message 同批升级：新版 webui-server 下载会话文件时调会话服务的 `resolveFile`，旧版 session-server 没有它；新版 webui-server 以 `outboundMediaMessage('file')` 记文件，旧版 schema-message 不收 `file` 会抛 TypeError，WebUI 会话的出站记录写不进去。发布时两者对 schema-message 与 api-session-protocol 的依赖下限抬到本批的新版本。
 - plugin-adapter-onebot 与 api-trigger、schema-message 同批升级：新版适配器把群友之间的戳一戳也转为入站，并以 `noticeTargetIsSelf: false` 标明不是戳机器人；旧版 api-trigger 的 `isAddressed` 不看这个标记，会把每次群友互戳都当作点名。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值；新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
 - 启用 plugin-paper 时，plugin-agent、plugin-session-manager、plugin-message-archive、plugin-memory-vector、plugin-memory-history、plugin-user-relation、plugin-user-profile、plugin-storage-local、plugin-checkpoint 须同批升级，用 DeepSeek 的另加 plugin-llm-deepseek，要发回网页与 MP4 的另加 plugin-adapter-onebot。旧版 plugin-agent 不填 `ToolCallContext.inbound`，白纸工具一律拒绝；旧版 session-manager 没有 `resolveInheritance`，诊断项与白纸页的白纸表抛 TypeError；旧版的 agent、归档、向量记忆与抽取插件不认识 `hostNotice`，完成通知会按普通消息呈现、归档为 user、进向量库与抽取窗口；旧版 memory-history 把完成通知带进同平台其他会话的跨会话注入；旧版 storage-local 没有 `paper` 根，成品取不回；旧版 checkpoint 会给 `paper` 根记账，别的会话回滚时删掉成品；旧版 onebot 适配器跳过文件附件，网页发不出去。
