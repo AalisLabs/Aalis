@@ -78,6 +78,7 @@ interface OutgoingMessage {
   segments?: ContentSegment[];        // 与协议层 Message.segments 一致
   source?: 'agent' | 'system' | 'command';
   callId?: string;                    // 由工具调用发出时，那次调用的 id
+  turnId?: string;                    // agent 一轮的回复：这一轮的 id
   delivery?: Promise<{ ok: true } | { ok: false; error: string; unconfirmed?: true }>;
 }
 ```
@@ -86,7 +87,9 @@ interface OutgoingMessage {
 
 `callId` 是发出这条消息的那次工具调用的 id（`ToolCallContext.callId`），如 `send_attachment` 发的附件。会话的客户端据此把消息挂到对应的工具卡上；平台收下后，房间里的工具卡标「已发到群」。
 
-`delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经保存（有在线页面时同时推送，没有时打开页面从历史看到），不区分「已推送」与「只保存」，存档服务不在场时只有推送到在线页面才算成功，写入会话历史失败、但已推送到在线页面时仍算成功；CLI 成功表示已在终端写出（附件写一行说明）。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
+`turnId` 是 agent 一轮的回复所在回合的 id。平台适配器记投递失败（`WellKnownKinds.OutboundDeliveryFailed`）时把 `turnId` 或 `callId` 写进记录，会话服务回看历史时据此标出哪条没发出。
+
+`delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经写进会话历史（打开着的页面经会话服务推送，没打开的打开时从历史看到），存档服务不在场或写入失败都算失败；CLI 成功表示已在终端写出（附件写一行说明）。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
 
 失败回执带 `unconfirmed: true` 时表示请求已经发出、只是没等到平台确认，消息可能已经送达（如 OneBot 文件上传超时）；发起方不得自动重发，也不得劝模型重发。适配器只在失败全部属于这种情况时才带它，夹着确定没发出的部分时按普通失败报。没有这个标记的失败才是确定没送达。
 

@@ -151,6 +151,7 @@ async function boot(decide: (request: ChatModelRequest) => ChatResponse) {
   const model = new ScriptedLLM(decide);
   const host = app.bind({ provide, events, hooks, gateway, tools });
   host.provide(sessionManager, {
+    registerSetting: () => () => {},
     resolveConfig: () => ({ enabledToolGroups: ['system'] }),
     getSession: () => undefined,
   } as unknown as SessionManagerService);

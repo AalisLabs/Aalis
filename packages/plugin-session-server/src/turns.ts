@@ -1,10 +1,12 @@
 // ════════════════════════════════════════════════════════════
 // 回合控制：发消息、工具调用达到上限后继续、停止、手动压缩、回滚、清空待办。
 // 消息以连接的身份（传输层认证出的平台与用户）发进入站事件，经网关进 agent，与平台适配器收到的消息走同一条路。
+// 停止、压缩、回滚、清空待办转给对应的服务，服务不在回 unsupported。
 // ════════════════════════════════════════════════════════════
 
 import type { AgentService } from '@aalis/api-agent';
 import type { CheckpointService } from '@aalis/api-checkpoint';
+import type { CompressionService } from '@aalis/api-memory';
 import type { SessionInfo } from '@aalis/api-session-manager';
 import type { SessionPeer } from '@aalis/api-session-protocol';
 import type { TodoListService } from '@aalis/api-todo-list';
@@ -19,6 +21,7 @@ interface TurnControlDeps {
   events: Events;
   agent: ServiceRef<AgentService>;
   checkpoint: ServiceRef<CheckpointService>;
+  compression: ServiceRef<CompressionService>;
   todoList: ServiceRef<TodoListService>;
   requireSession(id: string): SessionInfo;
   /** 请 agent 重发某会话的用量 */
@@ -65,7 +68,9 @@ export function createTurnControl(deps: TurnControlDeps) {
     },
     'session/compress': async ({ sessionId }, conn) => {
       requireSession(sessionId);
-      await events.emit('session:compress', { sessionId, reason: 'manual' });
+      const compression = deps.compression.current;
+      if (!compression) throw failure('unsupported', '没有压缩服务');
+      await compression.compress(sessionId, 'manual');
       deps.requestUsage(sessionId, conn.peer.identity.platform);
       return {};
     },

@@ -1,0 +1,164 @@
+.tool-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  text-align: left;
+  color: var(--color-text-2);
+  background: none;
+}
+
+.tool-line:hover {
+  background: var(--color-fill-1);
+}
+
+.tool-line:focus-visible {
+  outline-offset: -2px;
+}
+
+.tool-line-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-line-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-3);
+}
+
+.tool-line-status[data-tone="attention"] {
+  color: var(--color-warning-text);
+}
+
+.tool-line-status[data-tone="danger"] {
+  color: var(--color-danger-text);
+}
+
+.tool-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-fill-1);
+}
+
+.tool-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+.tool-facts dt {
+  color: var(--color-text-3);
+}
+
+.tool-facts dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tool-path,
+.approval-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  overflow-wrap: anywhere;
+}
+
+.tool-output,
+.approval-command,
+.approval-params {
+  max-height: 20rem;
+  margin: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-diff > span {
+  display: block;
+}
+
+.tool-diff > [data-change="removed"] {
+  color: var(--color-danger-text);
+}
+
+.tool-diff > [data-change="added"] {
+  color: var(--color-success-text);
+}
+
+/* 审批卡：等你决定的东西，不用卡片样式的唯一例外 */
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--color-warning-text);
+  border-radius: var(--radius-md);
+  background: var(--color-fill-1);
+}
+
+.approval-title {
+  font-weight: var(--weight-semibold);
+}
+
+.approval-command {
+  max-height: calc(6 * var(--leading-sm));
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.approval-meta {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+}
+
+.approval-meta > span {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.approval-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.approval-error {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-danger-text);
+}

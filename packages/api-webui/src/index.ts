@@ -1,6 +1,6 @@
 // ----- WebUI 服务接口与声明式页面组件 -----
 //
-// WebUI 服务契约、声明式页面组件类型、管理面推送（/admin）的事件类型与服务描述符（WebuiPage 由本包直接导出）。
+// WebUI 服务契约、声明式页面组件类型、管理面推送（/admin）的事件类型、主题的令牌表与文件格式，以及服务描述符（WebuiPage 由本包直接导出）。
 // 需要登记 WebUI 页面的插件从本包导入相关类型。
 
 import type { UserIdentity } from '@aalis/api-authority';
@@ -362,3 +362,7 @@ export type WebuiAdminEvent =
   | { type: 'plugins.changed' }
   | { type: 'app.restarting' }
   | { type: 'client.reload' };
+
+// ----- 主题：令牌表、主题文件格式与内置主题，见 theme.ts -----
+
+export * from './theme.js';

@@ -1,7 +1,7 @@
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { LLMCapabilities, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
-import { memory } from '../../packages/api-memory/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { compression, memory } from '../../packages/api-memory/src/index.js';
+import { App, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import { registerHubs } from './hubs.js';
@@ -20,9 +20,16 @@ export function fakeSummaryLLM(sink?: { text: string }): LLMModel {
   };
 }
 
-/** 装好 memory-inmemory 与 memory-summary、挂上桩 LLM，返回这次 App 的 memory 与宿主门面 */
-export async function setupSummary(config: Record<string, unknown>, model: LLMModel = fakeSummaryLLM()) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+/**
+ * 装好 memory-inmemory 与 memory-summary、挂上桩 LLM，返回这次 App 的 memory、memory-summary 提供的压缩服务与宿主门面。
+ * 给了 logger 时日志交给它
+ */
+export async function setupSummary(
+  config: Record<string, unknown>,
+  model: LLMModel = fakeSummaryLLM(),
+  logger?: Logger,
+) {
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   await registerHubs(app);
   const host = app.bind({ provide, services, hooks, events });
   await app.plugin(memoryInMemory);
@@ -35,5 +42,7 @@ export async function setupSummary(config: Record<string, unknown>, model: LLMMo
     throw new Error('plugin-memory-summary 未激活');
   const store = host.services.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
-  return { app, host, memory: store };
+  const compressor = host.services.get(compression);
+  if (!compressor) throw new Error('compression 服务未就绪');
+  return { app, host, memory: store, compression: compressor };
 }

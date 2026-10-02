@@ -1,0 +1,185 @@
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: var(--measure-chat);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.timeline-earlier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.timeline-time {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  text-align: center;
+  color: var(--color-text-3);
+}
+
+.timeline-error {
+  font-size: var(--text-xs);
+  color: var(--color-danger-text);
+}
+
+/* 一段：条目排在第一列，回滚占第二列的第一行，不另占一行 */
+.turn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3) var(--space-2);
+}
+
+.turn > * {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.turn > .turn-rewind {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.turn-outcome {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+.turn-outcome[data-outcome="error"] {
+  color: var(--color-danger-text);
+}
+
+/* 回滚在悬停、键盘聚焦时出现，触屏上常显 */
+.turn-rewind .icon-button {
+  visibility: hidden;
+}
+
+.turn:hover .turn-rewind .icon-button,
+.turn-rewind:focus-within .icon-button,
+.turn-rewind .icon-button[aria-expanded="true"] {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .turn-rewind .icon-button {
+    visibility: visible;
+  }
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}
+
+/* owner 自己的会话里，用户消息靠右、浅底；房间是多人对话，各条一样靠左 */
+.message[data-from="user"]:not([data-room]) {
+  justify-self: end;
+  max-width: 80%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-fill-2);
+}
+
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message[data-undelivered] .markdown {
+  color: var(--color-text-3);
+}
+
+.message-head,
+.message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+.message-speaker {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-2);
+}
+
+.message-streaming {
+  color: var(--color-text-2);
+}
+
+.reasoning {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-3);
+}
+
+.reasoning .disclosure {
+  padding: var(--space-0-5) var(--space-1);
+}
+
+.reasoning-text {
+  margin-top: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-2);
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-2);
+}
+
+.notice > .lucide {
+  margin-top: var(--space-0-5);
+}
+
+.notice-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.attachment-image {
+  display: block;
+  max-width: 100%;
+  max-height: 20rem;
+  border-radius: var(--radius-md);
+}
+
+.attachment-media {
+  max-width: 100%;
+}
+
+.attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-wrap: anywhere;
+}

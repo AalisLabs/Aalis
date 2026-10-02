@@ -1,162 +1,42 @@
 import { agent } from '@aalis/api-agent';
 import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
-import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
+import { hostConfig } from '@aalis/api-host-config';
+import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
-import { persona } from '@aalis/api-persona';
 import { getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   type InheritanceSource,
-  type MemoryRecallScope,
-  omitRoomOnlyKeys,
-  type PlatformProfile,
+  type NewSessionFields,
+  type RegisteredSessionSetting,
   type SessionConfig,
+  type SessionConfigLayer,
+  type SessionConfigPatch,
   type SessionInfo,
   type SessionInheritance,
-  type SessionListSection,
   type SessionManagerService,
+  type SessionSetting,
   type SessionTreeNode,
-  type SessionTreeSection,
-  sessionListSection,
+  type SessionUpdates,
+  sessionKind,
   sessionManager,
 } from '@aalis/api-session-manager';
-import { tools } from '@aalis/api-tools';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-
-const configSchema = defineConfig({
-  defaults: {
-    label: '全局默认配置',
-    description:
-      '所有平台共享的最低层默认配置（platform profile 之下的 fallback）。LLM 默认模型由各 agent 插件通过 ServicePreference 锁定，不再在此配置；本节仅保留 persona 等通用默认。',
-    fields: {
-      persona: {
-        type: 'select',
-        label: '默认人设',
-        dynamicOptions: 'persona',
-        allowCustom: true,
-        description: '所有平台未单独指定时使用的默认人设',
-      },
-    },
-  },
-  platformProfiles: {
-    type: 'array',
-    label: '平台默认配置',
-    default: [],
-    onInvalid: 'error',
-    description: '为每个平台设置默认的会话配置模板。新会话创建时自动应用对应平台的模板。',
-    items: {
-      // 不设 required：WebUI 新增一行未填就保存时，缺平台的条目由加载时跳过，
-      // 不让整组判无效、整个插件起不来；其余字段仍按整组严格，金额不会因丢条目变宽。
-      platform: {
-        type: 'string',
-        label: '平台标识',
-        description: '平台名（如 onebot、webui、cli）；留空的条目不生效',
-      },
-      audience: {
-        type: 'select',
-        label: '受众',
-        allowCustom: true,
-        onInvalid: 'error',
-        options: [
-          { label: '该平台全部房间', value: '' },
-          { label: '群与频道', value: 'group' },
-          { label: '私聊', value: 'private' },
-        ],
-        description:
-          '只对有出生平台的房间会话生效。写了受众的条目只列与同平台基础档（不写受众的那条）不同的键，叠加在基础档上',
-      },
-      persona: {
-        type: 'select',
-        label: '人设文件',
-        dynamicOptions: 'persona',
-        allowCustom: true,
-        description: '该平台默认使用的人设文件名（不含后缀）',
-      },
-      llm: {
-        type: 'llm-ref',
-        label: '默认模型',
-        description: '该平台新会话的默认 LLM (provider + model)。留空则沿用 ServicePreference 锁定的全局默认。',
-      },
-      enabledToolGroups: {
-        type: 'multiselect',
-        label: '工具分组',
-        dynamicOptions: 'toolGroups',
-        allowCustom: true,
-        description: '该平台启用的工具分组',
-      },
-      disableOutputFormat: {
-        type: 'boolean',
-        label: '禁用结构化输出',
-        description: '禁用 JSON 结构化输出，回复纯文本',
-      },
-      clientSideJsonRendering: {
-        type: 'boolean',
-        label: '客户端渲染 JSON',
-        description: '保留完整 JSON 给前端渲染，不提取回复字段',
-      },
-      think: {
-        type: 'select',
-        label: 'thinking 默认',
-        options: [
-          { label: '继承 provider 全局配置', value: '' },
-          { label: '强制开启', value: 'on' },
-          { label: '强制关闭', value: 'off' },
-        ],
-        description: '该平台会话的深度思考默认档。留空=各 LLM provider 自行决定；会话可用 /session.set -t 进一步覆盖。',
-      },
-      paperEnabled: {
-        type: 'boolean',
-        label: '开启白纸',
-        description: '该平台房间默认开启白纸；一般只在单个房间的会话配置里开',
-      },
-      paperName: {
-        type: 'string',
-        label: '白纸名',
-        description: '留空则每个房间各一块白纸，属性取白纸枢纽的 defaults',
-      },
-      remoteAgentTypes: {
-        type: 'multiselect',
-        label: '远端代理类型',
-        allowCustom: true,
-        description: '允许的远端代理插件实例 id；空=关。写在平台档里，这个平台的所有房间都会继承',
-      },
-      remoteAgentUserDailyCents: {
-        type: 'number',
-        label: '每人每天金额上限（美分）',
-        min: 0,
-        onInvalid: 'error',
-        description: '留空不增加每人金额限制，0 禁止新远端任务；无效金额拒绝启用会话管理',
-      },
-      remoteAgentUserDailyTasks: {
-        type: 'number',
-        label: '每人每天件数上限',
-        min: 0,
-        description: '留空即不按人限制',
-      },
-      remoteAgentRoomDailyCents: {
-        type: 'number',
-        label: '每房间每天金额上限（美分）',
-        min: 0,
-        onInvalid: 'error',
-        description: '留空不增加房间金额限制，0 禁止新远端任务；无效金额拒绝启用会话管理',
-      },
-      memoryRecallScope: {
-        type: 'select',
-        label: '记忆召回范围',
-        options: [
-          { label: '继承记忆插件配置', value: '' },
-          { label: '仅本会话', value: 'session' },
-          { label: '同平台', value: 'platform' },
-          { label: '全部', value: 'all' },
-        ],
-        description: '只能比记忆插件的配置更窄，写宽了按插件配置',
-      },
-    },
-  },
-});
+import {
+  AUDIENCE_NAMES,
+  applyPatch,
+  assertLayer,
+  checkPatch,
+  type Layers,
+  listLayers,
+  rawLayer,
+  readLayers,
+  readSetting,
+  SettingRegistry,
+  type SettingValues,
+  writeLayer,
+} from './settings.js';
 
 // ===== 常量 =====
 
@@ -169,48 +49,7 @@ const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
  */
 const OWNER_ENTRY_PLATFORMS: ReadonlySet<string> = new Set(['webui', 'cli']);
 
-// ===== WebuiPages（声明式 UI） =====
-
-/**
- * WebUI 传来的会话配置补丁：JSON 带不了 undefined，前端用 null 表示「删除该键、恢复继承」。
- * updateSession 是合并语义，键置为 undefined 即从生效配置里消失（resolveConfig 会 strip）。
- */
-export function normalizeSessionConfigPatch(patch: unknown): Partial<SessionConfig> {
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('缺少配置');
-  return Object.fromEntries(
-    Object.entries(patch as Record<string, unknown>).map(([k, v]) => [k, v === null ? undefined : v]),
-  ) as Partial<SessionConfig>;
-}
-
-const webuiPages: WebuiPage[] = [
-  {
-    key: 'sessions',
-    label: '会话管理',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8M8 14h4"/></svg>',
-    order: 6,
-    renderer: 'sessions',
-  },
-];
-
 // ===== 辅助函数 =====
-
-/**
- * 递归归档：先归档所有子会话再归档自己。
- *
- * 写成自由函数而非方法：页面动作是被单独取出调用的（没有 receiver），递归不能依赖 this。
- */
-async function archiveRecursively(sm: SessionManagerService, id: string): Promise<void> {
-  const session = sm.getSession(id);
-  if (session) {
-    for (const childId of session.children) {
-      const child = sm.getSession(childId);
-      if (child && child.status !== 'archived') {
-        await archiveRecursively(sm, childId);
-      }
-    }
-  }
-  await sm.updateSession(id, { status: 'archived' });
-}
 
 /** 等待 ms 毫秒，signal 中止时提前返回。不用 node:timers/promises：全局定时器测试里能用假时钟推进 */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -225,22 +64,16 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function formatConfigSummary(config: SessionConfig): string {
-  const parts: string[] = [];
-  if (config.llm?.model) parts.push(`${config.llm.provider}/${config.llm.model}`);
-  if (config.enabledToolGroups?.length)
-    parts.push(config.enabledToolGroups.includes('*') ? 'tools:全部' : `tools:${config.enabledToolGroups.length}组`);
-  if (config.persona) parts.push(`persona:${config.persona}`);
-  return parts.join(', ') || '(默认)';
-}
-
 // ===== SessionManager 实现 =====
 
 /**
  * SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM、中止读表重试的 lifecycle，
- * 以及解析接管房间的适配器实例的 platform
+ * 解析接管房间的适配器实例的 platform，以及存放会话设置各层的宿主配置文档
  */
-type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle' | 'platform'>;
+type ManagerCaps = Pick<
+  Caps,
+  'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle' | 'platform' | 'hostConfig'
+>;
 
 /** 回合的结局（api-agent 的 agent:turn:after） */
 type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
@@ -264,12 +97,10 @@ class SessionManager implements SessionManagerService {
   private store: MemoryService | undefined;
   /** 最近一次挂接的加载；apply 等它完成再对外提供服务 */
   loading: Promise<void> = Promise.resolve();
-  /** 平台 → 默认 SessionConfig 模板 */
-  private platformProfiles = new Map<string, PlatformProfile>();
-  /** `<平台>/<受众>` → 平台档的受众条目，叠加在同平台的基础档上 */
-  private audienceProfiles = new Map<string, PlatformProfile>();
-  /** 全局默认配置（platform profile 之下的最低层 fallback） */
-  private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
+  /** 插件登记的设置项：登记与撤回都发 session:config:changed */
+  private readonly settings = new SettingRegistry(() => void this.caps.events.emit('session:config:changed'));
+  /** 已告警过的设置问题：取值无效、文档形状不对。解析每轮都跑，同一处只告警一次 */
+  private readonly warned = new Set<string>();
   /**
    * 在飞的回合：turnId → 所在会话与这一轮的结局。agent:input:before 进出登记与注销，结局由 agent:turn:after 记下
    * （消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合），
@@ -411,13 +242,14 @@ class SessionManager implements SessionManagerService {
    */
   async ensureSession(
     id: string,
-    patch: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata' | 'createdBy'>> = {},
+    patch: SessionUpdates & Pick<NewSessionFields, 'createdBy'> = {},
   ): Promise<SessionInfo> {
     if (this.sessions.has(id)) {
       // updateSession 不接受 createdBy（建档专用），命中路径剥离后转发
       const { createdBy: _ignore, ...updates } = patch;
       return this.updateSession(id, updates);
     }
+    const config = this.checkedConfig(patch.config);
     const now = Date.now();
     const session: SessionInfo = {
       id,
@@ -428,7 +260,7 @@ class SessionManager implements SessionManagerService {
       parentId: undefined,
       children: [],
       status: patch.status || (this.hasTurnInFlight(id) ? 'active' : 'waiting'),
-      config: patch.config || {},
+      config,
       createdAt: now,
       updatedAt: now,
       createdBy: patch.createdBy || 'user',
@@ -451,8 +283,7 @@ class SessionManager implements SessionManagerService {
    * 先占住 id，等待期间别的建档调用走合并更新，不会重复建档。解析期间会话被删除或换表的不再写回。不会拒绝。
    */
   async recordOriginInstance(session: SessionInfo): Promise<void> {
-    if (session.kind !== 'room' || !session.originPlatform || session.originInstance || this.resolving.has(session))
-      return;
+    if (session.kind !== 'room' || session.originInstance || this.resolving.has(session)) return;
     this.resolving.add(session);
     try {
       const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
@@ -467,11 +298,8 @@ class SessionManager implements SessionManagerService {
 
   // ---- CRUD ----
 
-  async createSession(
-    opts?: Partial<
-      Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'>
-    >,
-  ): Promise<SessionInfo> {
+  async createSession(opts?: NewSessionFields): Promise<SessionInfo> {
+    const config = this.checkedConfig(opts?.config);
     const id = opts?.parentId
       ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
       : `session-${crypto.randomUUID().slice(0, 8)}`;
@@ -486,7 +314,7 @@ class SessionManager implements SessionManagerService {
       parentId: opts?.parentId,
       children: [],
       status: opts?.status || 'active',
-      config: opts?.config || {},
+      config,
       createdAt: now,
       updatedAt: now,
       createdBy: opts?.createdBy || 'user',
@@ -532,24 +360,21 @@ class SessionManager implements SessionManagerService {
     return result.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  async updateSession(
-    id: string,
-    updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>,
-  ): Promise<SessionInfo> {
+  async updateSession(id: string, updates: SessionUpdates): Promise<SessionInfo> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`会话不存在: ${id}`);
+    // 先校验再动记录：配置被拒时什么都不改
+    const config = updates.config && checkPatch(this.settings, updates.config);
 
     if (updates.name !== undefined) session.name = updates.name;
     if (updates.status !== undefined) session.status = updates.status;
     if (updates.metadata !== undefined) session.metadata = { ...session.metadata, ...updates.metadata };
-    if (updates.config !== undefined) {
-      // 合并配置而不是替换
-      session.config = { ...session.config, ...updates.config };
-    }
+    if (config) session.config = applyPatch(session.config, config);
     session.updatedAt = Date.now();
 
     this.markDirty();
     await this.caps.events.emit('session:updated', session);
+    if (config) await this.caps.events.emit('session:config:changed');
     return session;
   }
 
@@ -607,15 +432,7 @@ class SessionManager implements SessionManagerService {
 
   // ---- 树形操作 ----
 
-  async createChildSession(
-    parentId: string,
-    opts?: Partial<
-      Omit<
-        SessionInfo,
-        'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'
-      >
-    >,
-  ): Promise<SessionInfo> {
+  async createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo> {
     // 平台派生会话（cli-default、OneBot 会话 id）从不经 createSession 预建，父档缺失是常态；
     // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。有出生平台的房间以 id 为名：带 source 的
     // 注入回合开子任务时房间还没收录，名字留给出生平台之后的真人入站按「现名等于 id」补上群名或昵称。
@@ -755,130 +572,159 @@ class SessionManager implements SessionManagerService {
     await this.caps.events.emit('session:updated', session);
   }
 
-  // ---- 配置解析 ----
+  // ---- 会话设置 ----
+
+  registerSetting(setting: SessionSetting, plugin: string): () => void {
+    return this.settings.register(setting, plugin);
+  }
+
+  listSettings(): RegisteredSessionSetting[] {
+    return this.settings.list();
+  }
 
   /**
    * 解析指定会话的最终生效配置
    *
    * 合并优先级（从高到低）：
    * 1. 会话自身 config
-   * 2. 父会话的 sessionDefaults
-   * 3. 平台 profile（房间会话按出生平台，见 {@link resolveInheritance}）
-   * 4. 全局 defaults（最低）
+   * 2. 父会话的 sessionDefaults（旧数据）
+   * 3. 受众条目与平台档（房间会话按出生平台，见 {@link resolveInheritance}）
+   * 4. 全局默认（最低）
    */
-  resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
-    // 2-4 层即继承链
-    const result = this.resolveInheritance(sessionId, platform).values;
-
-    const session = this.sessions.get(sessionId);
-    if (!session) return result;
-
-    // 1. 会话自身 config（最高优先级）
-    Object.assign(result, stripUndefined(session.config));
-
-    // 移除 sessionDefaults（不传递到消费方）
-    delete (result as Record<string, unknown>).sessionDefaults;
-
-    return result;
+  resolveConfig(sessionId: string, platform?: string): SessionConfig {
+    return { ...this.resolveInheritance(sessionId, platform).values, ...this.getOwnConfig(sessionId) };
   }
 
   /**
-   * 继承链解析：不含 session 自身 config，只算 defaults + platform profile + 受众条目 + 父 sessionDefaults，另记下每个键来自哪一层。
+   * 继承链解析：不含 session 自身 config，只算全局默认 + 平台档 + 受众条目 + 父 sessionDefaults，另记下每个键来自哪一层。
    * 房间会话钉死出生平台：不论从哪个入口驱动都按房间自己的平台档，并按房间的受众叠加受众条目；
    * 传入的入口平台只对没有出生平台的会话起作用，这类会话不取受众条目。
    */
   resolveInheritance(sessionId: string, platform?: string): SessionInheritance {
     const origin = resolveSessionOrigin(sessionId);
     const pinned = origin?.platform ?? platform;
-    const values: Record<string, unknown> = {};
-    const sources: SessionInheritance['sources'] = {};
-    const layer = (config: object | undefined, source: InheritanceSource) => {
-      for (const [key, value] of Object.entries(stripUndefined(config))) {
-        values[key] = value;
-        sources[key as keyof SessionConfig] = source;
-      }
-    };
-
-    // 3. 全局 defaults（最低）
-    layer(this.defaults, 'defaults');
-
-    // 2. 平台 profile，房间会话再叠加受众条目
-    if (pinned) layer(this.platformProfiles.get(pinned), 'platform');
-    if (origin) layer(this.audienceProfiles.get(`${origin.platform}/${origin.audience}`), 'audience');
-
-    // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
+    const parts = this.layerChain(this.layers(), pinned, origin?.audience);
     const session = this.sessions.get(sessionId);
-    if (session?.parentId) layer(this.sessions.get(session.parentId)?.config?.sessionDefaults, 'parent');
-
-    delete values.sessionDefaults;
-    delete sources.sessionDefaults;
-    return { platform: pinned, audience: origin?.audience, values, sources };
+    const parent = session?.parentId ? this.sessions.get(session.parentId) : undefined;
+    if (parent) parts.push([parent.config.sessionDefaults, 'parent', `会话 ${parent.id} 给子会话的默认值`]);
+    return { platform: pinned, audience: origin?.audience, ...this.stack(parts) };
   }
 
-  getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
-    return { ...this.defaults };
+  getOwnConfig(sessionId: string): SessionConfig {
+    return this.valid(this.sessions.get(sessionId)?.config, `会话 ${sessionId} `);
   }
 
-  /** 从配置加载全局 defaults */
-  loadDefaults(cfg: ConfigOf<typeof configSchema>['defaults']): void {
-    const next: Omit<SessionConfig, 'sessionDefaults'> = {};
-    if (cfg.persona) next.persona = cfg.persona;
-    this.defaults = next;
-    if (Object.keys(next).length > 0) {
-      this.caps.logger.info(`已加载全局 defaults: ${Object.keys(next).join(', ')}`);
+  childConfig(parentId: string, platform?: string): SessionConfig {
+    const config = this.resolveConfig(parentId, platform) as SettingValues;
+    for (const setting of this.settings.list()) if (setting.liveOnly) delete config[setting.key];
+    return config;
+  }
+
+  listLayers(): SessionConfigLayer[] {
+    return listLayers(this.layers());
+  }
+
+  getLayer(layer: SessionConfigLayer): SessionConfig {
+    return this.valid(rawLayer(this.layers(), layer), describeLayer(layer));
+  }
+
+  resolveLayer(layer: SessionConfigLayer): Pick<SessionInheritance, 'values' | 'sources'> {
+    const platform = layer.scope === 'defaults' ? undefined : layer.platform;
+    return this.stack(
+      this.layerChain(this.layers(), platform, layer.scope === 'audience' ? layer.audience : undefined),
+    );
+  }
+
+  async updateLayer(layer: SessionConfigLayer, patch: SessionConfigPatch): Promise<void> {
+    assertLayer(layer);
+    const host = this.caps.hostConfig.current;
+    if (!host) throw new Error('宿主没有提供配置文档（host-config），会话设置的各层无处保存');
+    const checked = checkPatch(this.settings, patch);
+    const layers = this.layers();
+    const previous = host.get('sessionConfig');
+    host.set('sessionConfig', writeLayer(layers, layer, applyPatch(rawLayer(layers, layer), checked)));
+    try {
+      await host.save();
+    } catch (err) {
+      // 拒写与写入失败都撤回：免得下一次任意保存把这次没存下的修改写进文件
+      host.set('sessionConfig', previous);
+      throw err;
     }
+    void this.caps.events.emit('session:config:changed');
   }
 
-  getPlatformProfiles(): Record<string, PlatformProfile> {
-    const result: Record<string, PlatformProfile> = {};
-    for (const [platform, profile] of this.platformProfiles) {
-      result[platform] = { ...profile };
+  /** 宿主配置文档里的各层；没有文档时为空 */
+  private layers(): Layers {
+    return readLayers(this.caps.hostConfig.current?.get('sessionConfig'), message => this.warnOnce(message));
+  }
+
+  /** 全局默认 → 平台档 → 受众条目：给了平台才有平台档，再给了受众才有受众条目 */
+  private layerChain(
+    layers: Layers,
+    platform: string | undefined,
+    audience: 'group' | 'private' | undefined,
+  ): Array<[values: object | undefined, source: InheritanceSource, where: string]> {
+    const parts: Array<[object | undefined, InheritanceSource, string]> = [[layers.defaults, 'defaults', '全局默认']];
+    if (platform === undefined) return parts;
+    parts.push([layers.platforms.get(platform), 'platform', describeLayer({ scope: 'platform', platform })]);
+    if (audience) {
+      parts.push([
+        layers.audiences.get(platform)?.[audience],
+        'audience',
+        describeLayer({ scope: 'audience', platform, audience }),
+      ]);
     }
-    return result;
+    return parts;
+  }
+
+  /** 按顺序叠加几处设置：后面的覆盖前面的，逐键记下来源 */
+  private stack(
+    parts: Array<[values: object | undefined, source: InheritanceSource, where: string]>,
+  ): Pick<SessionInheritance, 'values' | 'sources'> {
+    const values: SettingValues = {};
+    const sources: Record<string, InheritanceSource> = {};
+    for (const [raw, source, where] of parts) {
+      for (const [key, value] of Object.entries(this.valid(raw, where))) {
+        values[key] = value;
+        sources[key] = source;
+      }
+    }
+    return { values, sources };
   }
 
   /**
-   * 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘）。
-   * 写了 audience 的条目按 `<平台>/<受众>` 另存；受众不是 group、private 的整条丢弃并告警，
-   * 不当成不限受众去覆盖整个平台的房间。没填平台的条目对任何房间都不生效，告警后跳过。
+   * 一处设置里已登记的项：没登记的不参与解析；取值不合登记字段的当作没设置，字段标了 onInvalid: 'error' 的原样交出、
+   * 由登记它的插件按拒绝处理。取值不合的同一处同一项只告警一次
    */
-  loadPlatformProfiles(profiles: ConfigOf<typeof configSchema>['platformProfiles']): void {
-    for (const entry of profiles) {
-      const platform = entry.platform;
-      if (!platform) {
-        this.caps.logger.warn('有一条平台档没有填平台，整条已忽略');
-        continue;
+  private valid(values: object | undefined, where: string): SettingValues {
+    const out: SettingValues = {};
+    for (const [key, value] of Object.entries(values ?? {})) {
+      // 清掉的覆盖经 BSON 落盘读回来是 null，与没有同义
+      if (value === undefined || value === null) continue;
+      const setting = this.settings.get(key);
+      if (!setting) continue;
+      const read = readSetting(setting, value);
+      if (!('invalid' in read)) {
+        if (read.value !== undefined) out[key] = read.value;
+      } else if (setting.field.onInvalid === 'error') {
+        this.warnOnce(`${where}的设置项 ${key} 取值无效（${read.invalid}），原样交给登记它的插件按拒绝处理`);
+        out[key] = value;
+      } else {
+        this.warnOnce(`${where}的设置项 ${key} 取值无效（${read.invalid}），按没设置处理`);
       }
-      const audience = entry.audience;
-      const unrestricted = audience === undefined || audience === '';
-      if (!unrestricted && audience !== 'group' && audience !== 'private') {
-        this.caps.logger.warn(
-          `平台档 ${platform} 的受众取值 ${JSON.stringify(audience)} 无效（只认 group、private），整条已忽略`,
-        );
-        continue;
-      }
-      const key = unrestricted ? platform : `${platform}/${audience}`;
-      const profile: PlatformProfile = {};
-      if (entry.persona) profile.persona = entry.persona;
-      if (entry.llm && typeof entry.llm === 'object' && entry.llm.provider && entry.llm.model) {
-        profile.llm = { provider: String(entry.llm.provider), model: String(entry.llm.model) };
-      }
-      if (entry.enabledToolGroups !== undefined) profile.enabledToolGroups = entry.enabledToolGroups;
-      if (entry.disableOutputFormat !== undefined) profile.disableOutputFormat = entry.disableOutputFormat;
-      if (entry.clientSideJsonRendering !== undefined) profile.clientSideJsonRendering = entry.clientSideJsonRendering;
-      // 空串表示继承 provider 全局配置。
-      if (entry.think === 'on') profile.think = true;
-      else if (entry.think === 'off') profile.think = false;
-      const invalid = readRoomKeys(entry, profile);
-      if (invalid.length > 0) {
-        this.caps.logger.warn(`平台档 ${key} 的 ${invalid.join('、')} 取值无效，已忽略`);
-      }
-      (unrestricted ? this.platformProfiles : this.audienceProfiles).set(key, profile);
     }
-    const loaded = [...this.platformProfiles.keys(), ...this.audienceProfiles.keys()];
-    if (loaded.length > 0) {
-      this.caps.logger.info(`已加载 ${loaded.length} 个平台配置模板: ${loaded.join(', ')}`);
-    }
+    return out;
+  }
+
+  /** 建会话时给的配置：校验后作为会话自己的覆盖 */
+  private checkedConfig(config: SessionConfigPatch | undefined): SettingValues {
+    return config ? applyPatch({}, checkPatch(this.settings, config)) : {};
+  }
+
+  private warnOnce(message: string): void {
+    if (this.warned.has(message)) return;
+    this.warned.add(message);
+    this.caps.logger.warn(message);
   }
 
   private hasTurnInFlight(sessionId: string): boolean {
@@ -965,268 +811,15 @@ function describeSession(
   parentId: string | undefined,
 ): Pick<SessionInfo, 'kind' | 'originPlatform' | 'audience'> {
   const origin = resolveSessionOrigin(id);
-  if (parentId) return { kind: 'task', originPlatform: origin?.platform, audience: undefined };
-  return { kind: 'room', originPlatform: origin?.platform, audience: origin?.audience ?? 'owner' };
+  const audience = parentId ? undefined : (origin?.audience ?? 'owner');
+  return { kind: sessionKind({ parentId, audience }), originPlatform: origin?.platform, audience };
 }
 
-const MEMORY_RECALL_SCOPES: readonly MemoryRecallScope[] = ['session', 'platform', 'all'];
-
-/**
- * 读平台档里白纸、远端代理与召回范围这七个键，合法的写进 profile，返回取值无效被丢弃的键名。
- *
- * 这些键关系到费用与召回范围，类型不对一律丢弃，不做宽松转换。null 与空串按未设置处理（YAML 裸键、
- * WebUI 表单留空），不算无效；远端类型数组里的非字符串项与空串被滤掉，也记为无效。
- */
-function readRoomKeys(entry: Record<string, unknown>, profile: PlatformProfile): string[] {
-  const invalid: string[] = [];
-  const isUnset = (v: unknown) => v === undefined || v === null || v === '';
-  const isLimit = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-
-  if (typeof entry.paperEnabled === 'boolean') profile.paperEnabled = entry.paperEnabled;
-  else if (!isUnset(entry.paperEnabled)) invalid.push('paperEnabled');
-
-  if (typeof entry.paperName === 'string' && entry.paperName) profile.paperName = entry.paperName;
-  else if (!isUnset(entry.paperName)) invalid.push('paperName');
-
-  if (Array.isArray(entry.remoteAgentTypes)) {
-    const types = entry.remoteAgentTypes.filter((t): t is string => typeof t === 'string' && t !== '');
-    if (types.length !== entry.remoteAgentTypes.length) invalid.push('remoteAgentTypes');
-    profile.remoteAgentTypes = types;
-  } else if (!isUnset(entry.remoteAgentTypes)) invalid.push('remoteAgentTypes');
-
-  for (const key of ['remoteAgentUserDailyCents', 'remoteAgentUserDailyTasks', 'remoteAgentRoomDailyCents'] as const) {
-    const value = entry[key];
-    if (isLimit(value)) profile[key] = value;
-    else if (!isUnset(value)) invalid.push(key);
-  }
-
-  const scope = entry.memoryRecallScope;
-  if (MEMORY_RECALL_SCOPES.includes(scope as MemoryRecallScope)) profile.memoryRecallScope = scope as MemoryRecallScope;
-  else if (!isUnset(scope)) invalid.push('memoryRecallScope');
-
-  return invalid;
-}
-
-/**
- * 移除值为 undefined / null 的键。
- *
- * null 必须一起剥：清除会话覆盖（`/model 复位`）写入的是 undefined，
- * 而它经 BSON 持久化后读回来是 **null**。不剥的话这个 null 会在 Object.assign 里
- * 把平台 profile 的同名字段盖成空——agent 侧判 `llm?.provider && llm?.model` 不成立、
- * 退回 `resolveLLMModel(undefined)`，静默落到首个注册的 entry。表现就是
- * 「配置里写着 A，实际跑的是 B」，且没有任何告警。persona 同理。
- * 本模型里「没有值」一律等于「继承上层」，null 与 undefined 同义。
- */
-function stripUndefined(obj: object | undefined): Record<string, unknown> {
-  if (!obj) return {};
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined && value !== null) result[key] = value;
-  }
-  return result;
-}
-
-// ===== 页面动作 =====
-
-/**
- * 页面动作用到的能力：登记口 webui、读历史的 memory，供下拉框枚举选项的 persona / llm / tools / platform
- * （platform 另用于推出会话所属平台），以及记录适配器认领出错的 logger
- */
-type ActionCaps = Pick<Caps, 'webui' | 'memory' | 'persona' | 'llm' | 'tools' | 'platform' | 'logger'>;
-
-/** 会话页的分区与显示名，按显示顺序 */
-const SESSION_LIST_SECTIONS: ReadonlyArray<readonly [SessionListSection, string]> = [
-  ['owner', '我的会话'],
-  ['rooms', 'IM 房间'],
-];
-
-/**
- * 页面动作全是 apply 里的闭包：直接用这次激活的 manager 与能力，
- * 登记随激活存亡（插件不在，WebUI 就调不到这些方法）。
- */
-function registerSessionActions(caps: ActionCaps, manager: SessionManager): void {
-  const { webui, memory, persona, llm, tools, platform, logger } = caps;
-
-  webui.registerAction('listSessions', async () =>
-    manager.listSessions().map(s => ({
-      ...s,
-      displayTitle: s.title || s.name,
-      configSummary: formatConfigSummary(s.config),
-      childCount: s.children.length,
-    })),
-  );
-
-  webui.registerAction('createSession', async args => {
-    const parentId = (args.parentId as string) || undefined;
-    // 新建会话时复制当前生效配置，而非留空继承；房间专属键不随复制冻结，留给继承链实时解析
-    let config = (args.config as SessionConfig) || {};
-    if (Object.keys(config).length === 0) {
-      if (parentId) {
-        // 子会话：复制父会话的 resolved config
-        config = omitRoomOnlyKeys(manager.resolveConfig(parentId, 'webui'));
-      } else {
-        // 根会话：复制 webui 平台 profile 作为初始配置
-        const profiles = manager.getPlatformProfiles();
-        if (profiles.webui) config = omitRoomOnlyKeys(profiles.webui);
-      }
-    }
-    return manager.createSession({
-      name:
-        (args.name as string) ||
-        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
-      parentId,
-      config,
-      createdBy: 'user',
-      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）；回合开始时才翻 active。
-      status: 'waiting',
-    });
-  });
-
-  webui.registerAction('deleteSession', async args => {
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    await manager.deleteSession(id);
-    return { success: true };
-  });
-
-  webui.registerAction('updateSessionConfig', async args => {
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    return manager.updateSession(id, { config: normalizeSessionConfigPatch(args.config) });
-  });
-
-  webui.registerAction('getSessionHistory', async args => {
-    const store = memory.current;
-    if (!store) throw new Error('memory 服务不可用');
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    const limit = (args.limit as number) || 100;
-    const history = await store.getHistory(sessionId, limit);
-    return { sessionId, messages: history };
-  });
-
-  /** 批量归档会话 */
-  webui.registerAction('batchArchive', async args => {
-    const ids = args.ids as string[];
-    if (!Array.isArray(ids) || ids.length === 0) throw new Error('缺少会话 ID 列表');
-    let count = 0;
-    for (const id of ids) {
-      try {
-        await manager.updateSession(id, { status: 'archived' });
-        count++;
-      } catch {
-        /* skip */
-      }
-    }
-    return { success: true, count };
-  });
-
-  /** 批量删除会话 */
-  webui.registerAction('batchDelete', async args => {
-    const ids = args.ids as string[];
-    if (!Array.isArray(ids) || ids.length === 0) throw new Error('缺少会话 ID 列表');
-    let count = 0;
-    for (const id of ids) {
-      try {
-        await manager.deleteSession(id);
-        count++;
-      } catch {
-        /* skip */
-      }
-    }
-    return { success: true, count };
-  });
-
-  /** 会话页的树按区回：我的会话在前、IM 房间在后，空区不回；分区在服务端判定，客户端只负责画 */
-  webui.registerAction('getSessionTree', async (): Promise<SessionTreeSection[]> => {
-    const roots = manager.getTree();
-    return SESSION_LIST_SECTIONS.map(([key, label]) => ({
-      key,
-      label,
-      nodes: roots.filter(n => sessionListSection(n.session) === key),
-    })).filter(section => section.nodes.length > 0);
-  });
-
-  /** 获取可选项列表（供前端下拉框使用） */
-  webui.registerAction('getConfigOptions', async () => {
-    // 可用人设列表
-    const personaService = persona.current;
-    const personas = personaService?.listModels ? await personaService.listModels() : [];
-
-    // 可用 LLM 模型列表（枚举所有 chat-capable entry）
-    const models = listLLMModels(llm, { caps: ['chat'] }).map(e => ({
-      id: e.instance.id,
-      capabilities: [...e.instance.capabilities],
-      provider: e.instance.providerId,
-      contextId: e.contextId,
-    }));
-
-    // 工具分组列表
-    const toolGroups = tools.current?.getGroups().map(g => ({ name: g.name, label: g.label })) ?? [];
-
-    // 已注册平台列表
-    const platforms = getPlatformNames(platform);
-
-    return { personas, models, toolGroups, platforms, profiles: manager.getPlatformProfiles() };
-  });
-
-  /** 获取指定会话的最终生效配置（合并所有层级后的结果） */
-  webui.registerAction('getResolvedConfig', async args => {
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    return manager.resolveConfig(sessionId, args.platform as string | undefined);
-  });
-
-  /**
-   * 获取「继承默认」——不含 session 自身 config，只算全局 defaults、平台档（含受众条目）与父 sessionDefaults，
-   * 并回选档平台、受众（房间会话才有）与每个键的来源层。
-   * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
-   *
-   * 会话所属平台由服务端推出，不收平台参数：有出生平台的按出生平台；没有的（owner 面会话）按会话 metadata 记下的
-   * 平台（子任务建档时写入）→ 接管这个会话 id 的平台适配器 → webui（WebUI 建的会话 id 不带平台前缀）。
-   */
-  webui.registerAction('getInheritance', async (args): Promise<SessionInheritance> => {
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    if (resolveSessionOrigin(sessionId)) return manager.resolveInheritance(sessionId);
-    const recorded = manager.getSession(sessionId)?.metadata?.platform;
-    const entryPlatform =
-      typeof recorded === 'string' && recorded
-        ? recorded
-        : ((await resolvePlatformBySession(platform, sessionId, logger))?.instance.platform ?? 'webui');
-    return manager.resolveInheritance(sessionId, entryPlatform);
-  });
-
-  /** 获取会话详情（含完整消息历史，包括已归档消息） */
-  webui.registerAction('getSessionDetail', async args => {
-    const store = memory.current;
-    if (!store) throw new Error('memory 服务不可用');
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    const session = manager.getSession(id);
-    if (!session) throw new Error(`会话不存在: ${id}`);
-    const limit = (args.limit as number) || 200;
-    // 优先使用 getFullHistory（含已归档消息），确保 UI 能看到完整对话
-    const messages = store.getFullHistory ? await store.getFullHistory(id, limit) : await store.getHistory(id, limit);
-    return { session, messages };
-  });
-
-  /** 手动重命名会话标题 */
-  webui.registerAction('renameSession', async args => {
-    const id = args.id as string;
-    const title = args.title as string;
-    if (!id || !title) throw new Error('缺少 id 或 title');
-    await manager.updateSessionTitle(id, title);
-    return { success: true };
-  });
-
-  /** 归档子会话（父已不再需要） */
-  webui.registerAction('archiveSession', async args => {
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    await archiveRecursively(manager, id);
-    return { success: true };
-  });
+/** 一层在日志里的称呼 */
+function describeLayer(layer: SessionConfigLayer): string {
+  if (layer.scope === 'defaults') return '全局默认';
+  if (layer.scope === 'platform') return `平台档 ${layer.platform} `;
+  return `平台档 ${layer.platform} 的${AUDIENCE_NAMES[layer.audience]}条目`;
 }
 
 // ===== 插件入口 =====
@@ -1242,17 +835,17 @@ const uses = {
   agent: optional(agent),
   /** 自动标题的模型来源；没有 LLM 时退回用户消息首段 */
   llm: optional(llm),
-  /** 下列三项只供 WebUI 下拉框枚举选项，缺席即空列表 */
-  persona: optional(persona),
+  /** 解析接管房间的适配器实例（originInstance），判断会话 id 前缀是不是已注册的平台名 */
   platform: optional(platform),
-  tools: optional(tools),
-  /** 页面与页面动作的登记口；无 WebUI 时会话管理照常在后台运行 */
-  webui: optional(webuiServer),
+  /**
+   * 会话设置的全局默认、平台档与受众条目存放在宿主配置文档的 sessionConfig 字段里。由宿主在根上提供、没有插件
+   * provide 它，写进激活闸只会挂一条解析不到提供者的告警；缺席时各层为空、按层写被拒
+   */
+  hostConfig: optional(hostConfig),
   events,
   hooks,
   lifecycle,
   logger,
-  config,
   provide,
 };
 type Caps = BoundOf<typeof uses>;
@@ -1261,18 +854,13 @@ export default definePlugin({
   name: '@aalis/plugin-session-manager',
   displayName: '会话管理',
   subsystem: 'session',
-  configSchema,
   provides: [sessionManager],
   uses,
   apply: run,
 });
 
 async function run(caps: Caps): Promise<void> {
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
-  const { memory, webui, events, hooks, lifecycle, logger, provide } = caps;
-
-  // 注册 WebUI 页面
-  for (const page of webuiPages) webui.registerPage(page);
+  const { memory, events, hooks, lifecycle, logger, provide } = caps;
 
   if (memory.current === undefined) {
     logger.error('memory 服务不可用，会话管理无法启动');
@@ -1287,15 +875,8 @@ async function run(caps: Caps): Promise<void> {
   // 读表（含重试等待）期间停用或停机的，不再发布服务与登记
   lifecycle.signal.throwIfAborted();
 
-  // 加载平台 profiles
-  manager.loadPlatformProfiles(cfg.platformProfiles);
-  // 加载全局 defaults
-  manager.loadDefaults(cfg.defaults);
-
   // 注册服务
   provide(sessionManager, manager, { label: '会话管理' });
-
-  registerSessionActions(caps, manager);
 
   // ===== IM 房间收录 =====
   // 有出生平台、不是子任务的会话，首条真人入站（不带 source，触发判定之前）即登记。带 source 的是内部注入

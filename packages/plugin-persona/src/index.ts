@@ -11,7 +11,7 @@ import {
   persona,
 } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
-import { sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import { type SessionSetting, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import {
   createStorageGateway,
   isStorageNotFound,
@@ -450,6 +450,49 @@ class PersonaServiceImpl implements PersonaService {
 
 // ===== 插件入口 =====
 
+/**
+ * 本插件登记的会话设置项：人设、额外提示与结构化输出的两个开关。都由人设服务生效，各种会话都适用；
+ * 人设的可选项来自人设服务的 listModels
+ */
+const SESSION_SETTINGS: SessionSetting[] = [
+  {
+    key: 'persona',
+    field: {
+      type: 'select',
+      label: '人设',
+      dynamicOptions: 'persona',
+      allowCustom: true,
+      description: '角色卡名（不含后缀）；没设置时用人设插件配置的默认卡',
+    },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'common',
+    order: 10,
+  },
+  {
+    key: 'systemPromptExtra',
+    field: { type: 'textarea', label: '额外提示', description: '追加在人设提示之后、结构化输出格式说明之前' },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'common',
+    order: 40,
+  },
+  {
+    key: 'disableOutputFormat',
+    field: { type: 'boolean', label: '不用结构化输出', description: '不用角色卡的结构化输出格式，回复纯文本' },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'advanced',
+  },
+  {
+    key: 'clientSideJsonRendering',
+    field: {
+      type: 'boolean',
+      label: '客户端渲染 JSON',
+      description: '结构化输出的 JSON 原样交给客户端渲染，不提取回复字段；没设置时按角色卡',
+    },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'advanced',
+  },
+];
+
 const uses = {
   provide: provideCap,
   config: configCap,
@@ -609,6 +652,7 @@ async function run(caps: Caps): Promise<void> {
     timeInjection,
     timeZone,
   });
+  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
   provide(persona, service);
 
   /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */

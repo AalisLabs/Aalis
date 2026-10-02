@@ -23,6 +23,7 @@ export default defineConfig({
       ['**/test/plugins/works-site-isolation.test.ts', 'threads'],
       ['**/test/plugins/publish-preview-isolation.test.ts', 'threads'],
       ['**/test/smoke/**', 'threads'],
+      ['**/test/e2e-webui/**', 'threads'],
     ],
     poolOptions: { threads: { singleThread: true } },
     coverage: {

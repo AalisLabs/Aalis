@@ -20,7 +20,7 @@ import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
-import { memory } from '@aalis/api-memory';
+import { MEMORY_RECALL_SCOPE_SETTING, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
 import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
@@ -584,6 +584,7 @@ function start(caps: Caps): void {
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (cfg.agentInjection) {
+    caps.sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
     registerRelationContribution({ contributions: caps.contributions, sessionManager: caps.sessionManager }, service, {
       maxDepth: cfg.injectionMaxDepth,
       maxBreadth: cfg.injectionMaxBreadth,

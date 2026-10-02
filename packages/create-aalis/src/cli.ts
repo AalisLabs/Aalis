@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
-// 会话 → 权限 → 消息归档 + 跨会话历史）。
+// 会话 → 权限 → 消息归档 + 跨会话历史）。会话服务提供会话协议与审批：没有它，需要确认的工具调用一律被拒。
 // 同类适配器不在此列，由 GROUPS 交互选择补入。钩子与贡献点由插件提供（core 不内置），
 // gateway / agent / 指令等都 required 它们，缺了整个机器人挂起，故排在最前。
 export const MINIMAL_BASE = [
@@ -42,6 +42,7 @@ export const MINIMAL_BASE = [
   '@aalis/plugin-prompt-budget',
   '@aalis/plugin-authority',
   '@aalis/plugin-session-manager',
+  '@aalis/plugin-session-server',
   '@aalis/plugin-message-archive',
   '@aalis/plugin-memory-history',
 ];
@@ -388,9 +389,9 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 `;
 }
 
-// 只有 owner 能进的平台（本地终端 / 单 token WebUI）开箱给全部工具分组。多人平台（OneBot 等）不代开：
+// 只有 owner 能进的平台（本地终端 / 单 token WebUI）的平台档开箱给全部工具分组。多人平台（OneBot 等）不代开：
 // 带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸（docs/concepts/security-model.md），
-// 由 owner 在平台档里按需列组。
+// 由 owner 在平台档里按需列组。平台档是会话设置的一层，写在配置文档的 sessionConfig 里，由 session-manager 读。
 const OWNER_ONLY_PLATFORMS: ReadonlyArray<readonly [plugin: string, platform: string]> = [
   ['@aalis/plugin-cli', 'cli'],
   ['@aalis/plugin-webui-server', 'webui'],
@@ -399,10 +400,7 @@ const OWNER_ONLY_PLATFORMS: ReadonlyArray<readonly [plugin: string, platform: st
 export function renderConfig(enabled: Set<string>): string {
   const lines = ['name: Aalis', 'logLevel: info'];
   const configured = [...enabled].filter(n => KNOWN_CONFIG[n]).sort();
-  const fullToolPlatforms = enabled.has('@aalis/plugin-session-manager')
-    ? OWNER_ONLY_PLATFORMS.filter(([plugin]) => enabled.has(plugin)).map(([, platform]) => platform)
-    : [];
-  if (configured.length > 0 || fullToolPlatforms.length > 0) {
+  if (configured.length > 0) {
     lines.push('plugins:');
     for (const n of configured) {
       lines.push(`  "${n}":`);
@@ -410,17 +408,18 @@ export function renderConfig(enabled: Set<string>): string {
         lines.push(`    ${k}: "${v}"`);
       }
     }
-    if (fullToolPlatforms.length > 0) {
-      lines.push('  "@aalis/plugin-session-manager":', '    platformProfiles:');
-      for (const platform of fullToolPlatforms) {
-        lines.push(`      - platform: ${platform}`, '        enabledToolGroups: ["*"]');
-      }
-    }
   } else {
     lines.push(
       '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写（密钥在启动时移进同目录的 secrets.yaml，本处换成引用；home/ 已在 .gitignore 里，不入库）。',
     );
     lines.push('plugins: {}');
+  }
+  const fullToolPlatforms = enabled.has('@aalis/plugin-session-manager')
+    ? OWNER_ONLY_PLATFORMS.filter(([plugin]) => enabled.has(plugin)).map(([, platform]) => platform)
+    : [];
+  if (fullToolPlatforms.length > 0) {
+    lines.push('sessionConfig:', '  platforms:');
+    for (const platform of fullToolPlatforms) lines.push(`    ${platform}:`, '      enabledToolGroups: ["*"]');
   }
   lines.push('disabledPlugins: []');
   return `${lines.join('\n')}\n`;

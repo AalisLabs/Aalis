@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 权限 / 文件 / 市场）+ WebSocket（`/session` 接会话协议；`/admin` 推管理面事件：日志、插件与页面登记表的变化、重启、换前端；`/ws` 是旧协议，推消息流与日志），并托管前端静态文件。第三方插件通过它**登记侧边栏页面 / 声明式面板 / 配置表单**，也可整体替换前端或替换整个服务实现。
+WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 市场 / 日志 / 媒体与会话文件）+ WebSocket（`/session` 接会话协议；`/admin` 推管理面事件：日志、插件与页面登记表的变化、重启、换前端），并托管前端静态文件。第三方插件通过它**登记页面与页面动作**，也可整体替换前端或替换整个服务实现。
 
 注意服务注册名（描述符 `name`）有**两个**，而非单个 `'webui'`：
 
@@ -85,7 +85,7 @@ action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 
 
 **提供方**
 
-- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时是一个 `platform` adapter（WebUI 当聊天界面）。`sessionProtocol`、`approvals` 等为 optional。
+- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时以 `webui` 平台名登记一个 `platform` adapter：平台名标明说话的是从 WebUI 来的 owner，连接状态数的是打开着的 `/session` 连接；WebUI 的会话不经它收发。`sessionProtocol`、`approvals` 等为 optional。
 - `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（可用 `onBehalfOf` 让偏好认前端包名；代登记不计入代理人 `provides`）。
 
 **消费方**（经 `webui.registerPage` / `registerAction`）：
@@ -171,20 +171,13 @@ export default definePlugin({
 
 `/api/proxy/image` 用 `@aalis/util-network-guard` 的 `safeFetch`（`packages/plugin-webui-server/src/routes/proxy.ts`）。该函数**逐跳 `redirect:'manual'` + 每跳重新校验协议与 host**，并强制 `content-type: image/*`、20MB 上限、15s 超时、`x-content-type-options: nosniff` + `content-security-policy: sandbox`。任何 egress 都应走 `safeFetch`，别直接 `fetch` 用户给的 URL。
 
-### 存储不是沙盒
-
-webui-server 的文件管理页基于 storage 根（默认 `workspace`，`fileRoot` 配置），用 `'<root>:/path'` 文法。storage 限定可达根但**不是沙盒**。文法见 `docs/concepts/storage-uri-grammar.md`、`docs/services/storage.md`。
-
 ### 跨会话隔离
 
-旧协议 `/ws` 的推送按 `sessionId` 分桶，`subscribe_session` 注册。`/admin` 的事件不按会话分：日志推给订阅了的连接，其余推给全部连接；日志里可能带会话内容，与旧协议的日志推送是同一份。
+会话的条目只推给订阅了这个会话的 `/session` 连接（见 [api-session-protocol](../api/api-session-protocol.md)）。`/admin` 的事件不按会话分：日志推给订阅了的连接，其余推给全部连接；日志里可能带会话内容。
 
 ## 7. 注意事项与边界情形
 
-- **插件 icon → 内联 SVG XSS（真实存留）**：默认前端 `resolveIcon` 在 `WebuiPage.icon` 以 `<svg` 开头时，直接 `dangerouslySetInnerHTML` 渲染（`packages/plugin-webui-client/src/App.tsx`）。`icon` 来自第三方插件声明，**一个恶意市场插件可借此注入脚本**。规避：你写的插件 `icon` 一律用**命名标识**（如 `'tools'`），别从不可信源透传内联 SVG。
-- **Mermaid**：聊天 markdown 里的 Mermaid 图用 `securityLevel: 'strict'`（`packages/plugin-webui-client/src/components/MermaidBlock.tsx`）。
 - **页面表是 webui-server 实例内存态**：webui-server 被替换会清空 `registeredPages`；这正是绑定门面用 `registrar` 自动重挂的原因。
-- **`renderer` 自定义渲染器**：内置 renderer 由默认前端写死 switch。第三方页面应优先用声明式 `content`。
 
 ## 8. 交叉链接
 

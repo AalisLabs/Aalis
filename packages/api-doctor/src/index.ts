@@ -67,7 +67,7 @@ export interface DoctorService {
 
 declare module '@aalis/core' {
   interface AalisEvents {
-    /** 一次诊断完成后发射，供 WebUI 等订阅者即时刷新 */
+    /** 一次诊断完成后发射，供订阅者即时刷新 */
     'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
   }
 }

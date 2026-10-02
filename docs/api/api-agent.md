@@ -30,6 +30,18 @@ interface AgentService {
 
 plugin-agent 落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在 `metadata.turnId` 记下这一轮的回合 id；执行过的工具调用在 tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段记下这次调用的 `callId`。
 
+## 会话设置项的键
+
+本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加三个键，由 plugin-agent 登记：
+
+```ts
+interface SessionConfig {
+  llm?: ModelRef;               // 会话用的模型；没设置时跟随 llm 服务的偏好
+  think?: boolean;              // 深度思考开关；没设置时由各模型服务自己的配置决定
+  maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置
+}
+```
+
 ## 绑定接口
 
 ```ts
@@ -58,7 +70,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, sessionId, source?, ... }`；`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
-| `agent:tool:after` | 工具调用之后 | `{ name, result, toolCallContext }` |
+| `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, visibleContent?, sessionId, ... }` |
 | `agent:turn:after` | 一轮处理完成（消息在 `agent:input:before` 被拦下时不触发） | `{ message, reply, outcome, sessionId, turnId, metadata }` |
 

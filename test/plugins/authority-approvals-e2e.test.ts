@@ -94,6 +94,8 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   const received: Array<Record<string, unknown>> = [];
   host.tools.register({
     confirm,
+    // 卡上的事实按声明的展示种类取：探针把 command 声明成命令
+    display: { kind: 'command', fields: { command: 'command' } },
     definition: {
       type: 'function',
       function: {

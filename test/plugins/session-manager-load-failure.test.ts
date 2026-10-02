@@ -5,6 +5,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // 读不到会话表时（连接抖动、后端不可用），先按 1s、3s、10s 的间隔有限重试，其间仍用原来的会话表与落盘目标；
 // 用尽仍失败时，空表不能当作权威表和落盘目标：否则之后 ensureSession 新建的空白记录会覆盖后端里的原记录，
@@ -79,9 +80,11 @@ async function setup(stores: Array<[ReturnType<typeof fakeMemory>, number]>, adv
   await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
   for (const [store, priority] of stores) host.provide(memory, store as never, { priority });
-  const registered = app.plugin(sessionManagerPlugin, {});
+  const registered = app.plugin(sessionManagerPlugin);
   await vi.advanceTimersByTimeAsync(advanceMs);
   await registered;
+  // 用例经 ensureSession 改人设，人设这一项要有人登记
+  await app.plugin(settingsPlugin('test-settings', [PERSONA]));
   await app.plugins.idle();
   return { app, host, logger, sm: () => host.sessionManager.require() };
 }

@@ -13,9 +13,10 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话级 maxToolIterations：契约与 WebUI 会话页都有这个字段，agent 却从不读——死配置。
-// 规则：正整数生效；非正整数视为未设置，回落全局配置。
-// 模型每轮都要求调工具（响应耗尽后重复最后一条），工具真实执行次数即循环轮数。
+// agent 登记的会话设置项。
+// - maxToolIterations：曾经契约里有这个字段，agent 却从不读——死配置。正整数生效，没设置回落全局配置；登记的字段
+//   要求不小于 1 的整数，写不进别的值。模型每轮都要求调工具（响应耗尽后重复最后一条），工具真实执行次数即循环轮数。
+// - llm：字段类型 llm-ref 不经 schema-config 校验，形状由登记给的 validate 核：服务与模型都是非空字符串。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -87,7 +88,7 @@ const ask = (host: Host, sessionId: string) =>
   });
 
 describe('会话级 maxToolIterations', () => {
-  it('会话设 2 → 循环两轮即停；未设置走全局 5；0 视为未设置', async () => {
+  it('会话设 2 → 循环两轮即停；未设置走全局 5；非正整数写不进去', async () => {
     const { app, host, executed, reset } = await boot();
     const sm = host.sessionManager.require();
     try {
@@ -99,10 +100,28 @@ describe('会话级 maxToolIterations', () => {
       await ask(host, 'test:iter-global');
       expect(executed(), '未设置的会话走全局上限').toBe(5);
 
-      reset();
-      await sm.ensureSession('test:iter-zero', { config: { maxToolIterations: 0 } });
-      await ask(host, 'test:iter-zero');
-      expect(executed(), '非正整数视为未设置').toBe(5);
+      await expect(sm.ensureSession('test:iter-zero', { config: { maxToolIterations: 0 } })).rejects.toThrow(
+        'maxToolIterations',
+      );
+    } finally {
+      await app.stop();
+    }
+  });
+});
+
+describe('会话级模型', () => {
+  it('只收服务与模型都是非空字符串的 { provider, model }，别的写不进去', async () => {
+    const { app, host } = await boot();
+    const sm = host.sessionManager.require();
+    try {
+      const model = { provider: '<服务>', model: '<模型>' };
+      await sm.ensureSession('test:model', { config: { llm: model } });
+      for (const llm of ['x', { provider: 1, model: {} }, { provider: '<服务>' }, { provider: '', model: '<模型>' }]) {
+        await expect(sm.updateSession('test:model', { config: { llm } as never }), JSON.stringify(llm)).rejects.toThrow(
+          'llm',
+        );
+      }
+      expect(sm.getSession('test:model')?.config).toEqual({ llm: model });
     } finally {
       await app.stop();
     }

@@ -92,10 +92,10 @@ describe('WebUI 媒体路由', () => {
     expect((await get('data:/images/missing.png')).status).toBe(404);
   });
 
-  it('安全：用 .. 指向存储根外的图片取不到', async () => {
+  it('安全：用 .. 指向存储根外的图片取不到（存储拒绝读取，按读不出回 500，不是「不存在」）', async () => {
     for (const uri of ['data:/../outside.png', 'data:/images/../../outside.png']) {
       const res = await get(uri);
-      expect(res.status, uri).toBe(404);
+      expect(res.status, uri).toBe(500);
       expect(Buffer.from(await res.arrayBuffer()).includes(PNG), uri).toBe(false);
     }
   });
@@ -148,5 +148,42 @@ describe('WebUI 媒体路由的读流', () => {
     // 响应头已经发出，正文取不完整
     await expect(fetch(url).then(res => res.arrayBuffer())).rejects.toThrow();
     await vi.waitFor(() => expect(warns).toEqual(['媒体文件 mem:/big.png 读取出错: zz-eio']));
+  });
+});
+
+describe('WebUI 媒体路由的读取失败', () => {
+  it('读取失败按原因分：文件不存在回 404、不记告警；其余读不出的回 500 并记一条告警', async () => {
+    const answer = async (error: Error) => {
+      const warns: string[] = [];
+      const routes = new Map<string, (req: unknown, res: unknown) => Promise<void>>();
+      registerMediaRoutes(
+        { get: (path: string, ...handlers: never[]) => void routes.set(path, handlers[handlers.length - 1]) } as never,
+        {
+          readFileRange: async () => {
+            throw error;
+          },
+        } as never,
+        { warn: (msg: string) => void warns.push(msg) } as never,
+        (() => () => {}) as never,
+      );
+      const res = {
+        statusCode: 0,
+        status(code: number) {
+          res.statusCode = code;
+          return res;
+        },
+        json: () => res,
+      };
+      await routes.get('/api/media')?.({ query: { uri: 'mem:/a.png' } }, res);
+      return { status: res.statusCode, warns };
+    };
+    expect(await answer(Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }))).toEqual({
+      status: 404,
+      warns: [],
+    });
+    expect(await answer(Object.assign(new Error('zz-eacces'), { code: 'EACCES' }))).toEqual({
+      status: 500,
+      warns: ['读取媒体文件 mem:/a.png 失败:'],
+    });
   });
 });

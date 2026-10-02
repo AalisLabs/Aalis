@@ -17,7 +17,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type { IncomingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -187,6 +187,27 @@ describe('落库的消息带回合 id', () => {
       ['tool', turnId],
       ['assistant', turnId],
     ]);
+  });
+
+  it('工具结果的钩子写进 metadata 的键随这次工具结果落库，turnId 与 callId 由 agent 写；回复的出站消息带这一轮的 turnId', async () => {
+    const { agent, seen } = await startAgent([callProbe, { content: '查好了' }], async () => 'ok');
+    const host = (apps.at(-1) as App).bind({ hooks, memory, events });
+    host.hooks.middleware('agent:tool:after', async (data, next) => {
+      data.metadata.note = '记一笔';
+      data.metadata.turnId = 'forged';
+      await next();
+    });
+    const outbound: OutgoingMessage[] = [];
+    host.events.on('outbound:message', msg => void outbound.push(msg));
+    await agent.handleMessage(message('test:tool-metadata'));
+    const turnId = seen.inputs[0]?.turnId;
+    const stored = await host.memory.require().getHistory('test:tool-metadata', 50);
+    expect(stored.find(m => m.role === 'tool')?.metadata).toEqual({
+      note: '记一笔',
+      turnId,
+      callId: seen.toolEvents[0]?.callId,
+    });
+    expect(outbound.map(m => [m.content, m.turnId])).toEqual([['查好了', turnId]]);
   });
 });
 

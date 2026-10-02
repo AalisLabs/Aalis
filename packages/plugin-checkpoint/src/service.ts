@@ -51,14 +51,14 @@ export interface TurnManifest {
   execUsed?: boolean;
 }
 
-/** 回合列表的一行（页面动作 listTurns） */
+/** 回合列表的一行（listTurns） */
 interface TurnSummary {
   turnId: string;
   sessionId: string;
   startedAt: number;
   endedAt?: number;
   fileCount: number;
-  /** 见 {@link TurnManifest.execUsed}，界面据此提示「部分未保护」 */
+  /** 见 {@link TurnManifest.execUsed} */
   execUsed?: boolean;
   /** 前 3 个文件的 URI */
   filesPreview: string[];
@@ -181,7 +181,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     return turn && this.turns.get(turn.manifest.turnId) === turn ? turn : undefined;
   }
 
-  /** 标记调用所在的那一轮调用过 exec / exec_background / run_* 等命令类工具，UI 端会提示「部分未保护」 */
+  /** 标记调用所在的那一轮调用过 exec / exec_background / run_* 等命令类工具：记进清单的 execUsed */
   markExecUsed(): void {
     const turn = this.currentTurn();
     if (turn) turn.manifest.execUsed = true;
@@ -319,15 +319,15 @@ export class CheckpointServiceImpl implements CheckpointService {
       this.readFailures.delete(uri);
       return manifest;
     } catch (err) {
-      // 不向上抛：listTurns 逐个读，一个坏 manifest 不能拖垮整张列表。读失败与损坏要留痕
+      // 不向上抛：回滚算 alsoChangedBy 时 manifests() 逐个读全会话的清单，一个坏 manifest 不能拖垮回滚。读失败与损坏要留痕
       this.readFailed(uri, '读取 manifest 失败', err);
       return null;
     }
   }
 
   /**
-   * 读失败留痕：「不存在」不算失败；其它原因告警，但同一位置同一原因只记一次——WebUI 每次消息变化都会列回合，
-   * storage 不在线或 manifest 损坏时不能每条消息记一条。读通（或确认不存在）即清掉记录，之后再失败会再记。
+   * 读失败留痕：「不存在」不算失败；其它原因告警，但同一位置同一原因只记一次——每次回滚都要读这个会话的全部清单，
+   * storage 不在线或 manifest 损坏时不能每次都记一条。读通（或确认不存在）即清掉记录，之后再失败会再记。
    */
   private readFailed(location: string, what: string, err: unknown): void {
     if (isStorageNotFound(err)) {

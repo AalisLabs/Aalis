@@ -1,0 +1,27 @@
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-12) var(--space-4);
+  text-align: center;
+}
+
+.empty-state > .lucide {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  color: var(--color-danger-text);
+}
+
+.empty-state-title {
+  font-weight: var(--weight-semibold);
+}
+
+.empty-state-description {
+  max-width: var(--measure-chat);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+  user-select: text;
+}

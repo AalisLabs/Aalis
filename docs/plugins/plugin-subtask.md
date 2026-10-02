@@ -40,7 +40,7 @@ export default definePlugin({
 
 ## 工作方式
 
-1. `create_subtask` 在 `session-manager` 中创建子会话：以父会话的 resolved config 为底（去掉白纸与远端代理的房间键 `ROOM_ONLY_CONFIG_KEYS`，它们只经继承链实时解析；`memoryRecallScope` 照常复制，子任务不会绕过房间的召回收窄），`llm` 按「工具参数 provider+model > 插件 `defaultProvider`+`defaultModel` > 继承父会话」的优先级覆盖（provider 与 model 须同时提供才生效），然后发送 `inbound:message` 事件触发子任务 agent 处理。子会话中不能再调用 `create_subtask`
+1. `create_subtask` 在 `session-manager` 中创建子会话：以 session-manager 的 `childConfig()` 为底（父会话的生效配置去掉登记为 liveOnly 的项，即白纸与远端代理的六项，它们只经继承链实时解析；`memoryRecallScope` 照常复制，子任务不会绕过房间的召回收窄），`llm` 按「工具参数 provider+model > 插件 `defaultProvider`+`defaultModel` > 继承父会话」的优先级覆盖（provider 与 model 须同时提供才生效），然后发送 `inbound:message` 事件触发子任务 agent 处理。子会话中不能再调用 `create_subtask`
    - 派发与 `send_to_subtask` 的追问都是内部注入：`source` 为 `subtask`，`userId` 为 `parent:<父会话 id>`（归档用的来源标记，authority 查不到，等价匿名），授权身份走 `actor`（创建者的有效授权身份）。它们不经触发判定、不查回复后冷却；带着 `source`，指令的意图确认不认它们；要求真人当面发起的工具（白纸的交任务与取消）拒绝子任务回合。派发与追问共用一条 lane，追问会打断子任务正在跑的那一轮
    - 子任务回合里需要确认的工具调用不转给 owner 审批，立即拒绝并写明原因（「子任务里需要确认的操作不会转给 owner，请在发起它的会话里执行」），需要确认的操作由父会话自己做；需要意图确认的指令带着 `source`、问不到发出者，直接拒绝
 2. 子会话的系统提示由 `agent:llm:before` 中间件注入子任务上下文（任务指令、共享资源规则）

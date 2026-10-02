@@ -114,10 +114,8 @@ describe('CHANGELOG 未发布节的发布声明', () => {
     expect(bad).toEqual([]);
   });
 
-  it('plugin-todo-list 把 api-memory / api-webui 放在 dependencies', () => {
-    const deps = readManifest('plugin-todo-list').dependencies ?? {};
-    expect(deps['@aalis/api-memory']).toBeTruthy();
-    expect(deps['@aalis/api-webui']).toBeTruthy();
+  it('plugin-todo-list 把 api-memory 放在 dependencies', () => {
+    expect(readManifest('plugin-todo-list').dependencies?.['@aalis/api-memory']).toBeTruthy();
   });
 
   it.each([

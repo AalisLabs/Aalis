@@ -76,7 +76,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 - Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。结果行的可选字段 `type` 是这一行所属的清理类型（取值同 `/clear --type`）：处理某个清理类型的中间件须在各行标注它，成败都标。`/clear` 据此判断显式指定的类型有没有处理者，第三方中间件处理内置类型却不标注，会被回执误报为「没有已启用的插件处理」。
 - Event `'memory:messages-deleted'`：消息被按时间戳删除后广播，下游存储（如向量库）据此同步清理。
 - Event `'history:changed'`：会话历史发生结构性变化，前端据此重新拉取。
-- Event `'session:compress'` / `'session:compressing'`：会话记忆压缩的请求与进度。
+- Event `'session:compressing'`：会话压缩的进度（开始、压成、没压成）。压缩本身是服务 `compression`，见 [api-memory](../api/api-memory.md#压缩服务)。
 
 ## 3. 谁提供 / 谁消费
 

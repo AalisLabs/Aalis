@@ -8,7 +8,7 @@ import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 //   - 带 toolCalls 的 assistant 渲染成「助手: (空)」，等于告诉模型这一轮什么也没发生。
 // 现在渲染成「调用 <工具名>(精简参数)」与「工具结果(名): …」，每条硬截断、名字优先；
 // tool 结果的工具名按 toolCallId 从 assistant.toolCalls 反查（消息自带 name 只作回落）。
-// generateSummary 与 session:compress 两条路径同款。
+// generateSummary 与压缩两条路径同款。
 // ════════════════════════════════════════════════════════════
 
 const LONG_RESULT = `晴${'气温二十六度'.repeat(60)}`; // 远超每条上限
@@ -61,12 +61,14 @@ describe('plugin-memory-summary: 工具回合进摘要输入', () => {
     await app.stop();
   });
 
-  it('session:compress 路径：同款渲染', async () => {
-    const { app, host, memory } = await setupSummary({ threshold: 10, keepRecent: 4 }, fakeSummaryLLM(lastInput));
+  it('压缩路径：同款渲染', async () => {
+    const { app, memory, compression } = await setupSummary(
+      { threshold: 10, keepRecent: 4 },
+      fakeSummaryLLM(lastInput),
+    );
     await seedToolTurn(memory, 's-t1', 20);
 
-    await host.events.emit('session:compress', { sessionId: 's-t1', reason: 'manual' });
-    await new Promise<void>(r => setTimeout(r, 50));
+    await compression.compress('s-t1', 'manual');
 
     assertToolTurnRendered(lastInput.text);
     await app.stop();

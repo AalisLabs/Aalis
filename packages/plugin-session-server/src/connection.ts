@@ -7,6 +7,7 @@
 import type { ApprovalAttendance } from '@aalis/api-approval';
 import {
   type ErrorCode,
+  type Features,
   RequestFrameSchema,
   RPC_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
@@ -81,7 +82,8 @@ const SERVER_NAME = '@aalis/plugin-session-server';
 
 const majorOf = (version: string) => version.split('.')[0];
 
-export function createSessionServer(handlers: MethodHandlers, logger: Logger) {
+/** features 回当前的功能位，握手时给出 */
+export function createSessionServer(handlers: MethodHandlers, features: () => Features, logger: Logger) {
   const connections = new Set<LiveConnection>();
 
   function connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection {
@@ -96,8 +98,8 @@ export function createSessionServer(handlers: MethodHandlers, logger: Logger) {
         const params: SessionNotificationParams<'approval/requested'> = { approval };
         conn.send({ method: 'approval/requested', params });
       },
-      settled: (approvalId, state) => {
-        const params: SessionNotificationParams<'approval/settled'> = { approvalId, state };
+      settled: (approvalId, settlement) => {
+        const params: SessionNotificationParams<'approval/settled'> = { approvalId, ...settlement };
         conn.send({ method: 'approval/settled', params });
       },
     });
@@ -150,6 +152,7 @@ export function createSessionServer(handlers: MethodHandlers, logger: Logger) {
         server: { name: SERVER_NAME },
         identity: peer.identity,
         surface: peer.surface.name,
+        features: features(),
       };
     };
 

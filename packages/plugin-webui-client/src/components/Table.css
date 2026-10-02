@@ -1,0 +1,141 @@
+.table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.table-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+}
+
+.table-toolbar select,
+.table-toolbar input {
+  min-height: var(--control-sm);
+}
+
+.table-toolbar input {
+  margin-left: auto;
+}
+
+.table-batch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+  font-size: var(--text-sm);
+}
+
+/* 列放不下时在自己的框里横向滚动，不折行 */
+.table-scroll {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  height: var(--control-md);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--color-text-2);
+  background: var(--surface);
+}
+
+.table td {
+  max-width: 20rem;
+  height: var(--row-table);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table tr[data-selected] td {
+  background: var(--color-fill-2);
+}
+
+.table-check {
+  width: var(--control-sm);
+}
+
+.table .table-check {
+  padding-right: 0;
+}
+
+/* 可点区是一个控件见方，触屏上随令牌放大，框本身不变 */
+.table-check label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  cursor: pointer;
+}
+
+.table-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+}
+
+.table-sort .lucide {
+  color: var(--color-text-3);
+}
+
+.table .table-empty {
+  height: var(--space-12);
+  color: var(--color-text-3);
+}
+
+.table-empty .button {
+  margin-left: var(--space-2);
+}
+
+.table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-2);
+}
+
+/* 窄时（手机、面板）只留标了 primary 的列 */
+@container (max-width: 36em) {
+  .table [data-column]:not([data-primary]) {
+    display: none;
+  }
+}

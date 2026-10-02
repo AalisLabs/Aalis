@@ -58,9 +58,8 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
  * 它无法阻止 run_python / shell 等子进程在拿到 cwd 之后访问 OS 用户可访问的任何文件——
  * 这种隔离只能靠 OS 用户权限或容器层。请按这个边界来理解和配置。
  *
- * 关于 browsable：仅是给"文件浏览器类 UI"的 hint。当前 plugin-webui-server 的文件页
- * 实际只显示其 fileRoot 配置指向的那一个根（默认 workspace），其它根的 browsable=true
- * 不会让它们出现在文件页里——那些根仅供 agent/工具按 URI 寻址使用。
+ * 关于 browsable：仅是给"文件浏览器类 UI"的 hint。WebUI 没有文件浏览页，不读它；
+ * 这些根供 agent 与工具按 URI 寻址。
  *
  * 当 agent 需要访问默认根之外的目录时：
  *   - 推荐：在 roots 里加一条具名根（如 share / project_x），路径限定到目标目录
@@ -130,8 +129,7 @@ const configSchema = defineConfig({
     description:
       '文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public），这里同名的项会被跳过。' +
       '直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。' +
-      'browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，' +
-      '其它根仅作为工具/agent 寻址使用）。',
+      'browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。',
     default: DEFAULT_ROOTS,
     onInvalid: 'error',
     items: {
@@ -158,10 +156,10 @@ const configSchema = defineConfig({
       },
       browsable: {
         type: 'boolean',
-        label: 'WebUI 浏览器可见 (hint)',
+        label: '文件浏览器可见 (hint)',
         default: false,
         onInvalid: 'error',
-        description: 'hint：当前实现下仅当 webui-server.fileRoot 指向本根时此开关才生效',
+        description: 'hint：给文件浏览器类界面用，WebUI 不读它',
       },
       readable: { type: 'boolean', label: '允许读', default: true, onInvalid: 'error' },
       writable: { type: 'boolean', label: '允许写', default: false, onInvalid: 'error' },

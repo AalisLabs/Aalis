@@ -246,8 +246,9 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
       },
     },
     visibility: 'restricted',
-    // 任意 shell 命令是最强的 confused-deputy 向量 → owner 也需确认（本会话记住）
+    // 任意 shell 命令是最强的 confused-deputy 向量 → owner 也要审批
     confirm: 'session',
+    display: { kind: 'command', fields: { command: 'command', cwd: 'cwd' } },
     handler: async (args, callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);
@@ -364,6 +365,7 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
     },
     visibility: 'restricted',
     confirm: 'session',
+    display: { kind: 'command', fields: { command: 'command', cwd: 'cwd' } },
     handler: async (args, callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);

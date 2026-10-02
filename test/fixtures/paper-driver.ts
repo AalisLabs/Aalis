@@ -144,7 +144,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   const sessionManager = fixedRef({
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
     getSession: (id: string) => sessionInfoOf(id),
-    getPlatformProfiles: () => ({}),
+    listLayers: () => [],
     listSessions: () => [],
   } as unknown as SessionManagerService);
   const outbound: OutgoingMessage[] = [];

@@ -101,14 +101,17 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
       await env.memory.saveMessage('s1', { role: i % 2 === 0 ? 'user' : 'assistant', content: `第 ${i} 条` });
     const statuses: string[] = [];
     env.host.events.on('session:compressing', info => void statuses.push(info.status));
-    // 压缩事件的处理器会一直等到模型返回，emit 不能在放行前 await
+    // 压缩一直等到模型返回才落定，不能在放行前 await
     const started =
       start === 'turn'
         ? env.host.hooks.run(
             'agent:turn:after' as never,
             { message: { sessionId: 's1' }, reply: 'ok', outcome: 'replied', sessionId: 's1', metadata: {} } as never,
           )
-        : env.host.events.emit('session:compress', { sessionId: 's1', reason: 'manual' });
+        : env.compression.compress('s1', 'manual').then(
+            () => 'done',
+            (err: Error) => err.message,
+          );
     await expect.poll(() => state.calls).toBe(1);
     const clear = async (scope: 'session' | 'all', sessionId: string) => {
       const data: HookContextMap['memory:clear'] = { scope, sessionId, results: [] };
@@ -116,12 +119,13 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
     };
     const finish = async () => {
       release();
-      await started;
+      const outcome = await started;
       await new Promise<void>(r => setTimeout(r, 50));
       return {
         summary: await env.memory.getMetadata('summary', 's1'),
         remaining: (await env.memory.getHistory('s1', 1000)).length,
         statuses,
+        outcome,
       };
     };
     return { clear, finish, release, writing };
@@ -146,13 +150,14 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
     expect(remaining).toBe(20);
   });
 
-  it('手动压缩途中清理：同样丢弃，前端收到 error 而不是 done', async () => {
+  it('手动压缩途中清理：同样丢弃，前端收到 error 而不是 done，压缩以会话被清空拒绝', async () => {
     const { clear, finish } = await inFlight('compress');
     await clear('session', 's1');
-    const { summary, remaining, statuses } = await finish();
+    const { summary, remaining, statuses, outcome } = await finish();
     expect(summary).toBeUndefined();
     expect(remaining).toBe(35);
     expect(statuses).toEqual(['start', 'error']);
+    expect(outcome).toBe('压缩期间会话被清空');
   });
 
   // 已过比对、写入正在往返时开始清理：mongodb 上写入与清理的删除走不同连接，先发出的写入可能晚于删除落地。

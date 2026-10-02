@@ -7,7 +7,8 @@
 // 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
 // 回合结束之后还在等平台送达结果的，也算没收尾：迟到的结果按实时条目的 itemId 推出，这段时间里订阅的快照
-// 照样给出实时条目，两边对得上。送达结果只在实时推送里，存档不记。
+// 照样给出实时条目，两边对得上。存档里另有记录：回复没收下的由适配器记投递失败，经工具发出、收下了的与审批的结算
+// 在工具结果落库前写进它的元数据（toolMetadata），历史据此标出同样的结局。
 //
 // 快照的历史要等读存档，读的同时回合照常推进。在途回合落了库的消息带 turnId：取快照那一刻还没收尾的回合、
 // 之后才结束或开始的回合，它们落库的消息都不进这份快照的历史，由在途条目与之后的推送给出，两边不重复。
@@ -15,7 +16,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TokenUsageEvent } from '@aalis/api-agent';
-import type { Approval } from '@aalis/api-approval';
+import type { Approval, ApprovalSettlement } from '@aalis/api-approval';
 import type { HookContextMap } from '@aalis/api-hooks';
 import type { MemoryService } from '@aalis/api-memory';
 import type { SessionInfo } from '@aalis/api-session-manager';
@@ -38,11 +39,15 @@ import {
   type StreamChunkMessage,
 } from '@aalis/schema-message';
 import type { MethodHandlers, ServerConnection } from './connection.js';
+import type { DisplayOf } from './display.js';
 import {
   archivedItem,
   BEFORE_TOOL_UNSENT,
   HISTORY_PAGE,
   type IsOwner,
+  type MergeContext,
+  notAccepted,
+  RETRIED,
   readHistory,
   type SignFile,
   toolFailed,
@@ -58,7 +63,6 @@ const UNSENT: Record<Exclude<Outcome, 'replied'>, string> = {
   aborted: '没有发出：回合已中止',
   error: '没有发出：回合出错',
 };
-const RETRIED = '没有发出：格式校验没通过，已重试';
 
 interface Turn {
   turnId: string;
@@ -91,6 +95,8 @@ interface TimelineDeps {
   isOwner: IsOwner;
   /** 给某个会话里她发出的文件签发下载句柄 */
   signFile(sessionId: string, uri: string, name: string): string | undefined;
+  /** 工具卡的展示 */
+  displayOf: DisplayOf;
   requireSession(id: string): SessionInfo;
   summarize(info: SessionInfo): SessionSummary;
   isRoom(sessionId: string): boolean;
@@ -98,6 +104,8 @@ interface TimelineDeps {
   notify<N extends SessionNotification>(sessionId: string, method: N, params: SessionNotificationParams<N>): void;
   /** 请 agent 重发某会话的用量 */
   requestUsage(sessionId: string, platform: string): void;
+  /** 自动压缩的使用率（用量条目的压缩线）；没有压缩服务或不自动压缩时没有 */
+  compressAt(): number | undefined;
   /** 这个会话已推出、还没结的审批 */
   approvalsOf(sessionId: string): Approval[];
   /** 插件停用时中止：不再等平台的送达结果 */
@@ -111,7 +119,7 @@ export function createTimeline(deps: TimelineDeps) {
   const turns = new Map<string, Turn>();
   /** 正在读历史的快照各自的 seq */
   const pending: number[] = [];
-  /** 每个会话最近一次的用量 */
+  /** 每个会话最近一次的用量，不含压缩线：压缩线在推送与取快照时现取 */
   const usages = new Map<string, Item<'usage'>>();
   /** 每个会话进行中的压缩 */
   const compressions = new Map<string, Item<'notice'>>();
@@ -127,6 +135,12 @@ export function createTimeline(deps: TimelineDeps) {
     (sessionId: string): SignFile =>
     (uri, name) =>
       deps.signFile(sessionId, uri, name);
+  const mergeContext = (sessionId: string): MergeContext => ({
+    isOwner: deps.isOwner,
+    room: deps.isRoom(sessionId),
+    signFile: signerOf(sessionId),
+    display: deps.displayOf,
+  });
 
   const live = (turnId: string) => {
     const turn = turns.get(turnId);
@@ -234,7 +248,7 @@ export function createTimeline(deps: TimelineDeps) {
       return `没有发出：发送出错（${err instanceof Error ? err.message : String(err)}）`;
     }
     if (!result) return undefined;
-    return result.ok || `没有发出：平台没收下（${result.error}）`;
+    return result.ok || notAccepted(result.error);
   }
 
   /** 等这条消息的送达结果，交给 settle。等着的时候这一轮不算收尾 */
@@ -269,6 +283,11 @@ export function createTimeline(deps: TimelineDeps) {
   /** 这个会话还没收尾的回合：在跑，或已结束、还在等平台的送达结果 */
   const unsettledOf = (sessionId: string) =>
     [...turns.values()].filter(turn => turn.sessionId === sessionId && (turn.end === undefined || turn.receipts > 0));
+
+  const withCompressAt = (item: Item<'usage'>): Item<'usage'> => {
+    const compressAt = deps.compressAt();
+    return compressAt === undefined ? item : { ...item, compressAt };
+  };
 
   const planItem = (entries: TodoItem[]): Item<'plan'> => ({
     kind: 'plan',
@@ -351,6 +370,7 @@ export function createTimeline(deps: TimelineDeps) {
     if (info.phase === 'start') {
       // 工具调用之前说的话不是回复：agent 只把最后的回复交给平台，房间里它们没有发进群
       dropCandidates(turn, turn.room ? BEFORE_TOOL_UNSENT : undefined);
+      const display = deps.displayOf(info.toolName, info.args);
       const item = add(turn, {
         kind: 'tool-call',
         itemId: info.callId,
@@ -359,6 +379,7 @@ export function createTimeline(deps: TimelineDeps) {
         name: info.toolName,
         args: info.args,
         status: 'running',
+        ...(display ? { display } : {}),
       });
       emit(turn.sessionId, 'item/started', item);
       return;
@@ -386,17 +407,37 @@ export function createTimeline(deps: TimelineDeps) {
     emitDelta(turn.sessionId, item.itemId, chunk.text);
   }
 
-  /** 审批推出或结算：推出时工具卡挂上它的 id 再推一次；没批准就结算的，工具卡收尾时状态是 denied */
-  function approval(card: Approval): void {
+  /**
+   * 审批推出或结算，工具卡跟着再推一次：推出时挂上它的 id，结算时带上怎样结算的（发起时就结算、没推出的同样）；
+   * 没批准就结算的，状态是 denied。结算随工具结果落库（见 toolMetadata）
+   */
+  function approval(card: Pick<Approval, 'id' | 'turnId' | 'callId'>, settlement?: ApprovalSettlement): void {
     const turn = card.turnId === undefined ? undefined : live(card.turnId);
     const item = card.callId === undefined ? undefined : turn?.items.get(card.callId);
     if (!turn || item?.kind !== 'tool-call') return;
-    if (card.state === 'pending') {
-      item.approvalId = card.id;
-      emit(turn.sessionId, 'item/started', item);
-    } else if (card.state !== 'approved') {
-      item.status = 'denied';
+    item.approvalId = card.id;
+    if (settlement) {
+      item.settlement = settlement;
+      if (settlement.state !== 'approved') item.status = 'denied';
     }
+    emit(turn.sessionId, 'item/started', item);
+  }
+
+  /**
+   * agent:tool:after：这次工具结果落库时要带的元数据，历史据此还原工具卡：审批的结算（approval），房间里经它发出、
+   * 平台已收下的消息（sentToRoom）。送达结果只取已经到了的：发消息的工具都等过确认，没等到的不再等
+   */
+  async function toolMetadata(turnId: string, callId: string): Promise<Record<string, unknown>> {
+    const turn = live(turnId);
+    const item = turn?.items.get(callId);
+    if (!turn || item?.kind !== 'tool-call') return {};
+    const metadata: Record<string, unknown> = {};
+    if (item.approvalId && item.settlement) metadata.approval = { id: item.approvalId, ...item.settlement };
+    const delivery = turn.room ? turn.sent.get(callId)?.delivery : undefined;
+    if (delivery && (await awaitDelivery(delivery, undefined, 0).catch(() => undefined))?.ok) {
+      metadata.sentToRoom = true;
+    }
+    return metadata;
   }
 
   /** agent:reply:before：一版回复定稿校验。之后若重试，新的一版另起一条 */
@@ -451,7 +492,7 @@ export function createTimeline(deps: TimelineDeps) {
       injectors,
     };
     usages.set(event.sessionId, item);
-    emit(event.sessionId, 'item/completed', item);
+    emit(event.sessionId, 'item/completed', withCompressAt(item));
   }
 
   function compressing(sessionId: string, status: 'start' | 'done' | 'error'): void {
@@ -501,7 +542,7 @@ export function createTimeline(deps: TimelineDeps) {
     const open = unsettledOf(sessionId);
     const ongoing = structuredClone([
       ...open.flatMap(turn => [...turn.items.values()]),
-      ...[compressions.get(sessionId), usage].filter(item => item !== undefined),
+      ...[compressions.get(sessionId), usage && withCompressAt(usage)].filter(item => item !== undefined),
     ]);
     const approvals = structuredClone(deps.approvalsOf(sessionId));
     // 读历史期间这些回合可能收尾、被清掉，按此刻抄下的回合排除它们的存档
@@ -513,9 +554,7 @@ export function createTimeline(deps: TimelineDeps) {
         deps.memory.require(),
         sessionId,
         { limit: HISTORY_PAGE, skip: skipFor(at, shown) },
-        deps.isOwner,
-        deps.isRoom(sessionId),
-        signerOf(sessionId),
+        mergeContext(sessionId),
       );
       const entries = (await deps.todoList.current?.get(sessionId)) ?? [];
       afterReply(() => {
@@ -552,9 +591,7 @@ export function createTimeline(deps: TimelineDeps) {
         deps.memory.require(),
         sessionId,
         { before, limit: limit ?? HISTORY_PAGE, skip: skipFor(seq, shown) },
-        deps.isOwner,
-        deps.isRoom(sessionId),
-        signerOf(sessionId),
+        mergeContext(sessionId),
       );
     },
   };
@@ -572,6 +609,7 @@ export function createTimeline(deps: TimelineDeps) {
     tool,
     toolOutput,
     approval,
+    toolMetadata,
     replyCheck,
     outbound,
     archived,

@@ -4,10 +4,11 @@
 // GET /api/media?uri=<storage URI>（如 data:/images/x.png、paper:/…）。聊天消息与会话历史里的附件多半是存储
 // 地址，浏览器拿它当不了图片地址；客户端把它换成这条路由。只有 owner（cookie 闸）能取；按文件头判定类型，
 // 只放行浏览器能直接显示或播放的图片、视频与音频，其余（含 HTML、SVG、JSON 账本）一律 415，不在 WebUI 源里内联。
-// 响应带 nosniff 与 sandbox CSP，类型取判定结果、不取扩展名。
+// 响应带 nosniff 与 sandbox CSP，类型取判定结果、不取扩展名。文件不存在回 404，其余读不出的（含存储拒绝的越界路径）
+// 回 500 并记告警。
 // ============================================================
 
-import type { StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
 import type express from 'express';
@@ -59,8 +60,13 @@ export function registerMediaRoutes(
       res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
       res.setHeader('Cache-Control', 'private, max-age=3600');
       pipeToResponse(stream, res, logger, `媒体文件 ${uri}`);
-    } catch {
-      res.status(404).json({ error: '取不到这个文件' });
+    } catch (err) {
+      if (isStorageNotFound(err)) {
+        res.status(404).json({ error: '文件不存在' });
+        return;
+      }
+      logger.warn(`读取媒体文件 ${uri} 失败:`, err);
+      res.status(500).json({ error: '读取文件失败' });
     }
   });
 }

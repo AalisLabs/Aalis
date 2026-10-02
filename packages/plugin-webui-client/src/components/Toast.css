@@ -1,0 +1,54 @@
+.toasts {
+  position: fixed;
+  right: var(--space-4);
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(var(--toast-w), calc(100% - 2 * var(--space-4)));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-1);
+  pointer-events: auto;
+}
+
+.toast > .lucide {
+  color: var(--color-text-2);
+}
+
+.toast[data-kind="success"] > .lucide {
+  color: var(--color-success-text);
+}
+
+.toast[data-kind="error"] > .lucide {
+  color: var(--color-danger-text);
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 手机上在顶部：底部是输入框与软键盘。新的一条靠近边缘 */
+@media (max-width: 47.99em) {
+  .toasts {
+    top: calc(var(--header-h) + env(safe-area-inset-top));
+    right: var(--space-4);
+    bottom: auto;
+    left: var(--space-4);
+    width: auto;
+    flex-direction: column-reverse;
+  }
+}

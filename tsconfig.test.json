@@ -17,11 +17,11 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": ".",
-    // DOM/jsx：test/plugins/*.test.tsx 测的是 webui-client 的 React 组件
+    // DOM/jsx：test/webui-client 测的是 webui-client 的 React 组件
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": { "@aalis/*": ["packages/*/src/index.ts"] }
   },
-  "include": ["test", "packages/plugin-webui-client/src/vite-env.d.ts"]
+  "include": ["test"]
 }

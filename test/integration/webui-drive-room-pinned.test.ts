@@ -4,7 +4,7 @@ import { gateway } from '../../packages/api-gateway/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events } from '../../packages/core/src/index.js';
+import { type App, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
@@ -15,8 +15,10 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 从 WebUI 驱动 IM 群房间：这一轮按房间的出生平台（onebot）档运行。
@@ -28,13 +30,16 @@ const GROUP = 'onebot:10000:group:20001';
 const PRIVATE = 'onebot:10000:private:30001';
 const REPLY = '<回复占位>';
 
-const PROFILES = {
-  platformProfiles: [
-    { platform: 'webui', enabledToolGroups: ['system'], persona: '<webui 人设>' },
-    { platform: 'onebot', enabledToolGroups: ['search'], persona: '<群人设>' },
-    { platform: 'onebot', audience: 'private', persona: '<私聊人设>' },
-  ],
+/** 宿主配置文档里会话设置的各层 */
+const LAYERS = {
+  platforms: {
+    webui: { enabledToolGroups: ['system'], persona: '<webui 人设>' },
+    onebot: { enabledToolGroups: ['search'], persona: '<群人设>' },
+  },
+  audiences: { onebot: { private: { persona: '<私聊人设>' } } },
 };
+/** 人设这一项由人设插件登记，这里不装人设插件，由测试插件代登 */
+const personaSetting = settingsPlugin('persona-settings', [PERSONA]);
 
 const definition = (name: string) => ({
   type: 'function' as const,
@@ -47,7 +52,7 @@ afterEach(async () => {
 });
 
 async function loadStack() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const { app } = hostedApp({ sessionConfig: LAYERS });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];
@@ -63,7 +68,8 @@ async function loadStack() {
   await app.plugin(triggerPolicyPlugin, { scopes: ['*:group'] });
   await app.plugin(flowControlPlugin, { scopes: ['*:group'] });
   await app.plugin(toolsPlugin, {});
-  await app.plugin(sessionManagerPlugin, PROFILES);
+  await app.plugin(sessionManagerPlugin);
+  await app.plugin(personaSetting);
   await app.plugin(agentPlugin, { systemPrompt: 'test bot', historyLimit: 10, maxToolIterations: 3 });
   await app.plugins.idle();
   // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「整条链根本没跑」伪装成绿
@@ -73,6 +79,7 @@ async function loadStack() {
     flowControlPlugin,
     toolsPlugin,
     sessionManagerPlugin,
+    personaSetting,
     agentPlugin,
   ]) {
     const state = app.plugins.getPlugin(plugin.name)?.state;

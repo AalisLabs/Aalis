@@ -4,6 +4,7 @@ import type {
   RegisteredTool,
   ToolCallContext,
   ToolDefinition,
+  ToolDisplay,
   ToolExecutionResult,
   ToolGroupInfo,
   ToolService,
@@ -91,6 +92,7 @@ export class ToolRegistry implements ToolService {
     confirm?: CapabilityConfirm;
     risk?: CapabilityRisk;
     groups?: string[];
+    display?: ToolDisplay;
   }> {
     return [...this.tools.values()].map(t => {
       const { visibility, confirm } = resolveCapabilityPolicy(t);
@@ -102,6 +104,7 @@ export class ToolRegistry implements ToolService {
         confirm,
         risk: t.risk, // 原始风险透传：让 authority 区分 sensitive(朋友) / dangerous(信任)，否则二者都折成 restricted=信任
         groups: t.groups,
+        display: t.display,
       };
     });
   }

@@ -11,14 +11,17 @@ import {
 } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
@@ -83,9 +86,13 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);
   const { state } = provideHostPaths(app, home);
-  const host = app.bind({ provide, events, approvals });
+  const host = app.bind({ provide, events, approvals, tools });
   host.provide(storage, memoryStorage(new Map()));
   host.provide(authority, { isOwner: owner } as never);
+  // 卡上的事实按工具声明的展示种类取
+  await app.plugin(toolsPlugin, {});
+  await app.plugins.idle();
+  declareToolSystemDisplays(host.tools);
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
   await app.plugin(cliPlugin, { startupView });

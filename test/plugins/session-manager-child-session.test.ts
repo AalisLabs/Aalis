@@ -5,6 +5,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { settingsPlugin, THINK } from '../fixtures/session-settings.js';
 
 // 背景：平台派生会话（cli-default、OneBot 的 `onebot:bot:group:x`）从不经 createSession 预建，
 // createChildSession 原本对未建档的父直接抛「父会话不存在」，create_subtask 在这些平台必败。
@@ -15,7 +16,8 @@ async function setup() {
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide(memory, fakeMemory() as never);
-  await app.plugin(sessionManagerPlugin, {});
+  await app.plugin(sessionManagerPlugin);
+  await app.plugin(settingsPlugin('test-settings', [THINK]));
   await app.plugins.idle();
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;

@@ -6,7 +6,7 @@ import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 // keepRecent=0 曾让"避免裁剪点落在 tool call 组中间"的循环索引越界
 // （allHistory[allHistory.length - 0] → undefined.role → TypeError）：
 // LLM 摘要已经花完，异常却被外层 catch 吞成一条 warn，历史一条不裁，
-// 之后每轮都重摘全量历史。generateSummary 与 session:compress 两条同构。
+// 之后每轮都重摘全量历史。generateSummary 与压缩两条同构。
 // ════════════════════════════════════════════════════════════
 
 async function seed(store: MemoryService, sessionId: string, count: number): Promise<void> {
@@ -32,16 +32,15 @@ describe('plugin-memory-summary: keepRecent=0 仍裁切', () => {
     await app.stop();
   });
 
-  it('session:compress 路径：同构代码同样不再空转', async () => {
-    const { app, host, memory } = await setupSummary({ threshold: 10, keepRecent: 0 });
+  it('压缩路径：同构代码同样不再空转', async () => {
+    const { app, host, memory, compression } = await setupSummary({ threshold: 10, keepRecent: 0 });
     await seed(memory, 's-k1', 30);
 
     const statuses: string[] = [];
     host.events.on('session:compressing', info => {
       if (info.sessionId === 's-k1') statuses.push(info.status);
     });
-    await host.events.emit('session:compress', { sessionId: 's-k1', reason: 'manual' });
-    await new Promise<void>(r => setTimeout(r, 50));
+    await compression.compress('s-k1', 'manual');
 
     const after = await memory.getHistory('s-k1', 1000);
     expect(after.length, `keepRecent=0 也必须裁切，实际剩 ${after.length} 条`).toBeLessThanOrEqual(2);
@@ -54,7 +53,7 @@ describe('plugin-memory-summary: keepRecent=0 仍裁切', () => {
 // keepRecent 大于 threshold 时（如 30/40），条数过了阈值也可能还不多于 keepRecent。
 // generateSummary 曾只判阈值：slice(0, 35 - 40) 的负数下标取出开头 30 条去摘要，
 // trimHistory(40) 却什么都不归档——同一批消息每轮重摘一次、反复叠进摘要。
-// session:compress 早有「不多于 keepRecent 不压缩」的守卫，两条路径现共用同一判定。
+// 压缩早有「不多于 keepRecent 不压缩」的守卫，两条路径现共用同一判定。
 // ════════════════════════════════════════════════════════════
 
 describe('plugin-memory-summary: 历史不多于 keepRecent 时不摘要', () => {

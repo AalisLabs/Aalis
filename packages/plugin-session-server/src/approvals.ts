@@ -2,8 +2,8 @@
 // 审批（契约见 @aalis/api-approval）：发起、在场、排队、频率上限、应答核验、结算、回给模型的话与审计。
 //
 // 只有 owner 本人与 owner 链的延续发起的回合能产生审批，其余直接拒绝，不推给任何审批面。能产生的先看有没有人在场：
-// 审批面上身份是 owner 的客户端上报活动，最近一次活动在 10 分钟内的算在场，没人在场直接拒绝。同一会话的审批排队，
-// 一次只推出一张卡，等待从推出那一刻算起；等满 300 秒、在场的客户端都离开、回合结束或中止、服务停止时结算。
+// 审批面上身份是 owner 的客户端上报活动，最近一次活动在 10 分钟内的算在场，发起时没人在场直接拒绝。同一会话的审批排队，
+// 一次只推出一张卡，等待从推出那一刻算起；等满 300 秒、在场的客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
 // 应答先答先得，核两项：应答人是 owner；id 由本服务签发且未结算，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文。
 // ════════════════════════════════════════════════════════════
@@ -22,20 +22,28 @@ import type {
   ApprovalRefusal,
   ApprovalRequest,
   ApprovalService,
+  ApprovalSettlement,
   ApprovalSink,
   ApprovalSource,
   SettledState,
   SurfaceBinding,
 } from '@aalis/api-approval';
+import type { ToolDisplay } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { failure, type MethodHandlers } from './connection.js';
+import { resolveDisplay } from './display.js';
 import type { IsOwner } from './history.js';
 
 /** 推出之后等应答的时限 */
 const APPROVAL_WAIT_MS = 300_000;
 /** 客户端最近一次活动在这段时间内算在场 */
 const PRESENCE_WINDOW_MS = 10 * 60_000;
+/**
+ * 等待中在场的客户端全部离开（断开或转为不在场）之后，再等这么久才按没人在场结算：手机切到别的应用、锁屏，
+ * 桌面上切一下标签页，都会让连接挂起或页面转为不可见，回来时重连、重报在场，卡片照常等着。不延长总的等待时限
+ */
+const ABSENCE_GRACE_MS = 30_000;
 /** 频率上限：同一会话在 RATE_WINDOW_MS 内最多 RATE_LIMIT 张卡 */
 const RATE_WINDOW_MS = 10 * 60_000;
 const RATE_LIMIT = 10;
@@ -77,30 +85,22 @@ interface Pending {
   delivered: Set<Attendee>;
 }
 
+/** 工具卡认审批用的几项：推出的审批对象，或发起时就结算、没有对象的请求 */
+type ApprovalRef = Pick<Approval, 'id' | 'sessionId' | 'turnId' | 'callId'>;
+
 interface ApprovalDeps {
   isOwner: IsOwner;
   events: Events;
   logger: Logger;
   /** 审计文件的绝对路径 */
   auditFile: string;
-  /** 一个审批推出或结算了：会话列表与工具卡跟着变 */
-  changed(approval: Approval): void;
+  /** 工具定义上声明的展示种类：卡片上的事实按它取 */
+  displaySpec(tool: string): ToolDisplay | undefined;
+  /** 一个审批推出或结算了（结算时带上怎样结算的，发起时就结算的也算）：会话列表与工具卡跟着变 */
+  changed(approval: ApprovalRef, settlement?: ApprovalSettlement): void;
 }
 
 // ───────── 事实与哈希 ─────────
-
-/** 由参数生成 diff 的工具：参数名与它的行在 diff 里的符号。追加与整份写入一样只有加的行 */
-const DIFF_SOURCES = new Map<string, Array<[key: string, sign: '-' | '+']>>([
-  [
-    'file_edit',
-    [
-      ['oldText', '-'],
-      ['newText', '+'],
-    ],
-  ],
-  ['file_write', [['content', '+']]],
-  ['file_append', [['content', '+']]],
-]);
 
 /** 疑似放密钥的文件：环境变量文件、包管理器与网络凭据、私钥与证书，以及密钥目录下的一切 */
 const SECRET_PATH =
@@ -109,29 +109,24 @@ const SECRET_PATH =
 const SECRET_TEXT =
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bAKIA[0-9A-Z]{16}\b|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|\bBearer\s+[A-Za-z0-9._~+/-]{16,}|(?:api[_-]?key|access[_-]?token|secret|password|passwd)["']?\s*[:=]\s*["']?[^\s"']{8,}/i;
 
-/** 卡片上的事实：只取参数里已有的，各项逐字；用掉的参数不在 params 里重复 */
-function factsOf(tool: string, args: Record<string, unknown>): ApprovalFacts {
+/**
+ * 卡片上的事实：按工具声明的展示种类从参数里取，各项逐字；用掉的参数不在 params 里重复。没声明（或解析不出）的，
+ * 全部参数都在 params 里
+ */
+function factsOf(spec: ToolDisplay | undefined, args: Record<string, unknown>): ApprovalFacts {
   const params: Record<string, unknown> = { ...args };
-  const facts: ApprovalFacts = { params };
-  if (typeof args.command === 'string') {
-    facts.command = args.command;
-    delete params.command;
+  const display = resolveDisplay(spec, args);
+  if (!spec || !display) return { params };
+  for (const key of Object.values(spec.fields))
+    if (key !== undefined && typeof args[key] === 'string') delete params[key];
+  if (display.kind === 'command') {
+    return { command: display.command, ...(display.cwd === undefined ? {} : { cwd: display.cwd }), params };
   }
-  if (typeof args.cwd === 'string') {
-    facts.cwd = args.cwd;
-    delete params.cwd;
-  }
-  const sources = DIFF_SOURCES.get(tool);
-  const path = args.path;
-  if (sources && typeof path === 'string' && sources.every(([key]) => typeof args[key] === 'string')) {
-    const texts = sources.map(([key]) => String(args[key]));
-    delete params.path;
-    for (const [key] of sources) delete params[key];
-    const secret = SECRET_PATH.test(path) || texts.some(text => SECRET_TEXT.test(text));
-    const patch = sources.flatMap(([, sign], i) => texts[i].split('\n').map(line => sign + line)).join('\n');
-    facts.diff = secret ? { path } : { path, patch };
-  }
-  return facts;
+  const { path, removed, added } = display;
+  const secret = SECRET_PATH.test(path) || [removed, added].some(text => text !== undefined && SECRET_TEXT.test(text));
+  const lines = (text: string | undefined, sign: '-' | '+') => text?.split('\n').map(line => sign + line) ?? [];
+  const patch = [...lines(removed, '-'), ...lines(added, '+')].join('\n');
+  return { diff: secret ? { path } : { path, patch }, params };
 }
 
 /** 请求内容的哈希：会话、回合、调用、工具与参数 */
@@ -174,6 +169,8 @@ export function createApprovals(deps: ApprovalDeps) {
   const cards = new Map<string, number[]>();
   const settledIds = createBoundedMap<string, SettledState>({ max: SETTLED_MEMORY });
   let lapse: ReturnType<typeof setTimeout> | undefined;
+  /** 在场的客户端全部离开之后的宽限：有推出的审批、又没人在场时才有 */
+  let grace: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
 
   // 写入排队：请求总在它的决定之前落盘
@@ -223,9 +220,17 @@ export function createApprovals(deps: ApprovalDeps) {
     lapse = setTimeout(recheck, Math.max(...live.map(attendee => attendee.until)) - now);
   }
 
-  /** 在场有变：没人在场了，推出的审批都按没人在场结算 */
+  /** 在场或推出的审批有变：没人在场又有推出的审批时起宽限，有人回来或审批都结了就撤掉 */
   function recheck(): void {
-    if (present().length === 0) for (const pending of shown()) settle(pending, 'expired', 'absent');
+    if (present().length > 0 || shown().length === 0) {
+      clearTimeout(grace);
+      grace = undefined;
+    } else if (grace === undefined) {
+      grace = setTimeout(() => {
+        grace = undefined;
+        for (const pending of shown()) settle(pending, 'expired', 'absent');
+      }, ABSENCE_GRACE_MS);
+    }
     rearm();
   }
 
@@ -242,22 +247,26 @@ export function createApprovals(deps: ApprovalDeps) {
     const index = queue.indexOf(pending);
     if (index >= 0) queue.splice(index, 1);
     if (queue.length === 0) queues.delete(sessionId);
+    const now = Date.now();
+    const settlement: ApprovalSettlement = { state, source, at: now };
     const approval = pending.approval;
     if (approval) {
       approval.state = state;
       settledIds.set(approval.id, state);
       for (const attendee of pending.delivered) {
-        if (attendee.surface.attendees.has(attendee)) tell('结算', () => attendee.sink.settled(approval.id, state));
+        if (attendee.surface.attendees.has(attendee))
+          tell('结算', () => attendee.sink.settled(approval.id, settlement));
       }
       void deps.events.emit('approval:settled', approval);
-      tell('结算', () => deps.changed(approval));
     } else if (index >= 0) {
       // 排进过队、没推出就结算了：退还它占的频率额度
       const times = cards.get(sessionId) ?? [];
       const at = times.indexOf(pending.at);
       if (at >= 0) times.splice(at, 1);
     }
-    const now = Date.now();
+    // 没推出就结算的（发起时没人在场、发起者不能产生审批等）工具卡同样带上结算：历史里显示真实的结局，不是「失败」
+    const { turnId, callId } = pending.req;
+    tell('结算', () => deps.changed({ id: pending.id, sessionId, turnId, callId }, settlement));
     audit({
       type: 'decision',
       id: pending.id,
@@ -282,10 +291,10 @@ export function createApprovals(deps: ApprovalDeps) {
           },
     );
     if (index === 0 && queue.length > 0) show(queue[0]);
-    rearm();
+    recheck();
   }
 
-  /** 队首推给在场的客户端；排队期间回合中止了、或已经没人在场的，直接结算 */
+  /** 队首推给在场的客户端；排队期间回合中止了的、已经没人在场又不在宽限内的，直接结算 */
   function show(pending: Pending): void {
     if (pending.signal?.aborted) {
       settle(pending, 'cancelled', 'turn-ended');
@@ -293,7 +302,7 @@ export function createApprovals(deps: ApprovalDeps) {
     }
     const now = Date.now();
     const audience = present(now);
-    if (audience.length === 0) {
+    if (audience.length === 0 && grace === undefined) {
       settle(pending, 'expired', 'absent');
       return;
     }
@@ -316,7 +325,7 @@ export function createApprovals(deps: ApprovalDeps) {
     void deps.events.emit('approval:created', approval);
     tell('推出', () => deps.changed(approval));
     for (const attendee of audience) deliver(pending, attendee);
-    rearm();
+    recheck();
   }
 
   const recentCards = (sessionId: string, at: number) =>
@@ -347,7 +356,7 @@ export function createApprovals(deps: ApprovalDeps) {
         req,
         signal,
         at,
-        facts: factsOf(req.tool, req.args),
+        facts: factsOf(deps.displaySpec(req.tool), req.args),
         contentHash: hashOf(req),
         resolve,
         delivered: new Set(),
@@ -460,6 +469,7 @@ export function createApprovals(deps: ApprovalDeps) {
       closed = true;
       settleAll(() => true, 'shutdown');
       clearTimeout(lapse);
+      clearTimeout(grace);
     },
     /** 已排进写入队列的审计都写完（写失败的已告警） */
     flushed: () => writing,

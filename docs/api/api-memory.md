@@ -56,6 +56,39 @@ export default definePlugin({
 });
 ```
 
+## 会话设置项：记忆召回范围
+
+```ts
+type MemoryRecallScope = 'session' | 'platform' | 'all';
+
+// 经 declaration merging 加进 api-session-manager 的 SessionConfig
+interface SessionConfig {
+  memoryRecallScope?: MemoryRecallScope;
+}
+
+const MEMORY_RECALL_SCOPE_SETTING: SessionSetting;   // key 'memoryRecallScope'，select，各种会话适用，advanced
+```
+
+房间的记忆召回范围：`session` 只召回本会话，`platform` 最多同平台，`all` 不限。它只能收窄、不能放宽各插件自己的范围配置，写得比插件配置宽时按插件配置；随子会话复制（不是 liveOnly），否则经子任务就绕过了收窄。跨会话取料的插件（[plugin-memory-history](../plugins/plugin-memory-history.md)、[plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-tool-session](../plugins/plugin-tool-session.md)、[plugin-user-relation](../plugins/user-relation.md)）都遵守它，各自登记这同一份定义（[api-session-manager](./api-session-manager.md) 允许几个插件以同一份定义登记同一个键）：只要其中一个在场这一项就有效，不会因为某一个插件停用而让其余插件不再收窄。
+
+## 压缩服务
+
+```ts
+import { compression } from '@aalis/api-memory';
+
+interface CompressionService {
+  compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void>;
+  readonly autoThreshold: number;   // 自动压缩的使用率（0 到 1），0 表示不自动压缩
+}
+```
+
+服务名 `compression`。压缩把较早的历史压成摘要、只留最近若干条进上下文，提供方是 [plugin-memory-summary](../plugins/plugin-memory-summary.md)。
+
+- **`compress`**：`manual` 是 owner 手动，`auto` 是用量达到 `autoThreshold` 时提供方自己触发。压完才落定；没有压成时拒绝，原因在错误里（这个会话正在压缩或生成摘要、记忆或摘要模型不在、模型失败只做了裁切、期间会话被清空）。历史不多于要保留的条数时什么都不做，照常落定。
+- **`autoThreshold`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，界面的压缩线取它。
+- **进度**：事件 `session:compressing { sessionId, status: 'start' | 'done' | 'error' }`，会话服务转成时间线上的压缩通知。
+- **使用方**：[plugin-session-server](../plugins/plugin-session-server.md) 的 `session/compress` 调它，功能位的「压缩」与用量条目的 `compressAt` 看它在不在。
+
 ## 钩子（HookContextMap）
 
 经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`（见 [api-hooks](./api-hooks.md)）：

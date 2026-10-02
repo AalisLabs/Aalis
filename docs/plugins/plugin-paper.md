@@ -49,7 +49,7 @@ export default definePlugin({
 
 ## 房间怎么开白纸
 
-房间级的开关与上限在 WebUI 会话页的房间配置里（[api-session-manager](../api/api-session-manager.md)），经继承链实时解析，不随建会话、建子任务复制。这里的 `paperName` 指向白纸插件 `papers[].name`；不填写则为该房间单独建纸，取白纸插件的 `defaults` 属性：
+房间级的开关与上限是本插件登记的会话设置项（[api-session-manager](../api/api-session-manager.md)），只对房间适用，在会话设置的「高级」里归在白纸名下；本插件没启用时它们不出现，已写的值保留。它们登记为 liveOnly：经继承链实时解析，不随建会话、建子任务复制。这里的 `paperName` 指向白纸插件 `papers[].name`；不填写则为该房间单独建纸，取白纸插件的 `defaults` 属性：
 
 | 键 | 说明 |
 |---|---|
@@ -60,10 +60,12 @@ export default definePlugin({
 | `remoteAgentUserDailyCents` | 每人每天金额上限（美分）；不填不增加个人金额限制，`0` 禁止该用户开新任务，正数按额度限制 |
 | `remoteAgentUserDailyTasks` | 每人每天件数上限；缺省不按人限制 |
 
-这些键一般只写在单个房间的会话配置里。写在平台档里，这个平台的所有房间都会继承；写在平台档的受众条目（`audience` 为 `group` 或 `private`）里，这个平台的全部群或全部私聊都会继承。两种写法诊断项都会报 warn；写的是 `paperName` 时，白纸页的「共用的房间」也会列出。受众条目不在 `getPlatformProfiles()` 的返回里，诊断项与白纸页经已登记的 IM 房间的继承链（`resolveInheritance`）看到它，这个受众还没有房间登记时看不到。onebot 群会话在群里来过一条真人消息后即登记，出现在 WebUI 会话页的「IM 房间」区（收录口径见 [session-manager 服务](../services/session-manager.md) §6.6）。
+写入时按登记的字段校验：两项金额与件数须是不小于 0 的数。手写的配置文件或旧数据里写坏了的金额不回落到下面的层，预算按 0 处理（不开新任务），不会退成不限额；写坏了的件数按没写处理。
+
+这些键一般只写在单个房间的会话设置里。写在平台档里（宿主配置文档的 `sessionConfig.platforms`），这个平台的所有房间都会继承；写在平台档的受众条目（`sessionConfig.audiences.<平台>.group` 或 `private`）里，这个平台的全部群或全部私聊都会继承。两种写法诊断项都会报 warn，不必先有这个受众的房间登记；写的是 `paperName` 时，白纸页的「共用的房间」也会列出。onebot 群会话在群里来过一条真人消息后即登记，出现在会话列表的「IM 房间」区（收录口径见 [session-manager 服务](../services/session-manager.md) §6.6）。
 
 ```yaml
-# 在 WebUI 会话页为 <试点群会话 id> 写入
+# 为 <试点群会话 id> 的会话设置写入
 enabledToolGroups: [<该群原有分组>, paper]
 paperEnabled: true
 paperName: '<白纸名>'

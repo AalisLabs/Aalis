@@ -2,6 +2,8 @@ node_modules/
 dist/
 .vitepress/cache/
 *.js
+# 前端的首帧主题脚本是手写的源文件，构建时原样复制到 dist
+!packages/plugin-webui-client/public/*.js
 *.d.ts
 !**/src/**/*.d.ts
 *.js.map

@@ -1,0 +1,98 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.panel-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--header-h);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panel-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-meta {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-3);
+}
+
+.panel-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.panel-banner {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* 贴着底部：滚动的起点在底部，内容不满一屏时仍从顶部排起 */
+.panel-body[data-anchor="end"] {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.panel-content {
+  margin-bottom: auto;
+}
+
+/* 回上一层：只在手机上有，桌面上上一层就在旁边 */
+.panel-back {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  margin-left: calc(-1 * var(--space-3));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-2);
+  background: none;
+}
+
+.panel-back .lucide {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+@media (max-width: 47.99em) {
+  .panel-back {
+    display: inline-flex;
+  }
+}

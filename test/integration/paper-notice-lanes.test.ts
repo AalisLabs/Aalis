@@ -148,6 +148,7 @@ async function boot(
   const host = app.bind({ provide, events, hooks, agent, memory, gateway, flowControl, tools });
 
   host.provide(sessionManager, {
+    registerSetting: () => () => {},
     resolveConfig: (sessionId: string) => (sessionId === ROOM ? { ...ROOM_CONFIG } : {}),
     getSession: (id: string): SessionInfo => sessionInfoOf(id),
   } as unknown as SessionManagerService);

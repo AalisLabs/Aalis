@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
-import { memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { type MemoryRecallScope, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { type MemoryRecallScope, memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
 import { App, logger, provide, services } from '../../packages/core/src/index.js';

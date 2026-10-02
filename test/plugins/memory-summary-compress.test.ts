@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
@@ -171,9 +172,9 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     await app.stop();
   });
 
-  it('session:compress 手动路径：LLM 失败同样降级裁切，事件 start→error，旧摘要保留', async () => {
-    // compress handler 是 generateSummary 之外的第二份降级实现，必须单独钉住
-    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
+  it('手动压缩：LLM 失败同样降级裁切，事件 start→error，压缩以「没压成」拒绝，旧摘要保留', async () => {
+    // compress 是 generateSummary 之外的第二份降级实现，必须单独钉住
+    const { app, host, memory, compression } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
       id: 'boom2',
       providerId: 'boom2',
       contextLength: 8192,
@@ -195,8 +196,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
       if (info.sessionId === 's-6') statuses.push(info.status);
     });
 
-    await host.events.emit('session:compress', { sessionId: 's-6', reason: 'manual' });
-    await new Promise<void>(r => setTimeout(r, 50));
+    await expect(compression.compress('s-6', 'manual')).rejects.toThrow('摘要没有生成');
 
     expect((await memory.getHistory('s-6', 1000)).length, '手动压缩失败也应降级裁切').toBeLessThanOrEqual(45);
     expect((await memory.getMetadata('summary', 's-6'))?.summary, '旧摘要不得被失败覆盖').toBe('GOOD-OLD-SUMMARY');
@@ -249,6 +249,127 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     // 半截输出未入库、旧摘要未被覆盖
     const doc = await memory.getMetadata('summary', 's-5');
     expect(doc?.summary, '半截流式输出不得成为权威摘要').toBe('GOOD-OLD-SUMMARY');
+    await app.stop();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 压缩服务（api-memory 的 compression）：会话服务的手动压缩调它，功能位与用量条目的压缩线看它在不在；
+// 用量达到自动压缩线时摘要插件直接调自己，不经事件
+// ════════════════════════════════════════════════════════════
+
+describe('plugin-memory-summary: 压缩服务', () => {
+  const usage = (sessionId: string, usageRatio: number) => ({
+    sessionId,
+    platform: 'webui',
+    contextWindow: 1000,
+    maxTokens: 100,
+    tokenBudget: 800,
+    used: usageRatio * 800,
+    usageRatio,
+    breakdown: {
+      system: 0,
+      persona: 0,
+      memorySummary: 0,
+      memoryVector: 0,
+      skills: 0,
+      platform: 0,
+      subtask: 0,
+      systemOther: 0,
+      history: 0,
+      toolResults: 0,
+      toolDefs: 0,
+      reservedForReply: 0,
+    },
+  });
+
+  it('自动压缩线取配置的 autoCompressThreshold；用量到线时自己压缩，进度照常广播，没到线不压', async () => {
+    const { app, host, memory, compression } = await setupSummary(
+      { threshold: 240, keepRecent: 4, autoCompressThreshold: 0.6 },
+      fakeSummaryLLM(lastSummaryInput),
+    );
+    expect(compression.autoThreshold).toBe(0.6);
+    await seedMessages(memory, 's-auto', 20);
+    const statuses: string[] = [];
+    host.events.on('session:compressing', info => void statuses.push(info.status));
+
+    await host.events.emit('token:usage', usage('s-auto', 0.59));
+    await new Promise<void>(r => setTimeout(r, 50));
+    expect(statuses).toEqual([]);
+
+    await host.events.emit('token:usage', usage('s-auto', 0.6));
+    await expect.poll(() => statuses).toEqual(['start', 'done']);
+    expect((await memory.getHistory('s-auto', 100)).length).toBeLessThanOrEqual(5);
+    expect(lastSummaryInput.text).toContain('自动触发');
+    await app.stop();
+  });
+
+  it('autoCompressThreshold 为 0：不自动压缩，压缩线为 0；手动压缩照常', async () => {
+    const { app, host, memory, compression } = await setupSummary(
+      { threshold: 240, keepRecent: 4, autoCompressThreshold: 0 },
+      fakeSummaryLLM(lastSummaryInput),
+    );
+    expect(compression.autoThreshold).toBe(0);
+    await seedMessages(memory, 's-off', 20);
+    const statuses: string[] = [];
+    host.events.on('session:compressing', info => void statuses.push(info.status));
+    await host.events.emit('token:usage', usage('s-off', 0.99));
+    await new Promise<void>(r => setTimeout(r, 50));
+    expect(statuses).toEqual([]);
+
+    await compression.compress('s-off', 'manual');
+    expect(statuses).toEqual(['start', 'done']);
+    await app.stop();
+  });
+
+  it.each([
+    -1, 70,
+  ])('autoCompressThreshold 写成 %d（不在 0 到 1 之间）：按 0 处理并告警一次，压缩线为 0、不自动压缩', async value => {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const { app, host, memory, compression } = await setupSummary(
+      { threshold: 240, keepRecent: 4, autoCompressThreshold: value },
+      fakeSummaryLLM(lastSummaryInput),
+      logger,
+    );
+    expect(compression.autoThreshold).toBe(0);
+    expect(warns.filter(w => w.includes('autoCompressThreshold'))).toHaveLength(1);
+    await seedMessages(memory, 's-bad', 20);
+    const statuses: string[] = [];
+    host.events.on('session:compressing', info => void statuses.push(info.status));
+    await host.events.emit('token:usage', usage('s-bad', 1.5));
+    await new Promise<void>(r => setTimeout(r, 50));
+    expect(statuses).toEqual([]);
+    await app.stop();
+  });
+
+  it('同一会话正在压缩时再压：拒绝并说明，不另起一次', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    let calls = 0;
+    const { app, memory, compression } = await setupSummary({ threshold: 240, keepRecent: 4 }, {
+      ...fakeSummaryLLM(),
+      async chat() {
+        calls++;
+        await gate;
+        return { content: 'SUMMARY' };
+      },
+    } as LLMModel);
+    await seedMessages(memory, 's-busy', 20);
+    const first = compression.compress('s-busy', 'manual');
+    await expect.poll(() => calls).toBe(1);
+    await expect(compression.compress('s-busy', 'manual')).rejects.toThrow('正在压缩');
+    release();
+    await first;
+    expect(calls).toBe(1);
     await app.stop();
   });
 });

@@ -21,6 +21,7 @@ import type {
   ExecutionGuard,
   InboundTurn,
 } from '@aalis/api-authority';
+import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 
@@ -133,6 +134,18 @@ export interface ToolExecutionResult {
 }
 
 /**
+ * 工具卡与审批卡上的展示种类，声明在工具定义上，fields 写明各项取自哪个参数（参数名）：
+ * - `command`：命令与工作目录；
+ * - `file-change`：路径，以及删、加两侧的文本（如 file_edit 的 oldText 与 newText，整份写入只有加的一侧）。
+ *
+ * 种类是宿主维护的封闭集合，以后按加法加。会话服务按它从参数里逐字取出各项，交给界面与审批卡；没声明或种类不认识的，
+ * 界面走通用卡、审批卡逐字列出全部参数。
+ */
+export type ToolDisplay =
+  | { kind: 'command'; fields: { command: string; cwd?: string } }
+  | { kind: 'file-change'; fields: { path: string; removed?: string; added?: string } };
+
+/**
  * 已注册的工具：函数声明 + 处理器 + 能力可见性/分组元信息。
  * handler 返回字符串即纯文本结果；需要交图给主模型时返回 {@link ToolExecutionResult}。
  */
@@ -148,6 +161,8 @@ export interface RegisteredTool {
   risk?: CapabilityRisk;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
+  /** 工具卡与审批卡上的展示种类 */
+  display?: ToolDisplay;
 }
 
 /** 工具摘要（不含 handler，用于搜索展示） */
@@ -199,6 +214,7 @@ export interface ToolService {
     /** 原始风险声明（透传，供 authority 派生 minTier：safe→访客/sensitive→朋友/dangerous→信任） */
     risk?: CapabilityRisk;
     groups?: string[];
+    display?: ToolDisplay;
   }>;
 
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
@@ -281,3 +297,11 @@ export const tools = defineService<ToolService, BoundTools>('tools', port => {
     registerGroup: (group: Omit<ToolGroupInfo, 'pluginName'>) => groups.add(group),
   });
 });
+
+// ----- 会话设置项（plugin-tools 登记）-----
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    /** 启用的工具分组，`'*'` 为全部分组；没设置或为空时只给不属于任何分组的工具 */
+    enabledToolGroups?: string[];
+  }
+}

@@ -54,6 +54,16 @@ definePlugin({
 | `toolResultMaxRatio` | number | `0.15` | 工具结果最大比例：单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15% |
 | `trimThresholdRatio` | number | `1` | 裁剪触发比例：裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。 |
 
+## 会话设置项
+
+本插件在 session-manager 上登记三个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：
+
+| 键 | 字段 | 显眼程度 | 没设置时 |
+|---|---|---|---|
+| `llm` | `llm-ref`「模型」，只收服务与模型都是非空字符串的 `{ provider, model }`（登记时给的 `validate` 核） | composer（也出现在输入框旁） | 用 llm 服务的偏好（本插件的 `defaultLLM`） |
+| `think` | boolean「深度思考」 | common | 由模型服务自己的配置决定，不支持按请求切换的服务忽略它 |
+| `maxToolIterations` | number「最大工具迭代」，不小于 1 的整数 | advanced | 用本插件配置的 `maxToolIterations` |
+
 ## 指令
 
 本插件注册以下斜杠指令（由 `commands` 服务统一解析）：
@@ -107,12 +117,12 @@ thinking: (默认)  [来源: 默认]
    - `chatStream()` — 流式调用 LLM
    - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多 `maxToolIterations` 次）:
-     - `agent:tool:before` → 执行工具 → `agent:tool:after`
+     - `agent:tool:before` → 执行工具 → `agent:tool:after`（中间件写进 `metadata` 的键随这次工具结果落库）
      - 参数不是合法的 JSON 对象（坏 JSON，或顶层是 `null`、数组、原始值）时不执行，把错误作为这次调用的结果回给模型重新生成；空串按无参处理
    - `agent:reply:before` — 后处理回复内容
    - `agent:turn:after` — 消息处理完成通知
-6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；执行过的工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段），历史里的工具卡据此与实时推送对上；空回复不保存
-7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件
+6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；执行过的工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存
+7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件。回复的出站消息带这一轮的 `turnId`，平台适配器记投递失败时带上它
 
 `message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
 
@@ -167,9 +177,9 @@ thinking: (默认)  [来源: 默认]
 
 ## Token 预算追踪与日志
 
-首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 与 plugin-session-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
+首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
 
-`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-webui-server 只带 `sessionId`；plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
+`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
 
 ```ts
 'token:usage': [{
@@ -178,14 +188,14 @@ thinking: (默认)  [来源: 默认]
   breakdown: {
     system, persona, memorySummary, memoryVector, skills, platform,
     subtask, systemOther, history, toolResults, toolDefs, reservedForReply,
-    injectors, // Record<string, number>：systemOther 按注入者标签细分的明细
+    injectors, // Record<string, number>：systemOther 按注入者细分的明细，键是注入者的全局键「插件实例 id/局部 id」
   }
 }]
 ```
 
 消费者：
 
-- [plugin-webui-server](./plugin-webui-server.md) → WebSocket `'token_usage'` 推给前端面板
+- [plugin-session-server](./plugin-session-server.md) → 会话协议的 `usage` 条目
 - [plugin-memory-summary](./plugin-memory-summary.md) → 超阈值触发自动压缩
 - [plugin-prompt-budget](./plugin-prompt-budget.md) → AI 自查工具 `prompt_budget_info`
 

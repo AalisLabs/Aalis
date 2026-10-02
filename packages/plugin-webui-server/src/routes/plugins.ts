@@ -374,8 +374,7 @@ export function registerPluginRoutes(
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     // 提交 null 的键置为 undefined，写文件时省略
     for (const key of changed) doc.set(key, updates[key] === null ? undefined : values[key]);
-    // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档（appName），保存即生效。
-    // 装有人设时聊天显示人设名，应用名称只在仪表盘上看得到
+    // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 只是显示用的应用名称，不为它重启整个进程
     const restartNeeded = changed.some(k => k === 'logLevel' || k === 'slowThresholdMs');
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
@@ -383,7 +382,7 @@ export function registerPluginRoutes(
       await doc.save();
     } catch (err) {
       // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件。
-      // logLevel / slowThresholdMs 要重启才生效，name 由状态接口读文档：撤回后都回到修改前，运行态不留改动
+      // logLevel / slowThresholdMs 要重启才生效，name 只用于显示：撤回后都回到修改前，运行态不留改动
       for (const key of changed) doc.set(key, previous[key]);
       res
         .status(isConfigSaveRefused(err) ? 409 : 500)

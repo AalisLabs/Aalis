@@ -83,7 +83,7 @@ export default definePlugin({
 
 ## 按房间收窄召回
 
-会话配置的 `memoryRecallScope`（`session` / `platform` / `all`，见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间的召回范围收得比 `crossSessionMode` 更窄：被动召回与 `memory_recall` 都取插件配置映出的可见范围与房间范围中较窄的一个，房间写得更宽时按插件配置。`memory_recall` 的 `scope` 参数再与这个结果取较窄者，传 `all` 也放不宽。房间范围每次检索时按会话所属平台现算，写在平台档里的同样生效；房间没设这个键或 session-manager 不在场时，行为与只看插件配置相同。
+会话配置的 `memoryRecallScope`（`session` / `platform` / `all`，见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间的召回范围收得比 `crossSessionMode` 更窄：被动召回与 `memory_recall` 都取插件配置映出的可见范围与房间范围中较窄的一个，房间写得更宽时按插件配置。`memory_recall` 的 `scope` 参数再与这个结果取较窄者，传 `all` 也放不宽。房间范围每次检索时按会话所属平台现算，写在平台档里的同样生效；房间没设这个键或 session-manager 不在场时，行为与只看插件配置相同。本插件登记这一项（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`，与其他跨会话取料的插件同一份定义）。
 
 ## embedding 模型与存量向量
 

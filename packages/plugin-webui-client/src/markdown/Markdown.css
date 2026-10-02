@@ -1,0 +1,151 @@
+.markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.markdown > * + * {
+  margin-top: var(--space-3);
+}
+
+.markdown :is(h1, h2, h3, h4, h5, h6) {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-xl);
+}
+
+.markdown :is(ul, ol) {
+  margin-bottom: 0;
+  padding-left: var(--space-6);
+}
+
+.markdown li + li {
+  margin-top: var(--space-1);
+}
+
+.markdown blockquote {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-2);
+}
+
+.markdown a {
+  text-decoration: underline 1px;
+  text-underline-offset: 2px;
+}
+
+.markdown img {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.markdown :is(th, td) {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.markdown :not(pre) > code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-code);
+  background: var(--color-fill-2);
+}
+
+.markdown-code {
+  position: relative;
+}
+
+.markdown pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  background: var(--color-fill-1);
+}
+
+.markdown-code .icon-button {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  visibility: hidden;
+}
+
+.markdown-code:hover .icon-button,
+.markdown-code .icon-button:focus-visible {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .markdown-code .icon-button {
+    visibility: visible;
+  }
+}
+
+.markdown-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-mermaid-error {
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-danger-text);
+}
+
+.markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-meta {
+  color: var(--color-syntax-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-attr,
+.hljs-symbol {
+  color: var(--color-syntax-string);
+}
+
+.hljs-number {
+  color: var(--color-syntax-number);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--color-syntax-comment);
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name {
+  color: var(--color-syntax-function);
+}
+
+.hljs-type,
+.hljs-built_in,
+.hljs-title.class_ {
+  color: var(--color-syntax-type);
+}

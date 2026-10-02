@@ -1,16 +1,19 @@
 // ════════════════════════════════════════════════════════════
 // 历史：存档里的消息归并成会话条目，以及分页。
 //
-// 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖之前按旧格式落库的工具调用组；
-// 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。相邻的 assistant 与 tool 消息成一组，两种格式都归并成
-// 按时间顺序的思考、正文与工具调用条目。提问、通知与她发出的附件各自单独成条。
-// 房间里她只把最后的回复发进群：工具调用之前说的话标「未发出」，与实时推送一致。
+// 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；
+// 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成
+// 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与她发出的附件
+// 各自单独成条。工具卡的审批结算与「已发到群」取自工具结果的元数据（会话服务在结果落库前写上）。
+// 房间里她只把最后的回复发进群：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复按适配器记的投递失败
+// 标出，与实时推送一致。
 // ════════════════════════════════════════════════════════════
 
 import type { MemoryService } from '@aalis/api-memory';
-import type { SessionItem } from '@aalis/api-session-protocol';
+import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
 import { type ContentSegment, type Message, parseAttachmentRefs, WellKnownKinds } from '@aalis/schema-message';
 import { failure } from './connection.js';
+import type { DisplayOf } from './display.js';
 
 /** 说话人是不是 owner */
 export type IsOwner = (platform: string, userId?: string) => boolean;
@@ -20,9 +23,23 @@ export const HISTORY_PAGE = 100;
 
 /** 房间里她在工具调用之前说的话：agent 只把最后的回复交给平台 */
 export const BEFORE_TOOL_UNSENT = '没有发出：调用工具之前说的话不发到群里';
+/** 房间里重试丢掉的几版：最后一版才是回复 */
+export const RETRIED = '没有发出：格式校验没通过，已重试';
+/** 平台没收下她发出的消息，error 是投递结果给的原因 */
+export const notAccepted = (error: string) => `没有发出：平台没收下（${error}）`;
 
 /** 给她发出的文件签发下载句柄（绑定所在的会话）：存储地址与文件名 → 句柄；不签发的回 undefined */
 export type SignFile = (uri: string, name: string) => string | undefined;
+
+/** 归并一个会话的存档要的东西 */
+export interface MergeContext {
+  isOwner: IsOwner;
+  /** 是房间的存档 */
+  room: boolean;
+  signFile: SignFile;
+  /** 工具卡的展示 */
+  display: DisplayOf;
+}
 
 type Attachment = { kind: 'image' | 'audio' | 'video' | 'file'; src?: string; name?: string };
 
@@ -166,26 +183,37 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
 /** 成组的消息：她的回复（不是发出的附件）与带 toolCallId 的工具结果 */
 const inGroup = (m: Message) => (m.role === 'assistant' && !sentRefs(m)) || (m.role === 'tool' && !!m.toolCallId);
 
+/** cur 接着 prev 在同一组：都是成组的消息，且属于同一轮（旧数据没记回合的不分） */
+function sameGroup(prev: Message, cur: Message): boolean {
+  if (!inGroup(prev) || !inGroup(cur)) return false;
+  const [a, b] = [text(prev.metadata?.turnId), text(cur.metadata?.turnId)];
+  return a === undefined || b === undefined || a === b;
+}
+
 type ToolSegment = Extract<ContentSegment, { type: 'tool_call' }>;
 
 /**
  * 一组回复与工具调用归并出的时间线：新格式取最后一条带时间线的回复；旧格式思考前置，正文与工具调用按序，
- * 工具结果按 toolCallId 对回它的调用（找不到调用的结果不显示）
+ * 工具结果按 toolCallId 对回它的调用（找不到调用的结果不显示）。另给出各次调用的工具结果元数据（按 callId），
+ * 以及这一组是不是以回复收尾（最后一条是不带工具调用的回复）
  */
 function groupTimeline(group: Message[]) {
   const segments: ContentSegment[] = [];
   const reasoning: ContentSegment[] = [];
   const calls = new Map<string, ToolSegment>();
+  const results = new Map<string, Record<string, unknown>>();
   let timeline = false;
   let finalContent = '';
   let lastAt = group[0]?.timestamp ?? 0;
   let model: { provider?: string; model?: string } | undefined;
   for (const [k, cur] of group.entries()) {
     if (cur.role === 'tool') {
+      const callId = text(cur.metadata?.callId);
+      if (callId && cur.metadata) results.set(callId, cur.metadata);
       const call = calls.get(cur.toolCallId as string);
       if (call) {
         call.result = cur.content ?? '';
-        call.callId = text(cur.metadata?.callId);
+        call.callId = callId;
       }
       continue;
     }
@@ -223,7 +251,17 @@ function groupTimeline(group: Message[]) {
   const ordered = timeline
     ? segments
     : [...reasoning, ...segments, ...(finalContent ? [{ type: 'text' as const, content: finalContent }] : [])];
-  return { ordered, lastAt, model };
+  const last = group.at(-1);
+  const replied = last?.role === 'assistant' && !last.toolCalls?.length;
+  return { ordered, lastAt, model, results, replied };
+}
+
+/** 工具结果元数据里记下的审批结算；没有或形状不对的不认 */
+function recordedApproval(metadata: Record<string, unknown> | undefined) {
+  const recorded = metadata?.approval;
+  if (!isRecord(recorded) || typeof recorded.id !== 'string') return undefined;
+  const settlement = ApprovalSettlementSchema.safeParse(recorded);
+  return settlement.success ? { approvalId: recorded.id, settlement: settlement.data } : undefined;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -231,10 +269,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * 一组归并成条目。工具卡以 callId 为 id（与实时推送相同），旧存档没有 callId 时按这一组第一条消息的 id 加序号；
- * 参数不是对象的（旧存档里模型给出的 null、数组等）按空参数显示
+ * 参数不是对象的（旧存档里模型给出的 null、数组等）按空参数显示。房间里以回复收尾的一组，最后一次工具调用之后的最后一条
+ * 是回复，failures 里有这一轮的就标平台没收下；其余她说的话标未发出
  */
-function mergeGroup(group: Message[], room: boolean): SessionItem[] {
-  const { ordered, lastAt, model } = groupTimeline(group);
+function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyMap<string, string>): SessionItem[] {
+  const { ordered, lastAt, model, results, replied } = groupTimeline(group);
   const base = archivedItemId(group[0] as Message);
   const turnId = group.map(m => text(m.metadata?.turnId)).find(id => id !== undefined);
   const items: SessionItem[] = [];
@@ -242,57 +281,81 @@ function mergeGroup(group: Message[], room: boolean): SessionItem[] {
   for (const segment of ordered) {
     const last = items.at(-1);
     if (segment.type === 'tool_call') {
-      const { result, startTime, endTime } = segment;
+      const { result, startTime, endTime, callId } = segment;
+      const metadata = callId === undefined ? undefined : results.get(callId);
+      const approval = recordedApproval(metadata);
+      const failed = result === undefined || toolFailed(result);
+      const args = isRecord(segment.args) ? segment.args : {};
+      const display = context.display(segment.name, args);
       items.push({
         kind: 'tool-call',
-        itemId: segment.callId ?? id(),
+        itemId: callId ?? id(),
         turnId,
         at: startTime ?? lastAt,
         name: segment.name,
-        args: isRecord(segment.args) ? segment.args : {},
-        status: result === undefined || toolFailed(result) ? 'failed' : 'completed',
+        args,
+        status: approval && approval.settlement.state !== 'approved' ? 'denied' : failed ? 'failed' : 'completed',
         result,
         durationMs: startTime !== undefined && endTime !== undefined ? endTime - startTime : undefined,
+        ...(display ? { display } : {}),
+        ...(metadata?.sentToRoom === true ? { sentToRoom: true } : {}),
+        ...approval,
       });
     } else if (segment.type === 'reasoning_text') {
       if (last?.kind === 'reasoning') last.text += segment.content;
       else items.push({ kind: 'reasoning', itemId: id(), turnId, at: lastAt, text: segment.content });
-    } else if (last?.kind === 'agent-message') {
-      last.text += segment.content;
     } else {
       items.push({ kind: 'agent-message', itemId: id(), turnId, at: lastAt, text: segment.content, attachments: [] });
     }
   }
   const shown = items.filter(i => !((i.kind === 'agent-message' || i.kind === 'reasoning') && i.text === ''));
-  const reply = shown.filter(i => i.kind === 'agent-message').at(-1);
-  if (reply?.kind === 'agent-message' && model) reply.model = model;
-  if (room) {
-    const lastCall = shown.map(i => i.kind).lastIndexOf('tool-call');
-    for (const item of shown.slice(0, Math.max(lastCall, 0))) {
-      if (item.kind === 'agent-message') item.undelivered = { reason: BEFORE_TOOL_UNSENT };
+  const lastCall = shown.map(i => i.kind).lastIndexOf('tool-call');
+  const said = shown.flatMap((item, index) => (item.kind === 'agent-message' ? [{ item, index }] : []));
+  const final = said.at(-1);
+  const reply = replied && final && final.index > lastCall ? final.item : undefined;
+  if (reply && model) reply.model = model;
+  if (context.room) {
+    for (const { item, index } of said) {
+      if (item !== reply) item.undelivered = { reason: index < lastCall ? BEFORE_TOOL_UNSENT : RETRIED };
     }
+    const failure = turnId === undefined ? undefined : failures.get(turnId);
+    if (reply && failure !== undefined) reply.undelivered = { reason: failure };
   }
   return shown;
 }
 
-/** 一段存档消息归并成条目，顺序同存档。room 为真时是房间的存档 */
+/**
+ * 适配器记下的投递失败里，一轮回复没发出的：回合 id → 未发出的原因。经工具发出的（带 callId）不算，
+ * 那次调用的结果已写明；没记回合或原因的旧记录不认
+ */
+function replyFailures(raw: readonly Message[]): Map<string, string> {
+  const failures = new Map<string, string>();
+  for (const message of raw) {
+    if (message.kind !== WellKnownKinds.OutboundDeliveryFailed || message.metadata?.callId !== undefined) continue;
+    const turnId = text(message.metadata?.turnId);
+    const error = text(message.metadata?.error);
+    if (turnId && error) failures.set(turnId, notAccepted(error));
+  }
+  return failures;
+}
+
+/** 一段存档消息归并成条目，顺序同存档；failures 见 replyFailures */
 export function mergeArchive(
   raw: readonly Message[],
-  isOwner: IsOwner,
-  room: boolean,
-  signFile: SignFile,
+  context: MergeContext,
+  failures: ReadonlyMap<string, string>,
 ): SessionItem[] {
   const items: SessionItem[] = [];
   for (let i = 0; i < raw.length; ) {
     const message = raw[i] as Message;
     if (message.role === 'assistant' && inGroup(message)) {
       let end = i + 1;
-      while (end < raw.length && inGroup(raw[end] as Message)) end++;
-      items.push(...mergeGroup(raw.slice(i, end), room));
+      while (end < raw.length && sameGroup(raw[end - 1] as Message, raw[end] as Message)) end++;
+      items.push(...mergeGroup(raw.slice(i, end), context, failures));
       i = end;
       continue;
     }
-    const item = archivedItem(message, isOwner, signFile);
+    const item = archivedItem(message, context.isOwner, context.signFile);
     if (item) items.push(item);
     i++;
   }
@@ -308,9 +371,7 @@ export async function readHistory(
   memory: MemoryService,
   sessionId: string,
   page: { before?: string; limit: number; skip: (message: Message) => boolean },
-  isOwner: IsOwner,
-  room: boolean,
-  signFile: SignFile,
+  context: MergeContext,
 ): Promise<{ items: SessionItem[]; before?: string }> {
   const read = (n: number) =>
     memory.getFullHistory ? memory.getFullHistory(sessionId, n) : memory.getHistory(sessionId, n);
@@ -323,13 +384,13 @@ export async function readHistory(
       continue;
     }
     let start = Math.max(0, end - page.limit);
-    while (start > 0 && inGroup(raw[start] as Message) && inGroup(raw[start - 1] as Message)) start--;
+    while (start > 0 && sameGroup(raw[start - 1] as Message, raw[start] as Message)) start--;
     if (start === 0 && !exhausted) continue;
+    // 回复的投递失败记在回复之后，可能落在更新的一页：从这一页的开头往后全看
     const items = mergeArchive(
       raw.slice(start, end).filter(m => !page.skip(m)),
-      isOwner,
-      room,
-      signFile,
+      context,
+      replyFailures(raw.slice(start)),
     );
     return start > 0 ? { items, before: archivedItemId(raw[start] as Message) } : { items };
   }

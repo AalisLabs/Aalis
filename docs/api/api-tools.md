@@ -23,7 +23,7 @@ interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
-  getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;
+  getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups?; display? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard): void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
@@ -44,10 +44,23 @@ interface RegisteredTool {
   confirm?: CapabilityConfirm;
   risk?: CapabilityRisk;
   groups?: string[];                      // 工具分组，未设置时始终可用
+  display?: ToolDisplay;                  // 工具卡与审批卡上的展示种类
 }
 ```
 
 `CapabilityVisibility` / `CapabilityConfirm` / `CapabilityRisk` 从 `@aalis/api-authority` 导入。
+
+### 展示种类
+
+```ts
+type ToolDisplay =
+  | { kind: 'command'; fields: { command: string; cwd?: string } }
+  | { kind: 'file-change'; fields: { path: string; removed?: string; added?: string } };
+```
+
+`fields` 写明各项取自哪个参数（参数名）：`command` 是命令与工作目录；`file-change` 是路径，以及删、加两侧的文本，只有一侧的只写那一侧（`file_edit` 是 `{ path: 'path', removed: 'oldText', added: 'newText' }`，`file_write` 是 `{ path: 'path', added: 'content' }`）。种类是宿主维护的封闭集合，以后按加法加。
+
+会话服务（[plugin-session-server](../plugins/plugin-session-server.md)）经 `getAll()` 取声明，从参数里逐字取出各项：工具卡带解析好的展示（会话协议 tool-call 条目的 `display`），审批卡的事实按它取命令、工作目录与 diff。没声明、种类不认识、声明的命令或路径不是字符串时，界面走通用卡，审批卡逐字列出全部参数；前端不写工具名清单。
 
 ## ToolCallContext
 
@@ -75,6 +88,10 @@ interface ToolCallContext {
 - 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看 `actor` 分不出来：定时任务注入的回合带着创建者的 `actor`。
 
 `turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一，不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
+
+## 会话设置项的键
+
+本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加 `enabledToolGroups?: string[]`（启用的工具分组，`'*'` 为全部；没设置或为空时只给不属于任何分组的工具），由 [plugin-tools](../plugins/plugin-tools.md) 登记。agent 按会话的生效值填 `ToolCallContext.enabledGroups`。
 
 ## 描述符与绑定门面
 

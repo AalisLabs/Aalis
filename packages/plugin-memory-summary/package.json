@@ -56,10 +56,14 @@
         "lifecycle",
         "llm",
         "logger",
-        "memory"
+        "memory",
+        "provide"
       ],
       "optional": [
         "message-archive"
+      ],
+      "provides": [
+        "compression"
       ]
     }
   }

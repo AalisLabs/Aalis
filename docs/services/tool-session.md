@@ -217,13 +217,11 @@ LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploade
 
 **提供**：`@aalis/plugin-file-reader`（`index.ts` `provides: [fileReader]`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
 
-**消费**：`@aalis/plugin-webui-server`
-- 能力探测：`services.get('file-reader') !== undefined` 按名动态探测（不声明依赖），决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
-- 删除同步：删文件后通知服务清内存索引（`packages/plugin-webui-server/src/routes/uploaded-files.ts`）——注意这里**故意只用 duck-typed 子集** `{ deleteFile?: ... }` 取用，避免 webui-server 反向依赖 file-reader 插件包（`uploaded-files.ts` 有注释，连 `FileMeta` 都是各自定义而非 import）。
+**消费**：第一方插件目前不经这个服务取上传文件；它留给要按 ID 取上传文件的插件。
 
 ## B.4 标准用法
 
-消费方可 `import type { FileReaderService }` 拿到完整类型；若不愿反向依赖实现包（webui-server 即出于此考量），也可自带最小形状声明。两种都要每次现取、不缓存实例：
+消费方可 `import type { FileReaderService }` 拿到完整类型；不愿反向依赖实现包时，也可自带最小形状声明。两种都要每次现取、不缓存实例：
 
 ```ts
 const reader = caps.services.get<{ deleteFile?: (id: string) => Promise<boolean> }>('file-reader');
@@ -242,7 +240,7 @@ if (reader?.deleteFile) await reader.deleteFile(fileId);
 
 **给 provider 作者的强约束**：`fileId` 由 `computeFileId` 生成，是 `sha256(sessionId + '\0' + content)` 的前 16 hex（`index.ts` `computeFileId`）——以会话 id 加盐：同会话重传同内容仍命中去重，不同会话上传相同内容得到不同 id（避免按 id 键的内存索引跨会话撞键、挤掉前一会话条目）。加盐提高了预测门槛，但 id 仍可预测：同时知道目标 `sessionId` 与文件内容即可算出。因此任何按 `fileId` 取数据的工具/接口路径**必须**校验 `entry.sessionId === callCtx.sessionId`，否则攻击者可越权访问。这是会话隔离的硬要求，见 [安全模型](../concepts/security-model.md)。
 
-注意：**服务接口本身**（`getMeta`/`resolveLocalPath`/`deleteFile`）**不带 `sessionId` 校验**——它们设计给同进程内可信消费方（webui-server）用，调用方自己负责鉴权。隔离闸门在 LLM 工具层，不在服务层。
+注意：**服务接口本身**（`getMeta`/`resolveLocalPath`/`deleteFile`）**不带 `sessionId` 校验**——它们设计给同进程内可信消费方用，调用方自己负责鉴权。隔离闸门在 LLM 工具层，不在服务层。
 
 ## B.6 会话生命周期
 

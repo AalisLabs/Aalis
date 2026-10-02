@@ -1,12 +1,13 @@
 import { App, provide } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionKind, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
 // 会话种类、受众与出生平台：入表时按 id 与 parentId 推出并覆盖写入，调用方传的值与存储里的旧值都不采信。
+// 种类由纯函数 sessionKind 按父会话与受众给出：子会话为 task，受众为群或私聊为 room（含 owner 自己的私聊），其余为 owner。
 
 const GROUP = 'onebot:10000:group:20001';
 const PRIVATE = 'onebot:10000:private:30001';
@@ -22,7 +23,7 @@ async function setup(initial: Record<string, Record<string, unknown>> = {}) {
   await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
   host.provide(memory, fakeMemory(initial) as never);
-  await app.plugin(sessionManagerPlugin, {});
+  await app.plugin(sessionManagerPlugin);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
@@ -35,16 +36,29 @@ const describeOf = (s: { kind?: unknown; audience?: unknown; originPlatform?: un
   originPlatform: s?.originPlatform,
 });
 
+describe('sessionKind', () => {
+  it.each([
+    ['子会话，父会话是群', 'task', { parentId: GROUP }],
+    ['子会话，父会话是 owner 的会话', 'task', { parentId: 'session-abcd1234' }],
+    ['群', 'room', { audience: 'group' }],
+    ['私聊（含 owner 自己的私聊）', 'room', { audience: 'private' }],
+    ['owner 面会话', 'owner', { audience: 'owner' }],
+    ['没有受众的根会话', 'owner', {}],
+  ] as const)('%s → %s', (_name, kind, session) => {
+    expect(sessionKind(session)).toBe(kind);
+  });
+});
+
 describe('会话种类字段', () => {
-  it('owner 面会话：WebUI 根会话与 cli-default 为 room、owner、无出生平台，WebUI 会话的子会话为 task、无受众', async () => {
+  it('owner 面会话：WebUI 根会话与 cli-default 为 owner、无出生平台，WebUI 会话的子会话为 task、无受众', async () => {
     const sm = await setup();
     const root = await sm.createSession({ name: '新会话' });
     const child = await sm.createChildSession(root.id, { name: '子会话' });
     const cli = await sm.ensureSession('cli-default');
 
-    expect(describeOf(root)).toEqual({ kind: 'room', audience: 'owner', originPlatform: undefined });
+    expect(describeOf(root)).toEqual({ kind: 'owner', audience: 'owner', originPlatform: undefined });
     expect(describeOf(child)).toEqual({ kind: 'task', audience: undefined, originPlatform: undefined });
-    expect(describeOf(cli)).toEqual({ kind: 'room', audience: 'owner', originPlatform: undefined });
+    expect(describeOf(cli)).toEqual({ kind: 'owner', audience: 'owner', originPlatform: undefined });
   });
 
   it('IM 房间：群为 group、私聊为 private，出生平台取 id 前缀；房间下的子会话为 task、带出生平台', async () => {
@@ -58,7 +72,7 @@ describe('会话种类字段', () => {
     expect(describeOf(task)).toEqual({ kind: 'task', audience: undefined, originPlatform: 'onebot' });
   });
 
-  it('加载时不采信存储值：存成 owner 的群房间读回为 group，没有这些字段的旧记录补上', async () => {
+  it('加载时不采信存储值：存成 owner 的群房间读回为 group 与 room，没有这些字段的旧记录补上', async () => {
     const stale = { name: '群', status: 'completed', children: [], config: {}, createdAt: 1, updatedAt: 1 };
     const sm = await setup({
       [GROUP]: { ...stale, id: GROUP, kind: 'room', audience: 'owner' },
@@ -73,7 +87,7 @@ describe('会话种类字段', () => {
       originPlatform: 'onebot',
     });
     expect(describeOf(sm.getSession('session-abcd1234'))).toEqual({
-      kind: 'room',
+      kind: 'owner',
       audience: 'owner',
       originPlatform: undefined,
     });
@@ -89,7 +103,7 @@ describe('会话种类字段', () => {
     } as never);
     const child = await sm.createChildSession(GROUP, { name: '子任务', kind: 'room', audience: 'private' } as never);
 
-    expect(describeOf(root)).toEqual({ kind: 'room', audience: 'owner', originPlatform: undefined });
+    expect(describeOf(root)).toEqual({ kind: 'owner', audience: 'owner', originPlatform: undefined });
     expect(describeOf(child)).toEqual({ kind: 'task', audience: undefined, originPlatform: 'onebot' });
   });
 });

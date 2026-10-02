@@ -35,7 +35,7 @@ async function setup(): Promise<{
   host.provide(sessionManager, {
     // parent-1 无 parentId（非嵌套）；child-session-1 供 send_to_subtask 的归属校验
     getSession: (id: string) => (id === 'child-session-1' ? { id, parentId: 'parent-1', status: 'active' } : undefined),
-    resolveConfig: () => ({}),
+    childConfig: () => ({}),
     createChildSession: async () => ({ id: 'child-session-1' }),
     updateSession: async () => {},
   } as never);

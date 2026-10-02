@@ -8,7 +8,8 @@
 
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
-import type { ChatResponse } from '@aalis/api-llm';
+import type { ChatResponse, ModelRef } from '@aalis/api-llm';
+import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import type { ToolCallContext, ToolDefinition } from '@aalis/api-tools';
 import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
@@ -100,7 +101,17 @@ declare module '@aalis/api-hooks' {
       metadata: Record<string, unknown>;
     };
     'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
-    'agent:tool:after': { name: string; result: string; toolCallContext: ToolCallContext };
+    /**
+     * 一次工具调用执行完：result 可以改写（回给模型、落库的都是改写后的）。metadata 是这次工具结果落库时 tool 消息的元数据，
+     * 中间件写进去的键随结果落库，供回看历史的一方还原这次调用的结局（如会话服务记下的审批结算、发进房间的消息已被收下）；
+     * turnId 与 callId 由 agent 写，中间件不写这两个键
+     */
+    'agent:tool:after': {
+      name: string;
+      result: string;
+      toolCallContext: ToolCallContext;
+      metadata: Record<string, unknown>;
+    };
     'agent:reply:before': {
       content: string;
       archiveContent?: string;
@@ -267,7 +278,7 @@ export interface TokenUsageBreakdown {
 /**
  * agent 每次 LLM 调用后 emit 的 prompt 预算快照。
  *
- * 发射方：plugin-agent；已知消费方：plugin-webui-server（面板渲染）、
+ * 发射方：plugin-agent；已知消费方：plugin-session-server（会话的用量条目）、
  * plugin-memory-summary（预压缩触发）、plugin-prompt-budget（AI 自检工具）。
  */
 export interface TokenUsageEvent {
@@ -288,8 +299,8 @@ declare module '@aalis/core' {
     'token:usage': [usage: TokenUsageEvent];
     /**
      * 请求 agent 重发某会话的最新 token:usage 快照。
-     * 发射方：plugin-webui-server（客户端刷新/重连、手动压缩之后，不填 platform）、plugin-session-server（订阅时还没有
-     * 这个会话的用量、手动压缩之后；房间不填，其余填连接的入口平台）；消费方：plugin-agent。
+     * 发射方：plugin-session-server（订阅时还没有这个会话的用量、手动压缩之后；房间不填，其余填连接的入口平台）；
+     * 消费方：plugin-agent。
      * platform 是调用方的入口平台，没有出生平台的会话（WebUI、CLI 等）的快照按它选档；缺省时消费方对
      * IM 房间按出生平台（api-gateway 的 resolveSessionOrigin）、其余按 'webui' 兜底。
      */
@@ -317,3 +328,15 @@ export const agent = defineService<AgentService, BoundAgent>('agent', port => {
     registerPreprocessor: (name: string, handler: PreprocessorFn) => preprocessors.add({ name, handler }),
   });
 });
+
+// ----- 会话设置项（plugin-agent 登记）-----
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    /** 会话用的模型：provider 为 LLM 插件实例 id，model 为它登记的模型 id；没设置时跟随 llm 服务的偏好 */
+    llm?: ModelRef;
+    /** 深度思考：true 开、false 关；没设置时由各模型服务自己的配置决定，不支持按请求切换的服务忽略它 */
+    think?: boolean;
+    /** 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置 */
+    maxToolIterations?: number;
+  }
+}

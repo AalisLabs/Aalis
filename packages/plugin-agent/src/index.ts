@@ -17,7 +17,12 @@ import { memory as memoryService } from '@aalis/api-memory';
 import { messageArchive as messageArchiveService } from '@aalis/api-message-archive';
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
-import { type SessionConfig, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import {
+  type SessionConfig,
+  type SessionConfigPatch,
+  type SessionSetting,
+  sessionManager as sessionManagerService,
+} from '@aalis/api-session-manager';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import {
   type ToolCallContext,
@@ -183,23 +188,14 @@ class DefaultAgent implements AgentService {
   /**
    * 根据优先级链解析当前会话该用哪个 LLMModel entry。
    *
-   * 全部交给 session-manager.resolveConfig。优先级（从高到低）：
-   * 1. 会话 config
-   * 2. 父会话 sessionDefaults
-   * 3. 平台 profile
-   * 4. ServicePreference（由 agent 启动时锁定的全局默认 entry，未传 ref 时生效）
+   * 会话设置的 llm 交给 session-manager.resolveConfig 解析（会话自己、父会话、受众条目、平台档、全局默认）；
+   * 哪一层都没设时用 ServicePreference（由 agent 启动时锁定的全局默认 entry）。
    *
    * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
   private async resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined> {
-    let ref: { provider?: string; model?: string } | undefined;
-
-    // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile
     const sm = this.caps.sessionManager.current;
-    if (sm && sessionId) {
-      const resolved = sm.resolveConfig(sessionId, platform);
-      if (resolved.llm?.provider && resolved.llm?.model) ref = resolved.llm;
-    }
+    const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
     return resolveLLMModel(this.caps.llm, ref, ['chat']);
@@ -645,12 +641,8 @@ class DefaultAgent implements AgentService {
           sessionMgr && incoming.sessionId
             ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
             : undefined;
-        // 会话级 maxToolIterations 覆盖（WebUI 会话页可编辑）：正整数才生效，其余视为未设置、回落全局配置
-        const sessionMaxIter = resolved?.maxToolIterations;
-        const maxToolIterations =
-          typeof sessionMaxIter === 'number' && Number.isInteger(sessionMaxIter) && sessionMaxIter >= 1
-            ? sessionMaxIter
-            : this.maxToolIterations;
+        // 会话设置的 maxToolIterations 按登记的字段解析过（正整数），没设置时用全局配置
+        const maxToolIterations = resolved?.maxToolIterations ?? this.maxToolIterations;
 
         // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
         const personaOpts = toPersonaOptions(resolved);
@@ -919,8 +911,13 @@ class DefaultAgent implements AgentService {
                 // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。
                 const resultImages = executed.images;
 
-                // Hook: agent:tool:after — 插件可以处理工具执行结果
-                const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: callCtx };
+                // Hook: agent:tool:after — 插件可以处理工具执行结果，写进 metadata 的随结果落库
+                const toolAfterData = {
+                  name: toolBeforeData.name,
+                  result,
+                  toolCallContext: callCtx,
+                  metadata: {} as Record<string, unknown>,
+                };
                 await this.caps.hooks.run('agent:tool:after', toolAfterData);
                 result = toolAfterData.result;
 
@@ -956,6 +953,7 @@ class DefaultAgent implements AgentService {
                   callId,
                   result,
                   resultImages,
+                  resultMetadata: toolAfterData.metadata,
                   toolName: toolBeforeData.name,
                   toolArgs: toolBeforeData.args,
                   startTime: toolT0,
@@ -971,7 +969,7 @@ class DefaultAgent implements AgentService {
                 const result = JSON.stringify({
                   error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
                 });
-                // start 已发出就补发配对的 end（emit 恒 resolve）：否则 WebUI 流式缓冲里这一段一直显示执行中
+                // start 已发出就补发配对的 end（emit 恒 resolve）：否则会话里这张工具卡一直显示执行中
                 if (toolT0 !== undefined) {
                   await this.caps.events.emit('tool:execute', {
                     sessionId: incoming.sessionId,
@@ -1014,6 +1012,7 @@ class DefaultAgent implements AgentService {
             callId,
             result,
             resultImages,
+            resultMetadata,
             toolName,
             toolArgs,
             startTime,
@@ -1028,7 +1027,7 @@ class DefaultAgent implements AgentService {
               content: result,
               toolCallId: toolCall.id,
               ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
-              metadata: { turnId, ...(callId ? { callId } : {}) },
+              metadata: { ...resultMetadata, turnId, ...(callId ? { callId } : {}) },
             };
             llmBeforeData.messages.push(toolMessage);
             toolMessages.push(toolMessage);
@@ -1271,7 +1270,7 @@ class DefaultAgent implements AgentService {
             segments: visibleSegments,
           });
 
-          // 发送给流式客户端时使用合并版本（统一时间线 segments 同时给出，前端按到达顺序渲染）
+          // 外发给平台：思考是这一轮各次调用合并的全文，segments 是这一轮的有序时间线
           await this.dispatchOutbound({
             content: replyContent,
             sessionId: incoming.sessionId,
@@ -1281,6 +1280,7 @@ class DefaultAgent implements AgentService {
               : {}),
             reasoningContent: combinedReasoning,
             source: 'agent',
+            turnId,
             segments: visibleSegments,
             modelInfo: turnModelInfo,
           });
@@ -1341,7 +1341,7 @@ class DefaultAgent implements AgentService {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`处理消息失败: ${message}`);
 
-        // 异常同样要结束流：不发 done，CLI 的流式块不收尾、WebUI 的工具进度与上限标记不复位，
+        // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
         // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
         await this.caps.events.emit('outbound:stream', {
           sessionId: incoming.sessionId,
@@ -1407,11 +1407,12 @@ class DefaultAgent implements AgentService {
         for (const m of history) {
           if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
           if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
-          // 为用户消息注入时间标注，帮助 LLM 理解时间先后
+          // 为用户消息注入时间标注，帮助 LLM 理解时间先后。标注加在副本上：记忆服务可能直接交出存着的消息对象
           if (m.role === 'user' && m.timestamp && m.content) {
             const timeLabel = formatTimeLabel(m.timestamp, now);
             if (timeLabel && !m.content.startsWith(`(${timeLabel})`)) {
-              m.content = `(${timeLabel}) ${m.content}`;
+              messages.push({ ...m, content: `(${timeLabel}) ${m.content}` });
+              continue;
             }
           }
           messages.push(m);
@@ -1625,11 +1626,11 @@ class DefaultAgent implements AgentService {
           } else {
             personaTokens += t;
           }
-        } else {
+        } else if (rawSource) {
           // 其余注入者(memory-history/user-profile/user-relation/自定义插件等):
-          // 计入 systemOther 汇总之余按标签点名,预算争抢时能看出是谁在吃。
+          // 计入 systemOther 汇总之余按全局键点名,预算争抢时能看出是谁在吃;界面按键里的实例前缀合并到插件
           systemOtherTokens += t;
-          injectorTokens[source] = (injectorTokens[source] ?? 0) + t;
+          injectorTokens[rawSource] = (injectorTokens[rawSource] ?? 0) + t;
         }
       } else if (msg.role === 'tool') {
         toolResultTokens += t;
@@ -2190,6 +2191,49 @@ const configSchema = defineConfig({
   },
 });
 
+/** 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考与工具迭代上限，各种会话都适用 */
+const SESSION_SETTINGS: SessionSetting[] = [
+  {
+    key: 'llm',
+    field: { type: 'llm-ref', label: '模型', description: '没设置时跟随 llm 服务的偏好（默认对话模型）' },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'composer',
+    // 会话选的是一个具体的模型：服务与模型都要给
+    validate: value => {
+      const ref = value as { provider?: unknown; model?: unknown } | null;
+      return typeof ref?.provider === 'string' &&
+        ref.provider !== '' &&
+        typeof ref.model === 'string' &&
+        ref.model !== ''
+        ? undefined
+        : '要是 { provider, model }，两项都是非空字符串';
+    },
+  },
+  {
+    key: 'think',
+    field: {
+      type: 'boolean',
+      label: '深度思考',
+      description: '开或关；没设置时由模型服务自己的配置决定，不支持按请求切换的服务忽略它',
+    },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'common',
+    order: 20,
+  },
+  {
+    key: 'maxToolIterations',
+    field: {
+      type: 'number',
+      label: '最大工具迭代',
+      integer: true,
+      min: 1,
+      description: '一轮里工具调用循环的最大次数；没设置时用对话代理插件的配置',
+    },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'advanced',
+  },
+];
+
 // 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
@@ -2212,6 +2256,7 @@ type InternalAgent = {
 
 function run(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
   const agentImpl = new DefaultAgent(caps, cfg);
   caps.provide(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。
@@ -2242,7 +2287,7 @@ function run(caps: Caps): void {
    * 会话有覆盖时另起一行列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，
    * 与实际回合同一口径（房间会话按出生平台与受众选档）。pick 从配置里提取并格式化该字段。
    */
-  type CfgView = { llm?: { provider: string; model: string }; persona?: string; think?: boolean | null } | undefined;
+  type CfgView = SessionConfig | undefined;
   function resolutionLines(
     sessionId: string,
     platform: string,
@@ -2264,15 +2309,13 @@ function run(caps: Caps): void {
           : layer === 'platform'
             ? profile
             : '默认';
-    // null 与 undefined 同义（BSON 持久化读回 null），都表示没有覆盖
-    const own = pick(smSvc.getSession(sessionId)?.config);
+    const own = pick(smSvc.getOwnConfig(sessionId));
     if (own == null) return [`${label}: ${inherited ?? '(默认)'}  [来源: ${from}]`];
     return [`${label}: ${own}  [来源: 会话覆盖]`, `  被覆盖的继承值: ${inherited ?? '(默认)'}  [来源: ${from}]`];
   }
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
-  // null 与 undefined 同义（BSON 持久化读回 null，契约见 session-manager stripUndefined）
-  const fmtThink = (c: CfgView): string | undefined => (c?.think == null ? undefined : c.think ? 'on' : 'off');
+  const fmtThink = (c: CfgView): string | undefined => (c?.think === undefined ? undefined : c.think ? 'on' : 'off');
 
   // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
   const PAGE_SIZE = 20;
@@ -2367,7 +2410,7 @@ function run(caps: Caps): void {
       if (thinkRaw && thinkRaw !== 'on' && thinkRaw !== 'off') {
         return `thinking 取值只能是 on 或 off（收到 "${thinkRaw}"）。例：/session.set -t off`;
       }
-      const config: SessionConfig = {};
+      const config: SessionConfigPatch = {};
       if (thinkRaw) config.think = thinkRaw === 'on';
       // 模型：校验存在再落，避免错名静默回退默认
       if (modelRef) {
@@ -2381,7 +2424,7 @@ function run(caps: Caps): void {
         }
         config.llm = { provider: modelRef.slice(0, lastSlash), model: modelRef.slice(lastSlash + 1) };
       }
-      // 人设：listModels 可选，缺失则不校验（persona 插件缺席时不误拒）
+      // 人设：人设插件不在时这一项没有登记，session-manager 拒绝写入
       if (personaName) {
         const persona = caps.persona.current;
         if (persona?.listModels) {
@@ -2431,23 +2474,23 @@ function run(caps: Caps): void {
         (clearModel && session?.config?.llm) ||
         (clearPersona && session?.config?.persona) ||
         (clearThink && session?.config?.think != null);
-      if (session?.config && willClear) {
-        // 写 undefined → resolveConfig 的 stripUndefined 使其回落默认级联
-        const patch: SessionConfig = { ...session.config };
-        if (clearModel) patch.llm = undefined;
-        if (clearPersona) patch.persona = undefined;
-        if (clearThink) patch.think = undefined;
-        await smSvc.ensureSession(sid, { config: patch });
+      if (willClear) {
+        // null 删掉这一项，回到继承链
+        const patch: SessionConfigPatch = {};
+        if (clearModel) patch.llm = null;
+        if (clearPersona) patch.persona = null;
+        if (clearThink) patch.think = null;
+        await smSvc.updateSession(sid, { config: patch });
       }
       const eff = smSvc.resolveConfig(sid, argv.session.platform);
-      const thinkStr = eff.think == null ? '(默认)' : eff.think ? 'on' : 'off';
+      const thinkStr = eff.think === undefined ? '(默认)' : eff.think ? 'on' : 'off';
       return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}，thinking: ${thinkStr}`;
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   caps.events.on('token:request', async data => {
     if (!data?.sessionId) return;
-    // platform 是调用方的入口平台（owner 面会话的快照按它选档）；WebUI 不填，会话服务对房间不填、其余填连接的平台。
+    // platform 是调用方的入口平台（owner 面会话的快照按它选档）；会话服务对房间不填、其余填连接的平台。
     // 缺省时 IM 房间按出生平台、其余按 'webui'：它还是提示词贡献方的「当前平台」（按平台取跨会话料），不能缺省成空
     const platform = data.platform ?? resolveSessionOrigin(data.sessionId)?.platform ?? 'webui';
 

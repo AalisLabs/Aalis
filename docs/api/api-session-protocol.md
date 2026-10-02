@@ -49,26 +49,35 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
   server: { name: string };
   identity: { platform: string; userId: string };  // 传输层认证出的身份
   surface: string;                    // 这条连接所在审批面的登记名（webui、cli）
+  features: { send: boolean; rewind: boolean; compress: boolean };  // 功能位
 }
 ```
 
 主版本不同时回 `unsupported`，错误信息写明两边的版本，随即断开；只差次版本照常握手。握手之前的其它请求回 `invalidRequest`。
 
+**功能位**：发送、回滚、压缩三项，分别看对话服务（agent）、检查点服务、压缩服务（api-memory 的 `compression`）在不在，界面据此决定输入框能不能用、回滚与压缩的入口出不出现。这几个服务上线或下线、功能位变了时，服务端给每条连接推 `features/changed { features }`。计划、审批、用量不在功能位里，按数据出现：有计划条目才有计划，有用量条目才有用量。
+
 ## 会话与列表
 
 | 方法或通知 | 参数 | 结果 |
 |---|---|---|
-| `sessions/list` | `{ section?, parentId?, query?, cursor?, limit? }` | `{ sessions: SessionSummary[], nextCursor?, groups: RoomGroup[] }` |
+| `sessions/list` | `{ section?, parentId?, instance?, platform?, archived?, query?, cursor?, limit? }` | `{ sessions: SessionSummary[], nextCursor?, groups: RoomGroup[] }` |
 | `sessions/watch` | `{}` | `{}`；之后推 `sessions/changed` |
 | `sessions/changed`（通知） | `{ upserts: SessionSummary[], removes: string[], groups: RoomGroup[] }` | — |
 | `session/create` | `{ name?, parentId? }` | `{ session: SessionSummary }` |
 | `session/rename` | `{ sessionId, title }` | `{}` |
 | `session/archive` | `{ sessionId }` | `{}`，连同子会话 |
+| `session/unarchive` | `{ sessionId }` | `{}`，连同子会话，恢复成最后一轮收尾后的状态；没归档的不动 |
 | `session/delete` | `{ sessionId }` | `{}`，连同子会话，并清空它们的消息历史与长期记忆 |
 | `session/batch` | `{ op: 'archive' \| 'delete', ids }` | `{ failed: Array<{ sessionId, message }> }` |
-| `session/config/get` | `{ sessionId }` | 见下文「会话配置」 |
+| `session/config/get` | `{ sessionId }` | `{ items: SettingRow[] }`，见下文「会话设置」 |
 | `session/config/update` | `{ sessionId, patch }` | 同 `session/config/get` |
+| `session/config/layers` | `{}` | `{ layers: SettingLayer[] }` |
+| `session/config/layer/get` | `{ layer }` | `{ items: SettingRow[] }` |
+| `session/config/layer/update` | `{ layer, patch }` | 同 `session/config/layer/get` |
+| `session/config/changed`（通知） | `{}` | — |
 | `session/markSeen` | `{ sessionId }` | `{}` |
+| `features/changed`（通知） | `{ features }` | —，见「握手」的功能位 |
 
 ### 摘要
 
@@ -78,7 +87,7 @@ interface SessionSummary {
   title: string;              // 标题，没有时是会话名
   parentId?: string;
   childCount: number;
-  kind: 'room' | 'task';      // task 为子任务
+  kind: 'owner' | 'room' | 'task';  // 会话种类（api-session-manager 的 sessionKind）：task 子任务，room IM 房间（含 owner 自己的私聊），owner 其余
   section: 'owner' | 'rooms'; // 子会话归在根会话的区里
   platform?: string;          // 出生平台；owner 自己的会话没有
   instance?: string;          // 房间：接管它的适配器实例（插件实例 id）
@@ -92,12 +101,12 @@ interface SessionSummary {
   unread: boolean;            // 只用于「我的」区，房间恒为 false
   attention: boolean;         // 需要我处理：有推出、还没结的审批
   archived: boolean;
-  paper?: boolean;            // 房间：生效配置是否开着白纸
 }
 
 interface RoomGroup {
   platform: string;
   instance?: string;          // 还没记下实例的房间按平台成一组，没有 instance
+  label: string;              // 组名：实例的显示名（插件显示名，非默认实例另带实例名）；没有实例的组是平台名
   rooms: number;
   accounts: number;           // 组里房间涉及的机器人账号数，多于 1 时界面在行内标出账号
   attention: number;          // 组里需要我处理的房间数
@@ -106,10 +115,12 @@ interface RoomGroup {
 
 ### 列表的规则
 
-- **分区**：「我的」（`owner`）是 owner 自己的会话，房间（`rooms`）是 IM 群与私聊。不给 `section` 时两区都列，「我的」在前。
+- **分区**：「我的」（`owner`）是 owner 自己的会话，房间（`rooms`）是 IM 群与私聊（根会话的种类为 `room`）。不给 `section` 时两区都列，「我的」在前。
 - **排序**：「我的」区按需要我处理、出错、完成未读、运行中依次靠前，其余按最后活动从新到旧；房间按最后活动从新到旧，靠分组里的状态露出，不显示未读。
 - **子会话**：不给 `parentId` 时只列根会话；给了就列它的直接子会话，按最后活动从新到旧，`section` 不起作用。父会话不存在回 `not-found`。
-- **分组**：`groups` 是全部房间的分组，不受分区、搜索与分页影响。组按平台排，同平台里有实例的在前（按实例 id），没记下实例的那组在后。
+- **归档**：缺省不含已归档的会话；`archived: true` 只列已归档的（界面的「已归档」区），归档的子会话同样按它取。
+- **一组房间**：`instance` 只列这个适配器实例接管的房间，`platform` 只列这个平台还没记下实例的房间（`groups` 里没有 `instance` 的那一组），两者不同时给（同时给回 `invalidParams`）。房间表据此翻页取全一组，筛选与排序在客户端做。
+- **分组**：`groups` 是没归档的房间的分组，不受分区、搜索与分页影响。组按平台排，同平台里有实例的在前（按实例 id），没记下实例的那组在后。组名 `label` 由服务端给出，客户端不按平台名或实例 id 查表。
 - **搜索**：`query` 按名称、标题、id 匹配，不分大小写；也认「平台:群号」，例如 `onebot:20001` 命中 `onebot:<账号>:group:20001`。
 - **分页**：`limit` 缺省 50、最大 200；`cursor` 取上一页的 `nextCursor`，没有下一页时不给。坏的 `cursor` 回 `invalidParams`。
 
@@ -121,29 +132,34 @@ interface RoomGroup {
 
 「我的」区的会话在她最近一次开口晚于 owner 上次 `session/markSeen` 的时刻时为完成未读。已读时刻由服务端记下并持久化，换连接、换设备都一致；客户端在 owner 看过会话（打开、看到新回复）时调 `markSeen`。
 
-### 会话配置
+### 会话设置
+
+设置项由拥有功能的插件登记（[api-session-manager](./api-session-manager.md)），协议与客户端都不认识具体的键：每一行带 schema-config 字段，客户端按字段渲染。
 
 ```ts
-{
-  config: SessionConfig;           // 会话自己的覆盖，另含 sessionDefaults
-  effective: SessionConfigValues;  // 生效值：继承值叠上会话自己的覆盖
-  inheritance: {
-    platform?: string;             // 选档用的平台
-    audience?: 'private' | 'group';
-    values: SessionConfigValues;   // 继承值
-    sources: Partial<Record<键, 'defaults' | 'platform' | 'audience' | 'parent'>>;
-  };
-  options: {
-    personas: string[];
-    models: Array<{ provider: string; model: string; capabilities: string[] }>;
-    toolGroups: Array<{ name: string; label: string }>;
-  };
+interface SettingRow {
+  key: string;
+  field: SchemaField;              // 类型、标签、说明、默认值、校验、可选项来源（dynamicOptions）
+  plugin: string;                  // 登记它的插件实例 id，「高级」里按它分组
+  prominence: 'composer' | 'common' | 'advanced';
+  value?: unknown;                 // 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值
+  effective?: unknown;             // 生效值；哪一层都没设时没有，界面按字段的默认值显示
+  source?: 'session' | 'parent' | 'audience' | 'platform' | 'defaults';  // 生效值出自哪一层
 }
+
+type SettingLayer =
+  | { scope: 'defaults' }
+  | { scope: 'platform'; platform: string }                               // 按平台名生效，不区分适配器实例
+  | { scope: 'audience'; platform: string; audience: 'group' | 'private' };
 ```
 
-配置的各项与 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 同义。房间按出生平台与受众选档；owner 自己的会话按入口平台选档，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台。
-
-`session/config/update` 的 `patch` 里给值即写成会话自己的覆盖，`null` 删掉这一项、恢复继承，没给的键不动。
+- **哪些行：** 会话只列适用于它的种类（`SessionSummary.kind`）的项；全局默认与平台档列全部，受众条目只列适用于房间的项。登记它的插件没装或没启用时不列，值保留。
+- **排序：** `composer`、`common` 在前，`advanced` 在后；同一显眼程度按登记时给的 `order`，没给的按登记的先后排在后面。`composer` 也放进输入框旁的快捷切换，同一组最多两项，多出的已退到 `common`。
+- **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。
+- **选档：** 房间按出生平台与受众选档；owner 自己的会话按入口平台选档，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台。继承先后：本会话、父会话（旧数据）、受众条目、平台档、全局默认。
+- **写：** `patch` 里给值即写入这一层（按登记的字段校验），`null` 删掉这一项、恢复继承，没给的键不动。没登记的键、不合字段的值，以及不适用于这个会话种类的项（受众条目按房间算）回 `invalidParams`，什么都不改；`null` 不看适用范围，已经写进去的照样清得掉。层写进宿主的配置文档，保存失败时撤回、回内部错误。
+- **`session/config/layers`：** 文档里写了的各层，全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排。
+- **`session/config/changed`：** 插件启停使设置项增减，或某一层、某个会话的覆盖被改写时推给每条连接，不带参数；客户端重取打开着的会话的设置与快捷切换。
 
 ## 订阅与条目
 
@@ -170,10 +186,10 @@ interface RoomGroup {
 | `user-message` | 文字、附件、说话人（平台、用户 id、昵称、注入来源、是否 owner）。文字是存档里的原文，多人平台带说话人前缀，附带的文件内容块已剥掉、文件名列成附件 |
 | `agent-message` | 文字与附件（可以只有附件）、模型；房间里没发出去的带 `undelivered.reason`：工具调用之前说的话（她只把一轮最后的回复发进群）、重试丢掉的那版、没回复就收尾的一轮（静默、中止、出错）里最后一次工具调用之后说的话、平台没收下或发送出错的回复 |
 | `reasoning` | 思考文字 |
-| `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据与参数没解析成、没有执行的调用除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（running、completed、failed、denied）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象时为 failed。这次调用要 owner 批准时带 `approvalId`（挂上时再推一次 `item/started`），没批准就结算的（拒绝、没人应答、撤销）收尾为 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom` |
+| `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据与参数没解析成、没有执行的调用除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（running、completed、failed、denied）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象时为 failed。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom` |
 | `notice` | 宿主事件，`topic` 区分种类：宿主通知取通知的种类（如 `paper-task`），压缩为 `compress`，存档里的压缩分隔线为 `event-marker`，达到工具调用上限为 `tool-limit`（带 `canContinue`，可以 `turn/continue`） |
 | `plan` | 待办，整份替换；每个会话一条，`itemId` 固定为 `plan` |
-| `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage` |
+| `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage`，整份替换。它不是时间线上的一条，界面画在会话头部（用量百分比与拆分表）。`injectors` 是「其余系统提示」按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件；`compressAt` 是自动压缩的使用率（与 `usageRatio` 同一口径），取压缩服务的 `autoThreshold`，没有压缩服务或不自动压缩时没有 |
 | `turn` | 回合开始（`by` 是发起方）与结束（`outcome` 取 replied、silent、aborted、error；被下游拦下、没有结局的一轮为 silent）。回合条目在她这一轮第一次有动静时推出，提问总排在它前面；历史里没有回合条目，其余条目带 `turnId` |
 
 附件（`ItemAttachmentSchema`）有 `kind`、`src`、`name`。`src`：图片、音频、视频是媒体地址（存储地址或网址），其他文件是会话服务签发的不透明句柄。取不到可下载的来源时没有 `src`，只有名字，例如存档只记了文件名的用户上传。
@@ -185,7 +201,33 @@ interface RoomGroup {
 - **有效范围**：句柄绑定签发它的会话与文件，换个会话 id 用不了；只在签发它的那次启动（同一个 `epoch`）内有效，会话服务重启之后 `epoch` 变了，客户端重新订阅，快照里是新的句柄。
 - **不签发的**：插件状态与插件私有数据的存储根（`data` 映射到家目录的 `state/`，里面有访问 token 与审计）里的文件、不是存储地址的来源。这些附件只有名字。
 
-送达结果（`undelivered`、`sentToRoom`）与审批（`approvalId`、denied）不落库。重新订阅之后，历史里只标得出工具调用之前说的话，其余标记只在实时推送里；历史里被审批拦下的工具调用显示为 failed，结果是回给模型的拒绝。
+**工具卡的展示**（`display`，按 `kind` 区分）：种类是宿主维护的封闭集合，以后按加法加。各项从参数里逐字取出：
+
+```ts
+type ToolDisplay =
+  | { kind: 'command'; command: string; cwd?: string }                       // 命令与工作目录
+  | { kind: 'file-change'; path: string; removed?: string; added?: string }; // 路径与删、加两侧的文本
+```
+
+工具没声明、种类不认识、声明的命令或路径不是字符串时没有 `display`。
+
+**审批的结算**（`settlement`，与 `approval/settled` 同形）：
+
+```ts
+interface ApprovalSettlement {
+  state: 'approved' | 'denied' | 'expired' | 'cancelled';
+  source: 'owner' | 'absent' | 'timeout' | 'ineligible' | 'subtask' | 'rate-limit' | 'turn-ended' | 'shutdown';
+  at: number;   // 结算的时刻
+}
+```
+
+**刷新之后**：历史与实时推送标出同样的结局。
+
+- **工具结果的元数据**：会话服务在工具结果落库之前（agent 的 `agent:tool:after` 钩子），把审批的结算与「平台已收下经它发出的消息」写进这次结果的元数据，历史里的工具卡据此带上 `approvalId`、`settlement`、`sentToRoom`。
+- **投递失败**：回复平台没收下时，适配器在存档里记一条投递失败（schema-message 的 `OutboundDeliveryFailed`，带这一轮的 `turnId`），历史据此给那一轮的回复标 `undelivered`。
+- **重试与工具调用之前**：重试丢掉的几版与工具调用之前说的话由存档的时间线推出，历史里同样标 `undelivered`。
+- **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。
+- **发起时就被拒的审批**：发起时没人在场、发起者不能产生审批、子任务、超过频率上限，审批没推给审批面，工具卡照样带 `approvalId` 与 `settlement`、状态是 denied，结算同样写进工具结果的元数据；不推 `approval/requested`，不算「需要我处理」。
 
 ## 回合控制
 
@@ -194,11 +236,11 @@ interface RoomGroup {
 | `turn/send` | `{ sessionId, content, attachments? }` | `{}`；以连接的身份发一条入站消息，网关收下就回，回合的进展经条目推送。文字去掉首尾空白；只有附件、没写文字的照常发出，两者都空（含只有空白）的不合参数 |
 | `turn/continue` | `{ sessionId }` | `{}`；工具调用达到上限后请她接着做 |
 | `turn/abort` | `{ sessionId, turnId? }` | `{}`；不带 `turnId` 停这个会话所有在跑的回合，带 `turnId` 时只停那一轮，对不上回 `expected-turn-mismatch` |
-| `session/compress` | `{ sessionId }` | `{}`；压缩结束才回，进度以 `compress` 通知推送，之后推最新用量 |
+| `session/compress` | `{ sessionId }` | `{}`；调压缩服务，压完才回，进度以 `compress` 通知推送，之后推最新用量。没压成（摘要模型不在或失败、期间会话被清空）回 `internalError`，错误信息写明原因，压缩通知同样写明失败；这个会话正在压缩或生成摘要时直接拒绝，同样回 `internalError`，时间线上没有新的通知 |
 | `turn/rewind` | `{ sessionId, turnId, scope: 'code' \| 'code-and-chat' }` | 回滚结果，字段同 [api-checkpoint](./api-checkpoint.md) 的 `RollbackResult`，连对话一起回滚时另有 `deletedMessages`、`chatDeleted`；回合 id 就是 agent 的 `turnId` |
 | `plan/clear` | `{ sessionId }` | `{}` |
 
-发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、待办）不在时，`turn/abort`、`turn/rewind`、`plan/clear` 回 `unsupported`。
+发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
 
 ## 在场与审批
 
@@ -208,11 +250,12 @@ interface RoomGroup {
 |---|---|---|
 | `presence/update` | `{ active }` | `{}` |
 | `approval/requested`（通知） | `{ approval: Approval }` | — |
-| `approval/settled`（通知） | `{ approvalId, state }`，`state` 是结局：`approved`、`denied`、`expired`、`cancelled` | — |
+| `approval/settled`（通知） | `{ approvalId, state, source, at }`：结局（`approved`、`denied`、`expired`、`cancelled`）、从哪里来与结算的时刻，同工具卡上的 `settlement` | — |
 | `approval/respond` | `{ approvalId, decision: 'approve' \| 'deny', contentHash, note? }` | `{}` |
 
 - **在场**：`active` 为真表示页面可见且刚有键盘或指针活动，为假表示页面转到后台，即刻不在场。最近一次为真的上报在 10 分钟内即算在场，所以客户端在有活动时按需重报（例如节流到每分钟一次），页面转到后台时报一次假。从没上报过的连接不算在场。
-- **推送**：审批推出时，`approval/requested` 推给在场、身份是 owner 的连接，不要求这条连接订阅了那个会话；不在场的连接变为在场时补推还没结的。结算时 `approval/settled` 推给拿到过这条请求的连接。订阅了会话的连接另从快照的 `approvals` 与工具卡的 `approvalId` 看到它。
+- **推送**：审批推出时，`approval/requested` 推给在场、身份是 owner 的连接，不要求这条连接订阅了那个会话；不在场的连接变为在场时补推还没结的。结算时 `approval/settled` 推给拿到过这条请求的连接。订阅了会话的连接另从快照的 `approvals` 与工具卡的 `approvalId`、`settlement` 看到它。
+- **重连宽限**：等待中在场的连接全部断开或转为不在场时，审批不立即结算：30 秒内有连接恢复在场（重连后重报在场），卡片照常等着并推给它；满 30 秒没有恢复，按没人在场（`absent`）结算。宽限不延长 300 秒的总等待。发起时就没人在场的仍立即拒绝。
 - **应答**：先答先得。服务端核两项：应答人（这条连接的身份）是 owner，否则 `forbidden`；`approvalId` 是本服务签发的、还没结算（不认识回 `not-found`，已结算回 `approval-settled`），并且 `contentHash` 与审批对象的一致（否则 `hash-mismatch`）。审批服务不在时回 `unsupported`。`note` 是说明，拒绝时回给模型。
 - **显示**：`facts` 是逐字的参数，可能带控制符、双向控制符与零宽字符。卡片显示之前一律经 api-approval 的 `sanitizeForCard` 清洗。
 

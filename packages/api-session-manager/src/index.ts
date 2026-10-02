@@ -7,102 +7,120 @@
 
 // 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
 import type {} from '@aalis/core';
-import { defineService } from '@aalis/core';
-
-/** 记忆召回范围：session=仅本会话，platform=同平台，all=不限 */
-export type MemoryRecallScope = 'session' | 'platform' | 'all';
+import { defineService, type ServiceRef, serviceRef } from '@aalis/core';
+import type { SchemaField } from '@aalis/schema-config';
 
 /**
- * 会话级配置覆盖
+ * 会话设置：各设置项的值。本包不认识任何具体的键，键由拥有这项功能的插件登记（{@link SessionSetting}），
+ * 值的类型经 declaration merging 注入，与 AalisEvents 同一写法：
  *
- * 每个会话可以独立配置 LLM 提供者、模型、工具集、人设等。
- * Agent 处理消息时通过 session-manager 的 resolveConfig() 获取最终生效配置。
+ * ```ts
+ * declare module '@aalis/api-session-manager' {
+ *   interface SessionConfig {
+ *     persona?: string;
+ *   }
+ * }
+ * ```
  *
- * 配置解析优先级（从高到低）：
- * 1. 会话自身 config（手工覆盖 / /model 指令设置）
- * 2. 父会话默认配置（sessionDefaults，供子会话继承）
- * 3. 平台默认配置（platformProfiles[platform]，房间会话另叠加受众条目）
- * 4. 全局默认（getDefaults()，即 @aalis/plugin-session-manager 的 defaults 配置）
+ * 每个键都可选：没有这个键即继承上层。解析结果只含已登记、取值合法的键。
  */
-export interface SessionConfig {
-  /**
-   * 会话使用的 LLM 模型引用：`{ provider, model }` 二元组。
-   * provider 为 LLM 插件实例 contextId（如 `@aalis/plugin-llm-openai:main`），
-   * model 为该 provider 注册的 model id（如 `gpt-4o`）。
-   * 由 ConfigSchema type='llm-ref' 字段统一编辑。
-   */
-  llm?: { provider: string; model: string };
-  /** 启用的工具分组；`'*'` = 全部分组。会话未设置时继承平台档，最终为空则只给无分组的通用工具 */
-  enabledToolGroups?: string[];
-  /** 人格文件名（不含后缀，如 'aalis', 'aalis-webui', 'default'） */
-  persona?: string;
-  /**
-   * 会话级 thinking 覆盖：true=强制开启深度思考，false=强制关闭；未设置=继承上层
-   * （平台 profile / 全局默认），最终落到各 provider 自己的全局配置。
-   * agent 将解析结果写入 ChatModelRequest.think；ollama 与 deepseek 原生支持请求级
-   * 覆盖，openai 兼容中转无对应参数、静默忽略。经 /session.set -t on|off 设置，
-   * /session.reset 复位。
-   */
-  think?: boolean;
-  /** 额外系统提示：由 persona 追加在人设提示之后、结构化输出格式说明之前；未装 persona 时不生效 */
-  systemPromptExtra?: string;
-  /** 最大工具迭代次数覆盖（正整数；非正整数视为未设置，回落 agent 全局配置） */
-  maxToolIterations?: number;
-  /** 禁用结构化输出格式（该会话回复纯文本） */
-  disableOutputFormat?: boolean;
-  /** JSON 内容由客户端渲染，服务端不提取回复字段 */
-  clientSideJsonRendering?: boolean;
-  /** 本房间开启白纸（默认关） */
-  paperEnabled?: boolean;
-  /** 白纸名；不写则每个房间各一块，属性取白纸枢纽的 defaults */
-  paperName?: string;
-  /** 允许的远端代理类型（远端代理插件实例 id）；空或缺省 = 关 */
-  remoteAgentTypes?: string[];
-  /** 每人每天金额上限（美分）；缺省不增加该层限制，显式 0 禁止新远端任务 */
-  remoteAgentUserDailyCents?: number;
-  /** 每人每天件数上限；缺省不按人限制 */
-  remoteAgentUserDailyTasks?: number;
-  /** 本房间每天金额上限（美分）；缺省不增加该层限制，显式 0 禁止新远端任务 */
-  remoteAgentRoomDailyCents?: number;
-  /** 记忆召回范围，只能比记忆插件的配置更窄；随子会话复制，否则经子任务就绕过了收窄 */
-  memoryRecallScope?: MemoryRecallScope;
-  /** 子会话默认配置（创建子会话时自动继承，子会话可进一步覆盖） */
-  sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>;
+export interface SessionConfig {}
+
+/**
+ * 会话档案里存的配置：会话自己对各设置项的覆盖。sessionDefaults 是旧数据里父会话给子会话的默认值，
+ * 解析时照常生效（来源为 parent），不再有写入口
+ */
+export type StoredSessionConfig = SessionConfig & { sessionDefaults?: SessionConfig };
+
+/** 写会话或某一层的设置：给值即写入（按登记的字段校验），null 删掉这一项、恢复继承，没给的键不动 */
+export type SessionConfigPatch = { [K in keyof SessionConfig]?: SessionConfig[K] | null };
+
+/**
+ * 会话种类：task 为子会话；room 为受众是群或私聊的根会话（IM 房间，含 owner 自己的私聊）；其余为 owner
+ * （owner 在 WebUI 与 CLI 的会话，以及 mcp-server、`workflow::<id>` 等没有出生平台的根会话）。
+ * 会话列表的分区、设置项的 appliesTo 与会话协议的会话种类都按它。与审批的发起类别是两回事：
+ * owner 在自己的私聊里亲手发起的回合照样能产生审批
+ */
+export type SessionKind = 'owner' | 'room' | 'task';
+
+/** 会话种类：有父会话为 task，受众为群或私聊为 room，其余为 owner */
+export function sessionKind(session: Pick<SessionInfo, 'parentId' | 'audience'>): SessionKind {
+  if (session.parentId) return 'task';
+  return session.audience === 'group' || session.audience === 'private' ? 'room' : 'owner';
 }
 
 /**
- * 只经继承链实时解析、不随建会话复制的键。
- *
- * 建会话时复制生效配置（WebUI 建会话、create_subtask 建子会话）会把复制时的值冻结进新会话，
- * 此后房间或平台档改了也不跟着变；子会话还会凭冻结的值继续开远端任务。复制一律经 {@link omitRoomOnlyKeys}。
+ * 设置项的显眼程度：composer 也出现在输入框旁的快捷切换（同一会话最多两项，多出的按 order 退到 common），
+ * common 在设置里排在前面，advanced 收进默认折叠的「高级」，按登记它的插件分组
  */
-export const ROOM_ONLY_CONFIG_KEYS = [
-  'paperEnabled',
-  'paperName',
-  'remoteAgentTypes',
-  'remoteAgentUserDailyCents',
-  'remoteAgentUserDailyTasks',
-  'remoteAgentRoomDailyCents',
-] as const satisfies readonly (keyof SessionConfig)[];
+export type SettingProminence = 'composer' | 'common' | 'advanced';
 
-/** 去掉 {@link ROOM_ONLY_CONFIG_KEYS}，返回新对象 */
-export function omitRoomOnlyKeys<T extends SessionConfig>(config: T): Omit<T, (typeof ROOM_ONLY_CONFIG_KEYS)[number]> {
-  const out = { ...config };
-  for (const key of ROOM_ONLY_CONFIG_KEYS) delete out[key];
-  return out;
+/**
+ * 一个会话设置项，由拥有这项功能的插件经 `sessionManager.registerSetting` 登记，随它的激活撤回。
+ * 插件没装或没启用时，它的键在会话与各层里原样保留，但不显示、不参与解析，重新启用后恢复。
+ *
+ * 同一个键可以由几个插件登记，须是同一份内容的定义（逐项深比较，validate 比较函数本身；进程里装了两份契约包时
+ * 不是同一个对象也认）：几个插件共同遵守的设置项由契约包导出定义、各自登记，只要还有一个登记者在场，这一项就有效
+ */
+export interface SessionSetting {
+  /** 键：登记它的插件要先经 declaration merging 把它加进 {@link SessionConfig} */
+  key: keyof SessionConfig & string;
+  /**
+   * schema-config 字段：类型、标签、说明、校验与可选项来源（dynamicOptions）。写入时按它校验，不合的拒绝；
+   * 存储里不合它的值（旧数据、手写的配置文件）解析时当作没设置并告警，标了 `onInvalid: 'error'` 的则原样交出、
+   * 不回落到下面的层，由登记它的插件按拒绝处理（例如金额上限写坏了按 0，不能退成不限）。
+   * 没有任何一层设置时解析结果里没有这个键：`default` 只供界面显示，须与「没有这个键」时的行为一致
+   */
+  field: SchemaField;
+  /** 适用的会话种类：会话的设置只列适用于它的种类的项 */
+  appliesTo: readonly SessionKind[];
+  prominence: SettingProminence;
+  /** 同一显眼程度里的先后，小的在前；不写排在写了的后面 */
+  order?: number;
+  /** 只经继承链实时解析：建子会话复制父会话的生效配置时不带它，免得把当时的值冻结进子会话 */
+  liveOnly?: boolean;
+  /**
+   * 取值校验：合法时返回 undefined，不合法时返回原因。写入与解析都先过它，再按字段校验，结果与字段校验不合同样处理。
+   * schema-config 不校验外来字段类型（如 api-llm 的 `'llm-ref'`）的取值，所以外来类型的设置项必须给出它，否则登记抛错
+   */
+  validate?(value: unknown): string | undefined;
+}
+
+/** 已登记的设置项：另带登记它的插件实例 id（几个插件登记同一项时取最先登记、仍在场的那个） */
+export interface RegisteredSessionSetting extends SessionSetting {
+  plugin: string;
 }
 
 /**
- * 平台配置模板
- *
- * 为每个平台设定默认的 SessionConfig，经继承链实时生效：房间会话按出生平台选档，其余按入口平台
- * （见 {@link SessionManagerService.resolveInheritance}）。同一平台可另写只对群或只对私聊生效的受众条目，
- * 只列与基础档不同的键，叠加在基础档上。
- * 在 session-manager 的 configSchema 中通过 WebUI 配置。
+ * 写会话设置被拒：键没有登记（提供它的插件没装或没启用）、值不合登记的字段，或层的标识不合法。
+ * 用 {@link isSessionConfigError} 判定，不用 instanceof
  */
-export type PlatformProfile = SessionConfig;
+export class SessionConfigError extends Error {
+  override name = 'SessionConfigError';
+}
 
-/** 继承链的层：全局 defaults、平台档、平台档的受众条目、父会话的 sessionDefaults */
+/** 判定写会话设置被拒：只按 name 判定，进程里装了两份本包时也认得 */
+export function isSessionConfigError(err: unknown): boolean {
+  return (err as { name?: unknown } | null | undefined)?.name === 'SessionConfigError';
+}
+
+/**
+ * 房间受众：private、group 为 IM 房间；owner 只表示「不是 IM 房间」（没有出生平台的根会话，含 mcp-server、
+ * `workflow::<id>` 等），只供列表分区，不代表 owner 在场，按受众定触及上限前须按主体重判。
+ * 非房间会话（含以后的工作会话）的 id 不得含单冒号，否则会被当成房间。
+ */
+export type RoomAudience = 'owner' | 'private' | 'group';
+
+/**
+ * 会话设置在会话之上的一层：全局默认、某个平台的平台档、平台档的受众条目（只对这个平台的群或私聊房间生效）。
+ * 平台档按平台名生效，不区分适配器实例
+ */
+export type SessionConfigLayer =
+  | { scope: 'defaults' }
+  | { scope: 'platform'; platform: string }
+  | { scope: 'audience'; platform: string; audience: Exclude<RoomAudience, 'owner'> };
+
+/** 继承链的层：全局默认、平台档、平台档的受众条目、父会话给子会话的默认值（旧数据） */
 export type InheritanceSource = 'defaults' | 'platform' | 'audience' | 'parent';
 
 /** 继承链的解析结果：选档用的平台与受众、继承值与每个键的来源层 */
@@ -111,21 +129,11 @@ export interface SessionInheritance {
   platform?: string;
   /** 选档用的受众：有出生平台的会话为它的受众，owner 面会话没有（不取受众条目） */
   audience?: Exclude<RoomAudience, 'owner'>;
-  /** 继承值（不含会话自身 config 与 sessionDefaults） */
-  values: Omit<SessionConfig, 'sessionDefaults'>;
+  /** 继承值：已登记、取值合法的键 */
+  values: SessionConfig;
   /** 每个键最终来自哪一层 */
-  sources: Partial<Record<keyof SessionConfig, InheritanceSource>>;
+  sources: Record<string, InheritanceSource>;
 }
-
-/** 会话种类：room 为聊天用的会话（IM 群与私聊、owner 在 WebUI 与 CLI 的聊天）；task 为挂在发起它的会话下面的子会话 */
-export type SessionKind = 'room' | 'task';
-
-/**
- * 房间受众：private、group 为 IM 房间；owner 只表示「不是 IM 房间」（没有出生平台的根会话，含 mcp-server、
- * `workflow::<id>` 等），只供列表分区，不代表 owner 在场，按受众定触及上限前须按主体重判。
- * 非房间会话（含以后的工作会话）的 id 不得含单冒号，否则会被当成房间。
- */
-export type RoomAudience = 'owner' | 'private' | 'group';
 
 /**
  * 会话信息
@@ -149,8 +157,8 @@ export interface SessionInfo {
    * （子会话由 plugin-subtask 收口）
    */
   status: 'active' | 'waiting' | 'completed' | 'error' | 'archived';
-  /** 会话级配置覆盖 */
-  config: SessionConfig;
+  /** 会话自己的设置覆盖（原样存储：含没启用的插件的键与旧数据里的 sessionDefaults） */
+  config: StoredSessionConfig;
   /** 创建时间戳 */
   createdAt: number;
   /** 最后更新时间戳 */
@@ -163,11 +171,11 @@ export interface SessionInfo {
   result?: string;
   /** 扩展元数据（供插件自由使用） */
   metadata?: Record<string, unknown>;
-  /** 由 session-manager 按 parentId 推出（有 parentId 为 task），不收调用方传值 */
+  /** 会话种类（{@link sessionKind}），由 session-manager 按 parentId 与受众推出，不收调用方传值 */
   kind: SessionKind;
   /** 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话为 undefined */
   originPlatform?: string;
-  /** 只有 room 带：有出生平台的取 group 或 private，其余为 owner */
+  /** 只有根会话带：有出生平台的取 group 或 private，其余为 owner */
   audience?: RoomAudience;
   /**
    * 有出生平台的房间：接管它的平台适配器的插件实例 id（api-platform 的 `resolvePlatformBySession`）。
@@ -189,22 +197,27 @@ export interface SessionTreeNode {
   children: SessionTreeNode[];
 }
 
-/** 会话列表的分区：owner=我的会话（WebUI、CLI 等 owner 面会话），rooms=IM 房间 */
-export type SessionListSection = 'owner' | 'rooms';
+/** 建会话时调用方能给的字段：配置按登记的设置项校验 */
+export type NewSessionFields = Partial<
+  Omit<
+    SessionInfo,
+    | 'id'
+    | 'children'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'kind'
+    | 'originPlatform'
+    | 'audience'
+    | 'originInstance'
+    | 'lastReplyAt'
+    | 'config'
+  >
+> & { config?: SessionConfigPatch };
 
-/** 按受众分区的纯函数：private、group 为 rooms，其余为 owner。服务端页面动作与以后的客户端协议共用 */
-export function sessionListSection(session: Pick<SessionInfo, 'audience'>): SessionListSection {
-  return session.audience === 'private' || session.audience === 'group' ? 'rooms' : 'owner';
-}
-
-/** 会话列表的一个分区 */
-export interface SessionTreeSection {
-  key: SessionListSection;
-  /** 显示名：「我的会话」「IM 房间」 */
-  label: string;
-  /** 根会话（子会话挂在各自父节点下） */
-  nodes: SessionTreeNode[];
-}
+/** 改会话时调用方能给的字段：配置按登记的设置项校验，与原有覆盖合并 */
+export type SessionUpdates = Partial<Pick<SessionInfo, 'name' | 'status' | 'metadata'>> & {
+  config?: SessionConfigPatch;
+};
 
 /**
  * 会话管理服务
@@ -213,39 +226,23 @@ export interface SessionTreeSection {
  * 由 plugin-session-manager 实现并注册为 'session-manager' 服务。
  *
  * 设计要点：
- * - 每个会话拥有独立的 SessionConfig，Agent 处理消息时查询并应用
+ * - 会话设置项由插件登记，session-manager 只做通用的存储、继承链与校验
  * - 树形结构通过 parentId/children 维护，支持未来的任务拆分场景
  * - 会话生命周期事件通过 EventBus 广播
+ *
+ * 写配置的方法（建会话、改会话、改某一层）遇到没登记的键或不合字段的值时抛 {@link SessionConfigError}，什么都不改。
  */
 export interface SessionManagerService {
   // ---- CRUD ----
 
   /** 创建新会话，返回完整的 SessionInfo */
-  createSession(
-    opts?: Partial<
-      Omit<
-        SessionInfo,
-        | 'id'
-        | 'children'
-        | 'createdAt'
-        | 'updatedAt'
-        | 'kind'
-        | 'originPlatform'
-        | 'audience'
-        | 'originInstance'
-        | 'lastReplyAt'
-      >
-    >,
-  ): Promise<SessionInfo>;
+  createSession(opts?: NewSessionFields): Promise<SessionInfo>;
   /** 获取指定会话（不存在返回 undefined） */
   getSession(id: string): SessionInfo | undefined;
   /** 列出会话（可按 parentId 和 status 过滤） */
   listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
-  /** 更新会话属性 */
-  updateSession(
-    id: string,
-    updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>,
-  ): Promise<SessionInfo>;
+  /** 更新会话属性；配置补丁与原有覆盖合并，改了配置时另发 `session:config:changed` */
+  updateSession(id: string, updates: SessionUpdates): Promise<SessionInfo>;
   /**
    * 按精确 id 幂等 upsert 会话。
    * - 已存在 → 合并式 update（emit `session:updated`）
@@ -259,34 +256,14 @@ export interface SessionManagerService {
    * createSession 预建，首次设置模型/人设覆盖时需按其原样 id 落档——而 createSession
    * 会自生成 id、updateSession 缺记录会抛错，故需要本方法。
    */
-  ensureSession(
-    id: string,
-    patch?: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata' | 'createdBy'>>,
-  ): Promise<SessionInfo>;
+  ensureSession(id: string, patch?: SessionUpdates & Pick<NewSessionFields, 'createdBy'>): Promise<SessionInfo>;
   /** 删除会话（同时清理其消息历史） */
   deleteSession(id: string): Promise<void>;
 
   // ---- 树形操作 ----
 
   /** 创建子会话 */
-  createChildSession(
-    parentId: string,
-    opts?: Partial<
-      Omit<
-        SessionInfo,
-        | 'id'
-        | 'parentId'
-        | 'children'
-        | 'createdAt'
-        | 'updatedAt'
-        | 'kind'
-        | 'originPlatform'
-        | 'audience'
-        | 'originInstance'
-        | 'lastReplyAt'
-      >
-    >,
-  ): Promise<SessionInfo>;
+  createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];
   /** 获取会话树（传入 rootId 则只返回该子树，否则返回所有根会话的树） */
@@ -297,39 +274,48 @@ export interface SessionManagerService {
   /** 标记会话完成（触发 session:completed 事件，通知父会话） */
   completeSession(id: string, result?: string): Promise<void>;
 
-  // ---- 配置解析 ----
+  // ---- 会话设置 ----
 
   /**
-   * 解析指定会话的最终生效配置
-   *
-   * 合并优先级：会话 config > 父会话 sessionDefaults > 平台 profile > 全局默认
-   * 返回合并后的完整 SessionConfig（不含 sessionDefaults 字段）。平台档的选法同 {@link resolveInheritance}：
+   * 登记一个设置项（提供者一侧；插件经绑定门面 `sessionManager.registerSetting` 登记，随激活撤回）。
+   * 键不合法，或同一个键已由别的插件以不同的定义登记时抛错。登记与撤回都发 `session:config:changed`
+   */
+  registerSetting(setting: SessionSetting, plugin: string): () => void;
+  /** 已登记的设置项 */
+  listSettings(): RegisteredSessionSetting[];
+
+  /**
+   * 解析指定会话的最终生效配置：会话自己的覆盖 > 父会话的 sessionDefaults（旧数据）> 受众条目 > 平台档 > 全局默认。
+   * 只含已登记、取值合法的键；取值不合登记的字段的跳过并告警一次。平台档的选法同 {@link resolveInheritance}：
    * 房间会话钉死出生平台，传入的入口平台只对没有出生平台的会话起作用。
    */
-  resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+  resolveConfig(sessionId: string, platform?: string): SessionConfig;
 
   /**
-   * 继承链解析（不含会话自身 config）：全局 defaults → 平台档 → 平台档的受众条目 → 父会话 sessionDefaults。
+   * 继承链解析（不含会话自身 config）：全局默认 → 平台档 → 平台档的受众条目 → 父会话 sessionDefaults。
    * 会话有出生平台（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按出生平台选档、忽略传入的 platform，
    * 并按它的受众（group 或 private）叠加受众条目；没有时（WebUI、CLI 等 owner 面会话）按传入的入口平台，不取受众条目。
-   *
-   * WebUI 的「继承 (xxx)」提示与 `/session` 的来源显示用它：只看继承值，才不会把会话自己的覆盖当成继承来的。
+   * 只看继承值，才不会把会话自己的覆盖当成继承来的。
    */
   resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
 
-  /**
-   * 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口）。
-   * 受众条目不在返回之列；要知道某个房间的某个键是否来自平台档，看 `resolveInheritance(id).sources[键]`
-   * 是 `platform` 还是 `audience`。
-   */
-  getPlatformProfiles(): Record<string, PlatformProfile>;
+  /** 会话自己的覆盖里已登记、取值合法的项 */
+  getOwnConfig(sessionId: string): SessionConfig;
 
+  /** 建子会话时复制的配置：父会话的生效配置去掉 liveOnly 的项 */
+  childConfig(parentId: string, platform?: string): SessionConfig;
+
+  /** 有值的各层：全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排 */
+  listLayers(): SessionConfigLayer[];
+  /** 这一层自己的值：已登记、取值合法的项 */
+  getLayer(layer: SessionConfigLayer): SessionConfig;
+  /** 解析到这一层为止的生效值与来源：全局默认 → 平台档 → 受众条目 */
+  resolveLayer(layer: SessionConfigLayer): Pick<SessionInheritance, 'values' | 'sources'>;
   /**
-   * 获取全局默认配置（platform profile 之下的最低层 fallback）。
-   * 当 session 自身、父会话 sessionDefaults、platform profile 都未指定某字段时，
-   * resolveConfig 会回落到这里。配置位置：`@aalis/plugin-session-manager.defaults`。
+   * 改一层的值并保存（存放在宿主配置文档的 sessionConfig 字段里）。补丁按登记的设置项校验；宿主没有提供配置文档时
+   * 抛错；保存失败时撤回文档里的改动、以拒绝传出。保存成功后发 `session:config:changed`
    */
-  getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
+  updateLayer(layer: SessionConfigLayer, patch: SessionConfigPatch): Promise<void>;
 
   // ---- 标题管理 ----
 
@@ -347,8 +333,22 @@ declare module '@aalis/core' {
     'session:updated': [session: SessionInfo];
     'session:completed': [session: SessionInfo];
     'session:deleted': [sessionId: string];
+    /** 会话设置可能变了：设置项登记或撤回（插件启停）、某一层的值被改写、某个会话的覆盖被改写 */
+    'session:config:changed': [];
   }
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const sessionManager = defineService<SessionManagerService>('session-manager');
+/** `sessionManager` 的绑定接口：调用面之外，登记的设置项随本次激活撤回 */
+export interface BoundSessionManager extends ServiceRef<SessionManagerService> {
+  /** 登记一个会话设置项（同一激活内同键重复登记为替换）；返回撤回 */
+  registerSetting(setting: SessionSetting): () => void;
+}
+
+// ----- 服务描述符（按激活绑定；调用型 + 登记设置项）-----
+export const sessionManager = defineService<SessionManagerService, BoundSessionManager>('session-manager', port => {
+  const settings = port.registrar<SessionSetting>({
+    key: setting => setting.key,
+    register: (service, setting) => service.registerSetting(setting, port.id),
+  });
+  return serviceRef(port, { registerSetting: (setting: SessionSetting) => settings.add(setting) });
+});

@@ -6,7 +6,7 @@ import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint, type RollbackWithChatResult } from '../../packages/api-checkpoint/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
-import { memory } from '../../packages/api-memory/src/index.js';
+import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -22,17 +22,19 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type {
-  IncomingMessage,
-  Message,
-  OutboundDeliveryResult,
-  OutgoingMessage,
+import {
+  type IncomingMessage,
+  type Message,
+  type OutboundDeliveryResult,
+  type OutgoingMessage,
+  WellKnownKinds,
 } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { client } from '../fixtures/session-client.js';
+import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -83,7 +85,16 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugins.idle();
-  const host = app.bind({ provide, events, hooks, sessionManager, sessionProtocol, messageArchive, memory });
+  const host = app.bind({
+    provide,
+    events,
+    hooks,
+    sessionManager,
+    sessionProtocol,
+    messageArchive,
+    memory,
+    compression,
+  });
   host.provide(storage, memoryStorage(new Map()));
 
   const rewinds: Array<[string, string, string]> = [];
@@ -726,7 +737,7 @@ describe('条目', () => {
     }
   });
 
-  it('房间里经工具发出、平台收下的消息：工具卡标「已发到群」；没收下的不标', async () => {
+  it('房间里经工具发出、平台收下的消息：工具卡标「已发到群」并写进工具结果的元数据；没收下的不标', async () => {
     const { server, sm, host, openTurn } = await setup();
     await sm.ensureSession(ROOM, { name: '群' });
     host.events.on('outbound:message', msg => {
@@ -737,6 +748,7 @@ describe('条目', () => {
     await c.init();
     const sub = await c.subscribe(ROOM);
     const t = openTurn(ROOM);
+    const metadata: Array<Record<string, unknown>> = [];
     for (const callId of ['call-ok', 'call-bad']) {
       await t.toolStart(callId, 'send_attachment');
       const out: OutgoingMessage = {
@@ -751,9 +763,19 @@ describe('条目', () => {
         await host.events.emit('outbound:message', out);
         await out.delivery;
       });
+      // 工具结果落库前，会话服务把平台收下了的写进这次结果的元数据，刷新后历史据此还原
+      const after = {
+        name: 'send_attachment',
+        result: '{"ok":true}',
+        toolCallContext: { sessionId: ROOM, turnId: t.turnId, callId },
+        metadata: {} as Record<string, unknown>,
+      };
+      await t.inside(() => host.hooks.run('agent:tool:after', after));
+      metadata.push(after.metadata);
       await t.toolEnd(callId, 'send_attachment', '{"ok":true}');
     }
     await t.finish('replied');
+    expect(metadata).toEqual([{ sentToRoom: true }, {}]);
     await vi.waitFor(() => {
       const calls = c.timeline(ROOM, sub).filter(i => i.kind === 'tool-call');
       expect(calls.map(i => [i.itemId, i.kind === 'tool-call' && i.sentToRoom])).toEqual([
@@ -761,6 +783,46 @@ describe('条目', () => {
         ['call-bad', undefined],
       ]);
     });
+  });
+
+  it('工具卡带按工具定义上声明的展示种类解析好的展示：命令与工作目录、路径与两侧逐字取自参数；没声明的不给，历史里同样解析', async () => {
+    const { app, server, sm, archive, openTurn } = await setup();
+    await app.plugin(toolsPlugin, {});
+    await app.plugins.idle();
+    declareToolSystemDisplays(app.bind({ tools }).tools);
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const t = openTurn(s.id);
+    await t.toolStart('c1', 'exec', { command: 'ls -a', cwd: 'workspace:/', timeout: 5 });
+    await t.toolStart('c2', 'exec', { command: 'pwd' });
+    await t.toolStart('c3', 'file_edit', { path: 'workspace:/a.md', oldText: '旧', newText: '新' });
+    await t.toolStart('c4', 'file_write', { path: 'workspace:/b.md', content: '全文' });
+    await t.toolStart('c5', 'probe', { command: 'ls' });
+    // 声明的必填字段（命令、路径）不是字符串：解析不出，走通用卡
+    await t.toolStart('c6', 'exec', { command: ['ls'] });
+    await t.finish('silent');
+    expect(c.timeline(s.id, sub).flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.display]] : []))).toEqual([
+      ['c1', { kind: 'command', command: 'ls -a', cwd: 'workspace:/' }],
+      ['c2', { kind: 'command', command: 'pwd' }],
+      ['c3', { kind: 'file-change', path: 'workspace:/a.md', removed: '旧', added: '新' }],
+      ['c4', { kind: 'file-change', path: 'workspace:/b.md', added: '全文' }],
+      ['c5', undefined],
+      ['c6', undefined],
+    ]);
+    // 历史里的工具卡按同一份声明解析
+    await archive.saveMessage(s.id, {
+      role: 'assistant',
+      content: '好',
+      timestamp: 9,
+      segments: [
+        { type: 'tool_call', name: 'exec', args: { command: 'pwd' }, result: '/', callId: 'h1' },
+        { type: 'text', content: '好' },
+      ],
+    });
+    const history = await c.call('session/history', { sessionId: s.id });
+    expect(history.items.find(i => i.itemId === 'h1')).toMatchObject({ display: { kind: 'command', command: 'pwd' } });
   });
 
   it('工具结果带 error 的记为失败；达到工具调用上限的一轮收尾时给一条可以继续的 notice', async () => {
@@ -885,18 +947,34 @@ describe('条目', () => {
       },
     };
     await host.events.emit('token:usage', usage);
-    const late = client(server());
-    await late.init();
-    const snap = await late.subscribe(s.id);
-    const item = snap.snapshot.items.find(i => i.kind === 'usage');
+    const usageOf = async () => {
+      const late = client(server());
+      await late.init();
+      return (await late.subscribe(s.id)).snapshot.items.find(i => i.kind === 'usage');
+    };
+    const item = await usageOf();
     expect(item).toMatchObject({ turnId: 'turn-u', used: 200, injectors: { notes: 5 } });
     expect(item && 'breakdown' in item && item.breakdown).not.toHaveProperty('injectors');
+    expect(item, '没有压缩服务就没有压缩线').not.toHaveProperty('compressAt');
     expect(requests, '有用量就不再请求').toHaveLength(1);
+
+    // 压缩线取压缩服务给的自动压缩使用率，取快照与推送的那一刻现取；不自动压缩（0）时没有
+    const never = host.provide(compression, { autoThreshold: 0, compress: async () => {} });
+    expect(await usageOf()).not.toHaveProperty('compressAt');
+    never();
+    host.provide(compression, { autoThreshold: 0.7, compress: async () => {} });
+    expect(await usageOf()).toMatchObject({ compressAt: 0.7 });
+    const c2 = client(server());
+    await c2.init();
+    const sub = await c2.subscribe(s.id);
+    await host.events.emit('token:usage', { ...usage, used: 300 });
+    expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ used: 300, compressAt: 0.7 });
   });
 
   it('房间的用量按出生平台算：订阅之后、手动压缩之后请求用量都不填平台', async () => {
     const { server, sm, host } = await setup();
     await sm.ensureSession(ROOM, { name: '群' });
+    host.provide(compression, { autoThreshold: 0.7, compress: async () => {} });
     const requests: Array<{ sessionId: string; platform?: string }> = [];
     host.events.on('token:request', req => void requests.push(req));
     const c = client(server());
@@ -907,26 +985,41 @@ describe('条目', () => {
     expect(requests).toStrictEqual([{ sessionId: ROOM }, { sessionId: ROOM }]);
   });
 
-  it('压缩：notice 从开始推到结束；session/compress 发压缩请求，压完再请求一次用量', async () => {
+  it('压缩：notice 从开始推到结束；session/compress 调压缩服务，压完才回、再请求一次用量；没压成回错误，不再请求用量', async () => {
     const { server, sm, host } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    const compressions: unknown[] = [];
-    const requests: unknown[] = [];
-    host.events.on('session:compress', async req => {
-      compressions.push(req);
-      await host.events.emit('session:compressing', { sessionId: req.sessionId, status: 'start' });
-      await host.events.emit('session:compressing', { sessionId: req.sessionId, status: 'done' });
+    const calls: unknown[] = [];
+    let failure: string | undefined;
+    host.provide(compression, {
+      autoThreshold: 0.7,
+      async compress(sessionId, reason) {
+        calls.push([sessionId, reason]);
+        await host.events.emit('session:compressing', { sessionId, status: 'start' });
+        await host.events.emit('session:compressing', { sessionId, status: failure ? 'error' : 'done' });
+        if (failure) throw new Error(failure);
+      },
     });
+    const requests: unknown[] = [];
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(s.id);
     host.events.on('token:request', req => void requests.push(req));
     await c.call('session/compress', { sessionId: s.id });
-    expect(compressions).toEqual([{ sessionId: s.id, reason: 'manual' }]);
+    expect(calls).toEqual([[s.id, 'manual']]);
     expect(requests).toEqual([{ sessionId: s.id, platform: 'webui' }]);
     const notices = c.timeline(s.id, sub).filter(i => i.kind === 'notice');
     expect(notices.map(shape)).toEqual([{ kind: 'notice', topic: 'compress', text: '对话已压缩', attachments: [] }]);
     expect(c.notifications('item/started').map(p => p.item.kind)).toContain('notice');
+
+    failure = '摘要模型不在';
+    expect((await c.fail('session/compress', { sessionId: s.id })).message).toContain('摘要模型不在');
+    expect(requests).toHaveLength(1);
+    expect(
+      c
+        .timeline(s.id, sub)
+        .filter(i => i.kind === 'notice')
+        .map(i => 'text' in i && i.text),
+    ).toEqual(['对话已压缩', '压缩失败']);
   });
 });
 
@@ -976,6 +1069,146 @@ describe('历史', () => {
       (await c.fail('session/history', { sessionId: s.id, before: 'x' })).data?.code,
       '游标指向的消息不在存档里',
     ).toBe('not-found');
+  });
+
+  it('重试的各版正文各成一条：房间里最后一版是回复，之前的标「未发出」；owner 自己的会话不标', async () => {
+    const { server, sm, archive } = await setup();
+    await sm.ensureSession(ROOM, { name: '群' });
+    const mine = await sm.createSession({ name: '我的' });
+    for (const sessionId of [ROOM, mine.id]) {
+      await archive.saveMessage(sessionId, {
+        role: 'assistant',
+        content: '第二版',
+        timestamp: 5,
+        metadata: { turnId: `t-${sessionId}` },
+        segments: [
+          { type: 'reasoning_text', content: '想一想' },
+          { type: 'text', content: '第一版' },
+          { type: 'text', content: '第二版' },
+        ],
+      });
+    }
+    const c = client(server());
+    await c.init();
+    const said = (items: SessionItem[]) =>
+      items.flatMap(i => (i.kind === 'agent-message' ? [[i.text, i.undelivered?.reason]] : []));
+    expect(said((await c.call('session/history', { sessionId: ROOM })).items)).toEqual([
+      ['第一版', expect.stringContaining('重试')],
+      ['第二版', undefined],
+    ]);
+    expect(said((await c.call('session/history', { sessionId: mine.id })).items)).toEqual([
+      ['第一版', undefined],
+      ['第二版', undefined],
+    ]);
+  });
+
+  it('相邻两轮之间没有提问：各归各的回合，前一轮按旧格式落库的工具调用不被后一轮的时间线盖掉', async () => {
+    const { server, sm, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const save = (m: Message) => archive.saveMessage(s.id, m);
+    await save({
+      role: 'assistant',
+      content: '先看看',
+      timestamp: 1,
+      metadata: { turnId: 't1' },
+      toolCalls: [{ id: 'm1', type: 'function', function: { name: 'probe', arguments: '{}' } }],
+    });
+    await save({
+      role: 'tool',
+      content: 'ok',
+      toolCallId: 'm1',
+      timestamp: 2,
+      metadata: { turnId: 't1', callId: 'c1' },
+    });
+    await save({
+      role: 'assistant',
+      content: '好了',
+      timestamp: 3,
+      metadata: { turnId: 't2' },
+      segments: [
+        { type: 'tool_call', name: 'probe', args: {}, result: 'ok', callId: 'c2' },
+        { type: 'text', content: '好了' },
+      ],
+    });
+    const c = client(server());
+    await c.init();
+    const { items } = await c.call('session/history', { sessionId: s.id });
+    expect(items.map(i => [i.kind, i.turnId, i.itemId])).toEqual([
+      ['agent-message', 't1', expect.any(String)],
+      ['tool-call', 't1', 'c1'],
+      ['tool-call', 't2', 'c2'],
+      ['agent-message', 't2', expect.any(String)],
+    ]);
+  });
+
+  it('刷新后仍在：平台没收下的回复按投递失败记录标出，已发到群与审批的结局按工具结果的元数据还原', async () => {
+    const { server, sm, archive } = await setup();
+    await sm.ensureSession(ROOM, { name: '群' });
+    const save = (m: Message) => archive.saveMessage(ROOM, m);
+    const settlement = { state: 'expired', source: 'absent', at: 7 } as const;
+    await save({
+      role: 'assistant',
+      content: null,
+      timestamp: 1,
+      metadata: { turnId: 't1' },
+      toolCalls: [
+        { id: 'm1', type: 'function', function: { name: 'send_attachment', arguments: '{}' } },
+        { id: 'm2', type: 'function', function: { name: 'exec', arguments: '{"command":"ls"}' } },
+      ],
+    });
+    await save({
+      role: 'tool',
+      content: '{"ok":true}',
+      toolCallId: 'm1',
+      timestamp: 2,
+      metadata: { turnId: 't1', callId: 'c1', sentToRoom: true },
+    });
+    await save({
+      role: 'tool',
+      content: '{"error":"需要 owner 批准的操作没有执行"}',
+      toolCallId: 'm2',
+      timestamp: 3,
+      metadata: { turnId: 't1', callId: 'c2', approval: { id: 'ap-1', ...settlement } },
+    });
+    await save({
+      role: 'assistant',
+      content: '发好了',
+      timestamp: 4,
+      metadata: { turnId: 't1' },
+      segments: [
+        { type: 'tool_call', name: 'send_attachment', args: {}, result: '{"ok":true}', callId: 'c1' },
+        { type: 'tool_call', name: 'exec', args: { command: 'ls' }, result: '{"error":"x"}', callId: 'c2' },
+        { type: 'text', content: '发好了' },
+      ],
+    });
+    await save({
+      role: 'system',
+      kind: WellKnownKinds.OutboundDeliveryFailed,
+      content: '[投递回报] 没送达',
+      timestamp: 5,
+      metadata: { turnId: 't1', error: '群已解散' },
+    });
+    // 经工具发出的失败（带 callId）不算到这一轮的回复上，记在后面也一样
+    await save({
+      role: 'system',
+      kind: WellKnownKinds.OutboundDeliveryFailed,
+      content: '[投递回报] 没送达',
+      timestamp: 6,
+      metadata: { turnId: 't1', callId: 'c1', error: '上传失败' },
+    });
+    const c = client(server());
+    await c.init();
+    const { items } = await c.call('session/history', { sessionId: ROOM });
+    expect(items.map(shape)).toEqual([
+      expect.objectContaining({ kind: 'tool-call', name: 'send_attachment', status: 'completed', sentToRoom: true }),
+      expect.objectContaining({ kind: 'tool-call', name: 'exec', status: 'denied', approvalId: 'ap-1', settlement }),
+      {
+        kind: 'agent-message',
+        text: '发好了',
+        attachments: [],
+        undelivered: { reason: '没有发出：平台没收下（群已解散）' },
+      },
+    ]);
   });
 });
 
@@ -1039,10 +1272,61 @@ describe('回合控制', () => {
     for (const [method, params] of [
       ['turn/abort', { sessionId: s.id }],
       ['turn/rewind', { sessionId: s.id, turnId: 't', scope: 'code' }],
+      ['session/compress', { sessionId: s.id }],
       ['plan/clear', { sessionId: s.id }],
     ] as const) {
       expect((await c.fail(method, params)).data?.code, method).toBe('unsupported');
     }
+  });
+
+  it('功能位：握手回发送、回滚、压缩三项，各看对话、检查点、压缩服务在不在；服务上下线时推 features/changed', async () => {
+    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    apps.push(app);
+    provideHome(app);
+    await registerHubs(app);
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugins.idle();
+    const host = app.bind({ provide, sessionProtocol });
+    host.provide(storage, memoryStorage(new Map()));
+    await app.plugin(sessionManagerPlugin, {});
+    await app.plugin(sessionServerPlugin, {});
+    await app.plugins.idle();
+    const c = client(host.sessionProtocol.require());
+    const hello = await c.init();
+    expect(hello.features).toEqual({ send: false, rewind: false, compress: false });
+
+    const pushed = () => c.notifications('features/changed').map(p => p.features);
+    const offCheckpoint = host.provide(checkpoint, {} as never);
+    await vi.waitFor(() => expect(pushed()).toEqual([{ send: false, rewind: true, compress: false }]));
+    const offCompression = host.provide(compression, { autoThreshold: 0, compress: async () => {} });
+    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: true, compress: true }));
+    offCheckpoint();
+    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: true }));
+    offCompression();
+    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false }));
+    // 已有检查点时再来一个提供者、又撤掉：功能位没变，不推
+    const first = host.provide(checkpoint, {} as never);
+    await vi.waitFor(() => expect(pushed()).toHaveLength(5));
+    const second = host.provide(checkpoint, {} as never);
+    second();
+    first();
+    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false }));
+    expect(pushed()).toEqual([
+      { send: false, rewind: true, compress: false },
+      { send: false, rewind: true, compress: true },
+      { send: false, rewind: false, compress: true },
+      { send: false, rewind: false, compress: false },
+      { send: false, rewind: true, compress: false },
+      { send: false, rewind: false, compress: false },
+    ]);
+
+    const later = client(host.sessionProtocol.require());
+    host.provide(compression, { autoThreshold: 0, compress: async () => {} });
+    expect((await later.init()).features, '握手给的是当前的功能位').toEqual({
+      send: false,
+      rewind: false,
+      compress: true,
+    });
   });
 });
 
@@ -1093,7 +1377,7 @@ async function startAgent(responses: ChatResponse[], probe: (ctx: ToolCallContex
   // 有标题就不在第一条消息时调模型起标题，预设的模型回复只给 agent 用
   await sm.updateSessionTitle(s.id, 'S');
   const c = client(host.sessionProtocol.require());
-  await c.init();
+  expect((await c.init()).features.send, '有对话服务就能发送').toBe(true);
   const sub = await c.subscribe(s.id);
   const turnItems = () => c.timeline(s.id, sub).filter(i => i.kind === 'turn');
   return { host, s, c, sub, inputs, turnItems };

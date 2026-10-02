@@ -71,7 +71,7 @@ npm start -- status
    | 档 | 装什么 |
    |---|---|
    | `bare` | 只装 `@aalis/core` + `@aalis/runtime`（完全自定义起点） |
-   | `minimal` | 最简对话闭包：钩子 + 贡献点 + 网关 + 指令 + agent + 权限 + 会话 + 消息归档 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
+   | `minimal` | 最简对话闭包：钩子 + 贡献点 + 网关 + 指令 + agent + 权限 + 会话 + 会话服务（会话协议与审批）+ 消息归档 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
    | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP / 联网搜索（Serper，需 key）…（`STANDARD_EXTRA`，`cli.ts`） |
    | `full` | 实时查 npm 全装所有官方插件（可能需手动取舍，`cli.ts`） |
 
@@ -141,16 +141,15 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 
 `home/aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填一个空的配置桩（如 `apiKey: ""`），填进去即可（空串不算密钥值，留在配置里；填了值的在启动时移进 `secrets.yaml`）；其余用空 `plugins: {}` 默认配置启动。
 
-装了 `plugin-session-manager` 时，还会给已选装的 owner 专用平台（`cli`、`webui`）各写一条平台档，开放全部工具分组：
+装了 `plugin-session-manager` 时，还会给已选装的 owner 专用平台（`cli`、`webui`）各写一个平台档，开放全部工具分组。平台档是会话设置在会话之上的一层，写在配置文档的顶层字段 `sessionConfig` 里（见 [plugin-session-manager](../plugins/plugin-session-manager.md#会话之上的各层)）：
 
 ```yaml
-plugins:
-  "@aalis/plugin-session-manager":
-    platformProfiles:
-      - platform: cli
-        enabledToolGroups: ["*"]
-      - platform: webui
-        enabledToolGroups: ["*"]
+sessionConfig:
+  platforms:
+    cli:
+      enabledToolGroups: ["*"]
+    webui:
+      enabledToolGroups: ["*"]
 ```
 
 带分组的工具（`system`、`skills`、`scheduler`、`subtask` 等）默认不暴露，平台档列出该**组名**或写 `"*"` 才对模型可见。组名要写准——`plugin-tool-system` 的 shell / 文件 / 系统 / HTTP 工具全部落在 `system` 这**一个**组里（见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。

@@ -8,7 +8,9 @@ import {
   reserveFor,
 } from '../../packages/plugin-paper/src/budget.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { ROOM_SETTINGS } from '../../packages/plugin-paper/src/rooms.js';
 import { emptyLedger, human, PILOT_ROOM, ROOM, startPaperHub, stopPaperHubs } from '../fixtures/paper.js';
+import { startSessionManager } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的每日上限：全局、白纸、房间与按人金额均可不填，不填即不增加该层限制；
@@ -384,5 +386,25 @@ describe('paper_task 按上限受理', () => {
     const third = await hub.call('paper_task', { text: '三', name: '三' }, owner);
     expect(third.ok).toBe(false);
     expect(String(third.error)).toMatch(/本房间/);
+  });
+});
+
+describe('房间设置项经会话管理交给预算', () => {
+  it('平台档里写坏的金额原样交出、按 0 拒绝：不回落到全局默认里的金额，也不退成不限', async () => {
+    const { app, sm } = await startSessionManager({
+      settings: ROOM_SETTINGS,
+      layers: {
+        defaults: { remoteAgentRoomDailyCents: 10_000 },
+        platforms: { onebot: { remoteAgentRoomDailyCents: -1, remoteAgentUserDailyCents: 'many' } },
+      },
+    });
+    try {
+      const room = sm.resolveConfig(ROOM);
+      expect(room.remoteAgentRoomDailyCents).toBe(-1);
+      const caps = { roomCents: room.remoteAgentRoomDailyCents, userCents: room.remoteAgentUserDailyCents };
+      expect(canStart(emptyLedger(), DAY, 'n:zz-paper', ROOM_KEY, USER, limits(caps), 50).ok).toBe(false);
+    } finally {
+      await app.stop();
+    }
   });
 });

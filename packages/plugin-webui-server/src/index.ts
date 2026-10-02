@@ -7,35 +7,27 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { agent } from '@aalis/api-agent';
 import { approvals } from '@aalis/api-approval';
 import { commands } from '@aalis/api-commands';
-import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated 事件
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
-import type { ModelInfo } from '@aalis/api-llm';
-import { listLLMModels, llm } from '@aalis/api-llm';
-import type {} from '@aalis/api-memory'; // declaration merging：session:compress / session:compressing / history:changed 事件
+import { llm } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
-import { persona } from '@aalis/api-persona';
 import {
   aggregatePlatformDetails,
   getPlatformAdapters,
   getPlatformNames,
-  type PlatformAdapter,
   type PlatformConnection,
   platform,
 } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
-import type {} from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, isStorageUri, readTailLines, storage } from '@aalis/api-storage';
-import type {} from '@aalis/api-todo-list'; // declaration merging：todo:updated 事件
-import { type ToolExecuteMessage, tools } from '@aalis/api-tools';
-import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
+import { tools } from '@aalis/api-tools';
+import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
 import { DEFAULT_SUBSYSTEM_METADATA, webuiClient, webuiServer } from '@aalis/api-webui';
 import {
   appService,
@@ -54,27 +46,19 @@ import {
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type LogEntry, parseLogLine } from '@aalis/schema-log';
-import {
-  type Message,
-  type OutgoingMessage,
-  outboundMediaMessage,
-  type StreamChunkMessage,
-  WellKnownKinds,
-} from '@aalis/schema-message';
+import { type Message, type OutgoingMessage, outboundMediaMessage, WellKnownKinds } from '@aalis/schema-message';
 import express from 'express';
-import { WebSocket, WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
 import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
-import { renderClientSwitchPage } from './client-switch-page.js';
+import { CLIENT_SWITCH_SCRIPT, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
-import { registerFileRoutes } from './routes/files.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { registerSessionFileRoute } from './routes/session-file.js';
-import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
 import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
 
@@ -95,20 +79,23 @@ const name = '@aalis/plugin-webui-server';
 // 按宿主身份记打开记录：插件 bounce 保留，新 App 独立；弱引用不延长宿主寿命。
 const browserOpenedFor = new WeakSet<object>();
 
-const webuiPages: WebuiPage[] = [
-  { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10, renderer: 'dashboard' },
-  { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20, renderer: 'marketplace' },
-  { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30, renderer: 'plugin-config' },
-  { key: 'platforms', label: '平台接入', icon: 'platforms', order: 40, renderer: 'platforms' },
-  { key: 'files', label: '文件管理', icon: 'files', order: 50, renderer: 'files' },
-  { key: 'logs', label: '日志', icon: 'logs', order: 60, renderer: 'logs' },
-];
-
 /**
  * fixed 模式的 token 最短长度。持有 token 就是 owner，带 cookie 的请求又不限速（见 auth.ts 的登录限速），
  * 防猜靠的是 token 本身够长：32 个十六进制字符是 128 位
  */
 const FIXED_TOKEN_MIN_LENGTH = 32;
+
+/** 文档级 CSP */
+const DOCUMENT_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' blob: data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
 
 const configSchema = defineConfig({
   port: { type: 'number', label: '端口', default: 3000, onInvalid: 'error', description: 'Web 管理界面的 HTTP 端口' },
@@ -118,13 +105,6 @@ const configSchema = defineConfig({
     default: '127.0.0.1',
     onInvalid: 'error',
     description: '绑定的 IP 地址，0.0.0.0 可对外访问',
-  },
-  fileRoot: {
-    type: 'string',
-    label: '文件浏览根',
-    default: 'workspace',
-    onInvalid: 'error',
-    description: '文件管理页面使用的 storage 根 ID，默认 workspace',
   },
   autoOpen: {
     type: 'boolean',
@@ -178,108 +158,6 @@ const configSchema = defineConfig({
 // ===== 配置 =====
 
 type WebUIConfig = ConfigOf<typeof configSchema>;
-
-// ===== WebSocket 消息协议 =====
-
-// 入站消息类型 + 校验 schema 见 ./protocol.ts（zod 强校验）
-import { type WSIncoming, WSIncomingSchema } from './protocol.js';
-
-interface WSOutgoing {
-  type:
-    | 'message'
-    | 'stream'
-    | 'stream_resume'
-    | 'log'
-    | 'tool_call'
-    | 'state_changed'
-    | 'sessions_changed'
-    | 'history_changed'
-    | 'todo_updated'
-    | 'restarting'
-    | 'reload'
-    | 'token_usage'
-    | 'compressing'
-    | 'page_refresh';
-  content?: string;
-  sessionId?: string;
-  reasoningContent?: string;
-  contentDelta?: string;
-  reasoningDelta?: string;
-  done?: boolean;
-  toolLimitReached?: boolean;
-  /** 流式生成期间：本次增量更新的单个工具调用进度（OpenAI/DeepSeek 在 tool_call 阶段不发文本，UI 显示「正在生成」）。
-   *  多工具并发场景下，每个 chunk 只携带其中一个 index 的更新；客户端按 index 维护自己的 Map。 */
-  toolCallProgress?: {
-    index: number;
-    name: string;
-    charsAccumulated: number;
-  };
-  /** 仅 stream_resume 携带：重连时所有仍在生成中的工具调用快照（按 index 升序） */
-  toolCallsProgress?: Array<{
-    index: number;
-    name: string;
-    charsAccumulated: number;
-    startedAt: number;
-  }>;
-  log?: LogEntry;
-  toolName?: string;
-  toolArgs?: Record<string, unknown>;
-  toolResult?: string;
-  toolPhase?: 'start' | 'end';
-  segments?: Array<
-    | { type: 'text'; content: string }
-    | { type: 'reasoning_text'; content: string }
-    | {
-        type: 'tool_call';
-        name: string;
-        args: Record<string, unknown>;
-        result?: string;
-        startTime?: number;
-        endTime?: number;
-      }
-  >;
-  /** assistant 消息附件（agent 通过 send_attachment 等工具产生的图片/媒体） */
-  attachments?: Array<{
-    kind: 'image' | 'audio' | 'video' | 'file';
-    data: string;
-    mimeType?: string;
-    name?: string;
-  }>;
-  todoItems?: unknown[];
-  /** 仅 message 类型携带：本轮 LLM 元数据，实时展示模型名/token 用量/耗时 */
-  modelInfo?: {
-    provider?: string;
-    model?: string;
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-    elapsedMs?: number;
-  };
-  /** page_refresh：通知前端某个插件相关的动态页面刷新数据源。pluginName 缺省 = 全部。 */
-  pluginName?: string;
-  // token_usage 字段
-  tokenUsage?: {
-    contextWindow: number;
-    maxTokens: number;
-    tokenBudget: number;
-    used: number;
-    usageRatio: number;
-    breakdown: {
-      system: number;
-      persona: number;
-      memorySummary: number;
-      memoryVector: number;
-      skills: number;
-      platform: number;
-      subtask: number;
-      systemOther: number;
-      history: number;
-      toolResults: number;
-      toolDefs: number;
-      reservedForReply: number;
-    };
-  };
-}
 
 // ===== 日志文件读取（与 @aalis/runtime 的 file-logger 格式对偶）=====
 // 行格式契约（format ↔ parse）由 @aalis/schema-log 的 parseLogLine 唯一持有，此处只负责
@@ -376,7 +254,7 @@ function localScanDirs(appDir: string | undefined): string[] {
 
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
 // 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
-// 暂时消失，webui-server 跟着重启就清空 registeredPages，其他插件的侧边栏页面再也回不来。
+// 暂时消失，webui-server 跟着重启就清空 registeredPages，其他插件登记的页面再也回不来。
 const uses = {
   events,
   logger,
@@ -401,8 +279,6 @@ const uses = {
   approvals: optional(approvals),
   tools: optional(tools),
   llm: optional(llm),
-  persona: optional(persona),
-  agent: optional(agent),
   // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
   archive: optional(messageArchive),
 };
@@ -423,7 +299,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const cfg = parseConfig(configSchema, caps.config, logger);
   const uiConfig: WebUIConfig = {
     ...cfg,
-    fileRoot: cfg.fileRoot || configSchema.fileRoot.default,
     marketplaceRegistry: cfg.marketplaceRegistry.trim() || configSchema.marketplaceRegistry.default,
   };
   if (!uiConfig.host.trim()) throw configError('host 不能为空');
@@ -432,7 +307,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   }
   if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
 
-  // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
+  // 创建 storage gateway；所有文件读写（token、访问凭据、日志、媒体与会话文件）都走这里
   const storage = createStorageGateway(caps.storage);
 
   // ---- Token 解析 ----
@@ -512,6 +387,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const auth = createAuthSystem(() => authToken);
 
   const expressApp = express();
+  // 文档级 CSP：脚本只许同源，样式放开内联（Mermaid 的输出带内联样式），图片只认同源与本地生成的；不许被别的页面嵌入。
+  // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱
+  expressApp.use((_req, res, next) => {
+    res.setHeader('Content-Security-Policy', DOCUMENT_CSP);
+    next();
+  });
   expressApp.use(express.json({ limit: '10mb' }));
   expressApp.use(auth.middleware);
   // REST 路由 owner 闸（连接级认证之上的显式 owner 复核，见 gate.ts）。
@@ -520,7 +401,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const server = createServer(expressApp);
   // 一个 WebSocketServer 接全部端点，连接按路径分给各自的处理，来源校验与认证对各端点一样。同一个 HTTP server 上
   // 挂两个带 path 的 WebSocketServer 不行：先挂的那个会把别的路径的升级请求按 400 拒掉。
-  const wsPaths = new Set(['/ws', SESSION_PATH, ADMIN_PATH]);
+  const wsPaths = new Set([SESSION_PATH, ADMIN_PATH]);
   const wsPath = (req: IncomingMessage) => (req.url ?? '').split('?')[0];
   const approvalSurface = caps.approvals.registerSurface('webui');
   const wss = new WebSocketServer({
@@ -533,53 +414,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     },
   });
   const admin = createAdminChannel(logger);
-  const sessions = new Map<string, Set<WebSocket>>();
-  const logSubscribers = new Set<WebSocket>();
-  const allClients = new Set<WebSocket>();
+  /** 打开着的 /session 连接：webui 平台的连接状态按它数 */
+  const sessionSockets = new Set<WebSocket>();
   // 半开连接回收：清理只挂 'close' 时，睡眠/断网的客户端永远等不到事件，
   // 日志广播持续往死连接的发送缓冲堆数据。详见 ws-heartbeat.ts。
   const heartbeat = createWsHeartbeat<WebSocket>({
     onStale: ws => logger.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
     onError: (_ws, err) => logger.warn(`WebUI 客户端连接错误: ${err.message}`),
   });
-
-  // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复。
-  // segments 是按到达顺序追加的统一时间线：text / reasoning_text / tool_call 三种段都按真实时序混排。
-  // content / reasoningContent 仅作为派生镜像（供老路径读取与 LLM 调用边界使用）。
-  type BufferSegment =
-    | { type: 'text'; content: string }
-    | { type: 'reasoning_text'; content: string }
-    | {
-        type: 'tool_call';
-        name: string;
-        args: Record<string, unknown>;
-        result?: string;
-        startTime?: number;
-        endTime?: number;
-      };
-  const streamBuffers = new Map<
-    string,
-    {
-      content: string;
-      reasoningContent: string;
-      segments: BufferSegment[];
-      generating: boolean;
-      /** 当前正在生成的所有 tool_call 进度（按 index 索引，done 或首个 phase='start' 后清空） */
-      toolCallsProgress: Map<number, { name: string; charsAccumulated: number; startedAt: number }>;
-    }
-  >();
-
-  // 延迟清理 streamBuffers：捕获要删的 buf 引用，10s 后仅当 (a) 该 session 仍是
-  // 同一个 buf 且 (b) 未重新进入生成态 时才删——防止 10s 内开始的新一轮生成被旧
-  // 定时器误删（审计 HIGH #8 竞态）。
-  const scheduleBufferCleanup = (sid: string, captured: { generating: boolean }): void => {
-    setTimeout(() => {
-      if (streamBuffers.get(sid) === captured && !captured.generating) streamBuffers.delete(sid);
-    }, 10_000);
-  };
-
-  // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
-  const tokenUsageCache = new Map<string, WSOutgoing>();
 
   // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
   // app:ready 时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
@@ -613,7 +455,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   }
   /**
    * 活跃前端可能变了时调用（改或清除 webui-client 的服务偏好、摘掉已不在的前端包）：重挂当前活跃前端，
-   * 通知 /ws（reload）与 /admin（client.reload）整页重载，换前端不重启进程。
+   * 经 /admin 推 client.reload 让页面整页重载，换前端不重启进程。
    */
   function remountActiveClient(): void {
     const dir = currentClientDir();
@@ -621,9 +463,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       clientDist = dir;
       mountStaticDir(dir);
     }
-    const payload: WSOutgoing = { type: 'reload' };
-    const json = JSON.stringify(payload);
-    for (const ws of allClients) if (ws.readyState === WebSocket.OPEN) ws.send(json);
     admin.send({ type: 'client.reload' });
   }
 
@@ -637,37 +476,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   // ---------- REST API ----------
-
-  // 获取系统状态
-  expressApp.get('/api/status', gate(), (_req, res) => {
-    const personaSvc = caps.persona.current;
-    // 判断上传能力。media / file-reader 在本插件里只做在场探测，为一个布尔值反向依赖
-    // 它们的包不值当（file-reader 还是插件包），故按名动态查——动态查到的不算声明依赖。
-    const hasMedia = services.get('media') !== undefined;
-    const llmHasVision = listLLMModels(caps.llm).some(e => e.instance.capabilities.includes('vision'));
-    const hasFileReader = services.get('file-reader') !== undefined;
-    const appName = caps.hostConfig.current?.get('name') ?? 'Aalis';
-
-    res.json({
-      /** 对话对象的显示名：装有人设时是人设名，否则同 appName */
-      name: personaSvc?.getPersonaName() ?? appName,
-      /** 全局配置里的应用名称，每次实时读配置文档 */
-      appName,
-      /** 上传能力：客户端据此决定显示哪些上传按钮 */
-      uploadCapabilities: {
-        /** 是否支持图片上传（media 可用 或 LLM 声明了 vision） */
-        image: hasMedia || llmHasVision,
-        /** 是否支持文件上传（file-reader 可用） */
-        file: hasFileReader,
-      },
-      tools: caps.tools.current?.getAll().map(t => t.name) ?? [],
-      commands: caps.commands.current?.getAll().map(c => ({
-        name: c.name,
-        description: descSummary(c.description),
-        visibility: c.visibility,
-      })),
-    });
-  });
 
   // ---------- 插件管理 + 全局配置 ----------
   // fs 扫描 env：discoverClients（app:ready 时）与市场「已装」兜底共用一份，避免两处重复。
@@ -860,37 +668,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.json({ platforms: aggregatePlatformDetails(caps.platform) });
   });
 
-  // 获取已注册的工具分组（含元数据 + 各组工具数量 + 贡献插件列表）
-  expressApp.get('/api/tool-groups', gate(), (_req, res) => {
-    const toolService = caps.tools.current;
-    const groups = toolService?.getGroups() ?? [];
-    const allTools = toolService?.getAll() ?? [];
-    const knownNames = new Set(groups.map(g => g.name));
-    const result = groups.map(g => {
-      const toolsInGroup = allTools.filter(t => t.groups?.includes(g.name));
-      // 贡献插件 = 该分组下所有工具的 pluginName 去重（可能跨多个插件，
-      // 例如 'session-history' 同时被 plugin-tool-session 与 plugin-memory-history 贡献）
-      const contributingPlugins = [...new Set(toolsInGroup.map(t => t.pluginName))].sort();
-      return { ...g, description: descSummary(g.description), toolCount: toolsInGroup.length, contributingPlugins };
-    });
-    // 兜底：未声明任何 group 或 group 不在已注册集合中的工具，聚成 "other" 组
-    const orphans = allTools.filter(t => {
-      const gs = t.groups ?? [];
-      return gs.length === 0 || gs.every(n => !knownNames.has(n));
-    });
-    if (orphans.length > 0) {
-      result.push({
-        name: 'other',
-        label: '其他',
-        description: '未声明分组的工具',
-        pluginName: '(system)',
-        toolCount: orphans.length,
-        contributingPlugins: [...new Set(orphans.map(t => t.pluginName))].sort(),
-      });
-    }
-    res.json({ groups: result });
-  });
-
   // 获取服务分组（manifest 驱动：每个插件自己声明 subsystem，本路由仅聚合）
   expressApp.get('/api/service-groups', gate(), (_req, res) => {
     const pluginMgr = caps.plugins.current;
@@ -929,22 +706,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       groups.unshift({ id: 'system', label: sysLabel, plugins: [], services: systemServices });
     }
     res.json({ groups });
-  });
-
-  // 获取所有 LLM 模型（枚举所有注册的 per-model entry）
-  expressApp.get('/api/llm-models', gate(), async (_req, res) => {
-    try {
-      const entries = caps.llm.all();
-      const models: ModelInfo[] = entries.map(e => ({
-        id: e.instance.id,
-        capabilities: [...e.instance.capabilities],
-        provider: e.instance.providerId,
-        contextId: e.contextId,
-      }));
-      res.json({ models });
-    } catch {
-      res.json({ models: [] });
-    }
   });
 
   // LLM providers + per-provider models（供 schema type='llm-ref' 联动 select 使用）
@@ -1141,17 +902,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
   });
 
-  // ---------- 文件管理 API ----------
-  registerFileRoutes(expressApp, { storage, fileRoot: uiConfig.fileRoot, logger }, gate);
-  registerUploadedFilesRoutes(
-    expressApp,
-    {
-      storage,
-      logger,
-      fileIndex: () => services.get('file-reader') as { deleteFile?(id: string): Promise<boolean> } | undefined,
-    },
-    gate,
-  );
   registerProxyRoutes(expressApp, logger, gate);
   registerMediaRoutes(expressApp, storage, logger, gate);
   registerSessionFileRoute(expressApp, storage, caps.sessionProtocol, logger, gate);
@@ -1165,158 +915,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 每条连接都过心跳：回收半开连接，track 同时挂上 'error' 兜底监听（见 ws-heartbeat.ts）
     heartbeat.track(ws);
     ws.on('close', () => heartbeat.untrack(ws));
-    if (wsPath(req) === SESSION_PATH) {
-      acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
-      return;
-    }
     if (wsPath(req) === ADMIN_PATH) {
       admin.accept(ws);
       return;
     }
-    allClients.add(ws);
-
-    ws.on('message', async data => {
-      // 非 JSON 帧与形状不对的帧同属协议违规：都只记一行告警，外层 catch 留给真正的处理失败
-      let raw: unknown;
-      try {
-        raw = JSON.parse(data.toString());
-      } catch {
-        logger.warn('WebUI 收到协议违规消息: 非 JSON 帧');
-        return;
-      }
-      try {
-        const parseResult = WSIncomingSchema.safeParse(raw);
-        if (!parseResult.success) {
-          logger.warn(
-            `WebUI 收到协议违规消息: ${parseResult.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-          );
-          return;
-        }
-        const msg: WSIncoming = parseResult.data;
-
-        if (msg.type === 'subscribe_logs') {
-          logSubscribers.add(ws);
-          return;
-        }
-
-        // 客户端连接时主动注册会话，确保 scheduler 等异步消息能推送
-        if (msg.type === 'subscribe_session') {
-          const sid = msg.sessionId || 'webui-default';
-          if (!sessions.has(sid)) {
-            sessions.set(sid, new Set());
-          }
-          sessions.get(sid)!.add(ws);
-          // 如果该会话正在生成中，发送已累积的内容供客户端恢复
-          const buf = streamBuffers.get(sid);
-          if (
-            buf &&
-            (buf.content || buf.reasoningContent || buf.segments.length > 0 || buf.toolCallsProgress.size > 0)
-          ) {
-            const resume: WSOutgoing = {
-              type: 'stream_resume',
-              sessionId: sid,
-              content: buf.content,
-              reasoningContent: buf.reasoningContent,
-              segments: buf.segments.length > 0 ? buf.segments : undefined,
-              toolCallsProgress:
-                buf.toolCallsProgress.size > 0
-                  ? [...buf.toolCallsProgress.entries()]
-                      .sort((a, b) => a[0] - b[0])
-                      .map(([index, v]) => ({
-                        index,
-                        name: v.name,
-                        charsAccumulated: v.charsAccumulated,
-                        startedAt: v.startedAt,
-                      }))
-                  : undefined,
-              done: !buf.generating,
-            };
-            ws.send(JSON.stringify(resume));
-          }
-          // 发送缓存的 token 用量，刷新/切换会话后立即展示
-          const cachedUsage = tokenUsageCache.get(sid);
-          if (cachedUsage) {
-            ws.send(JSON.stringify(cachedUsage));
-          } else {
-            // 无缓存（服务重启后），请求 agent 重新计算
-            events.emit('token:request', { sessionId: sid }).catch(() => {});
-          }
-          return;
-        }
-
-        if (msg.type === 'unsubscribe_session') {
-          const sid = msg.sessionId || 'webui-default';
-          sessions.get(sid)?.delete(ws);
-          return;
-        }
-
-        if (msg.type === 'abort') {
-          const sessionId = msg.sessionId || 'webui-default';
-          const agentSvc = caps.agent.current;
-          if (agentSvc?.abort) agentSvc.abort(sessionId);
-          return;
-        }
-
-        if (msg.type === 'compress') {
-          const sessionId = msg.sessionId || 'webui-default';
-          logger.info(`收到手动压缩请求: session=${sessionId}`);
-          // 触发压缩事件（memory-summary 监听此事件，并发出 session:compressing 通知）
-          events
-            .emit('session:compress', { sessionId, reason: 'manual' })
-            .then(() => {
-              // 压缩完成后重新计算 token 用量并推送给客户端
-              events.emit('token:request', { sessionId }).catch(() => {});
-            })
-            .catch(() => {});
-          return;
-        }
-
-        if (msg.type !== 'message' || !msg.content) return;
-
-        const sessionId = msg.sessionId || 'webui-default';
-        const trimmed = msg.content.trim();
-
-        if (!sessions.has(sessionId)) {
-          sessions.set(sessionId, new Set());
-        }
-        sessions.get(sessionId)!.add(ws);
-
-        // 指令解析已统一到全局 inbound:command 相位（plugin-commands 注册）。
-        // 适配器不再内联解析命令——未注册的命令会被该相位放行为普通消息进入
-        // agent，命中的命令由该相位执行并经 outbound:message 回送，与 onebot
-        // 平台行为完全一致。客户端只通过 attachments 发送多模态内容。
-        await events.emit('inbound:message', {
-          content: trimmed,
-          sessionId,
-          platform: wsIdentity.platform,
-          userId: wsIdentity.userId,
-          nickname: undefined,
-          ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
-        });
-      } catch (err) {
-        logger.warn('WebUI 消息处理失败:', err);
-      }
-    });
-
-    ws.on('close', () => {
-      allClients.delete(ws);
-      logSubscribers.delete(ws);
-      for (const [sid, sockets] of sessions) {
-        sockets.delete(ws);
-        if (sockets.size === 0) sessions.delete(sid);
-      }
-    });
-  });
-
-  // 实时推送日志给订阅者
-  const removeLogListener = LogHub.default.onEntry((entry: LogEntry) => {
-    const payload: WSOutgoing = { type: 'log', log: entry };
-    const json = JSON.stringify(payload);
-    for (const ws of logSubscribers) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
+    sessionSockets.add(ws);
+    ws.on('close', () => sessionSockets.delete(ws));
+    acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
   });
 
   // 管理面推送（/admin）：日志、插件状态、重启。页面登记表的变化在 registerPage 里推，换前端在 remountActiveClient 里推
@@ -1324,337 +929,31 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   events.on('plugins:changed', () => admin.send({ type: 'plugins.changed' }));
   events.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
 
-  // 插件状态级联变更后，广播通知所有前端刷新
-  events.on('plugins:changed', () => {
-    const payload: WSOutgoing = { type: 'state_changed' };
-    const json = JSON.stringify(payload);
-    for (const ws of allClients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  // 重启通知：广播给所有客户端。WS 报文的 type 是前端协议，与 core 事件名无关，保持 'restarting'。
-  events.on('app:restarting', () => {
-    const payload: WSOutgoing = { type: 'restarting' };
-    const json = JSON.stringify(payload);
-    for (const ws of allClients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  // 会话列表变更：广播给所有客户端，让前端即时刷新
-  const broadcastSessionsChanged = () => {
-    const payload: WSOutgoing = { type: 'sessions_changed' };
-    const json = JSON.stringify(payload);
-    for (const ws of allClients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  };
-  // Todo 列表变更：推送给订阅了该会话的客户端
-  events.on('todo:updated', (sessionId, items) => {
-    const sockets = sessions.get(sessionId);
-    if (!sockets) return;
-    const payload: WSOutgoing = { type: 'todo_updated', sessionId, todoItems: items };
-    const json = JSON.stringify(payload);
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  events.on('session:created', broadcastSessionsChanged);
-  events.on('session:updated', broadcastSessionsChanged);
-  events.on('session:deleted', broadcastSessionsChanged);
-  events.on('session:completed', broadcastSessionsChanged);
-
-  // 动态页面刷新通知：插件可通过广播 'page_refresh' 让前端无感刷新对应页面数据
-  // 当前已知发射方：plugin-doctor（'doctor:updated'）。新增同类需求时按相同模式订阅即可。
-  const broadcastPageRefresh = (pluginName?: string) => {
-    const payload: WSOutgoing = { type: 'page_refresh', pluginName };
-    const json = JSON.stringify(payload);
-    for (const ws of allClients) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(json);
-    }
-  };
-  events.on('doctor:updated', () => broadcastPageRefresh('@aalis/plugin-doctor'));
-
-  // 会话历史变更（如 checkpoint 回滚整轮对话）：推送给订阅该会话的客户端，让前端重新拉取历史
-  events.on('history:changed', change => {
-    const sessionId = change?.sessionId;
-    if (!sessionId) return;
-    const sockets = sessions.get(sessionId);
-    if (!sockets) return;
-    const payload: WSOutgoing = { type: 'history_changed', sessionId };
-    const json = JSON.stringify(payload);
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  // 压缩状态通知：memory-summary 发出 session:compressing 事件，广播给订阅该会话的客户端
-  events.on('session:compressing', info => {
-    const sockets = sessions.get(info.sessionId);
-    if (!sockets) return;
-    const payload: WSOutgoing = { type: 'compressing', sessionId: info.sessionId, content: info.status };
-    const json = JSON.stringify(payload);
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  // 会话切换不再跨客户端广播：每个 webui 客户端独立持有自己的活跃会话（localStorage
-  // 持久化 + 每条消息自带 sessionId），互不干扰。全局 activeSessionId 退化为 CLI 概念，
-  // 不再驱动 webui。这样多人同时使用时，他人新建/切换会话不会把你的窗口切走。
-
-  // 监听 AI 回复
+  // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。
+  // 回执表示这条消息已经进了会话历史，不看有没有页面在线。owner 从 WebUI 驱动的房间由那个平台的适配器认领
   events.on('outbound:message', (msg: OutgoingMessage) => {
-    // WebUI 也会镜像展示其他平台的会话；镜像不构成该平台消息的送达确认。
-    // platform 可能是入口 WebUI，而 sessionId 仍指向外部群聊；会话目的地优先。
     const sessionRoot = msg.sessionId.split('::')[0];
     const colon = sessionRoot.indexOf(':');
     const externalTarget = colon >= 0 && sessionRoot.slice(0, colon) !== 'webui';
-    const ownsDelivery =
-      !msg.delivery && !externalTarget && (msg.platform === 'webui' || (!msg.platform && sessions.has(msg.sessionId)));
-    // 生成完成，延迟清理缓冲区（给客户端重连拉取历史留出时间窗口）
-    const buf = streamBuffers.get(msg.sessionId);
-    if (buf) {
-      buf.generating = false;
-      buf.content = msg.content ?? buf.content;
-      buf.reasoningContent = msg.reasoningContent ?? buf.reasoningContent;
-      scheduleBufferCleanup(msg.sessionId, buf);
-    }
-    const sockets = sessions.get(msg.sessionId);
-    if (!sockets && !ownsDelivery) return;
-
-    // 仅信任 msg 本身携带的 segments。不要回退到 buf?.segments：
-    // 工具循环中 agent tool（如 send_attachment / commands 回复）会直接 emit 'outbound:message'，
-    // 但 streamBuffers[sid].segments 累积的是当前回合的完整时间线（含本工具之前的 reasoning/tool_call）。
-    // 若回退使用 buf，会把整条时间线"借尸还魂"挂到工具消息上 → 前端 REPLACE 当前 assistant 后，
-    // 真正的 agent final outbound:message 再到达时被识别为新消息 APPEND，导致整条时间线渲染两遍。
-    // agent 的 final emit 已显式带 segments=turnSegments，不需要这个隐式 fallback。
-    const segments = msg.segments;
-    const payload: WSOutgoing = {
-      type: 'message',
-      content: msg.content,
-      sessionId: msg.sessionId,
-      reasoningContent: msg.reasoningContent,
-      segments: segments && segments.length > 0 ? segments : undefined,
-      attachments: msg.attachments?.length
-        ? msg.attachments.map(a => ({
-            kind: a.kind,
-            data: a.data,
-            mimeType: a.mimeType,
-            name: a.name,
-          }))
-        : undefined,
-      modelInfo: msg.modelInfo,
-    };
-    if (ownsDelivery) {
-      // 会话历史是 WebUI 的收件箱，页面只是查看器：回执表示这条消息已经进了会话历史，有在线页面时同时推送，
-      // 不区分「已推送」与「只保存」，也不等页面写出。存档服务不在场时，只有推送到了在线页面才算送达。
-      // 同步挂上 Promise，始终 resolve，即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
-      msg.delivery = (async () => {
-        try {
-          // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
-          const snapshot: OutgoingMessage = { ...msg, attachments: msg.attachments?.map(att => ({ ...att })) };
-          const json = JSON.stringify(payload);
-          let pushed = false;
-          for (const ws of sockets ?? []) {
-            if (ws.readyState !== WebSocket.OPEN) continue;
-            try {
-              ws.send(json);
-              pushed = true;
-            } catch {
-              // 这个页面没推送成功，打开后从会话历史看到
-            }
-          }
-          const archive = caps.archive.current;
-          if (archive) {
-            try {
-              for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
-            } catch (error) {
-              if (!pushed) throw error;
-              logger.warn(`WebUI 消息已推送到页面，写进会话历史失败: ${(error as Error).message}`);
-            }
-          } else if (!pushed) {
-            return { ok: false as const, error: 'WebUI 会话没有在线页面，消息存档服务也不在场，这条消息没有保存' };
-          }
-          if (snapshot.attachments?.length) {
-            // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得 image-sender 再记一份
-            const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
-            void events.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
-          }
-          return { ok: true as const };
-        } catch (error) {
-          return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+    if (msg.delivery || externalTarget || msg.platform !== 'webui') return;
+    // 同步挂上 Promise，始终 resolve，即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
+    msg.delivery = (async () => {
+      try {
+        // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
+        const snapshot: OutgoingMessage = { ...msg, attachments: msg.attachments?.map(att => ({ ...att })) };
+        const archive = caps.archive.current;
+        if (!archive) return { ok: false as const, error: '消息存档服务不在场，这条消息没有存进 WebUI 会话的历史' };
+        for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
+        if (snapshot.attachments?.length) {
+          // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得 image-sender 再记一份
+          const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
+          void events.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
         }
-      })();
-      return;
-    }
-
-    // 非 WebUI 目标照旧镜像到已订阅的客户端，但不认领发送结果。
-    const json = JSON.stringify(payload);
-    for (const ws of sockets ?? []) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(json);
-    }
-  });
-
-  // 监听流式增量推送
-  events.on('outbound:stream', (chunk: StreamChunkMessage) => {
-    // 累积到缓冲区
-    if (!chunk.done) {
-      let buf = streamBuffers.get(chunk.sessionId);
-      if (!buf) {
-        buf = { content: '', reasoningContent: '', segments: [], generating: true, toolCallsProgress: new Map() };
-        streamBuffers.set(chunk.sessionId, buf);
+        return { ok: true as const };
+      } catch (error) {
+        return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
       }
-      if (chunk.contentDelta) {
-        // 进入文本生成阶段：清空所有 tool 进度
-        buf.toolCallsProgress.clear();
-        buf.content += chunk.contentDelta;
-        // 追加到 segments：合并连续 text
-        const last = buf.segments[buf.segments.length - 1];
-        if (last && last.type === 'text') {
-          last.content += chunk.contentDelta;
-        } else {
-          buf.segments.push({ type: 'text', content: chunk.contentDelta });
-        }
-      }
-      if (chunk.reasoningDelta) {
-        buf.toolCallsProgress.clear();
-        buf.reasoningContent += chunk.reasoningDelta;
-        // 同样追加到统一时间线：合并连续 reasoning_text
-        const last = buf.segments[buf.segments.length - 1];
-        if (last && last.type === 'reasoning_text') {
-          last.content += chunk.reasoningDelta;
-        } else {
-          buf.segments.push({ type: 'reasoning_text', content: chunk.reasoningDelta });
-        }
-      }
-      if (chunk.toolCallProgress) {
-        const { index, name, charsAccumulated } = chunk.toolCallProgress;
-        const prev = buf.toolCallsProgress.get(index);
-        buf.toolCallsProgress.set(index, {
-          name,
-          charsAccumulated,
-          startedAt: prev?.startedAt ?? Date.now(),
-        });
-      }
-    } else {
-      // done：回合终态收口。无论本回合是正常完成、空回复、还是被用户中止，
-      // agent 都会发一次 outbound:stream{done:true}（见 plugin-agent 的成功/中止/异常/未处理四条路径）。
-      // 这里必须把 generating 翻 false 并安排清理，否则刷新后 subscribe_session 仍读到
-      // generating=true 的残留 buffer → 回 stream_resume{done:false} → 前端永远显示"可停止"。
-      // （正常路径的 outbound:message 也会做同样的事；此处补全保证中止/静默路径对称。）
-      const buf = streamBuffers.get(chunk.sessionId);
-      if (buf) {
-        buf.toolCallsProgress.clear();
-        buf.generating = false;
-        scheduleBufferCleanup(chunk.sessionId, buf);
-      }
-    }
-    const sockets = sessions.get(chunk.sessionId);
-    if (!sockets) return;
-
-    const payload: WSOutgoing = {
-      type: 'stream',
-      sessionId: chunk.sessionId,
-      contentDelta: chunk.contentDelta,
-      reasoningDelta: chunk.reasoningDelta,
-      toolCallProgress: chunk.toolCallProgress,
-      done: chunk.done,
-      toolLimitReached: chunk.toolLimitReached,
-    };
-    const json = JSON.stringify(payload);
-
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  // 监听工具调用事件
-  events.on('tool:execute', (info: ToolExecuteMessage) => {
-    // 缓存工具调用到 segments
-    let buf = streamBuffers.get(info.sessionId);
-    if (!buf) {
-      buf = { content: '', reasoningContent: '', segments: [], generating: true, toolCallsProgress: new Map() };
-      streamBuffers.set(info.sessionId, buf);
-    }
-    if (info.phase === 'start') {
-      // 工具进入实际执行阶段：清掉生成中进度（占位卡 → ToolCallBlock 切换）
-      buf.toolCallsProgress.clear();
-      buf.segments.push({ type: 'tool_call', name: info.toolName, args: info.args ?? {}, startTime: Date.now() });
-    } else if (info.phase === 'end') {
-      // 找到最后一个同名且无结果的 tool_call segment，填充结果
-      for (let i = buf.segments.length - 1; i >= 0; i--) {
-        const seg = buf.segments[i];
-        if (seg.type === 'tool_call' && seg.name === info.toolName && seg.result == null) {
-          seg.result = info.result;
-          seg.endTime = Date.now();
-          break;
-        }
-      }
-    }
-
-    const sockets = sessions.get(info.sessionId);
-    if (!sockets) return;
-
-    const payload: WSOutgoing = {
-      type: 'tool_call',
-      sessionId: info.sessionId,
-      toolName: info.toolName,
-      toolArgs: info.args,
-      toolPhase: info.phase,
-      toolResult: info.result,
-    };
-    const json = JSON.stringify(payload);
-
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
-
-  // 监听 token 使用量统计事件
-  events.on('token:usage', usage => {
-    const sockets = sessions.get(usage.sessionId);
-    if (!sockets) return;
-
-    const payload: WSOutgoing = {
-      type: 'token_usage',
-      sessionId: usage.sessionId,
-      tokenUsage: {
-        contextWindow: usage.contextWindow,
-        maxTokens: usage.maxTokens,
-        tokenBudget: usage.tokenBudget,
-        used: usage.used,
-        usageRatio: usage.usageRatio,
-        breakdown: usage.breakdown,
-      },
-    };
-    // 缓存最新的 token 用量
-    tokenUsageCache.set(usage.sessionId, payload);
-    const json = JSON.stringify(payload);
-
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
+    })();
   });
 
   // 前端切换「逃生页」：由 webui-server 直出、独立于任何可被切换的前端，故任意前端（哪怕
@@ -1664,14 +963,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   expressApp.get('/__clients', (_req, res) => {
     res.type('html').send(renderClientSwitchPage());
   });
+  expressApp.get('/__clients.js', (_req, res) => {
+    res.type('application/javascript').send(CLIENT_SWITCH_SCRIPT);
+  });
 
   // API 未命中：回 404 JSON，不落到 SPA 兜底（否则客户端拿到 HTML 去解析 JSON）。
   expressApp.all('/api/{*path}', (req, res) => {
     res.status(404).json({ error: `未知 API: ${req.method} ${req.path}` });
   });
 
-  // SPA fallback: 所有非 API 路径返回 index.html
-  expressApp.get('{*path}', (_req, res) => {
+  // SPA fallback: 所有非 API 路径返回 index.html；/assets/ 下缺失的文件回 404（旧页面引用的资源换了构建就不在了，
+  // 回 index.html 只会让浏览器把 HTML 当脚本执行）
+  expressApp.get('{*path}', (req, res) => {
+    if (req.path.startsWith('/assets/')) {
+      res.status(404).end();
+      return;
+    }
     // 还没有选中的前端时 clientDist 为空：不能拼出相对 cwd 的 index.html
     const indexPath = clientDist ? join(clientDist, 'index.html') : undefined;
     if (indexPath && existsSync(indexPath)) {
@@ -1846,12 +1153,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   lifecycle.onDispose(() => {
     heartbeat.dispose();
-    removeLogListener();
     removeAdminLogListener();
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对
-    // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 上
-    // 注册的 message 闭包在插件卸载后仍然活着，照常发 'inbound:message'——而事件发射
-    // 不设关闭守卫（订阅与发布两侧不对称）。
+    // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 在插件卸载后
+    // 仍然活着，照常把帧转给会话服务，发出的消息照样进入站事件。
     // 发 1001 触发前端既有的 onclose 重连路径，bounce 之后自动接回新实例。各端点的连接都在 wss.clients 里，
     // /session 的连接关闭时撤掉会话服务那头的连接。
     for (const ws of wss.clients) {
@@ -1861,57 +1166,27 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         /* 单条连接关不掉不应阻塞拆卸 */
       }
     }
-    allClients.clear();
     wss.close();
     server.close();
   });
 
-  // 构造 PlatformAdapter 实例
-  const adapter: PlatformAdapter = {
+  // 平台名 webui 标明说话的是从 WebUI 来的 owner。登记成平台，平台档、会话范围的候选与用户关系认的平台名里才有它；
+  // 连接状态数的是打开着的 /session 连接。WebUI 的会话不经适配器收发：页面走会话协议，出站消息由上面的收件箱认领
+  provide(platform, {
     adapterName: 'WebUI',
     platform: 'webui',
-    sessionTypes: [], // WebUI 单会话，不区分 sessionType
+    sessionTypes: [],
     getConnections(): PlatformConnection[] {
-      // 统计所有活跃 WebSocket 客户端
-      const activeCount = [...allClients].filter(ws => ws.readyState === WebSocket.OPEN).length;
-      if (activeCount === 0) return [];
-      return [
-        {
-          id: 'webui',
-          platform: 'webui',
-          status: 'online',
-          detail: { clients: activeCount },
-        },
-      ];
+      const clients = sessionSockets.size;
+      return clients === 0 ? [] : [{ id: 'webui', platform: 'webui', status: 'online', detail: { clients } }];
     },
-    async sendMessage(sessionId: string, content: string): Promise<void> {
-      const sockets = sessions.get(sessionId);
-      if (!sockets) return;
-      const payload: WSOutgoing = {
-        type: 'message',
-        content,
-        sessionId,
-      };
-      const json = JSON.stringify(payload);
-      for (const ws of sockets) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(json);
-        }
-      }
+    async sendMessage() {
+      throw new Error('WebUI 的会话不经平台适配器发消息：页面经会话协议收发，发往 WebUI 会话的出站消息写进会话历史');
     },
-  };
-
-  provide(platform, adapter);
+  });
 
   // === 注册 WebUI 服务 ===
   const registeredPages = new Map<string, Array<WebuiPage & { pluginName: string }>>();
-
-  // 内建页面归属为 webui-server 本身
-  for (const page of webuiPages) {
-    const list = registeredPages.get(name) ?? [];
-    list.push({ ...page, pluginName: name });
-    registeredPages.set(name, list);
-  }
 
   const webuiService: WebUIService = {
     getPort: () => uiConfig.port,

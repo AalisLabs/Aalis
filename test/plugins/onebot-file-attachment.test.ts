@@ -10,7 +10,12 @@ import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
-import type { Message, MessageAttachment, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import {
+  type Message,
+  type MessageAttachment,
+  type OutgoingMessage,
+  WellKnownKinds,
+} from '../../packages/schema-message/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -277,7 +282,7 @@ async function boot(
     await send({ sessionId, content: '哨兵' });
     await until(() => JSON.stringify(sent()).includes('哨兵'));
   };
-  const failureNotes = () => notes.filter(n => n.message.kind === 'outbound-delivery-failed');
+  const failureNotes = () => notes.filter(n => n.message.kind === WellKnownKinds.OutboundDeliveryFailed);
   const imageNotes = () => notes.filter(n => n.message.kind === 'outbound-image');
   const sendAttachment = async (args: Record<string, unknown>, sessionId = GROUP, signal?: AbortSignal) => {
     const handler = toolHandlers.get('send_attachment');
@@ -351,6 +356,35 @@ describe('onebot 出站：文件附件', () => {
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
     expect(t.warns.some(w => w.includes('文件附件'))).toBe(true);
     expect(t.failureNotes().map(n => [n.sessionId, n.message.role])).toEqual([[GROUP, 'system']]);
+  });
+
+  it('投递失败记录带这条消息的回合或调用 id，原因与投递结果同一句', async () => {
+    const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
+    const big = { kind: 'file' as const, data: 'data:/paper-out/big.html', name: 'big.html' };
+    const reply: OutgoingMessage = {
+      sessionId: GROUP,
+      content: '',
+      attachments: [big],
+      source: 'agent',
+      turnId: 't-1',
+    };
+    const viaTool: OutgoingMessage = {
+      sessionId: GROUP,
+      content: '',
+      attachments: [big],
+      source: 'agent',
+      callId: 'c-1',
+    };
+    await t.send(reply);
+    await t.send(viaTool);
+    await until(() => t.failureNotes().length === 2);
+    const [replyResult, toolResult] = [await reply.delivery, await viaTool.delivery];
+    expect(t.failureNotes().map(n => n.message.metadata)).toEqual([
+      expect.objectContaining({ turnId: 't-1', error: replyResult?.ok === false && replyResult.error }),
+      expect.objectContaining({ callId: 'c-1', error: toolResult?.ok === false && toolResult.error }),
+    ]);
+    expect(t.failureNotes()[0].message.metadata).not.toHaveProperty('callId');
+    expect(t.failureNotes()[0].message.kind).toBe(WellKnownKinds.OutboundDeliveryFailed);
   });
 
   it('selfId 无匹配连接时不误发到其他机器人', async () => {

@@ -334,6 +334,47 @@ describe('登录失败限速', () => {
   });
 });
 
+describe('改状态的请求校验来源', () => {
+  const host = '127.0.0.1:3000';
+  const cookie = `aalis_webui_token=${TOKEN}`;
+  const request = (method: string, origin?: string) =>
+    run(
+      makeAuth(),
+      makeReq({ path: '/api/plugins/x/enable', method, cookie, headers: { host, ...(origin && { origin }) } }),
+    );
+
+  it('非 GET 的请求与 WebSocket 用同一个判定：Origin 不同源回 403，带着有效的 cookie 也不放行', async () => {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      for (const origin of ['http://127.0.0.1:5173', 'http://evil.example', 'null']) {
+        const { res, nexted } = await request(method, origin);
+        expect([method, origin, res.statusCode, nexted]).toEqual([method, origin, 403, false]);
+      }
+    }
+  });
+
+  it('同源的照常放行；没有 Origin 的（脚本、命令行）交给 token；GET 不看 Origin', async () => {
+    for (const method of ['POST', 'PUT', 'DELETE']) {
+      expect((await request(method, `http://${host}`)).nexted, method).toBe(true);
+      expect((await request(method)).nexted, method).toBe(true);
+    }
+    expect((await request('GET', 'http://evil.example')).nexted).toBe(true);
+    const noToken = await run(
+      makeAuth(),
+      makeReq({ path: '/api/plugins/x/enable', method: 'POST', headers: { host } }),
+    );
+    expect(noToken.res.statusCode).toBe(401);
+  });
+
+  it('跨源的注销也被拒，cookie 不被清掉', async () => {
+    const { res } = await run(
+      makeAuth(),
+      makeReq({ path: '/api/auth/logout', method: 'POST', cookie, headers: { host, origin: 'http://evil.example' } }),
+    );
+    expect(res.statusCode).toBe(403);
+    expect(res.headers['Set-Cookie']).toBeUndefined();
+  });
+});
+
 describe('未认证拦截', () => {
   it('API 请求 401 JSON；GET 页面返回登录页（仅 token 表单）', async () => {
     const auth = makeAuth();
@@ -344,6 +385,12 @@ describe('未认证拦截', () => {
     expect(page.res.statusCode).toBe(401);
     expect(page.res.htmlBody).toContain('访问 token');
     expect(page.res.htmlBody).not.toContain('用户名');
+    // 文档级 CSP 只许同源脚本：登录页不带内联脚本，脚本另由不需登录的同源地址给出
+    expect(page.res.htmlBody).toMatch(/<script src="\/api\/auth\/login\.js"><\/script>/);
+    expect(page.res.htmlBody).not.toMatch(/<script>/);
+    const script = await run(auth, makeReq({ path: '/api/auth/login.js' }));
+    expect(script.res.statusCode).toBe(200);
+    expect(script.res.htmlBody).toContain('/api/auth/login');
   });
 
   it('status 端点：匿名 authed=false；token 登录后含 console 身份', async () => {

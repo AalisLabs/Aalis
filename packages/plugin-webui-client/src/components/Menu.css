@@ -1,0 +1,65 @@
+.menu {
+  position: fixed;
+  top: var(--menu-edge);
+  right: var(--menu-right);
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  min-width: var(--menu-w);
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.menu[data-placement="up"] {
+  top: auto;
+  bottom: var(--menu-edge);
+  margin: 0 0 var(--space-1);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--row-1line);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  text-align: left;
+  color: var(--color-text);
+  background: none;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--color-fill-1);
+}
+
+.menu-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.menu-item[data-danger] {
+  color: var(--color-danger-text);
+}
+
+/* 手机上贴底弹出，拇指够得着 */
+@media (max-width: 47.99em) {
+  .menu,
+  .menu[data-placement="up"] {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    box-shadow: var(--shadow-2);
+  }
+}
