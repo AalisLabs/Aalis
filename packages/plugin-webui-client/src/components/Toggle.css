@@ -1,0 +1,46 @@
+/* 按钮本身是点击区（触屏上跟着控件令牌放大），里面画轨道与圆钮 */
+.toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--control-sm);
+  min-height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+}
+
+.toggle-track {
+  position: relative;
+  width: var(--space-8);
+  height: var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--color-fill-3);
+  transition: background-color var(--duration-base) var(--ease-out);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: var(--space-0-5);
+  left: var(--space-0-5);
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-text-2);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.toggle[aria-checked="true"] .toggle-track {
+  background: var(--color-accent);
+}
+
+.toggle[aria-checked="true"] .toggle-thumb {
+  background: var(--color-on-accent);
+  transform: translateX(calc(var(--space-8) - var(--space-4) - 2 * var(--space-0-5)));
+}
+
+.toggle:disabled .toggle-track {
+  opacity: 0.5;
+}

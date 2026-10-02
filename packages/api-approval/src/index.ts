@@ -65,11 +65,11 @@ export type ApprovalState = 'pending' | 'approved' | 'denied' | 'expired' | 'can
 export type SettledState = Exclude<ApprovalState, 'pending'>;
 
 /**
- * 卡片上的事实，只取参数里已有的，各项逐字、与执行的参数一致：
- * - `command`、`cwd`：参数里的命令与工作目录；
- * - `diff`：由 file_edit（oldText、newText）、file_write 与 file_append（content）的参数生成，删的行以 `-` 开头、加的行以 `+` 开头；
+ * 卡片上的事实，按工具定义上声明的展示种类（api-tools 的 `display`）从参数里取，各项逐字、与执行的参数一致：
+ * - `command`、`cwd`：命令类工具声明的命令与工作目录；
+ * - `diff`：改文件类工具声明的路径与删、加两侧的参数生成，删的行以 `-` 开头、加的行以 `+` 开头；
  *   路径或内容疑似含密钥时没有 `patch`，只给路径；
- * - `params`：其余参数，逐字。
+ * - `params`：其余参数，逐字。没声明展示种类的工具，全部参数都在这里。
  *
  * 显示之前一律经 {@link sanitizeForCard} 清洗。
  */
@@ -100,7 +100,7 @@ export interface Approval {
 /**
  * 结算从哪里来：
  * - `owner`：owner 应答（批准或拒绝）；
- * - `absent`：没人在场（发起时，或等待中在场的审批面都断开、变为不在场）；
+ * - `absent`：没人在场（发起时，或等待中在场的审批面都断开、变为不在场，且宽限内没有恢复）；
  * - `timeout`：等满时限；
  * - `ineligible`：发起回合的类别不能产生审批；
  * - `subtask`：子任务回合的审批不上浮给 owner；
@@ -118,6 +118,13 @@ export type ApprovalSource =
   | 'turn-ended'
   | 'shutdown';
 
+/** 一个审批怎样结算的：结局、从哪里来与结算的时刻（毫秒时间戳） */
+export interface ApprovalSettlement {
+  state: SettledState;
+  source: ApprovalSource;
+  at: number;
+}
+
 /** 审批的结局。拒绝时 message 是回给模型的话：写明被什么拦下、能不能再申请；发起类别为 room 的只有一句通用的拒绝 */
 export type ApprovalOutcome =
   | { approvalId: string; approved: true }
@@ -132,7 +139,7 @@ export interface ApprovalSink {
   /** 有审批要处理：在场时推出；变为在场时补推还没结的 */
   requested(approval: Approval): void;
   /** 推给过它的审批结算了 */
-  settled(approvalId: string, state: SettledState): void;
+  settled(approvalId: string, settlement: ApprovalSettlement): void;
 }
 
 export interface ApprovalAnswer {

@@ -98,7 +98,7 @@ class DoctorRegistry implements DoctorService {
       checks,
     };
 
-    // 通知 WebUI 同步刷新（webui-server 监听并广播到所有连接的客户端）
+    // 通知订阅者报告换了
     this.caps.events.emit('doctor:updated', { generatedAt: this.last.generatedAt, summary }).catch(() => {});
 
     return this.last;

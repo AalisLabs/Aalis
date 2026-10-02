@@ -1,0 +1,426 @@
+// @vitest-environment jsdom
+import { act, fireEvent, screen, within } from '@testing-library/react';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubPlatform, stubViewport } from '../helpers/browser.js';
+import { FakeWebSocket } from '../helpers/fake-websocket.js';
+import { type Harness, INIT, installDialog, main, renderApp, requests, server, summary } from './harness.js';
+import { agentMessage, notice, push, pushDelta, reasoning, snapshot, toolCall, turn, userMessage } from './items.js';
+
+// ════════════════════════════════════════════════════════════
+// 会话工作台的时间线：条目按种类渲染（提问、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局），
+// 流式拼接，工具卡按 display 渲染，全部折叠，回合上的回滚按功能位出现，驱动房间的提示条，更早的历史，
+// 完成未读的清除，会话被删掉时回首页，Esc 停止，订阅失败的错误态，附件
+// ════════════════════════════════════════════════════════════
+
+const mermaid = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  parse: vi.fn(async () => true),
+  render: vi.fn(async () => ({ svg: '<svg data-testid="chart"></svg>' })),
+}));
+vi.mock('../../packages/plugin-webui-client/node_modules/mermaid', () => ({ default: mermaid }));
+
+let app: Harness | undefined;
+let restoreDialog: () => void;
+
+beforeAll(() => {
+  restoreDialog = installDialog();
+});
+afterAll(() => restoreDialog());
+
+beforeEach(() => {
+  FakeWebSocket.install();
+  stubPlatform('MacIntel');
+  stubViewport(1440);
+});
+
+afterEach(() => {
+  app?.close();
+  app = undefined;
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+const timeline = () => main().findByRole('region', { name: '对话' });
+
+describe('时间线', () => {
+  it('条目按种类渲染：提问、回复（Markdown 与模型角标）、默认折叠的思考、宿主通知；头部写标题与会话种类', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '把周报整理一下'),
+          turn('t1', { outcome: 'replied' }),
+          reasoning('r1', '先读三份草稿'),
+          agentMessage('a1', '**好的**，已经整理好', { model: { provider: 'p', model: 'demo-model' } }),
+          notice('n1', '对话已压缩', { topic: 'compress' }),
+        ]),
+    });
+    const log = within(await timeline());
+    expect(log.getByText('把周报整理一下')).toBeTruthy();
+    expect(log.getByText('好的').tagName).toBe('STRONG');
+    expect(log.getByText('demo-model')).toBeTruthy();
+    expect(log.getByText('对话已压缩')).toBeTruthy();
+    const thinking = log.getByRole('button', { name: /思考/ });
+    expect(thinking.getAttribute('aria-expanded')).toBe('false');
+    expect(log.queryByText('先读三份草稿')).toBeNull();
+    fireEvent.click(thinking);
+    expect(log.getByText('先读三份草稿')).toBeTruthy();
+    expect(main().getByRole('heading', { name: '整理周报' })).toBeTruthy();
+    expect(main().getByText('我的会话')).toBeTruthy();
+  });
+
+  it('流式：started 之后的增量接在正文后面，completed 的全文是正本', async () => {
+    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([]) });
+    const log = within(await timeline());
+    act(() => push('started', agentMessage('a1', '你')));
+    act(() => pushDelta('a1', '好'));
+    expect(log.getByText('你好')).toBeTruthy();
+    expect(log.getByLabelText('正在输出')).toBeTruthy();
+    act(() => push('completed', agentMessage('a1', '你好，在的')));
+    expect(log.getByText('你好，在的')).toBeTruthy();
+    expect(log.queryByText('你好')).toBeNull();
+    expect(log.queryByLabelText('正在输出')).toBeNull();
+    act(() =>
+      push('started', toolCall('c1', 'exec', { status: 'running', display: { kind: 'command', command: 'ls' } })),
+    );
+    act(() => pushDelta('c1', 'a.txt\n'));
+    act(() => pushDelta('c1', 'b.txt'));
+    const line = log.getByRole('button', { name: /执行 ls/ });
+    expect(line.textContent).toContain('运行中');
+    fireEvent.click(line);
+    expect(log.getByText(/a\.txt\s+b\.txt/)).toBeTruthy();
+  });
+
+  it('正在输出的回复里的 Mermaid 图输出完才画', async () => {
+    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([]) });
+    const log = within(await timeline());
+    mermaid.parse.mockClear();
+    act(() => push('started', agentMessage('a1', '```mermaid\ngraph TD; A-->')));
+    act(() => pushDelta('a1', 'B\n```'));
+    await act(() => new Promise(resolve => setTimeout(resolve, 0)));
+    expect(mermaid.parse).not.toHaveBeenCalled();
+    act(() => push('completed', agentMessage('a1', '```mermaid\ngraph TD; A-->B\n```')));
+    expect(await log.findByTestId('chart')).toBeTruthy();
+  });
+
+  it('工具卡按 display 渲染：命令与工作目录、改文件的两侧，没声明的走通用卡并逐字列出参数；失败写在行上', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          toolCall('c1', 'exec', {
+            args: { command: 'npm test', cwd: '/repo' },
+            display: { kind: 'command', command: 'npm test', cwd: '/repo' },
+            output: 'ok 12 tests',
+            durationMs: 1200,
+          }),
+          toolCall('c2', 'file_edit', {
+            args: { path: 'src/a.ts', oldText: 'old line', newText: 'new line' },
+            display: { kind: 'file-change', path: 'src/a.ts', removed: 'old line', added: 'new line' },
+          }),
+          toolCall('c3', 'web_search', { args: { query: '天气', limit: 3 }, result: '晴' }),
+          toolCall('c5', 'send_group_message', { sentToRoom: true, durationMs: 300 }),
+          toolCall('c4', 'exec', {
+            status: 'failed',
+            args: { command: 'false' },
+            display: { kind: 'command', command: 'false' },
+          }),
+        ]),
+    });
+    const log = within(await timeline());
+    const exec = log.getByRole('button', { name: /执行 npm test/ });
+    expect(exec.textContent).toContain('1.2 秒');
+    expect(exec.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(exec);
+    expect(log.getByText('ok 12 tests')).toBeTruthy();
+    expect(log.getByText('/repo')).toBeTruthy();
+
+    fireEvent.click(log.getByRole('button', { name: /修改 src\/a\.ts/ }));
+    expect(log.getByText('-old line')).toBeTruthy();
+    expect(log.getByText('+new line')).toBeTruthy();
+
+    fireEvent.click(log.getByRole('button', { name: /调用 web_search/ }));
+    expect(log.getByText(/"query": "天气"/)).toBeTruthy();
+    expect(log.getByText('晴')).toBeTruthy();
+
+    expect(log.getByRole('button', { name: /执行 false/ }).textContent).toContain('失败');
+    expect(log.getByRole('button', { name: /调用 send_group_message/ }).textContent).toContain('已发到群 · 0.3 秒');
+  });
+
+  it('工具行上来自参数的文字经过清洗：看不见的字符显示出来', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([toolCall('c1', 'exec', { display: { kind: 'command', command: 'echo \u202Egnp.exe' } })]),
+    });
+    const line = within(await timeline()).getByRole('button', { name: /执行/ });
+    expect(line.textContent).toContain('echo ⟨U+202E⟩gnp.exe');
+    expect(line.textContent).not.toContain('\u202E');
+  });
+
+  it('改文件的细节：两侧经过清洗；只有新增一侧时不多出一行删除', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          toolCall('c1', 'file_write', {
+            display: { kind: 'file-change', path: 'a.txt', added: 'ok\u202Egnp.exe' },
+          }),
+        ]),
+    });
+    const log = within(await timeline());
+    fireEvent.click(log.getByRole('button', { name: /写入 a\.txt/ }));
+    const diff = log.getByText(/^\+ok/).parentElement as HTMLElement;
+    expect([...diff.children].map(row => row.textContent)).toEqual(['+ok⟨U+202E⟩gnp.exe']);
+  });
+
+  it('相隔超过 10 分钟的两段之间插一行时间，挨得近的不插', async () => {
+    const at = (minute: number) => new Date(2026, 9, 3, 9, minute).getTime();
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '第一句', { at: at(0) }),
+          userMessage('u2', '第二句', { at: at(5) }),
+          userMessage('u3', '第三句', { at: at(30) }),
+        ]),
+    });
+    const log = await timeline();
+    expect([...log.querySelectorAll('time')].map(time => time.textContent)).toEqual([
+      expect.stringContaining('09:00'),
+      expect.stringContaining('09:30'),
+    ]);
+  });
+
+  it('「全部展开」与「全部折叠」：工具卡与思考一起展开或收起，单张卡可以单独展开', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          reasoning('r1', '想一想'),
+          toolCall('c1', 'exec', { display: { kind: 'command', command: 'ls' } }),
+          toolCall('c2', 'exec', { display: { kind: 'command', command: 'pwd' } }),
+        ]),
+    });
+    const log = within(await timeline());
+    const cards = () => log.queryAllByRole('button', { expanded: true });
+    expect(cards()).toHaveLength(0);
+    fireEvent.click(log.getByRole('button', { name: /执行 ls/ }));
+    expect(cards()).toHaveLength(1);
+    fireEvent.click(main().getByRole('button', { name: '全部展开' }));
+    expect(cards()).toHaveLength(3);
+    fireEvent.click(main().getByRole('button', { name: '全部折叠' }));
+    expect(cards()).toHaveLength(0);
+  });
+
+  it('回合：中止与出错写在回合末尾；回滚挂在收尾了的回合上、按功能位出现，两种范围，之后的回合也改过的文件如实提示', async () => {
+    const rewound: unknown[] = [];
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '改一下配置'),
+          turn('t1', { outcome: 'aborted' }),
+          agentMessage('a1', '好的，我先改', { turnId: 't1' }),
+          userMessage('u2', '再试一次'),
+          turn('t2', { outcome: 'error' }),
+          agentMessage('a2', '出错前说的', { turnId: 't2' }),
+          userMessage('u3', '还在吗'),
+          turn('t3'),
+        ]),
+      'turn/rewind': params => {
+        rewound.push(params);
+        return {
+          ok: true,
+          restored: ['workspace:/a.ts'],
+          deleted: [],
+          errors: [],
+          alsoChangedBy: [{ uri: 'workspace:/a.ts', turnIds: ['t2'] }],
+          ...(params.scope === 'code-and-chat' ? { deletedMessages: 2, chatDeleted: true } : {}),
+        };
+      },
+    });
+    const log = within(await timeline());
+    expect(log.getByText('已停止')).toBeTruthy();
+    expect(log.getByText('这一轮出错了')).toBeTruthy();
+    const rewinds = log.getAllByRole('button', { name: '回滚这一轮' });
+    expect(rewinds).toHaveLength(2);
+
+    fireEvent.click(rewinds[0]);
+    fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
+    const dialog = within(screen.getByRole('dialog', { name: '回滚这一轮的文件改动？' }));
+    expect(document.activeElement).toBe(dialog.getByRole('button', { name: '取消' }));
+    fireEvent.click(dialog.getByRole('button', { name: '回滚' }));
+    await vi.waitFor(() => expect(rewound).toEqual([{ sessionId: 's1', turnId: 't1', scope: 'code' }]));
+    const toasts = within(screen.getByRole('region', { name: '通知' }));
+    expect(await toasts.findByText(/已回滚：恢复 1 个文件/)).toBeTruthy();
+    expect(toasts.getByText(/workspace:\/a\.ts/)).toBeTruthy();
+
+    fireEvent.click(rewinds[1]);
+    fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动与这一轮对话' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '回滚' }));
+    await vi.waitFor(() => expect(rewound).toHaveLength(2));
+    expect(rewound[1]).toEqual({ sessionId: 's1', turnId: 't2', scope: 'code-and-chat' });
+
+    act(() => server().notify('features/changed', { features: { ...INIT.features, rewind: false } }));
+    expect(log.queryAllByRole('button', { name: '回滚这一轮' })).toHaveLength(0);
+  });
+
+  it('驱动别人的房间时顶部有提示条；房间里逐条写说话人，没发出的回复写明原因', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot(
+          [
+            userMessage('u1', '今晚谁来讲', {
+              speaker: { platform: 'onebot', userId: '20001', nickname: '小林', owner: false },
+            }),
+            userMessage('u2', '我来讲', { speaker: { platform: 'webui', userId: 'console', owner: true } }),
+            agentMessage('a1', '不客气', { undelivered: { reason: '没有发出：这一轮静默结束' } }),
+          ],
+          { session: { kind: 'room', section: 'rooms', platform: 'onebot', audience: 'group', title: '示例群 A' } },
+        ),
+    });
+    const log = within(await timeline());
+    expect(main().getByText('你正在以 owner 身份在「示例群 A」发言，按群的人设和能力运行')).toBeTruthy();
+    expect(main().getByText('群 · onebot')).toBeTruthy();
+    expect(log.getByText('小林')).toBeTruthy();
+    expect(log.getByText('你')).toBeTruthy();
+    expect(log.getByText('没有发出：这一轮静默结束')).toBeTruthy();
+  });
+
+  it('「我的」会话没有提示条，也不逐条写说话人', async () => {
+    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([userMessage('u1', '你好')]) });
+    const log = within(await timeline());
+    expect(main().queryByText(/你正在以 owner 身份/)).toBeNull();
+    expect(log.queryByText('你')).toBeNull();
+  });
+
+  it('更早的消息：按快照给的游标取历史，接在前面，取完了按钮消失', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([userMessage('u2', '最近的一句')], { before: 'cursor-1' }),
+      'session/history': () => ({ items: [userMessage('u1', '更早的一句')] }),
+    });
+    const log = within(await timeline());
+    fireEvent.click(log.getByRole('button', { name: '更早的消息' }));
+    await log.findByText('更早的一句');
+    expect(requests('session/history')).toEqual([{ sessionId: 's1', before: 'cursor-1' }]);
+    const texts = log.getAllByText(/的一句$/).map(node => node.textContent);
+    expect(texts).toEqual(['更早的一句', '最近的一句']);
+    expect(log.queryByRole('button', { name: '更早的消息' })).toBeNull();
+  });
+
+  it('看着「我的」会话时清掉完成未读；会话被删掉时回首页', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([], { session: { unread: true } }),
+      'session/markSeen': () => ({}),
+    });
+    await timeline();
+    await vi.waitFor(() => expect(requests('session/markSeen')).toEqual([{ sessionId: 's1' }]));
+    for (const unread of [false, true]) {
+      act(() =>
+        server().notify('sessions/changed', {
+          upserts: [summary('s1', { title: '整理周报', unread })],
+          removes: [],
+          groups: [],
+        }),
+      );
+    }
+    await vi.waitFor(() => expect(requests('session/markSeen')).toHaveLength(2));
+    act(() => server().notify('sessions/changed', { upserts: [], removes: ['s1'], groups: [] }));
+    expect(app.where()).toBe('/');
+  });
+
+  it('Esc 停止正在跑的那一轮（带 turnId）；有弹层时 Esc 只关弹层，输入法组字时的 Esc（isComposing 与 keyCode 229）不算', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([userMessage('u1', '跑一下'), turn('t9')], { session: { running: true } }),
+      'turn/abort': () => ({}),
+    });
+    await timeline();
+    fireEvent.click(main().getByRole('button', { name: '更多' }));
+    const menu = screen.getByRole('menu');
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(requests('turn/abort')).toEqual([]);
+    fireEvent.keyDown(document.body, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(document.body, { key: 'Escape', keyCode: 229 });
+    fireEvent.keyDown(document.body, { key: 'k', code: 'KeyK', metaKey: true });
+    fireEvent.keyDown(screen.getByRole('combobox', { name: '搜索会话' }), { key: 'Escape' });
+    expect(requests('turn/abort')).toEqual([]);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await vi.waitFor(() => expect(requests('turn/abort')).toEqual([{ sessionId: 's1', turnId: 't9' }]));
+  });
+
+  it('订阅失败时会话区写明原因并可以重试', async () => {
+    let fail = true;
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => {
+        if (fail) throw Object.assign(new Error('会话不存在：s1'), { code: 'not-found' });
+        return snapshot([userMessage('u1', '回来了')]);
+      },
+    });
+    const alert = await main().findByRole('alert');
+    expect(alert.textContent).toContain('会话不存在：s1');
+    fail = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(within(await timeline()).getByText('回来了')).toBeTruthy();
+  });
+
+  it('工具调用达到上限的通知可以「继续」，请求在途时不能再点；没有对话服务时不出现', async () => {
+    const items = [
+      userMessage('u1', '整理一下'),
+      turn('t1', { outcome: 'replied' }),
+      notice('n1', '工具调用达到这一轮的上限，可以让她继续', { turnId: 't1', topic: 'tool-limit', canContinue: true }),
+    ];
+    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot(items), 'turn/continue': () => ({}) });
+    const log = within(await timeline());
+    fireEvent.click(log.getByRole('button', { name: '继续' }));
+    fireEvent.click(log.getByRole('button', { name: '继续' }));
+    await vi.waitFor(() => expect(requests('turn/continue')).toEqual([{ sessionId: 's1' }]));
+    await vi.waitFor(() =>
+      expect((log.getByRole('button', { name: '继续' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(requests('turn/continue')).toHaveLength(1);
+    act(() => server().notify('features/changed', { features: { ...INIT.features, send: false } }));
+    expect(log.queryByRole('button', { name: '继续' })).toBeNull();
+  });
+
+  it('「继续」只给最后一段里的通知，回合在跑时不出现', async () => {
+    const items = [
+      turn('t1', { outcome: 'replied' }),
+      notice('n1', '工具调用达到这一轮的上限，可以让她继续', { turnId: 't1', topic: 'tool-limit', canContinue: true }),
+    ];
+    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot(items) });
+    const log = within(await timeline());
+    expect(log.getByRole('button', { name: '继续' })).toBeTruthy();
+    act(() =>
+      server().notify('sessions/changed', { upserts: [summary('s1', { running: true })], removes: [], groups: [] }),
+    );
+    expect(log.queryByRole('button', { name: '继续' })).toBeNull();
+    act(() =>
+      server().notify('sessions/changed', { upserts: [summary('s1', { running: false })], removes: [], groups: [] }),
+    );
+    act(() => push('completed', userMessage('u2', '先别继续')));
+    expect(log.queryByRole('button', { name: '继续' })).toBeNull();
+  });
+
+  it('附件：图片走媒体地址，外站图片经代理，文件按句柄下载，没有句柄的只写名字', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          agentMessage('a1', '', {
+            attachments: [
+              { kind: 'image', src: 'data:/images/x.png', name: 'x.png' },
+              { kind: 'image', src: 'https://example.com/a.png', name: 'a.png' },
+              { kind: 'file', src: 'handle-1', name: '报告.pdf' },
+              { kind: 'file', name: '只有名字.txt' },
+            ],
+          }),
+        ]),
+    });
+    const log = within(await timeline());
+    const images = log.getAllByRole('img');
+    expect(images.map(img => img.getAttribute('src'))).toEqual([
+      '/api/media?uri=data%3A%2Fimages%2Fx.png',
+      '/api/proxy/image?url=https%3A%2F%2Fexample.com%2Fa.png',
+    ]);
+    const file = log.getByRole('link', { name: /报告\.pdf/ });
+    expect(file.getAttribute('href')).toBe('/api/session-file?sessionId=s1&handle=handle-1');
+    expect(file.hasAttribute('download')).toBe(true);
+    expect(log.getByText('只有名字.txt').closest('a')).toBeNull();
+  });
+});

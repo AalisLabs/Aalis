@@ -1,5 +1,6 @@
 // ----- 记忆服务接口 -----
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
+import type { SessionSetting } from '@aalis/api-session-manager'; // 也是下方 SessionConfig 增强的锚点
 import type {} from '@aalis/core';
 import { defineService, type Logger } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
@@ -278,19 +279,64 @@ declare module '@aalis/core' {
   }
 }
 
-// ----- 会话记忆压缩事件契约 -----
+// ----- 会话压缩 -----
 //
-// 压缩协作：plugin-webui-server、plugin-session-server（手动触发）/ plugin-memory-summary（usage 超阈值
-// 自动触发）emit 'session:compress'；plugin-memory-summary 执行压缩并以
-// 'session:compressing' 广播进度（webui-server 与 session-server 转发给订阅的客户端）。
+// 压缩把较早的历史压成摘要、只留最近若干条进上下文。提供方：plugin-memory-summary（用量达到自动压缩线时它自己触发）；
+// 使用方：plugin-session-server（手动压缩；功能位与用量条目的压缩线看这个服务在不在）。
+// 进度经 'session:compressing' 广播，会话服务转成时间线上的压缩通知。
+
+/** 会话压缩服务 */
+export interface CompressionService {
+  /**
+   * 压缩一个会话：manual 是 owner 手动，auto 是用量达到 autoThreshold 时提供方自己触发。压完才落定；没有压成时拒绝，
+   * 原因在错误里：这个会话正在压缩或生成摘要、记忆或摘要模型不在、模型失败只做了裁切、期间会话被清空。
+   * 历史不多于要保留的条数时什么都不做，照常落定
+   */
+  compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void>;
+  /** 自动压缩的使用率（0 到 1，与 api-agent 的 token:usage 里 usageRatio 同一口径）；0 表示不自动压缩 */
+  readonly autoThreshold: number;
+}
+
 declare module '@aalis/core' {
   interface AalisEvents {
-    /** 请求压缩某会话的记忆。usageRatio 仅 auto 触发时携带 */
-    'session:compress': [req: { sessionId: string; reason: 'manual' | 'auto'; usageRatio?: number }];
-    /** 压缩进度通知 */
+    /** 压缩进度：开始、压成、没压成 */
     'session:compressing': [info: { sessionId: string; status: 'start' | 'done' | 'error' }];
   }
 }
+
+export const compression = defineService<CompressionService>('compression');
+
+// ----- 会话设置项：记忆召回范围 -----
+
+/** 记忆召回范围：session=仅本会话，platform=同平台，all=不限 */
+export type MemoryRecallScope = 'session' | 'platform' | 'all';
+
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    /** 记忆召回范围，只能比各记忆插件自己的配置更窄；随子会话复制，否则经子任务就绕过了收窄 */
+    memoryRecallScope?: MemoryRecallScope;
+  }
+}
+
+/**
+ * 会话设置项「记忆召回范围」。跨会话取料的插件（跨会话历史、向量记忆、会话历史工具、关系图）都遵守它，各自登记
+ * 这同一份定义：只要其中一个在场这一项就有效，不会因为某一个插件停用而让其余插件不再收窄
+ */
+export const MEMORY_RECALL_SCOPE_SETTING: SessionSetting = {
+  key: 'memoryRecallScope',
+  field: {
+    type: 'select',
+    label: '记忆召回范围',
+    description: '跨会话的记忆与历史从哪里取；只能比各记忆插件自己的配置更窄，写宽了按插件配置',
+    options: [
+      { label: '仅本会话', value: 'session' },
+      { label: '同平台', value: 'platform' },
+      { label: '全部', value: 'all' },
+    ],
+  },
+  appliesTo: ['owner', 'room', 'task'],
+  prominence: 'advanced',
+};
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const memory = defineService<MemoryService>('memory');

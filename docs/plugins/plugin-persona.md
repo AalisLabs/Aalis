@@ -37,6 +37,10 @@ export default definePlugin({
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
 | `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。 |
 
+## 会话设置项
+
+本插件在 session-manager 上登记四个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：`persona`（人设，可选项来自 `listModels()`，common）、`systemPromptExtra`（额外提示，追加在人设提示之后、结构化输出格式说明之前，common）、`disableOutputFormat`（不用结构化输出，advanced）、`clientSideJsonRendering`（JSON 留给客户端渲染，advanced）。没设置时分别用本插件配置的 `persona`、不追加、按角色卡、按角色卡。本插件没启用时这几项不出现，写过的值保留。
+
 ## 角色卡格式
 
 人设以 YAML 文件定义，放在 `personasDir` 下，文件名（不含 `.yaml` / `.yml` 后缀）即 `persona` 配置值。找不到指定人设时使用内置默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。

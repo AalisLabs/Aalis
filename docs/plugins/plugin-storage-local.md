@@ -5,7 +5,7 @@
 
 ## 概述
 
-`@aalis/api-storage` 契约的本地文件系统实现，提供 `storage` 服务。它给若干本机目录起稳定的名字（插件自己的数据在按家目录布局派生的内部根里，文件工具用的根在 `roots` 数组里声明，缺省只有 workspace），让上层用 URI 表示文件而不写宿主机绝对路径；在每条 API 内对 `..` 穿越做规范化与校验；写入、删除、重命名、移动、建目录和下载都会记一行 info 日志，作为统一审计点；不管经哪个根，都不能读写宿主的密钥文件、不能改写主配置（见「宿主控制文件」）；`writeFile` 在快照之前先判目标类型，目标是目录就直接报「不能覆盖目录」——既然写目录本就必然失败，就不能让它先在 checkpoint 里留下一条「新建文件」记录，否则回滚会把整棵目录删掉；`list` / `stat` / `readFile` 只记 debug，同一操作对同一 URI 在 1 秒内只记一次。它不是沙箱：无法阻止 shell、run_python 等工具启动的子进程在拿到 cwd 之后访问 OS 用户可访问的任何文件，这种隔离只能靠 OS 用户权限、容器或 OS 级沙箱。`browsable` 只是给文件浏览器类 UI 的 hint，当前 WebUI 文件页只显示其 `fileRoot` 配置指向的那一个根，其它根仅供 agent 与工具按 URI 寻址。需要访问 workspace 之外的目录时，在 `roots` 里加一条路径限定到目标目录的具名根；加 `{ name: 'host', path: '/' }` 则可通过 `host:/` 访问宿主机任何位置（未显式设置 `writable` / `deletable` 时仅可读），注册时会输出 WARN 日志。
+`@aalis/api-storage` 契约的本地文件系统实现，提供 `storage` 服务。它给若干本机目录起稳定的名字（插件自己的数据在按家目录布局派生的内部根里，文件工具用的根在 `roots` 数组里声明，缺省只有 workspace），让上层用 URI 表示文件而不写宿主机绝对路径；在每条 API 内对 `..` 穿越做规范化与校验；写入、删除、重命名、移动、建目录和下载都会记一行 info 日志，作为统一审计点；不管经哪个根，都不能读写宿主的密钥文件、不能改写主配置（见「宿主控制文件」）；`writeFile` 在快照之前先判目标类型，目标是目录就直接报「不能覆盖目录」——既然写目录本就必然失败，就不能让它先在 checkpoint 里留下一条「新建文件」记录，否则回滚会把整棵目录删掉；`list` / `stat` / `readFile` 只记 debug，同一操作对同一 URI 在 1 秒内只记一次。它不是沙箱：无法阻止 shell、run_python 等工具启动的子进程在拿到 cwd 之后访问 OS 用户可访问的任何文件，这种隔离只能靠 OS 用户权限、容器或 OS 级沙箱。`browsable` 只是给文件浏览器类 UI 的 hint，WebUI 没有文件浏览页，不读它；这些根供 agent 与工具按 URI 寻址。需要访问 workspace 之外的目录时，在 `roots` 里加一条路径限定到目标目录的具名根；加 `{ name: 'host', path: '/' }` 则可通过 `host:/` 访问宿主机任何位置（未显式设置 `writable` / `deletable` 时仅可读），注册时会输出 WARN 日志。
 
 ## 插件声明
 
@@ -33,13 +33,13 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `roots` | array | `[{"name":"workspace","path":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true}]` | 存储根目录：文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，其它根仅作为工具/agent 寻址使用）。 |
+| `roots` | array | `[{"name":"workspace","path":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true}]` | 存储根目录：文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。 |
 
 `path` 可写绝对路径，也可写相对路径；相对路径按家目录（`host-paths` 的 `home`）解析，与进程的 cwd 无关。插件以 required 声明 `host-paths`，宿主不提供时停在 pending。
 
 ## 内部根
 
-插件另注册一组内部根，存放各插件自己的数据。它们按 `host-paths` 给出的家目录布局派生，不能配置，不在文件页出现（都是 `browsable: false`）：
+插件另注册一组内部根，存放各插件自己的数据。它们按 `host-paths` 给出的家目录布局派生，不能配置（都是 `browsable: false`）：
 
 | 根 | 路径 | kind | 权限 | 用途 |
 |---|---|---|---|---|
@@ -80,4 +80,3 @@ export default definePlugin({
 - 存储服务契约：[api/api-storage.md](../api/api-storage.md)
 - 存储服务说明：[services/storage.md](../services/storage.md)
 - 存储 URI 文法：[concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)
-- WebUI 服务端（文件页 `fileRoot`）：[plugin-webui-server.md](./plugin-webui-server.md)

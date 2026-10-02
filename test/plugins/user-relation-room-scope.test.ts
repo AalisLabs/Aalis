@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
-import { memory } from '../../packages/api-memory/src/index.js';
-import { type MemoryRecallScope, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { type MemoryRecallScope, memory } from '../../packages/api-memory/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, logger, optional, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';

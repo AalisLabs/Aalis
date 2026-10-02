@@ -48,6 +48,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `OutboundVideo` | `'outbound-video'` | assistant 已发出的视频占位 | assistant |
 | `OutboundFile` | `'outbound-file'` | assistant 已发出的文件占位（描述位是文件名） | assistant |
 | `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
+| `OutboundDeliveryFailed` | `'outbound-delivery-failed'` | 平台适配器记下的投递失败：她发出的消息平台没收下或结果未知，进下一轮的上下文。`metadata` 带 `error`（与投递结果同一句原因）与那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里标出没发出的回复 | system |
 
 第三方插件可以定义自己的 kind 字符串，但应避开上表已占用的语义。
 
@@ -287,7 +288,7 @@ await handle?.chat({ messages });   // entry 已知道是哪个 model
 
 - **`ContentSegment`** 是 assistant 输出的有序时间线，有三种：`text`、`reasoning_text`（DeepSeek-R1、Ollama thinking 等产出的思考文本）、`tool_call`（带 `startTime` / `endTime` 供时长展示，`callId` 是这次调用的 id，同 `ToolCallContext.callId`）。当它存在时，它是渲染顺序的真相；`content` 与 `reasoningContent` 是供 LLM API、历史压缩等纯文本消费者使用的派生镜像，生产方累积时需要同步写。
 - **`ChatStreamChunk`** 是流式增量，包含 `contentDelta` / `reasoningDelta` / `toolCalls`（最终结果）/ `toolCallProgress`（增量进度提示，与 `toolCalls` 互斥）/ `done` / `usage`。
-- **`StreamChunkMessage`** 是平台层的流式片段，经 `'outbound:stream'` 事件发往 WebUI 等前端。其中 `toolCallProgress` 仅用于 UI「正在生成工具调用」提示，不影响最终 tool_call segment 的下发。
+- **`StreamChunkMessage`** 是平台层的流式片段，经 `'outbound:stream'` 事件广播：会话服务把正文与思考的增量拼进时间线推给客户端，终端客户端直接显示正文。其中的 `toolCallProgress`（「正在生成工具调用」的进度）目前没有读者，会话服务不把它推给客户端；它不影响最终 tool_call segment 的下发。
 
 ---
 

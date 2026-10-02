@@ -132,7 +132,7 @@ const md = fixGfmTables(rawMarkdown);
 
 ### `plugin-webui-client`：前端渲染预处理复用
 
-`packages/plugin-webui-client/src/preprocessLaTeX.ts` 导入 `fixGfmTables`，在 `preprocessLaTeX` 开头先跑一次表格归一（`preprocessLaTeX.ts`）。注释说明（`preprocessLaTeX.ts`）：agent 侧若已修复则此处等价 no-op，保留是为**兼容历史会话与未走 agent 通道的内容**。这说明同一份纯函数逻辑被「后端 provider/agent」和「前端渲染器」两端复用——正是 util 库存在的意义。
+`packages/plugin-webui-client/src/markdown/latex.ts` 导入 `fixGfmTables`，在 `preprocessLaTeX` 开头先跑一次表格归一。注释说明：agent 侧若已修复则此处等价 no-op，保留是为**兼容历史会话与未走 agent 通道的内容**。这说明同一份纯函数逻辑被「后端 provider/agent」和「前端渲染器」两端复用——正是 util 库存在的意义。
 
 ---
 

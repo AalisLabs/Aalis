@@ -3,8 +3,8 @@ import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
-import { memory } from '@aalis/api-memory';
-import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
+import { MEMORY_RECALL_SCOPE_SETTING, type MemoryRecallScope, memory } from '@aalis/api-memory';
+import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
@@ -335,6 +335,7 @@ async function run({
   }
 
   const parsed = parseConfig(configSchema, config, logger);
+  sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
 
   // 配置校验
   const windowNum = parsed.contextExpand.window;

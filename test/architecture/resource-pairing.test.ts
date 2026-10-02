@@ -26,10 +26,6 @@ const WHITELIST = new Map<string, string>([
   // fetch：浏览器端代码与库层透传
   ['fetch plugin-webui-server/auth.ts', '登录页模板串内的浏览器端 JS'],
   ['fetch plugin-webui-server/client-switch-page.ts', '页面模板串内的浏览器端 JS'],
-  ['fetch plugin-webui-client/App.tsx', '浏览器 SPA'],
-  ['fetch plugin-webui-client/api.ts', '浏览器 SPA'],
-  ['fetch plugin-webui-client/components/SchemaForm.tsx', '浏览器 SPA'],
-  ['fetch plugin-webui-client/components/UploadedFilesDrawer.tsx', '浏览器 SPA'],
   ['fetch util-network-guard/index.ts', 'safeFetch 是库层，透传调用方 init（含 signal），超时由调用方给'],
   ['fetch plugin-tool-code-runner/index.ts', '`fetch(` 出现在工具描述字符串里，不是调用'],
   // spawn：契约、实现方、以及寿命由外部决定的进程

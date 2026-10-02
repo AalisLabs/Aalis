@@ -363,7 +363,7 @@ export interface OutgoingMessage {
   /** 宿主通知的最终转述或宿主正文兜底；用于关联通知派发，不给回合中的工具消息附带此标记。 */
   hostNotice?: { kind: string; id?: string };
   reasoningContent?: string;
-  /** 助手输出的有序时间线（与 Message.segments 含义一致），存在时为 webui 等消费者顺序渲染的依据 */
+  /** 助手输出的有序时间线（与 Message.segments 含义一致）：要按顺序展示思考与工具调用的适配器以它为准 */
   segments?: ContentSegment[];
   /**
    * 助手要附带发送的多模态附件（图片/音频/视频/文件）。
@@ -375,7 +375,9 @@ export interface OutgoingMessage {
   source?: 'agent' | 'system' | 'command';
   /** 由工具调用发出的消息：那次调用的 id（ToolCallContext.callId），会话的客户端据此把消息挂到对应的工具卡上 */
   callId?: string;
-  /** 本条回复的 LLM 元数据（供 webui 实时展示，不需持久化）。 */
+  /** agent 一轮的回复：这一轮的 id。适配器记投递失败时带上它，回看历史时据此标出这一轮的回复没发出 */
+  turnId?: string;
+  /** 本条回复的 LLM 元数据，只在进程内、不持久化；会话服务取其中的 provider 与 model 标在实时推送的回复上 */
   modelInfo?: {
     provider?: string;
     model?: string;
@@ -450,6 +452,8 @@ declare module '@aalis/core' {
  * - `OutboundVideo`：assistant 已发出的视频占位。
  * - `OutboundFile`：assistant 已发出的文件占位（描述位是文件名）。
  * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
+ * - `OutboundDeliveryFailed`：平台适配器记下的投递失败（role 为 system）：她发出的消息平台没收下或结果未知，进下一轮的上下文，
+ *   让她知道刚才那条没送达。metadata 带 `error`（与投递结果同一句原因），以及那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的）。
  */
 export const WellKnownKinds = {
   EventMarker: 'event-marker',
@@ -459,6 +463,7 @@ export const WellKnownKinds = {
   OutboundVideo: 'outbound-video',
   OutboundFile: 'outbound-file',
   HostNotice: 'host-notice',
+  OutboundDeliveryFailed: 'outbound-delivery-failed',
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];

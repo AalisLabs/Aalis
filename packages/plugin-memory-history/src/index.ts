@@ -21,8 +21,13 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { resolveSessionOrigin } from '@aalis/api-gateway';
-import { memory, type RecentMessageRecord } from '@aalis/api-memory';
-import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
+import {
+  MEMORY_RECALL_SCOPE_SETTING,
+  type MemoryRecallScope,
+  memory,
+  type RecentMessageRecord,
+} from '@aalis/api-memory';
+import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -194,6 +199,7 @@ export default definePlugin({
   uses,
   apply({ memory, config, logger, contributions, tools, sessionManager }) {
     const cfg = normalizeConfig(parseConfig(configSchema, config, logger));
+    sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
 
     logger.info(
       `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,

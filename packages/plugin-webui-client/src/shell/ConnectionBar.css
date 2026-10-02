@@ -1,0 +1,24 @@
+.connection-bar {
+  grid-area: bar;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.connection-bar:empty {
+  display: none;
+}
+
+.connection-bar[data-tone="warning"] {
+  color: var(--color-warning-text);
+  background: var(--color-warning-subtle);
+}
+
+.connection-bar[data-tone="success"] {
+  color: var(--color-success-text);
+  background: var(--color-success-subtle);
+}

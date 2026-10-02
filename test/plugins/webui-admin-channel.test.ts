@@ -234,10 +234,10 @@ describe('/admin 管理面推送', () => {
 });
 
 describe('WebSocket 升级的来源校验', () => {
-  it('/ws、/session、/admin：同源与不带 Origin 的接受；跨源回 403，同一主机的别的端口、换个主机名、Origin 为 null 都算跨源', async () => {
+  it('/session、/admin：同源与不带 Origin 的接受；跨源回 403，同一主机的别的端口、换个主机名、Origin 为 null 都算跨源', async () => {
     const port = await start(quietApp());
     const crossOrigins = [`http://127.0.0.1:${port + 1}`, `http://localhost:${port}`, 'https://evil.example', 'null'];
-    for (const path of ['/ws', '/session', '/admin']) {
+    for (const path of ['/session', '/admin']) {
       const sameOrigin = { cookie: COOKIE, origin: `http://127.0.0.1:${port}` };
       expect((await upgrade(port, path, sameOrigin, rawSockets)).status).toBe(101);
       expect((await upgrade(port, path, { cookie: COOKIE }, rawSockets)).status).toBe(101);

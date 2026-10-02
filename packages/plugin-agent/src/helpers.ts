@@ -193,9 +193,7 @@ export function describeLLMFailure(
  * 会话解析结果 → persona 的会话选项。真实回合与 token:request 快照共用这一份构造，
  * 快照里 persona 那一桶才会按会话实际人设与额外提示估算。无 session-manager 时给 undefined（全局默认）。
  */
-export function toPersonaOptions(
-  resolved: Omit<SessionConfig, 'sessionDefaults'> | undefined,
-): PersonaSessionOptions | undefined {
+export function toPersonaOptions(resolved: SessionConfig | undefined): PersonaSessionOptions | undefined {
   if (!resolved) return undefined;
   return {
     persona: resolved.persona,

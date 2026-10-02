@@ -1,0 +1,26 @@
+.badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  height: var(--leading-xs);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  white-space: nowrap;
+  color: var(--color-text-2);
+  background: var(--color-fill-2);
+}
+
+.badge[data-count] {
+  min-width: var(--leading-xs);
+  border-radius: var(--radius-full);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.badge[data-tone="attention"] {
+  color: var(--color-warning-text);
+  background: var(--color-warning-subtle);
+}

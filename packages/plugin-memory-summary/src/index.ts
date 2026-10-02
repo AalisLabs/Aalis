@@ -4,10 +4,10 @@ import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
-import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
+import { clearMetadataNamespaces, compression, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import type { BoundOf, Logger } from '@aalis/core';
-import { config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
@@ -51,7 +51,7 @@ function visibleText(m: Message): string | null {
 
 /**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
- * generateSummary 与 session:compress 两条路径共用，避免格式漂移。
+ * generateSummary 与压缩（compress）两条路径共用，避免格式漂移。
  *
  * 工具回合必须留痕：带 toolCalls 的 assistant 行 content 常为空，直译成「助手: (空)」
  * 等于告诉摘要模型「这一轮什么也没发生」；tool 结果整条丢掉则连做了什么都看不见。
@@ -108,7 +108,7 @@ const configSchema = defineConfig({
     label: 'Token 预压缩阈值',
     default: 0.7,
     description:
-      '监听 agent 发出的 token:usage 事件，当使用率超过此比例 (0~1) 时启动后台压缩。默认 0.7 实现“临界前预压缩”，让本轮调用仍然能用原始上下文完成，压缩后的成果下一轮生效。设为 0 则禁用 token 触发。',
+      '监听 agent 发出的 token:usage 事件，当使用率超过此比例 (0~1) 时启动后台压缩。默认 0.7 实现“临界前预压缩”，让本轮调用仍然能用原始上下文完成，压缩后的成果下一轮生效。设为 0 则禁用 token 触发；不在 0 到 1 之间的值按 0 处理。',
   },
   summaryPrompt: {
     type: 'string',
@@ -215,6 +215,7 @@ const uses = {
   hooks,
   contributions,
   lifecycle,
+  provide,
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -223,12 +224,13 @@ export default definePlugin({
   displayName: '记忆摘要',
   subsystem: 'memory',
   configSchema,
+  provides: [compression],
   uses,
   apply: run,
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { memory, llm, messageArchive, logger, events, hooks, contributions, lifecycle } = caps;
+  const { memory, llm, messageArchive, logger, events, hooks, contributions, lifecycle, provide } = caps;
   const parsed = parseConfig(configSchema, caps.config, logger);
   const cfg: SummaryConfig = {
     ...parsed,
@@ -333,7 +335,7 @@ async function run(caps: Caps): Promise<void> {
   /**
    * 待摘要区间 = 除最近 keepRecent 条之外的旧消息。历史不多于 keepRecent 时为空：此时裁切什么都
    * 不归档，若照摘前段（slice 的负数下标会取出开头若干条），同一批消息每轮重摘一次、反复叠进摘要。
-   * 条数触发与 session:compress 共用这一处判定。
+   * 条数触发与压缩（compress）共用这一处判定。
    */
   function selectMessagesToSummarize(allHistory: Message[]): Message[] {
     if (allHistory.length <= cfg.keepRecent) return [];
@@ -341,7 +343,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 摘要并裁切（generateSummary 与 session:compress 共用）：格式化待摘要消息 → 联合已有摘要调用模型
+   * 摘要并裁切（generateSummary 与 compress 共用）：格式化待摘要消息 → 联合已有摘要调用模型
    * → 摘要落库 → 裁切活跃历史 → 写压缩分隔标记。`userSuffix` 追加在摘要请求正文末尾
    * （compress 路径的任务列表状态与任务提示）。
    *
@@ -592,107 +594,93 @@ async function run(caps: Caps): Promise<void> {
     });
   });
 
-  // === 监听 token:usage 事件，预压缩触发 ===
-  // agent 在每次 LLM 调用前发出 token 使用统计；
-  // 当使用率超过 autoCompressThreshold（默认 0.7）时，转发为 session:compress(reason='auto') 启动后台压缩。
-  // 注意：generateSummary/session:compress 内部已有 summarizing 锁，这里再做一次提前判断避免无谓 emit。
-  events.on('token:usage', async usage => {
-    if (!usage?.sessionId) return;
-    if (cfg.autoCompressThreshold <= 0) return;
-    if (usage.usageRatio < cfg.autoCompressThreshold) return;
-    if (summarizing.has(usage.sessionId)) return;
-    logger.info(
-      `Token 使用率 ${(usage.usageRatio * 100).toFixed(1)}% 超过阈值 ${(cfg.autoCompressThreshold * 100).toFixed(0)}%，触发后台压缩`,
-    );
-    events
-      .emit('session:compress', { sessionId: usage.sessionId, reason: 'auto', usageRatio: usage.usageRatio })
-      .catch(() => {});
-  });
+  /**
+   * 压缩一个会话（compression 服务）：不看 threshold，历史多于 keepRecent 就摘要并裁切，进度经 session:compressing 广播。
+   * 没有压成时拒绝：报 error 的同时把原因抛给调用方，报 done 才算压成（done 会让界面插入「对话已压缩」的分隔线）
+   */
+  async function compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void> {
+    logger.info(`收到压缩请求: session=${sessionId}, reason=${reason}`);
+    if (summarizing.has(sessionId)) throw new Error('这个会话正在压缩或生成摘要，稍后再试');
+    summarizing.add(sessionId);
+    const cleared = clearedSince(sessionId);
+    const report = (status: 'start' | 'done' | 'error') =>
+      events.emit('session:compressing', { sessionId, status }).catch(() => {});
 
-  // === 监听手动/自动压缩事件 ===
-  events.on('session:compress', async data => {
-    logger.info(`收到压缩请求: session=${data.sessionId}, reason=${data.reason}`);
-
-    // reason 必填且仅 manual|auto（api-memory 契约），两个发射方也只发这两种：
-    // 两者都走同一条压缩路径——手动/自动之别只体现在 taskHint 措辞上。
-    // 压缩不看 threshold：消息数不到阈值也强制执行。
-    if (summarizing.has(data.sessionId)) return;
-    summarizing.add(data.sessionId);
-    const cleared = clearedSince(data.sessionId);
-
-    // 通知前端：压缩开始
-    events.emit('session:compressing', { sessionId: data.sessionId, status: 'start' }).catch(() => {});
-
+    report('start');
     try {
       const provider = memory.current;
       const summaryModel = resolveSummaryModel();
-      if (!provider || !summaryModel) {
-        // 报 error 而非 done：报 done 会让前端插入"对话已压缩"的假成功分隔线。
-        // 常见触发：summaryModelMode=custom 指向的 provider 被卸载/重载中。
-        logger.warn(
-          `压缩跳过: ${!provider ? 'memory 服务不可用' : '摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）'}`,
-        );
-        events.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
-        return;
-      }
-      const allHistory = await provider.getHistory(data.sessionId, getHistoryProbeLimit());
+      // 常见触发：summaryModelMode=custom 指向的 provider 被卸载或重载中
+      if (!provider) throw new Error('memory 服务不可用');
+      if (!summaryModel) throw new Error('摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）');
+      const allHistory = await provider.getHistory(sessionId, getHistoryProbeLimit());
       // 只要有 > keepRecent 条消息就压缩
       const messagesToSummarize = selectMessagesToSummarize(allHistory);
       if (messagesToSummarize.length === 0) {
         logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
-        events.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+        report('done');
         return;
       }
 
       // 从历史消息中提取最近的 todo-list 状态，注入到压缩上下文中
       let todoContext = '';
-      try {
-        const recentMessages = allHistory.slice(-cfg.keepRecent);
-        const todoMsgs = recentMessages.filter(
+      const todoMsgs = allHistory
+        .slice(-cfg.keepRecent)
+        .filter(
           m =>
             m.role === 'assistant' &&
             m.toolCalls?.some(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage'),
         );
-        if (todoMsgs.length > 0) {
-          const lastTodo = todoMsgs[todoMsgs.length - 1];
-          const tc = lastTodo.toolCalls?.find(
-            tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage',
-          );
-          if (tc?.function.arguments) {
-            todoContext = `\n\n当前任务列表状态：\n${tc.function.arguments}`;
-          }
-        }
-      } catch {
-        /* ignore */
-      }
+      const tc = todoMsgs
+        .at(-1)
+        ?.toolCalls?.find(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage');
+      if (tc?.function.arguments) todoContext = `\n\n当前任务列表状态：\n${tc.function.arguments}`;
 
       const taskHint =
-        data.reason === 'auto'
+        reason === 'auto'
           ? '\n\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
           : '';
 
       const finalSummary = await summarizeAndTrim(
         provider,
         summaryModel,
-        data.sessionId,
+        sessionId,
         allHistory,
         messagesToSummarize,
         `${todoContext}${taskHint}`,
         cleared,
       );
-
-      // 通知前端：成功报 done；降级报 error（摘要确实失败了，裁切结果经历史刷新可见）；期间被清空而作废也报 error。
-      // 空响应此前既不裁也不发事件，前端会永远停在 'start'——现在归入降级路径一并解决。
-      events
-        .emit('session:compressing', { sessionId: data.sessionId, status: finalSummary ? 'done' : 'error' })
-        .catch(() => {});
+      // 模型失败只做了裁切（裁切结果经历史刷新可见）、期间被清空而作废，都算没压成
+      if (!finalSummary) throw new Error(cleared() ? '压缩期间会话被清空' : '摘要没有生成，只裁切了较早的历史');
+      report('done');
     } catch (err) {
       logger.warn('压缩会话失败:', err);
-      // 通知前端：压缩失败
-      events.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
+      report('error');
+      throw err;
     } finally {
-      summarizing.delete(data.sessionId);
+      summarizing.delete(sessionId);
     }
+  }
+
+  // 压缩线是 0 到 1 的使用率，0 表示不自动压缩；写成负数或按百分比填成 70 的按 0 处理，交出去的与实际行为一致
+  const autoThreshold = cfg.autoCompressThreshold > 0 && cfg.autoCompressThreshold <= 1 ? cfg.autoCompressThreshold : 0;
+  if (autoThreshold !== cfg.autoCompressThreshold) {
+    logger.warn(`autoCompressThreshold 为 ${cfg.autoCompressThreshold}，不在 0 到 1 之间，按 0（不自动压缩）处理`);
+  }
+  provide(compression, { compress, autoThreshold }, { label: '会话压缩' });
+
+  // === 用量达到 autoCompressThreshold（默认 0.7）时在后台压缩 ===
+  // agent 在每次 LLM 调用前发出 token:usage；本轮调用仍用原始上下文完成，压缩的成果下一轮生效。
+  // 正在摘要或压缩的会话不再触发
+  events.on('token:usage', usage => {
+    if (!usage?.sessionId) return;
+    if (autoThreshold === 0) return;
+    if (usage.usageRatio < autoThreshold) return;
+    if (summarizing.has(usage.sessionId)) return;
+    logger.info(
+      `Token 使用率 ${(usage.usageRatio * 100).toFixed(1)}% 超过阈值 ${(autoThreshold * 100).toFixed(0)}%，触发后台压缩`,
+    );
+    compress(usage.sessionId, 'auto').catch(() => {});
   });
 
   // 统一记忆清除：通过 memory:clear hook 参与编排

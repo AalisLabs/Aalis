@@ -17,7 +17,6 @@
       "!**/data",
       "!**/*.lock",
       "!docs",
-      "!packages/plugin-webui-client",
       "!workspace"
     ]
   },

@@ -1,16 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import type { TodoItem } from '../../packages/api-todo-list/src/index.js';
+import { type TodoItem, todoList as todoListService } from '../../packages/api-todo-list/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import todoList from '../../packages/plugin-todo-list/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// todo 的 sessionId→items 缓存随插件的这次激活存亡：页面动作与工具 handler 都是 apply 里的闭包，
+// todo 的 sessionId→items 缓存随插件的这次激活存亡：服务与工具 handler 都是 apply 里的闭包，
 // 共用同一份缓存。插件重载后不得命中上一次激活的陈旧条目；有 memory 时回源，没有就是空。
 // ════════════════════════════════════════════════════════════
 
@@ -22,7 +21,6 @@ async function boot() {
   await app.plugins.register(memoryInMemory, {});
   const host = app.bind({ provide, services, hooks, events });
   const handlers = new Map<string, ToolHandler>();
-  const actions = new Map<string, WebuiActionHandler>();
   host.provide(tools, {
     register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
       handlers.set(tool.definition.function.name, tool.handler);
@@ -30,16 +28,9 @@ async function boot() {
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(webuiServer, {
-    registerPage: () => () => {},
-    registerAction(method: string, handler: WebuiActionHandler) {
-      actions.set(method, handler);
-      return () => void actions.delete(method);
-    },
-  } as never);
   await app.plugins.register(todoList, { enabled: true });
   await app.plugins.idle();
-  const getTodos = (sessionId: string) => actions.get('getTodos')!({ sessionId }) as Promise<unknown[]>;
+  const getTodos = (sessionId: string) => host.services.get(todoListService)!.get(sessionId);
   return { app, host, manage: () => handlers.get('manage_todo_list')!, getTodos };
 }
 
@@ -70,17 +61,17 @@ describe('plugin-todo-list: 缓存随激活存亡', () => {
     await app.stop();
   });
 
-  it('状态原样保存并经页面动作读回', async () => {
+  it('状态原样保存并经服务读回', async () => {
     const { app, manage, getTodos } = await boot();
     await manage()({ todoList: [{ id: 1, title: '写测试', status: 'completed' }] }, { sessionId: 's-2' });
-    const items = (await getTodos('s-2')) as Array<{ status: string }>;
+    const items = await getTodos('s-2');
     expect(items.map(i => i.status)).toEqual(['completed']);
     await app.stop();
   });
 });
 
-describe('plugin-todo-list: memory 换胜者后页面读当前胜者', () => {
-  it('更高优先级的 memory 上线后，getTodos 返回新胜者里的清单，不命中旧后端读进来的缓存', async () => {
+describe('plugin-todo-list: memory 换胜者后读当前胜者', () => {
+  it('更高优先级的 memory 上线后，服务返回新胜者里的清单，不命中旧后端读进来的缓存', async () => {
     const { app, host, manage, getTodos } = await boot();
     const first = host.services.get(memory) as MemoryService;
     await first.saveMetadata('todo-list', 's-4', { items: [{ id: 1, title: 'A 的任务', status: 'in-progress' }] });
@@ -104,7 +95,7 @@ describe('plugin-todo-list: memory 换胜者后页面读当前胜者', () => {
 
 // ════════════════════════════════════════════════════════════
 // 待办属会话级短期上下文：随 context 一起清。会话级 /clear 与删除会话（也走 memory:clear、会话级、
-// 不带类型）删本会话那条；/clear all 删全部。清掉的会话各发一次 todo:updated 空列表，WebUI 面板随之清空。
+// 不带类型）删本会话那条；/clear all 删全部。清掉的会话各发一次 todo:updated 空列表，会话服务据此推出空的计划。
 // ════════════════════════════════════════════════════════════
 
 describe('plugin-todo-list: 参与 memory:clear', () => {

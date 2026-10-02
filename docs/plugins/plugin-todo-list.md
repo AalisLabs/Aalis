@@ -29,7 +29,6 @@ export default definePlugin({
     logger,
     provide,
     memory: optional(memory),
-    webui: optional(webuiServer),
     hooks: optional(hooks),
   },
   apply(caps) { /* 见源码 */ },
@@ -60,9 +59,9 @@ export default definePlugin({
 
 | 事件 | 载荷 | 说明 |
 |---|---|---|
-| `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入、服务的 `clear`（页面动作 `clearTodos` 与会话协议的 `plan/clear` 都经它）或 `memory:clear` 清理时触发（后两者 `items` 为 `[]`，全局清理时每个被清的会话各触发一次） |
+| `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入、服务的 `clear`（会话协议的 `plan/clear` 经它）或 `memory:clear` 清理时触发（后两者 `items` 为 `[]`，全局清理时每个被清的会话各触发一次） |
 
-事件声明在 api-todo-list。WebUI 前端通过 WebSocket 接收 `todo_updated` 推送，实时显示任务进度面板；会话服务把它推成会话协议的 `plan` 条目。
+事件声明在 api-todo-list。会话服务把它推成会话协议的 `plan` 条目。
 
 ## 配置校验
 

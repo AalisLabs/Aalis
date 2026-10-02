@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import type { HostPaths } from '../../packages/api-host-paths/src/index.js';
+import { getPlatformAdapters, platform } from '../../packages/api-platform/src/index.js';
 import {
   SESSION_PROTOCOL_VERSION,
   type SessionItem,
@@ -19,7 +20,7 @@ import {
   sessionProtocol,
 } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -292,7 +293,33 @@ describe('/session 的传输', () => {
     expect(await status('/nope', COOKIE)).toBe(404);
     expect(await status('/session/x', COOKIE)).toBe(404);
     expect(await status('/session?v=1', COOKIE)).toBe(101);
-    expect(await status('/ws', COOKIE)).toBe(101);
+    expect(await status('/admin', COOKIE)).toBe(101);
+    expect(await status('/ws', COOKIE), '旧协议的端点已删').toBe(404);
+  });
+
+  it('webui 平台的连接是打开着的 /session 连接，/admin 不算；WebUI 的会话不经平台适配器发消息', async () => {
+    const { app, port } = await startWithStub();
+    const adapter = () => {
+      const found = getPlatformAdapters(app.bind({ platform: optional(platform) }).platform).find(
+        a => a.platform === 'webui',
+      );
+      if (!found) throw new Error('webui 平台没有登记');
+      return found;
+    };
+    expect(adapter().getConnections()).toEqual([]);
+    expect((await upgrade(port, '/admin', { cookie: COOKIE }, rawSockets)).status).toBe(101);
+    const a = await open(port);
+    const b = await open(port);
+    expect(adapter().getConnections()).toEqual([
+      { id: 'webui', platform: 'webui', status: 'online', detail: { clients: 2 } },
+    ]);
+    a.ws.close();
+    await a.closed;
+    await vi.waitFor(() => expect(adapter().getConnections()[0]?.detail).toEqual({ clients: 1 }));
+    b.ws.close();
+    await b.closed;
+    await vi.waitFor(() => expect(adapter().getConnections()).toEqual([]));
+    await expect(adapter().sendMessage('session-x', '你好')).rejects.toThrow('会话协议');
   });
 
   it('连接原样接到会话服务：身份取自认证、审批面是登记的 webui，帧原文双向转交，对端关闭时撤掉连接', async () => {

@@ -22,8 +22,11 @@ function tokenEquals(given: string, expected: string): boolean {
   return timingSafeEqual(digest(given), digest(expected));
 }
 
+/** 不改状态的请求方法：不校验来源 */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 /**
- * 请求的来源能不能收，WebSocket 升级与登录请求共用。浏览器发起的握手与 POST 一律带 Origin，只收与本服务同源的：
+ * 请求的来源能不能收，WebSocket 升级与改状态的请求（非 GET）共用。浏览器发起的握手与 POST 一律带 Origin，只收与本服务同源的：
  * Origin 的主机与端口等于请求的 Host。同一主机别的端口上的网页与本服务同站，SameSite cookie 会随它的请求发出，
  * 靠这一关拦下。没有 Origin 的是浏览器之外的客户端（脚本、命令行），不会被别的网页借用户的浏览器发起，交给 token。
  * Host 按 Origin 的协议解析后再比，两边的默认端口都去掉（代理转来的 Host 可能写成 `x:443`）。
@@ -72,7 +75,21 @@ function buildClearCookie(name: string): string {
   return `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
 }
 
-/** 登录页：自包含 HTML，不引入外部资源；提交 POST /api/auth/login 后刷新到 / */
+/** 登录页的脚本：文档级 CSP 只许同源脚本，不内联，由这个地址给出（不需登录） */
+const LOGIN_SCRIPT_PATH = '/api/auth/login.js';
+
+/** 提交 POST /api/auth/login，成功后刷新到 / */
+const LOGIN_SCRIPT = `const f=document.getElementById('f'),t=document.getElementById('t'),b=document.getElementById('b'),e=document.getElementById('e');
+f.addEventListener('submit',async ev=>{
+  ev.preventDefault();e.textContent='';b.disabled=true;
+  try{
+    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t.value.trim()})});
+    if(r.ok){location.replace('/');}else{const j=await r.json().catch(()=>({}));e.textContent=j.error||'token 不正确';b.disabled=false;t.select();}
+  }catch(err){e.textContent='网络错误';b.disabled=false;}
+});
+`;
+
+/** 登录页：只引用同源的登录脚本，不引入别的资源 */
 function loginPageHtml(reason?: string): string {
   const note = reason ? `<p class="note">${escapeHtml(reason)}</p>` : '';
   return `<!DOCTYPE html><html lang="zh-CN"><head>
@@ -101,16 +118,7 @@ ${note}
 <button type="submit" id="b">登录</button>
 <div class="err" id="e"></div>
 </form>
-<script>
-const f=document.getElementById('f'),t=document.getElementById('t'),b=document.getElementById('b'),e=document.getElementById('e');
-f.addEventListener('submit',async ev=>{
-  ev.preventDefault();e.textContent='';b.disabled=true;
-  try{
-    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t.value.trim()})});
-    if(r.ok){location.replace('/');}else{const j=await r.json().catch(()=>({}));e.textContent=j.error||'token 不正确';b.disabled=false;t.select();}
-  }catch(err){e.textContent='网络错误';b.disabled=false;}
-});
-</script></body></html>`;
+<script src="${LOGIN_SCRIPT_PATH}"></script></body></html>`;
 }
 
 function escapeHtml(s: string): string {
@@ -132,6 +140,8 @@ export interface AuthSystem {
  * - token 由调用方经 getToken 提供，每次校验现取：persist 模式下 storage 晚上线时，调用方会把
  *   启动时的临时 token 换成读回的持久化 token（见 index.ts 的 token 解析）
  * - HttpOnly + SameSite=Strict cookie；`?token=` 一键登录；同源 POST /api/auth/login 提交
+ * - 改状态的请求（非 GET、HEAD、OPTIONS）按 {@link originAllowed} 校验来源，与 WebSocket 升级同一个判定：SameSite 按站判、
+ *   不分端口，同一主机别的端口上的网页发一个简单 POST 就会带上 cookie
  * - `?token=` 与登录接口按来源地址限速：失败计数见 LOGIN_MAX_FAILURES、LOGIN_FAILURE_WINDOW_MS，成功清零。
  *   别的网页借 owner 的浏览器发起的登录（跨源的 POST、别的站点打开的 `?token=`）不比对也不计数，免得别人替 owner 把
  *   地址锁住。带 cookie 的请求不计数：各种模式的 token 都够长（随机生成的 24 字节，固定的至少 32 个字符），
@@ -189,6 +199,18 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
     const qToken = typeof req.query?.token === 'string' ? (req.query.token as string) : undefined;
     const address = req.socket.remoteAddress ?? '';
 
+    // 0. 改状态的请求先看来源：别的网页借 owner 的浏览器发来的（带着 cookie）一律拒，登录与注销也一样
+    if (!SAFE_METHODS.has(req.method) && !originAllowed(req)) {
+      res.status(403).json({ ok: false, error: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）' });
+      return;
+    }
+
+    // 登录页的脚本不需登录
+    if (url === LOGIN_SCRIPT_PATH && req.method === 'GET') {
+      res.type('application/javascript').send(LOGIN_SCRIPT);
+      return;
+    }
+
     // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径。别的站点打开的不认 token，按没带 token 往下走
     if (req.method === 'GET' && qToken && !navigatedFromOtherSite(req)) {
       const waitMs = lockedFor(address);
@@ -209,12 +231,8 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
       return;
     }
 
-    // 2. 登录端点：{token}。跨源的先拒，不计数
+    // 2. 登录端点：{token}。跨源的已在 0 拒掉，不计数
     if (url === '/api/auth/login' && req.method === 'POST') {
-      if (!originAllowed(req)) {
-        res.status(403).json({ ok: false, error: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）' });
-        return;
-      }
       const waitMs = lockedFor(address);
       if (waitMs > 0) {
         res.json({ ok: false, error: rejectLocked(res, waitMs) });

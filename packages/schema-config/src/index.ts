@@ -275,7 +275,7 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: {
     type: 'string',
     label: '应用名称',
-    description: '应用显示名称，用于启动日志和界面展示；装有人设时仪表盘仍显示它，聊天显示人设名',
+    description: '应用显示名称，用于启动日志和界面展示',
     default: 'Aalis',
   },
   logLevel: {
@@ -381,6 +381,11 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
   'list',
   'map',
 ]);
+
+/** 字段类型是不是本包内置的：内置类型的取值经 validateConfig 与 parseConfig 校验，外来类型（如 'llm-ref'）的不经 */
+export function isBuiltinFieldType(type: string): boolean {
+  return NEUTRAL_FIELD_TYPES.has(type);
+}
 
 /**
  * 按 ConfigSchema 对配置做只读结构校验，返回问题清单（空数组 = 无问题）。

@@ -5,9 +5,11 @@ import { type EgressReport, type RemoteAgentProvider, remoteAgent } from '../../
 import {
   type InheritanceSource,
   type SessionConfig,
+  type SessionConfigLayer,
   type SessionInfo,
   type SessionInheritance,
   type SessionManagerService,
+  sessionKind,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
@@ -193,7 +195,7 @@ export function sessionInfoOf(id: string, parentId?: string): SessionInfo {
     config: {},
     createdAt: 0,
     updatedAt: 0,
-    kind: parentId ? 'task' : 'room',
+    kind: sessionKind({ parentId, audience: origin?.audience }),
     originPlatform: origin?.platform,
     audience: parentId ? undefined : (origin?.audience ?? 'owner'),
   };
@@ -215,7 +217,7 @@ function inheritanceOf(
   const layer = (config: SessionConfig | undefined, source: InheritanceSource) => {
     for (const [key, value] of Object.entries(config ?? {})) {
       values[key] = value;
-      sources[key as keyof SessionConfig] = source;
+      sources[key] = source;
     }
   };
   if (pinned) layer(opts.profiles?.[pinned], 'platform');
@@ -246,9 +248,9 @@ export interface PaperHubOptions {
   rooms?: Record<string, SessionConfig>;
   /** 子会话 id → 父会话 id */
   children?: Record<string, string>;
-  /** 平台档的基础条目（getPlatformProfiles 的结果）；缺省没有 */
+  /** 平台档，键为平台名；缺省没有 */
   profiles?: Record<string, SessionConfig>;
-  /** 平台档的受众条目，键为 `<平台>/<受众>`（不在 getPlatformProfiles 里，只经 resolveInheritance 看得到）；缺省没有 */
+  /** 平台档的受众条目，键为 `<平台>/<受众>`；缺省没有 */
   audienceProfiles?: Record<string, SessionConfig>;
   /** 会话列表里的会话 id → 会话自身的 config（listSessions 的结果）；缺省没有 */
   listed?: Record<string, SessionConfig>;
@@ -331,7 +333,21 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   } as never);
   host.provide(sessionManager, {
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
-    getPlatformProfiles: () => ({ ...(opts.profiles ?? {}) }),
+    registerSetting: () => () => {},
+    listLayers: (): SessionConfigLayer[] => [
+      ...Object.keys(opts.profiles ?? {}).map(platform => ({ scope: 'platform' as const, platform })),
+      ...Object.keys(opts.audienceProfiles ?? {}).map(key => {
+        const [platform, audience] = key.split('/') as [string, 'group' | 'private'];
+        return { scope: 'audience' as const, platform, audience };
+      }),
+    ],
+    getLayer: (layer: SessionConfigLayer) =>
+      layer.scope === 'platform'
+        ? (opts.profiles?.[layer.platform] ?? {})
+        : layer.scope === 'audience'
+          ? (opts.audienceProfiles?.[`${layer.platform}/${layer.audience}`] ?? {})
+          : {},
+    getOwnConfig: (id: string) => ({ ...(opts.listed?.[id] ?? {}) }),
     resolveInheritance: (id: string, platform?: string) => inheritanceOf(id, platform, opts),
     listSessions: (): SessionInfo[] =>
       Object.entries(opts.listed ?? {}).map(([id, config]) => ({ ...sessionInfoOf(id, children[id]), config })),

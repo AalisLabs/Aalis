@@ -657,8 +657,7 @@ const { Chat, ToolCalling, Streaming, Vision, Thinking } = LLMCapabilities;
 
 // resolveCapabilities 的前缀匹配按表序取第一个命中，更具体的前缀必须排在更短的前缀之前
 // （gpt-4.1 在 gpt-4 之前，否则 gpt-4.1-mini 会命中 gpt-4、丢掉 Vision）。
-// 表里的 Vision 影响 media 的视觉路由、vision.delivery=auto 的交付判定，以及 media 缺席时
-// WebUI（/api/status）是否显示图片上传按钮；漏标只是退回识别模型转文字，误标会把原图直通给
+// 表里的 Vision 影响 media 的视觉路由与 vision.delivery=auto 的交付判定；漏标只是退回识别模型转文字，误标会把原图直通给
 // 不收图的模型，故只收确认全系支持看图的族。
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'gpt-4o': [Chat, ToolCalling, Streaming, Vision],

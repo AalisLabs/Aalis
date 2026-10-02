@@ -12,22 +12,24 @@ AI 可调用工具的中心注册表。提供 `tools` 服务，所有插件通�
 ## 插件声明
 
 ```ts
+import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
-import { definePlugin, logger, provide } from '@aalis/core';
+import { definePlugin, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-tools',
   displayName: '工具注册表',
   subsystem: 'agent',
   provides: [tools],
-  uses: { logger, provide },
-  apply({ logger, provide }) {
+  uses: { logger, provide, sessionManager: optional(sessionManager) },
+  apply({ logger, provide, sessionManager }) {
+    sessionManager.registerSetting({ key: 'enabledToolGroups', /* 字段、适用种类、显眼程度见源码 */ });
     provide(tools, new ToolRegistry(logger));
   },
 });
 ```
 
-无配置项。无其它服务依赖（权限钩子由消费方通过 `setExecutionGuard()` 注入）。
+无配置项。可选依赖 session-manager 只用来登记会话设置项「工具分组」（权限钩子由消费方通过 `setExecutionGuard()` 注入）。
 
 ## 主要能力
 
@@ -36,7 +38,8 @@ export default definePlugin({
   按分组返回工具：无分组的通用工具恒可见；带分组的只在命中 `groups` 时返回，`'*'` 表示全部分组；
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸
   （见 [security-model](../concepts/security-model.md)）；平台启用哪些分组由 session-manager 的平台档 /
-  会话配置 `enabledToolGroups` 决定。
+  会话配置 `enabledToolGroups` 决定。这一项由本插件在 session-manager 上登记（可选项取工具分组注册表，
+  common）；没有 session-manager 时没有会话设置，各会话只拿到通用工具。
 - **分组闸在执行面同样生效**：`execute()` 在调用方传了 `ToolCallContext.enabledGroups` 时按同一判据校验，
   不命中即返回与「工具未找到」同形的错误；近似名建议也不会把闸外的工具名回流给模型。
   只在列举面拦是不够的——被提示注入的模型可以叫出一个本回合没下发给它的名字，而安全模型把

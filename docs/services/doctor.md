@@ -6,7 +6,7 @@
 
 为什么单独抽出 `-api` 包。如果 storage、commands 等下游插件必须直接 runtime depend 实现包 `plugin-doctor` 才能注册检查项，就会形成「实现包 ↔ 业务插件」的双向耦合。doctor 仿照 storage-api、commands-api 的做法，把类型和一个 `doctor.registerCheck` helper 抽到 `-api`，业务插件只依赖契约，doctor 自身不反向硬依赖任何业务插件。
 
-参考实现是 `@aalis/plugin-doctor`，它是唯一的 provider，内置 `env.node`、`env.platform`、`plugins.status` 三条与领域无关的检查。典型 consumer 有两类：`@aalis/plugin-storage-local` 注册 `storage.roots` 探测可写性；`@aalis/plugin-webui-server` 订阅 `doctor:updated` 事件刷新 WebUI。
+参考实现是 `@aalis/plugin-doctor`，它是唯一的 provider，内置 `env.node`、`env.platform`、`plugins.status` 三条与领域无关的检查。典型 consumer 是注册检查项的插件，例如 `@aalis/plugin-storage-local` 注册 `storage.roots` 探测可写性。
 
 ---
 
@@ -90,7 +90,6 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 | Provider（唯一） | `@aalis/plugin-doctor` | `provide(doctor, registry)`；内置 `env.node` / `env.platform` / `plugins.status`；挂 `/doctor` 命令与 WebUI 页面 |
 | Consumer（注册检查项） | `@aalis/plugin-storage-local` | `doctor.registerCheck({ id: 'storage.roots', ... })` |
 | Consumer（注册检查项） | `@aalis/runtime`（宿主，经根绑定） | `config.secrets`：配置里引用的密钥不在 `secrets.yaml` 里时，每个这样的实例报一条 error（id `config.secrets.<实例 id>`，点名字段与键），都在时报一条 ok。不走 `parseConfig` 的插件拿到悬空引用不会激活失败，靠这一项发现 |
-| Consumer（订阅结果） | `@aalis/plugin-webui-server` | `events.on('doctor:updated', () => broadcastPageRefresh(...))` |
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
 
@@ -226,7 +225,7 @@ export default definePlugin({
 - `provide(doctor, instance, options?)` 的 `options.priority` 默认为 0。要抢占官方 doctor，设更高的 priority（数字越大越优先）。
 - 同名解析顺序是 preference > priority > 注册顺序，不再有能力匹配（0.5.0 已移除）。详见 [service-model](../concepts/service-model.md) 与 [docs/core/service.md](../core/service.md)。
 - `provides` / `uses` 与 `package.json` 的 `aalis.service.provides` 双源都要写上 `'doctor'`。
-- 实现里务必对每条 check 做 try/catch（官方 doctor 就是这么做的），并在每次 `runChecks` 之后发出 `'doctor:updated'`，否则 WebUI 不会刷新。
+- 实现里务必对每条 check 做 try/catch（官方 doctor 就是这么做的），并在每次 `runChecks` 之后发出 `'doctor:updated'`，订阅结果的 consumer 靠它得知报告换了。
 
 ---
 
