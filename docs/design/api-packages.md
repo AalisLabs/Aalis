@@ -94,7 +94,7 @@ import { storage, resolveStorageByPath } from '@aalis/api-storage';
 const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 ```
 
-`provide` 的 options 是 `{ priority?, label?, entryId?, onBehalfOf? }`，没有 `capabilities`；`ServiceRef` 与 `services.get` 只按名字解析。能力字符串也会随 entry 上送前端（`ModelInfo.capabilities`）供下拉展示与过滤——同样是元数据用途，不是 DI 通道。
+`provide` 的 options 是 `{ priority?, label?, entryId?, onBehalfOf? }`，没有 `capabilities`；`ServiceRef` 与 `services.get` 只按名字解析。能力字符串也会随模型列表上送前端（webui-server 的 `/api/llm-providers` 里各模型的 `capabilities`）供下拉展示与过滤——同样是元数据用途，不是 DI 通道。
 
 ## 当前 api 包索引
 
@@ -102,11 +102,11 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 |---|---|---|---|---|
 | `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`, `ModelInfo`；导出 `resolveLLMModel` / `listLLMModels` helper（吃 `ServiceRef`，按能力过滤）；向 schema-config 注入 `'llm-ref'` 字段类型 |
 | `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；密钥字段的引用 `SecretRef` 与 `isSecretRef` / `mapSecretFields`（零运行时依赖，对 `@aalis/core` 只有 type-only 锚点；另含对词汇的中立解释函数与配置危险键闸；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
-| `api-memory` | `memory:clear` | `memory` | — | `MemoryService` |
+| `api-memory` | `memory:clear` | `memory` / `compression` | — | `MemoryService`, `CompressionService`（压缩，默认提供者 plugin-memory-summary） |
 | `api-storage` | — | `storage` | — | `StorageService`；导出 `resolveStorageByPath` / `createStorageGateway` helper（吃 `ServiceRef`） |
 | `api-embedding` | — | `embedding` | — | `EmbeddingService` |
 | `api-vectorstore` | — | `vectorstore` | — | `VectorStoreService` |
-| `api-tools` | — | `tools` | — | `ToolService`；绑定门面含 `register` / `registerGroup`，另导出 `withToolGroups` |
+| `api-tools` | — | `tools` | — | `ToolService`；工具定义的展示种类 `ToolDisplay`；绑定门面含 `register` / `registerGroup`，另导出 `withToolGroups` |
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
 | `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；绑定门面 `registerPage` / `registerAction`；向 `PluginMeta` 注入 `extends` |
@@ -117,7 +117,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-host-config` | — | `host-config` | — | `HostConfig`，配置文档类型 `AalisConfig`（declaration merging 目标）；由宿主提供 |
 | `api-host-paths` | — | `host-paths` | — | `HostPaths`：家目录、安装集与家目录布局的绝对路径；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
-| `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSurface`；绑定门面 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |
+| `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSettlement`, `ApprovalSurface`；绑定门面 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |
 | `api-asr` | — | `asr` | — | `ASRService`, `TranscribeInput`, `TranscribeResult` |
 | `api-checkpoint` | — | `checkpoint` | — | `CheckpointService`, `RollbackResult`, `RollbackWithChatResult`；默认提供者 plugin-checkpoint |
 | `api-code-sandbox` | — | `code-sandbox` | — | `CodeSandboxService`, `SandboxPolicy`, `SandboxRunRequest`；默认提供者 plugin-code-sandbox-os |
@@ -131,7 +131,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃 `ServiceRef`） |
 | `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `createProcessGateway` / `makeTempDirViaStorage` helper |
 | `api-session-history` | — | `session-history` | — | `SessionHistoryService`, `AccessChecker`；默认提供者 plugin-tool-session |
-| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`, `SessionInfo` |
+| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`（各插件经 declaration merging 加键）, `SessionSetting`, `SessionInfo`；导出 `sessionKind`；绑定门面 `registerSetting` |
 | `api-session-protocol` | — | `session-protocol` | — | `SessionProtocolService`, `SessionPeer`, `SessionConnection`；会话协议的 zod schema（`sessionMethods` / `sessionNotifications`、帧与错误码），类型由 schema 推导；默认提供者 plugin-session-server |
 | `api-todo-list` | — | `todo-list` | — | `TodoListService`, `TodoItem`；注入事件 `todo:updated`；默认提供者 plugin-todo-list |
 | `api-user-relation` | — | `user-relation` | — | `UserRelationService`；默认提供者 plugin-user-relation |

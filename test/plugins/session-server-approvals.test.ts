@@ -16,14 +16,17 @@ import { type PlatformAdapter, platform } from '../../packages/api-platform/src/
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { client, DETACHED_SURFACE } from '../fixtures/session-client.js';
+import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -45,6 +48,8 @@ const OWNER_DM = 'onebot:10000:private:99999';
 
 const WAIT_MS = 300_000;
 const PRESENCE_MS = 10 * 60_000;
+/** 在场的面全部消失之后的重连宽限 */
+const GRACE_MS = 30_000;
 
 const isOwner = (p: string, u?: string) =>
   ((p === 'webui' || p === 'cli') && u === 'console') || (p === OWNER_QQ.platform && u === OWNER_QQ.userId);
@@ -92,9 +97,13 @@ async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'aalis-approvals-'));
   homes.push(home);
   const { state } = provideHostPaths(app, home);
-  const host = app.bind({ provide, events, hooks, sessionManager, sessionProtocol, approvals });
+  const host = app.bind({ provide, events, hooks, sessionManager, sessionProtocol, approvals, tools });
   host.provide(storage, memoryStorage(new Map()));
   host.provide(authority, { isOwner } as never);
+  // 卡上的事实按工具定义上声明的展示种类取：登记与系统工具同样声明的空工具
+  await app.plugin(toolsPlugin, {});
+  await app.plugins.idle();
+  declareToolSystemDisplays(host.tools);
   await app.plugin(adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => id.startsWith('onebot:10000:') }));
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
@@ -293,6 +302,7 @@ describe('在场才问', () => {
     expect(pushed(owner)).toHaveLength(1);
     expect(pushed(stranger)).toEqual([]);
     await owner.call('presence/update', { active: false });
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
     expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
     expect(stranger.notifications('approval/settled')).toEqual([]);
   });
@@ -306,52 +316,120 @@ describe('在场才问', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(r.outcome).toMatchObject({ approved: false, source: 'timeout' });
     expect(r.outcome?.approved === false && r.outcome.message).toContain('300 秒');
-    expect(c.notifications('approval/settled')).toEqual([{ approvalId: pushed(c)[0].id, state: 'expired' }]);
+    expect(c.notifications('approval/settled')).toEqual([
+      { approvalId: pushed(c)[0].id, state: 'expired', source: 'timeout', at: Date.now() },
+    ]);
   });
 
-  it('等待中在场的连接全部断开：立即结算；只断开一条时照常等', async () => {
+  it('等待中最近一次活动满 10 分钟：从那一刻起等完宽限再结算，不等到 300 秒', async () => {
+    const { mine, connect, request } = await setup();
+    await connect();
+    await vi.advanceTimersByTimeAsync(PRESENCE_MS - 60_000);
+    const r = request(mine);
+    await vi.advanceTimersByTimeAsync(60_000 + GRACE_MS - 1);
+    expect(r.outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
+  });
+
+  it('审批面的登记撤回（登记它的插件停用）：它的连接都不算在场，等待中的等完宽限后结算', async () => {
+    const { app, mine, connect, request, flush } = await setup();
+    await connect();
+    const r = request(mine);
+    await flush();
+    const disabled = app.plugins.disable('@test/webui-surface');
+    await vi.advanceTimersByTimeAsync(0);
+    await disabled;
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 1);
+    expect(r.outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
+  });
+});
+
+describe('重连宽限：在场的面全部消失之后再等 30 秒', () => {
+  it('在场的连接全部断开后 30 秒内重连并重报在场：卡片仍在等并推给新连接，应答照常结算；只断开一条时照常等', async () => {
     const { mine, connect, request, flush } = await setup();
     const a = await connect();
     const b = await connect();
     const r = request(mine);
     await flush();
     a.conn.close();
-    await flush();
-    expect(r.outcome).toBeUndefined();
     b.conn.close();
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 1);
+    expect(r.outcome).toBeUndefined();
+    const back = await connect();
+    expect(pushed(back)).toEqual(pushed(a));
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(r.outcome, '恢复在场之后宽限作废，不会到点结算').toBeUndefined();
+    const other = await connect();
+    other.conn.close();
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(r.outcome, '还有在场的连接时断开一条不起宽限').toBeUndefined();
+    await approve(back, pushed(back)[0]);
     await flush();
-    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(r.outcome).toMatchObject({ approved: true });
   });
 
-  it('等待中唯一在场的连接转到后台：立即结算', async () => {
+  it('在场的连接全部断开满 30 秒没有恢复：按没人在场结算，推给拿到过它、还连着的连接', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const gone = await connect();
+    const r = request(mine);
+    await flush();
+    await c.call('presence/update', { active: false });
+    gone.conn.close();
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 1);
+    expect(r.outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(r.outcome?.approved === false && r.outcome.message).toContain('没人在场');
+    expect(c.notifications('approval/settled')).toEqual([
+      { approvalId: pushed(c)[0].id, state: 'expired', source: 'absent', at: Date.now() },
+    ]);
+  });
+
+  it('宽限不延长 300 秒总等待：快到时限时全部离开，到 300 秒照常按超时结算', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
     const r = request(mine);
     await flush();
+    await vi.advanceTimersByTimeAsync(WAIT_MS - 10_000);
     await c.call('presence/update', { active: false });
-    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
-    expect(c.notifications('approval/settled')).toEqual([{ approvalId: pushed(c)[0].id, state: 'expired' }]);
-  });
-
-  it('等待中最近一次活动满 10 分钟：在那一刻结算，不等到 300 秒', async () => {
-    const { mine, connect, request } = await setup();
-    await connect();
-    await vi.advanceTimersByTimeAsync(PRESENCE_MS - 60_000);
-    const r = request(mine);
-    await vi.advanceTimersByTimeAsync(60_000 - 1);
+    await vi.advanceTimersByTimeAsync(10_000 - 1);
     expect(r.outcome).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
-    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(r.outcome).toMatchObject({ approved: false, source: 'timeout' });
   });
 
-  it('审批面的登记撤回（登记它的插件停用）：它的连接都不算在场，等待中的立即结算', async () => {
-    const { app, mine, connect, request, flush } = await setup();
-    await connect();
-    const r = request(mine);
+  it('宽限期内发起的新请求：发起时没人在场，仍立即拒绝；等着的那张照旧等', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const waiting = request(mine, { callId: 'call-1' });
     await flush();
-    vi.useRealTimers();
-    await app.plugins.disable('@test/webui-surface');
-    await vi.waitFor(() => expect(r.outcome).toMatchObject({ approved: false, source: 'absent' }));
+    await c.call('presence/update', { active: false });
+    const fresh = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    await flush();
+    expect(fresh.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(waiting.outcome).toBeUndefined();
+  });
+
+  it('宽限期内轮到的下一张卡：照常推出、一起等宽限；有面恢复在场就推给它', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const first = request(mine, { callId: 'call-1' });
+    const second = request(mine, { callId: 'call-2' });
+    await flush();
+    await vi.advanceTimersByTimeAsync(WAIT_MS - 1_000);
+    await c.call('presence/update', { active: false });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(first.outcome).toMatchObject({ approved: false, source: 'timeout' });
+    expect(second.outcome, '轮到它时没人在场，但还在宽限内').toBeUndefined();
+    await c.call('presence/update', { active: true });
+    expect(pushed(c).map(a => a.callId)).toEqual(['call-1', 'call-2']);
+    await approve(c, pushed(c)[1]);
+    await flush();
+    expect(second.outcome).toMatchObject({ approved: true });
   });
 });
 
@@ -374,7 +452,9 @@ describe('应答', () => {
     });
     expect(late.data?.code).toBe('approval-settled');
     for (const c of [a, b]) {
-      expect(c.notifications('approval/settled')).toEqual([{ approvalId: approval.id, state: 'approved' }]);
+      expect(c.notifications('approval/settled')).toEqual([
+        { approvalId: approval.id, state: 'approved', source: 'owner', at: Date.now() },
+      ]);
     }
   });
 
@@ -421,7 +501,9 @@ describe('应答', () => {
     const message = r.outcome?.approved === false ? r.outcome.message : '';
     expect(message).toContain('owner 拒绝');
     expect(message).toContain('先备份再删');
-    expect(c.notifications('approval/settled')).toEqual([{ approvalId: approval.id, state: 'denied' }]);
+    expect(c.notifications('approval/settled')).toEqual([
+      { approvalId: approval.id, state: 'denied', source: 'owner', at: Date.now() },
+    ]);
   });
 });
 
@@ -521,7 +603,9 @@ describe('结算', () => {
     abort.abort();
     await flush();
     for (const r of [shown, queued]) expect(r.outcome).toMatchObject({ approved: false, source: 'turn-ended' });
-    expect(c.notifications('approval/settled')).toEqual([{ approvalId: pushed(c)[0].id, state: 'cancelled' }]);
+    expect(c.notifications('approval/settled')).toEqual([
+      { approvalId: pushed(c)[0].id, state: 'cancelled', source: 'turn-ended', at: Date.now() },
+    ]);
     expect(pushed(c)).toHaveLength(1);
   });
 
@@ -635,7 +719,7 @@ describe('回给模型的话', () => {
 });
 
 describe('事实与内容哈希', () => {
-  it('命令与工作目录逐字取自参数（含 ESC 与 U+202E），其余参数逐字列出', async () => {
+  it('声明了命令的工具：命令与工作目录按声明逐字取自参数（含 ESC 与 U+202E），其余参数逐字列出', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
     const command = 'cat notes\u202Etxt.sh \u001b[2K; rm -rf ./build';
@@ -646,7 +730,7 @@ describe('事实与内容哈希', () => {
     expect(approval.facts).toEqual({ command, cwd: 'workspace:/proj', params: { timeout: 5000 } });
   });
 
-  it('file_edit、file_write 与 file_append 生成 diff；路径或内容疑似含密钥时只给路径', async () => {
+  it('声明了改文件的工具（file_edit、file_write、file_append）按声明的两侧生成 diff；路径或内容疑似含密钥时只给路径；没声明的不生成', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
     const facts = async (tool: string, args: Record<string, unknown>) => {
@@ -687,6 +771,15 @@ describe('事实与内容哈希', () => {
       params: {},
     });
     expect(await facts('file_delete', { path: 'workspace:/e.md' })).toEqual({ params: { path: 'workspace:/e.md' } });
+  });
+
+  it('没声明展示种类的工具：参数名叫 command、path 也不当命令与路径，全部参数逐字列出', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const args = { command: 'deploy', path: 'workspace:/x', content: '新内容', cwd: 'workspace:/' };
+    request(mine, { tool: 'zz_custom', args });
+    await flush();
+    expect(pushed(c)[0].facts).toEqual({ params: args });
   });
 
   it('同样的请求内容哈希相同；参数、工具或调用不同哈希就不同', async () => {
@@ -785,7 +878,12 @@ describe('审批面的登记', () => {
     });
 
     await app.plugins.enable(sessionServerPlugin.name);
-    await app.plugins.idle();
+    // 登记跟着提供者重挂（通知异步送达）：接上之前的应答仍回 unavailable，接上之后不认识的 id 回 not-found
+    await vi.waitFor(() =>
+      expect(attendance.respond({ approvalId: 'x', decision: 'approve', contentHash: 'h' })).toMatchObject({
+        refusal: 'not-found',
+      }),
+    );
     attendance.presence(true);
     const r = request(mine);
     await vi.waitFor(() => expect(got).toHaveLength(1));
@@ -823,7 +921,9 @@ describe('会话协议上的审批', () => {
       [OWNER_DM]: true,
       [ROOM]: false,
     });
-    expect(page.groups).toEqual([{ platform: 'onebot', instance: 'onebot-a', rooms: 2, accounts: 1, attention: 1 }]);
+    expect(page.groups).toEqual([
+      { platform: 'onebot', instance: 'onebot-a', label: 'onebot-a', rooms: 2, accounts: 1, attention: 1 },
+    ]);
     const changed = c.notifications('sessions/changed').flatMap(n => n.upserts);
     expect(changed.filter(s => s.id === mine).at(-1)?.attention).toBe(true);
 
@@ -839,8 +939,8 @@ describe('会话协议上的审批', () => {
     ).toBe(false);
   });
 
-  it('快照带这个会话未结的审批；工具卡挂上 approvalId（订阅着的连接收到重推），被拒的工具卡状态是 denied', async () => {
-    const { mine, connect, request, flush, openTurn } = await setup();
+  it('快照带这个会话未结的审批；工具卡挂上 approvalId、结算后带上结算（订阅着的连接收到重推），被拒的状态是 denied，结算写进工具结果的元数据', async () => {
+    const { host, mine, connect, request, flush, openTurn } = await setup();
     const c = await connect();
     const early = await c.subscribe(mine);
     const turn = openTurn(mine);
@@ -858,10 +958,69 @@ describe('会话协议上的审批', () => {
 
     await c.call('approval/respond', { approvalId: approval.id, decision: 'deny', contentHash: approval.contentHash });
     await flush();
+    const settlement = { state: 'denied', source: 'owner', at: Date.now() };
+    expect(card(watcher.timeline(mine, sub)), '结算时工具卡带上结算再推一次').toMatchObject({
+      status: 'denied',
+      approvalId: approval.id,
+      settlement,
+    });
+    // 结算随工具结果落库：agent 跑工具结果的钩子时，会话服务写进这次结果的元数据
+    const after = {
+      name: 'exec',
+      result: '{"error":"需要 owner 批准的操作没有执行"}',
+      toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
+      metadata: {} as Record<string, unknown>,
+    };
+    await host.hooks.run('agent:tool:after', after);
+    expect(after.metadata).toEqual({ approval: { id: approval.id, ...settlement } });
     await turn.tool('end', 'call-1', { command: 'ls' }, '{"error":"需要 owner 批准的操作没有执行"}');
-    expect(card(watcher.timeline(mine, sub))).toMatchObject({ status: 'denied', approvalId: approval.id });
+    expect(card(watcher.timeline(mine, sub))).toMatchObject({ status: 'denied', approvalId: approval.id, settlement });
     const again = await watcher.subscribe(mine);
     expect(again.snapshot.approvals).toEqual([]);
+    await turn.end();
+  });
+
+  it.each([
+    ['没人在场', 'owner', 'expired', 'absent'],
+    ['发起者不能产生审批', 'autonomous', 'denied', 'ineligible'],
+    ['子任务', 'subtask', 'denied', 'subtask'],
+    ['超过频率上限', 'owner', 'denied', 'rate-limit'],
+  ] as const)('发起时就结算（%s）：工具卡同样是 denied 并带结算，结算写进工具结果的元数据；不推卡、不算需要我处理', async (_case, kind, state, source) => {
+    const { host, mine, connect, request, flush, openTurn } = await setup();
+    const c = await connect({ active: source !== 'absent' });
+    if (source === 'rate-limit') {
+      for (let i = 0; i < 10; i++) {
+        request(mine);
+        await flush();
+        await approve(c, pushed(c)[i]);
+        await flush();
+      }
+    }
+    const shownBefore = pushed(c).length;
+    const sub = await c.subscribe(mine);
+    const turn = openTurn(mine);
+    await turn.tool('start', 'call-1', { command: 'ls' });
+    const r = request(mine, { turnId: turn.turnId, callId: 'call-1', origin: { kind, ...OWNER } });
+    await flush();
+    expect(r.outcome).toMatchObject({ approved: false, source });
+    const approvalId = r.outcome?.approvalId;
+    const settlement = { state, source, at: Date.now() };
+    const card = () => c.timeline(mine, sub).find(item => item.itemId === 'call-1');
+    expect(card()).toMatchObject({ status: 'denied', approvalId, settlement });
+
+    const denial = '{"error":"需要 owner 批准的操作没有执行"}';
+    const after = {
+      name: 'exec',
+      result: denial,
+      toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
+      metadata: {} as Record<string, unknown>,
+    };
+    await host.hooks.run('agent:tool:after', after);
+    expect(after.metadata).toEqual({ approval: { id: approvalId, ...settlement } });
+    await turn.tool('end', 'call-1', { command: 'ls' }, denial);
+    expect(card()).toMatchObject({ status: 'denied', approvalId, settlement });
+    expect(pushed(c)).toHaveLength(shownBefore);
+    expect((await c.summary(mine)).attention).toBe(false);
     await turn.end();
   });
 
@@ -876,7 +1035,10 @@ describe('会话协议上的审批', () => {
     await approve(c, pushed(c)[0]);
     await flush();
     await turn.tool('end', 'call-1', { command: 'ls' }, 'a.txt');
-    expect(c.timeline(mine, sub).find(item => item.itemId === 'call-1')).toMatchObject({ status: 'completed' });
+    expect(c.timeline(mine, sub).find(item => item.itemId === 'call-1')).toMatchObject({
+      status: 'completed',
+      settlement: { state: 'approved', source: 'owner', at: Date.now() },
+    });
     await turn.end();
   });
 

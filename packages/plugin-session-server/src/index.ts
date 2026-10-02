@@ -5,18 +5,17 @@ import { authority } from '@aalis/api-authority';
 import { checkpoint } from '@aalis/api-checkpoint';
 import { hooks } from '@aalis/api-hooks';
 import { hostPaths } from '@aalis/api-host-paths';
-import { llm } from '@aalis/api-llm';
-import { memory } from '@aalis/api-memory';
-import { persona } from '@aalis/api-persona';
+import { compression, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
 import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
-import { sessionProtocol } from '@aalis/api-session-protocol';
+import { type Features, sessionProtocol } from '@aalis/api-session-protocol';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { todoList } from '@aalis/api-todo-list';
 import { tools } from '@aalis/api-tools';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, definePlugin, events, lifecycle, logger, optional, pluginsService, provide } from '@aalis/core';
 import { approvalHandlers, createApprovals } from './approvals.js';
 import { createSessionServer } from './connection.js';
+import { type DisplayOf, resolveDisplay } from './display.js';
 import { createFileHandles } from './files.js';
 import type { IsOwner } from './history.js';
 import { openSeenStore } from './seen.js';
@@ -28,9 +27,11 @@ import { createTurnControl } from './turns.js';
 // plugin-session-server — 会话协议的服务端（契约见 @aalis/api-session-protocol）
 //
 // owner 的客户端经传输层（WebUI 的 WebSocket 等）接到 sessionProtocol.connect。会话本身在 session-manager 里，
-// 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与配置，另记「我的」区的已读时间；
+// 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与设置（各插件登记的设置项与
+// 会话之上的各层），设置变了推 session/config/changed，另记「我的」区的已读时间；
 // 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；条目里她发出的文件给本服务签发的下载句柄，
-// 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点与待办。
+// 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点、压缩与待办。握手给出功能位（发送、回滚、压缩
+// 各看对话、检查点、压缩服务在不在），服务上下线时推 features/changed。
 // 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
@@ -43,27 +44,32 @@ const uses = {
   paths: hostPaths,
   /** 历史从存档归并 */
   memory,
-  /** 回合进出（agent:input:before、agent:turn:after）与定稿校验（agent:reply:before）拼出在途条目；memory:clear 之后重新取快照 */
+  /**
+   * 回合进出（agent:input:before、agent:turn:after）与定稿校验（agent:reply:before）拼出在途条目，工具结果落库前
+   * （agent:tool:after）写上历史要还原的结局；memory:clear 之后重新取快照
+   */
   hooks,
   /** session:* 事件推列表增量，agent、工具与存档的事件推条目 */
   events,
   lifecycle,
   logger,
   provide,
+  /** 房间分组的组名：适配器实例的显示名 */
+  plugins: pluginsService,
   /** owner 自己的会话按哪个入口平台选档：看会话 id 归哪个平台适配器 */
   platform: optional(platform),
-  /** 下列三项只供会话配置列可选项，缺席即空列表 */
-  persona: optional(persona),
-  llm: optional(llm),
-  tools: optional(tools),
   /** 停止回合 */
   agent: optional(agent),
   /** 回滚 */
   checkpoint: optional(checkpoint),
+  /** 手动压缩，用量条目的压缩线 */
+  compression: optional(compression),
   /** 计划的快照与清空 */
   todoList: optional(todoList),
   /** 说话人与审批的应答人是不是 owner；缺席时都不是 */
   authority: optional(authority),
+  /** 工具卡与审批卡的展示按工具定义上声明的展示种类取；缺席时都走通用卡 */
+  tools: optional(tools),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -85,6 +91,8 @@ async function run(caps: Caps): Promise<void> {
   const files = createFileHandles(() => store.listRoots());
   const isOwner: IsOwner = (platformName, userId) =>
     userId !== undefined && (caps.authority.current?.isOwner(platformName, userId) ?? false);
+  const displaySpec = (tool: string) => caps.tools.current?.getAll().find(t => t.name === tool)?.display;
+  const displayOf: DisplayOf = (tool, args) => resolveDisplay(displaySpec(tool), args);
   const isRoom = (sessionId: string) => {
     const info = sm.getSession(sessionId);
     return info !== undefined && sessions.sectionOf(info) === 'rooms';
@@ -103,9 +111,7 @@ async function run(caps: Caps): Promise<void> {
     hasApproval: id => approval.pendingIn(id),
     changed: id => push([id], []),
     platform: caps.platform,
-    persona: caps.persona,
-    llm: caps.llm,
-    tools: caps.tools,
+    plugins: caps.plugins.require(),
     logger,
   });
   const timeline = createTimeline({
@@ -113,11 +119,13 @@ async function run(caps: Caps): Promise<void> {
     todoList: caps.todoList,
     isOwner,
     signFile: files.sign,
+    displayOf,
     requireSession: sessions.requireSession,
     summarize: sessions.summarize,
     isRoom,
     notify: (sessionId, method, params) => server.notifySession(sessionId, method, params),
     requestUsage,
+    compressAt: () => caps.compression.current?.autoThreshold || undefined,
     approvalsOf: sessionId => approval.service.list({ sessionId }),
     signal: lifecycle.signal,
   });
@@ -126,8 +134,9 @@ async function run(caps: Caps): Promise<void> {
     events,
     logger,
     auditFile: join(caps.paths.require().state, 'audit', 'approvals.jsonl'),
-    changed: card => {
-      timeline.approval(card);
+    displaySpec,
+    changed: (card, settlement) => {
+      timeline.approval(card, settlement);
       push([card.sessionId], []);
     },
   });
@@ -135,14 +144,37 @@ async function run(caps: Caps): Promise<void> {
     events,
     agent: caps.agent,
     checkpoint: caps.checkpoint,
+    compression: caps.compression,
     todoList: caps.todoList,
     requireSession: sessions.requireSession,
     requestUsage,
   });
+  const currentFeatures = (): Features => ({
+    send: caps.agent.current !== undefined,
+    rewind: caps.checkpoint.current !== undefined,
+    compress: caps.compression.current !== undefined,
+  });
   const server = createSessionServer(
     { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...approvalHandlers },
+    currentFeatures,
     logger,
   );
+  // 功能位所看的服务上线或下线（通知在变化之后异步送达）：与上次推的不同才推给每条连接
+  let features = currentFeatures();
+  const featureServices = new Set([agent.name, checkpoint.name, compression.name]);
+  const refreshFeatures = (service: string) => {
+    if (!featureServices.has(service)) return;
+    const next = currentFeatures();
+    if (next.send === features.send && next.rewind === features.rewind && next.compress === features.compress) return;
+    features = next;
+    server.notify(
+      'features/changed',
+      () => ({ features: next }),
+      () => true,
+    );
+  };
+  events.on('service:registered', refreshFeatures);
+  events.on('service:unregistered', refreshFeatures);
 
   /** 把这些会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组 */
   function push(ids: string[], removes: string[]): void {
@@ -169,6 +201,14 @@ async function run(caps: Caps): Promise<void> {
     timeline.forget(id);
     seen.forget(id).catch(err => logger.warn(`删除会话后清理已读记录失败 (${id}):`, err));
   });
+  // 设置变了（插件启停、某一层或某个会话的覆盖被改写）：每条连接各推一次，客户端重取打开着的会话的设置
+  events.on('session:config:changed', () =>
+    server.notify(
+      'session/config/changed',
+      () => ({}),
+      () => true,
+    ),
+  );
 
   // 回合真正开始（agent:input:before）到它的 next 返回之间算运行中；被下游拦下、出错的一轮同样在 finally 里结束
   hooks.middleware('agent:input:before', async (data, next) => {
@@ -185,6 +225,11 @@ async function run(caps: Caps): Promise<void> {
   });
   hooks.middleware('agent:turn:after', async (data, next) => {
     timeline.outcome(data.turnId, data.outcome);
+    await next();
+  });
+  hooks.middleware('agent:tool:after', async (data, next) => {
+    const { turnId, callId } = data.toolCallContext;
+    if (turnId && callId) Object.assign(data.metadata, await timeline.toolMetadata(turnId, callId));
     await next();
   });
   hooks.middleware('agent:reply:before', async (_data, next) => {

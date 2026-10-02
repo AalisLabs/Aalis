@@ -1,0 +1,198 @@
+.shell {
+  display: grid;
+  grid-template-areas:
+    "rail left bar right"
+    "rail left main right";
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.shell-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: var(--rail-w);
+  padding: var(--space-2) 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-rail);
+}
+
+.shell-rail-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-0-5);
+  width: calc(var(--rail-w) - 2 * var(--space-2));
+  min-height: calc(var(--rail-w) - 2 * var(--space-2));
+  border-radius: var(--radius-sm);
+  color: var(--color-text-2);
+}
+
+.shell-rail-item:hover {
+  background: var(--color-fill-1);
+}
+
+.shell-rail-item[aria-current="page"] {
+  color: var(--color-text);
+  background: var(--color-fill-2);
+}
+
+/* 当前项：贴着图标栏左边一条金色指示条 */
+.shell-rail-item[aria-current="page"]::before {
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  left: calc(-1 * var(--space-2));
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-mark);
+  content: "";
+}
+
+.shell-rail-item .lucide {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+/* 触屏上没有悬停提示，图标下方写短名 */
+.shell-rail-name {
+  display: none;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+@media (pointer: coarse) {
+  .shell-rail-name {
+    display: block;
+  }
+}
+
+.shell-left,
+.shell-right {
+  --surface: var(--color-bg-side);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-bg-side);
+}
+
+.shell-left:focus-visible,
+.shell-right:focus-visible {
+  outline: none;
+}
+
+.shell-left {
+  grid-area: left;
+  width: var(--left-w);
+  border-right: 1px solid var(--color-border);
+}
+
+.shell-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.shell-right {
+  grid-area: right;
+  width: var(--right-w);
+  border-left: 1px solid var(--color-border);
+}
+
+.shell-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-drawer) - 1);
+  display: none;
+  padding: 0;
+  border: 0;
+  background: var(--color-scrim);
+}
+
+@media (min-width: 64em) {
+  .shell[data-left="collapsed"] .shell-left {
+    display: none;
+  }
+}
+
+@media (min-width: 80em) {
+  .shell[data-right="collapsed"] .shell-right {
+    display: none;
+  }
+}
+
+/* 覆盖式抽屉：左栏 48em–64em，右侧面板 48em–80em，从边上盖在主区上面，不挤压主区 */
+@media (min-width: 48em) and (max-width: 63.99em) {
+  .shell-left {
+    position: fixed;
+    top: env(safe-area-inset-top);
+    bottom: env(safe-area-inset-bottom);
+    left: calc(env(safe-area-inset-left) + var(--rail-w));
+    z-index: var(--z-drawer);
+    display: none;
+    box-shadow: var(--shadow-2);
+  }
+
+  .shell[data-drawer="left"] .shell-left,
+  .shell-scrim[data-side="left"] {
+    display: flex;
+  }
+}
+
+@media (min-width: 48em) and (max-width: 79.99em) {
+  .shell-right {
+    position: fixed;
+    top: env(safe-area-inset-top);
+    right: env(safe-area-inset-right);
+    bottom: env(safe-area-inset-bottom);
+    z-index: var(--z-drawer);
+    display: none;
+    box-shadow: var(--shadow-2);
+  }
+
+  .shell[data-drawer="right"] .shell-right,
+  .shell-scrim[data-side="right"] {
+    display: flex;
+  }
+}
+
+/* 手机：没有图标栏，一层占满一屏，地址决定是哪一层 */
+@media (max-width: 47.99em) {
+  .shell {
+    grid-template-areas:
+      "bar"
+      "main";
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell-rail {
+    display: none;
+  }
+
+  .shell-left,
+  .shell-main,
+  .shell-right {
+    grid-area: main;
+    width: auto;
+    border: 0;
+  }
+
+  .shell[data-level="1"] .shell-main,
+  .shell[data-level="1"] .shell-right,
+  .shell[data-level="2"] .shell-left,
+  .shell[data-level="2"] .shell-right,
+  .shell[data-level="3"] .shell-left,
+  .shell[data-level="3"] .shell-main {
+    display: none;
+  }
+}

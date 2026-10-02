@@ -131,9 +131,8 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
 
   it('插件 dispose 时关闭已建立的 WebSocket 连接', async () => {
     // ws 的 close() 在 {server} 模式下只摘监听器、对 this.clients 一个都不动，
-    // server.close() 也只停止 accept。不主动关的话，禁用/热重载后旧 socket 上注册的
-    // message 闭包仍然活着，还能替一次已关闭的激活发出 inbound:message
-    // （事件发射不校验「已关闭」：on / provide 与账本登记都会拒并 warn）。
+    // server.close() 也只停止 accept。不主动关的话，禁用/热重载后旧 socket 仍然活着，
+    // 还能替一次已关闭的激活收发帧。
     //
     // 这里不引 ws 客户端（它是 webui-server 的私有依赖，test/ 下既解析不到也没有类型），
     // 直接用 node:http 做升级握手拿到裸 socket，再断言服务端发来了 close 帧（opcode 0x8）。
@@ -160,7 +159,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     const req = request({
       host: '127.0.0.1',
       port,
-      path: '/ws',
+      path: '/admin',
       headers: {
         Connection: 'Upgrade',
         Upgrade: 'websocket',

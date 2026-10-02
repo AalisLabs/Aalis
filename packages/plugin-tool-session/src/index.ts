@@ -1,5 +1,5 @@
 import { resolveSessionOrigin } from '@aalis/api-gateway';
-import { memory } from '@aalis/api-memory';
+import { MEMORY_RECALL_SCOPE_SETTING, type MemoryRecallScope, memory } from '@aalis/api-memory';
 import {
   type AccessChecker,
   type AccessCheckerDisposer,
@@ -7,7 +7,7 @@ import {
   type SessionHistoryService,
   sessionHistory,
 } from '@aalis/api-session-history';
-import { type MemoryRecallScope, sessionManager } from '@aalis/api-session-manager';
+import { sessionManager } from '@aalis/api-session-manager';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -429,6 +429,7 @@ export default definePlugin({
     };
     if (!cfg.enabled) return;
 
+    caps.sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
     const historyService = createSessionHistoryService(caps, cfg);
     caps.provide(sessionHistory, historyService, { label: '会话历史读取' });
     registerSessionHistoryTools(caps, historyService, cfg);

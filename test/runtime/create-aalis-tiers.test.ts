@@ -109,6 +109,14 @@ describe('create-aalis 对话模板', () => {
     }
   });
 
+  it.each(['minimal', 'standard'] as const)('%s：带上会话协议与审批服务的提供者', tier => {
+    const base = tier === 'minimal' ? [...MINIMAL_BASE] : [...MINIMAL_BASE, ...STANDARD_EXTRA];
+    const provided = new Set(base.flatMap(name => manifestOf(name).aalis?.service?.provides ?? []));
+    // 没有审批服务时，需要确认的工具调用一律被拒；WebUI 的会话也要经会话协议才连得上
+    expect(provided.has('approvals'), '审批').toBe(true);
+    expect(provided.has('session-protocol'), '会话协议').toBe(true);
+  });
+
   it.each(['minimal', 'standard'] as const)('%s：任一同类组换选任一组员（其余组取默认），依赖仍闭合', tier => {
     const base = tier === 'minimal' ? [...MINIMAL_BASE] : [...MINIMAL_BASE, ...STANDARD_EXTRA];
     const groups = GROUPS.filter(g => g.tiers.includes(tier));

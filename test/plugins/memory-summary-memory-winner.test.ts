@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
-import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { compression, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
@@ -98,7 +98,7 @@ async function setup(first: StubMemory, model: LLMModel) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
-  const host = app.bind({ provide, events, hooks });
+  const host = app.bind({ provide, events, hooks, compression });
   host.provide(memory, first as unknown as MemoryService);
   host.provide(llm, model);
   await app.plugin(memorySummary, { threshold: 30, keepRecent: 10 });
@@ -123,7 +123,7 @@ async function settle(first: StubMemory, pending: Promise<unknown>): Promise<voi
   await new Promise<void>(r => setTimeout(r, 20));
 }
 
-/** 两条摘要路径：agent:turn:after 触发的 generateSummary（后台跑，不阻塞钩子）与 session:compress */
+/** 两条摘要路径：agent:turn:after 触发的 generateSummary（后台跑，不阻塞钩子）与压缩（裁切失败时以失败落定，这里只看写在哪） */
 const paths: Array<[string, (host: Booted['host']) => Promise<unknown>]> = [
   [
     'generateSummary',
@@ -133,7 +133,14 @@ const paths: Array<[string, (host: Booted['host']) => Promise<unknown>]> = [
         { message: { sessionId: SESSION }, reply: 'ok', outcome: 'replied', sessionId: SESSION, metadata: {} } as never,
       ),
   ],
-  ['session:compress', host => host.events.emit('session:compress', { sessionId: SESSION, reason: 'manual' })],
+  [
+    'compress',
+    host =>
+      host.compression
+        .require()
+        .compress(SESSION, 'manual')
+        .catch(() => {}),
+  ],
 ];
 
 describe.each(paths)('plugin-memory-summary %s：一次操作只认开头取到的 memory 实例', (_name, trigger) => {

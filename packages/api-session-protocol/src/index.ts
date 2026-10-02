@@ -12,6 +12,7 @@
 
 import type { ApprovalSurface } from '@aalis/api-approval';
 import { defineService } from '@aalis/core';
+import type { SchemaField } from '@aalis/schema-config';
 import { z } from 'zod';
 
 /** 协议版本 `<主>.<次>`：握手时主版本不同即断开 */
@@ -106,6 +107,17 @@ export const InitializeParamsSchema = z.object({
   client: z.object({ name: z.string(), version: z.string() }),
 });
 
+/**
+ * 功能位：发送、回滚、压缩，各看对话、检查点、压缩服务在不在。界面按它决定入口出现与否；服务上下线时推
+ * features/changed。计划、审批、用量按数据出现，不在这里
+ */
+export const FeaturesSchema = z.object({
+  send: z.boolean(),
+  rewind: z.boolean(),
+  compress: z.boolean(),
+});
+export type Features = z.infer<typeof FeaturesSchema>;
+
 export const InitializeResultSchema = z.object({
   protocolVersion: z.string(),
   experimental: z.literal(true),
@@ -113,6 +125,7 @@ export const InitializeResultSchema = z.object({
   identity: IdentitySchema,
   /** 这条连接所在审批面的登记名（webui、cli）；审计记的是登记身份 */
   surface: z.string(),
+  features: FeaturesSchema,
 });
 
 // ════════════════════════════════════════════════════════════
@@ -130,8 +143,11 @@ export const SessionSummarySchema = z.object({
   title: z.string(),
   parentId: z.string().optional(),
   childCount: z.number().int().nonnegative(),
-  /** room 是聊天用的会话（IM 房间与 owner 自己的会话），task 是子任务 */
-  kind: z.enum(['room', 'task']),
+  /**
+   * 会话种类（api-session-manager 的 sessionKind）：task 是子任务，room 是 IM 房间（受众为群或私聊，含 owner 自己的私聊），
+   * owner 是其余（owner 在 WebUI、终端的会话等）。适用于这个会话的设置项按它选
+   */
+  kind: z.enum(['owner', 'room', 'task']),
   section: SessionSectionSchema,
   /** 出生平台；owner 自己的会话没有 */
   platform: z.string().optional(),
@@ -155,8 +171,6 @@ export const SessionSummarySchema = z.object({
   /** 需要我处理：有未结的审批 */
   attention: z.boolean(),
   archived: z.boolean(),
-  /** 房间：生效配置是否开着白纸 */
-  paper: z.boolean().optional(),
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -164,6 +178,8 @@ export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 export const RoomGroupSchema = z.object({
   platform: z.string(),
   instance: z.string().optional(),
+  /** 组名：实例的显示名（插件显示名，非默认实例另带实例名）；没有实例的组是平台名 */
+  label: z.string(),
   /** 组里的房间数 */
   rooms: z.number().int().nonnegative(),
   /** 组里房间涉及的机器人账号数 */
@@ -176,21 +192,29 @@ export type RoomGroup = z.infer<typeof RoomGroupSchema>;
 /**
  * 不给 parentId 时列根会话：「我的」区在前，按需要处理的程度（需要我处理、出错、完成未读、运行中）排在前面，其余按最后活动从新到旧；
  * 房间在后，按最后活动从新到旧。给 parentId 时列它的直接子会话，按最后活动从新到旧，不看 section。
- * query 按名称、标题、id 匹配（不分大小写），也认「平台:群号」。cursor 取上一页的 nextCursor。
+ * - instance 只列这个适配器实例接管的房间，platform 只列这个平台还没记下实例的房间（groups 里没有 instance 的那一组），
+ *   两者不同时给；房间表据此一次取全一组；
+ * - archived 缺省不含已归档的会话，为 true 时只列已归档的；
+ * - query 按名称、标题、id 匹配（不分大小写），也认「平台:群号」。cursor 取上一页的 nextCursor。
  */
-export const SessionsListParamsSchema = z.object({
-  section: SessionSectionSchema.optional(),
-  parentId: z.string().optional(),
-  query: z.string().optional(),
-  cursor: z.string().optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-});
+export const SessionsListParamsSchema = z
+  .object({
+    section: SessionSectionSchema.optional(),
+    parentId: z.string().optional(),
+    instance: z.string().optional(),
+    platform: z.string().optional(),
+    archived: z.boolean().optional(),
+    query: z.string().optional(),
+    cursor: z.string().optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+  })
+  .refine(p => p.instance === undefined || p.platform === undefined, { message: 'instance 与 platform 不同时给' });
 
 export const SessionsListResultSchema = z.object({
   sessions: z.array(SessionSummarySchema),
   /** 还有下一页时给出 */
   nextCursor: z.string().optional(),
-  /** 全部房间的分组，不受分区、搜索与分页影响 */
+  /** 没归档的房间的分组，不受分区、搜索与分页影响 */
   groups: z.array(RoomGroupSchema),
 });
 
@@ -203,7 +227,7 @@ export const SessionsChangedParamsSchema = z.object({
 
 const SessionTargetSchema = z.object({ sessionId: z.string() });
 
-/** 新建会话：给 parentId 时建它的子会话，复制父会话的生效配置（房间专属的键除外） */
+/** 新建会话：给 parentId 时建它的子会话，复制父会话的生效配置（只经继承链实时解析的设置项除外） */
 export const SessionCreateParamsSchema = z.object({
   name: z.string().min(1).optional(),
   parentId: z.string().optional(),
@@ -221,72 +245,64 @@ export const SessionBatchResultSchema = z.object({
   failed: z.array(z.object({ sessionId: z.string(), message: z.string() })),
 });
 
-// ----- 会话配置 -----
+// ----- 会话设置 -----
 
-/** 会话配置的各项（与 api-session-manager 的 SessionConfig 同义） */
-const sessionConfigFields = {
-  llm: z.object({ provider: z.string(), model: z.string() }),
-  enabledToolGroups: z.array(z.string()),
-  persona: z.string(),
-  think: z.boolean(),
-  systemPromptExtra: z.string(),
-  maxToolIterations: z.number(),
-  disableOutputFormat: z.boolean(),
-  clientSideJsonRendering: z.boolean(),
-  paperEnabled: z.boolean(),
-  paperName: z.string(),
-  remoteAgentTypes: z.array(z.string()),
-  remoteAgentUserDailyCents: z.number(),
-  remoteAgentUserDailyTasks: z.number(),
-  remoteAgentRoomDailyCents: z.number(),
-  memoryRecallScope: z.enum(['session', 'platform', 'all']),
-};
+/** schema-config 的字段：类型、标签、说明、默认值、校验与可选项来源（dynamicOptions），词汇见 @aalis/schema-config */
+const SettingFieldSchema = z.custom<SchemaField>(
+  value =>
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === 'string' &&
+    typeof (value as { label?: unknown }).label === 'string',
+  { message: '期望 schema-config 字段（带 type 与 label）' },
+);
 
-/** 配置值（生效值与继承值不含子会话默认配置） */
-export const SessionConfigValuesSchema = z.object(sessionConfigFields).partial();
+/** 生效值出自哪一层：本会话、父会话给子会话的默认值（旧数据）、受众条目、平台档、全局默认 */
+export const SettingSourceSchema = z.enum(['session', 'parent', 'audience', 'platform', 'defaults']);
 
-/** 会话自己的覆盖，另含给子会话的默认配置 */
-export const SessionConfigSchema = SessionConfigValuesSchema.extend({
-  sessionDefaults: SessionConfigValuesSchema.optional(),
+/**
+ * 一个设置项的一行。设置项由插件登记，协议与客户端都不认识具体的键，按 field 渲染。一组行已排好：composer、common
+ * 在前，advanced 在后，同一显眼程度按登记的先后；composer 也出现在输入框旁的快捷切换，同一组最多两项，多出的已退到 common
+ */
+export const SettingRowSchema = z.object({
+  key: z.string(),
+  field: SettingFieldSchema,
+  /** 登记它的插件实例 id：「高级」里按它分组，组名取插件显示名 */
+  plugin: z.string(),
+  prominence: z.enum(['composer', 'common', 'advanced']),
+  /** 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值；没写的没有 */
+  value: z.unknown().optional(),
+  /** 生效值；哪一层都没设时没有，界面按字段的默认值显示 */
+  effective: z.unknown().optional(),
+  /** 生效值出自哪一层；哪一层都没设时没有 */
+  source: SettingSourceSchema.optional(),
 });
+export type SettingRow = z.infer<typeof SettingRowSchema>;
 
-/** 改配置的补丁：给值即写成会话自己的覆盖，null 删掉这一项、恢复继承，没给的键不动 */
-export const SessionConfigPatchSchema = z
-  .object({
-    ...(Object.fromEntries(Object.entries(sessionConfigFields).map(([key, field]) => [key, field.nullable()])) as {
-      [K in keyof typeof sessionConfigFields]: z.ZodNullable<(typeof sessionConfigFields)[K]>;
-    }),
-    sessionDefaults: SessionConfigValuesSchema.nullable(),
-  })
-  .partial();
+export const SettingRowsSchema = z.object({ items: z.array(SettingRowSchema) });
 
-/** 继承来的值出自哪一层：全局默认、平台档、平台档的受众条目、父会话给子会话的默认配置 */
-export const InheritanceSourceSchema = z.enum(['defaults', 'platform', 'audience', 'parent']);
+/**
+ * 写设置：给值即写入这一层（按登记的校验与字段），null 删掉这一项、恢复继承，没给的键不动。给值的键须适用于这个会话种类
+ * （受众条目按房间），null 不受限
+ */
+const SettingPatchSchema = z.record(z.unknown());
 
-export const SessionConfigViewSchema = z.object({
-  /** 会话自己的覆盖 */
-  config: SessionConfigSchema,
-  /** 生效值：继承值叠上会话自己的覆盖 */
-  effective: SessionConfigValuesSchema,
-  /** 继承链：选档用的平台与受众、继承值，以及每一项出自哪一层 */
-  inheritance: z.object({
-    platform: z.string().optional(),
-    audience: z.enum(['private', 'group']).optional(),
-    values: SessionConfigValuesSchema,
-    sources: z.record(SessionConfigValuesSchema.keyof(), InheritanceSourceSchema),
-  }),
-  /** 可选项 */
-  options: z.object({
-    personas: z.array(z.string()),
-    models: z.array(z.object({ provider: z.string(), model: z.string(), capabilities: z.array(z.string()) })),
-    toolGroups: z.array(z.object({ name: z.string(), label: z.string() })),
-  }),
-});
+/** 改本会话的覆盖；没登记的键、不合字段的值、不适用于这个会话种类的项回参数错误，什么都不改 */
+export const SessionConfigUpdateParamsSchema = z.object({ sessionId: z.string(), patch: SettingPatchSchema });
 
-export const SessionConfigUpdateParamsSchema = z.object({
-  sessionId: z.string(),
-  patch: SessionConfigPatchSchema,
-});
+/**
+ * 会话之上的一层：全局默认、平台档（按平台名生效，不区分适配器实例）、平台档的受众条目（只对这个平台的群或私聊房间）。
+ * 继承的先后：本会话、父会话、受众条目、平台档、全局默认
+ */
+export const SettingLayerSchema = z.discriminatedUnion('scope', [
+  z.object({ scope: z.literal('defaults') }),
+  z.object({ scope: z.literal('platform'), platform: z.string().min(1) }),
+  z.object({ scope: z.literal('audience'), platform: z.string().min(1), audience: z.enum(['group', 'private']) }),
+]);
+export type SettingLayer = z.infer<typeof SettingLayerSchema>;
+
+export const SettingLayerTargetSchema = z.object({ layer: SettingLayerSchema });
+export const SettingLayerUpdateParamsSchema = z.object({ layer: SettingLayerSchema, patch: SettingPatchSchema });
 
 // ════════════════════════════════════════════════════════════
 // 订阅与条目
@@ -327,6 +343,34 @@ export const SpeakerSchema = z.object({
 /** 回合的结局，取值同 api-agent 的 agent:turn:after */
 export const TurnOutcomeSchema = z.enum(['replied', 'silent', 'aborted', 'error']);
 
+const ApprovalStateSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']);
+/** 结算之后的四种结局 */
+const SettledStateSchema = ApprovalStateSchema.exclude(['pending']);
+
+/**
+ * 审批的结算，与 @aalis/api-approval 的 ApprovalSettlement 同形：结局、从哪里来（owner 应答、没人在场、超时、发起者不能产生审批、
+ * 子任务、频率上限、回合结束、服务停止）与结算的时刻
+ */
+export const ApprovalSettlementSchema = z.object({
+  state: SettledStateSchema,
+  source: z.enum(['owner', 'absent', 'timeout', 'ineligible', 'subtask', 'rate-limit', 'turn-ended', 'shutdown']),
+  at: z.number(),
+});
+
+/**
+ * 工具卡的展示：会话服务按工具定义上声明的展示种类，从参数里取出各字段的值（逐字）。种类是宿主维护的封闭集合，
+ * 以后按加法加：command 是命令与工作目录，file-change 是路径与删、加两侧的文本
+ */
+export const ToolDisplaySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('command'), command: z.string(), cwd: z.string().optional() }),
+  z.object({
+    kind: z.literal('file-change'),
+    path: z.string(),
+    removed: z.string().optional(),
+    added: z.string().optional(),
+  }),
+]);
+
 const itemBase = {
   /** 会话里唯一；tool-call 的 itemId 就是工具调用的 callId（存档里没记 callId 的旧数据与没有执行的调用除外） */
   itemId: z.string(),
@@ -340,15 +384,17 @@ const itemBase = {
  * 一次成形的条目不经 started 直接 completed，同一条目可以再次 completed（如送达结果晚到），按 itemId 覆盖：
  * - user-message：说话人的文字与附件；
  * - agent-message：她的文字与附件（可以只有附件）、模型；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
- *   平台没收下的）带 undelivered；
+ *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
  * - reasoning：思考文字；
- * - tool-call：工具名、参数、状态、流式输出（exec 等）、结果摘要、耗时；sentToRoom 标出经平台工具发进房间、平台收下的消息。
- *   送达结果不落库，历史里只标得出工具调用之前说的话，其余 undelivered 与 sentToRoom 只在实时推送里。
- *   这次调用要 owner 批准时带 approvalId，再推一次 item/started；没批准的（拒绝、没人应答、撤销）状态是 denied。
- *   approvalId 与 denied 也只在实时推送里，历史里被拦下的调用显示为 failed；
+ * - tool-call：工具名、参数、状态、流式输出（exec 等）、结果摘要、耗时；display 是按工具声明解析好的展示，没声明的没有，
+ *   界面逐字列出参数；sentToRoom 标出房间里经平台工具发出、平台收下的消息。
+ *   这次调用要 owner 批准、审批推给了审批面时带 approvalId，再推一次 item/started；结算后带 approvalId 与 settlement，
+ *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
+ *   没人应答、撤销）状态是 denied。sentToRoom、approvalId 与 settlement 随工具结果落库，历史里同样还原；
  * - notice：宿主事件（压缩、白纸与作品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
- * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage；
+ * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
+ *   compressAt 是自动压缩的使用率（由压缩服务给出），没有压缩服务或不自动压缩时没有；
  * - turn：回合开始（by 是发起方）与结束（outcome）。
  */
 export const SessionItemSchema = z.discriminatedUnion('kind', [
@@ -377,8 +423,10 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     output: z.string().optional(),
     result: z.string().optional(),
     durationMs: z.number().optional(),
+    display: ToolDisplaySchema.optional(),
     sentToRoom: z.boolean().optional(),
     approvalId: z.string().optional(),
+    settlement: ApprovalSettlementSchema.optional(),
   }),
   z.object({
     kind: z.literal('notice'),
@@ -404,8 +452,10 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     used: z.number(),
     usageRatio: z.number(),
     breakdown: z.record(z.number()),
-    /** 其余系统提示的按注入者明细 */
+    /** 其余系统提示的按注入者明细：键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件 */
     injectors: z.record(z.number()).optional(),
+    /** 自动压缩的使用率（0 到 1，与 usageRatio 同一口径） */
+    compressAt: z.number().optional(),
   }),
   z.object({
     kind: z.literal('turn'),
@@ -420,10 +470,6 @@ export type SessionItem = z.infer<typeof SessionItemSchema>;
 // ════════════════════════════════════════════════════════════
 // 审批
 // ════════════════════════════════════════════════════════════
-
-const ApprovalStateSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']);
-/** 结算之后的四种结局 */
-const SettledStateSchema = ApprovalStateSchema.exclude(['pending']);
 
 /**
  * 审批对象，与 @aalis/api-approval 的 Approval 同形。卡片显示 facts 之前一律经 api-approval 的 sanitizeForCard 清洗：
@@ -547,7 +593,10 @@ export const ApprovalRespondParamsSchema = z.object({
 export const ApprovalRequestedParamsSchema = z.object({ approval: ApprovalSchema });
 
 /** 审批结算了：推给拿到过 approval/requested 的连接 */
-export const ApprovalSettledParamsSchema = z.object({ approvalId: z.string(), state: SettledStateSchema });
+export const ApprovalSettledParamsSchema = ApprovalSettlementSchema.extend({ approvalId: z.string() });
+
+/** 功能位变了（对话、检查点或压缩服务上线或下线）：给出最新的功能位 */
+export const FeaturesChangedParamsSchema = z.object({ features: FeaturesSchema });
 
 // ════════════════════════════════════════════════════════════
 // 方法与通知表
@@ -563,12 +612,23 @@ export const sessionMethods = {
     result: z.object({ session: SessionSummarySchema }),
   },
   'session/rename': { params: SessionRenameParamsSchema, result: EmptySchema },
+  /** 归档会话连同子会话 */
   'session/archive': { params: SessionTargetSchema, result: EmptySchema },
+  /** 恢复归档的会话连同子会话 */
+  'session/unarchive': { params: SessionTargetSchema, result: EmptySchema },
   /** 删除会话连同子会话，并清空它们的消息历史与长期记忆 */
   'session/delete': { params: SessionTargetSchema, result: EmptySchema },
   'session/batch': { params: SessionBatchParamsSchema, result: SessionBatchResultSchema },
-  'session/config/get': { params: SessionTargetSchema, result: SessionConfigViewSchema },
-  'session/config/update': { params: SessionConfigUpdateParamsSchema, result: SessionConfigViewSchema },
+  /** 适用于这个会话的设置项，各带本会话的值、生效值与来源 */
+  'session/config/get': { params: SessionTargetSchema, result: SettingRowsSchema },
+  /** 按键改本会话的覆盖，回最新的各行 */
+  'session/config/update': { params: SessionConfigUpdateParamsSchema, result: SettingRowsSchema },
+  /** 写了值的各层：全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排 */
+  'session/config/layers': { params: EmptySchema, result: z.object({ layers: z.array(SettingLayerSchema) }) },
+  /** 一层的各行，形状与会话的相同；受众条目只列适用于房间的项 */
+  'session/config/layer/get': { params: SettingLayerTargetSchema, result: SettingRowsSchema },
+  /** 按键改一层的值，回最新的各行；改动写进宿主的配置文档 */
+  'session/config/layer/update': { params: SettingLayerUpdateParamsSchema, result: SettingRowsSchema },
   /** 记下 owner 看过这个会话，用于「我的」区的完成未读 */
   'session/markSeen': { params: SessionTargetSchema, result: EmptySchema },
   'session/subscribe': { params: SessionTargetSchema, result: SessionSnapshotSchema },
@@ -578,7 +638,10 @@ export const sessionMethods = {
   /** 工具调用达到上限后继续 */
   'turn/continue': { params: SessionTargetSchema, result: EmptySchema },
   'turn/abort': { params: TurnAbortParamsSchema, result: EmptySchema },
-  /** 手动压缩 */
+  /**
+   * 手动压缩：压完才回；没有压缩服务回 unsupported，没压成回内部错误（时间线上的压缩通知同样写明失败）。这个会话正在
+   * 压缩或生成摘要时直接拒绝，同样回内部错误，时间线上没有新的通知
+   */
   'session/compress': { params: SessionTargetSchema, result: EmptySchema },
   'turn/rewind': { params: TurnRewindParamsSchema, result: TurnRewindResultSchema },
   /** 清空待办 */
@@ -594,7 +657,13 @@ export const sessionMethods = {
 
 /** 服务端推送：名字 → 参数的 schema */
 export const sessionNotifications = {
+  'features/changed': FeaturesChangedParamsSchema,
   'sessions/changed': SessionsChangedParamsSchema,
+  /**
+   * 会话设置变了：插件启停使设置项增减，或某一层、某个会话的覆盖被改写。不带参数，客户端重取打开着的会话的设置
+   * 与输入框旁的快捷切换
+   */
+  'session/config/changed': EmptySchema,
   'item/started': ItemPushParamsSchema,
   'item/delta': ItemDeltaParamsSchema,
   'item/completed': ItemPushParamsSchema,

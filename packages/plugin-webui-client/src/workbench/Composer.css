@@ -1,0 +1,104 @@
+.composer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: calc(100% - 2 * var(--space-4));
+  max-width: var(--measure-chat);
+  margin: 0 auto var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-md);
+}
+
+.composer:focus-within {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -1px;
+}
+
+.composer textarea {
+  min-height: 0;
+  max-height: 40dvh;
+  padding: 0;
+  border: 0;
+  font-size: max(var(--text-input), var(--text-lg));
+  line-height: var(--leading-lg);
+  resize: none;
+  field-sizing: content;
+}
+
+.composer textarea:focus-visible {
+  outline: none;
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.composer-spacer {
+  flex: 1;
+}
+
+.composer-setting {
+  min-width: 0;
+  max-width: 12rem;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-input);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-2);
+  background: none;
+}
+
+a.composer-setting {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-xs);
+}
+
+.composer-setting:hover {
+  background: var(--color-fill-1);
+}
+
+.composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer-files li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+}
+
+.composer-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-note {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+.composer-note[role="alert"] {
+  color: var(--color-danger-text);
+}

@@ -3,7 +3,6 @@ import { checkpoint } from '@aalis/api-checkpoint';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { createStorageGateway, storage } from '@aalis/api-storage';
-import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { configSchema } from './config.js';
@@ -24,8 +23,6 @@ const uses = {
   storage,
   /** 只有「回滚整轮对话」用得到（抓消息时间戳、删消息）；没有 memory 也能做纯文件回滚 */
   memory: optional(memory),
-  /** 页面动作的登记口；无 WebUI 时本插件照常在后台记账 */
-  webui: optional(webuiServer),
   events,
   hooks,
   lifecycle,
@@ -46,7 +43,7 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { storage, memory, webui, events, hooks, lifecycle, provide } = caps;
+  const { storage, memory, events, hooks, lifecycle, provide } = caps;
   /** 服务内部的 commitTurn / gc / flush 都写这个 source，日志页按 `…:checkpoint` 归组 */
   const logger = caps.logger.child('checkpoint');
   const cfg = normalizeConfig(parseConfig(configSchema, caps.config, logger));
@@ -68,39 +65,6 @@ function run(caps: Caps): void {
         .emit('history:changed', { sessionId })
         .catch(err => logger.debug(`emit history:changed 失败: ${(err as Error).message}`));
     },
-  });
-
-  // ──────────── 页面动作（供 WebUI 调用）────────────
-
-  webui.registerAction('listTurns', async args => {
-    const sessionId = (args.sessionId as string | undefined) ?? '';
-    if (!sessionId) return { error: '缺少 sessionId' };
-    return service.listTurns(sessionId);
-  });
-
-  webui.registerAction('getManifest', async args =>
-    service.getManifest(args.sessionId as string, args.turnId as string),
-  );
-
-  webui.registerAction('rollback', async args => {
-    const sessionId = args.sessionId as string;
-    const turnId = args.turnId as string;
-    if (!sessionId || !turnId) return { ok: false, errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }] };
-    return service.rollback(sessionId, turnId);
-  });
-
-  webui.registerAction('rollbackWithChat', async args => {
-    const sessionId = args.sessionId as string;
-    const turnId = args.turnId as string;
-    if (!sessionId || !turnId) {
-      return {
-        ok: false,
-        errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }],
-        deletedMessages: 0,
-        chatDeleted: false,
-      };
-    }
-    return service.rollbackWithChat(sessionId, turnId);
   });
 
   // ──────────── 回合生命周期 ────────────
@@ -128,7 +92,7 @@ function run(caps: Caps): void {
     }
   });
 
-  // 监听命令类工具调用，给调用所在的那一轮打 execUsed 标记（UI 显示 "部分未保护"）：
+  // 监听命令类工具调用，给调用所在的那一轮在清单里打 execUsed 标记：
   // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
   hooks.middleware('agent:tool:before', async (data, next) => {
     const name = data.name;

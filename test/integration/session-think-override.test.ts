@@ -13,6 +13,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话级 thinking 覆盖（/session.set -t on|off）端到端：
@@ -30,7 +31,9 @@ async function loadStack(recorder: ChatModelRequest[]) {
   // gateway 是 plugin-commands 的 required 依赖：生产里指令插件只在网关在场时才激活
   await app.plugin(gatewayPlugin, {});
   await app.plugin(commandsPlugin, {});
-  await app.plugin(sessionManagerPlugin, {});
+  await app.plugin(sessionManagerPlugin);
+  // 人设这一项由人设插件登记，这里不装人设插件，由测试插件代登
+  await app.plugin(settingsPlugin('persona-settings', [PERSONA]));
   await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
     historyLimit: 10,

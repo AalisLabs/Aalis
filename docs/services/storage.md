@@ -246,7 +246,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 
 ## 7. 边界与注意事项
 
-1. **`browsable` 当前是部分生效的 hint**：`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**。
+1. **`browsable` 只是给文件浏览器类界面的 hint**：WebUI 没有文件浏览页，不读它。
 2. **rename 仅同目录改名**。同根跨目录移动改用 `move`。
 3. **同名 root 静默遮蔽**：用 `getStorageRootConflicts(storage)` 暴露。
 4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。参考实现的监听器归提供者的这次激活所有，提供者关闭（重启、改配置、卸载）时一并关闭；需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。

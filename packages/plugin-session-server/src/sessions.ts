@@ -1,18 +1,18 @@
 // ════════════════════════════════════════════════════════════
-// 会话列表与会话的增删改：摘要、分区与分组、排序与分页、搜索；建、改名、归档、删除与批量；
-// 会话配置的生效值与继承来源；已读。会话本身都在 session-manager 里，这里只做投影与转发。
-// 「需要我处理」由未结的审批驱动。
+// 会话列表与会话的增删改：摘要、分区与分组、排序与分页、搜索、按组取与归档区；建、改名、归档与恢复、删除与批量；
+// 会话设置的各行（会话与各层）；已读。会话本身都在 session-manager 里，这里只做投影与转发。
+// 「需要我处理」由未结的审批驱动；房间按接管的适配器实例分组，组名取实例的显示名。
 // ════════════════════════════════════════════════════════════
 
-import { type LLMModel, listLLMModels } from '@aalis/api-llm';
-import type { PersonaService } from '@aalis/api-persona';
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import {
-  omitRoomOnlyKeys,
+  isSessionConfigError,
+  type RegisteredSessionSetting,
   type SessionConfig,
+  type SessionConfigPatch,
   type SessionInfo,
+  type SessionKind,
   type SessionManagerService,
-  sessionListSection,
 } from '@aalis/api-session-manager';
 import {
   type RoomGroup,
@@ -21,9 +21,9 @@ import {
   type SessionMethodResult,
   type SessionPeer,
   type SessionSummary,
+  type SettingRow,
 } from '@aalis/api-session-protocol';
-import type { ToolService } from '@aalis/api-tools';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import { failure, type MethodHandlers, ProtocolError } from './connection.js';
 import type { SeenStore } from './seen.js';
 
@@ -40,22 +40,32 @@ interface SessionDeps {
   /** 摘要因会话表之外的原因变了（已读），推给 watch 的连接 */
   changed(sessionId: string): void;
   platform: ServiceRef<PlatformAdapter>;
-  persona: ServiceRef<PersonaService>;
-  llm: ServiceRef<LLMModel>;
-  tools: ServiceRef<ToolService>;
+  /** 组名：适配器实例的显示名 */
+  plugins: Pick<PluginManagerService, 'getPlugin'>;
   logger: Logger;
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** 存档里清掉的项读回来可能是 null（经 BSON 落盘），与没有同义 */
-function withoutNulls(value: object): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, v] of Object.entries(value)) {
-    if (v === null || v === undefined) continue;
-    out[key] = typeof v === 'object' && !Array.isArray(v) ? withoutNulls(v) : v;
+const KIND_NAMES: Record<SessionKind, string> = { owner: '我的会话', room: '房间', task: '子任务' };
+
+/** 输入框旁的快捷切换最多放几项：多出的 composer 退到 common */
+const COMPOSER_LIMIT = 2;
+const PROMINENCE_RANK = { composer: 0, common: 1, advanced: 2 } as const;
+
+/** 显眼程度在前，同一显眼程度按 order，没给 order 的按登记的先后排在后面（排序是稳定的） */
+const byProminence = (a: RegisteredSessionSetting, b: RegisteredSessionSetting) =>
+  PROMINENCE_RANK[a.prominence] - PROMINENCE_RANK[b.prominence] ||
+  (a.order ?? Number.POSITIVE_INFINITY) - (b.order ?? Number.POSITIVE_INFINITY);
+
+/** 写设置被拒（没登记的键、不合字段的值、不合法的层）是参数错误，别的照常上抛 */
+async function writing(write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write();
+  } catch (err) {
+    if (isSessionConfigError(err)) throw new ProtocolError(RPC_ERROR_CODES.invalidParams, (err as Error).message);
+    throw err;
   }
-  return out;
 }
 
 /**
@@ -87,13 +97,13 @@ export function createSessions(deps: SessionDeps) {
     return root;
   };
 
-  /** 会话所在的区：子会话归在根会话的区里 */
-  const sectionOf = (info: SessionInfo) => sessionListSection(rootOf(info));
+  /** 会话所在的区：按根会话的种类，子会话归在根会话的区里 */
+  const sectionOfRoot = (root: SessionInfo) => (root.kind === 'room' ? 'rooms' : 'owner');
+  const sectionOf = (info: SessionInfo) => sectionOfRoot(rootOf(info));
 
   function summarize(info: SessionInfo): SessionSummary {
     const root = rootOf(info);
-    const section = sessionListSection(root);
-    const room = section === 'rooms';
+    const room = root.kind === 'room';
     const seenAt = seen.get(info.id);
     return {
       id: info.id,
@@ -101,7 +111,7 @@ export function createSessions(deps: SessionDeps) {
       parentId: info.parentId,
       childCount: info.children.length,
       kind: info.kind,
-      section,
+      section: sectionOfRoot(root),
       platform: info.originPlatform,
       instance: info.originInstance,
       // 房间 id 是「平台:账号:类型:对象」，第二段是机器人账号
@@ -115,21 +125,29 @@ export function createSessions(deps: SessionDeps) {
       unread: !room && info.lastReplyAt !== undefined && (seenAt === undefined || info.lastReplyAt > seenAt),
       attention: deps.hasApproval(info.id),
       archived: info.status === 'archived',
-      paper: room ? sm.resolveConfig(info.id).paperEnabled === true : undefined,
     };
   }
 
-  /** 房间按接管的适配器实例分组；还没记下实例的按平台成一组，排在同平台各实例之后 */
+  /** 适配器实例的显示名：插件的显示名（没有时用包名），非默认实例另带实例名；插件已不在的用实例 id */
+  function instanceLabel(instance: string): string {
+    const definition = deps.plugins.getPlugin(instance)?.definition;
+    if (!definition) return instance;
+    const name = definition.displayName ?? definition.name;
+    return instance === definition.name ? name : `${name}（${instance.slice(definition.name.length + 1)}）`;
+  }
+
+  /** 没归档的房间按接管的适配器实例分组；还没记下实例的按平台成一组，排在同平台各实例之后 */
   function groups(): RoomGroup[] {
-    type Group = { platform: string; instance?: string; rooms: number; accounts: Set<string>; attention: number };
+    type Group = Omit<RoomGroup, 'accounts'> & { accounts: Set<string> };
     const byKey = new Map<string, Group>();
     for (const info of sm.listSessions({ parentId: null })) {
       const platform = info.originPlatform;
-      if (!platform) continue;
+      if (!platform || info.status === 'archived') continue;
       const key = JSON.stringify([platform, info.originInstance]);
       const group = byKey.get(key) ?? {
         platform,
         instance: info.originInstance,
+        label: info.originInstance === undefined ? platform : instanceLabel(info.originInstance),
         rooms: 0,
         accounts: new Set(),
         attention: 0,
@@ -151,14 +169,22 @@ export function createSessions(deps: SessionDeps) {
 
   /**
    * 根会话：「我的」区在前，需要我处理、出错、完成未读、运行中依次靠前，其余按最后活动；房间在后，按最后活动。
-   * 子会话按最后活动。
+   * 子会话按最后活动。缺省不含已归档的，archived 为真时只列已归档的；instance、platform 只列一组房间。
    */
   function list(params: SessionMethodParams<'sessions/list'>): SessionMethodResult<'sessions/list'> {
     if (params.cursor !== undefined && !/^\d+$/.test(params.cursor)) {
       throw new ProtocolError(RPC_ERROR_CODES.invalidParams, `cursor 无效：${params.cursor}`);
     }
     const parent = params.parentId === undefined ? undefined : requireSession(params.parentId);
-    let rows = parent ? sm.getChildren(parent.id) : sm.listSessions({ parentId: null });
+    const archived = params.archived ?? false;
+    let rows = (parent ? sm.getChildren(parent.id) : sm.listSessions({ parentId: null })).filter(
+      info => (info.status === 'archived') === archived,
+    );
+    const { instance, platform } = params;
+    if (instance !== undefined) rows = rows.filter(info => info.originInstance === instance);
+    if (platform !== undefined) {
+      rows = rows.filter(info => info.originPlatform === platform && info.originInstance === undefined);
+    }
     if (params.query) rows = rows.filter(info => matches(info, params.query ?? ''));
     let summaries = rows.map(summarize);
     if (!parent && params.section) summaries = summaries.filter(s => s.section === params.section);
@@ -183,6 +209,14 @@ export function createSessions(deps: SessionDeps) {
     if (session.status !== 'archived') await sm.updateSession(id, { status: 'archived' });
   }
 
+  /** 恢复归档的会话连同子会话：回到最后一轮收尾后的状态（completed） */
+  async function unarchive(id: string): Promise<void> {
+    const session = sm.getSession(id);
+    if (!session) return;
+    if (session.status === 'archived') await sm.updateSession(id, { status: 'completed' });
+    for (const child of session.children) await unarchive(child);
+  }
+
   /**
    * owner 自己的会话按哪个入口平台选档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，
    * 都没有时取这条连接的平台。房间钉死出生平台，不看入口。
@@ -195,25 +229,78 @@ export function createSessions(deps: SessionDeps) {
     return adapter?.instance.platform ?? peer.identity.platform;
   }
 
-  async function configView(
+  /**
+   * 设置项的各行：只列 applies 选中的项，排好显眼程度与先后，composer 多出的退到 common。own 是这一层自己的值，
+   * effective 与 sources 是解析到这一层为止（含这一层）的生效值与来源
+   */
+  function rows(
+    applies: (setting: RegisteredSessionSetting) => boolean,
+    own: SessionConfig,
+    effective: SessionConfig,
+    sources: Record<string, SettingRow['source']>,
+  ): SessionMethodResult<'session/config/get'> {
+    let composers = 0;
+    const settings = sm
+      .listSettings()
+      .filter(applies)
+      .sort(byProminence)
+      .map(setting =>
+        setting.prominence === 'composer' && ++composers > COMPOSER_LIMIT
+          ? { ...setting, prominence: 'common' as const }
+          : setting,
+      )
+      .sort(byProminence);
+    const ownValues = own as Record<string, unknown>;
+    const effectiveValues = effective as Record<string, unknown>;
+    return {
+      items: settings.map(({ key, field, plugin, prominence }) => ({
+        key,
+        field,
+        plugin,
+        prominence,
+        value: ownValues[key],
+        effective: effectiveValues[key],
+        source: sources[key],
+      })),
+    };
+  }
+
+  /** 一个会话的各行：只列适用于它的种类的项，本层是会话自己的覆盖 */
+  async function sessionRows(
     session: SessionInfo,
     peer: SessionPeer,
   ): Promise<SessionMethodResult<'session/config/get'>> {
     const platform = await entryPlatform(session, peer);
-    return {
-      config: withoutNulls(session.config),
-      effective: sm.resolveConfig(session.id, platform),
-      inheritance: sm.resolveInheritance(session.id, platform),
-      options: {
-        personas: (await deps.persona.current?.listModels?.()) ?? [],
-        models: listLLMModels(deps.llm, { caps: ['chat'] }).map(({ instance }) => ({
-          provider: instance.providerId,
-          model: instance.id,
-          capabilities: [...instance.capabilities],
-        })),
-        toolGroups: deps.tools.current?.getGroups().map(({ name, label }) => ({ name, label })) ?? [],
-      },
-    };
+    const inheritance = sm.resolveInheritance(session.id, platform);
+    const own = sm.getOwnConfig(session.id);
+    const sources: Record<string, SettingRow['source']> = { ...inheritance.sources };
+    for (const key of Object.keys(own)) sources[key] = 'session';
+    return rows(setting => setting.appliesTo.includes(session.kind), own, { ...inheritance.values, ...own }, sources);
+  }
+
+  /**
+   * 写入只收适用于这个种类的项：不适用的写进去照样参与解析，界面却列不出来、恢复不了继承。null 照常放行，
+   * 好让已经写进去的清得掉；没登记的键由会话管理拒绝
+   */
+  function assertApplies(kind: SessionKind, patch: Record<string, unknown>): void {
+    const settings = sm.listSettings();
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null) continue;
+      const setting = settings.find(s => s.key === key);
+      if (setting && !setting.appliesTo.includes(kind)) {
+        throw new ProtocolError(RPC_ERROR_CODES.invalidParams, `会话设置项 ${key} 不适用于${KIND_NAMES[kind]}`);
+      }
+    }
+  }
+
+  /** 一层的各行：受众条目只列适用于房间的项，全局默认与平台档列全部 */
+  function layerRows(layer: SessionMethodParams<'session/config/layer/get'>['layer']) {
+    const { values, sources } = sm.resolveLayer(layer);
+    const applies =
+      layer.scope === 'audience'
+        ? (setting: RegisteredSessionSetting) => setting.appliesTo.includes('room')
+        : () => true;
+    return rows(applies, sm.getLayer(layer), values, sources);
   }
 
   const handlers: Pick<
@@ -223,10 +310,14 @@ export function createSessions(deps: SessionDeps) {
     | 'session/create'
     | 'session/rename'
     | 'session/archive'
+    | 'session/unarchive'
     | 'session/delete'
     | 'session/batch'
     | 'session/config/get'
     | 'session/config/update'
+    | 'session/config/layers'
+    | 'session/config/layer/get'
+    | 'session/config/layer/update'
     | 'session/markSeen'
   > = {
     'sessions/list': list,
@@ -236,10 +327,8 @@ export function createSessions(deps: SessionDeps) {
     },
     'session/create': async ({ name, parentId }, conn) => {
       const parent = parentId === undefined ? undefined : requireSession(parentId);
-      // 根会话不复制平台档，配置经继承链实时生效；子会话复制父会话的生效配置（继承链不经父会话自己的配置）
-      const config = parent
-        ? omitRoomOnlyKeys(sm.resolveConfig(parent.id, await entryPlatform(parent, conn.peer)))
-        : {};
+      // 根会话不复制各层，配置经继承链实时生效；子会话复制父会话的生效配置（继承链不经父会话自己的配置）
+      const config = parent ? sm.childConfig(parent.id, await entryPlatform(parent, conn.peer)) : {};
       const session = await sm.createSession({ name, parentId, config, createdBy: 'user', status: 'waiting' });
       return { session: summarize(session) };
     },
@@ -250,6 +339,10 @@ export function createSessions(deps: SessionDeps) {
     },
     'session/archive': async ({ sessionId }) => {
       await archive(requireSession(sessionId).id);
+      return {};
+    },
+    'session/unarchive': async ({ sessionId }) => {
+      await unarchive(requireSession(sessionId).id);
       return {};
     },
     'session/delete': async ({ sessionId }) => {
@@ -271,14 +364,18 @@ export function createSessions(deps: SessionDeps) {
       }
       return { failed };
     },
-    'session/config/get': ({ sessionId }, conn) => configView(requireSession(sessionId), conn.peer),
+    'session/config/get': ({ sessionId }, conn) => sessionRows(requireSession(sessionId), conn.peer),
     'session/config/update': async ({ sessionId, patch }, conn) => {
-      requireSession(sessionId);
-      // null 表示删掉这一项、恢复继承；updateSession 合并配置，值为 undefined 的项在解析时不生效
-      const config = Object.fromEntries(
-        Object.entries(patch).map(([key, value]) => [key, value ?? undefined]),
-      ) as Partial<SessionConfig>;
-      return configView(await sm.updateSession(sessionId, { config }), conn.peer);
+      assertApplies(requireSession(sessionId).kind, patch);
+      await writing(() => sm.updateSession(sessionId, { config: patch as SessionConfigPatch }));
+      return sessionRows(requireSession(sessionId), conn.peer);
+    },
+    'session/config/layers': () => ({ layers: sm.listLayers() }),
+    'session/config/layer/get': ({ layer }) => layerRows(layer),
+    'session/config/layer/update': async ({ layer, patch }) => {
+      if (layer.scope === 'audience') assertApplies('room', patch);
+      await writing(() => sm.updateLayer(layer, patch as SessionConfigPatch));
+      return layerRows(layer);
     },
     'session/markSeen': async ({ sessionId }) => {
       requireSession(sessionId);

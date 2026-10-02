@@ -1,0 +1,163 @@
+.list {
+  margin: 0;
+  padding: 0 var(--space-2);
+  list-style: none;
+}
+
+/* 子列表挂在父行下面，向里缩一级 */
+.list .list {
+  padding: 0 0 0 var(--space-4);
+}
+
+.list-item-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.list-item-row:hover {
+  background: var(--color-fill-1);
+}
+
+.list-item-row[data-current] {
+  background: var(--color-fill-2);
+}
+
+/* 当前项：金色指示条，另有底色与 aria-current */
+.list-item-row[data-current]::before {
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  left: 0;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-mark);
+  content: "";
+}
+
+.list-item-link {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--row-1line);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text);
+}
+
+.list-item-row[data-lines="2"] .list-item-link {
+  min-height: var(--row-2line);
+}
+
+.list-item-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.list-item-marker {
+  flex-shrink: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.list-item-row[data-marker="attention"] .list-item-marker {
+  background: var(--color-mark);
+}
+
+.list-item-row[data-marker="error"] .list-item-marker {
+  background: var(--color-danger-text);
+}
+
+.list-item-row[data-marker="unread"] .list-item-marker {
+  background: var(--color-accent);
+}
+
+.list-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.list-item-title,
+.list-item-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-item-row[data-marker="unread"] .list-item-title {
+  font-weight: var(--weight-semibold);
+}
+
+.list-item-detail {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+}
+
+.list-item-meta {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-3);
+}
+
+.list-item-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-2);
+  background: transparent;
+}
+
+.list-item-toggle:hover {
+  background: var(--color-fill-1);
+}
+
+/* 同一列表里有可展开的行时，其余的行也留出展开按钮的位置，右侧的时间对齐 */
+.list:has(> .list-item > .list-item-row > .list-item-toggle)
+  > .list-item
+  > .list-item-row:not(:has(> .list-item-toggle))
+  .list-item-link {
+  margin-right: var(--control-sm);
+}
+
+.list-item-menu {
+  display: flex;
+  padding-right: var(--space-1);
+  visibility: hidden;
+}
+
+.list-item-row:hover .list-item-menu,
+.list-item-row:focus-within .list-item-menu,
+.list-item-row[data-current] .list-item-menu,
+.list-item-menu:has([aria-expanded="true"]) {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .list-item-menu {
+    visibility: visible;
+  }
+}
+
+/* 手机上行不带操作，操作在会话头的「更多」里 */
+@media (max-width: 47.99em) {
+  .list-item-menu {
+    display: none;
+  }
+}

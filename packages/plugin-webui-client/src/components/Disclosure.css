@@ -1,0 +1,21 @@
+.disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+}
+
+.disclosure:hover {
+  background: var(--color-fill-1);
+}
+
+.disclosure:focus-visible {
+  outline-offset: -2px;
+}

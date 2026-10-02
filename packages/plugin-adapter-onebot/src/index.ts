@@ -19,6 +19,7 @@ import {
   type MessageAttachment,
   type OutboundDeliveryResult,
   type OutgoingMessage,
+  WellKnownKinds,
   WellKnownNoticeTypes,
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -2255,8 +2256,9 @@ function runAdapter(caps: Caps): void {
   /**
    * 投递失败回报给 agent：写一条系统提示进会话记忆，让它下一轮知晓「刚才那条没送达」，
    * 而不是误以为已发成功。被动记录，不立即触发回复；每条出站消息至多一条。
+   * 记录带投递结果的原因与这条消息的回合或调用 id，回看历史时据此标出哪条没发出
    */
-  function reportUndelivered(msg: OutgoingMessage, errors: unknown[], unconfirmed: string[]): void {
+  function reportUndelivered(msg: OutgoingMessage, error: string, errors: unknown[], unconfirmed: string[]): void {
     if (msg.source !== 'agent') return;
     let content = '[投递回报] ';
     if (errors.length) {
@@ -2269,10 +2271,16 @@ function runAdapter(caps: Caps): void {
     }
     const note: Message = {
       role: 'system',
-      kind: 'outbound-delivery-failed',
+      kind: WellKnownKinds.OutboundDeliveryFailed,
       content,
       timestamp: Date.now(),
-      metadata: { source: 'adapter-onebot', error: errors.map(String).join('; '), unconfirmed },
+      metadata: {
+        source: 'adapter-onebot',
+        error,
+        unconfirmed,
+        ...(msg.turnId ? { turnId: msg.turnId } : {}),
+        ...(msg.callId ? { callId: msg.callId } : {}),
+      },
     };
     void Promise.resolve()
       .then(() => messageArchive.current?.saveMessage(msg.sessionId, note))
@@ -2363,13 +2371,13 @@ function runAdapter(caps: Caps): void {
       });
     }
     if (errors.length || unconfirmed.length) {
-      reportUndelivered(msg, errors, unconfirmed);
       const problems: string[] = [];
       if (errors.length) problems.push(`附件或消息未获完整发送确认：${errors.map(String).join('; ')}`);
       if (unconfirmed.length) {
         problems.push(`文件 ${unconfirmed.join('、')} 上传超时，结果未知，可能已经送达，请勿重发`);
       }
       const error = problems.join('；');
+      reportUndelivered(msg, error, errors, unconfirmed);
       // 只有上传超时、没有别的失败时才整条算结果未知；夹着确定没发出的部分，发起方仍按失败处理
       return errors.length ? { ok: false, error } : { ok: false, error, unconfirmed: true };
     }

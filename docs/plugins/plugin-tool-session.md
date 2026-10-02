@@ -73,7 +73,7 @@ interface SessionHistoryService {
 2. **插件的 `scope`**：`current` / `platform` / `all` 粗筛。
 3. **平台规则**：匹配目标平台的 checker 链，任一 deny 即拒绝。
 
-平台规则只能在前两步放行之后再收窄。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，房间的召回范围一处管住两个工具。
+平台规则只能在前两步放行之后再收窄。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，房间的召回范围一处管住两个工具。本插件启用（`enabled`）时登记召回范围这一项（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`，与其他跨会话取料的插件同一份定义）。
 
 ## 历史
 

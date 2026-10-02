@@ -2,8 +2,8 @@
 // @aalis/plugin-paper — 白纸枢纽
 //
 // 试点群里真人提需求，她调 paper_task 把任务交给远端代理（remote-agent 提供者，按白纸配置里写的实例 id
-// 精确取）；受理后排队、记账，前台自然确认，不额外回显原文。房间用哪块白纸、每天能花多少由会话配置决定
-// （paperEnabled、paperName、remoteAgentTypes、remoteAgent*DailyCents），白纸本身的属性与全局上限在
+// 精确取）；受理后排队、记账，前台自然确认，不额外回显原文。房间用哪块白纸、每天能花多少由本插件登记的会话设置项决定
+// （paperEnabled、paperName、remoteAgentTypes、remoteAgent*DailyCents，见 rooms.ts），白纸本身的属性与全局上限在
 // 本插件配置里。运行驱动（driver.ts）按白纸排队开轮、跟踪到终态、取回成品放进白纸根、按轮记账，并定期对账。
 // 显式 publish:false 的任务到终态后以宿主通知回到发起房间（notices.ts），她用 paper_send 把成品发回；没发回的在之后的对话里
 // 一直有待交付提示。owner 在 WebUI 白纸页（webui.ts）看白纸、任务、成品、账本与告警，并做换新、归档、清空、
@@ -33,7 +33,7 @@ import { PaperDriver } from './driver.js';
 import { LedgerStore } from './ledger.js';
 import { PaperNotices, registerPendingHint } from './notices.js';
 import { PaperPublication } from './publication.js';
-import { Isolation } from './rooms.js';
+import { Isolation, ROOM_SETTINGS } from './rooms.js';
 import { TaskJournal } from './task-journal.js';
 import { registerPaperTools } from './tools.js';
 import { registerPaperPage } from './webui.js';
@@ -72,6 +72,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     // 只为认出写错的具名白纸；不传日志器，告警已由上面的正式解析报过
     parseConfig(paperAuditSchema, caps.config).papers,
   );
+  for (const setting of ROOM_SETTINGS) caps.sessionManager.registerSetting(setting);
   const storage = createStorageGateway(caps.storage);
   const ledger = new LedgerStore(storage, logger);
   await ledger.load();

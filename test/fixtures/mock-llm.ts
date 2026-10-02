@@ -20,8 +20,11 @@ import { definePlugin, provide } from '../../packages/core/src/index.js';
  */
 
 export interface MockLLMOptions {
-  /** 顺序消费的预设响应；用尽后重复使用最后一项 */
-  responses?: ChatResponse[];
+  /**
+   * 预设响应：数组按调用顺序消费，用尽后重复使用最后一项；函数按请求给出响应。同一个模型还会被别的插件调用
+   * （会话标题等）、调用的先后取决于时序时用函数
+   */
+  responses?: ChatResponse[] | ((request: ChatModelRequest) => ChatResponse);
   /** 每次 chat 的请求都会被 push 进来 */
   recorder?: ChatModelRequest[];
   /** 模拟延迟（毫秒） */
@@ -35,7 +38,7 @@ export class MockLLMService implements LLMModel {
     latencyMs: number;
     throwOnce?: Error;
     recorder?: ChatModelRequest[];
-    responses: ChatResponse[];
+    responses: NonNullable<MockLLMOptions['responses']>;
   };
   private cursor = 0;
 
@@ -57,10 +60,12 @@ export class MockLLMService implements LLMModel {
     };
   }
 
-  private nextResponse(): ChatResponse {
-    const idx = Math.min(this.cursor, this.opts.responses.length - 1);
+  private nextResponse(request: ChatModelRequest): ChatResponse {
+    const { responses } = this.opts;
+    if (typeof responses === 'function') return responses(request);
+    const idx = Math.min(this.cursor, responses.length - 1);
     this.cursor++;
-    return this.opts.responses[idx];
+    return responses[idx];
   }
 
   async chat(request: ChatModelRequest): Promise<ChatResponse> {
@@ -71,7 +76,7 @@ export class MockLLMService implements LLMModel {
       throw err;
     }
     if (this.opts.latencyMs > 0) await new Promise(r => setTimeout(r, this.opts.latencyMs));
-    return this.nextResponse();
+    return this.nextResponse(request);
   }
 
   async *chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
@@ -81,7 +86,7 @@ export class MockLLMService implements LLMModel {
       this.opts.throwOnce = undefined;
       throw err;
     }
-    const resp = this.nextResponse();
+    const resp = this.nextResponse(request);
     const text = resp.content ?? '';
     for (let i = 0; i < text.length; i += 4) {
       if (this.opts.latencyMs > 0) await new Promise(r => setTimeout(r, this.opts.latencyMs));

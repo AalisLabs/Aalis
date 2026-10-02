@@ -1,6 +1,7 @@
 // ----- 人格服务接口 -----
 // 由 @aalis/plugin-persona 拥有并导出。消费者从本包 import type。
 
+import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import { defineService } from '@aalis/core';
 
 /** 输出格式中单个字段的定义 */
@@ -83,3 +84,17 @@ export interface PersonaService {
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const persona = defineService<PersonaService>('persona');
+
+// ----- 会话设置项（plugin-persona 登记）-----
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    /** 角色卡名（不含后缀）；没设置时用人设插件的默认卡 */
+    persona?: string;
+    /** 额外系统提示：追加在人设提示之后、结构化输出格式说明之前 */
+    systemPromptExtra?: string;
+    /** 不用角色卡的结构化输出格式，回复纯文本 */
+    disableOutputFormat?: boolean;
+    /** 结构化输出的 JSON 留给客户端渲染，不提取回复字段 */
+    clientSideJsonRendering?: boolean;
+  }
+}

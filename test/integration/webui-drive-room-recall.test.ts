@@ -91,13 +91,16 @@ describe('WebUI 驱动 IM 房间：跨会话料按出生平台', () => {
     expect(block?.content).toContain('别的群原文');
     expect(block?.content).not.toContain('WebUI原文');
 
+    // 注入者明细按全局键「插件实例 id/局部 id」给出，界面据实例前缀合并到插件
+    const key = String(block?.metadata?.injector);
+    expect(key).toBe('@aalis/plugin-memory-history/memory-history');
     const turnUsage = usages.find(u => u.sessionId === GROUP);
-    const turnTokens = turnUsage?.breakdown.injectors?.['memory-history'];
+    const turnTokens = turnUsage?.breakdown.injectors?.[key];
     expect(turnTokens, '真实回合应带 memory-history 的注入').toBeGreaterThan(0);
 
     usages.length = 0;
     await bus.emit('token:request', { sessionId: GROUP });
     expect(usages).toHaveLength(1);
-    expect(usages[0].breakdown.injectors?.['memory-history']).toBe(turnTokens);
+    expect(usages[0].breakdown.injectors?.[key]).toBe(turnTokens);
   });
 });

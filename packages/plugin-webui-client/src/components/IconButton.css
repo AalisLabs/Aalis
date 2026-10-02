@@ -1,0 +1,28 @@
+.icon-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-2);
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.icon-button:hover:not(:disabled),
+.icon-button[aria-expanded="true"] {
+  background: var(--color-fill-1);
+}
+
+.icon-button[aria-current="page"] {
+  color: var(--color-text);
+  background: var(--color-fill-2);
+}
+
+.icon-button:disabled {
+  color: var(--color-text-disabled);
+}

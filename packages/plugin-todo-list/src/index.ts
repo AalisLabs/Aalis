@@ -2,7 +2,6 @@ import { hooks } from '@aalis/api-hooks';
 import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
 import { type TodoItem, type TodoListService, todoList } from '@aalis/api-todo-list';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
-import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 
@@ -25,7 +24,6 @@ const uses = {
   logger,
   provide,
   memory: optional(memory),
-  webui: optional(webuiServer),
   hooks: optional(hooks),
 };
 type Caps = BoundOf<typeof uses>;
@@ -87,23 +85,8 @@ function createTodoList({ events, memory }: Caps) {
   };
 }
 
-function registerTodoTool({ tools, events, logger, memory, webui, hooks }: Caps, todos: TodoStore): void {
+function registerTodoTool({ tools, events, logger, memory, hooks }: Caps, todos: TodoStore): void {
   const { store } = todos;
-
-  // ===== 页面动作 =====
-
-  webui.registerAction('getTodos', async args => {
-    const sessionId = args.sessionId as string;
-    if (!sessionId) return [];
-    return await todos.api.get(sessionId);
-  });
-
-  webui.registerAction('clearTodos', async args => {
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    await todos.api.clear(sessionId);
-    return { success: true };
-  });
 
   // 注册工具分组
   tools.registerGroup({

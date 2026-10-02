@@ -719,8 +719,9 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
       },
     },
     visibility: 'restricted',
-    // 写文件是 confused-deputy 向量（注入诱导覆盖/落恶意文件）→ owner 也需确认（本会话记住）
+    // 写文件是 confused-deputy 向量（注入诱导覆盖/落恶意文件）→ owner 也要审批
     confirm: 'session',
+    display: { kind: 'file-change', fields: { path: 'path', added: 'content' } },
     handler: async (args, callCtx) => {
       try {
         const { storage } = config;
@@ -763,7 +764,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
       },
     },
     visibility: 'restricted',
-    // 移动是 confused-deputy 向量（注入诱导挪走/覆盖文件）→ owner 也需确认（本会话记住），与 file_write 一致
+    // 移动是 confused-deputy 向量（注入诱导挪走/覆盖文件）→ owner 也要审批，与 file_write 一致
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {
@@ -842,6 +843,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     },
     visibility: 'restricted',
     confirm: 'session',
+    display: { kind: 'file-change', fields: { path: 'path', removed: 'oldText', added: 'newText' } },
     handler: async (args, callCtx) => {
       try {
         const { storage } = config;
@@ -910,6 +912,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     },
     visibility: 'restricted',
     confirm: 'session',
+    display: { kind: 'file-change', fields: { path: 'path', added: 'content' } },
     handler: async (args, callCtx) => {
       try {
         const { storage } = config;
@@ -960,7 +963,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
       },
     },
     visibility: 'restricted',
-    // 删文件不可逆 → owner 也需确认（本会话记住）
+    // 删文件不可逆 → owner 也要审批
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {

@@ -34,15 +34,15 @@
 ## 流程
 
 1. **发起**：`request(req, signal)`。`signal` 是发起回合的中止信号。
-2. **在场**：审批面的客户端上报活动，最近一次活动在时限内的算在场；只算身份是 owner 的客户端，别人答不了，推给它只会让审批白等。没人在场时直接按拒绝结算，发起方立即拿到原因。
+2. **在场**：审批面的客户端上报活动，最近一次活动在时限内的算在场；只算身份是 owner 的客户端，别人答不了，推给它只会让审批白等。发起时没人在场直接按拒绝结算，发起方立即拿到原因。
 3. **排队**：同一会话的审批串行，一次只推出一张卡，不同会话之间并行；等待从卡推出那一刻算起。同一会话一段时间内推出的卡有上限，超出的直接拒绝并说明原因。
 4. **推送**：推出时推给在场的客户端；不在场的客户端变为在场时补推还没结的。身份不是 owner 的客户端收不到推送。
 5. **应答**：先答先得，核两项：应答人是 owner；`approvalId` 是本服务签发的、还没结算，并且 `contentHash` 一致。后到的应答回 `approval-settled`。
-6. **结算**：owner 批准或拒绝；等满时限、等待中在场的客户端都断开或变为不在场时按拒绝结算；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端。
+6. **结算**：owner 批准或拒绝；等满时限按拒绝结算；等待中在场的客户端都断开或变为不在场时先等一段重连宽限，宽限内有客户端恢复在场就照常等，没有就按拒绝结算（宽限不延长总的等待时限）；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端，带上怎样结算的（`ApprovalSettlement`）。
 7. **回给模型**：批准时工具照常执行。拒绝时结局里的 `message` 写明被什么拦下、能不能再申请；发起类别是 `room` 的（房间里的回合）只回一句通用的拒绝，不透露 owner 的文件布局与说明。owner 自己的 QQ 私聊不算房间，照样拿到写明原因的格式。
 8. **审计**：请求与决定成对记下，不进模型上下文。
 
-时限、在场的判据、频率上限与审计的落点由实现定，默认实现的取值见 [plugin-session-server](../plugins/plugin-session-server.md#审批)。
+时限、在场的判据、重连宽限、频率上限与审计的落点由实现定，默认实现的取值见 [plugin-session-server](../plugins/plugin-session-server.md#审批)。
 
 ## 类型
 
@@ -82,6 +82,12 @@ interface Approval {
 type ApprovalState = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled';
 type SettledState = Exclude<ApprovalState, 'pending'>;   // 结算之后的四种结局
 
+interface ApprovalSettlement {
+  state: SettledState;
+  source: ApprovalSource;
+  at: number;                 // 结算的时刻
+}
+
 type ApprovalOutcome =
   | { approvalId: string; approved: true }
   | { approvalId: string; approved: false; source: ApprovalSource; message: string };
@@ -89,22 +95,22 @@ type ApprovalOutcome =
 
 `state` 的结局：owner 批准为 `approved`；owner 拒绝，或发起不被允许（类别、频率上限）为 `denied`；没人应答（不在场、等满时限）为 `expired`；回合结束或中止、服务停止为 `cancelled`。
 
-`ApprovalSource` 是结算从哪里来：`owner`（owner 应答）、`absent`、`timeout`、`ineligible`、`subtask`、`rate-limit`、`turn-ended`、`shutdown`。
+`ApprovalSource` 是结算从哪里来：`owner`（owner 应答）、`absent`（发起时没人在场，或等待中在场的都离开、宽限内没有回来）、`timeout`、`ineligible`、`subtask`、`rate-limit`、`turn-ended`、`shutdown`。
 
 ### 事实
 
-卡片上的事实只取参数里已有的，各项逐字、与执行的参数一致：
+卡片上的事实按工具定义上声明的展示种类（[api-tools](./api-tools.md) 的 `display`）从参数里取，各项逐字、与执行的参数一致：
 
 ```ts
 interface ApprovalFacts {
-  command?: string;                         // 参数里的命令
-  cwd?: string;                             // 参数里的工作目录
-  diff?: { path: string; patch?: string };  // 由 file_edit、file_write、file_append 的参数生成
+  command?: string;                         // 命令类工具声明的命令
+  cwd?: string;                             // 命令类工具声明的工作目录
+  diff?: { path: string; patch?: string };  // 改文件类工具声明的路径与删、加两侧
   params: Record<string, unknown>;          // 其余参数，逐字
 }
 ```
 
-`diff.patch` 里删的行以 `-` 开头、加的行以 `+` 开头：`file_edit` 是 `oldText` 与 `newText`，`file_write` 与 `file_append` 是 `content`（不读原文件）。路径像密钥文件（`.env*`、`.npmrc`、私钥与证书、`.ssh` 等目录下）或内容像密钥（私钥块、常见的令牌前缀、「密钥名 = 值」）时没有 `patch`，只给路径。用掉的参数不在 `params` 里重复。
+`diff.patch` 里删的行以 `-` 开头、加的行以 `+` 开头，例如 `file_edit` 声明 `oldText` 为删的一侧、`newText` 为加的一侧，`file_write` 与 `file_append` 只有加的一侧 `content`（不读原文件）。路径像密钥文件（`.env*`、`.npmrc`、私钥与证书、`.ssh` 等目录下）或内容像密钥（私钥块、常见的令牌前缀、「密钥名 = 值」）时没有 `patch`，只给路径。用掉的参数不在 `params` 里重复。没声明展示种类的工具（参数名叫 `command`、`path` 也一样）全部参数都在 `params` 里。
 
 ## 审批面
 
@@ -116,7 +122,7 @@ interface ApprovalSurface {
 
 interface ApprovalSink {
   requested(approval: Approval): void;
-  settled(approvalId: string, state: SettledState): void;
+  settled(approvalId: string, settlement: ApprovalSettlement): void;
 }
 
 interface ApprovalAttendance {
@@ -204,7 +210,7 @@ import { approvals, sanitizeForCard } from '@aalis/api-approval';
 const surface = caps.approvals.registerSurface('cli');
 const attendance = surface.attend({ platform: 'cli', userId: 'console' }, {
   requested: approval => showCard(sanitizeForCard(approval.facts.command ?? approval.tool, 400)),
-  settled: approvalId => closeCard(approvalId),
+  settled: (approvalId, { state }) => closeCard(approvalId, state),
 });
 attendance.presence(true);   // 有输入时
 const reply = attendance.respond({ approvalId, decision: 'approve', contentHash });

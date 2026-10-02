@@ -9,6 +9,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // IM 房间收录：有出生平台、不是子任务的会话，首条真人入站（不带 source）即登记，名字只采信出生平台自己的入站；
@@ -75,7 +76,9 @@ async function setup(
     );
     await app.plugin(adapterPlugin('cli', { platform: 'cli', canHandle: id => id === 'cli-default' }));
   }
-  await app.plugin(sessionManagerPlugin, {});
+  await app.plugin(sessionManagerPlugin);
+  // 用例经 ensureSession 落人设（/session.set 的落点），人设这一项要有人登记
+  await app.plugin(settingsPlugin('test-settings', [PERSONA]));
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);

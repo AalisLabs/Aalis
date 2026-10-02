@@ -37,7 +37,7 @@ export default definePlugin({
 - `platform`：最多查同平台，插件配置或工具参数写了 `cross-platform` 也按 `same-platform` 查。
 - `all` 或未设置：按插件配置与工具参数。
 
-房间范围在每次查询时按会话所属平台现算；session-manager 不在场时不收窄。
+房间范围在每次查询时按会话所属平台现算；session-manager 不在场时不收窄。这一项由跨会话取料的几个插件各自登记同一份定义（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`），本插件是其中之一，只要有一个在场它就有效。
 
 ## 配置
 

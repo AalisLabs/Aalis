@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { type SessionItem, SessionItemSchema } from '../../packages/api-session-protocol/src/index.js';
-import { mergeArchive } from '../../packages/plugin-session-server/src/history.js';
-import type { ChatMessage } from '../../packages/plugin-webui-client/src/types.js';
-import { buildChatMessages, type RawMessage } from '../../packages/plugin-webui-client/src/useSessionManager.js';
+import { type MergeContext, mergeArchive } from '../../packages/plugin-session-server/src/history.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// 历史归并从客户端搬到会话服务：同一份存档，服务端归并出的条目与旧客户端 buildChatMessages 归并出的气泡
-// 逐项对得上。气泡按渲染方式拆开再比：带时间线的按段，同类相邻的段合成一条；没有时间线的取正文。
-// 样例取自旧客户端现有用例（她发出的附件、文件块剥离的各种格式），另加新旧两种工具调用存档格式。
+// 历史归并在会话服务：存档归并成条目，客户端只渲染。下面把条目压成便于比较的形状：
+// 她发出的附件、文件块剥离的各种格式、新旧两种工具调用存档格式、系统消息与平台事件。
 // ════════════════════════════════════════════════════════════
 
 type Entry =
@@ -17,34 +14,6 @@ type Entry =
   | { kind: 'agent'; text: string; attachments: Array<{ kind: string; src?: string }>; model?: unknown }
   | { kind: 'reasoning'; text: string }
   | { kind: 'tool'; name: string; args: Record<string, unknown>; result?: string };
-
-/** 旧客户端的一个气泡按渲染拆成条目 */
-function fromBubble(message: ChatMessage): Entry[] {
-  if (message.role === 'user') return [{ kind: 'user', text: message.content, files: message.fileNames ?? [] }];
-  if (message.role === 'system') return [{ kind: 'notice', text: message.content }];
-  if (message.attachments?.length) {
-    return [{ kind: 'agent', text: '', attachments: message.attachments.map(a => ({ kind: a.kind, src: a.data })) }];
-  }
-  const entries: Entry[] = [];
-  for (const segment of message.segments ?? [{ type: 'text' as const, content: message.content }]) {
-    const last = entries.at(-1);
-    if (segment.type === 'tool_call') {
-      entries.push({ kind: 'tool', name: segment.name, args: segment.args, result: segment.result });
-    } else if (segment.type === 'reasoning_text') {
-      if (last?.kind === 'reasoning') last.text += segment.content;
-      else entries.push({ kind: 'reasoning', text: segment.content });
-    } else if (last?.kind === 'agent') {
-      last.text += segment.content;
-    } else {
-      entries.push({ kind: 'agent', text: segment.content, attachments: [] });
-    }
-  }
-  const final = entries.filter(e => e.kind === 'agent').at(-1);
-  if (final?.kind === 'agent' && message.modelInfo) {
-    final.model = { provider: message.modelInfo.provider, model: message.modelInfo.model };
-  }
-  return entries.filter(e => e.kind !== 'agent' || e.text !== '' || e.attachments.length > 0);
-}
 
 function fromItem(item: SessionItem): Entry {
   switch (item.kind) {
@@ -73,21 +42,21 @@ function fromItem(item: SessionItem): Entry {
 }
 
 const isOwner = (platform: string, userId?: string) => platform === 'webui' && userId === 'console';
-/** 这些存档里没有她发出的文件，不签发句柄 */
-const noFiles = () => undefined;
+/** 这些存档里没有她发出的文件，不签发句柄；工具都没声明展示种类 */
+const context = (room = false): MergeContext => ({
+  isOwner,
+  room,
+  signFile: () => undefined,
+  display: () => undefined,
+});
 
-function compare(raw: Message[]): Entry[] {
-  const server = mergeArchive(raw, isOwner, false, noFiles).map(fromItem);
-  const client = buildChatMessages(raw as RawMessage[]).flatMap(fromBubble);
-  expect(server).toEqual(client);
-  return server;
-}
+const merged = (raw: Message[]): Entry[] => mergeArchive(raw, context(), new Map()).map(fromItem);
 
 const block = (name: string, body: string) => `[文件: ${name}]\n--- 文件内容 ---\n${body}\n--- 文件内容结束 ---`;
 
-describe('历史归并与旧客户端一致', () => {
+describe('历史归并', () => {
   it('她发出的附件还原成只有附件的消息，不打断前后的文字回复', () => {
-    const entries = compare([
+    const entries = merged([
       { role: 'user', content: '画只猫', timestamp: 1 },
       { role: 'assistant', content: '画好了', timestamp: 2 },
       {
@@ -104,8 +73,13 @@ describe('历史归并与旧客户端一致', () => {
       },
       { role: 'user', content: '好看', timestamp: 5 },
     ]);
-    expect(entries.map(e => e.kind)).toEqual(['user', 'agent', 'agent', 'agent', 'user']);
-    expect(JSON.stringify(entries)).not.toContain('ref:');
+    expect(entries).toEqual([
+      { kind: 'user', text: '画只猫', files: [] },
+      { kind: 'agent', text: '画好了', attachments: [] },
+      { kind: 'agent', text: '', attachments: [{ kind: 'image', src: 'data:/images/cat.png' }] },
+      { kind: 'agent', text: '', attachments: [{ kind: 'video', src: 'paper:/n-a/tasks/t-1/out/a-2.mp4' }] },
+      { kind: 'user', text: '好看', files: [] },
+    ]);
   });
 
   it('用户消息里的文件块按各种格式剥净，文件名列成附件', () => {
@@ -121,21 +95,21 @@ describe('历史归并与旧客户端一致', () => {
       '[文件: legacy.txt (ID: file_lq2x3k_2，大文件，使用 read_uploaded_file 工具读取内容)]',
     ];
     for (const form of forms) {
-      const [entry] = compare([
+      const [entry] = merged([
         { role: 'user', content: `帮我看看\n${form}`, timestamp: 1, metadata: { fileNames: ['report.txt'] } },
       ]);
       expect(entry, form).toEqual({ kind: 'user', text: '帮我看看', files: ['report.txt'] });
     }
     const two = `帮我比较\n${block('a.txt', '甲')}\n${block('b.txt', '乙')}`;
-    expect(compare([{ role: 'user', content: two }])).toEqual([{ kind: 'user', text: '帮我比较', files: [] }]);
+    expect(merged([{ role: 'user', content: two }])).toEqual([{ kind: 'user', text: '帮我比较', files: [] }]);
     const described = `帮我看看\n[文件: notes.txt (ID: ${id}，3.2 KB)\n说明：x]\n[图片: 一只猫 (橘色)]`;
-    expect(compare([{ role: 'user', content: described }])[0]).toMatchObject({
+    expect(merged([{ role: 'user', content: described }])[0]).toMatchObject({
       text: '帮我看看\n[图片: 一只猫 (橘色)]',
     });
   });
 
-  it('旧格式的工具调用组：思考前置、中间的话、工具结果回填到调用上，最后一条是回复', () => {
-    compare([
+  it('旧格式的工具调用组：思考前置、中间的话、工具结果回填到调用上，每条回复各成一条，最后一条是回复', () => {
+    const entries = merged([
       { role: 'user', content: '查一下', timestamp: 1 },
       {
         role: 'assistant',
@@ -156,10 +130,20 @@ describe('历史归并与旧客户端一致', () => {
       { role: 'assistant', content: '查好了', timestamp: 7, metadata: { modelInfo: { provider: 'p', model: 'm' } } },
       { role: 'user', content: '谢谢', timestamp: 8 },
     ]);
+    expect(entries).toEqual([
+      { kind: 'user', text: '查一下', files: [] },
+      { kind: 'reasoning', text: '想想还要' },
+      { kind: 'agent', text: '我先查', attachments: [] },
+      { kind: 'tool', name: 'search', args: { q: 'x' }, result: '结果一' },
+      { kind: 'tool', name: 'read', args: {}, result: '结果二' },
+      { kind: 'agent', text: '再想想', attachments: [] },
+      { kind: 'agent', text: '查好了', attachments: [], model: { provider: 'p', model: 'm' } },
+      { kind: 'user', text: '谢谢', files: [] },
+    ]);
   });
 
   it('新格式：最后一条带时间线的回复覆盖前面按旧格式落库的工具调用组', () => {
-    const entries = compare([
+    const entries = merged([
       { role: 'user', content: '查一下', timestamp: 1 },
       {
         role: 'assistant',
@@ -178,16 +162,21 @@ describe('历史归并与旧客户端一致', () => {
           { type: 'reasoning_text', content: '想' },
           { type: 'text', content: '我先查' },
           { type: 'tool_call', name: 'search', args: {}, result: '结果', startTime: 10, endTime: 15 },
-          { type: 'text', content: '好' },
-          { type: 'text', content: '了' },
+          { type: 'text', content: '好了' },
         ],
       },
     ]);
-    expect(entries.filter(e => e.kind === 'tool')).toHaveLength(1);
+    expect(entries).toEqual([
+      { kind: 'user', text: '查一下', files: [] },
+      { kind: 'reasoning', text: '想想' },
+      { kind: 'agent', text: '我先查', attachments: [] },
+      { kind: 'tool', name: 'search', args: {}, result: '结果' },
+      { kind: 'agent', text: '好了', attachments: [], model: { provider: 'p', model: 'm' } },
+    ]);
   });
 
   it('系统消息只留压缩分隔线，平台事件按通知显示，孤立的工具结果跳过', () => {
-    const entries = compare([
+    const entries = merged([
       { role: 'system', content: '对话已压缩', kind: 'event-marker', timestamp: 1 },
       { role: 'system', content: '不显示', timestamp: 2 },
       { role: 'notice', kind: 'poke', content: '小明戳了戳你', timestamp: 3 },
@@ -209,7 +198,7 @@ describe('历史归并与旧客户端一致', () => {
 });
 
 describe('服务端归并的条目', () => {
-  it('旧格式里并行的几次工具调用：结果按 toolCallId 对回各自的调用（旧客户端按位置从后往前填，两个结果会对调）', () => {
+  it('旧格式里并行的几次工具调用：结果按 toolCallId 对回各自的调用，不按位置填', () => {
     const raw: Message[] = [
       {
         role: 'assistant',
@@ -224,7 +213,7 @@ describe('服务端归并的条目', () => {
       { role: 'tool', content: '读到的内容', toolCallId: 'b', timestamp: 3 },
       { role: 'tool', content: '对不上调用的结果', toolCallId: 'x', timestamp: 4 },
     ];
-    const calls = mergeArchive(raw, isOwner, false, noFiles).filter(i => i.kind === 'tool-call');
+    const calls = mergeArchive(raw, context(), new Map()).filter(i => i.kind === 'tool-call');
     expect(calls.map(i => i.kind === 'tool-call' && [i.name, i.result, i.status])).toEqual([
       ['search', '搜索结果', 'completed'],
       ['read', '读到的内容', 'completed'],
@@ -256,8 +245,47 @@ describe('服务端归并的条目', () => {
         ],
       },
     ];
-    const calls = mergeArchive(raw, isOwner, false, noFiles).filter(i => i.kind === 'tool-call');
+    const calls = mergeArchive(raw, context(), new Map()).filter(i => i.kind === 'tool-call');
     expect(calls.map(i => i.itemId)).toEqual(['call-1', expect.stringMatching(/^\d+-\w+\/1$/), 'call-2']);
+  });
+
+  it('工具卡带按工具定义解析好的展示：两种存档格式都按工具名与参数解析，解析不出的不给', () => {
+    const raw: Message[] = [
+      {
+        role: 'assistant',
+        content: null,
+        timestamp: 1,
+        toolCalls: [
+          { id: 'a', type: 'function', function: { name: 'exec', arguments: '{"command":"ls"}' } },
+          { id: 'b', type: 'function', function: { name: 'search', arguments: '{}' } },
+        ],
+      },
+      { role: 'tool', content: 'a.txt', toolCallId: 'a', timestamp: 2 },
+      { role: 'tool', content: '结果', toolCallId: 'b', timestamp: 3 },
+      { role: 'user', content: '再来', timestamp: 4 },
+      {
+        role: 'assistant',
+        content: '好',
+        timestamp: 5,
+        segments: [
+          { type: 'tool_call', name: 'exec', args: { command: 'pwd' }, result: '/', callId: 'c2' },
+          { type: 'text', content: '好' },
+        ],
+      },
+    ];
+    const items = mergeArchive(
+      raw,
+      {
+        ...context(),
+        display: (tool, args) => (tool === 'exec' ? { kind: 'command', command: String(args.command) } : undefined),
+      },
+      new Map(),
+    );
+    expect(items.flatMap(i => (i.kind === 'tool-call' ? [[i.name, i.display]] : []))).toEqual([
+      ['exec', { kind: 'command', command: 'ls' }],
+      ['search', undefined],
+      ['exec', { kind: 'command', command: 'pwd' }],
+    ]);
   });
 
   it('工具参数不是对象（null、数组、原始值）时按空参数显示，两种存档格式都是', () => {
@@ -280,7 +308,7 @@ describe('服务端归并的条目', () => {
         segments: [{ type: 'tool_call', name: 'x', args: null as unknown as Record<string, unknown>, result: 'ok' }],
       },
     ];
-    const items = mergeArchive(raw, isOwner, false, noFiles);
+    const items = mergeArchive(raw, context(), new Map());
     expect(items.filter(i => i.kind === 'tool-call').map(i => i.kind === 'tool-call' && i.args)).toEqual([
       {},
       {},
@@ -312,7 +340,7 @@ describe('服务端归并的条目', () => {
       { role: 'tool', content: 'ok', toolCallId: 'a', timestamp: 4 },
     ];
     const said = (room: boolean) =>
-      mergeArchive(raw, isOwner, room, noFiles).flatMap(i =>
+      mergeArchive(raw, context(room), new Map()).flatMap(i =>
         i.kind === 'agent-message' ? [[i.text, i.undelivered?.reason]] : [],
       );
     expect(said(true)).toEqual([
@@ -346,7 +374,7 @@ describe('服务端归并的条目', () => {
       },
       { role: 'assistant', kind: 'outbound-audio', content: '[音频: 一段话 | ref:data:/a.wav]', timestamp: 5 },
     ];
-    const items = mergeArchive(raw, isOwner, false, noFiles);
+    const items = mergeArchive(raw, context(), new Map());
     expect(items.map(i => [i.kind, i.turnId])).toEqual([
       ['user-message', undefined],
       ['user-message', undefined],
@@ -359,9 +387,9 @@ describe('服务端归并的条目', () => {
     expect(items[1]).toMatchObject({ speaker: { platform: 'onebot', userId: '7', nickname: '阿七', owner: false } });
     expect(items[2]).toMatchObject({ status: 'failed', durationMs: 5 });
     expect(items[4]).toMatchObject({ topic: 'paper-task' });
-    // 语音按存档格式（音频）还原，旧客户端认错了标签、漏掉了它
+    // 语音按存档格式（音频）还原
     expect(items[5]).toMatchObject({ attachments: [{ kind: 'audio', src: 'data:/a.wav' }] });
     expect(new Set(items.map(i => i.itemId)).size).toBe(items.length);
-    expect(mergeArchive(raw, isOwner, false, noFiles).map(i => i.itemId)).toEqual(items.map(i => i.itemId));
+    expect(mergeArchive(raw, context(), new Map()).map(i => i.itemId)).toEqual(items.map(i => i.itemId));
   });
 });

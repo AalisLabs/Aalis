@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "Web 管理界面后端：对话/插件/服务/市场/文件",
+  "description": "Web 管理界面后端：会话连接、管理面推送、插件、服务与市场",
   "type": "module",
   "keywords": [
     "aalis",
@@ -28,13 +28,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/api-agent": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-protocol": "workspace:>=0.1.0 <1.0.0",
@@ -48,7 +46,6 @@
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0",
     "express": "^5.1.0",
     "ws": "^8.18.0",
-    "zod": "^3.25.76",
     "@aalis/schema-log": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
@@ -57,10 +54,6 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-doctor": "workspace:*",
-    "@aalis/api-memory": "workspace:*",
-    "@aalis/api-session-manager": "workspace:*",
-    "@aalis/api-todo-list": "workspace:*",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
@@ -84,8 +77,6 @@
         "approvals",
         "tools",
         "llm",
-        "persona",
-        "agent",
         "message-archive",
         "plugin-source",
         "package-manager"

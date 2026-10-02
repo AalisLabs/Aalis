@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type MessageArchiveService, messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
@@ -7,12 +6,13 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import type { Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { freePort } from '../helpers/net.js';
 
-type NodeWebSocketCtor = new (url: string, init: { headers: Record<string, string> }) => WebSocket;
+// ════════════════════════════════════════════════════════════
+// 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，回执表示这条消息已经进了会话历史，
+// 不看有没有页面在线（打开着的页面由会话服务推送）。
+// ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
-const sockets: WebSocket[] = [];
 afterEach(async () => {
-  for (const ws of sockets.splice(0)) ws.close();
   for (const app of apps.splice(0)) await app.stop();
 });
 
@@ -31,23 +31,11 @@ async function startWebui(archive?: Pick<MessageArchiveService, 'saveMessage'>, 
     ...(withImageSender ? [{ definition: imageSender, config: {} }] : []),
   ]);
   await app.start();
-  return { app, port, token };
-}
-
-async function connect(port: number, token: string): Promise<WebSocket> {
-  const ws = new (WebSocket as unknown as NodeWebSocketCtor)(`ws://127.0.0.1:${port}/ws`, {
-    headers: { cookie: `aalis_webui_token=${token}` },
-  });
-  await new Promise<void>((resolve, reject) => {
-    ws.onopen = () => resolve();
-    ws.onerror = () => reject(new Error('WebUI WebSocket failed to open'));
-  });
-  sockets.push(ws);
-  return ws;
+  return { app };
 }
 
 describe('WebUI outbound delivery confirmation', () => {
-  it('fails when there is no open page and no archive to save into', async () => {
+  it('fails when there is no archive to save into', async () => {
     const { app } = await startWebui();
     const delivered: OutgoingMessage[] = [];
     app.bind({ events }).events.on('outbound:delivered', message => {
@@ -62,12 +50,12 @@ describe('WebUI outbound delivery confirmation', () => {
     };
     await app.bind({ events }).events.emit('outbound:message', message);
     expect(message.delivery).toBeDefined();
-    expect(await message.delivery).toEqual({ ok: false, error: expect.stringContaining('没有保存') });
+    expect(await message.delivery).toEqual({ ok: false, error: expect.stringContaining('没有存进') });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(delivered).toEqual([]);
   });
 
-  it('saves the message into the history before confirming, with no open page (the history is the inbox)', async () => {
+  it('saves the message into the history before confirming (the history is the inbox)', async () => {
     const saved: Array<{ sessionId: string; message: Message }> = [];
     const { app } = await startWebui({
       async saveMessage(sessionId, message) {
@@ -129,7 +117,7 @@ describe('WebUI outbound delivery confirmation', () => {
     ]);
   });
 
-  it('saves the image she sends without image-sender installed: no open page, the history has it and the receipt is ok', async () => {
+  it('saves the image she sends without image-sender installed: the history has it and the receipt is ok', async () => {
     const saved: Message[] = [];
     const { app } = await startWebui({
       async saveMessage(_sessionId, message) {
@@ -175,6 +163,8 @@ describe('WebUI outbound delivery confirmation', () => {
     await host.events.emit('outbound:message', message);
     expect(await message.delivery).toEqual({ ok: true });
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    // 只给快照标 skipArchive，生产者手里的消息不动
+    expect(message.attachments?.[0].skipArchive).toBeUndefined();
     // image-sender 的归档在后台：等一拍再数
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(saved.map(({ message: { kind, content } }) => ({ kind, content }))).toEqual([
@@ -182,7 +172,7 @@ describe('WebUI outbound delivery confirmation', () => {
     ]);
   });
 
-  it('fails when saving into the history fails and no page is open', async () => {
+  it('fails when saving into the history fails', async () => {
     const { app } = await startWebui({
       async saveMessage() {
         throw new Error('zz-disk-full');
@@ -244,119 +234,22 @@ describe('WebUI outbound delivery confirmation', () => {
     ]);
   });
 
-  it('still confirms when an open page got the frame but saving into the history failed', async () => {
-    const { app, port, token } = await startWebui({
-      async saveMessage() {
-        throw new Error('zz-disk-full');
-      },
-    });
-    const ws = await connect(port, token);
-    const sessionId = 'webui-archive-down';
-    const inbound = new Promise<void>(resolve => {
-      app.bind({ events }).events.on('inbound:message', message => {
-        if (message.sessionId === sessionId) resolve();
-      });
-    });
-    ws.send(JSON.stringify({ type: 'message', sessionId, content: 'hello' }));
-    await inbound;
-    const received = new Promise<unknown>(resolve => {
-      ws.onmessage = event => resolve(JSON.parse(String(event.data)));
-    });
-    const message: OutgoingMessage = { sessionId, platform: 'webui', content: '[作品通知] 已上线', source: 'system' };
-    await app.bind({ events }).events.emit('outbound:message', message);
-    expect(await message.delivery).toEqual({ ok: true });
-    expect(await received).toMatchObject({ type: 'message', sessionId, content: '[作品通知] 已上线' });
-  });
-
-  it('does not wait for an open page to write the frame out', async () => {
-    const { app, port, token } = await startWebui();
-    const ws = await connect(port, token);
-    const sessionId = 'webui-stalled-page';
-    const inbound = new Promise<void>(resolve => {
-      app.bind({ events }).events.on('inbound:message', message => {
-        if (message.sessionId === sessionId) resolve();
-      });
-    });
-    ws.send(JSON.stringify({ type: 'message', sessionId, content: 'hello' }));
-    await inbound;
-
-    // 服务端用的 ws 包：页面卡住时写出回调迟迟不来
-    const { WebSocket: ServerSocket } = createRequire(
-      new URL('../../packages/plugin-webui-server/package.json', import.meta.url),
-    )('ws') as { WebSocket: { prototype: { send: (...args: unknown[]) => void } } };
-    const stalled = vi.spyOn(ServerSocket.prototype, 'send').mockImplementation(() => {});
-    try {
-      const message: OutgoingMessage = { sessionId, platform: 'webui', content: 'reply', source: 'agent' };
-      await app.bind({ events }).events.emit('outbound:message', message);
-      const settled = await Promise.race([
-        message.delivery,
-        new Promise(resolve => setTimeout(() => resolve('still waiting'), 1000)),
-      ]);
-      expect(stalled).toHaveBeenCalled();
-      expect(settled).toEqual({ ok: true });
-    } finally {
-      stalled.mockRestore();
-    }
-  });
-
-  it('confirms an open WebUI socket and emits the successfully sent attachment snapshot', async () => {
-    const { app, port, token } = await startWebui();
-    const ws = await connect(port, token);
-    const sessionId = 'webui-image-room';
-    const inbound = new Promise<void>(resolve => {
-      app.bind({ events }).events.on('inbound:message', message => {
-        if (message.sessionId === sessionId) resolve();
-      });
-    });
-    ws.send(JSON.stringify({ type: 'message', sessionId, content: 'hello' }));
-    await inbound;
-
-    const delivered: OutgoingMessage[] = [];
-    app.bind({ events }).events.on('outbound:delivered', message => {
-      delivered.push(message);
-    });
-    const received = new Promise<unknown>(resolve => {
-      ws.onmessage = event => resolve(JSON.parse(String(event.data)));
-    });
-    const message: OutgoingMessage = {
-      sessionId,
-      platform: 'webui',
-      content: '',
-      attachments: [{ kind: 'image', data: 'https://example.com/image.png', ref: 'image-ref' }],
-      source: 'agent',
-    };
-    await app.bind({ events }).events.emit('outbound:message', message);
-    expect(message.delivery).toBeDefined();
-    expect(await message.delivery).toEqual({ ok: true });
-    expect(await received).toMatchObject({
-      type: 'message',
-      sessionId,
-      attachments: [{ kind: 'image', data: 'https://example.com/image.png' }],
-    });
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0].attachments).toEqual(message.attachments?.map(att => ({ ...att, skipArchive: true })));
-    expect(message.attachments?.[0].skipArchive).toBeUndefined();
-  });
-
   it.each([undefined, 'webui'])('does not claim OneBot traffic when entry platform is %s', async platform => {
-    const { app, port, token } = await startWebui();
-    const ws = await connect(port, token);
-    const sessionId = 'onebot:123:private:456';
-    const inbound = new Promise<void>(resolve => {
-      app.bind({ events }).events.on('inbound:message', message => {
-        if (message.sessionId === sessionId) resolve();
-      });
-    });
-    ws.send(JSON.stringify({ type: 'message', sessionId, content: 'hello' }));
-    await inbound;
-
+    const { app } = await startWebui();
     const message: OutgoingMessage = {
-      sessionId,
+      sessionId: 'onebot:123:private:456',
       platform,
       content: '',
       attachments: [{ kind: 'image', data: 'https://example.com/image.png' }],
       source: 'agent',
     };
+    await app.bind({ events }).events.emit('outbound:message', message);
+    expect(message.delivery).toBeUndefined();
+  });
+
+  it('does not claim a message that names no platform: another transport may own that session', async () => {
+    const { app } = await startWebui({ async saveMessage() {} });
+    const message: OutgoingMessage = { sessionId: 'session-x', content: 'reply', source: 'agent' };
     await app.bind({ events }).events.emit('outbound:message', message);
     expect(message.delivery).toBeUndefined();
   });
@@ -373,22 +266,5 @@ describe('WebUI outbound delivery confirmation', () => {
     await app.bind({ events }).events.emit('outbound:message', message);
     expect(message.delivery).toBe(receipt);
     expect(await message.delivery).toEqual({ ok: false, error: 'original failure' });
-  });
-
-  it('claims legacy WebUI traffic without a platform when the room has an open subscriber', async () => {
-    const { app, port, token } = await startWebui();
-    const ws = await connect(port, token);
-    const sessionId = 'legacy-webui-room';
-    const inbound = new Promise<void>(resolve => {
-      app.bind({ events }).events.on('inbound:message', message => {
-        if (message.sessionId === sessionId) resolve();
-      });
-    });
-    ws.send(JSON.stringify({ type: 'message', sessionId, content: 'hello' }));
-    await inbound;
-
-    const message: OutgoingMessage = { sessionId, content: 'reply', source: 'agent' };
-    await app.bind({ events }).events.emit('outbound:message', message);
-    expect(await message.delivery).toEqual({ ok: true });
   });
 });

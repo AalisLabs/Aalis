@@ -3,12 +3,12 @@
 //
 // 两段式：概览只回答"有哪些能力"，详情回答"这条怎么用"。
 //
-// 载体约束（已核实 packages/plugin-webui-client/src/components/markdownConfig.tsx）：
+// 载体约束（已核实 packages/plugin-webui-client/src/markdown/Markdown.tsx）：
 // - 概览用 markdown 列表（`- ` 前缀），换行由列表语义保证。
 // - 详情的结构化正文整体包进代码块。**这不是权宜之计，代码块就是这段内容该在的载体**：
 //   `twoColumn` 用空格按 CJK 显示宽度补齐来对列，只有等宽字体下才对得齐——正文本来就是
 //   定宽的列对齐文本。顺带免疫 **autolink**（`<name:string>` 这类占位符会被 CommonMark
-//   解析成链接，渲染出 `<a href="">name:string</a>`）。
+//   解析成自动链接，尖括号被吃掉，协议不在链接白名单里，只剩 `name:string` 几个字）。
 //   曾有个待办说「要在产出侧转义尖括号、把围栏拆掉」——那能修 autolink 但会把列排歪，
 //   两个需求里只满足一个。别照做。
 //
@@ -16,7 +16,7 @@
 // - 「无 remark-breaks」：已于 e2e75155 补上，裸换行不再被合并成一段。
 // - 「无 rehype-raw 导致 `<type>` 被整段丢弃」：反了。不加 rehype-raw 时 `<type>` 渲染为
 //   `&lt;type&gt;`（**正确显示**）；加上反而变成空的自定义元素 `<type></type>`，肉眼不可见。
-//   而且该渲染器喂的是 LLM 输出与用户消息，开放 raw HTML 是 XSS 面（详见 markdownConfig.tsx）。
+//   而且该渲染器喂的是 LLM 输出与用户消息，开放 raw HTML 是 XSS 面（所以 WebUI 的 Markdown 不渲染原始 HTML）。
 //
 // 纯文本载体（QQ / CLI）看到的是 markdown 源码，可读性不受损。
 // ============================================================

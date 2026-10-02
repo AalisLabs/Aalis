@@ -1,0 +1,14 @@
+.session-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-2);
+}
+
+.session-status[data-status="attention"] {
+  color: var(--color-warning-text);
+}
+
+.session-status[data-status="error"] {
+  color: var(--color-danger-text);
+}

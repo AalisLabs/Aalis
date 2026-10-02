@@ -342,7 +342,7 @@ class CliTui {
           this.cards.push(approval);
           this.queueRender();
         },
-        settled: (approvalId, state) => this.closeCard(approvalId, SETTLED_LINES[state]),
+        settled: (approvalId, { state }) => this.closeCard(approvalId, SETTLED_LINES[state]),
       },
     );
   }
