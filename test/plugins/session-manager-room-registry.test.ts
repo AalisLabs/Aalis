@@ -15,7 +15,8 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 带 source 的内部注入（工作流、好友申请的合成通知、空闲开话题等）不登记。
 // 状态在回合真正开始的 agent:input:before 翻 active，同一个中间件在 finally 里收口，
 // 后面的中间件拦下或抛错时房间也不停在「进行中」。收口按这一轮的结局：出错为 error，其余为 completed；
-// 结局为 replied 时记下她最近开口的时间。房间建档时记下接管它的平台适配器实例，会话列表按它分组。
+// 结局为 replied 时记下她最近开口的时间。房间建档时记下接管它的平台适配器实例，会话列表按它分组；
+// 没记下的（建档时没有适配器认领、读表读进来的旧房间）下一次有消息进来时补记。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -174,25 +175,47 @@ describe('IM 房间按首条真人入站登记', () => {
   });
 });
 
-describe('房间建档时记下接管它的适配器实例', () => {
+describe('房间记下接管它的适配器实例：建档时解析，没记下的下一次有消息进来时补记', () => {
   /** 入站收录不等建档完成，让它落定 */
   const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
-  /** canHandle 等到 release 才回答，用来卡住建档时的解析 */
+  /** canHandle 等到 release 才回答，用来卡住解析；asked 记下被问过的会话 */
   function gatedAdapter() {
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => {
       release = resolve;
     });
+    const asked: string[] = [];
     const adapter: Partial<PlatformAdapter> = {
       platform: 'onebot',
       canHandle: async id => {
+        asked.push(id);
         await gate;
         return id.startsWith('onebot:10000:');
       },
     };
-    return { adapter, release };
+    return { adapter, release, asked };
   }
+
+  /** canHandle 照 claiming 回答：起初不认领，模拟适配器还没装好、连接还没上来 */
+  function laterAdapter() {
+    const state = { claiming: false };
+    const adapter: Partial<PlatformAdapter> = { platform: 'onebot', canHandle: () => state.claiming };
+    return { adapter, state };
+  }
+
+  /** 读表读进来的旧房间：没有 originInstance */
+  const STORED_ROOM: SessionInfo = {
+    id: GROUP,
+    name: '<群名>',
+    children: [],
+    status: 'completed',
+    config: {},
+    createdAt: 1,
+    updatedAt: 1,
+    kind: 'room',
+  };
+  const stored = (info: SessionInfo) => ({ [info.id]: info as unknown as Record<string, unknown> });
 
   it('原生入站、子任务兜底、/session 落配置建出的房间各记各的实例；认不出的、owner 面会话与子任务不记', async () => {
     const { sm, inbound } = await setup([], { instances: true });
@@ -201,7 +224,7 @@ describe('房间建档时记下接管它的适配器实例', () => {
     const UNKNOWN = 'onebot:30000:group:20001';
     const instanceOf = (id: string) => sm.getSession(id)?.originInstance;
 
-    // ensureSession 等记下实例再返回
+    // 建档的 ensureSession 等记下实例再返回
     await sm.ensureSession(B_PRIVATE, { config: { persona: '<人设>' } }); // /session.set 的落点
     expect(instanceOf(B_PRIVATE)).toBe('onebot-b');
     const child = await sm.createChildSession(B_GROUP, { name: '<子任务>' });
@@ -284,6 +307,57 @@ describe('房间建档时记下接管它的适配器实例', () => {
     const { sm } = await setup([], { stored: { [GROUP]: stored as unknown as Record<string, unknown> } });
 
     expect(sm.getSession(GROUP)).toMatchObject({ originInstance: 'onebot-a', lastReplyAt: 5 });
+  });
+
+  it('没记下实例的房间（读表读进来的旧房间、建档时没有适配器认领的）在下一条真人入站时补记，推 session:updated', async () => {
+    const later = laterAdapter();
+    const t = await setup([later.adapter], { stored: stored(STORED_ROOM) });
+    await t.inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', nickname: '<乙>' });
+    await settle();
+    expect(
+      [GROUP, PRIVATE].map(id => t.sm.getSession(id)?.originInstance),
+      '还没有适配器认领',
+    ).toEqual([undefined, undefined]);
+    const pushed: Array<[string, string | undefined]> = [];
+    t.host.events.on('session:updated', session => void pushed.push([session.id, session.originInstance]));
+
+    later.state.claiming = true;
+    for (const id of [GROUP, PRIVATE]) await t.inbound({ sessionId: id, platform: 'onebot' });
+    await settle();
+
+    const recorded = t.sm.getSession(GROUP)?.originInstance;
+    expect(recorded).toBeTypeOf('string');
+    expect(t.sm.getSession(PRIVATE)?.originInstance).toBe(recorded);
+    expect(pushed).toContainEqual([GROUP, recorded]);
+    expect(pushed).toContainEqual([PRIVATE, recorded]);
+  });
+
+  it('已记下的实例不改：之后的入站不重新解析', async () => {
+    const { sm, inbound } = await setup([], {
+      instances: true,
+      stored: stored({ ...STORED_ROOM, originInstance: '<原实例>' }),
+    });
+
+    await inbound({ sessionId: GROUP, platform: 'onebot' });
+    await settle();
+
+    expect(sm.getSession(GROUP)?.originInstance).toBe('<原实例>');
+  });
+
+  it('补记的解析期间会话被删除：不写回，也不推送更新', async () => {
+    const gated = gatedAdapter();
+    const { sm, host, inbound } = await setup([gated.adapter], { stored: stored(STORED_ROOM) });
+
+    await inbound({ sessionId: GROUP, platform: 'onebot' });
+    expect(gated.asked, '补记的解析已经发起').toContain(GROUP);
+    await sm.deleteSession(GROUP);
+    const updated: string[] = [];
+    host.events.on('session:updated', session => void updated.push(session.id));
+    gated.release();
+    await settle();
+
+    expect(sm.getSession(GROUP)).toBeUndefined();
+    expect(updated).toEqual([]);
   });
 });
 
