@@ -6,6 +6,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Events, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
@@ -77,6 +78,18 @@ describe('send_attachment storage_uri 归一化', () => {
     expect(out.error).toBeUndefined();
     expect(out.ok).toBe(true);
     expect(outbound).toHaveLength(1);
+  });
+
+  it('发出的消息带这次工具调用的 callId：界面据此把它挂到对应的工具卡上', async () => {
+    const outbound: OutgoingMessage[] = [];
+    hostEvents.on('outbound:message', m => {
+      outbound.push(m);
+    });
+    await handlers.send_attachment({ kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/abcd1234.jpg' }, {
+      sessionId: 'onebot:x:group:1',
+      callId: 'call-7',
+    } as { sessionId: string });
+    expect(outbound.map(m => m.callId)).toEqual(['call-7']);
   });
 
   it('storage URI（data:/images/...，带冒号）→ 同样成功（归一化对已是 URI 幂等）', async () => {

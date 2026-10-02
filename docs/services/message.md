@@ -22,7 +22,7 @@
 | --- | --- | --- | --- |
 | `Message` | interface | `index.ts` | LLM 对话上下文消息主体：`role`/`content`/`toolCalls`/`name`/`kind`/`segments`/`images`/`audios`/`metadata` 等 |
 | `ToolCall` | interface | `index.ts` | assistant 消息的 `tool_calls` 载荷（OpenAI 协议字段：`id`/`type:'function'`/`function{name,arguments}`） |
-| `ContentSegment` | type（三联合） | `index.ts` | assistant 输出的有序时间线：`text` / `reasoning_text` / `tool_call`（后者带 `startTime`/`endTime`） |
+| `ContentSegment` | type（三联合） | `index.ts` | assistant 输出的有序时间线：`text` / `reasoning_text` / `tool_call`（后者带 `startTime`/`endTime` 与这次调用的 `callId`） |
 | `WellKnownRole` | type | `index.ts` | `'system' \| 'user' \| 'assistant' \| 'tool'`——chat 协议直接接受的四种 |
 | `MessageRole` | type | `index.ts` | `WellKnownRole \| (string & {})`——四种标准 + 任意扩展 role（如 `'notice'`） |
 
@@ -32,7 +32,7 @@
 | --- | --- | --- | --- |
 | `IncomingMessage` | interface | `index.ts` | 从适配器流入的原始消息：会话上下文 + `attachments` + `triggerType` + `actor`（授权身份）等 |
 | `OutgoingMessage` | interface | `index.ts` | 发往平台的回复：`content`/`segments`/`attachments`/`source`/`modelInfo` |
-| `StreamChunkMessage` | interface | `index.ts` | 流式片段（经 `'outbound:stream'` 事件发往前端）：`contentDelta`/`reasoningDelta`/`toolCallProgress`/`done`/`toolLimitReached` |
+| `StreamChunkMessage` | interface | `index.ts` | 流式片段（经 `'outbound:stream'` 事件发往前端）：`turnId`（所在回合）/`contentDelta`/`reasoningDelta`/`toolCallProgress`/`done`/`toolLimitReached` |
 | `MessageAttachment` | interface | `index.ts` | v2 多模态附件统一载体：`kind`/`data`/`mimeType`/`description`/`ref`/`skipArchive` 等 |
 
 ### LLM 出口工具（值导出）— `src/index.ts`

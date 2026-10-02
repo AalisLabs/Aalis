@@ -360,7 +360,7 @@ describe('agent 预处理器退订按条目身份', () => {
       await next();
     };
     const run = () =>
-      host.hooks.run('agent:input:before', { message: {} as never, metadata: {} }, async () => undefined);
+      host.hooks.run('agent:input:before', { message: {} as never, turnId: 't1', metadata: {} }, async () => undefined);
 
     const oldOff = svc.registerPreprocessor!('x', handler('old'));
     svc.registerPreprocessor!('x', handler('new'));

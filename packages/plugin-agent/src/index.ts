@@ -131,12 +131,12 @@ class DefaultAgent implements AgentService {
   private trimThresholdRatio: number;
 
   /**
-   * 活跃 AbortController 表
+   * 在飞回合表：lane → 这一轮的 AbortController 与 turnId
    *
-   * key = `${sessionId}::${source}` — 同一 session 不同来源（user / scheduler）
+   * lane = `${sessionId}::${source}` — 同一 session 不同来源（user / scheduler）
    * 独立管理，互不打断；同来源新消息会中止旧的生成。
    */
-  private activeControllers = new Map<string, AbortController>();
+  private activeControllers = new Map<string, { controller: AbortController; turnId: string }>();
 
   /**
    * 延续某位发言者身份的宿主通知回合（lane → 会话与 hostNotice.callerUserId）。那位发言者在同一会话发来的真人消息
@@ -233,16 +233,18 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 中止指定会话的当前生成（所有 lane）
+   * 中止指定会话的在飞回合：不带 turnId 时停所有 lane，带 turnId 时只停那一轮。返回是否停下了回合。
    */
-  abort(sessionId: string): void {
-    for (const [key, controller] of this.activeControllers) {
-      if (key.startsWith(`${sessionId}::`)) {
-        controller.abort();
-        this.activeControllers.delete(key);
-      }
+  abort(sessionId: string, turnId?: string): boolean {
+    let aborted = false;
+    for (const [key, turn] of this.activeControllers) {
+      if (!key.startsWith(`${sessionId}::`) || (turnId !== undefined && turn.turnId !== turnId)) continue;
+      turn.controller.abort();
+      this.activeControllers.delete(key);
+      aborted = true;
     }
-    this.logger.info(`生成已中止: session=${sessionId}`);
+    if (aborted) this.logger.info(`生成已中止: session=${sessionId}${turnId ? ` turn=${turnId}` : ''}`);
+    return aborted;
   }
 
   /**
@@ -255,8 +257,8 @@ class DefaultAgent implements AgentService {
    */
   abortAll(): void {
     let n = 0;
-    for (const [key, controller] of this.activeControllers) {
-      controller.abort();
+    for (const [key, turn] of this.activeControllers) {
+      turn.controller.abort();
       this.activeControllers.delete(key);
       n++;
     }
@@ -346,6 +348,7 @@ class DefaultAgent implements AgentService {
   private async consumeStream(
     llm: LLMModel,
     request: ChatModelRequest,
+    turnId: string,
     sessionId: string,
     platform: string,
     emitProgress = true,
@@ -375,6 +378,7 @@ class DefaultAgent implements AgentService {
         if (emitProgress)
           await this.caps.events.emit('outbound:stream', {
             sessionId,
+            turnId,
             platform,
             contentDelta: chunk.contentDelta,
           });
@@ -385,6 +389,7 @@ class DefaultAgent implements AgentService {
         if (emitProgress)
           await this.caps.events.emit('outbound:stream', {
             sessionId,
+            turnId,
             platform,
             reasoningDelta: chunk.reasoningDelta,
           });
@@ -392,6 +397,7 @@ class DefaultAgent implements AgentService {
       if (emitProgress && chunk.toolCallProgress) {
         await this.caps.events.emit('outbound:stream', {
           sessionId,
+          turnId,
           platform,
           toolCallProgress: chunk.toolCallProgress,
         });
@@ -533,7 +539,7 @@ class DefaultAgent implements AgentService {
 
     // 仅中止同一 lane（同 session + 同 source）的旧生成；不同来源互不打断
     const prev = this.activeControllers.get(lane);
-    if (prev) prev.abort();
+    if (prev) prev.controller.abort();
     // 例外：真人消息打断延续其本人身份的宿主通知回合，本人说话就停得下她自己开的那一轮。
     // 对那一轮确认请求的应答在网关的确认相位就被吞掉，到不了这里。
     if (incoming.source === undefined && incoming.userId !== undefined) {
@@ -545,7 +551,9 @@ class DefaultAgent implements AgentService {
     }
 
     const controller = new AbortController();
-    this.activeControllers.set(lane, controller);
+    // 回合 id：这一轮的入站钩子、流式片段、工具调用、用量与回合结束都带它，停止键也能按它只停这一轮
+    const turnId = crypto.randomUUID();
+    this.activeControllers.set(lane, { controller, turnId });
     const callerUserId = incoming.hostNotice?.callerUserId;
     if (callerUserId !== undefined) {
       this.noticeCallers.set(lane, { sessionId: incoming.sessionId, callerUserId, controller });
@@ -553,10 +561,10 @@ class DefaultAgent implements AgentService {
 
     const turn = (async () => {
       try {
-        await this._handleMessageInner(incoming, controller.signal, lane);
+        await this._handleMessageInner(incoming, controller.signal, lane, turnId);
       } finally {
         // 仅清理自己创建的 controller（避免清掉后续新请求的）
-        if (this.activeControllers.get(lane) === controller) {
+        if (this.activeControllers.get(lane)?.controller === controller) {
           this.activeControllers.delete(lane);
         }
         if (this.noticeCallers.get(lane)?.controller === controller) this.noticeCallers.delete(lane);
@@ -570,11 +578,17 @@ class DefaultAgent implements AgentService {
     }
   }
 
-  private async _handleMessageInner(incoming: IncomingMessage, signal: AbortSignal, lane: string): Promise<void> {
+  private async _handleMessageInner(
+    incoming: IncomingMessage,
+    signal: AbortSignal,
+    lane: string,
+    turnId: string,
+  ): Promise<void> {
     // Hook: agent:input:before — 插件可以修改或拦截消息
     // 中间件不调用 next() 即可中断整个流程（包括 LLM 调用）
-    const msgHookData: { message: IncomingMessage; metadata: Record<string, unknown> } = {
+    const msgHookData: HookContextMap['agent:input:before'] = {
       message: incoming,
+      turnId,
       metadata: {},
     };
 
@@ -607,6 +621,7 @@ class DefaultAgent implements AgentService {
           reply: '',
           outcome: signal.aborted ? 'aborted' : 'error',
           sessionId: incoming.sessionId,
+          turnId,
           metadata: msgHookData.metadata,
         });
         return;
@@ -678,6 +693,7 @@ class DefaultAgent implements AgentService {
           signal,
           // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入
           inbound: { source: incoming.source },
+          turnId,
         };
 
         // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
@@ -731,6 +747,7 @@ class DefaultAgent implements AgentService {
           contextLength,
           maxTokens,
           tokenBudget,
+          turnId,
         );
 
         this.logger.debug(
@@ -768,6 +785,7 @@ class DefaultAgent implements AgentService {
             signal,
             ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
           },
+          turnId,
           incoming.sessionId,
           incoming.platform,
           !reportOnly,
@@ -796,7 +814,7 @@ class DefaultAgent implements AgentService {
         // 收集工具调用摘要
         const toolCallSummaries: string[] = [];
 
-        const assistantMetadata = this.buildAssistantMetadata(incoming);
+        const assistantMetadata = this.buildAssistantMetadata(incoming, turnId);
 
         // 工具调用循环
         let iterations = 0;
@@ -832,9 +850,16 @@ class DefaultAgent implements AgentService {
               const rawArgs = toolCall.function.arguments?.trim();
               let args: Record<string, unknown>;
               try {
-                args = rawArgs ? JSON.parse(rawArgs) : {};
+                const parsed: unknown = rawArgs ? JSON.parse(rawArgs) : {};
+                // 工具按参数名取值：顶层是 null、数组或原始值的同坏 JSON 一样处理
+                if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                  throw new TypeError(
+                    `顶层是 ${parsed === null ? 'null' : Array.isArray(parsed) ? '数组' : typeof parsed}`,
+                  );
+                }
+                args = parsed as Record<string, unknown>;
               } catch (parseErr) {
-                // 参数不是合法 JSON：跳过本次执行，把错误当工具结果回给模型重新生成 arguments。
+                // 参数不是合法 JSON 对象：跳过本次执行，把错误当工具结果回给模型重新生成 arguments。
                 // 旧行为 args = {} 会让"无必填参数"的工具真的空参跑一遍（副作用已发生，模型却不知情）。
                 const reason = parseErr instanceof Error ? parseErr.message : String(parseErr);
                 this.logger.warn(
@@ -843,7 +868,9 @@ class DefaultAgent implements AgentService {
                 const failedAt = Date.now();
                 return {
                   toolCall,
-                  result: JSON.stringify({ error: `工具参数不是合法 JSON：${reason}；请重新生成 arguments` }),
+                  // 没有执行：不发 tool:execute，也就没有 callId
+                  callId: undefined,
+                  result: JSON.stringify({ error: `工具参数不是合法 JSON 对象：${reason}；请重新生成 arguments` }),
                   resultImages: undefined,
                   toolName: toolCall.function.name,
                   toolArgs: {},
@@ -852,8 +879,13 @@ class DefaultAgent implements AgentService {
                 };
               }
 
+              // 这次调用的 id：开始与结束事件、工具上下文都带它。自己生成而不用模型给的 toolCall.id——
+              // 模型给的 id 不保证唯一（有的 provider 用毫秒时间戳加序号拼，并发的两轮会撞上），
+              // 而 callId 要在全局配对开始与结束。模型的 id 只留在发回模型的 tool 消息里配对调用与结果。
+              const callId = crypto.randomUUID();
+              const callCtx: ToolCallContext = { ...toolCtx, callId };
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
-              const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
+              const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: callCtx };
               // 单个工具的链路异常（钩子 / 守卫 / 结果处理抛错）只算该工具失败，转成它自己的错误结果：
               // 整批照常落定、整组落库，兄弟工具已发生的副作用不会因连坐而从历史里消失。
               // executeDone 区分失败发生在执行前还是执行后——后者须明说「已执行」，免得模型重做有副作用的操作。
@@ -865,6 +897,8 @@ class DefaultAgent implements AgentService {
                 // 通知平台：工具开始执行
                 await this.caps.events.emit('tool:execute', {
                   sessionId: incoming.sessionId,
+                  turnId,
+                  callId,
                   platform: incoming.platform,
                   toolName: toolBeforeData.name,
                   args: toolBeforeData.args,
@@ -877,7 +911,7 @@ class DefaultAgent implements AgentService {
                 const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
                   toolBeforeData.name,
                   toolBeforeData.args,
-                  toolCtx,
+                  callCtx,
                 ) ?? Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
                 executeDone = true;
                 let result = executed.content;
@@ -886,7 +920,7 @@ class DefaultAgent implements AgentService {
                 const resultImages = executed.images;
 
                 // Hook: agent:tool:after — 插件可以处理工具执行结果
-                const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
+                const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: callCtx };
                 await this.caps.hooks.run('agent:tool:after', toolAfterData);
                 result = toolAfterData.result;
 
@@ -908,6 +942,8 @@ class DefaultAgent implements AgentService {
                 // 通知平台：工具执行完成
                 await this.caps.events.emit('tool:execute', {
                   sessionId: incoming.sessionId,
+                  turnId,
+                  callId,
                   platform: incoming.platform,
                   toolName: toolBeforeData.name,
                   args: toolBeforeData.args,
@@ -917,6 +953,7 @@ class DefaultAgent implements AgentService {
 
                 return {
                   toolCall,
+                  callId,
                   result,
                   resultImages,
                   toolName: toolBeforeData.name,
@@ -938,6 +975,8 @@ class DefaultAgent implements AgentService {
                 if (toolT0 !== undefined) {
                   await this.caps.events.emit('tool:execute', {
                     sessionId: incoming.sessionId,
+                    turnId,
+                    callId,
                     platform: incoming.platform,
                     toolName: toolBeforeData.name,
                     args: toolBeforeData.args,
@@ -947,6 +986,7 @@ class DefaultAgent implements AgentService {
                 }
                 return {
                   toolCall,
+                  callId,
                   result,
                   resultImages: undefined,
                   toolName: toolBeforeData.name,
@@ -969,15 +1009,26 @@ class DefaultAgent implements AgentService {
           }
 
           // 按原始 toolCalls 顺序将结果推入消息列表 + 时间线
-          for (const { toolCall, result, resultImages, toolName, toolArgs, startTime, endTime } of parallelResults) {
+          for (const {
+            toolCall,
+            callId,
+            result,
+            resultImages,
+            toolName,
+            toolArgs,
+            startTime,
+            endTime,
+          } of parallelResults) {
             const resultPreview = result.length > 200 ? `${result.slice(0, 200)}...` : result;
             toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
 
+            // callId 随工具结果与时间线落库：没回复就收尾的一轮只落工具调用组，历史里的工具卡靠它对回这次调用
             const toolMessage: Message = {
               role: 'tool',
               content: result,
               toolCallId: toolCall.id,
               ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
+              metadata: { turnId, ...(callId ? { callId } : {}) },
             };
             llmBeforeData.messages.push(toolMessage);
             toolMessages.push(toolMessage);
@@ -990,6 +1041,7 @@ class DefaultAgent implements AgentService {
               result,
               startTime,
               endTime,
+              ...(callId ? { callId } : {}),
             });
           }
 
@@ -1024,6 +1076,7 @@ class DefaultAgent implements AgentService {
             contextLength,
             maxTokens,
             tokenBudget,
+            turnId,
           );
 
           const tN = Date.now();
@@ -1036,6 +1089,7 @@ class DefaultAgent implements AgentService {
               signal,
               ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
             },
+            turnId,
             incoming.sessionId,
             incoming.platform,
           );
@@ -1122,6 +1176,7 @@ class DefaultAgent implements AgentService {
               signal,
               ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
             },
+            turnId,
             incoming.sessionId,
             incoming.platform,
             !reportOnly,
@@ -1172,6 +1227,7 @@ class DefaultAgent implements AgentService {
         // 发出流结束标记
         await this.caps.events.emit('outbound:stream', {
           sessionId: incoming.sessionId,
+          turnId,
           platform: incoming.platform,
           done: true,
           toolLimitReached,
@@ -1237,6 +1293,7 @@ class DefaultAgent implements AgentService {
           reply: replyContent,
           outcome: turnOutcome,
           sessionId: incoming.sessionId,
+          turnId,
           metadata: msgHookData.metadata,
         });
       } catch (err) {
@@ -1261,18 +1318,20 @@ class DefaultAgent implements AgentService {
           );
           await this.caps.events.emit('outbound:stream', {
             sessionId: incoming.sessionId,
+            turnId,
             platform: incoming.platform,
             done: true,
           });
 
           // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
-          // checkpoint 关闭当前回合（否则中止后回合不关闭、长期泄漏）。
+          // 编排的 agent 节点在等这一轮的结果，不发它就要等到超时才失败。
           // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
           await this.caps.hooks.run('agent:turn:after', {
             message: incoming,
             reply: '',
             outcome: 'aborted',
             sessionId: incoming.sessionId,
+            turnId,
             metadata: msgHookData.metadata,
           });
 
@@ -1286,6 +1345,7 @@ class DefaultAgent implements AgentService {
         // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
         await this.caps.events.emit('outbound:stream', {
           sessionId: incoming.sessionId,
+          turnId,
           platform: incoming.platform,
           done: true,
         });
@@ -1298,12 +1358,13 @@ class DefaultAgent implements AgentService {
           });
         }
 
-        // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合。
+        // 异常也是回合终态：同样发 turn:after(outcome=error)，等这一轮结果的订阅方才收得了尾。
         await this.caps.hooks.run('agent:turn:after', {
           message: incoming,
           reply: '',
           outcome: 'error',
           sessionId: incoming.sessionId,
+          turnId,
           metadata: msgHookData.metadata,
         });
       }
@@ -1313,6 +1374,7 @@ class DefaultAgent implements AgentService {
     if (!handled) {
       await this.caps.events.emit('outbound:stream', {
         sessionId: incoming.sessionId,
+        turnId,
         platform: incoming.platform,
         done: true,
       });
@@ -1510,6 +1572,8 @@ class DefaultAgent implements AgentService {
     contextLength: number,
     maxTokens: number,
     tokenBudget: number,
+    /** 所在回合；回应 token:request 的快照不在回合里 */
+    turnId?: string,
   ): void {
     // 按来源分类统计各消息的 token 占用
     let historyTokens = 0;
@@ -1591,6 +1655,7 @@ class DefaultAgent implements AgentService {
     this.caps.events
       .emit('token:usage', {
         sessionId,
+        turnId,
         platform,
         contextWindow: contextLength,
         maxTokens,
@@ -1931,11 +1996,13 @@ class DefaultAgent implements AgentService {
     }
   }
 
-  private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
+  /** 这一轮落库的 assistant 消息的元数据；带 turnId，会话的客户端据此把存档归回它所在的回合 */
+  private buildAssistantMetadata(incoming: IncomingMessage, turnId: string): Record<string, unknown> | undefined {
     const identity = getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
       senderType: 'assistant',
+      turnId,
     };
     if (identity?.selfId) metadata.userId = identity.selfId;
     if (identity?.nickname) metadata.nickname = identity.nickname;
@@ -2139,6 +2206,7 @@ type InternalAgent = {
     contextLength: number,
     maxTokens: number,
     tokenBudget: number,
+    turnId?: string,
   ): void;
 };
 
@@ -2379,8 +2447,8 @@ function run(caps: Caps): void {
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   caps.events.on('token:request', async data => {
     if (!data?.sessionId) return;
-    // platform 是调用方的入口平台（owner 面会话的快照按它选档），唯一发射方 WebUI 不填。缺省时 IM 房间按
-    // 出生平台、其余按 'webui'：它还是提示词贡献方的「当前平台」（按平台取跨会话料），不能缺省成空
+    // platform 是调用方的入口平台（owner 面会话的快照按它选档）；WebUI 不填，会话服务对房间不填、其余填连接的平台。
+    // 缺省时 IM 房间按出生平台、其余按 'webui'：它还是提示词贡献方的「当前平台」（按平台取跨会话料），不能缺省成空
     const platform = data.platform ?? resolveSessionOrigin(data.sessionId)?.platform ?? 'webui';
 
     try {

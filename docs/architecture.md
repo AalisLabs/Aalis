@@ -91,7 +91,7 @@ plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 a
   │     inbound:flow      节流硬闸：禁言、回复后冷却、限速
   │     inbound:dispatch  默认动作 → Agent.handleMessage(incoming)
   │
-  ├─ 1. hooks.run('agent:input:before', { message, metadata }, defaultAction)
+  ├─ 1. hooks.run('agent:input:before', { message, turnId, metadata }, defaultAction)
   │     │
   │     ├─ [预处理中间件] 图像识别、文件提取等
   │     └─ 全部通过 → defaultAction() 进入 Agent 处理
@@ -338,8 +338,8 @@ defaultAction()        ← 所有 handler 通过后执行
 | 钩子名 | 数据 | 用途 |
 |---|---|---|
 | `outbound:dispatch` | `{ message, metadata }` | 出站主管道；默认动作是 `emit('outbound:message')`，handler 可脱敏 / 限速 / 审计。 |
-| `agent:input:before` | `{ message, metadata }` | 修改/拦截收到的消息（图像识别、文件提取） |
-| `agent:turn:after` | `{ message, reply, sessionId, metadata }` | agent 回复周期完成后（摘要触发、子任务完成检测） |
+| `agent:input:before` | `{ message, turnId, metadata }` | 修改/拦截收到的消息（图像识别、文件提取）；`turnId` 是 agent 在回合开始时生成的回合 id |
+| `agent:turn:after` | `{ message, reply, outcome, sessionId, turnId, metadata }` | agent 回复周期完成后（摘要触发、子任务完成检测） |
 | `agent:llm:before` | `{ messages, tools, sessionId }` | 修改发给 LLM 的消息列表和工具（记忆注入、技能注入、工具搜索替换） |
 | `agent:llm:after` | `{ response, messages }` | 处理 LLM 返回的响应 |
 | `agent:tool:before` | `{ name, args, toolCallContext }` | 修改工具调用参数 |

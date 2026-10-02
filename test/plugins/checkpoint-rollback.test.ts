@@ -1,6 +1,11 @@
-import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
-import { CheckpointServiceImpl, type TurnManifest } from '../../packages/plugin-checkpoint/src/service.js';
+import type { TurnManifest } from '../../packages/plugin-checkpoint/src/service.js';
+import {
+  makeCheckpointService as makeService,
+  CHECKPOINT_ROOT as ROOT,
+  soleTurnId,
+} from '../fixtures/checkpoint-disk.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // checkpoint 回滚：备份不得把自己也记成一条改动。
@@ -9,107 +14,14 @@ import { CheckpointServiceImpl, type TurnManifest } from '../../packages/plugin-
 //  覆盖/删除类恢复必败且备份被毁；listTurns 也因此虚高并暴露内部路径。）
 // ════════════════════════════════════════════════════════════
 
-const ROOT = 'ws:/checkpoints'; // 非根级、无尾斜杠，钉住 isOwnUri 的补分隔符分支（生产默认在 data 根下，那里本就不快照）
-
-/**
- * 夹具：一份内存「磁盘」+ 复刻 storage-local 写前快照钩子的 storage 假实现。
- * checkpoint 自己的 blob/manifest 与用户文件共用这块磁盘，以复现递归路径。
- */
-function makeService() {
-  const disk = new Map<string, string>();
-  /** 这些 URI「存在但读不出来」：stat 成功、读取抛错 */
-  const unreadable = new Set<string>();
-  let svc: CheckpointServiceImpl;
-
-  // storage-local 的 snapshot(): 回合活跃时，在实际改动前调 beforeMutate
-  const snapshot = async (uri: string, op: 'write' | 'delete' | 'rename', toUri?: string) => {
-    if (!svc.isActive()) return;
-    await svc.beforeMutate(
-      uri,
-      op,
-      async () => {
-        // 复刻修好后的 storage-local：只有目录/不存在返回 null，其余读取失败抛出去
-        if (unreadable.has(uri)) throw new Error('EACCES: permission denied');
-        const cur = disk.get(uri);
-        if (cur === undefined) return null;
-        const data = Buffer.from(cur);
-        return { data, size: data.length };
-      },
-      toUri,
-    );
-  };
-
-  const storage = {
-    writeFile: async (uri: string, data: string | Uint8Array) => {
-      await snapshot(uri, 'write');
-      disk.set(uri, typeof data === 'string' ? data : Buffer.from(data).toString());
-    },
-    readFile: async (uri: string) => {
-      const cur = disk.get(uri);
-      if (cur === undefined) throw new Error(`ENOENT: ${uri}`);
-      return Buffer.from(cur);
-    },
-    delete: async (uri: string) => {
-      await snapshot(uri, 'delete');
-      if (!disk.delete(uri)) throw new Error(`ENOENT: ${uri}`);
-    },
-    move: async (from: string, to: string) => {
-      await snapshot(from, 'rename', to);
-      const cur = disk.get(from);
-      if (cur === undefined) throw new Error(`ENOENT: ${from}`);
-      disk.set(to, cur);
-      disk.delete(from);
-    },
-    list: async (dirUri: string) => {
-      const prefix = dirUri.endsWith('/') ? dirUri : `${dirUri}/`;
-      const names = new Map<string, boolean>();
-      for (const key of disk.keys()) {
-        if (!key.startsWith(prefix)) continue;
-        const rest = key.slice(prefix.length);
-        const slash = rest.indexOf('/');
-        const name = slash === -1 ? rest : rest.slice(0, slash);
-        names.set(name, names.get(name) === true || slash !== -1);
-      }
-      return {
-        entries: [...names].map(([name, isDirectory]) => ({ name, isDirectory, uri: `${prefix}${name}` })),
-      };
-    },
-    stat: async () => ({ mtime: new Date().toISOString() }),
-    // data / tmp / pluginData / logs 不记账；workspace 与用户自建的 custom 根记账
-    listRoots: () => [
-      { name: 'ws', kind: 'workspace' },
-      { name: 'repo', kind: 'custom' },
-      { name: 'data', kind: 'data' },
-      { name: 'tmp', kind: 'tmp' },
-      { name: 'plugs', kind: 'pluginData' },
-      { name: 'lg', kind: 'logs' },
-    ],
-  };
-
-  const logger = { debug() {}, info() {}, warn() {}, error() {} };
-  const cfg = { rootUri: ROOT, maxFileSize: 1024 * 1024, keepSessions: 0, scopes: ['*'] };
-  // 不注入 memory：commitTurn 跳过消息时间戳，仅凭文件改动判断是否落盘
-  svc = new CheckpointServiceImpl(cfg, logger as never, storage as never);
-  return { svc, disk, storage, unreadable };
-}
-
-/** 取某会话唯一一个已落盘回合的 turnId */
-function soleTurnId(disk: Map<string, string>, sessionId: string): string {
-  const prefix = `${ROOT}/${sessionId}/`;
-  const ids = [...disk.keys()].filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length).split('/')[0]);
-  const uniq = [...new Set(ids)];
-  expect(uniq).toHaveLength(1);
-  return uniq[0] as string;
-}
-
 describe('checkpoint 回滚', () => {
   it('覆盖写：回滚恢复原文', async () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/a.txt', 'changed');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/a.txt', 'changed');
+    });
     expect(disk.get('ws:/a.txt')).toBe('changed');
 
     const result = await svc.rollback('sessA', soleTurnId(disk, 'sessA'));
@@ -123,9 +35,9 @@ describe('checkpoint 回滚', () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/b.txt', 'orig-b');
 
-    svc.beginTurn('sessA');
-    await storage.delete('ws:/b.txt');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.delete('ws:/b.txt');
+    });
     expect(disk.has('ws:/b.txt')).toBe(false);
 
     const result = await svc.rollback('sessA', soleTurnId(disk, 'sessA'));
@@ -138,10 +50,10 @@ describe('checkpoint 回滚', () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/a.txt', 'changed'); // 覆盖（有 blob）
-    await storage.writeFile('ws:/new.txt', 'brand new'); // 新建
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/a.txt', 'changed'); // 覆盖（有 blob）
+      await storage.writeFile('ws:/new.txt', 'brand new'); // 新建
+    });
 
     const result = await svc.rollback('sessA', soleTurnId(disk, 'sessA'));
     expect(result.ok).toBe(true);
@@ -153,9 +65,9 @@ describe('checkpoint 回滚', () => {
 
   it('write-new 回滚删不掉：错误带非 ENOENT 的 code 时如实入 errors，文案含 not found 也不当成「已不在」', async () => {
     const { svc, disk, storage } = makeService();
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/new.txt', 'brand new');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/new.txt', 'brand new');
+    });
 
     storage.delete = async (uri: string) => {
       throw Object.assign(new Error(`access denied: credentials not found for ${uri}`), { code: 'EACCES' });
@@ -170,9 +82,9 @@ describe('checkpoint 回滚', () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
     // 回合内只做这一次移动：中间有写入的话 rename 条目不带 blob，走不到回落分支
-    svc.beginTurn('sessA');
-    await storage.move('ws:/a.txt', 'ws:/b.txt');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.move('ws:/a.txt', 'ws:/b.txt');
+    });
 
     storage.move = async () => {
       throw new Error('target occupied');
@@ -191,9 +103,9 @@ describe('checkpoint 回滚', () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/a.txt', 'changed');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/a.txt', 'changed');
+    });
 
     const turnId = soleTurnId(disk, 'sessA');
     const manifest = await svc.getManifest('sessA', turnId);
@@ -209,10 +121,10 @@ describe('checkpoint 回滚', () => {
     disk.set('ws:/checkpoints-old/a.txt', 'orig-sibling');
     disk.set('ws:/a.txt', 'orig');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/checkpoints-old/a.txt', 'changed');
-    await storage.writeFile('ws:/a.txt', 'changed');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/checkpoints-old/a.txt', 'changed');
+      await storage.writeFile('ws:/a.txt', 'changed');
+    });
 
     const turnId = soleTurnId(disk, 'sessA');
     const manifest = await svc.getManifest('sessA', turnId);
@@ -226,42 +138,66 @@ describe('checkpoint 回滚', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 回滚动作本身不是任何回合的改动：它的写回/删除经 storage 写前钩子回到 beforeMutate，
-// 曾被记进其它会话此刻活跃的回合——那边一回滚就把这次回滚再撤掉，且 listTurns 虚高。
+// 回滚动作本身不是任何回合的改动：WebUI 发起的回滚在任何回合之外执行，它的写回/删除经 storage 写前钩子
+// 回到 beforeMutate 时，不得记进此刻在跑的别的回合——那边一回滚就把这次回滚再撤掉，且 listTurns 虚高。
 // ════════════════════════════════════════════════════════════
-describe('checkpoint 回滚动作不记进其它会话的活跃回合', () => {
-  it('B 回合活跃时回滚 A：磁盘回到 A 回合前，B 无改动、不落 manifest', async () => {
+describe('checkpoint 回滚动作不记进此刻在跑的回合', () => {
+  /** B 回合开着，等 duringB 在回合之外跑完，再执行 afterInB（在 B 的回合里）后结束 */
+  async function whileBRuns(
+    svc: ReturnType<typeof makeService>['svc'],
+    duringB: () => Promise<void>,
+    afterInB: () => Promise<void> = async () => {},
+  ): Promise<void> {
+    const entered = deferred();
+    const proceed = deferred();
+    const turnB = svc.runTurn('turn-sessB', 'sessB', async () => {
+      entered.resolve();
+      await proceed.promise;
+      await afterInB();
+    });
+    await entered.promise;
+    await duringB();
+    proceed.resolve();
+    await turnB;
+  }
+
+  it('B 回合在跑时回滚 A：磁盘回到 A 回合前，B 无改动、不落 manifest', async () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/a.txt', 'changed');
-    await storage.writeFile('ws:/new.txt', 'n');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/a.txt', 'changed');
+      await storage.writeFile('ws:/new.txt', 'n');
+    });
     const turnId = soleTurnId(disk, 'sessA');
 
-    svc.beginTurn('sessB');
-    const r = await svc.rollback('sessA', turnId);
-    expect(r.ok).toBe(true);
-    expect(disk.get('ws:/a.txt')).toBe('orig');
-    expect(disk.has('ws:/new.txt')).toBe(false);
-    await svc.endTurn('sessB');
+    await whileBRuns(svc, async () => {
+      const r = await svc.rollback('sessA', turnId);
+      expect(r.ok).toBe(true);
+      expect(disk.get('ws:/a.txt')).toBe('orig');
+      expect(disk.has('ws:/new.txt')).toBe(false);
+    });
 
     expect([...disk.keys()].filter(k => k.startsWith(`${ROOT}/sessB/`))).toEqual([]);
   });
 
-  it('回滚结束后 B 回合的真实改动照常受保护（标记不残留）', async () => {
+  it('回滚结束后 B 回合的真实改动照常受保护', async () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/a.txt', 'changed');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/a.txt', 'changed');
+    });
     const turnId = soleTurnId(disk, 'sessA');
 
-    svc.beginTurn('sessB');
-    await svc.rollback('sessA', turnId);
-    await storage.writeFile('ws:/a.txt', 'by-B');
-    await svc.endTurn('sessB');
+    await whileBRuns(
+      svc,
+      async () => {
+        await svc.rollback('sessA', turnId);
+      },
+      async () => {
+        await storage.writeFile('ws:/a.txt', 'by-B');
+      },
+    );
 
     const manifestKey = [...disk.keys()].find(k => k.startsWith(`${ROOT}/sessB/`) && k.endsWith('manifest.json'));
     expect(manifestKey, 'B 自己的改动应有 manifest').toBeTruthy();
@@ -275,17 +211,17 @@ describe('checkpoint 回滚动作不记进其它会话的活跃回合', () => {
   it('rename 条目：回滚的原路移回（toUri 侧）也不记进 B', async () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
-    svc.beginTurn('sessA');
-    await storage.move('ws:/a.txt', 'ws:/b.txt');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.move('ws:/a.txt', 'ws:/b.txt');
+    });
     const turnId = soleTurnId(disk, 'sessA');
 
-    svc.beginTurn('sessB');
-    const r = await svc.rollback('sessA', turnId);
-    expect(r.ok).toBe(true);
-    expect(disk.get('ws:/a.txt')).toBe('orig');
-    expect(disk.has('ws:/b.txt')).toBe(false);
-    await svc.endTurn('sessB');
+    await whileBRuns(svc, async () => {
+      const r = await svc.rollback('sessA', turnId);
+      expect(r.ok).toBe(true);
+      expect(disk.get('ws:/a.txt')).toBe('orig');
+      expect(disk.has('ws:/b.txt')).toBe(false);
+    });
     expect([...disk.keys()].filter(k => k.startsWith(`${ROOT}/sessB/`))).toEqual([]);
   });
 });
@@ -301,16 +237,16 @@ describe('checkpoint 不记 data / tmp 等共享根', () => {
     disk.set('data:/scheduler-jobs.json', '[]');
     disk.set('repo:/src.ts', 'orig');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/note.txt', 'n'); // 工作区改动照常记账
-    await storage.writeFile('repo:/src.ts', 'agent-overwrote'); // 用户自建的 custom 根（如把整个仓库挂成根）
-    await storage.writeFile('unlisted:/x.txt', 'x'); // 根集合里没列出的根：按记账处理
-    await storage.writeFile('data:/images/onebot_1_group_2/0123456789abcdef.jpg', 'img'); // 别的平台落盘
-    await storage.writeFile('data:/scheduler-jobs.json', '[{"name":"j"}]'); // 插件状态
-    await storage.writeFile('tmp:/run-1/main.py', 'print(1)'); // 临时目录
-    await storage.writeFile('plugs:/file-reader/s/x.txt', 'p'); // pluginData
-    await storage.writeFile('lg:/app.log', 'l'); // logs
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/note.txt', 'n'); // 工作区改动照常记账
+      await storage.writeFile('repo:/src.ts', 'agent-overwrote'); // 用户自建的 custom 根（如把整个仓库挂成根）
+      await storage.writeFile('unlisted:/x.txt', 'x'); // 根集合里没列出的根：按记账处理
+      await storage.writeFile('data:/images/onebot_1_group_2/0123456789abcdef.jpg', 'img'); // 别的平台落盘
+      await storage.writeFile('data:/scheduler-jobs.json', '[{"name":"j"}]'); // 插件状态
+      await storage.writeFile('tmp:/run-1/main.py', 'print(1)'); // 临时目录
+      await storage.writeFile('plugs:/file-reader/s/x.txt', 'p'); // pluginData
+      await storage.writeFile('lg:/app.log', 'l'); // logs
+    });
     const turnId = soleTurnId(disk, 'sessA');
 
     const manifest = JSON.parse(disk.get(`${ROOT}/sessA/${turnId}/manifest.json`) as string) as TurnManifest;
@@ -345,9 +281,9 @@ describe('checkpoint：原文件读取失败不得当成「本回合新建」', 
     disk.set('ws:/secret.txt', '回合开始前就存在的用户数据');
     unreadable.add('ws:/secret.txt');
 
-    svc.beginTurn('sessA');
-    await storage.writeFile('ws:/secret.txt', 'agent 覆盖后的内容');
-    await svc.endTurn('sessA');
+    await svc.runTurn('turn-sessA', 'sessA', async () => {
+      await storage.writeFile('ws:/secret.txt', 'agent 覆盖后的内容');
+    });
 
     const turnId = soleTurnId(disk, 'sessA');
     const manifest = await svc.getManifest('sessA', turnId);
@@ -367,9 +303,9 @@ describe('checkpoint：原文件读取失败不得当成「本回合新建」', 
   it('真·新建的文件仍记 write-new，回滚照常删除', async () => {
     const { svc, disk, storage } = makeService();
 
-    svc.beginTurn('sessB');
-    await storage.writeFile('ws:/brand-new.txt', '本回合新建');
-    await svc.endTurn('sessB');
+    await svc.runTurn('turn-sessB', 'sessB', async () => {
+      await storage.writeFile('ws:/brand-new.txt', '本回合新建');
+    });
 
     const turnId = soleTurnId(disk, 'sessB');
     const manifest = await svc.getManifest('sessB', turnId);

@@ -130,13 +130,15 @@ async function dispatch(deps: DeliverDeps, message: OutgoingMessage): Promise<vo
 
 /**
  * 把这件任务的几件成品作为一条消息发回发起房间，等平台确认。调用方先用 {@link sendRefusal} 筛过；
- * wait 是等确认的中止信号（工具用这一回合的，直接发送用插件的）
+ * wait 是等确认的中止信号（工具用这一回合的，直接发送用插件的）；callId 是经工具发送时那次调用的 id，
+ * 会话的客户端据此给工具卡标「已发到群」
  */
 export async function deliverArtifacts(
   deps: DeliverDeps,
   task: TaskRecord,
   artifacts: readonly Artifact[],
   wait: AbortSignal | undefined,
+  callId?: string,
 ): Promise<DeliveryOutcome> {
   const message: OutgoingMessage = {
     sessionId: task.room,
@@ -152,6 +154,7 @@ export async function deliverArtifacts(
       };
     }),
     source: 'agent',
+    ...(callId ? { callId } : {}),
   };
   try {
     await dispatch(deps, message);

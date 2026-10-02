@@ -77,11 +77,14 @@ interface OutgoingMessage {
   reasoningContent?: string;
   segments?: ContentSegment[];        // 与协议层 Message.segments 一致
   source?: 'agent' | 'system' | 'command';
+  callId?: string;                    // 由工具调用发出时，那次调用的 id
   delivery?: Promise<{ ok: true } | { ok: false; error: string; unconfirmed?: true }>;
 }
 ```
 
 `source='agent'` 表示由 AI 生成，可被分条延迟发送以模拟自然节奏；其它来源默认整条立即发送。
+
+`callId` 是发出这条消息的那次工具调用的 id（`ToolCallContext.callId`），如 `send_attachment` 发的附件。会话的客户端据此把消息挂到对应的工具卡上；平台收下后，房间里的工具卡标「已发到群」。
 
 `delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经保存（有在线页面时同时推送，没有时打开页面从历史看到），不区分「已推送」与「只保存」，存档服务不在场时只有推送到在线页面才算成功，写入会话历史失败、但已推送到在线页面时仍算成功；CLI 成功表示已在终端写出（附件写一行说明）。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
 
@@ -102,6 +105,8 @@ interface OutgoingMessage {
 'outbound:delivered':        [message: OutgoingMessage]
 'outbound:stream':           [chunk: StreamChunkMessage]
 ```
+
+`StreamChunkMessage` 带 `turnId`：所在回合的 id，由 agent 在回合开始时生成，同一轮的工具调用、用量与回合结束带同一个（见 [api-agent](./api-agent.md#回合-id)）。一轮的最后一个片段是 `done: true`，消息在 `agent:input:before` 被拦下时也会发这一片。
 
 ## 工具函数（runtime exports）
 

@@ -1,29 +1,17 @@
 import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextMap augmentation
+import { checkpoint } from '@aalis/api-checkpoint';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { webuiServer } from '@aalis/api-webui';
-import {
-  type BoundOf,
-  config,
-  definePlugin,
-  defineService,
-  events,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { configSchema } from './config.js';
-import { type CheckpointService, CheckpointServiceImpl, normalizeConfig } from './service.js';
+import { CheckpointServiceImpl, normalizeConfig } from './service.js';
 
 // ════════════════════════════════════════════════════════════
-// plugin-checkpoint — 文件操作快照与回滚
+// plugin-checkpoint — 文件操作快照与回滚（契约见 @aalis/api-checkpoint）
 // ════════════════════════════════════════════════════════════
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const checkpoint = defineService<CheckpointService>('checkpoint');
 
 const uses = {
   /**
@@ -116,7 +104,8 @@ function run(caps: Caps): void {
   });
 
   // ──────────── 回合生命周期 ────────────
-  // agent:input:before：一次 LLM 回合开始（一个用户消息进来）
+  // agent:input:before 的 next 就是这一轮的全部（后续中间件、模型调用、工具、回合结束钩子），
+  // 用 agent 给的 turnId 把它包进 runTurn：期间的存储改动记进这一轮，next 返回（含被下游拦下、出错）即提交。
   // 仅对配置 scopes 匹配的会话参与回合生命周期，避免 onebot 等聊天平台为每条消息都创建空 checkpoint。
   const isScopeEnabled = (platform?: string, sessionType?: string): boolean => {
     if (cfg.scopes.length === 0) return false;
@@ -133,23 +122,18 @@ function run(caps: Caps): void {
 
   hooks.middleware('agent:input:before', async (data, next) => {
     if (isScopeEnabled(data.message.platform, data.message.sessionType)) {
-      service.beginTurn(data.message.sessionId);
+      await service.runTurn(data.turnId, data.message.sessionId, next);
+    } else {
+      await next();
     }
-    await next();
   });
 
-  // agent:turn:after：回合结束（按 sessionId 提交该会话回合；无对应回合则直接 return）
-  hooks.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    await service.endTurn(data.sessionId);
-  });
-
-  // 监听命令类工具调用，给该会话当前 turn 打 execUsed 标记（UI 显示 "部分未保护"）：
+  // 监听命令类工具调用，给调用所在的那一轮打 execUsed 标记（UI 显示 "部分未保护"）：
   // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
   hooks.middleware('agent:tool:before', async (data, next) => {
     const name = data.name;
     if (name === 'exec' || name === 'exec_background' || name.startsWith('run_')) {
-      service.markExecUsed(data.toolCallContext.sessionId);
+      service.markExecUsed();
     }
     await next();
   });
@@ -192,19 +176,10 @@ function run(caps: Caps): void {
     await next();
   });
 
-  // 进程退出前提交所有未结束的活跃回合，避免崩溃/重载时丢失（per-session 化后不再有"任意新回合 flush 旧回合"的兜底）
+  // 拆卸时提交所有还在跑的回合，避免崩溃/重载时丢失
   lifecycle.onDispose(() => service.flushAll());
 
   logger.info(
     `checkpoint 服务就绪 rootUri=${cfg.rootUri} maxFileSize=${cfg.maxFileSize} scopes=${cfg.scopes.join('|') || '<空>'}`,
   );
 }
-
-export type {
-  CheckpointFileRecord,
-  CheckpointService,
-  RollbackResult,
-  RollbackWithChatResult,
-  TurnManifest,
-  TurnSummary,
-} from './service.js';

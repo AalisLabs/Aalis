@@ -15,6 +15,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { checkpoint } from '@aalis/api-checkpoint';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
 import {
@@ -206,18 +207,6 @@ function parseUri(uri: string): { root: string; relPath: string } {
   return { root, relPath };
 }
 
-// 用最小接口表达对 checkpoint 服务的依赖，避免循环依赖。
-interface CheckpointLike {
-  isActive(): boolean;
-  beforeMutate(
-    uri: string,
-    op: 'write' | 'delete' | 'rename',
-    loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
-    /** rename 的目标 URI：checkpoint 据它把文件原路移回，不在目标端留重复 */
-    toUri?: string,
-  ): Promise<void>;
-}
-
 /**
  * 宿主控制文件的执行点兜底：密钥文件读写都拒，主配置拒写，只许 runtime 自己读写它们（见计划书「执行点兜底」）。
  * 不管目标经哪个根进来都查：
@@ -344,18 +333,17 @@ class ScopedStorageService implements StorageService {
     this.logger.debug(msg);
   }
 
-  /** 懒解析 checkpoint 服务；仅当回合活跃时调用 beforeMutate */
+  /** 懒解析 checkpoint 服务，在场就调 beforeMutate：写入是否处在回合里、要不要快照由它判断 */
   private async snapshot(
     uri: string,
     op: 'write' | 'delete' | 'rename',
     abs: string,
     targetUri?: string,
   ): Promise<void> {
-    // 按名动态查：checkpoint 的描述符在实现包里，而 checkpoint 自己要用存储——
-    // 声明它会让两个实现包互指。动态查到的不算声明依赖，与这里需要的语义一致
-    // （快照能力有就用、没有就直接落盘，不设激活闸）。
-    const cp = this.services.get('checkpoint') as CheckpointLike | undefined;
-    if (!cp?.isActive()) return;
+    // 动态查而不写进 uses：checkpoint 自己要用存储，声明它会让两者互为依赖。动态查到的不算声明依赖，
+    // 与这里需要的语义一致（快照能力有就用、没有就直接落盘，不设激活闸）。
+    const cp = this.services.get(checkpoint);
+    if (!cp) return;
     await cp.beforeMutate(
       uri,
       op,

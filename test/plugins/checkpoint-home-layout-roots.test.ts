@@ -2,13 +2,14 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import {
   createStorageGateway,
   type StorageService,
   storage as storageService,
 } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
+import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -50,12 +51,12 @@ describe('checkpoint × 家目录布局的内置根', () => {
   });
 
   it('写 cache:/、skills:/、personas:/ 不记账，回滚不动它们；同一轮写工作根的照常回滚', async () => {
-    svc.beginTurn('s1');
-    await storage.writeFile('ws:/note.txt', 'w');
-    await storage.writeFile('cache:/thumb.png', 'c');
-    await storage.writeFile('skills:/demo/SKILL.md', 'skill');
-    await storage.writeFile('personas:/main.yaml', 'name: x\n');
-    await svc.endTurn('s1');
+    await svc.runTurn('turn-s1', 's1', async () => {
+      await storage.writeFile('ws:/note.txt', 'w');
+      await storage.writeFile('cache:/thumb.png', 'c');
+      await storage.writeFile('skills:/demo/SKILL.md', 'skill');
+      await storage.writeFile('personas:/main.yaml', 'name: x\n');
+    });
 
     const [turn] = await svc.listTurns('s1');
     const turnId = (turn as { turnId: string }).turnId;

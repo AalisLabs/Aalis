@@ -24,6 +24,7 @@
 |---|---|---|
 | [api-agent](./api-agent.md) | `agent` 描述符 + `BoundAgent`（`registerPreprocessor`） | plugin-agent |
 | [api-authority](./api-authority.md) | `authority` 描述符 + `ExecutionGuard` | plugin-authority |
+| [api-checkpoint](./api-checkpoint.md) | `checkpoint` 描述符 + `CheckpointService`：存储写前快照、按回合回滚 | plugin-checkpoint |
 | [api-commands](./api-commands.md) | `commands` 描述符 + `BoundCommands`（`command` builder） | plugin-commands |
 | [api-contributions](./api-contributions.md) | `contributions` 描述符 + `Contributions`（`contribute` / `collect`）+ 扩展点 `ContributionPointMap` | plugin-contributions |
 | [api-embedding](./api-embedding.md) | `embedding` 描述符 | plugin-embedding-openai / plugin-embedding-ollama |
@@ -41,7 +42,9 @@
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符 | plugin-session-manager |
+| [api-session-protocol](./api-session-protocol.md) | `sessionProtocol` 描述符（服务名 `session-protocol`）+ 会话协议的 zod schema：owner 客户端与守护进程之间的帧、会话列表、条目与回合控制（实验性） | plugin-session-server |
 | [api-storage](./api-storage.md) | `storage` 描述符 + `createStorageGateway` 等 helper（第一参吃 `ServiceRef`） | plugin-storage-local |
+| [api-todo-list](./api-todo-list.md) | `todoList` 描述符（服务名 `todo-list`）+ `TodoListService`：读与清空会话的待办；`TodoItem` 与 `todo:updated` 事件 | plugin-todo-list |
 | [api-tools](./api-tools.md) | `tools` 描述符 + `BoundTools` / `withToolGroups` | plugin-tools |
 | [api-trigger](../services/trigger.md) | `trigger` 描述符（选出生效的触发插件，二选一）与触发插件共用的函数 | plugin-trigger-policy（规则判定） |
 | [api-user-relation](./api-user-relation.md) | `userRelation` 描述符（服务名 `user-relation`）+ 查询接口 `UserRelationService` | plugin-user-relation |

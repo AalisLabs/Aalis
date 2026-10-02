@@ -133,6 +133,50 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     expect(savedTool?.content).toContain('工具参数不是合法 JSON');
   });
 
+  it.each([
+    ['null', 'null'],
+    ['[1,2]', '数组'],
+    ['42', 'number'],
+  ])('arguments 是合法 JSON 但不是对象（%s）：同坏 JSON 一样不执行，回给模型重新生成', async (raw, kind) => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const recorder: ChatModelRequest[] = [];
+    const call: ChatResponse = {
+      content: null,
+      toolCalls: [{ id: 'call-shape', type: 'function', function: { name: 'probe', arguments: raw } }],
+    };
+    await bootAgentStack(app, createMockLLMPlugin({ responses: [call, { content: '已收到' }], recorder }), true);
+    const host = app.bind({ agent, tools, events });
+    let executed = 0;
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => {
+        executed++;
+        return { content: '{"ok":true}' };
+      },
+    });
+    const started: unknown[] = [];
+    host.events.on('tool:execute', info => void started.push(info.args));
+
+    await host.agent.require().handleMessage({
+      content: '调工具',
+      sessionId: 'test:non-object-args',
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await app.stop();
+
+    expect(executed).toBe(0);
+    expect(started, '没执行的调用不发 tool:execute').toEqual([]);
+    const toolMsg = recorder[1]?.messages.find(m => m.role === 'tool');
+    expect(toolMsg?.toolCallId).toBe('call-shape');
+    expect(toolMsg?.content).toContain('不是合法 JSON 对象');
+    expect(toolMsg?.content).toContain(kind);
+  });
+
   it('arguments 为空串的无参工具照常执行（空串不是坏 JSON）', async () => {
     const app = new App({ name: 'E2E', logLevel: 'error' });
     const emptyCall: ChatResponse = {
