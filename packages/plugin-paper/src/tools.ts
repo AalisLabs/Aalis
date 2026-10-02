@@ -16,7 +16,7 @@ import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aa
 import type { Events, Logger, ServiceRef } from '@aalis/core';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
-import { deliverArtifacts, rawDeliveryAllowed, sendRefusal } from './deliver.js';
+import { deliverArtifacts, failedBeforeSubmission, rawDeliveryAllowed, sendRefusal } from './deliver.js';
 import type { PaperDriver } from './driver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { currentProgress } from './progress.js';
@@ -56,6 +56,8 @@ interface PaperToolDeps {
   kick: (paperId: string) => void;
   /** 取消一件任务（运行驱动的 cancel，与 WebUI 共用） */
   cancel: PaperDriver['cancel'];
+  /** 宿主还要或正在直接发送这件任务的成品（PaperNotices.directSending）：paper_send 不另发一遍 */
+  directSending: (task: TaskRecord) => boolean;
 }
 
 /** 白纸工具与作品工具共用房间、回合和白纸归属检查。 */
@@ -284,7 +286,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         ...(position > 0 ? { position } : {}),
         ...(t.startedAt !== undefined ? { durationSec: Math.round(((t.endedAt ?? now) - t.startedAt) / 1000) } : {}),
         ...(t.costCents !== undefined ? { costCents: t.costCents } : {}),
-        ...(t.artifacts.length > 0 && (!t.publication || (t.publication.state === 'failed' && !t.publication.workId))
+        // 上线任务只在创作完成、发布在提交之前失败时列成品编号，供 works_nominate 重新提名；创作失败或取消的提名不了
+        ...(t.artifacts.length > 0 && (!t.publication || failedBeforeSubmission(t))
           ? { artifacts: t.artifacts.map(a => ({ id: a.id, type: a.type, sizeBytes: a.sizeBytes })) }
           : {}),
         ...(t.error ? { error: t.error } : {}),
@@ -341,10 +344,16 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       return fail('白纸完成通知只能发送本次通知对应任务的成品，不能夹带其他任务的文件');
     if (!rawDeliveryAllowed(task))
       return fail(
-        task.publication?.state === 'failed'
-          ? '这件作品没有通过审核或发布检查，成品不发出去'
-          : '这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件',
+        task.publication?.state !== 'failed'
+          ? '这件任务按上线方式交付；请等待发布结果及作品链接，不发送未经发布处理的原始文件'
+          : task.state !== 'done'
+            ? '创作任务失败或已取消，自动上线任务不发原始成品'
+            : '这件作品没有通过审核或发布检查，成品不发出去',
       );
+    if (deps.directSending(task)) return fail('宿主正在直接发送这件任务的成品，结果写在完成通知里，不要另发');
+    // 结果未知的成品按发过处理：可能已经送达。同一任务的其他成品照常可发
+    if (task.unknownArtifacts?.includes(artifactId))
+      return fail(`成品 ${artifactId} 此前已发出，结果未知（可能已经送达），不要重发`);
     if (task.artifactsCleared) return fail(`成品 ${artifactId} 已随白纸清空删除`);
     const refused = sendRefusal(artifact, cfg);
     if (refused) return fail(refused);
