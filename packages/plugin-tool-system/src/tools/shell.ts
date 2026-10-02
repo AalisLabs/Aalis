@@ -2,14 +2,14 @@
  * Shell 工具组 —— 命令行执行与进程管理
  *
  * 提供以下能力：
- * - exec: 执行 shell 命令并返回结果
+ * - exec: 执行 shell 命令并返回结果；agent 回合里执行时，输出边跑边经 tool:output 推给界面
  * - exec_background: 在后台启动长时间运行的进程；对话回合里起的进程自行退出时，向起它的会话注入一条宿主通知
  * - process_list: 列出当前管理的后台进程
  * - process_read: 读取后台进程输出
  * - process_kill: 终止后台进程（不确认，只能终止自己起的，owner 除外）
  */
 
-import type { ExecResult, ProcessService } from '@aalis/api-process';
+import type { ExecResult, ProcessService, SpawnHandle } from '@aalis/api-process';
 import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
 import type { StorageService } from '@aalis/api-storage';
 import { resolveAgainstCwd } from '@aalis/api-storage';
@@ -170,6 +170,28 @@ function truncateOutput(output: string, maxSize: number): string {
   return `${truncated}\n...[输出截断，超过 ${maxSize} 字节]`;
 }
 
+/**
+ * 把命令的 stdout 与 stderr 按到达顺序经 tool:output 推给界面，推出的总量不超过 maxOutputSize 字节（与结果里保留的输出同一上限）。
+ * 两路各自流式解码，多字节字符被拆在两次读取之间也不出乱码。
+ */
+function streamOutput(
+  child: SpawnHandle,
+  target: { sessionId: string; turnId: string; callId: string },
+  config: ShellConfig,
+): void {
+  let room = config.maxOutputSize;
+  for (const stream of [child.stdout, child.stderr]) {
+    const decoder = new TextDecoder();
+    stream?.on('data', (chunk: Uint8Array) => {
+      if (room <= 0) return;
+      const taken = chunk.subarray(0, room);
+      room -= taken.length;
+      const text = decoder.decode(taken, { stream: true });
+      if (text) void config.events.emit('tool:output', { ...target, text });
+    });
+  }
+}
+
 async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: string; localPath: string }> {
   if (!config.storage?.resolveLocalPath) {
     throw new Error('Shell 工具需要支持 local-path 能力的 storage 服务');
@@ -245,7 +267,11 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
           timeout,
           signal: callCtx.signal,
         });
-        const result = await child.wait();
+        // wait() 与流式转发在同一拍挂上监听，开头的输出两边都收得到
+        const exited = child.wait();
+        const { sessionId, turnId, callId } = callCtx;
+        if (turnId && callId) streamOutput(child, { sessionId, turnId, callId }, config);
+        const result = await exited;
         const output = {
           exitCode: result.code ?? -1,
           stdout: truncateOutput(result.stdout, config.maxOutputSize),

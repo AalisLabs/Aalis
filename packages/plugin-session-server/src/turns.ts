@@ -1,0 +1,88 @@
+// ════════════════════════════════════════════════════════════
+// 回合控制：发消息、工具调用达到上限后继续、停止、手动压缩、回滚、清空待办。
+// 消息以连接的身份（传输层认证出的平台与用户）发进入站事件，经网关进 agent，与平台适配器收到的消息走同一条路。
+// ════════════════════════════════════════════════════════════
+
+import type { AgentService } from '@aalis/api-agent';
+import type { CheckpointService } from '@aalis/api-checkpoint';
+import type { SessionInfo } from '@aalis/api-session-manager';
+import type { SessionPeer } from '@aalis/api-session-protocol';
+import type { TodoListService } from '@aalis/api-todo-list';
+import type { Events, ServiceRef } from '@aalis/core';
+import type { MessageAttachment } from '@aalis/schema-message';
+import { failure, type MethodHandlers } from './connection.js';
+
+/** 工具调用达到上限后请她接着做 */
+const CONTINUE_PROMPT = '[请继续执行未完成的工具调用]';
+
+interface TurnControlDeps {
+  events: Events;
+  agent: ServiceRef<AgentService>;
+  checkpoint: ServiceRef<CheckpointService>;
+  todoList: ServiceRef<TodoListService>;
+  requireSession(id: string): SessionInfo;
+  /** 请 agent 重发某会话的用量 */
+  requestUsage(sessionId: string, platform: string): void;
+}
+
+export function createTurnControl(deps: TurnControlDeps) {
+  const { events, requireSession } = deps;
+
+  /** 发一条入站消息：网关收下就回，回合的进展经条目推送 */
+  function send(peer: SessionPeer, sessionId: string, content: string, attachments?: MessageAttachment[]) {
+    const { platform, userId } = peer.identity;
+    return events.emit('inbound:message', {
+      content,
+      sessionId,
+      platform,
+      userId,
+      ...(attachments?.length ? { attachments } : {}),
+    });
+  }
+
+  const handlers: Pick<
+    MethodHandlers,
+    'turn/send' | 'turn/continue' | 'turn/abort' | 'session/compress' | 'turn/rewind' | 'plan/clear'
+  > = {
+    'turn/send': async ({ sessionId, content, attachments }, conn) => {
+      requireSession(sessionId);
+      await send(conn.peer, sessionId, content.trim(), attachments);
+      return {};
+    },
+    'turn/continue': async ({ sessionId }, conn) => {
+      requireSession(sessionId);
+      await send(conn.peer, sessionId, CONTINUE_PROMPT);
+      return {};
+    },
+    'turn/abort': ({ sessionId, turnId }) => {
+      requireSession(sessionId);
+      const agent = deps.agent.current;
+      if (!agent?.abort) throw failure('unsupported', '没有能停止回合的 agent 服务');
+      if (!agent.abort(sessionId, turnId) && turnId !== undefined) {
+        throw failure('expected-turn-mismatch', `这一轮不在跑：${turnId}`);
+      }
+      return {};
+    },
+    'session/compress': async ({ sessionId }, conn) => {
+      requireSession(sessionId);
+      await events.emit('session:compress', { sessionId, reason: 'manual' });
+      deps.requestUsage(sessionId, conn.peer.identity.platform);
+      return {};
+    },
+    'turn/rewind': ({ sessionId, turnId, scope }) => {
+      requireSession(sessionId);
+      const checkpoint = deps.checkpoint.current;
+      if (!checkpoint) throw failure('unsupported', '没有检查点服务，不能回滚');
+      return scope === 'code' ? checkpoint.rollback(sessionId, turnId) : checkpoint.rollbackWithChat(sessionId, turnId);
+    },
+    'plan/clear': async ({ sessionId }) => {
+      requireSession(sessionId);
+      const todoList = deps.todoList.current;
+      if (!todoList) throw failure('unsupported', '没有待办服务');
+      await todoList.clear(sessionId);
+      return {};
+    },
+  };
+
+  return { handlers };
+}

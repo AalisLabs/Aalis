@@ -1,0 +1,81 @@
+{
+  "name": "@aalis/plugin-session-server",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-session-server"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "会话服务：会话协议的服务端（会话列表与增量、会话的增删改与配置、已读、订阅与条目、历史、回合控制）",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-agent": "workspace:>=0.9.1 <1.0.0",
+    "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-checkpoint": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0",
+    "@aalis/api-persona": "workspace:>=0.8.1 <1.0.0",
+    "@aalis/api-platform": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-session-protocol": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-todo-list": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "events",
+        "hooks",
+        "lifecycle",
+        "logger",
+        "memory",
+        "provide",
+        "session-manager",
+        "storage"
+      ],
+      "optional": [
+        "agent",
+        "authority",
+        "checkpoint",
+        "llm",
+        "persona",
+        "platform",
+        "todo-list",
+        "tools"
+      ],
+      "provides": [
+        "session-protocol"
+      ]
+    }
+  }
+}

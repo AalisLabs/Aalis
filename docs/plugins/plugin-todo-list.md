@@ -1,7 +1,8 @@
 # plugin-todo-list — 任务计划
 
 **包名**: `@aalis/plugin-todo-list`  
-**源码**: `packages/plugin-todo-list/src/index.ts`
+**源码**: `packages/plugin-todo-list/src/index.ts`  
+**契约**: [api-todo-list](../api/api-todo-list.md)（服务描述符 `todoList`、`TodoItem`、`todo:updated` 事件）
 
 ## 概述
 
@@ -11,6 +12,8 @@
 
 待办属于会话级短期上下文，以 `context` 类型参与 `memory:clear`：会话级清理（`/clear` 与删除会话）删除本会话的待办，全局清理（`/clear all`）删除全部会话的待办。
 
+插件提供 `todo-list` 服务：`get(sessionId)` 读当前待办，`clear(sessionId)` 清空并发空清单的 `todo:updated`。会话服务用它给订阅的快照带上当前计划、执行 `plan/clear`。服务不随 `enabled` 开关：工具关掉之后，之前留下的待办照样读得到、清得掉。
+
 ## 插件声明
 
 ```typescript
@@ -18,11 +21,13 @@ export default definePlugin({
   name: '@aalis/plugin-todo-list',
   displayName: '任务计划',
   subsystem: 'scheduler',
+  provides: [todoList],
   uses: {
     tools: optional(tools),
     events,
     config,
     logger,
+    provide,
     memory: optional(memory),
     webui: optional(webuiServer),
     hooks: optional(hooks),
@@ -55,9 +60,9 @@ export default definePlugin({
 
 | 事件 | 载荷 | 说明 |
 |---|---|---|
-| `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入、`clearTodos` 清空或 `memory:clear` 清理时触发（后两者 `items` 为 `[]`，全局清理时每个被清的会话各触发一次） |
+| `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入、服务的 `clear`（页面动作 `clearTodos` 与会话协议的 `plan/clear` 都经它）或 `memory:clear` 清理时触发（后两者 `items` 为 `[]`，全局清理时每个被清的会话各触发一次） |
 
-WebUI 前端通过 WebSocket 接收 `todo_updated` 推送，实时显示任务进度面板。
+事件声明在 api-todo-list。WebUI 前端通过 WebSocket 接收 `todo_updated` 推送，实时显示任务进度面板；会话服务把它推成会话协议的 `plan` 条目。
 
 ## 配置校验
 
