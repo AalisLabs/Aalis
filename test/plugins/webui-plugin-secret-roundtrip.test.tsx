@@ -52,13 +52,18 @@ afterEach(async () => {
 
 /**
  * 按文档登记插件（引用经密钥存储解析）、挂上真实路由，取 GET /api/plugins（经 JSON 往返，与浏览器拿到的一致）渲染配置页。
- * `others` 是文档里别的实例的配置段（只用来共用密钥键，不登记）；不给 `secrets` 时宿主没有密钥存储
+ * `others` 是文档里别的实例的配置段（只用来共用密钥键，不登记）；不给 `secrets` 时宿主没有密钥存储；
+ * `apply` 是插件拿到配置后做的事（抛错即激活失败）
  */
 async function boot(
   name: string,
   configSchema: ConfigSchema,
   stored: Record<string, unknown>,
-  options: { others?: Record<string, Record<string, unknown>>; secrets?: Record<string, unknown> } = {},
+  options: {
+    others?: Record<string, Record<string, unknown>>;
+    secrets?: Record<string, unknown>;
+    apply?: (config: Record<string, unknown>) => void;
+  } = {},
 ) {
   const secretSaves: Array<Record<string, unknown>> = [];
   const { app, store } = hostedApp(
@@ -73,7 +78,17 @@ async function boot(
       : {},
   );
   apps.push(app);
-  await registerFromDoc(app, store, definePlugin({ name, configSchema, uses: { config }, apply() {} }));
+  const apply = options.apply ?? (() => {});
+  await registerFromDoc(
+    app,
+    store,
+    definePlugin({
+      name,
+      configSchema,
+      uses: { config },
+      apply: caps => apply(caps.config as Record<string, unknown>),
+    }),
+  );
   await app.plugins.idle();
   const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
   const { expressApp, invoke } = captureRoutes();
@@ -96,18 +111,19 @@ async function boot(
   const list = JSON.parse(JSON.stringify((await invoke('GET /api/plugins')).body)) as PluginListResponse;
   const row = list.plugins.find(p => p.instanceId === name);
   if (!row) throw new Error(`列表里没有 ${name}`);
+  const refreshed = vi.fn();
   const { container } = render(
     <PluginConfigPage
       plugins={[row]}
       secretRefCounts={list.secretRefCounts}
       config={null}
-      onRefresh={() => {}}
+      onRefresh={refreshed}
       onConfigSaved={() => {}}
       onRestart={() => {}}
     />,
   );
   fireEvent.click(screen.getByText(name));
-  return { app, store, container, list, secretSaves };
+  return { app, store, container, list, secretSaves, refreshed };
 }
 
 /** 查看态里字段名为 key 的那一行显示的值（顶层、分组内、数组元素内都按字段名找） */
@@ -334,6 +350,31 @@ describe('插件配置页的密钥：文档里是引用，页面不见原值', (
     await save('vault');
     expect(server.puts[0].signingKey).toBe('');
     expect(store.getPluginConfig('vault').signingKey).toBe('');
+  });
+
+  it('清除必填的密钥后保存、插件激活失败：配置已写进文件，表单收起并刷新状态，不留「撤销」', async () => {
+    const { app, store, refreshed } = await boot('vault', SCHEMA, DOC, {
+      others: OTHERS,
+      secrets: SECRETS,
+      apply: config => {
+        if (!config.signingKey) throw new Error('需要签名密钥');
+      },
+    });
+    fireEvent.click(screen.getByText('编辑配置'));
+    fireEvent.click(within(editRow('signingKey')).getByText('清除'));
+    fireEvent.click(screen.getByText('保存'));
+    expect(
+      await screen.findByText(
+        /^插件 vault 按新配置重新激活失败，已转为 error 态（.*需要签名密钥.*）；配置已写入配置文件$/,
+      ),
+    ).toBeTruthy();
+    expect(app.plugins.getPlugin('vault')?.state).toBe('error');
+    expect(store.getPluginConfig('vault').signingKey).toBe('');
+    // 「撤销」会把草稿退回已删掉的引用：写成之后表单不能留着
+    expect(screen.queryByText('撤销')).toBeNull();
+    expect(screen.queryByText('保存')).toBeNull();
+    expect(screen.getByText('编辑配置')).toBeTruthy();
+    expect(refreshed).toHaveBeenCalled();
   });
 
   it('「恢复默认」不清掉已存的密钥：顶层与分组的引用原样留在草稿里', async () => {

@@ -35,7 +35,8 @@ const grouped = definePlugin({
   apply() {},
 });
 
-async function setup() {
+/** `register`：登记在册的插件，缺省只登记主实例 grouped */
+async function setup(register: (app: App) => Promise<unknown> = app => app.plugin(grouped)) {
   const warnings: string[] = [];
   const logger: Logger = {
     debug() {},
@@ -49,7 +50,7 @@ async function setup() {
   const saves: number[] = [];
   const { app, store } = hostedApp({}, { provider: { save: () => void saves.push(1) } });
   apps.push(app);
-  await app.plugin(grouped);
+  await register(app);
   await app.plugins.idle();
   const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
   const { expressApp, invoke } = captureRoutes();
@@ -110,6 +111,33 @@ describe('POST /api/plugins/:name/instances 的配置与改配置同一套', () 
     expect(w.app.plugins.getPlugin('grouped:x')).toBeUndefined();
     expect(Object.hasOwn(w.store.getAll().plugins, 'grouped:x')).toBe(false);
     expect(w.saves).toHaveLength(0);
+  });
+
+  it('同模块在册的定义不止一份：取主实例的，与宿主登记新实例所用的是同一份', async () => {
+    // 先登记的后缀实例用的是旧定义（timeoutMs 默认 10、没有 retry 分组），主实例后登记、用新定义。
+    // 按注册表顺序取第一份会拿到旧定义：合并出 timeoutMs 10、补不出 retry，宿主却按主实例的定义登记
+    const older = definePlugin({
+      name: 'grouped',
+      reusable: true,
+      configSchema: { timeoutMs: { type: 'number', label: '超时', default: 10 } },
+      uses: { config },
+      apply() {},
+    });
+    const w = await setup(async app => {
+      await app.plugin(older, { timeoutMs: 10 }, 'grouped:early');
+      await app.plugin(grouped);
+    });
+    const reply = await w.create({ suffix: 'x', config: {} });
+    expect(reply.body).toEqual({ ok: true, instanceId: 'grouped:x', message: '已创建实例 grouped:x', ignored: [] });
+    expect(w.store.getPluginConfig('grouped:x')).toEqual({ timeoutMs: 30, retry: { delayMs: 100, maxTries: 3 } });
+  });
+
+  it('主实例不在册、只有后缀实例在：取在册实例的定义照常创建', async () => {
+    const w = await setup(app => app.plugin(grouped, {}, 'grouped:early'));
+    expect(w.app.plugins.getPlugin('grouped')).toBeUndefined();
+    const reply = await w.create({ suffix: 'x', config: {} });
+    expect(reply.body).toEqual({ ok: true, instanceId: 'grouped:x', message: '已创建实例 grouped:x', ignored: [] });
+    expect(w.store.getPluginConfig('grouped:x')).toEqual({ timeoutMs: 30, retry: { delayMs: 100, maxTries: 3 } });
   });
 
   it('config 不是对象（字符串、数组）：400，不登记；否则会被展开成逐个字符、逐个下标的键', async () => {

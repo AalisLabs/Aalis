@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, errText } from '../api';
+import { ApiError, api, errText } from '../api';
 import type { ServiceInfo } from '../types';
 
 /**
@@ -39,6 +39,8 @@ export function ServiceCard({
       onPreferChanged?.();
     } catch (err) {
       window.alert(errText(err, '切换服务偏好失败'));
+      // 回执带 applied：落盘失败，但偏好已在运行态生效，刷新以显示实际的提供者
+      if (err instanceof ApiError && err.applied) onPreferChanged?.();
     } finally {
       setBusy(false);
     }
@@ -52,6 +54,7 @@ export function ServiceCard({
       onPreferChanged?.();
     } catch (err) {
       window.alert(errText(err, '恢复默认服务偏好失败'));
+      if (err instanceof ApiError && err.applied) onPreferChanged?.();
     } finally {
       setBusy(false);
     }

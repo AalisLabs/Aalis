@@ -471,7 +471,7 @@ interface MarketplaceRoutesCaps {
   /** 可选依赖：缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。 */
   packageManager: Pick<ServiceRef<PackageManagerService>, 'current'>;
   /** 宿主的安装集目录（host-paths）；宿主不提供时市场列表与系统组件页回 503 */
-  appDir(): string | undefined;
+  appDir?: string;
 }
 
 const NO_APP_DIR = '宿主没有提供安装集目录（host-paths），无法判断已装的包';
@@ -517,7 +517,7 @@ export function registerMarketplaceRoutes(
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉不作为插件加载的 api/前端/核心）。
     // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
     // 才能判「可更新」（版本序由服务端算进 updatable 下发，前端不自算）。
-    const appDir = caps.appDir();
+    const appDir = caps.appDir;
     if (!appDir) {
       res.status(503).json({ error: NO_APP_DIR });
       return;
@@ -600,7 +600,7 @@ export function registerMarketplaceRoutes(
   // 在市场里拿到一张「内核」卡片。版本查询按精确包名，故不存在冒名空间。
   // 这一页只提供更新，无安装无卸载：它们要么随脚手架就位，要么是插件的依赖被自动带入。
   expressApp.get('/api/system-components', gate(), async (_req, res) => {
-    const appDir = caps.appDir();
+    const appDir = caps.appDir;
     if (!appDir) {
       res.status(503).json({ error: NO_APP_DIR });
       return;
