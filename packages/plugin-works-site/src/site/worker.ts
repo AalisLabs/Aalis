@@ -4,7 +4,7 @@ import { canonicalBasePath } from './paths.js';
 interface WorkerInput {
   nonce: string;
   mainOrigin: string;
-  mainBasePath?: string;
+  mainBasePath: string;
   frameAncestors: readonly string[];
   works: Readonly<Record<string, readonly string[]>>;
 }
@@ -30,7 +30,7 @@ export function buildWorker(input: WorkerInput): string {
     throw new TypeError('主站来源格式不对');
   }
   const works: Record<string, string[]> = Object.create(null);
-  const mainBasePath = canonicalBasePath(input.mainBasePath ?? '/');
+  const mainBasePath = canonicalBasePath(input.mainBasePath);
   const headers: Record<string, Record<string, string>> = Object.create(null);
   for (const [id, paths] of Object.entries(input.works)) {
     if (!WORK_ID_PATTERN.test(id)) throw new TypeError('作品编号格式不对');

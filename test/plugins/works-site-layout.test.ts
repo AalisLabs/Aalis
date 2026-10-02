@@ -16,6 +16,8 @@ const item: PublishedItem = {
   hasThumbnail: false,
 };
 
+const SITE = 'https://works.example';
+
 function withInlineCss(html: string): string {
   return html.replace(/<link rel="stylesheet" href="[^"]+">/, `<style>${SITE_CSS}</style>`);
 }
@@ -29,7 +31,7 @@ describe('works site work viewport', () => {
     try {
       const page = await browser.newPage();
       await page.setViewport({ width: 1280, height: 720 });
-      await page.setContent(withInlineCss(wrapperPage(item, 'https://p-abc.example')));
+      await page.setContent(withInlineCss(wrapperPage(item, 'https://p-abc.example', '/', SITE)));
       const layout = await page.evaluate(() => {
         const frame = document.querySelector('iframe')!;
         const rect = frame.getBoundingClientRect();
@@ -73,7 +75,10 @@ describe('works site work viewport', () => {
         files: [{ path: 'portrait.png', size: 4, contentType: 'image/png' }],
       };
       const image = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1600"/>')}`;
-      const html = withInlineCss(wrapperPage(media)).replace('src="/m/abcdefgabc.png"', `src="${image}"`);
+      const html = withInlineCss(wrapperPage(media, undefined, '/', SITE)).replace(
+        'src="/m/abcdefgabc.png"',
+        `src="${image}"`,
+      );
       await page.setContent(html);
       await page.waitForFunction(() => (document.querySelector('img') as HTMLImageElement)?.complete);
       const layout = await page.evaluate(() => {

@@ -5,6 +5,7 @@ const id = 'abcdefgabc';
 const source = buildWorker({
   nonce: 'nonce123',
   mainOrigin: 'https://aalis.pages.dev',
+  mainBasePath: '/',
   frameAncestors: ['https://aalis.pages.dev'],
   works: { [id]: [`/${id}/`, `/${id}/app.js`, `/${id}/style.css`, `/${id}/shape.svg`, `/${id}/x.png`] },
 });
@@ -117,6 +118,7 @@ describe('works site worker', () => {
     const uppercaseSource = buildWorker({
       nonce: 'nonce123',
       mainOrigin: 'https://aalis.pages.dev',
+      mainBasePath: '/',
       frameAncestors: ['https://aalis.pages.dev'],
       works: { [id]: [`/${id}/`, `/${id}/APP.JS`, `/${id}/IMAGE.PNG`, `/${id}/ART.SVG`] },
     });

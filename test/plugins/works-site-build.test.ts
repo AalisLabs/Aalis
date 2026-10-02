@@ -22,7 +22,16 @@ const item: PublishedItem = {
 const bytes = new TextEncoder().encode('data');
 const readFile = vi.fn(async () => bytes);
 const readThumbnail = vi.fn(async () => bytes);
-const base = { items: [item], tombstones: [], nonce: 'nonce123', now: Date.UTC(2026, 0, 3), readFile, readThumbnail };
+const base = {
+  basePath: '/',
+  items: [item],
+  tombstones: [],
+  nonce: 'nonce123',
+  now: Date.UTC(2026, 0, 3),
+  readFile,
+  readThumbnail,
+};
+const site = 'https://works.example';
 const textOf = (files: readonly { path: string; bytes: Uint8Array }[], path: string) =>
   new TextDecoder().decode(files.find(f => f.path === path)?.bytes);
 
@@ -32,6 +41,7 @@ describe('works site build', () => {
       ...base,
       siteTitle: '<script>"',
       siteIntro: '</iframe>\u202e',
+      siteOrigin: site,
       aliases: { opaque: 'https://p-abc.aalis.pages.dev' },
     });
     const paths = out.files.map(f => f.path);
@@ -69,6 +79,7 @@ describe('works site build', () => {
       basePath: '/draw/',
       siteTitle: 'Draw',
       siteIntro: '',
+      siteOrigin: site,
       aliases: { opaque: 'https://p-abc.aalis.pages.dev' },
     });
     const paths = out.files.map(file => file.path);
@@ -126,6 +137,7 @@ describe('works site build', () => {
         ...base,
         group: 'opaque',
         mainOrigin: 'https://aalis.pages.dev',
+        mainBasePath: '/',
         frameAncestors: ['https://aalis.pages.dev'],
         items: [item, { ...item, id: 'bad', files: item.files }],
       }),
@@ -143,6 +155,7 @@ describe('works site build', () => {
       aliases: {},
       siteTitle: 'Works',
       siteIntro: '',
+      siteOrigin: site,
     });
     expect(textOf(out.files, removed.path)).toContain('该作品已下架');
     const expired = await buildGallery({
@@ -153,6 +166,7 @@ describe('works site build', () => {
       aliases: {},
       siteTitle: 'Works',
       siteIntro: '',
+      siteOrigin: site,
     });
     expect(expired.files.some(f => f.path === removed.path)).toBe(false);
   });
@@ -169,6 +183,7 @@ describe('works site build', () => {
         items: [media],
         group: 'opaque',
         mainOrigin: 'https://aalis.pages.dev',
+        mainBasePath: '/',
         frameAncestors: ['https://aalis.pages.dev'],
       }),
     ).toBeUndefined();
@@ -182,6 +197,7 @@ describe('works site build', () => {
       ...base,
       group: 'opaque',
       mainOrigin: 'https://aalis.pages.dev',
+      mainBasePath: '/',
       frameAncestors: ['https://aalis.pages.dev'],
     });
     expect(branch?.files.map(f => f.path)).toEqual([`/v/nonce123.txt`, `/${id}/index.html`, `/${id}/app.js`]);
@@ -193,6 +209,7 @@ describe('works site build', () => {
       items: [],
       group: 'opaque',
       mainOrigin: 'https://aalis.pages.dev',
+      mainBasePath: '/',
       frameAncestors: ['https://aalis.pages.dev'],
       tombstones: [
         { branch: 'opaque', path: `/${id}/index.html`, until: base.now + 1 },
@@ -213,6 +230,7 @@ describe('works site build', () => {
         aliases: { opaque: 'https://good.aalis.pages.dev\nX-Evil: yes' },
         siteTitle: 'Works',
         siteIntro: '',
+        siteOrigin: site,
       }),
     ).rejects.toThrow();
     expect(readFile).not.toHaveBeenCalled();
@@ -229,7 +247,7 @@ describe('works site build', () => {
     readFile.mockClear();
     readThumbnail.mockClear();
     await expect(
-      buildGallery({ ...base, aliases: { opaque: origin }, siteTitle: 'Works', siteIntro: '' }),
+      buildGallery({ ...base, aliases: { opaque: origin }, siteTitle: 'Works', siteIntro: '', siteOrigin: site }),
     ).rejects.toThrow();
     expect(readFile).not.toHaveBeenCalled();
     expect(readThumbnail).not.toHaveBeenCalled();
@@ -243,6 +261,7 @@ describe('works site build', () => {
         ...base,
         group: 'opaque',
         mainOrigin: 'https://aalis.pages.dev',
+        mainBasePath: '/',
         frameAncestors: ['https://aalis.pages.dev'],
         tombstones: [{ branch: 'opaque', path: `/${id}/index.html`, until: base.now + 1 }],
       }),
@@ -258,16 +277,26 @@ describe('works site build', () => {
       files: [{ path, size: 4, contentType: path.endsWith('.PNG') ? 'image/png' : 'video/mp4' }],
       hasThumbnail: false,
     };
-    const out = await buildGallery({ ...base, items: [media], aliases: {}, siteTitle: 'Works', siteIntro: '' });
+    const out = await buildGallery({
+      ...base,
+      items: [media],
+      aliases: {},
+      siteTitle: 'Works',
+      siteIntro: '',
+      siteOrigin: site,
+    });
     const wrapper = textOf(out.files, `/w/${id}/index.html`);
     const src = /\bsrc="([^"]+)"/.exec(wrapper)?.[1];
     expect(src).toBeDefined();
     expect(out.files.find(file => file.path === src)?.bytes).toEqual(bytes);
+    // 扩展名统一小写：公开地址不随原文件名大小写变化，大写的 .MP4 也按视频呈现
+    const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+    expect(src).toBe(`/m/${id}.${ext}`);
+    expect(wrapper).toContain(ext === 'mp4' ? '<video' : '<img');
   });
 });
 
 describe('works site presentation', () => {
-  const site = 'https://works.example';
   const html = { ...item, title: '星空主页', summary: '一页自我介绍' };
   const gif = {
     ...item,
@@ -321,11 +350,17 @@ describe('works site presentation', () => {
     expect(wrapper).not.toMatch(/<h1|<p[ >]/);
   });
 
-  it('empty gallery says so; without a site origin no absolute share URLs are written', async () => {
-    const out = await buildGallery({ ...base, items: [], aliases: {}, siteTitle: 'Works', siteIntro: '' });
+  it('empty gallery says so and shares no cover image', async () => {
+    const out = await buildGallery({
+      ...base,
+      items: [],
+      aliases: {},
+      siteTitle: 'Works',
+      siteIntro: '',
+      siteOrigin: site,
+    });
     const index = textOf(out.files, '/index.html');
     expect(index).toContain('还没有作品');
-    expect(index).not.toContain('og:url');
     expect(index).not.toContain('og:image');
     expect(index).not.toContain('name="description"');
   });
@@ -337,6 +372,7 @@ describe('works site presentation', () => {
       aliases: {},
       siteTitle: 'Works',
       siteIntro: '',
+      siteOrigin: site,
       basePath: '/draw/',
       tombstones: [{ branch: 'main', path: `/draw/w/${id}/index.html`, until: base.now + 1 }],
     });
@@ -350,6 +386,7 @@ describe('works site presentation', () => {
       items: [],
       group: 'opaque',
       mainOrigin: 'https://aalis.pages.dev',
+      mainBasePath: '/',
       frameAncestors: ['https://aalis.pages.dev'],
       tombstones: [{ branch: 'opaque', path: `/${id}/index.html`, until: base.now + 1 }],
     });
