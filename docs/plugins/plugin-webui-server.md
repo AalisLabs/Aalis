@@ -35,6 +35,7 @@ export default definePlugin({
     llm: optional(llm),
     persona: optional(persona),
     agent: optional(agent),
+    archive: optional(messageArchive),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -155,7 +156,7 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、改�
 
 | 类型 | 说明 |
 |---|---|
-| `message` | 完整消息推送。发往 WebUI 自己会话的消息由本插件认领投递回执：会话历史是收件箱，没有在线页面或推送没成功时照样算送达，附件经 `outbound:delivered` 归档进会话历史，打开页面就能看到 |
+| `message` | 完整消息推送。发往 WebUI 自己会话的消息由本插件认领投递回执：会话历史是收件箱，回执成功表示这条消息已进会话历史，有在线页面时同时推送（不等页面写出）。agent 的文字回复由 agent 存档；其余由本插件经 message-archive 写进会话历史，不取决于 image-sender 是否在场：不是她说的文字（系统提示、指令回复、宿主通知）与文件记成事件标记，回看时显示成分隔条，不进模型上下文；图片、视频、音频按 `outboundMediaMessage` 的格式记，带 `skipArchive` 的（`history_ref` 重发，原图已在历史里）不记。随后发出的 `outbound:delivered` 快照给附件标上 `skipArchive`，image-sender 不再记一份，因此发往 WebUI 的网址图片与视频不由它补视觉描述。存档服务不在场且没有在线页面时回执失败；写入失败而推送到了页面时仍算送达。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败且没有在线页面时回执失败，已写成的几条不撤回，发起方重发后这几条会重复 |
 | `stream` | 流式增量推送（contentDelta / reasoningDelta） |
 | `stream_resume` | 页面刷新后恢复中断的流（累积缓冲内容） |
 | `tool_call` | 工具调用开始/结束事件 |

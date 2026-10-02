@@ -8,9 +8,11 @@
 // ============================================================
 
 import type { StorageService } from '@aalis/api-storage';
+import type { Logger } from '@aalis/core';
 import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
+import { pipeToResponse } from './pipe-to-response.js';
 
 /** 判定出的格式 → 响应类型；不在表里的不提供 */
 const MEDIA_TYPES: Readonly<Record<string, string>> = {
@@ -29,7 +31,13 @@ const MEDIA_TYPES: Readonly<Record<string, string>> = {
 /** 存储地址：<根名>:/<路径> */
 const STORAGE_URI = /^[A-Za-z][\w-]*:\/[^\0]*$/;
 
-export function registerMediaRoutes(expressApp: express.Express, storage: StorageService, gate: RouteGate): void {
+/** 传入的是 createStorageGateway 的网关：区间读恒有定义，提供者不支持时调用即抛错 */
+export function registerMediaRoutes(
+  expressApp: express.Express,
+  storage: StorageService & Required<Pick<StorageService, 'readFileRange'>>,
+  logger: Logger,
+  gate: RouteGate,
+): void {
   expressApp.get('/api/media', gate(), async (req, res) => {
     const uri = String(req.query.uri ?? '');
     if (!STORAGE_URI.test(uri) || /^https?:/i.test(uri)) {
@@ -37,9 +45,7 @@ export function registerMediaRoutes(expressApp: express.Express, storage: Storag
       return;
     }
     try {
-      const head = storage.readFileRange
-        ? await storage.readFileRange(uri, 0, MEDIA_HEAD_BYTES)
-        : Buffer.from(await storage.readFile(uri)).subarray(0, MEDIA_HEAD_BYTES);
+      const head = await storage.readFileRange(uri, 0, MEDIA_HEAD_BYTES);
       const type = MEDIA_TYPES[detectMediaFormat(new Uint8Array(head))?.format ?? ''];
       if (!type) {
         res.status(415).json({ error: '只提供图片、视频与音频' });
@@ -52,8 +58,7 @@ export function registerMediaRoutes(expressApp: express.Express, storage: Storag
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
       res.setHeader('Cache-Control', 'private, max-age=3600');
-      res.on('close', () => stream.destroy());
-      stream.pipe(res);
+      pipeToResponse(stream, res, logger, `媒体文件 ${uri}`);
     } catch {
       res.status(404).json({ error: '取不到这个文件' });
     }

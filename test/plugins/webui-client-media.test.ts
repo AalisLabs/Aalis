@@ -49,4 +49,36 @@ describe('WebUI 客户端的媒体地址', () => {
     expect(messages[3].attachments).toEqual([{ kind: 'video', data: 'paper:/n-a/tasks/t-1/out/a-2.mp4' }]);
     expect(JSON.stringify(messages)).not.toContain('ref:');
   });
+
+  it('历史里她发出的音频还原成音频附件（归档的占位符是「音频」）', () => {
+    const messages = buildChatMessages([
+      { role: 'assistant', kind: 'outbound-audio', content: '[音频 | ref:data:/audio/hello.mp3]', timestamp: 1 },
+    ]);
+    expect(messages).toEqual([
+      { role: 'assistant', content: '', attachments: [{ kind: 'audio', data: 'data:/audio/hello.mp3' }], timestamp: 1 },
+    ]);
+  });
+
+  it('相对形式的 ref 按 toStorageUri 的规则还原成存储地址，经 /api/media 取；带冒号的原样', () => {
+    const messages = buildChatMessages([
+      { role: 'assistant', kind: 'outbound-image', content: '[图片: 猫 | ref:data/images/cat.png]', timestamp: 1 },
+      { role: 'assistant', kind: 'outbound-image', content: '[图片 | ref:./workspace/out/b.png]', timestamp: 2 },
+      { role: 'assistant', kind: 'outbound-image', content: '[图片 | ref:abc.png]', timestamp: 3 },
+      {
+        role: 'assistant',
+        kind: 'outbound-image',
+        content: '[图片 | ref:https://example.invalid/c.png]',
+        timestamp: 4,
+      },
+      { role: 'assistant', kind: 'outbound-image', content: '[图片 | ref:data:image/png;base64,AAAA]', timestamp: 5 },
+    ]);
+    expect(messages.map(m => m.attachments?.[0]?.data)).toEqual([
+      'data:/images/cat.png',
+      'workspace:/out/b.png',
+      'data:/abc.png',
+      'https://example.invalid/c.png',
+      'data:image/png;base64,AAAA',
+    ]);
+    expect(proxiedMediaUrl(messages[0].attachments?.[0]?.data)).toBe('/api/media?uri=data%3A%2Fimages%2Fcat.png');
+  });
 });

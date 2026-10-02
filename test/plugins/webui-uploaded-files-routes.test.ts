@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { Readable, Writable } from 'node:stream';
+import { describe, expect, it, vi } from 'vitest';
 import { registerUploadedFilesRoutes } from '../../packages/plugin-webui-server/src/routes/uploaded-files.js';
 
 // ════════════════════════════════════════════════════════════
@@ -36,37 +37,30 @@ function memoryStorage(files: Map<string, string>) {
     async createReadStream(uri: string) {
       const v = files.get(uri);
       if (v === undefined) throw new Error(`不存在: ${uri}`);
-      const pipe = (res: { piped: string }): void => {
-        res.piped = v;
-      };
-      return { stream: { pipe }, stat: { size: v.length } };
+      return { stream: Readable.from([Buffer.from(v)]), stat: { size: v.length } };
     },
   };
 }
 
 function fakeRes() {
   const out = { status: 200, body: undefined as unknown, piped: '' };
-  const res = {
+  // 下载路由把读流 pipeline 进响应，响应得是可写流；写出的正文收进 piped
+  class Res extends Writable {
     status(code: number) {
       out.status = code;
-      return res;
-    },
+      return this;
+    }
     json(body: unknown) {
       out.body = body;
-      return res;
-    },
-    setHeader() {},
-    // 下载路由会挂 res.on('close') 以便客户端中断时 destroy 源流。这里是 no-op：
-    // 本用例不模拟中断，回调不该被触发。
-    on() {},
-    get piped() {
-      return out.piped;
-    },
-    set piped(v: string) {
-      out.piped = v;
-    },
-  };
-  return { res, out };
+      return this;
+    }
+    setHeader() {}
+    override _write(chunk: Buffer, _encoding: BufferEncoding, callback: () => void) {
+      out.piped += chunk.toString();
+      callback();
+    }
+  }
+  return { res: new Res(), out };
 }
 
 function setup() {
@@ -115,9 +109,8 @@ describe('webui-server 上传文件路由与 file-reader 目录名对齐', () =>
   it('下载：数据文件与 meta 同在替换后的目录', async () => {
     const { files, call } = setup();
     seed(files);
-    expect(
-      (await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: FILE_ID } })).piped,
-    ).toBe('DATA');
+    const out = await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: FILE_ID } });
+    await vi.waitFor(() => expect(out.piped).toBe('DATA'));
     expect(
       (await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: 'cccccccccccccccc' } }))
         .status,

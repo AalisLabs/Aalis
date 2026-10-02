@@ -15,6 +15,7 @@ import { hostConfig } from '@aalis/api-host-config';
 import type { ModelInfo } from '@aalis/api-llm';
 import { listLLMModels, llm } from '@aalis/api-llm';
 import type {} from '@aalis/api-memory'; // declaration merging：session:compress / session:compressing / history:changed 事件
+import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
 import { persona } from '@aalis/api-persona';
 import {
@@ -52,7 +53,13 @@ import {
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type LogEntry, parseLogLine } from '@aalis/schema-log';
-import type { OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
+import {
+  type Message,
+  type OutgoingMessage,
+  outboundMediaMessage,
+  type StreamChunkMessage,
+  WellKnownKinds,
+} from '@aalis/schema-message';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
@@ -293,6 +300,42 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
   return lines.map(parseLogLine).filter((e): e is LogEntry => e !== null && e.seq < beforeSeq);
 }
 
+// ===== WebUI 会话的收件箱 =====
+
+/**
+ * 发往 WebUI 自己会话的出站消息里，要由本插件写进会话历史的部分。WebUI 的收件箱就是会话历史，记不记全不取决于
+ * 别的插件是否在场。agent 的文字回复由 agent 存档，这里不再记，免得历史里重复。其余部分：
+ * - 不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记：回看时显示成分隔条，不进模型上下文，与其他平台一致；
+ * - 文件记成事件标记「[文件] 名称」，页面对文件本来也只显示名称；
+ * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件。快照里的 data 未经平台改写，就是页面上显示的
+ *   那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在历史里，不再记。她发出的媒体在别的平台由
+ *   image-sender 在 outbound:delivered 上归档；发往 WebUI 的由这里记，outbound:delivered 的快照给附件标上
+ *   skipArchive，免得 image-sender 再记一份。代价是这些网址图片与视频不再由 image-sender 在后台补视觉描述
+ */
+function inboxRecords(msg: OutgoingMessage): Message[] {
+  const timestamp = Date.now();
+  const marker = (content: string): Message => ({
+    role: 'system',
+    kind: WellKnownKinds.EventMarker,
+    content,
+    timestamp,
+  });
+  const records: Message[] = [];
+  if (msg.source !== 'agent' && msg.content.trim()) records.push(marker(msg.content));
+  for (const att of msg.attachments ?? []) {
+    if (att.kind === 'file') {
+      records.push(marker(`[文件] ${att.name ?? att.data.split('/').pop()}`));
+    } else if (!att.skipArchive) {
+      records.push({
+        ...outboundMediaMessage(att.kind, att.data, att.description),
+        timestamp,
+        metadata: { source: 'webui-server', ref: att.data },
+      });
+    }
+  }
+  return records;
+}
+
 // ===== 插件入口 =====
 
 /**
@@ -334,6 +377,8 @@ const uses = {
   llm: optional(llm),
   persona: optional(persona),
   agent: optional(agent),
+  // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
+  archive: optional(messageArchive),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -362,7 +407,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
-  const storage: StorageService = createStorageGateway(caps.storage);
+  const storage = createStorageGateway(caps.storage);
 
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
@@ -1086,7 +1131,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   // ---------- 文件管理 API ----------
-  registerFileRoutes(expressApp, { storage, fileRoot: uiConfig.fileRoot }, gate);
+  registerFileRoutes(expressApp, { storage, fileRoot: uiConfig.fileRoot, logger }, gate);
   registerUploadedFilesRoutes(
     expressApp,
     {
@@ -1097,7 +1142,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     gate,
   );
   registerProxyRoutes(expressApp, logger, gate);
-  registerMediaRoutes(expressApp, storage, gate);
+  registerMediaRoutes(expressApp, storage, logger, gate);
 
   // ---------- WebSocket ----------
 
@@ -1397,34 +1442,39 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       modelInfo: msg.modelInfo,
     };
     if (ownsDelivery) {
-      // 同步挂上确认 Promise；真正的结果由 ws.send 回调报告。Promise 始终 resolve，
-      // 即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
+      // 会话历史是 WebUI 的收件箱，页面只是查看器：回执表示这条消息已经进了会话历史，有在线页面时同时推送，
+      // 不区分「已推送」与「只保存」，也不等页面写出。存档服务不在场时，只有推送到了在线页面才算送达。
+      // 同步挂上 Promise，始终 resolve，即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
       msg.delivery = (async () => {
         try {
-          const attachmentsSnapshot = msg.attachments?.map(att => ({ ...att }));
+          // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
+          const snapshot: OutgoingMessage = { ...msg, attachments: msg.attachments?.map(att => ({ ...att })) };
           const json = JSON.stringify(payload);
-          const sends = [...(sockets ?? [])]
-            .filter(ws => ws.readyState === WebSocket.OPEN)
-            .map(
-              ws =>
-                new Promise<boolean>(resolve => {
-                  try {
-                    ws.send(json, error => resolve(!error));
-                  } catch {
-                    resolve(false);
-                  }
-                }),
-            );
-          // 会话历史是 WebUI 的收件箱，页面只是查看器：没有在线页面、或推送没成功时照样算送达，附件经
-          // outbound:delivered 归档进会话历史，打开页面就能看到（结果不区分「已推送」与「只保存」）
-          await Promise.all(sends);
-          if (attachmentsSnapshot?.length) {
-            // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
-            void events.emit('outbound:delivered', {
-              ...msg,
-              attachments: attachmentsSnapshot,
-              delivery: undefined,
-            });
+          let pushed = false;
+          for (const ws of sockets ?? []) {
+            if (ws.readyState !== WebSocket.OPEN) continue;
+            try {
+              ws.send(json);
+              pushed = true;
+            } catch {
+              // 这个页面没推送成功，打开后从会话历史看到
+            }
+          }
+          const archive = caps.archive.current;
+          if (archive) {
+            try {
+              for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
+            } catch (error) {
+              if (!pushed) throw error;
+              logger.warn(`WebUI 消息已推送到页面，写进会话历史失败: ${(error as Error).message}`);
+            }
+          } else if (!pushed) {
+            return { ok: false as const, error: 'WebUI 会话没有在线页面，消息存档服务也不在场，这条消息没有保存' };
+          }
+          if (snapshot.attachments?.length) {
+            // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得 image-sender 再记一份
+            const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
+            void events.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
           }
           return { ok: true as const };
         } catch (error) {
