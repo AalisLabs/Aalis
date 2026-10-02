@@ -27,6 +27,7 @@
 // 仅以空导入锚点 @aalis/core 让 TS 解析模块身份。
 import type {} from '@aalis/core';
 import { toWellFormedText } from '@aalis/util-text-normalize';
+import { AttachmentRefKind, formatAttachmentRef } from './attachment-ref.js';
 
 // ----- LLM 协议层消息类型 -----
 
@@ -306,8 +307,12 @@ export function selfInitiatedActor(platform: string): { platform: string; userId
 
 // ----- 出站消息 -----
 
-/** 传输端确认已接受消息，不代表收件人已阅读；失败也 resolve，避免无人等待时产生拒绝。 */
-export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string };
+/**
+ * 传输端确认已接受消息，不代表收件人已阅读；失败也 resolve，避免无人等待时产生拒绝。
+ * 失败分支的 unconfirmed 表示请求已经发出、只是没等到平台确认（如 OneBot 文件上传超时），消息可能已经送达：
+ * 发起方不得自动重发，也不得劝模型重发。没有这个标记的失败才是确定没送达。
+ */
+export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string; unconfirmed?: true };
 
 /**
  * 发起方等待传输确认的上限。适配器自身的重试窗口可能更长（如 OneBot 单个附件最坏约 150 秒），
@@ -435,7 +440,7 @@ declare module '@aalis/core' {
  * - `EventMarker`：纯 UI/控制标记（如对话压缩分隔条）。LLM 出口与抽取均应排除。
  * - `CrossSessionDelegation`：代发任务——triggerType 为 proactive 的入站消息（如 workflow 的 agent 节点）归档时标的 kind。
  * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
- * - `OutboundAudio`：assistant 已发出的语音占位。
+ * - `OutboundAudio`：assistant 已发出的音频占位。
  * - `OutboundVideo`：assistant 已发出的视频占位。
  * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
  */
@@ -449,6 +454,27 @@ export const WellKnownKinds = {
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
+
+/** 出站媒体附件归档时的消息 kind 与占位符 kind */
+const OUTBOUND_MEDIA = {
+  image: { kind: WellKnownKinds.OutboundImage, ref: AttachmentRefKind.Image },
+  audio: { kind: WellKnownKinds.OutboundAudio, ref: AttachmentRefKind.Audio },
+  video: { kind: WellKnownKinds.OutboundVideo, ref: AttachmentRefKind.Video },
+} as const;
+
+/**
+ * 发出的图片、音频、视频在会话历史里的记法：一条 assistant 消息，kind 为 OutboundImage / OutboundAudio /
+ * OutboundVideo，正文是附件引用占位符（{@link formatAttachmentRef}）。归档方一律用它，memory_recall 与 WebUI
+ * 回看历史才能按同一格式命中、还原。时间戳与 metadata 由调用方补上。
+ */
+export function outboundMediaMessage(
+  kind: Exclude<MessageAttachment['kind'], 'file'>,
+  ref: string,
+  desc?: string,
+): Message {
+  const media = OUTBOUND_MEDIA[kind];
+  return { role: 'assistant', kind: media.kind, content: formatAttachmentRef({ kind: media.ref, desc, ref }) };
+}
 
 /**
  * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表只登记由一方写入、另一方读取的键。

@@ -44,7 +44,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `EventMarker` | `'event-marker'` | 纯 UI / 控制标记（如对话压缩分隔条），不应进入 LLM 上下文 | system |
 | `CrossSessionDelegation` | `'cross-session-delegation'` | 系统代发的任务指令（`triggerType: 'proactive'`，如 workflow 的 agent 节点） | notice |
 | `OutboundImage` | `'outbound-image'` | assistant 已发出的图片占位 | assistant |
-| `OutboundAudio` | `'outbound-audio'` | assistant 已发出的语音占位 | assistant |
+| `OutboundAudio` | `'outbound-audio'` | assistant 已发出的音频占位 | assistant |
 | `OutboundVideo` | `'outbound-video'` | assistant 已发出的视频占位 | assistant |
 | `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
 
@@ -172,6 +172,8 @@ parseAttachmentRefs(text): AttachmentRef[]
 ### 4.4 与结构化附件的关系
 
 `MessageAttachment` 是 v2 的结构化主字段，所有适配器优先填 `IncomingMessage.attachments` / `OutgoingMessage.attachments`。出站附件的 `description` 与 `ref` 字段，正是全局出站归档写 `[类型: desc | ref:xxx]` 标记的数据来源，让 `memory_recall` 能命中。`skipArchive` 用于 history_ref 重发场景，避免向量库膨胀。
+
+出站媒体归档一律用 `outboundMediaMessage`（见 [schema-message](../api/schema-message.md)），不要自行组合 kind 与占位符。
 
 ---
 

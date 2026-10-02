@@ -27,13 +27,11 @@ import {
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import {
-  AttachmentRefKind,
   awaitDelivery,
-  formatAttachmentRef,
   type Message,
   type MessageAttachment,
   type OutgoingMessage,
-  WellKnownKinds,
+  outboundMediaMessage,
 } from '@aalis/schema-message';
 import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
 
@@ -181,7 +179,7 @@ function registerImageSender(caps: Caps): void {
           'kind 必填，指定附件类型；来源三选一：\n' +
           '  - url：网络资源 URL（http/https）。\n' +
           '  - storage_uri：存储库内的资源 URI（如 data:/images/xxx）。\n' +
-          '  - history_ref：历史消息中已识别的引用（[图片/语音/视频: ... | ref:xxx] 中 xxx 部分），\n' +
+          '  - history_ref：历史消息中已识别的引用（[图片/音频/视频: ... | ref:xxx] 中 xxx 部分），\n' +
           '    用于"把之前那条媒体重发/转发回去"。\n' +
           '建议流程（图片）：search_images 拿候选 URL →（有 preview_image 时可先看清内容）→ send_attachment 选其一发出。\n' +
           '只有返回 ok:true 才能说已发送；返回 error 时没有成功确认，下载失败可改选另一张图片，不要反复重发同一失效地址。\n' +
@@ -279,7 +277,11 @@ function registerImageSender(caps: Caps): void {
         if (!outgoing.delivery) return JSON.stringify({ error: '没有目标适配器确认附件发送，请勿声称已发出' });
         const result = await awaitDelivery(outgoing.delivery, callCtx.signal);
         if (!result) return JSON.stringify({ error: '附件仍在发送，结果未确认，请勿重发' });
-        if (!result.ok) return JSON.stringify({ error: result.error });
+        if (!result.ok) {
+          return JSON.stringify({
+            error: result.unconfirmed ? '附件发送结果未知（可能已经送达），请勿重发' : result.error,
+          });
+        }
 
         return JSON.stringify({ ok: true, sent: { kind, via, ref: refTag } });
       } catch (err) {
@@ -294,7 +296,7 @@ function registerImageSender(caps: Caps): void {
   // 只归档传输端确认后的附件，出站请求本身不代表发送成功。
   // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
   // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
-  // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过 history_ref 重发。
+  // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过已在档的（history_ref 重发、WebUI 收件箱已记下的）。
   events.on('outbound:delivered', msg => {
     if (msg.source !== 'agent' || !msg.attachments?.length) return;
     if (!archive.current?.saveMessage) return;
@@ -369,20 +371,9 @@ async function archiveOutboundAttachment(
 ): Promise<void> {
   const archive = caps.archive.current;
   if (!archive?.saveMessage) return;
-  const attachKind =
-    kind === 'video' ? AttachmentRefKind.Video : kind === 'audio' ? AttachmentRefKind.Audio : AttachmentRefKind.Image;
-  const msgKind =
-    kind === 'video'
-      ? WellKnownKinds.OutboundVideo
-      : kind === 'audio'
-        ? WellKnownKinds.OutboundAudio
-        : WellKnownKinds.OutboundImage;
-  const label = kind === 'video' ? '视频' : kind === 'audio' ? '语音' : '图片';
-  const tag = formatAttachmentRef({ kind: attachKind, desc: description, ref });
+  const label = kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片';
   const message: Message = {
-    role: 'assistant',
-    kind: msgKind,
-    content: tag,
+    ...outboundMediaMessage(kind, ref, description),
     timestamp: Date.now(),
     metadata: { source: 'image-sender', ref },
   };
