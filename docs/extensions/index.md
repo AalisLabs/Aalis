@@ -24,17 +24,16 @@
 > 领域能力（LLM 的 tool-calling / vision、storage 的 local-path 等）**不在描述符的 name 上**——
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。
 
-一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
+一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `checkpoint` / `code-sandbox` / `commands` /
 `contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `host-paths` / `llm` / `media` /
 `memory` / `message-archive` / `package-manager` / `persona` / `platform` / `plugin-source` / `process` / `session-confirm` /
-`session-history` / `session-manager` / `storage` / `tools` / `trigger` / `user-relation` / `vectorstore` / `workflow`），一个例外：
+`session-history` / `session-manager` / `session-protocol` / `storage` / `todo-list` / `tools` / `trigger` / `user-relation` / `vectorstore` / `workflow`），一个例外：
 `@aalis/api-webui` 导出 `webui-server` 与 `webui-client` 两条。
 
 没有独立契约包、在自己 `src/index.ts` 里就地 `defineService` 的插件：
 
 | 插件包 | 注册的服务 |
 |---|---|
-| `@aalis/plugin-checkpoint` | `checkpoint` |
 | `@aalis/plugin-cli` | `cli` |
 | `@aalis/plugin-file-reader` | `file-reader` |
 | `@aalis/plugin-memory-vector` | `semantic-memory` |

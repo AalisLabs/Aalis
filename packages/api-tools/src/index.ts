@@ -4,10 +4,10 @@
 // - LLM 函数声明协议类型（ToolDefinition / ToolFunction）
 // - 工具/分组数据结构（RegisteredTool / ToolGroupInfo / ToolSummary）
 // - 工具调用上下文（ToolCallContext）—— 平台/会话语义
-// - 工具执行通知（ToolExecuteMessage）
+// - 工具执行通知（ToolExecuteMessage）与执行中的流式输出（ToolOutputMessage）
 // - 服务接口（ToolService）
 // - 服务描述符 `tools`（按激活绑定的登记门面）与 `withToolGroups`
-// - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
+// - 通过 declaration merging 向 AalisEvents 注入 'tool:execute' 与 'tool:output'
 //
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/schema-message，
 // 与 Message 同源同生命周期。本包不依赖 message-api（双向解耦）。
@@ -76,11 +76,22 @@ export interface ToolCallContext {
    * （workflow 节点、mcp-server 等）；需要「真人发起」判据的工具应把缺省当作不满足。
    */
   inbound?: { source?: string };
+  /** 调用所在回合的 id（只由 agent 工具循环填写，与 inbound 同时出现） */
+  turnId?: string;
+  /**
+   * 这次工具调用的 id（只由 agent 工具循环填写）。由 agent 生成、全局唯一，不取模型给的 tool call id：
+   * 模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
+   */
+  callId?: string;
 }
 
-/** 工具调用状态通知（WebUI 等前端订阅展示用） */
+/** 工具调用状态通知（WebUI 等前端订阅展示用）。只由 agent 工具循环发出，开始与结束按 callId 配对 */
 export interface ToolExecuteMessage {
   sessionId: string;
+  /** 所在回合的 id */
+  turnId: string;
+  /** 这次工具调用的 id，同 ToolCallContext.callId */
+  callId: string;
   platform?: string;
   /** 工具名称 */
   toolName: string;
@@ -90,6 +101,18 @@ export interface ToolExecuteMessage {
   phase: 'start' | 'end';
   /** 工具返回结果（仅在 phase='end' 时存在） */
   result?: string;
+}
+
+/**
+ * 工具执行中的流式输出（exec 的 stdout 与 stderr 按到达顺序），在这次调用的开始与结束之间发出。
+ * 只给界面看：不进模型、不落库，工具结果照旧在调用结束时一次给出。只有 agent 回合里的调用（带 turnId 与 callId）才发
+ */
+export interface ToolOutputMessage {
+  sessionId: string;
+  turnId: string;
+  /** 同 ToolCallContext.callId */
+  callId: string;
+  text: string;
 }
 
 /**
@@ -214,6 +237,7 @@ export function wrapUntrustedContent(content: string, source: string): string {
 declare module '@aalis/core' {
   interface AalisEvents {
     'tool:execute': [info: ToolExecuteMessage];
+    'tool:output': [chunk: ToolOutputMessage];
   }
 }
 

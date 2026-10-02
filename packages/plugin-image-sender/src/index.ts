@@ -272,6 +272,7 @@ function registerImageSender(caps: Caps): void {
           content: '',
           attachments: [attachment],
           source: 'agent',
+          callId: callCtx.callId,
         };
         await events.emit('outbound:message', outgoing);
         if (!outgoing.delivery) return JSON.stringify({ error: '没有目标适配器确认附件发送，请勿声称已发出' });

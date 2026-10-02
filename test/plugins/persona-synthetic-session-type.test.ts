@@ -36,7 +36,7 @@ describe('persona 合成回合的会话类型推断', () => {
   /** 经 agent:input:before 装上会话身份，在钩子链内取易变上下文 */
   const volatileFor = async (message: IncomingMessage): Promise<{ prompt: string; message: IncomingMessage }> => {
     let prompt = '';
-    const data = { message, metadata: {} };
+    const data = { message, turnId: 't1', metadata: {} };
     await host.hooks.run('agent:input:before', data, async () => {
       prompt = svc.getVolatilePrompt?.() ?? '';
     });
