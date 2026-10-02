@@ -1,8 +1,9 @@
 import { hooks } from '@aalis/api-hooks';
 import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
+import { type TodoItem, type TodoListService, todoList } from '@aalis/api-todo-list';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 
 const configSchema = defineConfig({
@@ -11,23 +12,9 @@ const configSchema = defineConfig({
 
 // ===== 内部存储 =====
 
-export interface TodoItem {
-  id: number;
-  title: string;
-  status: 'not-started' | 'in-progress' | 'completed';
-}
-
 const TODO_NAMESPACE = 'todo-list';
 const MAX_TODO_ITEMS = 50;
 const MAX_TODO_TITLE_LENGTH = 120;
-
-// ===== 声明扩展事件 =====
-
-declare module '@aalis/core' {
-  interface AalisEvents {
-    'todo:updated': [sessionId: string, items: TodoItem[]];
-  }
-}
 
 // ===== 插件入口 =====
 
@@ -36,6 +23,7 @@ const uses = {
   events,
   config,
   logger,
+  provide,
   memory: optional(memory),
   webui: optional(webuiServer),
   hooks: optional(hooks),
@@ -47,15 +35,21 @@ export default definePlugin({
   displayName: '任务计划',
   subsystem: 'scheduler',
   configSchema,
+  provides: [todoList],
   uses,
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    // 读与清空不随工具开关：工具关掉之后，之前留下的计划照样看得到、清得掉
+    const service = createTodoList(caps);
+    caps.provide(todoList, service.api, { label: '任务计划' });
     if (!cfg.enabled) return;
-    registerTodoList(caps);
+    registerTodoTool(caps, service);
   },
 });
 
-function registerTodoList({ tools, events, logger, memory, webui, hooks }: Caps): void {
+type TodoStore = ReturnType<typeof createTodoList>;
+
+function createTodoList({ events, memory }: Caps) {
   /**
    * sessionId → TodoItem[]：随这次激活存亡，插件重载后不会命中陈旧条目。
    * 只在没有 memory 时充当存储，有 memory 时不作读缓存：memory 是 optional，胜者换人时
@@ -63,36 +57,51 @@ function registerTodoList({ tools, events, logger, memory, webui, hooks }: Caps)
    */
   const store = new Map<string, TodoItem[]>();
 
-  /**
-   * 持久化依赖 memory 服务，而本插件不 require 它（没有 memory 也能当纯回合内清单用）：
-   * 无 memory 时静默 no-op，todo 只存活于这次激活的 store 里。
-   */
-  async function persistTodos(sessionId: string, items: TodoItem[]): Promise<void> {
-    await memory.current?.saveMetadata(TODO_NAMESPACE, sessionId, { items });
-  }
+  const api: TodoListService = {
+    /** 有 memory 时每次读当前胜者，没有时读 store */
+    async get(sessionId) {
+      const mem = memory.current;
+      if (!mem) return store.get(sessionId) ?? [];
+      const data = await mem.getMetadata(TODO_NAMESPACE, sessionId);
+      return data?.items && Array.isArray(data.items) ? (data.items as TodoItem[]) : [];
+    },
+    async clear(sessionId) {
+      store.delete(sessionId);
+      await memory.current?.deleteMetadata(TODO_NAMESPACE, sessionId);
+      await events.emit('todo:updated', sessionId, []);
+    },
+  };
 
-  /** 有 memory 时每次读当前胜者，没有时读 store */
-  async function loadTodos(sessionId: string): Promise<TodoItem[]> {
-    const mem = memory.current;
-    if (!mem) return store.get(sessionId) ?? [];
-    const data = await mem.getMetadata(TODO_NAMESPACE, sessionId);
-    return data?.items && Array.isArray(data.items) ? (data.items as TodoItem[]) : [];
-  }
+  return {
+    store,
+    api,
+    /**
+     * 持久化依赖 memory 服务，而本插件不 require 它（没有 memory 也能当纯回合内清单用）：
+     * 无 memory 时静默 no-op，todo 只存活于这次激活的 store 里。
+     */
+    async save(sessionId: string, items: TodoItem[]): Promise<void> {
+      store.set(sessionId, items);
+      await memory.current?.saveMetadata(TODO_NAMESPACE, sessionId, { items });
+      await events.emit('todo:updated', sessionId, items);
+    },
+  };
+}
+
+function registerTodoTool({ tools, events, logger, memory, webui, hooks }: Caps, todos: TodoStore): void {
+  const { store } = todos;
 
   // ===== 页面动作 =====
 
   webui.registerAction('getTodos', async args => {
     const sessionId = args.sessionId as string;
     if (!sessionId) return [];
-    return await loadTodos(sessionId);
+    return await todos.api.get(sessionId);
   });
 
   webui.registerAction('clearTodos', async args => {
     const sessionId = args.sessionId as string;
     if (!sessionId) throw new Error('缺少 sessionId');
-    store.delete(sessionId);
-    await memory.current?.deleteMetadata(TODO_NAMESPACE, sessionId);
-    await events.emit('todo:updated', sessionId, []);
+    await todos.api.clear(sessionId);
     return { success: true };
   });
 
@@ -188,9 +197,7 @@ function registerTodoList({ tools, events, logger, memory, webui, hooks }: Caps)
         };
       });
 
-      store.set(callCtx.sessionId, items);
-      await persistTodos(callCtx.sessionId, items);
-      await events.emit('todo:updated', callCtx.sessionId, items);
+      await todos.save(callCtx.sessionId, items);
 
       const total = items.length;
       const completed = items.filter(i => i.status === 'completed').length;
@@ -210,25 +217,22 @@ function registerTodoList({ tools, events, logger, memory, webui, hooks }: Caps)
       return;
     }
     try {
-      const mem = memory.current;
-      let cleared: string[] = [];
       if (data.scope === 'all') {
+        const mem = memory.current;
         // 读不出的条目一并删除，计入会话数
         const [keys] = mem ? await clearMetadataNamespaces(mem, [TODO_NAMESPACE], logger) : [[]];
-        cleared = [...new Set([...keys, ...store.keys()])];
+        const cleared = [...new Set([...keys, ...store.keys()])];
         store.clear();
         data.results.push({
           source: 'todo-list',
           success: true,
           message: `所有会话待办已清空（${cleared.length} 个会话）`,
         });
+        for (const sessionId of cleared) await events.emit('todo:updated', sessionId, []);
       } else if (data.sessionId) {
-        await mem?.deleteMetadata(TODO_NAMESPACE, data.sessionId);
-        store.delete(data.sessionId);
-        cleared = [data.sessionId];
+        await todos.api.clear(data.sessionId);
         data.results.push({ source: 'todo-list', success: true, message: '当前会话待办已清空' });
       }
-      for (const sessionId of cleared) await events.emit('todo:updated', sessionId, []);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       data.results.push({ source: 'todo-list', success: false, message: `待办清空失败: ${msg}` });

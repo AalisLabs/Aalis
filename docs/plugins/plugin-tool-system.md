@@ -93,6 +93,10 @@ export default definePlugin({
 
 停止键与超时都只打原进程组：命令里主动脱离进程组的后代（`setsid`、以 `detached: true` 起的子进程等守护化写法）会活下来。
 
+### 边跑边推输出
+
+agent 回合里的 `exec`（工具上下文带 `turnId` 与 `callId`）在命令运行期间把 stdout 与 stderr 按到达顺序经 `tool:output` 事件推出（见 [api-tools](../api/api-tools.md)），会话的客户端在工具卡上实时显示。两路各自流式解码，多字节字符被拆在两次读取之间也不出乱码；推出的总量不超过 `maxOutputSize` 字节，与结果里保留的输出同一上限。推送只给界面看，工具结果照旧在命令结束时一次给出、落库、交给模型。不在回合里的调用（编排节点、mcp-server 等）不推。
+
 ### 后台命令结束通知
 
 在对话回合里起的后台进程，在本次运行期间自行退出（包括出错退出）时，工具向起它的会话注入一条宿主通知（`inbound:message`，`source` 为 `exec-bg:<进程 id>`，`hostNotice.kind` 为 `exec-background`），agent 随即开一轮，她自己说出结果。长驻进程（开发服务器、文件监视）正常运行时不会退出，也就没有通知，是否就绪要用 `process_read` 看输出。

@@ -1,0 +1,41 @@
+{
+  "name": "@aalis/api-session-protocol",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/api-session-protocol"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "keywords": [
+    "aalis",
+    "aalis-api"
+  ],
+  "description": "会话协议契约（实验性）：owner 客户端与守护进程之间的 JSON-RPC 帧、会话与条目的 zod schema，以及 session-protocol 服务描述符"
+}

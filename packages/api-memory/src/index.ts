@@ -267,7 +267,8 @@ declare module '@aalis/api-hooks' {
 // ----- 记忆变更事件契约 -----
 //
 // 发射方：plugin-checkpoint（回滚删除消息时）；
-// 消费方：plugin-memory-vector（清理同时间戳向量）、plugin-webui-server（刷新历史视图）。
+// 消费方：plugin-memory-vector（清理同时间戳向量）、plugin-webui-server（刷新历史视图）、
+// plugin-session-server（history:changed 时通知订阅的客户端重新取快照）。
 declare module '@aalis/core' {
   interface AalisEvents {
     /** 某会话的若干消息被按时间戳删除（回滚等场景），下游存储应同步清理 */
@@ -279,9 +280,9 @@ declare module '@aalis/core' {
 
 // ----- 会话记忆压缩事件契约 -----
 //
-// 压缩协作：plugin-webui-server（手动触发）/ plugin-memory-summary（usage 超阈值
+// 压缩协作：plugin-webui-server、plugin-session-server（手动触发）/ plugin-memory-summary（usage 超阈值
 // 自动触发）emit 'session:compress'；plugin-memory-summary 执行压缩并以
-// 'session:compressing' 广播进度（webui-server 转发给订阅客户端）。
+// 'session:compressing' 广播进度（webui-server 与 session-server 转发给订阅的客户端）。
 declare module '@aalis/core' {
   interface AalisEvents {
     /** 请求压缩某会话的记忆。usageRatio 仅 auto 触发时携带 */
