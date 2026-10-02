@@ -57,7 +57,7 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
 
 会话页配置编辑器的「白纸与远端」一组编辑白纸与远端代理的房间键与记忆召回范围：`paperEnabled` 是开关，写法与另外两个开关相同：未覆盖时显示继承值，点一下即写成显式的开或关；`paperName` 留空即继承；`remoteAgentTypes` 以逗号分隔输入、保存为数组，留空即继承；三项上限留空即继承；`memoryRecallScope` 可选继承、仅本会话、同平台、全部。`remoteAgentTypes` 来自平台档时显示告警「平台档里写了远端类型，这个平台所有房间都会继承」，来自受众条目时「所有房间」换成「的所有群」或「的所有私聊」。
 
-聊天里的媒体：消息与会话历史里的存储地址（如 `data:/images/x.png`、白纸成品的 `paper:/…`）经 `/api/media` 取，网址经图片代理；她发出的附件归档成占位符（`[图片: … | ref:…]`），回看历史时还原成图片、视频或音频，不显示占位符原文。
+聊天里的媒体：消息与会话历史里的存储地址（如 `data:/images/x.png`、白纸成品的 `paper:/…`）经 `/api/media` 取，网址经图片代理；她发出的附件归档成占位符（`[图片: … | ref:…]`），回看历史时还原成图片、视频或音频，不显示占位符原文；ref 是相对形式（`data/images/x.png`）时按 api-storage 的 `toStorageUri` 规则换成存储地址再取，带冒号的 ref（网址、存储地址、data 网址）原样使用。
 
 DynamicPage 的表格支持文件单元格（`render: 'file'`，契约见 [api-webui](../api/api-webui.md)）：只有 PNG、JPEG、GIF、WebP 位图能在弹窗里查看，其他类型（含 HTML、SVG）只能下载，下载的 Blob 一律为 `application/octet-stream`，保存的文件名去掉路径分隔符，对象 URL 用完即回收。
 

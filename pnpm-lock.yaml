@@ -920,6 +920,9 @@ importers:
       '@aalis/schema-log':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../schema-log
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -933,9 +936,6 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2902,6 +2902,9 @@ importers:
       '@aalis/api-llm':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-llm
+      '@aalis/api-message-archive':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-message-archive
       '@aalis/api-package-manager':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-package-manager
@@ -2935,6 +2938,9 @@ importers:
       '@aalis/schema-log':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../schema-log
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
       '@aalis/util-dep-spec':
         specifier: workspace:>=0.1.1 <1.0.0
         version: link:../util-dep-spec
@@ -2969,9 +2975,6 @@ importers:
       '@aalis/plugin-todo-list':
         specifier: workspace:*
         version: link:../plugin-todo-list
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6

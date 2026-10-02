@@ -82,13 +82,24 @@ const OUTBOUND_KINDS: Readonly<Record<string, 'image' | 'video' | 'audio'>> = {
   'outbound-video': 'video',
   'outbound-audio': 'audio',
 };
-const ATTACHMENT_REF = /\[(?:图片|视频|语音)(?:: [^\]\n|]+?)? \| ref:([^\]\n]+?)\]/g;
+const ATTACHMENT_REF = /\[(?:图片|视频|音频)(?:: [^\]\n|]+?)? \| ref:([^\]\n]+?)\]/g;
+
+/**
+ * ref 也可能是相对形式（data/images/x.png）：send_attachment 按存储地址发送时，记的是模型给的原样字符串。按
+ * api-storage 的 toStorageUri 规则还原成存储地址（首段当根名，单段归 data 根）；带冒号的（网址、存储地址、data 网址）原样
+ */
+function storageUriOf(ref: string): string {
+  if (ref.includes(':')) return ref;
+  const path = ref.replace(/^\.?\/+/, '');
+  const slash = path.indexOf('/');
+  return slash > 0 ? `${path.slice(0, slash)}:/${path.slice(slash + 1)}` : `data:/${path}`;
+}
 
 function outboundAttachments(msg: RawMessage): ChatMessage['attachments'] {
   const kind = msg.kind ? OUTBOUND_KINDS[msg.kind] : undefined;
   if (msg.role !== 'assistant' || !kind) return undefined;
   const refs = [...(msg.content ?? '').matchAll(ATTACHMENT_REF)].map(m => m[1].trim()).filter(Boolean);
-  return refs.length > 0 ? refs.map(data => ({ kind, data })) : undefined;
+  return refs.length > 0 ? refs.map(ref => ({ kind, data: storageUriOf(ref) })) : undefined;
 }
 
 /**
