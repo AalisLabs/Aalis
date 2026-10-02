@@ -52,6 +52,10 @@ export interface HostConfig {
   readonly trimUnknownFields?: boolean;
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K];
   getAll(): Readonly<AalisConfig>;
+  /**
+   * 写一个顶层字段，只改文档。`plugins` 不经这里整块替换（会绕过 setPluginConfig 的形态检查），宿主抛错；
+   * 改插件配置用 {@link HostConfig.applyPluginConfig} 或 setPluginConfig
+   */
   set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void;
   /**
    * 实例在文档里的配置：密钥字段上是引用，不是原值（要原值读 `caps.config`）。返回的是文档里的活对象，

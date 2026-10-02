@@ -110,7 +110,7 @@ my-bot/
 └── README.md           # 启动/配置/装更多插件指引
 ```
 
-首次启动后，`home/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`stage/`（白纸成品与发布的作品）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。布局见 [runtime 的「家目录」](../architecture/runtime.md#家目录)。
+首次启动后，`home/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`stage/`（白纸成品与发布的作品）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。这些子目录由用到它们的部分在启动时建出（多数是存储插件的内部根），完整布局见 [runtime 的「家目录」](../architecture/runtime.md#家目录)；其中还没有使用方的 `stage/drafts` 不会出现。
 
 入口 `index.mjs`（`renderEntry`，`cli.ts`）：
 
@@ -157,7 +157,7 @@ plugins:
 
 首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 
-**密钥的值存在 `home/secrets.yaml` 里**，`home/aalis.config.yaml` 只放引用。填写时直接写进 `aalis.config.yaml` 或在 WebUI 配置页填都可以：启动或热重载时，runtime 把标了 `secret` 的字段上的明文移进 `secrets.yaml`（0600），原处换成 `{ $secret: '<键>' }`，日志只写字段路径与键名。移走之前的明文可能还留在编辑器的备份文件里。`home/` 在生成的 `.gitignore` 内、不入库；备份家目录时连同 `secrets.yaml` 一起备份。规则见 [运行态与配置文档](../core/config.md#密钥配置)。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把家目录本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
+**密钥的值存在 `home/secrets.yaml` 里**，`home/aalis.config.yaml` 只放引用。填写时直接写进 `aalis.config.yaml` 或在 WebUI 配置页填都可以：启动或热重载时，runtime 把标了 `secret` 的字段上的明文移进 `secrets.yaml`（0600），原处换成 `{ $secret: '<键>' }`，日志只写字段路径与键名。运行中把已有的引用改写成明文时写回原来那个键（数组元素里的除外），这个键被别的插件共用时，它们一起换成新值并重载；启动时会另取新键，旧值留在 `secrets.yaml` 里。只想换某一个插件的 key，把它的字段改成指向新键的引用，并在 `secrets.yaml` 里加上这个键。移走之前的明文可能还留在编辑器的备份文件里。`home/` 在生成的 `.gitignore` 内、不入库；备份家目录时连同 `secrets.yaml` 一起备份。规则见 [运行态与配置文档](../core/config.md#密钥配置)。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把家目录本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
 
 > 生态约定的「更多插件不在终端铺列」：长尾插件发现交给 WebUI 的「插件市场」页（`cli.ts`）。装新插件只需 `npm install @aalis/plugin-<name>`，装上即被自动发现加载。
 

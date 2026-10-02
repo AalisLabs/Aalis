@@ -91,7 +91,8 @@ export interface SchemaField {
   /** string / textarea：正则约束（RegExp 源文本，test() 子串语义——要整串匹配请显式 ^…$），validateConfig 与 parseConfig 强制；模式本身非法则跳过该检查 */
   pattern?: string;
   /**
-   * string / textarea：宿主文件路径的写法，validateConfig 与 parseConfig 强制；判定忽略首尾空白，空串照常表示未填，不查。
+   * string / textarea：宿主文件路径的写法，validateConfig 与 parseConfig 强制；判定忽略首尾空白，parseConfig 交出的值也去掉首尾空白；
+   * 空串与只有空白都表示未填（required 字段算缺失），不查。
    * 配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以路径一律写绝对路径：
    * - `absolute-path`：绝对路径（`/…`、`C:\…` 或 `\\…`）；
    * - `executable`：可执行文件，绝对路径或不含路径分隔符的命令名（按 PATH 查找；`C:foo` 这类带盘符的相对写法不算）。
@@ -396,11 +397,11 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
  * - **options 即取值范围**：select 有静态 options、没有 dynamicOptions 且 allowCustom 不为 true 时，值须是
  *   某个选项值（按字符串比较）；multiselect 同样逐元素判定。
  * - **约束键**：number 强制 min/max（含边界）与 integer，string/textarea 强制
- *   pattern（模式非法则跳过该检查）与 format（空串不查）；step 是纯 UI 提示不校验。约束只在类型
+ *   pattern（模式非法则跳过该检查）与 format（空串与只有空白不查）；step 是纯 UI 提示不校验。约束只在类型
  *   检查通过后评估——类型都不对时报类型错，不叠报约束错。
  * - **list / map**：list 须为数组、map 须为对象，逐元素 / 逐值报错，路径形如 `args[1]`、`env.KEY`。
  * - **宽容缺失**：undefined 与 null（YAML 裸键）视为"未配置"，required 字段的 `''` 也算未配置（WebUI 与脚手架
- *   用 `''` 表示未填，与 parseConfig 一致；空数组仍算已配置），仅在 required 且未声明 default 时报缺——顶层/分组的默认值在调用点已合并，数组元素的默认值
+ *   用 `''` 表示未填，与 parseConfig 一致；声明了 format 的只有空白也算；空数组仍算已配置），仅在 required 且未声明 default 时报缺——顶层/分组的默认值在调用点已合并，数组元素的默认值
  *   不参与合并（defaultsFrom 把 SchemaArray 当叶子），靠 default 声明本身放行。
  *
  * 政策留给调用方：config-sync 对启用插件打 warn（禁用插件的配置是休眠数据，不告警），
@@ -416,8 +417,8 @@ export function validateConfig(schema: ConfigSchema | undefined, config: Record<
  * 按 schema 解析插件拿到的配置，返回 {@link ConfigOf} 类型的新对象（不改入参）。插件在 apply 里用它读配置：
  * `const cfg = parseConfig(configSchema, caps.config, caps.logger)`，之后的夹紧、跨字段约束等核对作用于 cfg。
  *
- * - **缺失**：undefined 与 null；required 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填），
- *   外来类型的 `''` 一律当作缺失。有 default 用 default（拷贝），无 default 且 required 不可恢复，否则省略该键。
+ * - **缺失**：undefined 与 null；required 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填；声明了 format 的
+ *   只有空白也算），外来类型的 `''` 一律当作缺失。有 default 用 default（拷贝），无 default 且 required 不可恢复，否则省略该键。
  * - **无效**：逐字段判定与 validateConfig 共用（标量宽容、选项即取值范围、约束键）。
  *   默认有 default 回落并告警；无 default 且 required 不可恢复；否则省略并告警。
  *   `onInvalid: 'error'` 的字段遇到显式无效值或坏集合成员时，即使有 default 也不可恢复。
@@ -561,7 +562,7 @@ function validateFields(
       continue;
     }
 
-    if (value === undefined || value === null || (value === '' && entry.required)) {
+    if (value === undefined || value === null || (entry.required && isBlank(entry, value))) {
       // 声明了 default 的字段永远不算缺失：顶层/分组的默认值多已在调用点合并，但合并不覆盖
       // 显式 null（YAML 裸键），这类值照样走到这里，
       // 数组元素的默认值不参与任何合并（defaultsFrom 把 SchemaArray 当叶子），
@@ -598,10 +599,13 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
       if (field.pattern !== undefined && !matchesPattern(field.pattern, text)) {
         return { invalid: `不匹配模式 ${field.pattern}` };
       }
-      if (field.format !== undefined && text.trim() !== '' && !matchesFormat(field.format, text.trim())) {
+      if (field.format === undefined) return { value: text, dropped: [] };
+      // 路径按去掉首尾空白后判定，交出去的也是这一份：带空白的原值交给插件会被当成相对路径或找不到
+      const path = text.trim();
+      if (path !== '' && !matchesFormat(field.format, path)) {
         return { invalid: field.format === 'executable' ? '须为绝对路径或命令名（不含路径分隔符）' : '须为绝对路径' };
       }
-      return { value: text, dropped: [] };
+      return { value: path, dropped: [] };
     }
     case 'number': {
       const num = asNumber(value);
@@ -671,6 +675,16 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
     default:
       return { value, dropped: [] };
   }
+}
+
+/**
+ * 填的是空串（WebUI 与脚手架用 `''` 表示未填）。声明了 format 的 string / textarea 交给插件的是去掉首尾空白的那份
+ * （见 judgeField），只有空白同样算空串
+ */
+function isBlank(field: SchemaField, value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const trims = field.format !== undefined && (field.type === 'string' || field.type === 'textarea');
+  return (trims ? value.trim() : value) === '';
 }
 
 /** 期望字符串的位置：字符串原样，有限数字转成字符串（YAML 里不加引号的 QQ 号、端口照常可用） */
@@ -794,7 +808,7 @@ function parseGroup(fields: unknown, value: unknown, path: string, warn: Warn): 
 
 function parseField(field: SchemaField, value: unknown, path: string, warn: Warn): unknown {
   const neutral = NEUTRAL_FIELD_TYPES.has(field.type);
-  if (value === undefined || value === null || (value === '' && (field.required || !neutral))) {
+  if (value === undefined || value === null || (field.required ? isBlank(field, value) : value === '' && !neutral)) {
     if (field.default !== undefined) return cloneConfigValue(field.default);
     if (field.required) throw new UnrecoverableField(path, '必填字段缺失', true);
     return undefined;

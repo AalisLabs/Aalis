@@ -8,7 +8,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config, logger)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务仍提供原始只读视图，不依赖 schema-config。
 
-缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。写宿主文件路径的 `string` / `textarea` 字段声明 `format: 'absolute-path'`（只收绝对路径）或 `'executable'`（绝对路径或按 PATH 查找的命令名），相对路径按无效处理；判定忽略首尾空白，空串照常表示未填，只看写法、与宿主平台无关。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。标了 `secret: true` 的字段由宿主在交给插件之前把引用解析成原值（见[密钥配置](#密钥配置)），插件读到的就是原值；字段上仍是引用时说明键不在宿主的密钥存储里，`parseConfig` 一律拒绝激活并点名键名，不回落默认值，数组元素里的也让整次解析失败。
+缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。写宿主文件路径的 `string` / `textarea` 字段声明 `format: 'absolute-path'`（只收绝对路径）或 `'executable'`（绝对路径或按 PATH 查找的命令名），相对路径按无效处理；判定忽略首尾空白，交给插件的值也去掉首尾空白，空串与只有空白都表示未填（必填字段算缺失），只看写法、与宿主平台无关。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。标了 `secret: true` 的字段由宿主在交给插件之前把引用解析成原值（见[密钥配置](#密钥配置)），插件读到的就是原值；字段上仍是引用时说明键不在宿主的密钥存储里，`parseConfig` 一律拒绝激活并点名键名，不回落默认值，数组元素里的也让整次解析失败。
 
 解析返回新对象，不改配置文档。写回配置时以 host-config 原文为底修改目标字段，避免把解析时补入的默认值、裁剪结果持久化；原文里密钥字段是引用，原样交回即保持原值，写回用 `applyPluginConfig`（见[跨重启保留](#跨重启保留)）。旧作用域配置升级见 [配置迁移](../guide/config-migration.md)。
 
@@ -75,7 +75,7 @@ doc.getServicePreferences()            // 服务偏好
 await doc.applyPluginConfig(instanceId, {...})
 
 // 写入（只改文档，不改运行态）
-doc.set('logLevel', 'debug')
+doc.set('logLevel', 'debug')           // 顶层字段；plugins 不能经它整块替换
 doc.setPluginConfig(instanceId, {...})  // 只收文档形态，密钥字段上的明文抛错
 doc.removePluginConfig(instanceId)
 doc.setPluginEnabled(instanceId, true)
@@ -163,11 +163,11 @@ plugins:
 "@aalis/plugin-llm-deepseek.apiKey": "<你的 API key>"
 ```
 
-- **填写**：在 WebUI 里填，或直接把明文写进 `aalis.config.yaml`。宿主同步插件配置时（启动、热重载、市场装载插件）把密钥字段上的非空明文移进 `secrets.yaml`，原处换成引用；这会改写配置文件，日志只写实例、字段路径与键名，不写值。移走之前的明文仍可能留在编辑器的备份文件与 git 历史里，家目录里迁移工具留下的 `aalis.config.yaml.before-schema-0.14` 等备份同样含明文，验证后删掉。`''`、空 map、空 list 不算密钥值，原样留在配置里。经 `applyPluginConfig`（WebUI 保存）提交时，本次新引入的悬空引用（键不在 `secrets.yaml` 里、也不是这次写入的）被拒绝，WebUI 回 400，运行态与文档都不动；提交前就悬空、原样带回的不拦。
+- **填写**：在 WebUI 里填，或直接把明文写进 `aalis.config.yaml`。宿主同步插件配置时（启动、热重载、市场装载插件）把密钥字段上的非空明文移进 `secrets.yaml`，原处换成引用；这会改写配置文件，日志只写实例、字段路径与键名，不写值。运行中把已有的引用改写成明文时，热重载按改动前的文档取键，与 WebUI 替换同一规则：顶层与分组里的字段写进原处原来引用的那个键，键被别处共用时一并改到它们。数组元素里的字段，以及启动时（宿主没有改动前的文档）的全部字段，按「键名」一条取新键，原来那个键的旧值留在 `secrets.yaml` 里，不再需要时手动删掉。移走之前的明文仍可能留在编辑器的备份文件与 git 历史里，家目录里迁移工具留下的 `aalis.config.yaml.before-schema-0.14` 等备份同样含明文，验证后删掉。`''`、空 map、空 list 不算密钥值，原样留在配置里。经 `applyPluginConfig`（WebUI 保存）提交时，本次新引入的悬空引用（键不在 `secrets.yaml` 里、也不是这次写入的）被拒绝，WebUI 回 400，运行态与文档都不动；提交前就悬空、原样带回的不拦。
 - **键名**：缺省是 `<实例 id>.<字段路径>`，数组元素里的字段路径不带下标（如 mcp-client 各 server 的 `env` 是 `@aalis/plugin-mcp-client.servers.env`）；这个键已被占用（配置里有引用指向它，或 `secrets.yaml` 里已有）时依次加 `-2`、`-3`。几处配置可以手写成指向同一个键，共用一个密钥；在 WebUI 里替换共用的键会一并影响它们。标在 map、list 上的字段整个值算一个密钥。
 - **读取**：宿主把配置交给插件之前解析引用，插件经 `parseConfig` 读到的是原值，读取配置的代码不需要改。引用的键不在 `secrets.yaml` 里时，宿主记一条错误（点名实例、字段与键）。用 `parseConfig` 读取、且装的是新版 schema-config 的插件激活失败，消息点名键名，不回落默认值；不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出（runtime 登记给 doctor，每个有悬空引用的实例报一条 error，点名字段与键）。在 WebUI 重新填写，或在 `secrets.yaml` 里补上这个键即可。
 - **保存**：先写 `secrets.yaml`、再写 `aalis.config.yaml`，文档里的引用落盘时它指向的键已经在盘上。`secrets.yaml` 的临时文件一律以 0600 创建，不沿用原文件的权限位。宿主经自己的写入（WebUI 改配置、删除实例、卸载插件、同步裁剪）换掉或删掉引用后，不再被任何配置引用的键在保存时从 `secrets.yaml` 删除，宿主新建、后来又没人引用的键同样删除。删除在主配置写成之后做，这一步写 `secrets.yaml` 失败不让保存报错，键留到下次保存再删。手改配置文件不会触发删除，手加进 `secrets.yaml`、还没被引用的键也不动。
-- **外部修改**：`secrets.yaml` 与主配置一样被监听，改动后只重新加载解析结果有变化的实例；有尚未生效的外部修改时保存同样拒写。运行中修好或改动 `secrets.yaml` 时，宿主已提交、还没写成的密钥不会丢，并进新读到的内容，下次保存时写入；改成空文件或只剩注释时按空的密钥文件处理。两个文件写坏时，日志只给 YAML 的错误码与行列，不带原文：启动时解析失败拒绝启动，运行中解析失败沿用上一份内容。YAML 的警告（例如把 `!xxx` 当成标签）同样只记错误码与行列，不经 Node 的 process warning 打到 stderr。
+- **外部修改**：`secrets.yaml` 与主配置一样被监听，改动后只重新加载解析结果有变化的实例；有尚未生效的外部修改时保存同样拒写，之后与主配置拒写一样按文件对账：修好或改动 `secrets.yaml` 后，密钥与配置文档都以两个文件的内容为准，被拒的密钥写入与这期间没写进文件的配置改动一并作废，插件随之按文件重载；要保留那次改动，重新提交即可。写入因其它原因失败（如没有写权限）时，已提交、还没写成的密钥留在内存里，其间 `secrets.yaml` 被外部改动也并进新读到的内容，下次保存时写入。改成空文件或只剩注释时按空的密钥文件处理。两个文件写坏时，日志只给 YAML 的错误码与行列，不带原文：启动时解析失败拒绝启动，运行中解析失败沿用上一份内容。YAML 的警告（例如把 `!xxx` 当成标签）同样只记错误码与行列，不经 Node 的 process warning 打到 stderr。
 - **仍是明文的情况**：没有 `configSchema` 的插件、没有标 `secret` 的字段，值照旧留在 `aalis.config.yaml` 里；自组装宿主创建配置存储时不给密钥存储的，密钥字段也照旧以明文留在文档里。没装上或加载失败的插件，宿主不处理它们的配置段，明文原样保留；这类残留段冷启动时逐段告警，要手动删掉，或装好插件后再启动一次。
 - **保护**：存储插件不许经任何根读写 `secrets.yaml`（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）；脚手架生成的 `.gitignore` 已包含整个家目录 `home/`。备份家目录时连同 `secrets.yaml` 一起备份，只备份 `aalis.config.yaml` 的，恢复后引用落空，按上面「读取」一条处理。
 

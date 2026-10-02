@@ -129,16 +129,18 @@ describe('plugin-mcp-client args / env', () => {
     expect(JSON.parse(out.content).map((s: { id: string }) => s.id)).toEqual(['off', 'good']);
   });
 
-  it('id / command 去掉首尾空白；缺字段或只有空白的条目告警跳过，其它 server 照常', async () => {
+  it('id / command 去掉首尾空白（command 由 parseConfig 去）；缺字段或只有空白的条目告警跳过，其它 server 照常', async () => {
     const { warns, registry } = await start([
       { command: 'npx' },
       { id: '  ', command: 'npx' },
+      { id: 'blank-cmd', command: ' \t' },
       { id: ' fs ', command: ' npx ', args: ['-y', '', 'pkg'] },
     ]);
     expect(spawned).toEqual([{ command: 'npx', args: ['-y', '', 'pkg'], env: {} }]);
     expect(registry.getGroups().map(g => g.name)).toContain('mcp:fs');
     expect(warns).toContain('配置项 servers[0] 已忽略：id 必填字段缺失');
-    expect(warns).toContain('servers 中有一条 id 或 command 只有空白（id「」，command「npx」），跳过');
+    expect(warns).toContain('servers 中有一条 id 只有空白（command「npx」），跳过');
+    expect(warns).toContain('配置项 servers[2] 已忽略：command 必填字段缺失');
   });
 });
 

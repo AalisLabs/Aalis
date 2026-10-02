@@ -120,6 +120,17 @@ describe("parseConfig 空串 ''", () => {
     expect(err.message).toBe('缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效');
   });
 
+  it('声明了 format 的 required 字段只有空白同样视为缺失；没声明 format 的空白是值', () => {
+    const schema: ConfigSchema = {
+      bin: field('string', { required: true, format: 'executable', default: 'whisper-cli' }),
+      sep: field('string', { required: true }),
+    };
+    expect(parse(schema, { bin: ' \n', sep: ' ' }).config).toEqual({ bin: 'whisper-cli', sep: ' ' });
+    const model = field('textarea', { required: true, format: 'absolute-path' });
+    const err = thrown(() => parse({ model }, { model: '  ' }));
+    expect(err.message).toBe('缺少配置项 model，在 WebUI 或配置文件中填入后生效');
+  });
+
   it("非 required 的中立类型：'' 是已配置的值，照常判定", () => {
     const schema: ConfigSchema = { prompt: field('string', { default: '默认' }), note: field('textarea') };
     expect(parse(schema, { prompt: '', note: '' })).toEqual({ config: { prompt: '', note: '' }, warns: [] });
@@ -197,6 +208,19 @@ describe('parseConfig 无效值', () => {
     );
     expect(err.message).toContain('model 须为绝对路径');
     expect(err.message).not.toContain('private');
+  });
+
+  it('format：交给插件的值去掉首尾空白（判定也按这一份）；没声明 format 的字段原样', () => {
+    const schema: ConfigSchema = {
+      model: field('textarea', { format: 'absolute-path' }),
+      bin: field('string', { format: 'executable' }),
+      note: field('string'),
+    };
+    expect(parse(schema, { model: ' /m/m.bin\n', bin: '  whisper ', note: ' x ' })).toEqual({
+      config: { model: '/m/m.bin', bin: 'whisper', note: ' x ' },
+      warns: [],
+    });
+    expect(parse(schema, { bin: '   ' }).config).toEqual({ bin: '' });
   });
 
   it('告警与错误文案都不含原值', () => {

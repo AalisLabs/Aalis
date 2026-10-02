@@ -6,9 +6,10 @@
 //   - 运行：改插件配置经 host-config 的 applyPluginConfig 一步完成；启停、偏好等管理动作只改运行态，
 //     要跨重启保留的调用方经 host-config 自己写文档并 save()。
 // 文档是文档形态：schema 里 `secret: true` 的字段只放引用 `{ $secret: '<键>' }`，值在密钥存储里（见 secrets.ts）。
-// 本模块不碰文件（无 node: import）：持久化与外部变更监听由注入的 provider 完成。
+// 本模块不碰文件：持久化与外部变更监听由注入的 provider 完成。
 // ============================================================
 
+import { isDeepStrictEqual } from 'node:util';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import {
   type AalisConfig,
@@ -25,7 +26,8 @@ import {
   defaultsFrom,
   isUnsafeConfigKey,
 } from '@aalis/schema-config';
-import type { ConfigSyncOptions } from './config-sync.js';
+import { type ConfigSyncOptions, configToReload } from './config-sync.js';
+import { moduleDefinitionOf } from './plugin-discovery.js';
 import {
   describeDangling,
   plainSecretPaths,
@@ -33,7 +35,6 @@ import {
   referencedKeys,
   resolveSecrets,
   type SplitSecrets,
-  sameConfig,
   splitSecrets,
 } from './secrets.js';
 
@@ -67,8 +68,11 @@ export interface SecretProvider {
  */
 export interface ConfigStore extends Omit<HostConfig, 'save' | 'trimUnknownFields' | 'applyPluginConfig'> {
   persist(): Promise<boolean>;
-  /** 订阅外部变更（配置文件或密钥文件；新内容已过同一道闸替换进来后回调）；单订阅者，返回退订 */
-  watch(onChange: () => void): () => void;
+  /**
+   * 订阅外部变更（配置文件或密钥文件；新内容已过同一道闸替换进来后回调，参数是替换前的文档）；单订阅者，返回退订。
+   * 密钥文件拒写之后的那次变更按文件对账，同主配置拒写：还没写成的密钥作废，文档退回配置文件上最后读入或写出的那一份
+   */
+  watch(onChange: (previous: Readonly<AalisConfig>) => void): () => void;
   unwatch(): void;
   /** 宿主有没有密钥存储：没有时密钥照旧以明文留在文档里，不拆 */
   readonly hasSecretStore: boolean;
@@ -83,13 +87,14 @@ export interface ConfigStore extends Omit<HostConfig, 'save' | 'trimUnknownField
     staged?: ReadonlyMap<string, unknown>,
   ): ResolvedSecrets;
   /**
-   * 提交的配置拆成文档形态，以该实例当前文档为基线（见 secrets.ts 的 splitSecrets）。只暂存、不写存储；
-   * 没有密钥存储时原样返回
+   * 提交的配置拆成文档形态（见 secrets.ts 的 splitSecrets）。`base` 是改动前的文档，缺省取该实例当前的文档。
+   * 只暂存、不写存储；没有密钥存储时原样返回
    */
   splitPluginSecrets(
     instanceId: string,
     schema: ConfigSchema | undefined,
     submitted: Record<string, unknown>,
+    base?: Record<string, unknown>,
   ): SplitSecrets;
   /** 把暂存的写入提交进密钥存储，返回撤回函数（恢复写之前的值） */
   commitSecrets(writes: ReadonlyMap<string, unknown>): () => void;
@@ -123,14 +128,20 @@ export function createConfigStore(
     );
   }
   let config = normalize(initial);
+  // 配置文件上的那一份（最后读入或写出的）：密钥文件拒写之后按文件对账时，文档退回这一份
+  let fileDoc = snapshot(config);
   let values = secretMap(secrets?.values ?? {});
-  // 已提交、还没写进密钥文件的值：密钥文件在这期间被外部改动（或修好）重新读入时并进新内容，文档里的引用可能正指着它们
+  // 已提交、还没写进密钥文件的值：密钥文件在这期间被外部改动重新读入时并进新内容，文档里的引用可能正指着它们
   const pending = new Map<string, unknown>();
+  // 密钥文件拒写过：下一次密钥文件变更按文件对账，不再并进 pending（见 watch）。refusedGen 是拒写的代数：
+  // 写成的那次保存只在它写盘期间没有新的拒写时清标志，并发的另一次保存被拒时标志留着
+  let secretsRefused = false;
+  let refusedGen = 0;
   // 宿主经自己的写入换掉、删掉或新建的键：文档落盘之后，不再被任何配置引用的就从密钥存储里删掉。
   // 手改配置文件不经这里，不触发删除；手加进 secrets.yaml 还没被引用的键也不在其中
   const orphanCandidates = new Set<string>();
   const unwatchFns: Array<() => void> = [];
-  let onChangeCallback: (() => void) | null = null;
+  let onChangeCallback: ((previous: Readonly<AalisConfig>) => void) | null = null;
   const markReplaced = (instanceId: string) => {
     if (Object.hasOwn(config.plugins, instanceId)) referencedKeys(config.plugins[instanceId], orphanCandidates);
   };
@@ -184,11 +195,11 @@ export function createConfigStore(
         return values.has(key) ? { value: values.get(key) } : undefined;
       });
     },
-    splitPluginSecrets(instanceId, schema, submitted) {
+    splitPluginSecrets(instanceId, schema, submitted, base) {
       if (!secrets) return { doc: submitted, writes: new Map(), placed: [] };
       const inUse = referencedKeys(config.plugins);
       referencedKeys(submitted, inUse);
-      return splitSecrets(schema, instanceId, submitted, store.getPluginConfig(instanceId), key => {
+      return splitSecrets(schema, instanceId, submitted, base ?? store.getPluginConfig(instanceId), key => {
         return inUse.has(key) || values.has(key);
       });
     },
@@ -219,22 +230,41 @@ export function createConfigStore(
     persist: async () => {
       const secretProvider = secrets?.provider;
       if (pending.size > 0 && secretProvider?.save) {
-        await secretProvider.save(Object.fromEntries(values));
-        pending.clear();
+        // 写盘途中可能有新的提交：写成后只清掉这次写出去、之后没再改过的
+        const flushing = new Map(pending);
+        const gen = refusedGen;
+        try {
+          await secretProvider.save(Object.fromEntries(values));
+        } catch (err) {
+          if (isConfigSaveRefused(err)) {
+            refusedGen++;
+            secretsRefused = true;
+          }
+          throw err;
+        }
+        // 写成了：盘上已是内存里的内容，不必再按文件对账（文件被原样改回后保存就会走到这里）
+        if (refusedGen === gen) secretsRefused = false;
+        for (const [key, value] of flushing) if (pending.get(key) === value) pending.delete(key);
       }
       if (!provider?.save) return false;
+      // 写出的这一份在交给 provider 时定格：落盘途中文档可能又被改过
+      const written = snapshot(config);
       await provider.save(config);
+      fileDoc = written;
       // 孤儿键在文档写成之后删：没写成时盘上的旧文档可能还引用着它们。主配置已经写成，这一步写密钥失败
       // 不让保存报错，删掉的键放回去，下次保存再删
       if (orphanCandidates.size > 0 && secretProvider?.save) {
+        const onDisk = referencedKeys(written.plugins);
         const live = referencedKeys(config.plugins);
         const removed = new Map<string, unknown>();
         for (const key of orphanCandidates) {
+          // 刚写出的文档与内存文档对它的引用不一致（落盘途中才去掉或才引用的）：留作候选，下次落盘后再判
+          if (onDisk.has(key) !== live.has(key)) continue;
+          orphanCandidates.delete(key);
           if (live.has(key) || !values.has(key)) continue;
           removed.set(key, values.get(key));
           values.delete(key);
         }
-        orphanCandidates.clear();
         if (removed.size > 0) {
           try {
             await secretProvider.save(Object.fromEntries(values));
@@ -252,14 +282,25 @@ export function createConfigStore(
       if (onChangeCallback) throw new Error('配置变更只支持一个订阅者，先 unwatch 再订阅');
       onChangeCallback = onChange;
       const configWatch = provider?.watch?.(next => {
+        const previous = config;
         config = normalize(next);
-        onChangeCallback?.();
+        fileDoc = snapshot(config);
+        onChangeCallback?.(previous);
       });
       if (configWatch) unwatchFns.push(configWatch);
       const secretsWatch = secrets?.provider?.watch?.(next => {
+        const previous = config;
         values = secretMap(next);
-        for (const [key, value] of pending) values.set(key, value);
-        onChangeCallback?.();
+        if (secretsRefused) {
+          // 拒写之后的这次变更按文件对账，同主配置拒写：没写成的密钥作废，与它们一起改的文档退回配置文件上那一份。
+          // 配置不落盘的宿主没有那一份，文档不动
+          secretsRefused = false;
+          pending.clear();
+          if (provider?.save) config = snapshot(fileDoc);
+        } else {
+          for (const [key, value] of pending) values.set(key, value);
+        }
+        onChangeCallback?.(previous);
       });
       if (secretsWatch) unwatchFns.push(secretsWatch);
       return () => store.unwatch();
@@ -273,19 +314,14 @@ export function createConfigStore(
 }
 
 /**
- * 实例的定义：已登记的取它自己的；没登记的后缀实例取同模块在册实例的（主实例优先），模块需声明 reusable
+ * 实例的定义：已登记的取它自己的；没登记的后缀实例取同模块在册实例的（见 moduleDefinitionOf），模块需声明 reusable
  */
 function definitionOf(app: App, instanceId: string): PluginDefinition | undefined {
   const own = app.plugins.getPlugin(instanceId)?.definition;
   if (own) return own;
   const { moduleName, suffix } = parseInstanceId(instanceId);
   if (!suffix) return undefined;
-  let found: PluginDefinition | undefined;
-  for (const status of app.plugins.getStatus()) {
-    if (status.name !== moduleName) continue;
-    const definition = app.plugins.getPlugin(status.instanceId)?.definition;
-    if (definition && (status.instanceId === moduleName || !found)) found = definition;
-  }
+  const found = moduleDefinitionOf(app, moduleName);
   return found?.reusable ? found : undefined;
 }
 
@@ -302,15 +338,10 @@ async function reloadSecretSharers(
   if (keys.size === 0) return;
   for (const status of app.plugins.getStatus()) {
     if (status.instanceId === except) continue;
-    const entry = app.plugins.getPlugin(status.instanceId);
-    if (!entry) continue;
     const refs = referencedKeys(store.getPluginConfig(status.instanceId));
     if (![...keys].some(key => refs.has(key))) continue;
-    const { config, dangling } = store.resolvePluginConfig(status.instanceId, entry.definition.configSchema);
-    if (dangling.length > 0) app.logger.error(describeDangling(status.instanceId, dangling));
-    if (sameConfig(config, entry.config)) continue;
-    app.logger.info(`插件 ${status.instanceId} 共用的密钥已更改，正在按新值重新加载...`);
-    await app.plugins.updateConfig(status.instanceId, config);
+    const next = configToReload(app, store, status.instanceId, '共用的密钥已更改');
+    if (next) await app.plugins.updateConfig(status.instanceId, next);
   }
 }
 
@@ -369,7 +400,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     if (entry) {
       // 解析出的配置与运行态相同、实例在 active：不重建（updateConfig 即 bounce，会连带重启依赖它所提供服务的下游），
       // 只写文档与落盘。error 态的实例靠原样保存重试激活，照旧走 updateConfig
-      if (entry.state === 'active' && sameConfig(resolved, entry.config)) reloaded = false;
+      if (entry.state === 'active' && isDeepStrictEqual(resolved, entry.config)) reloaded = false;
       else if (!(await app.plugins.updateConfig(instanceId, resolved))) return { status: 'refused' };
       store.commitSecrets(writes);
       store.setPluginConfig(instanceId, doc);
@@ -390,7 +421,6 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
         return { status: 'refused' };
       }
     }
-    for (const { path, key } of placed) app.logger.info(`已把 ${instanceId} 的 ${path} 写进 secrets.yaml（键 ${key}）`);
     // 写进的若是被别处共用的已有键，共用它的实例跟着换上新值（新建的键没有别人引用）
     await reloadSecretSharers(app, store, new Set(writes.keys()), instanceId);
     try {
@@ -398,6 +428,8 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     } catch (saveError) {
       return { status: 'applied', reloaded, saveError };
     }
+    // 写成之后才记：落盘失败时值只在内存里
+    for (const { path, key } of placed) app.logger.info(`已把 ${instanceId} 的 ${path} 写进 secrets.yaml（键 ${key}）`);
     return { status: 'applied', reloaded };
   };
 
@@ -406,7 +438,12 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     {
       get: store.get,
       getAll: store.getAll,
-      set: store.set,
+      // plugins 整块替换会绕过下面 setPluginConfig 的形态检查与孤儿键记账
+      set: (key, value) => {
+        if (key === 'plugins')
+          throw new Error('plugins 不能整块替换：改插件配置用 applyPluginConfig 或 setPluginConfig');
+        store.set(key, value);
+      },
       getPluginConfig: store.getPluginConfig,
       // 只收文档形态：查得到 schema 时，密钥字段上的明文（例如把 caps.config 原样写回）拒绝，不让原值进文档
       setPluginConfig: (instanceId, next) => {
@@ -464,6 +501,11 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
 }
 
 // ----- helpers -----
+
+/** 文档的拷贝：之后对文档的就地修改（禁用名单、服务偏好、插件配置里的子对象）不会改到它 */
+function snapshot(doc: AalisConfig): AalisConfig {
+  return cloneConfigObject(doc) as AalisConfig;
+}
 
 /** 密钥文件的键值：危险键不收 */
 function secretMap(input: Record<string, unknown>): Map<string, unknown> {

@@ -67,6 +67,7 @@ type ApplyPluginConfigResult =
 本接口读写的都是**文档形态**：schema 里 `secret: true` 的字段在文档里是引用 `{ $secret: '<键>' }`，值在宿主的密钥存储里（Node 宿主是家目录的 `secrets.yaml`），宿主交给插件（运行态、`config` 服务）之前解析成原值。
 
 - `trimUnknownFields`：宿主的裁剪政策。为 `true` 时宿主同步插件配置会按 `configSchema` 删掉 schema 外字段，不声明时按 `true` 处理；替宿主写插件配置的管理面（如 WebUI 保存插件配置）按它决定裁不裁，与宿主同一政策。Node 宿主取 `startAalis({ configSync })` 的 `trimUnknownFields`，缺省为 `true`；别的宿主保留未知字段时 provide 本服务须填 `false`。
+- `set` 写一个顶层字段，只改文档。`plugins` 不能经它整块替换，宿主会抛错；改插件配置用 `applyPluginConfig` 或 `setPluginConfig`。
 - `getPluginConfig` 返回实例在文档里的配置，密钥字段上是引用、不是原值；插件要原值读自己的 `config`。返回的是文档里的活对象，改写前先复制。
 - `setPluginConfig` 只写文档、不改运行态，只收文档形态：宿主有密钥存储、且查得到该实例的 schema 时，密钥字段上的非空明文（例如把 `config` 服务给的运行态原样写回）抛错，不让原值进文档。
 - `applyPluginConfig` 改一个实例的配置并让它生效，见下文[改插件配置](#改插件配置)。

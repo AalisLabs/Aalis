@@ -17,14 +17,16 @@ import { quiet, settle, sleep, waitFor } from '../helpers/fs-watch.js';
 // ════════════════════════════════════════════════════════════
 
 // fs.watch 不可用的平台 / 挂载无法在测试机上造出来：只在打开开关时让它抛错，其余用例走真实实现。
-const watchFault = vi.hoisted(() => ({ fail: false }));
+// 监听出错（Windows 上被监听的目录被删）同样造不出来：记下最近一个 watcher，用例自己让它发 error
+const watchFault = vi.hoisted(() => ({ fail: false, last: undefined as import('node:fs').FSWatcher | undefined }));
 vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
     ...fs,
     watch: (...args: Parameters<typeof fs.watch>) => {
       if (watchFault.fail) throw new Error('ENOSYS: watch unavailable');
-      return fs.watch(...args);
+      watchFault.last = fs.watch(...args);
+      return watchFault.last;
     },
   };
 });
@@ -52,6 +54,7 @@ beforeEach(() => {
 afterEach(() => {
   stop?.();
   watchFault.fail = false;
+  watchFault.last = undefined;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -178,6 +181,30 @@ describe('fs.watch 不可用', () => {
       stop = provider.watch?.(() => {});
       expect(warns).toHaveLength(1);
       expect(warns[0]).toMatch(/无法监听配置文件变更.*重启/);
+    } finally {
+      offHub();
+    }
+  });
+});
+
+describe('fs.watch 出错', () => {
+  it('告警并停止监听，不成为未捕获异常（未接 error 的 watcher 发 error 会带倒进程）', () => {
+    const warns: string[] = [];
+    const offHub = LogHub.default.onEntry(e => {
+      if (e.level === 'warn' && e.scope === 'aalis:config') warns.push(e.message);
+    });
+    try {
+      writeFileSync(path, A);
+      const { provider } = createFsYamlConfigProvider(path);
+      stop = provider.watch?.(() => {});
+      const watcher = watchFault.last;
+      expect(watcher).toBeDefined();
+      const close = vi.spyOn(watcher as import('node:fs').FSWatcher, 'close');
+      expect(() => watcher?.emit('error', new Error('EPERM: operation not permitted'))).not.toThrow();
+      // 「已停止监听」属实：出错的 watcher 当场关掉
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toMatch(/^配置文件监听出错，已停止监听（EPERM: operation not permitted）：.*重启/);
     } finally {
       offHub();
     }

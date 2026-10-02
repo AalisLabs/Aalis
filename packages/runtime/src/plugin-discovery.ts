@@ -50,6 +50,21 @@ export interface PluginDiscovery extends PluginSourceService {
 }
 
 /**
+ * 模块在注册表里的定义：主实例在册取主实例的，否则取同模块任一在册实例的（主实例已卸载、后缀实例还在时）。
+ * 由配置段定义、还没登记的后缀实例按它登记或新建：热重载登记、配置同步与 host-config 新建实例同一判据
+ */
+export function moduleDefinitionOf(app: App, moduleName: string): PluginDefinition | undefined {
+  const main = app.plugins.getPlugin(moduleName)?.definition;
+  if (main) return main;
+  for (const status of app.plugins.getStatus()) {
+    if (status.name !== moduleName) continue;
+    const definition = app.plugins.getPlugin(status.instanceId)?.definition;
+    if (definition) return definition;
+  }
+  return undefined;
+}
+
+/**
  * @param doc 配置文档：登记时按实例 id 取配置（解析密钥引用后交给 core）与禁用标记，并从中枚举 `name:suffix` 实例。
  *   默认值回填与密钥拆出由加载器一侧的政策（withPluginConfigSync）先写进文档。
  */
@@ -144,13 +159,8 @@ export function createPluginDiscovery(
     },
 
     async registerConfiguredInstances() {
-      const known = new Map<string, PluginDefinition>();
-      for (const { name, instanceId } of app.plugins.getStatus()) {
-        const definition = app.plugins.getPlugin(instanceId)?.definition;
-        // 主实例的定义优先；主实例已卸载时用同模块任一在册实例的，与冷启动时这一段照常登记一致
-        if (definition && (instanceId === name || !known.has(name))) known.set(name, definition);
-      }
-      await app.pluginAll(configuredInstances(name => known.get(name)));
+      // 主实例已卸载时用同模块任一在册实例的定义，与冷启动时这一段照常登记一致
+      await app.pluginAll(configuredInstances(name => moduleDefinitionOf(app, name)));
     },
   };
 }
