@@ -21,20 +21,39 @@ export const HISTORY_PAGE = 100;
 /** 房间里她在工具调用之前说的话：agent 只把最后的回复交给平台 */
 export const BEFORE_TOOL_UNSENT = '没有发出：调用工具之前说的话不发到群里';
 
+/** 给她发出的文件签发下载句柄（绑定所在的会话）：存储地址与文件名 → 句柄；不签发的回 undefined */
+export type SignFile = (uri: string, name: string) => string | undefined;
+
 type Attachment = { kind: 'image' | 'audio' | 'video' | 'file'; src?: string; name?: string };
 
-const OUTBOUND_KINDS: Readonly<Record<string, 'image' | 'video' | 'audio'>> = {
+const OUTBOUND_KINDS: Readonly<Record<string, Attachment['kind']>> = {
   [WellKnownKinds.OutboundImage]: 'image',
   [WellKnownKinds.OutboundVideo]: 'video',
   [WellKnownKinds.OutboundAudio]: 'audio',
+  [WellKnownKinds.OutboundFile]: 'file',
 };
 
-/** 她发出的附件归档成 outbound-* 的 assistant 消息，正文是附件引用占位符；还原成附件，认不出引用的按普通回复 */
-function sentAttachments(message: Message): Attachment[] | undefined {
+/** 她发出的附件归档成 outbound-* 的 assistant 消息，正文是附件引用占位符；认不出引用的按普通回复，回 undefined */
+function sentRefs(message: Message) {
   const kind = message.kind ? OUTBOUND_KINDS[message.kind] : undefined;
   if (message.role !== 'assistant' || !kind) return undefined;
   const refs = parseAttachmentRefs(message.content ?? '');
-  return refs.length > 0 ? refs.map(r => ({ kind, src: r.ref })) : undefined;
+  return refs.length > 0 ? { kind, refs } : undefined;
+}
+
+/**
+ * 她发出的附件还原成条目里的附件：图片、音频、视频的来源就是引用（存储地址或网址）；文件不给存储地址，给句柄。
+ * 文件的地址与名字先取存档时 metadata 里原样记下的 ref、name（占位符里的地址遇到「]」会截断，描述位的「]」「|」
+ * 换成了全角），没有时取占位符的引用与描述位，名字再没有就取地址的最后一段
+ */
+function sentAttachments(message: Message, signFile: SignFile): Attachment[] | undefined {
+  const sent = sentRefs(message);
+  return sent?.refs.map(({ ref: parsed, desc }) => {
+    if (sent.kind !== 'file') return { kind: sent.kind, src: parsed };
+    const ref = text(message.metadata?.ref) ?? parsed;
+    const name = text(message.metadata?.name) ?? desc ?? ref.slice(ref.lastIndexOf('/') + 1);
+    return { kind: 'file', name, src: signFile(ref, name) };
+  });
 }
 
 /**
@@ -112,7 +131,7 @@ function speakerOf(message: Message, isOwner: IsOwner) {
  * 单独成条的存档消息：提问、通知（含压缩分隔线）、她发出的附件。她的回复与工具调用要成组归并，
  * 其余系统消息与组外的工具结果不显示，都回 undefined
  */
-export function archivedItem(message: Message, isOwner: IsOwner): SessionItem | undefined {
+export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignFile): SessionItem | undefined {
   const itemId = archivedItemId(message);
   const at = message.timestamp ?? 0;
   if (message.role === 'user') {
@@ -140,13 +159,12 @@ export function archivedItem(message: Message, isOwner: IsOwner): SessionItem | 
       attachments: [],
     };
   }
-  const sent = sentAttachments(message);
+  const sent = sentAttachments(message, signFile);
   return sent ? { kind: 'agent-message', itemId, at, text: '', attachments: sent } : undefined;
 }
 
 /** 成组的消息：她的回复（不是发出的附件）与带 toolCallId 的工具结果 */
-const inGroup = (m: Message) =>
-  (m.role === 'assistant' && !sentAttachments(m)) || (m.role === 'tool' && !!m.toolCallId);
+const inGroup = (m: Message) => (m.role === 'assistant' && !sentRefs(m)) || (m.role === 'tool' && !!m.toolCallId);
 
 type ToolSegment = Extract<ContentSegment, { type: 'tool_call' }>;
 
@@ -258,7 +276,12 @@ function mergeGroup(group: Message[], room: boolean): SessionItem[] {
 }
 
 /** 一段存档消息归并成条目，顺序同存档。room 为真时是房间的存档 */
-export function mergeArchive(raw: readonly Message[], isOwner: IsOwner, room: boolean): SessionItem[] {
+export function mergeArchive(
+  raw: readonly Message[],
+  isOwner: IsOwner,
+  room: boolean,
+  signFile: SignFile,
+): SessionItem[] {
   const items: SessionItem[] = [];
   for (let i = 0; i < raw.length; ) {
     const message = raw[i] as Message;
@@ -269,7 +292,7 @@ export function mergeArchive(raw: readonly Message[], isOwner: IsOwner, room: bo
       i = end;
       continue;
     }
-    const item = archivedItem(message, isOwner);
+    const item = archivedItem(message, isOwner, signFile);
     if (item) items.push(item);
     i++;
   }
@@ -287,6 +310,7 @@ export async function readHistory(
   page: { before?: string; limit: number; skip: (message: Message) => boolean },
   isOwner: IsOwner,
   room: boolean,
+  signFile: SignFile,
 ): Promise<{ items: SessionItem[]; before?: string }> {
   const read = (n: number) =>
     memory.getFullHistory ? memory.getFullHistory(sessionId, n) : memory.getHistory(sessionId, n);
@@ -305,6 +329,7 @@ export async function readHistory(
       raw.slice(start, end).filter(m => !page.skip(m)),
       isOwner,
       room,
+      signFile,
     );
     return start > 0 ? { items, before: archivedItemId(raw[start] as Message) } : { items };
   }

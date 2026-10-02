@@ -46,6 +46,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `OutboundImage` | `'outbound-image'` | assistant 已发出的图片占位 | assistant |
 | `OutboundAudio` | `'outbound-audio'` | assistant 已发出的音频占位 | assistant |
 | `OutboundVideo` | `'outbound-video'` | assistant 已发出的视频占位 | assistant |
+| `OutboundFile` | `'outbound-file'` | assistant 已发出的文件占位（描述位是文件名） | assistant |
 | `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
 
 第三方插件可以定义自己的 kind 字符串，但应避开上表已占用的语义。

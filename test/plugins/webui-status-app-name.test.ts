@@ -8,7 +8,7 @@ import { freePort } from '../helpers/net.js';
 // /api/status 的 name 是对话对象的显示名，装有人设时是人设名（聊天用）；仪表盘的「应用名称」要看全局配置里的
 // name，另由 appName 给出。只有 name 时，装了人设以后改应用名称在界面上看不出任何变化。
 
-const TOKEN = 'zz-status-token-placeholder';
+const TOKEN = 'zz-status-token-placeholder-000000';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];
 afterEach(async () => {

@@ -73,9 +73,11 @@ function fromItem(item: SessionItem): Entry {
 }
 
 const isOwner = (platform: string, userId?: string) => platform === 'webui' && userId === 'console';
+/** 这些存档里没有她发出的文件，不签发句柄 */
+const noFiles = () => undefined;
 
 function compare(raw: Message[]): Entry[] {
-  const server = mergeArchive(raw, isOwner, false).map(fromItem);
+  const server = mergeArchive(raw, isOwner, false, noFiles).map(fromItem);
   const client = buildChatMessages(raw as RawMessage[]).flatMap(fromBubble);
   expect(server).toEqual(client);
   return server;
@@ -222,7 +224,7 @@ describe('服务端归并的条目', () => {
       { role: 'tool', content: '读到的内容', toolCallId: 'b', timestamp: 3 },
       { role: 'tool', content: '对不上调用的结果', toolCallId: 'x', timestamp: 4 },
     ];
-    const calls = mergeArchive(raw, isOwner, false).filter(i => i.kind === 'tool-call');
+    const calls = mergeArchive(raw, isOwner, false, noFiles).filter(i => i.kind === 'tool-call');
     expect(calls.map(i => i.kind === 'tool-call' && [i.name, i.result, i.status])).toEqual([
       ['search', '搜索结果', 'completed'],
       ['read', '读到的内容', 'completed'],
@@ -254,7 +256,7 @@ describe('服务端归并的条目', () => {
         ],
       },
     ];
-    const calls = mergeArchive(raw, isOwner, false).filter(i => i.kind === 'tool-call');
+    const calls = mergeArchive(raw, isOwner, false, noFiles).filter(i => i.kind === 'tool-call');
     expect(calls.map(i => i.itemId)).toEqual(['call-1', expect.stringMatching(/^\d+-\w+\/1$/), 'call-2']);
   });
 
@@ -278,7 +280,7 @@ describe('服务端归并的条目', () => {
         segments: [{ type: 'tool_call', name: 'x', args: null as unknown as Record<string, unknown>, result: 'ok' }],
       },
     ];
-    const items = mergeArchive(raw, isOwner, false);
+    const items = mergeArchive(raw, isOwner, false, noFiles);
     expect(items.filter(i => i.kind === 'tool-call').map(i => i.kind === 'tool-call' && i.args)).toEqual([
       {},
       {},
@@ -310,7 +312,7 @@ describe('服务端归并的条目', () => {
       { role: 'tool', content: 'ok', toolCallId: 'a', timestamp: 4 },
     ];
     const said = (room: boolean) =>
-      mergeArchive(raw, isOwner, room).flatMap(i =>
+      mergeArchive(raw, isOwner, room, noFiles).flatMap(i =>
         i.kind === 'agent-message' ? [[i.text, i.undelivered?.reason]] : [],
       );
     expect(said(true)).toEqual([
@@ -344,7 +346,7 @@ describe('服务端归并的条目', () => {
       },
       { role: 'assistant', kind: 'outbound-audio', content: '[音频: 一段话 | ref:data:/a.wav]', timestamp: 5 },
     ];
-    const items = mergeArchive(raw, isOwner, false);
+    const items = mergeArchive(raw, isOwner, false, noFiles);
     expect(items.map(i => [i.kind, i.turnId])).toEqual([
       ['user-message', undefined],
       ['user-message', undefined],
@@ -360,6 +362,6 @@ describe('服务端归并的条目', () => {
     // 语音按存档格式（音频）还原，旧客户端认错了标签、漏掉了它
     expect(items[5]).toMatchObject({ attachments: [{ kind: 'audio', src: 'data:/a.wav' }] });
     expect(new Set(items.map(i => i.itemId)).size).toBe(items.length);
-    expect(mergeArchive(raw, isOwner, false).map(i => i.itemId)).toEqual(items.map(i => i.itemId));
+    expect(mergeArchive(raw, isOwner, false, noFiles).map(i => i.itemId)).toEqual(items.map(i => i.itemId));
   });
 });

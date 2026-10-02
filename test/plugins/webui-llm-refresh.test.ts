@@ -9,7 +9,7 @@ import { freePort } from '../helpers/net.js';
 // `<实例 id>/<模型 id>` 登记，按条目 contextId 等于实例 id 去找，永远找不到。
 // 找不到时如实说明：provider 名下有模型但都不提供 refresh（如关闭了 discoverModels），与名下一个模型都没有，是两回事。
 
-const TOKEN = 'zz-refresh-token-placeholder';
+const TOKEN = 'zz-refresh-token-placeholder-0000';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];
 afterEach(async () => {

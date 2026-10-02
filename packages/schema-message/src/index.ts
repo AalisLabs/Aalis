@@ -448,6 +448,7 @@ declare module '@aalis/core' {
  * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
  * - `OutboundAudio`：assistant 已发出的音频占位。
  * - `OutboundVideo`：assistant 已发出的视频占位。
+ * - `OutboundFile`：assistant 已发出的文件占位（描述位是文件名）。
  * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
  */
 export const WellKnownKinds = {
@@ -456,28 +457,26 @@ export const WellKnownKinds = {
   OutboundImage: 'outbound-image',
   OutboundAudio: 'outbound-audio',
   OutboundVideo: 'outbound-video',
+  OutboundFile: 'outbound-file',
   HostNotice: 'host-notice',
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
 
-/** 出站媒体附件归档时的消息 kind 与占位符 kind */
+/** 出站附件归档时的消息 kind 与占位符 kind */
 const OUTBOUND_MEDIA = {
   image: { kind: WellKnownKinds.OutboundImage, ref: AttachmentRefKind.Image },
   audio: { kind: WellKnownKinds.OutboundAudio, ref: AttachmentRefKind.Audio },
   video: { kind: WellKnownKinds.OutboundVideo, ref: AttachmentRefKind.Video },
+  file: { kind: WellKnownKinds.OutboundFile, ref: AttachmentRefKind.File },
 } as const;
 
 /**
- * 发出的图片、音频、视频在会话历史里的记法：一条 assistant 消息，kind 为 OutboundImage / OutboundAudio /
- * OutboundVideo，正文是附件引用占位符（{@link formatAttachmentRef}）。归档方一律用它，memory_recall 与 WebUI
- * 回看历史才能按同一格式命中、还原。时间戳与 metadata 由调用方补上。
+ * 发出的图片、音频、视频与文件在会话历史里的记法：一条 assistant 消息，kind 为 OutboundImage / OutboundAudio /
+ * OutboundVideo / OutboundFile，正文是附件引用占位符（{@link formatAttachmentRef}）。归档方一律用它，memory_recall 与
+ * 会话服务回看历史才能按同一格式命中、还原。文件的 desc 记文件名。时间戳与 metadata 由调用方补上。
  */
-export function outboundMediaMessage(
-  kind: Exclude<MessageAttachment['kind'], 'file'>,
-  ref: string,
-  desc?: string,
-): Message {
+export function outboundMediaMessage(kind: MessageAttachment['kind'], ref: string, desc?: string): Message {
   const media = OUTBOUND_MEDIA[kind];
   return { role: 'assistant', kind: media.kind, content: formatAttachmentRef({ kind: media.ref, desc, ref }) };
 }

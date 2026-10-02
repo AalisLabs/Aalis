@@ -32,7 +32,7 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import type {} from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
 import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, readTailLines, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageUri, readTailLines, storage } from '@aalis/api-storage';
 import type {} from '@aalis/api-todo-list'; // declaration merging：todo:updated 事件
 import { type ToolExecuteMessage, tools } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
@@ -63,7 +63,8 @@ import {
 } from '@aalis/schema-message';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createAuthSystem, openBrowser } from './auth.js';
+import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
+import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
@@ -72,6 +73,7 @@ import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
+import { registerSessionFileRoute } from './routes/session-file.js';
 import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
 import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
@@ -101,6 +103,12 @@ const webuiPages: WebuiPage[] = [
   { key: 'files', label: '文件管理', icon: 'files', order: 50, renderer: 'files' },
   { key: 'logs', label: '日志', icon: 'logs', order: 60, renderer: 'logs' },
 ];
+
+/**
+ * fixed 模式的 token 最短长度。持有 token 就是 owner，带 cookie 的请求又不限速（见 auth.ts 的登录限速），
+ * 防猜靠的是 token 本身够长：32 个十六进制字符是 128 位
+ */
+const FIXED_TOKEN_MIN_LENGTH = 32;
 
 const configSchema = defineConfig({
   port: { type: 'number', label: '端口', default: 3000, onInvalid: 'error', description: 'Web 管理界面的 HTTP 端口' },
@@ -146,7 +154,7 @@ const configSchema = defineConfig({
     default: '',
     onInvalid: 'error',
     secret: true,
-    description: '请使用足够长的随机字符串；存进 secrets.yaml，WebUI 不回显。',
+    description: `至少 ${FIXED_TOKEN_MIN_LENGTH} 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理。存进 secrets.yaml，WebUI 不回显。`,
   },
   relationGraphDefaultSpacing: {
     type: 'number',
@@ -309,11 +317,15 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
  * 发往 WebUI 自己会话的出站消息里，要由本插件写进会话历史的部分。WebUI 的收件箱就是会话历史，记不记全不取决于
  * 别的插件是否在场。agent 的文字回复由 agent 存档，这里不再记，免得历史里重复。其余部分：
  * - 不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记：回看时显示成分隔条，不进模型上下文，与其他平台一致；
- * - 文件记成事件标记「[文件] 名称」，页面对文件本来也只显示名称；
- * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件。快照里的 data 未经平台改写，就是页面上显示的
- *   那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在历史里，不再记。她发出的媒体在别的平台由
- *   image-sender 在 outbound:delivered 上归档；发往 WebUI 的由这里记，outbound:delivered 的快照给附件标上
- *   skipArchive，免得 image-sender 再记一份。代价是这些网址图片与视频不再由 image-sender 在后台补视觉描述
+ * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件；
+ * - 给的是存储地址的文件（白纸成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
+ *   metadata 另记原样的地址与文件名：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
+ *   「[文件: 名称 | ref:…]」进模型上下文与记忆，与 QQ 等平台不同（image-sender 不归档文件）。不是存储地址的文件
+ *   （网址、data URL）签不出句柄，记成事件标记「[文件] 名称」，内容不进历史；
+ * - 快照里的 data 未经平台改写，就是页面上显示的那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在
+ *   历史里，不再记。她发出的媒体在别的平台由 image-sender 在 outbound:delivered 上归档；发往 WebUI 的由这里记，
+ *   outbound:delivered 的快照给附件标上 skipArchive，免得 image-sender 再记一份。代价是这些网址图片与视频不再由
+ *   image-sender 在后台补视觉描述
  */
 function inboxRecords(msg: OutgoingMessage): Message[] {
   const timestamp = Date.now();
@@ -326,14 +338,21 @@ function inboxRecords(msg: OutgoingMessage): Message[] {
   const records: Message[] = [];
   if (msg.source !== 'agent' && msg.content.trim()) records.push(marker(msg.content));
   for (const att of msg.attachments ?? []) {
-    if (att.kind === 'file') {
-      records.push(marker(`[文件] ${att.name ?? att.data.split('/').pop()}`));
-    } else if (!att.skipArchive) {
+    if (att.skipArchive) continue;
+    if (att.kind !== 'file') {
       records.push({
         ...outboundMediaMessage(att.kind, att.data, att.description),
         timestamp,
         metadata: { source: 'webui-server', ref: att.data },
       });
+    } else if (isStorageUri(att.data)) {
+      records.push({
+        ...outboundMediaMessage('file', att.data, att.name),
+        timestamp,
+        metadata: { source: 'webui-server', ref: att.data, name: att.name },
+      });
+    } else {
+      records.push(marker(`[文件] ${att.name ?? att.data.split('/').pop()}`));
     }
   }
   return records;
@@ -376,7 +395,7 @@ const uses = {
   // platform 既被本插件提供又被平台页枚举：required 会让激活等一个由自己提供的服务
   platform: optional(platform),
   process: optional(processService),
-  /** /session 的连接接到它；每条连接到达时现取，不在时关闭连接并写明原因 */
+  /** /session 的连接接到它；每条连接到达时现取，不在时关闭连接并写明原因。会话文件的下载请它核验句柄 */
   sessionProtocol: optional(sessionProtocol),
   /** 登记 webui 审批面：/session 连接上的在场上报与应答记在这个登记身份名下 */
   approvals: optional(approvals),
@@ -419,11 +438,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
   // - persist：首次生成后写入 storage data:/webui/token，重启复用（默认）
-  // - fixed：使用 fixedToken 配置项；为空时降级为 persist
+  // - fixed：使用 fixedToken 配置项，至少 FIXED_TOKEN_MIN_LENGTH 个字符；为空时降级为 persist
   // 所有模式都会写出 data:/webui/access.txt 便于查找访问 URL
   const tokenFileUri = 'data:/webui/token';
   const accessFileUri = 'data:/webui/access.txt';
   const fixedToken = uiConfig.tokenMode === 'fixed' ? uiConfig.fixedToken.trim() : '';
+  if (fixedToken && fixedToken.length < FIXED_TOKEN_MIN_LENGTH) {
+    throw configError(`fixedToken 至少要 ${FIXED_TOKEN_MIN_LENGTH} 个字符（现在 ${fixedToken.length} 个）`);
+  }
   let authToken = fixedToken || Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
   /** 监听成功后的访问 URL；持久化 token 晚于监听读回时，据此重写 access.txt */
   let listeningUrl: string | undefined;
@@ -496,19 +518,21 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 当前身份 / 登录态查询统一走 auth.ts 的 GET /api/auth/status（含 identity）。
   const gate = createRouteGate(auth.identify);
   const server = createServer(expressApp);
-  // 一个 WebSocketServer 接全部端点，连接按路径分给各自的处理，认证对各端点一样。同一个 HTTP server 上
+  // 一个 WebSocketServer 接全部端点，连接按路径分给各自的处理，来源校验与认证对各端点一样。同一个 HTTP server 上
   // 挂两个带 path 的 WebSocketServer 不行：先挂的那个会把别的路径的升级请求按 400 拒掉。
-  const wsPaths = new Set(['/ws', SESSION_PATH]);
+  const wsPaths = new Set(['/ws', SESSION_PATH, ADMIN_PATH]);
   const wsPath = (req: IncomingMessage) => (req.url ?? '').split('?')[0];
   const approvalSurface = caps.approvals.registerSurface('webui');
   const wss = new WebSocketServer({
     server,
     verifyClient: (info, cb) => {
-      if (!auth.verifyWsClient(info.req)) cb(false, 401, 'unauthenticated');
+      if (!originAllowed(info.req)) cb(false, 403, 'origin not allowed');
+      else if (!auth.verifyWsClient(info.req)) cb(false, 401, 'unauthenticated');
       else if (!wsPaths.has(wsPath(info.req))) cb(false, 404);
       else cb(true);
     },
   });
+  const admin = createAdminChannel(logger);
   const sessions = new Map<string, Set<WebSocket>>();
   const logSubscribers = new Set<WebSocket>();
   const allClients = new Set<WebSocket>();
@@ -588,8 +612,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     return services.get(webuiClient)?.getClientDir?.();
   }
   /**
-   * 切换 webui-client 服务偏好后调用：重挂当前活跃前端 + 广播 'reload'——所有客户端进入
-   * 「正在切换前端，即将刷新」遮罩后自动 reload（复用现有刷新流程，平滑换前端、不重启进程）。
+   * 活跃前端可能变了时调用（改或清除 webui-client 的服务偏好、摘掉已不在的前端包）：重挂当前活跃前端，
+   * 通知 /ws（reload）与 /admin（client.reload）整页重载，换前端不重启进程。
    */
   function remountActiveClient(): void {
     const dir = currentClientDir();
@@ -600,6 +624,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     const payload: WSOutgoing = { type: 'reload' };
     const json = JSON.stringify(payload);
     for (const ws of allClients) if (ws.readyState === WebSocket.OPEN) ws.send(json);
+    admin.send({ type: 'client.reload' });
   }
 
   // 动态静态文件中间件（支持运行时切换前端）
@@ -1129,6 +1154,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   );
   registerProxyRoutes(expressApp, logger, gate);
   registerMediaRoutes(expressApp, storage, logger, gate);
+  registerSessionFileRoute(expressApp, storage, caps.sessionProtocol, logger, gate);
 
   // ---------- WebSocket ----------
 
@@ -1141,6 +1167,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     ws.on('close', () => heartbeat.untrack(ws));
     if (wsPath(req) === SESSION_PATH) {
       acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
+      return;
+    }
+    if (wsPath(req) === ADMIN_PATH) {
+      admin.accept(ws);
       return;
     }
     allClients.add(ws);
@@ -1288,6 +1318,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       }
     }
   });
+
+  // 管理面推送（/admin）：日志、插件状态、重启。页面登记表的变化在 registerPage 里推，换前端在 remountActiveClient 里推
+  const removeAdminLogListener = LogHub.default.onEntry(entry => admin.send({ type: 'log', entry }));
+  events.on('plugins:changed', () => admin.send({ type: 'plugins.changed' }));
+  events.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
 
   // 插件状态级联变更后，广播通知所有前端刷新
   events.on('plugins:changed', () => {
@@ -1812,6 +1847,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   lifecycle.onDispose(() => {
     heartbeat.dispose();
     removeLogListener();
+    removeAdminLogListener();
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对
     // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 上
     // 注册的 message 闭包在插件卸载后仍然活着，照常发 'inbound:message'——而事件发射
@@ -1880,18 +1916,21 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const webuiService: WebUIService = {
     getPort: () => uiConfig.port,
     getHost: () => uiConfig.host,
+    // 页面登记表一变就推 plugins.changed，前端据此重取页面
     registerPage(page, contextId) {
       const list = registeredPages.get(contextId) ?? [];
       const entry = { ...page, pluginName: contextId };
       list.push(entry);
       registeredPages.set(contextId, list);
+      admin.send({ type: 'plugins.changed' });
       // 退订按条目引用比对：同 key 重注册后，旧退订闭包不得摘掉新登记
       return () => {
         const cur = registeredPages.get(contextId);
-        if (!cur) return;
-        const idx = cur.indexOf(entry);
-        if (idx >= 0) cur.splice(idx, 1);
+        const idx = cur ? cur.indexOf(entry) : -1;
+        if (!cur || idx < 0) return;
+        cur.splice(idx, 1);
         if (cur.length === 0) registeredPages.delete(contextId);
+        admin.send({ type: 'plugins.changed' });
       };
     },
     getPages() {

@@ -115,10 +115,10 @@ getSenderLabel(nickname?: string, userId?: string): string | undefined;
 prefixSender(content: string, nickname?: string, userId?: string): string;
 getMessageName(userId?: string): string | undefined;
 buildIncomingContent(incoming: IncomingMessage): string;
-outboundMediaMessage(kind: 'image' | 'audio' | 'video', ref: string, desc?: string): Message;
+outboundMediaMessage(kind: 'image' | 'audio' | 'video' | 'file', ref: string, desc?: string): Message;
 ```
 
-前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法。`outboundMediaMessage` 是发出的图片、音频、视频归档进会话历史的写法：一条 assistant 消息，`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`），时间戳与 `metadata` 由调用方补上。
+前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：一条 assistant 消息，`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`），时间戳与 `metadata` 由调用方补上。
 
 ## kind 常量
 

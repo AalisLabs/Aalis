@@ -93,7 +93,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     const dirB = clientDir('CLIENT-B');
     dirs.push(dirA, dirB);
     const port = await freePort();
-    const token = 'test-fixed-token-placeholder';
+    const token = 'test-fixed-token-placeholder-0000';
     apps.push(app);
     const host = app.bind({ provide, webuiClient });
     host.provide(storage, makeFakeStorage());

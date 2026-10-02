@@ -65,7 +65,7 @@ async function opensOverStartAndBounce(
     host: '127.0.0.1',
     autoOpen,
     tokenMode,
-    fixedToken: tokenMode === 'fixed' ? 'zz-fixed-token-placeholder' : '',
+    fixedToken: tokenMode === 'fixed' ? 'zz-fixed-token-placeholder-000000' : '',
   });
   await app.plugins.idle();
   await app.start();

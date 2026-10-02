@@ -1,12 +1,26 @@
-import { describe, expect, it } from 'vitest';
-import { createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
+import { timingSafeEqual } from 'node:crypto';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { App, type Logger } from '../../packages/core/src/index.js';
+import {
+  createAuthSystem,
+  LOGIN_FAILURE_ADDRESSES_MAX,
+  originAllowed,
+} from '../../packages/plugin-webui-server/src/auth.js';
 import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-server/src/gate.js';
+import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 单 token（单 owner）
 //
-// 纯 middleware 单测：用最小 req/res mock 走登录/识别/注销流程，不起 HTTP 服务器。
+// 纯 middleware 单测：用最小 req/res mock 走登录/识别/注销流程、token 比较、来源判定与登录失败限速，不起 HTTP 服务器。
+// 固定 token 的长度校验在插件激活时做，那一组只激活插件、不启动应用，同样不监听端口。
 // ════════════════════════════════════════════════════════════
+
+// 定时安全比较的调用记下来，核对 token 比较走的是它、比的是等长的摘要；判定仍由原函数做
+vi.mock('node:crypto', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return { ...actual, timingSafeEqual: vi.fn(actual.timingSafeEqual) };
+});
 
 interface MockRes {
   statusCode: number;
@@ -53,13 +67,18 @@ function makeReq(over: {
   cookie?: string;
   body?: unknown;
   query?: Record<string, string>;
+  /** 来源地址，默认本机回环 */
+  address?: string;
+  /** 其余请求头（origin、host、sec-fetch-site） */
+  headers?: Record<string, string>;
 }) {
   return {
     path: over.path ?? '/',
     method: over.method ?? 'GET',
     query: over.query ?? {},
-    headers: { cookie: over.cookie },
+    headers: { cookie: over.cookie, ...over.headers },
     body: over.body,
+    socket: { remoteAddress: over.address ?? '127.0.0.1' },
   };
 }
 
@@ -127,6 +146,194 @@ describe('单 token 登录', () => {
   });
 });
 
+describe('token 比较', () => {
+  it('cookie、?token= 与登录三处都以等长的摘要做定时安全比较：正确、错误、长度不同的 token 判定照旧', async () => {
+    const compare = vi.mocked(timingSafeEqual);
+    const lengths = new Set<number>();
+    for (const [given, ok] of [
+      [TOKEN, true],
+      ['test-token-abd', false],
+      ['short', false],
+      [`${TOKEN}-and-more`, false],
+    ] as const) {
+      const auth = makeAuth();
+      compare.mockClear();
+      expect(auth.verifyWsClient({ headers: { cookie: `aalis_webui_token=${given}` } } as never)).toBe(ok);
+      const viaQuery = await run(auth, makeReq({ path: '/', query: { token: given } }));
+      expect(viaQuery.res.redirectTo === '/').toBe(ok);
+      const viaLogin = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: given } }));
+      expect(viaLogin.res.statusCode).toBe(ok ? 200 : 401);
+      // 每处一次比较，两边等长，且长度与给的 token 无关：比较的耗时不透露 token 的长度
+      expect(compare).toHaveBeenCalledTimes(3);
+      for (const [a, b] of compare.mock.calls) {
+        expect(a.byteLength).toBe(b.byteLength);
+        lengths.add(a.byteLength);
+      }
+    }
+    expect(lengths.size).toBe(1);
+  });
+});
+
+describe('同源判定', () => {
+  const allowed = (origin: string | undefined, host: string | undefined) =>
+    originAllowed({ headers: { origin, host } });
+
+  it('Origin 与 Host 两边去掉默认端口再比：https 的 443、http 的 80 写不写都算同源', () => {
+    expect(allowed('https://a.example', 'a.example:443')).toBe(true);
+    expect(allowed('https://a.example:443', 'a.example')).toBe(true);
+    expect(allowed('http://a.example', 'a.example:80')).toBe(true);
+    expect(allowed('http://127.0.0.1:3000', '127.0.0.1:3000')).toBe(true);
+    expect(allowed('http://[::1]:3000', '[::1]:3000')).toBe(true);
+  });
+
+  it('别的端口、默认端口对不上协议、换个主机名、Origin 为 null、没有 Host 都不算同源；没有 Origin 的交给 token', () => {
+    expect(allowed('https://a.example', 'a.example:444')).toBe(false);
+    expect(allowed('http://a.example', 'a.example:443')).toBe(false);
+    expect(allowed('http://127.0.0.1:3001', '127.0.0.1:3000')).toBe(false);
+    expect(allowed('http://localhost:3000', '127.0.0.1:3000')).toBe(false);
+    expect(allowed('null', 'a.example')).toBe(false);
+    expect(allowed('https://a.example', undefined)).toBe(false);
+    expect(allowed('http://undefined', undefined), '没有 Host 时不拿字面量 undefined 去比').toBe(false);
+    expect(allowed(undefined, 'a.example')).toBe(true);
+  });
+});
+
+describe('登录失败限速', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const login = (auth: ReturnType<typeof makeAuth>, token: string, address?: string) =>
+    run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token }, address }));
+  const viaQuery = (auth: ReturnType<typeof makeAuth>, token: string, address?: string) =>
+    run(auth, makeReq({ path: '/', query: { token }, address }));
+
+  it('同一地址失败满 10 次后，登录与 ?token= 都回 429，正确的 token 也不收；本机回环同样计数，别的地址不受影响', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    const auth = makeAuth();
+    for (let i = 0; i < 5; i++) expect((await login(auth, 'wrong')).res.statusCode).toBe(401);
+    for (let i = 0; i < 5; i++) expect((await viaQuery(auth, 'wrong')).res.statusCode).toBe(401);
+
+    const locked = await login(auth, TOKEN);
+    expect(locked.res.statusCode).toBe(429);
+    expect(locked.res.headers['Retry-After']).toBe('600');
+    expect(locked.res.jsonBody).toMatchObject({ ok: false, error: expect.stringContaining('10 分钟') });
+    expect(extractCookie(locked.res, 'aalis_webui_token')).toBeUndefined();
+    const lockedQuery = await viaQuery(auth, TOKEN);
+    expect(lockedQuery.res.statusCode).toBe(429);
+    expect(lockedQuery.res.redirectTo).toBeUndefined();
+    expect(lockedQuery.res.htmlBody).toContain('登录失败次数过多');
+
+    expect((await login(auth, TOKEN, '192.0.2.7')).res.statusCode).toBe(200);
+  });
+
+  it('从第一次失败算起 10 分钟后自动解除，计数从零重来', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    const auth = makeAuth();
+    await login(auth, 'wrong');
+    vi.advanceTimersByTime(5 * 60_000);
+    for (let i = 0; i < 9; i++) await login(auth, 'wrong');
+    vi.advanceTimersByTime(5 * 60_000 - 1);
+    const stillLocked = await login(auth, TOKEN);
+    expect(stillLocked.res.statusCode).toBe(429);
+    expect(stillLocked.res.headers['Retry-After']).toBe('1');
+    vi.advanceTimersByTime(1);
+    // 解除之后没有登录成功过，新的窗口照样数满 10 次才拒
+    for (let i = 0; i < 10; i++) expect((await login(auth, 'wrong')).res.statusCode).toBe(401);
+    expect((await login(auth, TOKEN)).res.statusCode).toBe(429);
+    vi.advanceTimersByTime(10 * 60_000);
+    expect((await login(auth, TOKEN)).res.statusCode).toBe(200);
+  });
+
+  it('登录成功清零：?token= 与登录接口成功之后，都重新从零计数', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    const auth = makeAuth();
+    for (let i = 0; i < 9; i++) await login(auth, 'wrong');
+    expect((await viaQuery(auth, TOKEN)).res.redirectTo).toBe('/');
+    for (let i = 0; i < 9; i++) expect((await login(auth, 'wrong')).res.statusCode).toBe(401);
+    expect((await login(auth, TOKEN)).res.statusCode).toBe(200);
+    // 从零数满 10 次才拒
+    for (let i = 0; i < 10; i++) expect((await login(auth, 'wrong')).res.statusCode).toBe(401);
+    expect((await login(auth, TOKEN)).res.statusCode).toBe(429);
+  });
+
+  it('别的网页借 owner 的浏览器发起的登录不计失败：跨源的登录回 403，别的站点打开的 ?token= 不比对；之后正确的 token 照常登录', async () => {
+    const auth = makeAuth();
+    const host = '127.0.0.1:3000';
+    const crossLogin = (token?: string) =>
+      run(
+        auth,
+        makeReq({
+          path: '/api/auth/login',
+          method: 'POST',
+          body: token === undefined ? {} : { token },
+          headers: { origin: 'http://127.0.0.1:5173', host },
+        }),
+      );
+    // 跨源的 text/plain 简单请求：body 解析不出 token
+    for (let i = 0; i < 10; i++) expect((await crossLogin()).res.statusCode).toBe(403);
+    const crossWithToken = await crossLogin(TOKEN);
+    expect(crossWithToken.res.statusCode, '跨源带着正确的 token 也不登录').toBe(403);
+    expect(extractCookie(crossWithToken.res, 'aalis_webui_token')).toBeUndefined();
+
+    for (const site of ['cross-site', 'same-site']) {
+      for (let i = 0; i < 10; i++) {
+        const r = await run(auth, makeReq({ path: '/', query: { token: 'x' }, headers: { 'sec-fetch-site': site } }));
+        expect(r.res.statusCode, site).toBe(401);
+        expect(r.res.htmlBody, site).toContain('访问 token');
+      }
+      const r = await run(auth, makeReq({ path: '/', query: { token: TOKEN }, headers: { 'sec-fetch-site': site } }));
+      expect(r.res.redirectTo, `${site} 带着正确的 token 也不设 cookie`).toBeUndefined();
+      expect(extractCookie(r.res, 'aalis_webui_token')).toBeUndefined();
+    }
+    // 已登录的页面被别的站点带着乱写的 token 打开：照常放行
+    const authed = await run(
+      auth,
+      makeReq({
+        path: '/',
+        query: { token: 'x' },
+        cookie: `aalis_webui_token=${TOKEN}`,
+        headers: { 'sec-fetch-site': 'cross-site' },
+      }),
+    );
+    expect(authed.nexted).toBe(true);
+
+    // 以上都没计数：同源的登录与粘贴的链接（Sec-Fetch-Site 为 none）照常成功
+    const sameOrigin = await run(
+      auth,
+      makeReq({
+        path: '/api/auth/login',
+        method: 'POST',
+        body: { token: TOKEN },
+        headers: { origin: `http://${host}`, host },
+      }),
+    );
+    expect(sameOrigin.res.statusCode).toBe(200);
+    const pasted = await run(
+      auth,
+      makeReq({ path: '/', query: { token: TOKEN }, headers: { 'sec-fetch-site': 'none' } }),
+    );
+    expect(pasted.res.redirectTo).toBe('/');
+  });
+
+  it('计数表有上限：失败过的地址到了上限，再记新地址时丢掉最早的那条，表不随地址数无限增长', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    const auth = makeAuth();
+    const first = '192.0.2.1';
+    for (let i = 0; i < 10; i++) await login(auth, 'wrong', first);
+    expect((await login(auth, TOKEN, first)).res.statusCode).toBe(429);
+    const others = Array.from({ length: LOGIN_FAILURE_ADDRESSES_MAX }, (_, i) => `2001:db8::${i.toString(16)}`);
+    const last = others.pop() as string;
+    for (const address of others) await login(auth, 'wrong', address);
+    expect((await login(auth, TOKEN, first)).res.statusCode, '表刚满，最早的那条还在').toBe(429);
+    await login(auth, 'wrong', last);
+    expect((await login(auth, TOKEN, first)).res.statusCode, '最早的那条被挤掉').toBe(200);
+    // 后来的照常计数
+    for (let i = 0; i < 9; i++) await login(auth, 'wrong', last);
+    expect((await login(auth, TOKEN, last)).res.statusCode).toBe(429);
+  });
+});
+
 describe('未认证拦截', () => {
   it('API 请求 401 JSON；GET 页面返回登录页（仅 token 表单）', async () => {
     const auth = makeAuth();
@@ -170,5 +377,34 @@ describe('REST 路由 owner 闸（单 owner 终态）', () => {
     const r = pass(gate());
     expect(r.nexted).toBe(false);
     expect(r.status).toBe(403);
+  });
+});
+
+describe('固定 token 的长度', () => {
+  const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
+  const apps: App[] = [];
+  afterEach(async () => {
+    for (const app of apps.splice(0)) await app.stop();
+  });
+
+  /** 只激活、不启动应用：webui-server 在应用就绪时才监听，这里不占端口 */
+  async function activate(fixedToken: string) {
+    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    apps.push(app);
+    await app.plugin(webuiServer, { host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken });
+    await app.plugins.idle();
+    return app.plugins.getPlugin(webuiServer.name);
+  }
+
+  it('fixed 模式的 token 去掉首尾空白后不足 32 个字符：激活失败并写明原因', async () => {
+    const short = await activate(`  ${'k'.repeat(31)}  `);
+    expect(short?.state).toBe('error');
+    expect(short?.error).toContain('fixedToken');
+    expect(short?.error).toContain('32');
+  });
+
+  it('够 32 个字符的照常激活；留空的仍按 persist 处理', async () => {
+    expect((await activate('k'.repeat(32)))?.state).toBe('active');
+    expect((await activate(''))?.state).toBe('active');
   });
 });

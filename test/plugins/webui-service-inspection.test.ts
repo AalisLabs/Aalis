@@ -35,7 +35,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
   installHostConfig(app, store);
   // hooks / contributions 已出核：与宿主一样由两个默认提供者插件登记
   await registerHubs(app);
-  const token = 'service-inspection-test';
+  const token = 'service-inspection-test-token-0000';
   const headers = { Cookie: `aalis_webui_token=${token}`, 'Content-Type': 'application/json' };
   const fakeStorage = {
     listRoots: () => [],

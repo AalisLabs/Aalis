@@ -112,7 +112,7 @@ describe('works-site target ownership', () => {
 
   it('routes both instance pages and status actions through the actual WebUI server', async () => {
     const port = await freePort();
-    const token = 'works-site-target-test';
+    const token = 'works-site-target-test-token-0000';
     const { app } = hostedApp({ name: 'works-target-pages' }, { logger: silent });
     app.bind({ provide }).provide(storage, memoryStorage(new Map()));
     try {
