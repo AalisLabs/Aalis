@@ -2,13 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import {
   createStorageGateway,
   type StorageService,
   storage as storageService,
 } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
+import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -42,7 +43,7 @@ describe('checkpoint × 白纸根', () => {
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint });
     storage = createStorageGateway(host.storage);
-    // beginTurn / endTurn 是实现类上的驱动面，不在对外服务契约里
+    // runTurn 是实现类上的驱动面，不在对外服务契约里
     svc = host.checkpoint.require() as CheckpointServiceImpl;
   });
 
@@ -57,11 +58,11 @@ describe('checkpoint × 白纸根', () => {
     writeFileSync(join(paperDir, 'old', 'prev.png'), 'prev');
     writeFileSync(join(base, 'ws', 'keep.txt'), 'orig');
 
-    svc.beginTurn('s1');
-    await storage.writeFile('ws:/keep.txt', 'changed');
-    await storage.writeFile('paper:/task-1/out.png', 'artifact');
-    await storage.delete('paper:/old/prev.png');
-    await svc.endTurn('s1');
+    await svc.runTurn('turn-s1', 's1', async () => {
+      await storage.writeFile('ws:/keep.txt', 'changed');
+      await storage.writeFile('paper:/task-1/out.png', 'artifact');
+      await storage.delete('paper:/old/prev.png');
+    });
 
     const [turn] = await svc.listTurns('s1');
     const manifest = await svc.getManifest('s1', (turn as { turnId: string }).turnId);

@@ -13,7 +13,7 @@
 ```ts
 interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
-  abort?(sessionId: string): void;
+  abort?(sessionId: string, turnId?: string): boolean;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   getPreprocessors?(): PreprocessorInfo[];
   getPluginGroups?(): PluginGroupInfo[];
@@ -21,6 +21,14 @@ interface AgentService {
 ```
 
 对话调用走 `ServiceRef`（`agent.current` / `agent.require()`）。Gateway 在 `inbound:dispatch` 相位调 `handleMessage`，业务层很少直接取。
+
+`abort` 不带 `turnId` 时停这个会话所有在飞的回合；带 `turnId` 时只停那一轮，它已经结束或换成了新一轮时什么也不停。返回值是有没有停下回合，调用方据此分辨「turnId 对不上」。
+
+## 回合 id
+
+实现者在一轮开始时生成回合 id（`turnId`），这一轮的 `agent:input:before`、`agent:turn:after`、流式片段（`outbound:stream`）、工具调用（`ToolCallContext` 与 `tool:execute`）与用量（`token:usage`）都带同一个 `turnId`。每次工具调用另有 `callId`，见 [api-tools](./api-tools.md#toolcallcontext)。回应 `token:request` 的用量快照不在任何回合里，不带 `turnId`。
+
+plugin-agent 落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在 `metadata.turnId` 记下这一轮的回合 id；执行过的工具调用在 tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段记下这次调用的 `callId`。
 
 ## 绑定接口
 
@@ -46,13 +54,13 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 
 | 钩子 | 时机 | payload |
 |---|---|---|
-| `agent:input:before` | 进入 Agent 之前 | `{ message, metadata }` |
+| `agent:input:before` | 进入 Agent 之前；`next` 之后是这一轮的全部，不调即拦下整条消息 | `{ message, turnId, metadata }` |
 | `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, sessionId, source?, ... }`；`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后 | `{ name, result, toolCallContext }` |
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, visibleContent?, sessionId, ... }` |
-| `agent:turn:after` | 一轮处理完成 | `{ message, reply, outcome, sessionId, metadata }` |
+| `agent:turn:after` | 一轮处理完成（消息在 `agent:input:before` 被拦下时不触发） | `{ message, reply, outcome, sessionId, turnId, metadata }` |
 
 这些键经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`。钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](./api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
 

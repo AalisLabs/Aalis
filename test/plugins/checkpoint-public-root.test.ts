@@ -2,13 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import {
   createStorageGateway,
   type StorageService,
   storage as storageService,
 } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
+import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -47,7 +48,7 @@ describe('checkpoint × 公开根', () => {
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint });
     storage = createStorageGateway(host.storage);
-    // beginTurn / endTurn 是实现类上的驱动面，不在对外服务契约里
+    // runTurn 是实现类上的驱动面，不在对外服务契约里
     svc = host.checkpoint.require() as CheckpointServiceImpl;
   });
 
@@ -62,12 +63,12 @@ describe('checkpoint × 公开根', () => {
     writeFileSync(join(publicDir, OLD_WORK_ID, 'files', 'work.png'), 'prev');
     writeFileSync(join(base, 'ws', 'keep.txt'), 'orig');
 
-    svc.beginTurn('s1');
-    await storage.writeFile('ws:/keep.txt', 'changed');
-    await storage.writeFile(`public:/${WORK_ID}/files/index.html`, 'published');
-    await storage.writeFile(`public:/${WORK_ID}/thumb.png`, 'thumb');
-    await storage.delete(`public:/${OLD_WORK_ID}/files/work.png`);
-    await svc.endTurn('s1');
+    await svc.runTurn('turn-s1', 's1', async () => {
+      await storage.writeFile('ws:/keep.txt', 'changed');
+      await storage.writeFile(`public:/${WORK_ID}/files/index.html`, 'published');
+      await storage.writeFile(`public:/${WORK_ID}/thumb.png`, 'thumb');
+      await storage.delete(`public:/${OLD_WORK_ID}/files/work.png`);
+    });
 
     const [turn] = await svc.listTurns('s1');
     const turnId = (turn as { turnId: string }).turnId;

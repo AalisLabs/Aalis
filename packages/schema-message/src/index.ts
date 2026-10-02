@@ -48,7 +48,8 @@ export interface ToolCall {
  * 内容时间线分段（按到达顺序记录助手输出的真实结构）。
  * - text：正常对话文本
  * - reasoning_text：思考/推理文本（部分模型如 DeepSeek-R1、Ollama thinking 会产出）
- * - tool_call：工具调用片段（startTime/endTime 用于时长展示）
+ * - tool_call：工具调用片段（startTime/endTime 用于时长展示；callId 同这次调用的 ToolCallContext.callId，
+ *   历史里的工具卡据它与实时推送对上，参数没解析成、没有执行的调用没有）
  *
  * 该数组若存在则为渲染顺序的真相；同时 message.content / reasoningContent
  * 仍保留为派生镜像，供 LLM API 与历史压缩等纯文本消费者使用。
@@ -63,6 +64,7 @@ export type ContentSegment =
       result?: string;
       startTime?: number;
       endTime?: number;
+      callId?: string;
     };
 
 /**
@@ -371,6 +373,8 @@ export interface OutgoingMessage {
   attachments?: MessageAttachment[];
   /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
   source?: 'agent' | 'system' | 'command';
+  /** 由工具调用发出的消息：那次调用的 id（ToolCallContext.callId），会话的客户端据此把消息挂到对应的工具卡上 */
+  callId?: string;
   /** 本条回复的 LLM 元数据（供 webui 实时展示，不需持久化）。 */
   modelInfo?: {
     provider?: string;
@@ -387,6 +391,8 @@ export interface OutgoingMessage {
 /** 流式消息片段 */
 export interface StreamChunkMessage {
   sessionId: string;
+  /** 所在回合的 id（agent 在回合开始时生成，同一轮的工具调用、用量与回合结束带同一个） */
+  turnId: string;
   platform?: string;
   contentDelta?: string;
   reasoningDelta?: string;

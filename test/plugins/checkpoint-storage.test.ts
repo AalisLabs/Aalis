@@ -2,18 +2,20 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import { type Hooks, hooks as hooksCap } from '../../packages/api-hooks/src/index.js';
 import {
   createStorageGateway,
   type StorageService,
   storage as storageService,
 } from '../../packages/api-storage/src/index.js';
-import { App, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
 import { configSchema } from '../../packages/plugin-checkpoint/src/config.js';
-import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
+import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import { CheckpointServiceImpl, normalizeConfig } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -61,7 +63,7 @@ describe('checkpoint × storage (真 fs)', () => {
     const host = app.bind({ storage: storageService, checkpoint, hooks: hooksCap });
     storage = createStorageGateway(host.storage);
     hooks = host.hooks;
-    // beginTurn / endTurn 是实现类上的驱动面，不在对外服务契约里
+    // runTurn 是实现类上的驱动面，不在对外服务契约里
     svc = host.checkpoint.require() as CheckpointServiceImpl;
   });
 
@@ -70,11 +72,9 @@ describe('checkpoint × storage (真 fs)', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  /** 跑一个回合：begin → body → end，返回该会话唯一的 turnId */
+  /** 在一个回合里跑 body，返回该会话唯一的 turnId */
   async function runTurn(sessionId: string, body: () => Promise<void>): Promise<string> {
-    svc.beginTurn(sessionId);
-    await body();
-    await svc.endTurn(sessionId);
+    await svc.runTurn(`turn-${sessionId}`, sessionId, body);
     const turns = await svc.listTurns(sessionId);
     expect(turns).toHaveLength(1);
     return (turns[0] as { turnId: string }).turnId;
@@ -328,6 +328,30 @@ describe('checkpoint × storage (真 fs)', () => {
     expect(result.ok).toBe(true);
     expect(readFileSync(join(ws, 'keep.txt'), 'utf-8')).toBe('orig');
     expect(String(await storage.readFile('data:/state.json', 'utf-8')), 'data 根文件不得被回滚改回').toBe('v2');
+  });
+
+  it('消息被下游钩子拦下、到不了回合结束：这一轮照样结束并落盘', async () => {
+    // 拦截者登记在 checkpoint 之后，排在它的 next 里面
+    await app.plugins.register(
+      definePlugin({
+        name: 'zz-block-input',
+        uses: { hooks: hooksCap, storage: storageService },
+        apply({ hooks, storage }) {
+          const gateway = createStorageGateway(storage);
+          hooks.middleware('agent:input:before', async () => {
+            await gateway.writeFile('ws:/blocked.txt', 'x'); // 不调 next：拦下整条消息
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('zz-block-input')?.state).toBe('active');
+
+    const message = { sessionId: 'h2', platform: 'webui', content: '' } as IncomingMessage;
+    await hooks.run('agent:input:before', { message, turnId: 'turn-blocked', metadata: {} }, async () => {
+      throw new Error('拦截者不调 next，回合本体不该跑');
+    });
+    expect((await svc.listTurns('h2')).map(t => [t.turnId, t.fileCount])).toEqual([['turn-blocked', 1]]);
   });
 
   it('execUsed：exec_background / run_python 也算命令副作用', async () => {

@@ -19,7 +19,7 @@
 ```ts
 export interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
-  abort?(sessionId: string): void;
+  abort?(sessionId: string, turnId?: string): boolean;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   getPreprocessors?(): PreprocessorInfo[];
   getPluginGroups?(): PluginGroupInfo[];
@@ -33,19 +33,21 @@ export interface BoundAgent extends ServiceRef<AgentService> {
 - `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`；**不调 `next()` 即中断整条管线**。
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
 - 对话调用走 `agent.current` / `agent.require()`。`current` 每次读取重新解析当前胜者。
-- `TokenUsageEvent` / `TokenUsageBreakdown`：每次 LLM 调用后通过 `token:usage` 事件 emit 的 12 桶 prompt 预算快照。
+- `abort(sessionId, turnId?)`：不带 `turnId` 停这个会话所有在飞的回合，带 `turnId` 只停那一轮；返回有没有停下回合，`turnId` 对不上（那一轮已结束或换成了新一轮）时返回 `false`、什么也不停。
+- `TokenUsageEvent` / `TokenUsageBreakdown`：每次 LLM 调用后通过 `token:usage` 事件 emit 的 12 桶 prompt 预算快照，带所在回合的 `turnId`（回应 `token:request` 的快照不带）。
+- **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:input:before`、`agent:turn:after`、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
 
 `agent:*` 钩子（declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`）——这是 agent 服务最重要的扩展面：
 
 | 钩子 | 触发时机 | data 关键字段 |
 |---|---|---|
-| `agent:input:before` | 回合最开始，预处理 | `{ message, metadata }`。不调 `next()` → 拦截整条消息 |
+| `agent:input:before` | 回合最开始，预处理 | `{ message, turnId, metadata }`。`next()` 之后是这一轮的全部；不调 `next()` → 拦截整条消息 |
 | `agent:llm:before` | 每次调 LLM 前（首轮 + 每次工具迭代） | `{ messages, tools, sessionId?, … }`。可改 `messages`/`tools` |
 | `agent:llm:after` | 每次 LLM 返回后 | `{ response, messages }` |
 | `agent:tool:before` | 每个工具执行前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 每个工具执行后 | `{ name, result, toolCallContext }` |
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, archiveContent?, visibleContent?, sessionId, …; retryRequested?, retryFeedback?, attempt?, maxRetries? }` |
-| `agent:turn:after` | 回合终态（四条路径都发） | `{ message, reply, outcome, sessionId, metadata }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
+| `agent:turn:after` | 回合终态（四条路径都发；消息被 `agent:input:before` 拦下时不发） | `{ message, reply, outcome, sessionId, turnId, metadata }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
 
 钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](../api/api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
 
@@ -79,7 +81,9 @@ class MyAgent implements AgentService {
   async handleMessage(_message: IncomingMessage): Promise<void> {
     // 跑 input:before → llm:before → 工具循环 → reply:before → turn:after
   }
-  abort(_sessionId: string): void {}
+  abort(_sessionId: string, _turnId?: string): boolean {
+    return false;
+  }
 }
 
 export default definePlugin({
@@ -92,7 +96,7 @@ export default definePlugin({
 });
 ```
 
-default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在四条终态路径都发 `agent:turn:after`——否则 `session-manager` 永远把会话停在 `active`、`checkpoint` 回合永不关闭。
+default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，必须在四条终态路径都发 `agent:turn:after`。漏发的话，workflow 的 agent 节点要等到超时才失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，会话服务按 silent 收尾。
 
 ## 5. 标准消费方式
 
@@ -128,7 +132,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 `incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages: true`、以及回合 `signal`（守卫等待确认期间被 abort 的工具不再执行）。自定义 provider 必须保留 actor 语义，否则系统触发的工具会以错误身份执权。宿主通知延续某次工具调用时（如后台命令结束通知）不带发言者，`userId` 取 `hostNotice.callerUserId`：这一轮的确认由起它的人应答、会话授予照常命中；归档与提示词钩子仍按消息本身的 `userId`（没有）。
+**ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 `incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages: true`、回合 `signal`（守卫等待确认期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`。自定义 provider 必须保留 actor 语义，否则系统触发的工具会以错误身份执权。宿主通知延续某次工具调用时（如后台命令结束通知）不带发言者，`userId` 取 `hostNotice.callerUserId`：这一轮的确认由起它的人应答、会话授予照常命中；归档与提示词钩子仍按消息本身的 `userId`（没有）。
 
 **lane 与打断**：同一会话按 `source` 分 lane，同一 lane 的新消息中止旧回合，不同 lane 互不打断。例外只有一条：真人消息（不带 `source`）到达时，中止同一会话里 `hostNotice.callerUserId` 等于这条消息 `userId` 的宿主通知回合，起它的人说话就能叫停她自己开的那一轮；别人的消息与不延续任何人身份的通知（白纸等）不受影响，宿主通知也从不打断别的回合。
 
@@ -142,7 +146,7 @@ export default definePlugin({
 
 ## 7. 边界情形与注意事项（审计标注）
 
-**`abort(sessionId)` 用 `startsWith` 匹配 lane**：lane key = `${sessionId}::${source}`。`abort('S')` 会一次性中止 `S` 的**所有** lane。若存在 sessionId 互为前缀的命名，`startsWith` 可能误伤——调用方需保证 sessionId 不互为前缀。
+**`abort(sessionId)` 用 `startsWith` 匹配 lane**：lane key = `${sessionId}::${source}`。`abort('S')` 会一次性中止 `S` 的**所有** lane；带 `turnId` 时只中止 `turnId` 相同的那条 lane。若存在 sessionId 互为前缀的命名，`startsWith` 可能误伤——调用方需保证 sessionId 不互为前缀。
 
 **`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
 

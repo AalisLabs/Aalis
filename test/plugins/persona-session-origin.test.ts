@@ -44,7 +44,7 @@ describe('persona 会话环境按出生平台', () => {
   /** 经 agent:input:before 装上会话身份，在钩子链内取易变上下文 */
   const volatileFor = async (message: IncomingMessage): Promise<string> => {
     let prompt = '';
-    await host.hooks.run('agent:input:before', { message, metadata: {} }, async () => {
+    await host.hooks.run('agent:input:before', { message, turnId: 't1', metadata: {} }, async () => {
       prompt = svc.getVolatilePrompt?.() ?? '';
     });
     return prompt;

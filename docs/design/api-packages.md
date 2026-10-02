@@ -118,6 +118,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-host-paths` | — | `host-paths` | — | `HostPaths`：家目录、安装集与家目录布局的绝对路径；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
 | `api-asr` | — | `asr` | — | `ASRService`, `TranscribeInput`, `TranscribeResult` |
+| `api-checkpoint` | — | `checkpoint` | — | `CheckpointService`, `RollbackResult`, `RollbackWithChatResult`；默认提供者 plugin-checkpoint |
 | `api-code-sandbox` | — | `code-sandbox` | — | `CodeSandboxService`, `SandboxPolicy`, `SandboxRunRequest`；默认提供者 plugin-code-sandbox-os |
 | `api-cron-engine` | — | `cron-engine` | — | `CronEngine`, `CronSubscribeOptions`；转出 `@aalis/util-cron` 的 `CronExprKind` / `ValidateResult` 类型 |
 | `api-doctor` | — | `doctor` | — | `DoctorService`, `CheckSpec`, `CheckResult`, `DoctorReport`；绑定门面 `registerCheck` |
@@ -131,6 +132,8 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-session-confirm` | — | `session-confirm` | — | `SessionConfirmService`, `ConfirmChannel` |
 | `api-session-history` | — | `session-history` | — | `SessionHistoryService`, `AccessChecker`；默认提供者 plugin-tool-session |
 | `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`, `SessionInfo` |
+| `api-session-protocol` | — | `session-protocol` | — | `SessionProtocolService`, `SessionPeer`, `SessionConnection`；会话协议的 zod schema（`sessionMethods` / `sessionNotifications`、帧与错误码），类型由 schema 推导；默认提供者 plugin-session-server |
+| `api-todo-list` | — | `todo-list` | — | `TodoListService`, `TodoItem`；注入事件 `todo:updated`；默认提供者 plugin-todo-list |
 | `api-user-relation` | — | `user-relation` | — | `UserRelationService`；默认提供者 plugin-user-relation |
 | `api-workflow` | — | `workflow` | — | `WorkflowService`, `WorkflowDef`, `WorkflowRun`, `NodeSpec` 等 |
 
@@ -142,7 +145,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 - 该领域要 **导出服务描述符**或 **augment** `AalisEvents`（core）、`HookContextMap`（`@aalis/api-hooks`）、`ContributionPointMap`（`@aalis/api-contributions`）（或定义自己的能力枚举 + helper）
 - 该领域类型被 **>3 个其他插件**直接 import
 
-只有一个实现且无类型外溢的“叶子插件”（如 plugin-todo-list、plugin-image-sender 内部）不需要 api 包。
+只有一个实现且无类型外溢的“叶子插件”（如 plugin-image-sender 内部）不需要 api 包。
 
 ## 包该多厚：三类判据
 

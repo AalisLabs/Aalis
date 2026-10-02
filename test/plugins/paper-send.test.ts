@@ -121,6 +121,14 @@ describe('paper_send：发出', () => {
     expect(tool?.risk).toBeUndefined();
   });
 
+  it('发出的消息带这次工具调用的 callId：界面据此给工具卡标「已发到群」', async () => {
+    const h = await hub();
+    expect(await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), callId: 'call-9' })).toMatchObject({
+      ok: true,
+    });
+    expect(h.outbound.map(m => m.callId)).toEqual(['call-9']);
+  });
+
   it('PNG 走 image：出站附件指向白纸根，文件名按任务名重写，平台确认收下后标为已交付', async () => {
     const h = await hub();
     const res = await h.call('paper_send', { artifact_id: 'a-00000001' });

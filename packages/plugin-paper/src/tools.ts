@@ -358,7 +358,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     const refused = sendRefusal(artifact, cfg);
     if (refused) return fail(refused);
 
-    const result = await deliverArtifacts(deps, task, [artifact], ctx.signal);
+    const result = await deliverArtifacts(deps, task, [artifact], ctx.signal, ctx.callId);
     if (!result.ok) return fail(result.error);
     deps.logger.info(`白纸任务 ${task.id} 的成品 ${artifactId} 已由平台确认收下（房间 ${ctx.sessionId}）`);
     return done({ taskId: task.id, artifactId, message: '平台已确认收下；不代表对方已经看到' });

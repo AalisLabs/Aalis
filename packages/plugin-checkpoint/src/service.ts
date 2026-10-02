@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { CheckpointService, RollbackResult, RollbackWithChatResult } from '@aalis/api-checkpoint';
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
@@ -21,99 +23,52 @@ const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set([
   'self',
 ]);
 
-/**
- * Checkpoint 服务
- *
- * 在 LLM 一次回合（assistant turn）期间记录受控存储中的写入/删除/重命名操作（data / tmp / cache / pluginData /
- * logs / paper / public / self 这几类共享根、临时根、白纸根、公开根与 self 根除外，见 beforeMutate），
- * 在改动发生前自动备份原始文件内容，使用户可以从 WebUI 一键回滚整轮操作。
- *
- * 协作模型：
- * - plugin-storage-local 在执行 writeFile/delete/rename 之前先探测 checkpoint 服务，
- *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
- * - 本服务通过 hooks `agent:input:before` / `agent:turn:after` 维护「当前回合」状态。
- * - exec / exec_background / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
- *   （前端 UI 标注「未保护」）。
- */
-export interface CheckpointService {
-  /** 探测：是否在某个回合内（storage-local 提早判断以避免无谓 stat） */
-  isActive(): boolean;
-  /**
-   * 在 storage 即将修改 uri 时调用。本调用是 op="write"|"delete"|"rename" 之前的一次性快照机会。
-   * 如果同一 uri 在当前回合内已被快照过，则不再备份内容（保留最早的原始内容）；
-   * 但 op='rename' 仍会补记一条不带 blob 的条目，否则「先改写再移走」的移动会整条丢失。
-   * loadOriginal 是按需读取原始内容的闭包；首次需要快照时才调用。
-   * toUri 仅 op='rename' 有意义：改动后的目标 URI，回滚时据它把文件原路移回
-   * （缺省则退化为「只把原内容写回源路径」，目标端会留一份重复）。
-   */
-  beforeMutate(
-    uri: string,
-    op: 'write' | 'delete' | 'rename',
-    loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
-    toUri?: string,
-  ): Promise<void>;
-  /** 列出某个 session 的所有回合 checkpoint */
-  listTurns(sessionId: string): Promise<TurnSummary[]>;
-  /** 读取某回合 manifest */
-  getManifest(sessionId: string, turnId: string): Promise<TurnManifest | null>;
-  /** 回滚某回合（恢复 / 删除 / 重命名复原）。返回受影响文件计数 */
-  rollback(sessionId: string, turnId: string): Promise<RollbackResult>;
-  /** 回滚某回合并同步删除本轮对话消息与向量条目 */
-  rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult>;
-  /** 清除某会话的所有 checkpoint（/clear 与 deleteSession 调用）。幂等；不存在也返回 0。 */
-  clearSession(sessionId: string): Promise<number>;
-  /** 清除全部 checkpoint（/clear all 调用）。幂等。 */
-  clearAll(): Promise<number>;
-}
-
-export interface CheckpointFileRecord {
+interface CheckpointFileRecord {
   uri: string;
-  /** write=覆盖已有, write-new=新创建, delete=删除, rename=重命名 */
+  /** write=覆盖已有, write-new=新创建, delete=删除, rename=改名或移动 */
   action: 'write' | 'write-new' | 'delete' | 'rename';
-  /** rename 的目标 URI（回滚时原路移回；调用方未传 toUri 时缺省） */
+  /** rename 的目标 URI（回滚时原路移回；存储实现没给目标时缺省） */
   toUri?: string;
-  /** 原始大小（如果有快照） */
+  /** 原始大小（有快照时） */
   originalSize?: number;
-  /** 备份 blob 文件名（相对于 turn 目录） */
+  /** 备份文件名（相对于回合目录） */
   blob?: string;
-  /** 跳过原因（过大、读取失败等） */
+  /** 没有备份的原因（过大、读取失败、目录等），这一条不可回滚 */
   skipped?: string;
 }
 
+/** 一轮的清单，提交时落盘为回合目录下的 manifest.json */
 export interface TurnManifest {
+  /** 回合 id，与 agent 的回合 id 相同 */
   turnId: string;
   sessionId: string;
   startedAt: number;
   endedAt?: number;
   files: CheckpointFileRecord[];
-  /** 本轮对话内消息的时间戳，用于 rollbackWithChat 精确删除消息与向量条目 */
+  /** 这一轮对话消息的时间戳，rollbackWithChat 据此删除消息与向量条目 */
   messageTimestamps?: number[];
+  /** 这一轮调用过 exec / exec_background / run_* 等命令类工具：它们的副作用不经存储，回滚覆盖不到 */
+  execUsed?: boolean;
 }
 
-export interface TurnSummary {
+/** 回合列表的一行（页面动作 listTurns） */
+interface TurnSummary {
   turnId: string;
   sessionId: string;
   startedAt: number;
   endedAt?: number;
   fileCount: number;
-  /** 是否在 turn 内调用过 exec / exec_background / run_* 等命令类工具（前端用于显示「部分未保护」） */
+  /** 见 {@link TurnManifest.execUsed}，界面据此提示「部分未保护」 */
   execUsed?: boolean;
-  /** 摘要预览（前 3 个文件 URI） */
+  /** 前 3 个文件的 URI */
   filesPreview: string[];
 }
 
-export interface RollbackResult {
-  ok: boolean;
-  restored: string[];
-  deleted: string[];
-  errors: Array<{ uri: string; reason: string }>;
-}
-
-export interface RollbackWithChatResult extends RollbackResult {
-  /** 实际从 memory 中删除的消息条数 */
-  deletedMessages: number;
-  /** chat 删除是否成功；若失败，errors 也会记录原因 */
-  chatDeleted: boolean;
+/** 进行中的回合：清单 + 本回合已快照的 uri（去重）+ 备份文件计数器 */
+interface ActiveTurn {
+  manifest: TurnManifest;
+  snapshotted: Set<string>;
+  blobIndex: number;
 }
 
 interface ServiceConfig {
@@ -124,16 +79,28 @@ interface ServiceConfig {
 }
 
 /**
- * 实现
+ * Checkpoint 服务实现
+ *
+ * 在一轮对话期间记录受控存储中的写入/删除/重命名操作（data / tmp / cache / pluginData /
+ * logs / paper / public / self 这几类共享根、临时根、白纸根、公开根与 self 根除外，见 beforeMutate），
+ * 在改动发生前自动备份原始文件内容，使用户可以一键回滚整轮操作。
+ *
+ * 协作模型：
+ * - plugin-storage-local 在执行 writeFile/delete/rename 之前先探测 checkpoint 服务，
+ *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
+ * - 本插件在 `agent:input:before` 里用 agent 给的 turnId 把这一轮包进 `runTurn`：回合的异步上下文里发生的改动
+ *   记进这一轮，回合跑完（含被下游拦下、出错）即提交。
+ * - exec / exec_background / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
+ *   （前端 UI 标注「未保护」）。
  */
 export class CheckpointServiceImpl implements CheckpointService {
   /**
-   * 每会话独立的活跃回合（跨会话并发互不串台）。
-   * 每项含：清单 + 本回合已快照 uri 集合(去重) + blob 文件计数器。
+   * 进行中的回合，按 turnId 记。同一会话可以同时有几轮在跑（agent 按会话加来源分 lane），
+   * 改动按写入时所在的异步上下文归属到其中一轮，见 {@link scope}。
    */
-  private turns = new Map<string, { manifest: TurnManifest; snapshotted: Set<string>; blobIndex: number }>();
-  /** 回滚正在处理的 URI：回滚自身的写/删/移经 storage 写前钩子回到 beforeMutate，不得记进任何活跃回合 */
-  private readonly rollingBack = new Set<string>();
+  private readonly turns = new Map<string, ActiveTurn>();
+  /** 回合的异步上下文：runTurn 里跑的一切（钩子、工具、它们触发的存储写入）都带着这一轮 */
+  private readonly scope = new AsyncLocalStorage<ActiveTurn>();
   /** 读失败的告警记录：位置（会话目录或 manifest URI）→ 已告警过的原因 */
   private readonly readFailures = new Map<string, string>();
 
@@ -145,27 +112,30 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   // ──────────── 生命周期 ────────────
 
-  beginTurn(sessionId: string): void {
-    // 同会话已有未结束回合（异常未 endTurn / abort 重开）→ 先提交它避免遗失（仅影响本会话，不碰其它）
-    const prev = this.turns.get(sessionId);
-    if (prev) {
-      this.turns.delete(sessionId);
-      this.commitTurn(prev).catch(err => this.logger.warn(`finalize 旧回合失败: ${(err as Error).message}`));
-    }
-    const turnId = crypto.randomUUID();
-    this.turns.set(sessionId, {
+  /**
+   * 在一轮里跑 fn：fn 的异步上下文里发生的存储改动记进这一轮，fn 结束（含抛错）即提交。
+   * 开始与结束在同一次调用里配对，同一会话并发的几轮互不结束对方。提交失败只告警：回复已经发出，
+   * 这一轮只是不能回滚。
+   */
+  async runTurn<T>(turnId: string, sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const turn: ActiveTurn = {
       manifest: { turnId, sessionId, startedAt: Date.now(), files: [] },
       snapshotted: new Set(),
       blobIndex: 0,
-    });
+    };
+    this.turns.set(turnId, turn);
     this.logger.debug(`checkpoint 回合开始 ${sessionId} turn=${turnId}`);
-  }
-
-  async endTurn(sessionId: string): Promise<void> {
-    const turn = this.turns.get(sessionId);
-    if (!turn) return;
-    this.turns.delete(sessionId);
-    await this.commitTurn(turn);
+    try {
+      return await this.scope.run(turn, fn);
+    } finally {
+      // flushAll 可能已经提交过它（拆卸时回合还在跑）
+      if (this.turns.get(turnId) === turn) {
+        this.turns.delete(turnId);
+        await this.commitTurn(turn).catch(err =>
+          this.logger.warn(`checkpoint 提交回合失败: ${(err as Error).message}`),
+        );
+      }
+    }
   }
 
   /** 进程退出前提交所有活跃回合，避免未结束回合丢失。 */
@@ -178,11 +148,7 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 
   /** 提交一个回合：补 endedAt + 抓消息时间戳 + 落盘 manifest + 触发 GC。无改动则跳过。 */
-  private async commitTurn(turn: {
-    manifest: TurnManifest;
-    snapshotted: Set<string>;
-    blobIndex: number;
-  }): Promise<void> {
+  private async commitTurn(turn: ActiveTurn): Promise<void> {
     const m = turn.manifest;
     m.endedAt = Date.now();
     // 在持久化前抓取本轮对话的消息时间戳（供 rollbackWithChat 使用）；即使无文件改动，只要有消息就持久化
@@ -206,17 +172,22 @@ export class CheckpointServiceImpl implements CheckpointService {
     this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
   }
 
-  /** 标记某会话当前回合调用过 exec / exec_background / run_* 等命令类工具，UI 端会提示「部分未保护」 */
-  markExecUsed(sessionId: string): void {
-    const turn = this.turns.get(sessionId);
-    if (turn) (turn.manifest as TurnManifest & { execUsed?: boolean }).execUsed = true;
+  /**
+   * 调用所在的那一轮：异步上下文带着的回合还没结束才算。回合里起的异步任务可能在回合提交之后才写入，
+   * 它们仍带着这一轮的上下文，但改动已不属于任何一轮。
+   */
+  private currentTurn(): ActiveTurn | undefined {
+    const turn = this.scope.getStore();
+    return turn && this.turns.get(turn.manifest.turnId) === turn ? turn : undefined;
+  }
+
+  /** 标记调用所在的那一轮调用过 exec / exec_background / run_* 等命令类工具，UI 端会提示「部分未保护」 */
+  markExecUsed(): void {
+    const turn = this.currentTurn();
+    if (turn) turn.manifest.execUsed = true;
   }
 
   // ──────────── beforeMutate ────────────
-
-  isActive(): boolean {
-    return this.turns.size > 0;
-  }
 
   async beforeMutate(
     uri: string,
@@ -224,30 +195,30 @@ export class CheckpointServiceImpl implements CheckpointService {
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
     toUri?: string,
   ): Promise<void> {
+    // 只记进写入所在的那一轮。回合外的改动（WebUI 发起的回滚、别的插件在后台的写入）不属于任何一轮，
+    // 存储每次写入都会调到这里，回合外的写入先在这一步返回
+    const turn = this.currentTurn();
+    if (!turn) return;
     // 自身根下的写入（blob / manifest）不快照：storage 的写前钩子会把它们递归送回这里，
     // 而 blob 此刻在磁盘上尚不存在 → 会给自己记一条 write-new 假账，且排在真实条目之前，
     // 回滚时先删备份再读同一 blob → ENOENT，覆盖/删除类恢复必败。
     if (this.isOwnUri(uri)) return;
     // data / pluginData / logs 是多会话、多平台共享的写入区：既有别处落盘的附件与插件状态，也有本回合自己
-    // 经工具产生的图片，storage 写入没有会话归属、无法分辨——记进本回合，回滚就会误删别人刚落盘的文件、
-    // 把插件状态写回旧版，故整根不记账（这些改动不可回滚）；self 根（skill / persona / 编排定义）同理；
+    // 经工具产生的图片，回滚这些会误删别人刚落盘的文件、把插件状态写回旧版，故整根不记账（这些改动不可回滚）；
+    // self 根（skill / persona / 编排定义）现在任何会话都能写，同理不记账；
     // tmp、cache 是回合结束前就清掉的临时目录与缓存，记账只会让回滚必报 ENOENT；paper 是白纸根，枢纽在任意会话的回合进行中写入远端成品，
     // public 是公开根，发布服务在审核结束、裁决与撤下时写删已发布的作品，这些写入都不属于那一轮。
     // 其余根（workspace 与用户自建的 custom 等）照常记账。
     if (this.isUnprotectedRootUri(uri)) return;
-    // 回滚自身的改动不是任何回合的改动：记进其它会话的活跃回合，那边一回滚就把这次回滚再撤掉
-    if (this.rollingBack.has(uri)) return;
     // 去重按 uri，但 rename 不能因此被吞掉：同一回合里「先 write/改写 f，再把 f 移走」时，
     // f 已快照过 → 移动整条不入账 → 回滚照 write 条目去写/删源端（ENOENT），文件还留在目标端。
-    // 对这些回合补记一条不带 blob 的 rename（内容已由更早的条目备份，不重复备份）：
+    // 对这种回合补记一条不带 blob 的 rename（内容已由更早的条目备份，不重复备份）：
     // LIFO 回滚先由它把目标移回源端，再由更早的 write/write-new 条目恢复原文或删除。
-    const renameOnly = op === 'rename' && toUri ? [...this.turns.values()].filter(t => t.snapshotted.has(uri)) : [];
-    for (const t of renameOnly) t.manifest.files.push({ uri, action: 'rename', toUri });
-    // 跨会话并发：把快照记进所有「本回合尚未对该 uri 快照过」的活跃回合。单回合=常态、零变化；
-    // 并发多回合无法精确判断是哪个 run 改的 → 保守地都备份（宁可冗余、不丢保护）。
-    const targets = [...this.turns.values()].filter(t => !t.snapshotted.has(uri));
-    if (targets.length === 0) return; // 回合外，或都已补记/快照过
-    for (const t of targets) t.snapshotted.add(uri);
+    if (turn.snapshotted.has(uri)) {
+      if (op === 'rename' && toUri) turn.manifest.files.push({ uri, action: 'rename', toUri });
+      return;
+    }
+    turn.snapshotted.add(uri);
 
     let original: { data: Buffer; size: number } | null = null;
     // 「读不出来」必须与「本就不存在」区分：前者记成 write-new 的话，回滚会把一个回合
@@ -260,54 +231,67 @@ export class CheckpointServiceImpl implements CheckpointService {
       this.logger.warn(`checkpoint 加载原文件失败 ${uri}: ${(err as Error).message}`);
     }
 
-    for (const t of targets) {
-      // 情况 1：write 且原文件不存在 → 标记为新创建（回滚时需要删除）；
-      // 情况 2：delete/rename 拿不到内容（目录，或读取失败）→ 仍要记一条：
-      //   否则目录递归删除零记录，UI 却照样渲染「回滚本轮对话（含文件）」并报回滚完成。
-      //   rename 有 toUri 时回滚仍能原路移回；delete 则如实标为不可回滚。
-      if (!original) {
-        if (op === 'write' && !loadFailed) {
-          t.manifest.files.push({ uri, action: 'write-new' });
-        } else {
-          // 读取失败的 write 记成 'write' + skipped：回滚时落到 skipped 分支如实报
-          // 「不可回滚」并计入 errors，而不是当作本回合新建删掉。
-          t.manifest.files.push({
-            uri,
-            action: op,
-            toUri,
-            skipped: loadFailed ? '未快照（原文件读取失败，不可回滚）' : '未快照（目录或读取失败）',
-          });
-        }
-        continue;
-      }
-      // 情况 3：过大 → 跳过快照但记录为「skipped」
-      if (original.size > this.cfg.maxFileSize) {
-        t.manifest.files.push({
+    // 情况 1：write 且原文件不存在 → 标记为新创建（回滚时需要删除）；
+    // 情况 2：delete/rename 拿不到内容（目录，或读取失败）→ 仍要记一条：
+    //   否则目录递归删除零记录，UI 却照样渲染「回滚本轮对话（含文件）」并报回滚完成。
+    //   rename 有 toUri 时回滚仍能原路移回；delete 则如实标为不可回滚。
+    if (!original) {
+      if (op === 'write' && !loadFailed) {
+        turn.manifest.files.push({ uri, action: 'write-new' });
+      } else {
+        // 读取失败的 write 记成 'write' + skipped：回滚时落到 skipped 分支如实报
+        // 「不可回滚」并计入 errors，而不是当作本回合新建删掉。
+        turn.manifest.files.push({
           uri,
           action: op,
           toUri,
-          originalSize: original.size,
-          skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
+          skipped: loadFailed ? '未快照（原文件读取失败，不可回滚）' : '未快照（目录或读取失败）',
         });
-        continue;
       }
-      // 情况 4：正常快照（每个活跃回合各存一份 blob 到自己的 turn 目录）
-      const blobName = `${t.blobIndex++}.bin`;
-      const turnDir = this.turnDir(t.manifest.sessionId, t.manifest.turnId);
-      await this.storage.writeFile(joinUri(turnDir, `blobs/${blobName}`), original.data);
-      t.manifest.files.push({
+      return;
+    }
+    // 情况 3：过大 → 跳过快照但记录为「skipped」
+    if (original.size > this.cfg.maxFileSize) {
+      turn.manifest.files.push({
         uri,
         action: op,
         toUri,
         originalSize: original.size,
-        blob: blobName,
+        skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
       });
+      return;
     }
+    // 情况 4：正常快照
+    const blobName = `${turn.blobIndex++}.bin`;
+    const turnDir = this.turnDir(turn.manifest.sessionId, turn.manifest.turnId);
+    await this.storage.writeFile(joinUri(turnDir, `blobs/${blobName}`), original.data);
+    turn.manifest.files.push({
+      uri,
+      action: op,
+      toUri,
+      originalSize: original.size,
+      blob: blobName,
+    });
   }
 
   // ──────────── 查询 ────────────
 
   async listTurns(sessionId: string): Promise<TurnSummary[]> {
+    const summaries: TurnSummary[] = (await this.manifests(sessionId)).map(manifest => ({
+      turnId: manifest.turnId,
+      sessionId: manifest.sessionId,
+      startedAt: manifest.startedAt,
+      endedAt: manifest.endedAt,
+      fileCount: manifest.files.length,
+      execUsed: manifest.execUsed,
+      filesPreview: manifest.files.slice(0, 3).map(f => f.uri),
+    }));
+    summaries.sort((a, b) => b.startedAt - a.startedAt);
+    return summaries;
+  }
+
+  /** 某会话已提交回合的清单，读不出来的回合跳过（并留痕） */
+  private async manifests(sessionId: string): Promise<TurnManifest[]> {
     const sessionDir = joinUri(this.cfg.rootUri, encodeSegment(sessionId));
     let entries: string[];
     try {
@@ -319,22 +303,12 @@ export class CheckpointServiceImpl implements CheckpointService {
       return [];
     }
     this.readFailures.delete(sessionDir);
-    const summaries: TurnSummary[] = [];
+    const manifests: TurnManifest[] = [];
     for (const turnId of entries) {
       const manifest = await this.getManifest(sessionId, turnId);
-      if (!manifest) continue;
-      summaries.push({
-        turnId: manifest.turnId,
-        sessionId: manifest.sessionId,
-        startedAt: manifest.startedAt,
-        endedAt: manifest.endedAt,
-        fileCount: manifest.files.length,
-        execUsed: (manifest as TurnManifest & { execUsed?: boolean }).execUsed,
-        filesPreview: manifest.files.slice(0, 3).map(f => f.uri),
-      });
+      if (manifest) manifests.push(manifest);
     }
-    summaries.sort((a, b) => b.startedAt - a.startedAt);
-    return summaries;
+    return manifests;
   }
 
   async getManifest(sessionId: string, turnId: string): Promise<TurnManifest | null> {
@@ -371,17 +345,27 @@ export class CheckpointServiceImpl implements CheckpointService {
   async rollback(sessionId: string, turnId: string): Promise<RollbackResult> {
     const manifest = await this.getManifest(sessionId, turnId);
     if (!manifest) {
-      return { ok: false, restored: [], deleted: [], errors: [{ uri: '', reason: 'checkpoint 不存在' }] };
+      return {
+        ok: false,
+        restored: [],
+        deleted: [],
+        errors: [{ uri: '', reason: 'checkpoint 不存在' }],
+        alsoChangedBy: [],
+      };
     }
-    const result: RollbackResult = { ok: true, restored: [], deleted: [], errors: [] };
+    const result: RollbackResult = {
+      ok: true,
+      restored: [],
+      deleted: [],
+      errors: [],
+      alsoChangedBy: await this.alsoChangedBy(manifest),
+    };
     const turnDir = this.turnDir(sessionId, turnId);
 
     // 逆序撤销（LIFO）：同回合内后发生的改动先回退，否则先前条目的复原会被后来条目再次覆盖。
     // 例：`move a.txt -> b.txt` 后又改写 b.txt，正序回滚先把 b 移回 a，再把 b 的快照写回，
     // b.txt 又冒出来；逆序则先把 b 还原成改写前内容，再整体移回 a，磁盘回到回合开始的样子。
     for (const file of [...manifest.files].reverse()) {
-      this.rollingBack.add(file.uri);
-      if (file.toUri) this.rollingBack.add(file.toUri);
       try {
         if (file.action === 'write-new') {
           // 新创建的文件 → 删除。已不存在即期望状态已达成（本回合新建后又删掉：delete 条目被按 URI
@@ -427,13 +411,27 @@ export class CheckpointServiceImpl implements CheckpointService {
         }
       } catch (err) {
         result.errors.push({ uri: file.uri, reason: (err as Error).message });
-      } finally {
-        this.rollingBack.delete(file.uri);
-        if (file.toUri) this.rollingBack.delete(file.toUri);
       }
     }
     if (result.errors.length > 0) result.ok = false;
     return result;
+  }
+
+  /**
+   * 这一轮改过、同一会话里另有回合也改过的文件（含移动的目标端），见 RollbackResult.alsoChangedBy。
+   * 在这一轮开始前就已结束的回合不算；已提交的与还在跑的回合都算。时间戳只到毫秒，结束与开始落在同一毫秒的
+   * 分不出先后，按算处理：多列一轮只是多一句如实的提示，漏列会让回滚悄悄撤掉别人的改动。
+   */
+  private async alsoChangedBy(target: TurnManifest): Promise<RollbackResult['alsoChangedBy']> {
+    const touched = (m: TurnManifest) => new Set(m.files.flatMap(f => (f.toUri ? [f.uri, f.toUri] : [f.uri])));
+    const running = [...this.turns.values()].map(t => t.manifest).filter(m => m.sessionId === target.sessionId);
+    const others = [...(await this.manifests(target.sessionId)), ...running]
+      .filter(m => m.turnId !== target.turnId && !(m.endedAt !== undefined && m.endedAt < target.startedAt))
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .map(m => ({ turnId: m.turnId, uris: touched(m) }));
+    return [...touched(target)]
+      .map(uri => ({ uri, turnIds: others.filter(o => o.uris.has(uri)).map(o => o.turnId) }))
+      .filter(entry => entry.turnIds.length > 0);
   }
 
   // ──────────── 聊天回滚依赖注入 ────────────
@@ -460,6 +458,7 @@ export class CheckpointServiceImpl implements CheckpointService {
         restored: [],
         deleted: [],
         errors: [{ uri: '', reason: 'checkpoint 不存在' }],
+        alsoChangedBy: [],
         deletedMessages: 0,
         chatDeleted: false,
       };

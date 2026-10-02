@@ -54,8 +54,13 @@ export interface ToolCallContext {
   enabledGroups?: string[];
   acceptsImages?: boolean;
   signal?: AbortSignal;
+  inbound?: { source?: string };
+  turnId?: string;
+  callId?: string;
 }
 ```
+
+`inbound`、`turnId`、`callId` 只由 agent 工具循环填写：所在入站回合的来源、回合 id，以及 agent 为这次调用生成的全局唯一 id（字段说明见 [api-tools](../api/api-tools.md#toolcallcontext)）。
 
 `handler` 返回字符串即纯文本结果；需要把图片交给主模型亲眼看时返回 `ToolExecutionResult`（`{ content, images? }`）。`risk` 是糖：`safe→{public}`、`sensitive→{restricted}`、`dangerous→{restricted, confirm:'session'}`；显式字段覆盖推导；全缺省 → `public`。
 
@@ -89,7 +94,7 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 
 `register` / `registerGroup` 走 `registrar`。查询与执行走 `tools.current` / `tools.require()`。`withToolGroups` 只覆盖 `register`，不要对象展开 `BoundTools`（会把 `current` 求成快照）。
 
-事件：`AalisEvents['tool:execute']`。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent`。
+事件：`AalisEvents['tool:execute']`，只由 agent 工具循环发出，带 `turnId` 与 `callId`，开始与结束按 `callId` 配对。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent`。
 
 ## 3. 谁提供 / 谁消费
 

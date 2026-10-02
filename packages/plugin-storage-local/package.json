@@ -28,6 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-checkpoint": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",

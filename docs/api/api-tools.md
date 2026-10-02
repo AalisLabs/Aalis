@@ -10,9 +10,9 @@
 
 - 工具数据结构（`RegisteredTool` / `ToolGroupInfo` / `ToolSummary`）
 - 工具调用上下文（`ToolCallContext`）—— 平台/会话语义
-- 工具执行通知（`ToolExecuteMessage`）
+- 工具执行通知（`ToolExecuteMessage`）与执行中的流式输出（`ToolOutputMessage`）
 - 服务接口 `ToolService`、描述符 `tools`、绑定接口 `BoundTools`、`withToolGroups`
-- 向 `AalisEvents` 注入 `'tool:execute'`
+- 向 `AalisEvents` 注入 `'tool:execute'` 与 `'tool:output'`
 
 **注**：runtime 工具函数已迁出本契约包（见 `packages/api-tools/src/index.ts` 迁出注释）：SSRF/私网判定 → `@aalis/util-network-guard`；工具输入路径解析 → `@aalis/api-storage`。本包只保留契约/类型与登记门面。
 
@@ -63,6 +63,8 @@ interface ToolCallContext {
   acceptsImages?: boolean;                          // 调用方能把结果里的图片交给主模型
   signal?: AbortSignal;                             // 调用方回合的中止信号
   inbound?: { source?: string };                    // 调用所在的入站回合，只由 agent 工具循环填写
+  turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
+  callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
 }
 ```
 
@@ -71,6 +73,8 @@ interface ToolCallContext {
 - 只有 plugin-agent 的工具循环填写它，`source` 取那条入站消息的 `IncomingMessage.source`：真人消息为 `undefined`，定时任务、闲置触发、宿主通知等内部注入为注入方标识。
 - workflow 的 tool 节点、mcp-server 等自己构造上下文的调用方不填，`inbound` 缺省。
 - 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看 `actor` 分不出来：定时任务注入的回合带着创建者的 `actor`。
+
+`turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一，不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
 
 ## 描述符与绑定门面
 
@@ -94,6 +98,8 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 ```ts
 'tool:execute': [{
   sessionId: string;
+  turnId: string;   // 所在回合
+  callId: string;   // 这次调用，同 ToolCallContext.callId
   platform?: string;
   toolName: string;
   args: Record<string, unknown>;
@@ -102,7 +108,18 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 }]
 ```
 
-供 WebUI / 日志归档订阅展示。
+只由 agent 工具循环发出，开始与结束按 `callId` 配对。会话服务（plugin-session-server）据此给出工具卡，`callId` 就是卡片的 `itemId`。
+
+```ts
+'tool:output': [{
+  sessionId: string;
+  turnId: string;
+  callId: string;   // 同 ToolCallContext.callId
+  text: string;
+}]
+```
+
+工具执行中的流式输出，在这次调用的开始与结束之间发出，只给界面看：不进模型、不落库，工具结果照旧在调用结束时一次给出。只有 agent 回合里的调用（`ToolCallContext` 带 `turnId` 与 `callId`）才发。现在发它的是 plugin-tool-system 的 `exec`：stdout 与 stderr 按到达顺序推出，总量不超过结果里保留的输出上限。
 
 ## 典型用法
 

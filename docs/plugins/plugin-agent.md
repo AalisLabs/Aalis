@@ -108,9 +108,10 @@ thinking: (默认)  [来源: 默认]
    - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多 `maxToolIterations` 次）:
      - `agent:tool:before` → 执行工具 → `agent:tool:after`
+     - 参数不是合法的 JSON 对象（坏 JSON，或顶层是 `null`、数组、原始值）时不执行，把错误作为这次调用的结果回给模型重新生成；空串按无参处理
    - `agent:reply:before` — 后处理回复内容
    - `agent:turn:after` — 消息处理完成通知
-6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入；空回复不保存
+6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；执行过的工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段），历史里的工具卡据此与实时推送对上；空回复不保存
 7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件
 
 `message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
@@ -166,9 +167,9 @@ thinking: (默认)  [来源: 默认]
 
 ## Token 预算追踪与日志
 
-首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
+首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 与 plugin-session-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
 
-`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-webui-server 只带 `sessionId`）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
+`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-webui-server 只带 `sessionId`；plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
 
 ```ts
 'token:usage': [{

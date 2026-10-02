@@ -53,8 +53,11 @@ export interface PreprocessorInfo {
 export interface AgentService {
   /** 处理一条传入消息，完成完整的对话循环 */
   handleMessage(message: IncomingMessage): Promise<void>;
-  /** 中止指定会话的当前生成（可选实现） */
-  abort?(sessionId: string): void;
+  /**
+   * 中止指定会话的在飞回合（可选实现）。不带 turnId 时停这个会话所有在飞的回合；带 turnId 时只停那一轮，
+   * 它已经结束或换成了新一轮时什么也不停。返回是否停下了回合，调用方据此分辨「turnId 对不上」。
+   */
+  abort?(sessionId: string, turnId?: string): boolean;
 
   /**
    * 注册消息预处理器
@@ -80,15 +83,20 @@ export interface AgentService {
 
 declare module '@aalis/api-hooks' {
   interface HookContextMap {
-    'agent:input:before': { message: IncomingMessage; metadata: Record<string, unknown> };
     /**
-     * 一轮 agent 处理结束时触发（仿 Fastify `onResponse` 相位）。
+     * 一轮开始、消息进入 agent 之前。next 之后是这一轮的全部：不调 next 即拦下整条消息。
+     * turnId 是 agent 在回合开始时生成的回合 id，这一轮的流式片段、工具调用、用量与回合结束都带同一个。
+     */
+    'agent:input:before': { message: IncomingMessage; turnId: string; metadata: Record<string, unknown> };
+    /**
+     * 一轮 agent 处理结束时触发，回复已发出或这一轮已静默、中止、出错。消息在 agent:input:before 被拦下时不触发。
      */
     'agent:turn:after': {
       message: IncomingMessage;
       reply: string;
       outcome: 'replied' | 'silent' | 'aborted' | 'error';
       sessionId: string;
+      turnId: string;
       metadata: Record<string, unknown>;
     };
     'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
@@ -264,6 +272,8 @@ export interface TokenUsageBreakdown {
  */
 export interface TokenUsageEvent {
   sessionId: string;
+  /** 所在回合的 id；回应 token:request 的快照不在任何回合里，缺省 */
+  turnId?: string;
   platform: string;
   contextWindow: number;
   maxTokens: number;
@@ -278,7 +288,8 @@ declare module '@aalis/core' {
     'token:usage': [usage: TokenUsageEvent];
     /**
      * 请求 agent 重发某会话的最新 token:usage 快照。
-     * 发射方：plugin-webui-server（客户端刷新/重连、手动压缩之后，不填 platform）；消费方：plugin-agent。
+     * 发射方：plugin-webui-server（客户端刷新/重连、手动压缩之后，不填 platform）、plugin-session-server（订阅时还没有
+     * 这个会话的用量、手动压缩之后；房间不填，其余填连接的入口平台）；消费方：plugin-agent。
      * platform 是调用方的入口平台，没有出生平台的会话（WebUI、CLI 等）的快照按它选档；缺省时消费方对
      * IM 房间按出生平台（api-gateway 的 resolveSessionOrigin）、其余按 'webui' 兜底。
      */
