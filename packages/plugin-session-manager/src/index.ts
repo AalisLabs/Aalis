@@ -238,7 +238,7 @@ function formatConfigSummary(config: SessionConfig): string {
 
 /**
  * SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM、中止读表重试的 lifecycle，
- * 以及房间建档时解析接管它的适配器实例的 platform
+ * 以及解析接管房间的适配器实例的 platform
  */
 type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle' | 'platform'>;
 
@@ -276,6 +276,8 @@ class SessionManager implements SessionManagerService {
    * 根会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
    */
   private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome }>();
+  /** 正在解析所属实例的会话记录：同一条记录不并发解析，后到的调用不等它、直接返回 */
+  private resolving = new WeakSet<SessionInfo>();
 
   constructor(caps: ManagerCaps) {
     this.caps = caps;
@@ -438,21 +440,29 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     await this.caps.events.emit('session:created', session);
     this.caps.logger.info(`会话建档(ensure): ${session.name} (${id})`);
-    if (session.originPlatform) await this.recordOriginInstance(session);
+    await this.recordOriginInstance(session);
     return session;
   }
 
   /**
-   * 记下接管这个房间的适配器实例，会话列表按它分组。记录先建好再解析：解析是异步的，先占住 id，
-   * 等待期间别的建档调用走合并更新，不会重复建档。没有适配器认领（适配器没装、账号不属于任何实例）的不记；
-   * 解析期间会话被删除的不再写回。
+   * 有出生平台的房间还没记下接管它的适配器实例时，解析并记下，会话列表按它分组；已记下的不改，子任务与 owner 面
+   * 会话不记。建档与真人入站调用它：建档时没有适配器认领（适配器没装好、连接还没上来、账号暂时
+   * 不属于任何实例）的房间与读表读进来的旧房间，下一次有消息进来时补记。建档时记录先建好再解析：解析是异步的，
+   * 先占住 id，等待期间别的建档调用走合并更新，不会重复建档。解析期间会话被删除或换表的不再写回。不会拒绝。
    */
-  private async recordOriginInstance(session: SessionInfo): Promise<void> {
-    const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
-    if (!entry || this.sessions.get(session.id) !== session) return;
-    session.originInstance = entry.contextId;
-    this.markDirty();
-    await this.caps.events.emit('session:updated', session);
+  async recordOriginInstance(session: SessionInfo): Promise<void> {
+    if (session.kind !== 'room' || !session.originPlatform || session.originInstance || this.resolving.has(session))
+      return;
+    this.resolving.add(session);
+    try {
+      const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
+      if (!entry || this.sessions.get(session.id) !== session) return;
+      session.originInstance = entry.contextId;
+      this.markDirty();
+      await this.caps.events.emit('session:updated', session);
+    } finally {
+      this.resolving.delete(session);
+    }
   }
 
   // ---- CRUD ----
@@ -1292,6 +1302,7 @@ async function run(caps: Caps): Promise<void> {
   //（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。
   // 名字只采信出生平台自己的入站：群取群名、私聊取对方昵称，缺省用 id（从 WebUI 插话时消息带的是 owner 的昵称；
   // 群的首条入站可能是不带群名的戳一戳，不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动。
+  // 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。
   const warnedPrefixes = new Set<string>();
   events.on('inbound:message', (msg: IncomingMessage) => {
     const { sessionId } = msg;
@@ -1320,9 +1331,12 @@ async function run(caps: Caps): Promise<void> {
       manager
         .ensureSession(sessionId, { name: nativeName || sessionId, createdBy: 'system', status: 'waiting' })
         .catch(err => logger.warn(`IM 房间登记失败 (${sessionId}):`, err));
-    } else if (nativeName && session.name === sessionId) {
+      return;
+    }
+    if (nativeName && session.name === sessionId) {
       manager.updateSession(sessionId, { name: nativeName }).catch(() => {});
     }
+    void manager.recordOriginInstance(session);
   });
 
   // ===== 会话状态 =====

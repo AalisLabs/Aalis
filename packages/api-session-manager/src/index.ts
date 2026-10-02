@@ -170,8 +170,9 @@ export interface SessionInfo {
   /** 只有 room 带：有出生平台的取 group 或 private，其余为 owner */
   audience?: RoomAudience;
   /**
-   * 有出生平台的房间建档时，接管它的平台适配器的插件实例 id（api-platform 的 `resolvePlatformBySession`）。
-   * 只供会话列表按实例分组，路由不读它；建档时没有适配器认领的为 undefined。不收调用方传值
+   * 有出生平台的房间：接管它的平台适配器的插件实例 id（api-platform 的 `resolvePlatformBySession`）。
+   * 只供会话列表按实例分组，路由不读它；还没有适配器认领的为 undefined，下一条真人入站时补记，记下后不再重算。
+   * 不收调用方传值
    */
   originInstance?: string;
   /** 她最近一次开口的时间：回合结局为 replied 时由 session-manager 写入。不收调用方传值 */
@@ -249,8 +250,10 @@ export interface SessionManagerService {
    * 按精确 id 幂等 upsert 会话。
    * - 已存在 → 合并式 update（emit `session:updated`）
    * - 不存在 → 以传入 id（**不自生成**）建记录（emit `session:created`）；`status` 缺省时，这个会话有回合在跑为
-   *   `active`（回合结束时收口），否则为 `waiting`。有出生平台的房间随后解析出 `originInstance`，记下后
-   *   emit `session:updated`，本方法等它落定再返回
+   *   `active`（回合结束时收口），否则为 `waiting`
+   *
+   * 两种情况下，还没记下 `originInstance` 的房间随后都解析一次，认领到就记下并 emit `session:updated`，
+   * 本方法等它落定再返回；同一条记录已有解析在途的不重复解析，也不等它
    *
    * 用于平台派生 sessionId（如 `onebot:<self>:group:<gid>`）：这些 id 不经
    * createSession 预建，首次设置模型/人设覆盖时需按其原样 id 落档——而 createSession
