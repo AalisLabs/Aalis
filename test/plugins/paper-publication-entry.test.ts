@@ -121,4 +121,45 @@ describe('白纸自动发布入口与交付边界', () => {
       expect.objectContaining({ id: task.id, publication: expect.stringContaining('works') }),
     );
   });
+
+  it('paper_status 只给创作完成、发布在提交前失败的上线任务列成品编号（供重新提名）；创作失败或取消的不列', async () => {
+    const ledger = emptyLedger();
+    const base = (id: string, over: Partial<TaskRecord>): TaskRecord => ({
+      id,
+      paperId: `n:${PAPER}`,
+      room: ROOM,
+      platform: 'onebot',
+      initiator: { platform: 'onebot', userId: '30001' },
+      name: '猫站',
+      text: '做网页并上线',
+      state: 'done',
+      createdAt: Date.now(),
+      endedAt: Date.now(),
+      delivered: false,
+      notice: { id: `n-${id.slice(2)}`, at: Date.now() },
+      artifacts: [{ id: `a-${id.slice(2)}`, rel: 'index.html', type: 'html', sizeBytes: 30 }],
+      ...over,
+    });
+    const refused = { target: 'works', title: '猫站', summary: '', state: 'failed' as const };
+    for (const task of [
+      base('t-0000000a', { publication: { ...refused, reason: '作品未通过发布检查' } }),
+      base('t-0000000b', { state: 'failed', publication: { ...refused, reason: '创作任务失败，未提交发布' } }),
+      base('t-0000000c', { state: 'cancelled', publication: { ...refused, reason: '创作任务已取消，未提交发布' } }),
+      // 私下交付的任务不受这条限制：创作失败也照旧列成品编号，paper_send 能发
+      base('t-0000000d', { state: 'failed' }),
+    ])
+      ledger.tasks[task.id] = task;
+    const hub = await startPaperHub({ files: new Map([[LEDGER_URI, JSON.stringify(ledger)]]) });
+    const listed = async (taskId: string) =>
+      (JSON.parse(await hub.raw('paper_status', { task_id: taskId })) as { tasks: Array<{ artifacts?: unknown }> })
+        .tasks[0].artifacts;
+    expect(await listed('t-0000000a'), '审核没过的已完成任务：编号留给 works_nominate 重新提名').toEqual([
+      { id: 'a-0000000a', type: 'html', sizeBytes: 30 },
+    ]);
+    expect(await listed('t-0000000b')).toBeUndefined();
+    expect(await listed('t-0000000c')).toBeUndefined();
+    expect(await listed('t-0000000d'), '私下交付的失败任务照旧列').toEqual([
+      { id: 'a-0000000d', type: 'html', sizeBytes: 30 },
+    ]);
+  });
 });

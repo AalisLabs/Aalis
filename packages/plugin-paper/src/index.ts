@@ -142,6 +142,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     now,
     kick: paperId => driver.kick(paperId),
     cancel: (taskId, via, gate) => driver.cancel(taskId, via, gate),
+    directSending: task => notices.directSending(task),
   });
   registerWorksTools({
     producer: lifecycle.id,
@@ -154,7 +155,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     ledger,
     cfg,
   });
-  registerPendingHint({ hooks: caps.hooks, ledger, cfg, now });
+  registerPendingHint({ hooks: caps.hooks, ledger, cfg, now, directSending: task => notices.directSending(task) });
   registerPaperPage({
     webui: caps.webui,
     driver,

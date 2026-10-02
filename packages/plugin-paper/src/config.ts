@@ -374,6 +374,7 @@ function brokenPaperNames(audit: PaperAudit, parsed: ParsedPaperConfig['papers']
   for (const item of parsed) kept.set(item.name, (kept.get(item.name) ?? 0) + 1);
   const broken = new Map<string, string>();
   for (const [name, { count, first }] of listed) {
+    // 出网上限写错的条目已被正式 schema（onInvalid: 'error'）整条丢掉，按条数对同样会停用；单独认出只为给出具体原因
     const egress = first.remoteAgentEgress;
     const problem =
       egress && !EGRESS_CEILINGS.includes(egress as EgressCeiling)
@@ -442,7 +443,7 @@ function validTimeZone(value: string | undefined, logger: Logger): string | unde
 }
 
 /** audit 是同一份配置按 {@link paperAuditSchema} 解析出的 papers，用来认出写错而停用的具名白纸 */
-export function readConfig(raw: ParsedPaperConfig, logger: Logger, audit: PaperAudit = []): PaperConfig {
+export function readConfig(raw: ParsedPaperConfig, logger: Logger, audit: PaperAudit): PaperConfig {
   const defaultsProblem = publishTargetsProblem(raw.defaults.publishTargets);
   if (defaultsProblem) throw configError(`defaults.publishTargets：${defaultsProblem}`);
   const defaults = readSpec(raw.defaults, DEFAULT_SPEC, logger, 'defaults');

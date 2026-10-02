@@ -220,6 +220,191 @@ describe('白纸作品工具', () => {
     expect(live.nominate).not.toHaveBeenCalled();
   });
 
+  it('创作结束超过 24 小时后照样能重新提名；审核没过的任务重新提名后仍记着审核结论', async () => {
+    const refused = { target: 'works', title: '猫', summary: '', state: 'failed' as const };
+    const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫站', summary: '' };
+    const endedAt = Date.now() - 25 * 3_600_000;
+    const review = await setup([task({ endedAt, publication: { ...refused, reason: '作品未通过发布检查' } })]);
+    expect(await review.hub.call('works_nominate', args)).toMatchObject({ ok: true, workId: 'abcdefghij' });
+    expect(review.nominate).toHaveBeenCalledTimes(1);
+    expect(review.hub.ledger().tasks[taskId].publication).toMatchObject({
+      state: 'submitted',
+      workId: 'abcdefghij',
+      reviewRefused: true,
+    });
+
+    const outage = await setup([
+      task({
+        endedAt,
+        publication: { ...refused, reason: '无法确定唯一的网页入口，请手动选择成品', directSend: true },
+      }),
+    ]);
+    expect(await outage.hub.call('works_nominate', args)).toMatchObject({ ok: true });
+    expect(outage.hub.ledger().tasks[taskId].publication?.reviewRefused).toBeUndefined();
+  });
+
+  it('重新提名之后发布在后台又失败：房间再收到一条完成通知，只收一条', async () => {
+    const earlier = { id: 'n-00000001', at: Date.now() - 60_000 };
+    // works_nominate 写下的重新提名：待提交、选定成品与公开路径，过一会儿由后台接着推进
+    const renominated = task({
+      endedAt: Date.now() - 120_000,
+      notice: earlier,
+      publication: {
+        target: 'works',
+        title: '猫站',
+        summary: '',
+        state: 'pending',
+        artifactIds: ['a-00000001', 'a-00000002'],
+        paths: ['index.html', 'cat.png'],
+        pendingSince: Date.now(),
+        nextAttemptAt: Date.now() + 300,
+      },
+    });
+    const { hub, nominate } = await setup([renominated]);
+    nominate.mockResolvedValueOnce({ refused: '不安全文件', fileIndex: 0 } as never);
+    await vi.waitFor(() => expect(hub.injected).toHaveLength(1), { timeout: 3000 });
+    expect(hub.injected[0].content).toContain('未能上线：作品未通过发布检查');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(hub.injected).toHaveLength(1);
+    expect(hub.ledger().tasks[taskId].notice?.id).not.toBe(earlier.id);
+  });
+
+  it('重新提名当场被发布检查拒绝：由工具回执告知，不另发完成通知', async () => {
+    const earlier = { id: 'n-00000001', at: Date.now() - 60_000 };
+    const { hub, nominate } = await setup([
+      task({
+        endedAt: Date.now() - 120_000,
+        notice: earlier,
+        publication: {
+          target: 'works',
+          title: '猫',
+          summary: '',
+          state: 'failed',
+          reason: '无法确定唯一的网页入口，请手动选择成品',
+          directSend: true,
+        },
+      }),
+    ]);
+    nominate.mockResolvedValueOnce({ refused: '不安全文件', fileIndex: 0 } as never);
+    const args = { task_id: taskId, artifact_ids: ['a-00000001', 'a-00000002'], title: '猫站', summary: '' };
+    expect(await hub.call('works_nominate', args)).toMatchObject({ ok: false, error: '成品 a-00000001：不安全文件' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(hub.injected).toEqual([]);
+    expect(hub.ledger().tasks[taskId].notice).toEqual(earlier);
+  });
+
+  it('重新提名遇到临时拒绝：保留待提交、按发布服务给的时间排下次尝试，回执说已排队，不记成审核结论', async () => {
+    const { hub, nominate } = await setup([
+      task({
+        endedAt: Date.now() - 120_000,
+        publication: {
+          target: 'works',
+          title: '猫',
+          summary: '',
+          state: 'failed',
+          reason: '无法确定唯一的网页入口，请手动选择成品',
+          directSend: true,
+        },
+      }),
+    ]);
+    nominate.mockResolvedValueOnce({ refused: '这个来源今天提名数已达上限', retryAfterMs: 3_600_000 } as never);
+    const before = Date.now();
+    const args = { task_id: taskId, artifact_ids: ['a-00000001', 'a-00000002'], title: '猫站', summary: '' };
+    const res = await hub.call('works_nominate', args);
+    expect(res).toMatchObject({ ok: true });
+    expect(String(res.message)).toContain('这个来源今天提名数已达上限');
+    expect(String(res.message)).toContain('已排队，稍后自动重试');
+    const publication = hub.ledger().tasks[taskId].publication;
+    expect(publication).toMatchObject({ state: 'pending', artifactIds: ['a-00000001', 'a-00000002'] });
+    expect(publication?.nextAttemptAt).toBeGreaterThanOrEqual(before + 3_600_000);
+    expect(publication?.reason).toBeUndefined();
+    expect(publication?.reviewRefused).toBeUndefined();
+    // 后台协调器到时才重试
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(nominate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['读取成品失败', 'read'],
+    ['提交时出错', 'throw'],
+  ] as const)('重新提名已写成待提交之后%s：回执说已排队、稍后自动重试，待提交照旧留着', async (_label, failure) => {
+    const { hub, nominate } = await setup([
+      task({
+        endedAt: Date.now() - 120_000,
+        publication: {
+          target: 'works',
+          title: '猫',
+          summary: '',
+          state: 'failed',
+          reason: '无法确定唯一的网页入口，请手动选择成品',
+          directSend: true,
+        },
+      }),
+    ]);
+    if (failure === 'read') hub.files.delete(artifactUri(paperId, taskId, task().artifacts[0]));
+    else nominate.mockRejectedValueOnce(new Error('zz-publish-down'));
+    const args = { task_id: taskId, artifact_ids: ['a-00000001', 'a-00000002'], title: '猫站', summary: '' };
+    const res = await hub.call('works_nominate', args);
+    expect(res).toMatchObject({ ok: true });
+    expect(String(res.message)).toContain('暂时没能提交，已排队，稍后自动重试');
+    expect(String(res.message)).toContain('上线或最终失败都会在本房间通知');
+    expect(hub.ledger().tasks[taskId].publication).toMatchObject({ state: 'pending', title: '猫站' });
+  });
+
+  it('提名前先核对公开路径：不合规的当场拒绝并说明原因，不写账本、不提交', async () => {
+    const before = {
+      target: 'works',
+      title: '猫',
+      summary: '',
+      state: 'failed' as const,
+      reason: '成品分属不同目录，请手动选择成品',
+      directSend: true,
+    };
+    const { hub, nominate } = await setup([
+      task({
+        artifacts: [
+          artifact('a-00000001', 'site/index.html', 'html'),
+          artifact('a-00000002', 'site/workspace.tar.gz', 'other'),
+        ],
+        publication: before,
+      }),
+    ]);
+    const res = await hub.call('works_nominate', {
+      task_id: taskId,
+      artifact_ids: ['a-00000001', 'a-00000002'],
+      title: '猫站',
+      summary: '',
+    });
+    expect(res).toMatchObject({ ok: false });
+    expect(String(res.error)).toContain('成品 a-00000002 的公开路径不符合发布要求');
+    expect(String(res.error)).toContain('扩展名不在白名单');
+    expect(JSON.stringify(res)).not.toContain('workspace');
+    expect(nominate).not.toHaveBeenCalled();
+    expect(hub.ledger().tasks[taskId].publication).toEqual(before);
+  });
+
+  it('提名前的路径核对也查只差大小写的重复路径（公开根可能不分大小写）', async () => {
+    const { hub, nominate } = await setup([
+      task({
+        artifacts: [
+          artifact('a-00000001', 'site/index.html', 'html'),
+          artifact('a-00000002', 'site/Cat.png', 'png'),
+          artifact('a-00000003', 'site/cat.png', 'png'),
+        ],
+      }),
+    ]);
+    const res = await hub.call('works_nominate', {
+      task_id: taskId,
+      artifact_ids: ['a-00000001', 'a-00000002', 'a-00000003'],
+      title: '猫站',
+      summary: '',
+    });
+    expect(res).toMatchObject({ ok: false });
+    expect(String(res.error)).toContain('成品 a-00000003 的公开路径不符合发布要求（文件路径重复）');
+    expect(nominate).not.toHaveBeenCalled();
+    expect(hub.ledger().tasks[taskId].publication).toBeUndefined();
+  });
+
   it('只允许真人提名自己在本房间完成的任务，撤下只认本房间来源', async () => {
     const { hub, nominate, get, withdraw } = await setup();
     const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫站', summary: '' };
@@ -360,16 +545,22 @@ describe('白纸作品工具', () => {
       artifacts: [
         artifact('a-00000001', 'private/site.html', 'html'),
         artifact('a-00000002', 'assets/logo.png', 'png'),
+        artifact('a-00000003', 'images/cat.png', 'png'),
       ],
     });
     const { hub, nominate } = await setup([source]);
     const base = { task_id: taskId, title: '猫', summary: '' };
     expect(await hub.call('works_nominate', { ...base, artifact_ids: ['a-00000001'] })).toMatchObject({ ok: true });
     expect(nominate.mock.calls[0][0].files).toEqual([{ path: 'index.html', bytes: new Uint8Array([1, 2, 3]) }]);
-    expect(await hub.call('works_nominate', { ...base, artifact_ids: ['a-00000001', 'a-00000002'] })).toMatchObject({
+    expect(await hub.call('works_nominate', { ...base, artifact_ids: ['a-00000002', 'a-00000003'] })).toMatchObject({
       ok: true,
     });
-    expect(nominate.mock.calls[1][0].files.map(file => file.path)).toEqual(['private/site.html', 'assets/logo.png']);
+    expect(nominate.mock.calls[1][0].files.map(file => file.path)).toEqual(['assets/logo.png', 'images/cat.png']);
+    // 网页留在子目录里上不了站：提交之前就拒绝
+    expect(await hub.call('works_nominate', { ...base, artifact_ids: ['a-00000001', 'a-00000002'] })).toMatchObject({
+      ok: false,
+    });
+    expect(nominate).toHaveBeenCalledTimes(2);
   });
 
   it('资格逐项拒绝无入站、内部来源、无发起身份和子会话；不读成品也不提名', async () => {

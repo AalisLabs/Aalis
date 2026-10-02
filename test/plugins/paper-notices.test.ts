@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {} from '../../packages/api-agent/src/index.js'; // declaration merging：agent:llm:before 钩子类型
 import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
+import { type PublishService, publish } from '../../packages/api-publish/src/index.js';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
-import type { Events, Logger } from '../../packages/core/src/index.js';
-import { configSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
+import { type Events, type Logger, provide } from '../../packages/core/src/index.js';
+import { configSchema, paperAuditSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
 import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { PaperNotices } from '../../packages/plugin-paper/src/notices.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
-import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, Message, OutboundDeliveryResult } from '../../packages/schema-message/src/index.js';
 import {
   emptyLedger,
   human,
@@ -49,13 +50,14 @@ async function waitFor(pred: () => boolean, label: string): Promise<void> {
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-/** 本房间真人回合请求前插入的待交付提示正文（没有时为空串） */
-async function pendingHintFor(hub: PaperHub): Promise<string> {
+/** 本房间请求前插入的待交付提示正文（没有时为空串）；source 缺省即真人回合 */
+async function pendingHintFor(hub: PaperHub, source?: string): Promise<string> {
   const data: HookContextMap['agent:llm:before'] = {
     messages: [{ role: 'user', content: '在吗' }],
     tools: [],
     sessionId: ROOM,
     platform: 'onebot',
+    ...(source ? { source } : {}),
   };
   await hub.hooks.run('agent:llm:before', data);
   return data.messages
@@ -266,11 +268,19 @@ describe('自动发布在提交前失败：先直接发成品', () => {
       },
     };
   }
-  function seed(task: TaskRecord): PaperFiles {
+  function seed(...tasks: TaskRecord[]): PaperFiles {
     const ledger: PaperLedger = emptyLedger();
     ledger.papers[PAPER_ID] = { lastClearedAt: now };
-    ledger.tasks[task.id] = task;
+    for (const task of tasks) ledger.tasks[task.id] = task;
     return new Map([[LEDGER_URI, JSON.stringify(ledger)]]);
+  }
+  /** 平台确认由用例逐条结算：直接发送停在等确认 */
+  function heldDelivery() {
+    const settle: Array<(result: OutboundDeliveryResult) => void> = [];
+    return {
+      settle,
+      delivery: () => new Promise<OutboundDeliveryResult>(resolve => void settle.push(resolve)),
+    };
   }
 
   it('发布环节的问题：能发的成品作为一条消息直接发回，平台确认后记已交付，通知写明已发', async () => {
@@ -300,7 +310,55 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     expect(hint).toContain('t-000000f1');
   });
 
-  it('直接发送等不到平台确认：通知说已发出、不要重发，不附 paper_send 的提示（免得她再发一遍）', async () => {
+  it('平台报结果未知（如上传超时）：通知说发出的几件已发出、没确认、不要重发，其余成品照常列出；这件任务之后不进待交付提示', async () => {
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed(failedPublication()),
+      delivery: async () => ({ ok: false, error: '文件上传超时，结果未知，可能已经送达，请勿重发', unconfirmed: true }),
+    });
+    await waitFor(() => hub.injected.length === 1, '注入失败通知');
+    const content = hub.injected[0].content;
+    expect(content).toContain('成品已直接发出：a-000000f1、a-000000f2，平台还没确认，不要重发');
+    expect(content).not.toContain('直接发送没有成功');
+    expect(content).not.toContain('要不要发回本群由你判断');
+    expect(content).toContain('另有成品：a-000000f3');
+    expect(hub.ledger().tasks['t-000000f1']).toMatchObject({
+      delivered: false,
+      unknownArtifacts: ['a-000000f1', 'a-000000f2'],
+    });
+    expect(await pendingHintFor(hub)).not.toContain('t-000000f1');
+  });
+
+  it('直接发送结果未知、可发成品超过 4 件：通知列出其余成品并提示 paper_send，之后其余成品照常能发，发出去的仍被拒', async () => {
+    const png = (n: number) => ({ id: `a-000000f${n}`, rel: `p${n}.png`, type: 'png' as const, sizeBytes: 1024 });
+    let calls = 0;
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed({ ...failedPublication(), artifacts: [1, 2, 3, 4, 5].map(png) }),
+      delivery: async () =>
+        calls++ === 0
+          ? { ok: false as const, error: '文件上传超时，结果未知，可能已经送达，请勿重发', unconfirmed: true as const }
+          : { ok: true as const },
+    });
+    await waitFor(() => hub.injected.length === 1, '注入失败通知');
+    expect(hub.outbound).toHaveLength(1);
+    expect(hub.outbound[0].attachments).toHaveLength(4);
+    const content = hub.injected[0].content;
+    expect(content).toContain('成品已直接发出：a-000000f1、a-000000f2、a-000000f3、a-000000f4，平台还没确认，不要重发');
+    expect(content).toContain('另有成品：a-000000f5（png，1.0 KB），需要时用 paper_send 按编号发。');
+    const sent4 = ['a-000000f1', 'a-000000f2', 'a-000000f3', 'a-000000f4'];
+    expect(hub.ledger().tasks['t-000000f1']).toMatchObject({ delivered: false, unknownArtifacts: sent4 });
+
+    expect(await hub.call('paper_send', { artifact_id: 'a-000000f5' }, human())).toMatchObject({ ok: true });
+    expect(hub.outbound).toHaveLength(2);
+    expect(hub.ledger().tasks['t-000000f1']).toMatchObject({ delivered: true, unknownArtifacts: sent4 });
+    const again = await hub.call('paper_send', { artifact_id: 'a-000000f1' }, human());
+    expect(again.ok).toBe(false);
+    expect(String(again.error)).toContain('成品 a-000000f1 此前已发出，结果未知');
+    expect(hub.outbound).toHaveLength(2);
+  });
+
+  it('直接发送等不到平台确认：通知说已发出、不要重发，paper_send 的提示只列其余成品（免得她把发出去的再发一遍）', async () => {
     const files = seed(failedPublication());
     const logger = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
     const ledger = new LedgerStore(memoryStorage(files), logger);
@@ -311,7 +369,11 @@ describe('自动发布在提交前失败：先直接发成品', () => {
         injected.push(message);
       },
     } as unknown as Events;
-    const cfg = readConfig(parseConfig(configSchema, PILOT_CONFIG), logger);
+    const cfg = readConfig(
+      parseConfig(configSchema, PILOT_CONFIG),
+      logger,
+      parseConfig(paperAuditSchema, PILOT_CONFIG).papers,
+    );
     const notices = new PaperNotices({
       ledger,
       events,
@@ -324,9 +386,175 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     await waitFor(() => injected.length === 1, '注入失败通知');
     const content = injected[0].content;
     expect(content).toContain('成品已直接发出：a-000000f1、a-000000f2，平台还没确认，不要重发');
-    expect(content).not.toContain('要不要发回本群由你判断');
-    expect(content).toContain('另有成品：a-000000f3');
+    const sendLines = content.split('\n').filter(line => line.includes('paper_send'));
+    expect(sendLines).toHaveLength(1);
+    expect(sendLines[0]).toContain('另有成品：a-000000f3');
+    expect(sendLines[0]).not.toMatch(/a-000000f[12]/);
     await notices.close();
+  });
+
+  it('直接发送本地等满 90 秒：当场记下结果未知，通知那一轮的待交付提示不列、paper_send 拒绝；迟到的确定失败再清掉', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const held = heldDelivery();
+      const hub = await startPaperHub({
+        remotes: { [REMOTE]: new ScriptedRemote() },
+        files: seed(failedPublication()),
+        delivery: held.delivery,
+      });
+      await waitFor(() => hub.outbound.length === 1, '直接发出');
+      await vi.advanceTimersByTimeAsync(90_000);
+      await waitFor(() => hub.injected.length === 1, '注入失败通知');
+      expect(hub.injected[0].content).toContain('平台还没确认，不要重发');
+      expect(hub.ledger().tasks['t-000000f1']).toMatchObject({
+        delivered: false,
+        unknownArtifacts: ['a-000000f1', 'a-000000f2'],
+      });
+      expect(await pendingHintFor(hub, `paper:${PAPER_ID}:t-000000f1`)).not.toContain('t-000000f1');
+      const sent = await hub.call('paper_send', { artifact_id: 'a-000000f1' }, human());
+      expect(sent.ok).toBe(false);
+      expect(String(sent.error)).toContain('不要重发');
+      expect(hub.outbound).toHaveLength(1);
+
+      held.settle[0]({ ok: false, error: '上传失败' });
+      await waitFor(() => hub.ledger().tasks['t-000000f1'].unknownArtifacts === undefined, '清掉结果未知');
+      expect(await pendingHintFor(hub)).toContain('t-000000f1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['已交付', { delivered: true }, '成品此前已发出，不要重发'],
+    ['结果未知', { unknownArtifacts: ['a-000000f1'] }, '成品此前已发出，结果未知，不要重发'],
+  ])('重新提名之后在后台又于提交前失败、此前%s：不再直接发，通知说不要重发、不附 paper_send 的提示', async (_label, before, line) => {
+    // #update 清掉了上一次的通知标记，已交付与结果未知的成品编号记在任务上，随任务留着
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed({ ...failedPublication({ reason: '24 小时内没能提交' }), ...before }),
+    });
+    await waitFor(() => hub.injected.length === 1, '注入失败通知');
+    await pause(50);
+    expect(hub.outbound).toEqual([]);
+    const content = hub.injected[0].content;
+    expect(content).toContain(line);
+    expect(content).not.toContain('paper_send');
+    expect(content).not.toContain('要不要发回本群由你判断');
+  });
+
+  it('此前结果未知的成品：paper_send 拒绝，说这件成品此前已发出、结果未知、不要重发', async () => {
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed({
+        ...failedPublication(),
+        notice: { id: 'n-00000001', at: now - 30_000 },
+        unknownArtifacts: ['a-000000f1', 'a-000000f2'],
+      }),
+    });
+    const sent = await hub.call('paper_send', { artifact_id: 'a-000000f2' }, human());
+    expect(sent.ok).toBe(false);
+    expect(String(sent.error)).toContain('成品 a-000000f2 此前已发出，结果未知');
+    expect(String(sent.error)).toContain('不要重发');
+    expect(hub.outbound).toEqual([]);
+  });
+
+  it('直接发送意外抛错：照常写进通知、接着注入同一轮后面的，这一轮记下的任务都不再算「正在直接发送」', async () => {
+    const silent = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
+    const second: TaskRecord = { ...failedPublication(), id: 't-000000f2', endedAt: now - 30_000 };
+    const ledger = new LedgerStore(memoryStorage(seed(failedPublication(), second)), silent);
+    await ledger.load();
+    const injected: IncomingMessage[] = [];
+    const notices = new PaperNotices({
+      ledger,
+      events: {
+        emit: async (_event: string, message: IncomingMessage) => {
+          injected.push(message);
+        },
+      } as unknown as Events,
+      logger: silent,
+      now: Date.now,
+      cfg: readConfig(
+        parseConfig(configSchema, PILOT_CONFIG),
+        silent,
+        parseConfig(paperAuditSchema, PILOT_CONFIG).papers,
+      ),
+      deliver: async () => {
+        throw new Error('适配器崩了');
+      },
+    });
+    notices.open();
+    await notices.close();
+    expect(injected.map(m => m.source)).toEqual([`paper:${PAPER_ID}:t-000000f1`, `paper:${PAPER_ID}:t-000000f2`]);
+    for (const message of injected) expect(message.content).toContain('直接发送没有成功：适配器崩了');
+    for (const id of ['t-000000f1', 't-000000f2']) {
+      expect(ledger.data.tasks[id].notice, `${id} 已记下通知`).toBeDefined();
+      expect(notices.directSending(ledger.data.tasks[id]), id).toBe(false);
+    }
+  });
+
+  it('记通知落盘期间，转为直接发送的任务一直算「正在直接发送」', async () => {
+    const silent = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
+    const storage = memoryStorage(seed(failedPublication()));
+    const write = storage.writeFile.bind(storage);
+    let release = () => {};
+    const held = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const ledger = new LedgerStore(storage, silent);
+    await ledger.load();
+    storage.writeFile = async (uri, data) => {
+      await held;
+      return write(uri, data);
+    };
+    const notices = new PaperNotices({
+      ledger,
+      events: { emit: async () => {} } as unknown as Events,
+      logger: silent,
+      now: Date.now,
+      cfg: readConfig(
+        parseConfig(configSchema, PILOT_CONFIG),
+        silent,
+        parseConfig(paperAuditSchema, PILOT_CONFIG).papers,
+      ),
+      deliver: async () => ({ ok: true }),
+    });
+    const task = ledger.data.tasks['t-000000f1'];
+    expect(notices.directSending(task)).toBe(true);
+    notices.open();
+    await waitFor(() => task.notice !== undefined, '记下通知、在落盘');
+    expect(notices.directSending(task)).toBe(true);
+    release();
+    await notices.close();
+    expect(notices.directSending(task)).toBe(false);
+  });
+
+  it('记通知落盘失败：通知标记与「正在直接发送」一起撤回', async () => {
+    const silent = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
+    const storage = memoryStorage(seed(failedPublication()));
+    const ledger = new LedgerStore(storage, silent);
+    await ledger.load();
+    storage.writeFile = async () => {
+      throw new Error('zz-disk-full');
+    };
+    const notices = new PaperNotices({
+      ledger,
+      events: { emit: async () => {} } as unknown as Events,
+      logger: silent,
+      now: Date.now,
+      cfg: readConfig(
+        parseConfig(configSchema, PILOT_CONFIG),
+        silent,
+        parseConfig(paperAuditSchema, PILOT_CONFIG).papers,
+      ),
+      deliver: async () => ({ ok: true }),
+    });
+    notices.open();
+    await notices.close();
+    const task = ledger.data.tasks['t-000000f1'];
+    expect(task.notice).toBeUndefined();
+    // 之后重新提名、发布改回待提交：不再转为直接发送，也就不算「正在直接发送」
+    task.publication = { target: 'works', title: '下雨的窗台', summary: '', state: 'pending' };
+    expect(notices.directSending(task)).toBe(false);
   });
 
   it('安全：发布检查不通过（审核结论）只通知原因，成品不发出去，paper_send 也拒绝，不进待交付提示', async () => {
@@ -346,6 +574,114 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     expect(String(sent.error)).toContain('没有通过审核或发布检查');
     expect(hub.outbound).toEqual([]);
     expect(await pendingHintFor(hub)).not.toContain('t-000000f1');
+  });
+
+  it('创作失败的上线任务：paper_send 如实说创作没完成，不说没通过审核', async () => {
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed({
+        ...failedPublication({ reason: '创作任务失败，未提交发布', directSend: undefined }),
+        state: 'failed',
+        error: '远端这一轮出错或已不存在',
+      }),
+    });
+    const sent = await hub.call('paper_send', { artifact_id: 'a-000000f1' }, human());
+    expect(sent.ok).toBe(false);
+    expect(String(sent.error)).toContain('创作任务失败或已取消');
+    expect(String(sent.error)).not.toContain('审核');
+    expect(hub.outbound).toEqual([]);
+  });
+
+  it('直接发送还没结束时：在发的与排在后面的都不进待交付提示，paper_send 也不另发一遍', async () => {
+    const held = heldDelivery();
+    const second: TaskRecord = {
+      ...failedPublication(),
+      id: 't-000000f2',
+      endedAt: now - 30_000,
+      artifacts: [{ id: 'a-000000f4', rel: 'four.png', type: 'png', sizeBytes: 1024 }],
+    };
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed(failedPublication(), second),
+      delivery: held.delivery,
+    });
+    await waitFor(() => hub.outbound.length === 1, '第一件直接发出');
+    const hint = await pendingHintFor(hub);
+    expect(hint).not.toContain('t-000000f1');
+    expect(hint, '排在后面、还没轮到直接发送的也不列').not.toContain('t-000000f2');
+    for (const artifactId of ['a-000000f1', 'a-000000f4']) {
+      const sent = await hub.call('paper_send', { artifact_id: artifactId }, human());
+      expect(sent.ok).toBe(false);
+      expect(String(sent.error)).toContain('正在直接发送');
+    }
+    expect(hub.outbound).toHaveLength(1);
+
+    held.settle[0]({ ok: true });
+    await waitFor(() => hub.outbound.length === 2, '第二件直接发出');
+    held.settle[1]({ ok: false, error: '上传失败' });
+    await waitFor(() => hub.injected.length === 2, '两条通知');
+    const after = await pendingHintFor(hub);
+    expect(after).not.toContain('t-000000f1');
+    expect(after, '直接发送结束、没发成的回到待交付提示').toContain('t-000000f2');
+  });
+
+  it('前一件直接发送没成功：它的通知那一轮就回到待交付提示，不等排在后面的发完', async () => {
+    const held = heldDelivery();
+    const second: TaskRecord = {
+      ...failedPublication(),
+      id: 't-000000f2',
+      endedAt: now - 30_000,
+      artifacts: [{ id: 'a-000000f4', rel: 'four.png', type: 'png', sizeBytes: 1024 }],
+    };
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed(failedPublication(), second),
+      delivery: held.delivery,
+    });
+    await waitFor(() => hub.outbound.length === 1, '第一件直接发出');
+    held.settle[0]({ ok: false, error: '上传失败' });
+    await waitFor(() => hub.injected.length === 1 && hub.outbound.length === 2, '第一条通知、第二件在发');
+    const hint = await pendingHintFor(hub);
+    expect(hint, '没发成的那一件，通知那一轮就能用 paper_send 补发').toContain('t-000000f1');
+    expect(hint, '第二件还在等平台确认').not.toContain('t-000000f2');
+
+    held.settle[1]({ ok: true });
+    await waitFor(() => hub.injected.length === 2, '两条通知');
+  });
+
+  it('通知链还在发前一件时，后一件刚转为直接发送的也不进待交付提示，paper_send 不抢先发', async () => {
+    const held = heldDelivery();
+    const later: TaskRecord = {
+      ...failedPublication(),
+      id: 't-000000f5',
+      artifacts: [
+        { id: 'a-000000f5', rel: 'five.png', type: 'png', sizeBytes: 1024 },
+        { id: 'a-000000f6', rel: 'six.png', type: 'png', sizeBytes: 1024 },
+      ],
+      publication: { target: 'works', title: '两张图', summary: '', state: 'pending' },
+    };
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: new ScriptedRemote() },
+      files: seed(failedPublication(), later),
+      delivery: held.delivery,
+    });
+    await waitFor(() => hub.outbound.length === 1, '前一件直接发出');
+    // 发布服务到场：两张图挑不出作品，转为直接发送，排在通知链上前一件之后
+    hub.app.bind({ provide }).provide(publish, {
+      listSurfaces: () => [{ name: 'works', available: true }],
+      onChange: () => () => {},
+    } as unknown as PublishService);
+    await waitFor(() => hub.ledger().tasks['t-000000f5'].publication?.directSend === true, '后一件转为直接发送');
+    expect(await pendingHintFor(hub)).not.toContain('t-000000f5');
+    const sent = await hub.call('paper_send', { artifact_id: 'a-000000f5' }, human());
+    expect(String(sent.error)).toContain('正在直接发送');
+    expect(hub.outbound).toHaveLength(1);
+
+    held.settle[0]({ ok: true });
+    await waitFor(() => hub.outbound.length === 2, '后一件直接发出');
+    expect(hub.outbound[1].attachments).toHaveLength(2);
+    held.settle[1]({ ok: true });
+    await waitFor(() => hub.injected.length === 2, '两条通知');
   });
 
   it('对照：已提交给发布服务的任务仍不发原始成品', async () => {

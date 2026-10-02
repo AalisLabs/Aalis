@@ -18,7 +18,9 @@ import {
 // paper_send（U10c）：把本房间发起的任务的成品发回本群。
 // 类型白名单（位图走 image、MP4 走 video、单个 HTML 按开关与大小走 file），原扩展名须与按文件头判定的
 // 类型一致；具名白纸被几个房间共用时，别的房间发起的任务的成品按「找不到」回；文件名由宿主按任务名重写。
-// 平台适配器确认收下才标为已交付；发送失败、没有适配器接手时不标；等不到确认时报「未确认、请勿重发」，迟到的确认照样记账。
+// 平台适配器确认收下才标为已交付；发送失败、没有适配器接手时不标；平台报结果未知时记下结果未知、报请勿重发；
+// 等不到确认时报「未确认、请勿重发」，同样当场记下结果未知，迟到的结果到了再结算。结果未知按成品记：那件成品不再发，
+// 同一任务的其他成品照常可发。
 // ════════════════════════════════════════════════════════════
 
 afterEach(stopPaperHubs);
@@ -159,6 +161,39 @@ describe('paper_send：发出', () => {
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain('上传超时');
     expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    expect(h.ledger().tasks['t-00000001'].unknownArtifacts).toBeUndefined();
+  });
+
+  it('平台报结果未知（可能已经送达）时报请勿重发，不标已交付，记下结果未知', async () => {
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: async () => ({ ok: false, error: '文件 x 上传超时', unconfirmed: true }),
+    });
+    const res = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain('可能已经送达');
+    expect(String(res.error)).toContain('请勿重发');
+    expect(String(res.error)).not.toContain('发送失败');
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    expect(h.ledger().tasks['t-00000001'].unknownArtifacts).toEqual(['a-00000001']);
+  });
+
+  it('这一轮被中止、迟到的结果是结果未知时，照样记下结果未知', async () => {
+    let settle: (result: { ok: false; error: string; unconfirmed: true }) => void = () => {};
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: () =>
+        new Promise(resolve => {
+          settle = resolve;
+        }),
+    });
+    const aborted = new AbortController();
+    aborted.abort();
+    const res = await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), signal: aborted.signal });
+    expect(String(res.error)).toContain('请勿重发');
+    settle({ ok: false, error: '文件 x 上传超时', unconfirmed: true });
+    await expect.poll(() => h.ledger().tasks['t-00000001'].unknownArtifacts).toEqual(['a-00000001']);
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
   });
 
   it('没有平台适配器接手时报没有发出，不标为已交付', async () => {
@@ -169,7 +204,7 @@ describe('paper_send：发出', () => {
     expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
   });
 
-  it('这一轮被中止、确认还没到时报未确认请勿重发；迟到的确认照样标为已交付', async () => {
+  it('这一轮被中止、确认还没到时报未确认请勿重发，当场记下结果未知、不让再发；迟到的确认补记已交付', async () => {
     let confirm: (result: { ok: true }) => void = () => {};
     const h = await startPaperHub({
       files: seed(),
@@ -183,9 +218,118 @@ describe('paper_send：发出', () => {
     const res = await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), signal: aborted.signal });
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain('请勿重发');
-    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    expect(h.ledger().tasks['t-00000001']).toMatchObject({ delivered: false, unknownArtifacts: ['a-00000001'] });
+    const again = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(again.ok).toBe(false);
+    expect(String(again.error)).toContain('此前已发出，结果未知');
+    expect(String(again.error)).toContain('不要重发');
+    expect(h.outbound).toHaveLength(1);
     confirm({ ok: true });
     await expect.poll(() => h.ledger().tasks['t-00000001'].delivered).toBe(true);
+    expect(h.ledger().tasks['t-00000001'].unknownArtifacts).toBeUndefined();
+  });
+
+  it('这一轮被中止、迟到的是确定失败时，清掉当场记下的结果未知，可以再发', async () => {
+    let settle: (result: { ok: false; error: string }) => void = () => {};
+    let calls = 0;
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: () =>
+        calls++ === 0
+          ? new Promise(resolve => {
+              settle = resolve;
+            })
+          : Promise.resolve({ ok: true as const }),
+    });
+    const aborted = new AbortController();
+    aborted.abort();
+    await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), signal: aborted.signal });
+    expect(h.ledger().tasks['t-00000001'].unknownArtifacts).toEqual(['a-00000001']);
+    settle({ ok: false, error: '上传失败' });
+    await expect.poll(() => h.ledger().tasks['t-00000001'].unknownArtifacts).toBeUndefined();
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    expect(await h.call('paper_send', { artifact_id: 'a-00000001' })).toMatchObject({ ok: true });
+    expect(h.outbound).toHaveLength(2);
+  });
+
+  it('同一任务里一件成品结果未知之后，其他成品照常可发、确认后记已交付；结果未知的那件再发仍被拒', async () => {
+    let calls = 0;
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: async () =>
+        calls++ === 0
+          ? { ok: false as const, error: '文件 x 上传超时', unconfirmed: true as const }
+          : { ok: true as const },
+    });
+    const first = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(String(first.error)).toContain('请勿重发');
+    expect(h.ledger().tasks['t-00000001']).toMatchObject({ delivered: false, unknownArtifacts: ['a-00000001'] });
+    expect(await h.call('paper_send', { artifact_id: 'a-00000002' })).toMatchObject({ ok: true });
+    expect(h.ledger().tasks['t-00000001']).toMatchObject({ delivered: true, unknownArtifacts: ['a-00000001'] });
+    const again = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(again.ok).toBe(false);
+    expect(String(again.error)).toContain('成品 a-00000001 此前已发出，结果未知');
+    expect(String(again.error)).toContain('不要重发');
+    expect(h.outbound).toHaveLength(2);
+  });
+
+  it('任务已有成品确认收下之后，另一件等不到确认：照样记下这件结果未知、再发被拒；迟到的确认再撤掉', async () => {
+    let confirm: (result: { ok: true }) => void = () => {};
+    let calls = 0;
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: () =>
+        calls++ === 0
+          ? Promise.resolve({ ok: true as const })
+          : new Promise(resolve => {
+              confirm = resolve;
+            }),
+    });
+    expect(await h.call('paper_send', { artifact_id: 'a-00000001' })).toMatchObject({ ok: true });
+    const aborted = new AbortController();
+    aborted.abort();
+    const res = await h.call('paper_send', { artifact_id: 'a-00000002' }, { ...human(), signal: aborted.signal });
+    expect(String(res.error)).toContain('请勿重发');
+    expect(h.ledger().tasks['t-00000001']).toMatchObject({ delivered: true, unknownArtifacts: ['a-00000002'] });
+    const again = await h.call('paper_send', { artifact_id: 'a-00000002' });
+    expect(again.ok).toBe(false);
+    expect(String(again.error)).toContain('成品 a-00000002 此前已发出，结果未知');
+    expect(h.outbound).toHaveLength(2);
+    confirm({ ok: true });
+    await expect.poll(() => h.ledger().tasks['t-00000001'].unknownArtifacts).toBeUndefined();
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(true);
+  });
+
+  it('迟到的确定失败只撤掉那一次发出的成品，别的结果未知成品照旧不让发', async () => {
+    let settle: (result: { ok: false; error: string }) => void = () => {};
+    let calls = 0;
+    const h = await startPaperHub({
+      files: seed(),
+      delivery: () => {
+        const n = calls++;
+        if (n === 0)
+          return Promise.resolve({ ok: false as const, error: '文件 x 上传超时', unconfirmed: true as const });
+        if (n === 1)
+          return new Promise(resolve => {
+            settle = resolve;
+          });
+        return Promise.resolve({ ok: true as const });
+      },
+    });
+    await h.call('paper_send', { artifact_id: 'a-00000001' });
+    const aborted = new AbortController();
+    aborted.abort();
+    await h.call('paper_send', { artifact_id: 'a-00000002' }, { ...human(), signal: aborted.signal });
+    expect(h.ledger().tasks['t-00000001'].unknownArtifacts).toEqual(['a-00000001', 'a-00000002']);
+    settle({ ok: false, error: '上传失败' });
+    await expect.poll(() => h.ledger().tasks['t-00000001'].unknownArtifacts).toEqual(['a-00000001']);
+    expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
+    expect(await h.call('paper_send', { artifact_id: 'a-00000002' })).toMatchObject({ ok: true });
+    const again = await h.call('paper_send', { artifact_id: 'a-00000001' });
+    expect(again.ok).toBe(false);
+    expect(String(again.error)).toContain('成品 a-00000001 此前已发出，结果未知');
+    expect(h.ledger().tasks['t-00000001']).toMatchObject({ delivered: true, unknownArtifacts: ['a-00000001'] });
+    expect(h.outbound).toHaveLength(3);
   });
 
   it('插件停了以后迟到的确认不再写账本（重载时旧实例不能盖掉新实例的账本）', async () => {

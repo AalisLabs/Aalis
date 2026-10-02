@@ -1,12 +1,13 @@
-import { type PublishFile, type PublishService, type PublishSurfaceInfo, publicPathProblem } from '@aalis/api-publish';
+import type { PublishFile, PublishService, PublishSurfaceInfo } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
 import { artifactUri } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
+import { failedBeforeSubmission } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
 import { actorKey, paperLabel } from './rooms.js';
 import type { TaskJournal } from './task-journal.js';
-import { automaticPublicationArtifacts } from './works.js';
+import { automaticPublicationArtifacts, pathsProblem, retryDelay } from './works.js';
 
 type Publication = NonNullable<TaskRecord['publication']>;
 const RETRY_MS = 30_000;
@@ -98,11 +99,17 @@ export class PaperPublication {
       const task = this.#d.ledger.data.tasks[taskId];
       if (!task || task.publication !== expected) return false;
       const previous = task.publication;
+      const notice = task.notice;
       task.publication = { ...previous, ...patch };
+      // 已完成任务的发布在提交之前转为失败，是房间还没听说的结果：清掉通知标记，由完成通知报它。第一次失败时本来就
+      // 没有标记；经 works_nominate 重新提名之后再失败，标记还是上一次失败的，不清就不再通知。当场被拒的提名由工具
+      // 回执告知，不经这里
+      if (patch.state === 'failed' && failedBeforeSubmission(task)) delete task.notice;
       try {
         await this.#d.ledger.save();
       } catch (err) {
         task.publication = previous;
+        if (notice) task.notice = notice;
         throw err;
       }
       return true;
@@ -136,7 +143,7 @@ export class PaperPublication {
       }
       if (task.state !== 'done' || task.artifactsCleared) continue;
       if (pub.state === 'pending') {
-        const deadline = (task.endedAt ?? task.createdAt) + PENDING_DEADLINE_MS;
+        const deadline = (pub.pendingSince ?? task.endedAt ?? task.createdAt) + PENDING_DEADLINE_MS;
         if (this.#now() >= deadline) {
           await this.#update(task.id, pub, {
             state: 'failed',
@@ -146,14 +153,14 @@ export class PaperPublication {
           });
           continue;
         }
-        // 只在推迟重试时把期限算进唤醒时刻；其余情况 #advance 每 30 秒重试一次，期限到了自然会查到
+        // 只在推迟重试时把期限算进唤醒时刻；其余情况推进不了时 30 秒后重试，期限到了自然会查到
         if ((pub.nextAttemptAt ?? 0) > this.#now()) {
           nearest = Math.min(nearest, pub.nextAttemptAt!, deadline);
           continue;
         }
       }
       try {
-        await this.#advance(task, pub);
+        if (await this.#advance(task, pub)) nearest = Math.min(nearest, this.#now() + RETRY_MS);
       } catch (err) {
         this.#d.logger.warn(`白纸作品 ${task.id} 提交/跟踪暂时失败: ${String(err)}`);
         nearest = Math.min(nearest, this.#now() + RETRY_MS);
@@ -176,12 +183,10 @@ export class PaperPublication {
     return !!specOf(this.#d.cfg, task.paperId)?.publishTargets.includes(pub.target);
   }
 
-  async #advance(task: TaskRecord, pub: Publication): Promise<void> {
+  /** 返回 true 表示暂时推进不了（发布服务、展示面或成品读取暂不可用），由 #sweep 排进 RETRY_MS 之后的唤醒 */
+  async #advance(task: TaskRecord, pub: Publication): Promise<boolean> {
     const service = this.#d.publish.current;
-    if (!service) {
-      this.#arm(RETRY_MS);
-      return;
-    }
+    if (!service) return true;
     if (!this.#valid(task, pub, service)) {
       if (
         this.#d.publish.current === service &&
@@ -192,12 +197,12 @@ export class PaperPublication {
       ) {
         await this.#update(task.id, pub, { state: 'failed', reason: '这块白纸未获准使用该发布目标', directSend: true });
       }
-      return;
+      return false;
     }
     if (pub.state === 'submitted') {
-      if (!pub.workId) return;
+      if (!pub.workId) return false;
       const item = service.get(pub.workId);
-      if (!this.#valid(task, pub, service)) return;
+      if (!this.#valid(task, pub, service)) return false;
       if (!item || item.origin.producer !== this.#d.producer || item.origin.ref !== `${task.paperId}/${task.id}`) {
         await this.#update(task.id, pub, { state: 'failed', reason: '发布回执无法核对来源' });
       } else if (item.live) {
@@ -210,39 +215,28 @@ export class PaperPublication {
       ) {
         await this.#update(task.id, pub, { state: 'failed', reason: `发布处理${item.state}` });
       }
-      return;
+      return false;
     }
     let surface: PublishSurfaceInfo | undefined;
     try {
       surface = service.listSurfaces().find(s => s.name === pub.target);
     } catch {
-      this.#arm(RETRY_MS);
-      return;
+      return true;
     }
-    if (!surface?.available) {
-      this.#arm(RETRY_MS);
-      return;
-    }
+    if (!surface?.available) return true;
 
     let selected: { artifacts: TaskRecord['artifacts']; paths: string[] } | { reason: string };
     if (pub.artifactIds) {
       const artifacts = pub.artifactIds.map(id => task.artifacts.find(a => a.id === id));
       if (artifacts.some(a => !a)) {
         await this.#update(task.id, pub, { state: 'failed', reason: '已选成品不再存在', directSend: true });
-        return;
+        return false;
       }
       if (pub.paths) {
-        const lowered = new Set<string>();
-        const valid =
-          pub.paths.length === artifacts.length &&
-          pub.paths.every(path => {
-            if (publicPathProblem(path) || lowered.has(path.toLowerCase())) return false;
-            lowered.add(path.toLowerCase());
-            return true;
-          });
-        selected = valid
-          ? { artifacts: artifacts as TaskRecord['artifacts'], paths: pub.paths }
-          : { reason: '已选作品路径不符合发布要求' };
+        selected =
+          pub.paths.length === artifacts.length && !pathsProblem(pub.paths)
+            ? { artifacts: artifacts as TaskRecord['artifacts'], paths: pub.paths }
+            : { reason: '已选作品路径不符合发布要求' };
       } else {
         selected = automaticPublicationArtifacts({ ...task, artifacts: artifacts as TaskRecord['artifacts'] });
       }
@@ -251,14 +245,14 @@ export class PaperPublication {
     }
     if ('reason' in selected) {
       await this.#update(task.id, pub, { state: 'failed', reason: selected.reason, directSend: true });
-      return;
+      return false;
     }
     if (!pub.artifactIds) {
       const saved = await this.#update(task.id, pub, {
         artifactIds: selected.artifacts.map(a => a.id),
         paths: selected.paths,
       });
-      if (!saved) return;
+      if (!saved) return false;
       pub = task.publication!;
     }
     const files: PublishFile[] = [];
@@ -273,17 +267,16 @@ export class PaperPublication {
         const artifact = task.artifacts.find(a => a.id === pub.coverArtifactId);
         if (!artifact || !['png', 'jpeg', 'gif', 'webp'].includes(artifact.type)) {
           await this.#update(task.id, pub, { state: 'failed', reason: '已选封面不再存在', directSend: true });
-          return;
+          return false;
         }
         cover = new Uint8Array(
           (await this.#d.storage.readFile(artifactUri(task.paperId, task.id, artifact))) as Uint8Array,
         );
       }
     } catch {
-      this.#arm(RETRY_MS);
-      return;
+      return true;
     }
-    if (!this.#valid(task, pub, service)) return;
+    if (!this.#valid(task, pub, service)) return false;
     const result = await service.nominate({
       submissionKey: `paper:${task.id}`,
       origin: {
@@ -301,19 +294,17 @@ export class PaperPublication {
       files,
       ...(cover ? { cover } : {}),
     });
-    if (!this.#valid(task, pub, service)) return;
+    if (!this.#valid(task, pub, service)) return false;
     if ('refused' in result) {
-      if (typeof result.retryAfterMs === 'number' && Number.isFinite(result.retryAfterMs) && result.retryAfterMs > 0) {
-        await this.#update(task.id, pub, {
-          state: 'pending',
-          nextAttemptAt: this.#now() + Math.ceil(result.retryAfterMs),
-          reason: undefined,
-        });
-        return;
+      const retry = retryDelay(result);
+      if (retry !== undefined) {
+        await this.#update(task.id, pub, { state: 'pending', nextAttemptAt: this.#now() + retry, reason: undefined });
+        return false;
       }
       await this.#update(task.id, pub, { state: 'failed', reason: '作品未通过发布检查' });
-      return;
+      return false;
     }
     await this.#update(task.id, pub, { state: 'submitted', workId: result.id, nextAttemptAt: undefined });
+    return false;
   }
 }
