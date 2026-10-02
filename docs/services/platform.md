@@ -50,10 +50,12 @@ export interface PlatformAdapter {
 | `getPlatformNames(source)` | 枚举所有平台名（`adapter.platform` 去重） |
 | `aggregatePlatformConnections(source)` | 聚合所有连接 |
 | `aggregatePlatformDetails(source)` | 聚合展示详情（含 `contextId` + `connections`） |
-| `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份 |
-| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter（优先 `canHandle`，否则 `startsWith(platform+':')` 兜底） |
-| `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错） |
-| `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（adapter 不支持 `callAction` 则抛错） |
+| `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份；同平台装了多个实例时，取第一个认得这个会话的实例给出的身份 |
+| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底） |
+| `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错，见下） |
+| `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（无 adapter 接管、或 adapter 不支持 `callAction` 则抛错） |
+
+没有 adapter 接管时，两个发送 helper 的报错写明 sessionId；sessionId 带平台前缀时，另列出这个平台各实例（`contextId`）的已知账号与连接状态，如 `<实例甲>: 111(online)；<实例乙>: 222(online)、333(offline)`，分得清是账号写错、账号不属于任何实例，还是连接没上来。
 
 类型随描述符提供：`defineService<PlatformAdapter>('platform')`（`src/index.ts`），消费方把描述符写进 `uses` 即得类型，`platform.current` 推断为 `PlatformAdapter | undefined`。
 
@@ -61,7 +63,7 @@ export interface PlatformAdapter {
 
 ### 参考实现（provider）
 
-- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `getSelfIdentity`、`callAction`（未实现 `canHandle`，按会话 ID 前缀路由），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
+- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `canHandle`、`getSelfIdentity`、`callAction`，`sessionTypes: ['group','private']`，在插件 `apply` 里注册。它可以装多个实例（`reusable`），每个实例可带多个账号：`canHandle` 只认本实例连接里的账号（含配置里写明、连接还没上来的），会话 ID `onebot:<selfId>:…` 因此按账号路由到所属实例。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
 - **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；`sessionTypes: []` 表示单会话不区分类型。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。
@@ -73,15 +75,15 @@ export interface PlatformAdapter {
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-authority**：`getPlatformNames(platform)` 进可选作用域候选（`src/index.ts`）。
 - **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypes` 生成 `gateway-scopes` 笛卡尔积。
-- **plugin-session-manager**：`getPlatformNames(platform)` 汇总已注册平台名，供页面下拉框使用（`src/index.ts`）。
-- **plugin-tool-onebot**：`getPlatformAdapters(platform).find(a => a.platform==='onebot' && typeof a.callAction==='function')` 拿到 onebot adapter 调原生 action（`src/index.ts`）。
+- **plugin-session-manager**：`getPlatformNames(platform)` 汇总已注册平台名，供页面下拉框使用；房间建档时用 `resolvePlatformBySession` 解析出接管它的实例，记进 `SessionInfo.originInstance`，供会话列表按实例分组（`src/index.ts`）。
+- **plugin-tool-onebot**：平台动作经 `callPlatformAction(platform, 'onebot:<selfId>:internal:0', action, params)` 发出，按账号路由到所属实例；撤回自己发的消息、处理好友申请与群请求按会话（或账号）用 `resolvePlatformBySession` 找到所属实例，自身禁言列表汇总所有 onebot 实例（`src/index.ts`）。
 
 ## 4. 写一个 provider
 
 ### 最小必须 vs 可选
 
 **必须实现**：`adapterName`、`platform`、`getConnections()`、`sendMessage()`。
-**强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，`sendPlatformMessage` / `callPlatformAction` 都找不到你的 adapter。
+**强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，`sendPlatformMessage` / `callPlatformAction` 都找不到你的 adapter。插件能装多个实例（`reusable`）时同样**必须**实现 `canHandle()`，只认自己实例的会话：前缀兜底会让第一个实例接下这个平台的全部会话。
 **按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`sessionTypes`（让 UI 能列出你的真实会话类型）。
 
 ### 会话 ID 约定
@@ -156,9 +158,9 @@ export default definePlugin({
 
 ## 7. 边界与注意事项
 
-- **路由依赖 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 即是典型反例（`plugin-cli/src/index.ts`）。
+- **路由依赖 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 即是典型反例（`plugin-cli/src/index.ts`）。前缀兜底只认平台名、不认实例，同一插件装多个实例时按注册顺序落到第一个，所以能多实例的适配器要自己实现 `canHandle`（OneBot 即是）。
 - **`getPlatformNames` 用 `adapter.platform` 字段去重，不是用服务名**：同一 `platform` 字符串值的多个 adapter 会被并成一个名。确保 `platform` 字段在你的生态里唯一且稳定（它会进 authority 作用域、user-relation 白名单、归档 metadata）。
-- **非标准扩展方法不在契约里**：OneBot 的 `getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等是 `PlatformAdapter & {…}` 交叉类型上附加的扩展（`adapter-onebot/src/index.ts`），只对知情消费者（`plugin-tool-onebot`，用 `typeof a.callAction === 'function'` + 平台名探测）可见。第三方 adapter **不要**依赖这些；要扩展平台专属能力，沿用「`callAction(sessionId, action, params)` 走平台原生 API」这条标准通道，或自己另起一个独立服务名而非污染 `platform` 契约。
+- **非标准扩展方法不在契约里**：OneBot 的 `getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等是 `PlatformAdapter & {…}` 交叉类型上附加的扩展（`adapter-onebot/src/index.ts`），只对知情消费者（`plugin-tool-onebot`，按会话路由到所属实例后用 `typeof` 探测方法）可见。第三方 adapter **不要**依赖这些；要扩展平台专属能力，沿用「`callAction(sessionId, action, params)` 走平台原生 API」这条标准通道，或自己另起一个独立服务名而非污染 `platform` 契约。
 - **多 entry 的 `platform.current` 胜者基本无意义**：因为 platform 是按名/按 sessionId 路由的多实例服务。误用 `platform.current` 当「主平台」会在多 adapter 时拿到不确定的那一个（按 priority>注册顺序）。一律用 helper。
 
 ## 8. 交叉链接

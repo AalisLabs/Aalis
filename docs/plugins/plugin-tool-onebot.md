@@ -39,7 +39,7 @@ export default definePlugin({
 
 1. 显式传入的 `group_id` / `user_id` / `self_id`
 2. 回退到当前会话的 OneBot 上下文（如果当前会话恰好是 onebot 群/私聊）
-3. `self_id` 还有一层兜底：优先取任一在线 OneBot 连接的 selfId，没有在线连接时取任一已知连接的 selfId；都没有则报错。
+3. `self_id` 还有一层兜底：先在所有 OneBot 实例里找在线连接的 selfId，都不在线时取任一已知连接的 selfId；都没有则报错。
 
 这意味着 LLM 不需要切到目标群的会话再调工具——一次性把目标 ID 传进来即可。
 
@@ -137,6 +137,7 @@ export default definePlugin({
 
 ## 行为说明
 
-- **adapter 调用**：内部以合成 sessionId `onebot:<selfId>:internal:0` 调用 OneBot 适配器的 `callAction`；适配器只从 sessionId 中取 selfId 定位连接，因此与目标会话类型无关。
+- **adapter 调用**：内部以合成 sessionId `onebot:<selfId>:internal:0` 经 `@aalis/api-platform` 的 `callPlatformAction` 发出，按 selfId 路由到账号所属的 OneBot 实例（适配器的 `canHandle`），适配器再按 selfId 定位连接，因此与目标会话类型无关。装了多个 OneBot 实例时，动作总是发到账号所在的实例。
+- **扩展方法按实例取**：撤回自己发的消息（`onebot_recall_self`）按目标会话找到发出消息的实例；处理好友申请、加群申请与入群邀请按当前会话（或 `self_id`）的账号找到收到申请的实例，申请通知注入在收到它的账号的会话里，在那里调用即落到对的实例；`onebot_list_self_mutes` 汇总所有实例记下的自身禁言。
 - **图像识别联动**：适配器缓存未命中时，`onebot_get_forward_msg` 会把转发消息中的图片交给 `media` 服务的 `describeImage`（若可用），识别结果以 `[图片: 描述]` 的形式嵌入返回文本；缓存命中时直接返回适配器缓存的原文与摘要。
 - **权限预检**：禁言、全员禁言、踢人、设置群名片、改群名、设置专属头衔、设管理员这些工具会先调用 `checkAdminPermission`，检查机器人在目标群的角色（专属头衔与设管理员要求群主，禁言与踢人还会比较目标成员的角色），不满足时返回「操作失败：……」文本；取不到机器人自身成员信息时跳过检查。
