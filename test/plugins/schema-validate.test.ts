@@ -176,6 +176,18 @@ describe('validateConfig required 与缺失语义', () => {
       { path: 's', message: '必填字段缺失', kind: 'missing' },
     ]);
   });
+
+  it('声明了 format 的必填字段只有空白算未配置（与 parseConfig 一致）；没声明 format 的空白照常是值', () => {
+    const schema: ConfigSchema = {
+      bin: field('string', { required: true, format: 'executable' }),
+      model: field('textarea', { required: true, format: 'absolute-path' }),
+      sep: field('string', { required: true }),
+    };
+    expect(validateConfig(schema, { bin: '  ', model: '\n', sep: ' ' })).toEqual([
+      { path: 'bin', message: '必填字段缺失', kind: 'missing' },
+      { path: 'model', message: '必填字段缺失', kind: 'missing' },
+    ]);
+  });
 });
 
 describe("validateConfig onInvalid: 'error'", () => {

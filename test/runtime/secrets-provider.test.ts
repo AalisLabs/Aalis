@@ -68,6 +68,19 @@ describe('createFsSecretsProvider', () => {
     expect(warns[0]).toMatch(/^密钥文件有可疑写法：TAG_RESOLVE_FAILED（第 1 行第 \d+ 列）$/);
   });
 
+  it('以集合作键（`[sk-…]: x`）：toJS 的告警同样不经 process.emitWarning 把键的原文打到 stderr', () => {
+    const emitted: unknown[] = [];
+    const original = process.emitWarning;
+    process.emitWarning = ((warning: unknown) => void emitted.push(warning)) as typeof process.emitWarning;
+    try {
+      writeFileSync(file, '[sk-LEAK-PLACEHOLDER]: x\n');
+      createFsSecretsProvider(file);
+    } finally {
+      process.emitWarning = original;
+    }
+    expect(emitted).toEqual([]);
+  });
+
   it('文件不存在：按空映射，不告警；第一次保存时建出，权限 0600', () => {
     const { values, provider } = createFsSecretsProvider(file);
     expect(values).toEqual({});

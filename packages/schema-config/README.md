@@ -56,7 +56,7 @@ export default definePlugin({
 | `map` | `Record<string, string>` | 对象，每个值按字符串判定（如环境变量表） |
 
 - **标量宽容**：YAML 里不加引号的纯数字（QQ 号、口令、端口、环境变量值）在期望字符串的位置照常可用，加了引号的数字在期望数字的位置照常可用；`parseConfig` 返回换算后的值。
-- **`format`**：写宿主文件路径的 `string` / `textarea` 字段声明。`'absolute-path'` 只收绝对路径（`/…`、`C:\…` 或 `\\…`）；`'executable'` 另收不含路径分隔符的命令名（按 PATH 查找），`C:foo` 这类带盘符的相对写法不算。判定忽略首尾空白，空串照常表示未填、不查；只按写法判定、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以不收。
+- **`format`**：写宿主文件路径的 `string` / `textarea` 字段声明。`'absolute-path'` 只收绝对路径（`/…`、`C:\…` 或 `\\…`）；`'executable'` 另收不含路径分隔符的命令名（按 PATH 查找），`C:foo` 这类带盘符的相对写法不算。判定忽略首尾空白，交给插件的值也去掉首尾空白；空串与只有空白都表示未填、不查（`required` 字段算缺失）；只按写法判定、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以不收。
 - **选项即取值范围**：选项按字符串比较，`parseConfig` 取选项声明的原值（WebUI 把数字选项存成字符串，读出时归位成数字）。
 - **`dynamicOptions` / `allowCustom`**：两者影响取值判定，由本包声明。`dynamicOptions` 是动态选项来源的服务名（WebUI 经 webui-server 调该服务的 `listModels()` 或等价方法获取选项），声明后静态 `options` 不再是取值范围，只查取值是字符串或数字；`allowCustom` 表示接受选项之外的值，不查是否在选项内：WebUI 给 multiselect 提供手动输入；select 用它表示静态选项不全（例如由插件在运行时补全选项的字段）。
 - **扩展字段类型**：api 包经 declaration merging 往 `SchemaFieldTypes` 登记类型名与取值类型（如 `'llm-ref': ModelRef`），`ConfigOf` 据此推导。本包不校验外来类型的取值：`validateConfig` 跳过，`parseConfig` 除把 `''` 当作未配置外原样透传。
@@ -73,7 +73,7 @@ export default definePlugin({
 
 ## parseConfig 的处置
 
-- **缺失**：`undefined` 与 `null`（YAML 裸键）；`required` 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填），外来类型的 `''` 一律当作缺失（WebUI 给未选的 `llm-ref` 存 `''`）。有 `default` 用 `default` 的拷贝；无 `default` 且 `required` 不可恢复；否则省略该键。
+- **缺失**：`undefined` 与 `null`（YAML 裸键）；`required` 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填；声明了 `format` 的只有空白也算），外来类型的 `''` 一律当作缺失（WebUI 给未选的 `llm-ref` 存 `''`）。有 `default` 用 `default` 的拷贝；无 `default` 且 `required` 不可恢复；否则省略该键。
 - **无效**（不符合上表的判定）：未声明 `onInvalid` 时保持宽容处置：有 `default` 回落并告警；无 `default` 且 `required` 不可恢复；否则省略并告警。字段声明 `onInvalid: 'error'` 时，显式无效值即使有 `default` 也抛 `ConfigError`；它不改变 `required` 的缺省含义，`undefined` / `null` 仍走上述缺省规则。
 - **list / map / multiselect**：默认坏元素、坏值逐个丢弃并告警，其余保留；稀疏数组的空位和 map 的保留键也属于坏成员。严格字段只要含一个坏成员就拒绝整个值，不返回部分结果。
 - **分组**：值不是对象时默认告警，整组按空对象解析，子字段各取默认值。显式给非对象且分组含严格字段时拒绝；`undefined` / `null` 仍视为缺省。
