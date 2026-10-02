@@ -54,7 +54,7 @@ interface SessionInfo {
   kind: SessionKind;               // 有 parentId 为 task，其余为 room
   originPlatform?: string;         // 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话没有
   audience?: RoomAudience;         // 只有 room 带：有出生平台的取 group 或 private，其余为 owner
-  originInstance?: string;         // 有出生平台的房间建档时，接管它的平台适配器的插件实例 id；只供列表分组
+  originInstance?: string;         // 有出生平台的房间：接管它的平台适配器的插件实例 id；只供列表分组
   lastReplyAt?: number;            // 她最近一次开口的时间：回合结局为 replied 时写入
 }
 
@@ -85,7 +85,7 @@ interface SessionTreeSection {
 
 `kind`、`originPlatform`、`audience` 由 session-manager 只按会话 ID 与 `parentId` 推出，新建、建档与加载时覆盖写入，调用方传的值与存储里的旧值都不采信；`createSession`、`createChildSession` 的参数类型里没有这三个字段，也没有下面两个由 session-manager 写入的字段。
 
-- `originInstance`：有出生平台的房间建档时，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析出接管它的适配器条目，记下它的插件实例 id（`contextId`），落盘保存，之后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。建档时没有适配器认领（适配器没装、账号不属于任何实例）的为 undefined。`ensureSession` 先建好记录、发 `session:created`，记下实例后再发 `session:updated`，等它落定才返回。
+- `originInstance`：有出生平台的房间建档时，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析出接管它的适配器条目，记下它的插件实例 id（`contextId`），落盘保存，记下后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。还没有适配器认领（适配器没装好、连接还没上来、账号暂时不属于任何实例）的为 undefined，下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录已有解析在途的不重复解析。`ensureSession` 建档时先建好记录、发 `session:created`，记下实例后再发 `session:updated`，等它落定才返回；命中已有的记录时只合并更新，不解析。
 - `lastReplyAt`：回合结局（`agent:turn:after` 的 `outcome`）为 `replied` 时写入，`silent`、`aborted`、`error` 不改；同一会话别的回合还在跑时同样写入，随 `session:updated` 推出。
 
 `status` 的变化：回合开始时翻 `active`；会话里最后一轮结束时，仍为 `active` 的根会话按这一轮的结局收口，结局为 `error` 的收口为 `error`，其余（含消息被拦下、没有结局的一轮）为 `completed`。子会话由 plugin-subtask 收口。`audience: 'owner'` 只表示「不是 IM 房间」，凡是没有出生平台的根会话都算，包括 `mcp-server`、`workflow::<id>` 与定时任务指定的目标会话，不代表 owner 本人在场，只供列表分区用。非房间会话的 ID 不得含单冒号，否则会被当成房间。

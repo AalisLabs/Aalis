@@ -99,7 +99,7 @@ interface SessionInfo {
   kind: 'room' | 'task';           // SessionKind：有 parentId 为 task（挂在发起它的会话下面的子会话），其余为 room
   originPlatform?: string;         // 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话没有
   audience?: 'owner' | 'private' | 'group';  // RoomAudience，只有 room 带：有出生平台的取 group 或 private，其余为 owner
-  originInstance?: string;         // 有出生平台的房间建档时，接管它的平台适配器的插件实例 id（§6.6），只供列表分组
+  originInstance?: string;         // 有出生平台的房间：接管它的平台适配器的插件实例 id（§6.6），只供列表分组
   lastReplyAt?: number;            // 她最近一次开口的时间：回合结局为 replied 时写入（§7.1）
 }
 ```
@@ -429,7 +429,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 参考实现在 `inbound:message` 上收录 IM 房间：有出生平台、不是子任务（id 不含 `::`）的会话，首条真人入站（不带 `source`）到达即登记，与是否执行过 `/session.set`、开过子任务无关。带 `source` 的是内部注入（workflow 的 send-message 与 agent 节点、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不触发登记，每次 workflow 运行不会多出一个持久的房间。
 
 - 登记：`ensureSession(id, { name, createdBy: 'system', status: 'waiting' })`，得到 `kind: 'room'` 与房间自己的 `audience`、`originPlatform`。收录只登记与补名，不改状态；状态翻转见 §7.1。
-- 所属实例：凡是有出生平台的房间建档（收录、owner 从 WebUI 插话、`createChildSession` 兜底、`/session.set`，都经 `ensureSession`），记录建好、发出 `session:created` 之后，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析接管它的适配器，把插件实例 id 记进 `originInstance` 并发 `session:updated`。会话列表据此把同一插件的多个实例（如两个 OneBot 实例）分组显示；路由不读它。先建记录再解析，解析期间别的建档调用走合并更新，不会重复建档；解析期间会话被删的不写回。没有适配器认领的（适配器没装、账号不属于任何实例）不记，之后也不补记；owner 面会话与子任务不记。
+- 所属实例：凡是有出生平台的房间建档（收录、owner 从 WebUI 插话、`createChildSession` 兜底、`/session.set`，都经 `ensureSession`），记录建好、发出 `session:created` 之后，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析接管它的适配器，把插件实例 id 记进 `originInstance` 并发 `session:updated`。会话列表据此把同一插件的多个实例（如两个 OneBot 实例）分组显示；路由不读它。先建记录再解析，解析期间别的建档调用走合并更新，不会重复建档；解析期间会话被删的不写回。没有适配器认领的（适配器没装好、连接还没上来、账号暂时不属于任何实例）先不记，与读表读进来、还没有 `originInstance` 的房间一样，在下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录的解析不并发。已记下的不改；owner 面会话与子任务不记。
 - 取名按受众：群取消息的 `groupName`，私聊取 `nickname`，缺省用会话 id。只采信出生平台自己的入站（`msg.platform` 等于出生平台）带的名字，从 WebUI 插话建档时名字为 id，不会把私聊房间起成 owner 的昵称。群的首条入站可能是不带群名的戳一戳，这时同样用 id，不回退到发送者昵称。
 - 补名：现名还等于 id 时，后到的出生平台原生入站带了群名（群）或昵称（私聊）就补上；现名不是 id 的（如 owner 用 `/session.set -n` 起的名）不改。`createChildSession` 兜底建档的房间同样以 id 为名，由之后的真人入站补名。
 - 前缀告警：出生平台既不是发来消息的平台、也不是已注册的平台名时，按前缀告警一次，多半是适配器的 id 前缀与平台名不一致（见 [platform 服务](platform.md) 的会话 ID 约定）。WebUI、CLI 往房间插话不参与判定：房间的适配器停用或还没加载时，它的平台名同样不在已注册之列。
