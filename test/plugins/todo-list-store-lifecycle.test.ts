@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import type { TodoItem } from '../../packages/api-todo-list/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
-import todoList, { type TodoItem } from '../../packages/plugin-todo-list/src/index.js';
+import todoList from '../../packages/plugin-todo-list/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
