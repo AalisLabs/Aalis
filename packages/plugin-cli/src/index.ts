@@ -19,7 +19,12 @@ import {
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { LogEntry } from '@aalis/schema-log';
-import type { MessageAttachment, OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
+import {
+  AttachmentRefKind,
+  type MessageAttachment,
+  type OutgoingMessage,
+  type StreamChunkMessage,
+} from '@aalis/schema-message';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
@@ -165,11 +170,11 @@ function startCli(caps: Caps): void {
   // 附件：终端就是这个会话的平台，显示不了图片本身，写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档。
   // 路径在支持超链接的终端里可以点开
   const attachmentStorage = createStorageGateway(caps.storage);
-  const KIND_LABELS: Record<MessageAttachment['kind'], string> = {
-    image: '图片',
-    audio: '语音',
-    video: '视频',
-    file: '文件',
+  const KIND_LABELS: Record<MessageAttachment['kind'], AttachmentRefKind> = {
+    image: AttachmentRefKind.Image,
+    audio: AttachmentRefKind.Audio,
+    video: AttachmentRefKind.Video,
+    file: AttachmentRefKind.File,
   };
   async function attachmentLine(att: MessageAttachment): Promise<string> {
     const label = `[${KIND_LABELS[att.kind] ?? '附件'}]`;
@@ -210,9 +215,16 @@ function startCli(caps: Caps): void {
       if (msg.content.trim()) adapter.sendMessage(msg.sessionId, msg.content);
       return;
     }
-    // 同一轮已流式输出时，agent 的整条回复是重复；系统/指令消息不是流式正文，照常显示
-    if (msg.source === 'agent' && tui?.consumeStreamedSend()) return;
-    adapter.sendMessage(msg.sessionId, msg.content);
+    // 纯文本同样写出即算送达，同步认领回执（作品通知等要等它）。同一轮已流式输出时，agent 的整条回复是重复、
+    // 正文早已写出；系统/指令消息不是流式正文，照常显示
+    const written =
+      msg.source === 'agent' && tui?.consumeStreamedSend()
+        ? Promise.resolve()
+        : adapter.sendMessage(msg.sessionId, msg.content);
+    msg.delivery = written.then(
+      () => ({ ok: true as const }),
+      err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }),
+    );
   });
 
   events.on('outbound:stream', chunk => {
