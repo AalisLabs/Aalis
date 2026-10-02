@@ -30,7 +30,7 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，以及家目录（第一部分与第二部分）。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的七个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），以及会话协议与会话服务（新 WebUI 的第一部分）。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十一个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
@@ -39,7 +39,8 @@
 - 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执；日志位置的说明）、plugin-media（图片来源的裸路径不再路由到插件私有的内置根；说明里的临时目录）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-session-confirm、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）、plugin-memory-summary（`summaryTokenRatio` 标 `secret: false`）
 - 不发版：plugin-asr-openai、plugin-embedding-openai、plugin-llm-openai、plugin-maimai、plugin-okx-trading、plugin-websearch-serper 只删了为 `secret` 写的类型导入（编译后擦除）与 api-webui 开发依赖，编译出的 JS 与类型声明不变（只差 source map 行号与 devDependencies），运行行为不变，停在已发布版本。
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
-- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0
+- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0、api-checkpoint 0.1.0、api-session-protocol 0.1.0、api-todo-list 0.1.0、plugin-session-server 0.1.0
+- 「会话协议与会话服务」一节的包还没并进上面三张清单：api-agent、api-tools、api-platform、api-session-manager、schema-message、plugin-agent、plugin-checkpoint、plugin-todo-list、plugin-tool-onebot、plugin-adapter-onebot、plugin-session-manager、plugin-storage-local、plugin-tool-system、plugin-image-sender、plugin-paper、plugin-webui-server。档位按该节末尾的说明，新 WebUI 各单元做完后统一并账。
 - plugin-trigger-laya 是 `private` 包，只改了说明与注释，不发布到 npm。
 - 上面的清单没收的：api-trigger、plugin-draw、plugin-tool-search 自上次发布以来也有源码改动（plugin-draw 见「作品提名与上站」；api-trigger、plugin-tool-search 的改动还没有写进本节），发布时按源码与 npm 实况核定档位并补写说明。
 - api-agent、api-authority、api-flow-control、api-platform、api-storage、api-workflow、plugin-authority、plugin-scheduler、plugin-trigger-policy 只改了注释（去掉跨会话委派的提法；api-platform 写明会话 ID 约定，api-agent、api-workflow 改了 `token:request` 与会话 ID 的说明；api-storage 的 URI 示例改为 `skills:/`），本批不单独发布。
@@ -396,8 +397,32 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - plugin-memory-mongodb 对 `@aalis/schema-config` 的下限可以一并抬到新版本，只为改进报错：旧版的 `parseConfig` 遇到落空的引用同样拒绝激活（`uri` 声明了 `onInvalid: 'error'`），只是报 `uri` 期望 string、得到 object，不点名缺的键。
   - runtime、plugin-webui-server、plugin-mcp-client 对 `@aalis/api-host-config` 的下限，抬到含 `applyPluginConfig` 的新版本。
 
+### 会话协议与会话服务（新包 @aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-checkpoint、@aalis/api-todo-list；@aalis/api-agent、@aalis/api-tools、@aalis/api-platform、@aalis/api-session-manager、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-checkpoint、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-session-manager、@aalis/plugin-storage-local、@aalis/plugin-tool-system、@aalis/plugin-image-sender、@aalis/plugin-paper、@aalis/plugin-webui-server）
+
+新 WebUI 的第一部分：owner 的客户端与守护进程之间改用一套公开的会话协议。旧的 `/ws` 与旧前端暂留，随新前端一起删除（见后续各节）。
+
+- **会话协议**（新包 api-session-protocol，实验性）：JSON-RPC 2.0 帧、握手（主版本不同即断开并给原因）、错误码，以及会话列表、订阅与条目、回合控制的 zod schema，类型由 schema 推导；服务描述符 `sessionProtocol`，接口为 `connect(peer, send)`。第一版在终端客户端接入之前允许不兼容的修改，之后只做加法。第三方前端照 [api-session-protocol](docs/api/api-session-protocol.md) 实现即可。
+- **会话服务**（新包 plugin-session-server）：
+  - 会话列表分「我的」与房间两区，房间按适配器实例分组；状态有出错、完成未读、运行中；支持排序、搜索、分页，增量经 `sessions/changed` 推送。「我的」区的已读时间记在 `pluginData:/session-server/seen.json`，换设备一致。
+  - 会话的新建、改名、归档（连同子会话）、删除与批量；会话配置一次给出生效值、继承来源与可选项。
+  - 订阅一个会话先回快照（最近一页历史、在途回合已产出的条目），再推条目；推送带 `epoch` 与按会话递增的 `seq`，只用于去重，重连一律重新取快照。一条连接可以订阅多个会话。
+  - 条目种类：用户消息、她的回复、思考、工具调用（exec 的输出边跑边推）、宿主通知、计划、用量、回合起止。房间里没发出去的话（静默、工具调用之前说的话）标「未发出」，经平台工具发进房间的消息在工具卡上标「已发到群」；这两种标记来自投递回执，刷新后历史里只保留「工具调用之前说的话」。
+  - 历史由存档归并，归并逻辑从前端搬到服务端；`/clear` 或回滚改写历史时推 `session/resync`，客户端重新取快照。
+  - 回合控制：发送（只有附件、没写文字的消息照常送出）、继续、停止（带 `turnId` 时只停那一轮）、压缩、回滚、清空计划。
+- **回合 id**：agent 在回合开始时生成 `turnId`，贯穿 `agent:input:before`、`outbound:stream`、`tool:execute`、`token:usage` 与 `agent:turn:after`；工具调用由 agent 生成全局唯一的 `callId`（不用模型给的 id，几家模型的 id 在并发回合里会撞），写进工具结果的 `metadata.callId` 与时间线的 `tool_call` 段。工具参数是 `null`、数组或原始值时不执行，错误回给模型。
+  - 破坏性：`agent:input:before`、`agent:turn:after`、`tool:execute`（另加 `callId`）、`StreamChunkMessage` 的 `turnId` 必填，自己实现 AgentService 或发这些事件的插件要带上；`AgentService.abort(sessionId, turnId?)` 改为返回是否停下。
+  - api-tools 新增 `tool:output` 事件；schema-message 的 `OutgoingMessage` 与时间线 `tool_call` 段新增可选的 `callId`，`send_attachment` 与 `paper_send` 发出的消息带上它。
+- **检查点**（新包 api-checkpoint）：`checkpoint` 服务描述符与回滚结果类型从 plugin-checkpoint 移出，契约只留 `beforeMutate`、`rollback`、`rollbackWithChat`。plugin-checkpoint 不再导出它们，自定义存储后端改为每次写入前直接调 `beforeMutate`（`isActive` 已删）。回合 id 就是 agent 的 `turnId`：同一会话并发的回合改同一个文件时按写入所在的回合归属，回合外的写入不再记账（此前记进所有在跑的回合，回滚会误删无关文件）；回滚时另有回合也改过同一文件，结果的 `alsoChangedBy` 列出它们；被入站钩子拦下的回合照样结束并提交；提交失败只告警，不再把已经回复成功的一轮变成错误。
+- **房间按适配器实例路由**：api-platform 的 `resolvePlatformBySession` 改为返回带 `contextId` 的适配器条目（破坏性，原来的用法改成 `.instance`）；能装多个实例的适配器必须实现 `canHandle`。onebot 适配器按会话 id 里的账号认领自己的房间，配置里写明、还没连上的账号也认；认不出时报错列出已知账号与连接状态。session-manager 收录房间时记下 `originInstance`（只用于分组），回合结局为 replied 时记 `lastReplyAt`，最近一轮出错时会话状态记为 `error`。tool-onebot 改走平台路由，修好多实例时动作总发到第一个实例的缺陷；撤回、好友与加群申请按实例处理，自身禁言列表汇总所有实例。
+- **待办**（新包 api-todo-list）：`todo-list` 服务描述符与 `TodoItem`、`todo:updated` 从 plugin-todo-list 移出（破坏性，不再从插件包导出）；工具关掉时也提供服务。
+- **WebUI**：新增 WebSocket 端点 `/session`，用现有 token 认证后接到会话协议，只搬运文本帧；会话服务不在时以 1013 关闭并写明原因。WebSocket 的未知路径由 400 改为 404，未登录一律 401。
+- **升级**：已有房间还没有 `originInstance`，等它下一次有消息进来时补记；在那之前列在所属平台下不归实例的一组里。不需要手动迁移。
+- **发布档位**：次版本：api-agent、api-tools、api-platform、schema-message、plugin-checkpoint、plugin-todo-list、plugin-session-manager；其余为 patch。plugin-agent、plugin-session-manager、plugin-checkpoint、plugin-storage-local、plugin-session-server 对 api-agent、api-tools、schema-message、api-platform、api-checkpoint 的下限抬到本批的新版本。
+
 ### 必须同批升级的包
 
+- plugin-agent、plugin-checkpoint、plugin-session-manager、plugin-storage-local 与 api-agent、api-checkpoint 同批升级：checkpoint 改从 `agent:input:before` 取 agent 的 `turnId` 记回合，配旧版 agent 时拿不到回合 id、写入不再记账；新版 session-manager 按 `turnId` 登记在飞回合；新版 storage-local 经 api-checkpoint 的描述符找 checkpoint，配旧版 checkpoint（描述符在插件包里）时找不到、写入不受保护。
+- plugin-session-manager、plugin-tool-onebot 与 api-platform 同批升级：新版 `resolvePlatformBySession` 返回适配器条目，旧版返回适配器本身。plugin-adapter-onebot 多实例部署时也要同批：旧版没有 `canHandle`，新版 api-platform 按它路由。
 - plugin-paper、plugin-image-sender、plugin-publish-review、plugin-webui-server 与 schema-message 同批升级：前三者在运行时导入 schema-message 新增的 `awaitDelivery`，plugin-image-sender 与 plugin-webui-server 另导入新增的 `outboundMediaMessage`。发布时它们对 schema-message 的依赖下限要抬到含这些导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
 - plugin-adapter-onebot 与 api-trigger、schema-message 同批升级：新版适配器把群友之间的戳一戳也转为入站，并以 `noticeTargetIsSelf: false` 标明不是戳机器人；旧版 api-trigger 的 `isAddressed` 不看这个标记，会把每次群友互戳都当作点名。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值；新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
