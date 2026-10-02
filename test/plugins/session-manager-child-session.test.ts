@@ -1,4 +1,4 @@
-import { App, provide } from '@aalis/core';
+import { App, events, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -13,14 +13,14 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
-  const host = app.bind({ provide, sessionManager });
+  const host = app.bind({ provide, events, sessionManager });
   host.provide(memory, fakeMemory() as never);
   await app.plugin(sessionManagerPlugin, {});
   await app.plugins.idle();
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  return { app, sm: host.sessionManager.require() };
+  return { app, host, sm: host.sessionManager.require() };
 }
 
 describe('createChildSession：父会话未建档时兜底建档', () => {
@@ -52,6 +52,31 @@ describe('createChildSession：父会话未建档时兜底建档', () => {
     expect(parent?.config).toEqual({ think: false });
     expect(parent?.createdBy).toBe('user');
     expect(parent?.children).toContain(child.id);
+    await app.stop();
+  });
+});
+
+describe('子会话增删：父会话的子会话列表变了，发 session:updated', () => {
+  it('建子会话先发子会话的 session:created，再发父会话的 session:updated；删子会话先发 session:deleted，再发父会话的 session:updated', async () => {
+    const { app, host, sm } = await setup();
+    const parent = await sm.createSession({ name: '父' });
+    const seen: Array<[string, string, number]> = [];
+    host.events.on('session:created', s => void seen.push(['created', s.id, s.children.length]));
+    host.events.on('session:updated', s => void seen.push(['updated', s.id, s.children.length]));
+    host.events.on('session:deleted', id => void seen.push(['deleted', id, 0]));
+
+    const child = await sm.createChildSession(parent.id, { name: '子' });
+    expect(seen).toEqual([
+      ['created', child.id, 0],
+      ['updated', parent.id, 1],
+    ]);
+
+    seen.length = 0;
+    await sm.deleteSession(child.id);
+    expect(seen).toEqual([
+      ['deleted', child.id, 0],
+      ['updated', parent.id, 0],
+    ]);
     await app.stop();
   });
 });

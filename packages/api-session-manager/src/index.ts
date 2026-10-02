@@ -144,7 +144,10 @@ export interface SessionInfo {
   parentId?: string;
   /** 子会话 ID 列表 */
   children: string[];
-  /** 会话状态 */
+  /**
+   * 会话状态。回合开始翻 active；根会话最后一轮结束时按这一轮的结局收口：出错为 error，其余为 completed
+   * （子会话由 plugin-subtask 收口）
+   */
   status: 'active' | 'waiting' | 'completed' | 'error' | 'archived';
   /** 会话级配置覆盖 */
   config: SessionConfig;
@@ -166,6 +169,13 @@ export interface SessionInfo {
   originPlatform?: string;
   /** 只有 room 带：有出生平台的取 group 或 private，其余为 owner */
   audience?: RoomAudience;
+  /**
+   * 有出生平台的房间建档时，接管它的平台适配器的插件实例 id（api-platform 的 `resolvePlatformBySession`）。
+   * 只供会话列表按实例分组，路由不读它；建档时没有适配器认领的为 undefined。不收调用方传值
+   */
+  originInstance?: string;
+  /** 她最近一次开口的时间：回合结局为 replied 时由 session-manager 写入。不收调用方传值 */
+  lastReplyAt?: number;
 }
 
 /**
@@ -212,7 +222,18 @@ export interface SessionManagerService {
   /** 创建新会话，返回完整的 SessionInfo */
   createSession(
     opts?: Partial<
-      Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'>
+      Omit<
+        SessionInfo,
+        | 'id'
+        | 'children'
+        | 'createdAt'
+        | 'updatedAt'
+        | 'kind'
+        | 'originPlatform'
+        | 'audience'
+        | 'originInstance'
+        | 'lastReplyAt'
+      >
     >,
   ): Promise<SessionInfo>;
   /** 获取指定会话（不存在返回 undefined） */
@@ -228,7 +249,8 @@ export interface SessionManagerService {
    * 按精确 id 幂等 upsert 会话。
    * - 已存在 → 合并式 update（emit `session:updated`）
    * - 不存在 → 以传入 id（**不自生成**）建记录（emit `session:created`）；`status` 缺省时，这个会话有回合在跑为
-   *   `active`（回合结束时收口），否则为 `waiting`
+   *   `active`（回合结束时收口），否则为 `waiting`。有出生平台的房间随后解析出 `originInstance`，记下后
+   *   emit `session:updated`，本方法等它落定再返回
    *
    * 用于平台派生 sessionId（如 `onebot:<self>:group:<gid>`）：这些 id 不经
    * createSession 预建，首次设置模型/人设覆盖时需按其原样 id 落档——而 createSession
@@ -249,7 +271,16 @@ export interface SessionManagerService {
     opts?: Partial<
       Omit<
         SessionInfo,
-        'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt' | 'kind' | 'originPlatform' | 'audience'
+        | 'id'
+        | 'parentId'
+        | 'children'
+        | 'createdAt'
+        | 'updatedAt'
+        | 'kind'
+        | 'originPlatform'
+        | 'audience'
+        | 'originInstance'
+        | 'lastReplyAt'
       >
     >,
   ): Promise<SessionInfo>;
@@ -309,6 +340,7 @@ declare module '@aalis/core' {
   /** 会话生命周期事件（由 plugin-session-manager 增量声明） */
   interface AalisEvents {
     'session:created': [session: SessionInfo];
+    /** 会话档案变了；建、删子会话时父会话的子会话列表也变了，父会话随后发一次 */
     'session:updated': [session: SessionInfo];
     'session:completed': [session: SessionInfo];
     'session:deleted': [sessionId: string];

@@ -236,8 +236,14 @@ function formatConfigSummary(config: SessionConfig): string {
 
 // ===== SessionManager 实现 =====
 
-/** SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM、中止读表重试的 lifecycle */
-type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle'>;
+/**
+ * SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM、中止读表重试的 lifecycle，
+ * 以及房间建档时解析接管它的适配器实例的 platform
+ */
+type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle' | 'platform'>;
+
+/** 回合的结局（api-agent 的 agent:turn:after） */
+type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
 
 class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
@@ -265,10 +271,11 @@ class SessionManager implements SessionManagerService {
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
   private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
   /**
-   * 各会话在飞的回合数（agent:input:before 进出计数）。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与
-   * 真人回合），根会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
+   * 在飞的回合：turnId → 所在会话与这一轮的结局。agent:input:before 进出登记与注销，结局由 agent:turn:after 记下
+   * （消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合），
+   * 根会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
    */
-  private turnsInFlight = new Map<string, number>();
+  private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome }>();
 
   constructor(caps: ManagerCaps) {
     this.caps = caps;
@@ -418,7 +425,7 @@ class SessionManager implements SessionManagerService {
       title: patch.metadata?.title as string | undefined,
       parentId: undefined,
       children: [],
-      status: patch.status || (this.turnsInFlight.has(id) ? 'active' : 'waiting'),
+      status: patch.status || (this.hasTurnInFlight(id) ? 'active' : 'waiting'),
       config: patch.config || {},
       createdAt: now,
       updatedAt: now,
@@ -431,7 +438,21 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     await this.caps.events.emit('session:created', session);
     this.caps.logger.info(`会话建档(ensure): ${session.name} (${id})`);
+    if (session.originPlatform) await this.recordOriginInstance(session);
     return session;
+  }
+
+  /**
+   * 记下接管这个房间的适配器实例，会话列表按它分组。记录先建好再解析：解析是异步的，先占住 id，
+   * 等待期间别的建档调用走合并更新，不会重复建档。没有适配器认领（适配器没装、账号不属于任何实例）的不记；
+   * 解析期间会话被删除的不再写回。
+   */
+  private async recordOriginInstance(session: SessionInfo): Promise<void> {
+    const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
+    if (!entry || this.sessions.get(session.id) !== session) return;
+    session.originInstance = entry.contextId;
+    this.markDirty();
+    await this.caps.events.emit('session:updated', session);
   }
 
   // ---- CRUD ----
@@ -466,17 +487,16 @@ class SessionManager implements SessionManagerService {
 
     this.sessions.set(id, session);
 
-    // 如果有父会话，更新父会话的 children
-    if (session.parentId) {
-      const parent = this.sessions.get(session.parentId);
-      if (parent) {
-        parent.children.push(id);
-        parent.updatedAt = now;
-      }
+    // 挂到父会话的 children 下：父会话的子会话列表变了，建档之后再给它发一次 session:updated
+    const parent = session.parentId ? this.sessions.get(session.parentId) : undefined;
+    if (parent) {
+      parent.children.push(id);
+      parent.updatedAt = now;
     }
 
     this.markDirty();
     await this.caps.events.emit('session:created', session);
+    if (parent) await this.caps.events.emit('session:updated', parent);
     this.caps.logger.info(`会话创建: ${session.name} (${id})`);
     return session;
   }
@@ -532,13 +552,11 @@ class SessionManager implements SessionManagerService {
       await this.deleteSession(childId);
     }
 
-    // 从父会话的 children 中移除
-    if (session.parentId) {
-      const parent = this.sessions.get(session.parentId);
-      if (parent) {
-        parent.children = parent.children.filter(c => c !== id);
-        parent.updatedAt = Date.now();
-      }
+    // 从父会话的 children 中移除：父会话的子会话列表变了，删除之后再给它发一次 session:updated
+    const parent = session.parentId ? this.sessions.get(session.parentId) : undefined;
+    if (parent) {
+      parent.children = parent.children.filter(c => c !== id);
+      parent.updatedAt = Date.now();
     }
 
     this.sessions.delete(id);
@@ -548,6 +566,7 @@ class SessionManager implements SessionManagerService {
 
     this.markDirty();
     await this.caps.events.emit('session:deleted', id);
+    if (parent) await this.caps.events.emit('session:updated', parent);
     this.caps.logger.info(`会话删除: ${session.name} (${id})`);
   }
 
@@ -852,25 +871,39 @@ class SessionManager implements SessionManagerService {
     }
   }
 
-  /** 回合开始：计数加一；已有记录且不是 active 的翻 active（归档的也翻：她在那里跑一轮就是进行中） */
-  beginTurn(id: string): void {
-    this.turnsInFlight.set(id, (this.turnsInFlight.get(id) ?? 0) + 1);
+  private hasTurnInFlight(sessionId: string): boolean {
+    for (const turn of this.turns.values()) if (turn.sessionId === sessionId) return true;
+    return false;
+  }
+
+  /** 回合开始：登记这一轮；已有记录且不是 active 的翻 active（归档的也翻：她在那里跑一轮就是进行中） */
+  beginTurn(id: string, turnId: string): void {
+    this.turns.set(turnId, { sessionId: id });
     const session = this.sessions.get(id);
     if (session && session.status !== 'active') this.updateSession(id, { status: 'active' }).catch(() => {});
   }
 
-  /** 回合结束：计数减一；最后一轮结束时仍为 active 的根会话收口为 completed（子会话由 plugin-subtask 收口） */
-  endTurn(id: string): void {
-    const left = (this.turnsInFlight.get(id) ?? 1) - 1;
-    if (left > 0) {
-      this.turnsInFlight.set(id, left);
-      return;
-    }
-    this.turnsInFlight.delete(id);
-    const session = this.sessions.get(id);
-    if (session?.status === 'active' && !session.parentId) {
-      this.updateSession(id, { status: 'completed' }).catch(() => {});
-    }
+  /** 记下这一轮的结局，回合结束时用 */
+  recordOutcome(turnId: string, outcome: TurnOutcome): void {
+    const turn = this.turns.get(turnId);
+    if (turn) turn.outcome = outcome;
+  }
+
+  /**
+   * 回合结束：注销这一轮。结局为 replied 的记下她开口的时间；会话里的最后一轮结束时，仍为 active 的根会话按这一轮的
+   * 结局收口，出错为 error，其余（含被拦下、没有结局的一轮）为 completed。子会话由 plugin-subtask 收口
+   */
+  endTurn(turnId: string): void {
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    this.turns.delete(turnId);
+    const session = this.sessions.get(turn.sessionId);
+    if (!session) return;
+    const settle = session.status === 'active' && !session.parentId && !this.hasTurnInFlight(session.id);
+    if (turn.outcome !== 'replied' && !settle) return;
+    if (turn.outcome === 'replied') session.lastReplyAt = Date.now();
+    const status = turn.outcome === 'error' ? 'error' : 'completed';
+    this.updateSession(session.id, settle ? { status } : {}).catch(() => {});
   }
 
   /**
@@ -1150,7 +1183,7 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
     const entryPlatform =
       typeof recorded === 'string' && recorded
         ? recorded
-        : ((await resolvePlatformBySession(platform, sessionId, logger))?.platform ?? 'webui');
+        : ((await resolvePlatformBySession(platform, sessionId, logger))?.instance.platform ?? 'webui');
     return manager.resolveInheritance(sessionId, entryPlatform);
   });
 
@@ -1295,17 +1328,20 @@ async function run(caps: Caps): Promise<void> {
   // ===== 会话状态 =====
   // 回合真正开始时（agent:input:before）才翻 active：群里只有消息、她没开口的房间不显示「进行中」
   //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话，这是唯一的收口：next() 返回时
-  // 整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它）；后面的中间件不调 next() 或抛错时
-  // agent 不发回合收尾，同样由这里兜住。按会话计在飞的回合，最后一轮结束才收口，别的 lane 还在跑时不显示已完成；
-  // 回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。子会话由 plugin-subtask 收口。
+  // 整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；后面的中间件不调 next()
+  // 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里最后一轮结束才收口，别的 lane 还在跑时
+  // 不显示已完成；回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。子会话由 plugin-subtask 收口。
   hooks.middleware('agent:input:before', async (data, next) => {
-    const { sessionId } = data.message;
-    manager.beginTurn(sessionId);
+    manager.beginTurn(data.message.sessionId, data.turnId);
     try {
       await next();
     } finally {
-      manager.endTurn(sessionId);
+      manager.endTurn(data.turnId);
     }
+  });
+  hooks.middleware('agent:turn:after', async (data, next) => {
+    manager.recordOutcome(data.turnId, data.outcome);
+    await next();
   });
 
   // 监听用户消息事件 → 自动生成会话标题

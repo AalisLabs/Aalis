@@ -757,6 +757,12 @@ function runAdapter(caps: Caps): void {
     return states.find(s => s.selfId != null && String(s.selfId) === target);
   }
 
+  /** 会话 id 里的账号是本实例的连接（含配置里写明、连接还没上来的）：会话路由与出站认领都按它判断 */
+  function ownsAccount(sessionId: string): boolean {
+    const parsed = parseSessionId(sessionId);
+    return parsed !== null && findStateBySelfId(parsed.selfId) !== undefined;
+  }
+
   function parseGroupSessionId(sessionId: string): { selfId?: string; groupId?: string } {
     // 形如 onebot:{selfId}:group:{groupId}
     const parts = sessionId.split(':');
@@ -1173,6 +1179,12 @@ function runAdapter(caps: Caps): void {
       }));
     },
 
+    /**
+     * 只认本实例连接里的账号（含配置里写明、连接还没上来的）：同一插件装多个实例时，会话、平台动作与
+     * 合成会话 id 都按 id 里的账号路由到所属实例。离线的已知账号照样认领，由发送处报出连接不可用。
+     */
+    canHandle: ownsAccount,
+
     getSelfIdentity(sessionId?: string) {
       const parsed = sessionId ? parseSessionId(sessionId) : null;
       const state = parsed
@@ -1194,9 +1206,9 @@ function runAdapter(caps: Caps): void {
 
       const state = findStateBySelfId(parsed.selfId);
       if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
-        const knownIds = states.map(s => `${s.selfId ?? '?'}(${s.status})`).join(', ') || '无';
+        // 经路由与出站认领到这里的账号都是本实例的；认不出的账号由路由处报错并列出各实例的已知账号
         const reason = !state
-          ? `未找到对应连接（已知: ${knownIds}）`
+          ? '未找到对应连接'
           : state.status !== 'online'
             ? `状态=${state.status}`
             : !state.ws
@@ -2268,10 +2280,8 @@ function runAdapter(caps: Caps): void {
   }
 
   events.on('outbound:message', msg => {
-    if (!msg.sessionId.startsWith('onebot:') || msg.delivery) return;
-    const parsed = parseSessionId(msg.sessionId);
-    // 多个适配器实例只认领自己的连接；离线的已知连接仍需返回明确失败。
-    if (!parsed || !findStateBySelfId(parsed.selfId)) return;
+    // 多个适配器实例只认领自己的连接（与会话路由同一判断）；离线的已知连接仍需返回明确失败。
+    if (msg.delivery || !ownsAccount(msg.sessionId)) return;
     // 同步交出回执，实际发送可在后台执行，不阻塞出站旁观者。
     msg.delivery = deliverOutbound(msg);
   });

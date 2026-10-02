@@ -90,6 +90,12 @@ onebot:{selfId}:{detailType}:{targetId}
 
 `detailType` 取 `private`、`group` 或 `channel`；其中 `channel`（v12）的 `targetId` 为 `{guildId}:{channelId}`。
 
+## 多实例与路由
+
+插件可以装多个实例（`reusable`），每个实例的 `connections` 可以带多个机器人账号。适配器实现了平台契约的 `canHandle(sessionId)`：只认会话 ID 里的 `selfId` 属于本实例连接的会话，包括配置里写明 `selfId`、连接还没上来的账号；离线的已知账号照样认领，由发送处报出连接不可用。`@aalis/api-platform` 的 `resolvePlatformBySession`、`sendPlatformMessage`、`callPlatformAction` 因此按账号路由到所属实例，`plugin-tool-onebot` 的合成会话 ID（`onebot:<selfId>:internal:0`）同样按账号路由；session-manager 收录房间时据此记下房间所属的实例（`SessionInfo.originInstance`）。没有实例认得的账号由路由处报错，报错列出各实例已知的账号与连接状态。
+
+出站消息（`outbound:message`）也只由账号所属的实例认领；`getSelfIdentity(sessionId)` 只回答本实例账号的会话，`api-platform` 的 `getPlatformSelfIdentity` 取第一个认得这个会话的实例。
+
 ## 连接管理
 
 - 支持多连接同时在线

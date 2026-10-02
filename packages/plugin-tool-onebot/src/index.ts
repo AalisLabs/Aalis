@@ -1,9 +1,11 @@
 import { media } from '@aalis/api-media';
 import {
+  callPlatformAction,
   getPlatformAdapters,
   getPlatformNames,
   type PlatformAdapter,
   platform as platformService,
+  resolvePlatformBySession,
 } from '@aalis/api-platform';
 import { type AccessChecker, sessionHistory } from '@aalis/api-session-history';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
@@ -125,7 +127,7 @@ const uses = {
 };
 type Caps = BoundOf<typeof uses>;
 
-/** OneBot 平台适配器引用：工具实现全部经它拿 callAction */
+/** 平台适配器引用：工具的平台动作全部按会话 id 里的账号路由到所属的 OneBot 实例 */
 type PlatformRef = Caps['platform'];
 /** 绝大多数工具只需要平台适配器与日志 */
 type ToolCaps = Pick<Caps, 'platform' | 'logger'>;
@@ -145,22 +147,13 @@ function parseOneBotSession(sessionId: string): { selfId: string; detailType: st
   };
 }
 
-/** 在已注册的平台适配器里找出支持 callAction 的 OneBot 适配器 */
-function findOneBotAdapter(platform: PlatformRef): PlatformAdapter | undefined {
-  return getPlatformAdapters(platform).find(a => a.platform === 'onebot' && typeof a.callAction === 'function');
-}
-
-/** 从已连接的 OneBot 适配器中找出任意一个 selfId（优先 online） */
+/** OneBot 各实例的全部连接里找出任意一个 selfId：先在所有实例里找在线的，都不在线才取任意一个 */
 function getAnyOneBotSelfId(platform: PlatformRef): string | undefined {
-  for (const a of getPlatformAdapters(platform)) {
-    if (a.platform !== 'onebot') continue;
-    const conns = a.getConnections();
-    const online = conns.find(c => c.status === 'online' && c.selfId);
-    if (online?.selfId) return online.selfId;
-    const any = conns.find(c => c.selfId);
-    if (any?.selfId) return any.selfId;
-  }
-  return undefined;
+  const known = getPlatformAdapters(platform)
+    .filter(a => a.platform === 'onebot')
+    .flatMap(a => a.getConnections())
+    .filter(c => c.selfId);
+  return (known.find(c => c.status === 'online') ?? known[0])?.selfId;
 }
 
 /**
@@ -202,19 +195,21 @@ function buildOneBotSessionId(selfId: string, detailType: string, targetId: stri
 }
 
 /**
- * 调用 OneBot 协议 action。selfId 决定走哪个机器人账号；
- * adapter 内部只用 sessionId 解析 selfId 来定位 WebSocket 连接，
- * 因此这里用合成 sessionId（"onebot:<selfId>:internal:0"）即可，与目标会话类型无关。
+ * 机器人账号的合成会话 id。路由与适配器都只看 id 里的 selfId（路由找到账号所属的实例，适配器定位它的连接），
+ * 与目标会话类型无关。
  */
+function selfSessionId(selfId: string): string {
+  return buildOneBotSessionId(selfId, 'internal', '0');
+}
+
+/** 调用 OneBot 协议 action：selfId 决定走哪个机器人账号，经平台路由发到账号所属实例的连接 */
 async function callAction(
   platform: PlatformRef,
   selfId: string,
   action: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
-  const adapter = findOneBotAdapter(platform);
-  if (!adapter?.callAction) throw new Error('OneBot 适配器不可用或不支持 callAction');
-  return adapter.callAction(buildOneBotSessionId(selfId, 'internal', '0'), action, params);
+  return callPlatformAction(platform, selfSessionId(selfId), action, params);
 }
 
 function imageMimeFromPath(path: string): string {
@@ -975,7 +970,8 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
         targetSessionId = callCtx.sessionId;
       }
 
-      const adapter = findOneBotAdapter(platform) as
+      // 发出记录在发消息的那个实例里：按目标会话路由
+      const adapter = (await resolvePlatformBySession(platform, targetSessionId))?.instance as
         | (PlatformAdapter & {
             getSentMessages?: (
               sessionId: string,
@@ -1229,8 +1225,6 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
         }
         groupId = parsed.targetId;
       }
-      const adapter = findOneBotAdapter(platform);
-      if (!adapter?.callAction) return JSON.stringify({ available: false, reason: 'OneBot 适配器不可用' });
       let info: Record<string, unknown> | null = null;
       try {
         info = (await callAction(platform, selfId, 'get_group_member_info', {
@@ -1282,12 +1276,15 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
       },
     },
     handler: async args => {
-      const adapter = findOneBotAdapter(platform) as
-        | (PlatformAdapter & {
-            getSelfMutes?: () => Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
-          })
-        | undefined;
-      if (!adapter?.getSelfMutes) {
+      // getSelfMutes 不在平台契约内；每个实例只记自己账号的禁言，汇总所有实例
+      type SelfMuteAdapter = PlatformAdapter & {
+        getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
+      };
+      const supporting = getPlatformAdapters(platform).filter(
+        (a): a is SelfMuteAdapter =>
+          a.platform === 'onebot' && typeof (a as Partial<SelfMuteAdapter>).getSelfMutes === 'function',
+      );
+      if (supporting.length === 0) {
         return JSON.stringify({
           supported: false,
           reason: '未找到支持记录自身禁言状态的 OneBot 适配器（getSelfMutes 不在平台契约内，第三方适配器可不提供）',
@@ -1295,10 +1292,7 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
       }
       const limit = Math.max(1, Math.min(200, Math.floor(Number(args.limit) || 30)));
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
-      const mutes = adapter
-        .getSelfMutes()
-        .slice()
-        .sort((a, b) => a.remainingSec - b.remainingSec);
+      const mutes = supporting.flatMap(a => a.getSelfMutes()).sort((a, b) => a.remainingSec - b.remainingSec);
       const total = mutes.length;
       const sliced = mutes.slice(offset, offset + limit);
       return JSON.stringify({
@@ -1908,24 +1902,26 @@ function registerSessionHistoryTools(
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
 
+/** 能处理好友申请与群请求的 OneBot 适配器（非标准扩展，不在平台契约内） */
+type RequestAdapter = PlatformAdapter & {
+  handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
+  handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+};
+
 function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
   const { platform, logger } = caps;
   const { group, personal } = bundle;
-  /** 找到支持 handleFriendRequest 的 OneBot 适配器 */
-  function findRequestAdapter(platform: PlatformRef):
-    | (PlatformAdapter & {
-        handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
-        handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
-      })
-    | undefined {
-    const adapter = getPlatformAdapters(platform).find(
-      a =>
-        a.platform === 'onebot' && typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
-    );
-    return adapter as typeof adapter & {
-      handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
-      handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
-    };
+  /**
+   * 处理申请的 OneBot 适配器：申请挂在收到它的实例上，按当前会话（或 self_id）的账号路由。
+   * 申请的通知注入在收到它的账号的会话里，在那里调用即落到对的实例
+   */
+  async function findRequestAdapter(
+    callCtx: ToolCallContext,
+    args: Record<string, unknown>,
+  ): Promise<RequestAdapter | undefined> {
+    const entry = await resolvePlatformBySession(platform, selfSessionId(resolveSelfId(platform, callCtx, args)));
+    const adapter = entry?.instance as Partial<RequestAdapter> | undefined;
+    return typeof adapter?.handleFriendRequest === 'function' ? (adapter as RequestAdapter) : undefined;
   }
 
   personal.register({
@@ -1945,8 +1941,8 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
         },
       },
     },
-    handler: async args => {
-      const adapter = findRequestAdapter(platform);
+    handler: async (args, callCtx) => {
+      const adapter = await findRequestAdapter(callCtx, args);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleFriendRequest(
         String(args.user_id),
@@ -1979,8 +1975,8 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
         },
       },
     },
-    handler: async args => {
-      const adapter = findRequestAdapter(platform);
+    handler: async (args, callCtx) => {
+      const adapter = await findRequestAdapter(callCtx, args);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleGroupRequest(
         String(args.user_id),
@@ -2010,8 +2006,8 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
         },
       },
     },
-    handler: async args => {
-      const adapter = findRequestAdapter(platform);
+    handler: async (args, callCtx) => {
+      const adapter = await findRequestAdapter(callCtx, args);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleGroupRequest(
         String(args.user_id),
