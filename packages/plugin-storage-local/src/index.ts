@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { createReadStream, type FSWatcher, watch as fsWatch, statSync } from 'node:fs';
+import { type BigIntStats, createReadStream, type FSWatcher, watch as fsWatch, statSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -95,7 +95,8 @@ const PRIVATE = { browsable: false, readable: true, writable: true, deletable: t
  * - tmp、cache：临时区与缓存；logs：runtime 写文件日志的目录，WebUI 与 CLI 的日志页从这里读，只读。
  * - personas、skills、workflows：self 下按用途分开的三个根，一个根里的路径拼接失误到不了另一个根。
  * - paper：白纸枢纽存放远端任务成品；public：发布服务存放审核通过的作品，作品站从这里读出来部署。
- * kind 供 checkpoint 等按类判断：data、pluginData、tmp、cache、logs、paper、public 不记账，self 记账。
+ * kind 供 checkpoint 等按类判断：data、pluginData、tmp、cache、logs、paper、public、self 都不记账
+ * （self 等访问层限定写入者后再记，见 plugin-checkpoint）。
  */
 function internalRoots(paths: HostPaths): RootEntryConfig[] {
   return [
@@ -218,19 +219,11 @@ interface CheckpointLike {
 }
 
 /**
- * Per-root 存储服务：每个 root 一个实例 + 一个 ServiceContainer entry。
- *
- * 与 service-granularity 整体方向对齐：每个 root 的真实权限由 StorageRootInfo 的
- * readable/writable/deletable 位携带；storage-api 网关按位路由，按 URI 调度交给
- * `createStorageGateway(storage)` helper。
- *
- * 自包含设计：URI→root 分发不依赖外部 router 插件，单文件即可理解整条数据流。
- */
-/**
  * 宿主控制文件的执行点兜底：密钥文件读写都拒，主配置拒写，只许 runtime 自己读写它们（见计划书「执行点兜底」）。
  * 不管目标经哪个根进来都查：
  * - 文件本身：按 (dev, ino) 比，硬链接与符号链接都挡得住；文件还不存在时按真实路径比（不分大小写，
  *   macOS 与 Windows 的卷默认不分），落在控制文件路径之下的也拒（不许把它建成目录）；
+ *   ino 按 bigint 取：Windows 的 64 位文件 ID 转成 number 会丢低位，不同文件可能撞号；
  * - 整个子树：删除、移动、改名一个目录，或以写、删的方式把目录的本地路径交给别的工具时，按目录身份 (dev, ino)
  *   看它是不是控制文件的祖先目录。按身份而不按路径比：macOS 的 firmlink 与 bind mount 给同一个目录不同的路径。
  * 控制文件每次现查：主配置保存时整份换掉，inode 会变。
@@ -251,11 +244,11 @@ class HostFileGuard {
         control.stat !== undefined &&
         target.stat.dev === control.stat.dev &&
         target.stat.ino === control.stat.ino;
-      const samePath = foldCase(target.real) === foldCase(control.real);
+      // 含路径相同（isInside 对同一路径判内）
       const underControl = isInside(foldCase(control.real), foldCase(target.real));
       const containsControl =
         subtree && target.stat?.isDirectory() === true && (await ancestorIds(control.real)).has(idOf(target.stat));
-      if (sameFile || samePath || underControl) {
+      if (sameFile || underControl) {
         const what = file === this.files.secrets ? '密钥文件（只经宿主读写）' : '主配置（只经宿主修改）';
         throw new Error(`不能经存储${mode === 'read' ? '读取' : '修改'}宿主的${what}`);
       }
@@ -264,15 +257,13 @@ class HostFileGuard {
   }
 }
 
-type StatLike = Awaited<ReturnType<typeof stat>>;
-
 const foldCase = (p: string) => p.toLowerCase();
-const idOf = (s: StatLike) => `${s.dev}:${s.ino}`;
+const idOf = (s: BigIntStats) => `${s.dev}:${s.ino}`;
 
 /** 路径的真实路径与 stat；不存在时从最近的已存在祖先算真实路径、不给 stat */
-async function identify(abs: string): Promise<{ real: string; stat?: StatLike }> {
+async function identify(abs: string): Promise<{ real: string; stat?: BigIntStats }> {
   try {
-    return { real: await realpath(abs), stat: await stat(abs) };
+    return { real: await realpath(abs), stat: await stat(abs, { bigint: true }) };
   } catch {
     /* 不存在或读不了：往上找 */
   }
@@ -297,7 +288,7 @@ async function ancestorIds(real: string): Promise<Set<string>> {
   let dir = dirname(real);
   for (;;) {
     try {
-      ids.add(idOf(await stat(dir)));
+      ids.add(idOf(await stat(dir, { bigint: true })));
     } catch {
       /* 不存在的跳过 */
     }
@@ -307,6 +298,15 @@ async function ancestorIds(real: string): Promise<Set<string>> {
   }
 }
 
+/**
+ * Per-root 存储服务：每个 root 一个实例 + 一个 ServiceContainer entry。
+ *
+ * 与 service-granularity 整体方向对齐：每个 root 的真实权限由 StorageRootInfo 的
+ * readable/writable/deletable 位携带；storage-api 网关按位路由，按 URI 调度交给
+ * `createStorageGateway(storage)` helper。
+ *
+ * 自包含设计：URI→root 分发不依赖外部 router 插件，单文件即可理解整条数据流。
+ */
 class ScopedStorageService implements StorageService {
   constructor(
     private readonly root: RootDefinition,
@@ -920,8 +920,8 @@ export default definePlugin({
     }
 
     // 诊断检查项：探测每个 writable root 是否真的可写。
-    // 由 storage 插件按当前 roots 配置上报，而非 doctor 硬编码 fs.data：data/ 仅是默认 root 之一，
-    // 不应由 doctor 单独「祝福」；按 roots 上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
+    // 由 storage 插件按全部根（含内置根）上报，而非 doctor 硬编码 fs.data：
+    // 按根上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
     caps.doctor.registerCheck({
       id: 'storage.roots',
       category: 'filesystem',

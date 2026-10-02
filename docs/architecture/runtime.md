@@ -33,11 +33,11 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createPluginDiscovery(app, loader, store)` | 发现驱动：`loadAll()` 发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）由本包导出。 |
 | `createFsYamlConfigProvider(configPath)` | 文件系统 + YAML 配置 provider（`configPath` 为绝对路径；返回 `{config, provider}`，交给 `createConfigStore`）。 |
 | `createFsSecretsProvider(secretsPath)` | 文件系统 + YAML 密钥存储（`secretsPath` 为绝对路径，`startAalis` 传家目录里的 `secrets.yaml`；返回 `{values, provider}`，作为 `createConfigStore` 的第三个参数）。读写、拒写与监听同配置文件；文件不存在时按空映射处理、第一次保存时建出；临时文件一律以 0600 创建。类型 `SecretProvider`、`SecretStoreInit` 由本包导出。 |
-| `parseHostArgs` / `resolveHome` / `derivePaths` / `isHomeInitialized` / `initHome` | 家目录的解析、路径派生与初始化，`startAalis` 用的就是这一套；参数有误时抛 `HomeArgsError`。 |
-| `createConfigStore(initial, provider?, secrets?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。`secrets`（`{ values, provider? }`）是密钥存储：给了才把密钥字段拆进它、文档里只留引用，`resolvePluginConfig(id, schema)` 把文档形态解析成交给 core 的配置；落盘时先写密钥再写文档。不给时密钥照旧以明文留在文档里。本身不碰文件。 |
+| `parseHostArgs` / `resolveHome` / `profileOfRealHome` / `derivePaths` / `isHomeInitialized` / `initHome` | 家目录的解析、路径派生与初始化，`startAalis` 用的就是这一套；参数有误时抛 `HomeArgsError`。`resolveHome` 按路径的写法认 profile，认不出时 `startAalis` 用 `profileOfRealHome` 按家目录的真实路径补认（见「家目录」）。 |
+| `createConfigStore(initial, provider?, secrets?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。`secrets`（`{ values, provider? }`）是密钥存储：给了才把密钥字段拆进它、文档里只留引用，`resolvePluginConfig(id, schema)` 把文档形态解析成交给 core 的配置；落盘时先写密钥再写文档。密钥文件拒写之后，下一次密钥文件变更按文件对账。不给时密钥照旧以明文留在文档里。本身不碰文件。 |
 | `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）；`applyPluginConfig` 在这里实现，插件拿到的 `setPluginConfig` 拒收密钥字段上的明文。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
-| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
+| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`；`syncPluginDefaults` 与 `handleConfigChanged` 另收可选的尾参数 `previous`（变更前的文档，热重载时作拆密钥的基线，`installConfigHotReload` 自动传）。三者依次：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 | `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
 
@@ -67,9 +67,9 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 `AALIS_HOME`、`AALIS_PROFILE` 设为空串时视同未设。profile 与更高优先级的 `--home` / `AALIS_HOME` 同时给出时报错退出，不静默挑一个。`--home` 与 `AALIS_HOME` 开头的 `~` 展开为用户主目录；命令行与环境变量里写的相对路径按启动时的 cwd 解析一次，之后全程用绝对路径。
 
-profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 profile `<名>`，经 `--home` 或 `AALIS_HOME` 选中它也一样，插件按 profile 派生的名字（如 MongoDB 记忆库的库名）对同一个家目录不变。这一条按路径的写法认，不解符号链接。家目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
+profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 profile `<名>`，经 `--home` 或 `AALIS_HOME` 选中它也一样。先按路径的写法认，认不出时再按真实路径认：大小写写错、经指向 `~/.aalis-<名>` 的符号链接选中、用户主目录本身是符号链接，都带上 profile。`~/.aalis-<名>` 自己是指向别处的符号链接时，经那个别处的路径选中认不出 profile，插件按 profile 派生的名字随之不同（如 MongoDB 记忆库的库名变成 `aalis`）；这种布局要固定库名，在插件配置里写明（如 memory-mongodb 的 `database`）。家目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
 
-家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600）、建布局里的子目录，然后退出。目标目录已存在时，里面只能有布局自己的条目（`state`、`logs`、`cache`、`run`、`tmp`、`self`、`stage`、`secrets.yaml`），有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
+家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600）、建布局里的子目录，然后退出。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`stage`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`，以及运行时由插件建出的 `workspace`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
 宿主参数（`--home`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。
 
@@ -107,7 +107,7 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
 
 - **取锁**：先把完整内容写进临时文件，再 link 成下一个代号。link 在目标已存在时原子失败，同一代号只有一个进程拿得到，读到的锁内容也总是完整的；所以家目录所在的文件系统要支持硬链接（exFAT、部分 SMB 挂载不行，启动时一行报错退出）。link 成功后再看一遍更低的代号：还有活着的持有者就让出刚建的这一代并报占用，代号最低的活持有者胜出。确认之后删掉更低代号的旧文件。
 - **释放**：进程退出时删掉自己这一代，只在锁文件的内容仍是自己那份时才删，同名的锁可能已是别的实例的。
-- **判活**：锁里记 pid、本次开机的标识（Linux 的 boot_id、macOS 的 kern.bootsessionuuid）、pid 命名空间（Linux）、进程启动标识（Linux 是 `/proc/<pid>/stat` 的启动滴答数，其它 POSIX 是 UTC 下的 `ps -o lstart=`）与交接令牌的哈希。这些都与墙上时钟无关，NTP 步进时钟、夏令时回拨都不影响判断。开机标识不同判残留；pid 命名空间不同（另一个容器共用这个家目录）判不了，按占用处理；pid 不在、或启动标识不同（pid 被复用）判残留。SIGKILL 或服务管理器超时强杀留下的锁，下次启动时按残留接手。
+- **判活**：锁里记 pid、本次开机的标识（Linux 的 boot_id、macOS 的 kern.bootsessionuuid）、pid 命名空间（Linux）、进程启动标识（Linux 是 `/proc/<pid>/stat` 的启动滴答数，其它 POSIX 是 UTC 下的 `ps -o lstart=`）与交接令牌的哈希。这些都与墙上时钟无关，NTP 步进时钟、夏令时回拨都不影响判断。开机标识不同判残留；同一次开机里 pid 命名空间不同（另一个容器共用这个家目录）判不了，按占用处理；pid 不在、或启动标识不同（pid 被复用）判残留。SIGKILL 或服务管理器超时强杀留下的锁，下次启动时按残留接手。容器部署有一处例外：同一次开机里容器被强杀（SIGKILL、OOM）后重启，新进程在另一个 pid 命名空间里，仍按占用处理，要手动删掉报错里点名的锁文件。实例锁只在同一台主机内有效：两台主机经网络盘共用一个家目录时开机标识不同，互相按残留接手，挡不住，不要这样部署。
 - **查不了启动标识的平台**：Windows 与没有 `ps` 的精简 Linux 镜像只看 pid。强杀留下的锁、pid 又恰好被别的进程占用时，启动会一直报占用；确认没有实例在运行时删掉报错里点名的锁文件即可。
 - **被占用**：打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。以 `--service` 启动（服务单元带上）时以 0 退出：配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会每隔几秒被拉起、抢锁失败地循环。锁文件读不了（权限）时不猜它是残留，报错退出。
 - **前台重启的交接**：取锁时生成一个随机令牌，锁里只记它的哈希。`/restart` 与市场更新引起的前台重启，把令牌经环境变量 `AALIS_LOCK_HANDOFF` 交给新进程；新进程看到锁里的哈希对得上就接手，并立即把它从环境里删掉，不让插件起的子进程与侧车继承。
@@ -131,14 +131,13 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
   （如 `level` 的等级表、`session.*` 的会话覆盖）在守护进程运行期间不会对其生效，且可能被守护进程下次落盘
   覆盖。管理运行中的实例请用聊天指令 / TUI / WebUI。
 
-它仍会完整跑一遍插件 `apply`，因此守护进程运行期间执行子命令会有两处可见副作用：端口型插件（webui-server /
-mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 schema 回填 / 裁剪配置文件、把明文密钥移进 `secrets.yaml`，守护进程会因此触发一次热重载。
+它仍会完整跑一遍插件 `apply`，因此守护进程运行期间执行子命令会有两处可见副作用：在 `apply` 里绑定端口的插件（如 mcp-server）因端口被占而激活失败，记一条 error；config-sync 可能按 schema 回填 / 裁剪配置文件、把明文密钥移进 `secrets.yaml`，守护进程会因此触发一次热重载。webui-server 在 `app:ready` 时才监听，子命令在 `app.start()` 之前就已退出，不绑定它的端口。
 
 ## startAalis 的装配顺序
 
 0. **家目录与安装集**：解析家目录（见「家目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
-2. **文档与密钥**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<家目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。
+2. **文档与密钥**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<家目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
 3. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
 4. **host-paths 与 host-config**：在根上独占提供 `host-paths`，再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。

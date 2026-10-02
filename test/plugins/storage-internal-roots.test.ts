@@ -74,7 +74,7 @@ describe('storage-local 内部路由根', () => {
     ).toEqual(Object.keys(expected).sort());
   });
 
-  it('只有 self 下的三个根让 checkpoint 记账：kind 为 self，其余内部根是各自不记账的 kind', async () => {
+  it('内部根的 kind：self 下三个根为 self，其余各自的 kind', async () => {
     await start([]);
     const kinds = Object.fromEntries(storage.listRoots().map(r => [r.name, r.kind]));
     expect(kinds).toMatchObject({

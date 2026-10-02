@@ -10,7 +10,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 // ════════════════════════════════════════════════════════════
 // storage-local 的公开根 public：插件内置、只映射 <家目录>/stage/public，不受用户 roots 影响。
 // 发布服务把审核通过的作品写在这里，作品站从这里读出来部署。
-//   - 与生产同形的显式 roots、以及 roots 为空回落默认根，两种配置下都有这个根；
+//   - 与生产同形的显式 roots 下有这个根（roots 为空的情形见 storage-internal-roots.test.ts）；
 //   - `..` 逃逸被拒，写入的真实路径前缀是 stage/public/，够不到 stage 下的兄弟文件
 //     （包括同在 stage 下的白纸根目录）；
 //   - 用户 roots 里同名 public 的项被跳过（不建它的目录）并告警，内置根生效。
@@ -130,15 +130,5 @@ describe('storage-local 公开根 public', () => {
     expect(readFileSync(join(base, 'stage', 'public', 'a.txt'), 'utf-8')).toBe('a');
     expect(existsSync(join(base, 'user-public')), '被跳过的用户根不该建目录').toBe(false);
     expect(logs.some(l => l.level === 'warn' && l.message.includes('public'))).toBe(true);
-  });
-
-  it('roots 为空回落默认根时 public 根同样可用，与白纸根并存', async () => {
-    const storage = await activate([]);
-
-    expect(storage.listRoots().map(r => r.name)).toEqual(
-      expect.arrayContaining(['workspace', 'data', 'tmp', 'pluginData', 'logs', 'paper', 'public']),
-    );
-    await storage.writeFile('public:/d.txt', 'd');
-    expect(readFileSync(join(base, 'stage', 'public', 'd.txt'), 'utf-8')).toBe('d');
   });
 });
