@@ -17,6 +17,7 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { approvalHandlers, createApprovals } from './approvals.js';
 import { createSessionServer } from './connection.js';
+import { createFileHandles } from './files.js';
 import type { IsOwner } from './history.js';
 import { openSeenStore } from './seen.js';
 import { createSessions } from './sessions.js';
@@ -28,14 +29,15 @@ import { createTurnControl } from './turns.js';
 //
 // owner 的客户端经传输层（WebUI 的 WebSocket 等）接到 sessionProtocol.connect。会话本身在 session-manager 里，
 // 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与配置，另记「我的」区的已读时间；
-// 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；回合控制转给 agent、网关、检查点与待办。
+// 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；条目里她发出的文件给本服务签发的下载句柄，
+// 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点与待办。
 // 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
 const uses = {
   /** 会话表、配置继承与增删改都经它 */
   sessionManager,
-  /** 已读时间落在本插件的插件数据里 */
+  /** 已读时间落在本插件的插件数据里；签发文件句柄时按存储根的种类挡掉插件状态 */
   storage,
   /** 审批的审计写在家目录的 state/audit 下 */
   paths: hostPaths,
@@ -78,7 +80,9 @@ async function run(caps: Caps): Promise<void> {
   const { events, hooks, lifecycle, logger } = caps;
   // session-manager 是 required 依赖：它换提供者时本插件随之重新激活，这里存下的引用不会过期
   const sm = caps.sessionManager.require();
-  const seen = await openSeenStore(createStorageGateway(caps.storage), logger);
+  const store = createStorageGateway(caps.storage);
+  const seen = await openSeenStore(store, logger);
+  const files = createFileHandles(() => store.listRoots());
   const isOwner: IsOwner = (platformName, userId) =>
     userId !== undefined && (caps.authority.current?.isOwner(platformName, userId) ?? false);
   const isRoom = (sessionId: string) => {
@@ -108,6 +112,7 @@ async function run(caps: Caps): Promise<void> {
     memory: caps.memory,
     todoList: caps.todoList,
     isOwner,
+    signFile: files.sign,
     requireSession: sessions.requireSession,
     summarize: sessions.summarize,
     isRoom,
@@ -206,7 +211,7 @@ async function run(caps: Caps): Promise<void> {
   events.on('session:compressing', ({ sessionId, status }) => timeline.compressing(sessionId, status));
   events.on('history:changed', ({ sessionId }) => timeline.resync(sessionId));
 
-  caps.provide(sessionProtocol, { connect: server.connect }, { label: '会话协议' });
+  caps.provide(sessionProtocol, { connect: server.connect, resolveFile: files.resolve }, { label: '会话协议' });
   caps.provide(approvals, approval.service, { label: '审批' });
   // 撤回登记之前结算没结的审批：审批面还接着，结算推得到；之后的请求直接拒绝
   lifecycle.onDrain(() => approval.close(), '结算未结的审批');

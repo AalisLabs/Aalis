@@ -1,5 +1,5 @@
 // ============================================================
-// routes/pipe-to-response.ts — 把存储读流写进 HTTP 响应（文件下载、上传文件下载与媒体路由共用）
+// routes/pipe-to-response.ts — 把存储读流写进 HTTP 响应
 // ============================================================
 
 import type { Readable, Writable } from 'node:stream';

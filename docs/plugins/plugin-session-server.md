@@ -18,6 +18,7 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 - **会话配置**：`session/config/get` 一次给出会话自己的覆盖、生效值、继承链（选档平台、受众、每一项的来源层）与可选项（人设、模型、工具分组）。owner 自己的会话按入口平台选档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，都没有时取这条连接的平台。`session/config/update` 的 `null` 表示删掉这一项、恢复继承；有的存储后端会把它存成 `null`，读回的 `null` 与没写过同义，回给客户端前剥掉。
 - **已读**：`session/markSeen` 记下 owner 看过某个会话的时刻，落在 `pluginData:/session-server/seen.json`。「我的」区的会话在她最近一次开口（`SessionInfo.lastReplyAt`）晚于这个时刻时为完成未读；房间不记未读。会话删除后丢掉它的记录。
 - **订阅与条目**：`session/subscribe` 回快照，之后把 agent、工具与存档的事件拼成条目推给订阅的连接，见下文「条目从哪里来」。
+- **文件句柄**：条目里她发出的文件不给存储地址，给本插件签发的句柄；传输层下发文件之前经 `resolveFile` 核验，见下文「文件句柄」。
 - **历史**：`session/history` 从存档归并条目、分页，见下文「历史归并」。
 - **回合控制**：`turn/send`、`turn/continue` 以连接的身份发入站消息；`turn/abort` 转给 agent；`session/compress` 发压缩请求；`turn/rewind` 转给检查点；`plan/clear` 转给待办服务。
 - **审批**：提供 `approvals` 服务。审批推给在场的审批面，同一会话排队、限频，应答先答先得并核应答人与内容哈希，请求与决定成对记进审计，见下文「审批」。每条连接接入对端带来的审批面，`presence/update` 与 `approval/respond` 经它。
@@ -54,7 +55,7 @@ definePlugin({
 ```
 
 - `sessionManager`：会话表、配置继承与增删改都经它。
-- `storage`：已读记录的落点。
+- `storage`：已读记录的落点；签发文件句柄时按存储根的种类挡掉插件状态。
 - `paths`：审批的审计写在家目录的 `state/audit/approvals.jsonl`。
 - `memory`：历史从存档归并。
 - `hooks`：`agent:input:before` 判运行中、拼出在途回合的条目；`agent:turn:after` 记下结局；`agent:reply:before` 切分重试的几版回复；`memory:clear` 清掉消息历史之后通知订阅的客户端重新取快照。
@@ -104,12 +105,22 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 
 - **提问**：去掉文件读取插件追加的文件内容块（内联全文、大文件引用、超限、处理失败、降级等各代格式），`metadata.fileNames` 列成文件附件；说话人取自存档的元数据。
 - **通知**：`notice` 角色的消息与压缩分隔线（`event-marker`）各成一条通知，宿主通知的种类取 `metadata.hostNoticeKind`。其余系统消息不显示。
-- **她发出的附件**：`outbound-image`、`outbound-video`、`outbound-audio` 的消息按附件引用占位符还原成只有附件的消息。
+- **她发出的附件**：`outbound-image`、`outbound-video`、`outbound-audio`、`outbound-file` 的消息按附件引用占位符还原成只有附件的消息。图片、音频、视频的 `src` 就是引用；文件的 `src` 是句柄（见下文「文件句柄」）。文件的地址与名字先取存档时 `metadata` 里原样记下的 `ref`、`name`（占位符里的地址遇到 `]` 会截断，描述位的 `]`、`|` 换成了全角），没有时取占位符的引用与描述位，名字再没有就取地址的最后一段。
 - **回复与工具调用**：相邻的 assistant 与带 `toolCallId` 的 tool 消息成一组。组里有带时间线（`segments`）的回复时，以最后这样一条为准，覆盖之前按旧格式落库的工具调用组；否则按旧格式拼：思考前置，正文与工具调用按序，工具结果按 `toolCallId` 对回它的调用。相邻的同类正文或思考合成一条，空的不显示；组里记下的模型挂在最后一条正文上，`metadata.turnId` 给出条目的回合 id。
   - 工具卡的 `itemId` 是这次调用的 `callId`（时间线的 `tool_call` 段与工具结果的 `metadata.callId` 带它），与实时推送相同；旧存档没有 `callId`，回落到这一组第一条消息的 id 加序号。参数不是对象的（旧存档里模型给出的 `null`、数组等）按空参数显示。
   - 房间里最后一次工具调用之前的正文标「未发出」，与实时推送一致。
 
 分页从最新往前取 `limit` 条存档消息；页的开头落在一组回复与工具调用中间时往前扩到这一组的开头。`before` 是上一页第一条存档消息的 id。
+
+## 文件句柄
+
+条目里她发出的文件（白纸成品等）给句柄，不给存储地址：客户端拿不到也构造不出任意的存储地址，按句柄只能取到这个会话里她发出的那个文件。
+
+- **形状**：`<载荷>.<签名>`，两段都是 base64url。载荷是存储地址与文件名，签名是密钥对会话 id 与载荷的 HMAC-SHA256。核验时先认形状，再比签名（定长比较），都过了才读载荷。
+- **用签名，不用服务端的表**：同一会话同一文件每次算出同一个句柄，快照与历史翻多少遍都不必记下什么，内存不随之增长。
+- **重启即失效**：密钥每次启动随机生成，只在内存里，不落盘。会话服务重启（停用后重新启用、重载）之后旧句柄一律核验不过；这时 `epoch` 也变了，客户端本来就要重新订阅，快照里是新句柄。
+- **不签发的**：不是存储地址的来源（网址、data URL）、存储服务里没有的根，以及种类为 `data`、`pluginData` 的根。`data` 根映射到家目录的 `state/`，里面有 WebUI 的访问 token 与审计；`pluginData` 在 `state/plugins` 下。这些附件只有名字。owner 自己在 storage-local 里加的直通根（如指向 `/` 的 `host`）不按路径区分，种类不是这两种的照常签发。
+- **核验**：`resolveFile(sessionId, handle)` 回存储地址与文件名，传输层自己读出、当附件下发（WebUI 见 [plugin-webui-server](./plugin-webui-server.md#rest-api) 的 `/api/session-file`）。会话 id 不是签发时那个的、载荷或签名改动过的、重启之前签发的，都回 `undefined`。核验不看文件还在不在，删掉的文件由传输层读取时报出。
 
 ## 已读记录
 

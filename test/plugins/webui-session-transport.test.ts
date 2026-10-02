@@ -1,6 +1,5 @@
 import { Buffer } from 'node:buffer';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { request } from 'node:http';
 import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,7 +32,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
-import { freePort } from '../helpers/net.js';
+import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 的 /session：已认证的 WebSocket 接到会话协议（sessionProtocol.connect）。
@@ -44,7 +43,7 @@ import { freePort } from '../helpers/net.js';
 /** Node 自带的 WebSocket（undici）接受 headers，DOM 类型里没有这个重载 */
 type NodeWebSocketCtor = new (url: string, init: { headers: Record<string, string> }) => WebSocket;
 
-const TOKEN = 'session-transport-test-token';
+const TOKEN = 'session-transport-test-token-0000';
 const COOKIE = `aalis_webui_token=${TOKEN}`;
 const WEBUI_CONFIG = { host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN };
 
@@ -67,17 +66,6 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
-
-/** webui-server 在 app:ready 时才监听：等登录状态接口答得上来 */
-async function listening(port: number): Promise<void> {
-  await vi.waitFor(
-    async () => {
-      const res = await fetch(`http://127.0.0.1:${port}/api/auth/status`);
-      if (!res.ok) throw new Error(`状态接口回 ${res.status}`);
-    },
-    { timeout: 3000, interval: 20 },
-  );
-}
 
 /**
  * 真的一整套：mock 模型、agent、网关、会话管理、会话服务（可以不装）与 webui-server。
@@ -107,7 +95,7 @@ async function startStack({ withSessionServer = true } = {}) {
   await app.plugin(webuiServer, { ...WEBUI_CONFIG, port });
   await app.plugins.idle();
   await app.start();
-  await listening(port);
+  await waitListening(port);
   return { app, port, paths, sessionServer };
 }
 
@@ -126,11 +114,12 @@ async function startWithStub() {
         close: () => void link.closes++,
       };
     },
+    resolveFile: () => undefined,
   });
   await app.plugin(webuiServer, { ...WEBUI_CONFIG, port });
   await app.plugins.idle();
   await app.start();
-  await listening(port);
+  await waitListening(port);
   return { app, port, links };
 }
 
@@ -178,34 +167,6 @@ function pushes(frames: Frame[], sessionId: string, after: number): Frame[] {
     if (f.method !== 'item/started' && f.method !== 'item/delta' && f.method !== 'item/completed') return false;
     const { sessionId: id, seq } = sessionNotifications[f.method].parse(f.params);
     return id === sessionId && seq > after;
-  });
-}
-
-/** 发一个 WebSocket 升级请求：被接受时给出状态码与升级后的套接字，被拒时只有状态码 */
-function upgrade(port: number, path: string, cookie?: string): Promise<{ status: number; socket?: Socket }> {
-  return new Promise((resolve, reject) => {
-    const req = request({
-      host: '127.0.0.1',
-      port,
-      path,
-      headers: {
-        Connection: 'Upgrade',
-        Upgrade: 'websocket',
-        'Sec-WebSocket-Version': '13',
-        'Sec-WebSocket-Key': Buffer.from('0123456789abcdef').toString('base64'),
-        ...(cookie ? { cookie } : {}),
-      },
-    });
-    req.on('upgrade', (res, socket) => {
-      rawSockets.push(socket);
-      resolve({ status: res.statusCode ?? 0, socket });
-    });
-    req.on('response', res => {
-      res.resume();
-      resolve({ status: res.statusCode ?? 0 });
-    });
-    req.on('error', reject);
-    req.end();
   });
 }
 
@@ -321,15 +282,17 @@ describe('/session 接上真的会话服务', () => {
 });
 
 describe('/session 的传输', () => {
-  it('升级请求：没有 token 或 token 不对回 401，不透露有哪些路径；认证之后只认 /session 与 /ws，别的路径回 404', async () => {
+  it('升级请求：没有 token 或 token 不对回 401，不透露有哪些路径；认证之后只认 WebUI 自己的几个端点，别的路径回 404', async () => {
     const { port } = await startWithStub();
-    expect((await upgrade(port, '/session')).status).toBe(401);
-    expect((await upgrade(port, '/session', 'aalis_webui_token=wrong')).status).toBe(401);
-    expect((await upgrade(port, '/nope')).status).toBe(401);
-    expect((await upgrade(port, '/nope', COOKIE)).status).toBe(404);
-    expect((await upgrade(port, '/session/x', COOKIE)).status).toBe(404);
-    expect((await upgrade(port, '/session?v=1', COOKIE)).status).toBe(101);
-    expect((await upgrade(port, '/ws', COOKIE)).status).toBe(101);
+    const status = async (path: string, cookie?: string) =>
+      (await upgrade(port, path, cookie ? { cookie } : {}, rawSockets)).status;
+    expect(await status('/session')).toBe(401);
+    expect(await status('/session', 'aalis_webui_token=wrong')).toBe(401);
+    expect(await status('/nope')).toBe(401);
+    expect(await status('/nope', COOKIE)).toBe(404);
+    expect(await status('/session/x', COOKIE)).toBe(404);
+    expect(await status('/session?v=1', COOKIE)).toBe(101);
+    expect(await status('/ws', COOKIE)).toBe(101);
   });
 
   it('连接原样接到会话服务：身份取自认证、审批面是登记的 webui，帧原文双向转交，对端关闭时撤掉连接', async () => {
@@ -379,7 +342,7 @@ describe('/session 的传输', () => {
     const onUncaught = (err: unknown) => void uncaught.push(err);
     process.on('uncaughtException', onUncaught);
     try {
-      const { status, socket } = await upgrade(port, '/session', COOKIE);
+      const { status, socket } = await upgrade(port, '/session', { cookie: COOKIE }, rawSockets);
       expect(status).toBe(101);
       await vi.waitFor(() => expect(links).toHaveLength(1));
       const received: Buffer[] = [];

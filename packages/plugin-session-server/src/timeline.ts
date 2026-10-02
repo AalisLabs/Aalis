@@ -38,7 +38,15 @@ import {
   type StreamChunkMessage,
 } from '@aalis/schema-message';
 import type { MethodHandlers, ServerConnection } from './connection.js';
-import { archivedItem, BEFORE_TOOL_UNSENT, HISTORY_PAGE, type IsOwner, readHistory, toolFailed } from './history.js';
+import {
+  archivedItem,
+  BEFORE_TOOL_UNSENT,
+  HISTORY_PAGE,
+  type IsOwner,
+  readHistory,
+  type SignFile,
+  toolFailed,
+} from './history.js';
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
@@ -81,6 +89,8 @@ interface TimelineDeps {
   memory: ServiceRef<MemoryService>;
   todoList: ServiceRef<TodoListService>;
   isOwner: IsOwner;
+  /** 给某个会话里她发出的文件签发下载句柄 */
+  signFile(sessionId: string, uri: string, name: string): string | undefined;
   requireSession(id: string): SessionInfo;
   summarize(info: SessionInfo): SessionSummary;
   isRoom(sessionId: string): boolean;
@@ -113,6 +123,10 @@ export function createTimeline(deps: TimelineDeps) {
   const emitDelta = (sessionId: string, itemId: string, text: string) =>
     deps.notify(sessionId, 'item/delta', { sessionId, epoch, seq: ++seq, itemId, text });
   const complete = (turn: Turn, item: SessionItem) => emit(turn.sessionId, 'item/completed', item);
+  const signerOf =
+    (sessionId: string): SignFile =>
+    (uri, name) =>
+      deps.signFile(sessionId, uri, name);
 
   const live = (turnId: string) => {
     const turn = turns.get(turnId);
@@ -413,7 +427,7 @@ export function createTimeline(deps: TimelineDeps) {
 
   /** 落了库的提问、通知与她发出的附件 */
   function archived(sessionId: string, stored: Message): void {
-    const item = archivedItem(stored, deps.isOwner);
+    const item = archivedItem(stored, deps.isOwner, signerOf(sessionId));
     if (item) emit(sessionId, 'item/completed', item);
   }
 
@@ -501,6 +515,7 @@ export function createTimeline(deps: TimelineDeps) {
         { limit: HISTORY_PAGE, skip: skipFor(at, shown) },
         deps.isOwner,
         deps.isRoom(sessionId),
+        signerOf(sessionId),
       );
       const entries = (await deps.todoList.current?.get(sessionId)) ?? [];
       afterReply(() => {
@@ -539,6 +554,7 @@ export function createTimeline(deps: TimelineDeps) {
         { before, limit: limit ?? HISTORY_PAGE, skip: skipFor(seq, shown) },
         deps.isOwner,
         deps.isRoom(sessionId),
+        signerOf(sessionId),
       );
     },
   };

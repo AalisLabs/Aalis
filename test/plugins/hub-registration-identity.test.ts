@@ -323,7 +323,7 @@ describe('webui-server 页面退订按条目身份', () => {
       host: '127.0.0.1',
       autoOpen: false,
       tokenMode: 'fixed',
-      fixedToken: 'test-fixed-token-placeholder',
+      fixedToken: 'test-fixed-token-placeholder-0000',
     });
     await app.plugins.idle();
     const svc = app.bind({ services }).services.get(webuiServer)!;

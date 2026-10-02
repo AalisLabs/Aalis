@@ -19,7 +19,7 @@ afterEach(async () => {
 describe('webui-server：WS 非 JSON 帧', () => {
   it('记一行「协议违规消息: 非 JSON 帧」告警，不带栈，也不记成处理失败', async () => {
     const port = await freePort();
-    const token = 'test-fixed-token-placeholder';
+    const token = 'test-fixed-token-placeholder-0000';
     const logHub = new LogHub();
     // 只收入站帧处理的两种告警：协议违规与处理失败（旧行为）
     const warns: string[] = [];

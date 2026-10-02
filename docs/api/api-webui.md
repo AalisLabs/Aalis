@@ -177,6 +177,50 @@ interface WebuiPage {
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 含 `dist/index.html`，被 webui-server 自动发现挂载（无需 `apply`）。
 - **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl, { label })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。`onBehalfOf` 代登记归属被代者身份，不计入代理人 `provides`。
 
+## 管理面推送（/admin）
+
+会话之外的推送走 WebUI 的 WebSocket 端点 `/admin`，与会话协议的 `/session`（见 [api-session-protocol](./api-session-protocol.md)）分开，校验相同：浏览器发起的握手要与 WebUI 同源，跨源回 403；升级请求带登录 cookie，没登录或 token 不对回 401（详见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的「WebSocket」一节）。浏览器对同一主机的 HTTP/1.1 连接数有上限（约 6 条，所有标签页共用），WebSocket 不占这个上限，开多少个标签页 REST 请求都不会因此排队。
+
+每个文本帧是一个 JSON 对象，`type` 区分种类。本包只给类型，前端导入类型即可，服务端不校验自己发出的帧：
+
+```ts
+/** 前端发往 /admin */
+type WebuiAdminClientMessage = { type: 'log.subscribe' } | { type: 'log.unsubscribe' };
+
+/** /admin 推给前端 */
+type WebuiAdminEvent =
+  | { type: 'log'; entry: LogEntry }
+  | { type: 'plugins.changed' }
+  | { type: 'app.restarting' }
+  | { type: 'client.reload' };
+```
+
+| 事件 | 字段 | 推给谁 | 前端怎么办 |
+|---|---|---|---|
+| `log` | `entry`：`{ seq, timestamp, level, scope, message }`，与 `GET /api/logs/tail` 返回的条目同形 | 订阅了日志的连接 | 追加到日志列表 |
+| `plugins.changed` | 无 | 全部连接 | 插件状态可能变了（启停、装卸、激活成败之后），或页面登记表变了（插件登记或撤回页面）：重取 `GET /api/plugins` 与 `GET /api/pages`。一次启停可能连着推几条，服务端不合并，前端合并成一次重取 |
+| `app.restarting` | 无 | 全部连接 | 应用即将重启，连接随后断开：提示正在重启，稍后重连 |
+| `client.reload` | 无 | 全部连接 | 前端偏好改了，或有前端包被卸载，活跃前端可能换了：整页重新加载 |
+
+- **日志**：日志页打开时发 `{ type: 'log.subscribe' }`，离开时发 `{ type: 'log.unsubscribe' }`；订阅与退订不回执。先发订阅、再取 `GET /api/logs/tail`，两边按 `seq` 去重；更早的日志用 `GET /api/logs/range` 往前翻。
+- **认不出的消息**（不是 JSON，或 `type` 不认识）：服务端记一行告警后忽略，连接照常。
+- 平台连接状态没有变化事件，页面打开时取一次 `GET /api/platforms`，配手动刷新。
+- 连接的心跳与关闭码见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的 WebSocket 一节。
+
+浏览器里的前端：
+
+```ts
+import type { WebuiAdminClientMessage, WebuiAdminEvent } from '@aalis/api-webui';
+
+const admin = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/admin`); // 同源，cookie 自动带上
+admin.onmessage = event => {
+  const e = JSON.parse(event.data) as WebuiAdminEvent;
+  if (e.type === 'plugins.changed') refetchPluginsAndPages();
+};
+// 日志页打开时
+admin.send(JSON.stringify({ type: 'log.subscribe' } satisfies WebuiAdminClientMessage));
+```
+
 ## 实现者
 
 - [@aalis/plugin-webui-server](../plugins/plugin-webui-server.md) — 后端服务 + 静态文件托管

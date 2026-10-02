@@ -139,7 +139,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     // 直接用 node:http 做升级握手拿到裸 socket，再断言服务端发来了 close 帧（opcode 0x8）。
     // 预取空闲端口：webui-server 打日志用的是配置值，port:0 时拿不到真实端口。
     const port = await freePort();
-    const token = 'test-fixed-token-placeholder';
+    const token = 'test-fixed-token-placeholder-0000';
     const app = new App({
       name: 'T',
       logLevel: 'error',

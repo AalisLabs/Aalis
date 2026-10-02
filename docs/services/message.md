@@ -39,14 +39,14 @@
 
 | 符号 | 类别 | file:line | 说明 |
 | --- | --- | --- | --- |
-| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`HostNotice` |
+| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice` |
 | `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
 | `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键：`VisibleContent`（assistant 消息的可见正文，落库内容是结构化输出信封时由 agent 写入；读历史做检索、摘要的一方应优先读它，缺省退回 `content`） |
 | `CONTROL_KINDS` | const 数组 | `index.ts` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼装历史时须自行过滤**（并非 `prepareLLMMessages` 的职责） |
 | `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
 | `prepareLLMMessages(messages)` | function | `index.ts` | **LLM provider 出口必调**：归一 role + 加前缀；不改原对象，返回浅拷贝；幂等 |
-| `outboundMediaMessage(kind, ref, desc?)` | function | `index.ts` | 发出的图片、音频、视频在会话历史里的记法：一条 assistant 消息，`kind` 为 `OutboundImage`/`OutboundAudio`/`OutboundVideo`，正文是附件引用占位符；时间戳与 `metadata` 由调用方补上。出站媒体的归档一律用它，`memory_recall` 与 WebUI 回看历史才能按同一格式命中、还原 |
+| `outboundMediaMessage(kind, ref, desc?)` | function | `index.ts` | 发出的图片、音频、视频与文件在会话历史里的记法：一条 assistant 消息，`kind` 为 `OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`，正文是附件引用占位符（文件的描述位记文件名）；时间戳与 `metadata` 由调用方补上。出站附件的归档一律用它，`memory_recall` 与会话服务回看历史才能按同一格式命中、还原 |
 
 > `prepareLLMMessages` 签名：`<T extends Pick<Message, 'role' \| 'content' \| 'kind'>>(messages: T[]): T[]`（`index.ts`）。语义、为何必调、为何不剔 event-marker——见概念文档 §3 + §10。
 

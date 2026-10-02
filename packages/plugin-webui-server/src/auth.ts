@@ -1,9 +1,51 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { ProcessService } from '@aalis/api-process';
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 
 const TOKEN_COOKIE = 'aalis_webui_token';
+
+/** 同一来源地址在一个窗口内登录失败满这么多次，到窗口结束前它的登录一律回 429（正确的 token 也不收） */
+const LOGIN_MAX_FAILURES = 10;
+/** 登录失败的计数窗口，从这个地址的第一次失败算起；窗口结束自动解除，计数归零 */
+const LOGIN_FAILURE_WINDOW_MS = 10 * 60 * 1000;
+/** 失败计数表最多记这么多个地址：满了再记新地址时丢掉最早的那条，内存有界，也不因此变成全局锁定 */
+export const LOGIN_FAILURE_ADDRESSES_MAX = 10_000;
+
+/**
+ * token 的定时安全比较：两边先取 SHA-256 摘要再逐字节比，比较耗时与 token 的内容和长度都无关，
+ * 逐字节试探与按长度试探都得不到信号。
+ */
+function tokenEquals(given: string, expected: string): boolean {
+  const digest = (s: string) => createHash('sha256').update(s).digest();
+  return timingSafeEqual(digest(given), digest(expected));
+}
+
+/**
+ * 请求的来源能不能收，WebSocket 升级与登录请求共用。浏览器发起的握手与 POST 一律带 Origin，只收与本服务同源的：
+ * Origin 的主机与端口等于请求的 Host。同一主机别的端口上的网页与本服务同站，SameSite cookie 会随它的请求发出，
+ * 靠这一关拦下。没有 Origin 的是浏览器之外的客户端（脚本、命令行），不会被别的网页借用户的浏览器发起，交给 token。
+ * Host 按 Origin 的协议解析后再比，两边的默认端口都去掉（代理转来的 Host 可能写成 `x:443`）。
+ * 经反向代理访问时，代理要把原始的 Host 转给本服务。
+ */
+export function originAllowed(req: Pick<IncomingMessage, 'headers'>): boolean {
+  const { origin, host } = req.headers;
+  if (origin === undefined) return true;
+  if (host === undefined || !URL.canParse(origin)) return false;
+  const { protocol, host: originHost } = new URL(origin);
+  const target = `${protocol}//${host}`;
+  return URL.canParse(target) && new URL(target).host === originHost;
+}
+
+/**
+ * 这次导航是不是别的网页发起的：Sec-Fetch-Site 为 cross-site 或 same-site。粘贴链接、书签与启动时自动打开的
+ * 一键登录链接是 none，本服务自己页面里的跳转是 same-origin；不带这个头的（浏览器之外的客户端、旧浏览器）不算
+ */
+function navigatedFromOtherSite(req: Pick<IncomingMessage, 'headers'>): boolean {
+  const site = req.headers['sec-fetch-site'];
+  return site === 'cross-site' || site === 'same-site';
+}
 
 function parseCookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
@@ -90,14 +132,52 @@ export interface AuthSystem {
  * - token 由调用方经 getToken 提供，每次校验现取：persist 模式下 storage 晚上线时，调用方会把
  *   启动时的临时 token 换成读回的持久化 token（见 index.ts 的 token 解析）
  * - HttpOnly + SameSite=Strict cookie；`?token=` 一键登录；同源 POST /api/auth/login 提交
+ * - `?token=` 与登录接口按来源地址限速：失败计数见 LOGIN_MAX_FAILURES、LOGIN_FAILURE_WINDOW_MS，成功清零。
+ *   别的网页借 owner 的浏览器发起的登录（跨源的 POST、别的站点打开的 `?token=`）不比对也不计数，免得别人替 owner 把
+ *   地址锁住。带 cookie 的请求不计数：各种模式的 token 都够长（随机生成的 24 字节，固定的至少 32 个字符），
+ *   按 cookie 逐个猜猜不中；对 cookie 也锁定的话，共用一个来源地址（同一个反向代理）的已登录页面会被别人一起锁住
  * - 身份恒为 `webui:console`（owner 级，单人模式语义）
  */
 export function createAuthSystem(getToken: () => string): AuthSystem {
   const cookieMaxAge = 30 * 24 * 3600; // 30d；进程重启 token 轮换后无效
 
+  // 登录失败按来源地址计数。本机回环也计数：经同机反向代理来的请求全是回环地址，豁免回环等于不限速；
+  // owner 自己输错满额也只等到窗口结束，已登录的页面不受影响。
+  // 时间取单调时钟，键的插入顺序就是窗口结束的先后，过期的从表头剪掉；表满时也从表头丢，最多 LOGIN_FAILURE_ADDRESSES_MAX 条。
+  const failures = new Map<string, { count: number; resetAt: number }>();
+
+  /** 这个地址还要等多少毫秒才能再登录，不受限时为 0；先剪掉窗口已过的计数 */
+  function lockedFor(address: string): number {
+    const now = performance.now();
+    for (const [key, entry] of failures) {
+      if (entry.resetAt > now) break;
+      failures.delete(key);
+    }
+    const entry = failures.get(address);
+    return entry && entry.count >= LOGIN_MAX_FAILURES ? entry.resetAt - now : 0;
+  }
+
+  /** 记一次失败；须紧跟在 lockedFor 之后调用，表里留着的计数都还在窗口内 */
+  function recordFailure(address: string): void {
+    const entry = failures.get(address);
+    if (entry) {
+      entry.count++;
+      return;
+    }
+    if (failures.size >= LOGIN_FAILURE_ADDRESSES_MAX) failures.delete(failures.keys().next().value as string);
+    failures.set(address, { count: 1, resetAt: performance.now() + LOGIN_FAILURE_WINDOW_MS });
+  }
+
+  /** 给被限速的登录写好 429 与 Retry-After，返回给人看的说明 */
+  function rejectLocked(res: Response, waitMs: number): string {
+    res.status(429);
+    res.setHeader('Retry-After', String(Math.ceil(waitMs / 1000)));
+    return `登录失败次数过多，请 ${Math.ceil(waitMs / 60_000)} 分钟后再试。`;
+  }
+
   function tokenAuthed(req: Pick<IncomingMessage, 'headers'>): boolean {
     const cookieToken = parseCookieValue(req.headers.cookie, TOKEN_COOKIE);
-    return !!cookieToken && cookieToken === getToken();
+    return !!cookieToken && tokenEquals(cookieToken, getToken());
   }
 
   function identify(req: Pick<IncomingMessage, 'headers'>): UserIdentity | undefined {
@@ -107,27 +187,47 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
   const middleware: RequestHandler = (req, res, next) => {
     const url = req.path;
     const qToken = typeof req.query?.token === 'string' ? (req.query.token as string) : undefined;
+    const address = req.socket.remoteAddress ?? '';
 
-    // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径
-    if (req.method === 'GET' && qToken) {
+    // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径。别的站点打开的不认 token，按没带 token 往下走
+    if (req.method === 'GET' && qToken && !navigatedFromOtherSite(req)) {
+      const waitMs = lockedFor(address);
+      if (waitMs > 0) {
+        const note = rejectLocked(res, waitMs);
+        res.type('html').send(loginPageHtml(note));
+        return;
+      }
       const token = getToken();
-      if (qToken === token) {
+      if (tokenEquals(qToken, token)) {
+        failures.delete(address);
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
         res.redirect(302, url);
         return;
       }
+      recordFailure(address);
       res.status(401).type('html').send(loginPageHtml('URL 中的 token 不正确，请手动输入。'));
       return;
     }
 
-    // 2. 登录端点：{token}
+    // 2. 登录端点：{token}。跨源的先拒，不计数
     if (url === '/api/auth/login' && req.method === 'POST') {
+      if (!originAllowed(req)) {
+        res.status(403).json({ ok: false, error: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）' });
+        return;
+      }
+      const waitMs = lockedFor(address);
+      if (waitMs > 0) {
+        res.json({ ok: false, error: rejectLocked(res, waitMs) });
+        return;
+      }
       const body = (req as { body?: { token?: string } }).body ?? {};
       const token = getToken();
-      if (typeof body.token === 'string' && body.token === token) {
+      if (typeof body.token === 'string' && tokenEquals(body.token, token)) {
+        failures.delete(address);
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
         res.json({ ok: true, identity: { platform: 'webui', userId: 'console' } });
       } else {
+        recordFailure(address);
         res.status(401).json({ ok: false, error: 'token 不正确' });
       }
       return;

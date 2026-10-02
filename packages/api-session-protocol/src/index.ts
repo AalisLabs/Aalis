@@ -295,8 +295,9 @@ export const SessionConfigUpdateParamsSchema = z.object({
 const AttachmentKindSchema = z.enum(['image', 'audio', 'video', 'file']);
 
 /**
- * 条目里的附件：图片、音频、视频的 src 是媒体地址（存储地址或网址），其他文件的 src 是服务端签发的不透明句柄。
- * 取不到可下载的来源时没有 src，只有名字（如存档只记了文件名的用户上传）
+ * 条目里的附件：图片、音频、视频的 src 是媒体地址（存储地址或网址），其他文件的 src 是会话服务签发的不透明句柄。
+ * 句柄绑定这个会话与文件，只在签发它的那次启动（同一个 epoch）内有效，客户端不解析它，按传输层给的下载入口取。
+ * 取不到可下载的来源时没有 src，只有名字（如存档只记了文件名的用户上传、存在插件状态目录里的文件）
  */
 export const ItemAttachmentSchema = z.object({
   kind: AttachmentKindSchema,
@@ -635,6 +636,11 @@ export interface SessionConnection {
 export interface SessionProtocolService {
   /** 接入一条连接；send 发出一帧文本 */
   connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection;
+  /**
+   * 核验条目附件里的文件句柄：是这次启动内为这个会话签发的，回它指向的存储地址与文件名；伪造的、改动过的、
+   * 别的会话的、会话服务重启之前签发的回 undefined。传输层据此读出文件，一律当附件下发
+   */
+  resolveFile(sessionId: string, handle: string): { uri: string; name: string } | undefined;
 }
 
 export const sessionProtocol = defineService<SessionProtocolService>('session-protocol');

@@ -19,7 +19,7 @@ afterEach(async () => {
 /** archive 给了就登记成 message-archive 服务；只用到 saveMessage。withImageSender 时同时装上 image-sender */
 async function startWebui(archive?: Pick<MessageArchiveService, 'saveMessage'>, withImageSender = false) {
   const port = await freePort();
-  const token = 'outbound-delivery-test-token';
+  const token = 'outbound-delivery-test-token-0000';
   const app = new App({ name: 'WebUI delivery test', logLevel: 'error' });
   apps.push(app);
   if (archive) app.bind({ provide }).provide(messageArchive, archive as never);
@@ -102,6 +102,8 @@ describe('WebUI outbound delivery confirmation', () => {
           { kind: 'image', data: 'data:/images/new.png', ref: 'data/images/new.png' },
           { kind: 'image', data: 'data:/images/cat.png', ref: 'cat', skipArchive: true },
           { kind: 'file', data: 'paper:/n-a/tasks/t-1/out/a-1.html', name: '主页.html' },
+          // 不是存储地址的文件签不出下载句柄：只记名字，内容不进历史
+          { kind: 'file', data: 'data:application/pdf;base64,QUJD', name: '报告.pdf' },
         ],
       }),
     ).toEqual({ ok: true });
@@ -110,7 +112,12 @@ describe('WebUI outbound delivery confirmation', () => {
     expect(saved.map(({ message: { role, kind, content } }) => ({ role, kind, content }))).toEqual([
       { role: 'system', kind: 'event-marker', content: '[作品通知] 《猫》已上线' },
       { role: 'assistant', kind: 'outbound-image', content: '[图片 | ref:data:/images/new.png]' },
-      { role: 'system', kind: 'event-marker', content: '[文件] 主页.html' },
+      {
+        role: 'assistant',
+        kind: 'outbound-file',
+        content: '[文件: 主页.html | ref:paper:/n-a/tasks/t-1/out/a-1.html]',
+      },
+      { role: 'system', kind: 'event-marker', content: '[文件] 报告.pdf' },
     ]);
     // 已经记过：快照里的附件都标上 skipArchive，image-sender 不再记一份
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
@@ -118,6 +125,7 @@ describe('WebUI outbound delivery confirmation', () => {
       { data: 'data:/images/new.png', skipArchive: true },
       { data: 'data:/images/cat.png', skipArchive: true },
       { data: 'paper:/n-a/tasks/t-1/out/a-1.html', skipArchive: true },
+      { data: 'data:application/pdf;base64,QUJD', skipArchive: true },
     ]);
   });
 
