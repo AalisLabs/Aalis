@@ -230,21 +230,14 @@ describe('deleteUser — 删除记录', () => {
   });
 });
 
-// 三个「改全局闸」的动作与兄弟处理器同一形状：caller 在场且非 owner 即拒。
-describe('setRestrictedPolicy / revokeTemporaryGrant / setConfig — 仅 owner 可达', () => {
+// 两个「改全局闸」的动作与兄弟处理器同一形状：caller 在场且非 owner 即拒。
+describe('setRestrictedPolicy / setConfig — 仅 owner 可达', () => {
   it('setRestrictedPolicy：非 owner 调用被拒，策略未落配置', async () => {
     const { call, config } = await boot();
     await expect(
       call('setRestrictedPolicy', { policy: { allow: ['*'] } }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
-    expect(config.get('restrictedPolicy'), '非 owner 不该开出受限能力白名单').toBeUndefined();
-  });
-
-  it('revokeTemporaryGrant：非 owner 调用被拒', async () => {
-    const { call } = await boot();
-    await expect(call('revokeTemporaryGrant', { id: 'g1' }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
-      /只有 owner/,
-    );
+    expect(config.get('restrictedPolicy'), '非 owner 不该开出免确认白名单').toBeUndefined();
   });
 
   it('setConfig：非 owner 调用被拒，硬禁清单未被改写', async () => {
@@ -262,34 +255,6 @@ describe('setRestrictedPolicy / revokeTemporaryGrant / setConfig — 仅 owner �
     expect((config.get('restrictedPolicy') as { allow: string[] }).allow).toEqual(['tool:x']);
     await call('setConfig', { deniedCapabilities: ['tool:y'] }, owner);
     expect(config.get('deniedCapabilities')).toEqual(['tool:y']);
-    await expect(call('revokeTemporaryGrant', { id: 'nope' }, owner)).resolves.toMatchObject({ ok: false });
-  });
-});
-
-describe('setAuthorityOverride — 抬门槛须撤销旧授予', () => {
-  it('抬高最低等级后，该能力上的会话授予立即失效', async () => {
-    const { manager, call } = await boot();
-    manager.setUserLevel({ platform: 'onebot', userId: 'alice' }, 2);
-    manager.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
-    const grantReq = {
-      name: 'shell.exec',
-      type: 'tool',
-      capability: 'tool:shell.exec',
-      sessionId: 's1',
-      platform: 'onebot',
-      userId: 'alice',
-      visibility: 'restricted',
-    } as never;
-    expect(await manager.requestAccess(grantReq), '前置：授予没建起来就测不到东西').toBe(true);
-    expect(manager.isPreApproved(grantReq)).toBe(true);
-
-    // owner 在权限页把门槛抬到 5（典型处置：不封人只抬门槛）
-    await call('setAuthorityOverride', { name: 'tool:shell.exec', level: 5 });
-
-    expect(
-      manager.isPreApproved(grantReq),
-      'authorize 已按新门槛拒绝，救援闸却靠旧授予继续放行——且救援命中直接 return null，连 confirm 轴一并跳过',
-    ).toBe(false);
   });
 });
 
@@ -326,24 +291,6 @@ describe('setConfirmOverride — owner 调整单操作确认要求', () => {
     await expect(
       call('setConfirmOverride', { name: 'tool:x', confirm: 'always' }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
-  });
-});
-
-describe('setAutoConfirm — owner 切 auto 确认模式', () => {
-  it('-1 写一直；0 写关；N 写未来截止', async () => {
-    const { call, config } = await boot();
-    await call('setAutoConfirm', { minutes: -1 });
-    expect(config.get('autoConfirmUntil')).toBe(-1);
-    await call('setAutoConfirm', { minutes: 0 });
-    expect(config.get('autoConfirmUntil')).toBe(0);
-    await call('setAutoConfirm', { minutes: 30 });
-    expect(config.get('autoConfirmUntil') as number).toBeGreaterThan(Date.now());
-  });
-  it('非 owner 调用被拒', async () => {
-    const { call } = await boot();
-    await expect(call('setAutoConfirm', { minutes: 30 }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
-      /只有 owner/,
-    );
   });
 });
 

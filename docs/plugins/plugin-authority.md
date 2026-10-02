@@ -5,7 +5,7 @@
 
 ## 概述
 
-基于「数字等级」的权限管理系统：每个外部身份一个**整数等级**，每个操作一个**最低等级**，等级够即放行。单 owner 个人 bot 的「好管」权限模型。管理 owner、用户等级、受限能力的临时放行与平台级确认处理器。
+基于「数字等级」的权限管理系统：每个外部身份一个**整数等级**，每个操作一个**最低等级**，等级够即放行。单 owner 个人 bot 的「好管」权限模型。管理 owner、用户等级与免确认白名单，并在执行守卫里完成确认：工具交给 owner 审批，指令向发出者本人核对意图。
 
 ## 插件声明
 
@@ -23,12 +23,13 @@ export default definePlugin({
     tools: optional(tools),
     storage: optional(storage),
     platform: optional(platform),
+    approvals: optional(approvals),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内仍 `require()`：宿主未提供配置文档时本插件激活失败。其余 optional 依赖缺席时只少对应的接线。WebUI 权限页与 `/auto` 指令改动配置后经 `host-config` 的 `save()` 落盘。
+裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内仍 `require()`：宿主未提供配置文档时本插件激活失败。其余 optional 依赖缺席时只少对应的接线；`approvals` 缺席时需要确认的工具调用一律拒绝。WebUI 权限页改动配置后经 `host-config` 的 `save()` 落盘。
 
 ## 两轴正交模型
 
@@ -47,7 +48,7 @@ export default definePlugin({
   1. `authorityOverrides[capability]`（owner 逐条覆盖成任意整数）
   2. `risk` 派生：`safe→0` · `sensitive→1` · `dangerous→2`
   3. `visibility` 兜底（拿不到 risk 时）：`public→0` · `restricted→2`（`RESTRICTED_LEVEL`）
-- 裁决 `resolveAccess`（首个命中赢，对齐 Claude Code deny→allow）：
+- 裁决 `resolveAccess`（首个命中即定，硬禁先于放行）：
   1. 全局硬禁 `deniedCapabilities` glob 命中 → **拒**（压过一切，连 owner 都压过）
   2. owner → 放行
   3. `level >= minLevel` → 放行；否则拒
@@ -60,35 +61,34 @@ export default definePlugin({
 
 ## 确认（轴 B）
 
-授权已过（含 owner / 等级够 / 被预先放行）但操作声明了 `confirm` 时，仍需走一次「意图确认」。确认由独立的 `plugin-session-confirm`（HITL 协调器）执行，经 `setConfirmHandler(platform, handler)` 注册进 authority（返回注销函数，注册方 dispose 时调用）；各平台（CLI / WebUI / OneBot）可注册独立确认回调，否则落到 `'*'` 通配 fallback。没有任何通道时 `requestAccess` 直接返回 false，守卫给出的拒绝原因会指出「没有确认通道」。
+授权已过（owner 或等级够）但操作声明了 `confirm`（经 `confirmOverrides` 覆盖后）时，仍要有人确认。守卫的判定顺序：
 
-- 回复 `Y` = 本次放行；`YS` = 本会话放行（带时限）；其它 = 取消。
-- `confirm: 'always'` = **每次都必须确认**，永不被会话记忆 / 白名单跳过（最高危；cron 等无人确认即拒）。
-- 跳过判定见 `shouldSkipConfirm`：`always` 永不跳；非 `always` 可被 `skipConfirm`（系统 / 受信源如 scheduler）或 owner 本人 **auto 模式** 跳过。
+1. **可免的确认**：`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认。`confirm: 'always'` 什么都免不掉（cron 等无人可问的上下文即拒）。
+2. **指令**：确认的是发出者本人的意图。plugin-commands 给人亲手输入的指令带上 `confirmIntent`，在同一会话里问发出者，只认他在这个会话里的下一条消息，带 `source` 的注入不认，60 秒不回即取消。没有 `confirmIntent` 的指令（编排投递等带 `source` 的注入）无从确认，直接拒。不走 owner 审批：群成员在私聊里用 `/clear` 清自己的记忆照样能确认。
+3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。
 
-权限守卫拒绝「未授权」分支时**绝不**调 `requestAccess`（那会询问发起者，造成自我提权），只查 `isPreApproved`（不问人）。
+等级不够或命中硬禁即拒，没有别的放行口：发起者本人不能靠确认给自己提权，白名单也不放宽授权。
 
-## 临时放行
+### 发起回合的类别
 
-当请求未直接授权 / 需确认时，依次尝试（`isTemporarilyAllowed`，先过硬禁绝对闸 `deniedCapabilities`）：
+按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）、`actor` 与会话 id（`originKind`，`packages/plugin-authority/src/authority-model.ts`）：
 
-1. `restrictedPolicy` 时限白名单（`{ allow?, duration? }`）：命中即放行（自动化免确认）。`duration > 0` 时放行窗口是**运行时态**——只有 WebUI 保存策略（action `setRestrictedPolicy`）才调 `markPolicyEnabled` 开始计时，重启或直接改 `aalis.config.yaml` 都不会自动武装，此时白名单恒不生效；`duration` 缺省 / `<= 0` 则不限时。该白名单在未直接授权的救援路径（`isPreApproved`）**只对 owner 生效**；非 owner 只在已授权、仅差确认的路径上吃它（即免确认），白名单不是免授权。
-2. 会话内临时授予复用：按 **platform + userId + sessionId + capability** 匹配，**不跨用户 / 不跨会话 / 不跨平台**（群内 sessionId 全群共享时不被白嫖）。
-3. 确认回调（`AccessConfirmHandler`）：只在已授权、需确认的路径（`requestAccess`）上使用，未授权的救援路径止于前两步。可返回会话级临时授予（`scope:'session'`，带 `durationSeconds`（1–3600，缺省 600）/ `maxUses`）。`always` 不接受任何记忆。
+按下面的顺序判，先命中的算：
 
-相关类型：请求 `AccessRequest`、决策 `AccessDecision { allowed, grant? }`、范围 `TemporaryGrantSpec { scope: 'once' | 'session', durationSeconds?, maxUses? }`。
-管理：`listTemporaryGrants()` / `revokeTemporaryGrant(id)`。
-
-> 会话内临时授予随进程态存活（重启即失效）、**不持久化**；时长缺省 600s、上限 3600s。
+1. 调用不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：`autonomous`；
+2. `source: 'subtask'`：`subtask`；
+3. 群房间，以及对端不是 owner 的私聊（按会话 id 判，子任务按它所在的房间算）：`room`，不论谁发言，owner 在 WebUI 里驱动房间也一样；
+4. 真人消息（没有 `source`）：带 `actor` 的是触发器把这一轮记成了自发的（例如频率触发），为 `autonomous`；否则发言者是 owner 为 `owner`，不是为 `other`；
+5. 宿主通知延续某次工具调用（`hostNotice.callerUserId`）：那次调用的发言者与授权身份都是 owner 为 `owner-chain`，否则 `other`；
+6. 其余带 `source` 的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知）：`autonomous`。
 
 ## 配置项
 
 - `config.owners`（`UserIdentity[]`）：owner 身份列表（owner = ∞，不在等级表内）。
 - `config.deniedCapabilities`（glob 列表）：全局硬禁用，命中即拒，连 owner 都压过（配置总闸，非 per-user）。
-- `config.authorityOverrides`（能力键 `type:name` → 整数）：owner 逐条覆盖单条操作的最低等级，无需改插件声明；传非整数则清除该条（回退默认派生）。经 WebUI 权限页改动该项时，**该能力上所有未过期的会话授予一并撤销**——否则 `authorize` 已按新门槛拒绝，而守卫的救援闸 `isPreApproved` 仍靠旧授予放行，且救援命中会直接返回放行、连确认轴（含 `always`）一起跳过。撤销由管理动作负责，不在救援口上复查：救援口恰恰在 `authorize` 拒绝之后才被调用，在那里复查等于把整条会话授予路径变成死代码（与 `setUserLevel` 降权撤销同源）。
+- `config.authorityOverrides`（能力键 `type:name` → 整数）：owner 逐条覆盖单条操作的最低等级，无需改插件声明；传非整数则清除该条（回退默认派生）。
 - `config.confirmOverrides`（能力键 `type:name` → `'session' | 'always' | 'off'`）：owner 逐条覆盖确认要求；`'off'` 强制关确认。
-- `config.autoConfirmUntil`（number）：auto 模式截止时间戳。`-1` = 一直；`>now` = 截止前激活；`0` / 过期 = 关（仅影响确认轴）。
-- `config.restrictedPolicy`（`{ allow?, duration? }`）：受限能力的临时放行白名单（owner 自动放行的时限）。注意 `duration > 0` 的窗口只在 WebUI 保存策略时开始计时（运行时态、不持久化），重启即失效、手写 yaml 不自动武装——想让它长期有效就别填 `duration`。
+- `config.restrictedPolicy`（`{ allow?, duration? }`）：免确认白名单（能力 glob，`['*']` 全放），给自动化用。只免 `session` 档的确认，`always` 照常确认；不放宽授权，等级不够的照样拒。注意 `duration > 0` 的窗口只在 WebUI 保存策略（action `setRestrictedPolicy`，调 `markPolicyEnabled`）时开始计时（运行时态、不持久化），重启即失效、手写 yaml 不自动武装——想让它长期有效就别填 `duration`。
 
 `DEFAULT_AUTHORITY`（未登记身份默认等级 = 0）是常量，不可配置。某操作是否 restricted 由其工具 / 指令声明的 `visibility` 决定，可经 `authorityOverrides`（等级）/ `confirmOverrides`（确认）逐操作覆盖。
 
@@ -98,7 +98,6 @@ export default definePlugin({
 
 - `/authority [target]` — 查看自己或指定用户（`<platform:userId>`）的权限等级（owner 显示「等级 ∞」）。
 - `/level <target> <整数>` — owner 给外部身份设等级（越大越高，`0` 默认，负数封禁）。`visibility: 'restricted'`。例：`/level onebot:12345 5`。
-- `/auto [分钟|on|off]` — owner 临时免 `dangerous` 二次确认（批处理便利，仅 owner 本人）：`on` = 一直、`off`/`0` = 关、正整数 = 分钟；无参 = 查状态。`visibility: 'restricted'`。例：`/auto 30`、`/auto off`。
 
 > 不存在 `/grant`、`/deny`、`/bind` 指令（能力委托 / 跨平台绑定模型已移除）。
 
@@ -108,9 +107,9 @@ WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 tok
 
 ## WebUI 权限管理页
 
-owner-only 的「权限管理」页（`renderer: 'authority'`，order 50）。`getOverview` 返回：用户等级表、owner 列表、平台清单、`deniedCapabilities`、`authorityOverrides`、`defaultAuthority`、`confirmOverrides`、`autoConfirmUntil`、`restrictedPolicy`、临时放行清单，以及指令 + 工具的操作清单（带 `pluginName/type/visibility/confirm/risk`，供前端按插件分组、显示两轴默认）。
+owner-only 的「权限管理」页（`renderer: 'authority'`，order 50）。`getOverview` 返回：用户等级表、owner 列表、平台清单、`deniedCapabilities`、`authorityOverrides`、`defaultAuthority`、`confirmOverrides`、`restrictedPolicy`，以及指令 + 工具的操作清单（带 `pluginName/type/visibility/confirm/risk`，供前端按插件分组、显示两轴默认）。
 
-操作处理器（均 owner-only，校验 `isOwner(caller)`）：`setUserLevel` / `deleteUser` / `setOwners` / `setAuthorityOverride` / `setConfirmOverride` / `setAutoConfirm` / `setRestrictedPolicy` / `revokeTemporaryGrant` / `setConfig`（更新 `deniedCapabilities`）。`setAuthorityOverride` 返回 `{ message, revokedGrants }`，`revokedGrants` 是因门槛变更撤销的会话授予条数；权限页整组设最低等级时按它汇总撤销数。
+操作处理器（均 owner-only，校验 `isOwner(caller)`）：`setUserLevel` / `deleteUser` / `setOwners` / `setAuthorityOverride` / `setConfirmOverride` / `setRestrictedPolicy` / `setConfig`（更新 `deniedCapabilities`）。
 
 ## 用户数据（users.json v5）
 

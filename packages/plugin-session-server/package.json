@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "会话服务：会话协议的服务端（会话列表与增量、会话的增删改与配置、已读、订阅与条目、历史、回合控制）",
+  "description": "会话服务：会话协议的服务端（会话列表与增量、会话的增删改与配置、已读、订阅与条目、历史、回合控制）与审批服务（在场、排队、应答核验、结算、审计）",
   "type": "module",
   "keywords": [
     "aalis",
@@ -29,9 +29,11 @@
   },
   "dependencies": {
     "@aalis/api-agent": "workspace:>=0.9.1 <1.0.0",
+    "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-checkpoint": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.1 <1.0.0",
@@ -41,7 +43,8 @@
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-todo-list": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0"
+    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
+    "@aalis/util-bounded-map": "workspace:>=0.6.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -56,6 +59,7 @@
       "required": [
         "events",
         "hooks",
+        "host-paths",
         "lifecycle",
         "logger",
         "memory",
@@ -74,6 +78,7 @@
         "tools"
       ],
       "provides": [
+        "approvals",
         "session-protocol"
       ]
     }

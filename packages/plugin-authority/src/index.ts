@@ -1,3 +1,4 @@
+import { approvals } from '@aalis/api-approval';
 import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aalis/api-authority';
 import { authority as authorityService, capabilityMinLevel } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
@@ -9,7 +10,7 @@ import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
-import { autoConfirmActive, DEFAULT_AUTHORITY, shouldSkipConfirm } from './authority-model.js';
+import { DEFAULT_AUTHORITY, originKind } from './authority-model.js';
 
 // 权限管理页（自定义 renderer 在 webui-client）。单 owner 终态无委托树，故无委托关系图。
 const webuiPages: WebuiPage[] = [
@@ -22,6 +23,7 @@ const webuiPages: WebuiPage[] = [
 // 故 apply 里 require()、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
 // （commands / tools / webui / storage / platform）缺席时只是少一条接线，不该拦住权限服务本身上线。
+// approvals 缺席时需要确认的工具调用一律拒绝。
 const uses = {
   provide,
   hostConfig: optional(hostConfig),
@@ -32,6 +34,7 @@ const uses = {
   tools: optional(toolsService),
   storage: optional(storageService),
   platform: optional(platformService),
+  approvals: optional(approvals),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -86,65 +89,45 @@ async function run(caps: Caps): Promise<void> {
     const confOv = (config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
     const cOv = confOv[capability];
     const confirm = cOv === 'off' ? undefined : (cOv ?? g.confirm);
-    // 等级裁决按授权身份（actor 缺省即会话身份）；accessBase 保持会话身份——
-    // confirm 通道按 platform 选路必须落在会话所在平台，否则 actor 与会话不在同一平台时
-    // （如跨平台的定时任务、workflow）确认提示会发进无人订阅的发起者平台通道、超时自动拒。
-    const identity = g.actor ?? { platform: g.platform, userId: g.userId };
-    const accessBase = {
-      name: g.name,
-      type: g.type,
-      capability,
-      args: g.args,
-      sessionId: g.sessionId,
-      platform: g.platform,
-      userId: g.userId,
-      signal: g.signal,
-    } as const;
 
-    // ── 轴 A · 授权：数字等级裁决（minLevel 由 risk/visibility/authorityOverrides 在 manager 内派生）——系统源也评估，防绕过提权 ──
-    const denied = manager.authorize(identity, {
+    // ── 轴 A · 授权：数字等级裁决按授权身份（actor 缺省即会话身份）——系统源也评估，防绕过提权。
+    // 等级不够即拒，没有别的放行口：发起者本人不能靠确认给自己提权。
+    const denied = manager.authorize(g.actor ?? { platform: g.platform, userId: g.userId }, {
       capability,
       visibility: g.visibility,
       risk: g.risk,
     });
-    if (denied) {
-      // 未授权（等级不够 / 硬禁 / 资源受限）：**绝不**让发起者本人弹确认自我提权。
-      // 仅 owner 预先配置的放行（restrictedPolicy 白名单 / 该用户在本会话已有的授予）可救；否则硬拒。
-      // 注意：这里**不**调 requestAccess（那会询问发起者）——只查 isPreApproved（不问人）。
-      if (g.skipConfirm) return denied;
-      // 救援闸按会话身份查「某个人预先放行了自己」，只在被裁决的就是这个人时才成立。
-      // actor 覆盖了会话身份（定时 / 自发回合）时，物理发言者的白名单与授予不能替
-      // 另一个身份解围——否则 interval 回合回填无主体 actor 后，owner 恰好最后发言时仍能
-      // 借 owner 的 restrictedPolicy 白名单或会话授予免授权执行，且救援命中直接 return null
-      // 连 confirm 轴（含 always 档）一并跳过。
-      const sameIdentity = identity.platform === g.platform && identity.userId === g.userId;
-      return sameIdentity && manager.isPreApproved(accessBase) ? null : denied;
+    if (denied) return denied;
+
+    // ── 轴 B · 确认：授权已过，但操作声明了 confirm 仍要有人确认（owner 也吃，防注入借权）。
+    // 非 always 的确认可免：没人可问的受信来源（skipConfirm）、owner 配的 restrictedPolicy 白名单。always 什么都免不掉
+    if (!confirm) return null;
+    if (confirm !== 'always' && (g.skipConfirm || manager.waivesConfirm(capability))) return null;
+
+    // 指令由人亲手输入：确认的是发出者本人的意图，由指令服务当面问；问不到（注入的指令）就拒
+    if (g.type === 'command') {
+      if (!g.confirmIntent) return `操作已取消：${capability} 需要发出者本人确认，这条指令不是人亲手输入的，无从确认`;
+      return (await g.confirmIntent()) ? null : `操作已取消：${capability} 没有得到发出者确认`;
     }
 
-    // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
-    // 仅对**已授权**操作做意图确认（owner 也吃，防注入借权）；不是提权入口。
-    // 跳过判定见 shouldSkipConfirm：always 永不跳（cron 无人确认即拒）；非 always 可被
-    // skipConfirm(系统/受信源) 或 owner 本人 auto 模式 跳过。**不能**用 `!g.skipConfirm`
-    // 门控整块 → 那会让 skipConfirm 连 always 一起绕过。
-    if (confirm) {
-      const skip = shouldSkipConfirm({
-        confirm,
-        skipConfirm: !!g.skipConfirm,
-        isOwner: manager.isOwner(identity.platform, identity.userId),
-        autoConfirmUntil: (config.get('autoConfirmUntil') as number) ?? 0,
-        now: Date.now(),
-      });
-      if (!skip) {
-        const hasChannel = manager.hasConfirmHandler(g.platform); // await 前取：等待期间通道可能被注销
-        const ok = await manager.requestAccess({ ...accessBase, confirm });
-        if (!ok) {
-          return hasChannel
-            ? `操作已取消：${capability} 需确认后执行`
-            : `操作已取消：${capability} 需确认后执行，但平台 ${g.platform} 没有确认通道（未安装 @aalis/plugin-session-confirm）`;
-        }
-      }
+    // 工具由模型调用：确认是 owner 审批。哪些回合能产生审批由审批服务按发起类别裁决，不能的立即拒绝、不推给任何面
+    const service = caps.approvals.current;
+    if (!service) {
+      return `操作已取消：${capability} 需要 owner 批准，但审批服务不在（由 @aalis/plugin-session-server 提供）`;
     }
-    return null;
+    const outcome = await service.request(
+      {
+        sessionId: g.sessionId,
+        turnId: g.turnId,
+        callId: g.callId,
+        origin: { kind: originKind(g, (p, u) => manager.isOwner(p, u)), platform: g.platform, userId: g.userId },
+        tool: g.name,
+        args: g.args ?? {},
+        rule: cOv ? `confirmOverrides 把 ${capability} 设为 ${cOv}` : `${capability} 声明 confirm=${confirm}`,
+      },
+      g.signal,
+    );
+    return outcome.approved ? null : outcome.message;
   };
 
   // 注入到 commands / tools（follow 在 provider 上线/重启时各调一次）。
@@ -215,47 +198,13 @@ async function run(caps: Caps): Promise<void> {
         `已设 ${t} 等级: ${lv}`,
       );
     });
-
-  // /auto [分钟|off|on] — owner 临时免 dangerous 二次确认（批处理便利）。on=一直, off=关, 数字=分钟。
-  commands
-    .command('auto [arg:string]', '自动确认模式：临时免 dangerous 二次确认（仅 owner 本人）', {
-      visibility: 'restricted',
-    })
-    .example('/auto 30')
-    .example('/auto off')
-    .action(async (argv, arg) => {
-      if (!manager.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
-      const a = arg === undefined ? undefined : String(arg).trim().toLowerCase();
-      const setUntil = async (u: number) => {
-        config.set('autoConfirmUntil', u);
-        await config.save();
-      };
-      if (a === undefined) {
-        const u = (config.get('autoConfirmUntil') as number) ?? 0;
-        if (u === -1) return '自动确认：一直开启';
-        if (autoConfirmActive(u, Date.now())) return `自动确认：开启中，剩 ${Math.ceil((u - Date.now()) / 60000)} 分钟`;
-        return '自动确认：关闭';
-      }
-      if (a === 'off' || a === '0') {
-        await setUntil(0);
-        return '已关闭自动确认';
-      }
-      if (a === 'on') {
-        await setUntil(-1);
-        return '已开启自动确认（一直，直到手动关闭）';
-      }
-      const m = Number(a);
-      if (!Number.isInteger(m) || m <= 0) return '用法：/auto <分钟> | off | on';
-      await setUntil(Date.now() + m * 60000);
-      return `已开启自动确认 ${m} 分钟`;
-    });
 }
 
 /**
  * 等级管理入口（/level、WebUI setUserLevel / deleteUser）的共同流程。
- * 先等在飞的等级表读取落定再改：首次读取完成前内存里查不到文件里的记录，原等级按默认 0 级算，降权或删除时
- * 该撤销的会话授予会漏撤。storage 未上线时首次读取尚未发起，这里无从等待：改等级（含降为 0 级）保留文件里的备注、
- * 删除不随文件回来，由 setUserLevel 在首次读取落定前不删记录、UserStore 的字段合并与删除墓碑保证，不靠这次等待。
+ * 先等在飞的等级表读取落定再改：首次读取完成前内存里查不到文件里的记录。storage 未上线时首次读取尚未发起，
+ * 这里无从等待：改等级（含降为 0 级）保留文件里的备注、删除不随文件回来，由 setUserLevel 在首次读取落定前不删记录、
+ * UserStore 的字段合并与删除墓碑保证，不靠这次等待。
  * 等落盘结束再生成回执，改动没写进 users.json 时如实注明，别让 owner 以为封禁或提权已经落盘：
  * 加载失败而拒写时只在本次运行生效、重启即失；首次读取尚未落定（storage 未上线）时改动留在内存，读完后写盘；
  * 写盘失败时改动留在内存，下次保存时重写。
@@ -286,7 +235,7 @@ type AdminDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'platform'> & {
 };
 
 function registerAdminActions({ webui, commands, tools, platform, config, manager }: AdminDeps): void {
-  /** 权限概览：用户等级 + owner + 操作门槛/确认 + 临时放行 + 受限/禁用清单 */
+  /** 权限概览：用户等级 + owner + 操作门槛/确认 + 免确认白名单 + 禁用清单 */
   webui.registerAction('getOverview', async () => {
     const users = manager.listUsers();
     const owners: UserIdentity[] = config.get('owners') ?? [];
@@ -311,9 +260,7 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
       authorityOverrides: config.get('authorityOverrides') ?? {},
       defaultAuthority: DEFAULT_AUTHORITY,
       confirmOverrides: config.get('confirmOverrides') ?? {},
-      autoConfirmUntil: (config.get('autoConfirmUntil') as number) ?? 0,
       restrictedPolicy: config.get('restrictedPolicy') ?? {},
-      temporaryGrants: manager.listTemporaryGrants(),
       commandPrefix,
       // 操作清单：指令 + 工具统一带 pluginName/type/confirm，供前端「操作」视图按插件分组、显示两轴默认。
       //
@@ -383,7 +330,7 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     return { message: 'Owner 列表已更新' };
   });
 
-  /** 更新受限能力的临时放行策略（restrictedPolicy）。仅 owner 可达：这是给受限能力开白名单。 */
+  /** 更新免确认白名单（restrictedPolicy）。仅 owner 可达。 */
   webui.registerAction('setRestrictedPolicy', async (args, caller) => {
     const policy = args.policy as Record<string, unknown>;
     if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
@@ -392,16 +339,7 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     if (Array.isArray(policy.allow) && policy.allow.length > 0) manager.markPolicyEnabled();
     // 内存态先整体落定再等落盘：save 拒绝会从这里抛出，其后的语句不再执行
     await config.save();
-    return { message: '临时放行策略已更新' };
-  });
-
-  /** 撤销一个临时能力委托（仅 owner 可达） */
-  webui.registerAction('revokeTemporaryGrant', async (args, caller) => {
-    const id = args.id as string;
-    if (!id) throw new Error('id 必填');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const ok = manager.revokeTemporaryGrant(id);
-    return { ok, message: ok ? '临时委托已撤销' : '不存在或已过期' };
+    return { message: '免确认白名单已更新' };
   });
 
   /** owner 覆盖单条操作的最低等级（任意整数），无需改插件声明。key=能力键 `type:name`；传非整数则清除该条（回退默认派生）。 */
@@ -413,16 +351,8 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     if (typeof level === 'number' && Number.isInteger(level)) overrides[name] = level;
     else delete overrides[name];
     config.set('authorityOverrides', overrides);
-    // 门槛变了就撤掉该能力上的旧会话授予：否则 authorize 已按新门槛拒绝，守卫的救援闸
-    // 仍会靠旧授予放行，而救援命中直接 return null、连 confirm 轴（含 always）一并跳过。
-    // 撤销与门槛更新必须在同一同步段完成，再等落盘：save 拒绝会从 await 抛出。
-    const revoked = manager.revokeGrantsOfCapability(name);
     await config.save();
-    return {
-      message: `操作 ${name} 最低等级已更新${revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : ''}`,
-      // 结构化撤销数：权限页整组设门槛时据此汇总，不解析 message 文案
-      revokedGrants: revoked,
-    };
+    return { message: `操作 ${name} 最低等级已更新` };
   });
 
   /** owner 覆盖单条操作的确认要求（session/always/off）。key=能力键 `type:name`；非法值清除该条。 */
@@ -436,17 +366,6 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     config.set('confirmOverrides', overrides);
     await config.save();
     return { message: `操作 ${name} 确认要求已更新` };
-  });
-
-  /** owner 切换 auto 确认模式。minutes: -1=一直 / 0=关 / N=N 分钟。仅 owner 可达。 */
-  webui.registerAction('setAutoConfirm', async (args, caller) => {
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const m = args.minutes;
-    if (typeof m !== 'number' || !Number.isInteger(m)) throw new Error('minutes 必须是整数（-1 一直 / 0 关 / N 分钟）');
-    const until = m === -1 ? -1 : m <= 0 ? 0 : Date.now() + m * 60000;
-    config.set('autoConfirmUntil', until);
-    await config.save();
-    return { message: until === -1 ? '自动确认：一直' : until === 0 ? '自动确认：关' : `自动确认：${m} 分钟`, until };
   });
 
   /** 更新禁用能力清单（仅 owner 可达：这是压过一切的硬禁总闸） */

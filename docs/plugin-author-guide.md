@@ -68,11 +68,11 @@ dev 模式下，实际 `provide` 了但未在 `provides` 声明的服务名会 w
 
 ## 3.5 提供者换人与 `follow`
 
-胜者替换默认**不**级联重启下游。调用型服务每次读 `current` / `require()` 即重新解析。要把有状态资源（SDK 句柄、订阅、确认通道）挂到会换人的提供者上，用 `follow`：
+胜者替换默认**不**级联重启下游。调用型服务每次读 `current` / `require()` 即重新解析。要把有状态资源（SDK 句柄、订阅、登记在提供者实例上的规则）挂到会换人的提供者上，用 `follow`：
 
 ```typescript
-authority.follow(provider => {
-  const off = provider.setConfirmHandler('*', handler);
+sessionHistory.follow(provider => {
+  const off = provider.registerAccessChecker(checker);
   return off;
 });
 ```

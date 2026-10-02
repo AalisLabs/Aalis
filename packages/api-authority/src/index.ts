@@ -5,7 +5,7 @@ import { defineService } from '@aalis/core';
 //   - owner = ∞，可执行任意能力、可管理所有人的权限（不入等级表）。
 //   - 裁决：deniedCapabilities（全局硬禁）> owner(∞) > 用户 level >= 操作 minLevel；
 //     minLevel 由操作的 risk / visibility / config.authorityOverrides 派生。
-//   - restricted：门槛较高的能力；未授权时可经「临时能力委托」（owner 白名单 / 会话短时授予）放行。
+//   - restricted：门槛较高的能力；等级不够即拒，没有别的放行口。
 //   - 单 owner 终态：等级只由 owner 管理（无委托树 / 子委托）。
 //
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
@@ -26,8 +26,11 @@ export type CapabilityVisibility = 'public' | 'restricted';
 /**
  * 能力确认要求（轴 B · 确认：是否需「人确认」这一步，与 visibility 正交、owner 也生效）：
  * - 缺省/undefined：无需确认（不提醒）。
- * - 'session'：执行前需人确认；可「本会话」记住（回复 YS），会话内同能力不再追问。
- * - 'always'：每次都需确认，不接受会话记忆（最危险操作）。
+ * - 'session'：执行前需人确认；系统源（ExecutionGuardContext.skipConfirm）与 restrictedPolicy 白名单可免。
+ * - 'always'：每次都需确认，什么都免不掉（最危险操作）。
+ *
+ * 怎么确认看操作是谁发起的：工具由模型调用，确认是 owner 审批（@aalis/api-approval）；指令由人亲手输入，
+ * 确认是向发出者本人核对意图（ExecutionGuardContext.confirmIntent）。
  *
  * 与 visibility 正交：visibility 管「授权（能不能）」，confirm 管「意图确认（是不是你本人此刻要）/防注入减速带」。
  * 即便 owner=`*`，命中 confirm 的能力仍须确认 —— 抵御 owner 会话内提示注入借权静默调高危。
@@ -116,6 +119,20 @@ export function resolveCapabilityPolicy(
 // 执行守卫（跨切面：commands / tools 服务通过 setExecutionGuard 注入）
 // ============================================================
 
+/**
+ * 调用所在的入站回合（只由 agent 工具循环填写，指令与其他调用方没有）。守卫据它判发起回合的类别，
+ * 类别决定需要确认的工具调用能不能产生 owner 审批。
+ */
+export interface InboundTurn {
+  /** 同 IncomingMessage.source：真人消息为 undefined，内部注入为注入方标识 */
+  source?: string;
+  /**
+   * 宿主通知延续某次工具调用时，那次调用的发言者（IncomingMessage.hostNotice.callerUserId）。
+   * 那次调用是 owner 在自己会话里发起的，这一轮才是 owner 链的延续
+   */
+  callerUserId?: string;
+}
+
 /** 执行守卫上下文 —— 操作执行前权限检查的最小信息 */
 export interface ExecutionGuardContext {
   /** 操作名称（指令名 / 工具名） */
@@ -130,26 +147,31 @@ export interface ExecutionGuardContext {
   confirm?: CapabilityConfirm;
   /** 会话 ID */
   sessionId: string;
-  /** 来源平台（会话语义：confirm 通道按它选路；等级判定见 actor） */
+  /** 来源平台（会话语义；等级判定见 actor） */
   platform: string;
   /** 用户 ID（物理发言者；等级判定见 actor） */
   userId?: string;
-  /**
-   * 授权身份（缺省 = platform/userId 本身）：等级裁决（authorize）与 owner 的
-   * 自动确认跳过按它评估；confirm 通道选路仍按会话身份。未授权后的救援闸
-   * （restrictedPolicy 白名单 / 会话临时授予，均按会话身份登记）只在授权身份就是
-   * 会话身份时适用——actor 覆盖了会话身份（定时 / 自发回合的无主体）时整体
-   * 不适用：物理发言者的放行不能替另一个身份解围（fail-safe，宁缺勿错）。
-   */
+  /** 授权身份（缺省 = platform/userId 本身）：等级裁决（authorize）按它评估 */
   actor?: { platform: string; userId: string };
   /** 操作参数 */
   args?: Record<string, unknown>;
   /**
    * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，**不**绕过它（防提权）。
-   * 被拒时不走救援闸（isPreApproved）；已授权时跳过非 always 的确认，always 照常确认。
+   * 已授权时跳过非 always 的确认，always 照常确认。
    */
   skipConfirm?: boolean;
-  /** 调用方回合的中止信号：守卫把它透传给 requestAccess，中止后不再等确认（见 AccessRequest.signal）。 */
+  /** 调用所在回合的 id（工具调用由 agent 工具循环填写）；审批随回合结束撤销 */
+  turnId?: string;
+  /** 这次工具调用的 id（同 ToolCallContext.callId）；审批卡据它挂到工具卡上 */
+  callId?: string;
+  /** 调用所在的入站回合；缺省 = 调用不在由入站消息驱动的回合里（编排的节点、mcp-server 等） */
+  inbound?: InboundTurn;
+  /**
+   * 向发出者本人核对意图（指令用）：调用方能在同一会话里当面问到发出者时提供，resolve true 为发出者确认。
+   * 需要确认的指令没有它（定时任务、编排注入的指令）就无从确认，按拒绝处理
+   */
+  confirmIntent?: () => Promise<boolean>;
+  /** 调用方回合的中止信号：守卫等 owner 审批期间回合中止，审批即撤销 */
   signal?: AbortSignal;
 }
 
@@ -176,70 +198,6 @@ export interface AuthorizeRequest {
   /** 操作原始风险（透传，供 minLevel 派生；缺省回退 visibility） */
   risk?: CapabilityRisk;
 }
-
-// ============================================================
-// 意图确认与临时能力委托（确认应答可附带会话级的时限/限次授予）
-// ============================================================
-
-/**
- * 访问请求：操作已过授权、但声明了 confirm 时，经 requestAccess 发起意图确认；
- * 守卫的救援闸 isPreApproved 也用它描述被 authorize 拒绝的操作。
- */
-export interface AccessRequest {
-  /** 操作名称 */
-  name: string;
-  /** 操作类型 */
-  type: 'command' | 'tool';
-  /** 触达的（受限）能力 */
-  capability: CapabilityId;
-  args?: Record<string, unknown>;
-  sessionId: string;
-  platform: string;
-  userId?: string;
-  /**
-   * 操作的生效确认要求（见 CapabilityConfirm）：
-   * - 'session'：可按会话记住，白名单与本会话已有的授予可免问。
-   * - 'always'：每次都问，不接受白名单与会话记忆。
-   */
-  confirm?: CapabilityConfirm;
-  /**
-   * 发起回合的中止信号（可选）。已中止即不问直接拒；等待应答期间中止则立即拒，
-   * 确认通道应据此撤回未决提示。第三方 authority / 通道实现可忽略该字段（退化为等应答）。
-   */
-  signal?: AbortSignal;
-}
-
-/** 批准后授予的临时委托范围：once 不持久；session 为当前会话短时授予 */
-export interface TemporaryGrantSpec {
-  scope: 'once' | 'session';
-  /** 授予秒数，仅 scope=session 时有效 */
-  durationSeconds?: number;
-  /** 最大使用次数，仅 scope=session 时有效 */
-  maxUses?: number;
-}
-
-export interface AccessDecision {
-  allowed: boolean;
-  grant?: TemporaryGrantSpec;
-}
-
-/** 一条生效中的临时能力委托 */
-export interface TemporaryGrant {
-  id: string;
-  capability: CapabilityId;
-  name: string;
-  type: 'command' | 'tool';
-  sessionId: string;
-  platform: string;
-  userId?: string;
-  expiresAt: number;
-  maxUses?: number;
-  used: number;
-  createdAt: number;
-}
-
-/** 确认回调：boolean 为最简允许/拒绝；对象可附带临时委托范围 */
-export type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
 
 // ============================================================
 // 用户身份
@@ -288,24 +246,6 @@ export interface AuthorityService {
   /** 删除用户记录（等级一并清除，回退默认 0） */
   removeUser(platform: string, userId: string): void;
 
-  // ── 意图确认与临时能力委托 ──
-  /**
-   * 「未授权」分支专用闸：请求是否被 owner 预先放行（restrictedPolicy 白名单 / 该用户在本会话已有授予），
-   * 且不触犯硬禁 / 资源保护。**绝不询问发起者本人**（杜绝自我确认提权）。守卫 authorize 拒绝后调本方法。
-   */
-  isPreApproved(request: AccessRequest): boolean;
-  /** 意图确认：操作已过授权、但声明了 confirm 时调用（白名单策略 → 会话临时授予 → 确认回调；confirm='always' 只走确认回调） */
-  requestAccess(request: AccessRequest): Promise<boolean>;
-  listTemporaryGrants(): TemporaryGrant[];
-  /** 撤销某能力上所有未过期的会话授予（操作门槛变更时调用），返回撤销条数 */
-  revokeGrantsOfCapability(capability: string): number;
-  revokeTemporaryGrant(id: string): boolean;
-  /**
-   * 注册平台确认通道（'*' 为兜底）。返回注销函数——注册方 dispose 时必须调用，
-   * 否则插件卸载后 authority 仍会把确认请求投给已死的 handler，等到超时才拒。
-   */
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void;
-
   save(): void;
   listUsers(): AuthorityUserEntry[];
 }
@@ -333,19 +273,14 @@ declare module '@aalis/api-host-config' {
      */
     confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
     /**
-     * 受限能力的临时放行策略（替代旧 dangerousPolicy）：
-     * allow 列出自动放行的 restricted 能力/操作名 glob（['*'] 全放）；duration 放行时长（秒，0=永久）。
+     * 免确认白名单：allow 列出不必确认的能力 glob（['*'] 全放）；duration 生效时长（秒，0=永久）。
+     * 只免 confirm 为 session 的确认，always 照常确认；不放宽授权，等级不够的照样拒。
      * 运行时启用时点（enabledAt）不持久化，是 plugin-authority 运行时状态。
      */
     restrictedPolicy?: {
       allow?: string[];
       duration?: number;
     };
-    /**
-     * auto 确认模式（owner 临时免 dangerous 二次确认，便于批处理；类 Claude Code auto）：
-     * epoch ms 截止时间;-1=一直;0/缺省=关。仅跳过 owner 自己的 session 确认,不动等级/deny,always 不跳。
-     */
-    autoConfirmUntil?: number;
     /**
      * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的出口能连到哪，即 safeFetch，
      * 以及 tool-browser 开启 blockPrivate 时的浏览器网络闸（三项都遵循）。

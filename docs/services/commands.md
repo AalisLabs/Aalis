@@ -40,7 +40,8 @@ Builder 链式追加 `alias / option / action / usage / example`。`commands.com
 - **命令名 = 完整点路径**（`'memory.clear.all'`）。名字段必须匹配 `^[a-z][a-z0-9-]*$`。
 - **inline DSL**：`<name:type>` 或 `[name:type]`，`type ∈ string|number|boolean|text`。`text` 会吞掉剩余 token。有子指令的父指令不声明位置参数时，多余的 token 不被忽略，回「未知子指令或多余参数」、不执行（见 [api-commands](../api/api-commands.md) 的「子指令」一节）。
 - **CommandHandler**：`(argv: CommandArgv, ...positionals: unknown[]) => ...`。返回字符串即回复，`undefined` 则静默。
-- **ExecutionInput.skipConfirm**：供 scheduler 等跳过交互确认，不绕过授权。
+- **ExecutionInput.skipConfirm**：供 scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，不绕过授权。
+- **ExecutionInput.confirmIntent**：人亲手输入的指令由入站相位带上，执行守卫需要确认时调它向发出者本人核对意图；没有就按无从确认拒绝。
 
 ---
 
@@ -127,7 +128,7 @@ option syntax 速查：
 - **轴 B**：`confirm: 'session' | 'always'`
 - **risk 糖**：`safe` / `sensitive` / `dangerous`
 - **沿点路径继承**
-- **`skipConfirm: true` 只跳确认弹窗，授权仍评估**
+- **`skipConfirm: true` 只免确认，授权仍评估**
 
 声明写在 `commands.command` 的第三参 `meta` 上：
 
@@ -146,7 +147,7 @@ handler 内对外抓取须走 `safeFetch`；文件读写走 storage URI。storag
 
 ## 6. 边界与注意事项
 
-1. **没有守卫时 fail-closed**：`plugin-authority` 未加载时，等同所有人都是默认等级、没有确认通道——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的命令一律拒绝并提示缺少权限插件，其余照常执行。
+1. **没有守卫时 fail-closed**：`plugin-authority` 未加载时，等同所有人都是默认等级、没人能确认——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的命令一律拒绝并提示缺少权限插件，其余照常执行。
 2. **follow 重挂期间存在窗口**：守卫注入与命令执行独立；provider 换人瞬间新实例尚未注入守卫，这段时间内需要鉴权或确认的命令按上一条被拒。
 3. **同名命令静默覆盖**。第三方应加领域前缀。
 4. **位置参数都是 `unknown`**。

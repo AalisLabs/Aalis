@@ -14,7 +14,13 @@
 //
 // 实现见 @aalis/plugin-tools。
 
-import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
+import type {
+  CapabilityConfirm,
+  CapabilityRisk,
+  CapabilityVisibility,
+  ExecutionGuard,
+  InboundTurn,
+} from '@aalis/api-authority';
 import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 
@@ -44,7 +50,7 @@ export interface ToolCallContext {
   sessionId: string;
   /** 消息物理来源的发言者标识（会话语义；授权身份见 actor） */
   userId?: string;
-  /** 会话所属平台（路由/分流/confirm 通道选路语义；授权身份见 actor） */
+  /** 会话所属平台（路由/分流语义；授权身份见 actor） */
   platform?: string;
   /**
    * 授权身份（与 platform/userId 解耦，语义同 schema-message 的 IncomingMessage.actor）：
@@ -52,7 +58,7 @@ export interface ToolCallContext {
    * (platform, userId) 实时查等级；platform/userId 保持**会话**语义不被覆盖——
    * 否则 actor 与会话不在同一平台时（如以 webui 身份发往 QQ 群的定时任务、WebUI 会话里
    * 经 workflow_run 调起、节点投向 onebot 会话的 workflow）会把定时任务归属、平台档继承、
-   * 记忆平台域、confirm 通道选路全部路由到发起者平台（2026-08-24 审计确认的四处错配）。
+   * 记忆平台域全部路由到发起者平台。
    * 缺省 = 授权身份就是 (platform, userId) 本身。
    */
   actor?: { platform: string; userId: string };
@@ -65,17 +71,15 @@ export interface ToolCallContext {
    */
   acceptsImages?: boolean;
   /**
-   * 调用方回合的中止信号（agent 工具循环传入）。守卫等待人工确认期间回合被中止
-   * （latest-wins / 手动 abort）时，工具服务据此放弃执行——否则用户稍后按下的 y 会替一个
-   * 已死的回合执行写操作。缺省 = 不可中止。
+   * 调用方回合的中止信号（agent 工具循环传入）。守卫等 owner 审批期间回合被中止
+   * （latest-wins / 手动 abort）时，审批撤销、工具服务据此放弃执行。缺省 = 不可中止。
    */
   signal?: AbortSignal;
   /**
-   * 调用所在的入站回合（只由 agent 工具循环填写）。`source` 同 IncomingMessage.source：
-   * 真人消息为 undefined，内部注入为注入方标识。缺省 = 调用不在由入站消息驱动的 agent 回合里
-   * （workflow 节点、mcp-server 等）；需要「真人发起」判据的工具应把缺省当作不满足。
+   * 调用所在的入站回合（只由 agent 工具循环填写，字段见 InboundTurn）。缺省 = 调用不在由入站消息驱动的
+   * agent 回合里（workflow 节点、mcp-server 等）；需要「真人发起」判据的工具应把缺省当作不满足。
    */
-  inbound?: { source?: string };
+  inbound?: InboundTurn;
   /** 调用所在回合的 id（只由 agent 工具循环填写，与 inbound 同时出现） */
   turnId?: string;
   /**
@@ -136,7 +140,7 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
   pluginName: string;
-  /** 主能力默认可见性（轴 A；缺省 public）；restricted 须被 owner/委托授予 */
+  /** 主能力默认可见性（轴 A；缺省 public）；restricted 要求调用者等级够 */
   visibility?: CapabilityVisibility;
   /** 确认要求（轴 B，与 visibility 正交、owner 也生效）：'session'/'always'；缺省=不确认 */
   confirm?: CapabilityConfirm;
@@ -199,7 +203,7 @@ export interface ToolService {
 
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
 
-  /** 注入执行守卫，用于能力裁决与 restricted 二次确认 */
+  /** 注入执行守卫，用于能力裁决与确认 */
   setExecutionGuard(guard: ExecutionGuard): void;
 
   /** 注册工具分组 */

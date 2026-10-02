@@ -52,6 +52,7 @@
         "events",
         "gateway",
         "hooks",
+        "lifecycle",
         "logger",
         "provide",
         "services"

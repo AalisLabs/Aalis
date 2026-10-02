@@ -201,7 +201,7 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 ### 该服务**不涉及** authority/确认/沙盒
 
-`llm` 是出口推理服务，本身不做 authority 风险分级或 HITL 确认——这些发生在工具层（`tools` 服务 + `session-confirm`）。provider 不要在 chat 路径里塞鉴权逻辑。
+`llm` 是出口推理服务，本身不做 authority 风险分级或 HITL 确认——这些发生在工具层（`tools` 服务的执行守卫，确认经 `approvals` 审批）。provider 不要在 chat 路径里塞鉴权逻辑。
 
 ## 7. 注意事项与边界情形（审计标注）
 

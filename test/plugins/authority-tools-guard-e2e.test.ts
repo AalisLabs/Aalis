@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { type AccessConfirmHandler, authority } from '../../packages/api-authority/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
@@ -36,11 +35,11 @@ async function makeApp(appConfig: Record<string, unknown> = {}) {
 async function runTool(
   risk: 'safe' | 'sensitive' | 'dangerous' | undefined,
   caller: { platform: string; userId?: string; actor?: { platform: string; userId: string } },
-  opts: { appConfig?: Record<string, unknown>; confirm?: 'always'; confirmHandler?: AccessConfirmHandler } = {},
+  opts: { appConfig?: Record<string, unknown>; confirm?: 'always' } = {},
 ): Promise<{ ran: boolean; out: string }> {
   const app = await makeApp(opts.appConfig);
   // 宿主侧按根激活取绑定接口：探针工具的登记与真实插件走同一条门面
-  const host = app.bind({ tools, authority });
+  const host = app.bind({ tools });
   let ran = false;
   host.tools.register({
     groups: ['probe'],
@@ -56,7 +55,6 @@ async function runTool(
     },
   });
 
-  if (opts.confirmHandler) host.authority.current?.setConfirmHandler('*', opts.confirmHandler);
   const svc = host.tools.current;
   if (!svc) throw new Error('tools 服务未注册');
   const out = await svc.execute('probe_tool', {}, { sessionId: 's1', ...caller });
@@ -81,35 +79,15 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     expect(ran, 'owner 被守卫误拦 —— 权限系统把自己锁死了').toBe(true);
   });
 
-  it('dangerous 工具：**owner 也过不去**，因为该档附带 confirm 而本实例无确认通道', async () => {
+  it('dangerous 工具：**owner 也过不去**，因为该档附带 confirm 而本实例没有审批服务', async () => {
     // 这不是缺陷，是设计：确认轴对 owner 同样生效（守卫注释：「owner 也吃，防注入借权」）。
-    // 无 confirmHandler 时 requestAccess 直接 false —— cron 等无人值守上下文要靠
-    // skipConfirm 显式豁免，而不是靠 owner 身份自动绕过。
+    // 没有审批服务就没人能批 —— cron 等无人值守上下文要靠 skipConfirm 显式豁免，而不是靠 owner 身份自动绕过。
     // 写成断言是为了钉住这条语义：哪天有人让 owner 自动跳过确认，这里会红。
+    // 有审批服务时的批准与拒绝见 authority-approvals-e2e.test.ts。
     const { ran, out } = await runTool('dangerous', { platform: 'webui', userId: 'console' });
     expect(ran).toBe(false);
-    // 拒绝原因要指出「无处询问」，否则用户会以为是自己点了取消
-    expect(out).toContain('没有确认通道');
-  });
-
-  it('有确认通道但被拒：只说「需确认后执行」，不误报「没有确认通道」', async () => {
-    const { ran, out } = await runTool(
-      'dangerous',
-      { platform: 'webui', userId: 'console' },
-      { confirmHandler: async () => false },
-    );
-    expect(ran).toBe(false);
-    expect(out).toContain('需确认后执行');
-    expect(out).not.toContain('没有确认通道');
-  });
-
-  it('有确认通道且确认：owner 执行 dangerous 工具', async () => {
-    const { ran } = await runTool(
-      'dangerous',
-      { platform: 'webui', userId: 'console' },
-      { confirmHandler: async () => true },
-    );
-    expect(ran).toBe(true);
+    // 拒绝原因要指出「无处询问」，否则用户会以为是 owner 拒绝了
+    expect(out).toContain('审批服务不在');
   });
 
   it('未声明 risk 的工具对普通用户照常可用（守卫不得误伤 public）', async () => {
@@ -136,26 +114,28 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     expect(out).toContain('error');
   });
 
-  it('救援闸不替被覆盖的身份解围：owner 配了 restrictedPolicy 白名单、又恰好是物理发言者，无主体 actor 仍拒且不跳过 confirm', async () => {
-    // 对抗审计复现（2026-09）：authorize 按无主体 actor 拒 → 守卫落进 isPreApproved(accessBase)，
-    // 而 accessBase.userId 是物理发言者（owner）→ 白名单命中 → return null，连 always 档 confirm 也一并跳过。
+  it('restrictedPolicy 白名单只免确认、不放宽授权：等级不够、无主体 actor 照样拒', async () => {
+    // 白名单是 owner 给自动化开的免确认口。授权轴先裁决，等级不够就拒，白名单救不回来——
+    // 否则 owner 配 allow:['tool:*'] 之后任何人（含被封禁到负等级的）都能调 dangerous 工具。
     const appConfig = { restrictedPolicy: { allow: ['tool:*'] } };
+    const anon = await runTool('dangerous', { platform: 'onebot', userId: 'anon' }, { appConfig });
+    expect(anon.ran, '白名单替等级不够的用户放行了').toBe(false);
     const selfInitiated = await runTool(
       'dangerous',
       { platform: 'webui', userId: 'console', actor: selfInitiatedActor('webui') },
-      { appConfig, confirm: 'always' },
+      { appConfig },
     );
-    expect(selfInitiated.ran, '白名单借物理发言者（owner）身份替无主体回合解围').toBe(false);
-    // 对照：同一配置下 owner 本人（无 actor 覆盖）走授权轴放行 → always 档无确认通道 → 拒，行为不变
-    const ownerSelf = await runTool(
+    expect(selfInitiated.ran, '白名单借物理发言者（owner）身份替无主体回合放行了').toBe(false);
+    // 对照：同一配置下 owner 本人的 dangerous（session 档确认）被白名单免掉确认，照常执行
+    const owner = await runTool('dangerous', { platform: 'webui', userId: 'console' }, { appConfig });
+    expect(owner.ran).toBe(true);
+    // always 档免不掉：没有审批服务即拒
+    const always = await runTool(
       'dangerous',
       { platform: 'webui', userId: 'console' },
       { appConfig, confirm: 'always' },
     );
-    expect(ownerSelf.ran).toBe(false);
-    expect(ownerSelf.out).toContain('需确认');
-    // 对照：白名单对 owner 本人的 sensitive（无 confirm）照常放行——救援闸本身没被封死
-    const ownerSensitive = await runTool('sensitive', { platform: 'webui', userId: 'console' }, { appConfig });
-    expect(ownerSensitive.ran).toBe(true);
+    expect(always.ran).toBe(false);
+    expect(always.out).toContain('审批服务不在');
   });
 });

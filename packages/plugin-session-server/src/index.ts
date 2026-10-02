@@ -1,7 +1,10 @@
+import { join } from 'node:path';
 import { agent } from '@aalis/api-agent';
+import { approvals } from '@aalis/api-approval';
 import { authority } from '@aalis/api-authority';
 import { checkpoint } from '@aalis/api-checkpoint';
 import { hooks } from '@aalis/api-hooks';
+import { hostPaths } from '@aalis/api-host-paths';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
@@ -12,6 +15,7 @@ import { createStorageGateway, storage } from '@aalis/api-storage';
 import { todoList } from '@aalis/api-todo-list';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { approvalHandlers, createApprovals } from './approvals.js';
 import { createSessionServer } from './connection.js';
 import type { IsOwner } from './history.js';
 import { openSeenStore } from './seen.js';
@@ -25,6 +29,7 @@ import { createTurnControl } from './turns.js';
 // owner 的客户端经传输层（WebUI 的 WebSocket 等）接到 sessionProtocol.connect。会话本身在 session-manager 里，
 // 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与配置，另记「我的」区的已读时间；
 // 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；回合控制转给 agent、网关、检查点与待办。
+// 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
 const uses = {
@@ -32,6 +37,8 @@ const uses = {
   sessionManager,
   /** 已读时间落在本插件的插件数据里 */
   storage,
+  /** 审批的审计写在家目录的 state/audit 下 */
+  paths: hostPaths,
   /** 历史从存档归并 */
   memory,
   /** 回合进出（agent:input:before、agent:turn:after）与定稿校验（agent:reply:before）拼出在途条目；memory:clear 之后重新取快照 */
@@ -53,7 +60,7 @@ const uses = {
   checkpoint: optional(checkpoint),
   /** 计划的快照与清空 */
   todoList: optional(todoList),
-  /** 说话人是不是 owner；缺席时都不是 */
+  /** 说话人与审批的应答人是不是 owner；缺席时都不是 */
   authority: optional(authority),
 };
 type Caps = BoundOf<typeof uses>;
@@ -62,7 +69,7 @@ export default definePlugin({
   name: '@aalis/plugin-session-server',
   displayName: '会话服务',
   subsystem: 'session',
-  provides: [sessionProtocol],
+  provides: [sessionProtocol, approvals],
   uses,
   apply: run,
 });
@@ -89,6 +96,7 @@ async function run(caps: Caps): Promise<void> {
     sm,
     seen,
     isRunning: id => timeline.isRunning(id),
+    hasApproval: id => approval.pendingIn(id),
     changed: id => push([id], []),
     platform: caps.platform,
     persona: caps.persona,
@@ -105,7 +113,18 @@ async function run(caps: Caps): Promise<void> {
     isRoom,
     notify: (sessionId, method, params) => server.notifySession(sessionId, method, params),
     requestUsage,
+    approvalsOf: sessionId => approval.service.list({ sessionId }),
     signal: lifecycle.signal,
+  });
+  const approval = createApprovals({
+    isOwner,
+    events,
+    logger,
+    auditFile: join(caps.paths.require().state, 'audit', 'approvals.jsonl'),
+    changed: card => {
+      timeline.approval(card);
+      push([card.sessionId], []);
+    },
   });
   const control = createTurnControl({
     events,
@@ -115,7 +134,10 @@ async function run(caps: Caps): Promise<void> {
     requireSession: sessions.requireSession,
     requestUsage,
   });
-  const server = createSessionServer({ ...sessions.handlers, ...timeline.handlers, ...control.handlers }, logger);
+  const server = createSessionServer(
+    { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...approvalHandlers },
+    logger,
+  );
 
   /** 把这些会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组 */
   function push(ids: string[], removes: string[]): void {
@@ -151,6 +173,7 @@ async function run(caps: Caps): Promise<void> {
     try {
       await turn.run(next);
     } finally {
+      approval.turnEnded(data.turnId);
       turn.end();
       push([sessionId], []);
     }
@@ -184,6 +207,12 @@ async function run(caps: Caps): Promise<void> {
   events.on('history:changed', ({ sessionId }) => timeline.resync(sessionId));
 
   caps.provide(sessionProtocol, { connect: server.connect }, { label: '会话协议' });
-  // 对外登记撤回之后断开现有连接：客户端重连时接到新的提供者
-  lifecycle.onDispose(() => server.disconnectAll('会话服务已停止'), '断开会话连接');
+  caps.provide(approvals, approval.service, { label: '审批' });
+  // 撤回登记之前结算没结的审批：审批面还接着，结算推得到；之后的请求直接拒绝
+  lifecycle.onDrain(() => approval.close(), '结算未结的审批');
+  // 对外登记撤回之后断开现有连接：客户端重连时接到新的提供者。停用完成之前把审计写完
+  lifecycle.onDispose(() => {
+    server.disconnectAll('会话服务已停止');
+    return approval.flushed();
+  }, '断开会话连接、写完审计');
 }

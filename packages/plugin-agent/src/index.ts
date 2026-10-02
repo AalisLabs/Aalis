@@ -541,7 +541,6 @@ class DefaultAgent implements AgentService {
     const prev = this.activeControllers.get(lane);
     if (prev) prev.controller.abort();
     // 例外：真人消息打断延续其本人身份的宿主通知回合，本人说话就停得下她自己开的那一轮。
-    // 对那一轮确认请求的应答在网关的确认相位就被吞掉，到不了这里。
     if (incoming.source === undefined && incoming.userId !== undefined) {
       for (const notice of this.noticeCallers.values()) {
         if (notice.sessionId === incoming.sessionId && notice.callerUserId === incoming.userId) {
@@ -674,13 +673,13 @@ class DefaultAgent implements AgentService {
           : (this.caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? []);
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
-          // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域、
-          // confirm 选路都靠它们）；授权身份单独走 actor——authority 守卫按 actor 查等级，
+          // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域都靠它们）；
+          // 授权身份单独走 actor——authority 守卫按 actor 查等级，
           // scheduler/workflow/subtask 等触发的 AI 因此以创建者等级执行而非匿名。
           // 不可再用 actor 覆盖 platform：actor 来自另一平台时（如跨平台的定时任务、workflow）
-          // 会把上述四类下游全路由到发起者平台。
-          // 延续某次工具调用的宿主通知不带发言者，userId 取那次调用的（hostNotice.callerUserId）：确认由起它的人
-          // 应答、会话授予照常命中。只用在这里，归档与提示词钩子仍按消息本身的 userId（没有）。
+          // 会把上述下游全路由到发起者平台。
+          // 延续某次工具调用的宿主通知不带发言者，userId 取那次调用的（hostNotice.callerUserId），工具眼里是起它的人在调。
+          // 只用在这里，归档与提示词钩子仍按消息本身的 userId（没有）。
           userId: incoming.userId ?? incoming.hostNotice?.callerUserId,
           platform: incoming.platform,
           actor: incoming.actor,
@@ -689,10 +688,11 @@ class DefaultAgent implements AgentService {
           enabledGroups: enabledGroups ?? [],
           // 本循环会把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
           acceptsImages: true,
-          // 回合中止信号：等确认期间被 latest-wins / 手动 abort 掐掉的工具不再执行
+          // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
           signal,
-          // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入
-          inbound: { source: incoming.source },
+          // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入；
+          // 延续某次调用的宿主通知另带那次调用的发言者，执行守卫据此认出 owner 链的延续
+          inbound: { source: incoming.source, callerUserId: incoming.hostNotice?.callerUserId },
           turnId,
         };
 

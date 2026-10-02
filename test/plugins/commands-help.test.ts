@@ -25,7 +25,7 @@ const childCount =
 describe('help: brief 描述摘要', () => {
   it('切到首个句读之前', () => {
     expect(brief('舞萌 DX 查分。子指令：info/b50')).toBe('舞萌 DX 查分');
-    expect(brief('自动确认模式：临时免确认')).toBe('自动确认模式');
+    expect(brief('查询 Best 50：/maimai b50 [friend_code|qq:<qq>] [--ap]')).toBe('查询 Best 50');
     expect(brief('设定当前对话的模型（会话级覆盖）')).toBe('设定当前对话的模型');
   });
 

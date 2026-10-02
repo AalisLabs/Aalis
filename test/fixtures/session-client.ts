@@ -1,3 +1,4 @@
+import type { ApprovalSurface } from '../../packages/api-approval/src/index.js';
 import {
   ErrorFrameSchema,
   SESSION_PROTOCOL_VERSION,
@@ -18,9 +19,19 @@ import {
 // 结果与通知先过协议 schema 再交给用例。
 // ════════════════════════════════════════════════════════════
 
+/** 不接审批服务的审批面：只看会话、不涉及审批的用例用它 */
+export const DETACHED_SURFACE: ApprovalSurface = {
+  name: 'webui',
+  attend: () => ({
+    presence() {},
+    respond: () => ({ ok: false, refusal: 'unavailable', message: '审批服务不在' }),
+    leave() {},
+  }),
+};
+
 const OWNER: Omit<SessionPeer, 'disconnect'> = {
   identity: { platform: 'webui', userId: 'console' },
-  surface: 'webui',
+  surface: DETACHED_SURFACE,
 };
 export const CLIENT = { name: 'test-client', version: '0.0.0' };
 

@@ -72,21 +72,21 @@ export default definePlugin({
 
 ## `follow`：有状态资源跟随提供者
 
-`current` 解决的是「每次读到最新值」。还有一类需求它不覆盖：一次性把副作用挂上去（SDK 句柄、订阅、确认通道）。hub 可能比你晚上线，或中途被换实例。
+`current` 解决的是「每次读到最新值」。还有一类需求它不覆盖：一次性把副作用挂上去（SDK 句柄、订阅、登记在提供者实例上的规则）。hub 可能比你晚上线，或中途被换实例。
 
 `x.follow(attach)` 在场即调 `attach`；换人时先跑上次返回的清理，等它的 Promise **落定**（完成或被拒）之后才用新实例再调；下线与关闭时清理。等待期间的多次切换合并到最新；退订或关闭之后不再挂载，哪怕旧清理后来才落定。
 
 ```typescript
-import { authority } from '@aalis/api-authority';
+import { sessionHistory } from '@aalis/api-session-history';
 import { definePlugin, logger, optional } from '@aalis/core';
 
 export default definePlugin({
   name: 'example-follow',
-  uses: { authority: optional(authority), logger },
-  apply({ authority, logger }) {
-    authority.follow(provider => {
-      const off = provider.setConfirmHandler('*', async () => false);
-      logger.debug('fallback handler 已注册');
+  uses: { sessionHistory: optional(sessionHistory), logger },
+  apply({ sessionHistory, logger }) {
+    sessionHistory.follow(provider => {
+      const off = provider.registerAccessChecker({ platform: 'example', check: () => undefined });
+      logger.debug('访问规则已登记');
       return off;
     });
   },

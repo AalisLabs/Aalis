@@ -32,7 +32,7 @@ const BRIEF_MAX = 24;
  * 概览用的描述摘要：先切到首个句读之前，再硬截。
  *
  * 不引入 summary/shortDesc 新字段——那要 60+ 个包配合填写。实测全仓真实描述
- * （"舞萌 DX 查分。子指令：…" / "自动确认模式：临时免…"）首句读切分即可切净。
+ * （"舞萌 DX 查分。子指令：…" / "查询 Best 50：/maimai b50 …"）首句读切分即可切净。
  */
 export function brief(desc: string): string {
   const raw = desc.trim();

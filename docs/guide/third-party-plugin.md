@@ -333,7 +333,7 @@ pnpm 可以直接引用根依赖的范围：
 | 工具注入 | `plugin-todo-list`, `plugin-tool-search` |
 | 命令注入 | `plugin-commands` |
 | WebUI 扩展 | `plugin-webui-server`, `plugin-todo-list` |
-| `follow` | `plugin-session-confirm` |
+| `follow` | `plugin-tool-onebot`（`sessionHistory.follow` 重挂访问规则） |
 
 ## 9. 进一步阅读
 

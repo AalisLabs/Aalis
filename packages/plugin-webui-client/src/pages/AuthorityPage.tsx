@@ -1,4 +1,4 @@
-import { Clock, Crown, SlidersHorizontal, User, Wrench } from 'lucide-react';
+import { Crown, SlidersHorizontal, User, Wrench } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pageAction } from '../api';
 import {
@@ -29,13 +29,6 @@ interface Owner {
   platform: string;
   userId: string;
 }
-interface TemporaryGrant {
-  id: string;
-  capability: string;
-  sessionId: string;
-  used: number;
-  maxUses?: number;
-}
 interface Overview {
   users: AuthorityUser[];
   owners: Owner[];
@@ -44,9 +37,7 @@ interface Overview {
   authorityOverrides: Record<string, number>;
   defaultAuthority: number;
   confirmOverrides: Record<string, ConfirmOverride>;
-  autoConfirmUntil: number;
   restrictedPolicy: { allow?: string[]; duration?: number };
-  temporaryGrants: TemporaryGrant[];
   commandPrefix: string;
   commands: Operation[];
   tools: Operation[];
@@ -212,9 +203,6 @@ export function AuthorityPage() {
   const users = data.users.filter(u => !u.isOwner);
   const denied = data.deniedCapabilities ?? [];
   const allow = data.restrictedPolicy?.allow ?? [];
-  const acUntil = data.autoConfirmUntil ?? 0;
-  const acActive = acUntil === -1 || acUntil > Date.now();
-  const acStatus = acUntil === -1 ? '一直开启' : acUntil > Date.now() ? `开启中 · 剩 ${Math.ceil((acUntil - Date.now()) / 60000)} 分钟` : '关闭';
 
   const setUserLevel = (u: { platform: string; userId: string }, level: number) =>
     act('setUserLevel', { platform: u.platform, userId: u.userId, level });
@@ -222,29 +210,25 @@ export function AuthorityPage() {
     act('setAuthorityOverride', { name: capKey(op), level });
   const setOpConfirm = (op: Operation, c: ConfirmOverride | '') => act('setConfirmOverride', { name: capKey(op), confirm: c });
   /**
-   * 整组设最低等级：逐条调 setAuthorityOverride，全部落定后汇总——各条回执的 revokedGrants（撤销的会话授予
-   * 条数）相加，失败原因去重列出；无论成败都刷新，部分失败时页面显示的也是实际生效的门槛。
+   * 整组设最低等级：逐条调 setAuthorityOverride，全部落定后汇总，失败原因去重列出；
+   * 无论成败都刷新，部分失败时页面显示的也是实际生效的门槛。
    */
   const setGroupLevel = async (groupOps: Operation[], level: number) => {
     const results = await Promise.allSettled(
-      groupOps.map(op => pageAction<{ revokedGrants?: unknown } | undefined>(PLUGIN, 'setAuthorityOverride', { name: capKey(op), level })),
+      groupOps.map(op => pageAction(PLUGIN, 'setAuthorityOverride', { name: capKey(op), level })),
     );
-    let revoked = 0;
     let failed = 0;
     const reasons = new Set<string>();
     for (const r of results) {
       if (r.status === 'rejected') {
         failed++;
         reasons.add(errMsg(r.reason));
-      } else if (typeof r.value?.revokedGrants === 'number') {
-        revoked += r.value.revokedGrants;
       }
     }
-    const note = revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : '';
     flash(
       failed === 0
-        ? `整组最低等级已更新${note}`
-        : `整组最低等级：${results.length - failed} 项已更新${note}，${failed} 项失败：${[...reasons].join('；')}`,
+        ? '整组最低等级已更新'
+        : `整组最低等级：${results.length - failed} 项已更新，${failed} 项失败：${[...reasons].join('；')}`,
     );
     await refresh();
   };
@@ -283,39 +267,6 @@ export function AuthorityPage() {
             <div className="overview-card-label">Owner</div>
             <div className="overview-card-value">{data.owners.length}</div>
           </div>
-        </div>
-        <div className="overview-card">
-          <div className="overview-card-icon"><Clock size={20} /></div>
-          <div className="overview-card-body">
-            <div className="overview-card-label">临时放行</div>
-            <div className="overview-card-value">{data.temporaryGrants.length}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══ 确认模式（auto：owner 临时免 dangerous 二次确认，批处理用）═══ */}
-      <div className="config-block" style={acActive ? { borderColor: '#f59e0b' } : undefined}>
-        <div className="config-block-header" style={{ cursor: 'default' }}>
-          <span className="config-block-title">
-            确认模式
-            {acActive && <span style={{ marginLeft: 8, color: '#f59e0b', fontSize: 12 }}>⚠ 自动确认中</span>}
-          </span>
-          <span className="config-block-hint">
-            开启后 owner 本人执行 dangerous 操作免二次确认（批处理便利）。等级门禁 / 封禁 / always 确认仍生效。当前：{acStatus}
-          </span>
-        </div>
-        <div className="config-block-body">
-          <span style={{ opacity: 0.6, fontSize: 12, marginRight: 8 }}>设为</span>
-          <SegButtons
-            value={acUntil === -1 ? '-1' : acUntil > Date.now() ? '' : '0'}
-            options={[
-              { v: '0', label: '关' },
-              { v: '30', label: '30 分钟' },
-              { v: '60', label: '1 小时' },
-              { v: '-1', label: '一直' },
-            ]}
-            onPick={v => act('setAutoConfirm', { minutes: Number(v) })}
-          />
         </div>
       </div>
 
@@ -601,7 +552,7 @@ export function AuthorityPage() {
             <SlidersHorizontal size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
             高级
           </span>
-          <span className="config-block-hint">全局硬禁（连 owner 都拒）+ 受限操作自动放行（给自动化）+ 当前临时放行。直接选操作即可，无需手写。</span>
+          <span className="config-block-hint">全局硬禁（连 owner 都拒）+ 免确认白名单（只免 session 档确认，不放宽授权；给自动化）。直接选操作即可，无需手写。</span>
           <span className={`config-block-toggle ${openSections.has('adv') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('adv') && (
@@ -715,25 +666,6 @@ export function AuthorityPage() {
                     追加
                   </button>
                 </div>
-              </div>
-            )}
-            <div className="section-label" style={{ marginTop: 12 }}>当前临时放行</div>
-            {data.temporaryGrants.length === 0 ? (
-              <div className="empty-hint" style={{ padding: '4px 0' }}>暂无。</div>
-            ) : (
-              <div className="authority-cmd-list">
-                {data.temporaryGrants.map(g => (
-                  <div className="authority-cmd-row" key={g.id}>
-                    <span className="authority-cmd-name" title={g.sessionId}>
-                      {g.capability}
-                      <span className="authority-cmd-plugin" style={{ marginLeft: 6 }}>{g.sessionId}</span>
-                    </span>
-                    <span style={{ fontSize: 12, opacity: 0.8, marginRight: 8 }}>{g.used}{g.maxUses ? ` / ${g.maxUses}` : ''}</span>
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('revokeTemporaryGrant', { id: g.id })}>
-                      撤销
-                    </button>
-                  </div>
-                ))}
               </div>
             )}
           </div>

@@ -19,7 +19,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // 本测试经真实 agent 工具循环端到端断言三件事：
 //   1. incoming.actor 原样到达工具 handler 的 callCtx.actor（授权身份可达守卫）；
 //   2. callCtx.platform / userId 保持**会话/物理**语义，不被 actor 覆盖
-//      ——跨平台委派曾因覆盖把定时任务归属/平台档继承/记忆平台域/confirm 选路
+//      ——跨平台委派曾因覆盖把定时任务归属/平台档继承/记忆平台域/确认的分流
 //      全部路由到发起者平台；
 //   3. 无 actor 时 callCtx.actor 缺省（匿名不发明身份）。
 // 同一条工具循环另钉分组闸执行面：会话没配工具分组（未装 session-manager）时

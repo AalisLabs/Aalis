@@ -13,13 +13,13 @@
 1. **`AuthorityService.authorize`** —— capability 统一闸。tools / commands 的执行守卫在操作边界过这道裁决：
    数字等级裁决 `deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel`。
    模型详见 [docs/plugins/plugin-authority.md](../plugins/plugin-authority.md)。
-2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize；被拒后的救援闸（`isPreApproved`）与已授权后的意图确认（`requestAccess`）留在适配层。
-3. **身份与确认** —— `UserIdentity`（全 surface 统一身份类型）、意图确认与会话临时授予、平台 confirm 回调注册。
+2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize，已授权但声明了确认的操作在守卫里确认（见下文「守卫流程」）。
+3. **身份** —— `UserIdentity`（全 surface 统一身份类型）。
 
 ## 两条正交轴
 
 - **轴 A · 授权（谁能用）**：每个外部身份对应一个整数 **level**（缺省 0，封禁=负数）；owner = ∞（经 `owners` 列表命中，**不是**有限数字，无法被设成有限等级）。每个操作有一个 `minLevel`，调用者 `level >= minLevel` 才放行。
-- **轴 B · 确认（HITL 意图核验）**：与等级正交，**owner 也是被确认对象**（抵御会话内提示注入借权静默调高危）。由独立的 `plugin-session-confirm` 协调器经 `setConfirmHandler` 注入执行。
+- **轴 B · 确认（HITL 意图核验）**：与等级正交，**owner 也是被确认对象**（抵御会话内提示注入借权静默调高危）。工具由模型调用，确认是 owner 审批（[api-approval](./api-approval.md)）；指令由人亲手输入，确认是向发出者本人核对意图。
 
 `risk` 声明同时设定两轴默认（`dangerous` = restricted + `confirm:'session'`）。
 
@@ -42,7 +42,17 @@ interface ExecutionGuardContext {
   userId?: string;
   actor?: { platform: string; userId: string }; // 被裁决身份（缺省=会话身份 platform/userId）
   args?: Record<string, unknown>;
-  skipConfirm?: boolean;             // 受信系统源（scheduler）：仍走 authorize；被拒时不走救援闸；已授权时跳过非 always 的确认
+  skipConfirm?: boolean;             // 受信系统源（scheduler、runtime 子命令）：仍走 authorize；已授权时跳过非 always 的确认
+  turnId?: string;                   // 调用所在回合（工具调用由 agent 工具循环填写）；审批随回合结束撤销
+  callId?: string;                   // 这次工具调用的 id；审批卡据它挂到工具卡上
+  inbound?: InboundTurn;             // 调用所在的入站回合；缺省 = 不在由入站消息驱动的回合里（编排节点、mcp-server 等）
+  confirmIntent?: () => Promise<boolean>; // 向发出者本人核对意图（指令用），resolve true 为确认
+  signal?: AbortSignal;              // 调用方回合的中止信号：等 owner 审批期间中止，审批即撤销
+}
+
+interface InboundTurn {
+  source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
+  callerUserId?: string;             // 宿主通知延续某次工具调用时，那次调用的发言者（hostNotice.callerUserId）
 }
 
 type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
@@ -83,40 +93,22 @@ interface AuthorityService {
   // 删除用户记录（等级一并清除，回退默认 0）
   removeUser(platform: string, userId: string): void;
 
-  // ── 意图确认与临时能力委托 ──
-  // 「未授权」分支专用闸：是否被 owner 预先放行（restrictedPolicy 白名单 / 本会话已有授予）
-  // 且不触犯硬禁。绝不询问发起者本人（杜绝自我确认提权）。
-  isPreApproved(request: AccessRequest): boolean;
-  requestAccess(request: AccessRequest): Promise<boolean>;
-  listTemporaryGrants(): TemporaryGrant[];
-  revokeGrantsOfCapability(capability: string): number; // 撤销某能力上所有未过期的会话授予，返回撤销条数
-  revokeTemporaryGrant(id: string): boolean;
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void; // 返回注销函数，注册方 dispose 时调用
-
   save(): void;
   listUsers(): AuthorityUserEntry[]; // { platform, userId, isOwner, level, note? }
 }
 ```
 
-## 守卫流程：救援闸与意图确认
+## 守卫流程：授权与确认
 
-执行前 `ExecutionGuard` 委托 `authorize` 裁决（轴 A），被裁决身份取 `actor`，缺省即会话身份（`platform` / `userId`）。之后按裁决结果分两条路径。
+执行前 `ExecutionGuard` 先委托 `authorize` 裁决（轴 A），被裁决身份取 `actor`，缺省即会话身份（`platform` / `userId`）。等级不够或命中硬禁即拒，没有别的放行口：发起者本人不能靠确认给自己提权，`restrictedPolicy` 白名单也不放宽授权。
 
-**被拒（等级不够 / 硬禁）：救援闸**
+已授权且声明了 `confirm`（经 `confirmOverrides` 覆盖后）的操作再走轴 B：
 
-- 守卫只查 `isPreApproved`，不询问任何人，发起者无法靠自我确认提权；查不中就拒。
-- `isPreApproved` 先过硬禁：命中 `deniedCapabilities` 的能力不可救。再看是否被预先放行：`restrictedPolicy` 白名单（这条路径上只认 owner 本人），或该用户在本会话已有的临时授予。命中即放行，不再走意图确认。
-- 救援闸只在被裁决身份就是会话身份时适用。`actor` 覆盖了会话身份（定时、自发回合）时直接拒，发言者的白名单与授予不能替另一个身份放行。
-- `skipConfirm` 的受信系统源被拒即拒，不走救援闸。
+- **可免的确认**：`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认。`always` 什么都免不掉。
+- **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（带 `source` 的注入，例如编排投递的指令）就无从确认，直接拒。
+- **工具**：确认是 owner 审批。守卫按发起回合的类别（`inbound`、`actor`、续做的调用者与会话受众，不按授权身份）调 `approvals.request`，只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面。拒绝时把审批服务给的话回给模型；审批服务不在时立即拒并说明。
 
-**已授权且声明了 `confirm`（轴 B）：意图确认**
-
-- 先按 `shouldSkipConfirm` 判断能否跳过：`always` 永不跳过；非 `always` 在 `skipConfirm`、或 auto 模式开启且被裁决身份是 owner 时跳过。
-- 否则调 `requestAccess`：`restrictedPolicy` 白名单免确认 → 会话临时授予复用（按 platform + userId + sessionId + capability 匹配）→ 平台 `AccessConfirmHandler`（由 `plugin-session-confirm` 等提供）询问。`confirm:'always'` 只走确认回调。没有确认通道时返回 false，操作被拒。
-- 确认应答可返回 `{ allowed: true, grant: { scope: 'session', durationSeconds, maxUses } }`，在该会话窗口内对同一用户的同一能力免确认；`always` 不建立会话授予。
-- 确认回复约定：`Y`=本次允许；`YS`=本会话允许（限时）；其它=取消。
-
-## 关键类型（请求 / 决策）
+## 关键类型（请求）
 
 ```ts
 interface AuthorizeRequest {
@@ -124,31 +116,6 @@ interface AuthorizeRequest {
   visibility: CapabilityVisibility; // 主能力默认可见性（无 risk 时作 minLevel 兜底）
   risk?: CapabilityRisk;            // 原始风险（透传，供 minLevel 派生；缺省回退 visibility）
 }
-
-interface AccessRequest {
-  name: string;
-  type: 'command' | 'tool';
-  capability: CapabilityId;        // 触达的（受限）能力
-  args?: Record<string, unknown>;
-  sessionId: string;
-  platform: string;
-  userId?: string;
-  confirm?: CapabilityConfirm;      // 'session' 可按会话记住；'always' 每次都问，不接受白名单与会话记忆
-}
-
-interface TemporaryGrantSpec {
-  scope: 'once' | 'session';
-  durationSeconds?: number;          // 仅 scope=session 有效
-  maxUses?: number;                  // 仅 scope=session 有效
-}
-
-interface AccessDecision {
-  allowed: boolean;
-  grant?: TemporaryGrantSpec;
-}
-
-// 确认回调：boolean 为最简允许/拒绝；对象可附带临时委托范围
-type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
 ```
 
 ## CapabilityId 命名约定
@@ -166,8 +133,7 @@ type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | Access
 - `deniedCapabilities?: string[]` —— 全局硬禁用（glob；命中即拒，连 owner 都压过）
 - `authorityOverrides?: Record<string, number>` —— 单条操作的最低等级覆盖（能力键 `type:name` → 任意整数），优先于 risk/visibility 派生
 - `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 强制关闭确认（便于自动化），与等级正交，owner 也吃
-- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 受限能力临时放行策略（`allow` glob，`['*']` 全放；`duration` 放行时长秒，0=永久）
-- `autoConfirmUntil?: number` —— auto 确认模式（owner 临时免 dangerous 二次确认，便于批处理）：epoch ms 截止；-1=一直；0/缺省=关。仅跳过 owner 自己的 session 确认，不动等级/deny，`always` 不跳
+- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 免确认白名单（`allow` glob，`['*']` 全放；`duration` 生效时长秒，0=永久）。只免 `session` 档的确认，`always` 照常确认；不放宽授权
 - `network?: { blockPrivate?: boolean; denyCidrs?: string[]; allowedPorts?: number[] }` —— 网络出口闸（SSRF 防护）：限制由 LLM/用户 URL 触发的出口能连到哪，即 `safeFetch`，以及 tool-browser 开启 `blockPrivate` 时的浏览器网络闸（三项都遵循）
 
 ## 管理入口
@@ -176,7 +142,6 @@ owner 仅管理权限（无自授）：
 
 - **WebUI authority 页**（owner-only）—— 设等级、管覆盖
 - **`/level`** 指令 —— 设某用户的等级
-- **`/auto`** 指令 —— 切 auto 确认模式（`autoConfirmUntil`）
 
 ## 实现者
 
@@ -185,6 +150,6 @@ owner 仅管理权限（无自授）：
 ## 相关
 
 - 权限数据（level / note）存于 `data:/users.json`（家目录的 `state/users.json`）
-- 确认轴（HITL）由独立的 `plugin-session-confirm` 协调器经 `setConfirmHandler` 接入
+- 工具的确认经 [api-approval](./api-approval.md) 的 `approvals` 服务（由 `plugin-session-server` 提供）；指令的意图确认由 `plugin-commands` 在同一会话里问发出者
 - 用户身份模型 `UserIdentity` 在本 api 包中定义，是全 surface 统一的调用者身份类型
   （WebUI action 的 caller 第三参、scheduler actor 快照等均为该类型）

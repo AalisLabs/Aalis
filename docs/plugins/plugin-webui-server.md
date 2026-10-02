@@ -27,12 +27,11 @@ export default definePlugin({
     source: optional(pluginSource),
     packageManager: optional(packageManager),
     storage: optional(storage),
-    authority: optional(authority),
     commands: optional(commands),
     platform: optional(platform),
     process: optional(processService),
-    sessionConfirm: optional(sessionConfirm),
     sessionProtocol: optional(sessionProtocol),
+    approvals: optional(approvals),
     tools: optional(tools),
     llm: optional(llm),
     persona: optional(persona),
@@ -149,7 +148,8 @@ WebSocket 与 HTTP 同端口，两个端点：`/session` 是会话协议，`/ws`
 
 协议本身（帧、握手、方法、推送、错误码、条目种类）见 [api-session-protocol](../api/api-session-protocol.md)，实现见 [plugin-session-server](./plugin-session-server.md)。本插件只做传输：
 
-- 一条连接接到会话服务的一次 `sessionProtocol.connect`。对端身份取自认证，即 `{ platform: 'webui', userId: 'console' }`，审批面为 `webui`，握手结果里原样给出。
+- 一条连接接到会话服务的一次 `sessionProtocol.connect`。对端身份取自认证，即 `{ platform: 'webui', userId: 'console' }`。
+- 本插件启动时经 `approvals.registerSurface('webui')` 登记 `webui` 审批面（见 [api-approval](../api/api-approval.md)），每条连接的对端都带着这个登记句柄：连接上的在场上报与审批应答记在 `webui` 与本插件实例名下，连接自己报不了别的面。握手结果里的审批面是登记名 `webui`。审批服务晚于本插件上线也不用重启本插件。
 - 每个文本帧是一个 JSON-RPC 帧，原文转交会话服务；服务端发出的帧原样发回。连接关闭时撤掉会话服务那头的连接。
 - 会话服务在每条连接到达时现取，会话服务晚于本插件上线、停用后重新启用，都不用重启本插件。
 
@@ -209,7 +209,6 @@ socket.onmessage = event => {
 | `restarting` | 应用即将重启通知 |
 | `reload` | 前端应重新加载 |
 | `page_refresh` | 通知前端刷新某插件的动态页面数据（`pluginName` 缺省表示全部） |
-| `confirm` | 受限操作的交互式确认请求（由 session-confirm 服务驱动；用户在聊天框回复即作答） |
 | `log` | 实时日志推送 |
 
 #### token 用量快照

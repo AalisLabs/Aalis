@@ -18,7 +18,7 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages')
  *
  * **名单是扫出来的，不是手写的。** 此前是一份硬编码数组，实测漏了 8 个插件
  * （code-sandbox-os / cron-engine / doctor / memory-history / process-local /
- * session-confirm / user-relation / workflow）—— 每个都 `private:false`、带
+ * user-relation / workflow 等）—— 每个都 `private:false`、带
  * `aalis-plugin` 关键词、导出 name/apply，纯粹是新增时忘了往数组里加。
  * 手写名单的失效方式是**静默漏测**，没有任何信号；改为扫描后新插件自动进来。
  */

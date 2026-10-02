@@ -4,12 +4,12 @@
 // 单 owner 个人 bot 的「好管」权限：每个外部身份一个**整数等级**（越大越高，默认 0，
 // 封禁=负数），每个操作一个**最低等级**（由 risk 派生、owner 可逐条覆盖成任意整数）。
 // owner = ∞（不在等级轴上，靠 owners 列表归属），永不被任何门槛锁出。
-// 裁决优先级（首个命中赢，对齐 Claude Code deny→allow 与老版数字等级）：
+// 裁决优先级（首个命中即定，硬禁先于 owner 与等级放行）：
 //   1. 全局硬禁 deniedCapabilities  → 拒（压过 owner，保 deny>owner 不变量；配置总闸，非 per-user）
 //   2. owner                        → 放行
 //   3. 等级 level >= 操作 minLevel   → 放行；否则拒（封禁=负数自然连 minLevel=0 都不过）
 // 确认轴（confirm/HITL）正交，不在此函数（owner 也吃，防注入借权）。
-// 内含 glob 工具 matchAnyCap（资源能力/硬禁匹配）。
+// 内含 glob 工具 matchAnyCap（资源能力/硬禁匹配），以及工具调用发起回合的类别 originKind。
 // ════════════════════════════════════════════════════════════
 
 /** owner 等级（∞）：不入等级轴，靠 owners 列表归属；任何有限门槛都压不过它（防自锁）。 */
@@ -18,7 +18,9 @@ export const OWNER_RANK = Number.POSITIVE_INFINITY;
 // 等级常量与 (risk,visibility)→门槛 的映射住在契约包 `@aalis/api-authority`：
 // 判断「两份能力声明谁更严」的地方不止这里（plugin-commands 合并同名指令的多份声明时也要），
 // 两份实现必然漂移 —— 曾因此漏掉「risk 遮蔽 visibility」这条性质，酿成一条提权面。
-import { capabilityMinLevel, DEFAULT_AUTHORITY } from '@aalis/api-authority';
+import type { OriginKind } from '@aalis/api-approval';
+import { capabilityMinLevel, DEFAULT_AUTHORITY, type ExecutionGuardContext } from '@aalis/api-authority';
+import { resolveSessionOrigin } from '@aalis/api-gateway';
 
 export { DEFAULT_AUTHORITY };
 
@@ -74,27 +76,45 @@ export function resolveAccess(input: AccessInput): boolean {
   return input.level >= input.minLevel; // 3. 等级门槛（封禁=负数自然不过）
 }
 
+type IsOwner = (platform: string, userId?: string) => boolean;
+
 /**
- * auto 模式（owner 临时免 session 确认，类 Claude Code auto）是否激活。纯函数。
- * `until`：-1=一直；>now=截止前激活；其余(0/过期)=关。只影响确认轴，不动等级/deny；always 确认不被它跳过（调用方保证）。
+ * 房间：群房间，以及对端不是 owner 的私聊（按会话 id 的受众判，子任务按它所在的房间算）。
+ * 私聊会话 id 是 `<platform>:<self>:private:<对端>`
  */
-export function autoConfirmActive(until: number, now: number): boolean {
-  return until === -1 || (until > 0 && now < until);
+function inRoom(sessionId: string, isOwner: IsOwner): boolean {
+  const origin = resolveSessionOrigin(sessionId);
+  if (!origin) return false;
+  if (origin.audience === 'group') return true;
+  const peer = sessionId.split('::')[0].split(':').slice(3).join(':');
+  return !isOwner(origin.platform, peer);
 }
 
 /**
- * 确认轴是否可跳过（纯函数）。**`always` 永不可跳**（最高危：必须每次有人确认；cron 无人确认即拒）。
- * 非 always 的两种正当跳过：① skipConfirm（系统/受信源如 scheduler，无人可点）；
- * ② auto 模式 且 触发者是 owner 本人。其余一律不跳。
+ * 工具调用发起回合的类别（契约见 api-approval 的 OriginKind），只有 owner 与 owner-chain 能产生审批。
+ * 按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 actor，按 actor 判它就成了 owner。
+ * - 不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：没有人在这一轮亲手发起它，是 autonomous；
+ * - 子任务回合是 subtask，房间里的回合是 room，不论谁发言；
+ * - 真人消息：带 actor 的是触发器把这一轮记成了自发的（群里的频率触发），是 autonomous；
+ *   否则发言者是 owner 为 owner，不是为 other；
+ * - 宿主通知延续某次工具调用：那次调用的发言者与授权身份都是 owner 才是 owner-chain，否则 other；
+ * - 其余注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知）是 autonomous。
  */
-export function shouldSkipConfirm(opts: {
-  confirm: 'session' | 'always';
-  skipConfirm: boolean;
-  isOwner: boolean;
-  autoConfirmUntil: number;
-  now: number;
-}): boolean {
-  if (opts.confirm === 'always') return false;
-  if (opts.skipConfirm) return true;
-  return opts.isOwner && autoConfirmActive(opts.autoConfirmUntil, opts.now);
+export function originKind(
+  turn: Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>,
+  isOwner: IsOwner,
+): OriginKind {
+  const { inbound, actor } = turn;
+  if (!inbound) return 'autonomous';
+  if (inbound.source === 'subtask') return 'subtask';
+  if (inRoom(turn.sessionId, isOwner)) return 'room';
+  if (inbound.source === undefined) {
+    if (actor) return 'autonomous';
+    return isOwner(turn.platform, turn.userId) ? 'owner' : 'other';
+  }
+  if (inbound.callerUserId !== undefined) {
+    const chained = isOwner(turn.platform, inbound.callerUserId) && !!actor && isOwner(actor.platform, actor.userId);
+    return chained ? 'owner-chain' : 'other';
+  }
+  return 'autonomous';
 }

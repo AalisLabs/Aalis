@@ -111,7 +111,7 @@ resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手�
 
 ## 基础指令
 
-App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-commands` 提供 `/help`、`/status`、`/clear`、`/shutdown`、`/restart`，`@aalis/plugin-authority` 提供 `/authority`、`/level`、`/auto`。
+App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-commands` 提供 `/help`、`/status`、`/clear`、`/shutdown`、`/restart`，`@aalis/plugin-authority` 提供 `/authority`、`/level`。
 
 | 指令 | 可见性 | 说明 |
 |---|---|---|
@@ -123,7 +123,6 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 | `/restart` | restricted | 重启应用 |
 | `/authority [target]` | public | 查看自己或指定用户的权限等级（owner 显示 ∞） |
 | `/level <target> <level>` | restricted | owner 给某外部身份设置权限等级（整数；0 默认，负数封禁；仅 owner 可用，防自授） |
-| `/auto [<分钟>\|on\|off]` | restricted | owner 临时免 dangerous 二次确认（仅 owner 本人） |
 
 ## 插件发现与配置文档（宿主，不在 core）
 

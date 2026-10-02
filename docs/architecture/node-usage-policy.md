@@ -64,6 +64,7 @@
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
 |  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
 |  |  | `plugin-memory-sqlite/src/index.ts` | `statSync` 取数据库文件的设备号与 inode，判断两个实例是否打开了同一个库 |
+|  |  | `plugin-session-server/src/approvals.ts` | `appendFile` / `mkdir` 追加审批审计：只追加的记录，存储网关没有追加写 |
 | `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
@@ -72,6 +73,7 @@
 | `node:crypto` | 推荐 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`） | `plugin-tool-browser` | `createHash` 取截图 PNG 内容的 sha256 作文件名 |
 |  |  | `plugin-storage-local` | `randomBytes` 生成原子写临时文件名里的随机段 |
 |  |  | `runtime/src/providers.ts` | `randomBytes` 生成配置文件原子写临时文件名里的随机段 |
+|  |  | `plugin-session-server/src/approvals.ts` | `createHash` 同步算审批的内容哈希 |
 | `node:buffer` / `node:path` | 直接使用 | 全部 | 纯函数 / Web 标准不覆盖，无 I/O |
 | `node:url` | `fileURLToPath` / `pathToFileURL` 推荐使用；`URL` 用全局 | 全部 | 仅用作路径互转时引入 |
 
@@ -120,6 +122,11 @@
 
 - **`plugin-memory-sqlite/src/index.ts`** — `node:fs`（`statSync`）
   better-sqlite3 本来就直接打开 `resolveLocalPath` 给出的本地文件，取这个文件的身份与开库属于同一层。开库后用 `statSync` 取设备号与 inode，按文件身份判断两个实例是否打开了同一个库：大小写不敏感的卷上只差大小写的两个路径、指向同一文件的硬链接，按路径字符串比较都认不出来。没有为此给 `StorageService` 增加文件身份字段，因为目前只有这一个消费者。这个文件不在 `overrides[1]` 里整条关掉 `noRestrictedImports`：`biome.json` 为它单独写了一段 override，`node:fs` 用 `allowImportNames` 只放行 `statSync`，其余受限的 `node:*` 照常报错。biome 的 override 会整体替换规则选项，这段 override 因此重抄了 `overrides[0]` 的全部路径，改 `overrides[0]` 时要一并改它。
+
+### 审批
+
+- **`plugin-session-server/src/approvals.ts`** — `node:fs/promises`（`appendFile` / `mkdir`）+ `node:crypto`（`createHash`）
+  审批的审计是只追加的 JSON 行文件，落在 host-paths 给的家目录 `state/audit/approvals.jsonl`；`StorageService` 没有追加写，整份重写会让每条记录的代价随文件变大。内容哈希要同步算：请求在发起的同一拍里定下去留与排队次序，Web Crypto 的异步摘要会让并行的请求按完成先后乱序。两处都只在这个文件里，用行内的 `biome-ignore` 写明理由，不整包放开。
 
 ### 宿主运行时
 

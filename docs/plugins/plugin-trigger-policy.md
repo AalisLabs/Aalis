@@ -48,7 +48,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数；记为真人活动：更新最近消息时间，闲置退避复位为 1，并从这条消息起重排 session 档闲置触发。
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与全部已登记人设按本会话取的名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
 7. 判定：点名直接开口；否则按 `intervalMode` 看此刻的计数与活跃指数是否达标。记一行判定日志（见下）。
-8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，其白名单与会话授予也不替无主体回合解围。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
+8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，这一轮也不能产生 owner 审批。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
 
 某个人设提供者读名字抛错时，名字检测只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）：
 

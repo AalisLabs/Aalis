@@ -1,6 +1,7 @@
 // ════════════════════════════════════════════════════════════
 // 会话列表与会话的增删改：摘要、分区与分组、排序与分页、搜索；建、改名、归档、删除与批量；
 // 会话配置的生效值与继承来源；已读。会话本身都在 session-manager 里，这里只做投影与转发。
+// 「需要我处理」由未结的审批驱动。
 // ════════════════════════════════════════════════════════════
 
 import { type LLMModel, listLLMModels } from '@aalis/api-llm';
@@ -34,6 +35,8 @@ interface SessionDeps {
   seen: SeenStore;
   /** 这个会话有没有回合在跑 */
   isRunning(sessionId: string): boolean;
+  /** 这个会话有没有推出、还没结的审批 */
+  hasApproval(sessionId: string): boolean;
   /** 摘要因会话表之外的原因变了（已读），推给 watch 的连接 */
   changed(sessionId: string): void;
   platform: ServiceRef<PlatformAdapter>;
@@ -110,21 +113,30 @@ export function createSessions(deps: SessionDeps) {
       running: deps.isRunning(info.id),
       error: info.status === 'error',
       unread: !room && info.lastReplyAt !== undefined && (seenAt === undefined || info.lastReplyAt > seenAt),
+      attention: deps.hasApproval(info.id),
       archived: info.status === 'archived',
       paper: room ? sm.resolveConfig(info.id).paperEnabled === true : undefined,
     };
   }
 
-  /** 房间按接管的适配器实例分组；建档时没记下实例的按平台成一组，排在同平台各实例之后 */
+  /** 房间按接管的适配器实例分组；还没记下实例的按平台成一组，排在同平台各实例之后 */
   function groups(): RoomGroup[] {
-    const byKey = new Map<string, { platform: string; instance?: string; rooms: number; accounts: Set<string> }>();
+    type Group = { platform: string; instance?: string; rooms: number; accounts: Set<string>; attention: number };
+    const byKey = new Map<string, Group>();
     for (const info of sm.listSessions({ parentId: null })) {
       const platform = info.originPlatform;
       if (!platform) continue;
       const key = JSON.stringify([platform, info.originInstance]);
-      const group = byKey.get(key) ?? { platform, instance: info.originInstance, rooms: 0, accounts: new Set() };
+      const group = byKey.get(key) ?? {
+        platform,
+        instance: info.originInstance,
+        rooms: 0,
+        accounts: new Set(),
+        attention: 0,
+      };
       group.rooms++;
       group.accounts.add(info.id.split(':')[1]);
+      if (deps.hasApproval(info.id)) group.attention++;
       byKey.set(key, group);
     }
     return [...byKey.values()]
@@ -138,7 +150,7 @@ export function createSessions(deps: SessionDeps) {
   }
 
   /**
-   * 根会话：「我的」区在前，出错、完成未读、运行中依次靠前，其余按最后活动；房间在后，按最后活动。
+   * 根会话：「我的」区在前，需要我处理、出错、完成未读、运行中依次靠前，其余按最后活动；房间在后，按最后活动。
    * 子会话按最后活动。
    */
   function list(params: SessionMethodParams<'sessions/list'>): SessionMethodResult<'sessions/list'> {
@@ -151,7 +163,7 @@ export function createSessions(deps: SessionDeps) {
     let summaries = rows.map(summarize);
     if (!parent && params.section) summaries = summaries.filter(s => s.section === params.section);
     const rank = (s: SessionSummary) =>
-      parent ? 0 : s.section === 'rooms' ? 4 : s.error ? 0 : s.unread ? 1 : s.running ? 2 : 3;
+      parent ? 0 : s.section === 'rooms' ? 5 : s.attention ? 0 : s.error ? 1 : s.unread ? 2 : s.running ? 3 : 4;
     summaries.sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt);
 
     const offset = Number(params.cursor ?? 0);

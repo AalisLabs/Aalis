@@ -10,7 +10,7 @@
 
 它做两件事：
 
-- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行运行 `inbound:confirm → inbound:command → inbound:trigger → inbound:flow → inbound:dispatch` 五个命名相位；终相 `dispatch` 的默认动作是调用 `agent.handleMessage`。前四相位任一被 swallow（handler 未调用 `next()`）即停止后续调度，消息不触达 agent（`packages/plugin-gateway/src/index.ts`）。
+- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行运行 `inbound:command → inbound:trigger → inbound:flow → inbound:dispatch` 四个命名相位；终相 `dispatch` 的默认动作是调用 `agent.handleMessage`。前三相位任一被 swallow（handler 未调用 `next()`）即停止后续调度，消息不触达 agent（`packages/plugin-gateway/src/index.ts`）。
 - **出站**：提供 `dispatchOutbound()`，运行 `outbound:dispatch` 钩子链，默认动作是向 `outbound:message` 事件总线广播，由平台适配器接收并发送（`packages/plugin-gateway/src/index.ts`）。
 
 > core 自身不再绑定任何路由实现。`packages/core/src/orchestration/app.ts` 的注释明确：「消息路由由网关插件承担，不在 core。」最小应用若不加载 gateway，则**没有人**监听 `inbound:message`，消息不会被处理 —— gateway 是路由的必要部件，不存在 core 兜底。
@@ -39,16 +39,14 @@ export interface GatewayService {
 ```ts
 // packages/api-gateway/src/index.ts
 export const INBOUND_PHASE = {
-  CONFIRM:  'inbound:confirm',  // 会话内待确认回复拦截（plugin-session-confirm）
-  COMMAND:  'inbound:command',  // 指令解析与执行（plugin-commands）
+  COMMAND:  'inbound:command',  // 指令解析与执行，以及指令意图确认的回复（plugin-commands）
   TRIGGER:  'inbound:trigger',  // 要不要开口：禁言关键词/点名识别/判定（生效的触发插件，如 plugin-trigger-policy）
   FLOW:     'inbound:flow',     // 节流硬闸：禁言/冷却/限速（plugin-flow-control）
   DISPATCH: 'inbound:dispatch', // 默认派发到 agent.handleMessage（plugin-gateway 提供默认动作）
 } as const;
 
 export const INBOUND_PHASE_ORDER = [
-  INBOUND_PHASE.CONFIRM, INBOUND_PHASE.COMMAND, INBOUND_PHASE.TRIGGER,
-  INBOUND_PHASE.FLOW, INBOUND_PHASE.DISPATCH,
+  INBOUND_PHASE.COMMAND, INBOUND_PHASE.TRIGGER, INBOUND_PHASE.FLOW, INBOUND_PHASE.DISPATCH,
 ] as const;
 export type InboundPhase = (typeof INBOUND_PHASE_ORDER)[number];
 ```
@@ -95,9 +93,8 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 - **直接调服务（`gateway.current`）** —— 主要是 agent 自己回话，外加主动注入消息的系统侧触发器：
   - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后 `gateway.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `events.emit('outbound:message', message)`，中间件链被跳过）。
   - `packages/plugin-trigger-policy/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`（gateway 是 trigger-policy 的必需依赖，缺席的瞬间放弃这次注入）。
-  - `packages/plugin-session-confirm/src/index.ts`：取 gateway 走出站总线投递确认提示。
+  - `packages/plugin-commands/src/index.ts`：指令结果与意图确认的提示经 `gateway.dispatchOutbound` 回到会话。
 - **注册到相位 hook（不经服务接口；hook 键后期绑定，注册与 gateway 的加载先后无关）** —— 各中间件占据一个语义相位：
-  - `plugin-session-confirm` → `INBOUND_PHASE.CONFIRM`（`packages/plugin-session-confirm/src/index.ts`）
   - `plugin-commands` → `INBOUND_PHASE.COMMAND`（`packages/plugin-commands/src/index.ts`）
   - 触发插件（`plugin-trigger-policy` 等，只有 `trigger` 服务的胜者判定）→ `INBOUND_PHASE.TRIGGER`
   - `plugin-flow-control` → `INBOUND_PHASE.FLOW`
@@ -212,14 +209,14 @@ export default definePlugin({
 ## 6. 标准消费方式
 
 - **惰性读取 `.current`，每次用时重新取，不缓存**：`const gw = gateway.current`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
-- **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway ? gateway.dispatchOutbound(msg) : events.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 session-confirm 靠它投递确认提示，`packages/plugin-session-confirm/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
+- **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway ? gateway.dispatchOutbound(msg) : events.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 plugin-commands 靠它回送指令结果与确认提示，`packages/plugin-commands/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
 - **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
 ## 7. 能力 / 风险 → 影响
 
 - **出站统一收口**：业务层**不应**再直接 `events.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
-- **CONFIRM 相位与在途生成的 abort**：`inbound:confirm` 刻意排在最前。会话内待确认回复（Y/YS/否）命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort —— 确认回送得以成立（`packages/api-gateway/src/index.ts`、`packages/plugin-session-confirm/src/index.ts`）。若你新增相位插在 CONFIRM 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `plugins/plugin-authority.md`。
+- **COMMAND 相位与在途生成的 abort**：`inbound:command` 排在最前。指令意图确认的回复（发出者本人在同一会话的下一条消息）在这里命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort（`packages/plugin-commands/src/index.ts`）。若你新增相位插在 COMMAND 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `plugins/plugin-authority.md`。
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / workflow）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 构造工具调用上下文时优先用 `actor` 查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
 - **`source` 标识系统侧注入**：闲置触发、定时任务、workflow 等触发器投递的消息必须设置 `IncomingMessage.source`；平台适配器投递真人消息**不得**设置。带 `source` 的消息被视为内部注入：不经触发策略（不计数、不改写 `triggerType`），不过回复后冷却，禁言与限速照常生效。`source` 同时用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。
 - gateway 自身不碰 storage / 网络出口；附件落盘、SSRF 守卫（`safeFetch`）等是适配器与 media 层的事，见 `concepts/storage-uri-grammar.md` / `concepts/security-model.md`。

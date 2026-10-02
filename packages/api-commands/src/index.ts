@@ -120,13 +120,17 @@ export interface ExecutionInput {
   args: string[];
   raw: string;
   /**
-   * 跳过受限被拒后的交互确认弹窗（requestAccess）；authorize 仍然生效。
+   * 跳过指令声明的确认（confirm 为 always 的照常确认）；authorize 仍然生效。
    *
-   * 供无法交互确认的受信任系统源（scheduler 等）使用：这些调用的身份来自
-   * 创建时固化的 actor（IncomingMessage.actor），能力按 actor 真实持有评估，
-   * 只是 cron 上下文里没有人能点确认弹窗，故跳过该步。**不**绕过 authorize（防提权）。
+   * 供没人可问的受信任来源使用：scheduler 触发的指令（owner 建任务时已经授权，身份是创建时固化的 actor）、
+   * runtime 一次性子命令（owner 在本机终端亲手输入）。**不**绕过 authorize（防提权）。
    */
   skipConfirm?: boolean;
+  /**
+   * 向发出者本人核对意图：调用方能在同一会话里当面问到发出者（人亲手输入的消息）时提供，resolve true 为确认。
+   * 原样交给执行守卫（ExecutionGuardContext.confirmIntent）；需要确认的指令没有它就按拒绝处理
+   */
+  confirmIntent?: () => Promise<boolean>;
 }
 
 // ===== Builder =====

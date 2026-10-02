@@ -284,8 +284,8 @@ export interface IncomingMessage {
     reportOnly?: boolean;
     /**
      * 通知延续某次工具调用时，那次调用的 ToolCallContext.userId。plugin-agent 只用它填本轮工具调用上下文的 userId
-     * （确认由谁应答、会话授予按谁匹配、工具眼里是谁在调），并让这位发言者在同一会话的消息打断这一轮；不当作发言者：
-     * 归档、用户档案、关系、提示词钩子与确认应答的判定都不看它。须与 actor 取自同一次调用；不延续某次调用的通知不设。
+     * （工具眼里是谁在调）与 inbound.callerUserId（执行守卫据此判这一轮是不是 owner 链的延续），并让这位发言者在同一会话的
+     * 消息打断这一轮；不当作发言者：归档、用户档案、关系与提示词钩子都不看它。须与 actor 取自同一次调用；不延续某次调用的通知不设。
      */
     callerUserId?: string;
   };

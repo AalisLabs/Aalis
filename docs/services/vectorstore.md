@@ -173,7 +173,7 @@ export default definePlugin({
 
 - **score 必须是余弦相似度语义**。flat 用归一化点积（真余弦）；lancedb 显式用 `distanceType('cosine')` 后取 `1 - _distance`（`index.ts`），与 flat 量纲对齐。**provider 若返回别的度量（如 1 − L2、内积未归一），会破坏消费者跨后端通用的阈值** ——`memory-vector` 的 `minScore`（0~1）与时间加权融合（`search.timeWeight`）都假设 score 是余弦相似度。换后端不应要求用户重调阈值。
 - **跨会话/隔离不在本服务**。Aalis 是单 owner，但向量库会混装所有会话的数据；隔离由消费者写入 metadata（如 `{ sessionId }`）并用 `deleteByFilter`/检索过滤实现。provider 不得擅自基于 metadata 做可见性裁剪——它不懂业务语义。
-- 本服务不涉及 authority risk/visibility 标注、确认（session-confirm）、SSRF（safeFetch）——它不直接对外发请求，也不暴露危险动作。涉及落盘的安全边界归 storage（storage **不是沙箱**，见 docs/concepts/security-model.md / storage-uri-grammar.md）。LanceDB 的 `resolveLocalPath` 把绝对路径交给原生库，仍受 storage root 授权约束，但绕过了 storage 的 URI 边界——provider 应只用它指向自有数据目录。
+- 本服务不涉及 authority risk/visibility 标注、确认与审批、SSRF（safeFetch）——它不直接对外发请求，也不暴露危险动作。涉及落盘的安全边界归 storage（storage **不是沙箱**，见 docs/concepts/security-model.md / storage-uri-grammar.md）。LanceDB 的 `resolveLocalPath` 把绝对路径交给原生库，仍受 storage root 授权约束，但绕过了 storage 的 URI 边界——provider 应只用它指向自有数据目录。
 
 ## 7. 边界情形与注意事项
 

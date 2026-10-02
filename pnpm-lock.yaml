@@ -131,6 +131,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-approval:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-asr:
     dependencies:
       '@aalis/schema-message':
@@ -484,22 +496,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/api-session-confirm:
-    dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.10.0 <1.0.0
-        version: link:../api-authority
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/api-session-history:
     dependencies:
       '@aalis/api-tools':
@@ -530,6 +526,9 @@ importers:
 
   packages/api-session-protocol:
     dependencies:
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -880,12 +879,18 @@ importers:
 
   packages/plugin-authority:
     dependencies:
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
       '@aalis/api-authority':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-commands':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.8.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
@@ -951,6 +956,9 @@ importers:
 
   packages/plugin-cli:
     dependencies:
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
@@ -2127,31 +2135,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-session-confirm:
-    dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.10.0 <1.0.0
-        version: link:../api-authority
-      '@aalis/api-gateway':
-        specifier: workspace:>=0.7.0 <1.0.0
-        version: link:../api-gateway
-      '@aalis/api-hooks':
-        specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../api-hooks
-      '@aalis/api-session-confirm':
-        specifier: workspace:>=0.7.0 <1.0.0
-        version: link:../api-session-confirm
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-session-manager:
     dependencies:
       '@aalis/api-agent':
@@ -2206,6 +2189,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.9.1 <1.0.0
         version: link:../api-agent
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
       '@aalis/api-authority':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-authority
@@ -2215,6 +2201,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
       '@aalis/api-llm':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-llm
@@ -2245,6 +2234,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.9.1 <1.0.0
         version: link:../schema-message
+      '@aalis/util-bounded-map':
+        specifier: workspace:>=0.6.1 <1.0.0
+        version: link:../util-bounded-map
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -2982,6 +2974,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
       '@aalis/api-authority':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-authority
@@ -3015,9 +3010,6 @@ importers:
       '@aalis/api-process':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-process
-      '@aalis/api-session-confirm':
-        specifier: workspace:>=0.7.0 <1.0.0
-        version: link:../api-session-confirm
       '@aalis/api-session-protocol':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-session-protocol

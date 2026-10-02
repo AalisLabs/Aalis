@@ -85,8 +85,7 @@ Platform 适配器接收 → 发出 inbound:message 事件
   │
   ▼
 plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 agent）
-  │     inbound:confirm   待确认回复拦截
-  │     inbound:command   指令解析与执行
+  │     inbound:command   指令解析与执行，以及指令意图确认的回复
   │     inbound:trigger   要不要开口：生效的触发插件判定（默认规则：禁言关键词、点名、计数与评分）
   │     inbound:flow      节流硬闸：禁言、回复后冷却、限速
   │     inbound:dispatch  默认动作 → Agent.handleMessage(incoming)
@@ -324,7 +323,6 @@ defaultAction()        ← 所有 handler 通过后执行
 
 | 相位 | 数据载荷 | 占据者 | 默认动作 |
 |---|---|---|---|
-| `inbound:confirm` | `InboundPhaseData` | plugin-session-confirm | （无）|
 | `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
 | `inbound:trigger` | `InboundPhaseData` | 生效的触发插件（如 plugin-trigger-policy） | （无）|
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
@@ -394,32 +392,30 @@ minLevel 解析（首个命中赢）:
 
 没有命名档位（受信/管理员等表面名仅是等级整数的别称）、没有能力委托图、
 没有 per-user 的逐条能力授予/禁用列表。owner **只管理权限**（不能自授）：
-WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `/auto`（自动确认模式）。
+WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）。
 模型详见 [docs/plugins/plugin-authority.md](plugins/plugin-authority.md)。
 
 ### 轴 B · 确认（HITL 意图核对）
 
-确认轴与等级轴正交，由独立的 **plugin-session-confirm**（HITL 协调器）执行，
-经 `setConfirmHandler` 注册进 authority。`risk` 声明同时设两轴默认值
+确认轴与等级轴正交，在 plugin-authority 的执行守卫里完成。`risk` 声明同时设两轴默认值
 （如 `dangerous` = `visibility:'restricted'` + `confirm:'session'`）。
 
 ```
-触发命中 confirm 的操作
+授权已过、命中 confirm 的操作
   │
   ▼
-可跳过确认? （shouldSkipConfirm，always 永不可跳）
-  ├─ skipConfirm（系统/受信源，如 scheduler 无人可点）→ 跳过
-  ├─ auto 模式 且 触发者是 owner 本人 → 跳过
-  └─ 否则 → 向 confirmHandler 发起确认
-       │
-       ▼
-     回复 Y   → 放行本次
-     回复 YS  → 放行本会话（限时，session 记住）
-     其它     → 取消
+可免确认? （always 什么都免不掉）
+  ├─ skipConfirm（受信来源：scheduler 触发的指令、runtime 一次性子命令）→ 免
+  ├─ restrictedPolicy 白名单命中 → 免
+  └─ 否则
+       ├─ 指令：在同一会话里问发出者本人，只认他的下一条消息（y 确认，其余取消，超时取消）
+       └─ 工具：owner 审批（approvals）
+            ├─ 发起回合是 owner 本人或 owner 链的延续 → 推给在场的审批面，owner 批准才执行
+            └─ 其余（定时任务、编排、房间、子任务、他人）→ 立即拒绝，不推给任何面
 ```
 
-`confirm:'always'` 是最高危档：**每次都必须有人确认**，永不被 session 记住、
-也不被 auto 模式跳过（cron 等无人确认场景直接拒）。
+`confirm:'always'` 是最高危档：**每次都必须有人确认**（cron 等无人可问的场景直接拒）。
+审批的在场、排队、时限与审计见 [api-approval](api/api-approval.md)。
 
 ## 上下文窗口管理算法
 

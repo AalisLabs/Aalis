@@ -11,7 +11,7 @@ import { hostedApp } from '../fixtures/app.js';
 // AuthorityPage 组件测试（jsdom，数字等级）—— 锁死「输入不能是死的」：
 // 渲染不崩 + 改用户等级输入真触发 setUserLevel、改整组等级真触发 setAuthorityOverride；
 // 操作成功后显示服务端返回的 message（拒写附注靠它让 owner 看见）；
-// 整组设最低等级汇总各条回执（撤销数、失败原因），无论成败都刷新。
+// 整组设最低等级汇总各条回执（失败原因），无论成败都刷新。
 // ════════════════════════════════════════════════════════════
 
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
@@ -27,7 +27,6 @@ const OVERVIEW = {
   defaultAuthority: 0,
   confirmOverrides: {},
   restrictedPolicy: {},
-  temporaryGrants: [],
   commandPrefix: '/',
   commands: [],
   tools: [
@@ -169,7 +168,7 @@ describe('AuthorityPage 操作提示', () => {
   });
 });
 
-// 回执直接取自真实的 plugin-authority 处理器：撤销数的字段名或形状在插件那边一改，这里就变红
+// 回执直接取自真实的 plugin-authority 处理器：回执形状在插件那边一改，这里就变红
 describe('AuthorityPage 整组设最低等级', () => {
   const OWNER = { platform: 'webui', userId: 'console' };
   const STRANGER = { platform: 'onebot', userId: 'bob' };
@@ -179,8 +178,8 @@ describe('AuthorityPage 整组设最低等级', () => {
     app = undefined;
   });
 
-  /** 装上真插件，按 grants 给各能力建会话授予（alice 名下，每条一个会话）；返回真实的 setAuthorityOverride 处理器 */
-  async function realOverride(grants: Record<string, number> = {}): Promise<WebuiActionHandler> {
+  /** 装上真插件，返回真实的 setAuthorityOverride 处理器 */
+  async function realOverride(): Promise<WebuiActionHandler> {
     const hosted = hostedApp();
     app = hosted.app;
     const host = app.bind({ provide, authority });
@@ -197,21 +196,6 @@ describe('AuthorityPage 整组设最低等级', () => {
     const manager = host.authority.current;
     const handler = actions.get('setAuthorityOverride');
     if (!manager || !handler) throw new Error('authority 没起来');
-    manager.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
-    for (const [capability, n] of Object.entries(grants)) {
-      for (let i = 0; i < n; i++) {
-        const name = capability.slice(capability.indexOf(':') + 1);
-        const req = {
-          name,
-          type: 'tool',
-          capability,
-          sessionId: `s${i}`,
-          platform: 'onebot',
-          userId: 'alice',
-        } as const;
-        if (!(await manager.requestAccess(req))) throw new Error('前置：会话授予没建起来');
-      }
-    }
     return handler;
   }
 
@@ -227,26 +211,24 @@ describe('AuthorityPage 整组设最低等级', () => {
       expect(calls.filter(c => c.method === 'getOverview').length, '整组操作落定后没有刷新').toBe(overviews + 1),
     );
 
-  it('全部成功：提示里带各条回执撤销数的合计', async () => {
-    const override = await realOverride({ 'tool:weather': 2, 'tool:exec': 1 });
+  it('全部成功：提示整组已更新', async () => {
+    const override = await realOverride();
     replies.setAuthorityOverride = (args: Record<string, unknown>) => override(args, OWNER);
     render(<AuthorityPage />);
     const overviews = await commitGroupLevel('3');
-    expect(await screen.findByText('整组最低等级已更新（已撤销 3 条相关会话授予）')).toBeTruthy();
+    expect(await screen.findByText('整组最低等级已更新')).toBeTruthy();
     await refreshedAfter(overviews);
   });
 
-  it('部分失败：列出成功与失败的条数、撤销数与失败原因，并照常刷新', async () => {
-    const override = await realOverride({ 'tool:weather': 2, 'tool:exec': 1 });
+  it('部分失败：列出成功与失败的条数与失败原因，并照常刷新', async () => {
+    const override = await realOverride();
     replies.setAuthorityOverride = (args: Record<string, unknown>) => {
       if (args.name === 'tool:shell') throw new Error('未写入配置文件');
       return override(args, OWNER);
     };
     render(<AuthorityPage />);
     const overviews = await commitGroupLevel('3');
-    expect(
-      await screen.findByText('整组最低等级：2 项已更新（已撤销 3 条相关会话授予），1 项失败：未写入配置文件'),
-    ).toBeTruthy();
+    expect(await screen.findByText('整组最低等级：2 项已更新，1 项失败：未写入配置文件')).toBeTruthy();
     await refreshedAfter(overviews);
   });
 

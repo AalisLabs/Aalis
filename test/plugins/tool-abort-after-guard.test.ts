@@ -37,9 +37,9 @@ describe('工具执行与回合中止信号', () => {
       const gate = new Promise<void>(r => (release = r));
       let seenSignal: AbortSignal | undefined;
       tools.setExecutionGuard(async g => {
-        seenSignal = g.signal; // 守卫拿得到信号（透传给 authority.requestAccess）
+        seenSignal = g.signal; // 守卫拿得到信号（等 owner 审批时据它撤销）
         await gate;
-        return null; // 放行（相当于用户迟到按了 y）
+        return null; // 放行（相当于审批迟到了）
       });
       const ac = new AbortController();
       const pending = tools.execute('probe', {}, { sessionId: 's', platform: 'cli', signal: ac.signal });

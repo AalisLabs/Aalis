@@ -52,7 +52,7 @@ async function setup(): Promise<{
 }
 
 describe('子任务消息是内部注入', () => {
-  it("安全：派发与追问都带 source 'subtask'：确认相位不把它们当作应答，真人判据也不把子任务回合当成真人当面发起", async () => {
+  it("安全：派发与追问都带 source 'subtask'：指令的意图确认不认它们，真人判据也不把子任务回合当成真人当面发起", async () => {
     const { app, handlers, inbound } = await setup();
     await handlers.get('create_subtask')!(
       { task: '做一件事' },

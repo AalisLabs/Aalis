@@ -288,7 +288,7 @@ describe('recent_messages 权限档（sensitive）', () => {
     expect(out.content).not.toContain('OWNER-WEBUI-ONLY');
   });
 
-  it('等级 1 的群成员照常调用，且不弹确认（本实例没有确认通道）', async () => {
+  it('等级 1 的群成员照常调用，且不需确认（本实例没有审批服务，需要确认就会被拒）', async () => {
     const { app, toolSvc, authoritySvc } = await bootGuarded();
     authoritySvc.setUserLevel({ platform: 'onebot', userId: '20002' }, 1);
     const out = await toolSvc.execute('recent_messages', { scope: 'cross-platform' }, groupCall('20002'));

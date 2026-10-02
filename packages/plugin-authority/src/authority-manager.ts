@@ -1,13 +1,4 @@
-import type {
-  AccessConfirmHandler,
-  AccessDecision,
-  AccessRequest,
-  AuthorityService,
-  AuthorityUserEntry,
-  AuthorizeRequest,
-  TemporaryGrant,
-  UserIdentity,
-} from '@aalis/api-authority';
+import type { AuthorityService, AuthorityUserEntry, AuthorizeRequest, UserIdentity } from '@aalis/api-authority';
 import type { HostConfig } from '@aalis/api-host-config';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
@@ -19,16 +10,13 @@ import { UserStore } from './user-store.js';
 //
 // owner=∞；每个外部身份一个登记等级（缺省 0，封禁=负数）；操作一个 minLevel（risk/visibility/authorityOverrides 派生）；
 // 裁决 deniedCapabilities(全局硬禁) > owner > level>=minLevel（纯函数在 authority-model）。
-// confirm 轴 + 临时放行正交保留。
+// confirm 轴另在执行守卫里（plugin-authority 的 index.ts），这里只答 restrictedPolicy 白名单免不免确认。
 // 数据层（users.json v5 等级存储）委托给 UserStore。
 // ════════════════════════════════════════════════════════════
 
 export class AuthorityManager implements AuthorityService {
   private store: UserStore;
-  private confirmHandlers = new Map<string, AccessConfirmHandler>();
-  private tempGrants = new Map<string, TemporaryGrant>();
-  private grantSeq = 0;
-  /** 临时放行策略（restrictedPolicy）的开启时间戳（运行时态，不持久化；重启即失效） */
+  /** 免确认白名单（restrictedPolicy）的开启时间戳（运行时态，不持久化；重启即失效） */
   private policyEnabledAt: number | null = null;
 
   constructor(
@@ -63,7 +51,7 @@ export class AuthorityManager implements AuthorityService {
     return (key ? this.store.get(key)?.level : undefined) ?? DEFAULT_AUTHORITY;
   }
 
-  // ── 统一权限闸（等级静态判定；临时放行/确认在 requestAccess）──────────
+  // ── 统一权限闸（等级静态判定；确认在执行守卫）──────────
   authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null {
     const level = this.level(identity.platform, identity.userId);
     const isOwner = this.isOwner(identity.platform, identity.userId);
@@ -92,7 +80,6 @@ export class AuthorityManager implements AuthorityService {
   setUserLevel(target: UserIdentity, level: number): void {
     const key = `${target.platform}:${target.userId}`;
     const existing = this.store.get(key);
-    const prev = existing?.level ?? DEFAULT_AUTHORITY;
     // 默认等级(0)且无备注 → 直接清记录（保持 users.json 精简）。首次读取落定之前、读取失败拒写期间内存里看不到
     // 文件里的备注，删除会记成墓碑、之后读取成功时连同备注删掉整条记录；这时改为保留记录，读取按字段合并带上文件里的备注
     if (level === DEFAULT_AUTHORITY && !existing?.note && !this.store.awaitingFirstLoad && !this.store.persistBlocked) {
@@ -100,239 +87,30 @@ export class AuthorityManager implements AuthorityService {
     } else {
       this.store.set(key, { ...existing, level });
     }
-    // 降权即撤销该用户尚未过期的会话授予。
-    // 不这么做的话，`isPreApproved`（守卫「未授权」分支的救援口）会靠旧授予继续放行——
-    // authorize 明确返回「权限不足」而守卫仍放过，即「封了但没封住」，窗口最长 1 小时。
-    // 撤销放在这里而不是放在救援口上复查：救援口恰恰是在 authorize 拒绝之后才被调用的，
-    // 在那里复查等于把整条会话授予路径变成死代码。撤销本就是管理动作的一部分。
-    if (level < prev) this.revokeGrantsOf(target.platform, target.userId);
     this.logger.debug(`设置等级: ${key} → ${level}`);
   }
 
   removeUser(platform: string, userId: string): void {
     const key = `${platform}:${userId}`;
-    // 删记录 = 等级回落 DEFAULT_AUTHORITY，所以**只在这构成降权时**撤销授予，判据与
-    // setUserLevel 同源。原等级为负（被封禁）时删记录其实是升权，撤销纯属多余；
-    // 记录本就不存在时更是什么都没变，无条件撤销会让人白白重新确认一次。
-    const prev = this.store.get(key)?.level ?? DEFAULT_AUTHORITY;
     if (this.store.delete(key)) this.logger.debug(`删除用户记录: ${key}`);
-    if (DEFAULT_AUTHORITY < prev) this.revokeGrantsOf(platform, userId);
   }
 
   /**
-   * 撤销某个能力上所有未过期的会话授予（操作门槛变更时调用）。返回撤销条数。
-   *
-   * 与 setUserLevel / removeUser 的撤销同源：救援闸 isPreApproved 恰恰在 authorize
-   * 拒绝之后才被调用，在那里复查会把整条会话授予路径变成死代码，所以撤销必须由管理
-   * 动作负责。门槛变更一律撤销（不像等级那样只在降权时撤）：覆盖值可增可减、删除时
-   * 还会回落到 risk 派生值，孰高孰低无法一概而论，而管理动作本就罕见，重确认一次的
-   * 代价远小于「抬了门槛却仍被旧授予放行」。
+   * restrictedPolicy 白名单是否免掉这个能力的确认（只对 confirm 为 session 的确认有意义，always 由守卫照常确认）。
+   * 硬禁的能力不在这里放行：授权轴已先拒。`duration > 0` 时从 owner 在权限页保存策略起算，过了即失效。
    */
-  revokeGrantsOfCapability(capability: string): number {
-    let n = 0;
-    for (const [id, g] of this.tempGrants) {
-      if (g.capability === capability) {
-        this.tempGrants.delete(id);
-        n++;
-      }
-    }
-    if (n > 0) this.logger.info(`已撤销能力 "${capability}" 上的 ${n} 条会话授予（门槛变更）`);
-    return n;
-  }
-
-  /** 撤销某身份名下所有未过期的会话授予（降权 / 删除用户记录时调用）。 */
-  private revokeGrantsOf(platform: string, userId: string): void {
-    let n = 0;
-    for (const [id, g] of this.tempGrants) {
-      if (g.platform === platform && g.userId === userId) {
-        this.tempGrants.delete(id);
-        n++;
-      }
-    }
-    if (n > 0) this.logger.info(`已撤销 ${platform}:${userId} 的 ${n} 条会话授予（等级下调）`);
-  }
-
-  // ── 临时能力委托（restricted 能力的时限/限次放行）──────────────
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void {
-    this.confirmHandlers.set(platform, handler);
-    // 只摘自己：同平台后来的再注册（插件重启）不能被旧实例的 dispose 清掉。
-    return () => {
-      if (this.confirmHandlers.get(platform) === handler) this.confirmHandlers.delete(platform);
-    };
-  }
-
-  /** 该平台（或 '*' 兜底）是否有确认通道——守卫据此区分「用户拒绝」与「根本无处询问」。 */
-  hasConfirmHandler(platform: string): boolean {
-    return this.confirmHandlers.has(platform) || this.confirmHandlers.has('*');
-  }
-
-  /**
-   * 该请求是否被 owner **预先**放行（白名单 / 该用户在本会话已有的临时授予）——**绝不**含"问发起者本人"。
-   * 先过绝对闸（任何放行都不得绕过）：硬禁 deniedCapabilities。
-   * 再看：restrictedPolicy 全局白名单（自动化免确认）或 会话临时授予。
-   * 临时授予按 **platform + userId + sessionId + capability** 匹配 —— 群内 sessionId 全群共享时
-   * 不跨用户泄漏，同名 id 跨平台时不跨平台泄漏。消费端 consumeTempGrant 用同一组判据。
-   */
-  private isTemporarilyAllowed(request: AccessRequest, ownerOnly: boolean): boolean {
-    const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
-    // 硬禁绝对：主能力命中 deniedCapabilities 时，任何放行路径都不得绕过
-    if (matchAnyCap(denied, request.capability)) return false;
-    // restrictedPolicy 全局白名单。
-    //
-    // `ownerOnly` 由调用方决定，两条路径的语义**不同**，别再合并成一条：
-    // - `requestAccess`（确认轴）传 false：白名单在这里的意思是「免确认」——请求**已经过了
-    //   授权**，只是还要不要弹确认。对已授权用户放宽确认，正是它被设计出来的用途。
-    // - `isPreApproved`（守卫的未授权分支）传 true：那里是**救援闸**，一条不带身份判据的
-    //   白名单等于把「免确认」偷偷变成「免授权」：owner 配 `allow: ['tool:*']`
-    //   （本意只是让自己的自动化不必每次确认）之后，**任何用户都能过**，包括被显式封禁到
-    //   -5 的那个。同一函数下半截的会话授予本就带 `userId` 匹配（注释写着「防群内跨用户
-    //   白嫖」），这里缺的正是同一道判据。
-    const policy =
-      ownerOnly && !this.isOwner(request.platform, request.userId) ? undefined : this.config.get('restrictedPolicy');
-    if (policy?.allow && policy.allow.length > 0) {
-      if (
-        !policy.duration ||
-        policy.duration <= 0 ||
-        (this.policyEnabledAt && (Date.now() - this.policyEnabledAt) / 1000 <= policy.duration)
-      ) {
-        if (matchAnyCap(policy.allow, request.capability)) return true;
-      }
-    }
-    // 会话临时授予：同一平台 + 同一用户 + 同会话 + 同能力。
-    //
-    // platform 必须一起匹配 —— grant 记录里本就存着它，漏掉则 onebot 的 '123' 会命中
-    // telegram 的 '123' 的授予（userId 在跨平台间不唯一）。
-    //
-    // 这里**不**复查「当前是否仍被授权」：`isPreApproved` 恰恰是在 authorize 已经拒绝
-    // 之后才被调用的救援口，加这道复查会把整条会话授予路径变成死代码。
-    // 「封禁后旧授予仍生效」那条改在 setUserLevel 侧解决——撤销是管理动作的一部分。
-    this.pruneTempGrants();
-    for (const g of this.tempGrants.values()) {
-      if (g.platform !== request.platform) continue;
-      if (g.sessionId !== request.sessionId) continue;
-      if (g.userId !== request.userId) continue;
-      if (g.capability === request.capability || matchAnyCap([g.capability], request.capability)) return true;
-    }
-    return false;
-  }
-
-  /**
-   * 守卫「未授权」分支专用闸：请求是否被 owner 预先放行（白名单 / 该用户已有授予），
-   * 且不触犯硬禁 / 资源保护。**绝不询问发起者本人** —— 杜绝低档用户对超档操作自我确认提权。
-   * 守卫拒绝后改调本方法（而非 requestAccess），requestAccess 仅用于「已授权但需意图确认」。
-   */
-  isPreApproved(request: AccessRequest): boolean {
-    // ownerOnly=true：这条是**未授权救援闸**，白名单只认 owner 自己（见上方注释）。
-    return this.isTemporarilyAllowed(request, true);
-  }
-
-  async requestAccess(request: AccessRequest): Promise<boolean> {
-    // confirm='always'：每次都问，不接受白名单/会话记忆（最高危）
-    const always = request.confirm === 'always';
-    // ownerOnly=false：这条是**确认轴**，请求已过授权，白名单在此的语义就是「免确认」。
-    if (!always && this.isTemporarilyAllowed(request, false)) {
-      this.consumeTempGrant(request);
-      return true;
-    }
-    // 精确平台 handler 优先（如 WebUI 的 WS 确认）；否则落到 '*' 通配 fallback
-    // （plugin-session-confirm 注册，经 gateway 总线覆盖 onebot/cli/任何会话型平台）。
-    const handler = this.confirmHandlers.get(request.platform) ?? this.confirmHandlers.get('*');
-    if (!handler) return false;
-    // 回合已中止（latest-wins / 手动 abort）：不问、也不等在途应答——用户稍后按下的 y 不该替死回合放行
-    if (request.signal?.aborted) return false;
-    try {
-      const answered = await this.untilAborted(handler(request), request.signal);
-      if (answered === undefined) return false;
-      const decision = this.normalizeDecision(answered);
-      if (!always && decision.allowed && decision.grant?.scope === 'session') this.createTempGrant(request, decision);
-      return decision.allowed;
-    } catch (err) {
-      this.logger.warn(`临时委托确认回调异常: ${err}`);
-      return false;
-    }
-  }
-
-  listTemporaryGrants(): TemporaryGrant[] {
-    this.pruneTempGrants();
-    return [...this.tempGrants.values()].map(g => ({ ...g }));
-  }
-
-  revokeTemporaryGrant(id: string): boolean {
-    const ok = this.tempGrants.delete(id);
-    if (ok) this.logger.info(`已撤销临时能力委托: ${id}`);
-    return ok;
+  waivesConfirm(capability: string): boolean {
+    const policy = this.config.get('restrictedPolicy');
+    if (!policy?.allow || policy.allow.length === 0) return false;
+    const live =
+      !policy.duration ||
+      policy.duration <= 0 ||
+      (this.policyEnabledAt !== null && (Date.now() - this.policyEnabledAt) / 1000 <= policy.duration);
+    return live && matchAnyCap(policy.allow, capability);
   }
 
   markPolicyEnabled(): void {
     this.policyEnabledAt = Date.now();
-  }
-
-  /** 等 handler 应答；signal 先中止则返回 undefined（通道自己按中止撤回未决提示并结算）。 */
-  private untilAborted<T>(p: Promise<T>, signal?: AbortSignal): Promise<T | undefined> {
-    if (!signal) return p;
-    return new Promise<T | undefined>((resolve, reject) => {
-      const onAbort = (): void => resolve(undefined);
-      signal.addEventListener('abort', onAbort, { once: true });
-      p.then(
-        v => {
-          signal.removeEventListener('abort', onAbort);
-          resolve(v);
-        },
-        err => {
-          signal.removeEventListener('abort', onAbort);
-          reject(err);
-        },
-      );
-    });
-  }
-
-  private normalizeDecision(result: boolean | AccessDecision): AccessDecision {
-    return typeof result === 'boolean' ? { allowed: result } : result;
-  }
-
-  private consumeTempGrant(request: AccessRequest): void {
-    for (const g of this.tempGrants.values()) {
-      if (g.capability !== request.capability) continue;
-      // platform 与 isTemporarilyAllowed 的匹配判据保持一致 —— 两个谓词必须成对：
-      // 只在匹配端加而消费端不加，会出现「命中的是 A 平台的授予、扣次数的是 B 平台的」。
-      if (g.platform !== request.platform) continue;
-      if (g.sessionId !== request.sessionId) continue;
-      if (g.userId !== request.userId) continue;
-      g.used++;
-      if (g.maxUses && g.used >= g.maxUses) this.tempGrants.delete(g.id);
-      return;
-    }
-  }
-
-  private createTempGrant(request: AccessRequest, decision: AccessDecision): void {
-    const spec = decision.grant;
-    if (!spec || spec.scope !== 'session') return;
-    this.pruneTempGrants();
-    const durationSeconds = Math.max(1, Math.min(spec.durationSeconds ?? 600, 3600));
-    const grant: TemporaryGrant = {
-      id: `grant_${this.grantSeq++}_${Date.now()}`,
-      capability: request.capability,
-      name: request.name,
-      type: request.type,
-      sessionId: request.sessionId,
-      platform: request.platform,
-      userId: request.userId,
-      expiresAt: Date.now() + durationSeconds * 1000,
-      maxUses: spec.maxUses,
-      used: 0,
-      createdAt: Date.now(),
-    };
-    this.tempGrants.set(grant.id, grant);
-    this.logger.info(
-      `创建临时能力委托: ${grant.capability} session=${grant.sessionId} ${durationSeconds}s grant=${grant.id}`,
-    );
-  }
-
-  private pruneTempGrants(): void {
-    const now = Date.now();
-    for (const [id, g] of this.tempGrants) {
-      if (g.expiresAt <= now || (g.maxUses && g.used >= g.maxUses)) this.tempGrants.delete(id);
-    }
   }
 
   // ── 列表 ──────────────────────────────────────────────────

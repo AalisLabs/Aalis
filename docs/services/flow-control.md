@@ -144,7 +144,7 @@ for (const [sid, s] of this.states) {
 ## 8. 交叉链接
 
 - [plugins/plugin-flow-control](../plugins/plugin-flow-control.md)、[plugins/plugin-trigger-policy](../plugins/plugin-trigger-policy.md) — 两个相位的处理顺序与配置。
-- [services/gateway](./gateway.md) — 入站相位 `CONFIRM → COMMAND → TRIGGER → FLOW → DISPATCH`（相位常量见 `packages/api-gateway/src/index.ts`）。
+- [services/gateway](./gateway.md) — 入站相位 `COMMAND → TRIGGER → FLOW → DISPATCH`（相位常量见 `packages/api-gateway/src/index.ts`）。
 - [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — 服务选名规则、现取不缓存。
 - [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides` / `uses` 双源同步。
 - [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md) — 禁言持久化用的 `data:` root 文法。

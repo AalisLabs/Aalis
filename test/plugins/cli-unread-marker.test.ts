@@ -48,7 +48,7 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
       expect(lastFrame()).toContain('[LOGS]');
       expect(lastFrame()).not.toMatch(/CHAT\(\d+\)/);
 
-      await send('需要确认：执行 exec（command: rm -rf ./build）？回复 y / ys');
+      await send('第一条');
       await settle();
       expect(lastFrame(), 'logs 页收到消息后 header 应带计数').toContain('CHAT(1)');
 

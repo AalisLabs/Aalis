@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { RESTRICTED_LEVEL } from '../../packages/api-authority/src/index.js';
 import {
-  autoConfirmActive,
   DEFAULT_AUTHORITY,
   OWNER_RANK,
   resolveAccess,
   resolveMinLevel,
-  shouldSkipConfirm,
 } from '../../packages/plugin-authority/src/authority-model.js';
 
 // ════════════════════════════════════════════════════════════
@@ -44,32 +42,5 @@ describe('resolveAccess（deny > owner > 等级）', () => {
   });
   it('封禁(负数) 压过 public/safe：连 minLevel=0 的安全操作也拒', () => {
     expect(resolveAccess({ ...base, level: -1, minLevel: DEFAULT_AUTHORITY })).toBe(false);
-  });
-});
-
-describe('autoConfirmActive（auto 模式开关）', () => {
-  const now = 1_000_000;
-  it('-1=一直；未来截止=激活；0/过期=关', () => {
-    expect(autoConfirmActive(-1, now)).toBe(true);
-    expect(autoConfirmActive(now + 60000, now)).toBe(true);
-    expect(autoConfirmActive(now - 1, now)).toBe(false);
-    expect(autoConfirmActive(0, now)).toBe(false);
-  });
-});
-
-describe('shouldSkipConfirm（确认轴跳过判定）', () => {
-  const now = 1_000_000;
-  const base = { skipConfirm: false, isOwner: false, autoConfirmUntil: 0, now };
-  it('always 永不跳——即便 skipConfirm 或 owner+auto', () => {
-    expect(shouldSkipConfirm({ ...base, confirm: 'always', skipConfirm: true })).toBe(false);
-    expect(shouldSkipConfirm({ ...base, confirm: 'always', isOwner: true, autoConfirmUntil: -1 })).toBe(false);
-  });
-  it('非 always：skipConfirm(系统/cron 源) → 跳', () => {
-    expect(shouldSkipConfirm({ ...base, confirm: 'session', skipConfirm: true })).toBe(true);
-  });
-  it('非 always：owner 本人 + auto 激活 → 跳；非 owner / auto 关 → 不跳', () => {
-    expect(shouldSkipConfirm({ ...base, confirm: 'session', isOwner: true, autoConfirmUntil: -1 })).toBe(true);
-    expect(shouldSkipConfirm({ ...base, confirm: 'session', isOwner: false, autoConfirmUntil: -1 })).toBe(false);
-    expect(shouldSkipConfirm({ ...base, confirm: 'session', isOwner: true, autoConfirmUntil: 0 })).toBe(false);
   });
 });

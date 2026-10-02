@@ -2,8 +2,8 @@
 //
 // Gateway 是 Aalis 的运行时编排中枢：
 //   - 入站：监听 `inbound:message`，按 INBOUND_PHASE_ORDER 顺序运行
-//           inbound:confirm → inbound:command → inbound:trigger → inbound:flow → inbound:dispatch
-//           五个命名相位，dispatch 的默认动作是调用 agent.handleMessage。
+//           inbound:command → inbound:trigger → inbound:flow → inbound:dispatch
+//           四个命名相位，dispatch 的默认动作是调用 agent.handleMessage。
 //           dispatch 之前任一相位被 swallow（handler 不调用 next）即停止后续调度。
 //   - 出站：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链，
 //           默认动作是向 `outbound:message` 事件总线广播，平台插件接收并发送。
@@ -20,8 +20,8 @@ import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 /**
  * 入站相位共享数据结构
  *
- * 同一条消息在 `inbound:confirm` → `inbound:command` → `inbound:trigger` → `inbound:flow`
- * → `inbound:dispatch` 五个相位间被同一对象引用传递。
+ * 同一条消息在 `inbound:command` → `inbound:trigger` → `inbound:flow` → `inbound:dispatch`
+ * 四个相位间被同一对象引用传递。
  */
 export interface InboundPhaseData {
   message: IncomingMessage;
@@ -34,7 +34,6 @@ export interface InboundPhaseData {
 
 declare module '@aalis/api-hooks' {
   interface HookContextMap {
-    'inbound:confirm': InboundPhaseData;
     'inbound:command': InboundPhaseData;
     'inbound:flow': InboundPhaseData;
     'inbound:trigger': InboundPhaseData;
@@ -110,9 +109,8 @@ export interface GatewayService {
  * 同一相位内部的多个 handler 按 **注册顺序** 执行洋葱模型 (next 语义)，
  * 跨相位则由 plugin-gateway 顺序调度，无需任何优先级数字。
  *
- *   CONFIRM  → 会话内待确认回复拦截（Y/YS/否；由 plugin-session-confirm 占据）。命中即吞掉回复、
- *              不进入后续相位，从而**不触发 agent.handleMessage 对在途生成的 abort**（确认得以回送）。
- *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）
+ *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）。指令的意图确认也在这里：发出者对确认提示的回复
+ *              命中即吞掉、不进入后续相位，从而**不触发 agent.handleMessage 对在途生成的 abort**
  *   TRIGGER  → 要不要开口：禁言关键词、点名识别与判定，结果写入 message.triggerType（由生效的触发插件
  *              占据，即 trigger 服务胜者，如 plugin-trigger-policy 的计数与评分）
  *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡非 immediate 触发，其中带 source 的
@@ -129,7 +127,6 @@ export interface GatewayService {
  *       core 不应知晓。
  */
 export const INBOUND_PHASE = {
-  CONFIRM: 'inbound:confirm',
   COMMAND: 'inbound:command',
   TRIGGER: 'inbound:trigger',
   FLOW: 'inbound:flow',
@@ -138,7 +135,6 @@ export const INBOUND_PHASE = {
 
 /** 默认相位执行顺序（gateway 内部调度使用）。 */
 export const INBOUND_PHASE_ORDER = [
-  INBOUND_PHASE.CONFIRM,
   INBOUND_PHASE.COMMAND,
   INBOUND_PHASE.TRIGGER,
   INBOUND_PHASE.FLOW,
