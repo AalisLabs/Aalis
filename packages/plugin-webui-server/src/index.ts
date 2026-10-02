@@ -3,7 +3,7 @@
 
 import { Buffer } from 'node:buffer';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -31,8 +31,10 @@ import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { type ConfirmChannel, sessionConfirm } from '@aalis/api-session-confirm';
 import type {} from '@aalis/api-session-manager';
+import { sessionProtocol } from '@aalis/api-session-protocol';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, readTailLines, storage } from '@aalis/api-storage';
+import type {} from '@aalis/api-todo-list'; // declaration merging：todo:updated 事件
 import { type ToolExecuteMessage, tools } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
 import { DEFAULT_SUBSYSTEM_METADATA, webuiClient, webuiServer } from '@aalis/api-webui';
@@ -51,7 +53,6 @@ import {
   type ServiceView,
   services,
 } from '@aalis/core';
-import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type LogEntry, parseLogLine } from '@aalis/schema-log';
 import {
@@ -73,6 +74,7 @@ import { registerMediaRoutes } from './routes/media.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
+import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
 
 /**
@@ -378,6 +380,8 @@ const uses = {
   platform: optional(platform),
   process: optional(processService),
   sessionConfirm: optional(sessionConfirm),
+  /** /session 的连接接到它；每条连接到达时现取，不在时关闭连接并写明原因 */
+  sessionProtocol: optional(sessionProtocol),
   tools: optional(tools),
   llm: optional(llm),
   persona: optional(persona),
@@ -494,12 +498,16 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 当前身份 / 登录态查询统一走 auth.ts 的 GET /api/auth/status（含 identity）。
   const gate = createRouteGate(auth.identify);
   const server = createServer(expressApp);
+  // 一个 WebSocketServer 接全部端点，连接按路径分给各自的处理，认证对各端点一样。同一个 HTTP server 上
+  // 挂两个带 path 的 WebSocketServer 不行：先挂的那个会把别的路径的升级请求按 400 拒掉。
+  const wsPaths = new Set(['/ws', SESSION_PATH]);
+  const wsPath = (req: IncomingMessage) => (req.url ?? '').split('?')[0];
   const wss = new WebSocketServer({
     server,
-    path: '/ws',
     verifyClient: (info, cb) => {
-      if (auth.verifyWsClient(info.req)) cb(true);
-      else cb(false, 401, 'unauthenticated');
+      if (!auth.verifyWsClient(info.req)) cb(false, 401, 'unauthenticated');
+      else if (!wsPaths.has(wsPath(info.req))) cb(false, 404);
+      else cb(true);
     },
   });
   const sessions = new Map<string, Set<WebSocket>>();
@@ -1157,8 +1165,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 连接建立时解析一次调用者身份（cookie 在升级请求里；verifyClient 已保证已认证）
     const wsIdentity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
     logger.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
-    allClients.add(ws);
+    // 每条连接都过心跳：回收半开连接，track 同时挂上 'error' 兜底监听（见 ws-heartbeat.ts）
     heartbeat.track(ws);
+    ws.on('close', () => heartbeat.untrack(ws));
+    if (wsPath(req) === SESSION_PATH) {
+      acceptSessionSocket(ws, wsIdentity, caps.sessionProtocol.current);
+      return;
+    }
+    allClients.add(ws);
 
     ws.on('message', async data => {
       // 非 JSON 帧与形状不对的帧同属协议违规：都只记一行告警，外层 catch 留给真正的处理失败
@@ -1291,7 +1305,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     });
 
     ws.on('close', () => {
-      heartbeat.untrack(ws);
       allClients.delete(ws);
       logSubscribers.delete(ws);
       for (const [sid, sockets] of sessions) {
@@ -1840,8 +1853,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 上
     // 注册的 message 闭包在插件卸载后仍然活着，照常发 'inbound:message'——而事件发射
     // 不设关闭守卫（订阅与发布两侧不对称）。
-    // 发 1001 触发前端既有的 onclose 重连路径，bounce 之后自动接回新实例。
-    for (const ws of allClients) {
+    // 发 1001 触发前端既有的 onclose 重连路径，bounce 之后自动接回新实例。各端点的连接都在 wss.clients 里，
+    // /session 的连接关闭时撤掉会话服务那头的连接。
+    for (const ws of wss.clients) {
       try {
         ws.close(1001, 'webui 正在卸载');
       } catch {
