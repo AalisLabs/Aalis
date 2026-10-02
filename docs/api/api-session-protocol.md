@@ -176,7 +176,14 @@ interface RoomGroup {
 | `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage` |
 | `turn` | 回合开始（`by` 是发起方）与结束（`outcome` 取 replied、silent、aborted、error；被下游拦下、没有结局的一轮为 silent）。回合条目在她这一轮第一次有动静时推出，提问总排在它前面；历史里没有回合条目，其余条目带 `turnId` |
 
-附件（`ItemAttachmentSchema`）有 `kind`、`src`、`name`。`src`：图片、音频、视频是媒体地址（存储地址或网址），其他文件是服务端签发的不透明句柄。取不到可下载的来源时没有 `src`，只有名字，例如存档只记了文件名的用户上传。
+附件（`ItemAttachmentSchema`）有 `kind`、`src`、`name`。`src`：图片、音频、视频是媒体地址（存储地址或网址），其他文件是会话服务签发的不透明句柄。取不到可下载的来源时没有 `src`，只有名字，例如存档只记了文件名的用户上传。
+
+**文件句柄**：
+
+- **形状**：只含字母、数字、`-`、`_` 与一个 `.` 的字符串。客户端不解析它，原样拿去下载。
+- **取法**：经传输层给的下载入口取，WebUI 是 `GET /api/session-file?sessionId=<会话 id>&handle=<句柄>`（见 [plugin-webui-server](../plugins/plugin-webui-server.md#rest-api)），一律以附件、`application/octet-stream` 下发。
+- **有效范围**：句柄绑定签发它的会话与文件，换个会话 id 用不了；只在签发它的那次启动（同一个 `epoch`）内有效，会话服务重启之后 `epoch` 变了，客户端重新订阅，快照里是新的句柄。
+- **不签发的**：插件状态与插件私有数据的存储根（`data` 映射到家目录的 `state/`，里面有访问 token 与审计）里的文件、不是存储地址的来源。这些附件只有名字。
 
 送达结果（`undelivered`、`sentToRoom`）与审批（`approvalId`、denied）不落库。重新订阅之后，历史里只标得出工具调用之前说的话，其余标记只在实时推送里；历史里被审批拦下的工具调用显示为 failed，结果是回给模型的拒绝。
 
@@ -241,8 +248,12 @@ interface SessionConnection {
 
 interface SessionProtocolService {
   connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection;
+  /** 核验文件句柄：这次启动内为这个会话签发的，回存储地址与文件名，否则 undefined */
+  resolveFile(sessionId: string, handle: string): { uri: string; name: string } | undefined;
 }
 ```
+
+传输层下发文件之前调 `resolveFile`：伪造的、改动过的、别的会话的、会话服务重启之前签发的句柄回 `undefined`。核验出的存储地址由传输层自己读出，当附件下发，不按存储地址提供任意读取。
 
 服务端在两种情况下调 `disconnect`：握手时主版本不合（回完错误帧之后）；会话服务停止或重载（客户端重连时接到新的提供者）。原因的长度不设上限（主版本不合时原样带着客户端报的版本号），传输层的关闭原因有长度限制的（WebSocket 的关闭帧最多 123 字节）自己截短。
 

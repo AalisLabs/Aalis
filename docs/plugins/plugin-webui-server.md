@@ -5,7 +5,7 @@
 
 ## 概述
 
-Express + WebSocket 实现的 Web 管理后台和聊天平台，提供 REST API 与 WebSocket 实时通信，并作为 `webui` 平台适配器接入聊天。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现。
+Express + WebSocket 实现的 Web 管理后台和聊天平台，提供 REST API 与 WebSocket 实时通信，并作为 `webui` 平台适配器接入聊天。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、重启、换前端）。
 
 ## 插件声明
 
@@ -51,13 +51,13 @@ export default definePlugin({
 | `fileRoot` | string | `'workspace'` | 文件浏览根：文件管理页面使用的 storage 根 ID，默认 workspace |
 | `autoOpen` | boolean | `true` | 每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭 |
 | `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
-| `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：请使用足够长的随机字符串（secret，值存进 `secrets.yaml`，WebUI 不回显）。配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |
+| `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：至少 32 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理（secret，值存进 `secrets.yaml`，WebUI 不回显）。配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |
 | `relationGraphDefaultSpacing` | number | `120` | 关系图默认密度：关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。 |
 | `marketplaceRegistry` | string | `'https://registry.npmjs.org'` | 插件市场 npm 源：插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。 |
 
 ## 认证 / 访问 token
 
-WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSocket 升级请求的登录判定相同：将 cookie 中的 token 与本进程的 token 做相等比较，没有"一次性"语义——**同一进程内任意多个用户/浏览器都可以反复用同一个 token 登录**。
+WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSocket 升级请求的登录判定相同：将 cookie 中的 token 与本进程的 token 做定时安全比较（两边先取 SHA-256 摘要再逐字节比，耗时与 token 的内容和长度都无关），没有"一次性"语义——**同一进程内任意多个用户/浏览器都可以反复用同一个 token 登录**。`?token=` 与登录接口的比较方式相同。
 
 ### tokenMode 三种模式
 
@@ -65,7 +65,7 @@ WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSock
 |---|---|---|
 | `ephemeral` | 每次进程启动随机生成，重启失效 | 仅写出 `data:/webui/access.txt` |
 | `persist`（默认） | 首次生成后写入 `data:/webui/token`，重启沿用 | 同时写出 `data:/webui/access.txt` |
-| `fixed` | 来自配置 `fixedToken`，不变；空则降级 persist | 同上 |
+| `fixed` | 来自配置 `fixedToken`，不变；至少 32 个字符，短了插件激活失败并写明原因；空则降级 persist | 同上 |
 
 persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（加载顺序、运行时才启用），WebUI 先用临时 token，storage 上线后读回 `data:/webui/token` 并改用它，同时重写 `access.txt`；没有 token 文件时把当前 token 写进去。已用临时 token 登录的浏览器此时需要重新登录。
 
@@ -83,6 +83,16 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
 
+### 登录失败限速
+
+`?token=` 与 POST `/api/auth/login` 按来源地址（TCP 连接的对端地址）记失败次数：从这个地址第一次失败算起的 10 分钟内失败满 10 次，到这 10 分钟结束前它的这两种登录一律回 429，带 `Retry-After`（秒），正确的 token 也不收；窗口结束后自动解除，计数从零重来。登录成功时这个地址的计数清零。
+
+- **别的网页发起的登录不比对、不计数。** 带 `Origin` 而与本服务不同源的 POST `/api/auth/login` 回 403（同源判定与 WebSocket 的相同，见下文「WebSocket」），不带 `Origin` 的（脚本、命令行）照常比对。`Sec-Fetch-Site` 为 `cross-site` 或 `same-site` 的 `?token=`，即别的网页里的链接或图片，不认 URL 里的 token，按没带 token 处理：已登录的照常放行，没登录的回登录页。粘贴链接、书签与启动时自动打开的一键登录链接是 `none`，照常登录。这样同一台机器其他端口上的网页，或 owner 打开的任意网页，都没法借她的浏览器替她把来源地址锁住。
+- **带 cookie 的请求不计数，也不受锁定。** 已登录的页面照常使用。按 cookie 逐个猜 token 不现实：自动生成的 token 是 24 字节随机数，`fixedToken` 至少 32 个字符。反过来，对 cookie 也锁定的话，共用一个来源地址（同一个反向代理）的已登录页面会被别人一起锁住。所以防猜靠 token 的长度，限速只是登录入口的又一道关。
+- **本机回环地址同样计数。** 经同一台机器上的反向代理来的请求，对端地址都是回环地址，豁免回环就等于不限速。owner 在本机输错满额，等到窗口结束即可，不会被一直锁住。
+- **经反向代理时所有访问者共用代理的地址。** 本插件不读 `X-Forwarded-For`：没有反向代理时这个头由访问者任意填写，按它计数等于让人自报地址。代价是一个人连续输错，会让经同一代理登录的其他人也等到窗口结束。
+- **失败计数最多记 10000 个地址。** 满了再记新地址时丢掉最早的那条，内存不随来源地址的数量增长。
+
 ### 登录身份与权限
 
 通过 token 登录后，请求身份被判定为 `webui:console`，而 `cli:console` / `webui:console` 在 authority 里直接视为 **owner（最高等级）**——可以驱动 exec 等受限工具、改配置、装卸插件。也就是说：
@@ -92,7 +102,8 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 而默认 `tokenMode=persist` 下 token 长期不变、且明文写在 `data:/webui/access.txt` 里。因此把 `host` 改成 `0.0.0.0`（或经反代暴露到公网）之前：
 
 - 确认处在可信网络，或在前面加一层独立鉴权（反代 Basic Auth / mTLS / 只对内网开放）；
-- 改用 `tokenMode=fixed` 配一个足够长的随机 token，并妥善保管 `access.txt`；
+- 经反向代理访问时，代理要把原始的 `Host` 转给本插件，WebSocket 与登录请求的来源校验按它比对（见下文「WebSocket」）；
+- 改用 `tokenMode=fixed` 配一个至少 32 个字符的随机 token，并妥善保管 `access.txt`；
 - 权限语义详见 [plugin-authority](./plugin-authority.md)。
 
 ### Cookie
@@ -132,9 +143,10 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；插件装上但激活失败、转为 `error` 态时仍返回 `{ ok: true }`，`message` 说明激活失败及原因；慢激活转入后台仍在进行、或在等 required 依赖时同样返回 `{ ok: true }`，`message` 说明尚未激活。装卸只接受插件与前端界面包；若有其它插件依赖该包提供的服务，且没有别的插件正在提供该服务，卸载被拒绝。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }` |
 | `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程；需 `package-manager` 服务（缺失时 503） |
 | `/api/files*` · `/api/uploaded-files*` | GET / POST | 工作区文件管理 / 上传文件管理 |
-| `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
+| `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录）。实时日志在 `/admin` 上订阅 |
 | `/api/proxy/image` | GET | 图片代理 |
 | `/api/media` | GET | 聊天里的图片、视频、音频按存储地址取（`?uri=data:/images/x.png` 这类）：按文件头判定类型，只提供 PNG、JPEG、GIF、WebP、MP4、WebM 与 MP3、WAV、OGG、M4A，其余（含 HTML、SVG、JSON）回 415；响应带 `nosniff` 与 `sandbox` CSP。客户端把消息与会话历史里的存储地址换成这条路由 |
+| `/api/session-file` | GET | 会话条目里的文件按句柄下载（`?sessionId=<会话>&handle=<附件的 src>`）。句柄由会话服务签发，先经 `sessionProtocol.resolveFile` 核验，再按核验出的存储地址读出，一律以 `application/octet-stream`、`Content-Disposition: attachment`（文件名取句柄里的名字，`filename*` 按 RFC 8187 编码，另带 ASCII 的 `filename` 退路）与 `nosniff` 下发。句柄核验不过（伪造、改动过、别的会话的、会话服务重启之前签发的，或会话服务不在）回 403，文件已不在回 404，其余读不出的回 500 并记告警。这条路由不接受存储地址，哪些文件不签发见 [plugin-session-server](./plugin-session-server.md#文件句柄) |
 
 core 的插件管理动作与 `services.prefer` 只改运行态；启停、删除实例与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘；改插件配置与新建实例经 `host-config` 的 `applyPluginConfig`，运行态、文档、密钥与落盘一步完成。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、新建实例与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好被拒写的文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停与服务偏好在重启时以文件为准。修好文件的方式不限，原样改回也会触发这次对账。落盘因其它原因失败（如没有写权限、磁盘写满）时，这些路由返回 500 与 `{ error, applied: true }`：文件没有变化，也不会触发重载，改动保留在配置文档里，下一次保存成功时一并写入。这两种情形下，插件在动作之后没有进入预期状态（激活失败、未在宽限内停止、仍在激活、在等依赖或保持禁用）时，`error` 开头先说明这一点。删除实例先落盘、后卸载：后缀实例由配置段定义，热重载也按文件登记，先卸载后落盘时卸载途中的热重载会按仍带配置段的文件把实例重新登记。落盘被拒返回 409、其它失败返回 500，实例不删除，文档里的配置段与禁用标记还原。全局配置（`PUT /api/config`）落盘失败时撤回文档里的改动，被拒返回 409、其它失败返回 500：`logLevel` 与 `slowThresholdMs` 要重启才生效，`name` 由状态接口实时读取，撤回后都回到修改前。`POST /api/config/save` 同样是被拒返回 409、其它失败返回 500。
 
@@ -142,7 +154,13 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、删�
 
 ## WebSocket
 
-WebSocket 与 HTTP 同端口，两个端点：`/session` 是会话协议，`/ws` 是下文的旧协议。升级请求的认证与 HTTP 相同（cookie 里的 token），没登录或 token 不对回 401；认证之后只认这两个路径（可以带查询串），其他路径回 404。每条连接都有心跳：每 30 秒 ping 一次，30 到 60 秒内没回 pong 的半开连接被踢掉。插件卸载时各端点的连接以 1001「webui 正在卸载」关闭。
+WebSocket 与 HTTP 同端口，三个端点：`/session` 是会话协议，`/admin` 是管理面推送，`/ws` 是下文的旧协议。升级请求先校验来源，再认证，最后认路径，三个端点都一样：
+
+- **来源**：带 `Origin` 的握手只收与本服务同源的，即 `Origin` 的主机与端口等于请求的 `Host`（两边都去掉协议的默认端口再比，代理转来的 `Host` 写成 `x:443` 也认），否则回 403。同一主机别的端口上的网页与 WebUI 同站，`SameSite=Strict` 的 cookie 会随它发起的握手一起发出，这一关把它拦下。浏览器发起的握手一律带 `Origin`；不带的是脚本、命令行等浏览器之外的客户端，不会被别的网页借用户的浏览器发起，只按 token 认证。经反向代理访问时，代理要把原始的 `Host` 转过来，否则浏览器的握手都会被当成跨源。没有额外放行来源的配置项：WebUI 的页面由本服务提供，或经转发原始 `Host` 的代理访问（前端开发时的开发服务器代理也是这样），握手都是同源的。
+- **认证**：与 HTTP 相同（cookie 里的 token），没登录或 token 不对回 401。
+- **路径**：只认这三个路径（可以带查询串），其他路径回 404。
+
+每条连接都有心跳：每 30 秒 ping 一次，30 到 60 秒内没回 pong 的半开连接被踢掉。插件卸载时各端点的连接以 1001「webui 正在卸载」关闭。
 
 ### `/session`：会话协议
 
@@ -152,6 +170,7 @@ WebSocket 与 HTTP 同端口，两个端点：`/session` 是会话协议，`/ws`
 - 本插件启动时经 `approvals.registerSurface('webui')` 登记 `webui` 审批面（见 [api-approval](../api/api-approval.md)），每条连接的对端都带着这个登记句柄：连接上的在场上报与审批应答记在 `webui` 与本插件实例名下，连接自己报不了别的面。握手结果里的审批面是登记名 `webui`。审批服务晚于本插件上线也不用重启本插件。
 - 每个文本帧是一个 JSON-RPC 帧，原文转交会话服务；服务端发出的帧原样发回。连接关闭时撤掉会话服务那头的连接。
 - 会话服务在每条连接到达时现取，会话服务晚于本插件上线、停用后重新启用，都不用重启本插件。
+- 条目里图片、音频、视频的 `src` 是存储地址或网址，经 `/api/media` 取；其他文件的 `src` 是会话服务签发的句柄，经 `/api/session-file` 下载（见上文 REST API）。
 
 关闭码：
 
@@ -166,7 +185,7 @@ WebSocket 与 HTTP 同端口，两个端点：`/session` 是会话协议，`/ws`
 浏览器里的客户端：
 
 ```ts
-const socket = new WebSocket(`ws://${location.host}/session`); // 同源，cookie 自动带上
+const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/session`); // 同源，cookie 自动带上
 socket.onopen = () =>
   socket.send(JSON.stringify({
     jsonrpc: '2.0',
@@ -178,6 +197,19 @@ socket.onmessage = event => {
   const frame = JSON.parse(event.data); // 带 id 的是回应，不带 id 的是推送
 };
 ```
+
+### `/admin`：管理面推送
+
+事件与消息的类型、前端怎么处理见 [api-webui](../api/api-webui.md) 的「管理面推送」一节。本插件的推送来源：
+
+| 事件 | 来源 | 推给谁 |
+|---|---|---|
+| `log` | 进程级日志中枢的每条新日志，与写进 `logs:/latest.log` 的是同一份 | 发过 `log.subscribe`、还没退订的连接 |
+| `plugins.changed` | core 每次重算插件状态之后的 `plugins:changed`；页面登记表的每次登记与撤回 | 全部 `/admin` 连接 |
+| `app.restarting` | core 的 `app:restarting` | 全部 `/admin` 连接 |
+| `client.reload` | 改或清除 `webui-client` 的服务偏好之后；装卸包后重新发现前端、摘掉了已不在的前端包之后 | 全部 `/admin` 连接 |
+
+前端发来的只有 `log.subscribe` 与 `log.unsubscribe`；认不出的消息记一行告警「WebUI /admin 收到认不出的消息，已忽略」，连接照常。连接关闭时它的日志订阅随之撤掉。本插件只在卸载时主动关闭连接（1001），客户端稍后重连。
 
 ### `/ws`：旧协议
 
@@ -196,7 +228,7 @@ socket.onmessage = event => {
 
 | 类型 | 说明 |
 |---|---|
-| `message` | 完整消息推送。发往 WebUI 自己会话的消息由本插件认领投递回执：会话历史是收件箱，回执成功表示这条消息已进会话历史，有在线页面时同时推送（不等页面写出）。agent 的文字回复由 agent 存档；其余由本插件经 message-archive 写进会话历史，不取决于 image-sender 是否在场：不是她说的文字（系统提示、指令回复、宿主通知）与文件记成事件标记，回看时显示成分隔条，不进模型上下文；图片、视频、音频按 `outboundMediaMessage` 的格式记，带 `skipArchive` 的（`history_ref` 重发，原图已在历史里）不记。随后发出的 `outbound:delivered` 快照给附件标上 `skipArchive`，image-sender 不再记一份，因此发往 WebUI 的网址图片与视频不由它补视觉描述。存档服务不在场且没有在线页面时回执失败；写入失败而推送到了页面时仍算送达。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败且没有在线页面时回执失败，已写成的几条不撤回，发起方重发后这几条会重复 |
+| `message` | 完整消息推送。发往 WebUI 自己会话的消息由本插件认领投递回执：会话历史是收件箱，回执成功表示这条消息已进会话历史，有在线页面时同时推送（不等页面写出）。agent 的文字回复由 agent 存档；其余由本插件经 message-archive 写进会话历史，不取决于 image-sender 是否在场：不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记，回看时显示成分隔条，不进模型上下文；图片、视频、音频按 `outboundMediaMessage` 的格式记，会话服务据此还原成附件；给的是存储地址的文件同样按这个格式记（描述位记文件名，`metadata` 另记原样的 `ref` 与 `name`），会话服务给它签发下载句柄。这样的文件以 `[文件: 名称 | ref:…]` 进入模型上下文与记忆，与 QQ 等平台不同：image-sender 只归档图片、音频、视频，那些平台上发出的文件不进历史。不是存储地址的文件（网址、data URL）签不出句柄，记成事件标记 `[文件] 名称`，内容不进历史。带 `skipArchive` 的附件（`history_ref` 重发，原图已在历史里）不记。随后发出的 `outbound:delivered` 快照给附件标上 `skipArchive`，image-sender 不再记一份，因此发往 WebUI 的网址图片与视频不由它补视觉描述。存档服务不在场且没有在线页面时回执失败；写入失败而推送到了页面时仍算送达。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败且没有在线页面时回执失败，已写成的几条不撤回，发起方重发后这几条会重复 |
 | `stream` | 流式增量推送（contentDelta / reasoningDelta） |
 | `stream_resume` | 页面刷新后恢复中断的流（累积缓冲内容） |
 | `tool_call` | 工具调用开始/结束事件 |
@@ -225,7 +257,7 @@ socket.onmessage = event => {
 
 扫描的目录是安装集（`host-paths` 的 `app`）下的 `packages/` 与 `node_modules/@aalis`，另按安装集 `package.json` 的依赖解析前端包。宿主不提供 `host-paths` 时没有可扫的目录，发现不到任何前端，整个 WebUI 前端不可用，页面路径回 404「前端未就绪」，只剩 HTTP 接口；同时市场列表（`/api/marketplace`）与系统组件（`/api/system-components`）判断不了已装的包，返回 503。Node 宿主 `@aalis/runtime` 总会提供 `host-paths`。
 
-**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 注册顺序。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸）后**实时重挂静态目录 + 广播 WebSocket `reload`**，无需重启进程。
+**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 注册顺序。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸）后**实时重挂静态目录，向 `/admin` 推 `client.reload`、向 `/ws` 推 `reload`**，无需重启进程。
 
 ### 切换逃生页 `/__clients`
 

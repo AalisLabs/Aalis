@@ -585,7 +585,12 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
 
   /** 会话服务从存档归并出的提问正文 */
   function sessionServerText(content: string): string | undefined {
-    const [item] = mergeArchive([{ role: 'user', content }], () => false, false);
+    const [item] = mergeArchive(
+      [{ role: 'user', content }],
+      () => false,
+      false,
+      () => undefined,
+    );
     return item?.kind === 'user-message' ? item.text : undefined;
   }
 

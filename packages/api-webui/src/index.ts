@@ -1,10 +1,10 @@
 // ----- WebUI 服务接口与声明式页面组件 -----
 //
-// WebUI 服务契约、声明式页面组件类型与服务描述符（WebuiPage 由本包直接导出）。
+// WebUI 服务契约、声明式页面组件类型、管理面推送（/admin）的事件类型与服务描述符（WebuiPage 由本包直接导出）。
 // 需要登记 WebUI 页面的插件从本包导入相关类型。
 
 import type { UserIdentity } from '@aalis/api-authority';
-import type { ServiceRef } from '@aalis/core';
+import type { LogEntry, ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
@@ -340,3 +340,25 @@ export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server
     registerAction: (method: string, handler: WebuiActionHandler) => actions.add({ method, handler }),
   });
 });
+
+// ----- 管理面推送 -----
+//
+// 会话之外的推送走 WebUI 的 WebSocket 端点 `/admin`，与会话协议的 `/session` 分开，认证相同（cookie 里的 token）。
+// 每个文本帧是一个 JSON 对象，`type` 区分种类。这里只给类型：服务端不校验自己发出的帧，前端照它实现。
+
+/** 前端发往 `/admin` 的消息：日志页打开时订阅实时日志，离开时退订。认不出的消息服务端忽略，连接照常 */
+export type WebuiAdminClientMessage = { type: 'log.subscribe' } | { type: 'log.unsubscribe' };
+
+/**
+ * `/admin` 推给前端的事件：
+ * - `log`：一条新日志，只推给订阅了的连接。先订阅、再取 `GET /api/logs/tail`，两边按 `seq` 去重；
+ * - `plugins.changed`：插件状态可能变了，或页面登记表变了，前端重取插件与页面（`GET /api/plugins`、`GET /api/pages`）。
+ *   一次启停可能连着推几条，服务端不合并；
+ * - `app.restarting`：应用即将重启，连接随后断开；
+ * - `client.reload`：前端偏好改了或有前端包被卸载，活跃前端可能换了，前端整页重新加载。
+ */
+export type WebuiAdminEvent =
+  | { type: 'log'; entry: LogEntry }
+  | { type: 'plugins.changed' }
+  | { type: 'app.restarting' }
+  | { type: 'client.reload' };
