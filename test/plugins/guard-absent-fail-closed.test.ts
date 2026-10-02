@@ -7,7 +7,7 @@ import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 
 // ════════════════════════════════════════════════════════════
 // 没有执行守卫（未装 plugin-authority）时 tools / commands 两处同一口径 fail-closed：
-// 等同人人都是默认等级、没有确认通道。曾经整段跳过校验——restricted、声明 confirm、
+// 等同人人都是默认等级、没人能确认。曾经整段跳过校验——restricted、声明 confirm、
 // 高 risk 的能力零鉴权直接执行。
 //   - 需要更高等级（restricted / risk 非 safe，risk 遮蔽 visibility）→ 拒绝并点名缺权限插件
 //   - 声明了 confirm → 拒绝（没人能确认）

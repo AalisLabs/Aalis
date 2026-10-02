@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { agent } from '@aalis/api-agent';
-import { authority } from '@aalis/api-authority';
+import { approvals } from '@aalis/api-approval';
 import { commands } from '@aalis/api-commands';
 import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated 事件
 import { hostConfig } from '@aalis/api-host-config';
@@ -29,7 +29,6 @@ import {
 } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
-import { type ConfirmChannel, sessionConfirm } from '@aalis/api-session-confirm';
 import type {} from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
 import type { StorageService } from '@aalis/api-storage';
@@ -190,7 +189,6 @@ interface WSOutgoing {
     | 'todo_updated'
     | 'restarting'
     | 'reload'
-    | 'confirm'
     | 'token_usage'
     | 'compressing'
     | 'page_refresh';
@@ -374,14 +372,14 @@ const uses = {
   source: optional(pluginSource),
   packageManager: optional(packageManager),
   storage: optional(storage),
-  authority: optional(authority),
   commands: optional(commands),
   // platform 既被本插件提供又被平台页枚举：required 会让激活等一个由自己提供的服务
   platform: optional(platform),
   process: optional(processService),
-  sessionConfirm: optional(sessionConfirm),
   /** /session 的连接接到它；每条连接到达时现取，不在时关闭连接并写明原因 */
   sessionProtocol: optional(sessionProtocol),
+  /** 登记 webui 审批面：/session 连接上的在场上报与应答记在这个登记身份名下 */
+  approvals: optional(approvals),
   tools: optional(tools),
   llm: optional(llm),
   persona: optional(persona),
@@ -502,6 +500,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 挂两个带 path 的 WebSocketServer 不行：先挂的那个会把别的路径的升级请求按 400 拒掉。
   const wsPaths = new Set(['/ws', SESSION_PATH]);
   const wsPath = (req: IncomingMessage) => (req.url ?? '').split('?')[0];
+  const approvalSurface = caps.approvals.registerSurface('webui');
   const wss = new WebSocketServer({
     server,
     verifyClient: (info, cb) => {
@@ -1117,34 +1116,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
   });
 
-  // ---------- 受限操作交互式确认（复用 session-confirm 协调器；WebUI 传输=WS type:'confirm'，流式友好） ----------
-  // 协调器逻辑（待确认/超时/解析/文案）由 session-confirm 服务统一实现；WebUI 只注入自己的 WS 投递，
-  // 并保留 type:'confirm'（前端「确认模式」信号，抑制富客户端的「打字即打断」）。回复在 WS-onmessage 调 feed（下方）。
-  let confirmChannel: ConfirmChannel | undefined;
-  caps.sessionConfirm.follow(confirmSvc => {
-    const channel = confirmSvc.createChannel((request, text) => {
-      const payload: WSOutgoing = { type: 'confirm', content: text, sessionId: request.sessionId };
-      const json = JSON.stringify(payload);
-      const sockets = sessions.get(request.sessionId);
-      const targets = sockets && sockets.size > 0 ? sockets : allClients;
-      for (const ws of targets) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(json);
-      }
-    });
-    // 挂到 authority 上要跟着它的胜者走（bounce 后重挂），所以嵌套一层跟随；
-    // 外层 cleanup 即内层订阅的退订：session-confirm 换胜者或本插件拆卸时一并注销
-    confirmChannel = channel;
-    const offAuthority = caps.authority.follow(authoritySvc =>
-      authoritySvc.setConfirmHandler('webui', channel.handler),
-    );
-    // cleanup：摘 handler、dispose 旧通道（在飞确认按取消结算，不留到 60s 超时）、清引用
-    return () => {
-      offAuthority();
-      channel.dispose();
-      if (confirmChannel === channel) confirmChannel = undefined;
-    };
-  });
-
   // ---------- 文件管理 API ----------
   registerFileRoutes(expressApp, { storage, fileRoot: uiConfig.fileRoot, logger }, gate);
   registerUploadedFilesRoutes(
@@ -1169,7 +1140,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     heartbeat.track(ws);
     ws.on('close', () => heartbeat.untrack(ws));
     if (wsPath(req) === SESSION_PATH) {
-      acceptSessionSocket(ws, wsIdentity, caps.sessionProtocol.current);
+      acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
       return;
     }
     allClients.add(ws);
@@ -1279,13 +1250,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           sessions.set(sessionId, new Set());
         }
         sessions.get(sessionId)!.add(ws);
-
-        // 检查待确认的受限操作（拦截输入作为确认/取消；协调器逻辑由 session-confirm 服务统一处理）
-        // 传应答者身份：仅确认的触发者本人能应答（防第三方抢答；webui 同账户天然同人）。
-        if (confirmChannel?.feed(sessionId, trimmed, wsIdentity.userId)) {
-          // 不继续处理此消息，交给原始命令/工具执行流返回结果
-          return;
-        }
 
         // 指令解析已统一到全局 inbound:command 相位（plugin-commands 注册）。
         // 适配器不再内联解析命令——未注册的命令会被该相位放行为普通消息进入
@@ -1846,7 +1810,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   lifecycle.onDispose(() => {
-    confirmChannel?.dispose(); // 清 WebUI 确认通道里挂起的待确认（安全拒），避免 Promise 永挂
     heartbeat.dispose();
     removeLogListener();
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对

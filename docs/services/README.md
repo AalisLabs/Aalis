@@ -39,7 +39,6 @@
 | 服务 | 定位 |
 |---|---|
 | [authority](authority.md) | 访问控制：开放数字等级 + 双轴（等级 + 确认）；risk/visibility/deniedCapabilities；owner=∞。参考实现 authority。 |
-| [session-confirm](session-confirm.md) | HITL 人确认（轴 B）；`setConfirmHandler` IoC；依赖 gateway 而非 authority。 |
 
 ## 工具与媒体
 | 服务 | 定位 |

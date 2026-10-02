@@ -1,6 +1,6 @@
 import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
-import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { createStorageGateway, isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
@@ -11,6 +11,7 @@ import {
   config,
   definePlugin,
   events,
+  lifecycle,
   logger,
   optional,
   provide,
@@ -19,6 +20,8 @@ import {
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { CommandRegistry } from './commands.js';
 import { renderDetail, renderOverview } from './help.js';
+
+type IncomingMessage = InboundPhaseData['message'];
 
 const configSchema = defineConfig({
   commandPrefix: {
@@ -116,6 +119,8 @@ const uses = {
   app: optional(appService),
   events,
   hooks,
+  /** 停用时结算等待中的意图确认 */
+  lifecycle,
   logger,
   config,
   provide,
@@ -142,6 +147,7 @@ function registerCommands({
   app,
   events,
   hooks,
+  lifecycle,
   logger,
   config,
   provide,
@@ -216,25 +222,72 @@ function registerCommands({
   // 评估——与普通用户走同一闸门，不存在 bypassGuard 式的全绕过。
   // **actor 缺省即匿名**：创建者匿名时不得回填 owner，否则受信来源就成了提权通道
   // （在触发路径把空 actor 补成 `webui:console` 之类，等于开了一条 owner 快速通道）。
-  // skipConfirm 仍然需要：cron 上下文无人可点受限二次确认弹窗（authorize 仍生效）。
+  // skipConfirm 仍然需要：cron 上下文里没人可问（authorize 仍生效，always 档照常要确认、无从确认即拒）。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。
-  // 受信系统源 = 免交互确认（skipConfirm）+ 结果写日志而非回发。仅 scheduler：
-  // 它建任务的入口是 dangerous + confirm:'always'（L2 且每次真人确认），拿到受信特权
+  // 受信系统源 = 免确认（skipConfirm）+ 结果写日志而非回发。仅 scheduler：
+  // 它建任务的入口是 dangerous + confirm:'always'（L2 且每次 owner 批准），拿到受信特权
   // 的成本与特权本身相称。
   // 刻意排除的两项（2026-08-28 对抗审计定，勿再"修死项"重开）：
   //   'system' —— 只出现在出站消息，无入站生产者，纯死值，删。
   //   'workflow:*' —— 曾想按前缀纳入，但 workflow_define/workflow_run 只是 sensitive(L1)、
   //     零确认，一旦受信，L1 就能定义 send-message 节点向任意会话静默投递 /clear 这类
   //     0 级 + confirm:'session' 命令、且无回显——confirm 闸（防注入误清）被绕过。
-  //     故 workflow 派发**不受信**：它经 COMMAND 相位的命令照常走 confirm，虚拟会话无人
-  //     应答即超时拒（fail-closed）。要让 workflow 自动化免确认，须先把 define/run 抬到
-  //     与 scheduler 相称的档位，那是单独的决定。
+  //     故 workflow 派发**不受信**：带 source 的注入问不到发出者，需要确认的指令直接拒（fail-closed）。
+  //     要让 workflow 自动化免确认，须先把 define/run 抬到与 scheduler 相称的档位，那是单独的决定。
   const TRUSTED_SOURCE_EXACT = new Set(['scheduler']);
   const isTrustedSystemSource = (source: string | undefined): boolean => !!source && TRUSTED_SOURCE_EXACT.has(source);
 
+  /** 回到消息所在的会话。required 依赖在调度收敛前可能短暂缺席，故保留事件兜底 */
+  async function reply(message: IncomingMessage, content: string): Promise<void> {
+    const out = { content, sessionId: message.sessionId, platform: message.platform, source: 'command' as const };
+    const gatewayService = gateway.current;
+    if (gatewayService) await gatewayService.dispatchOutbound(out);
+    else await events.emit('outbound:message', out);
+  }
+
+  // ===== 意图确认：人亲手输入、声明了 confirm 的指令，在同一会话里问发出者本人 =====
+  //
+  // 只认这个人在这个会话里的下一条消息（带 source 的注入不认）：y 为确认，其余取消，这条回复吞掉、不往下走；
+  // 时限内不回也取消。问的是「确定要这么做吗」，不是 owner 审批：群成员在私聊里清自己的记忆照样能确认。
+  const INTENT_TIMEOUT_MS = 60_000;
+  const YES = /^\s*(?:y|yes)\s*$/i;
+  /** 等回复的意图确认：键是会话与发出者，值是结算函数 */
+  const intents = new Map<string, (confirmed: boolean) => void>();
+  const intentKey = (m: IncomingMessage) => `${m.sessionId}\n${m.platform}\n${m.userId}`;
+
+  function askIntent(message: IncomingMessage, raw: string): () => Promise<boolean> {
+    return () =>
+      new Promise<boolean>(resolve => {
+        const key = intentKey(message);
+        const settle = (confirmed: boolean) => {
+          clearTimeout(timer);
+          if (intents.get(key) === settle) intents.delete(key);
+          resolve(confirmed);
+        };
+        const timer = setTimeout(() => settle(false), INTENT_TIMEOUT_MS);
+        timer.unref?.();
+        intents.set(key, settle);
+        void reply(
+          message,
+          `确认执行 ${raw} 吗？回复 y 确认，回复其他内容取消；${INTENT_TIMEOUT_MS / 1000} 秒内不回复也取消。`,
+        );
+      });
+  }
+
+  // 停用（含重载）时等待中的确认按取消结算：新实例不认得它们，留到时限只会在拆卸之后才回「已取消」。
+  // 在撤回登记之前结算，网关还在，取消的回复发得出去
+  lifecycle.onDrain(() => {
+    for (const settle of [...intents.values()]) settle(false);
+  }, '取消等待中的意图确认');
+
   hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
+    const settle = message.source === undefined ? intents.get(intentKey(message)) : undefined;
+    if (settle) {
+      settle(YES.test(message.content ?? ''));
+      return;
+    }
     // 内部触发（idle-trigger 等无 userId）不参与命令解析
     if (!message.content) return next();
 
@@ -258,6 +311,9 @@ function registerCommands({
         args: parsed.args,
         raw: parsed.raw,
         skipConfirm: isSystemTrigger,
+        // 人亲手输入的消息才问得到发出者
+        confirmIntent:
+          message.source === undefined && message.userId !== undefined ? askIntent(message, parsed.raw) : undefined,
       });
       if (result) {
         if (isSystemTrigger) {
@@ -266,19 +322,7 @@ function registerCommands({
           const preview = result.length > 500 ? `${result.slice(0, 500)}…` : result;
           logger.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
         } else {
-          // required 依赖在调度收敛前可能短暂缺席，故保留事件兜底
-          const gatewayService = gateway.current;
-          const reply = {
-            content: result,
-            sessionId: message.sessionId,
-            platform: message.platform,
-            source: 'command' as const,
-          };
-          if (gatewayService) {
-            await gatewayService.dispatchOutbound(reply);
-          } else {
-            await events.emit('outbound:message', reply);
-          }
+          await reply(message, result);
         }
       }
     } catch (err) {

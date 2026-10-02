@@ -53,7 +53,6 @@ interface WebSocketHandlers {
     done: boolean,
     toolCallsProgress?: Array<{ index: number; name: string; charsAccumulated: number; startedAt: number }>,
   ) => void;
-  onConfirm?: (content: string) => void;
   onTokenUsage?: (usage: TokenUsageData) => void;
   onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void;
   onHistoryChanged?: (sessionId: string) => void;
@@ -128,8 +127,6 @@ export function useWebSocket(handlers: WebSocketHandlers) {
             h.onTodoUpdated?.(data.todoItems);
           } else if (data.type === 'stream_resume') {
             h.onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', data.segments ?? [], !!data.done, data.toolCallsProgress);
-          } else if (data.type === 'confirm' && data.content) {
-            h.onConfirm?.(data.content);
           } else if (data.type === 'token_usage' && data.tokenUsage) {
             h.onTokenUsage?.(data.tokenUsage);
           } else if (data.type === 'compressing' && data.sessionId) {

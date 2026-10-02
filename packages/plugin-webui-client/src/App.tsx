@@ -148,9 +148,6 @@ export function App() {
   // 重启/刷新 overlay 的提示文字
   const [restartMessage, setRestartMessage] = useState('正在重启…');
 
-  // 高危操作确认等待状态
-  const [pendingConfirm, setPendingConfirm] = useState(false);
-
   // Token 使用量统计
   const [tokenUsage, setTokenUsage] = useState<TokenUsageData | null>(null);
 
@@ -512,15 +509,6 @@ export function App() {
     setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
   }, []);
 
-  /** 高危操作确认提示：插入消息但不影响 loading/streaming 状态 */
-  const handleConfirm = useCallback((content: string) => {
-    setPendingConfirm(true);
-    setMessages(prev => [
-      ...prev,
-      { role: 'assistant' as const, content, segments: [{ type: 'text' as const, content }], timestamp: Date.now() },
-    ]);
-  }, []);
-
   /** Token 使用量更新 */
   const handleTokenUsage = useCallback((usage: TokenUsageData) => {
     setTokenUsage(usage);
@@ -552,7 +540,6 @@ export function App() {
     onSessionsChanged: handleSessionsChanged,
     onTodoUpdated: handleTodoUpdated,
     onStreamResume: handleStreamResume,
-    onConfirm: handleConfirm,
     onTokenUsage: handleTokenUsage,
     onCompressing: handleCompressing,
     onHistoryChanged: session.handleHistoryChanged,
@@ -660,19 +647,6 @@ export function App() {
   ): Promise<void> => {
     const trimmed = content.trim();
 
-    // 高危操作确认中 — 仅发送确认回复，不中止也不新建 loading
-    if (pendingConfirm) {
-      if (!trimmed) return;
-      setPendingConfirm(false);
-      setMessages(prev => [...prev, {
-        role: 'user',
-        content: trimmed,
-        timestamp: Date.now(),
-      }]);
-      send(trimmed);
-      return;
-    }
-
     // 生成中 — 先中止当前生成
     if (loading) {
       handleAbort();
@@ -719,7 +693,7 @@ export function App() {
     setToolLimitReached(false);
     setLoading(true);
     send(trimmed, attachments.length > 0 ? attachments : undefined);
-  }, [pendingConfirm, loading, send, handleAbort, session]);
+  }, [loading, send, handleAbort, session]);
 
   // 内置页面（webui-server 核心页面）的图标映射
   const builtinIconMap: Record<string, React.ReactNode> = {

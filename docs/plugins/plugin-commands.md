@@ -48,11 +48,17 @@ export default definePlugin({
 | `/shutdown` | — | 关闭应用 | restricted |
 | `/restart` | — | 重启应用 | restricted |
 
-`/model` 由 plugin-agent 注册，`/tools` 由 plugin-tool-system 注册，`/authority`、`/level`、`/auto` 由 plugin-authority 注册，详见各自页面。
+`/model` 由 plugin-agent 注册，`/tools` 由 plugin-tool-system 注册，`/authority`、`/level` 由 plugin-authority 注册，详见各自页面。
 
 单条指令的等级与确认可在 plugin-authority 配置中按能力键 `command:<点路径>`（如 `command:clear.all`）覆盖，见 plugin-authority 文档。
 
-权限守卫由 plugin-authority 注入。未安装 plugin-authority 时指令系统按 fail-closed 处理：等同所有人都是默认等级、没有确认通道，需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的指令一律拒绝并提示缺少权限插件，其余指令照常执行。上表中除 `/help`、`/status` 外的指令因此都不可用。
+## 意图确认
+
+声明了 `confirm` 的指令（如 `/clear`）由人亲手输入时，执行前在同一会话里问发出者本人「确认执行 /clear 吗？」。只认这个人在这个会话里的下一条消息：回 `y`（或 `yes`，不分大小写）即执行，回别的取消；这条回复在 `inbound:command` 相位被吞掉，不进入后续相位、不打断在途的回合。别人的消息、发出者在别的会话里的消息、带 `source` 的注入都不算回复，照常往下走。60 秒不回即取消；插件停用或重载时，等待中的确认当即取消。
+
+这是意图确认，不是 owner 审批：群成员在私聊里用 `/clear` 清自己的记忆照样能确认。带 `source` 的注入投递的指令（编排的发消息节点等）问不到发出者，需要确认时直接拒；scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，`always` 档照样无从确认而拒。确认要不要做由 plugin-authority 的执行守卫判定（含 `confirmOverrides` 与白名单），见 [plugin-authority](./plugin-authority.md)。
+
+权限守卫由 plugin-authority 注入。未安装 plugin-authority 时指令系统按 fail-closed 处理：等同所有人都是默认等级、没人能确认，需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的指令一律拒绝并提示缺少权限插件，其余指令照常执行。上表中除 `/help`、`/status` 外的指令因此都不可用。
 
 ## 选项解析形式
 

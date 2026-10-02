@@ -47,7 +47,7 @@ describe('tools 守卫的 actor 接线', () => {
     );
     await app.stop();
     expect(seen?.actor).toEqual({ platform: 'webui', userId: 'console' });
-    expect(seen?.platform, 'confirm 选路依赖会话平台，不得被 actor 覆盖').toBe('onebot');
+    expect(seen?.platform, '审批的发起类别等按会话平台判，不得被 actor 覆盖').toBe('onebot');
   });
 
   it('authority 等级裁决按 actor：物理匿名 + owner actor 可执行 sensitive 工具，无 actor 则不能', async () => {

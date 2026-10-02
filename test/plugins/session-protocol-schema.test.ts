@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { Approval, SettledState } from '../../packages/api-approval/src/index.js';
 import type { SessionConfig } from '../../packages/api-session-manager/src/index.js';
 import {
+  type ApprovalSchema,
   ErrorFrameSchema,
   NotificationFrameSchema,
   RequestFrameSchema,
@@ -38,8 +40,23 @@ const summary: SessionSummary = {
   running: false,
   error: false,
   unread: false,
+  attention: true,
   archived: false,
   paper: true,
+};
+
+const approval: Approval = {
+  id: 'ap-1',
+  sessionId: 'session-1',
+  turnId: 't1',
+  callId: 'c1',
+  origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+  target: 'tool',
+  tool: 'file_edit',
+  facts: { diff: { path: 'workspace:/a.txt', patch: '-旧\n+新' }, params: {} },
+  options: ['approve', 'deny'],
+  contentHash: 'f'.repeat(64),
+  state: 'pending',
 };
 
 const configView: SessionMethodResult<'session/config/get'> = {
@@ -88,7 +105,9 @@ const methodSamples: MethodSamples = {
       valid: {
         sessions: [summary],
         nextCursor: '50',
-        groups: [{ platform: 'onebot', instance: '@aalis/plugin-adapter-onebot:a', rooms: 1, accounts: 1 }],
+        groups: [
+          { platform: 'onebot', instance: '@aalis/plugin-adapter-onebot:a', rooms: 1, accounts: 1, attention: 1 },
+        ],
       },
       invalid: { sessions: [{ ...summary, running: 'yes' }], groups: [] },
     },
@@ -158,9 +177,10 @@ const methodSamples: MethodSamples = {
             attachments: [],
           },
         ],
+        approvals: [approval],
         before: 'c1',
       },
-      invalid: { epoch: 'e1', seq: -1, session: summary, items: [] },
+      invalid: { epoch: 'e1', seq: 3, session: summary, items: [], approvals: [{ ...approval, state: 'waiting' }] },
     },
   },
   'session/unsubscribe': {
@@ -222,6 +242,17 @@ const methodSamples: MethodSamples = {
     params: { valid: { sessionId: 'session-1' }, invalid: {} },
     result: { valid: {}, invalid: null },
   },
+  'presence/update': {
+    params: { valid: { active: true }, invalid: { active: 'yes' } },
+    result: { valid: {}, invalid: null },
+  },
+  'approval/respond': {
+    params: {
+      valid: { approvalId: 'ap-1', decision: 'deny', contentHash: 'f'.repeat(64), note: '先别动这个文件' },
+      invalid: { approvalId: 'ap-1', decision: 'always', contentHash: 'f'.repeat(64) },
+    },
+    result: { valid: {}, invalid: null },
+  },
 };
 
 /** 每种条目一个合法样例 */
@@ -261,6 +292,7 @@ const items: SessionItem[] = [
     output: 'a.txt\n',
     result: '{"exitCode":0}',
     durationMs: 12,
+    approvalId: 'ap-1',
   },
   {
     kind: 'notice',
@@ -332,6 +364,15 @@ const notificationSamples: NotificationSamples = {
     valid: { sessionId: 'session-1', epoch: 'e1', seq: 7 },
     invalid: { sessionId: 'session-1', epoch: 'e1' },
   },
+  'approval/requested': {
+    valid: { approval },
+    invalid: { approval: { ...approval, options: ['approve', 'always'] } },
+  },
+  'approval/settled': {
+    valid: { approvalId: 'ap-1', state: 'expired' },
+    // 结算推送的状态只有四种结局，不会是 pending
+    invalid: { approvalId: 'ap-1', state: 'pending' },
+  },
 };
 
 /**
@@ -340,6 +381,10 @@ const notificationSamples: NotificationSamples = {
  */
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const configInSync: Same<Required<SessionMethodResult<'session/config/get'>['config']>, Required<SessionConfig>> = true;
+/** 协议里的审批对象与 api-approval 的 Approval 是同一个形状（类型检查守） */
+const approvalInSync: Same<ReturnType<(typeof ApprovalSchema)['parse']>, Approval> = true;
+/** 结算推送的状态与 api-approval 的 SettledState 相同（类型检查守） */
+const settledInSync: Same<SessionNotificationParams<'approval/settled'>['state'], SettledState> = true;
 
 /** 经 JSON 往返后用 schema 解析：结果与原样例相等 */
 function roundTrip(schema: { parse(value: unknown): unknown }, value: unknown): unknown {
@@ -347,8 +392,10 @@ function roundTrip(schema: { parse(value: unknown): unknown }, value: unknown): 
 }
 
 describe('会话协议 schema 往返', () => {
-  it('会话配置的各项与 SessionConfig 一一对应（类型检查守）', () => {
+  it('会话配置的各项与 SessionConfig 一一对应，审批对象与 Approval 同形，结算推送的状态与 SettledState 相同（类型检查守）', () => {
     expect(configInSync).toBe(true);
+    expect(approvalInSync).toBe(true);
+    expect(settledInSync).toBe(true);
   });
 
   it('样例表覆盖全部方法与通知', () => {

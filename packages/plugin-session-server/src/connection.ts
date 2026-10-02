@@ -1,8 +1,10 @@
 // ════════════════════════════════════════════════════════════
 // 会话协议的连接层：JSON-RPC 帧的解析与校验、握手、按方法表分派、错误帧、推送与断开。
+// 每条连接接入它所在的审批面（对端的登记句柄），审批推送经它到达，在场上报与应答也经它。
 // 方法的业务逻辑不在这里，由 index 传入的处理函数表承担。
 // ════════════════════════════════════════════════════════════
 
+import type { ApprovalAttendance } from '@aalis/api-approval';
 import {
   type ErrorCode,
   RequestFrameSchema,
@@ -38,6 +40,8 @@ export function failure(reason: ErrorCode, message: string): ProtocolError {
 /** 一条已握手的连接，处理函数从它取对端、登记 watch 与订阅 */
 export interface ServerConnection {
   readonly peer: SessionPeer;
+  /** 这条连接在它所在审批面上的接入：在场上报与应答 */
+  readonly attendance: ApprovalAttendance;
   /** 调过 sessions/watch，会话列表的增量推给它 */
   watching: boolean;
   /**
@@ -86,8 +90,20 @@ export function createSessionServer(handlers: MethodHandlers, logger: Logger) {
     /** 握手时主版本不合：回完错误帧再断开 */
     let farewell: string | undefined;
     const subscriptions = new Map<string, string[] | null>();
+    // 审批推送只发给上报过在场的连接，在场上报要先握手：握手之前不会有推送
+    const attendance = peer.surface.attend(peer.identity, {
+      requested: approval => {
+        const params: SessionNotificationParams<'approval/requested'> = { approval };
+        conn.send({ method: 'approval/requested', params });
+      },
+      settled: (approvalId, state) => {
+        const params: SessionNotificationParams<'approval/settled'> = { approvalId, state };
+        conn.send({ method: 'approval/settled', params });
+      },
+    });
     const conn: LiveConnection = {
       peer,
+      attendance,
       watching: false,
       subscriptions,
       sendText(frame) {
@@ -116,6 +132,7 @@ export function createSessionServer(handlers: MethodHandlers, logger: Logger) {
       drop() {
         closed = true;
         connections.delete(conn);
+        attendance.leave();
       },
     };
     connections.add(conn);
@@ -132,7 +149,7 @@ export function createSessionServer(handlers: MethodHandlers, logger: Logger) {
         experimental: true,
         server: { name: SERVER_NAME },
         identity: peer.identity,
-        surface: peer.surface,
+        surface: peer.surface.name,
       };
     };
 

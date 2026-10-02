@@ -405,7 +405,7 @@ export class CommandRegistry implements CommandService {
     // authority 的拒绝文案照样暴露存在性，要真做得连那条通用文案一起改，而它同时服务 tools
     // 与 commands 两个注入点，牵动所有能力的拒绝语义，改动面大于收益。
     // 真要做的话两条一起：注入与执行侧同源的 authorize 判定，只取等级轴，明确排除 confirm
-    // 与临时授予（前者是 async 且会真弹确认框、后者随会话漂移，都不适合用于列表渲染）。
+    // （它是 async 且会真去问人，不适合用于列表渲染）。
     // /help 的概览与详情（plugin-commands 的 renderOverview/renderDetail）是同族第三条
     // 列举路径，同属本裁定——2026-08 审计曾把它当漏项翻出，特此留痕勿再重开。
     if (!cmd.handler) {
@@ -426,11 +426,12 @@ export class CommandRegistry implements CommandService {
         platform: input.platform,
         userId: input.userId,
         skipConfirm: input.skipConfirm,
+        confirmIntent: input.confirmIntent,
       });
       if (rejection) return rejection;
     } else if (cmd.confirm || capabilityMinLevel({ risk: cmd.risk, visibility: cmd.visibility }) > DEFAULT_AUTHORITY) {
       // 没有守卫（未装权限插件）时 fail-closed，口径与 plugin-tools 相同：等同人人都是默认等级、
-      // 没有确认通道。需要更高等级或需要确认的指令一律拒绝，默认等级可用且无需确认的照常执行。
+      // 没人能确认。需要更高等级或需要确认的指令一律拒绝，默认等级可用且无需确认的照常执行。
       return `指令 ${this.prefix}${cmd.name} 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
     }
 

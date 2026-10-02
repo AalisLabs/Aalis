@@ -69,7 +69,7 @@ describe('/doctor 需要等级 2', () => {
     const { commands, authority } = await boot();
     authority.setUserLevel({ platform: 'onebot', userId: 'lv2' }, 2);
 
-    // onebot 平台没有确认通道：指令若声明了 confirm，这里会被取消而不是出报告
+    // 直接调注册表，没有发出者可问：指令若声明了 confirm，这里会被取消而不是出报告
     const out = await commands.execute('doctor', input('lv2'));
     expect(out).toMatch(/汇总: ✓ \d+/);
   });

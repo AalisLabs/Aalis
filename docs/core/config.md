@@ -42,9 +42,9 @@ interface AalisConfig {
   owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
   deniedCapabilities?: string[];                    // 全局硬禁用 glob：命中即拒，连 owner 都压过
   authorityOverrides?: Record<string, number>;      // 单操作最低等级覆盖（能力键 type:name → 整数等级）
-  restrictedPolicy?: {                              // 受限能力临时放行策略
-    allow?: string[];                               // 自动放行的 restricted 能力/操作名 glob（['*'] 全放）
-    duration?: number;                              // 放行时长（秒，0=永久）
+  restrictedPolicy?: {                              // 免确认白名单（只免 session 档，不放宽授权）
+    allow?: string[];                               // 免确认的能力 glob（['*'] 全放）
+    duration?: number;                              // 生效时长（秒，0=永久）
   };
   // …其余 authority 字段见 @aalis/api-authority
 }

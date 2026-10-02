@@ -85,7 +85,7 @@ action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 
 
 **提供方**
 
-- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时是一个 `platform` adapter（WebUI 当聊天界面）。`sessionConfirm` 等为 optional。
+- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时是一个 `platform` adapter（WebUI 当聊天界面）。`sessionProtocol`、`approvals` 等为 optional。
 - `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（可用 `onBehalfOf` 让偏好认前端包名；代登记不计入代理人 `provides`）。
 
 **消费方**（经 `webui.registerPage` / `registerAction`）：
@@ -165,7 +165,7 @@ export default definePlugin({
 单 owner 终态下「持 token ⟺ `webui:console` ⟺ owner」。`createRouteGate`（`packages/plugin-webui-server/src/gate.ts`）只做身份解析：解析得到放行，否则 403。多账户 / 能力委托已剥离，**没有 per-route 档位裁决**。
 
 - 你的 action handler 拿到的 `caller` 即 owner 身份。涉及敏感操作时应在 handler 内自检 `caller`，不要假设路由层替你做了细粒度授权。
-- 受限操作的**交互式确认**走 `session-confirm` 协调器：webui-server 只注入自己的 WS 投递（`type:'confirm'`），按 `request.sessionId` 定向推送。鉴权双轴见 `docs/plugins/plugin-authority.md`、`docs/concepts/security-model.md`。
+- 工具的 owner 审批经 `/session` 连接（会话协议的 `approval/*`）送达与应答，webui-server 登记 `webui` 审批面；指令的意图确认是同一会话里的一问一答，不经 webui-server。鉴权双轴见 `docs/plugins/plugin-authority.md`、`docs/concepts/security-model.md`。
 
 ### SSRF：图片代理走 safeFetch
 

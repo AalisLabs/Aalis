@@ -3,12 +3,13 @@
 //
 // 帧的解析、握手与分派都在会话服务里（@aalis/api-session-protocol 的 sessionProtocol），
 // 这里只搬运文本帧：收到的帧原样交给 receive，服务端要发的帧原样 send，底层连接关闭时 close。
+// 对端是认证出的身份与本插件登记的 webui 审批面：连接上的在场上报与应答记在这个登记身份名下。
 //
 // 会话服务在连接到达时现取：不在就以 1013 关闭并写明原因，客户端稍后重连；它停止或重载时
 // 自己断开现有连接，客户端重连时接到新的提供者。本插件不必随它重启。
 // ============================================================
 
-import type { Identity, SessionProtocolService } from '@aalis/api-session-protocol';
+import type { SessionPeer, SessionProtocolService } from '@aalis/api-session-protocol';
 import type { WebSocket } from 'ws';
 
 export const SESSION_PATH = '/session';
@@ -28,16 +29,15 @@ function closeReason(reason: string): string {
 /** 接一条已认证的 /session 连接；service 是此刻的会话服务，不在时传 undefined */
 export function acceptSessionSocket(
   ws: WebSocket,
-  identity: Identity,
+  peer: Omit<SessionPeer, 'disconnect'>,
   service: SessionProtocolService | undefined,
 ): void {
   if (!service) {
     ws.close(1013, '会话服务不在');
     return;
   }
-  const conn = service.connect(
-    { identity, surface: 'webui', disconnect: reason => ws.close(1000, closeReason(reason)) },
-    frame => ws.send(frame),
+  const conn = service.connect({ ...peer, disconnect: reason => ws.close(1000, closeReason(reason)) }, frame =>
+    ws.send(frame),
   );
   ws.on('message', data => void conn.receive(String(data)));
   ws.on('close', () => conn.close());

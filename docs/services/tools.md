@@ -54,7 +54,7 @@ export interface ToolCallContext {
   enabledGroups?: string[];
   acceptsImages?: boolean;
   signal?: AbortSignal;
-  inbound?: { source?: string };
+  inbound?: { source?: string; callerUserId?: string };
   turnId?: string;
   callId?: string;
 }
@@ -165,11 +165,11 @@ const result =
 
 **提供者必须遵守**：写/删/越权读/外发类工具都要声明 `risk` 或显式 `visibility/confirm`。外发网络走 `safeFetch`。访问文件系统只走 storage URI。
 
-**执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 guard 则调它。`skipConfirm` 只跳交互确认、**不**绕过 authorize。owner 视为等级 ∞。
+**执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 guard 则把调用上下文（身份、回合与调用 id、`inbound`、中止信号）交给它。需要确认的工具调用由守卫请 owner 审批，只有 owner 本人与 owner 链的延续发起的回合能产生审批。owner 视为等级 ∞。
 
 ## 7. 注意事项
 
-- **守卫缺失 = fail-closed（拒绝）**：若 `plugin-authority` 未加载，参考实现等同所有人都是默认等级、没有确认通道——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的工具一律拒绝并提示缺少权限插件，默认等级可用且无需确认的工具照常执行。
+- **守卫缺失 = fail-closed（拒绝）**：若 `plugin-authority` 未加载，参考实现等同所有人都是默认等级、没人能确认——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的工具一律拒绝并提示缺少权限插件，默认等级可用且无需确认的工具照常执行。
 - **`http_download`** 现为 `restricted + confirm:'session'`。新写下载/上传类工具照此挂闸。
 - **`file_read` 的 `allowedRoots`** 默认 `['workspace', 'tmp']`，配置可设 `["*"]`。
 - **重名即覆盖**。应选用带前缀的工具名。

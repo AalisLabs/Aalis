@@ -77,7 +77,7 @@ plugins:
 
 - 外部 server 是**不受信任的第三方进程**。默认 `auto` 按注解分档、未知即 restricted（失败关闭）；
   只有确认全部工具都只读的 server，才应显式放宽为 `public`（最低等级 0）。
-- Aalis 自身的能力闸仍然生效：`restricted` 工具默认要求触发者等级 >= 2，`sensitive` 工具默认要求等级 >= 1，owner 不受等级限制；等级不足时，须有临时能力委托才能放行。
+- Aalis 自身的能力闸仍然生效：`restricted` 工具默认要求触发者等级 >= 2，`sensitive` 工具默认要求等级 >= 1，owner 不受等级限制；等级不足即拒。
 
 ## 依赖
 

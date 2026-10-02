@@ -23,6 +23,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -37,5 +38,5 @@
     "aalis",
     "aalis-api"
   ],
-  "description": "会话协议契约（实验性）：owner 客户端与守护进程之间的 JSON-RPC 帧、会话与条目的 zod schema，以及 session-protocol 服务描述符"
+  "description": "会话协议契约（实验性）：owner 客户端与守护进程之间的 JSON-RPC 帧、会话、条目与审批的 zod schema，以及 session-protocol 服务描述符"
 }

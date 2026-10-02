@@ -105,4 +105,5 @@ export default definePlugin({
 ## 相关
 
 - `ExecutionGuard` 见 [api-authority](./api-authority.md)
-- `ExecutionInput.skipConfirm` 用于受信系统源（scheduler 等）跳过受限确认弹窗；authorize 仍生效
+- `ExecutionInput.skipConfirm` 用于没人可问的受信来源（scheduler 触发的指令、runtime 一次性子命令）免 `session` 档的确认；authorize 仍生效
+- `ExecutionInput.confirmIntent` 由能当面问到发出者的调用方（plugin-commands 的入站相位）提供，原样交给执行守卫做意图确认

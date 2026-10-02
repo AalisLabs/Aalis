@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint, type RollbackWithChatResult } from '../../packages/api-checkpoint/src/index.js';
@@ -25,6 +28,7 @@ import type {
   OutboundDeliveryResult,
   OutgoingMessage,
 } from '../../packages/schema-message/src/index.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -38,8 +42,17 @@ import { deferred } from '../helpers/deferred.js';
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
+/** 每个 App 一个临时家目录：会话服务的审批审计写在它下面 */
+const homes: string[] = [];
+/** 像 runtime 一样在根上提供 host-paths，家目录是新建的临时目录 */
+function provideHome(app: App): void {
+  const home = mkdtempSync(join(tmpdir(), 'aalis-session-server-'));
+  homes.push(home);
+  provideHostPaths(app, home);
+}
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
@@ -65,6 +78,7 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
 async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
+  provideHome(app);
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
@@ -1010,6 +1024,7 @@ describe('回合控制', () => {
   it('没有 agent、检查点、待办服务时，对应的方法回 unsupported', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
+    provideHome(app);
     await registerHubs(app);
     await app.plugin(memoryInMemoryPlugin);
     await app.plugins.idle();
@@ -1044,6 +1059,7 @@ const callProbe: ChatResponse = {
 async function startAgent(responses: ChatResponse[], probe: (ctx: ToolCallContext) => Promise<string>) {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
+  provideHome(app);
   await registerHubs(app);
   await app.plugin(createMockLLMPlugin({ responses }));
   await app.plugin(toolsPlugin, {});

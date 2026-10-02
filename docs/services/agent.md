@@ -132,7 +132,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 `incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages: true`、回合 `signal`（守卫等待确认期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`。自定义 provider 必须保留 actor 语义，否则系统触发的工具会以错误身份执权。宿主通知延续某次工具调用时（如后台命令结束通知）不带发言者，`userId` 取 `hostNotice.callerUserId`：这一轮的确认由起它的人应答、会话授予照常命中；归档与提示词钩子仍按消息本身的 `userId`（没有）。
+**ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 `incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages: true`、回合 `signal`（守卫等 owner 审批期间被 abort 的工具不再执行）、`inbound`（本回合的 `source` 与续做的调用者 `callerUserId`），以及 `turnId` 与每次调用各自的 `callId`。自定义 provider 必须保留 actor 语义，否则系统触发的工具会以错误身份执权。宿主通知延续某次工具调用时（如后台命令结束通知）不带发言者，`userId` 与 `inbound.callerUserId` 取 `hostNotice.callerUserId`，执行守卫据后者认出 owner 链的延续；归档与提示词钩子仍按消息本身的 `userId`（没有）。
 
 **lane 与打断**：同一会话按 `source` 分 lane，同一 lane 的新消息中止旧回合，不同 lane 互不打断。例外只有一条：真人消息（不带 `source`）到达时，中止同一会话里 `hostNotice.callerUserId` 等于这条消息 `userId` 的宿主通知回合，起它的人说话就能叫停她自己开的那一轮；别人的消息与不延续任何人身份的通知（白纸等）不受影响，宿主通知也从不打断别的回合。
 

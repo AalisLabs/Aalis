@@ -53,7 +53,7 @@ plugins:
 ## 安全边界
 
 - **`ListTools` 与 `CallTool` 共用同一个暴露判定**（allowRestricted + toolGroups 白名单）：client 按工具名直接调用未暴露的工具时，返回错误 `工具不可用或未暴露: <工具名>`。toolGroups 非空时，未归入任何分组的工具不会暴露。
-- 工具执行仍经 `ToolService.execute`。若加载了 [plugin-authority](plugin-authority.md)，其注入的 ExecutionGuard（权限守卫）同样生效：MCP 调用以 platform `mcp`、userId `mcp-client` 身份参与等级裁决，因此即使开启 allowRestricted，restricted/sensitive 工具仍可能被拒；声明了 confirm 的工具因 mcp 平台没有可应答的确认通道，调用通常会被取消。
+- 工具执行仍经 `ToolService.execute`。若加载了 [plugin-authority](plugin-authority.md)，其注入的 ExecutionGuard（权限守卫）同样生效：MCP 调用以 platform `mcp`、userId `mcp-client` 身份参与等级裁决，因此即使开启 allowRestricted，restricted/sensitive 工具仍可能被拒；声明了 confirm 的工具调用不在由入站消息驱动的回合里，不能产生 owner 审批，直接被拒。
 - 没有外部 client 鉴权 —— 完全依赖网络层（`127.0.0.1` + 防火墙）做隔离。
 
 ## 外部 client 配置示例

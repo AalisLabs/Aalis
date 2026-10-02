@@ -64,16 +64,19 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 - **轴 B · 确认（是不是你本人此刻要做）**：HITL（human-in-the-loop）意图确认，与等级无关。
   关键点是 **owner 也受确认约束**——这道关卡专门为「owner 会话被提示注入借权、静默调用高危操作」的场景设计。
   - `confirm: 'always'` **永不可跳过**（最高危，每次都需要人工确认；cron 这类无人确认的来源直接拒绝）。
-  - `confirm: 'session'` 可在三种情况下跳过：来自系统或受信源时（`skipConfirm`，例如 scheduler 无人可确认），
-    或触发者是 owner 本人且 auto 模式已激活时（`shouldSkipConfirm`）。
+  - `confirm: 'session'` 可在两种情况下免掉：来自受信来源时（`skipConfirm`：scheduler 触发的指令、runtime 一次性子命令），
+    或能力命中 owner 配的 `restrictedPolicy` 白名单时。
+  - 工具的确认是 owner 审批：只有 owner 本人在自己会话里发起的回合（含其后台续做）能产生审批，
+    定时任务、编排、房间、子任务与他人的回合需要确认时直接拒绝、不推给任何面；没人在场也按拒绝回给模型，回合不挂起。
+  - 指令的确认是向发出者本人核对意图：只认他在同一会话里的下一条消息，带 `source` 的注入不认。
 
 **`risk` 是一个便捷声明，一次为两轴设定默认值**：`dangerous` 会展开成
 `visibility:'restricted'`（抬高轴 A 门槛）加上 `confirm:'session'`（轴 B 需确认），
 这套默认值由 `RISK_DEFAULTS` 定义。
 
-> 两轴的完整机制（临时放行 `requestAccess`、会话授予、auto 模式、WebUI 权限页、users.json 持久化、
-> session-confirm 协调）见 [权限系统文档](../plugins/plugin-authority.md) 与 forward-ref
-> [`docs/services/authority.md`](../services/authority.md)。这里只给出安全视角的要点。
+> 两轴的完整机制（发起回合的类别、免确认白名单、WebUI 权限页、users.json 持久化）见
+> [权限系统文档](../plugins/plugin-authority.md) 与 forward-ref [`docs/services/authority.md`](../services/authority.md)；
+> 审批的在场、排队、时限与审计见 [api-approval](../api/api-approval.md)。这里只给出安全视角的要点。
 
 ### 插件作者怎么标操作风险（provider 侧）
 
@@ -208,8 +211,8 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 宿主通知（`hostNotice`，见 [schema-message](../api/schema-message.md)）不是任何人的发言，默认不带任何人的权限：
 `actor` 为无主体的 `selfInitiatedActor`，按默认等级裁决、永不视为 owner。延续某次工具调用的通知沿用那次调用的
 身份、不高于它：`actor` 取那次调用的有效授权身份，`hostNotice.callerUserId` 取那次调用的 `userId`，agent 用后者
-填这一轮工具调用上下文的 `userId`，确认由起它的人应答、会话授予按那人匹配；等级按 `actor` 实时查，其间被调低
-或封禁的按新值。这一轮的 `inbound.source` 非空，要求真人当面发起的工具照样拒绝。`callerUserId` 与 `actor`
+填这一轮工具调用上下文的 `userId` 与 `inbound.callerUserId`；那次调用的发言者与授权身份都是 owner 时，这一轮算
+owner 链的延续、能产生审批；等级按 `actor` 实时查，其间被调低或封禁的按新值。这一轮的 `inbound.source` 非空，要求真人当面发起的工具照样拒绝。`callerUserId` 与 `actor`
 同一信任面，只有插件能设（平台适配器与 WebUI 服务端都按字段逐个构造入站消息）。
 
 允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 显式登记，现在只有一处：

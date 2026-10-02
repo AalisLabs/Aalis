@@ -2,7 +2,7 @@
  * @aalis/api-session-protocol — 会话协议（实验性）
  *
  * owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上格式：JSON-RPC 2.0 帧、握手、错误码，会话列表与增量、
- * 订阅与条目、回合控制。帧与参数都写成 zod schema，类型由 schema 推导：服务端按它校验收到的帧，客户端照它实现。
+ * 订阅与条目、回合控制、在场与审批。帧与参数都写成 zod schema，类型由 schema 推导：服务端按它校验收到的帧，客户端照它实现。
  * 本包只有 schema、协议版本与服务描述符 `sessionProtocol`；实现见 @aalis/plugin-session-server，
  * 传输（WebSocket 等）由宿主插件接到 `sessionProtocol.connect`。
  *
@@ -10,6 +10,7 @@
  * 对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
  */
 
+import type { ApprovalSurface } from '@aalis/api-approval';
 import { defineService } from '@aalis/core';
 import { z } from 'zod';
 
@@ -110,7 +111,7 @@ export const InitializeResultSchema = z.object({
   experimental: z.literal(true),
   server: z.object({ name: z.string() }),
   identity: IdentitySchema,
-  /** 这条连接所在的审批面名称（webui、cli），供审计记录 */
+  /** 这条连接所在审批面的登记名（webui、cli）；审计记的是登记身份 */
   surface: z.string(),
 });
 
@@ -134,7 +135,7 @@ export const SessionSummarySchema = z.object({
   section: SessionSectionSchema,
   /** 出生平台；owner 自己的会话没有 */
   platform: z.string().optional(),
-  /** 房间：接管它的适配器实例（插件实例 id），列表按它分组；建档时没有适配器认领的没有 */
+  /** 房间：接管它的适配器实例（插件实例 id），列表按它分组；还没有适配器认领的没有 */
   instance: z.string().optional(),
   /** 房间：会话 id 里的机器人账号；同一实例带多个账号时界面据此标出 */
   account: z.string().optional(),
@@ -151,13 +152,15 @@ export const SessionSummarySchema = z.object({
   error: z.boolean(),
   /** 只用于「我的」区：她最近一次开口晚于 owner 上次看过（session/markSeen）；房间恒为 false */
   unread: z.boolean(),
+  /** 需要我处理：有未结的审批 */
+  attention: z.boolean(),
   archived: z.boolean(),
   /** 房间：生效配置是否开着白纸 */
   paper: z.boolean().optional(),
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
-/** 房间的一组：一个适配器实例一组；建档时没记下实例的房间按平台成一组，没有 instance */
+/** 房间的一组：一个适配器实例一组；还没记下实例的房间按平台成一组，没有 instance */
 export const RoomGroupSchema = z.object({
   platform: z.string(),
   instance: z.string().optional(),
@@ -165,11 +168,13 @@ export const RoomGroupSchema = z.object({
   rooms: z.number().int().nonnegative(),
   /** 组里房间涉及的机器人账号数 */
   accounts: z.number().int().nonnegative(),
+  /** 组里需要我处理的房间数 */
+  attention: z.number().int().nonnegative(),
 });
 export type RoomGroup = z.infer<typeof RoomGroupSchema>;
 
 /**
- * 不给 parentId 时列根会话：「我的」区在前，按需要处理的程度（出错、完成未读、运行中）排在前面，其余按最后活动从新到旧；
+ * 不给 parentId 时列根会话：「我的」区在前，按需要处理的程度（需要我处理、出错、完成未读、运行中）排在前面，其余按最后活动从新到旧；
  * 房间在后，按最后活动从新到旧。给 parentId 时列它的直接子会话，按最后活动从新到旧，不看 section。
  * query 按名称、标题、id 匹配（不分大小写），也认「平台:群号」。cursor 取上一页的 nextCursor。
  */
@@ -337,7 +342,9 @@ const itemBase = {
  *   平台没收下的）带 undelivered；
  * - reasoning：思考文字；
  * - tool-call：工具名、参数、状态、流式输出（exec 等）、结果摘要、耗时；sentToRoom 标出经平台工具发进房间、平台收下的消息。
- *   送达结果不落库，历史里只标得出工具调用之前说的话，其余 undelivered 与 sentToRoom 只在实时推送里；
+ *   送达结果不落库，历史里只标得出工具调用之前说的话，其余 undelivered 与 sentToRoom 只在实时推送里。
+ *   这次调用要 owner 批准时带 approvalId，再推一次 item/started；没批准的（拒绝、没人应答、撤销）状态是 denied。
+ *   approvalId 与 denied 也只在实时推送里，历史里被拦下的调用显示为 failed；
  * - notice：宿主事件（压缩、白纸与作品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage；
@@ -370,6 +377,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     result: z.string().optional(),
     durationMs: z.number().optional(),
     sentToRoom: z.boolean().optional(),
+    approvalId: z.string().optional(),
   }),
   z.object({
     kind: z.literal('notice'),
@@ -408,8 +416,46 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
 ]);
 export type SessionItem = z.infer<typeof SessionItemSchema>;
 
+// ════════════════════════════════════════════════════════════
+// 审批
+// ════════════════════════════════════════════════════════════
+
+const ApprovalStateSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']);
+/** 结算之后的四种结局 */
+const SettledStateSchema = ApprovalStateSchema.exclude(['pending']);
+
 /**
- * 订阅一律先回快照：最近一页历史、在途回合已产出的条目，以及会话当前的计划与用量。之后的推送带 epoch 与 seq：
+ * 审批对象，与 @aalis/api-approval 的 Approval 同形。卡片显示 facts 之前一律经 api-approval 的 sanitizeForCard 清洗：
+ * facts 是逐字的参数，可能带控制符、双向控制符与零宽字符
+ */
+export const ApprovalSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  turnId: z.string().optional(),
+  callId: z.string().optional(),
+  /** 发起回合的直接主体与它的类别（能产生审批的只有 owner 与 owner-chain） */
+  origin: z.object({
+    kind: z.enum(['owner', 'owner-chain', 'subtask', 'autonomous', 'room', 'other']),
+    platform: z.string(),
+    userId: z.string().optional(),
+  }),
+  target: z.literal('tool'),
+  tool: z.string(),
+  facts: z.object({
+    command: z.string().optional(),
+    cwd: z.string().optional(),
+    /** 路径或内容疑似含密钥时没有 patch */
+    diff: z.object({ path: z.string(), patch: z.string().optional() }).optional(),
+    params: z.record(z.unknown()),
+  }),
+  options: z.array(z.enum(['approve', 'deny'])),
+  /** 应答时原样带回 */
+  contentHash: z.string(),
+  state: ApprovalStateSchema,
+});
+
+/**
+ * 订阅一律先回快照：最近一页历史、在途回合已产出的条目、会话当前的计划与用量，以及未结的审批。之后的推送带 epoch 与 seq：
  * seq 在一个 epoch 内递增，客户端丢掉 seq 不大于快照 seq 的推送；epoch 变了（会话服务重启过）就重新订阅。
  * 快照回应发出之前，这条连接收不到这个会话的推送。before 是更早一页历史的游标。
  */
@@ -418,6 +464,8 @@ export const SessionSnapshotSchema = z.object({
   seq: z.number().int().nonnegative(),
   session: SessionSummarySchema,
   items: z.array(SessionItemSchema),
+  /** 这个会话已推给审批面、还没结算的审批 */
+  approvals: z.array(ApprovalSchema),
   before: z.string().optional(),
 });
 
@@ -481,6 +529,26 @@ export const TurnRewindResultSchema = z.object({
 });
 
 // ════════════════════════════════════════════════════════════
+// 在场与审批的方法与推送
+// ════════════════════════════════════════════════════════════
+
+export const PresenceUpdateParamsSchema = z.object({ active: z.boolean() });
+
+export const ApprovalRespondParamsSchema = z.object({
+  approvalId: z.string(),
+  decision: z.enum(['approve', 'deny']),
+  contentHash: z.string(),
+  /** 说明：拒绝时回给模型 */
+  note: z.string().optional(),
+});
+
+/** 有审批要处理：连接级推送，按在场推给在场的连接，不要求这条连接订阅了那个会话 */
+export const ApprovalRequestedParamsSchema = z.object({ approval: ApprovalSchema });
+
+/** 审批结算了：推给拿到过 approval/requested 的连接 */
+export const ApprovalSettledParamsSchema = z.object({ approvalId: z.string(), state: SettledStateSchema });
+
+// ════════════════════════════════════════════════════════════
 // 方法与通知表
 // ════════════════════════════════════════════════════════════
 
@@ -514,6 +582,13 @@ export const sessionMethods = {
   'turn/rewind': { params: TurnRewindParamsSchema, result: TurnRewindResultSchema },
   /** 清空待办 */
   'plan/clear': { params: SessionTargetSchema, result: EmptySchema },
+  /**
+   * 在场上报：active 为真表示页面可见且刚有键盘或指针活动，为假表示页面转到后台、即刻不在场。
+   * 最近一次为真的上报在 10 分钟内即算在场；客户端在有活动时按需重报
+   */
+  'presence/update': { params: PresenceUpdateParamsSchema, result: EmptySchema },
+  /** 应答一个审批：先答先得，后到的回 approval-settled；应答人须是 owner，内容哈希须一致 */
+  'approval/respond': { params: ApprovalRespondParamsSchema, result: EmptySchema },
 } as const;
 
 /** 服务端推送：名字 → 参数的 schema */
@@ -523,6 +598,8 @@ export const sessionNotifications = {
   'item/delta': ItemDeltaParamsSchema,
   'item/completed': ItemPushParamsSchema,
   'session/resync': SessionResyncParamsSchema,
+  'approval/requested': ApprovalRequestedParamsSchema,
+  'approval/settled': ApprovalSettledParamsSchema,
 } as const;
 
 export type SessionMethod = keyof typeof sessionMethods;
@@ -538,8 +615,11 @@ export type SessionNotificationParams<N extends SessionNotification> = z.infer<(
 /** 一条连接的对端，由传输层在认证之后给出 */
 export interface SessionPeer {
   identity: Identity;
-  /** 审批面名称（webui、cli） */
-  surface: string;
+  /**
+   * 这条连接所在的审批面：传输层经 approvals 的 registerSurface 登记得到的句柄。连接上的在场上报与应答都记在它的
+   * 登记身份名下，连接自己报不了别的面
+   */
+  surface: ApprovalSurface;
   /** 服务端要断开这条连接（握手版本不合、会话服务停止）时调用，传输层据此关闭底层连接 */
   disconnect(reason: string): void;
 }

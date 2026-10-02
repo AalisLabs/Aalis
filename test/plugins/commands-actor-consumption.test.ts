@@ -88,7 +88,7 @@ describe('commands 消费 message.actor 与受信系统源', () => {
   it('workflow 派发不受信（2026-08-28 审计：workflow_define/run 仅 L1，受信会绕过 confirm 闸）', async () => {
     // workflow send-message 节点可向任意会话投递 /clear 这类 0 级+confirm 命令；
     // define/run 只 sensitive(L1)、零确认，故 workflow 派发**不给** skipConfirm，
-    // 命令照常走 confirm（虚拟会话无人应答即超时拒，fail-closed）。
+    // 带 source 的注入问不到发出者，需要确认的指令直接拒（fail-closed）。
     const { input } = await runInbound({ ...base, userId: 'u', source: 'workflow:wf1:node2' });
     expect(input?.skipConfirm, 'workflow 不该受信——否则 L1 绕过 confirm 向任意会话投命令').toBeFalsy();
   });

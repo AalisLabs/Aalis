@@ -62,7 +62,7 @@ interface ToolCallContext {
   enabledGroups?: string[];                         // 当前会话启用的工具分组
   acceptsImages?: boolean;                          // 调用方能把结果里的图片交给主模型
   signal?: AbortSignal;                             // 调用方回合的中止信号
-  inbound?: { source?: string };                    // 调用所在的入站回合，只由 agent 工具循环填写
+  inbound?: InboundTurn;                            // 调用所在的入站回合（source、续做的调用者 callerUserId；类型见 api-authority），只由 agent 工具循环填写
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
 }

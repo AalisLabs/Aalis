@@ -3,8 +3,8 @@
 //
 // 在途回合的条目由 agent 的事件实时拼出：回合开始与结束、流式的思考与正文、工具调用与它的输出、她的回复。
 // 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId。
-// 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量。推送带 epoch（每次启动换一个）
-// 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。
+// 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量 + 未结的审批。推送带 epoch（每次启动换一个）
+// 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
 // 回合结束之后还在等平台送达结果的，也算没收尾：迟到的结果按实时条目的 itemId 推出，这段时间里订阅的快照
 // 照样给出实时条目，两边对得上。送达结果只在实时推送里，存档不记。
@@ -15,6 +15,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TokenUsageEvent } from '@aalis/api-agent';
+import type { Approval } from '@aalis/api-approval';
 import type { HookContextMap } from '@aalis/api-hooks';
 import type { MemoryService } from '@aalis/api-memory';
 import type { SessionInfo } from '@aalis/api-session-manager';
@@ -87,6 +88,8 @@ interface TimelineDeps {
   notify<N extends SessionNotification>(sessionId: string, method: N, params: SessionNotificationParams<N>): void;
   /** 请 agent 重发某会话的用量 */
   requestUsage(sessionId: string, platform: string): void;
+  /** 这个会话已推出、还没结的审批 */
+  approvalsOf(sessionId: string): Approval[];
   /** 插件停用时中止：不再等平台的送达结果 */
   signal: AbortSignal;
 }
@@ -348,7 +351,7 @@ export function createTimeline(deps: TimelineDeps) {
     }
     const item = turn.items.get(info.callId);
     if (item?.kind !== 'tool-call') return;
-    item.status = toolFailed(info.result ?? '') ? 'failed' : 'completed';
+    if (item.status !== 'denied') item.status = toolFailed(info.result ?? '') ? 'failed' : 'completed';
     item.result = info.result;
     item.durationMs = Date.now() - item.at;
     complete(turn, item);
@@ -367,6 +370,19 @@ export function createTimeline(deps: TimelineDeps) {
     if (!turn || item?.kind !== 'tool-call' || item.status !== 'running') return;
     item.output = (item.output ?? '') + chunk.text;
     emitDelta(turn.sessionId, item.itemId, chunk.text);
+  }
+
+  /** 审批推出或结算：推出时工具卡挂上它的 id 再推一次；没批准就结算的，工具卡收尾时状态是 denied */
+  function approval(card: Approval): void {
+    const turn = card.turnId === undefined ? undefined : live(card.turnId);
+    const item = card.callId === undefined ? undefined : turn?.items.get(card.callId);
+    if (!turn || item?.kind !== 'tool-call') return;
+    if (card.state === 'pending') {
+      item.approvalId = card.id;
+      emit(turn.sessionId, 'item/started', item);
+    } else if (card.state !== 'approved') {
+      item.status = 'denied';
+    }
   }
 
   /** agent:reply:before：一版回复定稿校验。之后若重试，新的一版另起一条 */
@@ -473,6 +489,7 @@ export function createTimeline(deps: TimelineDeps) {
       ...open.flatMap(turn => [...turn.items.values()]),
       ...[compressions.get(sessionId), usage].filter(item => item !== undefined),
     ]);
+    const approvals = structuredClone(deps.approvalsOf(sessionId));
     // 读历史期间这些回合可能收尾、被清掉，按此刻抄下的回合排除它们的存档
     const shown = new Set(open.map(turn => turn.turnId));
     const { release, cancel } = conn.subscribe(sessionId);
@@ -495,6 +512,7 @@ export function createTimeline(deps: TimelineDeps) {
         seq: at,
         session: deps.summarize(info),
         items: [...history.items, ...ongoing, ...(entries.length > 0 ? [planItem(entries)] : [])],
+        approvals,
         before: history.before,
       };
     } catch (err) {
@@ -537,6 +555,7 @@ export function createTimeline(deps: TimelineDeps) {
     stream,
     tool,
     toolOutput,
+    approval,
     replyCheck,
     outbound,
     archived,
