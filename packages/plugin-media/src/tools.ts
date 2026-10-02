@@ -14,6 +14,9 @@ import { getMediaRuntime } from './runtime.js';
 import { safeDownloadToTemp } from './safe-fetch.js';
 import type { MediaServiceImpl } from './service.js';
 
+/** 不参与裸路径首段路由的根类型：插件私有的内置根，agent 给的裸路径不会指向它们 */
+const PRIVATE_ROOT_KINDS: ReadonlySet<string> = new Set(['self', 'cache', 'logs', 'pluginData', 'paper', 'public']);
+
 /**
  * 把 agent 传入的图片路径规整为 storage URI。
  *
@@ -26,9 +29,6 @@ import type { MediaServiceImpl } from './service.js';
  *   工作目录里同名的子目录（如 `skills/x.png`）照常归到 workspace
  * - 其它相对路径：归到 `workspace:/`（默认）
  */
-/** 不参与裸路径首段路由的根类型：插件私有的内置根，agent 给的裸路径不会指向它们 */
-const PRIVATE_ROOT_KINDS: ReadonlySet<string> = new Set(['self', 'cache', 'logs', 'pluginData', 'paper', 'public']);
-
 export function resolveImageStorageUri(input: string): string {
   // [图片(: desc)? | ref:xxx] 占位符 → 提取 ref 后递归
   const refMatch = input.match(/\|\s*ref:([^\]\n]+)\]/);

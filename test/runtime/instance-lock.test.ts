@@ -1,21 +1,23 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   acquireInstanceLock,
-  InstanceLockError,
   type LockHolder,
   nodeProcessProbe,
   type ProcessProbe,
@@ -98,7 +100,7 @@ describe('acquireInstanceLock', () => {
     ['锁里没记启动标识时只看 pid', holder({ startId: undefined }), { 200: 'whatever' }, {}],
     ['本机查不了开机标识时不比开机标识', holder(), { 200: 'start-200' }, { bootId: () => undefined }],
     [
-      '另一个 pid 命名空间（容器）里的锁判不了，按占用处理',
+      '同一次开机里另一个 pid 命名空间（另一个容器，或容器被强杀后重启）的锁判不了，按占用处理',
       holder({ pidNs: 'pid:[1]' }),
       {},
       { pidNs: () => 'pid:[2]' },
@@ -124,21 +126,32 @@ describe('acquireInstanceLock', () => {
     expect(files()).toEqual(['instance.5.lock']);
   });
 
+  it('开机标识不同时不看 pid 命名空间：主机重启后，容器里留下的锁按残留接手', () => {
+    writeLock(4, holder({ bootId: 'boot-old', pidNs: 'pid:[1]' }));
+    const r = acquireInstanceLock(run, { probe: probe({ 200: 'start-200' }, { pidNs: () => 'pid:[2]' }) });
+    expect(r.ok).toBe(true);
+    expect(files()).toEqual(['instance.5.lock']);
+  });
+
   it('锁文件内容坏了按残留处理', () => {
     writeLock(2, '{"pid":');
     expect(acquireInstanceLock(run, { probe: probe() }).ok).toBe(true);
     expect(files()).toEqual(['instance.3.lock']);
   });
 
-  it('锁文件读不了（权限）不猜它是残留：抛 InstanceLockError，不建新锁', () => {
-    writeLock(2, holder());
-    chmodSync(join(run, 'instance.2.lock'), 0o000);
-    expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(InstanceLockError);
-    chmodSync(join(run, 'instance.2.lock'), 0o600);
-    expect(files()).toEqual(['instance.2.lock']);
-  });
+  // 下面两条靠权限位制造读不了、写不进：root 不受权限位限制，Windows 的 chmod 只切换只读属性
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    '锁文件读不了（权限）不猜它是残留：报错，不建新锁',
+    () => {
+      writeLock(2, holder());
+      chmodSync(join(run, 'instance.2.lock'), 0o000);
+      expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(/读不了锁文件/);
+      chmodSync(join(run, 'instance.2.lock'), 0o600);
+      expect(files()).toEqual(['instance.2.lock']);
+    },
+  );
 
-  it('run 目录写不进去时抛 InstanceLockError，说明原因', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('run 目录写不进去时报错，说明原因', () => {
     chmodSync(run, 0o500);
     expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(`写不进 ${run}`);
   });
@@ -151,6 +164,17 @@ describe('acquireInstanceLock', () => {
     if (r.ok) return;
     expect(r.holder.pid).toBe(300);
     expect(files()).toEqual(['instance.1.lock', 'instance.6.lock']);
+  });
+
+  it('更低代号的锁文件名带前导零（instance.05.lock）：按目录里的原文件名读，活着的持有者照样让出', () => {
+    writeFileSync(join(run, 'instance.05.lock'), JSON.stringify(holder({ pid: 300, startId: 'start-300' })));
+    writeLock(7, '{"pid":');
+    const r = acquireInstanceLock(run, { probe: probe({ 300: 'start-300' }) });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.holder.pid).toBe(300);
+    expect(r.file).toBe(join(run, 'instance.05.lock'));
+    expect(files()).toEqual(['instance.05.lock', 'instance.7.lock']);
   });
 
   it('更低代号都是残留时一并删掉', () => {
@@ -195,6 +219,79 @@ describe('acquireInstanceLock', () => {
     expect(acquireInstanceLock(nested, { probe: probe() }).ok).toBe(true);
     expect(existsSync(join(nested, 'instance.1.lock'))).toBe(true);
   });
+});
+
+// 这几种文件名曾让取锁同步死循环（测试超时打断不了），所以在子进程里限时跑。用 `node --import tsx`
+// 不经 .bin/tsx 的包装进程，超时杀得干净，不留空转的孙进程
+describe('锁文件名拼不回原名、是悬空的符号链接、或代号过大（真实子进程）', () => {
+  const repoRoot = resolve(import.meta.dirname, '..', '..');
+  const contender = join(repoRoot, 'test', 'fixtures', 'lock-contender.ts');
+  let dir: string;
+  let run: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'aalis-lock-name-'));
+    run = join(dir, 'run');
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** 发令与收场文件先建好：参赛进程取一次锁、报 OK 或 BUSY，取到的随即放掉 */
+  const acquireOnce = () => {
+    writeFileSync(join(dir, 'go'), '');
+    writeFileSync(join(dir, 'done'), '');
+    return spawnSync(process.execPath, ['--import', 'tsx', contender, run, join(dir, 'go'), join(dir, 'done')], {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      timeout: 20_000,
+    });
+  };
+
+  it('代号带前导零（instance.05.lock）：按目录里的原文件名读，活着的持有者照样挡住', () => {
+    // 本测试进程是活着的持有者：pid 在，开机与进程启动标识都是真的
+    const startId = nodeProcessProbe.startId(process.pid);
+    const bootId = nodeProcessProbe.bootId();
+    mkdirSync(run);
+    writeFileSync(
+      join(run, 'instance.05.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        ...(startId ? { startId } : {}),
+        ...(bootId ? { bootId } : {}),
+        handoffHash: sha256('other'),
+      }),
+    );
+    const r = acquireOnce();
+    expect(r.signal, r.stderr).toBeNull();
+    expect(r.stdout).toBe('READY\nBUSY\n');
+    expect(readdirSync(run)).toEqual(['instance.05.lock']);
+  }, 30_000);
+
+  it.skipIf(process.platform === 'win32')(
+    '悬空的符号链接按坏锁处理：接手并清掉它',
+    () => {
+      mkdirSync(run);
+      symlinkSync(join(dir, 'missing'), join(run, 'instance.3.lock'));
+      const r = acquireOnce();
+      expect(r.signal, r.stderr).toBeNull();
+      expect(r.stdout).toBe('READY\nOK\n');
+      // 取到的第 4 代随即放掉，悬空的第 3 代在取锁时已被清掉
+      expect(readdirSync(run)).toEqual([]);
+    },
+    30_000,
+  );
+
+  it('代号到了 2^53（加一不再变大）：报错点名锁文件，不空转、不动它', () => {
+    mkdirSync(run);
+    const huge = join(run, 'instance.9007199254740992.lock');
+    writeFileSync(huge, '{"pid":');
+    const r = acquireOnce();
+    expect(r.signal, r.stderr).toBeNull();
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toBe('READY\n');
+    expect(r.stderr).toContain(`锁文件 ${huge} 的代号太大`);
+    expect(readdirSync(run)).toEqual(['instance.9007199254740992.lock']);
+  }, 30_000);
 });
 
 describe.skipIf(process.platform === 'win32')('本机的进程探测', () => {

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, resolve } from 'node:path';
 import type { HostPaths } from '@aalis/api-host-paths';
@@ -133,12 +133,28 @@ export function resolveHome(input: ResolveHomeInput): { home: string; profile?: 
 
 /**
  * `~/.aalis-<p>` 就是 profile p 的家目录：经 `--home`、`AALIS_HOME` 或 defaultHome 选中它时同样带上 profile，
- * 插件按 profile 派生的名字（如记忆库名）对同一个家目录才一样。按路径的写法认，不解符号链接。
+ * 插件按 profile 派生的名字（如记忆库名）对同一个家目录才一样。这里按路径的写法认，认不出的写法由
+ * {@link profileOfRealHome} 按真实路径补认。
  */
 function withProfile(home: string, userHome: string): { home: string; profile?: string } {
   const profile = /^\.aalis-(.+)$/.exec(basename(home))?.[1];
   if (profile === undefined || !PROFILE_PATTERN.test(profile)) return { home };
   return resolve(home) === resolve(userHome, `.aalis-${profile}`) ? { home, profile } : { home };
+}
+
+/**
+ * 按真实路径补认 profile：家目录的真实路径就是 `~/.aalis-<p>` 的真实路径时为 p。补上按写法认不出的情形：
+ * 大小写写错、经指向它的符号链接选中、用户主目录本身是符号链接。`~/.aalis-<p>` 自己是指向别处的链接时，
+ * 经那个别处的路径选中仍认不出。用户主目录不存在时没有 profile。
+ */
+export function profileOfRealHome(realHome: string, userHome: string = homedir()): string | undefined {
+  let realUserHome: string;
+  try {
+    realUserHome = realpathSync.native(userHome);
+  } catch {
+    return undefined;
+  }
+  return withProfile(realHome, realUserHome).profile;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

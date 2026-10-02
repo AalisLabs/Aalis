@@ -355,6 +355,8 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(`已有实例在运行：pid ${process.pid}`);
     expect(r.stderr).toContain(join(dir, 'run', 'instance.4.lock'));
+    // 判不了的几种情形都要提到：容器被强杀后在同一次开机内重启，新进程在另一个 pid 命名空间里
+    expect(r.stderr).toContain('或容器被强杀后在同一次开机内重启');
     expect(readFileSync(join(dir, 'logs', 'latest.log'), 'utf-8')).toBe(SENTINEL);
     expect(existsSync(join(dir, 'logs', 'latest.1.log'))).toBe(false);
     expect(readdirSync(join(dir, 'run'))).toEqual(['instance.4.lock']);
@@ -371,19 +373,23 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(r.stderr).toContain('以服务形态启动，按正常退出处理');
   });
 
-  it('取不了实例锁（run/ 写不进去）：一行说明后 exit 1，不往下启动', async () => {
-    const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-    mkdirSync(join(dir, 'run'), { mode: 0o500 });
-    try {
-      const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
-      expect(r.code).toBe(1);
-      expect(r.stderr).toContain(`无法在 ${join(realpathSync.native(dir), 'run')} 取实例锁`);
-      expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
-    } finally {
-      chmodSync(join(dir, 'run'), 0o700);
-    }
-  });
+  // 靠权限位制造写不进：root 不受权限位限制，Windows 的 chmod 只切换只读属性
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    '取不了实例锁（run/ 写不进去）：一行说明后 exit 1，不往下启动',
+    async () => {
+      const dir = tempDir();
+      writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+      mkdirSync(join(dir, 'run'), { mode: 0o500 });
+      try {
+        const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain(`无法在 ${join(realpathSync.native(dir), 'run')} 取实例锁`);
+        expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
+      } finally {
+        chmodSync(join(dir, 'run'), 0o700);
+      }
+    },
+  );
 
   it('子命令不取实例锁：守护进程在跑时照常执行，不碰它的锁', async () => {
     const dir = tempDir();
@@ -435,7 +441,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
   });
 
-  it('交给插件的家目录是真实路径；~/.aalis-<p> 不论经 --profile 还是 --home 选中都带 profile，profile 按路径的写法认', async () => {
+  it('交给插件的家目录是真实路径；~/.aalis-<p> 不论经 --profile、--home 还是指向它的链接选中都带 profile', async () => {
     const dir = tempDir();
     const home = join(dir, '.aalis-e2e');
     mkdirSync(home);
@@ -450,8 +456,26 @@ describe('startAalis 家目录（真实子进程）', () => {
     const real = realpathSync.native(home);
     expect(await seen(['--profile', 'e2e'])).toEqual({ home: real, profile: 'e2e' });
     expect(await seen(['--home', '~/.aalis-e2e/'])).toEqual({ home: real, profile: 'e2e' });
-    expect(await seen(['--home', 'link'])).toEqual({ home: real, profile: null });
+    // 写法认不出，按真实路径补认
+    expect(await seen(['--home', 'link'])).toEqual({ home: real, profile: 'e2e' });
   });
+
+  it('启动时配置文件或密钥文件写坏：一行报错（错误码与行列，不带原文）后 exit 1，不带调用栈', async () => {
+    for (const [file, label] of [
+      ['aalis.config.yaml', '配置文件'],
+      ['secrets.yaml', '密钥文件'],
+    ] as const) {
+      const dir = tempDir();
+      writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+      writeFileSync(join(dir, file), 'name: e2e\ntoken: "PLACEHOLDER-NOT-SHOWN\n');
+      const r = await run(dir, ['probe']);
+      expect(r.code, file).toBe(1);
+      expect(r.stderr).toMatch(new RegExp(`^\\[aalis\\] ${label}解析失败：\\S+（第 \\d+ 行第 \\d+ 列）`, 'm'));
+      expect(r.stderr).not.toMatch(/^\s+at /m);
+      expect(r.stderr).not.toContain('PLACEHOLDER-NOT-SHOWN');
+      expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
+    }
+  }, 30_000);
 
   it('配置文件里手写的密钥：启动时移进 secrets.yaml（0600），插件拿到原值，配置文件里只剩引用', async () => {
     const dir = tempDir();
