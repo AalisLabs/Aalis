@@ -204,6 +204,7 @@ describe('Chromium work iframe', () => {
       hasThumbnail: false,
     };
     const common = {
+      basePath: '/',
       items: [item],
       tombstones: [],
       nonce: 'browser123',
@@ -211,11 +212,18 @@ describe('Chromium work iframe', () => {
       readFile: async (_id: string, path: string) => payload.get(path) ?? new Uint8Array(),
       readThumbnail: async () => new Uint8Array(),
     };
-    const branch = await buildBranch({ ...common, group: 'room', mainOrigin, frameAncestors: [mainOrigin] });
+    const branch = await buildBranch({
+      ...common,
+      group: 'room',
+      mainOrigin,
+      mainBasePath: '/',
+      frameAncestors: [mainOrigin],
+    });
     const gallery = await buildGallery({
       ...common,
       siteTitle: 'Works',
       siteIntro: '',
+      siteOrigin: mainOrigin,
       aliases: { room: branchOrigin },
     });
     function deploy(

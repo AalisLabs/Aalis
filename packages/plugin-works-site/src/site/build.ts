@@ -1,7 +1,7 @@
 import { PUBLIC_CONTENT_TYPES, type PublishedItem, publicPathProblem, WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { DeployFile } from '../cloudflare/client.js';
 import { branchHeaderFile, galleryHeaderFile } from './headers.js';
-import { canonicalBasePath, sitePath } from './paths.js';
+import { canonicalBasePath, mediaPath, sitePath } from './paths.js';
 import { encode, indexPage, notFoundPage, removedPage, SITE_CSS, wrapperPage } from './templates.js';
 import { buildWorker } from './worker.js';
 
@@ -20,7 +20,7 @@ export interface Tombstone {
 }
 
 interface BuildBase {
-  basePath?: string;
+  basePath: string;
   /** Main site path when this build is for an isolated branch. */
   mainBasePath?: string;
   /** The exact selected snapshot: withdrawal callers pass current works minus withdrawn IDs. */
@@ -35,8 +35,8 @@ interface BuildBase {
 interface GalleryBuildInput extends BuildBase {
   siteTitle: string;
   siteIntro: string;
-  /** 主站源（https://主机），用来写分享信息里的绝对地址；缺省时不写 og:url 与 og:image */
-  siteOrigin?: string;
+  /** 主站源（https://主机），用来写分享信息里的绝对地址 */
+  siteOrigin: string;
   /** Group to validated work-site origin. */
   aliases: Readonly<Record<string, string>>;
 }
@@ -44,6 +44,7 @@ interface GalleryBuildInput extends BuildBase {
 interface BranchBuildInput extends BuildBase {
   group: string;
   mainOrigin: string;
+  mainBasePath: string;
   frameAncestors: readonly string[];
 }
 
@@ -54,8 +55,8 @@ export interface SiteBuild {
 }
 
 function validate(input: BuildBase): void {
-  canonicalBasePath(input.basePath ?? '/');
-  const mainBasePath = canonicalBasePath(input.mainBasePath ?? input.basePath ?? '/');
+  canonicalBasePath(input.basePath);
+  const mainBasePath = canonicalBasePath(input.mainBasePath ?? input.basePath);
   if (!NONCE.test(input.nonce) || !Number.isFinite(input.now)) throw new TypeError('站点构建参数不合法');
   const ids = new Set<string>();
   for (const item of input.items) {
@@ -138,9 +139,9 @@ function addTombstones(
 
 export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild> {
   validate(input);
-  const basePath = canonicalBasePath(input.basePath ?? '/');
+  const basePath = canonicalBasePath(input.basePath);
   const at = (relative: string) => sitePath(basePath, relative);
-  for (const origin of [...Object.values(input.aliases), ...(input.siteOrigin ? [input.siteOrigin] : [])]) {
+  for (const origin of [...Object.values(input.aliases), input.siteOrigin]) {
     try {
       const url = new URL(origin);
       if (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin || url.username || url.password) {
@@ -161,7 +162,7 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
     `/v/${input.nonce}.txt`,
     ...input.items.flatMap(item => [
       at(`w/${item.id}/index.html`),
-      ...(item.kind === 'media' ? [at(`m/${item.id}.${item.files[0].path.split('.').at(-1)?.toLowerCase()}`)] : []),
+      ...(item.kind === 'media' ? [mediaPath(basePath, item)] : []),
       ...(item.hasThumbnail ? [at(`t/${item.id}.png`)] : []),
     ]),
     ...input.tombstones.filter(t => t.branch === 'main' && t.until > input.now).map(t => t.path),
@@ -187,10 +188,9 @@ export async function buildGallery(input: GalleryBuildInput): Promise<SiteBuild>
     );
     if (item.kind === 'media') {
       const file = item.files[0];
-      const ext = file.path.slice(file.path.lastIndexOf('.') + 1).toLowerCase();
       const bytes = await input.readFile(item.id, file.path);
       if (bytes.byteLength !== file.size) throw new TypeError('媒体文件大小与清单不符');
-      add(files, at(`m/${item.id}.${ext}`), bytes, file.contentType);
+      add(files, mediaPath(basePath, item), bytes, file.contentType);
     }
     if (item.hasThumbnail) add(files, at(`t/${item.id}.png`), await input.readThumbnail(item.id), 'image/png');
   }
