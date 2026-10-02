@@ -286,7 +286,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **家目录**
   - 实例的配置、数据与日志此前放在启动时的当前目录里：换个目录启动就是另一个（空的）实例，生产实例住在仓库里，一次 `git clean -fdx` 就会删掉。现在它们都在家目录里。
   - runtime 在启动时按 `--home`、`AALIS_HOME`、`--profile` / `AALIS_PROFILE`（`~/.aalis-<名>`）、宿主代码的 `defaultHome`、`~/.aalis` 的顺序解析一次，进程的 cwd 不再带任何语义。
-  - `--home` 与 `AALIS_HOME` 开头的 `~` 展开成用户主目录；环境变量设成空串视同没设。profile 名只能用小写字母、数字与连字符；profile 与 `--home` / `AALIS_HOME` 同时给出时报错退出。家目录是 `~/.aalis-<名>` 时就是 profile `<名>`，经 `--home` 选中它也一样。交给插件的家目录取真实路径（符号链接已解开）。
+  - `--home` 与 `AALIS_HOME` 开头的 `~` 展开成用户主目录；环境变量设成空串视同没设。profile 名只能用小写字母、数字与连字符；profile 与 `--home` / `AALIS_HOME` 同时给出时报错退出。家目录是 `~/.aalis-<名>` 时就是 profile `<名>`，经 `--home` 选中它也一样；按写法认不出时再按真实路径认，所以大小写写法不同或经指向它的别名选中时同样是这个 profile。交给插件的家目录取真实路径（符号链接已解开）。
 - **初始化**
   - 家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。
   - 在启动命令里、子命令之前加上 `--init` 运行一次即可初始化：建目录（0700），写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600），建布局里的子目录。目标目录里已有布局以外的东西时拒绝初始化。
@@ -294,7 +294,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **实例锁**：同一家目录只许一个守护进程。手动在终端再起一份时，此前会与服务并存、每条消息回两遍；现在打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。
   - 以 `--service` 启动时改以 0 退出，配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会被反复拉起。
   - 锁在家目录的 `run/instance.<n>.lock`，按代号 link 取得，两个进程同时启动也只有一个拿到；家目录所在的文件系统要支持硬链接。
-  - 判活用开机标识、pid 与进程启动标识，与墙上时钟无关；SIGKILL 留下的锁下次启动时按残留接手。Windows 与没有 `ps` 的环境只看 pid。
+  - 判活用开机标识、pid 与进程启动标识，与墙上时钟无关；SIGKILL 留下的锁下次启动时按残留接手。开机标识不同（宿主机重启过）的一律按残留接手，容器里也一样；同一次开机里容器被强杀后重启（pid 命名空间不同），判不了原进程是否还活着，按占用处理，要按报错提示手动删锁文件。Windows 与没有 `ps` 的环境只看 pid。锁只在同一台主机内有效：两台主机经网络盘共用一个家目录时开机标识不同，会互相按残留接手，不要这样部署。
   - `/restart` 与市场更新引起的前台重启经环境变量 `AALIS_LOCK_HANDOFF` 把锁交给新进程，新进程读到即从环境里删掉。以 `--service` 运行时，重启改为停掉后以 75 退出、由服务管理器拉起，不自己起新进程；服务形态下市场更新没有「新版起不来就回滚」。子命令不取锁。
 - **安装集**：默认的插件加载器从安装集（`appDir`）的 `package.json` 找插件。安装集里没有 `package.json` 时拒绝启动，并说明要传 `appDir`；此前这种情况会一个插件都不加载、照样起来。缺省的 `<家目录>/app` 留给以后的全局启动器，现在的入口都要自己传 `appDir`。
 - **日志**：文件日志改写到家目录的 `logs/latest.log`，WebUI 与 CLI 的日志页读的就是这一份。
@@ -309,7 +309,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - 库里记着它归哪个家目录（真实路径）与实例：不同家目录连同一个 MongoDB、派生出同一个库名时（例如 `.aalis-dev/` 与 `~/.aalis`，或复制出来的测试实例），后来的那个以一行配置错误激活失败，不会共写。库里任一集合已有数据却没有归属记录时也不默认认走。路径只在一台机器上有意义：家目录路径相同的两台机器或两个容器连同一个 MongoDB 时认不出来，要各自写明 `database`。
   - 新增配置项 `claimFrom`：家目录搬了位置后，先停掉原家目录的实例，再填原家目录的路径认领；认领已有数据的旧库填 `unowned`。认领后删掉这一项。
   - 激活失败时本插件不提供记忆服务；同时启用了 memory-sqlite 或 memory-inmemory 的，记忆改由它们提供。
-- **宿主控制文件兜底**：不管经哪个根进来，存储都不许读写家目录的 `secrets.yaml`、不许改 `aalis.config.yaml`（按 dev 与 ino 比，硬链接与符号链接都挡得住）；删除、移动、改名一个含它们的目录，或以写、删的方式交出这类目录的本地路径，同样拒绝（按目录身份比，firmlink 与 bind mount 的别名也认得出）。它们不存在时，往它们的位置写、在下面建目录都拒绝。只有宿主自己读写它们；以读的方式交出目录（命令的工作目录）不查子树，挡命令读文件靠以后的沙箱。
+- **宿主控制文件兜底**：不管经哪个根进来，存储都不许读写家目录的 `secrets.yaml`、不许改 `aalis.config.yaml`（按 dev 与 ino 比，Windows 上按完整的 64 位文件 ID 比，硬链接与符号链接都挡得住）；删除、移动、改名一个含它们的目录，或以写、删的方式交出这类目录的本地路径，同样拒绝（按目录身份比，firmlink 与 bind mount 的别名也认得出）。它们不存在时，往它们的位置写、在下面建目录都拒绝。只有宿主自己读写它们；以读的方式交出目录（命令的工作目录）不查子树，挡命令读文件靠以后的沙箱。
 - **新契约包 `@aalis/api-host-paths`**：服务 `host-paths` 给出家目录、安装集与家目录布局的绝对路径，runtime 在根上独占提供，交给插件的对象是冻结的。
   - plugin-storage-local 依赖它，存储根的相对路径按家目录解析；
   - plugin-package-manager 依赖它，往安装集里装卸插件。原来要与宿主手动对齐的配置项 `projectRoot` 删掉了：配置里残留的这一项会被忽略，可以删掉；要装到别处，改由入口给 `startAalis` 传 `appDir`；
@@ -319,9 +319,9 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - `startAalis` 删掉 `configPath`、`projectDir` 与字符串形态的 `fileLog`，新增 `appDir` 与 `defaultHome`；`subcommands` 改名 `argv`，开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走。
   - `createFsYamlConfigProvider`、`createFsPluginLoader`、`createNodeModulesPluginLoader`、`setupFileLogger` 的路径参数改为必填，且必须是绝对路径（相对路径直接抛错）。`appendCrashLog` 的路径参数改为必填。
   - `createProcessRespawnStrategy` 必须传 `appDir` 与 `cwd`（新进程在启动时的 cwd 里起，命令行里相对的 `--home` 才解析到同一处），可选 `env`（交给新进程的环境变量，startAalis 用它交接实例锁）。新增 `createServiceRestartStrategy` 与 `SERVICE_RESTART_EXIT_CODE`（75）。`buildRespawnCommand` 的第一个参数改为 `appDir`。删掉导出常量 `DEFAULT_LOG_FILE`。
-  - 新增导出 `parseHostArgs`、`resolveHome`、`derivePaths`、`isHomeInitialized`、`initHome`、`HomeArgsError` 与类型 `HostArgs`、`ResolveHomeInput`。
+  - 新增导出 `parseHostArgs`、`resolveHome`、`profileOfRealHome`、`derivePaths`、`isHomeInitialized`、`initHome`、`HomeArgsError` 与类型 `HostArgs`、`ResolveHomeInput`。`resolveHome` 按写法认 profile，认不出时 startAalis 用 `profileOfRealHome` 按家目录的真实路径补认，自组装宿主可以照做。
 - **路径字段的 `format`**
-  - schema-config 新增字段属性 `format`（string 与 textarea 适用）：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名。判定忽略首尾空白，空串照常表示未填；只按写法判定，与宿主平台无关。plugin-webui-client 的表单给这类字段显示写法提示。
+  - schema-config 新增字段属性 `format`（string 与 textarea 适用）：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名。判定忽略首尾空白，交给插件的值也去掉首尾空白；空串照常表示未填，只有空白的必填字段同样算没填；只按写法判定，与宿主平台无关。plugin-webui-client 的表单给这类字段显示写法提示。
   - 下面这些字段都声明了它：whisper-cli 与模型路径、绘图 / 浏览器 / 审核渲染用的 Chrome 路径、审核的 ffmpeg 路径、MCP server 的 `command`。它们此前收相对路径并按启动目录解析；现在写了相对路径的插件拒绝激活，MCP 只跳过那一个 server。改成绝对路径即可。whisper-cli 与 ffmpeg 的路径改为必填加默认值，留空时用默认的命令名，不再拿空串去执行。
 - **其余修复**：plugin-process-local 的 `readExternalFile` 拒收相对路径：契约本来只收绝对路径或 `file://`，相对路径此前按 cwd 读。plugin-webui-server 还没有选中前端时，不再按 cwd 找 `index.html`。
 - **脚手架**：create-aalis 生成的项目带家目录 `home/`（配置与空的 `secrets.yaml` 都在里面），入口传 `appDir` 与 `defaultHome`，`.gitignore` 改为忽略整个 `home/`。用 npm 启动时，宿主参数要写在 `--` 之后：`npm start -- --home <目录>`。
@@ -344,7 +344,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   5. 密钥不用手动搬：第一次用新版启动时自动从 `aalis.config.yaml` 移进 `secrets.yaml`，其余步骤见「家目录（第二部分）」一节的升级步骤。
 - **发布时要抬的下限**
   - plugin-persona、plugin-skills 对 `@aalis/plugin-storage-local` 没有包依赖，但新的默认目录要新版 storage-local 提供的 `personas`、`skills` 根，见「必须同批升级的包」。
-  - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 对 `@aalis/schema-config` 的下限，抬到含 `format` 的新版本：旧版不认这个属性，相对路径会照旧放行。
+  - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 对 `@aalis/schema-config` 的下限，抬到含 `format` 的新版本：旧版不认这个属性，相对路径会照旧放行。plugin-mcp-client 删掉了自己对 `command` 的去空白与空值判断，改由新版 schema-config 做，配旧版时带空白的命令会原样拿去执行。
   - plugin-storage-local、plugin-package-manager、plugin-webui-server、plugin-memory-mongodb 对 `@aalis/api-host-paths` 写 `>=0.1.0`。
   - runtime 对 schema-config 的下限这一部分不用抬，第二部分要抬，见下一节。
 
@@ -360,17 +360,18 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - 引用的键不在 `secrets.yaml` 里时，记一条错误（点名实例、字段与键）。用 `parseConfig` 读取、且装的是新版 schema-config 的插件激活失败，消息点名键名，不回落默认值；不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出（runtime 登记给 doctor，每个有悬空引用的实例报一条 error，点名字段与键）。
   - 保存时先写 `secrets.yaml`、再写主配置；`secrets.yaml` 的临时文件一律以 0600 创建，不沿用原文件的权限位。与主配置一样，盘上有尚未生效的外部修改时拒写。
   - 宿主经自己的写入（WebUI 改配置、删除实例、卸载插件、同步裁剪）换掉或删掉引用后，不再被任何配置引用的键在保存时删除；宿主新建、后来又没人引用的键同样删除。删除在主配置写成之后做，这一步写 `secrets.yaml` 失败不让保存报错，键留到下次保存再删。手改配置文件不会触发删除，手加进 `secrets.yaml`、还没被引用的键不动。
-  - 外部修改 `secrets.yaml` 后只重新加载解析结果变了的实例；配置热重载同样改为拿解析后的配置与运行态比较。运行中修好或改动 `secrets.yaml` 时，宿主已提交、还没写成的密钥不会丢，并进新读到的内容，下次保存时写入。运行中把它改成空文件或只剩注释，按空的密钥文件处理，不当作坏内容忽略。
-  - 两个文件的 YAML 解析错误在日志里只写错误码与行列，不再带报错消息的首行（其中可能有原文，原文可能就是密钥）。YAML 的警告（例如把 `!xxx` 当成标签）也不再经 Node 的 process warning 带原文打到 stderr，改为记错误码与行列。
+  - 外部修改 `secrets.yaml` 后只重新加载解析结果变了的实例；配置热重载同样改为拿解析后的配置与运行态比较。宿主写 `secrets.yaml` 被拒（盘上有尚未生效的外部修改）之后，下一次文件变更按两个文件对账：被拒的那次改动作废，文档退回配置文件上的内容，插件按文件重载，与主配置被拒写时一致；你在文件里写的值以文件为准。因为别的原因没写成的密钥不会丢，并进新读到的内容，下次保存时写入。运行中把它改成空文件或只剩注释，按空的密钥文件处理，不当作坏内容忽略。监听的目录被删除或不可访问时停止监听并告警，不让进程退出。
+  - 两个文件的 YAML 解析错误在日志里只写错误码与行列，不再带报错消息的首行（其中可能有原文，原文可能就是密钥）。YAML 的警告（例如把 `!xxx` 当成标签、以集合作键）也不再经 Node 的 process warning 带原文打到 stderr，改为记错误码与行列。启动时两个文件里有一个写坏，打印一行错误（错误码、行列与文件路径）后退出，不带调用栈。
   - 自组装宿主创建配置存储时不给密钥存储的，密钥照旧以明文留在文档里；没有 `configSchema` 的插件、没标 `secret` 的字段也照旧是明文。没装上或加载失败的插件，宿主不处理它们的配置段，明文原样保留；这类残留段冷启动时逐段告警，要手动删掉，或装好插件后再启动一次。
-- **配置文件里的明文会被自动移走**：配置同步（启动、热重载、市场装载插件）遇到密钥字段上的非空明文，把它移进 `secrets.yaml`、原处换成引用。这会改写用户的 `aalis.config.yaml`，日志只写实例、字段路径与键名，不写值。`''`、空 map、空 list 不算密钥值，原样留着。移走之前的明文仍可能留在编辑器的备份文件、同步盘的历史版本与 git 历史里（配置文件曾经提交过的话），需要自行清理；曾经外泄过的密钥应当轮换。
+- **配置文件里的明文会被自动移走**：配置同步（启动、热重载、市场装载插件）遇到密钥字段上的非空明文，把它移进 `secrets.yaml`、原处换成引用。这会改写用户的 `aalis.config.yaml`，日志只写实例、字段路径与键名，不写值，在写成之后才记。运行中把已有的引用改成明文时，新值写回原来那个键（与 WebUI 里替换一致，旧值不留在 `secrets.yaml` 里；这个键被别的插件共用时，它们一起换成新值并重载）；启动前改的、数组元素里的照旧新建键。`''`、空 map、空 list 不算密钥值，原样留着。移走之前的明文仍可能留在编辑器的备份文件、同步盘的历史版本与 git 历史里（配置文件曾经提交过的话），需要自行清理；曾经外泄过的密钥应当轮换。
 - **host-config 读写文档形态**（api-host-config）
   - 新增 `applyPluginConfig(instanceId, submitted)`，返回 `{ status: 'refused' }` 或 `{ status: 'applied', reloaded, saveError? }`：拆出密钥、更新运行态（未登记的后缀实例按同模块的定义登记，先写文档再登记，没登记上时撤回文档与密钥）、写文档，让共用了被替换的键的其他实例按新值重载，最后落盘。
   - 写入规则：密钥字段上的引用表示保持；非空明文在顶层与分组字段上写进该实例当前文档在同一位置引用的键（被共用时一并影响共用者），没有引用时新建键；数组元素里的一律新建键；`''` 与空值不是密钥。本次提交新引入的悬空引用（键不在 `secrets.yaml` 里、也不是这次写入的）被拒绝：抛错，WebUI 回 400，运行态与文档都不动；提交前就悬空、原样带回的不拦。
-  - `getPluginConfig` 返回文档形态（引用，不是原值），插件要原值读自己的 `config`。`setPluginConfig` 遇到密钥字段上的非空明文抛错（宿主有密钥存储、且查得到该实例的 schema 时）。`save()` 先写密钥、再写文档。「调用方两边都写」的约定只剩启停与服务偏好。
+  - `getPluginConfig` 返回文档形态（引用，不是原值），插件要原值读自己的 `config`。`setPluginConfig` 遇到密钥字段上的非空明文抛错（宿主有密钥存储、且查得到该实例的 schema 时）。`save()` 先写密钥、再写文档。「调用方两边都写」的约定只剩启停与服务偏好。交给插件的 `set` 不能整块替换 `plugins`（会绕过上面的形态检查），宿主抛错；改插件配置用 `applyPluginConfig` 或 `setPluginConfig`。
 - **WebUI**
   - `GET /api/plugins` 的 `config` 改为文档形态，密钥字段上是引用，不再回原值；顶层新增 `secretRefCounts`（键 → 引用处数）。宿主不提供 host-config 时给运行态配置并去掉密钥字段。`GET /api/config` 与 `GET /api/plugins/:name/config` 读的是文档，同样只有引用。
   - `PUT /api/plugins/:name/config` 与 `POST /api/plugins/:name/instances` 改经 `applyPluginConfig`。PUT 只改已登记的实例，没登记的照旧返回 404，不借 `applyPluginConfig` 新建（建实例走 POST）。
+  - 改配置、启用、停用与新建实例几条路由统一为「回 2xx 即已写进配置文件」：已写入但插件激活失败（或没在宽限内停下）时，由 500 改为 200 `{ ok: true, message }`，原因在 `message` 里；按 0.19.0 一节的写法把 500 当作「已写入、激活失败」处理的调用方要改。没写成的情况照旧：400、404、409，以及落盘失败时带 `applied: true` 的 409、500（运行态已生效、文件没写成）。plugin-webui-client 认得 `applied`：新建实例在这种情况下也收起表单、刷新列表，不会再因重复点「创建」得到「已存在」；服务偏好切换同理会刷新卡片；插件配置页保存或删除实例出错后也刷新插件列表，与启停一致。停机进行中删除实例时，配置段照样从文件删掉、回 200，回执写明「停机中，未卸载运行中的实例」。拒写的回执改为「修好该文件后会按文件内容重载」，不再一律说成配置文件。
   - plugin-webui-client 的配置表单对已设置的密钥字段显示「已设置」和键名，不显示值；输入新值即替换，不动则保持原值，可清除、可撤销；顶层与分组字段的键被几处配置共用时提示替换会一并影响它们（数组元素里的替换另建新键，不提示）；map、list 上的密钥字段整个只写不回显；「恢复默认」保留顶层与分组里已存的密钥（数组整份换成默认值，元素里的密钥随之删除）；密码框不让浏览器自动填入登录口令。
 - **第一方插件补标**
   - plugin-webui-server 的 `fixedToken` 标 `secret: true`。
@@ -389,7 +390,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   3. 第一次用新版启动时，`aalis.config.yaml` 里密钥字段上的明文自动移进 `secrets.yaml`，日志里每处有一行「配置同步：已把 <实例> 的 <字段> 移进 secrets.yaml（键 <键>）」。启动后看一眼配置文件，确认这些位置已换成引用。没装上或加载失败的插件，配置段不处理、明文原样保留（冷启动时逐段告警）：删掉这些段，或装好插件后再启动一次。
   4. 删掉明文的旧副本：编辑器的备份文件，同步盘或备份工具里的旧版本，家目录里迁移工具留下的 `aalis.config.yaml.before-schema-0.14` 等备份（启动验证后删掉）；配置文件进过 git 的，历史里仍有明文，应当轮换这些密钥。
   5. 备份从此要连同 `secrets.yaml`（0600）。只恢复 `aalis.config.yaml` 时引用落空：用 `parseConfig` 读配置的插件激活失败，`/doctor` 的 `config.secrets` 也会点名；按日志或诊断点名的键在 WebUI 重新填写，或在 `secrets.yaml` 里补上即可。
-  6. 手改配置时，密钥照旧可以直接写成明文，下次热重载时会被移走；要让几个插件共用一个密钥，把它们的字段写成指向同一个键的引用。
+  6. 手改配置时，密钥照旧可以直接写成明文，下次热重载时会被移走（原处已有引用的，写回原来那个键，可以这样轮换密钥；共用这个键的插件一并换成新值，只想换其中一个时，把它的字段改成指向新键的引用，并在 `secrets.yaml` 里加上这个键）；要让几个插件共用一个密钥，把它们的字段写成指向同一个键的引用。
 - **发布时要抬的下限**
   - runtime、plugin-webui-server 对 `@aalis/schema-config` 的下限，抬到含 `isSecretRef`、`mapSecretFields` 的新版本：旧版没有这两个导出，加载时报错。
   - plugin-memory-mongodb 对 `@aalis/schema-config` 的下限可以一并抬到新版本，只为改进报错：旧版的 `parseConfig` 遇到落空的引用同样拒绝激活（`uri` 声明了 `onInvalid: 'error'`），只是报 `uri` 期望 string、得到 object，不点名缺的键。
