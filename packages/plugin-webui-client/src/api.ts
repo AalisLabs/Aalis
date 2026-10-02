@@ -84,17 +84,18 @@ export async function pageAction<T = unknown>(pluginName: string, method: string
 }
 
 /**
- * 把外部图片 URL 包装成走服务端代理的本地 URL，规避第三方站点 hotlink/referer/CORS 限制。
- * - http(s):// → /api/proxy/image?url=<encoded>
- * - data: / blob: / base64 / 已是 /api/... 的本地路径 → 原样返回
- * - file:// → 浏览器无法直接加载，原样返回（让 alt 显示）
- */
-/**
  * 存储地址：<根名>:/<路径>（如 data:/images/x.png、paper:/…）。真正的 data 网址是 data:<类型>,…，冒号后不是斜杠；
  * file:// 网址冒号后是两个斜杠，也不算
  */
 const STORAGE_URI = /^[A-Za-z][\w-]*:\/(?!\/)/;
 
+/**
+ * 把消息里的媒体地址换成浏览器能加载的地址。
+ * - http(s):// → /api/proxy/image?url=<encoded>（走服务端代理，规避第三方站点 hotlink/referer/CORS 限制）
+ * - 存储地址 <根>:/… → /api/media?uri=<encoded>
+ * - data 网址（data:<类型>,…）/ blob: / 已是 /api/... 的本地路径 → 原样返回
+ * - file:// → 浏览器无法直接加载，原样返回（让 alt 显示）
+ */
 export function proxiedMediaUrl(raw: string | undefined | null): string {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) {

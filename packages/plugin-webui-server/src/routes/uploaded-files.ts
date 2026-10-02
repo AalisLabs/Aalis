@@ -3,6 +3,7 @@ import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
+import { pipeToResponse } from './pipe-to-response.js';
 
 /**
  * file-reader 元信息（与 plugin-file-reader 的 FileMeta 保持一致；
@@ -136,11 +137,7 @@ export function registerUploadedFilesRoutes(
       res.setHeader('Content-Type', meta.mimeType || 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(meta.name)}`);
       res.setHeader('Content-Length', String(result.stat.size));
-      // 客户端中断（取消下载/关标签页/断网）时 res 触发 'close'，而 Node 的 pipe 只 unpipe、
-      // 不 destroy 源流——fs.ReadStream 会停在 paused 态永不 end，fd 不回收。正常结束时
-      // destroy 打在已 autoClose 的流上是 no-op，happy path 行为不变。
-      res.on('close', () => result.stream.destroy());
-      result.stream.pipe(res);
+      pipeToResponse(result.stream, res, logger, `下载上传文件 ${dataUri}`);
     } catch (err) {
       logger.warn('下载上传文件失败:', err);
       res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
