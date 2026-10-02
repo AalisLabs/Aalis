@@ -439,7 +439,6 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - api-session-protocol 的 `SessionPeer.surface` 改为审批面登记得到的句柄。
   - plugin-session-server 现在必须有 host-paths 才能启动（审计写在家目录）。
   - plugin-session-confirm 与 api-session-confirm 删除；create-aalis 的预设不再含 session-confirm。配置里残留的 session-confirm 条目与 `autoConfirmUntil` 要手动删掉（宿主冷启动时会对没装上的插件配置段告警）。
-- **升级须知**：单元 4 之前，create-aalis 的各档预设里还没有 plugin-session-server，此时需要确认的工具调用一律被拒（审批服务不在时立即拒绝并说明）。
 - **发布档位**：次版本：api-authority、api-gateway、api-commands、api-session-protocol（实验性）、plugin-authority、plugin-commands、plugin-gateway、plugin-cli、plugin-session-server；其余为 patch。
 
 ### 管理推送、登录加固与会话文件（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/schema-message）
@@ -455,6 +454,33 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **破坏性**：`tokenMode` 为 `fixed` 时，`fixedToken` 去掉首尾空白后至少要 32 个字符，短了插件不启动并写明原因（留空仍按 persist 处理）。**升级前配了短 token 的，先换成更长的随机字符串。**
 - **发布档位**：次版本：api-webui、api-session-protocol（实验性）、schema-message、plugin-webui-server；plugin-session-server 为 patch。
 
+### 新 WebUI：外壳、会话与插件登记的会话设置（@aalis/plugin-webui-client、@aalis/plugin-webui-server、@aalis/api-webui、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-approval、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-tool-system、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-paper、@aalis/plugin-subtask、@aalis/plugin-checkpoint、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-cli、@aalis/schema-message、@aalis/schema-config、@aalis/create-aalis）
+
+新 WebUI 的第四部分：前端整套重写，接上会话协议与管理推送；会话设置改由插件登记。旧的 `/ws` 协议与旧前端在这一批删除。插件管理、设置、运行状况与插件页面在后续各节补上。
+
+- **外观与主题**：深浅两套，默认跟随系统。主题是独立的单位（名字、深或浅、一套颜色令牌），内置 8 个：偏中性、品牌柔和、文档站原色、安静中性各出深浅两个，默认跟随系统用偏中性。主题只改颜色，不改间距、圆角、字号与布局。令牌表 `THEME_TOKENS`、主题文件格式与 `parseTheme`、内置主题 `BUILTIN_THEMES`、对比度检查 `themeContrastIssues` 在 api-webui（实验性），以后导入第三方主题用同一套校验。首帧前写好主题，刷新不闪。
+- **布局**：最左侧图标栏、左栏、主区、右侧面板，栏宽固定；48em 以下是手机三层（按地址逐层进入，系统返回逐层退回），平板宽度两侧是覆盖式抽屉。不用卡片样式，圆角 4px 与 6px，阴影只给浮层。尺寸用 rem，跟随浏览器字号；触屏下控件自动放大。图标统一为线性图标，界面上没有 emoji。
+- **会话列表**：「我的」与按适配器实例分组的房间，组默认折叠；组内只露出需要处理的与近 7 天她开过口的房间，其余收在「其余 N 个」里。房间组可以打开主区的房间表（`/rooms?instance=`），按类型与状态筛选、按列排序、批量归档与删除。底部有「已归档」，可以恢复。Cmd/Ctrl+K 搜索会话。
+- **会话工作台**：时间线按条目渲染（流式、思考、工具卡、通知、回合分隔），每张可折叠；工具卡按工具声明的展示种类画命令或文件改动；审批卡挂在工具卡上，只有批准与拒绝（可附理由），出现时不抢输入框焦点、没有批准的快捷键，结算后收成一句写明结果、原因与时间，刷新后仍在；回合可回滚（两种范围都先确认）。头部有上下文用量百分比，点开是拆分表（桌面在右侧面板，手机从底部弹出），有压缩服务时写明压缩线、达到时换色。右侧面板有计划、设置、用量。输入框附件一律接收，只有附件也能发，正确处理输入法组字时的回车，触屏上回车换行、按钮发送。
+- **会话设置由插件登记**：api-session-manager 新增 `registerSetting`、`listSettings`，设置项（字段、适用的会话种类、显眼程度、是否只按继承链实时解析）由拥有功能的插件登记，随它的激活撤回；`SessionConfig` 不再列具体的键，各插件经 declaration merging 加。没装或停用的插件的键原样保留，但不显示、不参与解析，重新启用后恢复。界面只列适用于这个会话种类的项：常用的在前，其余收进「高级」并按插件分组；每项显示生效值与来源，就地修改、改完即存，可以恢复继承。模型等 `composer` 档的项同时出现在输入框旁。登记的插件：agent（模型、深度思考、工具迭代上限）、persona（人设、额外提示、两个结构化输出开关）、tools（工具分组）、记忆与关系图等（召回范围，定义在 api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`）、paper（白纸与远端代理六项，只对房间）。
+- **会话种类与默认层**：api-session-manager 新增纯函数 `sessionKind`，给出 `owner`、`room`、`task` 三种（owner 自己的 QQ 私聊算房间），列表分区、设置项的适用范围与协议共用它。全局默认、平台档与受众条目改存宿主配置文档顶层的 `sessionConfig`（`defaults`、`platforms`、`audiences`），协议新增按层读写；保存失败时撤回并报错。
+- **会话协议**：握手回包加 `features`（发送、回滚、压缩，按服务在场算出）与通知 `features/changed`；会话设置按登记项给出各行，新增 `session/config/layers`、`session/config/layer/get`、`session/config/layer/update` 与通知 `session/config/changed`；`sessions/list` 加 `instance`、`platform`、`archived`，新增 `session/unarchive`，`RoomGroup` 加显示名；工具调用条目加 `display` 与审批结算 `settlement`，用量条目加 `compressAt`，`approval/settled` 加 `source` 与 `at`；删除 `SessionSummary.paper` 与写死的配置字段、`options`。
+- **审批**：在场的界面全部断开或转到后台之后，有 30 秒重连宽限，宽限内回来卡片照常等着（等待总时长仍是 300 秒）；发起时就没人在场的仍立即拒绝。审批结局（含发起时就被拒的）写进工具结果的元数据，刷新后历史显示真实结局，不再显示成「失败」。卡上的事实按工具声明的展示种类取（api-tools 新增 `display`，exec、exec_background、file_edit、file_write、file_append 已声明）；没声明的工具逐字列出全部参数。
+- **压缩服务**：api-memory 新增服务 `compression`（`compress(sessionId, reason)`、`autoThreshold`），memory-summary 提供；手动压缩改调它，`session:compress` 事件删除。`autoCompressThreshold` 不在 0 到 1 之间时按不自动压缩处理并告警。
+- **历史**：刷新后能还原「已发到群」、审批结局、平台没收下与重试丢掉的几版；重试的各版不再连成一条。静默或重复跳过的那一轮说的话不落库，只在实时推送里标「未发出」。
+- **安全**：所有响应带文档级 CSP；改状态的请求（含页面动作、配置写入、插件启停、登录与注销）校验来源，同一主机别的端口上的网页发不进来；Markdown 不渲染原始 HTML，外站图片显示成链接、不发请求，链接只许 http、https、mailto；`/assets/` 下缺失的文件回 404。
+- **修复**：agent 给发往模型的历史加时间标注时不再改写记忆服务交出的对象（用内存记忆后端时，会话历史里的用户消息此前会被永久加上时间前缀）。
+- **删除**：旧 `/ws` 协议与它的全部推送；`/api/status`、`/api/tool-groups`、`/api/llm-models`、`/api/files*`、`/api/uploaded-files*` 与配置项 `fileRoot`（通用文件管理页不再提供）；session-manager 的会话页与 14 个页面动作、checkpoint 的 4 个、todo-list 的 2 个页面动作（都由会话协议取代）。webui 平台适配器仍然登记（平台名 `webui` 标明说话的是 owner），但不再经它收发消息。
+- **破坏性**：
+  - api-session-manager 删除 `ROOM_ONLY_CONFIG_KEYS`、`omitRoomOnlyKeys`、`sessionListSection`、`PlatformProfile`、`getPlatformProfiles`、`getDefaults`、`SessionTreeSection`，`MemoryRecallScope` 移到 api-memory；自研 session-manager 要实现设置登记与按层读写。
+  - plugin-session-manager 不再有插件配置：`defaults` 与 `platformProfiles` 搬到宿主配置的 `sessionConfig`（见下面的升级须知）。
+  - api-approval 的 `ApprovalSink.settled` 改为接收结算对象 `{ state, source, at }`。
+  - api-memory 删除 `session:compress` 事件，改用 `compression` 服务。
+  - 会话设置写入改为按登记的字段校验：没有登记的键被拒绝（例如没装人设插件时 `/session.set -p` 会失败），外来字段类型的设置项必须提供 `validate`，不适用于这个会话种类的项写不进去。
+  - 第三方前端：旧 `/ws` 协议已删除，改按 [api-session-protocol](docs/api/api-session-protocol.md) 与 [api-webui](docs/api/api-webui.md) 的管理推送实现。
+- **升级须知**：session-manager 插件配置里的 `defaults` 改放到宿主配置的 `sessionConfig.defaults`；`platformProfiles` 里不带 `audience` 的条目改放到 `sessionConfig.platforms.<平台>`，带 `audience` 的改放到 `sessionConfig.audiences.<平台>.<group 或 private>`；`think` 的 `'on'`、`'off'` 改成 `true`、`false`，空串与 null 删掉，`llm` 要 provider 与 model 都有才保留。会话库里每个会话自己的配置不用改。
+- **发布档位**：次版本：api-session-manager、plugin-session-manager、api-session-protocol（实验性）、api-approval、api-memory、api-tools、api-webui、plugin-session-server、plugin-memory-summary、plugin-webui-server、plugin-webui-client、create-aalis；其余为 patch。只改注释的 api-doctor、plugin-doctor、plugin-llm-openai、plugin-commands 可以不发。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -462,6 +488,10 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - plugin-agent、plugin-checkpoint、plugin-session-manager、plugin-storage-local 与 api-agent、api-checkpoint 同批升级：checkpoint 改从 `agent:input:before` 取 agent 的 `turnId` 记回合，配旧版 agent 时拿不到回合 id、写入不再记账；新版 session-manager 按 `turnId` 登记在飞回合；新版 storage-local 经 api-checkpoint 的描述符找 checkpoint，配旧版 checkpoint（描述符在插件包里）时找不到、写入不受保护。
 - plugin-session-manager、plugin-tool-onebot 与 api-platform 同批升级：新版 `resolvePlatformBySession` 返回适配器条目，旧版返回适配器本身。plugin-adapter-onebot 多实例部署时也要同批：旧版没有 `canHandle`，新版 api-platform 按它路由。
 - plugin-paper、plugin-image-sender、plugin-publish-review、plugin-webui-server 与 schema-message 同批升级：前三者在运行时导入 schema-message 新增的 `awaitDelivery`，plugin-image-sender 与 plugin-webui-server 另导入新增的 `outboundMediaMessage`。发布时它们对 schema-message 的依赖下限要抬到含这些导出的版本，否则配旧版 schema-message 会在加载时找不到导出。
+- plugin-session-manager、plugin-session-server、plugin-agent、plugin-persona、plugin-tools、plugin-memory-history、plugin-memory-vector、plugin-tool-session、plugin-user-relation、plugin-paper、plugin-subtask 与 api-session-manager、api-memory 同批升级：会话设置改由各插件登记，新版 session-manager 拒绝没登记的键，旧版插件不登记，它们的设置项会写不进去也不显示；旧版 session-manager 没有 `registerSetting`，新版插件登记时抛 TypeError。
+- plugin-session-server、plugin-memory-summary、plugin-webui-server 与 api-memory 同批升级：手动压缩改调 `compression` 服务，旧版 memory-summary 只听已删的 `session:compress` 事件，压缩会报服务不在。
+- plugin-session-server、plugin-cli 与 api-approval 同批升级：审批面推送的 `settled` 改为接收结算对象。
+- plugin-webui-client 与 plugin-webui-server、plugin-session-server 同批升级：新前端只走 `/session` 与 `/admin`，旧版 webui-server 没有 `/admin`、旧版前端连不上已删的 `/ws`。
 - plugin-webui-server、plugin-session-server 与 api-session-protocol、schema-message 同批升级：新版 webui-server 下载会话文件时调会话服务的 `resolveFile`，旧版 session-server 没有它；新版 webui-server 以 `outboundMediaMessage('file')` 记文件，旧版 schema-message 不收 `file` 会抛 TypeError，WebUI 会话的出站记录写不进去。发布时两者对 schema-message 与 api-session-protocol 的依赖下限抬到本批的新版本。
 - plugin-adapter-onebot 与 api-trigger、schema-message 同批升级：新版适配器把群友之间的戳一戳也转为入站，并以 `noticeTargetIsSelf: false` 标明不是戳机器人；旧版 api-trigger 的 `isAddressed` 不看这个标记，会把每次群友互戳都当作点名。
 - plugin-session-manager 与 plugin-agent、plugin-webui-client 同批升级：新版会话页调 `getInheritance`，旧版 session-manager 没有这个动作；新版 session-manager 删了 `getInheritedDefaults`，旧版会话页取不到继承值；新版 agent 的 `/session` 调 `resolveInheritance`，配旧版 session-manager 会抛 TypeError；`getSessionTree` 的回包改成了分区，新旧 webui-client 与 session-manager 混用时，会话页按另一种形状读回包，渲染时抛错。
