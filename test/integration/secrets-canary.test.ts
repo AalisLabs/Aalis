@@ -150,14 +150,14 @@ describe('金丝雀密钥不进主配置文件', () => {
       'p:b.apiKey': 1,
     });
 
-    // 手改配置文件，把明文写进 p:b：热重载里的同步把它移走、文件随之改写，实例按新值重载。
-    // 原来的键还在 secrets.yaml 里（手改不触发删除），新值取下一个键
+    // 手改配置文件，把 p:b 的引用改成明文：热重载里的同步把它移走、文件随之改写，实例按新值重载。
+    // 新值写回原来引用的那个键（同 WebUI 替换），旧值不留在 secrets.yaml 里
     const edited = parse(readFileSync(configPath, 'utf-8')) as { plugins: Record<string, Record<string, unknown>> };
     edited.plugins['p:b'].apiKey = 'CANARY-4-PLACEHOLDER';
     const tmp = `${configPath}.edit`;
     writeFileSync(tmp, stringify(edited));
     renameSync(tmp, configPath);
-    await waitFor(() => canaries().length === 0 && secretsFile()['p:b.apiKey-2'] === 'CANARY-4-PLACEHOLDER');
+    await waitFor(() => canaries().length === 0 && secretsFile()['p:b.apiKey'] === 'CANARY-4-PLACEHOLDER');
     await waitFor(() => seen.includes('CANARY-4-PLACEHOLDER'));
 
     const removed = await invoke('DELETE /api/plugins/:instanceId/instance', {
@@ -166,10 +166,7 @@ describe('金丝雀密钥不进主配置文件', () => {
       headers: {},
     });
     expect(removed.status).toBe(200);
-    expect(Object.keys(secretsFile()).sort(), '删实例：它当时引用的键随之删除；手改留下的旧键不动').toEqual([
-      'p.apiKey',
-      'p:b.apiKey',
-    ]);
+    expect(Object.keys(secretsFile()), '删实例：它引用的键随之删除').toEqual(['p.apiKey']);
     expect(canaries()).toEqual([]);
     expect(statSync(secretsPath).mode & 0o777).toBe(0o600);
   });

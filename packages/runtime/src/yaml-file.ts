@@ -68,10 +68,11 @@ function describeYamlError(err: unknown): string {
 
 /**
  * 解析 YAML 文本：错误抛出，警告（例如把 `!xxx` 当成标签、值变成空）记一行错误码与行列。不用 yaml 的 parse()：
- * 它把警告连同原文经 process.emitWarning 打到 stderr
+ * 它把警告连同原文经 process.emitWarning 打到 stderr。toJS() 遇到以集合作键时同样会这样打（不进 doc.warnings），
+ * logLevel 设为 error 关掉
  */
 function parseYamlText(text: string, label: string, logger: Logger): unknown {
-  const doc = parseDocument(text);
+  const doc = parseDocument(text, { logLevel: 'error' });
   if (doc.errors.length > 0) throw doc.errors[0];
   for (const warning of doc.warnings) logger.warn(`${label}有可疑写法：${describeYamlError(warning)}`);
   return doc.toJS();
@@ -222,6 +223,14 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
           // filename 平台不保证非空；为空时不过滤，交给内容比对兜底
           if (filename && basename(filename.toString()) !== fileName) return;
           schedule();
+        });
+        // 不接 error 会成为未捕获异常、带倒进程（Windows 上被监听的目录被删或不可访问时会报 EPERM）
+        watcher.on('error', err => {
+          logger.warn(
+            `${label}监听出错，已停止监听（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
+          );
+          watcher?.close();
+          watcher = null;
         });
         // 武装即对账一次：武装前（启动期）的外部修改不会再有事件，不补就既不生效、又让 save 一直拒写
         schedule();

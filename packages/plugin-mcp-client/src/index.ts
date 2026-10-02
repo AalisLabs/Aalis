@@ -293,18 +293,17 @@ function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[])
 }
 
 /**
- * 解析之后的规范化：id / command 去掉首尾空白，只剩空白的条目跳过并告警（只跳这一条，其它 server 照常）；
- * args 原样保留（空字符串也是合法的独立参数）。
+ * 解析之后的规范化：id 去掉首尾空白，只剩空白的条目跳过并告警（只跳这一条，其它 server 照常）。
+ * command 声明了 format，parseConfig 已去掉首尾空白，只有空白的按缺失丢掉该条；args 原样保留（空字符串也是合法的独立参数）。
  */
 function normalizeServerSpec(spec: ServerSpec, logger: Logger): ServerSpec | undefined {
   const id = spec.id.trim();
-  const command = spec.command.trim();
-  if (!id || !command) {
-    // 解析丢掉的条目不占下标，按下标报会对不上配置文件，所以报两个字段本身
-    logger.warn(`servers 中有一条 id 或 command 只有空白（id「${id}」，command「${command}」），跳过`);
+  if (!id) {
+    // 解析丢掉的条目不占下标，按下标报会对不上配置文件，所以报 command 帮助定位
+    logger.warn(`servers 中有一条 id 只有空白（command「${spec.command}」），跳过`);
     return undefined;
   }
-  return { ...spec, id, command };
+  return { ...spec, id };
 }
 
 async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {

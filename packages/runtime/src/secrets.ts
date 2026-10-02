@@ -16,25 +16,6 @@ export function isSecretValue(value: unknown): boolean {
   return true;
 }
 
-/**
- * 两份配置是否相同：结构比较，与键序无关。配置经合并默认值、表单重建后键序可能不同，按 JSON 字符串比较会误判为有改动、
- * 白白重建插件
- */
-export function sameConfig(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameConfig(x, b[i]));
-  }
-  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
-  const left = a as Record<string, unknown>;
-  const right = b as Record<string, unknown>;
-  const keys = Object.keys(left);
-  return (
-    keys.length === Object.keys(right).length &&
-    keys.every(key => Object.hasOwn(right, key) && sameConfig(left[key], right[key]))
-  );
-}
-
 /** 值里出现的全部引用的键。不看 schema：用来判断一个键还有没有人用，宁可多算 */
 export function referencedKeys(value: unknown, into = new Set<string>()): Set<string> {
   if (isSecretRef(value)) into.add(value.$secret);
@@ -64,7 +45,7 @@ export interface SplitSecrets {
 
 /**
  * 提交的配置拆成文档形态：密钥字段上的非空明文换成引用，值放进 writes。
- * - 顶层与分组里的字段：写进 `base`（该实例当前的文档）在同一位置引用的键，键被别处共用时一并改到它们；
+ * - 顶层与分组里的字段：写进 `base`（该实例改动前的文档）在同一位置引用的键，键被别处共用时一并改到它们；
  *   那里没有引用就取新键。
  * - 数组元素里的字段：一律取新键。元素可能被重排、增删，按下标找到的可能是别的元素的键。
  * 新键是 `<实例 id>.<字段路径>`（数组元素的路径不带下标），`taken` 认为被占用时依次加 `-2`、`-3`。
