@@ -54,6 +54,8 @@ describe('布局与层级', () => {
     ['/rooms?instance=im-a', '2'],
     ['/s/a/settings', '3'],
     ['/s/a/usage', '2'],
+    ['/p/zz-jobs/jobs', '2'],
+    ['/s/a/p/zz-notes/notes', '3'],
   ])('手机上 %s 是第 %s 层', async (url, level) => {
     stubViewport(390);
     app = await renderApp(url, handlers);

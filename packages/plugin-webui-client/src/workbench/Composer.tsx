@@ -1,5 +1,5 @@
 import type { SessionMethodParams, SettingRow } from '@aalis/api-session-protocol';
-import { ArrowUp, FileText, LoaderCircle, Paperclip, Square, X } from 'lucide-react';
+import { ArrowUp, CircleStop, FileText, LoaderCircle, Paperclip, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Button } from '../components/Button';
@@ -182,7 +182,7 @@ export function Composer({ send, onStop, switches }: ComposerProps) {
         {switches}
         <span className="composer-spacer" />
         {onStop && empty ? (
-          <Button icon={Square} onClick={onStop}>
+          <Button icon={CircleStop} onClick={onStop}>
             停止
           </Button>
         ) : (
@@ -204,23 +204,47 @@ export function Composer({ send, onStop, switches }: ComposerProps) {
 interface ComposerSettingsProps {
   rows: readonly SettingRow[];
   update(key: string, value: unknown): Promise<void>;
-  /** 不能在这里选的设置项点了去会话的「设置」标签 */
+  /** 不能在这里选的设置项点了去会话的「设置」标签：链接写它的地址，点按交给 openSettings（标签关着时先打开） */
   settingsPath: string;
+  openSettings(): void;
 }
 
 /** 输入框旁的快捷切换：composer 档的设置项，能从选项里选的就地选，改了即存 */
-export function ComposerSettings({ rows, update, settingsPath }: ComposerSettingsProps) {
+export function ComposerSettings({ rows, update, settingsPath, openSettings }: ComposerSettingsProps) {
   return rows
     .filter(row => row.prominence === 'composer')
-    .map(row => {
-      if (hasChoices(row.field)) return <SettingSelect key={row.key} row={row} update={update} />;
-      const effective = effectiveOf(row);
-      return (
-        <Link key={row.key} className="composer-setting" to={settingsPath}>
-          {row.field.label}：{effective === undefined ? '未设置' : formatValue(row.field, effective)}
-        </Link>
-      );
-    });
+    .map(row =>
+      hasChoices(row.field) ? (
+        <SettingSelect key={row.key} row={row} update={update} />
+      ) : (
+        <SettingLink key={row.key} row={row} settingsPath={settingsPath} openSettings={openSettings} />
+      ),
+    );
+}
+
+/** 不能就地选的项写成名字与生效值（按可选项的标签），点了去会话的「设置」标签；没有值的只写名字 */
+function SettingLink({
+  row,
+  settingsPath,
+  openSettings,
+}: { row: SettingRow } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
+  const { options } = useFieldOptions(row.field);
+  const effective = effectiveOf(row);
+  return (
+    <Link
+      className="composer-setting"
+      to={settingsPath}
+      onClick={event => {
+        // 不是左键、按着修饰键的交给浏览器（新标签页、新窗口打开），与链接自己的判定一致
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        openSettings();
+      }}
+    >
+      {row.field.label}
+      {effective !== undefined && `：${formatValue(row.field, effective, options)}`}
+    </Link>
+  );
 }
 
 function SettingSelect({ row, update }: { row: SettingRow; update: ComposerSettingsProps['update'] }) {
@@ -240,7 +264,7 @@ function SettingSelect({ row, update }: { row: SettingRow; update: ComposerSetti
         const chosen = choices.find(option => option.key === event.target.value);
         if (!chosen) return;
         update(row.key, chosen.value).catch((err: Error) =>
-          toast({ kind: 'error', text: `${field.label}没改成：${err.message}` }),
+          toast({ kind: 'danger', text: `${field.label}没改成：${err.message}` }),
         );
       }}
     >

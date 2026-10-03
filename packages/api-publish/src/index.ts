@@ -187,6 +187,11 @@ export interface PublishService {
   readFile(id: string, path: string): Promise<Uint8Array>;
   /** 缩略图（只对 hasThumbnail 为真的作品）；与 readFile 同样按账本核对 */
   readThumbnail(id: string): Promise<Uint8Array>;
+  /**
+   * 已发布作品的缩略图在发布服务存储里的地址，没有缩略图时为 undefined。给管理界面经 /api/media 显示：
+   * 不核对摘要，读内容要核对的用 readThumbnail
+   */
+  thumbnailUri(id: string): string | undefined;
   /** 已发布的撤出公开根；待审的撤回提名。degraded：这件作品所在的展示面有 health 不正常时，给出类别 */
   withdraw(
     id: string,

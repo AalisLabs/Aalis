@@ -48,10 +48,6 @@ button.setting-row-main:focus-visible {
   white-space: pre-line;
 }
 
-.setting-row-value[data-unset] {
-  color: var(--color-text-3);
-}
-
 .setting-row-grid > .button {
   margin-top: var(--space-1);
 }

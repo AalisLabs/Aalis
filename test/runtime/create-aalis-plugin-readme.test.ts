@@ -6,8 +6,9 @@ import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { optionalNames, requiredNames } from '../../packages/core/src/composition/descriptors.js';
 import * as core from '../../packages/core/src/index.js';
 import { renderIndexTs, renderPackageJson, renderReadme } from '../../packages/create-aalis-plugin/src/cli.js';
+import { checkPage } from '../../packages/plugin-webui-server/src/page-check.js';
 
-// README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。
+// README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。生成的示例页面过 webui-server 登记时的质量门槛。
 
 function usesKeys(source: string): string[] {
   const m = source.match(/\buses:\s*\{([^}]+)\}/);
@@ -58,6 +59,24 @@ describe('create-aalis-plugin README 与 index 同源', () => {
       expect(declared.required).toEqual(requiredNames(exports.default!.uses ?? {}));
       expect(declared.optional ?? []).toEqual(optionalNames(exports.default!.uses ?? {}));
     }
+  });
+
+  it('勾了 webui：apply 登记的示例页面过登记时的质量门槛，数据源给出键值', async () => {
+    const source = ts.transpileModule(renderIndexTs(answers({ tool: false, command: false, webui: true })), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const exports: { default?: core.PluginDefinition } = {};
+    const imports: Record<string, unknown> = { '@aalis/core': core, '@aalis/api-webui': { webuiServer } };
+    new Function('require', 'exports', source)((name: string) => imports[name], exports);
+    const pages: unknown[] = [];
+    const quiet = () => {};
+    const logger = { debug: quiet, info: quiet, warn: quiet, error: quiet };
+    const webui = { definePage: (page: unknown) => void pages.push(page) };
+    await (exports.default?.apply as (caps: unknown) => unknown)({ logger, webui });
+    expect(pages).toHaveLength(1);
+    expect(checkPage(pages[0])).toMatchObject({ ok: true });
+    const [info] = (pages[0] as { content: Array<{ data: () => unknown }> }).content;
+    expect(info.data()).toEqual([{ label: '提示', value: '这是 演示 插件的示例信息面板。' }]);
   });
 
   it('每种勾选组合：README 列出的 uses 键 == index 的 uses 键', () => {

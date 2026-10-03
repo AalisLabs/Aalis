@@ -14,9 +14,14 @@ import { Mermaid, Streaming } from './Mermaid';
 import './Markdown.css';
 
 // 模型、插件与房间成员写的文字都不可信：原始 HTML 当文字显示；图片只认媒体地址，外站图片显示成链接、不发请求；
-// 链接只许 http、https 与 mailto；公式不信任输入（\href 等不生效）。裸换行照写的换行显示
+// 链接只许 http、https 与 mailto；公式不信任输入（\href 等不生效）。裸换行照写的换行显示。
+// 单个 ~ 不是删除线（常用来写「约」）；单美元不是公式的定界符，行内公式由预处理写成行内的 $$（见 latex.ts）
 
-const REMARK_PLUGINS = [remarkGfm, remarkMath, remarkBreaks];
+const REMARK_PLUGINS: Options['remarkPlugins'] = [
+  [remarkGfm, { singleTilde: false }],
+  [remarkMath, { singleDollarTextMath: false }],
+  remarkBreaks,
+];
 const REHYPE_PLUGINS: Options['rehypePlugins'] = [
   [rehypeHighlight, { plainText: ['mermaid'] }],
   [

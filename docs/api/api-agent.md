@@ -28,7 +28,7 @@ interface AgentService {
 
 实现者在一轮开始时生成回合 id（`turnId`），这一轮的 `agent:input:before`、`agent:turn:after`、流式片段（`outbound:stream`）、工具调用（`ToolCallContext` 与 `tool:execute`）与用量（`token:usage`）都带同一个 `turnId`。每次工具调用另有 `callId`，见 [api-tools](./api-tools.md#toolcallcontext)。回应 `token:request` 的用量快照不在任何回合里，不带 `turnId`。
 
-plugin-agent 落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在 `metadata.turnId` 记下这一轮的回合 id；执行过的工具调用在 tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段记下这次调用的 `callId`。
+plugin-agent 落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在 `metadata.turnId` 记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段记下这次调用的 `callId`。
 
 ## 会话设置项的键
 

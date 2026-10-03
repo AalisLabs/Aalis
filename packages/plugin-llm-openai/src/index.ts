@@ -1,4 +1,11 @@
-import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
+import type {
+  ChatModelRequest,
+  ChatResponse,
+  ChatStreamChunk,
+  LLMCapability,
+  LLMModel,
+  ToolCallProgress,
+} from '@aalis/api-llm';
 import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
@@ -544,7 +551,8 @@ class OpenAIClient {
 
             if (delta.content) chunk.contentDelta = delta.content;
 
-            // 累积工具调用
+            // 累积工具调用；同一帧里有几个调用，进度就各报一次
+            const progress: ToolCallProgress[] = [];
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
                 const idx = tc.index ?? 0;
@@ -555,19 +563,13 @@ class OpenAIClient {
                 if (entry) {
                   if (tc.function?.name) entry.name = tc.function.name;
                   if (tc.function?.arguments) entry.args += tc.function.arguments;
-                  // 每次 delta 都 yield 进度（不影响最终 done chunk）
-                  chunk.toolCallProgress = {
-                    index: idx,
-                    name: entry.name,
-                    charsAccumulated: entry.args.length,
-                  };
+                  progress.push({ index: idx, name: entry.name, charsAccumulated: entry.args.length });
                 }
               }
             }
 
-            if (chunk.contentDelta || chunk.usage || chunk.toolCallProgress) {
-              yield chunk;
-            }
+            if (chunk.contentDelta || chunk.usage) yield chunk;
+            for (const toolCallProgress of progress) yield { toolCallProgress };
           } catch {
             /* skip malformed JSON */
           }

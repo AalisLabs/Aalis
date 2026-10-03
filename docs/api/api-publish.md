@@ -16,6 +16,7 @@
 | `listPublished(surface)` | 某展示面的已审核作品清单；返回快照 |
 | `listSurfaces()` | 已登记发布目标的名称、标签、发布目录和可用状态；返回独立快照，不含部署句柄或凭据 |
 | `readFile(id, path)` / `readThumbnail(id)` | 只读账本中的公开文件，核对摘要；文件不符会撤下该作品并抛 `IntegrityError` |
+| `thumbnailUri(id)` | 已发布作品的缩略图在发布服务存储里的地址，没有缩略图时为 `undefined`。给管理界面经 `/api/media` 显示，不核对摘要；读内容要核对的用 `readThumbnail` |
 
 `NominateInput` 包含 `origin`、`group`、`groupLabel`、`surfaces`、`title`、`summary`、`files` 与可选 `cover`。后台自动提名可提供 1–128 字符的 `submissionKey`（ASCII 字母、数字、点、下划线、冒号或连字符，以字母或数字开头）。键只在同一 `origin.producer` 内生效；重复提交相同来源、文字、目标和文件字节时返回原作品编号，不再占用配额。相同键对应的输入发生变化会被拒绝，终态也不会被重新提名。未提供键的人工提名保留每次新建作品的行为。调用方仍负责自己的用户授权；服务负责审核和发布边界。审核提供者默认让自动通过的作品继续发布，自动拒绝、拿不准或模型调用失败时转人工；`manualReview: true` 进一步要求每件作品人工批准。结构检查与净化失败不能由人工覆盖，提名方不能绕过审核规则。所选展示面暂未登记（例如正在重载）时返回带 `retryAfterMs` 的临时拒绝；未选择任何展示面属于永久拒绝。
 

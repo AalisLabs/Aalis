@@ -9,7 +9,7 @@ import {
   type DoctorService,
   doctor,
 } from '@aalis/api-doctor';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   definePlugin,
@@ -44,7 +44,11 @@ class DoctorRegistry implements DoctorService {
   private last: DoctorReport | undefined;
   private readonly specs = new Map<string, CheckSpec>();
 
-  constructor(private readonly caps: Pick<Caps, 'logger' | 'events'>) {}
+  /** reported：每次运行完，诊断页按新报告刷新并发出或撤回提示 */
+  constructor(
+    private readonly caps: Pick<Caps, 'logger' | 'events'>,
+    private readonly reported: (report: DoctorReport) => void,
+  ) {}
 
   getLastReport(): DoctorReport | undefined {
     return this.last;
@@ -100,6 +104,7 @@ class DoctorRegistry implements DoctorService {
 
     // 通知订阅者报告换了
     this.caps.events.emit('doctor:updated', { generatedAt: this.last.generatedAt, summary }).catch(() => {});
+    this.reported(this.last);
 
     return this.last;
   }
@@ -107,38 +112,11 @@ class DoctorRegistry implements DoctorService {
 
 // ===== WebUI 页面 =====
 
-const webuiPages: WebuiPage[] = [
-  {
-    key: 'doctor',
-    label: '系统诊断',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
-    order: 90,
-    content: [
-      {
-        type: 'actions',
-        label: '运行诊断',
-        items: [{ label: '立即运行', method: 'runChecks' }],
-      },
-      {
-        type: 'info',
-        label: '上次运行时间',
-        source: 'getLastRunAt',
-      },
-      {
-        type: 'table',
-        label: '最近一次诊断结果',
-        source: 'getReport',
-        columns: [
-          { key: 'level', label: '级别' },
-          { key: 'category', label: '类别' },
-          { key: 'id', label: '检查项' },
-          { key: 'message', label: '说明' },
-          { key: 'detail', label: '详情' },
-        ],
-      },
-    ],
-  },
-];
+const LEVELS: Record<CheckLevel, { text: string; state?: 'attention' | 'error' }> = {
+  ok: { text: '通过' },
+  warn: { text: '警告', state: 'attention' },
+  error: { text: '错误', state: 'error' },
+};
 
 // ===== 插件入口 =====
 
@@ -149,23 +127,87 @@ export default definePlugin({
   provides: [doctor],
   uses,
   apply({ provide, logger, events, services, plugins, commands, webui }) {
-    const registry = new DoctorRegistry({ logger, events });
+    // 诊断页只读本次激活的 registry：页面属于本插件，不该去查「当前胜出的 doctor」
+    const page = webui.definePage({
+      key: 'doctor',
+      title: '系统诊断',
+      icon: 'activity',
+      actions: {
+        runDiagnostics: {
+          label: '立即运行',
+          effect: 'read',
+          async handler() {
+            const { ok, warn, error } = (await registry.runChecks()).summary;
+            return `诊断完成：${ok} 项通过、${warn} 项警告、${error} 项错误`;
+          },
+        },
+      },
+      content: [
+        { type: 'actions', actions: ['runDiagnostics'] },
+        {
+          type: 'info',
+          id: 'summary',
+          label: '上次运行',
+          data() {
+            const last = registry.getLastReport();
+            if (!last) return [{ label: '时间', value: '尚未运行' }];
+            return [
+              { label: '时间', value: last.generatedAt, kind: 'time' },
+              { label: '通过', value: last.summary.ok },
+              { label: '警告', value: last.summary.warn },
+              { label: '错误', value: last.summary.error },
+            ];
+          },
+        },
+        {
+          type: 'table',
+          id: 'checks',
+          label: '诊断结果',
+          rowKey: 'key',
+          empty: '还没有运行过诊断',
+          columns: [
+            { key: 'level', label: '级别', kind: 'status', primary: true },
+            { key: 'category', label: '类别' },
+            { key: 'id', label: '检查项', kind: 'code' },
+            { key: 'message', label: '说明', primary: true },
+            { key: 'detail', label: '详情', kind: 'long-text' },
+          ],
+          // 检查项的 id 可能重复（一个检查项回多条结果），行按报告里的次序标识
+          data: () =>
+            (registry.getLastReport()?.checks ?? []).map((check, i) => ({
+              key: String(i),
+              level: LEVELS[check.level],
+              category: check.category,
+              id: check.id,
+              message: check.message,
+              detail: check.detail,
+            })),
+        },
+      ],
+    });
+
+    let notice: NoticeHandle | undefined;
+    const registry = new DoctorRegistry({ logger, events }, report => {
+      page.invalidate();
+      const { error, warn } = report.summary;
+      if (error + warn === 0) {
+        notice?.clear();
+        notice = undefined;
+        return;
+      }
+      // 「诊断有 2 项错误、1 项警告」：只写不为零的
+      const counts = [error && `${error} 项错误`, warn && `${warn} 项警告`].filter(Boolean);
+      notice = webui.notify({
+        id: 'checks',
+        level: error > 0 ? 'error' : 'action',
+        title: `诊断有 ${counts.join('、')}`,
+        open: { page: 'doctor' },
+      });
+    });
     provide(doctor, registry);
 
     // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
     registerBuiltinChecks(registry, plugins, services);
-
-    for (const page of webuiPages) webui.registerPage(page);
-
-    // 页面动作直接闭包本次激活的 registry：页面属于本插件，不该去查「当前胜出的 doctor」
-    webui.registerAction('runChecks', () => registry.runChecks());
-    webui.registerAction('getReport', async () => registry.getLastReport()?.checks ?? []);
-    webui.registerAction('getLastRunAt', async () => {
-      const last = registry.getLastReport();
-      if (!last) return { value: '尚未运行' };
-      const s = last.summary;
-      return { value: `${formatLocalTime(last.generatedAt)} — ok=${s.ok} warn=${s.warn} error=${s.error}` };
-    });
 
     // 注册 /doctor 命令 —— chat 与 CLI 通用入口。受限（等级 2）：报告带存储根的宿主路径、
     // 插件报错原文（其中可能有内网地址与端口），不该让群里人人都能看到

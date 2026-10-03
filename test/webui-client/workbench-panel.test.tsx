@@ -13,16 +13,19 @@ import {
   main,
   renderApp,
   requests,
+  restCalls,
   server,
   summary,
 } from './harness.js';
-import { plan, row, snapshot, toolCall, turn, usage, userMessage } from './items.js';
+import { plan, push, row, snapshot, toolCall, turn, usage, userMessage } from './items.js';
+import { hostTab, layoutStore } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
 // 右侧面板与会话头：设置（只列服务端给的行，composer 与 common 在前，advanced 收进默认折叠的「高级」按插件分组，
 // 每行写生效值与来源，就地修改即存，恢复继承，收到 session/config/changed 重取）、用量（头部百分比、压缩线与换色，
-// 拆分表不显示为 0 的行，其余系统提示按插件合并）、计划（有条目才有，可以清空），功能位决定压缩入口，
-// 手机上用量从底部弹出，最少插件组合下这些入口都不出现
+// 拆分表不显示为 0 的行，其余系统提示按插件合并，上方堆叠的进度条与图例、剩余一行）、计划（有条目才有，可以清空），
+// 功能位决定压缩入口，手机上用量从底部弹出，最少插件组合下这些入口都不出现；面板标签里宿主的标签按数据出现、可以关闭与
+// 从「+」重新打开，别处指向标签的入口（用量百分比、输入框旁的设置项）在标签关着时先打开它
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -49,6 +52,15 @@ afterEach(() => {
 });
 
 const panel = () => within(screen.getByRole('complementary', { name: '会话面板' }));
+/** 拆分表上方的进度条：只是表的图示，读屏不读它 */
+const usageBar = () => screen.getByRole('complementary', { name: '会话面板' }).querySelector<HTMLElement>('.usage-bar');
+/** 工具分组的可选项：「*」在可选项里有自己的标签 */
+const TOOL_GROUPS = {
+  details: [
+    { value: '*', label: '全部分组' },
+    { value: 'web', label: '联网' },
+  ],
+};
 const settingRow = (label: string) => within(panel().getByRole('group', { name: label }));
 
 const PLUGINS: FakeRest = {
@@ -113,7 +125,6 @@ describe('右侧面板与会话头', () => {
     expect(settingRow('人设').getByText('平台档')).toBeTruthy();
     expect(settingRow('深度思考').getByRole('switch', { name: '深度思考' }).getAttribute('aria-checked')).toBe('true');
     expect(settingRow('深度思考').getByText('本会话')).toBeTruthy();
-    expect(settingRow('额外提示').getByText('未设置')).toBeTruthy();
     expect(panel().queryByRole('group', { name: '最大工具迭代' })).toBeNull();
 
     const advanced = panel().getByRole('button', { name: '高级' });
@@ -214,10 +225,20 @@ describe('右侧面板与会话头', () => {
     expect(app.where()).toBe('/s/s1/usage');
     const table = within(panel().getByRole('table', { name: '上下文用量' }));
     const labels = () => table.getAllByRole('rowheader').map(cell => cell.textContent);
-    expect(labels()).toEqual(['上下文窗口', '已用', '历史消息', '其余系统提示', '为回复预留']);
+    expect(labels()).toEqual(['上下文窗口', '已用', '历史消息', '其余系统提示', '为回复预留', '剩余']);
+    expect(table.getByRole('rowheader', { name: '剩余' }).closest('tr')?.textContent).toContain('24.0k');
     fireEvent.click(table.getByRole('button', { name: '其余系统提示' }));
     await vi.waitFor(() =>
-      expect(labels()).toEqual(['上下文窗口', '已用', '历史消息', '其余系统提示', '跨会话历史', '其他', '为回复预留']),
+      expect(labels()).toEqual([
+        '上下文窗口',
+        '已用',
+        '历史消息',
+        '其余系统提示',
+        '跨会话历史',
+        '其他',
+        '为回复预留',
+        '剩余',
+      ]),
     );
     const plugin = table.getByRole('rowheader', { name: '跨会话历史' }).closest('tr') as HTMLElement;
     expect(plugin.textContent).toContain('8.0k');
@@ -245,6 +266,85 @@ describe('右侧面板与会话头', () => {
       }),
     );
     expect(table.queryByText(/%/)).toBeNull();
+    expect(table.queryByRole('rowheader', { name: '剩余' }), '不知道窗口时没有剩余').toBeNull();
+    expect(usageBar(), '不知道窗口时没有进度条').toBeNull();
+  });
+
+  it('用量的进度条：分项按占用从大到小堆叠着色，表里每行前一个同色的点作图例；为回复预留与剩余另有颜色，压缩线标在条上', async () => {
+    const data = usage({
+      contextWindow: 100_000,
+      used: 72_000,
+      usageRatio: 0.72,
+      compressAt: 0.7,
+      breakdown: {
+        history: 30_000,
+        toolResults: 20_000,
+        persona: 10_000,
+        systemOther: 12_000,
+        reservedForReply: 4_000,
+      },
+    });
+    app = await renderApp('/s/s1/usage', { 'session/subscribe': () => snapshot([userMessage('u1', '在吗'), data]) });
+    const table = within(await panel().findByRole('table', { name: '上下文用量' }));
+    const swatchOf = (label: string) =>
+      table.getByRole('rowheader', { name: label }).querySelector<HTMLElement>('[data-swatch]')?.dataset.swatch;
+    expect(
+      ['历史消息', '工具结果', '其余系统提示', '人设', '为回复预留', '剩余', '上下文窗口', '已用'].map(swatchOf),
+    ).toEqual(['1', '2', '3', '4', 'reserved', 'free', undefined, undefined]);
+    const bar = usageBar() as HTMLElement;
+    const segments = [...bar.querySelectorAll<HTMLElement>('[data-swatch]')].map(segment => [
+      segment.dataset.swatch,
+      segment.style.getPropertyValue('--share'),
+    ]);
+    expect(segments).toEqual([
+      ['1', '30%'],
+      ['2', '20%'],
+      ['3', '12%'],
+      ['4', '10%'],
+      ['reserved', '4%'],
+    ]);
+    expect(bar.querySelector<HTMLElement>('[data-mark]')?.style.getPropertyValue('--at')).toBe('70%');
+
+    act(() =>
+      server().notify('item/completed', {
+        sessionId: 's1',
+        epoch: 'epoch-1',
+        seq: 60,
+        item: { ...data, compressAt: undefined },
+      }),
+    );
+    expect(usageBar()?.querySelector('[data-mark]'), '没有压缩线就不标').toBeNull();
+  });
+
+  it('设置的值按可选项的标签显示（动态可选项里的值也一样）；没设的显示字段默认值，没有默认值的不写「未设置」', async () => {
+    const rows = [
+      row('groups', {
+        field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups' },
+        effective: ['*', 'web'],
+        source: 'platform',
+      }),
+      row('mode', {
+        field: {
+          type: 'select',
+          label: '模式',
+          default: 'b',
+          options: [
+            { label: '甲', value: 'a' },
+            { label: '乙', value: 'b' },
+          ],
+        },
+      }),
+      row('extra', { field: { type: 'string', label: '额外提示' } }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      { '/api/models/toolGroups': TOOL_GROUPS },
+    );
+    expect(await settingRow('工具分组').findByText('全部分组、联网')).toBeTruthy();
+    expect(settingRow('模式').getByText('乙')).toBeTruthy();
+    const extra = settingRow('额外提示').getByRole('button', { name: /额外提示/ });
+    expect(extra.textContent).toBe('额外提示');
   });
 
   it('设置：哪一层都没设的项按字段的默认值显示与编辑', async () => {
@@ -290,6 +390,23 @@ describe('右侧面板与会话头', () => {
     fireEvent.click(panel().getByRole('button', { name: '完成' }));
     fireEvent.click(settingRow('备注').getByRole('button', { name: /备注/ }));
     expect((settingRow('备注').getByRole('textbox', { name: '备注' }) as HTMLInputElement).value).toBe('<默认备注>');
+  });
+
+  it('多选的编辑：已选的值不在可选项里时也列出来，标签与显示的写法一样', async () => {
+    const rows = [
+      row('targets', {
+        field: {
+          type: 'multiselect',
+          label: '目标',
+          options: [{ label: '甲', value: 'a' }],
+        },
+        effective: ['a', { room: 7 }],
+        source: 'session',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', { ...subscribe(), 'session/config/get': () => ({ items: rows }) });
+    fireEvent.click((await panel().findByRole('group', { name: '目标' })).querySelector('button') as HTMLElement);
+    expect(panel().getByRole('checkbox', { name: '{"room":7}' })).toBeTruthy();
   });
 
   it('计划：有条目才有这个标签；可以清空', async () => {
@@ -374,6 +491,161 @@ describe('用量打开右侧面板', () => {
   });
 });
 
+describe('面板标签', () => {
+  const tabs = () =>
+    panel()
+      .queryAllByRole('tab')
+      .map(tab => tab.textContent);
+  const closeButtons = () =>
+    panel()
+      .queryAllByRole('button', { name: /^关闭「/ })
+      .map(button => button.getAttribute('aria-label'));
+  const layoutPosts = () =>
+    restCalls()
+      .filter(call => call.method === 'POST' && call.path === '/api/layout')
+      .map(call => call.body);
+  const PLAN = plan([{ id: 1, title: '读三份草稿', status: 'in-progress' }]);
+  /** 布局记录与这个会话适用的插件页面（没有） */
+  const rest = (layout: ReturnType<typeof layoutStore>): FakeRest => ({
+    '/api/layout': layout.route,
+    '/api/session-pages?sessionId=s1': { pages: [] },
+  });
+  const config = { 'session/config/get': () => ({ items: [] }) };
+
+  it('新记录：计划、设置、用量三个宿主标签都开着，有数据才出现；关闭按钮只在当前标签上', async () => {
+    app = await renderApp('/s/s1/usage', {
+      'session/subscribe': () => snapshot([userMessage('u1', '在吗'), PLAN, usage({ breakdown: { history: 10 } })]),
+      ...config,
+    });
+    await panel().findByRole('table', { name: '上下文用量' });
+    expect(tabs()).toEqual(['计划', '设置', '用量']);
+    expect(closeButtons()).toEqual(['关闭「用量」']);
+    fireEvent.click(panel().getByRole('tab', { name: '计划' }));
+    expect(closeButtons()).toEqual(['关闭「计划」']);
+  });
+
+  it('关掉计划后它进「+」，没有计划条目时「+」里也没有它；条目回来后从「+」打开，回到原位', async () => {
+    const layout = layoutStore();
+    app = await renderApp(
+      '/s/s1/plan',
+      { 'session/subscribe': () => snapshot([userMessage('u1', '在吗'), PLAN]), ...config },
+      rest(layout),
+    );
+    await panel().findByRole('list', { name: '计划' });
+    fireEvent.click(panel().getByRole('button', { name: '关闭「计划」' }));
+    await vi.waitFor(() => expect(tabs()).toEqual(['设置']));
+    expect(layoutPosts()).toEqual([{ op: 'close-tab', tab: { host: 'plan' } }]);
+    expect(app.where()).toBe('/s/s1');
+    fireEvent.click(panel().getByRole('button', { name: '打开标签' }));
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['计划']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+
+    act(() => push('completed', plan([])));
+    expect(panel().queryByRole('button', { name: '打开标签' })).toBeNull();
+    act(() => push('completed', PLAN));
+    fireEvent.click(panel().getByRole('button', { name: '打开标签' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '计划' }));
+    await vi.waitFor(() => expect(tabs()).toEqual(['计划', '设置']));
+    expect(layoutPosts().at(-1)).toEqual({ op: 'open-tab', tab: { host: 'plan' } });
+    expect(app.where()).toBe('/s/s1/plan');
+  });
+
+  it('「用量」标签关着时点按头部的用量百分比：先打开标签再跳过去；开着时直接跳', async () => {
+    const layout = layoutStore({ panelTabs: [hostTab('plan'), hostTab('settings'), hostTab('usage', false)] });
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+        ...config,
+      },
+      rest(layout),
+    );
+    const meter = await main().findByRole('button', { name: '上下文已用 42%' });
+    await vi.waitFor(() => expect(tabs()).toEqual(['设置']));
+    fireEvent.click(meter);
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1/usage'));
+    expect(layoutPosts()).toEqual([{ op: 'open-tab', tab: { host: 'usage' } }]);
+    expect(tabs()).toEqual(['设置', '用量']);
+    expect(panel().getByRole('tab', { name: '用量' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(panel().getByRole('tab', { name: '设置' }));
+    fireEvent.click(meter);
+    expect(app.where()).toBe('/s/s1/usage');
+    expect(layoutPosts()).toHaveLength(1);
+  });
+
+  it('输入框旁不能就地选的设置项：「设置」标签关着时先打开再跳过去', async () => {
+    const layout = layoutStore({ panelTabs: [hostTab('plan'), hostTab('settings', false), hostTab('usage')] });
+    const rows = [row('extra', { field: { type: 'string', label: '额外提示' }, prominence: 'composer' })];
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () => snapshot([userMessage('u1', '在吗')]),
+        'session/config/get': () => ({ items: rows }),
+      },
+      rest(layout),
+    );
+    await vi.waitFor(() => expect(tabs()).toEqual([]));
+    fireEvent.click(await main().findByRole('link', { name: '额外提示' }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1/settings'));
+    expect(layoutPosts()).toEqual([{ op: 'open-tab', tab: { host: 'settings' } }]);
+    expect(tabs()).toEqual(['设置']);
+    expect(await panel().findByRole('group', { name: '额外提示' })).toBeTruthy();
+  });
+
+  it('输入框旁的设置项在右侧面板是抽屉的宽度上打开抽屉；不是左键、按着修饰键的点按交给浏览器（新标签页打开），这里不跳', async () => {
+    stubViewport(1100);
+    const rows = [row('extra', { field: { type: 'string', label: '额外提示' }, prominence: 'composer' })];
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () => snapshot([userMessage('u1', '在吗')]),
+        'session/config/get': () => ({ items: rows }),
+      },
+      rest(layoutStore()),
+    );
+    const link = await main().findByRole('link', { name: '额外提示' });
+    const shell = document.querySelector('[data-level]') as HTMLElement;
+    // 冒泡到 window 时页面有没有拦下点按；之后拦下，jsdom 不做真的跳转
+    const leftToBrowser: boolean[] = [];
+    const record = (event: MouseEvent) => {
+      leftToBrowser.push(!event.defaultPrevented);
+      event.preventDefault();
+    };
+    window.addEventListener('click', record);
+    for (const init of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+      fireEvent.click(link, init);
+    }
+    window.removeEventListener('click', record);
+    expect(leftToBrowser).toEqual([true, true, true, true, true]);
+    expect(app.where()).toBe('/s/s1');
+    expect(shell.dataset.drawer).toBeUndefined();
+    fireEvent.click(link);
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1/settings'));
+    expect(shell.dataset.drawer).toBe('right');
+  });
+
+  it('布局记录里有前端不认识的宿主标签（服务端比前端新）：按不可用跳过，面板照常', async () => {
+    const layout = layoutStore({
+      panelTabs: [
+        hostTab('plan'),
+        { tab: { host: 'later' } as never, open: true },
+        hostTab('settings', false),
+        { tab: { host: 'later-closed' } as never, open: false },
+        hostTab('usage'),
+      ],
+    });
+    app = await renderApp(
+      '/s/s1',
+      { 'session/subscribe': () => snapshot([userMessage('u1', '在吗'), PLAN]), ...config },
+      rest(layout),
+    );
+    await vi.waitFor(() => expect(tabs()).toEqual(['计划']));
+    fireEvent.click(panel().getByRole('button', { name: '打开标签' }));
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['设置']);
+  });
+});
+
 describe('手机', () => {
   it('会话头左边是返回，右侧只有用量与「更多」，全部展开与会话面板收进「更多」，标题不被挤掉', async () => {
     stubViewport(390);
@@ -430,5 +702,55 @@ describe('手机', () => {
     expect(app.where()).toBe('/s/s1');
     app.back();
     expect(app.where()).toBe('/');
+  });
+
+  it('从「更多 → 会话面板」进的第三层关掉标签：退回会话，系统返回不停在原地', async () => {
+    stubViewport(390);
+    const layout = layoutStore();
+    app = await renderApp(
+      '/',
+      {
+        'sessions/list': lists(params => (params.section === 'owner' ? [summary('s1', { title: '整理周报' })] : [])),
+        'session/subscribe': () => snapshot([userMessage('u1', '在吗')]),
+        'session/config/get': () => ({ items: [] }),
+      },
+      { '/api/layout': layout.route, '/api/session-pages?sessionId=s1': { pages: [] } },
+    );
+    fireEvent.click(await screen.findByRole('link', { name: /整理周报/ }));
+    fireEvent.click(await main().findByRole('button', { name: '更多' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '会话面板' }));
+    expect(app.where()).toBe('/s/s1/settings');
+    fireEvent.click(await panel().findByRole('button', { name: '关闭「设置」' }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1'));
+    app.back();
+    expect(app.where()).toBe('/');
+  });
+
+  it('手机上没有用量标签，用量关着也不进「+」；标签都关了时「会话面板」仍进第三层，从「+」打开', async () => {
+    stubViewport(390);
+    const layout = layoutStore({ panelTabs: [hostTab('plan'), hostTab('settings', false), hostTab('usage', false)] });
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+        'session/config/get': () => ({ items: [] }),
+      },
+      { '/api/layout': layout.route, '/api/session-pages?sessionId=s1': { pages: [] } },
+    );
+    fireEvent.click(await main().findByRole('button', { name: '更多' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '会话面板' }));
+    expect((document.querySelector('[data-level]') as HTMLElement).dataset.level).toBe('3');
+    await vi.waitFor(() => expect(panel().queryAllByRole('tab')).toEqual([]));
+    fireEvent.click(await panel().findByRole('button', { name: '打开标签' }));
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['设置']);
+    fireEvent.click(screen.getByRole('menuitem', { name: '设置' }));
+    await vi.waitFor(() =>
+      expect(
+        panel()
+          .getAllByRole('tab')
+          .map(tab => tab.textContent),
+      ).toEqual(['设置']),
+    );
+    expect(panel().queryByRole('button', { name: '打开标签' })).toBeNull();
   });
 });

@@ -19,12 +19,7 @@ import {
   type ToolGroupInfo,
   tools,
 } from '../../packages/api-tools/src/index.js';
-import {
-  type WebUIService,
-  type WebuiActionHandler,
-  type WebuiPage,
-  webuiServer,
-} from '../../packages/api-webui/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, events, LogHub, provide, services } from '../../packages/core/src/index.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
@@ -34,14 +29,16 @@ import type {
   OutgoingMessage,
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from './hubs.js';
+import { type PageHost, pageHost } from './page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
 // - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
 // - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；平台档分基础条目与受众条目，继承链按参考实现的口径解析；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
-// - tools / gateway / doctor / webui-server：记下登记的工具、出站消息、页面与页面动作，诊断项按需运行；
-//   网关替身像目标适配器一样填 delivery，缺省立即确认收下；
+// - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行；网关替身像目标适配器一样填 delivery，
+//   缺省立即确认收下；
+// - webui-server：真实的页面登记表（page-host.ts），页面经质量门槛登记、数据源与动作经闸门调用；
 // - 钩子与贡献点用默认提供者；入站消息（宿主通知）只记下，没有网关与 agent 消费。
 // - 日志：每个测试台一个独立的 LogHub，warn 与 error 记进 logs。
 // 装好后 app.start()，与宿主一样发出 app:started。不连任何真实服务。
@@ -279,10 +276,8 @@ export interface PaperHub {
   logs: Array<{ level: string; message: string }>;
   tools: Map<string, Omit<RegisteredTool, 'pluginName'>>;
   groups: Array<Omit<ToolGroupInfo, 'pluginName'>>;
-  /** 枢纽登记的 WebUI 页面 */
-  pages: WebuiPage[];
-  /** 调一个页面动作（owner 已过权限闸），返回原样的结果 */
-  action(method: string, args?: Record<string, unknown>): Promise<unknown>;
+  /** 白纸页与会话面板所在的页面登记表 */
+  pages: PageHost;
   /** 调工具，返回原样的结果文本 */
   raw(name: string, args: Record<string, unknown>, ctx?: ToolCallContext): Promise<string>;
   /** 调结果为 JSON 的工具 */
@@ -294,11 +289,14 @@ export interface PaperHub {
   stop(): Promise<void>;
 }
 
-const hubs: App[] = [];
+const hubs: Array<{ app: App; pages: PageHost }> = [];
 
 /** 停掉本文件里起过的全部测试台（afterEach 里调） */
 export async function stopPaperHubs(): Promise<void> {
-  for (const app of hubs.splice(0)) await app.stop();
+  for (const { app, pages } of hubs.splice(0)) {
+    await app.stop();
+    pages.dispose();
+  }
 }
 
 export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHub> {
@@ -306,17 +304,17 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   const logHub = new LogHub();
   logHub.onEntry(entry => void logs.push({ level: entry.level, message: entry.message }));
   const app = new App({ name: 'T', logLevel: 'warn', logHub });
-  hubs.push(app);
+  const children = opts.children ?? {};
+  const pages = pageHost({ sessions: id => sessionInfoOf(id, children[id]) });
+  const hub = { app, pages };
+  hubs.push(hub);
   const files: PaperFiles = opts.files ?? new Map();
   const outbound: OutgoingMessage[] = [];
   const injected: IncomingMessage[] = [];
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();
   const groups: Array<Omit<ToolGroupInfo, 'pluginName'>> = [];
   const checks = new Map<string, CheckSpec>();
-  const pages: WebuiPage[] = [];
-  const actions = new Map<string, WebuiActionHandler>();
   const rooms = opts.rooms ?? { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM };
-  const children = opts.children ?? {};
 
   await registerHubs(app);
   const host = app.bind({ provide, services, events, hooks });
@@ -369,19 +367,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       return () => checks.delete(spec.id);
     },
   } as unknown as DoctorService);
-  host.provide(webuiServer, {
-    getPort: () => 0,
-    getHost: () => '127.0.0.1',
-    getPages: () => pages.map(page => ({ ...page, pluginName: paperPlugin.name })),
-    registerPage(page: WebuiPage) {
-      pages.push(page);
-      return () => void pages.splice(pages.indexOf(page), 1);
-    },
-    registerAction(method: string, handler: WebuiActionHandler) {
-      actions.set(method, handler);
-      return () => actions.delete(method);
-    },
-  } satisfies WebUIService);
+  host.provide(webuiServer, pages.service);
 
   for (const [id, provider] of Object.entries(opts.remotes ?? { [REMOTE]: fakeRemote() })) {
     await app.plugin(
@@ -417,11 +403,6 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     tools: registered,
     groups,
     pages,
-    async action(method, args = {}) {
-      const handler = actions.get(method);
-      if (!handler) throw new Error(`页面动作 ${method} 未登记`);
-      return handler(args, { platform: 'webui', userId: 'console' });
-    },
     raw,
     call: async (name, args, ctx) => JSON.parse(await raw(name, args, ctx)) as Record<string, unknown>,
     async doctor() {
@@ -431,8 +412,9 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     },
     ledger: () => JSON.parse(String(files.get(LEDGER_URI) ?? 'null')) as PaperLedger,
     async stop() {
-      hubs.splice(hubs.indexOf(app), 1);
+      hubs.splice(hubs.indexOf(hub), 1);
       await app.stop();
+      pages.dispose();
     },
   };
 }

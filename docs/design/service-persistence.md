@@ -26,7 +26,7 @@
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
 | `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
 | `tools` | `@aalis/plugin-tool-system` | tool 定义 Map | n/a | 否 | 同上 |
-| `webui-server` | `@aalis/plugin-webui-server` | 已注册页面 Map | n/a | 否 | bounce 后下游插件通过绑定门面 `registerPage` 由 registrar 跟随重挂 |
+| `webui-server` | `@aalis/plugin-webui-server` | 页面与提示的登记表 | n/a | 否 | bounce 后下游插件通过绑定门面 `definePage` / `notify` 由 registrar 跟随重挂；owner 的布局记录在插件数据里，不随之丢失 |
 | `doctor` | `@aalis/plugin-doctor` | `lastReport` 单例 | n/a | 否 | 重载后报告丢失，需重新 `runChecks` |
 | `scheduler` | `@aalis/plugin-scheduler` | 任务调度状态 | `data/scheduler-jobs.json` | 是（持久部分） | bounce 后从 JSON 读回；运行中的 timer 会重建 |
 | `authority` | `@aalis/plugin-authority` | 角色规则 | 配置文件 | 是 | 规则随配置一起回填 |

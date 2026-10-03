@@ -195,7 +195,7 @@ pnpm build
 | 显示名（中文标签） | 由包名推导 | 去掉 `plugin-` 前缀、连字符转空格、首字母大写（`defaultDisplayName`，`cli.ts`） |
 | 注册 AI 工具？ | **是** | 生成 `uses: { tools: optional(tools) }` 与 `tools.register` 示例 |
 | 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.command` 示例 |
-| 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `registerPage` / `registerAction` 示例 |
+| 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `webui.definePage` 示例 |
 
 `--yes` / `-y` 跳过全部，取上表默认（即只生成 tool 扩展点，`cli.ts`）。yes/no 输入兼容 `y/yes/true/1` 与 `n/no/false/0`（`parseYesNo`，`cli.ts`）。
 
@@ -269,7 +269,7 @@ export default definePlugin({
 
 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`packages/api-tools/src/index.ts`），不是平铺的 `{ name, description }`。`handler` 返回 `Promise<string | ToolExecutionResult>`——字符串即纯文本；需要把图片交给主模型时返回 `{ content, images }`。
 
-选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer`、`registerPage` 与 `registerAction`（页面动作不再是静态 `actions` 字段）。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
+选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer` 与一段 `webui.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
 脚手架同时生成 README，其中写明入口是 `export default definePlugin({ uses, apply })`，扩展点与 `src/index.ts` 的 `uses` 一致。
 

@@ -271,6 +271,7 @@ function makeProvider() {
     listPublished: () => [],
     readFile: async () => new Uint8Array(),
     readThumbnail: async () => new Uint8Array(),
+    thumbnailUri: () => undefined,
     withdraw: async () => ({ refused: '桩' }),
     onChange(listener) {
       listeners.add(listener);

@@ -3,6 +3,7 @@ import { type ChatStreamChunk, type LLMModel, llm } from '../../packages/api-llm
 import { App, type LogEntry, LogHub, type PluginDefinition } from '../../packages/core/src/index.js';
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import openai from '../../packages/plugin-llm-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 流式收尾组装 toolCalls 的两条路径（收到终帧 / 流意外结束）行为一致。
@@ -10,6 +11,7 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 // - ollama：EOF 兜底此前造的 id 是 `call_${i}`，与终帧、非流式的 `call_ollama_<时间戳>_<i>`
 //   不同格式，跨回合必撞；下游按 id 配对调用与结果（tool-search、memory-summary）。
 // - deepseek：DSML 泄漏本地解析失败时，[DONE] 分支告警、EOF 分支静默。
+// - openai 与 deepseek：一帧里带几个工具调用时每个都报生成进度（只报最后一个时，界面按序号配的工具卡会串位）。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -104,5 +106,39 @@ describe('deepseek：DSML 泄漏本地解析失败时两条收尾路径都告警
     expect(last?.done).toBe(true);
     expect(last?.toolCalls).toBeUndefined();
     expect(warns.some(m => m.includes('DSML 本地解析未识别出完整 invoke 块'))).toBe(true);
+  });
+});
+
+describe.each([
+  ['openai', openai],
+  ['deepseek', deepseek],
+] as const)('%s：一帧里有几个工具调用时每个都报生成进度', (_label, plugin) => {
+  it('两个调用同在一帧', async () => {
+    const frame = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: 'a', function: { name: 'file_write', arguments: '{"p":1}' } },
+              { index: 1, id: 'b', function: { name: 'exec', arguments: '{}' } },
+            ],
+          },
+        },
+      ],
+    };
+    stubProvider(`data: ${JSON.stringify(frame)}\ndata: [DONE]\n`);
+    const model = await loadModel(plugin, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
+    const progress: Array<[number, string, number]> = [];
+    let last: ChatStreamChunk | undefined;
+    for await (const chunk of model.chatStream!({ messages: [{ role: 'user', content: 'hi' }] })) {
+      const p = chunk.toolCallProgress;
+      if (p) progress.push([p.index, p.name, p.charsAccumulated]);
+      last = chunk;
+    }
+    expect(progress).toEqual([
+      [0, 'file_write', 7],
+      [1, 'exec', 2],
+    ]);
+    expect(last?.toolCalls?.map(c => c.function.name)).toEqual(['file_write', 'exec']);
   });
 });

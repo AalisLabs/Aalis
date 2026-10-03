@@ -117,7 +117,7 @@ describe('白纸自动发布入口与交付边界', () => {
     expect(hub.injected).toHaveLength(0);
     expect(await hub.call('paper_send', { artifact_id: 'a-12345678' })).toMatchObject({ ok: false });
     expect(hub.outbound).toHaveLength(0);
-    expect(await hub.action('listTasks')).toContainEqual(
+    expect(await hub.pages.data('paper', 'paperTasks', { rowKey: task.paperId })).toContainEqual(
       expect.objectContaining({ id: task.id, publication: expect.stringContaining('works') }),
     );
   });

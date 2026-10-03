@@ -60,11 +60,8 @@ function setup() {
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
-      webui: () => undefined,
     },
-    () => ({ platform: 'webui', userId: 'console' }),
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
-    () => undefined,
   );
   const put = (body: unknown) =>
     invoke('PUT /api/plugins/:name/config', {

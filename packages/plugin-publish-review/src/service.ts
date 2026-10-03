@@ -666,6 +666,12 @@ export class PublishReviewService implements PublishService {
     throw new IntegrityError('缩略图完整性核对失败');
   }
 
+  thumbnailUri(id: string): string | undefined {
+    if (!WORK_ID_PATTERN.test(id)) return undefined;
+    const item = this.#d.store.data.ledger[id];
+    return item?.state === 'published' && item.thumbnail ? publicThumb(id) : undefined;
+  }
+
   async withdraw(
     id: string,
     by: { kind: 'origin' | 'owner' | 'integrity'; actorKey?: string },

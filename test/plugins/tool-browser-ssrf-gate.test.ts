@@ -3,7 +3,6 @@ import { promises as dns } from 'node:dns';
 import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
@@ -195,7 +194,6 @@ async function startBrowserTools(
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(webuiServer, { registerPage: () => () => {}, registerAction: () => () => {} } as never);
   await app.plugins.register(browserPlugin, { headless: true, defaultTimeout: 20_000, ...config });
   await app.plugins.idle();
   return { app, handlers };

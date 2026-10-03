@@ -1,8 +1,7 @@
 import { cronEngine } from '@aalis/api-cron-engine';
 import { createStorageGateway, isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import type { WebuiPage } from '@aalis/api-webui';
-import { webuiServer } from '@aalis/api-webui';
+import { type PageContext, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   config,
@@ -127,7 +126,7 @@ export interface SchedulerService {
   resumeJob(name: string): boolean;
   triggerJob(name: string): Promise<boolean>;
   addJob(job: SchedulerJobConfig): void;
-  /** upsert：已存在则先 remove 再 add，用于 WebUI 表单"创建/编辑"统一入口 */
+  /** upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它 */
   setJob(job: SchedulerJobConfig): void;
   removeJob(name: string): boolean;
 }
@@ -212,79 +211,39 @@ export const configSchema = defineConfig({
 
 // ──────────── WebUI 页面 ────────────
 
-const webuiPages: WebuiPage[] = [
-  {
-    key: 'scheduler',
-    label: '计划任务',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>',
-    order: 55,
-    content: [
-      {
-        type: 'table',
-        label: '任务列表',
-        source: 'listJobs',
-        columns: [
-          { key: 'name', label: '名称' },
-          { key: 'schedule', label: '调度规则' },
-          { key: 'sessionId', label: '目标会话' },
-          { key: 'status', label: '状态' },
-          { key: 'nextRun', label: '下次执行', render: 'countdown' },
-          { key: 'lastRunText', label: '上次执行' },
-          { key: 'runCount', label: '执行次数' },
-          { key: 'lastResult', label: '最近结果' },
-        ],
-        actions: [
-          { label: '立即执行', method: 'triggerJob' },
-          { label: '暂停', method: 'pauseJob' },
-          { label: '恢复', method: 'resumeJob' },
-          { label: '删除', method: 'removeJob', confirm: '确定删除该任务？', danger: true },
-        ],
-        refresh: 30,
-      },
-      {
-        type: 'form',
-        label: '新建 / 编辑任务',
-        source: 'newJobDraft',
-        save: 'upsertJob',
-        schema: {
-          name: {
-            type: 'string',
-            label: '名称',
-            required: true,
-            description: '任务唯一标识；填已有动态任务名会覆盖（配置文件中的静态任务无法覆盖）',
-          },
-          cron: {
-            type: 'string',
-            label: 'Cron 表达式',
-            description:
-              '5 字段或别名：@hourly / @daily / @weekly / @every 30s；与 interval / runAt / delaySeconds 四选一',
-          },
-          interval: { type: 'number', label: '固定间隔（秒）', description: '与 cron / runAt / delaySeconds 四选一' },
-          runAt: {
-            type: 'string',
-            label: '一次性运行时间',
-            description: 'ISO 字符串，如 2026-05-19T10:00:00；执行一次后自动删除',
-          },
-          delaySeconds: {
-            type: 'number',
-            label: 'X 秒后执行一次',
-            description: '与 cron / interval / runAt 四选一；填写后会转换为 runAt = now + N 秒，执行一次后自动删除',
-          },
-          sessionId: { type: 'string', label: '目标会话 ID', required: true },
-          platform: { type: 'string', label: '目标平台', default: 'internal' },
-          content: { type: 'textarea', label: '消息内容', required: true, description: '届时发送给自己的指令/提示' },
-          enabled: { type: 'boolean', label: '启用', default: true },
-          paused: {
-            type: 'boolean',
-            label: '创建后立即暂停',
-            default: false,
-            description: '勾选后任务创建但不会自动运行，需手动「恢复」；仅周期任务（cron / interval）可用',
-          },
-        },
-      },
-    ],
+/** 新建与编辑共用的输入：调度方式（四选一）、目标会话与内容。新建另收任务名，编辑的任务名取这一行 */
+const JOB_FIELDS = defineConfig({
+  cron: {
+    type: 'string',
+    label: 'Cron 表达式',
+    description: '5 字段或别名：@hourly、@daily、@weekly、@every 30s；与固定间隔、一次性运行时间、X 秒后执行四选一',
   },
-];
+  interval: { type: 'number', label: '固定间隔（秒）', description: '不小于 5；与其余三种调度方式四选一' },
+  runAt: {
+    type: 'string',
+    label: '一次性运行时间',
+    description: 'ISO 时间，如 2026-05-19T10:00:00；执行一次后自动删除',
+  },
+  delaySeconds: {
+    type: 'number',
+    label: 'X 秒后执行一次',
+    description: '换算成一次性运行时间 = 现在 + N 秒，执行一次后自动删除',
+  },
+  sessionId: { type: 'string', label: '目标会话 ID', required: true },
+  platform: { type: 'string', label: '目标平台', default: 'internal' },
+  content: { type: 'textarea', label: '消息内容', required: true, description: '届时发送给自己的指令或提示' },
+  enabled: { type: 'boolean', label: '启用', default: true },
+  paused: {
+    type: 'boolean',
+    label: '暂停',
+    default: false,
+    description: '勾选后不自动运行，要手动「恢复」；只对周期任务（cron、固定间隔）有效',
+  },
+});
+type JobInput = ConfigOf<typeof JOB_FIELDS>;
+
+/** 单个会话最多几个计划任务（防资源耗尽）；编辑已有任务不计入 */
+const MAX_JOBS_PER_SESSION = 20;
 
 // ──────────── 插件入口 ────────────
 
@@ -295,7 +254,7 @@ const uses = {
   cronEngine,
   /** 动态任务的持久化出口；没有 storage 时任务只活在本次激活里（读写各自降级） */
   storage: optional(storage),
-  /** 页面与页面动作的登记口；无 WebUI 时调度照常运行 */
+  /** 计划任务页的登记口；无 WebUI 时调度照常运行 */
   webui: optional(webuiServer),
   events,
   lifecycle,
@@ -323,8 +282,6 @@ async function run(caps: Caps): Promise<void> {
   const { cronEngine, storage, webui, events, lifecycle, logger, provide, tools } = caps;
   const config = resolveConfig(cfg);
 
-  for (const page of webuiPages) webui.registerPage(page);
-
   const runtimes = new Map<string, JobRuntime>();
 
   // 配置中定义的任务名称集合（不需要持久化）
@@ -341,8 +298,185 @@ async function run(caps: Caps): Promise<void> {
    * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次，storage 迟到也不重读。
    */
   let loadFailed = false;
-  /** 拒写期间新建或改动的任务只在内存、重启即失：回执末尾如实注明（AI 工具与 WebUI 表单同一附注），文件正常时为空串 */
+  /** 拒写期间新建或改动的任务只在内存、重启即失：回执末尾如实注明（AI 工具与计划任务页同一附注），文件正常时为空串 */
   const persistNote = () => (loadFailed ? `；仅本次运行生效，未写入 ${persistUri}（加载失败，见日志）` : '');
+
+  // 先读完持久化任务再登记页面：登记之后到服务就绪之间不再有等待，页面一出现取数与动作就可用
+  const persisted = await loadDynamicJobs();
+
+  // ── 计划任务页：动作是本次激活的闭包，直接操作本插件自己的调度表；登记随激活撤回 ──
+
+  /**
+   * 新建与编辑共用：调度方式恰好一个（四者是互不相容的定时语义，多填时取哪个都是猜），与 scheduler_create_job
+   * 工具路径同一条判据与同一份 delaySeconds 换算。actor 取闸门放行后的调用者，不从输入读，免得伪造他人身份
+   */
+  function saveJob(name: string, input: JobInput, caller: PageContext['caller'], creating: boolean): string {
+    const cron = input.cron?.trim() || undefined;
+    const interval = input.interval !== undefined && input.interval > 0 ? input.interval : undefined;
+    const delaySeconds =
+      input.delaySeconds !== undefined && input.delaySeconds > 0 ? Math.floor(input.delaySeconds) : undefined;
+    const rawRunAt = input.runAt?.trim() || undefined;
+    const provided = [cron, interval, delaySeconds, rawRunAt].filter(v => v !== undefined).length;
+    if (provided === 0) throw new Error('cron、固定间隔、一次性运行时间、X 秒后执行必须填写其中之一');
+    if (provided > 1) throw new Error('cron、固定间隔、一次性运行时间、X 秒后执行互斥，只能填一个');
+    const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
+    // 一次性任务被暂停时到点的定时器直接跳过，之后既不重排也不自删，任务就永久卡死在那里
+    if (input.paused && runAt) throw new Error('暂停对一次性任务（一次性运行时间、X 秒后执行）没有可用语义');
+    // 防误填高频任务：挡住 interval:0.5 这类会占满调度的间隔
+    if (interval !== undefined && interval < 5) throw new Error('固定间隔不能小于 5 秒（防高频任务耗尽资源）');
+    const sessionId = input.sessionId.trim();
+    if (!sessionId) throw new Error('目标会话 ID 不能为空');
+    const content = input.content.trim();
+    if (!content) throw new Error('消息内容不能为空');
+    if (creating) {
+      const all = service.getJobs();
+      if (all.some(j => j.name === name)) throw new Error(`已有同名任务 ${name}，改它用「编辑」`);
+      if (all.filter(j => j.sessionId === sessionId).length >= MAX_JOBS_PER_SESSION) {
+        throw new Error(`本会话定时任务数已达上限 ${MAX_JOBS_PER_SESSION}，请先删除部分任务再新建`);
+      }
+    }
+    service.setJob({
+      name,
+      cron,
+      interval,
+      runAt,
+      sessionId,
+      platform: input.platform,
+      actorPlatform: caller.platform,
+      actorUserId: caller.userId,
+      content,
+      enabled: input.enabled,
+      paused: input.paused,
+    });
+    return `已保存任务 ${name}${persistNote()}`;
+  }
+
+  const jobsPage = webui.definePage({
+    key: 'scheduler',
+    title: '计划任务',
+    icon: 'clock',
+    actions: {
+      createJob: {
+        label: '新建',
+        effect: 'write',
+        input: {
+          name: { type: 'string', label: '名称', required: true, description: '任务的唯一标识' },
+          ...JOB_FIELDS,
+        },
+        handler({ input, ctx }) {
+          const name = input.name.trim();
+          if (!name) throw new Error('名称不能为空');
+          return saveJob(name, input, ctx.caller, true);
+        },
+      },
+      editJob: {
+        label: '编辑',
+        effect: 'write',
+        row: true,
+        input: JOB_FIELDS,
+        handler({ rowKey, input, ctx }) {
+          if (!service.getJobs().some(j => j.name === rowKey)) throw new Error(`任务 ${rowKey} 不存在`);
+          return saveJob(rowKey, input, ctx.caller, false);
+        },
+      },
+      triggerJob: {
+        label: '立即执行',
+        effect: 'write',
+        row: true,
+        async handler({ rowKey }) {
+          // 这一轮还没执行完时 triggerJob 直接跳过；与它置 running 在同一个同步段里判，没有竞态
+          if (service.getJobs().find(j => j.name === rowKey)?.running) {
+            throw new Error(`任务 ${rowKey} 正在执行，这次没有再触发`);
+          }
+          if (!(await service.triggerJob(rowKey))) throw new Error(`任务 ${rowKey} 不存在`);
+          return `已执行 ${rowKey}`;
+        },
+      },
+      pauseJob: {
+        label: '暂停',
+        effect: 'write',
+        row: true,
+        handler({ rowKey }) {
+          if (!service.pauseJob(rowKey)) throw new Error('任务不存在，或是一次性任务（不能暂停，只能删除重建）');
+          return `已暂停 ${rowKey}`;
+        },
+      },
+      resumeJob: {
+        label: '恢复',
+        effect: 'write',
+        row: true,
+        handler({ rowKey }) {
+          if (!service.resumeJob(rowKey)) throw new Error(`任务 ${rowKey} 不存在`);
+          return `已恢复 ${rowKey}`;
+        },
+      },
+      removeJob: {
+        label: '删除',
+        effect: 'destructive',
+        confirm: '删除这个计划任务？',
+        row: true,
+        handler({ rowKey }) {
+          if (!service.removeJob(rowKey)) throw new Error(`任务 ${rowKey} 不存在`);
+          return `已删除 ${rowKey}`;
+        },
+      },
+    },
+    content: [
+      {
+        type: 'table',
+        id: 'jobs',
+        rowKey: 'name',
+        empty: '还没有计划任务',
+        columns: [
+          { key: 'name', label: '名称', primary: true },
+          { key: 'schedule', label: '调度' },
+          { key: 'sessionId', label: '目标会话' },
+          { key: 'status', label: '状态', kind: 'status', primary: true },
+          { key: 'nextRun', label: '下次执行', kind: 'countdown' },
+          { key: 'lastRun', label: '上次执行', kind: 'time' },
+          { key: 'runCount', label: '执行次数' },
+          { key: 'lastResult', label: '最近结果', kind: 'long-text' },
+        ],
+        rowActions: [
+          { action: 'triggerJob' },
+          { action: 'pauseJob', visibleWhen: 'pausable' },
+          { action: 'resumeJob', visibleWhen: 'paused' },
+          { action: 'editJob', visibleWhen: 'editable' },
+          { action: 'removeJob' },
+        ],
+        data: () =>
+          service.getJobs().map(j => {
+            const ready = j.enabled && !j.paused && !j.running;
+            return {
+              name: j.name,
+              cron: j.cron,
+              interval: j.interval,
+              runAt: j.runAt,
+              sessionId: j.sessionId,
+              platform: j.platform,
+              content: j.content,
+              enabled: j.enabled,
+              paused: j.paused,
+              schedule: j.cron ?? (j.interval ? `每 ${j.interval} 秒` : j.runAt ? `一次性 ${j.runAt}` : '未设置'),
+              status: !j.enabled
+                ? { text: '禁用', state: 'inactive' as const }
+                : j.paused
+                  ? { text: '暂停', state: 'inactive' as const }
+                  : j.running
+                    ? { text: '执行中', state: 'running' as const }
+                    : { text: '就绪' },
+              nextRun: ready && j.nextRun > 0 ? j.nextRun : undefined,
+              lastRun: j.lastRun || undefined,
+              runCount: j.runCount,
+              lastResult: j.lastResult,
+              pausable: ready && !!(j.cron || j.interval),
+              editable: !configJobNames.has(j.name),
+            };
+          }),
+      },
+      { type: 'actions', actions: ['createJob'] },
+    ],
+  });
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
     try {
@@ -427,6 +561,7 @@ async function run(caps: Caps): Promise<void> {
     if (rt.running) return;
 
     rt.running = true;
+    jobsPage.invalidate();
     const jobName = rt.config.name;
 
     try {
@@ -479,6 +614,7 @@ async function run(caps: Caps): Promise<void> {
       await events.emit('scheduler:job:error', jobName, msg);
     } finally {
       rt.running = false;
+      jobsPage.invalidate();
     }
   }
 
@@ -599,6 +735,7 @@ async function run(caps: Caps): Promise<void> {
     }
 
     runtimes.set(jobCfg.name, rt);
+    jobsPage.invalidate();
     const scheduleHint = jobCfg.cron
       ? `(cron: ${jobCfg.cron})`
       : jobCfg.interval
@@ -618,12 +755,14 @@ async function run(caps: Caps): Promise<void> {
       runtimes.delete(jobName);
       dynamicJobs.delete(jobName);
       saveDynamicJobs();
+      jobsPage.invalidate();
       logger.info(`一次性任务已执行完毕并删除: ${jobName}`);
       return;
     }
     // 静态配置任务：不删，仅标记 enabled=false（yaml 才是权威源）
     rt.config.enabled = false;
     rt.paused = true;
+    jobsPage.invalidate();
     logger.info(`一次性任务已执行完毕并停用（静态）: ${jobName}`);
   }
 
@@ -644,8 +783,7 @@ async function run(caps: Caps): Promise<void> {
     initJob(p && u ? job : { ...job, actorPlatform: 'webui', actorUserId: 'console' });
   }
 
-  // 加载持久化的动态任务
-  const persisted = await loadDynamicJobs();
+  // 持久化的动态任务（同名的配置文件任务优先）
   for (const job of persisted) {
     if (!runtimes.has(job.name)) {
       dynamicJobs.set(job.name, job);
@@ -691,6 +829,7 @@ async function run(caps: Caps): Promise<void> {
         dynamicJobs.set(jobName, { ...rt.config });
         saveDynamicJobs();
       }
+      jobsPage.invalidate();
       logger.info(`任务已暂停: ${jobName}`);
       return true;
     },
@@ -704,6 +843,7 @@ async function run(caps: Caps): Promise<void> {
         dynamicJobs.set(jobName, { ...rt.config });
         saveDynamicJobs();
       }
+      jobsPage.invalidate();
       logger.info(`任务已恢复: ${jobName}`);
       return true;
     },
@@ -746,122 +886,13 @@ async function run(caps: Caps): Promise<void> {
         dynamicJobs.delete(jobName);
         saveDynamicJobs();
       }
+      jobsPage.invalidate();
       logger.info(`任务已删除: ${jobName}`);
       return true;
     },
   };
 
   provide(scheduler, service);
-
-  // ── WebUI 页面动作 ──
-  // 动作是本次激活的闭包，直接操作本插件自己的调度表；登记随激活撤回。
-
-  webui.registerAction('listJobs', async () => {
-    return service.getJobs().map(j => {
-      const ready = j.enabled && !j.paused && !j.running;
-      return {
-        ...j,
-        nextRun: ready ? j.nextRun : 0,
-        schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
-        status: !j.enabled ? '❌ 禁用' : j.paused ? '⏸ 暂停' : j.running ? '⏳ 执行中' : '✅ 就绪',
-        lastRunText: j.lastRun ? new Date(j.lastRun).toLocaleString('zh-CN') : '从未',
-      };
-    });
-  });
-
-  webui.registerAction('triggerJob', async args => service.triggerJob(args.name as string));
-
-  // 三个开关类 action 返回 { ok, error }：裸 boolean 会被前端按成功处理（一次性任务不能暂停就是这样被静默掉的）
-  webui.registerAction('pauseJob', async args =>
-    service.pauseJob(args.name as string)
-      ? { ok: true }
-      : { ok: false, error: '任务不存在，或是一次性任务（不能暂停，只能删除重建）' },
-  );
-
-  webui.registerAction('resumeJob', async args =>
-    service.resumeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' },
-  );
-
-  webui.registerAction('removeJob', async args =>
-    service.removeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' },
-  );
-
-  webui.registerAction('newJobDraft', async () => ({
-    name: '',
-    cron: '',
-    interval: 0,
-    runAt: '',
-    delaySeconds: 0,
-    sessionId: '',
-    platform: 'internal',
-    content: '',
-    enabled: true,
-    paused: false,
-  }));
-
-  webui.registerAction('upsertJob', async (args, caller) => {
-    const jobName = String(args.name ?? '').trim();
-    if (!jobName) return { ok: false, error: '任务名称不能为空' };
-    const cron = String(args.cron ?? '').trim() || undefined;
-    const interval = Number(args.interval) > 0 ? Number(args.interval) : undefined;
-    const delaySeconds = Number(args.delaySeconds) > 0 ? Math.floor(Number(args.delaySeconds)) : undefined;
-    const rawRunAt = String(args.runAt ?? '').trim() || undefined;
-    // 调度方式恰好一个：四者同时也是四种互不相容的定时语义（周期 cron / 周期间隔 / 一次性），
-    // 多填时取哪个都是猜，一律报错要求填一个——与 scheduler_create_job 工具路径同一条判据。
-    const provided = [cron, interval, delaySeconds, rawRunAt].filter(v => v !== undefined).length;
-    if (provided === 0) {
-      return { ok: false, error: 'cron / interval / runAt / delaySeconds 必须填写其中之一' };
-    }
-    if (provided > 1) {
-      return { ok: false, error: 'cron / interval / runAt / delaySeconds 互斥，只能填一个' };
-    }
-    // delaySeconds → runAt：与 scheduler_create_job 工具路径同一份转换（到点执行一次后自动停止）
-    const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
-    // 「创建后立即暂停」只对周期任务有意义：一次性任务被暂停时到点的 setTimeout 直接跳过，
-    // 之后既不会重排也不会自删（disableOneShot 只在真执行后走），任务就永久卡死在那里。
-    if (args.paused === true && runAt) {
-      return { ok: false, error: '创建后立即暂停对一次性任务（runAt / delaySeconds）没有可用语义' };
-    }
-    // 防资源耗尽（scheduler 工具对聊天访客公开）：interval 下限，挡住 interval:0.5 这类高频任务。
-    if (interval !== undefined && interval < 5) {
-      return { ok: false, error: 'interval 不能小于 5 秒（防高频任务耗尽资源）' };
-    }
-    const sessionId = String(args.sessionId ?? '').trim();
-    if (!sessionId) return { ok: false, error: 'sessionId 不能为空' };
-    const content = String(args.content ?? '').trim();
-    if (!content) return { ok: false, error: 'content 不能为空' };
-    // 防资源耗尽：单会话任务数上限；更新已有任务（同名）不计入，仅拦新建。
-    const MAX_JOBS_PER_SESSION = 20;
-    const allJobs = service.getJobs();
-    if (
-      !allJobs.some(j => j.name === jobName) &&
-      allJobs.filter(j => j.sessionId === sessionId).length >= MAX_JOBS_PER_SESSION
-    ) {
-      return { ok: false, error: `本会话定时任务数已达上限 ${MAX_JOBS_PER_SESSION}，请先删除部分任务再新建` };
-    }
-    try {
-      // actor 从权限闸放行后的 caller 快照（登录账户或单 token 模式的 webui:console），
-      // 不从 args 读取，避免 WebUI 调用方伪造他人身份。
-      const actor = caller ?? { platform: 'webui', userId: 'console' };
-      service.setJob({
-        name: jobName,
-        cron,
-        interval,
-        runAt,
-        sessionId,
-        platform: String(args.platform ?? 'internal'),
-        actorPlatform: actor.platform,
-        actorUserId: actor.userId,
-        content,
-        enabled: args.enabled !== false,
-        paused: args.paused === true,
-      });
-      const note = persistNote();
-      return note ? { ok: true, message: `已保存${note}` } : { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
 
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
 

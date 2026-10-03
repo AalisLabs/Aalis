@@ -14,7 +14,7 @@
   background: none;
 }
 
-.tool-line:hover {
+.tool-line:hover:not(:disabled) {
   background: var(--color-fill-1);
 }
 
@@ -88,16 +88,22 @@
 }
 
 .tool-output,
+.tool-diff,
 .approval-command,
 .approval-params {
-  max-height: 20rem;
   margin: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
   font-size: var(--text-xs);
   line-height: var(--leading-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* 工具卡的细节限高、在框内滚动；审批卡上的事实完整列出，不限高 */
+.tool-details > .tool-output,
+.tool-details > .tool-diff {
+  max-height: 20rem;
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .tool-diff > span {
@@ -129,7 +135,6 @@
 }
 
 .approval-command {
-  max-height: calc(6 * var(--leading-sm));
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
 }

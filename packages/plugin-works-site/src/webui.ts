@@ -1,115 +1,16 @@
+// ============================================================
+// WebUI 作品站页：概况（健康状况与几个运维动作）、线上的作品、部署与部署历史、未读告警。
+// 状态写盘后页面重取；健康状况不正常（状态读不出、暂停、鉴权失败、部署连续失败）时发「出错」提示，恢复后撤回。
+// 动作要求作品站在运行：状态读不出或已停止时一律回错误。
+// ============================================================
+
 import { type BoundPublish, WORK_ID_PATTERN } from '@aalis/api-publish';
-import type { BoundWebui, WebuiPage } from '@aalis/api-webui';
+import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
 import type { WorksSiteConfig } from './config.js';
 import type { WorksDeployer } from './deploy.js';
 import type { WorksStore } from './state.js';
 
-const PAGE: WebuiPage = {
-  key: 'works-site',
-  label: '作品站',
-  order: 56,
-  refresh: 30,
-  content: [
-    { type: 'markdown', source: 'worksStatus' },
-    {
-      type: 'tabs',
-      items: [
-        {
-          key: 'works',
-          label: '作品',
-          content: [
-            {
-              type: 'table',
-              source: 'worksItems',
-              columns: [
-                { key: 'thumbnail', label: '缩略图', render: 'image', method: 'worksThumbnail' },
-                { key: 'title', label: '标题' },
-                { key: 'kind', label: '类型' },
-                { key: 'branch', label: '分支' },
-                { key: 'alias', label: '别名' },
-                { key: 'url', label: '网址', render: 'link' },
-                { key: 'at', label: '上线时刻', render: 'time', nowrap: true },
-              ],
-              actions: [
-                {
-                  label: '撤下',
-                  method: 'worksWithdraw',
-                  danger: true,
-                  confirm: '撤下后站点与缓存会在几分钟内不再返回它；已保持的连接可能更久。',
-                },
-              ],
-            },
-          ],
-        },
-        {
-          key: 'deployments',
-          label: '部署',
-          content: [
-            {
-              type: 'table',
-              source: 'worksDeployments',
-              columns: [
-                { key: 'branch', label: '分支' },
-                { key: 'id', label: '部署' },
-                { key: 'nonce', label: 'nonce' },
-                { key: 'at', label: '时刻', render: 'time', nowrap: true },
-                { key: 'count', label: '作品数' },
-              ],
-            },
-            {
-              type: 'table',
-              source: 'worksHistory',
-              columns: [
-                { key: 'at', label: '时刻', render: 'time', nowrap: true },
-                { key: 'branch', label: '分支' },
-                { key: 'deployment', label: '部署' },
-                { key: 'result', label: '结果' },
-              ],
-            },
-          ],
-        },
-        {
-          key: 'alerts',
-          label: '告警',
-          content: [
-            {
-              type: 'table',
-              source: 'worksAlerts',
-              columns: [
-                { key: 'kind', label: '类型' },
-                { key: 'detail', label: '详情' },
-                { key: 'at', label: '时刻', render: 'time', nowrap: true },
-              ],
-              actions: [{ label: '标为已读', method: 'worksAcknowledge' }],
-            },
-          ],
-        },
-      ],
-    },
-    {
-      type: 'actions',
-      label: '操作',
-      items: [
-        { label: '重试部署', method: 'worksRetry' },
-        { label: '恢复自动部署', method: 'worksResume' },
-        {
-          label: '对齐项目设置',
-          method: 'worksAlignSettings',
-          confirm: '按配置更新两套 fail_open？其他设置需去控制台修改。',
-        },
-        {
-          label: '重新部署并清理账外部署',
-          method: 'worksCleanupUnknown',
-          danger: true,
-          confirm: '先重新部署我方分支与主站，再删除账外部署。继续？',
-        },
-      ],
-    },
-  ],
-};
-
-const fail = (error: string) => ({ ok: false as const, error });
-const ok = () => ({ ok: true as const });
+const PAGE_KEY = 'works-site';
 
 export function registerWorksPage(deps: {
   webui: BoundWebui;
@@ -118,121 +19,266 @@ export function registerWorksPage(deps: {
   deployer: WorksDeployer;
   config: WorksSiteConfig;
 }): void {
-  const state = () => deps.store.data;
-  const ready = () =>
-    deps.store.failure ? fail(deps.store.failure) : !deps.deployer.active ? fail('作品站尚未启动或已停止') : undefined;
-  deps.webui.registerPage({
-    ...PAGE,
-    key: deps.config.targetId === 'works' ? PAGE.key : `works-site:${deps.config.targetId}`,
-    label:
-      deps.config.targetId === 'works' ? PAGE.label : `作品站 · ${deps.config.siteTitle} (${deps.config.targetId})`,
+  const { config, deployer, store } = deps;
+  const state = () => store.data;
+  const ready = () => {
+    if (store.failure) throw new Error(store.failure);
+    if (!deployer.active) throw new Error('作品站尚未启动或已停止');
+  };
+  const page = deps.webui.definePage({
+    key: PAGE_KEY,
+    title: '作品站',
+    icon: 'images',
+    actions: {
+      withdrawWork: {
+        label: '撤下',
+        effect: 'destructive',
+        confirm: '撤下后站点与缓存会在几分钟内不再返回它；已保持的连接可能更久。',
+        row: true,
+        async handler({ rowKey }) {
+          ready();
+          if (
+            !WORK_ID_PATTERN.test(rowKey) ||
+            !state()?.current[config.productionBranch]?.works.some(work => work.id === rowKey)
+          )
+            throw new Error('作品不存在');
+          const service = deps.publish.current;
+          if (!service) throw new Error('发布服务不在场');
+          const result = await service.withdraw(rowKey, { kind: 'owner' }, 'owner 在作品页撤下');
+          if ('refused' in result) throw new Error(result.refused);
+          deployer.change();
+          return result.degraded ? `撤下已登记；站点状态：${result.degraded}` : '已撤下';
+        },
+      },
+      acknowledgeAlert: {
+        label: '标为已读',
+        effect: 'write',
+        row: true,
+        async handler({ rowKey }) {
+          ready();
+          if (!(await deployer.acknowledge(rowKey))) throw new Error('告警不存在');
+          return '已标为已读';
+        },
+      },
+      retryDeploy: {
+        label: '重试部署',
+        effect: 'write',
+        handler() {
+          ready();
+          deployer.retry();
+          return '已安排重试部署';
+        },
+      },
+      resumeDeploy: {
+        label: '恢复自动部署',
+        effect: 'write',
+        async handler() {
+          ready();
+          if (!(await deployer.resume())) throw new Error('请先把未读告警标为已读');
+          return '已恢复自动部署';
+        },
+      },
+      alignSettings: {
+        label: '对齐项目设置',
+        effect: 'write',
+        async handler() {
+          ready();
+          try {
+            await deployer.alignSettings();
+          } catch {
+            throw new Error('项目设置对齐失败');
+          }
+          return '项目设置已对齐';
+        },
+      },
+      cleanupUnknown: {
+        label: '重新部署并清理账外部署',
+        effect: 'destructive',
+        confirm: '先重新部署我方分支与主站，再删除账外部署。继续？',
+        async handler() {
+          ready();
+          try {
+            await deployer.cleanupUnknown();
+          } catch {
+            throw new Error('重新部署与清理未完成');
+          }
+          return '已重新部署并清理账外部署';
+        },
+      },
+    },
+    content: {
+      tabs: [
+        {
+          key: 'overview',
+          title: '概况',
+          content: [
+            {
+              type: 'info',
+              id: 'health',
+              description: '已打开的连接在撤下后可能继续取到旧内容十分钟以上。',
+              data() {
+                const snapshot = state();
+                const health = deployer.health();
+                const last = snapshot?.history[0];
+                return [
+                  { label: '发布目标', value: config.targetId },
+                  { label: '主站', value: `${config.siteOrigin}${config.basePath}`, kind: 'link' as const },
+                  {
+                    label: '健康',
+                    value: health.ok ? { text: '正常' } : { text: health.reason, state: 'error' as const },
+                    kind: 'status' as const,
+                  },
+                  { label: '上次部署', value: last ? last.result : '尚无' },
+                  ...(last ? [{ label: '上次部署时间', value: last.at, kind: 'time' as const }] : []),
+                  { label: '暂停', value: snapshot?.paused?.reason ?? '否' },
+                  {
+                    label: 'fail_open',
+                    value: `期望 ${config.failOpen}，线上 ${deployer.onlineFailOpen ?? '未核对'}`,
+                  },
+                  deployer.tokenExpiresOn
+                    ? { label: 'token 到期', value: deployer.tokenExpiresOn, kind: 'time' as const }
+                    : { label: 'token 到期', value: '未知或不过期' },
+                ];
+              },
+            },
+            {
+              type: 'actions',
+              description: '对齐项目设置只按配置更新两套 fail_open，其他设置要去控制台改。',
+              actions: ['retryDeploy', 'resumeDeploy', 'alignSettings', 'cleanupUnknown'],
+            },
+          ],
+        },
+        {
+          key: 'works',
+          title: '作品',
+          content: [
+            {
+              type: 'table',
+              id: 'works',
+              rowKey: 'id',
+              empty: '主站上还没有作品',
+              columns: [
+                { key: 'thumbnail', label: '缩略图', kind: 'image', primary: true },
+                { key: 'title', label: '标题', primary: true },
+                { key: 'kind', label: '类型' },
+                { key: 'branch', label: '分支' },
+                { key: 'alias', label: '别名' },
+                { key: 'url', label: '网址', kind: 'link' },
+                { key: 'at', label: '上线时刻', kind: 'time' },
+              ],
+              rowActions: [{ action: 'withdrawWork' }],
+              data: () =>
+                Object.values(state()?.current ?? {})
+                  .filter(item => item.branch === config.productionBranch)
+                  .flatMap(item =>
+                    item.works.map(work => ({
+                      id: work.id,
+                      thumbnail: work.hasThumbnail ? deps.publish.current?.thumbnailUri(work.id) : undefined,
+                      title: work.title,
+                      kind: work.kind,
+                      branch: state()?.groups[work.group]?.branch ?? '主站',
+                      alias: state()?.groups[work.group]?.alias ?? '',
+                      url: `${config.siteOrigin}${config.basePath}w/${work.id}/`,
+                      at: item.at,
+                    })),
+                  ),
+            },
+          ],
+        },
+        {
+          key: 'deployments',
+          title: '部署',
+          content: [
+            {
+              type: 'table',
+              id: 'deployments',
+              label: '当前部署',
+              rowKey: 'id',
+              empty: '还没有部署',
+              columns: [
+                { key: 'branch', label: '分支', primary: true },
+                { key: 'deployment', label: '部署', kind: 'code' },
+                { key: 'nonce', label: 'nonce', kind: 'code' },
+                { key: 'at', label: '时刻', kind: 'time', primary: true },
+                { key: 'count', label: '作品数' },
+              ],
+              data: () =>
+                Object.values(state()?.current ?? {}).map(item => ({
+                  id: item.id,
+                  branch: item.branch,
+                  deployment: item.id.slice(0, 8),
+                  nonce: item.nonce,
+                  at: item.at,
+                  count: item.works.length,
+                })),
+            },
+            {
+              type: 'table',
+              id: 'history',
+              label: '部署历史',
+              rowKey: 'key',
+              empty: '还没有部署历史',
+              columns: [
+                { key: 'at', label: '时刻', kind: 'time', primary: true },
+                { key: 'branch', label: '分支' },
+                { key: 'deployment', label: '部署', kind: 'code' },
+                { key: 'result', label: '结果', primary: true },
+              ],
+              // 历史没有自己的 id，按从新到旧的次序标识
+              data: () =>
+                (state()?.history ?? []).slice(0, 50).map((item, i) => ({
+                  key: String(i),
+                  at: item.at,
+                  branch: item.branch,
+                  deployment: item.deployment.slice(0, 8),
+                  result: item.result,
+                })),
+            },
+          ],
+        },
+        {
+          key: 'alerts',
+          title: '告警',
+          content: [
+            {
+              type: 'table',
+              id: 'alerts',
+              rowKey: 'id',
+              empty: '没有未读告警',
+              columns: [
+                { key: 'kind', label: '类型' },
+                { key: 'detail', label: '详情', kind: 'long-text', primary: true },
+                { key: 'at', label: '时刻', kind: 'time', primary: true },
+              ],
+              rowActions: [{ action: 'acknowledgeAlert' }],
+              data: () =>
+                (state()?.alerts ?? [])
+                  .filter(item => !item.acknowledged)
+                  .map(item => ({ id: item.id, kind: item.kind, detail: item.detail, at: item.at })),
+            },
+          ],
+        },
+      ],
+    },
   });
-  deps.webui.registerAction('worksStatus', async () => {
-    const snapshot = state();
-    const health = deps.deployer.health();
-    const last = snapshot?.history[0];
-    return {
-      content:
-        `发布目标：${deps.config.targetId}\n\n主站：${deps.config.siteOrigin}${deps.config.basePath}\n\n健康：${health.ok ? '正常' : health.reason}\n\n` +
-        `上次部署：${last ? `${new Date(last.at).toISOString()} ${last.result}` : '尚无'}\n\n` +
-        `暂停：${snapshot?.paused?.reason ?? '否'}\n\nfail_open：期望 ${deps.config.failOpen}，线上 ` +
-        `${deps.deployer.onlineFailOpen ?? '未核对'}\n\ntoken 到期：` +
-        `${deps.deployer.tokenExpiresOn ? new Date(deps.deployer.tokenExpiresOn).toISOString() : '未知/不过期'}\n\n` +
-        '已打开的连接在撤下后可能继续取到旧内容十分钟以上。',
-    };
-  });
-  deps.webui.registerAction('worksItems', async () =>
-    Object.values(state()?.current ?? {})
-      .filter(item => item.branch === deps.config.productionBranch)
-      .flatMap(item =>
-        item.works.map(work => ({
-          id: work.id,
-          thumbnail: work.hasThumbnail ? work.id : '',
-          title: work.title,
-          kind: work.kind,
-          branch: state()?.groups[work.group]?.branch ?? '主站',
-          alias: state()?.groups[work.group]?.alias ?? '',
-          url: `${deps.config.siteOrigin}${deps.config.basePath}w/${work.id}/`,
-          at: item.at,
-        })),
-      ),
-  );
-  deps.webui.registerAction('worksDeployments', async () =>
-    Object.values(state()?.current ?? {}).map(item => ({
-      branch: item.branch,
-      id: item.id.slice(0, 8),
-      nonce: item.nonce,
-      at: item.at,
-      count: item.works.length,
-    })),
-  );
-  deps.webui.registerAction('worksHistory', async () =>
-    (state()?.history ?? []).slice(0, 50).map(item => ({
-      ...item,
-      deployment: item.deployment.slice(0, 8),
-    })),
-  );
-  deps.webui.registerAction('worksAlerts', async () => state()?.alerts.filter(item => !item.acknowledged) ?? []);
-  deps.webui.registerAction('worksThumbnail', async args => {
-    if (ready()) return ready();
-    const id = args.id;
-    if (typeof id !== 'string' || !WORK_ID_PATTERN.test(id)) return fail('作品编号不合法');
-    const item = state()?.current[deps.config.productionBranch]?.works.find(work => work.id === id);
-    if (!item?.hasThumbnail) return fail('缩略图不存在');
-    try {
-      const service = deps.publish.current;
-      if (!service) return fail('发布服务不在场');
-      const bytes = await service.readThumbnail(id);
-      return { name: `${id}.png`, mime: 'image/png', base64: Buffer.from(bytes).toString('base64') };
-    } catch {
-      return fail('缩略图不可读取');
+
+  let unhealthy: NoticeHandle | undefined;
+  /** 状态变了：页面重取，健康状况不正常时发出提示，恢复后撤回 */
+  const changed = () => {
+    page.invalidate();
+    const health = deployer.health();
+    if (health.ok) {
+      unhealthy?.clear();
+      unhealthy = undefined;
+      return;
     }
-  });
-  deps.webui.registerAction('worksWithdraw', async args => {
-    if (ready()) return ready();
-    const id = args.id;
-    if (
-      typeof id !== 'string' ||
-      !WORK_ID_PATTERN.test(id) ||
-      !state()?.current[deps.config.productionBranch]?.works.some(work => work.id === id)
-    )
-      return fail('作品不存在');
-    const service = deps.publish.current;
-    if (!service) return fail('发布服务不在场');
-    const result = await service.withdraw(id, { kind: 'owner' }, 'owner 在作品页撤下');
-    if ('refused' in result) return fail(result.refused);
-    deps.deployer.change();
-    return result.degraded ? { ok: true, message: `撤下已登记；站点状态：${result.degraded}` } : ok();
-  });
-  deps.webui.registerAction('worksRetry', async () => {
-    if (ready()) return ready();
-    deps.deployer.retry();
-    return ok();
-  });
-  deps.webui.registerAction('worksResume', async () => {
-    if (ready()) return ready();
-    return (await deps.deployer.resume()) ? ok() : fail('请先把未读告警标为已读');
-  });
-  deps.webui.registerAction('worksAcknowledge', async args => {
-    if (ready()) return ready();
-    return typeof args.id === 'string' && (await deps.deployer.acknowledge(args.id)) ? ok() : fail('告警不存在');
-  });
-  deps.webui.registerAction('worksAlignSettings', async () => {
-    if (ready()) return ready();
-    try {
-      await deps.deployer.alignSettings();
-      return ok();
-    } catch {
-      return fail('项目设置对齐失败');
-    }
-  });
-  deps.webui.registerAction('worksCleanupUnknown', async () => {
-    if (ready()) return ready();
-    try {
-      await deps.deployer.cleanupUnknown();
-      return ok();
-    } catch {
-      return fail('重新部署与清理未完成');
-    }
-  });
+    unhealthy = deps.webui.notify({
+      id: 'health',
+      level: 'error',
+      title: `作品站：${health.reason}`,
+      open: { page: PAGE_KEY },
+    });
+  };
+  store.onChange(changed);
+  changed();
 }

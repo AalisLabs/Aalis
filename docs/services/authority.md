@@ -127,7 +127,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | commands / tools 服务 | `packages/plugin-authority/src/index.ts` | `commands.follow` / `tools.follow` 调 `setExecutionGuard(guard)` 注入闸（反向注入，不返回 cleanup） |
 | plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`，非 null 即拦截 |
 | plugin-commands 执行点 | `packages/plugin-commands/src/index.ts` | 人亲手输入的指令带 `confirmIntent`，守卫需要确认时经它问发出者本人 |
-| WebUI actions | `packages/plugin-authority/src/index.ts` | `getOverview` / `setUserLevel` / `setOwners` 等管理面，经闭包里本次激活的 manager 调用 |
+| 权限页 | `packages/plugin-authority/src/index.ts` | 设置里的声明式页面（用户等级、owner、操作门槛、禁用与免确认），处理函数经闭包里本次激活的 manager 调用 |
 
 ## 4. 写一个 provider（替换默认 authority 实现）
 
@@ -138,7 +138,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 `AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
 - **必须**：`isOwner`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
-- **管理面用**：`setUserLevel`、`removeUser`（被 WebUI/CLI actions 调）。
+- **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。
 - **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；等级不够即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按回合的来源判、不按 `actor` 判，只有 owner 本人与 owner 链的延续能产生审批。
 
 ### 4.2 注册（provide）
@@ -287,7 +287,7 @@ authority 在 `apply` 时把 `config.network` 注入进程级网络策略：`set
 
 - **`risk` 在两轴里走不同路径**：守卫把 `risk` 既透传给 `authorize`（派生 minLevel）又用 `resolveCapabilityPolicy` 展开出 `confirm`（`tools.ts`）。即 `risk:'dangerous'` 同时抬高最低等级到 2 **且**要求 session 确认；只想要其一时显式写 `visibility`/`confirm` 覆盖。
 - **守卫是反向注入，时序敏感**：authority 经 `commands.follow` / `tools.follow` 注入守卫（`packages/plugin-authority/src/index.ts`）。任何一方未上线时另一方退化：没 authority → tools/commands 无守卫，需要鉴权或确认的操作全拒；没 `approvals` → 需要确认的工具调用全拒。重写时保持 `follow`（provider 重启会重新触发），不要用一次性 `services.get`（无依赖边）。
-- **`restrictedPolicy` 的生效计时是运行时态**：`policyEnabledAt` 不持久化。重启后 `restrictedPolicy` 的 duration 计时归零（需再次触发 `markPolicyEnabled`，见 action `setRestrictedPolicy`，`src/index.ts`）。
+- **`restrictedPolicy` 的生效计时是运行时态**：`policyEnabledAt` 不持久化。重启后 `restrictedPolicy` 的 duration 计时归零（需再次触发 `markPolicyEnabled`，见权限页的「免确认」动作，`src/index.ts`）。
 - **owner 判定含内置本地控制台身份**：`platform ∈ {webui, cli}` 且 `userId === 'console'` 恒为 owner（`authority-manager.ts`）。这是设计而非后门——`platform` 由适配器填写，远端用户无法伪造成 `cli`/`webui`，能填这两个平台名的只有本进程内代码（已具完全能力）。因此新增平台适配器**不得**把自身 platform 命名为 `cli` 或 `webui`；暴露新的本地 surface 时也注意别误用 `console` 这个 userId。
 
 ## 8. 交叉链接

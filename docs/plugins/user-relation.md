@@ -5,7 +5,7 @@
 
 ## 概述
 
-用 LLM 从对话中提取人物、事件、实体及其关系，维护一张人物关系图。每个会话累计 `triggerEveryNMessages` 条入站消息后自动提取一次；开启 `agentInjection` 时，把当前用户的子图速览经 `agent:prompt` 贡献点的 `turn-context` 槽注入。另提供 Agent 工具、`/relation` 指令与 WebUI 页面，并以 type `user-relation` 参与 `memory:clear`（仅 scope 为 all 时清空整张图）。字段与术语对照见 [关系图 · 字段含义速查](./user-relation-graph.md)。
+用 LLM 从对话中提取人物、事件、实体及其关系，维护一张人物关系图。每个会话累计 `triggerEveryNMessages` 条入站消息后自动提取一次；开启 `agentInjection` 时，把当前用户的子图速览经 `agent:prompt` 贡献点的 `turn-context` 槽注入。另提供 Agent 工具、`/relation` 指令与 WebUI 的关系图页与原始数据页（见文末），并以 type `user-relation` 参与 `memory:clear`（仅 scope 为 all 时清空整张图）。字段与术语对照见 [关系图 · 字段含义速查](./user-relation-graph.md)。
 
 ## 插件声明
 
@@ -239,7 +239,7 @@ $$
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。彻底卸载请整体停用该插件。 |
+| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、WebUI 页面仍可查/删。彻底卸载请整体停用该插件。 |
 | `triggerEveryNMessages` | number | `20` | 自动触发阈值（每 N 条消息）：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=关闭自动提取。 |
 | `readWindowSize` | number | `30` | 提取读取窗口大小：每次提取时回读的最近消息数。建议略大于触发阈值（如阈值 20、窗口 30），让相邻批次窗口重叠 10 条左右、便于 LLM 跨批次稳定识别同一事件与关系 |
 | `mode` | select | `'incremental'` | 提取模式：incremental: 固定窗口；all-new: 一次性读所有累积（注意 context 上限） |
@@ -291,4 +291,14 @@ $$
 | `findPathHardMaxDepth` | number | `6` | find_path 硬上限 |
 | `searchEventsDefaultLimit` | number | `10` | search_events 默认 limit |
 | `searchEventsHardMaxLimit` | number | `50` | search_events 硬上限 limit |
+| `graphSpacing` | number | `120` | 关系图疏密：关系图布局的理想边长（像素），越大越稀疏，建议 60 到 250；超出 20 到 1000 时按默认 |
 | `debug` | boolean | `false` | Debug 日志：开启后会输出提取/工具调用的详细日志 |
+
+## 7. WebUI 页面
+
+插件详情里有两页，数据源与删除动作直接用本次激活的 `RelationService`：
+
+- **人物关系图**（`key: 'user-relation'`）：一张全图。节点分人物、事件、实体三类，边按六种 kind 分类，取色用分类色（不写死颜色，随主题变）；疏密取 `graphSpacing`。选中一个节点，详情里是它的属性与连着它的关系（对端、关系、权重、最近强化、最新证据）。引用了缺失节点的边不画，记一条告警。
+- **关系图原始数据**（`key: 'user-relation-raw'`）：人物、事件、实体三个标签各一张表，行动作「删除」（确认框，连同相关的边）。删除前先核节点在且种类对，扑空时回错误；删除后两页都重取。
+
+抽取写入的变化不推送，靠打开时取一次与手动刷新。

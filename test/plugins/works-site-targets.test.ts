@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type WebUIService, type WebuiPage, webuiServer } from '../../packages/api-webui/src/index.js';
+import { type PageListResponse, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { readConfig } from '../../packages/plugin-works-site/src/config.js';
@@ -8,6 +8,7 @@ import worksSite from '../../packages/plugin-works-site/src/index.js';
 import { claimWorksTarget } from '../../packages/plugin-works-site/src/ownership.js';
 import { STATE_URI, stateUriForInstance, WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { hostedApp } from '../fixtures/app.js';
+import { pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { freePort } from '../helpers/net.js';
 
@@ -60,20 +61,12 @@ describe('works-site target ownership', () => {
   });
 
   it('registers two real plugin instances with independent WebUI contexts before any Pages traffic', async () => {
-    const pages: Array<{ contextId: string; page: WebuiPage }> = [];
+    const pages = pageHost();
     const disk = new Map<string, string>();
     const app = new App({ name: 'works-targets', logger: silent, logLevel: 'error' });
     const host = app.bind({ provide });
     host.provide(storage, memoryStorage(disk));
-    host.provide(webuiServer, {
-      registerPage(page: WebuiPage, contextId: string) {
-        pages.push({ page, contextId });
-        return () => {};
-      },
-      registerAction() {
-        return () => {};
-      },
-    } as unknown as WebUIService);
+    host.provide(webuiServer, pages.service);
     try {
       expect(await app.plugin(worksSite, baseConfig)).toBe(true);
       expect(
@@ -85,6 +78,7 @@ describe('works-site target ownership', () => {
             targetId: 'draw',
             siteOrigin: 'https://two.example',
             basePath: '/draw',
+            siteTitle: '画廊',
           },
           '@aalis/plugin-works-site:draw',
         ),
@@ -96,17 +90,16 @@ describe('works-site target ownership', () => {
           .filter(item => item.name === worksSite.name)
           .map(item => item.state),
       ).toEqual(['active', 'active']);
-      expect(pages.map(page => page.contextId).sort()).toEqual([
-        '@aalis/plugin-works-site',
-        '@aalis/plugin-works-site:draw',
+      expect(pages.logs).toEqual([]);
+      expect(pages.pages().map(page => [page.instance, page.key, page.title])).toEqual([
+        ['@aalis/plugin-works-site', 'works-site', '作品站'],
+        ['@aalis/plugin-works-site:draw', 'works-site', '作品站'],
       ]);
-      expect(pages.map(({ page }) => page.key)).toEqual(['works-site:one', 'works-site:draw']);
-      expect(pages[0]?.page.label).toContain('one');
-      expect(pages[1]?.page.label).toContain('draw');
       expect(disk.has(STATE_URI)).toBe(true);
       expect(disk.has(stateUriForInstance('@aalis/plugin-works-site:draw'))).toBe(true);
     } finally {
       await app.stop();
+      pages.dispose();
     }
   });
 
@@ -143,22 +136,17 @@ describe('works-site target ownership', () => {
       await app.start();
       const base = `http://127.0.0.1:${port}`;
       const headers = { Cookie: `aalis_webui_token=${token}` };
-      const pages = (await (await fetch(`${base}/api/pages`, { headers })).json()) as Array<{
-        key: string;
-        plugin: string;
-      }>;
-      expect(pages.filter(page => page.key.startsWith('works-site')).map(page => [page.key, page.plugin])).toEqual([
-        ['works-site', '@aalis/plugin-works-site'],
-        ['works-site:draw', '@aalis/plugin-works-site:draw'],
+      const { pages } = (await (await fetch(`${base}/api/pages`, { headers })).json()) as PageListResponse;
+      expect(pages.filter(page => page.key === 'works-site').map(page => page.instance)).toEqual([
+        '@aalis/plugin-works-site',
+        '@aalis/plugin-works-site:draw',
       ]);
-      for (const [plugin, expected] of [
+      for (const [instance, expected] of [
         ['@aalis/plugin-works-site', 'https://one.example/'],
         ['@aalis/plugin-works-site:draw', 'https://two.example/draw/'],
       ]) {
-        const response = await fetch(`${base}/api/page-action/${encodeURIComponent(plugin)}/worksStatus`, {
-          method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: '{}',
+        const response = await fetch(`${base}/api/pages/${encodeURIComponent(instance)}/works-site/data/health`, {
+          headers,
         });
         expect(response.status).toBe(200);
         expect(JSON.stringify(await response.json())).toContain(expected);

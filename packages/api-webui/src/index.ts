@@ -1,226 +1,43 @@
-// ----- WebUI 服务接口与声明式页面组件 -----
+// ----- WebUI 服务接口 -----
 //
-// WebUI 服务契约、声明式页面组件类型、管理面推送（/admin）的事件类型、主题的令牌表与文件格式，以及服务描述符（WebuiPage 由本包直接导出）。
-// 需要登记 WebUI 页面的插件从本包导入相关类型。
+// WebUI 服务契约、声明式页面与提示的登记门面（页面契约见 page.ts）、管理面推送（/admin）的事件类型、
+// 主题的令牌表与文件格式（theme.ts），以及服务描述符。
 
-import type { UserIdentity } from '@aalis/api-authority';
 import type { LogEntry, ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import type { Notice, NoticeHandle, PageDefinition, PageHandle, PagePlacement } from './page.js';
 
 /**
  * WebUI 服务 —— Web 管理后台
  *
- * 负责启动 HTTP 服务器，提供 REST API（插件管理、配置、权限等）
- * 和 WebSocket（消息/日志推送），同时托管前端静态文件。
+ * 负责启动 HTTP 服务器，提供 REST API（插件管理、配置、页面等）与 WebSocket（会话协议、管理面推送），
+ * 同时托管前端静态文件。
  *
- * 默认由 plugin-webui-server 提供，第三方可替换整个实现或仅替换前端部分。
+ * 默认由 plugin-webui-server 提供，第三方可替换整个实现或仅替换前端部分。插件不直接调登记方法，经绑定接口
+ * {@link BoundWebui} 的 definePage 与 notify 登记，归属与撤回由门面管。
  */
 export interface WebUIService {
   /** 获取 HTTP 服务监听端口 */
   getPort(): number;
   /** 获取 HTTP 服务监听地址 */
   getHost(): string;
-  /** 注册一个 WebUI 页面；返回 dispose */
-  registerPage(page: WebuiPage, contextId: string): () => void;
-  /** 列出当前所有已注册的页面（含插件归属） */
-  getPages(): Array<WebuiPage & { pluginName: string }>;
   /**
-   * 登记一个页面动作：宿主路由层（POST /api/page-action/:plugin/:method）在权限闸门放行后调用。
-   * 同一插件同名动作为替换；返回 dispose。
+   * 登记一个页面，归属插件实例 instance；同一实例同一 key 再登记就是替换。按质量门槛校验（见 PageDefinition），
+   * 不过就不登记并记一条错误日志。返回撤回，只撤这一次登记
    */
-  registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
-}
-
-/**
- * 页面动作处理函数。caller 是路由层解析出的调用者身份，可用来做业务级检查
- * （如 owner 自检）。
- */
-export type WebuiActionHandler = (args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>;
-
-// -- 声明式页面组件类型 --
-
-/** 统计卡片 */
-export interface WebuiStatComponent {
-  type: 'stat';
-  label: string;
-  source: string;
-  icon?: string;
-}
-
-/** 数据表格 */
-export interface WebuiTableComponent {
-  type: 'table';
-  label?: string;
-  source: string;
-  columns: Array<{
-    key: string;
-    label: string;
-    /**
-     * 单元格显示方式，不写时按文本显示：`countdown`（值是毫秒时间戳，显示剩余时间）、
-     * `time`（值是毫秒时间戳或 ISO 字符串，显示为本地日期时间）、`link`（http(s) 网址显示为新标签页打开的链接，
-     * 其他值按文本）、`status-badge`、`code`、`expandable-text`、`file`、`image`。
-     *
-     * `file`：值作为文件名显示，配「查看」「下载」两个按钮；点击时以整行为参数调本列的 `method`，
-     * 返回 {@link WebuiFilePayload}（业务失败返回 `{ ok: false, error }`）。只有 png、jpeg、gif、webp
-     * 位图能在页面里查看，其他类型（含 HTML、SVG）只能下载；下载一律按 `application/octet-stream` 保存。
-     *
-     * `image`：行内图片。值作为替代文字；单元格挂载时以整行为参数调本列的 `method`，返回
-     * {@link WebuiFilePayload}（业务失败返回 `{ ok: false, error }`）。只有 png、jpeg、gif、webp 在行内显示
-     * （最大宽 240 像素，点击放大），其他类型显示「不可预览」。表格刷新时值不变就不重取，所以值要能区分
-     * 不同的图（例如带上编号或文件名）。每一行都会随页面取图，`method` 应返回缩略图一类的小图、不返回原图。
-     */
-    render?: string;
-    /** `render` 为 `file` 或 `image` 时取文件内容的页面动作名 */
-    method?: string;
-    nowrap?: boolean;
-    minWidth?: number;
-    maxWidth?: number;
-  }>;
+  addPage(page: PageDefinition, instance: string): () => void;
+  /** 页面数据变了：推给打开着它的界面，按实例、页面、组件与会话合并短时间内的连发 */
+  invalidate(instance: string, pageKey: string, componentId?: string, sessionId?: string): void;
   /**
-   * 行内操作按钮；method 对应的 action 同 form.save 的失败约定（返回 {ok:false,error} 即失败）。
-   * 非 danger/confirm 的 action 返回**不带 ok 字段**的对象会被当详情弹窗展示；
-   * 只想刷新表格就返回 undefined 或 {ok:true}。
+   * 登记一条提示，归属插件实例 instance；同一实例同一 id 再登记就是替换。open 指向的不是本实例位置为 plugin 或
+   * settings 的页面时不登记并记一条错误日志。返回撤回，只撤这一次登记
    */
-  actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>;
-  /** 自动刷新间隔（**秒**，与 graph.refresh 的毫秒相反）；0 / undefined = 关闭 */
-  refresh?: number;
-  /** 启用前端本地文本搜索（空格分隔多关键词，AND 语义，对所有列值做不区分大小写子串匹配） */
-  searchable?: boolean;
-  /** 搜索框 placeholder（searchable=true 时生效） */
-  searchPlaceholder?: string;
-}
-
-/** render 为 'file' 或 'image' 的列以整行为参数调 method，返回这个结构 */
-export interface WebuiFilePayload {
-  /** 保存时的文件名；客户端会去掉其中的路径分隔符 */
-  name: string;
-  mime: string;
-  /** 文件内容的 base64 */
-  base64: string;
-}
-
-/** 配置表单（复用 ConfigSchema） */
-export interface WebuiFormComponent {
-  type: 'form';
-  label?: string;
-  /** 读取当前值的 action 名；返回表单初值对象 */
-  source: string;
-  /**
-   * 保存用的 action 名。
-   *
-   * 失败约定：业务失败**返回** `{ ok: false, error: '原因' }`（HTTP 仍是 200——路由只把
-   * action 的抛错转成 5xx），前端据此显示原因；抛错同样被前端捕获展示。返回其它任何值
-   * （含 undefined）都视为成功。
-   */
-  save: string;
-  schema: ConfigSchema;
-}
-
-/** 操作按钮组 */
-export interface WebuiActionsComponent {
-  type: 'actions';
-  label?: string;
-  /** method 对应的 action 同 form.save 的失败约定（返回 {ok:false,error} 即失败，原因显示在按钮旁） */
-  items: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
-}
-
-/** 键值信息面板 */
-export interface WebuiInfoComponent {
-  type: 'info';
-  label?: string;
-  source: string;
-}
-
-/** Markdown 内容 */
-export interface WebuiMarkdownComponent {
-  type: 'markdown';
-  label?: string;
-  source: string;
-}
-
-/** 子标签页容器 */
-export interface WebuiTabsComponent {
-  type: 'tabs';
-  label?: string;
-  items: Array<{ key: string; label: string; content: WebuiComponent[] }>;
-}
-
-/**
- * 交互式关系图组件（基于 Cytoscape）。
- *
- * `source` 后端方法签名: `(args: { focusId?: string; maxDepth?: number; maxBreadth?: number; filters?: Record<string, unknown> })`
- * 返回 cytoscape 风格的 elements：
- * ```ts
- * {
- *   nodes: Array<{ data: { id: string; label: string; kind: 'person' | 'event' | string; [k: string]: unknown } }>;
- *   edges: Array<{ data: { id: string; source: string; target: string; label?: string; relationType?: string; [k: string]: unknown } }>;
- *   focusId?: string;
- *   stats?: Record<string, number | string>;
- * }
- * ```
- *
- * `detailSource` 可选：节点被点击时调用，签名 `(args: { nodeId: string; kind: string })`，返回任意键值对 → 右侧 Drawer 渲染。
- */
-export interface WebuiGraphComponent {
-  type: 'graph';
-  label?: string;
-  source: string;
-  detailSource?: string;
-  /** 节点最大深度/宽度默认值（前端展示初值） */
-  defaultMaxDepth?: number;
-  defaultMaxBreadth?: number;
-  /** 自动刷新（毫秒），0 / undefined = 关闭 */
-  refresh?: number;
-  /** 顶部右上角额外按钮；本处**不解读** {ok:false} 约定（返回值被丢弃），失败请抛错 */
-  actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
-  /**
-   * 自定义节点类别：节点 data.kind → 形状/颜色/图例文本。
-   * 声明后组件据此生成样式与底部图例，**不再使用人物关系图的内置三类**
-   * （person/event/entity）语义——非关系图场景（如权限图）必须声明，
-   * 避免冒用他人图例。
-   */
-  nodeKinds?: Array<{ kind: string; label: string; shape?: 'circle' | 'round-rect' | 'diamond'; color?: string }>;
-  /** 自定义边类别：边 data.kind → 颜色/虚线/图例文本。 */
-  edgeKinds?: Array<{ kind: string; label: string; color?: string; dashed?: boolean }>;
-}
-
-/** 所有声明式页面组件的联合类型 */
-export type WebuiComponent =
-  | WebuiStatComponent
-  | WebuiTableComponent
-  | WebuiFormComponent
-  | WebuiActionsComponent
-  | WebuiInfoComponent
-  | WebuiMarkdownComponent
-  | WebuiTabsComponent
-  | WebuiGraphComponent;
-
-/**
- * 插件可声明的 WebUI 页面 —— 完整定义。
- *
- * 由本包直接导出（core 不再持有 WebuiPage 骨架）。
- */
-export interface WebuiPage {
-  /** 页面唯一标识（对应前端路由/标签 key） */
-  key: string;
-  /** 页面显示名称 */
-  label: string;
-  /** 图标标识（命名标识或内联 SVG） */
-  icon?: string;
-  /** 排序权重（越小越靠前，默认 99） */
-  order?: number;
-  /** 自定义渲染器标识（非声明式 content 场景） */
-  renderer?: string;
-  /** 全页数据刷新间隔（秒）；0 / undefined = 关闭，不重置表单中的编辑内容 */
-  refresh?: number;
-  /** 声明式页面内容（不提供则使用客户端内置页面） */
-  content?: WebuiComponent[];
+  addNotice(notice: Notice, instance: string): () => void;
 }
 
 /**
  * 通过 declaration merging 向插件定义注入展示元数据 extends。
- * 页面与页面动作不是静态字段：在 apply 里经 `webuiServer.registerPage / registerAction` 登记。
+ * 页面与提示不是静态字段：在 apply 里经 webuiServer 的 definePage 与 notify 登记。
  */
 declare module '@aalis/core' {
   interface PluginMeta {
@@ -318,27 +135,39 @@ export const webuiClient = defineService<WebuiClientProvider>('webui-client');
 
 // ===== 服务描述符（按激活绑定）=====
 
-/** `webui-server` 的绑定接口：页面与页面动作的登记自动归属这次激活 */
+/** `webui-server` 的绑定接口：页面与提示的登记归属这次激活，提供者换人自动重挂，停用时同一拍撤回 */
 export interface BoundWebui extends ServiceRef<WebUIService> {
-  /** 登记页面：提供者换人自动重挂，随激活撤回 */
-  registerPage(page: WebuiPage): () => void;
-  /** 登记页面动作：同名替换，提供者换人自动重挂，随激活撤回 */
-  registerAction(method: string, handler: WebuiActionHandler): () => void;
+  /**
+   * 登记一个页面：组件、数据源、动作与处理函数一次给出，返回形状按组件种类推出，引用了没声明的动作在编译期报错。
+   * 要在引用它的 notify 之前登记
+   */
+  definePage<const P extends PagePlacement = 'plugin', const S extends Record<string, unknown> = Record<never, never>>(
+    page: PageDefinition<P, S, NoInfer<keyof S & string>>,
+  ): PageHandle;
+  /** 发一条提示；同一个 id 再发一次就是替换 */
+  notify(notice: Notice): NoticeHandle;
 }
 
 export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server', port => {
-  const pages = port.registrar<WebuiPage>({
+  // 先建页面的账本：提供者换人时按创建次序重挂，提示的 open 要在它指向的页面挂上之后才核得过
+  const pages = port.registrar<PageDefinition>({
     key: page => page.key,
-    register: (service, page) => service.registerPage(page, port.id),
+    register: (service, page) => service.addPage(page, port.id),
   });
-  const actions = port.registrar<{ method: string; handler: WebuiActionHandler }>({
-    key: action => action.method,
-    register: (service, action) => service.registerAction(action.method, action.handler, port.id),
+  const notices = port.registrar<Notice>({
+    key: notice => notice.id,
+    register: (service, notice) => service.addNotice(notice, port.id),
   });
-  return serviceRef(port, {
-    registerPage: (page: WebuiPage) => pages.add(page),
-    registerAction: (method: string, handler: WebuiActionHandler) => actions.add({ method, handler }),
-  });
+  const facade: Pick<BoundWebui, 'definePage' | 'notify'> = {
+    definePage(page) {
+      pages.add(page as PageDefinition);
+      return {
+        invalidate: (componentId, sessionId) => port.current()?.invalidate(port.id, page.key, componentId, sessionId),
+      };
+    },
+    notify: notice => ({ clear: notices.add(notice) }),
+  };
+  return serviceRef(port, facade);
 });
 
 // ----- 管理面推送 -----
@@ -354,15 +183,21 @@ export type WebuiAdminClientMessage = { type: 'log.subscribe' } | { type: 'log.u
  * - `log`：一条新日志，只推给订阅了的连接。先订阅、再取 `GET /api/logs/tail`，两边按 `seq` 去重；
  * - `plugins.changed`：插件状态可能变了，或页面登记表变了，前端重取插件与页面（`GET /api/plugins`、`GET /api/pages`）。
  *   一次启停可能连着推几条，服务端不合并；
+ * - `page.invalidate`：插件说这一页的数据变了。带 componentId 时只重取这个组件；带 sessionId 时只有打开着这个会话的面板重取。
+ *   服务端按这四项合并短时间内的连发；
+ * - `layout.changed`：owner 的布局记录（固定的页面、会话面板的标签）变了，前端重取 `GET /api/layout`；
  * - `app.restarting`：应用即将重启，连接随后断开；
  * - `client.reload`：前端偏好改了或有前端包被卸载，活跃前端可能换了，前端整页重新加载。
  */
 export type WebuiAdminEvent =
   | { type: 'log'; entry: LogEntry }
   | { type: 'plugins.changed' }
+  | { type: 'page.invalidate'; instance: string; pageKey: string; componentId?: string; sessionId?: string }
+  | { type: 'layout.changed' }
   | { type: 'app.restarting' }
   | { type: 'client.reload' };
 
-// ----- 主题：令牌表、主题文件格式与内置主题，见 theme.ts -----
+// ----- 声明式页面与提示，见 page.ts；主题的令牌表、文件格式与内置主题，见 theme.ts -----
 
+export * from './page.js';
 export * from './theme.js';

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 // 回合控制：发消息、工具调用达到上限后继续、停止、手动压缩、回滚、清空待办。
 // 消息以连接的身份（传输层认证出的平台与用户）发进入站事件，经网关进 agent，与平台适配器收到的消息走同一条路。
-// 停止、压缩、回滚、清空待办转给对应的服务，服务不在回 unsupported。
+// 停止、压缩、回滚（与回滚之前查检查点）、清空待办转给对应的服务，服务不在回 unsupported。
 // ════════════════════════════════════════════════════════════
 
 import type { AgentService } from '@aalis/api-agent';
@@ -45,7 +45,7 @@ export function createTurnControl(deps: TurnControlDeps) {
 
   const handlers: Pick<
     MethodHandlers,
-    'turn/send' | 'turn/continue' | 'turn/abort' | 'session/compress' | 'turn/rewind' | 'plan/clear'
+    'turn/send' | 'turn/continue' | 'turn/abort' | 'session/compress' | 'turn/checkpoint' | 'turn/rewind' | 'plan/clear'
   > = {
     'turn/send': async ({ sessionId, content, attachments }, conn) => {
       requireSession(sessionId);
@@ -73,6 +73,12 @@ export function createTurnControl(deps: TurnControlDeps) {
       await compression.compress(sessionId, 'manual');
       deps.requestUsage(sessionId, conn.peer.identity.platform);
       return {};
+    },
+    'turn/checkpoint': async ({ sessionId, turnId }) => {
+      requireSession(sessionId);
+      const checkpoint = deps.checkpoint.current;
+      if (!checkpoint) throw failure('unsupported', '没有检查点服务');
+      return { execUsed: await checkpoint.execUsed(sessionId, turnId) };
     },
     'turn/rewind': ({ sessionId, turnId, scope }) => {
       requireSession(sessionId);

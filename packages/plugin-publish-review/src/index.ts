@@ -83,7 +83,6 @@ export default definePlugin({
       webui: caps.webui,
       service,
       store,
-      storage,
       preview,
       ownerTimeoutHours: cfg.ownerTimeoutHours,
       reviewEnabled: cfg.reviewEnabled,

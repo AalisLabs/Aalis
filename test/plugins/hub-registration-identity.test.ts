@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type BoundTools, tools, withToolGroups } from '../../packages/api-tools/src/index.js';
-import { webuiServer } from '../../packages/api-webui/src/index.js';
 import {
   App,
   definePlugin,
@@ -15,9 +14,7 @@ import {
 } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
-import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
@@ -306,43 +303,6 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     const groupsOf = (name: string) => reg.getAll().find(t => t.name === name)?.groups;
     expect(groupsOf('t')).toEqual(['g']);
     expect(groupsOf('u'), '自带分组在前，默认分组追加在后').toEqual(['own', 'g']);
-  });
-});
-
-describe('webui-server 页面退订按条目身份', () => {
-  const apps: App[] = [];
-  afterEach(async () => {
-    for (const a of apps.splice(0)) await a.stop().catch(() => {});
-  });
-
-  it('同 key 重注册后，旧退订闭包不摘掉新登记', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
-    apps.push(app);
-    await app.plugins.register(webuiServerPlugin, {
-      port: await freePort(),
-      host: '127.0.0.1',
-      autoOpen: false,
-      tokenMode: 'fixed',
-      fixedToken: 'test-fixed-token-placeholder-0000',
-    });
-    await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(webuiServer)!;
-    const pages = () => svc.getPages().filter(p => p.pluginName === 'p');
-
-    const oldOff = svc.registerPage({ key: 'k', label: 'old' }, 'p');
-    const newOff = svc.registerPage({ key: 'k', label: 'new' }, 'p');
-    expect(
-      pages().map(p => p.label),
-      '前置：同 key 两次登记并存',
-    ).toEqual(['old', 'new']);
-
-    newOff();
-    expect(
-      pages().map(p => p.label),
-      '新闭包只摘自己那条',
-    ).toEqual(['old']);
-    oldOff();
-    expect(pages()).toEqual([]);
   });
 });
 

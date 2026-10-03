@@ -2,18 +2,18 @@
 
 ## 1. 定位
 
-WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 市场 / 日志 / 媒体与会话文件）+ WebSocket（`/session` 接会话协议；`/admin` 推管理面事件：日志、插件与页面登记表的变化、重启、换前端），并托管前端静态文件。第三方插件通过它**登记页面与页面动作**，也可整体替换前端或替换整个服务实现。
+WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 市场 / 日志 / 媒体与文件 / 声明式页面与布局记录）+ WebSocket（`/session` 接会话协议；`/admin` 推管理面事件：日志、插件与页面登记表的变化、页面数据变了、布局记录变了、重启、换前端），并托管前端静态文件。第三方插件通过它**登记声明式页面与提示**，也可整体替换前端或替换整个服务实现。
 
 注意服务注册名（描述符 `name`）有**两个**，而非单个 `'webui'`：
 
 - `'webui-server'` —— 后端服务，契约 `WebUIService`。描述符 `webuiServer`，绑定接口 `BoundWebui`（`packages/api-webui/src/index.ts`）。
 - `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，绑定接口是普通 `ServiceRef`。
 
-契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它导出运行时服务契约、声明式页面组件类型，以及向 `PluginMeta` 注入的 `extends`。
+契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts` 与 `page.ts`、`theme.ts`），**MIT**。它导出运行时服务契约、声明式页面与提示的类型、管理面事件与页面路由的返回形状、主题格式，以及向 `PluginMeta` 注入的 `extends`。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
-页面与页面动作不是静态模块字段：在 `apply` 里经 `webui.registerPage` / `webui.registerAction` 登记，随本次激活撤回。
+页面与提示不是静态模块字段：在 `apply` 里经 `webui.definePage` / `webui.notify` 登记，随本次激活撤回。契约的全文（组件、动作、会话面板、质量门槛、路由）见 [api-webui](../api/api-webui.md#声明式页面)。
 
 ## 2. 契约
 
@@ -23,24 +23,22 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 export interface WebUIService {
   getPort(): number;
   getHost(): string;
-  registerPage(page: WebuiPage, contextId: string): () => void;
-  getPages(): Array<WebuiPage & { pluginName: string }>;
-  registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
+  addPage(page: PageDefinition, instance: string): () => void;
+  invalidate(instance: string, pageKey: string, componentId?: string, sessionId?: string): void;
+  addNotice(notice: Notice, instance: string): () => void;
 }
-
-export type WebuiActionHandler = (args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>;
 ```
 
 ### 绑定接口 `BoundWebui`
 
 ```ts
 export interface BoundWebui extends ServiceRef<WebUIService> {
-  registerPage(page: WebuiPage): () => void;
-  registerAction(method: string, handler: WebuiActionHandler): () => void;
+  definePage(page: PageDefinition): PageHandle; // 泛型推断动作输入与引用，见 api-webui
+  notify(notice: Notice): NoticeHandle;
 }
 ```
 
-`registerPage` / `registerAction` 走 `registrar`：同键替换、提供者换人整体重挂、关闭后拒收。插件不要自己传 `contextId`。调用型查询走 `webui.current`（每次读取重新解析）。
+`definePage` / `notify` 走 `registrar`：同键替换（页面按 key，提示按 id）、提供者换人整体重挂、关闭后拒收。插件不要自己传实例 id。`definePage` 返回的 `invalidate` 推给打开着这一页的界面；`notify` 返回的 `clear` 撤回这条提示。
 
 ### 前端 provider `WebuiClientProvider`
 
@@ -50,34 +48,13 @@ export interface WebuiClientProvider {
 }
 ```
 
-### 页面骨架 `WebuiPage`
+### 声明式页面（`packages/api-webui/src/page.ts`）
 
-```ts
-export interface WebuiPage {
-  key: string;
-  label: string;
-  icon?: string;
-  order?: number;
-  renderer?: string;
-  content?: WebuiComponent[];
-}
-```
-
-### 声明式组件 `WebuiComponent`
-
-8 种联合：`stat` / `table` / `form` / `actions` / `info` / `markdown` / `tabs` / `graph`。每种组件的 `source` 字段都是一个**字符串方法名**，前端按它调 `POST /api/page-action/:plugin/:method`（见第 5 节）取数据。
-
-- `WebuiFormComponent` 复用 `@aalis/schema-config` 的 `ConfigSchema`，`save` 是回写方法名。
-- `WebuiTableComponent` 支持 `columns/actions/refresh/searchable`。
-- `WebuiGraphComponent` 基于 Cytoscape，非关系图场景**必须**声明 `nodeKinds/edgeKinds`，否则冒用人物关系图内置三类图例。
-
-`POST /api/page-action/:plugin/:method` 在身份闸放行后调用已登记的 handler，并把 `caller` 作为第二参传入（`packages/plugin-webui-server/src/routes/plugins.ts`）。单 owner 终态下该路由要求 owner 身份。
-
-action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。成功回执 `{ ok: true, message }` 带非空 `message` 时前端显示它：form 用它代替「已保存」，actions 用它代替「完成」，table 行内操作先弹窗告知再刷新表格——「已保存，但仅本次运行生效」这类附注放在这里。
+一个页面 = key、标题、lucide 图标名、位置（插件详情、设置的一节、会话面板）、内容（组件数组或标签页）与动作。组件只有五样：`table`、`graph`、`info`、`markdown`、`actions`；表格与关系图可带详情。数据源与处理函数写在声明里，返回形状按组件种类推出；动作带 `effect`（`read`、`write`、`destructive`）、可选的 `input`（一组 schema-config 字段）与 `row`（行动作）。登记时 webui-server 按质量门槛校验，数据源与动作经服务端闸门调用。详见 [api-webui](../api/api-webui.md#声明式页面)。
 
 ### 配置表单用到的字段属性
 
-本包不向 `SchemaField` 注入属性。`secret`（值是凭据）与影响取值判定的 `dynamicOptions` / `allowCustom`（`parseConfig` / `validateConfig` 据此决定是否查选项成员资格）都由 `@aalis/schema-config` 声明，插件用到它们不必引入本包。`secret` 字段在 WebUI 里的呈现见第 5 节。
+本包不向 `SchemaField` 注入属性。`secret`（值是凭据）与影响取值判定的 `dynamicOptions` / `allowCustom`（`parseConfig` / `validateConfig` 据此决定是否查选项成员资格）都由 `@aalis/schema-config` 声明，插件用到它们不必引入本包。动作的 `input` 用同一套字段。`secret` 字段在 WebUI 里的呈现见第 5 节。
 
 `subsystem` 写在 `definePlugin({ subsystem })`（`PluginDefinition` 字段，core 不读）。`extends` 经本包 declaration merging 挂到 `PluginMeta`。
 
@@ -88,56 +65,55 @@ action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 
 - `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时以 `webui` 平台名登记一个 `platform` adapter：平台名标明说话的是从 WebUI 来的 owner，连接状态数的是打开着的 `/session` 连接；WebUI 的会话不经它收发。`sessionProtocol`、`approvals` 等为 optional。
 - `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（可用 `onBehalfOf` 让偏好认前端包名；代登记不计入代理人 `provides`）。
 
-**消费方**（经 `webui.registerPage` / `registerAction`）：
+**消费方**（经 `webui.definePage` / `notify`）：
 
-| 插件 | 注册点 |
+| 插件 | 页面 |
 | --- | --- |
-| `plugin-authority` | `packages/plugin-authority/src/index.ts` |
-| `plugin-doctor` | `packages/plugin-doctor/src/index.ts` |
-| `plugin-scheduler` | `packages/plugin-scheduler/src/index.ts` |
-| `plugin-session-manager` | `packages/plugin-session-manager/src/index.ts` |
-| `plugin-skills` | `packages/plugin-skills/src/index.ts` |
-| `plugin-tool-browser` | `packages/plugin-tool-browser/src/index.ts` |
-| `plugin-user-relation` | `packages/plugin-user-relation/src/index.ts`（用 `graph` 组件画关系图） |
-| `plugin-workflow` | `packages/plugin-workflow/src/index.ts` |
-| `plugin-todo-list` | `packages/plugin-todo-list/src/index.ts` |
+| `plugin-paper` | 白纸（插件详情）与本群白纸（会话面板），另发未读告警与账本读取失败的提示 |
+| `plugin-publish-review` | 作品审核，另发待裁决数与账本读取失败的提示 |
+| `plugin-works-site` | 作品站（每个实例一页），健康状况不正常时发提示 |
+| `plugin-scheduler` | 计划任务 |
+| `plugin-authority` | 权限（设置） |
+| `plugin-skills` | 技能（设置） |
+| `plugin-doctor` | 诊断，另按每次运行的结果发出或撤回提示 |
+| `plugin-workflow` | 工作流 |
+| `plugin-tool-browser` | 浏览器 |
+| `plugin-user-relation` | 人物关系图（`graph` 组件，疏密取本插件的 `graphSpacing`）与原始数据 |
+| `plugin-file-reader` | 本会话上传的文件（会话面板） |
 
-webui-server 内部读页面用当前服务实例上的 `getPages()`——页面登记在该实例的内存 Map 里。
+页面登记在 webui-server 实例的内存登记表里，路由按这张表分派。
 
 ## 4. 写一个 provider
 
-绝大多数第三方作者**不替换 webui-server**，只是**登记页面与页面动作**。
+绝大多数第三方作者**不替换 webui-server**，只是**登记页面与提示**。
 
 ### 4a. 消费 WebUI：登记一个声明式页面（最常见）
 
 ```ts
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import { definePlugin, optional } from '@aalis/core';
-
-const page: WebuiPage = {
-  key: 'my-plugin',
-  label: '我的插件',
-  icon: 'tools',
-  order: 80,
-  content: [
-    { type: 'stat', label: '条目数', source: 'stats' },
-    { type: 'actions', label: '操作', items: [{ label: '刷新', method: 'refresh' }] },
-  ],
-};
 
 export default definePlugin({
   name: '@acme/plugin-my-webui',
   subsystem: 'tools',
   uses: { webui: optional(webuiServer) },
   apply({ webui }) {
-    webui.registerPage(page);
-    webui.registerAction('stats', async () => ({ total: 42 }));
-    webui.registerAction('refresh', async args => ({ ok: true, echo: args }));
+    const page = webui.definePage({
+      key: 'my-plugin',
+      title: '我的插件',
+      icon: 'wrench',
+      actions: { reset: { label: '清空', effect: 'destructive', confirm: '清空全部条目？', handler: async () => store.clear() } },
+      content: [
+        { type: 'info', id: 'summary', data: () => [{ label: '条目数', value: store.size }] },
+        { type: 'actions', actions: ['reset'] },
+      ],
+    });
+    store.onChange(() => page.invalidate('summary'));
   },
 });
 ```
 
-`webui-server` 缺失时登记排队、就绪后挂上，页面不显示。不必把 `webuiServer` 标成 required，除非还要读 `getPort` / `getPages`。
+`webui-server` 缺失时登记排队、就绪后挂上，页面不显示。不必把 `webuiServer` 标成 required。
 
 不要把 `webui.current` 存进字段：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护缓存引用。登记门面本身会随提供者换人重挂。
 
@@ -148,13 +124,13 @@ export default definePlugin({
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。实现全部 `WebUIService` 必须方法（`registerPage` / `registerAction` 必须真正维护表），用更高的 priority 或 `services.prefer` 压过默认实现。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide(webuiServer, impl); } })`。同名胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
+罕见。实现全部 `WebUIService` 必须方法（`addPage`、`addNotice` 要真正维护登记表，`invalidate` 要推给界面），用更高的 priority 或 `services.prefer` 压过默认实现。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide(webuiServer, impl); } })`。同名胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
 
 ## 5. 标准消费方式
 
-- **登记**：始终经 `BoundWebui.registerPage` / `registerAction`，不要绕过门面直接调 `WebUIService.registerPage(..., contextId)`——否则提供者换人时不会自动重挂，激活撤回也不会按条目退订。
+- **登记**：始终经 `BoundWebui.definePage` / `notify`，不要绕过门面直接调 `WebUIService.addPage(..., instance)`——否则提供者换人时不会自动重挂，激活撤回也不会按条目退订。
 - **服务缺失**：`webui.current` 在未就绪时为 `undefined`。登记用门面即可。
-- **错误边界**：action handler 抛错会被路由层 catch 成 `500 {error}`，前端展示错误。
+- **错误边界**：数据源或处理函数抛错，路由回 `500 { error }`，界面在那一块或操作的人那里显示原因；处理函数成功时可以返回一句话，宿主用 Toast 显示。
 - **动态选项**：表单字段标 `dynamicOptions: '<serviceName>'`，前端经 webui-server 聚合调该服务的 `listModels()`（`llm` 走 per-model entry 枚举）。
 - **密钥字段**：`secret: true` 的字段，宿主提供密钥存储时 `GET /api/plugins` 回的是配置文档里的引用 `{ $secret: '<键>' }`，不回原值（没有密钥存储的自组装宿主，文档里本就是明文，接口原样返回）。表单对已设置的字段显示「已设置」和键名，不显示值；输入新值即替换，不动（或输入后删空、点撤销）则原样回传引用、保持原值，点清除则清空。顶层与分组里的字段，键被几处配置共用时提示替换会一并影响它们；数组元素里的字段替换时另建新键，不影响共用者，不提示。标在 map、list 上的字段整个值算一个密钥，只写不回显，要改就整份重填。存放与写入规则见 [`docs/core/config.md`](../core/config.md#密钥配置) 的「密钥配置」一节。
 
@@ -164,7 +140,7 @@ export default definePlugin({
 
 单 owner 终态下「持 token ⟺ `webui:console` ⟺ owner」。`createRouteGate`（`packages/plugin-webui-server/src/gate.ts`）只做身份解析：解析得到放行，否则 403。多账户 / 能力委托已剥离，**没有 per-route 档位裁决**。
 
-- 你的 action handler 拿到的 `caller` 即 owner 身份。涉及敏感操作时应在 handler 内自检 `caller`，不要假设路由层替你做了细粒度授权。
+- 数据源与处理函数只有 owner 能调用，由 webui-server 的闸门保证，收到的 `ctx.caller` 即 owner 身份，处理函数不另核调用者；在线用户能进 WebUI 时，契约会另给按调用者身份裁剪的办法。`write` 与 `destructive` 的动作每次调用 webui-server 记一行 info 日志。
 - 工具的 owner 审批经 `/session` 连接（会话协议的 `approval/*`）送达与应答，webui-server 登记 `webui` 审批面；指令的意图确认是同一会话里的一问一答，不经 webui-server。鉴权双轴见 `docs/plugins/plugin-authority.md`、`docs/concepts/security-model.md`。
 
 ### SSRF：图片代理走 safeFetch
@@ -177,7 +153,7 @@ export default definePlugin({
 
 ## 7. 注意事项与边界情形
 
-- **页面表是 webui-server 实例内存态**：webui-server 被替换会清空 `registeredPages`；这正是绑定门面用 `registrar` 自动重挂的原因。
+- **页面表是 webui-server 实例内存态**：webui-server 被替换或重载会清空页面与提示的登记表；这正是绑定门面用 `registrar` 自动重挂的原因。owner 的布局记录（固定的页面、会话面板的标签）存在插件数据里，不随之丢失。
 
 ## 8. 交叉链接
 

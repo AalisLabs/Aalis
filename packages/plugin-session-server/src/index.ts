@@ -4,6 +4,7 @@ import { approvals } from '@aalis/api-approval';
 import { authority } from '@aalis/api-authority';
 import { checkpoint } from '@aalis/api-checkpoint';
 import { hooks } from '@aalis/api-hooks';
+import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
 import { compression, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
@@ -31,7 +32,7 @@ import { createTurnControl } from './turns.js';
 // 会话之上的各层），设置变了推 session/config/changed，另记「我的」区的已读时间；
 // 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；条目里她发出的文件给本服务签发的下载句柄，
 // 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点、压缩与待办。握手给出功能位（发送、回滚、压缩
-// 各看对话、检查点、压缩服务在不在），服务上下线时推 features/changed。
+// 各看对话、检查点、压缩服务在不在），服务上下线时推 features/changed；另给出宿主配置里的应用名。
 // 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
@@ -70,6 +71,8 @@ const uses = {
   authority: optional(authority),
   /** 工具卡与审批卡的展示按工具定义上声明的展示种类取；缺席时都走通用卡 */
   tools: optional(tools),
+  /** 握手回应里的应用名：宿主配置的 name，每次握手现读；缺席时是 Aalis */
+  hostConfig: optional(hostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -92,7 +95,7 @@ async function run(caps: Caps): Promise<void> {
   const isOwner: IsOwner = (platformName, userId) =>
     userId !== undefined && (caps.authority.current?.isOwner(platformName, userId) ?? false);
   const displaySpec = (tool: string) => caps.tools.current?.getAll().find(t => t.name === tool)?.display;
-  const displayOf: DisplayOf = (tool, args) => resolveDisplay(displaySpec(tool), args);
+  const displayOf: DisplayOf = (tool, args, result) => resolveDisplay(displaySpec(tool), args, result);
   const isRoom = (sessionId: string) => {
     const info = sm.getSession(sessionId);
     return info !== undefined && sessions.sectionOf(info) === 'rooms';
@@ -156,7 +159,7 @@ async function run(caps: Caps): Promise<void> {
   });
   const server = createSessionServer(
     { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...approvalHandlers },
-    currentFeatures,
+    () => ({ features: currentFeatures(), appName: caps.hostConfig.current?.get('name') || 'Aalis' }),
     logger,
   );
   // 功能位所看的服务上线或下线（通知在变化之后异步送达）：与上次推的不同才推给每条连接
@@ -227,9 +230,12 @@ async function run(caps: Caps): Promise<void> {
     timeline.outcome(data.turnId, data.outcome);
     await next();
   });
+  // 工具返回时回合的中止信号已触发：停止时这次调用还没结束
   hooks.middleware('agent:tool:after', async (data, next) => {
-    const { turnId, callId } = data.toolCallContext;
-    if (turnId && callId) Object.assign(data.metadata, await timeline.toolMetadata(turnId, callId));
+    const { turnId, callId, signal } = data.toolCallContext;
+    if (turnId && callId) {
+      Object.assign(data.metadata, await timeline.toolMetadata(turnId, callId, signal?.aborted === true, data.result));
+    }
     await next();
   });
   hooks.middleware('agent:reply:before', async (_data, next) => {

@@ -8,7 +8,8 @@ import { agentMessage, notice, push, pushDelta, reasoning, snapshot, toolCall, t
 
 // ════════════════════════════════════════════════════════════
 // 会话工作台的时间线：条目按种类渲染（提问、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局），
-// 流式拼接，工具卡按 display 渲染，全部折叠，回合上的回滚按功能位出现，驱动房间的提示条，更早的历史，
+// 流式拼接，工具卡按 display 渲染（生成参数期间写「正在生成」），全部折叠，回合上的回滚按功能位出现、确认前查这一轮
+// 执行过命令没有，驱动房间的提示条，更早的历史，
 // 完成未读的清除，会话被删掉时回首页，Esc 停止，订阅失败的错误态，附件
 // ════════════════════════════════════════════════════════════
 
@@ -147,6 +148,63 @@ describe('时间线', () => {
     expect(log.getByRole('button', { name: /调用 send_group_message/ }).textContent).toContain('已发到群 · 0.3 秒');
   });
 
+  it('工具卡的结局：退出码不为 0 的写退出码、用危险色；停止时还没结束的写「已停止」、不用危险色；没有退出码的失败写「失败」', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          toolCall('c1', 'exec', {
+            status: 'failed',
+            display: { kind: 'command', command: 'make', exitCode: 2 },
+            durationMs: 1200,
+          }),
+          toolCall('c2', 'exec', { status: 'aborted', display: { kind: 'command', command: 'sleep 9' } }),
+          toolCall('c3', 'web_search', { status: 'failed' }),
+          toolCall('c4', 'exec', {
+            display: { kind: 'command', command: 'ls', exitCode: 0 },
+            durationMs: 300,
+          }),
+          toolCall('c5', 'exec', { status: 'failed', display: { kind: 'command', command: 'cat', exitCode: 0 } }),
+        ]),
+    });
+    const log = within(await timeline());
+    const status = (name: RegExp) => {
+      const element = log.getByRole('button', { name }).querySelector('.tool-line-status');
+      return [element?.textContent, element?.getAttribute('data-tone')];
+    };
+    expect(status(/执行 make/)).toEqual(['退出码 2', 'danger']);
+    expect(status(/执行 sleep 9/)).toEqual(['已停止', null]);
+    expect(status(/调用 web_search/)).toEqual(['失败', 'danger']);
+    expect(status(/执行 ls/)).toEqual(['0.3 秒', null]);
+    expect(status(/执行 cat/)).toEqual(['失败', 'danger']);
+  });
+
+  it('模型还在生成参数的工具卡写工具名与「正在生成」，不能展开；开始执行后同一张卡照常', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([turn('t1'), toolCall('c1', 'file_write', { status: 'generating' })]),
+    });
+    const log = within(await timeline());
+    const line = log.getByRole('button', { name: /调用 file_write/ });
+    expect(line.textContent).toContain('正在生成');
+    expect((line as HTMLButtonElement).disabled).toBe(true);
+    expect(line.getAttribute('aria-expanded')).toBeNull();
+
+    act(() =>
+      push(
+        'started',
+        toolCall('c1', 'file_write', {
+          status: 'running',
+          args: { path: 'a.md', content: '全文' },
+          display: { kind: 'file-change', path: 'a.md', added: '全文' },
+        }),
+      ),
+    );
+    const running = log.getByRole('button', { name: /写入 a\.md/ });
+    expect(running.textContent).toContain('运行中');
+    expect(log.queryByText('正在生成')).toBeNull();
+    fireEvent.click(running);
+    expect(log.getByText('+全文')).toBeTruthy();
+  });
+
   it('工具行上来自参数的文字经过清洗：看不见的字符显示出来', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
@@ -223,6 +281,7 @@ describe('时间线', () => {
           userMessage('u3', '还在吗'),
           turn('t3'),
         ]),
+      'turn/checkpoint': ({ turnId }) => ({ execUsed: turnId === 't2' }),
       'turn/rewind': params => {
         rewound.push(params);
         return {
@@ -245,7 +304,12 @@ describe('时间线', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
     const dialog = within(screen.getByRole('dialog', { name: '回滚这一轮的文件改动？' }));
     expect(document.activeElement).toBe(dialog.getByRole('button', { name: '取消' }));
-    fireEvent.click(dialog.getByRole('button', { name: '回滚' }));
+    const confirm = dialog.getByRole('button', { name: '回滚' }) as HTMLButtonElement;
+    expect(confirm.disabled, '查完这一轮有没有执行过命令之前不能确认').toBe(true);
+    await vi.waitFor(() => expect(confirm.disabled).toBe(false));
+    expect(requests('turn/checkpoint')).toEqual([{ sessionId: 's1', turnId: 't1' }]);
+    expect(dialog.queryByText(/命令的效果不会撤回/), '这一轮没执行过命令').toBeNull();
+    fireEvent.click(confirm);
     await vi.waitFor(() => expect(rewound).toEqual([{ sessionId: 's1', turnId: 't1', scope: 'code' }]));
     const toasts = within(screen.getByRole('region', { name: '通知' }));
     expect(await toasts.findByText(/已回滚：恢复 1 个文件/)).toBeTruthy();
@@ -253,7 +317,9 @@ describe('时间线', () => {
 
     fireEvent.click(rewinds[1]);
     fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动与这一轮对话' }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '回滚' }));
+    const second = within(screen.getByRole('dialog'));
+    expect(await second.findByText('这一轮执行过命令，命令的效果不会撤回。')).toBeTruthy();
+    fireEvent.click(second.getByRole('button', { name: '回滚' }));
     await vi.waitFor(() => expect(rewound).toHaveLength(2));
     expect(rewound[1]).toEqual({ sessionId: 's1', turnId: 't2', scope: 'code-and-chat' });
 
@@ -261,8 +327,28 @@ describe('时间线', () => {
     expect(log.queryAllByRole('button', { name: '回滚这一轮' })).toHaveLength(0);
   });
 
-  it('驱动别人的房间时顶部有提示条；房间里逐条写说话人，没发出的回复写明原因', async () => {
+  it('回滚前没查到这一轮有没有执行过命令：对话框写明原因，仍可以回滚', async () => {
     app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([userMessage('u1', '改一下'), turn('t1', { outcome: 'replied' })]),
+      'turn/checkpoint': () => {
+        throw new Error('检查点读不出来');
+      },
+      'turn/rewind': () => ({ ok: true, restored: [], deleted: [], errors: [], alsoChangedBy: [] }),
+    });
+    const log = within(await timeline());
+    fireEvent.click(log.getByRole('button', { name: '回滚这一轮' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect((await dialog.findByRole('alert')).textContent).toBe(
+      '没能确认这一轮有没有执行过命令（检查点读不出来）；命令的效果不会随回滚撤回。',
+    );
+    fireEvent.click(dialog.getByRole('button', { name: '回滚' }));
+    await vi.waitFor(() => expect(requests('turn/rewind')).toHaveLength(1));
+  });
+
+  it('驱动别人的房间时顶部有提示条；房间里逐条写说话人（她的回复写握手给的应用名），没发出的回复写明原因', async () => {
+    app = await renderApp('/s/s1', {
+      initialize: () => ({ ...INIT, appName: '<应用名>' }),
       'session/subscribe': () =>
         snapshot(
           [
@@ -280,14 +366,19 @@ describe('时间线', () => {
     expect(main().getByText('群 · onebot')).toBeTruthy();
     expect(log.getByText('小林')).toBeTruthy();
     expect(log.getByText('你')).toBeTruthy();
+    const reply = log.getByText('不客气').closest('.message') as HTMLElement;
+    expect(within(reply).getByText('<应用名>')).toBeTruthy();
     expect(log.getByText('没有发出：这一轮静默结束')).toBeTruthy();
   });
 
   it('「我的」会话没有提示条，也不逐条写说话人', async () => {
-    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([userMessage('u1', '你好')]) });
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([userMessage('u1', '你好'), agentMessage('a1', '在的')]),
+    });
     const log = within(await timeline());
     expect(main().queryByText(/你正在以 owner 身份/)).toBeNull();
     expect(log.queryByText('你')).toBeNull();
+    expect(log.queryByText('Aalis')).toBeNull();
   });
 
   it('更早的消息：按快照给的游标取历史，接在前面，取完了按钮消失', async () => {

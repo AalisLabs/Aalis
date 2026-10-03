@@ -93,9 +93,14 @@
   visibility: visible;
 }
 
+/* 触屏上没有悬停：复制按钮常显，代码从按钮下面开始，不压住第一行 */
 @media (pointer: coarse) {
   .markdown-code .icon-button {
     visibility: visible;
+  }
+
+  .markdown-code:has(> .icon-button) pre {
+    padding-top: calc(var(--space-1) + var(--control-sm));
   }
 }
 

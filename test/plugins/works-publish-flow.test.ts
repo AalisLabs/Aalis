@@ -385,7 +385,7 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     const service = hub.app.bind({ publish }).publish.require();
     await ready(() => expect(service.get(workId)?.state).toBe('published'));
     expect(hub.injected.filter(message => message.source === `publish:${workId}`)).toHaveLength(0);
-    expect(await hub.action('worksRetry')).toMatchObject({ ok: true });
+    expect(await hub.pages.act('works-site', 'retryDeploy')).toMatchObject({ status: 200 });
     await ready(() => expect(hub.injected.filter(message => message.source === `publish:${workId}`)).toHaveLength(1));
     expect(hub.outbound).toContainEqual(
       expect.objectContaining({
@@ -394,16 +394,15 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
         content: expect.stringContaining(`https://aalis.pages.dev${basePath}w/${workId}/`),
       }),
     );
-    expect(await hub.action('worksItems')).toContainEqual(
-      expect.objectContaining({ id: workId, url: `https://aalis.pages.dev${basePath}w/${workId}/` }),
+    // 缩略图取发布服务给的公开根地址，宿主换成 /api/media；审核插件的临时目录已清掉
+    expect(await hub.pages.data('works-site', 'works')).toContainEqual(
+      expect.objectContaining({
+        id: workId,
+        url: `https://aalis.pages.dev${basePath}w/${workId}/`,
+        thumbnail: `/api/media?${new URLSearchParams({ uri: `public:/${workId}/thumb.png` })}`,
+      }),
     );
-    const thumbnailRead = vi.spyOn(service, 'readThumbnail');
-    expect(await hub.action('worksThumbnail', { id: workId })).toEqual({
-      name: `${workId}.png`,
-      mime: 'image/png',
-      base64: 'AQID',
-    });
-    expect(thumbnailRead).toHaveBeenCalledWith(workId);
+    expect(files.has(`public:/${workId}/thumb.png`)).toBe(true);
     expect([...files.keys()].some(path => path.startsWith(`pluginData:/publish-review/items/${workId}/`))).toBe(false);
     const publicUrl = `https://aalis.pages.dev${basePath}w/${workId}/`;
     const live = await fetch(publicUrl);
@@ -414,7 +413,7 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     await ready(() => expect(service.get(workId)?.state).toBe('withdrawn'));
     await ready(async () => expect(await (await fetch(publicUrl)).text()).toContain('该作品已下架'));
     await ready(async () =>
-      expect(await hub.action('worksItems')).not.toContainEqual(expect.objectContaining({ id: workId })),
+      expect(await hub.pages.data('works-site', 'works')).not.toContainEqual(expect.objectContaining({ id: workId })),
     );
     await hub.app.plugins.disable(review.name);
     expect(

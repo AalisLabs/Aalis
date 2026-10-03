@@ -1,0 +1,19 @@
+.status-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+  color: var(--color-text-2);
+}
+
+.status-text[data-state="attention"] {
+  color: var(--color-warning-text);
+}
+
+.status-text[data-state="error"] {
+  color: var(--color-danger-text);
+}
+
+.status-text[data-state="inactive"] {
+  color: var(--color-text-3);
+}

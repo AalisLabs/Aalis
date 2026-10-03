@@ -6,7 +6,7 @@
  *
  * 两类使用方：
  * - 存储实现在每次改动前探测本服务，在场就调 `beforeMutate` 留一次快照机会；
- * - 会话服务按回合回滚（会话协议的 turn/rewind）。
+ * - 会话服务按回合回滚（会话协议的 turn/rewind），回滚之前查这一轮执行过命令没有（turn/checkpoint）。
  */
 
 import { defineService } from '@aalis/core';
@@ -27,6 +27,11 @@ export interface CheckpointService {
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
     toUri?: string,
   ): Promise<void>;
+  /**
+   * 这一轮调用过命令类工具（exec、exec_background、run_* 这类直接起子进程的）：它们的副作用不经存储，回滚撤不回。
+   * 只看已提交的回合，与 rollback 读同一份清单；没有这一轮的清单（不在记账的会话里、已被清理、还没提交）时为 false
+   */
+  execUsed(sessionId: string, turnId: string): Promise<boolean>;
   /** 回滚某回合（恢复、删除、移回）；回合 id 与 agent 的回合 id 相同 */
   rollback(sessionId: string, turnId: string): Promise<RollbackResult>;
   /** 回滚某回合，并删除这一轮的对话消息与对应的向量条目 */
