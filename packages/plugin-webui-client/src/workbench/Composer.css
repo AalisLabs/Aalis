@@ -16,10 +16,10 @@
   outline-offset: -1px;
 }
 
+/* 一行字时框高正好是点按范围的下限，上下留白相等，字在点按范围里居中 */
 .composer textarea {
-  min-height: 0;
   max-height: 40dvh;
-  padding: 0;
+  padding: calc((var(--hit) - var(--leading-lg)) / 2) 0;
   border: 0;
   font-size: max(var(--text-input), var(--text-lg));
   line-height: var(--leading-lg);
@@ -45,7 +45,7 @@
 .composer-setting {
   min-width: 0;
   max-width: 12rem;
-  min-height: var(--control-sm);
+  min-height: var(--hit);
   padding: 0 var(--space-2);
   overflow: hidden;
   border: 0;

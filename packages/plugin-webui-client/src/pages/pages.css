@@ -114,8 +114,8 @@
 .page-image {
   display: block;
   width: auto;
-  max-width: var(--control-md);
-  height: var(--control-md);
+  max-width: var(--control-h);
+  height: var(--control-h);
   object-fit: cover;
   border-radius: var(--radius-sm);
 }
@@ -141,8 +141,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--control-sm);
-  height: var(--control-sm);
+  width: var(--hit);
+  height: var(--hit);
   color: var(--color-text-2);
 }
 
@@ -176,7 +176,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--control-md);
 }
 
 .page-detail .page-screen {
@@ -388,7 +387,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--control-sm);
+  min-height: var(--hit);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
 }

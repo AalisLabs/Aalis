@@ -173,7 +173,7 @@ export function Table<Row>({
         <div className="table-batch">
           <span>{`已选 ${chosen.length} 项`}</span>
           {selection.actions(chosen)}
-          <Button variant="text" size="sm" onClick={() => selection.onChange(new Set())}>
+          <Button variant="text" onClick={() => selection.onChange(new Set())}>
             取消选择
           </Button>
         </div>
@@ -290,7 +290,7 @@ export function Table<Row>({
                   ) : (
                     <>
                       没有符合筛选的项
-                      <Button variant="text" size="sm" onClick={clearFilters}>
+                      <Button variant="text" onClick={clearFilters}>
                         清除筛选
                       </Button>
                     </>
@@ -303,16 +303,11 @@ export function Table<Row>({
       </div>
       {pageCount > 1 && (
         <nav className="table-pager" aria-label="分页">
-          <Button variant="text" size="sm" disabled={shownPage === 0} onClick={() => setPage(shownPage - 1)}>
+          <Button variant="text" disabled={shownPage === 0} onClick={() => setPage(shownPage - 1)}>
             上一页
           </Button>
           <span>{`第 ${shownPage + 1} / ${pageCount} 页`}</span>
-          <Button
-            variant="text"
-            size="sm"
-            disabled={shownPage === pageCount - 1}
-            onClick={() => setPage(shownPage + 1)}
-          >
+          <Button variant="text" disabled={shownPage === pageCount - 1} onClick={() => setPage(shownPage + 1)}>
             下一页
           </Button>
         </nav>

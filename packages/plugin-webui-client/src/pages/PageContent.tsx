@@ -260,7 +260,7 @@ function RowActions({ entries, target }: { entries: readonly RowAction[]; target
   return (
     <div className="page-row-actions">
       <span data-wide>
-        <Button variant="text" size="sm" onClick={() => run(inline.name, target)}>
+        <Button variant="text" onClick={() => run(inline.name, target)}>
           {inline.action.label}
         </Button>
         {rest.length > 0 && menu(rest)}

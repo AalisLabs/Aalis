@@ -21,11 +21,6 @@
   color: var(--color-text-2);
 }
 
-.table-toolbar select,
-.table-toolbar input {
-  min-height: var(--control-sm);
-}
-
 .table-toolbar input {
   margin-left: auto;
 }
@@ -34,7 +29,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--control-md);
   font-size: var(--text-sm);
 }
 
@@ -56,7 +50,7 @@
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  height: var(--control-md);
+  height: var(--row-1line);
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
   font-size: var(--text-xs);
@@ -82,20 +76,20 @@
 }
 
 .table-check {
-  width: var(--control-sm);
+  width: var(--hit);
 }
 
 .table .table-check {
   padding-right: 0;
 }
 
-/* 可点区是一个控件见方，触屏上随令牌放大，框本身不变 */
+/* 点按范围是 --hit 见方，触屏上随令牌放大，复选框本身不变 */
 .table-check label {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--control-sm);
-  height: var(--control-sm);
+  width: var(--hit);
+  height: var(--hit);
   cursor: pointer;
 }
 

@@ -54,10 +54,25 @@ button:disabled {
   cursor: default;
 }
 
+/*
+ * 点按范围：框不到 --hit 见方时，::before 向四周补足，不占排版位置、看不见（百分比上下按框高、左右按框宽算）。
+ * 管所有按钮、按钮样式的链接与表格单元格里的链接；用 :where 不加优先级，组件自己的定位照常生效。
+ * Button 的进行中叠层也靠这里的 position: relative 定位，改这条之前先看它
+ */
+:where(button, .button, .table td a) {
+  position: relative;
+}
+
+:where(button, .button, .table td a)::before {
+  position: absolute;
+  inset: min(0rem, (100% - var(--hit)) / 2);
+  content: "";
+}
+
 input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
-  min-height: var(--control-md);
+  min-height: var(--hit);
   padding: 0 var(--space-3);
   font-size: var(--text-input);
   background: transparent;

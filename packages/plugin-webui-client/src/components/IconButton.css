@@ -3,8 +3,8 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: var(--control-sm);
-  height: var(--control-sm);
+  width: var(--hit);
+  height: var(--hit);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);

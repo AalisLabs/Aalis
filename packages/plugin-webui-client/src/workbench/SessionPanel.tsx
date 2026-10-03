@@ -130,7 +130,6 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
       </ul>
       <Button
         variant="text"
-        size="sm"
         busy={busy}
         onClick={() => {
           setBusy(true);
