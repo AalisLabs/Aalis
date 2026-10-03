@@ -539,6 +539,48 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **插件前端样式基线**（`/frames/_base/frame.css`）：按钮与输入框跟宿主一致（28px 高、字重常规）；触屏上按钮外面一圈透明边框补到 44px，占排版位置，列表里相邻两行的点按范围不重叠；输入框与选择框触屏 44px 高、字号 16px。插件改写按钮的边框，或用简写 `background` 换底色时，触屏上底色会铺满 44px。
 - **发布档位**：plugin-webui-client、api-webui 随本批的次版本，不另计。
 
+### 插件区与设置，深度思考按模型的档位（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-llm、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-package-manager、@aalis/plugin-package-manager、@aalis/plugin-media、@aalis/plugin-memory-summary、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-adapter-onebot）
+
+新 WebUI 的第七部分：插件的管理搬进插件区，设置有了自己的目录；深度思考改为按每个模型声明的档位来选。
+
+- **入口**：图标栏底部与手机第一层新增「插件」「设置」。点已在的一区收起或展开左栏；左栏是抽屉的宽度下，插件区的空白页另有「打开插件列表」。
+- **插件区**（`/plugins`）：
+  - 左栏是实例树，按插件声明的 `subsystem` 分组，没声明的归「其他」，多开的实例挂在插件下面；正常运行的行不写状态，缺服务、失败、已停用写一句原因；顶上是「市场」与「只看有问题的」。
+  - 插件详情由宿主拼装：头部写包名、版本、状态与原因，可以停用、启用、重载、卸载，多开的其余实例另有「移除实例」；配置按插件的 schema 画表单，只提交改了的项，写法不对时逐项写在控件下面，插件失败时也能改并重新激活；密钥只写不回显，写「已设置」加「更换」「清除」；「依赖与贡献」列出缺的服务与已装没启用的提供者（一键启用写明是哪个实例）、它提供的服务、工具与指令；「实例」可以新建与移除；「页面」列出它的全部页面与位置，插件前端另写申请的宿主数据能力。
+  - 市场搬到插件区（`/market`），按类型（插件、前端界面、系统组件、全部）、状态与关键词筛；装卸前列出一并装上的包、要用的服务与依赖它的插件；装上插件后跳到它详情的配置区。
+  - 页面所属插件停用时的占位与「会话服务未启用」都链到对应的插件详情，会话面板里同样。
+- **WebUI 服务端**：
+  - 插件列表新增 `subsystem`、`version`（按包名查本地安装）、`missing`（此刻没有提供者的必需服务）与 `self`（提供这个界面的插件），删掉 `capabilities` 与 `uses`。
+  - 新增 `POST /api/plugins/:name/reload`，失败的插件重载即重试，已停用的回 409。
+  - 不能经自己的接口停用或卸载 webui-server（回 409），重载照常；webui-server 的 `port` 须是 0–65535 的整数、`host` 不能是空白，保存这类值直接回 400，不再让界面起不来。重载自己后，承载那次请求的连接应答完即关闭，后面的请求落到新实例。
+  - 删掉 `GET /api/service-groups` 与 `GET /api/llm-providers`；`/api/models/llm` 只回 `{ providers }`，其中的 `contextId` 改为提供者的实例 id，修好会话里切换模型时解析不到模型的问题。
+  - `GET /api/config` 改为 `{ config, schema, restartKeys, home }`，不再回整份配置文档；`PUT /api/config` 只保存，回执带 `restartNeeded`，重启改走新增的 `POST /api/restart`。
+  - 新增 `GET /api/themes`（插件提供的主题）；可选项来源新增 `llm-thinking`，按查询参数 `dependency` 里的模型给出它的档位，默认档带 `default: true`。
+  - 市场安装的回执带 `plugin`（装上的插件的主实例 id）。
+- **设置**（`/settings`）：宿主的分节与插件的分节（`placement: 'settings'` 的页面）在同一个目录里，插件的分节刷新后仍在。
+  - **会话默认**：按层读写会话设置，行与会话面板的设置相同，只来自插件的登记；层的选择里，平台档来自已装适配器的平台加上配置里写过的，群与私聊条目按适配器的 `sessionTypes` 出；选中的层消失后回到全局默认。会话服务不在时这一节不出现，插件列表没取到时写明原因并可以重试。
+  - **外观**：跟随系统时深浅各选一个主题；主题可以导出成文件、改了再导入，导入时拒收令牌表外的名字、带 `url()` 的值与超过 16 KB 的文件，缺的令牌按偏中性补齐，对比度不够的列出但仍可用；插件经 api-webui 的贡献点 `webui:theme` 提供主题，插件停用后正在用的回到同深浅的偏中性，插件回来后自动换回；导入或插件的主题照样推给插件前端。快捷栏可以上移、下移、取消固定；会话面板的标签可以上移、下移、显示、隐藏，插件的标签另可「移出」（布局操作新增 `remove-tab`，宿主标签不收）。
+  - **系统**：宿主配置每项写明来源（配置文件或默认），要重启的键标「重启后生效」，改了之后出现「改动重启以生效」与「重启」；服务偏好（有两个以上提供者或写过偏好的服务，含切换界面前端）；家目录路径。
+- **深度思考的档位**：
+  - api-llm：模型经 `thinking` 声明允许的档位（由浅到深，至少两档）与默认档，`ChatModelRequest.think` 改为档位 id，没带时按模型的默认档；新增 `requestedThinking`（带了模型没有的档位时抛错）与 `lightestThinking`（模型最浅的一档）。
+  - DeepSeek：能思考的模型声明「关、高、自动、最高」四档；实例配置的 `thinkingMode`、`reasoningEffort` 合成默认档 `thinking`（`off`、`high`、`auto`、`max`）；模型名称去掉「(thinking)」后缀。
+  - OpenAI：`thinkingParam` 改为选写法。`reasoning_effort` 写法下档位按模型族给：gpt-5.1 起为关、低、中、高（默认关），gpt-5 为最低、低、中、高（默认中），其余能思考的为低、中、高（默认中）；o1-mini、o1-preview 与 gpt-5-chat 不声明档位。`thinking` 写法为关、开。请求带了档位才发字段。
+  - Ollama：只有能思考的模型声明「关、开」两档、才发 `think`；实例的 `thinking` 改为默认档（`off`、`on`）；能力探测失败时，qwen3、deepseek-r1、gemma4 按家族表仍可调。
+  - 会话设置「深度思考」改为下拉，可选项按这个会话生效的模型现取（设置项登记新增 `dependsOn`，协议的设置行带上它，会话默认里按这一层的模型取，输入框旁的快捷切换同样）；没设时写出默认档；换到没有这一档的模型时按默认并写明，模型不能调时写「当前模型不能调」。`/session.set -t <档位>` 按当前模型校验，`/session` 列出当前模型的档位。
+  - 摘要、标题、画像与关系抽取、合并转发摘要、识图这些压低思考的调用改用模型最浅的一档；media 的 `vision.think`、`audio.think` 开启时按模型的默认档。
+- **设置行与表单**：插件配置、页面动作与设置行按字段类型共用一套控件，动作表单里的开关改为标签在上；保存中编辑控件不可用，连着勾多选不再丢项；Safari 与 iOS 上点模型旁的刷新不再收起编辑；设置正文、插件详情与市场最宽 45rem。
+- **破坏性**：
+  - api-llm 的 `ChatModelRequest.think` 从布尔改为档位 id；api-agent 的 `SessionConfig.think` 改为档位 id。自己实现 LLM 提供者的，要声明 `thinking` 才能被调档，把档位翻成自己的线上字段前先过 `requestedThinking`；调用方压低思考改带 `lightestThinking(model)`。
+  - api-package-manager 的 `install()` 回 `InstallResult`，自己实现包管理服务的要带上 `plugin`。
+  - plugin-webui-server 删除 `GET /api/service-groups`、`GET /api/llm-providers`，插件列表删掉 `capabilities` 与 `uses`，`GET /api/config`、`/api/models/llm` 的回包与 `PUT /api/config` 的行为如上；第三方前端照 [plugin-webui-server](docs/plugins/plugin-webui-server.md) 的 REST 表改。
+- **升级须知**（配置改名，旧键不再认）：
+  - DeepSeek 实例删掉 `thinkingMode`、`reasoningEffort`，改写 `thinking`：原来 `thinkingMode: disabled` 的写 `off`，其余按原来的 `reasoningEffort` 写 `auto`、`high` 或 `max`。原来 `thinkingMode: enabled` 会对没标思考的模型也强开，要保留就在 `modelCapabilities` 里给这些模型加上 `thinking`。
+  - Ollama 实例的 `thinking: true` 改写 `on`，`false` 改写 `off`。
+  - OpenAI 实例的 `thinkingParam: false` 删掉即可（缺省就是 `reasoning_effort`），`true` 改写 `thinking`，并在 `modelCapabilities` 里给经这个实例的思考模型加上 `thinking`。
+  - 会话设置里的 `think`（会话的覆盖与宿主配置 `sessionConfig` 的各层）从布尔改成那一层生效模型的档位 id；拿不准模型时删掉，按模型的默认档。旧的布尔值读到时当作没设置，并告警一次。
+  - media 的 `think` 开启时原来对 Ollama 强开思考，现在按 Ollama 实例的默认档；实例默认档是 `off` 时识别不再思考，要思考就把实例默认档设成 `on`。
+- **发布档位**：次版本：api-llm、api-agent、api-session-manager、api-session-protocol、api-webui、api-package-manager、plugin-webui-server、plugin-webui-client、plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-agent、plugin-session-manager、plugin-media；其余为 patch。只改注释或说明的 api-hooks、api-trigger、plugin-trigger-laya 可以不发。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -569,6 +611,9 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - plugin-session-server、plugin-webui-server 与 api-storage 同批升级：两者在运行时导入 api-storage 新增的 `canIssueFileHandle`，发布时依赖下限抬到本批的新版本。
 - plugin-user-relation 与 plugin-webui-server 同批升级：关系图的疏密改由 user-relation 的 `graphSpacing` 经关系图组件带出，旧版 webui-server 的 `relationGraphDefaultSpacing` 在新版里已删。
 - plugin-webui-client、plugin-webui-server 与 api-webui 同批升级：新版 webui-server 的 `/api/pages` 会下发插件前端页面（`PageView` 的新形态），旧版前端不认识；新版前端挂载的框架要新版 webui-server 托管 `/frames`。
+- api-llm 与 plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama 以及会调模型的 plugin-agent、plugin-session-manager、plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-media、plugin-adapter-onebot 同批升级：旧版调用方压低思考时带 `think: false`，新版提供者按档位 id 核对，不在档位里就抛错，摘要、标题、抽取这些调用全部失败；反过来，新版调用方带的档位 id 是字符串，旧版提供者当成布尔的真，`off` 也会打开思考。
+- plugin-agent 与 plugin-session-manager、plugin-session-server、plugin-webui-server、plugin-webui-client 同批升级：「深度思考」的可选项要新版 webui-server 的 `llm-thinking` 来源，并经新版 session-manager、session-server 把 `dependsOn` 带到界面，混用时可选项取不到或按服务偏好的模型取。
+- plugin-webui-client 与 plugin-webui-server 同批升级：新版前端用插件列表的新字段、`reload`、`/api/themes`、`/api/restart` 与 `/api/config`、`/api/models/llm` 的新回包，旧版服务端没有；旧版前端读已删的 `/api/service-groups`、`/api/llm-providers` 与插件列表的 `capabilities`。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
