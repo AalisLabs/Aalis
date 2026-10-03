@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: var(--control-md);
+  min-height: var(--row-1line);
   padding: 0 var(--space-4);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);

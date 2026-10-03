@@ -100,7 +100,7 @@
   }
 
   .markdown-code:has(> .icon-button) pre {
-    padding-top: calc(var(--space-1) + var(--control-sm));
+    padding-top: calc(var(--space-1) + var(--hit));
   }
 }
 

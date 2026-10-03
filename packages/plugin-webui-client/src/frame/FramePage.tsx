@@ -151,7 +151,6 @@ function FrameDialog({ asking, answer }: { asking?: Asking; answer(confirmed: bo
       <a
         className="button"
         data-variant="primary"
-        data-size="md"
         href={question.url}
         target="_blank"
         rel="noopener noreferrer"

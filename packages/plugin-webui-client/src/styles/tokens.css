@@ -1,7 +1,8 @@
 /*
  * 字号、间距、尺寸、圆角、阴影、层级与时长的令牌，组件只引用这些名字。颜色令牌来自主题（<html data-theme>，
  * 令牌表见 @aalis/api-webui），本文件不写颜色。尺寸用 rem（16px 为 1rem），跟随浏览器与系统的字号设置；
- * 线宽与圆角用 px。触屏（pointer: coarse）上控件、行高与输入框字号换成触屏值，组件不分支。
+ * 线宽与圆角用 px。触屏（pointer: coarse）上点按范围、按钮、行高、图标栏、输入框字号与分隔条换成触屏值，组件不分支：
+ * 点按范围放大到 44px，按钮看得见的只到 36px，差的由 base.css 的伪元素补足。
  */
 :root {
   --font-sans:
@@ -41,8 +42,10 @@
   --radius-md: 6px;
   --radius-full: 9999px;
 
-  --control-sm: 1.75rem;
-  --control-md: 2rem;
+  /* 按钮看得见的高 */
+  --control-h: 1.75rem;
+  /* 点按范围的下限：图标按钮的框、复选框所在的 label、输入框与选择框的高取它；其余按钮（含开关）由 base.css 的伪元素补到它 */
+  --hit: 1.75rem;
   --icon-sm: 1rem;
   --icon-md: 1.25rem;
   --icon-lg: 1.5rem;
@@ -85,11 +88,12 @@
 @media (pointer: coarse) {
   :root {
     --text-input: 1rem;
-    --control-sm: 2.75rem;
-    --control-md: 2.75rem;
+    --control-h: 2.25rem;
+    --hit: 2.75rem;
     --row-1line: 3rem;
     --row-2line: 3.75rem;
     --row-table: 3rem;
+    --rail-w: 3.75rem;
     --separator-w: 1rem;
   }
 }

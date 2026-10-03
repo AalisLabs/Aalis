@@ -1,14 +1,10 @@
-/* 按钮本身是点击区（触屏上跟着控件令牌放大），里面画轨道与圆钮 */
+/* 按钮的框就是轨道，不撑高所在的行；点按范围由按钮共用的伪元素补足 */
 .toggle {
   display: inline-flex;
   flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--control-sm);
-  min-height: var(--control-sm);
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-full);
   background: none;
 }
 

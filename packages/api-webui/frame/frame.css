@@ -80,20 +80,22 @@ textarea {
 
 /* 按钮只有一种，与宿主的次要按钮一致 */
 button {
-  min-height: 2rem;
-  padding: 0 0.75rem;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
   border: 0;
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.25rem;
   background: var(--color-fill-2);
   cursor: pointer;
   transition: background-color 100ms cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* 只写底色：简写 background 会复位 background-clip，触屏上底色就铺进透明边框（见文件末尾） */
 button:hover:not(:disabled) {
-  background: var(--color-fill-3);
+  background-color: var(--color-fill-3);
 }
 
 button:disabled {
@@ -104,7 +106,7 @@ button:disabled {
 input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
-  min-height: 2rem;
+  min-height: 1.75rem;
   padding: 0 0.75rem;
   font-size: 0.875rem;
   background: transparent;
@@ -175,9 +177,24 @@ pre {
   background: var(--color-fill-1);
 }
 
-/* 触屏：可点区 44 像素；输入框字号不小于 16 像素，免得 iOS 聚焦时放大整页 */
+/*
+ * 触屏：点按范围 44 像素。按钮外面一圈 0.25rem 的透明边框占排版位置，底色只画到边框以内，看得见的是 36 像素；
+ * 圆角加上边框宽，里面的角仍是 --radius-sm；焦点环往回收到看得见的框外 2 像素。
+ * 输入框 44 像素高，字号不小于 16 像素，免得 iOS 聚焦时放大整页
+ */
 @media (pointer: coarse) {
-  button,
+  button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border: 0.25rem solid transparent;
+    border-radius: calc(var(--radius-sm) + 0.25rem);
+    background-clip: padding-box;
+  }
+
+  button:focus-visible {
+    outline-offset: -2px;
+  }
+
   input:not([type="checkbox"]):not([type="radio"]),
   select {
     min-height: 2.75rem;

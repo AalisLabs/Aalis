@@ -3,7 +3,7 @@
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: var(--control-sm);
+  min-height: var(--hit);
   padding: 0 var(--space-1);
   border: 0;
   border-radius: var(--radius-sm);
