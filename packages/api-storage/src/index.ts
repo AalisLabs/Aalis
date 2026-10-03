@@ -328,6 +328,17 @@ export function parseUriRoot(uri: string): string {
 }
 
 /**
+ * 能不能给这个存储地址签发界面下载用的句柄：是存储地址、根认识，且不是插件私有数据的根。data 根映射到家目录的 state/
+ * （里面有 WebUI 的 token 与审计），pluginData 是各插件的私有目录，这两类根里的文件不签发。按根的种类判、不按路径：
+ * owner 自己加的指到家目录的根里，state/ 下的文件照常签发。会话条目与页面单元格的文件句柄共用这一条
+ */
+export function canIssueFileHandle(roots: readonly StorageRootInfo[], uri: string): boolean {
+  if (!isStorageUri(uri)) return false;
+  const root = roots.find(r => r.name === parseUriRoot(uri));
+  return root !== undefined && root.kind !== 'data' && root.kind !== 'pluginData';
+}
+
+/**
  * 把配置里的路径/裸名归一为 storage URI —— 契约级文法，全体后端消费者（memory/vectorstore/
  * checkpoint/scheduler/persona…）复用，勿各自重抄。
  * - 已是 storage URI（含 `:/`）→ 原样返回。

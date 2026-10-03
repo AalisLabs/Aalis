@@ -663,6 +663,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
@@ -920,9 +923,6 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
-      '@aalis/api-platform':
-        specifier: workspace:>=0.8.0 <1.0.0
-        version: link:../api-platform
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-storage
@@ -1228,6 +1228,9 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools
+      '@aalis/api-webui':
+        specifier: workspace:>=0.11.1 <1.0.0
+        version: link:../api-webui
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
@@ -2218,6 +2221,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-host-paths':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-paths
@@ -2913,6 +2919,15 @@ importers:
 
   packages/plugin-webui-client:
     dependencies:
+      d3-force:
+        specifier: ^3.0.0
+        version: 3.0.0
+      d3-selection:
+        specifier: ^3.0.0
+        version: 3.0.0
+      d3-zoom:
+        specifier: ^3.0.0
+        version: 3.0.0
       katex:
         specifier: ^0.16.44
         version: 0.16.44
@@ -2965,6 +2980,15 @@ importers:
       '@aalis/util-text-normalize':
         specifier: workspace:*
         version: link:../util-text-normalize
+      '@types/d3-force':
+        specifier: ^3.0.10
+        version: 3.0.10
+      '@types/d3-selection':
+        specifier: ^3.0.11
+        version: 3.0.11
+      '@types/d3-zoom':
+        specifier: ^3.0.8
+        version: 3.0.8
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.14
@@ -3018,6 +3042,9 @@ importers:
       '@aalis/api-process':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-process
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-session-protocol':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-session-protocol

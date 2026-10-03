@@ -28,6 +28,14 @@
   overflow-wrap: anywhere;
 }
 
+.dialog-body > p + p {
+  margin-top: var(--space-2);
+}
+
+.dialog-body > [role="alert"] {
+  color: var(--color-danger-text);
+}
+
 .dialog-footer {
   display: flex;
   justify-content: flex-end;

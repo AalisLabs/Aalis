@@ -31,6 +31,8 @@ export interface MockLLMOptions {
   latencyMs?: number;
   /** chat() 应该抛出的错误（一次性） */
   throwOnce?: Error;
+  /** 只为这些序号的工具调用报生成进度；缺省全报 */
+  progress?: (index: number) => boolean;
 }
 
 export class MockLLMService implements LLMModel {
@@ -39,6 +41,7 @@ export class MockLLMService implements LLMModel {
     throwOnce?: Error;
     recorder?: ChatModelRequest[];
     responses: NonNullable<MockLLMOptions['responses']>;
+    progress: NonNullable<MockLLMOptions['progress']>;
   };
   private cursor = 0;
 
@@ -57,6 +60,7 @@ export class MockLLMService implements LLMModel {
       recorder: options.recorder,
       latencyMs: options.latencyMs ?? 0,
       throwOnce: options.throwOnce,
+      progress: options.progress ?? (() => true),
     };
   }
 
@@ -91,6 +95,13 @@ export class MockLLMService implements LLMModel {
     for (let i = 0; i < text.length; i += 4) {
       if (this.opts.latencyMs > 0) await new Promise(r => setTimeout(r, this.opts.latencyMs));
       yield { contentDelta: text.slice(i, i + 4) };
+    }
+    // 与真实 provider 一样，生成工具调用的参数时按调用的序号报进度（这里每个调用报两次：刚有名字、参数生成完）
+    for (const [index, call] of (resp.toolCalls ?? []).entries()) {
+      if (!this.opts.progress(index)) continue;
+      const { name, arguments: args } = call.function;
+      yield { toolCallProgress: { index, name, charsAccumulated: 0 } };
+      yield { toolCallProgress: { index, name, charsAccumulated: args.length } };
     }
     // 与真实 provider 的流契约对齐（ollama/openai 均把最终 toolCalls 挂在 done chunk 上，
     // agent 的 consumeStream 也只从 done chunk 读取）；单独 yield {toolCalls} 会被丢弃。

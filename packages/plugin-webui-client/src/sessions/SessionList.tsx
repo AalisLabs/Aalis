@@ -10,6 +10,7 @@ import { List, ListItem } from '../components/List';
 import { Menu } from '../components/Menu';
 import { listTime } from '../format';
 import { shortcutLabel } from '../keys';
+import { PinnedList } from '../pages/Pinned';
 import {
   addressOf,
   groupFromParams,
@@ -26,7 +27,8 @@ import { useSessionList } from './live-list';
 import { SessionStatus, statusOf } from './status';
 import './SessionList.css';
 
-// 左栏的会话列表：「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的「已归档」
+// 左栏的会话列表：「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的「已归档」。
+// 手机上它是第一层，没有图标栏，固定的页面列在会话上面
 
 /** 组内露出近这么久她开过口的房间，其余收进「其余 N 个」 */
 const RECENT_REPLY_MS = 7 * 24 * 60 * 60_000;
@@ -34,10 +36,11 @@ const RECENT_REPLY_MS = 7 * 24 * 60 * 60_000;
 export function SessionList() {
   const { openSearch } = useShell();
   const navigate = useNavigate();
+  const phone = usePhone();
   const newSession = () => navigate(paths.newSession);
   return (
     <Left label="会话">
-      {usePhone() ? (
+      {phone ? (
         <div className="session-list-header">
           <h1 className="session-list-title">会话</h1>
           <IconButton icon={Search} label="搜索会话" onClick={openSearch} />
@@ -52,6 +55,7 @@ export function SessionList() {
         </div>
       )}
       <div className="session-list-body">
+        {phone && <PinnedList />}
         <SessionGate>
           <Sections />
         </SessionGate>

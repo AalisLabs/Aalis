@@ -3,26 +3,20 @@ import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aa
 import { authority as authorityService, capabilityMinLevel } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
-import { getPlatformNames, platform as platformService } from '@aalis/api-platform';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { DEFAULT_AUTHORITY, originKind } from './authority-model.js';
-
-// 权限管理页（自定义 renderer 在 webui-client）。单 owner 终态无委托树，故无委托关系图。
-const webuiPages: WebuiPage[] = [
-  { key: 'authority', label: '权限管理', icon: 'authority', order: 50, renderer: 'authority' },
-];
 
 // ===== 插件入口 =====
 
 // 裁决要读整份宿主配置（owners / deniedCapabilities / confirmOverrides…），缺了它权限系统无从裁决，
 // 故 apply 里 require()、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
-// （commands / tools / webui / storage / platform）缺席时只是少一条接线，不该拦住权限服务本身上线。
+// （commands / tools / webui / storage）缺席时只是少一条接线，不该拦住权限服务本身上线。
 // approvals 缺席时需要确认的工具调用一律拒绝。
 const uses = {
   provide,
@@ -33,7 +27,6 @@ const uses = {
   commands: optional(commandsService),
   tools: optional(toolsService),
   storage: optional(storageService),
-  platform: optional(platformService),
   approvals: optional(approvals),
 };
 type Caps = BoundOf<typeof uses>;
@@ -48,14 +41,12 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { commands, lifecycle, logger, platform, storage, tools, webui } = caps;
+  const { commands, lifecycle, logger, storage, tools, webui } = caps;
   const config = caps.hostConfig.require();
-
-  for (const page of webuiPages) webui.registerPage(page);
 
   const manager = new AuthorityManager(config, logger, createStorageGateway(storage));
   caps.provide(authorityService, manager);
-  registerAdminActions({ webui, commands, tools, platform, config, manager });
+  const page = defineAuthorityPage({ webui, commands, tools, config, manager });
 
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
@@ -192,16 +183,18 @@ async function run(caps: Caps): Promise<void> {
       if (sep < 1) return '目标格式: <platform:userId>';
       const lv = Number(level);
       if (!Number.isInteger(lv)) return '等级必须是整数';
-      return applyUserChange(
+      const message = await applyUserChange(
         manager,
         () => manager.setUserLevel({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, lv),
         `已设 ${t} 等级: ${lv}`,
       );
+      page.invalidate();
+      return message;
     });
 }
 
 /**
- * 等级管理入口（/level、WebUI setUserLevel / deleteUser）的共同流程。
+ * 等级管理入口（/level、权限页的设等级、加用户与删除记录）的共同流程。
  * 先等在飞的等级表读取落定再改：首次读取完成前内存里查不到文件里的记录。storage 未上线时首次读取尚未发起，
  * 这里无从等待：改等级（含降为 0 级）保留文件里的备注、删除不随文件回来，由 setUserLevel 在首次读取落定前不删记录、
  * UserStore 的字段合并与删除墓碑保证，不靠这次等待。
@@ -220,160 +213,393 @@ async function applyUserChange(manager: AuthorityManager, change: () => void, me
   return message;
 }
 
-// ===== WebUI 页面动作（数字等级单轴：用户等级 + 操作门槛 + owner 列表 + 高级）=====
+// ===== 权限的设置页（数字等级单轴：用户等级、owner、操作门槛、禁用与免确认）=====
 
-function asStringList(v: unknown, label: string): string[] | undefined {
-  if (v === undefined || v === null) return undefined;
-  if (!Array.isArray(v) || v.some(x => typeof x !== 'string')) throw new Error(`${label} 必须是字符串数组`);
-  return v as string[];
+/** 页面用到的能力：几个服务引用 + 这次激活自己的 manager 与宿主配置 */
+type PageDeps = Pick<Caps, 'webui' | 'commands' | 'tools'> & { config: HostConfig; manager: AuthorityManager };
+
+/** 表格里的身份写成「平台:用户 ID」，按第一个冒号拆回 */
+function identityOf(key: string): UserIdentity {
+  const sep = key.indexOf(':');
+  if (sep < 1) throw new Error(`身份要写成「平台:用户 ID」，收到的是 ${key}`);
+  return { platform: key.slice(0, sep), userId: key.slice(sep + 1) };
 }
 
-/** 页面动作用到的能力：几个服务引用 + 这次激活自己的 manager 与宿主配置 */
-type AdminDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'platform'> & {
-  config: HostConfig;
-  manager: AuthorityManager;
-};
+const CONFIRM_TEXT: Record<CapabilityConfirm, string> = { session: '每会话一次', always: '每次' };
 
-function registerAdminActions({ webui, commands, tools, platform, config, manager }: AdminDeps): void {
-  /** 权限概览：用户等级 + owner + 操作门槛/确认 + 免确认白名单 + 禁用清单 */
-  webui.registerAction('getOverview', async () => {
-    const users = manager.listUsers();
-    const owners: UserIdentity[] = config.get('owners') ?? [];
-    const commandsSvc = commands.current;
-    const commandPrefix = commandsSvc?.prefix ?? '/';
-    const cmdNodes = commandsSvc?.getAll() ?? [];
-    const toolList = tools.current?.getAll() ?? [];
-    const platforms = Array.from(
-      new Set([
-        ...getPlatformNames(platform),
-        'webui',
-        'cli',
-        ...users.map(u => u.platform),
-        ...owners.map(o => o.platform),
-      ]),
-    ).filter(Boolean);
-    return {
-      users,
-      owners,
-      platforms,
-      deniedCapabilities: config.get('deniedCapabilities') ?? [],
-      authorityOverrides: config.get('authorityOverrides') ?? {},
-      defaultAuthority: DEFAULT_AUTHORITY,
-      confirmOverrides: config.get('confirmOverrides') ?? {},
-      restrictedPolicy: config.get('restrictedPolicy') ?? {},
-      commandPrefix,
-      // 操作清单：指令 + 工具统一带 pluginName/type/confirm，供前端「操作」视图按插件分组、显示两轴默认。
-      //
-      // `minLevel` 是**派生默认值**（不含 authorityOverrides）——定级这件事收在权限服务这一侧，
-      // 前端只渲染，不得自算：前端一旦自带一份 `derivedMinLevel`，risk 为非联合成员的真值串时
-      // 就与后端分歧（后端落 visibility 兜底=2、前端只要 risk 为真就吐 0），方向是 fail-open 的显示。
-      // overrides 不能由后端算进去：它是前端正在编辑中的状态，同一份 payload 里已整体下发。
-      commands: cmdNodes.map(n => ({
-        key: n.name,
-        name: n.name,
+/** 「禁用与免确认」表的两种规则：禁用写进 deniedCapabilities，免确认写进 restrictedPolicy.allow */
+const RULE_KINDS = { deny: '禁用（连 owner 也拒）', waive: '免确认' } as const;
+type RuleKind = keyof typeof RULE_KINDS;
+
+/**
+ * 权限页放在设置里。改宿主配置的动作先改运行态（即刻生效）再等落盘：save 拒绝时从处理函数抛出，写明改动已在本次运行
+ * 生效、没写进配置文件及原因。等级改动走 applyUserChange，回执注明没落盘的情形。每次改动后页面重取，落盘失败也一样
+ */
+function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDeps) {
+  /** 指令与工具统一成「操作」：能力键、所属插件、后端派生的默认门槛（不含 authorityOverrides） */
+  const operations = () => {
+    const prefix = commands.current?.prefix ?? '/';
+    const entries = [
+      ...(commands.current?.getAll() ?? []).map(n => ({
         type: 'command' as const,
-        displayName: `${commandPrefix}${n.name.split('.').join(' ')}`,
+        name: n.name,
+        display: `${prefix}${n.name.split('.').join(' ')}`,
         pluginName: n.pluginName,
-        visibility: n.visibility ?? 'public',
-        confirm: n.confirm,
+        visibility: n.visibility,
         risk: n.risk,
-        minLevel: capabilityMinLevel({ risk: n.risk, visibility: n.visibility }),
+        confirm: n.confirm,
       })),
-      tools: toolList.map(t => ({
-        key: t.name,
-        name: t.name,
+      ...(tools.current?.getAll() ?? []).map(t => ({
         type: 'tool' as const,
-        displayName: t.name,
+        name: t.name,
+        display: t.name,
         pluginName: t.pluginName,
-        visibility: t.visibility ?? 'public',
-        confirm: t.confirm,
+        visibility: t.visibility,
         risk: t.risk,
-        minLevel: capabilityMinLevel({ risk: t.risk, visibility: t.visibility }),
+        confirm: t.confirm,
       })),
-    };
-  });
+    ];
+    return entries.map(op => ({
+      ...op,
+      capability: `${op.type}:${op.name}`,
+      minLevel: capabilityMinLevel({ risk: op.risk, visibility: op.visibility }),
+    }));
+  };
+  const overrides = (): Record<string, number> => ({ ...(config.get('authorityOverrides') ?? {}) });
+  const rules = (kind: RuleKind): string[] =>
+    kind === 'deny' ? (config.get('deniedCapabilities') ?? []) : (config.get('restrictedPolicy')?.allow ?? []);
+  const owners = (): UserIdentity[] => config.get('owners') ?? [];
+  const sameIdentity = (a: UserIdentity, b: UserIdentity) => a.platform === b.platform && a.userId === b.userId;
 
-  /** 设置外部身份等级（覆盖式整数）。权限管理仅 owner 可达（防自我提权）。 */
-  webui.registerAction('setUserLevel', async (args, caller) => {
-    const { platform, userId, level } = args;
-    if (!platform || !userId) throw new Error('platform, userId 必填');
-    if (typeof level !== 'number' || !Number.isInteger(level)) throw new Error('level 必须是整数');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const message = await applyUserChange(
-      manager,
-      () => manager.setUserLevel({ platform: platform as string, userId: userId as string }, level),
-      `${platform}:${userId} 等级已更新为 ${level}`,
-    );
-    return { message };
-  });
+  /** 写宿主配置并落盘，页面重取 */
+  async function saveConfig(write: () => void, message: string): Promise<string> {
+    write();
+    try {
+      await config.save();
+    } catch (err) {
+      throw new Error(`已在本次运行中生效，但没写进配置文件：${err instanceof Error ? err.message : String(err)}`, {
+        cause: err,
+      });
+    } finally {
+      page.invalidate();
+    }
+    return message;
+  }
+  async function saveUser(change: () => void, message: string): Promise<string> {
+    const receipt = await applyUserChange(manager, change, message);
+    page.invalidate();
+    return receipt;
+  }
+  async function setRules(kind: RuleKind, next: string[], message: string): Promise<string> {
+    return saveConfig(() => {
+      if (kind === 'deny') config.set('deniedCapabilities', next);
+      else {
+        config.set('restrictedPolicy', { ...config.get('restrictedPolicy'), allow: next });
+        // 白名单的生效时长从这一刻起算
+        if (next.length > 0) manager.markPolicyEnabled();
+      }
+    }, message);
+  }
+  async function addRule(kind: RuleKind, pattern: string): Promise<string> {
+    const rule = pattern.trim();
+    if (!rule) throw new Error('能力不能为空');
+    const current = rules(kind);
+    if (current.includes(rule)) throw new Error(`${rule} 已经在${RULE_KINDS[kind]}清单里`);
+    return setRules(kind, [...current, rule], `已把 ${rule} 加进${RULE_KINDS[kind]}清单`);
+  }
+  async function setOverrides(capabilities: string[], level: number | undefined, message: string) {
+    const next = overrides();
+    for (const capability of capabilities) {
+      if (level === undefined) delete next[capability];
+      else next[capability] = level;
+    }
+    return saveConfig(() => config.set('authorityOverrides', next), message);
+  }
 
-  /** 删除用户记录（仅 owner 可达：删掉封禁记录等于解封） */
-  webui.registerAction('deleteUser', async (args, caller) => {
-    const { platform, userId } = args;
-    if (!platform || !userId) throw new Error('platform, userId 必填');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const message = await applyUserChange(
-      manager,
-      () => manager.removeUser(platform as string, userId as string),
-      `${platform}:${userId} 记录已删除`,
-    );
-    return { message };
-  });
+  const RULE_INPUT = {
+    pattern: {
+      type: 'string',
+      label: '能力',
+      required: true,
+      description: '能力键或通配，如 tool:shell_exec、command:level、tool:*',
+    },
+  } as const;
+  const LEVEL_DESCRIPTION = '整数，越大权限越高；0 是默认，负数是封禁';
+  const THRESHOLD = {
+    level: { type: 'number', label: '最低等级', integer: true, description: '整数；留空恢复按风险派生的默认门槛' },
+  } as const;
 
-  /** 更新 owner 列表（仅 owner 可达：防非 owner 把自己加成 owner 提权） */
-  webui.registerAction('setOwners', async (args, caller) => {
-    const owners = args.owners;
-    if (!Array.isArray(owners)) throw new Error('owners 必须是数组');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理 owner 列表');
-    config.set('owners', owners);
-    await config.save();
-    return { message: 'Owner 列表已更新' };
+  const page = webui.definePage({
+    key: 'authority',
+    title: '权限',
+    icon: 'shield',
+    placement: 'settings',
+    actions: {
+      setUserLevel: {
+        label: '设等级',
+        effect: 'write',
+        row: true,
+        input: {
+          level: { type: 'number', label: '等级', integer: true, required: true, description: LEVEL_DESCRIPTION },
+        },
+        handler: ({ rowKey, input }) =>
+          saveUser(
+            () => manager.setUserLevel(identityOf(rowKey), input.level),
+            `${rowKey} 的等级已设为 ${input.level}`,
+          ),
+      },
+      addUser: {
+        label: '加用户',
+        effect: 'write',
+        input: {
+          platform: { type: 'string', label: '平台', required: true, description: '如 onebot' },
+          userId: { type: 'string', label: '用户 ID', required: true },
+          level: { type: 'number', label: '等级', integer: true, required: true, description: LEVEL_DESCRIPTION },
+        },
+        handler: ({ input }) =>
+          saveUser(
+            () => manager.setUserLevel({ platform: input.platform, userId: input.userId }, input.level),
+            `${input.platform}:${input.userId} 的等级已设为 ${input.level}`,
+          ),
+      },
+      deleteUser: {
+        label: '删除记录',
+        effect: 'destructive',
+        confirm: '删除这条记录？封禁的用户删掉记录就等于解封。',
+        row: true,
+        handler({ rowKey }) {
+          const { platform, userId } = identityOf(rowKey);
+          return saveUser(() => manager.removeUser(platform, userId), `${rowKey} 的记录已删除`);
+        },
+      },
+      addOwner: {
+        label: '加 owner',
+        effect: 'write',
+        input: {
+          platform: { type: 'string', label: '平台', required: true, description: '如 onebot' },
+          userId: { type: 'string', label: '用户 ID', required: true },
+        },
+        handler({ input }) {
+          const owner = { platform: input.platform, userId: input.userId };
+          if (owners().some(o => sameIdentity(o, owner)))
+            throw new Error(`${input.platform}:${input.userId} 已经是 owner`);
+          return saveConfig(
+            () => config.set('owners', [...owners(), owner]),
+            `已把 ${input.platform}:${input.userId} 加为 owner`,
+          );
+        },
+      },
+      removeOwner: {
+        label: '移除',
+        effect: 'destructive',
+        confirm: '移除这个 owner？它之后按登记的等级裁决。',
+        row: true,
+        handler({ rowKey }) {
+          const owner = identityOf(rowKey);
+          if (!owners().some(o => sameIdentity(o, owner))) throw new Error(`${rowKey} 不是 owner`);
+          return saveConfig(
+            () =>
+              config.set(
+                'owners',
+                owners().filter(o => !sameIdentity(o, owner)),
+              ),
+            `已移除 owner ${rowKey}`,
+          );
+        },
+      },
+      setGroupLevel: {
+        label: '整组设门槛',
+        effect: 'write',
+        row: true,
+        input: THRESHOLD,
+        handler({ rowKey, input }) {
+          const group = operations().filter(op => op.pluginName === rowKey);
+          if (group.length === 0) throw new Error(`${rowKey} 没有登记指令或工具`);
+          return setOverrides(
+            group.map(op => op.capability),
+            input.level,
+            input.level === undefined
+              ? `${rowKey} 的 ${group.length} 项操作已恢复默认门槛`
+              : `${rowKey} 的 ${group.length} 项操作门槛已设为 ${input.level}`,
+          );
+        },
+      },
+      setOperationLevel: {
+        label: '设门槛',
+        effect: 'write',
+        row: true,
+        input: THRESHOLD,
+        handler({ rowKey, input }) {
+          if (!operations().some(op => op.capability === rowKey)) throw new Error(`没有操作 ${rowKey}`);
+          return setOverrides(
+            [rowKey],
+            input.level,
+            input.level === undefined ? `${rowKey} 已恢复默认门槛` : `${rowKey} 的门槛已设为 ${input.level}`,
+          );
+        },
+      },
+      denyCapability: {
+        label: '禁用',
+        effect: 'write',
+        input: RULE_INPUT,
+        handler: ({ input }) => addRule('deny', input.pattern),
+      },
+      waiveConfirm: {
+        label: '免确认',
+        effect: 'write',
+        input: RULE_INPUT,
+        handler: ({ input }) => addRule('waive', input.pattern),
+      },
+      removeRule: {
+        label: '移除',
+        effect: 'write',
+        row: true,
+        handler({ rowKey }) {
+          const sep = rowKey.indexOf(':');
+          const kind = rowKey.slice(0, sep) as RuleKind;
+          const rule = rowKey.slice(sep + 1);
+          const current = Object.hasOwn(RULE_KINDS, kind) ? rules(kind) : [];
+          if (!current.includes(rule)) throw new Error(`没有这条规则：${rowKey}`);
+          return setRules(
+            kind,
+            current.filter(r => r !== rule),
+            `已把 ${rule} 移出${RULE_KINDS[kind]}清单`,
+          );
+        },
+      },
+    },
+    content: {
+      tabs: [
+        {
+          key: 'users',
+          title: '用户',
+          content: [
+            {
+              type: 'table',
+              id: 'users',
+              rowKey: 'identity',
+              description: `给外部身份设一个整数等级：越大权限越高，默认 ${DEFAULT_AUTHORITY}，负数是封禁；owner 不看等级。`,
+              empty: `还没有登记的用户，所有人按默认等级 ${DEFAULT_AUTHORITY} 裁决`,
+              columns: [
+                { key: 'identity', label: '身份', primary: true },
+                { key: 'level', label: '等级', primary: true },
+                { key: 'note', label: '备注' },
+              ],
+              rowActions: [{ action: 'setUserLevel' }, { action: 'deleteUser' }],
+              data: () =>
+                manager
+                  .listUsers()
+                  .filter(u => !u.isOwner)
+                  .map(u => ({ identity: `${u.platform}:${u.userId}`, level: u.level, note: u.note ?? '' })),
+            },
+            { type: 'actions', actions: ['addUser'] },
+          ],
+        },
+        {
+          key: 'owners',
+          title: 'Owner',
+          content: [
+            {
+              type: 'table',
+              id: 'owners',
+              rowKey: 'identity',
+              description: 'owner 拥有全部权限；本机的控制台恒为 owner，不在这里列出。',
+              empty: '没有另外登记的 owner',
+              columns: [{ key: 'identity', label: '身份', primary: true }],
+              rowActions: [{ action: 'removeOwner' }],
+              data: () => owners().map(o => ({ identity: `${o.platform}:${o.userId}` })),
+            },
+            { type: 'actions', actions: ['addOwner'] },
+          ],
+        },
+        {
+          key: 'operations',
+          title: '操作门槛',
+          content: [
+            {
+              type: 'table',
+              id: 'groups',
+              rowKey: 'plugin',
+              description: '每个指令与工具有一个最低等级，默认按风险派生（安全 0、敏感 1、危险 2）；多数不用动。',
+              empty: '没有登记的指令或工具',
+              columns: [
+                { key: 'plugin', label: '插件', primary: true },
+                { key: 'count', label: '操作数', primary: true },
+                { key: 'overridden', label: '已改门槛' },
+              ],
+              rowActions: [{ action: 'setGroupLevel' }],
+              data() {
+                const set = overrides();
+                const groups = new Map<string, { count: number; overridden: number }>();
+                for (const op of operations()) {
+                  const group = groups.get(op.pluginName) ?? { count: 0, overridden: 0 };
+                  group.count++;
+                  if (Object.hasOwn(set, op.capability)) group.overridden++;
+                  groups.set(op.pluginName, group);
+                }
+                return [...groups]
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([plugin, group]) => ({ plugin, ...group }));
+              },
+              detail: [
+                {
+                  type: 'table',
+                  id: 'operations',
+                  rowKey: 'capability',
+                  columns: [
+                    { key: 'display', label: '操作', primary: true },
+                    { key: 'kind', label: '种类' },
+                    { key: 'defaultLevel', label: '默认门槛' },
+                    { key: 'effectiveLevel', label: '生效门槛', primary: true },
+                    { key: 'confirm', label: '确认' },
+                  ],
+                  rowActions: [{ action: 'setOperationLevel' }],
+                  data({ rowKey }) {
+                    const set = overrides();
+                    return operations()
+                      .filter(op => op.pluginName === rowKey)
+                      .map(op => ({
+                        capability: op.capability,
+                        display: op.display,
+                        kind: op.type === 'command' ? '指令' : '工具',
+                        defaultLevel: op.minLevel,
+                        effectiveLevel: set[op.capability] ?? op.minLevel,
+                        // 设门槛的表单按它预填：只有改过的才有
+                        level: set[op.capability],
+                        confirm: op.confirm ? CONFIRM_TEXT[op.confirm] : '',
+                      }));
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          key: 'rules',
+          title: '禁用与免确认',
+          content: [
+            {
+              type: 'table',
+              id: 'rules',
+              rowKey: 'key',
+              description:
+                '禁用压过一切，连 owner 也拒；免确认只免每会话一次的确认，不放宽等级，给自动化用。都可以写通配，如 tool:*。',
+              empty: '没有禁用或免确认的规则',
+              columns: [
+                { key: 'rule', label: '能力', kind: 'code', primary: true },
+                { key: 'kind', label: '规则', primary: true },
+              ],
+              rowActions: [{ action: 'removeRule' }],
+              data: () =>
+                (Object.keys(RULE_KINDS) as RuleKind[]).flatMap(kind =>
+                  rules(kind).map(rule => ({ key: `${kind}:${rule}`, rule, kind: RULE_KINDS[kind] })),
+                ),
+            },
+            { type: 'actions', actions: ['denyCapability', 'waiveConfirm'] },
+          ],
+        },
+      ],
+    },
   });
-
-  /** 更新免确认白名单（restrictedPolicy）。仅 owner 可达。 */
-  webui.registerAction('setRestrictedPolicy', async (args, caller) => {
-    const policy = args.policy as Record<string, unknown>;
-    if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    config.set('restrictedPolicy', policy);
-    if (Array.isArray(policy.allow) && policy.allow.length > 0) manager.markPolicyEnabled();
-    // 内存态先整体落定再等落盘：save 拒绝会从这里抛出，其后的语句不再执行
-    await config.save();
-    return { message: '免确认白名单已更新' };
-  });
-
-  /** owner 覆盖单条操作的最低等级（任意整数），无需改插件声明。key=能力键 `type:name`；传非整数则清除该条（回退默认派生）。 */
-  webui.registerAction('setAuthorityOverride', async (args, caller) => {
-    const { name, level } = args;
-    if (!name || typeof name !== 'string') throw new Error('name 必填');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const overrides = { ...((config.get('authorityOverrides') ?? {}) as Record<string, number>) };
-    if (typeof level === 'number' && Number.isInteger(level)) overrides[name] = level;
-    else delete overrides[name];
-    config.set('authorityOverrides', overrides);
-    await config.save();
-    return { message: `操作 ${name} 最低等级已更新` };
-  });
-
-  /** owner 覆盖单条操作的确认要求（session/always/off）。key=能力键 `type:name`；非法值清除该条。 */
-  webui.registerAction('setConfirmOverride', async (args, caller) => {
-    const { name, confirm } = args;
-    if (!name || typeof name !== 'string') throw new Error('name 必填');
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const overrides = { ...((config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>) };
-    if (confirm === 'session' || confirm === 'always' || confirm === 'off') overrides[name] = confirm;
-    else delete overrides[name];
-    config.set('confirmOverrides', overrides);
-    await config.save();
-    return { message: `操作 ${name} 确认要求已更新` };
-  });
-
-  /** 更新禁用能力清单（仅 owner 可达：这是压过一切的硬禁总闸） */
-  webui.registerAction('setConfig', async (args, caller) => {
-    if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const denied = asStringList(args.deniedCapabilities, 'deniedCapabilities');
-    if (denied) config.set('deniedCapabilities', denied);
-    await config.save();
-    return { message: '权限配置已更新' };
-  });
+  return page;
 }

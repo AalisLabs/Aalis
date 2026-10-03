@@ -81,7 +81,7 @@ export default definePlugin({
 
 ## shell 工具：停止键与后台进程
 
-`exec`、`exec_background` 声明命令类展示（命令在 `command`，工作目录在 `cwd`），`file_edit`、`file_write`、`file_append` 声明改文件类展示（路径在 `path`；`file_edit` 删的一侧是 `oldText`、加的一侧是 `newText`，另两个只有加的一侧 `content`），会话的工具卡与审批卡据此显示命令或 diff，见 [api-tools](../api/api-tools.md#展示种类)。
+`exec`、`exec_background` 声明命令类展示（命令在 `command`，工作目录在 `cwd`；`exec` 另声明退出码在结果的 `exitCode`，不为 0 时工具卡记为失败、写明退出码，`exec_background` 的结果是进程 id、没有退出码），`file_edit`、`file_write`、`file_append` 声明改文件类展示（路径在 `path`；`file_edit` 删的一侧是 `oldText`、加的一侧是 `newText`，另两个只有加的一侧 `content`），会话的工具卡与审批卡据此显示命令或 diff，见 [api-tools](../api/api-tools.md#展示种类)。
 
 `exec` 把回合的中止信号交给 process 服务。WebUI 按停止键（或同一会话的新消息打断在途回合）时，命令按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树；回合随即结束，不必等命令跑完或超时。结果只在命令确实是被信号结束时标为中止，因为这条结果随工具调用落库，下一轮模型看到「已中止」可能把已经生效的命令（如 `git push`）再跑一遍：
 

@@ -5,13 +5,13 @@ import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { Menu } from '../components/Menu';
 import { useToast } from '../components/Toast';
-import { type Approval, useFeatures, useSessionClient } from '../connection';
+import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
 import { clockTime } from '../format';
 import { Markdown } from '../markdown/Markdown';
 import { isWebUrl, mediaUrl } from '../media';
 import type { TimelineItem } from './live-session';
 import { RewindDialog, type RewindTarget } from './Rewind';
-import { ToolCall } from './ToolCall';
+import { STOPPED, ToolCall } from './ToolCall';
 import './Timeline.css';
 
 // 时间线：条目按回合成段，同一回合的条目挨在一起，回合的结局（停止、出错）写在段尾，回滚在段的右上角。
@@ -21,7 +21,7 @@ type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 type Attachment = Item<'user-message'>['attachments'][number];
 
 const TIME_GAP_MS = 10 * 60_000;
-const OUTCOMES = { aborted: '已停止', error: '这一轮出错了' } as const;
+const OUTCOMES = { aborted: STOPPED, error: '这一轮出错了' } as const;
 
 /** 一段：一个回合的条目（turnId 相同、挨在一起），或一条不在回合里的条目 */
 interface Block {
@@ -249,6 +249,7 @@ interface AgentMessageProps {
 }
 
 function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
+  const { appName } = useConnection();
   const model = item.model?.model;
   return (
     <div
@@ -257,12 +258,17 @@ function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
       data-undelivered={item.undelivered ? '' : undefined}
       title={clockTime(item.at)}
     >
+      {room && (
+        <p className="message-head">
+          <span className="message-speaker">{appName}</span>
+          <time>{clockTime(item.at)}</time>
+        </p>
+      )}
       {item.text && <Markdown text={item.text} streaming={streaming} />}
       <Attachments attachments={item.attachments} sessionId={sessionId} />
       {streaming && <LoaderCircle className="spin message-streaming" aria-label="正在输出" />}
-      {(model || room || item.undelivered) && (
+      {(model || item.undelivered) && (
         <p className="message-meta">
-          {room && <time>{clockTime(item.at)}</time>}
           {model && <span>{model}</span>}
           {item.undelivered && <span>{item.undelivered.reason}</span>}
         </p>
@@ -322,7 +328,7 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
             setBusy(true);
             client
               .request('turn/continue', { sessionId })
-              .catch((err: Error) => toast({ kind: 'error', text: `继续失败：${err.message}` }))
+              .catch((err: Error) => toast({ kind: 'danger', text: `继续失败：${err.message}` }))
               .finally(() => setBusy(false));
           }}
         >

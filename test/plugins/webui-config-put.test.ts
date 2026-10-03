@@ -57,12 +57,9 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
-      webui: () => undefined,
       logger,
     },
-    () => ({ platform: 'webui', userId: 'console' }),
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
-    () => undefined,
   );
   const put = (body: unknown) => invoke('PUT /api/config', { body, headers: {} });
   const saveToDisk = () => invoke('POST /api/config/save', { body: {}, headers: {} });

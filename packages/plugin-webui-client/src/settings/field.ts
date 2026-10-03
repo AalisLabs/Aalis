@@ -1,8 +1,8 @@
 import type { SettingRow } from '@aalis/api-session-protocol';
 import { isRecord } from '../rest';
 
-// 设置项的字段（schema-config 的词汇）：取值写成一句、选项的键，以及可选项接口回应的解析。前端不认识任何设置键，
-// 只按字段类型渲染；模型字段（llm-ref）的取值是 { provider, model }，可选项来自模型服务
+// 设置项与页面动作输入的字段（schema-config 的词汇）：取值写成一句、选项的键、编辑框里的文字与取值的互换，以及可选项接口
+// 回应的解析。前端不认识任何设置键，只按字段类型渲染；模型字段（llm-ref）的取值是 { provider, model }，可选项来自模型服务
 
 export type Field = SettingRow['field'];
 
@@ -89,8 +89,61 @@ export function formatValue(field: Field, value: unknown, options: readonly Opti
   return JSON.stringify(value);
 }
 
+/** 用文字框编辑的字段类型 */
+export const TEXT_TYPES: ReadonlySet<string> = new Set(['string', 'number', 'textarea', 'list', 'map']);
+
+/** 编辑框里的文字 ↔ 取值：列表一行一项，映射一行一个「键=值」 */
+export function toText(field: Field, value: unknown): string {
+  if (value === undefined) return '';
+  if (field.type === 'list') return Array.isArray(value) ? value.join('\n') : '';
+  if (field.type === 'map') {
+    return typeof value === 'object' && value !== null
+      ? Object.entries(value)
+          .map(([key, item]) => `${key}=${String(item)}`)
+          .join('\n')
+      : '';
+  }
+  return String(value);
+}
+
+/** 读不出（写法不对）时抛错，原因给人看 */
+export function fromText(field: Field, text: string): unknown {
+  if (field.type === 'number') {
+    const number = Number(text.trim());
+    if (text.trim() === '' || !Number.isFinite(number)) throw new Error('要填一个数');
+    return number;
+  }
+  const lines = text.split('\n').filter(line => line.trim() !== '');
+  if (field.type === 'list') return lines.map(line => line.trim());
+  if (field.type === 'map') {
+    return Object.fromEntries(
+      lines.map(line => {
+        const at = line.indexOf('=');
+        if (at <= 0) throw new Error(`「${line}」要写成「键=值」`);
+        return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
+      }),
+    );
+  }
+  return text;
+}
+
+const unlisted = (field: Field, options: readonly Option[], value: unknown): Option => ({
+  key: valueKey(field, value),
+  label: formatValue(field, value, options),
+  value,
+});
+
 /** 当前值不在选项里（服务不在了、手写的值）时也列出来，免得看起来像选了别的 */
 export function withCurrent(field: Field, options: Option[], current: unknown): Option[] {
   if (current === undefined || options.some(option => option.key === valueKey(field, current))) return options;
-  return [{ key: valueKey(field, current), label: formatValue(field, current, options), value: current }, ...options];
+  return [unlisted(field, options, current), ...options];
+}
+
+/** 多选：已选的值不在选项里时接在后面列出来 */
+export function withChosen(field: Field, options: Option[], chosen: readonly unknown[]): Option[] {
+  const known = new Set(options.map(option => option.key));
+  return [
+    ...options,
+    ...chosen.filter(item => !known.has(valueKey(field, item))).map(item => unlisted(field, options, item)),
+  ];
 }

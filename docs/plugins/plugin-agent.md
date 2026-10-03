@@ -114,14 +114,15 @@ thinking: (默认)  [来源: 默认]
    - 组装 `agent:prompt` 贡献 — 记忆 / 摘要 / 技能 / 档案等提示词块按锚位物化进消息列表，单个贡献 build 超过 `promptBuildTimeoutMs` 时本轮缺席
    - `agent:llm:before` — 拦截、修改消息列表或工具列表（如工具搜索过滤、媒体规范化）
    - `trimMessages()` — 按 token 预算裁剪上下文
-   - `chatStream()` — 流式调用 LLM
+   - `chatStream()` — 流式调用 LLM；模型生成工具调用的参数时，每个调用配一个 `callId` 随流式片段的工具调用进度推出（`outbound:stream` 的 `toolCallProgress`），执行它时用同一个
    - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多 `maxToolIterations` 次）:
      - `agent:tool:before` → 执行工具 → `agent:tool:after`（中间件写进 `metadata` 的键随这次工具结果落库）
      - 参数不是合法的 JSON 对象（坏 JSON，或顶层是 `null`、数组、原始值）时不执行，把错误作为这次调用的结果回给模型重新生成；空串按无参处理
+     - 每次调用都发一对 `tool:execute`（开始与结束）：没有执行就失败的（参数不合法、`agent:tool:before` 出错）同样发，结束带回给模型的错误，会话里的工具卡据此收尾
    - `agent:reply:before` — 后处理回复内容
    - `agent:turn:after` — 消息处理完成通知
-6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；执行过的工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存
+6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；每次工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段，没有执行就失败的调用同样记），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存
 7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件。回复的出站消息带这一轮的 `turnId`，平台适配器记投递失败时带上它
 
 `message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。

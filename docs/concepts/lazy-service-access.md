@@ -99,7 +99,7 @@ export default definePlugin({
 - 清理可以是异步的，关闭会等它落地。拒绝被隔离并报告，**不证明**旧资源已释放。
 - 运行期旧清理永久不落定会阻塞交接；关闭时按超时放弃并点名。
 
-登记型能力（工具、命令、页面）不要手写 `follow`：契约包描述符用 `BindingPort.registrar` 造绑定门面，`tools.register` / `commands.command` / `webui.registerPage` 已包含「同键替换、提供者换人整体重挂、关闭后拒收」。registrar 与 `follow` 的串行资源交接不同：换人时立即在新提供者重挂，旧异步撤回可后台进行，不能声称所有新旧资源绝无重叠。
+登记型能力（工具、命令、页面）不要手写 `follow`：契约包描述符用 `BindingPort.registrar` 造绑定门面，`tools.register` / `commands.command` / `webui.definePage` 已包含「同键替换、提供者换人整体重挂、关闭后拒收」。registrar 与 `follow` 的串行资源交接不同：换人时立即在新提供者重挂，旧异步撤回可后台进行，不能声称所有新旧资源绝无重叠。
 
 ## 惰性网关：吃 `ServiceRef`
 
@@ -166,7 +166,7 @@ export default definePlugin({
 | 偶尔读一次某服务的当前胜者 | `x.current` / `x.require()`，即取即用 | 不要把读出的值存进类字段或闭包 |
 | 长期持有一个自动跟随换人的句柄 | `createStorageGateway(storage)` / `createProcessGateway(process)` | 不要缓存 `current` 的裸实例 |
 | 把有状态资源挂到会换人的提供者上 | `x.follow(attach)`，attach 同步返回 cleanup | 不要 `async` attach；不要手写监听 `service:registered` |
-| 往 hub 登记工具 / 命令 / 页面 | `uses` 描述符的绑定门面（`register` / `command` / `registerPage`） | 不要绕过门面直接打到 `current` 上（会丢掉换人重挂） |
+| 往 hub 登记工具 / 命令 / 页面 | `uses` 描述符的绑定门面（`register` / `command` / `definePage`） | 不要绕过门面直接打到 `current` 上（会丢掉换人重挂） |
 | 跨 root 或跨 model 透明路由 | `*-api` 的 `resolveXxx` 或网关 helper | 不要自己重抄聚合逻辑 |
 | 清理资源（连接、定时器、外部句柄） | `lifecycle.onDispose`；交接在手数据用 `onDrain` | 不要用 `app:stopping` 当清理通道 |
 | 动态按名查找（无依赖边） | `services.get` / `services.all` | 不要指望关停期一定还能拿到 |

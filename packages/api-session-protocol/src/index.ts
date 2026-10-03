@@ -126,6 +126,8 @@ export const InitializeResultSchema = z.object({
   /** 这条连接所在审批面的登记名（webui、cli）；审计记的是登记身份 */
   surface: z.string(),
   features: FeaturesSchema,
+  /** 应用名：宿主配置里的 name，每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 Aalis */
+  appName: z.string(),
 });
 
 // ════════════════════════════════════════════════════════════
@@ -358,11 +360,17 @@ export const ApprovalSettlementSchema = z.object({
 });
 
 /**
- * 工具卡的展示：会话服务按工具定义上声明的展示种类，从参数里取出各字段的值（逐字）。种类是宿主维护的封闭集合，
- * 以后按加法加：command 是命令与工作目录，file-change 是路径与删、加两侧的文本
+ * 工具卡的展示：会话服务按工具定义上声明的展示种类，从参数里逐字取出各字段的值。种类是宿主维护的封闭集合，
+ * 以后按加法加：command 是命令与工作目录，以及结果里的退出码（工具声明了取自结果的哪个键、调用已结束且取得到时才有），
+ * file-change 是路径与删、加两侧的文本
  */
 export const ToolDisplaySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('command'), command: z.string(), cwd: z.string().optional() }),
+  z.object({
+    kind: z.literal('command'),
+    command: z.string(),
+    cwd: z.string().optional(),
+    exitCode: z.number().int().optional(),
+  }),
   z.object({
     kind: z.literal('file-change'),
     path: z.string(),
@@ -387,10 +395,13 @@ const itemBase = {
  *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
  * - reasoning：思考文字；
  * - tool-call：工具名、参数、状态、流式输出（exec 等）、结果摘要、耗时；display 是按工具声明解析好的展示，没声明的没有，
- *   界面逐字列出参数；sentToRoom 标出房间里经平台工具发出、平台收下的消息。
+ *   界面逐字列出参数；sentToRoom 标出房间里经平台工具发出、平台收下的消息。模型还在生成参数时先推一次，状态是 generating，
+ *   只有工具名、args 为空；开始执行时同一个 itemId 转为 running。结果带 error、或展示里的退出码不为 0 的是 failed。
+ *   回合被停止时还没结束的调用（包括生成了还没执行的）是 aborted，停止之后工具照样返回了结果也不改；生成了却没有执行、
+ *   回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾。历史里没有结果的调用（重启或中断）是 aborted。
  *   这次调用要 owner 批准、审批推给了审批面时带 approvalId，再推一次 item/started；结算后带 approvalId 与 settlement，
  *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
- *   没人应答、撤销）状态是 denied。sentToRoom、approvalId 与 settlement 随工具结果落库，历史里同样还原；
+ *   没人应答、撤销）状态是 denied。sentToRoom、approvalId、settlement 与停止时还没结束随工具结果落库，历史里同样还原；
  * - notice：宿主事件（压缩、白纸与作品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
@@ -419,7 +430,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     ...itemBase,
     name: z.string(),
     args: z.record(z.unknown()),
-    status: z.enum(['running', 'completed', 'failed', 'denied']),
+    status: z.enum(['generating', 'running', 'completed', 'failed', 'denied', 'aborted']),
     output: z.string().optional(),
     result: z.string().optional(),
     durationMs: z.number().optional(),
@@ -643,6 +654,13 @@ export const sessionMethods = {
    * 压缩或生成摘要时直接拒绝，同样回内部错误，时间线上没有新的通知
    */
   'session/compress': { params: SessionTargetSchema, result: EmptySchema },
+  /**
+   * 回滚之前查一轮的检查点：execUsed 为真表示这一轮执行过命令，命令的效果不经存储，回滚撤不回；没有这一轮的检查点时为 false
+   */
+  'turn/checkpoint': {
+    params: z.object({ sessionId: z.string(), turnId: z.string() }),
+    result: z.object({ execUsed: z.boolean() }),
+  },
   'turn/rewind': { params: TurnRewindParamsSchema, result: TurnRewindResultSchema },
   /** 清空待办 */
   'plan/clear': { params: SessionTargetSchema, result: EmptySchema },

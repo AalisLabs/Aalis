@@ -3,7 +3,6 @@ import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, connect, Server, type Socket } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type AppOptions, LogHub, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
@@ -104,7 +103,6 @@ async function startBrowserTools(
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(webuiServer, { registerPage: () => () => {}, registerAction: () => () => {} } as never);
   // executablePath 非空：跳过「Chrome 未安装就自动下载」那一步
   await app.plugins.register(browserPlugin, { blockPrivate, allowedHosts, executablePath: '/zz-fake-chrome' });
   await app.plugins.idle();

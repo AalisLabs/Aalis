@@ -60,6 +60,10 @@ export default definePlugin({
 2. Activation：调用 `load_skill(name)`，或在 `triggersEnabled` 开启时由 `agent:input:before` 中间件以 frontmatter `triggers` 正则匹配用户消息自动激活
 3. Execution：`discoveryEnabled` 开启时，已激活技能的 SKILL.md 正文与附属资源清单经 `agent:prompt` 贡献注入该会话后续的模型调用，agent 按指令使用 scripts/references；关闭时不注入激活正文
 
+## 技能的设置页
+
+WebUI 设置里的「技能」一节（`key: 'skills'`，位置 `settings`）：一张技能表（名称、描述、自动触发、附属文件数），选中一个在详情里看它的属性（名称、描述、自动触发、许可证、位置与附属文件，空的不列）与 SKILL.md 正文。行动作「删除」（确认框）删掉整个技能目录；技能不存在或目录删不掉时回错误，原因显示给 owner。经工具或服务增删改技能、重扫目录后页面重取；手改技能目录靠打开时取一次与手动刷新。
+
 ## 配置校验
 
 `skillsUri` 必须是 storage URI；显式无效类型或非法 URI 在扫描与工具注册前报配置错误。数字字符串上限按数值解析，其余错误类型回落默认值并告警。

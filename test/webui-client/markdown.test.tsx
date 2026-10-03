@@ -57,6 +57,34 @@ describe('Markdown', () => {
     expect(view.querySelector('a[href="https://a.example"]')).toBeNull();
   });
 
+  it('单个 ~ 不是删除线，~~删除~~ 照常', () => {
+    let view = show('大约 ~5 分钟，~ 约等于');
+    expect(view.querySelector('del')).toBeNull();
+    expect(view.textContent).toBe('大约 ~5 分钟，~ 约等于');
+    cleanup();
+    view = show('~~删除~~');
+    expect(view.querySelector('del')?.textContent).toBe('删除');
+  });
+
+  it('美元金额不变形；$x^2$、\\(x\\) 与单行的 $$x$$ 是行内公式，跨行的 $$ 块是块公式；行内代码里的 $x$ 原样', () => {
+    for (const text of ['$5 和 $10', '价格 $5,$10']) {
+      const view = show(text);
+      expect(view.querySelector('.katex'), text).toBeNull();
+      expect(view.textContent).toBe(text);
+      cleanup();
+    }
+    let view = show('设 $x^2$ 与 \\(y\\) 与 $$z$$');
+    expect(view.querySelectorAll('.katex')).toHaveLength(3);
+    expect(view.querySelector('.katex-display')).toBeNull();
+    cleanup();
+    view = show('$$\nE = mc^2\n$$');
+    expect(view.querySelector('.katex-display')).not.toBeNull();
+    cleanup();
+    view = show('写成 `$x$`');
+    expect(view.querySelector('.katex')).toBeNull();
+    expect(view.querySelector('code')?.textContent).toBe('$x$');
+  });
+
   it('代码块按语法色高亮；剪贴板不可用时没有复制按钮，可用时有', async () => {
     const code = '```js\nconst a = 1;\n```';
     let view = show(code);

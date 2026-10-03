@@ -8,8 +8,10 @@ import { clockTime, duration } from '../format';
 import { RequestError } from '../protocol/session-client';
 import './ToolCall.css';
 
-// 工具卡：一行写动作与对象、右侧写状态，点开看细节。按会话服务解析好的展示种类（display）渲染，没声明的走通用卡、
-// 逐字列出参数；前端不认识任何工具名。要 owner 批准的调用，审批卡挂在这一行下面；结算后收成行上的一句。
+// 工具卡：一行写动作与对象、右侧写状态，点开看细节；模型还在生成参数时只有工具名与「正在生成」，没有细节可看。
+// 失败用危险色，命令有退出码的写退出码；回合停止时还没结束的写「已停止」，与回合的结局同一个说法，不用危险色。
+// 按会话服务解析好的展示种类（display）渲染，没声明的走通用卡、逐字列出参数；前端不认识任何工具名。
+// 要 owner 批准的调用，审批卡挂在这一行下面，事实完整列出、不限高（服务端已截断并写明省略多少）；结算后收成行上的一句。
 // 卡上来自参数的文字一律经审批契约的清洗（控制符、双向控制符、零宽字符都显示出来），免得看到的和要执行的不一样
 
 type ToolCallItem = Extract<SessionItem, { kind: 'tool-call' }>;
@@ -17,12 +19,9 @@ type Settlement = NonNullable<ToolCallItem['settlement']>;
 
 /** 一行里命令最多显示这么多个字，完整的在细节里 */
 const SUMMARY_LIMIT = 60;
-/** 审批卡上命令框的行数，与 ToolCall.css 里 .approval-command 的限高一致 */
-const COMMAND_ROWS = 6;
-/** 审批卡上参数与 diff 框限高 20rem，按 12/18 的字号约 17 行 */
-const BLOCK_ROWS = 17;
-/** 估算折行时一行按这么多个等宽字算 */
-const CHARS_PER_ROW = 40;
+
+/** 回合与工具调用被停止时写的字 */
+export const STOPPED = '已停止';
 
 const SETTLED_BY: Record<Exclude<Settlement['source'], 'owner'>, string> = {
   absent: '没人在场',
@@ -54,6 +53,10 @@ function summaryOf(item: ToolCallItem): string {
   return `调用 ${sanitizeForCard(item.name)}`;
 }
 
+/** 失败写成一句：命令的退出码不为 0 时写退出码，其余写「失败」 */
+const failureOf = ({ display }: ToolCallItem) =>
+  display?.kind === 'command' && (display.exitCode ?? 0) !== 0 ? `退出码 ${display.exitCode}` : '失败';
+
 const ICONS = { command: SquareTerminal, 'file-change': FilePen } as const;
 
 interface ToolCallProps {
@@ -65,34 +68,42 @@ interface ToolCallProps {
 }
 
 export function ToolCall({ item, open, onToggle, approval }: ToolCallProps) {
+  const generating = item.status === 'generating';
   const waiting = item.approvalId !== undefined && item.settlement === undefined;
   const Icon = item.display ? ICONS[item.display.kind] : Wrench;
   const parts = [
     item.settlement && settlementText(item.settlement),
-    item.status === 'failed' && '失败',
+    item.status === 'failed' && failureOf(item),
+    item.status === 'aborted' && STOPPED,
     item.sentToRoom && '已发到群',
     item.status === 'completed' && item.durationMs !== undefined && duration(item.durationMs),
   ].filter(part => typeof part === 'string');
   const tone = waiting ? 'attention' : item.status === 'failed' ? 'danger' : undefined;
   return (
     <div className="tool-call">
-      <button type="button" className="tool-line" aria-expanded={open} onClick={onToggle}>
+      <button
+        type="button"
+        className="tool-line"
+        aria-expanded={generating ? undefined : open}
+        disabled={generating}
+        onClick={onToggle}
+      >
         <Icon aria-hidden />
         <span className="tool-line-text">{summaryOf(item)}</span>
         <span className="tool-line-status" data-tone={tone}>
           {waiting ? (
             '等你批准'
-          ) : item.status === 'running' ? (
+          ) : generating || item.status === 'running' ? (
             <>
               <LoaderCircle aria-hidden className="spin" />
-              运行中
+              {generating ? '正在生成' : '运行中'}
             </>
           ) : (
             parts.join(' · ')
           )}
         </span>
       </button>
-      {open && <ToolDetails item={item} />}
+      {open && !generating && <ToolDetails item={item} />}
       {waiting && approval && <ApprovalCard approval={approval} />}
     </div>
   );
@@ -142,7 +153,7 @@ function ToolDetails({ item }: { item: ToolCallItem }) {
 /** 改动的两侧，一行一个元素：删的以 - 开头，加的以 + 开头 */
 function Diff({ lines: rows }: { lines: string[] }) {
   return (
-    <pre className="tool-output tool-diff">
+    <pre className="tool-diff">
       {rows.map((row, index) => (
         // 行随条目整份替换，不会重排
         <span key={index} data-change={row.startsWith('-') ? 'removed' : 'added'}>
@@ -150,18 +161,6 @@ function Diff({ lines: rows }: { lines: string[] }) {
         </span>
       ))}
     </pre>
-  );
-}
-
-/** 卡上限高的框放不下时写明全长：行数超出，或按每行的字数估会折出更多行（长串空白也算） */
-function Extent({ text, rows }: { text: string; rows: number }) {
-  const lines = text.split('\n').length;
-  const chars = [...text].length;
-  if (lines <= rows && chars <= rows * CHARS_PER_ROW) return null;
-  return (
-    <p className="approval-meta">
-      共 {lines} 行 · {chars} 字，超出的部分在框内滚动
-    </p>
   );
 }
 
@@ -205,12 +204,7 @@ function ApprovalCard({ approval }: { approval: Approval }) {
   return (
     <section className="approval" aria-label="审批">
       <p className="approval-title">{title}</p>
-      {command !== undefined && (
-        <>
-          <pre className="approval-command">{command}</pre>
-          <Extent text={command} rows={COMMAND_ROWS} />
-        </>
-      )}
+      {command !== undefined && <pre className="approval-command">{command}</pre>}
       {facts.cwd !== undefined && (
         <p className="approval-meta">
           目录 <span>{sanitizeForCard(facts.cwd)}</span>
@@ -222,10 +216,7 @@ function ApprovalCard({ approval }: { approval: Approval }) {
           {patch === undefined ? (
             <p className="approval-meta">路径或内容疑似含密钥，只显示文件名</p>
           ) : (
-            <>
-              <Diff lines={patch.split('\n')} />
-              <Extent text={patch} rows={BLOCK_ROWS} />
-            </>
+            <Diff lines={patch.split('\n')} />
           )}
         </>
       )}
@@ -233,7 +224,6 @@ function ApprovalCard({ approval }: { approval: Approval }) {
         <>
           {(command !== undefined || facts.diff) && <p className="approval-meta">其他参数</p>}
           <pre className="approval-params">{params}</pre>
-          <Extent text={params} rows={BLOCK_ROWS} />
         </>
       )}
       {noting ? (

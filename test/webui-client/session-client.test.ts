@@ -29,6 +29,7 @@ const init: SessionMethodResult<'initialize'> = {
   identity: { platform: 'webui', userId: 'console' },
   surface: 'webui',
   features: { send: true, rewind: false, compress: true },
+  appName: 'Aalis',
 };
 
 function snapshot(sessionId: string, epoch: string, seq: number): Snapshot {

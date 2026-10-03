@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cronEngine } from '../../packages/api-cron-engine/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import schedulerPlugin, { scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
+import { pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // 一次性任务的远期 runAt：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成立即触发，
@@ -31,15 +32,9 @@ describe('scheduler 一次性任务的远期 runAt', () => {
     const host = app.bind({ provide, services, events });
     host.provide(storage, memoryStorage().service as never);
     host.provide(cronEngine, cronEngineStub as never);
-    // 页面动作是本次激活的闭包，经 webui 登记；桩 webui 把登记表截下来按名调用
-    const actions = new Map<string, WebuiActionHandler>();
-    host.provide(webuiServer, {
-      registerPage: () => () => {},
-      registerAction(method: string, handler: WebuiActionHandler) {
-        actions.set(method, handler);
-        return () => void actions.delete(method);
-      },
-    } as never);
+    // 计划任务页的「新建」经 webui-server 的真实登记表调用
+    const pages = pageHost();
+    host.provide(webuiServer, pages.service);
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.register(schedulerPlugin, { jobs: [] });
     await app.plugins.idle();
@@ -49,17 +44,14 @@ describe('scheduler 一次性任务的远期 runAt', () => {
       started.push(name);
     });
     const jobs = () => host.services.get(scheduler)?.getJobs() ?? [];
-    const upsertJob = actions.get('upsertJob');
-    if (!upsertJob) throw new Error('页面动作 "upsertJob" 未登记 —— 管理面缺失');
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
       const runAt = new Date(Date.now() + 30 * DAY).toISOString();
-      const res = await upsertJob(
-        { name: 'far', sessionId: 'internal', platform: 'internal', content: 'x', enabled: true, runAt },
-        { platform: 'webui', userId: 'console' },
-      );
-      expect(res).toEqual({ ok: true });
+      const res = await pages.act('scheduler', 'createJob', {
+        input: { name: 'far', sessionId: 'internal', platform: 'internal', content: 'x', enabled: true, runAt },
+      });
+      expect(res).toEqual({ status: 200, body: { message: '已保存任务 far' } });
 
       // 25 天已越过 setTimeout 上限：溢出写法在这里早就执行并删掉任务了
       await vi.advanceTimersByTimeAsync(25 * DAY);
@@ -78,6 +70,7 @@ describe('scheduler 一次性任务的远期 runAt', () => {
     } finally {
       vi.useRealTimers();
       await app.stop().catch(() => {});
+      pages.dispose();
     }
   });
 });

@@ -501,7 +501,7 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 
 回合之外建档的会话（自动标题路径兜底建的 CLI 会话、`/session.set` 建的档）状态为 `waiting`：首条消息是被指令相位吞掉的指令时没有回合，指令回复不改状态。回合中建档的（如 `create_subtask` 给父会话兜底建档）为 `active`，由这一轮结束时收口。
 
-边界：未装 agent 时没有回合，会话不会翻 `active`；非 `active` 的会话（包括已归档的）在新一轮开始时一律翻回 `active`；关停时仍为 `active` 的会话由 `onDrain` 收口（§7.3）。
+边界：未装 agent 时没有回合，会话不会翻 `active`；`waiting`、`completed`、`error` 的会话在新一轮开始时翻回 `active`，已归档的不翻，回合结束时也不收口：归档是 owner 不想在列表里看到它，她在那里跑一轮不该让它回到列表，只有手动恢复（会话协议的 `session/unarchive`）才回来，开口时间照常记下；关停时仍为 `active` 的会话由 `onDrain` 收口（§7.3）。
 
 ### 7.2 配置解析是同步快照
 

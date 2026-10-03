@@ -1,6 +1,5 @@
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
-import type { WebUIService } from '@aalis/api-webui';
 import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
@@ -24,9 +23,9 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { deferred } from '../helpers/deferred.js';
 
-// GET /api/plugins 与 /api/pages 必须按 instanceId 归属工具 / 指令 / displayName。
+// GET /api/plugins 必须按 instanceId 归属工具 / 指令 / displayName。
 // 生产里 tools.register 的 pluginName 就是 contextId（= instanceId）；按 definition.name
-// 索引会让 name:suffix 误挂主实例的工具，页面展示名变成 undefined。
+// 索引会让 name:suffix 误挂主实例的工具。
 
 function ref<T>(instance: unknown): ServiceRef<T> {
   return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
@@ -63,7 +62,6 @@ function mountPluginRoutes(
   extras: {
     tools?: { getAll(): Array<{ name: string; pluginName: string; visibility?: string }> };
     commands?: { getAll(): Array<{ name: string; pluginName?: string; visibility?: string }> };
-    pages?: Array<{ key: string; label: string; pluginName: string }>;
   } = {},
 ) {
   const { expressApp, invoke } = captureRoutes();
@@ -76,21 +74,13 @@ function mountPluginRoutes(
       hostConfig: app.bind({ hostConfig }).hostConfig,
       tools: { current: extras.tools as ToolService | undefined },
       commands: { current: extras.commands as CommandService | undefined },
-      webui: () =>
-        extras.pages
-          ? ({
-              getPages: () => extras.pages,
-            } as WebUIService)
-          : undefined,
     },
-    () => ({ platform: 'webui', userId: 'console' }),
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
-    () => undefined,
   );
   return { invoke };
 }
 
-describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
+describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
   it('披露全部 uses：核心服务也参与依赖闸，保留参数别名与可选声明，不混入敏感标签', async () => {
     const app = silentApp();
     // hooks / contributions 由提供者插件给出：先登记它们，探针才能激活；行按名字取，列表里还有这两个提供者
@@ -265,28 +255,6 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     expect(extra?.commands).toEqual(['cmd-work']);
     expect(extra?.capabilities).toEqual(['visibility:restricted']);
     expect(main?.capabilities ?? []).not.toContain('visibility:restricted');
-  });
-
-  it('GET /api/pages 的 pluginDisplayName 按页面 pluginName（= instanceId）解析', async () => {
-    const def = reusableDef();
-    const app = silentApp();
-    await app.plugin(def);
-    await app.plugin(def, {}, 'probe-pkg:work');
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('probe-pkg')?.state).toBe('active');
-    expect(app.plugins.getPlugin('probe-pkg:work')?.state).toBe('active');
-    const { invoke } = mountPluginRoutes(app, {
-      pages: [
-        { key: 'main', label: '主页', pluginName: 'probe-pkg' },
-        { key: 'work', label: '工页', pluginName: 'probe-pkg:work' },
-      ],
-    });
-    const out = await invoke('GET /api/pages');
-    const pages = out.body as Array<{ plugin: string; pluginDisplayName?: string }>;
-    expect(pages.find(p => p.plugin === 'probe-pkg')?.pluginDisplayName).toBe('探针包');
-    expect(pages.find(p => p.plugin === 'probe-pkg:work')?.pluginDisplayName, '额外实例页面也要有 displayName').toBe(
-      '探针包',
-    );
   });
 
   const SECRET_SCHEMA = {

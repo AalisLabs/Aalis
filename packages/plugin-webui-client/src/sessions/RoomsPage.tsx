@@ -125,7 +125,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
         <div className="rooms-page">
           {list.error ? (
             <EmptyState
-              tone="error"
+              tone="danger"
               title="房间读取失败"
               description={list.error.message}
               action={<Button onClick={list.retry}>重试</Button>}

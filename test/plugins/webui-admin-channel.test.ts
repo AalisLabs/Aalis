@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import {
-  type BoundWebui,
   type WebuiAdminClientMessage,
   type WebuiAdminEvent,
   webuiClient,
@@ -18,8 +17,8 @@ import {
   definePlugin,
   type Logger,
   LogHub,
-  optional,
   provide,
+  services,
 } from '../../packages/core/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
@@ -161,23 +160,20 @@ describe('/admin 管理面推送', () => {
   });
 
   it('页面登记与撤回：插件状态不变，也各推一次 plugins.changed', async () => {
-    let webui: BoundWebui | undefined;
-    const pageOwner = definePlugin({
-      name: 'admin-page-owner',
-      uses: { webui: optional(webuiServer) },
-      apply(caps) {
-        webui = caps.webui;
-      },
-    });
-    const port = await start(quietApp(), async app => void (await app.plugin(pageOwner)));
+    const app = quietApp();
+    const port = await start(app);
     const a = await openAdmin(port);
     const pages = async () => {
       const res = await fetch(`http://127.0.0.1:${port}/api/pages`, { headers: { cookie: COOKIE } });
-      return ((await res.json()) as Array<{ key: string }>).map(p => p.key);
+      return ((await res.json()) as { pages: Array<{ key: string }> }).pages.map(p => p.key);
     };
+    const service = app.bind({ services }).services.get(webuiServer)!;
 
     const before = a.count('plugins.changed');
-    const off = webui!.registerPage({ key: 'probe-page', label: '探针页' });
+    const off = service.addPage(
+      { key: 'probe-page', title: '探针页', content: [{ type: 'markdown', id: 'm', data: () => '' }] },
+      'admin-page-owner',
+    );
     await vi.waitFor(() => expect(a.count('plugins.changed')).toBe(before + 1));
     expect(await pages()).toContain('probe-page');
     off();

@@ -6,6 +6,8 @@ import './Menu.css';
 
 interface MenuItem {
   label: string;
+  /** 同一个菜单里可能同名的项给一个不重的标识 */
+  id?: string;
   onSelect(): void;
   /** 危险操作用危险色字 */
   danger?: boolean;
@@ -119,7 +121,7 @@ export function Menu({ label, items, icon = Ellipsis }: MenuProps) {
           >
             {items.map(item => (
               <button
-                key={item.label}
+                key={item.id ?? item.label}
                 type="button"
                 role="menuitem"
                 tabIndex={-1}

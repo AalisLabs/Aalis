@@ -25,10 +25,9 @@ import { platform } from '@aalis/api-platform';
 import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import { registerRelationActions } from './actions.js';
 import { type EvictionConfig, registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationContribution } from './middleware.js';
@@ -36,6 +35,7 @@ import { startRenameWatcher } from './rename-watcher.js';
 import { RelationService } from './service.js';
 import { RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
+import { registerRelationPages } from './webui.js';
 
 const configSchema = defineConfig({
   // ────── 抽取（写入）侧 ──────
@@ -389,6 +389,16 @@ const configSchema = defineConfig({
     default: 50,
   },
 
+  // ────── 关系图页 ──────
+  graphSpacing: {
+    type: 'number',
+    label: '关系图疏密',
+    default: 120,
+    min: 20,
+    max: 1000,
+    description: '关系图布局的理想边长（像素），越大越稀疏，建议 60 到 250',
+  },
+
   // ────── 通用 ──────
   debug: {
     type: 'boolean',
@@ -397,110 +407,6 @@ const configSchema = defineConfig({
     default: false,
   },
 });
-
-const webuiPages: WebuiPage[] = [
-  {
-    key: 'user-relation',
-    label: '人物关系图',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="6" y1="9" x2="12" y2="15"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="6" y1="6" x2="18" y2="6"/></svg>',
-    order: 58,
-    content: [
-      {
-        type: 'graph',
-        label: '关系图（点击节点查看详情；可设置焦点重做子图）',
-        source: 'getRelationGraph',
-        detailSource: 'getGraphNodeDetail',
-        defaultMaxDepth: 2,
-        defaultMaxBreadth: 10,
-        refresh: 0,
-      },
-    ],
-  },
-  {
-    key: 'user-relation-raw',
-    label: '关系图·原始数据',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="20"/></svg>',
-    order: 59,
-    content: [
-      {
-        type: 'tabs',
-        label: '原始数据（与关系图共用同一份存储）',
-        items: [
-          {
-            key: 'persons',
-            label: '人物列表',
-            content: [
-              {
-                type: 'table',
-                source: 'listPersons',
-                searchable: true,
-                columns: [
-                  { key: 'id', label: 'ID', nowrap: true },
-                  { key: 'platform', label: '平台', nowrap: true },
-                  { key: 'userId', label: '用户 ID', nowrap: true },
-                  { key: 'displayName', label: '显示名', nowrap: true },
-                  { key: 'firstSeenAt', label: '首次出现', nowrap: true },
-                  { key: 'lastSeenAt', label: '最近活跃', nowrap: true },
-                ],
-                actions: [
-                  { label: '删除', method: 'deletePerson', confirm: '确认删除该人物及其所有相关边？', danger: true },
-                ],
-                refresh: 60,
-              },
-            ],
-          },
-          {
-            key: 'events',
-            label: '事件列表',
-            content: [
-              {
-                type: 'table',
-                source: 'listEvents',
-                searchable: true,
-                columns: [
-                  { key: 'title', label: '标题', minWidth: 160 },
-                  { key: 'category', label: '类别', nowrap: true },
-                  { key: 'sessionScope', label: '会话', nowrap: true },
-                  { key: 'summary', label: '摘要', minWidth: 200, maxWidth: 360, render: 'expandable-text' },
-                  { key: 'preview', label: '最新证据', minWidth: 160, render: 'expandable-text' },
-                  { key: 'evidenceCount', label: '证据数', nowrap: true },
-                  { key: 'lastReinforcedAt', label: '最近强化', nowrap: true },
-                ],
-                actions: [
-                  { label: '删除', method: 'deleteEvent', confirm: '确认删除该事件及其所有相关边？', danger: true },
-                ],
-                refresh: 60,
-              },
-            ],
-          },
-          {
-            key: 'entities',
-            label: '实体列表',
-            content: [
-              {
-                type: 'table',
-                source: 'listEntities',
-                searchable: true,
-                columns: [
-                  { key: 'name', label: '名称', minWidth: 140 },
-                  { key: 'entityKind', label: '类型', nowrap: true },
-                  { key: 'aliases', label: '别名', minWidth: 140, render: 'expandable-text' },
-                  { key: 'summary', label: '摘要', minWidth: 200, maxWidth: 360, render: 'expandable-text' },
-                  { key: 'evidenceCount', label: '证据数', nowrap: true },
-                  { key: 'lastReinforcedAt', label: '最近强化', nowrap: true },
-                ],
-                actions: [
-                  { label: '删除', method: 'deleteEntity', confirm: '确认删除该实体及其所有相关边？', danger: true },
-                ],
-                refresh: 60,
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-];
 
 function start(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config, caps.logger);
@@ -614,9 +520,8 @@ function start(caps: Caps): void {
     });
   }
 
-  // WebUI 页面与页面动作
-  for (const page of webuiPages) caps.webui.registerPage(page);
-  registerRelationActions(caps.webui, service, caps.logger);
+  // 关系图页与原始数据页
+  registerRelationPages(caps.webui, service, caps.logger, cfg.graphSpacing);
 
   // /relation 指令
   if (cfg.commandsEnabled) {

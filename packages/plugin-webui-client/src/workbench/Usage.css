@@ -24,6 +24,72 @@
   padding: var(--space-3) var(--space-4);
 }
 
+/* 堆叠的进度条：底色就是剩余；分项按 data-swatch 取色，表里每行前的点同色 */
+.usage-bar {
+  position: relative;
+  display: flex;
+  height: var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-fill-3);
+}
+
+.usage-bar > [data-swatch] {
+  flex: 0 1 var(--share);
+  background: var(--swatch);
+}
+
+.usage-bar > [data-mark] {
+  position: absolute;
+  inset-block: 0;
+  left: var(--at);
+  width: 2px;
+  background: var(--color-warning-text);
+}
+
+.usage-swatch {
+  display: inline-block;
+  width: var(--space-2);
+  height: var(--space-2);
+  margin-right: var(--space-2);
+  border-radius: var(--radius-full);
+  vertical-align: middle;
+  background: var(--swatch);
+}
+
+.usage [data-swatch="1"] {
+  --swatch: var(--color-chart-1);
+}
+
+.usage [data-swatch="2"] {
+  --swatch: var(--color-chart-2);
+}
+
+.usage [data-swatch="3"] {
+  --swatch: var(--color-chart-3);
+}
+
+.usage [data-swatch="4"] {
+  --swatch: var(--color-chart-4);
+}
+
+.usage [data-swatch="5"] {
+  --swatch: var(--color-chart-5);
+}
+
+.usage [data-swatch="6"] {
+  --swatch: var(--color-chart-6);
+}
+
+.usage [data-swatch="other"],
+.usage [data-swatch="reserved"] {
+  --swatch: var(--color-text-3);
+}
+
+.usage [data-swatch="free"] {
+  --swatch: var(--color-fill-3);
+}
+
 .usage-table {
   width: 100%;
   border-collapse: collapse;

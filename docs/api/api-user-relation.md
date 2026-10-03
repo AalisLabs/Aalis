@@ -6,7 +6,7 @@
 
 ## 概述
 
-本包定义 `userRelation` 描述符（服务名 `user-relation`）与查询接口 `UserRelationService`，不含实现。接口只收消费方实际用到的方法；关系图的完整实现类 `RelationService`（抽取、整理、工具、指令与页面动作背后的全部方法）仍由 `@aalis/plugin-user-relation` 导出，不属于契约。
+本包定义 `userRelation` 描述符（服务名 `user-relation`）与查询接口 `UserRelationService`，不含实现。接口只收消费方实际用到的方法；关系图的完整实现类 `RelationService`（抽取、整理、工具、指令与 WebUI 页面背后的全部方法）仍由 `@aalis/plugin-user-relation` 导出，不属于契约。
 
 ## 服务接口
 

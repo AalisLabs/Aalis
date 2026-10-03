@@ -1,7 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 
@@ -84,7 +83,6 @@ async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; ca
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(webuiServer, { registerPage: () => () => {}, registerAction: () => () => {} } as never);
   // blockPrivate:false 才连得上本机测试服务（同时不起网络闸）
   await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false, defaultTimeout });
   await app.plugins.idle();

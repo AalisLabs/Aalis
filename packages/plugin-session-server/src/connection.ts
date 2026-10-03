@@ -7,7 +7,6 @@
 import type { ApprovalAttendance } from '@aalis/api-approval';
 import {
   type ErrorCode,
-  type Features,
   RequestFrameSchema,
   RPC_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
@@ -82,8 +81,10 @@ const SERVER_NAME = '@aalis/plugin-session-server';
 
 const majorOf = (version: string) => version.split('.')[0];
 
-/** features 回当前的功能位，握手时给出 */
-export function createSessionServer(handlers: MethodHandlers, features: () => Features, logger: Logger) {
+/** 握手回应里随时会变的两项：当前的功能位与应用名 */
+type ServerState = () => Pick<SessionMethodResult<'initialize'>, 'features' | 'appName'>;
+
+export function createSessionServer(handlers: MethodHandlers, state: ServerState, logger: Logger) {
   const connections = new Set<LiveConnection>();
 
   function connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection {
@@ -152,7 +153,7 @@ export function createSessionServer(handlers: MethodHandlers, features: () => Fe
         server: { name: SERVER_NAME },
         identity: peer.identity,
         surface: peer.surface.name,
-        features: features(),
+        ...state(),
       };
     };
 

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
-import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
 import { App, type Logger, provide, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
@@ -15,6 +15,7 @@ import { WorkflowLoader } from '../../packages/plugin-workflow/src/loader.js';
 import { RunStore } from '../../packages/plugin-workflow/src/persistence.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // workflow 的运行历史（含 once 记账）是整份快照：读不懂时必须拒写，once 也不能据空记账安排。
@@ -132,8 +133,8 @@ describe('workflow：once 记账读不出时不安排 once', () => {
   let base: string;
   let app: App;
   let calls: number;
-  /** 桩 webui 截下的页面动作登记表：按名调用，看 WebUI 回执 */
-  let actions: Map<string, WebuiActionHandler>;
+  /** webui-server 的真实登记表：经闸门调工作流页的动作，看回执 */
+  let pages: PageHost;
 
   // data 是 storage-local 的内置根，映射到家目录的 state/
   const runsPath = () => join(base, 'state', 'workflow-runs.json');
@@ -141,14 +142,8 @@ describe('workflow：once 记账读不出时不安排 once', () => {
   const boot = async (enableTools = false): Promise<WorkflowService> => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
-    actions = new Map();
-    app.bind({ provide }).provide(webuiServer, {
-      registerPage: () => () => {},
-      registerAction(method: string, handler: WebuiActionHandler) {
-        actions.set(method, handler);
-        return () => void actions.delete(method);
-      },
-    } as never);
+    pages = pageHost();
+    app.bind({ provide }).provide(webuiServer, pages.service);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: ['workspace'].map(name => ({
@@ -191,6 +186,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
 
   afterEach(async () => {
     await app?.stop();
+    pages?.dispose();
     rmSync(base, { recursive: true, force: true });
   });
 
@@ -262,48 +258,35 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     expect(readable.note).toBeUndefined();
   });
 
-  it('记账读不出时 WebUI 保存或启用 once：回执带同一说明，只对写了文件的定义说重启恢复；记账可读时不带附注', async () => {
-    const call = async (method: string, args: Record<string, unknown>) => {
-      const handler = actions.get(method);
-      if (!handler) throw new Error(`页面动作 "${method}" 未登记`);
-      return (await handler(args, { platform: 'webui', userId: 'console' })) as {
-        ok?: boolean;
-        message?: string;
-        error?: string;
-      };
+  it('记账读不出时工作流页保存或启用 once：回执带同一说明，只对写了文件的定义说重启恢复；记账可读时不带附注', async () => {
+    const message = async (action: string, body: Record<string, unknown>) => {
+      const reply = await pages.act('workflows', action, body);
+      expect(reply.status, JSON.stringify(reply.body)).toBe(200);
+      return (reply.body as { message: string }).message;
     };
     const skipped = 'once 记账读取失败（见日志），本次运行不会触发；可用「立即运行」手动执行';
     writeFileSync(runsPath(), 'null');
     await boot();
-    expect(await call('upsertWorkflowYaml', { yaml: ONCE_YAML, persist: true })).toMatchObject({
-      ok: true,
-      message: `已保存；${skipped}，修复运行历史文件后重启恢复`,
-    });
-    expect((await call('upsertWorkflowYaml', { yaml: ONCE_YAML, persist: false })).message).toBe(`已保存；${skipped}`);
+    expect(await message('defineWorkflow', { input: { yaml: ONCE_YAML, persist: true } })).toBe(
+      `已保存工作流 zz-once；${skipped}，修复运行历史文件后重启恢复`,
+    );
+    expect(await message('defineWorkflow', { input: { yaml: ONCE_YAML, persist: false } })).toBe(
+      `已保存工作流 zz-once；${skipped}`,
+    );
     // zz-once 此刻启用：先停用（不涉及触发，无附注），再启用（带附注）
-    const disabled = await call('toggleWorkflow', { id: 'zz-once' });
-    expect(disabled).toMatchObject({ ok: true, enabled: false });
-    expect(disabled.message).toBeUndefined();
-    expect(await call('toggleWorkflow', { id: 'zz-once' })).toMatchObject({
-      ok: true,
-      enabled: true,
-      message: `已启用；${skipped}，修复运行历史文件后重启恢复`,
-    });
+    expect(await message('disableWorkflow', { rowKey: 'zz-once' })).toBe('已停用 zz-once');
+    expect(await message('enableWorkflow', { rowKey: 'zz-once' })).toBe(
+      `已启用 zz-once；${skipped}，修复运行历史文件后重启恢复`,
+    );
     expect(calls).toBe(0);
 
     await app.stop();
+    pages.dispose();
     rmSync(runsPath());
     await boot();
-    const readable = await call('upsertWorkflowYaml', { yaml: ONCE_YAML, persist: false });
-    expect(readable.ok).toBe(true);
-    expect(readable.message).toBeUndefined();
-  });
-
-  it('WebUI 删除不存在的工作流：回 {ok:false,error}，前端据此显示原因', async () => {
-    await boot();
-    const handler = actions.get('removeWorkflow');
-    expect(await handler?.({ id: 'zz-missing' })).toEqual({ ok: false, error: '工作流不存在' });
-    expect(await handler?.({ id: 'zz-once' })).toEqual({ ok: true });
+    expect(await message('defineWorkflow', { input: { yaml: ONCE_YAML, persist: false } })).toBe(
+      '已保存工作流 zz-once',
+    );
   });
 
   it('对照：运行历史文件不存在时过期 once 照常补触发一次', async () => {

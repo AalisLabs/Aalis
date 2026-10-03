@@ -113,11 +113,8 @@ describe('金丝雀密钥不进主配置文件', () => {
         hostConfig: refStub(bound.hostConfig.require()),
         tools: { current: undefined },
         commands: { current: undefined },
-        webui: () => undefined,
       },
-      () => ({ platform: 'webui', userId: 'console' }),
       () => (_req: unknown, _res: unknown, next: () => void) => next(),
-      () => undefined,
     );
 
     const put = await invoke('PUT /api/plugins/:name/config', {

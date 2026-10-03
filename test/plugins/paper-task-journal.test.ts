@@ -111,7 +111,7 @@ describe('TaskJournal', () => {
     expect((parse(await journal.read(TASK))[0].entry as Record<string, unknown>).text).toBe('x'.repeat(9000));
   });
 
-  it('reads only recent files and rejects an oversized full download before reading any body', async () => {
+  it('reads only the bodies of the recent files', async () => {
     const { storage, journal } = setup();
     for (let i = 0; i < 6; i++) await journal.record(TASK, `run:${i}`, { text: `event-${i}` });
     const read = storage.readFile.bind(storage);
@@ -125,8 +125,5 @@ describe('TaskJournal', () => {
       'event-5',
     ]);
     expect(calls).toHaveLength(2);
-    calls.length = 0;
-    await expect(journal.read(TASK, 1)).rejects.toThrow('Task journal exceeds 1 byte read limit');
-    expect(calls).toHaveLength(0);
   });
 });

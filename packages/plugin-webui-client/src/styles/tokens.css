@@ -59,6 +59,9 @@
   --dialog-w: 25rem;
   --dialog-form-w: 35rem;
   --toast-w: 22.5rem;
+  /* 关系图的高度：宽时与窄时（手机、会话面板） */
+  --graph-h: 30rem;
+  --graph-h-narrow: 20rem;
 
   /* 当前区域的底色：吸顶的表头、分组头要盖住滚过去的内容。侧栏与右侧面板里改成 --color-bg-side */
   --surface: var(--color-bg);

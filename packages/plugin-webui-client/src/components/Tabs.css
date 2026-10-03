@@ -5,13 +5,22 @@
   min-height: 0;
 }
 
+.tabs-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* 放不下时横向滚动 */
 .tabs-list {
   display: flex;
-  flex-shrink: 0;
+  flex: 1;
   gap: var(--space-4);
+  min-width: 0;
   padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -44,6 +53,14 @@
   height: 2px;
   background: var(--color-accent);
   content: "";
+}
+
+/* 可以关闭的标签：关闭按钮紧跟在字后面 */
+.tabs-closable {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-0-5);
 }
 
 .tabs-panel {

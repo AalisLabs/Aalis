@@ -13,7 +13,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
-import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallContext, type ToolDisplay, tools } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -27,6 +27,7 @@ import {
   type Message,
   type OutboundDeliveryResult,
   type OutgoingMessage,
+  type StreamChunkMessage,
   WellKnownKinds,
 } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -103,6 +104,8 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       rewinds.push(['code', sessionId, turnId]);
       return { ok: true, restored: ['workspace:/a.txt'], deleted: [], errors: [], alsoChangedBy: [] };
     },
+    /** 这一组用例里 turn-exec 那一轮执行过命令 */
+    execUsed: async (_sessionId: string, turnId: string) => turnId === 'turn-exec',
     async rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult> {
       rewinds.push(['code-and-chat', sessionId, turnId]);
       await host.events.emit('history:changed', { sessionId });
@@ -190,12 +193,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       wake.resolve();
       return done.promise;
     };
-    const stream = (chunk: {
-      contentDelta?: string;
-      reasoningDelta?: string;
-      done?: boolean;
-      toolLimitReached?: boolean;
-    }) =>
+    const stream = (chunk: Omit<StreamChunkMessage, 'sessionId' | 'turnId' | 'platform'>) =>
       inside(() => host.events.emit('outbound:stream', { sessionId, turnId, platform: message.platform, ...chunk }));
     const tool = (
       phase: 'start' | 'end',
@@ -225,10 +223,33 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       text: (contentDelta: string) => stream({ contentDelta }),
       think: (reasoningDelta: string) => stream({ reasoningDelta }),
       streamDone: (toolLimitReached = false) => stream({ done: true, toolLimitReached }),
+      /** 模型正在生成第 index 个工具调用的参数，已生成 chars 个字 */
+      generating: (callId: string, name: string, index = 0, chars = 0) =>
+        stream({ toolCallProgress: { index, name, charsAccumulated: chars, callId } }),
       toolStart: (callId: string, name: string, args: Record<string, unknown> = {}) =>
         tool('start', callId, name, args),
       toolEnd: (callId: string, name: string, result: string, args: Record<string, unknown> = {}) =>
         tool('end', callId, name, args, result),
+      /**
+       * 工具返回：agent 先跑 agent:tool:after（工具上下文带回合的中止信号），再发结束事件；返回随结果落库的元数据
+       */
+      toolReturns: async (
+        callId: string,
+        name: string,
+        result: string,
+        args: Record<string, unknown> = {},
+        signal?: AbortSignal,
+      ) => {
+        const data = {
+          name,
+          result,
+          toolCallContext: { sessionId, turnId, callId, signal },
+          metadata: {} as Record<string, unknown>,
+        };
+        await inside(() => host.hooks.run('agent:tool:after', data));
+        await tool('end', callId, name, args, result);
+        return data.metadata;
+      },
       toolOutput: (callId: string, text: string) =>
         inside(() => host.events.emit('tool:output', { sessionId, turnId, callId, text })),
       /** 一次定稿校验（persona 等在这里决定要不要重试） */
@@ -825,6 +846,80 @@ describe('条目', () => {
     expect(history.items.find(i => i.itemId === 'h1')).toMatchObject({ display: { kind: 'command', command: 'pwd' } });
   });
 
+  it('模型生成参数期间工具卡已出现：只有工具名，状态 generating；开始执行时同一张卡转为 running；生成了却没执行的在回合结束时以失败收尾', async () => {
+    const { server, sm, openTurn } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const t = openTurn(s.id);
+    await t.text('我来写');
+    // 名字还没生成出来时不出卡；同一个调用的后续进度不再推
+    await t.generating('c1', '', 0, 0);
+    await t.generating('c1', 'file_write', 0, 10);
+    await t.generating('c1', 'file_write', 0, 400);
+    await t.generating('c2', 'exec', 1, 5);
+    const startedCards = () =>
+      c
+        .notifications('item/started')
+        .map(p => p.item)
+        .filter(i => i.kind === 'tool-call')
+        .map(i => [i.itemId, i.status, i.name, i.args]);
+    expect(startedCards()).toEqual([
+      ['c1', 'generating', 'file_write', {}],
+      ['c2', 'generating', 'exec', {}],
+    ]);
+    const other = client(server());
+    await other.init();
+    const cards = (await other.subscribe(s.id)).snapshot.items.filter(i => i.kind === 'tool-call');
+    expect(
+      cards.map(i => [i.itemId, i.status]),
+      '快照里同样有生成中的卡',
+    ).toEqual([
+      ['c1', 'generating'],
+      ['c2', 'generating'],
+    ]);
+
+    await t.toolStart('c1', 'file_write', { path: 'workspace:/a.md', content: '全文' });
+    expect(startedCards().at(-1)).toEqual([
+      'c1',
+      'running',
+      'file_write',
+      { path: 'workspace:/a.md', content: '全文' },
+    ]);
+    await t.toolEnd('c1', 'file_write', '{"ok":true}', { path: 'workspace:/a.md', content: '全文' });
+    await t.finish('silent');
+    const items = c.timeline(s.id, sub);
+    expect(items.filter(i => i.kind === 'tool-call').map(i => [i.itemId, i.status, i.result])).toEqual([
+      ['c1', 'completed', '{"ok":true}'],
+      ['c2', 'failed', '没有执行'],
+    ]);
+    expect(
+      items.map(i => i.kind),
+      '卡片排在生成它之前说的话后面',
+    ).toEqual(['turn', 'agent-message', 'tool-call', 'tool-call']);
+  });
+
+  it('房间里达到工具调用上限：生成了、没执行的调用之前说的话就是回复，不标「未发出」', async () => {
+    const { server, sm, host, openTurn } = await setup();
+    await sm.ensureSession(ROOM, { name: '群' });
+    host.events.on('outbound:message', msg => {
+      if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = Promise.resolve({ ok: true });
+    });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(ROOM);
+    const t = openTurn(ROOM);
+    await t.text('先说到这');
+    await t.generating('c9', 'exec');
+    await t.streamDone(true);
+    await t.replyCheck();
+    await t.reply('先说到这');
+    await t.finish('replied');
+    const said = c.timeline(ROOM, sub).filter(i => i.kind === 'agent-message');
+    expect(said.map(i => [i.text, i.undelivered])).toEqual([['先说到这', undefined]]);
+  });
+
   it('工具结果带 error 的记为失败；达到工具调用上限的一轮收尾时给一条可以继续的 notice', async () => {
     const { server, sm, openTurn } = await setup();
     const s = await sm.createSession({ name: 'S' });
@@ -842,6 +937,94 @@ describe('条目', () => {
       result: '{"error":"没有这个文件"}',
     });
     expect(items.find(i => i.kind === 'notice')).toMatchObject({ topic: 'tool-limit', canContinue: true });
+  });
+
+  it('命令的退出码按声明从结果里取：不为 0 的记为失败、展示带上退出码，为 0 的完成；结果不是 JSON、没声明取退出码的不看；历史里同样', async () => {
+    const { app, server, sm, archive, openTurn } = await setup();
+    await app.plugin(toolsPlugin, {});
+    await app.plugins.idle();
+    declareToolSystemDisplays(app.bind({ tools }).tools);
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const calls: Array<[string, string, string]> = [
+      ['c1', 'exec', '{"exitCode":0,"stdout":"ok","stderr":""}'],
+      ['c2', 'exec', '{"exitCode":3,"stdout":"","stderr":"坏了"}'],
+      ['c3', 'exec', '不是 JSON'],
+      // 声明了命令展示、没声明从结果里取退出码的工具：结果里同名的键不算
+      ['c4', 'exec_background', '{"exitCode":3}'],
+    ];
+    const t = openTurn(s.id);
+    const recorded: Array<Record<string, unknown>> = [];
+    for (const [callId, name, result] of calls) {
+      await t.toolStart(callId, name, { command: 'make' });
+      recorded.push(await t.toolReturns(callId, name, result, { command: 'make' }));
+    }
+    await t.finish('silent');
+    // 取到的退出码随结果落库
+    expect(recorded).toEqual([{ exitCode: 0 }, { exitCode: 3 }, {}, {}]);
+    const expected = [
+      ['c1', 'completed', { kind: 'command', command: 'make', exitCode: 0 }],
+      ['c2', 'failed', { kind: 'command', command: 'make', exitCode: 3 }],
+      ['c3', 'completed', { kind: 'command', command: 'make' }],
+      ['c4', 'completed', { kind: 'command', command: 'make' }],
+    ];
+    const cards = (items: SessionItem[]) =>
+      items.flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.status, i.display]] : []));
+    expect(cards(c.timeline(s.id, sub))).toEqual(expected);
+
+    // 存档里没记下退出码的（结果落库时会话服务没在跑）从结果里取
+    await archive.saveMessage(s.id, {
+      role: 'assistant',
+      content: '好',
+      timestamp: 9,
+      segments: [
+        ...calls.map(([callId, name, result]) => ({
+          type: 'tool_call' as const,
+          name,
+          args: { command: 'make' },
+          result,
+          callId,
+        })),
+        { type: 'text', content: '好' },
+      ],
+    });
+    const history = await c.call('session/history', { sessionId: s.id });
+    expect(cards(history.items)).toEqual(expected);
+  });
+
+  it('回合被停止：停止时还没结束的调用落成 aborted，不管之后返回了什么，并写进工具结果的元数据；生成了没执行的同样；停止之前结束的照旧', async () => {
+    const { app, server, sm, openTurn } = await setup();
+    await app.plugin(toolsPlugin, {});
+    await app.plugins.idle();
+    declareToolSystemDisplays(app.bind({ tools }).tools);
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const t = openTurn(s.id);
+    const turn = new AbortController();
+    const returns = (callId: string, name: string, result: string) =>
+      t.toolReturns(callId, name, result, { command: 'make' }, turn.signal);
+    await t.toolStart('c1', 'exec', { command: 'make' });
+    const settled = await returns('c1', 'exec', '{"exitCode":0}');
+    await t.toolStart('c2', 'exec', { command: 'make' });
+    await t.toolStart('c3', 'probe', { command: 'make' });
+    await t.generating('c4', 'exec', 2);
+    turn.abort();
+    const killed = await returns('c2', 'exec', '{"aborted":true,"message":"命令已随回合中止","exitCode":-1}');
+    const finished = await returns('c3', 'probe', '{"ok":true}');
+    await t.finish('aborted');
+    expect([settled, killed, finished]).toEqual([{ exitCode: 0 }, { aborted: true, exitCode: -1 }, { aborted: true }]);
+    expect(
+      c.timeline(s.id, sub).flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.status, i.result]] : [])),
+    ).toEqual([
+      ['c1', 'completed', '{"exitCode":0}'],
+      ['c2', 'aborted', '{"aborted":true,"message":"命令已随回合中止","exitCode":-1}'],
+      ['c3', 'aborted', '{"ok":true}'],
+      ['c4', 'aborted', '没有执行'],
+    ]);
   });
 
   it('入站与她发出的附件按存档推送：用户消息带说话人，宿主通知是 notice，发出的图片是只有附件的消息', async () => {
@@ -1210,6 +1393,60 @@ describe('历史', () => {
       },
     ]);
   });
+
+  it('历史里元数据记着停止时还没结束的调用落成 aborted；没有结果的调用（重启或中断）同样，不算失败', async () => {
+    const { server, sm, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const save = (m: Message) => archive.saveMessage(s.id, m);
+    await save({
+      role: 'assistant',
+      content: null,
+      timestamp: 1,
+      metadata: { turnId: 't1' },
+      toolCalls: [
+        { id: 'm1', type: 'function', function: { name: 'exec', arguments: '{"command":"make"}' } },
+        { id: 'm2', type: 'function', function: { name: 'exec', arguments: '{"command":"ls"}' } },
+        { id: 'm3', type: 'function', function: { name: 'exec', arguments: '{"command":"pwd"}' } },
+        { id: 'm4', type: 'function', function: { name: 'exec', arguments: '{"command":"rm"}' } },
+      ],
+    });
+    await save({
+      role: 'tool',
+      content: '{"aborted":true,"exitCode":-1}',
+      toolCallId: 'm1',
+      timestamp: 2,
+      metadata: { turnId: 't1', callId: 'c1', aborted: true },
+    });
+    await save({
+      role: 'tool',
+      content: '{"exitCode":0}',
+      toolCallId: 'm2',
+      timestamp: 3,
+      metadata: { turnId: 't1', callId: 'c2' },
+    });
+    // 等着批准时被停下：审批随之撤销，停止在前，按停止算
+    await save({
+      role: 'tool',
+      content: '{"error":"需要 owner 批准的操作没有执行"}',
+      toolCallId: 'm4',
+      timestamp: 4,
+      metadata: {
+        turnId: 't1',
+        callId: 'c4',
+        aborted: true,
+        approval: { id: 'ap-1', state: 'cancelled', source: 'turn-ended', at: 3 },
+      },
+    });
+    const c = client(server());
+    await c.init();
+    const { items } = await c.call('session/history', { sessionId: s.id });
+    expect(items.flatMap(i => (i.kind === 'tool-call' ? [[i.args.command, i.status]] : []))).toEqual([
+      ['make', 'aborted'],
+      ['ls', 'completed'],
+      ['pwd', 'aborted'],
+      ['rm', 'aborted'],
+    ]);
+  });
 });
 
 describe('回合控制', () => {
@@ -1254,6 +1491,16 @@ describe('回合控制', () => {
     ]);
   });
 
+  it('turn/checkpoint 回这一轮有没有执行过命令（命令的效果回滚撤不回）；会话不存在回 not-found', async () => {
+    const { server, sm } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    expect(await c.call('turn/checkpoint', { sessionId: s.id, turnId: 'turn-exec' })).toEqual({ execUsed: true });
+    expect(await c.call('turn/checkpoint', { sessionId: s.id, turnId: 'turn-edit' })).toEqual({ execUsed: false });
+    expect((await c.fail('turn/checkpoint', { sessionId: 'session-nope', turnId: 't' })).data?.code).toBe('not-found');
+  });
+
   it('没有 agent、检查点、待办服务时，对应的方法回 unsupported', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
@@ -1272,6 +1519,7 @@ describe('回合控制', () => {
     for (const [method, params] of [
       ['turn/abort', { sessionId: s.id }],
       ['turn/rewind', { sessionId: s.id, turnId: 't', scope: 'code' }],
+      ['turn/checkpoint', { sessionId: s.id, turnId: 't' }],
       ['session/compress', { sessionId: s.id }],
       ['plan/clear', { sessionId: s.id }],
     ] as const) {
@@ -1340,7 +1588,11 @@ const callProbe: ChatResponse = {
   toolCalls: [{ id: 'model-id', type: 'function', function: { name: PROBE, arguments: '{"q":1}' } }],
 };
 
-async function startAgent(responses: ChatResponse[], probe: (ctx: ToolCallContext) => Promise<string>) {
+async function startAgent(
+  responses: ChatResponse[],
+  probe: (ctx: ToolCallContext) => Promise<string>,
+  display?: ToolDisplay,
+) {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
   provideHome(app);
@@ -1360,6 +1612,7 @@ async function startAgent(responses: ChatResponse[], probe: (ctx: ToolCallContex
       function: { name: PROBE, description: '探针', parameters: { type: 'object', properties: {} } },
     },
     handler: (_args, ctx) => probe(ctx),
+    display,
   });
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
@@ -1399,6 +1652,15 @@ describe('接 agent 与网关', () => {
     expect(ctxs.map(ctx => ctx.turnId)).toEqual([turnId]);
     const call = live.find(i => i.kind === 'tool-call');
     expect(call?.itemId).toBe(ctxs[0]?.callId);
+    // 模型生成参数时卡片已出现，用的就是执行时的 callId：开始执行时同一张卡转为 running
+    expect(
+      c
+        .notifications('item/started')
+        .flatMap(p => (p.item.kind === 'tool-call' ? [[p.item.itemId, p.item.status]] : [])),
+    ).toEqual([
+      [ctxs[0]?.callId, 'generating'],
+      [ctxs[0]?.callId, 'running'],
+    ]);
     expect(live.filter(i => i.kind !== 'user-message' && i.kind !== 'usage').every(i => i.turnId === turnId)).toBe(
       true,
     );
@@ -1479,5 +1741,49 @@ describe('接 agent 与网关', () => {
     await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ turnId, outcome: 'aborted' }));
     expect(c.timeline(s.id, sub).filter(i => i.kind === 'turn')).toHaveLength(1);
     await c.call('turn/abort', { sessionId: s.id });
+  });
+
+  it('命令的结果过长被 agent 截断：退出码取自截断之前的结果，工具卡照样记为失败、带退出码；刷新后历史里同样', async () => {
+    const runTests: ChatResponse = {
+      content: '跑一下测试',
+      toolCalls: [{ id: 'model-id', type: 'function', function: { name: PROBE, arguments: '{"command":"npm test"}' } }],
+    };
+    const { host, s, c, sub, turnItems } = await startAgent(
+      [runTests, { content: '测试没过' }],
+      async () => JSON.stringify({ exitCode: 1, stdout: 'x'.repeat(10_000), stderr: '' }),
+      { kind: 'command', fields: { command: 'command' }, result: { exitCode: 'exitCode' } },
+    );
+    await c.call('turn/send', { sessionId: s.id, content: '跑测试' });
+    await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'replied' }));
+    const card = (items: SessionItem[]) => items.find(i => i.kind === 'tool-call');
+    const expected = {
+      status: 'failed',
+      display: { kind: 'command', command: 'npm test', exitCode: 1 },
+      result: expect.stringContaining('[工具输出已截断'),
+    };
+    expect(card(c.timeline(s.id, sub))).toMatchObject(expected);
+    const fresh = client(host.sessionProtocol.require());
+    await fresh.init();
+    expect(card((await fresh.subscribe(s.id)).snapshot.items)).toMatchObject(expected);
+  });
+
+  it('停止键停下的一轮：停止时在途的工具调用落成 aborted，工具之后照常返回也不改；刷新后历史里同样', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const { host, s, c, sub, turnItems } = await startAgent([callProbe, { content: '完成' }], async () => {
+      entered.resolve();
+      await release.promise;
+      return '{"ok":true}';
+    });
+    await c.call('turn/send', { sessionId: s.id, content: '跑一个慢的' });
+    await entered.promise;
+    await c.call('turn/abort', { sessionId: s.id });
+    release.resolve();
+    await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'aborted' }));
+    const card = (items: SessionItem[]) => items.find(i => i.kind === 'tool-call');
+    expect(card(c.timeline(s.id, sub))).toMatchObject({ status: 'aborted', result: '{"ok":true}' });
+    const fresh = client(host.sessionProtocol.require());
+    await fresh.init();
+    expect(card((await fresh.subscribe(s.id)).snapshot.items)).toMatchObject({ status: 'aborted' });
   });
 });

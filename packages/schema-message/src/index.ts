@@ -399,14 +399,17 @@ export interface StreamChunkMessage {
   contentDelta?: string;
   reasoningDelta?: string;
   /**
-   * 工具调用生成进度提示。当 LLM 正在生成 tool_call（不发文本/reasoning）时，
-   * provider 每收到一段 tool_calls delta 会通过此字段上报，让 UI 显示「正在生成工具调用」。
-   * 仅用于 UI 提示，不影响最终 tool_call segment 的下发。
+   * 工具调用的生成进度：模型生成工具调用的参数时，provider 每收到一段增量上报一次（api-llm 的 ToolCallProgress），
+   * agent 转发时带上这次调用的 callId，与之后执行它时 tool:execute 的 callId 相同，界面据此在参数生成期间就画出它的
+   * 工具卡。同一个调用的多次进度 callId 相同；只是提示，不影响最终的工具调用
    */
   toolCallProgress?: {
+    /** 这一次模型回复里的第几个工具调用 */
     index: number;
     name: string;
+    /** 已生成的参数字数 */
     charsAccumulated: number;
+    callId: string;
   };
   done?: boolean;
   /** 当工具调用次数达到上限时为 true，前端可据此提示用户继续 */

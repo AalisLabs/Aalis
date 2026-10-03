@@ -62,11 +62,29 @@
   height: var(--icon-md);
 }
 
+/* 固定的页面：与「会话」之间一条细线，多了在这一段里纵向滚动 */
+.shell-rail-pinned {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  gap: var(--space-1);
+  min-height: 0;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
 /* 触屏上没有悬停提示，图标下方写短名 */
 .shell-rail-name {
   display: none;
+  max-width: 100%;
+  overflow: hidden;
   font-size: var(--text-xs);
   line-height: var(--leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (pointer: coarse) {

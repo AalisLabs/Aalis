@@ -111,6 +111,8 @@ interface OutgoingMessage {
 
 `StreamChunkMessage` 带 `turnId`：所在回合的 id，由 agent 在回合开始时生成，同一轮的工具调用、用量与回合结束带同一个（见 [api-agent](./api-agent.md#回合-id)）。一轮的最后一个片段是 `done: true`，消息在 `agent:input:before` 被拦下时也会发这一片。
 
+模型生成工具调用的参数时，片段带 `toolCallProgress { index, name, charsAccumulated, callId }`：`index` 是这次模型回复里的第几个调用，`charsAccumulated` 是已生成的参数字数，`callId` 是 agent 给这次调用配的 id，与之后执行它的 `tool:execute` 的 `callId` 相同，同一个调用的几次进度 `callId` 不变。会话服务据此在参数生成期间就给出工具卡。
+
 ## 工具函数（runtime exports）
 
 ```ts

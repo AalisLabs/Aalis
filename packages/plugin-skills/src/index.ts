@@ -11,7 +11,7 @@ import {
   storage,
 } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -156,42 +156,6 @@ const configSchema = defineConfig({
   },
 });
 type SkillsConfig = ConfigOf<typeof configSchema>;
-
-// ──────────── WebUI 页面 ────────────
-
-const webuiPages: WebuiPage[] = [
-  {
-    key: 'skills',
-    label: '技能库 (Skills)',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>',
-    order: 56,
-    content: [
-      {
-        type: 'table',
-        label: '技能列表',
-        source: 'listSkills',
-        columns: [
-          { key: 'name', label: '名称', nowrap: true },
-          { key: 'description', label: '描述', minWidth: 220, maxWidth: 360, render: 'expandable-text' },
-          { key: 'triggers', label: '自动触发', nowrap: true },
-          { key: 'fileCount', label: '资源', nowrap: true, minWidth: 160 },
-          { key: 'dir', label: '路径', nowrap: true },
-        ],
-        actions: [
-          { label: '查看', method: 'getSkill' },
-          { label: '删除', method: 'deleteSkill', confirm: '确定删除该技能？', danger: true },
-        ],
-        refresh: 60,
-      },
-      {
-        type: 'stat',
-        label: '技能总数',
-        source: 'getStats',
-        icon: 'skills',
-      },
-    ],
-  },
-];
 
 // ──────────── frontmatter 解析 ────────────
 
@@ -338,8 +302,73 @@ function run(caps: Caps): void {
   const storage = createStorageGateway(caps.storage);
   const skillsUri = config.skillsUri;
 
-  // WebUI 页面
-  for (const page of webuiPages) webui.registerPage(page);
+  // 技能的设置页：直接读这次激活自己的服务实例，页面与服务同生共死
+  const skillOf = (name: string): SkillDefinition => {
+    const skill = service.getSkill(name);
+    if (!skill) throw new Error(`技能 ${name} 不存在`);
+    return skill;
+  };
+  const page = webui.definePage({
+    key: 'skills',
+    title: '技能',
+    icon: 'sparkles',
+    placement: 'settings',
+    actions: {
+      deleteSkill: {
+        label: '删除',
+        effect: 'destructive',
+        confirm: '删除这个技能的整个目录（含脚本、引用与资源）？',
+        row: true,
+        async handler({ rowKey }) {
+          if (!(await service.deleteSkill(rowKey))) throw new Error(`技能 ${rowKey} 不存在`);
+          return `已删除技能 ${rowKey}`;
+        },
+      },
+    },
+    content: [
+      {
+        type: 'table',
+        id: 'skills',
+        rowKey: 'name',
+        empty: '还没有技能',
+        columns: [
+          { key: 'name', label: '名称', primary: true },
+          { key: 'description', label: '描述', kind: 'long-text', primary: true },
+          { key: 'triggers', label: '自动触发' },
+          { key: 'files', label: '附属文件' },
+        ],
+        rowActions: [{ action: 'deleteSkill' }],
+        data: () =>
+          service.listSkills().map(s => ({
+            name: s.name,
+            description: s.description,
+            triggers: s.triggers?.join('、') ?? '',
+            files: `脚本 ${s.scripts.length} / 引用 ${s.references.length} / 资源 ${s.assets.length}`,
+          })),
+        detail: [
+          {
+            type: 'info',
+            id: 'skill',
+            data({ rowKey }) {
+              const s = skillOf(rowKey);
+              const listed = (label: string, value: string | undefined) => (value ? [{ label, value }] : []);
+              return [
+                { label: '名称', value: s.name },
+                { label: '描述', value: s.description },
+                ...listed('自动触发', s.triggers?.join('、')),
+                ...listed('许可证', s.license),
+                { label: '位置', value: s.uri, kind: 'code' as const },
+                ...listed('脚本', s.scripts.join('、')),
+                ...listed('引用', s.references.join('、')),
+                ...listed('资源', s.assets.join('、')),
+              ];
+            },
+          },
+          { type: 'markdown', id: 'body', label: 'SKILL.md 正文', data: ({ rowKey }) => skillOf(rowKey).body },
+        ],
+      },
+    ],
+  });
 
   // ── 加载所有 skill ──
   /** key = skill.name；重扫收尾时整体替换 */
@@ -385,7 +414,7 @@ function run(caps: Caps): void {
 
   // 重扫串行化：同一时刻只跑一次；进行中再触发，只排一次尾随重扫（期间的多次触发并成这一次）。
   // 每次扫描收尾时整体替换 skillsCache，并发的话，先开始、后收尾的那次会用读得早的旧结果盖掉新结果；
-  // 同理，扫描在飞时经服务的写入由 resyncIfScanning 排尾随重扫。
+  // 同理，扫描在飞时经服务的写入由 afterWrite 排尾随重扫。
   let scanning: Promise<void> | undefined;
   let queued: Promise<void> | undefined;
   function rescanSkills(): Promise<void> {
@@ -405,9 +434,10 @@ function run(caps: Caps): void {
     return scanning;
   }
 
-  // 扫描在飞时经服务写入：进行中的那次扫描可能在写之前就读过目录或文件，收尾整体替换会把这次写盖掉，
+  // 经服务写入之后：页面重取；扫描在飞时，进行中的那次扫描可能在写之前就读过目录或文件，收尾整体替换会把这次写盖掉，
   // 排一次尾随重扫按盘上实况重建
-  function resyncIfScanning(): void {
+  function afterWrite(): void {
+    page.invalidate();
     if (scanning) rescanSkills().catch(err => logger.warn(`写入后重扫 skills 失败：${err}`));
   }
 
@@ -448,6 +478,7 @@ function run(caps: Caps): void {
     // 扫完整体替换；按名字缓存的已编译 triggers 随旧缓存一并作废（改了 triggers 的技能要重新编译）
     skillsCache = found;
     compiledTriggers.clear();
+    page.invalidate();
   }
 
   // ── 编译 triggers regex（缓存） ──
@@ -641,7 +672,7 @@ function run(caps: Caps): void {
       }
       const loaded = await loadSkillFromDir(dirUri);
       if (loaded) skillsCache.set(loaded.name, loaded);
-      resyncIfScanning();
+      afterWrite();
       logger.info(
         `技能已创建: ${input.name} (${dirUri})${input.files && input.files.length > 0 ? ` + ${input.files.length} 个附属文件` : ''}`,
       );
@@ -679,7 +710,7 @@ function run(caps: Caps): void {
         skillsCache.set(reloaded.name, reloaded);
         compiledTriggers.delete(reloaded.name);
       }
-      resyncIfScanning();
+      afterWrite();
       logger.info(`技能已更新: ${skillName}`);
       return true;
     },
@@ -697,7 +728,7 @@ function run(caps: Caps): void {
       skillsCache.delete(skillName);
       compiledTriggers.delete(skillName);
       for (const set of sessionLoaded.values()) set.delete(skillName);
-      resyncIfScanning();
+      afterWrite();
       logger.info(`技能已删除: ${skillName}`);
       return true;
     },
@@ -707,7 +738,7 @@ function run(caps: Caps): void {
       const rel = await writeSkillFile(existing.uri, file);
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) skillsCache.set(reloaded.name, reloaded);
-      resyncIfScanning();
+      afterWrite();
       logger.info(`技能 ${skillName} 已写入附属文件: ${rel}`);
       return true;
     },
@@ -723,7 +754,7 @@ function run(caps: Caps): void {
       }
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) skillsCache.set(reloaded.name, reloaded);
-      resyncIfScanning();
+      afterWrite();
       logger.info(`技能 ${skillName} 已删除附属文件: ${rel}`);
       return true;
     },
@@ -760,39 +791,6 @@ function run(caps: Caps): void {
   };
 
   provide(skills, service);
-
-  // ── 页面动作：直接读这次激活自己的服务实例，页面与服务同生共死 ──
-  webui.registerAction('listSkills', async () =>
-    service.listSkills().map(s => ({
-      name: s.name,
-      description: s.description,
-      triggers: s.triggers?.join(', ') || '',
-      fileCount: `脚本 ${s.scripts.length} / 引用 ${s.references.length} / 资源 ${s.assets.length}`,
-      dir: s.uri,
-    })),
-  );
-
-  webui.registerAction('getSkill', async args => {
-    const s = service.getSkill(args.name as string);
-    if (!s) return { error: '技能不存在' };
-    return {
-      name: s.name,
-      description: s.description,
-      triggers: s.triggers,
-      license: s.license,
-      dir: s.uri,
-      scripts: s.scripts,
-      references: s.references,
-      assets: s.assets,
-      raw: s.raw,
-    };
-  });
-
-  webui.registerAction('deleteSkill', async args =>
-    (await service.deleteSkill(args.name as string)) ? { ok: true } : { error: '技能不存在' },
-  );
-
-  webui.registerAction('getStats', async () => ({ value: service.listSkills().length }));
 
   // ── 注册工具分组与工具 ──
   tools.registerGroup({

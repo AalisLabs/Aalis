@@ -14,7 +14,7 @@ import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 // ════════════════════════════════════════════════════════════
 // IM 房间收录：有出生平台、不是子任务的会话，首条真人入站（不带 source）即登记，名字只采信出生平台自己的入站；
 // 带 source 的内部注入（工作流、好友申请的合成通知、空闲开话题等）不登记。
-// 状态在回合真正开始的 agent:input:before 翻 active，同一个中间件在 finally 里收口，
+// 状态在回合真正开始的 agent:input:before 翻 active（已归档的不翻），同一个中间件在 finally 里收口，
 // 后面的中间件拦下或抛错时房间也不停在「进行中」。收口按这一轮的结局：出错为 error，其余为 completed；
 // 结局为 replied 时记下她最近开口的时间。房间建档时记下接管它的平台适配器实例，会话列表按它分组；
 // 没记下的（建档时没有适配器认领、读表读进来的旧房间）下一次有消息进来时补记。
@@ -430,6 +430,23 @@ describe('状态在回合开始时翻 active', () => {
     });
     expect(during).toBe('active');
     expect(sm.getSession(GROUP)?.status).toBe('completed');
+  });
+
+  it('已归档的会话跑一轮仍是归档：回合开始与结束都不改它，开口时间照常记下', async () => {
+    const { sm, inbound, turn } = await setup();
+    await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
+    await sm.updateSession(GROUP, { status: 'archived' });
+
+    let during: string | undefined;
+    await turn(GROUP, () => {
+      during = sm.getSession(GROUP)?.status;
+    });
+    expect(during).toBe('archived');
+    expect(sm.getSession(GROUP)?.status).toBe('archived');
+    expect(sm.getSession(GROUP)?.lastReplyAt).toEqual(expect.any(Number));
+
+    await turn(GROUP, undefined, 'error');
+    expect(sm.getSession(GROUP)?.status, '出错的一轮同样不翻').toBe('archived');
   });
 
   it('WebUI 会话（回归）：入站本身不翻，回合中为 active，结束后收口', async () => {

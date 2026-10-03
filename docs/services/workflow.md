@@ -132,7 +132,7 @@ await events.emit('trigger:fired' as any, {
 ### 典型消费点
 
 - **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖；登记口在 tools 提供者缺席时先挂账，上线后自动补挂）。
-- **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等是闭包，直接使用本次激活构造的 service，不按名回查容器（查到的可能是别人提供的同名服务）。
+- **工作流页**（同插件内）：数据源与动作处理函数是闭包，直接使用本次激活构造的 service，不按名回查容器（查到的可能是别人提供的同名服务）。
 - 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `workflow.current` 编程式触发/查询。
 
 ## 4. 写一个 provider

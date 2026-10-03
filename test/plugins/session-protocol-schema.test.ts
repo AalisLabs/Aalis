@@ -106,6 +106,7 @@ const methodSamples: MethodSamples = {
         identity: { platform: 'webui', userId: 'console' },
         surface: 'webui',
         features: { send: true, rewind: false, compress: true },
+        appName: 'Aalis',
       },
       invalid: {
         protocolVersion: SESSION_PROTOCOL_VERSION,
@@ -306,6 +307,10 @@ const methodSamples: MethodSamples = {
       invalid: { ok: true, restored: [], deleted: [], errors: [] },
     },
   },
+  'turn/checkpoint': {
+    params: { valid: { sessionId: 'session-1', turnId: 't1' }, invalid: { sessionId: 'session-1' } },
+    result: { valid: { execUsed: true }, invalid: {} },
+  },
   'plan/clear': {
     params: { valid: { sessionId: 'session-1' }, invalid: {} },
     result: { valid: {}, invalid: null },
@@ -360,7 +365,7 @@ const items: SessionItem[] = [
     output: 'a.txt\n',
     result: '{"exitCode":0}',
     durationMs: 12,
-    display: { kind: 'command', command: 'ls', cwd: 'workspace:/' },
+    display: { kind: 'command', command: 'ls', cwd: 'workspace:/', exitCode: 0 },
     approvalId: 'ap-1',
     settlement: { state: 'approved', source: 'owner', at: 5 },
   },
@@ -376,6 +381,10 @@ const items: SessionItem[] = [
     approvalId: 'ap-2',
     settlement: { state: 'expired', source: 'absent', at: 6 },
   },
+  // 模型还在生成参数：只有工具名
+  { kind: 'tool-call', itemId: 'c3', turnId: 't1', at: 4, name: 'exec', args: {}, status: 'generating' },
+  // 回合停下时还没结束
+  { kind: 'tool-call', itemId: 'c4', turnId: 't1', at: 4, name: 'exec', args: {}, status: 'aborted' },
   {
     kind: 'notice',
     itemId: 'n1',
@@ -425,6 +434,15 @@ const invalidItems: unknown[] = [
     args: {},
     status: 'completed',
     display: { kind: 'diff', path: 'a' },
+  },
+  {
+    kind: 'tool-call',
+    itemId: 'c4',
+    at: 4,
+    name: 'exec',
+    args: {},
+    status: 'failed',
+    display: { kind: 'command', command: 'ls', exitCode: '3' },
   },
   {
     kind: 'tool-call',

@@ -3,13 +3,13 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, installDialog, main, renderApp, requests, server } from './harness.js';
+import { type Harness, INIT, installDialog, main, renderApp, requests, server } from './harness.js';
 import { approval, push, snapshot, toolCall, turn, userMessage } from './items.js';
 
 // ════════════════════════════════════════════════════════════
-// 审批卡：挂在工具卡下面，事实取会话服务按展示种类给出的命令、目录与 diff，没声明的逐字列出全部参数，显示前一律清洗；
-// 只有批准与拒绝（拒绝可附理由），不显示倒计时，出现时不抢输入框的焦点；结算后收成工具行上的一句（结果、原因与时间），
-// 刷新后从条目恢复；标签页标题在有未结审批时带上待处理数
+// 审批卡：挂在工具卡下面，事实取会话服务按展示种类给出的命令、目录与 diff，没声明的逐字列出全部参数，显示前一律清洗、
+// 完整列出不限高；只有批准与拒绝（拒绝可附理由），不显示倒计时，出现时不抢输入框的焦点；结算后收成工具行上的一句
+// （结果、原因与时间），刷新后从条目恢复；标签页标题是握手给的应用名，有未结审批时带上待处理数
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -108,11 +108,11 @@ describe('审批卡', () => {
     expect(params).not.toContain('‮');
   });
 
-  it('卡上限高的命令、参数与 diff 放不下时，下面写明全长：长串空白藏起来的后半截也有提示', async () => {
+  it('卡上的命令、参数与 diff 完整显示，不设行数上限、不在框内滚动：长串空白后面的半截照样在卡上', async () => {
     const hidden = `echo ok${' '.repeat(500)}&& rm -rf ~`;
-    // 字数按字符算：代理对的字算一个
-    const script = Array.from({ length: 8 }, (_, i) => `step ${i} 𝄞`).join('\n');
+    const script = Array.from({ length: 8 }, (_, i) => `step ${i}`).join('\n');
     const patch = Array.from({ length: 30 }, (_, i) => `+line ${i}`).join('\n');
+    const params = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`key${i}`, i]));
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot(
@@ -121,6 +121,7 @@ describe('审批卡', () => {
             toolCall('c1', 'exec', { status: 'running', approvalId: 'ap1' }),
             toolCall('c2', 'exec', { status: 'running', approvalId: 'ap2' }),
             toolCall('c3', 'file_write', { status: 'running', approvalId: 'ap3' }),
+            toolCall('c4', 'web_fetch', { status: 'running', approvalId: 'ap4' }),
           ],
           {
             approvals: [
@@ -131,15 +132,19 @@ describe('审批卡', () => {
                 tool: 'file_write',
                 facts: { diff: { path: 'a.txt', patch }, params: {} },
               }),
+              approval('ap4', { callId: 'c4', tool: 'web_fetch', facts: { params } }),
             ],
           },
         ),
     });
     await timeline();
-    const [long, lines, diff] = screen.getAllByRole('region', { name: '审批' }).map(node => within(node));
-    expect(long.getByText(`共 1 行 · ${hidden.length} 字，超出的部分在框内滚动`)).toBeTruthy();
-    expect(lines.getByText(`共 8 行 · ${[...script].length} 字，超出的部分在框内滚动`)).toBeTruthy();
-    expect(diff.getByText(`共 30 行 · ${patch.length} 字，超出的部分在框内滚动`)).toBeTruthy();
+    const cards = screen.getAllByRole('region', { name: '审批' });
+    const [long, lines, diff, generic] = cards.map(node => within(node));
+    expect(long.getByText(hidden, { normalizer: text => text })).toBeTruthy();
+    expect(lines.getByText(script, { normalizer: text => text })).toBeTruthy();
+    expect(diff.getAllByText(/^\+line \d+$/)).toHaveLength(30);
+    expect(generic.getByText(/"key19": 19/)).toBeTruthy();
+    for (const card of cards) expect(card.textContent).not.toMatch(/滚动|共 \d+ 行/);
   });
 
   it('批准与拒绝发 approval/respond，带回内容哈希；拒绝可附理由', async () => {
@@ -286,15 +291,19 @@ describe('审批卡', () => {
     expect(screen.queryByRole('region', { name: '审批' })).toBeNull();
   });
 
-  it('标签页标题在有推来的未结审批时带上待处理数，结算后去掉；连接断开时清空', async () => {
-    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([]) });
+  it('标签页标题是握手给的应用名，有推来的未结审批时带上待处理数，结算后去掉；连接断开时清空', async () => {
+    app = await renderApp('/s/s1', {
+      initialize: () => ({ ...INIT, appName: '<应用名>' }),
+      'session/subscribe': () => snapshot([]),
+    });
     await timeline();
+    expect(document.title).toBe('<应用名>');
     act(() => server().notify('approval/requested', { approval: execApproval }));
     act(() => server().notify('approval/requested', { approval: approval('ap2', { sessionId: 'other' }) }));
-    expect(document.title).toBe('(2) Aalis');
+    expect(document.title).toBe('(2) <应用名>');
     act(() => server().notify('approval/settled', { approvalId: 'ap1', state: 'approved', source: 'owner', at: 0 }));
-    expect(document.title).toBe('(1) Aalis');
+    expect(document.title).toBe('(1) <应用名>');
     act(() => server().drop());
-    expect(document.title).toBe('Aalis');
+    expect(document.title).toBe('<应用名>');
   });
 });

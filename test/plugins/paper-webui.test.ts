@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type PublishService, publish } from '../../packages/api-publish/src/index.js';
-import type {
-  WebuiComponent,
-  WebuiFilePayload,
-  WebuiTableComponent,
-  WebuiTabsComponent,
-} from '../../packages/api-webui/src/index.js';
+import type { ComponentView, InfoItem, PageView } from '../../packages/api-webui/src/index.js';
 import { provide } from '../../packages/core/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import {
@@ -26,10 +21,11 @@ import {
 import { PNG, ScriptedRemote, text } from '../fixtures/paper-remote.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 白纸页（U10d）：声明式页面 paper，白纸、任务、成品、账本、告警五个表；owner 的管理动作
-// （换新、归档代理、清空、恢复、取消任务、告警已读）经页面动作调运行驱动；成品经 readArtifact 以
-// { name, mime, base64 } 取回，mime 按文件头判定：只有位图给对应类型，其余（含 HTML、SVG）一律
-// application/octet-stream，不在 WebUI 源里渲染。真实 App 装载插件，远端用 ScriptedRemote，真实时钟。
+// WebUI 白纸页与群会话的白纸面板：经 webui-server 的真实登记表登记（质量门槛）、取数与调动作（闸门）。
+// 白纸页分「白纸」「创作日志」两个标签：白纸表选中一块看属性、任务与成品，同一标签里另有今天的花费与告警。
+// owner 的管理动作（换新、归档代理、清空、恢复、取消任务、放弃跟踪、核销预留、告警已读）经页面动作调运行驱动。
+// 成品交存储地址：宿主签发下载句柄（一律当附件下发），只有账本记作位图的给预览（宿主经 /api/media 按文件头再核）。
+// 账本落盘后两页都重取；未读告警数与账本读取失败发提示。真实 App 装载插件，远端用 ScriptedRemote，真实时钟。
 // ════════════════════════════════════════════════════════════
 
 afterEach(stopPaperHubs);
@@ -69,26 +65,38 @@ async function running(hub: PaperHub, taskId: string): Promise<string> {
   return hub.ledger().tasks[taskId].runId ?? '';
 }
 
-async function rows(hub: PaperHub, method: string): Promise<Row[]> {
-  return (await hub.action(method)) as Row[];
+const papers = (hub: PaperHub) => hub.pages.data<Row[]>('paper', 'papers');
+const tasks = (hub: PaperHub, paperId = PAPER_ID) => hub.pages.data<Row[]>('paper', 'paperTasks', { rowKey: paperId });
+const artifacts = (hub: PaperHub, paperId = PAPER_ID) =>
+  hub.pages.data<Row[]>('paper', 'paperArtifacts', { rowKey: paperId });
+const spend = (hub: PaperHub) => hub.pages.data<Row[]>('paper', 'spend');
+const alerts = (hub: PaperHub) => hub.pages.data<Row[]>('paper', 'alerts');
+/** 白纸详情的键值：名称 → 值 */
+async function info(hub: PaperHub, paperId = PAPER_ID): Promise<Map<string, unknown>> {
+  const items = await hub.pages.data<InfoItem[]>('paper', 'paper', { rowKey: paperId });
+  return new Map(items.map(item => [item.label, item.value]));
 }
+const act = (hub: PaperHub, action: string, rowKey: string) => hub.pages.act('paper', action, { rowKey });
+const ok = (message: string) => ({ status: 200, body: { message } });
+const refused = (error: string | RegExp) => ({
+  status: 500,
+  body: { error: typeof error === 'string' ? error : expect.stringMatching(error) },
+});
 
-function tabsOf(hub: PaperHub): WebuiTabsComponent {
-  const page = hub.pages.find(p => p.key === 'paper');
-  expect(page, '白纸页已登记').toBeDefined();
-  const tabs = page?.content?.find((c: WebuiComponent) => c.type === 'tabs');
-  expect(tabs, '白纸页是 tabs').toBeDefined();
-  return tabs as WebuiTabsComponent;
+/** 页面声明里按 id 找组件（含标签里的与详情里的） */
+function component(view: PageView, id: string): ComponentView {
+  const screens = Array.isArray(view.content) ? [view.content] : view.content.tabs.map(tab => tab.content);
+  const all = screens.flat().flatMap(c => [c, ...(('detail' in c && c.detail) || [])]);
+  const found = all.find(c => 'id' in c && c.id === id);
+  if (!found) throw new Error(`页面 ${view.key} 没有组件 ${id}`);
+  return found;
 }
+const rowActionsOf = (hub: PaperHub, id: string) => {
+  const table = component(hub.pages.view('paper'), id);
+  return table.type === 'table' ? (table.rowActions ?? []) : [];
+};
 
-function tableOf(hub: PaperHub, label: string): WebuiTableComponent {
-  const item = tabsOf(hub).items.find(i => i.label === label);
-  const table = item?.content.find(c => c.type === 'table');
-  expect(table, `${label} 表`).toBeDefined();
-  return table as WebuiTableComponent;
-}
-
-function doneTask(id: string, artifacts: TaskRecord['artifacts'], over: Partial<TaskRecord> = {}): TaskRecord {
+function doneTask(id: string, taskArtifacts: TaskRecord['artifacts'], over: Partial<TaskRecord> = {}): TaskRecord {
   return {
     id,
     paperId: PAPER_ID,
@@ -102,7 +110,7 @@ function doneTask(id: string, artifacts: TaskRecord['artifacts'], over: Partial<
     startedAt: Date.now() - 50_000,
     endedAt: Date.now() - 10_000,
     costCents: 12,
-    artifacts,
+    artifacts: taskArtifacts,
     delivered: false,
     ...over,
   };
@@ -110,12 +118,12 @@ function doneTask(id: string, artifacts: TaskRecord['artifacts'], over: Partial<
 
 /** 账本里一件已完成的任务，成品文件照宿主的命名放进白纸根 */
 function seeded(
-  tasks: Array<{ task: TaskRecord; bytes: Record<string, Uint8Array> }>,
+  seeds: Array<{ task: TaskRecord; bytes: Record<string, Uint8Array> }>,
   mutate?: (ledger: PaperLedger) => void,
 ): PaperFiles {
   const ledger = emptyLedger();
   const files: PaperFiles = new Map();
-  for (const { task, bytes } of tasks) {
+  for (const { task, bytes } of seeds) {
     ledger.tasks[task.id] = task;
     for (const a of task.artifacts) {
       const ext = { png: 'png', jpeg: 'jpg', gif: 'gif', webp: 'webp', mp4: 'mp4', html: 'html', other: 'bin' }[a.type];
@@ -127,11 +135,57 @@ function seeded(
   return files;
 }
 
+const unreadAlert = (ledger: PaperLedger) => {
+  ledger.alerts.push({
+    id: 'al-00000001',
+    at: Date.now(),
+    kind: 'unknown-agent',
+    subject: 'bc-foreign',
+    providerType: REMOTE,
+    message: '账号下有账本外的代理 FOREIGN-AGENT',
+    acknowledged: false,
+  });
+};
+
 const HTML = text('<!doctype html><html><body><script>alert(1)</script></body></html>');
 const SVG = text('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><rect/></svg>');
+const media = (uri: string) => `/api/media?${new URLSearchParams({ uri })}`;
 
 describe('页面登记', () => {
-  it('白纸表显示具名留空、显式额度与零值；无名房间纸才用 defaults 金额', async () => {
+  it('白纸页与会话面板都过登记门槛；白纸页分「白纸」「创作日志」两个标签', async () => {
+    const hub = await startPaperHub();
+    expect(hub.pages.logs).toEqual([]);
+    const view = hub.pages.view('paper');
+    expect(view).toMatchObject({ title: '白纸', placement: 'plugin', icon: 'file' });
+    expect('tabs' in view.content && view.content.tabs.map(tab => tab.title)).toEqual(['白纸', '创作日志']);
+    expect(hub.pages.view('paper-room')).toMatchObject({ title: '白纸', placement: 'session' });
+  });
+
+  it('动作按语义分效果：会丢东西的弹确认；恢复、放弃跟踪、核销与已读按行状态显示', async () => {
+    const hub = await startPaperHub();
+    const actions = hub.pages.view('paper').actions ?? {};
+    expect(rowActionsOf(hub, 'papers')).toEqual([
+      { action: 'resumePaper', visibleWhen: 'halted' },
+      { action: 'archivePaper' },
+      { action: 'rotatePaper' },
+      { action: 'freshStartPaper' },
+      { action: 'clearPaper' },
+    ]);
+    expect(actions.rotatePaper).toMatchObject({ label: '换新', effect: 'destructive' });
+    expect(actions.rotatePaper.confirm).toContain('只重置对话，工程包照常带到新代理');
+    expect(actions.freshStartPaper.confirm).toContain('成品与任务记录保留');
+    expect(actions.clearPaper).toMatchObject({ label: '清空', effect: 'destructive' });
+    expect(actions.clearPaper.confirm).toMatch(/远端代理/);
+    expect(actions.archivePaper).toMatchObject({ effect: 'write' });
+    expect(rowActionsOf(hub, 'paperTasks')).toEqual([
+      { action: 'cancelTask', visibleWhen: 'cancellable' },
+      { action: 'abandonTask', visibleWhen: 'abandonable' },
+      { action: 'writeOffReserve', visibleWhen: 'writeOffable' },
+    ]);
+    expect(rowActionsOf(hub, 'alerts')).toEqual([{ action: 'acknowledgeAlert', visibleWhen: 'unread' }]);
+  });
+
+  it('白纸详情的每日额度：具名留空、显式额度与零值；无名房间纸才用 defaults 金额', async () => {
     const configured = await startPaperHub({
       config: {
         ...PILOT_CONFIG,
@@ -144,11 +198,9 @@ describe('页面登记', () => {
         ],
       },
     });
-    const rowsWithDefault = await rows(configured, 'listPapers');
-    expect(String(rowsWithDefault.find(row => row.paperId === PAPER_ID)?.dailyBudget)).toContain('不单独限额');
-    expect(String(rowsWithDefault.find(row => row.paperId === 'n:capped')?.dailyBudget)).toContain('上限 120 美分');
-    expect(String(rowsWithDefault.find(row => row.paperId === 'n:closed')?.dailyBudget)).toContain('0 美分（禁任务）');
-    expect(tableOf(configured, '白纸').columns.map(col => col.key)).toContain('dailyBudget');
+    expect(String((await info(configured, PAPER_ID)).get('每日额度'))).toContain('不单独限额');
+    expect(String((await info(configured, 'n:capped')).get('每日额度'))).toContain('上限 120 美分');
+    expect(String((await info(configured, 'n:closed')).get('每日额度'))).toContain('0 美分（禁任务）');
 
     const anonymous = await startPaperHub({
       config: { defaults: { dailyCents: 120 } },
@@ -156,25 +208,19 @@ describe('页面登记', () => {
         ledger.papers['r:abcdef012345'] = { lastClearedAt: 0 };
       }),
     });
-    const roomPaper = (await rows(anonymous, 'listPapers')).find(row => String(row.paperId).startsWith('r:'));
-    expect(String(roomPaper?.dailyBudget)).toContain('上限 120 美分');
-
-    const unlimited = await startPaperHub({ config: { ...PILOT_CONFIG, budgetTimeZone: 'UTC' } });
-    const [paper] = await rows(unlimited, 'listPapers');
-    expect(String(paper.dailyBudget)).toContain('不单独限额');
-    expect((await rows(unlimited, 'listSpend'))[0]?.scope).toContain('全局');
+    expect(String((await info(anonymous, 'r:abcdef012345')).get('每日额度'))).toContain('上限 120 美分');
+    await expect(info(anonymous, 'n:zz-no-such')).rejects.toThrow('没有这块白纸');
   });
 
-  it('全局金额上限留空时，账本页与白纸表写明不限额而不显示 undefined 美分', async () => {
+  it('全局金额上限留空时，今天的花费与白纸详情写明不限额而不显示 undefined 美分', async () => {
     const hub = await startPaperHub({
       config: { papers: [{ name: PAPER, remoteAgentType: REMOTE }] },
     });
-    const [global] = await rows(hub, 'listSpend');
+    const [global] = await spend(hub);
     expect(global.scope).toContain('全局');
     expect(global.scope).toContain('不限额');
     expect(global.scope).not.toContain('undefined');
-    const [paper] = await rows(hub, 'listPapers');
-    expect(String(paper.dailyBudget)).toContain('不限额（这块白纸与全局都没设上限；房间上限另算）');
+    expect(String((await info(hub)).get('每日额度'))).toContain('不限额（这块白纸与全局都没设上限；房间上限另算）');
   });
 
   it('共用白纸合并两个房间的费用与预留，并明确计入未归属旧日账', async () => {
@@ -200,18 +246,19 @@ describe('页面登记', () => {
       rooms: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
       listed: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
     });
-    const [paper] = await rows(hub, 'listPapers');
-    expect(String(paper.rooms)).toContain('共用（2）');
-    expect(String(paper.rooms)).toContain(ROOM);
-    expect(String(paper.rooms)).toContain(ROOM2);
-    expect(String(paper.dailyBudget)).toContain('上限 200 美分');
-    expect(String(paper.dailyBudget)).toContain('已记 20 美分');
-    expect(String(paper.dailyBudget)).toContain('预留 20 美分');
-    expect(String(paper.dailyBudget)).toContain('未归属费用（含旧账）70 美分，保守计入每块白纸额度');
-    expect((await rows(hub, 'listSpend'))[0]).toMatchObject({ cents: 120, reserved: 28 });
+    const detail = await info(hub);
+    expect(String(detail.get('共用的房间'))).toContain('共用（2）');
+    expect(String(detail.get('共用的房间'))).toContain(ROOM);
+    expect(String(detail.get('共用的房间'))).toContain(ROOM2);
+    expect(String(detail.get('每日额度'))).toContain('上限 200 美分');
+    expect(String(detail.get('每日额度'))).toContain('已记 20 美分');
+    expect(String(detail.get('每日额度'))).toContain('预留 20 美分');
+    expect(String(detail.get('每日额度'))).toContain('未归属费用（含旧账）70 美分，保守计入每块白纸额度');
+    expect((await papers(hub)).find(row => row.paperId === PAPER_ID)).toMatchObject({ spent: 20 });
+    expect((await spend(hub))[0]).toMatchObject({ key: 'global', cents: 120, reserved: 28 });
   });
 
-  it('白纸页只显示获准发布目标的地址与状态，显式空显示禁发布', async () => {
+  it('白纸详情只显示获准发布目标的地址与状态，显式空显示禁发布', async () => {
     const hub = await startPaperHub({
       config: {
         ...PILOT_CONFIG,
@@ -228,59 +275,18 @@ describe('页面登记', () => {
         { name: 'secret', baseUrl: 'https://secret.example.test', available: true },
       ],
     } as unknown as PublishService);
-    const papers = await rows(hub, 'listPapers');
-    const open = papers.find(row => row.paperId === PAPER_ID);
-    const closed = papers.find(row => row.paperId === 'n:closed');
-    expect(String(open?.publishTargets)).toContain('https://aalis2.example.test/draw');
-    expect(String(open?.publishTargets)).toContain('不可用：暂停');
-    expect(String(open?.publishTargets)).not.toContain('secret.example.test');
-    expect(open?.defaultPublishTarget).toBe('two');
-    expect(closed?.publishTargets).toBe('（禁止发布）');
-    expect(closed?.defaultPublishTarget).toBe('（禁止发布）');
-    expect(tableOf(hub, '白纸').columns.map(col => col.key)).toEqual(
-      expect.arrayContaining(['publishTargets', 'defaultPublishTarget']),
-    );
-  });
-
-  it('白纸页含白纸、任务、成品、账本、告警五个表；数据源、行动作与文件列都指向已登记的页面动作', async () => {
-    const hub = await startPaperHub();
-    const tabs = tabsOf(hub);
-    expect(tabs.items.map(i => i.label)).toEqual(['白纸', '任务', '创作日志', '成品', '账本', '告警']);
-
-    const tables = tabs.items.map(i => tableOf(hub, i.label));
-    for (const table of tables) {
-      await expect(hub.action(table.source), table.source).resolves.toEqual(expect.any(Array));
-      for (const act of table.actions ?? []) {
-        // 未登记的动作会抛「未登记」；登记了的对空参数回业务失败
-        await expect(hub.action(act.method, {}), act.method).resolves.toMatchObject({ ok: false });
-      }
-    }
-
-    const papers = tableOf(hub, '白纸');
-    expect(papers.actions?.map(a => a.label)).toEqual(['换新', '归档代理', '清空', '恢复', '不带旧工程继续']);
-    expect(papers.actions?.find(a => a.label === '不带旧工程继续')?.confirm).toContain('成品与任务记录保留');
-    const rotate = papers.actions?.find(a => a.label === '换新');
-    expect(rotate?.confirm).toContain('只重置对话，工程包照常带到新代理');
-    const clear = papers.actions?.find(a => a.label === '清空');
-    expect(clear).toMatchObject({ danger: true });
-    expect(clear?.confirm).toMatch(/远端代理/);
-
-    const tasks = tableOf(hub, '任务');
-    expect(tasks.actions?.map(a => a.label)).toEqual(['取消', '放弃跟踪', '核销预留']);
-    expect(tasks.columns.map(c => c.key)).toContain('progress');
-    expect(tasks.columns.map(c => c.key)).toContain('progressAt');
-    expect(tasks.columns.find(c => c.key === 'text')?.render).toBe('expandable-text');
-
-    const artifacts = tableOf(hub, '成品');
-    const fileColumn = artifacts.columns.find(c => c.render === 'file');
-    expect(fileColumn?.method).toBe('readArtifact');
-    await expect(hub.action('readArtifact', {})).resolves.toMatchObject({ ok: false });
-
-    expect(tableOf(hub, '告警').actions?.map(a => a.label)).toEqual(['已读']);
+    const open = await info(hub);
+    const closed = await info(hub, 'n:closed');
+    expect(String(open.get('可用发布目标'))).toContain('https://aalis2.example.test/draw');
+    expect(String(open.get('可用发布目标'))).toContain('不可用：暂停');
+    expect(String(open.get('可用发布目标'))).not.toContain('secret.example.test');
+    expect(open.get('默认发布目标')).toBe('two');
+    expect(closed.get('可用发布目标')).toBe('（禁止发布）');
+    expect(closed.get('默认发布目标')).toBe('（禁止发布）');
   });
 });
 
-describe('跑完一件任务后的五个表', () => {
+describe('跑完一件任务后的几张表', () => {
   it('任务表显示运行中的最近动作与时间，结束后不再显示旧动作', async () => {
     const remote = new ScriptedRemote();
     const hub = await hubWith(remote);
@@ -292,18 +298,24 @@ describe('跑完一件任务后的五个表', () => {
     run.wake?.();
     let active: Row | undefined;
     for (let i = 0; i < 400; i++) {
-      active = (await rows(hub, 'listTasks')).find(row => row.id === taskId);
+      active = (await tasks(hub)).find(row => row.id === taskId);
       if (active?.progress === '使用工具（进行中）') break;
       await new Promise(resolve => setTimeout(resolve, 5));
     }
-    expect(active).toMatchObject({ progress: '使用工具（进行中）', progressAt: expect.any(String) });
+    expect(active).toMatchObject({
+      progress: '使用工具（进行中）',
+      progressAt: expect.any(String),
+      state: { text: '运行中', state: 'running' },
+      cancellable: true,
+    });
     remote.finish(runId);
     await waitFor(() => hub.ledger().tasks[taskId]?.state === 'done', '任务完成');
-    const finished = (await rows(hub, 'listTasks')).find(row => row.id === taskId);
-    expect(finished).toMatchObject({ progress: '', progressAt: '' });
+    const finished = (await tasks(hub)).find(row => row.id === taskId);
+    expect(finished).toMatchObject({ progress: '', state: { text: '完成' }, cancellable: false });
+    expect(finished?.progressAt).toBeUndefined();
   });
 
-  it('白纸、任务、成品、账本各行对得上；位图成品按 image/png 取回', async () => {
+  it('白纸、任务、成品、账本各行对得上；成品给下载句柄，位图另给预览', async () => {
     const a = new ScriptedRemote();
     const hub = await hubWith(a);
     const taskId = await accept(hub, '像素猫');
@@ -318,145 +330,130 @@ describe('跑完一件任务后的五个表', () => {
     const agentId = ledger.tasks[taskId].agentId ?? '';
     const agentName = ledger.agents[agentId].name;
 
-    const [paper] = await rows(hub, 'listPapers');
-    expect(paper).toMatchObject({ paperId: PAPER_ID, name: PAPER, remoteAgentType: REMOTE, halted: '' });
-    expect(String(paper.rooms)).toContain(ROOM);
+    const [paper] = await papers(hub);
+    expect(paper).toMatchObject({ paperId: PAPER_ID, name: PAPER, status: { text: '正常' }, halted: false });
     expect(String(paper.agent)).toContain(agentName);
     expect(String(paper.agent)).toContain('active');
-    expect(String(paper.egress)).toContain('allowlist');
-    expect(String(paper.egress)).toContain('未核实');
-    expect(String(paper.usage)).toContain('2048');
+    const detail = await info(hub);
+    expect(String(detail.get('共用的房间'))).toContain(ROOM);
+    expect(detail.get('远端类型')).toBe(REMOTE);
+    expect(String(detail.get('出网'))).toContain('allowlist');
+    expect(String(detail.get('出网'))).toContain('未核实');
+    expect(String(detail.get('目录占用 / 上限'))).toContain('2048');
+    expect(detail.get('停开原因')).toBe('');
 
-    const [task] = await rows(hub, 'listTasks');
+    const [task] = await tasks(hub);
     expect(task).toMatchObject({
       id: taskId,
       room: ROOM,
       initiator: 'onebot:30001',
       name: '像素猫',
-      state: 'done',
+      state: { text: '完成' },
       cost: 10,
       text: '像素猫的原文',
-      artifacts: 2,
     });
 
-    const artifacts = await rows(hub, 'listArtifacts');
-    expect(artifacts.map(r => [r.taskId, r.type, r.rel])).toEqual([
-      [taskId, 'png', 'cat.png'],
-      [taskId, 'html', 'index.html'],
+    const [png, html] = ledger.tasks[taskId].artifacts;
+    const pngUri = `${DIR}/tasks/${taskId}/out/${png.id}.png`;
+    const htmlUri = `${DIR}/tasks/${taskId}/out/${html.id}.html`;
+    expect(await artifacts(hub)).toEqual([
+      {
+        key: `${taskId}/${png.id}`,
+        file: { name: `${png.id}.png`, handle: `signed:${pngUri}` },
+        preview: media(pngUri),
+        task: '像素猫',
+        type: 'png',
+        size: expect.any(String),
+        rel: 'cat.png',
+      },
+      {
+        key: `${taskId}/${html.id}`,
+        file: { name: `${html.id}.html`, handle: `signed:${htmlUri}` },
+        task: '像素猫',
+        type: 'html',
+        size: expect.any(String),
+        rel: 'index.html',
+      },
     ]);
 
-    const spend = await rows(hub, 'listSpend');
-    expect(spend).toEqual(
+    expect(await spend(hub)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ scope: expect.stringContaining('全局'), cents: 10, tasks: 1, reserved: 0 }),
-        expect.objectContaining({ scope: expect.stringContaining(ROOM), cents: 10, tasks: 1 }),
-        expect.objectContaining({ scope: expect.stringContaining('onebot:30001'), cents: 10, tasks: 1 }),
+        expect.objectContaining({ key: `room:${ROOM}`, cents: 10, tasks: 1 }),
+        expect.objectContaining({ key: 'user:onebot:30001', cents: 10, tasks: 1 }),
       ]),
     );
-
-    const png = (await hub.action('readArtifact', artifacts[0])) as WebuiFilePayload;
-    expect(png.mime).toBe('image/png');
-    expect(Buffer.from(png.base64, 'base64')).toEqual(Buffer.from(PNG));
-    expect(png.name).toBe(`${artifacts[0].artifactId}.png`);
   });
 
-  it('账本行：预留中的金额按房间与发起者列出', async () => {
+  it('今天的花费：预留中的金额按房间与发起者列出', async () => {
     const a = new ScriptedRemote();
     const hub = await hubWith(a);
     const taskId = await accept(hub, '网页');
     await running(hub, taskId);
     const reserve = hub.ledger().reserves[taskId].cents;
-    const spend = await rows(hub, 'listSpend');
-    expect(spend).toEqual(
+    expect(await spend(hub)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ scope: expect.stringContaining('全局'), cents: 0, reserved: reserve }),
-        expect.objectContaining({ scope: expect.stringContaining(ROOM), reserved: reserve }),
-        expect.objectContaining({ scope: expect.stringContaining('onebot:30001'), reserved: reserve, tasks: 1 }),
+        expect.objectContaining({ key: 'global', cents: 0, reserved: reserve }),
+        expect.objectContaining({ key: `room:${ROOM}`, reserved: reserve }),
+        expect.objectContaining({ key: 'user:onebot:30001', reserved: reserve, tasks: 1 }),
       ]),
     );
   });
 });
 
-describe('白纸表的「共用的房间」', () => {
+describe('白纸详情的「共用的房间」', () => {
   it('受众条目写了 paperName：列出继承它的已登记房间与这个受众的全部房间，标为共用', async () => {
     const hub = await startPaperHub({
       listed: { [ROOM]: {} },
       audienceProfiles: { 'onebot/group': { paperName: PAPER } },
     });
-    const paper = (await rows(hub, 'listPapers')).find(r => r.paperId === PAPER_ID);
-    expect(paper?.rooms).toBe(`共用（2）：${ROOM}、平台档 onebot 的全部群房间`);
+    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台档 onebot 的全部群房间`);
   });
 
   it('对照：只有房间自己的配置写了 paperName、没有平台档时不算共用', async () => {
     const hub = await startPaperHub({ listed: { [ROOM]: { paperName: PAPER } } });
-    const paper = (await rows(hub, 'listPapers')).find(r => r.paperId === PAPER_ID);
-    expect(paper?.rooms).toBe(ROOM);
+    expect((await info(hub)).get('共用的房间')).toBe(ROOM);
   });
 });
 
-describe('readArtifact', () => {
+describe('成品的文件与预览', () => {
   const html = { id: 'a-0000000a', rel: 'index.html', type: 'html' as const, sizeBytes: HTML.byteLength };
   const svg = { id: 'a-0000000b', rel: 'pic.svg', type: 'other' as const, sizeBytes: SVG.byteLength };
   const fakePng = { id: 'a-0000000c', rel: 'fake.png', type: 'png' as const, sizeBytes: HTML.byteLength };
   const realPng = { id: 'a-0000000d', rel: 'real.png', type: 'png' as const, sizeBytes: PNG.byteLength };
 
-  function files() {
-    return seeded([
-      {
-        task: doneTask('t-00000001', [html, svg, fakePng, realPng]),
-        bytes: { [html.id]: HTML, [svg.id]: SVG, [fakePng.id]: HTML, [realPng.id]: PNG },
-      },
-    ]);
-  }
-
-  it('安全：HTML 与 SVG 成品回 application/octet-stream；账本记作位图、文件头却不是的也一样', async () => {
-    const hub = await startPaperHub({ files: files() });
-    for (const artifact of [html, svg, fakePng]) {
-      const out = (await hub.action('readArtifact', {
-        taskId: 't-00000001',
-        artifactId: artifact.id,
-      })) as WebuiFilePayload;
-      expect(out.mime, artifact.rel).toBe('application/octet-stream');
-      expect(out.base64.length, artifact.rel).toBeGreaterThan(0);
-    }
-    const png = (await hub.action('readArtifact', {
-      taskId: 't-00000001',
-      artifactId: realPng.id,
-    })) as WebuiFilePayload;
-    expect(png.mime).toBe('image/png');
+  it('安全：HTML 与 SVG 成品只给下载、不给预览；记作位图的给预览，文件头由 /api/media 再核', async () => {
+    const hub = await startPaperHub({
+      files: seeded([
+        {
+          task: doneTask('t-00000001', [html, svg, fakePng, realPng]),
+          bytes: { [html.id]: HTML, [svg.id]: SVG, [fakePng.id]: HTML, [realPng.id]: PNG },
+        },
+      ]),
+    });
+    const rows = new Map((await artifacts(hub)).map(row => [row.rel, row]));
+    expect(rows.get('index.html')?.preview).toBeUndefined();
+    expect(rows.get('pic.svg')?.preview).toBeUndefined();
+    expect(rows.get('fake.png')?.preview).toBe(media(`${DIR}/tasks/t-00000001/out/${fakePng.id}.png`));
+    for (const row of rows.values())
+      expect(row.file).toMatchObject({ handle: expect.stringMatching(/^signed:paper:/) });
   });
 
   it('文件名由宿主给（产物 id 加判定类型的扩展名），不用远端给的路径', async () => {
-    const hub = await startPaperHub({ files: files() });
-    const out = (await hub.action('readArtifact', { taskId: 't-00000001', artifactId: svg.id })) as WebuiFilePayload;
-    expect(out.name).toBe(`${svg.id}.bin`);
+    const hub = await startPaperHub({
+      files: seeded([{ task: doneTask('t-00000001', [svg]), bytes: { [svg.id]: SVG } }]),
+    });
+    expect((await artifacts(hub))[0].file).toMatchObject({ name: `${svg.id}.bin` });
   });
 
-  it('找不到的任务或成品、已随清空删除的、超过单文件上限的都拒绝', async () => {
-    const big = { id: 'a-0000000e', rel: 'big.png', type: 'png' as const, sizeBytes: 1024 * 1024 + 1 };
-    const cleared = doneTask('t-00000002', [realPng], { artifactsCleared: true });
+  it('已随清空删除的成品不列', async () => {
     const hub = await startPaperHub({
-      config: { ...PILOT_CONFIG, artifacts: { maxFileMB: 1 } },
       files: seeded([
-        {
-          task: doneTask('t-00000001', [realPng, big]),
-          bytes: { [realPng.id]: PNG, [big.id]: new Uint8Array(big.sizeBytes) },
-        },
-        { task: cleared, bytes: { [realPng.id]: PNG } },
+        { task: doneTask('t-00000001', [realPng]), bytes: { [realPng.id]: PNG } },
+        { task: doneTask('t-00000002', [realPng], { artifactsCleared: true }), bytes: { [realPng.id]: PNG } },
       ]),
     });
-    const refused = [
-      { taskId: 't-0000000f', artifactId: realPng.id },
-      { taskId: 't-00000001', artifactId: 'a-ffffffff' },
-      { taskId: 't-00000002', artifactId: realPng.id },
-      { taskId: 't-00000001', artifactId: big.id },
-      { taskId: 42, artifactId: realPng.id },
-    ];
-    for (const args of refused) {
-      expect(await hub.action('readArtifact', args), JSON.stringify(args)).toMatchObject({ ok: false });
-    }
-    const ok = (await hub.action('readArtifact', { taskId: 't-00000001', artifactId: realPng.id })) as WebuiFilePayload;
-    expect(ok.mime).toBe('image/png');
+    expect((await artifacts(hub)).map(row => row.key)).toEqual([`t-00000001/${realPng.id}`]);
   });
 });
 
@@ -475,11 +472,11 @@ describe('白纸的管理动作', () => {
 
   it('归档代理：调提供者的 archiveAgent，账本里代理转为 archived', async () => {
     const { a, hub, agentId } = await finishedHub();
-    expect(await hub.action('archivePaper', { paperId: PAPER_ID })).toMatchObject({ ok: true });
+    expect(await act(hub, 'archivePaper', PAPER_ID)).toEqual(ok('已归档'));
     expect(a.callsOn('archiveAgent', agentId)).toHaveLength(1);
     expect(hub.ledger().agents[agentId].state).toBe('archived');
     // 已归档的再归档：没有在用的代理
-    expect(await hub.action('archivePaper', { paperId: PAPER_ID })).toMatchObject({ ok: false });
+    expect(await act(hub, 'archivePaper', PAPER_ID)).toMatchObject({ status: 500 });
     expect(a.count('archiveAgent')).toBe(1);
   });
 
@@ -488,15 +485,14 @@ describe('白纸的管理动作', () => {
     const hub = await hubWith(a);
     const taskId = await accept(hub, '网页');
     await running(hub, taskId);
-    const res = await hub.action('archivePaper', { paperId: PAPER_ID });
-    expect(res).toMatchObject({ ok: false });
+    expect(await act(hub, 'archivePaper', PAPER_ID)).toMatchObject({ status: 500 });
     expect(a.count('archiveAgent')).toBe(0);
   });
 
   it('换新：下一件任务建新代理（账本置 rotateNext），不动远端', async () => {
     const { a, hub } = await finishedHub();
     const before = a.calls.length;
-    expect(await hub.action('rotatePaper', { paperId: PAPER_ID })).toMatchObject({ ok: true });
+    expect(await act(hub, 'rotatePaper', PAPER_ID)).toEqual(ok('下一件任务建新代理'));
     expect(hub.ledger().papers[PAPER_ID].rotateNext).toBe(true);
     expect(a.calls.length).toBe(before);
   });
@@ -504,14 +500,14 @@ describe('白纸的管理动作', () => {
   it('清空：删除远端代理与白纸目录，任务记录保留、成品标为已清空，成品表随之为空', async () => {
     const { a, hub, taskId, agentId } = await finishedHub();
     expect([...hub.files.keys()].some(k => k.startsWith(`${DIR}/`))).toBe(true);
-    expect(await hub.action('clearPaper', { paperId: PAPER_ID })).toMatchObject({ ok: true });
+    expect(await act(hub, 'clearPaper', PAPER_ID)).toEqual(ok('已清空'));
     await waitFor(() => !hub.ledger().agents[agentId], '代理移出账本');
     expect(a.callsOn('deleteAgent', agentId)).toHaveLength(1);
     const ledger = hub.ledger();
     expect(ledger.papers[PAPER_ID].binding).toBeUndefined();
     expect(ledger.tasks[taskId]).toMatchObject({ state: 'done', artifactsCleared: true });
     expect([...hub.files.keys()].some(k => k.startsWith(`${DIR}/`))).toBe(false);
-    expect(await rows(hub, 'listArtifacts')).toEqual([]);
+    expect(await artifacts(hub)).toEqual([]);
   });
 
   it('清空：有任务在跑时拒绝并给出原因', async () => {
@@ -519,13 +515,11 @@ describe('白纸的管理动作', () => {
     const hub = await hubWith(a);
     const taskId = await accept(hub, '网页');
     await running(hub, taskId);
-    const res = (await hub.action('clearPaper', { paperId: PAPER_ID })) as Row;
-    expect(res).toMatchObject({ ok: false });
-    expect(String(res.error)).toMatch(/在跑/);
+    expect(await act(hub, 'clearPaper', PAPER_ID)).toEqual(refused(/在跑/));
     expect(a.count('deleteAgent')).toBe(0);
   });
 
-  it('恢复：清除停开；没停开的回失败', async () => {
+  it('恢复：只对停开的白纸显示；清除停开，没停开的回失败', async () => {
     const files = seeded([], ledger => {
       ledger.papers[PAPER_ID] = {
         lastClearedAt: Date.now(),
@@ -533,18 +527,22 @@ describe('白纸的管理动作', () => {
       };
     });
     const hub = await hubWith(new ScriptedRemote(), { files });
-    const [paper] = await rows(hub, 'listPapers');
-    expect(String(paper.halted)).toContain('HALT-DETAIL');
-    expect(await hub.action('resumePaper', { paperId: PAPER_ID })).toMatchObject({ ok: true });
+    expect((await papers(hub))[0]).toMatchObject({
+      status: { text: '停开：HALT-DETAIL-轮次费用取不到', state: 'error' },
+      halted: true,
+    });
+    expect(String((await info(hub)).get('停开原因'))).toContain('HALT-DETAIL');
+    expect(await act(hub, 'resumePaper', PAPER_ID)).toEqual(ok('已恢复'));
     expect(hub.ledger().papers[PAPER_ID].halted).toBeUndefined();
-    expect(await hub.action('resumePaper', { paperId: PAPER_ID })).toMatchObject({ ok: false });
+    expect((await papers(hub))[0]).toMatchObject({ halted: false });
+    expect(await act(hub, 'resumePaper', PAPER_ID)).toEqual(refused('这块白纸没有停开'));
   });
 
   it('不认识的白纸一律回失败，账本里不多出白纸', async () => {
     const a = new ScriptedRemote();
     const hub = await hubWith(a);
-    for (const method of ['rotatePaper', 'archivePaper', 'clearPaper', 'resumePaper']) {
-      expect(await hub.action(method, { paperId: 'n:zz-no-such' }), method).toMatchObject({ ok: false });
+    for (const action of ['rotatePaper', 'archivePaper', 'clearPaper', 'resumePaper', 'freshStartPaper']) {
+      expect(await act(hub, action, 'n:zz-no-such'), action).toEqual(refused('没有这块白纸'));
     }
     expect(hub.ledger()?.papers?.['n:zz-no-such']).toBeUndefined();
     expect(a.count('deleteAgent') + a.count('archiveAgent')).toBe(0);
@@ -561,7 +559,7 @@ describe('取消任务（owner，任何任务）', () => {
     const taskId = String(t2.taskId);
     expect(hub.ledger().reserves[taskId]).toBeDefined();
 
-    expect(await hub.action('cancelTask', { id: taskId })).toMatchObject({ ok: true });
+    expect(await act(hub, 'cancelTask', taskId)).toEqual(ok('已取消'));
     const ledger = hub.ledger();
     expect(ledger.tasks[taskId]).toMatchObject({ state: 'cancelled', cancelledVia: 'webui' });
     expect(ledger.reserves[taskId]).toBeUndefined();
@@ -576,7 +574,7 @@ describe('取消任务（owner，任何任务）', () => {
     const taskId = await accept(hub, '任务一');
     const runId = await running(hub, taskId);
     const agentId = hub.ledger().tasks[taskId].agentId;
-    expect(await hub.action('cancelTask', { id: taskId })).toMatchObject({ ok: true });
+    expect(await act(hub, 'cancelTask', taskId)).toEqual(ok('已请远端取消这一轮；费用按实际发生的入账'));
     expect(a.calls.filter(c => c.method === 'cancelRun').map(c => c.args)).toEqual([[agentId, runId]]);
     await waitFor(() => hub.ledger().tasks[taskId]?.state === 'cancelled', '到终态');
     expect(hub.ledger().tasks[taskId].cancelledVia).toBe('webui');
@@ -588,8 +586,8 @@ describe('取消任务（owner，任何任务）', () => {
     const hub = await startPaperHub({
       files: seeded([{ task: doneTask('t-00000001', []), bytes: {} }]),
     });
-    expect(await hub.action('cancelTask', { id: 't-00000001' })).toMatchObject({ ok: false });
-    expect(await hub.action('cancelTask', { id: 't-0000000f' })).toMatchObject({ ok: false });
+    expect(await act(hub, 'cancelTask', 't-00000001')).toMatchObject({ status: 500 });
+    expect(await act(hub, 'cancelTask', 't-0000000f')).toMatchObject({ status: 500 });
     expect(hub.ledger().tasks['t-00000001'].state).toBe('done');
   });
 });
@@ -609,16 +607,16 @@ describe('核销预留', () => {
       },
     );
     const hub = await startPaperHub({ files });
-    const [row] = await rows(hub, 'listTasks');
-    expect(row.cost).toBe('预留 70');
+    expect((await tasks(hub))[0]).toMatchObject({ cost: '预留 70', writeOffable: true, abandonable: false });
 
-    expect(await hub.action('writeOffReserve', { id: 't-00000001' })).toMatchObject({ ok: true });
+    expect(await act(hub, 'writeOffReserve', 't-00000001')).toEqual(ok('已核销'));
     const ledger = hub.ledger();
     expect(ledger.reserves['t-00000001']).toBeUndefined();
     expect(ledger.runs['run-1'].cost).toEqual({ state: 'booked', cents: 70, estimated: true });
     expect(Object.values(ledger.spend)[0]).toMatchObject({ global: 70, rooms: { [ROOM]: 70 } });
     expect(ledger.tasks['t-00000001'].costCents).toBe(70);
-    expect(await hub.action('writeOffReserve', { id: 't-00000001' }), '没有预留了').toMatchObject({ ok: false });
+    expect((await tasks(hub))[0]).toMatchObject({ writeOffable: false });
+    expect(await act(hub, 'writeOffReserve', 't-00000001'), '没有预留了').toEqual(refused('这件任务没有占着预留'));
   });
 
   it('还没结束的任务不能核销', async () => {
@@ -626,50 +624,156 @@ describe('核销预留', () => {
       ledger.reserves['t-00000001'] = { cents: 70, day: '2026-09-27', room: ROOM, user: 'onebot:30001' };
     });
     const hub = await startPaperHub({ files });
-    expect(await hub.action('writeOffReserve', { id: 't-00000001' })).toMatchObject({ ok: false });
+    expect((await tasks(hub))[0]).toMatchObject({ writeOffable: false });
+    expect(await act(hub, 'writeOffReserve', 't-00000001')).toMatchObject({ status: 500 });
     expect(hub.ledger().reserves['t-00000001']).toBeDefined();
   });
 });
 
 describe('放弃跟踪', () => {
-  it('没有到点取消失败的运行中任务不能放弃跟踪', async () => {
+  it('没有到点取消失败的运行中任务不显示放弃跟踪，调用也回失败', async () => {
     const a = new ScriptedRemote();
     const hub = await hubWith(a);
     const taskId = await accept(hub, '任务一');
     await running(hub, taskId);
-    const res = await hub.action('abandonTask', { id: taskId });
-    expect(res).toMatchObject({ ok: false });
+    expect((await tasks(hub)).find(row => row.id === taskId)).toMatchObject({ abandonable: false });
+    expect(await act(hub, 'abandonTask', taskId)).toEqual(refused(/先试「取消」/));
     expect(hub.ledger().tasks[taskId].state).toBe('running');
+  });
+
+  it('白纸停开、到点取消失败的运行中任务显示放弃跟踪，判为失败', async () => {
+    const files = seeded(
+      [{ task: doneTask('t-00000001', [], { state: 'running', agentId: 'bc-00000001', runId: 'run-1' }), bytes: {} }],
+      ledger => {
+        ledger.papers[PAPER_ID] = { lastClearedAt: 0, halted: { reason: 'cancel-failed', detail: '取消失败', at: 1 } };
+        ledger.alerts.push({
+          id: 'al-00000002',
+          at: 1,
+          kind: 'cancel-failed',
+          subject: 'bc-00000001',
+          message: '到点取消失败',
+          acknowledged: false,
+        });
+      },
+    );
+    const hub = await startPaperHub({ files });
+    expect((await tasks(hub))[0]).toMatchObject({ abandonable: true });
+    expect(await act(hub, 'abandonTask', 't-00000001')).toEqual(ok('已放弃跟踪'));
+    expect(hub.ledger().tasks['t-00000001'].state).toBe('failed');
   });
 });
 
-describe('告警', () => {
+describe('告警与提示', () => {
   it('列出告警；账本外代理的告警标为已读后，用这个提供者的白纸解除停开', async () => {
-    const files = seeded([], ledger => {
-      ledger.alerts.push({
-        id: 'al-00000001',
-        at: Date.now(),
-        kind: 'unknown-agent',
-        subject: 'bc-foreign',
-        providerType: REMOTE,
-        message: '账号下有账本外的代理 FOREIGN-AGENT',
-        acknowledged: false,
-      });
+    const hub = await hubWith(new ScriptedRemote(), { files: seeded([], unreadAlert) });
+    const [alert] = await alerts(hub);
+    expect(alert).toMatchObject({
+      id: 'al-00000001',
+      kind: 'unknown-agent',
+      status: { text: '未读', state: 'attention' },
+      unread: true,
     });
-    const hub = await hubWith(new ScriptedRemote(), { files });
-    const [alert] = await rows(hub, 'listAlerts');
-    expect(alert).toMatchObject({ id: 'al-00000001', kind: 'unknown-agent', status: '未读' });
     expect(String(alert.message)).toContain('FOREIGN-AGENT');
 
-    const refused = await hub.call('paper_task', { text: '做个网页', name: '网页' });
-    expect(String(refused.error)).toMatch(/账本外的代理/);
+    const refusedTask = await hub.call('paper_task', { text: '做个网页', name: '网页' });
+    expect(String(refusedTask.error)).toMatch(/账本外的代理/);
 
-    expect(await hub.action('acknowledgeAlert', { id: 'al-00000001' })).toMatchObject({ ok: true });
+    expect(await act(hub, 'acknowledgeAlert', 'al-00000001')).toEqual(ok('已标为已读'));
     expect(hub.ledger().alerts[0].acknowledged).toBe(true);
-    expect((await rows(hub, 'listAlerts'))[0].status).toBe('已读');
-    expect(await hub.action('acknowledgeAlert', { id: 'al-00000001' })).toMatchObject({ ok: false });
+    expect((await alerts(hub))[0]).toMatchObject({ status: { text: '已读', state: 'inactive' }, unread: false });
+    expect(await act(hub, 'acknowledgeAlert', 'al-00000001')).toEqual(refused('没有这条未读告警'));
 
     const accepted = await hub.call('paper_task', { text: '做个网页', name: '网页' });
     expect(accepted.ok).toBe(true);
+  });
+
+  it('未读告警发提示，数量写进标题、跳到白纸页；全部标为已读后撤回', async () => {
+    const hub = await hubWith(new ScriptedRemote(), { files: seeded([], unreadAlert) });
+    expect(hub.pages.notices()).toEqual([
+      {
+        instance: '@aalis/plugin-paper',
+        id: 'alerts',
+        level: 'action',
+        title: '1 条白纸告警未读',
+        open: { page: 'paper' },
+      },
+    ]);
+    await act(hub, 'acknowledgeAlert', 'al-00000001');
+    expect(hub.pages.notices()).toEqual([]);
+  });
+
+  it('账本每次落盘后白纸页与会话面板都重取', async () => {
+    const hub = await hubWith(new ScriptedRemote());
+    const before = hub.pages.invalidations.length;
+    await accept(hub, '网页');
+    const pushed = hub.pages.invalidations.slice(before);
+    expect(pushed).toContainEqual({ instance: '@aalis/plugin-paper', pageKey: 'paper' });
+    expect(pushed).toContainEqual({ instance: '@aalis/plugin-paper', pageKey: 'paper-room' });
+  });
+
+  it('账本读取失败：发「出错」提示跳到白纸页，管理动作一律回错误', async () => {
+    const files: PaperFiles = new Map([[LEDGER_URI, '{ 坏了']]);
+    const hub = await startPaperHub({ files });
+    expect(hub.pages.notices()).toEqual([
+      expect.objectContaining({ id: 'ledger', level: 'error', title: '白纸账本读取失败', open: { page: 'paper' } }),
+    ]);
+    expect(await act(hub, 'archivePaper', PAPER_ID)).toEqual(refused('白纸账本读取失败，等 owner 处理'));
+    expect(await act(hub, 'cancelTask', 't-00000001')).toEqual(refused('白纸账本读取失败，等 owner 处理'));
+  });
+});
+
+describe('会话面板', () => {
+  it('只在开了白纸的群出现：没开白纸的群与 owner 的会话都不出现', async () => {
+    const hub = await startPaperHub({ rooms: { [ROOM]: PILOT_ROOM, [ROOM2]: { paperEnabled: false } } });
+    expect(await hub.pages.panels(ROOM)).toEqual(['paper-room']);
+    expect(await hub.pages.panels(ROOM2)).toEqual([]);
+    expect(await hub.pages.panels('webui:zz-owner')).toEqual([]);
+  });
+
+  it('按当前会话取：本群的白纸、进行中的任务与最近的成品，别的群看不到', async () => {
+    const a = new ScriptedRemote();
+    const hub = await startPaperHub({
+      remotes: { [REMOTE]: a },
+      config: ROOMY_CONFIG,
+      rooms: { [ROOM]: ROOMY_ROOM, [ROOM2]: ROOMY_ROOM },
+    });
+    const taskId = await accept(hub, '像素猫');
+    await running(hub, taskId);
+    const panel = (sessionId: string, id: string) => hub.pages.data<Row[]>('paper-room', id, { sessionId });
+    expect(await panel(ROOM, 'room')).toEqual(
+      expect.arrayContaining([
+        { label: '白纸', value: PAPER },
+        { label: '状态', value: { text: '正常' }, kind: 'status' },
+        { label: '本群每天上限', value: '100000 美分' },
+      ]),
+    );
+    expect(await panel(ROOM, 'tasks')).toMatchObject([{ id: taskId, name: '像素猫', cancellable: true }]);
+    expect(await panel(ROOM2, 'tasks')).toEqual([]);
+
+    a.outputs.set(taskId, [{ rel: 'cat.png', data: PNG }]);
+    a.finish(hub.ledger().tasks[taskId].runId ?? '', 'finished');
+    await waitFor(() => hub.ledger().tasks[taskId]?.state === 'done', '任务完成');
+    expect(await panel(ROOM, 'tasks')).toEqual([]);
+    expect(await panel(ROOM, 'artifacts')).toMatchObject([{ task: '像素猫', type: 'png' }]);
+    expect(await panel(ROOM2, 'artifacts')).toEqual([]);
+  });
+
+  it('取消只认本群的任务；恢复本群的白纸，没停开的回失败', async () => {
+    const files = seeded([], ledger => {
+      ledger.papers[PAPER_ID] = { lastClearedAt: 0, halted: { reason: 'provider', detail: '提供者故障', at: 1 } };
+      ledger.tasks['t-00000001'] = doneTask('t-00000001', [], { state: 'queued' });
+    });
+    const hub = await startPaperHub({ files });
+    expect(await hub.pages.act('paper-room', 'cancelTask', { rowKey: 't-00000001', sessionId: ROOM2 })).toEqual(
+      refused('本群没有这件任务'),
+    );
+    expect(await hub.pages.act('paper-room', 'cancelTask', { rowKey: 't-00000001', sessionId: ROOM })).toEqual(
+      ok('已取消'),
+    );
+    expect(await hub.pages.act('paper-room', 'resumeRoomPaper', { sessionId: ROOM })).toEqual(ok('已恢复'));
+    expect(hub.ledger().papers[PAPER_ID].halted).toBeUndefined();
+    expect(await hub.pages.act('paper-room', 'resumeRoomPaper', { sessionId: ROOM })).toEqual(
+      refused('这块白纸没有停开'),
+    );
   });
 });

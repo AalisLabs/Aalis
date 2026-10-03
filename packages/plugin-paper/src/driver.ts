@@ -392,22 +392,14 @@ export class PaperDriver {
     const refused = await ledger.exclusive(async () => {
       const task = Object.hasOwn(ledger.data.tasks, taskId) ? ledger.data.tasks[taskId] : undefined;
       if (!task) return `没有任务 ${taskId}`;
+      const refusal = this.abandonRefusal(task);
+      if (refusal) return refusal;
       if (task.state === 'running') {
-        const cancelFailed = ledger.data.alerts.some(a => a.kind === 'cancel-failed' && a.subject === task.agentId);
-        if (!ledger.data.papers[task.paperId]?.halted || !cancelFailed) {
-          return '运行中的任务只在到点取消失败、白纸停开之后才能放弃跟踪；先试「取消」';
-        }
         task.error = '远端这一轮取消不了，owner 放弃跟踪；远端可能仍在运行，费用等这一轮结束后补记';
-      } else if (task.state === 'starting') {
-        const claimFailed = ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id);
-        if (task.start?.path !== 'run' || !claimFailed) {
-          return '开轮中的任务只在开轮结果未知、认领失败之后才能放弃跟踪';
-        }
+      } else {
         task.error = '开轮结果未知、认领不了，owner 放弃跟踪；远端可能已开出一轮，列得出轮次后费用记到本件名下';
         task.orphanRun = true;
         delete task.start;
-      } else {
-        return '只有运行中与开轮中的任务能放弃跟踪';
       }
       task.state = 'failed';
       task.endedAt = this.#d.now();
@@ -422,6 +414,24 @@ export class PaperDriver {
     await this.journal.record(taskId, undefined, { type: 'tracking_abandoned' });
     this.#d.ended();
     return undefined;
+  }
+
+  /** 这件任务现在能不能放弃跟踪（见 abandon 的两种情形）：不能时给出原因。白纸页按它决定显不显示「放弃跟踪」 */
+  abandonRefusal(task: TaskRecord): string | undefined {
+    const { data } = this.#d.ledger;
+    if (task.state === 'running') {
+      const cancelFailed = data.alerts.some(a => a.kind === 'cancel-failed' && a.subject === task.agentId);
+      return data.papers[task.paperId]?.halted && cancelFailed
+        ? undefined
+        : '运行中的任务只在到点取消失败、白纸停开之后才能放弃跟踪；先试「取消」';
+    }
+    if (task.state === 'starting') {
+      const claimFailed = data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id);
+      return task.start?.path === 'run' && claimFailed
+        ? undefined
+        : '开轮中的任务只在开轮结果未知、认领失败之后才能放弃跟踪';
+    }
+    return '只有运行中与开轮中的任务能放弃跟踪';
   }
 
   /**

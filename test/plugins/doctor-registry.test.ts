@@ -9,13 +9,15 @@
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
  * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据），仍在激活中的提供者归为等待
  * - plugins.slow 点名激活超过阈值、已转入后台的插件
+ * - 诊断页过登记门槛；每次运行后推 invalidate，有错误或警告时发提示（跳到诊断页），全部通过后撤回
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { type CheckResult, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, defineService, logger, provide, services } from '../../packages/core/src/index.js';
 import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
+import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ===== helpers =====
 
@@ -37,18 +39,22 @@ function makeCommandService(recorded: Array<{ name: string; description?: string
   };
 }
 
+const hosts: PageHost[] = [];
+afterEach(() => {
+  for (const host of hosts.splice(0)) host.dispose();
+});
+
 async function boot(options: { slowThresholdMs?: number } = {}) {
   const app = new App({ name: 'T', logLevel: 'error', ...options });
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];
-  host.provide(webuiServer, {
-    registerPage: () => () => undefined,
-    registerAction: () => () => undefined,
-  } as never);
+  const pages = pageHost();
+  hosts.push(pages);
+  host.provide(webuiServer, pages.service);
   host.provide(commands, makeCommandService(recordedCommands) as never);
   await app.plugins.register(doctorPlugin, {});
   await app.plugins.idle();
-  return { app, recordedCommands, doctor: host.services.get(doctor) as DoctorService };
+  return { app, pages, recordedCommands, doctor: host.services.get(doctor) as DoctorService };
 }
 
 // ===== tests =====
@@ -247,6 +253,96 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(doctor.listChecks().some(c => c.id === 'temp')).toBe(true);
     off();
     expect(doctor.listChecks().some(c => c.id === 'temp')).toBe(false);
+    await app.stop();
+  });
+});
+
+describe('plugin-doctor — 诊断页与提示', () => {
+  it('诊断页过登记门槛；没运行过时写明尚未运行，结果表为空', async () => {
+    const { app, pages } = await boot();
+    expect(pages.logs).toEqual([]);
+    expect(pages.view('doctor')).toMatchObject({ title: '系统诊断', placement: 'plugin', icon: 'activity' });
+    expect(await pages.data('doctor', 'summary')).toEqual([{ label: '时间', value: '尚未运行' }]);
+    expect(await pages.data('doctor', 'checks')).toEqual([]);
+    await app.stop();
+  });
+
+  it('「立即运行」经页面动作跑一次：回一句汇总，结果表按级别标状态', async () => {
+    const { app, pages, doctor } = await boot();
+    doctor.registerCheck({
+      id: 'zz.broken',
+      category: 'other',
+      run: () => ({ id: 'zz.broken', category: 'other', level: 'error', message: '坏了', detail: '原因' }),
+    });
+    const reply = await pages.act('doctor', 'runDiagnostics');
+    expect(reply.status).toBe(200);
+    expect((reply.body as { message: string }).message).toMatch(/^诊断完成：\d+ 项通过、0 项警告、1 项错误$/);
+    const rows = await pages.data<Array<Record<string, unknown>>>('doctor', 'checks');
+    expect(rows.find(row => row.id === 'zz.broken')).toMatchObject({
+      level: { text: '错误', state: 'error' },
+      message: '坏了',
+      detail: '原因',
+    });
+    expect(rows.find(row => row.id === 'env.platform')).toMatchObject({ level: { text: '通过' } });
+    await app.stop();
+  });
+
+  it('每次运行后推 invalidate；有错误发出提示并跳到诊断页，修好后再运行就撤回', async () => {
+    const { app, pages, doctor } = await boot();
+    const off = doctor.registerCheck({
+      id: 'zz.broken',
+      category: 'other',
+      run: () => ({ id: 'zz.broken', category: 'other', level: 'error', message: '坏了' }),
+    });
+    await doctor.runChecks();
+    expect(pages.invalidations).toEqual([{ instance: '@aalis/plugin-doctor', pageKey: 'doctor' }]);
+    expect(pages.notices()).toEqual([
+      {
+        instance: '@aalis/plugin-doctor',
+        id: 'checks',
+        level: 'error',
+        title: '诊断有 1 项错误',
+        open: { page: 'doctor' },
+      },
+    ]);
+    off();
+    await doctor.runChecks();
+    expect(pages.invalidations).toHaveLength(2);
+    expect(pages.notices()).toEqual([]);
+    await app.stop();
+  });
+
+  it('只有警告时提示是「需要处理」，标题写明几项；错误与警告都有时一并写明', async () => {
+    const { app, pages, doctor } = await boot();
+    doctor.registerCheck({
+      id: 'zz.warn',
+      category: 'other',
+      run: () => ({ id: 'zz.warn', category: 'other', level: 'warn', message: '小心' }),
+    });
+    await doctor.runChecks();
+    expect(pages.notices()).toMatchObject([{ id: 'checks', level: 'action', title: '诊断有 1 项警告' }]);
+    doctor.registerCheck({
+      id: 'zz.broken',
+      category: 'other',
+      run: () => ({ id: 'zz.broken', category: 'other', level: 'error', message: '坏了' }),
+    });
+    await doctor.runChecks();
+    expect(pages.notices()).toMatchObject([{ id: 'checks', level: 'error', title: '诊断有 1 项错误、1 项警告' }]);
+    await app.stop();
+  });
+
+  it('停用后页面与提示一并撤回', async () => {
+    const { app, pages, doctor } = await boot();
+    doctor.registerCheck({
+      id: 'zz.broken',
+      category: 'other',
+      run: () => ({ id: 'zz.broken', category: 'other', level: 'error', message: '坏了' }),
+    });
+    await doctor.runChecks();
+    expect(pages.notices()).toHaveLength(1);
+    await app.plugins.unload('@aalis/plugin-doctor');
+    expect(pages.pages()).toEqual([]);
+    expect(pages.notices()).toEqual([]);
     await app.stop();
   });
 });

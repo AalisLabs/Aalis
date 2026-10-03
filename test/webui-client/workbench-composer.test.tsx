@@ -185,7 +185,10 @@ describe('输入框', () => {
     });
     await main().findByRole('region', { name: '对话' });
     expect(main().queryByRole('button', { name: '发送' })).toBeNull();
-    fireEvent.click(main().getByRole('button', { name: '停止' }));
+    const stop = main().getByRole('button', { name: '停止' });
+    // 实心方块单独看像个勾选框：停止用带圆圈的停止图标
+    expect(stop.querySelector('svg.lucide-circle-stop')).toBeTruthy();
+    fireEvent.click(stop);
     await vi.waitFor(() => expect(requests('turn/abort')).toEqual([{ sessionId: 's1', turnId: 't5' }]));
     type('换个方向');
     expect(main().getByRole('button', { name: '发送' })).toBeTruthy();
@@ -244,5 +247,25 @@ describe('输入框', () => {
     expect((failed as HTMLOptionElement).disabled).toBe(true);
     expect(model.title).toContain('可选项没取到');
     expect(main().getByRole('link', { name: '额外提示：<默认提示>' })).toBeTruthy();
+  });
+
+  it('快捷切换里不能就地选的项按可选项的标签显示；没设又没有默认值的只写名字', async () => {
+    stubViewport(1440);
+    const rows = [
+      row('groups', {
+        field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups' },
+        prominence: 'composer',
+        effective: ['*'],
+        source: 'defaults',
+      }),
+      row('note', { field: { type: 'string', label: '备注' }, prominence: 'composer' }),
+    ];
+    app = await renderApp(
+      '/s/s1',
+      { ...session, 'session/config/get': () => ({ items: rows }) },
+      { '/api/models/toolGroups': { details: [{ value: '*', label: '全部分组' }] } },
+    );
+    expect(await main().findByRole('link', { name: '工具分组：全部分组' })).toBeTruthy();
+    expect(main().getByRole('link', { name: '备注' })).toBeTruthy();
   });
 });

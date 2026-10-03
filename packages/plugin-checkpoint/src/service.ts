@@ -276,6 +276,10 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   // ──────────── 查询 ────────────
 
+  async execUsed(sessionId: string, turnId: string): Promise<boolean> {
+    return (await this.getManifest(sessionId, turnId))?.execUsed === true;
+  }
+
   async listTurns(sessionId: string): Promise<TurnSummary[]> {
     const summaries: TurnSummary[] = (await this.manifests(sessionId)).map(manifest => ({
       turnId: manifest.turnId,

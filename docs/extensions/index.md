@@ -132,7 +132,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 |---|---|
 | `@aalis/api-tools` | `tools.register` / `registerGroup`；`withToolGroups(bound, groups)` |
 | `@aalis/api-commands` | `commands.command(name, description?)` |
-| `@aalis/api-webui` | `webuiServer.registerPage` / `registerAction` |
+| `@aalis/api-webui` | `webuiServer.definePage` / `notify` |
 | `@aalis/api-agent` | `agent.registerPreprocessor` |
 
 示例：
@@ -141,7 +141,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 import { agent } from '@aalis/api-agent';
 import { commands } from '@aalis/api-commands';
 import { tools, withToolGroups } from '@aalis/api-tools';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import { definePlugin, optional } from '@aalis/core';
 
 export default definePlugin({
@@ -159,8 +159,7 @@ export default definePlugin({
 
     commands.command('hello', 'hi').action(async () => 'hi');
 
-    const page: WebuiPage = { key: 'my', label: '我的', icon: 'star', order: 50 };
-    webui.registerPage(page);
+    webui.definePage({ key: 'my', title: '我的', icon: 'star', content: [{ type: 'markdown', id: 'about', data: () => '你好' }] });
 
     agent.registerPreprocessor('my-preproc', async (msg, next) => {
       await next();
@@ -182,7 +181,7 @@ export default definePlugin({
 | 包 | 注入的字段 |
 |---|---|
 | `@aalis/schema-config` | `configSchema`（插件配置表单 schema，默认值经 `defaultsFrom` 派生） |
-| `@aalis/api-webui` | `extends`（对 core 扩展的声明，仅前端展示；页面与页面动作在 apply 里 `registerPage` / `registerAction`） |
+| `@aalis/api-webui` | `extends`（对 core 扩展的声明，仅前端展示；页面与提示在 apply 里 `definePage` / `notify`） |
 
 `subsystem` 是 `PluginDefinition` 上的展示字符串，core 不读不校验；第一方界面认的 id 见 `DEFAULT_SUBSYSTEM_METADATA`。
 

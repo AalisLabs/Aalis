@@ -1,8 +1,12 @@
 import { afterEach, expect, it } from 'vitest';
 import type { RunProgress } from '../../packages/api-remote-agent/src/index.js';
-import type { WebuiFilePayload } from '../../packages/api-webui/src/index.js';
-import { human, PILOT_CONFIG, REMOTE, ROOM, startPaperHub, stopPaperHubs } from '../fixtures/paper.js';
+import { human, PAPER, PILOT_CONFIG, REMOTE, ROOM, startPaperHub, stopPaperHubs } from '../fixtures/paper.js';
 import { ScriptedRemote } from '../fixtures/paper-remote.js';
+
+// ════════════════════════════════════════════════════════════
+// 创作日志：具体操作显示在白纸页（任务的最近动作与创作日志的详情），不泄漏到 paper_status 或聊天；
+// 日志按任务 ID 校验后才读与删，不允许路径穿越。日志在插件数据里，界面不给下载，详情写明它的位置。
+// ════════════════════════════════════════════════════════════
 
 afterEach(stopPaperHubs);
 
@@ -14,9 +18,11 @@ async function until(check: () => Promise<boolean> | boolean) {
   throw new Error('任务日志未到达预期状态');
 }
 
-it('具体操作显示在管理端，完整工具记录独立下载，不泄漏到 paper_status 或聊天', async () => {
+it('具体操作显示在白纸页，完整工具记录在创作日志的详情里，不泄漏到 paper_status 或聊天', async () => {
   const remote = new ScriptedRemote();
   const hub = await startPaperHub({ config: PILOT_CONFIG, remotes: { [REMOTE]: remote } });
+  const tasks = () => hub.pages.data<Array<Record<string, unknown>>>('paper', 'paperTasks', { rowKey: `n:${PAPER}` });
+  const logs = () => hub.pages.data<Array<Record<string, unknown>>>('paper', 'logs');
   const accepted = await hub.call('paper_task', { name: '五子棋', text: '制作五子棋', publish: false });
   const taskId = String(accepted.taskId);
   await until(() => hub.ledger().tasks[taskId]?.state === 'running');
@@ -43,36 +49,44 @@ it('具体操作显示在管理端，完整工具记录独立下载，不泄漏�
   } as RunProgress;
   run.queue.push(event);
   run.wake?.();
-  await until(async () => JSON.stringify(await hub.action('listTasks')).includes('/agent/gomoku/index.html'));
-  const rows = (await hub.action('listTasks')) as Array<Record<string, unknown>>;
-  expect(rows[0].progress).toContain('+200 / -3 行');
-  const file = (await hub.action('readTaskLog', { id: taskId })) as WebuiFilePayload;
-  expect(file.mime).toBe('application/octet-stream');
-  const log = Buffer.from(file.base64, 'base64').toString();
-  const entries = log
-    .trim()
-    .split('\n')
-    .map(line => JSON.parse(line));
-  expect(entries.some(row => row.entry.record?.output?.content === 'PRIVATE-FULL-CREATION-CONTENT\nsecond line')).toBe(
-    true,
-  );
-  expect(file.name).toBe(`${taskId}.jsonl`);
+  await until(async () => JSON.stringify(await tasks()).includes('/agent/gomoku/index.html'));
+  expect((await tasks())[0].progress).toContain('+200 / -3 行');
+  const recent = await hub.pages.data<string>('paper', 'logRecent', { rowKey: taskId });
+  expect(recent).toMatch(/^```json\n/);
+  expect(recent).toContain('PRIVATE-FULL-CREATION-CONTENT\\nsecond line');
+  expect(recent).toContain(`pluginData:/paper/task-logs/${taskId}/`);
   const status = await hub.call('paper_status', { task_id: taskId }, human('30001', ROOM));
   expect(JSON.stringify(status)).not.toContain('PRIVATE-FULL-CREATION-CONTENT');
   expect(JSON.stringify(status)).not.toContain('/agent/gomoku');
   expect(hub.outbound).toHaveLength(0);
-  expect(await hub.action('clearTaskLog', { taskId })).toMatchObject({ ok: false });
+
+  expect((await logs()).find(row => row.taskId === taskId)).toMatchObject({ name: '五子棋', clearable: false });
+  expect(await hub.pages.act('paper', 'clearTaskLog', { rowKey: taskId })).toEqual({
+    status: 500,
+    body: { error: '任务仍在创作或发布中，不能删除日志' },
+  });
   remote.finish(runId);
   await until(() => hub.ledger().tasks[taskId]?.state === 'done');
-  await until(async () => ((await hub.action('listTaskLogs')) as unknown[]).length > 0);
-  expect(await hub.action('clearTaskLog', { taskId })).toMatchObject({ ok: true });
-  expect(await hub.action('listTaskLogs')).toEqual([]);
+  expect((await logs()).find(row => row.taskId === taskId)).toMatchObject({ clearable: true });
+  expect(await hub.pages.act('paper', 'clearTaskLog', { rowKey: taskId })).toEqual({
+    status: 200,
+    body: { message: '已删除创作日志' },
+  });
+  expect(await logs()).toEqual([]);
+  expect(hub.pages.invalidations).toContainEqual({
+    instance: '@aalis/plugin-paper',
+    pageKey: 'paper',
+    componentId: 'logs',
+  });
 });
 
-it('日志下载和清理按任务 ID 验证，不允许路径穿越', async () => {
+it('日志的读取和清理按任务 ID 验证，不允许路径穿越', async () => {
   const hub = await startPaperHub();
-  for (const taskId of ['../ledger.json', 't-12345678/../../config', '__proto__', '']) {
-    expect(await hub.action('readTaskLog', { taskId })).toMatchObject({ ok: false });
-    expect(await hub.action('clearTaskLog', { taskId })).toMatchObject({ ok: false });
+  for (const taskId of ['../ledger.json', 't-12345678/../../config', '__proto__']) {
+    await expect(hub.pages.data('paper', 'logRecent', { rowKey: taskId }), taskId).rejects.toThrow('任务 ID 无效');
+    expect(await hub.pages.act('paper', 'clearTaskLog', { rowKey: taskId }), taskId).toEqual({
+      status: 500,
+      body: { error: '任务 ID 无效' },
+    });
   }
 });

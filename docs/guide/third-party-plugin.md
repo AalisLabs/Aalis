@@ -198,7 +198,7 @@ apply({ lifecycle }) {
 |----------|--------|
 | 注册 AI 可调用的工具 | `uses: { tools }`，`tools.register(...)`（`@aalis/api-tools` 的描述符） |
 | 注册斜杠命令 | `uses: { commands }`，`commands.command(...)`（`@aalis/api-commands`） |
-| 自定义 WebUI 页面与页面动作 | `uses: { webui: webuiServer }`，`webui.registerPage` / `registerAction`（`@aalis/api-webui`） |
+| 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.definePage` / `notify`（`@aalis/api-webui`） |
 | 注册 agent 输入预处理器 | `uses: { agent }`，`agent.registerPreprocessor(...)`（`@aalis/api-agent`） |
 | 监听核心事件 | `uses: { events }`，`events.on('service:registered', …)` |
 
@@ -332,7 +332,7 @@ pnpm 可以直接引用根依赖的范围：
 | 跨 entry helper | `api-storage` (`createStorageGateway`)、`api-platform` (`resolvePlatformBySession`) |
 | 工具注入 | `plugin-todo-list`, `plugin-tool-search` |
 | 命令注入 | `plugin-commands` |
-| WebUI 扩展 | `plugin-webui-server`, `plugin-todo-list` |
+| WebUI 页面与提示 | `plugin-scheduler`（新建与编辑是带输入的动作）、`plugin-paper`（标签页、详情与会话面板）、`plugin-doctor`（运行后发出或撤回提示） |
 | `follow` | `plugin-tool-onebot`（`sessionHistory.follow` 重挂访问规则） |
 
 ## 9. 进一步阅读

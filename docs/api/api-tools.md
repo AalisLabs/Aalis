@@ -54,13 +54,13 @@ interface RegisteredTool {
 
 ```ts
 type ToolDisplay =
-  | { kind: 'command'; fields: { command: string; cwd?: string } }
+  | { kind: 'command'; fields: { command: string; cwd?: string }; result?: { exitCode: string } }
   | { kind: 'file-change'; fields: { path: string; removed?: string; added?: string } };
 ```
 
-`fields` 写明各项取自哪个参数（参数名）：`command` 是命令与工作目录；`file-change` 是路径，以及删、加两侧的文本，只有一侧的只写那一侧（`file_edit` 是 `{ path: 'path', removed: 'oldText', added: 'newText' }`，`file_write` 是 `{ path: 'path', added: 'content' }`）。种类是宿主维护的封闭集合，以后按加法加。
+`fields` 写明各项取自哪个参数（参数名）：`command` 是命令与工作目录；`file-change` 是路径，以及删、加两侧的文本，只有一侧的只写那一侧（`file_edit` 是 `{ path: 'path', removed: 'oldText', added: 'newText' }`，`file_write` 是 `{ path: 'path', added: 'content' }`）。`command` 的 `result` 写明退出码取自结果（JSON 对象）的哪个键（`exec` 是 `{ exitCode: 'exitCode' }`）：退出码不为 0 时工具卡记为失败、写明退出码；没写 `result`、结果不是 JSON 对象或那一项不是整数时不看退出码。种类是宿主维护的封闭集合，以后按加法加。
 
-会话服务（[plugin-session-server](../plugins/plugin-session-server.md)）经 `getAll()` 取声明，从参数里逐字取出各项：工具卡带解析好的展示（会话协议 tool-call 条目的 `display`），审批卡的事实按它取命令、工作目录与 diff。没声明、种类不认识、声明的命令或路径不是字符串时，界面走通用卡，审批卡逐字列出全部参数；前端不写工具名清单。
+会话服务（[plugin-session-server](../plugins/plugin-session-server.md)）经 `getAll()` 取声明，从参数里逐字取出各项、工具返回时从结果里取退出码（取在 agent 截断过长的结果之前）：工具卡带解析好的展示（会话协议 tool-call 条目的 `display`），审批卡的事实按它取命令、工作目录与 diff。没声明、种类不认识、声明的命令或路径不是字符串时，界面走通用卡，审批卡逐字列出全部参数；前端不写工具名清单。
 
 ## ToolCallContext
 
@@ -87,7 +87,7 @@ interface ToolCallContext {
 - workflow 的 tool 节点、mcp-server 等自己构造上下文的调用方不填，`inbound` 缺省。
 - 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看 `actor` 分不出来：定时任务注入的回合带着创建者的 `actor`。
 
-`turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一，不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
+`turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一（模型生成参数时报过进度的，用那时随进度推出的那一个），不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
 
 ## 会话设置项的键
 
@@ -125,7 +125,7 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 }]
 ```
 
-只由 agent 工具循环发出，开始与结束按 `callId` 配对。会话服务（plugin-session-server）据此给出工具卡，`callId` 就是卡片的 `itemId`。
+只由 agent 工具循环发出，开始与结束按 `callId` 配对，模型发出的每一次调用都有一对：参数不是合法 JSON 对象、执行前的钩子出错这类没有执行就失败的调用同样发一对，结束的 `result` 是回给模型的错误。会话服务（plugin-session-server）据此给出工具卡，`callId` 就是卡片的 `itemId`；模型生成参数期间，流式片段的工具调用进度已带上同一个 `callId`（见 [schema-message](./schema-message.md)），卡片在那时就出现。
 
 ```ts
 'tool:output': [{

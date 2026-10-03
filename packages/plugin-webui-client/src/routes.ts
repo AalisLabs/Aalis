@@ -1,10 +1,7 @@
-import { useParams } from 'react-router';
+import { HOST_PANEL_TABS, type HostPanelTab, type PageRef } from '@aalis/api-webui';
+import { matchPath, useParams } from 'react-router';
 
-// 地址表：当前会话、右侧面板的标签与房间表的组都由地址决定，能收藏、能刷新，浏览器后退按地址逐层退回
-
-/** 会话右侧面板的标签 */
-const SESSION_TABS = ['plan', 'settings', 'usage'] as const;
-export type SessionTab = (typeof SESSION_TABS)[number];
+// 地址表：当前会话、右侧面板的标签、房间表的组与打开的页面都由地址决定，能收藏、能刷新，浏览器后退按地址逐层退回
 
 /** 路由的写法，路由表照它登记 */
 export const routes = {
@@ -12,7 +9,9 @@ export const routes = {
   newSession: '/new',
   session: '/s/:sessionId',
   sessionTab: '/s/:sessionId/:tab',
+  sessionPanel: '/s/:sessionId/p/:instance/:pageKey',
   rooms: '/rooms',
+  page: '/p/:instance/:pageKey',
 } as const;
 
 /** 房间表的一组：按适配器实例取；还没记下实例的房间按平台成一组 */
@@ -38,16 +37,30 @@ export function groupFromParams(params: URLSearchParams): RoomGroupAddress | und
   return platform === null ? undefined : { platform };
 }
 
+const pageSegments = (ref: PageRef) => `${encodeURIComponent(ref.instance)}/${encodeURIComponent(ref.pageKey)}`;
+
 export const paths = {
   home: routes.home,
   newSession: routes.newSession,
-  session: (sessionId: string, tab?: SessionTab) => `/s/${encodeURIComponent(sessionId)}${tab ? `/${tab}` : ''}`,
+  session: (sessionId: string, tab?: HostPanelTab) => `/s/${encodeURIComponent(sessionId)}${tab ? `/${tab}` : ''}`,
+  sessionPanel: (sessionId: string, ref: PageRef) => `/s/${encodeURIComponent(sessionId)}/p/${pageSegments(ref)}`,
   rooms: (group: RoomGroupAddress) => `/rooms?${new URLSearchParams(group)}`,
+  page: (ref: PageRef) => `/p/${pageSegments(ref)}`,
 };
 
-/** 地址上的当前会话与右侧面板标签；不在会话地址上时为 undefined，认不出的标签当作没有 */
-export function useSessionAddress(): { sessionId: string; tab?: SessionTab } | undefined {
-  const { sessionId, tab } = useParams();
+/** 地址上打开着的页面（位置为插件详情的）；不在页面地址上时为 undefined */
+export function pageAt(pathname: string): PageRef | undefined {
+  const params = matchPath(routes.page, pathname)?.params;
+  if (params?.instance === undefined || params.pageKey === undefined) return undefined;
+  return { instance: decodeURIComponent(params.instance), pageKey: decodeURIComponent(params.pageKey) };
+}
+
+/**
+ * 地址上的当前会话与右侧面板的标签：宿主的标签或一个会话面板页面。不在会话地址上时为 undefined，认不出的标签当作没有
+ */
+export function useSessionAddress(): { sessionId: string; tab?: HostPanelTab; panel?: PageRef } | undefined {
+  const { sessionId, tab, instance, pageKey } = useParams();
   if (sessionId === undefined) return undefined;
-  return { sessionId, tab: SESSION_TABS.find(known => known === tab) };
+  if (instance !== undefined && pageKey !== undefined) return { sessionId, panel: { instance, pageKey } };
+  return { sessionId, tab: HOST_PANEL_TABS.find(known => known === tab) };
 }

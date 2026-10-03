@@ -1,3 +1,4 @@
+import type { HostPanelTab } from '@aalis/api-webui';
 import { MessagesSquare } from 'lucide-react';
 import {
   createContext,
@@ -14,14 +15,16 @@ import {
 import { Link, matchPath, Outlet, useLocation, useNavigate } from 'react-router';
 import { useConnection } from '../connection';
 import { shortcutLabel, shortcutOf } from '../keys';
-import { paths, routes, type SessionTab } from '../routes';
+import { PinnedRail } from '../pages/Pinned';
+import { pageAt, paths, routes } from '../routes';
 import { readStored, writeStored } from '../storage';
 import { ConnectionBar } from './ConnectionBar';
 import { QuickSwitch } from './QuickSwitch';
 import './Shell.css';
 
 // 外壳：图标栏、左栏、主区、右侧面板，栏宽固定。左栏 64em 起、右侧面板 80em 起常驻，可收起，收起状态存本浏览器；
-// 更窄时它们是覆盖式抽屉；48em 以下是手机，没有图标栏，按地址分三层逐级进入，每层占满一屏
+// 更窄时它们是覆盖式抽屉；48em 以下是手机，没有图标栏，按地址分三层逐级进入，每层占满一屏。
+// 图标栏上方是「会话」，下面是 owner 固定的页面；打开着插件页面（/p/ 地址）时「会话」回到刚才的会话地址
 
 type Side = 'left' | 'right';
 
@@ -75,8 +78,7 @@ export function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const { approvals } = useConnection();
-  const baseTitle = useRef(document.title);
+  const { approvals, appName } = useConnection();
 
   /** 按一侧现在开着没有，定它接下来开不开 */
   const change = useCallback(
@@ -109,8 +111,8 @@ export function Shell() {
 
   // 有推来的未结审批时，标签页标题前带上待处理数
   useEffect(() => {
-    document.title = approvals.size > 0 ? `(${approvals.size}) ${baseTitle.current}` : baseTitle.current;
-  }, [approvals]);
+    document.title = approvals.size > 0 ? `(${approvals.size}) ${appName}` : appName;
+  }, [approvals, appName]);
 
   // 抽屉里的左栏点了会话、换了地址就收回
   useEffect(() => setDrawer(current => (current === 'left' ? undefined : current)), [location.key]);
@@ -128,10 +130,21 @@ export function Shell() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [navigate, toggle]);
 
-  // 手机上用量从底部弹出，不另成一层
+  const onPage = pageAt(location.pathname) !== undefined;
+  const lastSessions = useRef<string>(paths.home);
+  useEffect(() => {
+    if (!onPage) lastSessions.current = location.pathname + location.search;
+  }, [onPage, location]);
+
+  // 手机上用量从底部弹出，不另成一层；会话面板的标签与插件的会话面板是第三层
   const tab = matchPath(routes.sessionTab, location.pathname)?.params.tab;
+  const panel = matchPath(routes.sessionPanel, location.pathname) !== null;
   const level =
-    location.pathname === routes.home ? 1 : tab !== undefined && tab !== ('usage' satisfies SessionTab) ? 3 : 2;
+    location.pathname === routes.home
+      ? 1
+      : panel || (tab !== undefined && tab !== ('usage' satisfies HostPanelTab))
+        ? 3
+        : 2;
 
   return (
     <Context.Provider value={controls}>
@@ -144,12 +157,13 @@ export function Shell() {
       >
         <nav className="shell-rail" aria-label="图标栏">
           <Link
-            to={paths.home}
+            to={onPage ? lastSessions.current : paths.home}
             className="shell-rail-item"
-            aria-current="page"
+            aria-current={onPage ? undefined : 'page'}
             aria-label="会话"
-            title={`会话（${shortcutLabel('toggleLeft')} 收起或展开左栏）`}
+            title={onPage ? '会话' : `会话（${shortcutLabel('toggleLeft')} 收起或展开左栏）`}
             onClick={event => {
+              if (onPage) return;
               event.preventDefault();
               toggle('left');
             }}
@@ -159,6 +173,7 @@ export function Shell() {
               会话
             </span>
           </Link>
+          <PinnedRail />
         </nav>
         <ConnectionBar />
         <Outlet />

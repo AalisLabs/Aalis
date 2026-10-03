@@ -50,8 +50,11 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
   identity: { platform: string; userId: string };  // 传输层认证出的身份
   surface: string;                    // 这条连接所在审批面的登记名（webui、cli）
   features: { send: boolean; rewind: boolean; compress: boolean };  // 功能位
+  appName: string;                    // 应用名
 }
 ```
+
+**应用名**：宿主配置文档里的 `name`（[api-host-config](./api-host-config.md)），每次握手现读，改名之后新的连接就拿到新名字，不用重启；没有宿主配置时是 `Aalis`。WebUI 的标签页标题与房间里她的回复的说话人用它。
 
 主版本不同时回 `unsupported`，错误信息写明两边的版本，随即断开；只差次版本照常握手。握手之前的其它请求回 `invalidRequest`。
 
@@ -118,7 +121,7 @@ interface RoomGroup {
 - **分区**：「我的」（`owner`）是 owner 自己的会话，房间（`rooms`）是 IM 群与私聊（根会话的种类为 `room`）。不给 `section` 时两区都列，「我的」在前。
 - **排序**：「我的」区按需要我处理、出错、完成未读、运行中依次靠前，其余按最后活动从新到旧；房间按最后活动从新到旧，靠分组里的状态露出，不显示未读。
 - **子会话**：不给 `parentId` 时只列根会话；给了就列它的直接子会话，按最后活动从新到旧，`section` 不起作用。父会话不存在回 `not-found`。
-- **归档**：缺省不含已归档的会话；`archived: true` 只列已归档的（界面的「已归档」区），归档的子会话同样按它取。
+- **归档**：缺省不含已归档的会话；`archived: true` 只列已归档的（界面的「已归档」区），归档的子会话同样按它取。她在已归档的会话里跑一轮不会让它回到列表，只有 `session/unarchive` 才回来。
 - **一组房间**：`instance` 只列这个适配器实例接管的房间，`platform` 只列这个平台还没记下实例的房间（`groups` 里没有 `instance` 的那一组），两者不同时给（同时给回 `invalidParams`）。房间表据此翻页取全一组，筛选与排序在客户端做。
 - **分组**：`groups` 是没归档的房间的分组，不受分区、搜索与分页影响。组按平台排，同平台里有实例的在前（按实例 id），没记下实例的那组在后。组名 `label` 由服务端给出，客户端不按平台名或实例 id 查表。
 - **搜索**：`query` 按名称、标题、id 匹配，不分大小写；也认「平台:群号」，例如 `onebot:20001` 命中 `onebot:<账号>:group:20001`。
@@ -186,7 +189,7 @@ type SettingLayer =
 | `user-message` | 文字、附件、说话人（平台、用户 id、昵称、注入来源、是否 owner）。文字是存档里的原文，多人平台带说话人前缀，附带的文件内容块已剥掉、文件名列成附件 |
 | `agent-message` | 文字与附件（可以只有附件）、模型；房间里没发出去的带 `undelivered.reason`：工具调用之前说的话（她只把一轮最后的回复发进群）、重试丢掉的那版、没回复就收尾的一轮（静默、中止、出错）里最后一次工具调用之后说的话、平台没收下或发送出错的回复 |
 | `reasoning` | 思考文字 |
-| `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据与参数没解析成、没有执行的调用除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（running、completed、failed、denied）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象时为 failed。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom` |
+| `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（generating、running、completed、failed、denied、aborted）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象、或 `display` 里的退出码不为 0 时为 failed。模型还在生成参数时卡片已推出，状态是 generating，只有工具名、`args` 为空；开始执行时同一个 `itemId` 转为 running。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发，包括生成了还没执行的）为 aborted，停止之后工具照样返回了结果也不改；历史里没有结果的调用（重启或中断）同样为 aborted。生成了却没有执行、回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾；生成了却没有执行的，收尾时结果都是「没有执行」。参数不合法、执行前出错这类没有执行就失败的调用，按回给模型的错误收成 failed，历史里同样以 callId 为 id。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom` |
 | `notice` | 宿主事件，`topic` 区分种类：宿主通知取通知的种类（如 `paper-task`），压缩为 `compress`，存档里的压缩分隔线为 `event-marker`，达到工具调用上限为 `tool-limit`（带 `canContinue`，可以 `turn/continue`） |
 | `plan` | 待办，整份替换；每个会话一条，`itemId` 固定为 `plan` |
 | `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage`，整份替换。它不是时间线上的一条，界面画在会话头部（用量百分比与拆分表）。`injectors` 是「其余系统提示」按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件；`compressAt` 是自动压缩的使用率（与 `usageRatio` 同一口径），取压缩服务的 `autoThreshold`，没有压缩服务或不自动压缩时没有 |
@@ -201,15 +204,15 @@ type SettingLayer =
 - **有效范围**：句柄绑定签发它的会话与文件，换个会话 id 用不了；只在签发它的那次启动（同一个 `epoch`）内有效，会话服务重启之后 `epoch` 变了，客户端重新订阅，快照里是新的句柄。
 - **不签发的**：插件状态与插件私有数据的存储根（`data` 映射到家目录的 `state/`，里面有访问 token 与审计）里的文件、不是存储地址的来源。这些附件只有名字。
 
-**工具卡的展示**（`display`，按 `kind` 区分）：种类是宿主维护的封闭集合，以后按加法加。各项从参数里逐字取出：
+**工具卡的展示**（`display`，按 `kind` 区分）：种类是宿主维护的封闭集合，以后按加法加。各项从参数里逐字取出，命令的退出码从结果里取：
 
 ```ts
 type ToolDisplay =
-  | { kind: 'command'; command: string; cwd?: string }                       // 命令与工作目录
+  | { kind: 'command'; command: string; cwd?: string; exitCode?: number }    // 命令、工作目录与结果里的退出码
   | { kind: 'file-change'; path: string; removed?: string; added?: string }; // 路径与删、加两侧的文本
 ```
 
-工具没声明、种类不认识、声明的命令或路径不是字符串时没有 `display`。
+工具没声明、种类不认识、声明的命令或路径不是字符串时没有 `display`。`exitCode` 只在工具声明了退出码取自结果的哪个键（api-tools 的 `ToolDisplay.result`）、调用已结束、结果是 JSON 对象且那一项是整数时才有。
 
 **审批的结算**（`settlement`，与 `approval/settled` 同形）：
 
@@ -223,7 +226,7 @@ interface ApprovalSettlement {
 
 **刷新之后**：历史与实时推送标出同样的结局。
 
-- **工具结果的元数据**：会话服务在工具结果落库之前（agent 的 `agent:tool:after` 钩子），把审批的结算与「平台已收下经它发出的消息」写进这次结果的元数据，历史里的工具卡据此带上 `approvalId`、`settlement`、`sentToRoom`。
+- **工具结果的元数据**：会话服务在工具结果落库之前（agent 的 `agent:tool:after` 钩子），把审批的结算、「平台已收下经它发出的消息」、「回合停止时这次调用还没结束」与命令的退出码写进这次结果的元数据，历史里的工具卡据此带上 `approvalId`、`settlement`、`sentToRoom`，状态为 aborted，`display` 带上退出码（结果过长时 agent 落库的是截断后的结果，从中取不到）。
 - **投递失败**：回复平台没收下时，适配器在存档里记一条投递失败（schema-message 的 `OutboundDeliveryFailed`，带这一轮的 `turnId`），历史据此给那一轮的回复标 `undelivered`。
 - **重试与工具调用之前**：重试丢掉的几版与工具调用之前说的话由存档的时间线推出，历史里同样标 `undelivered`。
 - **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。
@@ -237,10 +240,11 @@ interface ApprovalSettlement {
 | `turn/continue` | `{ sessionId }` | `{}`；工具调用达到上限后请她接着做 |
 | `turn/abort` | `{ sessionId, turnId? }` | `{}`；不带 `turnId` 停这个会话所有在跑的回合，带 `turnId` 时只停那一轮，对不上回 `expected-turn-mismatch` |
 | `session/compress` | `{ sessionId }` | `{}`；调压缩服务，压完才回，进度以 `compress` 通知推送，之后推最新用量。没压成（摘要模型不在或失败、期间会话被清空）回 `internalError`，错误信息写明原因，压缩通知同样写明失败；这个会话正在压缩或生成摘要时直接拒绝，同样回 `internalError`，时间线上没有新的通知 |
+| `turn/checkpoint` | `{ sessionId, turnId }` | `{ execUsed: boolean }`；回滚之前查这一轮的检查点：为真表示这一轮执行过命令（`exec` 等直接起子进程的工具），命令的效果不经存储，回滚撤不回，界面在回滚确认里写明。没有这一轮的检查点时为 false |
 | `turn/rewind` | `{ sessionId, turnId, scope: 'code' \| 'code-and-chat' }` | 回滚结果，字段同 [api-checkpoint](./api-checkpoint.md) 的 `RollbackResult`，连对话一起回滚时另有 `deletedMessages`、`chatDeleted`；回合 id 就是 agent 的 `turnId` |
 | `plan/clear` | `{ sessionId }` | `{}` |
 
-发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
+发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/checkpoint`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
 
 ## 在场与审批
 

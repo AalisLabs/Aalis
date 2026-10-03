@@ -2,6 +2,8 @@ import { Navigate, Outlet, Route, Routes } from 'react-router';
 import { HistoryTrail } from './back';
 import { ToastProvider } from './components/Toast';
 import { ConnectionProvider } from './connection';
+import { PluginPage } from './pages/PluginPage';
+import { PagesProvider } from './pages/registry';
 import type { AdminClient } from './protocol/admin-client';
 import type { SessionClient } from './protocol/session-client';
 import { paths, routes } from './routes';
@@ -16,27 +18,31 @@ export function App({ session, admin }: { session: SessionClient; admin: AdminCl
     <ConnectionProvider session={session} admin={admin}>
       <ToastProvider>
         <SessionActionsProvider>
-          <HistoryTrail>
-            <Routes>
-              <Route element={<Shell />}>
-                <Route
-                  element={
-                    <>
-                      <SessionList />
-                      <Outlet />
-                    </>
-                  }
-                >
-                  <Route path={routes.home} element={<NewSession />} />
-                  <Route path={routes.newSession} element={<NewSessionOnPhone />} />
-                  <Route path={routes.session} element={<SessionRoute />} />
-                  <Route path={routes.sessionTab} element={<SessionRoute />} />
-                  <Route path={routes.rooms} element={<RoomsPage />} />
+          <PagesProvider>
+            <HistoryTrail>
+              <Routes>
+                <Route element={<Shell />}>
+                  <Route
+                    element={
+                      <>
+                        <SessionList />
+                        <Outlet />
+                      </>
+                    }
+                  >
+                    <Route path={routes.home} element={<NewSession />} />
+                    <Route path={routes.newSession} element={<NewSessionOnPhone />} />
+                    <Route path={routes.session} element={<SessionRoute />} />
+                    <Route path={routes.sessionTab} element={<SessionRoute />} />
+                    <Route path={routes.sessionPanel} element={<SessionRoute />} />
+                    <Route path={routes.rooms} element={<RoomsPage />} />
+                  </Route>
+                  <Route path={routes.page} element={<PluginPage />} />
+                  <Route path="*" element={<Navigate to={paths.home} replace />} />
                 </Route>
-                <Route path="*" element={<Navigate to={paths.home} replace />} />
-              </Route>
-            </Routes>
-          </HistoryTrail>
+              </Routes>
+            </HistoryTrail>
+          </PagesProvider>
         </SessionActionsProvider>
       </ToastProvider>
     </ConnectionProvider>

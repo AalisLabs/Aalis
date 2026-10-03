@@ -7,7 +7,8 @@ import './Toast.css';
 // Toast 只回报用户自己操作的结果；插件与后台事件不弹 Toast，走「需要处理」
 
 interface ToastInput {
-  kind: 'success' | 'error' | 'info';
+  /** 语气：与颜色令牌同名 */
+  kind: 'success' | 'danger' | 'info';
   text: string;
   /** 撤销一类的后续操作 */
   action?: { label: string; run(): void };
@@ -16,7 +17,7 @@ interface ToastInput {
 const LIMIT = 3;
 const DURATION_MS = 4_000;
 const ACTION_DURATION_MS = 8_000;
-const ICONS = { success: Check, error: CircleAlert, info: Info };
+const ICONS = { success: Check, danger: CircleAlert, info: Info };
 
 const ShowToast = createContext<(toast: ToastInput) => void>(() => {
   throw new Error('Toast 只能在 ToastProvider 里弹出');
@@ -64,7 +65,7 @@ interface ToastItemProps {
 
 function ToastItem({ toast, paused, onDismiss }: ToastItemProps) {
   const remaining = useRef(
-    toast.kind === 'error' ? Number.POSITIVE_INFINITY : toast.action ? ACTION_DURATION_MS : DURATION_MS,
+    toast.kind === 'danger' ? Number.POSITIVE_INFINITY : toast.action ? ACTION_DURATION_MS : DURATION_MS,
   );
   const Icon = ICONS[toast.kind];
 
@@ -79,7 +80,7 @@ function ToastItem({ toast, paused, onDismiss }: ToastItemProps) {
   }, [paused, onDismiss, toast.id]);
 
   return (
-    <div className="toast" data-kind={toast.kind} role={toast.kind === 'error' ? 'alert' : undefined}>
+    <div className="toast" data-kind={toast.kind} role={toast.kind === 'danger' ? 'alert' : undefined}>
       <Icon aria-hidden />
       <p className="toast-text">{toast.text}</p>
       {toast.action && (

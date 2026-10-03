@@ -1,10 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
-import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
 import type { AppService, Logger, PluginManagerService, PluginState, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
@@ -123,23 +121,12 @@ interface PluginRoutesCaps {
   hostConfig: Pick<ServiceRef<HostConfig>, 'current'>;
   tools: Pick<ServiceRef<ToolService>, 'current'>;
   commands: Pick<ServiceRef<CommandService>, 'current'>;
-  /**
-   * 取当前 webui-server 提供者（页面登记表的读取面）。本插件自己提供这个服务，
-   * 写死引用就绕过了解析——第三方若以更高优先级接管 webui-server，页面列表该跟着走。
-   */
-  webui(): WebUIService | undefined;
   /** 裁剪 schema 外字段时点名 warn，保存全局配置后重启失败时记 error；测试可不传 */
   logger?: Logger;
 }
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
-export function registerPluginRoutes(
-  expressApp: express.Express,
-  caps: PluginRoutesCaps,
-  identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
-  gate: RouteGate,
-  getAction: (plugin: string, method: string) => WebuiActionHandler | undefined,
-): void {
+export function registerPluginRoutes(expressApp: express.Express, caps: PluginRoutesCaps, gate: RouteGate): void {
   const getApp = (): AppService | undefined => caps.app.current;
   const getPluginMgr = (): PluginManagerService | undefined => caps.plugins.current;
   /** 配置文档由宿主提供；没有时读写文档的路由一律 503，与扫描、市场路由的缺席口径一致 */
@@ -254,74 +241,6 @@ export function registerPluginRoutes(
       };
     });
     res.json({ plugins, secretRefCounts: doc ? countSecretRefs(doc.getAll().plugins) : {} });
-  });
-
-  // 获取可用的 WebUI 页面（由活跃插件经 webui-server 的绑定接口 registerPage 登记）
-  expressApp.get('/api/pages', gate(), (_req, res) => {
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.json([]);
-      return;
-    }
-
-    const webuiSvc = caps.webui();
-    if (!webuiSvc) {
-      res.json([]);
-      return;
-    }
-
-    const displayNameByPlugin = new Map<string, string | undefined>();
-    for (const p of pm.getStatus()) displayNameByPlugin.set(p.instanceId, p.displayName);
-
-    const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
-    for (const page of webuiSvc.getPages()) {
-      pages.push({ ...page, plugin: page.pluginName, pluginDisplayName: displayNameByPlugin.get(page.pluginName) });
-    }
-    pages.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
-    res.json(pages);
-  });
-
-  // 通用声明式页面操作：调用插件经 webuiServer.registerAction 登记的处理函数
-  expressApp.post('/api/page-action/:plugin/:method', async (req, res) => {
-    const { plugin: pluginName, method } = req.params;
-    const args: Record<string, unknown> = req.body ?? {};
-
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-
-    const entry = pm.getPlugin(pluginName);
-    if (!entry || entry.state !== 'active') {
-      res.status(404).json({ error: `插件 ${pluginName} 不存在或未激活` });
-      return;
-    }
-
-    const handler = getAction(pluginName, method);
-    if (!handler) {
-      res.status(404).json({ error: `处理器 ${method} 不存在` });
-      return;
-    }
-
-    // ===== owner 闸 + 调用者身份（单 owner 终态）=====
-    // 单 token ⟺ webui:console ⟺ owner；auth.middleware 已校 token，这里复核身份并把
-    // caller 传给 action。各 action 自身对敏感操作再做 owner 自检（如 setUserTier）。
-    // 多账户的 action: 能力委托（per-user grant/deny / actionsMeta 可见性）已剥离。
-    const caller = identify(req);
-    if (!caller) {
-      res.status(403).json({ error: `操作 ${pluginName}/${method} 需要 owner 权限` });
-      return;
-    }
-
-    try {
-      res.json({ ok: true, data: await handler(args, caller) });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
-    }
   });
 
   // 获取当前全局配置

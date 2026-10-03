@@ -4,11 +4,23 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Toggle } from '../components/Toggle';
 import { composing } from '../keys';
-import { effectiveOf, type Field, formatValue, hasChoices, type Option, valueKey, withCurrent } from './field';
+import {
+  effectiveOf,
+  formatValue,
+  fromText,
+  hasChoices,
+  type Option,
+  TEXT_TYPES,
+  toText,
+  valueKey,
+  withChosen,
+  withCurrent,
+} from './field';
 import { useFieldOptions } from './options';
 import './SettingRow.css';
 
 // 设置的一行：名称、来源徽标与生效值（不是「继承」两个字），点这一行就地修改、改完即存；开关直接拨。
+// 值按可选项的标签显示（动态可选项一并取来），哪一层都没设的按字段的默认值，没有默认值的不写。
 // 被这一层覆盖时行尾有「恢复继承」。会话的设置与设置区的「会话默认」共用，只是存到不同的层
 
 const SOURCES = {
@@ -25,44 +37,9 @@ type Save = (value: unknown) => Promise<void>;
 /** 编辑控件交出新值的方式：read 读出要写的值，读不出（写法不对）时抛错，原因与写入失败一样写在行下 */
 type Commit = (read: () => unknown) => void;
 
-/** 编辑框里的文字 ↔ 取值：列表一行一项，映射一行一个「键=值」 */
-function toText(field: Field, value: unknown): string {
-  if (value === undefined) return '';
-  if (field.type === 'list') return Array.isArray(value) ? value.join('\n') : '';
-  if (field.type === 'map') {
-    return typeof value === 'object' && value !== null
-      ? Object.entries(value)
-          .map(([key, item]) => `${key}=${String(item)}`)
-          .join('\n')
-      : '';
-  }
-  return String(value);
-}
-
-function fromText(field: Field, text: string): unknown {
-  if (field.type === 'number') {
-    const number = Number(text.trim());
-    if (text.trim() === '' || !Number.isFinite(number)) throw new Error('要填一个数');
-    return number;
-  }
-  const lines = text.split('\n').filter(line => line.trim() !== '');
-  if (field.type === 'list') return lines.map(line => line.trim());
-  if (field.type === 'map') {
-    return Object.fromEntries(
-      lines.map(line => {
-        const at = line.indexOf('=');
-        if (at <= 0) throw new Error(`「${line}」要写成「键=值」`);
-        return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
-      }),
-    );
-  }
-  return text;
-}
-
-const TEXT_TYPES = new Set(['string', 'number', 'textarea', 'list', 'map']);
-
 export function SettingRow({ row, save }: { row: Row; save: Save }) {
   const { field } = row;
+  const fieldOptions = useFieldOptions(field);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -114,7 +91,13 @@ export function SettingRow({ row, save }: { row: Row; save: Save }) {
         ) : editing ? (
           <div className="setting-row-edit">
             <div className="setting-row-main">{head}</div>
-            <Editor row={row} busy={busy} onCommit={commit} onClose={() => setEditing(false)} />
+            <Editor
+              row={row}
+              fieldOptions={fieldOptions}
+              busy={busy}
+              onCommit={commit}
+              onClose={() => setEditing(false)}
+            />
             {field.description && <p className="setting-row-description">{field.description}</p>}
           </div>
         ) : (
@@ -128,9 +111,9 @@ export function SettingRow({ row, save }: { row: Row; save: Save }) {
             }}
           >
             {head}
-            <span className="setting-row-value" data-unset={shown === undefined || undefined}>
-              {shown === undefined ? '未设置' : formatValue(field, shown)}
-            </span>
+            {shown !== undefined && (
+              <span className="setting-row-value">{formatValue(field, shown, fieldOptions.options)}</span>
+            )}
           </button>
         )}
         {row.value !== undefined && (
@@ -150,6 +133,8 @@ export function SettingRow({ row, save }: { row: Row; save: Save }) {
 
 interface EditorProps {
   row: Row;
+  /** 字段的可选项（静态的与动态来源的），没取到时带原因 */
+  fieldOptions: ReturnType<typeof useFieldOptions>;
   busy: boolean;
   onCommit: Commit;
   onClose(): void;
@@ -176,10 +161,9 @@ function useFocus<T extends HTMLElement>(): RefObject<T | null> {
   return ref;
 }
 
-function ChoiceEditor({ row, busy, onCommit, onClose }: EditorProps) {
+function ChoiceEditor({ row, fieldOptions: { options, error }, busy, onCommit, onClose }: EditorProps) {
   const { field } = row;
   const ref = useFocus<HTMLSelectElement>();
-  const { options, error } = useFieldOptions(field);
   const current = effectiveOf(row);
   const choices = withCurrent(field, options, current);
   return (
@@ -196,11 +180,7 @@ function ChoiceEditor({ row, busy, onCommit, onClose }: EditorProps) {
         onBlur={onClose}
         onKeyDown={onEscape(onClose)}
       >
-        {current === undefined && (
-          <option value="" disabled>
-            未设置
-          </option>
-        )}
+        {current === undefined && <option value="" disabled />}
         {choices.map(option => (
           <option key={option.key} value={option.key}>
             {option.label}
@@ -212,24 +192,16 @@ function ChoiceEditor({ row, busy, onCommit, onClose }: EditorProps) {
   );
 }
 
-function MultiEditor({ row, busy, onCommit, onClose }: EditorProps) {
+function MultiEditor({ row, fieldOptions: { options, error }, busy, onCommit, onClose }: EditorProps) {
   const { field } = row;
   const ref = useFocus<HTMLFieldSetElement>();
-  const { options, error } = useFieldOptions(field);
   const effective = effectiveOf(row);
   const current = Array.isArray(effective) ? effective : [];
   const chosen = new Set(current.map(item => valueKey(field, item)));
   const [custom, setCustom] = useState('');
   const toggle = (option: Option, on: boolean) =>
     onCommit(() => (on ? [...current, option.value] : current.filter(item => valueKey(field, item) !== option.key)));
-  const all = [
-    ...options,
-    ...current.flatMap(item =>
-      options.some(option => option.key === valueKey(field, item))
-        ? []
-        : [{ key: valueKey(field, item), label: String(item), value: item }],
-    ),
-  ];
+  const all = withChosen(field, options, current);
   return (
     <fieldset ref={ref} className="setting-row-choices" tabIndex={-1} disabled={busy} onKeyDown={onEscape(onClose)}>
       <legend className="visually-hidden">{field.label}</legend>

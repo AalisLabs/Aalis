@@ -5,15 +5,12 @@
 // 用签名而不用服务端的表：同一会话同一文件每次算出同一个句柄，历史翻多少遍都不必记下什么，内存不随之增长。
 // 密钥每次启动随机生成、只在内存里，重启之后旧句柄一律失效：重启也换了 epoch，客户端本来就要重新订阅，拿到新句柄；
 // 换来的是不必把密钥落盘。
-// 插件状态与插件私有数据的根里的文件不签发：data 映射到家目录的 state/，里面有 WebUI 的 token 与审计。
+// 插件状态与插件私有数据的根里的文件不签发（api-storage 的 canIssueFileHandle，页面单元格的句柄同用这一条）。
 // ════════════════════════════════════════════════════════════
 
 // biome-ignore lint/style/noRestrictedImports: 条目在拼出的同一拍里带上句柄，推送按 seq 排序、历史按页同步归并，签名与核验都要同步；Web Crypto 的 HMAC 只有异步接口
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { isStorageUri, parseUriRoot, type StorageRootInfo } from '@aalis/api-storage';
-
-/** 不签发的存储根种类 */
-const PRIVATE_KINDS: ReadonlySet<string> = new Set(['data', 'pluginData']);
+import { canIssueFileHandle, type StorageRootInfo } from '@aalis/api-storage';
 
 /** roots 现取存储服务的根表：签发时按地址的根名查它的种类 */
 export function createFileHandles(roots: () => StorageRootInfo[]) {
@@ -26,9 +23,7 @@ export function createFileHandles(roots: () => StorageRootInfo[]) {
   return {
     /** 给这个会话里的一个文件签发句柄；不是存储地址、根不认识或在不签发的根里时回 undefined */
     sign(sessionId: string, uri: string, name: string): string | undefined {
-      if (!isStorageUri(uri)) return undefined;
-      const root = roots().find(r => r.name === parseUriRoot(uri));
-      if (!root || PRIVATE_KINDS.has(root.kind)) return undefined;
+      if (!canIssueFileHandle(roots(), uri)) return undefined;
       const payload = Buffer.from(JSON.stringify([uri, name])).toString('base64url');
       return `${payload}.${signature(sessionId, payload).toString('base64url')}`;
     },

@@ -6,11 +6,12 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type BoundOf, provide, services } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器工具的两条实证缺陷（真 Chromium + 真本机 http 服务 + 真 fs）：
@@ -21,6 +22,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 //      时再把图随结果附上；两种情况 content 都不含 base64，note 按有没有附图分写。
 //   2) ensureBrowser 只判句柄非空，Chromium 崩溃/被杀后所有 browser_* 永久失效
 //      到插件 bounce，pages 表还列着死页面。
+// 另测浏览器页（webui-server 的真实登记表）：过登记门槛，开关页面推 invalidate，关不存在的页面回错误。
 //
 // 不外发：测试启动的 Chrome 不走系统代理，Chrome 自己的后台请求出不了本机（见下方 launch 替身）。
 // ════════════════════════════════════════════════════════════
@@ -59,7 +61,7 @@ let host: BoundOf<typeof hostUses>;
 let server: Server;
 let port: number;
 let handlers: Record<string, Handler>;
-let actions: Map<string, WebuiActionHandler>;
+let pages: PageHost;
 
 /** SIGKILL 掉本进程下的 Chromium 子进程——真崩溃，不是 browser.close() 的优雅退出 */
 function killChromium(): number {
@@ -97,7 +99,7 @@ beforeAll(async () => {
   await app.plugins.register(storageLocal, {});
   host = app.bind(hostUses);
   handlers = {};
-  actions = new Map();
+  pages = pageHost();
   host.provide(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
       handlers[t.definition.function.name] = t.handler;
@@ -105,13 +107,7 @@ beforeAll(async () => {
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(webuiServer, {
-    registerPage: () => () => {},
-    registerAction(method: string, handler: WebuiActionHandler) {
-      actions.set(method, handler);
-      return () => void actions.delete(method);
-    },
-  } as never);
+  host.provide(webuiServer, pages.service);
   // blockPrivate:false 才连得上本机测试服务（同时不起网络闸）
   await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false });
   await app.plugins.idle();
@@ -119,6 +115,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app.stop();
+  pages.dispose();
   vi.restoreAllMocks();
   await new Promise<void>(resolve => server.close(() => resolve()));
   await rm(base, { recursive: true, force: true });
@@ -211,9 +208,59 @@ describe('ensureBrowser 对断连的浏览器', () => {
     expect(freshPageId).not.toBe(deadPageId);
 
     // 死页面不留在表里（webui 的页面列表也不该列它）
-    const listed = (await actions.get('listPages')!({})) as Array<{ id: string }>;
+    const listed = await pages.data<Array<{ id: string }>>('browser', 'pages');
     expect(listed.map(p => p.id)).toEqual([freshPageId]);
     const stale = JSON.parse((await handlers.browser_get_text({ pageId: deadPageId }, { sessionId: 's' })) as string);
     expect(stale.error).toBe('页面不存在');
   }, 90_000);
+});
+
+describe('浏览器页', () => {
+  it('过登记门槛；开页与关页都推 invalidate，表格跟着变', async () => {
+    expect(pages.logs).toEqual([]);
+    expect(pages.view('browser')).toMatchObject({ title: '浏览器', placement: 'plugin', icon: 'globe' });
+    const opened = pages.invalidations.length;
+    const pageId = await navigate();
+    expect(pages.invalidations.slice(opened)).toContainEqual({
+      instance: '@aalis/plugin-tool-browser',
+      pageKey: 'browser',
+    });
+    const rows = await pages.data<Array<{ id: string; title: string; url: string }>>('browser', 'pages');
+    expect(rows.find(row => row.id === pageId)).toMatchObject({ title: '截图页', url: `http://127.0.0.1:${port}/` });
+
+    const closing = pages.invalidations.length;
+    expect(await pages.act('browser', 'closePage', { rowKey: pageId })).toEqual({
+      status: 200,
+      body: { message: `已关闭 ${pageId}` },
+    });
+    expect(pages.invalidations.length).toBeGreaterThan(closing);
+    expect((await pages.data<Array<{ id: string }>>('browser', 'pages')).map(row => row.id)).not.toContain(pageId);
+  }, 60_000);
+
+  it('导航失败时开出的页面留在表里，开页那一刻已推 invalidate', async () => {
+    const before = pages.invalidations.length;
+    const out = JSON.parse(
+      (await handlers.browser_navigate({ url: 'http://127.0.0.1:1/' }, { sessionId: 's' })) as string,
+    );
+    expect(out.error, '用例前提：本机 1 号端口连不上，导航失败').toBeTruthy();
+    expect(pages.invalidations.slice(before)).toEqual([{ instance: '@aalis/plugin-tool-browser', pageKey: 'browser' }]);
+    const rows = await pages.data<Array<{ url: string }>>('browser', 'pages');
+    expect(rows.map(row => row.url)).toContain('about:blank');
+    expect(await pages.act('browser', 'closeAllPages')).toMatchObject({ status: 200 });
+  }, 60_000);
+
+  it('关不存在的页面回错误，不当成功', async () => {
+    expect(await pages.act('browser', 'closePage', { rowKey: 'page_none' })).toEqual({
+      status: 500,
+      body: { error: '页面 page_none 不存在' },
+    });
+  });
+
+  it('关闭所有页面：表格清空并推 invalidate', async () => {
+    await navigate();
+    const before = pages.invalidations.length;
+    expect(await pages.act('browser', 'closeAllPages')).toEqual({ status: 200, body: { message: '已关闭全部页面' } });
+    expect(pages.invalidations.length).toBeGreaterThan(before);
+    expect(await pages.data('browser', 'pages')).toEqual([]);
+  }, 60_000);
 });
