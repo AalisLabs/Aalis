@@ -481,6 +481,40 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **升级须知**：session-manager 插件配置里的 `defaults` 改放到宿主配置的 `sessionConfig.defaults`；`platformProfiles` 里不带 `audience` 的条目改放到 `sessionConfig.platforms.<平台>`，带 `audience` 的改放到 `sessionConfig.audiences.<平台>.<group 或 private>`；`think` 的 `'on'`、`'off'` 改成 `true`、`false`，空串与 null 删掉，`llm` 要 provider 与 model 都有才保留。会话库里每个会话自己的配置不用改。
 - **发布档位**：次版本：api-session-manager、plugin-session-manager、api-session-protocol（实验性）、api-approval、api-memory、api-tools、api-webui、plugin-session-server、plugin-memory-summary、plugin-webui-server、plugin-webui-client、create-aalis；其余为 patch。只改注释的 api-doctor、plugin-doctor、plugin-llm-openai、plugin-commands 可以不发。
 
+### 删除自档案（@aalis/plugin-user-profile、@aalis/schema-message）
+
+user-profile 不再让模型反思自己的输出、生成「自档案」再注入回所有会话。
+
+- **删除**：配置项 `enableSelfProfile`、`selfReflectEveryNMessages`、`selfReflectHistory`、`maxSelfFacts`，以及自反思与 `__self__:<人设名>` 档案的写入和注入；指令 `/profile.self` 与 `/profile.self.clear`；`user_profile_lookup` 的 `self` 参数，返回值不再带 `isSelf`。旧配置里的这四个键启动时按 schema 裁掉并告警。
+- **跨会话补齐**：开着 `allowGlobalBackfill` 时，补齐「在场参与者」跳过平台段以 `__` 开头的保留键，旧版本留下的自档案不会被当成一位参与者注入。
+- **升级须知**：存量的自档案不会自动清理。开过自档案的实例用 `/profile.forget __self__:<人设名> <事实id>` 逐条删；`/profile.clear.nuke` 也能清掉，但会连同全部用户档案。
+- **发布档位**：plugin-user-profile 次版本；schema-message 只改注释。
+
+### 页面契约第二版、插件页面与会话面板（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-storage、@aalis/api-publish、@aalis/api-checkpoint、@aalis/api-tools、@aalis/api-session-protocol、@aalis/schema-message、@aalis/plugin-session-server、@aalis/plugin-session-manager、@aalis/plugin-checkpoint、@aalis/plugin-agent、@aalis/plugin-tool-system、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-paper、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-authority、@aalis/plugin-skills、@aalis/plugin-doctor、@aalis/plugin-tool-browser、@aalis/plugin-user-relation、@aalis/plugin-file-reader、@aalis/create-aalis-plugin）
+
+新 WebUI 的第五部分：插件页面换成第二版契约并全部迁移，右侧面板的宿主标签与插件标签合成一套；补齐会话工作台的几处细节，修掉命令卡与 Markdown 的显示错误。
+
+- **页面契约第二版**（api-webui，实验性）：`webui.definePage({ key, title, icon?, placement?, order?, applies?, content | tabs, actions? })` 一次声明组件、数据源与动作，返回 `{ invalidate(componentId?, sessionId?) }`。
+  - 三个位置：插件页（`/p/:instance/:pageKey`，用户可固定到图标栏）、设置（`placement: 'settings'`，界面在后续一节）、会话面板（`placement: 'session'`，`applies` 按会话判断是否适用，超时 2 秒按不适用）。
+  - 五样组件：表格（客户端排序与搜索、`visibleWhen`、窄时只留标了 `primary` 的列、`detail` 宽时在右窄时进下一级）、关系图、键值 `info`、Markdown、按钮组；页面最外层可以排成标签页。嵌套最多一层，一屏最多 6 个组件、6 个标签。
+  - 动作按效果分 `read`、`write`、`destructive`，可带输入（按声明的字段校验，行动作只收 `rowKey`）；`destructive` 由宿主弹确认，`confirm` 不能是空字符串。
+  - 插件经 `webui.notify(notice)` 发提示，只有插件能撤回，随插件停用撤回。
+  - 登记时按质量门槛校验（嵌套、组件数、引用的名字都存在、不认识的字段），不过就拒绝登记并记错误日志；数据源与动作经服务端闸门调用，只许调声明过的，返回形状不对的回 500 并告警。
+  - 新增 `markdownCode`；管理面事件新增 `page.invalidate`、`layout.changed`；页面路由与布局记录的请求、返回类型在 api-webui。
+- **全部页面插件同批迁移**：白纸（插件页两个标签，另有群会话面板）、作品审核、作品站、计划任务、工作流、诊断（每次运行后按结果发出或撤回提示）、浏览器、关系图与原始数据，权限与技能移到设置位置；file-reader 新增「上传的文件」会话面板；脚手架模板的页面示例改用 `definePage`。告警、待裁决数、部署失败、账本故障改发提示。几处失败不再报成功：删技能、关浏览器页、立即执行计划任务（找不到任务或这一轮还没执行完时报错）、编辑已经不在的计划任务、删除上传文件（存储删不掉时报错并保留，文件本来就不在时当作删掉了）。
+- **WebUI 服务端**：删除 `/api/page-action`；`/api/pages` 改为 `{ pages }`；新增数据源与动作路由、`/api/session-pages`、`/api/page-file`、`/api/layout`。页面单元格里的文件改用 webui-server 签发的下载句柄，私有存储根不签发，判定规则 `canIssueFileHandle` 在 api-storage，会话服务共用。固定记录与会话面板记录存在 webui-server 的插件数据里，按操作写、只认 owner，变化推 `layout.changed`。
+- **会话面板的标签合成一套**：计划、设置、用量（api-webui 的 `HOST_PANEL_TABS`）与插件的会话面板页记在同一张表里，各带开关、按表的顺序排；当前标签可以关闭，关掉的从「+」重新打开并回到原位；读出时补齐缺的宿主标签、丢掉认不出的；连同宿主标签最多 50 个。用量百分比与输入框旁的设置项在标签关着时先把它打开。
+- **会话**：握手回包加应用名（取宿主配置的 `name`，标签页标题与房间里她的回复用它）；已归档的会话跑一轮仍是归档，只有手动恢复才回到列表；审批卡完整显示命令、参数与 diff；模型生成参数期间就出现「正在生成」的工具卡（schema-message 的 `toolCallProgress` 加 `callId`，openai 与 deepseek 同一帧有几个调用就各报一次），没执行的在回合结束时收尾；新增 `turn/checkpoint`，回滚确认在这一轮执行过命令时写明命令的效果不会撤回；用量拆分表加堆叠进度条、图例、「剩余」与压缩线；设置值按可选项的标签显示，没设的显示默认值；登录页按主题令牌重写，深浅跟随系统。
+- **工具卡的结局**：api-tools 的展示种类 `command` 可以声明退出码取自结果的哪个键（exec 已声明），退出码不为 0 时卡片记为失败并写「退出码 N」，结果被截断时照样认得出；协议的工具调用状态新增 `aborted`：回合被停止时还没结束的调用，以及历史里没有结果的调用，显示「已停止」，刷新后仍在。
+- **Markdown**：单个 `~` 不再是删除线；行内公式按成文规则认（开头的 `$` 右边紧跟非空白，结尾的 `$` 左边紧跟非空白、右边不紧跟数字或 `$`），「$5 和 $10」这类金额不再被当成公式，`\(x\)`、`$$x$$` 照常；代码块（含流式中还没闭合的）、行内代码与链接地址里的 `$` 原样保留；触屏上代码块的复制按钮不再压住第一行。
+- **破坏性**：
+  - api-webui 删除 `registerPage`、`registerAction`、`getPages`、`renderer`、内联 SVG 图标、`refresh`、`danger`、组件 `stat`、`form`、`tabs`、`searchable`、`WebuiFilePayload` 与关系图类别的 `color`；第三方页面插件改用 `definePage`，写法见 [api-webui](docs/api/api-webui.md)。
+  - api-checkpoint 的 `CheckpointService` 新增必须实现的 `execUsed(sessionId, turnId)`；api-publish 的 `PublishService` 新增必须实现的 `thumbnailUri(id)`。自己实现这两个服务的要补上。
+  - plugin-file-reader 的 `deleteFile` 删不掉时改为抛错。
+  - plugin-webui-server 删除配置项 `relationGraphDefaultSpacing`。
+- **升级须知**：webui-server 的 `relationGraphDefaultSpacing` 改放到 user-relation 的 `graphSpacing`（含义相同，默认 120，范围 20 到 1000，超出按默认）。
+- **发布档位**：次版本：api-webui、api-publish、api-checkpoint、api-storage、api-tools、api-session-protocol（实验性）、schema-message、plugin-webui-server、plugin-webui-client、plugin-session-server、plugin-user-relation、plugin-file-reader、create-aalis-plugin；其余为 patch。只改注释的 api-llm 可以不发。各页面插件对 api-webui 的依赖下限抬到带 `definePage` 的版本。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -503,6 +537,13 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - runtime 与 plugin-storage-local、plugin-package-manager、plugin-webui-server 同批升级：新版 storage-local 与 package-manager 依赖 runtime 提供的 `host-paths`，配旧版 runtime 一直停在 pending（存储不可用，几乎所有插件随之挂起）；新版 webui-server 配旧版 runtime 时找不到前端，市场与系统组件页回 503。反过来，新版 runtime 配旧版 storage-local 时，存储根仍按启动目录解析，与家目录分成两处。create-aalis 生成的新项目要新版 runtime：旧版不认 `appDir` 与 `defaultHome`，会到启动目录找配置。
 - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 与 schema-config 同批升级：路径字段的校验在 schema-config 里，配旧版 schema-config 时相对路径照旧放行。
 - runtime、schema-config、api-host-config、plugin-webui-server、plugin-webui-client、plugin-mcp-client 同批升级：新版 webui-server 改配置、新建实例与新版 mcp-client 的 `mcp_set_server_enabled` 都调 host-config 的 `applyPluginConfig`，旧版 runtime 没有这个方法，调用抛 TypeError；旧版 webui-server 配新版 runtime 时，改配置仍按「`updateConfig` 后 `setPluginConfig`」写、混用文档形态与运行态：请求里没带的密钥字段以引用交给插件，插件激活失败，带了原值的被新版 `setPluginConfig` 拒收，列表接口还会回出原值；新版 webui-server 回给前端的是引用，旧版 webui-client 不认识它。
+- 页面插件（plugin-paper、plugin-publish-review、plugin-works-site、plugin-scheduler、plugin-workflow、plugin-authority、plugin-skills、plugin-doctor、plugin-tool-browser、plugin-user-relation、plugin-file-reader）与 api-webui、plugin-webui-server、plugin-webui-client 同批升级：旧版插件调用已删的 `registerPage`、`registerAction`，新版插件经 `definePage` 调新版 webui-server 才有的 `addPage`，新旧混用时页面登记不上；旧版前端不认识第二版页面。发布时这些插件对 api-webui 的依赖下限抬到本批的新版本。
+- plugin-checkpoint、plugin-session-server 与 api-checkpoint 同批升级：新版会话服务的 `turn/checkpoint` 调 `execUsed`，旧版 checkpoint 没有它。
+- plugin-publish-review、plugin-works-site 与 api-publish 同批升级：新版作品站页的缩略图取 `thumbnailUri`，旧版作品审核没有它。
+- plugin-agent、plugin-session-server、plugin-llm-openai、plugin-llm-deepseek 与 schema-message 同批升级：新版会话服务按 `toolCallProgress.callId` 把生成进度对到工具卡，旧版 agent 不带它；旧版服务商插件同一帧只报最后一个调用的进度。
+- plugin-session-server、plugin-tool-system、plugin-webui-client 与 api-tools、api-session-protocol 同批升级：退出码按 exec 声明的 `display.result` 取，旧版 tool-system 不声明；新版会话服务会发 `aborted` 状态与 `display.exitCode`，旧版前端不认识。
+- plugin-session-server、plugin-webui-server 与 api-storage 同批升级：两者在运行时导入 api-storage 新增的 `canIssueFileHandle`，发布时依赖下限抬到本批的新版本。
+- plugin-user-relation 与 plugin-webui-server 同批升级：关系图的疏密改由 user-relation 的 `graphSpacing` 经关系图组件带出，旧版 webui-server 的 `relationGraphDefaultSpacing` 在新版里已删。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
