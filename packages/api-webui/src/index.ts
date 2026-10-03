@@ -71,10 +71,11 @@ export interface ExtendDeclaration {
  * 子系统展示目录条目。
  *
  * **职责边界**：
- * - 这是 **WebUI 展示层契约**，唯一消费者是 webui-server 的 `/api/service-groups` 路由。
+ * - 这是 **WebUI 展示层契约**：插件列表（`GET /api/plugins`）给出每个插件声明的 `subsystem`，界面的插件区按它分组，
+ *   组名与顺序取本表。
  * - `core` 不解释 subsystem 的取值，插件定义上只有一个透传的字符串字段
  *   `subsystem?: string`（不读不解释，纯粹搬运给 WebUI）。
- * - 本表只描述 **展示元数据**（中文 label / 排序 / icon），**不再写死插件归属**。
+ * - 本表只描述 **展示元数据**（中文 label / 排序），**不写死插件归属**。
  *   归属由每个插件在 `definePlugin({ subsystem: 'llm' })` 中声明。
  *
  * 解耦收益：
@@ -94,8 +95,8 @@ export interface SubsystemMetadata {
 /**
  * 默认子系统元数据。
  *
- * 仅提供常用 id 的中文 label 与排序；插件可任意自定义 subsystem id，
- * 未命中本表时 WebUI 会回退到「id 原样展示，order=9999」。
+ * 仅提供常用 id 的中文 label 与排序；插件可任意自定义 subsystem id，未命中本表的按 id 原样显示、排在表里的之后，
+ * 没声明的排在最后。
  */
 export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.freeze([
   { id: 'system', label: '系统', order: 0 },

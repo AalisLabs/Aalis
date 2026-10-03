@@ -328,7 +328,8 @@ function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => 
     theme = next;
     post({ type: 'theme', ...next });
   });
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  // 内置主题换 data-theme，导入与插件提供的主题另把令牌写在根元素的内联样式上
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
 
   const offs = [
     admin.on('page.invalidate', event => {

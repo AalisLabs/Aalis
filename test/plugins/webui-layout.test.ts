@@ -154,7 +154,8 @@ describe('固定的页面', () => {
       body: {
         error:
           '操作要是 { op, page } 或 { op, tab }：pin、unpin、move-up、move-down 带 page（{ instance, pageKey }），' +
-          'open-tab、close-tab、tab-up、tab-down 带 tab（{ host } 或 { instance, pageKey }）',
+          'open-tab、close-tab、tab-up、tab-down 带 tab（{ host } 或 { instance, pageKey }），' +
+          'remove-tab 只带插件标签 tab（{ instance, pageKey }），宿主标签只能关闭、不能移出',
       },
     });
     for (const body of [
@@ -290,6 +291,45 @@ describe('会话面板的标签', () => {
     expect((await read()).body.panelTabs).toHaveLength(MAX_LAYOUT_ENTRIES);
     await tab('close-tab', 'n0');
     expect((await tab('open-tab', 'n0')).body.panelTabs[HOSTS.length]).toEqual(page('n0'));
+  });
+});
+
+describe('移出插件标签', () => {
+  it('移出把插件标签从表里删掉，再打开时追加在末尾；不在表里的移出不变', async () => {
+    const { tab, read } = await setup();
+    await tab('open-tab', 'n0');
+    await tab('open-tab', 'n1');
+    expect((await tab('remove-tab', 'n0')).body.panelTabs).toEqual([...HOSTS, page('n1')]);
+    expect((await tab('remove-tab', 'n0')).body.panelTabs, '已不在表里').toEqual([...HOSTS, page('n1')]);
+    expect((await tab('open-tab', 'n0')).body.panelTabs).toEqual([...HOSTS, page('n1'), page('n0')]);
+    expect((await read()).body.panelTabs).toEqual([...HOSTS, page('n1'), page('n0')]);
+  });
+
+  it('宿主标签只能关、不能移出：服务端拒收，记录不变', async () => {
+    const { tab, read } = await setup();
+    const refused = await tab('remove-tab', { host: 'plan' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toContain('宿主标签只能关闭、不能移出');
+    expect((await read()).body.panelTabs).toEqual(HOSTS);
+  });
+
+  it('所属插件停用时也能移出', async () => {
+    const { app, tab } = await setup();
+    await tab('open-tab', 'n0');
+    await app.plugins.disable(OWNER);
+    expect((await tab('remove-tab', 'n0')).body.panelTabs).toEqual(HOSTS);
+  });
+
+  it(`记录满到 ${MAX_LAYOUT_ENTRIES} 个后移出一个插件标签，就能再打开新的`, async () => {
+    const room = MAX_LAYOUT_ENTRIES - HOSTS.length;
+    const { tab } = await setup({ panelPages: room + 1 });
+    for (let i = 0; i < room; i++) expect((await tab('open-tab', `n${i}`)).status).toBe(200);
+    expect((await tab('open-tab', `n${room}`)).status).toBe(409);
+    await tab('remove-tab', 'n0');
+    const reopened = await tab('open-tab', `n${room}`);
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.panelTabs.at(-1)).toEqual(page(`n${room}`));
+    expect(reopened.body.panelTabs).toHaveLength(MAX_LAYOUT_ENTRIES);
   });
 });
 

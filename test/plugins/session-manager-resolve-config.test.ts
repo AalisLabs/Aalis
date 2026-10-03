@@ -21,7 +21,7 @@ afterEach(async () => {
 /** stored：会话表里预置的会话自身 config（复现经 BSON 落盘读回来的形状） */
 async function setup(stored: Record<string, Record<string, unknown>> = {}) {
   const { app, sm } = await startSessionManager({
-    layers: { platforms: { onebot: { persona: 'aalis', llm: ONEBOT_MODEL, think: true } } },
+    layers: { platforms: { onebot: { persona: 'aalis', llm: ONEBOT_MODEL, think: 'high' } } },
     settings: [MODEL, THINK, PERSONA],
     stored: Object.fromEntries(
       Object.entries(stored).map(([id, config]) => [id, { id, name: id, children: [], status: 'waiting', config }]),
@@ -59,22 +59,21 @@ describe('resolveConfig：null 与 undefined 同义（都表示继承上层）',
 });
 
 describe('resolveConfig：think 会话覆盖（/session.set -t 的存储层契约）', () => {
-  it('think:false 是合法覆盖值，不被剥掉——压过平台档的 think:true', async () => {
+  it('会话的覆盖压过平台档', async () => {
     const sm = await setup();
     const id = 'onebot:bot:private:t1';
-    await sm.ensureSession(id, { config: { think: false } });
-    // 关键回归：false 是 falsy，若误剥 falsy 值，这里会错误回落平台档的 true
-    expect(sm.resolveConfig(id, 'onebot').think).toBe(false);
+    await sm.ensureSession(id, { config: { think: 'off' } });
+    expect(sm.resolveConfig(id, 'onebot').think).toBe('off');
   });
 
-  it('清除覆盖（写 null，或 BSON 读回的 null）→ 回落平台档的 think:true', async () => {
+  it('清除覆盖（写 null，或 BSON 读回的 null）→ 回落平台档', async () => {
     const stored = 'onebot:bot:private:t3';
     const sm = await setup({ [stored]: { think: null } });
     const id = 'onebot:bot:private:t2';
-    await sm.ensureSession(id, { config: { think: false } });
+    await sm.ensureSession(id, { config: { think: 'off' } });
     await sm.ensureSession(id, { config: { think: null } });
-    expect(sm.resolveConfig(id, 'onebot').think, 'null 删掉覆盖').toBe(true);
-    expect(sm.resolveConfig(stored, 'onebot').think, '存储里读回的 null 与没有同义').toBe(true);
+    expect(sm.resolveConfig(id, 'onebot').think, 'null 删掉覆盖').toBe('high');
+    expect(sm.resolveConfig(stored, 'onebot').think, '存储里读回的 null 与没有同义').toBe('high');
   });
 
   it('没有平台档的平台上未设置 think → 解析结果不含 think（agent 不带 think 字段发请求）', async () => {

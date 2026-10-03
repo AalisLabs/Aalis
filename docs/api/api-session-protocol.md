@@ -145,6 +145,7 @@ interface SettingRow {
   field: SchemaField;              // 类型、标签、说明、默认值、校验、可选项来源（dynamicOptions）
   plugin: string;                  // 登记它的插件实例 id，「高级」里按它分组
   prominence: 'composer' | 'common' | 'advanced';
+  dependsOn?: string;              // 可选项依赖的另一行的键
   value?: unknown;                 // 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值
   effective?: unknown;             // 生效值；哪一层都没设时没有，界面按字段的默认值显示
   source?: 'session' | 'parent' | 'audience' | 'platform' | 'defaults';  // 生效值出自哪一层
@@ -158,10 +159,10 @@ type SettingLayer =
 
 - **哪些行：** 会话只列适用于它的种类（`SessionSummary.kind`）的项；全局默认与平台档列全部，受众条目只列适用于房间的项。登记它的插件没装或没启用时不列，值保留。
 - **排序：** `composer`、`common` 在前，`advanced` 在后；同一显眼程度按登记时给的 `order`，没给的按登记的先后排在后面。`composer` 也放进输入框旁的快捷切换，同一组最多两项，多出的已退到 `common`。
-- **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。
+- **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。带 `dependsOn` 的行取可选项时把那一行的生效值（没有时取字段默认值）写成 JSON 放在 `dependency` 查询参数里，那一行变了就重取；例如深度思考（`llm-thinking`）按「模型」这一行取档位。
 - **选档：** 房间按出生平台与受众选档；owner 自己的会话按入口平台选档，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台。继承先后：本会话、父会话（旧数据）、受众条目、平台档、全局默认。
 - **写：** `patch` 里给值即写入这一层（按登记的字段校验），`null` 删掉这一项、恢复继承，没给的键不动。没登记的键、不合字段的值，以及不适用于这个会话种类的项（受众条目按房间算）回 `invalidParams`，什么都不改；`null` 不看适用范围，已经写进去的照样清得掉。层写进宿主的配置文档，保存失败时撤回、回内部错误。
-- **`session/config/layers`：** 文档里写了的各层，全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排。
+- **`session/config/layers`：** 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上配置里写过的平台（卸了适配器后还能清掉）；受众条目按适配器声明的会话类型（`sessionTypes` 里的 `group`、`private`）出，加上配置里写过的。
 - **`session/config/changed`：** 插件启停使设置项增减，或某一层、某个会话的覆盖被改写时推给每条连接，不带参数；客户端重取打开着的会话的设置与快捷切换。
 
 ## 订阅与条目

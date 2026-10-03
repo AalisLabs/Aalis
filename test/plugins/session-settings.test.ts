@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import {
   isSessionConfigError,
   type SessionSetting,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
-import { App, events, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
+import {
+  App,
+  definePlugin,
+  events,
+  type Logger,
+  type PluginDefinition,
+  provide,
+} from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -84,6 +92,22 @@ async function setup({
   const layers = () => (doc ? app.bind({ hostConfig }).hostConfig.require().get('sessionConfig') : undefined);
   return { app, sm: host.sessionManager.require(), warns, changes: () => changes, layers };
 }
+
+/** 以插件实例提供一个平台适配器 */
+const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
+  definePlugin({
+    name,
+    provides: [platform],
+    uses: { provide },
+    apply: ({ provide }) => {
+      provide(platform, {
+        adapterName: name,
+        getConnections: () => [],
+        sendMessage: async () => {},
+        ...adapter,
+      } as never);
+    },
+  });
 
 describe('设置项登记', () => {
   it('登记过的键参与解析；插件停用后不列出、不参与解析，值原样保留；重新启用后恢复', async () => {
@@ -202,6 +226,31 @@ describe('设置项登记', () => {
     expect(sm.listSettings().map(s => s.key)).toEqual(['llm']);
   });
 
+  it('可选项依赖另一项（dependsOn）随登记列出；依赖自己、依赖空键、字段没有动态可选项的登记被拒', async () => {
+    const dependent: SessionSetting = {
+      key: 'think',
+      field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
+      appliesTo: ['owner', 'room', 'task'],
+      prominence: 'common',
+      dependsOn: 'llm',
+    };
+    const { app, sm } = await setup({ plugins: [settingsPlugin(SETTINGS, [MODEL, dependent])] });
+    expect(sm.listSettings().map(s => [s.key, s.dependsOn])).toEqual([
+      ['llm', undefined],
+      ['think', 'llm'],
+    ]);
+    for (const [name, setting] of [
+      ['itself', { ...dependent, key: 'persona', dependsOn: 'persona' }],
+      ['empty', { ...dependent, key: 'persona', dependsOn: '' }],
+      ['static', { ...dependent, key: 'persona', field: { type: 'string', label: '人设' } }],
+    ] as const) {
+      await app.plugin(settingsPlugin(name, [setting as SessionSetting]));
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin(name)?.state, name).toBe('error');
+    }
+    expect(sm.listSettings().map(s => s.key)).toEqual(['llm', 'think']);
+  });
+
   it('建子会话复制的配置不带 liveOnly 的项', async () => {
     const { sm } = await setup();
     await sm.ensureSession(GROUP, { config: { persona: '<人设>', paperName: '<白纸名>' } });
@@ -254,15 +303,15 @@ describe('各层：全局默认、平台档与受众条目', () => {
     });
   });
 
-  it('按层读：listLayers 列出有值的层，getLayer 是这一层自己的值，resolveLayer 解析到这一层为止', async () => {
+  it('按层读：listLayers 列出写过的层，getLayer 是这一层自己的值，resolveLayer 解析到这一层为止', async () => {
     const { sm } = await setup({ doc: DOC });
     const priv = { scope: 'audience', platform: 'onebot', audience: 'private' } as const;
 
     expect(sm.listLayers()).toEqual([
       { scope: 'defaults' },
       { scope: 'platform', platform: 'onebot' },
-      { scope: 'platform', platform: 'webui' },
       priv,
+      { scope: 'platform', platform: 'webui' },
     ]);
     expect(sm.getLayer(priv)).toEqual({ enabledToolGroups: ['search', 'scheduler'], paperName: '<私聊白纸>' });
     expect(sm.resolveLayer(priv)).toEqual({
@@ -273,6 +322,59 @@ describe('各层：全局默认、平台档与受众条目', () => {
       values: { persona: '<默认人设>' },
       sources: { persona: 'defaults' },
     });
+  });
+
+  it('层的列表：平台档是已装适配器的平台加配置里写过的平台，群与私聊条目按适配器的 sessionTypes 加配置里写过的；按平台名排，每个平台先平台档、再群、私聊', async () => {
+    const { app, sm } = await setup({
+      doc: DOC,
+      plugins: [
+        settingsPlugin(SETTINGS, [PERSONA, TOOL_GROUPS, ITERATIONS, PAPER_NAME]),
+        adapterPlugin('zz-qq', { platform: 'qq', sessionTypes: ['group', 'private'] }),
+        adapterPlugin('zz-forum', { platform: 'forum', sessionTypes: ['group'] }),
+        adapterPlugin('zz-terminal', { platform: 'terminal', sessionTypes: [] }),
+        adapterPlugin('zz-bare', { platform: 'bare' }),
+        adapterPlugin('zz-onebot', { platform: 'onebot', sessionTypes: ['group', 'private'] }),
+      ],
+    });
+    const platformLayer = (platform: string) => ({ scope: 'platform', platform });
+    const audience = (platform: string, which: 'group' | 'private') => ({
+      scope: 'audience',
+      platform,
+      audience: which,
+    });
+    expect(sm.listLayers()).toEqual([
+      { scope: 'defaults' },
+      platformLayer('bare'),
+      platformLayer('forum'),
+      audience('forum', 'group'),
+      platformLayer('onebot'),
+      audience('onebot', 'group'),
+      audience('onebot', 'private'),
+      platformLayer('qq'),
+      audience('qq', 'group'),
+      audience('qq', 'private'),
+      platformLayer('terminal'),
+      platformLayer('webui'),
+    ]);
+
+    // 卸了适配器：没写过的平台档跟着消失，写过的仍在，能清掉
+    await app.plugins.disable('zz-qq');
+    await app.plugins.disable('zz-onebot');
+    const after = sm.listLayers();
+    expect(after).not.toContainEqual(platformLayer('qq'));
+    expect(after).toEqual(
+      expect.arrayContaining([platformLayer('onebot'), audience('onebot', 'private'), platformLayer('webui')]),
+    );
+    expect(after).not.toContainEqual(audience('onebot', 'group'));
+    await sm.updateLayer(
+      { scope: 'audience', platform: 'onebot', audience: 'private' },
+      {
+        enabledToolGroups: null,
+        paperName: null,
+      },
+    );
+    await sm.updateLayer({ scope: 'platform', platform: 'onebot' }, { enabledToolGroups: null });
+    expect(sm.listLayers()).not.toContainEqual(platformLayer('onebot'));
   });
 
   it('按层写：校验后写进文档并保存，null 删掉这一项；没启用的插件写在这一层的键不受影响', async () => {

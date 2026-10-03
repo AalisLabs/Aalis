@@ -4,9 +4,10 @@ import type {
   ChatStreamChunk,
   LLMCapability,
   LLMModel,
+  ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm } from '@aalis/api-llm';
+import { LLMCapabilities, llm, requestedThinking } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
@@ -115,6 +116,50 @@ function parseApiError(provider: string, status: number, body: string): string {
   return httpErrorMessage(provider, status, body);
 }
 
+const LOW_TO_HIGH = [
+  { id: 'low', label: '低' },
+  { id: 'medium', label: '中' },
+  { id: 'high', label: '高' },
+];
+
+/**
+ * reasoning_effort 写法下模型的档位，按模型族给：gpt-5.1 起（gpt-5.<n>）多一档关（none），不带字段时就是关；gpt-5 本身
+ * 最浅是最低（minimal）；o1-mini 与 o1-preview 会思考却不收这个字段，不声明；其余能思考的模型是低、中、高
+ */
+function effortLevels(model: string): ThinkingLevels | undefined {
+  const lower = model.toLowerCase();
+  if (/^o1-(mini|preview)/.test(lower)) return undefined;
+  if (/^gpt-5\.\d/.test(lower)) return { levels: [{ id: 'none', label: '关' }, ...LOW_TO_HIGH], default: 'none' };
+  if (lower.startsWith('gpt-5')) {
+    return { levels: [{ id: 'minimal', label: '最低' }, ...LOW_TO_HIGH], default: 'medium' };
+  }
+  return { levels: LOW_TO_HIGH, default: 'medium' };
+}
+
+/**
+ * 思考档位的两种写法（thinkingParam）：能思考的模型（能力里有 thinking 的）按实例选的写法声明档位，fields 把档位翻成
+ * 请求体字段。请求带了档位才发，没带时不发、按端点自己的默认，默认档写的就是端点的默认
+ */
+const THINKING_STYLES: Record<
+  'reasoning_effort' | 'thinking',
+  { levels(model: string): ThinkingLevels | undefined; fields(level: string): Record<string, unknown> }
+> = {
+  reasoning_effort: {
+    levels: effortLevels,
+    fields: level => ({ reasoning_effort: level }),
+  },
+  thinking: {
+    levels: () => ({
+      levels: [
+        { id: 'off', label: '关' },
+        { id: 'on', label: '开' },
+      ],
+      default: 'on',
+    }),
+    fields: level => ({ thinking: { type: level === 'on' ? 'enabled' : 'disabled' } }),
+  },
+};
+
 const configSchema = defineConfig({
   apiKey: {
     type: 'string',
@@ -170,14 +215,17 @@ const configSchema = defineConfig({
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
   thinkingParam: {
-    type: 'boolean',
-    label: '透传 thinking 开关（DeepSeek 风格）',
-    default: false,
+    type: 'select',
+    label: '思考档位的写法',
+    default: 'reasoning_effort',
+    options: [
+      { label: 'reasoning_effort：档位按模型族（OpenAI 官方与多数兼容端点）', value: 'reasoning_effort' },
+      { label: 'thinking.type：关、开（DeepSeek 风格的端点或中转）', value: 'thinking' },
+    ],
     description:
-      '开启后把请求的 think 开关编码为 DeepSeek 风格的 `thinking: {type: enabled|disabled}` 字段发给端点，' +
-      '使会话级 /session.set -t 与平台档 think 对本 provider 生效。' +
-      '仅在端点是 DeepSeek 或会原样透传该字段的中转时开启——OpenAI 官方端点不认此字段会拒收请求。' +
-      '请求未指定 think 时不发送该字段（沿用端点默认）。',
+      '能思考的模型（内置表里的 o 系列与 gpt-5 系列，gpt-5-chat 除外，或单模型能力覆盖里写了 thinking 的）按这种写法提供深度思考的档位。' +
+      '请求指定了档位才发对应字段，没指定时不发、按端点自己的默认。' +
+      '端点不认所选字段时会拒收指定了档位的请求，这时换一种写法，或在单模型能力覆盖里去掉这个模型的 thinking。',
   },
 });
 
@@ -255,7 +303,7 @@ class OpenAIClient {
   private timeout: number;
   readonly temperature: number;
   readonly maxTokens: number;
-  private thinkingParam: boolean;
+  private thinkingFields: (level: string) => Record<string, unknown>;
   private logger;
 
   constructor(cfg: OpenAIConfig, logger: Logger) {
@@ -265,19 +313,8 @@ class OpenAIClient {
     this.timeout = cfg.timeout > 0 ? cfg.timeout * 1000 : 2_147_483_647;
     this.temperature = cfg.temperature;
     this.maxTokens = cfg.maxTokens;
-    this.thinkingParam = cfg.thinkingParam;
+    this.thinkingFields = THINKING_STYLES[cfg.thinkingParam].fields;
     this.logger = logger;
-  }
-
-  /**
-   * 请求的 think 开关 → 线上字段。本插件原本只按真 OpenAI 写（无思考开关，o 系列隐式推理），
-   * request.think 一直被无视——走 OpenAI 兼容中转的 DeepSeek 因此收不到会话级开关。
-   * DeepSeek 风格 `thinking: {type}` 由配置显式开启（真 OpenAI 端点不认此字段会 400）；
-   * think 未指定时不发字段，端点默认行为不被触碰。
-   */
-  private applyThinking(body: Record<string, unknown>, request: ChatModelRequest): void {
-    if (!this.thinkingParam || request.think === undefined) return;
-    body.thinking = { type: request.think ? 'enabled' : 'disabled' };
   }
 
   /** 构造请求头（无 apiKey 时不发 Authorization） */
@@ -356,7 +393,8 @@ class OpenAIClient {
     }
   }
 
-  async chat(model: string, request: ChatModelRequest): Promise<ChatResponse> {
+  /** level 是请求带的思考档位，没带时不发字段 */
+  async chat(model: string, request: ChatModelRequest, level: string | undefined): Promise<ChatResponse> {
     const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
@@ -369,7 +407,7 @@ class OpenAIClient {
       [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
       ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
     };
-    this.applyThinking(body, request);
+    if (level !== undefined) Object.assign(body, this.thinkingFields(level));
 
     if (tools && tools.length > 0) {
       body.tools = tools;
@@ -431,7 +469,11 @@ class OpenAIClient {
     return result;
   }
 
-  async *chatStream(model: string, request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+  async *chatStream(
+    model: string,
+    request: ChatModelRequest,
+    level: string | undefined,
+  ): AsyncIterable<ChatStreamChunk> {
     const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
@@ -446,7 +488,7 @@ class OpenAIClient {
       // 流式必须显式声明才会在收尾帧返回 usage（真 OpenAI 端点无此开关则整条流不含 usage）。
       stream_options: { include_usage: true },
     };
-    this.applyThinking(body, request);
+    if (level !== undefined) Object.assign(body, this.thinkingFields(level));
 
     if (tools && tools.length > 0) {
       body.tools = tools;
@@ -667,6 +709,8 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'gpt-4.1': [Chat, ToolCalling, Streaming, Vision],
   'gpt-4-turbo': [Chat, ToolCalling, Streaming],
   'gpt-4': [Chat, ToolCalling, Streaming],
+  // gpt-5-chat 是 ChatGPT 用的非推理模型，不收思考档位
+  'gpt-5-chat': [Chat, ToolCalling, Streaming, Vision],
   'gpt-5': [Chat, ToolCalling, Streaming, Vision, Thinking],
   'gpt-3.5-turbo': [Chat, ToolCalling, Streaming],
   o1: [Chat, Thinking],
@@ -775,16 +819,18 @@ class OpenAIModelHandle implements LLMModel {
     readonly maxOutputTokens: number,
     /** 该 model 的能力元数据（供 media 发现/下拉展示读取，非 DI 选择机制）。 */
     readonly capabilities: readonly LLMCapability[],
+    /** 能调思考的模型才有：按实例选的写法与模型族 */
+    readonly thinking: ThinkingLevels | undefined,
     /** Provider 级共享的 refresh 闭包；webui 按 providerId 找到该 provider 的任一 entry 调一次即可。关闭模型发现时没有 */
     readonly refresh?: () => Promise<{ added: string[]; removed: string[]; total: number }>,
   ) {}
 
-  chat(request: ChatModelRequest): Promise<ChatResponse> {
-    return this.client.chat(this.id, request);
+  async chat(request: ChatModelRequest): Promise<ChatResponse> {
+    return this.client.chat(this.id, request, requestedThinking(this, request));
   }
 
-  chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
-    return this.client.chatStream(this.id, request);
+  async *chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    yield* this.client.chatStream(this.id, request, requestedThinking(this, request));
   }
 }
 
@@ -840,6 +886,7 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
       cfg.contextLength,
       cfg.maxTokens,
       capabilities,
+      capabilities.includes(Thinking) ? THINKING_STYLES[cfg.thinkingParam].levels(modelId) : undefined,
       refresh,
     );
     const dispose = provide(llm, handle, {

@@ -9,8 +9,8 @@
 ## 怎么试
 1. `pnpm install && pnpm -r build`（或单独 `pnpm --filter @aalis/plugin-webui-client-example build`）。
 2. 启动带 webui-server 的 Aalis。
-3. 打开默认前端 **Dashboard 的「服务」区**，找到 `webui-client` 服务卡片的**下拉框**（多 provider 时出现），选「示例前端」。
-4. 页面平滑 reload 后即由本示例前端接管；切回默认前端 = 同一下拉框选回，或点「恢复默认」。
+3. 打开默认前端设置里的 **「系统」**，在「服务偏好」里把 `webui-client` 一行（多 provider 时出现）选成「示例前端」。
+4. 页面平滑 reload 后即由本示例前端接管。本示例没有切换入口，切回默认前端打开 `/__clients` 恢复页选回；回到默认前端后，也可以在同一行点「恢复默认」。
 
 > 前端切换统一走「服务偏好」（`webui-client` 是多 provider 服务）；没有单独的切换开关。
 >

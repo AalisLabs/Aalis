@@ -1,0 +1,156 @@
+/* 插件配置：宽时标签一列、控件一列、撤销在行尾，窄时标签在控件上面 */
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  container-type: inline-size;
+}
+
+.config-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.config-head > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 分组与数组：标题比「配置」低一级，用次要色 */
+.config-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.config-group-title,
+.config-item-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-sm);
+  color: var(--color-text-2);
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.config-form .field-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-1) var(--space-2);
+  padding-left: var(--space-3);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* 改了没保存：行左边一条强调色竖线；数组整块算一项，竖线画在整块上 */
+.config-form .field-row[data-changed]::before,
+.config-group[data-changed]::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  content: "";
+}
+
+.config-group[data-changed] {
+  position: relative;
+  padding-left: var(--space-3);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* 窄时标签这一行与行尾的撤销同高：撤销出现时下面正在填的控件不挪位置 */
+.config-form .field-row-label {
+  align-items: center;
+  min-height: var(--control-h);
+}
+
+.config-form .field-row > .button {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.config-form .field-row-control {
+  grid-column: 1 / -1;
+}
+
+.config-form .field-row-control > :is(input:not([type="checkbox"]), select, textarea) {
+  width: 100%;
+}
+
+.config-warning {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-warning-text);
+  overflow-wrap: anywhere;
+}
+
+.config-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--hit);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+}
+
+@container (min-width: 40em) {
+  .config-form .field-row {
+    grid-template-columns: 12.5rem minmax(0, 25rem) max-content;
+    justify-content: start;
+    column-gap: var(--space-4);
+  }
+
+  /* 标签与同一行的控件一样高，竖直居中对齐 */
+  .config-form .field-row-label {
+    min-height: var(--hit);
+  }
+
+  .config-form .field-row-control {
+    grid-column: auto;
+  }
+
+  .config-form .field-row > .button {
+    grid-column: 3;
+  }
+}
+
+/* 底部一条：几项未保存与保存的结果，贴着滚动区的底边 */
+.config-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--surface);
+}
+
+.config-bar-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+}
+
+.config-bar-text[role="alert"] {
+  color: var(--color-danger-text);
+}

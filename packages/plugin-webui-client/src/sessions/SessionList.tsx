@@ -20,6 +20,7 @@ import {
   routes,
   useSessionAddress,
 } from '../routes';
+import { HOST_ENTRIES } from '../shell/entries';
 import { SessionGate } from '../shell/SessionGate';
 import { Left, usePhone, useShell } from '../shell/Shell';
 import { useSessionActions } from './actions';
@@ -28,7 +29,7 @@ import { SessionStatus, statusOf } from './status';
 import './SessionList.css';
 
 // 左栏的会话列表：「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的「已归档」。
-// 手机上它是第一层，没有图标栏，固定的页面列在会话上面
+// 手机上它是第一层，没有图标栏，宿主的入口与固定的页面列在会话上面
 
 /** 组内露出近这么久她开过口的房间，其余收进「其余 N 个」 */
 const RECENT_REPLY_MS = 7 * 24 * 60 * 60_000;
@@ -55,6 +56,22 @@ export function SessionList() {
         </div>
       )}
       <div className="session-list-body">
+        {phone && (
+          <List label="入口">
+            {HOST_ENTRIES.map(({ area, label, icon: Icon, path }) => (
+              <ListItem
+                key={area}
+                to={path}
+                title={
+                  <span className="pinned-title">
+                    <Icon aria-hidden />
+                    {label}
+                  </span>
+                }
+              />
+            ))}
+          </List>
+        )}
         {phone && <PinnedList />}
         <SessionGate>
           <Sections />

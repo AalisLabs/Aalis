@@ -3,7 +3,7 @@ import type { CommandService } from '@aalis/api-commands';
 import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
-import type { AppService, Logger, PluginManagerService, PluginState, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, PluginState, ServiceRef, Services } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
@@ -75,6 +75,9 @@ function reportSaveFailure(
   }
 }
 
+/** 宿主配置里要重启才生效的键：runtime 与 core 只在启动时读它们。name 只是显示用的应用名称，保存即生效 */
+const RESTART_KEYS: readonly string[] = ['logLevel', 'slowThresholdMs'];
+
 /** 文档里每个密钥键被引用的处数：表单据此提示「替换会同时改到另外 N 处」 */
 function countSecretRefs(value: unknown, into: Record<string, number> = {}): Record<string, number> {
   if (isSecretRef(value)) into[value.$secret] = (into[value.$secret] ?? 0) + 1;
@@ -121,6 +124,14 @@ interface PluginRoutesCaps {
   hostConfig: Pick<ServiceRef<HostConfig>, 'current'>;
   tools: Pick<ServiceRef<ToolService>, 'current'>;
   commands: Pick<ServiceRef<CommandService>, 'current'>;
+  /** 服务的登记情况：列表据它给出此刻没有提供者的 required 服务 */
+  services: Pick<Services, 'inspect'>;
+  /** 提供这个界面的插件实例：经这些路由停用不了它，列表给它标 self */
+  self: string;
+  /** 家目录（宿主路径的 home）：宿主配置一并给出；宿主不提供路径时没有 */
+  home?: string;
+  /** 本地已装包的版本，每取一次列表现查一遍（装卸与更新会改它） */
+  versions(): (name: string) => string | undefined;
   /** 裁剪 schema 外字段时点名 warn，保存全局配置后重启失败时记 error；测试可不传 */
   logger?: Logger;
 }
@@ -134,6 +145,13 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const doc = caps.hostConfig.current;
     if (!doc) res.status(503).json({ error: '宿主未提供配置文档（host-config），无法读写配置' });
     return doc;
+  };
+
+  /** 提供这个界面的插件经界面停掉就回不来了：拒绝停用它 */
+  const refuseSelf = (res: express.Response, name: string): boolean => {
+    if (name !== caps.self) return false;
+    res.status(409).json({ error: `插件 ${name} 提供这个界面，不能从界面停用` });
+    return true;
   };
 
   /**
@@ -183,34 +201,19 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       res.json({ plugins: [], secretRefCounts: {} });
       return;
     }
-    // 反向索引：instanceId -> tools / commands（名字列表 + 聚合敏感能力）。
-    // 生产登记的 pluginName 就是 contextId（= instanceId）；按 definition.name 索引
-    // 会让 name:suffix 误挂主实例的工具。能力披露用聚合 capability。
+    // 反向索引：instanceId -> tools / commands。生产登记的 pluginName 就是 contextId（= instanceId）；
+    // 按 definition.name 索引会让 name:suffix 误挂主实例的工具
     const toolsByPlugin = new Map<string, string[]>();
-    const capsByPlugin = new Map<string, Set<string>>();
-    const addCaps = (plugin: string, visibility?: string) => {
-      if (visibility !== 'restricted') return;
-      const set = capsByPlugin.get(plugin) ?? new Set<string>();
-      set.add('visibility:restricted');
-      capsByPlugin.set(plugin, set);
-    };
-    const tools = caps.tools.current?.getAll() ?? [];
-    for (const t of tools) {
-      const list = toolsByPlugin.get(t.pluginName) ?? [];
-      list.push(t.name);
-      toolsByPlugin.set(t.pluginName, list);
-      addCaps(t.pluginName, t.visibility);
+    for (const t of caps.tools.current?.getAll() ?? []) {
+      toolsByPlugin.set(t.pluginName, [...(toolsByPlugin.get(t.pluginName) ?? []), t.name]);
     }
     const commandsByPlugin = new Map<string, string[]>();
-    const cmds = caps.commands.current?.getAll() ?? [];
-    for (const c of cmds) {
+    for (const c of caps.commands.current?.getAll() ?? []) {
       const owner = c.pluginName ?? 'unknown';
-      const list = commandsByPlugin.get(owner) ?? [];
-      list.push(c.name);
-      commandsByPlugin.set(owner, list);
-      addCaps(owner, c.visibility);
+      commandsByPlugin.set(owner, [...(commandsByPlugin.get(owner) ?? []), c.name]);
     }
     const doc = caps.hostConfig.current;
+    const versionOf = caps.versions();
     const plugins = pm.getStatus().map(p => {
       const entry = pm.getPlugin(p.instanceId);
       const schema = entry?.definition?.configSchema;
@@ -218,20 +221,23 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         name: p.name,
         instanceId: p.instanceId,
         displayName: p.displayName,
+        // 展示元数据：子系统按插件声明原样给，归哪组、组名与顺序由界面定；版本取已装的包
+        subsystem: entry?.definition?.subsystem,
+        version: versionOf(p.name),
         state: p.state,
         slow: p.slow,
+        self: p.instanceId === caps.self || undefined,
         provides: p.provides ?? [],
-        // 完整能力声明含内置能力与 apply 别名；外部依赖闸与工具/指令可见性仍是各自独立的事实。
-        uses: p.uses,
         requiredServices: p.requiredServices ?? [],
         optionalServices: p.optionalServices ?? [],
-        capabilities: [...(capsByPlugin.get(p.instanceId) ?? [])],
+        // 此刻没有任何提供者的 required 服务：插件「缺服务」时缺的就是它们
+        missing: (p.requiredServices ?? []).filter(service => caps.services.inspect(service).length === 0),
         tools: toolsByPlugin.get(p.instanceId) ?? [],
         commands: commandsByPlugin.get(p.instanceId) ?? [],
         reusable: p.reusable ?? false,
         // extends / config / configSchema / defaultConfig 非内核状态摘要字段
         // （getStatus 只含内核事实）：从配置文档与 entry.definition 补齐给前端。
-        // 配置给文档形态：密钥字段上是引用，不是原值；前端据它建编辑草稿、整份保存，引用原样发回即保持原值。
+        // 配置给文档形态：密钥字段上是引用，不是原值；前端据它建编辑草稿，引用原样发回即保持原值。
         // 宿主不提供配置文档时给运行态，去掉密钥字段（运行态里是原值）
         extends: entry?.definition?.extends,
         config: doc ? doc.getPluginConfig(p.instanceId) : mapSecretFields(schema, entry?.config ?? {}, () => undefined),
@@ -243,42 +249,39 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     res.json({ plugins, secretRefCounts: doc ? countSecretRefs(doc.getAll().plugins) : {} });
   });
 
-  // 获取当前全局配置
+  // 宿主配置：文档里写了的核心键、它们的 schema、要重启才生效的键与家目录
   expressApp.get('/api/config', gate(), (_req, res) => {
     const doc = docOr503(res);
     if (!doc) return;
-    res.json({ ...doc.getAll(), _schema: CORE_CONFIG_SCHEMA });
+    const all = doc.getAll() as Record<string, unknown>;
+    const config = Object.fromEntries(
+      Object.keys(CORE_CONFIG_SCHEMA)
+        .filter(key => all[key] !== undefined)
+        .map(key => [key, all[key]]),
+    );
+    res.json({ config, schema: CORE_CONFIG_SCHEMA, restartKeys: RESTART_KEYS, home: caps.home });
   });
 
-  // 更新全局配置字段
+  // 改宿主配置的核心键：只保存，要重启才生效的键改了时回执写明，由界面出「重启以生效」，重启走 POST /api/restart
   expressApp.put('/api/config', gate(), async (req, res) => {
     const updates = req.body;
     if (!updates || typeof updates !== 'object') {
       res.status(400).json({ error: '请求体必须是对象' });
       return;
     }
-
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
     const doc = docOr503(res);
     if (!doc) return;
 
-    // 可改的只有 CORE_CONFIG_SCHEMA 的键。内置前端（buildDraftFromSchema）会把 GET 到的整份配置连同
-    // _schema 原样回传，其中 plugins 等还可能是过期快照（插件配置页保存后不刷新全局 config），
-    // 所以不能按键报错：其余键一律不应用，但把真有改动的点名回给调用方——不静默吞掉却回复「已保存」。
+    // 可改的只有 CORE_CONFIG_SCHEMA 的键。其余键不应用，有改动的点名回给调用方——不静默吞掉却回复「已保存」。
     const allowed = Object.keys(CORE_CONFIG_SCHEMA);
     const current = doc.getAll() as Record<string, unknown>;
     const defaultOf = (k: string) => (CORE_CONFIG_SCHEMA[k] as { default?: unknown } | undefined)?.default;
-    // 文档里没写的核心键按 schema 默认值比较：内置前端把默认值回填进草稿后整份回传，不能据此判成改动（否则只改
-    // 名字也会把默认值写进文件并触发重启）
+    // 文档里没写的核心键按 schema 默认值比较：回传的默认值不算改动，不写进文件
     const currentOf = (k: string) => current[k] ?? defaultOf(k);
     const differs = (k: string) => !isDeepStrictEqual(updates[k], currentOf(k));
-    // 核心键提交 null 表示清空（前端清空数字框时发 null）：回到默认值，并从文档里删掉这个键，不把默认值写死进文件
+    // 核心键提交 null 表示清空（恢复默认）：回到默认值，并从文档里删掉这个键，不把默认值写死进文件
     const submittedOf = (k: string) => (updates[k] === null ? defaultOf(k) : updates[k]);
-    const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
+    const ignored = Object.keys(updates).filter(k => !allowed.includes(k) && differs(k));
     const changed = allowed.filter(k => k in updates && !isDeepStrictEqual(submittedOf(k), currentOf(k)));
     // 与插件配置路径同一把尺子：类型不符、越界或不在选项里的值（如 logLevel 传 nope）不落盘。
     const picked = Object.fromEntries(changed.map(k => [k, submittedOf(k)]));
@@ -293,37 +296,44 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     // 提交 null 的键置为 undefined，写文件时省略
     for (const key of changed) doc.set(key, updates[key] === null ? undefined : values[key]);
-    // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 只是显示用的应用名称，不为它重启整个进程
-    const restartNeeded = changed.some(k => k === 'logLevel' || k === 'slowThresholdMs');
+    const restartNeeded = changed.some(k => RESTART_KEYS.includes(k));
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
     try {
       await doc.save();
     } catch (err) {
-      // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件。
-      // logLevel / slowThresholdMs 要重启才生效，name 只用于显示：撤回后都回到修改前，运行态不留改动
+      // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件
       for (const key of changed) doc.set(key, previous[key]);
       res
         .status(isConfigSaveRefused(err) ? 409 : 500)
         .json({ error: `未写入配置文件（${errorMessage(err)}），本次修改已撤回` });
       return;
     }
-    if (!restartNeeded) {
-      res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
+    res.json({
+      ok: true,
+      message: `${restartNeeded ? '全局配置已保存，重启后生效' : '全局配置已更新并保存'}${note}`,
+      ignored,
+      restartNeeded,
+    });
+  });
+
+  // 重启应用。发起之后的停机是异步的（core 先广播 app:restarting，何时停机由重启策略决定），这条回复来得及发出；
+  // 宿主没注入重启策略时 restart() 同步抛错，回 500，界面据此不去等待重连
+  expressApp.post('/api/restart', gate(), (_req, res) => {
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    // 先发起重启再回复：宿主没注入重启策略时 restart() 同步抛错，据此回 restart:false，前端才不会进入等待重连
-    // 却永远等不到。发起之后的停机是异步的（core 先广播 app:restarting，何时停机由重启策略决定，Node 宿主延迟
-    // 500ms），这条回复来得及发出。已写进文件，重启失败不撤回：改动在下次启动时生效
     try {
       app.restart();
     } catch (err) {
-      const reason = `全局配置已保存，但重启失败（${errorMessage(err)}），改动在下次启动时生效`;
+      const reason = `重启失败（${errorMessage(err)}），改动在下次启动时生效`;
       caps.logger?.error(reason);
-      res.json({ ok: true, message: `${reason}${note}`, restart: false, ignored });
+      res.status(500).json({ error: reason });
       return;
     }
-    res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
+    res.json({ ok: true, message: '正在重启应用' });
   });
 
   // 获取单个插件在配置文档里的配置
@@ -510,6 +520,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   // 禁用插件
   expressApp.post('/api/plugins/:name/disable', gate(), async (req, res) => {
     const pluginName = req.params.name;
+    if (refuseSelf(res, pluginName)) return;
     const pm = getPluginMgr();
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
@@ -540,6 +551,40 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     } else {
       refuse(pm, res, pluginName, '禁用');
     }
+  });
+
+  // 重载：拆掉当前激活再按原配置重新激活，不写配置文件；失败的插件重载即重试
+  expressApp.post('/api/plugins/:name/reload', gate(), async (req, res) => {
+    const pluginName = req.params.name;
+    const pm = getPluginMgr();
+    if (!pm) {
+      res.status(500).json({ error: '插件管理服务不可用' });
+      return;
+    }
+    if (pm.getPlugin(pluginName)?.state === 'disabled') {
+      res.status(409).json({ error: `插件 ${pluginName} 已停用，启用后才能重载` });
+      return;
+    }
+    let success: boolean;
+    try {
+      success = await pm.bounce(pluginName);
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
+    if (!success) {
+      refuse(pm, res, pluginName, '重载');
+      return;
+    }
+    const after = await settledEntry(pm, pluginName);
+    const aside = notYetActive(after?.state);
+    res.json({
+      ok: true,
+      message:
+        after?.state === 'error'
+          ? `插件 ${pluginName} 重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
+          : `插件 ${pluginName} 已重载${aside ? `；${aside}` : ''}`,
+    });
   });
 
   // 经宿主 plugin-source 重新扫描并加载新插件

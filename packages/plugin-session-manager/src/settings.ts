@@ -8,6 +8,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 import type {} from '@aalis/api-host-config'; // declaration merging 锚点（下方 AalisConfig 增强）
+import type { PlatformAdapter } from '@aalis/api-platform';
 import {
   type RegisteredSessionSetting,
   type RoomAudience,
@@ -67,6 +68,13 @@ function assertSetting(setting: SessionSetting): void {
   }
   if (!PROMINENCES.has(prominence)) {
     throw new TypeError(`会话设置项 ${key} 的显眼程度要是 composer、common、advanced 之一`);
+  }
+  const dependsOn: unknown = setting.dependsOn;
+  if (dependsOn !== undefined && (typeof dependsOn !== 'string' || dependsOn === '' || dependsOn === key)) {
+    throw new TypeError(`会话设置项 ${key} 的 dependsOn 要是另一个设置项的键`);
+  }
+  if (dependsOn !== undefined && field.dynamicOptions === undefined) {
+    throw new TypeError(`会话设置项 ${key} 声明了 dependsOn，字段要有 dynamicOptions`);
   }
 }
 
@@ -235,13 +243,25 @@ export function rawLayer(layers: Layers, layer: SessionConfigLayer): SettingValu
   return layers.audiences.get(layer.platform)?.[layer.audience];
 }
 
-/** 文档里写了的各层：全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排 */
-export function listLayers(layers: Layers): SessionConfigLayer[] {
+/**
+ * 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上
+ * 文档里写过的平台（卸了适配器后还能清掉）；受众条目按适配器声明的 sessionTypes 出，加上文档里写过的
+ */
+export function listLayers(
+  layers: Layers,
+  adapters: ReadonlyArray<Pick<PlatformAdapter, 'platform' | 'sessionTypes'>>,
+): SessionConfigLayer[] {
+  const audiences = new Map<string, Set<string>>();
+  const add = (platform: string, kinds: Iterable<string> = []) =>
+    audiences.set(platform, new Set([...(audiences.get(platform) ?? []), ...kinds]));
+  for (const platform of layers.platforms.keys()) add(platform);
+  for (const [platform, parts] of layers.audiences) add(platform, Object.keys(parts));
+  for (const adapter of adapters) add(adapter.platform, adapter.sessionTypes);
   const result: SessionConfigLayer[] = [{ scope: 'defaults' }];
-  for (const platform of [...layers.platforms.keys()].sort()) result.push({ scope: 'platform', platform });
-  for (const platform of [...layers.audiences.keys()].sort()) {
+  for (const platform of [...audiences.keys()].sort()) {
+    result.push({ scope: 'platform', platform });
     for (const audience of ['group', 'private'] as const) {
-      if (layers.audiences.get(platform)?.[audience]) result.push({ scope: 'audience', platform, audience });
+      if (audiences.get(platform)?.has(audience)) result.push({ scope: 'audience', platform, audience });
     }
   }
   return result;

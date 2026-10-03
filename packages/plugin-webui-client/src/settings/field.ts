@@ -1,22 +1,35 @@
 import type { SettingRow } from '@aalis/api-session-protocol';
 import { isRecord } from '../rest';
 
-// 设置项与页面动作输入的字段（schema-config 的词汇）：取值写成一句、选项的键、编辑框里的文字与取值的互换，以及可选项接口
-// 回应的解析。前端不认识任何设置键，只按字段类型渲染；模型字段（llm-ref）的取值是 { provider, model }，可选项来自模型服务
+// 设置项与页面动作输入的字段（schema-config 的词汇）：取值写成一句、选项的键，以及可选项接口回应的解析。前端不认识任何
+// 设置键，只按字段类型渲染；模型字段（llm-ref）的取值是 { provider, model }，可选项来自模型服务
 
 export type Field = SettingRow['field'];
 
-/** 一个可选项：key 用来比较与做 <option> 的值，value 是写回去的取值 */
+/** 一个可选项：key 用来比较与做 <option> 的值，value 是写回去的取值；isDefault 是可选项接口标的默认那一项 */
 export interface Option {
   key: string;
   label: string;
   value: unknown;
+  isDefault?: boolean;
 }
 
 export const isModelField = (field: Field) => String(field.type) === 'llm-ref';
 
 /** 一行的生效值：哪一层都没设时按字段的默认值 */
 export const effectiveOf = (row: SettingRow) => (row.source === undefined ? row.field.default : row.effective);
+
+/** 可选项依赖的另一项（设置项的 dependsOn）：它的名字与生效值 */
+export interface Dependency {
+  label: string;
+  value: unknown;
+}
+
+/** 一行可选项依赖的那一行；那一行不在这一组里时没有 */
+export function dependencyOf(rows: readonly SettingRow[], row: SettingRow): Dependency | undefined {
+  const other = row.dependsOn === undefined ? undefined : rows.find(candidate => candidate.key === row.dependsOn);
+  return other && { label: other.field.label, value: effectiveOf(other) };
+}
 
 /** 能从一组选项里选的字段 */
 export const hasChoices = (field: Field) => isModelField(field) || field.type === 'select' || field.type === 'boolean';
@@ -43,8 +56,8 @@ export function staticOptions(field: Field): Option[] {
 }
 
 /**
- * 可选项接口（/api/models/:service）的回应：模型服务给 providers（每个模型带服务的 contextId），分组等给 details，
- * 其余给 models 的名字列表
+ * 可选项接口（/api/models/:service）的回应：模型服务给 providers（每个模型带提供它的插件实例 id，即 contextId），分组等给 details
+ * （标了 default 的是没设时生效的那一项），其余给 models 的名字列表
  */
 export function parseOptions(models: boolean, body: unknown): Option[] {
   if (!isRecord(body)) throw new Error('可选项的回应不是预期的形状');
@@ -65,7 +78,14 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
   if (details) {
     return details.flatMap(entry =>
       typeof entry.value === 'string'
-        ? [{ key: entry.value, label: typeof entry.label === 'string' ? entry.label : entry.value, value: entry.value }]
+        ? [
+            {
+              key: entry.value,
+              label: typeof entry.label === 'string' ? entry.label : entry.value,
+              value: entry.value,
+              ...(entry.default === true ? { isDefault: true } : {}),
+            },
+          ]
         : [],
     );
   }
@@ -87,44 +107,6 @@ export function formatValue(field: Field, value: unknown, options: readonly Opti
     return labelOf(value) ?? String(value);
   }
   return JSON.stringify(value);
-}
-
-/** 用文字框编辑的字段类型 */
-export const TEXT_TYPES: ReadonlySet<string> = new Set(['string', 'number', 'textarea', 'list', 'map']);
-
-/** 编辑框里的文字 ↔ 取值：列表一行一项，映射一行一个「键=值」 */
-export function toText(field: Field, value: unknown): string {
-  if (value === undefined) return '';
-  if (field.type === 'list') return Array.isArray(value) ? value.join('\n') : '';
-  if (field.type === 'map') {
-    return typeof value === 'object' && value !== null
-      ? Object.entries(value)
-          .map(([key, item]) => `${key}=${String(item)}`)
-          .join('\n')
-      : '';
-  }
-  return String(value);
-}
-
-/** 读不出（写法不对）时抛错，原因给人看 */
-export function fromText(field: Field, text: string): unknown {
-  if (field.type === 'number') {
-    const number = Number(text.trim());
-    if (text.trim() === '' || !Number.isFinite(number)) throw new Error('要填一个数');
-    return number;
-  }
-  const lines = text.split('\n').filter(line => line.trim() !== '');
-  if (field.type === 'list') return lines.map(line => line.trim());
-  if (field.type === 'map') {
-    return Object.fromEntries(
-      lines.map(line => {
-        const at = line.indexOf('=');
-        if (at <= 0) throw new Error(`「${line}」要写成「键=值」`);
-        return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
-      }),
-    );
-  }
-  return text;
 }
 
 const unlisted = (field: Field, options: readonly Option[], value: unknown): Option => ({

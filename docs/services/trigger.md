@@ -21,7 +21,7 @@ export interface TriggerService {
 export const trigger = defineService<TriggerService>('trigger');
 ```
 
-服务只用来选出生效者：触发插件拿 `trigger.current`（胜者）与自己的实例比身份，不调用方法。`label` 是触发插件的名字，进诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 服务页显示的是 `provide` 时传的 `label`，两处取同一个值。
+服务只用来选出生效者：触发插件拿 `trigger.current`（胜者）与自己的实例比身份，不调用方法。`label` 是触发插件的名字，进诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 设置「系统」的服务偏好显示的是 `provide` 时传的 `label`，两处取同一个值。
 
 触发插件共用的函数（同一文件）。写日志的函数由调用方传入日志前缀 `tag`（如 `'[laya]'`），告警行与调用方自己的日志同一前缀：
 
@@ -117,9 +117,9 @@ export default definePlugin({
 
 ## 5. 行为不变量
 
-- **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的默认优先级 -10 低于它的 0；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页切换 `trigger` 的偏好。
+- **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的默认优先级 -10 低于它的 0；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`。
 - **胜者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 `trigger.current`，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`，经全局符号表取同一个对象：契约包装了两份、两个触发插件各用一份时仍共用这张表），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
-- **切换即时生效**。WebUI 服务页把 `trigger` 的偏好切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
+- **切换即时生效**。在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
 - **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。
 - **状态与配置不共享**。禁言关键词与时长、点名的别名与开关、作用域由各触发插件在自己的配置里分别设置，只有生效者的起作用：切换后按新生效者的配置执行，只在一边配了禁言关键词的，切到另一边后这些关键词不再生效；要在切换后保持一致，两边须同样配置。各触发插件的状态只属于自己：trigger-policy 的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，不生效期间不计数；闲置主动开口到点时它不生效就跳过（不注入，也不记为 bot 开口），agent 回复也不记。
 - **附件只识别一次**。要看附件描述的触发插件自己调 media 的 `processMessage` 启动识别（Laya 判定前至多等 `mediaWaitMs`）；放行与吞掉都不等识别跑完。media 的 `processMessage` 按消息对象只处理一次，agent 预处理器与归档对同一个消息对象调用时命中这次识别（在途则等它），不再识别第二遍。trigger-policy 不看附件，不启动识别。

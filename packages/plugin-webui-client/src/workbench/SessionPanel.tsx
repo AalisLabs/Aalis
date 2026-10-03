@@ -1,9 +1,7 @@
-import type { SettingRow as Row } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
 import { Circle, CircleAlert, CircleCheck, CircleDot, Plus, RotateCw } from 'lucide-react';
 import { useReducer, useState } from 'react';
 import { Button } from '../components/Button';
-import { Disclosure } from '../components/Disclosure';
 import { IconButton } from '../components/IconButton';
 import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
@@ -12,11 +10,12 @@ import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
 import { FramePage } from '../frame/FramePage';
 import { PageContent } from '../pages/PageContent';
+import { PageGone } from '../pages/PluginPage';
+import { refOf, sameRef, usePages } from '../pages/registry';
 import { PageScope } from '../pages/scope';
-import { usePluginNames } from '../plugins';
 import { paths } from '../routes';
-import { SettingRow } from '../settings/SettingRow';
-import type { useSessionSettings } from '../settings/session-settings';
+import { SettingRows } from '../settings/SettingRows';
+import type { useSettingRows } from '../settings/setting-rows';
 import { Aside, usePhone } from '../shell/Shell';
 import type { PlanItem, UsageItem } from './live-session';
 import type { SessionTabs } from './panel-tabs';
@@ -37,23 +36,31 @@ interface SessionPanelProps {
   panel?: PageRef;
   plan?: PlanItem;
   usage?: UsageItem;
-  settings: ReturnType<typeof useSessionSettings>;
+  settings: ReturnType<typeof useSettingRows>;
 }
 
 export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, settings }: SessionPanelProps) {
   const phone = usePhone();
+  const { pages } = usePages();
   const [reloads, reload] = useReducer((n: number) => n + 1, 0);
   const addressed = panel ? paths.page(panel) : tab;
-  const current = tabs.bar.find(item => item.key === addressed) ?? tabs.bar[0];
+  // 地址上的插件面板所属的插件停用了：标签栏末尾留着它，内容是占位；插件重新启用后它回到标签栏里原来的位置
+  const gone = panel && pages && !pages.some(page => sameRef(panel)(refOf(page))) ? panel : undefined;
+  const current = gone ? undefined : (tabs.bar.find(item => item.key === addressed) ?? tabs.bar[0]);
   const host = current && 'host' in current.ref ? current.ref.host : undefined;
+  const items = gone ? [...tabs.bar, { ref: gone, key: paths.page(gone), title: '已停用' }] : tabs.bar;
+  const selected = gone ? paths.page(gone) : current?.key;
+  const shownRef = gone ?? current?.ref;
 
   const body = (
     <Tabs
       label="会话面板"
-      items={tabs.bar}
-      value={current?.key ?? ''}
-      onChange={key => tabs.show(tabs.bar.find(item => item.key === key)!.ref, { replace: true })}
-      onClose={current && (() => tabs.close(current.ref))}
+      items={items}
+      value={selected ?? ''}
+      onChange={key => {
+        if (key !== selected) tabs.show(items.find(item => item.key === key)!.ref, { replace: true });
+      }}
+      onClose={shownRef && (() => tabs.close(shownRef))}
       trailing={
         <>
           {current?.page && <IconButton icon={RotateCw} label="刷新" onClick={reload} />}
@@ -78,6 +85,7 @@ export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, setting
         </>
       }
     >
+      {gone && <PageGone instance={gone.instance} />}
       {host === 'plan' && plan && <PlanTab sessionId={sessionId} plan={plan} />}
       {host === 'settings' && <SettingsTab settings={settings} />}
       {host === 'usage' && usage && <UsageTable usage={usage} />}
@@ -146,8 +154,6 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
 }
 
 function SettingsTab({ settings }: { settings: SessionPanelProps['settings'] }) {
-  const names = usePluginNames();
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const { rows, error, update } = settings;
   if (error) {
     return (
@@ -158,43 +164,10 @@ function SettingsTab({ settings }: { settings: SessionPanelProps['settings'] }) 
   }
   if (!rows) return null;
   if (rows.length === 0) return <p className="session-panel-note">这个会话没有可以设置的项</p>;
-
-  const save = (row: Row) => (value: unknown) => update(row.key, value);
-  const advanced = rows.filter(row => row.prominence === 'advanced');
-  const groups = new Map<string, Row[]>();
-  for (const row of advanced) {
-    const label = names.instances.get(row.plugin)?.label ?? row.plugin;
-    groups.set(label, [...(groups.get(label) ?? []), row]);
-  }
   return (
     <div className="session-panel-section">
       <p className="session-panel-note">改动从下一轮起生效</p>
-      {rows
-        .filter(row => row.prominence !== 'advanced')
-        .map(row => (
-          <SettingRow key={row.key} row={row} save={save(row)} />
-        ))}
-      {advanced.length > 0 && (
-        <div className="settings-advanced">
-          <Disclosure expanded={advancedOpen} onToggle={() => setAdvancedOpen(!advancedOpen)}>
-            高级
-          </Disclosure>
-          {advancedOpen && names.error && (
-            <p className="session-panel-note" role="alert">
-              插件的显示名没取到（{names.error.message}），按插件实例 id 分组
-            </p>
-          )}
-          {advancedOpen &&
-            [...groups].map(([label, group]) => (
-              <section key={label} aria-label={label}>
-                <h3 className="settings-group">{label}</h3>
-                {group.map(row => (
-                  <SettingRow key={row.key} row={row} save={save(row)} />
-                ))}
-              </section>
-            ))}
-        </div>
-      )}
+      <SettingRows rows={rows} update={update} />
     </div>
   );
 }

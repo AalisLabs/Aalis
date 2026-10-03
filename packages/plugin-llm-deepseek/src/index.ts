@@ -4,9 +4,11 @@ import type {
   ChatStreamChunk,
   LLMCapability,
   LLMModel,
+  ThinkingLevel,
+  ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm } from '@aalis/api-llm';
+import { LLMCapabilities, llm, requestedThinking } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
@@ -116,6 +118,21 @@ function parseApiError(provider: string, status: number, body: string): string {
   return httpErrorMessage(provider, status, body);
 }
 
+// ===== 深度思考的档位 =====
+
+/**
+ * 能思考的模型（能力里有 thinking 的）允许的档位，由浅到深，各带它的请求体字段。自动：开启思考，强度由 DeepSeek 按场景
+ * 在高与最高之间选。v4 系列不发 thinking 会保持开启，所以关也要明说
+ */
+const LEVELS = {
+  off: { label: '关', fields: { thinking: { type: 'disabled' } } },
+  high: { label: '高', fields: { thinking: { type: 'enabled' }, reasoning_effort: 'high' } },
+  auto: { label: '自动', fields: { thinking: { type: 'enabled' } } },
+  max: { label: '最高', fields: { thinking: { type: 'enabled' }, reasoning_effort: 'max' } },
+} as const;
+
+const THINKING_LEVELS: ThinkingLevel[] = Object.entries(LEVELS).map(([id, { label }]) => ({ id, label }));
+
 // ===== 配置 schema =====
 
 const configSchema = defineConfig({
@@ -184,29 +201,14 @@ const configSchema = defineConfig({
     description:
       '启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。',
   },
-  thinkingMode: {
+  thinking: {
     type: 'select',
-    label: '思考模式',
+    label: '默认思考档位',
     default: 'auto',
-    options: [
-      { label: '自动（按模型推断，仅 thinking-capable 模型启用）', value: 'auto' },
-      { label: '强制启用所有模型', value: 'enabled' },
-      { label: '强制关闭所有模型', value: 'disabled' },
-    ],
+    options: THINKING_LEVELS.map(level => ({ label: level.label, value: level.id })),
     description:
-      '控制深度思考。auto 模式下，仅 thinking-capable 模型（v4 / reasoner 等）默认启用思考。enabled/disabled 会覆盖所有模型。',
-  },
-  reasoningEffort: {
-    type: 'select',
-    label: '推理强度',
-    default: 'auto',
-    options: [
-      { label: '自动（由 API 按场景选 high/max）', value: 'auto' },
-      { label: '高', value: 'high' },
-      { label: '最大', value: 'max' },
-    ],
-    description:
-      '思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。',
+      '能思考的模型（v4、reasoner 等，或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。' +
+      '自动：开启思考，强度由 DeepSeek 按场景在高与最高之间选。不能思考的模型一律按关发。',
   },
 });
 
@@ -313,7 +315,6 @@ class DeepSeekClient {
   private timeout: number;
   readonly temperature: number;
   readonly maxTokens: number;
-  private reasoningEffort: 'auto' | 'high' | 'max';
   private strictToolCalls: boolean;
   private forceJsonOutput: boolean;
   private logger;
@@ -325,7 +326,6 @@ class DeepSeekClient {
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
-    this.reasoningEffort = config.reasoningEffort;
     this.strictToolCalls = config.strictToolCalls;
     this.forceJsonOutput = config.forceJsonOutput;
     this.logger = logger;
@@ -401,14 +401,15 @@ class DeepSeekClient {
   }
 
   /**
-   * chat / chatStream 共用的请求体（两侧只差 stream 标志；分开写曾让两侧漂移）。
+   * chat / chatStream 共用的请求体（两侧只差 stream 标志；分开写曾让两侧漂移）。level 是这次的思考档位，不能调的模型
+   * 没有，按关发
    */
   private buildRequestBody(
     model: string,
     request: ChatModelRequest,
-    enableThinking: boolean,
+    level: string | undefined,
     stream: boolean,
-  ): { body: Record<string, unknown>; messages: APIMessage[]; tools?: APITool[]; shouldThink: boolean } {
+  ): { body: Record<string, unknown>; messages: APIMessage[]; tools?: APITool[] } {
     const messages = normalizeSystemPlacement(prepareLLMMessages(request.messages)).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
@@ -419,17 +420,11 @@ class DeepSeekClient {
     };
     if (stream) body.stream = true;
 
-    const shouldThink = request.think !== undefined ? request.think : enableThinking;
-
-    if (shouldThink) {
-      body.thinking = { type: 'enabled' };
-      if (this.reasoningEffort !== 'auto') body.reasoning_effort = this.reasoningEffort;
-      // 思考模式下 temperature 等参数不生效
-    } else {
-      // 显式关闭：v4 系列 API 默认 enabled，不发送字段会保持开启
-      body.thinking = { type: 'disabled' };
-      body.temperature = request.temperature ?? this.temperature;
-    }
+    // 档位已经 requestedThinking 核过、是 LEVELS 里的一档；不能调的模型没有档位，按关
+    const { fields } = LEVELS[(level ?? 'off') as keyof typeof LEVELS];
+    Object.assign(body, fields);
+    // 思考模式下 temperature 不生效，只在关闭时带
+    if (fields.thinking.type === 'disabled') body.temperature = request.temperature ?? this.temperature;
 
     if (tools && tools.length > 0) {
       body.tools = tools;
@@ -440,14 +435,14 @@ class DeepSeekClient {
     if (this.forceJsonOutput && !(tools && tools.length > 0)) {
       body.response_format = { type: 'json_object' };
     }
-    return { body, messages, tools, shouldThink };
+    return { body, messages, tools };
   }
 
-  async chat(model: string, request: ChatModelRequest, enableThinking: boolean): Promise<ChatResponse> {
-    const { body, messages, tools, shouldThink } = this.buildRequestBody(model, request, enableThinking, false);
+  async chat(model: string, request: ChatModelRequest, level: string | undefined): Promise<ChatResponse> {
+    const { body, messages, tools } = this.buildRequestBody(model, request, level, false);
 
     this.logger.debug(
-      `请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
+      `请求 DeepSeek (思考 ${level ?? 'off'}): ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
     );
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
@@ -541,12 +536,14 @@ class DeepSeekClient {
     return result;
   }
 
-  async *chatStream(model: string, request: ChatModelRequest, enableThinking: boolean): AsyncIterable<ChatStreamChunk> {
-    const { body, messages, shouldThink } = this.buildRequestBody(model, request, enableThinking, true);
+  async *chatStream(
+    model: string,
+    request: ChatModelRequest,
+    level: string | undefined,
+  ): AsyncIterable<ChatStreamChunk> {
+    const { body, messages } = this.buildRequestBody(model, request, level, true);
 
-    this.logger.debug(
-      `流式请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`,
-    );
+    this.logger.debug(`流式请求 DeepSeek (思考 ${level ?? 'off'}): ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -930,17 +927,23 @@ class DeepSeekModelHandle implements LLMModel {
     readonly providerId: string,
     readonly contextLength: number,
     readonly maxOutputTokens: number,
-    private enableThinking: boolean,
     /** 该 model 的能力元数据（供 media 发现/下拉展示读取，非 DI 选择机制）。 */
     readonly capabilities: readonly LLMCapability[],
+    /** 能思考的模型才有：默认档取实例配置 */
+    readonly thinking?: ThinkingLevels,
   ) {}
 
-  chat(request: ChatModelRequest): Promise<ChatResponse> {
-    return this.client.chat(this.id, request, this.enableThinking);
+  async chat(request: ChatModelRequest): Promise<ChatResponse> {
+    return this.client.chat(this.id, request, this.levelOf(request));
   }
 
-  chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
-    return this.client.chatStream(this.id, request, this.enableThinking);
+  async *chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    yield* this.client.chatStream(this.id, request, this.levelOf(request));
+  }
+
+  /** 这次的档位：请求带了按请求，没带按默认档；不能调的模型没有 */
+  private levelOf(request: ChatModelRequest): string | undefined {
+    return requestedThinking(this, request) ?? this.thinking?.default;
   }
 }
 
@@ -971,7 +974,6 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
-  const thinkingMode = cfg.thinkingMode;
   const client = new DeepSeekClient(cfg, logger);
   const shownBaseUrl = redactUrl(cfg.baseUrl);
 
@@ -1010,36 +1012,23 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   // 为每个 model 注册独立的 LLMModel entry
   for (const modelId of allModelIds) {
     const capabilities = resolveCapabilities(modelId, modelCapabilities.get(modelId), providerCapabilities);
-    // 思考开关：auto → 由模型 capability 决定；enabled/disabled → 强制覆盖
-    let enableThinking: boolean;
-    if (thinkingMode === 'enabled') {
-      enableThinking = true;
-    } else if (thinkingMode === 'disabled') {
-      enableThinking = false;
-    } else {
-      enableThinking = capabilities.includes(Thinking);
-    }
-
     const handle = new DeepSeekModelHandle(
       client,
       modelId,
       lifecycle.id,
       cfg.contextLength,
       cfg.maxTokens,
-      enableThinking,
       capabilities,
+      capabilities.includes(Thinking) ? { levels: THINKING_LEVELS, default: cfg.thinking } : undefined,
     );
-    provide(llm, handle, {
-      label: `${baseLabel} / ${modelId}${enableThinking ? ' (thinking)' : ''}`,
-      entryId: `${lifecycle.id}/${modelId}`,
-    });
+    provide(llm, handle, { label: `${baseLabel} / ${modelId}`, entryId: `${lifecycle.id}/${modelId}` });
   }
 
   logger.info(
     !cfg.discoverModels
-      ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`
+      ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
       : discoveryError
-        ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`
-        : `已连接: ${shownBaseUrl}，注册 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`,
+        ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
+        : `已连接: ${shownBaseUrl}，注册 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`,
   );
 }

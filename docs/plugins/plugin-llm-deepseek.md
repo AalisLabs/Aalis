@@ -39,12 +39,20 @@ definePlugin({
 | `contextLength` | number | `131072` | 上下文长度：模型上下文窗口大小 |
 | `strictToolCalls` | boolean | `false` | Strict 工具调用：启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com） |
 | `forceJsonOutput` | boolean | `false` | 强制 JSON 输出：启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。 |
-| `thinkingMode` | select | `'auto'` | 思考模式：控制深度思考。auto 模式下，仅 thinking-capable 模型（v4 / reasoner 等）默认启用思考。enabled/disabled 会覆盖所有模型。 |
-| `reasoningEffort` | select | `'auto'` | 推理强度：思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。 |
+| `thinking` | select | `'auto'` | 默认思考档位：能思考的模型（v4、reasoner 等，或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。可选 `off`（关）、`high`（高）、`auto`（自动：开启思考，强度由 DeepSeek 按场景在高与最高之间选）、`max`（最高）。不能思考的模型一律按关发。 |
 
 ## 特性
 
-- **思考模式**: 由 `thinkingMode` 按模型决定——`auto` 下仅能力集含 `thinking` 的模型启用，`enabled` / `disabled` 覆盖所有模型；请求自带 `think` 时以其为准。启用时请求体附加 `thinking: { type: 'enabled' }`，`reasoningEffort` 非 `auto` 时同时发送 `reasoning_effort`；关闭时显式发送 `thinking: { type: 'disabled' }`。思考内容在非流式响应中通过 `reasoningContent` 返回，在流式响应中通过 `reasoningDelta` 逐段返回
+- **思考档位**: 能力里有 `thinking` 的模型声明关、高、自动、最高四档（`off`、`high`、`auto`、`max`），默认档取实例配置 `thinking`；请求带了档位按请求，没带按默认档，带了别的档位拒绝。档位翻成请求体字段：
+
+  | 档位 | `thinking.type` | `reasoning_effort` | `temperature` |
+  |---|---|---|---|
+  | `off` | `disabled` | 不发 | 发 |
+  | `high` | `enabled` | `high` | 不发 |
+  | `auto` | `enabled` | 不发 | 不发 |
+  | `max` | `enabled` | `max` | 不发 |
+
+  不能思考的模型不声明档位，一律按 `off` 发（v4 系列不发 `thinking` 会保持开启）。思考内容在非流式响应中通过 `reasoningContent` 返回，在流式响应中通过 `reasoningDelta` 逐段返回
 - **Strict 工具调用**: 启用 `strictToolCalls` 后，每个工具定义的 `function` 字段带上 `strict: true`；关闭时沿用各工具自身声明的 `strict`
 - **SSE 流式解析**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
 - **模型发现**: 启动时 `fetchRemoteModelIds()` 请求 `/models` 获取远端模型列表（停用或停机时中止），与 `customModels` 合并后为每个模型注册一个独立的 `llm` 服务条目。发现失败（不可达、超时、非 2xx、响应不是 JSON 或不是模型列表）时记一条 warn（带 URL 与原因），只注册 `customModels`；一个模型都没有（发现失败且未配置 `customModels`，或已连接但列表为空）时实例转为出错，错误信息写明原因。网关不提供 `/models` 时关闭 `discoverModels`：不发发现请求、不记 warn，只注册 `customModels`（此时必填，留空时实例转为出错并点名该字段）

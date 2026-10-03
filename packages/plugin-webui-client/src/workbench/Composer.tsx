@@ -7,7 +7,7 @@ import { IconButton } from '../components/IconButton';
 import { useToast } from '../components/Toast';
 import { useConnectionState, useFeatures, useSessionClient } from '../connection';
 import { composing } from '../keys';
-import { effectiveOf, formatValue, hasChoices, valueKey, withCurrent } from '../settings/field';
+import { dependencyOf, effectiveOf, formatValue, hasChoices, valueKey, withCurrent } from '../settings/field';
 import { useFieldOptions } from '../settings/options';
 import './Composer.css';
 
@@ -215,9 +215,15 @@ export function ComposerSettings({ rows, update, settingsPath, openSettings }: C
     .filter(row => row.prominence === 'composer')
     .map(row =>
       hasChoices(row.field) ? (
-        <SettingSelect key={row.key} row={row} update={update} />
+        <SettingSelect key={row.key} row={row} dependency={dependencyOf(rows, row)?.value} update={update} />
       ) : (
-        <SettingLink key={row.key} row={row} settingsPath={settingsPath} openSettings={openSettings} />
+        <SettingLink
+          key={row.key}
+          row={row}
+          dependency={dependencyOf(rows, row)?.value}
+          settingsPath={settingsPath}
+          openSettings={openSettings}
+        />
       ),
     );
 }
@@ -225,10 +231,11 @@ export function ComposerSettings({ rows, update, settingsPath, openSettings }: C
 /** 不能就地选的项写成名字与生效值（按可选项的标签），点了去会话的「设置」标签；没有值的只写名字 */
 function SettingLink({
   row,
+  dependency,
   settingsPath,
   openSettings,
-}: { row: SettingRow } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
-  const { options } = useFieldOptions(row.field);
+}: { row: SettingRow; dependency: unknown } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
+  const { options } = useFieldOptions(row.field, 0, dependency);
   const effective = effectiveOf(row);
   return (
     <Link
@@ -247,10 +254,18 @@ function SettingLink({
   );
 }
 
-function SettingSelect({ row, update }: { row: SettingRow; update: ComposerSettingsProps['update'] }) {
+function SettingSelect({
+  row,
+  dependency,
+  update,
+}: {
+  row: SettingRow;
+  dependency: unknown;
+  update: ComposerSettingsProps['update'];
+}) {
   const { field } = row;
   const toast = useToast();
-  const { options, error } = useFieldOptions(field);
+  const { options, error } = useFieldOptions(field, 0, dependency);
   const current = effectiveOf(row);
   const choices = withCurrent(field, options, current);
   const failed = error && `可选项没取到：${error.message}`;

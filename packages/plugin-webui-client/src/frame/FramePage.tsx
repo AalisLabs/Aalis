@@ -9,7 +9,7 @@ import { EmptyState } from '../components/EmptyState';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
 import { DEFAULT_CONFIRM } from '../pages/scope';
-import { usePluginNames } from '../plugins';
+import { usePluginNames } from '../plugins/list';
 import { paths } from '../routes';
 import { formatValue } from '../settings/field';
 import { type FrameQuestion, type FrameStop, mountFrame } from './channel';

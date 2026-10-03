@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
 import {
+  type InstallResult,
   type PackageManagerService,
   packageManager,
   type UpdateResult,
@@ -626,11 +627,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 就位查的是加载器解析出的定义 name，不是 npm 包名。就位但主实例没有激活时仍回 ok：包确实装上、已进插件列表；
    * message 按重算落定后的状态说明——激活失败（如缺配置，改好配置即可重试）、慢激活转入后台仍在进行、等待 required 依赖。
    */
-  async function settleInstall(
-    npmPkg: string,
-    installedPkgJsonPath: string,
-    where: string,
-  ): Promise<{ ok: boolean; message: string }> {
+  async function settleInstall(npmPkg: string, installedPkgJsonPath: string, where: string): Promise<InstallResult> {
     const target = stripVersion(npmPkg);
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
@@ -638,15 +635,16 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (deps.isPluginRegistered(defName)) {
       await deps.idle?.();
       const main = deps.pluginStatus?.().find(p => p.instanceId === defName);
+      const settled = (message: string): InstallResult => ({ ok: true, message, plugin: defName });
       switch (main?.state) {
         case 'error':
-          return { ok: true, message: `已安装 ${target}，但激活失败，已转为 error 态（${main.error ?? '详见日志'}）` };
+          return settled(`已安装 ${target}，但激活失败，已转为 error 态（${main.error ?? '详见日志'}）`);
         case 'activating':
-          return { ok: true, message: `已安装 ${target}，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准` };
+          return settled(`已安装 ${target}，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准`);
         case 'pending':
-          return { ok: true, message: `已安装 ${target}，尚未激活，正在等待 required 依赖满足` };
+          return settled(`已安装 ${target}，尚未激活，正在等待 required 依赖满足`);
       }
-      return { ok: true, message: `已安装并加载: ${target}` };
+      return settled(`已安装并加载: ${target}`);
     }
     const meta = await readJson(installedPkgJsonPath);
     if (declaresPlugin(meta)) {
@@ -666,7 +664,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 只有一条路径。真正的 monorepo 由下面的 `hasWorkspaceProtocol` 守卫拦住并说清
    * 该用什么工具——那才是开发者场景，不该用市场往自己仓里塞源码。
    */
-  async function installTo(npmPkg: string): Promise<{ ok: boolean; message: string }> {
+  async function installTo(npmPkg: string): Promise<InstallResult> {
     const root = deps.projectRoot();
     const rootPkg = await readJson(`${root}/package.json`);
     if (hasWorkspaceProtocol(rootPkg)) {
@@ -988,7 +986,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         ok: false,
         message:
           `${pluginName} 正在承载市场/管理界面本身，卸掉它这个页面会立刻不可用，` +
-          '只能在终端里恢复。若确要更换实现，请先装上替代者并在「服务」页切换过去，再回来卸载它。',
+          '只能在终端里恢复。若确要更换实现，请先装上替代者并在设置「系统」的服务偏好里切换过去，再回来卸载它。',
       };
     }
 

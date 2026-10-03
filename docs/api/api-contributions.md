@@ -101,6 +101,7 @@ interface ContributionRegistry {
 | 贡献点 | owner | spec | 说明 |
 |---|---|---|---|
 | `agent:prompt` | `@aalis/plugin-agent` | `PromptContribution`（`@aalis/api-agent`） | LLM 提示词块；锚位 `identity` / `knowledge` / `context` / `turn-context` / `turn-hint`（前三者在历史前、供会话级稳定材料，`turn-context` 在历史后、供每轮取材的材料——分界依据见概念文档《消息与 LLM 管线》），`build(view)` 返回 `string | string[] | null` |
+| `webui:theme` | `@aalis/plugin-webui-server` | `ThemeContribution`（`@aalis/api-webui`） | 界面主题：一份主题文件（只收颜色令牌），经 `parseTheme` 校验后由 `GET /api/themes` 列出，出现在设置「外观」的主题选择里；不合格式的不列出、告警一次 |
 
 ## 定义自己的贡献点
 

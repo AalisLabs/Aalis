@@ -66,12 +66,15 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
 
 const ALL = ['owner', 'room', 'task'] as const;
 const MODEL_FIRST: SessionSetting = { ...MODEL, order: 0 };
+/** 可选项依赖模型：行上带 dependsOn */
 const THINK: SessionSetting = {
   key: 'think',
-  field: { type: 'boolean', label: '深度思考' },
+  field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
   appliesTo: ALL,
   prominence: 'composer',
   order: 1,
+  dependsOn: 'llm',
+  validate: value => (typeof value === 'string' && value !== '' ? undefined : '要是档位 id'),
 };
 /** 第三个 composer：同一组最多两项，它退到 common */
 const EXTRA: SessionSetting = {
@@ -665,10 +668,10 @@ describe('建、改名、归档、删除与批量', () => {
     const persona = (await c.call('session/config/get', { sessionId: root.id })).items.find(r => r.key === 'persona');
     expect([persona?.effective, persona?.source]).toEqual(['aalis-webui', 'platform']);
 
-    await sm.updateSession(root.id, { config: { think: true } });
+    await sm.updateSession(root.id, { config: { think: 'high' } });
     const { session: child } = await c.call('session/create', { name: '子', parentId: root.id });
     expect(child).toMatchObject({ title: '子', parentId: root.id, kind: 'task' });
-    expect(sm.getSession(child.id)?.config).toEqual({ persona: 'aalis-webui', think: true });
+    expect(sm.getSession(child.id)?.config).toEqual({ persona: 'aalis-webui', think: 'high' });
 
     expect((await c.fail('session/create', { parentId: 'session-nope' })).data?.code).toBe('not-found');
   });
@@ -756,7 +759,7 @@ describe('会话设置', () => {
           name: '旧',
           children: [],
           status: 'completed',
-          config: { persona: null, think: true, memoryRecallScope: 'session' },
+          config: { persona: null, think: 'high', memoryRecallScope: 'session' },
           createdAt: 1,
           updatedAt: 1,
         },
@@ -777,9 +780,10 @@ describe('会话设置', () => {
       ['clientSideJsonRendering', 'advanced', 'persona-settings'],
     ]);
     expect(old.items[0].field).toEqual(MODEL_FIRST.field);
+    expect(old.items.filter(r => r.dependsOn !== undefined).map(r => [r.key, r.dependsOn])).toEqual([['think', 'llm']]);
     expect(values(old.items)).toEqual([
       ['llm', undefined, undefined, undefined],
-      ['think', true, true, 'session'],
+      ['think', 'high', 'high', 'session'],
       ['systemPromptExtra', undefined, undefined, undefined],
       ['persona', undefined, 'aalis-webui', 'platform'],
       ['enabledToolGroups', undefined, undefined, undefined],
@@ -821,18 +825,18 @@ describe('会话设置', () => {
     await c.init();
     const pick = (rows: Rows, ...keys: string[]) => values(rows.filter(r => keys.includes(r.key)));
 
-    const set = await c.call('session/config/update', { sessionId: s.id, patch: { persona: '<人设>', think: false } });
+    const set = await c.call('session/config/update', { sessionId: s.id, patch: { persona: '<人设>', think: 'off' } });
     expect(pick(set.items, 'persona', 'think')).toEqual([
-      ['think', false, false, 'session'],
+      ['think', 'off', 'off', 'session'],
       ['persona', '<人设>', '<人设>', 'session'],
     ]);
 
     const reset = await c.call('session/config/update', { sessionId: s.id, patch: { persona: null } });
     expect(pick(reset.items, 'persona')).toEqual([['persona', undefined, 'aalis-webui', 'platform']]);
-    expect(sm.getSession(s.id)?.config).toEqual({ think: false });
+    expect(sm.getSession(s.id)?.config).toEqual({ think: 'off' });
 
     for (const patch of [
-      { think: 'yes' },
+      { think: 1 },
       { bogus: 1 },
       { persona: '<另一个>', maxToolIterations: 0 },
       { llm: 'x' },
@@ -841,7 +845,7 @@ describe('会话设置', () => {
       const err = await c.fail('session/config/update', { sessionId: s.id, patch });
       expect(err.code, JSON.stringify(patch)).toBe(RPC_ERROR_CODES.invalidParams);
     }
-    expect(sm.getSession(s.id)?.config).toEqual({ think: false });
+    expect(sm.getSession(s.id)?.config).toEqual({ think: 'off' });
     expect((await c.fail('session/config/update', { sessionId: 'session-nope', patch: {} })).data?.code).toBe(
       'not-found',
     );
@@ -869,7 +873,7 @@ describe('会话设置', () => {
     expect(sm.getSession('session-legacy')?.config).toEqual({});
   });
 
-  it('按层读写：layers 列出写了值的各层；一层的行与会话的同形，受众条目只列适用于房间的项；改动写进宿主配置文档', async () => {
+  it('按层读写：layers 列出可以设的各层；一层的行与会话的同形，受众条目只列适用于房间的项；改动写进宿主配置文档', async () => {
     const { server, doc } = await setup({ layers: LAYERS });
     const c = client(server());
     await c.init();
@@ -880,8 +884,8 @@ describe('会话设置', () => {
       { scope: 'defaults' },
       { scope: 'platform', platform: 'cli' },
       onebot,
-      { scope: 'platform', platform: 'webui' },
       group,
+      { scope: 'platform', platform: 'webui' },
     ]);
     const defaults = await c.call('session/config/layer/get', { layer: { scope: 'defaults' } });
     expect(defaults.items.map(r => r.key)).toContain('clientSideJsonRendering');
@@ -904,7 +908,7 @@ describe('会话设置', () => {
 
     for (const params of [
       { layer: onebot, patch: { bogus: 1 } },
-      { layer: onebot, patch: { think: 'yes' } },
+      { layer: onebot, patch: { think: 1 } },
       { layer: { scope: 'platform', platform: '' }, patch: { persona: '<人设>' } },
       { layer: { scope: 'audience', platform: 'onebot', audience: 'owner' }, patch: { persona: '<人设>' } },
     ]) {

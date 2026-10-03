@@ -41,11 +41,24 @@ button.setting-row-main:focus-visible {
   min-width: 0;
 }
 
+.setting-row-timing {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
 .setting-row-value {
   flex-basis: 100%;
   color: var(--color-text-2);
   overflow-wrap: anywhere;
   white-space: pre-line;
+}
+
+.setting-row-note {
+  flex-basis: 100%;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
 }
 
 .setting-row-grid > .button {
@@ -59,8 +72,19 @@ button.setting-row-main:focus-visible {
   padding-bottom: var(--space-2);
 }
 
-.setting-row-edit > :is(input, select, textarea, fieldset) {
+.setting-row-control {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  min-width: 0;
   margin: 0 var(--space-2);
+  padding: 0;
+  border: 0;
+}
+
+.setting-row-control > .button {
+  align-self: flex-start;
 }
 
 .setting-row-description {
@@ -78,20 +102,34 @@ button.setting-row-main:focus-visible {
   color: var(--color-danger-text);
 }
 
-.setting-row-choices {
+/* 一组行：「高级」默认折叠，里面按登记的插件分组 */
+.settings-advanced {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--space-1);
-  min-width: 0;
-  padding: 0;
-  border: 0;
+  margin-top: var(--space-4);
 }
 
-.setting-row-choice {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--row-1line);
+.settings-advanced > .disclosure {
+  align-self: flex-start;
+  min-height: var(--hit);
+  padding: 0 var(--space-1);
   font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-group {
+  margin-top: var(--space-3);
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+}
+
+.settings-advanced-note {
+  padding: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-danger-text);
 }

@@ -78,17 +78,17 @@ describe('固定到图标栏', () => {
     const layout = layoutStore();
     app = await renderApp(pagePath(JOBS), {}, pageRest(layout));
     const pin = await header('计划').findByRole('button', { name: '固定到图标栏' });
-    expect(railLinks()).toEqual(['会话']);
+    expect(railLinks()).toEqual(['会话', '插件', '设置']);
     expect(rail().getByRole('link', { name: '会话' }).getAttribute('aria-current')).toBeNull();
 
     fireEvent.click(pin);
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']));
     expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'pin', page: refOf(JOBS) }]);
     expect(pin.getAttribute('aria-pressed')).toBe('true');
     expect(rail().getByRole('link', { name: '计划 · night' }).getAttribute('aria-current')).toBe('page');
 
     fireEvent.click(pin);
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '插件', '设置']));
     expect(posts('/api/layout').at(-1)?.body).toEqual({ op: 'unpin', page: refOf(JOBS) });
   });
 
@@ -108,28 +108,28 @@ describe('固定到图标栏', () => {
     fireEvent.click(pin);
     expect((await screen.findByRole('alert')).textContent).toContain('固定失败：最多 50 条，先取消一些');
     expect(pin.getAttribute('aria-pressed')).toBe('false');
-    expect(railLinks()).toEqual(['会话']);
+    expect(railLinks()).toEqual(['会话', '插件', '设置']);
   });
 
   it('图标栏按记录的顺序列出登记着、位置为插件详情的页面；页面不在时图标不出现、记录保留，回来后出现', async () => {
     const layout = layoutStore({ pinned: [refOf(GRAPH), refOf(SETTINGS_PAGE), refOf(JOBS)] });
     let pages = [JOBS, GRAPH, SETTINGS_PAGE];
     app = await renderApp('/', {}, pageRest(layout, { '/api/pages': () => ({ pages }) }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '插件', '设置']));
     expect(rail().getByRole('link', { name: '关系' }).getAttribute('href')).toBe(pagePath(GRAPH));
 
     pages = [JOBS];
     act(() => admin().push({ type: 'plugins.changed' }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']));
     pages = [JOBS, GRAPH];
     act(() => admin().push({ type: 'plugins.changed' }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '插件', '设置']));
   });
 
   it('不认识的图标名用通用图标', async () => {
     const layout = layoutStore({ pinned: [refOf(GRAPH), refOf(JOBS)] });
     app = await renderApp('/', {}, pageRest(layout));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '插件', '设置']));
     await vi.waitFor(() =>
       expect(rail().getByRole('link', { name: '计划 · night' }).querySelector('svg')?.classList).toContain(
         'lucide-clock',
@@ -144,7 +144,7 @@ describe('固定到图标栏', () => {
     await vi.waitFor(() => expect(gets('/api/layout')).toBe(1));
     layout.records.pinned.push(refOf(GRAPH));
     act(() => admin().push({ type: 'layout.changed' }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '插件', '设置']));
   });
 
   it('点「会话」回到刚才的会话地址；只有位置为插件详情的页面有「固定」', async () => {
@@ -234,7 +234,7 @@ describe('固定到图标栏', () => {
     expect(await rail().findByRole('button', { name: /固定的页面没取到：页面表读不了/ })).toBeTruthy();
     expect(screen.queryByRole('region', { name: '计划' }), '一次重取失败把打开着的页面卸掉了').toBeTruthy();
     expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe('晨报');
-    expect(railLinks()).toEqual(['会话', '计划 · night']);
+    expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']);
   });
 
   it('布局记录重取失败：图标栏留着上一次的固定项，并写明没取到', async () => {
@@ -245,7 +245,7 @@ describe('固定到图标栏', () => {
     state.fail = true;
     act(() => admin().push({ type: 'layout.changed' }));
     expect(await rail().findByRole('button', { name: /固定的页面没取到：存储服务不在/ })).toBeTruthy();
-    expect(railLinks()).toEqual(['会话', '计划 · night']);
+    expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']);
   });
 
   it('实例与页面键拼起来一样的两个页面之间切换：进行中的动作不带到另一页', async () => {
@@ -286,14 +286,14 @@ describe('固定到图标栏', () => {
     expect(await region('乙').findByRole('button', { name: '执行' })).toBeTruthy();
   });
 
-  it('手机：没有图标栏，固定的页面列在第一层的会话列表上面，点进去是第二层', async () => {
+  it('手机：没有图标栏，固定的页面列在第一层的会话列表上面，点进去占满一屏的是主区', async () => {
     stubViewport(390);
     const layout = layoutStore({ pinned: [refOf(JOBS)] });
     app = await renderApp('/', { 'sessions/list': lists(() => []) }, pageRest(layout));
     const pinned = within(await screen.findByRole('region', { name: '固定的页面' }));
     fireEvent.click(await pinned.findByRole('link', { name: /计划 · night/ }));
     expect(app.where()).toBe(pagePath(JOBS));
-    expect((document.querySelector('[data-level]') as HTMLElement).dataset.level).toBe('2');
+    expect((document.querySelector('[data-phone]') as HTMLElement).dataset.phone).toBe('main');
   });
 });
 
@@ -443,6 +443,35 @@ describe('会话面板', () => {
     expect(app.where()).toBe('/s/b');
     app.back();
     expect(app.where(), '切换会话那一条历史被替换掉了').toBe('/s/a');
+  });
+
+  it('面板所属的插件停用：标签栏末尾留着「已停用」，内容是占位并链到插件详情，关掉回会话；插件回来后回到原位', async () => {
+    let pages = [JOBS, GRAPH, SETTINGS_PAGE, NOTES, FILES];
+    const layout = layoutStore({ panelTabs: [...hostTabs(), pageTab(NOTES)] });
+    app = await renderApp(
+      notesPath,
+      handlers,
+      panelRest(layout, { a: [refOf(NOTES)] }, { '/api/pages': () => ({ pages }) }),
+    );
+    await panel().findByText('周一交');
+    pages = pages.filter(page => page !== NOTES);
+    act(() => admin().push({ type: 'plugins.changed' }));
+    expect(await panel().findByText('这个页面所属的插件已停用')).toBeTruthy();
+    expect(tabs()).toEqual(['设置', '已停用']);
+    expect(panel().getByRole('tab', { name: '已停用' }).getAttribute('aria-selected')).toBe('true');
+    expect(panel().getByRole('link', { name: '去插件详情' }).getAttribute('href')).toBe(`/plugins/${NOTES.instance}`);
+    expect(app.where()).toBe(notesPath);
+
+    pages = [...pages, NOTES];
+    act(() => admin().push({ type: 'plugins.changed' }));
+    expect(await panel().findByText('周一交')).toBeTruthy();
+    expect(tabs()).toEqual(['设置', '笔记']);
+
+    pages = pages.filter(page => page !== NOTES);
+    act(() => admin().push({ type: 'plugins.changed' }));
+    fireEvent.click(await panel().findByRole('button', { name: '关闭「已停用」' }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/a'));
+    expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'close-tab', tab: refOf(NOTES) }]);
   });
 
   it('会话面板里的页面：刷新在标签栏里，不另占一行，按了整页重取；宿主自己的标签没有刷新', async () => {

@@ -272,6 +272,8 @@ export const SettingRowSchema = z.object({
   /** 登记它的插件实例 id：「高级」里按它分组，组名取插件显示名 */
   plugin: z.string(),
   prominence: z.enum(['composer', 'common', 'advanced']),
+  /** 可选项依赖的另一行的键：取这一行的动态可选项时带上那一行的生效值，那一行变了就重取 */
+  dependsOn: z.string().optional(),
   /** 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值；没写的没有 */
   value: z.unknown().optional(),
   /** 生效值；哪一层都没设时没有，界面按字段的默认值显示 */
@@ -634,7 +636,10 @@ export const sessionMethods = {
   'session/config/get': { params: SessionTargetSchema, result: SettingRowsSchema },
   /** 按键改本会话的覆盖，回最新的各行 */
   'session/config/update': { params: SessionConfigUpdateParamsSchema, result: SettingRowsSchema },
-  /** 写了值的各层：全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排 */
+  /**
+   * 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上
+   * 配置里写过的平台；受众条目按适配器声明的会话类型出，加上配置里写过的
+   */
   'session/config/layers': { params: EmptySchema, result: z.object({ layers: z.array(SettingLayerSchema) }) },
   /** 一层的各行，形状与会话的相同；受众条目只列适用于房间的项 */
   'session/config/layer/get': { params: SettingLayerTargetSchema, result: SettingRowsSchema },

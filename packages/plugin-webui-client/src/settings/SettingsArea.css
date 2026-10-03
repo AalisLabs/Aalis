@@ -1,0 +1,157 @@
+.settings-directory {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.settings-directory > .settings-note {
+  padding: var(--space-1) var(--space-4);
+}
+
+/* 一节的正文：一列设置，名字与值、开关、行尾的按钮不隔得太远；左对齐，组与组之间留白 */
+.settings-screen {
+  max-width: var(--measure-page);
+}
+
+/* 选层与它的说明连在一起 */
+.settings-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+  overflow-wrap: anywhere;
+}
+
+.settings-note[role="alert"] {
+  color: var(--color-danger-text);
+}
+
+/* 名字一列、控件一列；窄时控件换到下一行 */
+.settings-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--row-1line);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.settings-field > :first-child {
+  flex: 0 0 auto;
+  min-width: 6rem;
+}
+
+.settings-field > select {
+  flex: 1;
+  min-width: 0;
+  max-width: 25rem;
+}
+
+/* 设置行的悬停底伸出正文两边，行里的字与上面的标题、说明对齐 */
+.settings-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 calc(-1 * var(--space-2));
+}
+
+/* 一列可以操作的行：名字在前，操作贴在行尾 */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--row-1line);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.settings-list-name {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-0-5) var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-list-meta {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+.settings-list-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.settings-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-wrap: anywhere;
+}
+
+.settings-result ul {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--color-text-2);
+}
+
+.settings-result[role="alert"] {
+  color: var(--color-danger-text);
+}
+
+/* 改了要重启的键之后：一句话加重启按钮 */
+.settings-restart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-warning-text);
+  background: var(--color-warning-subtle);
+}
+
+.settings-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-wrap: anywhere;
+  user-select: text;
+}

@@ -2,7 +2,7 @@
 
 Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trigger.md)。经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定一条入站消息要不要开口。
 
-本包 `private: true`，只随仓库源码提供，不发布到 npm。从仓库源码运行时，工作区加载器按 `aalis-plugin` 关键词发现它并与其它插件一样默认启用，但默认不生效：它的默认优先级（-10）低于 trigger-policy（0），两者都启用时由 trigger-policy 判定，本插件什么都不做。要用本插件，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`（重启生效），或在 WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」（见「切换与回滚」）。它生效而本机没有侧车时判定不可用，群里只回点名（见「兜底与故障观测」）。
+本包 `private: true`，只随仓库源码提供，不发布到 npm。从仓库源码运行时，工作区加载器按 `aalis-plugin` 关键词发现它并与其它插件一样默认启用，但默认不生效：它的默认优先级（-10）低于 trigger-policy（0），两者都启用时由 trigger-policy 判定，本插件什么都不做。要用本插件，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`（重启生效），或在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「Laya 模型」（见「切换与回滚」）。它生效而本机没有侧车时判定不可用，群里只回点名（见「兜底与故障观测」）。
 
 ## 定位
 
@@ -152,8 +152,8 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 切换与回滚
 
-- **启用模型判定**：默认由 trigger-policy 判定。WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」，下一条消息起由本插件判定，trigger-policy 什么都不做（偏好同时写回配置文件的 `servicePreferences`）；也可以手改配置文件，在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，重启生效。托管侧车时，切过来才拉起侧车，就绪前约 11 秒只回点名。
-- **切到规则判定（即时）**：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，下一条消息起由 trigger-policy 判定，本插件什么都不做，托管的侧车随之关掉。切回同理。
+- **启用模型判定**：默认由 trigger-policy 判定。在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「Laya 模型」，下一条消息起由本插件判定，trigger-policy 什么都不做（偏好同时写回配置文件的 `servicePreferences`）；也可以手改配置文件，在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，重启生效。托管侧车时，切过来才拉起侧车，就绪前约 11 秒只回点名。
+- **切到规则判定（即时）**：在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「规则（计数/评分）」，下一条消息起由 trigger-policy 判定，本插件什么都不做，托管的侧车随之关掉。切回同理。
 - **停用本插件**：WebUI 插件管理里停用，trigger-policy 在下一条消息接手。
 - **让某些会话不走模型**：把它们移出 `scopes`（作用域是白名单，要排除单个群就改为列出其余的群）。移出后这些消息直接放行、不经任何触发判定；要按规则判定，只能整体切到 trigger-policy。
 - 手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。

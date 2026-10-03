@@ -79,10 +79,11 @@ describe('标题栏与取数', () => {
     expect(gets(dataPath(JOBS, 'list'))).toBe(1);
   });
 
-  it('地址里的页面不在页面表里（插件停用）时显示占位；页面重新登记后自动回到原页', async () => {
+  it('地址里的页面不在页面表里（插件停用）时显示占位，链到插件详情；页面重新登记后自动回到原页', async () => {
     let pages = [GRAPH];
     app = await renderApp(pagePath(JOBS), {}, jobsRest({ '/api/pages': () => ({ pages }) }));
     expect(await screen.findByText('这个页面所属的插件已停用')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '去插件详情' }).getAttribute('href')).toBe('/plugins/zz-jobs%3Anight');
     pages = [JOBS];
     act(() => admin().push({ type: 'plugins.changed' }));
     await screen.findByRole('region', { name: '计划' });
@@ -441,7 +442,7 @@ describe('动作', () => {
     const dialog = within(screen.getByRole('dialog', { name: '新建' }));
     const name = dialog.getByLabelText('名称') as HTMLInputElement;
     expect(document.activeElement).toBe(name);
-    expect(name.closest('.page-field')?.textContent).toContain('必填');
+    expect(name.closest('.field-row')?.textContent).toContain('必填');
     expect(dialog.getByText('不小于 5')).toBeTruthy();
     expect((dialog.getByLabelText('启用') as HTMLInputElement).checked).toBe(true);
     expect(
@@ -460,7 +461,7 @@ describe('动作', () => {
       input: { name: '晨报', every: 3, mode: 'once', enabled: true, tags: ['早上', '日报'] },
     });
     const issue = await dialog.findByText('不能小于 5');
-    expect(issue.closest('.page-field')?.querySelector('input')?.getAttribute('aria-invalid')).toBe('true');
+    expect(issue.closest('.field-row')?.querySelector('input')?.getAttribute('aria-invalid')).toBe('true');
 
     fireEvent.change(dialog.getByLabelText('间隔（秒）'), { target: { value: '很久' } });
     fireEvent.click(dialog.getByRole('button', { name: '新建' }));
