@@ -459,7 +459,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 新 WebUI 的第四部分：前端整套重写，接上会话协议与管理推送；会话设置改由插件登记。旧的 `/ws` 协议与旧前端在这一批删除。插件管理、设置、运行状况与插件页面在后续各节补上。
 
 - **外观与主题**：深浅两套，默认跟随系统。主题是独立的单位（名字、深或浅、一套颜色令牌），内置 8 个：偏中性、品牌柔和、文档站原色、安静中性各出深浅两个，默认跟随系统用偏中性。主题只改颜色，不改间距、圆角、字号与布局。令牌表 `THEME_TOKENS`、主题文件格式与 `parseTheme`、内置主题 `BUILTIN_THEMES`、对比度检查 `themeContrastIssues` 在 api-webui（实验性），以后导入第三方主题用同一套校验。首帧前写好主题，刷新不闪。
-- **布局**：最左侧图标栏、左栏、主区、右侧面板，栏宽固定；48em 以下是手机三层（按地址逐层进入，系统返回逐层退回），平板宽度两侧是覆盖式抽屉。不用卡片样式，圆角 4px 与 6px，阴影只给浮层。尺寸用 rem，跟随浏览器字号；触屏下控件自动放大。图标统一为线性图标，界面上没有 emoji。
+- **布局**：最左侧图标栏、左栏、主区、右侧面板（两侧栏宽在后面「隔离的插件前端」一节改为可拖动）；48em 以下是手机三层（按地址逐层进入，系统返回逐层退回），平板宽度两侧是覆盖式抽屉。不用卡片样式，圆角 4px 与 6px，阴影只给浮层。尺寸用 rem，跟随浏览器字号；触屏下控件自动放大。图标统一为线性图标，界面上没有 emoji。
 - **会话列表**：「我的」与按适配器实例分组的房间，组默认折叠；组内只露出需要处理的与近 7 天她开过口的房间，其余收在「其余 N 个」里。房间组可以打开主区的房间表（`/rooms?instance=`），按类型与状态筛选、按列排序、批量归档与删除。底部有「已归档」，可以恢复。Cmd/Ctrl+K 搜索会话。
 - **会话工作台**：时间线按条目渲染（流式、思考、工具卡、通知、回合分隔），每张可折叠；工具卡按工具声明的展示种类画命令或文件改动；审批卡挂在工具卡上，只有批准与拒绝（可附理由），出现时不抢输入框焦点、没有批准的快捷键，结算后收成一句写明结果、原因与时间，刷新后仍在；回合可回滚（两种范围都先确认）。头部有上下文用量百分比，点开是拆分表（桌面在右侧面板，手机从底部弹出），有压缩服务时写明压缩线、达到时换色。右侧面板有计划、设置、用量。输入框附件一律接收，只有附件也能发，正确处理输入法组字时的回车，触屏上回车换行、按钮发送。
 - **会话设置由插件登记**：api-session-manager 新增 `registerSetting`、`listSettings`，设置项（字段、适用的会话种类、显眼程度、是否只按继承链实时解析）由拥有功能的插件登记，随它的激活撤回；`SessionConfig` 不再列具体的键，各插件经 declaration merging 加。没装或停用的插件的键原样保留，但不显示、不参与解析，重新启用后恢复。界面只列适用于这个会话种类的项：常用的在前，其余收进「高级」并按插件分组；每项显示生效值与来源，就地修改、改完即存，可以恢复继承。模型等 `composer` 档的项同时出现在输入框旁。登记的插件：agent（模型、深度思考、工具迭代上限）、persona（人设、额外提示、两个结构化输出开关）、tools（工具分组）、记忆与关系图等（召回范围，定义在 api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`）、paper（白纸与远端代理六项，只对房间）。
@@ -515,6 +515,21 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **升级须知**：webui-server 的 `relationGraphDefaultSpacing` 改放到 user-relation 的 `graphSpacing`（含义相同，默认 120，范围 20 到 1000，超出按默认）。
 - **发布档位**：次版本：api-webui、api-publish、api-checkpoint、api-storage、api-tools、api-session-protocol（实验性）、schema-message、plugin-webui-server、plugin-webui-client、plugin-session-server、plugin-user-relation、plugin-file-reader、create-aalis-plugin；其余为 patch。只改注释的 api-llm 可以不发。各页面插件对 api-webui 的依赖下限抬到带 `definePage` 的版本。
 
+### 隔离的插件前端、顶部横线贯穿与两侧栏宽拖拽（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/create-aalis-plugin）
+
+新 WebUI 的第六部分：插件页面默认仍是声明式，声明式表达不了时可以带自己的前端，在隔离的框架里显示；外壳的顶部横线贯穿各栏，两侧栏宽可以拖动。
+
+- **插件前端**（api-webui，实验性）：`definePage` 多一种形态，`frame: { module, entry?, host? }` 加 `sources`，与声明式的 `content` 二选一；位置只有插件页与会话面板（设置位置只收声明式），动作不收 `row`；数据源与动作的输入按声明推导。登记时从 `frame.module` 往上取最近一个带 `name` 的 `package.json` 作包根，`name` 要等于插件名，入口要在包的 `webui/` 目录里，数据源名与动作名不超过 128 个字符。
+- **托管与隔离**：webui-server 新增 `GET /frames/:token/*`（每次登记随机一个 token，撤回或重新登记后旧的作废）与 `/frames/_base/*`（助手与样式基线）。不要登录，只收 GET 与 HEAD，扩展名白名单与 realpath 两道检查，不合一律 404、不发重定向；响应带只放行本页目录的框架 CSP（`default-src 'none'`，脚本、样式、图片、字体只认自己的目录）与 `sandbox`、`nosniff`、`no-referrer`、DNS 预取关闭。iframe 只给 `FRAME_SANDBOX` 的权限，与宿主不同源，读不到宿主的 cookie 与页面。框架发不出网络请求、取不到外站资源；跳转、WebRTC 与 preconnect 仍可能把数据带出去，插件的服务端代码本来就能联网，文档如实写明。以 IPv6 字面地址访问时不显示插件前端。
+- **消息通道**：宿主在地址片段里放一个随机数，框架带着它握手，之后改走专用端口；协议版本主版本不同时不挂载。数据源、动作与宿主数据能力都由宿主转发，实例、页面与会话一律取挂载时的值。外链与 destructive 动作经宿主画的对话框，同一时刻一个，打开后 500 毫秒内不接受确认，确认框列出这次的输入值，连续取消 3 次就停止显示这个页面；外链经对话框里的真实链接打开，与宿主同源的地址不收。框架离开自己的地址、每秒超过 200 条消息时立即卸载并显示占位。错误码是封闭集合。消息校验纯函数 `parseFrameHello`、`parseFrameMessage`、能力表与能力词表（第一版 `sessions:read`、`turn:abort`）在 api-webui，第三方宿主前端共用。
+- **助手与样式基线**：`/frames/_base/frame.js` 的 `connect()` 负责握手、主题令牌、请求配对与离开时通知宿主，类型是 `FrameClient`；`/frames/_base/frame.css` 只给元素级样式，颜色取主题令牌。两者随 api-webui 发布在 `dist/frame/`。
+- **界面**：框架上面写一行「来自 <插件显示名>」，手动刷新就是重新挂载；握手完成前不显示，第一次加载后 10 秒没有回应时写明「页面没有响应」；插件推来的 `invalidate`、重连与主题切换都转发给框架。
+- **脚手架**：create-aalis-plugin 在「提供 WebUI 页面」之后多一问「页面用自带前端？」，选了就生成不用构建的 `webui/index.html` 与 `webui/main.js`（一个数据源、一个 destructive 动作），`files` 加 `webui`。
+- **顶部横线与两侧栏宽**：各栏头部同一高度、同一条下边线，横线从图标栏贯穿到右侧面板，声明式页面里的标签栏同高。左栏与右侧面板常驻时可拖动分隔条调宽（左 13.75–25rem，右 18.75–37.5rem），方向键与 Home、End 可调，双击恢复默认，拖到下限以下松手即收起，再展开回到收起前的宽度；窗口变窄时两侧按比例收，主区至少留 30rem；覆盖式抽屉按记住的宽度打开。栏宽连同收起状态按设备记在本浏览器（`aalis.panels` 的形状改为每侧 `{ open, width? }`，旧记录按默认读）。连接状态横条移到窗口顶部，横跨图标栏与各栏。
+- **文档**：插件作者指南新增「界面：声明式页面与插件前端」，列出插件能放在哪、不能放在哪与理由；联网搜索后端由插件自己登记 `web_search`、`search_images`，与 plugin-websearch-serper 二选一。安全模型新增「WebUI 的插件前端」。
+- **破坏性**：api-webui 的 `PageView` 与 `PageDefinition` 改为声明式与插件前端两种的联合，读 `content` 前要先按 `frame` 区分；`definePage` 多一个泛型参数。第三方前端照 [api-webui](docs/api/api-webui.md) 的「插件前端」一节实现框架挂载与转发，不实现的显示占位即可。
+- **发布档位**：次版本：api-webui（实验性）、plugin-webui-server、plugin-webui-client、create-aalis-plugin。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -544,6 +559,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - plugin-session-server、plugin-tool-system、plugin-webui-client 与 api-tools、api-session-protocol 同批升级：退出码按 exec 声明的 `display.result` 取，旧版 tool-system 不声明；新版会话服务会发 `aborted` 状态与 `display.exitCode`，旧版前端不认识。
 - plugin-session-server、plugin-webui-server 与 api-storage 同批升级：两者在运行时导入 api-storage 新增的 `canIssueFileHandle`，发布时依赖下限抬到本批的新版本。
 - plugin-user-relation 与 plugin-webui-server 同批升级：关系图的疏密改由 user-relation 的 `graphSpacing` 经关系图组件带出，旧版 webui-server 的 `relationGraphDefaultSpacing` 在新版里已删。
+- plugin-webui-client、plugin-webui-server 与 api-webui 同批升级：新版 webui-server 的 `/api/pages` 会下发插件前端页面（`PageView` 的新形态），旧版前端不认识；新版前端挂载的框架要新版 webui-server 托管 `/frames`。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
