@@ -64,9 +64,11 @@ const REMOVED: Array<[string, string]> = [
   ['自反思', 'user-profile 的自档案'],
   ['registerPage(', '页面与页面动作分两次登记、靠字符串名对上的旧接口，由 definePage 一次给出取代'],
   ['registerAction(', '页面与页面动作分两次登记、靠字符串名对上的旧接口，由 definePage 一次给出取代'],
-  ["renderer: '", '页面交给界面内置渲染器的 renderer：插件不带前端，权限页改为声明式页面'],
+  ["renderer: '", '页面交给界面内置渲染器的 renderer：页面默认声明式、需要自绘时用插件前端，权限页改为声明式页面'],
   ['WebuiFilePayload', '文件列以 base64 载荷回传文件，改为交存储地址、由宿主签发下载句柄'],
   ['/api/page-action', '旧的页面动作路由，由按组件取数与按动作调用的两条路由取代'],
+  ['TAB_TITLES', '客户端写死的会话面板标签名，由 api-webui 的宿主标签集合 HOST_PANEL_TABS 与标签合成取代'],
+  ['SESSION_TABS', '客户端写死的会话面板标签，由 api-webui 的宿主标签集合 HOST_PANEL_TABS 与标签合成取代'],
 ];
 
 /**

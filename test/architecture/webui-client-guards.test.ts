@@ -9,8 +9,9 @@ import { sessionMethods, sessionNotifications } from '../../packages/api-session
 // - 兼容与写法：颜色只来自主题令牌，组件 CSS 不写 px（线宽 1px、2px 除外），字号与时长只引用令牌，内联 style 只设 CSS 变量，
 //   不用原生对话框与 window.open，浏览器存储只经存储模块（首帧主题脚本除外），不写死主机与端口，
 //   dangerouslySetInnerHTML 只许出现在白名单里的文件；
-// - 只认契约不认插件：不出现插件包名，字符串字面量不等于任何插件登记的页面键、动作名或设置键。
-//   与会话协议、管理面事件里的字段同名的不查，这份排除表从 schema 与类型定义算出。
+// - 只认契约不认插件：不出现插件包名，字符串字面量不等于任何插件登记的页面键、动作名、数据源名或设置键。
+//   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；
+// - 插件前端：iframe、postMessage 与 MessageChannel 只出现在框架模块里，客户端与服务端都不出现 allow-same-origin。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = join(import.meta.dirname, '../..');
@@ -26,6 +27,8 @@ const STORAGE_MODULE = 'src/storage.ts';
 const THEME_SCRIPT = 'public/theme.js';
 /** 可以用 dangerouslySetInnerHTML 的文件：只给 Mermaid 渲染组件（输出经严格安全级别） */
 const DANGEROUS_HTML_FILES = new Set<string>(['src/markdown/Mermaid.tsx']);
+/** 插件前端的框架模块：唯一画 iframe、收发框架消息的地方 */
+const FRAME_MODULE = 'src/frame/';
 
 function* walk(dir: string, pattern: RegExp): Generator<string> {
   for (const name of readdirSync(dir)) {
@@ -82,57 +85,67 @@ const propertyName = (property: ts.ObjectLiteralElementLike) =>
     ? property.name.text
     : undefined;
 
-// ----- 插件登记的页面键、动作名与设置键 -----
+// ----- 插件登记的页面键、动作名、数据源名与设置键 -----
 
 /**
- * 从全部插件的源码收集：页面键取页面声明（带 key、title 与 content 的对象，标签不算）的 key，key 写成本文件里的字符串常量
- * 时取常量的值；动作名取页面声明的 actions 对象的键；设置键取各包对 SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）
+ * 从源码收集：页面键取页面声明（带 key、title，且带 content 或 frame 的对象，标签不算）的 key，key 写成本文件里的字符串
+ * 常量时取常量的值；动作名取页面声明的 actions 对象的键，数据源名取插件前端页面的 sources 对象的键；设置键取各包对
+ * SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）
  */
-function registeredKeys() {
+function collectKeys(sources: Iterable<ts.SourceFile>) {
   const pages = new Set<string>();
   const actions = new Set<string>();
+  const dataSources = new Set<string>();
   const settings = new Set<string>();
+  const keysOf = (node: ts.Node | undefined, into: Set<string>) => {
+    if (!node || !ts.isObjectLiteralExpression(node)) return;
+    for (const property of node.properties) {
+      const name = propertyName(property);
+      if (name) into.add(name);
+    }
+  };
+  for (const source of sources) {
+    const constants = new Map<string, string>();
+    visitAll(source, node => {
+      const value = ts.isVariableDeclaration(node) ? literalText(node.initializer) : undefined;
+      if (value !== undefined && ts.isIdentifier((node as ts.VariableDeclaration).name)) {
+        constants.set((node as ts.VariableDeclaration).name.getText(), value);
+      }
+    });
+    const textOf = (node: ts.Node | undefined) =>
+      node && ts.isIdentifier(node) ? constants.get(node.text) : literalText(node);
+    const visit = (node: ts.Node, inPage: boolean): void => {
+      let page = inPage;
+      if (ts.isInterfaceDeclaration(node) && node.name.text === 'SessionConfig') {
+        for (const member of node.members)
+          if (member.name && ts.isIdentifier(member.name)) settings.add(member.name.text);
+      }
+      if (!inPage && ts.isObjectLiteralExpression(node)) {
+        const fields = new Map(
+          node.properties.filter(ts.isPropertyAssignment).map(p => [propertyName(p), p.initializer] as const),
+        );
+        const key = textOf(fields.get('key'));
+        if (key && fields.has('title') && (fields.has('content') || fields.has('frame'))) {
+          pages.add(key);
+          page = true;
+          keysOf(fields.get('actions'), actions);
+          keysOf(fields.get('sources'), dataSources);
+        }
+      }
+      ts.forEachChild(node, child => visit(child, page));
+    };
+    visit(source, false);
+  }
+  return { pages, actions, dataSources, settings };
+}
+
+/** 全部插件的源码（客户端自己除外） */
+function* pluginSources(): Generator<ts.SourceFile> {
   for (const pkg of readdirSync(PACKAGES)) {
     const src = join(PACKAGES, pkg, 'src');
     if (pkg === 'plugin-webui-client' || !existsSync(src)) continue;
-    for (const file of walk(src, /\.tsx?$/)) {
-      const source = parse(file);
-      const constants = new Map<string, string>();
-      visitAll(source, node => {
-        const value = ts.isVariableDeclaration(node) ? literalText(node.initializer) : undefined;
-        if (value !== undefined && ts.isIdentifier((node as ts.VariableDeclaration).name)) {
-          constants.set((node as ts.VariableDeclaration).name.getText(), value);
-        }
-      });
-      const textOf = (node: ts.Node | undefined) =>
-        node && ts.isIdentifier(node) ? constants.get(node.text) : literalText(node);
-      const visit = (node: ts.Node, inPage: boolean): void => {
-        let page = inPage;
-        if (ts.isInterfaceDeclaration(node) && node.name.text === 'SessionConfig') {
-          for (const member of node.members)
-            if (member.name && ts.isIdentifier(member.name)) settings.add(member.name.text);
-        }
-        if (!inPage && ts.isObjectLiteralExpression(node)) {
-          const fields = new Map(
-            node.properties.filter(ts.isPropertyAssignment).map(p => [propertyName(p), p.initializer] as const),
-          );
-          const key = textOf(fields.get('key'));
-          if (key && fields.has('title') && fields.has('content')) {
-            pages.add(key);
-            page = true;
-            const declared = fields.get('actions');
-            if (declared && ts.isObjectLiteralExpression(declared)) {
-              for (const property of declared.properties) actions.add(propertyName(property) ?? '');
-            }
-          }
-        }
-        ts.forEachChild(node, child => visit(child, page));
-      };
-      visit(source, false);
-    }
+    for (const file of walk(src, /\.tsx?$/)) yield parse(file);
   }
-  actions.delete('');
-  return { pages, actions, settings };
 }
 
 /** zod schema 的内部定义：只走到收集字段名要用的几种 */
@@ -176,6 +189,31 @@ function protocolFields(): Set<string> {
     visit(result as unknown as SchemaNode);
   }
   for (const params of Object.values(sessionNotifications)) visit(params as unknown as SchemaNode);
+  return names;
+}
+
+/**
+ * 插件前端消息的类型里出现的字段名：从握手与两个方向的消息联合出发，顺着同一文件里引用到的类型走（会话协议的部分
+ * 已在协议的字段里）
+ */
+function frameFields(): Set<string> {
+  const names = new Set<string>();
+  const declarations = new Map<string, ts.Node>();
+  const source = parse(join(PACKAGES, 'api-webui/src/frame.ts'));
+  visitAll(source, node => {
+    if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) declarations.set(node.name.text, node);
+  });
+  const seen = new Set<string>();
+  const follow = (name: string): void => {
+    const declaration = declarations.get(name);
+    if (!declaration || seen.has(name)) return;
+    seen.add(name);
+    visitAll(declaration, node => {
+      if (ts.isPropertySignature(node) && ts.isIdentifier(node.name)) names.add(node.name.text);
+      if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) follow(node.typeName.text);
+    });
+  };
+  for (const root of ['FrameHello', 'FrameMessage', 'FrameHostMessage']) follow(root);
   return names;
 }
 
@@ -302,8 +340,8 @@ describe('WebUI 客户端的写法', () => {
 });
 
 describe('WebUI 客户端只认契约不认插件', () => {
-  const { pages, actions, settings } = registeredKeys();
-  const excluded = new Set([...protocolFields(), ...adminFields()]);
+  const { pages, actions, dataSources, settings } = collectKeys(pluginSources());
+  const excluded = new Set([...protocolFields(), ...adminFields(), ...frameFields()]);
 
   it('收集到的登记与排除表不空：判据没有因为写法变化失效', () => {
     expect([...pages]).toEqual(expect.arrayContaining(['paper', 'paper-room', 'skills', 'doctor', 'uploads']));
@@ -311,7 +349,31 @@ describe('WebUI 客户端只认契约不认插件', () => {
       expect.arrayContaining(['cancelTask', 'runDiagnostics', 'approveWork', 'deleteUpload']),
     );
     expect([...settings]).toEqual(expect.arrayContaining(['llm', 'persona', 'enabledToolGroups', 'paperEnabled']));
-    expect([...excluded]).toEqual(expect.arrayContaining(['sessionId', 'epoch', 'seq', 'type', 'entry']));
+    expect([...excluded]).toEqual(
+      expect.arrayContaining(['sessionId', 'epoch', 'seq', 'type', 'entry', 'nonce', 'target', 'tokens', 'code']),
+    );
+  });
+
+  it('插件前端页面也按判据收集：带 key、title 与 frame 的对象是页面，动作名与数据源名取它的 actions 与 sources', () => {
+    const declared = ts.createSourceFile(
+      'zz-frame-page.ts',
+      `const KEY = 'zz-board';
+      webui.definePage({
+        key: KEY,
+        title: '看板',
+        frame: { module: import.meta.url },
+        sources: { zzCards: { data: () => [] }, 'zz-card': { data: () => null } },
+        actions: { zzArchive: { label: '归档', effect: 'write', handler: () => undefined } },
+      });`,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const keys = collectKeys([declared]);
+    expect([[...keys.pages], [...keys.actions], [...keys.dataSources]]).toEqual([
+      ['zz-board'],
+      ['zzArchive'],
+      ['zzCards', 'zz-card'],
+    ]);
   });
 
   it('客户端源码不出现插件包名', () => {
@@ -319,10 +381,11 @@ describe('WebUI 客户端只认契约不认插件', () => {
     expect(hits).toEqual([]);
   });
 
-  it('字符串字面量不等于插件登记的页面键、动作名或设置键', () => {
+  it('字符串字面量不等于插件登记的页面键、动作名、数据源名或设置键', () => {
     const forbidden = new Map<string, string>();
     for (const key of pages) forbidden.set(key, '页面键');
     for (const name of actions) forbidden.set(name, '动作名');
+    for (const name of dataSources) forbidden.set(name, '数据源名');
     for (const key of settings) forbidden.set(key, '设置键');
     const hits: string[] = [];
     for (const file of SCRIPTS) {
@@ -334,6 +397,29 @@ describe('WebUI 客户端只认契约不认插件', () => {
         hits.push(`${rel(file)}:${line} '${text}' 是${forbidden.get(text)}`);
       });
     }
+    expect(hits).toEqual([]);
+  });
+});
+
+describe('插件前端的写法', () => {
+  it('iframe、postMessage 与 MessageChannel 只出现在框架模块里，框架模块里都有', () => {
+    const words = ['<iframe', 'postMessage', 'MessageChannel'];
+    const hits = SCRIPTS.filter(file => !rel(file).startsWith(FRAME_MODULE)).flatMap(file =>
+      words.filter(word => read(file).includes(word)).map(word => `${rel(file)} ${word}`),
+    );
+    expect(hits).toEqual([]);
+    const module = SCRIPTS.filter(file => rel(file).startsWith(FRAME_MODULE))
+      .map(read)
+      .join('\n');
+    expect(words.filter(word => !module.includes(word))).toEqual([]);
+  });
+
+  it('客户端与服务端的源码都不出现 allow-same-origin：框架的 sandbox 只取 FRAME_SANDBOX', () => {
+    const server = [...walk(join(PACKAGES, 'plugin-webui-server', 'src'), /\.ts$/)];
+    const hits = [...SOURCES, ...server]
+      .filter(file => read(file).includes('allow-same-origin'))
+      .map(file => relative(ROOT, file));
+    expect(server.length).toBeGreaterThan(10);
     expect(hits).toEqual([]);
   });
 });

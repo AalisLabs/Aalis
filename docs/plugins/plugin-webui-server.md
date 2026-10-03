@@ -5,7 +5,7 @@
 
 ## 概述
 
-Express + WebSocket 实现的 Web 管理后台，提供 REST API 与 WebSocket 实时通信。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、页面数据变了、布局记录变了、重启、换前端）。插件经 `webuiServer` 登记的声明式页面与提示由本插件收下、按质量门槛核过，页面的数据源与动作经本插件的服务端闸门调用（见下文「声明式页面」）。发往 WebUI 会话的出站消息由本插件写进会话历史（见下文「WebUI 会话的收件箱」）。
+Express + WebSocket 实现的 Web 管理后台，提供 REST API 与 WebSocket 实时通信。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、页面数据变了、布局记录变了、重启、换前端）。插件经 `webuiServer` 登记的页面（默认声明式，需要自绘时用插件前端）与提示由本插件收下、按质量门槛核过，页面的数据源与动作经本插件的服务端闸门调用，插件前端的文件由本插件在 `/frames/` 下托管（见下文「声明式页面」与「插件前端」）。发往 WebUI 会话的出站消息由本插件写进会话历史（见下文「WebUI 会话的收件箱」）。
 
 ## 插件声明
 
@@ -119,7 +119,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 - 样式放开内联：Mermaid 的输出带内联样式。
 - 图片只认同源、`blob:` 与 `data:`：外站图片不加载，前端把它们显示成链接。
 - 不许被别的页面嵌入（`frame-ancestors 'none'`）。
-- `/api/media` 另设更严的 `sandbox; default-src 'none'`。
+- `/api/media` 另设更严的 `sandbox; default-src 'none'`；`/frames/` 下插件前端的文件另设框架 CSP，见下文「插件前端」。
 
 ### Cookie
 
@@ -145,8 +145,8 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins`。启用后激活失败、转为 `error` 态时，照样写回启用，仍返回 200 与 `{ ok: true }`，`message` 说明激活失败及原因；停用仍在初始化的插件而它未在宽限内停止、转为 `error` 态时，照样写回禁用，同样返回 200，`message` 说明它未在宽限内停止、已转为 `error` 态。插件不存在时返回 404；停机中或插件正在卸载时拒绝，返回 409，配置文件不变 |
 | `/api/plugins/scan` | POST | 经宿主的 `plugin-source` 服务重新扫描插件源（范围由宿主的加载器决定），加载新发现且尚未注册的插件；宿主未提供插件来源时返回 503 |
 | `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除。创建的请求体为 `{ suffix, config? }`，`config` 与 PUT 插件配置同一套处理：按 schema 默认值深合并、按宿主的裁剪政策裁掉未声明的字段（在响应 `ignored` 里点名，附在 `message` 末尾）；有类型不符的值时不创建，返回 400。创建同样经 `applyPluginConfig`：`secret` 字段上的值拆进密钥存储，先写配置文档再登记。停机进行中创建会被拒绝登记，返回 409，配置文档与密钥都撤回、不写入；创建后激活失败、实例转为 `error` 态时，实例与配置照样保留并写入配置文件，仍返回 200 与 `{ ok: true, instanceId }`，`message` 说明激活失败及原因：创建回 2xx 即表示实例已登记、配置已写进配置文件，WebUI 据此收起建实例表单、刷新列表；落盘失败的回执带 `applied: true`（见下文），实例同样已在运行态登记，表单也收起；其余非 2xx 时表单留着；配置文件的 `disabledPlugins` 里已有该实例（手改配置文件留下）时以禁用态登记，回执说明这一点。移除时先从配置文件删掉该实例的配置段与禁用标记（同名重建以启用态登记；不再被任何配置引用的密钥随这次保存从 `secrets.yaml` 删除），落盘成功后再卸载实例；卸载失败时返回 500，说明配置段已从配置文件删除、卸载失败；停机进行中删除时内核不受理卸载，配置段照样删掉，返回 200，`message` 注明停机中、未卸载运行中的实例 |
-| `/api/pages` · `/api/session-pages` | GET | 登记着的声明式页面（声明去掉函数，带上实例与位置）/ 这个会话（`?sessionId=`）适用的会话面板页面。见下文「声明式页面」 |
-| `/api/pages/:instance/:pageKey/data/:componentId` · `/api/pages/:instance/:pageKey/actions/:action` | GET · POST | 页面组件的数据源 / 页面动作，经服务端闸门调用，见下文「声明式页面」 |
+| `/api/pages` · `/api/session-pages` | GET | 登记着的页面（声明式页面的声明去掉函数，插件前端页面只有框架地址、申请的能力与 actions；都带上实例与位置）/ 这个会话（`?sessionId=`）适用的会话面板页面。见下文「声明式页面」「插件前端」 |
+| `/api/pages/:instance/:pageKey/data/:componentId` · `/api/pages/:instance/:pageKey/actions/:action` | GET · POST | 页面组件或插件前端数据源的数据 / 页面动作，经服务端闸门调用，见下文「声明式页面」「插件前端」 |
 | `/api/page-file` | GET | 页面单元格里的文件按句柄下载（`?handle=<文件单元格的 handle>`），句柄由本插件签发；下发方式与错误同 `/api/session-file` |
 | `/api/layout` | GET · POST | owner 的布局记录（图标栏上固定的页面、会话面板的标签）/ 按一个操作改它，见下文「布局记录」 |
 | `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取整份配置文档（宿主有密钥存储时，插件配置里的 `secret` 字段是引用，不是原值）；PUT 可改 `name`、`logLevel`、`slowThresholdMs`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；文档里没写的核心键按 schema 默认值比较（前端把默认值回填进草稿后回传，不算改动、不写进文件）；`logLevel` 或 `slowThresholdMs` 有变化时保存并自动重启应用（宿主不支持重启时记一条错误日志，响应 `restart: false`，`message` 说明改动已写入文件、下次启动生效），只改 `name` 时只保存、不重启（它只是显示用的应用名称）；POST `/api/config/save` 把当前配置写回磁盘（宿主不持久化时不写盘，回执只说「配置已保存」） |
@@ -162,6 +162,8 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/proxy/image` | GET | 图片代理 |
 | `/api/media` | GET | 聊天里的图片、视频、音频按存储地址取（`?uri=data:/images/x.png` 这类）：按文件头判定类型，只提供 PNG、JPEG、GIF、WebP、MP4、WebM 与 MP3、WAV、OGG、M4A，其余（含 HTML、SVG、JSON）回 415；响应带 `nosniff` 与 `sandbox` CSP。文件不存在回 404；其余读不出的（含存储拒绝的越界路径）回 500 并记告警。客户端把消息与会话历史里的存储地址换成这条路由 |
 | `/api/session-file` | GET | 会话条目里的文件按句柄下载（`?sessionId=<会话>&handle=<附件的 src>`）。句柄由会话服务签发，先经 `sessionProtocol.resolveFile` 核验，再按核验出的存储地址读出，一律以 `application/octet-stream`、`Content-Disposition: attachment`（文件名取句柄里的名字，`filename*` 按 RFC 8187 编码，另带 ASCII 的 `filename` 退路）与 `nosniff` 下发。句柄核验不过（伪造、改动过、别的会话的、会话服务重启之前签发的，或会话服务不在）回 403，文件已不在回 404，其余读不出的回 500 并记告警。这条路由不接受存储地址，哪些文件不签发见 [plugin-session-server](./plugin-session-server.md#文件句柄) |
+
+`/frames/:token/*` 与 `/frames/_base/*`（GET、HEAD）托管插件前端的文件与宿主给框架的公用文件，不要登录，见下文「插件前端」。
 
 core 的插件管理动作与 `services.prefer` 只改运行态；启停、删除实例与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘；改插件配置与新建实例经 `host-config` 的 `applyPluginConfig`，运行态、文档、密钥与落盘一步完成。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、新建实例与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好被拒写的文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停与服务偏好在重启时以文件为准。修好文件的方式不限，原样改回也会触发这次对账。落盘因其它原因失败（如没有写权限、磁盘写满）时，这些路由返回 500 与 `{ error, applied: true }`：文件没有变化，也不会触发重载，改动保留在配置文档里，下一次保存成功时一并写入。这两种情形下，插件在动作之后没有进入预期状态（激活失败、未在宽限内停止、仍在激活、在等依赖或保持禁用）时，`error` 开头先说明这一点。删除实例先落盘、后卸载：后缀实例由配置段定义，热重载也按文件登记，先卸载后落盘时卸载途中的热重载会按仍带配置段的文件把实例重新登记。落盘被拒返回 409、其它失败返回 500，实例不删除，文档里的配置段与禁用标记还原。全局配置（`PUT /api/config`）落盘失败时撤回文档里的改动，被拒返回 409、其它失败返回 500：撤回后 `logLevel`、`slowThresholdMs` 与 `name` 都回到修改前。`POST /api/config/save` 同样是被拒返回 409、其它失败返回 500。
 
@@ -239,6 +241,16 @@ socket.onmessage = event => {
 - **单元格里的图片与文件**：图片列的存储地址换成 `/api/media?uri=…`；文件列换成本插件签发的句柄（`page-files.ts`），经 `/api/page-file` 下载。句柄是「载荷.签名」：载荷是存储地址与文件名，签名是每次激活随机生成的密钥对载荷的 HMAC-SHA256，本插件重载后旧句柄失效，界面重新取数就拿到新的。哪些文件不签发与会话条目的句柄同一条规则（api-storage 的 `canIssueFileHandle`）：`data`、`pluginData` 两类根里的不签发，只给名字。会话条目的句柄由会话服务签发、绑定会话；页面的文件不属于哪个会话，会话服务也可能没启用，所以页面的句柄由本插件另设签发器。
 - **会话面板**：`GET /api/session-pages` 按会话一次算完，`applies` 并行地问，抛错、超过 2 秒或没回布尔值按不适用处理，记一条告警。
 - **invalidate**：按实例、页面、组件与会话合并，同一组一秒内最多推一次 `page.invalidate`；本插件卸载时清掉合并窗口。
+
+### 插件前端
+
+插件前端页面（契约见 [api-webui](../api/api-webui.md#插件前端)）与声明式页面同一张登记表、同一道闸门，另有：
+
+- **登记时找包根**（`pages.ts`）：`frame.module` 要是 `file:` 地址；从它所在目录往上找最近一个带 `name` 的 `package.json`（只写 `type` 的跳过），`name` 要等于插件名（实例 id 第一个「:」之前的部分）；包根下的 `webui/` 要是目录，入口要是按 realpath 落在 `webui/` 之内的文件。不过就不登记，错误日志写明是哪一条、在哪个目录。包根在登记时解析一次，`webui/` 的 realpath 记进登记条目，另随机一个 128 位的 `token`（base64url）。
+- **托管**（`routes/frames.ts`）：`GET /frames/:token/<路径>` 按 `token` 找到这一次登记的 `webui/`，`GET /frames/_base/<路径>` 给出 `@aalis/api-webui` 包里 `dist/frame/` 的公用文件（助手 `frame.js` 与样式基线 `frame.css`）。注册在认证之前，不看 cookie。用 `express.static` 托管（关掉目录索引与目录重定向，点开头的段不给），前面另加两道：扩展名白名单（`html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`）与 realpath 落在目录之内。不合的一律 404，不发 3xx；只收 GET 与 HEAD，别的方法回 405。页面撤回或重新登记后旧的 `token` 回 404。
+- **响应头**：框架 CSP（盖过全局的文档级 CSP）、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *`、`Cache-Control: no-cache`。CSP 全文见 api-webui；其中的来源按请求的 Host 写成带路径、不带协议的来源，Host 去掉默认端口 `:80`、`:443`。Host 在本插件按「主机名或 IPv4 地址，加可选端口」核对，IPv6 字面地址与带分号、空白、斜杠等的回 400。
+- **数据源**：`componentId` 是数据源名，没声明的回 404；查询参数只收 `sessionId`（会话面板）与 `input`（声明了输入的数据源），`input` 是 JSON 字符串，解不开、不是对象、类型不对、缺必填、带多余的键都回 400。返回不能转成 JSON 的值时回 500，记告警「页面 <key>（<实例>）的数据源 <名> 返回的数据不对：不能转成 JSON…」。动作的请求体不收 `rowKey`。
+- **`GET /api/pages`**：插件前端页面按字段组装，只给 `frame: { src, host }` 与 `actions`；不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里；数据源也不下发。
 
 ### 布局记录
 

@@ -187,7 +187,7 @@ pnpm build
 
 ### 交互式 prompts 与默认值
 
-非 TTY 且无 `--yes` 时同样提前拦截（`cli.ts`）。问 4 件事：
+非 TTY 且无 `--yes` 时同样提前拦截（`cli.ts`）。依次问：
 
 | prompt | 默认 | 说明 |
 |---|---|---|
@@ -196,6 +196,7 @@ pnpm build
 | 注册 AI 工具？ | **是** | 生成 `uses: { tools: optional(tools) }` 与 `tools.register` 示例 |
 | 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.command` 示例 |
 | 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `webui.definePage` 示例 |
+| 页面用自带前端？ | 否 | 只在上一问选了「是」时问。选了就把页面写成插件前端：另生成 `webui/` 里的静态网页，见下文「页面用自带前端」 |
 
 `--yes` / `-y` 跳过全部，取上表默认（即只生成 tool 扩展点，`cli.ts`）。yes/no 输入兼容 `y/yes/true/1` 与 `n/no/false/0`（`parseYesNo`，`cli.ts`）。
 
@@ -206,6 +207,7 @@ my-plugin/
 ├── package.json        # name / keywords:["aalis-plugin"] / peerDep core / 按选项的 *-api 依赖
 ├── tsconfig.json       # 自包含 compilerOptions（不 extends monorepo base，独立目录也能 tsc）
 ├── src/index.ts        # export default definePlugin({ name, displayName, uses, apply })
+├── webui/              # 只在页面用自带前端时生成：index.html 与 main.js
 └── README.md           # 启用方式 + 已选扩展点清单
 ```
 
@@ -220,7 +222,7 @@ my-plugin/
   "keywords": ["aalis-plugin"],          // 市场发现 + 加载硬门（见下）
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],                      // 发布包只含编译产物
+  "files": ["dist"],                      // 发布包只含编译产物；页面用自带前端时另有 "webui"
   "dependencies": { "@aalis/api-tools": "latest" },  // 选了对应扩展点才写入（描述符是值导入）
   "peerDependencies": { "@aalis/core": ">=0.17.0 <1.0.0" },
   "devDependencies": { "@aalis/core": "latest", "typescript": "^5.7.0", "@types/node": "^22.0.0" },
@@ -272,6 +274,38 @@ export default definePlugin({
 选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer` 与一段 `webui.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
 脚手架同时生成 README，其中写明入口是 `export default definePlugin({ uses, apply })`，扩展点与 `src/index.ts` 的 `uses` 一致。
+
+### 页面用自带前端
+
+页面默认声明式；「页面用自带前端？」选了「是」时，`webui.definePage` 写成插件前端的形态（契约见 [api-webui 的「插件前端」](../api/api-webui.md#插件前端)）：
+
+```ts
+const items = ['示例条目一', '示例条目二', '示例条目三'];
+const page = webui.definePage({
+  key: 'my-plugin',
+  title: 'My Plugin',
+  frame: { module: import.meta.url },
+  sources: { items: { data: () => items } },
+  actions: {
+    remove: {
+      label: '删除',
+      effect: 'destructive',
+      confirm: '从列表里删掉这一条？',
+      input: { item: { type: 'string', label: '条目', required: true } },
+      handler: ({ input }) => {
+        // 删掉这一条，再 page.invalidate('items')：打开着的页面收到通知后重取
+      },
+    },
+  },
+});
+```
+
+另生成两份文件，都不用构建：
+
+- `webui/index.html`：入口，引用宿主提供的样式基线 `/frames/_base/frame.css`，颜色跟随宿主的主题；
+- `webui/main.js`：从 `/frames/_base/frame.js` 导入助手，`connect()` 握手后取数据源 `items` 列出条目，每条一个「删除」调动作 `remove`（宿主先弹确认框，框里列出这一条），插件 `invalidate` 之后重取。
+
+`package.json` 的 `files` 带上 `webui`，README 多一节「插件前端」，写明框架里能做什么、不能做什么。宿主从 `frame.module`（`import.meta.url`）往上取最近一个带 `name` 的 `package.json`（只写 `type` 的跳过），它的 `name` 要等于插件名，那一层就是包根，只托管它下面的 `webui/`；不符就拒绝登记。
 
 ---
 

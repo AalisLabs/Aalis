@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_PAGE_TABS, MAX_SCREEN_COMPONENTS } from '../../packages/api-webui/src/index.js';
+import { FRAME_NAME_MAX_LENGTH, MAX_PAGE_TABS, MAX_SCREEN_COMPONENTS } from '../../packages/api-webui/src/index.js';
 import { checkNotice, checkPage } from '../../packages/plugin-webui-server/src/page-check.js';
 
 // ════════════════════════════════════════════════════════════
@@ -67,7 +67,7 @@ describe('页面登记的质量门槛', () => {
       },
     });
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || result.page.kind !== 'declarative') throw new Error('应当登记成声明式页面');
     expect(result.page.placement).toBe('plugin');
     expect([...result.page.sources].map(([id, s]) => [id, s.inDetail])).toEqual([
       ['papers', false],
@@ -202,6 +202,135 @@ describe('页面登记的质量门槛', () => {
         ],
       }),
     ).toEqual(['content[0].edgeKinds[0].tone：只有 1 到 6']);
+  });
+});
+
+describe('插件前端页面登记时的校验', () => {
+  const MODULE = 'file:///zz/frame-owner/dist/index.js';
+  const field = { id: { type: 'string', label: '卡片', required: true } };
+
+  it('合格的插件前端页面通过：入口与能力有默认，数据源带或不带输入，动作照声明式的写法', () => {
+    const result = checkPage({
+      key: 'board',
+      title: '看板',
+      placement: 'session',
+      applies: () => true,
+      frame: { module: MODULE, entry: 'app/main.html', host: ['sessions:read', 'turn:abort'] },
+      sources: { cards: { data: () => [] }, card: { input: field, data: () => ({}) } },
+      actions: { archive: act({ effect: 'destructive', confirm: '归档后不能恢复', input: field }) },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.page.kind !== 'frame') throw new Error('应当登记成插件前端页面');
+    expect(result.page.placement).toBe('session');
+    expect(result.page.frame).toEqual({
+      module: MODULE,
+      entry: 'app/main.html',
+      host: ['sessions:read', 'turn:abort'],
+    });
+    expect([...result.page.sources].map(([name, source]) => [name, source.input])).toEqual([
+      ['cards', undefined],
+      ['card', field],
+    ]);
+    expect([...result.page.actions.keys()]).toEqual(['archive']);
+
+    const plain = checkPage({ key: 'p', title: '页面', frame: { module: MODULE } });
+    if (!plain.ok || plain.page.kind !== 'frame') throw new Error('应当登记成插件前端页面');
+    expect(plain.page.placement).toBe('plugin');
+    expect(plain.page.frame).toEqual({ module: MODULE, entry: 'index.html', host: [] });
+  });
+
+  it('content 与 frame 恰好写一个', () => {
+    const exactlyOne = ['content：与 frame 恰好写一个（声明式页面写 content，插件前端写 frame）'];
+    expect(problems({ frame: { module: MODULE }, content: [md('a')] })).toEqual(exactlyOne);
+    expect(problems({})).toEqual(exactlyOne);
+  });
+
+  it('frame 只认 module、entry、host；module 要是字符串；entry 只许 webui/ 里的 .html 相对路径', () => {
+    expect(problems({ frame: 'index.html' })).toEqual(['frame：要是对象']);
+    expect(problems({ frame: { module: MODULE, dir: 'public' } })).toEqual(['frame.dir：不认识的字段']);
+    expect(problems({ frame: { entry: 'index.html' } })).toEqual([
+      'frame.module：要是非空字符串（写 import.meta.url）',
+    ]);
+    const badEntry =
+      'frame.entry：只许 webui/ 里以 .html 结尾的相对路径：不以 / 开头，各段非空、不以点开头，不含反斜杠';
+    for (const entry of [
+      'index.htm',
+      'main.js',
+      '/index.html',
+      '../index.html',
+      'a/../../index.html',
+      './index.html',
+      'a//index.html',
+      '.hidden/index.html',
+      'a\\..\\index.html',
+      '',
+      7,
+    ]) {
+      expect(problems({ frame: { module: MODULE, entry } }), String(entry)).toEqual([badEntry]);
+    }
+  });
+
+  it('位置只有 plugin 与 session，applies 只给 session', () => {
+    expect(problems({ placement: 'settings', frame: { module: MODULE } })).toEqual([
+      'placement：插件前端只放在 plugin 或 session',
+    ]);
+    expect(problems({ applies: () => true, frame: { module: MODULE } })).toEqual([
+      'applies：只给会话面板（placement 为 session）',
+    ]);
+  });
+
+  it('host 只收词表里的能力，不重复', () => {
+    expect(problems({ frame: { module: MODULE, host: 'sessions:read' } })).toEqual(['frame.host：要是数组']);
+    expect(problems({ frame: { module: MODULE, host: null } })).toEqual(['frame.host：要是数组']);
+    expect(problems({ frame: { module: MODULE, host: ['sessions:read', 'approvals:respond'] } })).toEqual([
+      'frame.host[1]：不认识的能力 approvals:respond（只有 sessions:read、turn:abort）',
+    ]);
+    expect(problems({ frame: { module: MODULE, host: ['turn:abort', 'turn:abort'] } })).toEqual([
+      'frame.host[1]：能力 turn:abort 重复',
+    ]);
+  });
+
+  it('sources 只给插件前端：名字非空，各有 data 函数，input 是合法的字段表，不认识的字段拒收', () => {
+    expect(problems({ content: [md('a')], sources: { x: { data: () => 1 } } })).toEqual([
+      'sources：只给插件前端（写了 frame 的页面）',
+    ]);
+    const frame = { module: MODULE };
+    expect(problems({ frame, sources: [] })).toEqual(['sources：要是对象']);
+    expect(problems({ frame, sources: { ' ': { data: () => 1 } } })).toEqual(['sources：数据源的名字要非空']);
+    expect(problems({ frame, sources: { x: () => 1 } })).toEqual(['sources.x：要是对象']);
+    expect(problems({ frame, sources: { x: { data: 1 } } })).toEqual(['sources.x.data：要是函数']);
+    expect(problems({ frame, sources: { x: { data: () => 1, refresh: 5 } } })).toEqual([
+      'sources.x.refresh：不认识的字段',
+    ]);
+    expect(problems({ frame, sources: { x: { data: () => 1, input: {} } } })).toEqual([
+      'sources.x.input：要是非空的字段表',
+    ]);
+    expect(problems({ frame, sources: { x: { data: () => 1, input: { id: { type: 'string' } } } } })).toEqual([
+      'sources.x.input.id：要是带 type 与 label 的配置字段',
+    ]);
+  });
+
+  it(`数据源名与动作名最多 ${FRAME_NAME_MAX_LENGTH} 个字符：插件前端发不出更长的名字；声明式页面的动作名不受限`, () => {
+    const frame = { module: MODULE };
+    const fit = 'n'.repeat(FRAME_NAME_MAX_LENGTH);
+    const long = `${fit}n`;
+    expect(problems({ frame, sources: { [fit]: { data: () => 1 } }, actions: { [fit]: act() } })).toEqual([]);
+    expect(problems({ frame, sources: { [long]: { data: () => 1 } } })).toEqual([
+      `sources：数据源的名字最多 ${FRAME_NAME_MAX_LENGTH} 个字符（插件前端发不出更长的名字）`,
+    ]);
+    expect(problems({ frame, actions: { [long]: act() } })).toEqual([
+      `actions：插件前端的动作名最多 ${FRAME_NAME_MAX_LENGTH} 个字符（插件前端发不出更长的名字）`,
+    ]);
+    expect(problems({ content: [{ type: 'actions', actions: [long] }], actions: { [long]: act() } })).toEqual([]);
+  });
+
+  it('动作不带 row：插件前端里没有宿主画的表格行', () => {
+    expect(problems({ frame: { module: MODULE }, actions: { remove: act({ row: true }) } })).toEqual([
+      'actions.remove.row：插件前端的动作不带 row，要指定对象就放进 input',
+    ]);
+    expect(problems({ frame: { module: MODULE }, actions: { remove: act({ row: false }) } })).toEqual([
+      'actions.remove.row：插件前端的动作不带 row，要指定对象就放进 input',
+    ]);
   });
 });
 

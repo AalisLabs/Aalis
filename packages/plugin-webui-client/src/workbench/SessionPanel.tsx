@@ -1,7 +1,7 @@
 import type { SettingRow as Row } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
 import { Circle, CircleAlert, CircleCheck, CircleDot, Plus, RotateCw } from 'lucide-react';
-import { useState } from 'react';
+import { useReducer, useState } from 'react';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { IconButton } from '../components/IconButton';
@@ -10,8 +10,9 @@ import { Panel } from '../components/Panel';
 import { Tabs } from '../components/Tabs';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
+import { FramePage } from '../frame/FramePage';
 import { PageContent } from '../pages/PageContent';
-import { PageScope, usePageVersion } from '../pages/scope';
+import { PageScope } from '../pages/scope';
 import { usePluginNames } from '../plugins';
 import { paths } from '../routes';
 import { SettingRow } from '../settings/SettingRow';
@@ -23,7 +24,8 @@ import { UsageTable } from './Usage';
 import './SessionPanel.css';
 
 // 会话的右侧面板：宿主的标签（计划、设置、用量）与插件的会话面板在一个标签栏里，按 owner 排的顺序（合成见 panel-tabs.ts）。
-// 当前标签旁有关闭按钮，关掉的与还没打开过的在标签栏末尾的「+」里；插件面板的标签就是它的标题，手动刷新放在标签栏里。
+// 当前标签旁有关闭按钮，关掉的与还没打开过的在标签栏末尾的「+」里；插件面板的标签就是它的标题，手动刷新放在标签栏里
+// （插件前端的手动刷新是重新挂载）。
 // 标签由地址决定，地址没写或写的标签不在标签栏里时停在第一个
 
 interface SessionPanelProps {
@@ -40,7 +42,7 @@ interface SessionPanelProps {
 
 export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, settings }: SessionPanelProps) {
   const phone = usePhone();
-  const [version, refresh] = usePageVersion();
+  const [reloads, reload] = useReducer((n: number) => n + 1, 0);
   const addressed = panel ? paths.page(panel) : tab;
   const current = tabs.bar.find(item => item.key === addressed) ?? tabs.bar[0];
   const host = current && 'host' in current.ref ? current.ref.host : undefined;
@@ -54,7 +56,7 @@ export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, setting
       onClose={current && (() => tabs.close(current.ref))}
       trailing={
         <>
-          {current?.page && <IconButton icon={RotateCw} label="刷新" onClick={refresh} />}
+          {current?.page && <IconButton icon={RotateCw} label="刷新" onClick={reload} />}
           {tabs.error && (
             <IconButton
               icon={CircleAlert}
@@ -79,11 +81,14 @@ export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, setting
       {host === 'plan' && plan && <PlanTab sessionId={sessionId} plan={plan} />}
       {host === 'settings' && <SettingsTab settings={settings} />}
       {host === 'usage' && usage && <UsageTable usage={usage} />}
-      {current?.page && (
-        <PageScope key={current.key} page={current.page} sessionId={sessionId} version={version}>
-          <PageContent page={current.page} />
-        </PageScope>
-      )}
+      {current?.page &&
+        (current.page.frame ? (
+          <FramePage key={current.key} page={current.page} sessionId={sessionId} reloads={reloads} reload={reload} />
+        ) : (
+          <PageScope key={current.key} page={current.page} sessionId={sessionId} version={reloads}>
+            <PageContent page={current.page} />
+          </PageScope>
+        ))}
     </Tabs>
   );
   return (

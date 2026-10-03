@@ -37,6 +37,9 @@ export default definePlugin({
 }
 ```
 
+页面用自带前端（插件前端）时，静态网页放在包根的 `webui/` 下，`files` 写成 `["dist", "webui"]`：webui-server 只从包根的
+`webui/` 托管它，没随包发布就找不到入口、页面不登记。写法见 [api-webui 的「插件前端」](../api/api-webui.md#插件前端)。
+
 > `keywords` 里的 `"aalis-plugin"` 是**加载硬门**而非检索装饰：加载器只认它，漏写则插件
 > 装上后永远不会被发现（启动日志会有「疑似插件缺关键词」提示，但不会加载）；`files` 须含
 > 构建产物，否则入口解析失败同样不加载。入口与 `import()` 包名得到的是同一个文件：写了 `exports` 时取
@@ -198,7 +201,7 @@ apply({ lifecycle }) {
 |----------|--------|
 | 注册 AI 可调用的工具 | `uses: { tools }`，`tools.register(...)`（`@aalis/api-tools` 的描述符） |
 | 注册斜杠命令 | `uses: { commands }`，`commands.command(...)`（`@aalis/api-commands`） |
-| 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.definePage` / `notify`（`@aalis/api-webui`） |
+| 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
 | 注册 agent 输入预处理器 | `uses: { agent }`，`agent.registerPreprocessor(...)`（`@aalis/api-agent`） |
 | 监听核心事件 | `uses: { events }`，`events.on('service:registered', …)` |
 

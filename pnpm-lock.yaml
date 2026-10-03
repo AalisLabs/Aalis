@@ -666,6 +666,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-session-manager
+      '@aalis/api-session-protocol':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-protocol
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config

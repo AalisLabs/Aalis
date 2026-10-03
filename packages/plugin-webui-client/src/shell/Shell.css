@@ -1,26 +1,33 @@
+/* 外壳：顶上是连接状态的横条，下面一行从左到右是图标栏、左栏、主区、右侧面板 */
 .shell {
-  display: grid;
-  grid-template-areas:
-    "rail left bar right"
-    "rail left main right";
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100dvh;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   overflow: hidden;
   background: var(--color-bg);
 }
 
-.shell-rail {
-  grid-area: rail;
+.shell-columns {
   display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.shell-rail {
+  display: flex;
+  flex: none;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
   width: var(--rail-w);
-  padding: var(--space-2) 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-rail);
+}
+
+/* 「会话」占一个头部的高度，头部的下边线就是它与固定的页面之间的那条细线 */
+.shell-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .shell-rail-item {
@@ -62,16 +69,14 @@
   height: var(--icon-md);
 }
 
-/* 固定的页面：与「会话」之间一条细线，多了在这一段里纵向滚动 */
+/* 固定的页面：多了在这一段里纵向滚动 */
 .shell-rail-pinned {
   display: flex;
   flex-direction: column;
   align-items: center;
-  align-self: stretch;
   gap: var(--space-1);
   min-height: 0;
-  padding-top: var(--space-1);
-  border-top: 1px solid var(--color-border);
+  padding: var(--space-2) 0;
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -93,12 +98,12 @@
   }
 }
 
+/* 两侧的栏宽与下限写在外壳上；窗口变窄、主区不到最小宽度时，两侧按栏宽的比例收，收到下限为止 */
 .shell-left,
 .shell-right {
   --surface: var(--color-bg-side);
   display: flex;
   flex-direction: column;
-  min-height: 0;
   background: var(--color-bg-side);
 }
 
@@ -108,23 +113,48 @@
 }
 
 .shell-left {
-  grid-area: left;
   width: var(--left-w);
+  min-width: var(--left-min);
   border-right: 1px solid var(--color-border);
 }
 
 .shell-main {
-  grid-area: main;
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
-  min-width: 0;
-  min-height: 0;
+  min-width: var(--main-min-w);
 }
 
 .shell-right {
-  grid-area: right;
   width: var(--right-w);
+  min-width: var(--right-min);
   border-left: 1px solid var(--color-border);
+}
+
+/* 分隔条：两侧停靠时才有，盖在栏的边线上、不占位置 */
+.shell-resize {
+  position: relative;
+  z-index: var(--z-sticky);
+  display: none;
+  flex: none;
+  width: var(--separator-w);
+  margin: 0 calc(var(--separator-w) / -2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.shell-resize::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 1px);
+  width: 2px;
+  content: "";
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.shell-resize:hover::after {
+  background: var(--color-border-control);
 }
 
 .shell-scrim {
@@ -141,15 +171,23 @@
   .shell[data-left="collapsed"] .shell-left {
     display: none;
   }
+
+  .shell:not([data-left="collapsed"]) .shell-resize[data-side="left"] {
+    display: block;
+  }
 }
 
 @media (min-width: 80em) {
   .shell[data-right="collapsed"] .shell-right {
     display: none;
   }
+
+  .shell:not([data-right="collapsed"]) .shell-resize[data-side="right"] {
+    display: block;
+  }
 }
 
-/* 覆盖式抽屉：左栏 48em–64em，右侧面板 48em–80em，从边上盖在主区上面，不挤压主区 */
+/* 覆盖式抽屉：左栏 48em–64em，右侧面板 48em–80em，按记住的栏宽从边上盖在主区上面，不挤压主区 */
 @media (min-width: 48em) and (max-width: 63.99em) {
   .shell-left {
     position: fixed;
@@ -186,13 +224,6 @@
 
 /* 手机：没有图标栏，一层占满一屏，地址决定是哪一层 */
 @media (max-width: 47.99em) {
-  .shell {
-    grid-template-areas:
-      "bar"
-      "main";
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .shell-rail {
     display: none;
   }
@@ -200,8 +231,9 @@
   .shell-left,
   .shell-main,
   .shell-right {
-    grid-area: main;
+    flex: 1;
     width: auto;
+    min-width: 0;
     border: 0;
   }
 
