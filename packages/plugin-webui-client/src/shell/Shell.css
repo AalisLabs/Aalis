@@ -81,6 +81,16 @@
   scrollbar-width: none;
 }
 
+/* 插件与设置：贴在图标栏底部 */
+.shell-rail-tail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: auto;
+  padding: var(--space-2) 0;
+}
+
 /* 触屏上没有悬停提示，图标下方写短名 */
 .shell-rail-name {
   display: none;
@@ -222,7 +232,7 @@
   }
 }
 
-/* 手机：没有图标栏，一层占满一屏，地址决定是哪一层 */
+/* 手机：没有图标栏，一层占满一屏，地址决定是哪一栏 */
 @media (max-width: 47.99em) {
   .shell-rail {
     display: none;
@@ -237,12 +247,9 @@
     border: 0;
   }
 
-  .shell[data-level="1"] .shell-main,
-  .shell[data-level="1"] .shell-right,
-  .shell[data-level="2"] .shell-left,
-  .shell[data-level="2"] .shell-right,
-  .shell[data-level="3"] .shell-left,
-  .shell[data-level="3"] .shell-main {
+  .shell[data-phone="left"] :is(.shell-main, .shell-right),
+  .shell[data-phone="main"] :is(.shell-left, .shell-right),
+  .shell[data-phone="right"] :is(.shell-left, .shell-main) {
     display: none;
   }
 }

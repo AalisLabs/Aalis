@@ -19,7 +19,7 @@ import { defineService } from '@aalis/core';
  */
 export interface PackageManagerService {
   /** 装进根 `dependencies` + node_modules，随后 rescan 让加载器发现它；只接受插件与前端界面包 */
-  install(npmPkg: string): Promise<{ ok: boolean; message: string }>;
+  install(npmPkg: string): Promise<InstallResult>;
   /** 从根 `dependencies` 摘掉并 npm uninstall；闸在服务层（类型 / 撤销通道 / 来源 / 服务依赖者） */
   uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
   /**
@@ -46,6 +46,17 @@ export interface PackageManagerService {
    * 返回 `ok: true` 表示已提交安装并即将重启——此时 HTTP 响应要抢在进程退出前发出。
    */
   update(targets: UpdateTarget[]): Promise<UpdateResult>;
+}
+
+/** 安装的结果 */
+export interface InstallResult {
+  ok: boolean;
+  message: string;
+  /**
+   * 装上的插件已登记时是它的主实例 id（加载器解析出的定义 name，可能与包名不同），界面据它打开这个插件；
+   * 前端界面这类不进插件列表的包、以及没装成的不给
+   */
+  plugin?: string;
 }
 
 /** 一个待更新目标：包名 + 目标版本（不带范围符，由调用方从市场卡片取安装源上的 latest）。 */

@@ -39,7 +39,7 @@ const handlers = {
   'sessions/list': lists(params => (params.section === 'owner' || params.query !== undefined ? mine : [])),
 };
 
-const shell = () => document.querySelector('[data-level]') as HTMLElement;
+const shell = () => document.querySelector('[data-phone]') as HTMLElement;
 /** 存在本浏览器的两侧状态 */
 const stored = () => JSON.parse(localStorage.getItem('aalis.panels') ?? 'null');
 /** 一侧此刻的栏宽变量：拖动中写在那一栏上，平时写在外壳上（jsdom 不排版，栏宽只看它） */
@@ -56,18 +56,21 @@ const press = (init: KeyboardEventInit) => {
 
 describe('布局与层级', () => {
   it.each([
-    ['/', '1'],
-    ['/new', '2'],
-    ['/s/a', '2'],
-    ['/rooms?instance=im-a', '2'],
-    ['/s/a/settings', '3'],
-    ['/s/a/usage', '2'],
-    ['/p/zz-jobs/jobs', '2'],
-    ['/s/a/p/zz-notes/notes', '3'],
-  ])('手机上 %s 是第 %s 层', async (url, level) => {
+    ['/', 'left'],
+    ['/new', 'main'],
+    ['/s/a', 'main'],
+    ['/rooms?instance=im-a', 'main'],
+    ['/s/a/settings', 'right'],
+    ['/s/a/usage', 'main'],
+    ['/p/zz-jobs/jobs', 'main'],
+    ['/s/a/p/zz-notes/notes', 'right'],
+    ['/plugins', 'left'],
+    ['/market', 'main'],
+    ['/plugins/zz-jobs', 'main'],
+  ])('手机上 %s 占满一屏的是 %s 那一栏', async (url, column) => {
     stubViewport(390);
     app = await renderApp(url, handlers);
-    expect(shell().dataset.level).toBe(level);
+    expect(shell().dataset.phone).toBe(column);
     expect(app.where()).toBe(url);
   });
 
@@ -80,12 +83,27 @@ describe('布局与层级', () => {
     expect(app.where()).toBe('/');
   });
 
-  it('图标栏只有「会话」一项，是当前项；常驻宽度下点它收起或展开左栏，收起状态存本浏览器', async () => {
+  it('图标栏上方是「会话」、底部是「插件」「设置」；所在的一区是当前项，从别处点回来回到这一区刚才的地址', async () => {
+    stubViewport(1440);
+    app = await renderApp('/s/a', handlers);
+    const rail = within(screen.getByRole('navigation', { name: '图标栏' }));
+    expect(rail.getAllByRole('link').map(link => link.getAttribute('aria-label'))).toEqual(['会话', '插件', '设置']);
+    const current = () => rail.getAllByRole('link').filter(link => link.getAttribute('aria-current') === 'page');
+    expect(current().map(link => link.getAttribute('aria-label'))).toEqual(['会话']);
+
+    fireEvent.click(rail.getByRole('link', { name: '插件' }));
+    expect(app.where()).toBe('/plugins');
+    expect(current().map(link => link.getAttribute('aria-label'))).toEqual(['插件']);
+    fireEvent.click(rail.getByRole('link', { name: '会话' }));
+    expect(app.where()).toBe('/s/a');
+    expect(rail.getByRole('link', { name: '设置' }).getAttribute('href')).toBe('/settings');
+  });
+
+  it('已在会话区时点「会话」收起或展开左栏，收起状态存本浏览器；插件区里点「插件」同样', async () => {
     stubViewport(1440);
     app = await renderApp('/', handlers);
     const rail = screen.getByRole('navigation', { name: '图标栏' });
     const sessions = within(rail).getByRole('link', { name: '会话' });
-    expect(within(rail).getAllByRole('link')).toHaveLength(1);
     expect(sessions.getAttribute('aria-current')).toBe('page');
     fireEvent.click(sessions);
     expect(shell().dataset.left).toBe('collapsed');
@@ -97,6 +115,23 @@ describe('布局与层级', () => {
     expect(shell().dataset.left).toBe('collapsed');
     fireEvent.click(within(screen.getByRole('navigation', { name: '图标栏' })).getByRole('link', { name: '会话' }));
     expect(shell().dataset.left).toBeUndefined();
+    app.close();
+
+    app = await renderApp('/plugins', handlers);
+    fireEvent.click(within(screen.getByRole('navigation', { name: '图标栏' })).getByRole('link', { name: '插件' }));
+    expect(shell().dataset.left).toBe('collapsed');
+    expect(app.where()).toBe('/plugins');
+  });
+
+  it('手机第一层在会话列表上面列出「插件」「设置」两个入口，点「插件」进插件树', async () => {
+    stubViewport(390);
+    app = await renderApp('/', handlers);
+    const entries = within(await screen.findByRole('list', { name: '入口' }));
+    expect(entries.getAllByRole('link').map(link => link.textContent)).toEqual(['插件', '设置']);
+    fireEvent.click(entries.getByRole('link', { name: '插件' }));
+    expect(app.where()).toBe('/plugins');
+    expect(shell().dataset.phone).toBe('left');
+    expect(screen.getByRole('navigation', { name: '插件' })).toBeTruthy();
   });
 
   it('存坏了的记录按默认：两侧都展开、默认宽度；超出上下限的宽度按上下限', async () => {

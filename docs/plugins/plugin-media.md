@@ -42,7 +42,7 @@ export default definePlugin({
 | `vision.recognizeOnArrival` | boolean | `true` | 接触到图片立即识别：开启：图片到达即识别，描述进档案与向量库（可被召回），未触发回复的消息也留下记忆。关闭：档案只留图片指针，主模型需要时再经 analyze_image 按需查看；此时图片内容不可被检索召回。 |
 | `vision.delivery` | select | `'auto'` | 主模型看图方式：决定当轮附件与 analyze_image 的交付形态。 |
 | `vision.maxTokens` | number | `300` | 描述最大 token |
-| `vision.think` | boolean | `false` | 启用思考链 (thinking)：启用后识别质量可能提升但 token 成本上升；关闭且后端为 Ollama 时会传 reasoning_effort=none。 |
+| `vision.think` | boolean | `false` | 启用思考链 (thinking)：开启时按模型服务配置的默认思考档，识别质量可能提升但 token 成本上升；关闭时用模型最浅的一档（Ollama 即关闭思考）。模型不能调思考时不起作用。 |
 | `vision.prompt` | textarea | `''` | 单图描述 prompt：填写后完全覆盖 auto 档（自路由）与 casual 档的描述 prompt；detailed/professional 档仍用各自内置模板。留空时 auto 档用内置自路由 prompt（模型看图自判类型给相应详略），casual 档用内置简洁模板。 内置简洁模板供参考：请像有经验的朋友一样看这张图，用自然中文客观描述实际可见的内容。先抓 1–2 个最值得注意的视觉重点——优先选「视觉意外/反常之处」：信息密度异常集中的区域、数量反常多或反常少的物体、与画面其他部分明显冲突的颜色或元素、不该出现却出现的东西、醒目的文字或表情包文案、明显的游戏/二次元/网络梗标志，再补充主体、场景、人物动作与表情、整体氛围。对确有把握、特征足够明确的游戏/动画/角色/网络梗，可以直接点名；但只要没把握，就老实描述外观、UI、配色、文字与画风，不要硬猜具体名字、更不要往热门作品上套——宁可说"看不出具体是什么"，也别硬认成 Minecraft/原神/明日方舟之类（认错比模糊更糟）。 画面中若有数字（连胜天数、分数、价格、等级、日期、计数等），务必逐位看准、按画面实际像素如实读出，不要受对话上下文里出现过的旧数字影响（以图为准）。 **严格约束**：只描述图片本身可见的内容；不要主动推测发送者的情绪、动机、意图或心理状态，也不要把上下文/对话历史里提到但图片中不可见的人物、事件、动机写进描述。只有当图中文字、表情包文案、画面元素自身明确表达了某种情绪或动作意图（例如表情包模板自带语义、画面里有醒目的「求助」/「炫耀」文字等）时，才可以简短指出该信号。 控制在 200 字以内，不要 markdown，不要按 1)2)3) 列点，写成 1–2 段连贯文字。 |
 | `vision.batchPrompt` | textarea | `''` | 多图批量描述 prompt：多张图片一起描述时使用（动图抽帧 / 图组）。留空则回落到“单图 prompt”或内置默认。 默认：以下是一组按顺序排列的图片，请综合所有图片做一段连贯的中文描述。先抓住整组图最值得注意的点：是同一场景的连拍/抽帧、还是各自独立的素材？是否构成时序变化、对比、剧情或梗？其次描述主体对象、人物动作、文字/表情包文案；画面中的游戏/动画/角色/网络梗仅在有把握时点名，没把握就客观描述外观与文字、不硬套热门作品。最后简短推测整组图想表达的事件、情绪或意图。画面中若有数字（分数、价格、计数、天数等）务必按实际像素逐位读准，不受上下文旧数字影响。控制在 250 字以内，不要 markdown，不要按 1)2)3) 列点，写成连贯文字。 |
 | `audio` | object | — | 音频识别（转写 + 描述） |
@@ -50,7 +50,7 @@ export default definePlugin({
 | `audio.prefer` | select | `''` | 处理后端：Whisper/ASR 与「能识别音频的 LLM」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。 |
 | `audio.language` | string | `''` | 默认语种 (ISO 639-1)：仅对 Whisper 类 ASR 生效；LLM-as-audio 会在 prompt 里作为提示。 |
 | `audio.maxTokens` | number | `1024` | 最大输出 token：LLM-as-audio 专用。e4b 等小模型在 thinking enabled 下需 ≥1024，否则空响应。 |
-| `audio.think` | boolean | `true` | 启用思考链 (thinking)：LLM-as-audio 专用。启用后识别质量更高但 token 成本 ×5-8；关闭则会传 reasoning_effort=none 给 Ollama。 |
+| `audio.think` | boolean | `true` | 启用思考链 (thinking)：LLM-as-audio 专用。开启时按模型服务配置的默认思考档，识别质量更高但 token 成本 ×5-8；关闭时用模型最浅的一档（Ollama 即传 reasoning_effort=none）。模型不能调思考时不起作用。 |
 | `audio.prompt` | textarea | `''` | 自定义 prompt：LLM-as-audio 专用。留空使用内置全能描述 prompt。 默认：请用中文描述这段音频的内容：若含语音/对话则转写为原文（中文用中文写，英文保留英文）；若含音乐则描述风格、乐器、情绪及可识别歌词；若是环境音/音效则描述场景；仅输出内容本身，不要 markdown 标记。 |
 | `video` | object | — | 视频识别 |
 | `video.mode` | select | `'frames+asr'` | 模式 |

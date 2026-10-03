@@ -17,7 +17,7 @@
  * cfg.extractionModel 为空时退化到 llm 服务的当前胜者。
  */
 
-import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
+import { LLMCapabilities, type LLMModel, lightestThinking, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
@@ -1583,7 +1583,7 @@ async function callLLM(model: LLMModel, messages: Message[], disableThinking: bo
   const resp = await model.chat({
     messages,
     temperature: 0,
-    ...(disableThinking ? { think: false } : {}),
+    think: disableThinking ? lightestThinking(model) : undefined,
   });
   return typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
 }

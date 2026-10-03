@@ -334,8 +334,11 @@ declare module '@aalis/api-session-manager' {
   interface SessionConfig {
     /** 会话用的模型：provider 为 LLM 插件实例 id，model 为它登记的模型 id；没设置时跟随 llm 服务的偏好 */
     llm?: ModelRef;
-    /** 深度思考：true 开、false 关；没设置时由各模型服务自己的配置决定，不支持按请求切换的服务忽略它 */
-    think?: boolean;
+    /**
+     * 深度思考的档位：会话所用模型声明的档位 id（api-llm 的 LLMModel.thinking）。没设置、当前模型没有这一档或不能调时
+     * 按模型的默认档
+     */
+    think?: string;
     /** 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置 */
     maxToolIterations?: number;
   }

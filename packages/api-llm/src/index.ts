@@ -84,7 +84,11 @@ export interface ChatModelRequest {
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
-  think?: boolean;
+  /**
+   * 深度思考的档位：模型声明的 {@link LLMModel.thinking} 里某一档的 id；没带时按模型的默认档。模型不能调（没声明档位）时
+   * 不带，带了模型没有的档位提供者拒绝（见 {@link requestedThinking}）
+   */
+  think?: string;
   /**
    * 消息里的图片是否为必需载荷。缺省 false。
    *
@@ -133,6 +137,9 @@ export interface LLMModel {
    */
   readonly capabilities: readonly LLMCapability[];
 
+  /** 能调深度思考的模型允许的档位；不能调的模型不声明 */
+  readonly thinking?: ThinkingLevels;
+
   chat(request: ChatModelRequest): Promise<ChatResponse>;
   chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
 
@@ -151,6 +158,43 @@ export interface LLMModel {
   refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
 }
 
+// ----- 深度思考的档位 -----
+
+/** 一个思考档位：id 是提供者自己的写法（请求的 think 填它），label 给人看 */
+export interface ThinkingLevel {
+  readonly id: string;
+  readonly label: string;
+}
+
+/**
+ * 模型允许的思考档位：levels 由浅到深排、至少两档（开关型就是「关、开」两档），default 是请求没带档位时用的那一档，
+ * 须是 levels 里的一个。档位由各提供者按自己的协议定义并翻成线上字段，不做跨服务商的统一档位表
+ */
+export interface ThinkingLevels {
+  readonly levels: readonly ThinkingLevel[];
+  readonly default: string;
+}
+
+/**
+ * 请求带的思考档位：没带时为 undefined；带了却不在模型声明的档位里（含模型不能调时带了档位）时抛错。提供者把档位翻成
+ * 线上字段之前先过它，调用方要先按模型声明的档位选
+ */
+export function requestedThinking(
+  model: Pick<LLMModel, 'id' | 'thinking'>,
+  request: Pick<ChatModelRequest, 'think'>,
+): string | undefined {
+  const { think } = request;
+  if (think !== undefined && !model.thinking?.levels.some(level => level.id === think)) {
+    throw new Error(`模型 ${model.id} 没有思考档位「${think}」`);
+  }
+  return think;
+}
+
+/** 模型最浅的一档：机械任务（摘要、标题、结构化提取）要压低思考时带它；模型不能调时为 undefined */
+export function lightestThinking(model: Pick<LLMModel, 'thinking'>): string | undefined {
+  return model.thinking?.levels[0]?.id;
+}
+
 // ----- LLM 能力声明（capability 框架）-----
 
 export interface LLMCapabilityRegistry {
@@ -158,6 +202,7 @@ export interface LLMCapabilityRegistry {
   ToolCalling: 'tool_calling';
   Streaming: 'streaming';
   Vision: 'vision';
+  /** 会思考（产出思考内容）；能不能按请求调档看 {@link LLMModel.thinking} */
   Thinking: 'thinking';
   /** 原生音频理解（能接收音频输入，返回描述/问答，如 Gemini / GPT-4o-audio / Gemma 4 E系列） */
   Audio: 'audio';

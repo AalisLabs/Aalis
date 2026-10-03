@@ -253,11 +253,12 @@ export function createSessions(deps: SessionDeps) {
     const ownValues = own as Record<string, unknown>;
     const effectiveValues = effective as Record<string, unknown>;
     return {
-      items: settings.map(({ key, field, plugin, prominence }) => ({
+      items: settings.map(({ key, field, plugin, prominence, dependsOn }) => ({
         key,
         field,
         plugin,
         prominence,
+        dependsOn,
         value: ownValues[key],
         effective: effectiveValues[key],
         source: sources[key],

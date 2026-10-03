@@ -132,7 +132,7 @@ const model = resolveLLMModel(llmRef, ref, [LLMCapabilities.Vision])?.instance;
 `resolvePlatformBySession` 等）。
 
 `current` 默认返回「偏好 > priority > 注册顺序」居首的那个。用户可经 `services.prefer(desc, contextId)`
-或 WebUI 的「服务」页指定偏好 provider。
+或 WebUI 设置「系统」的服务偏好里指定偏好 provider。
 
 ### 2.3 多提供者：per-entry 注册
 

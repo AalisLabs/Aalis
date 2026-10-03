@@ -2,6 +2,7 @@
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BUILTIN_THEMES,
   FRAME_PROTOCOL_VERSION,
   FRAME_SANDBOX,
   type FrameHostMessage,
@@ -119,8 +120,8 @@ afterEach(() => {
 const PLUGINS: FakeRest = {
   '/api/plugins': {
     plugins: [
-      { name: 'zz-board', instanceId: 'zz-board', displayName: '看板插件' },
-      { name: 'zz-roster', instanceId: 'zz-roster', displayName: '子会话面板' },
+      { name: 'zz-board', instanceId: 'zz-board', displayName: '看板插件', state: 'active' },
+      { name: 'zz-roster', instanceId: 'zz-roster', displayName: '子会话面板', state: 'active' },
     ],
   },
 };
@@ -770,14 +771,14 @@ describe('转发', () => {
     await vi.waitFor(() => expect(invalidations().slice(3)).toEqual([{ type: 'invalidate' }, { type: 'invalidate' }]));
   });
 
-  it('主题：init 带当前主题的深浅与令牌；切换主题后推 theme，没变不推', async () => {
+  it('主题：init 带当前主题的深浅与令牌；切换主题（系统换了深浅）后推 theme，没变不推', async () => {
+    const viewport = stubViewport(1440, { dark: true });
     const style = document.createElement('style');
     style.textContent = [
-      ':root[data-theme="zz-dark"]{color-scheme:dark;--color-bg:#101010;--color-text:#eeeeee}',
-      ':root[data-theme="zz-light"]{color-scheme:light;--color-bg:#fafafa;--color-text:#111111}',
+      ':root[data-theme="calm-dark"]{color-scheme:dark;--color-bg:#101010;--color-text:#eeeeee}',
+      ':root[data-theme="calm-light"]{color-scheme:light;--color-bg:#fafafa;--color-text:#111111}',
     ].join('\n');
     document.head.append(style);
-    document.documentElement.dataset.theme = 'zz-dark';
     try {
       app = await renderApp(pagePath(BOARD), {}, boardRest());
       const peer = await connect();
@@ -786,17 +787,62 @@ describe('转发', () => {
       expect(peer.init.theme.tokens['--color-bg']).toBe('#101010');
       expect(peer.init.theme.tokens['--color-text']).toBe('#eeeeee');
 
-      document.documentElement.dataset.theme = 'zz-light';
+      act(() => viewport.scheme(false));
       await vi.waitFor(() => expect(peer.received.filter(message => message.type === 'theme')).toHaveLength(1));
       const [theme] = peer.received.filter(message => message.type === 'theme');
       expect(theme).toMatchObject({ type: 'theme', kind: 'light', tokens: { '--color-bg': '#fafafa' } });
 
-      document.documentElement.dataset.theme = 'zz-light';
+      act(() => viewport.scheme(false));
       await act(() => Promise.resolve());
       expect(peer.received.filter(message => message.type === 'theme')).toHaveLength(1);
     } finally {
       style.remove();
       delete document.documentElement.dataset.theme;
+    }
+  });
+
+  it('主题令牌写在根元素的内联样式上时，只改令牌、不碰 data-theme 也推 theme', async () => {
+    const root = document.documentElement;
+    try {
+      app = await renderApp(pagePath(BOARD), {}, boardRest());
+      const peer = await connect();
+      await act(async () => root.style.setProperty('--color-bg', '#202024'));
+      await vi.waitFor(() => expect(peer.received.filter(message => message.type === 'theme')).toHaveLength(1));
+      const [theme] = peer.received.filter(message => message.type === 'theme');
+      expect(theme).toMatchObject({ type: 'theme', tokens: { '--color-bg': '#202024' } });
+    } finally {
+      delete root.dataset.theme;
+      root.removeAttribute('style');
+    }
+  });
+
+  it('插件提供的主题：令牌写在根元素的内联样式上，插件改了令牌（主题 id 不变、data-theme 不变）时照样推 theme', async () => {
+    const dusk = (bg: string) => ({
+      id: 'zz-board/dusk',
+      instance: 'zz-board',
+      theme: { name: '黄昏', kind: 'dark', colors: { ...BUILTIN_THEMES['calm-dark'].colors, '--color-bg': bg } },
+    });
+    let themes = [dusk('#201a18')];
+    localStorage.setItem(
+      'aalis.appearance',
+      JSON.stringify({ follow: true, dark: 'plugin:zz-board/dusk', light: 'calm-light' }),
+    );
+    const root = document.documentElement;
+    try {
+      app = await renderApp(pagePath(BOARD), {}, boardRest({ '/api/themes': () => ({ themes }) }));
+      await vi.waitFor(() => expect(root.style.getPropertyValue('--color-bg')).toBe('#201a18'));
+      const peer = await connect();
+      expect(peer.init.theme.tokens['--color-bg']).toBe('#201a18');
+
+      themes = [dusk('#2a2220')];
+      act(() => admin().push({ type: 'plugins.changed' }));
+      await vi.waitFor(() => expect(peer.received.filter(message => message.type === 'theme')).toHaveLength(1));
+      expect(root.dataset.theme).toBe('plugin:zz-board/dusk');
+      const [theme] = peer.received.filter(message => message.type === 'theme');
+      expect(theme).toMatchObject({ type: 'theme', kind: 'dark', tokens: { '--color-bg': '#2a2220' } });
+    } finally {
+      delete root.dataset.theme;
+      root.removeAttribute('style');
     }
   });
 

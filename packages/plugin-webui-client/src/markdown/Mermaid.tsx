@@ -42,15 +42,15 @@ function themeVariables() {
   return variables;
 }
 
-/** 当前主题：<html data-theme> 变了就重画 */
-function useTheme(): string | null {
+/** 当前主题：<html data-theme> 或写在它内联样式上的令牌（导入与插件提供的主题）变了就重画 */
+function useTheme(): string {
   return useSyncExternalStore(
     listener => {
       const observer = new MutationObserver(listener);
-      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
       return () => observer.disconnect();
     },
-    () => document.documentElement.getAttribute('data-theme'),
+    () => `${document.documentElement.getAttribute('data-theme')}|${document.documentElement.getAttribute('style')}`,
   );
 }
 

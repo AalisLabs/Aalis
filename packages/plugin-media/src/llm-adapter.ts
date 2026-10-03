@@ -4,7 +4,7 @@
 
 import { Buffer } from 'node:buffer';
 import type { LLMModel, LLMModelEntry } from '@aalis/api-llm';
-import { LLMCapabilities } from '@aalis/api-llm';
+import { LLMCapabilities, lightestThinking } from '@aalis/api-llm';
 import type {
   DescribeInput,
   DescribeResult,
@@ -148,9 +148,10 @@ interface LlmProcessorOptions {
   maxTokens?: number;
   /**
    * 是否启用 thinking（思考链）。
-   * - true（默认）：模型先内部推理后输出，质量更好但 token 消耗 ~5-8 倍
-   * - false：直接输出，token 省但全能 prompt 下偶发 echo prompt
-   * 对 Ollama OpenAI 兼容路径会翻译为 `reasoning_effort: "none"`。
+   * - true：按模型的默认思考档，模型先内部推理后输出，质量更好但 token 消耗 ~5-8 倍
+   * - false：用模型最浅的思考档（Ollama 即关闭思考，音频走兼容接口时为 `reasoning_effort: "none"`），token 省但全能
+   *   prompt 下偶发 echo prompt
+   * 模型不能调思考时两者一样。
    */
   think?: boolean;
 }
@@ -326,7 +327,12 @@ function wrapLLMAsProcessor(
           `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
       );
       // 视觉识别里图片就是全部内容，取不到就该抛，不能让模型对着占位文字编
-      const resp = await llm.chat({ messages, maxTokens, think, requireImages: true });
+      const resp = await llm.chat({
+        messages,
+        maxTokens,
+        think: think ? undefined : lightestThinking(llm),
+        requireImages: true,
+      });
       const rawLen = resp.content?.length ?? 0;
       const text = resp.content?.trim() ?? '';
       const usedTokens = resp.usage?.totalTokens;
@@ -369,7 +375,7 @@ function wrapLLMAsProcessor(
       logger.info(
         `[audio.transcribe] 调用 ${llm.id}，音频 ${sizeKB}KB, prompt ${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
       );
-      const resp = await llm.chat({ messages, maxTokens, think });
+      const resp = await llm.chat({ messages, maxTokens, think: think ? undefined : lightestThinking(llm) });
       const rawLen = resp.content?.length ?? 0;
       const text = (resp.content ?? '').trim();
       const usedTokens = resp.usage?.totalTokens;

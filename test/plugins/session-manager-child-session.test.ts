@@ -45,13 +45,13 @@ describe('createChildSession：父会话未建档时兜底建档', () => {
   it('父会话已建档时不改动其既有字段（兜底不越权覆盖）', async () => {
     const { app, sm } = await setup();
     const parentId = 'onebot:bot:group:g1';
-    await sm.ensureSession(parentId, { name: '群聊', config: { think: false }, createdBy: 'user' });
+    await sm.ensureSession(parentId, { name: '群聊', config: { think: 'off' }, createdBy: 'user' });
 
-    const child = await sm.createChildSession(parentId, { name: '子任务 B', config: { think: true } });
+    const child = await sm.createChildSession(parentId, { name: '子任务 B', config: { think: 'high' } });
 
     const parent = sm.getSession(parentId);
     expect(parent?.name).toBe('群聊');
-    expect(parent?.config).toEqual({ think: false });
+    expect(parent?.config).toEqual({ think: 'off' });
     expect(parent?.createdBy).toBe('user');
     expect(parent?.children).toContain(child.id);
     await app.stop();

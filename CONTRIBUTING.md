@@ -41,7 +41,7 @@ pnpm dev                        # 运行 tsx src/index.ts --home .aalis-dev
 
 `pnpm dev` 已经带了 `--home`，再给 profile（`AALIS_PROFILE` 或 `--profile`）会报错退出，这是有意的，不会静默忽略 profile。从源码运行某个 profile，先构建再 `pnpm start --profile <名>`，或直接 `tsx src/index.ts --profile <名>`。
 
-`pnpm dev` 会发现并默认启用仓库内的私有插件 `@aalis/plugin-trigger-laya`，但它默认不生效，群聊判定仍由 trigger-policy 负责；想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页切换 `trigger` 的偏好，它生效而本机没有侧车时群里只回点名（见 `packages/plugin-trigger-laya/README.md`）。
+`pnpm dev` 会发现并默认启用仓库内的私有插件 `@aalis/plugin-trigger-laya`，但它默认不生效，群聊判定仍由 trigger-policy 负责；想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`，它生效而本机没有侧车时群里只回点名（见 `packages/plugin-trigger-laya/README.md`）。
 
 ## 2. 校验三件套
 
@@ -126,7 +126,7 @@ packages/
 **示例**：
 
 ```
-fix(webui-server): /api/service-groups 把 'app' 放入「核心」
+fix(webui-server): 插件列表按实例归属工具与指令
 refactor(agent): 拆出 prompt-assembly（提示词贡献组装）
 test(core): ServiceRef.follow 换代时先清理再重挂
 ```

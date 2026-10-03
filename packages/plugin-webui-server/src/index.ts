@@ -9,9 +9,10 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { approvals } from '@aalis/api-approval';
 import { commands } from '@aalis/api-commands';
+import { contributions } from '@aalis/api-contributions';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
-import { llm } from '@aalis/api-llm';
+import { llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
 import {
@@ -28,8 +29,14 @@ import { sessionProtocol } from '@aalis/api-session-protocol';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, isStorageUri, readTailLines, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import type { WebUIService } from '@aalis/api-webui';
-import { DEFAULT_SUBSYSTEM_METADATA, webuiClient, webuiServer } from '@aalis/api-webui';
+import {
+  type PluginTheme,
+  type PluginThemesResponse,
+  parseTheme,
+  type WebUIService,
+  webuiClient,
+  webuiServer,
+} from '@aalis/api-webui';
 import {
   appService,
   type BoundOf,
@@ -60,7 +67,7 @@ import { createPageFiles } from './page-files.js';
 import { createPageRegistry } from './pages.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerFrameRoutes } from './routes/frames.js';
-import { registerMarketplaceRoutes } from './routes/marketplace.js';
+import { localPackageLookup, registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPageRoutes } from './routes/pages.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
@@ -76,6 +83,22 @@ function descSummary(d?: string): string | undefined {
   if (!d) return d;
   const s = d.split('\n')[0].trim();
   return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
+/** 可选项接口的 dependency 查询参数当模型引用读（llm-ref 的取值，JSON）：没带为 undefined，写法不对为 null */
+function modelRefOf(raw: unknown): ModelRef | undefined | null {
+  if (raw === undefined) return undefined;
+  let value: unknown;
+  try {
+    value = typeof raw === 'string' ? JSON.parse(raw) : undefined;
+  } catch {
+    return null;
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const { provider, model } = value as Record<string, unknown>;
+  return (provider === undefined || typeof provider === 'string') && (model === undefined || typeof model === 'string')
+    ? { provider, model }
+    : null;
 }
 
 // ===== 插件元数据 =====
@@ -104,11 +127,21 @@ const DOCUMENT_CSP = [
 ].join('; ');
 
 const configSchema = defineConfig({
-  port: { type: 'number', label: '端口', default: 3000, onInvalid: 'error', description: 'Web 管理界面的 HTTP 端口' },
+  port: {
+    type: 'number',
+    label: '端口',
+    default: 3000,
+    integer: true,
+    min: 0,
+    max: 65535,
+    onInvalid: 'error',
+    description: 'Web 管理界面的 HTTP 端口',
+  },
   host: {
     type: 'string',
     label: '监听地址',
     default: '127.0.0.1',
+    pattern: '\\S',
     onInvalid: 'error',
     description: '绑定的 IP 地址，0.0.0.0 可对外访问',
   },
@@ -151,7 +184,7 @@ const configSchema = defineConfig({
       '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。',
   },
   // 活跃前端不在此配置：前端即 `webui-client` 服务的多 provider，活跃者由「服务偏好」
-  // （servicePreferences['webui-client']）决定——在 WebUI「服务」页的下拉框切换。
+  // （servicePreferences['webui-client']）决定——在 WebUI 设置「系统」的服务偏好里切换。
 });
 
 // ===== 配置 =====
@@ -302,10 +335,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     ...cfg,
     marketplaceRegistry: cfg.marketplaceRegistry.trim() || configSchema.marketplaceRegistry.default,
   };
-  if (!uiConfig.host.trim()) throw configError('host 不能为空');
-  if (!Number.isInteger(uiConfig.port) || uiConfig.port < 0 || uiConfig.port > 65535) {
-    throw configError('port 必须是 0-65535 的整数');
-  }
   if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
 
   // 创建 storage gateway；所有文件读写（token、访问凭据、日志、媒体与会话文件）都走这里
@@ -402,6 +431,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 当前身份 / 登录态查询统一走 auth.ts 的 GET /api/auth/status（含 identity）。
   const gate = createRouteGate(auth.identify);
   const server = createServer(expressApp);
+  // server.close() 只停止 accept 并关掉此刻闲着的连接；拆卸时还在处理请求的 keep-alive 连接（例如重载自己的那次）
+  // 应答完会留下来，后面的请求照样落到已拆卸的旧实例。拆卸之后每次应答完就关掉闲下来的连接，浏览器改开新连接
+  server.on('request', (_req, res) =>
+    res.on('finish', () => {
+      if (!server.listening) server.closeIdleConnections();
+    }),
+  );
   // 一个 WebSocketServer 接全部端点，连接按路径分给各自的处理，来源校验与认证对各端点一样。同一个 HTTP server 上
   // 挂两个带 path 的 WebSocketServer 不行：先挂的那个会把别的路径的升级请求按 400 拒掉。
   const wsPaths = new Set([SESSION_PATH, ADMIN_PATH]);
@@ -500,6 +536,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     },
     join: (...parts: string[]) => resolve(...parts),
   };
+  // 市场「已装」判定、依赖图、插件列表的版本与前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
+  // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。host-paths 由宿主在根上提供，不会中途换。
+  const appDir = caps.paths.current?.app;
+  const scanDirs = localScanDirs(appDir);
   registerPluginRoutes(
     expressApp,
     {
@@ -509,6 +549,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       hostConfig: caps.hostConfig,
       tools: caps.tools,
       commands: caps.commands,
+      services,
+      self: lifecycle.id,
+      home: caps.paths.current?.home,
+      versions: () => {
+        if (!appDir) return () => undefined;
+        const lookup = localPackageLookup(appDir, collectLocalPackageDeps(scanDirs, fsScanEnv));
+        return name => lookup(name)?.version;
+      },
       logger,
     },
     gate,
@@ -533,10 +581,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     auth.identify,
     gate,
   );
-  // 市场「已装」判定、依赖图、前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
-  // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。host-paths 由宿主在根上提供，不会中途换。
-  const appDir = caps.paths.current?.app;
-  const scanDirs = localScanDirs(appDir);
   registerMarketplaceRoutes(
     expressApp,
     {
@@ -677,6 +721,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.json({ ok: true });
   });
 
+  // 插件经贡献点提供的主题：与导入的主题同一套校验，不合格式的不列出、每份告警一次。插件停用时贡献随之撤回，
+  // 界面收到 plugins.changed 后重取。贡献点服务不在时没有插件主题
+  const warnedThemes = new WeakSet<object>();
+  expressApp.get('/api/themes', gate(), (_req, res) => {
+    const themes: PluginTheme[] = [];
+    for (const { key, spec } of services.get(contributions)?.collect('webui:theme') ?? []) {
+      const parsed = parseTheme((spec as { theme?: unknown }).theme);
+      if (parsed.ok) themes.push({ id: key, instance: key.slice(0, key.lastIndexOf('/')), theme: parsed.theme });
+      else if (!warnedThemes.has(spec)) {
+        warnedThemes.add(spec);
+        logger.warn(`插件主题 ${key} 不合主题文件的格式，没有列出：${parsed.errors.join('；')}`);
+      }
+    }
+    res.json({ themes } satisfies PluginThemesResponse);
+  });
+
   // 前端切换已统一到「服务偏好」：前端是 webui-client 服务的多 provider，切换走
   // POST /api/services/webui-client/prefer（见上），webui-server 在该偏好变更时重挂 + 广播刷新。
   // 故不再有独立的 /api/clients* 路由。
@@ -686,88 +746,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.json({ platforms: aggregatePlatformDetails(caps.platform) });
   });
 
-  // 获取服务分组（manifest 驱动：每个插件自己声明 subsystem，本路由仅聚合）
-  expressApp.get('/api/service-groups', gate(), (_req, res) => {
-    const pluginMgr = caps.plugins.current;
-    const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
-    // 按插件 subsystem 归组（未声明 → 'external'）。subsystem 是插件定义上的展示标签，
-    // core 状态契约不含——从定义直接读。
-    const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
-    for (const p of pluginStatus) {
-      const sub = pluginMgr?.getPlugin(p.instanceId)?.definition?.subsystem ?? 'external';
-      if (!groupsMap.has(sub)) groupsMap.set(sub, []);
-      groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
-    }
-    // 排序：DEFAULT_SUBSYSTEM_METADATA 已知 id 优先按 order 排，未知 id 以 id 作为 label，order=9999
-    const meta = new Map(DEFAULT_SUBSYSTEM_METADATA.map(e => [e.id, e]));
-    const sorted = [...groupsMap.keys()]
-      .map(id => {
-        const m = meta.get(id);
-        return m ? { id, label: m.label, order: m.order } : { id, label: id, order: 9999 };
-      })
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    // First-claim-wins：服务名只归入最先（order 最小）声明它的组，避免同一服务出现在多个分组
-    const servicesClaimed = new Set<string>();
-    const groups = sorted.map(({ id, label }) => {
-      const plugins = groupsMap.get(id)!;
-      const owned = [...new Set(plugins.flatMap(p => p.provides))].filter(s => {
-        if (servicesClaimed.has(s)) return false;
-        servicesClaimed.add(s);
-        return true;
-      });
-      return { id, label, plugins, services: owned };
-    });
-    // 系统内建服务（app、plugins 等由 core 直接 provide，不属于任何插件）
-    const systemServices = services.names().filter(n => !servicesClaimed.has(n));
-    if (systemServices.length > 0) {
-      const sysLabel = meta.get('system')?.label ?? '系统';
-      groups.unshift({ id: 'system', label: sysLabel, plugins: [], services: systemServices });
-    }
-    res.json({ groups });
-  });
-
-  // LLM providers + per-provider models（供 schema type='llm-ref' 联动 select 使用）
-  expressApp.get('/api/llm-providers', gate(), async (_req, res) => {
-    try {
-      const entries = caps.llm.all();
-      type ProvAgg = {
-        contextId: string;
-        label?: string;
-        models: Array<{ id: string; capabilities: string[]; contextLength?: number }>;
-      };
-      const byProvider = new Map<string, ProvAgg>();
-      // entry.label 形如 "Ollama (localhost:11434) / qwen3.6:35b-mlx"；
-      // 取第一个 " / " 之前的部分作为 providerLabel（避免把 model id 也带进去）。
-      const extractProviderLabel = (raw?: string): string | undefined => {
-        if (!raw) return undefined;
-        const slash = raw.indexOf(' / ');
-        return slash > 0 ? raw.slice(0, slash) : raw;
-      };
-      for (const e of entries) {
-        const providerId = e.instance.providerId;
-        let agg = byProvider.get(providerId);
-        if (!agg) {
-          agg = { contextId: providerId, label: extractProviderLabel(e.label), models: [] };
-          byProvider.set(providerId, agg);
-        } else if (!agg.label) {
-          agg.label = extractProviderLabel(e.label);
-        }
-        agg.models.push({
-          id: e.instance.id,
-          capabilities: [...e.instance.capabilities],
-          contextLength: e.instance.contextLength,
-        });
-      }
-      res.json({ providers: [...byProvider.values()] });
-    } catch {
-      res.json({ providers: [] });
-    }
-  });
-
-  // 触发指定 provider 重新探测远端模型列表（用于 webui 上的"刷新模型"按钮）
+  // 触发指定 provider 重新探测远端模型列表（插件配置里模型字段旁的「刷新」按钮）
   // 仅对在 LLMModel 上实现了 refresh() 的 provider 生效（远端动态发现型，如 Ollama / OpenAI）。
   // 同 provider 下所有 model entries 共享同一份 refresh 闭包，调任一个 entry 即可。
-  // 按 providerId 找条目，与 /api/llm-providers 的聚合同一口径：条目的 contextId 是 `<provider>/<model>`，不等于 provider
+  // 按 providerId 找条目，与 /api/models/llm 给的 contextId 同一口径：条目自己的 contextId 是 `<provider>/<model>`，不等于 provider
   expressApp.post('/api/llm-providers/:contextId/refresh', gate(), async (req, res) => {
     const contextId = req.params.contextId;
     try {
@@ -828,6 +810,27 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
+    // 深度思考的档位：可选项依赖「模型」这一项，dependency 带它的生效值；没带时按服务偏好解析，与对话时同一种解析。
+    // 默认档在名字后注明并标 default（没设时界面据它写按哪一档跑），模型不能调时没有可选项
+    if (serviceName === 'llm-thinking') {
+      const ref = modelRefOf(req.query.dependency);
+      if (ref === null) {
+        res.status(400).json({ error: 'dependency 要是模型引用 { provider, model } 的 JSON' });
+        return;
+      }
+      const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.instance.thinking;
+      const levels = thinking?.levels ?? [];
+      res.json({
+        models: levels.map(level => level.id),
+        details: levels.map(level =>
+          level.id === thinking?.default
+            ? { value: level.id, label: `${level.label}（默认）`, default: true }
+            : { value: level.id, label: level.label },
+        ),
+      });
+      return;
+    }
+
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
       const groups = caps.tools.current?.getGroups() ?? [];
@@ -859,20 +862,20 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // LLM 走 per-model entry 枚举（每个 entry 已对应一个具体 model，不再依赖 provider.listModels）
+    // LLM 走 per-model entry 枚举（每个 entry 已对应一个具体 model，不再依赖 provider.listModels）。
+    // contextId 给提供者的实例 id（条目自己的是 `<实例 id>/<模型 id>`）：llm-ref 的取值 { provider, model } 认的是它
     if (serviceName === 'llm') {
       try {
         const entries = caps.llm.all();
-        const aggregated = entries.map(e => ({
-          value: `${e.contextId}::${e.instance.id}`,
+        const providers = entries.map(e => ({
           model: e.instance.id,
           provider: e.label ?? e.contextId,
-          contextId: e.contextId,
+          contextId: e.instance.providerId,
           capabilities: [...e.instance.capabilities],
         }));
-        res.json({ models: aggregated.map(a => a.value), providers: aggregated });
+        res.json({ providers });
       } catch {
-        res.json({ models: [] });
+        res.json({ providers: [] });
       }
       return;
     }
@@ -1014,11 +1017,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
    * （忒修斯之船——任意第三方前端带标记+dist 即被发现）。
    * 覆盖三种拓扑：monorepo（扫 packages 同级目录）/ 独立项目（扫 node_modules/@aalis + 根 deps）。
    *
-   * **幂等**，可重复调用：装完一个 `aalis-interface` 包后要立刻重跑，否则它不会出现在服务页
+   * **幂等**，可重复调用：装完一个 `aalis-interface` 包后要立刻重跑，否则它不会出现在服务偏好
    * 的下拉里、必须重启才看得见。幂等是硬要求而非优化——重复 `fork().provide()` 会在服务
    * 容器里堆同名重复项。已登记过的 id 直接跳过。
    *
-   * 只登记新候选，**不切换活跃前端**：换前端是用户在服务页的显式选择，装了个新的不该把
+   * 只登记新候选，**不切换活跃前端**：换前端是用户在服务偏好里的显式选择，装了个新的不该把
    * 他正在用的顶掉。
    */
   function discoverAndProvideClients(): void {
@@ -1075,10 +1078,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       scanned,
     );
     clientCandidates.push(...fresh);
-    // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
+    // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供服务偏好里切换）。
     // 外部插件在 apply 里主动提供 webui-client 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
     //
-    // 代前端包登记：条目身份是前端**包名本身**——它是服务页展示的 contextId，也是
+    // 代前端包登记：条目身份是前端**包名本身**——它是服务偏好里展示的 contextId，也是
     // servicePreferences['webui-client'] 里持久化的键，还是装卸闸按包名比对的对象。
     for (const candidate of fresh) {
       clientProviderDisposers.set(

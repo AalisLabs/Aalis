@@ -22,7 +22,7 @@ import { deferred } from '../helpers/deferred.js';
 
 // 管理动作只改运行态；WebUI 的启停与改配置路由在动作成功后自己写配置文档并落盘。
 // 这里用真实 App 与真实路由：按落盘的文档重建 App，状态要与重启前一致。
-// 路由挂在一个插件的激活上（与 webui-server 同样经 uses 取服务），也覆盖经自己的路由禁用自己。
+// 路由挂在一个插件的激活上（与 webui-server 同样经 uses 取服务）；它经自己的路由停用不了自己，见 webui-plugin-area。
 // 登记一律按文档取配置与禁用标记（与 runtime 发现驱动的登记同一口径），core 不读文档。
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -114,6 +114,9 @@ function world(
           source: { current: undefined },
           tools: { current: undefined },
           commands: { current: undefined },
+          services: { inspect: () => [] },
+          self: 'console',
+          versions: () => () => undefined,
         },
         () => (_req: unknown, _res: unknown, next: () => void) => next(),
       );
@@ -221,16 +224,6 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect((await w.enable('target')).status).toBe(200);
     await w.app.plugins.idle();
     expect(applied, '启用后按新配置激活').toEqual([1, 9]);
-  });
-
-  it('经自己的路由禁用自己：激活被拆掉后仍写入文档并落盘', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
-    await w.boot();
-
-    expect((await w.disable('console')).status).toBe(200);
-    expect(w.app.plugins.getPlugin('console')?.state).toBe('disabled');
-    expect(w.store.isPluginDisabled('console')).toBe(true);
-    expect(w.saved).toHaveLength(1);
   });
 
   it('停用时插件未在宽限内停止、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；文档记为禁用并落盘', async () => {

@@ -35,6 +35,10 @@ const HOST_TABS: Record<HostPanelTab, { title: string; available(data: HostData)
   usage: { title: '用量', available: ({ usage, phone }) => usage !== undefined && !phone },
 };
 
+/** 宿主标签的名字；前端还不认识的宿主标签（webui-server 比前端新）没有 */
+export const hostTabTitle = (host: string): string | undefined =>
+  Object.hasOwn(HOST_TABS, host) ? HOST_TABS[host as HostPanelTab].title : undefined;
+
 /** 布局记录没取到时：宿主的标签都开着 */
 const NEW_RECORD: LayoutRecords['panelTabs'] = HOST_PANEL_TABS.map(host => ({ tab: { host }, open: true }));
 
@@ -72,8 +76,9 @@ function composeTabs(
       return page && pageTab(page);
     }
     // 记录里可能有前端还不认识的宿主标签（webui-server 比前端新），当作不可用
-    if (!Object.hasOwn(HOST_TABS, ref.host) || !available(ref.host)) return undefined;
-    return { ref, key: ref.host, title: HOST_TABS[ref.host].title };
+    const title = hostTabTitle(ref.host);
+    if (title === undefined || !available(ref.host)) return undefined;
+    return { ref, key: ref.host, title };
   };
   const bar: PanelTab[] = [];
   const add: PanelTab[] = [];

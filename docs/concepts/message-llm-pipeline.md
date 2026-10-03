@@ -263,7 +263,7 @@ export interface ChatModelRequest {
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
-  think?: boolean;
+  think?: string;             // 深度思考的档位 id，模型声明的 thinking.levels 之一；不带按模型的默认档
 }
 ```
 

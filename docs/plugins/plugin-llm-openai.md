@@ -37,11 +37,12 @@ export default definePlugin({
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
 | `maxTokens` | number | `4096` | 最大 Token：单次回复最大生成 token 数 |
 | `contextLength` | number | `128000` | 上下文长度：模型上下文窗口大小 |
-| `thinkingParam` | boolean | `false` | 透传 thinking 开关（DeepSeek 风格）：开启后把请求的 think 开关编码为 DeepSeek 风格的 `thinking: {type: enabled\|disabled}` 字段发给端点，使会话级 /session.set -t 与平台档 think 对本 provider 生效。仅在端点是 DeepSeek 或会原样透传该字段的中转时开启——OpenAI 官方端点不认此字段会拒收请求。请求未指定 think 时不发送该字段（沿用端点默认）。 |
+| `thinkingParam` | select | `'reasoning_effort'` | 思考档位的写法：能思考的模型（内置表里的 o 系列与 gpt-5 系列，gpt-5-chat 除外，或单模型能力覆盖里写了 thinking 的）按这种写法提供深度思考的档位。`reasoning_effort`：档位按模型族，发 `reasoning_effort`（OpenAI 官方与多数兼容端点）；`thinking`：关、开，发 `thinking: {type: enabled\|disabled}`（DeepSeek 风格的端点或中转）。请求指定了档位才发对应字段，没指定时不发、按端点自己的默认。端点不认所选字段时会拒收指定了档位的请求，这时换一种写法，或在单模型能力覆盖里去掉这个模型的 thinking。 |
 
 ## 特性
 
 - **SSE 流式**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
+- **思考档位**: 能力里有 `thinking` 的模型按 `thinkingParam` 声明档位——`reasoning_effort` 写法按模型族：gpt-5.1 起（`gpt-5.<n>`）为关、低、中、高（`none`、`low`、`medium`、`high`，默认关），gpt-5 为最低、低、中、高（`minimal` 起，默认中），o1-mini 与 o1-preview 不收这个字段、不声明档位，gpt-5-chat 是非推理模型、不声明档位，其余为低、中、高（默认中）；`thinking` 写法为关、开（`off`、`on`，默认开）。默认档写的是端点自己的默认。请求带了档位才发字段（`reasoning_effort: <档位>`，或 `thinking: {type: enabled|disabled}`），没带时都不发；带了别的档位拒绝。拿不准的兼容端点在 `modelCapabilities` 里给思考模型写上或去掉 `thinking`
 - **动态模型列表**: 启动时请求 `/models` 发现模型（停用或停机时中止），与 `customModels` 合并（重复项会告警）后逐个注册；发现失败（不可达、超时、非 2xx、响应不是 JSON 或不是模型列表）时记一条 warn（带 URL 与原因），只注册 `customModels`。一个模型都没有（发现失败且未配置 `customModels`，或已连接但列表为空）时实例转为出错，错误信息写明原因。模型句柄上的 `refresh()` 会重新发现，并增删已注册的条目；发现失败时报错（消息带 URL 与原因），停用或停机时中止并报错，这两种情况都不增删条目
 - **不提供 `/models` 的网关**: 关闭 `discoverModels`。启动时不发发现请求、不记 warn，只注册 `customModels`（此时必填，留空时实例转为出错并点名该字段），模型句柄不提供 `refresh()`，WebUI 模型选择框旁的「刷新」会提示该 provider 不支持运行时刷新
 - **错误信息**: 对话请求失败时的错误信息会经 agent 发回会话，只写状态码与原因：非 2xx 时写状态码，401/403、402、404、429、5xx 各加一句提示（密钥无效或没有权限、余额不足或需要付费、模型或地址不对、请求过多或额度不足、上游服务故障），并附上游 JSON 里的说明（`error.message`、`error` 字符串或顶层 `message`，折成一行后截断）；取不到说明（如 HTML 错误页）时写「详情见日志」。超时与连不上各一句；非流式请求的应答是 200 但不是 JSON 时写明。响应体与底层原因（如 `connect ECONNREFUSED <地址>`）只记 warn 日志，响应体先把换行与连续空白折叠成一个空格，再截断到 500 个字符（按代理对安全截断）。内容审查类错误按完整响应体识别，给固定提示。模型发现失败的原因带响应体摘录（同样折叠与截断）；这段原因与启动日志里的 URL 去掉查询串

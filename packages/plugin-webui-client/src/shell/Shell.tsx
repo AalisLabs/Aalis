@@ -1,5 +1,5 @@
 import type { HostPanelTab } from '@aalis/api-webui';
-import { MessagesSquare } from 'lucide-react';
+import { type LucideIcon, MessagesSquare } from 'lucide-react';
 import {
   type CSSProperties,
   createContext,
@@ -21,15 +21,19 @@ import { PinnedRail } from '../pages/Pinned';
 import { pageAt, paths, routes } from '../routes';
 import { readStored, writeStored } from '../storage';
 import { ConnectionBar } from './ConnectionBar';
+import { HOST_ENTRIES, type HostArea } from './entries';
 import { QuickSwitch } from './QuickSwitch';
 import './Shell.css';
 
 // 外壳：图标栏、左栏、主区、右侧面板。左栏 64em 起、右侧面板 80em 起常驻，可收起，两侧之间的分隔条可以拖动调宽；
-// 更窄时它们是按记住的栏宽盖进来的抽屉；48em 以下是手机，没有图标栏，按地址分三层逐级进入，每层占满一屏。
-// 收起状态与栏宽按设备存本浏览器。图标栏上方是「会话」，下面是 owner 固定的页面；打开着插件页面（/p/ 地址）时
-// 「会话」回到刚才的会话地址
+// 更窄时它们是按记住的栏宽盖进来的抽屉；48em 以下是手机，没有图标栏，按地址逐层进入，每层占满一屏。
+// 收起状态与栏宽按设备存本浏览器。图标栏上方是「会话」，下面是 owner 固定的页面，底部是插件与设置；
+// 不在某一区时点它回到刚才在这一区的地址，已在这一区时点它收起或展开左栏
 
 type Side = 'left' | 'right';
+
+/** 图标栏上带左栏的几区：会话与宿主的入口；打开着插件页面时不在任何一区 */
+type Area = 'sessions' | HostArea;
 
 const DOCKED: Record<Side, string> = { left: '(min-width: 64em)', right: '(min-width: 80em)' };
 const PHONE = '(max-width: 47.99em)';
@@ -172,27 +176,28 @@ export function Shell() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [navigate, toggle]);
 
-  const onPage = pageAt(location.pathname) !== undefined;
-  const lastSessions = useRef<string>(paths.home);
+  const area = areaOf(location.pathname);
+  // 每一区最近一次的地址：从别处点回这一区时回到它
+  const lastAddress = useRef<Partial<Record<Area, string>>>({});
   useEffect(() => {
-    if (!onPage) lastSessions.current = location.pathname + location.search;
-  }, [onPage, location]);
-
-  // 手机上用量从底部弹出，不另成一层；会话面板的标签与插件的会话面板是第三层
-  const tab = matchPath(routes.sessionTab, location.pathname)?.params.tab;
-  const panel = matchPath(routes.sessionPanel, location.pathname) !== null;
-  const level =
-    location.pathname === routes.home
-      ? 1
-      : panel || (tab !== undefined && tab !== ('usage' satisfies HostPanelTab))
-        ? 3
-        : 2;
+    if (area) lastAddress.current[area] = location.pathname + location.search;
+  }, [area, location]);
+  const railItem = (to: Area, label: string, Icon: LucideIcon, home: string) => (
+    <RailItem
+      key={to}
+      label={label}
+      icon={Icon}
+      current={area === to}
+      to={lastAddress.current[to] ?? home}
+      toggleLeft={() => toggle('left')}
+    />
+  );
 
   return (
     <Context.Provider value={controls}>
       <div
         className="shell"
-        data-level={level}
+        data-phone={phoneColumn(location.pathname)}
         data-left={layout.left.open ? undefined : 'collapsed'}
         data-right={layout.right.open ? undefined : 'collapsed'}
         data-drawer={drawer}
@@ -208,26 +213,11 @@ export function Shell() {
         <ConnectionBar />
         <div className="shell-columns">
           <nav className="shell-rail" aria-label="图标栏">
-            <div className="header-bar shell-rail-head">
-              <Link
-                to={onPage ? lastSessions.current : paths.home}
-                className="shell-rail-item"
-                aria-current={onPage ? undefined : 'page'}
-                aria-label="会话"
-                title={onPage ? '会话' : `会话（${shortcutLabel('toggleLeft')} 收起或展开左栏）`}
-                onClick={event => {
-                  if (onPage) return;
-                  event.preventDefault();
-                  toggle('left');
-                }}
-              >
-                <MessagesSquare aria-hidden />
-                <span className="shell-rail-name" aria-hidden>
-                  会话
-                </span>
-              </Link>
-            </div>
+            <div className="header-bar shell-rail-head">{railItem('sessions', '会话', MessagesSquare, paths.home)}</div>
             <PinnedRail />
+            <div className="shell-rail-tail">
+              {HOST_ENTRIES.map(entry => railItem(entry.area, entry.label, entry.icon, entry.path))}
+            </div>
           </nav>
           <Outlet />
         </div>
@@ -244,6 +234,57 @@ export function Shell() {
       </div>
       <QuickSwitch open={searching} onClose={() => setSearching(false)} />
     </Context.Provider>
+  );
+}
+
+/** 地址所在的区：插件页面（/p/ 地址）不算任何一区；市场不占 /plugins/ 下的名字，归插件区 */
+function areaOf(pathname: string): Area | undefined {
+  if (pageAt(pathname)) return undefined;
+  if (matchPath(routes.market, pathname)) return 'plugins';
+  for (const entry of HOST_ENTRIES) if (matchPath({ path: entry.path, end: false }, pathname)) return entry.area;
+  return 'sessions';
+}
+
+/**
+ * 手机上占满一屏的一栏：第一层、插件树与设置目录是左栏；会话面板的标签与插件的会话面板是右侧面板（用量从底部弹出，不算）
+ */
+function phoneColumn(pathname: string): Side | 'main' {
+  if (pathname === routes.home || pathname === routes.plugins || pathname === routes.settings) return 'left';
+  const tab = matchPath(routes.sessionTab, pathname)?.params.tab;
+  if (matchPath(routes.sessionPanel, pathname) || (tab !== undefined && tab !== ('usage' satisfies HostPanelTab))) {
+    return 'right';
+  }
+  return 'main';
+}
+
+interface RailItemProps {
+  label: string;
+  icon: LucideIcon;
+  current: boolean;
+  to: string;
+  toggleLeft(): void;
+}
+
+/** 图标栏上带左栏的一区：已在这一区时点它收起或展开左栏 */
+function RailItem({ label, icon: Icon, current, to, toggleLeft }: RailItemProps) {
+  return (
+    <Link
+      to={to}
+      className="shell-rail-item"
+      aria-current={current ? 'page' : undefined}
+      aria-label={label}
+      title={current ? `${label}（${shortcutLabel('toggleLeft')} 收起或展开左栏）` : label}
+      onClick={event => {
+        if (!current) return;
+        event.preventDefault();
+        toggleLeft();
+      }}
+    >
+      <Icon aria-hidden />
+      <span className="shell-rail-name" aria-hidden>
+        {label}
+      </span>
+    </Link>
   );
 }
 

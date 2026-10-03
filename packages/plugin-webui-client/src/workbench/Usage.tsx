@@ -2,7 +2,7 @@ import type { TokenUsageBreakdown } from '@aalis/api-agent';
 import { type CSSProperties, Fragment, useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
 import { percent, tokens } from '../format';
-import { type PluginNames, usePluginNames } from '../plugins';
+import { usePluginNames } from '../plugins/list';
 import type { UsageItem } from './live-session';
 import './Usage.css';
 
@@ -55,7 +55,10 @@ export function UsageMeter({ usage, onOpen }: { usage: UsageItem; onOpen(): void
 }
 
 /** 其余系统提示按插件合并：注入者的键是「插件实例 id/局部 id」，同一插件的几个实例合在一起 */
-function byPlugin(usage: UsageItem, names: PluginNames): Array<{ label: string; tokens: number }> {
+function byPlugin(
+  usage: UsageItem,
+  names: ReturnType<typeof usePluginNames>,
+): Array<{ label: string; tokens: number }> {
   const merged = new Map<string, { label: string; tokens: number }>();
   let others = usage.breakdown.systemOther ?? 0;
   for (const [key, count] of Object.entries(usage.injectors ?? {})) {

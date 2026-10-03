@@ -38,10 +38,9 @@ const input = () => main().getByRole('textbox', { name: '消息' }) as HTMLTextA
 const type = (text: string) => fireEvent.change(input(), { target: { value: text } });
 
 const MODELS = {
-  models: ['@aalis/llm-a::alpha', '@aalis/llm-a::beta'],
   providers: [
-    { value: '@aalis/llm-a::alpha', model: 'alpha', provider: '服务甲', contextId: '@aalis/llm-a', capabilities: [] },
-    { value: '@aalis/llm-a::beta', model: 'beta', provider: '服务甲', contextId: '@aalis/llm-a', capabilities: [] },
+    { model: 'alpha', provider: '服务甲', contextId: '@aalis/llm-a', capabilities: [] },
+    { model: 'beta', provider: '服务甲', contextId: '@aalis/llm-a', capabilities: [] },
   ],
 };
 
@@ -203,7 +202,7 @@ describe('输入框', () => {
         effective: { provider: '@aalis/llm-a', model: 'alpha' },
         source: 'defaults',
       }),
-      row('think', { field: { type: 'boolean', label: '深度思考' }, prominence: 'common' }),
+      row('zz-flag', { field: { type: 'boolean', label: '开关项' }, prominence: 'common' }),
     ];
     app = await renderApp(
       '/s/s1',
@@ -216,7 +215,7 @@ describe('输入框', () => {
     );
     const model = (await main().findByRole('combobox', { name: '模型' })) as HTMLSelectElement;
     await vi.waitFor(() => expect(model.selectedOptions[0]?.textContent).toBe('alpha'));
-    expect(main().queryByRole('combobox', { name: '深度思考' })).toBeNull();
+    expect(main().queryByRole('combobox', { name: '开关项' })).toBeNull();
     const beta = within(model).getByRole('option', { name: 'beta' }) as HTMLOptionElement;
     fireEvent.change(model, { target: { value: beta.value } });
     await vi.waitFor(() =>
@@ -228,6 +227,41 @@ describe('输入框', () => {
     rows = [rows[1]];
     act(() => server().notify('session/config/changed', {}));
     await vi.waitFor(() => expect(main().queryByRole('combobox', { name: '模型' })).toBeNull());
+  });
+
+  it('快捷切换里可选项依赖另一项的，带上那一项的生效值去取，它变了就重取', async () => {
+    stubViewport(1440);
+    const levels = (name: string) =>
+      `/api/models/llm-thinking?dependency=${encodeURIComponent(JSON.stringify({ provider: '@aalis/llm-a', model: name }))}`;
+    const rowsFor = (name: string) => [
+      row('llm', {
+        field: { type: 'llm-ref', label: '模型' },
+        prominence: 'composer',
+        effective: { provider: '@aalis/llm-a', model: name },
+        source: 'defaults',
+      }),
+      row('think', {
+        field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
+        prominence: 'composer',
+        dependsOn: 'llm',
+      }),
+    ];
+    let rows = rowsFor('alpha');
+    app = await renderApp(
+      '/s/s1',
+      { ...session, 'session/config/get': () => ({ items: rows }) },
+      {
+        '/api/models/llm': MODELS,
+        [levels('alpha')]: { details: [{ value: 'deep', label: '深' }] },
+        [levels('beta')]: { details: [{ value: 'light', label: '浅' }] },
+      },
+    );
+    const think = () => main().getByRole('combobox', { name: '深度思考' });
+    await vi.waitFor(() => expect(within(think()).getByRole('option', { name: '深' })).toBeTruthy());
+    rows = rowsFor('beta');
+    act(() => server().notify('session/config/changed', {}));
+    await vi.waitFor(() => expect(within(think()).getByRole('option', { name: '浅' })).toBeTruthy());
+    expect(within(think()).queryByRole('option', { name: '深' })).toBeNull();
   });
 
   it('快捷切换的可选项没取到时写明原因；哪一层都没设的项按字段的默认值显示', async () => {

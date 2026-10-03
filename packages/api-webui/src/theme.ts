@@ -6,7 +6,11 @@
 //
 // 令牌名是公开契约：主题只能写 THEME_TOKENS 里的名字，界面的样式只引用这些名字。改名会打破已有的主题，
 // 所以按格式版本迁移，迁不了的拒收并说明。
+//
+// 插件经贡献点 `webui:theme` 提供主题（ThemeContribution），webui-server 经 GET /api/themes 列出校验过的，
+// 插件停用就随之撤回；设置「外观」的主题选择里与内置、导入的主题并列。
 
+import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
 import aalisDark from './themes/aalis-dark.json' with { type: 'json' };
 import aalisLight from './themes/aalis-light.json' with { type: 'json' };
 import brandDark from './themes/brand-dark.json' with { type: 'json' };
@@ -123,6 +127,34 @@ export interface Theme {
 }
 
 export type ThemeParseResult = { ok: true; theme: Theme } | { ok: false; errors: string[] };
+
+/**
+ * `webui:theme` 贡献点的 spec：插件交一份主题文件，经 `contributions.contribute('webui:theme', { id, theme })` 登记，
+ * 随激活撤回。id 是局部名，与插件实例 id 合成全局键。主题只是数据，与导入的主题文件走同一套校验（parseTheme），
+ * 不合格式的不列出，webui-server 记一条告警
+ */
+export interface ThemeContribution {
+  id: string;
+  theme: ThemeFile;
+}
+
+declare module '@aalis/api-contributions' {
+  interface ContributionPointMap {
+    'webui:theme': ThemeContribution;
+  }
+}
+
+/** GET /api/themes 的一项：贡献点的全局键（`<插件实例 id>/<局部 id>`）、提供它的插件实例与校验过的主题 */
+export interface PluginTheme {
+  id: string;
+  instance: string;
+  theme: Theme;
+}
+
+/** GET /api/themes：插件此刻提供的主题，按全局键排 */
+export interface PluginThemesResponse {
+  themes: PluginTheme[];
+}
 
 /** 内置主题：随包带的主题文件，键是主题 id（配色名加种类） */
 export const BUILTIN_THEMES = {

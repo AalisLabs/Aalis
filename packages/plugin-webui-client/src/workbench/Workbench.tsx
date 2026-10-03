@@ -1,7 +1,7 @@
 import type { SessionSummary } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
 import { ChevronsDownUp, ChevronsUpDown, PanelRight } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import { useBack } from '../back';
 import { Button } from '../components/Button';
@@ -16,7 +16,7 @@ import { composing, shortcutLabel } from '../keys';
 import { RequestError, unlessLost } from '../protocol/session-client';
 import { paths, useSessionAddress } from '../routes';
 import { useSessionActions } from '../sessions/actions';
-import { useSessionSettings } from '../settings/session-settings';
+import { useSettingRows } from '../settings/setting-rows';
 import { SessionGate } from '../shell/SessionGate';
 import { Main, usePhone, useShell } from '../shell/Shell';
 import { Composer, ComposerSettings, type OutgoingAttachment } from './Composer';
@@ -70,7 +70,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const actions = useSessionActions();
   const toast = useToast();
   const live = useLiveSession(sessionId);
-  const settings = useSessionSettings(sessionId);
+  const settings = useSettingRows(useMemo(() => ({ sessionId }), [sessionId]));
   const fold = useFold();
   const { summary, usage, plan } = live;
   const tabs = useSessionTabs(sessionId, { plan, usage });
