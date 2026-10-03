@@ -1,4 +1,4 @@
-import type { ActionView, ComponentView, PageRow, PageView, RowAction } from '@aalis/api-webui';
+import type { ActionView, ComponentView, DeclarativePageView, PageRow, RowAction } from '@aalis/api-webui';
 import { ArrowLeft, LoaderCircle, X } from 'lucide-react';
 import { type ReactNode, useId } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -23,7 +23,7 @@ type Of<T extends ComponentView['type']> = Extract<ComponentView, { type: T }>;
 
 const NO_CONTENT = '还没有内容';
 
-export function PageContent({ page }: { page: PageView }) {
+export function PageContent({ page }: { page: DeclarativePageView }) {
   const [params, setParams] = useSearchParams();
   if (Array.isArray(page.content)) return <Screen components={page.content} />;
   const { tabs } = page.content;

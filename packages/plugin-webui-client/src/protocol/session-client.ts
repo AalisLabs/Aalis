@@ -21,10 +21,14 @@ const CLIENT = { name: 'webui', version };
 export type SessionSnapshot = SessionMethodResult<'session/subscribe'>;
 export type InitializeResult = SessionMethodResult<'initialize'>;
 
-/** 服务端回了错误；reason 是业务错误码，帧或参数不合时没有 */
+/** JSON-RPC 的「参数不合」：请求的参数没过服务端的校验 */
+export const INVALID_PARAMS = -32602;
+
+/** 服务端回了错误：code 是 JSON-RPC 的错误码；reason 是业务错误码，帧或参数不合时没有 */
 export class RequestError extends Error {
   constructor(
     message: string,
+    readonly code: number,
     readonly reason?: ErrorCode,
   ) {
     super(message);
@@ -82,7 +86,7 @@ interface PushPosition {
   seq: number;
 }
 
-type ErrorBody = { message: string; data?: { code: ErrorCode } };
+type ErrorBody = { code: number; message: string; data?: { code: ErrorCode } };
 
 type IncomingFrame =
   | { id: number; result: unknown }
@@ -223,8 +227,9 @@ export function createSessionClient(): SessionClient {
       if (frame.id === null) throw new Error(`服务端拒收了这个客户端发出的一帧：${frame.error.message}`);
       const waiting = pending.get(frame.id) as { resolve(result: unknown): void; reject(error: Error): void };
       pending.delete(frame.id);
-      if ('error' in frame) waiting.reject(new RequestError(frame.error.message, frame.error.data?.code));
-      else waiting.resolve(frame.result);
+      if ('error' in frame) {
+        waiting.reject(new RequestError(frame.error.message, frame.error.code, frame.error.data?.code));
+      } else waiting.resolve(frame.result);
     },
     closed() {
       for (const waiting of pending.values()) waiting.reject(new ConnectionLostError());

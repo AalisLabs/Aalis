@@ -19,12 +19,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p frame && node -e \"require('node:fs').cpSync('frame/frame.css', 'dist/frame/frame.css')\"",
     "dev": "tsc --watch"
   },
   "dependencies": {
     "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-session-protocol": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0"
   },
   "devDependencies": {

@@ -27,7 +27,8 @@ interface Answers {
   features: {
     tool: boolean;
     command: boolean;
-    webui: boolean;
+    /** WebUI 页面：不要、声明式，或自带前端（插件前端） */
+    webui: false | 'declarative' | 'frame';
   };
 }
 
@@ -123,11 +124,11 @@ async function main(): Promise<void> {
       packageName = await askValid('包名（如 my-plugin 或 @scope/my-plugin）', 'aalis-plugin-sample', validateNpmName);
     }
     const displayName = await ask('显示名（中文标签）', defaultDisplayName(packageName));
-    const features: Answers['features'] = {
-      tool: await askYesNo('注册 AI 工具？', true),
-      command: await askYesNo('注册斜杠命令？', false),
-      webui: await askYesNo('提供 WebUI 页面？', false),
-    };
+    const tool = await askYesNo('注册 AI 工具？', true);
+    const command = await askYesNo('注册斜杠命令？', false);
+    const page = await askYesNo('提供 WebUI 页面？', false);
+    const frame = page && (await askYesNo('页面用自带前端？', false));
+    const features: Answers['features'] = { tool, command, webui: page && (frame ? 'frame' : 'declarative') };
 
     const answers: Answers = { packageName, displayName, features };
     const targetDir = resolve(process.cwd(), shortName(packageName));
@@ -166,13 +167,18 @@ function shortName(pkg: string): string {
   return slash >= 0 ? pkg.slice(slash + 1) : pkg;
 }
 
-async function generate(dir: string, a: Answers): Promise<void> {
+export async function generate(dir: string, a: Answers): Promise<void> {
   await mkdir(resolve(dir, 'src'), { recursive: true });
 
   await writeFile(resolve(dir, 'package.json'), renderPackageJson(a));
   await writeFile(resolve(dir, 'tsconfig.json'), renderTsconfig());
   await writeFile(resolve(dir, 'src/index.ts'), renderIndexTs(a));
   await writeFile(resolve(dir, 'README.md'), renderReadme(a));
+  if (a.features.webui === 'frame') {
+    await mkdir(resolve(dir, 'webui'));
+    await writeFile(resolve(dir, 'webui/index.html'), renderFrameHtml(a));
+    await writeFile(resolve(dir, 'webui/main.js'), FRAME_SCRIPT);
+  }
 }
 
 export function renderPackageJson(a: Answers): string {
@@ -206,7 +212,8 @@ export function renderPackageJson(a: Answers): string {
     keywords: ['aalis-plugin'],
     main: 'dist/index.js',
     types: 'dist/index.d.ts',
-    files: ['dist'], // 发布包只含编译产物
+    // 发布包只含编译产物，以及插件前端的静态网页
+    files: ['dist', ...(a.features.webui === 'frame' ? ['webui'] : [])],
     scripts: {
       build: 'tsc',
       dev: 'tsc --watch',
@@ -282,7 +289,7 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
       usesKey: 'webui',
       descriptor: 'optional(webuiServer)',
       importLine: `import { webuiServer } from '@aalis/api-webui';`,
-      bullet: '- ✓ WebUI 页面（`uses: { webui: optional(webuiServer) }`，从 `@aalis/api-webui` 导入描述符）',
+      bullet: `- ✓ WebUI 页面${features.webui === 'frame' ? '，自带前端（见下文「插件前端」）' : ''}（\`uses: { webui: optional(webuiServer) }\`，从 \`@aalis/api-webui\` 导入描述符）`,
     });
   }
   return out;
@@ -330,10 +337,11 @@ export function renderIndexTs(a: Answers): string {
     body.push(`    // 注册斜杠命令
     commands.command('hello', '示例命令').action(async () => '你好');`);
   }
-  if (a.features.webui) {
+  const pageKey = shortName(a.packageName).replace(/^plugin-/, '');
+  if (a.features.webui === 'declarative') {
     body.push(`    // 登记 WebUI 页面：组件、数据源与动作一次给出，出现在本插件详情里；登记随这次激活撤回
     webui.definePage({
-      key: '${shortName(a.packageName).replace(/^plugin-/, '')}',
+      key: '${pageKey}',
       title: '${a.displayName}',
       content: [
         {
@@ -343,6 +351,37 @@ export function renderIndexTs(a: Answers): string {
           data: () => [{ label: '提示', value: '这是 ${a.displayName} 插件的示例信息面板。' }],
         },
       ],
+    });`);
+  }
+  if (a.features.webui === 'frame') {
+    body.push(`    // 登记一个自带前端的 WebUI 页面：webui/ 里的静态网页在宿主画的隔离框架里显示，只能经宿主调这里声明的数据源与
+    // 动作。出现在本插件详情里；登记随这次激活撤回
+    const items = ['示例条目一', '示例条目二', '示例条目三'];
+    const page = webui.definePage({
+      key: '${pageKey}',
+      title: '${a.displayName}',
+      // 宿主从这个模块往上找到插件包根，托管包根下 webui/ 里的文件
+      frame: { module: import.meta.url },
+      sources: {
+        items: { data: () => items },
+      },
+      actions: {
+        // destructive 的动作由宿主先弹确认框，框里列出这次的输入值
+        remove: {
+          label: '删除',
+          effect: 'destructive',
+          confirm: '从列表里删掉这一条？',
+          input: { item: { type: 'string', label: '条目', required: true } },
+          handler: ({ input }) => {
+            const at = items.indexOf(input.item);
+            if (at < 0) throw new Error(\`没有这一条：\${input.item}\`);
+            items.splice(at, 1);
+            // 数据变了：打开着的页面收到通知后重取
+            page.invalidate('items');
+            return \`已删除 \${input.item}\`;
+          },
+        },
+      },
     });`);
   }
 
@@ -394,8 +433,85 @@ npm install ${a.packageName}
 
 ${bullets ? `${bullets}\n` : ''}
 请打开 \`src/index.ts\` 按需修改。
+${a.features.webui === 'frame' ? FRAME_README : ''}`;
+}
+
+/** 选了自带前端时 README 多的一节 */
+const FRAME_README = `
+## 插件前端
+
+页面用自带前端：\`webui/\` 里是一份静态网页，宿主把它画在插件详情的页面里一个隔离的框架中。它与宿主页面不同源，
+拿不到登录状态，发不出网络请求、取不到外站资源，只能经宿主调 \`src/index.ts\` 里声明的数据源与动作。
+
+- \`webui/index.html\` 是入口，引用宿主提供的样式基线 \`/frames/_base/frame.css\`（跟随宿主的主题）；
+  \`webui/main.js\` 用宿主提供的助手 \`/frames/_base/frame.js\` 握手，取数据源 \`items\`、调动作 \`remove\`。都不用构建。
+- \`package.json\` 的 \`files\` 带上了 \`webui\`，发布时一起打包。
+- 只有一个文档：页面内的切换只用内存里的状态，不改地址；链接经 \`frame.open({ url })\` 请宿主打开；
+  确认交给动作的 \`effect\`；不受信的文本（群成员的昵称与消息、网页标题）用 \`textContent\` 插入，不当 HTML。
+- 页面宽度：插件页面跟着主区，会话面板约 340 像素，手机 390 像素，按容器宽度排版；尺寸用 rem，触屏可点区 44 像素。
+
+契约见 Aalis 文档 api-webui 的「插件前端」一节。
+`;
+
+/** 插件前端的入口：显示名按 HTML 文本写进标题 */
+function renderFrameHtml(a: Answers): string {
+  const title = a.displayName
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <link rel="stylesheet" href="/frames/_base/frame.css" />
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <p id="status">正在加载…</p>
+    <ul id="items"></ul>
+  </body>
+</html>
 `;
 }
+
+/** 插件前端的脚本：取数据源 items 列出条目，每条一个「删除」调动作 remove；插件通知数据变了就重取 */
+const FRAME_SCRIPT = `// 宿主在隔离的框架里显示这一页：经助手取数据源、调动作，链接经 frame.open 请宿主打开。
+// 条目当文本插入（textContent），不当 HTML
+import { connect } from '/frames/_base/frame.js';
+
+const frame = await connect();
+const list = document.querySelector('#items');
+const status = document.querySelector('#status');
+
+function show(error) {
+  // 用户在宿主的确认框里取消不算出错
+  if (error.code !== 'cancelled') status.textContent = error.message;
+}
+
+async function render() {
+  const items = await frame.data('items');
+  list.replaceChildren(
+    ...items.map(item => {
+      const row = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = item;
+      const remove = document.createElement('button');
+      remove.textContent = '删除';
+      remove.addEventListener('click', () => frame.action('remove', { item }).catch(show));
+      row.append(name, ' ', remove);
+      return row;
+    }),
+  );
+  status.textContent = items.length === 0 ? '列表空了' : '';
+}
+
+// 插件的数据变了，或宿主重连之后，重取
+frame.onInvalidate(() => render().catch(show));
+render().catch(show);
+`;
 
 // 仅在作为 CLI 直接执行时运行 main；被 import（单测纯函数）时不自动跑。
 // 用 realpath 比较两侧：经 .bin 软链调用时 argv[1] 是软链路径，直接比 import.meta.url 会不相等。

@@ -7,17 +7,16 @@
 
 .tabs-bar {
   display: flex;
-  flex-shrink: 0;
   align-items: center;
   gap: var(--space-1);
   padding-right: var(--space-2);
-  border-bottom: 1px solid var(--color-border);
 }
 
 /* 放不下时横向滚动 */
 .tabs-list {
   display: flex;
   flex: 1;
+  align-self: stretch;
   gap: var(--space-4);
   min-width: 0;
   padding: 0 var(--space-4);
@@ -25,10 +24,12 @@
   scrollbar-width: none;
 }
 
+/* 标签占满标签栏的高度，选中的下划线压在栏的下边线上 */
 .tabs-tab {
   position: relative;
   flex-shrink: 0;
-  padding: var(--space-3) 0;
+  align-self: stretch;
+  padding: 0;
   border: 0;
   font-size: var(--text-sm);
   line-height: var(--leading-sm);

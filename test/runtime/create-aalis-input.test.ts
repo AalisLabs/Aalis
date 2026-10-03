@@ -133,7 +133,7 @@ describe('positionalArgs（flag 取值不当位置参数）', () => {
 
 // ── create-aalis-plugin：生成的 src/index.ts ────────────────────
 describe('renderIndexTs：生成的入口', () => {
-  const answers = (features: { tool: boolean; command: boolean; webui: boolean }) => ({
+  const answers = (features: { tool: boolean; command: boolean; webui: false | 'declarative' | 'frame' }) => ({
     packageName: 'aalis-plugin-demo',
     displayName: '演示',
     features,
@@ -141,8 +141,9 @@ describe('renderIndexTs：生成的入口', () => {
   const COMBOS = [
     { tool: false, command: false, webui: false },
     { tool: true, command: false, webui: false },
-    { tool: true, command: true, webui: true },
-  ];
+    { tool: true, command: true, webui: 'declarative' },
+    { tool: false, command: false, webui: 'frame' },
+  ] as const;
 
   it('默认导出 definePlugin 的产物；勾了什么能力，uses 里就声明什么', () => {
     const bare = renderIndexTs(answers(COMBOS[0]));

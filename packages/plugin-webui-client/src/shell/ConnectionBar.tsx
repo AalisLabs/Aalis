@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { SERVICE_ABSENT, useConnection, useConnectionState } from '../connection';
 import './ConnectionBar.css';
 
-// 主区顶部的连接状态：会话连接或管理连接断开、重连中时出现，重连上写「已恢复」两秒后收起，平时是空的。
-// 会话服务不在（1013）不算断线，由会话区自己写明
+// 窗口顶部的连接状态（横跨图标栏与各栏）：会话连接或管理连接断开、重连中时出现，重连上写「已恢复」两秒后收起，
+// 平时是空的。会话服务不在（1013）不算断线，由会话区自己写明
 
 const RECOVERED_MS = 2_000;
 

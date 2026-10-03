@@ -1,4 +1,6 @@
 import {
+  type DeclarativePageView,
+  type FramePageView,
   HOST_PANEL_TABS,
   type HostPanelTab,
   type LayoutOperation,
@@ -9,10 +11,10 @@ import {
 } from '../../packages/api-webui/src/index.js';
 import type { FakeRequest } from './harness.js';
 
-// 声明式页面用例的页面表、布局记录与取数路径。页面声明是界面从 GET /api/pages 拿到的样子（函数已去掉）
+// 页面用例的页面表、布局记录与取数路径。页面声明是界面从 GET /api/pages 拿到的样子（函数已去掉）
 
 /** 计划任务页：带实例后缀（多实例插件），最外层一块概况、一张带详情的表与一组页面动作 */
-export const JOBS: PageView = {
+export const JOBS: DeclarativePageView = {
   instance: 'zz-jobs:night',
   key: 'jobs',
   title: '计划',
@@ -81,7 +83,7 @@ export const JOB_ROWS = [
 ];
 
 /** 带标签的页面：两个标签，第二个是关系图 */
-export const GRAPH: PageView = {
+export const GRAPH: DeclarativePageView = {
   instance: 'zz-graph',
   key: 'graph',
   title: '关系',
@@ -116,7 +118,7 @@ export const GRAPH: PageView = {
 };
 
 /** 设置里的一节：不能固定，不出现在 /p/ 下 */
-export const SETTINGS_PAGE: PageView = {
+export const SETTINGS_PAGE: DeclarativePageView = {
   instance: 'zz-auth',
   key: 'auth',
   title: '权限',
@@ -125,7 +127,7 @@ export const SETTINGS_PAGE: PageView = {
 };
 
 /** 会话面板：笔记，行动作删除 */
-export const NOTES: PageView = {
+export const NOTES: DeclarativePageView = {
   instance: 'zz-notes',
   key: 'notes',
   title: '笔记',
@@ -144,12 +146,51 @@ export const NOTES: PageView = {
 };
 
 /** 另一个会话面板：只在一部分会话适用 */
-export const FILES: PageView = {
+export const FILES: DeclarativePageView = {
   instance: 'zz-files',
   key: 'files',
   title: '上传的文件',
   placement: 'session',
   content: [{ type: 'table', id: 'files', rowKey: 'name', columns: [{ key: 'name', label: '名称', primary: true }] }],
+};
+
+/** 插件前端：插件页面，一个 write 动作与一个带输入的 destructive 动作，没申请宿主数据能力 */
+export const BOARD: FramePageView = {
+  instance: 'zz-board',
+  key: 'board',
+  title: '看板',
+  icon: 'layout-grid',
+  placement: 'plugin',
+  frame: { src: '/frames/tok-board/index.html', host: [] },
+  actions: {
+    archive: { label: '归档', effect: 'write', input: { id: { type: 'string', label: '卡片', required: true } } },
+    purge: {
+      label: '清空',
+      effect: 'destructive',
+      confirm: '清空后不能恢复。',
+      input: {
+        list: {
+          type: 'select',
+          label: '列表',
+          options: [
+            { label: '待办', value: 'todo' },
+            { label: '完成', value: 'done' },
+          ],
+        },
+        note: { type: 'string', label: '备注' },
+      },
+    },
+  },
+};
+
+/** 插件前端：会话面板，申请了两种宿主数据能力 */
+export const ROSTER: FramePageView = {
+  instance: 'zz-roster',
+  key: 'roster',
+  title: '子会话',
+  placement: 'session',
+  frame: { src: '/frames/tok-roster/index.html', host: ['sessions:read', 'turn:abort'] },
+  actions: { mark: { label: '标记', effect: 'write' } },
 };
 
 export const refOf = (page: PageView): PageRef => ({ instance: page.instance, pageKey: page.key });

@@ -1,20 +1,22 @@
 import type { PageRef, PageView } from '@aalis/api-webui';
 import { CircleAlert, Pin, RotateCw } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useReducer, useState } from 'react';
 import { useParams } from 'react-router';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { useToast } from '../components/Toast';
+import { FramePage } from '../frame/FramePage';
 import { paths } from '../routes';
 import { Main } from '../shell/Shell';
 import { PageContent } from './PageContent';
 import { instanceName, refOf, sameRef, usePages } from './registry';
-import { PageScope, usePageVersion } from './scope';
+import { PageScope } from './scope';
 
-// 打开一个页面：标题栏写标题（多实例插件另写实例名）与手动刷新，位置为插件详情的页面另有「固定」。页面取数在打开时、
-// 手动刷新与管理连接重连后整页重取。地址里的页面不在页面表里（所属插件停用）时显示占位，页面重新登记后自动回到原页
+// 打开一个页面：标题栏写标题（多实例插件另写实例名）与手动刷新，位置为插件详情的页面另有「固定」。声明式页面在打开时、
+// 手动刷新与管理连接重连后整页重取；插件前端的手动刷新是重新挂载。地址里的页面不在页面表里（所属插件停用）时显示占位，
+// 页面重新登记后自动回到原页
 
 export function PluginPage() {
   const { instance, pageKey } = useParams() as { instance: string; pageKey: string };
@@ -54,7 +56,7 @@ function Missing({ error, retry, loading }: { error?: Error; retry(): void; load
 }
 
 function OpenPage({ page }: { page: PageView }) {
-  const [version, refresh] = usePageVersion();
+  const [reloads, reload] = useReducer((n: number) => n + 1, 0);
   return (
     <Panel
       title={page.title}
@@ -62,14 +64,18 @@ function OpenPage({ page }: { page: PageView }) {
       back={paths.home}
       actions={
         <>
-          <IconButton icon={RotateCw} label="刷新" onClick={refresh} />
+          <IconButton icon={RotateCw} label="刷新" onClick={reload} />
           <PinButton page={page} />
         </>
       }
     >
-      <PageScope page={page} version={version}>
-        <PageContent page={page} />
-      </PageScope>
+      {page.frame ? (
+        <FramePage page={page} reloads={reloads} reload={reload} />
+      ) : (
+        <PageScope page={page} version={reloads}>
+          <PageContent page={page} />
+        </PageScope>
+      )}
     </Panel>
   );
 }

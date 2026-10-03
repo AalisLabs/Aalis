@@ -36,7 +36,7 @@ export function Panel({ title, icon: Icon, meta, actions, back, banner, footer, 
   const titleId = useId();
   return (
     <section className="panel" aria-labelledby={titleId}>
-      <header className="panel-header">
+      <header className="header-bar panel-header">
         {back !== undefined && <Back to={back} />}
         {Icon && <Icon aria-hidden />}
         <h2 id={titleId} className="panel-title">

@@ -4,10 +4,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import { type Harness, installDialog, lists, renderApp, summary } from './harness.js';
+import { snapshot } from './items.js';
 
 // ════════════════════════════════════════════════════════════
-// 外壳：图标栏、左栏、主区、右侧面板。地址决定手机上的层级；常驻宽度下收起状态存本浏览器，覆盖式宽度下是抽屉；
-// 快捷键按平台取键；连接断开、重连中、刚恢复时主区顶部有横条；Cmd/Ctrl+K 搜索会话
+// 外壳：图标栏、左栏、主区、右侧面板。地址决定手机上的层级；常驻宽度下收起状态与栏宽存本浏览器，覆盖式宽度下是抽屉；
+// 两侧的分隔条可以拖动、按方向键调宽，双击恢复默认，拖到下限以下松手即收起；快捷键按平台取键；
+// 连接断开、重连中、刚恢复时顶部有横条；Cmd/Ctrl+K 搜索会话
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -38,6 +40,12 @@ const handlers = {
 };
 
 const shell = () => document.querySelector('[data-level]') as HTMLElement;
+/** 存在本浏览器的两侧状态 */
+const stored = () => JSON.parse(localStorage.getItem('aalis.panels') ?? 'null');
+/** 一侧此刻的栏宽变量：拖动中写在那一栏上，平时写在外壳上（jsdom 不排版，栏宽只看它） */
+const width = (side: 'left' | 'right') =>
+  document.querySelector<HTMLElement>(`.shell-${side}`)?.style.getPropertyValue(`--${side}-w`) ||
+  shell().style.getPropertyValue(`--${side}-w`);
 const press = (init: KeyboardEventInit) => {
   const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
   act(() => {
@@ -82,7 +90,7 @@ describe('布局与层级', () => {
     fireEvent.click(sessions);
     expect(shell().dataset.left).toBe('collapsed');
     expect(app.where()).toBe('/');
-    expect(JSON.parse(localStorage.getItem('aalis.panels') ?? '')).toEqual({ left: false, right: true });
+    expect(stored()).toEqual({ left: { open: false }, right: { open: true } });
     app.close();
 
     app = await renderApp('/', handlers);
@@ -91,12 +99,31 @@ describe('布局与层级', () => {
     expect(shell().dataset.left).toBeUndefined();
   });
 
-  it('存坏了的收起状态按默认（两侧都展开）', async () => {
+  it('存坏了的记录按默认：两侧都展开、默认宽度；超出上下限的宽度按上下限', async () => {
     stubViewport(1440);
     localStorage.setItem('aalis.panels', JSON.stringify({ left: 'no' }));
     app = await renderApp('/', handlers);
     expect(shell().dataset.left).toBeUndefined();
     expect(shell().dataset.right).toBeUndefined();
+    expect(width('left')).toBe('16.5rem');
+    expect(width('right')).toBe('22.5rem');
+    app.close();
+
+    localStorage.setItem(
+      'aalis.panels',
+      JSON.stringify({ left: { open: false, width: 99 }, right: { open: 'no', width: 'wide' } }),
+    );
+    app = await renderApp('/', handlers);
+    expect(shell().dataset.left).toBe('collapsed');
+    expect(width('left')).toBe('25rem');
+    expect(shell().dataset.right).toBeUndefined();
+    expect(width('right')).toBe('22.5rem');
+    app.close();
+
+    localStorage.setItem('aalis.panels', JSON.stringify({ left: { open: true, width: 1 }, right: { width: null } }));
+    app = await renderApp('/', handlers);
+    expect(width('left')).toBe('13.75rem');
+    expect(width('right')).toBe('22.5rem');
   });
 
   it('平板宽度下左栏是覆盖式抽屉：打开时焦点进抽屉；Esc、点遮罩、点了里面的链接都会关上，收起状态不变', async () => {
@@ -183,7 +210,7 @@ describe('布局与层级', () => {
     app = await renderApp('/s/a', handlers);
     press({ key: '∫', code: 'KeyB', metaKey: true, altKey: true });
     expect(shell().dataset.right).toBe('collapsed');
-    expect(JSON.parse(localStorage.getItem('aalis.panels') ?? '')).toEqual({ left: true, right: false });
+    expect(stored()).toEqual({ left: { open: true }, right: { open: false } });
   });
 
   it('⇧⌘O 去新会话；浏览器保留的键不拦', async () => {
@@ -194,6 +221,143 @@ describe('布局与层级', () => {
     for (const letter of ['n', 't', 'w']) {
       expect(press({ key: letter, code: `Key${letter.toUpperCase()}`, metaKey: true }).defaultPrevented).toBe(false);
     }
+  });
+});
+
+describe('两侧栏宽', () => {
+  // 根字号 16px；jsdom 没有 PointerEvent，指针事件用 MouseEvent 发
+  const LEFT = '调整左栏宽度';
+  const RIGHT = '调整右侧面板宽度';
+  const sessionHandlers = {
+    ...handlers,
+    'session/subscribe': () => snapshot([]),
+    'session/config/get': () => ({ items: [] }),
+  };
+  const separator = (name: string) => screen.getByRole('separator', { name });
+  const values = (target: HTMLElement) =>
+    ['aria-valuenow', 'aria-valuemin', 'aria-valuemax'].map(name => Number(target.getAttribute(name)));
+  const pointer = (target: Element, type: string, clientX: number) =>
+    fireEvent(target, new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX }));
+  /** 在 from 处按住分隔条，依次移到 moves 的各处，在最后一处松手 */
+  const drag = (target: Element, from: number, ...moves: number[]) => {
+    pointer(target, 'pointerdown', from);
+    for (const x of moves) pointer(target, 'pointermove', x);
+    pointer(target, 'pointerup', moves.at(-1) ?? from);
+  };
+
+  beforeEach(() => {
+    stubViewport(1440);
+    document.documentElement.style.fontSize = '16px';
+    Element.prototype.setPointerCapture = () => {};
+  });
+
+  afterEach(() => {
+    document.documentElement.style.fontSize = '';
+    delete (Element.prototype as Partial<Element>).setPointerCapture;
+  });
+
+  it('方向键按步长调宽、到上下限为止，Home、End 到上下限；调过的宽度与收起状态存在同一条记录里', async () => {
+    app = await renderApp('/', handlers);
+    const left = separator(LEFT);
+    expect(left.getAttribute('aria-orientation')).toBe('vertical');
+    expect(left.tabIndex).toBe(0);
+    expect(values(left)).toEqual([16.5, 13.75, 25]);
+    expect(width('left')).toBe('16.5rem');
+
+    fireEvent.keyDown(left, { key: 'ArrowRight' });
+    expect(values(left)[0]).toBe(17.5);
+    expect(width('left')).toBe('17.5rem');
+    expect(stored()).toEqual({ left: { open: true, width: 17.5 }, right: { open: true } });
+
+    fireEvent.keyDown(left, { key: 'ArrowLeft' });
+    fireEvent.keyDown(left, { key: 'ArrowLeft' });
+    expect(width('left')).toBe('15.5rem');
+    fireEvent.keyDown(left, { key: 'ArrowLeft' });
+    fireEvent.keyDown(left, { key: 'ArrowLeft' });
+    expect(width('left')).toBe('13.75rem');
+    expect(shell().dataset.left).toBeUndefined();
+    fireEvent.keyDown(left, { key: 'End' });
+    expect(width('left')).toBe('25rem');
+    fireEvent.keyDown(left, { key: 'ArrowRight' });
+    expect(width('left')).toBe('25rem');
+    fireEvent.keyDown(left, { key: 'Home' });
+    expect(values(left)[0]).toBe(13.75);
+    expect(stored()).toEqual({ left: { open: true, width: 13.75 }, right: { open: true } });
+  });
+
+  it('右侧面板的分隔条往左是加宽：方向键与拖动都一样', async () => {
+    app = await renderApp('/s/s1', sessionHandlers);
+    const right = separator(RIGHT);
+    expect(values(right)).toEqual([22.5, 18.75, 37.5]);
+    fireEvent.keyDown(right, { key: 'ArrowLeft' });
+    expect(width('right')).toBe('23.5rem');
+    drag(right, 1000, 960, 920);
+    expect(width('right')).toBe('28.5rem');
+    expect(stored()).toEqual({ left: { open: true }, right: { open: true, width: 28.5 } });
+  });
+
+  it('双击分隔条恢复默认宽度，记录里不再带宽度', async () => {
+    localStorage.setItem('aalis.panels', JSON.stringify({ left: { open: true, width: 20 }, right: { open: true } }));
+    app = await renderApp('/', handlers);
+    expect(width('left')).toBe('20rem');
+    fireEvent.doubleClick(separator(LEFT));
+    expect(width('left')).toBe('16.5rem');
+    expect(values(separator(LEFT))[0]).toBe(16.5);
+    expect(stored()).toEqual({ left: { open: true }, right: { open: true } });
+  });
+
+  it('拖动：栏宽跟着指针变、到上限为止，松手才记下；没有移动的点按与被打断的拖动都不改', async () => {
+    app = await renderApp('/', handlers);
+    const left = separator(LEFT);
+    pointer(left, 'pointerdown', 300);
+    pointer(left, 'pointermove', 340);
+    expect(width('left')).toBe('19rem');
+    expect(stored()).toBeNull();
+    pointer(left, 'pointerup', 340);
+    expect(values(left)[0]).toBe(19);
+    expect(stored()).toEqual({ left: { open: true, width: 19 }, right: { open: true } });
+
+    drag(left, 300, 900);
+    expect(width('left')).toBe('25rem');
+    expect(stored().left).toEqual({ open: true, width: 25 });
+
+    fireEvent.doubleClick(left);
+    drag(left, 300);
+    expect(stored().left).toEqual({ open: true });
+
+    pointer(left, 'pointerdown', 300);
+    pointer(left, 'pointermove', 360);
+    expect(width('left')).toBe('20.25rem');
+    pointer(left, 'pointercancel', 360);
+    expect(width('left')).toBe('16.5rem');
+    pointer(left, 'pointermove', 400);
+    expect(width('left')).toBe('16.5rem');
+    expect(stored().left).toEqual({ open: true });
+  });
+
+  it('拖到下限以下松手即收起，与快捷键收起是同一个状态；再展开回到拖动前的宽度；恰好拖到下限不收起', async () => {
+    localStorage.setItem('aalis.panels', JSON.stringify({ left: { open: true, width: 20 }, right: { open: true } }));
+    app = await renderApp('/s/s1', sessionHandlers);
+    const left = separator(LEFT);
+    pointer(left, 'pointerdown', 300);
+    pointer(left, 'pointermove', 100);
+    expect(width('left')).toBe('13.75rem');
+    expect(shell().dataset.left).toBeUndefined();
+    pointer(left, 'pointerup', 100);
+    expect(shell().dataset.left).toBe('collapsed');
+    expect(stored()).toEqual({ left: { open: false, width: 20 }, right: { open: true } });
+
+    press({ key: 'b', code: 'KeyB', metaKey: true });
+    expect(shell().dataset.left).toBeUndefined();
+    expect(width('left')).toBe('20rem');
+
+    drag(left, 300, 200);
+    expect(shell().dataset.left).toBeUndefined();
+    expect(width('left')).toBe('13.75rem');
+
+    drag(separator(RIGHT), 1000, 1400);
+    expect(shell().dataset.right).toBe('collapsed');
+    expect(stored().right).toEqual({ open: false });
   });
 });
 

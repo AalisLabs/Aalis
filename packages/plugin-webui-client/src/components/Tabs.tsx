@@ -46,7 +46,7 @@ export function Tabs({ label, items, value, onChange, onClose, trailing, childre
 
   return (
     <div className="tabs">
-      <div className="tabs-bar">
+      <div className="header-bar tabs-bar">
         <div role="tablist" aria-label={label} className="tabs-list">
           {items.map((item, index) => {
             const selected = index === selectedIndex;

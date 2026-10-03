@@ -1,14 +1,14 @@
-# api-webui — WebUI 服务、声明式页面与管理面契约
+# api-webui — WebUI 服务、页面与管理面契约
 
 **包名**: `@aalis/api-webui`  
-**源码**: `packages/api-webui/src/index.ts`（服务、登记门面、管理面推送）、`packages/api-webui/src/page.ts`（声明式页面与提示）、`packages/api-webui/src/theme.ts`（主题）  
+**源码**: `packages/api-webui/src/index.ts`（服务、登记门面、管理面推送）、`packages/api-webui/src/page.ts`（页面与提示）、`packages/api-webui/src/frame.ts`（插件前端的消息通道）、`packages/api-webui/frame/`（插件前端的助手与样式基线，浏览器里运行）、`packages/api-webui/src/theme.ts`（主题）  
 **实现**: `@aalis/plugin-webui-server`（+ `@aalis/plugin-webui-client` 提供前端）
 
 ## 概述
 
-定义 WebUI 后台服务接口、按激活绑定的登记门面、声明式页面与提示、管理面推送的事件类型，以及主题的令牌表与主题文件格式。契约包是 MIT：第三方前端只依赖它，照本页实现页面的渲染、调用与布局记录。本页的页面契约与路由先标 experimental。
+定义 WebUI 后台服务接口、按激活绑定的登记门面、页面与提示、插件前端的消息通道、管理面推送的事件类型，以及主题的令牌表与主题文件格式。契约包是 MIT：第三方前端只依赖它，照本页实现页面的渲染、调用与布局记录。本页的页面契约、消息通道与路由先标 experimental。
 
-插件不带前端代码，页面只交声明。插件在 `apply` 里经 `webuiServer` 的 `definePage` 一次交出组件、数据源与动作的处理函数，经 `notify` 发提示；样式、窄屏变形、确认框与输入表单都由宿主统一画。登记归属这次激活，插件停用时同一拍撤回。
+页面默认声明式，需要自绘时用插件前端（见下文「插件前端」）。声明式页面只交声明：插件在 `apply` 里经 `webuiServer` 的 `definePage` 一次交出组件、数据源与动作的处理函数，经 `notify` 发提示；样式、窄屏变形、确认框与输入表单都由宿主统一画。登记归属这次激活，插件停用时同一拍撤回。
 
 `GET /api/plugins` 的 `uses` 是插件 `uses` 声明的完整快照，每项为 `{ key, service, kind }`，`key` 保留 `apply` 参数名；插件页展开后按 `kind` 标为「必需」或「可选」。core 内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）和宿主服务（`app` / `plugins` / `host-config` 等）由根激活登记，与第三方服务一样是普通提供者：`/api/services` 里以「宿主」为提供者列出；插件声明了它们同样要经过激活闸，只是这些服务在加载插件前已就绪。`requiredServices` / `optionalServices` 是 `uses` 按是否包 `optional()` 拆出的服务名，包含 core 内置服务。`capabilities` 是工具和指令的敏感可见性标记。经 `services` 动态查询获得的服务不在声明列表中。
 
@@ -34,9 +34,11 @@ interface WebUIService {
 
 ```ts
 interface BoundWebui extends ServiceRef<WebUIService> {
-  definePage<const P extends PagePlacement = 'plugin', const S extends Record<string, unknown> = Record<never, never>>(
-    page: PageDefinition<P, S, NoInfer<keyof S & string>>,
-  ): PageHandle;
+  definePage<
+    const P extends PagePlacement = 'plugin',
+    const S extends Record<string, unknown> = Record<never, never>,
+    const R extends Record<string, unknown> = Record<never, never>,
+  >(page: PageDefinition<P, S, NoInfer<keyof S & string>, R>): PageHandle;
   notify(notice: Notice): NoticeHandle;
 }
 
@@ -126,8 +128,10 @@ export default definePlugin({
 
 ### 页面
 
+`PageDefinition` 是声明式页面（`DeclarativePageDefinition`，写 `content`）与插件前端页面（`FramePageDefinition`，写 `frame`，见下文「插件前端」）的联合，二者只能写一个。声明式页面：
+
 ```ts
-interface PageDefinition<P, S, A> {
+interface DeclarativePageDefinition<P, S, A> {
   key: string;        // 本插件实例内唯一
   title: string;
   icon?: string;      // lucide 图标名（kebab-case），界面不认识的换成通用图标
@@ -232,6 +236,200 @@ webui-server 登记时整份核一遍，不过就不登记并记一条错误日�
 
 宿主统一变形，插件不写任何窄屏专用的东西：表格只显示标了 `primary` 的列，动作收进「更多」；带详情的表格与关系图变成两级，先列表、点进去看详情；标签页横向滚动；关系图可以缩放查看；表单变成单列。手机上确认框、选择器与动作的输入表单从底部弹出。
 
+## 插件前端
+
+声明式页面是默认。声明式表达不了的页面，插件可以自带一份静态网页（插件前端）：由 webui-server 托管，宿主把它画进 iframe，与宿主页面不同源。它拿不到登录状态，发不出网络请求、取不到外站资源；跳转、WebRTC 与 preconnect 仍可能把数据带出去（见下文「托管与隔离」的残余）。要数据与执行动作只能经消息通道请宿主代办，且只能调这一页声明过的数据源与动作，走与声明式页面同一道服务端闸门。
+
+位置只有插件页面（`plugin`）与会话面板（`session`），设置不收插件前端。
+
+### 声明
+
+```ts
+webui.definePage({
+  key: 'board',
+  title: '看板',
+  icon: 'layout-grid',
+  frame: {
+    module: import.meta.url,   // 声明这个页面的模块地址
+    entry: 'index.html',       // 包根下 webui/ 里的入口，不写为 index.html
+    host: ['sessions:read'],   // 申请的宿主数据能力，不写就没有
+  },
+  sources: {
+    cards: { data: () => listCards() },
+    card: {
+      input: { id: { type: 'string', label: '卡片', required: true } },
+      data: ({ input }) => getCard(input.id),
+    },
+  },
+  actions: {
+    archive: {
+      label: '归档',
+      effect: 'destructive',
+      input: { id: { type: 'string', label: '卡片', required: true } },
+      handler: ({ input }) => archive(input.id),
+    },
+  },
+});
+```
+
+- **`frame.module`**：写 `import.meta.url`。webui-server 从这个文件所在目录往上找最近一个带 `name` 字段的 `package.json`（双格式构建放在 `dist/esm/` 里、只写 `type` 的那种跳过），它的 `name` 要等于插件名（实例 id 第一个「:」之前的部分），那一层就是插件包根。只托管包根下 `webui/` 目录里的文件，插件不能指定别的目录。
+- **`frame.entry`**：`webui/` 下以 `.html` 结尾的相对路径，不以 `/` 开头，各段非空、不以点开头。
+- **`frame.host`**：申请的宿主数据能力，从词表里选、不重复，见下文「宿主数据能力」。
+- **`sources`**：只给插件前端。每个数据源有可选的 `input`（写法与校验同动作的 `input`）与 `data({ input, ctx })`，`data` 返回能转成 JSON 的值。
+- **`actions`**：与声明式的动作同一个定义，只是不收 `row`：插件前端里没有宿主画的表格行，要指定对象就放进 `input`。`destructive` 的由宿主弹确认框。
+- `applies`、`order`、`icon`、`ctx` 与声明式相同；`invalidate(name?, sessionId?)` 的第一个参数是数据源名。
+- 同时写 `content` 与 `frame` 或两样都不写、插件前端写 `placement: 'settings'`、动作写 `row`、`host` 写词表之外的名字，都在编译期报错。
+
+插件包的样子（`package.json` 的 `files` 里要带上 `webui`）：
+
+```text
+<包根>/package.json      "files" 里加上 "webui"
+<包根>/webui/index.html  入口
+<包根>/webui/…           构建好的脚本、样式、图片、字体
+```
+
+插件前端只有一个文档，资源用相对路径引用；页面内的切换只用内存里的状态，不改地址。
+
+**登记时校验：** `content` 与 `frame` 恰好一个；`frame` 只认 `module`、`entry`、`host`；位置是 `plugin` 或 `session`；`host` 都在词表里、不重复；数据源的名字非空、各有 `data` 函数、`input` 是合法的字段表；动作不带 `row`；数据源名与动作名不超过 `FRAME_NAME_MAX_LENGTH`（128）个字符，更长的名字插件前端发不出来；`module` 是 `file:` 地址、找得到名字相符的包根、`webui/` 是目录、入口文件存在且按 realpath 落在 `webui/` 之内。不认识的字段照旧一律拒收。不过就不登记，记一条错误日志写明原因。
+
+### 界面收到的样子
+
+`GET /api/pages` 里的插件前端页面（`FramePageView`）不带 `content` 与数据源，带：
+
+- `frame: { src, host }`：`src` 是宿主签发的框架地址 `/frames/<token>/<入口>`，`host` 是申请的能力；
+- `actions`：与声明式相同的 `ActionView`，宿主据它决定确认框。
+
+不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里。数据源与动作走下文「页面与布局的路由」的两条路由：数据源名放在 `componentId` 的位置，`input` 以 JSON 字符串放在查询参数里；动作的请求体不收 `rowKey`。数据源返回不能转成 JSON 的值时回 500 并记告警。
+
+### 托管与隔离
+
+- `GET /frames/:token/<路径>`：插件前端的文件。`token` 是页面登记时随机生成的 128 位标识（base64url），页面撤回或重新登记后旧的回 404；地址变了界面就重新挂载，插件升级后不会读到旧缓存。不要登录：`token` 只出现在要登录的 `GET /api/pages` 里，文件是随包发布的代码，不含数据。
+- `GET /frames/_base/<路径>`：宿主给框架的公用文件，随本包发布，只有助手 `frame.js` 与样式基线 `frame.css`（见下文「助手」「样式基线」）。
+- 只收 `GET` 与 `HEAD`，别的方法回 405。扩展名只有 `html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`；文件要按 realpath 落在 `webui/` 之内，指向外面的符号链接也算越界；点开头的段、目录与其余不合的一律 404，不回目录列表、不发 3xx。
+- 响应头：框架 CSP、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *`（框架是不透明来源，模块脚本连取自己目录下的文件也走 CORS）、`Cache-Control: no-cache`（用 ETag 再验证）。
+- 框架 CSP，`<Host>` 是请求的 Host 去掉默认端口 `:80`、`:443`：
+
+  ```text
+  sandbox allow-scripts; default-src 'none'; script-src <Host>/frames/<token>/ <Host>/frames/_base/; style-src <Host>/frames/<token>/ <Host>/frames/_base/ 'unsafe-inline'; img-src <Host>/frames/<token>/ data: blob:; font-src <Host>/frames/<token>/ data:; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors <Host>
+  ```
+
+  来源写成带路径、不带协议的来源：只放行这一页自己的目录，http 访问与经 TLS 代理的 https 访问都成立。Host 只收主机名或 IPv4 地址加可选端口；IPv6 字面地址写不进 CSP 的来源，与带非法字符的一样回 400。经反向代理访问时，代理要把原始的 Host 转过来。
+- 宿主的 iframe 带 `sandbox`，值是 `FRAME_SANDBOX`（`'allow-scripts'`），与 CSP 的 `sandbox` 指令同一个常量：不给同源、表单、弹窗、原生对话框、顶层跳转与下载。框架读不到 cookie 与浏览器存储，碰不到宿主页面；发不出 fetch、XHR、WebSocket 一类请求，取不到外站的脚本、样式、图片。别人把框架地址当顶层页面打开，它照样是不透明来源。
+- **残余：** 跳转、WebRTC 与 preconnect 仍可能把数据带出去。WebRTC 能连任意主机的 STUN、TURN（CSP 的 `webrtc` 指令，当前的 Chromium 不认）。`<link rel="preconnect">`（写在标记里或由脚本插入）不受 CSP 约束，本地 Chrome 实测框架里的 preconnect 能向任意主机建立 TCP 连接；主机名的 DNS 解析也可能把数据带出去，`X-DNS-Prefetch-Control: off` 不能保证拦住。框架能让自己跳到别的地址：沙箱挡不住框架自我导航，注入的 `<meta http-equiv="refresh">` 不需要脚本；宿主在它离开时立即卸载（助手在 `pagehide` 时发 `leaving`，第二次 `load` 兜底），但跳到不返回页面的地址（例如回 204）时察觉不到，新页面开始显示到卸载之间也有一小段。
+
+### 消息通道
+
+宿主与框架之间只用 `postMessage`。框架先在窗口上发 `hello`，宿主核过来源窗口、随机数与主版本，经 `MessageChannel` 交给框架一个专用端口，之后的消息都走这个端口。版本常量 `FRAME_PROTOCOL_VERSION`（`'1.0'`），写法与 `SESSION_PROTOCOL_VERSION` 相同；第一版标 experimental，只做加法，加字段、加消息升次版本。实例、页面与会话面板的会话一律取宿主挂载时的值，消息里没有这些字段，带了就是多余的键。
+
+**框架 → 宿主**（请求带 `id`：框架自选的整数，在途的不重复；宿主回 `result`）
+
+| type | 字段 | 成功时的 `value` |
+|---|---|---|
+| `hello` | `protocol`、`nonce` | 窗口消息，宿主回 `init` 与端口 |
+| `data` | `id`、`source`、`input?` | 数据源的值 |
+| `action` | `id`、`action`、`input?` | 处理函数给的一句话，或 `null` |
+| `open` | `id`、`target`：`{ url }`（只许 http、https）或 `{ session }` | `null` |
+| `sessions.list` | `id`、`parentId?`、`archived?`、`cursor?`、`limit?` | `{ sessions, nextCursor? }` |
+| `turn.abort` | `id`、`sessionId`、`turnId?` | `null` |
+| `leaving` | — | 框架文档正在被替换，不回 |
+
+**宿主 → 框架**
+
+| type | 字段 | 什么时候 |
+|---|---|---|
+| `init` | `protocol`、`experimental: true`、`sessionId?`（会话面板）、`theme` | 握手时随端口交出 |
+| `result` | `id`，以及 `ok: true, value` 或 `ok: false, error: { code, message }` | 回每个请求 |
+| `theme` | `kind`（`dark`、`light`）、`tokens`（主题令牌名到值） | 主题切换，或跟随系统时深浅变了 |
+| `invalidate` | `source?` | 数据变了；带 `source` 时只重取这个数据源。会话或管理连接重连后宿主推一次不带 `source` 的，意思是全部重取（含会话列表） |
+| `sessions.changed` | `upserts`、`removes` | 申请了 `sessions:read` 的框架挂载起就收 |
+
+**错误码**（`FrameErrorCode`，封闭集合）：
+
+| code | 含义 |
+|---|---|
+| `invalid` | 消息或输入不对；转发的 HTTP 400、414、431 |
+| `denied` | 没申请的能力；这个框架已开着一个宿主对话框时再请求外链或要确认的动作 |
+| `not-found` | 页面、会话、数据源或动作不在；HTTP 404 |
+| `busy` | 超出在途上限 |
+| `cancelled` | 用户在宿主的确认框或外链对话框里取消 |
+| `unavailable` | 会话服务不在、连接断开；HTTP 503 与连不上 |
+| `failed` | 插件的处理函数或宿主服务出错（其余 4xx 与 5xx），`message` 写原因 |
+
+**校验函数：** `parseFrameHello(value)` 与 `parseFrameMessage(value)` 是不碰 DOM、不依赖 zod 的纯函数，宿主前端与第三方宿主前端共用，换前端时规则不漂。它们核类型标记、字段类型、多余的键、字符串长度（名字 `FRAME_NAME_MAX_LENGTH` 128 个字符，会话 id、回合 id、游标与随机数 `FRAME_ID_MAX_LENGTH` 256 个，地址 `FRAME_URL_MAX_LENGTH` 2048 个）、`input` 是对象、`open` 的地址是 http 或 https 的绝对地址，回 `{ ok: true, message }` 或 `{ ok: false, id?, problem }`：认得出请求 `id` 时一并给出，宿主据它回 `invalid`、不往下走。不合格的 `hello` 一律忽略。来源窗口、随机数、主版本，以及外链是否与宿主同源，由宿主另核。
+
+**宿主的处理规则：** 上限、对话框与卸载涉及界面与计时，不在校验函数里，各宿主前端照下面实现（默认前端的写法见 [plugin-webui-client](../plugins/plugin-webui-client.md) 的「插件前端」一节）：
+
+- 握手只认一次：来源窗口是这个框架、来源是 `null`、随机数对得上的第一个 `hello`。握手完成前框架不可见；第一次 `load` 之后 10 秒内没有合格的 `hello` 算没有响应。
+- 在途请求最多 8 个，超了回 `busy`；每秒最多收 200 条消息，超了卸载框架。
+- 动作按这一页 `PageView` 的 `actions` 找，找不到回 `not-found`、不发请求；`destructive` 先由宿主弹确认框，框里按输入字段列出这次的值。外链经宿主的对话框，由用户点真实的链接打开。宿主对话框同一个框架同一时刻只一个，开着时再请求的回 `denied`；确认不默认聚焦，对话框显示后 500 毫秒内不接受确认（按点按事件发生的时刻 `timeStamp` 算，主线程忙时排队晚到的点按也拦下）；连续被取消 3 次就卸载框架。经过确认框的动作由宿主另用 Toast 显示结果，其余的结果只回给框架。
+- 收到 `leaving` 或第二次 `load` 立即卸载。卸载时关端口、撤监听、在途的结果不再转回、关掉它弹出的对话框、清计时器。
+
+### 宿主数据能力
+
+插件前端可以在 `frame.host` 里申请读宿主数据、做通用会话动作的能力。词表 `FRAME_HOST_CAPABILITIES` 是封闭集合，按加法扩；不申请就没有。宿主照声明转发，走的是宿主自己的界面用的同一条会话协议与同一道服务端闸门，不为插件前端另开接口。申请了的框架能列任何会话、停任何会话的回合，与 owner 自己的界面相同。
+
+| 能力 | 显示为 | 允许的请求与推送 | 经哪条现有协议 |
+|---|---|---|---|
+| `sessions:read` | 读会话树与状态 | `sessions.list`；挂载起推 `sessions.changed` | 会话协议 `sessions/list`（只透传 `parentId`、`archived`、`cursor`、`limit`，回包去掉 `groups`）；`sessions.changed` 取自宿主已有的 `sessions/changed` 订阅，去掉 `groups` |
+| `turn:abort` | 停止会话的回合 | `turn.abort` | 会话协议 `turn/abort` |
+
+能力表 `FRAME_REQUIRED_CAPABILITY` 给出每种请求与推送要的能力（`data`、`action`、`open` 为 `null`，不要能力）。宿主转发请求前按页面的 `frame.host` 核，没申请的回 `denied`；推送只发给申请了的框架。读会话的时间线、应答审批、发消息、改设置、建删会话与文件媒体都不给。
+
+### 助手
+
+`GET /frames/_base/frame.js` 是给插件前端用的浏览器 ES 模块，源码在本包的 `frame/`，按浏览器环境单独编译，与本包同版本发布，由 webui-server 托管。插件前端直接导入，不用构建：
+
+```js
+import { connect } from '/frames/_base/frame.js';
+
+const frame = await connect();
+const cards = await frame.data('cards');
+frame.onInvalidate(source => { /* 重取 source 这个数据源；没带 source 时全部重取 */ });
+```
+
+`connect()` 给出的连接（类型 `FrameClient`，从 `@aalis/api-webui` 导入）：
+
+| 成员 | 做什么 |
+|---|---|
+| `sessionId` | 会话面板挂在哪个会话上；插件页面没有 |
+| `data(source, input?)` | 取这一页一个数据源的数据 |
+| `action(name, input?)` | 调这一页的一个动作，回处理函数给的一句话或 `null`；`destructive` 的由宿主先弹确认框 |
+| `open({ url })`、`open({ session })` | 请宿主打开外站地址（经宿主的对话框，由用户点开）或应用内的会话 |
+| `onInvalidate(listener)` | 数据变了：带数据源名时只重取它，不带时全部重取。回退订 |
+| `listSessions(params?)`、`onSessionsChanged(listener)` | 列会话、收会话列表的增量（要 `sessions:read`） |
+| `abortTurn({ sessionId, turnId? })` | 停止一个会话的回合（要 `turn:abort`） |
+
+- 请求失败时抛出 `Error`，带 `code`（上文的错误码）。用户在宿主的确认框里取消是 `cancelled`，不算出错。
+- 握手：从地址片段读出随机数发 `hello`，片段不清（清片段会往会话历史里加条目）；只认来自 `window.parent`、带一个端口的第一个 `init`，之后只用这个端口；10 秒等不到 `init`，或 `init` 里的 `theme` 不是带 `tokens` 的对象时，`connect()` 报错。`connect()` 调多次是同一个连接。
+- 主题：收到 `init` 的同一拍把主题令牌写到根元素的内联样式上，设 `data-theme`（`dark` 或 `light`）与 `color-scheme`，收到 `theme` 时更新。
+- 在 `pagehide` 时经端口发 `leaving`。不画界面，不缓存数据，不改地址。
+- 宿主前端与助手不一定同版本，兼容靠握手的主版本检查与只做加法。用 TypeScript 写插件前端时，在项目里任意一个 `.d.ts` 中给这个地址补一条模块声明。以 `/` 开头的名字 TypeScript 当作相对模块名、不能直接声明，所以写成通配：
+
+  ```ts
+  declare module '*/frames/_base/frame.js' {
+    export function connect(): Promise<import('@aalis/api-webui').FrameClient>;
+  }
+  ```
+
+  用打包工具时把这个地址设为 external，原样留给浏览器去取。
+
+### 样式基线
+
+`GET /frames/_base/frame.css` 是可选引用的样式基线：`<link rel="stylesheet" href="/frames/_base/frame.css">`。
+
+- 只给元素级的样式：系统字体与 rem 尺寸的基础排版、链接、按钮（一种，与宿主的次要按钮一致）、输入框、表格、代码与焦点环；不设按类名选的变体，不用卡片、阴影与渐变。
+- 颜色只引用主题令牌（下文「主题」的令牌表），由助手写在根元素上，深浅跟着宿主。尺寸写在样式基线自己里面，取值与宿主界面相同；触屏（`pointer: coarse`）上可点区 44 像素、输入框字号 16 像素，减少动效时去掉过渡，都由它自己的媒体查询求值。宿主内部的尺寸令牌名不外露，`init` 与 `theme` 里只有主题令牌。
+- 圆角用 `--radius-sm`、`--radius-md` 两个名字写默认值（4 像素与 6 像素）。
+
+### 作者须知
+
+- 宽度：插件页面跟着主区，会话面板约 340 像素，手机 390 像素。按容器宽度排版，尺寸用 rem，触屏可点区 44 像素，输入框字号不小于 16 像素（iOS 聚焦时不放大整页）。框架占满它的区域，内容在框架里自己滚动。
+- 只有一个文档：页面内的切换只用内存里的状态，不改地址（History API 与片段都会往会话历史里加条目，手机上按返回会先退框架里的条目）。离开这个文档就会被卸载。
+- 链接一律经 `open` 请宿主打开；要确认的操作交给动作的 `effect: 'destructive'`，由宿主弹确认框。
+- 不受信的文本（群成员的昵称与消息、作品、网页标题）只用文本节点或转义后的输出插入，不当 HTML。注入的标记跑不了脚本，但仍能让框架跳走。
+- 框架里做不到的：发网络请求、取外站资源；`eval`、worker 与 WebAssembly；浏览器存储（状态存在插件自己的数据里，经数据源与动作读写）；存储里的图片（只能用 `data:` 或打包进 `webui/`）；剪贴板写入多半也不可用。
+- 宿主切走就卸载、切回来重新挂载，不保活；需要保留的状态由插件存在自己的数据里。
+
 ## 提示
 
 ```ts
@@ -255,9 +453,9 @@ interface Notice {
 
 | 路由 | 请求 | 返回 |
 |---|---|---|
-| `GET /api/pages` | — | `{ pages: PageView[] }`：登记着的全部页面，声明去掉函数（数据源、处理函数、`applies`），加上所属实例 `instance`，`placement` 总是给出；按 `order`、实例、key 排好 |
+| `GET /api/pages` | — | `{ pages: PageView[] }`：登记着的全部页面，加上所属实例 `instance`，`placement` 总是给出；按 `order`、实例、key 排好。声明式页面（`DeclarativePageView`）是声明去掉函数（数据源、处理函数、`applies`）；插件前端页面（`FramePageView`）见上文「插件前端」 |
 | `GET /api/session-pages?sessionId=` | — | `{ pages: PageRef[] }`：这个会话适用的会话面板页面。会话不存在回 404 |
-| `GET /api/pages/:instance/:pageKey/data/:componentId` | 查询参数只收 `sessionId`（会话面板必填）与 `rowKey`（详情里的组件必填） | `{ data }`，按组件种类见 `PageDataByType` |
+| `GET /api/pages/:instance/:pageKey/data/:componentId` | 查询参数只收 `sessionId`（会话面板必填）与 `rowKey`（详情里的组件必填）；插件前端页面的 `componentId` 是数据源名，另收 `input` | `{ data }`，按组件种类见 `PageDataByType`；插件前端是数据源返回的值 |
 | `POST /api/pages/:instance/:pageKey/actions/:action` | `{ sessionId?, rowKey?, input? }` | `{ message? }` |
 | `GET /api/page-file?handle=` | — | 文件，一律当附件以 `application/octet-stream` 下发；句柄无效回 403，文件已不在回 404 |
 | `GET /api/layout` | — | `LayoutRecords` |
@@ -266,7 +464,7 @@ interface Notice {
 **服务端闸门：**
 
 - 只许调页面声明过的组件与动作，按实例、页面与组件或动作分派；没有的回 404。
-- 参数只收用得上的键：`sessionId` 只给会话面板，`rowKey` 只给详情里的组件与行动作，`input` 只给声明了输入的动作；多出的键回 400，该有的没有或不是非空字符串回 400。行动作只收 `rowKey`，不收整行。
+- 参数只收用得上的键：`sessionId` 只给会话面板，`rowKey` 只给详情里的组件与行动作，`input` 只给声明了输入的动作与插件前端声明了输入的数据源；多出的键回 400，该有的没有或不是非空字符串回 400。行动作只收 `rowKey`，不收整行。插件前端数据源的 `input` 是一个 JSON 字符串，不是或解不开回 400。
 - `input` 按声明的字段校验类型、必填与可选项，拒收多余的键；没过时 `issues` 逐项列出（与 `validateConfig` 的问题同形）。过了的按字段解析（数字字符串转成数字等）并补上默认值，再交给处理函数。
 - 会话面板的 `sessionId` 经会话管理核过存在再传，见上文。
 - 确认框只是界面上的交互，服务端的闸门是 owner 身份加改状态请求的来源校验。

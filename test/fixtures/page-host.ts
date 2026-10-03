@@ -1,5 +1,5 @@
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
-import type { PageView, WebUIService } from '../../packages/api-webui/src/index.js';
+import type { DeclarativePageView, WebUIService } from '../../packages/api-webui/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { createPageRegistry, type Reply } from '../../packages/plugin-webui-server/src/pages.js';
 
@@ -59,10 +59,11 @@ export function pageHost(opts: PageHostOptions = {}) {
     },
   };
 
-  /** 按页面 key 找到登记它的实例；没登记就报错 */
-  function view(pageKey: string): PageView {
+  /** 按页面 key 找到登记它的实例；没登记或不是声明式页面就报错 */
+  function view(pageKey: string): DeclarativePageView {
     const found = registry.views().find(page => page.key === pageKey);
     if (!found) throw new Error(`页面 ${pageKey} 没有登记；日志：${logs.join(' | ')}`);
+    if (found.frame) throw new Error(`页面 ${pageKey} 是插件前端页面`);
     return found;
   }
 

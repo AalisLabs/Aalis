@@ -41,13 +41,13 @@ export function SessionList() {
   return (
     <Left label="会话">
       {phone ? (
-        <div className="session-list-header">
+        <div className="header-bar session-list-header">
           <h1 className="session-list-title">会话</h1>
           <IconButton icon={Search} label="搜索会话" onClick={openSearch} />
           <IconButton icon={Plus} label="新会话" onClick={newSession} />
         </div>
       ) : (
-        <div className="session-list-header">
+        <div className="header-bar session-list-header">
           <Button icon={Plus} title={`新会话（${shortcutLabel('newSession')}）`} onClick={newSession}>
             新会话
           </Button>

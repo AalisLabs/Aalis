@@ -1,12 +1,15 @@
-// ----- 声明式页面 -----
+// ----- 页面 -----
 //
-// 插件不带前端代码，页面只交声明：组件与它们的数据源、动作与它们的处理函数在 definePage 里一次给出，返回形状按组件种类推出。
-// 样式、窄屏变形、确认框与输入表单都由宿主统一画。组件只有表格、关系图、键值、文字、按钮组五样，另有标签页这一种排法。
-// 界面经 REST 取页面的声明（函数去掉，见 PageView）、按组件取数、调动作；路由与返回形状见本文件末尾。
+// 页面默认声明式，需要自绘时用插件前端。声明式页面只交声明：组件与它们的数据源、动作与它们的处理函数在 definePage 里
+// 一次给出，返回形状按组件种类推出；样式、窄屏变形、确认框与输入表单都由宿主统一画。组件只有表格、关系图、键值、文字、
+// 按钮组五样，另有标签页这一种排法。插件前端是插件包里的一份静态网页，在宿主画的隔离框架里运行，只放在插件页面与
+// 会话面板，经消息通道调这一页声明过的数据源与动作（frame.ts）。
+// 界面经 REST 取页面的声明（函数去掉，见 PageView）、取数、调动作；路由与返回形状见本文件末尾。
 
 import type { UserIdentity } from '@aalis/api-authority';
 import type { SessionKind } from '@aalis/api-session-manager';
 import type { ConfigOf, SchemaField, SchemaIssue } from '@aalis/schema-config';
+import type { FrameHostCapability } from './frame.js';
 
 /** 一屏（页面最外层、一个标签、一个详情）最多几个组件；webui-server 登记时校验，超了不登记 */
 export const MAX_SCREEN_COMPONENTS = 6;
@@ -245,53 +248,118 @@ type CheckedInput<I> = unknown extends I
     ? unknown
     : ActionInputFields;
 
-export type ActionDefinition<I, C> = {
+/** 动作共有的字段 */
+type ActionFields<I> = {
   /** 按钮上的字：两到四个字的动词 */
   label: string;
   effect: ActionEffect;
   /** 只给 destructive：确认框（带输入的是表单）里的警示，非空；不写时宿主写「这个操作不能撤销。」 */
   confirm?: string;
   input?: I & CheckedInput<I>;
-} & (
-  | {
-      /** 行动作：放在表格行上或详情里，处理函数收到那一行的 rowKey，按它重新查，不信任界面回传的整行 */
-      row: true;
-      handler(args: { rowKey: string; input: ActionInput<I>; ctx: C }): ActionResult;
-    }
-  | { row?: false; handler(args: { input: ActionInput<I>; ctx: C }): ActionResult }
-);
+};
+
+export type ActionDefinition<I, C> = ActionFields<I> &
+  (
+    | {
+        /** 行动作：放在表格行上或详情里，处理函数收到那一行的 rowKey，按它重新查，不信任界面回传的整行 */
+        row: true;
+        handler(args: { rowKey: string; input: ActionInput<I>; ctx: C }): ActionResult;
+      }
+    | { row?: false; handler(args: { input: ActionInput<I>; ctx: C }): ActionResult }
+  );
+
+/**
+ * 插件前端的动作：与声明式的同一个定义，只是不收 row。插件前端里没有宿主画的表格行，要指定对象就放进 input；
+ * destructive 的由宿主弹确认框，框里按输入字段列出这次的值
+ */
+export type FrameActionDefinition<I, C> = ActionFields<I> & {
+  row?: never;
+  handler(args: { input: ActionInput<I>; ctx: C }): ActionResult;
+};
 
 // ----- 页面 -----
 
-/**
- * 一个页面的声明。P 是位置，S 是各动作的输入字段（由 definePage 推断），A 是可以引用的动作名。
- * 登记时 webui-server 按质量门槛校验：一屏最多 {@link MAX_SCREEN_COMPONENTS} 个组件、最多 {@link MAX_PAGE_TABS} 个标签、
- * 嵌套最多一层、组件 id 唯一、引用的动作都存在且放对了地方、不认识的字段一律拒收；不过就不登记并记一条错误日志
- */
-export interface PageDefinition<
-  P extends PagePlacement = PagePlacement,
-  S extends Record<string, unknown> = Record<string, unknown>,
-  A extends string = keyof S & string,
-> {
+/** 两种页面共有的字段 */
+interface PageDefinitionBase {
   /** 本插件实例内唯一 */
   key: string;
   title: string;
   /** lucide 图标名（kebab-case）；界面不认识的名字换成通用图标 */
   icon?: string;
-  placement?: P;
   /** 同一位置里的先后，小的在前 */
   order?: number;
   /** 只给会话面板：这个会话用不用得上本页，不写就适用于全部会话。抛错或超时按不适用处理 */
   applies?(session: PanelSession): boolean | Promise<boolean>;
+}
+
+/**
+ * 声明式页面。P 是位置，S 是各动作的输入字段（由 definePage 推断），A 是可以引用的动作名。
+ * 登记时 webui-server 按质量门槛校验：一屏最多 {@link MAX_SCREEN_COMPONENTS} 个组件、最多 {@link MAX_PAGE_TABS} 个标签、
+ * 嵌套最多一层、组件 id 唯一、引用的动作都存在且放对了地方、不认识的字段一律拒收；不过就不登记并记一条错误日志
+ */
+export interface DeclarativePageDefinition<
+  P extends PagePlacement = PagePlacement,
+  S extends Record<string, unknown> = Record<string, unknown>,
+  A extends string = keyof S & string,
+> extends PageDefinitionBase {
+  placement?: P;
   content: PageContent<PageComponentDefinition<A, PageContextOf<P>>>;
   actions?: { [K in keyof S]: ActionDefinition<S[K], PageContextOf<P>> };
+  frame?: never;
+  sources?: never;
 }
+
+/** 插件前端只放在这两个位置：插件页面与会话面板 */
+export type FramePlacement = Exclude<PagePlacement, 'settings'>;
+
+/**
+ * 插件前端在插件包里的位置。webui-server 从 module 所在目录往上找最近一个带 name 字段的 package.json（只写 type 的
+ * 跳过），它的 name 要等于插件名，那一层就是插件包根；只托管包根下 webui/ 目录里的文件。包的 files 里要带上 webui
+ */
+export interface FrameDefinition {
+  /** 声明这个页面的模块地址：写 import.meta.url */
+  module: string;
+  /** webui/ 下的入口：以 .html 结尾的相对路径，不以 / 开头、各段不以点开头；不写为 index.html */
+  entry?: string;
+  /** 申请的宿主数据能力，从词表（frame.ts 的 FRAME_HOST_CAPABILITIES）里选、不重复；不写就没有 */
+  host?: FrameHostCapability[];
+}
+
+/** 插件前端的一个数据源：输入的写法与校验同动作的 input，data 返回可以 JSON 化的值 */
+export interface FrameSourceDefinition<I, C> {
+  input?: I & CheckedInput<I>;
+  data(args: { input: ActionInput<I>; ctx: C }): unknown;
+}
+
+/**
+ * 插件前端页面。P 是位置，S 是各动作的输入字段，R 是各数据源的输入字段（都由 definePage 推断）。
+ * 框架经消息通道按名字取数据源、调动作，数据源的名字与输入、动作的声明都由服务端核；登记时另核插件包根、webui/ 与入口
+ */
+export interface FramePageDefinition<
+  P extends PagePlacement = PagePlacement,
+  S extends Record<string, unknown> = Record<string, unknown>,
+  R extends Record<string, unknown> = Record<string, unknown>,
+> extends PageDefinitionBase {
+  placement?: P & FramePlacement;
+  frame: FrameDefinition;
+  sources?: { [K in keyof R]: FrameSourceDefinition<R[K], PageContextOf<P>> };
+  actions?: { [K in keyof S]: FrameActionDefinition<S[K], PageContextOf<P>> };
+  content?: never;
+}
+
+/** 一个页面的声明：声明式（写 content）与插件前端（写 frame）二选一 */
+export type PageDefinition<
+  P extends PagePlacement = PagePlacement,
+  S extends Record<string, unknown> = Record<string, unknown>,
+  A extends string = keyof S & string,
+  R extends Record<string, unknown> = Record<string, unknown>,
+> = DeclarativePageDefinition<P, S, A> | FramePageDefinition<P, S, R>;
 
 /** definePage 的返回 */
 export interface PageHandle {
   /**
-   * 这一页的数据变了：打开着它的界面重取。componentId 只重取这个组件，不写为整页；sessionId 只让打开着这个会话的面板重取。
-   * 宿主按这四项合并短时间内的连发
+   * 这一页的数据变了：打开着它的界面重取。componentId 只重取这个组件（插件前端是数据源名），不写为整页；sessionId 只让
+   * 打开着这个会话的面板重取。宿主按这四项合并短时间内的连发
    */
   invalidate(componentId?: string, sessionId?: string): void;
 }
@@ -342,17 +410,38 @@ export interface ActionView {
   row?: boolean;
 }
 
-/** GET /api/pages 的一项：页面声明去掉函数，加上所属的插件实例；placement 总是给出 */
-export interface PageView {
+/** 两种页面在界面上共有的字段：所属的插件实例与 placement 总是给出 */
+interface PageViewBase {
   instance: string;
   key: string;
   title: string;
   icon?: string;
   placement: PagePlacement;
   order?: number;
-  content: PageContent<ComponentView>;
   actions?: Record<string, ActionView>;
 }
+
+/** 声明式页面：声明去掉函数 */
+export interface DeclarativePageView extends PageViewBase {
+  content: PageContent<ComponentView>;
+  frame?: never;
+}
+
+/**
+ * 插件前端页面：不带 content 与数据源，带宿主签发的框架地址与申请的能力；actions 供宿主决定确认框。
+ * 不下发插件包的本机路径（module）与单独的 entry 字段，入口已含在 src 里
+ */
+export interface FramePageView extends PageViewBase {
+  frame: {
+    /** 框架地址 `/frames/<token>/<入口>`：页面撤回或重新登记后换新的 */
+    src: string;
+    host: FrameHostCapability[];
+  };
+  content?: never;
+}
+
+/** GET /api/pages 的一项 */
+export type PageView = DeclarativePageView | FramePageView;
 
 /** 界面收到的文件单元格：宿主签发的下载句柄（`GET /api/page-file?handle=`）与文件名；不能签发时只有名字 */
 export interface FileCell {
@@ -418,7 +507,8 @@ export const MAX_LAYOUT_ENTRIES = 50;
 // GET  /api/pages                                              → PageListResponse
 // GET  /api/session-pages?sessionId=                            → PanelPagesResponse（这个会话适用的会话面板页面）
 // GET  /api/pages/:instance/:pageKey/data/:componentId          → PageDataResponse
-//        查询参数只收 sessionId（会话面板必填）与 rowKey（详情里的组件必填）
+//        查询参数只收 sessionId（会话面板必填）与 rowKey（详情里的组件必填）；插件前端页面的 componentId 是数据源名，
+//        另收 input（JSON 字符串，声明了输入的数据源才收，按字段校验），data 是数据源返回的值
 // POST /api/pages/:instance/:pageKey/actions/:action            PageActionRequest → PageActionResponse
 // GET  /api/page-file?handle=                                   → 文件，一律当附件以 octet-stream 下发
 // GET  /api/layout                                              → LayoutRecords
@@ -437,7 +527,7 @@ export interface PageDataResponse<T extends keyof PageDataByType = keyof PageDat
   data: PageDataByType[T];
 }
 
-/** 只收这三个键：sessionId 给会话面板，rowKey 给行动作，input 给声明了输入的动作；多出或缺了都拒收 */
+/** 只收这三个键：sessionId 给会话面板，rowKey 给行动作（插件前端没有），input 给声明了输入的动作；多出或缺了都拒收 */
 export interface PageActionRequest {
   sessionId?: string;
   rowKey?: string;

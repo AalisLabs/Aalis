@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import {
   type BoundWebui,
+  type DeclarativePageDefinition,
   type Notice,
-  type PageDefinition,
   type WebUIService,
   type WebuiAdminEvent,
   webuiServer,
@@ -41,7 +41,7 @@ function registry(sessions: Record<string, SessionInfo['kind']> = {}) {
   return { pages, sent, logs, invalidations: () => sent.filter(e => e.type === 'page.invalidate') };
 }
 
-const page = (key: string, extra: Partial<PageDefinition> = {}): PageDefinition => ({
+const page = (key: string, extra: Partial<DeclarativePageDefinition> = {}): DeclarativePageDefinition => ({
   key,
   title: key,
   content: [{ type: 'markdown', id: 'm', data: () => key }],
@@ -164,7 +164,7 @@ describe('会话面板的 applies', () => {
   it('不写适用于全部会话；回 true 的适用；回 false、抛错、超时或不是布尔值的不适用，后三种记告警', async () => {
     vi.useFakeTimers();
     const { pages, logs } = registry({ 'qq:group:1': 'room' });
-    const panel = (key: string, applies?: PageDefinition['applies']) =>
+    const panel = (key: string, applies?: DeclarativePageDefinition['applies']) =>
       pages.addPage(page(key, { placement: 'session', applies }), 'p');
     const seen: unknown[] = [];
     panel('always');

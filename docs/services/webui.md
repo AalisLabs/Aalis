@@ -2,14 +2,14 @@
 
 ## 1. 定位
 
-WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 市场 / 日志 / 媒体与文件 / 声明式页面与布局记录）+ WebSocket（`/session` 接会话协议；`/admin` 推管理面事件：日志、插件与页面登记表的变化、页面数据变了、布局记录变了、重启、换前端），并托管前端静态文件。第三方插件通过它**登记声明式页面与提示**，也可整体替换前端或替换整个服务实现。
+WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 市场 / 日志 / 媒体与文件 / 声明式页面与布局记录）+ WebSocket（`/session` 接会话协议；`/admin` 推管理面事件：日志、插件与页面登记表的变化、页面数据变了、布局记录变了、重启、换前端），并托管前端静态文件。第三方插件通过它**登记页面与提示**（页面默认声明式，需要自绘时用隔离的插件前端），也可整体替换前端或替换整个服务实现。
 
 注意服务注册名（描述符 `name`）有**两个**，而非单个 `'webui'`：
 
 - `'webui-server'` —— 后端服务，契约 `WebUIService`。描述符 `webuiServer`，绑定接口 `BoundWebui`（`packages/api-webui/src/index.ts`）。
 - `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，绑定接口是普通 `ServiceRef`。
 
-契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts` 与 `page.ts`、`theme.ts`），**MIT**。它导出运行时服务契约、声明式页面与提示的类型、管理面事件与页面路由的返回形状、主题格式，以及向 `PluginMeta` 注入的 `extends`。
+契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts` 与 `page.ts`、`frame.ts`、`theme.ts`），**MIT**。它导出运行时服务契约、页面与提示的类型、插件前端的消息通道（消息类型、校验函数与宿主数据能力）、管理面事件与页面路由的返回形状、主题格式，以及向 `PluginMeta` 注入的 `extends`。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
@@ -51,6 +51,8 @@ export interface WebuiClientProvider {
 ### 声明式页面（`packages/api-webui/src/page.ts`）
 
 一个页面 = key、标题、lucide 图标名、位置（插件详情、设置的一节、会话面板）、内容（组件数组或标签页）与动作。组件只有五样：`table`、`graph`、`info`、`markdown`、`actions`；表格与关系图可带详情。数据源与处理函数写在声明里，返回形状按组件种类推出；动作带 `effect`（`read`、`write`、`destructive`）、可选的 `input`（一组 schema-config 字段）与 `row`（行动作）。登记时 webui-server 按质量门槛校验，数据源与动作经服务端闸门调用。详见 [api-webui](../api/api-webui.md#声明式页面)。
+
+声明式表达不了的页面用插件前端：`definePage` 写 `frame`（不写 `content`），插件包的 `webui/` 里放一份静态网页，webui-server 在 `/frames/` 下托管，宿主画进与宿主页面不同源的 iframe；它只能经消息通道调这一页声明过的数据源（`sources`）与动作，位置只有插件详情与会话面板。详见 [api-webui](../api/api-webui.md#插件前端)。
 
 ### 配置表单用到的字段属性
 

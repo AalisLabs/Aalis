@@ -1,0 +1,201 @@
+/*
+ * 插件前端的样式基线，托管为 /frames/_base/frame.css，插件前端可选引用：
+ *   <link rel="stylesheet" href="/frames/_base/frame.css">
+ * 只给元素级的样式，不设按类名选的变体。颜色只引用主题令牌（助手收到 init 时写在根元素上，主题变了跟着更新）；
+ * 尺寸写在本文件里，取值与宿主界面相同，触屏与减少动效由本文件自己的媒体查询求值。圆角用 --radius-sm、--radius-md
+ * 两个名字写默认值，宿主以后推入的值写在根元素的内联样式上，盖过这里的默认值。
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  font-family:
+    system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    sans-serif;
+  font-size: 100%;
+  line-height: 1.375rem;
+  color: var(--color-text);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 1rem;
+  font-size: 0.875rem;
+  background: var(--color-bg);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+}
+
+p,
+ul,
+ol,
+table,
+pre {
+  margin: 0 0 0.75rem;
+}
+
+ul,
+ol {
+  padding-left: 1.5rem;
+}
+
+li + li {
+  margin-top: 0.25rem;
+}
+
+a {
+  color: var(--color-accent-text);
+  text-decoration: underline 1px;
+  text-underline-offset: 2px;
+}
+
+/* 焦点环用 outline：Windows 高对比度模式会去掉阴影 */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* 按钮只有一种，与宿主的次要按钮一致 */
+button {
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  background: var(--color-fill-2);
+  cursor: pointer;
+  transition: background-color 100ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+button:hover:not(:disabled) {
+  background: var(--color-fill-3);
+}
+
+button:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  background: transparent;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+}
+
+textarea {
+  padding: 0.5rem 0.75rem;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
+}
+
+::placeholder {
+  color: var(--color-text-3);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--color-accent);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+th,
+td {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+th {
+  height: 2rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-2);
+}
+
+code,
+kbd,
+pre {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+:not(pre) > code {
+  padding: 0 0.25rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+  background: var(--color-fill-2);
+}
+
+pre {
+  padding: 0.75rem;
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  background: var(--color-fill-1);
+}
+
+/* 触屏：可点区 44 像素；输入框字号不小于 16 像素，免得 iOS 聚焦时放大整页 */
+@media (pointer: coarse) {
+  button,
+  input:not([type="checkbox"]):not([type="radio"]),
+  select {
+    min-height: 2.75rem;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 1rem;
+  }
+
+  td {
+    height: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+}

@@ -1,17 +1,27 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { type AddressInfo, connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import puppeteer, { type Browser, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
+import { pathToFileURL } from 'node:url';
+import puppeteer, { type Browser, type Frame, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import type { TodoItem } from '../../packages/api-todo-list/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type PageHandle, type TableRow, webuiClient, webuiServer } from '../../packages/api-webui/src/index.js';
-import { definePlugin, type PluginDefinition, provide } from '../../packages/core/src/index.js';
+import {
+  type FrameClient,
+  type PageHandle,
+  type TableRow,
+  webuiClient,
+  webuiServer,
+} from '../../packages/api-webui/src/index.js';
+import { definePlugin, events, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import { MINIMAL_BASE } from '../../packages/create-aalis/src/cli.js';
+import { generate } from '../../packages/create-aalis-plugin/src/cli.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
@@ -26,8 +36,10 @@ import { freePort, waitListening } from '../helpers/net.js';
 // WebUI 端到端：构建前端，起最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、假模型与 webui-server，
 // 不装计划、检查点、摘要），在真的 Chromium 里按桌面与手机两种宽度走主流程；按宽度变的排版（房间表、声明式页面与
 // 会话面板的容器查询）只有真的排版才验得了，也在这里核。声明式页面用一个探针插件登记，另装迁移过来的计划任务与工作流看
-// 真实插件的页面。浏览器经一个可以切断的中转连到 webui-server，断线重连靠它模拟。假模型按这一轮的
-// 最后一条消息回话，流式回复逐块慢慢出；需要批准的是一个声明了命令展示的探针工具。页面里的请求只到这个中转，外站一律不连。
+// 真实插件的页面。插件前端用脚手架生成的插件，加一个在临时目录里搭的测试插件（会话面板，与隔离的各项核查）。
+// 浏览器经一个可以切断的中转连到 webui-server，断线重连靠它模拟。假模型按这一轮的
+// 最后一条消息回话，流式回复逐块慢慢出；需要批准的是一个声明了命令展示的探针工具。页面里的请求只到这个中转与本机起的
+// 「外站」，外站一律不连。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = join(import.meta.dirname, '../..');
@@ -86,6 +98,9 @@ const LONG_NAME = '把这个季度的周报整理进 weekly_summary_final_2026_q
 
 /** 带原因的失败状态：窄时折行，不撑出横向滚动，也不把同一行的第一列挤成一字一行 */
 const LONG_FAILURE = '失败：远端代理返回 500 Internal Server Error，请稍后再试';
+
+/** 慢慢流出来的长回复：每块 4 个字，整段要十几秒才出完，够从面板里停掉它 */
+const SLOW_REPLY = '这是一段很长的回复，'.repeat(24);
 
 /** 看板的行与登记拿到的句柄：用例改了行、经句柄推 invalidate，看打开着的页面跟着变；每次激活重置 */
 const board: { rows: TableRow[]; page?: PageHandle } = { rows: [] };
@@ -187,6 +202,117 @@ const probePages = definePlugin({
   },
 });
 
+/** 脚手架生成的插件：包名、显示名，页面键取包名 */
+const SCAFFOLD = 'zz-e2e-scaffold';
+const SCAFFOLD_NAME = '示例条目';
+
+/** 用脚手架在临时目录里生成一个页面用自带前端的插件，加载它的定义 */
+async function scaffolded(): Promise<PluginDefinition> {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-e2e-scaffold-')));
+  cleanups.push(async () => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, SCAFFOLD);
+  await generate(dir, {
+    packageName: SCAFFOLD,
+    displayName: SCAFFOLD_NAME,
+    features: { tool: false, command: false, webui: 'frame' },
+  });
+  return ((await import(join(dir, 'src/index.ts'))) as { default: PluginDefinition }).default;
+}
+
+/**
+ * 插件前端的测试插件：探针页（连上后把连接挂在 window.frame 上）与一个 destructive 动作、不用助手的页、会话面板
+ * （申请读会话与停回合，写出挂在哪个会话上、记下会话的增量），另有一个仿冒宿主的页（挂着一张图，中转扣住它的请求，
+ * 页面的 load 就不会来）。插件包搭在临时目录里，页面的 module 指向包里
+ */
+const FRAMES = 'zz-e2e-frames';
+const FRAMES_NAME = '框架探针';
+const FRAME_FILES: Record<string, string> = {
+  'probe.html':
+    '<!doctype html><meta charset="utf-8"><title>探针</title><script type="module" src="probe.js"></script><p id="ready"></p>',
+  'probe.js': `import { connect } from '/frames/_base/frame.js';
+window.frame = await connect();
+document.querySelector('#ready').textContent = '已连上';
+`,
+  'raw.html': '<!doctype html><meta charset="utf-8"><title>不用助手</title><p>不用助手的页面</p>',
+  'away.html': '<!doctype html><meta charset="utf-8"><title>登录已过期</title><p>请输入 token</p><img src="never.png">',
+  'roster.html': `<!doctype html><meta charset="utf-8"><title>子会话</title>
+<link rel="stylesheet" href="/frames/_base/frame.css"><script type="module" src="roster.js"></script><p id="session"></p>`,
+  'roster.js': `import { connect } from '/frames/_base/frame.js';
+window.changes = [];
+window.frame = await connect();
+window.frame.onSessionsChanged(change => window.changes.push(change));
+document.querySelector('#session').textContent = window.frame.sessionId;
+`,
+};
+
+/** 测试插件在框架里的样子：经 evaluate 取连接与记下的增量 */
+type FrameWindow = Window & { frame: FrameClient; changes: Array<{ upserts: Array<{ id: string }> }> };
+
+function framesPlugin(): PluginDefinition {
+  const root = join(realpathSync(mkdtempSync(join(tmpdir(), 'aalis-e2e-frames-'))), FRAMES);
+  cleanups.push(async () => rmSync(dirname(root), { recursive: true, force: true }));
+  mkdirSync(join(root, 'webui'), { recursive: true });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: FRAMES, files: ['dist', 'webui'] }));
+  for (const [name, content] of Object.entries(FRAME_FILES)) writeFileSync(join(root, 'webui', name), content);
+  const module = pathToFileURL(join(root, 'dist/index.js')).href;
+  return definePlugin({
+    name: FRAMES,
+    displayName: FRAMES_NAME,
+    uses: { webui: webuiServer },
+    apply({ webui }) {
+      webui.definePage({
+        key: 'probe',
+        title: '探针',
+        frame: { module, entry: 'probe.html' },
+        actions: {
+          drop: {
+            label: '丢弃',
+            effect: 'destructive',
+            input: { item: { type: 'string', label: '条目', required: true } },
+            handler: ({ input }) => `已丢弃 ${input.item}`,
+          },
+        },
+      });
+      webui.definePage({ key: 'raw', title: '不用助手', frame: { module, entry: 'raw.html' } });
+      webui.definePage({
+        key: 'roster',
+        title: '子会话',
+        placement: 'session',
+        frame: { module, entry: 'roster.html', host: ['sessions:read', 'turn:abort'] },
+      });
+    },
+  });
+}
+
+/** 本机起的「外站」：按路径数收到的请求，一律回 404 */
+async function externalSite() {
+  const hits = new Map<string, number>();
+  const server = createHttpServer((req, res) => {
+    const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    hits.set(path, (hits.get(path) ?? 0) + 1);
+    res.writeHead(404).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  cleanups.push(
+    () =>
+      new Promise<void>(resolve => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  );
+  return {
+    origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    hits: (path: string) => hits.get(path) ?? 0,
+  };
+}
+
+/** 插件前端的框架：等握手完成（宿主给 iframe 标上 data-ready），回它的框架句柄 */
+async function frameIn(page: Page, scope = ''): Promise<Frame> {
+  const frame = await (await page.waitForSelector(`${scope} iframe[data-ready]`))?.contentFrame();
+  if (!frame) throw new Error('框架不在');
+  return frame;
+}
+
 const VIEWPORTS: Record<'desktop' | 'phone', Viewport> = {
   desktop: { width: 1280, height: 800 },
   phone: { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
@@ -231,9 +357,14 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-/** 浏览器与 webui-server 之间的中转：cut() 切断现有的全部连接，之后的新连接照常转发 */
+/**
+ * 浏览器与 webui-server 之间的中转：cut() 切断现有的全部连接，之后的新连接照常转发；heard(text) 看浏览器发给服务端的
+ * 字节里有没有出现过 text；hold(text) 之后，发出带 text 的请求的那条连接不再往服务端转，这个请求一直等不到回应
+ */
 async function relay(target: number) {
   const sockets = new Set<Socket>();
+  const held: string[] = [];
+  let sent = '';
   const server = createServer(inbound => {
     const outbound = connect(target, '127.0.0.1');
     for (const socket of [inbound, outbound]) {
@@ -242,7 +373,15 @@ async function relay(target: number) {
       // 切断时另一端会报连接被重置，这是预期的
       socket.on('error', () => {});
     }
-    inbound.pipe(outbound).pipe(inbound);
+    let holding = false;
+    inbound.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('latin1');
+      sent += text;
+      holding ||= held.some(marker => text.includes(marker));
+      if (!holding) outbound.write(chunk);
+    });
+    inbound.on('end', () => outbound.end());
+    outbound.pipe(inbound);
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const cut = () => {
@@ -251,6 +390,8 @@ async function relay(target: number) {
   return {
     port: (server.address() as AddressInfo).port,
     cut,
+    heard: (text: string) => sent.includes(text),
+    hold: (text: string) => void held.push(text),
     close: () =>
       new Promise<void>(resolve => {
         cut();
@@ -314,7 +455,7 @@ async function startStack(replies: Record<string, string> = {}, extra: PluginDef
   await waitListening(port);
   const proxy = await relay(port);
   cleanups.push(proxy.close);
-  return { origin: `http://127.0.0.1:${proxy.port}`, cut: proxy.cut, runs, app };
+  return { origin: `http://127.0.0.1:${proxy.port}`, cut: proxy.cut, heard: proxy.heard, hold: proxy.hold, runs, app };
 }
 
 type Stack = Awaited<ReturnType<typeof startStack>>;
@@ -598,7 +739,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('最少插件组合：没有计划标签、回滚、压缩与压缩线，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面）、右侧面板没有「+」，也没有空着的区域', async () => {
+  it('最少插件组合：没有计划标签、回滚、压缩与压缩线，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面）、右侧面板没有「+」，也没有空着的区域与框架', async () => {
     const stack = await startStack({ 你好: '好的。' });
     const { page, problems } = await openPage(stack, viewport);
     await page.waitForNetworkIdle({ idleTime: 300 });
@@ -639,6 +780,8 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       await page.waitForSelector(aria('上下文用量', 'table'));
       expect(await page.$$(text('自动压缩'))).toHaveLength(0);
     }
+    // 没有插件前端页面时页面上没有框架
+    expect(await page.$$('iframe')).toHaveLength(0);
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -914,6 +1057,133 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await tabNames()).toEqual(opened);
     expect(problems).toEqual([]);
   }, 60_000);
+
+  it('插件前端（脚手架生成）：框架里列出数据源的条目，写明出处；主题令牌进了框架，切换深浅跟着变；删除经宿主确认框，确认后插件通知重取，框架里少了这一条', async () => {
+    const stack = await startStack({}, [await scaffolded()]);
+    const { page, problems } = await openPage(stack, viewport, pagePath(SCAFFOLD, SCAFFOLD));
+    await page.waitForSelector(`.frame-source ${text(`来自 ${SCAFFOLD_NAME}`)}`);
+    const frame = await frameIn(page);
+    const items = () => frame.$$eval('li span', spans => spans.map(span => span.textContent));
+    await frame.waitForFunction(() => document.querySelectorAll('li').length === 3);
+    expect(await items()).toEqual(['示例条目一', '示例条目二', '示例条目三']);
+    // 框架占满它的区域，自己不横向滚动
+    expect(
+      await frame.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+    ).toBe(true);
+
+    for (const scheme of ['dark', 'light'] as const) {
+      await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+      await page.waitForFunction(scheme => document.documentElement.dataset.theme === `calm-${scheme}`, {}, scheme);
+      const background = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+      await frame.waitForFunction(
+        (scheme, background) =>
+          document.documentElement.dataset.theme === scheme &&
+          getComputedStyle(document.body).backgroundColor === background,
+        {},
+        scheme,
+        background,
+      );
+    }
+
+    await frame.locator('li:first-child button').click();
+    const dialog = await page.waitForSelector(aria('删除？', 'dialog'));
+    expect(await dialog?.evaluate(element => element.textContent)).toMatch(/从列表里删掉这一条？.*条目.*示例条目一/);
+    // 宿主对话框打开后 500 毫秒内不接受确认
+    await new Promise(resolve => setTimeout(resolve, 600));
+    await page.locator(`${aria('删除？', 'dialog')} ${aria('删除', 'button')}`).click();
+    await toastSays(page, '已删除 示例条目一');
+    await frame.waitForFunction(() => document.querySelectorAll('li').length === 2);
+    expect(await items()).toEqual(['示例条目二', '示例条目三']);
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('会话面板的插件前端：关掉宿主的「计划」标签，从「+」打开申请了读会话与停回合的面板替代它；拿到当前会话，换会话后重新挂载拿到新的；列出会话、收到会话的增量，停掉在跑的回合', async () => {
+    const stack = await startStack({ 你好: '好的。', 第二个: '第二个的回复', 慢慢说: SLOW_REPLY }, [framesPlugin()]);
+    const { page, problems } = await openPage(stack, viewport);
+    await newSession(page);
+    await send(page, '你好');
+    const first = await sessionIdOf(page);
+    await page.waitForSelector(text('好的。'));
+    await page.waitForSelector('[aria-label^="上下文已用"]');
+    const plan: TodoItem[] = [{ id: 1, title: '整理周报', status: 'in-progress' }];
+    await stack.app.bind({ events }).events.emit('todo:updated', first, plan);
+    const tabNames = () => page.$$eval('aside [role="tab"]', tabs => tabs.map(tab => tab.textContent));
+    /** 手机上会话面板是从会话头的「更多」进去的一层 */
+    async function openPanel() {
+      if (!phone) return;
+      await page.locator(`main ${aria('更多', 'button')}`).click();
+      await page.locator(aria('会话面板', 'menuitem')).click();
+    }
+    /** 面板里的子会话框架写出的会话 */
+    async function roster(sessionId: string): Promise<Frame> {
+      const frame = await frameIn(page, 'aside');
+      await frame.waitForFunction(id => document.querySelector('#session')?.textContent === id, {}, sessionId);
+      return frame;
+    }
+
+    await openPanel();
+    await page.locator(aria('计划', 'tab')).click();
+    await page.locator(aria('关闭「计划」', 'button')).click();
+    await openPanel();
+    await page.waitForSelector(aria('计划', 'tab'), { hidden: true });
+    await page.locator(aria('打开标签', 'button')).click();
+    expect(await page.$$eval('[role="menuitem"]', items => items.map(item => item.textContent))).toEqual([
+      '计划',
+      '子会话',
+    ]);
+    await page.locator(aria('子会话', 'menuitem')).click();
+    let frame = await roster(first);
+    expect(await tabNames()).toEqual(phone ? ['设置', '子会话'] : ['设置', '用量', '子会话']);
+    await page.waitForSelector(`aside .frame-source ${text(`来自 ${FRAMES_NAME}`)}`);
+    const listed = await frame.evaluate(() => (window as unknown as FrameWindow).frame.listSessions());
+    expect(listed.sessions.map(session => session.id)).toEqual([first]);
+    expect(listed).not.toHaveProperty('groups');
+    if (!phone) {
+      // 面板宽度下框架占满面板，自己不横向滚动
+      const [panel, area] = await page.$$eval('aside .frame-page, aside iframe', elements =>
+        elements.map(element => element.getBoundingClientRect().width),
+      );
+      expect(area).toBe(panel);
+      expect(panel).toBeLessThan(400);
+      expect(
+        await frame.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+      ).toBe(true);
+    }
+
+    // 换到另一个会话：面板标签照样开着，框架重新挂载，拿到新的会话
+    if (phone) {
+      await page.locator(aria('返回', 'button')).click();
+      await page.locator(aria('返回', 'button')).click();
+    } else {
+      await page.locator(aria('新会话', 'button')).click();
+    }
+    await newSession(page);
+    await send(page, '第二个会话');
+    await page.waitForSelector(text('第二个的回复'));
+    const second = await sessionIdOf(page);
+    await openPanel();
+    await page.locator(aria('子会话', 'tab')).click();
+    frame = await roster(second);
+
+    // 在第二个会话里说一段慢慢流出来的话，从面板停掉它：会话停下来的状态变化推进了框架，时间线上这一轮写「已停止」
+    if (phone) await page.locator(aria('返回', 'button')).click();
+    await send(page, '慢慢说');
+    await page.waitForSelector('::-p-aria(正在输出)');
+    await openPanel();
+    if (phone) await page.locator(aria('子会话', 'tab')).click();
+    frame = await roster(second);
+    await frame.evaluate(id => (window as unknown as FrameWindow).frame.abortTurn({ sessionId: id }), second);
+    await frame.waitForFunction(
+      id =>
+        (window as unknown as FrameWindow).changes.some(change => change.upserts.some(session => session.id === id)),
+      {},
+      second,
+    );
+    if (phone) await page.locator(aria('返回', 'button')).click();
+    await page.waitForSelector('.turn-outcome[data-outcome="aborted"]');
+    expect(await page.$$(text(SLOW_REPLY))).toHaveLength(0);
+    expect(problems).toEqual([]);
+  }, 90_000);
 });
 
 describe('页面数据', () => {
@@ -952,6 +1222,363 @@ describe('页面在外壳里的位置', () => {
     await third.page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 3);
     expect(await railNames(third.page)).toEqual(order);
     for (const { problems } of [first, second, third]) expect(problems).toEqual([]);
+  }, 60_000);
+});
+
+describe('插件前端的隔离', () => {
+  const desktop = VIEWPORTS.desktop;
+
+  /** 打开测试插件的一页，等框架握手完成；记下页面的告警 */
+  async function openFrame(stack: Stack, key = 'probe') {
+    const opened = await openPage(stack, desktop, pagePath(FRAMES, key));
+    const warnings: string[] = [];
+    opened.page.on('console', message => {
+      if (message.type() === 'warn') warnings.push(message.text());
+    });
+    return { ...opened, warnings, frame: key === 'raw' ? undefined : await frameIn(opened.page) };
+  }
+
+  const LEFT = '这个页面离开了宿主给它的地址，已停止显示';
+
+  it('握手完成前框架不可见：不用助手的框架加载完了也看不见；握手完成后看得见', async () => {
+    const stack = await startStack({}, [framesPlugin()]);
+    const visibility = (page: Page) => page.$eval('iframe', element => getComputedStyle(element).visibility);
+    const raw = await openFrame(stack, 'raw');
+    const frame = await (await raw.page.waitForSelector('iframe'))?.contentFrame();
+    await frame?.waitForFunction(() => document.readyState === 'complete');
+    expect(await visibility(raw.page)).toBe('hidden');
+    const probe = await openFrame(stack);
+    expect(await visibility(probe.page)).toBe('visible');
+    expect([...raw.problems, ...probe.problems]).toEqual([]);
+  }, 60_000);
+
+  it('框架碰不到宿主：读父页面的文档抛错，cookie 与浏览器存储都读不到；顶层直接打开框架地址同样拿不到', async () => {
+    const stack = await startStack({}, [framesPlugin()]);
+    const { page, frame, problems } = await openFrame(stack);
+    const probe = () => {
+      const attempt = (read: () => unknown) => {
+        try {
+          read();
+          return '读到了';
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      return {
+        origin: window.origin,
+        parent: attempt(() => window.parent.document.title),
+        cookie: attempt(() => document.cookie),
+        storage: attempt(() => localStorage.length),
+      };
+    };
+    expect(await frame?.evaluate(probe)).toEqual({
+      origin: 'null',
+      parent: 'SecurityError',
+      cookie: 'SecurityError',
+      storage: 'SecurityError',
+    });
+
+    const src = await page.$eval('iframe', element => (element.getAttribute('src') ?? '').split('#')[0]);
+    const top = await page.browserContext().newPage();
+    await top.goto(`${stack.origin}${src}`);
+    expect(await top.evaluate(probe)).toMatchObject({
+      origin: 'null',
+      cookie: 'SecurityError',
+      storage: 'SecurityError',
+    });
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('框架里注入的内联脚本与 onerror 都不执行；fetch 与外站图片都被拦下，服务端与外站都没收到请求', async () => {
+    const site = await externalSite();
+    const stack = await startStack({}, [framesPlugin()]);
+    const { frame, problems } = await openFrame(stack);
+    const result = await frame?.evaluate(async image => {
+      const violations: string[] = [];
+      document.addEventListener('securitypolicyviolation', event => violations.push(event.effectiveDirective));
+      const script = document.createElement('script');
+      script.textContent = 'window.zzInline = 1';
+      document.body.append(script);
+      const broken = document.createElement('img');
+      broken.setAttribute('onerror', 'window.zzOnerror = 1');
+      broken.src = 'data:,';
+      document.body.append(broken);
+      const outside = document.createElement('img');
+      outside.src = image;
+      document.body.append(outside);
+      const fetched = await fetch('/api/pages?zz-frame-probe').then(
+        () => '取到了',
+        (error: Error) => error.name,
+      );
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return {
+        inline: 'zzInline' in window,
+        onerror: 'zzOnerror' in window,
+        fetched,
+        violations: [...new Set(violations)].sort(),
+      };
+    }, `${site.origin}/zz-probe.png`);
+    expect(result).toEqual({
+      inline: false,
+      onerror: false,
+      fetched: 'TypeError',
+      violations: ['connect-src', 'img-src', 'script-src-attr', 'script-src-elem'],
+    });
+    expect(site.hits('/zz-probe.png')).toBe(0);
+    expect(stack.heard('zz-frame-probe')).toBe(false);
+    expect([...problems].sort()).toEqual(
+      [
+        'CSP 拦下了 inline（script-src-elem）',
+        'CSP 拦下了 inline（script-src-attr）',
+        `CSP 拦下了 ${stack.origin}/api/pages?zz-frame-probe（connect-src）`,
+        `CSP 拦下了 ${site.origin}/zz-probe.png（img-src）`,
+      ].sort(),
+    );
+  }, 60_000);
+
+  it('外链的地址与确认框里的输入值按原文显示，不当标记；没声明的数据源由服务端回 404，框架收到 not-found', async () => {
+    const stack = await startStack({}, [framesPlugin()]);
+    const { page, frame, problems } = await openFrame(stack);
+    const URL_WITH_MARKUP = 'https://example.invalid/?q=<b>粗</b>';
+    const ITEM_WITH_MARKUP = '<img src=x onerror="window.zz=1"><b>粗</b>';
+
+    const opening = frame?.evaluate(
+      url =>
+        (window as unknown as FrameWindow).frame.open({ url }).then(
+          () => '打开了',
+          (error: { code: string }) => error.code,
+        ),
+      URL_WITH_MARKUP,
+    );
+    const external = await page.waitForSelector(aria('打开外部链接？', 'dialog'));
+    expect(await external?.evaluate(element => element.textContent)).toContain(new URL(URL_WITH_MARKUP).href);
+    expect(await external?.$$('b, img')).toHaveLength(0);
+    await page.locator(`${aria('打开外部链接？', 'dialog')} ${aria('取消', 'button')}`).click();
+    expect(await opening).toBe('cancelled');
+
+    const dropping = frame?.evaluate(
+      item =>
+        (window as unknown as FrameWindow).frame.action('drop', { item }).then(
+          () => '做了',
+          (error: { code: string }) => error.code,
+        ),
+      ITEM_WITH_MARKUP,
+    );
+    const confirm = await page.waitForSelector(aria('丢弃？', 'dialog'));
+    expect(await confirm?.evaluate(element => element.textContent)).toContain(ITEM_WITH_MARKUP);
+    expect(await confirm?.$$('b, img')).toHaveLength(0);
+    await page.locator(`${aria('丢弃？', 'dialog')} ${aria('取消', 'button')}`).click();
+    expect(await dropping).toBe('cancelled');
+    expect(await page.evaluate(() => 'zz' in window)).toBe(false);
+
+    expect(
+      await frame?.evaluate(() =>
+        (window as unknown as FrameWindow).frame.data('zz-missing').then(
+          () => '取到了',
+          (error: { code: string }) => error.code,
+        ),
+      ),
+    ).toBe('not-found');
+    expect(problems).toEqual([`404 ${stack.origin}/api/pages/${FRAMES}/probe/data/zz-missing`]);
+  }, 60_000);
+
+  it('离开自己的地址：框架里注入 meta refresh 跳到挂着子资源的页面，宿主立即卸载、显示占位、记告警；跳到外站被宿主文档的 CSP 拦下，照样卸载；不用助手的框架改了地址，靠第二次 load 卸载', async () => {
+    const site = await externalSite();
+    const stack = await startStack({}, [framesPlugin()]);
+    stack.hold('never.png');
+    const probe = await openFrame(stack);
+    const refresh = (url: string) =>
+      probe.frame?.evaluate(url => {
+        const meta = document.createElement('meta');
+        meta.httpEquiv = 'refresh';
+        meta.content = `0;url=${url}`;
+        document.head.append(meta);
+      }, url);
+    await refresh('away.html');
+    await probe.page.waitForSelector(text(LEFT));
+    expect(await probe.page.$$('iframe')).toHaveLength(0);
+    // 跳到的页面开始加载、它的图一直没有回应：宿主没等 load
+    expect([stack.heard('away.html'), stack.heard('never.png')]).toEqual([true, true]);
+    expect(probe.warnings).toEqual([`插件前端「探针」（${FRAMES}）：${LEFT}`]);
+
+    await probe.page.locator(aria('重新加载', 'button')).click();
+    probe.frame = await frameIn(probe.page);
+    await refresh(`${site.origin}/away.html`);
+    await probe.page.waitForSelector(text(LEFT));
+    expect(site.hits('/away.html')).toBe(0);
+    expect(probe.problems).toEqual([`CSP 拦下了 ${site.origin}（frame-src）`]);
+    expect(probe.warnings).toHaveLength(2);
+
+    const raw = await openFrame(stack, 'raw');
+    const frame = await (await raw.page.waitForSelector('iframe'))?.contentFrame();
+    await frame?.waitForFunction(() => document.readyState === 'complete');
+    await frame?.evaluate(() => location.assign('raw.html?again'));
+    await raw.page.waitForSelector(text(LEFT));
+    expect(await raw.page.$$('iframe')).toHaveLength(0);
+    expect(raw.warnings).toEqual([`插件前端「不用助手」（${FRAMES}）：${LEFT}`]);
+    expect(raw.problems).toEqual([]);
+  }, 60_000);
+
+  it('插件停用后框架消失、显示占位；重新启用后回到原页，框架重新挂上', async () => {
+    const stack = await startStack({}, [framesPlugin()]);
+    const { page, problems } = await openFrame(stack);
+    await stack.app.plugins.disable(FRAMES);
+    await page.waitForSelector(text('这个页面所属的插件已停用'));
+    expect(await page.$$('iframe')).toHaveLength(0);
+    await stack.app.plugins.enable(FRAMES);
+    const frame = await frameIn(page);
+    await frame.waitForFunction(() => document.querySelector('#ready')?.textContent === '已连上');
+    expect(problems).toEqual([]);
+  }, 60_000);
+});
+
+describe('顶部横线与两侧分隔', () => {
+  const wide: Viewport = { width: 1440, height: 900 };
+  const ALL = ['.shell-rail', '.shell-left', '.shell-main', '.shell-right'];
+  const LEFT = '调整左栏宽度';
+  const RIGHT = '调整右侧面板宽度';
+
+  /** 发一条消息、等到回复与右侧面板的标签：外壳的四栏都在 */
+  async function openSession(stack: Stack) {
+    const opened = await openPage(stack, wide);
+    const box = await opened.page.waitForSelector(aria('消息', 'textbox'));
+    await box?.type('你好');
+    await opened.page.keyboard.press('Enter');
+    await sessionIdOf(opened.page);
+    await opened.page.waitForSelector(text('好的。'));
+    await opened.page.waitForSelector(aria('设置', 'tab'));
+    return opened;
+  }
+
+  /** 各栏头部的下边缘与下边线：图标栏顶上一格、左栏、主区、右侧面板，收起的栏不在 */
+  async function expectOneLine(page: Page, columns: string[]) {
+    const edges = await page.evaluate(
+      (all: string[]) =>
+        all.flatMap(column => {
+          const header = document.querySelector(`${column} .header-bar`);
+          if (!header || header.getClientRects().length === 0) return [];
+          return [
+            { column, bottom: header.getBoundingClientRect().bottom, line: getComputedStyle(header).borderBottomWidth },
+          ];
+        }),
+      ALL,
+    );
+    expect(edges.map(edge => edge.column)).toEqual(columns);
+    expect(new Set(edges.map(edge => edge.bottom)).size, JSON.stringify(edges)).toBe(1);
+    expect(edges.map(edge => edge.line)).toEqual(columns.map(() => '1px'));
+  }
+
+  const widthOf = (page: Page, selector: string) =>
+    page.$eval(selector, element => element.getBoundingClientRect().width);
+  /** 显示着的分隔条 */
+  const separators = (page: Page) =>
+    page.$$eval('[role="separator"][aria-label^="调整"]', elements =>
+      elements
+        .filter(element => element.getClientRects().length > 0)
+        .map(element => element.getAttribute('aria-label')),
+    );
+  async function centerOf(page: Page, name: string) {
+    const box = await (await page.waitForSelector(aria(name, 'separator')))?.boundingBox();
+    if (!box) throw new Error(`${name}不在`);
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+  async function dragBy(page: Page, name: string, dx: number) {
+    const { x, y } = await centerOf(page, name);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx, y, { steps: 5 });
+    await page.mouse.up();
+  }
+
+  it('各栏头部的下边缘同一高度，横线从图标栏贯穿到右侧面板：深浅两套主题、左栏或右侧面板收起时都一样；选中标签的下划线压在横线上', async () => {
+    const stack = await startStack({ 你好: '好的。' });
+    const { page, problems } = await openSession(stack);
+    expect(
+      await page.$eval('.shell-right [role="tab"][aria-selected="true"]', tab => {
+        const bar = tab.closest('.header-bar') as Element;
+        return bar.getBoundingClientRect().bottom - tab.getBoundingClientRect().bottom;
+      }),
+    ).toBe(1);
+    for (const scheme of ['dark', 'light'] as const) {
+      await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+      await page.waitForFunction(scheme => document.documentElement.dataset.theme === `calm-${scheme}`, {}, scheme);
+      await expectOneLine(page, ALL);
+
+      await page.locator(`.shell-rail ${aria('会话', 'link')}`).click();
+      await page.waitForSelector('.shell[data-left="collapsed"]');
+      await expectOneLine(page, ['.shell-rail', '.shell-main', '.shell-right']);
+      await page.locator(`.shell-rail ${aria('会话', 'link')}`).click();
+
+      await page.locator(`main ${aria('会话面板', 'button')}`).click();
+      await page.waitForSelector('.shell[data-right="collapsed"]');
+      await expectOneLine(page, ['.shell-rail', '.shell-left', '.shell-main']);
+      await page.locator(`main ${aria('会话面板', 'button')}`).click();
+      await page.waitForSelector('.shell:not([data-right])');
+    }
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('分隔条：拖动调宽、双击复原、拖到下限以下松手即收起，刷新后保持；窗口变窄时两侧按比例收、不低于下限，主区留最小宽度；抽屉沿用记住的宽度，抽屉与手机上没有分隔条', async () => {
+    const stack = await startStack({ 你好: '好的。' });
+    const { page, problems } = await openSession(stack);
+    expect(await separators(page)).toEqual([LEFT, RIGHT]);
+    expect(await widthOf(page, '.shell-left')).toBe(264);
+    expect(await widthOf(page, '.shell-right')).toBe(360);
+
+    await dragBy(page, RIGHT, -100);
+    expect(await widthOf(page, '.shell-right')).toBe(460);
+    await page.reload();
+    await page.waitForSelector(aria('设置', 'tab'));
+    expect(await widthOf(page, '.shell-right')).toBe(460);
+
+    const right = await centerOf(page, RIGHT);
+    await page.mouse.click(right.x, right.y, { count: 2 });
+    expect(await widthOf(page, '.shell-right')).toBe(360);
+
+    await dragBy(page, LEFT, -200);
+    await page.waitForSelector('.shell[data-left="collapsed"]');
+    expect(await separators(page)).toEqual([RIGHT]);
+    await page.reload();
+    await page.waitForSelector(aria('设置', 'tab'));
+    expect(await page.$eval('.shell', shell => shell.getAttribute('data-left'))).toBe('collapsed');
+    await page.locator(`.shell-rail ${aria('会话', 'link')}`).click();
+    await page.waitForSelector('.shell:not([data-left])');
+    expect(await widthOf(page, '.shell-left')).toBe(264);
+
+    // 两侧都到上限后窗口变窄到放不下：按比例收，主区留 30rem
+    await page.focus(aria(LEFT, 'separator'));
+    await page.keyboard.press('End');
+    await page.focus(aria(RIGHT, 'separator'));
+    await page.keyboard.press('End');
+    await page.setViewport({ width: 1280, height: 900 });
+    const columns = () => Promise.all(ALL.map(selector => widthOf(page, selector)));
+    const [rail, left, main, panel] = await columns();
+    expect(main).toBe(480);
+    expect(left / panel).toBeCloseTo(400 / 600, 3);
+    expect(rail + left + main + panel).toBeCloseTo(1280, 1);
+    // 收窄着拖动：从记住的宽度算起，往外拖不变窄，往里拖变窄
+    await dragBy(page, LEFT, 40);
+    expect(await widthOf(page, '.shell-left')).toBeGreaterThanOrEqual(left);
+    await dragBy(page, LEFT, -40);
+    expect(await widthOf(page, '.shell-left')).toBeLessThan(left);
+    // 左栏在下限、右侧面板在上限：左栏不低于下限，右侧面板让出
+    await page.focus(aria(LEFT, 'separator'));
+    await page.keyboard.press('Home');
+    expect(await columns()).toEqual([52, 220, 480, 528]);
+
+    // 64em–80em：右侧面板是抽屉，沿用记住的宽度，没有分隔条；手机上都没有
+    await page.setViewport({ width: 1100, height: 900 });
+    expect(await separators(page)).toEqual([LEFT]);
+    await page.locator(`main ${aria('会话面板', 'button')}`).click();
+    await page.waitForSelector('.shell[data-drawer="right"]');
+    expect(await widthOf(page, '.shell-right')).toBe(600);
+    expect(await separators(page)).toEqual([LEFT]);
+    await page.keyboard.press('Escape');
+    await page.setViewport(VIEWPORTS.phone);
+    await page.waitForSelector(aria('消息', 'textbox'));
+    expect(await page.$$('[role="separator"][aria-label^="调整"]')).not.toHaveLength(0);
+    expect(await separators(page)).toEqual([]);
+    expect(problems).toEqual([]);
   }, 60_000);
 });
 

@@ -100,6 +100,13 @@ pre {
   stroke-width: 1.75;
 }
 
+/* 头部条：各栏的头部与标签栏同一个高度、同一条下边线，几栏的头部连成从图标栏贯穿到右侧面板的一条横线 */
+.header-bar {
+  flex-shrink: 0;
+  height: var(--header-h);
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* 只给读屏的文字 */
 .visually-hidden {
   position: absolute;
