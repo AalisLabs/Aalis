@@ -122,7 +122,8 @@ const configSchema = defineConfig({
     type: 'boolean',
     label: '提取：禁用思考模式',
     description:
-      '提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。默认禁用',
+      '提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。' +
+      '开启时用模型最浅的思考档（能关闭思考的模型即关闭），模型不能调思考时不起作用。默认开启',
     default: true,
   },
 
@@ -136,7 +137,7 @@ const configSchema = defineConfig({
   consolidationDisableThinking: {
     type: 'boolean',
     label: 'Consolidate LLM：禁用思考模式',
-    description: '同 extractionDisableThinking。默认禁用',
+    description: '同 extractionDisableThinking。默认开启',
     default: true,
   },
   consolidationAutoLink: {

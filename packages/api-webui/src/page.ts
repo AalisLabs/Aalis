@@ -490,11 +490,13 @@ export interface LayoutRecords {
 
 /**
  * 布局记录的一个操作。固定只收此刻登记着、位置为 plugin 的页面；打开插件标签只收此刻登记着、位置为 session 的页面。
- * 其余只动记录，所属插件停用时也能做
+ * 移出（remove-tab）只收插件标签，把它从表里删掉：关闭只设为关、位置保留，插件标签累计到上限后，移出用不着的才能打开新的；
+ * 宿主标签只能关、不能移出。其余只动记录，所属插件停用时也能做
  */
 export type LayoutOperation =
   | { op: 'pin' | 'unpin' | 'move-up' | 'move-down'; page: PageRef }
-  | { op: 'open-tab' | 'close-tab' | 'tab-up' | 'tab-down'; tab: PanelTabRef };
+  | { op: 'open-tab' | 'close-tab' | 'tab-up' | 'tab-down'; tab: PanelTabRef }
+  | { op: 'remove-tab'; tab: PageRef };
 
 /** 布局记录各自最多几条；会话面板的标签连同宿主标签算 */
 export const MAX_LAYOUT_ENTRIES = 50;

@@ -45,6 +45,7 @@ interface SessionSetting {
   prominence: SettingProminence;
   order?: number;                      // 同一显眼程度里的先后，小的在前；不写的排在后面
   liveOnly?: boolean;                  // 只经继承链实时解析：建子会话复制配置时不带它
+  dependsOn?: keyof SessionConfig & string;  // 可选项依赖另一项的生效值，见下文
   validate?(value: unknown): string | undefined;  // 取值校验：合法回 undefined，否则回原因；外来字段类型必须给
 }
 
@@ -70,6 +71,7 @@ sessionManager.registerSetting({
 
 - **显眼程度：** `composer` 也出现在输入框旁的快捷切换，同一会话最多两项，多出的按 `order` 退到 `common`；`common` 在设置里排在前面；`advanced` 收进默认折叠的「高级」，按登记它的插件分组。
 - **字段：** 写入时按它校验，不合的拒绝。存储里不合它的值（旧数据、手写的配置文件）解析时当作没设置，同一处只告警一次；字段标了 `onInvalid: 'error'` 的，原值原样交出、不回落到下面的层，由登记它的插件按拒绝处理（例如金额上限写坏了按 0，不能退成不限）。没有任何一层设置时解析结果里没有这个键，`field.default` 只供界面显示，须与「没有这个键」时的行为一致。
+- **可选项依赖另一项：** `dependsOn` 写另一个设置项的键。界面取这一项的动态可选项（`field.dynamicOptions`）时带上那一项在这个会话或这一层的生效值（webui-server 的 `/api/models/:service` 收在 `dependency` 查询参数里），那一项变了就重取。依赖值只交给会读它的可选项来源（目前是 webui-server 的 `llm-thinking`），走服务 `listModels()` 的可选项拿不到它。依赖的须是另一个键、字段须有 `dynamicOptions`，否则登记抛错。会话协议的设置行带同名字段。第一个用处是 plugin-agent 的「深度思考」：档位按「模型」这一项的生效模型取。
 - **取值校验：** `validate` 在写入与解析时先于字段校验，回了原因的与不合字段同样处理。schema-config 不校验外来字段类型（如 `llm-ref`）的取值，外来类型的设置项不给 `validate` 时登记抛错。plugin-agent 的 `llm` 只收服务与模型都是非空字符串的 `{ provider, model }`。
 - **同一个键几个插件登记：** 须是同一份内容的定义（逐项深比较，`validate` 比较函数本身），不必是同一个对象：进程里装了两份契约包时，两份导出的定义也认作同一份。几个插件共同遵守的设置项由契约包导出定义、各自登记，只要还有一个登记者在场，这一项就有效；`listSettings()` 里归最先登记、仍在场的那个插件。内容不同的登记抛错。
 - 键不能是空串、`sessionDefaults` 或原型链上的名字，`appliesTo` 与 `prominence` 取值不对的登记抛错。
@@ -220,7 +222,7 @@ interface SessionManagerService {
   resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
   getOwnConfig(sessionId: string): SessionConfig;                 // 会话自己的覆盖里已登记、取值合法的项
   childConfig(parentId: string, platform?: string): SessionConfig;
-  listLayers(): SessionConfigLayer[];                             // 文档里写了的各层，全局默认总在第一个
+  listLayers(): SessionConfigLayer[];                             // 可以设的各层：已装适配器的平台加文档里写过的，全局默认总在第一个
   getLayer(layer: SessionConfigLayer): SessionConfig;             // 这一层自己的值
   resolveLayer(layer: SessionConfigLayer): Pick<SessionInheritance, 'values' | 'sources'>;  // 解析到这一层为止
   updateLayer(layer: SessionConfigLayer, patch: SessionConfigPatch): Promise<void>;

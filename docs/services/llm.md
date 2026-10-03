@@ -24,6 +24,9 @@ interface LLMModel {
   // 能力元数据：chat/vision/tool_calling/audio/video…——领域数据，不是 DI 选择机制
   readonly capabilities: readonly LLMCapability[];
 
+  // 能调深度思考的模型允许的档位：由浅到深、各有 id 与显示名、一个默认档；不能调的不声明
+  readonly thinking?: ThinkingLevels;
+
   chat(request: ChatModelRequest): Promise<ChatResponse>;
   chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
 
@@ -43,7 +46,7 @@ interface ChatModelRequest {
   temperature?: number;
   maxTokens?: number;           // 调用方期望的输出上限——provider 必须尊重（见 §6/§7）
   signal?: AbortSignal;         // 取消
-  think?: boolean;              // 思考开关：undefined=随模型默认，true/false=显式覆盖
+  think?: string;               // 思考档位 id（模型 thinking.levels 之一）；不带=按模型的默认档
 }
 ```
 
@@ -65,6 +68,8 @@ interface ChatModelRequest {
 - `listLLMModels(llm, { caps? }): LLMModelEntry[]`——列举（可按能力过滤），供 `/model` 列表与前端下拉。
 - `LLMModelEntry`：`{ instance: LLMModel; contextId: string; label? }`。
 - `ModelRef`：`{ provider?, model? }`，由 ConfigSchema `type: 'llm-ref'` 字段编辑，YAML 存为嵌套对象。
+- `requestedThinking(model, request)`：提供者用，请求带的档位不是这个模型声明的（含模型不能调时带了）就抛错。
+- `lightestThinking(model)`：消费方用，机械任务要压低思考时带模型最浅的一档；模型不能调时为 `undefined`。
 
 > 关键：`resolveLLMModel` / `listLLMModels` 的 `requiredCaps` 过滤源是 **handle 自带的 `instance.capabilities` 元数据**，不依赖 core 的能力选择（core 0.5.0 起已移除能力维度的 DI 选择）。
 
@@ -72,12 +77,12 @@ interface ChatModelRequest {
 
 **参考实现（provider）**：
 - `@aalis/plugin-llm-openai`（`packages/plugin-llm-openai/src/index.ts`）——OpenAI 兼容 `chat/completions`（`baseUrl` 为完整前缀，含版本段），远端动态发现 + 实现 `refresh`。
-- `@aalis/plugin-llm-deepseek`（`packages/plugin-llm-deepseek/src/index.ts`）——DeepSeek，含 thinking / reasoning_effort / DSML 泄漏恢复。
+- `@aalis/plugin-llm-deepseek`（`packages/plugin-llm-deepseek/src/index.ts`）——DeepSeek，含思考档位（翻成 thinking.type 与 reasoning_effort）/ DSML 泄漏恢复。
 - `@aalis/plugin-llm-ollama`（`packages/plugin-llm-ollama/src/index.ts`）——本地 Ollama，`/api/show` 真实能力探测 + 音频改路 OpenAI 兼容端点。
 
 **典型消费方**：
 - `@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，解析并消费 `chatStream`、用 `maxOutputTokens` 算 token 预算）——核心对话循环。
-- `@aalis/plugin-media`（`packages/plugin-media/src/llm-adapter.ts`）——扫描所有 `llm` entry，按 `capabilities` 把 vision/audio 模型包成 MediaProcessor（`chat({ messages, maxTokens, think })`）。
+- `@aalis/plugin-media`（`packages/plugin-media/src/llm-adapter.ts`）——扫描所有 `llm` entry，按 `capabilities` 把 vision/audio 模型包成 MediaProcessor（`chat({ messages, maxTokens, think })`，关掉思考链时带最浅的一档）。
 - `@aalis/plugin-websearch-serper`（`packages/plugin-websearch-serper/src/index.ts`）——可选依赖 `llm` 压缩搜索结果。
 - 其它：`plugin-memory-summary` / `plugin-user-profile` / `plugin-user-relation` / `plugin-session-manager`。
 
@@ -215,7 +220,7 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 5. **`chatStream` 是可选的，但 agent 直接 `chatStream!()`**：agent 用非空断言调用（`packages/plugin-agent/src/index.ts`），意味着被选为对话 model 的 entry 实际需要实现 `chatStream`。只实现 `chat` 的 model 不应被 preference 选为对话默认（可只用于 media 处理器等只调 `chat` 的场景）。
 
-6. **`think` 默认语义**：`request.think === undefined` 表示「随模型默认」，`false` 表示显式关闭。Ollama 原生 thinking 模型必须显式传 `think:false` 才能关闭，仅省略字段会被默认启用导致 content 为空（`packages/plugin-llm-ollama/src/index.ts`）。
+6. **`think` 的语义**：`request.think === undefined` 表示「按模型的默认档」，带了就必须是模型声明的档位之一，提供者经 `requestedThinking` 拒绝别的值。各提供者按自己的协议翻译：DeepSeek 总是明说 `thinking.type`（v4 系列不发会保持开启），Ollama 对能思考的模型总是明说 `think`（原生思考模型省略字段会默认思考，content 可能为空），OpenAI 只在请求带了档位时发字段（`packages/plugin-llm-*/src/index.ts`）。
 
 7. **per-model entry 注册顺序 = 优先级稳定性**：Ollama 并行探测能力时保留顺序以保证注册顺序稳定（`packages/plugin-llm-ollama/src/index.ts`），因为相同 priority 下注册顺序是 DI 胜者的最后一道裁决（[服务模型](../concepts/service-model.md)）。
 

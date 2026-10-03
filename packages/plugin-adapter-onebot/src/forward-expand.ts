@@ -1,4 +1,4 @@
-import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
+import { type LLMModel, lightestThinking, resolveLLMModel } from '@aalis/api-llm';
 import type { MediaService } from '@aalis/api-media';
 import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
 import type { ProcessService } from '@aalis/api-process';
@@ -321,7 +321,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.3,
-        think: false,
+        think: lightestThinking(model),
         maxTokens: Math.max(800, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
       });
       const out = (resp.content ?? '').trim();

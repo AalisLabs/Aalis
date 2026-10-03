@@ -47,6 +47,7 @@ const REMOVED: Array<[string, string]> = [
   ['/api/status', 'WebUI 的状态接口（按名探测上传能力）'],
   ['/api/tool-groups', 'WebUI 仪表盘的工具分组接口'],
   ['/api/llm-models', 'WebUI 仪表盘的模型列表接口'],
+  ['/api/service-groups', 'WebUI 仪表盘的服务分组接口，插件区改按插件列表的 subsystem 分组'],
   ['ROOM_ONLY_CONFIG_KEYS', '写死的房间专属设置键，由设置项登记的 liveOnly 取代'],
   ['omitRoomOnlyKeys', '写死的房间专属设置键，由会话管理的 childConfig 取代'],
   ['sessionListSection', '会话列表分区函数，由会话种类函数 sessionKind 取代'],
@@ -69,6 +70,8 @@ const REMOVED: Array<[string, string]> = [
   ['/api/page-action', '旧的页面动作路由，由按组件取数与按动作调用的两条路由取代'],
   ['TAB_TITLES', '客户端写死的会话面板标签名，由 api-webui 的宿主标签集合 HOST_PANEL_TABS 与标签合成取代'],
   ['SESSION_TABS', '客户端写死的会话面板标签，由 api-webui 的宿主标签集合 HOST_PANEL_TABS 与标签合成取代'],
+  ['thinkingMode', 'DeepSeek 的思考开关配置，由模型声明的思考档位与实例的默认档 thinking 取代'],
+  ['reasoningEffort', 'DeepSeek 的推理强度配置，并进思考档位'],
 ];
 
 /**

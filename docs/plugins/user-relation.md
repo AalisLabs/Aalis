@@ -250,9 +250,9 @@ $$
 | `candidateEventLimit` | number | `20` | 候选事件最大数量：控制 prompt 体积 |
 | `senderNeighborhoodEdgeLimit` | number | `8` | 候选人 1 跳邻居展示上限：提取时，对窗口内每位已知发言人附带其 1 跳邻居子图（已关联的事件/实体/人际关系，按权重降序），上限条数。0 = 关闭 |
 | `extractionModel` | llm-ref | — | 提取使用的 LLM：建议挑一个具备 chat 能力的便宜模型；留空则使用默认 llm 服务 |
-| `extractionDisableThinking` | boolean | `true` | 提取：禁用思考模式：提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。默认禁用 |
+| `extractionDisableThinking` | boolean | `true` | 提取：禁用思考模式：提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。开启时用模型最浅的思考档（能关闭思考的模型即关闭），模型不能调思考时不起作用。默认开启 |
 | `consolidationModel` | llm-ref | — | Consolidate 使用的 LLM：可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus），留空则保持纯算法行为。 |
-| `consolidationDisableThinking` | boolean | `true` | Consolidate LLM：禁用思考模式：同 extractionDisableThinking。默认禁用 |
+| `consolidationDisableThinking` | boolean | `true` | Consolidate LLM：禁用思考模式：同 extractionDisableThinking。默认开启 |
 | `consolidationAutoLink` | boolean | `false` | Consolidate autoLink：为 true 时自动合并别名实体、建层级边（结合 consolidationModel 可由 LLM 核验）；false 仅打印候选不动数据。 |
 | `consolidationSkipLowScorePairs` | boolean | `true` | Consolidate：跳过低权候选 pair：启用后，宽召回阶段双方 compositeScore 均低于阈值的候选不送 LLM 核验（两端都是 edge tier，合并价值低）。默认启用以节省 LLM 调用。 |
 | `consolidationLowScoreThreshold` | number | `0.2` | Consolidate：低权阈值：compositeScore 阈值（0~1，与 scoreToTier 的 edge 边界一致，默认 0.2）。设 0 等同关闭跳过；仅在 consolidationSkipLowScorePairs=true 时生效。 |

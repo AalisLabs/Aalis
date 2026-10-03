@@ -80,6 +80,12 @@ export interface SessionSetting {
   /** 只经继承链实时解析：建子会话复制父会话的生效配置时不带它，免得把当时的值冻结进子会话 */
   liveOnly?: boolean;
   /**
+   * 可选项依赖另一项的生效值：取这一项的动态可选项（field.dynamicOptions）时带上那一项在这个会话或这一层的生效值，
+   * 那一项变了就重取。例如深度思考的档位按模型取。依赖的须是另一个键，字段须有 dynamicOptions。依赖值只交给会读它的
+   * 可选项来源（目前是 webui-server 的 llm-thinking），走服务 listModels() 的可选项拿不到它
+   */
+  dependsOn?: keyof SessionConfig & string;
+  /**
    * 取值校验：合法时返回 undefined，不合法时返回原因。写入与解析都先过它，再按字段校验，结果与字段校验不合同样处理。
    * schema-config 不校验外来字段类型（如 api-llm 的 `'llm-ref'`）的取值，所以外来类型的设置项必须给出它，否则登记抛错
    */
@@ -305,7 +311,10 @@ export interface SessionManagerService {
   /** 建子会话时复制的配置：父会话的生效配置去掉 liveOnly 的项 */
   childConfig(parentId: string, platform?: string): SessionConfig;
 
-  /** 有值的各层：全局默认总在第一个，其后平台档按平台名、受众条目按平台名与受众排 */
+  /**
+   * 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上
+   * 配置里写过的平台；受众条目按适配器声明的 sessionTypes 出，加上配置里写过的
+   */
   listLayers(): SessionConfigLayer[];
   /** 这一层自己的值：已登记、取值合法的项 */
   getLayer(layer: SessionConfigLayer): SessionConfig;

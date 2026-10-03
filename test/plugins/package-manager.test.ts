@@ -353,6 +353,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     const r = await createPackageManager(h.deps).install('@scope/ui');
     expect(r.ok).toBe(true);
     expect(r.message).toContain('非插件包');
+    expect(r.plugin, '不进插件列表的包没有插件可指').toBeUndefined();
   });
 
   // ── 判据必须是「目标自身是否就位」，不能是 rescan 的返回值 ──
@@ -389,7 +390,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(r.message).toContain('npm');
   });
 
-  it('定义 name 与包名不同、但定义已落账 → 安装成功，并 warn', async () => {
+  it('定义 name 与包名不同、但定义已落账 → 安装成功，回执指向按定义 name 登记的插件，并 warn', async () => {
     const warns: string[] = [];
     const h = makeHarness({
       registered: ['other-name'],
@@ -403,6 +404,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     const r = await createPackageManager(h.deps).install('plugin-mismatch');
     expect(r.ok, r.message).toBe(true);
     expect(r.message).toContain('plugin-mismatch');
+    expect(r.plugin).toBe('other-name');
     expect(
       warns.some(w => w.includes('plugin-mismatch') && w.includes('other-name') && w.includes('定义的 name')),
     ).toBe(true);
@@ -423,6 +425,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
       ok: true,
       message: '已安装 @scope/foo，但激活失败，已转为 error 态（缺少配置项 apiKey）',
+      plugin: '@scope/foo',
     });
 
     // 只看主实例：同名的后缀实例出错不算这次安装的结果
@@ -430,6 +433,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
       ok: true,
       message: '已安装并加载: @scope/foo',
+      plugin: '@scope/foo',
     });
   });
 
@@ -446,6 +450,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
       ok: true,
       message: '已安装 @scope/foo，但激活失败，已转为 error 态（缺少配置项 apiKey）',
+      plugin: '@scope/foo',
     });
 
     for (const [state, message] of [
@@ -453,7 +458,11 @@ describe('install（只有一条路径：写根依赖）', () => {
       ['pending', '已安装 @scope/foo，尚未激活，正在等待 required 依赖满足'],
     ] as const) {
       h.deps.pluginStatus = () => [entry('@scope/foo', state)];
-      expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({ ok: true, message });
+      expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+        ok: true,
+        message,
+        plugin: '@scope/foo',
+      });
     }
   });
 });
@@ -1359,6 +1368,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       expect(await installing).toEqual({
         ok: true,
         message: `已安装 ${pkg}，但激活失败，已转为 error 态（缺少配置项 apiKey）`,
+        plugin: pkg,
       });
     } finally {
       rmSync(proj, { recursive: true, force: true });

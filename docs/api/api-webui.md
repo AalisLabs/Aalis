@@ -10,7 +10,7 @@
 
 页面默认声明式，需要自绘时用插件前端（见下文「插件前端」）。声明式页面只交声明：插件在 `apply` 里经 `webuiServer` 的 `definePage` 一次交出组件、数据源与动作的处理函数，经 `notify` 发提示；样式、窄屏变形、确认框与输入表单都由宿主统一画。登记归属这次激活，插件停用时同一拍撤回。
 
-`GET /api/plugins` 的 `uses` 是插件 `uses` 声明的完整快照，每项为 `{ key, service, kind }`，`key` 保留 `apply` 参数名；插件页展开后按 `kind` 标为「必需」或「可选」。core 内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）和宿主服务（`app` / `plugins` / `host-config` 等）由根激活登记，与第三方服务一样是普通提供者：`/api/services` 里以「宿主」为提供者列出；插件声明了它们同样要经过激活闸，只是这些服务在加载插件前已就绪。`requiredServices` / `optionalServices` 是 `uses` 按是否包 `optional()` 拆出的服务名，包含 core 内置服务。`capabilities` 是工具和指令的敏感可见性标记。经 `services` 动态查询获得的服务不在声明列表中。
+`GET /api/plugins` 的 `requiredServices` / `optionalServices` 是插件 `uses` 声明按是否包 `optional()` 拆出的服务名，包含 core 内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）。这些内置服务和宿主服务（`app` / `plugins` / `host-config` 等）由根激活登记，与第三方服务一样是普通提供者：`/api/services` 里以「宿主」为提供者列出；插件声明了它们同样要经过激活闸，只是这些服务在加载插件前已就绪。经 `services` 动态查询获得的服务不在声明列表中。
 
 ## 服务接口
 
@@ -487,15 +487,16 @@ interface LayoutRecords {
 }
 type LayoutOperation =
   | { op: 'pin' | 'unpin' | 'move-up' | 'move-down'; page: PageRef }
-  | { op: 'open-tab' | 'close-tab' | 'tab-up' | 'tab-down'; tab: PanelTabRef };
+  | { op: 'open-tab' | 'close-tab' | 'tab-up' | 'tab-down'; tab: PanelTabRef }
+  | { op: 'remove-tab'; tab: PageRef };
 ```
 
 - **会话面板的标签：** 宿主的标签与插件的会话面板（位置为 `session` 的页面）在同一张表里，同一套写法。宿主的标签是封闭集合 `HOST_PANEL_TABS`，每个对应会话协议里的一类数据，由宿主按数据画、不走页面登记，以后按加法加。界面把表里开着、此刻可用的排成标签栏，关着的与适用、还没进表的插件页面列在「+」里；宿主标签按数据出现（计划要有计划条目，设置总有，用量要有用量数据），插件标签要这个会话适用。
 - **读出时：** 宿主标签缺哪个，就按 `HOST_PANEL_TABS` 的顺序补在末尾、开着，新记录因此是计划、设置、用量都开着，以后加的宿主标签对已有的记录也出现。认不出的宿主标签与形状不对的条目丢掉，重复的留第一个。
-- 按操作写，不整份覆盖：两台设备同时改，各自的操作都生效。请求体只收两个键：`pin`、`unpin`、`move-up`、`move-down` 带 `page`，`open-tab`、`close-tab`、`tab-up`、`tab-down` 带 `tab`；`instance` 与 `pageKey` 是 1 到 512 个字符。
+- 按操作写，不整份覆盖：两台设备同时改，各自的操作都生效。请求体只收两个键：`pin`、`unpin`、`move-up`、`move-down` 带 `page`，`open-tab`、`close-tab`、`tab-up`、`tab-down` 带 `tab`，`remove-tab` 只带插件标签（宿主标签回 400）；`instance` 与 `pageKey` 是 1 到 512 个字符。
 - `pin` 只收此刻登记着、位置为 `plugin` 的页面；`open-tab` 打开插件标签时只收此刻登记着、位置为 `session` 的页面。页面不存在回 404，位置不对回 400。其余只动记录，所属插件停用时也能做。
-- `open-tab` 把表里的标签设为开，插件标签第一次打开时追加在末尾；`close-tab` 设为关，位置保留，再打开回到原位；`tab-up`、`tab-down` 与表里的邻居对调。
-- 已固定的再固定、挪到头的、取消没固定的、关掉没进过表的都不变，回原记录、不推事件。每个列表最多 `MAX_LAYOUT_ENTRIES`（50）条，会话面板的标签连同宿主标签算，满了回 409。
+- `open-tab` 把表里的标签设为开，插件标签第一次打开时追加在末尾；`close-tab` 设为关，位置保留，再打开回到原位；`tab-up`、`tab-down` 与表里的邻居对调；`remove-tab` 把插件标签从表里删掉，再打开时追加在末尾。关闭只设为关、位置保留，插件标签累计到上限后，移出用不着的才能打开新的；宿主标签只能关、不能移出。
+- 已固定的再固定、挪到头的、取消没固定的、关掉或移出没进过表的都不变，回原记录、不推事件。每个列表最多 `MAX_LAYOUT_ENTRIES`（50）条，会话面板的标签连同宿主标签算，满了回 409。
 - 所属插件停用或卸载时记录保留，界面按当前的页面表决定显示哪些；重新启用后回来。
 - 记录变了经 `/admin` 推 `layout.changed`，各设备重取。存储服务不在时回 503；落盘失败回 500，记录不变。
 
@@ -557,7 +558,7 @@ admin.send(JSON.stringify({ type: 'log.subscribe' } satisfies WebuiAdminClientMe
 
 ## 主题
 
-一个主题是名字、种类（深或浅）与一套颜色令牌值，只改颜色，不改间距、圆角、字号与布局。主题文件是可交换的 JSON，内置主题就是随包带的这种文件（`packages/api-webui/src/themes/`），第三方主题照同一格式写，三者都经 `parseTheme` 校验。本节的格式与令牌表是公开契约，先标 experimental。
+一个主题是名字、种类（深或浅）与一套颜色令牌值，只改颜色，不改间距、圆角、字号与布局。主题文件是可交换的 JSON，内置主题就是随包带的这种文件（`packages/api-webui/src/themes/`），第三方主题照同一格式写，在设置「外观」里导入，插件也能经贡献点提供（见下文「插件提供的主题」），三者都经 `parseTheme` 校验。本节的格式、令牌表与贡献点是公开契约，先标 experimental。
 
 ### 主题文件
 
@@ -632,6 +633,29 @@ interface Theme {
 | `--color-scrim`、`--color-shadow` | 对话框后的遮罩；浮层的投影 |
 | `--color-chart-1` 到 `-6` | 关系图等图表的分类色 |
 | `--color-syntax-keyword`、`-string`、`-number`、`-comment`、`-function`、`-type` | 代码高亮 |
+
+### 插件提供的主题
+
+插件经贡献点 `webui:theme`（[api-contributions](./api-contributions.md)）提供主题，只交一份主题文件这份数据，与导入的主题走同一套校验：
+
+```ts
+import { contributions } from '@aalis/api-contributions';
+
+interface ThemeContribution {
+  id: string;        // 局部名，与插件实例 id 合成全局键
+  theme: ThemeFile;
+}
+
+// apply 里
+contributions.contribute('webui:theme', {
+  id: 'dusk',
+  theme: { format: 'aalis-theme', version: 1, name: '黄昏', kind: 'dark', colors: { '--color-bg': '#201a18' } },
+});
+```
+
+- 登记随这次激活撤回：插件停用或卸载，它的主题就不在了；界面上正在用它的回到同深浅的偏中性，回来了就回到它。
+- webui-server 经 `GET /api/themes` 列出 `PluginThemesResponse`：`{ themes: PluginTheme[] }`，每项是 `{ id, instance, theme }`，`id` 是贡献点的全局键（`<插件实例 id>/<局部 id>`），`instance` 是提供它的插件实例，`theme` 是过了 `parseTheme` 的主题（缺的令牌已补齐）。不合格式的不列出，webui-server 每份记一条告警。
+- 设置「外观」的主题选择里，插件提供的主题写明出自哪个插件；能导出成主题文件。
 
 ### 对比度检查
 

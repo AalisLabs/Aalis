@@ -23,6 +23,7 @@ body {
 h1,
 h2,
 h3,
+h4,
 p {
   margin: 0;
 }
@@ -88,6 +89,11 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline-offset: 0;
+}
+
+/* 没过校验：外框换危险色，原因写在控件下面 */
+:is(input, select, textarea)[aria-invalid="true"] {
+  border-color: var(--color-danger-text);
 }
 
 input::placeholder,

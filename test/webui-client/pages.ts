@@ -222,9 +222,14 @@ const sameTab = (a: PanelTabRef) => (b: PanelTabRef) =>
     ? 'host' in b && a.host === b.host
     : !('host' in b) && a.instance === b.instance && a.pageKey === b.pageKey;
 
-/** 布局记录：GET 回现在的记录，POST 按操作改了再回，像服务端那样（只做界面发得出的固定、取消、打开与关闭标签） */
+/** 布局记录：GET 回现在的记录，POST 按操作改了再回，像服务端那样 */
 export function layoutStore(initial: Partial<LayoutRecords> = {}) {
   const records: LayoutRecords = { pinned: [], panelTabs: hostTabs(), ...initial };
+  const swap = <T>(entries: T[], at: number, step: number) => {
+    const to = at + step;
+    if (at < 0 || to < 0 || to >= entries.length) return;
+    [entries[at], entries[to]] = [entries[to], entries[at]];
+  };
   return {
     records,
     route({ method, body }: FakeRequest): LayoutRecords {
@@ -234,11 +239,22 @@ export function layoutStore(initial: Partial<LayoutRecords> = {}) {
         const at = records.pinned.findIndex(sameTab(operation.page));
         if (operation.op === 'pin' && at < 0) records.pinned.push(operation.page);
         if (operation.op === 'unpin' && at >= 0) records.pinned.splice(at, 1);
+        if (operation.op === 'move-up' || operation.op === 'move-down') {
+          swap(records.pinned, at, operation.op === 'move-up' ? -1 : 1);
+        }
+        return records;
+      }
+      const at = records.panelTabs.findIndex(({ tab }) => sameTab(tab)(operation.tab));
+      if (operation.op === 'remove-tab') {
+        if (at >= 0) records.panelTabs.splice(at, 1);
+        return records;
+      }
+      if (operation.op === 'tab-up' || operation.op === 'tab-down') {
+        swap(records.panelTabs, at, operation.op === 'tab-up' ? -1 : 1);
         return records;
       }
       const open = operation.op === 'open-tab';
-      const entry = records.panelTabs.find(({ tab }) => sameTab(tab)(operation.tab));
-      if (entry) entry.open = open;
+      if (at >= 0) records.panelTabs[at] = { ...records.panelTabs[at], open };
       else if (open) records.panelTabs.push({ tab: operation.tab, open });
       return records;
     },

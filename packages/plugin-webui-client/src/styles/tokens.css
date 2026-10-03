@@ -59,6 +59,8 @@
   /* 分隔条可按住的宽度 */
   --separator-w: 0.5rem;
   --measure-chat: 45rem;
+  /* 设置、插件详情与市场的正文最宽这么多，左对齐：行尾的按钮、开关与底部的保存离名字和控件不远 */
+  --measure-page: 45rem;
   --menu-w: 13.5rem;
   --dialog-w: 25rem;
   --dialog-form-w: 35rem;

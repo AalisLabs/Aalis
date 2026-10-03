@@ -47,6 +47,7 @@
     "@aalis/api-approval": "workspace:*",
     "@aalis/api-session-protocol": "workspace:*",
     "@aalis/api-webui": "workspace:*",
+    "@aalis/schema-config": "workspace:*",
     "@aalis/util-text-normalize": "workspace:*",
     "@types/d3-force": "^3.0.10",
     "@types/d3-selection": "^3.0.11",

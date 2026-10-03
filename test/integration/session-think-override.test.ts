@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
-import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
+import { type ChatModelRequest, type LLMModel, llm, type ThinkingLevels } from '../../packages/api-llm/src/index.js';
 import { sessionManager as sessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, definePlugin, lifecycle, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -12,20 +12,72 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话级 thinking 覆盖（/session.set -t on|off）端到端：
-//   指令写入 session config → resolveConfig 解析链 → agent 把 think 装进
-//   ChatModelRequest（ollama/deepseek 原生认请求级 think）→ /session.reset 回落。
-// 契约：未设置时请求**不带** think 字段（provider 按各自全局配置决策）。
+// 会话的深度思考档位（/session.set -t <档位>）端到端：指令按当前模型声明的档位校验后写入会话设置 → agent 解析会话设置，
+// 当前模型有这一档才把它装进请求，没设置、模型没有这一档或不能调时请求不带 think，由模型服务按它的默认档 →
+// /session 写明当前模型的档位与这一档用不上的原因 → /session.reset 回落。
 // ════════════════════════════════════════════════════════════
 
-async function loadStack(recorder: ChatModelRequest[]) {
+const PROVIDER = 'zz-llm';
+const DEEP: ThinkingLevels = {
+  levels: [
+    { id: 'off', label: '关' },
+    { id: 'high', label: '高' },
+    { id: 'max', label: '最高' },
+  ],
+  default: 'high',
+};
+const SWITCH: ThinkingLevels = {
+  levels: [
+    { id: 'off', label: '关' },
+    { id: 'on', label: '开' },
+  ],
+  default: 'on',
+};
+
+type Sent = { model: string; request: ChatModelRequest };
+
+/** 三个对话模型：deep 有关、高、最高三档，switch 有关、开两档，plain 不能调；每次请求记进 sent */
+function models(sent: Sent[]) {
+  return definePlugin({
+    name: PROVIDER,
+    provides: [llm],
+    uses: { provide, lifecycle },
+    apply(caps) {
+      for (const [id, thinking] of [
+        ['deep', DEEP],
+        ['switch', SWITCH],
+        ['plain', undefined],
+      ] as const) {
+        const handle: LLMModel = {
+          id,
+          providerId: caps.lifecycle.id,
+          contextLength: 8192,
+          maxOutputTokens: 1024,
+          capabilities: ['chat', 'streaming'],
+          ...(thinking ? { thinking } : {}),
+          async chat(request) {
+            sent.push({ model: id, request });
+            return { content: 'ok' };
+          },
+          async *chatStream(request) {
+            sent.push({ model: id, request });
+            yield { contentDelta: 'ok' };
+            yield { done: true };
+          },
+        };
+        caps.provide(llm, handle, { entryId: `${caps.lifecycle.id}/${id}` });
+      }
+    },
+  });
+}
+
+async function loadStack(sent: Sent[]) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
-  await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
+  await app.plugin(models(sent));
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   // gateway 是 plugin-commands 的 required 依赖：生产里指令插件只在网关在场时才激活
@@ -70,54 +122,66 @@ const cmdInput = (sessionId: string, args: string[]) => ({
   raw: args.join(' '),
 });
 
-describe('会话 thinking 覆盖端到端', () => {
-  it('未设置 → 请求不带 think；set -t off → 请求 think:false；reset → 回落不带', async () => {
-    const recorder: ChatModelRequest[] = [];
-    const { app, agent, commands } = await loadStack(recorder);
+describe('会话的深度思考档位端到端', () => {
+  it('当前模型有这一档才带上；换到没有这一档的模型、不能调的模型时不带，/session 写明原因；reset 回落', async () => {
+    const sent: Sent[] = [];
+    const { app, agent, commands } = await loadStack(sent);
+    const turn = async (sessionId: string) => {
+      await agent.handleMessage(incoming(sessionId));
+      return sent.at(-1) as Sent;
+    };
 
-    // 1. 基线：无覆盖，请求不带 think 字段
-    await agent.handleMessage(incoming('s1'));
-    expect(recorder).toHaveLength(1);
-    expect('think' in recorder[0], '未设置时不该带 think 字段').toBe(false);
+    await commands.execute('session.set', cmdInput('s1', ['-m', `${PROVIDER}/deep`]));
+    const baseline = await turn('s1');
+    expect(baseline.model).toBe('deep');
+    expect('think' in baseline.request, '没设置时不带 think').toBe(false);
 
-    // 2. /session.set -t off → 覆盖生效
-    const setOut = await commands.execute('session.set', cmdInput('s1', ['-t', 'off']));
-    expect(setOut).toContain('thinking: off');
-    await agent.handleMessage(incoming('s1'));
-    expect(recorder).toHaveLength(2);
-    expect(recorder[1].think, '覆盖 off 应以 think:false 落进请求').toBe(false);
+    expect(await commands.execute('session.set', cmdInput('s1', ['-t', 'max']))).toContain('深度思考: max');
+    expect((await turn('s1')).request.think).toBe('max');
+    expect('think' in (await turn('s2')).request, '别的会话不受影响').toBe(false);
 
-    // 3. 另一个会话不受影响
-    await agent.handleMessage(incoming('s2'));
-    expect('think' in recorder[2]).toBe(false);
+    await commands.execute('session.set', cmdInput('s1', ['-m', `${PROVIDER}/switch`]));
+    const fallback = await turn('s1');
+    expect(fallback.model).toBe('switch');
+    expect('think' in fallback.request, '当前模型没有这一档时按它的默认档').toBe(false);
+    const view = String(await commands.execute('session', cmdInput('s1', [])));
+    expect(view).toContain('深度思考: max');
+    expect(view).toContain('当前模型没有这一档，按默认');
+    expect(view).toContain('off（关）、on（开），默认 on');
 
-    // 4. /session.reset → 回落全局（不带 think）
-    const resetOut = await commands.execute('session.reset', cmdInput('s1', []));
-    expect(resetOut).toContain('thinking: (默认)');
-    await agent.handleMessage(incoming('s1'));
-    expect('think' in recorder[3], 'reset 后应回落到不带 think').toBe(false);
+    await commands.execute('session.set', cmdInput('s1', ['-m', `${PROVIDER}/plain`]));
+    expect('think' in (await turn('s1')).request, '不能调的模型不带').toBe(false);
+    expect(String(await commands.execute('session', cmdInput('s1', [])))).toContain('当前模型不能调');
+
+    const reset = await commands.execute('session.reset', cmdInput('s1', ['-t']));
+    expect(reset).toContain('深度思考: (默认)');
+    await commands.execute('session.set', cmdInput('s1', ['-m', `${PROVIDER}/deep`]));
+    expect('think' in (await turn('s1')).request, 'reset 后回落到不带').toBe(false);
 
     await app.stop();
   });
 
-  it('set -t on 与 -t 非法值；reset -t 只清 thinking 不动人设', async () => {
-    const recorder: ChatModelRequest[] = [];
-    const { app, sm, commands } = await loadStack(recorder);
+  it('-t 按当前模型（同时给了 -m 时按新模型）的档位校验：没有这一档、模型不能调都拒绝且不写；reset -t 只清深度思考', async () => {
+    const sent: Sent[] = [];
+    const { app, sm, commands } = await loadStack(sent);
 
-    // 非法值如实拒绝
-    const bad = await commands.execute('session.set', cmdInput('s3', ['-t', 'maybe']));
-    expect(bad).toContain('只能是 on 或 off');
+    await sm.ensureSession('s3', { config: { persona: 'keep-me', llm: { provider: PROVIDER, model: 'switch' } } });
+    const unknown = await commands.execute('session.set', cmdInput('s3', ['-t', 'max']));
+    expect(unknown).toContain('当前模型没有档位「max」，可选：off（关）、on（开）');
+    expect(sm.resolveConfig('s3', 'test').think).toBeUndefined();
 
-    // -t on 与 -p 同时设置；reset -t 只清 thinking
-    await sm.ensureSession('s3', { config: { persona: 'keep-me' } });
-    const out = await commands.execute('session.set', cmdInput('s3', ['-t', 'on']));
-    expect(out).toContain('thinking: on');
-    expect(sm.resolveConfig('s3', 'test').think).toBe(true);
+    const plain = await commands.execute('session.set', cmdInput('s3', ['-m', `${PROVIDER}/plain`, '-t', 'on']));
+    expect(plain).toBe('当前模型不能调深度思考');
+    expect(sm.resolveConfig('s3', 'test').llm).toEqual({ provider: PROVIDER, model: 'switch' });
+
+    await commands.execute('session.set', cmdInput('s3', ['-m', `${PROVIDER}/deep`, '-t', 'max']));
+    expect(sm.resolveConfig('s3', 'test').think).toBe('max');
 
     await commands.execute('session.reset', cmdInput('s3', ['-t']));
     const eff = sm.resolveConfig('s3', 'test');
-    expect(eff.think, 'reset -t 应清 thinking').toBeUndefined();
-    expect(eff.persona, 'reset -t 不该动人设').toBe('keep-me');
+    expect(eff.think, 'reset -t 清深度思考').toBeUndefined();
+    expect(eff.persona, 'reset -t 不动人设').toBe('keep-me');
+    expect(eff.llm, 'reset -t 不动模型').toEqual({ provider: PROVIDER, model: 'deep' });
 
     await app.stop();
   });

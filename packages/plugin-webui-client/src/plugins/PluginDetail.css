@@ -1,0 +1,86 @@
+/* 插件详情：正文有最大宽度、左对齐，块与块之间留白 */
+.plugin-detail {
+  max-width: var(--measure-page);
+}
+
+.plugin-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.plugin-summary-meta {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+  overflow-wrap: anywhere;
+}
+
+.plugin-summary-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.plugin-summary-reason {
+  min-width: 0;
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.plugin-summary-note,
+.plugin-needs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plugin-needs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.plugin-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.plugin-pages li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.plugin-instance-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 25rem;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.plugin-instance-input {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.plugin-instance-input > input {
+  flex: 1;
+  min-width: 0;
+}

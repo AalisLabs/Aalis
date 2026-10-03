@@ -119,7 +119,7 @@ async function setup(opts: SetupOptions = {}) {
     logs,
     injected,
     send: (message: IncomingMessage) => run(host.hooks, message),
-    /** WebUI 服务页切偏好的等价操作 */
+    /** WebUI 服务偏好切换的等价操作 */
     prefer: (label: string) => {
       const view = host.services.all(trigger).find(v => v.label === label);
       if (!view) throw new Error(`trigger 服务里没有「${label}」`);

@@ -1,8 +1,9 @@
 import type { PageRef, PageView } from '@aalis/api-webui';
 import { CircleAlert, Pin, RotateCw } from 'lucide-react';
-import { type ReactNode, useReducer, useState } from 'react';
+import { useReducer, useState } from 'react';
 import { useParams } from 'react-router';
 import { Button } from '../components/Button';
+import { ButtonLink } from '../components/ButtonLink';
 import { EmptyState } from '../components/EmptyState';
 import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
@@ -21,37 +22,45 @@ import { PageScope } from './scope';
 export function PluginPage() {
   const { instance, pageKey } = useParams() as { instance: string; pageKey: string };
   const ref: PageRef = { instance, pageKey };
-  const { pages, pagesError, retry } = usePages();
+  const { pages } = usePages();
   const page = pages?.find(view => view.placement === 'plugin' && sameRef(ref)(refOf(view)));
   return (
     <Main>
       {page ? (
         <OpenPage key={paths.page(refOf(page))} page={page} />
       ) : (
-        <Missing error={pagesError} retry={retry} loading={!pages} />
+        <Panel title="页面" back={paths.home}>
+          <PageMissing instance={instance} />
+        </Panel>
       )}
     </Main>
   );
 }
 
-function Missing({ error, retry, loading }: { error?: Error; retry(): void; loading: boolean }) {
-  let body: ReactNode = null;
-  if (error) {
-    body = (
+/** 地址里的页面不在页面表里：页面表没取到时写原因、可以重试，取到了是所属插件停用了；还在取时什么都不显示 */
+export function PageMissing({ instance }: { instance: string }) {
+  const { pages, pagesError, retry } = usePages();
+  if (pagesError) {
+    return (
       <EmptyState
         tone="danger"
         title="页面没取到"
-        description={error.message}
+        description={pagesError.message}
         action={<Button onClick={retry}>重试</Button>}
       />
     );
-  } else if (!loading) {
-    body = <EmptyState title="这个页面所属的插件已停用" description="插件重新启用后会自动回到这里。" />;
   }
+  return pages ? <PageGone instance={instance} /> : null;
+}
+
+/** 页面所属的插件停用了：主区与会话面板里同一个占位，链到插件详情 */
+export function PageGone({ instance }: { instance: string }) {
   return (
-    <Panel title="页面" back={paths.home}>
-      {body}
-    </Panel>
+    <EmptyState
+      title="这个页面所属的插件已停用"
+      description="插件重新启用后会自动回到这里。"
+      action={<ButtonLink to={paths.plugin(instance)}>去插件详情</ButtonLink>}
+    />
   );
 }
 

@@ -3,7 +3,7 @@ import { authority, DEFAULT_AUTHORITY } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
-import { llm, resolveLLMModel } from '@aalis/api-llm';
+import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
@@ -883,7 +883,7 @@ function registerUserProfile({
         messages: baseMessages,
         temperature: 0.2,
         maxTokens: 800,
-        think: false,
+        think: lightestThinking(extractLlm),
       });
       let text = (resp.content ?? '').trim();
       if (!text) return empty;
@@ -907,7 +907,7 @@ function registerUserProfile({
           ],
           temperature: 0.2,
           maxTokens: 800,
-          think: false,
+          think: lightestThinking(extractLlm),
         });
         text = (retryResp.content ?? '').trim();
         ({ parsed } = parseLLMJsonObject(text));
@@ -1255,7 +1255,7 @@ function registerUserProfile({
         ],
         temperature: 0.2,
         maxTokens: 700,
-        think: false,
+        think: lightestThinking(entry.instance),
       });
       const text = (resp.content ?? '').trim();
       if (!text) return empty;

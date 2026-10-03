@@ -1,7 +1,7 @@
 import { HOST_PANEL_TABS, type HostPanelTab, type PageRef } from '@aalis/api-webui';
 import { matchPath, useParams } from 'react-router';
 
-// 地址表：当前会话、右侧面板的标签、房间表的组与打开的页面都由地址决定，能收藏、能刷新，浏览器后退按地址逐层退回
+// 地址表：当前会话、右侧面板的标签、房间表的组、打开的页面与插件详情都由地址决定，能收藏、能刷新，浏览器后退按地址逐层退回
 
 /** 路由的写法，路由表照它登记 */
 export const routes = {
@@ -12,6 +12,12 @@ export const routes = {
   sessionPanel: '/s/:sessionId/p/:instance/:pageKey',
   rooms: '/rooms',
   page: '/p/:instance/:pageKey',
+  plugins: '/plugins',
+  market: '/market',
+  plugin: '/plugins/:instance',
+  settings: '/settings',
+  settingsSection: '/settings/:section',
+  settingsPage: '/settings/p/:instance/:pageKey',
 } as const;
 
 /** 房间表的一组：按适配器实例取；还没记下实例的房间按平台成一组 */
@@ -46,6 +52,16 @@ export const paths = {
   sessionPanel: (sessionId: string, ref: PageRef) => `/s/${encodeURIComponent(sessionId)}/p/${pageSegments(ref)}`,
   rooms: (group: RoomGroupAddress) => `/rooms?${new URLSearchParams(group)}`,
   page: (ref: PageRef) => `/p/${pageSegments(ref)}`,
+  plugins: routes.plugins,
+  market: routes.market,
+  /** 插件详情；给 section 时落在那一块（配置区是 config） */
+  plugin: (instance: string, section?: 'config') =>
+    `/plugins/${encodeURIComponent(instance)}${section ? `#${section}` : ''}`,
+  settings: routes.settings,
+  /** 设置里宿主自己的一节 */
+  settingsSection: (section: string) => `/settings/${section}`,
+  /** 位置为设置的页面：设置里插件的一节 */
+  settingsPage: (ref: PageRef) => `/settings/p/${pageSegments(ref)}`,
 };
 
 /** 地址上打开着的页面（位置为插件详情的）；不在页面地址上时为 undefined */

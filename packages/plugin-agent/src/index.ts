@@ -10,7 +10,7 @@ import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { gateway as gatewayService, resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
-import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
+import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry, ThinkingLevels } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
 import { media as mediaService } from '@aalis/api-media';
 import { memory as memoryService } from '@aalis/api-memory';
@@ -655,9 +655,9 @@ class DefaultAgent implements AgentService {
         // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
         const personaOpts = toPersonaOptions(resolved);
 
-        // 会话级 thinking 覆盖（/session.set -t on|off）：未设置则不带 think 字段，
-        // 由各 provider 按自己的全局配置决定（ollama thinking / deepseek thinkingMode）。
-        const thinkOverride = resolved?.think;
+        // 会话的深度思考档位：当前模型有这一档才带上；没设置、模型没有这一档或不能调时不带，由模型服务按它的默认档
+        const level = resolved?.think;
+        const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
 
         const messages = await this.buildMessages(incoming, personaOpts, archivedIncoming);
         // 通过 resolved config 获取工具分组
@@ -783,7 +783,7 @@ class DefaultAgent implements AgentService {
             tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
             maxTokens,
             signal,
-            ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
+            ...thinking,
           },
           turnId,
           incoming.sessionId,
@@ -1091,7 +1091,7 @@ class DefaultAgent implements AgentService {
               tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
               maxTokens,
               signal,
-              ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
+              ...thinking,
             },
             turnId,
             incoming.sessionId,
@@ -1179,7 +1179,7 @@ class DefaultAgent implements AgentService {
               tools: undefined,
               maxTokens,
               signal,
-              ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
+              ...thinking,
             },
             turnId,
             incoming.sessionId,
@@ -2218,13 +2218,17 @@ const SESSION_SETTINGS: SessionSetting[] = [
   {
     key: 'think',
     field: {
-      type: 'boolean',
+      type: 'select',
       label: '深度思考',
-      description: '开或关；没设置时由模型服务自己的配置决定，不支持按请求切换的服务忽略它',
+      dynamicOptions: 'llm-thinking',
+      description: '可选的档位随所用的模型；没设置或当前模型没有这一档时按模型的默认档',
     },
+    // 可选项是「模型」这一项生效的那个模型声明的档位
+    dependsOn: 'llm',
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'common',
     order: 20,
+    validate: value => (typeof value === 'string' && value !== '' ? undefined : '要是档位 id（非空字符串）'),
   },
   {
     key: 'maxToolIterations',
@@ -2321,7 +2325,19 @@ function run(caps: Caps): void {
   }
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
-  const fmtThink = (c: CfgView): string | undefined => (c?.think === undefined ? undefined : c.think ? 'on' : 'off');
+  const fmtThink = (c: CfgView): string | undefined => c?.think;
+  /** 模型的档位写成一句：id（名字），由浅到深 */
+  const levelList = (thinking: ThinkingLevels) =>
+    thinking.levels.map(({ id, label }) => `${id}（${label}）`).join('、');
+
+  /** /session 深度思考那一行之后：这一轮会用的模型的档位与默认档，生效的档位它没有时写明按默认 */
+  async function thinkingNote(sessionId: string, platform: string): Promise<string> {
+    const thinking = (await agent.resolveLLM(platform, sessionId))?.instance.thinking;
+    if (!thinking) return '  当前模型不能调';
+    const level = caps.sessionManager.current?.resolveConfig(sessionId, platform).think;
+    const missing = level !== undefined && !thinking.levels.some(({ id }) => id === level);
+    return `  当前模型的档位：${levelList(thinking)}，默认 ${thinking.default}${missing ? '；当前模型没有这一档，按默认' : ''}`;
+  }
 
   // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
   const PAGE_SIZE = 20;
@@ -2365,9 +2381,9 @@ function run(caps: Caps): void {
       return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
     });
 
-  // ---- 会话级「模型 + 人设 + thinking + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
+  // ---- 会话级「模型 + 人设 + 深度思考 + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
   caps.commands
-    .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源', { risk: 'sensitive' })
+    .command('session', '查看当前对话生效的模型 / 人设 / 深度思考 / 名称及来源', { risk: 'sensitive' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
@@ -2377,18 +2393,19 @@ function run(caps: Caps): void {
         `会话: ${session?.name ?? sid}`,
         ...resolutionLines(sid, argv.session.platform, '模型', 'llm', fmtModel),
         ...resolutionLines(sid, argv.session.platform, '人设', 'persona', fmtPersona),
-        ...resolutionLines(sid, argv.session.platform, 'thinking', 'think', fmtThink),
+        ...resolutionLines(sid, argv.session.platform, '深度思考', 'think', fmtThink),
+        await thinkingNote(sid, argv.session.platform),
         session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
         '────',
-        '改配置: /session.set -m <模型> -p <人设> -t <on|off> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
-        '复位:   /session.reset          （-m 仅模型 / -p 仅人设 / -t 仅 thinking）',
+        '改配置: /session.set -m <模型> -p <人设> -t <档位> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
+        '复位:   /session.reset          （-m 仅模型 / -p 仅人设 / -t 仅深度思考）',
       ]
         .filter(Boolean)
         .join('\n');
     });
 
   caps.commands
-    .command('session.set', '设定当前对话的模型 / 人设 / thinking / 显示名（会话级覆盖，持久化，重启不丢）', {
+    .command('session.set', '设定当前对话的模型 / 人设 / 深度思考 / 显示名（会话级覆盖，持久化，重启不丢）', {
       risk: 'sensitive',
       examples: [
         '/session.set -m @aalis/plugin-llm-openai:main/gpt-4o -p catgirl',
@@ -2399,8 +2416,8 @@ function run(caps: Caps): void {
     })
     .option('model', '-m <ref:string>', { description: '模型 provider/model（LLM entry 的 contextId；/model 可列出）' })
     .option('persona', '-p <name:string>', { description: '人设卡名（不含后缀）' })
-    .option('think', '-t <mode:string>', {
-      description: 'thinking 开关：on|off（会话级覆盖；/session.reset 后回落全局配置）',
+    .option('think', '-t <level:string>', {
+      description: '深度思考的档位 id，按当前模型的档位（/session 列出；会话级覆盖，/session.reset 后回落默认）',
     })
     .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
     .action(async argv => {
@@ -2408,27 +2425,35 @@ function run(caps: Caps): void {
       if (!smSvc) return 'session-manager 服务不可用';
       const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
       const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
-      const thinkRaw = typeof argv.options.think === 'string' ? argv.options.think.trim().toLowerCase() : '';
+      const level = typeof argv.options.think === 'string' ? argv.options.think.trim() : '';
       const displayName = typeof argv.options.name === 'string' ? argv.options.name.trim() : '';
-      if (!modelRef && !personaName && !thinkRaw && !displayName) {
-        return '用法: /session.set -m <provider/model> -p <人设名> -t <on|off> [-n <显示名>]（至少给一项）';
-      }
-      if (thinkRaw && thinkRaw !== 'on' && thinkRaw !== 'off') {
-        return `thinking 取值只能是 on 或 off（收到 "${thinkRaw}"）。例：/session.set -t off`;
+      if (!modelRef && !personaName && !level && !displayName) {
+        return '用法: /session.set -m <provider/model> -p <人设名> -t <档位> [-n <显示名>]（至少给一项）';
       }
       const config: SessionConfigPatch = {};
-      if (thinkRaw) config.think = thinkRaw === 'on';
       // 模型：校验存在再落，避免错名静默回退默认
+      let chosen: LLMModelEntry | undefined;
       if (modelRef) {
         const lastSlash = modelRef.lastIndexOf('/');
         if (lastSlash <= 0 || lastSlash === modelRef.length - 1) {
           return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-llm-openai:main/gpt-4o`';
         }
         const chatModels = listLLMModels(caps.llm, { caps: ['chat'] });
-        if (!chatModels.some(e => e.contextId === modelRef)) {
+        chosen = chatModels.find(e => e.contextId === modelRef);
+        if (!chosen) {
           return `未知模型 "${modelRef}"。用 /model <关键词> 搜索（如 /model grok），共 ${chatModels.length} 个可用。`;
         }
         config.llm = { provider: modelRef.slice(0, lastSlash), model: modelRef.slice(lastSlash + 1) };
+      }
+      // 深度思考：按这一轮会用的模型（同时改了模型时按新模型）的档位校验
+      if (level) {
+        const thinking = (chosen ?? (await agent.resolveLLM(argv.session.platform, argv.session.sessionId)))?.instance
+          .thinking;
+        if (!thinking) return '当前模型不能调深度思考';
+        if (!thinking.levels.some(({ id }) => id === level)) {
+          return `当前模型没有档位「${level}」，可选：${levelList(thinking)}`;
+        }
+        config.think = level;
       }
       // 人设：人设插件不在时这一项没有登记，session-manager 拒绝写入
       if (personaName) {
@@ -2449,20 +2474,20 @@ function run(caps: Caps): void {
       const lines = ['本对话已切换 →'];
       if (config.llm) lines.push(`· 模型: ${config.llm.provider}/${config.llm.model}`);
       if (config.persona) lines.push(`· 人设: ${config.persona}`);
-      if (config.think !== undefined) lines.push(`· thinking: ${config.think ? 'on' : 'off'}`);
+      if (config.think) lines.push(`· 深度思考: ${config.think}`);
       if (displayName) lines.push(`· 名称: ${displayName}`);
       lines.push('后续消息持续生效（已持久化，重启不丢）。/session.reset 可复位。');
       return lines.join('\n');
     });
 
   caps.commands
-    .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设+thinking；-m/-p/-t 单独清对应项）', {
+    .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设+深度思考；-m/-p/-t 单独清对应项）', {
       risk: 'sensitive',
       examples: ['/session.reset', '/session.reset -m', '/session.reset -p', '/session.reset -t'],
     })
     .option('model', '-m', { description: '仅复位模型覆盖' })
     .option('persona', '-p', { description: '仅复位人设覆盖' })
-    .option('think', '-t', { description: '仅复位 thinking 覆盖' })
+    .option('think', '-t', { description: '仅复位深度思考覆盖' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
@@ -2489,8 +2514,7 @@ function run(caps: Caps): void {
         await smSvc.updateSession(sid, { config: patch });
       }
       const eff = smSvc.resolveConfig(sid, argv.session.platform);
-      const thinkStr = eff.think === undefined ? '(默认)' : eff.think ? 'on' : 'off';
-      return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}，thinking: ${thinkStr}`;
+      return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}，深度思考: ${eff.think ?? '(默认)'}`;
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量

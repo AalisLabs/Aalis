@@ -71,7 +71,8 @@ export function registerPageRoutes(
       return res.status(400).json({
         error:
           '操作要是 { op, page } 或 { op, tab }：pin、unpin、move-up、move-down 带 page（{ instance, pageKey }），' +
-          'open-tab、close-tab、tab-up、tab-down 带 tab（{ host } 或 { instance, pageKey }）',
+          'open-tab、close-tab、tab-up、tab-down 带 tab（{ host } 或 { instance, pageKey }），' +
+          'remove-tab 只带插件标签 tab（{ instance, pageKey }），宿主标签只能关闭、不能移出',
       });
     }
     // 固定与打开插件标签只收此刻登记着、位置对的页面；其余只动记录，所属插件停用时也能改

@@ -193,7 +193,7 @@ const methodSamples: MethodSamples = {
   },
   'session/config/update': {
     params: {
-      valid: { sessionId: 'session-1', patch: { persona: null, llm: { provider: 'p', model: 'm' }, think: false } },
+      valid: { sessionId: 'session-1', patch: { persona: null, llm: { provider: 'p', model: 'm' }, think: 'off' } },
       invalid: { sessionId: 'session-1', patch: ['persona'] },
     },
     result: { valid: settingRows, invalid: { items: [{ ...modelRow, field: { type: 'llm-ref' } }] } },

@@ -33,7 +33,14 @@ export const MODEL: SessionSetting = {
 
 export const THINK: SessionSetting = {
   key: 'think',
-  field: { type: 'boolean', label: '深度思考' },
+  field: {
+    type: 'select',
+    label: '深度思考',
+    options: [
+      { label: '关', value: 'off' },
+      { label: '高', value: 'high' },
+    ],
+  },
   appliesTo: ALL,
   prominence: 'common',
 };

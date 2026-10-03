@@ -267,6 +267,35 @@ function readRootDependencies(appDir: string): Record<string, string> {
   }
 }
 
+/**
+ * 本地已装包的查询：按包名给出 {@link LocalPkgInfo}，同一次查询里每个包只读一次盘。根依赖在建查询时读一次，
+ * 装卸与更新会改它，所以每个请求另建一个。市场列表与插件列表的版本都经它查
+ */
+export function localPackageLookup(
+  appDir: string,
+  scanned: ReadonlyMap<string, LocalScanEntry>,
+): (name: string) => LocalPkgInfo | undefined {
+  const projectRequire = createRequire(pathToFileURL(join(appDir, 'package.json')));
+  const rootDeps = readRootDependencies(appDir);
+  /** 读本地 package.json。用 resolve+readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。 */
+  const readPkgJson = (name: string) => {
+    try {
+      return JSON.parse(readFileSync(projectRequire.resolve(`${name}/package.json`), 'utf-8')) as {
+        version?: string;
+        keywords?: string[];
+        description?: string;
+      };
+    } catch {
+      return undefined;
+    }
+  };
+  const cache = new Map<string, LocalPkgInfo | undefined>();
+  return name => {
+    if (!cache.has(name)) cache.set(name, resolveLocalInfo(rootDeps[name], readPkgJson(name), scanned.get(name)));
+    return cache.get(name);
+  };
+}
+
 /** 系统组件卡片：本地实况为准，`latest` 由按精确包名的 registry 查询补齐（拿不到则 undefined）。 */
 export interface SystemComponent {
   name: string;
@@ -488,7 +517,7 @@ export function registerMarketplaceRoutes(
    * 装完一个包后重跑前端发现（幂等）。
    *
    * 必需而非锦上添花：`aalis-interface` 包**不是插件**，装完不会触发 rescanPlugins 那条
-   * 通路，于是它不会出现在服务页的下拉里、必须重启才看得见——而重启恰恰是市场承诺不需要
+   * 通路，于是它不会出现在服务偏好的可选项里、必须重启才看得见——而重启恰恰是市场承诺不需要
    * 用户手动做的事。
    */
   rediscoverClients: () => void,
@@ -523,30 +552,8 @@ export function registerMarketplaceRoutes(
       return;
     }
     const localPkgs = getLocalPackages();
-    const projectRequire = createRequire(pathToFileURL(join(appDir, 'package.json')));
-    const rootDeps = readRootDependencies(appDir);
-    /** 读本地 package.json。用 resolve+readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。 */
-    const readPkgJson = (name: string) => {
-      try {
-        return JSON.parse(readFileSync(projectRequire.resolve(`${name}/package.json`), 'utf-8')) as {
-          version?: string;
-          keywords?: string[];
-          description?: string;
-        };
-      } catch {
-        return undefined;
-      }
-    };
-    const readLocal = (name: string): LocalPkgInfo | undefined =>
-      resolveLocalInfo(rootDeps[name], readPkgJson(name), localPkgs.get(name));
-    /** 每个包名只读一次盘，已装判定与版本展示共用。 */
-    const localCache = new Map<string, LocalPkgInfo>();
-    const localOf = (name: string): LocalPkgInfo | undefined => {
-      if (localCache.has(name)) return localCache.get(name);
-      const info = readLocal(name);
-      if (info) localCache.set(name, info);
-      return info;
-    };
+    /** 已装判定与版本展示共用，每个包名只读一次盘 */
+    const localOf = localPackageLookup(appDir, localPkgs);
     // 四类关键词各发一条检索（npm 的 keywords 逗号是 AND 非 OR），并行后按包名合并去重 = OR。
     const fetchKw = async (kw: string): Promise<NpmSearchResponse> => {
       const r = await fetch(buildSearchUrl(q, kw, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
@@ -560,10 +567,13 @@ export function registerMarketplaceRoutes(
       const msg = reason?.reason instanceof Error ? reason.reason.message : String(reason?.reason ?? '未知错误');
       caps.logger.debug(`market: npm registry 检索失败: ${msg}`);
       // 降级：只列本地已装。名单取自本地扫描 + 运行时已加载插件（后者覆盖扫描目录之外的部署）。
-      const names = new Set([...localPkgs.keys(), ...status.map(p => p.name)]);
-      for (const n of names) localOf(n);
+      const local = new Map<string, LocalPkgInfo>();
+      for (const n of new Set([...localPkgs.keys(), ...status.map(p => p.name)])) {
+        const info = localOf(n);
+        if (info) local.set(n, info);
+      }
       res.json({
-        packages: toLocalPackages(localCache, q),
+        packages: toLocalPackages(local, q),
         warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件`,
       });
       return;

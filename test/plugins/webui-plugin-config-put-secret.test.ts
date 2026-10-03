@@ -60,6 +60,9 @@ function setup() {
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
+      services: { inspect: () => [] },
+      self: 'zz-webui',
+      versions: () => () => undefined,
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
   );

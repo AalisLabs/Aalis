@@ -75,7 +75,9 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '启用思考链 (thinking)',
         default: false,
-        description: '启用后识别质量可能提升但 token 成本上升；关闭且后端为 Ollama 时会传 reasoning_effort=none。',
+        description:
+          '开启时按模型服务配置的默认思考档，识别质量可能提升但 token 成本上升；关闭时用模型最浅的一档（Ollama 即关闭思考）。' +
+          '模型不能调思考时不起作用。',
       },
       prompt: {
         type: 'textarea',
@@ -135,7 +137,8 @@ const configSchema = defineConfig({
         label: '启用思考链 (thinking)',
         default: true,
         description:
-          'LLM-as-audio 专用。启用后识别质量更高但 token 成本 ×5-8；关闭则会传 reasoning_effort=none 给 Ollama。',
+          'LLM-as-audio 专用。开启时按模型服务配置的默认思考档，识别质量更高但 token 成本 ×5-8；' +
+          '关闭时用模型最浅的一档（Ollama 即传 reasoning_effort=none）。模型不能调思考时不起作用。',
       },
       prompt: {
         type: 'textarea',

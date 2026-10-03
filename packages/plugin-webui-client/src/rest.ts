@@ -42,8 +42,12 @@ async function request(path: string, init: RequestInit): Promise<unknown> {
 
 export const getJson = (path: string, signal: AbortSignal) => request(path, { signal });
 
-export const postJson = (path: string, body: unknown) =>
-  request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const send = (method: string) => (path: string, body: unknown) =>
+  request(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+export const postJson = send('POST');
+export const putJson = send('PUT');
+export const deleteJson = (path: string) => request(path, { method: 'DELETE' });
 
 /**
  * 在组件里取 path：parse 校验形状（模块级的函数，不随渲染变），version 变了重取，旧的请求作废。重取时与重取失败时都留着

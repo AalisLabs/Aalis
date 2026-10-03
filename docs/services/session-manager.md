@@ -133,7 +133,7 @@ sessionConfig:
       private: { enabledToolGroups: [search, scheduler] }
 ```
 
-层的标识是 `SessionConfigLayer`：`{ scope: 'defaults' }`、`{ scope: 'platform', platform }`、`{ scope: 'audience', platform, audience: 'group' | 'private' }`。`listLayers()` 列出文档里写了的各层，`getLayer` 回这一层自己的值，`resolveLayer` 回解析到这一层为止的生效值与来源，`updateLayer` 校验补丁后写回文档并 `save()`：保存成功后发 `session:config:changed`；保存失败时撤回文档里的改动，以拒绝传出，免得下一次任意保存把没存下的修改写进文件。手写的文档里形状不对的部分（某层不是对象、受众不是 `group` 或 `private`）与 `sessionConfig` 下不认识的键告警一次后忽略，按层写时不再写回。宿主没有提供配置文档时各层为空、按层写被拒。
+层的标识是 `SessionConfigLayer`：`{ scope: 'defaults' }`、`{ scope: 'platform', platform }`、`{ scope: 'audience', platform, audience: 'group' | 'private' }`。`listLayers()` 列出可以设的各层（全局默认在第一个，其后按平台名，每个平台先平台档、再群与私聊：平台档是已装适配器的平台加上文档里写过的平台，受众条目按适配器声明的 `sessionTypes` 出，加上文档里写过的），`getLayer` 回这一层自己的值，`resolveLayer` 回解析到这一层为止的生效值与来源，`updateLayer` 校验补丁后写回文档并 `save()`：保存成功后发 `session:config:changed`；保存失败时撤回文档里的改动，以拒绝传出，免得下一次任意保存把没存下的修改写进文件。手写的文档里形状不对的部分（某层不是对象、受众不是 `group` 或 `private`）与 `sessionConfig` 下不认识的键告警一次后忽略，按层写时不再写回。宿主没有提供配置文档时各层为空、按层写被拒。
 
 `resolveConfig` 与 `resolveInheritance` 的平台档按下面的规则选：
 
@@ -178,7 +178,7 @@ interface SessionSetting {
 | `plugin-tools` | 登记 `enabledToolGroups`（agent 读它决定工具分组） | `plugin-tools/src/index.ts` |
 | `plugin-subtask` | `childConfig()` 取复制给子会话的配置，`createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
 | `plugin-session-server` | 会话协议的会话列表、增删改与设置：`listSessions`、`createSession`、`childConfig`、`updateSession`、`listSettings`、`resolveInheritance`、`getOwnConfig` 与各层的读写，分区按 `kind`（§2.2），入口平台的推法见 §2.4 | `plugin-session-server/src/sessions.ts` |
-| `plugin-paper` | 登记白纸与远端代理的六项；`resolveConfig()` 取它们决定房间用哪块白纸、每天能花多少，`listLayers()`、`getLayer()` 看平台档写了什么 | `plugin-paper/src/rooms.ts` |
+| `plugin-paper` | 登记白纸与远端代理的六项；`resolveConfig()` 取它们决定房间用哪块白纸、每天能花多少，`listLayers()`、`getLayer()` 看各层写了什么 | `plugin-paper/src/rooms.ts` |
 | `plugin-memory-vector` / `plugin-memory-history` / `plugin-tool-session` / `plugin-user-relation` | 各自登记 `MEMORY_RECALL_SCOPE_SETTING`；每次检索或注入时 `resolveConfig()` 取 `memoryRecallScope`，按房间收窄召回范围（可选依赖，缺席时不收窄） | 各包 `src/` |
 
 ## 4. 写一个 provider（替换实现）
@@ -460,7 +460,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 6.5 标题生成会调 LLM
 
-`generateTitle` 会真发一次 LLM `chat`（`think:false`，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。第三方平台自动调用前请自行权衡。
+`generateTitle` 会真发一次 LLM `chat`（模型最浅的思考档，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。第三方平台自动调用前请自行权衡。
 
 平台派生的会话 id（`cli-default` 等）从不经 `createSession` 预建，首条消息到达时**缺档是常态**：参考实现先 `ensureSession` 兜底建档再生成标题（与 `createChildSession` 同一条兜底路），因此这些平台的首条消息一样会拿到标题。兜底只看入口平台：`cli` / `webui` 平台上带未知 `sessionId` 的入站消息都会建档，包括定时任务投给已删除会话的那种；有出生平台的 IM 房间除外，从 WebUI 往房间插话既不生成标题，也不经这里建档（房间由 §6.6 的收录登记）。
 

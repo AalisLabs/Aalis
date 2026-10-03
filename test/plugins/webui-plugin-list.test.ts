@@ -74,6 +74,9 @@ function mountPluginRoutes(
       hostConfig: app.bind({ hostConfig }).hostConfig,
       tools: { current: extras.tools as ToolService | undefined },
       commands: { current: extras.commands as CommandService | undefined },
+      services: app.bind({ services }).services,
+      self: 'zz-webui',
+      versions: () => () => undefined,
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
   );
@@ -113,17 +116,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     );
     expect(row?.state).toBe('active');
     expect(sameProvider).toBe(true);
-    expect(row?.uses).toEqual([
-      { key: 'bus', service: 'events', kind: 'required' },
-      { key: 'hooks', service: 'hooks', kind: 'required' },
-      { key: 'contributions', service: 'contributions', kind: 'required' },
-      { key: 'lifecycle', service: 'lifecycle', kind: 'required' },
-      { key: 'log', service: 'logger', kind: 'required' },
-      { key: 'config', service: 'config', kind: 'required' },
-      { key: 'provide', service: 'provide', kind: 'required' },
-      { key: 'services', service: 'services', kind: 'required' },
-      { key: 'optionalEvents', service: 'events', kind: 'optional' },
-    ]);
+    expect(row).not.toHaveProperty('uses');
     expect(row?.requiredServices).toEqual([
       'events',
       'hooks',
@@ -135,7 +128,6 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
       'services',
     ]);
     expect(row?.optionalServices).toEqual(['events']);
-    expect(row?.capabilities).toEqual([]);
     // 返回的是声明快照，修改投影不能反向改写插件定义。
     const statusOf = () => app.plugins.getStatus().find(s => s.name === 'declared-capabilities');
     const snapshot = statusOf();
@@ -143,7 +135,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     expect(statusOf()?.uses[0].service).toBe('events');
   });
 
-  it('required 缺席的 pending 插件也披露声明；零声明返回空列表', async () => {
+  it('required 缺席的 pending 插件也披露依赖；零声明返回空列表', async () => {
     const app = silentApp();
     const needed = defineService<object>('needed');
     const extra = defineService<object>('extra');
@@ -163,18 +155,14 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
       state: 'pending',
       requiredServices: ['needed'],
       optionalServices: ['extra', 'logger'],
-      uses: [
-        { key: 'db', service: 'needed', kind: 'required' },
-        { key: 'cache', service: 'extra', kind: 'optional' },
-        { key: 'log', service: 'logger', kind: 'optional' },
-      ],
     });
-    expect(before.find(p => p.name === 'empty')?.uses).toEqual([]);
+    expect(before.find(p => p.name === 'empty')).toMatchObject({ requiredServices: [], optionalServices: [] });
     app.bind({ provide }).provide(needed, {});
     await app.plugins.idle();
     expect((await rows()).find(p => p.name === 'waiting')).toMatchObject({
       state: 'active',
-      uses: before.find(p => p.name === 'waiting')?.uses,
+      requiredServices: ['needed'],
+      optionalServices: ['extra', 'logger'],
     });
   });
 
@@ -220,7 +208,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     }
   });
 
-  it('GET /api/plugins 的 tools/commands/capabilities 必须按 instanceId 索引，不能用 definition.name', async () => {
+  it('GET /api/plugins 的 tools/commands 必须按 instanceId 索引，不能用 definition.name', async () => {
     const def = reusableDef();
     const app = silentApp();
     await app.plugin(def, { tag: 'main' });
@@ -253,8 +241,6 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     expect(main?.tools, '主实例只列自己的工具').toEqual(['tool-main']);
     expect(extra?.tools, '额外实例必须列自己的工具，不得误挂主实例的、也不得空').toEqual(['tool-work']);
     expect(extra?.commands).toEqual(['cmd-work']);
-    expect(extra?.capabilities).toEqual(['visibility:restricted']);
-    expect(main?.capabilities ?? []).not.toContain('visibility:restricted');
   });
 
   const SECRET_SCHEMA = {

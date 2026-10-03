@@ -101,7 +101,7 @@ export interface MediaConfigResolved {
     language?: string;
     /** 默认最大 output tokens。e4b thinking enabled 时全能 prompt 需要 ≥1024 */
     maxTokens: number;
-    /** 是否启用 thinking（识别质量 ↑，但 token 成本 ×5-8）。默认 true */
+    /** 开启时按模型的默认思考档（识别质量 ↑，但 token 成本 ×5-8），关闭时用最浅的一档。默认 true */
     think: boolean;
     /** 自定义 prompt。留空使用 LLM adapter 内置的全能描述 prompt */
     prompt?: string;

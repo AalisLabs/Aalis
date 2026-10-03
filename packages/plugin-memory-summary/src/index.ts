@@ -2,7 +2,7 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
-import { llm, resolveLLMModel } from '@aalis/api-llm';
+import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
@@ -403,11 +403,11 @@ async function run(caps: Caps): Promise<void> {
         messages: summaryMessages,
         temperature: 0.3,
         maxTokens: summaryBudget,
-        think: false, // 取舍见下方非流式分支的注释
+        think: lightestThinking(summaryModel), // 取舍见下方非流式分支的注释
       });
       if (!stream) {
-        // think: false 写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
-        // thinkingMode=auto 下 v4 全系默认带思考，300 条群聊的摘要曾多次撞
+        // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
+        // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞
         // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
         // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
         // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
@@ -415,7 +415,7 @@ async function run(caps: Caps): Promise<void> {
           messages: summaryMessages,
           temperature: 0.3,
           maxTokens: summaryBudget,
-          think: false,
+          think: lightestThinking(summaryModel),
         });
         summaryText = resp.content ?? '';
       } else {

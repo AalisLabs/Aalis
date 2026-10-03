@@ -6,7 +6,7 @@
  * 这两步都是「可选」：仅当 consolidationModel 已配置时启用，否则保持原算法行为。
  */
 
-import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
+import { LLMCapabilities, type LLMModel, lightestThinking, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import type { Logger, ServiceRef } from '@aalis/core';
 
 import type { EntityNode, EventNode, PersonNode } from './types.js';
@@ -172,7 +172,11 @@ export async function verifyAliasPair(
     },
   ];
   try {
-    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const resp = await model.chat({
+      messages: prompt,
+      temperature: 0,
+      think: disableThinking ? lightestThinking(model) : undefined,
+    });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as { verdict?: unknown; reason?: unknown; parent?: unknown } | undefined;
     if (!parsed) return { isSame: false, reason: 'LLM 输出无法解析' };
@@ -267,7 +271,11 @@ export async function verifyEventPair(
     },
   ];
   try {
-    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const resp = await model.chat({
+      messages: prompt,
+      temperature: 0,
+      think: disableThinking ? lightestThinking(model) : undefined,
+    });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as { isSame?: unknown; reason?: unknown } | undefined;
     if (!parsed || typeof parsed.isSame !== 'boolean') return { isSame: false, reason: 'LLM 输出无法解析' };
@@ -320,7 +328,11 @@ export async function rewriteEntitySummary(
     },
   ];
   try {
-    const resp = await model.chat({ messages: prompt, temperature: 0.2, ...(disableThinking ? { think: false } : {}) });
+    const resp = await model.chat({
+      messages: prompt,
+      temperature: 0.2,
+      think: disableThinking ? lightestThinking(model) : undefined,
+    });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const cleaned = raw
       .trim()
@@ -366,7 +378,11 @@ export async function inferEntityHierarchy(
     },
   ];
   try {
-    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const resp = await model.chat({
+      messages: prompt,
+      temperature: 0,
+      think: disableThinking ? lightestThinking(model) : undefined,
+    });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as Array<{ index?: number; isPartOf?: unknown; reason?: unknown }> | undefined;
     if (!Array.isArray(parsed)) {
@@ -442,7 +458,11 @@ export async function inferMissingParent(
     },
   ];
   try {
-    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const resp = await model.chat({
+      messages: prompt,
+      temperature: 0,
+      think: disableThinking ? lightestThinking(model) : undefined,
+    });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as { accept?: unknown; suggestedName?: unknown; reason?: unknown } | undefined;
     if (!parsed || typeof parsed.accept !== 'boolean') {

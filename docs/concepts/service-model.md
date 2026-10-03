@@ -68,7 +68,7 @@ export default definePlugin({
 - `priority?: number`
 - `label?: string` —— 供管控视图展示
 - `entryId?: string` —— 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
-- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好与服务页认这个 id），清理仍归本激活。代登记不替被代者满足 `provides`：校验同时核对实际登记的激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
+- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好与 WebUI 的服务偏好认这个 id），清理仍归本激活。代登记不替被代者满足 `provides`：校验同时核对实际登记的激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
 
 内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
 

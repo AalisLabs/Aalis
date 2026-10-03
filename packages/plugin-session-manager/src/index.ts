@@ -2,9 +2,9 @@ import { agent } from '@aalis/api-agent';
 import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { hostConfig } from '@aalis/api-host-config';
-import { llm, resolveLLMModel } from '@aalis/api-llm';
+import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
-import { getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
+import { getPlatformAdapters, getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   type InheritanceSource,
   type NewSessionFields,
@@ -532,9 +532,8 @@ class SessionManager implements SessionManagerService {
           { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
         temperature: 0.3,
-        // 关闭 thinking：标题生成无需推理，避免 reasoning 占满 token 预算导致 content 为空。
-        // DeepSeek 会映射为 thinking.type=disabled；其他不消费此字段的 provider 视为 no-op。
-        think: false,
+        // 标题生成无需推理，用模型最浅的思考档：避免 reasoning 占满 token 预算导致 content 为空
+        think: lightestThinking(model),
       });
       title = (resp.content || '').trim().slice(0, 50);
       if (!title) {
@@ -621,7 +620,7 @@ class SessionManager implements SessionManagerService {
   }
 
   listLayers(): SessionConfigLayer[] {
-    return listLayers(this.layers());
+    return listLayers(this.layers(), getPlatformAdapters(this.caps.platform));
   }
 
   getLayer(layer: SessionConfigLayer): SessionConfig {

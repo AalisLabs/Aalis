@@ -1,5 +1,13 @@
-import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
-import { LLMCapabilities, llm } from '@aalis/api-llm';
+import type {
+  ChatModelRequest,
+  ChatResponse,
+  ChatStreamChunk,
+  LLMCapability,
+  LLMModel,
+  ThinkingLevel,
+  ThinkingLevels,
+} from '@aalis/api-llm';
+import { LLMCapabilities, llm, requestedThinking } from '@aalis/api-llm';
 import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, optional, provide } from '@aalis/core';
@@ -123,6 +131,12 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
   return Buffer.concat(chunks);
 }
 
+/** 报告了思考能力的模型允许的档位：开关型，翻成 think 开关 */
+const THINKING_LEVELS: ThinkingLevel[] = [
+  { id: 'off', label: '关' },
+  { id: 'on', label: '开' },
+];
+
 const configSchema = defineConfig({
   baseUrl: {
     type: 'string',
@@ -180,10 +194,13 @@ const configSchema = defineConfig({
     description: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）',
   },
   thinking: {
-    type: 'boolean',
-    label: '启用思考',
-    default: true,
-    description: '为支持思考的模型启用扩展思考（think 参数）。无 thinking 能力的模型该参数无效。',
+    type: 'select',
+    label: '默认思考档位',
+    default: 'on',
+    options: THINKING_LEVELS.map(level => ({ label: level.label, value: level.id })),
+    description:
+      '报告了思考能力的模型（或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。' +
+      '没有思考能力的模型不发 think 参数。',
   },
 });
 
@@ -413,14 +430,14 @@ class OllamaClient {
   /**
    * chat / chatStream 共用的 /api/chat 请求体（两侧只差 stream 标志；分开写曾让两侧漂移）。
    * 先走 prepareLLMMessages（归一 role + 拼 kind/自定义 role 内容前缀），否则丢
-   * [系统通知]/[跨会话委派] 等前缀。
+   * [系统通知]/[跨会话委派] 等前缀。level 是这次的思考档位，不能调的模型没有
    */
   private async buildRequestBody(
     model: string,
     request: ChatModelRequest,
-    defaultThinking: boolean,
+    level: string | undefined,
     stream: boolean,
-  ): Promise<{ body: Record<string, unknown>; messages: OllamaMessage[]; tools?: OllamaTool[]; shouldThink: boolean }> {
+  ): Promise<{ body: Record<string, unknown>; messages: OllamaMessage[]; tools?: OllamaTool[] }> {
     const messages = await Promise.all(
       prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request.requireImages === true)),
     );
@@ -442,24 +459,20 @@ class OllamaClient {
       body.tools = tools;
     }
 
-    // 启用原生思考模式（Ollama API think 参数）
-    // 调用方可通过 request.think === false 显式关闭
-    // 必须显式传 think:false 才能关闭 gemma4:31b 等原生 thinking 模型的思考；
-    // 仅省略字段会被模型默认启用思考，导致 content 为空。
-    const shouldThink = request.think !== undefined ? request.think : defaultThinking;
-    body.think = shouldThink;
-    return { body, messages, tools, shouldThink };
+    // 能思考的模型总是明说 think：gemma4:31b 等原生思考模型省略字段会默认思考，content 可能为空。没有思考能力的模型不发
+    if (level !== undefined) body.think = level === 'on';
+    return { body, messages, tools };
   }
 
-  async chat(model: string, request: ChatModelRequest, defaultThinking: boolean): Promise<ChatResponse> {
+  async chat(model: string, request: ChatModelRequest, level: string | undefined): Promise<ChatResponse> {
     // 包含音频输入 → 改走 OpenAI 兼容的 /v1/chat/completions（/api/chat 不支持 audios）
     if (request.messages.some(m => m.audios && m.audios.length > 0)) {
-      return this.chatOpenAIWithAudio(model, request);
+      return this.chatOpenAIWithAudio(model, request, level);
     }
-    const { body, messages, tools, shouldThink } = await this.buildRequestBody(model, request, defaultThinking, false);
+    const { body, messages, tools } = await this.buildRequestBody(model, request, level, false);
 
     this.logger.debug(
-      `请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
+      `请求 Ollama${level ? ` (思考 ${level})` : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
     );
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
@@ -514,11 +527,11 @@ class OllamaClient {
   async *chatStream(
     model: string,
     request: ChatModelRequest,
-    defaultThinking: boolean,
+    level: string | undefined,
   ): AsyncIterable<ChatStreamChunk> {
     // 包含音频输入 → 回退为非流式（OpenAI compat 路径不支持 SSE 交互）后以单 chunk 交付。
     if (request.messages.some(m => m.audios && m.audios.length > 0)) {
-      const r = await this.chatOpenAIWithAudio(model, request);
+      const r = await this.chatOpenAIWithAudio(model, request, level);
       yield {
         contentDelta: r.content ?? '',
         reasoningDelta: r.reasoningContent ?? '',
@@ -527,9 +540,9 @@ class OllamaClient {
       };
       return;
     }
-    const { body, messages, shouldThink } = await this.buildRequestBody(model, request, defaultThinking, true);
+    const { body, messages } = await this.buildRequestBody(model, request, level, true);
 
-    this.logger.debug(`流式请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 Ollama${level ? ` (思考 ${level})` : ''}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -851,7 +864,11 @@ class OllamaClient {
    * audios 字段时，/api/chat 原生路径不支持，必须走这里。
    * 文本与工具调用等其它能力仍由 chat() 走原生路径。
    */
-  async chatOpenAIWithAudio(model: string, request: ChatModelRequest): Promise<ChatResponse> {
+  async chatOpenAIWithAudio(
+    model: string,
+    request: ChatModelRequest,
+    level: string | undefined,
+  ): Promise<ChatResponse> {
     // 将 Aalis Message 转为 OpenAI multimodal content blocks
     const oaiMessages = await Promise.all(
       prepareLLMMessages(request.messages).map(async m => {
@@ -886,12 +903,9 @@ class OllamaClient {
       max_tokens: request.maxTokens ?? this.maxTokens,
       temperature: request.temperature ?? this.temperature,
     };
-    // Ollama 0.20+ thinking 控制：OpenAI 兼容路径只认 reasoning_effort，
-    // 不认 /api/chat 的 think 字段。think=false → reasoning_effort: "none"
-    // 节省 ~5-8x completion tokens（实测 935 → 155）。
-    if (request.think === false) {
-      body.reasoning_effort = 'none';
-    }
+    // Ollama 0.20+ 的兼容路径只认 reasoning_effort、不认 /api/chat 的 think：关 → reasoning_effort: "none"，
+    // 节省 ~5-8x completion tokens（实测 935 → 155）；开按模型默认，不发
+    if (level === 'off') body.reasoning_effort = 'none';
 
     this.logger.debug(`请求 Ollama (OpenAI compat, audio): ${model}, ${oaiMessages.length} 条消息`);
 
@@ -1016,6 +1030,8 @@ function safeParseJSON(str: string): Record<string, unknown> {
 
 const { Chat, ToolCalling, Streaming, Vision, Audio, Thinking } = LLMCapabilities;
 
+// 能力探测（/api/show）失败时的回退。前缀匹配按表序取第一个命中，更具体的前缀排在更短的之前（qwen3-coder 在 qwen3 之前）。
+// 原生思考的族标 Thinking：探测失败时照样声明档位、明说 think，省略字段它们会默认思考
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'llama3.1': [Chat, ToolCalling, Streaming],
   'llama3.2': [Chat, ToolCalling, Streaming],
@@ -1024,12 +1040,13 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'llava-llama3': [Chat, Streaming, Vision],
   gemma2: [Chat, Streaming],
   gemma3: [Chat, ToolCalling, Streaming, Vision],
-  gemma4: [Chat, ToolCalling, Streaming, Vision],
+  gemma4: [Chat, ToolCalling, Streaming, Vision, Thinking],
   'qwen2.5': [Chat, ToolCalling, Streaming],
   'qwen2.5-coder': [Chat, ToolCalling, Streaming],
-  qwen3: [Chat, ToolCalling, Streaming],
+  'qwen3-coder': [Chat, ToolCalling, Streaming],
+  qwen3: [Chat, ToolCalling, Streaming, Thinking],
   mistral: [Chat, ToolCalling, Streaming],
-  'deepseek-r1': [Chat, Streaming],
+  'deepseek-r1': [Chat, Streaming, Thinking],
   phi4: [Chat, Streaming],
   'command-r': [Chat, ToolCalling, Streaming],
 };
@@ -1172,19 +1189,25 @@ class OllamaModelHandle implements LLMModel {
     readonly providerId: string,
     readonly contextLength: number,
     readonly maxOutputTokens: number,
-    private defaultThinking: boolean,
     /** 该 model 的能力元数据（供 media 发现/下拉展示读取，非 DI 选择机制）。 */
     readonly capabilities: readonly LLMCapability[],
+    /** 能思考的模型才有：默认档取实例配置 */
+    readonly thinking: ThinkingLevels | undefined,
     /** Provider 级共享的 refresh 闭包；webui 按 providerId 找到该 provider 的任一 entry 调一次即可。关闭模型发现时没有 */
     readonly refresh?: () => Promise<{ added: string[]; removed: string[]; total: number }>,
   ) {}
 
-  chat(request: ChatModelRequest): Promise<ChatResponse> {
-    return this.client.chat(this.id, request, this.defaultThinking);
+  async chat(request: ChatModelRequest): Promise<ChatResponse> {
+    return this.client.chat(this.id, request, this.levelOf(request));
   }
 
-  chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
-    return this.client.chatStream(this.id, request, this.defaultThinking);
+  async *chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    yield* this.client.chatStream(this.id, request, this.levelOf(request));
+  }
+
+  /** 这次的档位：请求带了按请求，没带按默认档；不能调的模型没有 */
+  private levelOf(request: ChatModelRequest): string | undefined {
+    return requestedThinking(this, request) ?? this.thinking?.default;
   }
 }
 
@@ -1237,8 +1260,8 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
       lifecycle.id,
       cfg.contextLength,
       cfg.maxTokens,
-      cfg.thinking,
       capabilities,
+      capabilities.includes(Thinking) ? { levels: THINKING_LEVELS, default: cfg.thinking } : undefined,
       refresh,
     );
     const dispose = provide(llm, handle, {

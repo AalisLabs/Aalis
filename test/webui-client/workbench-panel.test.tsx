@@ -66,10 +66,10 @@ const settingRow = (label: string) => within(panel().getByRole('group', { name: 
 const PLUGINS: FakeRest = {
   '/api/plugins': {
     plugins: [
-      { name: '@aalis/plugin-a', instanceId: '@aalis/plugin-a', displayName: '对话代理' },
-      { name: '@aalis/plugin-b', instanceId: '@aalis/plugin-b', displayName: '白纸' },
-      { name: '@aalis/plugin-c', instanceId: '@aalis/plugin-c', displayName: '跨会话历史' },
-      { name: '@aalis/plugin-c', instanceId: '@aalis/plugin-c:two', displayName: '跨会话历史' },
+      { name: '@aalis/plugin-a', instanceId: '@aalis/plugin-a', displayName: '对话代理', state: 'active' },
+      { name: '@aalis/plugin-b', instanceId: '@aalis/plugin-b', displayName: '白纸', state: 'active' },
+      { name: '@aalis/plugin-c', instanceId: '@aalis/plugin-c', displayName: '跨会话历史', state: 'active' },
+      { name: '@aalis/plugin-c', instanceId: '@aalis/plugin-c:two', displayName: '跨会话历史', state: 'active' },
     ],
   },
 };
@@ -88,8 +88,8 @@ const ROWS: SettingRow[] = [
     effective: 'group',
     source: 'platform',
   }),
-  row('think', {
-    field: { type: 'boolean', label: '深度思考' },
+  row('zz-flag', {
+    field: { type: 'boolean', label: '开关项' },
     plugin: '@aalis/plugin-a',
     value: true,
     effective: true,
@@ -123,8 +123,8 @@ describe('右侧面板与会话头', () => {
     expect(panel().getByText('改动从下一轮起生效')).toBeTruthy();
     expect(settingRow('人设').getByText('群聊人设')).toBeTruthy();
     expect(settingRow('人设').getByText('平台档')).toBeTruthy();
-    expect(settingRow('深度思考').getByRole('switch', { name: '深度思考' }).getAttribute('aria-checked')).toBe('true');
-    expect(settingRow('深度思考').getByText('本会话')).toBeTruthy();
+    expect(settingRow('开关项').getByRole('switch', { name: '开关项' }).getAttribute('aria-checked')).toBe('true');
+    expect(settingRow('开关项').getByText('本会话')).toBeTruthy();
     expect(panel().queryByRole('group', { name: '最大工具迭代' })).toBeNull();
 
     const advanced = panel().getByRole('button', { name: '高级' });
@@ -136,7 +136,7 @@ describe('右侧面板与会话头', () => {
     expect(within(panel().getByRole('region', { name: '白纸' })).getByRole('group', { name: '开启白纸' })).toBeTruthy();
   });
 
-  it('设置：点行就地修改、改完即存；开关立即存；被本会话覆盖的行有「恢复继承」；写不进去时原因写在行下', async () => {
+  it('设置：点行就地修改、改完即存；开关立即存；被本会话覆盖的行有「恢复继承」；写不进去、写法不对时原因写在行下', async () => {
     let rows = ROWS;
     const updates: unknown[] = [];
     app = await renderApp(
@@ -168,11 +168,11 @@ describe('右侧面板与会话头', () => {
     await vi.waitFor(() => expect(updates).toHaveLength(2));
     expect(updates[1]).toEqual({ persona: 'private' });
 
-    fireEvent.click(settingRow('深度思考').getByRole('switch', { name: '深度思考' }));
-    await vi.waitFor(() => expect(updates[2]).toEqual({ think: false }));
+    fireEvent.click(settingRow('开关项').getByRole('switch', { name: '开关项' }));
+    await vi.waitFor(() => expect(updates[2]).toEqual({ 'zz-flag': false }));
     expect(settingRow('人设').queryByRole('button', { name: '恢复继承' })).toBeNull();
-    fireEvent.click(settingRow('深度思考').getByRole('button', { name: '恢复继承' }));
-    await vi.waitFor(() => expect(updates[3]).toEqual({ think: null }));
+    fireEvent.click(settingRow('开关项').getByRole('button', { name: '恢复继承' }));
+    await vi.waitFor(() => expect(updates[3]).toEqual({ 'zz-flag': null }));
 
     fireEvent.click(settingRow('额外提示').getByRole('button', { name: /额外提示/ }));
     const again = settingRow('额外提示').getByRole('textbox', { name: '额外提示' });
@@ -191,7 +191,7 @@ describe('右侧面板与会话头', () => {
     const number = settingRow('最大工具迭代').getByRole('textbox', { name: '最大工具迭代' });
     fireEvent.change(number, { target: { value: '很多' } });
     fireEvent.keyDown(number, { key: 'Enter' });
-    expect((await settingRow('最大工具迭代').findByRole('alert')).textContent).toContain('要填一个数');
+    expect(settingRow('最大工具迭代').getByText('要填一个数')).toBeTruthy();
     fireEvent.change(number, { target: { value: '30' } });
     fireEvent.keyDown(number, { key: 'Enter' });
     await vi.waitFor(() => expect(updates.at(-1)).toEqual({ maxIterations: 30 }));
@@ -392,6 +392,197 @@ describe('右侧面板与会话头', () => {
     expect((settingRow('备注').getByRole('textbox', { name: '备注' }) as HTMLInputElement).value).toBe('<默认备注>');
   });
 
+  it('可选项依赖另一项（dependsOn）：带上那一项的生效值去取，它变了就重取；当前值不在可选项里写明按默认，没有可选项写明不能调', async () => {
+    const model = (name: string) => ({ provider: '@aalis/llm-a', model: name });
+    const levels = (name: string) =>
+      `/api/models/llm-thinking?dependency=${encodeURIComponent(JSON.stringify(model(name)))}`;
+    const rowsFor = (name: string) => [
+      row('llm', {
+        field: { type: 'llm-ref', label: '模型' },
+        plugin: '@aalis/plugin-a',
+        effective: model(name),
+        source: 'session',
+      }),
+      row('think', {
+        field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
+        plugin: '@aalis/plugin-a',
+        dependsOn: 'llm',
+        value: 'max',
+        effective: 'max',
+        source: 'session',
+      }),
+    ];
+    let rows = rowsFor('deep');
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        ...PLUGINS,
+        '/api/models/llm': { providers: [] },
+        [levels('deep')]: {
+          details: [
+            { value: 'off', label: '关' },
+            { value: 'high', label: '高（默认）' },
+            { value: 'max', label: '最高' },
+          ],
+        },
+        [levels('switch')]: {
+          details: [
+            { value: 'off', label: '关' },
+            { value: 'on', label: '开（默认）' },
+          ],
+        },
+        [levels('plain')]: { details: [] },
+      },
+    );
+    expect(await settingRow('深度思考').findByText('最高')).toBeTruthy();
+    expect(settingRow('深度思考').queryByText(/当前模型/)).toBeNull();
+
+    rows = rowsFor('switch');
+    act(() => server().notify('session/config/changed', {}));
+    expect(await settingRow('深度思考').findByText('当前模型没有这一档，按默认')).toBeTruthy();
+    fireEvent.click(settingRow('深度思考').getByRole('button', { name: /深度思考/ }));
+    const select = settingRow('深度思考').getByRole('combobox', { name: '深度思考' });
+    await within(select).findByRole('option', { name: '开（默认）' });
+    expect(within(select).queryByRole('option', { name: '最高' })).toBeNull();
+    fireEvent.keyDown(select, { key: 'Escape' });
+
+    rows = rowsFor('plain');
+    act(() => server().notify('session/config/changed', {}));
+    expect(await settingRow('深度思考').findByText('当前模型不能调')).toBeTruthy();
+    expect(
+      (settingRow('深度思考').getByRole('button', { name: /深度思考/ }) as HTMLButtonElement).disabled,
+      '没有可选项时不能改，只能恢复继承',
+    ).toBe(true);
+    expect(settingRow('深度思考').getByRole('button', { name: '恢复继承' })).toBeTruthy();
+    expect(restCalls().map(call => call.path)).not.toContain('/api/models/llm-thinking');
+  });
+
+  it('依赖型可选项没设时写生效的那一档：可选项接口标了默认的那一项', async () => {
+    const levels = `/api/models/llm-thinking?dependency=${encodeURIComponent(
+      JSON.stringify({ provider: '@aalis/llm-a', model: 'deep' }),
+    )}`;
+    const rows = [
+      row('llm', {
+        field: { type: 'llm-ref', label: '模型' },
+        effective: { provider: '@aalis/llm-a', model: 'deep' },
+        source: 'session',
+      }),
+      row('think', { field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' }, dependsOn: 'llm' }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        ...PLUGINS,
+        '/api/models/llm': { providers: [] },
+        [levels]: {
+          details: [
+            { value: 'off', label: '关' },
+            { value: 'high', label: '高（默认）', default: true },
+          ],
+        },
+      },
+    );
+    expect(await settingRow('深度思考').findByText('高（默认）')).toBeTruthy();
+  });
+
+  it('数字清空写 null，与恢复继承一样回到下一层；文字清空写空值，在这一层覆盖成空', async () => {
+    const rows = [
+      row('extra', {
+        field: { type: 'string', label: '额外提示' },
+        value: '说话简短些',
+        effective: '说话简短些',
+        source: 'session',
+      }),
+      row('iterations', {
+        field: { type: 'number', label: '最大工具迭代' },
+        value: 30,
+        effective: 30,
+        source: 'session',
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      {
+        ...subscribe(),
+        'session/config/get': () => ({ items: rows }),
+        'session/config/update': () => ({ items: rows }),
+      },
+      PLUGINS,
+    );
+    fireEvent.click(await settingRow('额外提示').findByRole('button', { name: /额外提示/ }));
+    const text = settingRow('额外提示').getByRole('textbox', { name: '额外提示' });
+    fireEvent.change(text, { target: { value: '' } });
+    fireEvent.keyDown(text, { key: 'Enter' });
+    await vi.waitFor(() => expect(requests('session/config/update')).toHaveLength(1));
+    fireEvent.click(await settingRow('最大工具迭代').findByRole('button', { name: /最大工具迭代/ }));
+    const number = settingRow('最大工具迭代').getByRole('textbox', { name: '最大工具迭代' });
+    fireEvent.change(number, { target: { value: '' } });
+    fireEvent.keyDown(number, { key: 'Enter' });
+    await vi.waitFor(() =>
+      expect(requests('session/config/update').map(params => (params as { patch: unknown }).patch)).toEqual([
+        { extra: '' },
+        { iterations: null },
+      ]),
+    );
+  });
+
+  it('保存在途时编辑控件不可用：多选勾了一项还没存完，另一项勾不了；存完恢复', async () => {
+    const rows = [
+      row('tags', {
+        field: {
+          type: 'multiselect',
+          label: '标签',
+          options: [
+            { label: '甲', value: 'a' },
+            { label: '乙', value: 'b' },
+            { label: '丙', value: 'c' },
+          ],
+        },
+        value: ['a'],
+        effective: ['a'],
+        source: 'session',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', { ...subscribe(), 'session/config/get': () => ({ items: rows }) }, PLUGINS);
+    fireEvent.click(await settingRow('标签').findByRole('button', { name: /标签/ }));
+    fireEvent.click(panel().getByRole('checkbox', { name: '乙' }));
+    await vi.waitFor(() => expect(requests('session/config/update')).toHaveLength(1));
+    const third = panel().getByRole('checkbox', { name: '丙' });
+    expect(third.matches(':disabled')).toBe(true);
+    act(() => server().reply('session/config/update', { items: rows }));
+    await vi.waitFor(() => expect(third.matches(':disabled')).toBe(false));
+    expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { tags: ['a', 'b'] } }]);
+  });
+
+  it('模型行的可选项只取一次，编辑控件用这一份；旁边的刷新按下时不抢走焦点（有的浏览器点按钮不把焦点给它，先失焦会把编辑控件收起、点按落空），刷新后重取', async () => {
+    const rows = [
+      row('llm', {
+        field: { type: 'llm-ref', label: '模型' },
+        value: { provider: '@aalis/llm-a', model: 'alpha' },
+        effective: { provider: '@aalis/llm-a', model: 'alpha' },
+        source: 'session',
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        ...PLUGINS,
+        '/api/models/llm': { providers: [{ model: 'alpha', provider: '服务甲', contextId: '@aalis/llm-a' }] },
+        '/api/llm-providers/%40aalis%2Fllm-a/refresh': { ok: true, added: [], removed: [], total: 1 },
+      },
+    );
+    const optionCalls = () => restCalls().filter(call => call.path === '/api/models/llm');
+    fireEvent.click(await settingRow('模型').findByRole('button', { name: /模型/ }));
+    const refresh = settingRow('模型').getByRole('button', { name: '刷新模型列表' });
+    expect(optionCalls()).toHaveLength(1);
+    expect(fireEvent.mouseDown(refresh), '按下时不把焦点交给按钮').toBe(false);
+    fireEvent.click(refresh);
+    await vi.waitFor(() => expect(optionCalls()).toHaveLength(2));
+  });
+
   it('多选的编辑：已选的值不在可选项里时也列出来，标签与显示的写法一样', async () => {
     const rows = [
       row('targets', {
@@ -471,7 +662,7 @@ describe('用量打开右侧面板', () => {
     'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
     'session/config/get': () => ({ items: [] }),
   };
-  const shell = () => document.querySelector('[data-level]') as HTMLElement;
+  const shell = () => document.querySelector('[data-phone]') as HTMLElement;
 
   it('宽屏上右侧面板收起时，点用量会展开它', async () => {
     stubViewport(1440);
@@ -605,7 +796,7 @@ describe('面板标签', () => {
       rest(layoutStore()),
     );
     const link = await main().findByRole('link', { name: '额外提示' });
-    const shell = document.querySelector('[data-level]') as HTMLElement;
+    const shell = document.querySelector('[data-phone]') as HTMLElement;
     // 冒泡到 window 时页面有没有拦下点按；之后拦下，jsdom 不做真的跳转
     const leftToBrowser: boolean[] = [];
     const record = (event: MouseEvent) => {
@@ -684,7 +875,7 @@ describe('手机', () => {
     fireEvent.click(await screen.findByRole('link', { name: /整理周报/ }));
     fireEvent.click(await main().findByRole('button', { name: '上下文已用 42%' }));
     expect(app.where()).toBe('/s/s1/usage');
-    expect((document.querySelector('[data-level]') as HTMLElement).dataset.level).toBe('2');
+    expect((document.querySelector('[data-phone]') as HTMLElement).dataset.phone).toBe('main');
     const sheet = within(screen.getByRole('dialog', { name: '上下文用量' }));
     expect(sheet.getByRole('table', { name: '上下文用量' })).toBeTruthy();
     fireEvent.click(sheet.getByRole('button', { name: '关闭' }));
@@ -696,7 +887,7 @@ describe('手机', () => {
     fireEvent.click(await main().findByRole('button', { name: '更多' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '会话面板' }));
     expect(app.where()).toBe('/s/s1/settings');
-    expect((document.querySelector('[data-level]') as HTMLElement).dataset.level).toBe('3');
+    expect((document.querySelector('[data-phone]') as HTMLElement).dataset.phone).toBe('right');
     expect(panel().queryByRole('tab', { name: '用量' })).toBeNull();
     fireEvent.click(panel().getByRole('button', { name: '返回' }));
     expect(app.where()).toBe('/s/s1');
@@ -739,7 +930,7 @@ describe('手机', () => {
     );
     fireEvent.click(await main().findByRole('button', { name: '更多' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '会话面板' }));
-    expect((document.querySelector('[data-level]') as HTMLElement).dataset.level).toBe('3');
+    expect((document.querySelector('[data-phone]') as HTMLElement).dataset.phone).toBe('right');
     await vi.waitFor(() => expect(panel().queryAllByRole('tab')).toEqual([]));
     fireEvent.click(await panel().findByRole('button', { name: '打开标签' }));
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['设置']);

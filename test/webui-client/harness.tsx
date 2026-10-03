@@ -103,10 +103,10 @@ export function installDialog(): () => void {
 let go: (delta: number) => void = () => {};
 
 function Where() {
-  const { pathname, search } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const navigate = useNavigate();
   go = delta => navigate(delta);
-  return <output data-testid="where">{pathname + search}</output>;
+  return <output data-testid="where">{pathname + search + hash}</output>;
 }
 
 export interface Harness {
@@ -114,7 +114,7 @@ export interface Harness {
   admin: AdminClient;
   /** 会话连接的服务端一侧 */
   server: FakeWebSocket;
-  /** 当前地址（路径加查询串） */
+  /** 当前地址（路径、查询串与锚点） */
   where(): string;
   /** 浏览器后退一条（系统返回手势） */
   back(): void;
@@ -137,6 +137,14 @@ export interface FakeRequest {
  */
 export type FakeRest = Record<string, unknown>;
 
+/** 请求被作废时按浏览器的行为立即以作废的原因失败，不等回应 */
+const aborted = (signal: AbortSignal | null | undefined) =>
+  new Promise<never>((_, reject) => {
+    if (!signal) return;
+    if (signal.aborted) reject(signal.reason);
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+
 /** 换掉全局的 fetch，按路径回 rest 里的 JSON */
 export function stubRest(rest: FakeRest = {}): void {
   const routes: FakeRest = {
@@ -146,20 +154,21 @@ export function stubRest(rest: FakeRest = {}): void {
     '/api/layout': { pinned: [], panelTabs: hostTabs() },
     ...rest,
   };
+  const answer = async (input: string, init?: RequestInit) => {
+    const url = new URL(input, location.origin);
+    const route = routes[url.pathname + url.search];
+    if (route === undefined) return Response.json({ error: '未知 API' }, { status: 404 });
+    if (typeof route !== 'function') return Response.json(route);
+    const request: FakeRequest = {
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    };
+    const reply = await (route as (request: FakeRequest) => unknown)(request);
+    return reply instanceof Response ? reply : Response.json(reply);
+  };
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: string, init?: RequestInit) => {
-      const url = new URL(input, location.origin);
-      const route = routes[url.pathname + url.search];
-      if (route === undefined) return Response.json({ error: '未知 API' }, { status: 404 });
-      if (typeof route !== 'function') return Response.json(route);
-      const request: FakeRequest = {
-        method: init?.method ?? 'GET',
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      };
-      const reply = await (route as (request: FakeRequest) => unknown)(request);
-      return reply instanceof Response ? reply : Response.json(reply);
-    }),
+    vi.fn((input: string, init?: RequestInit) => Promise.race([answer(input, init), aborted(init?.signal)])),
   );
 }
 

@@ -24,6 +24,8 @@ const REF_MAX_LENGTH = 512;
 
 type PinOperation = Extract<LayoutOperation, { page: PageRef }>;
 type TabOperation = Extract<LayoutOperation, { tab: PanelTabRef }>;
+/** 宿主标签与插件标签同一套写法的四个操作；移出只对插件标签 */
+type SharedTabOperation = Exclude<TabOperation['op'], 'remove-tab'>;
 type TabEntry = LayoutRecords['panelTabs'][number];
 
 const PIN_OPERATIONS: ReadonlySet<unknown> = new Set([
@@ -37,7 +39,7 @@ const TAB_OPERATIONS: ReadonlySet<unknown> = new Set([
   'close-tab',
   'tab-up',
   'tab-down',
-] satisfies TabOperation['op'][]);
+] satisfies SharedTabOperation[]);
 
 /** 插件标签最多几个：宿主标签总在表里，连同它们不超过 MAX_LAYOUT_ENTRIES */
 const PAGE_TABS_MAX = MAX_LAYOUT_ENTRIES - HOST_PANEL_TABS.length;
@@ -63,15 +65,16 @@ function isTabRef(value: unknown): value is PanelTabRef {
 const isTabEntry = (value: unknown): value is TabEntry =>
   isRecord(value) && Object.keys(value).length === 2 && isTabRef(value.tab) && typeof value.open === 'boolean';
 
-/** 核一个操作：固定的四个只收 op 与 page，标签的四个只收 op 与 tab */
+/** 核一个操作：固定的四个只收 op 与 page，标签的四个只收 op 与 tab，移出只收 op 与插件标签 */
 export function parseLayoutOperation(value: unknown): LayoutOperation | undefined {
   if (!isRecord(value) || Object.keys(value).length !== 2) return undefined;
   if (PIN_OPERATIONS.has(value.op) && isPageRef(value.page)) {
     return { op: value.op as PinOperation['op'], page: value.page };
   }
   if (TAB_OPERATIONS.has(value.op) && isTabRef(value.tab)) {
-    return { op: value.op as TabOperation['op'], tab: value.tab };
+    return { op: value.op as SharedTabOperation, tab: value.tab };
   }
+  if (value.op === 'remove-tab' && isPageRef(value.tab)) return { op: 'remove-tab', tab: value.tab };
   return undefined;
 }
 
@@ -102,9 +105,10 @@ function pinnedAfter(pinned: PageRef[], { op, page }: PinOperation): PageRef[] {
   return swapped(pinned, at, op === 'move-up' ? -1 : 1);
 }
 
-/** 打开与关闭只改开关、位置不动；插件标签第一次打开时追加在末尾，没打开过的关了也不进表 */
+/** 打开与关闭只改开关、位置不动；插件标签第一次打开时追加在末尾，没打开过的关了也不进表；移出删掉这一条 */
 function tabsAfter(tabs: TabEntry[], { op, tab }: TabOperation): TabEntry[] {
   const at = tabs.findIndex(entry => sameTab(entry.tab)(tab));
+  if (op === 'remove-tab') return at < 0 ? tabs : tabs.filter((_, i) => i !== at);
   if (op === 'tab-up' || op === 'tab-down') return swapped(tabs, at, op === 'tab-up' ? -1 : 1);
   const open = op === 'open-tab';
   if (at >= 0) return tabs[at].open === open ? tabs : tabs.map((entry, i) => (i === at ? { ...entry, open } : entry));

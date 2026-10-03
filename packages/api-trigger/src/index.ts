@@ -21,8 +21,8 @@ import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '
 
 /**
  * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿胜者与自己的实例比身份，
- * 不调用方法，所以接口只有名字，进诊断（如 Laya 诊断项报「生效的触发插件是某某」）。WebUI 服务页
- * 显示的是 provide 时传的 label，两处取同一个值。
+ * 不调用方法，所以接口只有名字，进诊断（如 Laya 诊断项报「生效的触发插件是某某」）。WebUI 设置「系统」的
+ * 服务偏好显示的是 provide 时传的 label，两处取同一个值。
  */
 export interface TriggerService {
   readonly label: string;

@@ -37,7 +37,7 @@ plugin-agent 落库的工具调用组（带 `toolCalls` 的 assistant 与 tool �
 ```ts
 interface SessionConfig {
   llm?: ModelRef;               // 会话用的模型；没设置时跟随 llm 服务的偏好
-  think?: boolean;              // 深度思考开关；没设置时由各模型服务自己的配置决定
+  think?: string;               // 深度思考的档位 id；没设置、当前模型没有这一档或不能调时按模型的默认档
   maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置
 }
 ```
