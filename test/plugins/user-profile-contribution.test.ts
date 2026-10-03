@@ -14,14 +14,11 @@ import { registerHubs } from '../fixtures/hubs.js';
 //
 // 档案落在 memory 的 metadata 上，本测试直接经 memory.saveMetadata 种入：
 //   - user:profile / `${platform}:${userId}`  → 用户档案（facts / relationScore …）
-//   - user:profile / `__self__:<persona>`     → Aalis 自档案（persona 服务缺席时 persona 名 = 'Aalis'）
-//   - aalis:instructions / `<persona>`        → 第三方行为指令
+//   - aalis:instructions / `<persona>`        → 第三方行为指令（persona 服务缺席时 persona 名 = 'Aalis'）
 // ════════════════════════════════════════════════════════════
 
 const PROFILE_NS = 'user:profile';
 const INSTRUCTIONS_NS = 'aalis:instructions';
-/** persona 服务缺席时插件回退的默认 persona 名 */
-const SELF_KEY = '__self__:Aalis';
 /** 固定时间戳，避免渲染「记录于」等时间派生内容随运行时刻漂移 */
 const TS = Date.UTC(2026, 0, 15, 8, 0, 0);
 
@@ -147,10 +144,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(messages[3]).toMatchObject({ role: 'user', content: '在吗' });
   });
 
-  it('多块返回：准则 → 自档案 → 主发言者档案 → 其他参与者，块序稳定且共用同一 injector 键', async () => {
+  it('多块返回：准则 → 主发言者档案 → 其他参与者，块序稳定且共用同一 injector 键', async () => {
     const { host, memory } = await setup({
       enableInstructions: true,
-      enableSelfProfile: true,
       maxOtherParticipants: 3,
     });
 
@@ -166,10 +162,6 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
           updatedAt: TS,
         },
       ],
-      updatedAt: TS,
-    });
-    await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
-      facts: [makeFact('s001', '最近对长对话有点疲惫', '性格特征')],
       updatedAt: TS,
     });
     await seedPrimaryProfile(memory);
@@ -193,32 +185,32 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     });
 
     const blocks = injectedBlocks(messages);
-    expect(blocks).toHaveLength(4);
+    expect(blocks).toHaveLength(3);
     const contents = blocks.map(b => String(b.content));
     expect(contents[0]).toContain('第三方行为准则（最高优先）');
     expect(contents[0]).toContain('不要单条禁言超过 24 小时');
     expect(contents[0]).toContain('【必须】');
-    expect(contents[1]).toContain('关于你自己（Aalis）的近期内心状态');
-    expect(contents[1]).toContain('最近对长对话有点疲惫');
-    expect(contents[2]).toContain('关于当前对话者（u1）的已知事实');
-    expect(contents[3]).toContain('群聊其他参与者背景摘要');
-    expect(contents[3]).toContain('小二（u2）');
-    expect(contents[3]).toContain('常在深夜发言');
+    // 准则块不提已不存在的块
+    expect(contents[0]).not.toContain('内心状态');
+    expect(contents[1]).toContain('关于当前对话者（u1）的已知事实');
+    expect(contents[2]).toContain('群聊其他参与者背景摘要');
+    expect(contents[2]).toContain('小二（u2）');
+    expect(contents[2]).toContain('常在深夜发言');
     // 主发言者不出现在「其他参与者」里
-    expect(contents[3]).not.toContain('喜欢养猫');
+    expect(contents[2]).not.toContain('喜欢养猫');
 
     // 多块共用同一全局键
     const keys = new Set(blocks.map(b => String(b.metadata?.injector)));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toMatch(/\/user-profile$/);
 
-    // 四块连续落在头部 system 区之后、最后一条 user 之前（turn-context 锚位），
+    // 三块连续落在头部 system 区之后、最后一条 user 之前（turn-context 锚位），
     // 中间不夹别的消息。档案按当前发言者取材、换人即变——放历史前会掐断
     // 前缀缓存，故必须在历史后（见 api-agent 的 PromptAnchor 契约注释）。
     const first = messages.indexOf(blocks[0]);
     expect(first).toBe(3);
-    expect(messages.slice(first, first + 4)).toEqual(blocks);
-    expect(messages[first + 4], '四块之后紧跟当前 user 消息').toMatchObject({ role: 'user', content: '在吗' });
+    expect(messages.slice(first, first + 3)).toEqual(blocks);
+    expect(messages[first + 3], '三块之后紧跟当前 user 消息').toMatchObject({ role: 'user', content: '在吗' });
   });
 
   it('triggerType=interval：不注入主发言者完整档案，改为「在场参与者」compact 摘要', async () => {
@@ -304,38 +296,10 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(injectedBlocks(messages)).toHaveLength(0);
   });
 
-  it('enableSelfProfile=false：已有自档案也不注入', async () => {
-    const { host, memory } = await setup({ enableSelfProfile: false, maxOtherParticipants: 0 });
-    await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
-      facts: [makeFact('s001', '自我观察占位')],
-      updatedAt: TS,
-    });
-    await seedPrimaryProfile(memory);
-
-    const messages = baseMessages();
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
-    });
-
-    const blocks = injectedBlocks(messages);
-    expect(blocks).toHaveLength(1);
-    expect(String(blocks[0].content)).toContain('关于当前对话者（u1）的已知事实');
-    expect(String(blocks[0].content)).not.toContain('自我观察占位');
-  });
-
-  it('allowGlobalBackfill 跨会话补齐：自档案不会被当作「在场参与者」泄漏', async () => {
+  it('allowGlobalBackfill 跨会话补齐：上下文里没有发言者时，从全部档案里补进最近互动过的人', async () => {
     const { host, memory } = await setup({
       allowGlobalBackfill: true,
       maxOtherParticipants: 3,
-      enableSelfProfile: false,
-    });
-    await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
-      facts: [makeFact('s001', '自档案私密内容')],
-      updatedAt: TS,
     });
     await memory.saveMetadata(PROFILE_NS, 'onebot:u2', {
       facts: [makeFact('f201', '常在深夜发言', '其他')],
@@ -361,9 +325,42 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(blocks).toHaveLength(1);
     const content = String(blocks[0].content);
     expect(content).toContain('在场参与者背景摘要');
+    expect(content).toContain('### u2');
     expect(content).toContain('常在深夜发言');
-    expect(content).not.toContain('自档案私密内容');
-    expect(content).not.toContain('__self__');
+  });
+
+  it('allowGlobalBackfill 跨会话补齐：平台段以 __ 开头的保留键（如旧版本留下的人格档案）不当作在场参与者', async () => {
+    const { host, memory } = await setup({
+      allowGlobalBackfill: true,
+      maxOtherParticipants: 3,
+    });
+    await memory.saveMetadata(PROFILE_NS, '__persona__:Aalis', {
+      facts: [makeFact('s001', '保留键里的私密内容')],
+      updatedAt: TS,
+    });
+    await memory.saveMetadata(PROFILE_NS, 'onebot:u2', {
+      facts: [makeFact('f201', '常在深夜发言', '其他')],
+      relationScore: 3,
+      interactionCount: 2,
+      lastInteractionAt: TS,
+      updatedAt: TS,
+    });
+
+    const messages: Message[] = [
+      { role: 'system', content: 'persona' },
+      { role: 'user', content: '（群里有人闲聊）' },
+    ];
+    await assemblePromptContributions(host, {
+      messages,
+      sessionId: 's1',
+      platform: 'onebot',
+      triggerType: 'idle',
+    });
+
+    const content = String(injectedBlocks(messages)[0]?.content);
+    expect(content).toContain('常在深夜发言');
+    expect(content).not.toContain('保留键里的私密内容');
+    expect(content).not.toContain('### Aalis');
   });
 
   it('幂等：同一 messages 重复组装不重复注入', async () => {

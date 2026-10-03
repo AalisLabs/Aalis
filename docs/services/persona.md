@@ -87,7 +87,7 @@ export const persona = defineService<PersonaService>('persona');
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
 - `@aalis/plugin-webui-server` — 用 `getPersonaName()` 作展示名，用 `persona.current` 探测上报能力，`listModels()` 走通用的 `/models` 枚举。
 - `@aalis/plugin-cli` — 多处用 `persona.current?.getPersonaName() ?? 'Aalis'` 做命令行标题。
-- `@aalis/plugin-user-profile` — 用 `getPersonaName()` 按 persona 名给自档案与指令分堆。
+- `@aalis/plugin-user-profile` — 用 `getPersonaName()` 按 persona 名给第三方行为指令分堆。
 
 关于消费模式，有一点值得说明：多数消费者对类型做了结构化窄化，只声明自己用到的那部分（例如 tool-system 只声明 `{ isTimeInjectionEnabled?(): boolean }`），以避免 import 全量类型造成包循环。`caps.services.get<T>(name)` 的 `T` 按设计就由消费侧窄化。
 

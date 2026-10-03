@@ -138,7 +138,7 @@ const DIRECTIVE_KINDS: ReadonlyArray<string>; // [CrossSessionDelegation, HostNo
 
 `DIRECTIVE_KINDS` 是宿主或系统撰写、不是任何人发言的指令类 kind：
 
-- 归档消息的 `kind` 属于它时，抽取（用户事实、自反思、指令、关系）与记忆扩窗一律跳过，跨会话读取（plugin-memory-history 的注入与 `recent_messages`、plugin-user-relation 的跨会话窗口）不带别的会话的这类消息；
+- 归档消息的 `kind` 属于它时，抽取（用户事实、指令、关系）与记忆扩窗一律跳过，跨会话读取（plugin-memory-history 的注入与 `recent_messages`、plugin-user-relation 的跨会话窗口）不带别的会话的这类消息；
 - 请求期消息的 `metadata.injector` 属于它时，就是本轮的指令块：`turn-context`、`turn-hint` 两个锚位落在它之前，DeepSeek 提供者不把它改成 user。
 
 自己拼历史交给模型抽取的插件，应按这个常量过滤，不要只写其中一个 kind。
