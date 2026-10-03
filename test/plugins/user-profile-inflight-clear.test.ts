@@ -15,9 +15,9 @@ import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 事实提取、自反思、指令提取都是「读快照 → 调 LLM（几秒到几十秒）→ 合并写回」。
+// 事实提取、指令提取都是「读快照 → 调 LLM（几秒到几十秒）→ 合并写回」。
 // 合并曾以调用前的快照为基底：LLM 调用期间执行的 /clear、/profile.forget、
-// /profile.self.clear、/instruct.clear 回执报成功，LLM 返回后清掉的内容整份写回。
+// /instruct.clear 回执报成功，LLM 返回后清掉的内容整份写回。
 // 合并基底须是 LLM 返回后重读的结果，快照里有、重读后已不在的事实不得借 update 复活。
 // ════════════════════════════════════════════════════════════
 
@@ -96,7 +96,6 @@ async function setup(config: Record<string, unknown>, reply: unknown) {
   if (!mem) throw new Error('memory 服务未就绪');
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
-    enableSelfProfile: false,
     enableInstructions: false,
     relationIncrementWitness: 0,
     ...config,
@@ -216,25 +215,27 @@ describe('plugin-user-profile: LLM 调用期间的清除不被合并写回撤销
     expect(factTexts(await mem.getMetadata(PROFILE_NS, 'onebot:u1'))).toEqual(['事实一', '喜欢鸟', '喜欢鱼']);
   });
 
-  it('自反思挂起期间 /profile.self.clear：旧自档案不回来', async () => {
-    const { mem, cmd, llm, inbound } = await setup(
-      { enableSelfProfile: true, selfReflectEveryNMessages: 1 },
-      { add: [{ text: '最近想多聊天', category: '性格特征', temporality: 'temporary' }] },
+  it('对照：合并后超过 maxFactsPerUser，按 updatedAt 淘汰最久未更新的', async () => {
+    const { mem, llm, inbound } = await setup(
+      { extractEveryNMessages: 1, maxFactsPerUser: 5 },
+      { add: [{ text: '喜欢鱼', category: '兴趣爱好', temporality: 'permanent', sourceQuote: '我喜欢鱼' }] },
     );
-    await mem.saveMessage(SESSION, { role: 'assistant', content: '今天也来聊聊吧' });
-    await mem.saveMetadata(PROFILE_NS, '__self__:Aalis', {
-      facts: [{ id: 's1', text: '旧心境', temporality: 'permanent', observedAt: 1, updatedAt: 1 }],
+    await mem.saveMessage(SESSION, {
+      role: 'user',
+      content: '我喜欢鱼',
+      metadata: { userId: 'u1', platform: 'onebot' },
+    });
+    const seeded = ['事实一', '事实二', '事实三', '事实四', '事实五'];
+    await mem.saveMetadata(PROFILE_NS, 'onebot:u1', {
+      facts: seeded.map((text, i) => ({ id: `f${i}`, text, temporality: 'permanent', observedAt: i, updatedAt: i })),
       updatedAt: 1,
     });
 
     await inbound('u1');
     await llm.entered;
-    expect(String(await cmd.run('profile.self.clear'))).toContain('已清空');
-
     llm.release();
-    await vi.waitFor(async () =>
-      expect(factTexts(await mem.getMetadata(PROFILE_NS, '__self__:Aalis'))).toEqual(['最近想多聊天']),
-    );
+    await vi.waitFor(async () => expect(factTexts(await mem.getMetadata(PROFILE_NS, 'onebot:u1'))).toContain('喜欢鱼'));
+    expect(factTexts(await mem.getMetadata(PROFILE_NS, 'onebot:u1'))).toEqual([...seeded.slice(1), '喜欢鱼']);
   });
 
   it('指令提取挂起期间 /instruct.clear：旧指令不回来', async () => {

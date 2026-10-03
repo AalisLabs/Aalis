@@ -98,7 +98,7 @@ tools.register({
 命令注册（用 `risk` 糖一次为两轴设默认）：
 
 ```typescript
-commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 'dangerous' })
+commands.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' })
 // 等价于 visibility:'restricted' + confirm:'session'
 // 也可显式覆盖：{ risk: 'dangerous', confirm: 'always' } —— 删库级操作每次都问
 ```

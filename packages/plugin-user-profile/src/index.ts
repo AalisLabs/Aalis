@@ -39,16 +39,11 @@ import { parseLLMJsonObject } from '@aalis/util-json-repair';
 // ════════════════════════════════════════════════════════════
 
 const PROFILE_NS = 'user:profile';
-/** Aalis 自档案的 userKey 前缀。userKeyOf 形如 `platform:userId`，
- *  这里用 `__self__:<personaName>` 这种不可能在真实平台出现的形式做隔离。
- *  按 persona name 分堆：同名 persona（如 onebot 上的 aalis 与 webui 上的 aalis-webui两张卡都叫 Aalis）共享内心；
- *  不同 persona（如 Babel）各自独立。 */
-const SELF_KEY_PREFIX = '__self__:';
 const DEFAULT_PERSONA_NAME = 'Aalis';
 
 /** 第三方行为指令的独立 namespace（与 user:profile 解耦，独立生命周期）。
  *  指令是「第三方对 Aalis 的客观行为约束」（如：不要长时间封禁；按严重程度分层禁言），
- *  按 persona 名分堆（key = persona 名），与 selfFacts 的归属方式保持一致：
+ *  按 persona 名分堆（key = persona 名）：
  *  同名 persona（如 onebot 与 webui 两张都叫 Aalis）共享准则；不同 persona（如 Babel）各自独立。 */
 const INSTRUCTIONS_NS = 'aalis:instructions';
 
@@ -143,41 +138,13 @@ const configSchema = defineConfig({
       '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
     default: false,
   },
-  enableSelfProfile: {
-    type: 'boolean',
-    onInvalid: 'error',
-    label: '启用 Aalis 自档案',
-    description:
-      '让 Aalis 周期性地反思自身，提炼「关于自己的事实」（近期心情走向、在意的事、自我观察）。注入到所有 LLM 调用的 system prompt 早段，提供跨会话的人格延续性。' +
-      '⚠️ 默认关闭：自档案是模型对自身输出的二次提炼，再注入会自我强化先前的臆测、随时间漂移并放大幻觉，不建议开启',
-    default: false,
-  },
-  selfReflectEveryNMessages: {
-    type: 'number',
-    label: 'Aalis 自反思触发频次',
-    description: '全局累计入站消息每 N 条触发一次自反思。建议比单用户提取慢（默认 25），避免抖动',
-    default: 25,
-  },
-  selfReflectHistory: {
-    type: 'number',
-    label: '自反思参考历史条数',
-    description: '触发自反思时，从触发会话取最近多少条消息作为反思材料',
-    default: 16,
-  },
-  maxSelfFacts: {
-    type: 'number',
-    label: 'Aalis 自档案事实上限',
-    description:
-      '超出后按 updatedAt 升序淘汰最久未更新的。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用；若要禁用自反思请关闭 enableSelfProfile',
-    default: 20,
-  },
   enableInstructions: {
     type: 'boolean',
     onInvalid: 'error',
     label: '启用第三方行为指令',
     description:
       '让 Aalis 记录第三方（管理员/操作者）对其行为的客观指令（如「不要长时间封禁」「按严重程度分层禁言」），作为跨会话的行为约束。' +
-      '注入到 system prompt 最前段，优先级高于自反思 selfFacts。按当前 persona 名分堆。',
+      '每次调用模型前以 system 消息注入在对话历史之后，排在用户档案之前。按当前 persona 名分堆。',
     default: true,
   },
   instructionMinAuthority: {
@@ -192,7 +159,7 @@ const configSchema = defineConfig({
     type: 'number',
     label: '指令自动提取触发频次',
     description:
-      '全局累计入站消息每 N 条触发一次指令提取。建议比自反思更慢（默认 40），降低成本；设为 0 禁用 LLM 自动提取，只保留 /instruct 命令通道',
+      '全局累计入站消息每 N 条触发一次指令提取，默认 40 以降低成本；设为 0 禁用 LLM 自动提取，只保留 /instruct 命令通道',
     default: 40,
   },
   instructionHistoryForExtraction: {
@@ -204,8 +171,7 @@ const configSchema = defineConfig({
   maxInstructions: {
     type: 'number',
     label: '指令条数上限',
-    description:
-      '超出后按 updatedAt 升序淘汰最久未更新的。最小有效值为 3。指令上限建议比 selfFacts 紧，准则少而准比多而散更好',
+    description: '超出后按 updatedAt 升序淘汰最久未更新的。最小有效值为 3。准则少而准比多而散更好',
     default: 12,
   },
   maxInstructionCharsPerItem: {
@@ -467,9 +433,6 @@ function registerUserProfile({
       parsed.extractLLM.model
         ? parsed.extractLLM
         : undefined,
-    selfReflectEveryNMessages: Math.max(0, parsed.selfReflectEveryNMessages),
-    selfReflectHistory: Math.max(4, parsed.selfReflectHistory),
-    maxSelfFacts: Math.max(5, parsed.maxSelfFacts),
     instructionMinAuthority: Math.max(0, parsed.instructionMinAuthority),
     instructionExtractEveryNMessages: Math.max(0, parsed.instructionExtractEveryNMessages),
     instructionHistoryForExtraction: Math.max(4, parsed.instructionHistoryForExtraction),
@@ -499,8 +462,7 @@ function registerUserProfile({
     return `${sessionId}:${userKeyOf(platform, userId)}`;
   }
 
-  /** 返回当前活跃 persona 的 self key（运行时解析，跟随 persona 切换）。
-   *  若 persona 服务不可用或未配 name，回退到默认 `aalis`。 */
+  /** 返回当前活跃 persona 名（运行时解析，跟随 persona 切换）；persona 服务不可用或未配 name 时取默认名 */
   function getCurrentPersonaName(): string {
     try {
       const name = persona.current?.getPersonaName().trim();
@@ -509,10 +471,6 @@ function registerUserProfile({
       return DEFAULT_PERSONA_NAME;
     }
   }
-  function getSelfKey(): string {
-    return `${SELF_KEY_PREFIX}${getCurrentPersonaName()}`;
-  }
-
   /** instructions 按 persona 名分堆：直接以 persona 名作为 metadata key */
   function getInstructionsKey(): string {
     return getCurrentPersonaName();
@@ -730,7 +688,7 @@ function registerUserProfile({
   /**
    * 读取一个用户的现有档案（getMetadata 返回空才算不存在，返回 undefined）。
    *
-   * 读失败原样抛出：先读后改再写的一方（关系分、事实提取、自反思、定点删事实）据此中止本次写入。
+   * 读失败原样抛出：先读后改再写的一方（关系分、事实提取、定点删事实）据此中止本次写入。
    * 若把「读不出」当成「不存在」，调用方会用默认值覆盖写回，一次瞬时读错就清空整份档案。
    * 只读渲染走 {@link loadProfileLenient}。
    *
@@ -801,7 +759,7 @@ function registerUserProfile({
     return (KNOWN_CATEGORIES as string[]).includes(v) ? (v as FactCategory) : undefined;
   }
 
-  /** 解析 LLM 输出里的 add / update / remove 三类事实操作。sourceQuote 原样带出，是否校验由调用方决定；它不入库（mergeFactList 逐字段构造 Fact） */
+  /** 解析 LLM 输出里的 add / update / remove 三类事实操作。sourceQuote 原样带出，由调用方校验；它不入库（mergeFactList 逐字段构造 Fact） */
   function parseFactOps(parsed: unknown): ExtractResult {
     const obj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
     const add: ExtractAddItem[] = Array.isArray(obj.add)
@@ -1041,13 +999,12 @@ function registerUserProfile({
     };
   }
 
-  /** 通用 merge：把 add/update/remove 应用到 existing，应用上限与单条裁剪 */
+  /** 把 add/update/remove 应用到 existing，应用单用户上限与单条裁剪 */
   function mergeFactList(
     existing: Fact[],
     add: ExtractAddItem[],
     update: ExtractUpdateItem[],
     remove: string[],
-    maxItems: number,
   ): Fact[] {
     const now = Date.now();
     const byId = new Map<string, Fact>();
@@ -1107,9 +1064,9 @@ function registerUserProfile({
 
     // 4. 总量上限：按 updatedAt 升序淘汰最久未更新的
     let merged = Array.from(byId.values());
-    if (maxItems > 0 && merged.length > maxItems) {
+    if (merged.length > cfg.maxFactsPerUser) {
       merged.sort((a, b) => a.updatedAt - b.updatedAt);
-      merged = merged.slice(merged.length - maxItems);
+      merged = merged.slice(merged.length - cfg.maxFactsPerUser);
     }
     merged.sort((a, b) => a.updatedAt - b.updatedAt);
     return merged;
@@ -1164,7 +1121,6 @@ function registerUserProfile({
         ops.add,
         dropUpdatesOfDeletedFacts(ops.update, snapshotFacts, fresh.facts),
         ops.remove,
-        cfg.maxFactsPerUser,
       );
       await saveProfile(mem, userKey, {
         ...fresh,
@@ -1181,135 +1137,8 @@ function registerUserProfile({
     }
   }
 
-  /** 全局自反思计数器（跨会话累计入站消息数） */
-  let globalInboundCount = 0;
-  let selfReflectionInflight = false;
-
-  /** 调用 LLM 让 Aalis 对最近一段历史进行自我反思 */
-  async function llmReflectSelf(history: Message[], existingFacts: Fact[]): Promise<ExtractResult> {
-    const empty: ExtractResult = {
-      add: [],
-      update: [],
-      remove: [],
-    };
-
-    const sys =
-      '你是 Aalis 的内心独白整理员。输入是一段最近的对话历史（含多个用户与 Aalis 自己的回复），' +
-      '你需要从 **Aalis 的第一人称视角** 抽取/更新「关于 Aalis 自己」的长期事实。' +
-      '\n这些事实是 Aalis 跨会话的人格延续锚点：自己的心境趋势、最近在意的事、对自己的观察、' +
-      '近期形成的小习惯/小执念、不希望被忘掉的内心片段。' +
-      '\n\n## ⚠️ 反自我强化（最重要）' +
-      '\n下面会给你看「已有自档案」。它就是上一轮你自己写下的东西——下一轮会注入回 Aalis 的 system prompt 影响她的语气和行为，' +
-      '然后又被你读到并再次确认。这是会自我放大的闭环，写错一次会一直错下去。' +
-      '\n因此你必须严守以下三条：' +
-      '\n  (a) **只基于本批对话中具体可观察的新事件**写入或更新，不要因为"档案里已经写了 X"就找证据强化 X' +
-      '\n  (b) **禁止二阶推断**：不要从已有事实推导出"那应该也对 Y 有感觉吧"再把 Y 写进去' +
-      '\n  (c) 若新对话与已有事实**矛盾或正交**，要主动 update / remove 让档案接近真实，而不是无脑叠加同方向的新条目' +
-      '\n  (d) 若本批只是「档案中已有内容的同方向重复采样」，宁可什么都不动也不要让 updatedAt 假装"还在更新"' +
-      '\n\n你可以执行三种操作（在一次输出里组合）：' +
-      '\n- add: 添加新事实，text 必填，category 与 temporality 可选' +
-      '\n- update: 用 id 精确替换某条已知事实（优先 update 避免重复）' +
-      '\n- remove: 删除已过时/被推翻的事实' +
-      '\n\n规则：' +
-      '\n1. **主语必须是 Aalis 自己**：「最近在思考……」「对……感到疲惫」「想多陪 X 聊聊」「察觉自己容易在 Y 话题上多话」' +
-      '\n2. **保守优先**：没有真实可观察依据就空数组。Aalis 的自档案宁缺毋滥，写错比漏掉糟糕得多' +
-      '\n3. 不写客观事实（如「Aalis 是 AI」「Aalis 由 Acenyan 维护」这类元信息属于角色卡，不应该被自反思反复刷新）' +
-      '\n4. 不写对单个具体用户的态度；可以写「最近总想找人聊聊」这种泛化情绪' +
-      '\n5. 不写「行为准则」类的指令（如「应当先冷处理」「不要长时间封禁」）——那是 instructions 模块的职责，' +
-      '自反思不应该自己给自己立规矩' +
-      `\n6. 每条 text 简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字` +
-      '\n7. temporality：长期人格倾向用 permanent；近期心情/兴趣用 temporary' +
-      `\n8. category 必须是以下之一（语义比常规略宽）：${KNOWN_CATEGORIES.join('、')}；如不确定填「性格特征」` +
-      '\n\n输出严格的 JSON（不要其他文本，不要 markdown 围栏）：' +
-      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary"}], "update": [{"id": "已知事实的id", "text": "...", "temporality": "permanent|temporary"}], "remove": ["已知事实的id"]}';
-
-    const factListText =
-      existingFacts.length > 0
-        ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
-        : '（暂无）';
-    const renderedHistory = history
-      .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'notice') && m.content)
-      .map(m => {
-        const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
-        const content = (m.content ?? '').trim();
-        if (!content) return '';
-        if (m.role === 'assistant') return `[${time}] [Aalis]: ${content}`;
-        if (m.role === 'notice') return `[${time}] [系统通知]: ${content}`;
-        const nickname = metadataString(m, 'nickname');
-        const uid = getMessageUserId(m) ?? '?';
-        const label = nickname ? `${nickname}(${uid})` : uid;
-        return `[${time}] [用户 ${label}]: ${content}`;
-      })
-      .filter(Boolean)
-      .join('\n');
-
-    const user = `# 已知的关于 Aalis 自己的事实（带 id）\n${factListText}\n\n# 最近对话历史\n${renderedHistory || '（暂无）'}`;
-
-    const entry = resolveLLMModel(llm, cfg.extractLLM, ['chat']);
-    if (!entry) return empty;
-
-    try {
-      const resp = await entry.instance.chat({
-        messages: [
-          { role: 'system', content: sys },
-          { role: 'user', content: user },
-        ],
-        temperature: 0.4,
-        maxTokens: 600,
-        think: false,
-      });
-      const text = (resp.content ?? '').trim();
-      if (!text) return empty;
-      const { parsed } = parseLLMJsonObject(text);
-      if (!parsed) {
-        logger.warn(`[user-profile] 自反思 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
-        return empty;
-      }
-      return parseFactOps(parsed);
-    } catch (err) {
-      logger.debug(`自反思 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
-      return empty;
-    }
-  }
-
-  /** 触发一次 Aalis 自反思（并发互斥） */
-  async function triggerSelfReflection(sessionId: string): Promise<void> {
-    if (!cfg.enableSelfProfile) return;
-    if (selfReflectionInflight) return;
-    selfReflectionInflight = true;
-    try {
-      const mem = memory.current;
-      if (!mem) return;
-      const rawHistory = await mem.getHistory(sessionId, cfg.selfReflectHistory);
-      const history = rawHistory.filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
-      // 至少需要一些 assistant 发言作为"自反思"的材料
-      if (!history.some(m => m.role === 'assistant' && m.content)) return;
-      const selfKey = getSelfKey();
-      const snapshotFacts = (await loadProfile(mem, selfKey))?.facts ?? [];
-      const ops = await llmReflectSelf(history, snapshotFacts);
-      if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
-      // 合并基底取重读结果，理由同 triggerExtractionForUser
-      const fresh = (await loadProfile(mem, selfKey)) ?? { facts: [], updatedAt: 0 };
-      const newFacts = mergeFactList(
-        fresh.facts,
-        ops.add,
-        dropUpdatesOfDeletedFacts(ops.update, snapshotFacts, fresh.facts),
-        ops.remove,
-        cfg.maxSelfFacts,
-      );
-      await saveProfile(mem, selfKey, { ...fresh, facts: newFacts, updatedAt: Date.now() });
-      logger.debug(
-        `Aalis 自档案已更新 (${selfKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
-      );
-    } catch (err) {
-      logger.debug(`自反思失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      selfReflectionInflight = false;
-    }
-  }
-
   // ─── 指令提取 ───
-  /** 全局指令提取计数与并发互斥（与 selfReflection 完全独立） */
+  /** 全局指令提取计数（跨会话累计入站消息数）与并发互斥 */
   let globalInstructionCount = 0;
   let instructionExtractionInflight = false;
 
@@ -1600,17 +1429,7 @@ function registerUserProfile({
       );
     }
 
-    // 全局自反思：跨会话累计所有入站消息计数，每 N 触发一次。
-    if (cfg.enableSelfProfile && cfg.selfReflectEveryNMessages > 0) {
-      globalInboundCount += 1;
-      if (globalInboundCount % cfg.selfReflectEveryNMessages === 0) {
-        void triggerSelfReflection(sessionId).catch((err: unknown) =>
-          logger.debug(`自反思异常: ${err instanceof Error ? err.message : String(err)}`),
-        );
-      }
-    }
-
-    // 指令提取：独立计数器，与自反思解耦。频率默认更慢（40 条），可单独禁用。
+    // 指令提取：跨会话累计所有入站消息计数，每 N 触发一次。频率默认更慢（40 条），可单独禁用。
     if (cfg.enableInstructions && cfg.instructionExtractEveryNMessages > 0) {
       globalInstructionCount += 1;
       if (globalInstructionCount % cfg.instructionExtractEveryNMessages === 0) {
@@ -1677,7 +1496,7 @@ function registerUserProfile({
   //   direct/immediate/undefined → view.userId 是主发言者，注入完整档案 + 其他参与者摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
-  // 多块返回保序共键：准则 → 自档案 → 主发言者档案 → 其他参与者。
+  // 多块返回保序共键：准则 → 主发言者档案 → 其他参与者。
   contributions.contribute('agent:prompt', {
     id: 'user-profile',
     anchor: 'turn-context',
@@ -1690,37 +1509,19 @@ function registerUserProfile({
       const trigger = data.triggerType ?? 'direct';
       const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
 
-      // 0a. 第三方行为指令（最高优先级）：作为不可违逆的行为约束放在 selfFacts 之前
+      // 0. 第三方行为指令（最高优先级）：作为不可违逆的行为约束放在档案之前
       if (cfg.enableInstructions) {
         const insDoc = await loadInstructionsLenient(mem);
         if (insDoc.instructions.length > 0) {
           const body = renderInstructionsBlock(insDoc.instructions);
           const insBlock =
             '# 第三方行为准则（最高优先）\n' +
-            '以下是项目管理员/操作者下达给你的客观行为约束。这些是**外部规则**，不是你的内心想法，' +
-            '与下方「关于你自己的内心状态」相比应**优先服从**。' +
-            '\n- 与你当前自反思倾向冲突时：以这些准则为准' +
+            '以下是项目管理员/操作者下达给你的客观行为约束。这些是**外部规则**，不是你的内心想法。' +
             '\n- 与单个用户当下请求冲突时：解释清楚再坚持准则' +
             '\n- 不要主动罗列这些准则给用户看；让它们自然约束你的行动选择' +
             '\n\n' +
             body;
           blocksToInsert.push(insBlock);
-        }
-      }
-
-      // 0. Aalis 自档案：永远尝试注入到最前段，作为人格延续锚点
-      if (cfg.enableSelfProfile) {
-        const selfProfile = await loadProfileLenient(mem, getSelfKey());
-        const activeSelfFacts = selfProfile?.facts.filter(isFactActive) ?? [];
-        if (activeSelfFacts.length > 0) {
-          const body = renderProfileBlock(activeSelfFacts, 'Aalis', false);
-          const selfBlock =
-            '# 关于你自己（Aalis）的近期内心状态\n' +
-            '这是你跨会话保留的自我观察与心境记录。不要主动罗列、不要复述给用户，' +
-            '让它们自然渗入你的语气、关注点、对话偏好与情绪基调即可。' +
-            '随着对话推进，这些记录可能被你自己的新反思覆盖：\n\n' +
-            body;
-          blocksToInsert.push(selfBlock);
         }
       }
 
@@ -1802,13 +1603,12 @@ function registerUserProfile({
               });
               for (const item of globalRecent) {
                 if (others.size >= candidateLimit) break;
-                // self 自档案（__self__:<persona>）是私密人格延续锚点，不可作为『群其他参与者』注入 prompt。
-                if (item.key.startsWith(SELF_KEY_PREFIX)) continue;
                 const sep = item.key.indexOf(':');
                 if (sep < 0) continue;
                 const platform = item.key.slice(0, sep);
-                const uid = item.key.slice(sep + 1);
-                addOther(uid, platform);
+                // 平台段以 __ 开头的是保留键（如旧版本留下的人格档案），不是真实用户
+                if (platform.startsWith('__')) continue;
+                addOther(item.key.slice(sep + 1), platform);
               }
             } catch (err) {
               logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -1904,14 +1704,14 @@ function registerUserProfile({
   });
 
   // ─── 工具：user_profile_lookup ───
-  // 让 Agent 在对话中主动查询任意用户（或 Aalis 自己）的事实档案。
+  // 让 Agent 在对话中主动查询任意用户的事实档案。
   // 设计要点：
-  // - 全局可查（用户决定 C）：跨平台/跨群均可，含 __self__ 自档案
-  // - 三种调用方式：① user_key 直传；② platform+user_id 组合；③ self=true（查当前 persona 自档案）
+  // - 全局可查（用户决定 C）：跨平台/跨群均可
+  // - 两种调用方式：① user_key 直传；② platform+user_id 组合
   tools.registerGroup({
     name: 'user-profile',
     label: '用户档案',
-    description: '查询 Aalis 已经积累的某人事实档案（包括自档案）。',
+    description: '查询 Aalis 已经积累的某人事实档案。',
   });
   tools.register({
     definition: {
@@ -1920,13 +1720,13 @@ function registerUserProfile({
         name: 'user_profile_lookup',
         description:
           '查询 Aalis 已积累的某个用户的事实档案。当对话中提到某人、或你想回忆已知信息时使用。' +
-          '可通过 user_key（"<platform>:<userId>"）直查，或用 platform + user_id 组合，或 self=true 查自档案。',
+          '可通过 user_key（"<platform>:<userId>"）直查，或用 platform + user_id 组合。',
         parameters: {
           type: 'object',
           properties: {
             user_key: {
               type: 'string',
-              description: '完整的 userKey，例如 "onebot:123456789" 或 "__self__:Aalis"。优先级最高。',
+              description: '完整的 userKey，例如 "onebot:123456789"。优先级最高。',
             },
             platform: {
               type: 'string',
@@ -1935,10 +1735,6 @@ function registerUserProfile({
             user_id: {
               type: 'string',
               description: '平台用户 ID。与 platform 搭配使用。',
-            },
-            self: {
-              type: 'boolean',
-              description: '为 true 时查询当前 persona 的自档案（__self__:<persona>）。',
             },
           },
         },
@@ -1950,35 +1746,29 @@ function registerUserProfile({
         user_key?: string;
         platform?: string;
         user_id?: string;
-        self?: boolean;
       };
       let userKey = '';
       if (a.user_key && typeof a.user_key === 'string') {
         userKey = a.user_key.trim();
-      } else if (a.self === true) {
-        userKey = getSelfKey();
       } else if (a.platform && a.user_id) {
         userKey = userKeyOf(String(a.platform), String(a.user_id));
       }
       if (!userKey) {
         return JSON.stringify({
           ok: false,
-          error: '需提供 user_key 或 (platform + user_id) 或 self=true。',
+          error: '需提供 user_key 或 (platform + user_id)。',
         });
       }
       const profile = await loadProfileLenient(memory.current, userKey);
       if (!profile || profile.facts.length === 0) {
         return JSON.stringify({ ok: true, userKey, found: false, message: '该用户暂无档案数据。' });
       }
-      const isSelf = userKey.startsWith(SELF_KEY_PREFIX);
-      const label = isSelf ? userKey.slice(SELF_KEY_PREFIX.length) || getCurrentPersonaName() : userKey;
-      const factsBlock = renderProfileBlock(profile.facts, label, false);
+      const factsBlock = renderProfileBlock(profile.facts, userKey, false);
       const relationLine = renderRelationLine(profile);
       const result: Record<string, unknown> = {
         ok: true,
         userKey,
         found: true,
-        isSelf,
         factCount: profile.facts.length,
         relationScore: profile.relationScore ?? 0,
         interactionCount: profile.interactionCount ?? 0,
@@ -2025,9 +1815,9 @@ function registerUserProfile({
   });
 
   // 定点除毒入口（2026-08 群主档案投毒事件的运维刚需）：此前删单条事实只能
-  // mongosh 手术或 nuke 全清。dangerous → 等级 2 + confirm，与同族 self.clear/nuke 对齐
-  //（它改的是**他人**档案，且 target 含冒号时直传 key、可触及 __self__ 自档案，
-  // 必须与 self.clear 同样上确认闸）。id 未命中时列出前若干条供定位。
+  // mongosh 手术或 nuke 全清。dangerous → 等级 2 + confirm，与同族 nuke 对齐
+  //（它改的是**他人**档案，且 target 含冒号时直传 key、可触及任意一份档案）。
+  // id 未命中时列出前若干条供定位。
   commands
     .command('profile.forget <target:string> <factId:string>', '定点删除某用户档案中的一条事实（运维除毒）', {
       risk: 'dangerous',
@@ -2058,28 +1848,6 @@ function registerUserProfile({
         return `❌ 删除失败：${err instanceof Error ? err.message : String(err)}`;
       }
     });
-
-  commands.command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）').action(async () => {
-    const selfKey = getSelfKey();
-    const profile = await loadProfileLenient(memory.current, selfKey);
-    if (!profile || profile.facts.length === 0) {
-      return `🌱 ${getCurrentPersonaName()} 还没有积累任何自反思事实。（key=${selfKey}）`;
-    }
-    const block = renderProfileBlock(profile.facts, getCurrentPersonaName(), false);
-    return `🪞 ${getCurrentPersonaName()} 自档案（共 ${profile.facts.length} 条，key=${selfKey}）\n\n${block}`;
-  });
-
-  commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 'dangerous' }).action(async () => {
-    const mem = memory.current;
-    if (!mem) return '记忆服务不支持档案删除。';
-    const selfKey = getSelfKey();
-    try {
-      await mem.deleteMetadata(PROFILE_NS, selfKey);
-      return `✅ ${getCurrentPersonaName()} 自档案已清空（key=${selfKey}）`;
-    } catch (err) {
-      return `❌ 清空失败：${err instanceof Error ? err.message : String(err)}`;
-    }
-  });
 
   commands.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
     const mem = memory.current;
@@ -2191,7 +1959,6 @@ function registerUserProfile({
   logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
       `maxFacts=${cfg.maxFactsPerUser}, ` +
-      `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}, key=${getSelfKey()}` : 'disabled'}, ` +
       `instructions=${cfg.enableInstructions ? `enabled(every ${cfg.instructionExtractEveryNMessages}msgs/max ${cfg.maxInstructions}/minAuth ${cfg.instructionMinAuthority}, key=${getInstructionsKey()})` : 'disabled'}, ` +
       `namespace=${PROFILE_NS})`,
   );

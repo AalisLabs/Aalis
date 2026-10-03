@@ -10,7 +10,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // 一次提取只认开头取到的 memory 实例。
 //
-// 事实提取、自反思、指令提取都是「读 A → 调 LLM → 重读最新档案 → 覆盖写」。LLM 调用期间
+// 事实提取、指令提取都是「读 A → 调 LLM → 重读最新档案 → 覆盖写」。LLM 调用期间
 // memory 胜者可能换人而本插件不重启；若重读与写回现取胜者，就会拿 A 上合并出的整张表覆盖 B，
 // B 原有的条目被删（读改写跨了两个后端）。
 // ════════════════════════════════════════════════════════════
@@ -143,35 +143,6 @@ describe('plugin-user-profile: 一次提取只认开头取到的 memory 实例',
     expect(second.texts(PROFILE_NS, 'onebot:u1', 'facts'), 'B 上原有事实不得被 A 的整张表覆盖').toEqual(['B上的事实']);
     // LLM 之后的重读同样只认 A：从 B 重读会把 B 的关系分带进 A
     expect(first.metadata.get(`${PROFILE_NS}/onebot:u1`)?.relationScore).toBe(10);
-  });
-
-  it('自反思：LLM 挂起期间换胜者，自档案新事实落在 A，B 的自档案不变', async () => {
-    const { first, second } = await runWithWinnerSwitch({
-      config: {
-        extractEveryNMessages: 0,
-        enableInstructions: false,
-        enableSelfProfile: true,
-        selfReflectEveryNMessages: 1,
-      },
-      history: [
-        { role: 'user', content: '你好', metadata: { userId: 'u1', platform: 'onebot' } },
-        { role: 'assistant', content: '你好呀，我最近很喜欢猫' },
-      ],
-      seed: label => [
-        `${PROFILE_NS}/__self__:Aalis`,
-        {
-          facts: [{ id: 'f1', text: `${label}上的事实`, temporality: 'permanent', observedAt: 1, updatedAt: 1 }],
-          relationScore: label === 'A' ? 10 : 90,
-        },
-      ],
-      reply: { add: [{ text: '喜欢猫', category: '兴趣爱好', temporality: 'permanent' }] },
-      speaker: 'u1',
-    });
-
-    await vi.waitFor(() => expect(first.texts(PROFILE_NS, '__self__:Aalis', 'facts')).toContain('喜欢猫'));
-    expect(first.texts(PROFILE_NS, '__self__:Aalis', 'facts')).toEqual(['A上的事实', '喜欢猫']);
-    expect(second.texts(PROFILE_NS, '__self__:Aalis', 'facts')).toEqual(['B上的事实']);
-    expect(first.metadata.get(`${PROFILE_NS}/__self__:Aalis`)?.relationScore).toBe(10);
   });
 
   it('指令提取：LLM 挂起期间换胜者，新指令落在 A，B 的指令不变', async () => {

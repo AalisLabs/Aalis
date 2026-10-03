@@ -53,6 +53,15 @@ const REMOVED: Array<[string, string]> = [
   ['getPlatformProfiles', '平台档写在会话管理的插件配置里，改为宿主配置文档的 sessionConfig 按层读写'],
   ["'session:compress'", '压缩请求事件（没人监听也照样成功），由压缩服务 compression 取代'],
   ['DIFF_SOURCES', '审批事实按工具名写死的 diff 来源，由工具定义上声明的展示种类 display 取代'],
+  ['enableSelfProfile', 'user-profile 的自档案：模型反思自己的输出再注入回所有会话'],
+  ['selfReflectEveryNMessages', 'user-profile 的自档案'],
+  ['selfReflectHistory', 'user-profile 的自档案'],
+  ['maxSelfFacts', 'user-profile 的自档案'],
+  ['selfFacts', 'user-profile 的自档案'],
+  ['__self__', 'user-profile 的自档案键前缀'],
+  ['profile.self', 'user-profile 查看与清空自档案的两条指令'],
+  ['自档案', 'user-profile 的自档案'],
+  ['自反思', 'user-profile 的自档案'],
 ];
 
 /** [包目录, 标识, 删掉的是什么]：只在这个包的源码与 package.json 里查 */
