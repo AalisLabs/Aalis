@@ -1,8 +1,10 @@
 import type { HostPanelTab } from '@aalis/api-webui';
 import { MessagesSquare } from 'lucide-react';
 import {
+  type CSSProperties,
   createContext,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
   useCallback,
   useContext,
@@ -22,23 +24,43 @@ import { ConnectionBar } from './ConnectionBar';
 import { QuickSwitch } from './QuickSwitch';
 import './Shell.css';
 
-// 外壳：图标栏、左栏、主区、右侧面板，栏宽固定。左栏 64em 起、右侧面板 80em 起常驻，可收起，收起状态存本浏览器；
-// 更窄时它们是覆盖式抽屉；48em 以下是手机，没有图标栏，按地址分三层逐级进入，每层占满一屏。
-// 图标栏上方是「会话」，下面是 owner 固定的页面；打开着插件页面（/p/ 地址）时「会话」回到刚才的会话地址
+// 外壳：图标栏、左栏、主区、右侧面板。左栏 64em 起、右侧面板 80em 起常驻，可收起，两侧之间的分隔条可以拖动调宽；
+// 更窄时它们是按记住的栏宽盖进来的抽屉；48em 以下是手机，没有图标栏，按地址分三层逐级进入，每层占满一屏。
+// 收起状态与栏宽按设备存本浏览器。图标栏上方是「会话」，下面是 owner 固定的页面；打开着插件页面（/p/ 地址）时
+// 「会话」回到刚才的会话地址
 
 type Side = 'left' | 'right';
 
 const DOCKED: Record<Side, string> = { left: '(min-width: 64em)', right: '(min-width: 80em)' };
 const PHONE = '(max-width: 47.99em)';
 
-/** 两侧在常驻宽度下是否展开 */
-type Panels = Record<Side, boolean>;
+/** 两侧的栏宽（rem）：默认值与可调的上下限 */
+const WIDTHS: Record<Side, { initial: number; min: number; max: number }> = {
+  left: { initial: 16.5, min: 13.75, max: 25 },
+  right: { initial: 22.5, min: 18.75, max: 37.5 },
+};
+/** 分隔条上按一下方向键调的宽度（rem） */
+const WIDTH_STEP = 1;
 
-function storedPanels(): Panels {
-  const stored = readStored('panels') as Partial<Panels> | undefined;
-  return typeof stored?.left === 'boolean' && typeof stored.right === 'boolean'
-    ? { left: stored.left, right: stored.right }
-    : { left: true, right: true };
+/** 一侧在常驻宽度下展开没有，调过的栏宽（rem，没调过是默认宽度） */
+interface SideLayout {
+  open: boolean;
+  width?: number;
+}
+type Layout = Record<Side, SideLayout>;
+
+const clampWidth = (side: Side, width: number) => Math.min(Math.max(width, WIDTHS[side].min), WIDTHS[side].max);
+
+function storedLayout(): Layout {
+  const stored = readStored('panels') as Partial<Record<Side, Partial<SideLayout>>> | undefined;
+  const sideOf = (side: Side): SideLayout => {
+    const { open, width } = stored?.[side] ?? {};
+    return {
+      open: typeof open === 'boolean' ? open : true,
+      width: typeof width === 'number' && Number.isFinite(width) ? clampWidth(side, width) : undefined,
+    };
+  };
+  return { left: sideOf('left'), right: sideOf('right') };
 }
 
 interface ShellControls {
@@ -50,6 +72,10 @@ interface ShellControls {
   reveal(side: Side): void;
   closeDrawer(): void;
   openSearch(): void;
+  /** 两侧记住的栏宽（rem） */
+  widths: Record<Side, number>;
+  /** 定下栏宽并记住；不给宽度时恢复默认 */
+  resize(side: Side, width?: number): void;
 }
 
 const Context = createContext<ShellControls | undefined>(undefined);
@@ -72,13 +98,22 @@ export function usePhone(): boolean {
 }
 
 export function Shell() {
-  const [panels, setPanels] = useState(storedPanels);
+  const [layout, setLayout] = useState(storedLayout);
   const [drawer, setDrawer] = useState<Side>();
   const [searching, setSearching] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
   const { approvals, appName } = useConnection();
+
+  const save = useCallback(
+    (side: Side, fields: Partial<SideLayout>) => {
+      const next = { ...layout, [side]: { ...layout[side], ...fields } };
+      setLayout(next);
+      writeStored('panels', next);
+    },
+    [layout],
+  );
 
   /** 按一侧现在开着没有，定它接下来开不开 */
   const change = useCallback(
@@ -88,15 +123,20 @@ export function Shell() {
         setDrawer(current => (decide(current === side) ? side : current === side ? undefined : current));
         return;
       }
-      const open = decide(panels[side]);
-      if (open === panels[side]) return;
-      const next = { ...panels, [side]: open };
-      setPanels(next);
-      writeStored('panels', next);
+      const open = decide(layout[side].open);
+      if (open !== layout[side].open) save(side, { open });
     },
-    [panels],
+    [layout, save],
   );
   const toggle = useCallback((side: Side) => change(side, open => !open), [change]);
+
+  const widths = useMemo(
+    () => ({
+      left: layout.left.width ?? WIDTHS.left.initial,
+      right: layout.right.width ?? WIDTHS.right.initial,
+    }),
+    [layout],
+  );
 
   const controls = useMemo<ShellControls>(
     () => ({
@@ -105,8 +145,10 @@ export function Shell() {
       reveal: side => change(side, () => true),
       closeDrawer: () => setDrawer(undefined),
       openSearch: () => setSearching(true),
+      widths,
+      resize: (side, width) => save(side, { width }),
     }),
-    [drawer, toggle, change],
+    [drawer, toggle, change, widths, save],
   );
 
   // 有推来的未结审批时，标签页标题前带上待处理数
@@ -151,32 +193,44 @@ export function Shell() {
       <div
         className="shell"
         data-level={level}
-        data-left={panels.left ? undefined : 'collapsed'}
-        data-right={panels.right ? undefined : 'collapsed'}
+        data-left={layout.left.open ? undefined : 'collapsed'}
+        data-right={layout.right.open ? undefined : 'collapsed'}
         data-drawer={drawer}
+        style={
+          {
+            '--left-w': `${widths.left}rem`,
+            '--left-min': `${WIDTHS.left.min}rem`,
+            '--right-w': `${widths.right}rem`,
+            '--right-min': `${WIDTHS.right.min}rem`,
+          } as CSSProperties
+        }
       >
-        <nav className="shell-rail" aria-label="图标栏">
-          <Link
-            to={onPage ? lastSessions.current : paths.home}
-            className="shell-rail-item"
-            aria-current={onPage ? undefined : 'page'}
-            aria-label="会话"
-            title={onPage ? '会话' : `会话（${shortcutLabel('toggleLeft')} 收起或展开左栏）`}
-            onClick={event => {
-              if (onPage) return;
-              event.preventDefault();
-              toggle('left');
-            }}
-          >
-            <MessagesSquare aria-hidden />
-            <span className="shell-rail-name" aria-hidden>
-              会话
-            </span>
-          </Link>
-          <PinnedRail />
-        </nav>
         <ConnectionBar />
-        <Outlet />
+        <div className="shell-columns">
+          <nav className="shell-rail" aria-label="图标栏">
+            <div className="header-bar shell-rail-head">
+              <Link
+                to={onPage ? lastSessions.current : paths.home}
+                className="shell-rail-item"
+                aria-current={onPage ? undefined : 'page'}
+                aria-label="会话"
+                title={onPage ? '会话' : `会话（${shortcutLabel('toggleLeft')} 收起或展开左栏）`}
+                onClick={event => {
+                  if (onPage) return;
+                  event.preventDefault();
+                  toggle('left');
+                }}
+              >
+                <MessagesSquare aria-hidden />
+                <span className="shell-rail-name" aria-hidden>
+                  会话
+                </span>
+              </Link>
+            </div>
+            <PinnedRail />
+          </nav>
+          <Outlet />
+        </div>
         {drawer && (
           <button
             type="button"
@@ -214,13 +268,103 @@ function useDrawer(side: Side) {
   return { ref, onKeyDown };
 }
 
+const SEPARATOR_LABEL: Record<Side, string> = { left: '调整左栏宽度', right: '调整右侧面板宽度' };
+
+interface SeparatorProps {
+  side: Side;
+  /** 拖动中的栏宽（rem）只用在这一栏上，松手时撤掉（给 undefined），再按松手的位置定下或收起 */
+  onDrag(width?: number): void;
+}
+
+/**
+ * 两侧停靠时栏与主区之间的分隔条（只在常驻宽度下显示）：按住拖动、方向键调宽，Home、End 到上下限，双击恢复默认；
+ * 拖到下限以下松手即收起，与按钮、快捷键收起是同一个状态，栏宽留着拖动前的，展开时回到它
+ */
+function Separator({ side, onDrag }: SeparatorProps) {
+  const { widths, toggle, resize } = useShell();
+  const drag = useRef<{ pointer: number; from: number; rem: number; to?: number }>(undefined);
+  const { min, max } = WIDTHS[side];
+  /** 往外是加宽：左栏的分隔条往右，右侧面板的往左 */
+  const outward = side === 'left' ? 1 : -1;
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    // 不让按住拖动时选中旁边的文字
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      pointer: event.clientX,
+      from: widths[side],
+      rem: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    };
+  };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (!current) return;
+    current.to = current.from + ((event.clientX - current.pointer) * outward) / current.rem;
+    onDrag(clampWidth(side, current.to));
+  };
+  const end = (commit: boolean) => {
+    const to = drag.current?.to;
+    drag.current = undefined;
+    onDrag(undefined);
+    // 没有移动过的是点按，不改栏宽
+    if (!commit || to === undefined) return;
+    if (to < min) toggle(side);
+    else resize(side, clampWidth(side, to));
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    let next: number;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      next = widths[side] + (event.key === 'ArrowRight' ? outward : -outward) * WIDTH_STEP;
+    } else if (event.key === 'Home') next = min;
+    else if (event.key === 'End') next = max;
+    else return;
+    event.preventDefault();
+    resize(side, clampWidth(side, next));
+  };
+
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: <hr> 不能获得焦点、不能拖动，可调的分隔条只能用 role="separator"
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={SEPARATOR_LABEL[side]}
+      aria-valuenow={widths[side]}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      title="拖动调整宽度，双击恢复默认"
+      className="shell-resize"
+      data-side={side}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={() => end(true)}
+      onPointerCancel={() => end(false)}
+      onDoubleClick={() => resize(side)}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
 /** 左栏，内容跟着图标栏的当前项 */
 export function Left({ label, children }: { label: string; children: ReactNode }) {
   const { ref, onKeyDown } = useDrawer('left');
+  const [dragged, setDragged] = useState<number>();
   return (
-    <nav ref={ref} className="shell-left" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown}>
-      {children}
-    </nav>
+    <>
+      <nav
+        ref={ref}
+        className="shell-left"
+        aria-label={label}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        style={{ '--left-w': dragged === undefined ? undefined : `${dragged}rem` } as CSSProperties}
+      >
+        {children}
+      </nav>
+      <Separator side="left" onDrag={setDragged} />
+    </>
   );
 }
 
@@ -231,9 +375,20 @@ export function Main({ children }: { children: ReactNode }) {
 /** 右侧面板，只跟着会话出现 */
 export function Aside({ label, children }: { label: string; children: ReactNode }) {
   const { ref, onKeyDown } = useDrawer('right');
+  const [dragged, setDragged] = useState<number>();
   return (
-    <aside ref={ref} className="shell-right" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown}>
-      {children}
-    </aside>
+    <>
+      <Separator side="right" onDrag={setDragged} />
+      <aside
+        ref={ref}
+        className="shell-right"
+        aria-label={label}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        style={{ '--right-w': dragged === undefined ? undefined : `${dragged}rem` } as CSSProperties}
+      >
+        {children}
+      </aside>
+    </>
   );
 }

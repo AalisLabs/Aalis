@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { BoundWebui, ComponentView, PageDataResponse, PageView } from '../../packages/api-webui/src/index.js';
+import type {
+  BoundWebui,
+  ComponentView,
+  FrameHostCapability,
+  PageDataResponse,
+  PageView,
+} from '../../packages/api-webui/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // definePage 的类型推导：组件与处理函数一次声明，返回形状按组件种类推出，写错在编译期报错。
@@ -237,8 +243,128 @@ function views(page: PageView, rows: PageDataResponse<'table'>) {
   return [table, withData, effect, cell];
 }
 
+// 插件前端：数据源与动作的输入按声明推出，动作不带 row；位置只有插件页面与会话面板，能力只从词表里选
+function frames(webui: BoundWebui) {
+  const board = webui.definePage({
+    key: 'board',
+    title: '看板',
+    icon: 'layout-grid',
+    frame: { module: import.meta.url, entry: 'index.html', host: ['sessions:read', 'turn:abort'] },
+    sources: {
+      cards: {
+        data: ({ input, ctx }) => {
+          const none: undefined = input;
+          return [none, ctx.caller.userId];
+        },
+      },
+      card: {
+        input: { id: { type: 'string', label: '卡片', required: true }, limit: { type: 'number', label: '上限' } },
+        data: ({ input }) => {
+          const id: string = input.id;
+          const limit: number | undefined = input.limit;
+          return { id, limit };
+        },
+      },
+    },
+    actions: {
+      archive: {
+        label: '归档',
+        effect: 'destructive',
+        confirm: '归档后不能恢复',
+        input: { id: { type: 'string', label: '卡片', required: true } },
+        handler: ({ input }) => {
+          const id: string = input.id;
+          return `已归档 ${id}`;
+        },
+      },
+      ping: {
+        label: '刷新',
+        effect: 'read',
+        handler: ({ input }) => {
+          const none: undefined = input;
+          return none;
+        },
+      },
+    },
+  });
+  board.invalidate('cards');
+
+  webui.definePage({
+    key: 'panel-frame',
+    title: '面板',
+    placement: 'session',
+    applies: ({ kind }) => kind === 'owner',
+    frame: { module: import.meta.url },
+    sources: { who: { data: ({ ctx }) => ctx.sessionId } },
+  });
+
+  webui.definePage({
+    key: 'plugin-frame-ctx',
+    title: '插件页面没有会话',
+    frame: { module: import.meta.url },
+    sources: {
+      who: {
+        // @ts-expect-error 插件页面的插件前端没有会话
+        data: ({ ctx }) => ctx.sessionId,
+      },
+    },
+  });
+
+  webui.definePage(
+    // @ts-expect-error content 与 frame 只能写一个
+    {
+      key: 'both',
+      title: '两样都写',
+      frame: { module: import.meta.url },
+      content: [{ type: 'markdown', id: 'm', data: () => '' }],
+    },
+  );
+
+  // @ts-expect-error content 与 frame 至少写一个
+  webui.definePage({ key: 'neither', title: '两样都不写' });
+
+  webui.definePage(
+    // @ts-expect-error 插件前端只放在 plugin 或 session
+    { key: 'settings-frame', title: '设置里不收插件前端', placement: 'settings', frame: { module: import.meta.url } },
+  );
+
+  webui.definePage(
+    // @ts-expect-error 插件前端里没有宿主画的表格行，要指定对象就放进 input
+    {
+      key: 'row-frame',
+      title: '插件前端的动作不带 row',
+      frame: { module: import.meta.url },
+      actions: { remove: { label: '删除', effect: 'destructive', row: true, handler: () => {} } },
+    },
+  );
+
+  webui.definePage({
+    key: 'host-frame',
+    title: '能力只从词表里选',
+    frame: {
+      module: import.meta.url,
+      // @ts-expect-error 词表里没有 approvals:respond
+      host: ['approvals:respond'],
+    },
+  });
+}
+
+// 界面收到的插件前端页面：只有框架地址与申请的能力，不带 content；声明式页面一定带 content
+function frameViews(page: PageView) {
+  if (!page.frame) return Array.isArray(page.content) ? page.content : page.content.tabs[0]?.content;
+  const src: string = page.frame.src;
+  const host: FrameHostCapability[] = page.frame.host;
+  // @ts-expect-error 插件前端页面没有 content
+  return [src, host, page.content.length];
+}
+
 describe('definePage 的类型推导', () => {
   it('只在编译期检查（test/architecture/test-types.test.ts 跑 tsc）', () => {
-    expect([typeof checks, typeof views]).toEqual(['function', 'function']);
+    expect([typeof checks, typeof views, typeof frames, typeof frameViews]).toEqual([
+      'function',
+      'function',
+      'function',
+      'function',
+    ]);
   });
 });

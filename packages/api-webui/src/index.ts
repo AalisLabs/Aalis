@@ -1,7 +1,7 @@
 // ----- WebUI 服务接口 -----
 //
-// WebUI 服务契约、声明式页面与提示的登记门面（页面契约见 page.ts）、管理面推送（/admin）的事件类型、
-// 主题的令牌表与文件格式（theme.ts），以及服务描述符。
+// WebUI 服务契约、页面与提示的登记门面（页面契约见 page.ts，插件前端的消息通道见 frame.ts）、管理面推送（/admin）的
+// 事件类型、主题的令牌表与文件格式（theme.ts），以及服务描述符。
 
 import type { LogEntry, ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
@@ -138,12 +138,14 @@ export const webuiClient = defineService<WebuiClientProvider>('webui-client');
 /** `webui-server` 的绑定接口：页面与提示的登记归属这次激活，提供者换人自动重挂，停用时同一拍撤回 */
 export interface BoundWebui extends ServiceRef<WebUIService> {
   /**
-   * 登记一个页面：组件、数据源、动作与处理函数一次给出，返回形状按组件种类推出，引用了没声明的动作在编译期报错。
-   * 要在引用它的 notify 之前登记
+   * 登记一个页面：声明式页面的组件、数据源、动作与处理函数一次给出，返回形状按组件种类推出，引用了没声明的动作在编译期
+   * 报错；插件前端页面给出框架所在的模块、数据源与动作，输入按声明推出。要在引用它的 notify 之前登记
    */
-  definePage<const P extends PagePlacement = 'plugin', const S extends Record<string, unknown> = Record<never, never>>(
-    page: PageDefinition<P, S, NoInfer<keyof S & string>>,
-  ): PageHandle;
+  definePage<
+    const P extends PagePlacement = 'plugin',
+    const S extends Record<string, unknown> = Record<never, never>,
+    const R extends Record<string, unknown> = Record<never, never>,
+  >(page: PageDefinition<P, S, NoInfer<keyof S & string>, R>): PageHandle;
   /** 发一条提示；同一个 id 再发一次就是替换 */
   notify(notice: Notice): NoticeHandle;
 }
@@ -197,7 +199,8 @@ export type WebuiAdminEvent =
   | { type: 'app.restarting' }
   | { type: 'client.reload' };
 
-// ----- 声明式页面与提示，见 page.ts；主题的令牌表、文件格式与内置主题，见 theme.ts -----
+// ----- 页面与提示，见 page.ts；插件前端的消息通道，见 frame.ts；主题的令牌表、文件格式与内置主题，见 theme.ts -----
 
+export * from './frame.js';
 export * from './page.js';
 export * from './theme.js';

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type PublishService, publish } from '../../packages/api-publish/src/index.js';
-import type { ComponentView, InfoItem, PageView } from '../../packages/api-webui/src/index.js';
+import type { ComponentView, DeclarativePageView, InfoItem } from '../../packages/api-webui/src/index.js';
 import { provide } from '../../packages/core/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import {
@@ -84,7 +84,7 @@ const refused = (error: string | RegExp) => ({
 });
 
 /** 页面声明里按 id 找组件（含标签里的与详情里的） */
-function component(view: PageView, id: string): ComponentView {
+function component(view: DeclarativePageView, id: string): ComponentView {
   const screens = Array.isArray(view.content) ? [view.content] : view.content.tabs.map(tab => tab.content);
   const all = screens.flat().flatMap(c => [c, ...(('detail' in c && c.detail) || [])]);
   const found = all.find(c => 'id' in c && c.id === id);

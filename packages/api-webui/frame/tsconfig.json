@@ -1,0 +1,16 @@
+{
+  // 框架侧的助手按浏览器环境单独编译，输出到 dist/frame/，与样式基线一起由 webui-server 托管在 /frames/_base/ 下。
+  // 类型取自本包编译出的声明（先跑本包的 tsc）；助手只导入类型，输出里没有 import
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist/frame",
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "paths": { "@aalis/api-webui": ["../dist/index.d.ts"] }
+  },
+  "include": ["frame.ts"]
+}

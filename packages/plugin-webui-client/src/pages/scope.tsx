@@ -1,4 +1,4 @@
-import type { ActionView, PageDataByType, PageRow, PageView } from '@aalis/api-webui';
+import type { ActionView, DeclarativePageView, PageDataByType, PageRow } from '@aalis/api-webui';
 import {
   createContext,
   type ReactNode,
@@ -18,17 +18,20 @@ import { useConnection } from '../connection';
 import { isRecord, postJson, useJson } from '../rest';
 import { ActionForm } from './ActionForm';
 
-// 一个打开着的页面：取数与动作都按它的实例、key 与会话（会话面板）走。整页在标题栏的手动刷新与管理连接重连后重取；
+// 一个打开着的声明式页面：取数与动作都按它的实例、key 与会话（会话面板）走。整页在手动刷新与管理连接重连后重取；
 // 一个组件在插件推来的 page.invalidate 指到它时重取（带会话的只认打开着这个会话的面板）。
 // 动作按 effect 推出交互：带输入的弹表单，destructive 先确认，其余直接调；发出后到回来这个动作在这一行上算进行中。
 // 成功时插件给的一句结果用 Toast 显示，失败按用户操作的失败显示（开着的表单写在表单上）。结果变了由插件 invalidate，
 // 这里不自己重取
 
+/** destructive 动作没写确认文案时，宿主的确认框写这一句（声明式页面与插件前端同一句） */
+export const DEFAULT_CONFIRM = '这个操作不能撤销。';
+
 interface Scope {
-  page: PageView;
+  page: DeclarativePageView;
   /** 会话面板的会话 */
   sessionId?: string;
-  /** 整页重取的计数 */
+  /** 整页重取的计数：PageScope 收的是手动刷新的次数，给组件的另加上管理连接重连的次数 */
   version: number;
 }
 
@@ -62,7 +65,7 @@ export function useActions(): Running & { actions: Readonly<Record<string, Actio
 }
 
 const enc = encodeURIComponent;
-const pageBase = (page: PageView) => `/api/pages/${enc(page.instance)}/${enc(page.key)}`;
+const pageBase = (page: DeclarativePageView) => `/api/pages/${enc(page.instance)}/${enc(page.key)}`;
 
 const PARSERS: { [T in keyof PageDataByType]: (body: unknown) => PageDataByType[T] } = {
   table: body => dataOf(body, Array.isArray, '行的数组') as PageDataByType['table'],
@@ -112,14 +115,6 @@ export function usePageData<T extends keyof PageDataByType>(
   return { ...result, retry: invalidate };
 }
 
-/** 整页重取的计数：标题栏的手动刷新与管理连接重连 */
-export function usePageVersion(): [number, () => void] {
-  const { admin } = useConnection();
-  const [version, refresh] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => admin.onReconnect(refresh), [admin]);
-  return [version, refresh];
-}
-
 /** 弹出的确认框或表单：哪个动作、作用于哪一行 */
 interface Pending {
   name: string;
@@ -130,6 +125,9 @@ interface Pending {
 const keyOf = (name: string, target?: ActionTarget) => JSON.stringify([name, target?.rowKey ?? null]);
 
 export function PageScope({ page, sessionId, version, children }: Scope & { children: ReactNode }) {
+  const { admin } = useConnection();
+  const [reconnects, reconnected] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => admin.onReconnect(reconnected), [admin]);
   const toast = useToast();
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [pending, setPending] = useState<Pending>();
@@ -200,7 +198,10 @@ export function PageScope({ page, sessionId, version, children }: Scope & { chil
     [call, failed],
   );
 
-  const scope = useMemo(() => ({ page, sessionId, version }), [page, sessionId, version]);
+  const scope = useMemo(
+    () => ({ page, sessionId, version: version + reconnects }),
+    [page, sessionId, version, reconnects],
+  );
   return (
     <ScopeContext.Provider value={scope}>
       <RunningContext.Provider value={running}>
@@ -234,7 +235,7 @@ function ActionDialog({
 }) {
   const formId = useId();
   const action = pending?.action;
-  const warning = action?.effect === 'destructive' ? (action.confirm ?? '这个操作不能撤销。') : undefined;
+  const warning = action?.effect === 'destructive' ? (action.confirm ?? DEFAULT_CONFIRM) : undefined;
   return (
     <Dialog
       open={action !== undefined}

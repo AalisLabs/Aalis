@@ -52,8 +52,9 @@
   --row-heading: 1.75rem;
   --header-h: 3rem;
   --rail-w: 3.25rem;
-  --left-w: 16.5rem;
-  --right-w: 22.5rem;
+  --main-min-w: 30rem;
+  /* 分隔条可按住的宽度 */
+  --separator-w: 0.5rem;
   --measure-chat: 45rem;
   --menu-w: 13.5rem;
   --dialog-w: 25rem;
@@ -89,6 +90,7 @@
     --row-1line: 3rem;
     --row-2line: 3.75rem;
     --row-table: 3rem;
+    --separator-w: 1rem;
   }
 }
 

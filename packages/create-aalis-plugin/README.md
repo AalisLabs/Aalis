@@ -12,7 +12,7 @@ pnpm add create-aalis-plugin
 
 ## 提供 / 依赖
 
-生成插件骨架包：`package.json`、`tsconfig.json`、`src/index.ts`（`definePlugin`）、`README.md`。可选特性会写入对应 api 包依赖与 `uses`（`tools` / `commands` / `webui-server`）。本包本身不是插件，无 `provides` / `uses`。
+生成插件骨架包：`package.json`、`tsconfig.json`、`src/index.ts`（`definePlugin`）、`README.md`。可选特性会写入对应 api 包依赖与 `uses`（`tools` / `commands` / `webui-server`）；WebUI 页面选了自带前端时另生成 `webui/index.html` 与 `webui/main.js`（插件前端，不用构建），`files` 带上 `webui`。本包本身不是插件，无 `provides` / `uses`。
 
 生成物的 `@aalis/core` peer 区间为 `>=0.17.0 <1.0.0`。
 

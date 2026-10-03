@@ -59,6 +59,7 @@ import { createLayoutStore } from './layout.js';
 import { createPageFiles } from './page-files.js';
 import { createPageRegistry } from './pages.js';
 import { registerFileRoutes } from './routes/files.js';
+import { registerFrameRoutes } from './routes/frames.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPageRoutes } from './routes/pages.js';
@@ -388,11 +389,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   const expressApp = express();
   // 文档级 CSP：脚本只许同源，样式放开内联（Mermaid 的输出带内联样式），图片只认同源与本地生成的；不许被别的页面嵌入。
-  // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱
+  // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱，插件前端的文件另设框架 CSP
   expressApp.use((_req, res, next) => {
     res.setHeader('Content-Security-Policy', DOCUMENT_CSP);
     next();
   });
+  // 插件前端的文件：注册在认证之前，凭页面登记时的 token 取，不看 cookie
+  registerFrameRoutes(expressApp, token => pages.frameDir(token));
   expressApp.use(express.json({ limit: '10mb' }));
   expressApp.use(auth.middleware);
   // REST 路由 owner 闸（连接级认证之上的显式 owner 复核，见 gate.ts）。
@@ -510,7 +513,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     },
     gate,
   );
-  // 声明式页面：插件经 webui-server 的绑定接口登记，页面的数据源与动作、会话面板与布局记录的路由按这张登记表分派
+  // 页面：插件经 webui-server 的绑定接口登记，页面的数据源与动作、插件前端的文件、会话面板与布局记录的路由按这张登记表分派
   const pageFiles = createPageFiles(() => storage.listRoots());
   const pages = createPageRegistry({
     logger,

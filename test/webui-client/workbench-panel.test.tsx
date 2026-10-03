@@ -475,7 +475,7 @@ describe('用量打开右侧面板', () => {
 
   it('宽屏上右侧面板收起时，点用量会展开它', async () => {
     stubViewport(1440);
-    localStorage.setItem('aalis.panels', JSON.stringify({ left: true, right: false }));
+    localStorage.setItem('aalis.panels', JSON.stringify({ left: { open: true }, right: { open: false } }));
     app = await renderApp('/s/s1', handlers);
     expect(shell().dataset.right).toBe('collapsed');
     fireEvent.click(await main().findByRole('button', { name: '上下文已用 42%' }));
