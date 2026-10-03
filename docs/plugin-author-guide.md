@@ -81,7 +81,7 @@ sessionHistory.follow(provider => {
 - 换人时先跑上次清理，等 Promise 落定（完成或被拒）才挂新实例；等待期间多次切换合并到最新。
 - 拒绝被隔离并报告，不证明旧资源已释放。旧清理永不落定会阻塞交接。
 
-往 hub 登记（工具 / 命令 / 页面 / 预处理器）走描述符绑定门面：`tools.register`、`commands.command`、`webui.registerPage`、`agent.registerPreprocessor`。门面用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
+往 hub 登记（工具 / 命令 / 页面 / 预处理器）走描述符绑定门面：`tools.register`、`commands.command`、`webui.definePage`、`agent.registerPreprocessor`。门面用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
 
 长期缓存 `current` 或 `all()[i].instance`：关停边不保护这份引用。提供者有失效逻辑则抛，没有则可能静默成功。
 
@@ -243,7 +243,7 @@ it('required 依赖到场后激活', async () => {
 - `events.on` / `events.emit`
 - `hooks.middleware` / `hooks.run`
 - `x.follow(attach)` 跟随会换人的提供者
-- `tools.register` / `commands.command` / `webui.registerPage` / `agent.registerPreprocessor`（经 `uses` 拿到的绑定门面）
+- `tools.register` / `commands.command` / `webui.definePage` / `agent.registerPreprocessor`（经 `uses` 拿到的绑定门面）
 - `lifecycle.onDispose` / `onDrain` 清理外部资源与交接
 - 启动后台 worker / 连接外部服务（发起即可，不要在 apply 里等它就绪，见下）
 
@@ -381,7 +381,7 @@ declare module '@aalis/core' {
 | 第一参 Context：`on`/`emit`、`logger`、`onDispose`、`provide(name, impl)`、按名取服务、跟随订阅、`middleware`/`runHook`、`contribute`/`collect` | `uses` 里写描述符后解构：`events`、`logger`、`lifecycle`（`onDispose` / `onDrain`）、`provide(desc, impl)`、`x.current` / `require()` / `all()` / `follow`、`hooks`、`contributions` |
 | 整份宿主配置默认可取 | `hostConfig` 须显式 uses（普通宿主服务） |
 | `useModule` 子上下文 | 删除。改用顶层插件：定义声明 `reusable`，以 `name:suffix` 注册多实例 |
-| 契约包 `useXxxService` helper | 描述符值导入进 `uses` 与 `dependencies`；apply 里用绑定门面（`tools.register`、`commands.command`、`webui.registerPage` / `registerAction`、`agent.registerPreprocessor`） |
+| 契约包 `useXxxService` helper | 描述符值导入进 `uses` 与 `dependencies`；apply 里用绑定门面（`tools.register`、`commands.command`、`webui.definePage` / `notify`、`agent.registerPreprocessor`） |
 | 网关 helper 第一参为 Context | `createStorageGateway` / `createProcessGateway` / `resolveLLMModel` 第一参为 `ServiceRef` |
 | 依赖变更时整插件级联重启开关 | 删除。调用型每次读 `current`；有状态资源用 `follow`；登记型由 registrar 随换人重挂 |
 | 服务名→实例的 declaration merging 表 | 删除。类型随描述符走 |

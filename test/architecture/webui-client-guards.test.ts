@@ -84,12 +84,9 @@ const propertyName = (property: ts.ObjectLiteralElementLike) =>
 
 // ----- 插件登记的页面键、动作名与设置键 -----
 
-/** 组件里引用动作名的字段 */
-const ACTION_FIELDS = ['source', 'method', 'save', 'detailSource'];
-
 /**
- * 从全部插件的源码收集：页面键取登记的页面对象（带 key、label 与 content 或 renderer）的 key；动作名取 registerAction 的第一个参数，
- * 以及页面里组件引用的动作名（循环登记的动作经它覆盖）；设置键取各包对 SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）
+ * 从全部插件的源码收集：页面键取页面声明（带 key、title 与 content 的对象，标签不算）的 key，key 写成本文件里的字符串常量
+ * 时取常量的值；动作名取页面声明的 actions 对象的键；设置键取各包对 SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）
  */
 function registeredKeys() {
   const pages = new Set<string>();
@@ -99,33 +96,39 @@ function registeredKeys() {
     const src = join(PACKAGES, pkg, 'src');
     if (pkg === 'plugin-webui-client' || !existsSync(src)) continue;
     for (const file of walk(src, /\.tsx?$/)) {
+      const source = parse(file);
+      const constants = new Map<string, string>();
+      visitAll(source, node => {
+        const value = ts.isVariableDeclaration(node) ? literalText(node.initializer) : undefined;
+        if (value !== undefined && ts.isIdentifier((node as ts.VariableDeclaration).name)) {
+          constants.set((node as ts.VariableDeclaration).name.getText(), value);
+        }
+      });
+      const textOf = (node: ts.Node | undefined) =>
+        node && ts.isIdentifier(node) ? constants.get(node.text) : literalText(node);
       const visit = (node: ts.Node, inPage: boolean): void => {
         let page = inPage;
         if (ts.isInterfaceDeclaration(node) && node.name.text === 'SessionConfig') {
           for (const member of node.members)
             if (member.name && ts.isIdentifier(member.name)) settings.add(member.name.text);
         }
-        if (ts.isObjectLiteralExpression(node)) {
+        if (!inPage && ts.isObjectLiteralExpression(node)) {
           const fields = new Map(
             node.properties.filter(ts.isPropertyAssignment).map(p => [propertyName(p), p.initializer] as const),
           );
-          const key = literalText(fields.get('key'));
-          if (!inPage && key && fields.has('label') && (fields.has('content') || fields.has('renderer'))) {
+          const key = textOf(fields.get('key'));
+          if (key && fields.has('title') && fields.has('content')) {
             pages.add(key);
             page = true;
+            const declared = fields.get('actions');
+            if (declared && ts.isObjectLiteralExpression(declared)) {
+              for (const property of declared.properties) actions.add(propertyName(property) ?? '');
+            }
           }
-          if (inPage) for (const field of ACTION_FIELDS) actions.add(literalText(fields.get(field)) ?? '');
-        }
-        if (
-          ts.isCallExpression(node) &&
-          ts.isPropertyAccessExpression(node.expression) &&
-          node.expression.name.text === 'registerAction'
-        ) {
-          actions.add(literalText(node.arguments[0]) ?? '');
         }
         ts.forEachChild(node, child => visit(child, page));
       };
-      visit(parse(file), false);
+      visit(source, false);
     }
   }
   actions.delete('');
@@ -303,8 +306,10 @@ describe('WebUI 客户端只认契约不认插件', () => {
   const excluded = new Set([...protocolFields(), ...adminFields()]);
 
   it('收集到的登记与排除表不空：判据没有因为写法变化失效', () => {
-    expect([...pages]).toEqual(expect.arrayContaining(['paper', 'skills', 'doctor']));
-    expect([...actions]).toEqual(expect.arrayContaining(['listPapers', 'runChecks', 'reviewPending']));
+    expect([...pages]).toEqual(expect.arrayContaining(['paper', 'paper-room', 'skills', 'doctor', 'uploads']));
+    expect([...actions]).toEqual(
+      expect.arrayContaining(['cancelTask', 'runDiagnostics', 'approveWork', 'deleteUpload']),
+    );
     expect([...settings]).toEqual(expect.arrayContaining(['llm', 'persona', 'enabledToolGroups', 'paperEnabled']));
     expect([...excluded]).toEqual(expect.arrayContaining(['sessionId', 'epoch', 'seq', 'type', 'entry']));
   });

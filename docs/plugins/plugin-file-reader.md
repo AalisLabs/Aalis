@@ -26,6 +26,7 @@ export default definePlugin({
     agent: optional(agent),
     memory: optional(memory),
     media: optional(media),
+    webui: optional(webuiServer),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -63,6 +64,10 @@ export default definePlugin({
 - 单张识别失败不影响其余；无 `media` 服务时整体静默跳过。
 - 提取文本（含图片描述）长度不超过 `autoInlineLimit` 时，结果写入文件元信息缓存，之后读取不再重复解析与识别；超过阈值的文档每次读取都会重新解析。
 - PDF 暂不识别内嵌图片，仅提取文本。
+
+## 会话面板
+
+会话右侧面板的「+」里有「上传的文件」（页面 `uploads`），只在本会话有上传文件时出现：列出本会话上传的文件（文件名、大小、类型、上传时间），行动作「删除」（确认框，只认本会话的文件；存储删不掉时回失败并写明原因，文件留在列表里可以重试）。文件存在插件数据里，面板不提供下载。文件增删（含按保留天数与总量的清理、会话删除时的联动清理）后，只有那个会话的面板重取；清理时删不掉的文件记一条告警、留到下次，不拦后面的。
 
 ## 限制
 

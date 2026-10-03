@@ -281,7 +281,7 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
     out.push({
       usesKey: 'webui',
       descriptor: 'optional(webuiServer)',
-      importLine: `import { type WebuiPage, webuiServer } from '@aalis/api-webui';`,
+      importLine: `import { webuiServer } from '@aalis/api-webui';`,
       bullet: '- ✓ WebUI 页面（`uses: { webui: optional(webuiServer) }`，从 `@aalis/api-webui` 导入描述符）',
     });
   }
@@ -331,32 +331,23 @@ export function renderIndexTs(a: Answers): string {
     commands.command('hello', '示例命令').action(async () => '你好');`);
   }
   if (a.features.webui) {
-    body.push(`    // 注册 WebUI 页面与它的页面动作（处理函数是闭包，直接用 apply 里的能力）
-    for (const page of webuiPages) webui.registerPage(page);
-    webui.registerAction('getInfo', async () => ({ 提示: '这是 ${a.displayName} 插件的示例信息面板。' }));`);
+    body.push(`    // 登记 WebUI 页面：组件、数据源与动作一次给出，出现在本插件详情里；登记随这次激活撤回
+    webui.definePage({
+      key: '${shortName(a.packageName).replace(/^plugin-/, '')}',
+      title: '${a.displayName}',
+      content: [
+        {
+          type: 'info',
+          id: 'info',
+          label: '示例信息',
+          data: () => [{ label: '提示', value: '这是 ${a.displayName} 插件的示例信息面板。' }],
+        },
+      ],
+    });`);
   }
 
-  const webuiPagesBlock = a.features.webui
-    ? `
-const webuiPages: WebuiPage[] = [
-  {
-    key: '${shortName(a.packageName).replace(/^plugin-/, '')}',
-    label: '${a.displayName}',
-    order: 80,
-    content: [
-      {
-        type: 'info',
-        label: '示例信息',
-        source: 'getInfo',
-      },
-    ],
-  },
-];
-`
-    : '';
-
   return `${imports.join('\n')}
-${webuiPagesBlock}
+
 // 入口必须默认导出 definePlugin 的产物：加载器只认它
 export default definePlugin({
   name: '${a.packageName}',

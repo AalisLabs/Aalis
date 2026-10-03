@@ -1,59 +1,89 @@
 import type { SettingRow as Row } from '@aalis/api-session-protocol';
-import { Circle, CircleCheck, CircleDot } from 'lucide-react';
+import type { HostPanelTab, PageRef } from '@aalis/api-webui';
+import { Circle, CircleAlert, CircleCheck, CircleDot, Plus, RotateCw } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
+import { IconButton } from '../components/IconButton';
+import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
 import { Tabs } from '../components/Tabs';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
+import { PageContent } from '../pages/PageContent';
+import { PageScope, usePageVersion } from '../pages/scope';
 import { usePluginNames } from '../plugins';
-import { paths, type SessionTab } from '../routes';
+import { paths } from '../routes';
 import { SettingRow } from '../settings/SettingRow';
 import type { useSessionSettings } from '../settings/session-settings';
 import { Aside, usePhone } from '../shell/Shell';
 import type { PlanItem, UsageItem } from './live-session';
+import type { SessionTabs } from './panel-tabs';
 import { UsageTable } from './Usage';
 import './SessionPanel.css';
 
-// 会话的右侧面板：计划（有计划条目才有）、设置、用量（有用量数据才有；手机上从会话头的百分比点开，从底部弹出）。
-// 标签由地址决定，地址没写或写的标签现在没有时停在第一个
-
-const TAB_TITLES: Record<SessionTab, string> = { plan: '计划', settings: '设置', usage: '用量' };
+// 会话的右侧面板：宿主的标签（计划、设置、用量）与插件的会话面板在一个标签栏里，按 owner 排的顺序（合成见 panel-tabs.ts）。
+// 当前标签旁有关闭按钮，关掉的与还没打开过的在标签栏末尾的「+」里；插件面板的标签就是它的标题，手动刷新放在标签栏里。
+// 标签由地址决定，地址没写或写的标签不在标签栏里时停在第一个
 
 interface SessionPanelProps {
   sessionId: string;
-  tab?: SessionTab;
+  tabs: SessionTabs;
+  /** 地址上的宿主标签 */
+  tab?: HostPanelTab;
+  /** 地址上的插件面板 */
+  panel?: PageRef;
   plan?: PlanItem;
   usage?: UsageItem;
   settings: ReturnType<typeof useSessionSettings>;
 }
 
-/** 面板现有的标签：计划与用量按数据出现 */
-export function panelTabs(plan: PlanItem | undefined, usage: UsageItem | undefined, phone: boolean): SessionTab[] {
-  return [
-    ...(plan && plan.entries.length > 0 ? (['plan'] as const) : []),
-    'settings' as const,
-    ...(usage && !phone ? (['usage'] as const) : []),
-  ];
-}
-
-export function SessionPanel({ sessionId, tab, plan, usage, settings }: SessionPanelProps) {
+export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, settings }: SessionPanelProps) {
   const phone = usePhone();
-  const navigate = useNavigate();
-  const tabs = panelTabs(plan, usage, phone);
-  const current = tab !== undefined && tabs.includes(tab) ? tab : tabs[0];
+  const [version, refresh] = usePageVersion();
+  const addressed = panel ? paths.page(panel) : tab;
+  const current = tabs.bar.find(item => item.key === addressed) ?? tabs.bar[0];
+  const host = current && 'host' in current.ref ? current.ref.host : undefined;
+
   const body = (
     <Tabs
       label="会话面板"
-      items={tabs.map(key => ({ key, title: TAB_TITLES[key] }))}
-      value={current}
-      onChange={key => navigate(paths.session(sessionId, key as SessionTab), { replace: true })}
+      items={tabs.bar}
+      value={current?.key ?? ''}
+      onChange={key => tabs.show(tabs.bar.find(item => item.key === key)!.ref, { replace: true })}
+      onClose={current && (() => tabs.close(current.ref))}
+      trailing={
+        <>
+          {current?.page && <IconButton icon={RotateCw} label="刷新" onClick={refresh} />}
+          {tabs.error && (
+            <IconButton
+              icon={CircleAlert}
+              label={`面板的标签没取全：${tabs.error.message}（点按重试）`}
+              onClick={tabs.retry}
+            />
+          )}
+          {tabs.add.length > 0 && (
+            <Menu
+              icon={Plus}
+              label="打开标签"
+              items={tabs.add.map(item => ({
+                id: item.key,
+                label: item.title,
+                onSelect: () => tabs.show(item.ref, { replace: true }),
+              }))}
+            />
+          )}
+        </>
+      }
     >
-      {current === 'plan' && plan && <PlanTab sessionId={sessionId} plan={plan} />}
-      {current === 'settings' && <SettingsTab settings={settings} />}
-      {current === 'usage' && usage && <UsageTable usage={usage} />}
+      {host === 'plan' && plan && <PlanTab sessionId={sessionId} plan={plan} />}
+      {host === 'settings' && <SettingsTab settings={settings} />}
+      {host === 'usage' && usage && <UsageTable usage={usage} />}
+      {current?.page && (
+        <PageScope key={current.key} page={current.page} sessionId={sessionId} version={version}>
+          <PageContent page={current.page} />
+        </PageScope>
+      )}
     </Tabs>
   );
   return (
@@ -101,7 +131,7 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
           setBusy(true);
           client
             .request('plan/clear', { sessionId })
-            .catch((err: Error) => toast({ kind: 'error', text: `清空失败：${err.message}` }))
+            .catch((err: Error) => toast({ kind: 'danger', text: `清空失败：${err.message}` }))
             .finally(() => setBusy(false));
         }}
       >

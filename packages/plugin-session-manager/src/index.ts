@@ -732,11 +732,16 @@ class SessionManager implements SessionManagerService {
     return false;
   }
 
-  /** 回合开始：登记这一轮；已有记录且不是 active 的翻 active（归档的也翻：她在那里跑一轮就是进行中） */
+  /**
+   * 回合开始：登记这一轮；已有记录且不是 active 的翻 active。归档的不翻：归档是 owner 不想在列表里看到它，
+   * 她在那里跑一轮不该让它回到列表，只有手动恢复才回来
+   */
   beginTurn(id: string, turnId: string): void {
     this.turns.set(turnId, { sessionId: id });
     const session = this.sessions.get(id);
-    if (session && session.status !== 'active') this.updateSession(id, { status: 'active' }).catch(() => {});
+    if (session && session.status !== 'active' && session.status !== 'archived') {
+      this.updateSession(id, { status: 'active' }).catch(() => {});
+    }
   }
 
   /** 记下这一轮的结局，回合结束时用 */
@@ -921,7 +926,7 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // ===== 会话状态 =====
-  // 回合真正开始时（agent:input:before）才翻 active：群里只有消息、她没开口的房间不显示「进行中」
+  // 回合真正开始时（agent:input:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」
   //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话，这是唯一的收口：next() 返回时
   // 整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；后面的中间件不调 next()
   // 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里最后一轮结束才收口，别的 lane 还在跑时

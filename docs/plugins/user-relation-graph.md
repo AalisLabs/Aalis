@@ -1,16 +1,16 @@
 # 关系图 · 字段含义速查
 
-> WebUI 关系图（plugin-user-relation 暴露给 plugin-webui-server）所用字段与
+> 关系图（plugin-user-relation 的数据，WebUI 关系图页与原始数据页显示）所用字段与
 > 中文术语对照。命令 `/relation compress | maintain` 触发的压缩 / 体检
 > 也使用同一套语义。
 
 ## 三类节点
 
-| kind   | 中文 | 形状 / 配色（WebUI） | 来源 |
-|--------|------|----------------------|------|
-| person | 人物 | 圆点 · 蓝（焦点变红） | observePerson（按 platform+userId upsert） |
-| event  | 事件 | 圆角矩形 · 橙 | LLM 提取的对话事件 |
-| entity | 物（topic/place/thing/work） | 菱形 · 绿/紫/黄/粉 | LLM 提取的"被讨论的客体" |
+| kind   | 中文 | 关系图页的分类色 | 来源 |
+|--------|------|------------------|------|
+| person | 人物 | 第 1 色 | observePerson（按 platform+userId upsert） |
+| event  | 事件 | 第 2 色 | LLM 提取的对话事件 |
+| entity | 物（topic/place/thing/work） | 第 3 色 | LLM 提取的"被讨论的客体" |
 
 ## 六类边
 

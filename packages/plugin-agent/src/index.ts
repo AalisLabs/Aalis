@@ -340,6 +340,9 @@ class DefaultAgent implements AgentService {
    *
    * 同时构建本轮调用的 segments 时间线（按 chunk 到达顺序记录 text / reasoning_text，
    * 相邻同类合并）——用于上层将多轮调用 + 工具执行交错拼接成统一时间线。
+   *
+   * 工具调用的生成进度按调用的序号各配一个 callId 随进度推出，界面在参数生成期间就画出它的工具卡。generating 按序号
+   * 记下 callId 与工具名（provider 按序号组装 toolCalls，序号即调用在 toolCalls 里的位置）；没报过进度的调用没有。
    */
   private async consumeStream(
     llm: LLMModel,
@@ -348,7 +351,8 @@ class DefaultAgent implements AgentService {
     sessionId: string,
     platform: string,
     emitProgress = true,
-  ): Promise<ChatResponse & { segments: ContentSegment[] }> {
+  ): Promise<ChatResponse & { segments: ContentSegment[]; generating: Map<number, { callId: string; name: string }> }> {
+    const generating = new Map<number, { callId: string; name: string }>();
     let content = '';
     let reasoningContent = '';
     let toolCalls: ToolCall[] | undefined;
@@ -391,11 +395,14 @@ class DefaultAgent implements AgentService {
           });
       }
       if (emitProgress && chunk.toolCallProgress) {
+        const { index, name } = chunk.toolCallProgress;
+        const callId = generating.get(index)?.callId ?? crypto.randomUUID();
+        generating.set(index, { callId, name });
         await this.caps.events.emit('outbound:stream', {
           sessionId,
           turnId,
           platform,
-          toolCallProgress: chunk.toolCallProgress,
+          toolCallProgress: { ...chunk.toolCallProgress, callId },
         });
       }
       if (chunk.done) {
@@ -423,6 +430,7 @@ class DefaultAgent implements AgentService {
       toolCalls,
       usage,
       segments,
+      generating,
     };
   }
 
@@ -783,6 +791,8 @@ class DefaultAgent implements AgentService {
           !reportOnly,
         );
         accUsage(firstResult.usage);
+        /** 这一次模型回复里各工具调用在生成进度里配好的 callId 与工具名，按调用的位置 */
+        let generating = firstResult.generating;
 
         // 维护本轮（一次完整对话回合）的统一时间线 segments：
         // 多次 LLM 调用 + 工具执行的输出按到达顺序拼接，保留模型原本的"思考/回答/工具/思考/回答"交错。
@@ -837,7 +847,31 @@ class DefaultAgent implements AgentService {
           const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
 
           const parallelResults = await Promise.all(
-            response.toolCalls.map(async toolCall => {
+            response.toolCalls.map(async (toolCall, position) => {
+              // 这次调用的 id：开始与结束事件、工具上下文都带它。同一位置生成参数时报过同一个工具的进度，用那时配的
+              // （会话里已有它的工具卡）；没报过的、或钩子改过调用列表而对不上的现在生成，免得接管画着别的工具的卡。
+              // 自己生成而不用模型给的 toolCall.id——模型给的 id 不保证唯一（有的 provider 用毫秒时间戳加序号拼，并发的
+              // 两轮会撞上），而 callId 要在全局配对开始与结束。模型的 id 只留在发回模型的 tool 消息里配对调用与结果。
+              const generated = generating.get(position);
+              const callId = generated?.name === toolCall.function.name ? generated.callId : crypto.randomUUID();
+              // 会话里的工具卡跟着这一对事件走：没执行就失败的调用（参数不合法、执行前的钩子出错）同样发一对，
+              // 结束带回给模型的错误，否则那张卡一直停在生成中
+              const announce = (
+                phase: 'start' | 'end',
+                toolName: string,
+                toolArgs: Record<string, unknown>,
+                result?: string,
+              ) =>
+                this.caps.events.emit('tool:execute', {
+                  sessionId: incoming.sessionId,
+                  turnId,
+                  callId,
+                  platform: incoming.platform,
+                  toolName,
+                  args: toolArgs,
+                  phase,
+                  result,
+                });
               // 无参工具的 arguments 常是空串（流式路径没有 argument delta 时拼出来就是 ''），不算坏 JSON
               const rawArgs = toolCall.function.arguments?.trim();
               let args: Record<string, unknown>;
@@ -858,11 +892,13 @@ class DefaultAgent implements AgentService {
                   `工具参数解析失败: ${toolCall.function.name} (${reason}) 原始参数=${rawArgs?.slice(0, 200)}`,
                 );
                 const failedAt = Date.now();
+                const result = JSON.stringify({ error: `工具参数不是合法 JSON 对象：${reason}；请重新生成 arguments` });
+                await announce('start', toolCall.function.name, {});
+                await announce('end', toolCall.function.name, {}, result);
                 return {
                   toolCall,
-                  // 没有执行：不发 tool:execute，也就没有 callId
-                  callId: undefined,
-                  result: JSON.stringify({ error: `工具参数不是合法 JSON 对象：${reason}；请重新生成 arguments` }),
+                  callId,
+                  result,
                   resultImages: undefined,
                   toolName: toolCall.function.name,
                   toolArgs: {},
@@ -871,10 +907,6 @@ class DefaultAgent implements AgentService {
                 };
               }
 
-              // 这次调用的 id：开始与结束事件、工具上下文都带它。自己生成而不用模型给的 toolCall.id——
-              // 模型给的 id 不保证唯一（有的 provider 用毫秒时间戳加序号拼，并发的两轮会撞上），
-              // 而 callId 要在全局配对开始与结束。模型的 id 只留在发回模型的 tool 消息里配对调用与结果。
-              const callId = crypto.randomUUID();
               const callCtx: ToolCallContext = { ...toolCtx, callId };
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
               const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: callCtx };
@@ -887,16 +919,8 @@ class DefaultAgent implements AgentService {
                 await this.caps.hooks.run('agent:tool:before', toolBeforeData);
 
                 // 通知平台：工具开始执行
-                await this.caps.events.emit('tool:execute', {
-                  sessionId: incoming.sessionId,
-                  turnId,
-                  callId,
-                  platform: incoming.platform,
-                  toolName: toolBeforeData.name,
-                  args: toolBeforeData.args,
-                  phase: 'start',
-                });
-                // 紧随 start 赋值：catch 据此判断 start 已发出、要补发配对的 end
+                await announce('start', toolBeforeData.name, toolBeforeData.args);
+                // 紧随 start 赋值：catch 据此判断 start 已发出
                 toolT0 = Date.now();
 
                 this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${formatToolArgsForLog(toolBeforeData.args)}`);
@@ -937,16 +961,7 @@ class DefaultAgent implements AgentService {
                 this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
 
                 // 通知平台：工具执行完成
-                await this.caps.events.emit('tool:execute', {
-                  sessionId: incoming.sessionId,
-                  turnId,
-                  callId,
-                  platform: incoming.platform,
-                  toolName: toolBeforeData.name,
-                  args: toolBeforeData.args,
-                  phase: 'end',
-                  result,
-                });
+                await announce('end', toolBeforeData.name, toolBeforeData.args, result);
 
                 return {
                   toolCall,
@@ -969,19 +984,9 @@ class DefaultAgent implements AgentService {
                 const result = JSON.stringify({
                   error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
                 });
-                // start 已发出就补发配对的 end（emit 恒 resolve）：否则会话里这张工具卡一直显示执行中
-                if (toolT0 !== undefined) {
-                  await this.caps.events.emit('tool:execute', {
-                    sessionId: incoming.sessionId,
-                    turnId,
-                    callId,
-                    platform: incoming.platform,
-                    toolName: toolBeforeData.name,
-                    args: toolBeforeData.args,
-                    phase: 'end',
-                    result,
-                  });
-                }
+                // 执行前就失败的补发开始，再发配对的结束（emit 恒 resolve）
+                if (toolT0 === undefined) await announce('start', toolBeforeData.name, toolBeforeData.args);
+                await announce('end', toolBeforeData.name, toolBeforeData.args, result);
                 return {
                   toolCall,
                   callId,
@@ -1027,7 +1032,7 @@ class DefaultAgent implements AgentService {
               content: result,
               toolCallId: toolCall.id,
               ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
-              metadata: { ...resultMetadata, turnId, ...(callId ? { callId } : {}) },
+              metadata: { ...resultMetadata, turnId, callId },
             };
             llmBeforeData.messages.push(toolMessage);
             toolMessages.push(toolMessage);
@@ -1040,7 +1045,7 @@ class DefaultAgent implements AgentService {
               result,
               startTime,
               endTime,
-              ...(callId ? { callId } : {}),
+              callId,
             });
           }
 
@@ -1094,6 +1099,7 @@ class DefaultAgent implements AgentService {
           );
           turnSegments.push(...nextResult.segments);
           response = nextResult;
+          generating = nextResult.generating;
           accUsage(response.usage);
 
           this.debugLogResponse(response, Date.now() - tN, iterations);

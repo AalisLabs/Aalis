@@ -185,6 +185,7 @@ export class WorksStore {
   failure?: string;
   #writing: Promise<void> = Promise.resolve();
   #closed = false;
+  readonly #listeners = new Set<() => void>();
   readonly uri: string;
   constructor(
     readonly storage: StorageService,
@@ -235,6 +236,18 @@ export class WorksStore {
     });
   }
 
+  /** 每次写盘成功、内存换成新状态之后调 listener（作品站页重取、健康状况的提示跟着变）；返回退订 */
+  onChange(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #changed(): void {
+    for (const listener of this.#listeners) listener();
+  }
+
   /** One serialized whole-state write; memory advances only after durable write succeeds. */
   save(next: WorksState): Promise<void> {
     if (this.#closed) return Promise.reject(new Error('作品站状态实例已停止'));
@@ -243,6 +256,7 @@ export class WorksStore {
       if (this.#closed) throw new Error('作品站状态实例已停止');
       await this.storage.writeFile(this.uri, JSON.stringify(next));
       this.data = next;
+      this.#changed();
     });
     this.#writing = run.catch(() => {});
     return run;
@@ -259,6 +273,7 @@ export class WorksStore {
       const result = change(draft);
       await this.storage.writeFile(this.uri, JSON.stringify(draft));
       this.data = draft;
+      this.#changed();
       return result;
     });
     this.#writing = run.then(

@@ -14,7 +14,7 @@ import {
   sessionProtocol,
 } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
@@ -193,8 +193,29 @@ describe('握手', () => {
       identity: { platform: 'webui', userId: 'console' },
       surface: 'webui',
       features: { send: false, rewind: false, compress: false },
+      appName: 'T',
     });
     expect(c.disconnects).toEqual([]);
+  });
+
+  it('应用名取宿主配置的 name，每次握手现读：改名之后新连接拿到新名字，不用重启', async () => {
+    const { server, host } = await setup();
+    host.hostConfig.require().set('name', '<新名字>');
+    expect((await client(server()).init()).appName).toBe('<新名字>');
+  });
+
+  it('没有宿主配置时应用名是 Aalis', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    provideHome(app);
+    await registerHubs(app);
+    const host = app.bind({ provide, sessionProtocol });
+    host.provide(memory, fakeMemory({}) as never);
+    host.provide(storage, memoryStorage(new Map()));
+    await app.plugin(sessionManagerPlugin);
+    await app.plugin(sessionServerPlugin, {});
+    await app.plugins.idle();
+    expect((await client(host.sessionProtocol.require()).init()).appName).toBe('Aalis');
   });
 
   it('主版本不同：回 unsupported 并断开，原因写明两边的版本，之后的帧不再处理；只差次版本照常握手', async () => {

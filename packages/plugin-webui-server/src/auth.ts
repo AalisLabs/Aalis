@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { ProcessService } from '@aalis/api-process';
+import { BUILTIN_THEMES, type BuiltinThemeId, DEFAULT_THEMES } from '@aalis/api-webui';
 import type { RequestHandler, Response } from 'express';
 
 const TOKEN_COOKIE = 'aalis_webui_token';
@@ -89,6 +90,31 @@ f.addEventListener('submit',async ev=>{
 });
 `;
 
+/** 一个内置主题的颜色令牌，写成 CSS 自定义属性的声明 */
+const themeTokens = (id: BuiltinThemeId) =>
+  Object.entries(BUILTIN_THEMES[id].colors)
+    .map(([name, value]) => `${name}:${value}`)
+    .join(';');
+
+/**
+ * 登录页的样式：颜色取默认主题的令牌，深浅跟随系统（界面在登录之后才读得到本浏览器选的主题）。与界面同一套写法：
+ * 不用卡片、不加阴影，圆角用小档
+ */
+const LOGIN_STYLE = `:root{color-scheme:light dark;${themeTokens(DEFAULT_THEMES.dark)}}
+@media (prefers-color-scheme: light){:root{${themeTokens(DEFAULT_THEMES.light)}}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:0.875rem;line-height:1.375rem;background:var(--color-bg);color:var(--color-text)}
+form{width:min(22.5rem,100%);display:flex;flex-direction:column;gap:0.75rem}
+h1{margin:0;font-size:1rem;line-height:1.5rem;font-weight:600}
+p{margin:0;color:var(--color-text-2)}
+p.note{color:var(--color-warning-text)}
+input{width:100%;height:2.25rem;padding:0 0.75rem;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:1rem;color:var(--color-text);background:transparent;border:1px solid var(--color-border-control);border-radius:4px}
+input:focus-visible,button:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}
+button{height:2.25rem;font:inherit;font-weight:500;color:var(--color-on-accent);background:var(--color-accent);border:0;border-radius:4px;cursor:pointer}
+button:hover{background:var(--color-accent-hover)}
+button:disabled{opacity:0.6;cursor:wait}
+.err{min-height:1.375rem;color:var(--color-danger-text)}`;
+
 /** 登录页：只引用同源的登录脚本，不引入别的资源 */
 function loginPageHtml(reason?: string): string {
   const note = reason ? `<p class="note">${escapeHtml(reason)}</p>` : '';
@@ -96,21 +122,9 @@ function loginPageHtml(reason?: string): string {
 <meta charset="utf-8"><title>Aalis WebUI 登录</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{color-scheme:light dark}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b0d10;color:#e6e8eb}
-.card{width:min(420px,90vw);padding:32px;background:#16191d;border:1px solid #262b32;border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.4)}
-h1{margin:0 0 8px;font-size:22px;font-weight:600}
-p{margin:0 0 16px;color:#8b95a1;font-size:14px;line-height:1.5}
-p.note{color:#ffb300}
-input{width:100%;padding:10px 12px;font-size:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0d10;color:#e6e8eb;border:1px solid #2a3038;border-radius:6px;outline:none}
-input:focus{border-color:#5b8def}
-button{width:100%;margin-top:12px;padding:10px;font-size:14px;font-weight:500;background:#5b8def;color:#fff;border:0;border-radius:6px;cursor:pointer}
-button:hover{background:#4a7de0}
-button:disabled{opacity:.5;cursor:wait}
-.err{margin-top:10px;color:#ff6b6b;font-size:13px;min-height:18px}
+${LOGIN_STYLE}
 </style></head>
-<body><form class="card" id="f">
+<body><form id="f">
 <h1>Aalis WebUI</h1>
 <p>请输入启动日志或家目录里 state/webui/access.txt 中显示的访问 token。</p>
 ${note}

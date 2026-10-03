@@ -166,17 +166,19 @@ describe('Toast', () => {
     expect(screen.queryByText('已归档')).toBeNull();
   });
 
-  it('出错的不自动消失、立即播报，手动关；同时最多 3 条，旧的先走', () => {
+  it('出错的（danger）不自动消失、立即播报，手动关；同时最多 3 条，旧的先走', () => {
     vi.useFakeTimers();
     render(
       <ToastProvider>
-        <Trigger toast={{ kind: 'error', text: '删除失败：会话不存在' }} />
+        <Trigger toast={{ kind: 'danger', text: '删除失败：会话不存在' }} />
       </ToastProvider>,
     );
     trigger();
     act(() => vi.advanceTimersByTime(60_000));
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('删除失败：会话不存在');
+    // 语气名与颜色令牌同名，样式按它取危险色
+    expect(alert.dataset.kind).toBe('danger');
     for (let i = 0; i < 3; i++) trigger();
     expect(screen.getAllByRole('alert')).toHaveLength(3);
     fireEvent.click(within(screen.getAllByRole('alert')[0]).getByRole('button', { name: '关闭' }));
@@ -217,15 +219,16 @@ describe('Panel、EmptyState 与 Badge', () => {
     expect(screen.getByText('首页')).toBeTruthy();
   });
 
-  it('EmptyState 写缺什么、怎么得到，最多一个操作；出错时作为警示播报', () => {
+  it('EmptyState 写缺什么、怎么得到，最多一个操作；出错时（danger）作为警示播报', () => {
     const { rerender } = render(<EmptyState title="还没有会话" description="发一条消息就会开始一个新会话" />);
     expect(screen.getByText('还没有会话')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     rerender(
-      <EmptyState tone="error" title="会话列表读取失败" description="连接断开" action={<Button>重试</Button>} />,
+      <EmptyState tone="danger" title="会话列表读取失败" description="连接断开" action={<Button>重试</Button>} />,
     );
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('会话列表读取失败');
+    expect(alert.dataset.tone).toBe('danger');
     expect(within(alert).getByRole('button', { name: '重试' })).toBeTruthy();
   });
 

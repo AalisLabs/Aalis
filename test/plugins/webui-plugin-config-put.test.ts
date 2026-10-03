@@ -57,12 +57,9 @@ function attachRoutes(opts: {
       hostConfig: refStub(opts.hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
-      webui: () => undefined,
       logger: opts.logger,
     },
-    () => ({ platform: 'webui', userId: 'console' }),
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
-    () => undefined,
   );
 
   return {

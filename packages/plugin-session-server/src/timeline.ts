@@ -2,13 +2,15 @@
 // 会话的时间线：订阅与快照、条目推送、历史。
 //
 // 在途回合的条目由 agent 的事件实时拼出：回合开始与结束、流式的思考与正文、工具调用与它的输出、她的回复。
+// 工具卡在模型生成参数时就出现（流式的生成进度带着这次调用的 callId），开始执行时转为 running；生成了却没有执行的
+// 在回合结束时收尾。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发）落成 aborted，之后工具返回什么都不改。
 // 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId。
 // 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量 + 未结的审批。推送带 epoch（每次启动换一个）
 // 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
 // 回合结束之后还在等平台送达结果的，也算没收尾：迟到的结果按实时条目的 itemId 推出，这段时间里订阅的快照
-// 照样给出实时条目，两边对得上。存档里另有记录：回复没收下的由适配器记投递失败，经工具发出、收下了的与审批的结算
-// 在工具结果落库前写进它的元数据（toolMetadata），历史据此标出同样的结局。
+// 照样给出实时条目，两边对得上。存档里另有记录：回复没收下的由适配器记投递失败，经工具发出、收下了的、审批的结算、
+// 回合停止时还没结束的与命令的退出码在工具结果落库前写进它的元数据（toolMetadata），历史据此标出同样的结局。
 //
 // 快照的历史要等读存档，读的同时回合照常推进。在途回合落了库的消息带 turnId：取快照那一刻还没收尾的回合、
 // 之后才结束或开始的回合，它们落库的消息都不进这份快照的历史，由在途条目与之后的推送给出，两边不重复。
@@ -56,6 +58,9 @@ import {
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 type Streamed = Item<'agent-message'> | Item<'reasoning'>;
+
+/** 生成了却没有执行的工具调用，回合结束时写在卡上的结果 */
+const NOT_EXECUTED = '没有执行';
 
 /** 房间里她没回复就收尾的一轮，说过的话按怎么收的尾写原因 */
 const UNSENT: Record<Exclude<Outcome, 'replied'>, string> = {
@@ -321,11 +326,20 @@ export function createTimeline(deps: TimelineDeps) {
     };
   }
 
-  /** 回合结束：房间里没回复就收尾的，说过的话标出原因；推回合的结局；房间里的回复等平台的送达结果 */
+  /**
+   * 回合结束：房间里没回复就收尾的，说过的话标出原因；生成了却没有执行的调用收尾（回合被停止的落成 aborted，其余失败）；
+   * 推回合的结局；房间里的回复等平台的送达结果
+   */
   function end(turn: Turn): void {
     // 被下游拦下的一轮没有结局：她没开口
     const outcome = turn.outcome ?? 'silent';
     dropCandidates(turn, turn.room && outcome !== 'replied' ? UNSENT[outcome] : undefined);
+    for (const item of turn.items.values()) {
+      if (item.kind !== 'tool-call' || item.status !== 'generating') continue;
+      item.status = outcome === 'aborted' ? 'aborted' : 'failed';
+      item.result = NOT_EXECUTED;
+      complete(turn, item);
+    }
     if (turn.items.size === 0) turn.items.set(turn.turnId, turn.item);
     turn.item.outcome = outcome;
     complete(turn, turn.item);
@@ -347,6 +361,7 @@ export function createTimeline(deps: TimelineDeps) {
     if (!turn) return;
     if (chunk.reasoningDelta) append(turn, 'reasoning', chunk.reasoningDelta);
     if (chunk.contentDelta) append(turn, 'agent-message', chunk.contentDelta);
+    if (chunk.toolCallProgress) generating(turn, chunk.toolCallProgress);
     if (!chunk.done) return;
     closeStream(turn);
     if (chunk.toolLimitReached) {
@@ -364,11 +379,30 @@ export function createTimeline(deps: TimelineDeps) {
     }
   }
 
+  /**
+   * 模型正在生成一个工具调用的参数：有了工具名就出卡，之后的进度不再推。之前说的话仍是候选的回复（这次调用可能不执行，
+   * 如达到工具调用上限），开始执行时才收起
+   */
+  function generating(turn: Turn, { callId, name }: NonNullable<StreamChunkMessage['toolCallProgress']>): void {
+    if (!name || turn.items.has(callId)) return;
+    const item = add(turn, {
+      kind: 'tool-call',
+      itemId: callId,
+      turnId: turn.turnId,
+      at: Date.now(),
+      name,
+      args: {},
+      status: 'generating',
+    });
+    emit(turn.sessionId, 'item/started', item);
+  }
+
   function tool(info: ToolExecuteMessage): void {
     const turn = live(info.turnId);
     if (!turn) return;
     if (info.phase === 'start') {
-      // 工具调用之前说的话不是回复：agent 只把最后的回复交给平台，房间里它们没有发进群
+      // 工具调用之前说的话不是回复：agent 只把最后的回复交给平台，房间里它们没有发进群。
+      // 生成参数时出过的卡由这一条换掉，位置不变
       dropCandidates(turn, turn.room ? BEFORE_TOOL_UNSENT : undefined);
       const display = deps.displayOf(info.toolName, info.args);
       const item = add(turn, {
@@ -386,7 +420,8 @@ export function createTimeline(deps: TimelineDeps) {
     }
     const item = turn.items.get(info.callId);
     if (item?.kind !== 'tool-call') return;
-    if (item.status !== 'denied') item.status = toolFailed(info.result ?? '') ? 'failed' : 'completed';
+    // 没批准的、回合停止时还没结束的保持原状；退出码已由 toolMetadata 取好
+    if (item.status === 'running') item.status = toolFailed(info.result ?? '', item.display) ? 'failed' : 'completed';
     item.result = info.result;
     item.durationMs = Date.now() - item.at;
     complete(turn, item);
@@ -425,13 +460,29 @@ export function createTimeline(deps: TimelineDeps) {
 
   /**
    * agent:tool:after：这次工具结果落库时要带的元数据，历史据此还原工具卡：审批的结算（approval），房间里经它发出、
-   * 平台已收下的消息（sentToRoom）。送达结果只取已经到了的：发消息的工具都等过确认，没等到的不再等
+   * 平台已收下的消息（sentToRoom），回合停止时这次调用还没结束（aborted，stopped 为工具返回时回合的中止信号已触发，
+   * 工具卡同时落成 aborted），命令的退出码（exitCode，工具卡的展示同时带上）。退出码在这里取：agent 跑完这个钩子
+   * 才把过长的结果截断，截断后的结果不再是 JSON。送达结果只取已经到了的：发消息的工具都等过确认，没等到的不再等
    */
-  async function toolMetadata(turnId: string, callId: string): Promise<Record<string, unknown>> {
+  async function toolMetadata(
+    turnId: string,
+    callId: string,
+    stopped: boolean,
+    result: string,
+  ): Promise<Record<string, unknown>> {
     const turn = live(turnId);
     const item = turn?.items.get(callId);
     if (!turn || item?.kind !== 'tool-call') return {};
     const metadata: Record<string, unknown> = {};
+    if (stopped) {
+      item.status = 'aborted';
+      metadata.aborted = true;
+    }
+    const display = deps.displayOf(item.name, item.args, result);
+    if (display?.kind === 'command' && display.exitCode !== undefined) {
+      item.display = display;
+      metadata.exitCode = display.exitCode;
+    }
     if (item.approvalId && item.settlement) metadata.approval = { id: item.approvalId, ...item.settlement };
     const delivery = turn.room ? turn.sent.get(callId)?.delivery : undefined;
     if (delivery && (await awaitDelivery(delivery, undefined, 0).catch(() => undefined))?.ok) {

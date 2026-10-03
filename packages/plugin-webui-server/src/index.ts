@@ -23,11 +23,12 @@ import {
 } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
+import { sessionManager } from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, isStorageUri, readTailLines, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
+import type { WebUIService } from '@aalis/api-webui';
 import { DEFAULT_SUBSYSTEM_METADATA, webuiClient, webuiServer } from '@aalis/api-webui';
 import {
   appService,
@@ -54,11 +55,15 @@ import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { CLIENT_SWITCH_SCRIPT, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
+import { createLayoutStore } from './layout.js';
+import { createPageFiles } from './page-files.js';
+import { createPageRegistry } from './pages.js';
+import { registerFileRoutes } from './routes/files.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
+import { registerPageRoutes } from './routes/pages.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
-import { registerSessionFileRoute } from './routes/session-file.js';
 import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
 
@@ -135,13 +140,6 @@ const configSchema = defineConfig({
     onInvalid: 'error',
     secret: true,
     description: `至少 ${FIXED_TOKEN_MIN_LENGTH} 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理。存进 secrets.yaml，WebUI 不回显。`,
-  },
-  relationGraphDefaultSpacing: {
-    type: 'number',
-    label: '关系图默认密度',
-    default: 120,
-    description:
-      '关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。',
   },
   marketplaceRegistry: {
     type: 'string',
@@ -254,7 +252,7 @@ function localScanDirs(appDir: string | undefined): string[] {
 
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
 // 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
-// 暂时消失，webui-server 跟着重启就清空 registeredPages，其他插件登记的页面再也回不来。
+// 暂时消失，webui-server 跟着重启会断开所有连接、清空页面登记表（登记门面随后重挂）。
 const uses = {
   events,
   logger,
@@ -277,6 +275,8 @@ const uses = {
   sessionProtocol: optional(sessionProtocol),
   /** 登记 webui 审批面：/session 连接上的在场上报与应答记在这个登记身份名下 */
   approvals: optional(approvals),
+  /** 会话面板：调用前核会话存在、按会话种类判断适用的页面 */
+  sessions: optional(sessionManager),
   tools: optional(tools),
   llm: optional(llm),
   // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
@@ -497,8 +497,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     },
     join: (...parts: string[]) => resolve(...parts),
   };
-  // 页面动作登记表：插件经 webui-server 的绑定接口登记，路由层按「插件 id + 方法名」查
-  const registeredActions = new Map<string, Map<string, WebuiActionHandler>>();
   registerPluginRoutes(
     expressApp,
     {
@@ -508,12 +506,29 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       hostConfig: caps.hostConfig,
       tools: caps.tools,
       commands: caps.commands,
-      webui: () => services.get(webuiServer),
+      logger,
+    },
+    gate,
+  );
+  // 声明式页面：插件经 webui-server 的绑定接口登记，页面的数据源与动作、会话面板与布局记录的路由按这张登记表分派
+  const pageFiles = createPageFiles(() => storage.listRoots());
+  const pages = createPageRegistry({
+    logger,
+    send: event => admin.send(event),
+    sessions: () => caps.sessions.current,
+    signFile: pageFiles.sign,
+  });
+  registerPageRoutes(
+    expressApp,
+    {
+      registry: pages,
+      layout: createLayoutStore(storage, logger),
+      storageReady: () => caps.storage.current !== undefined,
+      send: event => admin.send(event),
       logger,
     },
     auth.identify,
     gate,
-    (plugin, method) => registeredActions.get(plugin)?.get(method),
   );
   // 市场「已装」判定、依赖图、前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
   // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。host-paths 由宿主在根上提供，不会中途换。
@@ -904,7 +919,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   registerProxyRoutes(expressApp, logger, gate);
   registerMediaRoutes(expressApp, storage, logger, gate);
-  registerSessionFileRoute(expressApp, storage, caps.sessionProtocol, logger, gate);
+  registerFileRoutes(expressApp, storage, { sessions: caps.sessionProtocol, pages: pageFiles }, logger, gate);
 
   // ---------- WebSocket ----------
 
@@ -924,7 +939,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
   });
 
-  // 管理面推送（/admin）：日志、插件状态、重启。页面登记表的变化在 registerPage 里推，换前端在 remountActiveClient 里推
+  // 管理面推送（/admin）：日志、插件状态、重启。页面登记表的变化与 invalidate 在页面登记表（pages.ts）里推，布局记录的变化在
+  // 它的路由里推，换前端在 remountActiveClient 里推
   const removeAdminLogListener = LogHub.default.onEntry(entry => admin.send({ type: 'log', entry }));
   events.on('plugins:changed', () => admin.send({ type: 'plugins.changed' }));
   events.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
@@ -1153,6 +1169,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   lifecycle.onDispose(() => {
     heartbeat.dispose();
+    pages.dispose();
     removeAdminLogListener();
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对
     // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 在插件卸载后
@@ -1186,44 +1203,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   // === 注册 WebUI 服务 ===
-  const registeredPages = new Map<string, Array<WebuiPage & { pluginName: string }>>();
-
   const webuiService: WebUIService = {
     getPort: () => uiConfig.port,
     getHost: () => uiConfig.host,
-    // 页面登记表一变就推 plugins.changed，前端据此重取页面
-    registerPage(page, contextId) {
-      const list = registeredPages.get(contextId) ?? [];
-      const entry = { ...page, pluginName: contextId };
-      list.push(entry);
-      registeredPages.set(contextId, list);
-      admin.send({ type: 'plugins.changed' });
-      // 退订按条目引用比对：同 key 重注册后，旧退订闭包不得摘掉新登记
-      return () => {
-        const cur = registeredPages.get(contextId);
-        const idx = cur ? cur.indexOf(entry) : -1;
-        if (!cur || idx < 0) return;
-        cur.splice(idx, 1);
-        if (cur.length === 0) registeredPages.delete(contextId);
-        admin.send({ type: 'plugins.changed' });
-      };
-    },
-    getPages() {
-      const out: Array<WebuiPage & { pluginName: string }> = [];
-      for (const list of registeredPages.values()) out.push(...list);
-      return out;
-    },
-    registerAction(method, handler, contextId) {
-      const actions = registeredActions.get(contextId) ?? new Map<string, WebuiActionHandler>();
-      actions.set(method, handler);
-      registeredActions.set(contextId, actions);
-      // 退订按这一次登记比对：同名替换后旧退订闭包不得摘掉新登记
-      return () => {
-        if (actions.get(method) !== handler) return;
-        actions.delete(method);
-        if (actions.size === 0 && registeredActions.get(contextId) === actions) registeredActions.delete(contextId);
-      };
-    },
+    addPage: pages.addPage,
+    invalidate: pages.invalidate,
+    addNotice: pages.addNotice,
   };
   provide(webuiServer, webuiService);
 }

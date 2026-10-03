@@ -372,7 +372,10 @@ describe('checkpoint × storage (真 fs)', () => {
       const [summary] = await svc.listTurns(sessionId);
       expect(summary?.turnId).toBe(turnId);
       expect(summary?.execUsed ?? false).toBe(toolName !== 'file_write');
+      expect(await svc.execUsed(sessionId, turnId), `契约上的查询：${toolName}`).toBe(toolName !== 'file_write');
     }
+    expect(await svc.execUsed('e1', 'turn-nope'), '没有这一轮的检查点').toBe(false);
+    expect(await svc.execUsed('e4', 'turn-e1'), '回合 id 按会话找').toBe(false);
   });
 });
 

@@ -5238,7 +5238,7 @@ export class RelationService {
  * compositeScore + 同 kind 百分位双门槛分级。绝对分给"够亮"的小图节点保底，
  * 百分位给"大图但绝对分都低"的相对核心节点保底。
  */
-export function scoreToTier(score: number, percentile: number): 'core' | 'active' | 'normal' | 'edge' {
+function scoreToTier(score: number, percentile: number): 'core' | 'active' | 'normal' | 'edge' {
   if (score >= 0.6 || percentile >= 0.9) return 'core';
   if (score >= 0.4 || percentile >= 0.7) return 'active';
   if (score >= 0.2 || percentile >= 0.4) return 'normal';

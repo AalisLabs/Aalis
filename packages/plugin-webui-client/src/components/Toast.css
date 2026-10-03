@@ -31,7 +31,7 @@
   color: var(--color-success-text);
 }
 
-.toast[data-kind="error"] > .lucide {
+.toast[data-kind="danger"] > .lucide {
   color: var(--color-danger-text);
 }
 

@@ -12,6 +12,7 @@ import review from '../../packages/plugin-publish-review/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
 const run = vi.hoisted(() =>
@@ -21,16 +22,20 @@ const run = vi.hoisted(() =>
   })),
 );
 vi.mock('../../packages/plugin-publish-review/src/pipeline.js', () => ({ createReviewPipeline: () => ({ run }) }));
-const apps: App[] = [];
+const apps: Array<{ app: App; pages: PageHost }> = [];
 afterEach(async () => {
-  for (const app of apps.splice(0)) await app.stop();
+  for (const { app, pages } of apps.splice(0)) {
+    await app.stop();
+    pages.dispose();
+  }
   run.mockClear();
   vi.restoreAllMocks();
 });
 
 async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
   const app = new App({ logLevel: 'error' });
-  apps.push(app);
+  const pages = pageHost();
+  apps.push({ app, pages });
   await registerHubs(app);
   const host = app.bind({ provide, hooks, gateway, publish });
   host.provide(agent, {
@@ -60,21 +65,7 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
       deletable: true,
     }));
   host.provide(storage, memory);
-  const actions = new Map<string, (args: Record<string, unknown>) => unknown>();
-  const pages: unknown[] = [];
-  host.provide(webuiServer, {
-    getPort: () => 0,
-    getHost: () => '127.0.0.1',
-    getPages: () => [],
-    registerPage: page => {
-      pages.push(page);
-      return () => void pages.splice(pages.indexOf(page), 1);
-    },
-    registerAction: (name, handler) => {
-      actions.set(name, handler);
-      return () => void actions.delete(name);
-    },
-  });
+  host.provide(webuiServer, pages.service);
   const checks = new Map<string, CheckSpec>();
   host.provide(doctor, {
     registerCheck: spec => {
@@ -102,7 +93,7 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
     urlFor: id => `https://works.invalid/w/${id}/`,
     health: () => ({ ok: true }),
   });
-  return { app, host, service, surface, pages, actions, messages, checks };
+  return { app, host, service, surface, pages, messages, checks };
 }
 const nomination = () => ({
   origin: { producer: 'paper', ref: 'one', label: '来源', notify: { sessionId: 'room', platform: 'onebot' } },
@@ -131,8 +122,8 @@ describe('审核插件实际入口', () => {
     expect(h.messages[0]).not.toHaveProperty('callerUserId');
     await h.app.plugins.disable(review.name);
     expect(h.host.publish.current).toBeUndefined();
-    expect(h.pages).toHaveLength(0);
-    expect(h.actions.size).toBe(0);
+    expect(h.pages.pages()).toEqual([]);
+    expect(h.pages.notices()).toEqual([]);
     expect(await h.service.nominate(nomination())).toHaveProperty('refused');
   });
   it('标题里的地址和指令仅进入非可信段，宿主正文只有已核验地址', async () => {
@@ -149,15 +140,17 @@ describe('审核插件实际入口', () => {
     expect(message.hostNotice?.untrusted).toContain(title);
     expect(message.content).not.toContain('evil.test');
   });
-  it('启动后热安装也运行；开启人工审核后通过实际WebUI动作批准', async () => {
+  it('启动后热安装也运行；开启人工审核后待裁决发提示，经审核页的动作批准后撤回', async () => {
     const h = await setup(true, true);
     const result = await h.service.nominate(nomination());
     if (!('id' in result)) throw new Error(result.refused);
     await vi.waitFor(() => expect(h.service.get(result.id)?.state).toBe('awaiting-owner'));
     expect(h.service.listPublished('works')).toHaveLength(0);
-    expect(h.actions.has('reviewApprove')).toBe(true);
-    expect(await h.actions.get('reviewApprove')?.({ id: result.id })).toMatchObject({ ok: true });
+    expect(h.pages.logs).toEqual([]);
+    expect(h.pages.notices()).toMatchObject([{ id: 'pending', title: '1 件作品待裁决' }]);
+    expect(await h.pages.act('publish-review', 'approveWork', { rowKey: result.id })).toMatchObject({ status: 200 });
     expect(h.service.listPublished('works')).toHaveLength(1);
+    expect(h.pages.notices()).toEqual([]);
   });
 });
 
@@ -183,6 +176,8 @@ it('内容审核关闭时，诊断和页面说明不要求模型或浏览器', a
   expect(result.message).toContain('代码沙箱');
   expect(result.message).not.toContain('分类器');
   expect(result.message).not.toContain('离线渲染');
-  const status = await h.actions.get('reviewStatus')?.({});
-  expect(status).toMatchObject({ content: expect.stringContaining('内容审核已关闭') });
+  expect(await h.pages.data('publish-review', 'counts')).toContainEqual({
+    label: '内容审核',
+    value: expect.stringContaining('已关闭'),
+  });
 });

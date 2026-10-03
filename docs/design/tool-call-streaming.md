@@ -30,35 +30,36 @@ export interface ChatStreamChunk {
 }
 ```
 
-**Provider 实现职责**：每收到一次 `delta.tool_calls`（无论是否首个），都必须 yield 一个携带 `toolCallProgress` 的 chunk（可以与 `contentDelta` 同时携带，但通常单独）。
+**Provider 实现职责**：每收到一次 `delta.tool_calls`（无论是否首个），里面的每个调用都必须各 yield 一个携带 `toolCallProgress` 的 chunk，一帧里带几个调用就 yield 几个（只报其中一个时，agent 按序号配的工具卡会对不上）。
 
 **Provider 现状**：
 
 | Provider | 实现状态 | 备注 |
 | --- | --- | --- |
-| `@aalis/plugin-llm-openai` | ✅ | 每个 delta yield 一次 |
+| `@aalis/plugin-llm-openai` | ✅ | 每个 delta 里的每个调用各 yield 一次 |
 | `@aalis/plugin-llm-deepseek` | ✅ | 同 OpenAI |
 | `@aalis/plugin-llm-ollama` | ✅（受限）| Ollama 一次性返回完整 tool_calls，故每个 tool 仅 emit 一次 progress |
 
 ### `StreamChunkMessage.toolCallProgress`（`@aalis/schema-message`）
 
-agent 接到 provider 的 `toolCallProgress` 后，转发到 `outbound:stream` 事件：
+agent 接到 provider 的 `toolCallProgress` 后，带上这次调用的 `callId` 转发到 `outbound:stream` 事件：
 
 ```ts
 export interface StreamChunkMessage {
   sessionId: string;
+  turnId: string;
   contentDelta?: string;
   reasoningDelta?: string;
-  toolCallProgress?: { index: number; name: string; charsAccumulated: number };
+  toolCallProgress?: { index: number; name: string; charsAccumulated: number; callId: string };
   done?: boolean;
 }
 ```
 
-Agent 端无需新增状态——只要把 `chunk.toolCallProgress` 透传到事件即可。
+agent 在一次流式调用里按 `index` 给每个工具调用配一个 `callId`，同一个调用的几次进度带同一个。provider 每收到一个调用的增量就为它报一次进度，同一帧里有几个调用就各报一次。流结束后，provider 按 `index` 组装 `toolCalls`，序号就是调用在 `toolCalls` 里的位置：执行时同一位置、同一个工具名的调用沿用生成时的 `callId`，`tool:execute` 与 `ToolCallContext` 都带它；没报过进度的调用（provider 本地补出的调用等），以及 `agent:llm:after` 钩子改过调用列表、同一位置换了工具的，执行时另配，生成时的那张卡在回合结束时按没有执行收尾。
 
 ### 会话协议
 
-会话服务（`@aalis/plugin-session-server`）目前不把 `toolCallProgress` 推给客户端：会话协议的条目里没有「生成中的工具调用」这一种，工具卡在 `tool:execute` 开始执行时才出现（见 [api-session-protocol](../api/api-session-protocol.md)）。
+会话服务（`@aalis/plugin-session-server`）收到带名字的进度时给出工具卡（`tool-call` 条目，`itemId` 就是 `callId`，状态 `generating`，只有工具名、`args` 为空），同一个调用之后的进度不再推；`tool:execute` 开始时同一张卡转为 `running`。生成了却没有执行的调用在回合结束时收尾，结果写「没有执行」：回合被停止的为 `aborted`，其余（达到工具调用上限、回合出错）为 `failed`。参数不合法、执行前的钩子出错这类没有执行就失败的调用，agent 照样发一对 `tool:execute`，卡片按结束的错误结果收成失败。见 [api-session-protocol](../api/api-session-protocol.md)。
 
 ## 测试要点
 

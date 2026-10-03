@@ -114,6 +114,21 @@
   color: var(--color-text-3);
 }
 
+/* 没排序的列只在指着或聚焦时露出排序图标，表头不满是箭头；触屏上没有悬停，常显 */
+.table th:not([aria-sort]) .table-sort .lucide {
+  visibility: hidden;
+}
+
+.table th:not([aria-sort]) .table-sort:is(:hover, :focus-visible) .lucide {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .table th:not([aria-sort]) .table-sort .lucide {
+    visibility: visible;
+  }
+}
+
 .table .table-empty {
   height: var(--space-12);
   color: var(--color-text-3);
@@ -133,9 +148,39 @@
   color: var(--color-text-2);
 }
 
-/* 窄时（手机、面板）只留标了 primary 的列 */
+/* 窄时（手机、面板）只留标了 primary 的列；写字的格子折行，不把后面的列挤出视野 */
 @container (max-width: 36em) {
   .table [data-column]:not([data-primary]) {
     display: none;
   }
+
+  .table td:not([data-numeric]),
+  .table .status-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+.table [data-numeric] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tr[data-clickable] {
+  cursor: pointer;
+}
+
+.table tr[data-clickable]:hover td {
+  background: var(--color-fill-1);
+}
+
+.table tr[data-current] td {
+  background: var(--color-fill-2);
+}
+
+.table .table-actions {
+  width: 1%;
+  max-width: none;
+  padding-right: var(--space-1);
+  text-align: right;
 }

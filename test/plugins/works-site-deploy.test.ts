@@ -1,7 +1,6 @@
 import { getEventListeners } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import type { BoundPublish, PublishedItem } from '../../packages/api-publish/src/index.js';
-import type { BoundWebui } from '../../packages/api-webui/src/index.js';
+import type { PublishedItem } from '../../packages/api-publish/src/index.js';
 import {
   PagesApiError,
   PagesClient,
@@ -20,7 +19,6 @@ import {
   verifyContentUntilMatch,
   waitForSwitch,
 } from '../../packages/plugin-works-site/src/verify.js';
-import { registerWorksPage } from '../../packages/plugin-works-site/src/webui.js';
 import { startFakePages } from '../fixtures/fake-pages.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -714,63 +712,6 @@ describe('作品站持久状态与内容核对', () => {
     expect(store.data?.alerts[0].acknowledged).toBe(true);
     expect(store.data?.history).toHaveLength(1);
   });
-
-  it('发布后的页面缩略图只从 publish 服务读取，不碰审核插件临时目录', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
-    await store.load();
-    const id = 'abcdefghij';
-    const item: PublishedItem = {
-      id,
-      group: 'opaque',
-      groupLabel: '朋友',
-      surfaces: ['works'],
-      kind: 'media',
-      title: '画',
-      summary: '',
-      publishedAt: 1,
-      files: [{ path: 'image.png', size: 3, contentType: 'image/png' }],
-      hasThumbnail: true,
-    };
-    await store.update(state => {
-      state.current.main = { id: 'aaaaaaaa', branch: 'main', nonce: 'a', at: 2, files: {}, works: [item] };
-    });
-    const actions = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
-    const webui = {
-      registerPage: vi.fn(),
-      registerAction: (name: string, fn: (args: Record<string, unknown>) => Promise<unknown>) => {
-        actions.set(name, fn);
-        return () => {};
-      },
-    } as unknown as BoundWebui;
-    const readThumbnail = vi.fn(async () => new Uint8Array([1, 2, 3]));
-    const publish = { current: { readThumbnail } } as unknown as BoundPublish;
-    const config: WorksSiteConfig = {
-      targetId: 'works',
-      basePath: '/',
-      accountId: '0'.repeat(32),
-      apiToken: 'sentinel',
-      projectName: 'aalis',
-      productionBranch: 'main',
-      siteOrigin: 'https://aalis.pages.dev',
-      mainOrigins: ['https://aalis.pages.dev'],
-      failOpen: false,
-      siteTitle: '作品集',
-      siteIntro: '',
-    };
-    const deployer = { health: () => ({ ok: true }), onlineFailOpen: false, active: true } as unknown as WorksDeployer;
-    registerWorksPage({ webui, publish, store, deployer, config });
-    expect(await actions.get('worksStatus')?.({})).toEqual(
-      expect.objectContaining({
-        content: expect.stringContaining('主站：https://aalis.pages.dev'),
-      }),
-    );
-    expect(await actions.get('worksThumbnail')?.({ id })).toEqual({
-      name: `${id}.png`,
-      mime: 'image/png',
-      base64: Buffer.from([1, 2, 3]).toString('base64'),
-    });
-    expect(readThumbnail).toHaveBeenCalledWith(id);
-  });
 });
 
 async function eventually(check: () => boolean, ms = 5000): Promise<void> {
@@ -1130,7 +1071,8 @@ describe('作品站编排与假 Pages', () => {
       await eventually(() => fake.deployments.find(item => item.id === oldMainId)?.deleted === true, 6000);
       await eventually(() => !!store.data?.paused, 6000);
       expect(store.data?.alerts.some(alert => alert.kind === 'content')).toBe(true);
-      expect(store.data?.history.some(entry => entry.result === 'rolled-back')).toBe(true);
+      // 暂停与告警先写，清掉这次部署之后才另记历史
+      await eventually(() => store.data?.history.some(entry => entry.result === 'rolled-back') === true, 6000);
       const diagnostics = warn.mock.calls
         .map(([message]) => String(message))
         .filter(message => message.includes('内容核验'));

@@ -21,8 +21,9 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //   2. 工具参数不是合法 JSON 时跳过执行（旧行为空参真跑），把错误当 tool 结果回给模型，
 //      并带对 tool_call_id（否则下一轮 tool_calls 与 tool 消息不配对，provider 直接 400）；
 //   3. 并行工具批次里单个工具的链路异常（钩子 / 守卫抛错）只算该工具失败，不连坐整组：
-//      兄弟工具已发生的副作用照常落库，回合继续；已发出 tool:execute start 的失败工具要补发 end，
-//      否则 WebUI 流式缓冲里这一段一直显示执行中。
+//      兄弟工具已发生的副作用照常落库，回合继续；
+//   4. 每次调用都有一对 tool:execute：没执行就失败的（参数不合法、执行前的钩子出错）同样发，结束带错误结果，
+//      否则会话里这张工具卡一直停在生成中或执行中；生成参数时的进度带上执行时用的同一个 callId。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -157,8 +158,8 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
         return { content: '{"ok":true}' };
       },
     });
-    const started: unknown[] = [];
-    host.events.on('tool:execute', info => void started.push(info.args));
+    const announced: Array<[string, string | undefined]> = [];
+    host.events.on('tool:execute', info => void announced.push([info.phase, info.result]));
 
     await host.agent.require().handleMessage({
       content: '调工具',
@@ -170,11 +171,157 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     await app.stop();
 
     expect(executed).toBe(0);
-    expect(started, '没执行的调用不发 tool:execute').toEqual([]);
     const toolMsg = recorder[1]?.messages.find(m => m.role === 'tool');
     expect(toolMsg?.toolCallId).toBe('call-shape');
     expect(toolMsg?.content).toContain('不是合法 JSON 对象');
     expect(toolMsg?.content).toContain(kind);
+    // 生成它时会话里已有它的工具卡：没执行的调用同样发一对 tool:execute，结束带回给模型的错误
+    expect(announced, '一对开始与结束，结束是错误结果').toEqual([
+      ['start', undefined],
+      ['end', toolMsg?.content],
+    ]);
+  });
+
+  it('流式生成工具调用：进度带上这次调用的 callId，执行时用同一个；同一调用的几次进度 callId 不变', async () => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const calls: ChatResponse = {
+      content: null,
+      toolCalls: [
+        { id: 'm-1', type: 'function', function: { name: 'probe', arguments: '{"n":1}' } },
+        { id: 'm-2', type: 'function', function: { name: 'probe', arguments: '{"n":2}' } },
+      ],
+    };
+    await bootAgentStack(app, createMockLLMPlugin({ responses: [calls, { content: '好' }] }), true);
+    const host = app.bind({ agent, tools, events });
+    const ctxIds: string[] = [];
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async (args, ctx) => {
+        ctxIds[Number(args.n) - 1] = ctx.callId as string;
+        return { content: '{"ok":true}' };
+      },
+    });
+    const progress: Array<[number, string, string]> = [];
+    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+      const p = chunk.toolCallProgress;
+      if (p) progress.push([p.index, p.name, p.callId]);
+    });
+
+    await host.agent.require().handleMessage({
+      content: '调两次',
+      sessionId: 'test:tool-progress',
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await app.stop();
+
+    const [first, second] = ctxIds;
+    expect(first).not.toBe(second);
+    expect(progress).toEqual([
+      [0, 'probe', first],
+      [0, 'probe', first],
+      [1, 'probe', second],
+      [1, 'probe', second],
+    ]);
+  });
+
+  it('有调用没报过生成进度：报过的用那时的 callId，没报过的另起，不按位置串到别的调用上', async () => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const calls: ChatResponse = {
+      content: null,
+      toolCalls: [
+        { id: 'm-1', type: 'function', function: { name: 'probe', arguments: '{"n":1}' } },
+        { id: 'm-2', type: 'function', function: { name: 'probe', arguments: '{"n":2}' } },
+      ],
+    };
+    // 两个调用并在一帧里时只报了后一个的进度
+    const llmPlugin = createMockLLMPlugin({ responses: [calls, { content: '好' }], progress: index => index === 1 });
+    await bootAgentStack(app, llmPlugin, true);
+    const host = app.bind({ agent, tools, events });
+    const ctxIds: string[] = [];
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async (args, ctx) => {
+        ctxIds[Number(args.n) - 1] = ctx.callId as string;
+        return { content: '{"ok":true}' };
+      },
+    });
+    const progressIds: string[] = [];
+    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+      if (chunk.toolCallProgress) progressIds.push(chunk.toolCallProgress.callId);
+    });
+
+    await host.agent.require().handleMessage({
+      content: '调两次',
+      sessionId: 'test:tool-progress-partial',
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await app.stop();
+
+    const generated = progressIds[0];
+    expect(ctxIds[1]).toBe(generated);
+    expect(ctxIds[0]).toEqual(expect.any(String));
+    expect(ctxIds[0]).not.toBe(generated);
+  });
+
+  it('agent:llm:after 钩子删掉了一个调用：生成卡不借给别的工具', async () => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const calls: ChatResponse = {
+      content: null,
+      toolCalls: [
+        { id: 'm-1', type: 'function', function: { name: 'probe_a', arguments: '{}' } },
+        { id: 'm-2', type: 'function', function: { name: 'probe_b', arguments: '{}' } },
+      ],
+    };
+    await bootAgentStack(app, createMockLLMPlugin({ responses: [calls, { content: '好' }] }), true);
+    const host = app.bind({ agent, tools, events, hooks });
+    host.hooks.middleware('agent:llm:after', async (data, next) => {
+      data.response = {
+        ...data.response,
+        toolCalls: data.response.toolCalls?.filter(c => c.function.name !== 'probe_a'),
+      };
+      await next();
+    });
+    const executed: Array<[string, string]> = [];
+    for (const name of ['probe_a', 'probe_b']) {
+      host.tools.register({
+        definition: {
+          type: 'function',
+          function: { name, description: '探针', parameters: { type: 'object', properties: {} } },
+        },
+        handler: async (_args, ctx) => {
+          executed.push([name, ctx.callId as string]);
+          return { content: '{"ok":true}' };
+        },
+      });
+    }
+    const cards = new Map<string, string>();
+    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+      const p = chunk.toolCallProgress;
+      if (p) cards.set(p.callId, p.name);
+    });
+
+    await host.agent.require().handleMessage({
+      content: '调两个',
+      sessionId: 'test:tool-progress-hook',
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await app.stop();
+
+    expect(executed.map(([name]) => name)).toEqual(['probe_b']);
+    const [[, callId]] = executed;
+    expect(cards.get(callId) ?? 'probe_b', '执行的调用接管了画着另一个工具名的生成卡').toBe('probe_b');
   });
 
   it('arguments 为空串的无参工具照常执行（空串不是坏 JSON）', async () => {
@@ -340,7 +487,13 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     expectWholeGroupKept(r);
     expect(r.guardedResult).toContain('工具调用失败');
     expect(r.guardedResult).toContain('钩子拦截');
-    expect(r.guardedEvents, 'before 钩子在 start 之前失败：start 与 end 都不发').toEqual([]);
+    expect(
+      r.guardedEvents.map(e => [e.phase, e.result]),
+      'before 钩子在执行之前失败：同样发一对开始与结束，结束是错误结果',
+    ).toEqual([
+      ['start', undefined],
+      ['end', r.guardedResult],
+    ]);
   });
 
   it('agent:tool:after 抛错：结果写明「已执行」，且不回退到原始输出（fail-closed）', async () => {

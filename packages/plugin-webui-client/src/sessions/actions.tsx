@@ -47,7 +47,7 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
   const [removing, setRemoving] = useState<readonly SessionRef[]>();
 
   const failed = useCallback(
-    (verb: string, err: unknown) => toast({ kind: 'error', text: `${verb}失败：${(err as Error).message}` }),
+    (verb: string, err: unknown) => toast({ kind: 'danger', text: `${verb}失败：${(err as Error).message}` }),
     [toast],
   );
 
@@ -68,7 +68,7 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
         const result = await client.request('session/batch', { op: 'archive', ids: sessions.map(s => s.id) });
         const done = sessions.filter(s => !result.failed.some(f => f.sessionId === s.id));
         if (result.failed.length > 0) {
-          toast({ kind: 'error', text: `有 ${result.failed.length} 个会话没能归档：${result.failed[0].message}` });
+          toast({ kind: 'danger', text: `有 ${result.failed.length} 个会话没能归档：${result.failed[0].message}` });
         }
         if (done.length > 0) {
           toast({
@@ -174,10 +174,10 @@ function DeleteDialog({ targets, onClose }: { targets?: readonly SessionRef[]; o
     try {
       const result = await client.request('session/batch', { op: 'delete', ids: sessions.map(s => s.id) });
       if (result.failed.length > 0) {
-        toast({ kind: 'error', text: `有 ${result.failed.length} 个会话没能删除：${result.failed[0].message}` });
+        toast({ kind: 'danger', text: `有 ${result.failed.length} 个会话没能删除：${result.failed[0].message}` });
       }
     } catch (err) {
-      toast({ kind: 'error', text: `删除失败：${(err as Error).message}` });
+      toast({ kind: 'danger', text: `删除失败：${(err as Error).message}` });
     } finally {
       setBusy(false);
       onClose();

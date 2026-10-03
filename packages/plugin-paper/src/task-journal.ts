@@ -90,13 +90,10 @@ export class TaskJournal {
     });
   }
 
-  /** Complete JSONL. Rejects before loading event bodies when listed bytes exceed maxBytes. */
-  read(taskId: string, maxBytes?: number): Promise<string> {
+  /** Complete JSONL. */
+  read(taskId: string): Promise<string> {
     validTaskId(taskId);
-    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
-      throw new RangeError('Journal maxBytes must be a nonnegative integer');
-    }
-    return this.#enqueue(() => this.#read(taskId, maxBytes));
+    return this.#enqueue(() => this.#read(taskId));
   }
 
   /** Last N JSONL records for display; oversized records become marked previews. */
@@ -307,16 +304,12 @@ export class TaskJournal {
     return entries.filter(e => !e.isDirectory && FILE.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async #read(taskId: string, maxBytes?: number): Promise<string> {
+  async #read(taskId: string): Promise<string> {
     const listed = await this.#files(taskId);
     if (typeof listed === 'string') return `${listed}\n`;
-    const files = listed;
-    if (maxBytes !== undefined && files.reduce((sum, file) => sum + file.size + 1, 0) > maxBytes) {
-      throw new RangeError(`Task journal exceeds ${maxBytes} byte read limit`);
-    }
     const lines: string[] = [];
     let expected = 1;
-    for (const file of files) {
+    for (const file of listed) {
       const order = this.#order(file.name);
       if (order > expected) lines.push(marker('missing_sequence', { from: expected, to: order - 1 }));
       expected = order + 1;
@@ -333,10 +326,6 @@ export class TaskJournal {
     const pending = this.#pending.filter(p => p.taskId === taskId).map(p => p.order);
     if (pending.length) lines.push(marker('write_pending', { orders: pending }));
     if (this.#missing.has(taskId)) lines.push(marker('write_failed_retry_buffer_full'));
-    const result = lines.length ? `${lines.join('\n')}\n` : '';
-    if (maxBytes !== undefined && Buffer.byteLength(result) > maxBytes) {
-      throw new RangeError(`Task journal exceeds ${maxBytes} byte read limit`);
-    }
-    return result;
+    return lines.length ? `${lines.join('\n')}\n` : '';
   }
 }

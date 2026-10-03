@@ -7,6 +7,7 @@ import { memory } from '@aalis/api-memory';
 import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
 import { type ToolCallContext, tools, withToolGroups } from '@aalis/api-tools';
+import { webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   config,
@@ -164,7 +165,7 @@ export interface FileReaderService {
   resolveLocalPath(fileId: string): Promise<string | null>;
   /** 单个文件的元信息；不存在返回 null。 */
   getMeta(fileId: string): FileMeta | null;
-  /** 删除文件及其 sidecar；文件不存在返回 false。 */
+  /** 删除文件及其 sidecar；文件不存在返回 false，存储删不掉时抛出（索引项保留，可以重试）。 */
   deleteFile(fileId: string): Promise<boolean>;
 }
 
@@ -223,6 +224,7 @@ const uses = {
   agent: optional(agent),
   memory: optional(memory),
   media: optional(media),
+  webui: optional(webuiServer),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -237,7 +239,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { logger, lifecycle, events, hooks, contributions, provide, tools, agent, memory, media } = caps;
+  const { logger, lifecycle, events, hooks, contributions, provide, tools, agent, memory, media, webui } = caps;
   const cfg = parseConfig(configSchema, caps.config, logger);
 
   const maxFileSize = cfg.maxFileSizeMB * 1024 * 1024;
@@ -269,6 +271,55 @@ async function run(caps: Caps): Promise<void> {
   // 内存索引：fileId → FileEntry（启动时从磁盘恢复，运行期与磁盘双写）
   const index = new Map<string, FileEntry>();
 
+  // 会话面板「上传的文件」：只在本会话有上传文件时出现；文件增删后让那个会话的面板重取
+  const uploadsPage = webui.definePage({
+    key: 'uploads',
+    title: '上传的文件',
+    icon: 'paperclip',
+    placement: 'session',
+    applies: ({ sessionId }) => [...index.values()].some(entry => entry.sessionId === sessionId),
+    actions: {
+      deleteUpload: {
+        label: '删除',
+        effect: 'destructive',
+        confirm: '删除这个上传的文件？之后模型就读不到它了。',
+        row: true,
+        async handler({ rowKey, ctx }) {
+          const entry = index.get(rowKey);
+          if (entry?.sessionId !== ctx.sessionId) throw new Error('本会话没有这个文件');
+          await deleteFile(rowKey);
+          return `已删除 ${entry.name}`;
+        },
+      },
+    },
+    content: [
+      {
+        type: 'table',
+        id: 'files',
+        rowKey: 'id',
+        empty: '本会话没有上传的文件',
+        columns: [
+          { key: 'name', label: '文件名', primary: true },
+          { key: 'size', label: '大小（字节）' },
+          { key: 'mimeType', label: '类型' },
+          { key: 'uploadedAt', label: '上传时间', kind: 'time', primary: true },
+        ],
+        rowActions: [{ action: 'deleteUpload' }],
+        data: ({ ctx }) =>
+          [...index.values()]
+            .filter(entry => entry.sessionId === ctx.sessionId)
+            .sort((a, b) => b.uploadedAt - a.uploadedAt)
+            .map(entry => ({
+              id: entry.id,
+              name: entry.name,
+              size: entry.size,
+              mimeType: entry.mimeType,
+              uploadedAt: entry.uploadedAt,
+            })),
+      },
+    ],
+  });
+
   // 会话目录名：sessionId 含 `:`（onebot:<self>:group:<gid>），Windows 文件名不收冒号，与附件落盘同一套替换。
   function sessionDirName(sessionId: string): string {
     return sessionId.replace(/[:/\\]/g, '_');
@@ -289,6 +340,7 @@ async function run(caps: Caps): Promise<void> {
     };
     await storage.writeFile(entry.metaUri, JSON.stringify(meta, null, 2));
     index.set(entry.id, entry);
+    uploadsPage.invalidate(undefined, entry.sessionId);
     return entry;
   }
 
@@ -506,24 +558,40 @@ async function run(caps: Caps): Promise<void> {
     return persistMeta(meta);
   }
 
+  /** 盘上已经不在的算删掉；别的存储错误抛出，索引项留着，可以重试 */
   async function deleteFile(fileId: string): Promise<boolean> {
     const entry = index.get(fileId);
     if (!entry) return false;
-    try {
-      await storage.delete(entry.dataUri).catch((err: unknown) => logger.debug('删除数据文件失败:', err));
-      await storage.delete(entry.metaUri).catch((err: unknown) => logger.debug('删除 meta 失败:', err));
-    } finally {
-      index.delete(fileId);
+    for (const uri of [entry.dataUri, entry.metaUri]) {
+      try {
+        await storage.delete(uri);
+      } catch (err) {
+        if (isStorageNotFound(err)) continue;
+        throw new Error(`删除 ${entry.name} 失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
+      }
     }
+    index.delete(fileId);
+    uploadsPage.invalidate(undefined, entry.sessionId);
     return true;
+  }
+
+  /** 批量清理用：删不掉的记告警、留在索引里，不拦后面的 */
+  async function tryDeleteFile(fileId: string): Promise<boolean> {
+    try {
+      return await deleteFile(fileId);
+    } catch (err) {
+      logger.warn(err instanceof Error ? err.message : String(err));
+      return false;
+    }
   }
 
   async function deleteSessionFiles(sessionId: string): Promise<number> {
     const targets = [...index.values()].filter(e => e.sessionId === sessionId);
-    for (const e of targets) await deleteFile(e.id);
+    let deleted = 0;
+    for (const e of targets) if (await tryDeleteFile(e.id)) deleted++;
     // 顺带把目录删掉（连同未入索引的残留；失败忽略）
     await storage.delete(`${ROOT_URI}/${sessionDirName(sessionId)}`).catch(() => undefined);
-    return targets.length;
+    return deleted;
   }
 
   // ===== retention / LRU 清理 =====
@@ -538,7 +606,7 @@ async function run(caps: Caps): Promise<void> {
       for (const e of all) {
         if (e.uploadedAt < cutoff) {
           logger.debug(`retention 淘汰: ${e.name} (uploaded ${new Date(e.uploadedAt).toISOString()})`);
-          await deleteFile(e.id);
+          await tryDeleteFile(e.id);
         }
       }
     }
@@ -551,8 +619,7 @@ async function run(caps: Caps): Promise<void> {
         logger.debug(
           `LRU 淘汰: ${e.name} (${(e.size / 1024).toFixed(1)} KB, total=${(total / 1024 / 1024).toFixed(1)}MB)`,
         );
-        await deleteFile(e.id);
-        total -= e.size;
+        if (await tryDeleteFile(e.id)) total -= e.size;
       }
     }
   }

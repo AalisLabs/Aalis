@@ -29,7 +29,7 @@ export interface ChatResponse {
 
 /**
  * 工具调用增量进度（非完整 ToolCall，仅用于 UI 提示「正在生成」）。
- * Provider 在每收到 tool_call 的 SSE delta 时 yield 一个 chunk，
+ * Provider 每收到一个调用的增量就为它 yield 一个 chunk（一帧里有几个调用就各 yield 一个），
  * 让上层可以渲染进度条而不必等整段 tool_calls 累积完。
  */
 export interface ToolCallProgress {

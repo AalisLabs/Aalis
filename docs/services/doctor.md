@@ -67,7 +67,7 @@ export interface DoctorService {
 'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
 ```
 
-这条事件在每次 `runChecks()` 完成后发射，供 WebUI 等订阅者即时刷新。如果某个包只想拿到这条事件类型、并不调用服务，只需 `import type {} from '@aalis/api-doctor'` 触发声明合并即可。
+这条事件在每次 `runChecks()` 完成后发射，供订阅者得知报告换了（官方诊断页不靠它：页面属于 doctor 插件自己，运行完直接重取）。如果某个包只想拿到这条事件类型、并不调用服务，只需 `import type {} from '@aalis/api-doctor'` 触发声明合并即可。
 
 ### Helper `doctor.registerCheck`
 
@@ -241,14 +241,16 @@ const report = await doctor.current?.runChecks();
 const checks = doctor.current?.getLastReport()?.checks ?? [];
 ```
 
-第三方 consumer 用这个模式：`?.` 链式吞掉服务缺失，`?? []` 兜底空数组。官方 doctor 页面的 `actions` 则直接闭包本次激活的 registry，不去查当前胜出的 doctor。订阅式 consumer 监听事件即可：
+第三方 consumer 用这个模式：`?.` 链式吞掉服务缺失，`?? []` 兜底空数组。官方诊断页的数据源与动作则直接闭包本次激活的 registry，不去查当前胜出的 doctor。订阅式 consumer 监听事件即可：
 
 ```ts
 import type {} from '@aalis/api-doctor';   // 仅引入事件类型增强
 events.on('doctor:updated', () => refresh());
 ```
 
-报告有两个入口。聊天 / CLI 走 `/doctor` 命令（受限指令，需要等级 2，见第 6 节），输出经 `formatReport` 按 level 分组排版；WebUI 走 doctor 页面的 `runChecks` / `getReport` / `getLastRunAt` 三个 action。
+报告有两个入口。聊天 / CLI 走 `/doctor` 命令（受限指令，需要等级 2，见第 6 节），输出经 `formatReport` 按 level 分组排版；WebUI 走插件详情里的诊断页（`key: 'doctor'`）：「立即运行」、上次运行的时间与通过、警告、错误数，以及结果表（级别、类别、检查项、说明、详情）。
+
+每次运行之后（不论从命令、诊断页还是别的插件触发），诊断页重取；结果里有错误或警告时发一条提示（有错误时是「出错」，只有警告时是「需要处理」），标题写明几项（如「诊断有 1 项错误、2 项警告」），跳到诊断页；全部通过后撤回。
 
 ---
 
@@ -258,7 +260,7 @@ events.on('doctor:updated', () => refresh());
 `run` 在注册方的闭包里执行，能力等于注册插件所能做的一切，doctor 不会替你降权。`runChecks` 由 `/doctor` 命令或 WebUI 触发，本质是「以触发者身份跑一遍所有已注册探测」。因此不要在 `run` 里做带副作用或危险的操作，它应当是只读探测。storage 的 `storage.roots` 检查只写一个临时探针文件、随即删除，这是探测可写性的克制做法。
 :::
 
-- `/doctor` 是受限指令（`visibility: 'restricted'`）：需要等级 2，不需要确认；owner 不受等级限制（本机 CLI 与 WebUI 的 `console` 身份即 owner）。未装或未启用 `@aalis/plugin-authority` 时指令没有执行守卫，受限指令一律被拒，`/doctor` 对 owner 也不可用，WebUI 的 doctor 页面不受影响。报告里有存储根的宿主路径和插件的报错原文，报错原文里可能有内网地址与端口，因此默认等级（0）的用户不能运行。门槛可在 WebUI 的权限管理页按能力键 `command:doctor` 调整（配置项 `authorityOverrides`，见 [plugin-authority](../plugins/plugin-authority.md)）：只让 owner 使用时，调到比任何已授予的等级都高的整数，如 99；要让某些用户使用，给他们等级 2，或调低门槛。
+- `/doctor` 是受限指令（`visibility: 'restricted'`）：需要等级 2，不需要确认；owner 不受等级限制（本机 CLI 与 WebUI 的 `console` 身份即 owner）。未装或未启用 `@aalis/plugin-authority` 时指令没有执行守卫，受限指令一律被拒，`/doctor` 对 owner 也不可用，WebUI 的诊断页不受影响。报告里有存储根的宿主路径和插件的报错原文，报错原文里可能有内网地址与端口，因此默认等级（0）的用户不能运行。门槛可在 WebUI 设置里的权限页按能力键 `command:doctor` 调整（配置项 `authorityOverrides`，见 [plugin-authority](../plugins/plugin-authority.md)）：只让 owner 使用时，调到比任何已授予的等级都高的整数，如 99；要让某些用户使用，给他们等级 2，或调低门槛。
 - 异常会被聚合器吞成 error 级结果，不向上抛出。`run` 抛错只会让该项显示为 error，不会中断其他检查；但不要依赖抛错来传递信息，正常路径应返回带 `level` 的 `CheckResult`。
 - `detail` 会出现在报告、WebUI 表格和聊天输出里。不要把密钥、完整路径这类敏感信息写进 `detail`。`/doctor` 只对等级 2 及以上的用户与 owner 开放（见本节第一条），但仍应遵循脱敏惯例，参考 [security-model](../concepts/security-model.md)。
 - 涉及网络探测的检查项，出口请走 `safeFetch`（`@aalis/util-network-guard`）而非裸 `fetch`，避免把诊断端点变成 SSRF 跳板，见 [security-model](../concepts/security-model.md)。
@@ -268,7 +270,7 @@ events.on('doctor:updated', () => refresh());
 ## 7. 边界与注意事项
 
 - 没有内置定时 / 自动运行。doctor 不自调度，只在 `/doctor` 命令、WebUI 的「立即运行」按钮、或你显式调用 `runChecks()` 时才跑。需要周期体检得自己接 scheduler。
-- `getLastReport()` 在从未运行时返回 `undefined`，而不是空报告，consumer 必须判空。官方 `getLastRunAt` 在这种情况下返回「尚未运行」。
+- `getLastReport()` 在从未运行时返回 `undefined`，而不是空报告，consumer 必须判空。官方诊断页在这种情况下写「尚未运行」。
 - 同 `id` 静默覆盖。两个插件用同一 `id` 注册时后者赢、前者被踢，仅打一条 debug 日志。务必用领域前缀避免撞车。
 - `run` 没有超时保护。`runChecks` 会顺序 `await` 每个 spec，一个慢检查会拖慢整份报告，也没有取消机制。你应当在 `run` 内部自带超时或 `AbortController`。
 - 报告是一次性快照，存放在 `last` 字段里，新一次 `runChecks` 会整体替换它，没有历史留存。需要趋势或历史，得自己在 `doctor:updated` 订阅里落库。

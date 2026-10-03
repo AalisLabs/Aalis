@@ -5,10 +5,11 @@ import { type Logger, LogHub, provide } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // authority apply 的 ready 闸 —— storage 已在线时，apply 返回即等级表已载入
@@ -30,9 +31,18 @@ const ROOT: StorageRootInfo = {
   deletable: true,
 };
 
-const OWNER = { platform: 'webui', userId: 'console' };
-
 let dir = '';
+const hosts: PageHost[] = [];
+
+/** 经闸门调权限页的等级动作（调用者是 owner），回那句回执 */
+async function act(pages: PageHost, action: string, body: Record<string, unknown>): Promise<string> {
+  const reply = await pages.act('authority', action, body);
+  if (reply.status !== 200) throw new Error(`${reply.status} ${JSON.stringify(reply.body)}`);
+  return (reply.body as { message: string }).message;
+}
+const setLevel = (pages: PageHost, userId: string, level: number) =>
+  act(pages, 'setUserLevel', { rowKey: `onebot:${userId}`, input: { level } });
+const removeUser = (pages: PageHost, userId: string) => act(pages, 'deleteUser', { rowKey: `onebot:${userId}` });
 
 /** 真 fs 存储：uri 末段即文件名 */
 function fsStorage(): StorageService {
@@ -53,6 +63,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
+  for (const host of hosts.splice(0)) host.dispose();
 });
 
 describe('authority：storage 已在线时 apply 等完等级表加载', () => {
@@ -84,17 +95,15 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
 // 管理入口还先等首载落定再改：读完之前内存里查不到文件里的记录。
 describe('authority：storage 晚于本插件上线，首载在飞时的等级改动', () => {
   it('健康的 users.json 不被残缺快照覆盖，改动在首载完成后落盘', async () => {
-    const { app, actions, release, writes } = await bootLateStorage();
+    const { app, pages, release, writes } = await bootLateStorage();
 
-    const setUserLevel = actions.get('setUserLevel');
-    if (!setUserLevel) throw new Error('页面动作 setUserLevel 未登记');
     // 入口先等首载落定再改，回执要等到落盘之后
-    const reply = setUserLevel({ platform: 'onebot', userId: 'newbie', level: 3 }, OWNER);
+    const reply = setLevel(pages, 'newbie', 3);
     await new Promise(r => setTimeout(r, 20));
     expect(writes(), '首载还没读完就写了全量快照').toBe(0);
 
     release();
-    expect(await reply).toEqual({ message: 'onebot:newbie 等级已更新为 3' });
+    expect(await reply).toBe('onebot:newbie 的等级已设为 3');
     // 先读盘再停机：停机时的拆卸落盘会把漏掉的补写掩盖掉
     const data = JSON.parse(await readFile(join(dir, 'users.json'), 'utf-8'));
     await app.stop();
@@ -108,15 +117,9 @@ describe('authority：storage 晚于本插件上线，首载在飞时的等级�
       join(dir, 'users.json'),
       JSON.stringify({ version: 5, users: { 'onebot:x': { level: 5, note: '老朋友' }, 'onebot:y': { level: -1 } } }),
     );
-    const { app, actions, release } = await bootLateStorage();
+    const { app, pages, release } = await bootLateStorage();
 
-    const setUserLevel = actions.get('setUserLevel');
-    const deleteUser = actions.get('deleteUser');
-    if (!setUserLevel || !deleteUser) throw new Error('页面动作未登记');
-    const replies = Promise.all([
-      setUserLevel({ platform: 'onebot', userId: 'x', level: 3 }, OWNER),
-      deleteUser({ platform: 'onebot', userId: 'y' }, OWNER),
-    ]);
+    const replies = Promise.all([setLevel(pages, 'x', 3), removeUser(pages, 'y')]);
     release();
     await replies;
     const data = JSON.parse(await readFile(join(dir, 'users.json'), 'utf-8'));
@@ -129,13 +132,11 @@ describe('authority：storage 晚于本插件上线，首载在飞时的等级�
   it('首载读不懂 users.json：首载在飞时改等级，回执照样注明未落盘', async () => {
     const legacy = JSON.stringify({ version: 4, users: { 'onebot:banned': { tier: 'blocked' } } });
     await writeFile(join(dir, 'users.json'), legacy);
-    const { app, actions, release } = await bootLateStorage();
+    const { app, pages, release } = await bootLateStorage();
 
-    const setUserLevel = actions.get('setUserLevel');
-    if (!setUserLevel) throw new Error('页面动作 setUserLevel 未登记');
-    const reply = setUserLevel({ platform: 'onebot', userId: 'newbie', level: 3 }, OWNER);
+    const reply = setLevel(pages, 'newbie', 3);
     release();
-    const { message } = (await reply) as { message: string };
+    const message = await reply;
     await app.stop();
 
     expect(message).toContain('仅本次运行生效，未写入 users.json');
@@ -160,18 +161,15 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
         },
       }),
     );
-    const { app, host, actions } = await bootWithoutStorage();
-    const setUserLevel = actions.get('setUserLevel');
-    const deleteUser = actions.get('deleteUser');
-    if (!setUserLevel || !deleteUser) throw new Error('页面动作未登记');
+    const { app, host, pages } = await bootWithoutStorage();
 
     const replies = [
-      await deleteUser({ platform: 'onebot', userId: 'banned' }, OWNER),
-      await setUserLevel({ platform: 'onebot', userId: 'mod', level: 0 }, OWNER),
-      await setUserLevel({ platform: 'onebot', userId: 'friend', level: 3 }, OWNER),
-      await setUserLevel({ platform: 'onebot', userId: 'pal', level: 0 }, OWNER),
-    ] as Array<{ message: string }>;
-    for (const { message } of replies)
+      await removeUser(pages, 'banned'),
+      await setLevel(pages, 'mod', 0),
+      await setLevel(pages, 'friend', 3),
+      await setLevel(pages, 'pal', 0),
+    ];
+    for (const message of replies)
       expect(message, '改动还没写进 users.json，回执却报成功').toContain('未写入 users.json');
 
     // storage 上线：follow 随后触发首次读取，读完补写
@@ -201,25 +199,16 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
   });
 
   it('回执注明等级表尚未载入：此时没有写盘，也就谈不上写入失败', async () => {
-    const { app, actions } = await bootWithoutStorage();
-    const setUserLevel = actions.get('setUserLevel');
-    if (!setUserLevel) throw new Error('页面动作 setUserLevel 未登记');
-    const { message } = (await setUserLevel({ platform: 'onebot', userId: 'mod', level: 2 }, OWNER)) as {
-      message: string;
-    };
+    const { app, pages } = await bootWithoutStorage();
+    const message = await setLevel(pages, 'mod', 2);
     await app.stop();
 
-    expect(message).toBe('onebot:mod 等级已更新为 2；未写入 users.json（等级表尚未载入），载入后写入');
+    expect(message).toBe('onebot:mod 的等级已设为 2；未写入 users.json（等级表尚未载入），载入后写入');
   });
 
   it('storage 上线后首次读取在飞时停机：等读取落定再写入，原有记录保留', async () => {
-    const { app, release } = await bootLateStorage(async actions => {
-      const setUserLevel = actions.get('setUserLevel');
-      if (!setUserLevel) throw new Error('页面动作 setUserLevel 未登记');
-      const { message } = (await setUserLevel({ platform: 'onebot', userId: 'newbie', level: 3 }, OWNER)) as {
-        message: string;
-      };
-      expect(message).toContain('等级表尚未载入');
+    const { app, release } = await bootLateStorage(async pages => {
+      expect(await setLevel(pages, 'newbie', 3)).toContain('等级表尚未载入');
     });
 
     let stopped = false;
@@ -276,31 +265,26 @@ describe('authority：storage 刚上线、首次读取尚未发起时的保存',
   });
 });
 
-/** storage 缺席时装上 authority；返回页面动作登记表 */
+/** storage 缺席时装上 authority；返回权限页所在的登记表 */
 async function bootWithoutStorage() {
   const { app } = hostedApp();
   const host = app.bind({ provide, authority });
-  const actions = new Map<string, WebuiActionHandler>();
-  host.provide(webuiServer, {
-    registerPage: () => () => {},
-    registerAction: (method: string, handler: WebuiActionHandler) => {
-      actions.set(method, handler);
-      return () => void actions.delete(method);
-    },
-  } as never);
+  const pages = pageHost();
+  hosts.push(pages);
+  host.provide(webuiServer, pages.service);
   await app.plugins.idle();
   await app.plugin(authorityPlugin, {}); // storage 缺席：apply 不等加载就返回
   await app.plugins.idle();
-  return { app, host, actions };
+  return { app, host, pages };
 }
 
 /**
- * storage 晚于 authority 上线，首载的读取卡在闸上；返回页面动作登记表与放闸句柄。
+ * storage 晚于 authority 上线，首载的读取卡在闸上；返回权限页所在的登记表与放闸句柄。
  * beforeStorage 在 storage 上线之前执行（此时首次读取尚未开始）。
  */
-async function bootLateStorage(beforeStorage?: (actions: Map<string, WebuiActionHandler>) => Promise<void>) {
-  const { app, host, actions } = await bootWithoutStorage();
-  await beforeStorage?.(actions);
+async function bootLateStorage(beforeStorage?: (pages: PageHost) => Promise<void>) {
+  const { app, host, pages } = await bootWithoutStorage();
+  await beforeStorage?.(pages);
 
   // storage 随后上线，follow 触发首载；读卡在闸上
   const disk = fsStorage();
@@ -326,7 +310,7 @@ async function bootLateStorage(beforeStorage?: (actions: Map<string, WebuiAction
     },
   } as never);
   await reading;
-  return { app, actions, release, writes: () => writes };
+  return { app, pages, release, writes: () => writes };
 }
 
 // users.json 加载结果的上报本身也可能抛（宿主经 AppOptions.logger 注入的 logger 抛错），失败的告警与成功的 debug 都算：

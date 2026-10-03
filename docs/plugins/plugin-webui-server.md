@@ -5,7 +5,7 @@
 
 ## 概述
 
-Express + WebSocket 实现的 Web 管理后台，提供 REST API 与 WebSocket 实时通信。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、重启、换前端）。发往 WebUI 会话的出站消息由本插件写进会话历史（见下文「WebUI 会话的收件箱」）。
+Express + WebSocket 实现的 Web 管理后台，提供 REST API 与 WebSocket 实时通信。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、页面数据变了、布局记录变了、重启、换前端）。插件经 `webuiServer` 登记的声明式页面与提示由本插件收下、按质量门槛核过，页面的数据源与动作经本插件的服务端闸门调用（见下文「声明式页面」）。发往 WebUI 会话的出站消息由本插件写进会话历史（见下文「WebUI 会话的收件箱」）。
 
 ## 插件声明
 
@@ -32,6 +32,7 @@ export default definePlugin({
     process: optional(processService),
     sessionProtocol: optional(sessionProtocol),
     approvals: optional(approvals),
+    sessions: optional(sessionManager),
     tools: optional(tools),
     llm: optional(llm),
     archive: optional(messageArchive),
@@ -49,7 +50,6 @@ export default definePlugin({
 | `autoOpen` | boolean | `true` | 每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭 |
 | `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
 | `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：至少 32 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理（secret，值存进 `secrets.yaml`，WebUI 不回显）。配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |
-| `relationGraphDefaultSpacing` | number | `120` | 关系图默认密度：关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。 |
 | `marketplaceRegistry` | string | `'https://registry.npmjs.org'` | 插件市场 npm 源：插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。 |
 
 ## 认证 / 访问 token
@@ -77,7 +77,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 ### 登录方式
 
 1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到干净 URL。
-2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。
+2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
 
 ### 登录失败限速
@@ -145,8 +145,10 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins`。启用后激活失败、转为 `error` 态时，照样写回启用，仍返回 200 与 `{ ok: true }`，`message` 说明激活失败及原因；停用仍在初始化的插件而它未在宽限内停止、转为 `error` 态时，照样写回禁用，同样返回 200，`message` 说明它未在宽限内停止、已转为 `error` 态。插件不存在时返回 404；停机中或插件正在卸载时拒绝，返回 409，配置文件不变 |
 | `/api/plugins/scan` | POST | 经宿主的 `plugin-source` 服务重新扫描插件源（范围由宿主的加载器决定），加载新发现且尚未注册的插件；宿主未提供插件来源时返回 503 |
 | `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除。创建的请求体为 `{ suffix, config? }`，`config` 与 PUT 插件配置同一套处理：按 schema 默认值深合并、按宿主的裁剪政策裁掉未声明的字段（在响应 `ignored` 里点名，附在 `message` 末尾）；有类型不符的值时不创建，返回 400。创建同样经 `applyPluginConfig`：`secret` 字段上的值拆进密钥存储，先写配置文档再登记。停机进行中创建会被拒绝登记，返回 409，配置文档与密钥都撤回、不写入；创建后激活失败、实例转为 `error` 态时，实例与配置照样保留并写入配置文件，仍返回 200 与 `{ ok: true, instanceId }`，`message` 说明激活失败及原因：创建回 2xx 即表示实例已登记、配置已写进配置文件，WebUI 据此收起建实例表单、刷新列表；落盘失败的回执带 `applied: true`（见下文），实例同样已在运行态登记，表单也收起；其余非 2xx 时表单留着；配置文件的 `disabledPlugins` 里已有该实例（手改配置文件留下）时以禁用态登记，回执说明这一点。移除时先从配置文件删掉该实例的配置段与禁用标记（同名重建以启用态登记；不再被任何配置引用的密钥随这次保存从 `secrets.yaml` 删除），落盘成功后再卸载实例；卸载失败时返回 500，说明配置段已从配置文件删除、卸载失败；停机进行中删除时内核不受理卸载，配置段照样删掉，返回 200，`message` 注明停机中、未卸载运行中的实例 |
-| `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |
-| `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器（统一 RPC 入口） |
+| `/api/pages` · `/api/session-pages` | GET | 登记着的声明式页面（声明去掉函数，带上实例与位置）/ 这个会话（`?sessionId=`）适用的会话面板页面。见下文「声明式页面」 |
+| `/api/pages/:instance/:pageKey/data/:componentId` · `/api/pages/:instance/:pageKey/actions/:action` | GET · POST | 页面组件的数据源 / 页面动作，经服务端闸门调用，见下文「声明式页面」 |
+| `/api/page-file` | GET | 页面单元格里的文件按句柄下载（`?handle=<文件单元格的 handle>`），句柄由本插件签发；下发方式与错误同 `/api/session-file` |
+| `/api/layout` | GET · POST | owner 的布局记录（图标栏上固定的页面、会话面板的标签）/ 按一个操作改它，见下文「布局记录」 |
 | `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取整份配置文档（宿主有密钥存储时，插件配置里的 `secret` 字段是引用，不是原值）；PUT 可改 `name`、`logLevel`、`slowThresholdMs`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；文档里没写的核心键按 schema 默认值比较（前端把默认值回填进草稿后回传，不算改动、不写进文件）；`logLevel` 或 `slowThresholdMs` 有变化时保存并自动重启应用（宿主不支持重启时记一条错误日志，响应 `restart: false`，`message` 说明改动已写入文件、下次启动生效），只改 `name` 时只保存、不重启（它只是显示用的应用名称）；POST `/api/config/save` 把当前配置写回磁盘（宿主不持久化时不写盘，回执只说「配置已保存」） |
 | `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除服务偏好提供者（持久化到 `servicePreferences`） |
 | `/api/service-groups` · `/api/system-components` | GET | 服务分组 / 系统组件 |
@@ -219,10 +221,33 @@ socket.onmessage = event => {
 |---|---|---|
 | `log` | 进程级日志中枢的每条新日志，与写进 `logs:/latest.log` 的是同一份 | 发过 `log.subscribe`、还没退订的连接 |
 | `plugins.changed` | core 每次重算插件状态之后的 `plugins:changed`；页面登记表的每次登记与撤回 | 全部 `/admin` 连接 |
+| `page.invalidate` | 插件调页面的 `invalidate`，以及页面登记时（插件重载后打开着的页面换成新一次激活的数据）；按实例、页面、组件与会话合并：同一组第一次立即推，一秒内再来的并成窗口结束时的一次 | 全部 `/admin` 连接 |
+| `layout.changed` | `POST /api/layout` 改动了记录（没有变化的操作不推） | 全部 `/admin` 连接 |
 | `app.restarting` | core 的 `app:restarting` | 全部 `/admin` 连接 |
 | `client.reload` | 改或清除 `webui-client` 的服务偏好之后；装卸包后重新发现前端、摘掉了已不在的前端包之后 | 全部 `/admin` 连接 |
 
 前端发来的只有 `log.subscribe` 与 `log.unsubscribe`；认不出的消息记一行告警「WebUI /admin 收到认不出的消息，已忽略」，连接照常。连接关闭时它的日志订阅随之撤掉。本插件只在卸载时主动关闭连接（1001），客户端稍后重连。
+
+## 声明式页面
+
+插件经 `webuiServer` 的 `definePage` 与 `notify` 登记页面与提示（契约见 [api-webui](../api/api-webui.md#声明式页面)），本插件按插件实例收下，插件停用时同一拍撤回。
+
+- **登记时的质量门槛**（`page-check.ts`）：嵌套、一屏组件数与标签数、组件 id、动作的引用与放置、不认识的字段，不过就不登记，记一条错误日志「页面 <key>（<实例>）没过登记校验，未登记：…」，列出每个问题与位置。提示的 `open` 要指向本实例已登记、位置为 `plugin` 或 `settings` 的页面，否则同样不登记、记错误日志。
+- **服务端闸门**（`pages.ts`）：数据源与动作按实例、页面与组件或动作分派，只许调声明过的；参数只收用得上的键（`sessionId` 给会话面板，`rowKey` 给详情里的组件与行动作，`input` 给声明了输入的动作），多的、缺的回 400；`input` 按声明的字段校验并解析，没过时回 400 与 `issues`。会话面板的 `sessionId` 经会话管理（`session-manager`，可选使用）核过存在，把规范化后的 id 交给插件；会话不存在回 404，会话管理不在回 503。页面的数据源与动作要把调用者交给插件，这两条路由自己解析身份（与其余路由的 owner 闸同一判定），不是 owner 回 403。
+- **审计**：`write` 与 `destructive` 的动作每次调用记一行 info 日志「页面动作 <名>（<效果>）：<实例> 的页面 <key>，来自 <来源地址>」。结构化审计随设备分级另做。
+- **调用的结果**：数据源或处理函数抛错回 500 与原因。数据源返回的形状不对（表格行缺 `rowKey` 或重复、`visibleWhen` 指名的字段不是布尔值、图片与文件列不是存储地址、关系图的边连着不存在的节点、文字不是字符串等）、处理函数返回的不是一句话，回 500 并记告警。
+- **单元格里的图片与文件**：图片列的存储地址换成 `/api/media?uri=…`；文件列换成本插件签发的句柄（`page-files.ts`），经 `/api/page-file` 下载。句柄是「载荷.签名」：载荷是存储地址与文件名，签名是每次激活随机生成的密钥对载荷的 HMAC-SHA256，本插件重载后旧句柄失效，界面重新取数就拿到新的。哪些文件不签发与会话条目的句柄同一条规则（api-storage 的 `canIssueFileHandle`）：`data`、`pluginData` 两类根里的不签发，只给名字。会话条目的句柄由会话服务签发、绑定会话；页面的文件不属于哪个会话，会话服务也可能没启用，所以页面的句柄由本插件另设签发器。
+- **会话面板**：`GET /api/session-pages` 按会话一次算完，`applies` 并行地问，抛错、超过 2 秒或没回布尔值按不适用处理，记一条告警。
+- **invalidate**：按实例、页面、组件与会话合并，同一组一秒内最多推一次 `page.invalidate`；本插件卸载时清掉合并窗口。
+
+### 布局记录
+
+图标栏上固定的页面与会话面板的标签存在本插件的插件数据里（`pluginData:/webui-server/layout.json`，Node 宿主在家目录的 `state/plugins/webui-server/`），跟着 owner 走，换设备、换浏览器一致。不放进插件配置：保存配置会重载本插件、断开会话连接。
+
+- 按操作写（`POST /api/layout`）：固定、取消、上移、下移带 `page`（`{ op, page }`），会话面板标签的打开、关闭、上移、下移带 `tab`（`{ op, tab }`，`tab` 是宿主标签 `{ host }` 或页面）。操作排队逐个应用，每个操作落盘成功才算数，两台设备同时改各自生效；落盘失败回 500，记录不变。
+- 固定只收此刻登记着、位置为 `plugin` 的页面，打开插件标签只收位置为 `session` 的页面；其余只动记录，所属插件停用时也能改。关闭只把标签标为关、位置不动，插件标签第一次打开时追加在末尾。每个列表最多 50 条（会话面板的标签连同宿主标签算），满了回 409。
+- 文件读出时只留形状对的、不重复的条目，认不出的宿主标签一并丢掉；缺的宿主标签按宿主的顺序补在末尾、开着。内容坏了记告警，按没有记录起步，下次改动时覆盖；读不出来（权限、存储不可用）回 500，下次再读。存储服务不在时两条路由回 503。
+- 记录变了推 `layout.changed`。只有 owner 能读写：只有 owner 能登录 WebUI，在线用户能进 WebUI 时再按身份分开存。
 
 ## WebUI 会话的收件箱
 

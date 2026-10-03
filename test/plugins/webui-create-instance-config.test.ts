@@ -63,12 +63,9 @@ async function setup(register: (app: App) => Promise<unknown> = app => app.plugi
       hostConfig: refStub(bound.hostConfig.require()),
       tools: { current: undefined },
       commands: { current: undefined },
-      webui: () => undefined,
       logger,
     },
-    () => ({ platform: 'webui', userId: 'console' }),
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
-    () => undefined,
   );
   const create = (body: unknown) =>
     invoke('POST /api/plugins/:name/instances', { params: { name: 'grouped' }, body, headers: {} });

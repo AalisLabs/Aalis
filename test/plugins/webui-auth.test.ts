@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BUILTIN_THEMES, DEFAULT_THEMES } from '../../packages/api-webui/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import {
   createAuthSystem,
@@ -391,6 +392,28 @@ describe('未认证拦截', () => {
     const script = await run(auth, makeReq({ path: '/api/auth/login.js' }));
     expect(script.res.statusCode).toBe(200);
     expect(script.res.htmlBody).toContain('/api/auth/login');
+  });
+
+  it('登录页按默认主题的令牌着色，深浅跟随系统；不用卡片、不加阴影，圆角只用小档', async () => {
+    const page = await run(makeAuth(), makeReq({ path: '/' }));
+    const style = page.res.htmlBody?.match(/<style>([\s\S]*)<\/style>/)?.[1] ?? '';
+    const [darkPart, lightPart = ''] = style.split('@media (prefers-color-scheme: light)');
+    const declared = (part: string) =>
+      Object.fromEntries([...part.matchAll(/(--color-[a-z0-9-]+):([^;}]+)/g)].map(m => [m[1], m[2]]));
+    for (const [part, id] of [
+      [darkPart, DEFAULT_THEMES.dark],
+      [lightPart, DEFAULT_THEMES.light],
+    ] as const) {
+      expect(declared(part), id).toEqual(expect.objectContaining(BUILTIN_THEMES[id].colors));
+    }
+    expect(style).toContain('color-scheme:light dark');
+    // 规则里的颜色只引用令牌：去掉令牌的声明之后没有颜色字面量
+    const rules = style.replace(/--color-[a-z0-9-]+:[^;}]+;?/g, '');
+    expect(rules).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
+    expect(rules).toContain('var(--color-bg)');
+    expect(style).not.toContain('box-shadow');
+    expect(page.res.htmlBody).not.toContain('class="card"');
+    expect(new Set([...style.matchAll(/border-radius:([^;}]+)/g)].map(m => m[1]))).toEqual(new Set(['4px']));
   });
 
   it('status 端点：匿名 authed=false；token 登录后含 console 身份', async () => {

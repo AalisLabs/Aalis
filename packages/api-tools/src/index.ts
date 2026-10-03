@@ -135,14 +135,15 @@ export interface ToolExecutionResult {
 
 /**
  * 工具卡与审批卡上的展示种类，声明在工具定义上，fields 写明各项取自哪个参数（参数名）：
- * - `command`：命令与工作目录；
+ * - `command`：命令与工作目录；result 写明退出码取自结果（JSON 对象）的哪个键，退出码不为 0 时工具卡记为失败、写明退出码。
+ *   没写 result、结果不是 JSON 对象或那个键不是整数时不看退出码；
  * - `file-change`：路径，以及删、加两侧的文本（如 file_edit 的 oldText 与 newText，整份写入只有加的一侧）。
  *
- * 种类是宿主维护的封闭集合，以后按加法加。会话服务按它从参数里逐字取出各项，交给界面与审批卡；没声明或种类不认识的，
+ * 种类是宿主维护的封闭集合，以后按加法加。会话服务按它从参数与结果里取出各项，交给界面与审批卡；没声明或种类不认识的，
  * 界面走通用卡、审批卡逐字列出全部参数。
  */
 export type ToolDisplay =
-  | { kind: 'command'; fields: { command: string; cwd?: string } }
+  | { kind: 'command'; fields: { command: string; cwd?: string }; result?: { exitCode: string } }
   | { kind: 'file-change'; fields: { path: string; removed?: string; added?: string } };
 
 /**

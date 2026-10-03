@@ -50,7 +50,7 @@
 | [api-trigger](../services/trigger.md) | `trigger` 描述符（选出生效的触发插件，二选一）与触发插件共用的函数 | plugin-trigger-policy（规则判定） |
 | [api-user-relation](./api-user-relation.md) | `userRelation` 描述符（服务名 `user-relation`）+ 查询接口 `UserRelationService` | plugin-user-relation |
 | [api-vectorstore](./api-vectorstore.md) | `vectorstore` 描述符 | plugin-vectorstore-flat / plugin-vectorstore-lancedb |
-| [api-webui](./api-webui.md) | `webuiServer` / `webuiClient` 描述符 + `BoundWebui`（`registerPage` / `registerAction`） | plugin-webui-server |
+| [api-webui](./api-webui.md) | `webuiServer` / `webuiClient` 描述符 + `BoundWebui`（`definePage` / `notify`）；声明式页面、管理面事件与主题格式 | plugin-webui-server |
 
 ## 阅读顺序
 
@@ -67,7 +67,7 @@
 
 ## 约定
 
-1. **服务身份是描述符的 `name`**。例：`@aalis/api-tools` 导出 `tools`，`name` 为 `'tools'`。消费方 `uses: { tools }`，调用型接口是 `ServiceRef`（`current` / `require()` / `all()` / `follow()`）；登记型能力另有绑定门面（如 `tools.register`、`webui.registerAction`）。
+1. **服务身份是描述符的 `name`**。例：`@aalis/api-tools` 导出 `tools`，`name` 为 `'tools'`。消费方 `uses: { tools }`，调用型接口是 `ServiceRef`（`current` / `require()` / `all()` / `follow()`）；登记型能力另有绑定门面（如 `tools.register`、`webui.definePage`）。
 2. **按名仲裁**：同名多实现按「偏好 > 优先级 > 注册顺序」选胜者，可经 `services.prefer` 或 WebUI 服务页调整。领域能力（storage 的 `local-path`、LLM 的 vision / tool-calling）挂在**服务实例 / model-handle 的元数据**上，由各领域 helper 过滤（如 `resolveLLMModel(llm, ref, ['vision'])`、storage gateway 的 `resolveLocalPath`），不经 core DI、也不用按能力选服务。
 3. **事件**通过 `declare module '@aalis/core' { interface AalisEvents }` 注入；订阅者在 `uses` 里声明 `events`，用 `events.on` / `events.emit`。
 4. **钩子与贡献点**的键分别经 `declare module '@aalis/api-hooks' { interface HookContextMap }` 与 `declare module '@aalis/api-contributions' { interface ContributionPointMap }` 注入。使用方在 `uses` 里声明 `hooks` / `contributions`（描述符分别从这两个契约包导入），服务由 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，core 不内置。

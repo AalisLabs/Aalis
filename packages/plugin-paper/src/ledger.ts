@@ -235,6 +235,7 @@ export class LedgerStore {
   failure?: string;
   #writing: Promise<void> = Promise.resolve();
   #queue: Promise<unknown> = Promise.resolve();
+  readonly #listeners = new Set<() => void>();
 
   constructor(
     private readonly storage: StorageService,
@@ -279,9 +280,20 @@ export class LedgerStore {
   save(): Promise<void> {
     if (this.failure) return Promise.reject(new Error(this.failure));
     const body = JSON.stringify(this.data, null, 2);
-    const run = this.#writing.then(() => this.storage.writeFile(LEDGER_URI, body));
+    const run = this.#writing.then(async () => {
+      await this.storage.writeFile(LEDGER_URI, body);
+      for (const listener of this.#listeners) listener();
+    });
     this.#writing = run.catch(() => {});
     return run;
+  }
+
+  /** 每次落盘成功之后调 listener（白纸页重取、告警提示跟着变）；返回退订 */
+  onChange(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
   }
 
   /** 等在途的写完成 */

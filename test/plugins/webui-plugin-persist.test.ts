@@ -114,11 +114,8 @@ function world(
           source: { current: undefined },
           tools: { current: undefined },
           commands: { current: undefined },
-          webui: () => undefined,
         },
-        () => ({ platform: 'webui', userId: 'console' }),
         () => (_req: unknown, _res: unknown, next: () => void) => next(),
-        () => undefined,
       );
     },
   });

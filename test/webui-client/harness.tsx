@@ -14,6 +14,7 @@ import {
   type SessionClient,
 } from '../../packages/plugin-webui-client/src/protocol/session-client.js';
 import { type FakeHandlers, FakeWebSocket } from '../helpers/fake-websocket.js';
+import { hostTabs } from './pages.js';
 
 // 整个前端连着假的会话服务渲染：会话连接上按 handlers 自动回应，管理连接只负责推事件。
 // 用例在 beforeEach 里 FakeWebSocket.install() 并补上 jsdom 没有的东西，afterEach 里 close()
@@ -25,6 +26,7 @@ export const INIT: SessionMethodResult<'initialize'> = {
   identity: { platform: 'webui', userId: 'console' },
   surface: 'webui',
   features: { send: true, rewind: true, compress: true },
+  appName: 'Aalis',
 };
 
 export function summary(id: string, fields: Partial<SessionSummary> = {}): SessionSummary {
@@ -123,20 +125,54 @@ export interface Harness {
   close(): void;
 }
 
-/** 假的 REST：路径（含查询串）→ 回应的 JSON；登录状态与插件列表有缺省的回应，没有的路径回 404 */
+/** 一次 REST 请求：方法与按 JSON 解析的请求体 */
+export interface FakeRequest {
+  method: string;
+  body?: unknown;
+}
+
+/**
+ * 假的 REST：路径（含查询串）→ 回应的 JSON，或按请求算回应的函数（返回 Response 时原样回，可以带状态码）；
+ * 登录状态、插件列表、页面表与布局记录有缺省的回应，没有的路径回 404
+ */
 export type FakeRest = Record<string, unknown>;
 
 /** 换掉全局的 fetch，按路径回 rest 里的 JSON */
 export function stubRest(rest: FakeRest = {}): void {
-  const routes: FakeRest = { '/api/auth/status': { authed: true }, '/api/plugins': { plugins: [] }, ...rest };
+  const routes: FakeRest = {
+    '/api/auth/status': { authed: true },
+    '/api/plugins': { plugins: [] },
+    '/api/pages': { pages: [] },
+    '/api/layout': { pinned: [], panelTabs: hostTabs() },
+    ...rest,
+  };
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: string) => {
+    vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input, location.origin);
-      const body = routes[url.pathname + url.search];
-      return body === undefined ? Response.json({ error: '未知 API' }, { status: 404 }) : Response.json(body);
+      const route = routes[url.pathname + url.search];
+      if (route === undefined) return Response.json({ error: '未知 API' }, { status: 404 });
+      if (typeof route !== 'function') return Response.json(route);
+      const request: FakeRequest = {
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+      };
+      const reply = await (route as (request: FakeRequest) => unknown)(request);
+      return reply instanceof Response ? reply : Response.json(reply);
     }),
   );
+}
+
+/** 发出的 REST 请求，按先后：路径（含查询串）、方法与请求体 */
+export function restCalls(): Array<FakeRequest & { path: string }> {
+  return vi.mocked(fetch).mock.calls.map(([input, init]) => {
+    const url = new URL(String(input), location.origin);
+    return {
+      path: url.pathname + url.search,
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    };
+  });
 }
 
 /**

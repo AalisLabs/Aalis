@@ -3,7 +3,7 @@ import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
-import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   config as configService,
@@ -100,37 +100,6 @@ const configSchema = defineConfig({
 });
 type BrowserConfig = ConfigOf<typeof configSchema>;
 
-// ──────────── WebUI 页面 ────────────
-
-const webuiPages: WebuiPage[] = [
-  {
-    key: 'browser',
-    label: '浏览器',
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
-    order: 57,
-    content: [
-      {
-        type: 'table',
-        label: '打开的页面',
-        source: 'listPages',
-        columns: [
-          { key: 'id', label: 'ID' },
-          { key: 'title', label: '标题' },
-          { key: 'url', label: 'URL' },
-          { key: 'lastAccessText', label: '最后访问' },
-        ],
-        actions: [{ label: '关闭', method: 'closePage', confirm: '确定关闭该页面？' }],
-        refresh: 15,
-      },
-      {
-        type: 'actions',
-        label: '操作',
-        items: [{ label: '关闭所有页面', method: 'closeAll', confirm: '确定关闭所有页面？', danger: true }],
-      },
-    ],
-  },
-];
-
 // ──────────── 插件入口 ────────────
 
 // tools / webui-server 全部声明为 optional：登记面在提供者缺席时排队，上线后自动补挂，
@@ -163,9 +132,6 @@ function runBrowserTools(caps: Caps): void {
   const proc = createProcessGateway(caps.proc);
   const storage = createStorageGateway(caps.storage);
 
-  // 注册 WebUI 页面
-  for (const page of webuiPages) webui.registerPage(page);
-
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   let browser: any = null;
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
@@ -173,6 +139,69 @@ function runBrowserTools(caps: Caps): void {
   let gate: NetworkGate | null = null;
   const pages = new Map<string, PageSlot>();
   let pageCounter = 0;
+
+  /** 关掉一个页面；不在表里回 false */
+  async function closePage(id: string): Promise<boolean> {
+    const slot = pages.get(id);
+    if (!slot) return false;
+    try {
+      await slot.page.close();
+    } catch {}
+    pages.delete(id);
+    browserPage.invalidate();
+    return true;
+  }
+
+  // 浏览器页：打开着的页面。页面表增删、导航后标题与地址变了都让它重取
+  const browserPage = webui.definePage({
+    key: 'browser',
+    title: '浏览器',
+    icon: 'globe',
+    actions: {
+      closePage: {
+        label: '关闭',
+        effect: 'write',
+        row: true,
+        async handler({ rowKey }) {
+          if (!(await closePage(rowKey))) throw new Error(`页面 ${rowKey} 不存在`);
+          return `已关闭 ${rowKey}`;
+        },
+      },
+      closeAllPages: {
+        label: '关闭所有页面',
+        effect: 'destructive',
+        confirm: '关闭全部打开的页面？',
+        async handler() {
+          for (const id of [...pages.keys()]) await closePage(id);
+          return '已关闭全部页面';
+        },
+      },
+    },
+    content: [
+      {
+        type: 'table',
+        id: 'pages',
+        label: '打开的页面',
+        rowKey: 'id',
+        empty: '没有打开的页面',
+        columns: [
+          { key: 'id', label: 'ID' },
+          { key: 'title', label: '标题', primary: true },
+          { key: 'url', label: '地址' },
+          { key: 'lastAccess', label: '最后访问', kind: 'time' },
+        ],
+        rowActions: [{ action: 'closePage' }],
+        data: () =>
+          [...pages].map(([id, slot]) => ({
+            id,
+            title: slot.title || '（无标题）',
+            url: slot.url,
+            lastAccess: slot.lastAccess,
+          })),
+      },
+      { type: 'actions', actions: ['closeAllPages'] },
+    ],
+  });
 
   // ── 动态加载 puppeteer ──
 
@@ -220,6 +249,7 @@ function runBrowserTools(caps: Caps): void {
     // 重新启动时页面表一起清，否则列出的是已经不存在的死页面
     browser = null;
     pages.clear();
+    browserPage.invalidate();
     // 仅 blockPrivate 时起网络闸（关掉即零开销、本地全通，便于 owner 测本地）。
     // 闸先于浏览器起好，起不来就不启动浏览器：浏览器不会在没有闸的情况下运行
     const gateArgs: string[] = [];
@@ -274,6 +304,7 @@ function runBrowserTools(caps: Caps): void {
       if (browser !== instance) return;
       browser = null;
       pages.clear();
+      browserPage.invalidate();
     });
     logger.info('浏览器已启动');
     return browser;
@@ -289,6 +320,7 @@ function runBrowserTools(caps: Caps): void {
     if (browser !== instance) return;
     browser = null;
     pages.clear();
+    browserPage.invalidate();
     logger.warn(`${reason}，关闭这一代浏览器，下次调用时重新启动`);
     instance
       .close()
@@ -340,12 +372,7 @@ function runBrowserTools(caps: Caps): void {
           oldestTime = v.lastAccess;
         }
       }
-      if (oldest) {
-        try {
-          await pages.get(oldest)!.page.close();
-        } catch {}
-        pages.delete(oldest);
-      }
+      if (oldest) await closePage(oldest);
     }
 
     const b = await ensureBrowser();
@@ -355,6 +382,7 @@ function runBrowserTools(caps: Caps): void {
     const newId = `page_${++pageCounter}`;
     const slot: PageSlot = { page, url: 'about:blank', title: '', lastAccess: Date.now() };
     pages.set(newId, slot);
+    browserPage.invalidate();
     return { id: newId, slot };
   }
 
@@ -410,6 +438,7 @@ function runBrowserTools(caps: Caps): void {
         }
         slot.url = slot.page.url();
         slot.title = (await slot.page.title()).slice(0, 300); // 截断防超长 <title> 夹带注入
+        browserPage.invalidate();
         const text = await slot.page.evaluate(() => document.body?.innerText ?? '');
         return JSON.stringify({
           pageId: id,
@@ -500,6 +529,7 @@ function runBrowserTools(caps: Caps): void {
         slot.url = slot.page.url();
         slot.title = (await slot.page.title()).slice(0, 300); // 截断防超长 <title> 夹带注入
         slot.lastAccess = Date.now();
+        browserPage.invalidate();
         return JSON.stringify({ ok: true, url: slot.url, title: slot.title });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -697,48 +727,8 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
-      const id = args.pageId as string;
-      const slot = pages.get(id);
-      if (!slot) return JSON.stringify({ error: '页面不存在' });
-      try {
-        await slot.page.close();
-      } catch {}
-      pages.delete(id);
-      return JSON.stringify({ ok: true });
-    },
-  });
-
-  // ── WebUI 页面动作 ──
-
-  webui.registerAction('listPages', async () =>
-    [...pages.entries()].map(([id, slot]) => ({
-      id,
-      title: slot.title || '(无标题)',
-      url: slot.url,
-      lastAccessText: new Date(slot.lastAccess).toLocaleString('zh-CN'),
-    })),
-  );
-
-  webui.registerAction('closePage', async args => {
-    const id = args.id as string;
-    const slot = pages.get(id);
-    if (!slot) return { error: '页面不存在' };
-    try {
-      await slot.page.close();
-    } catch {}
-    pages.delete(id);
-    return { ok: true };
-  });
-
-  webui.registerAction('closeAll', async () => {
-    for (const [id, slot] of pages) {
-      try {
-        await slot.page.close();
-      } catch {}
-      pages.delete(id);
-    }
-    return { ok: true };
+    handler: async args =>
+      JSON.stringify((await closePage(args.pageId as string)) ? { ok: true } : { error: '页面不存在' }),
   });
 
   // ── 清理 ──

@@ -14,6 +14,8 @@ export interface TableColumn<Row> {
   sortValue?(row: Row): string | number;
   /** 窄时（手机、面板）仍显示的列 */
   primary?: boolean;
+  /** 数字列：右对齐、等宽数字 */
+  numeric?: boolean;
 }
 
 interface TableFilterField<Row> {
@@ -51,6 +53,12 @@ interface TableProps<Row> {
   search?(row: Row): string;
   filter?: TableFilter<Row>;
   selection?: TableSelection<Row>;
+  /** 行尾的操作，窄时也在 */
+  rowActions?(row: Row): ReactNode;
+  /** 选中看详情的行 */
+  current?: string;
+  /** 点一行（不是点在行里的控件上）选中它 */
+  onRowClick?(row: Row): void;
 }
 
 function compare(a: string | number, b: string | number): number {
@@ -58,7 +66,19 @@ function compare(a: string | number, b: string | number): number {
 }
 
 /** 表格：排序、搜索、筛选与分页都在客户端做；窄时只留标了 primary 的列 */
-export function Table<Row>({ label, rows, rowKey, columns, empty, search, filter, selection }: TableProps<Row>) {
+export function Table<Row>({
+  label,
+  rows,
+  rowKey,
+  columns,
+  empty,
+  search,
+  filter,
+  selection,
+  rowActions,
+  current,
+  onRowClick,
+}: TableProps<Row>) {
   const id = useId();
   const [sort, setSort] = useState<{ key: string; descending: boolean }>();
   const [query, setQuery] = useState('');
@@ -185,6 +205,7 @@ export function Table<Row>({ label, rows, rowKey, columns, empty, search, filter
                   scope="col"
                   data-column={column.key}
                   data-primary={column.primary || undefined}
+                  data-numeric={column.numeric || undefined}
                   aria-sort={sort?.key === column.key ? (sort.descending ? 'descending' : 'ascending') : undefined}
                 >
                   {column.sortValue ? (
@@ -209,6 +230,11 @@ export function Table<Row>({ label, rows, rowKey, columns, empty, search, filter
                   )}
                 </th>
               ))}
+              {rowActions && (
+                <th scope="col" className="table-actions">
+                  <span className="visually-hidden">操作</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -216,7 +242,20 @@ export function Table<Row>({ label, rows, rowKey, columns, empty, search, filter
               const key = rowKey(row);
               const checked = selection?.selected.has(key);
               return (
-                <tr key={key} data-selected={checked || undefined}>
+                <tr
+                  key={key}
+                  data-selected={checked || undefined}
+                  data-current={key === current || undefined}
+                  data-clickable={onRowClick ? true : undefined}
+                  onClick={
+                    onRowClick &&
+                    (event => {
+                      if (!(event.target as Element).closest('a, button, input, select, textarea, label')) {
+                        onRowClick(row);
+                      }
+                    })
+                  }
+                >
                   {selection && (
                     <td className="table-check">
                       <label>
@@ -230,16 +269,22 @@ export function Table<Row>({ label, rows, rowKey, columns, empty, search, filter
                     </td>
                   )}
                   {columns.map(column => (
-                    <td key={column.key} data-column={column.key} data-primary={column.primary || undefined}>
+                    <td
+                      key={column.key}
+                      data-column={column.key}
+                      data-primary={column.primary || undefined}
+                      data-numeric={column.numeric || undefined}
+                    >
                       {column.render(row)}
                     </td>
                   ))}
+                  {rowActions && <td className="table-actions">{rowActions(row)}</td>}
                 </tr>
               );
             })}
             {visible.length === 0 && (
               <tr>
-                <td className="table-empty" colSpan={columns.length + (selection ? 1 : 0)}>
+                <td className="table-empty" colSpan={columns.length + (selection ? 1 : 0) + (rowActions ? 1 : 0)}>
                   {rows.length === 0 ? (
                     empty
                   ) : (
