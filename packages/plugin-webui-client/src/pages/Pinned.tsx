@@ -66,7 +66,7 @@ export function PinnedList() {
       {error && (
         <p className="session-list-note" role="alert">
           没取到：{error.message}
-          <Button variant="text" size="sm" onClick={retry}>
+          <Button variant="text" onClick={retry}>
             重试
           </Button>
         </p>

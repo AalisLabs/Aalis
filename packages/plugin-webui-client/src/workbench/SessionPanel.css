@@ -66,7 +66,7 @@
 
 .settings-advanced > .disclosure {
   align-self: flex-start;
-  min-height: var(--control-sm);
+  min-height: var(--hit);
   padding: 0 var(--space-1);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);

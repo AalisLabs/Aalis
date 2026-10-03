@@ -109,7 +109,7 @@ function ListError({ error, retry }: { error: Error; retry(): void }) {
   return (
     <p className="session-list-note" role="alert">
       {error.message}
-      <Button variant="text" size="sm" onClick={retry}>
+      <Button variant="text" onClick={retry}>
         重试
       </Button>
     </p>

@@ -117,7 +117,7 @@ export function SettingRow({ row, save }: { row: Row; save: Save }) {
           </button>
         )}
         {row.value !== undefined && (
-          <Button variant="text" size="sm" disabled={busy} onClick={() => commit(() => null)}>
+          <Button variant="text" disabled={busy} onClick={() => commit(() => null)}>
             恢复继承
           </Button>
         )}
@@ -230,7 +230,7 @@ function MultiEditor({ row, fieldOptions: { options, error }, busy, onCommit, on
         />
       )}
       {error && <p className="setting-row-description">可选项没取到：{error.message}</p>}
-      <Button variant="text" size="sm" onClick={onClose}>
+      <Button variant="text" onClick={onClose}>
         完成
       </Button>
     </fieldset>

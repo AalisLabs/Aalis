@@ -220,7 +220,8 @@ async function scaffolded(): Promise<PluginDefinition> {
 }
 
 /**
- * 插件前端的测试插件：探针页（连上后把连接挂在 window.frame 上）与一个 destructive 动作、不用助手的页、会话面板
+ * 插件前端的测试插件：探针页（连上后把连接挂在 window.frame 上）与一个 destructive 动作、引用样式基线的控件页（同一个
+ * 探针脚本，另有两个被插件自己整个重置掉的按钮）、不用助手的页、会话面板
  * （申请读会话与停回合，写出挂在哪个会话上、记下会话的增量），另有一个仿冒宿主的页（挂着一张图，中转扣住它的请求，
  * 页面的 load 就不会来）。插件包搭在临时目录里，页面的 module 指向包里
  */
@@ -233,6 +234,10 @@ const FRAME_FILES: Record<string, string> = {
 window.frame = await connect();
 document.querySelector('#ready').textContent = '已连上';
 `,
+  'controls.html': `<!doctype html><meta charset="utf-8"><title>控件</title>
+<link rel="stylesheet" href="/frames/_base/frame.css"><style>.icon { all: unset; cursor: pointer }</style>
+<script type="module" src="probe.js"></script><h1>条目</h1><p id="ready"></p><input aria-label="名称"> <button>添加</button>
+<ul><li>甲 <button class="icon" aria-label="移除甲">×</button></li><li>乙 <button class="icon" aria-label="移除乙">×</button></li></ul>`,
   'raw.html': '<!doctype html><meta charset="utf-8"><title>不用助手</title><p>不用助手的页面</p>',
   'away.html': '<!doctype html><meta charset="utf-8"><title>登录已过期</title><p>请输入 token</p><img src="never.png">',
   'roster.html': `<!doctype html><meta charset="utf-8"><title>子会话</title>
@@ -273,6 +278,7 @@ function framesPlugin(): PluginDefinition {
           },
         },
       });
+      webui.definePage({ key: 'controls', title: '控件', frame: { module, entry: 'controls.html' } });
       webui.definePage({ key: 'raw', title: '不用助手', frame: { module, entry: 'raw.html' } });
       webui.definePage({
         key: 'roster',
@@ -1580,6 +1586,243 @@ describe('顶部横线与两侧分隔', () => {
     expect(await separators(page)).toEqual([]);
     expect(problems).toEqual([]);
   }, 60_000);
+});
+
+describe('控件与文字的比例', () => {
+  /** 平板：触屏，有图标栏，左栏与右侧面板是抽屉 */
+  const tablet: Viewport = { width: 820, height: 1180, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
+
+  /** 按钮看得见的高（画出底色的部分：底色只画到边框以内时不算边框）、字重与左内边距 */
+  const looks = (scope: Page | Frame, selector: string) =>
+    scope.$eval(selector, element => {
+      const style = getComputedStyle(element);
+      const clipped = style.backgroundClip === 'padding-box';
+      return {
+        height: clipped ? element.clientHeight : element.getBoundingClientRect().height,
+        weight: style.fontWeight,
+        padding: style.paddingLeft,
+      };
+    });
+
+  /** 宿主的输入框与次要、主要按钮：从会话头的「更多」打开改名框量，量完关上 */
+  async function hostControls(page: Page) {
+    const dialog = aria('改名', 'dialog');
+    await page.locator(`main ${aria('更多', 'button')}`).click();
+    await page.locator(aria('改名', 'menuitem')).click();
+    await page.waitForSelector(dialog);
+    const input = await page.$eval(`${dialog} ${aria('会话名', 'textbox')}`, element => {
+      return element.getBoundingClientRect().height;
+    });
+    const secondary = await looks(page, `${dialog} ${aria('取消', 'button')}`);
+    const primary = await looks(page, `${dialog} ${aria('保存', 'button')}`);
+    await page.locator(`${dialog} ${aria('取消', 'button')}`).click();
+    await page.waitForSelector(dialog, { hidden: true });
+    return { input, secondary, primary };
+  }
+
+  /** 脚手架生成的插件前端：临时加进去的一个输入框（页面里本来没有）的高，与第一条的「删除」 */
+  async function frameControls(frame: Frame) {
+    const input = await frame.evaluate(() => {
+      const input = document.body.appendChild(document.createElement('input'));
+      const height = input.getBoundingClientRect().height;
+      input.remove();
+      return height;
+    });
+    return { input, secondary: await looks(frame, 'li button') };
+  }
+
+  /**
+   * 触屏上量一个文档，开着模态框时只量框里。看得见的可点元素的点按范围是框与绝对定位的 ::before 取大，复选框取它所在
+   * 的 label；记下不到 44×44 的、::before 大过 44 见方与框之大者（没贴在元素上）的，以及在点按范围四边内侧各取一点、
+   * 命中的不是元素自己或它的后代（被别的元素压住）的。另回 filled 选中的有底色的按钮看得见的高（量法同 looks）
+   */
+  const touchTargets = (scope: Page | Frame, filled: string) =>
+    scope.evaluate((filled: string) => {
+      const root = document.querySelector('dialog:modal') ?? document;
+      const shown = (element: Element) =>
+        element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
+      const named = (element: Element) =>
+        `${element.tagName.toLowerCase()}「${(element.getAttribute('aria-label') ?? element.textContent ?? '').trim().slice(0, 16)}」`;
+      const faults = [...root.querySelectorAll('button, a[href], input, select, textarea')]
+        .filter(shown)
+        .flatMap(element => {
+          const target = element.matches('[type="checkbox"], [type="radio"]')
+            ? (element.closest('label') ?? element)
+            : element;
+          target.scrollIntoView({ block: 'center', inline: 'center' });
+          const box = target.getBoundingClientRect();
+          const before = getComputedStyle(target, '::before');
+          const reach = before.position === 'absolute' && before.content !== 'none';
+          const width = Math.max(box.width, reach ? Number.parseFloat(before.width) : 0);
+          const height = Math.max(box.height, reach ? Number.parseFloat(before.height) : 0);
+          const size = `${Math.round(width)}×${Math.round(height)}`;
+          if (Math.round(width) < 44 || Math.round(height) < 44) return [`${named(element)}${size}`];
+          if (width > Math.max(box.width, 44) + 1 || height > Math.max(box.height, 44) + 1) {
+            return [`${named(element)}的 ::before ${size}`];
+          }
+          // 四边往里 1 像素取整数坐标，不到 1 像素的重叠不计
+          const x = box.left + box.width / 2;
+          const y = box.top + box.height / 2;
+          const w = Math.max(box.width, 44) / 2;
+          const h = Math.max(box.height, 44) / 2;
+          const sides: Array<[string, number, number]> = [
+            ['上', x, Math.ceil(y - h) + 1],
+            ['下', x, Math.floor(y + h) - 1],
+            ['左', Math.ceil(x - w) + 1, y],
+            ['右', Math.floor(x + w) - 1, y],
+          ];
+          // 选中的标签紧挨着它的关闭按钮，右侧被关闭按钮压住：选中的标签不用再点
+          const closer = target.matches('[role="tab"][aria-selected="true"]') ? target.nextElementSibling : null;
+          return sides.flatMap(([side, px, py]) => {
+            const hit = document.elementFromPoint(px, py);
+            if (hit && (target.contains(hit) || (side === '右' && closer?.contains(hit)))) return [];
+            return [`${named(element)}的${side}侧被${hit ? named(hit) : '视口外'}压住`];
+          });
+        });
+      const heights = [...root.querySelectorAll(filled)]
+        .filter(shown)
+        .map(element =>
+          getComputedStyle(element).backgroundClip === 'padding-box'
+            ? element.clientHeight
+            : element.getBoundingClientRect().height,
+        );
+      return { faults, heights };
+    }, filled);
+
+  it('桌面：按钮、图标按钮、输入框与选择框都是 28 像素高，左栏头部、输入框区、审批卡与改名框里同一处同高，带开关的设置行不被开关撑高；有底色的按钮字重常规，文字按钮中等；插件前端的按钮、输入框与宿主的次要按钮、输入框一样', async () => {
+    const stack = await startStack({}, [await scaffolded()]);
+    const { page, problems } = await openPage(stack, VIEWPORTS.desktop);
+    const box = await page.waitForSelector(aria('消息', 'textbox'));
+    await box?.type('部署一下');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector(aria('审批', 'region'));
+    await page.waitForSelector(aria('设置', 'tab'));
+    const heights = (selector: string) =>
+      page.$$eval(selector, elements => elements.map(element => element.getBoundingClientRect().height));
+    expect(await heights('.session-list-header > :is(.button, .icon-button)')).toEqual([28, 28]);
+    expect(await heights('.composer-bar > :is(.icon-button, .composer-setting, .button)')).toEqual([28, 28, 28]);
+    const approve = await looks(page, aria('批准', 'button'));
+    const reject = await looks(page, aria('拒绝', 'button'));
+    expect([approve.height, approve.weight, reject.height, reject.weight]).toEqual([28, '400', 28, '500']);
+    const host = await hostControls(page);
+    expect([
+      host.input,
+      host.secondary.height,
+      host.secondary.weight,
+      host.primary.height,
+      host.primary.weight,
+    ]).toEqual([28, 28, '400', 28, '400']);
+
+    // 带开关的一行与只有一行字的行同高：行高只由字与上下内边距定
+    await page.locator(aria('设置', 'tab')).click();
+    const toggled = await page.waitForSelector('.setting-row-main:has(.toggle)');
+    expect(
+      await toggled?.evaluate(row => {
+        const style = getComputedStyle(row);
+        const label = (row.querySelector('.setting-row-label') as Element).getBoundingClientRect().height;
+        return [
+          row.getBoundingClientRect().height,
+          label + Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom),
+        ];
+      }),
+    ).toEqual([36, 36]);
+
+    await page.goto(`${stack.origin}${pagePath(SCAFFOLD, SCAFFOLD)}`);
+    const frame = await frameIn(page);
+    await frame.waitForFunction(() => document.querySelectorAll('li').length === 3);
+    expect(await frameControls(frame)).toEqual({ input: host.input, secondary: host.secondary });
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('触屏：会话页（审批等着）、会话设置、房间表（选中一行）、计划任务、插件前端与它的两种确认框、平板的首页里，看得见的可点元素点按范围都不小于 44×44、贴在元素上、不被别的元素压住，有底色的按钮看得见的比点按范围矮；插件前端的按钮、输入框与宿主的次要按钮、输入框一样，插件自己整个重置掉的按钮不挡住页面别处', async () => {
+    const stack = await startStack({}, [cronEnginePlugin, schedulerPlugin, await scaffolded(), framesPlugin()]);
+    await stack.app.bind({ sessionManager }).sessionManager.require().ensureSession('onebot:10000:group:20001', {
+      name: '读书会',
+    });
+    const { page, problems } = await openPage(stack, VIEWPORTS.phone);
+    const faults: Record<string, string[]> = {};
+    const filled: number[] = [];
+    async function audit(where: string, scope: Page | Frame = page, selector = '.button:not([data-variant="text"])') {
+      const found = await touchTargets(scope, selector);
+      faults[where] = found.faults;
+      filled.push(...found.heights);
+    }
+
+    await page.locator(aria('新会话', 'button')).click();
+    await (await page.waitForSelector(aria('消息', 'textbox')))?.type('部署一下');
+    await page.locator(aria('发送', 'button')).click();
+    await page.waitForSelector(aria('审批', 'region'));
+    await audit('会话页');
+    const host = await hostControls(page);
+    await page.locator(`main ${aria('更多', 'button')}`).click();
+    await page.locator(aria('会话面板', 'menuitem')).click();
+    await page.waitForSelector('.setting-row');
+    await audit('会话设置');
+
+    await page.goto(`${stack.origin}/rooms?platform=onebot`);
+    await page.waitForSelector(`td[data-column="name"] ${text('读书会')}`);
+    await page.locator('tbody .table-check label').click();
+    await page.waitForSelector('.table-batch');
+    await audit('房间表');
+
+    await page.goto(`${stack.origin}${pagePath(schedulerPlugin.name, 'scheduler')}`);
+    await page.waitForSelector(text('还没有计划任务'));
+    await audit('计划任务');
+
+    await page.goto(`${stack.origin}${pagePath(SCAFFOLD, SCAFFOLD)}`);
+    const frame = await frameIn(page);
+    await frame.waitForFunction(() => document.querySelectorAll('li').length === 3);
+    await audit('插件前端', frame, 'button');
+    // 悬停着量：悬停换了底色，仍只画到边框以内
+    await frame.hover('li button');
+    expect(await frameControls(frame)).toEqual({ input: host.input, secondary: host.secondary });
+    await frame.locator('li:first-child button').click();
+    await page.waitForSelector(aria('删除？', 'dialog'));
+    await audit('插件前端的确认框');
+    await page.locator(`${aria('删除？', 'dialog')} ${aria('取消', 'button')}`).click();
+
+    // 插件把按钮整个重置掉（all: unset）：页面别处点到的仍是各自的元素
+    await page.goto(`${stack.origin}${pagePath(FRAMES, 'controls')}`);
+    const controls = await frameIn(page);
+    await controls.waitForFunction(() => document.querySelector('#ready')?.textContent === '已连上');
+    expect(
+      await controls.evaluate(() =>
+        [...document.querySelectorAll('h1, p, input, button:not(.icon), li')].flatMap(element => {
+          const box = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          return hit === element ? [] : [`${element.tagName.toLowerCase()}被${hit?.getAttribute('aria-label')}挡住`];
+        }),
+      ),
+    ).toEqual([]);
+    const opening = controls.evaluate(() =>
+      (window as unknown as FrameWindow).frame.open({ url: 'https://example.invalid/' }).then(
+        () => '打开了',
+        (error: { code: string }) => error.code,
+      ),
+    );
+    await page.waitForSelector(aria('打开外部链接？', 'dialog'));
+    await audit('插件前端的外链确认框');
+    await page.locator(`${aria('打开外部链接？', 'dialog')} ${aria('取消', 'button')}`).click();
+    expect(await opening).toBe('cancelled');
+
+    const other = await openPage(stack, tablet);
+    await other.page.waitForSelector(aria('消息', 'textbox'));
+    await audit('平板', other.page);
+
+    expect(faults).toEqual({
+      会话页: [],
+      会话设置: [],
+      房间表: [],
+      计划任务: [],
+      插件前端: [],
+      插件前端的确认框: [],
+      插件前端的外链确认框: [],
+      平板: [],
+    });
+    expect(filled.length).toBeGreaterThan(0);
+    expect(filled.filter(height => height >= 44)).toEqual([]);
+    expect([...problems, ...other.problems]).toEqual([]);
+  }, 90_000);
 });
 
 describe('文档与主题', () => {

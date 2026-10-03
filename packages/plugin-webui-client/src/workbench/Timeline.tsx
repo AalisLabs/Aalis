@@ -114,7 +114,6 @@ function Earlier({ load }: { load(): Promise<void> }) {
     <div className="timeline-earlier">
       <Button
         variant="text"
-        size="sm"
         busy={busy}
         onClick={() => {
           setBusy(true);
@@ -322,7 +321,6 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
       </div>
       {continuable && features.send && (
         <Button
-          size="sm"
           busy={busy}
           onClick={() => {
             setBusy(true);

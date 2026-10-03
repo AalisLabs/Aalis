@@ -147,7 +147,6 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                   actions: keys => (
                     <>
                       <Button
-                        size="sm"
                         onClick={() => {
                           actions.archive(rowsOf(keys));
                           setSelected(new Set());
@@ -155,7 +154,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                       >
                         归档
                       </Button>
-                      <Button size="sm" variant="text" danger onClick={() => actions.remove(rowsOf(keys))}>
+                      <Button variant="text" danger onClick={() => actions.remove(rowsOf(keys))}>
                         删除
                       </Button>
                     </>

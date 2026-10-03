@@ -86,7 +86,6 @@ function ToastItem({ toast, paused, onDismiss }: ToastItemProps) {
       {toast.action && (
         <Button
           variant="text"
-          size="sm"
           onClick={() => {
             toast.action?.run();
             onDismiss(toast.id);

@@ -73,19 +73,14 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: var(--control-sm);
-  height: var(--control-sm);
+  width: var(--hit);
+  height: var(--hit);
   margin-left: calc(-1 * var(--space-3));
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   color: var(--color-text-2);
   background: none;
-}
-
-.panel-back .lucide {
-  width: var(--icon-md);
-  height: var(--icon-md);
 }
 
 @media (max-width: 47.99em) {
