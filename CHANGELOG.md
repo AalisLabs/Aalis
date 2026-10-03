@@ -530,6 +530,15 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **破坏性**：api-webui 的 `PageView` 与 `PageDefinition` 改为声明式与插件前端两种的联合，读 `content` 前要先按 `frame` 区分；`definePage` 多一个泛型参数。第三方前端照 [api-webui](docs/api/api-webui.md) 的「插件前端」一节实现框架挂载与转发，不实现的显示占位即可。
 - **发布档位**：次版本：api-webui（实验性）、plugin-webui-server、plugin-webui-client、create-aalis-plugin。
 
+### 控件与文字的比例（@aalis/plugin-webui-client、@aalis/api-webui）
+
+按钮等控件按所在文字的比例重新定尺寸，一行文字旁的按钮不再比文字重太多。
+
+- **桌面**：按钮、图标按钮、输入框与选择框统一 28px 高，同一处的控件同高；有底色的按钮字重改为常规，文字按钮保留中粗。
+- **触屏**：有底色的按钮看得见 36px，所有可点元素的点按范围不小于 44px，由伪元素补足，不把按钮画大；设置行同高；手机顶栏图标统一 16px。
+- **插件前端样式基线**（`/frames/_base/frame.css`）：按钮与输入框跟宿主一致（28px 高、字重常规）；触屏上按钮外面一圈透明边框补到 44px，占排版位置，列表里相邻两行的点按范围不重叠；输入框与选择框触屏 44px 高、字号 16px。插件改写按钮的边框，或用简写 `background` 换底色时，触屏上底色会铺满 44px。
+- **发布档位**：plugin-webui-client、api-webui 随本批的次版本，不另计。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
