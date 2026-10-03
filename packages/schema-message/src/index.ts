@@ -523,7 +523,7 @@ export const CONTROL_KINDS: ReadonlyArray<string> = [WellKnownKinds.EventMarker]
 
 /**
  * 宿主或系统撰写、不是任何人发言的指令类 kind。
- * - 归档消息的 kind 属于它：抽取（用户事实、自反思、指令、关系）与记忆扩窗一律跳过；
+ * - 归档消息的 kind 属于它：抽取（用户事实、指令、关系）与记忆扩窗一律跳过；
  * - 请求期消息的 metadata.injector 属于它：是本轮的指令块（turn-context、turn-hint 落在它之前；DeepSeek 不把它改成 user）。
  */
 export const DIRECTIVE_KINDS: ReadonlyArray<string> = [

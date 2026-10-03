@@ -135,7 +135,6 @@ async function setup(config: Record<string, unknown>, history: Message[] = []) {
   host.provide(memory, mem as unknown as MemoryService);
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
-    enableSelfProfile: false,
     enableInstructions: false,
     ...config,
   });

@@ -403,7 +403,6 @@ async function setupProfile(config: Record<string, unknown>, opts: { withArchive
   await app.plugins.idle();
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
-    enableSelfProfile: false,
     enableInstructions: false,
     ...config,
   });
@@ -430,18 +429,11 @@ async function setupProfile(config: Record<string, unknown>, opts: { withArchive
   return { app, host, mem, requests, seedAndTrigger };
 }
 
-describe('user-profile：宿主通知不进三处抽取窗口', () => {
+describe('user-profile：宿主通知不进两处抽取窗口', () => {
   it('安全：用户事实抽取的输入不含通知正文', async () => {
     const { seedAndTrigger } = await setupProfile({ extractEveryNMessages: 1 });
     const input = await seedAndTrigger();
     expect(input).toContain('我喜欢猫');
-    expect(input).not.toContain('HOST-NOTICE-BODY');
-  });
-
-  it('安全：自反思的输入不含通知正文', async () => {
-    const { seedAndTrigger } = await setupProfile({ enableSelfProfile: true, selfReflectEveryNMessages: 1 });
-    const input = await seedAndTrigger();
-    expect(input).toContain('猫很可爱');
     expect(input).not.toContain('HOST-NOTICE-BODY');
   });
 
@@ -453,10 +445,7 @@ describe('user-profile：宿主通知不进三处抽取窗口', () => {
   });
 
   it('不带 userId 的宿主通知归档后不写档案、不改关系分', async () => {
-    const { host, mem, requests } = await setupProfile(
-      { extractEveryNMessages: 1, enableSelfProfile: true, selfReflectEveryNMessages: 1 },
-      { withArchive: true },
-    );
+    const { host, mem, requests } = await setupProfile({ extractEveryNMessages: 1 }, { withArchive: true });
     await host.messageArchive.require().archiveIncoming(hostNoticeIncoming());
     await new Promise(r => setTimeout(r, 30));
     expect(await mem.listMetadata('user:profile')).toEqual([]);
