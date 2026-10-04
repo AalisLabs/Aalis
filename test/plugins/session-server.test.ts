@@ -83,6 +83,7 @@ const EXTRA: SessionSetting = {
   appliesTo: ALL,
   prominence: 'composer',
   order: 5,
+  unset: '<不追加>',
 };
 /** 只对 owner 的会话 */
 const JSON_RENDERING: SessionSetting = {
@@ -781,6 +782,9 @@ describe('会话设置', () => {
     ]);
     expect(old.items[0].field).toEqual(MODEL_FIRST.field);
     expect(old.items.filter(r => r.dependsOn !== undefined).map(r => [r.key, r.dependsOn])).toEqual([['think', 'llm']]);
+    expect(old.items.filter(r => r.unset !== undefined).map(r => [r.key, r.unset])).toEqual([
+      ['systemPromptExtra', '<不追加>'],
+    ]);
     expect(values(old.items)).toEqual([
       ['llm', undefined, undefined, undefined],
       ['think', 'high', 'high', 'session'],

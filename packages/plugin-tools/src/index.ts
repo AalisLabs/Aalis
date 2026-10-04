@@ -23,6 +23,7 @@ export default definePlugin({
       appliesTo: ['owner', 'room', 'task'],
       prominence: 'common',
       order: 30,
+      unset: '只给不属于任何分组的工具',
     });
     provide(tools, new ToolRegistry(logger));
   },

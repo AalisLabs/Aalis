@@ -15,6 +15,7 @@ import puppeteer, {
   type Viewport,
 } from 'puppeteer';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { approvals } from '../../packages/api-approval/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import type { TodoItem } from '../../packages/api-todo-list/src/index.js';
@@ -34,6 +35,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
+import { setupFileLogger } from '../../packages/runtime/src/file-logger.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -188,6 +190,20 @@ const probePages = definePlugin({
             { id: '2', message: '整理周报', state: { text: LONG_FAILURE, state: 'error' } },
           ],
         },
+        {
+          type: 'table',
+          id: 'counts',
+          label: '次数',
+          rowKey: 'id',
+          columns: [
+            { key: 'name', label: '名称', primary: true },
+            { key: 'count', label: '次数', primary: true },
+          ],
+          data: () => [
+            { id: '1', name: '整理', count: 1200 },
+            { id: '2', name: '归档', count: 3.5 },
+          ],
+        },
       ],
     });
     webui.definePage({
@@ -219,6 +235,24 @@ const needsConfig = definePlugin({
   uses: { config },
   apply({ config: value }) {
     if (!value.endpoint) throw new Error('缺少服务地址');
+  },
+});
+
+/** 发一条提示的插件：跳到它的「作品审核」页 */
+const NOTICE_PROBE = 'zz-e2e-notice';
+const noticeProbe = definePlugin({
+  name: NOTICE_PROBE,
+  displayName: '提示的探针',
+  uses: { webui: webuiServer },
+  apply({ webui }) {
+    webui.definePage({ key: 'queue', title: '作品审核', content: [{ type: 'markdown', id: 'note', data: () => '' }] });
+    webui.notify({
+      id: 'pending',
+      level: 'action',
+      title: '2 件作品待裁决',
+      detail: '最早的一件已等 3 天',
+      open: { page: 'queue' },
+    });
   },
 });
 
@@ -389,12 +423,14 @@ afterEach(async () => {
 
 /**
  * 浏览器与 webui-server 之间的中转：cut() 切断现有的全部连接，之后的新连接照常转发；heard(text) 看浏览器发给服务端的
- * 字节里有没有出现过 text；hold(text) 之后，发出带 text 的请求的那条连接不再往服务端转，这个请求一直等不到回应
+ * 字节里有没有出现过 text；hold(text) 之后，发出带 text 的请求的那条连接不再往服务端转，这个请求一直等不到回应；
+ * misroute(host) 之后，WebSocket 升级请求的 Host 换成 host（像没转发原始 Host 的反向代理），给 undefined 恢复
  */
 async function relay(target: number) {
   const sockets = new Set<Socket>();
   const held: string[] = [];
   let sent = '';
+  let upgradeHost: string | undefined;
   const server = createServer(inbound => {
     const outbound = connect(target, '127.0.0.1');
     for (const socket of [inbound, outbound]) {
@@ -408,7 +444,10 @@ async function relay(target: number) {
       const text = chunk.toString('latin1');
       sent += text;
       holding ||= held.some(marker => text.includes(marker));
-      if (!holding) outbound.write(chunk);
+      if (holding) return;
+      if (upgradeHost !== undefined && /\r\nupgrade: websocket/i.test(text)) {
+        outbound.write(Buffer.from(text.replace(/\r\nhost: [^\r]*/i, `\r\nHost: ${upgradeHost}`), 'latin1'));
+      } else outbound.write(chunk);
     });
     inbound.on('end', () => outbound.end());
     outbound.pipe(inbound);
@@ -422,6 +461,9 @@ async function relay(target: number) {
     cut,
     heard: (text: string) => sent.includes(text),
     hold: (text: string) => void held.push(text),
+    misroute: (host: string | undefined) => {
+      upgradeHost = host;
+    },
     close: () =>
       new Promise<void>(resolve => {
         cut();
@@ -430,15 +472,20 @@ async function relay(target: number) {
   };
 }
 
-/** 起运行时：minimal 档的插件、内存记忆、假模型与 webui-server，再加一个需要批准的探针工具；extra 是另加的插件 */
+/**
+ * 起运行时：minimal 档的插件、内存记忆、假模型与 webui-server，再加一个需要批准的探针工具；extra 是另加的插件。
+ * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它
+ */
 async function startStack(replies: Record<string, string> = {}, extra: PluginDefinition[] = []) {
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
-  const { app } = hostedApp();
+  const { app } = hostedApp({ logLevel: 'info' });
   cleanups.push(async () => {
     await app.stop();
     rmSync(home, { recursive: true, force: true });
   });
-  provideHostPaths(app, home);
+  const { logs } = provideHostPaths(app, home);
+  const fileLog = await setupFileLogger(join(logs, 'latest.log'));
+  cleanups.push(() => fileLog.dispose());
   app.bind({ provide }).provide(webuiClient, { getClientDir: () => clientDir });
   const minimal = await Promise.all(
     MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
@@ -485,7 +532,15 @@ async function startStack(replies: Record<string, string> = {}, extra: PluginDef
   await waitListening(port);
   const proxy = await relay(port);
   cleanups.push(proxy.close);
-  return { origin: `http://127.0.0.1:${proxy.port}`, cut: proxy.cut, heard: proxy.heard, hold: proxy.hold, runs, app };
+  return {
+    origin: `http://127.0.0.1:${proxy.port}`,
+    cut: proxy.cut,
+    heard: proxy.heard,
+    hold: proxy.hold,
+    misroute: proxy.misroute,
+    runs,
+    app,
+  };
 }
 
 type Stack = Awaited<ReturnType<typeof startStack>>;
@@ -614,7 +669,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('代码块的复制按钮：桌面上悬停才出现，代码照常从内边距开始；触屏上常显，不压住第一行代码', async () => {
+  it('代码块的复制按钮与语言名在代码上方一条细的标题行里，桌面与触屏一样常显、不压住第一行代码；触屏上按钮的点按范围不小于 44', async () => {
     const stack = await startStack({
       代码: '```sh\nnpm run build --workspace packages/plugin-webui-client --if-present\nnpm test\n```',
     });
@@ -623,36 +678,49 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await send(page, '代码');
     const block = await page.waitForSelector('.message[data-from="agent"] .markdown-code');
     await page.waitForSelector('::-p-aria(正在输出)', { hidden: true });
-    /** 复制按钮的可见性与上下边，第一行代码的上下边（pre 内容区的顶上一行，长行横向铺满内容区） */
-    const measure = () =>
-      block?.evaluate(element => {
-        const button = element.querySelector('button') as HTMLElement;
+    /**
+     * 标题行的字与高、复制按钮的可见性与上下边、第一行代码的上下边；点按范围按真的命中算：以按钮中心为心、reach 见方的
+     * 四边往里 1 像素取点，命中的都要是按钮（被祖先裁掉的点不算），写出没命中的边
+     */
+    const measured = await block?.evaluate(
+      (element, reach) => {
+        const head = element.querySelector('.markdown-code-head') as HTMLElement;
+        const button = head.querySelector('button') as HTMLElement;
         const pre = element.querySelector('pre') as HTMLElement;
+        button.scrollIntoView({ block: 'center' });
         const style = getComputedStyle(pre);
         const top = pre.getBoundingClientRect().top + Number.parseFloat(style.paddingTop);
-        const { top: buttonTop, bottom: buttonBottom } = button.getBoundingClientRect();
+        const box = button.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        const half = reach / 2;
+        const sides: Array<[string, number, number]> = [
+          ['上', x, Math.ceil(y - half) + 1],
+          ['下', x, Math.floor(y + half) - 1],
+          ['左', Math.ceil(x - half) + 1, y],
+          ['右', Math.floor(x + half) - 1, y],
+        ];
         return {
+          language: head.textContent,
+          head: head.getBoundingClientRect().height,
           visible: getComputedStyle(button).visibility === 'visible',
           label: button.getAttribute('aria-label'),
-          paddingTop: style.paddingTop,
-          button: [buttonTop, buttonBottom],
-          line: [top, top + Number.parseFloat(style.lineHeight)],
+          clear: box.bottom <= top,
+          missed: sides
+            .filter(([, px, py]) => !button.contains(document.elementFromPoint(px, py)))
+            .map(([side]) => side),
         };
-      });
-    if (phone) {
-      const shown = await measure();
-      expect(shown).toMatchObject({ visible: true, label: '复制代码' });
-      const [buttonTop, buttonBottom] = shown?.button ?? [];
-      const [lineTop, lineBottom] = shown?.line ?? [];
-      expect(
-        (buttonBottom as number) <= (lineTop as number) || (buttonTop as number) >= (lineBottom as number),
-        `按钮 ${shown?.button} 压住了第一行 ${shown?.line}`,
-      ).toBe(true);
-    } else {
-      expect(await measure()).toMatchObject({ visible: false, paddingTop: '12px' });
-      await block?.hover();
-      expect(await measure()).toMatchObject({ visible: true, label: '复制代码', paddingTop: '12px' });
-    }
+      },
+      phone ? 44 : 28,
+    );
+    expect(measured).toMatchObject({
+      language: 'sh',
+      head: 28,
+      visible: true,
+      label: '复制代码',
+      clear: true,
+      missed: [],
+    });
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -772,12 +840,31 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('最少插件组合：没有计划标签、回滚、压缩与压缩线，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面）、右侧面板没有「+」，也没有空着的区域与框架', async () => {
+  it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有应用名，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架', async () => {
     const stack = await startStack({ 你好: '好的。' });
     const { page, problems } = await openPage(stack, viewport);
     await page.waitForNetworkIdle({ idleTime: 300 });
-    if (phone) expect(await page.$$(aria('固定的页面', 'list'))).toHaveLength(0);
-    else expect(await railNames(page)).toEqual(['会话', '插件', '设置']);
+    // 应用名是宿主配置的 name；列表为空也就没有 MCP 的提示
+    await page.waitForFunction(() => document.title === 'T');
+    expect(await page.$$(aria('需要处理', 'region'))).toHaveLength(0);
+    const attention = await fetch(`${stack.origin}/api/attention`, {
+      headers: { Cookie: `aalis_webui_token=${TOKEN}` },
+    });
+    expect(await attention.json()).toEqual({ items: [] });
+    const pages = await fetch(`${stack.origin}/api/pages`, { headers: { Cookie: `aalis_webui_token=${TOKEN}` } });
+    const { pages: list } = (await pages.json()) as { pages: Array<{ title: string }> };
+    expect(list.map(entry => entry.title)).not.toContain('用量统计');
+    if (phone) {
+      expect(await page.$$(aria('固定的页面', 'list'))).toHaveLength(0);
+      expect(await page.$$eval('[aria-label="入口"] a', links => links.map(link => link.textContent))).toEqual([
+        '运行状况',
+        '插件',
+        '设置',
+      ]);
+    } else {
+      expect(await railNames(page)).toEqual(['会话', '运行状况', '插件', '设置']);
+      expect(await page.$$('.shell-rail .badge')).toHaveLength(0);
+    }
     await newSession(page);
     await send(page, '你好');
     const sessionId = await sessionIdOf(page);
@@ -794,9 +881,13 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       await meter?.evaluate(element => [element.getAttribute('title'), element.hasAttribute('data-tone')]),
     ).toEqual([expect.stringMatching(/^上下文已用 \d+%$/), false]);
 
+    // 分项的行名由对话代理产出、随用量条目给出
+    const usageRows = () =>
+      page.$$eval('[aria-label="上下文用量"] th[scope="row"]', cells => cells.map(cell => cell.textContent));
     if (phone) {
       await meter?.click();
       await page.waitForSelector(aria('上下文用量', 'table'));
+      expect(await usageRows()).toEqual(expect.arrayContaining(['已用', '历史消息', '为回复预留']));
       expect(await page.$$(text('自动压缩'))).toHaveLength(0);
       await page.locator(aria('关闭', 'button')).click();
       await page.locator(`main ${aria('更多', 'button')}`).click();
@@ -811,6 +902,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     if (!phone) {
       await page.locator(aria('用量', 'tab')).click();
       await page.waitForSelector(aria('上下文用量', 'table'));
+      expect(await usageRows()).toEqual(expect.arrayContaining(['已用', '历史消息', '为回复预留']));
       expect(await page.$$(text('自动压缩'))).toHaveLength(0);
     }
     // 没有插件前端页面时页面上没有框架
@@ -823,10 +915,14 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const { page, problems } = await openPage(stack, viewport);
     if (phone) {
       const entries = await page.waitForSelector(aria('入口', 'list'));
-      expect(await entries?.$$eval('a', links => links.map(link => link.textContent))).toEqual(['插件', '设置']);
+      expect(await entries?.$$eval('a', links => links.map(link => link.textContent))).toEqual([
+        '运行状况',
+        '插件',
+        '设置',
+      ]);
       await page.locator(`[aria-label="入口"] ${aria('插件', 'link')}`).click();
     } else {
-      expect(await railNames(page)).toEqual(['会话', '插件', '设置']);
+      expect(await railNames(page)).toEqual(['会话', '运行状况', '插件', '设置']);
       await page.locator(`.shell-rail ${aria('插件', 'link')}`).click();
     }
     await page.waitForFunction(() => location.pathname === '/plugins');
@@ -892,11 +988,31 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     };
 
     await open('会话默认');
+    // 层选择器：桌面上在按钮下方左对齐弹出，手机上从底部弹出、占满宽，每项不矮于点按范围
     const picker = await page.waitForSelector(`main ${aria('层', 'combobox')}`);
-    await page.waitForFunction(element => (element as HTMLSelectElement).options.length > 0, {}, picker);
-    expect(
-      await picker?.evaluate(element => [...(element as HTMLSelectElement).options].map(o => o.textContent)),
-    ).toEqual(['全局默认', '平台档：webui']);
+    await picker?.click();
+    const list = await page.waitForSelector(aria('层', 'listbox'));
+    expect(await list?.$$eval('[role="option"]', options => options.map(option => option.textContent))).toEqual([
+      '全局默认',
+      '平台档：webui',
+    ]);
+    const placed = await page.$eval(
+      '.select-popup',
+      (popup, trigger) => {
+        const box = popup.getBoundingClientRect();
+        const at = (trigger as Element).getBoundingClientRect();
+        const option = (popup.querySelector('[role="option"]') as Element).getBoundingClientRect();
+        return {
+          sheet: Math.round(box.bottom) === innerHeight && box.left === 0 && Math.round(box.width) === innerWidth,
+          below: Math.round(box.left) === Math.round(at.left) && box.top >= at.bottom,
+          option: option.height,
+        };
+      },
+      picker,
+    );
+    expect(placed).toMatchObject(phone ? { sheet: true, option: 48 } : { sheet: false, below: true, option: 32 });
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.select-popup', { hidden: true });
     await page.waitForSelector('main .setting-row');
     await page.locator(`main ${aria('高级', 'button')}`).click();
     const rows = await page.$$eval('main .setting-row', fieldsets => fieldsets.map(f => f.getAttribute('aria-label')));
@@ -924,6 +1040,55 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.waitForSelector(`main ${aria('权限', 'heading')}`);
     // 手机上这一层只有这一节，目录在上一层
     if (!phone) await page.waitForSelector(`${directory} ${aria('权限', 'link')}`);
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('运行状况（最少插件组合）：从图标栏底部（手机上第一层）进去；「需要处理」写明没有，平台连接只有 WebUI 一行且在线；日志的「审批」预设筛出审批结算的那一行，筛选写进地址，刷新后筛选与那一行都在', async () => {
+    const SERVER = '@aalis/plugin-session-server';
+    const stack = await startStack();
+    const { page, problems } = await openPage(stack, viewport);
+    await page.locator(`${phone ? '[aria-label="入口"]' : '.shell-rail'} ${aria('运行状况', 'link')}`).click();
+    await page.waitForFunction(() => location.pathname === '/health');
+    await page.waitForSelector(`main ${text('没有需要处理的事')}`);
+    const platforms = await page.waitForSelector(`main ${aria('平台连接', 'list')}`);
+    expect(
+      await platforms?.$$eval('li', rows =>
+        rows.map(row => [
+          row.querySelector('.list-item-title')?.textContent,
+          row.querySelector('.list-item-meta')?.textContent,
+        ]),
+      ),
+    ).toEqual([['WebUI', '在线']]);
+
+    await page.locator(`main ${aria('日志', 'tab')}`).click();
+    await page.waitForFunction(() => location.pathname === '/health/logs');
+    await page.locator(`main ${aria('审批', 'link')}`).click();
+    await page.waitForFunction(id => location.search === `?plugin=${encodeURIComponent(id)}`, {}, SERVER);
+    // 自主回合发起的审批发起时就按拒绝结算，会话服务记一行
+    const { id: sessionId } = await stack.app
+      .bind({ sessionManager })
+      .sessionManager.require()
+      .createSession({ name: '审批探针', createdBy: 'user' });
+    await stack.app
+      .bind({ approvals })
+      .approvals.require()
+      .request({
+        sessionId,
+        origin: { kind: 'autonomous', platform: 'webui', userId: 'console' },
+        tool: DEPLOY,
+        args: { command: COMMAND },
+        rule: 'e2e',
+      });
+    const settled = `main ${aria('日志', 'list')} ${text(`审批结算：会话 ${sessionId}，工具 ${DEPLOY}，拒绝`)}`;
+    await page.waitForSelector(settled);
+    const scopes = () =>
+      page.$$eval(`main ${aria('日志', 'list')} .log-scope`, cells => cells.map(cell => cell.textContent));
+    for (const scope of await scopes()) expect(scope?.startsWith(`aalis:${SERVER}`), scope ?? '').toBe(true);
+
+    await page.reload();
+    await page.waitForSelector(settled);
+    expect(await page.$eval(`main ${aria('插件', 'combobox')}`, element => element.textContent)).toBe('会话服务');
+    for (const scope of await scopes()) expect(scope?.startsWith(`aalis:${SERVER}`), scope ?? '').toBe(true);
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -959,6 +1124,50 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     }
     await page.waitForSelector(`nav[aria-label="会话"] ${text('还没有会话')}`);
     expect(await page.$$(text('会话服务未启用'))).toHaveLength(0);
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('需要处理：失败的插件与插件的提示在首页摘要（手机上在第一层顶部）里，标签页标题、运行状况的角标（手机上是第一层入口的数）带上数目；「去处理」进插件详情，改好配置后少一条；提示也在发出它的插件详情里，运行状况列出同样的几条', async () => {
+    const stack = await startStack({}, [noticeProbe]);
+    await stack.app.plugin(needsConfig, {});
+    await stack.app.plugins.idle();
+    const { page, problems } = await openPage(stack, viewport);
+    const summary = `${phone ? 'nav[aria-label="会话"]' : 'main'} ${aria('需要处理', 'region')}`;
+    await page.waitForSelector(`${summary} ${text('打开作品审核')}`);
+    expect(await page.$eval(`${summary} h2`, heading => heading.textContent)).toBe('需要处理 · 2');
+    const rows = (scope: string) =>
+      page.$$eval(`${scope} .attention-row`, items =>
+        items.map(row =>
+          ['.attention-title', '.attention-detail', 'a'].map(part => row.querySelector(part)?.textContent),
+        ),
+      );
+    expect(await rows(summary)).toEqual([
+      ['要配置的探针', '失败：缺少服务地址', '去处理'],
+      ['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核'],
+    ]);
+    await page.waitForFunction(() => document.title === '(2) T');
+    const entry = `${phone ? '[aria-label="入口"]' : '.shell-rail'} a[href="/health"]`;
+    expect(await page.$eval(`${entry} .badge`, badge => badge.textContent)).toBe('2');
+    if (!phone) {
+      expect(await page.$eval(entry, link => link.getAttribute('aria-label'))).toBe('运行状况（2 项需要处理）');
+    }
+
+    await page.locator(`${summary} ${aria('去处理', 'link')}`).click();
+    await page.waitForFunction(name => location.pathname === `/plugins/${name}`, {}, NEEDS_CONFIG);
+    await stack.app.plugins.updateConfig(NEEDS_CONFIG, { endpoint: 'http://upstream.invalid' });
+    await page.waitForFunction(() => document.title === '(1) T');
+
+    await page.goto(`${stack.origin}/plugins/${NOTICE_PROBE}`);
+    const block = `main ${aria('需要处理', 'region')}`;
+    await page.waitForSelector(`${block} ${text('打开作品审核')}`);
+    expect(await rows(block)).toEqual([['2 件作品待裁决', '最早的一件已等 3 天', '打开作品审核']]);
+    await page.locator(`${block} ${aria('打开作品审核', 'link')}`).click();
+    await page.waitForFunction(path => location.pathname === path, {}, pagePath(NOTICE_PROBE, 'queue'));
+
+    await page.goto(`${stack.origin}/health`);
+    await page.waitForSelector(`${block} ${text('打开作品审核')}`);
+    expect(await rows(block)).toEqual([['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核']]);
+    if (!phone) expect(await page.$eval(`${entry} .badge`, badge => badge.textContent)).toBe('1');
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -1104,6 +1313,26 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
+  it('数字列：表头的文字与数字右对齐（没排序时藏着的排序图标不占在文字右边）', async () => {
+    const stack = await startStack({}, [probePages]);
+    const { page, problems } = await openPage(stack, viewport, pagePath(PAGES_PROBE, 'stats'));
+    const counts = aria('次数', 'table');
+    await page.waitForSelector(`${counts} td[data-column="count"]`);
+    const rights = await page.$eval(counts, table => {
+      const textRight = (node: Node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getBoundingClientRect().right;
+      };
+      const label = [...(table.querySelector('th[data-column="count"] button') as Element).childNodes].find(
+        node => node.nodeType === Node.TEXT_NODE,
+      ) as Node;
+      return [textRight(label), textRight(table.querySelector('td[data-column="count"]') as Element)];
+    });
+    expect(Math.abs(rights[0] - rights[1])).toBeLessThanOrEqual(1);
+    expect(problems).toEqual([]);
+  }, 60_000);
+
   it('计划任务：「新建」是带输入的动作，保存后经 page.invalidate 出现在表里；「编辑」按这一行预填；「删除」先确认', async () => {
     const stack = await startStack({}, [cronEnginePlugin, schedulerPlugin]);
     const { page, problems } = await openPage(stack, viewport, pagePath(schedulerPlugin.name, 'scheduler'));
@@ -1177,7 +1406,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       );
     /** 固定着的页面：桌面看图标栏；手机回第一层看「固定的页面」，再回到看板 */
     async function pinned(): Promise<Array<string | null>> {
-      if (!phone) return (await railNames(page)).slice(1, -2);
+      if (!phone) return (await railNames(page)).slice(1, -3);
       await page.locator(aria('返回', 'button')).click();
       await page.waitForFunction(() => location.pathname === '/');
       await page.waitForNetworkIdle({ idleTime: 300 });
@@ -1201,7 +1430,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await page.$eval(`main ${aria('去插件详情', 'link')}`, link => link.getAttribute('href'))).toBe(
       `/plugins/${PAGES_PROBE}`,
     );
-    if (!phone) await page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 3);
+    if (!phone) await page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 4);
     await stack.app.plugins.enable(PAGES_PROBE);
     await page.waitForSelector(`td[data-column="name"] ${text('整理周报')}`);
     expect(await pinned()).toEqual(['看板']);
@@ -1428,6 +1657,22 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   }, 90_000);
 });
 
+describe('反向代理', () => {
+  it('升级请求的 Host 没转发（来源校验回 403）、页面的请求照常：连接横条提示检查反向代理；转发好了重连上写「已恢复」', async () => {
+    const stack = await startStack();
+    const { page, problems } = await openPage(stack, VIEWPORTS.desktop);
+    await page.waitForSelector(aria('消息', 'textbox'));
+    stack.misroute('upstream.invalid');
+    stack.cut();
+    const bar = aria('连接状态', 'status');
+    await page.waitForSelector(`${bar} ${text('检查代理是否转发了原始的 Host 请求头')}`, { timeout: 20_000 });
+    stack.misroute(undefined);
+    await page.waitForSelector(`${bar} ${text('已恢复')}`, { timeout: 20_000 });
+    // 被拒的升级是浏览器自己的握手失败，不算页面里的问题
+    expect(problems).toEqual([]);
+  }, 60_000);
+});
+
 describe('页面数据', () => {
   it('page.invalidate：插件改了数据推一次，打开着的页面跟着更新，不用手动刷新', async () => {
     const stack = await startStack({}, [probePages]);
@@ -1449,19 +1694,19 @@ describe('页面在外壳里的位置', () => {
     const second = await openPage(stack, desktop, pagePath(PAGES_PROBE, 'stats'));
     await first.page.waitForSelector(aria('看板', 'heading'));
     await second.page.waitForSelector(text('总数'));
-    expect(await railNames(first.page)).toEqual(['会话', '插件', '设置']);
+    expect(await railNames(first.page)).toEqual(['会话', '运行状况', '插件', '设置']);
 
     await Promise.all([
       first.page.locator(aria('固定到图标栏', 'button')).click(),
       second.page.locator(aria('固定到图标栏', 'button')).click(),
     ]);
     for (const { page } of [first, second]) {
-      await page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 5);
-      expect((await railNames(page)).sort()).toEqual(['会话', '看板', '统计', '插件', '设置'].sort());
+      await page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 6);
+      expect((await railNames(page)).sort()).toEqual(['会话', '看板', '统计', '运行状况', '插件', '设置'].sort());
     }
     const order = await railNames(first.page);
     const third = await openPage(stack, desktop);
-    await third.page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 5);
+    await third.page.waitForFunction(() => document.querySelectorAll('.shell-rail a').length === 6);
     expect(await railNames(third.page)).toEqual(order);
     for (const { problems } of [first, second, third]) expect(problems).toEqual([]);
   }, 60_000);
@@ -1976,7 +2221,7 @@ describe('控件与文字的比例', () => {
     const heights = (selector: string) =>
       page.$$eval(selector, elements => elements.map(element => element.getBoundingClientRect().height));
     expect(await heights('.session-list-header > :is(.button, .icon-button)')).toEqual([28, 28]);
-    expect(await heights('.composer-bar > :is(.icon-button, .composer-setting, .button)')).toEqual([28, 28, 28]);
+    expect(await heights('.composer-bar > :is(.icon-button, .select, .button)')).toEqual([28, 28, 28]);
     const approve = await looks(page, aria('批准', 'button'));
     const reject = await looks(page, aria('拒绝', 'button'));
     expect([approve.height, approve.weight, reject.height, reject.weight]).toEqual([28, '400', 28, '500']);
@@ -2007,6 +2252,66 @@ describe('控件与文字的比例', () => {
     const frame = await frameIn(page);
     await frame.waitForFunction(() => document.querySelectorAll('li').length === 3);
     expect(await frameControls(frame)).toEqual({ input: host.input, secondary: host.secondary });
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('触屏：设置行行尾的「恢复继承」与名字竖直居中对齐，只有名字的一行与名字下面写着值的一行一样；插件配置行尾的「撤销」与标签对齐', async () => {
+    const align = settingsPlugin('zz-e2e-align', [
+      {
+        key: 'clientSideJsonRendering',
+        field: { type: 'boolean', label: '<开关>' },
+        appliesTo: ['owner'],
+        prominence: 'common',
+      },
+      {
+        key: 'systemPromptExtra',
+        field: { type: 'string', label: '<额外提示>' },
+        appliesTo: ['owner'],
+        prominence: 'common',
+      },
+    ]);
+    const stack = await startStack({ 你好: '在的。' }, [align]);
+    await stack.app.plugin(needsConfig, {});
+    await stack.app.plugins.idle();
+    const { page, problems } = await openPage(stack, VIEWPORTS.phone);
+    /** 两个元素看得见的框的竖直中线相差多少像素 */
+    const offset = (scope: string, label: string, button: string) =>
+      page.$eval(
+        scope,
+        (element, label, button) => {
+          const middle = (selector: string) => {
+            const { top, bottom } = (element.querySelector(selector) as Element).getBoundingClientRect();
+            return (top + bottom) / 2;
+          };
+          return Math.round(middle(button) - middle(label));
+        },
+        label,
+        button,
+      );
+
+    await page.locator(aria('新会话', 'button')).click();
+    await (await page.waitForSelector(aria('消息', 'textbox')))?.type('你好');
+    await page.locator(aria('发送', 'button')).click();
+    await page.waitForSelector(text('在的。'));
+    await page.locator(`main ${aria('更多', 'button')}`).click();
+    await page.locator(aria('会话面板', 'menuitem')).click();
+    await page.locator(aria('<开关>', 'switch')).click();
+    const single = '.setting-row[aria-label="<开关>"]';
+    await page.waitForSelector(`${single} ${aria('恢复继承', 'button')}`);
+    await page.locator(`.setting-row ${aria('<额外提示>', 'button')}`).click();
+    await (await page.waitForSelector(`.setting-row ${aria('<额外提示>', 'textbox')}`))?.type('简短');
+    await page.keyboard.press('Enter');
+    const double = '.setting-row[aria-label="<额外提示>"]';
+    await page.waitForSelector(`${double} ${aria('恢复继承', 'button')}`);
+    expect([
+      await offset(single, '.setting-row-label', '.button'),
+      await offset(double, '.setting-row-label', '.button'),
+    ]).toEqual([0, 0]);
+
+    await page.goto(`${stack.origin}/plugins/${NEEDS_CONFIG}`);
+    await (await page.waitForSelector(`main ${aria('服务地址', 'textbox')}`))?.type('http://upstream.invalid');
+    await page.waitForSelector(`main ${aria('撤销服务地址', 'button')}`);
+    expect(await offset('.field-row:has([aria-label="撤销服务地址"])', '.field-row-label label', '.button')).toBe(0);
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -2145,7 +2450,8 @@ describe('文档与主题', () => {
     const input = (await page.waitForSelector('main input[type="file"]')) as ElementHandle<HTMLInputElement>;
     await input.uploadFile(file);
     await page.waitForSelector(`main [role="status"] ${text('已导入「夜读」')}`);
-    await page.select(aria('深色用', 'combobox'), 'imported:dark:夜读');
+    await page.locator(aria('深色用', 'combobox')).click();
+    await page.locator(aria('夜读（导入）', 'option')).click();
     const background = 'rgb(16, 20, 24)';
     await page.waitForFunction(
       background => getComputedStyle(document.documentElement).backgroundColor === background,

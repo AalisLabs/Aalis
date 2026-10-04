@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { SystemComponent } from '../../packages/api-webui/src/index.js';
 import {
   augmentInstalled,
   buildDependencyChain,
@@ -9,7 +10,6 @@ import {
   type LocalPkgInfo,
   matchesQuery,
   resolveLocalInfo,
-  type SystemComponent,
   sortSystemComponents,
   toLocalPackages,
   toManifest,

@@ -76,6 +76,10 @@ function assertSetting(setting: SessionSetting): void {
   if (dependsOn !== undefined && field.dynamicOptions === undefined) {
     throw new TypeError(`会话设置项 ${key} 声明了 dependsOn，字段要有 dynamicOptions`);
   }
+  const unset: unknown = setting.unset;
+  if (unset !== undefined && (typeof unset !== 'string' || unset === '')) {
+    throw new TypeError(`会话设置项 ${key} 的 unset 要是一句非空的话`);
+  }
 }
 
 /** 已登记的设置项。几个插件登记同一个键时须是同一份内容的定义，键在最后一个登记者撤回时才失效 */

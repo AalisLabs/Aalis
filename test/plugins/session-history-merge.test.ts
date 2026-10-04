@@ -142,6 +142,30 @@ describe('历史归并', () => {
     ]);
   });
 
+  it('回复的模型与 token 按类型取：存档里是 null 或空串的（存储把 undefined 存成 null）当没有，条目照样过协议的校验', () => {
+    const items = mergeArchive(
+      [
+        { role: 'user', content: '在吗', timestamp: 1 },
+        {
+          role: 'assistant',
+          content: '在',
+          timestamp: 2,
+          metadata: { modelInfo: { provider: 'p', model: '', promptTokens: null, completionTokens: 30 } },
+        },
+      ],
+      context(),
+      new Map(),
+    );
+    const reply = items.find(item => item.kind === 'agent-message');
+    expect(reply?.kind === 'agent-message' && reply.model).toStrictEqual({
+      provider: 'p',
+      model: undefined,
+      promptTokens: undefined,
+      completionTokens: 30,
+    });
+    for (const item of items) expect(SessionItemSchema.safeParse(item).success).toBe(true);
+  });
+
   it('新格式：最后一条带时间线的回复覆盖前面按旧格式落库的工具调用组', () => {
     const entries = merged([
       { role: 'user', content: '查一下', timestamp: 1 },

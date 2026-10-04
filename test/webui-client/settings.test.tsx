@@ -15,10 +15,13 @@ import {
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
+  choose,
   type FakeRequest,
   type FakeRest,
   type Harness,
   installDialog,
+  optionsOf,
+  pluginRow as plugin,
   renderApp,
   requests,
   restCalls,
@@ -70,24 +73,6 @@ afterEach(() => {
 });
 
 /** 插件列表的一项 */
-function plugin(instanceId: string, fields: Record<string, unknown> = {}) {
-  return {
-    name: instanceId.split(':')[0],
-    instanceId,
-    state: 'active',
-    reusable: false,
-    provides: [],
-    requiredServices: [],
-    optionalServices: [],
-    missing: [],
-    tools: [],
-    commands: [],
-    config: {},
-    defaultConfig: {},
-    ...fields,
-  };
-}
-
 const SESSIONS = plugin('zz-sessions', { displayName: '会话服务', provides: ['session-protocol'] });
 const AUTH = plugin('zz-auth', { displayName: '权限插件' });
 const THEMES = plugin('zz-themes', { displayName: '主题包' });
@@ -221,7 +206,12 @@ describe('会话默认', () => {
   const QQ_GROUP: SettingLayer = { scope: 'audience', platform: 'qq', audience: 'group' };
   const ROWS = {
     defaults: [
-      row('llm', { field: { type: 'llm-ref', label: '模型' }, plugin: 'zz-agent', prominence: 'composer' }),
+      row('llm', {
+        field: { type: 'llm-ref', label: '模型' },
+        plugin: 'zz-agent',
+        prominence: 'composer',
+        unset: '跟随服务偏好',
+      }),
       row('persona', {
         field: { type: 'string', label: '人设' },
         value: '<默认人设>',
@@ -254,18 +244,13 @@ describe('会话默认', () => {
       'session/config/layer/update': ({ layer }: { layer: SettingLayer }) => ({ items: ROWS[layerKey(layer)] }),
     };
   }
-  const picker = () => section().getByRole('combobox', { name: '层' }) as HTMLSelectElement;
+  const picker = () => section().getByRole('combobox', { name: '层' });
   const settingRow = (label: string) => within(section().getByRole('group', { name: label }));
 
   it('层选择器列出服务端给的层，平台档与群、私聊条目写明是哪个平台；行与会话设置同一套：常用在前、「高级」折叠，每行写生效值与来源', async () => {
     app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
     await section().findByRole('group', { name: '人设' });
-    expect([...picker().options].map(option => option.textContent)).toEqual([
-      '全局默认',
-      '平台档：qq',
-      '平台档：qq · 群',
-      '平台档：webui',
-    ]);
+    expect(optionsOf(picker())).toEqual(['全局默认', '平台档：qq', '平台档：qq · 群', '平台档：webui']);
     expect(requests('session/config/layer/get')).toEqual([{ layer: DEFAULTS }]);
     expect(settingRow('人设').getByText('<默认人设>')).toBeTruthy();
     expect(settingRow('人设').getByText('默认')).toBeTruthy();
@@ -274,7 +259,7 @@ describe('会话默认', () => {
     expect(section().getByRole('button', { name: '高级' }).getAttribute('aria-expanded')).toBe('false');
     expect(section().queryByText(/按平台名生效/)).toBeNull();
 
-    fireEvent.change(picker(), { target: { value: JSON.stringify(QQ_GROUP) } });
+    choose(picker(), '平台档：qq · 群');
     await vi.waitFor(() => expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: QQ_GROUP }));
     await vi.waitFor(() => expect(settingRow('人设').getByText('<群人设>')).toBeTruthy());
     expect(settingRow('人设').getByText('受众')).toBeTruthy();
@@ -283,9 +268,7 @@ describe('会话默认', () => {
 
   it('改一项写进选中的这一层；被这一层覆盖的行有「恢复继承」，写 null', async () => {
     app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
-    fireEvent.change(await section().findByRole('combobox', { name: '层' }), {
-      target: { value: JSON.stringify(QQ_GROUP) },
-    });
+    choose(await section().findByRole('combobox', { name: '层' }), '平台档：qq · 群');
     await vi.waitFor(() => expect(settingRow('人设').getByText('<群人设>')).toBeTruthy());
     fireEvent.click(settingRow('人设').getByRole('button', { name: /人设/ }));
     const box = settingRow('人设').getByRole('textbox', { name: '人设' });
@@ -311,7 +294,7 @@ describe('会话默认', () => {
       { ...handlers(), 'session/config/layers': () => ({ layers }) },
       settingsRest(),
     );
-    fireEvent.change(await section().findByRole('combobox', { name: '层' }), { target: { value: JSON.stringify(QQ) } });
+    choose(await section().findByRole('combobox', { name: '层' }), '平台档：qq');
     await vi.waitFor(() => expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: QQ }));
 
     act(() => server().notify('session/config/changed', {}));
@@ -322,15 +305,15 @@ describe('会话默认', () => {
     layers = [DEFAULTS, WEBUI];
     act(() => admin().push({ type: 'plugins.changed' }));
     await vi.waitFor(() => expect(requests('session/config/layers')).toHaveLength(3));
-    await vi.waitFor(() => expect(picker().value).toBe(JSON.stringify(DEFAULTS)));
+    await vi.waitFor(() => expect(picker().textContent).toBe('全局默认'));
     expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: DEFAULTS });
 
     // 那一层之后再出现也不自己切回去：改动照旧写进看着的全局默认
     layers = [DEFAULTS, QQ, QQ_GROUP, WEBUI];
     act(() => admin().push({ type: 'plugins.changed' }));
     await vi.waitFor(() => expect(requests('session/config/layers')).toHaveLength(4));
-    await vi.waitFor(() => expect(picker().options).toHaveLength(4));
-    expect(picker().value).toBe(JSON.stringify(DEFAULTS));
+    await vi.waitFor(() => expect(optionsOf(picker())).toHaveLength(4));
+    expect(picker().textContent).toBe('全局默认');
     expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: DEFAULTS });
   });
 
@@ -360,15 +343,15 @@ describe('会话默认', () => {
         [levels('deep')]: {
           details: [
             { value: 'off', label: '关' },
-            { value: 'high', label: '高（默认）' },
+            { value: 'high', label: '高', default: true },
           ],
         },
         [levels('plain')]: { details: [] },
       }),
     );
     await section().findByRole('group', { name: '深度思考' });
-    expect(await settingRow('深度思考').findByText('高（默认）')).toBeTruthy();
-    fireEvent.change(picker(), { target: { value: JSON.stringify(QQ) } });
+    expect(await settingRow('深度思考').findByText('高')).toBeTruthy();
+    choose(picker(), '平台档：qq');
     await vi.waitFor(() => expect(settingRow('深度思考').getByText('当前模型不能调')).toBeTruthy());
     expect(calls(levels('plain'))).toHaveLength(1);
   });
@@ -384,8 +367,8 @@ describe('外观', () => {
   });
   const fileOf = (content: unknown, name = 'theme.json') =>
     new File([typeof content === 'string' ? content : JSON.stringify(content)], name, { type: 'application/json' });
-  const picker = (label: string) => section().getByRole('combobox', { name: label }) as HTMLSelectElement;
-  const optionNames = (label: string) => [...picker(label).options].map(option => option.textContent);
+  const picker = (label: string) => section().getByRole('combobox', { name: label });
+  const optionNames = (label: string) => optionsOf(picker(label));
   const applied = () => document.documentElement.dataset.theme;
   const inline = (token: string) => document.documentElement.style.getPropertyValue(token);
   const stored = (key: string) => JSON.parse(localStorage.getItem(`aalis.${key}`) ?? 'null');
@@ -431,23 +414,23 @@ describe('外观', () => {
     app = await renderApp('/settings/appearance', {}, settingsRest());
     const follow = await section().findByRole('switch', { name: '跟随系统' });
     expect(follow.getAttribute('aria-checked')).toBe('true');
-    expect(picker('深色用').value).toBe('calm-dark');
-    expect(picker('浅色用').value).toBe('calm-light');
+    expect(picker('深色用').textContent).toBe('偏中性深色');
+    expect(picker('浅色用').textContent).toBe('偏中性浅色');
     expect(optionNames('深色用')).toEqual(['偏中性深色', '品牌柔和深色', '文档站原色深色', '安静中性深色']);
     await vi.waitFor(() => expect(applied()).toBe('calm-dark'));
 
-    fireEvent.change(picker('深色用'), { target: { value: 'aalis-dark' } });
+    choose(picker('深色用'), '品牌柔和深色');
     expect(applied()).toBe('aalis-dark');
     act(() => viewport.scheme(false));
     expect(applied()).toBe('calm-light');
-    fireEvent.change(picker('浅色用'), { target: { value: 'brand-light' } });
+    choose(picker('浅色用'), '文档站原色浅色');
     expect(applied()).toBe('brand-light');
     expect(stored('appearance')).toMatchObject({ follow: true, dark: 'aalis-dark', light: 'brand-light' });
 
     fireEvent.click(follow);
-    expect(picker('主题').value).toBe('brand-light');
+    expect(picker('主题').textContent).toBe('文档站原色浅色');
     expect(optionNames('主题')).toHaveLength(8);
-    fireEvent.change(picker('主题'), { target: { value: 'neutral-dark' } });
+    choose(picker('主题'), '安静中性深色');
     act(() => viewport.scheme(true));
     act(() => viewport.scheme(false));
     expect(applied()).toBe('neutral-dark');
@@ -464,18 +447,17 @@ describe('外观', () => {
     expect(fileRow('夜读').getByText('深色 · 导入')).toBeTruthy();
     expect(optionNames('深色用')).toContain('夜读（导入）');
 
-    const option = [...picker('深色用').options].find(item => item.textContent === '夜读（导入）') as HTMLOptionElement;
-    fireEvent.change(picker('深色用'), { target: { value: option.value } });
-    expect(applied()).toBe(option.value);
+    choose(picker('深色用'), '夜读（导入）');
+    expect(applied()).toBe('imported:dark:夜读');
     expect(inline('--color-bg')).toBe('#101012');
     expect(inline('--color-accent')).toBe(BUILTIN_THEMES['calm-dark'].colors['--color-accent']);
     expect(document.documentElement.style.getPropertyValue('color-scheme')).toBe('dark');
     // 首帧脚本读的：选中的不是内置主题时连同令牌一起存着
-    expect(stored('appearance').palettes[option.value].colors['--color-bg']).toBe('#101012');
+    expect(stored('appearance').palettes['imported:dark:夜读'].colors['--color-bg']).toBe('#101012');
     expect(stored('themes')).toHaveLength(1);
 
     // 换回内置主题：写进去的令牌撤掉
-    fireEvent.change(picker('深色用'), { target: { value: 'calm-dark' } });
+    choose(picker('深色用'), '偏中性深色');
     expect(inline('--color-bg')).toBe('');
     expect(stored('appearance').palettes).toEqual({});
   });
@@ -518,9 +500,8 @@ describe('外观', () => {
     }
 
     act(() => viewport.scheme(false));
-    const option = [...picker('浅色用').options].find(item => item.textContent === '品牌柔和浅色（导入）');
-    fireEvent.change(picker('浅色用'), { target: { value: option?.value } });
-    expect(applied()).toBe(option?.value);
+    choose(picker('浅色用'), '品牌柔和浅色（导入）');
+    expect(applied()).toBe('imported:light:品牌柔和浅色');
     fireEvent.click(fileRow('品牌柔和浅色', '导入').getByRole('button', { name: '移除' }));
     expect(applied()).toBe('calm-light');
     expect(stored('themes')).toEqual([]);
@@ -553,10 +534,7 @@ describe('外观', () => {
     app = await renderApp('/settings/appearance', {}, settingsRest({ '/api/themes': () => ({ themes }) }));
     await vi.waitFor(() => expect(optionNames('深色用')).toContain('黄昏（主题包）'));
     expect(fileRow('黄昏').getByText('深色 · 主题包')).toBeTruthy();
-    const option = [...picker('深色用').options].find(
-      item => item.textContent === '黄昏（主题包）',
-    ) as HTMLOptionElement;
-    fireEvent.change(picker('深色用'), { target: { value: option.value } });
+    choose(picker('深色用'), '黄昏（主题包）');
     expect(inline('--color-bg')).toBe('#201a18');
 
     themes = [];
@@ -568,7 +546,7 @@ describe('外观', () => {
 
     themes = [dusk];
     act(() => admin().push({ type: 'plugins.changed' }));
-    await vi.waitFor(() => expect(applied()).toBe(option.value));
+    await vi.waitFor(() => expect(applied()).toBe('plugin:zz-themes/dusk'));
   });
 
   it('上次选的插件主题：插件主题取回之前先用存着的令牌，页面不先闪成偏中性；取回后插件已不提供它时回到同深浅的偏中性', async () => {
@@ -727,7 +705,7 @@ describe('系统', () => {
           }
           config = { ...config };
           const restartNeeded = 'logLevel' in body;
-          return { ok: true, message: '已保存', ignored: [], restartNeeded };
+          return { ok: true, message: '已保存', restartNeeded };
         }
         return { config, schema: SCHEMA, restartKeys: ['logLevel'], home: '/home/zz/.aalis' };
       },
@@ -761,9 +739,7 @@ describe('系统', () => {
     expect(section().queryByRole('button', { name: '重启' })).toBeNull();
 
     fireEvent.click(settingRow('日志等级').getByRole('button', { name: /日志等级/ }));
-    fireEvent.change(settingRow('日志等级').getByRole('combobox', { name: '日志等级' }), {
-      target: { value: 'debug' },
-    });
+    choose(settingRow('日志等级').getByRole('combobox', { name: '日志等级' }), 'debug');
     await vi.waitFor(() => expect(calls('/api/config', 'PUT').at(-1)?.body).toEqual({ logLevel: 'debug' }));
     expect((await section().findByRole('status')).textContent).toContain('重启以生效');
     fireEvent.click(section().getByRole('button', { name: '重启' }));
@@ -775,7 +751,7 @@ describe('系统', () => {
     // 选空的一项与「恢复默认」一样写 null
     await vi.waitFor(() => expect(settingRow('日志等级').getByText('debug')).toBeTruthy());
     fireEvent.click(settingRow('日志等级').getByRole('button', { name: /日志等级/ }));
-    fireEvent.change(settingRow('日志等级').getByRole('combobox', { name: '日志等级' }), { target: { value: '' } });
+    choose(settingRow('日志等级').getByRole('combobox', { name: '日志等级' }), '不选');
     await vi.waitFor(() => expect(calls('/api/config', 'PUT').at(-1)?.body).toEqual({ logLevel: null }));
   });
 
@@ -787,7 +763,7 @@ describe('系统', () => {
     expect(section().queryByRole('group', { name: 'memory' })).toBeNull();
 
     fireEvent.click(llm.getByRole('button', { name: /llm/ }));
-    fireEvent.change(llm.getByRole('combobox', { name: 'llm' }), { target: { value: 'zz-llm-a' } });
+    choose(llm.getByRole('combobox', { name: 'llm' }), '主模型');
     await vi.waitFor(() =>
       expect(calls('/api/services/llm/prefer', 'POST').map(call => call.body)).toEqual([{ contextId: 'zz-llm-a' }]),
     );

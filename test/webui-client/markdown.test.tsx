@@ -35,6 +35,13 @@ describe('Markdown', () => {
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
   });
 
+  it('图片取不到时显示替代：图标加「图片取不到」，读屏名字是替代文字，不留破图', () => {
+    const view = show('![周报截图](workspace:/b.png)');
+    fireEvent.error(view.querySelector('img') as HTMLImageElement);
+    expect(view.querySelector('img')).toBeNull();
+    expect(screen.getByRole('img', { name: '周报截图（取不到）' }).textContent).toBe('图片取不到');
+  });
+
   it('链接只许 http、https 与 mailto，外链在新标签页打开', () => {
     show('[a](https://a.example) [b](mailto:x@a.example) [c](javascript:alert(1)) [d](file:///etc/passwd)');
     expect(screen.getByRole('link', { name: 'a' }).getAttribute('target')).toBe('_blank');
@@ -83,6 +90,23 @@ describe('Markdown', () => {
     view = show('写成 `$x$`');
     expect(view.querySelector('.katex')).toBeNull();
     expect(view.querySelector('code')?.textContent).toBe('$x$');
+  });
+
+  it('代码块上方一条细的标题行写语言名，复制按钮也在这一行，不压住代码；没写语言、剪贴板也不可用时没有标题行', async () => {
+    let view = show('```sh\nnpm test\n```\n\n```\n纯文本\n```');
+    let heads = [...view.querySelectorAll('.markdown-code-head')];
+    expect(heads.map(head => head.textContent)).toEqual(['sh']);
+    expect(heads[0].nextElementSibling?.tagName).toBe('PRE');
+    cleanup();
+
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn(async () => {}) } });
+    view = show('```sh\nnpm test\n```\n\n```\n纯文本\n```');
+    heads = [...view.querySelectorAll('.markdown-code-head')];
+    expect(heads.map(head => [head.textContent, head.querySelectorAll('button').length])).toEqual([
+      ['sh', 1],
+      ['', 1],
+    ]);
   });
 
   it('代码块按语法色高亮；剪贴板不可用时没有复制按钮，可用时有', async () => {

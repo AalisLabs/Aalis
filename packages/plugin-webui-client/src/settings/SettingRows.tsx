@@ -33,6 +33,7 @@ export function SettingRows({
       source={row.source && SOURCES[row.source]}
       reset={row.value === undefined ? undefined : '恢复继承'}
       dependency={dependencyOf(rows, row)}
+      unset={row.unset}
       save={value => update(row.key, value)}
     />
   );

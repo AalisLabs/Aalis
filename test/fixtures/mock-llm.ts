@@ -1,11 +1,12 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
-import { definePlugin, provide } from '../../packages/core/src/index.js';
+import { LLMCapabilities, llm, metered } from '../../packages/api-llm/src/index.js';
+import { definePlugin, events, provide } from '../../packages/core/src/index.js';
 
 /**
  * Mock LLM 插件（fixture）
  *
- * 提供可编程的 `LLMModel`（per-model entry），用于不联网的集成测试。
+ * 提供可编程的 `LLMModel`（per-model entry），用于不联网的集成测试。与第一方服务商一样套上 metered：响应带 usage 的调用发
+ * `llm:usage`。
  *
  * 这份 mock 曾 `implements LLMService` —— 那个接口在 service-granularity 重构后就不存在了，
  * 于是 implements 子句等于**零约束**：mock 缺 `contextLength`，而 agent 用它算 tokenBudget
@@ -114,10 +115,10 @@ export function createMockLLMPlugin(options: MockLLMOptions = {}) {
   return definePlugin({
     name: '@aalis/test-fixture-mock-llm',
     provides: [llm],
-    uses: { provide },
-    apply({ provide }) {
+    uses: { provide, events },
+    apply({ provide, events }) {
       // 能力挂在 handle 自身的 `capabilities` 字段上，不是 provide 的选项
-      provide(llm, service, { entryId: `${service.providerId}/${service.id}` });
+      provide(llm, metered(service, events), { entryId: `${service.providerId}/${service.id}` });
     },
   });
 }

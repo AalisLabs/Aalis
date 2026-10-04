@@ -7,9 +7,9 @@ import type {
   ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm, requestedThinking } from '@aalis/api-llm';
+import { LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
@@ -836,7 +836,7 @@ class OpenAIModelHandle implements LLMModel {
 
 // ===== 插件定义 =====
 
-const uses = { config, logger, lifecycle, provide };
+const uses = { config, logger, lifecycle, provide, events };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -850,7 +850,7 @@ export default definePlugin({
   apply: registerModels,
 });
 
-async function registerModels({ config, logger, lifecycle, provide }: Caps): Promise<void> {
+async function registerModels({ config, logger, lifecycle, provide, events }: Caps): Promise<void> {
   const cfg = parseConfig(configSchema, config, logger);
   const customModels = parseCustomModels(cfg.customModels);
   const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
@@ -889,7 +889,7 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
       capabilities.includes(Thinking) ? THINKING_STYLES[cfg.thinkingParam].levels(modelId) : undefined,
       refresh,
     );
-    const dispose = provide(llm, handle, {
+    const dispose = provide(llm, metered(handle, events), {
       label: `${baseLabel} / ${modelId}`,
       entryId: `${lifecycle.id}/${modelId}`,
     });

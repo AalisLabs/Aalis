@@ -51,6 +51,7 @@ import {
   notAccepted,
   RETRIED,
   readHistory,
+  replyModel,
   type SignFile,
   toolFailed,
 } from './history.js';
@@ -230,7 +231,7 @@ export function createTimeline(deps: TimelineDeps) {
     const candidates = turn.candidates;
     turn.candidates = [];
     const item = candidates.at(-1) ?? message(turn, out.content);
-    if (out.modelInfo) item.model = { provider: out.modelInfo.provider, model: out.modelInfo.model };
+    if (out.modelInfo) item.model = replyModel(out.modelInfo);
     if (open && open !== item) complete(turn, open);
     if (turn.room) {
       for (const discarded of candidates.slice(0, -1)) {
@@ -528,7 +529,6 @@ export function createTimeline(deps: TimelineDeps) {
   }
 
   function usage(event: TokenUsageEvent): void {
-    const { injectors, ...breakdown } = event.breakdown;
     const item: Item<'usage'> = {
       kind: 'usage',
       itemId: 'usage',
@@ -539,8 +539,7 @@ export function createTimeline(deps: TimelineDeps) {
       tokenBudget: event.tokenBudget,
       used: event.used,
       usageRatio: event.usageRatio,
-      breakdown,
-      injectors,
+      parts: event.parts,
     };
     usages.set(event.sessionId, item);
     emit(event.sessionId, 'item/completed', withCompressAt(item));

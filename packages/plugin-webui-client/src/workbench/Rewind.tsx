@@ -6,11 +6,14 @@ import { useSessionClient } from '../connection';
 
 // 回滚一轮：只回滚文件，或连这一轮的对话一起删。回滚撤不回来，先确认，焦点落在「取消」上。确认之前先查这一轮的检查点：
 // 执行过命令的写明命令的效果不会撤回（命令的副作用不经存储），没查到的写明原因，查完才能确认。
-// 结果如实回报：恢复与删除了几个文件、删掉几条消息；之后的回合也改过的文件，那些改动一并撤掉了，点名写出；没能回滚的写原因
+// 结果如实回报：恢复与删除了几个文件、删掉几条消息；之后的回合也改过的文件，那些改动一并撤掉了，点名写出；没能回滚的写原因。
+// 对话真的删掉了的，那一轮 owner 发的文字放回输入框，不自动发，附件不放回
 
 export interface RewindTarget {
   turnId: string;
   scope: 'code' | 'code-and-chat';
+  /** 那一轮 owner 发的文字 */
+  prompt?: string;
 }
 
 const TEXT = {
@@ -27,10 +30,12 @@ const TEXT = {
 export function RewindDialog({
   sessionId,
   target,
+  restore,
   onClose,
 }: {
   sessionId: string;
   target?: RewindTarget;
+  restore(prompt: string): void;
   onClose(): void;
 }) {
   const client = useSessionClient();
@@ -55,10 +60,11 @@ export function RewindDialog({
     };
   }, [client, sessionId, target]);
 
-  const rewind = async ({ turnId, scope }: RewindTarget) => {
+  const rewind = async ({ turnId, scope, prompt }: RewindTarget) => {
     setBusy(true);
     try {
       const result = await client.request('turn/rewind', { sessionId, turnId, scope });
+      if (prompt !== undefined && (result.deletedMessages ?? 0) > 0) restore(prompt);
       const done = [
         result.restored.length > 0 && `恢复 ${result.restored.length} 个文件`,
         result.deleted.length > 0 && `删除 ${result.deleted.length} 个文件`,

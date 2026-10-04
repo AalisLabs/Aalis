@@ -15,24 +15,27 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { Link, matchPath, Outlet, useLocation, useNavigate } from 'react-router';
+import { Badge } from '../components/Badge';
 import { useConnection } from '../connection';
+import { useAttention } from '../health/attention';
 import { shortcutLabel, shortcutOf } from '../keys';
 import { PinnedRail } from '../pages/Pinned';
 import { pageAt, paths, routes } from '../routes';
+import { useMine } from '../sessions/mine';
 import { readStored, writeStored } from '../storage';
 import { ConnectionBar } from './ConnectionBar';
-import { HOST_ENTRIES, type HostArea } from './entries';
+import { countNote, HOST_ENTRIES, type HostArea, useEntryCounts } from './entries';
 import { QuickSwitch } from './QuickSwitch';
 import './Shell.css';
 
 // 外壳：图标栏、左栏、主区、右侧面板。左栏 64em 起、右侧面板 80em 起常驻，可收起，两侧之间的分隔条可以拖动调宽；
 // 更窄时它们是按记住的栏宽盖进来的抽屉；48em 以下是手机，没有图标栏，按地址逐层进入，每层占满一屏。
-// 收起状态与栏宽按设备存本浏览器。图标栏上方是「会话」，下面是 owner 固定的页面，底部是插件与设置；
-// 不在某一区时点它回到刚才在这一区的地址，已在这一区时点它收起或展开左栏
+// 收起状态与栏宽按设备存本浏览器。图标栏上方是「会话」，下面是 owner 固定的页面，底部是运行状况、插件与设置；
+// 不在某一区时点它回到刚才在这一区的地址，已在这一区时点它收起或展开左栏（运行状况没有左栏）。角标只有运行状况一个
 
 type Side = 'left' | 'right';
 
-/** 图标栏上带左栏的几区：会话与宿主的入口；打开着插件页面时不在任何一区 */
+/** 图标栏上的几区：会话与宿主的入口；打开着插件页面时不在任何一区 */
 type Area = 'sessions' | HostArea;
 
 const DOCKED: Record<Side, string> = { left: '(min-width: 64em)', right: '(min-width: 80em)' };
@@ -108,7 +111,10 @@ export function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const { approvals, appName } = useConnection();
+  const { appName } = useConnection();
+  const attention = useAttention().items?.length ?? 0;
+  const countOf = useEntryCounts();
+  const unread = useMine().sessions?.filter(session => session.unread).length ?? 0;
 
   const save = useCallback(
     (side: Side, fields: Partial<SideLayout>) => {
@@ -155,10 +161,11 @@ export function Shell() {
     [drawer, toggle, change, widths, save],
   );
 
-  // 有推来的未结审批时，标签页标题前带上待处理数
+  // 标签页标题前的数：「需要处理」加「我的」区完成未读的会话，都为 0 时只有应用名
+  const count = attention + unread;
   useEffect(() => {
-    document.title = approvals.size > 0 ? `(${approvals.size}) ${appName}` : appName;
-  }, [approvals, appName]);
+    document.title = count > 0 ? `(${count}) ${appName}` : appName;
+  }, [count, appName]);
 
   // 抽屉里的左栏点了会话、换了地址就收回
   useEffect(() => setDrawer(current => (current === 'left' ? undefined : current)), [location.key]);
@@ -182,14 +189,15 @@ export function Shell() {
   useEffect(() => {
     if (area) lastAddress.current[area] = location.pathname + location.search;
   }, [area, location]);
-  const railItem = (to: Area, label: string, Icon: LucideIcon, home: string) => (
+  const railItem = (to: Area, label: string, Icon: LucideIcon, home: string, count?: number) => (
     <RailItem
       key={to}
       label={label}
       icon={Icon}
+      count={count}
       current={area === to}
       to={lastAddress.current[to] ?? home}
-      toggleLeft={() => toggle('left')}
+      toggleLeft={to === 'health' ? undefined : () => toggle('left')}
     />
   );
 
@@ -216,7 +224,9 @@ export function Shell() {
             <div className="header-bar shell-rail-head">{railItem('sessions', '会话', MessagesSquare, paths.home)}</div>
             <PinnedRail />
             <div className="shell-rail-tail">
-              {HOST_ENTRIES.map(entry => railItem(entry.area, entry.label, entry.icon, entry.path))}
+              {HOST_ENTRIES.map(entry =>
+                railItem(entry.area, entry.label, entry.icon, entry.path, countOf(entry.area)),
+              )}
             </div>
           </nav>
           <Outlet />
@@ -260,27 +270,32 @@ function phoneColumn(pathname: string): Side | 'main' {
 interface RailItemProps {
   label: string;
   icon: LucideIcon;
+  /** 角标上的数，没有时不带角标 */
+  count?: number;
   current: boolean;
   to: string;
-  toggleLeft(): void;
+  /** 这一区有左栏：已在这一区时点它收起或展开左栏 */
+  toggleLeft?(): void;
 }
 
-/** 图标栏上带左栏的一区：已在这一区时点它收起或展开左栏 */
-function RailItem({ label, icon: Icon, current, to, toggleLeft }: RailItemProps) {
+/** 图标栏上宿主的一区 */
+function RailItem({ label, icon: Icon, count, current, to, toggleLeft }: RailItemProps) {
+  const name = count === undefined ? label : label + countNote(count);
   return (
     <Link
       to={to}
       className="shell-rail-item"
       aria-current={current ? 'page' : undefined}
-      aria-label={label}
-      title={current ? `${label}（${shortcutLabel('toggleLeft')} 收起或展开左栏）` : label}
+      aria-label={name}
+      title={current && toggleLeft ? `${name}（${shortcutLabel('toggleLeft')} 收起或展开左栏）` : name}
       onClick={event => {
-        if (!current) return;
+        if (!current || !toggleLeft) return;
         event.preventDefault();
         toggleLeft();
       }}
     >
       <Icon aria-hidden />
+      {count !== undefined && <Badge tone="attention">{count}</Badge>}
       <span className="shell-rail-name" aria-hidden>
         {label}
       </span>

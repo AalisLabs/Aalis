@@ -406,8 +406,10 @@ const items: SessionItem[] = [
     tokenBudget: 120000,
     used: 3000,
     usageRatio: 0.025,
-    breakdown: { system: 100, history: 2900 },
-    injectors: { '@aalis/plugin-skills/skills-discovery': 40 },
+    parts: [
+      { label: '历史消息', tokens: 2900 },
+      { label: '其余系统提示', tokens: 40, injectors: { '@aalis/plugin-skills/skills-discovery': 40 } },
+    ],
     compressAt: 0.7,
   },
   {

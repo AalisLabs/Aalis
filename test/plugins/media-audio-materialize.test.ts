@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Logger, ServiceRef } from '@aalis/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
+import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/index.js';
 import type { AdapterCaps } from '../../packages/plugin-media/src/llm-adapter.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
@@ -57,14 +57,14 @@ function realRuntime(baseDir: string): void {
   });
 }
 
-/** 一个只有 audio 能力的假 LLM 提供者：记下收到的 audios，回一句转写结果 */
-function audioLLMCaps(): { caps: AdapterCaps; audios: () => string[] } {
-  let seen: string[] = [];
+/** 一个只有 audio 能力的假 LLM 提供者：记下收到的请求，回一句转写结果 */
+function audioLLMCaps(): { caps: AdapterCaps; audios: () => string[]; request: () => ChatModelRequest | undefined } {
+  let seen: ChatModelRequest | undefined;
   const instance: LLMModel = {
     id: 'fake-audio',
     capabilities: ['audio'],
-    chat: async (req: { messages: Array<{ audios?: string[] }> }) => {
-      seen = req.messages[0].audios ?? [];
+    chat: async (req: ChatModelRequest) => {
+      seen = req;
       return { content: '转写文本' };
     },
   } as unknown as LLMModel;
@@ -75,7 +75,7 @@ function audioLLMCaps(): { caps: AdapterCaps; audios: () => string[] } {
     all: () => [{ contextId: 'p/fake-audio', instance, priority: 0 }],
     follow: () => () => {},
   };
-  return { caps: { llm, logger }, audios: () => seen };
+  return { caps: { llm, logger }, audios: () => seen?.messages[0]?.audios ?? [], request: () => seen };
 }
 
 beforeAll(async () => {
@@ -122,6 +122,16 @@ describe('audio 附件 → LLM 转写', () => {
     const r = await proc.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } });
     expect(r.text).toBe('转写文本');
     expect(audios()[0]).toBe(`data:audio/mpeg;base64,${MP3.toString('base64')}`);
+  });
+
+  it('转写的模型调用带上用途「转写」与音频所在的会话，供记账', async () => {
+    const local = join(base, 'session-voice.mp3');
+    await writeFile(local, MP3);
+    const { caps, request } = audioLLMCaps();
+    const proc = scanLLMProcessors(caps).find(p => p.transcribe);
+    if (!proc?.transcribe) throw new Error('未包出 audio processor');
+    await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` }, sessionId: 's1' });
+    expect(request()).toMatchObject({ purpose: '转写', sessionId: 's1' });
   });
 
   it('file:// 音频走 proc.readExternalFile 回落（没落进 storage 根不是死路）', async () => {

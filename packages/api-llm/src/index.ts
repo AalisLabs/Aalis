@@ -4,7 +4,7 @@
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
 import type { ToolDefinition } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
+import type { Events, ServiceRef } from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { Message, ToolCall } from '@aalis/schema-message';
 
@@ -101,6 +101,12 @@ export interface ChatModelRequest {
    * 这个判断只有调用方做得了，provider 无从区分两种语义。
    */
   requireImages?: boolean;
+  /** 这次调用做什么用，记账用：给人看的短语，如「对话」「摘要」「识图」「子任务」。调用方填，可以缺 */
+  purpose?: string;
+  /** 这次调用所在的会话，记账用。调用方填，可以缺 */
+  sessionId?: string;
+  /** 调用方的插件实例，记账用：经 `llm` 的绑定接口调用时按调用方这次激活填上，调用方自己填的不算 */
+  caller?: string;
 }
 
 /**
@@ -156,6 +162,109 @@ export interface LLMModel {
    *   entries 原样保留、不增删——不得把失败当成远端没有模型而注销自动发现的条目。经停用或停机中止时同样抛错。
    */
   refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
+
+  /**
+   * 查服务商账户的余额（可选）：服务商有余额接口才实现，同一 provider 下所有 model entries 共享同一份，按 providerId
+   * 找任一 entry 调一次即可。查不到（不可达、超时、认证失败、回应认不出）时抛错，消息带原因
+   */
+  balance?(signal?: AbortSignal): Promise<LLMBalance[]>;
+}
+
+/** 服务商账户的余额：一个币种一项 */
+export interface LLMBalance {
+  readonly currency: string;
+  readonly amount: number;
+}
+
+// ----- 记账 -----
+
+/**
+ * 一次模型调用的用量，`llm:usage` 事件的内容。cachedTokens 是 inputTokens 里前缀缓存命中的部分，服务商不报时没有
+ * （与 0 不同）；caller、sessionId、purpose 取请求里的同名字段
+ */
+export interface LLMUsageEvent {
+  /** 服务商：模型所属 provider 的实例 id（{@link LLMModel.providerId}） */
+  provider: string;
+  model: string;
+  caller?: string;
+  sessionId?: string;
+  purpose?: string;
+  inputTokens: number;
+  cachedTokens?: number;
+  outputTokens: number;
+}
+
+declare module '@aalis/core' {
+  interface AalisEvents {
+    /** 一次模型调用结束、服务商报了用量：发射方是服务商登记的 {@link metered} 模型，消费方如记账插件 */
+    'llm:usage': [usage: LLMUsageEvent];
+  }
+}
+
+/**
+ * 换掉 chat 与 chatStream，其余字段与方法照原样转给 model。逐个字段列出，LLMModel 加了字段这里漏写时编译报错
+ * （chatStream 要写出来，没有时是 undefined）
+ */
+function withCalls(model: LLMModel, calls: { chat: LLMModel['chat']; chatStream: LLMModel['chatStream'] }): LLMModel {
+  const refresh = model.refresh?.bind(model);
+  const balance = model.balance?.bind(model);
+  return {
+    id: model.id,
+    providerId: model.providerId,
+    contextLength: model.contextLength,
+    maxOutputTokens: model.maxOutputTokens,
+    capabilities: model.capabilities,
+    thinking: model.thinking,
+    ...calls,
+    refresh,
+    balance,
+  } satisfies Record<keyof LLMModel, unknown>;
+}
+
+const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+/**
+ * 给登记的模型包上记账：chat 拿到用量、chatStream 结束时报过用量（取最后一次报的），就发一次 `llm:usage`，不等监听器。
+ * 服务商登记模型时套一层，`provide(llm, metered(model, events), { entryId })`，自己的 chat 与 chatStream 不用管记账。
+ * 服务商回的数运行时没人核，在这里规整一次：没报用量、输入或输出不是非负有限数的调用不记；缓存命中不是非负有限数时当没报，
+ * 比输入多时截到输入
+ */
+export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel {
+  const report = (request: ChatModelRequest, usage: ChatResponse['usage']) => {
+    if (!usage || !isCount(usage.promptTokens) || !isCount(usage.completionTokens)) return;
+    const cached = usage.cachedPromptTokens;
+    void events.emit('llm:usage', {
+      provider: model.providerId,
+      model: model.id,
+      caller: request.caller,
+      sessionId: request.sessionId,
+      purpose: request.purpose,
+      inputTokens: usage.promptTokens,
+      ...(isCount(cached) ? { cachedTokens: Math.min(cached, usage.promptTokens) } : {}),
+      outputTokens: usage.completionTokens,
+    });
+  };
+  const { chatStream } = model;
+  return withCalls(model, {
+    async chat(request) {
+      const response = await model.chat(request);
+      report(request, response.usage);
+      return response;
+    },
+    chatStream:
+      chatStream &&
+      async function* (request) {
+        let usage: ChatResponse['usage'];
+        try {
+          for await (const chunk of chatStream.call(model, request)) {
+            if (chunk.usage) usage = chunk.usage;
+            yield chunk;
+          }
+        } finally {
+          report(request, usage);
+        }
+      },
+  });
 }
 
 // ----- 深度思考的档位 -----
@@ -305,5 +414,33 @@ export function resolveLLMModel(
   return all[0];
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const llm = defineService<LLMModel>('llm');
+// ----- 服务描述符（按激活绑定）-----
+
+/**
+ * 调用型，绑定接口是 ServiceRef。拿到的模型在请求里填上调用方这次激活的实例 id（{@link ChatModelRequest.caller}），
+ * 同一个模型每次拿到的是同一个对象
+ */
+export const llm = defineService<LLMModel, ServiceRef<LLMModel>>('llm', port => {
+  const stamped = new WeakMap<LLMModel, LLMModel>();
+  const stamp = (model: LLMModel): LLMModel => {
+    let bound = stamped.get(model);
+    if (!bound) {
+      const { chatStream } = model;
+      bound = withCalls(model, {
+        chat: request => model.chat({ ...request, caller: port.id }),
+        chatStream: chatStream && (request => chatStream.call(model, { ...request, caller: port.id })),
+      });
+      stamped.set(model, bound);
+    }
+    return bound;
+  };
+  return {
+    get current() {
+      const model = port.current();
+      return model && stamp(model);
+    },
+    require: () => stamp(port.require()),
+    all: () => port.all().map(view => ({ ...view, instance: stamp(view.instance) })),
+    follow: attach => port.follow(model => attach(stamp(model))),
+  };
+});

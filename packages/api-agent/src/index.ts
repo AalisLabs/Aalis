@@ -276,7 +276,18 @@ export interface TokenUsageBreakdown {
 }
 
 /**
- * agent 每次 LLM 调用后 emit 的 prompt 预算快照。
+ * 用量拆分表的一项：显示名由产出方给，界面按 {@link TokenUsageEvent.parts} 的次序画行、不认分项的键。
+ * injectors 是这一项按注入者的明细（键是注入者的全局键「插件实例 id/局部 id」），界面可以按实例合并到插件展开
+ */
+export interface TokenUsagePart {
+  label: string;
+  tokens: number;
+  injectors?: Record<string, number>;
+}
+
+/**
+ * agent 每次 LLM 调用后 emit 的 prompt 预算快照。breakdown 是按固定桶的数，供程序判断；parts 是同一份数按显示的次序
+ * 排好、带显示名的拆分表（不含为回复预留的 maxTokens），供界面照画。
  *
  * 发射方：plugin-agent；已知消费方：plugin-session-server（会话的用量条目）、
  * plugin-memory-summary（预压缩触发）、plugin-prompt-budget（AI 自检工具）。
@@ -292,6 +303,7 @@ export interface TokenUsageEvent {
   used: number;
   usageRatio: number;
   breakdown: TokenUsageBreakdown;
+  parts: TokenUsagePart[];
 }
 
 declare module '@aalis/core' {

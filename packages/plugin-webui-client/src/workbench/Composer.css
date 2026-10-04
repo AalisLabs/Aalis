@@ -11,7 +11,8 @@
   border-radius: var(--radius-md);
 }
 
-.composer:focus-within {
+.composer:focus-within,
+.composer[data-dropping] {
   outline: 2px solid var(--color-focus);
   outline-offset: -1px;
 }
@@ -40,31 +41,6 @@
 
 .composer-spacer {
   flex: 1;
-}
-
-.composer-setting {
-  min-width: 0;
-  max-width: 12rem;
-  min-height: var(--hit);
-  padding: 0 var(--space-2);
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-input);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-2);
-  background: none;
-}
-
-a.composer-setting {
-  display: inline-flex;
-  align-items: center;
-  font-size: var(--text-xs);
-}
-
-.composer-setting:hover {
-  background: var(--color-fill-1);
 }
 
 .composer-files {

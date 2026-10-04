@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { SessionMethodParams } from '../../packages/api-session-protocol/src/index.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { group, type Harness, installDialog, listRequests, renderApp, room } from './harness.js';
+import { choose, group, type Harness, installDialog, listRequests, renderApp, room } from './harness.js';
 
 // ════════════════════════════════════════════════════════════
 // 房间表（/rooms?instance=）：一次取全这一组（翻页取完），类型与状态的筛选写进地址，排序、搜索与分页在客户端；
@@ -98,6 +98,17 @@ describe('房间表', () => {
     ]);
   });
 
+  it('表格下面一句提示：要统一设置一类房间，去设置的「会话默认」（平台档按平台名生效，不区分实例）', async () => {
+    app = await renderApp('/rooms?instance=im-a', { 'sessions/list': serveRooms });
+    await vi.waitFor(() => expect(names()).toHaveLength(4));
+    const main = within(screen.getByRole('main'));
+    expect(main.getByText(/要统一设置一类房间/).textContent).toBe(
+      '要统一设置一类房间，用「会话默认」里这个平台的档或它的群、私聊条目；平台档按平台名生效，不区分实例。',
+    );
+    fireEvent.click(main.getByRole('link', { name: '去会话默认' }));
+    expect(app.where()).toBe('/settings/session-defaults');
+  });
+
   it('还没记下实例的组按平台取', async () => {
     app = await renderApp('/rooms?platform=onebot', { 'sessions/list': serveRooms });
     await vi.waitFor(() => expect(names()).toEqual(['旧房间']));
@@ -107,12 +118,12 @@ describe('房间表', () => {
   it('类型与状态的筛选写进地址，从地址恢复；排序在客户端', async () => {
     app = await renderApp('/rooms?instance=im-a&status=error', { 'sessions/list': serveRooms });
     await vi.waitFor(() => expect(names()).toEqual(['技术交流']));
-    fireEvent.change(screen.getByRole('combobox', { name: '状态' }), { target: { value: '' } });
+    choose(screen.getByRole('combobox', { name: '状态' }), '全部');
     expect(app.where()).toBe('/rooms?instance=im-a');
-    fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'private' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '私聊');
     expect(app.where()).toBe('/rooms?instance=im-a&type=private');
     expect(names()).toEqual(['小林']);
-    fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'group' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '群');
     fireEvent.click(within(screen.getByRole('columnheader', { name: /名称/ })).getByRole('button'));
     expect(names()).toEqual(['技术交流', '读书会', '摄影分享'].sort((a, b) => a.localeCompare(b)));
   });
@@ -122,7 +133,7 @@ describe('房间表', () => {
     app = await renderApp('/', { 'sessions/list': serveRooms });
     fireEvent.click(await screen.findByRole('button', { name: '用表格查看「QQ 主号」的全部房间' }));
     await vi.waitFor(() => expect(names()).toHaveLength(4));
-    fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'group' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '群');
     expect(app.where()).toBe('/rooms?instance=im-a&type=group');
     fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: '返回' }));
     expect(app.where()).toBe('/');

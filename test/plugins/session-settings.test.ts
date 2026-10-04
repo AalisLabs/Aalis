@@ -251,6 +251,30 @@ describe('设置项登记', () => {
     expect(sm.listSettings().map(s => s.key)).toEqual(['llm', 'think']);
   });
 
+  it('没设时的含义（unset）随登记列出；不是非空的一句话的登记被拒', async () => {
+    const described: SessionSetting = {
+      key: 'maxToolIterations',
+      field: { type: 'number', label: '最大工具迭代' },
+      appliesTo: ['owner'],
+      prominence: 'advanced',
+      unset: '按插件配置',
+    };
+    const { app, sm } = await setup({ plugins: [settingsPlugin(SETTINGS, [MODEL, described])] });
+    expect(sm.listSettings().map(s => [s.key, s.unset])).toEqual([
+      ['llm', undefined],
+      ['maxToolIterations', '按插件配置'],
+    ]);
+    for (const [name, unset] of [
+      ['empty', ''],
+      ['number', 3],
+    ] as const) {
+      await app.plugin(settingsPlugin(name, [{ ...described, key: 'persona', unset } as unknown as SessionSetting]));
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin(name)?.state, name).toBe('error');
+    }
+    expect(sm.listSettings().map(s => s.key)).toEqual(['llm', 'maxToolIterations']);
+  });
+
   it('建子会话复制的配置不带 liveOnly 的项', async () => {
     const { sm } = await setup();
     await sm.ensureSession(GROUP, { config: { persona: '<人设>', paperName: '<白纸名>' } });

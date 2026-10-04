@@ -336,6 +336,7 @@ export const MEMORY_RECALL_SCOPE_SETTING: SessionSetting = {
   },
   appliesTo: ['owner', 'room', 'task'],
   prominence: 'advanced',
+  unset: '按各记忆插件的配置',
 };
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----

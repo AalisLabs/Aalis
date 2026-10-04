@@ -30,6 +30,15 @@
   display: none;
 }
 
+.quick-switch-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-switch-heading {
+  padding: 0 var(--space-2);
+}
+
 .quick-switch-option {
   display: flex;
   flex-shrink: 0;

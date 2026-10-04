@@ -68,7 +68,38 @@
 }
 
 .markdown-code {
-  position: relative;
+  border-radius: var(--radius-md);
+  background: var(--color-fill-1);
+}
+
+/* 代码块的标题行：语言名与复制按钮。按钮看得见的与这一行同高，触屏上点按范围由伪元素补足 */
+.markdown-code-head {
+  display: flex;
+  align-items: center;
+  min-height: var(--row-heading);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+.markdown-code-head > .icon-button {
+  width: var(--row-heading);
+  height: var(--row-heading);
+  margin-left: auto;
+}
+
+/* 底色画在整块上：底色是半透明的，代码区再画一层会和标题行分出两种深浅。整块不裁剪，按钮的点按范围与焦点环伸出标题行；
+   代码区留着下边的圆角，裁的是它自己的横向滚动条 */
+.markdown .markdown-code > pre {
+  background: none;
+}
+
+.markdown .markdown-code-head + pre {
+  padding-top: var(--space-1);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .markdown pre {
@@ -79,29 +110,6 @@
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
   background: var(--color-fill-1);
-}
-
-.markdown-code .icon-button {
-  position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
-  visibility: hidden;
-}
-
-.markdown-code:hover .icon-button,
-.markdown-code .icon-button:focus-visible {
-  visibility: visible;
-}
-
-/* 触屏上没有悬停：复制按钮常显，代码从按钮下面开始，不压住第一行 */
-@media (pointer: coarse) {
-  .markdown-code .icon-button {
-    visibility: visible;
-  }
-
-  .markdown-code:has(> .icon-button) pre {
-    padding-top: calc(var(--space-1) + var(--hit));
-  }
 }
 
 .markdown-mermaid svg {

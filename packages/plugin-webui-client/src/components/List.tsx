@@ -3,7 +3,8 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import './List.css';
 
-const MARKERS = { attention: '需要处理', error: '出错', unread: '未读' } as const;
+/** 行首标记的读屏说法 */
+export const MARKERS = { attention: '需要处理', error: '出错', unread: '未读' } as const;
 
 export function List({ label, children }: { label: string; children: ReactNode }) {
   return (

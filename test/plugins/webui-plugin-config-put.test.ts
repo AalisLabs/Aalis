@@ -45,7 +45,6 @@ function attachRoutes(opts: {
   logger?: Logger;
 }): {
   putPlugin: (name: string, body: unknown) => Promise<{ status: number; body?: unknown }>;
-  getConfig: (name: string) => Promise<{ status: number; body?: unknown }>;
 } {
   const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
@@ -70,12 +69,6 @@ function attachRoutes(opts: {
       invoke('PUT /api/plugins/:name/config', {
         params: { name },
         body: { config: body },
-        headers: {},
-      }),
-    getConfig: name =>
-      invoke('GET /api/plugins/:name/config', {
-        params: { name },
-        body: {},
         headers: {},
       }),
   };
@@ -569,7 +562,7 @@ describe('PUT /api/plugins/:name/config 请求体', () => {
   });
 });
 
-describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
+describe('PUT /api/plugins/:name/config 非法 id', () => {
   it(':name 含 # 时 core 抛 Error，路由返回 400 并透出 message', async () => {
     // `#` 是定义闸已拒的形状（保留字符）。在窄面外用同一道闸包一层，
     // 钉的是路由「core 抛 Error → 400 + message」而不是自己猜非法规则。
@@ -600,16 +593,12 @@ describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
     }
     expect(thrown).toBeInstanceOf(Error);
 
-    const get = await api.getConfig(illegal);
-    expect(get.status).toBe(400);
-    expect((get.body as { error: string }).error).toBe(thrown?.message);
-
     const put = await api.putPlugin(illegal, { timeoutMs: 1 });
     expect(put.status).toBe(400);
     expect((put.body as { error: string }).error).toBe(thrown?.message);
   });
 
-  it('GET/PUT /api/plugins/__proto__/config 返回 400 且 message 含 插件 id 不合法: __proto__', async () => {
+  it('PUT /api/plugins/__proto__/config 返回 400 且 message 含 插件 id 不合法: __proto__', async () => {
     const { app } = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
@@ -617,10 +606,6 @@ describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
       plugins: bound.plugins.require(),
       hostConfig: bound.hostConfig.require(),
     });
-
-    const get = await api.getConfig('__proto__');
-    expect(get.status).toBe(400);
-    expect((get.body as { error: string }).error).toContain('插件 id 不合法: __proto__');
 
     const put = await api.putPlugin('__proto__', { timeoutMs: 1 });
     expect(put.status).toBe(400);

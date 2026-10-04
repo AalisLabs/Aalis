@@ -6,7 +6,7 @@
 
 ## 设计动机
 
-`plugin-agent` 已 emit `token:usage` 事件（含 12 桶 breakdown），WebUI 通过 `plugin-webui-server` 订阅渲染面板。但 **AI 自己在工具循环里跑时看不到 WebUI**，怀疑"是不是 prompt 太大了"的时候没有内省路径。
+`plugin-agent` 已 emit `token:usage` 事件（含 12 桶 breakdown 与给界面画的分项 `parts`），WebUI 经 `plugin-session-server` 的用量条目画出拆分表。但 **AI 自己在工具循环里跑时看不到 WebUI**，怀疑"是不是 prompt 太大了"的时候没有内省路径。
 
 本插件提供一个**主动 query** 工具：让模型在 tool loop 中直接查到自己最近一次 LLM 调用的预算消耗，决定是否减少 tool 输出 / 调整策略（历史压缩不由模型发起，见下）。
 

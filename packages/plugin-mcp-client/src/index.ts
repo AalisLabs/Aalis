@@ -10,11 +10,13 @@
  * - 每个 server 注册一个工具分组 `mcp:<server-id>`
  * - 激活关闭时断开所有 client 连接（lifecycle.onDispose）
  * - 档位按 server 的 visibility 配置（默认 auto，按工具注解分档）
+ * - 连不上的 server 发一条 error 提示（WebUI 的「需要处理」与插件详情），提示归属这次激活：改好配置重载后撤回
  */
 
 import { type HostConfig, hostConfig as hostConfigService } from '@aalis/api-host-config';
 import type { BoundTools, ToolDefinition } from '@aalis/api-tools';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
+import { type BoundWebui, webuiServer } from '@aalis/api-webui';
 import {
   config as configService,
   definePlugin,
@@ -41,6 +43,7 @@ interface Caps extends BridgeCaps {
   lifecycle: LifecycleCap;
   config: Readonly<Record<string, unknown>>;
   hostConfig: ServiceRef<HostConfig>;
+  webui: BoundWebui;
 }
 
 const configSchema = defineConfig({
@@ -176,7 +179,15 @@ async function run(caps: Caps): Promise<void> {
       .map(spec =>
         connectServer(caps, spec).catch(err => {
           if (caps.lifecycle.signal.aborted) return;
-          caps.logger.error(`连接 MCP server "${spec.id}" 失败: ${err instanceof Error ? err.message : String(err)}`);
+          const reason = err instanceof Error ? err.message : String(err);
+          caps.logger.error(`连接 MCP server "${spec.id}" 失败: ${reason}`);
+          caps.webui.notify({
+            id: `connect:${spec.id}`,
+            level: 'error',
+            title: `MCP 服务器「${spec.id}」连不上`,
+            detail: reason,
+            open: 'config',
+          });
         }),
       ),
   );
@@ -451,6 +462,7 @@ export default definePlugin({
     lifecycle: lifecycleService,
     config: configService,
     hostConfig: optional(hostConfigService),
+    webui: optional(webuiServer),
   },
   configSchema,
   apply: run,

@@ -3,6 +3,7 @@ import { MessagesSquare } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
+import { ButtonLink } from '../components/ButtonLink';
 import { EmptyState } from '../components/EmptyState';
 import { Panel } from '../components/Panel';
 import { Table, type TableColumn } from '../components/Table';
@@ -15,7 +16,7 @@ import { SessionStatus, STATUS_ORDER, statusOf } from './status';
 import './RoomsPage.css';
 
 // 房间表：一组房间（一个适配器实例，或还没记下实例的一个平台）一次取全，筛选、排序、搜索与分页都在客户端。
-// 类型与状态的筛选写进地址；批量动作只有归档与删除
+// 类型与状态的筛选写进地址；批量动作只有归档与删除。统一设置一类房间在设置的「会话默认」，表格下面一句话指过去
 
 const FILTER_FIELDS = [
   {
@@ -163,6 +164,12 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
               />
             )
           )}
+          <div className="rooms-hint">
+            <p>要统一设置一类房间，用「会话默认」里这个平台的档或它的群、私聊条目；平台档按平台名生效，不区分实例。</p>
+            <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
+              去会话默认
+            </ButtonLink>
+          </div>
         </div>
       </Panel>
     </Main>

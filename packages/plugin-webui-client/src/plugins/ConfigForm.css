@@ -84,7 +84,7 @@
   grid-column: 1 / -1;
 }
 
-.config-form .field-row-control > :is(input:not([type="checkbox"]), select, textarea) {
+.config-form .field-row-control > :is(input:not([type="checkbox"]), .select, textarea) {
   width: 100%;
 }
 

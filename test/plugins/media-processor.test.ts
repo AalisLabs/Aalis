@@ -2,11 +2,11 @@ import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { ASRService } from '../../packages/api-asr/src/index.js';
 import { type LLMModel, llm, type ModelRef } from '../../packages/api-llm/src/index.js';
-import type { MediaProcessor } from '../../packages/api-media/src/index.js';
+import type { MediaProcessor, TranscribeInput } from '../../packages/api-media/src/index.js';
 import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
-import type { MessageAttachment } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, MessageAttachment } from '../../packages/schema-message/src/index.js';
 import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -159,6 +159,31 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     expect(llmProc?.describe).toBeUndefined();
     // 下拉项 value = 此 name，pickProcessor 也按 name 命中 → 名字一致由同一 listProcessors 来源构造保证
     expect(s.pickProcessor('audio', llmProc?.name)?.name).toBe(llmProc?.name);
+  });
+
+  it('消息里的语音转写时带上消息所在的会话，供记账', async () => {
+    const seen: TranscribeInput[] = [];
+    const s = new MediaServiceImpl(caps(), {
+      ...cfg,
+      audio: { mode: 'enabled', maxTokens: 1024, think: true },
+      contextHistory: { enabled: false, maxMessages: 0 },
+    } as unknown as MediaConfigResolved);
+    s.registerProcessor({
+      name: 'fake-audio',
+      capabilities: ['audio'],
+      priority: 1,
+      transcribe: async input => {
+        seen.push(input);
+        return { text: '你好' };
+      },
+    });
+    await s.processMessage({
+      content: '',
+      sessionId: 's1',
+      platform: 'test',
+      attachments: [audioAtt('https://example.invalid/voice.amr')],
+    } as IncomingMessage);
+    expect(seen.map(input => input.sessionId)).toEqual(['s1']);
   });
 });
 

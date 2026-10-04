@@ -1,20 +1,25 @@
 import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
-import { Store } from 'lucide-react';
+import { FolderSearch, Store } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { useLocation, useParams } from 'react-router';
 import { Button } from '../components/Button';
+import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
+import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { instanceName } from '../pages/registry';
+import { postJson } from '../rest';
 import { paths } from '../routes';
 import { Left } from '../shell/Shell';
+import { messageOf, usePluginAction } from './action';
 import { labelOf, type PluginRow, usePlugins } from './list';
 import { hasProblem, markerOf, statusOf } from './status';
 import './PluginTree.css';
 
-// 插件区的左栏：顶上是市场与「只看有问题的」，下面是已安装的实例树，按子系统分组到插件、再到实例。
-// 组名与顺序取 api-webui 的子系统目录，不认识的按原样排在后面，没声明的归「其他」。正常运行的行不写状态
+// 插件区的左栏：头部可以重新扫描插件目录（手动放进来的插件包靠它加载），顶上是市场与「只看有问题的」，下面是已安装的
+// 实例树，按子系统分组到插件、再到实例。组名与顺序取 api-webui 的子系统目录，不认识的按原样排在后面，没声明的归「其他」。
+// 正常运行的行不写状态
 
 const SUBSYSTEMS = new Map(DEFAULT_SUBSYSTEM_METADATA.map(entry => [entry.id, entry]));
 
@@ -71,14 +76,33 @@ function problemsOf(groups: PluginGroup[]): PluginGroup[] {
 
 export function PluginTree() {
   const { plugins, error, refresh } = usePlugins();
+  const action = usePluginAction();
+  const toast = useToast();
   const [problemsOnly, setProblemsOnly] = useState(false);
   const onMarket = useLocation().pathname === paths.market;
   const all = groupsOf(plugins ?? []);
   const groups = problemsOnly ? problemsOf(all) : all;
+  const rescan = () =>
+    action.run(
+      '重新扫描插件目录',
+      () => postJson('/api/plugins/scan', {}),
+      reply => toast({ kind: 'success', text: messageOf(reply) ?? '已重新扫描插件目录' }),
+    );
 
   return (
     <Left label="插件">
-      <Panel title="插件" back={paths.home}>
+      <Panel
+        title="插件"
+        back={paths.home}
+        actions={
+          <IconButton
+            icon={FolderSearch}
+            label="重新扫描插件目录"
+            disabled={action.busy !== undefined}
+            onClick={() => void rescan()}
+          />
+        }
+      >
         <div className="plugin-tree">
           <List label="市场">
             <ListItem
@@ -120,7 +144,7 @@ function Group({ group }: { group: PluginGroup }) {
   const id = useId();
   return (
     <section aria-labelledby={id}>
-      <h3 id={id} className="plugin-tree-heading">
+      <h3 id={id} className="section-heading plugin-tree-heading">
         {group.label}
       </h3>
       <List label={group.label}>

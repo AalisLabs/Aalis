@@ -1094,7 +1094,7 @@ describe('条目', () => {
     expect(plans.has(s.id)).toBe(false);
   });
 
-  it('usage：推最新的用量；快照带上；没有用量的会话订阅后请求一次', async () => {
+  it('usage：推最新的用量，分项照 token:usage 原样放进条目；快照带上；没有用量的会话订阅后请求一次', async () => {
     const { server, sm, host } = await setup();
     const s = await sm.createSession({ name: 'S' });
     const requests: Array<{ sessionId: string; platform?: string }> = [];
@@ -1128,6 +1128,12 @@ describe('条目', () => {
         toolDefs: 92,
         reservedForReply: 0,
       },
+      parts: [
+        { label: '历史消息', tokens: 100 },
+        { label: '工具定义', tokens: 92 },
+        { label: '人设', tokens: 2 },
+        { label: '其余系统提示', tokens: 5, injectors: { notes: 5 } },
+      ],
     };
     await host.events.emit('token:usage', usage);
     const usageOf = async () => {
@@ -1136,8 +1142,8 @@ describe('条目', () => {
       return (await late.subscribe(s.id)).snapshot.items.find(i => i.kind === 'usage');
     };
     const item = await usageOf();
-    expect(item).toMatchObject({ turnId: 'turn-u', used: 200, injectors: { notes: 5 } });
-    expect(item && 'breakdown' in item && item.breakdown).not.toHaveProperty('injectors');
+    expect(item).toMatchObject({ turnId: 'turn-u', used: 200, parts: usage.parts });
+    expect(item).not.toHaveProperty('breakdown');
     expect(item, '没有压缩服务就没有压缩线').not.toHaveProperty('compressAt');
     expect(requests, '有用量就不再请求').toHaveLength(1);
 
@@ -1637,12 +1643,18 @@ async function startAgent(
 }
 
 describe('接 agent 与网关', () => {
-  it('turn/send 进 agent：回合 id 贯通各条目，tool-call 的 itemId 就是工具上下文的 callId；结束后新快照的历史与实时条目一致', async () => {
+  it('turn/send 进 agent：回合 id 贯通各条目，tool-call 的 itemId 就是工具上下文的 callId；结束后新快照的历史与实时条目一致，回复带的模型与这一轮的 token 也一致', async () => {
     const ctxs: ToolCallContext[] = [];
-    const { host, s, c, sub, turnItems } = await startAgent([callProbe, { content: '查好了' }], async ctx => {
-      ctxs.push(ctx);
-      return '{"found":true}';
-    });
+    const { host, s, c, sub, turnItems } = await startAgent(
+      [
+        { ...callProbe, usage: { promptTokens: 1200, completionTokens: 30, totalTokens: 1230 } },
+        { content: '查好了', usage: { promptTokens: 1500, completionTokens: 40, totalTokens: 1540 } },
+      ],
+      async ctx => {
+        ctxs.push(ctx);
+        return '{"found":true}';
+      },
+    );
     await c.call('turn/send', { sessionId: s.id, content: '帮我查' });
     await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'replied' }));
 
@@ -1689,7 +1701,13 @@ describe('接 agent 与网关', () => {
       {
         kind: 'agent-message',
         text: '查好了',
-        model: { provider: '@aalis/test-fixture-mock-llm', model: 'mock-model' },
+        // 输入取这一轮最后一次调用的上下文，输出是这一轮各次调用的合计
+        model: {
+          provider: '@aalis/test-fixture-mock-llm',
+          model: 'mock-model',
+          promptTokens: 1500,
+          completionTokens: 70,
+        },
       },
     ]);
     expect(history.filter(i => i.kind !== 'user-message').every(i => i.turnId === turnId)).toBe(true);

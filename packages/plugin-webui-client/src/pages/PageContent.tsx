@@ -10,7 +10,7 @@ import { Menu } from '../components/Menu';
 import { Table, type TableColumn } from '../components/Table';
 import { Tabs } from '../components/Tabs';
 import { Markdown } from '../markdown/Markdown';
-import { Cell, cellText, sortValue } from './cells';
+import { Cell, cellText, fractionDigits, sortValue } from './cells';
 import { Graph } from './Graph';
 import { type ActionTarget, useActions, usePageData, usePageScope } from './scope';
 import './pages.css';
@@ -169,15 +169,23 @@ function TableBlock({ component, target }: { component: Of<'table'>; target?: Ac
   // 窄时只留 primary 的列：都没标时留第一列，选中用的链接列总留着
   const marked = component.columns.some(column => column.primary);
   const columns: TableColumn<PageRow>[] = component.columns.map((column, index) => {
-    const cell = (row: PageRow) => <Cell kind={column.kind} value={row[column.key]} label={column.label} />;
+    const values = rows.map(row => row[column.key]);
+    const numeric =
+      (column.kind ?? 'text') === 'text' &&
+      values.some(value => typeof value === 'number') &&
+      values.every(value => value == null || typeof value === 'number');
+    // 数字列的小数位对齐：按这一列最多的小数位补齐
+    const digits = numeric
+      ? values.reduce<number>((most, value) => Math.max(most, typeof value === 'number' ? fractionDigits(value) : 0), 0)
+      : undefined;
+    const cell = (row: PageRow) => (
+      <Cell kind={column.kind} value={row[column.key]} label={column.label} digits={digits} />
+    );
     return {
       key: column.key,
       label: column.label,
       primary: column.primary || column === linkColumn || (!marked && index === 0),
-      numeric:
-        (column.kind ?? 'text') === 'text' &&
-        rows.some(row => typeof row[column.key] === 'number') &&
-        rows.every(row => row[column.key] == null || typeof row[column.key] === 'number'),
+      numeric,
       sortValue:
         column.kind === 'image' || column.kind === 'file' ? undefined : row => sortValue(column.kind, row[column.key]),
       render:

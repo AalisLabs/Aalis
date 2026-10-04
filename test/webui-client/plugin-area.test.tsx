@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
+  choose,
   type FakeRequest,
   type FakeRest,
   type Harness,
   installDialog,
   lists,
+  pluginRow as plugin,
   renderApp,
   restCalls,
 } from './harness.js';
@@ -45,24 +47,6 @@ afterEach(() => {
 });
 
 /** 插件列表的一项 */
-function plugin(instanceId: string, fields: Record<string, unknown> = {}) {
-  return {
-    name: instanceId.split(':')[0],
-    instanceId,
-    state: 'active',
-    reusable: false,
-    provides: [],
-    requiredServices: [],
-    optionalServices: [],
-    missing: [],
-    tools: [],
-    commands: [],
-    config: {},
-    defaultConfig: {},
-    ...fields,
-  };
-}
-
 const PLUGINS = [
   plugin('zz-mongo', { displayName: '文档库', subsystem: 'memory', version: '1.2.3', provides: ['zz-store'] }),
   plugin('zz-agent', {
@@ -150,6 +134,32 @@ describe('实例树', () => {
     expect(tree().getByRole('link', { name: '市场' }).getAttribute('aria-current')).toBe('page');
     const rail = within(screen.getByRole('navigation', { name: '图标栏' }));
     expect(rail.getByRole('link', { name: '插件' }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('树的头部可以重新扫描插件目录：扫完重取插件列表，Toast 写服务端的回执；扫不了时写原因', async () => {
+    let listed = 0;
+    let scan = (): unknown => ({ ok: true, loaded: ['zz-new'], message: '新加载 1 个插件' });
+    app = await renderApp(
+      '/plugins',
+      {},
+      pluginRest(PLUGINS, {
+        '/api/plugins': () => {
+          listed++;
+          return { plugins: PLUGINS, secretRefCounts: {} };
+        },
+        '/api/plugins/scan': () => scan(),
+      }),
+    );
+    await tree().findByRole('link', { name: '文档库' });
+    const before = listed;
+    fireEvent.click(tree().getByRole('button', { name: '重新扫描插件目录' }));
+    expect(await screen.findByText('新加载 1 个插件')).toBeTruthy();
+    expect(posts('/api/plugins/scan')).toHaveLength(1);
+    expect(listed).toBeGreaterThan(before);
+
+    scan = () => Response.json({ error: '宿主未提供插件来源，无法扫描' }, { status: 503 });
+    fireEvent.click(tree().getByRole('button', { name: '重新扫描插件目录' }));
+    expect(await screen.findByText('重新扫描插件目录失败：宿主未提供插件来源，无法扫描')).toBeTruthy();
   });
 
   it('插件列表没取到：左栏写明原因，可以重试', async () => {
@@ -506,10 +516,10 @@ describe('市场', () => {
     expect(entries()).toEqual(['@aalis/plugin-zz-notes']);
     expect(screen.queryByRole('link', { name: '@aalis/plugin-zz-notes' })).toBeNull();
     expect(screen.getByText('安装源查不到最新版')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('类型'), { target: { value: 'all' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '全部');
     expect(entries()).toEqual(['@aalis/plugin-zz-notes', 'zz-theme-ui', '@aalis/core']);
     expect(screen.getByRole('link', { name: 'zz-theme-ui' }).getAttribute('rel')).toBe('noopener noreferrer');
-    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'installed' } });
+    choose(screen.getByRole('combobox', { name: '状态' }), '已安装');
     expect(entries()).toEqual(['zz-theme-ui', '@aalis/core']);
     fireEvent.change(screen.getByLabelText('搜索'), { target: { value: '前端' } });
     expect(entries()).toEqual(['zz-theme-ui']);
@@ -519,13 +529,10 @@ describe('市场', () => {
   });
 
   it('安装先确认（列出一并装上的与要用的服务），装上插件后跳到它详情的配置区', async () => {
-    // jsdom 没有 scrollIntoView：记下是谁滚进视野，用完拿掉
+    // 记下是谁滚进视野
     const scrolled = vi.fn();
-    Element.prototype.scrollIntoView = function (this: Element) {
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
       scrolled(this.id);
-    };
-    onTestFinished(() => {
-      delete (Element.prototype as Partial<Element>).scrollIntoView;
     });
     const notes = plugin('@aalis/plugin-zz-notes', {
       displayName: '笔记',

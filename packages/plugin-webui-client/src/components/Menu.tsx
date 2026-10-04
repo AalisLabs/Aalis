@@ -1,7 +1,8 @@
 import { Ellipsis, type LucideIcon } from 'lucide-react';
-import { type CSSProperties, type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { IconButton } from './IconButton';
+import { usePopover } from './popover';
 import './Menu.css';
 
 interface MenuItem {
@@ -20,52 +21,17 @@ interface MenuProps {
   icon?: LucideIcon;
 }
 
-/** 按钮下方弹出的位置：与按钮右边对齐；按钮在视口下部时向上弹出 */
-interface Placement {
-  right: number;
-  edge: number;
-  up: boolean;
-}
-
 /**
- * 「更多」菜单：图标按钮弹出一列操作。弹层挂在 body 上，不被滚动区与容器裁掉；手机上从底部弹出。
+ * 「更多」菜单：图标按钮弹出一列操作，与按钮右边对齐；手机上从底部弹出。
  * 方向键在项之间移动，Esc 关闭并把焦点还给按钮，Tab 离开时关闭，点在外面关闭
  */
 export function Menu({ label, items, icon = Ellipsis }: MenuProps) {
-  const [placement, setPlacement] = useState<Placement>();
-  const trigger = useRef<HTMLButtonElement>(null);
-  const popup = useRef<HTMLDivElement>(null);
+  const { open, show, close, trigger, popup, layer, host } = usePopover<HTMLButtonElement>();
   const menuId = useId();
-  const open = placement !== undefined;
-
-  const show = () => {
-    const rect = (trigger.current as HTMLButtonElement).getBoundingClientRect();
-    const up = rect.bottom > window.innerHeight * 0.6;
-    setPlacement({ right: window.innerWidth - rect.right, edge: up ? window.innerHeight - rect.top : rect.bottom, up });
-  };
-
-  const close = (refocus: boolean) => {
-    setPlacement(undefined);
-    if (refocus) trigger.current?.focus();
-  };
 
   useEffect(() => {
-    if (!open) return;
-    popup.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    const outside = (event: Event) => {
-      const target = event.target as Node;
-      if (!popup.current?.contains(target) && !trigger.current?.contains(target)) setPlacement(undefined);
-    };
-    const dismiss = () => setPlacement(undefined);
-    document.addEventListener('pointerdown', outside, true);
-    document.addEventListener('scroll', outside, true);
-    window.addEventListener('resize', dismiss);
-    return () => {
-      document.removeEventListener('pointerdown', outside, true);
-      document.removeEventListener('scroll', outside, true);
-      window.removeEventListener('resize', dismiss);
-    };
-  }, [open]);
+    if (open) popup.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [open, popup]);
 
   const onTriggerKeyDown = (event: KeyboardEvent) => {
     if (open || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
@@ -107,16 +73,15 @@ export function Menu({ label, items, icon = Ellipsis }: MenuProps) {
         onClick={() => (open ? close(true) : show())}
         onKeyDown={onTriggerKeyDown}
       />
-      {placement &&
+      {layer &&
         createPortal(
           <div
             ref={popup}
             id={menuId}
             role="menu"
             aria-label={label}
-            className="menu"
-            data-placement={placement.up ? 'up' : 'down'}
-            style={{ '--menu-right': `${placement.right}px`, '--menu-edge': `${placement.edge}px` } as CSSProperties}
+            className="popover menu"
+            {...layer}
             onKeyDown={onMenuKeyDown}
           >
             {items.map(item => (
@@ -136,7 +101,7 @@ export function Menu({ label, items, icon = Ellipsis }: MenuProps) {
               </button>
             ))}
           </div>,
-          document.body,
+          host(),
         )}
     </>
   );

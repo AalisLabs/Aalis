@@ -50,7 +50,7 @@ const SUBGROUPS: Record<string, { text: string; files: string[] }[]> = {
   plugins: [
     { text: '钩子与贡献点', files: ['plugin-hooks', 'plugin-contributions'] },
     { text: '平台适配器', files: ['plugin-adapter-onebot'] },
-    { text: '模型与嵌入', files: ['plugin-llm-openai', 'plugin-llm-deepseek', 'plugin-llm-ollama', 'plugin-embedding-openai', 'plugin-embedding-ollama', 'plugin-asr-openai', 'plugin-asr-whisper-cpp'] },
+    { text: '模型与嵌入', files: ['plugin-llm-openai', 'plugin-llm-deepseek', 'plugin-llm-ollama', 'plugin-usage-stats', 'plugin-embedding-openai', 'plugin-embedding-ollama', 'plugin-asr-openai', 'plugin-asr-whisper-cpp'] },
     { text: '记忆与向量存储', files: ['plugin-memory-sqlite', 'plugin-memory-mongodb', 'plugin-memory-inmemory', 'plugin-memory-vector', 'plugin-memory-summary', 'plugin-vectorstore-lancedb', 'plugin-vectorstore-flat', 'plugin-memory-history', 'plugin-message-archive'] },
     { text: '智能体与人设', files: ['plugin-agent', 'plugin-persona', 'plugin-session-manager', 'plugin-session-server', 'plugin-subtask', 'plugin-skills', 'plugin-todo-list', 'plugin-prompt-budget', 'plugin-trigger-policy', 'plugin-user-profile', 'user-relation', 'user-relation-graph'] },
     { text: '工具与 MCP', files: ['plugin-tools', 'plugin-tool-system', 'plugin-tool-browser', 'plugin-tool-search', 'plugin-websearch-serper', 'plugin-tool-code-runner', 'plugin-code-sandbox-os', 'plugin-tool-math', 'plugin-tool-onebot', 'plugin-tool-session', 'plugin-file-reader', 'plugin-office', 'plugin-okx-trading', 'mcp', 'plugin-mcp-client', 'plugin-mcp-server', 'plugin-maimai'] },

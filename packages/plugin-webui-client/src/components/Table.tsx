@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { Button } from './Button';
+import { Select } from './Select';
 import './Table.css';
 
 /** 一页的行数；行数超过一页才出现搜索框与分页 */
@@ -137,22 +138,16 @@ export function Table<Row>({
           {filter?.fields.map(field => (
             <div key={field.key} className="table-filter">
               <label htmlFor={`${id}-${field.key}`}>{field.label}</label>
-              <select
+              <Select
                 id={`${id}-${field.key}`}
                 value={filter.values[field.key] ?? ''}
-                onChange={event => {
+                options={[{ value: '', label: '全部' }, ...field.options]}
+                onChange={value => {
                   setPage(0);
                   const { [field.key]: _, ...others } = filter.values;
-                  filter.onChange(event.target.value ? { ...others, [field.key]: event.target.value } : others);
+                  filter.onChange(value ? { ...others, [field.key]: value } : others);
                 }}
-              >
-                <option value="">全部</option>
-                {field.options.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           ))}
           {searchable && (

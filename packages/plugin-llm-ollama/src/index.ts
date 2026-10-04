@@ -7,10 +7,20 @@ import type {
   ThinkingLevel,
   ThinkingLevels,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm, requestedThinking } from '@aalis/api-llm';
+import { LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
 import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, optional, provide } from '@aalis/core';
+import {
+  type BoundOf,
+  config,
+  definePlugin,
+  events,
+  type Logger,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
@@ -1211,7 +1221,7 @@ class OllamaModelHandle implements LLMModel {
   }
 }
 
-const uses = { config, logger, lifecycle, provide, proc: optional(processService) };
+const uses = { config, logger, lifecycle, provide, events, proc: optional(processService) };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -1225,7 +1235,7 @@ export default definePlugin({
   apply: start,
 });
 
-async function start({ config, logger, lifecycle, provide, proc }: Caps): Promise<void> {
+async function start({ config, logger, lifecycle, provide, events, proc }: Caps): Promise<void> {
   const cfg = parseConfig(configSchema, config, logger);
   const customModels = parseCustomModels(cfg.customModels);
   const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
@@ -1264,7 +1274,7 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
       capabilities.includes(Thinking) ? { levels: THINKING_LEVELS, default: cfg.thinking } : undefined,
       refresh,
     );
-    const dispose = provide(llm, handle, {
+    const dispose = provide(llm, metered(handle, events), {
       label: `${baseLabel} / ${modelId}`,
       entryId: `${lifecycle.id}/${modelId}`,
     });

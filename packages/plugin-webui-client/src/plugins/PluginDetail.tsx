@@ -12,19 +12,21 @@ import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
-import { instanceName, refOf, usePages } from '../pages/registry';
+import { AttentionList } from '../health/AttentionList';
+import { useAttention } from '../health/attention';
+import { instanceName, pageAddress, usePages } from '../pages/registry';
 import { deleteJson, isRecord, postJson, RestError } from '../rest';
 import { paths } from '../routes';
 import { Main, useShell } from '../shell/Shell';
-import { type PluginAction, usePluginAction } from './action';
+import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
 import { labelOf, type PluginRow, usePlugins } from './list';
 import { markerOf, statusOf } from './status';
 import './PluginDetail.css';
 
-// 插件详情，由宿主拼装，自上而下：头部（包名、版本、状态与原因，启停、重载，主实例卸载、其余实例移除）、配置、依赖与贡献、
-// 页面、实例。没有内容的块不出现。管理动作写进去了就看头部的状态，出错用 Toast 报；无论成败都重取插件列表
+// 插件详情，由宿主拼装，自上而下：头部（包名、版本、状态与原因，启停、重载、查看日志，主实例卸载、其余实例移除）、需要处理（这个插件的
+// 提示）、配置、依赖与贡献、页面、实例。没有内容的块不出现。管理动作写进去了就看头部的状态，出错用 Toast 报；无论成败都重取插件列表
 
 /** 插件前端申请的宿主数据能力怎么写 */
 const CAPABILITIES: Record<FrameHostCapability, string> = {
@@ -39,10 +41,6 @@ const PLACEMENTS: Record<PageView['placement'], string> = {
 };
 
 const enc = encodeURIComponent;
-
-/** 回执里的说明 */
-const messageOf = (reply: unknown) =>
-  isRecord(reply) && typeof reply.message === 'string' ? reply.message : undefined;
 
 /** 桌面上插件区的主区：还没选插件。左栏是抽屉或收起着时，从这里打开它 */
 export function PluginsHome() {
@@ -106,6 +104,7 @@ function Detail({ row }: { row: PluginRow }) {
     <Panel title={labelOf(row)} meta={instanceName(row.instanceId)} back={paths.plugins}>
       <div className="page-screen plugin-detail">
         <Summary row={row} />
+        <Notices row={row} />
         {schema && <ConfigSection row={row} schema={schema} />}
         <Relations row={row} />
         <Pages row={row} />
@@ -171,6 +170,9 @@ function Summary({ row }: { row: PluginRow }) {
             </Button>
           </>
         )}
+        <ButtonLink to={paths.healthLogs({ plugin: row.instanceId })} variant="text">
+          查看日志
+        </ButtonLink>
         {row.instanceId === row.name ? (
           <Button variant="text" danger disabled={locked} onClick={() => setUninstalling(true)}>
             卸载
@@ -200,6 +202,17 @@ function Summary({ row }: { row: PluginRow }) {
       </Dialog>
       <RemoveInstanceDialog target={removing} current={row} action={action} onClose={() => setRemoving(undefined)} />
     </div>
+  );
+}
+
+/** 这个插件的提示：故障原因写在头部、缺的服务写在依赖块，这里不重复 */
+function Notices({ row }: { row: PluginRow }) {
+  const own = (useAttention().items ?? []).filter(item => item.kind === 'notice' && item.instance === row.instanceId);
+  if (own.length === 0) return null;
+  return (
+    <Block title="需要处理">
+      <AttentionList items={own} named={false} />
+    </Block>
   );
 }
 
@@ -353,12 +366,7 @@ function Pages({ row }: { row: PluginRow }) {
     <Block title="页面">
       <ul className="plugin-pages">
         {own.map(page => {
-          const to =
-            page.placement === 'plugin'
-              ? paths.page(refOf(page))
-              : page.placement === 'settings'
-                ? paths.settingsPage(refOf(page))
-                : undefined;
+          const to = pageAddress(page);
           const host = page.frame?.host ?? [];
           return (
             <li key={page.key}>

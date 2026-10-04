@@ -6,7 +6,7 @@ import { isRecord } from '../rest';
 
 export type Field = SettingRow['field'];
 
-/** 一个可选项：key 用来比较与做 <option> 的值，value 是写回去的取值；isDefault 是可选项接口标的默认那一项 */
+/** 一个可选项：key 用来比较，也是选择器里选项的值；value 是写回去的取值；isDefault 是可选项接口标的默认那一项 */
 export interface Option {
   key: string;
   label: string;
@@ -15,6 +15,9 @@ export interface Option {
 }
 
 export const isModelField = (field: Field) => String(field.type) === 'llm-ref';
+
+/** 选项在列表里的写法：可选项接口标了默认的那一项注明是默认 */
+export const optionLabel = (option: Option) => (option.isDefault ? `${option.label}（默认）` : option.label);
 
 /** 一行的生效值：哪一层都没设时按字段的默认值 */
 export const effectiveOf = (row: SettingRow) => (row.source === undefined ? row.field.default : row.effective);
@@ -53,6 +56,14 @@ export function staticOptions(field: Field): Option[] {
     ];
   }
   return (field.options ?? []).map(option => ({ key: String(option.value), label: option.label, value: option.value }));
+}
+
+/** 可选项接口另给的 labels：认得、但这次不在可选项里的取值的名字（如别的模型才有的思考档位）；不是可选项 */
+export function parseNames(body: unknown): Option[] {
+  const labels = isRecord(body) && isRecord(body.labels) ? body.labels : {};
+  return Object.entries(labels).flatMap(([value, label]) =>
+    typeof label === 'string' ? [{ key: value, label, value }] : [],
+  );
 }
 
 /**
@@ -115,10 +126,15 @@ const unlisted = (field: Field, options: readonly Option[], value: unknown): Opt
   value,
 });
 
-/** 当前值不在选项里（服务不在了、手写的值）时也列出来，免得看起来像选了别的 */
-export function withCurrent(field: Field, options: Option[], current: unknown): Option[] {
+/** 当前值不在选项里（服务不在了、手写的值）时也列出来，免得看起来像选了别的；names 是不在选项里的取值的名字 */
+export function withCurrent(
+  field: Field,
+  options: Option[],
+  current: unknown,
+  names: readonly Option[] = [],
+): Option[] {
   if (current === undefined || options.some(option => option.key === valueKey(field, current))) return options;
-  return [unlisted(field, options, current), ...options];
+  return [unlisted(field, [...options, ...names], current), ...options];
 }
 
 /** 多选：已选的值不在选项里时接在后面列出来 */

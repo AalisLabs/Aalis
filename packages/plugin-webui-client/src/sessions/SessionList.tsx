@@ -9,6 +9,7 @@ import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Menu } from '../components/Menu';
 import { listTime } from '../format';
+import { AttentionSummary } from '../health/AttentionList';
 import { shortcutLabel } from '../keys';
 import { PinnedList } from '../pages/Pinned';
 import {
@@ -20,16 +21,17 @@ import {
   routes,
   useSessionAddress,
 } from '../routes';
-import { HOST_ENTRIES } from '../shell/entries';
+import { countNote, HOST_ENTRIES, useEntryCounts } from '../shell/entries';
 import { SessionGate } from '../shell/SessionGate';
 import { Left, usePhone, useShell } from '../shell/Shell';
 import { useSessionActions } from './actions';
 import { useSessionList } from './live-list';
+import { useMine } from './mine';
 import { SessionStatus, statusOf } from './status';
 import './SessionList.css';
 
 // 左栏的会话列表：「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的「已归档」。
-// 手机上它是第一层，没有图标栏，宿主的入口与固定的页面列在会话上面
+// 手机上它是第一层，没有图标栏，「需要处理」的摘要、宿主的入口（运行状况带数）与固定的页面列在会话上面
 
 /** 组内露出近这么久她开过口的房间，其余收进「其余 N 个」 */
 const RECENT_REPLY_MS = 7 * 24 * 60 * 60_000;
@@ -44,7 +46,7 @@ export function SessionList() {
       {phone ? (
         <div className="header-bar session-list-header">
           <h1 className="session-list-title">会话</h1>
-          <IconButton icon={Search} label="搜索会话" onClick={openSearch} />
+          <IconButton icon={Search} label="搜索" onClick={openSearch} />
           <IconButton icon={Plus} label="新会话" onClick={newSession} />
         </div>
       ) : (
@@ -52,26 +54,12 @@ export function SessionList() {
           <Button icon={Plus} title={`新会话（${shortcutLabel('newSession')}）`} onClick={newSession}>
             新会话
           </Button>
-          <IconButton icon={Search} label="搜索会话" shortcut={shortcutLabel('search')} onClick={openSearch} />
+          <IconButton icon={Search} label="搜索" shortcut={shortcutLabel('search')} onClick={openSearch} />
         </div>
       )}
       <div className="session-list-body">
-        {phone && (
-          <List label="入口">
-            {HOST_ENTRIES.map(({ area, label, icon: Icon, path }) => (
-              <ListItem
-                key={area}
-                to={path}
-                title={
-                  <span className="pinned-title">
-                    <Icon aria-hidden />
-                    {label}
-                  </span>
-                }
-              />
-            ))}
-          </List>
-        )}
+        {phone && <AttentionSummary />}
+        {phone && <Entries />}
         {phone && <PinnedList />}
         <SessionGate>
           <Sections />
@@ -81,8 +69,42 @@ export function SessionList() {
   );
 }
 
+/** 手机第一层的宿主入口 */
+function Entries() {
+  const countOf = useEntryCounts();
+  return (
+    <List label="入口">
+      {HOST_ENTRIES.map(({ area, label, icon: Icon, path }) => {
+        const count = countOf(area);
+        return (
+          <ListItem
+            key={area}
+            to={path}
+            title={
+              <span className="pinned-title">
+                <Icon aria-hidden />
+                {label}
+              </span>
+            }
+            meta={
+              count !== undefined && (
+                <>
+                  <span aria-hidden>
+                    <Badge tone="attention">{count}</Badge>
+                  </span>
+                  <span className="visually-hidden">{countNote(count)}</span>
+                </>
+              )
+            }
+          />
+        );
+      })}
+    </List>
+  );
+}
+
 function Sections() {
-  const mine = useSessionList({ section: 'owner' });
+  const mine = useMine();
   if (mine.error) return <ListError error={mine.error} retry={mine.retry} />;
   if (!mine.sessions) return null;
   return (
@@ -114,7 +136,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   const id = useId();
   return (
     <section aria-labelledby={id}>
-      <h2 id={id} className="session-list-heading">
+      <h2 id={id} className="section-heading session-list-heading">
         {title}
       </h2>
       {children}
@@ -144,7 +166,7 @@ function RoomGroupItem({ group }: { group: RoomGroup }) {
   const tableOpen = shown !== undefined && inGroup(shown, address);
   return (
     <div className="room-group">
-      <div className="room-group-header">
+      <div className="section-heading room-group-header">
         <Disclosure expanded={expanded} onToggle={() => setOpen(!expanded)}>
           <MessagesSquare aria-hidden />
           <span className="room-group-label">{group.label}</span>
@@ -204,9 +226,11 @@ function Archive() {
   const [open, setOpen] = useState(false);
   return (
     <section aria-label="已归档">
-      <Disclosure expanded={open} onToggle={() => setOpen(!open)}>
-        已归档
-      </Disclosure>
+      <div className="section-heading">
+        <Disclosure expanded={open} onToggle={() => setOpen(!open)}>
+          已归档
+        </Disclosure>
+      </div>
       {open && <ArchivedSessions />}
     </section>
   );
