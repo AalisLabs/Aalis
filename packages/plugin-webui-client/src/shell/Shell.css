@@ -69,6 +69,13 @@
   height: var(--icon-md);
 }
 
+/* 运行状况的角标压在图标的右上角 */
+.shell-rail-item .badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
 /* 固定的页面：多了在这一段里纵向滚动 */
 .shell-rail-pinned {
   display: flex;
@@ -81,7 +88,7 @@
   scrollbar-width: none;
 }
 
-/* 插件与设置：贴在图标栏底部 */
+/* 运行状况、插件与设置：贴在图标栏底部 */
 .shell-rail-tail {
   display: flex;
   flex-direction: column;

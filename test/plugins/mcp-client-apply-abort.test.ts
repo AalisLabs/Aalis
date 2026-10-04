@@ -120,6 +120,7 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
       lifecycle,
       config: SERVERS,
       hostConfig: { current: undefined } as never,
+      webui: { notify: () => ({ clear() {} }) } as never,
     });
 
     expect(lines).toEqual([]);

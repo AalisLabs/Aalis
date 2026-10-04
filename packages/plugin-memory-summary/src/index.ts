@@ -399,24 +399,22 @@ async function run(caps: Caps): Promise<void> {
     // 降级为纯裁切——该段历史无摘要但仍在归档层可检索，活跃上下文回到 keepRecent 以内，循环即断。
     let summaryText = '';
     try {
-      const stream = summaryModel.chatStream?.({
+      // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
+      // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞
+      // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
+      // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
+      // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
+      const request = {
         messages: summaryMessages,
         temperature: 0.3,
         maxTokens: summaryBudget,
-        think: lightestThinking(summaryModel), // 取舍见下方非流式分支的注释
-      });
+        think: lightestThinking(summaryModel),
+        sessionId,
+        purpose: '摘要',
+      };
+      const stream = summaryModel.chatStream?.(request);
       if (!stream) {
-        // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
-        // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞
-        // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
-        // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
-        // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
-        const resp = await summaryModel.chat({
-          messages: summaryMessages,
-          temperature: 0.3,
-          maxTokens: summaryBudget,
-          think: lightestThinking(summaryModel),
-        });
+        const resp = await summaryModel.chat(request);
         summaryText = resp.content ?? '';
       } else {
         for await (const chunk of stream) {

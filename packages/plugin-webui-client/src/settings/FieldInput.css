@@ -25,7 +25,7 @@
   min-width: 0;
 }
 
-.field-model > select {
+.field-model > .select {
   flex: 1;
   min-width: 0;
 }

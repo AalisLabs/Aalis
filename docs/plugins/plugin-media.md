@@ -5,7 +5,7 @@
 
 ## 概述
 
-注册 `media` 服务（`MediaService`），调度 vision / audio / video 三类媒体处理。内置 LLM-as-Processor adapter，把声明了 vision/audio 能力的 LLM 包装为 `MediaProcessor`。向 agent 注册 preprocessor，归一化 `IncomingMessage.attachments` 并写入描述。视频处理先用 ffmpeg 抽关键帧，交给 vision 处理器做综合描述；`video.mode` 为 `frames+asr` 且 `audio.mode` 为 `enabled` 时，再用 ffmpeg 抽出音轨，交给音频处理器（Whisper/ASR 或能识别音频的 LLM）转写。两段文字分别加 `video.framePrefix` / `video.audioTrackPrefix` 前缀后拼接。本插件取代并删除了 plugin-image-recognition，图片、动图、视频、音频统一走 `attachments[]`。
+注册 `media` 服务（`MediaService`），调度 vision / audio / video 三类媒体处理。内置 LLM-as-Processor adapter，把声明了 vision/audio 能力的 LLM 包装为 `MediaProcessor`；看图（含视频与动图的帧）的模型调用带上用途「识图」，转写语音（含视频的音轨）的带上用途「转写」；消息到达时的识别与转写另带消息所在的会话，`analyze_image` 带调用工具的会话（`DescribeInput.sessionId`、`TranscribeInput.sessionId`），供记账（见 [api-llm 的记账](../api/api-llm.md#记账)）。向 agent 注册 preprocessor，归一化 `IncomingMessage.attachments` 并写入描述。视频处理先用 ffmpeg 抽关键帧，交给 vision 处理器做综合描述；`video.mode` 为 `frames+asr` 且 `audio.mode` 为 `enabled` 时，再用 ffmpeg 抽出音轨，交给音频处理器（Whisper/ASR 或能识别音频的 LLM）转写。两段文字分别加 `video.framePrefix` / `video.audioTrackPrefix` 前缀后拼接。本插件取代并删除了 plugin-image-recognition，图片、动图、视频、音频统一走 `attachments[]`。
 
 ## 插件声明
 

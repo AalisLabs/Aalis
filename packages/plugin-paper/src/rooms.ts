@@ -51,50 +51,83 @@ declare module '@aalis/api-session-manager' {
   }
 }
 
-/** 房间专用的一项：只对房间适用，只经继承链实时解析（建子会话不复制，免得子会话凭冻结的值开远端任务） */
-const roomSetting = (order: number, key: SessionSetting['key'], field: SessionSetting['field']): SessionSetting => ({
+/**
+ * 房间专用的一项：只对房间适用，只经继承链实时解析（建子会话不复制，免得子会话凭冻结的值开远端任务）；unset 是没设时的含义
+ */
+const roomSetting = (
+  order: number,
+  key: SessionSetting['key'],
+  field: SessionSetting['field'],
+  unset?: string,
+): SessionSetting => ({
   key,
   field,
   appliesTo: ['room'],
   prominence: 'advanced',
   order,
   liveOnly: true,
+  unset,
 });
 
 /** 本插件登记的会话设置项：房间的白纸开关与远端代理的类型、上限 */
 export const ROOM_SETTINGS: SessionSetting[] = [
   roomSetting(0, 'paperEnabled', { type: 'boolean', label: '开启白纸', description: '这个房间开启白纸（默认关）' }),
-  roomSetting(1, 'paperName', {
-    type: 'string',
-    label: '白纸名',
-    description: '留空则每个房间各一块白纸，属性取白纸插件配置的 defaults；几个房间写同一个名字就共用一块',
-  }),
-  roomSetting(2, 'remoteAgentTypes', {
-    type: 'multiselect',
-    label: '远端代理类型',
-    allowCustom: true,
-    description: '允许的远端代理插件实例 id；空即关',
-  }),
-  roomSetting(3, 'remoteAgentUserDailyCents', {
-    type: 'number',
-    label: '每人每天金额上限（美分）',
-    min: 0,
-    onInvalid: 'error',
-    description: '留空不增加每人金额限制，0 禁止新远端任务；写坏了按 0',
-  }),
-  roomSetting(4, 'remoteAgentUserDailyTasks', {
-    type: 'number',
-    label: '每人每天件数上限',
-    min: 0,
-    description: '留空即不按人限制',
-  }),
-  roomSetting(5, 'remoteAgentRoomDailyCents', {
-    type: 'number',
-    label: '每房间每天金额上限（美分）',
-    min: 0,
-    onInvalid: 'error',
-    description: '留空不增加房间金额限制，0 禁止新远端任务；写坏了按 0',
-  }),
+  roomSetting(
+    1,
+    'paperName',
+    {
+      type: 'string',
+      label: '白纸名',
+      description: '留空则每个房间各一块白纸，属性取白纸插件配置的 defaults；几个房间写同一个名字就共用一块',
+    },
+    '每个房间各一块',
+  ),
+  roomSetting(
+    2,
+    'remoteAgentTypes',
+    {
+      type: 'multiselect',
+      label: '远端代理类型',
+      allowCustom: true,
+      description: '允许的远端代理插件实例 id；空即关',
+    },
+    '不允许',
+  ),
+  roomSetting(
+    3,
+    'remoteAgentUserDailyCents',
+    {
+      type: 'number',
+      label: '每人每天金额上限（美分）',
+      min: 0,
+      onInvalid: 'error',
+      description: '留空不增加每人金额限制，0 禁止新远端任务；写坏了按 0',
+    },
+    '不另加限制',
+  ),
+  roomSetting(
+    4,
+    'remoteAgentUserDailyTasks',
+    {
+      type: 'number',
+      label: '每人每天件数上限',
+      min: 0,
+      description: '留空即不按人限制',
+    },
+    '不按人限制',
+  ),
+  roomSetting(
+    5,
+    'remoteAgentRoomDailyCents',
+    {
+      type: 'number',
+      label: '每房间每天金额上限（美分）',
+      min: 0,
+      onInvalid: 'error',
+      description: '留空不增加房间金额限制，0 禁止新远端任务；写坏了按 0',
+    },
+    '不另加限制',
+  ),
 ];
 
 export interface RoomPaper {

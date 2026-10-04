@@ -74,6 +74,8 @@ export interface DescribeInput {
   maxTokens?: number;
   /** 调用语义：'single' 每个 attachment 单独描述；'combined' 合并描述 */
   mode?: 'single' | 'combined';
+  /** 附件所在的会话：识别的模型调用按它记账（api-llm 的 ChatModelRequest.sessionId）；不在会话里识别时不填 */
+  sessionId?: string;
 }
 
 export interface DescribeResult {
@@ -98,6 +100,8 @@ export interface TranscribeInput {
    * 传统 Whisper 类 ASR 端点会忽略。
    */
   context?: string;
+  /** 音频所在的会话：转写的模型调用按它记账（api-llm 的 ChatModelRequest.sessionId）；不在会话里转写时不填 */
+  sessionId?: string;
 }
 
 export interface TranscribeResult {
@@ -193,6 +197,8 @@ export interface DescribeImageOptions {
    * 描述缓存按档分键：`'auto'` 与到达识别共用一条，其余三档各自一条；带 hint 不进缓存。
    */
   detailLevel?: 'auto' | 'casual' | 'detailed' | 'professional';
+  /** 图片所在的会话：识别的模型调用按它记账（同 {@link DescribeInput.sessionId}）；不在会话里识别时不填 */
+  sessionId?: string;
 }
 
 export interface DescribeVideoOptions {

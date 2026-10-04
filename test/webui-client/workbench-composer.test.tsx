@@ -1,9 +1,21 @@
 // @vitest-environment jsdom
-import { act, fireEvent, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, INIT, installDialog, main, renderApp, requests, server, summary } from './harness.js';
+import {
+  choose,
+  type Harness,
+  INIT,
+  installDialog,
+  lists,
+  main,
+  optionsOf,
+  renderApp,
+  requests,
+  server,
+  summary,
+} from './harness.js';
 import { row, snapshot, turn, userMessage } from './items.js';
 
 // ════════════════════════════════════════════════════════════
@@ -193,7 +205,7 @@ describe('输入框', () => {
     expect(main().getByRole('button', { name: '发送' })).toBeTruthy();
   });
 
-  it('输入框旁是 composer 档设置项的快捷切换：显示生效值，改了即存；收到 session/config/changed 重取', async () => {
+  it('输入框旁是 composer 档设置项的快捷切换：只显示生效值，名字在读屏标签与悬停提示里；改了即存；收到 session/config/changed 重取', async () => {
     stubViewport(1440);
     let rows = [
       row('llm', {
@@ -213,11 +225,11 @@ describe('输入框', () => {
       },
       { '/api/models/llm': MODELS },
     );
-    const model = (await main().findByRole('combobox', { name: '模型' })) as HTMLSelectElement;
-    await vi.waitFor(() => expect(model.selectedOptions[0]?.textContent).toBe('alpha'));
+    const model = await main().findByRole('combobox', { name: '模型' });
+    await vi.waitFor(() => expect(model.textContent).toBe('alpha'));
+    expect(model.title).toBe('模型');
     expect(main().queryByRole('combobox', { name: '开关项' })).toBeNull();
-    const beta = within(model).getByRole('option', { name: 'beta' }) as HTMLOptionElement;
-    fireEvent.change(model, { target: { value: beta.value } });
+    choose(model, 'beta');
     await vi.waitFor(() =>
       expect(requests('session/config/update')).toEqual([
         { sessionId: 's1', patch: { llm: { provider: '@aalis/llm-a', model: 'beta' } } },
@@ -252,16 +264,16 @@ describe('输入框', () => {
       { ...session, 'session/config/get': () => ({ items: rows }) },
       {
         '/api/models/llm': MODELS,
-        [levels('alpha')]: { details: [{ value: 'deep', label: '深' }] },
+        [levels('alpha')]: { details: [{ value: 'deep', label: '深', default: true }] },
         [levels('beta')]: { details: [{ value: 'light', label: '浅' }] },
       },
     );
     const think = () => main().getByRole('combobox', { name: '深度思考' });
-    await vi.waitFor(() => expect(within(think()).getByRole('option', { name: '深' })).toBeTruthy());
+    await vi.waitFor(() => expect(optionsOf(think())).toEqual(['深（默认）']));
+    expect(think().textContent).toBe('深（默认）');
     rows = rowsFor('beta');
     act(() => server().notify('session/config/changed', {}));
-    await vi.waitFor(() => expect(within(think()).getByRole('option', { name: '浅' })).toBeTruthy());
-    expect(within(think()).queryByRole('option', { name: '深' })).toBeNull();
+    await vi.waitFor(() => expect(optionsOf(think())).toEqual(['浅']));
   });
 
   it('快捷切换的可选项没取到时写明原因；哪一层都没设的项按字段的默认值显示', async () => {
@@ -276,14 +288,15 @@ describe('输入框', () => {
       row('extra', { field: { type: 'string', label: '额外提示', default: '<默认提示>' }, prominence: 'composer' }),
     ];
     app = await renderApp('/s/s1', { ...session, 'session/config/get': () => ({ items: rows }) });
-    const model = (await main().findByRole('combobox', { name: '模型' })) as HTMLSelectElement;
-    const failed = await within(model).findByRole('option', { name: /可选项没取到/ });
-    expect((failed as HTMLOptionElement).disabled).toBe(true);
-    expect(model.title).toContain('可选项没取到');
-    expect(main().getByRole('link', { name: '额外提示：<默认提示>' })).toBeTruthy();
+    const model = await main().findByRole('combobox', { name: '模型' });
+    await vi.waitFor(() => expect(model.title).toContain('可选项没取到'));
+    fireEvent.click(model);
+    expect(screen.getByRole('option', { name: /可选项没取到/ }).getAttribute('aria-disabled')).toBe('true');
+    const extra = main().getByRole('link', { name: '额外提示：<默认提示>' });
+    expect([extra.textContent, extra.title]).toEqual(['<默认提示>', '额外提示：<默认提示>']);
   });
 
-  it('快捷切换里不能就地选的项按可选项的标签显示；没设又没有默认值的只写名字', async () => {
+  it('快捷切换里不能就地选的项按可选项的标签显示；没设又没有默认值的写登记方给的「没设时」，都没有才写名字', async () => {
     stubViewport(1440);
     const rows = [
       row('groups', {
@@ -293,13 +306,148 @@ describe('输入框', () => {
         source: 'defaults',
       }),
       row('note', { field: { type: 'string', label: '备注' }, prominence: 'composer' }),
+      row('limit', { field: { type: 'number', label: '上限' }, prominence: 'composer', unset: '<不限>' }),
     ];
     app = await renderApp(
       '/s/s1',
       { ...session, 'session/config/get': () => ({ items: rows }) },
       { '/api/models/toolGroups': { details: [{ value: '*', label: '全部分组' }] } },
     );
-    expect(await main().findByRole('link', { name: '工具分组：全部分组' })).toBeTruthy();
-    expect(main().getByRole('link', { name: '备注' })).toBeTruthy();
+    expect((await main().findByRole('link', { name: '工具分组：全部分组' })).textContent).toBe('全部分组');
+    expect(main().getByRole('link', { name: '备注' }).textContent).toBe('备注');
+    expect(main().getByRole('link', { name: '上限：<不限>' }).textContent).toBe('<不限>');
+  });
+
+  it('草稿按会话存在本浏览器：切会话、刷新后还在，发出去就清掉；首页的新会话也一样', async () => {
+    stubViewport(1440);
+    const mine = [summary('s1', { title: '甲' }), summary('s2', { title: '乙' })];
+    const handlers = {
+      ...session,
+      'sessions/list': lists(params => (params.section === 'owner' ? mine : [])),
+      'session/create': () => ({ session: summary('s3') }),
+    };
+    app = await renderApp('/s/s1', handlers);
+    await main().findByRole('region', { name: '对话' });
+    type('给甲的半句话');
+    fireEvent.click(await screen.findByRole('link', { name: /乙/ }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s2'));
+    expect(input().value).toBe('');
+    type('给乙的');
+    fireEvent.click(screen.getByRole('link', { name: /甲/ }));
+    await vi.waitFor(() => expect(input().value).toBe('给甲的半句话'));
+
+    app.close();
+    app = await renderApp('/s/s2', handlers);
+    await main().findByRole('region', { name: '对话' });
+    expect(input().value).toBe('给乙的');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    await vi.waitFor(() => expect(input().value).toBe(''));
+    app.close();
+    app = await renderApp('/s/s2', handlers);
+    await main().findByRole('region', { name: '对话' });
+    expect(input().value).toBe('');
+
+    app.close();
+    app = await renderApp('/', handlers);
+    type('新会话的开头');
+    app.close();
+    app = await renderApp('/', handlers);
+    expect(input().value).toBe('新会话的开头');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s3'));
+    app.close();
+    app = await renderApp('/', handlers);
+    expect(input().value).toBe('');
+  });
+
+  it('发送在途时切到别的会话，回应到了以后切回来，输入框是空的：发出去的不当草稿留着', async () => {
+    stubViewport(1440);
+    const mine = [summary('s1', { title: '甲' }), summary('s2', { title: '乙' })];
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([userMessage('u1', '在吗')]),
+      'sessions/list': lists(params => (params.section === 'owner' ? mine : [])),
+    });
+    await main().findByRole('region', { name: '对话' });
+    type('发出去的话');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    await vi.waitFor(() => expect(requests('turn/send')).toHaveLength(1));
+    fireEvent.click(await screen.findByRole('link', { name: /乙/ }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s2'));
+    await act(async () => server().reply('turn/send', {}));
+    fireEvent.click(screen.getByRole('link', { name: /甲/ }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1'));
+    await main().findByRole('region', { name: '对话' });
+    expect(input().value).toBe('');
+  });
+
+  it('打开存着草稿的会话不算改过：草稿的先后不因打开而变', async () => {
+    stubViewport(1440);
+    localStorage.setItem('aalis.drafts', JSON.stringify({ s1: { text: '存着的半句', at: 1 } }));
+    app = await renderApp('/s/s1', session);
+    await main().findByRole('region', { name: '对话' });
+    expect(input().value).toBe('存着的半句');
+    expect(JSON.parse(localStorage.getItem('aalis.drafts') ?? '{}')).toEqual({ s1: { text: '存着的半句', at: 1 } });
+  });
+
+  it('浏览器存储不可用时输入框照常能打字、发送', async () => {
+    stubViewport(1440);
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('存储被禁用');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('存储被禁用');
+    });
+    app = await renderApp('/s/s1', session);
+    await main().findByRole('region', { name: '对话' });
+    type('照常');
+    expect(input().value).toBe('照常');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    await vi.waitFor(() =>
+      expect(requests('turn/send')).toEqual([{ sessionId: 's1', content: '照常', attachments: [] }]),
+    );
+  });
+
+  it('文件拖到会话里就成为附件，与附件按钮同一条路；拖着时输入框标出能放下', async () => {
+    stubViewport(1440);
+    app = await renderApp('/s/s1', session);
+    const log = await main().findByRole('region', { name: '对话' });
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' });
+    const dataTransfer = { types: ['Files'], files: [file] };
+    const form = main().getByRole('form', { name: '发消息' });
+    fireEvent.dragOver(log, { dataTransfer });
+    expect(form.hasAttribute('data-dropping')).toBe(true);
+    fireEvent.drop(log, { dataTransfer });
+    expect(form.hasAttribute('data-dropping')).toBe(false);
+    const attachments = await main().findByRole('list', { name: '附件' });
+    expect(within(attachments).getByText('note.txt')).toBeTruthy();
+    await vi.waitFor(() =>
+      expect((main().getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(main().getByRole('button', { name: '发送' }));
+    await vi.waitFor(() => expect(requests('turn/send')).toHaveLength(1));
+    expect((requests('turn/send')[0] as { attachments: unknown[] }).attachments).toEqual([
+      expect.objectContaining({ kind: 'file', name: 'note.txt', mimeType: 'text/plain' }),
+    ]);
+
+    // 拖的不是文件（选中的文字）：不拦
+    const text = fireEvent.dragOver(log, { dataTransfer: { types: ['text/plain'], files: [] } });
+    expect(text).toBe(true);
+    expect(form.hasAttribute('data-dropping')).toBe(false);
+  });
+
+  it('不能用时拖进来的文件照样拦下（浏览器不离开页面去打开它），不加附件、不标能放下；拖着时变得不能用，标记随之撤掉', async () => {
+    stubViewport(1440);
+    app = await renderApp('/s/s1', session);
+    const log = await main().findByRole('region', { name: '对话' });
+    const dataTransfer = { types: ['Files'], files: [new File(['hello'], 'note.txt', { type: 'text/plain' })] };
+    const form = main().getByRole('form', { name: '发消息' });
+    fireEvent.dragOver(log, { dataTransfer });
+    expect(form.hasAttribute('data-dropping')).toBe(true);
+    act(() => server().notify('features/changed', { features: { ...INIT.features, send: false } }));
+    expect(form.hasAttribute('data-dropping')).toBe(false);
+    expect(fireEvent.dragOver(log, { dataTransfer })).toBe(false);
+    expect(form.hasAttribute('data-dropping')).toBe(false);
+    expect(fireEvent.drop(log, { dataTransfer })).toBe(false);
+    expect(main().queryByRole('list', { name: '附件' })).toBeNull();
   });
 });

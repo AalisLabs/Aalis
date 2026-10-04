@@ -1,7 +1,10 @@
-import { HOST_PANEL_TABS, type HostPanelTab, type PageRef } from '@aalis/api-webui';
+import { HOST_PANEL_TABS, type HostPanelTab, type LogFilter, type PageRef } from '@aalis/api-webui';
 import { matchPath, useParams } from 'react-router';
 
-// 地址表：当前会话、右侧面板的标签、房间表的组、打开的页面与插件详情都由地址决定，能收藏、能刷新，浏览器后退按地址逐层退回
+type LogLevel = NonNullable<LogFilter['level']>;
+
+// 地址表：当前会话、右侧面板的标签、房间表的组、打开的页面、插件详情与日志的筛选都由地址决定，能收藏、能刷新，
+// 浏览器后退按地址逐层退回
 
 /** 路由的写法，路由表照它登记 */
 export const routes = {
@@ -18,6 +21,8 @@ export const routes = {
   settings: '/settings',
   settingsSection: '/settings/:section',
   settingsPage: '/settings/p/:instance/:pageKey',
+  health: '/health',
+  healthLogs: '/health/logs',
 } as const;
 
 /** 房间表的一组：按适配器实例取；还没记下实例的房间按平台成一组 */
@@ -43,6 +48,29 @@ export function groupFromParams(params: URLSearchParams): RoomGroupAddress | und
   return platform === null ? undefined : { platform };
 }
 
+/** 地址里认的级别：debug 是最低一级，按它筛与不筛一样，不认 */
+const LOG_LEVELS: ReadonlySet<string> = new Set(['info', 'warn', 'error'] satisfies LogLevel[]);
+
+/** 日志筛选的查询串：按级别、插件、文字的顺序，空的不写。地址与取历史都用它 */
+export function logQuery({ level, plugin, text }: LogFilter): string {
+  const fields = Object.entries({ level, plugin, text }).filter((field): field is [string, string] =>
+    Boolean(field[1]),
+  );
+  return new URLSearchParams(fields).toString();
+}
+
+/** 地址栏里的日志筛选：不认的级别当没给 */
+export function logFilterFrom(params: URLSearchParams): LogFilter {
+  const level = params.get('level');
+  const plugin = params.get('plugin');
+  const text = params.get('text');
+  return {
+    ...(level !== null && LOG_LEVELS.has(level) ? { level: level as LogLevel } : {}),
+    ...(plugin ? { plugin } : {}),
+    ...(text ? { text } : {}),
+  };
+}
+
 const pageSegments = (ref: PageRef) => `${encodeURIComponent(ref.instance)}/${encodeURIComponent(ref.pageKey)}`;
 
 export const paths = {
@@ -62,6 +90,12 @@ export const paths = {
   settingsSection: (section: string) => `/settings/${section}`,
   /** 位置为设置的页面：设置里插件的一节 */
   settingsPage: (ref: PageRef) => `/settings/p/${pageSegments(ref)}`,
+  health: routes.health,
+  /** 运行状况的日志标签，筛选写在查询串里 */
+  healthLogs: (filter: LogFilter = {}) => {
+    const query = logQuery(filter);
+    return query ? `${routes.healthLogs}?${query}` : routes.healthLogs;
+  },
 };
 
 /** 地址上打开着的页面（位置为插件详情的）；不在页面地址上时为 undefined */

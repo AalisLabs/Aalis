@@ -18,14 +18,7 @@
 }
 
 .plugin-tree-heading {
-  display: flex;
-  align-items: center;
-  min-height: var(--row-heading);
   padding: 0 var(--space-4);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-xs);
-  color: var(--color-text-2);
 }
 
 .plugin-tree-note {

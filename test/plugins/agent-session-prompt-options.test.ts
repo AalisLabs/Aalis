@@ -92,6 +92,20 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
+  it('登记的设置项写得出没设时的样子：人设与工具迭代上限的默认值取插件配置，其余给没设时的含义', async () => {
+    const { sm } = await boot(1);
+    const unsetOf = Object.fromEntries(
+      sm.listSettings().map(setting => [setting.key, setting.field.default ?? setting.unset]),
+    );
+    expect(unsetOf).toMatchObject({
+      llm: '跟随服务偏好',
+      maxToolIterations: 3,
+      persona: 'zz-card',
+      systemPromptExtra: '不追加',
+      clientSideJsonRendering: '按角色卡',
+    });
+  });
+
   it('快照的 tokenBudget 与真实回合同一公式（trimThresholdRatio ≠ 1）', async () => {
     const { agent, usage, snapshot } = await boot(0.5);
     await agent.handleMessage({ content: '你好', sessionId: 'test:budget', platform: 'test', userId: 'u1' });

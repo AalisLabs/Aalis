@@ -3,11 +3,13 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { PackageManagerService } from '@aalis/api-package-manager';
+import type { DependencyNode, MarketplacePackage, PackageCategory, SystemComponent } from '@aalis/api-webui';
 import type { Logger, PluginManagerService, ServiceRef, Services } from '@aalis/core';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
 import type { LocalScanEntry } from '../client-discovery.js';
 import type { RouteGate } from '../gate.js';
+import { route } from '../route.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
 // 安装/卸载/更新走 package-manager（npm install / uninstall）。
@@ -29,49 +31,6 @@ const SEARCH_TIMEOUT_MS = 8000;
 // 刻意不同：packument URL 是 `${base}/${name}`，带上 `@1.2.3` 必然 404，而 404 只会让
 // `if (r.ok)` 静默跳过、前端拿到一张空图而不是 400。收成纯包名后这类输入直接被拒。
 const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
-
-interface MarketplacePackage {
-  name: string;
-  /**
-   * 安装源上的最新版（按包名查 dist-tags.latest），查不到为空串。检索结果自带的版本号来自检索源，不用。
-   * 注意：**不是**本地已装版本，那是 resolved。
-   */
-  version: string;
-  description: string;
-  author?: string;
-  /** 该插件名是否已在本地激活/注册 */
-  installed: boolean;
-  /** 本地已装版本。未装 / 版本读不到则缺省。**判「可更新」看 updatable，不要自己比版本。** */
-  resolved?: string;
-  /** 根 package.json 里的原始声明（`^0.9.1` / `workspace:*` / `file:../x`）。未装或非直接依赖为 undefined。 */
-  request?: string;
-  /** 本地这份从哪来（展示用的来源徽章）。未装则缺省。 */
-  origin?: PkgOrigin;
-  /**
-   * 此刻能否经市场更新 = 来源是 registry + version 严格新于 resolved。
-   *
-   * **服务端算，前端直接用。** 前端另算一份（`resolved !== version` 再叠一个 origin 判断），
-   * 三份判据（这里 / package-manager 的闸 / 前端）就会互不一致，实测两类错：字符串不等把
-   * 「latest 低于本地」渲染成可更新并真的降级；GitHub 简写依赖出了勾选框却被服务端闸整批否决。
-   */
-  updatable: boolean;
-  /** @aalis/ scope = 官方插件；其余为社区（npm 自带信号，零额外维护） */
-  official: boolean;
-  /** 组件类别（按类型关键词分类，供前端分页/筛选） */
-  category: PackageCategory;
-  /** 关键词标签（已剔除 aalis-plugin/util/api/interface 约定词） */
-  keywords?: string[];
-  /** 月下载量（npm search 自带，可信度信号） */
-  downloads?: number;
-  /** 最近更新时间（ISO，新鲜度信号） */
-  updated?: string;
-  /** npm 综合评分（仅供排序；npm 已不再提供可信的 quality/popularity/maintenance 细分，故不展示） */
-  score?: number;
-  /** npm 标记的不安全包（红色警示） */
-  insecure?: boolean;
-  license?: string;
-  links?: { npm?: string; homepage?: string; repository?: string };
-}
 
 interface NpmSearchResponse {
   objects?: Array<{
@@ -99,16 +58,6 @@ interface PluginManifest {
   /** 该版本声明的依赖名（dependencies+peer，已剔版本）；供装前依赖树的根种子。 */
   dependencies?: string[];
 }
-
-/**
- * 市场组件类别。'plugin'=可装卸功能；'api'=服务契约（只读）；'schema'=数据格式规范（只读）；
- * 'interface'=前端界面（可换）；'util'=工具库（被插件 import）
- *
- * 'api' 与 'schema' 的界线：`-api` 必然导出一个服务描述符（有对应服务可查）；
- * `schema-*` 只定义跨服务流动的数据形状（`Message` / `ConfigSchema`），无对应服务、
- * 不可能有第二实现。
- */
-type PackageCategory = 'plugin' | 'api' | 'schema' | 'interface' | 'util';
 
 /**
  * 按**类型关键词**分类（npm search 直接返回 keywords，与加载约定的类型词 1:1，可靠）。
@@ -150,15 +99,6 @@ export function findPackageDependents(target: string, depMap: ReadonlyMap<string
   return out.sort();
 }
 
-/** 依赖链路树节点。present=false：该包本地不存在（upstream 里即「缺失/将引入」，链路在此中断）。 */
-interface DepChainNode {
-  name: string;
-  present: boolean;
-  /** 服务标注（仅已加载插件有；util/api/未装为 undefined）。由端点据 getStatus 补，纯函数不填。 */
-  services?: { provides: string[]; requires: string[] };
-  children: DepChainNode[];
-}
-
 /**
  * 构建 target 的 import 依赖链路树（纯函数，只看 import 边，不碰服务）。
  * direction='upstream'：children=该节点的依赖（它需要谁）；缺失依赖标 present=false 且停止下钻（中断）。
@@ -171,11 +111,11 @@ export function buildDependencyChain(
   depMap: ReadonlyMap<string, string[]>,
   direction: 'upstream' | 'downstream',
   opts: { maxDepth?: number; isRelevant?: (name: string) => boolean } = {},
-): DepChainNode {
+): DependencyNode {
   const maxDepth = opts.maxDepth ?? 8;
   const isRelevant = opts.isRelevant ?? ((n: string) => depMap.has(n));
-  const build = (name: string, depth: number, path: ReadonlySet<string>): DepChainNode => {
-    const node: DepChainNode = { name, present: depMap.has(name), children: [] };
+  const build = (name: string, depth: number, path: ReadonlySet<string>): DependencyNode => {
+    const node: DependencyNode = { name, present: depMap.has(name), children: [] };
     if (depth >= maxDepth || path.has(name)) return node; // 深度 / 环 → 不下钻
     if (direction === 'upstream' && !node.present) return node; // upstream 缺失即中断（downstream 不受 target 自身存在影响）
     const nextPath = new Set(path).add(name);
@@ -187,23 +127,21 @@ export function buildDependencyChain(
   return build(target, 0, new Set());
 }
 
-/**
- * 本地这份包从哪来。
- *
- * 判据是**根 package.json 的依赖声明**，不是解析出来的文件路径——路径只说明代码躺在哪，
- * 说明不了它归谁管。典型反例：传递依赖（父包拉进来的）和直装包一样躺在 node_modules 里，
- * 路径完全相同，但前者的版本由父包的范围决定，市场独立升它只会和父包打架。
- *
- * 分档实现住在 `@aalis/util-dep-spec`：更新闸（package-manager）与这里的展示必须用同一份，
- * 否则会出现「前端给了勾选框、提交后被闸整批否决」（实测会发生，见该模块顶部注释）。
- */
-export type PkgOrigin = DepOrigin;
-
 /** 本地已装包的实况。未装则 undefined。 */
 export interface LocalPkgInfo {
   version?: string;
   request?: string;
-  origin: PkgOrigin;
+  /**
+   * 本地这份包从哪来。
+   *
+   * 判据是**根 package.json 的依赖声明**，不是解析出来的文件路径——路径只说明代码躺在哪，
+   * 说明不了它归谁管。典型反例：传递依赖（父包拉进来的）和直装包一样躺在 node_modules 里，
+   * 路径完全相同，但前者的版本由父包的范围决定，市场独立升它只会和父包打架。
+   *
+   * 分档实现住在 `@aalis/util-dep-spec`：更新闸（package-manager）与这里的展示必须用同一份，
+   * 否则会出现「前端给了勾选框、提交后被闸整批否决」（实测会发生，见该模块顶部注释）。
+   */
+  origin: DepOrigin;
   keywords?: string[];
   description?: string;
 }
@@ -231,7 +169,7 @@ export function resolveLocalInfo(
   }
   // resolve 不到（不在 node_modules）却被扫描扫出来 → 只能来自 monorepo 的 packages/ 源码目录。
   // 此处不可沿用 classifyDepSpec(undefined)=transitive：那是「在 node_modules 里但非直接依赖」
-  // 的语义，而这里的包压根不在 node_modules。实测本仓库 @aalis/plugin-commands 等全走这条分支。
+  // 的语义，而这里的包压根不在 node_modules。实测本仓库的第一方插件全走这条分支。
   //
   // 元数据取自扫描时读到的那份 package.json：pnpm 工作区下根 node_modules 只链根依赖
   // （本仓库根 dependencies 仅 core 与 runtime），packages/ 下的包一律 resolve 不到，故这条
@@ -294,36 +232,6 @@ export function localPackageLookup(
     if (!cache.has(name)) cache.set(name, resolveLocalInfo(rootDeps[name], readPkgJson(name), scanned.get(name)));
     return cache.get(name);
   };
-}
-
-/** 系统组件卡片：本地实况为准，`latest` 由按精确包名的 registry 查询补齐（拿不到则 undefined）。 */
-export interface SystemComponent {
-  name: string;
-  /** 本地已装版本 */
-  version?: string;
-  /** registry 上的最新版；与 version 不等即可更新。离线/查不到时 undefined。 */
-  latest?: string;
-  /** 根 package.json 里的依赖声明；不在根依赖里（传递依赖/工作区包）则 undefined。 */
-  request?: string;
-  /**
-   * 来源分档（展示徽章用）。**必须独立下发，不能让前端从 updatable 反推**：
-   * updatable 里折进了版本序，于是「已是最新版的 registry 组件」和「离线查不到 latest 的组件」
-   * 都会 updatable=false，反推就把它们错标成「依赖引入」。
-   */
-  origin: DepOrigin;
-  description?: string;
-  /** 分类：内核 / 宿主 / 服务契约 / 数据规范 / 工具库 */
-  kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
-  /**
-   * 是否可经市场更新。**只有根 `dependencies` 里以 semver 范围声明的才可以**。
-   *
-   * 传递依赖（被某个插件带进来的 `-api` / `schema` / `util`）不可更新：`npm install <name>@<ver>`
-   * 对它们的语义是「加进根 dependencies」，而父包声明的范围若不含新版就会**嵌套装第二份**——
-   * 于是同一个契约包出现两份，两份 `declare module` 撞成 TS2717 且被 `skipLibCheck` 静默吞掉，
-   * 而插件运行时加载的仍是自己 node_modules 里的旧版，更新对它零效果。
-   * 这与市场页用 `origin === 'registry'` 挡住传递依赖是同一道闸。
-   */
-  updatable: boolean;
 }
 
 /**
@@ -540,7 +448,7 @@ export function registerMarketplaceRoutes(
   };
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
-  expressApp.get('/api/marketplace', gate(), async (req, res) => {
+  route(expressApp, 'GET /api/marketplace', gate(), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const status = caps.plugins.current?.getStatus() ?? [];
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉不作为插件加载的 api/前端/核心）。
@@ -609,7 +517,7 @@ export function registerMarketplaceRoutes(
   // 不走 npm 关键词检索——关键词是开放命名空间，任何人都能发一个带 aalis-core 关键词的包，
   // 在市场里拿到一张「内核」卡片。版本查询按精确包名，故不存在冒名空间。
   // 这一页只提供更新，无安装无卸载：它们要么随脚手架就位，要么是插件的依赖被自动带入。
-  expressApp.get('/api/system-components', gate(), async (_req, res) => {
+  route(expressApp, 'GET /api/system-components', gate(), async (_req, res) => {
     const appDir = caps.appDir;
     if (!appDir) {
       res.status(503).json({ error: NO_APP_DIR });
@@ -666,7 +574,7 @@ export function registerMarketplaceRoutes(
   // 依赖图：本地 import 依赖图（name→deps 扫描）+ 运行时服务图（getStatus）合成，供装/卸/装前展示。
   // 两类边：import（链路树，可传递）+ service（每节点直接标注 + 根的提供者解析）。
   // 装前（target 本地不存在）：拉一次 packument 取其直接依赖作根种子，深层仍走本地图。
-  expressApp.get('/api/marketplace/depgraph', gate(), async (req, res) => {
+  route(expressApp, 'GET /api/marketplace/depgraph', gate(), async (req, res) => {
     const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
     if (!name || !PKG_NAME_RE.test(name)) {
       res.status(400).json({ error: 'name 必须是合法 npm 包名' });
@@ -700,7 +608,7 @@ export function registerMarketplaceRoutes(
     }
     // upstream 放宽 isRelevant 到 @aalis scope：看得见缺失的生态依赖（中断），又不带 express 这类库噪声。
     const isRelevant = (n: string) => upstreamMap.has(n) || n.startsWith('@aalis/');
-    const annotate = (node: DepChainNode): DepChainNode => ({
+    const annotate = (node: DependencyNode): DependencyNode => ({
       ...node,
       services: svcOf.get(node.name) ?? (node.name === name ? rootServices : undefined),
       children: node.children.map(annotate),
@@ -729,7 +637,7 @@ export function registerMarketplaceRoutes(
   // 安装：owner 级（安装第三方代码 = 高危）。
   // 形状校验只做「是不是字符串」；包名的安全校验在 package-manager 的 validatePackageSpec
   // 里统一做——那里是所有调用方（含直接拿服务的插件）的必经之路，也只有那一份实现。
-  expressApp.post('/api/marketplace/install', gate(), async (req, res) => {
+  route(expressApp, 'POST /api/marketplace/install', gate(), async (req, res) => {
     const npmPkg = req.body?.name;
     if (typeof npmPkg !== 'string') {
       res.status(400).json({ error: 'name 字段必须是字符串' });
@@ -752,7 +660,7 @@ export function registerMarketplaceRoutes(
 
   // 卸载：owner 级。闸全在服务层（见 package-manager 的 uninstallOne）：市场只卸插件与
   // 前端界面；承载撤销通道的提供者、非 registry 来源、会断别人服务依赖的包同样拒绝。
-  expressApp.post('/api/marketplace/uninstall', gate(), async (req, res) => {
+  route(expressApp, 'POST /api/marketplace/uninstall', gate(), async (req, res) => {
     const name = req.body?.name;
     if (typeof name !== 'string') {
       res.status(400).json({ error: 'name 字段必须是字符串' });
@@ -776,7 +684,7 @@ export function registerMarketplaceRoutes(
 
   // 批量更新：owner 级。**整批提交**，不是每张卡片各调一次——
   // peer 冲突只有对整张版本映射一次预检才能发现，且重启次数恒为 1（与改了多少包无关）。
-  expressApp.post('/api/marketplace/update', gate(), async (req, res) => {
+  route(expressApp, 'POST /api/marketplace/update', gate(), async (req, res) => {
     const raw = req.body?.targets;
     if (!Array.isArray(raw) || raw.length === 0) {
       res.status(400).json({ error: 'targets 必须是非空数组' });

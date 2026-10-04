@@ -332,6 +332,8 @@ function wrapLLMAsProcessor(
         maxTokens,
         think: think ? undefined : lightestThinking(llm),
         requireImages: true,
+        sessionId: input.sessionId,
+        purpose: '识图',
       });
       const rawLen = resp.content?.length ?? 0;
       const text = resp.content?.trim() ?? '';
@@ -375,7 +377,13 @@ function wrapLLMAsProcessor(
       logger.info(
         `[audio.transcribe] 调用 ${llm.id}，音频 ${sizeKB}KB, prompt ${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
       );
-      const resp = await llm.chat({ messages, maxTokens, think: think ? undefined : lightestThinking(llm) });
+      const resp = await llm.chat({
+        messages,
+        maxTokens,
+        think: think ? undefined : lightestThinking(llm),
+        sessionId: input.sessionId,
+        purpose: '转写',
+      });
       const rawLen = resp.content?.length ?? 0;
       const text = (resp.content ?? '').trim();
       const usedTokens = resp.usage?.totalTokens;

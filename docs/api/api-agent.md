@@ -30,6 +30,20 @@ interface AgentService {
 
 plugin-agent 落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在 `metadata.turnId` 记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段记下这次调用的 `callId`。
 
+## 用量（token:usage）
+
+`token:usage` 是每次 LLM 调用前的 prompt 预算快照（`TokenUsageEvent`），`breakdown` 是按固定桶的数，供 AI 自检（plugin-prompt-budget）判断；`parts` 是同一份数按显示的次序排好、带显示名的拆分表，不含为回复预留的 `maxTokens`，供界面照画：
+
+```ts
+interface TokenUsagePart {
+  label: string;                        // 显示名
+  tokens: number;
+  injectors?: Record<string, number>;   // 这一项按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」
+}
+```
+
+会话服务把 `parts` 原样放进会话协议的 `usage` 条目，界面按条目画行、不认分项的键。别的实现照样给出自己的分项与显示名。
+
 ## 会话设置项的键
 
 本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加三个键，由 plugin-agent 登记：

@@ -10,12 +10,13 @@ import './ToolCall.css';
 
 // 工具卡：一行写动作与对象、右侧写状态，点开看细节；模型还在生成参数时只有工具名与「正在生成」，没有细节可看。
 // 失败用危险色，命令有退出码的写退出码；回合停止时还没结束的写「已停止」，与回合的结局同一个说法，不用危险色。
-// 按会话服务解析好的展示种类（display）渲染，没声明的走通用卡、逐字列出参数；前端不认识任何工具名。
+// 按会话服务解析好的展示种类（display）渲染，没声明的与认不出的种类走通用卡、逐字列出参数；前端不认识任何工具名。
 // 要 owner 批准的调用，审批卡挂在这一行下面，事实完整列出、不限高（服务端已截断并写明省略多少）；结算后收成行上的一句。
 // 卡上来自参数的文字一律经审批契约的清洗（控制符、双向控制符、零宽字符都显示出来），免得看到的和要执行的不一样
 
 type ToolCallItem = Extract<SessionItem, { kind: 'tool-call' }>;
 type Settlement = NonNullable<ToolCallItem['settlement']>;
+type Display = NonNullable<ToolCallItem['display']>;
 
 /** 一行里命令最多显示这么多个字，完整的在细节里 */
 const SUMMARY_LIMIT = 60;
@@ -41,8 +42,16 @@ function settlementText({ state, source, at }: Settlement): string {
   return `${state === 'cancelled' ? '已撤销' : '已按拒绝'} · ${SETTLED_BY[source]} · ${time}`;
 }
 
+/** 认得的展示：种类按加法扩展，服务端比客户端新时会发来认不出的种类，当没声明 */
+export function displayOf({ display }: ToolCallItem): Display | undefined {
+  return display?.kind === 'command' || display?.kind === 'file-change' ? display : undefined;
+}
+
+/** 等 owner 批准：收起会把审批卡藏起来 */
+export const awaitingApproval = (item: ToolCallItem) => item.approvalId !== undefined && item.settlement === undefined;
+
 function summaryOf(item: ToolCallItem): string {
-  const { display } = item;
+  const display = displayOf(item);
   if (display?.kind === 'command') {
     const line = display.command.split('\n')[0];
     return `执行 ${sanitizeForCard(line, SUMMARY_LIMIT)}`;
@@ -54,10 +63,13 @@ function summaryOf(item: ToolCallItem): string {
 }
 
 /** 失败写成一句：命令的退出码不为 0 时写退出码，其余写「失败」 */
-const failureOf = ({ display }: ToolCallItem) =>
-  display?.kind === 'command' && (display.exitCode ?? 0) !== 0 ? `退出码 ${display.exitCode}` : '失败';
+function failureOf(item: ToolCallItem): string {
+  const display = displayOf(item);
+  return display?.kind === 'command' && (display.exitCode ?? 0) !== 0 ? `退出码 ${display.exitCode}` : '失败';
+}
 
-const ICONS = { command: SquareTerminal, 'file-change': FilePen } as const;
+/** 按展示种类选的图标，没声明的是通用调用 */
+export const TOOL_ICONS = { command: SquareTerminal, 'file-change': FilePen, generic: Wrench } as const;
 
 interface ToolCallProps {
   item: ToolCallItem;
@@ -69,8 +81,8 @@ interface ToolCallProps {
 
 export function ToolCall({ item, open, onToggle, approval }: ToolCallProps) {
   const generating = item.status === 'generating';
-  const waiting = item.approvalId !== undefined && item.settlement === undefined;
-  const Icon = item.display ? ICONS[item.display.kind] : Wrench;
+  const waiting = awaitingApproval(item);
+  const Icon = TOOL_ICONS[displayOf(item)?.kind ?? 'generic'];
   const parts = [
     item.settlement && settlementText(item.settlement),
     item.status === 'failed' && failureOf(item),
@@ -118,7 +130,7 @@ const side = (text: string | undefined, sign: '-' | '+') =>
         .map(line => sign + line);
 
 function ToolDetails({ item }: { item: ToolCallItem }) {
-  const { display } = item;
+  const display = displayOf(item);
   const output = item.output ?? item.result;
   return (
     <div className="tool-details">

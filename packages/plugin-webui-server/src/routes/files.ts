@@ -10,10 +10,12 @@
 
 import type { SessionProtocolService } from '@aalis/api-session-protocol';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import type { ErrorResponse } from '@aalis/api-webui';
 import type { Logger, ServiceRef } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import type { PageFiles } from '../page-files.js';
+import { route } from '../route.js';
 import { pipeToResponse } from './pipe-to-response.js';
 
 export function registerFileRoutes(
@@ -24,7 +26,11 @@ export function registerFileRoutes(
   gate: RouteGate,
 ): void {
   /** what 是日志里的叫法：会话文件或页面文件 */
-  async function sendAttachment(res: express.Response, file: { uri: string; name: string } | undefined, what: string) {
+  async function sendAttachment(
+    res: express.Response<ErrorResponse>,
+    file: { uri: string; name: string } | undefined,
+    what: string,
+  ) {
     if (!file) {
       res.status(403).json({ error: '文件句柄无效' });
       return;
@@ -47,14 +53,14 @@ export function registerFileRoutes(
     }
   }
 
-  expressApp.get('/api/session-file', gate(), (req, res) =>
+  route(expressApp, 'GET /api/session-file', gate(), (req, res) =>
     sendAttachment(
       res,
       issuers.sessions.current?.resolveFile(String(req.query.sessionId ?? ''), String(req.query.handle ?? '')),
       '会话文件',
     ),
   );
-  expressApp.get('/api/page-file', gate(), (req, res) =>
+  route(expressApp, 'GET /api/page-file', gate(), (req, res) =>
     sendAttachment(res, issuers.pages.resolve(String(req.query.handle ?? '')), '页面文件'),
   );
 }

@@ -3,13 +3,14 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, installDialog, lists, renderApp, summary } from './harness.js';
+import { type Harness, installDialog, lists, pluginRow as plugin, renderApp, summary } from './harness.js';
 import { snapshot } from './items.js';
+import { JOBS, NOTES, SETTINGS_PAGE } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
 // 外壳：图标栏、左栏、主区、右侧面板。地址决定手机上的层级；常驻宽度下收起状态与栏宽存本浏览器，覆盖式宽度下是抽屉；
 // 两侧的分隔条可以拖动、按方向键调宽，双击恢复默认，拖到下限以下松手即收起；快捷键按平台取键；
-// 连接断开、重连中、刚恢复时顶部有横条；Cmd/Ctrl+K 搜索会话
+// 连接断开、重连中、刚恢复时顶部有横条；Cmd/Ctrl+K 搜索会话、页面与插件
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -67,6 +68,8 @@ describe('布局与层级', () => {
     ['/plugins', 'left'],
     ['/market', 'main'],
     ['/plugins/zz-jobs', 'main'],
+    ['/health', 'main'],
+    ['/health/logs?level=error', 'main'],
   ])('手机上 %s 占满一屏的是 %s 那一栏', async (url, column) => {
     stubViewport(390);
     app = await renderApp(url, handlers);
@@ -83,11 +86,16 @@ describe('布局与层级', () => {
     expect(app.where()).toBe('/');
   });
 
-  it('图标栏上方是「会话」、底部是「插件」「设置」；所在的一区是当前项，从别处点回来回到这一区刚才的地址', async () => {
+  it('图标栏上方是「会话」、底部是「运行状况」「插件」「设置」；所在的一区是当前项，从别处点回来回到这一区刚才的地址', async () => {
     stubViewport(1440);
     app = await renderApp('/s/a', handlers);
     const rail = within(screen.getByRole('navigation', { name: '图标栏' }));
-    expect(rail.getAllByRole('link').map(link => link.getAttribute('aria-label'))).toEqual(['会话', '插件', '设置']);
+    expect(rail.getAllByRole('link').map(link => link.getAttribute('aria-label'))).toEqual([
+      '会话',
+      '运行状况',
+      '插件',
+      '设置',
+    ]);
     const current = () => rail.getAllByRole('link').filter(link => link.getAttribute('aria-current') === 'page');
     expect(current().map(link => link.getAttribute('aria-label'))).toEqual(['会话']);
 
@@ -123,11 +131,11 @@ describe('布局与层级', () => {
     expect(app.where()).toBe('/plugins');
   });
 
-  it('手机第一层在会话列表上面列出「插件」「设置」两个入口，点「插件」进插件树', async () => {
+  it('手机第一层在会话列表上面列出「运行状况」「插件」「设置」三个入口，点「插件」进插件树', async () => {
     stubViewport(390);
     app = await renderApp('/', handlers);
     const entries = within(await screen.findByRole('list', { name: '入口' }));
-    expect(entries.getAllByRole('link').map(link => link.textContent)).toEqual(['插件', '设置']);
+    expect(entries.getAllByRole('link').map(link => link.textContent)).toEqual(['运行状况', '插件', '设置']);
     fireEvent.click(entries.getByRole('link', { name: '插件' }));
     expect(app.where()).toBe('/plugins');
     expect(shell().dataset.phone).toBe('left');
@@ -396,19 +404,45 @@ describe('两侧栏宽', () => {
   });
 });
 
-describe('搜索会话', () => {
+describe('搜索', () => {
+  const REST = {
+    '/api/plugins': {
+      plugins: [
+        plugin('zz-jobs:night', { displayName: '计划任务' }),
+        plugin('zz-auth', { displayName: '权限' }),
+        plugin('zz-notes', { displayName: '笔记本', state: 'error', error: '坏了' }),
+      ],
+    },
+    '/api/pages': { pages: [JOBS, SETTINGS_PAGE, NOTES] },
+  };
+  const found = {
+    'sessions/list': lists(params => mine.filter(session => !params.query || session.title.includes(params.query))),
+  };
+  const dialog = () => screen.getByRole('dialog', { name: '搜索' });
+  const input = () => within(dialog()).getByRole('combobox', { name: '搜索会话、页面与插件' });
+  /** 结果按组：组名与各项的名字（不含后面那句出处） */
+  const groups = () =>
+    within(dialog())
+      .queryAllByRole('group')
+      .map(group => [
+        group.getAttribute('aria-label'),
+        within(group)
+          .getAllByRole('option')
+          .map(option => option.firstElementChild?.textContent),
+      ]);
+  const type = (value: string) => fireEvent.change(input(), { target: { value } });
+
   it('⌘K 打开；按输入搜索，方向键选、回车打开，输入法组字的回车不算', async () => {
     stubViewport(1440);
     app = await renderApp('/', handlers);
     press({ key: 'k', code: 'KeyK', metaKey: true });
-    const dialog = screen.getByRole('dialog', { name: '搜索会话' });
-    const input = within(dialog).getByRole('combobox');
+    const input = within(dialog()).getByRole('combobox');
     expect(document.activeElement).toBe(input);
     fireEvent.change(input, { target: { value: '周报' } });
-    await vi.waitFor(() => expect(within(dialog).getAllByRole('option')).toHaveLength(2));
+    await vi.waitFor(() => expect(within(dialog()).getAllByRole('option')).toHaveLength(2));
     const server = FakeWebSocket.at('/session');
     expect(server.request('sessions/list').params).toMatchObject({ query: '周报' });
-    const options = within(dialog).getAllByRole('option');
+    const options = within(dialog()).getAllByRole('option');
     expect(options[0].getAttribute('aria-selected')).toBe('true');
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     expect(input.getAttribute('aria-activedescendant')).toBe(options[1].id);
@@ -419,13 +453,81 @@ describe('搜索会话', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('会话、页面与插件分组列出：页面按名字找、插件按显示名与 id 找，不分大小写，会话面板的页面不列；方向键跨组选，回车打开', async () => {
+    stubViewport(1440);
+    app = await renderApp('/', found, REST);
+    press({ key: 'k', code: 'KeyK', metaKey: true });
+    type('笔记');
+    await vi.waitFor(() =>
+      expect(groups()).toEqual([
+        ['会话', ['读书笔记']],
+        ['插件', ['笔记本']],
+      ]),
+    );
+    expect(within(dialog()).getByRole('option', { name: /笔记本/ }).textContent).toBe('笔记本失败');
+    type('ZZ-AUTH');
+    await vi.waitFor(() => expect(groups()).toEqual([['插件', ['权限']]]));
+    type('计划');
+    await vi.waitFor(() =>
+      expect(groups()).toEqual([
+        ['页面', ['计划 · night']],
+        ['插件', ['计划任务 · night']],
+      ]),
+    );
+    fireEvent.keyDown(input(), { key: 'ArrowDown' });
+    fireEvent.keyDown(input(), { key: 'Enter', keyCode: 13 });
+    expect(app.where()).toBe('/plugins/zz-jobs%3Anight');
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    press({ key: 'k', code: 'KeyK', metaKey: true });
+    type('权限');
+    await vi.waitFor(() =>
+      expect(groups()).toEqual([
+        ['页面', ['权限']],
+        ['插件', ['权限']],
+      ]),
+    );
+    fireEvent.keyDown(input(), { key: 'Enter', keyCode: 13 });
+    expect(app.where()).toBe('/settings/p/zz-auth/auth');
+  });
+
+  it('空的输入只列会话；会话服务不在时照样找页面与插件，什么都没找到时写明', async () => {
+    stubViewport(1440);
+    app = await renderApp('/', found, REST);
+    press({ key: 'k', code: 'KeyK', metaKey: true });
+    await vi.waitFor(() => expect(groups()).toEqual([['会话', ['整理周报', '读书笔记']]]));
+    act(() => {
+      dialog().dispatchEvent(new Event('cancel', { cancelable: true }));
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
+    press({ key: 'k', code: 'KeyK', metaKey: true });
+    type('计划');
+    expect(groups()).toEqual([
+      ['页面', ['计划 · night']],
+      ['插件', ['计划任务 · night']],
+    ]);
+    type('没有这个');
+    expect(within(dialog()).getByText('没有找到')).toBeTruthy();
+  });
+
+  it('页面表与插件列表没取到时写明原因', async () => {
+    stubViewport(1440);
+    const broken = (error: string) => () => Response.json({ error }, { status: 500 });
+    app = await renderApp('/', found, { '/api/pages': broken('页面表坏了'), '/api/plugins': broken('插件列表坏了') });
+    press({ key: 'k', code: 'KeyK', metaKey: true });
+    type('计划');
+    expect(await within(dialog()).findByText('页面表没取到：页面表坏了')).toBeTruthy();
+    expect(within(dialog()).getByText('插件列表没取到：插件列表坏了')).toBeTruthy();
+  });
+
   it('左栏顶部的搜索按钮打开同一个框；没有结果时写明', async () => {
     stubViewport(1440);
     app = await renderApp('/', { 'sessions/list': lists(params => (params.query ? [] : mine)) });
-    fireEvent.click(screen.getByRole('button', { name: '搜索会话' }));
-    const dialog = screen.getByRole('dialog', { name: '搜索会话' });
-    fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: '没有' } });
-    expect(await within(dialog).findByText('没有找到会话')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '搜索' }));
+    type('没有');
+    expect(await within(dialog()).findByText('没有找到')).toBeTruthy();
   });
 });
 
@@ -455,6 +557,37 @@ describe('连接状态', () => {
         .frames.filter(f => f.method === 'presence/update')
         .map(f => f.params),
     ).toEqual([{ active: true }]);
+  });
+
+  it('一次也没连上就断开、页面的请求却正常（升级被来源校验拒绝）连着两回：横条提示检查反向代理是否转发了原始的 Host；请求也不通时照旧写断线', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    stubViewport(1440);
+    let restUp = true;
+    app = await renderApp('/', handlers, {
+      '/api/auth/status': () => (restUp ? { authed: true } : Response.error()),
+    });
+    const refuse = async (delay: number) => {
+      await act(() => vi.advanceTimersByTimeAsync(delay));
+      act(() => FakeWebSocket.at('/session').drop());
+      await act(() => vi.advanceTimersByTimeAsync(0));
+    };
+    act(() => FakeWebSocket.at('/session').drop());
+    expect(bar().textContent).toBe('连接断开，正在重连…');
+    await refuse(1_000);
+    expect(bar().textContent, '只被拒了一回').toBe('连接断开，正在重连…');
+    await refuse(2_000);
+    await vi.waitFor(() =>
+      expect(bar().textContent).toBe(
+        '连接一直被服务端拒绝，页面的其他请求却正常：经反向代理访问时，检查代理是否转发了原始的 Host 请求头',
+      ),
+    );
+    restUp = false;
+    await refuse(5_000);
+    await vi.waitFor(() => expect(bar().textContent).toBe('连接断开，正在重连…'));
+    restUp = true;
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    await app.reconnect();
+    expect(bar().textContent).toBe('已恢复');
   });
 
   it('管理连接断开同样报断线', async () => {

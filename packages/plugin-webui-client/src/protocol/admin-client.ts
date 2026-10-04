@@ -1,4 +1,4 @@
-import type { WebuiAdminEvent } from '@aalis/api-webui';
+import type { WebuiAdminClientMessage, WebuiAdminEvent } from '@aalis/api-webui';
 import { type ConnectionState, openSocket } from './socket';
 
 // 管理面的客户端：/admin 推来的事件按名字分给登记的处理函数。事件只是「变了」的信号，断线期间丢的不补发，
@@ -12,6 +12,8 @@ export interface AdminClient {
   on<T extends AdminEventType>(type: T, handler: (event: Extract<WebuiAdminEvent, { type: T }>) => void): () => void;
   /** 重连上以后调用，第一次连上不算 */
   onReconnect(listener: () => void): () => void;
+  /** 发一条消息；没连上时不发，订阅方按连接状态在连上后重发 */
+  send(message: WebuiAdminClientMessage): void;
   close(): void;
 }
 
@@ -46,6 +48,7 @@ export function createAdminClient(): AdminClient {
       reconnectListeners.add(listener);
       return () => reconnectListeners.delete(listener);
     },
+    send: message => void socket.send(JSON.stringify(message)),
     close: () => socket.close(),
   };
 }

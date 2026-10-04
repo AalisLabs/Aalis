@@ -3,6 +3,8 @@ import { AppearanceProvider } from './appearance';
 import { HistoryTrail } from './back';
 import { ToastProvider } from './components/Toast';
 import { ConnectionProvider } from './connection';
+import { AttentionProvider } from './health/attention';
+import { HealthPage } from './health/HealthPage';
 import { PluginPage } from './pages/PluginPage';
 import { PagesProvider } from './pages/registry';
 import { PluginsProvider } from './plugins/list';
@@ -13,6 +15,7 @@ import type { AdminClient } from './protocol/admin-client';
 import type { SessionClient } from './protocol/session-client';
 import { paths, routes } from './routes';
 import { SessionActionsProvider } from './sessions/actions';
+import { MineProvider } from './sessions/mine';
 import { RoomsPage } from './sessions/RoomsPage';
 import { SessionList } from './sessions/SessionList';
 import { SettingsDirectory, SettingsHome, SettingsSection } from './settings/SettingsArea';
@@ -26,55 +29,61 @@ export function App({ session, admin }: { session: SessionClient; admin: AdminCl
         <SessionActionsProvider>
           <PluginsProvider>
             <PagesProvider>
-              <AppearanceProvider>
-                <HistoryTrail>
-                  <Routes>
-                    <Route element={<Shell />}>
-                      <Route
-                        element={
-                          <>
-                            <SessionList />
-                            <Outlet />
-                          </>
-                        }
-                      >
-                        <Route path={routes.home} element={<NewSession />} />
-                        <Route path={routes.newSession} element={<NewSessionOnPhone />} />
-                        <Route path={routes.session} element={<SessionRoute />} />
-                        <Route path={routes.sessionTab} element={<SessionRoute />} />
-                        <Route path={routes.sessionPanel} element={<SessionRoute />} />
-                        <Route path={routes.rooms} element={<RoomsPage />} />
-                      </Route>
-                      <Route path={routes.page} element={<PluginPage />} />
-                      <Route
-                        element={
-                          <>
-                            <PluginTree />
-                            <Outlet />
-                          </>
-                        }
-                      >
-                        <Route path={routes.plugins} element={<PluginsHome />} />
-                        <Route path={routes.market} element={<Market />} />
-                        <Route path={routes.plugin} element={<PluginDetail />} />
-                      </Route>
-                      <Route
-                        element={
-                          <>
-                            <SettingsDirectory />
-                            <Outlet />
-                          </>
-                        }
-                      >
-                        <Route path={routes.settings} element={<SettingsHome />} />
-                        <Route path={routes.settingsSection} element={<SettingsSection />} />
-                        <Route path={routes.settingsPage} element={<SettingsSection />} />
-                      </Route>
-                      <Route path="*" element={<Navigate to={paths.home} replace />} />
-                    </Route>
-                  </Routes>
-                </HistoryTrail>
-              </AppearanceProvider>
+              <AttentionProvider>
+                <MineProvider>
+                  <AppearanceProvider>
+                    <HistoryTrail>
+                      <Routes>
+                        <Route element={<Shell />}>
+                          <Route
+                            element={
+                              <>
+                                <SessionList />
+                                <Outlet />
+                              </>
+                            }
+                          >
+                            <Route path={routes.home} element={<NewSession />} />
+                            <Route path={routes.newSession} element={<NewSessionOnPhone />} />
+                            <Route path={routes.session} element={<SessionRoute />} />
+                            <Route path={routes.sessionTab} element={<SessionRoute />} />
+                            <Route path={routes.sessionPanel} element={<SessionRoute />} />
+                            <Route path={routes.rooms} element={<RoomsPage />} />
+                          </Route>
+                          <Route path={routes.page} element={<PluginPage />} />
+                          <Route path={routes.health} element={<HealthPage />} />
+                          <Route path={routes.healthLogs} element={<HealthPage />} />
+                          <Route
+                            element={
+                              <>
+                                <PluginTree />
+                                <Outlet />
+                              </>
+                            }
+                          >
+                            <Route path={routes.plugins} element={<PluginsHome />} />
+                            <Route path={routes.market} element={<Market />} />
+                            <Route path={routes.plugin} element={<PluginDetail />} />
+                          </Route>
+                          <Route
+                            element={
+                              <>
+                                <SettingsDirectory />
+                                <Outlet />
+                              </>
+                            }
+                          >
+                            <Route path={routes.settings} element={<SettingsHome />} />
+                            <Route path={routes.settingsSection} element={<SettingsSection />} />
+                            <Route path={routes.settingsPage} element={<SettingsSection />} />
+                          </Route>
+                          <Route path="*" element={<Navigate to={paths.home} replace />} />
+                        </Route>
+                      </Routes>
+                    </HistoryTrail>
+                  </AppearanceProvider>
+                </MineProvider>
+              </AttentionProvider>
             </PagesProvider>
           </PluginsProvider>
         </SessionActionsProvider>

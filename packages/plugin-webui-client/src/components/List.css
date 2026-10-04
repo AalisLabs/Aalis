@@ -65,15 +65,15 @@
   border-radius: var(--radius-full);
 }
 
-.list-item-row[data-marker="attention"] .list-item-marker {
+[data-marker="attention"] .list-item-marker {
   background: var(--color-mark);
 }
 
-.list-item-row[data-marker="error"] .list-item-marker {
+[data-marker="error"] .list-item-marker {
   background: var(--color-danger-text);
 }
 
-.list-item-row[data-marker="unread"] .list-item-marker {
+[data-marker="unread"] .list-item-marker {
   background: var(--color-accent);
 }
 

@@ -1,7 +1,8 @@
 // ============================================================
 // pages.ts — 页面与提示的登记表，以及数据源与动作的服务端闸门
 //
-// 页面与提示按插件实例登记、按条目撤回；invalidate 按实例、页面、组件与会话合并短时间内的连发；会话面板按会话一次算完
+// 页面与提示按插件实例登记、按条目撤回，页面表变了推 plugins.changed，提示变了推 attention.changed（「需要处理」，见
+// attention.ts）；invalidate 按实例、页面、组件与会话合并短时间内的连发；会话面板按会话一次算完
 // 适用的页面。数据源与动作只许调页面声明过的，参数按声明核过再交给插件：会话面板的会话 id 是宿主单独设的字段，调用前
 // 经会话管理核过会话存在；行动作只收 rowKey，插件按它重新查；输入按声明的字段校验类型、必填与可选项，拒收多余的键。
 // 确认框只是界面上的交互，这里的闸门是 owner 身份（路由的 gate）加改状态请求的来源校验（auth.ts）。
@@ -21,13 +22,18 @@ import { isStorageUri } from '@aalis/api-storage';
 import type {
   ActionInputFields,
   DeclarativePageView,
+  ErrorResponse,
   FileCell,
+  FrameDataResponse,
   FramePageView,
   Notice,
+  PageActionResponse,
   PageContext,
+  PageDataResponse,
   PageDefinition,
   PageRef,
   PageView,
+  PanelPagesResponse,
   PanelSession,
   SessionPageContext,
   TableRow,
@@ -59,10 +65,10 @@ interface PageRegistryDeps {
   signFile(uri: string, name: string): string | undefined;
 }
 
-/** 回给路由的结果 */
-export interface Reply {
+/** 回给路由的结果：状态码与回应，失败时回应是 ErrorResponse */
+export interface Reply<T> {
   status: number;
-  body: unknown;
+  body: T | ErrorResponse;
 }
 
 /** 闸门拒了这次调用：状态码与给人看的原因 */
@@ -307,7 +313,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
   }
 
   /** 跑一次调用：闸门拒的回它的状态码，插件抛的回 500 与原因 */
-  async function guarded(run: () => Promise<Reply>): Promise<Reply> {
+  async function guarded<T>(run: () => Promise<Reply<T>>): Promise<Reply<T>> {
     try {
       return await run();
     } catch (err) {
@@ -411,8 +417,11 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       const key = keyOf(instance, notice.id);
       const entry = { instance, notice };
       notices.set(key, entry);
+      deps.send({ type: 'attention.changed' });
       return () => {
-        if (notices.get(key) === entry) notices.delete(key);
+        if (notices.get(key) !== entry) return;
+        notices.delete(key);
+        deps.send({ type: 'attention.changed' });
       };
     },
 
@@ -450,7 +459,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       [...pages.values()].find(entry => entry.frame?.token === token)?.frame?.dir,
 
     /** 这个会话适用的会话面板页面，按页面的先后 */
-    panelPages: (sessionId: unknown): Promise<Reply> =>
+    panelPages: (sessionId: unknown): Promise<Reply<PanelPagesResponse>> =>
       guarded(async () => {
         const session = sessionOf(requiredText(sessionId, 'sessionId'));
         const target: PanelSession = { sessionId: session.id, kind: session.kind };
@@ -472,7 +481,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       componentId: string,
       query: Record<string, unknown>,
       caller: UserIdentity,
-    ): Promise<Reply> =>
+    ): Promise<Reply<PageDataResponse | FrameDataResponse>> =>
       guarded(async () => {
         const entry = entryOf(instance, pageKey);
         const { checked } = entry;
@@ -509,7 +518,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       body: unknown,
       caller: UserIdentity,
       from: string,
-    ): Promise<Reply> =>
+    ): Promise<Reply<PageActionResponse>> =>
       guarded(async () => {
         const entry = entryOf(instance, pageKey);
         const action = entry.checked.actions.get(name);

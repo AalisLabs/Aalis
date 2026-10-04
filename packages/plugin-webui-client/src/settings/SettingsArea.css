@@ -52,7 +52,7 @@
   min-width: 6rem;
 }
 
-.settings-field > select {
+.settings-field > .select {
   flex: 1;
   min-width: 0;
   max-width: 25rem;

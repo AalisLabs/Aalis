@@ -281,6 +281,7 @@ describe('plugin-memory-summary: 压缩服务', () => {
       toolDefs: 0,
       reservedForReply: 0,
     },
+    parts: [],
   });
 
   it('自动压缩线取配置的 autoCompressThreshold；用量到线时自己压缩，进度照常广播，没到线不压', async () => {

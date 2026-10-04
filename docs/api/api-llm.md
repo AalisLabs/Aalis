@@ -18,6 +18,9 @@ interface ChatModelRequest {
   maxTokens?: number;
   signal?: AbortSignal;
   think?: string;                // 深度思考的档位 id，见下文「深度思考的档位」
+  purpose?: string;              // 记账：这次调用做什么用，见下文「记账」
+  sessionId?: string;            // 记账：所在的会话
+  caller?: string;               // 记账：调用方的插件实例，由绑定接口填
 }
 // 不含 model / provider——entry 本身已绑定到具体 model
 
@@ -33,7 +36,7 @@ interface ChatResponse {
 
 ## 服务接口
 
-一个 model 就是一个 `'llm'` service entry。描述符 `llm` 是普通调用型 `ServiceRef<LLMModel>`。
+一个 model 就是一个 `'llm'` service entry。描述符 `llm` 的绑定接口是 `ServiceRef<LLMModel>`；经它拿到的模型在请求里填上调用方这次激活的实例 id（`caller`），同一个模型每次拿到的是同一个对象。
 
 ```ts
 interface LLMModel {
@@ -46,6 +49,7 @@ interface LLMModel {
   chat(request: ChatModelRequest): Promise<ChatResponse>;
   chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
   refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
+  balance?(signal?: AbortSignal): Promise<LLMBalance[]>; // 服务商有余额接口才实现，见下文「记账」
 }
 ```
 
@@ -106,6 +110,35 @@ export default definePlugin({
 });
 ```
 
+## 记账
+
+每次模型调用结束、服务商报了用量时发一条 `llm:usage` 事件，记账插件（如 [plugin-usage-stats](../plugins/plugin-usage-stats.md)）订阅它：
+
+```ts
+interface LLMUsageEvent {
+  provider: string;      // 模型所属 provider 的实例 id（LLMModel.providerId）
+  model: string;
+  caller?: string;       // 调用方的插件实例
+  sessionId?: string;    // 所在的会话
+  purpose?: string;      // 做什么用
+  inputTokens: number;
+  cachedTokens?: number; // inputTokens 里前缀缓存命中的部分；服务商不报时没有，与 0 不同
+  outputTokens: number;
+}
+
+export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel;
+```
+
+- **谁发：** 服务商登记模型时套一层 `metered`：`provide(llm, metered(handle, events), { entryId })`。`chat` 拿到 `usage` 时发一次；`chatStream` 在流结束时（含中途停止）按最后一次报的 `usage` 发一次；服务商没报用量的调用不记。服务商回的数运行时没人核，`metered` 发之前规整一次：输入或输出不是非负有限数的调用当没报，不记；缓存命中不是非负有限数时不带，比输入多时截到输入。服务商自己的 `chat` 与 `chatStream` 不用管记账，发事件不等监听器。三个第一方服务商都套了它。
+- **调用方：** `caller` 由 `llm` 的绑定接口按调用方这次激活填上，调用方自己填的不算。
+- **用途与会话：** 调用方在请求里带，可以缺。`purpose` 是给人看的短语，第一方的写法：对话代理的回合是「对话」，子会话里的回合是「子任务」；压缩服务的摘要是「摘要」；媒体识别看图（含视频与动图的帧）是「识图」，转写语音（含视频的音轨）是「转写」。
+
+**余额查询：** 服务商有余额接口时在模型上实现 `balance`，同一 provider 下所有 model entries 共享同一份，按 `providerId` 找任一 entry 调一次即可。返回一个币种一项；查不到（不可达、超时、认证失败、回应认不出）时抛错，消息带原因。
+
+```ts
+interface LLMBalance { readonly currency: string; readonly amount: number }
+```
+
 ## 模型引用解析
 
 ```ts
@@ -128,15 +161,15 @@ export function resolveLLMModel(
 ## 提供方骨架
 
 ```ts
-import { llm, type LLMModel } from '@aalis/api-llm';
-import { definePlugin, lifecycle, logger, provide } from '@aalis/core';
+import { llm, type LLMModel, metered } from '@aalis/api-llm';
+import { definePlugin, events, lifecycle, logger, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-llm',
   reusable: true,
   provides: [llm],
-  uses: { provide, lifecycle, logger },
-  apply({ provide, lifecycle }) {
+  uses: { provide, events, lifecycle, logger },
+  apply({ provide, events, lifecycle }) {
     const handle: LLMModel = {
       id: 'demo',
       providerId: lifecycle.id,
@@ -146,7 +179,7 @@ export default definePlugin({
         return { content: '' };
       },
     };
-    provide(llm, handle, { entryId: `${lifecycle.id}/demo`, label: 'demo' });
+    provide(llm, metered(handle, events), { entryId: `${lifecycle.id}/demo`, label: 'demo' });
   },
 });
 ```

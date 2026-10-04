@@ -60,7 +60,7 @@ export function PinnedList() {
   if (pinned.length === 0 && !error) return null;
   return (
     <section aria-labelledby={headingId}>
-      <h2 id={headingId} className="session-list-heading">
+      <h2 id={headingId} className="section-heading session-list-heading">
         固定的页面
       </h2>
       {error && (

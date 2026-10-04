@@ -37,6 +37,7 @@ const usage: TokenUsageEvent = {
     toolDefs: 1500,
     reservedForReply: 4096,
   },
+  parts: [],
 };
 
 describe('prompt_budget_info 的 top3 与 advice', () => {

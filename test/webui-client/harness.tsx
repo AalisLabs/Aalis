@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { expect, vi } from 'vitest';
 import type {
@@ -47,6 +47,25 @@ export function summary(id: string, fields: Partial<SessionSummary> = {}): Sessi
   };
 }
 
+/** 插件列表（GET /api/plugins）的一行，名字取实例 id 第一个「:」之前的部分 */
+export function pluginRow(instanceId: string, fields: Record<string, unknown> = {}) {
+  return {
+    name: instanceId.split(':')[0],
+    instanceId,
+    state: 'active',
+    reusable: false,
+    provides: [],
+    requiredServices: [],
+    optionalServices: [],
+    missing: [],
+    tools: [],
+    commands: [],
+    config: {},
+    defaultConfig: {},
+    ...fields,
+  };
+}
+
 export function room(id: string, instance: string | undefined, fields: Partial<SessionSummary> = {}): SessionSummary {
   return summary(id, {
     kind: 'room',
@@ -86,6 +105,23 @@ export const listRequests = (socket?: FakeWebSocket) => requests('sessions/list'
 
 /** 主区域 */
 export const main = () => within(screen.getByRole('main'));
+
+/** 在选择器里选一项：点开，点名字是 label 的那一项（弹层挂在 body 或所在的对话框里） */
+export function choose(combobox: HTMLElement, label: string | RegExp): void {
+  fireEvent.click(combobox);
+  fireEvent.click(screen.getByRole('option', { name: label }));
+}
+
+/** 选择器列出的各项的名字：点开数一遍，再按 Esc 关上 */
+export function optionsOf(combobox: HTMLElement): string[] {
+  fireEvent.click(combobox);
+  const list = screen.getByRole('listbox');
+  const names = within(list)
+    .queryAllByRole('option')
+    .map(option => option.textContent ?? '');
+  fireEvent.keyDown(list, { key: 'Escape' });
+  return names;
+}
 
 /** jsdom 没有模态对话框：按浏览器的行为补上打开与关闭 */
 export function installDialog(): () => void {
@@ -133,7 +169,7 @@ export interface FakeRequest {
 
 /**
  * 假的 REST：路径（含查询串）→ 回应的 JSON，或按请求算回应的函数（返回 Response 时原样回，可以带状态码）；
- * 登录状态、插件列表、页面表与布局记录有缺省的回应，没有的路径回 404
+ * 登录状态、插件列表、页面表、布局记录与「需要处理」有缺省的回应，没有的路径回 404
  */
 export type FakeRest = Record<string, unknown>;
 
@@ -152,6 +188,7 @@ export function stubRest(rest: FakeRest = {}): void {
     '/api/plugins': { plugins: [] },
     '/api/pages': { pages: [] },
     '/api/layout': { pinned: [], panelTabs: hostTabs() },
+    '/api/attention': { items: [] },
     ...rest,
   };
   const answer = async (input: string, init?: RequestInit) => {

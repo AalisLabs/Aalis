@@ -1,27 +1,31 @@
 import type { SessionItem } from '@aalis/api-session-protocol';
-import { FileText, Info, LoaderCircle, RotateCcw } from 'lucide-react';
+import { Info, LoaderCircle, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { Menu } from '../components/Menu';
 import { useToast } from '../components/Toast';
 import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
-import { clockTime } from '../format';
+import { clockTime, tokens } from '../format';
 import { Markdown } from '../markdown/Markdown';
-import { isWebUrl, mediaUrl } from '../media';
+import { Attachments } from './Attachments';
 import type { TimelineItem } from './live-session';
 import { RewindDialog, type RewindTarget } from './Rewind';
-import { STOPPED, ToolCall } from './ToolCall';
+import { awaitingApproval, displayOf, STOPPED, TOOL_ICONS, ToolCall } from './ToolCall';
 import './Timeline.css';
 
-// 时间线：条目按回合成段，同一回合的条目挨在一起，回合的结局（停止、出错）写在段尾，回滚在段的右上角。
-// 相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间
+// 时间线：条目按回合成段，同一回合的条目挨在一起，回合的结局（停止、出错、没有回复）写在段尾，回滚在段的右上角。
+// 相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间。
+// 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
+// 或还在跑的，或者是还在跑的这一轮末尾那一组，不收，免得藏掉要看的东西；写给用户的正文不收。
+// 什么都没做就没有回复的一轮只写一行「没有回复」，中间只隔着提问的几轮合成一行「N 轮没有回复」，房间不刷屏靠合并
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
-type Attachment = Item<'user-message'>['attachments'][number];
 
 const TIME_GAP_MS = 10 * 60_000;
 const OUTCOMES = { aborted: STOPPED, error: '这一轮出错了' } as const;
+/** 连续这么多个工具调用收成一行 */
+const COLLAPSE_FROM = 3;
 
 /** 一段：一个回合的条目（turnId 相同、挨在一起），或一条不在回合里的条目 */
 interface Block {
@@ -49,6 +53,76 @@ function toBlocks(items: readonly TimelineItem[]): Block[] {
 
 const startOf = (block: Block) => (block.items[0] ?? block.turn)?.at ?? 0;
 const endOf = (block: Block) => (block.items.at(-1) ?? block.turn)?.at ?? 0;
+
+/** 什么都没做就没有回复的一轮 */
+const quiet = (block: Block) => block.turn?.outcome === 'silent' && block.items.length === 0;
+/** 只有提问的一段 */
+const asking = (block: Block) => block.turnId === undefined && block.items.every(item => item.kind === 'user-message');
+
+/**
+ * 每段写几轮没有回复：没有回复的一轮写 1；什么都没做的几轮中间只隔着提问时并到最后一轮，前面的写 0（不显示）。
+ * 不是没有回复的段为 undefined
+ */
+function silentCounts(blocks: readonly Block[]): Array<number | undefined> {
+  const counts: Array<number | undefined> = blocks.map(block => (block.turn?.outcome === 'silent' ? 1 : undefined));
+  let previous: number | undefined;
+  blocks.forEach((block, index) => {
+    if (quiet(block)) {
+      if (previous !== undefined) {
+        counts[index] = (counts[previous] as number) + 1;
+        counts[previous] = 0;
+      }
+      previous = index;
+    } else if (!asking(block)) previous = undefined;
+  });
+  return counts;
+}
+
+type ToolCallItem = Item<'tool-call'>;
+type Process = ToolCallItem | Item<'reasoning'>;
+
+/** 一段里的一项：一个条目，或收成一行的一组工具调用与夹着的思考 */
+type Row = { item: Exclude<TimelineItem, Item<'turn'>> } | { group: Process[] };
+
+/** 收起会藏掉要看的东西 */
+const holding = (call: ToolCallItem) =>
+  awaitingApproval(call) || call.status === 'failed' || call.status === 'generating' || call.status === 'running';
+
+function rowsOf(items: Block['items'], live: boolean): Row[] {
+  const rows: Row[] = [];
+  let run: Process[] = [];
+  const flush = (atEnd: boolean) => {
+    const calls = run.filter(item => item.kind === 'tool-call');
+    if (calls.length >= COLLAPSE_FROM && !calls.some(holding) && !(live && atEnd)) rows.push({ group: run });
+    else rows.push(...run.map(item => ({ item })));
+    run = [];
+  };
+  for (const item of items) {
+    if (item.kind === 'tool-call' || item.kind === 'reasoning') run.push(item);
+    else {
+      flush(false);
+      rows.push({ item });
+    }
+  }
+  flush(true);
+  return rows;
+}
+
+const KIND_NAMES = { command: '执行命令', 'file-change': '改动文件', generic: '其他' } as const;
+const kindOf = (call: ToolCallItem) => displayOf(call)?.kind ?? 'generic';
+
+function groupSummary(calls: readonly ToolCallItem[]): string {
+  const counts = new Map<keyof typeof KIND_NAMES, number>();
+  for (const call of calls) counts.set(kindOf(call), (counts.get(kindOf(call)) ?? 0) + 1);
+  const total = calls.length;
+  if (counts.size > 1) {
+    return `调用了 ${total} 个工具：${[...counts].map(([kind, count]) => `${KIND_NAMES[kind]} ${count}`).join('、')}`;
+  }
+  const [kind] = counts.keys();
+  if (kind === 'command') return `执行了 ${total} 条命令`;
+  if (kind === 'file-change') return `改动了 ${total} 次文件`;
+  return `调用了 ${total} 个工具`;
+}
 
 /** 工具卡与思考的折叠：默认收起，「全部展开」「全部折叠」改默认并清掉逐张的设置 */
 export function useFold() {
@@ -79,16 +153,29 @@ interface TimelineProps {
   fold: Fold;
   before?: string;
   loadEarlier(): Promise<void>;
+  /** 连对话一起回滚之后，把那一轮 owner 发的文字放回输入框 */
+  restore(prompt: string): void;
+}
+
+/** 一轮之前 owner 发的那条提问的文字：往前找到上一轮为止，中间隔着的通知不算 */
+function promptOf(blocks: readonly Block[], index: number): string | undefined {
+  for (let at = index - 1; at >= 0 && blocks[at].turnId === undefined; at--) {
+    const [item] = blocks[at].items;
+    if (item?.kind === 'user-message' && item.speaker.owner) return item.text || undefined;
+  }
+  return undefined;
 }
 
 export function Timeline(props: TimelineProps) {
   const { items, before, loadEarlier } = props;
   const blocks = useMemo(() => toBlocks(items), [items]);
+  const silent = useMemo(() => silentCounts(blocks), [blocks]);
   const [rewinding, setRewinding] = useState<RewindTarget>();
   return (
     <section className="timeline" aria-label="对话">
       {before !== undefined && <Earlier load={loadEarlier} />}
       {blocks.map((block, index) => {
+        if (silent[index] === 0) return null;
         const previous = blocks[index - 1];
         const gap = !previous || startOf(block) - endOf(previous) > TIME_GAP_MS;
         return (
@@ -98,11 +185,24 @@ export function Timeline(props: TimelineProps) {
                 <time dateTime={new Date(startOf(block)).toISOString()}>{clockTime(startOf(block))}</time>
               </p>
             )}
-            <TurnBlock {...props} block={block} last={index === blocks.length - 1} onRewind={setRewinding} />
+            <TurnBlock
+              {...props}
+              block={block}
+              last={index === blocks.length - 1}
+              silent={silent[index]}
+              onRewind={scope =>
+                setRewinding({ turnId: block.turnId as string, scope, prompt: promptOf(blocks, index) })
+              }
+            />
           </Fragment>
         );
       })}
-      <RewindDialog sessionId={props.sessionId} target={rewinding} onClose={() => setRewinding(undefined)} />
+      <RewindDialog
+        sessionId={props.sessionId}
+        target={rewinding}
+        restore={props.restore}
+        onClose={() => setRewinding(undefined)}
+      />
     </section>
   );
 }
@@ -137,20 +237,33 @@ function Earlier({ load }: { load(): Promise<void> }) {
 interface TurnBlockProps extends TimelineProps {
   block: Block;
   last: boolean;
-  onRewind(target: RewindTarget): void;
+  /** 没有回复的轮数（合并了前面什么都没做的几轮） */
+  silent?: number;
+  onRewind(scope: RewindTarget['scope']): void;
 }
 
-function TurnBlock({ block, last, onRewind, ...props }: TurnBlockProps) {
+function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) {
   const features = useFeatures();
   const outcome = block.turn?.outcome;
   const settled = block.turn === undefined || outcome !== undefined;
-  const rewindable = features.rewind && block.turnId !== undefined && settled && !props.running;
-  const outcomeText = outcome === 'aborted' || outcome === 'error' ? OUTCOMES[outcome] : undefined;
+  const rewindable = features.rewind && block.turnId !== undefined && settled && !props.running && !quiet(block);
+  const outcomeText =
+    outcome === 'aborted' || outcome === 'error'
+      ? OUTCOMES[outcome]
+      : silent === undefined
+        ? undefined
+        : silent > 1
+          ? `${silent} 轮没有回复`
+          : '没有回复';
   return (
     <div className="turn">
-      {block.items.map(item => (
-        <Entry key={item.itemId} item={item} last={last} {...props} />
-      ))}
+      {rowsOf(block.items, !settled).map(row =>
+        'group' in row ? (
+          <CallGroup key={row.group[0].itemId} group={row.group} last={last} {...props} />
+        ) : (
+          <Entry key={row.item.itemId} item={row.item} last={last} {...props} />
+        ),
+      )}
       {outcomeText && (
         <p className="turn-outcome" data-outcome={outcome}>
           {outcomeText}
@@ -162,12 +275,8 @@ function TurnBlock({ block, last, onRewind, ...props }: TurnBlockProps) {
             label="回滚这一轮"
             icon={RotateCcw}
             items={[
-              { label: '回滚文件改动', onSelect: () => onRewind({ turnId: block.turnId as string, scope: 'code' }) },
-              {
-                label: '回滚文件改动与这一轮对话',
-                danger: true,
-                onSelect: () => onRewind({ turnId: block.turnId as string, scope: 'code-and-chat' }),
-              },
+              { label: '回滚文件改动', onSelect: () => onRewind('code') },
+              { label: '回滚文件改动与这一轮对话', danger: true, onSelect: () => onRewind('code-and-chat') },
             ]}
           />
         </div>
@@ -179,6 +288,30 @@ function TurnBlock({ block, last, onRewind, ...props }: TurnBlockProps) {
 interface EntryProps extends TimelineProps {
   item: Exclude<TimelineItem, Item<'turn'>>;
   last: boolean;
+}
+
+/** 收成一行的工具调用：点开才渲染里面的条目，开合与工具卡一样跟着「全部展开」「全部折叠」 */
+function CallGroup({ group, last, ...props }: TimelineProps & { group: Process[]; last: boolean }) {
+  const key = `calls/${group[0].itemId}`;
+  const open = props.fold.isOpen(key);
+  const calls = group.filter(item => item.kind === 'tool-call');
+  const kinds = new Set(calls.map(kindOf));
+  const Icon = kinds.size === 1 ? TOOL_ICONS[kindOf(calls[0])] : TOOL_ICONS.generic;
+  return (
+    <div className="tool-group">
+      <button type="button" className="tool-line" aria-expanded={open} onClick={() => props.fold.toggle(key)}>
+        <Icon aria-hidden />
+        <span className="tool-line-text">{groupSummary(calls)}</span>
+      </button>
+      {open && (
+        <div className="tool-group-items">
+          {group.map(item => (
+            <Entry key={item.itemId} item={item} last={last} {...props} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Entry({ item, last, ...props }: EntryProps) {
@@ -249,7 +382,13 @@ interface AgentMessageProps {
 
 function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
   const { appName } = useConnection();
-  const model = item.model?.model;
+  const { model, promptTokens, completionTokens } = item.model ?? {};
+  const meta = [
+    model,
+    promptTokens === undefined ? undefined : `输入 ${tokens(promptTokens)}`,
+    completionTokens === undefined ? undefined : `输出 ${tokens(completionTokens)}`,
+    item.undelivered?.reason,
+  ].filter((text): text is string => Boolean(text));
   return (
     <div
       className="message"
@@ -266,10 +405,11 @@ function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
       {item.text && <Markdown text={item.text} streaming={streaming} />}
       <Attachments attachments={item.attachments} sessionId={sessionId} />
       {streaming && <LoaderCircle className="spin message-streaming" aria-label="正在输出" />}
-      {(model || item.undelivered) && (
+      {meta.length > 0 && (
         <p className="message-meta">
-          {model && <span>{model}</span>}
-          {item.undelivered && <span>{item.undelivered.reason}</span>}
+          {meta.map(text => (
+            <span key={text}>{text}</span>
+          ))}
         </p>
       )}
     </div>
@@ -334,57 +474,5 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
         </Button>
       )}
     </div>
-  );
-}
-
-/** 附件：图片、音频、视频按媒体地址取，外站图片经图片代理；文件按会话服务签发的句柄下载，没有句柄的只写名字 */
-function Attachments({ attachments, sessionId }: { attachments: readonly Attachment[]; sessionId: string }) {
-  if (attachments.length === 0) return null;
-  return (
-    <div className="attachments">
-      {attachments.map((attachment, index) => (
-        // 附件随条目整份替换，不会重排
-        <AttachmentView key={index} attachment={attachment} sessionId={sessionId} />
-      ))}
-    </div>
-  );
-}
-
-function AttachmentView({ attachment, sessionId }: { attachment: Attachment; sessionId: string }) {
-  const { kind, src, name } = attachment;
-  const media = src === undefined ? undefined : mediaUrl(src);
-  if (kind === 'image' && src !== undefined && (media || isWebUrl(src))) {
-    const url = media ?? `/api/proxy/image?${new URLSearchParams({ url: src })}`;
-    return <img className="attachment-image" src={url} alt={name ?? '图片'} loading="lazy" />;
-  }
-  // biome-ignore lint/a11y/useMediaCaption: 会话里收发的音视频没有字幕文件可配
-  if (kind === 'audio' && media) return <audio className="attachment-media" controls src={media} />;
-  // biome-ignore lint/a11y/useMediaCaption: 同上
-  if (kind === 'video' && media) return <video className="attachment-media" controls src={media} />;
-  if (kind === 'file' && src !== undefined) {
-    return (
-      <a
-        className="attachment-file"
-        href={`/api/session-file?${new URLSearchParams({ sessionId, handle: src })}`}
-        download={name ?? true}
-      >
-        <FileText aria-hidden />
-        {name ?? '文件'}
-      </a>
-    );
-  }
-  if (src !== undefined && isWebUrl(src)) {
-    return (
-      <a className="attachment-file" href={src} target="_blank" rel="noopener noreferrer">
-        <FileText aria-hidden />
-        {name ?? src}
-      </a>
-    );
-  }
-  return (
-    <span className="attachment-file">
-      <FileText aria-hidden />
-      {name ?? src ?? '附件'}
-    </span>
   );
 }

@@ -8,6 +8,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { IconButton } from '../components/IconButton';
+import { Picture } from '../components/Picture';
 import { isWebUrl, mediaUrl } from '../media';
 import { preprocessLaTeX } from './latex';
 import { Mermaid, Streaming } from './Mermaid';
@@ -41,12 +42,14 @@ function textOf(node: ElementContent | undefined): string {
   return node.type === 'element' ? node.children.map(textOf).join('') : '';
 }
 
-const isMermaid = (code: ElementContent | undefined): code is Element =>
-  code?.type === 'element' &&
-  code.tagName === 'code' &&
-  String(code.properties.className ?? '')
+/** 代码块写明的语言：code 元素的 language-* 类名 */
+function languageOf(code: ElementContent | undefined): string | undefined {
+  if (code?.type !== 'element' || code.tagName !== 'code') return undefined;
+  const name = String(code.properties.className ?? '')
     .split(/[\s,]+/)
-    .includes('language-mermaid');
+    .find(token => token.startsWith('language-'));
+  return name?.slice('language-'.length);
+}
 
 const COMPONENTS: Components = {
   a: ({ href, children }) =>
@@ -59,7 +62,7 @@ const COMPONENTS: Components = {
     ),
   img: ({ src, alt }) => {
     const url = typeof src === 'string' ? mediaUrl(src) : undefined;
-    if (url) return <img src={url} alt={alt ?? ''} loading="lazy" />;
+    if (url) return <Picture src={url} alt={alt ?? ''} />;
     if (typeof src === 'string' && isWebUrl(src)) {
       return (
         <a href={src} target="_blank" rel="noopener noreferrer">
@@ -71,8 +74,13 @@ const COMPONENTS: Components = {
   },
   pre: ({ node, children }) => {
     const code = node?.children[0];
-    if (isMermaid(code)) return <Mermaid chart={textOf(code).replace(/\n$/, '')} />;
-    return <CodeBlock text={textOf(code)}>{children}</CodeBlock>;
+    const language = languageOf(code);
+    if (language === 'mermaid') return <Mermaid chart={textOf(code).replace(/\n$/, '')} />;
+    return (
+      <CodeBlock text={textOf(code)} language={language}>
+        {children}
+      </CodeBlock>
+    );
   },
 };
 
@@ -81,8 +89,10 @@ const canCopy = () => window.isSecureContext && navigator.clipboard !== undefine
 const COPY_LABELS = { idle: '复制代码', copied: '已复制', failed: '没能复制' } as const;
 const COPY_RESET_MS = 2_000;
 
-function CodeBlock({ text, children }: { text: string; children: ReactNode }) {
+/** 代码块：上方一条细的标题行写语言名与复制按钮，不压住代码；两样都没有时没有这一行 */
+function CodeBlock({ text, language, children }: { text: string; language?: string; children: ReactNode }) {
   const [copy, setCopy] = useState<keyof typeof COPY_LABELS>('idle');
+  const copyable = canCopy();
 
   useEffect(() => {
     if (copy === 'idle') return;
@@ -92,19 +102,24 @@ function CodeBlock({ text, children }: { text: string; children: ReactNode }) {
 
   return (
     <div className="markdown-code">
-      <pre>{children}</pre>
-      {canCopy() && (
-        <IconButton
-          icon={copy === 'copied' ? Check : Copy}
-          label={COPY_LABELS[copy]}
-          onClick={() =>
-            navigator.clipboard.writeText(text).then(
-              () => setCopy('copied'),
-              () => setCopy('failed'),
-            )
-          }
-        />
+      {(language || copyable) && (
+        <div className="markdown-code-head">
+          {language}
+          {copyable && (
+            <IconButton
+              icon={copy === 'copied' ? Check : Copy}
+              label={COPY_LABELS[copy]}
+              onClick={() =>
+                navigator.clipboard.writeText(text).then(
+                  () => setCopy('copied'),
+                  () => setCopy('failed'),
+                )
+              }
+            />
+          )}
+        </div>
       )}
+      <pre>{children}</pre>
     </div>
   );
 }

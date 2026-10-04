@@ -1,0 +1,34 @@
+/* 按钮弹出的一层（菜单、选择器）：位置由 usePopover 写成 CSS 变量，向下弹出贴着按钮下边，向上弹出贴着按钮上边 */
+.popover {
+  position: fixed;
+  top: var(--popover-edge);
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.popover[data-placement="up"] {
+  top: auto;
+  bottom: var(--popover-edge);
+  margin: 0 0 var(--space-1);
+}
+
+/* 手机上贴底弹出，拇指够得着 */
+@media (max-width: 47.99em) {
+  .popover,
+  .popover[data-placement="up"] {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    margin: 0;
+    padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    box-shadow: var(--shadow-2);
+  }
+}

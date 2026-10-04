@@ -1,0 +1,120 @@
+/* 按钮与输入框同高、同边框；bare 不带边框，用在输入框旁的快捷切换 */
+.select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--hit);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-input);
+  text-align: left;
+  background: transparent;
+}
+
+.select:focus-visible {
+  outline-offset: 0;
+}
+
+.select[aria-invalid="true"] {
+  border-color: var(--color-danger-text);
+}
+
+.select:disabled {
+  color: var(--color-text-disabled);
+}
+
+.select > .lucide {
+  color: var(--color-text-3);
+}
+
+.select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select[data-variant="bare"] {
+  max-width: 12rem;
+  padding: 0 var(--space-2);
+  border: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+}
+
+.select[data-variant="bare"]:hover:not(:disabled) {
+  background: var(--color-fill-1);
+}
+
+/* 弹层：左边与按钮对齐、不比按钮窄，不超出视口；列表在弹层里滚动 */
+.select-popup {
+  left: var(--popover-left);
+  gap: var(--space-1);
+  min-width: min(max(var(--popover-width), var(--menu-w)), calc(100vw - var(--popover-left) - var(--space-2)));
+  max-width: calc(100vw - var(--popover-left) - var(--space-2));
+  max-height: min(22rem, calc(100dvh - var(--popover-edge) - var(--space-4)));
+}
+
+.select-popup > input {
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.select-popup > [role="listbox"] {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border-radius: var(--radius-sm);
+}
+
+.select-popup > [role="listbox"]:focus-visible {
+  outline-offset: -2px;
+}
+
+.select-option {
+  display: flex;
+  align-items: center;
+  min-height: var(--row-1line);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.select-option[data-active],
+.select-option:hover:not([aria-disabled]) {
+  background: var(--color-fill-1);
+}
+
+.select-option[aria-selected="true"] {
+  color: var(--color-accent-text);
+}
+
+.select-option[aria-disabled] {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.select-empty {
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-3);
+}
+
+/* 手机上贴底占满宽 */
+@media (max-width: 47.99em) {
+  .select-popup {
+    left: 0;
+    min-width: 0;
+    max-width: none;
+    max-height: 70dvh;
+  }
+}

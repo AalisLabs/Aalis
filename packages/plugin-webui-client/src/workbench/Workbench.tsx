@@ -1,6 +1,6 @@
 import type { SessionSummary } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
-import { ChevronsDownUp, ChevronsUpDown, PanelRight } from 'lucide-react';
+import { ChevronsDownUp, ChevronsUpDown, LoaderCircle, PanelRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import { useBack } from '../back';
@@ -12,6 +12,7 @@ import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
 import { useToast } from '../components/Toast';
 import { useConnection, useFeatures, useSessionClient } from '../connection';
+import { AttentionSummary } from '../health/AttentionList';
 import { composing, shortcutLabel } from '../keys';
 import { RequestError, unlessLost } from '../protocol/session-client';
 import { paths, useSessionAddress } from '../routes';
@@ -19,29 +20,33 @@ import { useSessionActions } from '../sessions/actions';
 import { useSettingRows } from '../settings/setting-rows';
 import { SessionGate } from '../shell/SessionGate';
 import { Main, usePhone, useShell } from '../shell/Shell';
-import { Composer, ComposerSettings, type OutgoingAttachment } from './Composer';
+import { Composer, type ComposerHandle, ComposerSettings, type OutgoingAttachment } from './Composer';
+import { clearSent, NEW_SESSION } from './drafts';
 import { useLiveSession } from './live-session';
 import { useSessionTabs } from './panel-tabs';
 import { SessionPanel } from './SessionPanel';
 import { Timeline, useFold } from './Timeline';
 import { UsageMeter, UsageTable } from './Usage';
 
-// 会话工作台：头部（标题、种类与平台、用量、全部折叠、会话面板、更多）、时间线、输入框与右侧面板。
-// 首页与 /new 是空白的新会话：发出第一条消息时先建会话，再打开它
+// 会话工作台：头部（标题、种类与平台、回合进行中的运行指示、用量、全部折叠、会话面板、更多）、时间线、输入框与右侧面板。
+// 首页与 /new 是空白的新会话：发出第一条消息时先建会话，再打开它；桌面的首页上方是「需要处理」的摘要（手机上它在第一层）
 
 export function NewSession() {
   const client = useSessionClient();
   const navigate = useNavigate();
+  const phone = usePhone();
   // 建好了、消息没发出去时，再发用同一个会话，不另建
   const created = useRef<string>(undefined);
   const send = async (content: string, attachments: OutgoingAttachment[]) => {
     created.current ??= (await client.request('session/create', {})).session.id;
     await client.request('turn/send', { sessionId: created.current, content, attachments });
+    clearSent(NEW_SESSION, content);
     navigate(paths.session(created.current));
   };
   return (
     <Main>
-      <Panel title="新会话" back={paths.home} footer={<Composer send={send} />}>
+      <Panel title="新会话" back={paths.home} footer={<Composer sessionId={NEW_SESSION} send={send} />}>
+        {!phone && <AttentionSummary />}
         <SessionGate>{null}</SessionGate>
       </Panel>
     </Main>
@@ -71,6 +76,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const toast = useToast();
   const live = useLiveSession(sessionId);
   const settings = useSettingRows(useMemo(() => ({ sessionId }), [sessionId]));
+  const composer = useRef<ComposerHandle>(null);
   const fold = useFold();
   const { summary, usage, plan } = live;
   const tabs = useSessionTabs(sessionId, { plan, usage });
@@ -114,6 +120,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
 
   const send = async (content: string, attachments: OutgoingAttachment[]) => {
     await client.request('turn/send', { sessionId, content, attachments });
+    clearSent(sessionId, content);
   };
   // 手机上用量从底部弹出；别的宽度上是面板的「用量」标签，关着时先打开
   const openUsage = () => {
@@ -157,6 +164,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
           banner={summary?.kind === 'room' && `你正在以 owner 身份在「${summary.title}」发言，按群的人设和能力运行`}
           actions={
             <>
+              {running && <LoaderCircle className="spin" role="img" aria-label="正在运行" />}
               {usage && <UsageMeter usage={usage} onOpen={openUsage} />}
               {!phone && (
                 <>
@@ -178,6 +186,8 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
           }
           footer={
             <Composer
+              ref={composer}
+              sessionId={sessionId}
               send={send}
               onStop={running ? stop : undefined}
               switches={
@@ -216,6 +226,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
                   fold={fold}
                   before={live.before}
                   loadEarlier={live.loadEarlier}
+                  restore={prompt => composer.current?.restore(prompt)}
                 />
               )
             )}

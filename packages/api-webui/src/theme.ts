@@ -151,11 +151,6 @@ export interface PluginTheme {
   theme: Theme;
 }
 
-/** GET /api/themes：插件此刻提供的主题，按全局键排 */
-export interface PluginThemesResponse {
-  themes: PluginTheme[];
-}
-
 /** 内置主题：随包带的主题文件，键是主题 id（配色名加种类） */
 export const BUILTIN_THEMES = {
   'calm-dark': calmDark,

@@ -26,13 +26,14 @@ import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
-import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, isStorageUri, readTailLines, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import {
+  type ErrorResponse,
+  type OptionDetail,
   type PluginTheme,
-  type PluginThemesResponse,
   parseTheme,
+  type ServiceListResponse,
   type WebUIService,
   webuiClient,
   webuiServer,
@@ -43,6 +44,7 @@ import {
   config,
   definePlugin,
   events,
+  type LogEntry,
   LogHub,
   lifecycle,
   logger,
@@ -53,18 +55,20 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type LogEntry, parseLogLine } from '@aalis/schema-log';
 import { type Message, type OutgoingMessage, outboundMediaMessage, WellKnownKinds } from '@aalis/schema-message';
 import express from 'express';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
+import { createAttention } from './attention.js';
 import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { CLIENT_SWITCH_SCRIPT, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { createLayoutStore } from './layout.js';
+import { logMatcher, parseLogFilter, readLogs } from './logs.js';
 import { createPageFiles } from './page-files.js';
 import { createPageRegistry } from './pages.js';
+import { route } from './route.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerFrameRoutes } from './routes/frames.js';
 import { localPackageLookup, registerMarketplaceRoutes } from './routes/marketplace.js';
@@ -191,36 +195,6 @@ const configSchema = defineConfig({
 
 type WebUIConfig = ConfigOf<typeof configSchema>;
 
-// ===== 日志文件读取（与 @aalis/runtime 的 file-logger 格式对偶）=====
-// 行格式契约（format ↔ parse）由 @aalis/schema-log 的 parseLogLine 唯一持有，此处只负责
-// 读取「持久化日志单一数据源」并按 cursor 尾读分页。
-//
-// 路径（宿主目录布局）是「环境知识」，归 storage 的 logs 根所有；本插件只用 storage
-// URI 寻址、对 cwd/落盘位置无知。写入方（runtime/file-logger）跑在 storage 起来之前，
-// 是 bootstrap 期的合法 raw-fs 例外，不在此处管辖（默认 logs 根 = data/，与之对偶）。
-
-const LOG_FILE_URI = 'logs:/latest.log';
-
-// 尾读/分页均走 readTailLines 的倒序分块读取——latest.log 可能几百 MB，
-// 旧实现每个请求整文件载入+全量解析，日志页一刷服务端就抖一次。
-async function readLogFileTail(storage: StorageService, limit: number): Promise<LogEntry[]> {
-  const lines = await readTailLines(storage, LOG_FILE_URI, limit);
-  return lines.map(parseLogLine).filter((e): e is LogEntry => e !== null);
-}
-
-async function readLogFileBefore(storage: StorageService, beforeSeq: number, limit: number): Promise<LogEntry[]> {
-  // seq 随文件位置单调递增：从尾部向前扫，过滤 seq >= before 的尾段后取 limit 条。
-  // maxBytes 放宽到 16MiB 覆盖较深的向上分页；更深的考古走 logs/latest.log 本体。
-  const lines = await readTailLines(storage, LOG_FILE_URI, limit, {
-    maxBytes: 16 * 1024 * 1024,
-    filter: line => {
-      const e = parseLogLine(line);
-      return e !== null && e.seq < beforeSeq;
-    },
-  });
-  return lines.map(parseLogLine).filter((e): e is LogEntry => e !== null && e.seq < beforeSeq);
-}
-
 // ===== WebUI 会话的收件箱 =====
 
 /**
@@ -228,14 +202,14 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
  * 别的插件是否在场。agent 的文字回复由 agent 存档，这里不再记，免得历史里重复。其余部分：
  * - 不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记：回看时显示成分隔条，不进模型上下文，与其他平台一致；
  * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件；
- * - 给的是存储地址的文件（白纸成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
+ * - 给的是存储地址的文件（插件发出的成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
  *   metadata 另记原样的地址与文件名：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
- *   「[文件: 名称 | ref:…]」进模型上下文与记忆，与 QQ 等平台不同（image-sender 不归档文件）。不是存储地址的文件
+ *   「[文件: 名称 | ref:…]」进模型上下文与记忆，不看全局出站归档记不记文件。不是存储地址的文件
  *   （网址、data URL）签不出句柄，记成事件标记「[文件] 名称」，内容不进历史；
  * - 快照里的 data 未经平台改写，就是页面上显示的那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在
- *   历史里，不再记。她发出的媒体在别的平台由 image-sender 在 outbound:delivered 上归档；发往 WebUI 的由这里记，
- *   outbound:delivered 的快照给附件标上 skipArchive，免得 image-sender 再记一份。代价是这些网址图片与视频不再由
- *   image-sender 在后台补视觉描述
+ *   历史里，不再记。她发出的媒体在别的平台由全局出站归档在 outbound:delivered 上记；发往 WebUI 的由这里记，
+ *   outbound:delivered 的快照给附件标上 skipArchive，免得全局出站归档再记一份。代价是这些网址图片与视频不再由
+ *   全局出站归档在后台补视觉描述
  */
 function inboxRecords(msg: OutgoingMessage): Message[] {
   const timestamp = Date.now();
@@ -285,7 +259,7 @@ function localScanDirs(appDir: string | undefined): string[] {
 }
 
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
-// 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
+// 整个控制台拖进 pending。storage 尤其不能 required——storage 的提供者 bounce 会让它
 // 暂时消失，webui-server 跟着重启会断开所有连接、清空页面登记表（登记门面随后重挂）。
 const uses = {
   events,
@@ -307,7 +281,7 @@ const uses = {
   process: optional(processService),
   /** /session 的连接接到它；每条连接到达时现取，不在时关闭连接并写明原因。会话文件的下载请它核验句柄 */
   sessionProtocol: optional(sessionProtocol),
-  /** 登记 webui 审批面：/session 连接上的在场上报与应答记在这个登记身份名下 */
+  /** 登记 webui 审批面：/session 连接上的在场上报与应答记在这个登记身份名下。推出未结的审批进「需要处理」 */
   approvals: optional(approvals),
   /** 会话面板：调用前核会话存在、按会话种类判断适用的页面 */
   sessions: optional(sessionManager),
@@ -426,7 +400,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 插件前端的文件：注册在认证之前，凭页面登记时的 token 取，不看 cookie
   registerFrameRoutes(expressApp, token => pages.frameDir(token));
   expressApp.use(express.json({ limit: '10mb' }));
-  expressApp.use(auth.middleware);
+  auth.install(expressApp);
   // REST 路由 owner 闸（连接级认证之上的显式 owner 复核，见 gate.ts）。
   // 当前身份 / 登录态查询统一走 auth.ts 的 GET /api/auth/status（含 identity）。
   const gate = createRouteGate(auth.identify);
@@ -452,7 +426,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       else cb(true);
     },
   });
-  const admin = createAdminChannel(logger);
+  // 日志按插件筛时用登记表分开后缀实例与插件分出的子作用域
+  const matchLogs = logMatcher(instance => caps.plugins.current?.getPlugin(instance) !== undefined);
+  const admin = createAdminChannel(logger, matchLogs);
   /** 打开着的 /session 连接：webui 平台的连接状态按它数 */
   const sessionSockets = new Set<WebSocket>();
   // 半开连接回收：清理只挂 'close' 时，睡眠/断网的客户端永远等不到事件，
@@ -596,35 +572,47 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     () => discoverAndProvideClients(),
   );
 
-  // 历史日志从 logs/latest.log 读（lazy load）。
-  // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
-  // 尾部 N 条（首屏 / 显式刷新）
-  expressApp.get('/api/logs/tail', gate(), async (req, res) => {
-    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
-    try {
-      res.json(await readLogFileTail(storage, limit));
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
+  // 「需要处理」：推出未结的审批、插件故障与提示，界面的首页摘要、插件详情与标签页标题都读这一个列表
+  const attention = createAttention({
+    approvals: () => caps.approvals.current?.list() ?? [],
+    sessions: () => caps.sessions.current,
+    plugins: () => caps.plugins.current?.getStatus() ?? [],
+    services,
+    notices: pages.notices,
+    send: event => admin.send(event),
+  });
+  route(expressApp, 'GET /api/attention', gate(), (_req, res) => {
+    res.json({ items: attention.items() });
   });
 
-  // 历史分页：返回 seq < before 的最近 limit 条（向上滚动加载更早）
-  expressApp.get('/api/logs/range', gate(), async (req, res) => {
+  /** 按查询参数里的筛选读日志的历史回给前端，给了 before 时往前翻；筛选写法不对回 400 */
+  const sendLogs = async (
+    query: express.Request['query'],
+    res: express.Response<LogEntry[] | ErrorResponse>,
+    before?: number,
+  ) => {
+    const filter = parseLogFilter(query);
+    if (!filter) {
+      res.status(400).json({ error: '日志筛选写法不对：level 只收 debug、info、warn、error，每一项最多给一次' });
+      return;
+    }
+    const limit = Math.min(Math.max(Number(query.limit) || 200, 1), 5000);
+    res.json(await readLogs(storage, matchLogs(filter), limit, before));
+  };
+  // 日志的历史以 logs/latest.log 为单一数据源：尾部 limit 条
+  route(expressApp, 'GET /api/logs/tail', gate(), (req, res) => sendLogs(req.query, res));
+  // 往前翻：seq 比 before 小的最后 limit 条
+  route(expressApp, 'GET /api/logs/range', gate(), (req, res) => {
     const before = Number(req.query.before);
-    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
     if (!Number.isFinite(before)) {
       res.status(400).json({ error: 'before query param required' });
       return;
     }
-    try {
-      res.json(await readLogFileBefore(storage, before, limit));
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
+    return sendLogs(req.query, res, before);
   });
 
   // 获取服务列表（含提供者信息）
-  expressApp.get('/api/services', gate(), async (_req, res) => {
+  route(expressApp, 'GET /api/services', gate(), async (_req, res) => {
     const pluginMgr = caps.plugins.current;
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     const displayNameMap = new Map<string, string>();
@@ -639,19 +627,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     displayNameMap.set('root', '宿主');
 
     const serviceNames = services.names();
-    const detail: Record<
-      string,
-      {
-        providers: Array<{
-          contextId: string;
-          displayName?: string;
-          label?: string;
-          priority: number;
-          exclusive: boolean;
-        }>;
-        preferred: string | null;
-      }
-    > = {};
+    const detail: ServiceListResponse['services'] = {};
 
     for (const svcName of serviceNames) {
       // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段；只取登记元数据，不取实例
@@ -675,27 +651,27 @@ async function startWebuiServer(caps: Caps): Promise<void> {
    * 设置服务偏好。body: { contextId: string }
    * 偏好语义：`preferred > priority > 注册顺序`。持久化到 aalis.config.yaml 的 servicePreferences。
    */
-  expressApp.post('/api/services/:name/prefer', gate(), async (req, res) => {
+  route(expressApp, 'POST /api/services/:name/prefer', gate(), async (req, res) => {
     const svcName = String(req.params.name);
     const contextId = String((req.body as { contextId?: string })?.contextId ?? '').trim();
     if (!contextId) {
-      res.status(400).json({ ok: false, error: 'contextId required' });
+      res.status(400).json({ error: 'contextId required' });
       return;
     }
     // 校验 entry 存在
     const entries = services.inspect(svcName);
     if (!entries.some(e => e.contextId === contextId)) {
-      res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
+      res.status(404).json({ error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;
     }
     // 偏好要跨重启保留就得写进文档：宿主没提供文档时不动运行态
     const host = caps.hostConfig.current;
     if (!host) {
-      res.status(503).json({ ok: false, error: '宿主未提供配置文档（host-config），无法保存偏好' });
+      res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
       return;
     }
     if (!services.prefer(svcName, contextId)) {
-      res.status(409).json({ ok: false, error: `service "${svcName}" rejected provider preference "${contextId}"` });
+      res.status(409).json({ error: `service "${svcName}" rejected provider preference "${contextId}"` });
       return;
     }
     host.setServicePreference(svcName, contextId);
@@ -707,11 +683,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   /** 清除服务偏好 */
-  expressApp.delete('/api/services/:name/prefer', gate(), async (req, res) => {
+  route(expressApp, 'DELETE /api/services/:name/prefer', gate(), async (req, res) => {
     const svcName = String(req.params.name);
     const host = caps.hostConfig.current;
     if (!host) {
-      res.status(503).json({ ok: false, error: '宿主未提供配置文档（host-config），无法保存偏好' });
+      res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
       return;
     }
     services.unprefer(svcName);
@@ -724,7 +700,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 插件经贡献点提供的主题：与导入的主题同一套校验，不合格式的不列出、每份告警一次。插件停用时贡献随之撤回，
   // 界面收到 plugins.changed 后重取。贡献点服务不在时没有插件主题
   const warnedThemes = new WeakSet<object>();
-  expressApp.get('/api/themes', gate(), (_req, res) => {
+  route(expressApp, 'GET /api/themes', gate(), (_req, res) => {
     const themes: PluginTheme[] = [];
     for (const { key, spec } of services.get(contributions)?.collect('webui:theme') ?? []) {
       const parsed = parseTheme((spec as { theme?: unknown }).theme);
@@ -734,7 +710,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         logger.warn(`插件主题 ${key} 不合主题文件的格式，没有列出：${parsed.errors.join('；')}`);
       }
     }
-    res.json({ themes } satisfies PluginThemesResponse);
+    res.json({ themes });
   });
 
   // 前端切换已统一到「服务偏好」：前端是 webui-client 服务的多 provider，切换走
@@ -742,15 +718,15 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 故不再有独立的 /api/clients* 路由。
 
   // 获取所有平台适配器及其连接状态
-  expressApp.get('/api/platforms', gate(), (_req, res) => {
+  route(expressApp, 'GET /api/platforms', gate(), (_req, res) => {
     res.json({ platforms: aggregatePlatformDetails(caps.platform) });
   });
 
   // 触发指定 provider 重新探测远端模型列表（插件配置里模型字段旁的「刷新」按钮）
-  // 仅对在 LLMModel 上实现了 refresh() 的 provider 生效（远端动态发现型，如 Ollama / OpenAI）。
+  // 仅对在 LLMModel 上实现了 refresh() 的 provider 生效（远端动态发现型）。
   // 同 provider 下所有 model entries 共享同一份 refresh 闭包，调任一个 entry 即可。
   // 按 providerId 找条目，与 /api/models/llm 给的 contextId 同一口径：条目自己的 contextId 是 `<provider>/<model>`，不等于 provider
-  expressApp.post('/api/llm-providers/:contextId/refresh', gate(), async (req, res) => {
+  route(expressApp, 'POST /api/llm-providers/:contextId/refresh', gate(), async (req, res) => {
     const contextId = req.params.contextId;
     try {
       const llmEntries = caps.llm.all().filter(e => e.instance.providerId === contextId);
@@ -759,7 +735,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         res.status(404).json({
           error:
             llmEntries.length > 0
-              ? `提供者 ${contextId} 不支持运行时刷新模型列表（例如关闭了模型发现 discoverModels）`
+              ? `提供者 ${contextId} 不支持运行时刷新模型列表（例如关闭了模型发现）`
               : `提供者 ${contextId} 当前没有已注册的模型，无法刷新`,
         });
         return;
@@ -772,7 +748,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   // 获取某个服务的可用模型/选项列表
-  expressApp.get('/api/models/:service', gate(), async (req, res) => {
+  route(expressApp, 'GET /api/models/:service', gate(), async (req, res) => {
     const serviceName = req.params.service;
 
     // 特殊处理 platform：通过 helper 获取已注册的平台名称
@@ -792,7 +768,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         platformTypes.set(a.platform, types);
         for (const t of types) allTypes.add(t);
       }
-      const scopes: Array<{ value: string; label: string }> = [];
+      const scopes: OptionDetail[] = [];
       scopes.push({ value: '*', label: '* （全部平台 × 全部类型）' });
       for (const t of [...allTypes].sort()) {
         scopes.push({ value: `*:${t}`, label: `*:${t} （所有平台的 ${t} 会话）` });
@@ -811,7 +787,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
 
     // 深度思考的档位：可选项依赖「模型」这一项，dependency 带它的生效值；没带时按服务偏好解析，与对话时同一种解析。
-    // 默认档在名字后注明并标 default（没设时界面据它写按哪一档跑），模型不能调时没有可选项
+    // 默认档标 default（没设时界面据它写按哪一档跑），模型不能调时没有可选项。labels 是各模型声明过的档位的名字
+    // （同一个 id 取先登记的）：换了模型以后存着的档位不在可选项里，界面按它写出名字
     if (serviceName === 'llm-thinking') {
       const ref = modelRefOf(req.query.dependency);
       if (ref === null) {
@@ -820,13 +797,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       }
       const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.instance.thinking;
       const levels = thinking?.levels ?? [];
+      const labels: Record<string, string> = {};
+      for (const entry of caps.llm.all()) {
+        for (const level of entry.instance.thinking?.levels ?? []) labels[level.id] ??= level.label;
+      }
       res.json({
         models: levels.map(level => level.id),
         details: levels.map(level =>
           level.id === thinking?.default
-            ? { value: level.id, label: `${level.label}（默认）`, default: true }
+            ? { value: level.id, label: level.label, default: true }
             : { value: level.id, label: level.label },
         ),
+        labels,
       });
       return;
     }
@@ -834,7 +816,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
       const groups = caps.tools.current?.getGroups() ?? [];
-      // '*' = 全部分组（plugin-tools 的分组过滤认它），与会话范围选项的「* （全部平台）」同一写法
+      // '*' = 全部分组（api-tools 的分组约定），与会话范围选项的「* （全部平台）」同一写法
       if (groups.length > 0) {
         res.json({
           models: ['*', ...groups.map(g => g.name).sort()],
@@ -880,47 +862,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    const service = services.get(serviceName) as { listModels?(): Promise<unknown[]> } | undefined;
-    if (!service || typeof service.listModels !== 'function') {
-      res.json({ models: [] });
-      return;
-    }
-    try {
-      // 聚合所有提供者的模型列表（embedding 等服务仍走 listModels()）。
-      const allProviders = services.all(serviceName) as Array<ServiceView<{ listModels?(): Promise<unknown[]> }>>;
-      const aggregated: Array<{
-        value: string;
-        model: string;
-        provider: string;
-        contextId: string;
-        capabilities: string[];
-      }> = [];
-      const flatValues: string[] = [];
-
-      for (const provider of allProviders) {
-        if (typeof provider.instance.listModels !== 'function') continue;
-        try {
-          const models = await provider.instance.listModels();
-          for (const m of models) {
-            const modelId = String(m);
-            aggregated.push({
-              value: modelId,
-              model: modelId,
-              provider: provider.label ?? provider.contextId,
-              contextId: provider.contextId,
-              capabilities: [],
-            });
-            flatValues.push(modelId);
-          }
-        } catch {
-          // 单个提供者获取模型失败不影响整体
-        }
+    // 合起各提供者的取值（人设卡等服务走 listModels()）
+    const allProviders = services.all(serviceName) as Array<ServiceView<{ listModels?(): Promise<unknown[]> }>>;
+    const models: string[] = [];
+    for (const provider of allProviders) {
+      if (typeof provider.instance.listModels !== 'function') continue;
+      try {
+        models.push(...(await provider.instance.listModels()).map(String));
+      } catch {
+        // 单个提供者获取失败不影响整体
       }
-
-      res.json({ models: flatValues, providers: aggregated });
-    } catch {
-      res.json({ models: [] });
     }
+    res.json({ models });
   });
 
   registerProxyRoutes(expressApp, logger, gate);
@@ -945,10 +898,15 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
   });
 
-  // 管理面推送（/admin）：日志、插件状态、重启。页面登记表的变化与 invalidate 在页面登记表（pages.ts）里推，布局记录的变化在
-  // 它的路由里推，换前端在 remountActiveClient 里推
+  // 管理面推送（/admin）：日志、插件状态、「需要处理」、重启。页面登记表与提示的变化、invalidate 在页面登记表（pages.ts）里推，
+  // 布局记录的变化在它的路由里推，换前端在 remountActiveClient 里推
   const removeAdminLogListener = LogHub.default.onEntry(entry => admin.send({ type: 'log', entry }));
-  events.on('plugins:changed', () => admin.send({ type: 'plugins.changed' }));
+  events.on('plugins:changed', () => {
+    admin.send({ type: 'plugins.changed' });
+    attention.pluginsChanged();
+  });
+  events.on('approval:created', () => attention.changed());
+  events.on('approval:settled', () => attention.changed());
   events.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
 
   // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。
@@ -967,7 +925,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         if (!archive) return { ok: false as const, error: '消息存档服务不在场，这条消息没有存进 WebUI 会话的历史' };
         for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
         if (snapshot.attachments?.length) {
-          // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得 image-sender 再记一份
+          // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得全局出站归档再记一份
           const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
           void events.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
         }
@@ -982,21 +940,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 极简第三方前端无切换 UI）卡住时都能在此切回。受全局 auth 中间件登录保护；切换走既有 owner
   // 闸的 POST /api/services/webui-client/prefer，本页零新增后端逻辑（见 client-switch-page.ts）。
   // 注册在 SPA 兜底之前，故 `/__clients` 被本路由先接走、不落到前端 index.html。
-  expressApp.get('/__clients', (_req, res) => {
+  route(expressApp, 'GET /__clients', (_req, res) => {
     res.type('html').send(renderClientSwitchPage());
   });
-  expressApp.get('/__clients.js', (_req, res) => {
+  route(expressApp, 'GET /__clients.js', (_req, res) => {
     res.type('application/javascript').send(CLIENT_SWITCH_SCRIPT);
   });
 
-  // API 未命中：回 404 JSON，不落到 SPA 兜底（否则客户端拿到 HTML 去解析 JSON）。
-  expressApp.all('/api/{*path}', (req, res) => {
-    res.status(404).json({ error: `未知 API: ${req.method} ${req.path}` });
+  // API 未命中：回 404 JSON，不落到 SPA 兜底（否则客户端拿到 HTML 去解析 JSON）。不是路由：任何方法都回它
+  expressApp.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    res.status(404).json({ error: `未知 API: ${req.method} ${req.path}` } satisfies ErrorResponse);
   });
 
   // SPA fallback: 所有非 API 路径返回 index.html；/assets/ 下缺失的文件回 404（旧页面引用的资源换了构建就不在了，
   // 回 index.html 只会让浏览器把 HTML 当脚本执行）
-  expressApp.get('{*path}', (req, res) => {
+  route(expressApp, 'GET /{*path}', (req, res) => {
     if (req.path.startsWith('/assets/')) {
       res.status(404).end();
       return;
@@ -1006,10 +965,26 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     if (indexPath && existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
-      res
-        .status(404)
-        .json({ error: '前端未就绪：请安装一个带 aalis.client 标记的前端包（如 @aalis/plugin-webui-client）' });
+      res.status(404).json({ error: '前端未就绪：请安装一个带 aalis.client 标记的前端包' });
     }
+  });
+
+  // 路由与中间件抛出的错误（请求体不是 JSON 或太大、路径参数解不开、处理函数出错）：/api/ 下回 ErrorResponse，别处回纯文本，
+  // 都不带堆栈，原因只进日志。挂在全部路由之后（插件前端的挂载另有自己的，紧跟在挂载之后）
+  expressApp.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (res.headersSent) return next(err);
+    const { status, expose, message } = err as { status?: unknown; expose?: unknown; message?: unknown };
+    const code = typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
+    if (code >= 500) logger.error(`${req.method} ${req.path} 处理出错:`, err);
+    else logger.debug(`${req.method} ${req.path} 请求被拒 (${code}): ${String(message)}`);
+    const reason =
+      code >= 500
+        ? '处理这个请求时出错，原因见日志'
+        : expose === true && typeof message === 'string'
+          ? message
+          : '请求的写法不对';
+    if (req.path.startsWith('/api/')) res.status(code).json({ error: reason } satisfies ErrorResponse);
+    else res.status(code).type('text').send(reason);
   });
 
   /**

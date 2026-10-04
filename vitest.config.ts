@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    setupFiles: ['test/setup/network.ts'],
+    setupFiles: ['test/setup/network.ts', 'test/setup/dom.ts'],
     // .test.tsx：WebUI 组件测试（含 `// @vitest-environment jsdom` 文件级覆盖 node 默认环境）
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     exclude: ['**/node_modules/**', '**/dist/**', 'test/fixtures/**'],

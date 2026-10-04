@@ -12,7 +12,13 @@
 
 import type { MemoryService } from '@aalis/api-memory';
 import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
-import { type ContentSegment, type Message, parseAttachmentRefs, WellKnownKinds } from '@aalis/schema-message';
+import {
+  type ContentSegment,
+  type Message,
+  type OutgoingMessage,
+  parseAttachmentRefs,
+  WellKnownKinds,
+} from '@aalis/schema-message';
 import { failure } from './connection.js';
 import type { DisplayOf, ResolvedDisplay } from './display.js';
 
@@ -132,6 +138,23 @@ export function toolFailed(result: string, display: ResolvedDisplay | undefined)
 }
 
 const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
+
+type ReplyModel = NonNullable<Extract<SessionItem, { kind: 'agent-message' }>['model']>;
+
+/**
+ * 回复的模型与这一轮的 token，取 agent 记的 modelInfo：实时外发的消息与存档的元数据同一形状，实时与历史一致。
+ * 存档是存储读回的（没有的项可能存成了 null），各项按类型取，不合的当没有
+ */
+export function replyModel(info: NonNullable<OutgoingMessage['modelInfo']>): ReplyModel {
+  const { provider, model, promptTokens, completionTokens } = info;
+  return {
+    provider: text(provider),
+    model: text(model),
+    promptTokens: finite(promptTokens),
+    completionTokens: finite(completionTokens),
+  };
+}
 
 function speakerOf(message: Message, isOwner: IsOwner) {
   const meta = message.metadata ?? {};
@@ -207,7 +230,7 @@ function groupTimeline(group: Message[]) {
   let timeline = false;
   let finalContent = '';
   let lastAt = group[0]?.timestamp ?? 0;
-  let model: { provider?: string; model?: string } | undefined;
+  let model: ReplyModel | undefined;
   for (const [k, cur] of group.entries()) {
     if (cur.role === 'tool') {
       const callId = text(cur.metadata?.callId);
@@ -219,8 +242,8 @@ function groupTimeline(group: Message[]) {
       }
       continue;
     }
-    const info = cur.metadata?.modelInfo as { provider?: string; model?: string } | undefined;
-    if (info) model = { provider: info.provider, model: info.model };
+    const info = cur.metadata?.modelInfo as OutgoingMessage['modelInfo'];
+    if (info) model = replyModel(info);
     lastAt = cur.timestamp ?? lastAt;
     if (cur.segments?.length) {
       timeline = true;
