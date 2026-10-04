@@ -581,6 +581,34 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - media 的 `think` 开启时原来对 Ollama 强开思考，现在按 Ollama 实例的默认档；实例默认档是 `off` 时识别不再思考，要思考就把实例默认档设成 `on`。
 - **发布档位**：次版本：api-llm、api-agent、api-session-manager、api-session-protocol、api-webui、api-package-manager、plugin-webui-server、plugin-webui-client、plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-agent、plugin-session-manager、plugin-media；其余为 patch。只改注释或说明的 api-hooks、api-trigger、plugin-trigger-laya 可以不发。
 
+### 需要处理、运行状况、用量与体验补齐，管理面 REST 契约（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-llm、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-media、@aalis/plugin-media、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-mcp-client、@aalis/plugin-persona、@aalis/plugin-tools、@aalis/plugin-paper、新包 @aalis/plugin-usage-stats）
+
+新 WebUI 的第八部分：要处理的事汇总到一处，有了运行状况页与用量统计；时间线与输入框补齐体验；管理面 REST 成为公开契约。
+
+- **需要处理**：webui-server 把未结的审批、插件故障（失败与缺服务）和插件的提示汇总成一个列表（`GET /api/attention`，类型 `AttentionItem`、`AttentionResponse`），变化时经 `/admin` 推 `attention.changed`。首页上方（手机上在第一层顶部）的摘要最多五条，空了不出现；插件详情头部之后列这个插件的提示；标签页标题的数改为「需要处理」加「我的」区完成未读，都为 0 时只写应用名。重取失败时留着上一次的结果并写明「没刷新成功」。
+- **MCP 连不上的提示**：plugin-mcp-client 可选使用 webui-server，某个 MCP 服务器连不上时发一条 error 提示（标题写服务器、说明写原因、跳转去配置），改好配置重载后撤回。
+- **运行状况**（`/health`）：概况列出全部需要处理的事与平台连接；日志标签（`/health/logs`）有「只看错误」「审批」两个预设，级别、插件、文字的筛选写进地址，可以往前翻更早的日志。图标栏底部与手机第一层新增「运行状况」，角标是需要处理的数（只有它带角标）；插件详情头部新增「查看日志」。
+- **日志的筛选**：`/api/logs/tail`、`/api/logs/range` 按 `level`、`plugin`、`text` 在服务端筛，写法不对回 400；`/admin` 的 `log.subscribe` 可以带 `filter`，只推符合的行，再订阅一次换掉筛选。按插件筛时认这个实例与它分出的子作用域。plugin-session-server 每个审批结算记一行 info 日志（会话、工具、结局、原因）。
+- **用量统计**：
+  - api-llm：请求可以带 `purpose`、`sessionId`，经 `llm` 的绑定接口调用时 `caller` 由宿主填成调用方这次激活的实例；服务商登记模型时套 `metered(model, events)`，每次调用拿到用量就发 `llm:usage`（`LLMUsageEvent`），服务商回的数不合规时不记；新增可选的余额查询 `LLMModel.balance()` 与 `LLMBalance`。三个第一方服务商都已套上，新增必需服务 `events`；目前都还没有实现余额查询。
+  - 调用方带上用途与会话：对话与子任务（plugin-agent）、摘要（plugin-memory-summary）、识图与转写（plugin-media，api-media 的 `DescribeInput`、`DescribeImageOptions`、`TranscribeInput` 加 `sessionId`）。
+  - 新包 plugin-usage-stats：把每次调用记进家目录 `state/usage/llm-calls.jsonl`（只追加、启动时按行读回、不自动清理），「用量统计」页按天、按周、按模型列 token，配置了单价（`prices`，每百万 token 的「输入, 缓存命中, 输出」）时估算费用，服务商实现了余额查询时多一个「余额」标签。不在任何档位里默认安装。
+  - 用量拆分表的行名与次序由产出方给：api-agent 的 `token:usage` 新增 `parts`（`TokenUsagePart`），协议的 `usage` 条目用 `parts` 取代 `breakdown` 与 `injectors`，客户端照条目画行、不再依赖 api-agent。
+  - 每轮回复下面那行写这一轮的输入与输出 token（协议回复条目的 `model` 加 `promptTokens`、`completionTokens`），实时与刷新后一致。
+- **时间线**：连续 3 个以上的工具调用收成一行（按展示种类计数，有待审批、失败或运行中的不收，被停止的照收，还在跑的这一轮末尾那一组不收），点开才渲染；没有回复的一轮写「没有回复」，连续几轮合成「N 轮没有回复」（刷新后不还原）；连对话一起回滚时那一轮的提问放回输入框，不自动发；文件与成品一行写名字与类型，文本类可以预览（512 KB 以内）；图片取不到时显示替代（时间线、Markdown、页面单元格）；代码块上方一条标题行写语言名与复制按钮；回合进行中头部有运行指示；认不出的展示种类走通用卡。
+- **输入框**：快捷切换只写值，名字在读屏标签与悬停提示里；草稿按会话存在本浏览器（最近 50 个会话），切会话与刷新后恢复，发出后清掉；文件可以拖进会话成为附件；会话连接反复被来源校验拒绝而登录正常时，连接横条提示检查反向代理是否转发了原始 Host。
+- **选择器**：一种能过滤（10 项起出现过滤框）、手机上从底部弹出的选择器取代全部原生选择框；菜单与选择器在打开着的对话框里也能用。
+- **设置行**：api-session-manager 的 `SessionSetting` 新增 `unset`，写这一项没设又没有默认值时的含义，协议的设置行带上它，session-manager 拒收空串；第一方设置项都写上了（「最大工具迭代」与「人设」的默认值取插件配置）。深度思考的档位当前模型没有时写那一档的名字与默认档名（`/api/models/llm-thinking` 另回 `labels`，`label` 不再带「（默认）」）。触屏上「恢复继承」与名字对齐。房间表下面一句话指去「会话默认」。
+- **搜索**：⌘K / Ctrl+K 在会话之外也按名字找有自己地址的页面与插件（显示名、包名、实例 id），分三组列出；会话服务不在时照样找页面与插件。
+- **声明式表格**：纯数字的列按这一列最多的小数位补齐（最多 3 位），数字按千位分组，表头文字与数字右对齐。
+- **管理面 REST 契约**（api-webui，实验性）：全部路由的请求与回应类型进 `rest.ts`（`WebuiRestRoutes`、`WebuiFileRoutes`、`WebuiRestResponse`），市场的类型一并移入；webui-server 一律经 `route()` 按契约登记，响应编译期受约束，守卫与走查用例逐条核对实际登记的路由。失败一律回 `ErrorResponse`（请求体不是 JSON、路径参数解不开、处理时出错也是），不再回带堆栈的 HTML。插件区左栏头部新增「重新扫描插件目录」。webui-server、session-server 与会话协议的源码加上只认契约不认插件的守卫。
+- **破坏性**：
+  - api-session-protocol 的 `usage` 条目删掉 `breakdown`、`injectors`，改读 `parts`。
+  - api-webui 的 `PageErrorResponse` 改名为 `ErrorResponse`（多一个 `applied`）。
+  - plugin-webui-server 删除 `GET /api/plugins/:name/config`（插件列表每项已带同样形态的 `config`）与 `POST /api/config/save`（写路由都自己落盘）；`PUT /api/config` 带核心键以外的键回 400，回执去掉 `ignored`；`/api/models/<服务>` 的通用来源只回 `{ models }`；登录、来源校验与服务偏好的错误回应去掉 `ok: false`。第三方前端照 [api-webui](docs/api/api-webui.md) 的「管理面 REST」一节改。
+  - 自己实现 LLM 服务商的，登记模型时套 `metered` 才会被记账；不套照常能用，只是不记。
+- **发布档位**：次版本：api-webui、api-llm、api-agent、api-session-protocol、api-session-manager、api-media、plugin-webui-server、plugin-webui-client、plugin-session-server、plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-mcp-client；plugin-usage-stats 首发 0.1.0（对 api-llm 的依赖下限抬到本批的新版本）；其余为 patch。只改注释的 schema-message 可以不发。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -614,6 +642,9 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - api-llm 与 plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama 以及会调模型的 plugin-agent、plugin-session-manager、plugin-memory-summary、plugin-user-profile、plugin-user-relation、plugin-media、plugin-adapter-onebot 同批升级：旧版调用方压低思考时带 `think: false`，新版提供者按档位 id 核对，不在档位里就抛错，摘要、标题、抽取这些调用全部失败；反过来，新版调用方带的档位 id 是字符串，旧版提供者当成布尔的真，`off` 也会打开思考。
 - plugin-agent 与 plugin-session-manager、plugin-session-server、plugin-webui-server、plugin-webui-client 同批升级：「深度思考」的可选项要新版 webui-server 的 `llm-thinking` 来源，并经新版 session-manager、session-server 把 `dependsOn` 带到界面，混用时可选项取不到或按服务偏好的模型取。
 - plugin-webui-client 与 plugin-webui-server 同批升级：新版前端用插件列表的新字段、`reload`、`/api/themes`、`/api/restart` 与 `/api/config`、`/api/models/llm` 的新回包，旧版服务端没有；旧版前端读已删的 `/api/service-groups`、`/api/llm-providers` 与插件列表的 `capabilities`。
+- plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-usage-stats 与 api-llm 同批升级：服务商要套新版 api-llm 的 `metered` 才发 `llm:usage`，旧版服务商配新版记账插件什么都记不上；新版服务商在运行时导入 `metered`，配旧版 api-llm 加载时找不到导出。
+- plugin-session-server、plugin-agent、plugin-webui-client 与 api-agent、api-session-protocol 同批升级：新版会话服务照 `token:usage` 的 `parts` 放进用量条目，旧版 agent 不带 `parts`，拆分表没有行；旧版前端读已删的 `breakdown`、`injectors`。
+- plugin-webui-client 与 plugin-webui-server、plugin-session-server 同批升级：新版前端读 `/api/attention`、日志的筛选参数与 `attention.changed`，设置行读 `unset`，回复读 token；旧版前端读已删的 `GET /api/plugins/:name/config`。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
