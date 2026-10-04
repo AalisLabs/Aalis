@@ -4,11 +4,11 @@
 // 一次给出，返回形状按组件种类推出；样式、窄屏变形、确认框与输入表单都由宿主统一画。组件只有表格、关系图、键值、文字、
 // 按钮组五样，另有标签页这一种排法。插件前端是插件包里的一份静态网页，在宿主画的隔离框架里运行，只放在插件页面与
 // 会话面板，经消息通道调这一页声明过的数据源与动作（frame.ts）。
-// 界面经 REST 取页面的声明（函数去掉，见 PageView）、取数、调动作；路由与返回形状见本文件末尾。
+// 界面经 REST 取页面的声明（函数去掉，见 PageView）、取数、调动作；路由与返回形状见 rest.ts。
 
 import type { UserIdentity } from '@aalis/api-authority';
 import type { SessionKind } from '@aalis/api-session-manager';
-import type { ConfigOf, SchemaField, SchemaIssue } from '@aalis/schema-config';
+import type { ConfigOf, SchemaField } from '@aalis/schema-config';
 import type { FrameHostCapability } from './frame.js';
 
 /** 一屏（页面最外层、一个标签、一个详情）最多几个组件；webui-server 登记时校验，超了不登记 */
@@ -500,49 +500,3 @@ export type LayoutOperation =
 
 /** 布局记录各自最多几条；会话面板的标签连同宿主标签算 */
 export const MAX_LAYOUT_ENTRIES = 50;
-
-// ----- 路由 -----
-//
-// 都要登录；改状态的请求校验来源（见 plugin-webui-server 的文档）。失败回 4xx 或 5xx 与 {@link PageErrorResponse}。
-// 路径里的实例 id、页面 key、组件 id、动作名都要 encodeURIComponent。
-//
-// GET  /api/pages                                              → PageListResponse
-// GET  /api/session-pages?sessionId=                            → PanelPagesResponse（这个会话适用的会话面板页面）
-// GET  /api/pages/:instance/:pageKey/data/:componentId          → PageDataResponse
-//        查询参数只收 sessionId（会话面板必填）与 rowKey（详情里的组件必填）；插件前端页面的 componentId 是数据源名，
-//        另收 input（JSON 字符串，声明了输入的数据源才收，按字段校验），data 是数据源返回的值
-// POST /api/pages/:instance/:pageKey/actions/:action            PageActionRequest → PageActionResponse
-// GET  /api/page-file?handle=                                   → 文件，一律当附件以 octet-stream 下发
-// GET  /api/layout                                              → LayoutRecords
-// POST /api/layout                                              LayoutOperation → LayoutRecords
-
-export interface PageListResponse {
-  /** 按位置内的 order、实例、key 排好 */
-  pages: PageView[];
-}
-
-export interface PanelPagesResponse {
-  pages: PageRef[];
-}
-
-export interface PageDataResponse<T extends keyof PageDataByType = keyof PageDataByType> {
-  data: PageDataByType[T];
-}
-
-/** 只收这三个键：sessionId 给会话面板，rowKey 给行动作（插件前端没有），input 给声明了输入的动作；多出或缺了都拒收 */
-export interface PageActionRequest {
-  sessionId?: string;
-  rowKey?: string;
-  input?: Record<string, unknown>;
-}
-
-export interface PageActionResponse {
-  /** 处理函数给的一句结果 */
-  message?: string;
-}
-
-export interface PageErrorResponse {
-  error: string;
-  /** 输入没过校验时逐项列出 */
-  issues?: SchemaIssue[];
-}

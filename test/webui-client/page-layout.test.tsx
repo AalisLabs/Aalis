@@ -78,17 +78,17 @@ describe('固定到图标栏', () => {
     const layout = layoutStore();
     app = await renderApp(pagePath(JOBS), {}, pageRest(layout));
     const pin = await header('计划').findByRole('button', { name: '固定到图标栏' });
-    expect(railLinks()).toEqual(['会话', '插件', '设置']);
+    expect(railLinks()).toEqual(['会话', '运行状况', '插件', '设置']);
     expect(rail().getByRole('link', { name: '会话' }).getAttribute('aria-current')).toBeNull();
 
     fireEvent.click(pin);
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night', '运行状况', '插件', '设置']));
     expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'pin', page: refOf(JOBS) }]);
     expect(pin.getAttribute('aria-pressed')).toBe('true');
     expect(rail().getByRole('link', { name: '计划 · night' }).getAttribute('aria-current')).toBe('page');
 
     fireEvent.click(pin);
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '运行状况', '插件', '设置']));
     expect(posts('/api/layout').at(-1)?.body).toEqual({ op: 'unpin', page: refOf(JOBS) });
   });
 
@@ -108,28 +108,28 @@ describe('固定到图标栏', () => {
     fireEvent.click(pin);
     expect((await screen.findByRole('alert')).textContent).toContain('固定失败：最多 50 条，先取消一些');
     expect(pin.getAttribute('aria-pressed')).toBe('false');
-    expect(railLinks()).toEqual(['会话', '插件', '设置']);
+    expect(railLinks()).toEqual(['会话', '运行状况', '插件', '设置']);
   });
 
   it('图标栏按记录的顺序列出登记着、位置为插件详情的页面；页面不在时图标不出现、记录保留，回来后出现', async () => {
     const layout = layoutStore({ pinned: [refOf(GRAPH), refOf(SETTINGS_PAGE), refOf(JOBS)] });
     let pages = [JOBS, GRAPH, SETTINGS_PAGE];
     app = await renderApp('/', {}, pageRest(layout, { '/api/pages': () => ({ pages }) }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '运行状况', '插件', '设置']));
     expect(rail().getByRole('link', { name: '关系' }).getAttribute('href')).toBe(pagePath(GRAPH));
 
     pages = [JOBS];
     act(() => admin().push({ type: 'plugins.changed' }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '计划 · night', '运行状况', '插件', '设置']));
     pages = [JOBS, GRAPH];
     act(() => admin().push({ type: 'plugins.changed' }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '运行状况', '插件', '设置']));
   });
 
   it('不认识的图标名用通用图标', async () => {
     const layout = layoutStore({ pinned: [refOf(GRAPH), refOf(JOBS)] });
     app = await renderApp('/', {}, pageRest(layout));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '计划 · night', '运行状况', '插件', '设置']));
     await vi.waitFor(() =>
       expect(rail().getByRole('link', { name: '计划 · night' }).querySelector('svg')?.classList).toContain(
         'lucide-clock',
@@ -144,7 +144,7 @@ describe('固定到图标栏', () => {
     await vi.waitFor(() => expect(gets('/api/layout')).toBe(1));
     layout.records.pinned.push(refOf(GRAPH));
     act(() => admin().push({ type: 'layout.changed' }));
-    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '插件', '设置']));
+    await vi.waitFor(() => expect(railLinks()).toEqual(['会话', '关系', '运行状况', '插件', '设置']));
   });
 
   it('点「会话」回到刚才的会话地址；只有位置为插件详情的页面有「固定」', async () => {
@@ -234,7 +234,7 @@ describe('固定到图标栏', () => {
     expect(await rail().findByRole('button', { name: /固定的页面没取到：页面表读不了/ })).toBeTruthy();
     expect(screen.queryByRole('region', { name: '计划' }), '一次重取失败把打开着的页面卸掉了').toBeTruthy();
     expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe('晨报');
-    expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']);
+    expect(railLinks()).toEqual(['会话', '计划 · night', '运行状况', '插件', '设置']);
   });
 
   it('布局记录重取失败：图标栏留着上一次的固定项，并写明没取到', async () => {
@@ -245,7 +245,7 @@ describe('固定到图标栏', () => {
     state.fail = true;
     act(() => admin().push({ type: 'layout.changed' }));
     expect(await rail().findByRole('button', { name: /固定的页面没取到：存储服务不在/ })).toBeTruthy();
-    expect(railLinks()).toEqual(['会话', '计划 · night', '插件', '设置']);
+    expect(railLinks()).toEqual(['会话', '计划 · night', '运行状况', '插件', '设置']);
   });
 
   it('实例与页面键拼起来一样的两个页面之间切换：进行中的动作不带到另一页', async () => {

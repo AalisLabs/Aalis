@@ -46,6 +46,7 @@ interface SessionSetting {
   order?: number;                      // 同一显眼程度里的先后，小的在前；不写的排在后面
   liveOnly?: boolean;                  // 只经继承链实时解析：建子会话复制配置时不带它
   dependsOn?: keyof SessionConfig & string;  // 可选项依赖另一项的生效值，见下文
+  unset?: string;                      // 哪一层都没设、字段又没有默认值时这一项的含义，见下文
   validate?(value: unknown): string | undefined;  // 取值校验：合法回 undefined，否则回原因；外来字段类型必须给
 }
 
@@ -72,6 +73,7 @@ sessionManager.registerSetting({
 - **显眼程度：** `composer` 也出现在输入框旁的快捷切换，同一会话最多两项，多出的按 `order` 退到 `common`；`common` 在设置里排在前面；`advanced` 收进默认折叠的「高级」，按登记它的插件分组。
 - **字段：** 写入时按它校验，不合的拒绝。存储里不合它的值（旧数据、手写的配置文件）解析时当作没设置，同一处只告警一次；字段标了 `onInvalid: 'error'` 的，原值原样交出、不回落到下面的层，由登记它的插件按拒绝处理（例如金额上限写坏了按 0，不能退成不限）。没有任何一层设置时解析结果里没有这个键，`field.default` 只供界面显示，须与「没有这个键」时的行为一致。
 - **可选项依赖另一项：** `dependsOn` 写另一个设置项的键。界面取这一项的动态可选项（`field.dynamicOptions`）时带上那一项在这个会话或这一层的生效值（webui-server 的 `/api/models/:service` 收在 `dependency` 查询参数里），那一项变了就重取。依赖值只交给会读它的可选项来源（目前是 webui-server 的 `llm-thinking`），走服务 `listModels()` 的可选项拿不到它。依赖的须是另一个键、字段须有 `dynamicOptions`，否则登记抛错。会话协议的设置行带同名字段。第一个用处是 plugin-agent 的「深度思考」：档位按「模型」这一项的生效模型取。
+- **没设时的含义：** 设置行要写生效值。写得出具体值的给 `field.default`（如 plugin-agent 把插件配置的工具迭代上限、plugin-persona 把配置的默认卡写进默认值，换配置重新激活时跟着变）；写不出的给 `unset`，一句话说没设时怎样（「跟随服务偏好」「只给不属于任何分组的工具」「不另加限制」），界面写在生效值的位置，开关写在开关下面。`unset` 不是非空的一句话时登记抛错。会话协议的设置行带同名字段。
 - **取值校验：** `validate` 在写入与解析时先于字段校验，回了原因的与不合字段同样处理。schema-config 不校验外来字段类型（如 `llm-ref`）的取值，外来类型的设置项不给 `validate` 时登记抛错。plugin-agent 的 `llm` 只收服务与模型都是非空字符串的 `{ provider, model }`。
 - **同一个键几个插件登记：** 须是同一份内容的定义（逐项深比较，`validate` 比较函数本身），不必是同一个对象：进程里装了两份契约包时，两份导出的定义也认作同一份。几个插件共同遵守的设置项由契约包导出定义、各自登记，只要还有一个登记者在场，这一项就有效；`listSettings()` 里归最先登记、仍在场的那个插件。内容不同的登记抛错。
 - 键不能是空串、`sessionDefaults` 或原型链上的名字，`appliesTo` 与 `prominence` 取值不对的登记抛错。
@@ -79,15 +81,15 @@ sessionManager.registerSetting({
 
 第一方登记的设置项：
 
-| 键 | 登记者 | 适用 | 显眼程度 |
-|---|---|---|---|
-| `llm` | [plugin-agent](../plugins/plugin-agent.md) | 全部 | composer |
-| `think`、`maxToolIterations` | plugin-agent | 全部 | common、advanced |
-| `persona`、`systemPromptExtra` | [plugin-persona](../plugins/plugin-persona.md) | 全部 | common |
-| `disableOutputFormat`、`clientSideJsonRendering` | plugin-persona | 全部 | advanced |
-| `enabledToolGroups` | [plugin-tools](../plugins/plugin-tools.md) | 全部 | common |
-| `memoryRecallScope` | 跨会话取料的插件各自登记 `MEMORY_RECALL_SCOPE_SETTING`（[api-memory](./api-memory.md)） | 全部 | advanced |
-| `paperEnabled`、`paperName`、`remoteAgentTypes` 与三项每日上限 | [plugin-paper](../plugins/plugin-paper.md) | 房间 | advanced，liveOnly |
+| 键 | 登记者 | 适用 | 显眼程度 | 没设时 |
+|---|---|---|---|---|
+| `llm` | [plugin-agent](../plugins/plugin-agent.md) | 全部 | composer | 跟随服务偏好 |
+| `think`、`maxToolIterations` | plugin-agent | 全部 | common、advanced | 模型的默认档（可选项接口标出）；插件配置的上限（默认值） |
+| `persona`、`systemPromptExtra` | [plugin-persona](../plugins/plugin-persona.md) | 全部 | common | 插件配置的默认卡（默认值）；不追加 |
+| `disableOutputFormat`、`clientSideJsonRendering` | plugin-persona | 全部 | advanced | 关；按角色卡 |
+| `enabledToolGroups` | [plugin-tools](../plugins/plugin-tools.md) | 全部 | common | 只给不属于任何分组的工具 |
+| `memoryRecallScope` | 跨会话取料的插件各自登记 `MEMORY_RECALL_SCOPE_SETTING`（[api-memory](./api-memory.md)） | 全部 | advanced | 按各记忆插件的配置 |
+| `paperEnabled`、`paperName`、`remoteAgentTypes` 与三项每日上限 | [plugin-paper](../plugins/plugin-paper.md) | 房间 | advanced，liveOnly | 关；每个房间各一块；不允许；不另加限制、不按人限制 |
 
 ### 会话之上的各层
 

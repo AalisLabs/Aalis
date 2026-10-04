@@ -16,12 +16,12 @@ definePlugin({
   subsystem: 'llm',
   reusable: true,
   provides: [llm],
-  uses: { provide, lifecycle, logger, config },
+  uses: { config, logger, lifecycle, provide, events },
   apply: registerModels,
 })
 ```
 
-无其它服务依赖。每个模型 `provide(llm, handle, { entryId: \`${lifecycle.id}/${modelId}\`, label })`。
+无其它服务依赖。每个模型 `provide(llm, metered(handle, events), { entryId: \`${lifecycle.id}/${modelId}\`, label })`：拿到用量的调用发 `llm:usage`（见 [api-llm 的记账](../api/api-llm.md#记账)）。
 
 ## 配置
 

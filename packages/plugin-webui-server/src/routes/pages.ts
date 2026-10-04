@@ -6,12 +6,13 @@
 // ============================================================
 
 import type { UserIdentity } from '@aalis/api-authority';
-import type { WebuiAdminEvent } from '@aalis/api-webui';
+import type { ErrorResponse, WebuiAdminEvent } from '@aalis/api-webui';
 import type { Logger } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import { LayoutFull, type LayoutStore, parseLayoutOperation } from '../layout.js';
 import type { PageRegistry, Reply } from '../pages.js';
+import { route } from '../route.js';
 
 export function registerPageRoutes(
   expressApp: express.Express,
@@ -27,34 +28,36 @@ export function registerPageRoutes(
   gate: RouteGate,
 ): void {
   const { registry, layout } = deps;
-  const reply = (res: express.Response, { status, body }: Reply) => res.status(status).json(body);
-  const forbidden = (res: express.Response) => res.status(403).json({ error: '需要 owner 权限' });
+  const reply = <T>(res: express.Response<T | ErrorResponse>, { status, body }: Reply<T>) =>
+    res.status(status).json(body);
+  const forbidden = (res: express.Response<ErrorResponse>) => res.status(403).json({ error: '需要 owner 权限' });
 
-  expressApp.get('/api/pages', gate(), (_req, res) => {
+  route(expressApp, 'GET /api/pages', gate(), (_req, res) => {
     res.json({ pages: registry.views() });
   });
 
-  expressApp.get('/api/session-pages', gate(), async (req, res) => {
+  route(expressApp, 'GET /api/session-pages', gate(), async (req, res) => {
     reply(res, await registry.panelPages(req.query.sessionId));
   });
 
-  expressApp.get('/api/pages/:instance/:pageKey/data/:componentId', async (req, res) => {
+  route(expressApp, 'GET /api/pages/:instance/:pageKey/data/:componentId', async (req, res) => {
     const caller = identify(req);
     if (!caller) return forbidden(res);
     const { instance, pageKey, componentId } = req.params;
     reply(res, await registry.data(instance, pageKey, componentId, req.query, caller));
   });
 
-  expressApp.post('/api/pages/:instance/:pageKey/actions/:action', async (req, res) => {
+  route(expressApp, 'POST /api/pages/:instance/:pageKey/actions/:action', async (req, res) => {
     const caller = identify(req);
     if (!caller) return forbidden(res);
     const { instance, pageKey, action } = req.params;
     reply(res, await registry.act(instance, pageKey, action, req.body, caller, req.socket.remoteAddress ?? '未知'));
   });
 
-  const storageMissing = (res: express.Response) => res.status(503).json({ error: '存储服务不在，布局记录读写不了' });
+  const storageMissing = (res: express.Response<ErrorResponse>) =>
+    res.status(503).json({ error: '存储服务不在，布局记录读写不了' });
 
-  expressApp.get('/api/layout', gate(), async (_req, res) => {
+  route(expressApp, 'GET /api/layout', gate(), async (_req, res) => {
     if (!deps.storageReady()) return storageMissing(res);
     try {
       res.json(await layout.read());
@@ -64,7 +67,7 @@ export function registerPageRoutes(
     }
   });
 
-  expressApp.post('/api/layout', gate(), async (req, res) => {
+  route(expressApp, 'POST /api/layout', gate(), async (req, res) => {
     if (!deps.storageReady()) return storageMissing(res);
     const operation = parseLayoutOperation(req.body);
     if (!operation) {

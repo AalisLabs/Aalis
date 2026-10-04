@@ -89,7 +89,10 @@ interface AuditLine {
 }
 
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  /** 记下的 info 日志 */
+  const infos: string[] = [];
+  const logger: Logger = { ...silent, info: message => void infos.push(message), child: () => logger };
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);
@@ -188,7 +191,7 @@ async function setup() {
       },
     };
   };
-  return { app, host, sm, mine, surfaces, service, connect, request, flush, audit, auditFile, openTurn };
+  return { app, host, sm, mine, surfaces, service, connect, request, flush, audit, auditFile, openTurn, infos };
 }
 
 /** 收到的审批推送 */
@@ -861,6 +864,25 @@ describe('审计', () => {
     await approve(c, pushed(c)[0]);
     const lines = await audit(2);
     expect(lines[1]).toMatchObject({ surface: { name: 'webui', plugin: '@test/other-surface' } });
+  });
+});
+
+describe('日志', () => {
+  it('每个审批结算记一行 info：会话、工具、结局与原因；发起时就拒绝的（自主回合）也记', async () => {
+    const { mine, connect, request, flush, infos } = await setup();
+    const c = await connect();
+    request(mine, { origin: { kind: 'autonomous', ...OWNER }, tool: 'exec_background' });
+    request(mine);
+    await flush();
+    await approve(c, pushed(c)[0]);
+    request(mine);
+    await flush();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(infos.filter(message => message.startsWith('审批'))).toEqual([
+      `审批结算：会话 ${mine}，工具 exec_background，拒绝（这一轮不是 owner 亲手发起的，不能产生审批）`,
+      `审批结算：会话 ${mine}，工具 exec，批准（owner 应答）`,
+      `审批结算：会话 ${mine}，工具 exec，过期（等了 300 秒没有人应答）`,
+    ]);
   });
 });
 

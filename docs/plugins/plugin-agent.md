@@ -64,7 +64,7 @@ definePlugin({
 | `think` | select「深度思考」，存档位 id（非空字符串，`validate` 核） | common | 按模型的默认档 |
 | `maxToolIterations` | number「最大工具迭代」，不小于 1 的整数 | advanced | 用本插件配置的 `maxToolIterations` |
 
-「深度思考」的可选项是会话所用模型声明的档位（[api-llm](../api/api-llm.md) 的「深度思考的档位」）：字段的 `dynamicOptions` 是 `llm-thinking`，登记上写 `dependsOn: 'llm'`，界面取可选项时带上「模型」这一项的生效值，模型变了就重取。每一轮里，当前模型有这一档才把它带进请求；没设置、换到了没有这一档的模型或模型不能调时不带，模型服务按它的默认档。设置的界面上，生效的档位当前模型没有时写「当前模型没有这一档，按默认」，模型不能调时写「当前模型不能调」。
+「深度思考」的可选项是会话所用模型声明的档位（[api-llm](../api/api-llm.md) 的「深度思考的档位」）：字段的 `dynamicOptions` 是 `llm-thinking`，登记上写 `dependsOn: 'llm'`，界面取可选项时带上「模型」这一项的生效值，模型变了就重取。每一轮里，当前模型有这一档才把它带进请求；没设置、换到了没有这一档的模型或模型不能调时不带，模型服务按它的默认档。设置的界面上，生效的档位当前模型没有时写这一档的名字与「当前模型没有这一档，按默认（<默认档的名字>）」，模型不能调时写「当前模型不能调」。「模型」没设时界面写「跟随服务偏好」（登记的 `unset`）；「最大工具迭代」的默认值是插件配置的 `maxToolIterations`，没设时界面写出这个数。
 
 ## 指令
 
@@ -181,6 +181,10 @@ definePlugin({
 
 其他插件可通过 `agent:*` 中间件钩子拦截或修改各阶段，通过 `agent:prompt` 贡献点向提示词注入内容，也可以用 `registerPreprocessor` 注册输入预处理器，都无需修改 Agent 代码。钩子键与预处理器见 [api-agent](../api/api-agent.md)，钩子机制见 [api-hooks](../api/api-hooks.md)，贡献点见 [api-contributions](../api/api-contributions.md)。
 
+## 模型调用的记账
+
+每次调用模型时在请求里带上会话 id 与用途：子会话里的回合是「子任务」，其余是「对话」。服务商据此发 `llm:usage`，见 [api-llm 的记账](../api/api-llm.md#记账)。
+
 ## Token 预算追踪与日志
 
 首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
@@ -195,13 +199,19 @@ definePlugin({
     system, persona, memorySummary, memoryVector, skills, platform,
     subtask, systemOther, history, toolResults, toolDefs, reservedForReply,
     injectors, // Record<string, number>：systemOther 按注入者细分的明细，键是注入者的全局键「插件实例 id/局部 id」
-  }
+  },
+  parts: [ // 拆分表：按显示的次序，带显示名
+    { label: '历史消息', tokens }, { label: '工具结果', tokens }, { label: '工具定义', tokens },
+    { label: '人设', tokens }, { label: '对话摘要', tokens }, { label: '向量记忆', tokens },
+    { label: '技能', tokens }, { label: '平台提示', tokens }, { label: '子任务', tokens },
+    { label: '其余系统提示', tokens, injectors },
+  ],
 }]
 ```
 
 消费者：
 
-- [plugin-session-server](./plugin-session-server.md) → 会话协议的 `usage` 条目
+- [plugin-session-server](./plugin-session-server.md) → 会话协议的 `usage` 条目（取 `parts`）
 - [plugin-memory-summary](./plugin-memory-summary.md) → 超阈值触发自动压缩
 - [plugin-prompt-budget](./plugin-prompt-budget.md) → AI 自查工具 `prompt_budget_info`
 

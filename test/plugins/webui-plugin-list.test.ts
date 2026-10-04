@@ -315,10 +315,6 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     expect(body.plugins.find(p => p.instanceId === 'secret-probe')?.config).toEqual(doc);
     expect(JSON.stringify(list.body)).not.toContain('PLACEHOLDER-');
     expect(body.secretRefCounts).toEqual({ 'k.top': 2, 'k.group': 1, 'k.item': 1 });
-
-    const editor = await invoke('GET /api/plugins/:name/config', { params: { name: 'secret-probe' } });
-    expect(editor.status).toBe(200);
-    expect((editor.body as { config: Record<string, unknown> }).config).toEqual(doc);
   });
 
   it('宿主不提供配置文档：给运行态配置，去掉密钥字段（运行态里是原值）', async () => {

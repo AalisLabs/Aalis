@@ -10,8 +10,8 @@ import { freePort, waitListening } from '../helpers/net.js';
 // 按条目 contextId 等于实例 id 去找永远找不到。
 // 找不到时如实说明：provider 名下有模型但都不提供 refresh（如关闭了模型发现 discoverModels），与名下一个模型都没有，是两回事。
 // 深度思考的可选项：`/api/models/llm-thinking` 按依赖的模型（llm-ref 的取值，经 dependency 查询参数带来）取它声明的
-// 档位，默认档在名字后注明并标 default；没带时按服务偏好解析，与对话时的解析一致；模型不能调时没有可选项；dependency 不是模型引用时
-// 回 400。
+// 档位，默认档标 default；另给 labels：各模型声明过的档位的名字（换了模型后存着的档位不在可选项里，界面按它写名字）；
+// 没带时按服务偏好解析，与对话时的解析一致；模型不能调时没有可选项；dependency 不是模型引用时回 400。
 
 const TOKEN = 'zz-refresh-token-placeholder-0000';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -28,6 +28,17 @@ const DEEP: ThinkingLevels = {
   ],
   default: 'high',
 };
+
+/** 开关型：与 DEEP 同名的档位 off 名字不同，labels 取先登记的 */
+const SWITCH: ThinkingLevels = {
+  levels: [
+    { id: 'off', label: '不思考' },
+    { id: 'on', label: '思考' },
+  ],
+  default: 'on',
+};
+
+const LABELS = { off: '关', high: '高', max: '最高', on: '思考' };
 
 /**
  * 按 llm-openai 的形状登记模型条目：entryId 为 `<实例 id>/<模型 id>`，refreshable 时每个条目共享同一个 refresh；
@@ -76,7 +87,7 @@ async function boot(): Promise<{ app: App; port: number }> {
   const port = await freePort();
   const { app } = hostedApp({ name: 'N' }, { logger: silent });
   apps.push(app);
-  await app.plugin(provider('zz-dynamic', ['m1', 'm2'], true, { m1: DEEP }), {});
+  await app.plugin(provider('zz-dynamic', ['m1', 'm2'], true, { m1: DEEP, m2: SWITCH }), {});
   await app.plugin(provider('zz-static', ['s1'], false), {});
   await app.plugin(webuiServer, { port, host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN });
   await app.plugins.idle();
@@ -111,7 +122,7 @@ it('按 provider 刷新：有 refresh 的调它；名下模型都不提供 refre
   });
   expect(await refresh(port, 'zz-static')).toEqual({
     status: 404,
-    body: { error: '提供者 zz-static 不支持运行时刷新模型列表（例如关闭了模型发现 discoverModels）' },
+    body: { error: '提供者 zz-static 不支持运行时刷新模型列表（例如关闭了模型发现）' },
   });
   expect(await refresh(port, 'zz-absent')).toEqual({
     status: 404,
@@ -119,7 +130,7 @@ it('按 provider 刷新：有 refresh 的调它；名下模型都不提供 refre
   });
 });
 
-it('深度思考的可选项按依赖的模型给出它的档位，默认档注明；不能调的模型没有可选项', async () => {
+it('深度思考的可选项按依赖的模型给出它的档位，默认档标出；另给各模型声明过的档位的名字；不能调的模型没有可选项', async () => {
   const { port } = await boot();
   expect(await thinkingOptions(port, JSON.stringify({ provider: 'zz-dynamic', model: 'm1' }))).toEqual({
     status: 200,
@@ -127,14 +138,15 @@ it('深度思考的可选项按依赖的模型给出它的档位，默认档注�
       models: ['off', 'high', 'max'],
       details: [
         { value: 'off', label: '关' },
-        { value: 'high', label: '高（默认）', default: true },
+        { value: 'high', label: '高', default: true },
         { value: 'max', label: '最高' },
       ],
+      labels: LABELS,
     },
   });
   expect(await thinkingOptions(port, JSON.stringify({ provider: 'zz-static', model: 's1' }))).toEqual({
     status: 200,
-    body: { models: [], details: [] },
+    body: { models: [], details: [], labels: LABELS },
   });
 });
 
@@ -142,7 +154,7 @@ it('深度思考的可选项没带依赖的值时按服务偏好解析', async (
   const { app, port } = await boot();
   expect((await thinkingOptions(port)).body).toMatchObject({ models: ['off', 'high', 'max'] });
   app.bind({ services }).services.prefer(llm, 'zz-static/s1');
-  expect((await thinkingOptions(port)).body).toEqual({ models: [], details: [] });
+  expect((await thinkingOptions(port)).body).toEqual({ models: [], details: [], labels: LABELS });
 });
 
 it('深度思考的可选项依赖的值不是模型引用时回 400', async () => {

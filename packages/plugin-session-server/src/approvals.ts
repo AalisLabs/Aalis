@@ -5,7 +5,7 @@
 // 审批面上身份是 owner 的客户端上报活动，最近一次活动在 10 分钟内的算在场，发起时没人在场直接拒绝。同一会话的审批排队，
 // 一次只推出一张卡，等待从推出那一刻算起；等满 300 秒、在场的客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
 // 应答先答先得，核两项：应答人是 owner；id 由本服务签发且未结算，内容哈希一致。
-// 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文。
+// 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
 
 // biome-ignore lint/style/noRestrictedImports: 请求在发起的同一拍里定下去留与排队次序，内容哈希要同步算；异步的摘要会让并行的请求按完成先后乱序
@@ -151,6 +151,9 @@ const REASONS: Record<Exclude<ApprovalSource, 'owner'>, [reason: string, again: 
   shutdown: ['审批服务已停止', '服务恢复后可以再申请'],
 };
 
+/** 日志里的结局 */
+const OUTCOMES: Record<SettledState, string> = { approved: '批准', denied: '拒绝', expired: '过期', cancelled: '撤销' };
+
 function denialFor(source: ApprovalSource, note: string | undefined): string {
   const [reason, again] =
     source === 'owner'
@@ -265,8 +268,11 @@ export function createApprovals(deps: ApprovalDeps) {
       if (at >= 0) times.splice(at, 1);
     }
     // 没推出就结算的（发起时没人在场、发起者不能产生审批等）工具卡同样带上结算：历史里显示真实的结局，不是「失败」
-    const { turnId, callId } = pending.req;
+    const { turnId, callId, tool } = pending.req;
     tell('结算', () => deps.changed({ id: pending.id, sessionId, turnId, callId }, settlement));
+    // 每个结算一行 info，被拒的自主回合、超出频率上限的请求都在里面，运行状况的日志按提供审批服务的实例筛出它们
+    const reason = source === 'owner' ? 'owner 应答' : REASONS[source][0];
+    deps.logger.info(`审批结算：会话 ${sessionId}，工具 ${tool}，${OUTCOMES[state]}（${reason}）`);
     audit({
       type: 'decision',
       id: pending.id,

@@ -2,8 +2,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { ProcessService } from '@aalis/api-process';
-import { BUILTIN_THEMES, type BuiltinThemeId, DEFAULT_THEMES } from '@aalis/api-webui';
-import type { RequestHandler, Response } from 'express';
+import { BUILTIN_THEMES, type BuiltinThemeId, DEFAULT_THEMES, type ErrorResponse } from '@aalis/api-webui';
+import type express from 'express';
+import { route } from './route.js';
 
 const TOKEN_COOKIE = 'aalis_webui_token';
 
@@ -140,8 +141,11 @@ function escapeHtml(s: string): string {
 }
 
 export interface AuthSystem {
-  /** Express 中间件：处理 ?token= 重定向、登录端点、未认证拦截、登录页 */
-  middleware: RequestHandler;
+  /**
+   * 挂上认证，要在 JSON 解析之后、其余路由之前：改状态的请求先核来源，再是登录页的脚本、`?token=` 一键登录、登录、
+   * 登录状态与注销，其余未登录的请求一律拦下（API 回 401，GET 页面回登录页）
+   */
+  install(expressApp: express.Express): void;
   /** 校验 WebSocket 升级请求是否已认证（cookie 读取） */
   verifyWsClient(req: IncomingMessage): boolean;
   /** 解析调用者身份：单 token 模式 → `webui:console`（owner 级，单人语义）；未认证 → undefined。 */
@@ -193,7 +197,7 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
   }
 
   /** 给被限速的登录写好 429 与 Retry-After，返回给人看的说明 */
-  function rejectLocked(res: Response, waitMs: number): string {
+  function rejectLocked(res: express.Response, waitMs: number): string {
     res.status(429);
     res.setHeader('Retry-After', String(Math.ceil(waitMs / 1000)));
     return `登录失败次数过多，请 ${Math.ceil(waitMs / 60_000)} 分钟后再试。`;
@@ -208,25 +212,27 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
     return tokenAuthed(req) ? { platform: 'webui', userId: 'console' } : undefined;
   }
 
-  const middleware: RequestHandler = (req, res, next) => {
-    const url = req.path;
-    const qToken = typeof req.query?.token === 'string' ? (req.query.token as string) : undefined;
-    const address = req.socket.remoteAddress ?? '';
+  const addressOf = (req: express.Request) => req.socket.remoteAddress ?? '';
 
-    // 0. 改状态的请求先看来源：别的网页借 owner 的浏览器发来的（带着 cookie）一律拒，登录与注销也一样
-    if (!SAFE_METHODS.has(req.method) && !originAllowed(req)) {
-      res.status(403).json({ ok: false, error: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）' });
-      return;
-    }
+  function install(expressApp: express.Express): void {
+    // 改状态的请求先看来源：别的网页借 owner 的浏览器发来的（带着 cookie）一律拒，登录与注销也一样
+    expressApp.use((req, res, next) => {
+      if (SAFE_METHODS.has(req.method) || originAllowed(req)) return next();
+      res
+        .status(403)
+        .json({ error: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）' } satisfies ErrorResponse);
+    });
 
     // 登录页的脚本不需登录
-    if (url === LOGIN_SCRIPT_PATH && req.method === 'GET') {
+    route(expressApp, 'GET /api/auth/login.js', (_req, res) => {
       res.type('application/javascript').send(LOGIN_SCRIPT);
-      return;
-    }
+    });
 
-    // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径。别的站点打开的不认 token，按没带 token 往下走
-    if (req.method === 'GET' && qToken && !navigatedFromOtherSite(req)) {
+    // ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径。别的站点打开的不认 token，按没带 token 往下走
+    expressApp.use((req, res, next) => {
+      const qToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
+      if (req.method !== 'GET' || !qToken || navigatedFromOtherSite(req)) return next();
+      const address = addressOf(req);
       const waitMs = lockedFor(address);
       if (waitMs > 0) {
         const note = rejectLocked(res, waitMs);
@@ -237,22 +243,22 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
       if (tokenEquals(qToken, token)) {
         failures.delete(address);
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
-        res.redirect(302, url);
+        res.redirect(302, req.path);
         return;
       }
       recordFailure(address);
       res.status(401).type('html').send(loginPageHtml('URL 中的 token 不正确，请手动输入。'));
-      return;
-    }
+    });
 
-    // 2. 登录端点：{token}。跨源的已在 0 拒掉，不计数
-    if (url === '/api/auth/login' && req.method === 'POST') {
+    // 登录：{ token }。跨源的已在上面拒掉，不计数
+    route(expressApp, 'POST /api/auth/login', (req, res) => {
+      const address = addressOf(req);
       const waitMs = lockedFor(address);
       if (waitMs > 0) {
-        res.json({ ok: false, error: rejectLocked(res, waitMs) });
+        res.json({ error: rejectLocked(res, waitMs) });
         return;
       }
-      const body = (req as { body?: { token?: string } }).body ?? {};
+      const body = (req.body as { token?: unknown } | undefined) ?? {};
       const token = getToken();
       if (typeof body.token === 'string' && tokenEquals(body.token, token)) {
         failures.delete(address);
@@ -260,51 +266,42 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
         res.json({ ok: true, identity: { platform: 'webui', userId: 'console' } });
       } else {
         recordFailure(address);
-        res.status(401).json({ ok: false, error: 'token 不正确' });
+        res.status(401).json({ error: 'token 不正确' });
       }
-      return;
-    }
+    });
 
-    // 3. 状态查询（含当前身份，供前端顶栏展示）
-    if (url === '/api/auth/status' && req.method === 'GET') {
+    // 登录状态（含当前身份，供前端顶栏展示）
+    route(expressApp, 'GET /api/auth/status', (req, res) => {
       const identity = identify(req);
       res.json({ authed: !!identity, identity });
-      return;
-    }
+    });
 
-    // 4. 注销：清 token cookie
-    if (url === '/api/auth/logout' && req.method === 'POST') {
+    // 注销：清 token cookie
+    route(expressApp, 'POST /api/auth/logout', (_req, res) => {
       res.setHeader('Set-Cookie', buildClearCookie(TOKEN_COOKIE));
       res.json({ ok: true });
-      return;
-    }
+    });
 
-    // 5. 已认证 → 放行
-    if (tokenAuthed(req)) {
-      next();
-      return;
-    }
-
-    // 6. 未认证：API 一律 401
-    if (url.startsWith('/api/')) {
-      res.status(401).json({ error: 'unauthenticated' });
-      return;
-    }
-
-    // 7. 未认证 GET：返回内联登录页（覆盖 SPA shell，不暴露任何静态资源）
-    if (req.method === 'GET') {
-      res.status(401).type('html').send(loginPageHtml());
-      return;
-    }
-
-    res.status(401).end();
-  };
+    // 已登录的放行；没登录的 API 一律 401，GET 回内联登录页（覆盖 SPA shell，不暴露任何静态资源）
+    expressApp.use((req, res, next) => {
+      if (tokenAuthed(req)) return next();
+      if (req.path.startsWith('/api/')) {
+        res.status(401).json({ error: 'unauthenticated' } satisfies ErrorResponse);
+        return;
+      }
+      if (req.method === 'GET') {
+        res.status(401).type('html').send(loginPageHtml());
+        return;
+      }
+      res.status(401).end();
+    });
+  }
 
   function verifyWsClient(req: IncomingMessage): boolean {
     return tokenAuthed(req);
   }
 
-  return { middleware, verifyWsClient, identify };
+  return { install, verifyWsClient, identify };
 }
 
 /**

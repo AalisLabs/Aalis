@@ -1,0 +1,60 @@
+{
+  "name": "@aalis/plugin-usage-stats",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-usage-stats"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "用量统计：记下每次模型调用的 token，按天、按周、按模型统计，填了单价估算费用，服务商支持时显示余额",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.11.1 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "config",
+        "events",
+        "host-paths",
+        "lifecycle",
+        "logger"
+      ],
+      "optional": [
+        "llm",
+        "plugins",
+        "webui-server"
+      ]
+    }
+  }
+}

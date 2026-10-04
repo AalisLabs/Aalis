@@ -6,9 +6,8 @@ import { CORE_CONFIG_SCHEMA } from '../../packages/schema-config/src/index.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // 宿主配置：GET /api/config 给出文档里写了的核心键、它们的 schema、要重启才生效的键与家目录。
-// PUT /api/config 只应用 CORE_CONFIG_SCHEMA 的键（name / logLevel / slowThresholdMs）。其余顶层键一律不应用，但真有改动的
-// 要在响应里点名——不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok
-// 但什么都没发生）。
+// PUT /api/config 只收 CORE_CONFIG_SCHEMA 的键（name / logLevel / slowThresholdMs）。别的顶层键回 400 并点名，什么都不写——
+// 不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok 但什么都没发生）。
 // PUT 只保存、不重启，改了要重启的键时回执写明，由前端出「重启以生效」；重启走 POST /api/restart。
 // 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不起端口。
 
@@ -71,8 +70,7 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
   const get = () => invoke('GET /api/config', { headers: {} });
   const put = (body: unknown) => invoke('PUT /api/config', { body, headers: {} });
   const restart = () => invoke('POST /api/restart', { body: {}, headers: {} });
-  const saveToDisk = () => invoke('POST /api/config/save', { body: {}, headers: {} });
-  return { store, calls, errors, get, put, restart, saveToDisk };
+  return { store, calls, errors, get, put, restart };
 }
 
 describe('GET /api/config', () => {
@@ -89,15 +87,20 @@ describe('GET /api/config', () => {
   });
 });
 
-describe('PUT /api/config 顶层键白名单', () => {
-  it('不可改的键 → 不写入，但在响应里点名', async () => {
+describe('PUT /api/config 只收核心键', () => {
+  it.each([
+    ['写错了位置的插件配置', { commandPrefix: '!' }],
+    ['与核心键混在一起', { logLevel: 'debug', disabledPlugins: ['@aalis/plugin-x'] }],
+    ['整份配置文档', { name: 'Bot', logLevel: 'warn', plugins: { '@aalis/plugin-x': { a: 0 } }, disabledPlugins: [] }],
+  ])('别的顶层键（%s）→ 400 点名，什么都不写、不落盘', async (_label, body) => {
     const { store, calls, put } = setup();
-    const r = await put({ commandPrefix: '!' });
-    expect(r.status).toBe(200);
-    expect((r.body as { ignored: string[] }).ignored).toEqual(['commandPrefix']);
-    expect((r.body as { message: string }).message).toMatch(/已忽略.*commandPrefix/);
-    expect(store.commandPrefix).toBeUndefined();
-    expect(calls).toEqual(['save']); // 仅保存，不重启
+    const before = structuredClone(store);
+    const r = await put(body);
+    expect(r.status).toBe(400);
+    const foreign = Object.keys(body).filter(key => !Object.hasOwn(CORE_CONFIG_SCHEMA, key));
+    expect(r.body).toEqual({ error: `只能改核心键（name、logLevel、slowThresholdMs），不收：${foreign.join('、')}` });
+    expect(store).toEqual(before);
+    expect(calls).toEqual([]);
   });
 
   it('已知键 → 写入并保存，不自己重启', async () => {
@@ -105,47 +108,6 @@ describe('PUT /api/config 顶层键白名单', () => {
     const r = await put({ logLevel: 'debug' });
     expect(r.status).toBe(200);
     expect(store.logLevel).toBe('debug');
-    expect(calls).toEqual(['save']);
-  });
-
-  it('整份配置回传、只改了 logLevel → 放行', async () => {
-    const { store, calls, put } = setup();
-    const r = await put({ ...structuredClone(store), logLevel: 'warn' });
-    expect(r.status).toBe(200);
-    expect(store.logLevel).toBe('warn');
-    expect(calls).toEqual(['save']);
-  });
-
-  it('整份回传且什么都没改 → 保存，不用重启', async () => {
-    const { store, calls, put } = setup();
-    const r = await put(structuredClone(store));
-    expect(r.status).toBe(200);
-    expect((r.body as { restartNeeded: boolean }).restartNeeded).toBe(false);
-    expect(calls).toEqual(['save']);
-  });
-
-  it('可改键与改动了的不可改键混在一起 → 只应用可改键，另一个点名忽略', async () => {
-    const { store, calls, put } = setup();
-    const r = await put({ logLevel: 'debug', disabledPlugins: ['@aalis/plugin-x'] });
-    expect(r.status).toBe(200);
-    expect(store.logLevel).toBe('debug');
-    expect(store.disabledPlugins).toEqual([]);
-    expect((r.body as { ignored: string[] }).ignored).toEqual(['disabledPlugins']);
-    expect(calls).toEqual(['save']);
-  });
-
-  it('回传的是过期快照（插件配置保存后没有重取）不该失败', async () => {
-    const { store, calls, put } = setup();
-    const stale = {
-      ...structuredClone(store),
-      plugins: { '@aalis/plugin-x': { a: 0 } },
-      logLevel: 'warn',
-    };
-    const r = await put(stale);
-    expect(r.status).toBe(200);
-    expect(store.logLevel).toBe('warn');
-    expect(store.plugins).toEqual({ '@aalis/plugin-x': { a: 1 } }); // 服务端当前值不被过期快照覆盖
-    expect((r.body as { ignored: string[] }).ignored).toEqual(['plugins']);
     expect(calls).toEqual(['save']);
   });
 });
@@ -156,7 +118,7 @@ describe('PUT /api/config 要不要重启', () => {
     const { store, calls, put } = setup();
     const r = await put({ name: 'Bot' });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ ok: true, message: '全局配置已更新并保存', ignored: [], restartNeeded: false });
+    expect(r.body).toEqual({ ok: true, message: '全局配置已更新并保存', restartNeeded: false });
     expect(store.name).toBe('Bot');
     expect(calls).toEqual(['save']);
   });
@@ -165,7 +127,7 @@ describe('PUT /api/config 要不要重启', () => {
     const { store, calls, put } = setup();
     const r = await put({ slowThresholdMs: 30000 });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ ok: true, message: '全局配置已保存，重启后生效', ignored: [], restartNeeded: true });
+    expect(r.body).toEqual({ ok: true, message: '全局配置已保存，重启后生效', restartNeeded: true });
     expect(store.slowThresholdMs).toBe(30000);
     expect(calls).toEqual(['save']);
   });
@@ -189,23 +151,18 @@ describe('PUT /api/config 要不要重启', () => {
 
   it('把文档里缺省的 slowThresholdMs 按默认值回传：不算改动，不写进文档、不用重启', async () => {
     const { store, put } = setup();
-    const r = await put({ ...structuredClone(store), slowThresholdMs: 60000, name: 'Bot' });
+    const r = await put({ name: 'Bot', logLevel: 'info', slowThresholdMs: 60000 });
     expect(r.status).toBe(200);
     expect(store.name).toBe('Bot');
     expect('slowThresholdMs' in store).toBe(false);
     expect((r.body as { restartNeeded: boolean }).restartNeeded).toBe(false);
   });
 
-  it('name 与 logLevel 一起改 → 重启后生效，忽略的键照样点名', async () => {
+  it('name 与 logLevel 一起改 → 重启后生效', async () => {
     const { store, put } = setup();
-    const r = await put({ name: 'Bot', logLevel: 'debug', commandPrefix: '!' });
+    const r = await put({ name: 'Bot', logLevel: 'debug' });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({
-      ok: true,
-      message: '全局配置已保存，重启后生效（已忽略不可修改的字段: commandPrefix）',
-      ignored: ['commandPrefix'],
-      restartNeeded: true,
-    });
+    expect(r.body).toEqual({ ok: true, message: '全局配置已保存，重启后生效', restartNeeded: true });
     expect(store).toMatchObject({ name: 'Bot', logLevel: 'debug' });
   });
 });
@@ -296,35 +253,7 @@ describe('PUT /api/config 值校验', () => {
   });
 });
 
-describe('拒写与写入失败的区分：POST /api/config/save 与其它落盘路由同一口径', () => {
-  it('落盘成功 → 200', async () => {
-    const { calls, saveToDisk } = setup();
-    const r = await saveToDisk();
-    expect(r).toEqual({ status: 200, body: { ok: true, message: '配置已保存' } });
-    expect(calls).toEqual(['save']);
-  });
-
-  it.each([
-    ['本包的拒写类', ConfigSaveRefusedError],
-    ['另一份 api-host-config 的同名类', ForeignCopyRefusedError],
-  ] as const)('宿主拒写（%s）→ 409', async (_label, Refused) => {
-    const { saveToDisk } = setup({
-      save: async () => {
-        throw new Refused('配置文件有尚未生效的外部修改');
-      },
-    });
-    expect(await saveToDisk()).toEqual({ status: 409, body: { error: '配置文件有尚未生效的外部修改' } });
-  });
-
-  it('写入失败（非拒写）→ 500', async () => {
-    const { saveToDisk } = setup({
-      save: async () => {
-        throw new Error('disk full');
-      },
-    });
-    expect(await saveToDisk()).toEqual({ status: 500, body: { error: 'disk full' } });
-  });
-
+describe('另一份 api-host-config 抛出的拒写与本包的同样认', () => {
   it('另一份 api-host-config 抛出的拒写：PUT /api/config 同样回 409，不当成写入失败', async () => {
     const { put } = setup({
       save: async () => {

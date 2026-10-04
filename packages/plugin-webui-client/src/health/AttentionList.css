@@ -1,0 +1,67 @@
+.attention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 行与行之间不加线：行首的标记（与列表行同一个）、两行文字，行尾的跳转 */
+.attention-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-2line);
+  padding: var(--space-1) 0;
+}
+
+.attention-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.attention-title {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 说明是原因与出处，长的折行，不截掉 */
+.attention-detail {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+}
+
+.attention-summary {
+  width: 100%;
+  max-width: var(--measure-chat);
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-4);
+}
+
+/* 分区标题，右侧是文字按钮「全部」 */
+.attention-summary-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.attention-summary-head h2 {
+  flex: 1;
+}
+
+.fetch-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-danger-text);
+  overflow-wrap: anywhere;
+}

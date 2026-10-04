@@ -112,3 +112,26 @@ describe('token 日志节流状态随会话删除清理', () => {
     expect(lines, '删除会话后同 id 重新计数，首轮必打').toHaveLength(2);
   });
 });
+
+describe('token:usage 的分项', () => {
+  it('分项带显示名、按显示的次序排，数与 breakdown 一致；其余系统提示一项带按注入者的明细', async () => {
+    const { seen, host } = await boot();
+    await host.events.emit('token:request', { sessionId: 'webui-parts' });
+    const [usage] = seen;
+    const { breakdown } = usage;
+    expect(usage.parts.map(part => [part.label, part.tokens])).toEqual([
+      ['历史消息', breakdown.history],
+      ['工具结果', breakdown.toolResults],
+      ['工具定义', breakdown.toolDefs],
+      ['人设', breakdown.persona],
+      ['对话摘要', breakdown.memorySummary],
+      ['向量记忆', breakdown.memoryVector],
+      ['技能', breakdown.skills],
+      ['平台提示', breakdown.platform],
+      ['子任务', breakdown.subtask],
+      ['其余系统提示', breakdown.systemOther],
+    ]);
+    expect(usage.parts.at(-1)?.injectors).toEqual(breakdown.injectors);
+    expect(usage.parts.slice(0, -1).every(part => part.injectors === undefined)).toBe(true);
+  });
+});

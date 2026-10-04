@@ -5,18 +5,16 @@ import { Button } from '../components/Button';
 import { Toggle } from '../components/Toggle';
 import { composing } from '../keys';
 import { FieldInput, type FieldOptions, UNREADABLE } from './FieldInput';
-import { type Dependency, type Field, formatValue, isModelField, valueKey } from './field';
+import { type Dependency, type Field, formatValue, isModelField, optionLabel, valueKey } from './field';
 import { useFieldOptions } from './options';
 import './SettingRow.css';
 
 // 设置的一行：名称、来源徽标、生效时机与生效值，点这一行就地修改、改完即存；开关直接拨。编辑控件就是表单用的 FieldInput，
 // 可选项由这一行取一次交给它：选择与多选选了即存，其余回车或离开时存，Esc 放弃；数字清空、选择选空的一项写 null，与行尾的
 // 恢复按钮一样回到下一层，文字与列表清空写的是空值。存的时候编辑控件不可用。
-// 值按可选项的标签显示（动态可选项一并取来）；没有值时模型跟随服务偏好，可选项接口标了默认的写那一项，其余不写。可选项
-// 依赖另一项的，那一项眼下给不出可选项时不能改、写明不能调，生效值不在可选项里时写明按默认
-
-/** 模型字段没有值时：跟随 llm 服务的偏好 */
-const FOLLOW_PREFERENCE = '跟随服务偏好';
+// 值按可选项的标签显示（动态可选项一并取来，不在可选项里的按来源另给的名字）；没有值时写可选项接口标了默认的那一项，
+// 没有就写登记方给的「没设时」。可选项依赖另一项的，那一项眼下给不出可选项时不能改、写明不能调，生效值不在可选项里时
+// 写明按默认的哪一项
 
 interface SettingRowProps {
   field: Field;
@@ -30,13 +28,15 @@ interface SettingRowProps {
   reset?: string;
   /** 可选项依赖的另一项（设置项的 dependsOn） */
   dependency?: Dependency;
+  /** 哪一层都没设、又没有默认值时这一项的含义（登记方给） */
+  unset?: string;
   /** 写进这一处：给值即写入，null 回到下一层；写不进去时抛错 */
   save(value: unknown): Promise<void>;
 }
 
-export function SettingRow({ field, value, source, timing, reset, dependency, save }: SettingRowProps) {
+export function SettingRow({ field, value, source, timing, reset, dependency, unset, save }: SettingRowProps) {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
-  const { options, loaded, error: optionsError } = useFieldOptions(field, version, dependency?.value);
+  const { options, names, loaded, error: optionsError } = useFieldOptions(field, version, dependency?.value);
   const labelId = useId();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,12 +58,13 @@ export function SettingRow({ field, value, source, timing, reset, dependency, sa
     );
   };
 
+  const fallback = options.find(option => option.isDefault);
   const shown =
     value === undefined
-      ? isModelField(field)
-        ? FOLLOW_PREFERENCE
-        : options.find(option => option.isDefault)?.label
-      : formatValue(field, value, options);
+      ? fallback
+        ? optionLabel(fallback)
+        : unset
+      : formatValue(field, value, [...options, ...names]);
   const fixed = dependency !== undefined && loaded && options.length === 0;
   const note =
     dependency === undefined || !loaded
@@ -71,7 +72,7 @@ export function SettingRow({ field, value, source, timing, reset, dependency, sa
       : fixed
         ? `当前${dependency.label}不能调`
         : value !== undefined && !options.some(option => option.key === valueKey(field, value))
-          ? `当前${dependency.label}没有这一档，按默认`
+          ? `当前${dependency.label}没有这一档，按默认${fallback ? `（${fallback.label}）` : ''}`
           : undefined;
   const head = (
     <>
@@ -95,6 +96,7 @@ export function SettingRow({ field, value, source, timing, reset, dependency, sa
               disabled={busy}
               onChange={checked => commit(checked)}
             />
+            {value === undefined && unset && <span className="setting-row-note">{unset}</span>}
           </div>
         ) : editing ? (
           <div className="setting-row-edit">
@@ -102,7 +104,7 @@ export function SettingRow({ field, value, source, timing, reset, dependency, sa
             <Editor
               field={field}
               value={value}
-              options={{ options, error: optionsError, refetch }}
+              options={{ options, names, error: optionsError, refetch }}
               labelId={labelId}
               busy={busy}
               onCommit={commit}
@@ -157,10 +159,13 @@ function Editor({ field, value, options, labelId, busy, onCommit, onClose }: Edi
   const [draft, setDraft] = useState(value);
   /** 按了 Esc：之后的失焦不再存 */
   const cancelled = useRef(false);
+  /** 失焦之后等一拍：焦点落回这一组（含选择器挂在 body 上的弹层，它的焦点事件经 React 的组件树传到这里）就不算离开 */
+  const leaving = useRef<ReturnType<typeof setTimeout>>(undefined);
   const instant = field.type === 'select' || field.type === 'multiselect' || isModelField(field);
 
   useEffect(() => {
-    ref.current?.querySelector<HTMLElement>('input, select, textarea, fieldset')?.focus();
+    ref.current?.querySelector<HTMLElement>('input, textarea, [role="combobox"], fieldset')?.focus();
+    return () => clearTimeout(leaving.current);
   }, []);
 
   /** 打字的控件：写法读不出的不存（原因写在控件下面），没改的直接收起，数字清空（undefined）写 null */
@@ -171,6 +176,8 @@ function Editor({ field, value, options, labelId, busy, onCommit, onClose }: Edi
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLFieldSetElement>) => {
+    // 选择器的弹层已经处理过的键（Esc 先关弹层）
+    if (event.defaultPrevented) return;
     if (event.key === 'Escape') {
       // 不再交给外面：外面的 Esc 是停止生成
       event.preventDefault();
@@ -196,10 +203,10 @@ function Editor({ field, value, options, labelId, busy, onCommit, onClose }: Edi
       onMouseDown={event => {
         if (event.target instanceof Element && event.target.closest('button')) event.preventDefault();
       }}
-      onBlur={event => {
-        if (busy || event.currentTarget.contains(event.relatedTarget)) return;
-        if (instant) onClose();
-        else submit();
+      onFocus={() => clearTimeout(leaving.current)}
+      onBlur={() => {
+        if (busy) return;
+        leaving.current = setTimeout(instant ? onClose : submit);
       }}
     >
       <FieldInput

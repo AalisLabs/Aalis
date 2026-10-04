@@ -146,6 +146,7 @@ interface SettingRow {
   plugin: string;                  // 登记它的插件实例 id，「高级」里按它分组
   prominence: 'composer' | 'common' | 'advanced';
   dependsOn?: string;              // 可选项依赖的另一行的键
+  unset?: string;                  // 哪一层都没设、字段又没有默认值时这一项的含义（登记方给），界面写在生效值的位置
   value?: unknown;                 // 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值
   effective?: unknown;             // 生效值；哪一层都没设时没有，界面按字段的默认值显示
   source?: 'session' | 'parent' | 'audience' | 'platform' | 'defaults';  // 生效值出自哪一层
@@ -159,7 +160,8 @@ type SettingLayer =
 
 - **哪些行：** 会话只列适用于它的种类（`SessionSummary.kind`）的项；全局默认与平台档列全部，受众条目只列适用于房间的项。登记它的插件没装或没启用时不列，值保留。
 - **排序：** `composer`、`common` 在前，`advanced` 在后；同一显眼程度按登记时给的 `order`，没给的按登记的先后排在后面。`composer` 也放进输入框旁的快捷切换，同一组最多两项，多出的已退到 `common`。
-- **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。带 `dependsOn` 的行取可选项时把那一行的生效值（没有时取字段默认值）写成 JSON 放在 `dependency` 查询参数里，那一行变了就重取；例如深度思考（`llm-thinking`）按「模型」这一行取档位。
+- **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。带 `dependsOn` 的行取可选项时把那一行的生效值（没有时取字段默认值）写成 JSON 放在 `dependency` 查询参数里，那一行变了就重取；例如深度思考（`llm-thinking`）按「模型」这一行取档位，回应另带 `labels`（各模型声明过的档位的名字），存着的档位不在这个模型的可选项里时按它写出名字。
+- **生效值：** 哪一层都没设时依次写字段的默认值、可选项接口标了默认的那一项、`unset`。
 - **选档：** 房间按出生平台与受众选档；owner 自己的会话按入口平台选档，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台。继承先后：本会话、父会话（旧数据）、受众条目、平台档、全局默认。
 - **写：** `patch` 里给值即写入这一层（按登记的字段校验），`null` 删掉这一项、恢复继承，没给的键不动。没登记的键、不合字段的值，以及不适用于这个会话种类的项（受众条目按房间算）回 `invalidParams`，什么都不改；`null` 不看适用范围，已经写进去的照样清得掉。层写进宿主的配置文档，保存失败时撤回、回内部错误。
 - **`session/config/layers`：** 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上配置里写过的平台（卸了适配器后还能清掉）；受众条目按适配器声明的会话类型（`sessionTypes` 里的 `group`、`private`）出，加上配置里写过的。
@@ -188,12 +190,12 @@ type SettingLayer =
 | kind | 内容 |
 |---|---|
 | `user-message` | 文字、附件、说话人（平台、用户 id、昵称、注入来源、是否 owner）。文字是存档里的原文，多人平台带说话人前缀，附带的文件内容块已剥掉、文件名列成附件 |
-| `agent-message` | 文字与附件（可以只有附件）、模型；房间里没发出去的带 `undelivered.reason`：工具调用之前说的话（她只把一轮最后的回复发进群）、重试丢掉的那版、没回复就收尾的一轮（静默、中止、出错）里最后一次工具调用之后说的话、平台没收下或发送出错的回复 |
+| `agent-message` | 文字与附件（可以只有附件）、`model`：生成这条回复的服务商与模型，以及这一轮的 token（`promptTokens` 是这一轮最后一次调用的上下文，`completionTokens` 是这一轮各次调用的输出合计；服务商没报时没有），实时与历史里还原的一致；房间里没发出去的带 `undelivered.reason`：工具调用之前说的话（她只把一轮最后的回复发进群）、重试丢掉的那版、没回复就收尾的一轮（静默、中止、出错）里最后一次工具调用之后说的话、平台没收下或发送出错的回复 |
 | `reasoning` | 思考文字 |
 | `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（generating、running、completed、failed、denied、aborted）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象、或 `display` 里的退出码不为 0 时为 failed。模型还在生成参数时卡片已推出，状态是 generating，只有工具名、`args` 为空；开始执行时同一个 `itemId` 转为 running。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发，包括生成了还没执行的）为 aborted，停止之后工具照样返回了结果也不改；历史里没有结果的调用（重启或中断）同样为 aborted。生成了却没有执行、回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾；生成了却没有执行的，收尾时结果都是「没有执行」。参数不合法、执行前出错这类没有执行就失败的调用，按回给模型的错误收成 failed，历史里同样以 callId 为 id。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom` |
 | `notice` | 宿主事件，`topic` 区分种类：宿主通知取通知的种类（如 `paper-task`），压缩为 `compress`，存档里的压缩分隔线为 `event-marker`，达到工具调用上限为 `tool-limit`（带 `canContinue`，可以 `turn/continue`） |
 | `plan` | 待办，整份替换；每个会话一条，`itemId` 固定为 `plan` |
-| `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage`，整份替换。它不是时间线上的一条，界面画在会话头部（用量百分比与拆分表）。`injectors` 是「其余系统提示」按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件；`compressAt` 是自动压缩的使用率（与 `usageRatio` 同一口径），取压缩服务的 `autoThreshold`，没有压缩服务或不自动压缩时没有 |
+| `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage`，整份替换。它不是时间线上的一条，界面画在会话头部（用量百分比与拆分表）。`parts` 是产出方给的拆分表（显示名、token 数，按显示的次序，不含为回复预留的 `maxTokens`），界面照它画行、不认分项；某一项带 `injectors` 时是它按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件；`compressAt` 是自动压缩的使用率（与 `usageRatio` 同一口径），取压缩服务的 `autoThreshold`，没有压缩服务或不自动压缩时没有 |
 | `turn` | 回合开始（`by` 是发起方）与结束（`outcome` 取 replied、silent、aborted、error；被下游拦下、没有结局的一轮为 silent）。回合条目在她这一轮第一次有动静时推出，提问总排在它前面；历史里没有回合条目，其余条目带 `turnId` |
 
 附件（`ItemAttachmentSchema`）有 `kind`、`src`、`name`。`src`：图片、音频、视频是媒体地址（存储地址或网址），其他文件是会话服务签发的不透明句柄。取不到可下载的来源时没有 `src`，只有名字，例如存档只记了文件名的用户上传。

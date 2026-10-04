@@ -86,6 +86,11 @@ export interface SessionSetting {
    */
   dependsOn?: keyof SessionConfig & string;
   /**
+   * 哪一层都没设、字段又没有默认值时这一项的含义，界面在生效值的位置写它（如「按插件配置」「不限」）。写得出具体值的用
+   * `field.default`，不用它
+   */
+  unset?: string;
+  /**
    * 取值校验：合法时返回 undefined，不合法时返回原因。写入与解析都先过它，再按字段校验，结果与字段校验不合同样处理。
    * schema-config 不校验外来字段类型（如 api-llm 的 `'llm-ref'`）的取值，所以外来类型的设置项必须给出它，否则登记抛错
    */

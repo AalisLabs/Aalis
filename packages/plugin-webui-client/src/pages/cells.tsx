@@ -1,12 +1,13 @@
 import type { CellKind, CellValue, FileCell, StatusValue } from '@aalis/api-webui';
 import { Download } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Picture } from '../components/Picture';
 import { StatusText } from '../components/StatusText';
 import { clockTime } from '../format';
 import { isRecord } from '../rest';
 
-// 单元格按显示种类显示，键值组件的值同样走这里。插件给的文字一律当纯文本；链接只认 http、https，新标签打开；
-// 图片只认宿主换好的 /api/media 地址，文件只认宿主签发的句柄，别的按文字或名字显示
+// 单元格按显示种类显示，键值组件的值同样走这里。插件给的文字一律当纯文本，数字按千位分组，表格里同一列的小数位对齐；
+// 链接只认 http、https，新标签打开；图片只认宿主换好的 /api/media 地址，文件只认宿主签发的句柄，别的按文字或名字显示
 
 const isStatus = (value: unknown): value is StatusValue => isRecord(value) && typeof value.text === 'string';
 const isFile = (value: unknown): value is FileCell => isRecord(value) && typeof value.name === 'string';
@@ -31,6 +32,9 @@ export function sortValue(kind: CellKind | undefined, value: CellValue | FileCel
   if (typeof value === 'number') return value;
   return cellText(value);
 }
+
+/** 小数位，最多算到 3 位：数字默认的格式最多显示 3 位 */
+export const fractionDigits = (value: number) => Math.min(3, String(value).split('.')[1]?.length ?? 0);
 
 /** 剩下的时间：一分钟内写秒，一小时内写分与秒，一天内写时与分，再长写天与时 */
 function remaining(ms: number): string {
@@ -66,8 +70,18 @@ function LongText({ text }: { text: string }) {
   );
 }
 
-/** 一个值按显示种类显示；label 是图片的替代文字（列名或键值的名称） */
-export function Cell({ kind = 'text', value, label }: { kind?: CellKind; value: CellValue | FileCell; label: string }) {
+/** 一个值按显示种类显示；label 是图片的替代文字（列名或键值的名称），digits 是数字至少写几位小数 */
+export function Cell({
+  kind = 'text',
+  value,
+  label,
+  digits,
+}: {
+  kind?: CellKind;
+  value: CellValue | FileCell;
+  label: string;
+  digits?: number;
+}) {
   if (value === undefined || value === null || value === '') return null;
   if (kind === 'status' && isStatus(value)) return <StatusText state={value.state}>{value.text}</StatusText>;
   if (kind === 'file' && isFile(value)) {
@@ -98,9 +112,9 @@ export function Cell({ kind = 'text', value, label }: { kind?: CellKind; value: 
     );
   }
   if (kind === 'image' && text.startsWith('/api/media?')) {
-    return <img className="page-image" src={text} alt={label} loading="lazy" />;
+    return <Picture className="page-image" src={text} alt={label} />;
   }
   if (kind === 'code') return <code>{text}</code>;
   if (kind === 'long-text') return <LongText text={text} />;
-  return text;
+  return typeof value === 'number' ? value.toLocaleString(undefined, { minimumFractionDigits: digits }) : text;
 }

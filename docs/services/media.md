@@ -69,12 +69,12 @@ export interface MediaProcessor {
 
 ### 输入/输出类型
 
-- **`DescribeInput`**：`attachments`，加上 `basePrompt`（完整替换默认 base）/ `hint`（在 base+context 之后追加一条约束）/ `context`（对话上下文，processor 可拼进 prompt）/ `maxTokens` / `mode:'single'|'combined'`。
+- **`DescribeInput`**：`attachments`，加上 `basePrompt`（完整替换默认 base）/ `hint`（在 base+context 之后追加一条约束）/ `context`（对话上下文，processor 可拼进 prompt）/ `maxTokens` / `mode:'single'|'combined'` / `sessionId`（附件所在的会话，LLM processor 把它带进模型请求供记账；不在会话里识别时不填）。
   - `basePrompt` 与 `hint` 的语义严格分离：要换整段 prompt 用 `basePrompt`，只加一条要求用 `hint`。把整段 prompt 塞进 `hint` 会与默认 base 冲突。
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
-- **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）。
+- **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）/ `sessionId?`（音频所在的会话，音频 LLM 把它带进模型请求供记账；不在会话里转写时不填）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
-- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）、`BuildContextOptions`。
+- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)；`sessionId` 是图片所在的会话，识别按它记账）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）、`BuildContextOptions`。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
 
 ### 事件（declaration merging）

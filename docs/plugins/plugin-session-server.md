@@ -6,7 +6,7 @@
 
 ## 概述
 
-owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [plugin-webui-server](./plugin-webui-server.md#session-会话协议)）接到 `sessionProtocol.connect`，本插件处理这条连接上的帧：握手、按方法表校验参数并分派、写错误帧、推送增量。会话本身都在 [session-manager](./plugin-session-manager.md) 里，本插件只做投影与转发：
+owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [plugin-webui-server](./plugin-webui-server.md#session-会话协议)）接到 `sessionProtocol.connect`，本插件处理这条连接上的帧：握手、按方法表校验参数并分派、写错误帧、推送增量。会话本身都在 [session-manager](./plugin-session-manager.md) 里，本插件只做投影与转发，只认宿主契约、不认具体插件（守卫见 [plugin-webui-server](./plugin-webui-server.md#概述)）：
 
 - **功能位**：握手回发送、回滚、压缩三项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）服务在不在。这三个服务上线或下线（核心的 `service:registered`、`service:unregistered` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
 - **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
@@ -17,7 +17,7 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
   - 新建根会话不复制各层，配置经继承链实时生效；新建子会话复制父会话的生效配置（session-manager 的 `childConfig`，不带登记为 liveOnly 的项），因为继承链不经父会话自己的配置。
   - 归档连同子会话，单个与批量一致；恢复同样连同子会话，状态改回 `completed`（最后一轮收尾后的状态），没归档的不动。
   - 批量逐个执行：开始前就不存在的、执行出错的列进 `failed`，其余照常；删父会话时一并删掉的子会话不算失败。
-- **会话设置**：设置项由各插件登记在 session-manager 上，本插件不认识具体的键。`session/config/get` 给出适用于这个会话种类的各行：字段、所属插件、显眼程度、可选项依赖的另一项（登记了 `dependsOn` 的）、本会话的值、生效值与来源，排好显眼程度与先后，`composer` 同一组最多两项、多出的退到 `common`。owner 自己的会话按入口平台选档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，都没有时取这条连接的平台。`session/config/update` 按键写本会话的覆盖，`null` 恢复继承。`session/config/layers`、`layer/get`、`layer/update` 按层读写全局默认、平台档与受众条目（受众条目只列适用于房间的项），层存放在宿主配置文档里。给值的键不适用于这个会话种类（受众条目按房间算）时回 `invalidParams`，`null` 不受限；写入被 session-manager 拒绝（没登记的键、不合字段的值、不合法的层）同样回 `invalidParams`。session-manager 发 `session:config:changed`（设置项登记或撤回、某一层或某个会话的覆盖被改写）时，给每条连接推 `session/config/changed`。
+- **会话设置**：设置项由各插件登记在 session-manager 上，本插件不认识具体的键。`session/config/get` 给出适用于这个会话种类的各行：字段、所属插件、显眼程度、可选项依赖的另一项（登记了 `dependsOn` 的）、没设时的含义（登记了 `unset` 的）、本会话的值、生效值与来源，排好显眼程度与先后，`composer` 同一组最多两项、多出的退到 `common`。owner 自己的会话按入口平台选档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，都没有时取这条连接的平台。`session/config/update` 按键写本会话的覆盖，`null` 恢复继承。`session/config/layers`、`layer/get`、`layer/update` 按层读写全局默认、平台档与受众条目（受众条目只列适用于房间的项），层存放在宿主配置文档里。给值的键不适用于这个会话种类（受众条目按房间算）时回 `invalidParams`，`null` 不受限；写入被 session-manager 拒绝（没登记的键、不合字段的值、不合法的层）同样回 `invalidParams`。session-manager 发 `session:config:changed`（设置项登记或撤回、某一层或某个会话的覆盖被改写）时，给每条连接推 `session/config/changed`。
 - **已读**：`session/markSeen` 记下 owner 看过某个会话的时刻，落在 `pluginData:/session-server/seen.json`。「我的」区的会话在她最近一次开口（`SessionInfo.lastReplyAt`）晚于这个时刻时为完成未读；房间不记未读。会话删除后丢掉它的记录。
 - **订阅与条目**：`session/subscribe` 回快照，之后把 agent、工具与存档的事件拼成条目推给订阅的连接，见下文「条目从哪里来」。
 - **文件句柄**：条目里她发出的文件不给存储地址，给本插件签发的句柄；传输层下发文件之前经 `resolveFile` 核验，见下文「文件句柄」。
@@ -77,12 +77,12 @@ definePlugin({
 | 条目 | 来源 |
 |---|---|
 | `turn` | `agent:input:before` 开始一轮，`agent:turn:after` 给出结局，`next` 返回时收尾；被下游拦下、没有结局的一轮按 silent 收尾。回合条目在这一轮第一次有动静时才推出，提问（在回合开头落库）总排在它前面 |
-| `reasoning`、`agent-message` | `outbound:stream` 的思考与正文增量，连续的同类增量接在同一条上；工具调用开始、定稿校验（`agent:reply:before`）与流结束时一条收尾。她这一轮的回复（`outbound:message`，`source` 为 agent）认作最后一版正文，带上模型；回合里的其他出站消息（`[错误]` 等）各成一条，回合外的出站消息也各成一条 |
+| `reasoning`、`agent-message` | `outbound:stream` 的思考与正文增量，连续的同类增量接在同一条上；工具调用开始、定稿校验（`agent:reply:before`）与流结束时一条收尾。她这一轮的回复（`outbound:message`，`source` 为 agent）认作最后一版正文，带上模型与这一轮的 token（取消息的 `modelInfo`，与历史里取存档元数据的同一份写法）；回合里的其他出站消息（`[错误]` 等）各成一条，回合外的出站消息也各成一条 |
 | `tool-call` | 模型生成参数时，`outbound:stream` 的工具调用进度带着这次调用的 callId，有了工具名就推一张 generating 的卡（只有工具名），之后的进度不再推；`tool:execute` 的开始与结束（`itemId` 是 callId）把同一张卡转为 running 再收尾，开始时按工具声明的展示种类解析出 `display`；`agent:tool:after` 时从截断之前的结果里取退出码、带进 `display`，结束时不为 0 的收成 failed；`agent:tool:after` 时回合的中止信号已触发的（停止时还没结束），卡落成 aborted，结束事件不再改它；生成了却没有执行的，回合结束时收尾（回合被停止的为 aborted，其余为 failed，结果都是「没有执行」）；`tool:output` 推成输出增量，工具结束之后才到的输出不再接上；审批推出与结算时再推一次（`approvalId`、`settlement`） |
 | `notice` | `session:compressing`（`compress`）；流结束标记带 `toolLimitReached` 时给 `tool-limit`；落库的宿主通知按存档推 |
 | `user-message`，她发出的附件 | `inbound:message:archived`、`assistant:message:archived` 带出的存档消息，与历史归并用同一套规则，`itemId` 相同 |
 | `plan` | `todo:updated`；快照从待办服务读当前计划 |
-| `usage` | `token:usage`，按会话记下最近一次；快照带它，还没有时订阅之后发 `token:request`。房间的请求不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的入口平台，与从这条连接发起的回合一致。压缩线 `compressAt` 在推送与取快照时现取压缩服务的 `autoThreshold`（为 0 或没有服务时不给） |
+| `usage` | `token:usage`，按会话记下最近一次，分项取事件的 `parts` 原样放进条目；快照带它，还没有时订阅之后发 `token:request`。房间的请求不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的入口平台，与从这条连接发起的回合一致。压缩线 `compressAt` 在推送与取快照时现取压缩服务的 `autoThreshold`（为 0 或没有服务时不给） |
 
 回复与回合的对应靠异步上下文：`agent:input:before` 的 `next` 在这一轮的上下文里跑，其中发出的回复与定稿校验归到这一轮，同一会话并行的几轮互不串。
 
@@ -117,7 +117,7 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 - **提问**：去掉文件读取插件追加的文件内容块（内联全文、大文件引用、超限、处理失败、降级等各代格式），`metadata.fileNames` 列成文件附件；说话人取自存档的元数据。
 - **通知**：`notice` 角色的消息与压缩分隔线（`event-marker`）各成一条通知，宿主通知的种类取 `metadata.hostNoticeKind`。其余系统消息不显示。
 - **她发出的附件**：`outbound-image`、`outbound-video`、`outbound-audio`、`outbound-file` 的消息按附件引用占位符还原成只有附件的消息。图片、音频、视频的 `src` 就是引用；文件的 `src` 是句柄（见下文「文件句柄」）。文件的地址与名字先取存档时 `metadata` 里原样记下的 `ref`、`name`（占位符里的地址遇到 `]` 会截断，描述位的 `]`、`|` 换成了全角），没有时取占位符的引用与描述位，名字再没有就取地址的最后一段。
-- **回复与工具调用**：同一轮里相邻的 assistant 与带 `toolCallId` 的 tool 消息成一组；`metadata.turnId` 不同的两条分属两组（旧存档没记回合的不分），前一轮按旧格式落库的工具调用组不会被后一轮的时间线盖掉。组里有带时间线（`segments`）的回复时，以最后这样一条为准，覆盖这一轮之前按旧格式落库的工具调用组；否则按旧格式拼：思考前置，正文与工具调用按序，工具结果按 `toolCallId` 对回它的调用。每段正文（一次模型调用说的话，重试的各版各是一段）各成一条，相邻的思考合成一条，空的不显示；组以回复收尾时，记下的模型挂在回复上，`metadata.turnId` 给出条目的回合 id。
+- **回复与工具调用**：同一轮里相邻的 assistant 与带 `toolCallId` 的 tool 消息成一组；`metadata.turnId` 不同的两条分属两组（旧存档没记回合的不分），前一轮按旧格式落库的工具调用组不会被后一轮的时间线盖掉。组里有带时间线（`segments`）的回复时，以最后这样一条为准，覆盖这一轮之前按旧格式落库的工具调用组；否则按旧格式拼：思考前置，正文与工具调用按序，工具结果按 `toolCallId` 对回它的调用。每段正文（一次模型调用说的话，重试的各版各是一段）各成一条，相邻的思考合成一条，空的不显示；组以回复收尾时，记下的模型与这一轮的 token（`metadata.modelInfo`）挂在回复上，`metadata.turnId` 给出条目的回合 id。
   - 工具卡的 `itemId` 是这次调用的 `callId`（时间线的 `tool_call` 段与工具结果的 `metadata.callId` 带它），与实时推送相同；旧存档没有 `callId`，回落到这一组第一条消息的 id 加序号。参数不是对象的（旧存档里模型给出的 `null`、数组等）按空参数显示。`display` 按工具现在的声明从参数与结果解析，退出码以元数据里记下的 `exitCode` 为准（没记下的，如结果落库时会话服务没在跑，从结果里取）；工具结果的元数据里记下的审批结算与 `sentToRoom` 还原到工具卡上。状态依次看：元数据记着停止时还没结束、或没有结果（重启或中断）的为 aborted，没批准的为 denied，结果带 `error` 或退出码不为 0 的为 failed，其余为 completed。
   - 房间里：最后一次工具调用之前的正文标「调用工具之前说的话不发到群里」；以回复收尾的组，回复之前、最后一次工具调用之后的几版标「格式校验没通过，已重试」；回复有这一轮的投递失败记录时标平台没收下。与实时推送一致。
 
@@ -181,6 +181,8 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 - 只有 owner 应答的决定带 `responder`、`surface`（登记名与登记它的插件实例）与 `note`。
 - `waitedMs` 从发起算起，含排队的时间。
 - 追加失败只告警，审批照常进行。
+
+每个结算另记一行 info 日志：「审批结算：会话 <id>，工具 <名>，<结局>（<原因>）」，结局写批准、拒绝、过期或撤销，原因是 owner 应答或回给模型的那句原因（不带 owner 的说明）。发起时就结算的（自主回合、频率上限等）也在里面；WebUI 运行状况的日志用「审批」预设（提供审批服务的实例）看它们。
 
 ### 已知的差距
 

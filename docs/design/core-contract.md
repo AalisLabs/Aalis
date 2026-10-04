@@ -109,8 +109,8 @@ API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli
 下限由 `test/architecture/dep-ranges.test.ts`、`test/architecture/release-claims.test.ts` 守住。
 
 **token 统计的固定桶不作为兼容残留删除**：plugin-agent 按注入者把提示词开销归入固定桶，这些桶是
-`@aalis/api-agent` 中 `TokenUsageBreakdown` 的契约字段，也是 WebUI 的展示维度；改成通用的按注入者统计
-属于契约改形，须另行立项。
+`@aalis/api-agent` 中 `TokenUsageBreakdown` 的契约字段，供 AI 自检（plugin-prompt-budget）判断；WebUI 不认桶名，按同一事件里
+产出方给的 `parts`（显示名与次序）画拆分表。改成通用的按注入者统计属于契约改形，须另行立项。
 
 ## 八、内部分层（非承诺面，改动须守）
 

@@ -2,6 +2,7 @@ import type { Logger } from '@aalis/core';
 import { safeFetch } from '@aalis/util-network-guard';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
+import { route } from '../route.js';
 
 /** 单张图最大体积（避免代理被滥用成大文件中转）。 */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -49,7 +50,7 @@ export function waitWritable(res: DrainTarget): Promise<boolean> {
  * 未登录请求拿不到 cookie 自然过不来；这里只关心 SSRF 与体积/超时。
  */
 export function registerProxyRoutes(expressApp: express.Express, logger: Logger, gate: RouteGate): void {
-  expressApp.get('/api/proxy/image', gate(), async (req, res) => {
+  route(expressApp, 'GET /api/proxy/image', gate(), async (req, res) => {
     const raw = req.query.url;
     if (typeof raw !== 'string' || !raw) {
       res.status(400).json({ error: '缺少 url 参数' });

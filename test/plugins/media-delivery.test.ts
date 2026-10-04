@@ -268,9 +268,10 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(calls[0].hint).toContain('补充上下文: 这是第 3 页');
   });
 
-  it('describe：识别模型出文字，不带 images', async () => {
+  it('describe：识别模型出文字，不带 images；识别按调用工具的会话记账', async () => {
     const { result, calls } = await withTool({ delivery: 'describe' }, true, toolUri(3));
     expect(calls).toHaveLength(1);
+    expect(calls[0].sessionId).toBe('s');
     expect(result.images).toBeUndefined();
     expect(JSON.parse(result.content).description).toBe('一只猫');
   });

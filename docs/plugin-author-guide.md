@@ -363,8 +363,8 @@ declare module '@aalis/core' {
 | 插件详情的页面（`placement: 'plugin'`，默认） | 声明式页面或插件前端 | 插件详情里的页面入口，地址 `/p/:instance/:pageKey`；用户可以把它固定到图标栏 |
 | 设置的一节（`placement: 'settings'`） | 只收声明式页面 | 设置的分节目录 |
 | 会话右侧面板（`placement: 'session'`） | 声明式页面或插件前端，可用 `applies` 只对部分会话适用 | 面板标签栏的「+」，用户打开后记住 |
-| 会话设置项 | `sessionManager.registerSetting`：一个配置字段，加适用的会话种类与显眼程度 | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
-| 提示 | `webui.notify`：一条待处理事项或故障，带级别，可附跳转 | 「需要处理」与插件详情 |
+| 会话设置项 | `sessionManager.registerSetting`：一个配置字段，加适用的会话种类与显眼程度；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-manager 的「登记设置项」](api/api-session-manager.md#登记设置项)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
+| 提示 | `webui.notify`：一条待处理事项或故障，带级别，可附跳转；事情处理好了就撤回 | 「需要处理」（运行状况页、首页摘要、运行状况的角标与标签页标题的数，每条计 1）与发出它的插件详情 |
 | 主题 | 经贡献点 `webui:theme` 交一份主题文件（`contributions.contribute('webui:theme', { id, theme })`，见 [api-webui 的「插件提供的主题」](api/api-webui.md#插件提供的主题)），只收颜色令牌，与导入的主题走同一套校验 | 设置「外观」的主题选择；插件停用后消失，正在用的回到同深浅的偏中性 |
 | 工具卡的展示 | 工具定义上的 `display`（命令、文件改动） | 时间线的工具卡与审批卡上的事实 |
 
@@ -377,6 +377,14 @@ declare module '@aalis/core' {
 ## 15. 联网搜索后端
 
 联网搜索不是宿主的内置能力。plugin-websearch-serper 登记 `web_search`、`search_images` 两个工具；换搜索后端就是另写一个插件，自己登记这两个工具，与 plugin-websearch-serper 二选一（停用其中一个）。
+
+---
+
+## 16. 模型服务商：记账与余额
+
+写一个 LLM 服务商插件时，登记模型要套一层 `metered`：`provide(llm, metered(handle, events), { entryId })`。每次调用拿到用量时它发一条 `llm:usage`，记账插件（如 [plugin-usage-stats](plugins/plugin-usage-stats.md)）靠这条事件记账；不套就不记账，用量统计里看不到这个服务商的调用。插件的 `uses` 因此要带上 `events`。服务商有余额接口时可以在模型上实现 `balance`，用量统计页按服务商有没有实现决定出不出现「余额」。写法见 [api-llm 的「记账」](api/api-llm.md#记账)。
+
+调模型的插件在请求里带 `purpose`（给人看的短语，如「摘要」）与 `sessionId`，记账才知道这次调用做什么用、算在哪个会话上；调用方的实例由 `llm` 的绑定接口填，不用自己写。
 
 ---
 

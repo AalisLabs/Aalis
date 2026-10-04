@@ -32,6 +32,9 @@ interface LLMModel {
 
   // 让 webui 触发重新探测远端模型列表并增删 entries（远端动态发现型 provider 实现，静态型可不实现）
   refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
+
+  // 查服务商账户的余额（服务商有余额接口才实现）；一个币种一项，查不到时抛错
+  balance?(signal?: AbortSignal): Promise<LLMBalance[]>;
 }
 ```
 
@@ -47,8 +50,13 @@ interface ChatModelRequest {
   maxTokens?: number;           // 调用方期望的输出上限——provider 必须尊重（见 §6/§7）
   signal?: AbortSignal;         // 取消
   think?: string;               // 思考档位 id（模型 thinking.levels 之一）；不带=按模型的默认档
+  purpose?: string;             // 记账：这次调用做什么用（给人看的短语），调用方填
+  sessionId?: string;           // 记账：所在的会话，调用方填
+  caller?: string;              // 记账：调用方的插件实例，由 llm 的绑定接口填
 }
 ```
+
+每次调用结束、服务商报了用量时发 `llm:usage`（服务商、模型、调用方、会话、用途、输入、缓存命中、输出），由服务商登记时套的 `metered` 发出，见 [api-llm 的记账](../api/api-llm.md#记账)。
 
 `ChatResponse`：`{ content: string | null; toolCalls?: ToolCall[]; reasoningContent?: string | null; usage?: { promptTokens, completionTokens, totalTokens, cachedPromptTokens? } }`。`cachedPromptTokens` 是 `promptTokens` 中命中 provider 前缀缓存的部分（≤ `promptTokens`），provider 不支持或本次无命中时省略；`undefined`（不可知）与 `0`（明确无命中）语义不同，消费方不要用 `?? 0` 抹平。
 
@@ -97,12 +105,13 @@ interface ChatModelRequest {
 | `chatStream()` | 强烈建议 | 不实现则该 model 无 `streaming` 能力，agent 会跳过它（agent 直接调 `chatStream!`，见 §7） |
 | `maxOutputTokens` | 建议 | 否则消费方回退默认值，token 预算估算变粗 |
 | `refresh()` | 可选 | 仅远端动态发现型需要；没有时 webui 的「刷新」按钮照常显示，点击后提示该 provider 不支持运行时刷新 |
+| `balance()` | 可选 | 服务商有余额接口才实现；记账插件的「余额」一页按它出现 |
 
 ### 双源 manifest 必须同步
 
 provider 既要在源码导出 `provides`，又要在 `package.json` 写 `aalis.service.provides`（见 [manifest 元数据](../concepts/manifest-metadata.md)）：
 
-源码入口是 `export default definePlugin({ name, subsystem: 'llm', reusable: true, provides: [llm], uses: { config, logger, lifecycle, provide }, apply })`（`packages/plugin-llm-deepseek/src/index.ts`）。多实例靠 `reusable`，归组靠 `subsystem`；不要再写具名 `export const subsystem`。
+源码入口是 `export default definePlugin({ name, subsystem: 'llm', reusable: true, provides: [llm], uses: { config, logger, lifecycle, provide, events }, apply })`（`packages/plugin-llm-deepseek/src/index.ts`）。多实例靠 `reusable`，归组靠 `subsystem`；不要再写具名 `export const subsystem`。
 
 `package.json`（`packages/plugin-llm-deepseek/package.json`）：
 ```json
@@ -115,9 +124,9 @@ provider 既要在源码导出 `provides`，又要在 `package.json` 写 `aalis.
 参考 `packages/plugin-llm-deepseek/src/index.ts`：
 
 ```ts
-import { llm } from '@aalis/api-llm';
+import { llm, metered } from '@aalis/api-llm';
 import type { ChatModelRequest, ChatResponse, LLMCapability, LLMModel } from '@aalis/api-llm';
-import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
+import { config, definePlugin, events, lifecycle, logger, provide } from '@aalis/core';
 import { prepareLLMMessages } from '@aalis/schema-message';
 
 class MyModelHandle implements LLMModel {
@@ -137,12 +146,12 @@ class MyModelHandle implements LLMModel {
 export default definePlugin({
   name: '@acme/plugin-example',
   provides: [llm],
-  uses: { provide, logger, lifecycle, config },
-  async apply({ provide, logger, lifecycle, config }) {
+  uses: { provide, events, logger, lifecycle, config },
+  async apply({ provide, events, logger, lifecycle, config }) {
     void config;
     const handle = new MyModelHandle();
     handle.providerId = lifecycle.id;
-    provide(llm, handle, {
+    provide(llm, metered(handle, events), {
       entryId: `${lifecycle.id}/${handle.id}`,
       label: `MyProvider / ${handle.id}`,
     });
@@ -156,6 +165,7 @@ export default definePlugin({
 - 不要传 `priority`，默认 `0` 即可；用户通过 preference 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**如实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
 - `provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
+- 登记时套上 `metered(handle, events)`：拿到用量的调用发 `llm:usage`，自己的 `chat` 与 `chatStream` 不用管记账（[api-llm 的记账](../api/api-llm.md#记账)）。
 
 ## 5. 消费方标准用法
 

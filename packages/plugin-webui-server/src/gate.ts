@@ -17,12 +17,12 @@ type GateMiddleware = (req: GateRequest, res: GateResponse, next: () => void) =>
 /**
  * REST 路由 owner 闸工厂（单 owner 终态）。
  *
- * 单 token 模式下「持 token ⟺ webui:console ⟺ owner」，故连接级认证（auth.middleware
+ * 单 token 模式下「持 token ⟺ webui:console ⟺ owner」，故连接级认证（auth.ts 挂上的认证
  * 校验 token，未认证一律 401）即等价于 owner 鉴权。本闸是 REST 层的显式 owner 复核
- * （防御纵深，与 auth.middleware 同义）：身份解析得到即放行，否则 403。
+ * （防御纵深，与连接级认证同义）：身份解析得到即放行，否则 403。
  *
  * 多账户 / 能力委托已剥离，故不再有 per-route capability 与档位裁决——所有需登录的
- * REST 路由统一是 owner-only。页面/状态等只读路由同样在 auth.middleware 之后，对
+ * REST 路由统一是 owner-only。页面/状态等只读路由同样在连接级认证之后，对
  * 单 owner 无区别。
  */
 export function createRouteGate(identify: IdentifyFn) {

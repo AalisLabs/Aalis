@@ -291,7 +291,7 @@ describe('断线重连', () => {
     const inFlight = client.request('session/rename', { sessionId: 'a', title: '甲' }).catch(e => e);
     socket.drop(1001, '服务停止');
     expect(await inFlight).toBeInstanceOf(ConnectionLostError);
-    expect(client.state).toEqual({ status: 'retrying', code: 1001, reason: '服务停止' });
+    expect(client.state).toEqual({ status: 'retrying', code: 1001, reason: '服务停止', refused: false });
 
     // 断开期间收到的推送不再处理，新连接要等退避
     await vi.advanceTimersByTimeAsync(999);

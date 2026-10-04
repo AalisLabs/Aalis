@@ -1,18 +1,39 @@
 import type { SessionMethodParams, SettingRow } from '@aalis/api-session-protocol';
 import { ArrowUp, CircleStop, FileText, LoaderCircle, Paperclip, X } from 'lucide-react';
-import { type ClipboardEvent, type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
+import {
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 import { Link } from 'react-router';
 import { Button } from '../components/Button';
 import { IconButton } from '../components/IconButton';
+import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { useConnectionState, useFeatures, useSessionClient } from '../connection';
 import { composing } from '../keys';
-import { dependencyOf, effectiveOf, formatValue, hasChoices, valueKey, withCurrent } from '../settings/field';
+import {
+  dependencyOf,
+  effectiveOf,
+  formatValue,
+  hasChoices,
+  type Option,
+  optionLabel,
+  valueKey,
+  withCurrent,
+} from '../settings/field';
 import { useFieldOptions } from '../settings/options';
+import { useDraft } from './drafts';
 import './Composer.css';
 
 // 输入框：Enter 发送、Shift+Enter 换行，输入法组字时的回车只上屏；触屏上回车换行，用按钮发送。附件一律接收，
-// 只有附件也能发，读成 data URL 随消息发出。回合在跑、又没有要发的内容时，发送键换成停止。没有对话服务时不能用
+// 只有附件也能发，读成 data URL 随消息发出；附件按钮、粘贴与把文件拖到这一栏里是同一条路。回合在跑、又没有要发的内容时，
+// 发送键换成停止。没有对话服务时不能用。打的字按会话存成草稿，状态留在输入框里，打字不牵动会话的其余部分
 
 export type OutgoingAttachment = NonNullable<SessionMethodParams<'turn/send'>['attachments']>[number];
 
@@ -52,24 +73,39 @@ function read(file: File): Promise<OutgoingAttachment> {
   });
 }
 
+/** 连对话一起回滚之后，把那一轮的提问放回输入框，放在已打的字前面 */
+export interface ComposerHandle {
+  restore(prompt: string): void;
+}
+
 interface ComposerProps {
+  /** 草稿按它存，首页的新会话是 NEW_SESSION */
+  sessionId: string;
   /** 发出一条消息；成功后清空输入，失败时原因写在输入框下面 */
   send(content: string, attachments: OutgoingAttachment[]): Promise<void>;
   /** 回合在跑：停止这一轮 */
   onStop?: () => void;
   /** 输入框左下的快捷切换 */
   switches?: ReactNode;
+  ref?: Ref<ComposerHandle>;
 }
 
 let nextFileId = 0;
 
-export function Composer({ send, onStop, switches }: ComposerProps) {
+export function Composer({ sessionId, send, onStop, switches, ref }: ComposerProps) {
+  const [text, setText] = useDraft(sessionId);
+  useImperativeHandle(
+    ref,
+    () => ({ restore: prompt => setText(current => (current.trim() ? `${prompt}\n\n${current}` : prompt)) }),
+    [setText],
+  );
   const features = useFeatures();
   const open = useConnectionState(useSessionClient()).status === 'open';
-  const [text, setText] = useState('');
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [dropping, setDropping] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   // 连接断开时由连接横条或会话区写明原因，这里只写没有对话服务
   const disabled = !open || !features.send;
@@ -133,10 +169,47 @@ export function Composer({ send, onStop, switches }: ComposerProps) {
     add(event.clipboardData.files);
   };
 
+  // 文件拖到输入框所在的这一栏（会话的时间线与输入框）里就成为附件。不能用时也拦下默认处理，免得浏览器离开页面去打开文件
+  const addDropped = useRef(add);
+  const usable = useRef(!disabled);
+  useEffect(() => {
+    addDropped.current = add;
+    usable.current = !disabled;
+  });
+  useEffect(() => {
+    const column = form.current?.closest<HTMLElement>('.panel');
+    if (!column) return;
+    const carriesFiles = (event: DragEvent) => event.dataTransfer?.types.includes('Files') === true;
+    const over = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      if (usable.current) setDropping(true);
+    };
+    const leave = (event: DragEvent) => {
+      if (!column.contains(event.relatedTarget as Node | null)) setDropping(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      setDropping(false);
+      if (usable.current) addDropped.current(event.dataTransfer?.files ?? []);
+    };
+    column.addEventListener('dragover', over);
+    column.addEventListener('dragleave', leave);
+    column.addEventListener('drop', drop);
+    return () => {
+      column.removeEventListener('dragover', over);
+      column.removeEventListener('dragleave', leave);
+      column.removeEventListener('drop', drop);
+    };
+  }, []);
+
   return (
     <form
+      ref={form}
       className="composer"
       aria-label="发消息"
+      data-dropping={(dropping && !disabled) || undefined}
       onSubmit={event => {
         event.preventDefault();
         submit();
@@ -209,7 +282,7 @@ interface ComposerSettingsProps {
   openSettings(): void;
 }
 
-/** 输入框旁的快捷切换：composer 档的设置项，能从选项里选的就地选，改了即存 */
+/** 输入框旁的快捷切换：composer 档的设置项只写值，名字在读屏标签与悬停提示里；能从选项里选的就地选，改了即存 */
 export function ComposerSettings({ rows, update, settingsPath, openSettings }: ComposerSettingsProps) {
   return rows
     .filter(row => row.prominence === 'composer')
@@ -228,19 +301,27 @@ export function ComposerSettings({ rows, update, settingsPath, openSettings }: C
     );
 }
 
-/** 不能就地选的项写成名字与生效值（按可选项的标签），点了去会话的「设置」标签；没有值的只写名字 */
+/**
+ * 不能就地选的项写生效值（按可选项的标签），没有值时写登记方给的「没设时」，都没有才写名字；点了去会话的「设置」标签。
+ * 样子与就地选的选择器一样，只是不带箭头
+ */
 function SettingLink({
   row,
   dependency,
   settingsPath,
   openSettings,
 }: { row: SettingRow; dependency: unknown } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
-  const { options } = useFieldOptions(row.field, 0, dependency);
+  const { options, names } = useFieldOptions(row.field, 0, dependency);
   const effective = effectiveOf(row);
+  const shown = effective === undefined ? row.unset : formatValue(row.field, effective, [...options, ...names]);
+  const name = shown === undefined ? row.field.label : `${row.field.label}：${shown}`;
   return (
     <Link
-      className="composer-setting"
+      className="select"
+      data-variant="bare"
       to={settingsPath}
+      aria-label={name}
+      title={name}
       onClick={event => {
         // 不是左键、按着修饰键的交给浏览器（新标签页、新窗口打开），与链接自己的判定一致
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -248,11 +329,13 @@ function SettingLink({
         openSettings();
       }}
     >
-      {row.field.label}
-      {effective !== undefined && `：${formatValue(row.field, effective, options)}`}
+      <span className="select-value">{shown ?? row.field.label}</span>
     </Link>
   );
 }
+
+/** 可选项没取到时列在选项末尾、不能选的一项 */
+const FAILED = '\u0000failed';
 
 function SettingSelect({
   row,
@@ -265,35 +348,28 @@ function SettingSelect({
 }) {
   const { field } = row;
   const toast = useToast();
-  const { options, error } = useFieldOptions(field, 0, dependency);
+  const { options, names, error } = useFieldOptions(field, 0, dependency);
   const current = effectiveOf(row);
-  const choices = withCurrent(field, options, current);
+  const choices = withCurrent(field, options, current, names);
+  const fallback = options.find(option => option.isDefault);
   const failed = error && `可选项没取到：${error.message}`;
   return (
-    <select
-      className="composer-setting"
+    <Select
+      variant="bare"
       aria-label={field.label}
-      title={failed}
+      title={failed || field.label}
       value={current === undefined ? '' : valueKey(field, current)}
-      onChange={event => {
-        const chosen = choices.find(option => option.key === event.target.value);
-        if (!chosen) return;
+      placeholder={fallback ? optionLabel(fallback) : (row.unset ?? field.label)}
+      options={[
+        ...choices.map(option => ({ value: option.key, label: optionLabel(option) })),
+        ...(failed ? [{ value: FAILED, label: failed, disabled: true }] : []),
+      ]}
+      onChange={key => {
+        const chosen = choices.find(option => option.key === key) as Option;
         update(row.key, chosen.value).catch((err: Error) =>
           toast({ kind: 'danger', text: `${field.label}没改成：${err.message}` }),
         );
       }}
-    >
-      {current === undefined && (
-        <option value="" disabled>
-          {field.label}
-        </option>
-      )}
-      {choices.map(option => (
-        <option key={option.key} value={option.key}>
-          {option.label}
-        </option>
-      ))}
-      {failed && <option disabled>{failed}</option>}
-    </select>
+    />
   );
 }

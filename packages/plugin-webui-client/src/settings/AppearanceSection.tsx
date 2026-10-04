@@ -6,6 +6,7 @@ import { Badge } from '../components/Badge';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
 import { IconButton } from '../components/IconButton';
+import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { pageName, refOf, sameRef, usePages } from '../pages/registry';
@@ -112,17 +113,12 @@ function ThemeSelect({ label, themes, value, labelOf, onChange }: ThemeSelectPro
   return (
     <div className="settings-field">
       <label htmlFor={id}>{label}</label>
-      <select
+      <Select
         id={id}
         value={value}
-        onChange={event => onChange(themes.find(entry => entry.id === event.target.value) as ThemeEntry)}
-      >
-        {themes.map(entry => (
-          <option key={entry.id} value={entry.id}>
-            {labelOf(entry)}
-          </option>
-        ))}
-      </select>
+        options={themes.map(entry => ({ value: entry.id, label: labelOf(entry) }))}
+        onChange={chosen => onChange(themes.find(entry => entry.id === chosen) as ThemeEntry)}
+      />
     </div>
   );
 }

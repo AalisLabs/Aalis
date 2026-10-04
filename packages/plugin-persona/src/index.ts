@@ -454,7 +454,7 @@ class PersonaServiceImpl implements PersonaService {
  * 本插件登记的会话设置项：人设、额外提示与结构化输出的两个开关。都由人设服务生效，各种会话都适用；
  * 人设的可选项来自人设服务的 listModels
  */
-const SESSION_SETTINGS: SessionSetting[] = [
+const sessionSettings = (persona: string): SessionSetting[] => [
   {
     key: 'persona',
     field: {
@@ -462,6 +462,7 @@ const SESSION_SETTINGS: SessionSetting[] = [
       label: '人设',
       dynamicOptions: 'persona',
       allowCustom: true,
+      default: persona,
       description: '角色卡名（不含后缀）；没设置时用人设插件配置的默认卡',
     },
     appliesTo: ['owner', 'room', 'task'],
@@ -474,6 +475,7 @@ const SESSION_SETTINGS: SessionSetting[] = [
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'common',
     order: 40,
+    unset: '不追加',
   },
   {
     key: 'disableOutputFormat',
@@ -490,6 +492,7 @@ const SESSION_SETTINGS: SessionSetting[] = [
     },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'advanced',
+    unset: '按角色卡',
   },
 ];
 
@@ -652,7 +655,7 @@ async function run(caps: Caps): Promise<void> {
     timeInjection,
     timeZone,
   });
-  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
+  for (const setting of sessionSettings(personaName as string)) caps.sessionManager.registerSetting(setting);
   provide(persona, service);
 
   /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */

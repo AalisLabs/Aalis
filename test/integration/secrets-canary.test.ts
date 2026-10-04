@@ -142,8 +142,6 @@ describe('金丝雀密钥不进主配置文件', () => {
       const out = await invoke(route, { params: {}, body: {}, headers: {} });
       expect(JSON.stringify(out.body), route).not.toMatch(/CANARY/);
     }
-    const one = await invoke('GET /api/plugins/:name/config', { params: { name: 'p:b' }, body: {}, headers: {} });
-    expect(JSON.stringify(one.body)).not.toMatch(/CANARY/);
     const list = await invoke('GET /api/plugins', { params: {}, body: {}, headers: {} });
     expect((list.body as { secretRefCounts: Record<string, number> }).secretRefCounts).toEqual({
       'p.apiKey': 1,

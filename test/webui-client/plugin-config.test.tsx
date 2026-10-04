@@ -9,7 +9,7 @@ import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, installDialog, renderApp } from './harness.js';
+import { choose, type Harness, installDialog, renderApp } from './harness.js';
 
 // ════════════════════════════════════════════════════════════
 // 插件详情的配置：按 schema 画的整张表，接到真实的插件路由与宿主（host-config 加密钥存储）上，列表、草稿、保存、拆出密钥、
@@ -126,7 +126,7 @@ const rowOf = (label: string, nth = 0) =>
 const control = (label: string, nth = 0) =>
   document.getElementById(
     (form().getAllByText(label, { selector: 'label' })[nth] as HTMLLabelElement).htmlFor,
-  ) as HTMLInputElement & HTMLSelectElement & HTMLTextAreaElement;
+  ) as HTMLInputElement & HTMLTextAreaElement;
 const bar = () => document.querySelector('.config-bar');
 const press = (name: string, nth = 0) => fireEvent.click(form().getAllByRole('button', { name })[nth]);
 
@@ -458,8 +458,8 @@ describe('清空与校验', () => {
   it('数字留空、模型选「跟随默认」：顶层送 null，服务端删除后按默认值补齐；分组里的随整块替换清掉', async () => {
     const { store, puts } = await boot('knobs', SCHEMA, STORED);
     for (const label of ['上限', '超时', '间隔', '次数']) fireEvent.change(control(label), { target: { value: '' } });
-    await vi.waitFor(() => expect(control('模型').value).toBe('llm-a\nmodel-a'));
-    fireEvent.change(control('模型'), { target: { value: '' } });
+    await vi.waitFor(() => expect(control('模型').textContent).toBe('model-a'));
+    choose(control('模型'), '跟随默认');
     expect(bar()?.textContent).toContain('5 项未保存');
     await save(puts);
     expect(puts).toEqual([{ limit: null, timeoutMs: null, model: null, retry: {} }]);

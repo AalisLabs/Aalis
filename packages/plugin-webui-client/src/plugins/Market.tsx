@@ -7,6 +7,7 @@ import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
 import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
+import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { listTime } from '../format';
 import { getJson, isRecord, postJson } from '../rest';
@@ -53,6 +54,9 @@ const kindOf = (category: Category): Exclude<Kind, 'all'> =>
 
 const STATES = { all: '全部状态', installed: '已安装', available: '没装' } as const;
 type State = keyof typeof STATES;
+
+const choicesOf = (labels: Readonly<Record<string, string>>) =>
+  Object.entries(labels).map(([value, label]) => ({ value, label }));
 
 /** 非 registry 来源：市场更新不了，写明原因 */
 const ORIGINS: Record<Exclude<Origin, 'registry'>, string> = {
@@ -239,20 +243,18 @@ export function Market() {
               placeholder="搜名称、说明或作者"
               onChange={event => setQuery(event.target.value)}
             />
-            <select aria-label="类型" value={kind} onChange={event => setKind(event.target.value as Kind)}>
-              {Object.entries(KINDS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <select aria-label="状态" value={status} onChange={event => setStatus(event.target.value as State)}>
-              {Object.entries(STATES).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            <Select
+              aria-label="类型"
+              value={kind}
+              options={choicesOf(KINDS)}
+              onChange={value => setKind(value as Kind)}
+            />
+            <Select
+              aria-label="状态"
+              value={status}
+              options={choicesOf(STATES)}
+              onChange={value => setStatus(value as State)}
+            />
           </div>
           {updatable.length > 0 && (
             <div className="market-updates">

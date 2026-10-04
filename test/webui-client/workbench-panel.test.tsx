@@ -11,6 +11,7 @@ import {
   installDialog,
   lists,
   main,
+  optionsOf,
   renderApp,
   requests,
   restCalls,
@@ -23,9 +24,10 @@ import { hostTab, layoutStore } from './pages.js';
 // ════════════════════════════════════════════════════════════
 // 右侧面板与会话头：设置（只列服务端给的行，composer 与 common 在前，advanced 收进默认折叠的「高级」按插件分组，
 // 每行写生效值与来源，就地修改即存，恢复继承，收到 session/config/changed 重取）、用量（头部百分比、压缩线与换色，
-// 拆分表不显示为 0 的行，其余系统提示按插件合并，上方堆叠的进度条与图例、剩余一行）、计划（有条目才有，可以清空），
-// 功能位决定压缩入口，手机上用量从底部弹出，最少插件组合下这些入口都不出现；面板标签里宿主的标签按数据出现、可以关闭与
-// 从「+」重新打开，别处指向标签的入口（用量百分比、输入框旁的设置项）在标签关着时先打开它
+// 拆分表的行名与次序取条目，不显示为 0 的行，带注入者明细的一行按插件合并，上方堆叠的进度条与图例、剩余一行）、
+// 计划（有条目才有，可以清空），功能位决定压缩入口，手机上用量从底部弹出，最少插件组合下这些入口都不出现；
+// 面板标签里宿主的标签按数据出现、可以关闭与从「+」重新打开，别处指向标签的入口（用量百分比、输入框旁的设置项）
+// 在标签关着时先打开它
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -73,6 +75,9 @@ const PLUGINS: FakeRest = {
     ],
   },
 };
+
+/** 各模型声明过的思考档位的名字：可选项接口另给，存着的档位不在这个模型的可选项里时按它写名字 */
+const LEVEL_NAMES = { off: '关', high: '高', max: '最高', on: '开' };
 
 const ROWS: SettingRow[] = [
   row('persona', {
@@ -164,7 +169,10 @@ describe('右侧面板与会话头', () => {
     await vi.waitFor(() => expect(updates).toEqual([{ extra: '说话简短些' }]));
 
     fireEvent.click(settingRow('人设').getByRole('button', { name: /人设/ }));
-    fireEvent.change(settingRow('人设').getByRole('combobox', { name: '人设' }), { target: { value: 'private' } });
+    // 选择器的弹层挂在 body 上：焦点进了弹层不算离开这一行，过一拍弹层还在
+    fireEvent.click(settingRow('人设').getByRole('combobox', { name: '人设' }));
+    await act(() => new Promise(resolve => setTimeout(resolve, 10)));
+    fireEvent.click(screen.getByRole('option', { name: '私聊人设' }));
     await vi.waitFor(() => expect(updates).toHaveLength(2));
     expect(updates[1]).toEqual({ persona: 'private' });
 
@@ -205,18 +213,26 @@ describe('右侧面板与会话头', () => {
     expect(await panel().findByRole('group', { name: '人设' })).toBeTruthy();
   });
 
-  it('用量：头部百分比在有用量时才出现，达到压缩线换警告色；拆分表不显示为 0 的行，其余系统提示按插件合并，写明压缩线', async () => {
+  it('用量：头部百分比在有用量时才出现，达到压缩线换警告色；拆分表的行名与次序取条目里的分项，不显示为 0 的行，带注入者明细的一行按插件合并，写明压缩线', async () => {
     const data = usage({
       contextWindow: 100_000,
       used: 72_000,
       usageRatio: 0.72,
       compressAt: 0.7,
-      breakdown: { history: 30_000, toolDefs: 0, systemOther: 12_000, reservedForReply: 4_000, persona: 0 },
-      injectors: {
-        '@aalis/plugin-c/history': 5_000,
-        '@aalis/plugin-c:two/history': 3_000,
-        '@aalis/gone/recall': 1_000,
-      },
+      parts: [
+        { label: '历史消息', tokens: 30_000 },
+        { label: '工具定义', tokens: 0 },
+        { label: '笔记', tokens: 2_000 },
+        {
+          label: '注入的提示',
+          tokens: 12_000,
+          injectors: {
+            '@aalis/plugin-c/history': 5_000,
+            '@aalis/plugin-c:two/history': 3_000,
+            '@aalis/gone/recall': 1_000,
+          },
+        },
+      ],
     });
     app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([userMessage('u1', '在吗'), data]) }, PLUGINS);
     const meter = await main().findByRole('button', { name: '上下文已用 72%' });
@@ -225,15 +241,16 @@ describe('右侧面板与会话头', () => {
     expect(app.where()).toBe('/s/s1/usage');
     const table = within(panel().getByRole('table', { name: '上下文用量' }));
     const labels = () => table.getAllByRole('rowheader').map(cell => cell.textContent);
-    expect(labels()).toEqual(['上下文窗口', '已用', '历史消息', '其余系统提示', '为回复预留', '剩余']);
+    expect(labels()).toEqual(['上下文窗口', '已用', '历史消息', '笔记', '注入的提示', '为回复预留', '剩余']);
     expect(table.getByRole('rowheader', { name: '剩余' }).closest('tr')?.textContent).toContain('24.0k');
-    fireEvent.click(table.getByRole('button', { name: '其余系统提示' }));
+    fireEvent.click(table.getByRole('button', { name: '注入的提示' }));
     await vi.waitFor(() =>
       expect(labels()).toEqual([
         '上下文窗口',
         '已用',
         '历史消息',
-        '其余系统提示',
+        '笔记',
+        '注入的提示',
         '跨会话历史',
         '其他',
         '为回复预留',
@@ -276,13 +293,12 @@ describe('右侧面板与会话头', () => {
       used: 72_000,
       usageRatio: 0.72,
       compressAt: 0.7,
-      breakdown: {
-        history: 30_000,
-        toolResults: 20_000,
-        persona: 10_000,
-        systemOther: 12_000,
-        reservedForReply: 4_000,
-      },
+      parts: [
+        { label: '历史消息', tokens: 30_000 },
+        { label: '工具结果', tokens: 20_000 },
+        { label: '人设', tokens: 10_000 },
+        { label: '其余系统提示', tokens: 12_000 },
+      ],
     });
     app = await renderApp('/s/s1/usage', { 'session/subscribe': () => snapshot([userMessage('u1', '在吗'), data]) });
     const table = within(await panel().findByRole('table', { name: '上下文用量' }));
@@ -316,7 +332,7 @@ describe('右侧面板与会话头', () => {
     expect(usageBar()?.querySelector('[data-mark]'), '没有压缩线就不标').toBeNull();
   });
 
-  it('设置的值按可选项的标签显示（动态可选项里的值也一样）；没设的显示字段默认值，没有默认值的不写「未设置」', async () => {
+  it('设置的值按可选项的标签显示（动态可选项里的值也一样）；没设的显示字段默认值，没有默认值的写登记方给的「没设时」（开关写在开关下面），都没有的不写「未设置」', async () => {
     const rows = [
       row('groups', {
         field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups' },
@@ -335,6 +351,8 @@ describe('右侧面板与会话头', () => {
         },
       }),
       row('extra', { field: { type: 'string', label: '额外提示' } }),
+      row('limit', { field: { type: 'number', label: '上限' }, unset: '<不另加限制>' }),
+      row('json', { field: { type: 'boolean', label: '渲染 JSON' }, unset: '<按角色卡>' }),
     ];
     app = await renderApp(
       '/s/s1/settings',
@@ -343,6 +361,8 @@ describe('右侧面板与会话头', () => {
     );
     expect(await settingRow('工具分组').findByText('全部分组、联网')).toBeTruthy();
     expect(settingRow('模式').getByText('乙')).toBeTruthy();
+    expect(settingRow('上限').getByRole('button', { name: /上限/ }).textContent).toBe('上限<不另加限制>');
+    expect(settingRow('渲染 JSON').getByText('<按角色卡>')).toBeTruthy();
     const extra = settingRow('额外提示').getByRole('button', { name: /额外提示/ });
     expect(extra.textContent).toBe('额外提示');
   });
@@ -380,7 +400,7 @@ describe('右侧面板与会话头', () => {
     });
     await panel().findByRole('group', { name: '模式' });
     fireEvent.click(settingRow('模式').getByRole('button', { name: /模式/ }));
-    expect((settingRow('模式').getByRole('combobox', { name: '模式' }) as HTMLSelectElement).value).toBe('b');
+    expect(settingRow('模式').getByRole('combobox', { name: '模式' }).textContent).toBe('乙');
     fireEvent.click(settingRow('标签').getByRole('button', { name: /标签/ }));
     expect((panel().getByRole('checkbox', { name: '叉' }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(panel().getByRole('checkbox', { name: '歪' }));
@@ -392,7 +412,7 @@ describe('右侧面板与会话头', () => {
     expect((settingRow('备注').getByRole('textbox', { name: '备注' }) as HTMLInputElement).value).toBe('<默认备注>');
   });
 
-  it('可选项依赖另一项（dependsOn）：带上那一项的生效值去取，它变了就重取；当前值不在可选项里写明按默认，没有可选项写明不能调', async () => {
+  it('可选项依赖另一项（dependsOn）：带上那一项的生效值去取，它变了就重取；当前值不在可选项里写它的名字（取不到名字写原样）并写明按默认的哪一档，没有可选项写明不能调', async () => {
     const model = (name: string) => ({ provider: '@aalis/llm-a', model: name });
     const levels = (name: string) =>
       `/api/models/llm-thinking?dependency=${encodeURIComponent(JSON.stringify(model(name)))}`;
@@ -422,16 +442,19 @@ describe('右侧面板与会话头', () => {
         [levels('deep')]: {
           details: [
             { value: 'off', label: '关' },
-            { value: 'high', label: '高（默认）' },
+            { value: 'high', label: '高', default: true },
             { value: 'max', label: '最高' },
           ],
+          labels: LEVEL_NAMES,
         },
         [levels('switch')]: {
           details: [
             { value: 'off', label: '关' },
-            { value: 'on', label: '开（默认）' },
+            { value: 'on', label: '开', default: true },
           ],
+          labels: LEVEL_NAMES,
         },
+        [levels('bare')]: { details: [{ value: 'on', label: '开', default: true }] },
         [levels('plain')]: { details: [] },
       },
     );
@@ -440,12 +463,19 @@ describe('右侧面板与会话头', () => {
 
     rows = rowsFor('switch');
     act(() => server().notify('session/config/changed', {}));
-    expect(await settingRow('深度思考').findByText('当前模型没有这一档，按默认')).toBeTruthy();
+    expect(await settingRow('深度思考').findByText('当前模型没有这一档，按默认（开）')).toBeTruthy();
+    expect(settingRow('深度思考').getByText('最高')).toBeTruthy();
     fireEvent.click(settingRow('深度思考').getByRole('button', { name: /深度思考/ }));
     const select = settingRow('深度思考').getByRole('combobox', { name: '深度思考' });
-    await within(select).findByRole('option', { name: '开（默认）' });
-    expect(within(select).queryByRole('option', { name: '最高' })).toBeNull();
+    expect(select.textContent).toBe('最高');
+    expect(optionsOf(select)).toEqual(['不选', '最高', '关', '开（默认）']);
+    expect(document.activeElement, '弹层里的 Esc 只关弹层，编辑还开着').toBe(select);
     fireEvent.keyDown(select, { key: 'Escape' });
+
+    rows = rowsFor('bare');
+    act(() => server().notify('session/config/changed', {}));
+    expect(await settingRow('深度思考').findByText('当前模型没有这一档，按默认（开）')).toBeTruthy();
+    expect(settingRow('深度思考').getByText('max')).toBeTruthy();
 
     rows = rowsFor('plain');
     act(() => server().notify('session/config/changed', {}));
@@ -479,7 +509,7 @@ describe('右侧面板与会话头', () => {
         [levels]: {
           details: [
             { value: 'off', label: '关' },
-            { value: 'high', label: '高（默认）', default: true },
+            { value: 'high', label: '高', default: true },
           ],
         },
       },
@@ -659,7 +689,8 @@ describe('右侧面板与会话头', () => {
 
 describe('用量打开右侧面板', () => {
   const handlers = {
-    'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+    'session/subscribe': () =>
+      snapshot([userMessage('u1', '在吗'), usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
     'session/config/get': () => ({ items: [] }),
   };
   const shell = () => document.querySelector('[data-phone]') as HTMLElement;
@@ -705,7 +736,8 @@ describe('面板标签', () => {
 
   it('新记录：计划、设置、用量三个宿主标签都开着，有数据才出现；关闭按钮只在当前标签上', async () => {
     app = await renderApp('/s/s1/usage', {
-      'session/subscribe': () => snapshot([userMessage('u1', '在吗'), PLAN, usage({ breakdown: { history: 10 } })]),
+      'session/subscribe': () =>
+        snapshot([userMessage('u1', '在吗'), PLAN, usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
       ...config,
     });
     await panel().findByRole('table', { name: '上下文用量' });
@@ -746,7 +778,8 @@ describe('面板标签', () => {
     app = await renderApp(
       '/s/s1',
       {
-        'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+        'session/subscribe': () =>
+          snapshot([userMessage('u1', '在吗'), usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
         ...config,
       },
       rest(layout),
@@ -841,7 +874,8 @@ describe('手机', () => {
   it('会话头左边是返回，右侧只有用量与「更多」，全部展开与会话面板收进「更多」，标题不被挤掉', async () => {
     stubViewport(390);
     app = await renderApp('/s/s1', {
-      'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+      'session/subscribe': () =>
+        snapshot([userMessage('u1', '在吗'), usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
       'session/config/get': () => ({ items: [] }),
     });
     await main().findByRole('button', { name: '上下文已用 42%' });
@@ -869,7 +903,8 @@ describe('手机', () => {
     stubViewport(390);
     app = await renderApp('/', {
       'sessions/list': lists(params => (params.section === 'owner' ? [summary('s1', { title: '整理周报' })] : [])),
-      'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+      'session/subscribe': () =>
+        snapshot([userMessage('u1', '在吗'), usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
       'session/config/get': () => ({ items: [] }),
     });
     fireEvent.click(await screen.findByRole('link', { name: /整理周报/ }));
@@ -923,7 +958,8 @@ describe('手机', () => {
     app = await renderApp(
       '/s/s1',
       {
-        'session/subscribe': () => snapshot([userMessage('u1', '在吗'), usage({ breakdown: { history: 10 } })]),
+        'session/subscribe': () =>
+          snapshot([userMessage('u1', '在吗'), usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
         'session/config/get': () => ({ items: [] }),
       },
       { '/api/layout': layout.route, '/api/session-pages?sessionId=s1': { pages: [] } },

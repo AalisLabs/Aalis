@@ -1,4 +1,9 @@
+/*
+ * 行的上下内边距：只有一行字时正好撑满单行的行高，名字在单行与写着值的两行里都在同一个高度；
+ * 行尾的「恢复继承」按名字那一行竖直居中
+ */
 .setting-row {
+  --setting-row-pad: max(var(--space-2), (var(--row-1line) - var(--leading-sm)) / 2);
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -18,7 +23,7 @@
   align-items: center;
   gap: var(--space-0-5) var(--space-2);
   min-height: var(--row-1line);
-  padding: var(--space-2);
+  padding: var(--setting-row-pad) var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
@@ -62,7 +67,7 @@ button.setting-row-main:focus-visible {
 }
 
 .setting-row-grid > .button {
-  margin-top: var(--space-1);
+  margin-top: calc(var(--setting-row-pad) + (var(--leading-sm) - var(--control-h)) / 2);
 }
 
 .setting-row-edit {

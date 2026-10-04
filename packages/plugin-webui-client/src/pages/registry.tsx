@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { useConnection } from '../connection';
 import { isRecord, postJson, useJson } from '../rest';
+import { paths } from '../routes';
 
 // 插件登记的页面与 owner 的布局记录（固定的页面、会话面板的标签）：整页各取一份，页面表在插件登记表变了（plugins.changed）、
 // 布局记录在别处改了（layout.changed）时重取，管理连接重连后两样都重取
@@ -47,11 +48,22 @@ export const instanceName = (instance: string): string | undefined => {
   return at < 0 ? undefined : instance.slice(at + 1);
 };
 
-/** 页面在图标栏、菜单与标签上的名字：多实例插件的页面后面带实例名 */
-export const pageName = (page: PageView): string => {
-  const name = instanceName(page.instance);
-  return name === undefined ? page.title : `${page.title} · ${name}`;
+/** 多实例插件的东西在名字后面带实例名（「显示名 · 实例名」），插件的第一个实例不带 */
+export const withInstance = (label: string, instance: string): string => {
+  const name = instanceName(instance);
+  return name === undefined ? label : `${label} · ${name}`;
 };
+
+/** 页面在图标栏、菜单与标签上的名字 */
+export const pageName = (page: PageView): string => withInstance(page.title, page.instance);
+
+/** 页面自己的地址：位置为插件详情的在 /p/ 下，设置的在设置里；会话面板的页面只在会话里打开，没有 */
+export const pageAddress = (page: PageView): string | undefined =>
+  page.placement === 'plugin'
+    ? paths.page(refOf(page))
+    : page.placement === 'settings'
+      ? paths.settingsPage(refOf(page))
+      : undefined;
 
 function parsePages(body: unknown): PageView[] {
   if (!isRecord(body) || !Array.isArray(body.pages)) throw new Error('页面表的回应不是预期的形状');

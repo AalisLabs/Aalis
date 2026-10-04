@@ -1,12 +1,12 @@
 # api-webui — WebUI 服务、页面与管理面契约
 
 **包名**: `@aalis/api-webui`  
-**源码**: `packages/api-webui/src/index.ts`（服务、登记门面、管理面推送）、`packages/api-webui/src/page.ts`（页面与提示）、`packages/api-webui/src/frame.ts`（插件前端的消息通道）、`packages/api-webui/frame/`（插件前端的助手与样式基线，浏览器里运行）、`packages/api-webui/src/theme.ts`（主题）  
+**源码**: `packages/api-webui/src/index.ts`（服务、登记门面、「需要处理」、管理面推送）、`packages/api-webui/src/page.ts`（页面与提示）、`packages/api-webui/src/frame.ts`（插件前端的消息通道）、`packages/api-webui/frame/`（插件前端的助手与样式基线，浏览器里运行）、`packages/api-webui/src/rest.ts`（管理面 REST）、`packages/api-webui/src/theme.ts`（主题）  
 **实现**: `@aalis/plugin-webui-server`（+ `@aalis/plugin-webui-client` 提供前端）
 
 ## 概述
 
-定义 WebUI 后台服务接口、按激活绑定的登记门面、页面与提示、插件前端的消息通道、管理面推送的事件类型，以及主题的令牌表与主题文件格式。契约包是 MIT：第三方前端只依赖它，照本页实现页面的渲染、调用与布局记录。本页的页面契约、消息通道与路由先标 experimental。
+定义 WebUI 后台服务接口、按激活绑定的登记门面、页面与提示、插件前端的消息通道、管理面推送的事件类型、管理面 REST 的路由与类型，以及主题的令牌表与主题文件格式。契约包是 MIT：第三方前端只依赖它，照本页实现页面的渲染、调用、布局记录与管理面。本页的页面契约、消息通道与路由先标 experimental。
 
 页面默认声明式，需要自绘时用插件前端（见下文「插件前端」）。声明式页面只交声明：插件在 `apply` 里经 `webuiServer` 的 `definePage` 一次交出组件、数据源与动作的处理函数，经 `notify` 发提示；样式、窄屏变形、确认框与输入表单都由宿主统一画。登记归属这次激活，插件停用时同一拍撤回。
 
@@ -299,7 +299,7 @@ webui.definePage({
 - `frame: { src, host }`：`src` 是宿主签发的框架地址 `/frames/<token>/<入口>`，`host` 是申请的能力；
 - `actions`：与声明式相同的 `ActionView`，宿主据它决定确认框。
 
-不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里。数据源与动作走下文「页面与布局的路由」的两条路由：数据源名放在 `componentId` 的位置，`input` 以 JSON 字符串放在查询参数里；动作的请求体不收 `rowKey`。数据源返回不能转成 JSON 的值时回 500 并记告警。
+不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里。数据源与动作走下文「管理面 REST」的「页面与布局」里取数与动作两条路由：数据源名放在 `componentId` 的位置，`input` 以 JSON 字符串放在查询参数里；动作的请求体不收 `rowKey`。数据源返回不能转成 JSON 的值时回 500 并记告警。
 
 ### 托管与隔离
 
@@ -448,19 +448,25 @@ interface Notice {
 - 插件不能弹 Toast：Toast 只回报用户自己操作的结果，后台的事走提示。
 - 第一次使用时模型插件缺密钥起不来这类故障，由宿主推导的插件故障覆盖，不靠提示。
 
-## 页面与布局的路由
+## 需要处理
 
-都要登录，改状态的请求校验来源（见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的「改状态的请求校验来源」）。路径里的实例 id、页面 key、组件 id、动作名都要 `encodeURIComponent`（实例 id 可能带 `@`、`/` 与 `:`）。失败回 4xx 或 5xx 与 `{ error, issues? }`（`PageErrorResponse`）。
+「需要处理」是宿主汇总的一个列表，每项计 1：推给了审批面、还没结算的审批，插件故障（失败与缺服务的实例），插件的提示。经 `GET /api/attention`（要登录）给出，变了经 `/admin` 推 `attention.changed`，前端重取；首页摘要、插件详情、运行状况与标签页标题都读这一个列表，数目一致。
 
-| 路由 | 请求 | 返回 |
-|---|---|---|
-| `GET /api/pages` | — | `{ pages: PageView[] }`：登记着的全部页面，加上所属实例 `instance`，`placement` 总是给出；按 `order`、实例、key 排好。声明式页面（`DeclarativePageView`）是声明去掉函数（数据源、处理函数、`applies`）；插件前端页面（`FramePageView`）见上文「插件前端」 |
-| `GET /api/session-pages?sessionId=` | — | `{ pages: PageRef[] }`：这个会话适用的会话面板页面。会话不存在回 404 |
-| `GET /api/pages/:instance/:pageKey/data/:componentId` | 查询参数只收 `sessionId`（会话面板必填）与 `rowKey`（详情里的组件必填）；插件前端页面的 `componentId` 是数据源名，另收 `input` | `{ data }`，按组件种类见 `PageDataByType`；插件前端是数据源返回的值 |
-| `POST /api/pages/:instance/:pageKey/actions/:action` | `{ sessionId?, rowKey?, input? }` | `{ message? }` |
-| `GET /api/page-file?handle=` | — | 文件，一律当附件以 `application/octet-stream` 下发；句柄无效回 403，文件已不在回 404 |
-| `GET /api/layout` | — | `LayoutRecords` |
-| `POST /api/layout` | `LayoutOperation` | 改后的 `LayoutRecords` |
+```ts
+type AttentionItem =
+  | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string } // session 是会话的标题
+  | { kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string; missing: string[] }
+  | ({ kind: 'notice'; instance: string } & Notice);
+interface AttentionResponse { items: AttentionItem[] }
+```
+
+- 顺序：审批在前，其后是插件故障与提示，各按先后。审批服务不在时没有审批这一类；会话管理不在或不认识这个会话时审批没有 `session`。
+- 插件故障：`error` 是失败（带原因 `error`），`pending` 是缺服务；`missing` 是此刻没有提供者的 required 服务（失败的也可能有）。
+- 跳转由前端按项推出：审批进它的会话；插件故障进插件详情；提示按 `open` 去配置或打开那个页面（按 `instance` 与页面 key 在 `GET /api/pages` 里找标题与位置），没有 `open` 的没有跳转。
+
+## 页面的调用与布局
+
+页面的声明、取数、动作与布局记录的路由见下文「管理面 REST」的「页面与布局」，这里写服务端怎样核这些调用。
 
 **服务端闸门：**
 
@@ -514,8 +520,15 @@ type LayoutOperation =
 每个文本帧是一个 JSON 对象，`type` 区分种类。本包只给类型，前端导入类型即可，服务端不校验自己发出的帧：
 
 ```ts
+/** 日志的筛选：历史（GET /api/logs/tail、/api/logs/range 的同名查询参数）与实时推送同一份，在服务端筛 */
+interface LogFilter {
+  level?: LogLevel; // 这一级及以上
+  plugin?: string; // 插件实例 id：这个实例与它分出的子作用域
+  text?: string; // 正文里含有这段文字，不分大小写
+}
+
 /** 前端发往 /admin */
-type WebuiAdminClientMessage = { type: 'log.subscribe' } | { type: 'log.unsubscribe' };
+type WebuiAdminClientMessage = { type: 'log.subscribe'; filter?: LogFilter } | { type: 'log.unsubscribe' };
 
 /** /admin 推给前端 */
 type WebuiAdminEvent =
@@ -523,22 +536,24 @@ type WebuiAdminEvent =
   | { type: 'plugins.changed' }
   | { type: 'page.invalidate'; instance: string; pageKey: string; componentId?: string; sessionId?: string }
   | { type: 'layout.changed' }
+  | { type: 'attention.changed' }
   | { type: 'app.restarting' }
   | { type: 'client.reload' };
 ```
 
 | 事件 | 字段 | 推给谁 | 前端怎么办 |
 |---|---|---|---|
-| `log` | `entry`：`{ seq, timestamp, level, scope, message }`，与 `GET /api/logs/tail` 返回的条目同形 | 订阅了日志的连接 | 追加到日志列表 |
+| `log` | `entry`：`{ seq, timestamp, level, scope, message }`，与 `GET /api/logs/tail` 返回的条目同形 | 订阅了日志、符合它订阅时的筛选的连接 | 追加到日志列表 |
 | `plugins.changed` | 无 | 全部连接 | 插件状态可能变了（启停、装卸、激活成败之后），或页面登记表变了（插件登记或撤回页面）：重取 `GET /api/plugins` 与 `GET /api/pages`。一次启停可能连着推几条，服务端不合并，前端合并成一次重取。打开着的页面所属插件停用时，主区显示占位；页面重新登记后回到原页 |
 | `page.invalidate` | `instance`、`pageKey`，可选 `componentId`、`sessionId` | 全部连接 | 插件说这一页的数据变了：打开着这一页的界面重取，带 `componentId` 时只重取这个组件，带 `sessionId` 时只有打开着这个会话的面板重取。页面登记时宿主也推一次整页的（插件重载时撤回与重新登记几乎同时，界面不一定看得到页面不在的那一刻）。服务端按这四项合并：同一组一秒内最多推一次 |
 | `layout.changed` | 无 | 全部连接 | 布局记录变了：重取 `GET /api/layout` |
+| `attention.changed` | 无 | 全部连接 | 「需要处理」变了（审批推出或结算、插件的故障有变、提示登记或撤回）：重取 `GET /api/attention` |
 | `app.restarting` | 无 | 全部连接 | 应用即将重启，连接随后断开：提示正在重启，稍后重连 |
 | `client.reload` | 无 | 全部连接 | 前端偏好改了，或有前端包被卸载，活跃前端可能换了：整页重新加载 |
 
-- **断线重连**：事件只是「变了」的信号，断线期间丢的不补发。重连后重取插件与页面、布局记录和当前打开的页面；日志页开着时重新订阅。
-- **日志**：日志页打开时发 `{ type: 'log.subscribe' }`，离开时发 `{ type: 'log.unsubscribe' }`；订阅与退订不回执。先发订阅、再取 `GET /api/logs/tail`，两边按 `seq` 去重；更早的日志用 `GET /api/logs/range` 往前翻。
-- **认不出的消息**（不是 JSON，或 `type` 不认识）：服务端记一行告警后忽略，连接照常。
+- **断线重连**：事件只是「变了」的信号，断线期间丢的不补发。重连后重取插件与页面、「需要处理」、布局记录和当前打开的页面；日志页开着时重新订阅。
+- **日志**：日志页打开时发 `{ type: 'log.subscribe', filter }`，离开时发 `{ type: 'log.unsubscribe' }`；订阅与退订不回执，筛选变了再订阅一次就换掉，不带 `filter` 推全部。先发订阅、再带同一份筛选取 `GET /api/logs/tail`，两边按 `seq` 去重；更早的日志用 `GET /api/logs/range` 带同一份筛选往前翻。按插件筛时怎样认作用域见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的「日志的筛选」。
+- **认不出的消息**（不是 JSON、`type` 不认识，或筛选写法不对）：服务端记一行告警后忽略，连接与之前的订阅照常。
 - 平台连接状态没有变化事件，页面打开时取一次 `GET /api/platforms`，配手动刷新。
 - 连接的心跳与关闭码见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的 WebSocket 一节。
 
@@ -552,9 +567,274 @@ admin.onmessage = event => {
   const e = JSON.parse(event.data) as WebuiAdminEvent;
   if (e.type === 'plugins.changed') refetchPluginsAndPages();
 };
-// 日志页打开时
-admin.send(JSON.stringify({ type: 'log.subscribe' } satisfies WebuiAdminClientMessage));
+// 日志页打开时，只看警告及以上
+admin.send(JSON.stringify({ type: 'log.subscribe', filter: { level: 'warn' } } satisfies WebuiAdminClientMessage));
 ```
+
+## 管理面 REST
+
+webui-server 的全部 HTTP 路由，第三方前端照它实现；路由表与请求、回应的类型在 `packages/api-webui/src/rest.ts`，只有类型。先标 experimental，终端客户端接入后只做加法。WebSocket 端点不在这里：`/session` 见 [api-session-protocol](./api-session-protocol.md)，`/admin` 见上文「管理面推送」。
+
+- **路由表**：`WebuiRestRoutes` 是回 JSON 的路由，每项写 `query`（查询参数）、`body`（请求体）与 2xx 时的 `response`；`WebuiFileRoutes` 是回文件或页面的路由，写请求与 2xx 时的响应头（小写，不含 `Date`、`ETag` 这类传输层的头）。键是「方法 路径」，路径照 webui-server 登记的写法：`:name` 是一段路径参数，要 `encodeURIComponent`（实例 id 可能带 `@`、`/` 与 `:`）；`{*path}` 是其后的任意多段。`WebuiRestResponse<K>` 取一条 JSON 路由的回应。
+- **登录**：不要登录的只有 `/api/auth/` 下的四条与 `/frames/` 下的文件。其余的带登录 cookie，没登录的 `/api/` 请求回 401，页面回登录页。
+- **来源**：改状态的请求（非 GET）带 `Origin` 时要与本服务同源，否则回 403（见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的「改状态的请求校验来源」）。
+- **失败**：一律回 4xx 或 5xx 与 `ErrorResponse`。路由表里没有的 `/api/` 路径回 404。请求体不是 JSON 或太大、路径参数解不开时回 4xx，处理时出错回 500，`error` 只写一句说明，不带堆栈，原因记在服务端日志里。
+- **对得上**：webui-server 的路由一律按这张表登记，回 JSON 的处理函数只能回表里的回应或 `ErrorResponse`；路由都经按表登记的入口（`test/architecture/webui-routes.test.ts`）；启动时实际登记的路由与表逐条对上，每条路由的实际回应与类型对得上（`test/plugins/webui-rest-contract.test.ts`）。
+
+```ts
+interface ErrorResponse {
+  error: string;
+  issues?: SchemaIssue[]; // 输入没过校验时逐项列出
+  applied?: true; // 改动已在运行态生效，只是没写进配置文件
+}
+interface OkResponse { ok: true }
+/** 管理动作的回执：message 写做成了什么；动作之后插件没落在预期状态（激活失败、仍在激活等）时也写在这里 */
+interface MessageResponse extends OkResponse { message: string }
+```
+
+### 认证
+
+| 路由 | 请求 | 返回 |
+|---|---|---|
+| `POST /api/auth/login` | `{ token }` | `{ ok: true, identity }`，设登录 cookie；token 不对回 401，同一来源地址失败过多回 429 |
+| `GET /api/auth/status` | — | `{ authed, identity? }` |
+| `POST /api/auth/logout` | — | `OkResponse`，清掉登录 cookie |
+| `GET /api/auth/login.js` | — | 登录页的脚本 |
+
+`identity` 是 `UserIdentity`（api-authority），单 owner 下恒为 `{ platform: 'webui', userId: 'console' }`。页面地址带 `?token=` 也能登录：对了设 cookie 并 302 到不带查询串的同一地址。
+
+### 插件与宿主配置
+
+| 路由 | 请求 | 返回 |
+|---|---|---|
+| `GET /api/plugins` | — | `PluginListResponse` |
+| `PUT /api/plugins/:name/config` | `{ config }`，部分更新：提交的顶层键整键替换，值为 `null` 的视为删除 | `PluginConfigResponse` |
+| `POST /api/plugins/:name/enable` · `/disable` · `/reload` | — | `MessageResponse` |
+| `POST /api/plugins/scan` | — | `{ ok: true, message, loaded }`：重新扫描插件目录，`loaded` 是新加载的插件 |
+| `POST /api/plugins/:name/instances` | `{ suffix, config? }` | `{ ok: true, message, instanceId, ignored }` |
+| `DELETE /api/plugins/:instanceId/instance` | — | `MessageResponse` |
+| `GET /api/config` | — | `HostConfigResponse` |
+| `PUT /api/config` | 核心键 → 新值，`null` 回到默认；只收核心键，别的顶层键回 400 | `{ ok: true, message, restartNeeded }` |
+| `POST /api/restart` | — | `MessageResponse`，之后应用重启、连接断开 |
+| `GET /api/services` | — | `ServiceListResponse` |
+| `POST /api/services/:name/prefer` | `{ contextId }` | `OkResponse` |
+| `DELETE /api/services/:name/prefer` | — | `OkResponse` |
+
+```ts
+interface PluginListItem {
+  name: string; // 插件包名，同一插件的几个实例按它合在一起
+  instanceId: string;
+  displayName?: string;
+  subsystem?: string; // 插件声明的子系统，组名与顺序见 DEFAULT_SUBSYSTEM_METADATA
+  version?: string; // 已装的包的版本
+  state: PluginState; // pending | activating | active | disabled | disposed | error
+  error?: string;
+  slow?: boolean; // 激活超过慢激活阈值、已转入后台
+  self?: true; // 提供这个界面：不能从界面停用或卸载
+  provides: string[];
+  requiredServices: string[];
+  optionalServices: string[];
+  missing: string[]; // 此刻没有提供者的 required 服务
+  tools: string[];
+  commands: string[];
+  reusable: boolean;
+  extends?: ExtendDeclaration;
+  config: Record<string, unknown>; // 配置文档里这一段，密钥字段上是引用 { $secret }
+  configSchema?: ConfigSchema;
+  defaultConfig: Record<string, unknown>;
+}
+interface PluginListResponse {
+  plugins: PluginListItem[];
+  secretRefCounts: Record<string, number>; // 密钥键 → 配置文档里引用它的处数
+}
+interface PluginConfigResponse extends MessageResponse {
+  ignored: string[]; // 本次提交里裁掉的未声明字段
+  removed: string[]; // 配置文档里原有、随这次写回删掉的未声明字段
+}
+interface HostConfigResponse {
+  config: Record<string, unknown>; // 配置文档里写了的核心键
+  schema: ConfigSchema; // 核心键的 schema
+  restartKeys: string[]; // 要重启才生效的键
+  home?: string; // 家目录
+}
+interface ServiceListResponse {
+  // 服务名 → 提供者（第一个就是正在用的）与偏好的提供者
+  services: Record<string, { providers: ServiceProviderView[]; preferred: string | null }>;
+}
+interface ServiceProviderView {
+  contextId: string; // 提供者的插件实例 id，宿主自己提供的是 root
+  displayName?: string;
+  label?: string;
+  priority: number;
+  exclusive: boolean;
+}
+```
+
+### 运行状况、日志与主题
+
+| 路由 | 请求 | 返回 |
+|---|---|---|
+| `GET /api/attention` | — | `AttentionResponse`，见上文「需要处理」 |
+| `GET /api/platforms` | — | `{ platforms: PlatformStatus[] }` |
+| `GET /api/logs/tail` | 查询参数 `LogQuery` | `LogEntry[]`：符合筛选的最后 `limit` 条 |
+| `GET /api/logs/range` | `LogQuery` 加 `before` | `LogEntry[]`：`seq` 比 `before` 小的最后 `limit` 条 |
+| `GET /api/themes` | — | `PluginThemesResponse`，见下文「插件提供的主题」 |
+
+```ts
+interface PlatformStatus {
+  adapterName: string;
+  platform: string;
+  contextId: string; // 适配器所在的插件实例
+  connections: PlatformConnection[]; // api-platform
+}
+interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5000；筛选写法不对回 400
+```
+
+### 可选项与模型
+
+| 路由 | 请求 | 返回 |
+|---|---|---|
+| `GET /api/models/:service` | 查询参数 `dependency?` | `LLMModelsResponse`（`:service` 是 `llm`）或 `OptionsResponse`（其余） |
+| `POST /api/llm-providers/:contextId/refresh` | — | `{ ok: true, added, removed, total }` |
+
+- `llm`：模型列表，模型字段的可选项走它。
+- 宿主回答的来源：`platform`（平台名）、`gateway-scopes`（会话范围）、`toolGroups`（工具分组，`'*'` 是全部分组）、`llm-thinking`（深度思考的档位，按 `dependency` 取那个模型声明的档位，`dependency` 是模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好，写法不对回 400；模型不能调时 `models` 与 `details` 为空）。
+- 其余服务名调那个服务各提供者的 `listModels()`，回 `{ models }`。
+- 刷新：`:contextId` 是提供者的插件实例，与模型的 `contextId` 相同；名下的模型都不能运行时刷新、或名下没有模型时回 404。
+
+```ts
+interface LLMModelsResponse { providers: LLMModelEntry[] }
+interface LLMModelEntry {
+  model: string;
+  provider: string; // 显示名
+  contextId: string; // 提供它的插件实例，llm-ref 的取值 { provider, model } 认的是它
+  capabilities: string[];
+}
+interface OptionsResponse {
+  models: string[]; // 取值
+  details?: OptionDetail[]; // 带名字的可选项，有它时按它画
+  labels?: Record<string, string>; // 不在可选项里的取值的名字（换了模型以后存着的档位）
+}
+interface OptionDetail {
+  value: string;
+  label: string;
+  default?: true; // 没设时生效的那一项
+  description?: string; // 工具分组的说明
+  pluginName?: string; // 登记工具分组的插件
+}
+```
+
+### 页面与布局
+
+| 路由 | 请求 | 返回 |
+|---|---|---|
+| `GET /api/pages` | — | `{ pages: PageView[] }`：登记着的全部页面，加上所属实例 `instance`，`placement` 总是给出；按 `order`、实例、key 排好。声明式页面（`DeclarativePageView`）是声明去掉函数（数据源、处理函数、`applies`）；插件前端页面（`FramePageView`）见上文「插件前端」 |
+| `GET /api/session-pages` | 查询参数 `sessionId` | `{ pages: PageRef[] }`：这个会话适用的会话面板页面。会话不存在回 404 |
+| `GET /api/pages/:instance/:pageKey/data/:componentId` | 查询参数 `PageDataQuery` | `PageDataResponse`（声明式页面，按组件种类见 `PageDataByType`）或 `FrameDataResponse`（插件前端的数据源，`componentId` 是数据源名，`data` 是数据源返回的值） |
+| `POST /api/pages/:instance/:pageKey/actions/:action` | `PageActionRequest` | `{ message? }` |
+| `GET /api/layout` | — | `LayoutRecords` |
+| `POST /api/layout` | `LayoutOperation` | 改后的 `LayoutRecords` |
+
+```ts
+interface PageDataQuery {
+  sessionId?: string; // 会话面板必填
+  rowKey?: string; // 详情里的组件必填
+  input?: string; // 插件前端声明了输入的数据源：JSON 字符串
+}
+interface PageActionRequest {
+  sessionId?: string; // 会话面板必填
+  rowKey?: string; // 行动作必填（插件前端没有行动作）
+  input?: Record<string, unknown>; // 声明了输入的动作
+}
+```
+
+两条路由只收用得上的键，多出或缺了都拒收，见上文「页面的调用与布局」；布局记录的操作见那一节的「布局记录」。
+
+### 市场
+
+| 路由 | 请求 | 返回 |
+|---|---|---|
+| `GET /api/marketplace` | 查询参数 `q?`：空格分隔的每个词都要在包名、描述或关键词里 | `{ packages: MarketplacePackage[], warning? }` |
+| `GET /api/system-components` | — | `{ components: SystemComponent[], warning? }` |
+| `GET /api/marketplace/depgraph` | 查询参数 `name`：包名 | `DependencyGraphResponse` |
+| `POST /api/marketplace/install` | `{ name }` | `InstallResult`（api-package-manager） |
+| `POST /api/marketplace/uninstall` | `{ name }` | `{ ok, message }` |
+| `POST /api/marketplace/update` | `{ targets: [{ name, version }] }`，整批 | `UpdateResult`（api-package-manager），成功后进程重启 |
+
+装卸与更新被包管理拒绝时也回 200，`ok` 为 `false`、`message` 写原因；`warning` 是检索源或安装源查不到时的说明。
+
+```ts
+interface MarketplacePackage {
+  name: string;
+  version: string; // 安装源上的最新版，查不到为空串；不是本地已装的版本
+  description: string;
+  author?: string;
+  installed: boolean;
+  resolved?: string; // 本地已装的版本
+  request?: string; // 根 package.json 里的依赖声明
+  origin?: DepOrigin; // 本地这份从哪来（util-dep-spec）
+  updatable: boolean; // 能否经市场更新，界面直接用它，不自己比版本
+  official: boolean; // @aalis/ 下的包
+  category: 'plugin' | 'api' | 'schema' | 'interface' | 'util';
+  keywords?: string[];
+  downloads?: number; // 月下载量
+  updated?: string; // ISO 时间
+  score?: number; // 只用来排序
+  insecure?: boolean;
+  license?: string;
+  links?: { npm?: string; homepage?: string; repository?: string };
+}
+interface SystemComponent {
+  name: string;
+  version?: string; // 本地已装的版本
+  latest?: string; // 安装源上的最新版
+  request?: string;
+  origin: DepOrigin; // 从 updatable 推不出来源，所以另给
+  description?: string;
+  kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
+  updatable: boolean; // 根 dependencies 里以 semver 范围声明、且最新版严格新于本地
+}
+interface DependencyGraphResponse {
+  upstream: DependencyNode; // 它依赖谁
+  downstream: DependencyNode; // 谁依赖它
+  services: { required: Array<{ service: string; providedBy: string | null }>; provides: string[] };
+  serviceDependents: string[]; // 卸载它会断掉服务的插件
+}
+interface DependencyNode {
+  name: string;
+  present: boolean; // false：本地没有这个包，链路在此中断
+  services?: { provides: string[]; requires: string[] }; // 已加载的插件才有
+  children: DependencyNode[];
+}
+```
+
+### 文件
+
+| 路由 | 请求 | 响应头 |
+|---|---|---|
+| `GET /api/session-file` | 查询参数 `sessionId`、`handle`（会话服务签发的句柄，条目附件的 `src`） | 当附件下发：`application/octet-stream`、`Content-Disposition: attachment`、`Content-Length`、`nosniff` |
+| `GET /api/page-file` | 查询参数 `handle`（`FileCell.handle`） | 同上 |
+| `GET /api/media` | 查询参数 `uri`：存储地址 | 按文件头判定的图片、视频或音频类型，`Content-Disposition: inline`、`Content-Length`、`nosniff`、`Content-Security-Policy: sandbox; default-src 'none'`、`Cache-Control: private, max-age=3600` |
+| `GET /api/proxy/image` | 查询参数 `url`：外站图片 | `image/*`、`nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: private, max-age=86400` |
+
+### 插件前端的文件
+
+| 路由 | 说明 |
+|---|---|
+| `GET /frames/:token/{*path}` | 插件前端的文件，`token` 取自 `FramePageView.frame.src` |
+| `GET /frames/_base/frame.js` | 宿主给框架的助手 |
+| `GET /frames/_base/frame.css` | 宿主给框架的样式基线 |
+
+只收 GET 与 HEAD，别的方法回 405；不要登录。响应头带框架 CSP（`sandbox allow-scripts; …`）、`nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *` 与 `Cache-Control: no-cache`，规则见上文「托管与隔离」。
+
+### 前端托管
+
+| 路由 | 说明 |
+|---|---|
+| `GET /__clients` · `GET /__clients.js` | 换前端的恢复页与它的脚本：任何前端卡住时都能在这里切回 |
+| `GET /{*path}` | 其余 GET：活跃前端的 `index.html`，前端自己的路由由它接手；`/assets/` 下没有的文件回 404，还没有前端时回 404 与 `ErrorResponse` |
+
+这几条带文档级 CSP；活跃前端的静态文件（`index.html` 旁的脚本、样式与图片）在它们之前按文件路径给出。
 
 ## 主题
 

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { Ellipsis, Send } from 'lucide-react';
 import { useState } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Badge } from '../../packages/plugin-webui-client/src/components/Badge.js';
 import { Button } from '../../packages/plugin-webui-client/src/components/Button.js';
 import { Dialog } from '../../packages/plugin-webui-client/src/components/Dialog.js';
@@ -12,11 +12,12 @@ import { IconButton } from '../../packages/plugin-webui-client/src/components/Ic
 import { List, ListItem } from '../../packages/plugin-webui-client/src/components/List.js';
 import { Menu } from '../../packages/plugin-webui-client/src/components/Menu.js';
 import { Panel } from '../../packages/plugin-webui-client/src/components/Panel.js';
+import { Select } from '../../packages/plugin-webui-client/src/components/Select.js';
 import { TABLE_PAGE_SIZE, Table, type TableColumn } from '../../packages/plugin-webui-client/src/components/Table.js';
 import { Tabs } from '../../packages/plugin-webui-client/src/components/Tabs.js';
 import { ToastProvider, useToast } from '../../packages/plugin-webui-client/src/components/Toast.js';
 import { Toggle } from '../../packages/plugin-webui-client/src/components/Toggle.js';
-import { installDialog } from './harness.js';
+import { choose, installDialog } from './harness.js';
 
 // ════════════════════════════════════════════════════════════
 // 基础组件：键盘可达、焦点可见、读屏标签，以及各组件自己的行为（Toast 的计时、Menu 的方向键、Table 的筛选与全选）
@@ -414,6 +415,146 @@ describe('Menu', () => {
   });
 });
 
+describe('Select', () => {
+  const FEW = [
+    { value: 'info', label: '信息' },
+    { value: 'warn', label: '警告' },
+    { value: 'gone', label: '已下线', disabled: true },
+    { value: 'error', label: '错误' },
+  ];
+  const MANY = Array.from({ length: 12 }, (_, index) => ({ value: `m${index}`, label: `model-${index}` }));
+
+  function Picker({ options, initial = '' }: { options: typeof FEW; initial?: string }) {
+    const [value, setValue] = useState(initial);
+    return (
+      <>
+        <Select aria-label="级别" value={value} options={options} placeholder="全部" onChange={setValue} />
+        <output data-testid="chosen">{value}</output>
+      </>
+    );
+  }
+
+  const chosen = () => screen.getByTestId('chosen').textContent;
+
+  it('按钮写选中的那一项，读屏标签是名字；点开列出选项、标出选中的，点一项交出它的值、关闭并把焦点还给按钮', () => {
+    render(<Picker options={FEW} initial="warn" />);
+    const trigger = screen.getByRole('combobox', { name: '级别' });
+    expect(trigger.textContent).toBe('警告');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    const list = screen.getByRole('listbox', { name: '级别' });
+    expect(
+      within(list)
+        .getAllByRole('option')
+        .map(option => option.textContent),
+    ).toEqual(['信息', '警告', '已下线', '错误']);
+    expect(within(list).getByRole('option', { name: '警告' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(list).getByRole('option', { name: '已下线' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(within(list).getByRole('option', { name: '已下线' }));
+    expect(chosen()).toBe('warn');
+    fireEvent.click(within(list).getByRole('option', { name: '错误' }));
+    expect(chosen()).toBe('error');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.textContent).toBe('错误');
+  });
+
+  it('没选时写占位的字；选项少时没有过滤框，方向键在可选的项之间移动（跳过不可选的），回车选中，Esc 关闭不改', () => {
+    render(<Picker options={FEW} />);
+    const trigger = screen.getByRole('combobox', { name: '级别' });
+    expect(trigger.textContent).toBe('全部');
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const list = screen.getByRole('listbox');
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(document.activeElement).toBe(list);
+    const active = () => document.getElementById(list.getAttribute('aria-activedescendant') ?? '')?.textContent;
+    expect(active()).toBe('信息');
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    expect(active()).toBe('错误');
+    fireEvent.keyDown(list, { key: 'Home' });
+    expect(active()).toBe('信息');
+    fireEvent.keyDown(list, { key: 'End' });
+    fireEvent.keyDown(list, { key: 'ArrowUp' });
+    expect(active()).toBe('警告');
+    fireEvent.keyDown(list, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(chosen()).toBe('');
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Enter' });
+    expect(chosen()).toBe('warn');
+  });
+
+  it('选项多时有过滤框：只留下名字含所写文字的项（不分大小写），方向键移动、回车选中；没有匹配的写明', () => {
+    render(<Picker options={MANY} />);
+    fireEvent.click(screen.getByRole('combobox', { name: '级别' }));
+    const filter = screen.getByRole('searchbox', { name: '过滤' });
+    expect(document.activeElement).toBe(filter);
+    fireEvent.change(filter, { target: { value: 'MODEL-1' } });
+    const list = screen.getByRole('listbox');
+    expect(
+      within(list)
+        .getAllByRole('option')
+        .map(option => option.textContent),
+    ).toEqual(['model-1', 'model-10', 'model-11']);
+    fireEvent.keyDown(filter, { key: 'ArrowDown' });
+    fireEvent.keyDown(filter, { key: 'Enter' });
+    expect(chosen()).toBe('m10');
+    fireEvent.click(screen.getByRole('combobox', { name: '级别' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: '过滤' }), { target: { value: '没有这个' } });
+    expect(within(screen.getByRole('listbox')).queryAllByRole('option')).toEqual([]);
+    expect(screen.getByText('没有符合的项')).toBeTruthy();
+  });
+
+  it('打开时把选中的那一项滚进视野：长列表里选中的在下面也看得到', () => {
+    const scrolled: string[] = [];
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this.textContent ?? '');
+    });
+    onTestFinished(() => scroll.mockRestore());
+    render(<Picker options={MANY} initial="m11" />);
+    fireEvent.click(screen.getByRole('combobox', { name: '级别' }));
+    expect(scrolled).toEqual(['model-11']);
+  });
+
+  it('点在外面、Tab 离开时关闭', () => {
+    render(<Select aria-label="级别" value="" options={FEW} onChange={() => {}} />);
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Tab' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  describe('在模态对话框里', () => {
+    let restoreDialog: () => void;
+    beforeAll(() => {
+      restoreDialog = installDialog();
+    });
+    afterAll(() => restoreDialog());
+
+    it('弹层挂在对话框里（对话框外面的东西点不到），Esc 只关弹层、不关对话框', () => {
+      const onClose = vi.fn();
+      render(
+        <Dialog open title="表单" onClose={onClose}>
+          <Picker options={FEW} />
+        </Dialog>,
+      );
+      const dialog = screen.getByRole('dialog');
+      fireEvent.click(within(dialog).getByRole('combobox', { name: '级别' }));
+      const list = within(dialog).getByRole('listbox');
+      const notCancelled = fireEvent.keyDown(list, { key: 'Escape' });
+      expect(notCancelled).toBe(false);
+      expect(within(dialog).queryByRole('listbox')).toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe('Table', () => {
   interface Room {
     id: string;
@@ -515,7 +656,7 @@ describe('Table', () => {
       />,
     );
     expect(names()).toEqual(['房间 001', '房间 003']);
-    fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'group' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '群');
     expect(onChange).toHaveBeenLastCalledWith({ type: 'group' });
 
     rerender(
@@ -582,9 +723,9 @@ describe('Table', () => {
     expect(screen.getByRole('status').textContent).toBe('r0,r2,r4');
     expect(screen.getByText('已选 3 项')).toBeTruthy();
     // 筛掉的行没被全选带上：换成私聊，只剩原先选的 r1
-    fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'private' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '私聊');
     expect(screen.getByRole('status').textContent).toBe('r1');
-    fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'group' } });
+    choose(screen.getByRole('combobox', { name: '类型' }), '群');
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 房间 002' }));
     expect(screen.getByRole('status').textContent).toBe('r0,r4');
     expect((all as HTMLInputElement).indeterminate).toBe(true);

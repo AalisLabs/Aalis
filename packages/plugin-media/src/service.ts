@@ -13,6 +13,7 @@ import type {
   MediaProcessor,
   MediaProcessReport,
   MediaService,
+  TranscribeInput,
   TranscribeOptions,
 } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
@@ -265,7 +266,7 @@ export class MediaServiceImpl implements MediaService {
 
   async transcribe(
     attachment: MessageAttachment,
-    opts: TranscribeOptions & { context?: string } = {},
+    opts: TranscribeOptions & Pick<TranscribeInput, 'context' | 'sessionId'> = {},
   ): Promise<string | undefined> {
     if (this.cfg.audio.mode === 'disabled') return undefined;
     // 音频后端=统一池（whisper/ASR 与 audio LLM），由 audio.prefer > 优先级选一个 processor
@@ -279,6 +280,7 @@ export class MediaServiceImpl implements MediaService {
         attachment,
         language: opts.language ?? this.cfg.audio.language,
         context: opts.context,
+        sessionId: opts.sessionId,
       });
       return r.text;
     } catch (err) {
@@ -396,7 +398,7 @@ export class MediaServiceImpl implements MediaService {
               }
               descriptions[i] = item.description;
             } else if (animated) {
-              const text = await this.processVideo(att, ctxText, 'animated');
+              const text = await this.processVideo(att, ctxText, 'animated', msg.sessionId);
               if (text) {
                 item.description = text;
                 item.cap = 'vision';
@@ -423,6 +425,7 @@ export class MediaServiceImpl implements MediaService {
                     maxTokens: this.cfg.vision.maxTokens,
                     basePrompt,
                     context: ctxText,
+                    sessionId: msg.sessionId,
                   }),
                   this.cacheImageRef(att, msg.sessionId),
                 ]);
@@ -447,7 +450,7 @@ export class MediaServiceImpl implements MediaService {
             // passthrough：不转写，attachment 原样保留，由主模型直接理解（需主模型有 audio 能力）
             item.description = undefined;
           } else if (this.cfg.audio.mode === 'enabled') {
-            const text = await this.transcribe(att, { context: ctxText });
+            const text = await this.transcribe(att, { context: ctxText, sessionId: msg.sessionId });
             item.cap = 'audio';
             // 空响应不应该被歸因为“非语音”——模型可能是 maxTokens 不足 / 上下文超限 / 超时，
             // 详细原因看 llm-adapter 里的 warn 日志（含 raw 长度、tokens 资源占用比）。
@@ -456,7 +459,7 @@ export class MediaServiceImpl implements MediaService {
           }
         } else if (att.kind === 'video') {
           if (this.cfg.video.mode !== 'disabled') {
-            item.description = await this.processVideo(att, ctxText);
+            item.description = await this.processVideo(att, ctxText, 'video', msg.sessionId);
             descriptions[i] = item.description;
             item.cap = 'vision';
           }
@@ -594,12 +597,13 @@ export class MediaServiceImpl implements MediaService {
   /**
    * 视频：抽帧 + 抽音轨转写 → 拼综合描述。
    * sourceKind: 'video'（默认）用 cfg.video.maxFrames；'animated' 用 cfg.animatedImage.maxFrames
-   * （两者独立配置，动图信息量低通常给更小预算）。
+   * （两者独立配置，动图信息量低通常给更小预算）。sessionId 是消息所在的会话，帧识别与音轨转写按它记账。
    */
   private async processVideo(
     att: MessageAttachment,
     contextText?: string,
     sourceKind: 'video' | 'animated' = 'video',
+    sessionId?: string,
   ): Promise<string | undefined> {
     const local = await materializeAttachment(att.data);
     if (!local) {
@@ -625,6 +629,7 @@ export class MediaServiceImpl implements MediaService {
             maxTokens: this.cfg.vision.maxTokens,
             hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
             context: contextText,
+            sessionId,
           });
           const text = r.descriptions[0];
           if (text) {
@@ -646,7 +651,7 @@ export class MediaServiceImpl implements MediaService {
         if (audioDataUrl) {
           const text = await this.transcribe(
             { kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' },
-            { context: contextText },
+            { context: contextText, sessionId },
           );
           if (text) {
             frameTexts.push(`${this.cfg.video.audioTrackPrefix}${text}`);
@@ -753,6 +758,7 @@ export class MediaServiceImpl implements MediaService {
               maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
               basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
               hint: opts.hint,
+              sessionId: opts.sessionId,
             });
             result = r.descriptions[0] ?? '';
           }
@@ -781,6 +787,7 @@ export class MediaServiceImpl implements MediaService {
         maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
         basePrompt,
         hint: opts.hint,
+        sessionId: opts.sessionId,
       });
       result = r.descriptions[0] ?? '';
     }

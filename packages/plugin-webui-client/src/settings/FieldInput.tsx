@@ -1,10 +1,11 @@
 import { RotateCw } from 'lucide-react';
 import { type ReactNode, useId, useReducer, useState } from 'react';
 import { IconButton } from '../components/IconButton';
+import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { composing } from '../keys';
 import { isRecord, postJson } from '../rest';
-import { type Field, isModelField, type Option, valueKey, withChosen, withCurrent } from './field';
+import { type Field, isModelField, type Option, optionLabel, valueKey, withChosen, withCurrent } from './field';
 import { useFieldOptions } from './options';
 import './FieldInput.css';
 
@@ -25,9 +26,10 @@ export interface FieldCommon {
   'data-autofocus'?: boolean;
 }
 
-/** 字段的可选项；refetch 让它重取（模型服务重新探测之后） */
+/** 字段的可选项与不在可选项里的取值的名字；refetch 让它重取（模型服务重新探测之后） */
 export interface FieldOptions {
   options: Option[];
+  names?: readonly Option[];
   error?: Error;
   refetch(): void;
 }
@@ -90,26 +92,25 @@ export function FieldInput(props: FieldInputProps) {
 /** 调用方没给可选项：自己取 */
 function OwnOptions(props: FieldInputProps) {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
-  const { options, error } = useFieldOptions(props.field, version, props.dependency);
-  return <FieldInput {...props} options={{ options, error, refetch }} />;
+  const { options, names, error } = useFieldOptions(props.field, version, props.dependency);
+  return <FieldInput {...props} options={{ options, names, error, refetch }} />;
 }
 
-function Choices({ field, value, onChange, common, options, empty }: ChoiceProps & { empty?: string }) {
-  const choices = withCurrent(field, options.options, value);
+/** 选择：不是必填的可以选空的一项（交出 undefined）；empty 是空的那一项的名字 */
+function Choices({ field, value, onChange, common, options, empty = '不选' }: ChoiceProps & { empty?: string }) {
+  const choices = withCurrent(field, options.options, value, options.names);
   return (
     <>
-      <select
+      <Select
         {...common}
         value={value === undefined ? '' : valueKey(field, value)}
-        onChange={e => onChange(choices.find(option => option.key === e.target.value)?.value)}
-      >
-        {(value === undefined || !field.required) && <option value="">{empty}</option>}
-        {choices.map(option => (
-          <option key={option.key} value={option.key}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        options={[
+          ...(field.required ? [] : [{ value: '', label: empty }]),
+          ...choices.map(option => ({ value: option.key, label: optionLabel(option) })),
+        ]}
+        placeholder="请选择"
+        onChange={key => onChange(choices.find(option => option.key === key)?.value)}
+      />
       {options.error && <p className="field-note">可选项没取到：{options.error.message}</p>}
     </>
   );

@@ -1,5 +1,6 @@
 import type { SettingLayer } from '@aalis/api-session-protocol';
 import { useCallback, useId, useMemo, useState } from 'react';
+import { Select } from '../components/Select';
 import { useConnection } from '../connection';
 import type { SessionClient } from '../protocol/session-client';
 import { SettingRows } from './SettingRows';
@@ -57,13 +58,12 @@ export function SessionDefaults() {
         <p className="settings-note">{ORDER}</p>
         <div className="settings-field">
           <label htmlFor={pickerId}>层</label>
-          <select id={pickerId} value={chosen} onChange={event => setChosen(event.target.value)}>
-            {(layers ?? [DEFAULTS]).map(layer => (
-              <option key={keyOf(layer)} value={keyOf(layer)}>
-                {labelOf(layer)}
-              </option>
-            ))}
-          </select>
+          <Select
+            id={pickerId}
+            value={chosen}
+            options={(layers ?? [DEFAULTS]).map(layer => ({ value: keyOf(layer), label: labelOf(layer) }))}
+            onChange={setChosen}
+          />
         </div>
         {target.layer.scope !== 'defaults' && <p className="settings-note">平台档按平台名生效，不区分实例。</p>}
       </div>

@@ -13,7 +13,8 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 单 token（单 owner）
 //
-// 纯 middleware 单测：用最小 req/res mock 走登录/识别/注销流程、token 比较、来源判定与登录失败限速，不起 HTTP 服务器。
+// 认证挂到一个按登记先后分派的假 app 上（只认方法与完整路径），用最小 req/res mock 走登录/识别/注销流程、token 比较、
+// 来源判定与登录失败限速，不起 HTTP 服务器。
 // 固定 token 的长度校验在插件激活时做，那一组只激活插件、不启动应用，同样不监听端口。
 // ════════════════════════════════════════════════════════════
 
@@ -97,15 +98,42 @@ function makeAuth() {
   return createAuthSystem(() => TOKEN);
 }
 
+type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
+
+/** 把认证挂上的中间件与路由按登记先后排成一列；路由只在方法与完整路径都对上时接手 */
+function stackOf(auth: ReturnType<typeof makeAuth>) {
+  const stack: Array<{ method?: string; path?: string; handle: Handler }> = [];
+  const routeOf =
+    (method: string) =>
+    (path: string, ...handlers: Handler[]) =>
+      stack.push(...handlers.map(handle => ({ method, path, handle })));
+  auth.install({
+    use: (handle: Handler) => stack.push({ handle }),
+    get: routeOf('GET'),
+    post: routeOf('POST'),
+  } as never);
+  return stack;
+}
+
+/** 走一遍认证：nexted 为 true 表示交给了后面的路由 */
 async function run(
   auth: ReturnType<typeof makeAuth>,
   req: ReturnType<typeof makeReq>,
 ): Promise<{ res: MockRes; nexted: boolean }> {
   const res = makeRes();
+  const stack = stackOf(auth);
   let nexted = false;
-  await auth.middleware(req as never, res as never, () => {
+  let i = 0;
+  const next = async (): Promise<void> => {
+    while (i < stack.length) {
+      const layer = stack[i++];
+      if (layer.method && (layer.method !== req.method || layer.path !== req.path)) continue;
+      await layer.handle(req, res, next);
+      return;
+    }
     nexted = true;
-  });
+  };
+  await next();
   return { res, nexted };
 }
 
@@ -218,7 +246,7 @@ describe('登录失败限速', () => {
     const locked = await login(auth, TOKEN);
     expect(locked.res.statusCode).toBe(429);
     expect(locked.res.headers['Retry-After']).toBe('600');
-    expect(locked.res.jsonBody).toMatchObject({ ok: false, error: expect.stringContaining('10 分钟') });
+    expect(locked.res.jsonBody).toEqual({ error: expect.stringContaining('10 分钟') });
     expect(extractCookie(locked.res, 'aalis_webui_token')).toBeUndefined();
     const lockedQuery = await viaQuery(auth, TOKEN);
     expect(lockedQuery.res.statusCode).toBe(429);
@@ -442,7 +470,7 @@ describe('REST 路由 owner 闸（单 owner 终态）', () => {
     expect(pass(gate()).nexted).toBe(true);
   });
 
-  it('身份解析为空（未认证，理论上 auth.middleware 已先拦）→ 403', () => {
+  it('身份解析为空（未认证，理论上连接级认证已先拦）→ 403', () => {
     const gate = createRouteGate(() => undefined);
     const r = pass(gate());
     expect(r.nexted).toBe(false);

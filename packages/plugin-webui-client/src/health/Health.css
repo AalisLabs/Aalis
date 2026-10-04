@@ -1,0 +1,107 @@
+/* 概况：正文有最大宽度、左对齐 */
+.health-overview {
+  max-width: var(--measure-page);
+}
+
+/* 日志：筛选在上面，不随日志滚动；日志在下面自己的滚动区里 */
+.health-logs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+.health-logs-filters {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.health-logs-filters > input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+/* 贴着底部：停在底部时新来的出现在视野里，往上翻看时不被拽走 */
+.health-logs-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column-reverse;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.health-logs-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: auto;
+  padding: var(--space-2) var(--space-4);
+}
+
+.log-list {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+/* 一条：时间、级别与作用域一行，正文在下面；宽时正文接在同一行，各列对齐 */
+.log-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: var(--space-3);
+  padding: var(--space-0-5) 0;
+}
+
+/* 时间与级别不折行，放不下时截短的是作用域 */
+.log-meta {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--color-text-3);
+}
+
+.log-scope {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.log-line[data-level="debug"] .log-message {
+  color: var(--color-text-2);
+}
+
+.log-line[data-level="warn"] .log-level {
+  color: var(--color-warning-text);
+}
+
+.log-line[data-level="error"] .log-level {
+  color: var(--color-danger-text);
+}
+
+@container (min-width: 48rem) {
+  .log-line {
+    grid-template-columns: max-content max-content 16rem minmax(0, 1fr);
+  }
+
+  .log-meta {
+    display: contents;
+  }
+}

@@ -41,7 +41,6 @@ a {
 
 button,
 input,
-select,
 textarea {
   font: inherit;
   color: inherit;
@@ -71,7 +70,6 @@ button:disabled {
 }
 
 input:not([type="checkbox"]):not([type="radio"]),
-select,
 textarea {
   min-height: var(--hit);
   padding: 0 var(--space-3);
@@ -86,13 +84,12 @@ textarea {
 }
 
 input:focus-visible,
-select:focus-visible,
 textarea:focus-visible {
   outline-offset: 0;
 }
 
 /* 没过校验：外框换危险色，原因写在控件下面 */
-:is(input, select, textarea)[aria-invalid="true"] {
+:is(input, textarea)[aria-invalid="true"] {
   border-color: var(--color-danger-text);
 }
 
@@ -126,6 +123,17 @@ pre {
   flex-shrink: 0;
   height: var(--header-h);
   border-bottom: 1px solid var(--color-border);
+}
+
+/* 分区的小标题（会话列表、插件列表、搜索结果的分组、首页摘要）：各处只另给内边距与间距 */
+.section-heading {
+  display: flex;
+  align-items: center;
+  min-height: var(--row-heading);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
 }
 
 /* 只给读屏的文字 */

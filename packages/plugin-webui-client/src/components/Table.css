@@ -108,6 +108,11 @@
   color: var(--color-text-3);
 }
 
+/* 数字列右对齐：图标放在文字左边，表头文字与数字的右边对齐 */
+.table th[data-numeric] .table-sort {
+  flex-direction: row-reverse;
+}
+
 /* 没排序的列只在指着或聚焦时露出排序图标，表头不满是箭头；触屏上没有悬停，常显 */
 .table th:not([aria-sort]) .table-sort .lucide {
   visibility: hidden;

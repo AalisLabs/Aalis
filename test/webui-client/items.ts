@@ -75,7 +75,7 @@ export const usage = (fields: Partial<Item<'usage'>> = {}) =>
     tokenBudget: 90_000,
     used: 42_000,
     usageRatio: 0.42,
-    breakdown: {},
+    parts: [],
     ...fields,
   }) satisfies Item<'usage'>;
 

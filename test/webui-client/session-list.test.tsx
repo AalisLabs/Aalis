@@ -405,7 +405,7 @@ describe('行的「更多」与归档区', () => {
     expect(
       header.getAllByRole('button').map(button => [button.getAttribute('aria-label'), button.textContent]),
     ).toEqual([
-      ['搜索会话', ''],
+      ['搜索', ''],
       ['新会话', ''],
     ]);
     fireEvent.click(header.getByRole('button', { name: '新会话' }));

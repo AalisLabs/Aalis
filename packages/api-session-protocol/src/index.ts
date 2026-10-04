@@ -3,7 +3,7 @@
  *
  * owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上格式：JSON-RPC 2.0 帧、握手、错误码，会话列表与增量、
  * 订阅与条目、回合控制、在场与审批。帧与参数都写成 zod schema，类型由 schema 推导：服务端按它校验收到的帧，客户端照它实现。
- * 本包只有 schema、协议版本与服务描述符 `sessionProtocol`；实现见 @aalis/plugin-session-server，
+ * 本包只有 schema、协议版本与服务描述符 `sessionProtocol`；实现由提供 `sessionProtocol` 的插件给出，
  * 传输（WebSocket 等）由宿主插件接到 `sessionProtocol.connect`。
  *
  * 第一版标 experimental：终端客户端接入之前允许不兼容的修改，之后只做加法，加字段升次版本。
@@ -274,6 +274,8 @@ export const SettingRowSchema = z.object({
   prominence: z.enum(['composer', 'common', 'advanced']),
   /** 可选项依赖的另一行的键：取这一行的动态可选项时带上那一行的生效值，那一行变了就重取 */
   dependsOn: z.string().optional(),
+  /** 哪一层都没设、字段又没有默认值时这一项的含义（登记方给），界面写在生效值的位置 */
+  unset: z.string().optional(),
   /** 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值；没写的没有 */
   value: z.unknown().optional(),
   /** 生效值；哪一层都没设时没有，界面按字段的默认值显示 */
@@ -393,7 +395,7 @@ const itemBase = {
  * 时间线上的一个条目。推送分 item/started、item/delta、item/completed，completed 里的全文是唯一正本；
  * 一次成形的条目不经 started 直接 completed，同一条目可以再次 completed（如送达结果晚到），按 itemId 覆盖：
  * - user-message：说话人的文字与附件；
- * - agent-message：她的文字与附件（可以只有附件）、模型；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
+ * - agent-message：她的文字与附件（可以只有附件）、模型与这一轮的 token；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
  *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
  * - reasoning：思考文字；
  * - tool-call：工具名、参数、状态、流式输出（exec 等）、结果摘要、耗时；display 是按工具声明解析好的展示，没声明的没有，
@@ -404,10 +406,11 @@ const itemBase = {
  *   这次调用要 owner 批准、审批推给了审批面时带 approvalId，再推一次 item/started；结算后带 approvalId 与 settlement，
  *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
  *   没人应答、撤销）状态是 denied。sentToRoom、approvalId、settlement 与停止时还没结束随工具结果落库，历史里同样还原；
- * - notice：宿主事件（压缩、白纸与作品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
+ * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
- *   compressAt 是自动压缩的使用率（由压缩服务给出），没有压缩服务或不自动压缩时没有；
+ *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是自动压缩的使用率（由压缩服务给出），
+ *   没有压缩服务或不自动压缩时没有；
  * - turn：回合开始（by 是发起方）与结束（outcome）。
  */
 export const SessionItemSchema = z.discriminatedUnion('kind', [
@@ -423,7 +426,18 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     ...itemBase,
     text: z.string(),
     attachments: z.array(ItemAttachmentSchema),
-    model: z.object({ provider: z.string().optional(), model: z.string().optional() }).optional(),
+    /**
+     * 生成这条回复的模型与这一轮的 token：promptTokens 是这一轮最后一次调用的上下文，completionTokens 是这一轮各次调用的
+     * 输出合计
+     */
+    model: z
+      .object({
+        provider: z.string().optional(),
+        model: z.string().optional(),
+        promptTokens: z.number().optional(),
+        completionTokens: z.number().optional(),
+      })
+      .optional(),
     undelivered: z.object({ reason: z.string() }).optional(),
   }),
   z.object({ kind: z.literal('reasoning'), ...itemBase, text: z.string() }),
@@ -464,9 +478,11 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     tokenBudget: z.number(),
     used: z.number(),
     usageRatio: z.number(),
-    breakdown: z.record(z.number()),
-    /** 其余系统提示的按注入者明细：键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件 */
-    injectors: z.record(z.number()).optional(),
+    /**
+     * 不含为回复预留（maxTokens）。injectors 是这一项按注入者的明细：键是注入者的全局键「插件实例 id/局部 id」，
+     * 界面按实例前缀合并到插件
+     */
+    parts: z.array(z.object({ label: z.string(), tokens: z.number(), injectors: z.record(z.number()).optional() })),
     /** 自动压缩的使用率（0 到 1，与 usageRatio 同一口径） */
     compressAt: z.number().optional(),
   }),

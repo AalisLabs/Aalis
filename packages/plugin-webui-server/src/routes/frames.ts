@@ -106,11 +106,9 @@ export function registerFrameRoutes(expressApp: express.Express, dirOf: (token: 
       },
     })(req, res, () => res.status(404).end());
   });
-  // token 段的 %xx 解不开时，路由在解参数这一步就抛错、走不到上面；默认的错误处理会回堆栈，这里一律回 404
-  expressApp.use(
-    '/frames',
-    (_err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-      res.status(404).end();
-    },
-  );
+  // token 段的 %xx 解不开时，路由在解参数这一步就抛错、走不到上面；默认的错误处理会回堆栈，这里一律回 404。
+  // 紧跟在挂载之后，前面只有给每个响应加 CSP 的中间件，接到的错误只会来自这里
+  expressApp.use((_err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(404).end();
+  });
 }

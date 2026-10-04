@@ -18,13 +18,14 @@ export default definePlugin({
     logger,
     lifecycle,
     provide,
+    events,
     proc: optional(processService),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-每个发现的模型单独注册为一条 `llm` 服务条目，能力按模型解析，优先级从高到低：`modelCapabilities` 覆盖、Ollama `/api/show` 探测结果、内置模型家族表、`providerCapabilities` 兜底。
+每个发现的模型单独注册为一条 `llm` 服务条目（登记时套上 `metered`，拿到用量的调用发 `llm:usage`，见 [api-llm 的记账](../api/api-llm.md#记账)），能力按模型解析，优先级从高到低：`modelCapabilities` 覆盖、Ollama `/api/show` 探测结果、内置模型家族表、`providerCapabilities` 兜底。
 
 `/api/show` 探测到能力但其中没有对话能力的模型（如只报 `embedding` 的嵌入模型）不注册条目，不会出现在 `/model` 与 WebUI 的模型列表里；确需注册可用 `modelCapabilities` 显式声明能力。
 

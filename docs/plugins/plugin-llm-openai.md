@@ -18,10 +18,13 @@ export default definePlugin({
     logger,
     lifecycle,
     provide,
+    events,
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
+
+每个模型登记时套上 `metered`：拿到用量的调用发 `llm:usage`（见 [api-llm 的记账](../api/api-llm.md#记账)）。
 
 ## 配置
 

@@ -41,6 +41,11 @@
   margin-left: auto;
 }
 
+/* 头部右侧不是按钮的图标（回合进行中的运行指示）：次要色 */
+.panel-actions > .lucide {
+  color: var(--color-text-2);
+}
+
 .panel-banner {
   flex-shrink: 0;
   padding: var(--space-2) var(--space-4);

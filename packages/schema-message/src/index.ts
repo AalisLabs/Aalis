@@ -377,7 +377,10 @@ export interface OutgoingMessage {
   callId?: string;
   /** agent 一轮的回复：这一轮的 id。适配器记投递失败时带上它，回看历史时据此标出这一轮的回复没发出 */
   turnId?: string;
-  /** 本条回复的 LLM 元数据，只在进程内、不持久化；会话服务取其中的 provider 与 model 标在实时推送的回复上 */
+  /**
+   * 本条回复的 LLM 元数据（agent 存档时写进这条 assistant 消息的同名元数据），只在进程内；会话服务取其中的模型与
+   * 这一轮的 token 标在实时推送的回复上，与历史里还原的一致
+   */
   modelInfo?: {
     provider?: string;
     model?: string;

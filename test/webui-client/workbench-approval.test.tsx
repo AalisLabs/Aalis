@@ -3,13 +3,13 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, INIT, installDialog, main, renderApp, requests, server } from './harness.js';
+import { type Harness, installDialog, main, renderApp, requests, server } from './harness.js';
 import { approval, push, snapshot, toolCall, turn, userMessage } from './items.js';
 
 // ════════════════════════════════════════════════════════════
 // 审批卡：挂在工具卡下面，事实取会话服务按展示种类给出的命令、目录与 diff，没声明的逐字列出全部参数，显示前一律清洗、
 // 完整列出不限高；只有批准与拒绝（拒绝可附理由），不显示倒计时，出现时不抢输入框的焦点；结算后收成工具行上的一句
-// （结果、原因与时间），刷新后从条目恢复；标签页标题是握手给的应用名，有未结审批时带上待处理数
+// （结果、原因与时间），刷新后从条目恢复
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -285,25 +285,11 @@ describe('审批卡', () => {
         ]),
     });
     const log = within(await timeline());
+    // 三条都结算了，连续三条收成一行：点开看
+    fireEvent.click(log.getByRole('button', { name: '执行了 3 条命令' }));
     expect(log.getByRole('button', { name: /执行 make/ }).textContent).toContain('已批准 · 09:05');
     expect(log.getByRole('button', { name: /执行 rm -rf build/ }).textContent).toContain('已拒绝 · 09:05');
     expect(log.getByRole('button', { name: /执行 sleep 9/ }).textContent).toContain('已撤销 · 回合已结束 · 09:05');
     expect(screen.queryByRole('region', { name: '审批' })).toBeNull();
-  });
-
-  it('标签页标题是握手给的应用名，有推来的未结审批时带上待处理数，结算后去掉；连接断开时清空', async () => {
-    app = await renderApp('/s/s1', {
-      initialize: () => ({ ...INIT, appName: '<应用名>' }),
-      'session/subscribe': () => snapshot([]),
-    });
-    await timeline();
-    expect(document.title).toBe('<应用名>');
-    act(() => server().notify('approval/requested', { approval: execApproval }));
-    act(() => server().notify('approval/requested', { approval: approval('ap2', { sessionId: 'other' }) }));
-    expect(document.title).toBe('(2) <应用名>');
-    act(() => server().notify('approval/settled', { approvalId: 'ap1', state: 'approved', source: 'owner', at: 0 }));
-    expect(document.title).toBe('(1) <应用名>');
-    act(() => server().drop());
-    expect(document.title).toBe('<应用名>');
   });
 });

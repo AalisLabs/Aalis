@@ -1,0 +1,9 @@
+.picture-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}

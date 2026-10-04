@@ -1,14 +1,17 @@
 // 断线重连的 WebSocket，会话连接与管理连接共用。地址由页面所在的源推出，https 的页面连 wss。
 // 断开后按退避重连，网络恢复或页面回到前台时立即重试。一次也没连上就断开时查一次登录状态：
-// 握手看不到 401，登录失效时重新加载页面，由服务端给出登录页。
+// 握手看不到 401，登录失效时重新加载页面，由服务端给出登录页。登录状态查得到（页面的请求正常）却连着几回
+// 一次也没连上，多半是升级被来源校验拒了（只回裸 403，浏览器读不到）：经反向代理访问、代理没转发原始的 Host，
+// 状态上标出 refused，由连接横条提示。
 
 export type ConnectionStatus = 'connecting' | 'open' | 'retrying' | 'stopped';
 
-/** 连接状态；断开时带关闭帧的码与原因，停止时带停止的原因 */
+/** 连接状态；断开时带关闭帧的码与原因，停止时带停止的原因；refused 见文件头 */
 export interface ConnectionState {
   status: ConnectionStatus;
   code?: number;
   reason?: string;
+  refused?: boolean;
 }
 
 interface SocketHandlers {
@@ -30,16 +33,18 @@ interface Socket {
 /** 第 n 次连续失败后等多久再连；连上一次就从头算 */
 const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const AUTH_CHECK_TIMEOUT_MS = 10_000;
+/** 页面的请求正常、却连着这么多回一次也没连上，算被拒 */
+const REFUSED_AFTER = 2;
 
-function checkSignedIn(): void {
-  fetch('/api/auth/status', { signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS) })
+/** 查登录状态，登录失效时重新加载页面；回答页面的请求通不通（查到已登录） */
+function checkSignedIn(): Promise<boolean> {
+  return fetch('/api/auth/status', { signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS) })
     .then(response => response.json() as Promise<{ authed?: boolean }>)
     .then(status => {
       if (status.authed === false) location.reload();
+      return status.authed === true;
     })
-    .catch(() => {
-      // 服务端连不上时查不到登录状态，照常重连
-    });
+    .catch(() => false);
 }
 
 export function openSocket(path: string, handlers: SocketHandlers): Socket {
@@ -51,6 +56,10 @@ export function openSocket(path: string, handlers: SocketHandlers): Socket {
   /** 打开着的底层连接 */
   let live: WebSocket | undefined;
   let failures = 0;
+  /** 连着几回一次也没连上、页面的请求却正常 */
+  let refusals = 0;
+  /** 第几次连接：登录状态查回来时已经在连下一次了，就不再据它改状态 */
+  let attempt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const setState = (next: ConnectionState) => {
@@ -68,6 +77,7 @@ export function openSocket(path: string, handlers: SocketHandlers): Socket {
 
   function connect(): void {
     timer = undefined;
+    attempt++;
     const socket = new WebSocket(url);
     current = socket;
     socket.onopen = () => {
@@ -76,6 +86,7 @@ export function openSocket(path: string, handlers: SocketHandlers): Socket {
         () => {
           if (current !== socket) return;
           failures = 0;
+          refusals = 0;
           setState({ status: 'open' });
         },
         (error: Error) => {
@@ -93,10 +104,17 @@ export function openSocket(path: string, handlers: SocketHandlers): Socket {
       if (current !== socket) return;
       const opened = live === socket;
       release();
-      if (!opened) checkSignedIn();
+      if (!opened) {
+        const closed = attempt;
+        void checkSignedIn().then(restWorks => {
+          if (closed !== attempt) return;
+          refusals = restWorks ? refusals + 1 : 0;
+          setState({ ...state, refused: refusals >= REFUSED_AFTER });
+        });
+      }
       const delay = RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length - 1)];
       failures++;
-      setState({ status: 'retrying', code: event.code, reason: event.reason });
+      setState({ status: 'retrying', code: event.code, reason: event.reason, refused: refusals >= REFUSED_AFTER });
       timer = setTimeout(connect, delay);
     };
   }

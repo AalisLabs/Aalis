@@ -367,7 +367,7 @@ class DefaultAgent implements AgentService {
       }
     };
 
-    for await (const chunk of llm.chatStream!(request)) {
+    for await (const chunk of llm.chatStream!({ ...request, sessionId, purpose: this.purposeOf(sessionId) })) {
       // 检查中止信号
       if (request.signal?.aborted) {
         throw new DOMException('Generation aborted', 'AbortError');
@@ -432,6 +432,11 @@ class DefaultAgent implements AgentService {
       segments,
       generating,
     };
+  }
+
+  /** 记账的用途：子会话里的回合是子任务，其余是对话 */
+  private purposeOf(sessionId: string): string {
+    return this.caps.sessionManager.current?.getSession(sessionId)?.kind === 'task' ? '子任务' : '对话';
   }
 
   /**
@@ -1684,6 +1689,18 @@ class DefaultAgent implements AgentService {
           toolDefs: toolDefsTokens,
           reservedForReply: maxTokens,
         },
+        parts: [
+          { label: '历史消息', tokens: historyTokens },
+          { label: '工具结果', tokens: toolResultTokens },
+          { label: '工具定义', tokens: toolDefsTokens },
+          { label: '人设', tokens: personaTokens },
+          { label: '对话摘要', tokens: memorySummaryTokens },
+          { label: '向量记忆', tokens: memoryVectorTokens },
+          { label: '技能', tokens: skillsTokens },
+          { label: '平台提示', tokens: platformTokens },
+          { label: '子任务', tokens: subtaskTokens },
+          { label: '其余系统提示', tokens: systemOtherTokens, injectors: injectorTokens },
+        ],
       })
       .catch(() => {});
 
@@ -2197,13 +2214,17 @@ const configSchema = defineConfig({
   },
 });
 
-/** 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考与工具迭代上限，各种会话都适用 */
-const SESSION_SETTINGS: SessionSetting[] = [
+/**
+ * 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考与工具迭代上限，各种会话都适用。工具迭代上限没设置时
+ * 用插件配置的值，写进字段的默认值
+ */
+const sessionSettings = (maxToolIterations: number): SessionSetting[] => [
   {
     key: 'llm',
     field: { type: 'llm-ref', label: '模型', description: '没设置时跟随 llm 服务的偏好（默认对话模型）' },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'composer',
+    unset: '跟随服务偏好',
     // 会话选的是一个具体的模型：服务与模型都要给
     validate: value => {
       const ref = value as { provider?: unknown; model?: unknown } | null;
@@ -2237,6 +2258,7 @@ const SESSION_SETTINGS: SessionSetting[] = [
       label: '最大工具迭代',
       integer: true,
       min: 1,
+      default: maxToolIterations,
       description: '一轮里工具调用循环的最大次数；没设置时用对话代理插件的配置',
     },
     appliesTo: ['owner', 'room', 'task'],
@@ -2266,7 +2288,7 @@ type InternalAgent = {
 
 function run(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config, caps.logger);
-  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
+  for (const setting of sessionSettings(cfg.maxToolIterations)) caps.sessionManager.registerSetting(setting);
   const agentImpl = new DefaultAgent(caps, cfg);
   caps.provide(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。

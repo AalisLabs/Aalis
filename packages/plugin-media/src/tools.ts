@@ -189,7 +189,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           };
         }
 
-        const desc = await svc.describeImage(imageUrl, { hint, detailLevel });
+        const desc = await svc.describeImage(imageUrl, { hint, detailLevel, sessionId: callCtx.sessionId });
         return JSON.stringify(desc ? { description: desc } : { error: '没有可用的视觉模型或识别失败' });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });

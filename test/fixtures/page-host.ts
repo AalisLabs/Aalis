@@ -1,5 +1,5 @@
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
-import type { DeclarativePageView, WebUIService } from '../../packages/api-webui/src/index.js';
+import type { DeclarativePageView, PageActionResponse, WebUIService } from '../../packages/api-webui/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { createPageRegistry, type Reply } from '../../packages/plugin-webui-server/src/pages.js';
 
@@ -83,7 +83,7 @@ export function pageHost(opts: PageHostOptions = {}) {
       return (reply.body as { data: T }).data;
     },
     /** 调一个动作，原样回状态码与回包 */
-    act: (pageKey: string, action: string, body: Record<string, unknown> = {}): Promise<Reply> =>
+    act: (pageKey: string, action: string, body: Record<string, unknown> = {}): Promise<Reply<PageActionResponse>> =>
       registry.act(view(pageKey).instance, pageKey, action, body, CALLER, 'test'),
     /** 这个会话适用的会话面板页面的 key */
     async panels(sessionId: string): Promise<string[]> {

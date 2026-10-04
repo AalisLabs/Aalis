@@ -1,9 +1,9 @@
 // ----- WebUI 服务接口 -----
 //
 // WebUI 服务契约、页面与提示的登记门面（页面契约见 page.ts，插件前端的消息通道见 frame.ts）、管理面推送（/admin）的
-// 事件类型、主题的令牌表与文件格式（theme.ts），以及服务描述符。
+// 事件类型、管理面 REST（rest.ts）、主题的令牌表与文件格式（theme.ts），以及服务描述符。
 
-import type { LogEntry, ServiceRef } from '@aalis/core';
+import type { LogEntry, LogLevel, ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 import type { Notice, NoticeHandle, PageDefinition, PageHandle, PagePlacement } from './page.js';
 
@@ -173,22 +173,53 @@ export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server
   return serviceRef(port, facade);
 });
 
+// ----- 需要处理 -----
+
+/**
+ * 「需要处理」的一项，每项计 1：
+ * - `approval`：推给了审批面、还没结算的审批（同一会话同一时刻最多一张）；`session` 是会话的标题，会话管理不在时没有；
+ * - `plugin`：插件实例的故障：失败（`error`，带原因）或缺服务（`pending`，`missing` 是此刻没有提供者的 required 服务）；
+ * - `notice`：插件的提示，`instance` 是发出它的插件实例。
+ */
+export type AttentionItem =
+  | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string }
+  | { kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string; missing: string[] }
+  | ({ kind: 'notice'; instance: string } & Notice);
+
 // ----- 管理面推送 -----
 //
 // 会话之外的推送走 WebUI 的 WebSocket 端点 `/admin`，与会话协议的 `/session` 分开，认证相同（cookie 里的 token）。
 // 每个文本帧是一个 JSON 对象，`type` 区分种类。这里只给类型：服务端不校验自己发出的帧，前端照它实现。
 
-/** 前端发往 `/admin` 的消息：日志页打开时订阅实时日志，离开时退订。认不出的消息服务端忽略，连接照常 */
-export type WebuiAdminClientMessage = { type: 'log.subscribe' } | { type: 'log.unsubscribe' };
+/**
+ * 日志的筛选，历史（`GET /api/logs/tail`、`/api/logs/range` 的同名查询参数）与实时推送（`log.subscribe`）同一份，在服务端筛：
+ * - `level`：这一级及以上；
+ * - `plugin`：插件实例 id，认这个实例与它分出的子作用域的日志；
+ * - `text`：日志正文里含有这段文字，不分大小写。
+ *
+ * 几项一起给时都要满足，空字符串当没给
+ */
+export interface LogFilter {
+  level?: LogLevel;
+  plugin?: string;
+  text?: string;
+}
+
+/**
+ * 前端发往 `/admin` 的消息：日志页打开时订阅实时日志（带 `filter` 时只推符合的，再订阅一次换掉筛选），离开时退订。
+ * 认不出的消息（含写法不对的筛选）服务端忽略，连接与之前的订阅照常
+ */
+export type WebuiAdminClientMessage = { type: 'log.subscribe'; filter?: LogFilter } | { type: 'log.unsubscribe' };
 
 /**
  * `/admin` 推给前端的事件：
- * - `log`：一条新日志，只推给订阅了的连接。先订阅、再取 `GET /api/logs/tail`，两边按 `seq` 去重；
+ * - `log`：一条新日志，只推给订阅了、符合它订阅时的筛选的连接。先订阅、再带同一份筛选取 `GET /api/logs/tail`，两边按 `seq` 去重；
  * - `plugins.changed`：插件状态可能变了，或页面登记表变了，前端重取插件与页面（`GET /api/plugins`、`GET /api/pages`）。
  *   一次启停可能连着推几条，服务端不合并；
  * - `page.invalidate`：插件说这一页的数据变了。带 componentId 时只重取这个组件；带 sessionId 时只有打开着这个会话的面板重取。
  *   服务端按这四项合并短时间内的连发；
  * - `layout.changed`：owner 的布局记录（固定的页面、会话面板的标签）变了，前端重取 `GET /api/layout`；
+ * - `attention.changed`：「需要处理」变了（审批推出或结算、插件的故障有变、提示登记或撤回），前端重取 `GET /api/attention`；
  * - `app.restarting`：应用即将重启，连接随后断开；
  * - `client.reload`：前端偏好改了或有前端包被卸载，活跃前端可能换了，前端整页重新加载。
  */
@@ -197,11 +228,14 @@ export type WebuiAdminEvent =
   | { type: 'plugins.changed' }
   | { type: 'page.invalidate'; instance: string; pageKey: string; componentId?: string; sessionId?: string }
   | { type: 'layout.changed' }
+  | { type: 'attention.changed' }
   | { type: 'app.restarting' }
   | { type: 'client.reload' };
 
-// ----- 页面与提示，见 page.ts；插件前端的消息通道，见 frame.ts；主题的令牌表、文件格式与内置主题，见 theme.ts -----
+// ----- 页面与提示，见 page.ts；插件前端的消息通道，见 frame.ts；主题的令牌表、文件格式与内置主题，见 theme.ts；
+// 管理面 REST 的路由表与请求、回应的类型，见 rest.ts -----
 
 export * from './frame.js';
 export * from './page.js';
+export * from './rest.js';
 export * from './theme.js';

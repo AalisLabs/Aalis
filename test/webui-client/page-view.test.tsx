@@ -3,7 +3,7 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type FakeRest, type Harness, installDialog, renderApp, restCalls } from './harness.js';
+import { choose, type FakeRest, type Harness, installDialog, optionsOf, renderApp, restCalls } from './harness.js';
 import { actionPath, data, dataPath, GRAPH, JOB_ROWS, JOBS, layoutStore, pagePath, SETTINGS_PAGE } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
@@ -196,7 +196,7 @@ describe('表格', () => {
     expect(menuItems(narrow(rowOf('备份'))).map(([label]) => label)).toEqual(['执行', '编辑', '删除']);
   });
 
-  it('列：primary 的标出（窄时只留它们）；数字右对齐；状态按 state 着色', async () => {
+  it('列：primary 的标出（窄时只留它们）；数字右对齐、按千位分组；状态按 state 着色', async () => {
     app = await renderApp(pagePath(JOBS), {}, jobsRest());
     await table().findByText('周报');
     const headers = table().getAllByRole('columnheader');
@@ -206,8 +206,50 @@ describe('表格', () => {
       ['状态', 'true'],
       ['操作', null],
     ]);
-    expect(rowOf('周报').getByText('3600').closest('td')?.dataset.numeric).toBe('true');
+    expect(rowOf('周报').getByText((3600).toLocaleString()).closest('td')?.dataset.numeric).toBe('true');
+    expect((3600).toLocaleString()).not.toBe('3600');
     expect(rowOf('备份').getByText('执行中').closest('[data-state]')?.getAttribute('data-state')).toBe('running');
+  });
+
+  it('同一列的数字按这一列最多的小数位补齐（最多 3 位），整数列照旧', async () => {
+    const COSTS: typeof JOBS = {
+      ...JOBS,
+      actions: {},
+      content: [
+        {
+          type: 'table',
+          id: 'list',
+          rowKey: 'name',
+          columns: [
+            { key: 'name', label: '名称' },
+            { key: 'tokens', label: '输入' },
+            { key: 'cost', label: '费用' },
+            { key: 'ratio', label: '比例' },
+          ],
+        },
+      ],
+    };
+    const rows = [
+      { name: '一', tokens: 1200, cost: 1.5, ratio: 0.12345 },
+      { name: '二', tokens: 80, cost: 1.83, ratio: 2 },
+      { name: '三', tokens: 5, cost: 2, ratio: null },
+    ];
+    app = await renderApp(
+      pagePath(COSTS),
+      {},
+      jobsRest({ '/api/pages': { pages: [COSTS] }, [dataPath(COSTS, 'list')]: data(rows) }),
+    );
+    await table().findByText('一');
+    const shown = (name: string) =>
+      rowOf(name)
+        .getAllByRole('cell')
+        .slice(1)
+        .map(cell => cell.textContent);
+    const fixed = (value: number, digits: number) =>
+      value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    expect(shown('一')).toEqual([(1200).toLocaleString(), fixed(1.5, 2), fixed(0.12345, 3)]);
+    expect(shown('二')).toEqual(['80', fixed(1.83, 2), fixed(2, 3)]);
+    expect(shown('三')).toEqual(['5', fixed(2, 2), '']);
   });
 
   it('都没标 primary 时窄时留第一列；选中用的链接列总留着', async () => {
@@ -445,16 +487,12 @@ describe('动作', () => {
     expect(name.closest('.field-row')?.textContent).toContain('必填');
     expect(dialog.getByText('不小于 5')).toBeTruthy();
     expect((dialog.getByLabelText('启用') as HTMLInputElement).checked).toBe(true);
-    expect(
-      within(dialog.getByLabelText('方式'))
-        .getAllByRole('option')
-        .map(o => o.textContent),
-    ).toEqual(['', '周期', '一次']);
+    expect(optionsOf(dialog.getByRole('combobox', { name: '方式' }))).toEqual(['不选', '周期', '一次']);
 
     fireEvent.change(name, { target: { value: '晨报' } });
     fireEvent.change(dialog.getByLabelText('间隔（秒）'), { target: { value: '3' } });
     fireEvent.change(dialog.getByLabelText('标签'), { target: { value: '早上\n\n日报' } });
-    fireEvent.change(dialog.getByLabelText('方式'), { target: { value: 'once' } });
+    choose(dialog.getByRole('combobox', { name: '方式' }), '一次');
     fireEvent.click(dialog.getByRole('button', { name: '新建' }));
     await vi.waitFor(() => expect(posts(actionPath(JOBS, 'create'))).toHaveLength(1));
     expect(posts(actionPath(JOBS, 'create'))[0].body).toEqual({
@@ -470,7 +508,7 @@ describe('动作', () => {
 
     reject = false;
     fireEvent.change(dialog.getByLabelText('间隔（秒）'), { target: { value: '' } });
-    fireEvent.change(dialog.getByLabelText('方式'), { target: { value: '' } });
+    choose(dialog.getByRole('combobox', { name: '方式' }), '不选');
     fireEvent.click(dialog.getByRole('button', { name: '新建' }));
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(posts(actionPath(JOBS, 'create'))[1].body).toEqual({
@@ -572,7 +610,7 @@ describe('单元格', () => {
     ],
   };
 
-  it('时间、倒计时、链接、代码、长文本、图片与文件按显示种类显示；不安全的链接与不是媒体地址的图片按文字', async () => {
+  it('时间、倒计时、链接、代码、长文本、图片与文件按显示种类显示；不安全的链接与不是媒体地址的图片按文字；图片取不到时显示替代', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const now = new Date(2026, 9, 3, 10, 0).getTime();
     vi.setSystemTime(now);
@@ -620,6 +658,10 @@ describe('单元格', () => {
     const download = a.getByRole('link', { name: /a\.zip/ });
     expect(download.getAttribute('href')).toBe('/api/page-file?handle=h.1');
     expect(download.hasAttribute('download')).toBe(true);
+    // 取不到的图片换成替代，不留破图
+    fireEvent.error(image);
+    expect(a.getByRole('img', { name: '封面（取不到）' }).textContent).toBe('图片取不到');
+    expect(a.queryByRole('img', { name: '封面' })).toBeNull();
 
     const b = rowOf('b');
     expect(b.queryByRole('link')).toBeNull();

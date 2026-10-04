@@ -34,7 +34,7 @@ export interface BoundAgent extends ServiceRef<AgentService> {
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
 - 对话调用走 `agent.current` / `agent.require()`。`current` 每次读取重新解析当前胜者。
 - `abort(sessionId, turnId?)`：不带 `turnId` 停这个会话所有在飞的回合，带 `turnId` 只停那一轮；返回有没有停下回合，`turnId` 对不上（那一轮已结束或换成了新一轮）时返回 `false`、什么也不停。
-- `TokenUsageEvent` / `TokenUsageBreakdown`：每次 LLM 调用后通过 `token:usage` 事件 emit 的 12 桶 prompt 预算快照，带所在回合的 `turnId`（回应 `token:request` 的快照不带）。
+- `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用后通过 `token:usage` 事件 emit 的 12 桶 prompt 预算快照，另带按显示次序排好、带显示名的拆分表 `parts`（界面照画），带所在回合的 `turnId`（回应 `token:request` 的快照不带）。
 - **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:input:before`、`agent:turn:after`、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
 
 `agent:*` 钩子（declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`）——这是 agent 服务最重要的扩展面：
