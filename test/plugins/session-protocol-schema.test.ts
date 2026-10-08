@@ -77,7 +77,8 @@ const task: BackgroundTask = {
   endedAt: 9,
   lastLine: 'npm ERR! missing script',
   lastOutputAt: 8,
-  display: { kind: 'command', command: 'npm run dev', cwd: 'workspace:/app', exitCode: 1 },
+  exitCode: 1,
+  display: { kind: 'command', command: 'npm run dev', cwd: 'workspace:/app' },
 };
 
 const approval: Approval = {

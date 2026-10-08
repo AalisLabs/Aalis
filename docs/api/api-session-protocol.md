@@ -288,12 +288,13 @@ interface BackgroundTask {
   lastLine?: string;          // 输出的最后一行
   lastOutputAt?: number;      // 最后一次有输出的时刻
   reason?: string;            // 失败或中断的一句原因
-  display?: ToolDisplay;      // 同工具卡：按工具声明的展示种类解析，命令种类在结束后带退出码
+  exitCode?: number;          // 命令的退出码（取自登记，工具撤回登记、Aalis 重启之后照样在）
+  display?: ToolDisplay;      // 同工具卡：按工具声明的展示种类从参数解析，不带退出码
 }
 ```
 
 - **状态**：失败是结果带 `error` 或退出码不为 0；被停止是经 `background/stop`、`background/stopAll` 或模型自己停的；被中断是工具撤回登记、工具注册表停用或 Aalis 重启时还在跑的。界面只画推送来的状态：按了停止之后等推送，不先自行标成已停止。
-- **不下发的**：模型给的参数与工具的结果都不下发。`display` 按工具现在的声明从参数解析，命令的退出码取自后台任务登记（随登记落盘，Aalis 重启之前结束的也在）。
+- **不下发的**：模型给的参数与工具的结果都不下发。`display` 按工具现在的声明从参数解析，工具已撤回登记时没有；退出码在 `exitCode`，取自后台任务登记（随登记落盘），不随工具在不在。
 - **推送的节拍**：开始、结束、停止与删除立即推；只有最后一行与最后输出时间变了的攒起来，每秒至多推一次；状态变了时，攒着的那次并进这一次。删掉的（会话删除、超出保留）在 `removes` 里。`background/watch` 不依赖后台任务登记在不在，登记晚些上线时照样推。
 - **服务不在**：没有后台任务登记时，`background/list`、`background/output`、`background/stop` 回 `unsupported`；`background/stopAll` 照样停子会话的回合。子会话有回合在跑、对话服务却停不了回合时，`background/stopAll` 回 `unsupported`，什么都不停。任务不认识回 `not-found`，会话不存在回 `not-found`。
 

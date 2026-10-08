@@ -24,7 +24,7 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 - **文件句柄**：条目里她发出的文件不给存储地址，给本插件签发的句柄；传输层下发文件之前经 `resolveFile` 核验，见下文「文件句柄」。
 - **历史**：`session/history` 从存档归并条目、分页，见下文「历史归并」。
 - **回合控制**：`turn/send`、`turn/continue` 以连接的身份发入站消息；`turn/abort` 转给 agent；`session/compress` 调压缩服务（api-memory 的 `compression`），压完才回，没压成回错误；`turn/checkpoint`（回滚之前查这一轮执行过命令没有）与 `turn/rewind` 转给检查点；`plan/clear` 转给待办服务。
-- **后台任务**：可选使用后台任务登记（api-tools 的 `backgroundTasks`），投影成协议的形状（去掉模型给的参数与工具的结果，`display` 按工具声明解析，同工具卡；命令的退出码取登记里的 `exitCode`）。`background/list` 列全部会话的；`background/watch` 之后按 `background:changed` 推 `background/changed`：状态与上次推出的不同（开始、结束、停止）立即推，删掉的立即推 `removes`，只有最后一行与最后输出时间变了的攒起来每秒推一次（常量 1 秒），状态变了时攒着的那次并进去。`background/output`、`background/stop` 转给登记表。`background/stopAll` 先经 agent 的 `abort` 停各级子会话在跑的回合，再经登记表的 `stop` 停本会话与各级子会话在跑的任务、等它们落定；本会话自己的回合不停。没有登记表时 list、output、stop 回 `unsupported`，watch 照常，stopAll 照样停子会话的回合。
+- **后台任务**：可选使用后台任务登记（api-tools 的 `backgroundTasks`），投影成协议的形状（去掉模型给的参数与工具的结果，`display` 按工具声明从参数解析，同工具卡；退出码照登记的 `exitCode` 下发）。`background/list` 列全部会话的；`background/watch` 之后按 `background:changed` 推 `background/changed`：状态与上次推出的不同（开始、结束、停止）立即推，删掉的立即推 `removes`，只有最后一行与最后输出时间变了的攒起来每秒推一次（常量 1 秒），状态变了时攒着的那次并进去。`background/output`、`background/stop` 转给登记表。`background/stopAll` 先经 agent 的 `abort` 停各级子会话在跑的回合，再经登记表的 `stop` 停本会话与各级子会话在跑的任务、等它们落定；本会话自己的回合不停。没有登记表时 list、output、stop 回 `unsupported`，watch 照常，stopAll 照样停子会话的回合。
 - **工具卡的展示**：工具卡与审批卡上的事实按工具定义上声明的展示种类（api-tools 的 `display`，经 tools 服务的 `getAll()` 取）从参数里逐字取出，工具返回时按声明从结果里取命令的退出码（取在 agent 截断过长的结果之前），实时条目、历史与审批共用一份解析。
 - **审批**：提供 `approvals` 服务。审批推给在场的审批面，同一会话排队、限频，应答先答先得并核应答人与内容哈希，请求与决定成对记进审计，见下文「审批」。每条连接接入对端带来的审批面，`presence/update` 与 `approval/respond` 经它。
 

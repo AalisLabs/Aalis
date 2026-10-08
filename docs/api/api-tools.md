@@ -59,7 +59,7 @@ interface RegisteredTool {
 
 - 发给模型的参数表多两项：`runInBackground`（布尔，立即转后台）与 `waitSeconds`（前台最多等多少秒）。执行时这两项先取出，再做参数校验、过守卫、交给工具；审批事实与工具拿到的参数里都没有它们。参数表里已有同名项的工具当作没声明，执行器记一条警告，工具照常登记。`takenBackgroundParams(parameters)` 回参数表里已有的这两项的名字，执行器按它判断；桥接远端工具的插件据此不声明，等多久照远端调用自己的超时。
 - 过了守卫之后先在前台等让出时限：`waitSeconds`，缺省取 `yieldSeconds`，再缺省是 30 秒；上限取执行器的配置。在前台时回合中止（停止键、新消息打断）一并中止它。
-- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（没有 `callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
+- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（没有 `turnId` 或 `callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
 - 同一会话里对话回合中在跑的可转后台调用有上限（前台与后台一起数），满了时新的调用在过守卫之前就被拒绝。不在对话回合里的调用不会转后台，不占名额。
 
 没声明的工具照旧等到底，照它们自己的超时。`background` 不进 `ToolDefinition`（那是发给模型的线上格式）。
@@ -207,7 +207,7 @@ export const backgroundTasks = defineService<BackgroundTaskService>('background-
 - `list`：在跑的与保留的结束的任务（每个会话留最近 20 条结束的），给 `sessionId` 时只列这个会话的。
 - `output`：`text` 是 `after` 之后的输出；`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾 64 KiB，早于缓冲的部分取不到时 `truncated` 为 true。Aalis 重启前的任务没有留下输出。
 - `stop`：中止并等它落定（宽限 3 秒），回落定后的任务；宽限内没停下的仍是 `running`，之后停下时记为 `stopped`。被停止的不通知。
-- 结局：结果带 `error` 或退出码不为 0 为 `failed`（`reason` 是结果里那句错误，命令的退出码记在 `exitCode`）；`stop` 停的为 `stopped`；工具撤回登记、执行器停用、重启时还在跑的为 `aborted`；其余 `completed`。
+- 结局：结果带 `error` 或退出码不为 0 为 `failed`；`stop` 停的为 `stopped`；工具撤回登记、执行器停用、重启时还在跑的为 `aborted`；其余 `completed`。
 
 ## 典型用法
 

@@ -23,6 +23,7 @@ import {
 } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
+import { truncateChars } from '@aalis/util-text-normalize';
 import {
   AUDIENCE_NAMES,
   applyPatch,
@@ -43,6 +44,8 @@ import {
 const METADATA_NAMESPACE = 'sessions';
 /** 读会话表失败后的重试间隔（毫秒）；用尽仍失败按读表失败处理 */
 const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
+/** 最近一轮出错原因最多留多少字 */
+const ERROR_MAX = 200;
 /**
  * owner 面的交互入口：自动标题只给它们的会话生成；它们发进 IM 房间的消息是 owner 插话，不是房间的原生入站，
  * 不拿来判 id 前缀与平台名是否一致
@@ -748,7 +751,8 @@ class SessionManager implements SessionManagerService {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     turn.outcome = outcome;
-    turn.error = outcome === 'error' ? error : undefined;
+    // 一句原因：agent 给的可能带上游的整段响应，会随会话落盘、进子任务提醒；空串当作没给
+    turn.error = outcome === 'error' && error ? truncateChars(error, ERROR_MAX, '…') : undefined;
   }
 
   /**

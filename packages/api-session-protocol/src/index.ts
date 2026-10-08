@@ -630,7 +630,7 @@ export const TurnRewindResultSchema = z.object({
 /**
  * 一个后台任务，取自后台任务登记（api-tools 的 backgroundTasks）。kind 是宿主维护的封闭集合，以后按加法加：现在只有
  * tool-call，即转到后台的工具调用。界面按通用字段画，不认种类以外的细节。不下发模型给的参数与工具的结果；display 是
- * 会话服务按工具声明的展示种类解析好的，同工具卡（命令种类在结束后带退出码）
+ * 会话服务按工具声明的展示种类从参数解析好的，同工具卡，不带退出码（在 exitCode）
  */
 export const BackgroundTaskSchema = z.object({
   id: z.string(),
@@ -650,6 +650,8 @@ export const BackgroundTaskSchema = z.object({
   lastOutputAt: z.number().optional(),
   /** 失败或中断的一句原因 */
   reason: z.string().optional(),
+  /** 命令的退出码：工具声明了 command 种类的展示、结束时取得到才有；取自登记，工具撤回登记、Aalis 重启之后照样在 */
+  exitCode: z.number().int().optional(),
   display: ToolDisplaySchema.optional(),
 });
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
