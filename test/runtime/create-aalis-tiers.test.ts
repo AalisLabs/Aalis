@@ -75,6 +75,7 @@ describe('create-aalis 对话模板', () => {
         { cwd: dir, timeout: 10_000 },
       );
       const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
+      expect(pkg.engines, '生成的项目与脚手架要求同一个最低 Node 版本').toEqual({ node: '>=24.15.0' });
       const home = join(dir, 'my-bot', 'home');
       const config = parse(await readFile(join(home, 'aalis.config.yaml'), 'utf-8'));
       // 家目录生成时就是初始化过的：配置与空的密钥文件都在，权限收紧

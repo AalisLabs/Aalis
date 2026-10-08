@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
@@ -13,6 +12,8 @@ import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/ind
 // 后端分不出哪个命名空间属于哪一层，此前 clearAll 连元数据一起删，`/clear all -t context`
 // 就连带清掉了用户没选的档案、关系图与绑定。改后各命名空间由归属插件经 memory:clear 自行清理。
 // ════════════════════════════════════════════════════════════
+
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
 const msg = (content: string, timestamp: number) => ({ role: 'user' as const, content, timestamp });
 
@@ -38,7 +39,7 @@ async function expectMessagesGoneMetadataKept(mem: MemoryService): Promise<void>
 
 describe('clearAll 只清消息与归档', () => {
   it('sqlite', async () => {
-    const mem = new SQLiteMemoryService(new Database(':memory:'), { logger: { warn() {} } });
+    const mem = new SQLiteMemoryService(new DatabaseSync(':memory:'), { logger: { warn() {} } });
     await seed(mem);
     expect(await mem.getFullHistory('s1')).toHaveLength(3);
     await expectMessagesGoneMetadataKept(mem);

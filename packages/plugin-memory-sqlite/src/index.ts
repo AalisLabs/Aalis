@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import {
   type MemoryService,
   type MetadataEntry,
@@ -20,7 +21,6 @@ import {
 } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ContentSegment, Message } from '@aalis/schema-message';
-import Database from 'better-sqlite3';
 
 /** 配置的 path 归一为 storage URI；留空按实例派生：主实例 data:/aalis.db，`name:b` 实例 data:/aalis-b.db */
 function toUri(input: string, instanceId: string): string {
@@ -38,23 +38,19 @@ function toUri(input: string, instanceId: string): string {
 const openedBy = new Map<string, { lifecycle: LifecycleCap; path: string }>();
 
 /**
- * 开库失败的说明。better-sqlite3 在首次构造 Database 时才加载原生绑定，加载失败报 ERR_DLOPEN_FAILED：
- * 原文含 NODE_MODULE_VERSION 才是编译它的 Node 与当前 Node 的模块 ABI 不同，给出重编指引并附原文首行
- * （含 .node 文件路径）；架构不符、缺系统库等其它加载失败，重编未必管用，只说明是原生模块加载失败并照录原文。
+ * 在一个事务里执行 fn：正常返回即提交，抛错则回滚并原样抛出。库满、I/O 出错时 SQLite 会自行撤销整个事务，
+ * 这时已没有进行中的事务，不再回滚，免得「没有进行中的事务」盖掉原错误。
  */
-function describeOpenError(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (message.includes('NODE_MODULE_VERSION')) {
-    return (
-      `better-sqlite3 原生模块的编译版本与当前 Node（${process.version}，NODE_MODULE_VERSION ${process.versions.modules}）` +
-      '不符，常见于装依赖后换了 Node 大版本。请用装依赖时的 Node 启动，或在项目根执行 npm rebuild better-sqlite3' +
-      `（pnpm 工程用 pnpm rebuild better-sqlite3）。原始错误：${message.split('\n', 1)[0]}`
-    );
+function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw err;
   }
-  if ((err as NodeJS.ErrnoException | undefined)?.code === 'ERR_DLOPEN_FAILED') {
-    return `better-sqlite3 原生模块无法加载：${message}`;
-  }
-  return message;
 }
 
 const configSchema = defineConfig({
@@ -85,14 +81,14 @@ const configSchema = defineConfig({
 // ===== SQLite MemoryService 实现 =====
 
 export class SQLiteMemoryService implements MemoryService {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly rangeQueryLimit: number;
   private readonly crossSessionMaxLimit: number;
   /** listMetadata 跳过读不出的行时由它点名 */
   private readonly logger: Pick<Logger, 'warn'>;
 
   constructor(
-    db: Database.Database,
+    db: DatabaseSync,
     opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number; logger: Pick<Logger, 'warn'> },
   ) {
     this.db = db;
@@ -188,7 +184,8 @@ export class SQLiteMemoryService implements MemoryService {
       sessionId,
       message.role,
       message.kind ?? null,
-      message.content,
+      // content 缺失时存 NULL：node:sqlite 拒绝绑定 undefined，而助手消息的 content 取自服务商的返回，未必带这个字段
+      message.content ?? null,
       message.toolCalls ? JSON.stringify(message.toolCalls) : null,
       message.toolCallId ?? null,
       message.name ?? null,
@@ -232,7 +229,7 @@ export class SQLiteMemoryService implements MemoryService {
     let sql = `SELECT role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
                FROM messages
                WHERE sessionId = ? AND timestamp BETWEEN ? AND ?`;
-    const params: unknown[] = [sessionId, fromTs, toTs];
+    const params: SQLInputValue[] = [sessionId, fromTs, toTs];
     if (roles && roles.length > 0) {
       sql += ` AND role IN (${roles.map(() => '?').join(',')})`;
       params.push(...roles);
@@ -262,7 +259,7 @@ export class SQLiteMemoryService implements MemoryService {
                FROM messages
                WHERE archived = 0
                  AND role IN (${roles.map(() => '?').join(',')})`;
-    const params: unknown[] = [...roles];
+    const params: SQLInputValue[] = [...roles];
     if (query.kinds && query.kinds.length > 0) {
       sql += ` AND kind IN (${query.kinds.map(() => '?').join(',')})`;
       params.push(...query.kinds);
@@ -307,8 +304,7 @@ export class SQLiteMemoryService implements MemoryService {
         SELECT id FROM messages WHERE sessionId = ? AND archived = 0 ORDER BY timestamp DESC LIMIT ?
       )
     `);
-    const result = stmt.run(sessionId, sessionId, keepRecent);
-    return result.changes;
+    return Number(stmt.run(sessionId, sessionId, keepRecent).changes);
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
@@ -383,12 +379,12 @@ export class SQLiteMemoryService implements MemoryService {
       ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now','subsec')
     `);
     const del = this.db.prepare('DELETE FROM metadata WHERE namespace = ? AND key = ?');
-    this.db.transaction(() => {
+    inTransaction(this.db, () => {
       for (const o of ops) {
         if (o.op === 'put') put.run(o.namespace, o.key, JSON.stringify(o.data));
         else del.run(o.namespace, o.key);
       }
-    })();
+    });
   }
 
   async deleteMetadata(namespace: string, key: string): Promise<void> {
@@ -423,21 +419,18 @@ export class SQLiteMemoryService implements MemoryService {
 
   async deleteMessagesByTimestamps(sessionId: string, timestamps: number[]): Promise<number> {
     if (timestamps.length === 0) return 0;
-    // SQLite 变量限制 999，分批处理
+    // 单条语句的绑定参数有上限（Node 自带的 SQLite 为 32766），分批处理
     const chunkSize = 500;
-    let total = 0;
-    const txn = this.db.transaction((tsChunks: number[][]) => {
-      for (const chunk of tsChunks) {
+    return inTransaction(this.db, () => {
+      let total = 0;
+      for (let i = 0; i < timestamps.length; i += chunkSize) {
+        const chunk = timestamps.slice(i, i + chunkSize);
         const placeholders = chunk.map(() => '?').join(',');
         const stmt = this.db.prepare(`DELETE FROM messages WHERE sessionId = ? AND timestamp IN (${placeholders})`);
-        const r = stmt.run(sessionId, ...chunk);
-        total += r.changes;
+        total += Number(stmt.run(sessionId, ...chunk).changes);
       }
+      return total;
     });
-    const chunks: number[][] = [];
-    for (let i = 0; i < timestamps.length; i += chunkSize) chunks.push(timestamps.slice(i, i + chunkSize));
-    txn(chunks);
-    return total;
   }
 
   close(): void {
@@ -477,15 +470,25 @@ export default definePlugin({
 
     caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
 
-    let db: Database.Database;
+    // 经 process.getBuiltinModule 取 node:sqlite：插件源码也在 vitest 里加载，而 vitest 解析不了静态的 `import 'node:sqlite'`。
+    // 取不到 process.getBuiltinModule 或 node:sqlite，或 node:sqlite 缺本插件要用的接口（22.16 之前、23.x）时，都按 Node 太旧报错
+    const tooOld =
+      `SQLite 打开失败: 当前 Node（${process.version}）版本过低，需要 Node 24.15.0 起；` +
+      '升级方法见 docs/guide/first-run.md「升级 Node」';
+    const sqlite = process.getBuiltinModule?.('node:sqlite');
+    if (!sqlite) throw new Error(tooOld);
+    let db: DatabaseSync;
     try {
-      db = new Database(dbPath);
+      // 遇锁（别的进程正写这个库）最多等 5 秒再报 SQLITE_BUSY
+      db = new sqlite.DatabaseSync(dbPath, { timeout: 5000 });
     } catch (err) {
-      throw new Error(`SQLite 打开失败: ${describeOpenError(err)}`, { cause: err });
+      throw new Error(`SQLite 打开失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
 
-    // 开库之后任何一步失败（取文件身份、撞库、设 WAL、建表、发布服务），都先关掉刚开的句柄再抛
+    // 开库之后任何一步失败（接口不全、取文件身份、撞库、设 WAL、建表、发布服务），都先关掉刚开的句柄再抛
     try {
+      // 连接上没有 isTransaction 时也不认 timeout 选项：事务出错时回滚不了，遇锁也不等待
+      if (typeof db.isTransaction !== 'boolean') throw new Error(tooOld);
       // 文件身份要等开库建出文件后才取得到。开库、取身份、查占用之间没有 await，两个并发激活不会交错；
       // 文件系统不提供 inode（ino 为 0）时退回按路径认
       const { dev, ino } = statSync(dbPath, { bigint: true });
@@ -503,8 +506,8 @@ export default definePlugin({
       });
 
       try {
-        // 设置 WAL 模式提升并发性能
-        db.pragma('journal_mode = WAL');
+        // WAL 让读写互不阻塞；WAL 下的 NORMAL 同步只在检查点刷盘，系统崩溃或断电可能丢掉最后几次提交，库本身不会损坏
+        db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL');
 
         const service = new SQLiteMemoryService(db, {
           rangeQueryLimit: cfg.rangeQueryLimit,
@@ -524,7 +527,7 @@ export default definePlugin({
           caps.logger.info('SQLite 数据库已关闭');
         });
       } catch (err) {
-        throw new Error(`SQLite 打开失败: ${describeOpenError(err)}`, { cause: err });
+        throw new Error(`SQLite 打开失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
       }
     } catch (err) {
       db.close();

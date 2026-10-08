@@ -85,6 +85,7 @@ const REMOVED: Array<[string, string]> = [
   ['SessionTreeNode', '会话管理服务的整棵会话树接口'],
   ['FileReaderService', 'plugin-file-reader 的 file-reader 服务：没有消费方，描述符又定义在实现包里'],
   ['stripFileBlocks', '会话服务按文件读取插件的私有格式剥掉提问里的文件块，由存档另记的发言人写的话与附件清单取代'],
+  ['better-sqlite3', 'memory-sqlite 依赖的原生 SQLite 模块，由 Node 自带的 node:sqlite 取代'],
 ];
 
 /**

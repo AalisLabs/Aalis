@@ -18,7 +18,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { argv, cwd, exit, stdin, stdout } from 'node:process';
+import { argv, cwd, exit, stdin, stdout, version } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -295,6 +295,29 @@ export function validateNpmName(name: string): ValidationResult {
   return { ok: true };
 }
 
+/** 最低 Node 版本：从这一版起，默认记忆后端用的 node:sqlite 不再打印实验特性警告。生成的项目同样写进 engines。 */
+const MIN_NODE = '24.15.0';
+
+/** 当前 Node（`process.version`，如 v24.15.0）够不够新；不够时写明需要的版本、当前版本与升级方法。 */
+export function checkNodeVersion(current: string): ValidationResult {
+  const have = current.slice(1).split('.').map(Number);
+  const need = MIN_NODE.split('.').map(Number);
+  // 逐段按数字比较，第一个不同的段定高低
+  const at = need.findIndex((n, i) => have[i] !== n);
+  if (at === -1 || have[at] > need[at]) return { ok: true };
+  return {
+    ok: false,
+    error: [
+      `Aalis 需要 Node.js ${MIN_NODE} 起，当前是 ${current}。请先升级 Node，再重新运行：`,
+      '  macOS / Linux：用 nvm 执行 nvm install 24 与 nvm alias default 24，或从 https://nodejs.org 下载 24 的安装包',
+      '  Windows：从 https://nodejs.org 下载 24 的安装包，或用 nvm-windows 装上 24 并切换过去',
+      '已经装过的 Aalis 项目，原有的数据库 aalis.db 照常可用，不用迁移。早先版本的记忆后端带原生模块，在旧 Node 上装好依赖的项目换到 Node 24 后：',
+      '  先在项目目录执行 npm install @aalis/plugin-memory-sqlite@latest 换成新版，再 npm start（npm update 只在 package.json 写的版本范围内更新，未必换得到新版）',
+      '  这一步报 ERESOLVE（peer 依赖冲突）时，改为执行一次 npm rebuild，按新 Node 重新编译旧版的原生模块，需要本机装有 C/C++ 编译工具',
+    ].join('\n'),
+  };
+}
+
 /** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
 async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
   try {
@@ -361,6 +384,7 @@ function renderPackageJson(projectName: string, enabled: string[], versions: Map
       private: true,
       type: 'module',
       description: `${projectName} —— 基于 Aalis 的 AI 助手`,
+      engines: { node: `>=${MIN_NODE}` },
       // 默认 dev 模式（startAalis 据 NODE_ENV!=='production' 判定）；
       // 生产部署用 `NODE_ENV=production node index.mjs`（Windows 用 set/$env:）。
       scripts: {
@@ -493,6 +517,12 @@ export function positionalArgs(args: string[]): string[] {
 }
 
 async function main(): Promise<void> {
+  const node = checkNodeVersion(version);
+  if (!node.ok) {
+    console.error(node.error);
+    exit(1);
+  }
+
   const tierFlag = argValue('--tier') as Tier | undefined;
   const skip = argv.includes('--yes') || argv.includes('-y') || tierFlag !== undefined;
   const noInstall = argv.includes('--no-install');

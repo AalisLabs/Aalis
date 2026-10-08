@@ -29,7 +29,7 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 
 ### Quickstart
 
-> 前提：Node.js >= 22（与 CI 一致）。
+> 前提：Node.js 24.15.0 起（与 CI 一致）。版本不够时脚手架一开头就退出，写明需要的版本、当前版本与升级方法，步骤也见 [第一次运行](./first-run.md#升级-node)。
 
 ```bash
 # 交互式：选模板档 + 同类适配器，建好后自动 npm install
@@ -101,7 +101,7 @@ npm start -- status
 
 ```
 my-bot/
-├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下）
+├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下），engines 写 Node 24.15.0 起
 ├── index.mjs           # 一行 startAalis() 启动
 ├── home/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
 │   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins / disabledPlugins；密钥字段只放引用

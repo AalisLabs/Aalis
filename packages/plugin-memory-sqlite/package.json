@@ -23,6 +23,9 @@
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=24.15.0"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
@@ -30,13 +33,11 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0",
-    "better-sqlite3": "^11.8.0"
+    "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/schema-message": "workspace:*",
-    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

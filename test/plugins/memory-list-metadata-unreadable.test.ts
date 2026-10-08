@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { MongoMemoryService } from '../../packages/plugin-memory-mongodb/src/index.js';
 import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/index.js';
@@ -10,6 +9,8 @@ import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/ind
 // sqlite 用内存库；mongodb 用替身集合直接构造服务，不经 apply、不连任何 mongod。
 // ════════════════════════════════════════════════════════════
 
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+
 function recordingWarn() {
   const warns: string[] = [];
   return { warns, logger: { warn: (message: string) => void warns.push(message) } };
@@ -17,7 +18,7 @@ function recordingWarn() {
 
 describe('listMetadata 跳过读不出的条目', () => {
   it('sqlite：data 不是 JSON 对象的行跳过并点名，其余照常返回', async () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
     const { warns, logger } = recordingWarn();
     const svc = new SQLiteMemoryService(db, { logger });
     await svc.saveMetadata('sessions', 'good', { id: 'good' });
@@ -38,7 +39,7 @@ describe('listMetadata 跳过读不出的条目', () => {
   });
 
   it('sqlite：写入时间读不出（别的文本、BLOB）的行照常返回，updatedAt 为 0', async () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
     const { warns, logger } = recordingWarn();
     const svc = new SQLiteMemoryService(db, { logger });
     for (const key of ['good', 'text', 'blob']) await svc.saveMetadata('sessions', key, { id: key });
@@ -80,7 +81,7 @@ describe('listMetadata 跳过读不出的条目', () => {
 // listMetadataKeys 只列键、不读 data：读不出的条目也在其中，按命名空间整体清理（clearMetadataNamespaces）靠它把坏条目一并删掉
 describe('listMetadataKeys 连读不出的条目一并列出', () => {
   it('sqlite：只列本命名空间的键，data 不是 JSON 对象的行也列出，不记 warn', async () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
     const { warns, logger } = recordingWarn();
     const svc = new SQLiteMemoryService(db, { logger });
     await svc.saveMetadata('sessions', 'good', { id: 'good' });

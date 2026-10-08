@@ -13,7 +13,8 @@ import memorySqlite from '../../packages/plugin-memory-sqlite/src/index.js';
 // （一行、不带 stack），消息点名占用它的实例，路径写法不同时带上占用者打开的路径；刚开的库立即关掉，不设 WAL、不建表。
 // 占用者关闭后让出。文件系统不提供 inode（ino 为 0）时退回按路径认。开库之后任何一步失败（取文件身份、设 WAL、
 // 建表），都先关掉刚开的库再以激活失败报出。
-// better-sqlite3 换成替身：构造时在真实临时目录里建出空文件（文件身份要靠它），并记下开库、关库、设 WAL 与建表。
+// node:sqlite 换成替身（插件经 process.getBuiltinModule 取它）：构造时在真实临时目录里建出空文件（文件身份要靠它），
+// 并记下开库、关库、设 WAL 与建表。
 // ════════════════════════════════════════════════════════════
 
 const NAME = '@aalis/plugin-memory-sqlite';
@@ -28,28 +29,6 @@ const native = vi.hoisted(() => ({
   /** 让取文件身份、设 WAL、建表各自抛出的错误 */
   fail: {} as { stat?: Error; pragma?: Error; exec?: Error },
 }));
-vi.mock('better-sqlite3', async () => {
-  const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
-  return {
-    default: class {
-      constructor(private readonly path: string) {
-        fs.writeFileSync(path, '', { flag: 'a' });
-        native.opened.push(path);
-      }
-      pragma() {
-        if (native.fail.pragma) throw native.fail.pragma;
-        native.wal.push(this.path);
-      }
-      exec() {
-        if (native.fail.exec) throw native.fail.exec;
-        native.tables.push(this.path);
-      }
-      close() {
-        native.closed.push(this.path);
-      }
-    },
-  };
-});
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return {
@@ -61,6 +40,23 @@ vi.mock('node:fs', async importOriginal => {
     }) as typeof actual.statSync,
   };
 });
+
+class FakeDatabase {
+  /** 够新的 node:sqlite 的连接都带这个状态，插件据它认 Node 版本 */
+  readonly isTransaction = false;
+  constructor(private readonly path: string) {
+    writeFileSync(path, '', { flag: 'a' });
+    native.opened.push(path);
+  }
+  exec(sql: string) {
+    const step = sql.includes('PRAGMA journal_mode') ? 'pragma' : 'exec';
+    if (native.fail[step]) throw native.fail[step];
+    (step === 'pragma' ? native.wal : native.tables).push(this.path);
+  }
+  close() {
+    native.closed.push(this.path);
+  }
+}
 
 /** 临时目录所在的卷是否大小写不敏感（macOS 默认的 APFS 是，Linux 的 ext4 不是） */
 const caseInsensitive = (() => {
@@ -98,10 +94,14 @@ function recordingLogger(): Logger & { errors: unknown[][] } {
 }
 
 const apps: App[] = [];
+const getBuiltinModule = process.getBuiltinModule.bind(process);
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'zz-memory-sqlite-instances-'));
+  vi.spyOn(process, 'getBuiltinModule').mockImplementation(((id: string) =>
+    id === 'node:sqlite' ? { DatabaseSync: FakeDatabase } : getBuiltinModule(id)) as typeof getBuiltinModule);
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
   for (const list of [native.opened, native.closed, native.wal, native.tables]) list.length = 0;
   native.zeroIno = false;
