@@ -10,7 +10,8 @@
 //
 // 回合结束之后还在等平台送达结果的，也算没收尾：迟到的结果按实时条目的 itemId 推出，这段时间里订阅的快照
 // 照样给出实时条目，两边对得上。存档里另有记录：回复没收下的由适配器记投递失败，经工具发出、收下了的、审批的结算、
-// 回合停止时还没结束的与命令的退出码在工具结果落库前写进它的元数据（toolMetadata），历史据此标出同样的结局。
+// 回合停止时还没结束的、命令的退出码与转到后台的任务 id 在工具结果落库前写进它的元数据（toolMetadata），
+// 历史据此标出同样的结局。
 //
 // 快照的历史要等读存档，读的同时回合照常推进。在途回合落了库的消息带 turnId：取快照那一刻还没收尾的回合、
 // 之后才结束或开始的回合，它们落库的消息都不进这份快照的历史，由在途条目与之后的推送给出，两边不重复。
@@ -30,7 +31,7 @@ import type {
   SessionSummary,
 } from '@aalis/api-session-protocol';
 import type { TodoItem, TodoListService } from '@aalis/api-todo-list';
-import type { ToolExecuteMessage, ToolOutputMessage } from '@aalis/api-tools';
+import { type ToolExecuteMessage, type ToolOutputMessage, toolFailed } from '@aalis/api-tools';
 import type { ServiceRef } from '@aalis/core';
 import {
   awaitDelivery,
@@ -53,7 +54,6 @@ import {
   readHistory,
   replyModel,
   type SignFile,
-  toolFailed,
 } from './history.js';
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
@@ -422,7 +422,10 @@ export function createTimeline(deps: TimelineDeps) {
     const item = turn.items.get(info.callId);
     if (item?.kind !== 'tool-call') return;
     // 没批准的、回合停止时还没结束的保持原状；退出码已由 toolMetadata 取好
-    if (item.status === 'running') item.status = toolFailed(info.result ?? '', item.display) ? 'failed' : 'completed';
+    if (item.status === 'running') {
+      const exitCode = item.display?.kind === 'command' ? item.display.exitCode : undefined;
+      item.status = toolFailed(info.result ?? '', exitCode) ? 'failed' : 'completed';
+    }
     item.result = info.result;
     item.durationMs = Date.now() - item.at;
     complete(turn, item);
@@ -462,14 +465,16 @@ export function createTimeline(deps: TimelineDeps) {
   /**
    * agent:tool:after：这次工具结果落库时要带的元数据，历史据此还原工具卡：审批的结算（approval），房间里经它发出、
    * 平台已收下的消息（sentToRoom），回合停止时这次调用还没结束（aborted，stopped 为工具返回时回合的中止信号已触发，
-   * 工具卡同时落成 aborted），命令的退出码（exitCode，工具卡的展示同时带上）。退出码在这里取：agent 跑完这个钩子
-   * 才把过长的结果截断，截断后的结果不再是 JSON。送达结果只取已经到了的：发消息的工具都等过确认，没等到的不再等
+   * 工具卡同时落成 aborted），命令的退出码（exitCode，工具卡的展示同时带上），这次调用转到了后台时的任务 id
+   * （backgroundTask，工具卡同时带上 taskId）。退出码在这里取：agent 跑完这个钩子才把过长的结果截断，截断后的结果
+   * 不再是 JSON。送达结果只取已经到了的：发消息的工具都等过确认，没等到的不再等
    */
   async function toolMetadata(
     turnId: string,
     callId: string,
     stopped: boolean,
     result: string,
+    taskId: string | undefined,
   ): Promise<Record<string, unknown>> {
     const turn = live(turnId);
     const item = turn?.items.get(callId);
@@ -478,6 +483,10 @@ export function createTimeline(deps: TimelineDeps) {
     if (stopped) {
       item.status = 'aborted';
       metadata.aborted = true;
+    }
+    if (taskId !== undefined) {
+      item.taskId = taskId;
+      metadata.backgroundTask = taskId;
     }
     const display = deps.displayOf(item.name, item.args, result);
     if (display?.kind === 'command' && display.exitCode !== undefined) {

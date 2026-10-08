@@ -84,16 +84,18 @@ async function observedAgentTurn(incoming: IncomingMessage) {
 }
 
 describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站来源', () => {
-  it('真人消息回合：inbound 存在，source 为 undefined', async () => {
+  it('真人消息回合：inbound 存在，source 为 undefined，messageId 为入站消息的平台消息 id', async () => {
     const { ctx, llmBeforeSources } = await observedAgentTurn({
       content: '帮我查一下',
       sessionId: SESSION,
       platform: 'test',
       userId: 'u1',
       sessionType: 'private',
+      messageId: 'zz-msg-1',
     });
     expect(ctx?.inbound).toBeDefined();
     expect(ctx?.inbound?.source).toBeUndefined();
+    expect(ctx?.inbound?.messageId, '后台任务的结束通知据它引用起它的那条消息').toBe('zz-msg-1');
     expect(llmBeforeSources).toEqual([undefined, undefined]);
   });
 
@@ -113,14 +115,14 @@ describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站�
 describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具调用上下文的 userId', () => {
   const QQ = '10001';
   const notice = (callerUserId?: string): IncomingMessage => ({
-    content: '后台进程 proc_0a1b2c_1 已退出：退出码 1，用时 3 秒。它最近的输出用 process_read 查看。',
+    content: '后台任务 bg_0a1b2c_1（exec）失败：退出码 1，用时 3 秒。结果与输出用 background_output 查看。',
     sessionId: SESSION,
     platform: 'onebot',
-    source: 'exec-bg:proc_0a1b2c_1',
+    source: 'bg:bg_0a1b2c_1',
     actor: { platform: 'onebot', userId: QQ },
     hostNotice: {
-      kind: 'exec-background',
-      id: 'proc_0a1b2c_1',
+      kind: 'background-task',
+      id: 'bg_0a1b2c_1',
       ...(callerUserId !== undefined ? { callerUserId } : {}),
     },
   });
@@ -131,10 +133,10 @@ describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具�
     expect(ctx?.inbound?.callerUserId, '守卫据它认出 owner 链的延续').toBe(QQ);
     expect(ctx?.actor).toEqual({ platform: 'onebot', userId: QQ });
     expect(ctx?.platform).toBe('onebot');
-    expect(ctx?.inbound?.source).toBe('exec-bg:proc_0a1b2c_1');
+    expect(ctx?.inbound?.source).toBe('bg:bg_0a1b2c_1');
     expect(llmBeforeUserIds.length).toBeGreaterThan(0);
     expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
-    expect(llmBeforeSources).toEqual(['exec-bg:proc_0a1b2c_1', 'exec-bg:proc_0a1b2c_1']);
+    expect(llmBeforeSources).toEqual(['bg:bg_0a1b2c_1', 'bg:bg_0a1b2c_1']);
     const archived = history.find(m => m.role === 'notice');
     expect(archived, '通知应归档为 notice').toBeDefined();
     expect(archived?.name).toBeUndefined();

@@ -72,6 +72,13 @@ const REMOVED: Array<[string, string]> = [
   ['SESSION_TABS', '客户端写死的会话面板标签，由 api-webui 的宿主标签集合 HOST_PANEL_TABS 与标签合成取代'],
   ['thinkingMode', 'DeepSeek 的思考开关配置，由模型声明的思考档位与实例的默认档 thinking 取代'],
   ['reasoningEffort', 'DeepSeek 的推理强度配置，并进思考档位'],
+  ['exec_background', 'plugin-tool-system 的后台命令，并进 exec：可转后台的工具由执行器转后台并登记成后台任务'],
+  ['process_list', 'plugin-tool-system 的后台进程工具，由执行器的后台任务工具 background_list 等取代'],
+  ['process_read', 'plugin-tool-system 的后台进程工具，由执行器的后台任务工具 background_output 取代'],
+  ['process_kill', 'plugin-tool-system 的后台进程工具，由执行器的后台任务工具 background_stop 取代'],
+  ['exec-bg:', '后台命令结束通知的来源前缀，由后台任务结束通知的 bg: 取代'],
+  ["'exec-background'", '后台命令结束通知的种类，由后台任务结束通知的 background-task 取代'],
+  ['ChildSessions', '左栏会话行上的子任务展开：左栏只列根会话，子会话在会话面板的「后台」标签里按会话树列出'],
 ];
 
 /**

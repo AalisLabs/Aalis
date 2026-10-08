@@ -1,6 +1,8 @@
+import type { BackgroundTask, SessionSummary } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
 import { Circle, CircleAlert, CircleCheck, CircleDot, Plus, RotateCw } from 'lucide-react';
 import { useReducer, useState } from 'react';
+import { BackgroundTab } from '../background/Background';
 import { Button } from '../components/Button';
 import { IconButton } from '../components/IconButton';
 import { Menu } from '../components/Menu';
@@ -22,7 +24,7 @@ import type { SessionTabs } from './panel-tabs';
 import { UsageTable } from './Usage';
 import './SessionPanel.css';
 
-// 会话的右侧面板：宿主的标签（计划、设置、用量）与插件的会话面板在一个标签栏里，按 owner 排的顺序（合成见 panel-tabs.ts）。
+// 会话的右侧面板：宿主的标签（计划、设置、用量、后台）与插件的会话面板在一个标签栏里，按 owner 排的顺序（合成见 panel-tabs.ts）。
 // 当前标签旁有关闭按钮，关掉的与还没打开过的在标签栏末尾的「+」里；插件面板的标签就是它的标题，手动刷新放在标签栏里
 // （插件前端的手动刷新是重新挂载）。
 // 标签由地址决定，地址没写或写的标签不在标签栏里时停在第一个
@@ -34,12 +36,30 @@ interface SessionPanelProps {
   tab?: HostPanelTab;
   /** 地址上的插件面板 */
   panel?: PageRef;
+  summary?: SessionSummary;
   plan?: PlanItem;
   usage?: UsageItem;
   settings: ReturnType<typeof useSettingRows>;
+  /** 这个会话的后台任务 */
+  tasks: readonly BackgroundTask[];
+  /** 打开着日志的后台任务 */
+  log?: string;
+  onLog(taskId?: string): void;
 }
 
-export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, settings }: SessionPanelProps) {
+export function SessionPanel({
+  sessionId,
+  tabs,
+  tab,
+  panel,
+  summary,
+  plan,
+  usage,
+  settings,
+  tasks,
+  log,
+  onLog,
+}: SessionPanelProps) {
   const phone = usePhone();
   const { pages } = usePages();
   const [reloads, reload] = useReducer((n: number) => n + 1, 0);
@@ -88,7 +108,8 @@ export function SessionPanel({ sessionId, tabs, tab, panel, plan, usage, setting
       {gone && <PageGone instance={gone.instance} />}
       {host === 'plan' && plan && <PlanTab sessionId={sessionId} plan={plan} />}
       {host === 'settings' && <SettingsTab settings={settings} />}
-      {host === 'usage' && usage && <UsageTable usage={usage} />}
+      {host === 'usage' && usage && <UsageTable usage={usage} session={summary} />}
+      {host === 'background' && summary && <BackgroundTab session={summary} tasks={tasks} log={log} onLog={onLog} />}
       {current?.page &&
         (current.page.frame ? (
           <FramePage key={current.key} page={current.page} sessionId={sessionId} reloads={reloads} reload={reload} />

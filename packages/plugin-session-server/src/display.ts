@@ -4,7 +4,7 @@
 // ════════════════════════════════════════════════════════════
 
 import type { SessionItem } from '@aalis/api-session-protocol';
-import type { ToolDisplay } from '@aalis/api-tools';
+import { integerIn, type ToolDisplay } from '@aalis/api-tools';
 
 /** 工具卡上解析好的展示 */
 export type ResolvedDisplay = NonNullable<Extract<SessionItem, { kind: 'tool-call' }>['display']>;
@@ -13,18 +13,6 @@ export type ResolvedDisplay = NonNullable<Extract<SessionItem, { kind: 'tool-cal
 export type DisplayOf = (tool: string, args: Record<string, unknown>, result?: string) => ResolvedDisplay | undefined;
 
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
-
-/** 结果（JSON 对象）里 key 那一项的整数值；结果不是 JSON、那一项不是整数时没有 */
-function integerIn(result: string, key: string): number | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(result);
-  } catch {
-    return undefined;
-  }
-  const value: unknown = typeof parsed === 'object' && parsed !== null ? Reflect.get(parsed, key) : undefined;
-  return Number.isInteger(value) ? (value as number) : undefined;
-}
 
 /**
  * 没声明、种类不认识、必填的项（命令、路径）不是字符串时没有展示；可选的项（工作目录、删与加的两侧）不是字符串的不给。

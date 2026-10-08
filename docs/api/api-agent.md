@@ -86,7 +86,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, visibleContent?, sessionId, ... }` |
-| `agent:turn:after` | 一轮处理完成（消息在 `agent:input:before` 被拦下时不触发） | `{ message, reply, outcome, sessionId, turnId, metadata }` |
+| `agent:turn:after` | 一轮处理完成（消息在 `agent:input:before` 被拦下时不触发） | `{ message, reply, outcome, error?, sessionId, turnId, metadata }` |
 
 这些键经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`。钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](./api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
 
@@ -121,6 +121,6 @@ export default definePlugin({
 ## 相关
 
 - `IncomingMessage` / `Message` 定义在 [schema-message](./schema-message.md)
-- `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted | error`（四条退出路径都会触发，供生命周期订阅方收口）
+- `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted | error`（四条退出路径都会触发，供生命周期订阅方收口）；结局为 `error` 时 `error` 是一句原因（默认实现填发到会话的 `[错误]` 那句，或解析不出模型时 `[系统]` 那句），会话管理记进 `SessionInfo.lastTurn`，其余结局不带
 - token 自检见 [plugin-prompt-budget](../plugins/plugin-prompt-budget.md)
 - 关停时默认实现在 `lifecycle.onDrain` 中止在飞回合，见 [services/agent](../services/agent.md)

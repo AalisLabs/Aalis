@@ -2,7 +2,7 @@ import { LoaderCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import './StatusText.css';
 
-/** 状态写成一句：需要处理是警告色，出错是危险色，运行中带旋转图标，停用是弱化色；正常时不上色 */
+/** 状态写成一句：需要处理是警告色，出错是危险色，运行中带旋转图标，停用是弱化色；正常时不上色。放不下时句末省略 */
 export function StatusText({
   state,
   children,
@@ -13,7 +13,7 @@ export function StatusText({
   return (
     <span className="status-text" data-state={state}>
       {state === 'running' && <LoaderCircle aria-hidden className="spin" />}
-      {children}
+      <span>{children}</span>
     </span>
   );
 }

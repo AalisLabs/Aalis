@@ -39,7 +39,8 @@ export default definePlugin({
 - **会话树**: 支持父子会话关系（用于子任务系统）
 - **会话设置**: 插件经 `sessionManager.registerSetting` 登记设置项，随它的激活撤回；写入按登记的字段校验，没登记的键与不合字段的值拒绝；插件没装或没启用时它的键原样保留、不参与解析，重新启用后恢复（契约见 [api-session-manager](../api/api-session-manager.md)）
 - **会话种类与列表分区**: 会话种类按 `sessionKind` 给出：子会话为 task，群与私聊为 room，其余为 owner。群与私聊的首条真人消息到达即登记，会话列表把它们列在「IM 房间」区，owner 自己的 WebUI、CLI 会话列在「我的会话」区（收录口径见 [session-manager 服务](../services/session-manager.md) §6.6）。房间建档时记下接管它的平台适配器实例（`originInstance`），供会话列表按实例分组；建档时没有适配器认领的，下一次有消息进来时补记
-- **会话状态**: 回合开始翻 `active`（已归档的不翻，只有手动恢复才回到列表），会话里最后一轮结束时按这一轮的结局收口为 `error` 或 `completed`；结局为 `replied` 时记下她最近开口的时间（`lastReplyAt`）（见 [session-manager 服务](../services/session-manager.md) §7.1）
+- **会话状态**: 回合开始翻 `active`（已归档的不翻，只有手动恢复才回到列表），会话里最后一轮结束时按这一轮的结局收口为 `error` 或 `completed`，根会话与子会话一样；每一轮结束时记下这一轮的结局、结束时间与出错原因（`lastTurn`），结局为 `replied` 时另记下她最近开口的时间（`lastReplyAt`）（见 [session-manager 服务](../services/session-manager.md) §7.1）
+- **按会话累加 token**: 订阅 `llm:usage`，把每次模型调用的输入与输出 token 累加进这个会话的 `tokens`；只记已有的会话，不改 `updatedAt`，随会话落盘与删除（见 [session-manager 服务](../services/session-manager.md) §7.4）
 - **事件发射**: `session:created`、`session:updated`、`session:deleted`、`session:completed`；建、删子会话之后父会话也发一次 `session:updated`（子会话列表变了）；设置项登记或撤回、某一层或某个会话的覆盖被改写时发 `session:config:changed`
 - **持久化**: 会话表存于 memory 的元数据命名空间 `sessions`，写操作经 1 秒防抖后整批提交。会话表跟随 memory 的当前胜者：运行中胜者换成另一个后端（如新装或启用首选后端）时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换。换后端即换库，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随 memory 胜者卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。清空、读取历史等消息类操作始终走当前胜者
 

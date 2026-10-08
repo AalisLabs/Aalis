@@ -42,12 +42,13 @@ export function ffmpegEncodeArgs(fps: number, framePattern: string, palettePath:
   ];
 }
 
-/** 帧序列编码为 GIF。失败抛错（调用方转用户可读错误）。 */
+/** 帧序列编码为 GIF。失败抛错（调用方转用户可读错误）；signal 中止时经 process 服务停掉编码，不另设超时。 */
 export async function framesToGif(
   proc: ProcessService,
   storage: StorageService,
   frames: Buffer[],
   fps: number,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   if (frames.length === 0) throw new Error('无帧可编码');
   const tmp = await proc.makeTempDir('draw-gif');
@@ -58,8 +59,8 @@ export async function framesToGif(
     const framePattern = `${tmp.path}/frame_%04d.png`;
     const palettePath = `${tmp.path}/palette.png`;
     const outPath = `${tmp.path}/out.gif`;
-    await proc.execFile('ffmpeg', ffmpegPaletteArgs(fps, framePattern, palettePath), { timeout: 60_000 });
-    await proc.execFile('ffmpeg', ffmpegEncodeArgs(fps, framePattern, palettePath, outPath), { timeout: 60_000 });
+    await proc.execFile('ffmpeg', ffmpegPaletteArgs(fps, framePattern, palettePath), { signal });
+    await proc.execFile('ffmpeg', ffmpegEncodeArgs(fps, framePattern, palettePath, outPath), { signal });
     const raw = (await storage.readFile(`${tmp.uri}/out.gif`)) as Uint8Array;
     const { Buffer: NodeBuffer } = await import('node:buffer');
     return NodeBuffer.from(raw);

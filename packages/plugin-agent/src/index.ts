@@ -63,6 +63,7 @@ import {
   formatToolArgsForLog,
   INPUT_CONVENTIONS,
   isSameMessage,
+  parseToolArguments,
   toPersonaOptions,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
@@ -628,6 +629,7 @@ class DefaultAgent implements AgentService {
           message: incoming,
           reply: '',
           outcome: signal.aborted ? 'aborted' : 'error',
+          ...(signal.aborted ? {} : { error: why }),
           sessionId: incoming.sessionId,
           turnId,
           metadata: msgHookData.metadata,
@@ -696,8 +698,13 @@ class DefaultAgent implements AgentService {
           // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
           signal,
           // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入；
-          // 延续某次调用的宿主通知另带那次调用的发言者，执行守卫据此认出 owner 链的延续
-          inbound: { source: incoming.source, callerUserId: incoming.hostNotice?.callerUserId },
+          // 延续某次调用的宿主通知另带那次调用的发言者，执行守卫据此认出 owner 链的延续；
+          // 入站消息的平台消息 id 供转到后台的调用结束时，通知的回复引用它
+          inbound: {
+            source: incoming.source,
+            callerUserId: incoming.hostNotice?.callerUserId,
+            messageId: incoming.messageId,
+          },
           turnId,
         };
 
@@ -830,11 +837,15 @@ class DefaultAgent implements AgentService {
           iterations++;
           this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
 
+          // 先解析各次调用的参数：解析不了的，写进本回合消息与存档的那次调用的 arguments 换成 {}（见 parseToolArguments）
+          const parsedCalls = response.toolCalls.map(parseToolArguments);
+          const toolCalls = parsedCalls.map(parsed => parsed.toolCall);
+
           // 将 assistant 消息 (含 toolCalls) 加入历史
           llmBeforeData.messages.push({
             role: 'assistant',
             content: response.content,
-            toolCalls: response.toolCalls,
+            toolCalls,
             reasoningContent: response.reasoningContent,
             metadata: assistantMetadata,
           });
@@ -842,7 +853,7 @@ class DefaultAgent implements AgentService {
           const assistantToolMessage: Message = {
             role: 'assistant',
             content: response.content,
-            toolCalls: response.toolCalls,
+            toolCalls,
             reasoningContent: response.reasoningContent,
             metadata: assistantMetadata,
           };
@@ -852,7 +863,8 @@ class DefaultAgent implements AgentService {
           const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
 
           const parallelResults = await Promise.all(
-            response.toolCalls.map(async (toolCall, position) => {
+            parsedCalls.map(async (parsed, position) => {
+              const { toolCall } = parsed;
               // 这次调用的 id：开始与结束事件、工具上下文都带它。同一位置生成参数时报过同一个工具的进度，用那时配的
               // （会话里已有它的工具卡）；没报过的、或钩子改过调用列表而对不上的现在生成，免得接管画着别的工具的卡。
               // 自己生成而不用模型给的 toolCall.id——模型给的 id 不保证唯一（有的 provider 用毫秒时间戳加序号拼，并发的
@@ -877,27 +889,12 @@ class DefaultAgent implements AgentService {
                   phase,
                   result,
                 });
-              // 无参工具的 arguments 常是空串（流式路径没有 argument delta 时拼出来就是 ''），不算坏 JSON
-              const rawArgs = toolCall.function.arguments?.trim();
-              let args: Record<string, unknown>;
-              try {
-                const parsed: unknown = rawArgs ? JSON.parse(rawArgs) : {};
-                // 工具按参数名取值：顶层是 null、数组或原始值的同坏 JSON 一样处理
-                if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-                  throw new TypeError(
-                    `顶层是 ${parsed === null ? 'null' : Array.isArray(parsed) ? '数组' : typeof parsed}`,
-                  );
-                }
-                args = parsed as Record<string, unknown>;
-              } catch (parseErr) {
+              if ('error' in parsed) {
                 // 参数不是合法 JSON 对象：跳过本次执行，把错误当工具结果回给模型重新生成 arguments。
-                // 旧行为 args = {} 会让"无必填参数"的工具真的空参跑一遍（副作用已发生，模型却不知情）。
-                const reason = parseErr instanceof Error ? parseErr.message : String(parseErr);
-                this.logger.warn(
-                  `工具参数解析失败: ${toolCall.function.name} (${reason}) 原始参数=${rawArgs?.slice(0, 200)}`,
-                );
+                // 不能按空参数执行：「无必填参数」的工具会真的空参跑一遍（副作用已发生，模型却不知情）。
+                this.logger.warn(`工具参数解析失败: ${toolCall.function.name}: ${parsed.error}`);
                 const failedAt = Date.now();
-                const result = JSON.stringify({ error: `工具参数不是合法 JSON 对象：${reason}；请重新生成 arguments` });
+                const result = JSON.stringify({ error: parsed.error });
                 await announce('start', toolCall.function.name, {});
                 await announce('end', toolCall.function.name, {}, result);
                 return {
@@ -914,7 +911,7 @@ class DefaultAgent implements AgentService {
 
               const callCtx: ToolCallContext = { ...toolCtx, callId };
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
-              const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: callCtx };
+              const toolBeforeData = { name: toolCall.function.name, args: parsed.args, toolCallContext: callCtx };
               // 单个工具的链路异常（钩子 / 守卫 / 结果处理抛错）只算该工具失败，转成它自己的错误结果：
               // 整批照常落定、整组落库，兄弟工具已发生的副作用不会因连坐而从历史里消失。
               // executeDone 区分失败发生在执行前还是执行后——后者须明说「已执行」，免得模型重做有副作用的操作。
@@ -1289,6 +1286,7 @@ class DefaultAgent implements AgentService {
             ...(incoming.hostNotice
               ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
               : {}),
+            ...(incoming.hostNotice?.replyTo ? { replyTo: incoming.hostNotice.replyTo } : {}),
             reasoningContent: combinedReasoning,
             source: 'agent',
             turnId,
@@ -1374,6 +1372,7 @@ class DefaultAgent implements AgentService {
           message: incoming,
           reply: '',
           outcome: 'error',
+          error: message,
           sessionId: incoming.sessionId,
           turnId,
           metadata: msgHookData.metadata,

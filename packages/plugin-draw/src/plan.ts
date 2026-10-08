@@ -197,8 +197,9 @@ export const DRAW_ENTRY = 'https://draw.invalid/';
 /**
  * 交给离线渲染库的请求：外壳文档是唯一的资源；量 #aalis-draw 的框截图。
  * HTML 模式视口先按 600 高排版，量高后按像素上限限高（maxPixels ÷ 宽）；SVG 模式视口与限高都是定好的画布高。
+ * signal 是工具执行器给这次调用的中止信号，中止时渲染随之停下
  */
-export function renderRequest(plan: CanvasPlan, scale: number, maxPixels: number): RenderRequest {
+export function renderRequest(plan: CanvasPlan, scale: number, maxPixels: number, signal?: AbortSignal): RenderRequest {
   const fixed = plan.height === 'auto' ? null : plan.height;
   return {
     entry: DRAW_ENTRY,
@@ -207,5 +208,6 @@ export function renderRequest(plan: CanvasPlan, scale: number, maxPixels: number
     ]),
     viewport: { width: plan.width, height: fixed ?? 600, deviceScaleFactor: scale },
     clip: { kind: 'element', selector: '#aalis-draw', maxHeight: fixed ?? Math.floor(maxPixels / plan.width) },
+    signal,
   };
 }

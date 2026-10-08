@@ -3,6 +3,8 @@ import type { Approval, ApprovalSettlement } from '../../packages/api-approval/s
 import {
   type ApprovalSchema,
   type ApprovalSettlementSchema,
+  type BackgroundTask,
+  type BackgroundTaskSchema,
   ErrorFrameSchema,
   NotificationFrameSchema,
   RequestFrameSchema,
@@ -18,6 +20,7 @@ import {
   sessionMethods,
   sessionNotifications,
 } from '../../packages/api-session-protocol/src/index.js';
+import type { BackgroundTask as RegisteredTask } from '../../packages/api-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话协议的 schema 往返：每种帧、每个方法的参数与结果、每种通知与条目，合法样例经 JSON 往返后原样通过，
@@ -42,6 +45,40 @@ const summary: SessionSummary = {
   unread: false,
   attention: true,
   archived: false,
+  background: 1,
+};
+
+/** 子会话：各级父会话、子树合计的 token、最近一轮与出错的原因 */
+const child: SessionSummary = {
+  ...summary,
+  id: 'onebot:10000:group:20001/task-1',
+  title: '查资料',
+  parentId: 'onebot:10000:group:20001',
+  childCount: 0,
+  kind: 'task',
+  error: true,
+  attention: false,
+  background: 0,
+  tokens: { input: 1200, output: 80 },
+  lastTurn: { outcome: 'error', endedAt: 3 },
+  reason: '模型调用失败',
+  ancestors: [{ id: 'onebot:10000:group:20001', title: '读书会' }],
+};
+
+/** 转到后台的命令：结束后带退出码 */
+const task: BackgroundTask = {
+  id: 'bg_1',
+  sessionId: 'session-1',
+  kind: 'tool-call',
+  label: 'exec',
+  call: { tool: 'exec', turnId: 't1', callId: 'c1' },
+  status: 'failed',
+  startedAt: 1,
+  endedAt: 9,
+  lastLine: 'npm ERR! missing script',
+  lastOutputAt: 8,
+  reason: '退出码 1',
+  display: { kind: 'command', command: 'npm run dev', cwd: 'workspace:/app', exitCode: 1 },
 };
 
 const approval: Approval = {
@@ -326,6 +363,32 @@ const methodSamples: MethodSamples = {
     },
     result: { valid: {}, invalid: null },
   },
+  'background/list': {
+    params: { valid: {}, invalid: null },
+    result: {
+      valid: { tasks: [task, { ...task, id: 'bg_2', status: 'running', endedAt: undefined, reason: undefined }] },
+      invalid: { tasks: [{ ...task, status: 'killed' }] },
+    },
+  },
+  'background/watch': {
+    params: { valid: {}, invalid: null },
+    result: { valid: {}, invalid: null },
+  },
+  'background/output': {
+    params: { valid: { taskId: 'bg_1', after: 120 }, invalid: { taskId: 'bg_1', after: -1 } },
+    result: {
+      valid: { text: 'ready on http://localhost:5173\n', end: 4096, truncated: true },
+      invalid: { text: '', end: 1.5, truncated: false },
+    },
+  },
+  'background/stop': {
+    params: { valid: { taskId: 'bg_1' }, invalid: { id: 'bg_1' } },
+    result: { valid: {}, invalid: null },
+  },
+  'background/stopAll': {
+    params: { valid: { sessionId: 'session-1' }, invalid: { taskId: 'bg_1' } },
+    result: { valid: {}, invalid: null },
+  },
 };
 
 /** 每种条目一个合法样例 */
@@ -385,6 +448,18 @@ const items: SessionItem[] = [
   { kind: 'tool-call', itemId: 'c3', turnId: 't1', at: 4, name: 'exec', args: {}, status: 'generating' },
   // 回合停下时还没结束
   { kind: 'tool-call', itemId: 'c4', turnId: 't1', at: 4, name: 'exec', args: {}, status: 'aborted' },
+  // 转到了后台：结果是转后台时回给模型的那段，状态看后台任务
+  {
+    kind: 'tool-call',
+    itemId: 'c5',
+    turnId: 't1',
+    at: 4,
+    name: 'exec',
+    args: { command: 'npm run dev', runInBackground: true },
+    status: 'completed',
+    result: '{"taskId":"bg_1","status":"running"}',
+    taskId: 'bg_1',
+  },
   {
     kind: 'notice',
     itemId: 'n1',
@@ -466,8 +541,12 @@ type NotificationSamples = { [N in SessionNotification]: Pair<SessionNotificatio
 
 const notificationSamples: NotificationSamples = {
   'sessions/changed': {
-    valid: { upserts: [summary], removes: ['session-9'], groups: [] },
-    invalid: { upserts: [], removes: [1], groups: [] },
+    valid: { upserts: [summary, child], removes: ['session-9'], groups: [] },
+    invalid: { upserts: [{ ...child, ancestors: [{ id: 'onebot:10000:group:20001' }] }], removes: [], groups: [] },
+  },
+  'background/changed': {
+    valid: { upserts: [task], removes: ['bg_0'] },
+    invalid: { upserts: [{ ...task, kind: 'remote' }], removes: [] },
   },
   'session/config/changed': { valid: {}, invalid: null },
   'item/started': {
@@ -506,6 +585,10 @@ type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const approvalInSync: Same<ReturnType<(typeof ApprovalSchema)['parse']>, Approval> = true;
 /** 结算推送与工具卡上的结算与 api-approval 的 ApprovalSettlement 同形（类型检查守） */
 const settledInSync: Same<ReturnType<(typeof ApprovalSettlementSchema)['parse']>, ApprovalSettlement> = true;
+type ProtocolTask = ReturnType<(typeof BackgroundTaskSchema)['parse']>;
+/** 后台任务的种类与状态取 api-tools 登记表的同一组值（类型检查守） */
+const taskKindInSync: Same<ProtocolTask['kind'], RegisteredTask['kind']> = true;
+const taskStatusInSync: Same<ProtocolTask['status'], RegisteredTask['status']> = true;
 
 /** 经 JSON 往返后用 schema 解析：结果与原样例相等 */
 function roundTrip(schema: { parse(value: unknown): unknown }, value: unknown): unknown {
@@ -516,6 +599,19 @@ describe('会话协议 schema 往返', () => {
   it('审批对象与 Approval 同形，结算与 ApprovalSettlement 同形（类型检查守）', () => {
     expect(approvalInSync).toBe(true);
     expect(settledInSync).toBe(true);
+  });
+
+  it('后台任务的种类与状态与 api-tools 的登记同一组值（类型检查守）', () => {
+    expect(taskKindInSync).toBe(true);
+    expect(taskStatusInSync).toBe(true);
+  });
+
+  it('sessions/list 的 background 只取 true，不与 archived 同给', () => {
+    const list = sessionMethods['sessions/list'].params;
+    expect(list.safeParse({ background: true, section: 'owner' }).success).toBe(true);
+    expect(list.safeParse({ background: false }).success).toBe(false);
+    expect(list.safeParse({ background: true, archived: true }).success).toBe(false);
+    expect(list.safeParse({ background: true, archived: false }).success).toBe(false);
   });
 
   it('样例表覆盖全部方法与通知', () => {

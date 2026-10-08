@@ -1,5 +1,4 @@
 import type { BoundTools, ToolDisplay } from '../../packages/api-tools/src/index.js';
-import type { Events, LifecycleCap } from '../../packages/core/src/index.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
 import { registerShellTools } from '../../packages/plugin-tool-system/src/tools/shell.js';
 import { silentLogger } from './authority.js';
@@ -15,14 +14,9 @@ export function toolSystemDisplays(): Map<string, ToolDisplay> {
   });
   registerShellTools(capture, {
     logger: silentLogger(),
-    lifecycle: { signal: new AbortController().signal, onDispose: () => () => {} } as unknown as LifecycleCap,
-    events: { on: () => () => {}, emit: async () => {} } as unknown as Events,
-    isOwner: () => false,
     cwdUri: 'workspace:/',
     proc: {} as never,
     storage: {} as never,
-    defaultTimeout: 30000,
-    maxTimeout: 300000,
     maxOutputSize: 65536,
   });
   registerFileTools(capture, {

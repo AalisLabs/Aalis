@@ -44,6 +44,8 @@ export interface ServerConnection {
   readonly attendance: ApprovalAttendance;
   /** 调过 sessions/watch，会话列表的增量推给它 */
   watching: boolean;
+  /** 调过 background/watch，后台任务的增量推给它 */
+  watchingBackground: boolean;
   /**
    * 订阅一个会话（已订阅的换成新的一份）。返回的 release 调用之前，这个会话的推送先攒着；release 时按序补发，之后照常推送。
    * 订阅在快照取定的同一拍登记、回应发出之后 release，快照之后的推送一条不漏，也不会跑到快照前面。
@@ -108,6 +110,7 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
       peer,
       attendance,
       watching: false,
+      watchingBackground: false,
       subscriptions,
       sendText(frame) {
         if (!closed) send(frame);

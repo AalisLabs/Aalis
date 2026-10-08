@@ -12,7 +12,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // 跨会话注入不带指令类消息（安全）。
 //
-// 宿主通知（白纸的完成通知、后台命令结束通知）与代发任务的指令归档为 notice，kind 属于 DIRECTIVE_KINDS。
+// 宿主通知（白纸的完成通知、后台任务结束通知）与代发任务的指令归档为 notice，kind 属于 DIRECTIVE_KINDS。
 // 它们只对所在会话的那一轮有意义；memory-history 按 user、assistant、notice 取别的会话的近期消息，
 // 不排除这些 kind 时，试点群的宿主通知正文会进同平台其他会话（包括 owner 私聊）的 turn-context，
 // recent_messages 也能读出来。普通 notice（戳一戳等事件）照旧带上。

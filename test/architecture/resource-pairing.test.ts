@@ -37,6 +37,15 @@ const WHITELIST = new Map<string, string>([
     'spawn plugin-trigger-laya/sidecar.ts',
     '常驻侧车：寿命由托管方管（启动超时后 SIGKILL，停止时先 SIGTERM、超时再 SIGKILL），不设整体超时',
   ],
+  // 声明可转后台的工具（RegisteredTool.background）：等多久由工具执行器的让出时限管（对话回合里到时转后台、回合照常往下走，
+  // 不在对话回合里的调用到时被中止），停只认执行器给这次调用的中止信号，不另设「到时就杀」的超时
+  ['spawn plugin-tool-system/tools/shell.ts', 'exec 声明可转后台，子进程随执行器给这次调用的中止信号停'],
+  [
+    'spawn plugin-tool-code-runner/runner.ts',
+    'run_python、run_javascript 声明可转后台，脚本随执行器给这次调用的中止信号停',
+  ],
+  ['spawn plugin-office/tools/pdf.ts', 'pdf_convert 声明可转后台，LibreOffice 随执行器给这次调用的中止信号停'],
+  ['spawn plugin-draw/gif.ts', 'draw_animation 声明可转后台，两遍 ffmpeg 编码随执行器给这次调用的中止信号停'],
 ]);
 
 interface Rule {

@@ -6,8 +6,8 @@ interface DialogProps {
   title: string;
   /** Esc 经它交给调用方，由调用方关掉 */
   onClose(): void;
-  /** 确认框窄，带表单的宽 */
-  size?: 'confirm' | 'form';
+  /** 确认框窄，带表单的宽；full 在手机上占满全屏，正文是一块自己滚动的区域（日志） */
+  size?: 'confirm' | 'form' | 'full';
   /** 按钮行：「取消」在左，确认的动作在右。打开时焦点落在标了 data-autofocus 的元素上 */
   footer?: ReactNode;
   children: ReactNode;

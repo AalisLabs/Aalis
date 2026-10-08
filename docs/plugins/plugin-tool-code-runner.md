@@ -5,7 +5,7 @@
 
 ## 概述
 
-执行 Python / JavaScript 代码的工具，带超时与输出大小限制。**默认在 OS 沙箱内运行**
+执行 Python / JavaScript 代码的工具，带输出大小限制，等多久由执行器的让出时限管。**默认在 OS 沙箱内运行**
 （经 `code-sandbox` 服务，由 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md) 提供）——
 把代码的写入限制在「工作目录 + 本次临时目录」、默认断网、只放行白名单环境变量（读取不受限，
 见下文「沙箱（隔离执行）」）。无可用沙箱后端时 **fail-closed**（拒绝执行，给出可操作提示），
@@ -38,8 +38,6 @@ export default definePlugin({
 | `javascript` | object | — | JavaScript (Node.js) |
 | `javascript.enabled` | boolean | `true` | 启用 run_javascript |
 | `javascript.interpreter` | string | `'node'` | 解释器路径：Node.js 解释器路径或命令名 |
-| `defaultTimeout` | number | `60000` | 默认超时 (ms)：脚本执行默认超时时间 |
-| `maxTimeout` | number | `300000` | 最大超时 (ms)：允许指定的最大超时时间 |
 | `maxOutputSize` | number | `131072` | 最大输出字节：stdout/stderr 各自的最大输出字节数 |
 | `workingDirectory` | string | `'workspace:/'` | 逻辑工作目录：脚本执行时的 storage URI 工作目录，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。 |
 | `sandbox` | object | — | 代码沙箱 |
@@ -63,19 +61,21 @@ export default definePlugin({
 | `run_python` | 执行 Python 代码 |
 | `run_javascript` | 执行 JavaScript 代码 |
 
-## 停止键与中止结果
+## 转后台、停止与中止结果
 
-两个工具都把回合的中止信号（工具调用上下文的 `signal`）交给执行路径：沙箱路径经 `code-sandbox` 服务的 `SandboxRunRequest.signal`，无沙箱路径经 process 服务的 `SpawnOptions.signal`。WebUI 按停止键（或同一会话的新消息打断在途回合）时，脚本按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，回合随即结束。
+两个工具都声明可转后台（`background`，让出时限用执行器的默认 30 秒）：在前台等满让出时限还没结束，[plugin-tools](./plugin-tools.md#转后台与后台任务) 的执行器把这次调用登记成后台任务、先回给模型，脚本照常跑，正常结束时通知起它的会话。参数里没有超时，配置里也没有，等多久由执行器的让出时限管（模型可用 `waitSeconds` 改，`runInBackground` 立即转后台）。
+
+停只认执行器给这次调用的中止信号（工具调用上下文的 `signal`）：在前台时随回合中止（WebUI 的停止键、同一会话的新消息打断在途回合），转到后台之后随停止、工具撤回登记与执行器停用中止。它交给执行路径：沙箱路径经 `code-sandbox` 服务的 `SandboxRunRequest.signal`，无沙箱路径经 process 服务的 `SpawnOptions.signal`，两条路径都不带超时。中止时脚本按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL。
 
 结果只在脚本确实是被信号结束时标为中止，免得下一轮模型把已经生效的脚本再跑一遍：
 
 | 情形 | 结果 |
 |---|---|
-| 回合中止，脚本被信号结束（含宽限到点的 SIGKILL） | `aborted: true`、`message: '代码已随回合中止'`，带已收集的输出；不标 `timedOut` |
-| 回合中止前脚本已自行退出，或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '回合已中止'` |
-| 起脚本进程前回合已中止 | 不运行脚本，返回 `aborted: true` 与同一条 `message` |
+| 中止时脚本被信号结束（含宽限到点的 SIGKILL） | `aborted: true`、`message: '代码已中止'`，带已收集的输出 |
+| 中止前脚本已自行退出，或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '调用已中止'` |
+| 起脚本进程前已中止 | 不运行脚本，返回 `aborted: true` 与同一条 `message` |
 
-边界：停止键与超时都只打原进程组。无沙箱路径（`sandbox.mode: none`）与 macOS Seatbelt 路径上，主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）会活下来；Linux bwrap 路径有 pid 命名空间，外层 bwrap 退出后它们随之结束。详见 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md) 的「停止键与超时的边界」。
+边界：中止只打原进程组。无沙箱路径（`sandbox.mode: none`）与 macOS Seatbelt 路径上，主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）会活下来；Linux bwrap 路径有 pid 命名空间，外层 bwrap 退出后它们随之结束。详见 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md) 的「停止键与超时的边界」。
 
 ## 工作目录解析
 

@@ -26,3 +26,15 @@
 .icon-button:disabled {
   color: var(--color-text-disabled);
 }
+
+/* 图标右上角的一个点（与列表行首的标记同大）：收在里面的项有事在进行，次要色，不用强调色与警告色。按图标定位，触屏上按钮变大也贴着图标 */
+.icon-button[data-dot]::after {
+  position: absolute;
+  top: calc(50% - var(--icon-sm) / 2 - var(--space-1));
+  right: calc(50% - var(--icon-sm) / 2 - var(--space-1));
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-text-2);
+  content: "";
+}

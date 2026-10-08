@@ -44,6 +44,8 @@ export interface RegisteredTool {
   confirm?: CapabilityConfirm;
   risk?: CapabilityRisk;
   groups?: string[];
+  display?: ToolDisplay;
+  background?: { yieldSeconds?: number };
 }
 
 export interface ToolCallContext {
@@ -54,13 +56,16 @@ export interface ToolCallContext {
   enabledGroups?: string[];
   acceptsImages?: boolean;
   signal?: AbortSignal;
-  inbound?: { source?: string; callerUserId?: string };
+  inbound?: { source?: string; callerUserId?: string; messageId?: string };
   turnId?: string;
   callId?: string;
+  output?: (text: string) => void;
 }
 ```
 
-`inbound`、`turnId`、`callId` 只由 agent 工具循环填写：所在入站回合的来源、回合 id，以及 agent 为这次调用生成的全局唯一 id（字段说明见 [api-tools](../api/api-tools.md#toolcallcontext)）。
+`inbound`、`turnId`、`callId` 只由 agent 工具循环填写：所在入站回合的来源、回合 id，以及 agent 为这次调用生成的全局唯一 id（字段说明见 [api-tools](../api/api-tools.md#toolcallcontext)）。`output` 由执行器给每次调用一份：工具执行中的输出写进它，agent 回合里转成 `tool:output`。
+
+`background` 声明工具可以转后台（响应 `signal`、晚些拿到结果仍有意义）：执行器给它的参数表补 `runInBackground` 与 `waitSeconds`，在前台等满让出时限还没结束就登记成后台任务、先回给模型，结束时通知起它的会话（见 [api-tools](../api/api-tools.md#可转后台)、[plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)）。
 
 `handler` 返回字符串即纯文本结果；需要把图片交给主模型亲眼看时返回 `ToolExecutionResult`（`{ content, images? }`）。`risk` 是糖：`safe→{public}`、`sensitive→{restricted}`、`dangerous→{restricted, confirm:'session'}`；显式字段覆盖推导；全缺省 → `public`。
 
@@ -81,6 +86,8 @@ getGroups(): ToolGroupInfo[];
 
 **执行面过同一道闸**：`execute` 在调用方给了 `enabledGroups` 时按同样判据校验。
 
+可见的工具里有可转后台的时，列举与执行连同参考实现自带的四个后台任务工具（`background_list`、`background_output`、`background_wait`、`background_stop`）；`getAll()` 在登记了可转后台的工具时列出它们。
+
 ### 2.4 绑定门面
 
 ```ts
@@ -94,11 +101,15 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 
 `register` / `registerGroup` 走 `registrar`。查询与执行走 `tools.current` / `tools.require()`。`withToolGroups` 只覆盖 `register`，不要对象展开 `BoundTools`（会把 `current` 求成快照）。
 
-事件：`AalisEvents['tool:execute']`，只由 agent 工具循环发出，带 `turnId` 与 `callId`，开始与结束按 `callId` 配对。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent`。
+事件：`AalisEvents['tool:execute']`，只由 agent 工具循环发出，带 `turnId` 与 `callId`，开始与结束按 `callId` 配对；`'tool:output'` 是执行中的输出；`'background:changed'` 是后台任务登记的变化。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent` 与工具结果的结局判据 `toolFailed`、`integerIn`。
+
+### 2.5 后台任务登记
+
+描述符 `backgroundTasks`（服务名 `background-tasks`），`list({ sessionId? })`、`output(id, after?)`、`stop(id)`；类型 `BackgroundTask`、`BackgroundTaskChange`。字段与语义见 [api-tools](../api/api-tools.md#后台任务登记)。
 
 ## 3. 谁提供 / 谁消费
 
-**提供者（唯一）**：`@aalis/plugin-tools` —— `provide(tools, new ToolRegistry(logger))`。本服务是**单实例中心 Registry**。
+**提供者（唯一）**：`@aalis/plugin-tools` —— `provide(tools, new ToolRegistry(logger, tasks))`，同时 `provide(backgroundTasks, tasks)`。本服务是**单实例中心 Registry**。
 
 **工具提供者**：`plugin-tool-system`、`plugin-tool-math`、`plugin-tool-browser`、`plugin-tool-search`、`plugin-tool-onebot`、`plugin-tool-code-runner`、`plugin-skills`、`plugin-todo-list`、`plugin-memory-*` 等经 `tools.register` 登记。
 

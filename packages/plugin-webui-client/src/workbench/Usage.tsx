@@ -1,3 +1,4 @@
+import type { SessionSummary } from '@aalis/api-session-protocol';
 import { type CSSProperties, Fragment, useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
 import { percent, tokens } from '../format';
@@ -8,7 +9,8 @@ import './Usage.css';
 // 上下文用量：会话头部一个百分比（上下文已用占窗口的比例），达到压缩线换警告色；点开是拆分表。
 // 拆分表的行是上下文窗口、已用、条目里的各分项（行名与次序照条目）、为回复预留与剩余，为 0 的不显示；带注入者明细的
 // 分项可以展开，按注入者的插件实例合并到插件，行名取插件显示名，对不上的归「其他」。表上方一条按窗口画的堆叠进度条：
-// 分项按占用从大到小堆叠、取图表色，表里每行前一个同色的点作图例，压缩线标在条上；不知道窗口时没有这条，也没有剩余
+// 分项按占用从大到小堆叠、取图表色，表里每行前一个同色的点作图例，压缩线标在条上；不知道窗口时没有这条，也没有剩余。
+// 表下另写会话累计的输入与输出 token（会话树上的数，有子会话时含子会话）
 
 /** 图表色有这么多种；占用排在后面的分项与为回复预留一样用弱化色 */
 const CHART_COLORS = 6;
@@ -20,7 +22,7 @@ export function UsageMeter({ usage, onOpen }: { usage: UsageItem; onOpen(): void
   return (
     <button
       type="button"
-      className="usage-meter"
+      className="header-meter"
       aria-label={`上下文已用 ${ratio}`}
       title={
         usage.compressAt === undefined
@@ -58,7 +60,7 @@ function byPlugin(part: UsagePart, names: ReturnType<typeof usePluginNames>): Ar
 
 const Swatch = ({ swatch }: { swatch: string }) => <span className="usage-swatch" data-swatch={swatch} aria-hidden />;
 
-export function UsageTable({ usage }: { usage: UsageItem }) {
+export function UsageTable({ usage, session }: { usage: UsageItem; session?: SessionSummary }) {
   const names = usePluginNames();
   const [expanded, setExpanded] = useState<string>();
   const { contextWindow, maxTokens: reserved } = usage;
@@ -146,6 +148,12 @@ export function UsageTable({ usage }: { usage: UsageItem }) {
         </tbody>
       </table>
       {usage.compressAt !== undefined && <p className="usage-note">到 {percent(usage.compressAt)} 自动压缩</p>}
+      {session?.tokens && (
+        <p className="usage-total">
+          累计输入 {tokens(session.tokens.input)}，输出 {tokens(session.tokens.output)}
+          {session.childCount > 0 && '（含子会话）'}
+        </p>
+      )}
     </div>
   );
 }

@@ -82,7 +82,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
       primary: true,
       render: s => {
         const status = statusOf(s);
-        return status && status !== 'unread' && <SessionStatus status={status} />;
+        return status && status !== 'unread' && <SessionStatus session={s} status={status} />;
       },
       sortValue: s => {
         const status = statusOf(s);

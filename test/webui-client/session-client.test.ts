@@ -49,6 +49,7 @@ function snapshot(sessionId: string, epoch: string, seq: number): Snapshot {
       unread: false,
       attention: false,
       archived: false,
+      background: 0,
     },
     items: [],
     approvals: [],
@@ -271,6 +272,29 @@ describe('连接级推送', () => {
     socket.notify('features/changed', { features: { send: true, rewind: true, compress: false } });
     expect(changed).toHaveBeenCalledWith({ upserts: [], removes: ['a'], groups: [] });
     expect(features).toHaveBeenCalledWith({ features: { send: true, rewind: true, compress: false } });
+  });
+
+  it('有人关心后台任务时发 background/watch，只发一次；重连后与 sessions/watch 在同一处重发', async () => {
+    vi.useFakeTimers();
+    client = createSessionClient();
+    const socket = await connect();
+    const changed = vi.fn();
+    client.on('background/changed', changed);
+    client.on('background/changed', () => {});
+    client.on('sessions/changed', () => {});
+    await vi.waitFor(() => socket.request('sessions/watch'));
+    expect(socket.frames.map(f => f.method)).toEqual(['initialize', 'background/watch', 'sessions/watch']);
+    socket.notify('background/changed', { upserts: [], removes: ['t1'] });
+    expect(changed).toHaveBeenCalledWith({ upserts: [], removes: ['t1'] });
+
+    socket.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const again = FakeWebSocket.last;
+    again.open();
+    again.reply('initialize', init);
+    await vi.waitFor(() =>
+      expect(again.frames.map(f => f.method)).toEqual(['initialize', 'sessions/watch', 'background/watch']),
+    );
   });
 });
 

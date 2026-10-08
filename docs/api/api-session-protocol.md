@@ -6,7 +6,7 @@
 
 ## 概述
 
-owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上格式。本包定义 JSON-RPC 2.0 帧、握手与错误码，会话列表与增量、订阅与条目、回合控制、在场与审批的参数与结果，全部写成 zod schema，类型由 schema 推导；另有服务描述符 `sessionProtocol`（服务名 `session-protocol`）。不含实现。
+owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上格式。本包定义 JSON-RPC 2.0 帧、握手与错误码，会话列表与增量、订阅与条目、回合控制、后台任务、在场与审批的参数与结果，全部写成 zod schema，类型由 schema 推导；另有服务描述符 `sessionProtocol`（服务名 `session-protocol`）。不含实现。
 
 - **服务端**按 `sessionMethods` 校验收到的每一帧，自己发出的帧由推导出的类型约束。
 - **客户端**（含第三方前端）照着这些 schema 实现，可以直接用它们解析服务端的帧。
@@ -64,7 +64,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 
 | 方法或通知 | 参数 | 结果 |
 |---|---|---|
-| `sessions/list` | `{ section?, parentId?, instance?, platform?, archived?, query?, cursor?, limit? }` | `{ sessions: SessionSummary[], nextCursor?, groups: RoomGroup[] }` |
+| `sessions/list` | `{ section?, parentId?, instance?, platform?, archived?, background?, query?, cursor?, limit? }` | `{ sessions: SessionSummary[], nextCursor?, groups: RoomGroup[] }` |
 | `sessions/watch` | `{}` | `{}`；之后推 `sessions/changed` |
 | `sessions/changed`（通知） | `{ upserts: SessionSummary[], removes: string[], groups: RoomGroup[] }` | — |
 | `session/create` | `{ name?, parentId? }` | `{ session: SessionSummary }` |
@@ -104,6 +104,11 @@ interface SessionSummary {
   unread: boolean;            // 只用于「我的」区，房间恒为 false
   attention: boolean;         // 需要我处理：有推出、还没结的审批
   archived: boolean;
+  background: number;         // 在跑的后台工作数，见下文
+  tokens?: { input: number; output: number };  // 本会话与各级子会话的模型调用累计的 token
+  lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number };  // 最近结束的一轮
+  reason?: string;            // 出错时最近一轮的一句原因
+  ancestors?: Array<{ id: string; title: string }>;  // 子会话才有：各级父会话，根在前
 }
 
 interface RoomGroup {
@@ -124,12 +129,20 @@ interface RoomGroup {
 - **归档**：缺省不含已归档的会话；`archived: true` 只列已归档的（界面的「已归档」区），归档的子会话同样按它取。她在已归档的会话里跑一轮不会让它回到列表，只有 `session/unarchive` 才回来。
 - **一组房间**：`instance` 只列这个适配器实例接管的房间，`platform` 只列这个平台还没记下实例的房间（`groups` 里没有 `instance` 的那一组），两者不同时给（同时给回 `invalidParams`）。房间表据此翻页取全一组，筛选与排序在客户端做。
 - **分组**：`groups` 是没归档的房间的分组，不受分区、搜索与分页影响。组按平台排，同平台里有实例的在前（按实例 id），没记下实例的那组在后。组名 `label` 由服务端给出，客户端不按平台名或实例 id 查表。
+- **后台**：`background: true` 只列 `background` 大于 0 的会话，已归档的与没归档的都列，运行状况的「正在运行」据此取；不与 `archived` 同时给（同时给回 `invalidParams`），只取 `true`。
 - **搜索**：`query` 按名称、标题、id 匹配，不分大小写；也认「平台:群号」，例如 `onebot:20001` 命中 `onebot:<账号>:group:20001`。
 - **分页**：`limit` 缺省 50、最大 200；`cursor` 取上一页的 `nextCursor`，没有下一页时不给。坏的 `cursor` 回 `invalidParams`。
 
+### 按会话树算的字段
+
+- **`background`**：本会话在跑的后台任务数（见下文「后台任务」），加各级子会话里有回合在跑、或有后台任务在跑的会话数（一个子会话算一个）。本会话自己的回合不算，那是 `running`。界面的「后台 N」取它。
+- **`tokens`**：本会话与各级子会话的模型调用累计的输入与输出 token（api-session-manager 的 `SessionInfo.tokens` 按子树相加），对话、摘要、识图、转写的调用都在里面；都还没有记账时没有。
+- **`lastTurn`、`reason`**：最近结束的一轮的结局与结束时间（被拦下、没有结局的一轮记为 silent）；`error` 为真时 `reason` 是那一轮的一句原因（agent 给的），没给原因的没有。子会话与根会话一样收口：出错为 error，其余为 completed，被停止的从 `lastTurn.outcome` 为 aborted 看出。
+- **`ancestors`**：子会话的各级父会话的 id 与标题，根会话在前；界面的路径「父会话 › 本会话」据此逐层退回。
+
 ### 增量
 
-`sessions/watch` 之后，会话建档、改动、完成、删除，回合开始与结束，已读变化，以及审批推出与结算，都推一条 `sessions/changed`：变了的会话给完整摘要，删掉的给 id，另附最新的分组。建、删子会话时父会话的子会话数变了，父会话也在 `upserts` 里。推送不去重，客户端按 id 用最新一条覆盖。连接关闭即停止推送。
+`sessions/watch` 之后，会话建档、改动、完成、删除，回合开始与结束，已读变化，审批推出与结算，后台任务的开始、结束与删除，以及 token 记账，都推一条 `sessions/changed`：变了的会话连同它的各级父会话给完整摘要（父会话的 `background`、`tokens` 按子树算），删掉的给 id，另附最新的分组。建、删子会话时父会话的子会话数变了，父会话也在 `upserts` 里。推送不去重，客户端按 id 用最新一条覆盖。连接关闭即停止推送。
 
 ### 完成未读
 
@@ -192,7 +205,7 @@ type SettingLayer =
 | `user-message` | 文字、附件、说话人（平台、用户 id、昵称、注入来源、是否 owner）。文字是存档里的原文，多人平台带说话人前缀，附带的文件内容块已剥掉、文件名列成附件 |
 | `agent-message` | 文字与附件（可以只有附件）、`model`：生成这条回复的服务商与模型，以及这一轮的 token（`promptTokens` 是这一轮最后一次调用的上下文，`completionTokens` 是这一轮各次调用的输出合计；服务商没报时没有），实时与历史里还原的一致；房间里没发出去的带 `undelivered.reason`：工具调用之前说的话（她只把一轮最后的回复发进群）、重试丢掉的那版、没回复就收尾的一轮（静默、中止、出错）里最后一次工具调用之后说的话、平台没收下或发送出错的回复 |
 | `reasoning` | 思考文字 |
-| `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（generating、running、completed、failed、denied、aborted）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象、或 `display` 里的退出码不为 0 时为 failed。模型还在生成参数时卡片已推出，状态是 generating，只有工具名、`args` 为空；开始执行时同一个 `itemId` 转为 running。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发，包括生成了还没执行的）为 aborted，停止之后工具照样返回了结果也不改；历史里没有结果的调用（重启或中断）同样为 aborted。生成了却没有执行、回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾；生成了却没有执行的，收尾时结果都是「没有执行」。参数不合法、执行前出错这类没有执行就失败的调用，按回给模型的错误收成 failed，历史里同样以 callId 为 id。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom` |
+| `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（generating、running、completed、failed、denied、aborted）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象、或 `display` 里的退出码不为 0 时为 failed。模型还在生成参数时卡片已推出，状态是 generating，只有工具名、`args` 为空；开始执行时同一个 `itemId` 转为 running。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发，包括生成了还没执行的）为 aborted，停止之后工具照样返回了结果也不改；历史里没有结果的调用（重启或中断）同样为 aborted。生成了却没有执行、回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾；生成了却没有执行的，收尾时结果都是「没有执行」。参数不合法、执行前出错这类没有执行就失败的调用，按回给模型的错误收成 failed，历史里同样以 callId 为 id。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom`。转到后台的调用带 `taskId`（后台任务的 id，见下文「后台任务」）：卡片本身以转后台时回给模型的那段结果收尾（completed），任务的状态、耗时、最后一行与输出按 `taskId` 看后台任务；后台任务登记里已经找不到的（超出保留被清掉），只画这次调用本身 |
 | `notice` | 宿主事件，`topic` 区分种类：宿主通知取通知的种类（如 `paper-task`），压缩为 `compress`，存档里的压缩分隔线为 `event-marker`，达到工具调用上限为 `tool-limit`（带 `canContinue`，可以 `turn/continue`） |
 | `plan` | 待办，整份替换；每个会话一条，`itemId` 固定为 `plan` |
 | `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage`，整份替换。它不是时间线上的一条，界面画在会话头部（用量百分比与拆分表）。`parts` 是产出方给的拆分表（显示名、token 数，按显示的次序，不含为回复预留的 `maxTokens`），界面照它画行、不认分项；某一项带 `injectors` 时是它按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件；`compressAt` 是自动压缩的使用率（与 `usageRatio` 同一口径），取压缩服务的 `autoThreshold`，没有压缩服务或不自动压缩时没有 |
@@ -229,7 +242,7 @@ interface ApprovalSettlement {
 
 **刷新之后**：历史与实时推送标出同样的结局。
 
-- **工具结果的元数据**：会话服务在工具结果落库之前（agent 的 `agent:tool:after` 钩子），把审批的结算、「平台已收下经它发出的消息」、「回合停止时这次调用还没结束」与命令的退出码写进这次结果的元数据，历史里的工具卡据此带上 `approvalId`、`settlement`、`sentToRoom`，状态为 aborted，`display` 带上退出码（结果过长时 agent 落库的是截断后的结果，从中取不到）。
+- **工具结果的元数据**：会话服务在工具结果落库之前（agent 的 `agent:tool:after` 钩子），把审批的结算、「平台已收下经它发出的消息」、「回合停止时这次调用还没结束」、命令的退出码与转到后台的任务 id 写进这次结果的元数据，历史里的工具卡据此带上 `approvalId`、`settlement`、`sentToRoom`、`taskId`，状态为 aborted，`display` 带上退出码（结果过长时 agent 落库的是截断后的结果，从中取不到）。
 - **投递失败**：回复平台没收下时，适配器在存档里记一条投递失败（schema-message 的 `OutboundDeliveryFailed`，带这一轮的 `turnId`），历史据此给那一轮的回复标 `undelivered`。
 - **重试与工具调用之前**：重试丢掉的几版与工具调用之前说的话由存档的时间线推出，历史里同样标 `undelivered`。
 - **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。
@@ -248,6 +261,41 @@ interface ApprovalSettlement {
 | `plan/clear` | `{ sessionId }` | `{}` |
 
 发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/checkpoint`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
+
+## 后台任务
+
+在后台替 owner 跑着的东西：现在是转到后台的工具调用（声明了可转后台的工具在前台等满让出时限还没结束，或模型要求立即转后台，见 [api-tools](./api-tools.md#后台任务登记)）。各级子会话的回合不在这里，它们来自会话树（`sessions/list` 带 `parentId` 按层取，摘要的 `background` 已算进去）。
+
+| 方法或通知 | 参数 | 结果 |
+|---|---|---|
+| `background/list` | `{}` | `{ tasks: BackgroundTask[] }`：全部会话在跑的与保留的结束的任务（每个会话留最近 20 条结束的），已归档的会话的也在 |
+| `background/watch` | `{}` | `{}`；之后推 `background/changed` |
+| `background/changed`（通知） | `{ upserts: BackgroundTask[], removes: string[] }` | — |
+| `background/output` | `{ taskId, after? }` | `{ text, end, truncated }`：`text` 是 `after` 之后的输出，`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾，`after` 早于缓冲的开头时 `truncated` 为真。Aalis 重启之前的任务没有留下输出 |
+| `background/stop` | `{ taskId }` | `{}`；中止它并等它落定（最多几秒）才回，状态经 `background/changed` 推出（`stopped`）。被停止的不给她发结束通知 |
+| `background/stopAll` | `{ sessionId }` | `{}`；停掉这个会话下面的全部后台工作：各级子会话在跑的回合，本会话与各级子会话在跑的后台任务，等任务落定才回。本会话自己的回合不停（那是 `turn/abort`） |
+
+```ts
+interface BackgroundTask {
+  id: string;
+  sessionId: string;
+  kind: 'tool-call';          // 宿主维护的封闭集合，以后按加法加
+  label: string;              // 显示名：工具调用是工具名
+  call?: { tool: string; turnId: string; callId: string };  // tool-call 才有；callId 就是工具卡的 itemId
+  status: 'running' | 'completed' | 'failed' | 'stopped' | 'aborted';
+  startedAt: number;
+  endedAt?: number;
+  lastLine?: string;          // 输出的最后一行
+  lastOutputAt?: number;      // 最后一次有输出的时刻
+  reason?: string;            // 失败或中断的一句原因
+  display?: ToolDisplay;      // 同工具卡：按工具声明的展示种类解析，命令种类在结束后带退出码
+}
+```
+
+- **状态**：失败是结果带 `error` 或退出码不为 0；被停止是经 `background/stop`、`background/stopAll` 或模型自己停的；被中断是工具撤回登记、工具注册表停用或 Aalis 重启时还在跑的。界面只画推送来的状态：按了停止之后等推送，不先自行标成已停止。
+- **不下发的**：模型给的参数与工具的结果都不下发。`display` 按工具现在的声明解析，退出码取自结果；Aalis 重启之前结束的任务没有留下结果，取不到退出码。
+- **推送的节拍**：开始、结束、停止与删除立即推；只有最后一行与最后输出时间变了的攒起来，每秒至多推一次；状态变了时，攒着的那次并进这一次。删掉的（会话删除、超出保留）在 `removes` 里。`background/watch` 不依赖后台任务登记在不在，登记晚些上线时照样推。
+- **服务不在**：没有后台任务登记时，`background/list`、`background/output`、`background/stop` 回 `unsupported`；`background/stopAll` 照样停子会话的回合。子会话有回合在跑、对话服务却停不了回合时，`background/stopAll` 回 `unsupported`，什么都不停。任务不认识回 `not-found`，会话不存在回 `not-found`。
 
 ## 在场与审批
 

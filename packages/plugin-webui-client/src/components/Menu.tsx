@@ -19,13 +19,15 @@ interface MenuProps {
   label: string;
   items: readonly MenuItem[];
   icon?: LucideIcon;
+  /** 按钮上的一个点：收在菜单里的项有事在进行（手机头部的「后台 N」） */
+  dot?: boolean;
 }
 
 /**
  * 「更多」菜单：图标按钮弹出一列操作，与按钮右边对齐；手机上从底部弹出。
  * 方向键在项之间移动，Esc 关闭并把焦点还给按钮，Tab 离开时关闭，点在外面关闭
  */
-export function Menu({ label, items, icon = Ellipsis }: MenuProps) {
+export function Menu({ label, items, icon = Ellipsis, dot }: MenuProps) {
   const { open, show, close, trigger, popup, layer, host } = usePopover<HTMLButtonElement>();
   const menuId = useId();
 
@@ -70,6 +72,7 @@ export function Menu({ label, items, icon = Ellipsis }: MenuProps) {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        data-dot={dot || undefined}
         onClick={() => (open ? close(true) : show())}
         onKeyDown={onTriggerKeyDown}
       />

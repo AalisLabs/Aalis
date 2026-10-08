@@ -81,14 +81,14 @@ async function boot() {
 }
 
 const notice = (callerUserId?: string): IncomingMessage => ({
-  content: '后台进程 proc_0a1b2c_1 已退出：退出码 1，用时 3 秒。它最近的输出用 process_read 查看。',
+  content: '后台任务 bg_0a1b2c_1（exec）失败：退出码 1，用时 3 秒。结果与输出用 background_output 查看。',
   sessionId: SESSION,
   platform: 'webui',
-  source: 'exec-bg:proc_0a1b2c_1',
+  source: 'bg:bg_0a1b2c_1',
   actor: callerUserId !== undefined ? { platform: 'webui', userId: callerUserId } : selfInitiatedActor('webui'),
   hostNotice: {
-    kind: 'exec-background',
-    id: 'proc_0a1b2c_1',
+    kind: 'background-task',
+    id: 'bg_0a1b2c_1',
     ...(callerUserId !== undefined ? { callerUserId } : {}),
   },
 });
@@ -108,7 +108,7 @@ describe('真人打断延续其本人身份的宿主通知回合', () => {
     await h.agent.handleMessage(human('console'));
     await noticeTurn;
     expect(h.held[0].signal?.aborted).toBe(true);
-    expect(h.turns).toContainEqual({ source: 'exec-bg:proc_0a1b2c_1', outcome: 'aborted' });
+    expect(h.turns).toContainEqual({ source: 'bg:bg_0a1b2c_1', outcome: 'aborted' });
     expect(h.turns).toContainEqual({ source: undefined, outcome: 'replied' });
   });
 
@@ -120,7 +120,7 @@ describe('真人打断延续其本人身份的宿主通知回合', () => {
     expect(h.held[0].signal?.aborted).toBe(false);
     h.release();
     await noticeTurn;
-    expect(h.turns).toContainEqual({ source: 'exec-bg:proc_0a1b2c_1', outcome: 'replied' });
+    expect(h.turns).toContainEqual({ source: 'bg:bg_0a1b2c_1', outcome: 'replied' });
   });
 
   it('不延续任何人身份的通知（不带 callerUserId）不被真人消息中止', async () => {

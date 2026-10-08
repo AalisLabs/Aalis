@@ -49,6 +49,12 @@ export function useConnectionState(client: SessionClient | AdminClient): Connect
   );
 }
 
+/** 会话服务用不了：会话连接已停止，或服务不在 */
+export function useSessionless(): boolean {
+  const state = useConnectionState(useSessionClient());
+  return state.status === 'stopped' || (state.status === 'retrying' && state.code === SERVICE_ABSENT);
+}
+
 export function ConnectionProvider({
   session,
   admin,

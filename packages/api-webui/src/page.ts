@@ -467,10 +467,10 @@ export interface PageRef {
 }
 
 /**
- * 会话右侧面板里宿主自己的标签，按宿主的顺序：计划、设置、用量。每个对应会话协议里的一类数据，由宿主按数据画，
- * 不走页面登记；照同一套协议实现的前端也有同样的标签。封闭集合，以后按加法加
+ * 会话右侧面板里宿主自己的标签，按宿主的顺序：计划、设置、用量、后台（子会话与后台任务）。每个对应会话协议里的一类
+ * 数据，由宿主按数据画，不走页面登记；照同一套协议实现的前端也有同样的标签。封闭集合，以后按加法加
  */
-export const HOST_PANEL_TABS = ['plan', 'settings', 'usage'] as const;
+export const HOST_PANEL_TABS = ['plan', 'settings', 'usage', 'background'] as const;
 
 export type HostPanelTab = (typeof HOST_PANEL_TABS)[number];
 

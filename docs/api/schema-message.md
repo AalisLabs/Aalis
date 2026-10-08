@@ -28,7 +28,7 @@ interface IncomingMessage {
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
   noticeTargetIsSelf?: boolean;        // poke 是否指向机器人；false 按未点名互动判断，省略沿用戳机器人的语义
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-  hostNotice?: { kind: string; id?: string; untrusted?: string; callerUserId?: string }; // 宿主撰写的事件通知，见下文
+  hostNotice?: { kind: string; id?: string; untrusted?: string; callerUserId?: string; replyTo?: string }; // 宿主撰写的事件通知，见下文
   // 内部字段（preprocessor 写入）
   _imageDescriptions?: string[];
   _imageRecognitionInfo?: { imageCount; successCount; descriptions; transformedContent };
@@ -53,7 +53,8 @@ interface IncomingMessage {
 `hostNotice` 标记一条由宿主撰写的事件通知，它不是任何人的发言（如白纸枢纽的任务完成通知）。注入方的约定：
 
 - 必须同时设 `source`；不设 `userId`、`nickname`、`sessionType`、`triggerType`。
-- 身份：不延续某次调用的通知（如白纸的完成通知），`actor` 用 `selfInitiatedActor(platform)`，不设 `callerUserId`。延续某次工具调用的通知（如 plugin-tool-system 的后台命令结束通知）沿用那次调用的身份、不高于它：`platform` 同那次调用，`actor` 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为 `selfInitiatedActor`），`callerUserId` 为那次调用的 `userId`。允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记，现在只有后台命令结束通知一处。
+- 身份：不延续某次调用的通知（如白纸的完成通知），`actor` 用 `selfInitiatedActor(platform)`，不设 `callerUserId`。延续某次工具调用的通知（如 plugin-tools 执行器的后台任务结束通知）沿用那次调用的身份、不高于它：`platform` 同那次调用，`actor` 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为 `selfInitiatedActor`），`callerUserId` 为那次调用的 `userId`。允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记，现在只有后台任务结束通知一处。
+- `replyTo` 是回复这条通知时要引用的平台消息 id，取自起那次调用的入站消息（`ToolCallContext.inbound.messageId`）；入站消息没有平台消息 id 的不设。plugin-agent 回复时把它带进出站消息的 `replyTo`。
 - `kind` 是通知的子类（如 `'paper-task'`），`id` 是注入方生成的通知标识，供日志与注入方自己的记录对位。
 - 宿主撰写的行一律放在 `content` 里。`untrusted` 放注入方已用 `wrapUntrustedContent`（`@aalis/api-tools`）包好的不可信段，如远端代理的说明，放在最后。
 - `callerUserId` 不是发言者：plugin-agent 只用它填这一轮工具调用上下文的 `userId`（工具眼里是谁在调）与 `inbound.callerUserId`（执行守卫据此判这一轮是不是 owner 链的延续），并让这位用户在同一会话发来的真人消息中止这一轮；归档、用户档案、关系与提示词钩子都不看它。
@@ -74,6 +75,7 @@ interface OutgoingMessage {
   sessionId: string;
   platform?: string;
   hostNotice?: { kind: string; id?: string }; // 最终通知关联，工具中途发消息不带
+  replyTo?: string;                   // 引用回复：被引用消息的平台消息 id
   reasoningContent?: string;
   segments?: ContentSegment[];        // 与协议层 Message.segments 一致
   source?: 'agent' | 'system' | 'command';
@@ -84,6 +86,8 @@ interface OutgoingMessage {
 ```
 
 `source='agent'` 表示由 AI 生成，可被分条延迟发送以模拟自然节奏；其它来源默认整条立即发送。
+
+`replyTo` 是被引用消息的平台消息 id。支持引用的适配器把引用加在这条消息的第一条分条前（OneBot v11、v12 各按自己的消息段写法，正文里模型已写了引用标记的不再加第二个），其余适配器忽略。现在只有 plugin-agent 回复带 `replyTo` 的宿主通知时带上它。
 
 `callId` 是发出这条消息的那次工具调用的 id（`ToolCallContext.callId`），如 `send_attachment` 发的附件。会话的客户端据此把消息挂到对应的工具卡上；平台收下后，房间里的工具卡标「已发到群」。
 

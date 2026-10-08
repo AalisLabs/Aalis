@@ -76,6 +76,8 @@ export interface DescribeInput {
   mode?: 'single' | 'combined';
   /** 附件所在的会话：识别的模型调用按它记账（api-llm 的 ChatModelRequest.sessionId）；不在会话里识别时不填 */
   sessionId?: string;
+  /** 中止信号：交给识别的模型调用（ChatModelRequest.signal），中止时识别随之停下 */
+  signal?: AbortSignal;
 }
 
 export interface DescribeResult {
@@ -199,6 +201,8 @@ export interface DescribeImageOptions {
   detailLevel?: 'auto' | 'casual' | 'detailed' | 'professional';
   /** 图片所在的会话：识别的模型调用按它记账（同 {@link DescribeInput.sessionId}）；不在会话里识别时不填 */
   sessionId?: string;
+  /** 中止信号，经 {@link DescribeInput.signal} 交给识别的模型调用（如 analyze_image 传执行器给这次调用的信号） */
+  signal?: AbortSignal;
 }
 
 export interface DescribeVideoOptions {

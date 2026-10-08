@@ -2,6 +2,7 @@
 // 会话列表与会话的增删改：摘要、分区与分组、排序与分页、搜索、按组取与归档区；建、改名、归档与恢复、删除与批量；
 // 会话设置的各行（会话与各层）；已读。会话本身都在 session-manager 里，这里只做投影与转发。
 // 「需要我处理」由未结的审批驱动；房间按接管的适配器实例分组，组名取实例的显示名。
+// 摘要里有几项按会话树算：在跑的后台工作数与 token 合计含各级子会话，子会话另带各级父会话。
 // ════════════════════════════════════════════════════════════
 
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
@@ -37,6 +38,8 @@ interface SessionDeps {
   isRunning(sessionId: string): boolean;
   /** 这个会话有没有推出、还没结的审批 */
   hasApproval(sessionId: string): boolean;
+  /** 各会话在跑的后台任务数：要遍历登记表，一批摘要取一次 */
+  runningTasks(): ReadonlyMap<string, number>;
   /** 摘要因会话表之外的原因变了（已读），推给 watch 的连接 */
   changed(sessionId: string): void;
   platform: ServiceRef<PlatformAdapter>;
@@ -97,14 +100,39 @@ export function createSessions(deps: SessionDeps) {
     return root;
   };
 
+  /** 各级父会话，根会话在前 */
+  const ancestorsOf = (info: SessionInfo): SessionInfo[] => {
+    const parent = parentOf(info);
+    return parent ? [...ancestorsOf(parent), parent] : [];
+  };
+
+  /** 各级子会话 */
+  const descendantsOf = (info: SessionInfo): SessionInfo[] =>
+    info.children.flatMap(id => {
+      const child = sm.getSession(id);
+      return child ? [child, ...descendantsOf(child)] : [];
+    });
+
   /** 会话所在的区：按根会话的种类，子会话归在根会话的区里 */
   const sectionOfRoot = (root: SessionInfo) => (root.kind === 'room' ? 'rooms' : 'owner');
   const sectionOf = (info: SessionInfo) => sectionOfRoot(rootOf(info));
 
-  function summarize(info: SessionInfo): SessionSummary {
+  /** 本会话与各级子会话的 token 合计；都还没有时没有 */
+  function tokensOf(tree: SessionInfo[]): SessionSummary['tokens'] {
+    const counted = tree.flatMap(info => (info.tokens ? [info.tokens] : []));
+    if (counted.length === 0) return undefined;
+    return counted.reduce((sum, t) => ({ input: sum.input + t.input, output: sum.output + t.output }));
+  }
+
+  /** tasks 是各会话在跑的后台任务数，一批摘要共用一份 */
+  function summarize(info: SessionInfo, tasks: ReadonlyMap<string, number> = deps.runningTasks()): SessionSummary {
     const root = rootOf(info);
     const room = root.kind === 'room';
     const seenAt = seen.get(info.id);
+    const below = descendantsOf(info);
+    const tokens = tokensOf([info, ...below]);
+    const ancestors = ancestorsOf(info).map(parent => ({ id: parent.id, title: parent.title || parent.name }));
+    const reason = info.status === 'error' ? info.lastTurn?.error : undefined;
     return {
       id: info.id,
       title: info.title || info.name,
@@ -125,6 +153,12 @@ export function createSessions(deps: SessionDeps) {
       unread: !room && info.lastReplyAt !== undefined && (seenAt === undefined || info.lastReplyAt > seenAt),
       attention: deps.hasApproval(info.id),
       archived: info.status === 'archived',
+      background:
+        (tasks.get(info.id) ?? 0) + below.filter(child => deps.isRunning(child.id) || tasks.has(child.id)).length,
+      ...(tokens ? { tokens } : {}),
+      ...(info.lastTurn ? { lastTurn: { outcome: info.lastTurn.outcome, endedAt: info.lastTurn.endedAt } } : {}),
+      ...(reason === undefined ? {} : { reason }),
+      ...(ancestors.length > 0 ? { ancestors } : {}),
     };
   }
 
@@ -169,7 +203,8 @@ export function createSessions(deps: SessionDeps) {
 
   /**
    * 根会话：「我的」区在前，需要我处理、出错、完成未读、运行中依次靠前，其余按最后活动；房间在后，按最后活动。
-   * 子会话按最后活动。缺省不含已归档的，archived 为真时只列已归档的；instance、platform 只列一组房间。
+   * 子会话按最后活动。缺省不含已归档的，archived 为真时只列已归档的；background 只列有后台工作的，归档与否都列；
+   * instance、platform 只列一组房间。
    */
   function list(params: SessionMethodParams<'sessions/list'>): SessionMethodResult<'sessions/list'> {
     if (params.cursor !== undefined && !/^\d+$/.test(params.cursor)) {
@@ -178,7 +213,7 @@ export function createSessions(deps: SessionDeps) {
     const parent = params.parentId === undefined ? undefined : requireSession(params.parentId);
     const archived = params.archived ?? false;
     let rows = (parent ? sm.getChildren(parent.id) : sm.listSessions({ parentId: null })).filter(
-      info => (info.status === 'archived') === archived,
+      info => params.background || (info.status === 'archived') === archived,
     );
     const { instance, platform } = params;
     if (instance !== undefined) rows = rows.filter(info => info.originInstance === instance);
@@ -186,8 +221,10 @@ export function createSessions(deps: SessionDeps) {
       rows = rows.filter(info => info.originPlatform === platform && info.originInstance === undefined);
     }
     if (params.query) rows = rows.filter(info => matches(info, params.query ?? ''));
-    let summaries = rows.map(summarize);
+    const tasks = deps.runningTasks();
+    let summaries = rows.map(info => summarize(info, tasks));
     if (!parent && params.section) summaries = summaries.filter(s => s.section === params.section);
+    if (params.background) summaries = summaries.filter(s => s.background > 0);
     const rank = (s: SessionSummary) =>
       parent ? 0 : s.section === 'rooms' ? 5 : s.attention ? 0 : s.error ? 1 : s.unread ? 2 : s.running ? 3 : 4;
     summaries.sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt);
@@ -387,5 +424,5 @@ export function createSessions(deps: SessionDeps) {
     },
   };
 
-  return { handlers, summarize, groups, requireSession, sectionOf };
+  return { handlers, summarize, groups, requireSession, sectionOf, ancestorsOf, descendantsOf };
 }
