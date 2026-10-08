@@ -609,6 +609,27 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - 自己实现 LLM 服务商的，登记模型时套 `metered` 才会被记账；不套照常能用，只是不记。
 - **发布档位**：次版本：api-webui、api-llm、api-agent、api-session-protocol、api-session-manager、api-media、plugin-webui-server、plugin-webui-client、plugin-session-server、plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-mcp-client；plugin-usage-stats 首发 0.1.0（对 api-llm 的依赖下限抬到本批的新版本）；其余为 patch。只改注释的 schema-message 可以不发。
 
+### 后台任务：可转后台的工具调用与「后台」标签（@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-tool-system、@aalis/plugin-tool-code-runner、@aalis/plugin-office、@aalis/plugin-draw、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-mcp-client、@aalis/api-checkpoint、@aalis/plugin-checkpoint、@aalis/api-authority、@aalis/schema-message、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-adapter-onebot、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-subtask、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-webui、@aalis/plugin-webui-client）
+
+新 WebUI 的第九部分：耗时的工具调用不再挡住对话。声明了可转后台的工具在前台等一段时间还没结束，就转到后台继续跑，她先回复，结束时再接着说；会话面板新增「后台」标签，可以看输出、停止。
+
+- **转后台**（api-tools、plugin-tools）：工具定义可以声明 `background`（可带 `yieldSeconds`，缺省 30 秒）。执行器给声明了的工具的参数表补两项：`waitSeconds`（前台最多等多少秒）与 `runInBackground`（立即转），执行时先取出，审批事实与工具拿到的参数里都没有它们；参数表里已有同名项的工具当作没声明。过了守卫之后先在前台等，在前台时回合中止一并中止它；到时没结束或要求立即转的，对话回合里的调用登记成后台任务，先回给模型任务 id 与已有输出的末尾，此后停止键与新消息打断都不动它。不在对话回合里的调用（workflow 的工具节点、mcp-server）没有可以通知的对话，到时中止并回报已有输出。调用上下文新增输出口 `output`，进度写进它，执行器转成 `tool:output`（一次调用最多推 64 KiB）并留进输出缓冲。
+- **后台任务登记**：新服务 `background-tasks`（描述符 `backgroundTasks`，类型 `BackgroundTask`、`BackgroundTaskService`）可查、可取输出、可停，变化发 `background:changed`；共用的结局判据 `toolFailed`、`integerIn` 与参数名判据 `takenBackgroundParams` 进 api-tools。结局：结果带 `error` 或命令的退出码不为 0 为失败（退出码记在任务的 `exitCode`），被停止为 `stopped`，工具撤回、插件停用、重启时还在跑的为 `aborted`。同一会话里对话回合中在跑的可转后台调用最多 `background.maxPerSession`（默认 4，前台与后台一起数），满了时在过守卫之前就拒绝；守卫拒绝或抛错都让出名额。登记写进插件数据 `pluginData:/tools/background-tasks.json`（不记输出与结果，每个会话留最近 20 条结束的），重启后读回，还在跑的落成 `aborted`。新配置 `background.maxWaitSeconds`（默认 600，最大 2147483）与 `background.maxPerSession`。
+- **四个后台任务工具**：可见的工具里有可转后台的时，模型多拿到 `background_list`、`background_output`、`background_wait`、`background_stop`，只看得到、停得了同一身份起的任务，owner 看得到全部。
+- **结束通知**：后台任务正常结束（含失败）时向起它的会话注入一条宿主通知（`hostNotice.kind` 为 `background-task`），身份取起它的那次调用，正文只写任务 id、工具名、结局与退出码、用时；回复时引用起它的那条消息（`InboundTurn.messageId`、`hostNotice.replyTo`、`OutgoingMessage.replyTo`，OneBot 只给第一条分条加引用段）。由结束通知开的回合里转后台的不再通知；被停止、被中断、停机期间结束的不通知。
+- **第一方工具**：exec、http_download（plugin-tool-system），run_python、run_javascript（plugin-tool-code-runner），pdf_convert（plugin-office），draw_image、draw_animation（plugin-draw），analyze_image（plugin-media）与 MCP 桥进来的工具声明可转后台，并跟随中止信号（api-media 的 `DescribeInput`、`DescribeImageOptions` 加 `signal`）；pdf_convert 与 GIF 编码去掉固定的 60 秒。MCP 工具的请求超时交给让出时限，参数撞名的仍用 SDK 默认的 60 秒。代码执行的脚本非零退出或被信号结束算失败（结果带 `error`）。
+- **会话数据**（api-agent、api-session-manager、plugin-session-manager、plugin-subtask）：`agent:turn:after` 带出错原因；`SessionInfo` 加 `lastTurn`（最近一轮的结局、结束时间与出错原因，原因最多留 200 字）与按会话累加的 `tokens`（订阅 `llm:usage`，不改 `updatedAt`）。子会话与根会话同一套收口，最后一轮出错为 error，其余为 completed。子任务被停止时在 `check_subtask`、`wait_subtasks` 与父会话提醒里报「已停止」，`wait_subtasks` 随即返回；出错的带上原因。
+- **会话协议**（api-session-protocol、plugin-session-server）：新增 `background/list`、`background/watch`、`background/output`、`background/stop`、`background/stopAll` 与推送 `background/changed`（开始、结束、停止立即推，只有最后一行变了的每秒合并一次）；`stopAll` 停各级子会话的回合与本会话、各级子会话的后台任务，不停本会话自己的回合。后台任务带命令的退出码 `exitCode`（取自登记，工具所属插件停用、重启之后照样在）。摘要加 `background`（在跑的后台工作数，含子会话）、`tokens`（含子会话的合计）、`lastTurn`、`reason`、`ancestors`，每次推送连同各级父会话；`sessions/list` 可以只列有后台工作的；转了后台的工具卡带 `taskId`，历史里同样还原。
+- **WebUI**（api-webui、plugin-webui-client）：会话面板的宿主标签加「后台」，有子会话或后台任务时出现：子会话按会话树列出，工具调用列这个会话的任务，在跑的在前、结束的收进「已结束」；可以看输出（可复制，手机上全屏）、停止、全部停止，最后一行里的本机网址在本机打开页面时给「打开」链接。时间线里转了后台的工具卡保持活的；会话头部有「后台 N」（手机上收进「更多」并加一个点）；子会话页顶部写「父会话 › 本会话」，可以逐层退回；用量面板写会话累计的输入与输出 token；运行状况新增「正在运行」，归档的会话也列出。左栏只列根会话，删除行上的子任务展开，有后台工作的行写「后台 N」，出错的写一句原因。
+- **破坏性**：
+  - 删除 `exec_background`、`process_list`、`process_read`、`process_kill`：长任务用 exec 的 `runInBackground`，或等它到时自己转后台；查看与停止用四个后台任务工具。
+  - 删除 exec、http_download、run_python、run_javascript 的 `timeout` 参数与结果里的 `timedOut`：带 `timeout` 的调用（如 workflow 工具节点里写死的参数）会被参数校验拒绝，去掉即可，要多等就给 `waitSeconds`。不在对话回合里的调用到让出时限（默认 30 秒，最多 `background.maxWaitSeconds`）还没结束就被中止；此前 exec 默认 30 秒、最多 300 秒超时。
+  - 删除配置 plugin-tool-system 的 `shell.defaultTimeout`、`shell.maxTimeout`，plugin-tool-code-runner 的 `defaultTimeout`、`maxTimeout`。
+  - pdf_convert 失败时改为报错（结果带 `error`），不再回 `{ success: false }`；MCP 工具的远端错误与调用失败以 `error` 回。
+  - `wait_subtasks` 的 `timedOut` 只在等满时还有没结束的子任务才为真（此前子任务出错也算）；子任务状态多了 `stopped`。
+  - 会话协议的 `SessionSummary.background` 必填。
+- **发布档位**：次版本：api-tools、plugin-tools、plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-mcp-client、api-media、schema-message、api-authority、api-agent、api-session-manager、plugin-session-manager、plugin-subtask、api-session-protocol、plugin-session-server、api-webui、plugin-webui-client；其余为 patch。plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-draw、plugin-media、plugin-mcp-client 对 `@aalis/api-tools` 的依赖下限抬到本批的新版本；plugin-tools 新增依赖 api-storage、schema-config、schema-message、util-text-normalize。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -645,6 +666,9 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-usage-stats 与 api-llm 同批升级：服务商要套新版 api-llm 的 `metered` 才发 `llm:usage`，旧版服务商配新版记账插件什么都记不上；新版服务商在运行时导入 `metered`，配旧版 api-llm 加载时找不到导出。
 - plugin-session-server、plugin-agent、plugin-webui-client 与 api-agent、api-session-protocol 同批升级：新版会话服务照 `token:usage` 的 `parts` 放进用量条目，旧版 agent 不带 `parts`，拆分表没有行；旧版前端读已删的 `breakdown`、`injectors`。
 - plugin-webui-client 与 plugin-webui-server、plugin-session-server 同批升级：新版前端读 `/api/attention`、日志的筛选参数与 `attention.changed`，设置行读 `unset`，回复读 token；旧版前端读已删的 `GET /api/plugins/:name/config`。
+- plugin-tools 与 plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-draw、plugin-media、plugin-mcp-client、api-tools 同批升级：新版工具不再自带超时，等多久交给新版执行器的让出时限；配旧版 plugin-tools 时不会转后台、也没有让出时限，exec 等调用一直等到回合被停止。
+- plugin-session-server、plugin-webui-client 与 api-session-protocol、plugin-tools 同批升级：新版前端读摘要必填的 `background` 与 `background/*` 方法，旧版会话服务没有；新版会话服务投影的后台任务登记只有新版 plugin-tools 提供。
+- plugin-subtask 与 plugin-session-manager 同批升级：新版子任务等子会话由 session-manager 收口（出错为 error、被停止为 completed 且最近一轮为 aborted），配旧版 session-manager 时出错或被停止的子会话一直停在进行中，`wait_subtasks` 等满才返回。
 - 走插件市场的，以上各组各自同一批勾选更新。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
 
