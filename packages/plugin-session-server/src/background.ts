@@ -49,10 +49,9 @@ export function createBackground(deps: BackgroundDeps) {
     return service;
   };
 
-  /** 协议的形状：去掉模型给的参数与工具的结果，展示按工具声明解析；命令的退出码取登记里的，重启前结束的也在 */
-  function project({ call, result: _result, exitCode, ...task }: RegisteredTask): BackgroundTask {
-    const parsed = deps.displayOf(call.tool, call.args);
-    const display = parsed?.kind === 'command' && exitCode !== undefined ? { ...parsed, exitCode } : parsed;
+  /** 协议的形状：去掉模型给的参数与工具的结果，展示按工具声明从参数解析；退出码照登记，不随工具是否还在 */
+  function project({ call, result: _result, ...task }: RegisteredTask): BackgroundTask {
+    const display = deps.displayOf(call.tool, call.args);
     return {
       ...task,
       call: { tool: call.tool, turnId: call.turnId, callId: call.callId },

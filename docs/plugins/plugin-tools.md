@@ -31,7 +31,7 @@ export default definePlugin({
 - `events`：发 `tool:output`、`background:changed` 与后台任务的结束通知；收听 `session:deleted` 与 `app:stopping`。
 - `lifecycle`：停用时把在跑的后台任务落成 `aborted` 并写盘。
 - 可选 `sessionManager`：登记会话设置项「工具分组」；没有时各会话只拿到通用工具。
-- 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，每次上线（有了插件数据根）都读回一遍，内存里已有的条目照留。
+- 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，有了插件数据根时读回一次。
 - 可选 `authority`：后台任务工具放行 owner 看与停别人起的任务；没有时只认同一身份。
 
 权限钩子由消费方通过 `setExecutionGuard()` 注入。
@@ -70,7 +70,7 @@ export default definePlugin({
 声明了 `background` 的工具（契约见 [api-tools](../api/api-tools.md#可转后台)）由执行器统一转后台，各工具不用自己管。第一方声明了的有：`exec`、`http_download`（[plugin-tool-system](plugin-tool-system.md)），`run_python`、`run_javascript`（[plugin-tool-code-runner](plugin-tool-code-runner.md)），`pdf_convert`（[plugin-office](plugin-office.md)），`draw_image`、`draw_animation`（[plugin-draw](plugin-draw.md)），`analyze_image`（[plugin-media](plugin-media.md)），以及 [plugin-mcp-client](plugin-mcp-client.md) 桥进来的工具（参数表里已有 `runInBackground` 或 `waitSeconds` 的除外）。
 
 - **让出**：参数表补 `runInBackground` 与 `waitSeconds`，执行时先取出。过了守卫之后在前台等让出时限（`waitSeconds`，缺省取工具的 `yieldSeconds`，再缺省 30 秒，上限 `background.maxWaitSeconds`）。执行器给这次调用自己的中止信号：在前台时回合中止一并中止它；转后台的那一刻摘掉与回合的联动，之后停止键、新消息打断都不动它。
-- **登记**：到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（`backgroundTasks`），回给模型任务 id、已有输出的末尾（最多 2000 字）与「已转到后台，结束时会通知你；不必等它，可以先回复」。所有会话同一句。没转后台的调用不进登记表。不在对话回合里的调用（没有 `callId`）不转后台：带 `runInBackground` 直接回错，到时中止并回报已有输出。
+- **登记**：到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（`backgroundTasks`），回给模型任务 id、已有输出的末尾（最多 2000 字）与「已转到后台，结束时会通知你；不必等它，可以先回复」。所有会话同一句。没转后台的调用不进登记表。不在对话回合里的调用（没有 `turnId` 或 `callId`）不转后台：带 `runInBackground` 直接回错，到时中止并回报已有输出。
 - **输出**：执行器给每次调用一个输出口 `ToolCallContext.output`：有 `turnId` 与 `callId` 时转成 `tool:output`，一次调用推出的总量不超过 64 KiB（界面按条目累加输出，前台最多要等 `background.maxWaitSeconds`，持续大量输出的命令不能把它撑满）；可转后台的调用另留进输出缓冲（只留末尾 64 KiB），任务的最后一行、最后输出时间与 `output(id, after)` 都取它。转到后台之后不再发 `tool:output`，只更新登记表并发 `background:changed`。
 - **结局**：结果带 `error` 或命令种类的退出码不为 0 为 `failed`（与会话服务的工具卡同一判据 `toolFailed`），`stop` 停的为 `stopped`，其余 `completed`；结束的留着工具的结果。命令种类的退出码记在任务的 `exitCode`，失败的 `reason` 只取结果里的 `error`。工具撤回登记（所属插件停用）时，执行器把它在跑的调用一并中止，后台的落成 `aborted`；本插件停用时全部落成 `aborted`。会话删除时停掉它的任务并删掉登记；归档不停。
 - **检查点**：转到后台的调用在回合提交之后经存储写的文件不进这一轮的检查点，回滚撤不回（见 [plugin-checkpoint](plugin-checkpoint.md)）。
@@ -83,7 +83,7 @@ export default definePlugin({
 
 | 工具 | 作用 |
 |---|---|
-| `background_list` | 列出本会话的任务：id、工具、状态、开始与结束时间、最后一行、最后输出时间、原因 |
+| `background_list` | 列出本会话的任务：id、工具、状态、开始与结束时间、最后一行、最后输出时间、原因、命令的退出码 |
 | `background_output` | 取一个任务的输出，带 `after` 只取新增的；结束的带工具的结果（调用方能看图时带上结果里的图） |
 | `background_wait` | 等列出的任务都结束，最多等 `waitSeconds`（默认 30，上限同 `background.maxWaitSeconds`），回合中止即返回 |
 | `background_stop` | 停一个任务，等它落定（宽限 3 秒）再如实回报；被停的不通知 |

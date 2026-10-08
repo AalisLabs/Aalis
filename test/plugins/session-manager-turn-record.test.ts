@@ -104,6 +104,15 @@ describe('lastTurn：每一轮结束时记下结局与结束时间', () => {
     }
   });
 
+  it('出错原因最多留 200 字，不从代理对中间切开；空串当作没有', async () => {
+    const { sm, turn } = await setup();
+    const session = await sm.createSession({ name: '<会话>' });
+    await turn(session.id, 'error', `${'x'.repeat(199)}😀${'y'.repeat(5_000)}`);
+    expect(sm.getSession(session.id)?.lastTurn?.error).toBe(`${'x'.repeat(199)}…`);
+    await turn(session.id, 'error', '');
+    expect(sm.getSession(session.id)?.lastTurn).not.toHaveProperty('error');
+  });
+
   it('被拦下、没有结局的一轮按 silent 记，不沿用上一轮的出错原因', async () => {
     const { sm, turn } = await setup();
     const session = await sm.createSession({ name: '<会话>' });

@@ -87,7 +87,7 @@ const ENDING_TONES = { completed: undefined, failed: 'error', stopped: 'inactive
 function endingOf(task: BackgroundTask): string | undefined {
   if (task.status === 'running') return undefined;
   if (task.status !== 'failed') return ENDINGS[task.status];
-  const exitCode = commandOf(task)?.exitCode;
+  const { exitCode } = task;
   return exitCode === undefined || exitCode === 0 ? '失败' : `退出码 ${exitCode}`;
 }
 
@@ -197,7 +197,7 @@ function shortPath(path: string): string {
 
 /**
  * 后台任务的一行：第一行是命令（或工具名），占满整行；第二行是状态与耗时、工作目录与动作；下面是最后一行，以及失败或
- * 中断的原因（与结局一样的不重复写）
+ * 中断的原因
  */
 function TaskRow({ task, onOutput }: { task: BackgroundTask; onOutput?(): void }) {
   const command = commandOf(task);
