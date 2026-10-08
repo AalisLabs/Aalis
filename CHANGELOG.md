@@ -630,6 +630,34 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - 会话协议的 `SessionSummary.background` 必填。
 - **发布档位**：次版本：api-tools、plugin-tools、plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-mcp-client、api-media、schema-message、api-authority、api-agent、api-session-manager、plugin-session-manager、plugin-subtask、api-session-protocol、plugin-session-server、api-webui、plugin-webui-client；其余为 patch。plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-draw、plugin-media、plugin-mcp-client 对 `@aalis/api-tools` 的依赖下限抬到本批的新版本；plugin-tools 新增依赖 api-storage、schema-config、schema-message、util-text-normalize。
 
+### 单元 7 收尾第一批：契约清理与中立、体验与无障碍、结束通知与 /help（@aalis/schema-message、@aalis/api-llm、@aalis/api-agent、@aalis/api-tools、@aalis/api-commands、@aalis/api-session-manager、@aalis/api-session-protocol、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-commands、@aalis/plugin-authority、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-message-archive、@aalis/plugin-file-reader、@aalis/plugin-image-sender、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-maimai、@aalis/plugin-webui-server、@aalis/plugin-webui-client）
+
+新 WebUI 的第十部分：清掉不再使用的契约，会话服务不再按平台或插件的文字格式去猜存档内容，补上出错时的重试与日志入口和无障碍，后台任务的结束通知画成一行状态，/help 只列能用的指令。
+
+- **契约清理**（schema-message、plugin-agent、api-llm、api-session-manager、plugin-session-manager、plugin-file-reader）：外发的 `OutgoingMessage` 不再带 `reasoningContent`、`segments`（思考与时间线经会话协议与存档取），`modelInfo` 只留 `provider`、`model`、`promptTokens`、`completionTokens`；删除 api-llm 的 `ModelInfo`、会话管理的 `getTree` 与 `SessionTreeNode`（子会话用 `getChildren` 逐层取）；plugin-file-reader 不再提供 `file-reader` 服务，上传的文件只经它自己的工具与会话面板取用。
+- **存档与会话历史**（schema-message、plugin-message-archive、plugin-session-server、api-agent，以及写元数据的 plugin-agent、plugin-webui-server、plugin-image-sender、plugin-adapter-onebot）：`WellKnownMetadataKeys` 登记存档元数据的键（键名不变，存量数据不用迁移），新增 `ArchivedAttachment`。存档另记发言人写的话（`spokenContent`）与附件清单（`attachments`：种类、名字、地址），附件地址只记网址与根在存储根表里的存储地址，私有引用（如 `aalis-file://`）不进清单；不再写 `fileNames`。会话历史与实时推送里的提问只显示发言人写的话，文件显示成卡片，有地址的图片显示成图片；没有这两个键的旧提问显示存档原文。api-agent 写明两条约定：落库按登记的键；房间里一轮只把最后一条回复交给平台。
+- **坏数据**（plugin-session-manager、plugin-session-server）：会话记录的可选字段存成 null 或类型不对时，去掉这个字段照常载入（存储把 undefined 存成 null 的记录因此不再从会话列表里消失）；必填字段不对的记录移到命名空间 `sessions-rejected` 并记 warn，同 id 的房间再来消息不会覆盖它。存档里字段不对的消息不进历史并记 warn，不再让整个快照取不出来。
+- **WebUI 体验与无障碍**（plugin-webui-client、plugin-webui-server、plugin-user-profile）：
+  - 取数失败的区域与出错提示带「重试」与「查看日志」，日志按来源实例筛好；保存宿主配置后重取失败时写「没刷新成功」，不再静默显示旧值。
+  - 会话面板关闭当前标签的按钮移到标签栏末尾，键盘与读屏都能到达，悬停提示写 Delete；可关闭的标签按 Delete 关闭。
+  - 运行状况角标的读屏名改为「运行状况，N 项需要处理」；端到端测试加 axe 无障碍检查。
+  - 构建目标改为 Chrome 129、Edge 129、Firefox 131、Safari 16。
+  - `?token=` 登录后保留其余查询串；多行通知（如指令回复）保留换行与缩进。
+  - 新增「用户档案」页，可查看与删除事实，只删不改。
+- **后台任务结束通知**（api-tools、schema-message、plugin-tools、plugin-message-archive、api-session-protocol、plugin-session-server、plugin-webui-client）：`hostNotice` 加可选的 `facts`（给界面的事实，不进模型），登记存档键 `HostNoticeId`、`HostNoticeFacts`；api-tools 新增 `BACKGROUND_TASK_NOTICE` 与 `BackgroundTaskNoticeFacts`，结束通知带工具名、结局、用时与退出码；会话协议的通知条目加 `noticeId`、`facts`。时间线把结束通知画成一行状态，点开是这个任务的日志；回滚确认在这一轮有转到后台的调用时，提示它们在这一轮结束之后写的文件不会撤回。
+- **指令与 /help**（api-commands、plugin-commands、plugin-maimai、plugin-user-relation、plugin-agent、plugin-authority、plugin-user-profile）：
+  - `/help` 只列调用者能用的指令，判据与执行同一份；用不了的当作不存在，执行时的拒绝提示不变。输出为各平台通用的纯文本；指令后加 `-h` 或 `--help` 回它的用法；裸敲分组与写错选项时附的用法同样过滤。
+  - api-commands 新增 `argument(name, description)` 与 `PositionalArgSpec.description`；选项的取值可带说明；约定描述的第一句是 /help 里的摘要。
+  - 负数可以直接作位置参数，如 `/level <平台>:<用户> -1`；修复以 `no-` 开头的选项名不能用；`/relation show` 的 id 为空、`/session.set` 一项都没给时回明确的提示。
+  - plugin-maimai 删除手写帮助，裸敲 `/maimai` 回自动生成的用法；recent 的条数跟在 `qq:` 目标后面也生效。
+- **权限**（api-tools、api-commands、plugin-authority、plugin-tools、plugin-commands）：`setExecutionGuard` 接受 `undefined`；停用 plugin-authority 时摘掉它注入的守卫，工具与指令回到 fail-closed（此前停用后仍按旧的等级表裁决）。
+- **破坏性**：
+  - schema-message：`OutgoingMessage` 删除 `reasoningContent`、`segments`，`modelInfo` 删除 `totalTokens`、`elapsedMs`。
+  - api-llm 删除 `ModelInfo`；api-session-manager 删除 `getTree`、`SessionTreeNode`；plugin-file-reader 删除 `file-reader` 服务（`fileReader` 描述符、`FileReaderService`、`FileMeta`）。
+  - plugin-message-archive 不再写 `fileNames`。
+  - api-commands：`OptionSpec.choices` 改为 `OptionChoice[]`（登记时仍收字符串）；`-h`、`--help` 成为保留选项，声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项时登记抛错。
+- **发布档位**：次版本：schema-message、api-llm、api-tools、api-commands、api-session-manager、api-session-protocol、plugin-session-manager、plugin-session-server、plugin-message-archive、plugin-file-reader、plugin-commands、plugin-user-profile、plugin-webui-client；其余为 patch。plugin-message-archive 新增依赖 api-storage（可选服务 storage），plugin-user-profile 新增依赖 api-webui（可选服务 webui-server）。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
