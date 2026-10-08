@@ -5,20 +5,20 @@ import { useReducer } from 'react';
 import { useMatch, useNavigate } from 'react-router';
 import { RunningBelow, StopButton } from '../background/Background';
 import { Block } from '../components/Block';
-import { Button } from '../components/Button';
-import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
 import { Tabs } from '../components/Tabs';
 import { useSessionClient, useSessionless } from '../connection';
 import { withInstance } from '../pages/registry';
+import { SESSION_PROTOCOL, useHost, useProvider } from '../plugins/list';
 import { isRecord, useJson } from '../rest';
 import { paths, routes } from '../routes';
 import { useSessionList } from '../sessions/live-list';
 import { BackgroundStatus } from '../sessions/status';
 import { Main } from '../shell/Shell';
-import { AttentionList, FetchError } from './AttentionList';
+import { AttentionList } from './AttentionList';
 import { useAttention } from './attention';
 import { Logs } from './Logs';
 import './Health.css';
@@ -67,20 +67,13 @@ export function HealthPage() {
 
 function Attention() {
   const { items, error, retry } = useAttention();
+  const host = useHost();
   return (
     <Block title="需要处理">
       {items && (items.length > 0 ? <AttentionList items={items} /> : <p className="page-empty">没有需要处理的事</p>)}
-      {error &&
-        (items ? (
-          <FetchError error={error} retry={retry} stale />
-        ) : (
-          <EmptyState
-            tone="danger"
-            title="「需要处理」没取到"
-            description={error.message}
-            action={<Button onClick={retry}>重试</Button>}
-          />
-        ))}
+      {error && (
+        <FetchError what="「需要处理」" error={error} retry={retry} stale={items !== undefined} source={host} />
+      )}
     </Block>
   );
 }
@@ -89,10 +82,19 @@ function Attention() {
 function Running() {
   const sessionless = useSessionless();
   const list = useSessionList({ background: true });
+  const sessions = useProvider(SESSION_PROTOCOL);
   if (sessionless || (!list.error && !list.sessions?.length)) return null;
   return (
     <Block title="正在运行">
-      {list.error && <FetchError error={list.error} retry={list.retry} stale={list.sessions !== undefined} />}
+      {list.error && (
+        <FetchError
+          what="正在运行的会话"
+          error={list.error}
+          retry={list.retry}
+          stale={list.sessions !== undefined}
+          source={sessions}
+        />
+      )}
       {list.sessions && list.sessions.length > 0 && (
         <List label="正在运行">
           {list.sessions.map(session => (
@@ -152,24 +154,11 @@ function parsePlatforms(body: unknown): PlatformStatus[] {
 /** 没有适配器时不出现 */
 function Platforms({ version, refresh }: { version: number; refresh(): void }) {
   const { value: platforms, error } = useJson('/api/platforms', parsePlatforms, version);
-  if (!platforms) {
-    return (
-      error && (
-        <Block title="平台连接">
-          <EmptyState
-            tone="danger"
-            title="平台连接没取到"
-            description={error.message}
-            action={<Button onClick={refresh}>重试</Button>}
-          />
-        </Block>
-      )
-    );
-  }
-  if (platforms.length === 0 && !error) return null;
+  const host = useHost();
+  if ((!platforms || platforms.length === 0) && !error) return null;
   return (
     <Block title="平台连接">
-      {platforms.length > 0 && (
+      {platforms && platforms.length > 0 && (
         <List label="平台连接">
           {platforms.flatMap(({ adapterName, contextId, connections }) => {
             const row = (key: string, connection?: Connection) => (
@@ -188,7 +177,9 @@ function Platforms({ version, refresh }: { version: number; refresh(): void }) {
           })}
         </List>
       )}
-      {error && <FetchError error={error} retry={refresh} stale />}
+      {error && (
+        <FetchError what="平台连接" error={error} retry={refresh} stale={platforms !== undefined} source={host} />
+      )}
     </Block>
   );
 }

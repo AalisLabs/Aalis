@@ -2,10 +2,18 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive } from '@aalis/api-message-archive';
+import { isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
-import { buildIncomingContent, getMessageName, WellKnownKinds } from '@aalis/schema-message';
+import type { ArchivedAttachment, IncomingMessage, Message } from '@aalis/schema-message';
+import {
+  AttachmentRefKind,
+  buildIncomingContent,
+  getMessageName,
+  parseAttachmentRefs,
+  WellKnownKinds,
+  WellKnownMetadataKeys,
+} from '@aalis/schema-message';
 
 const configSchema = defineConfig({
   debugLogs: {
@@ -30,7 +38,40 @@ function extractMentions(text: string): string[] {
   return [...ids];
 }
 
-const uses = { memory, media: optional(media), events, logger, config, provide };
+/** 附件引用里的种类名 */
+const REF_KINDS: Readonly<Record<ArchivedAttachment['kind'], string>> = {
+  image: AttachmentRefKind.Image,
+  audio: AttachmentRefKind.Audio,
+  video: AttachmentRefKind.Video,
+  file: AttachmentRefKind.File,
+};
+
+/**
+ * 能当地址的写法：网址，以及根在存储服务根表里的存储地址；相对的存储路径（`<根>/路径`，平台适配器与媒体识别落盘后的写法）
+ * 先归一成存储地址。预处理器换上的私有引用（形似存储地址、根不存在）不算
+ */
+function addressOf(value: string | undefined, roots: ReadonlySet<string>): string | undefined {
+  if (!value) return undefined;
+  if (/^https?:\/\//i.test(value)) return value;
+  const uri = /^[A-Za-z][\w-]*\/[^:]*$/.test(value) ? toStorageUri(value) : value;
+  return isStorageUri(uri) && roots.has(parseUriRoot(uri)) ? uri : undefined;
+}
+
+/**
+ * 入站附件的清单：地址取附件的 data；data 不是地址（内联数据、本机路径、预处理器的私有引用）时，取预处理器给它写的描述里
+ * 同种附件的引用（formatAttachmentRef 的写法，如媒体识别把上传的图片落盘后写的）
+ */
+function attachmentList(incoming: IncomingMessage, roots: ReadonlySet<string>): ArchivedAttachment[] {
+  return (incoming.attachments ?? []).map(({ kind, name, data }, i) => {
+    const described = parseAttachmentRefs(incoming._attachmentDescriptions?.[i] ?? '').find(
+      found => found.kind === REF_KINDS[kind],
+    );
+    const ref = addressOf(data, roots) ?? addressOf(described?.ref, roots);
+    return { kind, ...(name ? { name } : {}), ...(ref ? { ref } : {}) };
+  });
+}
+
+const uses = { memory, media: optional(media), storage: optional(storage), events, logger, config, provide };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -46,7 +87,10 @@ export default definePlugin({
   },
 });
 
-function createArchiveService({ memory, media, events, logger }: Caps, debugLogs: boolean): MessageArchiveService {
+function createArchiveService(
+  { memory, media, storage, events, logger }: Caps,
+  debugLogs: boolean,
+): MessageArchiveService {
   // 不缓存 memory 引用，每次调用现取：一次激活内胜者也可能换人（偏好变更、更高优先级的
   // 提供者登场），ServiceRef 的契约就是每次解析当前值。多一次查表的开销可忽。
   return {
@@ -91,25 +135,23 @@ function createArchiveService({ memory, media, events, logger }: Caps, debugLogs
 
       // 把会话身份信息存入 metadata，供向量检索/上下文渲染等场景使用
       const meta: Record<string, unknown> = {};
-      if (working.userId) meta.userId = working.userId;
-      if (working.nickname) meta.nickname = working.nickname;
-      if (working.platform) meta.platform = working.platform;
+      if (working.userId) meta[WellKnownMetadataKeys.UserId] = working.userId;
+      if (working.nickname) meta[WellKnownMetadataKeys.Nickname] = working.nickname;
+      if (working.platform) meta[WellKnownMetadataKeys.Platform] = working.platform;
       if (working.groupId) meta.groupId = working.groupId;
       if (working.groupName) meta.groupName = working.groupName;
       if (working.sessionType) meta.sessionType = working.sessionType;
       // 平台侧消息 ID（如 OneBot message_id），用于"引用回复"反查归档原文
       if (working.messageId) meta.messageId = working.messageId;
-      // 文件附件名称列表：供前端历史加载时重建文件标签，避免 content 里的 inline 文件内容
-      // 污染对话气泡显示。此时 plugin-file-reader 已将 att.data 替换为 aalis-file://ID，
-      // 但 att.name 仍保留原始文件名。
-      const fileAttachments = working.attachments?.filter(a => a.kind === 'file') ?? [];
-      if (fileAttachments.length > 0) {
-        meta.fileNames = fileAttachments.map(a => a.name ?? '未知文件').filter(Boolean);
-      }
+      // 发言人写的话与附件清单：归档正文拼进了发送者前缀、引用与附件描述（给模型看），读历史给人看的一方取这两样
+      if (working.content !== content) meta[WellKnownMetadataKeys.SpokenContent] = working.content;
+      const roots = new Set(storage.current?.listRoots().map(root => root.name));
+      const attachments = attachmentList(working, roots);
+      if (attachments.length > 0) meta[WellKnownMetadataKeys.Attachments] = attachments;
       // 触发与来源溯源：用于区分真实用户消息 vs proactive 代发任务/调度等系统注入，
       // 也方便事后审计"agent 在 X 群做过什么"
       if (working.triggerType) meta.triggerType = working.triggerType;
-      if (working.source) meta.source = working.source;
+      if (working.source) meta[WellKnownMetadataKeys.Source] = working.source;
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
@@ -119,8 +161,13 @@ function createArchiveService({ memory, media, events, logger }: Caps, debugLogs
       //
       // 宿主通知同样落成 notice，kind='host-notice'。只归档宿主正文：注入方包好的不可信段
       // （hostNotice.untrusted）不写进消息也不写进 metadata——归档的 notice 出口转成 system，
-      // 之后这个房间每一轮都看得到它，不可信段只能在当轮出现。
-      if (working.hostNotice) meta.hostNoticeKind = working.hostNotice.kind;
+      // 之后这个房间每一轮都看得到它，不可信段只能在当轮出现。子类、id 与给界面的事实另记，读历史的一方据此画通知
+      if (working.hostNotice) {
+        const { kind, id, facts } = working.hostNotice;
+        meta[WellKnownMetadataKeys.HostNoticeKind] = kind;
+        if (id) meta[WellKnownMetadataKeys.HostNoticeId] = id;
+        if (facts) meta[WellKnownMetadataKeys.HostNoticeFacts] = facts;
+      }
       const kind = working.hostNotice
         ? WellKnownKinds.HostNotice
         : working.triggerType === 'proactive'
@@ -166,8 +213,8 @@ function createArchiveService({ memory, media, events, logger }: Caps, debugLogs
 
       const metadata: Record<string, unknown> = {};
       if (opts.subType) metadata.subType = opts.subType;
-      if (opts.platform) metadata.platform = opts.platform;
-      if (opts.userId) metadata.userId = opts.userId;
+      if (opts.platform) metadata[WellKnownMetadataKeys.Platform] = opts.platform;
+      if (opts.userId) metadata[WellKnownMetadataKeys.UserId] = opts.userId;
       if (opts.targetId) metadata.targetId = opts.targetId;
       if (opts.groupId) metadata.groupId = opts.groupId;
       if (opts.operatorId) metadata.operatorId = opts.operatorId;

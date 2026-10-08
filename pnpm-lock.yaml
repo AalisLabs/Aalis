@@ -69,6 +69,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^2.1.9
         version: 2.1.9(vitest@2.1.9(@types/node@22.19.15)(jsdom@25.0.1(canvas@2.11.2))(terser@5.46.1))
+      axe-core:
+        specifier: ^4.14.0
+        version: 4.14.0
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -1819,6 +1822,9 @@ importers:
       '@aalis/api-message-archive':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-message-archive
+      '@aalis/api-storage':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-storage
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
@@ -2810,6 +2816,9 @@ importers:
       '@aalis/api-user-relation':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-user-relation
+      '@aalis/api-webui':
+        specifier: workspace:>=0.11.1 <1.0.0
+        version: link:../api-webui
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
@@ -3020,6 +3029,9 @@ importers:
       '@aalis/api-session-protocol':
         specifier: workspace:*
         version: link:../api-session-protocol
+      '@aalis/api-tools':
+        specifier: workspace:*
+        version: link:../api-tools
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
@@ -4809,6 +4821,10 @@ packages:
 
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
+
+  axe-core@4.14.0:
+    resolution: {integrity: sha512-9WTZxEjsZ7b13TH8JPmbV2z8CHbl80/2hm3XPEG4JgNdQLK81IBRXmSxHfMAOkSqQeRxT/0dwNDz2GOm3zzpcQ==}
+    engines: {node: '>=4'}
 
   b4a@1.8.0:
     resolution: {integrity: sha512-qRuSmNSkGQaHwNbM7J78Wwy+ghLEYF1zNrSeMxj4Kgw6y33O3mXcQ6Ie9fRvfU/YnxWkOchPXbaLb73TkIsfdg==}
@@ -8713,6 +8729,8 @@ snapshots:
   async@3.2.6: {}
 
   asynckit@0.4.0: {}
+
+  axe-core@4.14.0: {}
 
   b4a@1.8.0: {}
 

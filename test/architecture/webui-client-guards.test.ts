@@ -2,19 +2,24 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { sessionMethods, sessionNotifications } from '../../packages/api-session-protocol/src/index.js';
+import {
+  sessionMethods,
+  sessionNotifications,
+  sessionProtocol,
+} from '../../packages/api-session-protocol/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 的写法守卫：
 // - 兼容与写法（客户端）：颜色只来自主题令牌，组件 CSS 不写 px（线宽 1px、2px 除外），字号与时长只引用令牌，内联 style 只设 CSS 变量，
 //   不用原生对话框与 window.open，浏览器存储只经存储模块（首帧主题脚本除外），不写死主机与端口（认本机网址的模块写回环
 //   地址，是唯一的例外），dangerouslySetInnerHTML 只许出现在白名单里的文件；
-// - 客户端只认契约不认插件：不出现插件包名，不依赖对话代理的契约（用量分项名由条目给出），字符串字面量不等于任何插件
-//   登记的页面键、动作名、数据源名、设置键或工具名。
+// - 客户端只认契约不认插件：不出现插件包名，不依赖对话代理的契约（用量分项名由条目给出），字符串字面量（正则字面量按词
+//   拆开）不等于任何插件登记的页面键、动作名、数据源名、设置键或工具名。
 //   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；
 // - 服务端只认契约不认插件：会话协议、webui-server（含框架托管与转发）、session-server 的源码不出现别的插件的名字，
-//   字符串字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名。
+//   字符串字面量与正则字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名。
 //   契约包里出现的词与字段声明的可选项来源不查，这份排除表从契约包的源码算出；
+// - 工具名静态收集，运行时才有、收不到的列进看不见的工具名，与收集结果逐条相等；
 // - 插件前端：iframe、postMessage 与 MessageChannel 只出现在框架模块里，客户端与服务端都不出现 allow-same-origin。
 // ════════════════════════════════════════════════════════════
 
@@ -106,14 +111,34 @@ const stringText = (node: ts.Node) =>
 /** 一段文字里的词：字母、数字、下划线与连字符连成的一串 */
 const wordsIn = (text: string) => text.split(/[^\w-]+/).filter(Boolean);
 
+/** 正则字面量里的词：只取两道斜杠之间，转义（\b、\s 之类）先去掉，免得粘在词上 */
+const regexWords = (node: ts.Node) =>
+  ts.isRegularExpressionLiteral(node)
+    ? wordsIn(node.text.slice(1, node.text.lastIndexOf('/')).replace(/\\./g, ' '))
+    : [];
+
 // ----- 插件登记的页面键、动作名、数据源名、设置键、工具名与字段名 -----
+
+/** 标识符是哪个具名函数的第几个形参：从内往外找第一个以它为形参的函数，那个函数没有名字时回 undefined */
+function parameterOf(identifier: ts.Identifier): { fn: string; index: number } | undefined {
+  for (let node: ts.Node = identifier; node.parent; node = node.parent) {
+    if (!ts.isFunctionLike(node)) continue;
+    const index = node.parameters.findIndex(p => ts.isIdentifier(p.name) && p.name.text === identifier.text);
+    if (index < 0) continue;
+    const named = node.name ?? (ts.isVariableDeclaration(node.parent) ? node.parent.name : undefined);
+    return named && ts.isIdentifier(named) ? { fn: named.text, index } : undefined;
+  }
+  return undefined;
+}
 
 /**
  * 从源码收集：页面键取页面声明（带 key、title，且带 content 或 frame 的对象，标签不算）的 key，key 写成本文件里的字符串
  * 常量时取常量的值；动作名取页面声明的 actions 对象的键，数据源名取插件前端页面的 sources 对象的键；设置键取各包对
- * SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）；工具名取带 name、description 与 parameters 的对象的 name；
- * schema 字段名（配置键、动作与数据源的输入字段）取带 type 与 label 的对象、带 fields 的分组所在属性的名字，只收复合词，
- * 单个小写词（如 port、shell）是通用词，判不出归属；字段声明的可选项来源（dynamicOptions）由宿主按名回答，另收一份
+ * SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）；工具名取带 name、description 与 parameters 的对象的 name，
+ * name 是本文件助手函数的形参时取本文件对这个函数每次调用在那个位置上的字面量或常量，取不全的把所在文件记进看不见的
+ * 工具名（unseenTools，一处一条）；schema 字段名（配置键、动作与数据源的输入字段）取带 type 与 label 的对象、带 fields
+ * 的分组所在属性的名字，只收复合词，单个小写词（如 port、shell）是通用词，判不出归属；字段声明的可选项来源
+ * （dynamicOptions）由宿主按名回答，另收一份
  */
 function collectKeys(sources: Iterable<ts.SourceFile>) {
   const pages = new Set<string>();
@@ -123,6 +148,7 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
   const tools = new Set<string>();
   const schemaFields = new Set<string>();
   const optionSources = new Set<string>();
+  const unseenTools: string[] = [];
   const keysOf = (node: ts.Node | undefined, into: Set<string>) => {
     if (!node || !ts.isObjectLiteralExpression(node)) return;
     for (const property of node.properties) {
@@ -132,14 +158,27 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
   };
   for (const source of sources) {
     const constants = new Map<string, string>();
+    /** 本文件里按名字调用的函数：函数名 → 各次调用的实参 */
+    const calls = new Map<string, ts.NodeArray<ts.Expression>[]>();
     visitAll(source, node => {
       const value = ts.isVariableDeclaration(node) ? literalText(node.initializer) : undefined;
       if (value !== undefined && ts.isIdentifier((node as ts.VariableDeclaration).name)) {
         constants.set((node as ts.VariableDeclaration).name.getText(), value);
       }
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        calls.set(node.expression.text, [...(calls.get(node.expression.text) ?? []), node.arguments]);
+      }
     });
     const textOf = (node: ts.Node | undefined) =>
       node && ts.isIdentifier(node) ? constants.get(node.text) : literalText(node);
+    /** 名字的各个取值：形参取各次调用的实参，有一次取不到就回空；不是形参的按字面量与常量取 */
+    const valuesOf = (node: ts.Node): string[] => {
+      const parameter = ts.isIdentifier(node) ? parameterOf(node) : undefined;
+      const values = parameter
+        ? (calls.get(parameter.fn) ?? []).map(args => textOf(args[parameter.index]))
+        : [textOf(node)];
+      return values.includes(undefined) ? [] : (values as string[]);
+    };
     const visit = (node: ts.Node, inPage: boolean): void => {
       let page = inPage;
       if (ts.isInterfaceDeclaration(node) && node.name.text === 'SessionConfig') {
@@ -147,8 +186,14 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
           if (member.name && ts.isIdentifier(member.name)) settings.add(member.name.text);
       }
       if (ts.isObjectLiteralExpression(node)) {
-        const fields = new Map(
-          node.properties.filter(ts.isPropertyAssignment).map(p => [propertyName(p), p.initializer] as const),
+        const fields = new Map<string | undefined, ts.Node>(
+          node.properties.flatMap(property =>
+            ts.isPropertyAssignment(property)
+              ? [[propertyName(property), property.initializer] as const]
+              : ts.isShorthandPropertyAssignment(property)
+                ? [[property.name.text, property.name] as const]
+                : [],
+          ),
         );
         const key = textOf(fields.get('key'));
         if (!inPage && key && fields.has('title') && (fields.has('content') || fields.has('frame'))) {
@@ -157,8 +202,12 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
           keysOf(fields.get('actions'), actions);
           keysOf(fields.get('sources'), dataSources);
         }
-        const tool = textOf(fields.get('name'));
-        if (tool && fields.has('description') && fields.has('parameters')) tools.add(tool);
+        const name = fields.get('name');
+        if (name && fields.has('description') && fields.has('parameters')) {
+          const names = valuesOf(name);
+          for (const tool of names) tools.add(tool);
+          if (names.length === 0) unseenTools.push(source.fileName);
+        }
         const field = ts.isPropertyAssignment(node.parent) ? propertyName(node.parent) : undefined;
         if (field && /[^a-z]/.test(field) && ((fields.has('type') && fields.has('label')) || fields.has('fields'))) {
           schemaFields.add(field);
@@ -170,10 +219,22 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
     };
     visit(source, false);
   }
-  return { pages, actions, dataSources, settings, tools, schemaFields, optionSources };
+  return { pages, actions, dataSources, settings, tools, schemaFields, optionSources, unseenTools };
 }
 
 type Collected = ReturnType<typeof collectKeys>;
+
+/**
+ * 守卫看不见的工具名：名字运行时才有，静态解析取不到。与收集时取不到名字的地方逐条相等（一处一条），多一处、少一处、
+ * 文件不在了都失败；新增要写理由
+ */
+const UNSEEN_TOOL_NAMES = new Map([
+  ['packages/plugin-llm-deepseek/src/index.ts', '把交给模型的工具定义转成服务商的请求格式，名字是已登记工具的'],
+  ['packages/plugin-llm-ollama/src/index.ts', '把交给模型的工具定义转成服务商的请求格式，名字是已登记工具的'],
+  ['packages/plugin-llm-openai/src/index.ts', '把交给模型的工具定义转成服务商的请求格式，名字是已登记工具的'],
+  ['packages/plugin-mcp-client/src/index.ts', '名字由远端 MCP 服务器给出（mcp_<服务器>_<工具>），连上之后才知道'],
+  ['packages/plugin-tool-search/src/index.ts', '搜索结果把已登记工具的定义换个形状回给模型，名字是那些工具的'],
+]);
 
 /** 一个包的源码 */
 function* sourcesOf(pkg: string): Generator<ts.SourceFile> {
@@ -440,6 +501,11 @@ describe('WebUI 客户端只认契约不认插件', () => {
     );
   });
 
+  it('客户端手写的会话协议服务名与契约描述符同名：客户端不在运行时引会话协议的描述符（会把 schema 打进前端）', () => {
+    const written = /export const SESSION_PROTOCOL = '([^']+)'/.exec(read(join(SRC, 'plugins/list.tsx')))?.[1];
+    expect(written).toBe(sessionProtocol.name);
+  });
+
   it('插件前端页面也按判据收集：带 key、title 与 frame 的对象是页面，动作名与数据源名取它的 actions 与 sources', () => {
     const declared = ts.createSourceFile(
       'zz-frame-page.ts',
@@ -462,6 +528,19 @@ describe('WebUI 客户端只认契约不认插件', () => {
     ]);
   });
 
+  it('正则字面量的文字按词拆开：转义与标志不粘在词上', () => {
+    const declared = ts.createSourceFile(
+      'zz-regex.ts',
+      String.raw`text.replace(/\n?\[zz_probe \(ID: \w+\)\]/g, '');
+      /\bzz-probe\b/i.test(text);`,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const words: string[] = [];
+    visitAll(declared, node => words.push(...regexWords(node)));
+    expect(words).toEqual(['zz_probe', 'ID', 'zz-probe']);
+  });
+
   it('客户端源码不出现插件包名', () => {
     const hits = SOURCES.filter(file => read(file).includes('@aalis/plugin-')).map(rel);
     expect(hits).toEqual([]);
@@ -472,7 +551,7 @@ describe('WebUI 客户端只认契约不认插件', () => {
     expect(files.filter(file => read(file).includes('@aalis/api-agent')).map(rel)).toEqual([]);
   });
 
-  it('字符串字面量不等于插件登记的页面键、动作名、数据源名、设置键或工具名', () => {
+  it('字符串字面量（正则字面量按词拆开）不等于插件登记的页面键、动作名、数据源名、设置键或工具名', () => {
     const forbidden = new Map<string, string>();
     for (const key of pages) forbidden.set(key, '页面键');
     for (const name of actions) forbidden.set(name, '动作名');
@@ -483,10 +562,12 @@ describe('WebUI 客户端只认契约不认插件', () => {
     for (const file of SCRIPTS) {
       const source = parse(file);
       visitAll(source, node => {
-        const text = literalText(node);
-        if (text === undefined || excluded.has(text) || !forbidden.has(text)) return;
-        const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
-        hits.push(`${rel(file)}:${line} '${text}' 是${forbidden.get(text)}`);
+        const literal = literalText(node);
+        for (const text of literal === undefined ? regexWords(node) : [literal]) {
+          if (excluded.has(text) || !forbidden.has(text)) continue;
+          const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+          hits.push(`${rel(file)}:${line} '${text}' 是${forbidden.get(text)}`);
+        }
       });
     }
     expect(hits).toEqual([]);
@@ -505,8 +586,9 @@ describe('WebUI 服务端只认契约不认插件', () => {
     new Set([...CONTRACT].filter(([pkg]) => pkg !== scope).flatMap(([, words]) => [...words]));
   const optionSources = collected(keys => keys.optionSources);
   const filesOf = (scope: string) => [...walk(join(PACKAGES, scope, 'src'), /\.ts$/)];
-  /** 一个包登记的全部词 */
-  const registered = (pkg: string) => Object.values(COLLECTED.get(pkg) ?? {}).flatMap(words => [...words]);
+  /** 一个包登记的全部词（看不见的工具名记的是所在文件，不算） */
+  const registered = (pkg: string) =>
+    Object.entries(COLLECTED.get(pkg) ?? {}).flatMap(([kind, words]) => (kind === 'unseenTools' ? [] : [...words]));
 
   it('扫描范围不空：三个包的源码都在，含框架托管与转发的路由', () => {
     const files = SCOPES.flatMap(filesOf).map(file => relative(PACKAGES, file));
@@ -522,7 +604,15 @@ describe('WebUI 服务端只认契约不认插件', () => {
 
   it('收集到的插件词汇、可选项来源与契约词汇不空：判据没有因为写法变化失效', () => {
     expect([...collected(keys => keys.tools)]).toEqual(
-      expect.arrayContaining(['math_eval', 'file_read', 'http_request']),
+      expect.arrayContaining([
+        'math_eval',
+        'file_read',
+        'http_request',
+        'background_list',
+        'background_output',
+        'background_wait',
+        'background_stop',
+      ]),
     );
     expect([...collected(keys => keys.schemaFields)]).toEqual(
       expect.arrayContaining(['discoverModels', 'summaryLLM', 'numberTheory']),
@@ -552,6 +642,38 @@ describe('WebUI 服务端只认契约不认插件', () => {
     ]);
   });
 
+  it('工具名是所在函数的形参时，取本文件对这个函数每次调用在那个位置上的字面量或常量；取不全的记进看不见的工具名', () => {
+    const declared = ts.createSourceFile(
+      'zz-tool-helper.ts',
+      `const SECOND = 'zz_second';
+      function tool(name: string, description: string) {
+        return { definition: { type: 'function', function: { name, description, parameters: { type: 'object' } } } };
+      }
+      const make = (name: string) => ({ name, description: '造', parameters: {} });
+      tool('zz_first', '一');
+      tool(SECOND, '二');
+      make('zz_known');
+      make(remote.name);
+      tools.register({ type: 'function', function: { name: 'zz_third', description: '三', parameters: {} } });
+      tools.register({ type: 'function', function: { name: remote.name, description: '远端', parameters: {} } });`,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const keys = collectKeys([declared]);
+    expect([[...keys.tools], keys.unseenTools]).toEqual([
+      ['zz_first', 'zz_second', 'zz_third'],
+      ['zz-tool-helper.ts', 'zz-tool-helper.ts'],
+    ]);
+  });
+
+  it('看不见的工具名恰为白名单：收集时取不到名字的地方与白名单逐条相等，白名单的文件不在了也失败', () => {
+    const unseen = [...COLLECTED.values()].flatMap(keys => keys.unseenTools.map(file => relative(ROOT, file)));
+    expect(
+      unseen.sort(),
+      '工具名写成字面量、本文件的字符串常量或本文件助手函数的形参（调用处给字面量），守卫才看得见；确实运行时才有的进 UNSEEN_TOOL_NAMES 并写理由',
+    ).toEqual([...UNSEEN_TOOL_NAMES.keys()].sort());
+  });
+
   it('源码、注释与 package.json 不出现别的插件的名字：包名，以及不是契约里的词的短名', () => {
     const hits: string[] = [];
     for (const scope of SCOPES) {
@@ -573,7 +695,7 @@ describe('WebUI 服务端只认契约不认插件', () => {
     expect(hits).toEqual([]);
   });
 
-  it('字符串字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名', () => {
+  it('字符串字面量与正则字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名', () => {
     const hits: string[] = [];
     for (const scope of SCOPES) {
       const allowed = new Set([...contractFor(scope), ...optionSources]);
@@ -591,7 +713,7 @@ describe('WebUI 服务端只认契约不认插件', () => {
             (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
               ? node.name.text
               : undefined;
-          for (const word of [...wordsIn(text ?? ''), ...(field ? [field] : [])]) {
+          for (const word of [...wordsIn(text ?? ''), ...regexWords(node), ...(field ? [field] : [])]) {
             const owner = owners.get(word);
             if (!owner) continue;
             const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;

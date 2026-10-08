@@ -4,21 +4,26 @@
 // 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；
 // 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成
 // 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与她发出的附件
-// 各自单独成条。工具卡的审批结算、「已发到群」、回合停止时还没结束、命令的退出码与转到后台的任务 id 取自工具结果的元数据
-// （会话服务在结果落库前写上），没有结果的调用（重启或中断）同样算没结束。
-// 房间里她只把最后的回复发进群：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复按适配器记的投递失败
-// 标出，与实时推送一致。
+// 各自单独成条；提问的正文与附件取存档另记的发言人写的话与附件清单，宿主通知另带它的 id 与给界面的事实。存档元数据
+// 只按 schema-message 登记的键读（WellKnownMetadataKeys），会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、
+// 「已发到群」、回合停止时还没结束、命令的退出码与转到后台的任务 id 取自工具结果的元数据（会话服务在结果落库前写上），
+// 没有结果的调用（重启或中断）同样算没结束。
+// 房间里她只把最后的回复发进群（api-agent 的约定）：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复
+// 按适配器记的投递失败标出，与实时推送一致。
 // ════════════════════════════════════════════════════════════
 
 import type { MemoryService } from '@aalis/api-memory';
 import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
 import { toolFailed } from '@aalis/api-tools';
+import type { Logger } from '@aalis/core';
 import {
+  type ArchivedAttachment,
   type ContentSegment,
   type Message,
   type OutgoingMessage,
   parseAttachmentRefs,
   WellKnownKinds,
+  WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import { failure } from './connection.js';
 import type { DisplayOf } from './display.js';
@@ -49,7 +54,7 @@ export interface MergeContext {
   display: DisplayOf;
 }
 
-type Attachment = { kind: 'image' | 'audio' | 'video' | 'file'; src?: string; name?: string };
+type Attachment = { kind: ArchivedAttachment['kind']; src?: string; name?: string };
 
 const OUTBOUND_KINDS: Readonly<Record<string, Attachment['kind']>> = {
   [WellKnownKinds.OutboundImage]: 'image',
@@ -57,6 +62,13 @@ const OUTBOUND_KINDS: Readonly<Record<string, Attachment['kind']>> = {
   [WellKnownKinds.OutboundAudio]: 'audio',
   [WellKnownKinds.OutboundFile]: 'file',
 };
+
+const ATTACHMENT_KINDS: ReadonlySet<string> = new Set(Object.values(OUTBOUND_KINDS));
+
+const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** 她发出的附件归档成 outbound-* 的 assistant 消息，正文是附件引用占位符；认不出引用的按普通回复，回 undefined */
 function sentRefs(message: Message) {
@@ -67,48 +79,55 @@ function sentRefs(message: Message) {
 }
 
 /**
- * 她发出的附件还原成条目里的附件：图片、音频、视频的来源就是引用（存储地址或网址）；文件不给存储地址，给句柄。
- * 文件的地址与名字先取存档时 metadata 里原样记下的 ref、name（占位符里的地址遇到「]」会截断，描述位的「]」「|」
- * 换成了全角），没有时取占位符的引用与描述位，名字再没有就取地址的最后一段
+ * 一个附件还原成条目里的附件：图片、音频、视频的来源就是地址（存储地址或网址）；文件不给存储地址，有地址时给句柄，
+ * 名字没有时取地址的最后一段
  */
-function sentAttachments(message: Message, signFile: SignFile): Attachment[] | undefined {
-  const sent = sentRefs(message);
-  return sent?.refs.map(({ ref: parsed, desc }) => {
-    if (sent.kind !== 'file') return { kind: sent.kind, src: parsed };
-    const ref = text(message.metadata?.ref) ?? parsed;
-    const name = text(message.metadata?.name) ?? desc ?? ref.slice(ref.lastIndexOf('/') + 1);
-    return { kind: 'file', name, src: signFile(ref, name) };
-  });
+function restored(
+  kind: Attachment['kind'],
+  ref: string | undefined,
+  name: string | undefined,
+  signFile: SignFile,
+): Attachment {
+  if (kind !== 'file' || ref === undefined) {
+    return { kind, ...(ref === undefined ? {} : { src: ref }), ...(name === undefined ? {} : { name }) };
+  }
+  const fileName = name ?? ref.slice(ref.lastIndexOf('/') + 1);
+  return { kind, name: fileName, src: signFile(ref, fileName) };
 }
 
 /**
- * 从提问里剥掉文件内容块，留下用户自己写的话。文件读取插件把文件描述追加在提问后面，格式有这些：
- *   [文件: name (ID: id)]\n--- 文件内容 ---（…「--- 文件内容结束 N ---」…）\nTEXT\n--- 文件内容结束 N ---   小文件内联，N 是随机编号
- *   [文件: name (ID: id)]\n--- 文件内容 ---\nTEXT\n--- 文件内容结束 ---                                       小文件内联，较早的归档
- *   [文件: name]\n--- 文件内容 ---\nTEXT\n--- 文件内容结束 ---                                                 小文件内联，最早的归档
- *   [文件: name (ID: id，SIZE KB)\n说明：...]                                                                  大文件引用
- *   [文件: name (ID: id，大文件，使用 read_uploaded_file 工具读取内容)]                                          大文件引用，最早的单行格式
- *   [文件: name - 超过大小限制 (…MB > …MB)] / [文件: name - 处理失败]                                            超限 / 处理失败
- *   [文件: name (ID: id)]                                                                                    降级
- * 名字可以含任意非换行字符，前四步靠名字之后固定的收尾定界，第五步兜底其余形态。
+ * 她发出的附件还原成条目里的附件。文件的地址与名字先取存档时元数据里原样记下的（占位符里的地址遇到「]」会截断，
+ * 描述位的「]」「|」换成了全角），没有时取占位符的引用与描述位
  */
-function stripFileBlocks(content: string): string {
-  // 内联块：新格式按开头那行的随机编号认行首的结束标记，正文里伪造的结束标记属于正文
-  let result = content.replace(
-    /\n?\[文件: [^\n]+? \(ID: [0-9a-f]+\)\]\n--- 文件内容 ---[^\n]*?「--- 文件内容结束 ([0-9a-f]+) ---」[^\n]*\n[\s\S]*?\n--- 文件内容结束 \1 ---/g,
-    '',
+function sentAttachments(message: Message, signFile: SignFile): Attachment[] | undefined {
+  const sent = sentRefs(message);
+  return sent?.refs.map(({ ref: parsed, desc }) =>
+    sent.kind === 'file'
+      ? restored(
+          'file',
+          text(message.metadata?.[WellKnownMetadataKeys.SentRef]) ?? parsed,
+          text(message.metadata?.[WellKnownMetadataKeys.SentName]) ?? desc,
+          signFile,
+        )
+      : restored(sent.kind, parsed, undefined, signFile),
   );
-  // 没有编号的旧格式：开头那行紧跟换行，文件头不要求带 ID，定界靠固定的「]\n--- 文件内容 ---\n」
-  result = result.replace(/\n?\[文件: [^\n]+?\]\n--- 文件内容 ---\n[\s\S]*?--- 文件内容结束 ---/g, '');
-  // 大文件引用：首行以「 (ID: <hex>，<SIZE> KB)」收尾，次行「说明：…]」
-  result = result.replace(/\n?\[文件: [^\n]+? \(ID: [0-9a-f]+，[0-9.]+ KB\)\n说明：[^\n]*\]/g, '');
-  // 超限与处理失败
-  result = result.replace(/\n?\[文件: [^\n]+? - (?:超过大小限制 \([0-9.]+MB > [0-9.]+MB\)|处理失败)\]/g, '');
-  // 降级引用与最早的单行大文件引用（最早的 ID 形如 file_xxx_1，不是 hex）
-  result = result.replace(/\n?\[文件: [^\n]+? \(ID: \w+(?:，大文件，使用 read_uploaded_file 工具读取内容)?\)\]/g, '');
-  // 兜底：其余形态的简单文件引用（名字不含「]」）
-  result = result.replace(/\n?\[文件: ([^\]]+?)\s*(?:\(ID:[^)]+\))?\]/g, '');
-  return result.trim();
+}
+
+/** 存档里提问的附件清单：按类型取，不是数组、种类不认识的项不认，名字与地址不是字符串的当没有 */
+function askedAttachments(value: unknown, signFile: SignFile): Attachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(entry =>
+    isRecord(entry) && typeof entry.kind === 'string' && ATTACHMENT_KINDS.has(entry.kind)
+      ? [restored(entry.kind as Attachment['kind'], text(entry.ref), text(entry.name), signFile)]
+      : [],
+  );
+}
+
+/** 存档里宿主通知给界面的事实：只认字符串与有限数的项，不是对象或一项都不认时没有 */
+function noticeFacts(value: unknown): Record<string, string | number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).filter(([, fact]) => typeof fact === 'string' || finite(fact) !== undefined);
+  return entries.length > 0 ? (Object.fromEntries(entries) as Record<string, string | number>) : undefined;
 }
 
 /**
@@ -116,9 +135,12 @@ function stripFileBlocks(content: string): string {
  * 成组归并的条目在这一组第一条消息的 id 后面加序号
  */
 function archivedItemId(message: Message): string {
-  const key = [message.role, message.kind ?? '', String(message.metadata?.userId ?? ''), message.content ?? ''].join(
-    '\u0000',
-  );
+  const key = [
+    message.role,
+    message.kind ?? '',
+    String(message.metadata?.[WellKnownMetadataKeys.UserId] ?? ''),
+    message.content ?? '',
+  ].join('\u0000');
   let hash = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
     hash ^= key.charCodeAt(i);
@@ -126,9 +148,6 @@ function archivedItemId(message: Message): string {
   }
   return `${message.timestamp ?? 0}-${(hash >>> 0).toString(36)}`;
 }
-
-const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
-const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
 
 type ReplyModel = NonNullable<Extract<SessionItem, { kind: 'agent-message' }>['model']>;
 
@@ -148,13 +167,13 @@ export function replyModel(info: NonNullable<OutgoingMessage['modelInfo']>): Rep
 
 function speakerOf(message: Message, isOwner: IsOwner) {
   const meta = message.metadata ?? {};
-  const platform = text(meta.platform) ?? '';
-  const userId = text(meta.userId);
+  const platform = text(meta[WellKnownMetadataKeys.Platform]) ?? '';
+  const userId = text(meta[WellKnownMetadataKeys.UserId]);
   return {
     platform,
     userId,
-    nickname: text(meta.nickname),
-    source: text(meta.source),
+    nickname: text(meta[WellKnownMetadataKeys.Nickname]),
+    source: text(meta[WellKnownMetadataKeys.Source]),
     owner: isOwner(platform, userId),
   };
 }
@@ -167,17 +186,13 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
   const itemId = archivedItemId(message);
   const at = message.timestamp ?? 0;
   if (message.role === 'user') {
-    const names = message.metadata?.fileNames;
+    const spoken = message.metadata?.[WellKnownMetadataKeys.SpokenContent];
     return {
       kind: 'user-message',
       itemId,
       at,
-      text: stripFileBlocks(message.content ?? ''),
-      attachments: Array.isArray(names)
-        ? names
-            .filter((name): name is string => typeof name === 'string' && name !== '')
-            .map(name => ({ kind: 'file', name }))
-        : [],
+      text: typeof spoken === 'string' ? spoken : (message.content ?? ''),
+      attachments: askedAttachments(message.metadata?.[WellKnownMetadataKeys.Attachments], signFile),
       speaker: speakerOf(message, isOwner),
     };
   }
@@ -186,9 +201,11 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
       kind: 'notice',
       itemId,
       at,
-      topic: text(message.metadata?.hostNoticeKind) ?? message.kind ?? message.role,
+      topic: text(message.metadata?.[WellKnownMetadataKeys.HostNoticeKind]) ?? message.kind ?? message.role,
       text: message.content ?? '',
       attachments: [],
+      noticeId: text(message.metadata?.[WellKnownMetadataKeys.HostNoticeId]),
+      facts: noticeFacts(message.metadata?.[WellKnownMetadataKeys.HostNoticeFacts]),
     };
   }
   const sent = sentAttachments(message, signFile);
@@ -198,10 +215,12 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
 /** 成组的消息：她的回复（不是发出的附件）与带 toolCallId 的工具结果 */
 const inGroup = (m: Message) => (m.role === 'assistant' && !sentRefs(m)) || (m.role === 'tool' && !!m.toolCallId);
 
+const turnOf = (message: Message) => text(message.metadata?.[WellKnownMetadataKeys.TurnId]);
+
 /** cur 接着 prev 在同一组：都是成组的消息，且属于同一轮（旧数据没记回合的不分） */
 function sameGroup(prev: Message, cur: Message): boolean {
   if (!inGroup(prev) || !inGroup(cur)) return false;
-  const [a, b] = [text(prev.metadata?.turnId), text(cur.metadata?.turnId)];
+  const [a, b] = [turnOf(prev), turnOf(cur)];
   return a === undefined || b === undefined || a === b;
 }
 
@@ -223,7 +242,7 @@ function groupTimeline(group: Message[]) {
   let model: ReplyModel | undefined;
   for (const [k, cur] of group.entries()) {
     if (cur.role === 'tool') {
-      const callId = text(cur.metadata?.callId);
+      const callId = text(cur.metadata?.[WellKnownMetadataKeys.CallId]);
       if (callId && cur.metadata) results.set(callId, cur.metadata);
       const call = calls.get(cur.toolCallId as string);
       if (call) {
@@ -232,7 +251,7 @@ function groupTimeline(group: Message[]) {
       }
       continue;
     }
-    const info = cur.metadata?.modelInfo as OutgoingMessage['modelInfo'];
+    const info = cur.metadata?.[WellKnownMetadataKeys.ModelInfo] as OutgoingMessage['modelInfo'];
     if (info) model = replyModel(info);
     lastAt = cur.timestamp ?? lastAt;
     if (cur.segments?.length) {
@@ -279,9 +298,6 @@ function recordedApproval(metadata: Record<string, unknown> | undefined) {
   return settlement.success ? { approvalId: recorded.id, settlement: settlement.data } : undefined;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /**
  * 一组归并成条目。工具卡以 callId 为 id（与实时推送相同），旧存档没有 callId 时按这一组第一条消息的 id 加序号；
  * 参数不是对象的（旧存档里模型给出的 null、数组等）按空参数显示。房间里以回复收尾的一组，最后一次工具调用之后的最后一条
@@ -290,7 +306,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyMap<string, string>): SessionItem[] {
   const { ordered, lastAt, model, results, replied } = groupTimeline(group);
   const base = archivedItemId(group[0] as Message);
-  const turnId = group.map(m => text(m.metadata?.turnId)).find(id => id !== undefined);
+  const turnId = group.map(turnOf).find(id => id !== undefined);
   const items: SessionItem[] = [];
   const id = () => `${base}/${items.length}`;
   for (const segment of ordered) {
@@ -360,9 +376,10 @@ function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyM
 function replyFailures(raw: readonly Message[]): Map<string, string> {
   const failures = new Map<string, string>();
   for (const message of raw) {
-    if (message.kind !== WellKnownKinds.OutboundDeliveryFailed || message.metadata?.callId !== undefined) continue;
-    const turnId = text(message.metadata?.turnId);
-    const error = text(message.metadata?.error);
+    if (message.kind !== WellKnownKinds.OutboundDeliveryFailed) continue;
+    if (message.metadata?.[WellKnownMetadataKeys.CallId] !== undefined) continue;
+    const turnId = turnOf(message);
+    const error = text(message.metadata?.[WellKnownMetadataKeys.DeliveryError]);
     if (turnId && error) failures.set(turnId, notAccepted(error));
   }
   return failures;
@@ -391,22 +408,70 @@ export function mergeArchive(
   return items;
 }
 
+const absentOr = (value: unknown, valid: (value: unknown) => boolean) => value == null || valid(value);
+const isText = (value: unknown) => typeof value === 'string';
+const isTime = (value: unknown) => finite(value) !== undefined;
+
+/** 时间线的一段：工具调用的参数不在这里核，不是对象的按空参数显示 */
+function wellFormedSegment(segment: unknown): boolean {
+  if (!isRecord(segment)) return false;
+  if (segment.type === 'text' || segment.type === 'reasoning_text') return isText(segment.content);
+  return (
+    segment.type === 'tool_call' &&
+    isText(segment.name) &&
+    absentOr(segment.result, isText) &&
+    absentOr(segment.callId, isText) &&
+    absentOr(segment.startTime, isTime) &&
+    absentOr(segment.endTime, isTime)
+  );
+}
+
+const wellFormedCall = (call: unknown) =>
+  isRecord(call) &&
+  isText(call.id) &&
+  isRecord(call.function) &&
+  isText(call.function.name) &&
+  isText(call.function.arguments);
+
+/**
+ * 存档读回的消息字段对不对。没有的字段存成 null 的（MongoDB 就是这样）算没有；不对的（旧数据、手改或别的插件写坏的）
+ * 整条不进历史，前后的照常归并。元数据里的键按登记的类型逐个取，不在这里核
+ */
+function wellFormed(message: Message): boolean {
+  const { role, content, kind, timestamp, toolCallId, reasoningContent, toolCalls, segments, metadata } =
+    message as unknown as Record<string, unknown>;
+  return (
+    isText(role) &&
+    absentOr(content, isText) &&
+    absentOr(kind, isText) &&
+    absentOr(timestamp, isTime) &&
+    absentOr(toolCallId, isText) &&
+    absentOr(reasoningContent, isText) &&
+    absentOr(toolCalls, value => Array.isArray(value) && value.every(wellFormedCall)) &&
+    absentOr(segments, value => Array.isArray(value) && value.every(wellFormedSegment)) &&
+    absentOr(metadata, isRecord)
+  );
+}
+
 /**
  * 读一页历史：before 是上一页第一条存档消息的 id，缺省从最新的读起；取 limit 条归并。页的开头落在一组回复与工具调用
  * 中间时往前扩到这一组的开头，免得一组拆在两页。skip 挑出不进历史的消息（在途回合落了库的那些），它们照样占位置，
- * 分页不受影响。before 指向的消息已不在存档里（被回滚删掉）时回 not-found。
+ * 分页不受影响；字段不对的消息（{@link wellFormed}）不进历史，也不占位置，读到了就记一条 warn。before 指向的消息
+ * 已不在存档里（被回滚删掉）时回 not-found。
  */
 export async function readHistory(
   memory: MemoryService,
   sessionId: string,
   page: { before?: string; limit: number; skip: (message: Message) => boolean },
   context: MergeContext,
+  logger: Pick<Logger, 'warn'>,
 ): Promise<{ items: SessionItem[]; before?: string }> {
   const read = (n: number) =>
     memory.getFullHistory ? memory.getFullHistory(sessionId, n) : memory.getHistory(sessionId, n);
   for (let want = page.limit + 1; ; want *= 2) {
-    const raw = await read(want);
-    const exhausted = raw.length < want;
+    const stored = await read(want);
+    const exhausted = stored.length < want;
+    const raw = stored.filter(wellFormed);
     const end = page.before === undefined ? raw.length : raw.findIndex(m => archivedItemId(m) === page.before);
     if (end < 0) {
       if (exhausted) throw failure('not-found', `历史游标已失效：${page.before}`);
@@ -415,6 +480,8 @@ export async function readHistory(
     let start = Math.max(0, end - page.limit);
     while (start > 0 && sameGroup(raw[start - 1] as Message, raw[start] as Message)) start--;
     if (start === 0 && !exhausted) continue;
+    const dropped = stored.length - raw.length;
+    if (dropped > 0) logger.warn(`会话 ${sessionId} 的存档里读到 ${dropped} 条字段不对的消息，没进历史`);
     // 回复的投递失败记在回复之后，可能落在更新的一页：从这一页的开头往后全看
     const items = mergeArchive(
       raw.slice(start, end).filter(m => !page.skip(m)),

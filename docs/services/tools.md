@@ -77,7 +77,7 @@ getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
 getSummaries(filter?: { groups?: string[] }): ToolSummary[];
 getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;
 execute(toolName, args, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
-setExecutionGuard(guard: ExecutionGuard): void;
+setExecutionGuard(guard: ExecutionGuard | undefined): void; // 传 undefined 摘掉，退回 fail-closed
 registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
 getGroups(): ToolGroupInfo[];
 ```
@@ -105,7 +105,7 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 
 ### 2.5 后台任务登记
 
-描述符 `backgroundTasks`（服务名 `background-tasks`），`list({ sessionId? })`、`output(id, after?)`、`stop(id)`；类型 `BackgroundTask`、`BackgroundTaskChange`。字段与语义见 [api-tools](../api/api-tools.md#后台任务登记)。
+描述符 `backgroundTasks`（服务名 `background-tasks`），`list({ sessionId? })`、`output(id, after?)`、`stop(id)`；类型 `BackgroundTask`、`BackgroundTaskChange`；结束通知的种类 `BACKGROUND_TASK_NOTICE` 与给界面的事实 `BackgroundTaskNoticeFacts`。字段与语义见 [api-tools](../api/api-tools.md#后台任务登记)。
 
 ## 3. 谁提供 / 谁消费
 
@@ -116,7 +116,7 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 **核心消费者**：
 
 - `plugin-agent` —— `tools.current?.getDefinitions(...)` / `?.execute(...)`
-- `plugin-authority` —— `tools.follow(svc => { svc.setExecutionGuard(guard); })` 注入权限守卫（不返回 cleanup：守卫随旧实例一起消失；契约没有「摘掉守卫」的口）
+- `plugin-authority` —— `tools.follow(svc => { svc.setExecutionGuard(guard); return () => svc.setExecutionGuard(undefined); })` 注入权限守卫，停用时摘掉
 - `plugin-mcp-server` —— `uses: { tools }` required
 - WebUI 经 `getAll()` 列工具+可见性
 

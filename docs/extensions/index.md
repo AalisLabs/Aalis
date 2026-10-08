@@ -35,7 +35,6 @@
 | 插件包 | 注册的服务 |
 |---|---|
 | `@aalis/plugin-cli` | `cli` |
-| `@aalis/plugin-file-reader` | `file-reader` |
 | `@aalis/plugin-memory-vector` | `semantic-memory` |
 | `@aalis/plugin-scheduler` | `scheduler` |
 | `@aalis/plugin-skills` | `skills` |

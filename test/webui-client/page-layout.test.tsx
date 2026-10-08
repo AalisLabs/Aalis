@@ -3,7 +3,16 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type FakeRest, type Harness, installDialog, lists, renderApp, restCalls, summary } from './harness.js';
+import {
+  type FakeRest,
+  type Harness,
+  installDialog,
+  lists,
+  panelClosers,
+  renderApp,
+  restCalls,
+  summary,
+} from './harness.js';
 import { snapshot } from './items.js';
 import {
   actionPath,
@@ -26,7 +35,7 @@ import {
 // 页面在外壳里的位置：位置为插件详情的页面可以从标题栏固定到图标栏（记录跟着 owner 存在服务端，layout.changed 推来后重取），
 // 图标栏按记录的顺序列出登记着的页面，所属插件停用时图标不出现、记录保留；手机上没有图标栏，固定的页面列在第一层。
 // 会话面板：宿主标签与插件标签同一张表，按表的顺序排；开着的在标签栏里，关着的与适用、还没进表的插件页面在「+」里，
-// 关闭按钮只在当前标签上；记录在所有适用的会话里生效。适用与否按会话从服务端取，插件启停、相关的 page.invalidate 与重连后重取
+// 关闭按钮只关当前标签；记录在所有适用的会话里生效。适用与否按会话从服务端取，插件启停、相关的 page.invalidate 与重连后重取
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -346,7 +355,7 @@ describe('会话面板', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '笔记' }));
     await vi.waitFor(() => expect(tabs()).toEqual(['设置', '笔记']));
     expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'open-tab', tab: refOf(NOTES) }]);
-    expect(app.where()).toBe(notesPath);
+    await vi.waitFor(() => expect(app?.where()).toBe(notesPath));
     expect(await panel().findByText('周一交')).toBeTruthy();
     expect(panel().queryByRole('button', { name: '固定到图标栏' })).toBeNull();
     expect(panel().getByRole('button', { name: '刷新' })).toBeTruthy();
@@ -372,7 +381,7 @@ describe('会话面板', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '设置' }));
     await vi.waitFor(() => expect(tabs()).toEqual(['设置']));
     expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'open-tab', tab: { host: 'settings' } }]);
-    expect(app.where()).toBe('/s/a/settings');
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/a/settings'));
     expect(await panel().findByText('这个会话没有可以设置的项')).toBeTruthy();
   });
 
@@ -469,7 +478,10 @@ describe('会话面板', () => {
 
     pages = pages.filter(page => page !== NOTES);
     act(() => admin().push({ type: 'plugins.changed' }));
-    fireEvent.click(await panel().findByRole('button', { name: '关闭「已停用」' }));
+    await vi.waitFor(() =>
+      expect(panelClosers().map(button => button.getAttribute('aria-label'))).toEqual(['关闭「已停用」']),
+    );
+    fireEvent.click(panelClosers()[0] as HTMLElement);
     await vi.waitFor(() => expect(app?.where()).toBe('/s/a'));
     expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'close-tab', tab: refOf(NOTES) }]);
   });
@@ -488,15 +500,12 @@ describe('会话面板', () => {
     expect(panel().queryByRole('button', { name: '刷新' })).toBeNull();
   });
 
-  it('行动作带上当前会话；关闭按钮只在当前标签上，关了留在表里标为关、进「+」，回到第一个标签；再打开回到原位', async () => {
+  it('行动作带上当前会话；关闭按钮只关当前标签，关了留在表里标为关、进「+」，回到第一个标签；再打开回到原位', async () => {
     const layout = layoutStore({ panelTabs: [hostTab('plan'), pageTab(NOTES), hostTab('settings'), hostTab('usage')] });
     app = await renderApp(notesPath, handlers, panelRest(layout, { a: [refOf(NOTES), refOf(FILES)] }));
     await panel().findByText('周一交');
     expect(tabs()).toEqual(['笔记', '设置']);
-    const closeButtons = () =>
-      panel()
-        .queryAllByRole('button', { name: /^关闭「/ })
-        .map(button => button.getAttribute('aria-label'));
+    const closeButtons = () => panelClosers().map(button => button.getAttribute('aria-label'));
     expect(closeButtons()).toEqual(['关闭「笔记」']);
     fireEvent.click(panel().getByRole('button', { name: '更多' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
@@ -504,16 +513,16 @@ describe('会话面板', () => {
     await vi.waitFor(() => expect(posts(actionPath(NOTES, 'drop'))).toHaveLength(1));
     expect(posts(actionPath(NOTES, 'drop'))[0].body).toEqual({ sessionId: 'a', rowKey: 'n1' });
 
-    fireEvent.click(panel().getByRole('button', { name: '关闭「笔记」' }));
+    fireEvent.keyDown(panel().getByRole('tab', { name: '笔记' }), { key: 'Delete' });
     await vi.waitFor(() => expect(tabs()).toEqual(['设置']));
     expect(posts('/api/layout').map(call => call.body)).toEqual([{ op: 'close-tab', tab: refOf(NOTES) }]);
-    expect(app.where()).toBe('/s/a');
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/a'));
     expect(closeButtons()).toEqual(['关闭「设置」']);
     expect(await addMenu()).toEqual(['笔记', '上传的文件']);
     fireEvent.click(screen.getByRole('menuitem', { name: '笔记' }));
     await vi.waitFor(() => expect(tabs()).toEqual(['笔记', '设置']));
     expect(posts('/api/layout').at(-1)?.body).toEqual({ op: 'open-tab', tab: refOf(NOTES) });
-    expect(app.where()).toBe(notesPath);
+    await vi.waitFor(() => expect(app?.where()).toBe(notesPath));
   });
 
   it('适用的页面没取到：「+」旁写明原因、点按重试，关着的宿主标签照样能从「+」打开', async () => {

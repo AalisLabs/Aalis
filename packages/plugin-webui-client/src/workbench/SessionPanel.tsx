@@ -15,9 +15,11 @@ import { PageContent } from '../pages/PageContent';
 import { PageGone } from '../pages/PluginPage';
 import { refOf, sameRef, usePages } from '../pages/registry';
 import { PageScope } from '../pages/scope';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { paths } from '../routes';
 import { SettingRows } from '../settings/SettingRows';
 import type { useSettingRows } from '../settings/setting-rows';
+import { SessionsFetchError } from '../shell/SessionGate';
 import { Aside, usePhone } from '../shell/Shell';
 import type { PlanItem, UsageItem } from './live-session';
 import type { SessionTabs } from './panel-tabs';
@@ -25,7 +27,7 @@ import { UsageTable } from './Usage';
 import './SessionPanel.css';
 
 // 会话的右侧面板：宿主的标签（计划、设置、用量、后台）与插件的会话面板在一个标签栏里，按 owner 排的顺序（合成见 panel-tabs.ts）。
-// 当前标签旁有关闭按钮，关掉的与还没打开过的在标签栏末尾的「+」里；插件面板的标签就是它的标题，手动刷新放在标签栏里
+// 标签栏里有关闭当前标签的按钮，关掉的与还没打开过的在标签栏末尾的「+」里；插件面板的标签就是它的标题，手动刷新放在标签栏里
 // （插件前端的手动刷新是重新挂载）。
 // 标签由地址决定，地址没写或写的标签不在标签栏里时停在第一个
 
@@ -142,6 +144,7 @@ const PLAN_STATUS = {
 function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
   const client = useSessionClient();
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const [busy, setBusy] = useState(false);
   return (
     <div className="session-panel-section">
@@ -164,7 +167,7 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
           setBusy(true);
           client
             .request('plan/clear', { sessionId })
-            .catch((err: Error) => toast({ kind: 'danger', text: `清空失败：${err.message}` }))
+            .catch((err: Error) => toast({ kind: 'danger', text: `清空失败：${err.message}`, source: sessions }))
             .finally(() => setBusy(false));
         }}
       >
@@ -175,12 +178,12 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
 }
 
 function SettingsTab({ settings }: { settings: SessionPanelProps['settings'] }) {
-  const { rows, error, update } = settings;
+  const { rows, error, update, retry } = settings;
   if (error) {
     return (
-      <p className="session-panel-note" role="alert">
-        设置没取到：{error.message}
-      </p>
+      <div className="session-panel-section">
+        <SessionsFetchError what="设置" error={error} retry={retry} />
+      </div>
     );
   }
   if (!rows) return null;

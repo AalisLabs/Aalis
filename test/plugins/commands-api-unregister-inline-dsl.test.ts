@@ -22,7 +22,7 @@ const mkLogger = () => {
 async function namesAfterProviderDown(declaration: string): Promise<string[]> {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
-  const registry = new CommandRegistry(mkLogger() as never);
+  const registry = new CommandRegistry(mkLogger() as never, () => undefined);
   const handle = host.provide(commands, registry);
 
   // commands 声明为**可选**依赖：提供者下线时探针保持激活，清理只经门面的跟随回调。

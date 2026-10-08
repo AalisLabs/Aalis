@@ -12,6 +12,7 @@ import {
   THEME_TOKENS,
   type ThemeFile,
 } from '../../packages/api-webui/src/index.js';
+import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
@@ -28,7 +29,7 @@ import {
   server,
 } from './harness.js';
 import { row } from './items.js';
-import { dataPath, hostTab, layoutStore, NOTES, pageTab, refOf, SETTINGS_PAGE } from './pages.js';
+import { dataPath, hostTab, hostTabs, layoutStore, NOTES, pageTab, refOf, SETTINGS_PAGE } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
 // 设置：宿主分区（会话默认、外观、系统）与插件分区（位置为设置的页面）同一个目录、同一套路由。
@@ -73,7 +74,7 @@ afterEach(() => {
 });
 
 /** 插件列表的一项 */
-const SESSIONS = plugin('zz-sessions', { displayName: '会话服务', provides: ['session-protocol'] });
+const SESSIONS = plugin('zz-sessions', { displayName: '会话服务', provides: [SESSION_PROTOCOL] });
 const AUTH = plugin('zz-auth', { displayName: '权限插件' });
 const THEMES = plugin('zz-themes', { displayName: '主题包' });
 
@@ -149,6 +150,7 @@ describe('目录与路由', () => {
     expect((await directory().findByRole('alert')).textContent).toContain('插件列表没取到：插件管理服务不可用');
     expect(await section().findByText('插件列表没取到')).toBeTruthy();
     expect(section().queryByText('会话服务未启用')).toBeNull();
+    expect(screen.queryByRole('link', { name: '查看日志' }), '插件列表没取到就指不出来源').toBeNull();
     fail = false;
     fireEvent.click(section().getByRole('button', { name: '重试' }));
     await vi.waitFor(() => expect(sectionNames()).toEqual(['会话默认', '权限', '技能', '外观', '系统']));
@@ -285,6 +287,30 @@ describe('会话默认', () => {
     await vi.waitFor(() =>
       expect(requests('session/config/layer/update').at(-1)).toEqual({ layer: QQ_GROUP, patch: { persona: null } }),
     );
+  });
+
+  it('没取到时写明原因，可以重试，「查看日志」链到提供会话协议的实例的日志', async () => {
+    let fail = true;
+    app = await renderApp(
+      '/settings/session-defaults',
+      {
+        ...handlers(),
+        'session/config/layer/get': ({ layer }: { layer: SettingLayer }) => {
+          if (fail) throw new Error('设置读不出');
+          return { items: ROWS[layerKey(layer)] };
+        },
+      },
+      settingsRest(),
+    );
+    const alert = await section().findByRole('alert');
+    expect(alert.textContent).toContain('会话默认没取到：设置读不出');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-sessions',
+    );
+    fail = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(await section().findByRole('group', { name: '人设' })).toBeTruthy();
+    expect(section().queryByRole('alert')).toBeNull();
   });
 
   it('设置项或层变了（session/config/changed、插件启停）时重取；选中的层没了回到全局默认', async () => {
@@ -578,6 +604,35 @@ describe('外观', () => {
     expect(stored('appearance')).toMatchObject({ dark: 'plugin:zz-themes/dusk', palettes: {} });
   });
 
+  it('插件提供的主题与布局记录没取到：各写一行原因，可以重试，「查看日志」链到提供界面的实例的日志', async () => {
+    let fail = true;
+    const failing = (ok: unknown) => () => (fail ? Response.json({ error: '存储服务不在' }, { status: 500 }) : ok);
+    app = await renderApp(
+      '/settings/appearance',
+      {},
+      settingsRest(
+        { '/api/themes': failing({ themes: [] }), '/api/layout': failing({ pinned: [], panelTabs: hostTabs() }) },
+        [SESSIONS, THEMES, plugin('zz-ui', { self: true })],
+      ),
+    );
+    const titles = () =>
+      section()
+        .queryAllByRole('alert')
+        .map(alert => alert.textContent?.split('：')[0]);
+    await vi.waitFor(() => expect(titles()).toEqual(['插件提供的主题没取到', '布局记录没取到', '布局记录没取到']));
+    const alerts = section().getAllByRole('alert');
+    for (const alert of alerts) {
+      expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+        '/health/logs?plugin=zz-ui',
+      );
+    }
+    fail = false;
+    fireEvent.click(within(alerts[0]).getByRole('button', { name: '重试' }));
+    fireEvent.click(within(alerts[1]).getByRole('button', { name: '重试' }));
+    await vi.waitFor(() => expect(titles()).toEqual([]));
+    expect(section().getByRole('list', { name: '会话面板标签' })).toBeTruthy();
+  });
+
   it('快捷栏：已固定的页面按顺序列出，可以上移、下移、取消固定；所属插件没启用的标「未启用」', async () => {
     const BOARD_PAGE: DeclarativePageView = { ...NOTES, key: 'board', title: '看板', placement: 'plugin' };
     const layout = layoutStore({
@@ -771,5 +826,84 @@ describe('系统', () => {
     await vi.waitFor(() => expect(reset.disabled).toBe(false));
     fireEvent.click(reset);
     await vi.waitFor(() => expect(calls('/api/services/llm/prefer', 'DELETE')).toHaveLength(1));
+  });
+
+  it('宿主配置没取到：写明原因、可以重试，「查看日志」链到提供界面的实例的日志', async () => {
+    let fail = true;
+    const rest = systemRest();
+    const config = rest['/api/config'];
+    app = await renderApp(
+      '/settings/system',
+      {},
+      {
+        ...rest,
+        '/api/plugins': { plugins: [SESSIONS, plugin('zz-ui', { self: true })], secretRefCounts: {} },
+        '/api/config': (request: FakeRequest) =>
+          fail
+            ? Response.json({ error: '配置文件读不出' }, { status: 500 })
+            : (config as (request: FakeRequest) => unknown)(request),
+      },
+    );
+    const alert = await section().findByRole('alert');
+    expect(alert.textContent).toContain('宿主配置没取到');
+    expect(alert.textContent).toContain('配置文件读不出');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-ui',
+    );
+    fail = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(await section().findByRole('group', { name: '应用名称' })).toBeTruthy();
+  });
+  it('服务列表没取到：写明原因，可以重试，「查看日志」链到提供界面的实例的日志', async () => {
+    let fail = true;
+    app = await renderApp(
+      '/settings/system',
+      {},
+      systemRest({
+        '/api/plugins': { plugins: [SESSIONS, plugin('zz-ui', { self: true })], secretRefCounts: {} },
+        '/api/services': () => (fail ? Response.json({ error: '服务表读不出' }, { status: 500 }) : SERVICES),
+      }),
+    );
+    const alert = await section().findByRole('alert');
+    expect(alert.textContent).toContain('服务列表没取到：服务表读不出');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-ui',
+    );
+    fail = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(await section().findByRole('group', { name: 'llm' })).toBeTruthy();
+  });
+
+  it('保存之后重取宿主配置失败：写「宿主配置没刷新成功」与原因，可以重试，重试成功后显示新值', async () => {
+    let failGet = false;
+    const rest = systemRest();
+    const config = rest['/api/config'] as (request: FakeRequest) => unknown;
+    app = await renderApp(
+      '/settings/system',
+      {},
+      {
+        ...rest,
+        '/api/plugins': { plugins: [SESSIONS, plugin('zz-ui', { self: true })], secretRefCounts: {} },
+        '/api/config': (request: FakeRequest) => {
+          if (request.method === 'GET' && failGet) return Response.json({ error: '配置文件读不出' }, { status: 500 });
+          if (request.method === 'PUT') failGet = true;
+          return config(request);
+        },
+      },
+    );
+    await section().findByRole('group', { name: '应用名称' });
+    fireEvent.click(settingRow('应用名称').getByRole('button', { name: /应用名称/ }));
+    const box = settingRow('应用名称').getByRole('textbox', { name: '应用名称' });
+    fireEvent.change(box, { target: { value: 'Aalis Two' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    const alert = await section().findByRole('alert');
+    expect(alert.textContent).toContain('宿主配置没刷新成功：配置文件读不出');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-ui',
+    );
+    failGet = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    await vi.waitFor(() => expect(settingRow('应用名称').getByText('Aalis Two')).toBeTruthy());
+    expect(section().queryByRole('alert')).toBeNull();
   });
 });

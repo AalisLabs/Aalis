@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
 import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
@@ -45,6 +46,8 @@ async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {
   const clearSession = vi.fn(async (_sessionId: string) => {});
   host.provide(memory, { clearSession, clearAll: async () => {} } as unknown as MemoryService);
   host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  // /help 按权限服务列出调用者能用的指令；这里测的是类型说明，给一个放行的替身
+  host.provide(authority, { authorize: () => null } as unknown as AuthorityService);
   if (opts.vectorHandler) {
     await app.plugin(
       definePlugin({

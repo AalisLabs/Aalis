@@ -131,7 +131,7 @@ export default definePlugin({
 
 ## 动态查询没有依赖边
 
-`services.get` / `services.all` 是管理、展示面用的动态查询：查到的服务**不是**声明依赖，不参与激活闸，不享有重绑与关停顺序保证。需要这些保证就写进 `uses`。关停期动态查询可能拿空，这是预期（例如 webui 在 file-reader 已关后按名查删除接口会得到 `undefined`，改走自己的 storage）。
+`services.get` / `services.all` 是管理、展示面用的动态查询：查到的服务**不是**声明依赖，不参与激活闸，不享有重绑与关停顺序保证。需要这些保证就写进 `uses`。关停期动态查询可能拿空，这是预期，调用方按提供者不在场处理。
 
 单独 unload / disable / bounce 提供者时，正在用它的 required 依赖方并入同批先收尾，交接同样成立。
 

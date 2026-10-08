@@ -59,7 +59,6 @@
         "hooks",
         "lifecycle",
         "logger",
-        "provide",
         "storage"
       ],
       "optional": [
@@ -68,9 +67,6 @@
         "memory",
         "media",
         "webui-server"
-      ],
-      "provides": [
-        "file-reader"
       ]
     }
   }

@@ -1,162 +1,100 @@
 // ============================================================
-// help.ts — 指令帮助的渲染（纯函数，无副作用，便于单测）
+// help.ts — 指令帮助的渲染（纯函数，便于单测）
 //
-// 两段式：概览只回答"有哪些能力"，详情回答"这条怎么用"。
+// 两段式：概览回答「有哪些能用」，详情回答「这条怎么用」。哪些指令看得见由注册表按调用者的等级定。
 //
-// 载体约束（已核实 packages/plugin-webui-client/src/markdown/Markdown.tsx）：
-// - 概览用 markdown 列表（`- ` 前缀），换行由列表语义保证。
-// - 详情的结构化正文整体包进代码块。**这不是权宜之计，代码块就是这段内容该在的载体**：
-//   `twoColumn` 用空格按 CJK 显示宽度补齐来对列，只有等宽字体下才对得齐——正文本来就是
-//   定宽的列对齐文本。顺带免疫 **autolink**（`<name:string>` 这类占位符会被 CommonMark
-//   解析成自动链接，尖括号被吃掉，协议不在链接白名单里，只剩 `name:string` 几个字）。
-//   曾有个待办说「要在产出侧转义尖括号、把围栏拆掉」——那能修 autolink 但会把列排歪，
-//   两个需求里只满足一个。别照做。
-//
-// 两条曾写在这里的理由**已被实测推翻**，不要据此施工：
-// - 「无 remark-breaks」：已于 e2e75155 补上，裸换行不再被合并成一段。
-// - 「无 rehype-raw 导致 `<type>` 被整段丢弃」：反了。不加 rehype-raw 时 `<type>` 渲染为
-//   `&lt;type&gt;`（**正确显示**）；加上反而变成空的自定义元素 `<type></type>`，肉眼不可见。
-//   而且该渲染器喂的是 LLM 输出与用户消息，开放 raw HTML 是 XSS 面（所以 WebUI 的 Markdown 不渲染原始 HTML）。
-//
-// 纯文本载体（QQ / CLI）看到的是 markdown 源码，可读性不受损。
+// 输出是各平台通用的纯文本：QQ 与终端原样显示，WebUI 按 Markdown 渲染。所以只用两边读起来都对的写法——
+// 一行一条的 `- ` 列表（取值缩进两格成子列表），段落之间空一行；不用加粗、反引号与代码围栏，也不用空格对列
+// （比例字体下对不齐）。占位写成 `<名字>`，不带冒号：`<名字:类型>` 在 Markdown 里会被当成自动链接。
 // ============================================================
 
-import type { Command } from '@aalis/api-commands';
+import type { Command, OptionSpec, PositionalArgSpec } from '@aalis/api-commands';
 
-/** 描述里的句读——概览截断到首个句读之前 */
-const CLAUSE_BREAK = /[。；;，,、（(：:\n]/;
-/** 概览描述的硬上限（code point 计），防止无句读的长描述撑爆一行 */
+/** 第一句的结束：句号、分号、问号、叹号或换行 */
+const SENTENCE_END = /[。；！？\n]/;
+/** 摘要的上限（按字计）：第一句过长时截断，免得一行撑满 */
 const BRIEF_MAX = 24;
 
-/**
- * 概览用的描述摘要：先切到首个句读之前，再硬截。
- *
- * 不引入 summary/shortDesc 新字段——那要 60+ 个包配合填写。实测全仓真实描述
- * （"舞萌 DX 查分。子指令：…" / "查询 Best 50：/maimai b50 …"）首句读切分即可切净。
- */
-export function brief(desc: string): string {
-  const raw = desc.trim();
-  if (!raw) return '';
-  const idx = raw.search(CLAUSE_BREAK);
-  let out = idx > 0 ? raw.slice(0, idx) : raw;
-  const chars = [...out];
-  if (chars.length > BRIEF_MAX) out = `${chars.slice(0, BRIEF_MAX).join('')}…`;
-  return out.replace(/[\s/·、\-—]+$/, '');
+/** 摘要：约定描述的第一句就是摘要；第一句过长时截断，省略号紧跟文字 */
+export function brief(description: string): string {
+  const text = description.trim();
+  const end = text.search(SENTENCE_END);
+  const first = [...(end < 0 ? text : text.slice(0, end)).trimEnd()];
+  if (first.length <= BRIEF_MAX) return first.join('');
+  return `${first
+    .slice(0, BRIEF_MAX)
+    .join('')
+    .replace(/[\s，,、：:·/\-—（(]+$/, '')}…`;
 }
 
-/** 自动分组节点（无人显式注册，描述是 ensureGroups 塞的"xxx 命令组"占位）不值得展示描述 */
-function isPlaceholderGroup(cmd: Command): boolean {
-  return cmd.isGroup && !cmd.handler;
+/** 列表里的一条指令：概览与详情的子指令共用 */
+export interface Entry {
+  cmd: Command;
+  /** 调用者看得见的直接子指令数 */
+  children: number;
 }
 
-/**
- * 显示宽度：CJK / 全角标点按 2 格算。详情正文在代码块里是等宽字体，
- * 按 code point 数补空格会让中英混排的列歪掉。
- */
-function displayWidth(s: string): number {
-  let w = 0;
-  for (const ch of s) {
-    const c = ch.codePointAt(0) ?? 0;
-    w +=
-      (c >= 0x1100 && c <= 0x115f) ||
-      (c >= 0x2e80 && c <= 0xa4cf) ||
-      (c >= 0xac00 && c <= 0xd7a3) ||
-      (c >= 0xf900 && c <= 0xfaff) ||
-      (c >= 0xfe30 && c <= 0xfe6f) ||
-      (c >= 0xff00 && c <= 0xff60) ||
-      (c >= 0xffe0 && c <= 0xffe6) ||
-      (c >= 0x20000 && c <= 0x3fffd)
-        ? 2
-        : 1;
-  }
-  return w;
+const spelled = (name: string, prefix: string) => `${prefix}${name.replace(/\./g, ' ')}`;
+
+/** `- /指令 — 摘要 · n 个子指令`；自动分组没有描述，只报子指令数 */
+function entryLine({ cmd, children }: Entry, prefix: string): string {
+  const notes = [cmd.isGroup ? '' : brief(cmd.description), children > 0 ? `${children} 个子指令` : ''].filter(Boolean);
+  return `- ${spelled(cmd.name, prefix)}${notes.length > 0 ? ` — ${notes.join(' · ')}` : ''}`;
 }
 
-/** 两列布局：左列按最宽项补齐（代码块内等宽字体下才对得上） */
-function twoColumn(rows: Array<[string, string]>, indent = '  '): string[] {
-  const width = Math.max(...rows.map(([l]) => displayWidth(l)));
-  return rows.map(([l, r]) => `${indent}${l}${' '.repeat(width - displayWidth(l) + 2)}${r}`.trimEnd());
+const argText = (arg: PositionalArgSpec) => (arg.required ? `<${arg.name}>` : `[${arg.name}]`);
+
+/** 一个选项一行，取值各占一行缩在下面 */
+function optionLines(option: OptionSpec): string[] {
+  const flags = new Set([`--${option.name}`, ...option.aliases.map(a => (a.length === 1 ? `-${a}` : `--${a}`))]);
+  const placeholder = option.valueName ?? option.name;
+  const value = option.type === 'boolean' ? '' : option.valueOptional ? ` [${placeholder}]` : ` <${placeholder}>`;
+  return [
+    `- ${[...flags].join(', ')}${value}${option.description ? `：${option.description}` : ''}`,
+    ...(option.choices ?? []).map(c => `  - ${c.value}${c.description ? `：${c.description}` : ''}`),
+  ];
 }
 
-/**
- * 概览：只列顶层节点（深度 0），子指令折成计数。
- *
- * 深度 ≥1 的节点（`session.set` / `clear.all` 等）一律不进概览——它们占了原先
- * 六成篇幅而信息价值近零（看到 `/session` 就该知道进去看）。
- */
-export function renderOverview(all: Command[], prefix: string, childCount: (name: string) => number): string {
-  const tops = all.filter(c => !c.name.includes('.') && c.name !== 'help');
-  const lines = [`**Aalis 指令**（${tops.length} 条）`, ''];
-  for (const cmd of tops) {
-    const head = `\`${prefix}${cmd.name}\``;
-    const n = childCount(cmd.name);
-    if (isPlaceholderGroup(cmd)) {
-      // 占位描述是噪音，改报子指令数——它才是这个节点的全部信息
-      lines.push(`- ${head} — ${n} 个子指令`);
-      continue;
-    }
-    const sub = n > 0 ? ` · ${n} 个子指令` : '';
-    lines.push(`- ${head} — ${brief(cmd.description)}${sub}`);
-  }
-  lines.push('', `详情：\`${prefix}help 指令名\``);
-  return lines.join('\n');
+/** 一段：标题加一行一条；没有条目时整段不出 */
+const section = (title: string, lines: string[]) => (lines.length > 0 ? [title, ...lines].join('\n') : '');
+
+export function renderOverview(entries: Entry[], prefix: string): string {
+  return [
+    `可用指令（${entries.length} 条）：`,
+    ...entries.map(e => entryLine(e, prefix)),
+    '',
+    `详情：${prefix}help 指令名，或在指令后加 -h`,
+  ].join('\n');
 }
 
-/**
- * 详情：标题行（markdown）+ 结构化正文（代码块）。
- *
- * 正文进代码块的理由见文件头：规避 `<name:string>` 被解析成 autolink，
- * 同时让选项/子指令在等宽字体下对齐。描述、选项说明、示例**不截断**——
- * 用户正是为细节才敲的第二段（如 plugin-maimai 把用法编码在描述里）。
- */
-export function renderDetail(cmd: Command, children: Command[], prefix: string): string {
-  const head = `${prefix}${cmd.name.replace(/\./g, ' ')}`;
-  const body: string[] = [];
-
-  const argText = cmd.positionalArgs
-    .map(a => (a.required ? `<${a.name}:${a.type}>` : `[${a.name}:${a.type}]`))
-    .join(' ');
-  const subText = children.length > 0 && !cmd.handler ? ' <子指令>' : '';
-  const optText = cmd.options.length > 0 ? ' [选项]' : '';
-  body.push(`用法: ${head}${subText}${argText ? ` ${argText}` : ''}${optText}`);
-
-  if (cmd.positionalArgs.length > 0) {
-    body.push('', '参数：');
-    for (const a of cmd.positionalArgs) {
-      const label = a.required ? `<${a.name}:${a.type}>` : `[${a.name}:${a.type}]`;
-      body.push(`  ${label}`);
-    }
-  }
-
-  if (cmd.options.length > 0) {
-    body.push('', '选项：');
-    body.push(
-      ...twoColumn(
-        cmd.options.map(o => {
-          const flags = [`--${o.name}`, ...o.aliases.map(a => `-${a}`)].join(', ');
-          const val =
-            o.type === 'boolean' ? '' : o.valueOptional ? ` [${o.valueName ?? o.name}]` : ` <${o.valueName ?? o.name}>`;
-          const choices = o.choices && o.choices.length > 0 ? `（${o.choices.join(' | ')}）` : '';
-          return [`${flags}${val}`, `${o.description ?? o.type}${choices}`];
-        }),
-      ),
-    );
-  }
-
-  if (children.length > 0) {
-    body.push('', '子指令：');
-    body.push(...twoColumn(children.map(c => [`${prefix}${c.name.replace(/\./g, ' ')}`, brief(c.description)])));
-  }
-
-  if (cmd.aliases.length > 0) {
-    body.push('', `别名：${cmd.aliases.map(a => `${prefix}${a.replace(/\./g, ' ')}`).join(', ')}`);
-  }
-
-  if (cmd.examples && cmd.examples.length > 0) {
-    body.push('', '示例：');
-    for (const e of cmd.examples) body.push(`  ${e}`);
-  }
-
-  const title = isPlaceholderGroup(cmd) ? `**${head}**` : `**${head}** — ${cmd.description}`;
-  return `${title}\n\n\`\`\`\n${body.join('\n')}\n\`\`\``;
+/** 详情：标题（带完整描述）、用法、示例、参数、选项、子指令、别名，各段之间空一行 */
+export function renderDetail(cmd: Command, children: Entry[], prefix: string): string {
+  const head = spelled(cmd.name, prefix);
+  const usage = [
+    head,
+    children.length > 0 && !cmd.handler ? '<子指令>' : '',
+    ...cmd.positionalArgs.map(argText),
+    cmd.options.length > 0 ? '[选项]' : '',
+  ];
+  const described = cmd.positionalArgs.filter(a => a.description);
+  return [
+    cmd.isGroup || !cmd.description ? head : `${head} — ${cmd.description}`,
+    `用法：${usage.filter(Boolean).join(' ')}`,
+    section(
+      '示例：',
+      (cmd.examples ?? []).map(e => `- ${e}`),
+    ),
+    section(
+      '参数：',
+      described.map(a => `- ${argText(a)}：${a.description}`),
+    ),
+    section('选项：', cmd.options.flatMap(optionLines)),
+    section(
+      '子指令：',
+      children.map(e => entryLine(e, prefix)),
+    ),
+    cmd.aliases.length > 0 ? `别名：${cmd.aliases.map(a => spelled(a, prefix)).join('、')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }

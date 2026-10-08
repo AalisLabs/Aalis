@@ -34,6 +34,19 @@ export default definePlugin({
 | `enableCommands` | boolean | `true` | 注册斜杠指令：为用户注册 /maimai 等斜杠指令 |
 | `defaultBindOnPrivateChat` | boolean | `true` | 私聊缺省绑定：在 OneBot 私聊中，若调用者未绑定但其 QQ 已注册查分器账号，自动以其 QQ 查分 |
 
+## 指令
+
+| 指令 | 说明 |
+|---|---|
+| `/maimai info [target]` | 查询玩家信息 |
+| `/maimai b50 [target] [--ap]` | 查询 Best 50；`--ap` 只查 AP 成绩 |
+| `/maimai recent [target] [count]` | 查询最近游玩，`count` 默认 10、最多 50 |
+| `/maimai song <keyword>` | 按曲名、艺术家或别名搜索曲目 |
+| `/maimai bind <code>` | 绑定你的好友码 |
+| `/maimai unbind` | 解绑你的好友码 |
+
+`target` 是好友码或 `qq:QQ 号`；不写时查你绑定的好友码，开着 `defaultBindOnPrivateChat` 时 OneBot 私聊里没绑定也按你的 QQ 号查。裸敲 `/maimai` 回的就是 `/help maimai`。
+
 ## 相关
 
 - 工具注册与工具组：[plugin-tools](./plugin-tools.md)

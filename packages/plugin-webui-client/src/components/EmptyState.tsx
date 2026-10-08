@@ -7,7 +7,7 @@ interface EmptyStateProps {
   title: string;
   /** 怎么得到；出错时写错误原文 */
   description?: ReactNode;
-  /** 最多一个操作 */
+  /** 最多一个操作；取数失败（FetchError）时是「重试」与「查看日志」 */
   action?: ReactNode;
   /** 区域取数失败：危险色图标，作为警示播报。语气名与颜色令牌同名 */
   tone?: 'danger';

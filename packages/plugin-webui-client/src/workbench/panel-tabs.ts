@@ -12,6 +12,7 @@ import { useBack } from '../back';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
 import { pageName, refOf, sameRef, usePages } from '../pages/registry';
+import { useHost } from '../plugins/list';
 import { isRecord, useJson } from '../rest';
 import { paths } from '../routes';
 import { usePhone } from '../shell/Shell';
@@ -118,6 +119,7 @@ export function useSessionTabs(sessionId: string, data: Omit<HostData, 'phone'>)
   const navigate = useNavigate();
   const goBack = useBack();
   const toast = useToast();
+  const host = useHost();
   const { admin } = useConnection();
   const { pages, pagesError, layout, layoutError, retry: retryPages, changeLayout } = usePages();
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
@@ -161,7 +163,8 @@ export function useSessionTabs(sessionId: string, data: Omit<HostData, 'phone'>)
       () => {
         if (mounted.current) then();
       },
-      (err: Error) => toast({ kind: 'danger', text: `${op === 'open-tab' ? '打开' : '关闭'}标签失败：${err.message}` }),
+      (err: Error) =>
+        toast({ kind: 'danger', text: `${op === 'open-tab' ? '打开' : '关闭'}标签失败：${err.message}`, source: host }),
     );
   const pathOf = (ref: PanelTabRef) =>
     'host' in ref ? paths.session(sessionId, ref.host) : paths.sessionPanel(sessionId, ref);

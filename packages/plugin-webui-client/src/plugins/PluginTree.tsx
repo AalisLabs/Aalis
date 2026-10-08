@@ -2,7 +2,7 @@ import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
 import { FolderSearch, Store } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { useLocation, useParams } from 'react-router';
-import { Button } from '../components/Button';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
@@ -13,7 +13,7 @@ import { postJson } from '../rest';
 import { paths } from '../routes';
 import { Left } from '../shell/Shell';
 import { messageOf, usePluginAction } from './action';
-import { labelOf, type PluginRow, usePlugins } from './list';
+import { labelOf, type PluginRow, useHost, usePlugins } from './list';
 import { hasProblem, markerOf, statusOf } from './status';
 import './PluginTree.css';
 
@@ -76,6 +76,7 @@ function problemsOf(groups: PluginGroup[]): PluginGroup[] {
 
 export function PluginTree() {
   const { plugins, error, refresh } = usePlugins();
+  const host = useHost();
   const action = usePluginAction();
   const toast = useToast();
   const [problemsOnly, setProblemsOnly] = useState(false);
@@ -121,12 +122,14 @@ export function PluginTree() {
             <Toggle label="只看有问题的" checked={problemsOnly} onChange={setProblemsOnly} />
           </div>
           {error && (
-            <p className="plugin-tree-note" role="alert">
-              插件列表没取到：{error.message}
-              <Button variant="text" onClick={() => void refresh()}>
-                重试
-              </Button>
-            </p>
+            <FetchError
+              what="插件列表"
+              error={error}
+              retry={() => void refresh()}
+              stale={plugins !== undefined}
+              inline
+              source={host}
+            />
           )}
           {plugins && groups.length === 0 && (
             <p className="plugin-tree-note">{problemsOnly ? '没有出问题的插件' : '还没有安装插件'}</p>

@@ -18,5 +18,5 @@ export function useEntryCounts(): (area: HostArea) => number | undefined {
   return area => (area === 'health' && count > 0 ? count : undefined);
 }
 
-/** 带角标的入口在读屏名字后面接上数，图标栏与手机第一层同一写法 */
-export const countNote = (count: number) => `（${count} 项需要处理）`;
+/** 带角标的入口在读屏名字后面接上数（不放进括号：看得见的角标要是名字的一部分），图标栏与手机第一层同一写法 */
+export const countNote = (count: number) => `，${count} 项需要处理`;

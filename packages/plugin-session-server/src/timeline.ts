@@ -32,7 +32,7 @@ import type {
 } from '@aalis/api-session-protocol';
 import type { TodoItem, TodoListService } from '@aalis/api-todo-list';
 import { type ToolExecuteMessage, type ToolOutputMessage, toolFailed } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import {
   awaitDelivery,
   type IncomingMessage,
@@ -40,6 +40,7 @@ import {
   type OutboundDeliveryResult,
   type OutgoingMessage,
   type StreamChunkMessage,
+  WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import type { MethodHandlers, ServerConnection } from './connection.js';
 import type { DisplayOf } from './display.js';
@@ -116,6 +117,7 @@ interface TimelineDeps {
   approvalsOf(sessionId: string): Approval[];
   /** 插件停用时中止：不再等平台的送达结果 */
   signal: AbortSignal;
+  logger: Pick<Logger, 'warn'>;
 }
 
 export function createTimeline(deps: TimelineDeps) {
@@ -280,7 +282,7 @@ export function createTimeline(deps: TimelineDeps) {
    * 才开始的回合（由推送给出）
    */
   const skipFor = (at: number, shown: ReadonlySet<string>) => (stored: Message) => {
-    const turnId = stored.metadata?.turnId;
+    const turnId = stored.metadata?.[WellKnownMetadataKeys.TurnId];
     if (typeof turnId !== 'string') return false;
     const turn = turns.get(turnId);
     return shown.has(turnId) || (turn !== undefined && (turn.end === undefined || turn.end > at));
@@ -614,6 +616,7 @@ export function createTimeline(deps: TimelineDeps) {
         sessionId,
         { limit: HISTORY_PAGE, skip: skipFor(at, shown) },
         mergeContext(sessionId),
+        deps.logger,
       );
       const entries = (await deps.todoList.current?.get(sessionId)) ?? [];
       afterReply(() => {
@@ -651,6 +654,7 @@ export function createTimeline(deps: TimelineDeps) {
         sessionId,
         { before, limit: limit ?? HISTORY_PAGE, skip: skipFor(seq, shown) },
         mergeContext(sessionId),
+        deps.logger,
       );
     },
   };

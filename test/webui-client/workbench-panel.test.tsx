@@ -2,6 +2,7 @@
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingRow } from '../../packages/api-session-protocol/src/index.js';
+import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
@@ -12,6 +13,8 @@ import {
   lists,
   main,
   optionsOf,
+  panelClosers,
+  pluginRow,
   renderApp,
   requests,
   restCalls,
@@ -140,6 +143,30 @@ describe('右侧面板与会话头', () => {
     expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('20')).toBeTruthy();
     expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('默认')).toBeTruthy();
     expect(within(panel().getByRole('region', { name: '白纸' })).getByRole('group', { name: '开启白纸' })).toBeTruthy();
+  });
+
+  it('设置没取到：写明原因，可以重试，「查看日志」链到提供会话协议的实例的日志', async () => {
+    let fail = true;
+    app = await renderApp(
+      '/s/s1/settings',
+      {
+        ...subscribe(),
+        'session/config/get': () => {
+          if (fail) throw new Error('设置读不出');
+          return { items: ROWS };
+        },
+      },
+      { '/api/plugins': { plugins: [pluginRow('zz-sessions', { provides: [SESSION_PROTOCOL] })] } },
+    );
+    const alert = await panel().findByRole('alert');
+    expect(alert.textContent).toContain('设置没取到：设置读不出');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-sessions',
+    );
+    fail = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(await panel().findByRole('group', { name: '人设' })).toBeTruthy();
+    expect(panel().queryByRole('alert')).toBeNull();
   });
 
   it('设置：点行就地修改、改完即存；开关立即存；被本会话覆盖的行有「恢复继承」；写不进去、写法不对时原因写在行下', async () => {
@@ -753,10 +780,7 @@ describe('面板标签', () => {
     panel()
       .queryAllByRole('tab')
       .map(tab => tab.textContent);
-  const closeButtons = () =>
-    panel()
-      .queryAllByRole('button', { name: /^关闭「/ })
-      .map(button => button.getAttribute('aria-label'));
+  const closeButtons = () => panelClosers().map(button => button.getAttribute('aria-label'));
   const layoutPosts = () =>
     restCalls()
       .filter(call => call.method === 'POST' && call.path === '/api/layout')
@@ -769,7 +793,7 @@ describe('面板标签', () => {
   });
   const config = { 'session/config/get': () => ({ items: [] }) };
 
-  it('新记录：计划、设置、用量三个宿主标签都开着，有数据才出现；关闭按钮只在当前标签上', async () => {
+  it('新记录：计划、设置、用量三个宿主标签都开着，有数据才出现；关闭按钮只关当前标签', async () => {
     app = await renderApp('/s/s1/usage', {
       'session/subscribe': () =>
         snapshot([userMessage('u1', '在吗'), PLAN, usage({ parts: [{ label: '历史消息', tokens: 10 }] })]),
@@ -790,10 +814,10 @@ describe('面板标签', () => {
       rest(layout),
     );
     await panel().findByRole('list', { name: '计划' });
-    fireEvent.click(panel().getByRole('button', { name: '关闭「计划」' }));
+    fireEvent.keyDown(panel().getByRole('tab', { name: '计划' }), { key: 'Delete' });
     await vi.waitFor(() => expect(tabs()).toEqual(['设置']));
     expect(layoutPosts()).toEqual([{ op: 'close-tab', tab: { host: 'plan' } }]);
-    expect(app.where()).toBe('/s/s1');
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1'));
     fireEvent.click(panel().getByRole('button', { name: '打开标签' }));
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['计划']);
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
@@ -805,7 +829,7 @@ describe('面板标签', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '计划' }));
     await vi.waitFor(() => expect(tabs()).toEqual(['计划', '设置']));
     expect(layoutPosts().at(-1)).toEqual({ op: 'open-tab', tab: { host: 'plan' } });
-    expect(app.where()).toBe('/s/s1/plan');
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1/plan'));
   });
 
   it('「用量」标签关着时点按头部的用量百分比：先打开标签再跳过去；开着时直接跳', async () => {
@@ -981,7 +1005,7 @@ describe('手机', () => {
     fireEvent.click(await main().findByRole('button', { name: '更多' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '会话面板' }));
     expect(app.where()).toBe('/s/s1/settings');
-    fireEvent.click(await panel().findByRole('button', { name: '关闭「设置」' }));
+    fireEvent.click(panel().getByRole('button', { name: '关闭「设置」' }));
     await vi.waitFor(() => expect(app?.where()).toBe('/s/s1'));
     app.back();
     expect(app.where()).toBe('/');

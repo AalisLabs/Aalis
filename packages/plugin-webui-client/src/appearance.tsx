@@ -169,6 +169,8 @@ interface Appearance {
   shown: { dark: ThemeEntry; light: ThemeEntry; current: ThemeEntry };
   /** 插件主题最近一次没取到的原因 */
   pluginError?: Error;
+  /** 重取插件主题 */
+  retryPluginThemes(): void;
   choose(choice: Choice): void;
   importTheme(file: File): Promise<ImportResult>;
   removeImported(id: string): void;
@@ -266,6 +268,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       choice,
       shown,
       pluginError: plugin.error,
+      retryPluginThemes: refetch,
       choose: setChoice,
       importTheme,
       removeImported,

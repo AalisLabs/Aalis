@@ -166,6 +166,7 @@ describe('会话的深度思考档位端到端', () => {
     const { app, sm, commands } = await loadStack(sent);
 
     await sm.ensureSession('s3', { config: { persona: 'keep-me', llm: { provider: PROVIDER, model: 'switch' } } });
+    expect(await commands.execute('session.set', cmdInput('s3', []))).toBe('至少给一项。敲 /session.set -h 看用法');
     const unknown = await commands.execute('session.set', cmdInput('s3', ['-t', 'max']));
     expect(unknown).toContain('当前模型没有档位「max」，可选：off（关）、on（开）');
     expect(sm.resolveConfig('s3', 'test').think).toBeUndefined();

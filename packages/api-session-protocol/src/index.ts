@@ -339,7 +339,7 @@ const AttachmentKindSchema = z.enum(['image', 'audio', 'video', 'file']);
 /**
  * 条目里的附件：图片、音频、视频的 src 是媒体地址（存储地址或网址），其他文件的 src 是会话服务签发的不透明句柄。
  * 句柄绑定这个会话与文件，只在签发它的那次启动（同一个 epoch）内有效，客户端不解析它，按传输层给的下载入口取。
- * 取不到可下载的来源时没有 src，只有名字（如存档只记了文件名的用户上传、存在插件状态目录里的文件）
+ * 取不到可下载的来源时没有 src，只有名字（如入站时只有内联数据、没有落盘的上传，存在插件状态目录里的文件）
  */
 export const ItemAttachmentSchema = z.object({
   kind: AttachmentKindSchema,
@@ -411,7 +411,8 @@ const itemBase = {
 /**
  * 时间线上的一个条目。推送分 item/started、item/delta、item/completed，completed 里的全文是唯一正本；
  * 一次成形的条目不经 started 直接 completed，同一条目可以再次 completed（如送达结果晚到），按 itemId 覆盖：
- * - user-message：说话人的文字与附件；
+ * - user-message：说话人自己写的话与附件（给模型看的发送者前缀、引用与附件描述不在文字里；存档没记发言人写的话的旧提问，文字是
+ *   存档正文原样）；
  * - agent-message：她的文字与附件（可以只有附件）、模型与这一轮的 token；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
  *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
  * - reasoning：思考文字；
@@ -424,7 +425,10 @@ const itemBase = {
  *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
  *   没人应答、撤销）状态是 denied。转到后台的调用带 taskId（后台任务的 id），结果是转后台时回给模型的那段，任务的状态、
  *   最后一行与输出看后台任务。sentToRoom、approvalId、settlement、taskId 与停止时还没结束随工具结果落库，历史里同样还原；
- * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
+ * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue。
+ *   宿主通知（schema-message 的 hostNotice）的 topic 是它的 kind，另带 noticeId（hostNotice.id）与 facts（hostNotice.facts，
+ *   给界面的事实，键由定义这个 kind 的契约约定）；界面认得的 kind 按事实画成状态、不显示 text（写给模型的那句话），
+ *   如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId 是任务 id）；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
  *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是自动压缩的使用率（由压缩服务给出），
@@ -481,6 +485,8 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     text: z.string(),
     attachments: z.array(ItemAttachmentSchema),
     canContinue: z.boolean().optional(),
+    noticeId: z.string().optional(),
+    facts: z.record(z.union([z.string(), z.number()])).optional(),
   }),
   z.object({
     kind: z.literal('plan'),
