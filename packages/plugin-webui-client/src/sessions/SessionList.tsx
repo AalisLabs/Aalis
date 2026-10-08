@@ -22,7 +22,7 @@ import {
   useSessionAddress,
 } from '../routes';
 import { countNote, HOST_ENTRIES, useEntryCounts } from '../shell/entries';
-import { SessionGate } from '../shell/SessionGate';
+import { SessionGate, SessionsFetchError } from '../shell/SessionGate';
 import { Left, usePhone, useShell } from '../shell/Shell';
 import { useSessionActions } from './actions';
 import { useSessionList } from './live-list';
@@ -106,7 +106,7 @@ function Entries() {
 
 function Sections() {
   const mine = useMine();
-  if (mine.error) return <ListError error={mine.error} retry={mine.retry} />;
+  if (mine.error) return <SessionsFetchError what="会话列表" error={mine.error} retry={mine.retry} />;
   if (!mine.sessions) return null;
   return (
     <>
@@ -142,17 +142,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       </h2>
       {children}
     </section>
-  );
-}
-
-function ListError({ error, retry }: { error: Error; retry(): void }) {
-  return (
-    <p className="session-list-note" role="alert">
-      {error.message}
-      <Button variant="text" onClick={retry}>
-        重试
-      </Button>
-    </p>
   );
 }
 
@@ -195,7 +184,7 @@ function GroupRooms({ query, label, accounts }: { query: RoomGroupAddress; label
   const list = useSessionList(query);
   const current = useSessionAddress()?.sessionId;
   const [all, setAll] = useState(false);
-  if (list.error) return <ListError error={list.error} retry={list.retry} />;
+  if (list.error) return <SessionsFetchError what="会话列表" error={list.error} retry={list.retry} />;
   if (!list.sessions) return null;
   const now = Date.now();
   const surfaced = list.sessions.filter(
@@ -240,7 +229,7 @@ function Archive() {
 
 function ArchivedSessions() {
   const list = useSessionList({ archived: true });
-  if (list.error) return <ListError error={list.error} retry={list.retry} />;
+  if (list.error) return <SessionsFetchError what="会话列表" error={list.error} retry={list.retry} />;
   if (!list.sessions) return null;
   if (list.sessions.length === 0) return <p className="session-list-note">没有归档的会话</p>;
   return (

@@ -49,6 +49,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitest/coverage-v8": "^2.1.9",
+    "axe-core": "^4.14.0",
     "better-sqlite3": "^11.10.0",
     "husky": "^9.1.7",
     "jsdom": "^25.0.1",

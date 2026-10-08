@@ -92,6 +92,7 @@ export class MockLLMService implements LLMModel {
       throw err;
     }
     const resp = this.nextResponse(request);
+    if (resp.reasoningContent) yield { reasoningDelta: resp.reasoningContent };
     const text = resp.content ?? '';
     for (let i = 0; i < text.length; i += 4) {
       if (this.opts.latencyMs > 0) await new Promise(r => setTimeout(r, this.opts.latencyMs));

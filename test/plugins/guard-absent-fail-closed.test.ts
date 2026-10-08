@@ -1,9 +1,17 @@
 import type { Logger } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ExecutionGuardContext } from '../../packages/api-authority/src/index.js';
-import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
+import { commands } from '../../packages/api-commands/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
+import type { App } from '../../packages/core/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
+import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { hostedApp } from '../fixtures/app.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -13,7 +21,7 @@ import { makeToolRegistry } from '../fixtures/tool-registry.js';
 //   - 需要更高等级（restricted / risk 非 safe，risk 遮蔽 visibility）→ 拒绝并点名缺权限插件
 //   - 声明了 confirm → 拒绝（没人能确认）
 //   - 默认等级可用且无需确认 → 照常执行
-// 注入守卫后一切交给守卫裁决，放行即执行。
+// 注入守卫后一切交给守卫裁决，放行即执行；摘掉守卫（权限插件停用）退回 fail-closed。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent } as unknown as Logger;
@@ -60,7 +68,7 @@ function toolRegistry(): { registry: ToolRegistry; ran: string[] } {
 }
 
 function commandRegistry(): { registry: CommandRegistry; ran: string[] } {
-  const registry = new CommandRegistry(silent);
+  const registry = new CommandRegistry(silent, () => undefined);
   const ran: string[] = [];
   for (const [name, policy] of Object.entries({ ...DENIED, ...ALLOWED })) {
     registry.command(name, name, policy).action(async () => {
@@ -104,6 +112,15 @@ describe('tools：没有守卫时 fail-closed', () => {
     expect(ran).toEqual(Object.keys(DENIED));
     expect(seen.map(c => c.name)).toEqual(Object.keys(DENIED));
   });
+
+  it('摘掉守卫后退回 fail-closed', async () => {
+    const { registry, ran } = toolRegistry();
+    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(undefined);
+    const out = await registry.execute('restricted', {}, { sessionId: 's' });
+    expect(JSON.parse(out.content).error).toContain('@aalis/plugin-authority');
+    expect(ran).toEqual([]);
+  });
 });
 
 describe('commands：没有守卫时 fail-closed（与 tools 同口径）', () => {
@@ -124,7 +141,7 @@ describe('commands：没有守卫时 fail-closed（与 tools 同口径）', () =
   });
 
   it('restricted 父分组下的子指令按整条路径取严：同样被拒', async () => {
-    const registry = new CommandRegistry(silent);
+    const registry = new CommandRegistry(silent, () => undefined);
     let ran = false;
     registry.command('admin', '管理', { visibility: 'restricted' });
     registry.command('admin.ping', 'ping').action(async () => {
@@ -142,5 +159,48 @@ describe('commands：没有守卫时 fail-closed（与 tools 同口径）', () =
       expect(await registry.execute(name, cmdInput), name).toBe('ok');
     }
     expect(ran).toEqual(Object.keys(DENIED));
+  });
+
+  it('摘掉守卫后退回 fail-closed', async () => {
+    const { registry, ran } = commandRegistry();
+    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(undefined);
+    expect(await registry.execute('restricted', cmdInput)).toContain('@aalis/plugin-authority');
+    expect(ran).toEqual([]);
+  });
+});
+
+describe('停用权限插件：它注入 tools 与 commands 的守卫随之摘掉', () => {
+  const apps: App[] = [];
+  afterEach(async () => {
+    for (const app of apps.splice(0)) await app.stop();
+  });
+
+  it('owner 停用前能用受限的工具与指令，停用后两处都按 fail-closed 拒绝', async () => {
+    const { app } = hostedApp();
+    apps.push(app);
+    await registerHubs(app);
+    for (const plugin of [gatewayPlugin, toolsPlugin, commandsPlugin, authorityPlugin]) await app.plugin(plugin);
+    await app.plugins.idle();
+    const host = app.bind({ tools, commands });
+    host.tools.register({
+      visibility: 'restricted',
+      definition: {
+        type: 'function',
+        function: { name: 'restricted', description: '受限', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => 'ok',
+    });
+    host.commands.command('restricted', '受限', { visibility: 'restricted' }).action(async () => 'ok');
+    const owner = { sessionId: 'webui:s1', platform: 'webui', userId: 'console' };
+    const callTool = async () => (await host.tools.require().execute('restricted', {}, owner)).content;
+    const runCommand = () => host.commands.require().execute('restricted', { ...owner, args: [], raw: '' });
+    expect(await callTool()).toBe('ok');
+    expect(await runCommand()).toBe('ok');
+
+    await app.plugins.disable(authorityPlugin.name);
+    await app.plugins.idle();
+    expect(JSON.parse(await callTool()).error).toContain('@aalis/plugin-authority');
+    expect(await runCommand()).toContain('@aalis/plugin-authority');
   });
 });

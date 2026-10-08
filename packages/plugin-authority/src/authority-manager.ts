@@ -69,8 +69,8 @@ export class AuthorityManager implements AuthorityService {
       // 文案点名能力，因此会向无权用户暴露该能力的**存在性**。这是评估后刻意保留的：
       // 改成「未知指令」式的模糊回应会牵动所有能力的拒绝语义（本函数同时服务 tools 与
       // commands 两个注入点），而开源项目里能力存在性本就公开——防泄漏不是这里的目标，
-      // 说清「差多少等级」对用户更有用。与 CommandRegistry.execute 里那条守卫前泄漏是
-      // 同一个决定的两半，要改一起改。
+      // 说清「差多少等级」对用户更有用。指令的帮助（/help、-h、裸敲分组）另按本函数过滤，
+      // 用不了的在那里当作不存在；直接执行时仍是这条点名的拒绝。
       return `权限不足: "${request.capability}" 需等级 ${minLevel}（当前 ${level}）`;
     }
     return null;

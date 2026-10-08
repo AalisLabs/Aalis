@@ -1,5 +1,5 @@
 import type { SettingLayer, SettingRow } from '@aalis/api-session-protocol';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionClient } from '../connection';
 import { ConnectionLostError, type SessionClient } from '../protocol/session-client';
 
@@ -9,15 +9,16 @@ import { ConnectionLostError, type SessionClient } from '../protocol/session-cli
 type SettingsTarget = { sessionId: string } | { layer: SettingLayer };
 
 /**
- * 会话连接上的一次查询：打开时取一次，设置变了（session/config/changed）、重连后重取，more 另给重取的时机；
+ * 会话连接上的一次查询：打开时取一次，设置变了（session/config/changed）、重连后重取，more 另给重取的时机，retry 当即重取；
  * 新的一次作废还在路上的，断线时不报错、等重连后重取。request 与 more 要是稳定的函数，request 换了先清空再取
  */
 export function useSessionQuery<T>(
   request: (client: SessionClient) => Promise<T>,
   more?: (load: () => void) => Array<() => void>,
-): { value?: T; error?: Error; set(value: T): void } {
+): { value?: T; error?: Error; set(value: T): void; retry(): void } {
   const client = useSessionClient();
   const [state, setState] = useState<{ value?: T; error?: Error }>({});
+  const reload = useRef<() => void>(() => {});
 
   useEffect(() => {
     let latest = 0;
@@ -35,6 +36,7 @@ export function useSessionQuery<T>(
         },
       );
     };
+    reload.current = load;
     const offs = [client.onReady(load), client.on('session/config/changed', load), ...(more?.(load) ?? [])];
     if (client.state.status === 'open') load();
     return () => {
@@ -44,7 +46,8 @@ export function useSessionQuery<T>(
   }, [client, request, more]);
 
   const set = useCallback((value: T) => setState({ value }), []);
-  return { ...state, set };
+  const retry = useCallback(() => reload.current(), []);
+  return { ...state, set, retry };
 }
 
 export function useSettingRows(target: SettingsTarget) {
@@ -58,7 +61,7 @@ export function useSettingRows(target: SettingsTarget) {
       ).items,
     [target],
   );
-  const { value: rows, error, set } = useSessionQuery<SettingRow[]>(request);
+  const { value: rows, error, set, retry } = useSessionQuery<SettingRow[]>(request);
 
   /** 改这个会话或这一层：给值即写入，null 恢复继承；写不进去时抛错 */
   const update = useCallback(
@@ -73,5 +76,5 @@ export function useSettingRows(target: SettingsTarget) {
     [client, target, set],
   );
 
-  return { rows, error, update };
+  return { rows, error, update, retry };
 }

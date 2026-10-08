@@ -2,9 +2,10 @@ import type { PageView } from '@aalis/api-webui';
 import { CircleAlert } from 'lucide-react';
 import { useId } from 'react';
 import { Link, useLocation } from 'react-router';
-import { Button } from '../components/Button';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
+import { useHost } from '../plugins/list';
 import { pageAt, paths } from '../routes';
 import { PageIcon } from './PageIcon';
 import { pageName, refOf, sameRef, usePages } from './registry';
@@ -56,6 +57,7 @@ export function PinnedRail() {
 
 export function PinnedList() {
   const { pinned, error, retry } = usePinned();
+  const host = useHost();
   const headingId = useId();
   if (pinned.length === 0 && !error) return null;
   return (
@@ -63,14 +65,7 @@ export function PinnedList() {
       <h2 id={headingId} className="section-heading session-list-heading">
         固定的页面
       </h2>
-      {error && (
-        <p className="session-list-note" role="alert">
-          没取到：{error.message}
-          <Button variant="text" onClick={retry}>
-            重试
-          </Button>
-        </p>
-      )}
+      {error && <FetchError what="固定的页面" error={error} retry={retry} inline source={host} />}
       {pinned.length > 0 && (
         <List label="固定的页面">
           {pinned.map(page => (

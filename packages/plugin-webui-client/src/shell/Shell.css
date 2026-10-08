@@ -129,7 +129,9 @@
   outline: none;
 }
 
+/* --row-inset：左栏里不在列表里的字（写成一行的出错）与列表行的字对齐 */
 .shell-left {
+  --row-inset: var(--space-4);
   width: var(--left-w);
   min-width: var(--left-min);
   border-right: 1px solid var(--color-border);

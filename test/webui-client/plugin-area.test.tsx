@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
@@ -71,7 +72,7 @@ const PLUGINS = [
   plugin('zz-own', { displayName: '自定义', subsystem: 'zz-group' }),
   plugin('zz-plain', { displayName: '没归类' }),
   plugin('zz-ui', { displayName: '界面服务', subsystem: 'platform', self: true }),
-  plugin('zz-sessions', { displayName: '会话服务', subsystem: 'session', provides: ['session-protocol'] }),
+  plugin('zz-sessions', { displayName: '会话服务', subsystem: 'session', provides: [SESSION_PROTOCOL] }),
 ];
 
 /** 插件列表与管理动作：动作按请求记下，改了状态再回列表 */
@@ -159,7 +160,13 @@ describe('实例树', () => {
 
     scan = () => Response.json({ error: '宿主未提供插件来源，无法扫描' }, { status: 503 });
     fireEvent.click(tree().getByRole('button', { name: '重新扫描插件目录' }));
-    expect(await screen.findByText('重新扫描插件目录失败：宿主未提供插件来源，无法扫描')).toBeTruthy();
+    const failed = (await screen.findByText('重新扫描插件目录失败：宿主未提供插件来源，无法扫描')).closest(
+      '[role="alert"]',
+    ) as HTMLElement;
+    expect(
+      within(failed).getByRole('link', { name: '查看日志' }).getAttribute('href'),
+      '插件区的出错 Toast 链到提供界面的实例',
+    ).toBe('/health/logs?plugin=zz-ui');
   });
 
   it('插件列表没取到：左栏写明原因，可以重试', async () => {
@@ -174,7 +181,9 @@ describe('实例树', () => {
             : { plugins: PLUGINS, secretRefCounts: {} },
       },
     );
-    expect((await tree().findByRole('alert')).textContent).toContain('插件管理服务不可用');
+    const alert = await tree().findByRole('alert');
+    expect(alert.textContent).toContain('插件管理服务不可用');
+    expect(within(alert).queryByRole('link', { name: '查看日志' }), '插件列表没取到就指不出来源').toBeNull();
     fail = false;
     fireEvent.click(tree().getByRole('button', { name: '重试' }));
     expect(await tree().findByRole('link', { name: '文档库' })).toBeTruthy();
@@ -209,7 +218,12 @@ describe('详情', () => {
     );
     expect(summary.getByText('运行中')).toBeTruthy();
     fireEvent.click(summary.getByRole('button', { name: '重载' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('重载失败：插件 zz-mongo 当前不接受重载');
+    const failed = await screen.findByRole('alert');
+    expect(failed.textContent).toContain('重载失败：插件 zz-mongo 当前不接受重载');
+    expect(
+      within(failed).getByRole('link', { name: '查看日志' }).getAttribute('href'),
+      '插件详情里的出错 Toast 链到这个插件的日志',
+    ).toBe('/health/logs?plugin=zz-mongo');
     fireEvent.click(summary.getByRole('button', { name: '停用' }));
     expect(await summary.findByText('已停用')).toBeTruthy();
     expect(summary.queryByRole('button', { name: '重载' })).toBeNull();
@@ -307,6 +321,44 @@ describe('详情', () => {
     fireEvent.click(block.getByRole('button', { name: '新建实例' }));
     await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model%3Avision'));
     expect(created).toEqual([{ suffix: 'bad name' }, { suffix: 'vision' }]);
+  });
+
+  it('在主实例页面移除其余实例、新建实例失败：出错 Toast 的「查看日志」分别链到被移除的实例与提供界面的实例', async () => {
+    app = await renderApp(
+      '/plugins/zz-model',
+      {},
+      pluginRest(
+        PLUGINS.map(row => (row.name === 'zz-model' ? { ...row, reusable: true } : row)),
+        {
+          '/api/plugins/zz-model/instances': () => Response.json({ error: '配置文件写不进去' }, { status: 500 }),
+          '/api/plugins/zz-model%3Abackup/instance': () => Response.json({ error: '实例停不下来' }, { status: 500 }),
+        },
+      ),
+    );
+    const block = within((await detail().findByRole('heading', { name: '实例' })).closest('section') as HTMLElement);
+    fireEvent.click(
+      within(block.getByRole('link', { name: /backup/ }).closest('li') as HTMLElement).getByRole('button', {
+        name: '更多',
+      }),
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: '移除' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: '移除实例「backup」？' })).getByRole('button', { name: '移除' }),
+    );
+    const removed = await screen.findByRole('alert');
+    expect(removed.textContent).toContain('移除实例失败：实例停不下来');
+    expect(within(removed).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-model%3Abackup',
+    );
+    fireEvent.click(within(removed).getByRole('button', { name: '关闭' }));
+
+    fireEvent.change(block.getByLabelText('新实例的名字'), { target: { value: 'vision' } });
+    fireEvent.click(block.getByRole('button', { name: '新建实例' }));
+    const created = await screen.findByRole('alert');
+    expect(created.textContent).toContain('新建实例失败：配置文件写不进去');
+    expect(within(created).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-ui',
+    );
   });
 
   it('移除实例先确认，确认后发 DELETE；移除的是正在看的实例时回到主实例', async () => {

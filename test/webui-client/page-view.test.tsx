@@ -142,7 +142,7 @@ describe('重取', () => {
     await vi.waitFor(() => expect(counts()).toEqual([4, 5]));
   });
 
-  it('一块取数失败只影响这一块：写明原因、可以重试，别的块照常', async () => {
+  it('一块取数失败只影响这一块：写明原因、可以重试、可以看页面所属实例的日志，别的块照常', async () => {
     let fail = true;
     app = await renderApp(
       pagePath(JOBS),
@@ -154,6 +154,9 @@ describe('重取', () => {
     );
     const alert = await page().findByRole('alert');
     expect(alert.textContent).toContain('数据源 summary 返回的数据不对');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-jobs%3Anight',
+    );
     expect(await table().findByText('周报')).toBeTruthy();
     fail = false;
     fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
@@ -557,7 +560,12 @@ describe('动作', () => {
     await vi.waitFor(() => expect(posts(actionPath(JOBS, 'edit'))).toHaveLength(1));
     fireEvent.click(within(screen.getByRole('dialog', { name: '编辑' })).getByRole('button', { name: '取消' }));
     act(() => held.edit());
-    expect((await screen.findByRole('alert')).textContent).toContain('编辑失败：任务 备份 不存在');
+    const failed = await screen.findByRole('alert');
+    expect(failed.textContent).toContain('编辑失败：任务 备份 不存在');
+    expect(
+      within(failed).getByRole('link', { name: '查看日志' }).getAttribute('href'),
+      '出错 Toast 链到页面所属实例的日志',
+    ).toBe('/health/logs?plugin=zz-jobs%3Anight');
   });
 
   it('带输入的 destructive 动作：表单里同样写警示，插件没写确认文案时是宿主的默认警示', async () => {

@@ -56,14 +56,6 @@
   content: "";
 }
 
-/* 可以关闭的标签：关闭按钮紧跟在字后面 */
-.tabs-closable {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--space-0-5);
-}
-
 .tabs-panel {
   flex: 1;
   min-height: 0;

@@ -354,6 +354,63 @@ describe('时间线', () => {
     await vi.waitFor(() => expect(requests('turn/rewind')).toHaveLength(1));
   });
 
+  it('回滚确认：这一轮有转到后台的调用（工具卡带 taskId）时写明它们在这一轮结束之后写的文件不会撤回，没有时不写', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '起开发服务器'),
+          turn('t1', { outcome: 'replied' }),
+          toolCall('c1', 'exec', { turnId: 't1', taskId: 'bg_1' }),
+          agentMessage('a1', '放到后台了', { turnId: 't1' }),
+          userMessage('u2', '再改一下'),
+          turn('t2', { outcome: 'replied' }),
+          toolCall('c2', 'exec', { turnId: 't2' }),
+          agentMessage('a2', '改好了', { turnId: 't2' }),
+        ]),
+      'turn/checkpoint': () => ({ execUsed: false }),
+    });
+    const log = within(await timeline());
+    const note = '这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。';
+    const [first, second] = log.getAllByRole('button', { name: '回滚这一轮' });
+    for (const [button, shown] of [
+      [first, true],
+      [second, false],
+    ] as const) {
+      fireEvent.click(button);
+      fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
+      const dialog = within(screen.getByRole('dialog'));
+      await vi.waitFor(() =>
+        expect((dialog.getByRole('button', { name: '回滚' }) as HTMLButtonElement).disabled).toBe(false),
+      );
+      expect(dialog.queryByText(note) !== null).toBe(shown);
+      fireEvent.click(dialog.getByRole('button', { name: '取消' }));
+    }
+  });
+
+  it('回滚确认按整轮判：一轮被插话隔成两段，从后一段回滚，前一段里转到后台的调用照样写明', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '起开发服务器'),
+          turn('t1', { outcome: 'replied' }),
+          toolCall('c1', 'exec', { turnId: 't1', taskId: 'bg_1' }),
+          userMessage('u2', '顺便看看日志'),
+          agentMessage('a1', '放到后台了', { turnId: 't1' }),
+        ]),
+      'turn/checkpoint': () => ({ execUsed: false }),
+    });
+    const log = within(await timeline());
+    const buttons = log.getAllByRole('button', { name: '回滚这一轮' });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1] as HTMLElement);
+    fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
+    const dialog = within(screen.getByRole('dialog'));
+    await vi.waitFor(() =>
+      expect((dialog.getByRole('button', { name: '回滚' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(dialog.getByText('这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。')).toBeTruthy();
+  });
+
   it('驱动别人的房间时顶部有提示条；房间里逐条写说话人（她的回复写握手给的应用名），没发出的回复写明原因', async () => {
     app = await renderApp('/s/s1', {
       initialize: () => ({ ...INIT, appName: '<应用名>' }),
@@ -442,6 +499,25 @@ describe('时间线', () => {
     expect(requests('turn/abort')).toEqual([]);
     fireEvent.keyDown(document.body, { key: 'Escape' });
     await vi.waitFor(() => expect(requests('turn/abort')).toEqual([{ sessionId: 's1', turnId: 't9' }]));
+  });
+
+  it('坏数据只坏它自己：重复的条目 id、没收尾就接上下一轮的回合，时间线照常画出，前后的条目都在', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '之前'),
+          turn('t1'),
+          toolCall('dup', 'read', { result: '甲' }),
+          toolCall('dup', 'read', { result: '乙' }),
+          userMessage('u2', '之后'),
+          turn('t2', { outcome: 'replied' }),
+          agentMessage('a2', '答', { turnId: 't2' }),
+        ]),
+    });
+    const log = within(await timeline());
+    expect(log.getByText('之前')).toBeTruthy();
+    expect(log.getByText('之后')).toBeTruthy();
+    expect(log.getByText('答')).toBeTruthy();
   });
 
   it('订阅失败时会话区写明原因并可以重试', async () => {

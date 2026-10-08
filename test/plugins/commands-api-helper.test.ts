@@ -29,6 +29,7 @@ interface RegisteredCmd {
   meta: InternalCommandMeta;
   aliases: string[];
   options: Array<{ name: string; syntax: string; opts?: OptionRegisterOptions }>;
+  arguments: Array<{ name: string; description: string }>;
   actions: CommandHandler[];
   usage: string[];
   examples: string[];
@@ -44,6 +45,7 @@ function makeCommandService(): { svc: CommandService; cmds: Map<string, Register
         meta: (meta ?? {}) as InternalCommandMeta,
         aliases: [],
         options: [],
+        arguments: [],
         actions: [],
         usage: [],
         examples: [],
@@ -56,6 +58,10 @@ function makeCommandService(): { svc: CommandService; cmds: Map<string, Register
         },
         option(n, syntax, opts) {
           reg.options.push({ name: n, syntax, opts });
+          return builder;
+        },
+        argument(n, description) {
+          reg.arguments.push({ name: n, description });
           return builder;
         },
         action(handler) {
@@ -221,6 +227,32 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     expect(cmd?.actions).toHaveLength(1);
     await app.stop();
   });
+
+  it('位置参数的说明同样热转发、换人后重放', async () => {
+    const app = newApp();
+    const host = app.bind({ provide });
+    const a = makeCommandService();
+    const handle = host.provide(commands, a.svc);
+    await loadProbe(
+      app,
+      commandProbe('probe-argument', commands => {
+        commands
+          .command('find <q:string>', 'f')
+          .argument('q', '要找的词')
+          .action(async () => undefined);
+      }),
+    );
+    const described = [{ name: 'q', description: '要找的词' }];
+    expect(a.cmds.get('find <q:string>')?.arguments).toEqual(described);
+
+    handle();
+    await settle(app);
+    const b = makeCommandService();
+    host.provide(commands, b.svc);
+    await settle(app);
+    expect(b.cmds.get('find <q:string>')?.arguments).toEqual(described);
+    await app.stop();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -237,7 +269,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
   it('两个插件注册同名指令，其中一个卸载后另一个仍在', async () => {
     const app = newApp();
     const host = app.bind({ provide });
-    const registry = new CommandRegistry(mkLogger() as never);
+    const registry = new CommandRegistry(mkLogger() as never, () => undefined);
     host.provide(commands, registry);
 
     await loadProbe(

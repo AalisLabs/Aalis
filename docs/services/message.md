@@ -31,7 +31,7 @@
 | 符号 | 类别 | file:line | 说明 |
 | --- | --- | --- | --- |
 | `IncomingMessage` | interface | `index.ts` | 从适配器流入的原始消息：会话上下文 + `attachments` + `triggerType` + `actor`（授权身份）等 |
-| `OutgoingMessage` | interface | `index.ts` | 发往平台的回复：`content`/`segments`/`attachments`/`source`/`modelInfo` |
+| `OutgoingMessage` | interface | `index.ts` | 发往平台的回复：`content`/`attachments`/`source`/`modelInfo` |
 | `StreamChunkMessage` | interface | `index.ts` | 流式片段（经 `'outbound:stream'` 事件发往前端）：`turnId`（所在回合）/`contentDelta`/`reasoningDelta`/`toolCallProgress`/`done`/`toolLimitReached` |
 | `MessageAttachment` | interface | `index.ts` | v2 多模态附件统一载体：`kind`/`data`/`mimeType`/`description`/`ref`/`skipArchive` 等 |
 
@@ -41,7 +41,8 @@
 | --- | --- | --- | --- |
 | `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice` |
 | `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
-| `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键：`VisibleContent`（assistant 消息的可见正文，落库内容是结构化输出信封时由 agent 写入；读历史做检索、摘要的一方应优先读它，缺省退回 `content`） |
+| `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键，写方与会话服务引用它：可见正文、发言人写的话与附件清单、说话人、来源、宿主通知的种类、id 与给界面的事实、回合与工具调用的 id、回复的模型与 token、发出附件原样的地址与名字、投递失败的原因；各键谁写谁读见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键) |
+| `ArchivedAttachment` | interface | `index.ts` | 存档里提问带的一个附件（`WellKnownMetadataKeys.Attachments` 的一项）：`kind`/`name`/`ref`（存储地址或网址） |
 | `CONTROL_KINDS` | const 数组 | `index.ts` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼装历史时须自行过滤**（并非 `prepareLLMMessages` 的职责） |
 | `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |

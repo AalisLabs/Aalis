@@ -1,9 +1,9 @@
 import type { AttentionItem } from '@aalis/api-webui';
-import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
+import { FetchError } from '../components/FetchError';
 import { MARKERS } from '../components/List';
 import { pageAddress, usePages, withInstance } from '../pages/registry';
-import { usePluginNames } from '../plugins/list';
+import { useHost, usePluginNames } from '../plugins/list';
 import { statusOf } from '../plugins/status';
 import { paths } from '../routes';
 import { useAttention } from './attention';
@@ -86,21 +86,10 @@ export function AttentionList({ items, named = true }: { items: readonly Attenti
   );
 }
 
-/** 没取到或重取失败：原因与「重试」。stale 时旧的还显示着，写「没刷新成功」 */
-export function FetchError({ error, retry, stale }: { error: Error; retry(): void; stale: boolean }) {
-  return (
-    <p className="fetch-error" role="alert">
-      {`${stale ? '没刷新成功' : '没取到'}：${error.message}`}
-      <Button variant="text" onClick={retry}>
-        重试
-      </Button>
-    </p>
-  );
-}
-
 /** 首页（手机上是第一层顶部）的摘要：最多五条，标题写总数，「全部」链到运行状况；空了又没出错时整条不出现 */
 export function AttentionSummary() {
   const { items, error, retry } = useAttention();
+  const host = useHost();
   const count = items?.length ?? 0;
   if (count === 0 && !error) return null;
   return (
@@ -114,7 +103,9 @@ export function AttentionSummary() {
         )}
       </div>
       {items && count > 0 && <AttentionList items={items.slice(0, SUMMARY_LIMIT)} />}
-      {error && <FetchError error={error} retry={retry} stale={items !== undefined} />}
+      {error && (
+        <FetchError what="「需要处理」" error={error} retry={retry} stale={items !== undefined} inline source={host} />
+      )}
     </section>
   );
 }

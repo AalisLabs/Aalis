@@ -165,8 +165,8 @@ export function PageScope({ page, sessionId, version, children }: Scope & { chil
 
   const failed = useCallback(
     (action: ActionView, err: unknown) =>
-      toast({ kind: 'danger', text: `${action.label}失败：${(err as Error).message}` }),
-    [toast],
+      toast({ kind: 'danger', text: `${action.label}失败：${(err as Error).message}`, source: page.instance }),
+    [toast, page.instance],
   );
 
   const running = useMemo<Running>(

@@ -124,7 +124,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 | 消费点 | 文件 | 用法 |
 |---|---|---|
-| commands / tools 服务 | `packages/plugin-authority/src/index.ts` | `commands.follow` / `tools.follow` 调 `setExecutionGuard(guard)` 注入闸（反向注入，不返回 cleanup） |
+| commands / tools 服务 | `packages/plugin-authority/src/index.ts` | `commands.follow` / `tools.follow` 调 `setExecutionGuard(guard)` 注入闸（反向注入），返回的清理调 `setExecutionGuard(undefined)` 摘掉 |
 | plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`，非 null 即拦截 |
 | plugin-commands 执行点 | `packages/plugin-commands/src/index.ts` | 人亲手输入的指令带 `confirmIntent`，守卫需要确认时经它问发出者本人 |
 | 权限页 | `packages/plugin-authority/src/index.ts` | 设置里的声明式页面（用户等级、owner、操作门槛、禁用与免确认），处理函数经闭包里本次激活的 manager 调用 |
@@ -208,9 +208,15 @@ export default definePlugin({
       // 声明了 confirm：指令调 g.confirmIntent，工具请 owner 审批（approvals.request）；做不到就拒，不能当作放行
       return `操作已取消：${capability} 需要确认`;
     };
-    // 不返回 cleanup：契约没有「摘掉守卫」的口，守卫随旧实例一起消失
-    commands.follow(svc => { svc.setExecutionGuard(guard); });
-    tools.follow(svc => { svc.setExecutionGuard(guard); });
+    // 停用时摘掉：守卫闭包里是这次激活的状态，摘掉后 commands / tools 退回 fail-closed
+    commands.follow(svc => {
+      svc.setExecutionGuard(guard);
+      return () => svc.setExecutionGuard(undefined);
+    });
+    tools.follow(svc => {
+      svc.setExecutionGuard(guard);
+      return () => svc.setExecutionGuard(undefined);
+    });
   },
 });
 ```

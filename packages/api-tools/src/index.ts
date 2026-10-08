@@ -8,7 +8,7 @@
 // - 工具结果的结局（toolFailed、integerIn）
 // - 服务接口（ToolService）
 // - 服务描述符 `tools`（按激活绑定的登记门面）与 `withToolGroups`
-// - 后台任务登记（BackgroundTask、BackgroundTaskService、描述符 `backgroundTasks`）
+// - 后台任务登记（BackgroundTask、BackgroundTaskService、描述符 `backgroundTasks`）与结束通知（BACKGROUND_TASK_NOTICE）
 // - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'、'tool:output' 与 'background:changed'
 //
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/schema-message，
@@ -249,8 +249,8 @@ export interface ToolService {
 
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
 
-  /** 注入执行守卫，用于能力裁决与确认 */
-  setExecutionGuard(guard: ExecutionGuard): void;
+  /** 注入执行守卫，用于能力裁决与确认；传 undefined 摘掉，需要更高等级或确认的工具退回 fail-closed */
+  setExecutionGuard(guard: ExecutionGuard | undefined): void;
 
   /** 注册工具分组 */
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
@@ -362,6 +362,20 @@ export interface BackgroundTaskService {
 
 /** `background:changed` 的内容：变了的任务，或删掉的任务 id 与所在会话 */
 export type BackgroundTaskChange = { task: BackgroundTask } | { removed: string; sessionId: string };
+
+/**
+ * 后台任务结束通知的种类（schema-message 的 `IncomingMessage.hostNotice.kind`）：任务正常结束（含失败）时由执行器注入，
+ * `hostNotice.id` 是任务 id，`hostNotice.facts` 是 {@link BackgroundTaskNoticeFacts}。界面按它认出结束通知，画成一行状态
+ */
+export const BACKGROUND_TASK_NOTICE = 'background-task';
+
+/** 结束通知带给界面的事实：工具名、结局与用时（毫秒），失败的命令取得到退出码时带上 */
+export type BackgroundTaskNoticeFacts = {
+  tool: string;
+  status: 'completed' | 'failed';
+  durationMs: number;
+  exitCode?: number;
+};
 
 export const backgroundTasks = defineService<BackgroundTaskService>('background-tasks');
 

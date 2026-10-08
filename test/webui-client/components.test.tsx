@@ -338,6 +338,40 @@ describe('Tabs', () => {
     fireEvent.keyDown(usage, { key: 'Home' });
     expect(plan.getAttribute('aria-selected')).toBe('true');
   });
+
+  it('可以关闭时：标签列表里只有标签；列表之后是关闭选中标签的按钮，在 Tab 顺序与读屏树里，提示写出 Delete；选中的标签按 Delete 也能关', () => {
+    const onClose = vi.fn();
+    render(
+      <Tabs
+        label="会话面板"
+        items={[
+          { key: 'plan', title: '计划' },
+          { key: 'settings', title: '设置' },
+        ]}
+        value="settings"
+        onChange={() => {}}
+        onClose={onClose}
+      >
+        内容
+      </Tabs>,
+    );
+    const list = screen.getByRole('tablist');
+    expect(within(list).queryAllByRole('button')).toEqual([]);
+    const [plan, settings] = within(list).getAllByRole('tab');
+    expect(settings.getAttribute('aria-keyshortcuts')).toBe('Delete');
+    expect(plan.hasAttribute('aria-keyshortcuts')).toBe(false);
+    fireEvent.keyDown(plan, { key: 'Delete' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(settings, { key: 'Delete' });
+    expect(onClose).toHaveBeenCalledOnce();
+
+    const close = screen.getByRole('button', { name: '关闭「设置」' });
+    expect(list.contains(close)).toBe(false);
+    expect(close.tabIndex).toBe(0);
+    expect(close.title).toBe('关闭「设置」（Delete）');
+    fireEvent.click(close);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('Toggle', () => {

@@ -74,8 +74,11 @@ function makeReq(over: {
   /** 其余请求头（origin、host、sec-fetch-site） */
   headers?: Record<string, string>;
 }) {
+  const path = over.path ?? '/';
+  const search = new URLSearchParams(over.query).toString();
   return {
-    path: over.path ?? '/',
+    path,
+    originalUrl: search ? `${path}?${search}` : path,
     method: over.method ?? 'GET',
     query: over.query ?? {},
     headers: { cookie: over.cookie, ...over.headers },
@@ -155,11 +158,17 @@ describe('单 token 登录', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('?token= 命中 → 设 cookie 并 302 到干净路径', async () => {
+  it('?token= 命中 → 设 cookie 并 302 到同一路径，只去掉 token，其余查询串照留', async () => {
     const auth = makeAuth();
     const { res } = await run(auth, makeReq({ path: '/', query: { token: TOKEN } }));
     expect(res.redirectTo).toBe('/');
     expect(extractCookie(res, 'aalis_webui_token')).toBeTruthy();
+
+    const logs = await run(
+      auth,
+      makeReq({ path: '/health/logs', query: { level: 'error', token: TOKEN, plugin: '@x/p:2', text: 'a b' } }),
+    );
+    expect(logs.res.redirectTo).toBe('/health/logs?level=error&plugin=%40x%2Fp%3A2&text=a+b');
   });
 
   it('注销清除 token：identify 回到 undefined', async () => {

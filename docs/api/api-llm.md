@@ -129,7 +129,7 @@ interface LLMUsageEvent {
 export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel;
 ```
 
-- **谁发：** 服务商登记模型时套一层 `metered`：`provide(llm, metered(handle, events), { entryId })`。`chat` 拿到 `usage` 时发一次；`chatStream` 在流结束时（含中途停止）按最后一次报的 `usage` 发一次；服务商没报用量的调用不记。服务商回的数运行时没人核，`metered` 发之前规整一次：输入或输出不是非负有限数的调用当没报，不记；缓存命中不是非负有限数时不带，比输入多时截到输入。服务商自己的 `chat` 与 `chatStream` 不用管记账，发事件不等监听器。三个第一方服务商都套了它。
+- **谁发：** 服务商登记模型时套一层 `metered`：`provide(llm, metered(handle, events), { entryId })`。`chat` 拿到 `usage` 时发一次；`chatStream` 在流结束时（含中途停止）按最后一次报的 `usage` 发一次；服务商没报用量的调用不记。服务商回的数运行时没人核，`metered` 发之前规整一次：输入或输出不是非负有限数的调用当没报，不记；缓存命中不是非负有限数时不带，比输入多时截到输入。服务商自己的 `chat` 与 `chatStream` 不用管记账，发事件不等监听器。三个第一方服务商都套了它。不套的服务商，调用不进用量统计，会话的 token 累计（会话管理取 `llm:usage` 记账）也不算它：这是提供者的约定，宿主不另核。
 - **调用方：** `caller` 由 `llm` 的绑定接口按调用方这次激活填上，调用方自己填的不算。
 - **用途与会话：** 调用方在请求里带，可以缺。`purpose` 是给人看的短语，第一方的写法：对话代理的回合是「对话」，子会话里的回合是「子任务」；压缩服务的摘要是「摘要」；媒体识别看图（含视频与动图的帧）是「识图」，转写语音（含视频的音轨）是「转写」。
 

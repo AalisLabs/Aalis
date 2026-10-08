@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -129,23 +129,16 @@ describe('自管资源配对绊线（作者纪律的机器化）', () => {
     ).toEqual([]);
   });
 
-  it('白名单条目都还有对应文件（防僵尸白名单）', () => {
+  it('白名单条目都还命中它的规则：规则 id 存在、文件在、有获取词而没有配对词（防僵尸白名单与拼错 id）', () => {
+    const rules = new Map(RULES.map(rule => [rule.id, rule]));
     const stale = [...WHITELIST.keys()].filter(key => {
-      const rel = key.slice(key.indexOf(' ') + 1);
-      const [pkg, ...rest] = rel.split('/');
-      try {
-        readFileSync(join(PACKAGES, pkg, 'src', ...rest));
-        return false;
-      } catch {
-        return true;
-      }
+      const rule = rules.get(key.slice(0, key.indexOf(' ')));
+      const [pkg, ...rest] = key.slice(key.indexOf(' ') + 1).split('/');
+      const file = join(PACKAGES, pkg, 'src', ...rest);
+      if (!rule || !existsSync(file)) return true;
+      const content = readFileSync(file, 'utf-8');
+      return !rule.acquire.test(content) || rule.release.test(content);
     });
     expect(stale).toEqual([]);
-  });
-
-  it('白名单的规则 id 都真实存在（防拼错 id 让白名单失效）', () => {
-    const ids = new Set(RULES.map(r => r.id));
-    const bad = [...WHITELIST.keys()].filter(key => !ids.has(key.slice(0, key.indexOf(' '))));
-    expect(bad).toEqual([]);
   });
 });

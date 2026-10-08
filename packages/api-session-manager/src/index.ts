@@ -205,16 +205,6 @@ export interface SessionInfo {
   tokens?: { input: number; output: number };
 }
 
-/**
- * 会话树节点（递归结构）
- *
- * 用于前端展示会话树和 agent 任务树状图。
- */
-export interface SessionTreeNode {
-  session: SessionInfo;
-  children: SessionTreeNode[];
-}
-
 /** 建会话时调用方能给的字段：配置按登记的设置项校验 */
 export type NewSessionFields = Partial<
   Omit<
@@ -286,8 +276,6 @@ export interface SessionManagerService {
   createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];
-  /** 获取会话树（传入 rootId 则只返回该子树，否则返回所有根会话的树） */
-  getTree(rootId?: string): SessionTreeNode[];
 
   // ---- 生命周期 ----
 

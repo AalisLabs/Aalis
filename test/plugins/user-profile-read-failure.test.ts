@@ -87,6 +87,7 @@ function captureCommands() {
       const builder: CommandBuilder = {
         alias: () => builder,
         option: () => builder,
+        argument: () => builder,
         usage: () => builder,
         example: () => builder,
         action(handler) {

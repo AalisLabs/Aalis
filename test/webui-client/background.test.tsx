@@ -2,6 +2,7 @@
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackgroundTask, SessionItem, SessionSummary } from '../../packages/api-session-protocol/src/index.js';
+import { BACKGROUND_TASK_NOTICE } from '../../packages/api-tools/src/index.js';
 import { DEFAULT_PAGE_URL, setPageUrl, stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
@@ -15,12 +16,12 @@ import {
   server,
   summary,
 } from './harness.js';
-import { AT, backgroundTask, pushTasks, snapshot, toolCall, turn, userMessage } from './items.js';
+import { AT, backgroundTask, notice, pushTasks, snapshot, toolCall, turn, userMessage } from './items.js';
 import { hostTab, layoutStore } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
 // 后台任务：会话面板的「后台」标签（子会话的树与这个会话的工具调用两组，在跑的在前、结束的收进「已结束」，日志、停止与
-// 全部停止，只画登记表里的状态）、时间线里转了后台的工具卡、会话头部的「后台 N」（手机上在「更多」里、「更多」上一个点）、
+// 全部停止，只画登记表里的状态）、时间线里转了后台的工具卡与结束通知、会话头部的「后台 N」（手机上在「更多」里、「更多」上一个点）、
 // 子会话页顶部的路径、最后一行里的本机网址；重连后重新 watch 与取列表，没有后台任务登记时按没有任务
 // ════════════════════════════════════════════════════════════
 
@@ -593,6 +594,61 @@ describe('时间线里转了后台的工具卡', () => {
         .map(call => call.body),
     ).toEqual([{ op: 'open-tab', tab: { host: 'background' } }]);
     expect(await panel().findByText('ready')).toBeTruthy();
+  });
+});
+
+describe('时间线里的结束通知', () => {
+  /** 结束通知：正文是写给模型的那句话，界面按种类与事实画 */
+  const ended = (itemId: string, taskId: string, facts: Record<string, string | number>) =>
+    notice(itemId, `后台任务 ${taskId}（exec）已结束。结果与输出用 background_output 查看。`, {
+      topic: BACKGROUND_TASK_NOTICE,
+      noticeId: taskId,
+      facts,
+    });
+
+  it('画成一行状态：工具名、结局与用时，写给模型的那句话不显示；点开在「后台」标签里打开这个任务的日志，标签关着时先打开', async () => {
+    const layout = layoutStore({
+      panelTabs: [hostTab('plan'), hostTab('settings'), hostTab('usage'), hostTab('background', false)],
+    });
+    app = await renderApp(
+      '/s/s1',
+      handlers({
+        tasks: [{ ...DEV, status: 'completed', endedAt: AT + 65_000 }],
+        items: [ended('n-dev', 't-dev', { tool: 'exec', status: 'completed', durationMs: 65_000 })],
+        output: () => ({ text: 'ready\n', end: 6, truncated: false }),
+      }),
+      { '/api/layout': layout.route, '/api/session-pages?sessionId=s1': { pages: [] } },
+    );
+    const line = (await main().findByRole('button', { name: /^后台任务 exec/ })) as HTMLButtonElement;
+    expect(line.textContent).toContain('完成 · 1 分 5 秒');
+    expect(main().queryByText(/background_output/)).toBeNull();
+    await loaded();
+    expect(line.disabled).toBe(false);
+    fireEvent.click(line);
+    await vi.waitFor(() => expect(app?.where()).toBe('/s/s1/background'));
+    expect(await panel().findByText('ready')).toBeTruthy();
+  });
+
+  it('失败的写退出码、用危险色；登记表里已没有这个任务时照样写工具名、结局与用时，不能点开；事实不合约定的、别的种类的按普通通知显示原文', async () => {
+    const facts = { tool: 'exec', status: 'completed', durationMs: 3_000 };
+    app = await renderApp(
+      '/s/s1',
+      handlers({
+        items: [
+          ended('n-gone', 'gone', { tool: 'exec', status: 'failed', exitCode: 2, durationMs: 3_000 }),
+          ended('n-bad', 'bad', { ...facts, status: 'running' }),
+          notice('n-other', '别的种类的通知', { topic: 'zz-other', noticeId: 't-dev', facts }),
+        ],
+      }),
+    );
+    const line = (await main().findByRole('button', { name: /^后台任务 exec/ })) as HTMLButtonElement;
+    await loaded();
+    expect(line.textContent).toContain('退出码 2 · 3.0 秒');
+    expect(line.querySelector('.status-text')?.getAttribute('data-state')).toBe('error');
+    expect(line.disabled).toBe(true);
+    expect(main().getByText('后台任务 bad（exec）已结束。结果与输出用 background_output 查看。')).toBeTruthy();
+    expect(main().getByText('别的种类的通知')).toBeTruthy();
+    expect(main().getAllByRole('button', { name: /^后台任务/ })).toHaveLength(1);
   });
 });
 

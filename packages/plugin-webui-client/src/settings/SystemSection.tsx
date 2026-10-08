@@ -1,9 +1,10 @@
 import { useEffect, useReducer, useState } from 'react';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
-import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
+import { useHost } from '../plugins/list';
 import { deleteJson, isRecord, postJson, putJson, useJson } from '../rest';
 import type { Field } from './field';
 import { SettingRow } from './SettingRow';
@@ -63,16 +64,10 @@ function parseServices(body: unknown): ServiceView[] {
 export function SystemSection() {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
   const { value, error } = useJson('/api/config', parseHostConfig, version);
+  const host = useHost();
   return (
     <div className="page-screen settings-screen">
-      {error && !value && (
-        <EmptyState
-          tone="danger"
-          title="宿主配置没取到"
-          description={error.message}
-          action={<Button onClick={refetch}>重试</Button>}
-        />
-      )}
+      {error && <FetchError what="宿主配置" error={error} retry={refetch} stale={value !== undefined} source={host} />}
       {value && <HostConfig view={value} saved={refetch} />}
       <ServicePreferences />
       {value?.home && (
@@ -87,6 +82,7 @@ export function SystemSection() {
 
 function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
   const toast = useToast();
+  const host = useHost();
   const [restartNeeded, setRestartNeeded] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const written = (key: string) => Object.hasOwn(view.config, key);
@@ -99,7 +95,7 @@ function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
     setRestarting(true);
     postJson('/api/restart', {}).catch((err: Error) => {
       setRestarting(false);
-      toast({ kind: 'danger', text: err.message });
+      toast({ kind: 'danger', text: err.message, source: host });
     });
   };
   return (
@@ -132,6 +128,7 @@ function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
 /** 有几个提供者（或写过偏好）的服务：选用哪一个，改了立即生效并写进配置文件。插件启停、管理连接重连后重取 */
 function ServicePreferences() {
   const { admin } = useConnection();
+  const host = useHost();
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
   const { value, error } = useJson('/api/services', parseServices, version);
   useEffect(() => {
@@ -151,9 +148,7 @@ function ServicePreferences() {
     <Block title="服务偏好">
       <p className="settings-note">{PREFERENCES_NOTE}</p>
       {error && (
-        <p className="settings-note" role="alert">
-          服务列表没取到：{error.message}
-        </p>
+        <FetchError what="服务列表" error={error} retry={refetch} stale={value !== undefined} inline source={host} />
       )}
       <div className="settings-rows">
         {services.map(service => {

@@ -44,7 +44,7 @@
 | 服务 | 定位 |
 |---|---|
 | [tools](tools.md) | 工具注册表：`ToolDefinition`（`{type:'function',function:{...}}`）+ handler 返回 string 或 `ToolExecutionResult`（需要交图给主模型时）；执行守卫（restricted/confirm）。参考实现 tool-system。 |
-| [tool-session](tool-session.md) | 按会话的工具状态 / 上传文件登记。 |
+| [tool-session](tool-session.md) | 跨会话历史读取与平台访问规则（`session-history`）。 |
 | [media](media.md) | 媒体转码/图片描述；detailLevel 档；描述缓存用 util-bounded-map。 |
 | [asr](asr.md) | 语音转写 provider（音频 → 文本）。参考实现 asr-openai/whisper-cpp。 |
 

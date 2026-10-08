@@ -33,7 +33,7 @@ async function withCmdApp(
   }) => Promise<void>,
 ): Promise<void> {
   const app = new App({ name: 'T', logLevel: 'error' });
-  const r = new CommandRegistry(makeLogger());
+  const r = new CommandRegistry(makeLogger(), () => undefined);
   app.bind({ provide }).provide(commands, r);
   const load = async (id: string, register: (bound: BoundCommands) => void): Promise<void> => {
     await app.plugin(
@@ -62,14 +62,14 @@ async function withCmdApp(
 
 describe('commands v2 — 链式 builder', () => {
   it('注册顶层命令并执行', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('hello', '打招呼').action(async () => 'hi');
     expect(r.has('hello')).toBe(true);
     expect(await r.execute('hello', input([]))).toBe('hi');
   });
 
   it('内联 DSL 解析位置参数（required / optional / text）', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('echo <a:string> [b:text]', '回声').action(
       async (_argv, a, b) => `${a as string}|${(b as string) ?? ''}`,
     );
@@ -80,7 +80,7 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('option 三种语法：boolean flag / 必带值 / 可选值', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('demo', '示例')
       .option('verbose', '-v', { description: 'flag' })
       .option('page', '-p <page:number>', { description: '页码' })
@@ -94,7 +94,7 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('number 选项/参数收到非数字 → 清晰报错（旧实现静默传 NaN 给 handler）', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('demo', '示例')
       .option('page', '-p <page:number>', { description: '页码' })
       .action(async argv => JSON.stringify(argv.options));
@@ -103,14 +103,14 @@ describe('commands v2 — 链式 builder', () => {
     // 合法数字仍正常
     expect(await r.execute('demo', input(['-p', '7']))).toBe(JSON.stringify({ page: 7 }));
 
-    const r2 = new CommandRegistry(makeLogger());
+    const r2 = new CommandRegistry(makeLogger(), () => undefined);
     r2.command('seek <n:number>', '跳转').action(async (_argv, n) => `n=${n}`);
     expect(await r2.execute('seek', input(['notnum']))).toMatch(/需要数字/);
     expect(await r2.execute('seek', input(['42']))).toBe('n=42');
   });
 
   it('string[] 选项可重复追加', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('tag', '标签')
       .option('type', '-t <type:string[]>')
       .action(async argv => JSON.stringify(argv.options.type));
@@ -118,7 +118,7 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('dot-path 子命令最长前缀解析 + 自动分组', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     // 测的是解析而非鉴权：放行守卫代替 plugin-authority（没有守卫时 restricted 指令一律被拒）
     r.setExecutionGuard(async () => null);
     r.command('profile.clear', '清除自己档案').action(async () => 'cleared');
@@ -133,7 +133,7 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('有子指令、自身不收位置参数的指令收到多余的词：不执行，按当前前缀指向 /help 下该指令的完整路径', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     const ran: string[] = [];
     r.command('profile.clear', '清除自己档案').action(async () => {
       ran.push('clear');
@@ -151,7 +151,7 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('visibility 声明 + 继承到子节点（restricted 父 → restricted 子）', () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('a.b', '', { visibility: 'restricted' }).action(async () => 'b');
     r.command('a.b.c', '').action(async () => 'c');
     const b = r.get('a.b')!;
@@ -164,7 +164,7 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('risk 透传 + 沿点路径继承 + 进 guard ctx（authority 据此派生 minTier：sensitive→朋友/dangerous→信任）', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('sys.exec', '', { risk: 'dangerous' }).action(async () => 'x');
     r.command('sys.exec.bg', '').action(async () => 'y'); // 未声明 → 继承父 risk
     expect(r.get('sys.exec')!.risk).toBe('dangerous');
@@ -185,26 +185,26 @@ describe('commands v2 — 链式 builder', () => {
   });
 
   it('guard 拒绝 → execute 返回拒绝原因', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('shutdown', '关机', { visibility: 'restricted' }).action(async () => 'bye');
     r.setExecutionGuard(async () => '权限不足');
     expect(await r.execute('shutdown', input([]))).toBe('权限不足');
   });
 
   it('未注册命令返回未知指令提示', async () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     expect(await r.execute('nope', input([]))).toMatch(/未知指令/);
   });
 
   it('命令名段校验：非法段抛错', () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     expect(() => r.command('Bad', '')).toThrow();
     expect(() => r.command('a.B', '')).toThrow();
     expect(() => r.command('1leading', '')).toThrow();
   });
 
   it('parseCommand 仅识别带前缀输入', () => {
-    const r = new CommandRegistry(makeLogger());
+    const r = new CommandRegistry(makeLogger(), () => undefined);
     r.command('hi', '').action(async () => 'hello');
     expect(r.parseCommand('/hi a b')).toEqual({ name: 'hi', args: ['a', 'b'], raw: '/hi a b' });
     expect(r.parseCommand('hi a b')).toBeNull();
@@ -222,7 +222,7 @@ describe('commands v2 — 链式 builder', () => {
 // ════════════════════════════════════════════════════════════
 
 describe('同名指令（声明栈）', () => {
-  const reg = () => new CommandRegistry(makeLogger());
+  const reg = () => new CommandRegistry(makeLogger(), () => undefined);
   const find = (r: CommandRegistry, n: string) => r.getAll().find(c => c.name === n);
 
   it('后来者胜：栈顶决定跑谁的实现（与旧行为一致）', async () => {
@@ -556,7 +556,7 @@ describe('分组节点回收', () => {
 });
 
 describe('别名：底层声明的别名要能被展示', () => {
-  const reg = () => new CommandRegistry(makeLogger());
+  const reg = () => new CommandRegistry(makeLogger(), () => undefined);
   const find = (r: CommandRegistry, n: string) => r.getAll().find(c => c.name === n);
 
   it('被覆盖者的别名仍列在 materialize 结果里（它本就解析得到）', () => {

@@ -55,7 +55,13 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type Message, type OutgoingMessage, outboundMediaMessage, WellKnownKinds } from '@aalis/schema-message';
+import {
+  type Message,
+  type OutgoingMessage,
+  outboundMediaMessage,
+  WellKnownKinds,
+  WellKnownMetadataKeys,
+} from '@aalis/schema-message';
 import express from 'express';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
@@ -203,7 +209,7 @@ type WebUIConfig = ConfigOf<typeof configSchema>;
  * - 不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记：回看时显示成分隔条，不进模型上下文，与其他平台一致；
  * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件；
  * - 给的是存储地址的文件（插件发出的成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
- *   metadata 另记原样的地址与文件名：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
+ *   metadata 另记原样的地址与文件名（登记的键 SentRef、SentName）：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
  *   「[文件: 名称 | ref:…]」进模型上下文与记忆，不看全局出站归档记不记文件。不是存储地址的文件
  *   （网址、data URL）签不出句柄，记成事件标记「[文件] 名称」，内容不进历史；
  * - 快照里的 data 未经平台改写，就是页面上显示的那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在
@@ -227,13 +233,17 @@ function inboxRecords(msg: OutgoingMessage): Message[] {
       records.push({
         ...outboundMediaMessage(att.kind, att.data, att.description),
         timestamp,
-        metadata: { source: 'webui-server', ref: att.data },
+        metadata: { [WellKnownMetadataKeys.Source]: 'webui-server', [WellKnownMetadataKeys.SentRef]: att.data },
       });
     } else if (isStorageUri(att.data)) {
       records.push({
         ...outboundMediaMessage('file', att.data, att.name),
         timestamp,
-        metadata: { source: 'webui-server', ref: att.data, name: att.name },
+        metadata: {
+          [WellKnownMetadataKeys.Source]: 'webui-server',
+          [WellKnownMetadataKeys.SentRef]: att.data,
+          [WellKnownMetadataKeys.SentName]: att.name,
+        },
       });
     } else {
       records.push(marker(`[文件] ${att.name ?? att.data.split('/').pop()}`));

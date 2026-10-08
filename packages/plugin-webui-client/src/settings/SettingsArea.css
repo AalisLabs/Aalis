@@ -5,10 +5,6 @@
   padding: var(--space-2) 0;
 }
 
-.settings-directory > .settings-note {
-  padding: var(--space-1) var(--space-4);
-}
-
 /* 一节的正文：一列设置，名字与值、开关、行尾的按钮不隔得太远；左对齐，组与组之间留白 */
 .settings-screen {
   max-width: var(--measure-page);
@@ -30,10 +26,6 @@
   line-height: var(--leading-xs);
   color: var(--color-text-3);
   overflow-wrap: anywhere;
-}
-
-.settings-note[role="alert"] {
-  color: var(--color-danger-text);
 }
 
 /* 名字一列、控件一列；窄时控件换到下一行 */

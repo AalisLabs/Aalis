@@ -154,7 +154,15 @@ describe('设置项登记', () => {
 
   it('存储里取值不合字段的当作没设置，同一处只告警一次', async () => {
     const stored = {
-      [GROUP]: { id: GROUP, name: GROUP, children: [], status: 'waiting', config: { maxToolIterations: 0 } },
+      [GROUP]: {
+        id: GROUP,
+        name: GROUP,
+        children: [],
+        status: 'waiting',
+        createdAt: 1,
+        updatedAt: 1,
+        config: { maxToolIterations: 0 },
+      },
     };
     const { sm, warns } = await setup({ stored });
 
@@ -204,7 +212,15 @@ describe('设置项登记', () => {
 
   it('外来字段类型的取值先过登记给的 validate：不合的拒绝写入、存储里的当作没设置；没给 validate 的登记被拒', async () => {
     const stored = {
-      [GROUP]: { id: GROUP, name: GROUP, children: [], status: 'waiting', config: { llm: 'x' } },
+      [GROUP]: {
+        id: GROUP,
+        name: GROUP,
+        children: [],
+        status: 'waiting',
+        createdAt: 1,
+        updatedAt: 1,
+        config: { llm: 'x' },
+      },
     };
     const { app, sm, warns } = await setup({ stored, plugins: [settingsPlugin(SETTINGS, [MODEL])] });
     expect(sm.resolveConfig(GROUP)).toEqual({});
@@ -476,7 +492,15 @@ describe('各层：全局默认、平台档与受众条目', () => {
   it('旧数据里父会话给子会话的 sessionDefaults 照常生效，来源为 parent；它不是设置项，写不进去', async () => {
     const sessionDefaults = { persona: '<父会话给的人设>', paperName: '<父会话给的白纸>' };
     const stored = {
-      [GROUP]: { id: GROUP, name: GROUP, children: [], status: 'waiting', config: { sessionDefaults } },
+      [GROUP]: {
+        id: GROUP,
+        name: GROUP,
+        children: [],
+        status: 'waiting',
+        createdAt: 1,
+        updatedAt: 1,
+        config: { sessionDefaults },
+      },
     };
     const { sm } = await setup({ doc: { sessionConfig: { defaults: { persona: '<默认人设>' } } }, stored });
     const child = await sm.createChildSession(GROUP, {});

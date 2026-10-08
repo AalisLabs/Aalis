@@ -17,6 +17,7 @@ import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { useConnectionState, useFeatures, useSessionClient } from '../connection';
 import { composing } from '../keys';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import {
   dependencyOf,
   effectiveOf,
@@ -348,6 +349,7 @@ function SettingSelect({
 }) {
   const { field } = row;
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const { options, names, error } = useFieldOptions(field, 0, dependency);
   const current = effectiveOf(row);
   const choices = withCurrent(field, options, current, names);
@@ -367,7 +369,7 @@ function SettingSelect({
       onChange={key => {
         const chosen = choices.find(option => option.key === key) as Option;
         update(row.key, chosen.value).catch((err: Error) =>
-          toast({ kind: 'danger', text: `${field.label}没改成：${err.message}` }),
+          toast({ kind: 'danger', text: `${field.label}没改成：${err.message}`, source: sessions }),
         );
       }}
     />

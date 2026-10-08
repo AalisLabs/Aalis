@@ -4,7 +4,7 @@ import { type ReactNode, useId } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useBack } from '../back';
 import { Button } from '../components/Button';
-import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { Menu } from '../components/Menu';
 import { Table, type TableColumn } from '../components/Table';
@@ -67,16 +67,10 @@ function Block({ component, target }: { component: ComponentView; target?: Actio
   );
 }
 
-/** 取数失败：这一块写明原因，可以重试，别的块照常 */
+/** 取数失败：这一块写明原因，可以重试、看页面所属实例的日志，别的块照常 */
 function Failed({ label, error, retry }: { label?: string; error: Error; retry(): void }) {
-  return (
-    <EmptyState
-      tone="danger"
-      title={`${label ?? '这一块'}没取到`}
-      description={error.message}
-      action={<Button onClick={retry}>重试</Button>}
-    />
-  );
+  const { page } = usePageScope();
+  return <FetchError what={label ?? '这一块'} error={error} retry={retry} source={page.instance} />;
 }
 
 // ----- 主从 -----

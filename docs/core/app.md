@@ -115,13 +115,13 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 
 | 指令 | 可见性 | 说明 |
 |---|---|---|
-| `/help` | public | 列出所有已注册指令 |
+| `/help` | public | 列出调用者能用的指令；`/help <指令>` 看用法 |
 | `/status` | public | 显示系统状态（服务可用性、工具数、指令数） |
 | `/clear [--type/-t <type>]` | public | 清空当前会话指定类型记忆 |
 | `/clear all [--type/-t <type>]` | restricted | 全局清空指定类型记忆 |
 | `/shutdown` | restricted | 关闭应用 |
 | `/restart` | restricted | 重启应用 |
-| `/authority [target]` | public | 查看自己或指定用户的权限等级（owner 显示 ∞） |
+| `/authority [target]` | restricted（risk: sensitive，等级 1） | 查看自己或指定用户的权限等级（owner 显示 ∞） |
 | `/level <target> <level>` | restricted | owner 给某外部身份设置权限等级（整数；0 默认，负数封禁；仅 owner 可用，防自授） |
 
 ## 插件发现与配置文档（宿主，不在 core）

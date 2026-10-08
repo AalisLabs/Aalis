@@ -34,7 +34,6 @@ deleteSession(id: string): Promise<void>;            // 同时清理其消息历
   // 父会话未建档时（平台派生 id 从不经 createSession 预建）先按原样 id 兜底建档，再挂子会话；有出生平台的房间以会话 id 为名
 createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo>;
 getChildren(parentId: string): SessionInfo[];
-getTree(rootId?: string): SessionTreeNode[];
 
 // 生命周期
 completeSession(id: string, result?: string): Promise<void>;   // 触发 session:completed
@@ -90,8 +89,6 @@ interface SessionInfo {
 ```
 
 `kind`、`originPlatform`、`audience` 只按会话 id 与 `parentId` 推出（参考实现的私有函数 `describeSession`），新建、建档与加载入表时覆盖写入，调用方传的值与存储里的旧值都不采信。会话种类由纯函数 `sessionKind({ parentId, audience })` 给出：有父会话为 `task`，受众为 `group`、`private` 的为 `room`（IM 房间，含 owner 自己的 QQ 私聊），其余为 `owner`。会话列表的分区（`room` 的进「IM 房间」，其余进「我的会话」，子会话随根会话）、设置项的 `appliesTo` 与会话协议的会话种类都按它。`audience: 'owner'` 只表示「不是 IM 房间」：凡是没有出生平台的根会话都落在这里，包括 `mcp-server`、`workflow::<id>` 与定时任务指定的目标会话，并不都是 owner 本人在说话，不能拿来判断「owner 在场」。非房间会话的 id 不得含单冒号，否则会被当成房间（会话 id 约定见 [platform 服务](platform.md)）。
-
-`SessionTreeNode = { session: SessionInfo; children: SessionTreeNode[] }`（`index.ts`，递归）。服务方法 `getTree()` 回不分区的根会话列表。
 
 `SessionInheritance`（`index.ts`）——`resolveInheritance` 的返回：
 
@@ -187,7 +184,7 @@ interface SessionSetting {
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期 + 配置解析语义。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `createChildSession` / `completeSession` / `registerSetting` / `resolveConfig` / `childConfig`。其余（`resolveInheritance` / 各层的读写 / `generateTitle` / ...）主要服务于会话服务、`/session` 与白纸的诊断，可保守实现；`getTree` 第一方目前没有调用方。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `createChildSession` / `completeSession` / `registerSetting` / `resolveConfig` / `childConfig`。其余（`resolveInheritance` / 各层的读写 / `generateTitle` / ...）主要服务于会话服务、`/session` 与白纸的诊断，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
 
 **设置的语义必须复刻**（否则 Agent 会拿错 LLM）：只认登记过的键，写入按登记的字段校验；`resolveConfig` 优先级从高到低 = 会话自身 config > 父会话 `sessionDefaults` > 受众条目 > 平台档 > 全局默认，平台档按 §2.4 钉死出生平台，结果里不带 `sessionDefaults`（`plugin-session-manager/src/index.ts`）。不钉死时，从 WebUI 驱动 IM 房间会拿到 webui 平台档的工具组。登记与改动要发 `session:config:changed`，会话服务靠它通知客户端重取。
 
@@ -208,7 +205,6 @@ import {
   type SessionInheritance,
   type SessionManagerService,
   type SessionSetting,
-  type SessionTreeNode,
   type SessionUpdates,
   sessionKind,
   sessionManager,
@@ -323,14 +319,6 @@ class MySessionManager implements SessionManagerService {
   }
   getChildren(parentId: string) {
     return this.listSessions().filter(s => s.parentId === parentId);
-  }
-  getTree(rootId?: string): SessionTreeNode[] {
-    const toNode = (s: SessionInfo): SessionTreeNode => ({ session: s, children: this.getChildren(s.id).map(toNode) });
-    if (rootId) {
-      const root = this.getSession(rootId);
-      return root ? [toNode(root)] : [];
-    }
-    return this.listSessions().filter(s => !s.parentId).map(toNode);
   }
   async completeSession(id: string, result?: string) {
     const s = await this.updateSession(id, { status: 'completed' });

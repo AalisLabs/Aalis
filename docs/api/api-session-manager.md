@@ -187,11 +187,6 @@ interface SessionInfo {
   lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number; error?: string };  // 最近结束的一轮
   tokens?: { input: number; output: number };  // 这个会话自己的模型调用累计的 token，不含子会话
 }
-
-interface SessionTreeNode {
-  session: SessionInfo;
-  children: SessionTreeNode[];
-}
 ```
 
 会话种类是会话列表的分区、设置项的 `appliesTo` 与会话协议的 `SessionSummary.kind` 共同的来源。它与审批的发起类别是两回事：owner 在自己的 QQ 私聊里亲手发起的回合照样能产生审批。
@@ -219,7 +214,6 @@ interface SessionManagerService {
   deleteSession(id: string): Promise<void>;
   createChildSession(parentId, opts?): Promise<SessionInfo>;
   getChildren(parentId: string): SessionInfo[];
-  getTree(rootId?: string): SessionTreeNode[];
   completeSession(id: string, result?: string): Promise<void>;
 
   registerSetting(setting: SessionSetting, plugin: string): () => void;  // 提供者一侧；插件用绑定门面

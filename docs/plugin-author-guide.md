@@ -382,7 +382,7 @@ declare module '@aalis/core' {
 | 插件详情的页面（`placement: 'plugin'`，默认） | 声明式页面或插件前端 | 插件详情里的页面入口，地址 `/p/:instance/:pageKey`；用户可以把它固定到图标栏 |
 | 设置的一节（`placement: 'settings'`） | 只收声明式页面 | 设置的分节目录 |
 | 会话右侧面板（`placement: 'session'`） | 声明式页面或插件前端，可用 `applies` 只对部分会话适用 | 面板标签栏的「+」，用户打开后记住 |
-| 会话设置项 | `sessionManager.registerSetting`：一个配置字段，加适用的会话种类与显眼程度；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-manager 的「登记设置项」](api/api-session-manager.md#登记设置项)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
+| 会话设置项 | `sessionManager.registerSetting`：一个配置字段，加适用的会话种类与显眼程度；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-manager 的「登记设置项」](api/api-session-manager.md#登记设置项)）。可选项要按服务现取的，字段的 `dynamicOptions` 指向提供它的服务，界面调那个服务各提供者的 `listModels()`，只拿得到取值、拿不到依赖项的值（见 [api-webui 的「可选项与模型」](api/api-webui.md#可选项与模型)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
 | 提示 | `webui.notify`：一条待处理事项或故障，带级别，可附跳转；事情处理好了就撤回 | 「需要处理」（运行状况页、首页摘要、运行状况的角标与标签页标题的数，每条计 1）与发出它的插件详情 |
 | 主题 | 经贡献点 `webui:theme` 交一份主题文件（`contributions.contribute('webui:theme', { id, theme })`，见 [api-webui 的「插件提供的主题」](api/api-webui.md#插件提供的主题)），只收颜色令牌，与导入的主题走同一套校验 | 设置「外观」的主题选择；插件停用后消失，正在用的回到同深浅的偏中性 |
 | 工具卡的展示 | 工具定义上的 `display`（命令、文件改动） | 时间线的工具卡与审批卡上的事实 |
