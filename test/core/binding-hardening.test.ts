@@ -10,7 +10,8 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const OWNER = Symbol('owner');
@@ -100,7 +101,7 @@ const slots = defineService<UniqueHub, { add(slot: Slot): () => void }>('zz-bind
 describe('registrar：重入替换后续键不留孤儿', () => {
   it('真实枢纽 tools：卸载消费者后 execute 必须报未注册', async () => {
     const { app } = world();
-    const reg = new ToolRegistry(silentLogger());
+    const reg = makeToolRegistry(silentLogger());
     const box: { bound?: BoundTools } = {};
     const orig = reg.register.bind(reg);
     reg.register = (tool, activation) => {
@@ -151,8 +152,8 @@ describe('registrar：重入替换后续键不留孤儿', () => {
 
   it('真实枢纽 tools：换人后旧表与新表在消费者卸载后都不可再派活', async () => {
     const { app, host } = world();
-    const a = new ToolRegistry(silentLogger());
-    const b = new ToolRegistry(silentLogger());
+    const a = makeToolRegistry(silentLogger());
+    const b = makeToolRegistry(silentLogger());
     const box: { bound?: BoundTools } = {};
     const wrap = (reg: ToolRegistry) => {
       const orig = reg.register.bind(reg);

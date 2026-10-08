@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type LifecycleCap, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // mcp-client 的 apply 等每个 server 握手、列工具（SDK 默认各 60 秒超时）：接上 lifecycle.signal 后，
@@ -84,7 +84,7 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
     const { logger, lines } = recorder();
     const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
     apps.push(app);
-    app.bind({ provide }).provide(tools, new ToolRegistry(logger));
+    app.bind({ provide }).provide(tools, makeToolRegistry(logger));
     const registering = app.plugin(mcpClient, SERVERS);
     await until(() => fake.requests.includes(method), `${method} 请求`);
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CodeSandboxService, SandboxRunRequest } from '../../packages/api-code-sandbox/src/index.js';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
+import { type RegisteredTool, toolFailed } from '../../packages/api-tools/src/index.js';
 import type { LifecycleCap, Provide } from '../../packages/core/src/index.js';
 import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
@@ -21,6 +21,7 @@ import { ref } from '../fixtures/service-ref.js';
 //   - handler 把 callCtx.signal 交给 runCode，无沙箱路径经 execFile、沙箱路径经 code-sandbox 的 run 交给 process 服务，
 //     两条路径都不带超时；
 //   - 被信号结束的才报 aborted；中止前已正常退出的按实际退出回报、注明调用已中止（与 exec 同一口径）。
+//   - 没被中止、脚本以非零退出的结果带 error（「退出码 N」），按 api-tools 的 toolFailed 判为失败；中止的两支不带。
 // 真实进程的断言看心跳文件而不是 pid：Linux bwrap 下记下的 pid 是外层启动器，解释器不在我们的进程组里，
 // 只查 pid 已不存在测不出沙箱内的进程是否真的停了。起真实进程的用例只在 POSIX 跑。
 // ════════════════════════════════════════════════════════════
@@ -330,6 +331,56 @@ describe('代码执行接住中止：替身沙箱', () => {
     const { run_javascript } = await applyRunner({ mode: 'auto', sandbox: fake.service });
     const res = await call(run_javascript, { code: 'for (;;) {}' }, ac.signal);
     expect(res).toMatchObject({ aborted: true, message: '代码已中止' });
+    expect(res).not.toHaveProperty('error');
+  });
+
+  it('脚本已以非零退出、落定前中止：按实际退出回报并注明调用已中止，不带 error', async () => {
+    const ac = new AbortController();
+    const fake = fakeSandbox(async () => {
+      ac.abort();
+      const result: ExecResult = { code: 1, signal: null, stdout: '', stderr: '' };
+      throw Object.assign(new Error('execFile 退出码 1'), { result });
+    });
+    const { run_python } = await applyRunner({ mode: 'auto', sandbox: fake.service });
+    const res = await call(run_python, { code: 'raise SystemExit(1)' }, ac.signal);
+    expect(res).toMatchObject({ exitCode: 1, note: '调用已中止' });
+    expect(res).not.toHaveProperty('error');
+  });
+});
+
+describe('脚本非零退出算失败', () => {
+  it.skipIf(!posix)('无沙箱路径（真实进程）：非零退出带 error「退出码 N」、判为失败；零退出不带', async () => {
+    const { run_javascript } = await applyRunner({ mode: 'none' });
+    const failed = await call(run_javascript, { code: "console.error('zz-slice1-boom'); process.exit(3);" });
+    expect(failed).toMatchObject({ exitCode: 3, stderr: 'zz-slice1-boom\n', error: '退出码 3' });
+    expect(toolFailed(JSON.stringify(failed))).toBe(true);
+
+    const ok = await call(run_javascript, { code: 'console.log(1)' });
+    expect(ok).toMatchObject({ exitCode: 0, stdout: '1\n' });
+    expect(ok).not.toHaveProperty('error');
+    expect(toolFailed(JSON.stringify(ok))).toBe(false);
+  });
+
+  it('沙箱路径：code-sandbox 以非零退出拒绝时带 error「退出码 N」、判为失败', async () => {
+    const fake = fakeSandbox(async () => {
+      const result: ExecResult = { code: 2, signal: null, stdout: '', stderr: 'zz-slice1-boom\n' };
+      throw Object.assign(new Error('execFile 退出码 2'), { result });
+    });
+    const { run_python } = await applyRunner({ mode: 'auto', sandbox: fake.service });
+    const res = await call(run_python, { code: 'raise SystemExit(2)' });
+    expect(res).toMatchObject({ exitCode: 2, stderr: 'zz-slice1-boom\n', error: '退出码 2' });
+    expect(toolFailed(JSON.stringify(res))).toBe(true);
+  });
+
+  it('没被中止却被信号结束（如内存不够被系统杀掉）：error 写信号名，不写合成的退出码', async () => {
+    const fake = fakeSandbox(async () => {
+      const result: ExecResult = { code: null, signal: 'SIGKILL', stdout: '', stderr: '' };
+      throw Object.assign(new Error('execFile 被信号结束'), { result });
+    });
+    const { run_python } = await applyRunner({ mode: 'auto', sandbox: fake.service });
+    const res = await call(run_python, { code: 'print(1)' });
+    expect(res).toMatchObject({ exitCode: -1, error: '被信号 SIGKILL 结束' });
+    expect(toolFailed(JSON.stringify(res))).toBe(true);
   });
 });
 

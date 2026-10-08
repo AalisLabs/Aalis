@@ -386,6 +386,21 @@ describe('上限', () => {
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     expect(w.runs).toHaveLength(1);
   });
+  it('不在对话回合里的调用不占名额，也不受上限挡：它们不会转后台', async () => {
+    const w = world({ maxPerSession: 1 });
+    w.slow();
+    const outside: ToolCallContext = { sessionId: SESSION, platform: 'mcp', userId: 'zz-client' };
+    void w.registry.execute('zz_slow', {}, outside);
+    void w.registry.execute('zz_slow', {}, outside);
+    await flush();
+    expect(w.runs).toHaveLength(2);
+    await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
+    expect(w.runs).toHaveLength(3);
+    expect(String(parse(await w.registry.execute('zz_slow', {}, turn().ctx)).error)).toContain('先等待或停掉一个');
+    void w.registry.execute('zz_slow', {}, outside);
+    await flush();
+    expect(w.runs, '名额满了，不在回合里的照常执行').toHaveLength(4);
+  });
 });
 
 describe('不在对话回合里的调用（没有 callId）', () => {
@@ -509,7 +524,7 @@ describe('输出口', () => {
 });
 
 describe('结局', () => {
-  it('结果带 error、或命令的退出码不为 0 为失败，原因写一句；其余完成，结束的留着工具的结果', async () => {
+  it('结果带 error、或命令的退出码不为 0 为失败；命令的退出码记在任务上，原因只取结果里的 error；结束的留着工具的结果', async () => {
     const w = world();
     w.slow('zz_cmd', { display: { kind: 'command', fields: { command: 'text' }, result: { exitCode: 'exitCode' } } });
     for (let i = 0; i < 3; i++) await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx);
@@ -517,10 +532,10 @@ describe('结局', () => {
     w.runs[1].finish(JSON.stringify({ error: 'zz-broke' }));
     w.runs[2].finish(JSON.stringify({ exitCode: 0 }));
     await flush();
-    expect(w.tasks.list().map(t => [t.status, t.reason])).toEqual([
-      ['failed', '退出码 3'],
-      ['failed', 'zz-broke'],
-      ['completed', undefined],
+    expect(w.tasks.list().map(t => [t.status, t.reason, t.exitCode])).toEqual([
+      ['failed', undefined, 3],
+      ['failed', 'zz-broke', undefined],
+      ['completed', undefined, 0],
     ]);
     expect(w.tasks.list()[2].result).toEqual({ content: JSON.stringify({ exitCode: 0 }) });
     expect(w.tasks.list()[0].endedAt).toBe(Date.now());
@@ -700,6 +715,32 @@ describe('落盘', () => {
         .sort(),
     ).toEqual(['bg_old_1', String(early.taskId)].sort());
     expect(store.saved()?.tasks).toHaveLength(2);
+  });
+
+  it('命令的退出码随登记落盘，读回后照样在', async () => {
+    const w = world();
+    const store = memoryStore();
+    await w.tasks.restore(store.service);
+    w.slow('zz_cmd', { display: { kind: 'command', fields: { command: 'text' }, result: { exitCode: 'exitCode' } } });
+    await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx);
+    w.runs[0].finish(JSON.stringify({ exitCode: 3 }));
+    await flush();
+    expect(store.saved()?.tasks[0].exitCode).toBe(3);
+    const after = world();
+    await after.tasks.restore(store.service);
+    expect(after.tasks.list().map(t => [t.status, t.exitCode])).toEqual([['failed', 3]]);
+  });
+
+  it('存储再次上线时重读一遍：内存里已有的条目照留，不算读不懂', async () => {
+    const w = world();
+    const store = memoryStore({ tasks: [stored({ status: 'completed', endedAt: 3_000 })] });
+    await w.tasks.restore(store.service);
+    w.slow();
+    await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
+    await flush();
+    await w.tasks.restore(store.service);
+    expect(w.tasks.list().map(t => t.status)).toEqual(['completed', 'running']);
+    expect(w.warnings).toEqual([]);
   });
 });
 

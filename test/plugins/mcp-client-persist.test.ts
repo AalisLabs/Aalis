@@ -4,8 +4,8 @@ import { type AalisConfig, ConfigSaveRefusedError } from '../../packages/api-hos
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // mcp_set_server_enabled 改的是 mcp-client 自己的配置：updateConfig 只改运行态并 bounce 本插件，
 // 工具随后自己写配置文档并落盘，重启后开关不回退。
@@ -46,7 +46,7 @@ describe('mcp-client 自服务开关落盘', () => {
       },
     );
     apps.push(app);
-    const registry = new ToolRegistry(silent);
+    const registry = makeToolRegistry(silent);
     // 测的是工具自身行为而非鉴权：放行守卫代替 plugin-authority（没有守卫时需要鉴权的工具一律被拒）
     registry.setExecutionGuard(async () => null);
     app.bind({ provide }).provide(tools, registry);
@@ -67,7 +67,7 @@ describe('mcp-client 自服务开关落盘', () => {
     // 按落盘文档重建：开关不回退
     const rebuilt = hostedApp(structuredClone(saved[0]), { logger: silent });
     apps.push(rebuilt.app);
-    rebuilt.app.bind({ provide }).provide(tools, new ToolRegistry(silent));
+    rebuilt.app.bind({ provide }).provide(tools, makeToolRegistry(silent));
     await registerFromDoc(rebuilt.app, rebuilt.store, mcpClient);
     await rebuilt.app.plugins.idle();
     expect((rebuilt.app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(true);
@@ -77,7 +77,7 @@ describe('mcp-client 自服务开关落盘', () => {
     const server = { id: 7, command: 'aalis-test-missing-mcp-command', enabled: false };
     const { app, store } = hostedApp({ plugins: { [NAME]: { servers: [server] } } }, { logger: silent });
     apps.push(app);
-    const registry = new ToolRegistry(silent);
+    const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
     app.bind({ provide }).provide(tools, registry);
     await registerFromDoc(app, store, mcpClient);
@@ -96,7 +96,7 @@ describe('mcp-client 自服务开关落盘', () => {
       { logger: silent },
     );
     apps.push(app);
-    const registry = new ToolRegistry(silent);
+    const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
     app.bind({ provide }).provide(tools, registry);
     await registerFromDoc(app, store, mcpClient);
@@ -124,7 +124,7 @@ describe('mcp-client 自服务开关落盘', () => {
       },
     );
     apps.push(app);
-    const registry = new ToolRegistry(silent);
+    const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
     app.bind({ provide }).provide(tools, registry);
     await registerFromDoc(app, store, mcpClient);
@@ -145,7 +145,7 @@ describe('mcp-client 自服务开关落盘', () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
     const host = app.bind({ events, provide });
-    const registry = new ToolRegistry(silent);
+    const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
     host.provide(tools, registry);
     const unloaded: string[] = [];

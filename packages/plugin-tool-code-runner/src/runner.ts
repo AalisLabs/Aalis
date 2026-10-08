@@ -30,6 +30,7 @@ export interface RunResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /** 脚本没能运行（沙箱不可用、起进程失败），或没被中止而以非零退出（「退出码 N」）、被信号结束：带 error 的工具结果判为失败 */
   error?: string;
   /** 调用被中止且脚本是被信号结束的 */
   aborted?: true;
@@ -131,7 +132,8 @@ export async function runCode(
           if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已中止' };
           return { ...output, note: '调用已中止' };
         }
-        return output;
+        const ended = e.result.signal !== null ? `被信号 ${e.result.signal} 结束` : `退出码 ${output.exitCode}`;
+        return { ...output, error: ended };
       }
       // 没有退出结果：spawn 失败，或已中止时 spawn 同步抛出（不起进程）
       if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已中止' };

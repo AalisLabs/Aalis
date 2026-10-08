@@ -12,7 +12,7 @@ import {
   takenBackgroundParams,
 } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
-import { BackgroundTasks, DEFAULT_LIMITS, DEFAULT_YIELD_SECONDS, type Plan } from './background.js';
+import { type BackgroundTasks, DEFAULT_YIELD_SECONDS, inTurn, type Plan } from './background.js';
 import { backgroundTaskTools } from './background-tools.js';
 
 /** 登记项：工具、发给模型的声明（可转后台的补上两项参数）与让出时限（秒，可转后台的才有） */
@@ -43,17 +43,9 @@ export class ToolRegistry implements ToolService {
   private readonly tasks: BackgroundTasks;
   private _guard?: ExecutionGuard;
 
-  /** tasks 缺省时（插件之外直接构造注册表）：不发事件，登记表只在内存，上限取默认，不认 owner */
-  constructor(logger: Logger, tasks?: BackgroundTasks) {
+  constructor(logger: Logger, tasks: BackgroundTasks) {
     this.logger = logger.child('tools');
-    this.tasks =
-      tasks ??
-      new BackgroundTasks({
-        logger: this.logger,
-        events: { emit: async () => {} },
-        limits: DEFAULT_LIMITS,
-        isOwner: () => false,
-      });
+    this.tasks = tasks;
     this.taskTools = new Map(
       backgroundTaskTools(this.tasks).map(tool => [
         tool.definition.function.name,
@@ -259,7 +251,7 @@ export class ToolRegistry implements ToolService {
     if (entry.yieldSeconds !== undefined) {
       const taken = takeFlags(args);
       if (typeof taken === 'string') return failure(taken);
-      if (taken.runInBackground && callCtx.callId === undefined) {
+      if (taken.runInBackground && !inTurn(callCtx)) {
         return failure('不在对话回合里的调用不能转后台：没有可以通知的对话');
       }
       toolArgs = taken.args;

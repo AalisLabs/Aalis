@@ -13,7 +13,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 import { deferred } from '../helpers/deferred.js';
 
 declare module '@aalis/core' {
@@ -163,7 +163,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
   it('真实 tools 的登记可执行且随消费者撤回，事件在撤回回调发射前已同栈切断', async () => {
     const app = makeApp();
     const host = app.bind({ provide, events });
-    const registry = new ToolRegistry(silent);
+    const registry = makeToolRegistry(silent);
     host.provide(tools, registry);
     // 绑定口交给消费者一个开关：调用时在消费者的清理链上挂一条撤回，撤回时向根发射测试事件
     const cleanupEmitter = defineService<object, () => void>(

@@ -202,13 +202,12 @@ describe('「后台」标签', () => {
     expect(rowOf(within(calls).getByText('pdf_convert')).textContent).toContain('已停止');
   });
 
-  it('失败与中断的行写一句原因，与结局写的一样时不重复', async () => {
+  it('失败与中断的行写一句原因；退出码只写在结局里', async () => {
     const tasks = [
       backgroundTask('t-exit', {
         display: { kind: 'command', command: 'make test', exitCode: 2 },
         status: 'failed',
         endedAt: AT + 3000,
-        reason: '退出码 2',
       }),
       backgroundTask('t-error', { label: 'http_download', status: 'failed', endedAt: AT + 2000, reason: '连接被拒绝' }),
       backgroundTask('t-restart', {

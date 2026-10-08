@@ -8,7 +8,7 @@ import draw from '../../packages/plugin-draw/src/index.js';
 import codeRunner from '../../packages/plugin-tool-code-runner/src/index.js';
 import onebotTools from '../../packages/plugin-tool-onebot/src/index.js';
 import toolSystem from '../../packages/plugin-tool-system/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // 只装服务替身以满足激活依赖；不提供实际进程、文件或网络操作能力，也不调用工具 handler。
 const apps: App[] = [];
@@ -23,7 +23,7 @@ async function start(
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide });
-  const registry = new ToolRegistry(app.logger);
+  const registry = makeToolRegistry(app.logger);
   const registerTool = vi.spyOn(registry, 'register');
   const registerGroup = vi.spyOn(registry, 'registerGroup');
   const registerChecker = vi.fn(() => () => {});
