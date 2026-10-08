@@ -12,9 +12,10 @@ import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { type Features, sessionProtocol } from '@aalis/api-session-protocol';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { todoList } from '@aalis/api-todo-list';
-import { tools } from '@aalis/api-tools';
+import { backgroundTasks, tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, pluginsService, provide } from '@aalis/core';
 import { approvalHandlers, createApprovals } from './approvals.js';
+import { createBackground } from './background.js';
 import { createSessionServer } from './connection.js';
 import { type DisplayOf, resolveDisplay } from './display.js';
 import { createFileHandles } from './files.js';
@@ -31,8 +32,9 @@ import { createTurnControl } from './turns.js';
 // 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与设置（各插件登记的设置项与
 // 会话之上的各层），设置变了推 session/config/changed，另记「我的」区的已读时间；
 // 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；条目里她发出的文件给本服务签发的下载句柄，
-// 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点、压缩与待办。握手给出功能位（发送、回滚、压缩
-// 各看对话、检查点、压缩服务在不在），服务上下线时推 features/changed；另给出宿主配置里的应用名。
+// 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点、压缩与待办。后台任务登记投影成列表与增量，
+// 取输出、停止与按会话树全部停止转给它与 agent。握手给出功能位（发送、回滚、压缩各看对话、检查点、压缩服务在不在），
+// 服务上下线时推 features/changed；另给出宿主配置里的应用名。
 // 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
@@ -71,6 +73,8 @@ const uses = {
   authority: optional(authority),
   /** 工具卡与审批卡的展示按工具定义上声明的展示种类取；缺席时都走通用卡 */
   tools: optional(tools),
+  /** 后台任务的列表、增量、取输出与停止，摘要里在跑的后台任务数；缺席时这几个方法回 unsupported（watch 与全部停止除外） */
+  backgroundTasks: optional(backgroundTasks),
   /** 握手回应里的应用名：宿主配置的 name，每次握手现读；缺席时是 Aalis */
   hostConfig: optional(hostConfig),
 };
@@ -112,6 +116,7 @@ async function run(caps: Caps): Promise<void> {
     seen,
     isRunning: id => timeline.isRunning(id),
     hasApproval: id => approval.pendingIn(id),
+    runningTasks: () => background.runningBySession(),
     changed: id => push([id], []),
     platform: caps.platform,
     plugins: caps.plugins.require(),
@@ -152,13 +157,23 @@ async function run(caps: Caps): Promise<void> {
     requireSession: sessions.requireSession,
     requestUsage,
   });
+  const background = createBackground({
+    tasks: caps.backgroundTasks,
+    agent: caps.agent,
+    displayOf,
+    requireSession: sessions.requireSession,
+    descendantsOf: sessions.descendantsOf,
+    isRunning: id => timeline.isRunning(id),
+    notify: build => server.notify('background/changed', build, conn => conn.watchingBackground),
+    sessionChanged: id => push([id], []),
+  });
   const currentFeatures = (): Features => ({
     send: caps.agent.current !== undefined,
     rewind: caps.checkpoint.current !== undefined,
     compress: caps.compression.current !== undefined,
   });
   const server = createSessionServer(
-    { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...approvalHandlers },
+    { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...background.handlers, ...approvalHandlers },
     () => ({ features: currentFeatures(), appName: caps.hostConfig.current?.get('name') || 'Aalis' }),
     logger,
   );
@@ -179,18 +194,26 @@ async function run(caps: Caps): Promise<void> {
   events.on('service:registered', refreshFeatures);
   events.on('service:unregistered', refreshFeatures);
 
-  /** 把这些会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组 */
+  /**
+   * 把这些会话连同各级父会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组：父会话的摘要里有按子树算的字段
+   * （在跑的后台工作数、token 合计），子会话的回合与任务进出、token 记账都会改它
+   */
   function push(ids: string[], removes: string[]): void {
     server.notify(
       'sessions/changed',
-      () => ({
-        upserts: ids.flatMap(id => {
+      () => {
+        const changed = new Map<string, SessionInfo>();
+        for (const id of ids) {
           const info = sm.getSession(id);
-          return info ? [sessions.summarize(info)] : [];
-        }),
-        removes,
-        groups: sessions.groups(),
-      }),
+          for (const each of info ? [info, ...sessions.ancestorsOf(info)] : []) changed.set(each.id, each);
+        }
+        const tasks = background.runningBySession();
+        return {
+          upserts: [...changed.values()].map(info => sessions.summarize(info, tasks)),
+          removes,
+          groups: sessions.groups(),
+        };
+      },
       conn => conn.watching,
     );
   }
@@ -230,11 +253,15 @@ async function run(caps: Caps): Promise<void> {
     timeline.outcome(data.turnId, data.outcome);
     await next();
   });
-  // 工具返回时回合的中止信号已触发：停止时这次调用还没结束
+  // 工具返回时回合的中止信号已触发：停止时这次调用还没结束。转到后台的调用此时已在登记表里
   hooks.middleware('agent:tool:after', async (data, next) => {
-    const { turnId, callId, signal } = data.toolCallContext;
+    const { sessionId, turnId, callId, signal } = data.toolCallContext;
     if (turnId && callId) {
-      Object.assign(data.metadata, await timeline.toolMetadata(turnId, callId, signal?.aborted === true, data.result));
+      const taskId = background.taskOf(sessionId, turnId, callId);
+      Object.assign(
+        data.metadata,
+        await timeline.toolMetadata(turnId, callId, signal?.aborted === true, data.result, taskId),
+      );
     }
     await next();
   });
@@ -252,6 +279,7 @@ async function run(caps: Caps): Promise<void> {
   events.on('outbound:stream', timeline.stream);
   events.on('tool:execute', timeline.tool);
   events.on('tool:output', timeline.toolOutput);
+  events.on('background:changed', background.changed);
   events.on('outbound:message', timeline.outbound);
   events.on('inbound:message:archived', ({ sessionId, archivedMessage }) =>
     timeline.archived(sessionId, archivedMessage),
@@ -268,6 +296,7 @@ async function run(caps: Caps): Promise<void> {
   lifecycle.onDrain(() => approval.close(), '结算未结的审批');
   // 对外登记撤回之后断开现有连接：客户端重连时接到新的提供者。停用完成之前把审计写完
   lifecycle.onDispose(() => {
+    background.dispose();
     server.disconnectAll('会话服务已停止');
     return approval.flushed();
   }, '断开会话连接、写完审计');

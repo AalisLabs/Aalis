@@ -53,6 +53,7 @@ interface ExecutionGuardContext {
 interface InboundTurn {
   source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
   callerUserId?: string;             // 宿主通知延续某次工具调用时，那次调用的发言者（hostNotice.callerUserId）
+  messageId?: string;                // 同 IncomingMessage.messageId：入站消息的平台消息 id，后台任务的结束通知据它引用这条消息
 }
 
 type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;

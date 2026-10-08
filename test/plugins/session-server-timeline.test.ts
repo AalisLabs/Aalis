@@ -943,7 +943,16 @@ describe('条目', () => {
     const { app, server, sm, archive, openTurn } = await setup();
     await app.plugin(toolsPlugin, {});
     await app.plugins.idle();
-    declareToolSystemDisplays(app.bind({ tools }).tools);
+    const bound = app.bind({ tools }).tools;
+    declareToolSystemDisplays(bound);
+    bound.register({
+      definition: {
+        type: 'function',
+        function: { name: 'zz_cmd_no_exit', description: 'zz', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => '',
+      display: { kind: 'command', fields: { command: 'command' } },
+    });
     const s = await sm.createSession({ name: 'S' });
     const c = client(server());
     await c.init();
@@ -953,7 +962,7 @@ describe('条目', () => {
       ['c2', 'exec', '{"exitCode":3,"stdout":"","stderr":"坏了"}'],
       ['c3', 'exec', '不是 JSON'],
       // 声明了命令展示、没声明从结果里取退出码的工具：结果里同名的键不算
-      ['c4', 'exec_background', '{"exitCode":3}'],
+      ['c4', 'zz_cmd_no_exit', '{"exitCode":3}'],
     ];
     const t = openTurn(s.id);
     const recorded: Array<Record<string, unknown>> = [];
@@ -1013,7 +1022,7 @@ describe('条目', () => {
     await t.toolStart('c3', 'probe', { command: 'make' });
     await t.generating('c4', 'exec', 2);
     turn.abort();
-    const killed = await returns('c2', 'exec', '{"aborted":true,"message":"命令已随回合中止","exitCode":-1}');
+    const killed = await returns('c2', 'exec', '{"aborted":true,"message":"命令已中止","exitCode":-1}');
     const finished = await returns('c3', 'probe', '{"ok":true}');
     await t.finish('aborted');
     expect([settled, killed, finished]).toEqual([{ exitCode: 0 }, { aborted: true, exitCode: -1 }, { aborted: true }]);
@@ -1021,7 +1030,7 @@ describe('条目', () => {
       c.timeline(s.id, sub).flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.status, i.result]] : [])),
     ).toEqual([
       ['c1', 'completed', '{"exitCode":0}'],
-      ['c2', 'aborted', '{"aborted":true,"message":"命令已随回合中止","exitCode":-1}'],
+      ['c2', 'aborted', '{"aborted":true,"message":"命令已中止","exitCode":-1}'],
       ['c3', 'aborted', '{"ok":true}'],
       ['c4', 'aborted', '没有执行'],
     ]);

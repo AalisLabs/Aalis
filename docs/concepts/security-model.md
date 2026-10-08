@@ -165,6 +165,11 @@ commands.command('profile.clear.nuke', '【危险】清空所有用户档案', {
 - 定档纪律：引用其他工具档位作判据前先读其注释的真实理由（`browser_navigate` 的 sensitive
   源于共享页面池带登录态、`file_read` 源于本机隐私，均与「出网」无关）。
 
+执行器的四个后台任务工具（`background_list`、`background_output`、`background_wait`、`background_stop`，
+`plugin-tools`）同样未声明 risk 与 visibility，解析为 public：它们只看本会话里与本轮同一授权身份起的任务（owner 除外），
+别的一律回「不存在」，不确认存在与否。可转后台的工具多是 public，房间里谁都能起；结束通知开的那一轮按起它的人的
+身份运行，挡掉 0 级就取不到结果。按身份放行等同于前台：同一个人在前台本来就拿得到这次结果。
+
 跨会话委派工具组 `session-delegate`（`list_known_sessions` 与 `delegate_to_session`）已删除，问题不在档位：
 `list_known_sessions` 不按调用者过滤，把各会话最近一条消息的前 80 字交给任何触发者；`delegate_to_session`
 按 actor 回填授权身份，只挡住了需要等级的工具，目标会话里不需要等级的工具照常可用，目标会话的回复原样带回
@@ -216,8 +221,9 @@ owner 链的延续、能产生审批；等级按 `actor` 实时查，其间被�
 同一信任面，只有插件能设（平台适配器与 WebUI 服务端都按字段逐个构造入站消息）。
 
 允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 显式登记，现在只有一处：
-`plugin-tool-system` 的后台命令结束通知（`exec_background` 起的进程自行退出时通知起它的会话，由结束通知开的
-回合里再起的进程不再通知，链只延续一层；判据只看本轮来源，通知回合经子任务、workflow 转一手开出的回合里起的进程照常通知，见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。白纸的完成通知不延续任何人的身份。
+`plugin-tools` 执行器的后台任务结束通知（转到后台的工具调用正常结束时通知起它的会话，由结束通知开的回合里
+转后台的任务不再通知，链只延续一层；判据只看本轮来源，通知回合经子任务、workflow 转一手开出的回合里转后台的照常通知，
+见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)）。白纸的完成通知不延续任何人的身份。
 
 ---
 

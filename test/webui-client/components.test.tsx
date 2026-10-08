@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { Ellipsis, Send } from 'lucide-react';
+import { CircleStop, Ellipsis, Send } from 'lucide-react';
 import { useState } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -272,37 +272,29 @@ describe('List', () => {
     expect(within(list).getByRole('button', { name: '更多' })).toBeTruthy();
   });
 
-  it('带子项的行有展开按钮，展开后子列表挂在这一行下面', () => {
-    function Tree() {
-      const [expanded, setExpanded] = useState(false);
-      return (
-        <List label="我的">
+  it('行尾常显的一个操作在链接外面；子列表挂在这一行下面', () => {
+    const stop = vi.fn();
+    render(
+      <MemoryRouter>
+        <List label="子会话">
           <ListItem
             to="/s/p"
             title="父会话"
-            expand={{ expanded, onToggle: () => setExpanded(!expanded), label: '2 个子任务' }}
+            action={<IconButton icon={CircleStop} label="停止「父会话」" onClick={stop} />}
           >
-            {expanded && (
-              <List label="子任务">
-                <ListItem to="/s/c" title="子任务一" />
-              </List>
-            )}
+            <List label="下一层">
+              <ListItem to="/s/c" title="子任务一" />
+            </List>
           </ListItem>
         </List>
-      );
-    }
-    render(
-      <MemoryRouter>
-        <Tree />
       </MemoryRouter>,
     );
-    const toggle = screen.getByRole('button', { name: '2 个子任务' });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(within(screen.getByRole('link', { name: '父会话' })).queryByRole('button')).toBeNull();
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    const parent = screen.getByRole('link', { name: '父会话' }).closest('li') as HTMLElement;
-    expect(within(within(parent).getByRole('list', { name: '子任务' })).getByRole('link').textContent).toBe('子任务一');
+    const link = screen.getByRole('link', { name: '父会话' });
+    expect(within(link).queryByRole('button')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '停止「父会话」' }));
+    expect(stop).toHaveBeenCalledOnce();
+    const parent = link.closest('li') as HTMLElement;
+    expect(within(within(parent).getByRole('list', { name: '下一层' })).getByRole('link').textContent).toBe('子任务一');
   });
 });
 

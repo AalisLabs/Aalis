@@ -800,7 +800,7 @@ describe('事实与内容哈希', () => {
     const base = await hash({ callId: 'c1' });
     expect(await hash({ callId: 'c1' })).toBe(base);
     expect(await hash({ callId: 'c1', args: { command: 'ls -a' } })).not.toBe(base);
-    expect(await hash({ callId: 'c1', tool: 'exec_background' })).not.toBe(base);
+    expect(await hash({ callId: 'c1', tool: 'file_write' })).not.toBe(base);
     expect(await hash({ callId: 'c2' })).not.toBe(base);
   });
 });
@@ -871,7 +871,7 @@ describe('日志', () => {
   it('每个审批结算记一行 info：会话、工具、结局与原因；发起时就拒绝的（自主回合）也记', async () => {
     const { mine, connect, request, flush, infos } = await setup();
     const c = await connect();
-    request(mine, { origin: { kind: 'autonomous', ...OWNER }, tool: 'exec_background' });
+    request(mine, { origin: { kind: 'autonomous', ...OWNER }, tool: 'file_write' });
     request(mine);
     await flush();
     await approve(c, pushed(c)[0]);
@@ -879,7 +879,7 @@ describe('日志', () => {
     await flush();
     await vi.advanceTimersByTimeAsync(WAIT_MS);
     expect(infos.filter(message => message.startsWith('审批'))).toEqual([
-      `审批结算：会话 ${mine}，工具 exec_background，拒绝（这一轮不是 owner 亲手发起的，不能产生审批）`,
+      `审批结算：会话 ${mine}，工具 file_write，拒绝（这一轮不是 owner 亲手发起的，不能产生审批）`,
       `审批结算：会话 ${mine}，工具 exec，批准（owner 应答）`,
       `审批结算：会话 ${mine}，工具 exec，过期（等了 300 秒没有人应答）`,
     ]);

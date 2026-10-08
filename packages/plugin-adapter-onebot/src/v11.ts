@@ -8,7 +8,7 @@ import type {
   OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { normalizeOneBotMessage, parseContentToSegments, segmentsToText, toV11Segments } from './types.js';
+import { messageSegments, normalizeOneBotMessage, segmentsToText, toV11Segments } from './types.js';
 
 /**
  * OneBot v11 协议处理器
@@ -24,9 +24,8 @@ export class OneBotV11 implements OneBotProtocol {
   readonly version = 'v11' as const;
 
   buildSendMessage(params: SendMessageParams): { action: string; params: Record<string, unknown> } {
-    const segments = parseContentToSegments(params.content);
     const actionParams: Record<string, unknown> = {
-      message: toV11Segments(segments),
+      message: toV11Segments(messageSegments(params)),
     };
 
     if (params.detailType === 'private') {

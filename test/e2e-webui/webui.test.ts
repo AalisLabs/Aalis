@@ -18,8 +18,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import type { TodoItem } from '../../packages/api-todo-list/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { backgroundTasks, tools } from '../../packages/api-tools/src/index.js';
 import {
   type FrameClient,
   type PageHandle,
@@ -27,12 +26,13 @@ import {
   webuiClient,
   webuiServer,
 } from '../../packages/api-webui/src/index.js';
-import { config, definePlugin, events, type PluginDefinition, provide } from '../../packages/core/src/index.js';
+import { config, definePlugin, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import { MINIMAL_BASE } from '../../packages/create-aalis/src/cli.js';
 import { generate } from '../../packages/create-aalis-plugin/src/cli.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
+import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { setupFileLogger } from '../../packages/runtime/src/file-logger.js';
@@ -48,8 +48,8 @@ import { freePort, waitListening } from '../helpers/net.js';
 // 会话面板的容器查询）只有真的排版才验得了，也在这里核。声明式页面用一个探针插件登记，另装迁移过来的计划任务与工作流看
 // 真实插件的页面。插件前端用脚手架生成的插件，加一个在临时目录里搭的测试插件（会话面板，与隔离的各项核查）。
 // 浏览器经一个可以切断的中转连到 webui-server，断线重连靠它模拟。假模型按这一轮的
-// 最后一条消息回话，流式回复逐块慢慢出；需要批准的是一个声明了命令展示的探针工具。页面里的请求只到这个中转与本机起的
-// 「外站」，外站一律不连。
+// 最后一条消息回话，流式回复逐块慢慢出；需要批准的是一个声明了命令展示的探针工具，可转后台的是另一个测试插件登记的命令工具
+// （会写输出、响应中止），子会话由子任务插件派生。页面里的请求只到这个中转与本机起的「外站」，外站一律不连。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = join(import.meta.dirname, '../..');
@@ -75,28 +75,76 @@ nodes:
     type: wait
     seconds: 1`;
 
+/** 可转后台的测试工具（见 backgroundProbe）转到后台后、它的结束通知来了以后、等完子任务以后，她各回的一句 */
+const MOVED = '已经转到后台了。';
+const NOTICED = '后台的命令跑完了。';
+const SUBTASKS_DONE = '子任务都收住了。';
+/** 派子任务的那句话 */
+const SPLIT = '分头整理';
+/** 要四十多秒才流完的回复：子任务回它时一直在跑，够在中途停掉 */
+const ENDLESS = '还在慢慢整理，'.repeat(400);
 /**
- * 假模型：不带工具定义的是会话标题之类的辅助调用，回一个固定标题；最后一条是工具结果时按批没批准收尾；
- * 用户说「部署」就叫探针工具；其余按 replies 里出现在用户消息中的那句回话
+ * 「分头整理」派出的三个子任务：名字、任务与子会话里的回复。整理目录的很快回完、带用量，另两个一直在跑；她只等前两个，
+ * 第三个留给「全部停止」
+ */
+const SUBTASKS: Array<{ name: string; task: string; reply: ChatResponse }> = [
+  {
+    name: '目录',
+    task: '整理目录',
+    reply: { content: '目录整理好了。', usage: { promptTokens: 1200, completionTokens: 340, totalTokens: 1540 } },
+  },
+  { name: '第一节', task: '慢慢整理第一节', reply: { content: ENDLESS } },
+  { name: '第二节', task: '慢慢整理第二节', reply: { content: ENDLESS } },
+];
+/** 模型拿到的后台任务工具：有可转后台的工具时才有 */
+const BACKGROUND_TOOLS = ['background_list', 'background_output', 'background_wait', 'background_stop'];
+
+/**
+ * 假模型：不带工具定义的是会话标题之类的辅助调用，回一个固定标题。最后一条是工具结果时：转到后台的回一句已转后台，派完子任务
+ * 就等前两个、等完了收尾，探针工具按批没批准收尾；后台任务的结束通知回一句。用户说「部署」叫探针工具，「跑 <命令>」叫可转
+ * 后台的测试工具（「后台跑」带上 runInBackground），说「分头整理」派三个子任务；子会话按任务回话；其余按 replies 里出现在
+ * 用户消息中的那句回话
  */
 function script(replies: Record<string, string>) {
+  let calls = 0;
+  const call = (name: string, args: Record<string, unknown>) => ({
+    id: `call-${++calls}`,
+    type: 'function' as const,
+    function: { name, arguments: JSON.stringify(args) },
+  });
   return (request: ChatModelRequest): ChatResponse => {
     if (!request.tools) return { content: '测试会话' };
-    const last = request.messages.at(-1);
+    const { messages } = request;
+    // 子任务插件给父会话附在末尾的子任务提醒不算
+    const last = messages.findLast(message => message.metadata?.injector !== 'subtask/parent-status');
     const text = typeof last?.content === 'string' ? last.content : '';
-    if (last?.role === 'tool') return { content: text.includes(DEPLOYED) ? '部署好了。' : '好的，不部署了。' };
-    if (text.includes('部署')) {
+    if (last?.role === 'tool') {
+      if (text.includes('"taskId"')) return { content: MOVED };
+      if (text.includes('"subtaskId"')) {
+        const created = messages
+          .slice(messages.findLastIndex(message => message.role === 'assistant') + 1)
+          .filter(message => message.role === 'tool')
+          .map(message => JSON.parse(message.content as string) as { subtaskId: string; name: string });
+        const waited = created.filter(each => each.name !== SUBTASKS[2].name).map(each => each.subtaskId);
+        return { content: null, toolCalls: [call('wait_subtasks', { subtask_ids: waited })] };
+      }
+      if (text.includes('"allCompleted"')) return { content: SUBTASKS_DONE };
+      return { content: text.includes(DEPLOYED) ? '部署好了。' : '好的，不部署了。' };
+    }
+    if (text.startsWith('[宿主通知]')) return { content: NOTICED };
+    if (text.includes('部署')) return { content: null, toolCalls: [call(DEPLOY, { command: COMMAND })] };
+    const job = /(后台)?跑 ([\w-]+)/.exec(text);
+    if (job) {
       return {
         content: null,
-        toolCalls: [
-          {
-            id: 'call-1',
-            type: 'function',
-            function: { name: DEPLOY, arguments: JSON.stringify({ command: COMMAND }) },
-          },
-        ],
+        toolCalls: [call(JOB, { command: job[2], ...(job[1] ? { runInBackground: true } : {}) })],
       };
     }
+    if (text.includes(SPLIT)) {
+      return { content: null, toolCalls: SUBTASKS.map(({ name, task }) => call('create_subtask', { name, task })) };
+    }
+    const subtask = SUBTASKS.find(each => text.includes(each.task));
+    if (subtask) return subtask.reply;
     const reply = Object.entries(replies).find(([said]) => text.includes(said))?.[1];
     if (reply === undefined) throw new Error(`假模型没有准备对「${text}」的回复`);
     return { content: reply };
@@ -259,6 +307,46 @@ const noticeProbe = definePlugin({
 /** 可多开的插件：主实例之外另起实例 */
 const MULTI = 'zz-e2e-multi';
 const multi = definePlugin({ name: MULTI, displayName: '多开的探针', reusable: true, apply() {} });
+
+/** 可转后台的测试工具：按命令先写 JOB_BURST 行输出，之后每 JOB_TICK_MS 一行，直到用例让它正常结束或被中止；让出时限 1 秒 */
+const JOB = 'zz_job';
+const JOB_BURST = 80;
+const JOB_TICK_MS = 250;
+/** 在跑的测试工具调用，按命令：调用它就正常结束（退出码 0） */
+const jobs = new Map<string, () => void>();
+const backgroundProbe = definePlugin({
+  name: 'zz-e2e-background',
+  uses: { tools },
+  apply({ tools }) {
+    tools.register({
+      display: { kind: 'command', fields: { command: 'command' }, result: { exitCode: 'exitCode' } },
+      background: { yieldSeconds: 1 },
+      definition: {
+        type: 'function',
+        function: {
+          name: JOB,
+          description: '跑一个命令',
+          parameters: { type: 'object', properties: { command: { type: 'string' } } },
+        },
+      },
+      handler: (args, ctx) =>
+        new Promise(resolve => {
+          const command = String(args.command);
+          let lines = 0;
+          const write = () => ctx.output?.(`${command} 第 ${++lines} 行\n`);
+          for (let n = 0; n < JOB_BURST; n++) write();
+          const timer = setInterval(write, JOB_TICK_MS);
+          const end = (exitCode: number) => {
+            clearInterval(timer);
+            jobs.delete(command);
+            resolve(JSON.stringify({ exitCode }));
+          };
+          jobs.set(command, () => end(0));
+          ctx.signal?.addEventListener('abort', () => end(143), { once: true });
+        }),
+    });
+  },
+});
 
 /** 脚手架生成的插件：包名、显示名，页面键取包名 */
 const SCAFFOLD = 'zz-e2e-scaffold';
@@ -474,7 +562,7 @@ async function relay(target: number) {
 
 /**
  * 起运行时：minimal 档的插件、内存记忆、假模型与 webui-server，再加一个需要批准的探针工具；extra 是另加的插件。
- * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它
+ * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。requests 是假模型收到的请求
  */
 async function startStack(replies: Record<string, string> = {}, extra: PluginDefinition[] = []) {
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
@@ -491,10 +579,11 @@ async function startStack(replies: Record<string, string> = {}, extra: PluginDef
     MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
   );
   const port = await freePort();
+  const requests: ChatModelRequest[] = [];
   const definitions = [
     ...minimal,
     memoryInMemoryPlugin,
-    createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS }),
+    createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS, recorder: requests }),
     webuiServerPlugin,
     ...extra,
   ];
@@ -539,6 +628,7 @@ async function startStack(replies: Record<string, string> = {}, extra: PluginDef
     hold: proxy.hold,
     misroute: proxy.misroute,
     runs,
+    requests,
     app,
   };
 }
@@ -573,6 +663,8 @@ async function openPage(stack: Stack, viewport: Viewport, path = '/') {
 
 const aria = (name: string, role: string) => `::-p-aria([name="${name}"][role="${role}"])`;
 const text = (content: string) => `::-p-text(${content})`;
+/** 会话头部的「后台 N」 */
+const BACKGROUND_METER = 'main [title="打开「后台」标签"]';
 const toolLine = (page: Page) => page.$eval('.tool-line', element => element.textContent);
 
 /** 当前会话的 id：地址是 /s/:id */
@@ -634,6 +726,24 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await box?.evaluate(element => (element as HTMLTextAreaElement).value)).toBe(`${message}\n`);
     await page.locator(aria('发送', 'button')).click();
   }
+
+  /** 打开当前会话的「后台」标签：桌面点头部的「后台 N」，手机从带着点的「更多」里点 */
+  async function openBackground(page: Page, count: number) {
+    const label = `后台 ${count}`;
+    if (phone) {
+      await page.locator(`main ${aria('更多', 'button')}[data-dot]`).click();
+      await page.locator(aria(label, 'menuitem')).click();
+    } else {
+      await page.locator(`main ${aria(label, 'button')}`).click();
+    }
+  }
+
+  /** 会话列表里这个会话的一行（手机上是第一层） */
+  const sessionRow = (page: Page, sessionId: string) =>
+    page.$eval(
+      `nav[aria-label="会话"] a[href="/s/${encodeURIComponent(sessionId)}"]`,
+      link => link.closest('li')?.textContent,
+    );
 
   it('打开、发消息、流式回复；外站图片只显示成链接；HTML 带 CSP', async () => {
     const stack = await startStack({
@@ -840,7 +950,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有应用名，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架', async () => {
+  it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有应用名，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架；没有可转后台的工具与派生子会话的插件，模型拿到的工具里没有后台任务工具，没有「后台」标签，头部、左栏与运行状况都没有后台工作，会话行没有子任务展开', async () => {
     const stack = await startStack({ 你好: '好的。' });
     const { page, problems } = await openPage(stack, viewport);
     await page.waitForNetworkIdle({ idleTime: 300 });
@@ -877,6 +987,8 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const items = await page.$$eval('[role="menuitem"]', elements => elements.map(element => element.textContent));
     expect(items).toEqual([...(phone ? ['全部展开', '会话面板'] : []), '改名', '归档', '删除']);
     await page.keyboard.press('Escape');
+    expect(await page.$$(`main ${aria('更多', 'button')}[data-dot]`)).toHaveLength(0);
+    expect(await page.$$(BACKGROUND_METER)).toHaveLength(0);
     expect(
       await meter?.evaluate(element => [element.getAttribute('title'), element.hasAttribute('data-tone')]),
     ).toEqual([expect.stringMatching(/^上下文已用 \d+%$/), false]);
@@ -907,7 +1019,22 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     }
     // 没有插件前端页面时页面上没有框架
     expect(await page.$$('iframe')).toHaveLength(0);
+
+    const offered = stack.requests.flatMap(request => request.tools ?? []).map(tool => tool.function.name);
+    expect(offered).toContain(DEPLOY);
+    expect(offered.filter(name => BACKGROUND_TOOLS.includes(name))).toEqual([]);
+    const other = await openPage(stack, viewport);
+    expect(await sessionRow(other.page, sessionId)).not.toMatch(/后台/);
+    const rowButtons = await other.page.$$eval('nav[aria-label="会话"] .list-item-row button', buttons =>
+      buttons.map(button => button.getAttribute('aria-label')),
+    );
+    expect(rowButtons).toEqual(['更多']);
+    await other.page.goto(`${stack.origin}/health`);
+    await other.page.waitForSelector(`main ${aria('平台连接', 'list')}`);
+    await other.page.waitForNetworkIdle({ idleTime: 300 });
+    expect(await other.page.$$(`main ${aria('正在运行', 'region')}`)).toHaveLength(0);
     expect(problems).toEqual([]);
+    expect(other.problems).toEqual([]);
   }, 60_000);
 
   it('插件区（最少插件组合）：从图标栏底部（手机上第一层）进去；树里正好是装着的实例；没有页面的插件没有页面块；WebUI 服务端停用、卸载不可点，接口同样拒绝停用，重载照常', async () => {
@@ -1031,7 +1158,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       await page.$$eval(`main ${aria('会话面板标签', 'list')} li`, items =>
         items.map(item => item.firstElementChild?.textContent),
       ),
-    ).toEqual(['计划', '设置', '用量']);
+    ).toEqual(['计划', '设置', '用量', '后台']);
 
     await open('权限');
     const address = await page.evaluate(() => location.pathname);
@@ -1568,16 +1695,21 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('会话面板的插件前端：关掉宿主的「计划」标签，从「+」打开申请了读会话与停回合的面板替代它；拿到当前会话，换会话后重新挂载拿到新的；列出会话、收到会话的增量，停掉在跑的回合', async () => {
-    const stack = await startStack({ 你好: '好的。', 第二个: '第二个的回复', 慢慢说: SLOW_REPLY }, [framesPlugin()]);
+  it('会话面板的插件前端：关掉宿主的「后台」标签（关的是整个标签，子会话与工具调用两组一起），从「+」打开申请了读会话与停回合的面板替代它；拿到当前会话，换会话后重新挂载拿到新的；列出会话、收到会话的增量，停掉在跑的回合', async () => {
+    const stack = await startStack({ 你好: '好的。', 第二个: '第二个的回复', 慢慢说: SLOW_REPLY }, [
+      framesPlugin(),
+      backgroundProbe,
+    ]);
     const { page, problems } = await openPage(stack, viewport);
     await newSession(page);
     await send(page, '你好');
     const first = await sessionIdOf(page);
     await page.waitForSelector(text('好的。'));
+    // 宿主的「后台」标签两组都有：一个子会话，一个转到后台的工具调用
+    await stack.app.bind({ sessionManager }).sessionManager.require().createChildSession(first, { name: '整理一节' });
+    await send(page, '后台跑 delta');
+    await page.waitForSelector(text(MOVED));
     await page.waitForSelector('[aria-label^="上下文已用"]');
-    const plan: TodoItem[] = [{ id: 1, title: '整理周报', status: 'in-progress' }];
-    await stack.app.bind({ events }).events.emit('todo:updated', first, plan);
     const tabNames = () => page.$$eval('aside [role="tab"]', tabs => tabs.map(tab => tab.textContent));
     /** 手机上会话面板是从会话头的「更多」进去的一层 */
     async function openPanel() {
@@ -1593,13 +1725,17 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     }
 
     await openPanel();
-    await page.locator(aria('计划', 'tab')).click();
-    await page.locator(aria('关闭「计划」', 'button')).click();
+    await page.locator(aria('后台', 'tab')).click();
+    const groups = [`aside ${aria('子会话 · 1', 'region')}`, `aside ${aria('工具调用 · 1', 'region')}`];
+    await page.waitForSelector(`${groups[0]} ${text('整理一节')}`);
+    await page.waitForSelector(`${groups[1]} ${aria('delta', 'button')}`);
+    await page.locator(aria('关闭「后台」', 'button')).click();
     await openPanel();
-    await page.waitForSelector(aria('计划', 'tab'), { hidden: true });
+    await page.waitForSelector(aria('后台', 'tab'), { hidden: true });
+    for (const group of groups) expect(await page.$$(group)).toHaveLength(0);
     await page.locator(aria('打开标签', 'button')).click();
     expect(await page.$$eval('[role="menuitem"]', items => items.map(item => item.textContent))).toEqual([
-      '计划',
+      '后台',
       '子会话',
     ]);
     await page.locator(aria('子会话', 'menuitem')).click();
@@ -1655,6 +1791,263 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await page.$$(text(SLOW_REPLY))).toHaveLength(0);
     expect(problems).toEqual([]);
   }, 90_000);
+
+  it('后台任务：前台等满让出时限转到后台；工具卡保持活的，头部、左栏、「后台」标签与运行状况的「正在运行」都列出它；日志跟随输出，往上翻看时不被拽走；正常结束后收到结束通知、她回复，标签里移进「已结束」', async () => {
+    const stack = await startStack({}, [backgroundProbe]);
+    const { page, problems } = await openPage(stack, viewport);
+    await newSession(page);
+    await send(page, '跑 build');
+    const sessionId = await sessionIdOf(page);
+    // 让出时限之前在前台：工具卡写运行中，还没有后台任务的那一行
+    await page.waitForSelector(`.tool-call:not(:has(.task-foot)) .tool-line-status ${text('运行中')}`);
+    await page.waitForSelector(text(MOVED));
+    const offered = stack.requests.find(request => request.tools)?.tools?.map(tool => tool.function.name);
+    expect(offered).toEqual(expect.arrayContaining(BACKGROUND_TOOLS));
+
+    // 工具卡保持活的：转动、走着的耗时、实时更新的最后一行
+    const card = '.tool-call:has(.task-foot)';
+    await page.waitForSelector(`${card} .tool-line-status .status-text[data-state="running"]`);
+    const shown = () =>
+      page.$eval(card, element => [
+        element.querySelector('.tool-line-status')?.textContent,
+        element.querySelector('.task-last')?.textContent,
+      ]);
+    const [took, line] = await shown();
+    expect(line).toMatch(/^build 第 \d+ 行$/);
+    await page.waitForFunction(
+      (card, took, line) => {
+        const element = document.querySelector(card);
+        return (
+          element?.querySelector('.tool-line-status')?.textContent !== took &&
+          element?.querySelector('.task-last')?.textContent !== line
+        );
+      },
+      {},
+      card,
+      took,
+      line,
+    );
+    if (phone) expect(await page.$$(`main ${aria('更多', 'button')}[data-dot]`)).toHaveLength(1);
+    else expect(await page.$eval(BACKGROUND_METER, element => element.textContent)).toBe('后台 1');
+
+    // 左栏（手机上是第一层）写「后台 1」；运行状况的「正在运行」列出这个会话与它在跑的命令
+    const other = await openPage(stack, viewport);
+    expect(await sessionRow(other.page, sessionId)).toContain('后台 1');
+    await other.page.goto(`${stack.origin}/health`);
+    const running = `main ${aria('正在运行', 'list')}`;
+    await other.page.waitForSelector(`${running} ${aria('build', 'button')}`);
+    expect(await other.page.$eval(running, element => element.textContent)).toContain('测试会话');
+
+    await openBackground(page, 1);
+    await page.waitForFunction(id => location.pathname === `/s/${encodeURIComponent(id)}/background`, {}, sessionId);
+    const calls = `aside ${aria('工具调用 · 1', 'region')}`;
+    await page.locator(`${calls} ${aria('在跑的工具调用', 'list')} ${aria('输出「build」', 'button')}`).click();
+
+    // 日志：输出超出滚动区时贴着底部，新来的行接在后面、出现在视野里；往上翻看时新来的行不把看着的那段挪走
+    const log = `${phone ? 'dialog' : 'aside'} .task-log-scroll`;
+    await page.waitForFunction(
+      (log, line) => document.querySelector(log)?.textContent?.includes(line),
+      {},
+      log,
+      `build 第 ${JOB_BURST} 行`,
+    );
+    const view = () =>
+      page.$eval(log, scroller => {
+        const box = scroller.getBoundingClientRect();
+        const text = (scroller.firstElementChild as HTMLElement).getBoundingClientRect();
+        return {
+          last: scroller.textContent?.trimEnd().split('\n').at(-1),
+          overflow: scroller.scrollHeight > scroller.clientHeight,
+          top: text.top - box.top,
+          bottom: box.bottom - text.bottom,
+        };
+      });
+    const pinned = await view();
+    expect(pinned).toMatchObject({ overflow: true, bottom: 0 });
+    const newer = (last: string | undefined) =>
+      page.waitForFunction(
+        (log, last) => document.querySelector(log)?.textContent?.trimEnd().split('\n').at(-1) !== last,
+        {},
+        log,
+        last,
+      );
+    await newer(pinned.last);
+    expect(await view()).toMatchObject({ bottom: 0 });
+    await page.$eval(log, scroller => scroller.scrollBy(0, -200));
+    const reading = await view();
+    expect(reading.bottom).toBeLessThan(-150);
+    await newer(reading.last);
+    expect((await view()).top).toBe(reading.top);
+    await page.locator(aria(phone ? '关闭' : '回到列表', 'button')).click();
+
+    // 正常结束：结束通知开一轮、她回复；标签里移进「已结束」，头部与运行状况不再列出
+    jobs.get('build')?.();
+    await page.locator(`${calls} ${aria('已结束 · 1', 'button')}`).click();
+    await page.waitForSelector(`${calls} ${aria('已结束的工具调用', 'list')} ${text('完成')}`);
+    expect(await page.$$(`${calls} ${aria('在跑的工具调用', 'list')}`)).toHaveLength(0);
+    await other.page.waitForSelector(running, { hidden: true });
+    if (phone) await page.locator(aria('返回', 'button')).click();
+    await page.waitForSelector(text(NOTICED));
+    expect(await page.$eval(card, element => element.querySelector('.tool-line-status')?.textContent)).toMatch(
+      /完成 · \d+\.\d 秒$/,
+    );
+    expect(await page.$$(BACKGROUND_METER)).toHaveLength(0);
+    expect(await page.$$(`main ${aria('更多', 'button')}[data-dot]`)).toHaveLength(0);
+    expect(problems).toEqual([]);
+    expect(other.problems).toEqual([]);
+  }, 90_000);
+
+  it('后台任务：带 runInBackground 的立即转到后台；在「后台」标签与运行状况各停一个，停后标「已停止」，没有结束通知', async () => {
+    const stack = await startStack({}, [backgroundProbe]);
+    const { page, problems } = await openPage(stack, viewport);
+    await newSession(page);
+    await send(page, '后台跑 alpha');
+    const sessionId = await sessionIdOf(page);
+    await page.waitForSelector(text(MOVED));
+    // 立即转：起它的那一轮不等让出时限（1 秒）就收了尾
+    const sessions = stack.app.bind({ sessionManager }).sessionManager.require();
+    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.require();
+    await expect.poll(() => sessions.getSession(sessionId)?.lastTurn).toBeDefined();
+    const [alpha] = tasks.list({ sessionId });
+    expect(sessions.getSession(sessionId)?.lastTurn?.endedAt).toBeLessThan(alpha.startedAt + 1000);
+    await send(page, '后台跑 beta');
+    await page.waitForFunction(() => document.querySelectorAll('.task-foot').length === 2);
+
+    await openBackground(page, 2);
+    const calls = `aside ${aria('工具调用 · 2', 'region')}`;
+    await page.locator(`${calls} ${aria('停止「alpha」', 'button')}`).click();
+    await page.locator(`${calls} ${aria('已结束 · 1', 'button')}`).click();
+    await page.waitForSelector(`${calls} ${aria('已结束的工具调用', 'list')} ${aria('alpha', 'button')}`);
+
+    const health = await openPage(stack, viewport, '/health');
+    const running = `main ${aria('正在运行', 'list')}`;
+    await health.page.waitForSelector(`${running} ${aria('beta', 'button')}`);
+    expect(await health.page.$$(`${running} ${aria('alpha', 'button')}`)).toHaveLength(0);
+    await health.page.locator(`${running} ${aria('停止「beta」', 'button')}`).click();
+    await health.page.waitForSelector(running, { hidden: true });
+
+    const ended = `${calls} ${aria('已结束的工具调用', 'list')}`;
+    await page.waitForSelector(`${ended} ${aria('beta', 'button')}`);
+    expect(await page.$$eval(`${ended} .task-meta .status-text`, cells => cells.map(cell => cell.textContent))).toEqual(
+      [expect.stringMatching(/^已停止 · /), expect.stringMatching(/^已停止 · /)],
+    );
+    expect(await page.$$(aria('全部停止', 'button'))).toHaveLength(0);
+    expect(tasks.list({ sessionId }).map(task => task.status)).toEqual(['stopped', 'stopped']);
+    if (phone) await page.locator(aria('返回', 'button')).click();
+    expect(await page.$$eval('.tool-call .tool-line-status', cells => cells.map(cell => cell.textContent))).toEqual([
+      expect.stringMatching(/^已停止 · /),
+      expect.stringMatching(/^已停止 · /),
+    ]);
+    // 被停止的不通知：等一会儿，模型没有收到结束通知，时间线上也没有新的一轮
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const notified = stack.requests.some(request =>
+      request.messages.some(message => typeof message.content === 'string' && message.content.startsWith('[宿主通知]')),
+    );
+    expect(notified).toBe(false);
+    expect(await page.$$('.message[data-from="agent"]')).toHaveLength(2);
+    expect(problems).toEqual([]);
+    expect(health.problems).toEqual([]);
+  }, 90_000);
+
+  it('子会话：「后台」标签按会话树列出子会话，带状态、耗时与 token；停掉父会话在等的那个，父会话的等待随即返回，「全部停止」停掉余下的；子会话页的路径逐层退回；父会话用量的累计含子会话', async () => {
+    const stack = await startStack({}, [subtaskPlugin]);
+    const sessions = stack.app.bind({ sessionManager }).sessionManager.require();
+    const { id: parentId } = await sessions.createSession({
+      createdBy: 'user',
+      config: { enabledToolGroups: ['subtask'] },
+    });
+    const { page, problems } = await openPage(stack, viewport, `/s/${encodeURIComponent(parentId)}`);
+    await send(page, SPLIT);
+    // 整理目录的很快回完，另两个一直在跑
+    await openBackground(page, 2);
+    const children = `aside ${aria('子会话 · 3', 'region')}`;
+    /** 一个子会话那一行的字：标题与第二行 */
+    const row = (name: string) =>
+      page.$$eval(
+        `${children} .list-item-link`,
+        (links, name) => links.find(link => link.querySelector('.list-item-title')?.textContent === name)?.textContent,
+        name,
+      );
+    await page.waitForSelector(`${children} ${aria('子会话', 'list')} ${text('第二节')}`);
+    expect(await row('第一节')).toMatch(/^第一节运行中\d+\.\d 秒$/);
+    await page.locator(`${children} ${aria('已结束 · 1', 'button')}`).click();
+    expect(await row('目录')).toMatch(/^目录完成\d+\.\d 秒1\.5k token$/);
+
+    // 停掉父会话在等的第一节：等待随即返回、报已停止，她收尾；第二节还在跑
+    await page.locator(`${children} ${aria('停止「第一节」', 'button')}`).click();
+    await page.waitForSelector(`${children} ${aria('已结束 · 2', 'button')}`);
+    expect(await row('第一节')).toMatch(/^第一节已停止\d+\.\d 秒$/);
+    const waited = () =>
+      stack.requests
+        .flatMap(request => request.messages)
+        .find(message => message.role === 'tool' && String(message.content).includes('"allCompleted"'))?.content;
+    await expect.poll(waited).toBeDefined();
+    expect(JSON.parse(String(waited()))).toMatchObject({
+      timedOut: false,
+      subtasks: [
+        { name: '目录', status: 'completed' },
+        { name: '第一节', status: 'stopped' },
+      ],
+    });
+    await page.locator(`aside ${aria('全部停止', 'button')}`).click();
+    await page.waitForSelector(`${children} ${aria('已结束 · 3', 'button')}`);
+    expect(await row('第二节')).toMatch(/^第二节已停止\d+\.\d 秒$/);
+    expect(await page.$$(aria('全部停止', 'button'))).toHaveLength(0);
+    if (phone) await page.locator(aria('返回', 'button')).click();
+    await page.waitForSelector(text(SUBTASKS_DONE));
+    expect(await page.$$(BACKGROUND_METER)).toHaveLength(0);
+
+    // 用量：累计的输入与输出是会话树上的数，写明含子会话
+    if (phone) {
+      await page.locator('[aria-label^="上下文已用"]').click();
+      await page.waitForSelector(`dialog ${aria('上下文用量', 'table')}`);
+    } else {
+      await page.locator(aria('用量', 'tab')).click();
+    }
+    expect(await page.$eval('.usage-total', element => element.textContent)).toBe(
+      '累计输入 1.2k，输出 340（含子会话）',
+    );
+
+    // 子会话页的路径：各级父会话写在标题前，点哪一级回到哪一级；手机上的返回回到父会话
+    const [outline] = sessions.getChildren(parentId).filter(child => child.name === '目录');
+    const appendix = await sessions.createChildSession(outline.id, { name: '附录' });
+    const trail = () =>
+      page.$eval('main .session-trail', element => [...element.children].map(child => child.textContent));
+    await page.goto(`${stack.origin}/s/${encodeURIComponent(appendix.id)}`);
+    await page.waitForSelector('main .session-trail');
+    expect(await trail()).toEqual(['测试会话', '', '目录', '', '附录']);
+    await page.locator(`main .session-trail ${aria('目录', 'link')}`).click();
+    await page.waitForFunction(id => location.pathname === `/s/${encodeURIComponent(id)}`, {}, outline.id);
+    expect(await trail()).toEqual(['测试会话', '', '目录']);
+    await page.locator(phone ? aria('返回', 'button') : `main .session-trail ${aria('测试会话', 'link')}`).click();
+    await page.waitForFunction(id => location.pathname === `/s/${encodeURIComponent(id)}`, {}, parentId);
+    await page.waitForSelector(text(SUBTASKS_DONE));
+    expect(problems).toEqual([]);
+  }, 90_000);
+
+  it('归档一个有后台任务在跑的会话：任务不停，运行状况照样列出、写明已归档，并能停', async () => {
+    const stack = await startStack({}, [backgroundProbe]);
+    const { page, problems } = await openPage(stack, viewport);
+    await newSession(page);
+    await send(page, '后台跑 gamma');
+    const sessionId = await sessionIdOf(page);
+    await page.waitForSelector(text(MOVED));
+    await page.locator(`main ${aria('更多', 'button')}`).click();
+    await page.locator(aria('归档', 'menuitem')).click();
+    await toastSays(page, '已归档「测试会话」');
+    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.require();
+    expect(tasks.list({ sessionId }).map(task => task.status)).toEqual(['running']);
+
+    const health = await openPage(stack, viewport, '/health');
+    const running = `main ${aria('正在运行', 'list')}`;
+    await health.page.waitForSelector(`${running} ${aria('gamma', 'button')}`);
+    expect(await health.page.$eval(`${running} .list-item-meta`, element => element.textContent)).toBe('已归档');
+    await health.page.locator(`${running} ${aria('全部停止「测试会话」', 'button')}`).click();
+    await health.page.waitForSelector(running, { hidden: true });
+    expect(tasks.list({ sessionId }).map(task => task.status)).toEqual(['stopped']);
+    expect(problems).toEqual([]);
+    expect(health.problems).toEqual([]);
+  }, 60_000);
 });
 
 describe('反向代理', () => {

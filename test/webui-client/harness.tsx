@@ -43,6 +43,7 @@ export function summary(id: string, fields: Partial<SessionSummary> = {}): Sessi
     unread: false,
     attention: false,
     archived: false,
+    background: 0,
     ...fields,
   };
 }

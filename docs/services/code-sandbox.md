@@ -91,7 +91,7 @@ export interface SandboxPolicy {
 1. `available === false` 时 `run()` 不应被调用，但仍要防御性地抛错，而不是裸跑——参考实现在 `backend === 'none'` 时，`run()` 直接 throw。
 2. 强制 `policy`：`fsWrite` 之外只读或拒写、`network === 'deny'` 必须真正断网、`env` 之外的宿主环境变量必须清零。这是契约的安全语义，consumer 依赖它来防「写出工作区 / 联网外泄 / secrets 泄漏」。
 3. `run()` 的错误约定要对齐 `ExecResult`：非零退出 reject，错误对象挂 `.result`（见 §5）。
-4. 转交 `req.signal`：不转交时停止键停不掉沙箱里的脚本，只能等超时。
+4. 转交 `req.signal`：不转交时停止键与执行器的中止都停不掉沙箱里的脚本（第一方调用方不设超时）。
 
 ### 注册（`provide`）
 参考实现在 `apply` 里先探测后端，再注册单例：
@@ -213,11 +213,12 @@ if (policy && !config.codeSandbox?.available) {
     error: `代码执行已禁用（沙箱不可用，backend=${config.codeSandbox?.backend ?? 'none'}）：…` };
 }
 
-// signal 是回合的中止信号（工具调用上下文的 callCtx.signal），两条路径都交下去
+// signal 是执行器给这次调用的中止信号（工具调用上下文的 callCtx.signal），两条路径都交下去；
+// 两个工具声明可转后台，等多久由执行器的让出时限管，不另设超时
 const result = policy
   ? await config.codeSandbox!.run({ cmd: interpreter, args: [...extraArgs, scriptPath],
-      cwd: config.cwd, env, timeout: effectiveTimeout, signal, policy })
-  : await proc.execFile(interpreter, [...extraArgs, scriptPath], { cwd: config.cwd, env, timeout: effectiveTimeout, signal });
+      cwd: config.cwd, env, signal, policy })
+  : await proc.execFile(interpreter, [...extraArgs, scriptPath], { cwd: config.cwd, env, signal });
 ```
 
 要点是，`policy` 应当用本次运行实际解析出的本地路径来构造：`config.cwd` 来自 `storage.resolveLocalPath`，`tmp.path` 来自 `proc.makeTempDir`。这样路径随运行时变化，将来 storage 按 session 命名空间化后，会自动变成 per-session 隔离。
@@ -235,15 +236,14 @@ const result = policy
   if (e.result) {
     const output = { exitCode: e.result.code ?? -1, stdout: …, stderr: … };
     if (signal?.aborted) {
-      // 判在 timedOut 之前：中止宽限到点的 SIGKILL 也算中止；不是被信号结束的按实际退出回报
-      if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已随回合中止' };
-      return { ...output, note: '回合已中止' };
+      // 被信号结束的才说被中止（中止宽限到点的 SIGKILL 也算）；不是被信号结束的按实际退出回报
+      if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已中止' };
+      return { ...output, note: '调用已中止' };
     }
-    const timedOut = e.result.signal === 'SIGKILL';  // 超时被杀
-    return { ...output, ...(timedOut ? { timedOut: true } : {}) };
+    return output;
   }
-  // 没有退出结果：进程根本没起来，或回合已中止时 spawn 同步抛出
-  if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已随回合中止' };
+  // 没有退出结果：进程根本没起来，或已中止时 spawn 同步抛出
+  if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已中止' };
   return { exitCode: -1, stdout: '', stderr: '', error: e.message };
 }
 ```

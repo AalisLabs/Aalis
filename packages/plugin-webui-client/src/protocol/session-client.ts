@@ -12,6 +12,7 @@ import { type ConnectionState, openSocket } from './socket';
 
 // 会话协议的客户端：一条 /session 连接上握手、配对请求与回应、订阅多个会话。
 // 推送带 epoch 与按会话递增的 seq：快照之前与不大于快照 seq 的推送丢掉，epoch 变了或收到 resync 就重新订阅取快照。
+// 会话列表与后台任务的增量要先 watch：有人登记了处理函数才发，每条连接一次。
 // 断线后重连，重新握手、watch 并重订打开着的会话；断开时在途的请求以 ConnectionLostError 失败，不重发。
 
 /** 本客户端实现的协议版本 */
@@ -86,6 +87,12 @@ interface PushPosition {
   seq: number;
 }
 
+/** 要先 watch 才推的增量：推送名 → 开始推送的方法 */
+const WATCHES = {
+  'sessions/changed': 'sessions/watch',
+  'background/changed': 'background/watch',
+} as const satisfies Partial<Record<ConnectionNotification, SessionMethod>>;
+
 type ErrorBody = { code: number; message: string; data?: { code: ErrorCode } };
 
 type IncomingFrame =
@@ -120,8 +127,8 @@ export function createSessionClient(): SessionClient {
   const readyListeners = new Set<(init: InitializeResult) => void>();
   /** 当前连接已握手 */
   let ready = false;
-  /** 当前连接已发过 sessions/watch */
-  let watching = false;
+  /** 当前连接已 watch 的增量 */
+  const watching = new Set<string>();
   let handshake = handshakeGate();
 
   function call(method: string, params: unknown): Promise<unknown> {
@@ -143,9 +150,12 @@ export function createSessionClient(): SessionClient {
     return sent as Promise<SessionMethodResult<M>>;
   }
 
-  function watch(): void {
-    watching = true;
-    request('sessions/watch', {}).catch(unlessLost);
+  /** 有处理函数、这条连接还没 watch 的增量，发它的 watch */
+  function watch(name: string): void {
+    if (!Object.hasOwn(WATCHES, name) || watching.has(name) || !handlers.get(name)?.size) return;
+    const method = WATCHES[name as keyof typeof WATCHES];
+    watching.add(name);
+    request(method, {}).catch(unlessLost);
   }
 
   function resubscribe(sessionId: string): void {
@@ -213,7 +223,7 @@ export function createSessionClient(): SessionClient {
       })) as InitializeResult;
       ready = true;
       handshake.resolve();
-      if (handlers.get('sessions/changed')?.size) watch();
+      for (const name of Object.keys(WATCHES)) watch(name);
       for (const sessionId of subscriptions.keys()) resubscribe(sessionId);
       for (const listener of readyListeners) listener(init);
     },
@@ -236,7 +246,7 @@ export function createSessionClient(): SessionClient {
       pending.clear();
       if (ready) handshake = handshakeGate();
       ready = false;
-      watching = false;
+      watching.clear();
       for (const subscription of subscriptions.values()) subscription.position = undefined;
     },
   });
@@ -259,7 +269,7 @@ export function createSessionClient(): SessionClient {
       const set = handlers.get(name) ?? new Set();
       handlers.set(name, set);
       set.add(handler as (params: never) => void);
-      if (name === 'sessions/changed' && ready && !watching) watch();
+      if (ready) watch(name);
       return () => set.delete(handler as (params: never) => void);
     },
     subscribe(sessionId, listener) {

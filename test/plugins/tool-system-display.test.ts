@@ -7,10 +7,9 @@ import { toolSystemDisplays } from '../fixtures/tool-display.js';
 // ════════════════════════════════════════════════════════════
 
 describe('系统工具的展示种类', () => {
-  it('exec 与 exec_background 是命令（exec 的结果带退出码，后台启动的没有），file_edit、file_write、file_append 是改文件；其余不声明', () => {
+  it('exec 是命令（结果带退出码），file_edit、file_write、file_append 是改文件；其余不声明', () => {
     expect(Object.fromEntries(toolSystemDisplays())).toEqual({
       exec: { kind: 'command', fields: { command: 'command', cwd: 'cwd' }, result: { exitCode: 'exitCode' } },
-      exec_background: { kind: 'command', fields: { command: 'command', cwd: 'cwd' } },
       file_edit: { kind: 'file-change', fields: { path: 'path', removed: 'oldText', added: 'newText' } },
       file_write: { kind: 'file-change', fields: { path: 'path', added: 'content' } },
       file_append: { kind: 'file-change', fields: { path: 'path', added: 'content' } },

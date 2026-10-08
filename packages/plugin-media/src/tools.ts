@@ -125,6 +125,8 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
         },
       },
     },
+    // 本地识图模型慢时一张图可达数分钟：等多久由执行器的让出时限管，中止信号一路交给识图的模型调用
+    background: {},
     handler: async (args, callCtx) => {
       try {
         const imageInput = String(args.image);
@@ -189,7 +191,12 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           };
         }
 
-        const desc = await svc.describeImage(imageUrl, { hint, detailLevel, sessionId: callCtx.sessionId });
+        const desc = await svc.describeImage(imageUrl, {
+          hint,
+          detailLevel,
+          sessionId: callCtx.sessionId,
+          signal: callCtx.signal,
+        });
         return JSON.stringify(desc ? { description: desc } : { error: '没有可用的视觉模型或识别失败' });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });

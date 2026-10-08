@@ -115,8 +115,8 @@ async function setup(options: { home?: string; pluginPages?: number; panelPages?
 const ref = (pageKey: string) => ({ instance: OWNER, pageKey });
 const host = (name: string, open = true) => ({ tab: { host: name }, open });
 const page = (pageKey: string, open = true) => ({ tab: ref(pageKey), open });
-/** 新记录的会话面板标签：宿主的三个，按计划、设置、用量，都开着 */
-const HOSTS = [host('plan'), host('settings'), host('usage')];
+/** 新记录的会话面板标签：宿主的四个，按计划、设置、用量、后台，都开着 */
+const HOSTS = [host('plan'), host('settings'), host('usage'), host('background')];
 
 /** 先写好布局文件，再起一个读它的 webui-server */
 async function withFile(content: unknown) {
@@ -191,9 +191,9 @@ describe('固定的页面', () => {
     await Promise.all([pin('p0'), pin('p1'), tab('open-tab', 'n0'), pin('p2'), tab('open-tab', 'n1')]);
     const records = (await read()).body;
     expect([...records.pinned].map(r => r.pageKey).sort()).toEqual(['p0', 'p1', 'p2']);
-    expect(records.panelTabs.slice(0, 3)).toEqual(HOSTS);
-    expect(records.panelTabs.slice(3)).toEqual(expect.arrayContaining([page('n0'), page('n1')]));
-    expect(records.panelTabs).toHaveLength(5);
+    expect(records.panelTabs.slice(0, HOSTS.length)).toEqual(HOSTS);
+    expect(records.panelTabs.slice(HOSTS.length)).toEqual(expect.arrayContaining([page('n0'), page('n1')]));
+    expect(records.panelTabs).toHaveLength(HOSTS.length + 2);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(records);
   });
 
@@ -218,7 +218,7 @@ describe('固定的页面', () => {
 describe('会话面板的标签', () => {
   it('宿主标签关了标为关、位置保留，再打开回到原位；关着的再关、开着的再开不变', async () => {
     const { tab, read } = await setup();
-    const closed = [host('plan', false), host('settings'), host('usage')];
+    const closed = [host('plan', false), ...HOSTS.slice(1)];
     expect((await tab('close-tab', { host: 'plan' })).body.panelTabs).toEqual(closed);
     expect((await tab('close-tab', { host: 'plan' })).body.panelTabs).toEqual(closed);
     expect((await tab('open-tab', { host: 'plan' })).body.panelTabs).toEqual(HOSTS);
@@ -250,17 +250,19 @@ describe('会话面板的标签', () => {
     expect((await tab('tab-up', 'n0')).body.panelTabs).toEqual([
       host('plan'),
       host('settings'),
-      page('n0'),
       host('usage'),
+      page('n0'),
+      host('background'),
     ]);
     expect((await tab('tab-up', { host: 'plan' })).body.panelTabs[0], '已在最前').toEqual(host('plan'));
     expect((await tab('tab-down', { host: 'plan' })).body.panelTabs).toEqual([
       host('settings'),
       host('plan'),
-      page('n0'),
       host('usage'),
+      page('n0'),
+      host('background'),
     ]);
-    const last = [host('settings'), host('plan'), host('usage'), page('n0')];
+    const last = [host('settings'), host('plan'), host('usage'), host('background'), page('n0')];
     expect((await tab('tab-down', 'n0')).body.panelTabs).toEqual(last);
     expect((await tab('tab-down', 'n0')).body.panelTabs, '已在最后').toEqual(last);
     expect((await tab('tab-up', 'n1')).body.panelTabs, '不在表里').toEqual(last);
@@ -334,7 +336,7 @@ describe('移出插件标签', () => {
 });
 
 describe('读出记录', () => {
-  it('补上缺的宿主标签（按宿主顺序、在末尾、开着），丢掉认不出的、形状不对的与重复的', async () => {
+  it('补上缺的宿主标签（按宿主顺序、在末尾、开着；以后加的宿主标签如「后台」对已有的记录也补上），丢掉认不出的、形状不对的与重复的', async () => {
     const { read, pin, file } = await withFile({
       pinned: [ref('p1'), { instance: OWNER }, ref('p1')],
       panelTabs: [
@@ -349,7 +351,7 @@ describe('读出记录', () => {
         'plan',
       ],
     });
-    const panelTabs = [page('n1', false), host('usage', false), host('plan'), host('settings')];
+    const panelTabs = [page('n1', false), host('usage', false), host('plan'), host('settings'), host('background')];
     expect((await read()).body).toEqual({ pinned: [ref('p1')], panelTabs });
     await pin('p0');
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ pinned: [ref('p1'), ref('p0')], panelTabs });

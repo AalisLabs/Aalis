@@ -11,7 +11,8 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 - **功能位**：握手回发送、回滚、压缩三项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）服务在不在。这三个服务上线或下线（核心的 `service:registered`、`service:unregistered` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
 - **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
 - **会话列表**：把会话表投影成摘要，按根会话的种类（`SessionInfo.kind`）分「我的」与房间两区，房间按接管它的适配器实例（`SessionInfo.originInstance`）分组，标出需要我处理（有推出、还没结的审批）、出错、完成未读、运行中。缺省不列已归档的，`archived` 只列已归档的；`instance`、`platform` 只列一组房间。组名是实例的显示名：插件定义的 `displayName`（没有时用包名），非默认实例（`<包名>:<实例名>`）另带实例名，如「OneBot 适配器（work）」；插件已不在的用实例 id，没有实例的组用平台名。排序、搜索、分页与分组的规则见契约页。
-- **增量**：`sessions/watch` 之后，`session:created`、`session:updated`、`session:completed`、`session:deleted` 与审批的推出、结算各推一条 `sessions/changed`，带变了的会话摘要与最新的分组。
+- **增量**：`sessions/watch` 之后，`session:created`、`session:updated`、`session:completed`、`session:deleted`、回合进出、审批的推出与结算、后台任务的开始、结束与删除各推一条 `sessions/changed`，带变了的会话连同各级父会话的摘要与最新的分组。
+- **按会话树算的字段**：摘要的 `background` 是本会话在跑的后台任务数，加各级子会话里有回合在跑或有后台任务在跑的会话数（运行中看下文的回合登记，后台任务看 `backgroundTasks`，一批摘要只遍历一次登记表）；`tokens` 把本会话与各级子会话的 `SessionInfo.tokens` 相加；`lastTurn` 取 `SessionInfo.lastTurn` 的结局与结束时间，状态为 error 时 `reason` 取它的原因；子会话另带 `ancestors`（各级父会话的 id 与标题，根在前）。子会话的回合进出、任务进出、token 记账（session-manager 据 `llm:usage` 累加、发 `session:updated`）都会改父会话的摘要，所以每次推送都连同各级父会话。`sessions/list` 带 `background` 时只列 `background` 大于 0 的，不看归档。
 - **运行中**：在 `agent:input:before` 中间件里登记回合，回合的 `next` 返回（含被下游拦下、出错）即撤销。同一会话按 lane 可以并行多轮，有一轮在跑就算运行中。房间只在她真的开始一轮时显示运行中。
 - **会话的增删改**：`session/create`、`rename`、`archive`、`unarchive`、`delete`、`batch` 转给 session-manager。
   - 新建根会话不复制各层，配置经继承链实时生效；新建子会话复制父会话的生效配置（session-manager 的 `childConfig`，不带登记为 liveOnly 的项），因为继承链不经父会话自己的配置。
@@ -23,6 +24,7 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 - **文件句柄**：条目里她发出的文件不给存储地址，给本插件签发的句柄；传输层下发文件之前经 `resolveFile` 核验，见下文「文件句柄」。
 - **历史**：`session/history` 从存档归并条目、分页，见下文「历史归并」。
 - **回合控制**：`turn/send`、`turn/continue` 以连接的身份发入站消息；`turn/abort` 转给 agent；`session/compress` 调压缩服务（api-memory 的 `compression`），压完才回，没压成回错误；`turn/checkpoint`（回滚之前查这一轮执行过命令没有）与 `turn/rewind` 转给检查点；`plan/clear` 转给待办服务。
+- **后台任务**：可选使用后台任务登记（api-tools 的 `backgroundTasks`），投影成协议的形状（去掉模型给的参数与工具的结果，`display` 按工具声明解析，同工具卡）。`background/list` 列全部会话的；`background/watch` 之后按 `background:changed` 推 `background/changed`：状态与上次推出的不同（开始、结束、停止）立即推，删掉的立即推 `removes`，只有最后一行与最后输出时间变了的攒起来每秒推一次（常量 1 秒），状态变了时攒着的那次并进去。`background/output`、`background/stop` 转给登记表。`background/stopAll` 先经 agent 的 `abort` 停各级子会话在跑的回合，再经登记表的 `stop` 停本会话与各级子会话在跑的任务、等它们落定；本会话自己的回合不停。没有登记表时 list、output、stop 回 `unsupported`，watch 照常，stopAll 照样停子会话的回合。
 - **工具卡的展示**：工具卡与审批卡上的事实按工具定义上声明的展示种类（api-tools 的 `display`，经 tools 服务的 `getAll()` 取）从参数里逐字取出，工具返回时按声明从结果里取命令的退出码（取在 agent 截断过长的结果之前），实时条目、历史与审批共用一份解析。
 - **审批**：提供 `approvals` 服务。审批推给在场的审批面，同一会话排队、限频，应答先答先得并核应答人与内容哈希，请求与决定成对记进审计，见下文「审批」。每条连接接入对端带来的审批面，`presence/update` 与 `approval/respond` 经它。
 
@@ -52,6 +54,7 @@ definePlugin({
     todoList: optional(todoList),
     authority: optional(authority),
     tools: optional(tools),
+    backgroundTasks: optional(backgroundTasks),
     hostConfig: optional(hostConfig),
   },
   apply: run,
@@ -62,12 +65,13 @@ definePlugin({
 - `storage`：已读记录的落点；签发文件句柄时按存储根的种类挡掉插件状态。
 - `paths`：审批的审计写在家目录的 `state/audit/approvals.jsonl`。
 - `memory`：历史从存档归并。
-- `hooks`：`agent:input:before` 判运行中、拼出在途回合的条目；`agent:turn:after` 记下结局；`agent:reply:before` 切分重试的几版回复；`agent:tool:after` 把审批的结算、「已发到群」与「回合停止时还没结束」写进工具结果的元数据；`memory:clear` 清掉消息历史之后通知订阅的客户端重新取快照。
+- `hooks`：`agent:input:before` 判运行中、拼出在途回合的条目；`agent:turn:after` 记下结局；`agent:reply:before` 切分重试的几版回复；`agent:tool:after` 把审批的结算、「已发到群」、「回合停止时还没结束」、退出码与转到后台的任务 id 写进工具结果的元数据；`memory:clear` 清掉消息历史之后通知订阅的客户端重新取快照。
 - `plugins`：房间分组的组名取适配器实例的显示名。
 - `platform`：owner 自己的会话按哪个入口平台选档。
-- `agent`、`checkpoint`、`compression`、`todoList`：停止回合、回滚（与回滚之前查检查点）、压缩（用量条目的压缩线取它的 `autoThreshold`）、计划的快照与清空；缺席时对应的方法回 `unsupported`，功能位对应的一项为 false，快照不带计划与压缩线。
+- `agent`、`checkpoint`、`compression`、`todoList`：停止回合（含全部停止里子会话的回合）、回滚（与回滚之前查检查点）、压缩（用量条目的压缩线取它的 `autoThreshold`）、计划的快照与清空；缺席时对应的方法回 `unsupported`，功能位对应的一项为 false，快照不带计划与压缩线。
 - `authority`：判说话人、审批的发起主体与应答人是不是 owner；缺席时都不是，审批一律按发起者不能产生审批拒绝。
-- `tools`：工具定义上声明的展示种类；缺席时工具卡都没有 `display`，审批卡逐字列出全部参数。
+- `tools`：工具定义上声明的展示种类；缺席时工具卡与后台任务都没有 `display`，审批卡逐字列出全部参数。
+- `backgroundTasks`：后台任务的列表、增量、取输出与停止，摘要里在跑的后台任务数，工具卡的 `taskId`；缺席时摘要只按子会话的回合算 `background`，`background/list`、`output`、`stop` 回 `unsupported`。
 - `hostConfig`：握手回应里的应用名；缺席时是 `Aalis`。
 
 没有配置项。
@@ -78,7 +82,7 @@ definePlugin({
 |---|---|
 | `turn` | `agent:input:before` 开始一轮，`agent:turn:after` 给出结局，`next` 返回时收尾；被下游拦下、没有结局的一轮按 silent 收尾。回合条目在这一轮第一次有动静时才推出，提问（在回合开头落库）总排在它前面 |
 | `reasoning`、`agent-message` | `outbound:stream` 的思考与正文增量，连续的同类增量接在同一条上；工具调用开始、定稿校验（`agent:reply:before`）与流结束时一条收尾。她这一轮的回复（`outbound:message`，`source` 为 agent）认作最后一版正文，带上模型与这一轮的 token（取消息的 `modelInfo`，与历史里取存档元数据的同一份写法）；回合里的其他出站消息（`[错误]` 等）各成一条，回合外的出站消息也各成一条 |
-| `tool-call` | 模型生成参数时，`outbound:stream` 的工具调用进度带着这次调用的 callId，有了工具名就推一张 generating 的卡（只有工具名），之后的进度不再推；`tool:execute` 的开始与结束（`itemId` 是 callId）把同一张卡转为 running 再收尾，开始时按工具声明的展示种类解析出 `display`；`agent:tool:after` 时从截断之前的结果里取退出码、带进 `display`，结束时不为 0 的收成 failed；`agent:tool:after` 时回合的中止信号已触发的（停止时还没结束），卡落成 aborted，结束事件不再改它；生成了却没有执行的，回合结束时收尾（回合被停止的为 aborted，其余为 failed，结果都是「没有执行」）；`tool:output` 推成输出增量，工具结束之后才到的输出不再接上；审批推出与结算时再推一次（`approvalId`、`settlement`） |
+| `tool-call` | `agent:tool:after` 时按回合与调用的 id 在后台任务登记里找这次调用：转到了后台的，卡上带 `taskId`、元数据记下 `backgroundTask`。模型生成参数时，`outbound:stream` 的工具调用进度带着这次调用的 callId，有了工具名就推一张 generating 的卡（只有工具名），之后的进度不再推；`tool:execute` 的开始与结束（`itemId` 是 callId）把同一张卡转为 running 再收尾，开始时按工具声明的展示种类解析出 `display`；`agent:tool:after` 时从截断之前的结果里取退出码、带进 `display`，结束时不为 0 的收成 failed；`agent:tool:after` 时回合的中止信号已触发的（停止时还没结束），卡落成 aborted，结束事件不再改它；生成了却没有执行的，回合结束时收尾（回合被停止的为 aborted，其余为 failed，结果都是「没有执行」）；`tool:output` 推成输出增量，工具结束之后才到的输出不再接上；审批推出与结算时再推一次（`approvalId`、`settlement`） |
 | `notice` | `session:compressing`（`compress`）；流结束标记带 `toolLimitReached` 时给 `tool-limit`；落库的宿主通知按存档推 |
 | `user-message`，她发出的附件 | `inbound:message:archived`、`assistant:message:archived` 带出的存档消息，与历史归并用同一套规则，`itemId` 相同 |
 | `plan` | `todo:updated`；快照从待办服务读当前计划 |
@@ -97,7 +101,7 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 
 **刷新之后**，历史标出同样的结局，不给记忆服务加改消息元数据的方法：
 
-- **工具结果的元数据**：工具结果落库之前（`agent:tool:after`），本插件把这次调用的审批结算（`approval: { id, state, source, at }`）、房间里经它发出、平台已收下的消息（`sentToRoom: true`）回合停止时这次调用还没结束（`aborted: true`，工具上下文的中止信号此时已触发）与命令的退出码（`exitCode`）写进 `metadata`，agent 随结果落库。退出码在这里取：agent 跑完这个钩子才把过长的结果截断，截断后的结果不再是 JSON，从中取不到。发消息的工具都等过平台确认，这里只取已经到了的送达结果，不再等。
+- **工具结果的元数据**：工具结果落库之前（`agent:tool:after`），本插件把这次调用的审批结算（`approval: { id, state, source, at }`）、房间里经它发出、平台已收下的消息（`sentToRoom: true`）、回合停止时这次调用还没结束（`aborted: true`，工具上下文的中止信号此时已触发）、命令的退出码（`exitCode`）与转到后台的任务 id（`backgroundTask`）写进 `metadata`，agent 随结果落库。退出码在这里取：agent 跑完这个钩子才把过长的结果截断，截断后的结果不再是 JSON，从中取不到。发消息的工具都等过平台确认，这里只取已经到了的送达结果，不再等。
 - **投递失败**：平台没收下她的回复时，适配器（onebot）在存档里记一条投递失败（`OutboundDeliveryFailed`，`metadata` 带这一轮的 `turnId` 与同一句原因）。这条记录在回复之后，可能落在更新的一页，归并时从这一页的开头往后全看。经工具发出的（带 `callId`）不算到回复上，那次调用的结果已写明。
 - **推出来的**：工具调用之前说的话、重试丢掉的几版由存档的时间线推出。
 - **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，历史里没有这几条。
@@ -118,7 +122,7 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 - **通知**：`notice` 角色的消息与压缩分隔线（`event-marker`）各成一条通知，宿主通知的种类取 `metadata.hostNoticeKind`。其余系统消息不显示。
 - **她发出的附件**：`outbound-image`、`outbound-video`、`outbound-audio`、`outbound-file` 的消息按附件引用占位符还原成只有附件的消息。图片、音频、视频的 `src` 就是引用；文件的 `src` 是句柄（见下文「文件句柄」）。文件的地址与名字先取存档时 `metadata` 里原样记下的 `ref`、`name`（占位符里的地址遇到 `]` 会截断，描述位的 `]`、`|` 换成了全角），没有时取占位符的引用与描述位，名字再没有就取地址的最后一段。
 - **回复与工具调用**：同一轮里相邻的 assistant 与带 `toolCallId` 的 tool 消息成一组；`metadata.turnId` 不同的两条分属两组（旧存档没记回合的不分），前一轮按旧格式落库的工具调用组不会被后一轮的时间线盖掉。组里有带时间线（`segments`）的回复时，以最后这样一条为准，覆盖这一轮之前按旧格式落库的工具调用组；否则按旧格式拼：思考前置，正文与工具调用按序，工具结果按 `toolCallId` 对回它的调用。每段正文（一次模型调用说的话，重试的各版各是一段）各成一条，相邻的思考合成一条，空的不显示；组以回复收尾时，记下的模型与这一轮的 token（`metadata.modelInfo`）挂在回复上，`metadata.turnId` 给出条目的回合 id。
-  - 工具卡的 `itemId` 是这次调用的 `callId`（时间线的 `tool_call` 段与工具结果的 `metadata.callId` 带它），与实时推送相同；旧存档没有 `callId`，回落到这一组第一条消息的 id 加序号。参数不是对象的（旧存档里模型给出的 `null`、数组等）按空参数显示。`display` 按工具现在的声明从参数与结果解析，退出码以元数据里记下的 `exitCode` 为准（没记下的，如结果落库时会话服务没在跑，从结果里取）；工具结果的元数据里记下的审批结算与 `sentToRoom` 还原到工具卡上。状态依次看：元数据记着停止时还没结束、或没有结果（重启或中断）的为 aborted，没批准的为 denied，结果带 `error` 或退出码不为 0 的为 failed，其余为 completed。
+  - 工具卡的 `itemId` 是这次调用的 `callId`（时间线的 `tool_call` 段与工具结果的 `metadata.callId` 带它），与实时推送相同；旧存档没有 `callId`，回落到这一组第一条消息的 id 加序号。参数不是对象的（旧存档里模型给出的 `null`、数组等）按空参数显示。`display` 按工具现在的声明从参数与结果解析，退出码以元数据里记下的 `exitCode` 为准（没记下的，如结果落库时会话服务没在跑，从结果里取）；工具结果的元数据里记下的审批结算、`sentToRoom` 与 `backgroundTask`（还原成 `taskId`）还原到工具卡上。状态依次看：元数据记着停止时还没结束、或没有结果（重启或中断）的为 aborted，没批准的为 denied，结果带 `error` 或退出码不为 0 的为 failed，其余为 completed。
   - 房间里：最后一次工具调用之前的正文标「调用工具之前说的话不发到群里」；以回复收尾的组，回复之前、最后一次工具调用之后的几版标「格式校验没通过，已重试」；回复有这一轮的投递失败记录时标平台没收下。与实时推送一致。
 
 分页从最新往前取 `limit` 条存档消息；页的开头落在一组回复与工具调用中间时往前扩到这一组的开头（同样按回合分组）。`before` 是上一页第一条存档消息的 id。
@@ -190,7 +194,7 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 
 ## 拆卸
 
-撤回登记之前（`lifecycle.onDrain`）先把没结的审批按 cancelled 结算并告诉模型（审批服务已停止），审批面还接着，结算推得到；之后到来的请求直接按同样的原因拒绝。对外登记撤回之后（`lifecycle.onDispose`）断开全部连接，原因写「会话服务已停止」，并等排着的审计写完。传输层据此关闭底层连接，客户端重连时接到新的提供者。
+撤回登记之前（`lifecycle.onDrain`）先把没结的审批按 cancelled 结算并告诉模型（审批服务已停止），审批面还接着，结算推得到；之后到来的请求直接按同样的原因拒绝。对外登记撤回之后（`lifecycle.onDispose`）丢掉攒着的后台任务推送，断开全部连接，原因写「会话服务已停止」，并等排着的审计写完。传输层据此关闭底层连接，客户端重连时接到新的提供者。
 
 ## 相关
 

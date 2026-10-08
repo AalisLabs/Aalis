@@ -24,6 +24,8 @@ import type { PlanItem, UsageItem } from './live-session';
 interface HostData {
   plan?: PlanItem;
   usage?: UsageItem;
+  /** 有子会话，或这个会话有后台任务（含保留着的结束的） */
+  background: boolean;
   phone: boolean;
 }
 
@@ -33,6 +35,7 @@ const HOST_TABS: Record<HostPanelTab, { title: string; available(data: HostData)
   settings: { title: '设置', available: () => true },
   // 手机上用量从会话头的百分比打开底部抽屉
   usage: { title: '用量', available: ({ usage, phone }) => usage !== undefined && !phone },
+  background: { title: '后台', available: ({ background }) => background },
 };
 
 /** 宿主标签的名字；前端还不认识的宿主标签（webui-server 比前端新）没有 */
@@ -110,7 +113,7 @@ export interface SessionTabs {
   close(ref: PanelTabRef): void;
 }
 
-export function useSessionTabs(sessionId: string, data: { plan?: PlanItem; usage?: UsageItem }): SessionTabs {
+export function useSessionTabs(sessionId: string, data: Omit<HostData, 'phone'>): SessionTabs {
   const phone = usePhone();
   const navigate = useNavigate();
   const goBack = useBack();

@@ -8,13 +8,15 @@
 
 定义 AI 工具系统的全部"非实现"契约：
 
-- 工具数据结构（`RegisteredTool` / `ToolGroupInfo` / `ToolSummary`）
+- 工具数据结构（`RegisteredTool` / `ToolGroupInfo` / `ToolSummary`），可转后台的执行器参数名判据 `takenBackgroundParams`
 - 工具调用上下文（`ToolCallContext`）—— 平台/会话语义
 - 工具执行通知（`ToolExecuteMessage`）与执行中的流式输出（`ToolOutputMessage`）
+- 工具结果的结局：`toolFailed`、`integerIn`
 - 服务接口 `ToolService`、描述符 `tools`、绑定接口 `BoundTools`、`withToolGroups`
-- 向 `AalisEvents` 注入 `'tool:execute'` 与 `'tool:output'`
+- 后台任务登记：`BackgroundTask`、`BackgroundTaskService`、描述符 `backgroundTasks`
+- 向 `AalisEvents` 注入 `'tool:execute'`、`'tool:output'` 与 `'background:changed'`
 
-**注**：runtime 工具函数已迁出本契约包（见 `packages/api-tools/src/index.ts` 迁出注释）：SSRF/私网判定 → `@aalis/util-network-guard`；工具输入路径解析 → `@aalis/api-storage`。本包只保留契约/类型与登记门面。
+**注**：runtime 工具函数已迁出本契约包（见 `packages/api-tools/src/index.ts` 迁出注释）：SSRF/私网判定 → `@aalis/util-network-guard`；工具输入路径解析 → `@aalis/api-storage`。本包只保留契约：类型、描述符与登记门面，以及契约里约定的判据（工具结果的结局、执行器参数名）。
 
 ## 服务接口
 
@@ -45,10 +47,22 @@ interface RegisteredTool {
   risk?: CapabilityRisk;
   groups?: string[];                      // 工具分组，未设置时始终可用
   display?: ToolDisplay;                  // 工具卡与审批卡上的展示种类
+  background?: { yieldSeconds?: number }; // 可以转后台，见下文
 }
 ```
 
 `CapabilityVisibility` / `CapabilityConfirm` / `CapabilityRisk` 从 `@aalis/api-authority` 导入。
+
+### 可转后台
+
+`background` 声明这个工具可以转到后台：它响应中止信号（`ToolCallContext.signal`），晚些拿到结果仍有意义。执行器（[plugin-tools](../plugins/plugin-tools.md)）对声明了的工具统一处理：
+
+- 发给模型的参数表多两项：`runInBackground`（布尔，立即转后台）与 `waitSeconds`（前台最多等多少秒）。执行时这两项先取出，再做参数校验、过守卫、交给工具；审批事实与工具拿到的参数里都没有它们。参数表里已有同名项的工具当作没声明，执行器记一条警告，工具照常登记。`takenBackgroundParams(parameters)` 回参数表里已有的这两项的名字，执行器按它判断；桥接远端工具的插件据此不声明，等多久照远端调用自己的超时。
+- 过了守卫之后先在前台等让出时限：`waitSeconds`，缺省取 `yieldSeconds`，再缺省是 30 秒；上限取执行器的配置。在前台时回合中止（停止键、新消息打断）一并中止它。
+- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（没有 `callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
+- 同一会话里在跑的可转后台调用有上限（前台与后台一起数），满了时新的调用在过守卫之前就被拒绝。
+
+没声明的工具照旧等到底，照它们自己的超时。`background` 不进 `ToolDefinition`（那是发给模型的线上格式）。
 
 ### 展示种类
 
@@ -75,17 +89,24 @@ interface ToolCallContext {
   enabledGroups?: string[];                         // 当前会话启用的工具分组
   acceptsImages?: boolean;                          // 调用方能把结果里的图片交给主模型
   signal?: AbortSignal;                             // 调用方回合的中止信号
-  inbound?: InboundTurn;                            // 调用所在的入站回合（source、续做的调用者 callerUserId；类型见 api-authority），只由 agent 工具循环填写
+  inbound?: InboundTurn;                            // 调用所在的入站回合（source、续做的调用者 callerUserId、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
+  output?: (text: string) => void;                  // 执行中的输出口，执行器给每次调用一份
 }
 ```
+
+`signal` 由调用方传回合的中止信号。可转后台的工具拿到的是执行器给这次调用的信号：在前台时随回合一并中止，转到后台之后只随停止、工具撤回登记与执行器停用中止。
+
+`output` 由执行器填写，调用方不填。工具执行中把输出写进它：有 `turnId` 与 `callId` 时转成 `tool:output` 推给界面，一次调用推出的总量不超过 64 KiB；可转后台的调用另留进这次调用的输出缓冲（只留末尾 64 KiB），后台任务的最后一行、最后输出时间与取输出都取它。工具结果照旧在调用结束时一次给出。
 
 `inbound` 用来正向判断「这次调用来自由入站消息驱动的 agent 回合」：
 
 - 只有 plugin-agent 的工具循环填写它，`source` 取那条入站消息的 `IncomingMessage.source`：真人消息为 `undefined`，定时任务、闲置触发、宿主通知等内部注入为注入方标识。
 - workflow 的 tool 节点、mcp-server 等自己构造上下文的调用方不填，`inbound` 缺省。
 - 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看 `actor` 分不出来：定时任务注入的回合带着创建者的 `actor`。
+
+`inbound.messageId` 是那条入站消息的平台消息 id（`IncomingMessage.messageId`，平台适配器填写，没有的不带）。转到后台的调用结束时，执行器把它写进结束通知的 `hostNotice.replyTo`，她回复通知时引用这条消息。
 
 `turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一（模型生成参数时报过进度的，用那时随进度推出的那一个），不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
 
@@ -136,7 +157,56 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 }]
 ```
 
-工具执行中的流式输出，在这次调用的开始与结束之间发出，只给界面看：不进模型、不落库，工具结果照旧在调用结束时一次给出。只有 agent 回合里的调用（`ToolCallContext` 带 `turnId` 与 `callId`）才发。现在发它的是 plugin-tool-system 的 `exec`：stdout 与 stderr 按到达顺序推出，总量不超过结果里保留的输出上限。
+工具执行中的流式输出（工具写进 `ToolCallContext.output` 的文字），在这次调用的开始与结束之间发出，只给界面看：不进模型、不落库，工具结果照旧在调用结束时一次给出。只有 agent 回合里的调用（`ToolCallContext` 带 `turnId` 与 `callId`）才发；转到后台的调用此后不再发，进度看后台任务登记。
+
+```ts
+'background:changed': [{ task: BackgroundTask } | { removed: string; sessionId: string }]
+```
+
+后台任务登记变了：开始、结束、最后一行与最后输出时间变化（带变了的任务），或删掉（带任务 id 与所在会话）。
+
+## 工具结果的结局
+
+```ts
+function integerIn(result: string, key: string): number | undefined;
+function toolFailed(result: string, exitCode?: number): boolean;
+```
+
+`toolFailed`：结果是带 `error` 的 JSON 对象（工具与执行器报失败的约定），或退出码不为 0，即为失败。退出码按展示种类取：`command` 种类写明了取自结果的哪个键时，用 `integerIn(result, display.result.exitCode)` 取。执行器判后台任务的结局与会话服务判工具卡的状态共用这一份，模型与界面看到同一个结局。
+
+## 后台任务登记
+
+```ts
+interface BackgroundTask {
+  id: string;
+  sessionId: string;
+  kind: 'tool-call';                 // 宿主维护的封闭集合，以后按加法加
+  label: string;                     // 显示名：工具调用是工具名
+  call: { tool: string; args: Record<string, unknown>; turnId: string; callId: string }; // 起它的那次调用，参数是模型给的原样
+  status: 'running' | 'completed' | 'failed' | 'stopped' | 'aborted';
+  startedAt: number;
+  endedAt?: number;
+  lastLine?: string;                 // 输出的最后一行
+  lastOutputAt?: number;             // 最后一次有输出的时刻
+  reason?: string;                   // 失败或中断的一句原因
+  result?: ToolExecutionResult;      // 结束的任务：工具的结果（不落盘）
+}
+
+interface BackgroundTaskService {
+  list(filter?: { sessionId?: string }): BackgroundTask[];
+  output(id: string, after?: number): { text: string; end: number; truncated: boolean } | undefined;
+  stop(id: string): Promise<BackgroundTask | undefined>;
+}
+
+export const backgroundTasks = defineService<BackgroundTaskService>('background-tasks');
+```
+
+由 [plugin-tools](../plugins/plugin-tools.md) 提供，现在唯一的登记方是它的执行器（转到后台的工具调用）。会话服务（[plugin-session-server](../plugins/plugin-session-server.md)）把它投影成会话协议的后台任务（[api-session-protocol](./api-session-protocol.md#后台任务) 的 `background/*`），不下发参数与结果。
+
+- `list`：在跑的与保留的结束的任务（每个会话留最近 20 条结束的），给 `sessionId` 时只列这个会话的。
+- `output`：`text` 是 `after` 之后的输出；`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾 64 KiB，早于缓冲的部分取不到时 `truncated` 为 true。Aalis 重启前的任务没有留下输出。
+- `stop`：中止并等它落定（宽限 3 秒），回落定后的任务；宽限内没停下的仍是 `running`，之后停下时记为 `stopped`。被停止的不通知。
+- 结局：结果带 `error` 或退出码不为 0 为 `failed`（`reason` 写退出码或那句错误）；`stop` 停的为 `stopped`；工具撤回登记、执行器停用、重启时还在跑的为 `aborted`；其余 `completed`。
 
 ## 典型用法
 
@@ -172,7 +242,7 @@ export default definePlugin({
 
 ## 实现者
 
-- [@aalis/plugin-tools](../plugins/plugin-tools.md) —— `tools` 服务本体（注册表、分组、可见性）
+- [@aalis/plugin-tools](../plugins/plugin-tools.md) —— `tools` 服务本体（注册表、分组、可见性、执行器）与 `backgroundTasks`
 - [@aalis/plugin-tool-system](../plugins/plugin-tool-system.md) —— 往里注册 `system` 一个工具组（含 shell / 文件 / 系统信息 / HTTP 四类工具）
 
 ## 相关

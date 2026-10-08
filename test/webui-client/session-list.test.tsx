@@ -7,8 +7,8 @@ import { group, type Harness, installDialog, listRequests, lists, renderApp, roo
 
 // ════════════════════════════════════════════════════════════
 // 会话列表：「我的」在上，房间按适配器实例分组；状态与排序、行首标记；组默认折叠、有需要处理的自动展开，
-// 组内只露出需要处理、出错、运行中与近 7 天她开过口的房间；归档区；子任务；行的「更多」；推送即时更新；
-// 断线重连后重取；翻页取全
+// 组内只露出需要处理、出错、运行中、有后台工作与近 7 天她开过口的房间；归档区；只列根会话，行上写「后台 N」与出错原因；
+// 行的「更多」；推送即时更新；断线重连后重取；翻页取全
 // ════════════════════════════════════════════════════════════
 
 const DAY = 24 * 60 * 60_000;
@@ -261,17 +261,37 @@ describe('会话列表', () => {
     expect(await within(section('我的')).findByText('还没有会话')).toBeTruthy();
   });
 
-  it('有子任务的行能展开子任务', async () => {
-    const mine = [summary('p', { title: '父会话', childCount: 1 })];
-    const children = [summary('p::t', { title: '子任务一', kind: 'task', parentId: 'p' })];
-    app = await renderApp('/', {
-      'sessions/list': lists(p => (p.section === 'owner' ? mine : p.parentId === 'p' ? children : [])),
-    });
-    const toggle = await within(section('我的')).findByRole('button', { name: '1 个子任务' });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(toggle);
-    expect(await within(section('我的')).findByRole('link', { name: /子任务一/ })).toBeTruthy();
-    expect(listRequests().some(p => p.parentId === 'p')).toBe(true);
+  it('左栏只列根会话、行上没有子会话的展开；有后台工作的行写「后台 N」，出错的行写一句原因', async () => {
+    const mine = [
+      summary('p', { title: '父会话', childCount: 2, background: 2, updatedAt: NOW - 1000 }),
+      summary('busy', { title: '在跑又有后台', running: true, background: 1, updatedAt: NOW - 2000 }),
+      summary('broken', { title: '出了错', error: true, reason: '模型服务返回 500', updatedAt: NOW - 3000 }),
+      summary('quiet', { title: '出错没原因', error: true, updatedAt: NOW - 4000 }),
+    ];
+    app = await renderApp('/', { 'sessions/list': lists(p => (p.section === 'owner' ? mine : [])) });
+    const list = await within(section('我的')).findByRole('list');
+    const row = (title: string) => within(list).getByRole('link', { name: new RegExp(title) });
+    expect(row('父会话').textContent).toContain('后台 2');
+    expect(row('在跑又有后台').textContent).toContain('运行中');
+    expect(row('在跑又有后台').textContent).not.toContain('后台 1');
+    expect(row('出了错').textContent).toContain('模型服务返回 500');
+    expect(row('出了错').querySelector('.status-text')?.getAttribute('data-state')).toBe('error');
+    expect(row('出错没原因').textContent).toContain('出错');
+    expect(within(left()).queryAllByRole('button', { name: /子任务|子会话/ })).toEqual([]);
+    expect(listRequests().filter(p => p.parentId !== undefined)).toEqual([]);
+  });
+
+  it('房间组里有后台工作的房间露出来，单行的右侧写「后台 N」', async () => {
+    const groups = [group('im-a', { label: 'QQ 主号', rooms: 2 })];
+    const rooms = [
+      room('r-busy', 'im-a', { title: '后台在跑的群', background: 1, updatedAt: NOW - 1000 }),
+      room('r-never', 'im-a', { title: '没开过口', updatedAt: NOW - 2000 }),
+    ];
+    app = await renderApp('/', { 'sessions/list': lists(p => (p.instance === 'im-a' ? rooms : []), groups) });
+    fireEvent.click(await within(left()).findByRole('button', { name: /^QQ 主号/ }));
+    const list = await within(left()).findByRole('list', { name: 'QQ 主号' });
+    expect(titles(list)).toEqual(['后台在跑的群']);
+    expect(within(list).getByRole('link', { name: /后台在跑的群/ }).textContent).toContain('后台 1');
   });
 });
 

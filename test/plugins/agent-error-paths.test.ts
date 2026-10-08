@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
-import { hooks } from '../../packages/api-hooks/src/index.js';
+import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -9,7 +9,7 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type { OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
+import type { Message, OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -23,7 +23,8 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //   3. 并行工具批次里单个工具的链路异常（钩子 / 守卫抛错）只算该工具失败，不连坐整组：
 //      兄弟工具已发生的副作用照常落库，回合继续；
 //   4. 每次调用都有一对 tool:execute：没执行就失败的（参数不合法、执行前的钩子出错）同样发，结束带错误结果，
-//      否则会话里这张工具卡一直停在生成中或执行中；生成参数时的进度带上执行时用的同一个 callId。
+//      否则会话里这张工具卡一直停在生成中或执行中；生成参数时的进度带上执行时用的同一个 callId；
+//   5. 结局为 error 的一轮，agent:turn:after 带一句原因（会话记下它，列表上出错的会话据此写原因）。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -132,6 +133,52 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     const savedTool = history.find(m => m.role === 'tool');
     expect(savedTool?.toolCallId).toBe('call-bad');
     expect(savedTool?.content).toContain('工具参数不是合法 JSON');
+  });
+
+  it('坏参数不原样重放：存档与下一次请求里那次调用的 arguments 换成 {}，原文截断到 200 字放进回给模型的错误；同批好的调用不动', async () => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const recorder: ChatModelRequest[] = [];
+    const raw = `{"a": "${'x'.repeat(300)}`;
+    const calls: ChatResponse = {
+      content: null,
+      toolCalls: [
+        { id: 'call-bad', type: 'function', function: { name: 'probe', arguments: raw } },
+        { id: 'call-good', type: 'function', function: { name: 'probe', arguments: '{"n":1}' } },
+      ],
+    };
+    await bootAgentStack(app, createMockLLMPlugin({ responses: [calls, { content: '已收到' }], recorder }), true);
+    const host = app.bind({ agent, memory, tools });
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => ({ content: '{"ok":true}' }),
+    });
+
+    const sessionId = 'test:bad-tool-args-replay';
+    await host.agent.require().handleMessage({
+      content: '调工具',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    const history = await host.memory.require().getHistory(sessionId, 50);
+    await app.stop();
+
+    const argumentsOf = (messages: Message[]) =>
+      messages.flatMap(m => m.toolCalls?.map(tc => [tc.id, tc.function.arguments]) ?? []);
+    const expected = [
+      ['call-bad', '{}'],
+      ['call-good', '{"n":1}'],
+    ];
+    expect(argumentsOf(recorder[1].messages), '下一次请求').toEqual(expected);
+    expect(argumentsOf(history), '存档').toEqual(expected);
+    const toolMsg = recorder[1].messages.find(m => m.role === 'tool' && m.toolCallId === 'call-bad');
+    const error = String(JSON.parse(String(toolMsg?.content)).error);
+    expect(error).toContain(raw.slice(0, 200));
+    expect(error).not.toContain(raw.slice(0, 201));
   });
 
   it.each([
@@ -397,6 +444,54 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
 
     expect(seen).toBeInstanceOf(AbortSignal);
     expect(abortedInsideTool, '回合中止后工具持有的信号应已中止').toBe(true);
+  });
+});
+
+describe('agent 错误路径：回合结束带出错原因', () => {
+  type TurnEnd = Pick<HookContextMap['agent:turn:after'], 'outcome' | 'error'>;
+
+  /** 记下每一轮的结局与原因，以及发到会话里的消息 */
+  function observe(app: App) {
+    const host = app.bind({ agent, events, hooks });
+    const ends: TurnEnd[] = [];
+    const sent: string[] = [];
+    host.hooks.middleware('agent:turn:after', async (data, next) => {
+      ends.push(data.error === undefined ? { outcome: data.outcome } : { outcome: data.outcome, error: data.error });
+      await next();
+    });
+    host.events.on('outbound:message', (msg: OutgoingMessage) => void sent.push(msg.content));
+    const send = (sessionId: string) =>
+      host.agent.require().handleMessage({ content: '你好', sessionId, platform: 'test', userId: 'u1' });
+    return { ends, sent, send };
+  }
+
+  it('模型调用抛错：结局 error，原因是发到会话的 [错误] 那句；正常回复的一轮不带原因', async () => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    await bootAgentStack(app, createMockLLMPlugin({ throwOnce: new Error('<模型炸了>') }), false);
+    const { ends, sent, send } = observe(app);
+
+    await send('test:turn-error');
+    await send('test:turn-error');
+    await app.stop();
+
+    expect(sent[0]).toBe('[错误] <模型炸了>');
+    expect(ends).toEqual([{ outcome: 'error', error: '<模型炸了>' }, { outcome: 'replied' }]);
+  });
+
+  it('解析不出模型：结局 error，原因是发到会话的 [系统] 那句', async () => {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    await registerHubs(app);
+    await use(app, memoryInMemoryPlugin);
+    await use(app, messageArchivePlugin, { debugLogs: false });
+    await use(app, agentPlugin, AGENT_CONFIG);
+    const { ends, sent, send } = observe(app);
+
+    await send('test:no-model');
+    await app.stop();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/^\[系统\] ./);
+    expect(ends).toEqual([{ outcome: 'error', error: sent[0].slice('[系统] '.length) }]);
   });
 });
 

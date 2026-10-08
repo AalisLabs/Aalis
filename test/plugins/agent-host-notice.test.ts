@@ -3,11 +3,16 @@ import { agent } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, definePlugin } from '../../packages/core/src/index.js';
+import { App, definePlugin, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
-import { type IncomingMessage, type Message, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import {
+  type IncomingMessage,
+  type Message,
+  type OutgoingMessage,
+  selfInitiatedActor,
+} from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -61,12 +66,14 @@ function promptProbe(name: string, id: string, anchor: string, out: string) {
   });
 }
 
-async function boot(opts: { probes?: boolean } = {}) {
+/** replies：模型依次的回复，用完重复最后一条（同一句连着两次会被当作卡壳不发出） */
+async function boot(opts: { probes?: boolean; replies?: string[] } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];
-  await app.plugin(createMockLLMPlugin({ responses: [{ content: '收到' }], recorder }));
+  const responses = (opts.replies ?? ['收到']).map(content => ({ content }));
+  await app.plugin(createMockLLMPlugin({ responses, recorder }));
   await app.plugin(memoryInMemory);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   if (opts.probes) {
@@ -78,9 +85,14 @@ async function boot(opts: { probes?: boolean } = {}) {
   for (const name of [agentPlugin.name, messageArchivePlugin.name, ...(opts.probes ? ['p-tctx', 'p-hint'] : [])]) {
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
-  const host = app.bind({ agent, memory });
+  const host = app.bind({ agent, memory, events });
+  const outbound: OutgoingMessage[] = [];
+  host.events.on('outbound:message', message => {
+    outbound.push(message);
+  });
   return {
     recorder,
+    outbound,
     send: (msg: IncomingMessage) => host.agent.require().handleMessage(msg),
     history: () => host.memory.require().getHistory(SESSION, 50),
   };
@@ -139,6 +151,18 @@ describe('plugin-agent：宿主通知回合', () => {
     expect(th).toBeGreaterThan(tc);
     expect(notice).toBe(th + 1);
     expect(notice).toBe(msgs.length - 1);
+  });
+
+  it('回复宿主通知时照转发 hostNotice 的写法带上它的 replyTo；不带 replyTo 的通知与真人消息的回复都不带', async () => {
+    const h = await boot({ replies: ['好了', '收到', '在'] });
+    await h.send(hostNotice({ hostNotice: { kind: 'background-task', id: 'bg_x_1', replyTo: 'zz-msg-1' } }));
+    await h.send(hostNotice());
+    await h.send(humanMessage);
+    expect(h.outbound.map(m => [m.hostNotice, m.replyTo])).toEqual([
+      [{ kind: 'background-task', id: 'bg_x_1' }, 'zz-msg-1'],
+      [{ kind: 'paper-task', id: 'n-1' }, undefined],
+      [undefined, undefined],
+    ]);
   });
 
   it('回归：workflow agent 节点的 proactive 注入仍渲染为跨会话委派、归档为 cross-session-delegation', async () => {

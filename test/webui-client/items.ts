@@ -1,4 +1,5 @@
 import type {
+  BackgroundTask,
   SessionItem,
   SessionMethodResult,
   SessionSummary,
@@ -7,13 +8,13 @@ import type {
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import { summary } from './harness.js';
 
-// 会话工作台用例的条目、快照与设置行，以及服务端推送的写法
+// 会话工作台用例的条目、快照、设置行与后台任务，以及服务端推送的写法
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 export type Approval = SessionMethodResult<'session/subscribe'>['approvals'][number];
 
 export const EPOCH = 'epoch-1';
-const AT = new Date(2026, 9, 3, 10, 32).getTime();
+export const AT = new Date(2026, 9, 3, 10, 32).getTime();
 
 export const userMessage = (itemId: string, text: string, fields: Partial<Item<'user-message'>> = {}) =>
   ({
@@ -130,3 +131,20 @@ export const row = (key: string, fields: Partial<SettingRow> = {}): SettingRow =
   prominence: 'common',
   ...fields,
 });
+
+/** 会话 s1 里转了后台的一次工具调用：在跑，从 AT 开始，工具卡的 itemId 是 call-<id> */
+export const backgroundTask = (id: string, fields: Partial<BackgroundTask> = {}): BackgroundTask => ({
+  id,
+  sessionId: 's1',
+  kind: 'tool-call',
+  label: 'exec',
+  call: { tool: 'exec', turnId: 't1', callId: `call-${id}` },
+  status: 'running',
+  startedAt: AT,
+  ...fields,
+});
+
+/** 服务端推后台任务的增量 */
+export function pushTasks(upserts: BackgroundTask[], removes: string[] = []): void {
+  FakeWebSocket.at('/session').notify('background/changed', { upserts, removes });
+}

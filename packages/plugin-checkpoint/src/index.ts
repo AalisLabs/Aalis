@@ -96,7 +96,7 @@ function run(caps: Caps): void {
   // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
   hooks.middleware('agent:tool:before', async (data, next) => {
     const name = data.name;
-    if (name === 'exec' || name === 'exec_background' || name.startsWith('run_')) {
+    if (name === 'exec' || name.startsWith('run_')) {
       service.markExecUsed();
     }
     await next();

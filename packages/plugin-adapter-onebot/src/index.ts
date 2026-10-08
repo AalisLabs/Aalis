@@ -1199,7 +1199,12 @@ function runAdapter(caps: Caps): void {
       };
     },
 
-    async sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void> {
+    /** replyTo：引用回复的平台消息 id，只加在第一条分条前 */
+    async sendMessage(
+      sessionId: string,
+      content: string,
+      options?: { skipSplit?: boolean; replyTo?: string },
+    ): Promise<void> {
       const parsed = parseSessionId(sessionId);
       if (!parsed) {
         throw new Error(`无法解析 sessionId: ${sessionId}`);
@@ -1224,6 +1229,7 @@ function runAdapter(caps: Caps): void {
       // 进一步拆出 <image .../>：图片始终独立成条，不与文本粘连。
       const pieces = punctPieces.flatMap(p => splitImageOut(p));
 
+      let replyTo = options?.replyTo;
       for (let i = 0; i < pieces.length; i++) {
         const piece = pieces[i].trim();
         if (!piece) continue;
@@ -1232,7 +1238,9 @@ function runAdapter(caps: Caps): void {
           detailType: parsed.detailType,
           targetId: parsed.targetId,
           content: piece,
+          replyTo,
         });
+        replyTo = undefined;
 
         const sendResult = await sendActionWithRetry(state, action, params);
         // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
@@ -1377,6 +1385,7 @@ function runAdapter(caps: Caps): void {
         : `已拒绝 ${userId} 的${typeLabel}（群 ${groupId}）${reason ? `，理由: ${reason}` : ''}`;
     },
   } as PlatformAdapter & {
+    sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean; replyTo?: string }): Promise<void>;
     getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
     getSentMessages(sessionId: string, limit?: number): Array<{ messageId: string; ts: number; preview: string }>;
     forgetSentMessage(sessionId: string, messageId: string): void;
@@ -2338,7 +2347,10 @@ function runAdapter(caps: Caps): void {
       if (content.trim()) {
         logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
         try {
-          await adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' });
+          await adapter.sendMessage(msg.sessionId, content, {
+            skipSplit: msg.source !== 'agent',
+            replyTo: msg.replyTo,
+          });
           textSent = true;
           delivered.push(...inlineAttachments);
         } catch (err) {

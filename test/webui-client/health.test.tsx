@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionSummary } from '../../packages/api-session-protocol/src/index.js';
 import type { AttentionItem, LogFilter } from '../../packages/api-webui/src/index.js';
 import type { LogEntry, LogLevel } from '../../packages/core/src/index.js';
+import { SERVICE_ABSENT } from '../../packages/plugin-webui-client/src/connection.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { deferred } from '../helpers/deferred.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
@@ -11,15 +13,20 @@ import {
   type FakeRest,
   type Harness,
   installDialog,
+  listRequests,
   lists,
   optionsOf,
   pluginRow as plugin,
   renderApp,
+  requests,
+  server,
+  summary,
 } from './harness.js';
+import { AT, backgroundTask } from './items.js';
 
 // ════════════════════════════════════════════════════════════
-// 运行状况：图标栏下方（手机上第一层）的「运行状况」，角标是「需要处理」的数；页面有两个标签，概况列出「需要处理」与
-// 各适配器的连接（打开时取一次，配手动刷新），日志按级别、插件、文字筛，筛选写进地址，订阅实时日志与取历史都带上它；
+// 运行状况：图标栏下方（手机上第一层）的「运行状况」，角标是「需要处理」的数；页面有两个标签，概况列出「需要处理」、
+// 正在运行的后台工作（按会话与会话树，可停）与各适配器的连接（打开时取一次，配手动刷新），日志按级别、插件、文字筛，筛选写进地址，订阅实时日志与取历史都带上它；
 // 两个预设：「只看错误」与「审批」（提供审批服务的实例，按插件列表的 provides 找）。插件详情的「查看日志」按插件筛好
 // ════════════════════════════════════════════════════════════
 
@@ -210,6 +217,94 @@ describe('概况', () => {
     fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
     await vi.waitFor(() => expect(main.queryByRole('alert')).toBeNull());
     expect(main.queryByRole('region', { name: '平台连接' })).toBeNull();
+  });
+});
+
+describe('正在运行', () => {
+  const ENDED = { outcome: 'replied' as const, endedAt: AT + 60_000 };
+  const ROOTS = [
+    summary('r1', { title: '整理周报', background: 2, childCount: 2 }),
+    summary('r2', { title: '归档的会话', background: 1, archived: true }),
+  ];
+  const CHILDREN: Record<string, SessionSummary[]> = {
+    r1: [
+      summary('c1', { title: '子任务一', kind: 'task', parentId: 'r1', running: true, childCount: 1 }),
+      summary('c2', { title: '做完的子任务', kind: 'task', parentId: 'r1', lastTurn: ENDED }),
+    ],
+    c1: [summary('g1', { title: '孙任务', kind: 'task', parentId: 'c1', background: 1, lastTurn: ENDED })],
+  };
+  const TASKS = [
+    backgroundTask('t-root', { sessionId: 'r1', display: { kind: 'command', command: 'npm run dev' } }),
+    backgroundTask('t-grand', { sessionId: 'g1', label: 'analyze_image' }),
+    backgroundTask('t-archived', { sessionId: 'r2', label: 'http_download' }),
+    backgroundTask('t-done', { sessionId: 'r1', label: 'pdf_convert', status: 'completed', endedAt: AT + 1000 }),
+  ];
+  const handlers = (roots: SessionSummary[] = ROOTS) => ({
+    'sessions/list': lists(p => (p.background ? roots : p.parentId ? (CHILDREN[p.parentId] ?? []) : [])),
+    'background/list': () => ({ tasks: TASKS }),
+    'background/stop': () => ({}),
+    'background/stopAll': () => ({}),
+    'turn/abort': () => ({}),
+  });
+
+  it('按会话列出有后台工作的会话（归档的照样列出），每个会话下按会话树列出在跑的子会话与在跑的后台任务；会话链到它的「后台」标签', async () => {
+    app = await renderApp('/health', handlers(), rest());
+    const main = within(screen.getByRole('main'));
+    const running = await main.findByRole('list', { name: '正在运行' });
+    await within(running).findByText('孙任务');
+    const sessions = within(running).getAllByRole('link', { name: /整理周报|归档的会话/ });
+    expect(sessions.map(link => link.getAttribute('href'))).toEqual(['/s/r1/background', '/s/r2/background']);
+    expect(sessions[0].textContent).toContain('后台 2');
+    expect(sessions[1].textContent).toContain('已归档');
+    expect(listRequests()).toContainEqual({ background: true, limit: 200 });
+
+    const r1 = sessions[0].closest('li') as HTMLElement;
+    expect(within(r1).getByText('npm run dev')).toBeTruthy();
+    const child = within(r1)
+      .getByRole('link', { name: /子任务一/ })
+      .closest('li') as HTMLElement;
+    expect(within(child).getByRole('link', { name: /孙任务/ })).toBeTruthy();
+    expect(within(child).getByText('analyze_image')).toBeTruthy();
+    expect(within(r1).queryByText('做完的子任务')).toBeNull();
+    expect(within(r1).queryByText('pdf_convert')).toBeNull();
+    const r2 = sessions[1].closest('li') as HTMLElement;
+    expect(within(r2).getByText('http_download')).toBeTruthy();
+
+    act(() =>
+      server().notify('sessions/changed', { upserts: [{ ...ROOTS[1], background: 0 }], removes: [], groups: [] }),
+    );
+    expect(within(running).queryByRole('link', { name: /归档的会话/ })).toBeNull();
+  });
+
+  it('可停：后台任务停这一个，子会话停它的回合并对它全部停止，会话这一行停它下面的全部后台工作；归档的照样能停', async () => {
+    app = await renderApp('/health', handlers(), rest());
+    const main = within(screen.getByRole('main'));
+    fireEvent.click(await main.findByRole('button', { name: '停止「npm run dev」' }));
+    await vi.waitFor(() => expect(requests('background/stop')).toEqual([{ taskId: 't-root' }]));
+    fireEvent.click(main.getByRole('button', { name: '停止「子任务一」' }));
+    await vi.waitFor(() => expect(requests('turn/abort')).toEqual([{ sessionId: 'c1' }]));
+    fireEvent.click(main.getByRole('button', { name: '全部停止「归档的会话」' }));
+    await vi.waitFor(() => expect(requests('background/stopAll')).toEqual([{ sessionId: 'c1' }, { sessionId: 'r2' }]));
+    fireEvent.click(main.getByRole('button', { name: '停止「http_download」' }));
+    await vi.waitFor(() =>
+      expect(requests('background/stop')).toEqual([{ taskId: 't-root' }, { taskId: 't-archived' }]),
+    );
+  });
+
+  it('没有在跑的就不出现；会话服务不在时也不出现', async () => {
+    app = await renderApp('/health', handlers([]), rest());
+    const main = within(screen.getByRole('main'));
+    await main.findByRole('region', { name: '需要处理' });
+    await vi.waitFor(() => expect(listRequests()).toContainEqual({ background: true, limit: 200 }));
+    await act(async () => {});
+    expect(main.queryByRole('region', { name: '正在运行' })).toBeNull();
+    app.close();
+
+    app = await renderApp('/health', handlers(), rest());
+    const again = within(screen.getByRole('main'));
+    await again.findByRole('list', { name: '正在运行' });
+    act(() => server().drop(SERVICE_ABSENT));
+    await vi.waitFor(() => expect(again.queryByRole('region', { name: '正在运行' })).toBeNull());
   });
 });
 

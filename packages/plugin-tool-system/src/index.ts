@@ -1,10 +1,9 @@
-import { authority } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import { persona } from '@aalis/api-persona';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { CwdState } from './tools/cwd-state.js';
 import { registerFileTools } from './tools/file.js';
@@ -26,8 +25,6 @@ const configSchema = defineConfig({
     label: 'Shell 工具',
     fields: {
       enabled: { type: 'boolean', label: '启用 Shell 工具', default: true, onInvalid: 'error' },
-      defaultTimeout: { type: 'number', label: '默认超时 (ms)', default: 30000 },
-      maxTimeout: { type: 'number', label: '最大超时 (ms)', default: 300000 },
       maxOutputSize: { type: 'number', label: '最大输出字节', default: 65536 },
     },
   },
@@ -68,7 +65,12 @@ const configSchema = defineConfig({
     label: 'HTTP 工具',
     fields: {
       enabled: { type: 'boolean', label: '启用 HTTP 工具', default: true, onInvalid: 'error' },
-      defaultTimeout: { type: 'number', label: '默认超时 (ms)', default: 30000 },
+      defaultTimeout: {
+        type: 'number',
+        label: '默认超时 (ms)',
+        default: 30000,
+        description: 'http_request 的默认超时；http_download 不另设超时，等多久由工具执行器的让出时限管',
+      },
       maxResponseSize: { type: 'number', label: '最大响应字节', default: 1048576 },
     },
   },
@@ -81,11 +83,8 @@ const configSchema = defineConfig({
 const uses = {
   tools: optional(tools),
   logger,
-  lifecycle,
-  events,
   config,
   commands: optional(commands),
-  authority: optional(authority),
   persona: optional(persona),
   storage: optional(storage),
   process: optional(processService),
@@ -133,14 +132,10 @@ function registerSystemToolset(caps: Caps): void {
     if (storageGateway && caps.process.current !== undefined) {
       registerShellTools(systemTools, {
         logger,
-        lifecycle: caps.lifecycle,
-        events: caps.events,
-        // 调用时再取：authority 可能晚于本插件上线或换提供者；不在时只认同一身份
-        isOwner: id => caps.authority.current?.isOwner(id.platform, id.userId) ?? false,
         cwdUri,
         storage: storageGateway,
         proc: createProcessGateway(caps.process),
-        ...cfg.shell,
+        maxOutputSize: cfg.shell.maxOutputSize,
       });
       logger.info('Shell 工具已启用');
     } else {

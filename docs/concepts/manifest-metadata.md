@@ -30,20 +30,30 @@ runtime 的发现驱动（`createPluginDiscovery`）拿到定义后整批交给 
 典型入口（以 `@aalis/plugin-tools` 为准）：
 
 ```ts
-import { tools } from '@aalis/api-tools';
-import { definePlugin, logger, provide } from '@aalis/core';
+import { backgroundTasks, tools } from '@aalis/api-tools';
+import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-tools',
   displayName: '工具注册表',
   subsystem: 'agent',
-  provides: [tools],
-  uses: { logger, provide },
-  apply({ logger, provide }) {
-    provide(tools, new ToolRegistry(logger));
+  configSchema,
+  provides: [tools, backgroundTasks],
+  uses: {
+    logger, provide, events, lifecycle, config,
+    sessionManager: optional(sessionManager),
+    storage: optional(storage),
+    authority: optional(authority),
+  },
+  apply(caps) {
+    // …
+    caps.provide(tools, new ToolRegistry(caps.logger, tasks));
+    caps.provide(backgroundTasks, tasks);
   },
 });
 ```
+
+对应的 `aalis.service`：`provides` 为 `tools`、`background-tasks`；`required` 为 `config`、`events`、`lifecycle`、`logger`、`provide`；`optional` 为 `session-manager`、`storage`、`authority`。
 
 `configSchema` 由 `@aalis/schema-config` 经 declaration merging 挂到 `PluginMeta` 上，是配置的唯一声明来源。`extends` 由 `@aalis/api-webui` 挂到 `PluginMeta`，写在 `definePlugin({ extends: { events, hooks } })` 里，供前端展示；webui-server 读 `entry.definition.extends`。
 

@@ -15,7 +15,7 @@
 
 import { type HostConfig, hostConfig as hostConfigService } from '@aalis/api-host-config';
 import type { BoundTools, ToolDefinition } from '@aalis/api-tools';
-import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
+import { takenBackgroundParams, tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
 import { type BoundWebui, webuiServer } from '@aalis/api-webui';
 import {
   config as configService,
@@ -32,6 +32,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const PLUGIN_NAME = '@aalis/plugin-mcp-client';
+/** setTimeout 能表示的最长延时（毫秒），工具调用的请求超时取它 */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 /** 桥接函数用到的能力：测试只需给这两样，不必伪造整个运行时 */
 interface BridgeCaps {
@@ -368,6 +370,13 @@ export async function bridgeClientToTools(
   for (const t of mcpTools) {
     const toolName = sanitizeToolName(`mcp_${spec.id}_${t.name}`);
     const parameters = normalizeParameters(t.inputSchema);
+    // 远端工具多久结束不可知：等多久由执行器的让出时限管，停只认执行器给这次调用的中止信号。参数表里已有执行器
+    // 参数名的，执行器不会让出，不声明可转后台，请求超时照 SDK 默认（60 秒）
+    const taken = takenBackgroundParams(parameters);
+    if (taken.length > 0) {
+      caps.logger.warn(`MCP 工具 ${toolName} 的参数表里已有 ${taken.join('、')}，不转后台，请求超时照 SDK 默认`);
+    }
+    const yieldable = taken.length === 0;
 
     const definition: ToolDefinition = {
       type: 'function',
@@ -382,16 +391,19 @@ export async function bridgeClientToTools(
       definition,
       groups: [`mcp:${spec.id}`],
       ...deriveMcpToolPolicy(t.annotations, spec.visibility),
-      handler: async args => {
+      ...(yieldable ? { background: {} } : {}),
+      handler: async (args, ctx) => {
         try {
-          const result = await client.callTool({
-            name: t.name,
-            arguments: args as Record<string, unknown>,
+          // 中止时 SDK 向服务端发 notifications/cancelled。可转后台的请求超时取 setTimeout 能表示的最大值：
+          // SDK 默认的 60 秒会把长任务截断，传 Infinity 又会被 Node 当成 1 毫秒
+          const result = await client.callTool({ name: t.name, arguments: args }, undefined, {
+            signal: ctx.signal,
+            ...(yieldable ? { timeout: MAX_TIMEOUT_MS } : {}),
           });
           return formatToolResult(result, `${spec.id}/${t.name}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          return `MCP 调用 ${spec.id}/${t.name} 失败: ${msg}`;
+          return JSON.stringify({ error: `MCP 调用 ${spec.id}/${t.name} 失败: ${msg}` });
         }
       },
     });
@@ -448,8 +460,10 @@ function formatToolResult(result: unknown, source: string): string {
   });
   const body = parts.join('\n');
   // MCP server 可信不等于它回传的内容可信——抓取型 server（fetch/search）的返回体
-  // 就是外部内容，同 http_request 一样套不可信边界。错误信息不是抓取内容，不套。
-  return r.isError ? `MCP 工具返回错误:\n${body}` : wrapUntrustedContent(body, `MCP ${source}`);
+  // 就是外部内容，同 http_request 一样套不可信边界。错误信息不是抓取内容，不套，按工具报失败的约定放进 error。
+  return r.isError
+    ? JSON.stringify({ error: `MCP 工具返回错误:\n${body}` })
+    : wrapUntrustedContent(body, `MCP ${source}`);
 }
 
 export default definePlugin({

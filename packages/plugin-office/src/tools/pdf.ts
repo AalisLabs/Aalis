@@ -232,44 +232,37 @@ export function registerPdfTools(
         },
       },
     },
-    async handler(args) {
+    // 转换大文档可能很久：等多久由执行器的让出时限管，停只认执行器给这次调用的中止信号。失败一律抛出，执行器转成 error
+    background: {},
+    async handler(args, ctx) {
       const inputUri = toUri(String(args.inputPath));
       const outUri = args.outputDir ? toUri(String(args.outputDir)) : parentUri(inputUri);
       const resolveLocal = storage.resolveLocalPath?.bind(storage);
-      if (!resolveLocal) {
-        return JSON.stringify({ success: false, message: 'PDF 转换需要存储提供本地路径能力（resolveLocalPath）。' });
-      }
+      if (!resolveLocal) throw new Error('PDF 转换需要存储提供本地路径能力（resolveLocalPath）。');
+      if (!proc) throw new Error('PDF 转换需要 process 服务，请启用 @aalis/plugin-process-local。');
       let inputLocal: string;
       let outDirLocal: string;
       try {
         inputLocal = await resolveLocal(inputUri, 'read');
         outDirLocal = await resolveLocal(outUri, 'write');
       } catch (e) {
-        return JSON.stringify({ success: false, message: `无法解析本地路径: ${(e as Error).message}` });
+        throw new Error(`无法解析本地路径: ${(e as Error).message}`);
       }
 
       try {
-        if (!proc) {
-          return JSON.stringify({
-            success: false,
-            message: 'PDF 转换需要 process 服务，请启用 @aalis/plugin-process-local。',
-          });
-        }
         await proc.execFile('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDirLocal, inputLocal], {
-          timeout: 60000,
+          signal: ctx.signal,
         });
-
-        const pdfName = baseName(inputUri).replace(/\.[^.]+$/, '.pdf') || 'output.pdf';
-        const pdfUri = joinUri(outUri, pdfName);
-
-        return JSON.stringify({ success: true, path: pdfUri, message: `已转换为 PDF: ${pdfUri}` });
-        // biome-ignore lint/suspicious/noExplicitAny: catch 兜底，e 可能为任意类型
-      } catch (e: any) {
-        return JSON.stringify({
-          success: false,
-          message: `PDF 转换失败。请确保已安装 LibreOffice 且 soffice 命令可用。错误: ${e.message}`,
-        });
+      } catch (e) {
+        if (ctx.signal?.aborted) throw new Error('PDF 转换已中止');
+        throw new Error(
+          `PDF 转换失败。请确保已安装 LibreOffice 且 soffice 命令可用。错误: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
+
+      const pdfName = baseName(inputUri).replace(/\.[^.]+$/, '.pdf') || 'output.pdf';
+      const pdfUri = joinUri(outUri, pdfName);
+      return JSON.stringify({ success: true, path: pdfUri, message: `已转换为 PDF: ${pdfUri}` });
     },
   });
 }

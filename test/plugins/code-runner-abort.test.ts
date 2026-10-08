@@ -16,9 +16,11 @@ import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 代码执行接住中止：run_python、run_javascript 在沙箱与无沙箱两条路径上都能被停止键停掉。
-//   - handler 把 callCtx.signal 交给 runCode，无沙箱路径经 execFile、沙箱路径经 code-sandbox 的 run 交给 process 服务；
-//   - 被信号结束的才报 aborted；中止前已正常退出的按实际退出回报、注明回合已中止（与 exec 同一口径）。
+// 代码执行声明可转后台，只认执行器给这次调用的中止信号，不另设超时：run_python、run_javascript 在沙箱与无沙箱
+// 两条路径上都能被中止停掉。
+//   - handler 把 callCtx.signal 交给 runCode，无沙箱路径经 execFile、沙箱路径经 code-sandbox 的 run 交给 process 服务，
+//     两条路径都不带超时；
+//   - 被信号结束的才报 aborted；中止前已正常退出的按实际退出回报、注明调用已中止（与 exec 同一口径）。
 // 真实进程的断言看心跳文件而不是 pid：Linux bwrap 下记下的 pid 是外层启动器，解释器不在我们的进程组里，
 // 只查 pid 已不存在测不出沙箱内的进程是否真的停了。起真实进程的用例只在 POSIX 跑。
 // ════════════════════════════════════════════════════════════
@@ -170,8 +172,6 @@ async function applyRunner(opts: {
     config: {
       python: { enabled: true, interpreter: pythonPath ?? 'python3' },
       javascript: { enabled: true, interpreter: process.execPath },
-      defaultTimeout: 30_000,
-      maxTimeout: 60_000,
       maxOutputSize: 65_536,
       workingDirectory: 'workspace:/',
       sandbox: { mode: opts.mode, network: 'deny' },
@@ -204,7 +204,7 @@ async function call(handler: Handler, args: Record<string, unknown>, signal?: Ab
 }
 
 /**
- * 脚本写心跳时回合中止：3 秒内返回，之后再等 1 秒心跳文件不再增长。
+ * 脚本写心跳时中止：3 秒内返回，之后再等 1 秒心跳文件不再增长。
  * `onlyAborted` 为 false 时（Linux bwrap：外层启动器可能自行处理 SIGTERM、以退出码结束）也接受 note 一支，心跳断言不放宽。
  */
 async function expectStopsOnAbort(handler: Handler, code: string, onlyAborted = true): Promise<void> {
@@ -214,9 +214,8 @@ async function expectStopsOnAbort(handler: Handler, code: string, onlyAborted = 
   expect(await waitFor(() => heartbeats() >= 2, 10_000)).toBe(true);
   ac.abort();
   const res = await within(pending, 3000);
-  if (onlyAborted || res.note === undefined) expect(res).toMatchObject({ aborted: true, message: '代码已随回合中止' });
-  else expect(res.note).toBe('回合已中止');
-  expect(res.timedOut).toBeUndefined();
+  if (onlyAborted || res.note === undefined) expect(res).toMatchObject({ aborted: true, message: '代码已中止' });
+  else expect(res.note).toBe('调用已中止');
   const settled = heartbeats();
   await sleep(1000);
   expect(heartbeats()).toBe(settled);
@@ -224,7 +223,7 @@ async function expectStopsOnAbort(handler: Handler, code: string, onlyAborted = 
 
 describe('代码执行接住中止：无沙箱路径（POSIX，真实进程）', () => {
   it.skipIf(!posix)(
-    '安全：run_javascript 运行中回合中止，3 秒内返回 aborted，心跳随即停止',
+    '安全：run_javascript 运行中中止，3 秒内返回 aborted，心跳随即停止',
     { timeout: 30_000 },
     async () => {
       const { run_javascript } = await applyRunner({ mode: 'none' });
@@ -233,7 +232,7 @@ describe('代码执行接住中止：无沙箱路径（POSIX，真实进程）',
   );
 
   it.skipIf(!posix || !pythonPath)(
-    '安全：run_python 运行中回合中止，3 秒内返回 aborted，心跳随即停止',
+    '安全：run_python 运行中中止，3 秒内返回 aborted，心跳随即停止',
     { timeout: 30_000 },
     async () => {
       const { run_python } = await applyRunner({ mode: 'none' });
@@ -241,12 +240,12 @@ describe('代码执行接住中止：无沙箱路径（POSIX，真实进程）',
     },
   );
 
-  it.skipIf(!posix)('调用前回合已中止：返回 aborted，脚本没有运行', async () => {
+  it.skipIf(!posix)('调用前已中止：返回 aborted，脚本没有运行', async () => {
     const { run_javascript } = await applyRunner({ mode: 'none' });
     const ac = new AbortController();
     ac.abort();
     const res = await within(call(run_javascript, { code: JS_HEARTBEAT }, ac.signal), 3000);
-    expect(res).toMatchObject({ aborted: true, message: '代码已随回合中止', exitCode: -1 });
+    expect(res).toMatchObject({ aborted: true, message: '代码已中止', exitCode: -1 });
     expect(res.error).toBeUndefined();
     expect(pids).toEqual([]);
     await sleep(300);
@@ -255,7 +254,7 @@ describe('代码执行接住中止：无沙箱路径（POSIX，真实进程）',
 });
 
 describe('代码执行接住中止：沙箱路径（真实 code-sandbox-os，POSIX）', () => {
-  it.skipIf(!posix)('安全：run_javascript 运行中回合中止，3 秒内返回，心跳随即停止', { timeout: 30_000 }, async ctx => {
+  it.skipIf(!posix)('安全：run_javascript 运行中中止，3 秒内返回，心跳随即停止', { timeout: 30_000 }, async ctx => {
     const proc = new RecordingProcess(localStorage());
     const sandbox = await applySandbox(proc);
     if (!sandbox.available) ctx.skip(); // 本机没有沙箱后端
@@ -264,7 +263,7 @@ describe('代码执行接住中止：沙箱路径（真实 code-sandbox-os，POS
   });
 
   it.skipIf(!posix || !pythonPath)(
-    '安全：run_python 运行中回合中止，3 秒内返回，心跳随即停止',
+    '安全：run_python 运行中中止，3 秒内返回，心跳随即停止',
     { timeout: 30_000 },
     async ctx => {
       const proc = new RecordingProcess(localStorage());
@@ -296,7 +295,7 @@ function fakeSandbox(run: (req: SandboxRunRequest) => Promise<ExecResult>): {
 }
 
 describe('代码执行接住中止：替身沙箱', () => {
-  it('安全：两个工具交给 code-sandbox 的 signal 就是调用方的 callCtx.signal', async () => {
+  it('安全：两个工具交给 code-sandbox 的 signal 就是调用方的 callCtx.signal，不带超时', async () => {
     const fake = fakeSandbox(async () => ({ code: 0, signal: null, stdout: '', stderr: '' }));
     const { run_python, run_javascript } = await applyRunner({ mode: 'auto', sandbox: fake.service });
     const ac = new AbortController();
@@ -305,9 +304,10 @@ describe('代码执行接住中止：替身沙箱', () => {
     expect(fake.requests).toHaveLength(2);
     expect(fake.requests[0].signal).toBe(ac.signal);
     expect(fake.requests[1].signal).toBe(ac.signal);
+    expect(fake.requests.map(r => r.timeout)).toEqual([undefined, undefined]);
   });
 
-  it('脚本已正常退出、落定前回合中止：按实际退出回报并注明回合已中止，不报 aborted', async () => {
+  it('脚本已正常退出、落定前中止：按实际退出回报并注明调用已中止，不报 aborted', async () => {
     const ac = new AbortController();
     const fake = fakeSandbox(async () => {
       ac.abort(); // 退出之后、落定之前中止到达
@@ -316,11 +316,11 @@ describe('代码执行接住中止：替身沙箱', () => {
     const { run_python } = await applyRunner({ mode: 'auto', sandbox: fake.service });
     const res = await call(run_python, { code: 'print(1)' }, ac.signal);
     expect(res.aborted).toBeUndefined();
-    expect(res.message, '没被中止就不说代码已随回合中止').toBeUndefined();
-    expect(res).toMatchObject({ exitCode: 0, stdout: 'zz-slice1-done\n', note: '回合已中止' });
+    expect(res.message, '没被中止就不说代码已中止').toBeUndefined();
+    expect(res).toMatchObject({ exitCode: 0, stdout: 'zz-slice1-done\n', note: '调用已中止' });
   });
 
-  it('中止后宽限到点被 SIGKILL 结束：报 aborted，不报 timedOut', async () => {
+  it('中止后宽限到点被 SIGKILL 结束：报 aborted', async () => {
     const ac = new AbortController();
     const fake = fakeSandbox(async () => {
       ac.abort();
@@ -329,7 +329,42 @@ describe('代码执行接住中止：替身沙箱', () => {
     });
     const { run_javascript } = await applyRunner({ mode: 'auto', sandbox: fake.service });
     const res = await call(run_javascript, { code: 'for (;;) {}' }, ac.signal);
-    expect(res).toMatchObject({ aborted: true, message: '代码已随回合中止' });
-    expect(res.timedOut).toBeUndefined();
+    expect(res).toMatchObject({ aborted: true, message: '代码已中止' });
+  });
+});
+
+describe('代码执行的声明', () => {
+  it('run_python、run_javascript 声明可转后台（让出时限用执行器的默认），参数只有 code', async () => {
+    const registered: Array<Omit<RegisteredTool, 'pluginName'>> = [];
+    await codeRunner.apply({
+      tools: stubBoundTools({ onRegister: t => registered.push(t) }),
+      storage: ref(view(localStorage())),
+      proc: ref([]),
+      codeSandbox: ref([]),
+      logger: silentLogger(),
+      config: {},
+    });
+    expect(registered.map(t => [t.definition.function.name, t.background])).toEqual([
+      ['run_python', {}],
+      ['run_javascript', {}],
+    ]);
+    for (const tool of registered)
+      expect(Object.keys(tool.definition.function.parameters.properties)).toEqual(['code']);
+  });
+
+  it.skipIf(!posix)('无沙箱路径交给 execFile 的是调用方的 signal，不带超时', async () => {
+    const execOpts: Array<SpawnOptions | undefined> = [];
+    class CapturingProcess extends RecordingProcess {
+      override execFile(cmd: string, args: readonly string[], opts?: SpawnOptions): Promise<ExecResult> {
+        execOpts.push(opts);
+        return super.execFile(cmd, args, opts);
+      }
+    }
+    const { run_javascript } = await applyRunner({ mode: 'none', proc: new CapturingProcess(localStorage()) });
+    const ac = new AbortController();
+    expect(await call(run_javascript, { code: 'console.log(1)' }, ac.signal)).toMatchObject({ exitCode: 0 });
+    expect(execOpts).toHaveLength(1);
+    expect(execOpts[0]?.signal).toBe(ac.signal);
+    expect(execOpts[0]?.timeout).toBeUndefined();
   });
 });
