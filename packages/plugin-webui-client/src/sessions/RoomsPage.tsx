@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
-import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { Panel } from '../components/Panel';
 import { Table, type TableColumn } from '../components/Table';
 import { listTime } from '../format';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { groupFromParams, inGroup, paths, type RoomGroupAddress } from '../routes';
 import { Main } from '../shell/Shell';
 import { useSessionActions } from './actions';
@@ -51,6 +52,7 @@ export function RoomsPage() {
 
 function RoomTable({ query }: { query: RoomGroupAddress }) {
   const list = useSessionList(query);
+  const sessions = useProvider(SESSION_PROTOCOL);
   const actions = useSessionActions();
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -125,12 +127,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
       <Panel icon={MessagesSquare} title={title} back={paths.home}>
         <div className="rooms-page">
           {list.error ? (
-            <EmptyState
-              tone="danger"
-              title="房间读取失败"
-              description={list.error.message}
-              action={<Button onClick={list.retry}>重试</Button>}
-            />
+            <FetchError what="房间" error={list.error} retry={list.retry} source={sessions} />
           ) : (
             list.sessions && (
               <Table

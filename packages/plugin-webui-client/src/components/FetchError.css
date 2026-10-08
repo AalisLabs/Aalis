@@ -1,0 +1,19 @@
+/* 写成一行：原因接在后面，按钮跟在原因后面，窄时折到下一行；字与所在栏的列表行对齐 */
+.fetch-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-danger-text);
+  overflow-wrap: anywhere;
+  padding-inline: var(--row-inset, 0);
+}
+
+.fetch-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}

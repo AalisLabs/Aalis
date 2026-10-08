@@ -1,3 +1,4 @@
+import type { SessionMethodResult } from '@aalis/api-session-protocol';
 import {
   createContext,
   type FormEvent,
@@ -12,6 +13,7 @@ import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import './actions.css';
 
 // 会话的改名、归档、恢复与删除：列表行、房间表与会话头共用一处对话框与回报。
@@ -21,6 +23,8 @@ interface SessionRef {
   id: string;
   title: string;
 }
+
+type BatchResult = SessionMethodResult<'session/batch'>;
 
 interface SessionActions {
   rename(session: SessionRef): void;
@@ -43,12 +47,21 @@ const named = (sessions: readonly SessionRef[]) =>
 export function SessionActionsProvider({ children }: { children: ReactNode }) {
   const client = useSessionClient();
   const toast = useToast();
+  const source = useProvider(SESSION_PROTOCOL);
   const [renaming, setRenaming] = useState<SessionRef>();
   const [removing, setRemoving] = useState<readonly SessionRef[]>();
 
   const failed = useCallback(
-    (verb: string, err: unknown) => toast({ kind: 'danger', text: `${verb}失败：${(err as Error).message}` }),
-    [toast],
+    (verb: string, err: unknown) => toast({ kind: 'danger', text: `${verb}失败：${(err as Error).message}`, source }),
+    [toast, source],
+  );
+  /** 批量操作里有没做成的：写数目与第一个的原因 */
+  const partial = useCallback(
+    (verb: string, { failed: missed }: BatchResult) => {
+      if (missed.length === 0) return;
+      toast({ kind: 'danger', text: `有 ${missed.length} 个会话没能${verb}：${missed[0].message}`, source });
+    },
+    [toast, source],
   );
 
   const unarchive = useCallback(
@@ -67,9 +80,7 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
       try {
         const result = await client.request('session/batch', { op: 'archive', ids: sessions.map(s => s.id) });
         const done = sessions.filter(s => !result.failed.some(f => f.sessionId === s.id));
-        if (result.failed.length > 0) {
-          toast({ kind: 'danger', text: `有 ${result.failed.length} 个会话没能归档：${result.failed[0].message}` });
-        }
+        partial('归档', result);
         if (done.length > 0) {
           toast({
             kind: 'success',
@@ -81,7 +92,7 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
         failed('归档', err);
       }
     },
-    [client, toast, failed, unarchive],
+    [client, toast, failed, partial, unarchive],
   );
 
   const actions = useMemo<SessionActions>(
@@ -98,7 +109,7 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
     <Context.Provider value={actions}>
       {children}
       <RenameDialog target={renaming} onClose={() => setRenaming(undefined)} />
-      <DeleteDialog targets={removing} onClose={() => setRemoving(undefined)} />
+      <DeleteDialog targets={removing} failed={failed} partial={partial} onClose={() => setRemoving(undefined)} />
     </Context.Provider>
   );
 }
@@ -164,20 +175,23 @@ function RenameDialog({ target, onClose }: { target?: SessionRef; onClose(): voi
   );
 }
 
-function DeleteDialog({ targets, onClose }: { targets?: readonly SessionRef[]; onClose(): void }) {
+interface DeleteDialogProps {
+  targets?: readonly SessionRef[];
+  failed(verb: string, err: unknown): void;
+  partial(verb: string, result: BatchResult): void;
+  onClose(): void;
+}
+
+function DeleteDialog({ targets, failed, partial, onClose }: DeleteDialogProps) {
   const client = useSessionClient();
-  const toast = useToast();
   const [busy, setBusy] = useState(false);
 
   const deleteSessions = async (sessions: readonly SessionRef[]) => {
     setBusy(true);
     try {
-      const result = await client.request('session/batch', { op: 'delete', ids: sessions.map(s => s.id) });
-      if (result.failed.length > 0) {
-        toast({ kind: 'danger', text: `有 ${result.failed.length} 个会话没能删除：${result.failed[0].message}` });
-      }
+      partial('删除', await client.request('session/batch', { op: 'delete', ids: sessions.map(s => s.id) }));
     } catch (err) {
-      toast({ kind: 'danger', text: `删除失败：${(err as Error).message}` });
+      failed('删除', err);
     } finally {
       setBusy(false);
       onClose();

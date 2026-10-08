@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
 import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
+import { FetchError, LogsLink } from '../components/FetchError';
 import { List, ListItem } from '../components/List';
 import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
@@ -21,7 +22,7 @@ import { Main, useShell } from '../shell/Shell';
 import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
-import { labelOf, type PluginRow, usePlugins } from './list';
+import { labelOf, type PluginRow, useHost, usePlugins } from './list';
 import { markerOf, statusOf } from './status';
 import './PluginDetail.css';
 
@@ -73,12 +74,7 @@ export function PluginDetail() {
     <Main>
       <Panel title="插件" back={paths.plugins}>
         {error ? (
-          <EmptyState
-            tone="danger"
-            title="插件列表没取到"
-            description={error.message}
-            action={<Button onClick={() => void refresh()}>重试</Button>}
-          />
+          <FetchError what="插件列表" error={error} retry={() => void refresh()} />
         ) : (
           plugins && (
             <EmptyState
@@ -115,7 +111,7 @@ function Detail({ row }: { row: PluginRow }) {
 }
 
 function Summary({ row }: { row: PluginRow }) {
-  const action = usePluginAction();
+  const action = usePluginAction(row.instanceId);
   const { busy, run } = action;
   const toast = useToast();
   const navigate = useNavigate();
@@ -170,9 +166,7 @@ function Summary({ row }: { row: PluginRow }) {
             </Button>
           </>
         )}
-        <ButtonLink to={paths.healthLogs({ plugin: row.instanceId })} variant="text">
-          查看日志
-        </ButtonLink>
+        <LogsLink source={row.instanceId} />
         {row.instanceId === row.name ? (
           <Button variant="text" danger disabled={locked} onClick={() => setUninstalling(true)}>
             卸载
@@ -236,6 +230,7 @@ function RemoveInstanceDialog({ target, current, action, onClose }: RemoveInstan
         onClose();
         if (plugin.instanceId === current.instanceId) navigate(paths.plugin(current.name));
       },
+      plugin.instanceId,
     );
   return (
     <Dialog
@@ -389,7 +384,8 @@ function Pages({ row }: { row: PluginRow }) {
 /** 多开的插件：列出全部实例，新建与移除（主实例不能移除） */
 function Instances({ row }: { row: PluginRow }) {
   const { plugins } = usePlugins();
-  const action = usePluginAction();
+  const host = useHost();
+  const action = usePluginAction(row.instanceId);
   const { busy, run } = action;
   const toast = useToast();
   const navigate = useNavigate();
@@ -428,6 +424,7 @@ function Instances({ row }: { row: PluginRow }) {
         setSuffix('');
         navigate(paths.plugin(reply.instanceId));
       },
+      host,
     );
   };
 

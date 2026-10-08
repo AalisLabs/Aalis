@@ -33,6 +33,7 @@ import {
   prepareLLMMessages,
   selfInitiatedActor,
   WellKnownKinds,
+  WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -128,6 +129,30 @@ describe('message-archive：宿主通知归档', () => {
     expect(JSON.stringify(stored)).not.toContain(SENTINEL);
     await vi.waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0].archivedMessage).toBe(message);
+  });
+
+  it('通知的 id 与带给界面的事实按登记的键记下；调用者与回复引用不记', async () => {
+    const app = newApp();
+    await registerHubs(app);
+    await app.plugin(memoryInMemory);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugins.idle();
+    const host = app.bind({ messageArchive });
+    const facts = { tool: 'zz_tool', status: 'failed', exitCode: 2, durationMs: 1500 };
+    const { message } = await host.messageArchive.require().archiveIncoming(
+      hostNoticeIncoming({
+        source: 'bg:bg_1',
+        hostNotice: { kind: 'background-task', id: 'bg_1', callerUserId: '30002', replyTo: 'zz-msg-1', facts },
+      }),
+    );
+    const K = WellKnownMetadataKeys;
+    expect(message.metadata).toEqual({
+      [K.Platform]: 'onebot',
+      [K.Source]: 'bg:bg_1',
+      [K.HostNoticeKind]: 'background-task',
+      [K.HostNoticeId]: 'bg_1',
+      [K.HostNoticeFacts]: facts,
+    });
   });
 
   it('flow-control 禁言期吞掉宿主通知：影子归档写成 notice，不含不可信段', async () => {

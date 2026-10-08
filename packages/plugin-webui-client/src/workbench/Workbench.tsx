@@ -8,7 +8,7 @@ import { TaskLog, taskName } from '../background/Background';
 import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
-import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
@@ -16,6 +16,7 @@ import { useToast } from '../components/Toast';
 import { useConnection, useFeatures, useSessionClient } from '../connection';
 import { AttentionSummary } from '../health/AttentionList';
 import { composing, shortcutLabel } from '../keys';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { RequestError, unlessLost } from '../protocol/session-client';
 import { paths, useSessionAddress } from '../routes';
 import { useSessionActions } from '../sessions/actions';
@@ -96,6 +97,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const goBack = useBack();
   const actions = useSessionActions();
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const live = useLiveSession(sessionId);
   const settings = useSettingRows(useMemo(() => ({ sessionId }), [sessionId]));
   const composer = useRef<ComposerHandle>(null);
@@ -122,9 +124,9 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
     client.request('turn/abort', { sessionId, ...(turnId === undefined ? {} : { turnId }) }).catch((err: Error) => {
       // 这一轮已经结束了
       if (err instanceof RequestError && err.reason === 'expected-turn-mismatch') return;
-      toast({ kind: 'danger', text: `停止失败：${err.message}` });
+      toast({ kind: 'danger', text: `停止失败：${err.message}`, source: sessions });
     });
-  }, [client, sessionId, turnId, toast]);
+  }, [client, sessionId, turnId, toast, sessions]);
 
   // Esc 停止正在跑的一轮；弹层（对话框、菜单、抽屉）先拦下自己的 Esc
   useEffect(() => {
@@ -178,7 +180,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const compress = () =>
     client
       .request('session/compress', { sessionId })
-      .catch((err: Error) => toast({ kind: 'danger', text: `压缩失败：${err.message}` }));
+      .catch((err: Error) => toast({ kind: 'danger', text: `压缩失败：${err.message}`, source: sessions }));
 
   const foldLabel = fold.all ? '全部折叠' : '全部展开';
   const toggleFold = () => fold.setAll(!fold.all);
@@ -260,12 +262,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
         >
           <SessionGate>
             {live.error ? (
-              <EmptyState
-                tone="danger"
-                title="会话没能打开"
-                description={live.error.message}
-                action={<Button onClick={live.retry}>重试</Button>}
-              />
+              <FetchError what="会话" error={live.error} retry={live.retry} source={sessions} />
             ) : (
               summary && (
                 <Timeline

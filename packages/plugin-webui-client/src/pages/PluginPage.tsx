@@ -2,13 +2,14 @@ import type { PageRef, PageView } from '@aalis/api-webui';
 import { CircleAlert, Pin, RotateCw } from 'lucide-react';
 import { useReducer, useState } from 'react';
 import { useParams } from 'react-router';
-import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
 import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { useToast } from '../components/Toast';
 import { FramePage } from '../frame/FramePage';
+import { useHost } from '../plugins/list';
 import { paths } from '../routes';
 import { Main } from '../shell/Shell';
 import { PageContent } from './PageContent';
@@ -40,16 +41,8 @@ export function PluginPage() {
 /** 地址里的页面不在页面表里：页面表没取到时写原因、可以重试，取到了是所属插件停用了；还在取时什么都不显示 */
 export function PageMissing({ instance }: { instance: string }) {
   const { pages, pagesError, retry } = usePages();
-  if (pagesError) {
-    return (
-      <EmptyState
-        tone="danger"
-        title="页面没取到"
-        description={pagesError.message}
-        action={<Button onClick={retry}>重试</Button>}
-      />
-    );
-  }
+  const host = useHost();
+  if (pagesError) return <FetchError what="页面" error={pagesError} retry={retry} source={host} />;
   return pages ? <PageGone instance={instance} /> : null;
 }
 
@@ -93,6 +86,7 @@ function OpenPage({ page }: { page: PageView }) {
 function PinButton({ page }: { page: PageView }) {
   const { layout, layoutError, retry, changeLayout } = usePages();
   const toast = useToast();
+  const host = useHost();
   const [busy, setBusy] = useState(false);
   if (!layout) {
     return layoutError ? (
@@ -110,7 +104,9 @@ function PinButton({ page }: { page: PageView }) {
       onClick={() => {
         setBusy(true);
         changeLayout({ op: pinned ? 'unpin' : 'pin', page: ref })
-          .catch((err: Error) => toast({ kind: 'danger', text: `${pinned ? '取消固定' : '固定'}失败：${err.message}` }))
+          .catch((err: Error) =>
+            toast({ kind: 'danger', text: `${pinned ? '取消固定' : '固定'}失败：${err.message}`, source: host }),
+          )
           .finally(() => setBusy(false));
       }}
     />

@@ -7,7 +7,9 @@
 
 持久化会话消息（入站消息、助手回复、平台 notice 等）以供检索；入站消息落库前会把发送者前缀（webui、cli 平台除外）、引用回复内容和附件描述合进归档文本。注册 `message-archive` 服务（`MessageArchiveService`，契约见 `@aalis/api-message-archive`），提供 `saveMessage` / `archiveIncoming` / `archiveNotice` / `findByMessageId` 四个方法。本插件不自行存储，所有写入与读取均委派给 `memory` 服务（必需依赖），且每次调用时懒查服务引用。入站消息带附件且 `_attachmentDescriptions` 尚未预设时，调用可选的 `media` 服务的 `processMessage` 识别附件。识别对传入的消息对象做，结果写回入参：`processMessage` 按消息对象只处理一次，触发判定已启动的识别在这里命中（在途则等它），不再识别第二遍。
 
-`archiveIncoming` 按消息种类定角色：代发任务（`triggerType: 'proactive'`）落成 `role: 'notice'`、`kind: 'cross-session-delegation'`；宿主通知（带 `hostNotice`）落成 `role: 'notice'`、`kind: 'host-notice'`，不带 `name`，`metadata.hostNoticeKind` 记通知子类，`metadata.source` 照常写。宿主通知只归档 `content`：注入方包好的不可信段 `hostNotice.untrusted` 不写进消息也不写进 metadata。归档的 notice 在出口转成 system，之后这个房间每一轮都看得到，不可信段只能在注入的那一轮出现。其余入站消息落成 `role: 'user'`。三种都照常发 `inbound:message:archived`，下游按 `kind` 或 `hostNotice` 自行跳过。
+`archiveIncoming` 按消息种类定角色：代发任务（`triggerType: 'proactive'`）落成 `role: 'notice'`、`kind: 'cross-session-delegation'`；宿主通知（带 `hostNotice`）落成 `role: 'notice'`、`kind: 'host-notice'`，不带 `name`，元数据记通知的子类、id 与给界面的事实（见下段），`metadata.source` 照常写。宿主通知只归档 `content`：注入方包好的不可信段 `hostNotice.untrusted` 不写进消息也不写进 metadata。归档的 notice 在出口转成 system，之后这个房间每一轮都看得到，不可信段只能在注入的那一轮出现。其余入站消息落成 `role: 'user'`。三种都照常发 `inbound:message:archived`，下游按 `kind` 或 `hostNotice` 自行跳过。
+
+归档文本是给模型看的。元数据按 schema-message 登记的键（`WellKnownMetadataKeys`，见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)）另记说话人（`Platform`、`UserId`、`Nickname`）、来源（`Source`）、宿主通知的子类、id 与给界面的事实（`HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`），以及给人看的两样：发言人写的话（`SpokenContent`，入站消息的 `content`，只在与归档文本不同时记）与附件清单（`Attachments`，每项是种类、名字与地址）。附件的地址先取它的 `data`：网址原样记；相对的存储路径（`<根>/路径`）先归一成存储地址，存储地址只在根在存储服务的根表里时记（存储服务不在时一个也不记）。`data` 不是地址时（内联数据、本机路径、预处理器换上的私有引用，如文件读取插件的 `aalis-file://<id>`），按同样的规则取预处理器给它写的描述里同种附件的引用（`formatAttachmentRef` 的写法，如媒体识别落盘后写的）；都没有时只记种类与名字。会话服务回看历史与实时推送的提问取这两样。
 
 ## 插件声明
 
@@ -20,6 +22,7 @@ export default definePlugin({
   uses: {
     memory,
     media: optional(media),
+    storage: optional(storage),
     events,
     logger,
     config,
@@ -42,4 +45,5 @@ export default definePlugin({
 - 服务契约 `@aalis/api-message-archive`：[services/message-archive.md](../services/message-archive.md)
 - 底层存储 `memory` 服务：[api/api-memory.md](../api/api-memory.md)
 - 附件识别 `media` 服务：[plugins/plugin-media.md](./plugin-media.md)
+- 存储地址的根表 `storage` 服务：[concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)
 - 消息到 LLM 的处理流水线：[concepts/message-llm-pipeline.md](../concepts/message-llm-pipeline.md)

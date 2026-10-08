@@ -1,6 +1,9 @@
+import { sanitizeForCard } from '@aalis/api-approval';
 import type { SessionItem } from '@aalis/api-session-protocol';
+import { BACKGROUND_TASK_NOTICE, type BackgroundTaskNoticeFacts } from '@aalis/api-tools';
 import { Info, LoaderCircle, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
+import { Ending } from '../background/Background';
 import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
@@ -9,6 +12,7 @@ import { useToast } from '../components/Toast';
 import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
 import { clockTime, tokens } from '../format';
 import { Markdown } from '../markdown/Markdown';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { Attachments } from './Attachments';
 import type { TimelineItem } from './live-session';
 import { RewindDialog, type RewindTarget } from './Rewind';
@@ -19,7 +23,8 @@ import './Timeline.css';
 // 相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间。
 // 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
 // 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮末尾那一组，不收，免得藏掉要看的东西；写给用户的正文不收。
-// 什么都没做就没有回复的一轮只写一行「没有回复」，中间只隔着提问的几轮合成一行「N 轮没有回复」，房间不刷屏靠合并
+// 什么都没做就没有回复的一轮只写一行「没有回复」，中间只隔着提问的几轮合成一行「N 轮没有回复」，房间不刷屏靠合并。
+// 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 
@@ -199,7 +204,15 @@ export function Timeline(props: TimelineProps) {
               last={index === blocks.length - 1}
               silent={silent[index]}
               onRewind={scope =>
-                setRewinding({ turnId: block.turnId as string, scope, prompt: promptOf(blocks, index) })
+                setRewinding({
+                  turnId: block.turnId as string,
+                  scope,
+                  prompt: promptOf(blocks, index),
+                  // 按整轮判：一轮在跑时插进来的消息把它隔成几段，回滚撤销的是整轮
+                  backgrounded: items.some(
+                    item => item.turnId === block.turnId && item.kind === 'tool-call' && item.taskId !== undefined,
+                  ),
+                })
               }
             />
           </Fragment>
@@ -349,7 +362,9 @@ function Entry({ item, last, ...props }: EntryProps) {
           openLog={props.openLog}
         />
       );
-    case 'notice':
+    case 'notice': {
+      const facts = taskNoticeFacts(item);
+      if (facts) return <TaskNotice facts={facts} taskId={item.noticeId} openLog={props.openLog} />;
       return (
         <Notice
           item={item}
@@ -358,6 +373,7 @@ function Entry({ item, last, ...props }: EntryProps) {
           continuable={item.canContinue === true && last && !props.running}
         />
       );
+    }
   }
 }
 
@@ -448,6 +464,39 @@ function Reasoning({ item, streaming, open, onToggle }: ReasoningProps) {
   );
 }
 
+/** 后台任务结束通知带的事实；不是结束通知或事实不合 api-tools 约定的形状时没有，按普通通知画 */
+function taskNoticeFacts({ topic, facts }: Item<'notice'>): BackgroundTaskNoticeFacts | undefined {
+  if (topic !== BACKGROUND_TASK_NOTICE || !facts) return undefined;
+  const { tool, status, durationMs, exitCode } = facts;
+  if (typeof tool !== 'string' || (status !== 'completed' && status !== 'failed') || typeof durationMs !== 'number') {
+    return undefined;
+  }
+  return { tool, status, durationMs, ...(typeof exitCode === 'number' ? { exitCode } : {}) };
+}
+
+/** 结束通知：一行写工具名、结局与用时；登记表里还有这个任务时点开它的日志 */
+function TaskNotice({
+  facts,
+  taskId,
+  openLog,
+}: {
+  facts: BackgroundTaskNoticeFacts;
+  taskId?: string;
+  openLog(taskId: string): void;
+}) {
+  const { tasks } = useBackground();
+  const task = taskId === undefined ? undefined : tasks?.get(taskId);
+  return (
+    <button type="button" className="tool-line" disabled={!task} onClick={task && (() => openLog(task.id))}>
+      <TOOL_ICONS.generic aria-hidden />
+      <span className="tool-line-text">后台任务 {sanitizeForCard(facts.tool)}</span>
+      <span className="tool-line-status">
+        <Ending end={facts} took={facts.durationMs} />
+      </span>
+    </button>
+  );
+}
+
 interface NoticeProps {
   item: Item<'notice'>;
   sessionId: string;
@@ -460,6 +509,7 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
   const client = useSessionClient();
   const features = useFeatures();
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const [busy, setBusy] = useState(false);
   const Icon = streaming ? LoaderCircle : Info;
   return (
@@ -476,7 +526,7 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
             setBusy(true);
             client
               .request('turn/continue', { sessionId })
-              .catch((err: Error) => toast({ kind: 'danger', text: `继续失败：${err.message}` }))
+              .catch((err: Error) => toast({ kind: 'danger', text: `继续失败：${err.message}`, source: sessions }))
               .finally(() => setBusy(false));
           }}
         >

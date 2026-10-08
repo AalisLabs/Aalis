@@ -5,7 +5,7 @@
 
 ## 概述
 
-通过 LLM 从对话中提取关于用户的长期事实（喜好、经历、关系、近况），按 `platform:userId` 落库到 memory metadata 的 `user:profile` namespace，并在 LLM 调用前以 system 消息的形式注入当前轮上下文（见下文 `turn-context` 槽）。`plugin-message-archive` 落库入站消息后发出 `inbound:message:archived` 事件，本插件据此按会话和用户计数（驱动事实提取），并累加旁观关系增量（`relationIncrementWitness` 为 0 时不加分，互动次数与最近互动时戳照记）；`agent:input:before` 中间件在触发回复时按 triggerType 叠加 direct / immediate / interval 增量。档案注入经 `agent:prompt` 贡献点的 `turn-context` 槽，落在对话历史之后，顺序为第三方行为指令、主发言者档案、其他参与者摘要。第三方行为指令存于独立 namespace `aalis:instructions`，按 persona 名分堆。另注册 `user_profile_lookup` 工具（按 `user_key`，或按 `platform` 加 `user_id` 查一个用户的档案）与 `profile` / `instruct` 两组命令，并以 type `user-profile` 参与统一的 `memory:clear`：仅在 scope 为 all 时清空全部档案（会话级清除不动档案），并一并清空 `aalis:instructions`（与 `enableInstructions` 是否开启无关）。
+通过 LLM 从对话中提取关于用户的长期事实（喜好、经历、关系、近况），按 `platform:userId` 落库到 memory metadata 的 `user:profile` namespace，并在 LLM 调用前以 system 消息的形式注入当前轮上下文（见下文 `turn-context` 槽）。`plugin-message-archive` 落库入站消息后发出 `inbound:message:archived` 事件，本插件据此按会话和用户计数（驱动事实提取），并累加旁观关系增量（`relationIncrementWitness` 为 0 时不加分，互动次数与最近互动时戳照记）；`agent:input:before` 中间件在触发回复时按 triggerType 叠加 direct / immediate / interval 增量。档案注入经 `agent:prompt` 贡献点的 `turn-context` 槽，落在对话历史之后，顺序为第三方行为指令、主发言者档案、其他参与者摘要。第三方行为指令存于独立 namespace `aalis:instructions`，按 persona 名分堆。另注册 `user_profile_lookup` 工具（按 `user_key`，或按 `platform` 加 `user_id` 查一个用户的档案）与 `profile` / `instruct` 两组命令，装了 webui-server 时提供「用户档案」页（见下文），并以 type `user-profile` 参与统一的 `memory:clear`：仅在 scope 为 all 时清空全部档案（会话级清除不动档案），并一并清空 `aalis:instructions`（与 `enableInstructions` 是否开启无关）。
 
 不带 `userId` 的入站消息（如宿主通知）不计数，也不写档案、不改关系分。用户事实提取与指令提取两处读取历史时，滤掉指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务与宿主通知），它们不是任何人的发言，不作为抽取语料。本插件不读会话配置的 `memoryRecallScope`：发言者与其他参与者的事实照常跨会话注入，这些事实可能抽自别的会话（包括私聊）。
 
@@ -29,6 +29,7 @@ export default definePlugin({
     commands: optional(commands),
     persona: optional(persona),
     userRelation: optional(userRelation),
+    webui: optional(webuiServer),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -59,6 +60,16 @@ export default definePlugin({
 | `maxInstructions` | number | `12` | 指令条数上限：超出后按 updatedAt 升序淘汰最久未更新的。最小有效值为 3。准则少而准比多而散更好 |
 | `maxInstructionCharsPerItem` | number | `120` | 单条指令字数上限：超出会被裁断 |
 
+## 「用户档案」页
+
+位置为插件详情（`/p/@aalis%2Fplugin-user-profile/profiles`），声明式，只删不改：档案里的事实是从对话里自动提取的，写错的或被人故意塞进去的（档案投毒）在这里删掉，不在界面上改写。不装 webui-server 时照常记档案，只是没有页面。
+
+- **表格：** 有事实的人一行（只有关系分、没有事实的不列），列出用户键（`platform:userId`）、事实条数与最近一条事实记下的时间，最近的在前。窄时只留用户与条数。
+- **详情：** 选中一个人，列出各条事实（正文、分类、时效「长期」或「近期」、记下的时间），最近的在前；底下是「清空档案」。
+- **删除一条事实：** 事实那一行的「删除」，`destructive`，由宿主弹确认。按行里记的用户键与事实 id 重新读档案再删，这一条已经不在时报错、什么都不改；关系分与互动次数照旧。
+- **清空档案：** 详情里的「清空档案」，`destructive`，删掉这个人的整份档案（事实连同关系强度与互动次数，与 `/profile.clear` 相同）；已经没有档案时报错。
+- **刷新：** 事实变了就整页 `invalidate`：页面上的两个动作、事实提取写入、`/profile.clear`、`/profile.forget`、`/profile.clear.nuke` 与全局的 `memory:clear`。只改关系分的写入（每条入站消息都有）不算，表格上的时间取的是最近一条事实，不随它变。
+
 ## 相关
 
 - 记忆服务契约：[api/api-memory.md](../api/api-memory.md)
@@ -67,3 +78,4 @@ export default definePlugin({
 - 命令服务契约：[api/api-commands.md](../api/api-commands.md)
 - 关系图（可选注入 `user-relation`）：[user-relation.md](./user-relation.md)
 - 入站消息归档（`inbound:message:archived` 事件来源）：[plugin-message-archive.md](./plugin-message-archive.md)
+- 页面契约（「用户档案」页）：[api/api-webui.md](../api/api-webui.md)

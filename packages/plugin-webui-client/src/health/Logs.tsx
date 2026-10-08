@@ -1,14 +1,16 @@
+import { approvals } from '@aalis/api-approval';
 import type { LogFilter, WebuiAdminEvent } from '@aalis/api-webui';
 import { type FormEvent, useEffect, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
 import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { useConnection, useConnectionState } from '../connection';
 import { withInstance } from '../pages/registry';
-import { labelOf, usePlugins } from '../plugins/list';
+import { labelOf, usePlugins, useProvider } from '../plugins/list';
 import { getJson, isRecord } from '../rest';
 import { logFilterFrom, logQuery, paths } from '../routes';
 
@@ -22,9 +24,6 @@ type LogLevel = LogEntry['level'];
 const PAGE = 200;
 /** 页面上最多留这么多条，实时推来的多了丢最早的 */
 const KEEP = 2000;
-
-/** 审批服务的服务名（契约 api-approval 的 approvals）：「审批」预设按插件列表的 provides 找提供它的实例 */
-const APPROVALS = 'approvals';
 
 const LEVELS: Record<LogLevel, string> = { debug: '调试', info: '信息', warn: '警告', error: '错误' };
 const LEVEL_FILTERS: ReadonlyArray<{ value: LogLevel | ''; label: string }> = [
@@ -144,7 +143,8 @@ export function Logs() {
   const query = logQuery(filter);
   const { loaded, error, retry, loadOlder, busy } = useLogs(query);
   const { plugins } = usePlugins();
-  const approvals = plugins?.find(plugin => plugin.provides.includes(APPROVALS));
+  /** 「审批」预设按插件列表的 provides 找提供审批服务的实例 */
+  const approver = useProvider(approvals.name);
   const options = (plugins ?? [])
     .map(plugin => ({ value: plugin.instanceId, label: withInstance(labelOf(plugin), plugin.instanceId) }))
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -161,7 +161,7 @@ export function Logs() {
     <div className="health-logs">
       <form aria-label="筛选日志" className="health-logs-filters" onSubmit={submitText}>
         <ButtonLink to={paths.healthLogs({ level: 'error' })}>只看错误</ButtonLink>
-        {approvals && <ButtonLink to={paths.healthLogs({ plugin: approvals.instanceId })}>审批</ButtonLink>}
+        {approver && <ButtonLink to={paths.healthLogs({ plugin: approver })}>审批</ButtonLink>}
         <Select
           aria-label="级别"
           value={filter.level ?? ''}
@@ -189,12 +189,8 @@ export function Logs() {
         )}
       </form>
       {error ? (
-        <EmptyState
-          tone="danger"
-          title="日志没取到"
-          description={error.message}
-          action={<Button onClick={retry}>重试</Button>}
-        />
+        // 日志本身没取到，「查看日志」帮不上
+        <FetchError what="日志" error={error} retry={retry} />
       ) : (
         loaded &&
         (loaded.entries.length === 0 ? (

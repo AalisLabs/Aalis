@@ -10,7 +10,15 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 墓碑按令牌清：提交期间新删的会话留下新令牌，不被这次提交的收尾清掉。
 // mongodb 后端没有事务，瞬时失败后墓碑一旦丢失，用户显式删掉的会话会在下次加载时复活。
 
-const session = (id: string) => ({ id, name: id, status: 'completed', children: [], createdAt: 1, updatedAt: 1 });
+const session = (id: string) => ({
+  id,
+  name: id,
+  status: 'completed',
+  children: [],
+  config: {},
+  createdAt: 1,
+  updatedAt: 1,
+});
 
 type Persistable = { persist(): Promise<void> };
 

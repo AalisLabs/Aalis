@@ -12,16 +12,17 @@ import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
 import { duration, tokens } from '../format';
-import { FetchError } from '../health/AttentionList';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { paths } from '../routes';
 import { useSessionList } from '../sessions/live-list';
+import { SessionsFetchError } from '../shell/SessionGate';
 import { usePhone } from '../shell/Shell';
 import { openableLocalUrl } from './loopback';
 import { useBackground } from './tasks';
 import './Background.css';
 
 // 后台工作：子会话（来自会话树）与转到后台的工具调用（来自后台任务登记）。会话面板的「后台」标签分这两组，在跑的在前、
-// 结束的收进默认折叠的「已结束」；时间线里转了后台的工具卡与运行状况的「正在运行」用同样的状态与行。
+// 结束的收进默认折叠的「已结束」；时间线里转了后台的工具卡与运行状况的「正在运行」用同样的状态与行，结束通知用同样的结局写法。
 // 只画会话树与登记表推来的状态：按了停止之后等推送，不先自行标成已停止。命令种类画成等宽的一行命令，其余写工具名。
 // 日志在桌面上就在标签里打开（嫌窄就拖宽面板），手机上从底部全屏弹出；都不另开地址
 
@@ -83,15 +84,22 @@ function Elapsed({ since }: { since: number }) {
 const ENDINGS = { completed: '完成', stopped: '已停止', aborted: '已中断' } as const;
 const ENDING_TONES = { completed: undefined, failed: 'error', stopped: 'inactive', aborted: 'inactive' } as const;
 
-/** 结局写成一个词：失败的命令有退出码时写退出码；在跑的没有 */
-function endingOf(task: BackgroundTask): string | undefined {
-  if (task.status === 'running') return undefined;
-  if (task.status !== 'failed') return ENDINGS[task.status];
-  const { exitCode } = task;
-  return exitCode === undefined || exitCode === 0 ? '失败' : `退出码 ${exitCode}`;
+/** 结束了的任务的结局 */
+interface TaskEnd {
+  status: Exclude<BackgroundTask['status'], 'running'>;
+  exitCode?: number;
 }
 
-/** 任务的状态写成一句：在跑的转动、写走着的耗时；结束的写结局与用时，失败用危险色 */
+/** 结局写成一个词（失败的命令有退出码时写退出码），后面接用时；失败用危险色 */
+export function Ending({ end: { status, exitCode }, took }: { end: TaskEnd; took?: number }) {
+  const ending =
+    status !== 'failed' ? ENDINGS[status] : exitCode === undefined || exitCode === 0 ? '失败' : `退出码 ${exitCode}`;
+  return (
+    <StatusText state={ENDING_TONES[status]}>{ending + (took === undefined ? '' : ` · ${duration(took)}`)}</StatusText>
+  );
+}
+
+/** 任务的状态写成一句：在跑的转动、写走着的耗时；结束的写结局与用时 */
 export function TaskStatus({ task }: { task: BackgroundTask }) {
   if (task.status === 'running') {
     return (
@@ -100,13 +108,14 @@ export function TaskStatus({ task }: { task: BackgroundTask }) {
       </StatusText>
     );
   }
-  const took = task.endedAt === undefined ? '' : ` · ${duration(task.endedAt - task.startedAt)}`;
-  return <StatusText state={ENDING_TONES[task.status]}>{endingOf(task) + took}</StatusText>;
+  const took = task.endedAt === undefined ? undefined : task.endedAt - task.startedAt;
+  return <Ending end={{ status: task.status, exitCode: task.exitCode }} took={took} />;
 }
 
 /** 停止按钮：不弹确认，请求在途时不能再按，失败写进 Toast；停下来的状态等推送 */
 export function StopButton({ label, stop }: { label: string; stop(): Promise<unknown> }) {
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const [busy, setBusy] = useState(false);
   return (
     <IconButton
@@ -116,7 +125,7 @@ export function StopButton({ label, stop }: { label: string; stop(): Promise<unk
       onClick={() => {
         setBusy(true);
         stop()
-          .catch((err: Error) => toast({ kind: 'danger', text: `停止失败：${err.message}` }))
+          .catch((err: Error) => toast({ kind: 'danger', text: `停止失败：${err.message}`, source: sessions }))
           .finally(() => setBusy(false));
       }}
     />
@@ -299,7 +308,7 @@ function ChildNode({ session }: { session: SessionSummary }) {
 
 function Children({ parentId }: { parentId: string }) {
   const list = useSessionList({ parentId });
-  if (list.error) return <FetchError error={list.error} retry={list.retry} stale={false} />;
+  if (list.error) return <SessionsFetchError what="子会话" error={list.error} retry={list.retry} />;
   if (!list.sessions?.length) return null;
   const rows = [...list.sessions.filter(active), ...list.sessions.filter(child => !active(child))];
   return (
@@ -318,7 +327,9 @@ function ChildGroup({ session }: { session: SessionSummary }) {
   const done = children.filter(ended);
   return (
     <Block title={`子会话 · ${session.childCount}`}>
-      {list.error && <FetchError error={list.error} retry={list.retry} stale={list.sessions !== undefined} />}
+      {list.error && (
+        <SessionsFetchError what="子会话" error={list.error} retry={list.retry} stale={list.sessions !== undefined} />
+      )}
       {open.length > 0 && (
         <List label="子会话">
           {open.map(child => (
@@ -363,6 +374,7 @@ interface BackgroundTabProps {
 export function BackgroundTab({ session, tasks, log, onLog }: BackgroundTabProps) {
   const client = useSessionClient();
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const phone = usePhone();
   const background = useBackground();
   const [stopping, setStopping] = useState(false);
@@ -391,7 +403,7 @@ export function BackgroundTab({ session, tasks, log, onLog }: BackgroundTabProps
             setStopping(true);
             client
               .request('background/stopAll', { sessionId: session.id })
-              .catch((err: Error) => toast({ kind: 'danger', text: `停止失败：${err.message}` }))
+              .catch((err: Error) => toast({ kind: 'danger', text: `停止失败：${err.message}`, source: sessions }))
               .finally(() => setStopping(false));
           }}
         >
@@ -399,7 +411,12 @@ export function BackgroundTab({ session, tasks, log, onLog }: BackgroundTabProps
         </Button>
       )}
       {background.error && (
-        <FetchError error={background.error} retry={background.retry} stale={background.tasks !== undefined} />
+        <SessionsFetchError
+          what="后台任务"
+          error={background.error}
+          retry={background.retry}
+          stale={background.tasks !== undefined}
+        />
       )}
       {session.childCount > 0 && <ChildGroup session={session} />}
       {tasks.length > 0 && <TaskGroup tasks={tasks} onLog={onLog} />}
@@ -460,7 +477,7 @@ export function TaskLog({ task, lead }: { task: BackgroundTask; lead?: ReactNode
         <CopyButton text={log.text} label="复制输出" />
       </div>
       {log.truncated && <p className="task-log-note">前面的输出已丢弃，只留着最后一段</p>}
-      {log.error && <FetchError error={log.error} retry={retry} stale={log.end !== undefined} />}
+      {log.error && <SessionsFetchError what="输出" error={log.error} retry={retry} stale={log.end !== undefined} />}
       {log.end !== undefined && log.text === '' && <p className="task-log-note">还没有输出</p>}
       <div className="task-log-scroll" data-anchor="end">
         <pre className="task-log-text">{log.text}</pre>
@@ -489,7 +506,7 @@ export function RunningBelow({ session }: { session: SessionSummary }) {
 
 function RunningChildren({ parentId }: { parentId: string }) {
   const list = useSessionList({ parentId });
-  if (list.error) return <FetchError error={list.error} retry={list.retry} stale={false} />;
+  if (list.error) return <SessionsFetchError what="子会话" error={list.error} retry={list.retry} />;
   const running = list.sessions?.filter(active) ?? [];
   if (running.length === 0) return null;
   return (

@@ -78,7 +78,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 
 ### 登录方式
 
-1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到干净 URL。
+1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到同一路径，只去掉 `token`，其余查询串（如日志的筛选）照留。
 2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
 

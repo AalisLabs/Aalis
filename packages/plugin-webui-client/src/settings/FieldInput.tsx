@@ -132,7 +132,7 @@ function ModelInput(props: ChoiceProps) {
           toast({ kind: 'success', text: `模型列表已刷新：新增 ${added} 个、移除 ${removed} 个` });
           props.options.refetch();
         },
-        (err: Error) => toast({ kind: 'danger', text: `刷新模型列表失败：${err.message}` }),
+        (err: Error) => toast({ kind: 'danger', text: `刷新模型列表失败：${err.message}`, source: provider }),
       )
       .finally(() => setBusy(false));
   };

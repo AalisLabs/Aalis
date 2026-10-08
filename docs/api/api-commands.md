@@ -23,9 +23,22 @@ type CommandHandler = (argv: CommandArgv, ...positionals: unknown[]) => Promise<
 interface CommandBuilder {
   alias(name: string): CommandBuilder;
   option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
+  argument(name: string, description: string): CommandBuilder;
   action(handler: CommandHandler): CommandBuilder;
   usage(text: string): CommandBuilder;
   example(line: string): CommandBuilder;
+}
+
+interface OptionRegisterOptions {
+  description?: string;
+  default?: unknown;
+  required?: boolean;
+  choices?: readonly (string | OptionChoice)[];
+}
+
+interface OptionChoice {
+  value: string;
+  description?: string;
 }
 
 interface CommandMeta {
@@ -36,6 +49,13 @@ interface CommandMeta {
   examples?: string[];
 }
 ```
+
+### 描述、参数与取值
+
+- **描述的第一句是摘要**：`/help` 概览与子指令列表只显示描述的第一句（到第一个句号、分号、问号、叹号或换行为止），超过 24 字截断加省略号；详情里显示完整描述。所以第一句写成一句短话，细节写在后面，如 `'清空当前会话记忆；用 --type 选择清理类型'`。不另设摘要字段。
+- **位置参数的说明**：`argument(name, description)` 给 DSL 里声明的位置参数加说明，名字不在 DSL 里时抛错。帮助里位置参数写成 `<名字>`（必填）与 `[名字]`（可选），带说明的另列在「参数」下。
+- **带说明的取值**：`choices` 的每一项可以只写值，也可以写成 `{ value, description }`，帮助里逐项列在选项下面。`string` 选项只收其中之一，取值不在里面时回「只能是」；`string[]` 选项不按它校验，由指令自己核（如 `/clear --type` 认别名）。
+- **`-h` 与 `--help` 是保留选项**：任何指令后面写 `-h` 或 `--help`（`--` 之前），回的就是 `/help <指令>`，别的参数一概不管、不执行；声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项时登记抛错。
 
 ### 子指令
 
@@ -48,6 +68,8 @@ interface CommandMeta {
 父指令有子指令、自身不声明位置参数时，匹配不到子指令的多余词（写错的子指令名，或写多了的选项值）不会被忽略：回「未知子指令或多余参数」并指向 `/help <指令>`，不执行父指令，也不进入权限确认。父指令要接收自由文本，就声明位置参数，如 `'note [tail:text]'`。子指令按最长前缀匹配，先于位置参数：自由文本的第一个词恰好与某个子指令同名时，整条输入路由到该子指令，不进父指令，只给这个词加引号也一样；把整段自由文本括进一对引号，就作为一个参数交给父指令（整段恰好是子指令名时除外）。
 
 可见性沿树继承（restricted 父分组 → restricted 子节点，除非子节点重新声明），可在 authority 配置的 `authorityOverrides` 里按能力键单独改写最低等级（key 形如 `command:clear.all`，值为整数等级）。
+
+帮助怎么按调用者过滤、怎么排版，见 [plugin-commands 的「帮助」](../plugins/plugin-commands.md#帮助)。
 
 ## 绑定门面
 
@@ -72,9 +94,11 @@ interface CommandService {
   has(name: string): boolean;
   get(name: string): Command | undefined;
   getAll(): Command[];
-  setExecutionGuard(guard: ExecutionGuard): void;
+  setExecutionGuard(guard: ExecutionGuard | undefined): void;
 }
 ```
+
+`setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的指令退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。
 
 `unregister` 的 `contextId`：**插件自己的清理必须传它**（绑定门面的退订已代传）；缺省会摘掉全部层（管理面用）。注销键是点路径（inline DSL 在注册时被切掉），传 `'memory.clear <key:string>'` 会键不匹配、静默 no-op。
 
@@ -89,7 +113,8 @@ export default definePlugin({
   uses: { commands: optional(commands) },
   apply({ commands }) {
     commands
-      .command('persona [persona:string]', '查看/切换人格', { visibility: 'restricted' })
+      .command('persona [persona:string]', '查看或切换人格', { visibility: 'restricted' })
+      .argument('persona', '要切换到的人格；不写时查看当前人格')
       .action(async (argv, persona) => {
         if (typeof persona !== 'string' || persona.length === 0) return '当前人格：…';
         return `已切换到 ${persona}`;

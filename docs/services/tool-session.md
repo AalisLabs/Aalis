@@ -1,22 +1,21 @@
 # 会话级工具状态服务（tool-session）
 
 > 受众：编写或消费「按会话隔离的工具状态」的第三方插件作者。
-> 先读 [服务模型](../concepts/service-model.md) 与 [惰性服务访问](../concepts/lazy-service-access.md)；本文是它们在「会话历史读取 / 上传文件登记」两个具体服务上的落点。
+> 先读 [服务模型](../concepts/service-model.md) 与 [惰性服务访问](../concepts/lazy-service-access.md)；本文是它们在「会话历史读取」这个具体服务上的落点。
 
 ## 0. 命名澄清（先读）
 
-本文件名 `tool-session` 是 **文档分组名**，不是任何一个 `current` 的注册名。Aalis 里**没有**名为 `'tool-session'` 的服务。这一类「按会话隔离的工具状态」实际由两个独立服务承担，作者按需取用：
+本文件名 `tool-session` 是 **文档分组名**，不是任何一个 `current` 的注册名。Aalis 里**没有**名为 `'tool-session'` 的服务。这一类「按会话隔离的工具状态」由 `session-history` 服务承担：
 
 | 关注点 | 服务注册名 | 契约包 / 实现 | 性质 |
 | --- | --- | --- | --- |
 | 跨会话历史读取 + 平台访问规则 | `session-history` | 契约 `@aalis/api-session-history`；实现 `@aalis/plugin-tool-session` | 有 `-api` 契约 + 运行时服务 |
-| 上传文件登记（per-session 文件态） | `file-reader` | 实现 `@aalis/plugin-file-reader`（**无独立 `-api` 包**，接口住在实现包里） | 仅运行时服务，无独立契约包 |
 
-下面分两节讲。两者都遵循「`sessionId` 是会话隔离边界」这一共同约束，见 [§6 会话隔离](#6-会话隔离-访问控制provider-consumer-必守)。
+它遵循「`sessionId` 是会话隔离边界」这一约束，见 [§6 会话隔离](#6-会话隔离-访问控制provider-consumer-必守)。用户上传的文件不经服务取用，只经 [plugin-file-reader](../plugins/plugin-file-reader.md) 自己的工具与会话面板给出。
 
 ---
 
-# Part A — `session-history` 服务
+# `session-history` 服务
 
 ## A.1 定位
 
@@ -173,87 +172,11 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ---
 
-# Part B — `file-reader` 服务（per-session 上传文件登记）
-
-## B.1 定位
-
-**登记并按会话隔离地访问「用户上传的文件」的元信息与本地路径。** 取用名 `fileReader.current`，实现包 `@aalis/plugin-file-reader`。
-
-**没有独立的 `@aalis/api-file-reader` 契约包**——契约与实现同住一包：`@aalis/plugin-file-reader` 直接导出 `FileReaderService` 接口与描述符 `fileReader = defineService<FileReaderService>('file-reader')`（`packages/plugin-file-reader/src/index.ts`）。消费方把描述符写进 `uses` 即得类型，`fileReader.current` 无需手写泛型。它与 `session-history` 的差异只在于「契约是否单独成包」，而非「有没有可 import 的接口」。
-
-## B.2 契约（导出的 `FileReaderService` 接口）
-
-`@aalis/plugin-file-reader` 导出的接口（`plugin-file-reader/src/index.ts`）：
-
-```ts
-interface FileReaderService {
-  available: boolean;                                 // 恒为 true，供消费方快速确认服务就绪
-  listFiles(sessionId?: string): FileMeta[];          // 省略 sessionId 列全部会话
-  resolveLocalPath(fileId: string): Promise<string | null>; // 本地绝对路径；文件不存在或 storage 不支持本地路径时为 null，其余存储错误照常抛出
-  getMeta(fileId: string): FileMeta | null;
-  deleteFile(fileId: string): Promise<boolean>;
-}
-```
-
-`FileMeta`（`plugin-file-reader/src/index.ts`，注意 provide 出去的版本剥掉了内部的 `dataUri`/`metaUri`）：
-
-```ts
-interface FileMeta {
-  id: string;        // computeFileId：sha256(sessionId + '\0' + content) 前 16 hex —— 会话加盐
-  name: string;
-  mimeType: string;
-  size: number;
-  sessionId: string; // ← 会话隔离边界
-  uploadedAt: number;
-  textCache?: string;
-}
-```
-
-存储布局：所有文件落在 `pluginData:/file-reader/<会话目录>/<id><ext>`（`index.ts`），会话目录名是把 sessionId 里的 `:` `/` `\` 替换为 `_` 的形式（Windows 文件名不收冒号），元信息走同名 `.meta.json` sidecar。这是 [storage URI 文法](../concepts/storage-uri-grammar.md) 的 `pluginData:` 根；**storage 不是沙箱**——隔离靠的是路径里的会话目录段 + 服务层校验，不是文件系统强隔离。
-
-LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploaded_file` / `list_uploaded_files` / `delete_uploaded_file`（`index.ts`）。
-
-## B.3 谁提供 / 谁消费
-
-**提供**：`@aalis/plugin-file-reader`（`index.ts` `provides: [fileReader]`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
-
-**消费**：第一方插件目前不经这个服务取上传文件；它留给要按 ID 取上传文件的插件。
-
-## B.4 标准用法
-
-消费方可 `import type { FileReaderService }` 拿到完整类型；不愿反向依赖实现包时，也可自带最小形状声明。两种都要每次现取、不缓存实例：
-
-```ts
-const reader = caps.services.get<{ deleteFile?: (id: string) => Promise<boolean> }>('file-reader');
-if (reader?.deleteFile) await reader.deleteFile(fileId);
-```
-
-或先 `fileReader.current !== undefined` 做能力位探测。**不要缓存实例**（[惰性服务访问](../concepts/lazy-service-access.md)）。
-
-## B.5 会话隔离 —— LLM 工具层（审计遗留问题已修复）
-
-> **审计遗留问题与当前状态**：曾有审计指出 `read_uploaded_file` / `delete_uploaded_file` 不校验 `entry.sessionId === callCtx.sessionId`，导致 `fileId` 可被跨会话读取/删除。**该问题在当前代码已修复**，新接入者应以现状为准：
-
-- `read_uploaded_file`：`if (!entry || entry.sessionId !== callCtx.sessionId)` → 走 memory 兜底或当作不存在，**不泄漏他人会话文件的存在性与内容**（`plugin-file-reader/src/index.ts`）。
-- `delete_uploaded_file`：`if (!entry || entry.sessionId !== callCtx.sessionId) return '文件不存在或已被删除'`（`index.ts`），且标了 `visibility: 'restricted'`（`index.ts`）。
-- `list_uploaded_files`：移除了 `'*'` 跨会话枚举，只列 `f.sessionId === callCtx.sessionId`（`index.ts`）。
-
-**给 provider 作者的强约束**：`fileId` 由 `computeFileId` 生成，是 `sha256(sessionId + '\0' + content)` 的前 16 hex（`index.ts` `computeFileId`）——以会话 id 加盐：同会话重传同内容仍命中去重，不同会话上传相同内容得到不同 id（避免按 id 键的内存索引跨会话撞键、挤掉前一会话条目）。加盐提高了预测门槛，但 id 仍可预测：同时知道目标 `sessionId` 与文件内容即可算出。因此任何按 `fileId` 取数据的工具/接口路径**必须**校验 `entry.sessionId === callCtx.sessionId`，否则攻击者可越权访问。这是会话隔离的硬要求，见 [安全模型](../concepts/security-model.md)。
-
-注意：**服务接口本身**（`getMeta`/`resolveLocalPath`/`deleteFile`）**不带 `sessionId` 校验**——它们设计给同进程内可信消费方用，调用方自己负责鉴权。隔离闸门在 LLM 工具层，不在服务层。
-
-## B.6 会话生命周期
-
-文件态随会话清理：监听 `session:deleted` 事件 → `deleteSessionFiles(sessionId)` 删该会话全部文件（`index.ts`）。另有 retention（按天）+ LRU（按总量 MB）后台清理（`index.ts`，每小时跑一次）。provider 替换实现时要保留这层生命周期联动，否则文件会泄漏堆积。
-
----
-
 ## 6. 会话隔离 / 访问控制（provider + consumer 必守）
 
-两服务共同的不变量：**`sessionId` 是会话隔离边界**。
-- `session-history`：跨 `sessionId` 读取必须过房间召回范围 + scope 粗筛 + platform checker 链；provider 重写时**必须**自己跑这三段。
-- `file-reader`：`fileId` 以会话加盐（`sha256(sessionId + '\0' + content)` 前 16 hex）但仍可预测，凡按 `fileId` 取数据的 LLM 工具路径**必须**校验 `entry.sessionId === callCtx.sessionId`。
-- 两者都从 `callCtx.sessionId`（`ToolCallContext`）拿「当前会话」，从不信任入参里的会话身份。
+不变量：**`sessionId` 是会话隔离边界**。
+- 跨 `sessionId` 读取必须过房间召回范围 + scope 粗筛 + platform checker 链；provider 重写时**必须**自己跑这三段。
+- 从 `callCtx.sessionId`（`ToolCallContext`）拿「当前会话」，从不信任入参里的会话身份。
 
 ## 7. 交叉链接
 

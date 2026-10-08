@@ -228,7 +228,8 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
       res.type('application/javascript').send(LOGIN_SCRIPT);
     });
 
-    // ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径。别的站点打开的不认 token，按没带 token 往下走
+    // ?token= 命中 → 设置 cookie → 302 到同一路径，只去掉 token，其余查询串（如日志的筛选）照留。别的站点打开的不认 token，
+    // 按没带 token 往下走
     expressApp.use((req, res, next) => {
       const qToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
       if (req.method !== 'GET' || !qToken || navigatedFromOtherSite(req)) return next();
@@ -243,7 +244,10 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
       if (tokenEquals(qToken, token)) {
         failures.delete(address);
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
-        res.redirect(302, req.path);
+        const rest = new URLSearchParams(req.originalUrl.slice(req.originalUrl.indexOf('?') + 1));
+        rest.delete('token');
+        const search = rest.toString();
+        res.redirect(302, search ? `${req.path}?${search}` : req.path);
         return;
       }
       recordFailure(address);

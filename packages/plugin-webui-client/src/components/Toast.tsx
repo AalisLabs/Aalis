@@ -1,6 +1,7 @@
 import { Check, CircleAlert, Info, X } from 'lucide-react';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Button } from './Button';
+import { LogsLink } from './FetchError';
 import { IconButton } from './IconButton';
 import './Toast.css';
 
@@ -12,6 +13,8 @@ interface ToastInput {
   text: string;
   /** 撤销一类的后续操作 */
   action?: { label: string; run(): void };
+  /** 出错的来源插件实例：出错的这一条带「查看日志」 */
+  source?: string;
 }
 
 const LIMIT = 3;
@@ -94,6 +97,7 @@ function ToastItem({ toast, paused, onDismiss }: ToastItemProps) {
           {toast.action.label}
         </Button>
       )}
+      {toast.kind === 'danger' && toast.source && <LogsLink source={toast.source} />}
       <IconButton icon={X} label="关闭" onClick={() => onDismiss(toast.id)} />
     </div>
   );

@@ -13,7 +13,7 @@
 - 工具执行通知（`ToolExecuteMessage`）与执行中的流式输出（`ToolOutputMessage`）
 - 工具结果的结局：`toolFailed`、`integerIn`
 - 服务接口 `ToolService`、描述符 `tools`、绑定接口 `BoundTools`、`withToolGroups`
-- 后台任务登记：`BackgroundTask`、`BackgroundTaskService`、描述符 `backgroundTasks`
+- 后台任务登记：`BackgroundTask`、`BackgroundTaskService`、描述符 `backgroundTasks`；结束通知的种类 `BACKGROUND_TASK_NOTICE` 与事实 `BackgroundTaskNoticeFacts`
 - 向 `AalisEvents` 注入 `'tool:execute'`、`'tool:output'` 与 `'background:changed'`
 
 **注**：runtime 工具函数已迁出本契约包（见 `packages/api-tools/src/index.ts` 迁出注释）：SSRF/私网判定 → `@aalis/util-network-guard`；工具输入路径解析 → `@aalis/api-storage`。本包只保留契约：类型、描述符与登记门面，以及契约里约定的判据（工具结果的结局、执行器参数名）。
@@ -27,13 +27,15 @@ interface ToolService {
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
   getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups?; display? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
-  setExecutionGuard(guard: ExecutionGuard): void;
+  setExecutionGuard(guard: ExecutionGuard | undefined): void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   getGroups(): ToolGroupInfo[];
 }
 ```
 
 插件侧不要直接调 `ToolService.register(..., contextId)`。`contextId` 由绑定门面填本次激活 id。
+
+`setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的工具退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。
 
 ## RegisteredTool 结构
 
@@ -208,6 +210,21 @@ export const backgroundTasks = defineService<BackgroundTaskService>('background-
 - `output`：`text` 是 `after` 之后的输出；`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾 64 KiB，早于缓冲的部分取不到时 `truncated` 为 true。Aalis 重启前的任务没有留下输出。
 - `stop`：中止并等它落定（宽限 3 秒），回落定后的任务；宽限内没停下的仍是 `running`，之后停下时记为 `stopped`。被停止的不通知。
 - 结局：结果带 `error` 或退出码不为 0 为 `failed`；`stop` 停的为 `stopped`；工具撤回登记、执行器停用、重启时还在跑的为 `aborted`；其余 `completed`。
+
+### 结束通知
+
+```ts
+export const BACKGROUND_TASK_NOTICE = 'background-task';
+
+type BackgroundTaskNoticeFacts = {
+  tool: string;                      // 工具名
+  status: 'completed' | 'failed';    // 只有正常结束（含失败）的才通知
+  durationMs: number;                // 用时
+  exitCode?: number;                 // 失败的命令取得到退出码时带上
+};
+```
+
+任务正常结束（含失败）时，执行器向起它的会话注入一条宿主通知（[schema-message](./schema-message.md#宿主通知-hostnotice)）：`hostNotice.kind` 为 `BACKGROUND_TASK_NOTICE`，`id` 为任务 id，`facts` 为 `BackgroundTaskNoticeFacts`；正文写给模型，只写同样的事实，结果与输出由模型用 `background_output` 取。通知的身份、引用与链只延续一层等约定见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)。界面按 `BACKGROUND_TASK_NOTICE` 认出结束通知（会话协议的通知条目带 `noticeId` 与 `facts`，见 [api-session-protocol](./api-session-protocol.md)），按事实画成一行状态，不显示写给模型的正文，也不认工具名。
 
 ## 典型用法
 

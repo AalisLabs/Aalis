@@ -72,16 +72,20 @@ describe('包间依赖版本范围（单一版本不变量）', () => {
 
   it('peerDependencies 的上界同样统一（core 被所有插件 peer 依赖，是最关键的一条）', () => {
     const bad: string[] = [];
+    let checked = 0;
     for (const dir of readdirSync(PACKAGES)) {
       const manifest = join(PACKAGES, dir, 'package.json');
       if (!existsSync(manifest)) continue;
       const pkg = JSON.parse(readFileSync(manifest, 'utf-8')) as { peerDependencies?: Record<string, string> };
       for (const [to, spec] of Object.entries(pkg.peerDependencies ?? {})) {
         if (!to.startsWith('@aalis/')) continue;
+        checked++;
         // peer 不带 workspace: 前缀（它要发布给消费者解析），但上界规则相同
         if (!/^>=\d+\.\d+\.\d+ <1\.0\.0$/.test(spec)) bad.push(`${dir} → ${to} = ${spec}`);
       }
     }
+    // 空集会让下面的断言空转通过：几乎每个包都 peer 依赖 core
+    expect(checked).toBeGreaterThan(100);
     expect(bad, 'peerDependencies 必须写 `>=x.y.z <1.0.0`（禁 caret，理由同上）').toEqual([]);
   });
 });

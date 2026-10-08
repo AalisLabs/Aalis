@@ -195,7 +195,7 @@ export class ToolRegistry implements ToolService {
 
   // ---- 执行 ----
 
-  setExecutionGuard(guard: ExecutionGuard): void {
+  setExecutionGuard(guard: ExecutionGuard | undefined): void {
     this._guard = guard;
   }
 

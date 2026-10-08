@@ -15,6 +15,7 @@ const oldSession = {
   name: '上次运行的会话',
   status: 'completed',
   children: [],
+  config: {},
   createdAt: 1,
   updatedAt: 1,
 };

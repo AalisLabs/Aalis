@@ -25,7 +25,7 @@ export interface CommandService {
   get(name: string): Command | undefined;
   getNode(name: string | string[]): Command | undefined;
   getAll(): Command[];
-  setExecutionGuard(guard: ExecutionGuard): void;
+  setExecutionGuard(guard: ExecutionGuard | undefined): void; // 传 undefined 摘掉，退回 fail-closed
 }
 
 export interface BoundCommands extends ServiceRef<CommandService> {
@@ -33,7 +33,7 @@ export interface BoundCommands extends ServiceRef<CommandService> {
 }
 ```
 
-Builder 链式追加 `alias / option / action / usage / example`。`commands.command` 把 `pluginName` 填成本次激活 id；撤回时只摘自己那一层。不要自己调不带 `contextId` 的 `unregister`。
+Builder 链式追加 `alias / option / argument / action / usage / example`。`commands.command` 把 `pluginName` 填成本次激活 id；撤回时只摘自己那一层。不要自己调不带 `contextId` 的 `unregister`。
 
 重要类型：
 
@@ -49,7 +49,7 @@ Builder 链式追加 `alias / option / action / usage / example`。`commands.com
 
 **唯一参考实现**：`@aalis/plugin-commands`。`provides: [commands]`，`uses` 含 `gateway` required，`provide(commands, registry)`。入站分发发生在 `INBOUND_PHASE.COMMAND`。运行时依赖 `@aalis/api-authority` 的 `riskDefaults`。
 
-**典型消费点**：`plugin-authority`、`plugin-agent`、`plugin-doctor`、`plugin-tool-system`、`plugin-user-profile`、`plugin-user-relation`、`plugin-maimai` 等。`commands` 几乎总是 optional。`plugin-authority` 用 `commands.follow(svc => { svc.setExecutionGuard(guard); ... })` 注入守卫。
+**典型消费点**：`plugin-authority`、`plugin-agent`、`plugin-doctor`、`plugin-tool-system`、`plugin-user-profile`、`plugin-user-relation`、`plugin-maimai` 等。`commands` 几乎总是 optional。`plugin-authority` 用 `commands.follow(svc => { svc.setExecutionGuard(guard); ... })` 注入守卫，follow 返回的清理调 `setExecutionGuard(undefined)` 摘掉。
 
 ---
 
@@ -92,8 +92,17 @@ export default definePlugin({
   uses: { commands: optional(commands) },
   apply({ commands }) {
     commands
-      .command('weather <city:string> [day:number]', '查询天气')
-      .option('unit', '-u <unit:string>', { choices: ['c', 'f'], default: 'c' })
+      .command('weather <city:string> [day:number]', '查询天气。默认查今天，day 写几就查几天后')
+      .argument('city', '城市名')
+      .argument('day', '几天后，0 是今天')
+      .option('unit', '-u <unit:string>', {
+        description: '温度单位',
+        choices: [
+          { value: 'c', description: '摄氏度' },
+          { value: 'f', description: '华氏度' },
+        ],
+        default: 'c',
+      })
       .example('/weather 北京')
       .action(async (argv, city, day) => {
         const unit = argv.options.unit as string;
@@ -115,6 +124,15 @@ option syntax 速查：
 | `''`（空） | 纯 boolean flag。 |
 
 登记侧不用判断 `commands` 是否存在：builder 在提供者未就绪时缓存调用、上线后重放。若要读 `getAll()`，用 `commands.current`，每次现取，不要缓存。
+
+写给 `/help` 看的几条：
+
+- **描述的第一句是摘要**：概览与子指令列表只显示第一句（到第一个句号、分号、问号、叹号或换行为止），超过 24 字会被截断。第一句写成一句短话，细节写在后面；不要把用法写进描述，用位置参数的说明与 `example` 写。
+- **位置参数**用 `argument(name, description)` 加说明，帮助里写成 `<名字>` 与 `[名字]`。
+- **取值清单**用 `choices`，每项可带说明，帮助里逐项列在选项下面。`string` 选项按它校验取值，`string[]` 不校验。
+- **`-h` 与 `--help` 是保留选项**，回这条指令的用法；不能声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项。
+- 有子指令、自身不执行的父指令只登记描述、不写 `action`：裸敲它回的就是 `/help <它>`，不要手写一份帮助。
+- 帮助只列调用者能用的指令，判据与执行同一份，见 [plugin-commands](../plugins/plugin-commands.md) 的「帮助」一节。帮助按各平台通用的纯文本输出，`usage` 写的整段帮助也应如此。
 
 **错误边界**：handler 抛错会被 `execute` 捕获，转成 `指令执行失败: <msg>`。
 

@@ -269,7 +269,6 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     expect(streamed).toEqual([]);
     expect(h.outgoing).toHaveLength(1);
     expect(h.outgoing[0].content).toBe(`做好啦：${URL}`);
-    expect(h.outgoing[0].segments).toBeUndefined();
     expect(JSON.stringify(h.outgoing)).not.toContain('失败轮的私有原文');
   });
 

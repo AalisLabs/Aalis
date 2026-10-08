@@ -57,18 +57,6 @@ export interface ChatStreamChunk {
   };
 }
 
-export interface ModelInfo {
-  id: string;
-  /**
-   * Capability 字符串数组，取自 model handle 的 `instance.capabilities` 元数据。使用宽松的 string[]
-   * 而不是 LLMCapability[]，便于跨插件共享（自定义 capability 也能照常上送给前端）。
-   */
-  capabilities: string[];
-  provider?: string;
-  contextId?: string;
-  contextLength?: number;
-}
-
 // ----- per-model service entry（feat/service-granularity） -----
 //
 // 每个 LLM model 是 ServiceContainer 'llm' 服务名下独立的 entry。

@@ -567,53 +567,52 @@ export default definePlugin({
         platform: argv.session.platform,
       });
 
-      commands
-        .command('maimai', '舞萌 DX 查分。子指令：info/b50/recent/song/bind/unbind')
-        .action(async () => formatHelp());
+      // 裸敲 /maimai 回指令系统生成的用法（列出子指令）
+      commands.command('maimai', '舞萌 DX 查分。绑定好友码后，info、b50、recent 可以不写查询目标');
+
+      const TARGET = `好友码，或 qq:QQ 号；不写时查你绑定的好友码${
+        cfg.defaultBindOnPrivateChat ? '，OneBot 私聊里没绑定时按你的 QQ 号查' : ''
+      }`;
 
       commands
-        .command('maimai.info [tail:text]', '查询玩家基本信息：/maimai info [friend_code|qq:<qq>]')
-        .action(async (argv, tail) => {
-          const args = parseSubArgs((tail as string) ?? '');
+        .command('maimai.info [target:string]', '查询玩家信息')
+        .argument('target', TARGET)
+        .action(async (argv, target) => {
+          const args = parseTarget(target as string | undefined);
           return handleGetPlayer(memory, cfg, client, args, callCtxOf(argv));
         });
 
       commands
-        .command('maimai.b50 [tail:text]', '查询 Best 50：/maimai b50 [friend_code|qq:<qq>] [--ap]')
+        .command('maimai.b50 [target:string]', '查询 Best 50')
+        .argument('target', TARGET)
         .option('ap', '--ap', { description: '仅查询 AP 成绩' })
-        .action(async (argv, tail) => {
-          const args = parseSubArgs((tail as string) ?? '');
+        .action(async (argv, target) => {
+          const args = parseTarget(target as string | undefined);
           if (argv.options.ap === true) args.ap_only = true;
           return handleGetBests(memory, cfg, client, args, callCtxOf(argv));
         });
 
       commands
-        .command('maimai.recent [tail:text]', '最近游玩：/maimai recent [friend_code|qq:<qq>] [N]')
-        .action(async (argv, tail) => {
-          const tokens = ((tail as string) ?? '').split(/\s+/).filter(Boolean);
-          const args = parseSubArgs(tokens.join(' '));
-          const numArgs = tokens.filter(a => /^\d+$/.test(a));
-          if (numArgs.length >= 2) args.limit = parseInt(numArgs[1], 10);
+        .command('maimai.recent [target:string] [count:number]', '查询最近游玩')
+        .argument('target', TARGET)
+        .argument('count', '显示几条，默认 10，最多 50')
+        .action(async (argv, target, count) => {
+          const args = parseTarget(target as string | undefined);
+          if (count !== undefined) args.limit = count;
           return handleGetRecents(memory, cfg, client, args, callCtxOf(argv));
         });
 
       commands
-        .command('maimai.song <keyword:text>', '搜索曲目：/maimai song <关键词>')
-        .action(async (_argv, keyword) => {
-          const kw = ((keyword as string) ?? '').trim();
-          if (!kw) return '用法: /maimai song <关键词>';
-          return handleSearchSong(client, songCache, { keyword: kw, limit: 5 });
-        });
+        .command('maimai.song <keyword:text>', '搜索曲目')
+        .argument('keyword', '曲名、艺术家或别名')
+        .action(async (_argv, keyword) => handleSearchSong(client, songCache, { keyword, limit: 5 }));
 
       commands
-        .command('maimai.bind <code:string>', '绑定自己的好友码：/maimai bind <friend_code>')
-        .action(async (argv, code) => {
-          const fc = parseIntStrict(code);
-          if (!fc) return '用法: /maimai bind <好友码>';
-          return handleBind(memory, { friend_code: String(fc) }, callCtxOf(argv));
-        });
+        .command('maimai.bind <code:string>', '绑定你的好友码')
+        .argument('code', '查分器上的好友码（数字）')
+        .action(async (argv, code) => handleBind(memory, { friend_code: code }, callCtxOf(argv)));
 
-      commands.command('maimai.unbind', '解绑自己').action(async argv => {
+      commands.command('maimai.unbind', '解绑你的好友码').action(async argv => {
         const ok = await clearBoundFriendCode(memory, argv.session.platform, argv.session.userId);
         return ok ? '已解绑' : '解绑失败';
       });
@@ -727,34 +726,9 @@ async function handleBind(
 
 // ===== 指令参数解析 =====
 
-/**
- * 解析子指令的常见参数：
- *   - 一个纯数字 → friend_code
- *   - qq:数字     → qq
- */
-function parseSubArgs(tail: string): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const a of tail.split(/\s+/).filter(Boolean)) {
-    if (a.startsWith('--')) continue;
-    if (/^qq:\d+$/i.test(a)) {
-      out.qq = a.slice(3);
-    } else if (/^\d{3,}$/.test(a)) {
-      if (out.friend_code === undefined) out.friend_code = a;
-    }
-  }
-  return out;
-}
-
-function formatHelp(): string {
-  return [
-    '舞萌 DX 查分指令:',
-    '  /maimai info [friend_code|qq:<qq>]   - 查询玩家信息',
-    '  /maimai b50  [friend_code|qq:<qq>] [--ap]  - 查询 Best 50',
-    '  /maimai recent [friend_code|qq:<qq>] [N]   - 最近 N 条游玩',
-    '  /maimai song <关键词>                 - 搜索曲目（含别名）',
-    '  /maimai bind <friend_code>            - 绑定自己的好友码',
-    '  /maimai unbind                        - 解绑',
-    '',
-    '提示：绑定后，info/b50/recent 可省略参数；OneBot 私聊默认尝试以你的 QQ 查询。',
-  ].join('\n');
+/** 查询目标：qq:数字 → qq；三位以上的纯数字 → friend_code；别的不认（按绑定查） */
+function parseTarget(target: string | undefined): Record<string, unknown> {
+  if (target && /^qq:\d+$/i.test(target)) return { qq: target.slice(3) };
+  if (target && /^\d{3,}$/.test(target)) return { friend_code: target };
+  return {};
 }

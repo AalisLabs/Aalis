@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { group, type Harness, installDialog, listRequests, lists, renderApp, room, summary } from './harness.js';
+import {
+  group,
+  type Harness,
+  installDialog,
+  listRequests,
+  lists,
+  pluginRow,
+  renderApp,
+  room,
+  summary,
+} from './harness.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话列表：「我的」在上，房间按适配器实例分组；状态与排序、行首标记；组默认折叠、有需要处理的自动展开，
@@ -230,6 +241,29 @@ describe('会话列表', () => {
     await vi.waitFor(() => expect(titles(list)).toHaveLength(202));
     expect(titles(list)[0]).toBe('推送3');
     expect(listRequests().filter(p => p.section === 'owner')).toHaveLength(6);
+  });
+
+  it('取不到时「查看日志」链到提供会话协议的实例的日志（按 provides 找）；插件列表里没有它时不出现，不改链到别的实例', async () => {
+    let plugins = [pluginRow('zz-ui', { self: true }), pluginRow('zz-sessions', { provides: [SESSION_PROTOCOL] })];
+    app = await renderApp(
+      '/',
+      {
+        'sessions/list': () => {
+          throw new Error('存储读取失败');
+        },
+      },
+      { '/api/plugins': () => ({ plugins }) },
+    );
+    const alert = await within(left()).findByRole('alert');
+    expect(alert.textContent).toContain('会话列表没取到');
+    await vi.waitFor(() =>
+      expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+        '/health/logs?plugin=zz-sessions',
+      ),
+    );
+    plugins = [pluginRow('zz-ui', { self: true })];
+    act(() => FakeWebSocket.at('/admin').push({ type: 'plugins.changed' }));
+    await vi.waitFor(() => expect(within(alert).queryByRole('link', { name: '查看日志' })).toBeNull());
   });
 
   it('取不到时就地写明原因，可以重试；之后来的推送不把错误冲掉', async () => {

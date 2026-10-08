@@ -107,6 +107,10 @@ export const listRequests = (socket?: FakeWebSocket) => requests('sessions/list'
 /** 主区域 */
 export const main = () => within(screen.getByRole('main'));
 
+/** 会话面板里关闭选中标签的按钮（「关闭「…」」）；标签都关了时没有 */
+export const panelClosers = () =>
+  within(screen.getByRole('complementary', { name: '会话面板' })).queryAllByRole('button', { name: /^关闭「/ });
+
 /** 在选择器里选一项：点开，点名字是 label 的那一项（弹层挂在 body 或所在的对话框里） */
 export function choose(combobox: HTMLElement, label: string | RegExp): void {
   fireEvent.click(combobox);

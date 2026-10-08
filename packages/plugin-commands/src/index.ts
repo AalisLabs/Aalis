@@ -19,7 +19,6 @@ import {
 } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { CommandRegistry } from './commands.js';
-import { renderDetail, renderOverview } from './help.js';
 
 type IncomingMessage = InboundPhaseData['message'];
 
@@ -155,7 +154,7 @@ function registerCommands({
 }: Caps): void {
   const cfg = parseConfig(configSchema, config, logger);
   // 创建指令注册表并注册为服务
-  const registry = new CommandRegistry(logger);
+  const registry = new CommandRegistry(logger, () => authority.current);
   const storageGateway = createStorageGateway(storage);
 
   // 可见性的运行时覆盖（authorityOverrides）现归 authority 配置，不在指令注册表加载。
@@ -333,25 +332,17 @@ function registerCommands({
 
   // ===== 内置指令 =====
 
-  commands.command('help [name:text]', '显示指令列表；带指令名看用法详情').action(async (_argv, name) => {
-    const all = registry.getAll();
-    // 无参 → 概览（只列顶层，子指令折成计数）
-    if (!name) {
-      const childCount = (top: string): number =>
-        all.filter(c => c.name.startsWith(`${top}.`) && !c.name.slice(top.length + 1).includes('.')).length;
-      return renderOverview(all, registry.prefix, childCount);
-    }
-    // 有参 → 详情。接受空格与点两种写法：`help session set` ≡ `help session.set`
-    const path = String(name)
-      .trim()
-      .split(/[\s.]+/)
-      .filter(Boolean);
-    const cmd = registry.getNode(path);
-    if (!cmd) return `没有指令 ${path.join(' ')}。敲 ${registry.prefix}help 看可用指令。`;
-    const prefixDot = `${cmd.name}.`;
-    const children = all.filter(c => c.name.startsWith(prefixDot) && !c.name.slice(prefixDot.length).includes('.'));
-    return renderDetail(cmd, children, registry.prefix);
-  });
+  // 只列调用者能用的指令：用不了的在帮助里当作不存在
+  commands
+    .command('help [name:text]', '列出你能用的指令；带指令名看用法详情')
+    .argument('name', '指令名，子指令用空格或点隔开，如 clear all')
+    .action(async (argv, name) => {
+      const caller = { platform: argv.session.platform, userId: argv.session.userId };
+      const path = String(name ?? '')
+        .split(/[\s.]+/)
+        .filter(Boolean);
+      return path.length > 0 ? registry.detail(path, caller) : registry.overview(caller);
+    });
 
   commands.command('status', '显示系统状态').action(async () => {
     const lines = ['**系统状态：**', ''];
@@ -494,9 +485,13 @@ function registerCommands({
     return runClear({ sessionId: argv.session.sessionId }, scope, types);
   }
 
-  const clearTypeOptDesc = `清理类型，可重复或用逗号分隔；all 为全部类型。${CLEAR_TYPES.map(
-    t => `${t.id}：${t.label}${t.globalOnly ? '（仅全局清理）' : ''}`,
-  ).join('；')}`;
+  const clearTypeOption = {
+    description: '清理类型，可重复或用逗号分隔',
+    choices: [
+      { value: 'all', description: '全部类型' },
+      ...CLEAR_TYPES.map(t => ({ value: t.id, description: t.globalOnly ? `${t.label}（仅全局清理）` : t.label })),
+    ],
+  };
 
   commands
     // 清空**当前会话**的记忆。风险随会话归属而变，静态声明取「最松的安全默认」：
@@ -507,7 +502,7 @@ function registerCommands({
     .command('clear', '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型', {
       confirm: 'session',
     })
-    .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
+    .option('type', '-t <type:string[]>', clearTypeOption)
     .example('/clear')
     .example('/clear --type context,vector')
     .example('/clear -t vector -t image')
@@ -520,6 +515,6 @@ function registerCommands({
     .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {
       risk: 'dangerous',
     })
-    .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
+    .option('type', '-t <type:string[]>', clearTypeOption)
     .action(async argv => runClearFromOptions(argv, 'all'));
 }

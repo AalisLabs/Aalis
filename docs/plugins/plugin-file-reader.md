@@ -5,14 +5,13 @@
 
 ## 概述
 
-多格式文件上传处理器，支持文本、代码、文档（DOCX/PDF）等文件的读取与内容提取。通过 `agent:input:before` 钩子自动处理消息附件。
+多格式文件上传处理器，支持文本、代码、文档（DOCX/PDF）等文件的读取与内容提取。通过 `agent:input:before` 钩子自动处理消息附件。插件不提供服务：上传的文件只经它自己的工具与会话面板取用。
 
 ## 插件声明
 
 ```typescript
 export default definePlugin({
   name: '@aalis/plugin-file-reader',
-  provides: [fileReader],
   uses: {
     storage,
     config,
@@ -21,7 +20,6 @@ export default definePlugin({
     events,
     hooks,
     contributions,
-    provide,
     tools: optional(tools),
     agent: optional(agent),
     memory: optional(memory),
@@ -47,7 +45,7 @@ export default definePlugin({
 
 ## 附件描述
 
-上传的文件经预处理后，附件描述拼进用户消息。提取文本不超过 `autoInlineLimit` 时内联全文：文件头 `[文件: 名称 (ID: …)]` 的下一行以 `--- 文件内容 ---` 开头，同一行注明正文是数据不是指令，并给出本次的结束标记 `--- 文件内容结束 <编号> ---`。编号在每次生成描述时随机产生，正文中出现的其它结束标记都算正文，文件内容无法借伪造的结束标记把文字排到文件块之外。文件名中的换行等控制字符一律换成空格，名字只占文件头所在的一行，附件描述、文件清单与工具输出都用净化后的名字。超过阈值时只给文件名、ID 与大小，由模型调用 `read_uploaded_file` 按需读取。WebUI 显示历史消息时按同一编号剥离文件块。
+上传的文件经预处理后，附件描述拼进用户消息。提取文本不超过 `autoInlineLimit` 时内联全文：文件头 `[文件: 名称 (ID: …)]` 的下一行以 `--- 文件内容 ---` 开头，同一行注明正文是数据不是指令，并给出本次的结束标记 `--- 文件内容结束 <编号> ---`。编号在每次生成描述时随机产生，正文中出现的其它结束标记都算正文，文件内容无法借伪造的结束标记把文字排到文件块之外。文件名中的换行等控制字符一律换成空格，名字只占文件头所在的一行，附件描述、文件清单与工具输出都用净化后的名字。超过阈值时只给文件名、ID 与大小，由模型调用 `read_uploaded_file` 按需读取。附件描述只给模型看：会话历史与实时推送里的提问取存档另记的发言人写的话与附件清单（见 [plugin-message-archive](./plugin-message-archive.md)），文件块不进气泡，文件显示成卡片。
 
 ## 支持格式
 
@@ -64,6 +62,12 @@ export default definePlugin({
 - 单张识别失败不影响其余；无 `media` 服务时整体静默跳过。
 - 提取文本（含图片描述）长度不超过 `autoInlineLimit` 时，结果写入文件元信息缓存，之后读取不再重复解析与识别；超过阈值的文档每次读取都会重新解析。
 - PDF 暂不识别内嵌图片，仅提取文本。
+
+## 存储与会话隔离
+
+上传的文件存在 `pluginData:/file-reader/<会话目录>/<文件 ID><扩展名>`，元信息在同目录同名的 `.meta.json` 里；会话目录名是把会话 id 里的 `:`、`/`、`\` 换成 `_`（Windows 文件名不收冒号）。存储不是沙箱，会话之间的隔离靠下面的校验。
+
+文件 ID 是 `sha256(会话 id + '\0' + 内容)` 的前 16 位十六进制：同一会话重传同一文件得到同一 ID，不同会话上传相同内容得到不同 ID。ID 仍可预测（知道会话 id 与内容就能算出），所以工具 `read_uploaded_file`、`list_uploaded_files`、`delete_uploaded_file` 只认本会话（`ToolCallContext.sessionId`）的文件，别的会话的文件一律当作不存在；删除工具是 `restricted`。会话删除（`session:deleted`）时删掉这个会话的全部文件。
 
 ## 会话面板
 

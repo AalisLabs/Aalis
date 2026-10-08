@@ -34,7 +34,7 @@ describe('createChildSession：父会话未建档时兜底建档', () => {
 
     expect(child.parentId).toBe(parentId);
     expect(child.createdBy).toBe('agent');
-    // 父档被兜底建出来，且 children 已挂上（否则 getTree/getChildren 看不到）
+    // 父档被兜底建出来，且 children 已挂上（否则 getChildren 看不到）
     const parent = sm.getSession(parentId);
     expect(parent, '父会话应被兜底建档').toBeDefined();
     expect(parent?.children).toContain(child.id);

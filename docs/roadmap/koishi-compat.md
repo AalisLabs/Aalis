@@ -58,7 +58,7 @@ cordis 的 npm latest 已是 4.0.0-rc 而 Koishi 4.18 锁 3.x：**沙盒必须�
 
 另加日志接管（替换 `Logger.targets`）与存储落位（`ctx.baseDir` + sqlite driver path）。
 
-**指令统一挂 `koishi.<name>`**：Aalis 指令重名由后来者接管（`CommandRegistry` 声明栈），而 help / echo 等常见名两边都有，混注会被静默覆盖且难排查。代价是与 Koishi 插件自身文档不一致（要打 `/koishi echo`），前缀做成配置项供用户权衡。实现细节：`koishi` 顶层节点必须显式 `command('koishi', '…')` 声明，否则被 `ensureGroups` 建成占位组、概览丢描述（`isPlaceholderGroup` 判定）。`/help` 概览里只占一个顶层条目，长度不随 Koishi 插件数膨胀。
+**指令统一挂 `koishi.<name>`**：Aalis 指令重名由后来者接管（`CommandRegistry` 声明栈），而 help / echo 等常见名两边都有，混注会被静默覆盖且难排查。代价是与 Koishi 插件自身文档不一致（要打 `/koishi echo`），前缀做成配置项供用户权衡。实现细节：`koishi` 顶层节点必须显式 `command('koishi', '…')` 声明，否则被 `ensureGroups` 建成占位组（`Command.isGroup` 为真）、概览丢描述。`/help` 概览里只占一个顶层条目，长度不随 Koishi 插件数膨胀。
 
 **市场**：纯 npm 路线多打一路 `keywords:koishi-plugin` 检索，结果标来源。三处天然隔离：分类（`classifyPackage` 命不中 aalis 关键词）、安装位置（进沙盒而非项目根）、加载（`isLoadablePlugin` 纯 aalis-plugin 正向门，不可能误加载）。注意 `classifyPackage` 假定结果只含五类 aalis 关键词——来源标记必须在进入分类之前打上，不能靠它的 `'plugin'` 兜底。
 

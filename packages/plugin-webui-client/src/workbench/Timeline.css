@@ -164,5 +164,6 @@
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

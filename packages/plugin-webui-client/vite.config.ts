@@ -40,8 +40,8 @@ export default defineConfig({
     },
   },
   build: {
-    // 浏览器下限：近两年的 Chrome、Edge、Firefox，Safari 16 起
-    target: ['chrome117', 'edge117', 'firefox118', 'safari16'],
+    // 浏览器下限：2024-10 时的 Chrome、Edge、Firefox（近两年），Safari 16 起
+    target: ['chrome129', 'edge129', 'firefox131', 'safari16'],
     // 资源一律是同源的文件，不内联成 data: 地址：文档级 CSP 的 font-src 随 default-src 只许同源，内联的公式字体会被拦下
     assetsInlineLimit: 0,
     // 拆分大依赖到独立 chunk，避免单个 bundle 超过 500KB

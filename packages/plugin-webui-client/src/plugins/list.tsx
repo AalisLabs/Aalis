@@ -151,6 +151,19 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
+/** 会话协议的服务名（契约 api-session-protocol 的 sessionProtocol） */
+export const SESSION_PROTOCOL = 'session-protocol';
+
+/** 按服务名找提供它的插件实例（插件列表的 provides，不认插件名）；插件列表没取到或没有提供者时为 undefined */
+export function useProvider(service: string): string | undefined {
+  return usePlugins().plugins?.find(plugin => plugin.provides.includes(service))?.instanceId;
+}
+
+/** 提供这个界面的插件实例：界面自己的接口出了错，看它的日志；插件列表没取到时为 undefined */
+export function useHost(): string | undefined {
+  return usePlugins().plugins?.find(plugin => plugin.self)?.instanceId;
+}
+
 /** 插件实例的显示名：显示名，没有时是包名 */
 export const labelOf = (row: Pick<PluginRow, 'name' | 'displayName'>): string => row.displayName ?? row.name;
 

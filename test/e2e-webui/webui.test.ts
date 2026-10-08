@@ -1,46 +1,36 @@
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { type AddressInfo, connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import puppeteer, {
-  type Browser,
-  type ElementHandle,
-  type Frame,
-  type HTTPResponse,
-  type Page,
-  type Viewport,
-} from 'puppeteer';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import type { ElementHandle, Frame, HTTPResponse, Page, Viewport } from 'puppeteer';
+import { describe, expect, it } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { backgroundTasks, tools } from '../../packages/api-tools/src/index.js';
-import {
-  type FrameClient,
-  type PageHandle,
-  type TableRow,
-  webuiClient,
-  webuiServer,
-} from '../../packages/api-webui/src/index.js';
-import { config, definePlugin, type PluginDefinition, provide } from '../../packages/core/src/index.js';
-import { MINIMAL_BASE } from '../../packages/create-aalis/src/cli.js';
+import { type FrameClient, type PageHandle, type TableRow, webuiServer } from '../../packages/api-webui/src/index.js';
+import { config, definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
 import { generate } from '../../packages/create-aalis-plugin/src/cli.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
-import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
-import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
-import { setupFileLogger } from '../../packages/runtime/src/file-logger.js';
-import { hostedApp } from '../fixtures/app.js';
-import { provideHostPaths } from '../fixtures/host-paths.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { settingsPlugin } from '../fixtures/session-settings.js';
-import { freePort, waitListening } from '../helpers/net.js';
+import {
+  aria,
+  framePackage,
+  onViewport,
+  openWebui,
+  sessionIdOf,
+  TOKEN,
+  text,
+  useWebuiE2E,
+  VIEWPORTS,
+  webuiStack,
+} from '../fixtures/webui-e2e.js';
+import { waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 端到端：构建前端，起最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、假模型与 webui-server，
@@ -52,9 +42,6 @@ import { freePort, waitListening } from '../helpers/net.js';
 // （会写输出、响应中止），子会话由子任务插件派生。页面里的请求只到这个中转与本机起的「外站」，外站一律不连。
 // ════════════════════════════════════════════════════════════
 
-const ROOT = join(import.meta.dirname, '../..');
-const CLIENT = join(ROOT, 'packages/plugin-webui-client');
-const TOKEN = 'zz-e2e-webui-token-placeholder-0000';
 const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
   "connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
@@ -400,12 +387,7 @@ document.querySelector('#session').textContent = window.frame.sessionId;
 type FrameWindow = Window & { frame: FrameClient; changes: Array<{ upserts: Array<{ id: string }> }> };
 
 function framesPlugin(): PluginDefinition {
-  const root = join(realpathSync(mkdtempSync(join(tmpdir(), 'aalis-e2e-frames-'))), FRAMES);
-  cleanups.push(async () => rmSync(dirname(root), { recursive: true, force: true }));
-  mkdirSync(join(root, 'webui'), { recursive: true });
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: FRAMES, files: ['dist', 'webui'] }));
-  for (const [name, content] of Object.entries(FRAME_FILES)) writeFileSync(join(root, 'webui', name), content);
-  const module = pathToFileURL(join(root, 'dist/index.js')).href;
+  const module = framePackage(FRAMES, FRAME_FILES, cleanups);
   return definePlugin({
     name: FRAMES,
     displayName: FRAMES_NAME,
@@ -465,49 +447,8 @@ async function frameIn(page: Page, scope = ''): Promise<Frame> {
   return frame;
 }
 
-const VIEWPORTS: Record<'desktop' | 'phone', Viewport> = {
-  desktop: { width: 1280, height: 800 },
-  phone: { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
-};
-
-let clientDir: string;
-let browser: Browser;
-
-beforeAll(async () => {
-  clientDir = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-client-'));
-  const vite = join(dirname(createRequire(join(CLIENT, 'package.json')).resolve('vite/package.json')), 'bin/vite.js');
-  const build = spawnSync(
-    process.execPath,
-    [vite, 'build', '--outDir', clientDir, '--emptyOutDir', '--logLevel', 'error'],
-    {
-      cwd: CLIENT,
-      encoding: 'utf-8',
-      env: { ...process.env, NODE_ENV: 'production' },
-      timeout: 120_000,
-    },
-  );
-  expect(build.status, `前端构建失败：${build.stderr}`).toBe(0);
-  browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--no-proxy-server'] });
-}, 180_000);
-
-// 浏览器的收尾须有界：10 秒仍未关掉就直接杀进程，不留残余 Chrome
-afterAll(async () => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    browser?.close().catch(() => {}),
-    new Promise<void>(resolve => {
-      timer = setTimeout(resolve, 10_000);
-    }),
-  ]);
-  clearTimeout(timer);
-  browser?.process()?.kill('SIGKILL');
-  rmSync(clientDir, { recursive: true, force: true });
-}, 30_000);
-
-const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
+const e2e = useWebuiE2E();
+const { cleanups } = e2e;
 
 /**
  * 浏览器与 webui-server 之间的中转：cut() 切断现有的全部连接，之后的新连接照常转发；heard(text) 看浏览器发给服务端的
@@ -561,45 +502,17 @@ async function relay(target: number) {
 }
 
 /**
- * 起运行时：minimal 档的插件、内存记忆、假模型与 webui-server，再加一个需要批准的探针工具；extra 是另加的插件。
- * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。requests 是假模型收到的请求
+ * 起运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件。
+ * requests 是假模型收到的请求
  */
 async function startStack(replies: Record<string, string> = {}, extra: PluginDefinition[] = []) {
-  const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
-  const { app } = hostedApp({ logLevel: 'info' });
-  cleanups.push(async () => {
-    await app.stop();
-    rmSync(home, { recursive: true, force: true });
-  });
-  const { logs } = provideHostPaths(app, home);
-  const fileLog = await setupFileLogger(join(logs, 'latest.log'));
-  cleanups.push(() => fileLog.dispose());
-  app.bind({ provide }).provide(webuiClient, { getClientDir: () => clientDir });
-  const minimal = await Promise.all(
-    MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
-  );
-  const port = await freePort();
   const requests: ChatModelRequest[] = [];
-  const definitions = [
-    ...minimal,
-    memoryInMemoryPlugin,
-    createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS, recorder: requests }),
-    webuiServerPlugin,
-    ...extra,
-  ];
-  await app.pluginAll(
-    definitions.map(definition => ({
-      definition,
-      config:
-        definition === webuiServerPlugin
-          ? { host: '127.0.0.1', port, autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN }
-          : {},
-    })),
-  );
-  await app.plugins.idle();
-  for (const definition of definitions) {
-    expect(app.plugins.getPlugin(definition.name)?.state, `${definition.name} 未激活`).toBe('active');
-  }
+  const { app, port } = await webuiStack({
+    clientDir: e2e.clientDir,
+    model: createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS, recorder: requests }),
+    extra,
+    cleanups,
+  });
   const runs: string[] = [];
   app.bind({ tools }).tools.register({
     confirm: 'session',
@@ -635,43 +548,12 @@ async function startStack(replies: Record<string, string> = {}, extra: PluginDef
 
 type Stack = Awaited<ReturnType<typeof startStack>>;
 
-/**
- * 开一个新的浏览器上下文（各用例的存储互不相通），按 token 登录后打开 path。页面里的未捕获异常、
- * CSP 拦下的加载与回 4xx、5xx 的请求都记进 problems，用例结束时应为空
- */
-async function openPage(stack: Stack, viewport: Viewport, path = '/') {
-  const context = await browser.createBrowserContext();
-  cleanups.push(() => context.close());
-  const page = await context.newPage();
-  await page.setViewport(viewport);
-  const problems: string[] = [];
-  page.on('pageerror', error => void problems.push(`未捕获的异常：${String(error)}`));
-  page.on('response', response => {
-    if (response.status() >= 400) problems.push(`${response.status()} ${response.url()}`);
-  });
-  await page.exposeFunction('reportViolation', (text: string) => void problems.push(text));
-  await page.evaluateOnNewDocument(() => {
-    document.addEventListener('securitypolicyviolation', event => {
-      (window as unknown as { reportViolation(text: string): void }).reportViolation(
-        `CSP 拦下了 ${event.blockedURI}（${event.violatedDirective}）`,
-      );
-    });
-  });
-  const response = (await page.goto(`${stack.origin}${path}?token=${TOKEN}`)) as HTTPResponse;
-  return { page, problems, response };
-}
-
-const aria = (name: string, role: string) => `::-p-aria([name="${name}"][role="${role}"])`;
-const text = (content: string) => `::-p-text(${content})`;
+/** 按 token 登录、在这个运行时上打开 path（见 openWebui） */
+const openPage = (stack: Stack, viewport: Viewport, path?: string) =>
+  openWebui(e2e.browser, stack.origin, viewport, cleanups, path);
 /** 会话头部的「后台 N」 */
 const BACKGROUND_METER = 'main [title="打开「后台」标签"]';
 const toolLine = (page: Page) => page.$eval('.tool-line', element => element.textContent);
-
-/** 当前会话的 id：地址是 /s/:id */
-async function sessionIdOf(page: Page): Promise<string> {
-  await page.waitForFunction(() => /^\/s\/[^/]+/.test(location.pathname));
-  return decodeURIComponent(new URL(page.url()).pathname.split('/')[2]);
-}
 
 /** 位置为插件详情的页面的地址 */
 const pagePath = (instance: string, pageKey: string) =>
@@ -706,37 +588,7 @@ async function fill(page: Page, dialog: string, fields: Record<string, string>) 
 
 describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   const phone = width === 'phone';
-
-  /** 打开新会话的输入框：桌面上首页就是；手机上从第一层点「新会话」进第二层 */
-  async function newSession(page: Page) {
-    if (phone) await page.locator(aria('新会话', 'button')).click();
-    await page.waitForSelector(aria('消息', 'textbox'));
-  }
-
-  /**
-   * 发一条消息：桌面上按回车发；触屏上回车只换行，按发送键发。先等上一轮收尾（输入框空着时出现的是发送键、
-   * 不是停止键）：回合还在跑时发的新消息会让 agent 停掉那一轮
-   */
-  async function send(page: Page, message: string) {
-    await page.waitForSelector(aria('发送', 'button'));
-    const box = await page.waitForSelector(aria('消息', 'textbox'));
-    await box?.type(message);
-    await page.keyboard.press('Enter');
-    if (!phone) return;
-    expect(await box?.evaluate(element => (element as HTMLTextAreaElement).value)).toBe(`${message}\n`);
-    await page.locator(aria('发送', 'button')).click();
-  }
-
-  /** 打开当前会话的「后台」标签：桌面点头部的「后台 N」，手机从带着点的「更多」里点 */
-  async function openBackground(page: Page, count: number) {
-    const label = `后台 ${count}`;
-    if (phone) {
-      await page.locator(`main ${aria('更多', 'button')}[data-dot]`).click();
-      await page.locator(aria(label, 'menuitem')).click();
-    } else {
-      await page.locator(`main ${aria(label, 'button')}`).click();
-    }
-  }
+  const { newSession, send, openBackground, openPanel } = onViewport(phone);
 
   /** 会话列表里这个会话的一行（手机上是第一层） */
   const sessionRow = (page: Page, sessionId: string) =>
@@ -776,6 +628,23 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       'noopener noreferrer',
     ]);
     expect(await page.$$('img[src*="example.invalid"]')).toHaveLength(0);
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('指令的回复是一条通知：/help clear 逐行显示，标题、用法各占一行，取值缩在选项下面', async () => {
+    const stack = await startStack();
+    const { page, problems } = await openPage(stack, viewport);
+    await newSession(page);
+    await send(page, '/help clear');
+    const reply = await page.waitForSelector(`.notice-body ${text('仅全局清理')}`);
+    const lines = (await reply?.evaluate(element => (element as HTMLElement).innerText))?.split('\n');
+    expect(lines?.slice(0, 3)).toEqual([
+      '/clear — 清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型',
+      '',
+      '用法：/clear [选项]',
+    ]);
+    expect(lines).toContain('- --type, -t <type>：清理类型，可重复或用逗号分隔');
+    expect(lines).toContain('  - all：全部类型');
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -1276,7 +1145,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const entry = `${phone ? '[aria-label="入口"]' : '.shell-rail'} a[href="/health"]`;
     expect(await page.$eval(`${entry} .badge`, badge => badge.textContent)).toBe('2');
     if (!phone) {
-      expect(await page.$eval(entry, link => link.getAttribute('aria-label'))).toBe('运行状况（2 项需要处理）');
+      expect(await page.$eval(entry, link => link.getAttribute('aria-label'))).toBe('运行状况，2 项需要处理');
     }
 
     await page.locator(`${summary} ${aria('去处理', 'link')}`).click();
@@ -1568,7 +1437,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('会话面板：「+」打开便签，追加在宿主标签后面，换一个浏览器仍在；数据源拿到当前会话；面板宽度下表格只留 primary 列，刷新在标签栏里；关闭按钮只在当前标签上，关了的标签（宿主的也一样）进「+」，再打开回到原位', async () => {
+  it('会话面板：「+」打开便签，追加在宿主标签后面，换一个浏览器仍在；数据源拿到当前会话；面板宽度下表格只留 primary 列，刷新在标签栏里；关闭按钮只关当前标签，关了的标签（宿主的也一样）进「+」，再打开回到原位', async () => {
     const stack = await startStack({ 你好: '好的。' }, [probePages]);
     const { page, problems } = await openPage(stack, viewport);
     await newSession(page);
@@ -1580,12 +1449,10 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const tabNames = () => page.$$eval('aside [role="tab"]', tabs => tabs.map(tab => tab.textContent));
     const closeButtons = () =>
       page.$$eval('aside [aria-label^="关闭「"]', buttons => buttons.map(button => button.getAttribute('aria-label')));
-    /** 手机上会话面板是从会话头的「更多」进去的一层，关掉标签回到会话 */
-    async function openPanel() {
-      if (!phone) return;
+    /** 手机上关掉标签回到会话：等地址回到会话再进会话面板 */
+    async function reenter() {
       await page.waitForFunction(id => location.pathname === `/s/${encodeURIComponent(id)}`, {}, sessionId);
-      await page.locator(`main ${aria('更多', 'button')}`).click();
-      await page.locator(aria('会话面板', 'menuitem')).click();
+      await openPanel(page);
     }
     /** 从「+」打开一项 */
     async function reopen(name: string) {
@@ -1594,7 +1461,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     }
     const opened = phone ? ['设置', '便签'] : ['设置', '用量', '便签'];
 
-    await openPanel();
+    await openPanel(page);
     await reopen('便签');
     await page.waitForSelector(notes);
     expect(new URL(page.url()).pathname).toBe(`/s/${encodeURIComponent(sessionId)}/p/${PAGES_PROBE}/notes`);
@@ -1610,16 +1477,16 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await other.page.waitForSelector(aria('便签', 'tab'));
     expect(other.problems).toEqual([]);
 
-    await page.locator(aria('关闭「便签」', 'button')).click();
-    await openPanel();
+    await page.locator(`aside ${aria('关闭「便签」', 'button')}`).click();
+    await reenter();
     await page.waitForSelector(aria('便签', 'tab'), { hidden: true });
     await reopen('便签');
     await page.waitForSelector(notes);
     expect(await tabNames()).toEqual(opened);
 
     await page.locator(aria('设置', 'tab')).click();
-    await page.locator(aria('关闭「设置」', 'button')).click();
-    await openPanel();
+    await page.keyboard.press('Delete');
+    await reenter();
     await page.waitForSelector(aria('设置', 'tab'), { hidden: true });
     await page.locator(aria('打开标签', 'button')).click();
     expect(await page.$$eval('[role="menuitem"]', items => items.map(item => item.textContent))).toEqual(['设置']);
@@ -1636,10 +1503,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await send(page, '你好');
     const sessionId = await sessionIdOf(page);
     await page.waitForSelector(text('好的。'));
-    if (phone) {
-      await page.locator(`main ${aria('更多', 'button')}`).click();
-      await page.locator(aria('会话面板', 'menuitem')).click();
-    }
+    await openPanel(page);
     await page.locator(aria('打开标签', 'button')).click();
     await page.locator(aria('便签', 'menuitem')).click();
     await page.waitForSelector(`aside ${text(`会话 ${sessionId}`)}`);
@@ -1711,12 +1575,6 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.waitForSelector(text(MOVED));
     await page.waitForSelector('[aria-label^="上下文已用"]');
     const tabNames = () => page.$$eval('aside [role="tab"]', tabs => tabs.map(tab => tab.textContent));
-    /** 手机上会话面板是从会话头的「更多」进去的一层 */
-    async function openPanel() {
-      if (!phone) return;
-      await page.locator(`main ${aria('更多', 'button')}`).click();
-      await page.locator(aria('会话面板', 'menuitem')).click();
-    }
     /** 面板里的子会话框架写出的会话 */
     async function roster(sessionId: string): Promise<Frame> {
       const frame = await frameIn(page, 'aside');
@@ -1724,13 +1582,13 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       return frame;
     }
 
-    await openPanel();
+    await openPanel(page);
     await page.locator(aria('后台', 'tab')).click();
     const groups = [`aside ${aria('子会话 · 1', 'region')}`, `aside ${aria('工具调用 · 1', 'region')}`];
     await page.waitForSelector(`${groups[0]} ${text('整理一节')}`);
     await page.waitForSelector(`${groups[1]} ${aria('delta', 'button')}`);
-    await page.locator(aria('关闭「后台」', 'button')).click();
-    await openPanel();
+    await page.locator(`aside ${aria('关闭「后台」', 'button')}`).click();
+    await openPanel(page);
     await page.waitForSelector(aria('后台', 'tab'), { hidden: true });
     for (const group of groups) expect(await page.$$(group)).toHaveLength(0);
     await page.locator(aria('打开标签', 'button')).click();
@@ -1768,7 +1626,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await send(page, '第二个会话');
     await page.waitForSelector(text('第二个的回复'));
     const second = await sessionIdOf(page);
-    await openPanel();
+    await openPanel(page);
     await page.locator(aria('子会话', 'tab')).click();
     frame = await roster(second);
 
@@ -1776,7 +1634,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     if (phone) await page.locator(aria('返回', 'button')).click();
     await send(page, '慢慢说');
     await page.waitForSelector('::-p-aria(正在输出)');
-    await openPanel();
+    await openPanel(page);
     if (phone) await page.locator(aria('子会话', 'tab')).click();
     frame = await roster(second);
     await frame.evaluate(id => (window as unknown as FrameWindow).frame.abortTurn({ sessionId: id }), second);
@@ -1792,7 +1650,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 90_000);
 
-  it('后台任务：前台等满让出时限转到后台；工具卡保持活的，头部、左栏、「后台」标签与运行状况的「正在运行」都列出它；日志跟随输出，往上翻看时不被拽走；正常结束后收到结束通知、她回复，标签里移进「已结束」', async () => {
+  it('后台任务：前台等满让出时限转到后台；工具卡保持活的，头部、左栏、「后台」标签与运行状况的「正在运行」都列出它；日志跟随输出，往上翻看时不被拽走；正常结束后收到结束通知、她回复，标签里移进「已结束」；结束通知在时间线里是一行状态，点开是这个任务的日志，刷新后一样', async () => {
     const stack = await startStack({}, [backgroundProbe]);
     const { page, problems } = await openPage(stack, viewport);
     await newSession(page);
@@ -1893,6 +1751,22 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     );
     expect(await page.$$(BACKGROUND_METER)).toHaveLength(0);
     expect(await page.$$(`main ${aria('更多', 'button')}[data-dot]`)).toHaveLength(0);
+
+    // 结束通知：一行写工具名、结局与用时，写给模型的那句话不显示；点开是这个任务的日志；刷新后一样
+    const ended = 'main .turn > button.tool-line';
+    const endedLine = await page.$eval(ended, element => element.textContent);
+    expect(endedLine).toMatch(new RegExp(`^后台任务 ${JOB}完成 · \\d+\\.\\d 秒$`));
+    expect(await page.$$(text('background_output'))).toHaveLength(0);
+    await page.locator(ended).click();
+    await page.waitForFunction(log => document.querySelector(log)?.textContent?.includes('build 第 1 行'), {}, log);
+    await page.locator(aria(phone ? '关闭' : '回到列表', 'button')).click();
+    await page.reload();
+    await page.waitForSelector(text(NOTICED));
+    expect(await page.$eval(ended, element => element.textContent)).toBe(endedLine);
+    await page.locator(ended).click();
+    await page.waitForFunction(log => document.querySelector(log)?.textContent?.includes('build 第 1 行'), {}, log);
+    await page.locator(aria(phone ? '关闭' : '回到列表', 'button')).click();
+    expect(await page.$$(text('background_output'))).toHaveLength(0);
     expect(problems).toEqual([]);
     expect(other.problems).toEqual([]);
   }, 90_000);
@@ -2576,11 +2450,9 @@ describe('控件与文字的比例', () => {
             ['左', Math.ceil(x - w) + 1, y],
             ['右', Math.floor(x + w) - 1, y],
           ];
-          // 选中的标签紧挨着它的关闭按钮，右侧被关闭按钮压住：选中的标签不用再点
-          const closer = target.matches('[role="tab"][aria-selected="true"]') ? target.nextElementSibling : null;
           return sides.flatMap(([side, px, py]) => {
             const hit = document.elementFromPoint(px, py);
-            if (hit && (target.contains(hit) || (side === '右' && closer?.contains(hit)))) return [];
+            if (hit && target.contains(hit)) return [];
             return [`${named(element)}的${side}侧被${hit ? named(hit) : '视口外'}压住`];
           });
         });

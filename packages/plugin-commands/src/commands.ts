@@ -1,4 +1,10 @@
-import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
+import type {
+  AuthorityService,
+  CapabilityConfirm,
+  CapabilityRisk,
+  CapabilityVisibility,
+  ExecutionGuard,
+} from '@aalis/api-authority';
 import { capabilityMinLevel, DEFAULT_AUTHORITY, riskDefaults } from '@aalis/api-authority';
 import type {
   Command,
@@ -15,7 +21,7 @@ import type {
   PositionalArgType,
 } from '@aalis/api-commands';
 import type { Logger } from '@aalis/core';
-import { renderDetail } from './help.js';
+import { type Entry, renderDetail, renderOverview } from './help.js';
 
 // ============================================================================
 // 命令注册表（v2 — 链式 builder）
@@ -30,6 +36,12 @@ import { renderDetail } from './help.js';
 // ============================================================================
 
 const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
+
+/** 帮助按谁的等级过滤：执行时守卫裁决的同一个身份 */
+interface Caller {
+  platform: string;
+  userId?: string;
+}
 
 /**
  * 一条指令声明。**节点持有的是一个声明栈**，不是单个格子。
@@ -126,17 +138,20 @@ export class CommandRegistry implements CommandService {
   /** 别名映射：aliasName → realName */
   private readonly aliases = new Map<string, string>();
   private readonly logger: Logger;
+  /** 当前的权限服务：帮助按它的 authorize 判调用者能用哪些指令，与执行守卫的等级裁决同一份 */
+  private readonly authority: () => AuthorityService | undefined;
   private _guard?: ExecutionGuard;
 
   prefix = '/';
 
-  constructor(logger: Logger) {
+  constructor(logger: Logger, authority: () => AuthorityService | undefined) {
     this.logger = logger.child('commands');
+    this.authority = authority;
   }
 
   // ---- Guard ----
 
-  setExecutionGuard(guard: ExecutionGuard): void {
+  setExecutionGuard(guard: ExecutionGuard | undefined): void {
     this._guard = guard;
   }
 
@@ -220,6 +235,12 @@ export class CommandRegistry implements CommandService {
         decl.options.push(parseOptionSyntax(optName, syntax, opts));
         return self;
       },
+      argument: (argName: string, description: string) => {
+        const arg = decl.positionalArgs.find(a => a.name === argName);
+        if (!arg) throw new Error(`指令 ${name} 没有位置参数 ${argName}`);
+        arg.description = description;
+        return self;
+      },
       action: (handler: CommandHandler) => {
         decl.handler = handler;
         return self;
@@ -294,12 +315,10 @@ export class CommandRegistry implements CommandService {
    * 分组节点由 `ensureGroups` 自动创建（空栈、无 pluginName），因此**任何按插件名的摘除都
    * 匹配不到它们**——空栈上 `dropped.length === 0` 直接返回。
    *
-   * 后果是用户可见的：卸载 `plugin-user-relation` 后 `relation` / `relation.cleanup` 留着，
-   * `hasMatch('relation')` 仍为真，于是指令相位**吞掉** `/relation` 不放行给普通消息管道，
-   * 回一段指向空节点的用法；`/help` 概览还会长出「`/relation` — 0 个子指令」。
-   * 而 `relation` 正是全仓唯一的占位分组，卸载该插件必然踩到。
+   * 后果是用户可见的：一个插件只登记了 `a.b.c`，卸载后自动建的 `a` / `a.b` 留着，
+   * `hasMatch('a')` 仍为真，于是指令相位**吞掉** `/a` 不放行给普通消息管道，回一段指向空节点的用法。
    *
-   * 反复扫直到不动点：删掉 `relation.cleanup` 会让 `relation` 也变成无子节点的空壳。
+   * 反复扫直到不动点：删掉 `a.b` 会让 `a` 也变成无子节点的空壳。
    */
   private pruneEmptyGroups(): void {
     let removed = true;
@@ -394,25 +413,13 @@ export class CommandRegistry implements CommandService {
     const resolved = this.resolve(name, input.args);
     if (!resolved) return `未知指令: ${this.prefix}${name}。输入 ${this.prefix}help 查看帮助。`;
 
+    const caller = { platform: input.platform, userId: input.userId };
     const cmd = this.materialize(resolved.name);
-    // ⚠️ 这两步（分组用法、parseArgs 的报错）**先于守卫**返回，所以会把无权使用的指令列出来。
-    // 最直观的样本是 `/relation cleanup`：`relation.cleanup` 是 ensureGroups 自动建的无
-    // handler 分组节点，敲它会把 `relation.cleanup.*` 那 6 条 restricted 子指令一并列出。
-    // （裸敲 `/relation` 只列出下一层的分组名，实测要再敲一层才到那 5 条。）
-    //
-    // **决定不做过滤**。这是降噪而非防泄漏——开源项目里指令存在性本就
-    // 公开（源码、文档、npm 包都写着）。而且只堵这里等于只堵一半：低权限用户直敲受限指令时，
-    // authority 的拒绝文案照样暴露存在性，要真做得连那条通用文案一起改，而它同时服务 tools
-    // 与 commands 两个注入点，牵动所有能力的拒绝语义，改动面大于收益。
-    // 真要做的话两条一起：注入与执行侧同源的 authorize 判定，只取等级轴，明确排除 confirm
-    // （它是 async 且会真去问人，不适合用于列表渲染）。
-    // /help 的概览与详情（plugin-commands 的 renderOverview/renderDetail）是同族第三条
-    // 列举路径，同属本裁定——2026-08 审计曾把它当漏项翻出，特此留痕勿再重开。
-    if (!cmd.handler) {
-      return this.formatUsage(cmd);
-    }
+    // 裸敲分组与 -h、--help 回的都是 `/help <指令>` 那一段：调用者用不了的指令在帮助里当作不存在。
+    // 直接执行用不了的指令由守卫拒绝，拒绝文案照旧点名指令
+    if (!cmd.handler || asksHelp(resolved.remaining)) return this.detail(resolved.name.split('.'), caller);
 
-    const parsed = this.parseArgs(cmd, resolved.remaining);
+    const parsed = this.parseArgs(cmd, resolved.remaining, caller);
     if (typeof parsed === 'string') return parsed;
 
     if (this._guard) {
@@ -429,9 +436,7 @@ export class CommandRegistry implements CommandService {
         confirmIntent: input.confirmIntent,
       });
       if (rejection) return rejection;
-    } else if (cmd.confirm || capabilityMinLevel({ risk: cmd.risk, visibility: cmd.visibility }) > DEFAULT_AUTHORITY) {
-      // 没有守卫（未装权限插件）时 fail-closed，口径与 plugin-tools 相同：等同人人都是默认等级、
-      // 没人能确认。需要更高等级或需要确认的指令一律拒绝，默认等级可用且无需确认的照常执行。
+    } else if (needsAuthority(cmd)) {
       return `指令 ${this.prefix}${cmd.name} 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
     }
 
@@ -512,19 +517,58 @@ export class CommandRegistry implements CommandService {
     };
   }
 
-  // ---- usage 自动格式化 ----
+  // ---- 帮助 ----
+
+  /** `/help` 的概览：调用者看得见的顶层指令（help 自己不列） */
+  overview(caller: Caller): string {
+    const tops = [...this.nodes.keys()].filter(n => !n.includes('.') && n !== 'help').sort();
+    return renderOverview(this.entries(tops, caller), this.prefix);
+  }
 
   /**
-   * 单条指令的用法详情。与 `/help <指令>` 共用同一个渲染器（help.ts 的
-   * renderDetail）——裸调用分组、未知选项报错、help 详情三条路径一处修全部好。
+   * `/help <指令>`、`<指令> -h` 与裸敲分组共用的回答。`/help` 问调用者看不见的指令，与问不存在的指令回同一句。
+   * 指令登记了 usage 时整段用它。
    */
-  private formatUsage(cmd: Command): string {
-    if (cmd.usage) return cmd.usage;
-    return renderDetail(
-      cmd,
-      this.directChildren(cmd.name).map(n => this.materialize(n)),
-      this.prefix,
-    );
+  detail(path: string[], caller: Caller): string {
+    const cmd = this.getNode(path);
+    if (!cmd || !this.visible(cmd.name, caller))
+      return `没有指令 ${path.join(' ')}。敲 ${this.prefix}help 看可用指令。`;
+    return this.usageOf(cmd, caller);
+  }
+
+  private usageOf(cmd: Command, caller: Caller): string {
+    return cmd.usage ?? renderDetail(cmd, this.entries(this.directChildren(cmd.name), caller), this.prefix);
+  }
+
+  /** 报错后附上用法；调用者看不见这条指令时只回报错 */
+  private withUsage(error: string, cmd: Command, caller: Caller): string {
+    return this.visible(cmd.name, caller) ? `${error}\n\n${this.usageOf(cmd, caller)}` : error;
+  }
+
+  private entries(names: string[], caller: Caller): Entry[] {
+    return names
+      .filter(n => this.visible(n, caller))
+      .map(n => ({
+        cmd: this.materialize(n),
+        children: this.directChildren(n).filter(c => this.visible(c, caller)).length,
+      }));
+  }
+
+  /** 帮助里看得见：调用者能用的指令，或底下有看得见的指令的分组 */
+  private visible(name: string, caller: Caller): boolean {
+    const cmd = this.materialize(name);
+    return cmd.handler ? this.permits(cmd, caller) : this.directChildren(name).some(c => this.visible(c, caller));
+  }
+
+  /**
+   * 调用者能不能用这条指令：有权限服务时按它的 authorize（执行守卫的等级裁决就是它，确认不算），
+   * 没有时按执行时同样的 fail-closed
+   */
+  private permits(cmd: Command, caller: Caller): boolean {
+    const authority = this.authority();
+    if (!authority) return !needsAuthority(cmd);
+    const request = { capability: `command:${cmd.name}`, visibility: cmd.visibility, risk: cmd.risk };
+    return authority.authorize(caller, request) === null;
   }
 
   private directChildren(parent: string): string[] {
@@ -544,6 +588,7 @@ export class CommandRegistry implements CommandService {
   private parseArgs(
     cmd: Command,
     rawArgs: string[],
+    caller: Caller,
   ): { positionals: unknown[]; options: Record<string, unknown> } | string {
     const options = this.defaultOptions(cmd.options);
     const positionalTokens: string[] = [];
@@ -558,10 +603,12 @@ export class CommandRegistry implements CommandService {
         if (token.startsWith('--') && token.length > 2) {
           const eq = token.indexOf('=');
           const rawName = eq >= 0 ? token.slice(2, eq) : token.slice(2);
-          const negated = rawName.startsWith('no-');
+          // 先按全名找：选项名本身可以以 no- 开头（--no-llm）；找不到才当作反写（--no-cache 关掉 cache）
+          const exact = findOption(cmd.options, rawName);
+          const negated = !exact && rawName.startsWith('no-');
           const optName = negated ? rawName.slice(3) : rawName;
-          const def = findOption(cmd.options, optName);
-          if (!def) return `未知选项: --${optName}\n\n${this.formatUsage(cmd)}`;
+          const def = exact ?? (negated ? findOption(cmd.options, optName) : undefined);
+          if (!def) return this.withUsage(`未知选项: --${rawName}`, cmd, caller);
           let rawValue = eq >= 0 ? token.slice(eq + 1) : undefined;
           if (def.type === 'boolean') {
             options[def.name] = negated ? false : rawValue === undefined ? true : parseBoolean(rawValue);
@@ -582,7 +629,12 @@ export class CommandRegistry implements CommandService {
         if (token.startsWith('-') && token.length > 1) {
           const alias = token.slice(1);
           const def = findOption(cmd.options, alias);
-          if (!def) return `未知选项: -${alias}\n\n${this.formatUsage(cmd)}`;
+          // 负数没有同名选项时是位置参数（/level <目标> -1 封禁）
+          if (!def && /^\d/.test(alias)) {
+            positionalTokens.push(token);
+            continue;
+          }
+          if (!def) return this.withUsage(`未知选项: -${alias}`, cmd, caller);
           if (def.type === 'boolean') {
             options[def.name] = true;
           } else {
@@ -644,6 +696,22 @@ export class CommandRegistry implements CommandService {
 // ============================================================================
 // 工具函数
 // ============================================================================
+
+/** 写了 -h 或 --help（`--` 之后的是位置参数，不算）：要看用法，别的参数一概不管 */
+function asksHelp(tokens: string[]): boolean {
+  const end = tokens.indexOf('--');
+  return (end < 0 ? tokens : tokens.slice(0, end)).some(t => t === '-h' || t === '--help');
+}
+
+/**
+ * 没有权限插件时执行不了的指令：要比默认等级高，或要人确认。没有守卫时 fail-closed，口径与 plugin-tools 相同：
+ * 等同人人都是默认等级、没人能确认
+ */
+function needsAuthority(cmd: Command): boolean {
+  return (
+    cmd.confirm !== undefined || capabilityMinLevel({ risk: cmd.risk, visibility: cmd.visibility }) > DEFAULT_AUTHORITY
+  );
+}
 
 function tokenize(input: string): string[] {
   const tokens: string[] = [];
@@ -768,6 +836,10 @@ function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOp
     }
   }
 
+  if (name === 'help' || name === 'h' || aliases.includes('h') || aliases.includes('help')) {
+    throw new Error(`-h 与 --help 是保留选项（回这条指令的用法），选项 ${name} 不能占用`);
+  }
+
   return {
     name,
     aliases,
@@ -777,7 +849,7 @@ function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOp
     description: opts?.description,
     default: opts?.default,
     required: opts?.required === true,
-    choices: opts?.choices,
+    choices: opts?.choices?.map(c => (typeof c === 'string' ? { value: c } : c)),
   };
 }
 
@@ -808,8 +880,8 @@ function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown):
     ];
   }
   // string
-  if (def.choices && !def.choices.includes(rawValue)) {
-    throw new Error(`选项 --${def.name} 只能是: ${def.choices.join(', ')}`);
+  if (def.choices && !def.choices.some(c => c.value === rawValue)) {
+    throw new Error(`选项 --${def.name} 只能是: ${def.choices.map(c => c.value).join(', ')}`);
   }
   return rawValue;
 }

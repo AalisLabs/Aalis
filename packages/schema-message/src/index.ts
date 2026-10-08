@@ -265,7 +265,8 @@ export interface IncomingMessage {
    * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
    * - 不进向量记忆、抽取与记忆扩窗。
    *
-   * `kind` 是通知的子类（如 'paper-task'），`id` 是注入方生成的通知标识（日志与账本对位用）。
+   * `kind` 是通知的子类（如 'paper-task'），`id` 是注入方生成的通知标识（日志与账本对位用，存档记下；含义随 kind，
+   * 如后台任务结束通知的是任务 id）。
    * `untrusted` 是注入方已用 wrapUntrustedContent 包好的不可信段：只在当轮渲染时接在正文之后，
    * 不归档、不进任何存储。宿主撰写的行一律放在 content 里。
    */
@@ -293,6 +294,11 @@ export interface IncomingMessage {
      * plugin-agent 回复时把它带进出站消息的 {@link OutgoingMessage.replyTo}；入站消息没有平台消息 id 的不设
      */
     replyTo?: string;
+    /**
+     * 给界面的事实：扁平的键值，键由定义这个 kind 的契约约定（如 api-tools 的后台任务结束通知）。界面据此把通知画成状态，
+     * 写给模型的 content 不给人看；不进模型的上下文，存档按 {@link WellKnownMetadataKeys}.HostNoticeFacts 记下
+     */
+    facts?: Record<string, string | number>;
   };
 }
 
@@ -355,6 +361,7 @@ export function awaitDelivery<T>(
   });
 }
 
+/** 发往平台的回复：只带要发出去的正文与附件。思考与工具时间线在存档的 Message 上，客户端经会话协议拿 */
 export interface OutgoingMessage {
   content: string;
   sessionId: string;
@@ -372,9 +379,6 @@ export interface OutgoingMessage {
    * 现在只有回复宿主通知时带（IncomingMessage.hostNotice.replyTo）
    */
   replyTo?: string;
-  reasoningContent?: string;
-  /** 助手输出的有序时间线（与 Message.segments 含义一致）：要按顺序展示思考与工具调用的适配器以它为准 */
-  segments?: ContentSegment[];
   /**
    * 助手要附带发送的多模态附件（图片/音频/视频/文件）。
    * 适配器（OneBot / WebUI 等）应优先发结构化 attachments，把远程 URL 主动下载为本地文件后用 file:// 形式发送。
@@ -388,16 +392,14 @@ export interface OutgoingMessage {
   /** agent 一轮的回复：这一轮的 id。适配器记投递失败时带上它，回看历史时据此标出这一轮的回复没发出 */
   turnId?: string;
   /**
-   * 本条回复的 LLM 元数据（agent 存档时写进这条 assistant 消息的同名元数据），只在进程内；会话服务取其中的模型与
-   * 这一轮的 token 标在实时推送的回复上，与历史里还原的一致
+   * 本条回复的 LLM 元数据（agent 存档时同一份写进这条 assistant 消息元数据的 {@link WellKnownMetadataKeys}.ModelInfo），
+   * 只在进程内；会话服务取其中的模型与这一轮的 token 标在实时推送的回复上，与历史里还原的一致
    */
   modelInfo?: {
     provider?: string;
     model?: string;
     promptTokens?: number;
     completionTokens?: number;
-    totalTokens?: number;
-    elapsedMs?: number;
   };
 }
 
@@ -469,7 +471,8 @@ declare module '@aalis/core' {
  * - `OutboundFile`：assistant 已发出的文件占位（描述位是文件名）。
  * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
  * - `OutboundDeliveryFailed`：平台适配器记下的投递失败（role 为 system）：她发出的消息平台没收下或结果未知，进下一轮的上下文，
- *   让她知道刚才那条没送达。metadata 带 `error`（与投递结果同一句原因），以及那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的）。
+ *   让她知道刚才那条没送达。metadata 带 {@link WellKnownMetadataKeys} 的 `DeliveryError`（与投递结果同一句原因），以及那条
+ *   消息的 `TurnId`（一轮的回复）或 `CallId`（经工具发出的）。
  */
 export const WellKnownKinds = {
   EventMarker: 'event-marker',
@@ -502,16 +505,63 @@ export function outboundMediaMessage(kind: MessageAttachment['kind'], ref: strin
   return { role: 'assistant', kind: media.kind, content: formatAttachmentRef({ kind: media.ref, desc, ref }) };
 }
 
+/** 存档里提问带的一个附件（{@link WellKnownMetadataKeys}.Attachments 的一项） */
+export interface ArchivedAttachment {
+  kind: MessageAttachment['kind'];
+  /** 入站附件带的文件名 */
+  name?: string;
+  /** 地址：存储地址（`<根>:/路径`）或网址；入站附件的 data 不是地址（内联数据、本机路径、预处理器的私有引用）、预处理器也没给出引用的没有 */
+  ref?: string;
+}
+
 /**
- * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表只登记由一方写入、另一方读取的键。
+ * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表登记由一方写入、另一方读取的键：写方与会话服务引用这里的
+ * 常量，第三方的 agent、存档与适配器照着写，读历史的一方（会话服务回看历史等）才还原得出说话人、文件、回复的模型与 token、
+ * 工具卡的归组。
  *
  * - `VisibleContent`：assistant 消息的可见正文（字符串）。回复经结构化输出（persona 的 outputFormat）
  *   时，`content` 存整串 JSON 信封（保持历史 few-shot 的格式），用户实际看到的是其中的回复字段。
  *   agent 落库时把解码后的正文写进这个键，只在它与 `content` 不同时写入；缺省即 `content` 本身就是
  *   可见正文。检索、摘要等按语义消费历史的一方应优先读它，读不到再退回 `content`。
+ * - `SpokenContent`：提问里发言人自己写的话（字符串，可以是空串），即入站消息的 `content`。存档的 `content` 是给模型看的
+ *   归档文本（{@link buildIncomingContent}：发送者前缀、引用与附件描述），存档只在两者不同时写这个键；缺省即 `content`。
+ *   会话服务据此给出提问条目的正文。
+ * - `Attachments`：提问带的附件清单（{@link ArchivedAttachment} 的数组，按入站顺序），存档写；会话服务据此把文件还原成卡片、
+ *   图片等按地址显示。没有附件时不写。
+ * - `Platform`、`UserId`、`Nickname`：说话人的平台、用户 id 与昵称（字符串）。存档写入站消息的；agent 给她自己的回复写
+ *   这一轮的平台与她在那里的账号、昵称。会话服务据此标出说话人与是不是 owner，向量记忆、用户档案与关系等也读。
+ * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；插件自己写的记录（发出的
+ *   附件、投递失败）写插件的名字。会话服务据此标出提问是不是内部注入的。
+ * - `HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`：宿主通知的子类（`hostNotice.kind`）、id（`hostNotice.id`）与给界面的
+ *   事实（`hostNotice.facts`），存档写；会话服务据此给出通知条目的种类、id 与事实。
+ * - `TurnId`：所在回合的 id（字符串）。agent 写在这一轮落库的回复与工具结果上，平台适配器写在一轮回复的投递失败记录上；
+ *   会话服务据此把存档归回回合、标出哪一轮的回复没发出。
+ * - `CallId`：工具调用的 id（字符串，即 `ToolCallContext.callId`）。agent 写在工具结果上，平台适配器写在经工具发出的
+ *   消息的投递失败记录上；会话服务据此把历史里的工具卡对回实时推送。
+ * - `ModelInfo`：一轮回复的模型与这一轮的 token，与 {@link OutgoingMessage}.modelInfo 同形；agent 写在这一轮最后的回复上，
+ *   会话服务标在回复条目上。
+ * - `SentRef`、`SentName`：发出的附件（`outboundMediaMessage` 记的那条）原样的地址与文件名（字符串）：占位符里的地址遇到
+ *   「]」会截断、描述位的「]」「|」换成了全角。归档发出附件的一方写，会话服务优先取它们还原附件。
+ * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串），平台
+ *   适配器写；会话服务据此写出回复为什么没发出。
  */
 export const WellKnownMetadataKeys = {
   VisibleContent: 'visibleContent',
+  SpokenContent: 'spokenContent',
+  Attachments: 'attachments',
+  Platform: 'platform',
+  UserId: 'userId',
+  Nickname: 'nickname',
+  Source: 'source',
+  HostNoticeKind: 'hostNoticeKind',
+  HostNoticeId: 'hostNoticeId',
+  HostNoticeFacts: 'hostNoticeFacts',
+  TurnId: 'turnId',
+  CallId: 'callId',
+  ModelInfo: 'modelInfo',
+  SentRef: 'ref',
+  SentName: 'name',
+  DeliveryError: 'error',
 } as const;
 
 /**

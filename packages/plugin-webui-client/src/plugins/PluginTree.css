@@ -32,7 +32,3 @@
   color: var(--color-text-3);
   overflow-wrap: anywhere;
 }
-
-.plugin-tree-note[role="alert"] {
-  color: var(--color-danger-text);
-}

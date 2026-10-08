@@ -121,16 +121,18 @@ async function run(caps: Caps): Promise<void> {
     return outcome.approved ? null : outcome.message;
   };
 
-  // 注入到 commands / tools（follow 在 provider 上线/重启时各调一次）。
-  // 不给清理：守卫是提供者身上的一格状态，提供者换人时随旧实例一起消失；而契约里没有
-  // 「摘掉守卫」的口；真要摘，tools / commands 会退回无守卫的 fail-closed（需要更高等级或确认的一律拒绝）。
+  // 注入到 commands / tools（follow 在 provider 上线/重启时各调一次）。本插件停用时摘掉：守卫闭包里是这次激活的等级表与
+  // 审批服务，留着的话停用之后执行仍按旧的裁决，帮助却已按没有权限服务列。摘掉后两处退回 fail-closed
+  //（需要更高等级或确认的一律拒绝）
   commands.follow(svc => {
     svc.setExecutionGuard(guard);
     logger.debug('权限守卫已注入: commands');
+    return () => svc.setExecutionGuard(undefined);
   });
   tools.follow(svc => {
     svc.setExecutionGuard(guard);
     logger.debug('权限守卫已注入: tools');
+    return () => svc.setExecutionGuard(undefined);
   });
 
   // 落盘走 onDispose 而非 app:stopping：后者只在全局停机触发一次，覆盖不了
@@ -148,7 +150,7 @@ async function run(caps: Caps): Promise<void> {
   // ===== 权限指令 =====
 
   // /authority [target] — 查看自己或指定用户的权限等级
-  // 读类敏感操作：会披露他人的权限等级 → risk:'sensitive'（推出 restricted=等级 2，不强制确认）。
+  // 读类敏感操作：会披露他人的权限等级 → risk:'sensitive'（等级 1，不强制确认）。
   commands
     .command('authority [target:string]', '查看自己或指定用户的权限等级', { risk: 'sensitive' })
     .action(async (argv, target) => {
@@ -172,7 +174,7 @@ async function run(caps: Caps): Promise<void> {
 
   // /level <target> <整数> — owner 给外部身份设等级（越大越高，0=默认，负数=封禁）。权限管理仅 owner 可达（防自授）。
   commands
-    .command('level <target:string> <level:number>', '设置用户权限等级（整数，越大越高；0 默认，负数封禁）', {
+    .command('level <target:string> <level:number>', '设置用户的权限等级。整数，越大越高；0 为默认，负数为封禁', {
       visibility: 'restricted',
     })
     .example('/level onebot:12345 5')

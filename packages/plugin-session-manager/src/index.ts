@@ -16,7 +16,6 @@ import {
   type SessionInheritance,
   type SessionManagerService,
   type SessionSetting,
-  type SessionTreeNode,
   type SessionUpdates,
   sessionKind,
   sessionManager,
@@ -42,6 +41,8 @@ import {
 // ===== 常量 =====
 
 const METADATA_NAMESPACE = 'sessions';
+/** 必填字段不对、没有载入的会话记录移到这里：留在会话表里会被之后同 id 的建档整条覆盖 */
+const REJECTED_NAMESPACE = 'sessions-rejected';
 /** 读会话表失败后的重试间隔（毫秒）；用尽仍失败按读表失败处理 */
 const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
 /** 最近一轮出错原因最多留多少字 */
@@ -154,11 +155,35 @@ class SessionManager implements SessionManagerService {
     for (let attempt = 0; ; attempt++) {
       try {
         const entries = await instance.listMetadata(METADATA_NAMESPACE);
-        sessions = new Map();
+        const loaded = new Map<string, SessionInfo>();
+        const dropped: string[] = [];
+        const rejected: Array<{ key: string; data: Record<string, unknown>; field: string }> = [];
         for (const { key, data } of entries) {
-          const info = data as unknown as SessionInfo;
-          if (info && info.id === key) sessions.set(key, { ...info, ...describeSession(key, info.parentId) });
+          const read = storedSession(key, data);
+          if ('wrong' in read) {
+            rejected.push({ key, data, field: read.wrong });
+            continue;
+          }
+          if (read.dropped.length > 0) dropped.push(`${key}（${read.dropped.join('、')}）`);
+          loaded.set(key, { ...read.session, ...describeSession(key, read.session.parentId) });
         }
+        // 先写副本再删原处：后端不保证整批原子时，停在半途也不丢记录
+        if (rejected.length > 0) {
+          await instance.commitMetadata(
+            rejected.flatMap(({ key, data }): MetadataOp[] => [
+              { op: 'put', namespace: REJECTED_NAMESPACE, key, data },
+              { op: 'del', namespace: METADATA_NAMESPACE, key },
+            ]),
+          );
+          this.caps.logger.warn(
+            `会话记录的必填字段不对，没有载入，原记录已移到 metadata 命名空间 ${REJECTED_NAMESPACE}：` +
+              rejected.map(({ key, field }) => `${key}（${field}）`).join('、'),
+          );
+        }
+        if (dropped.length > 0) {
+          this.caps.logger.warn(`会话记录有字段类型不对，去掉这些字段后照常载入：${dropped.join('、')}`);
+        }
+        sessions = loaded;
         break;
       } catch (err) {
         const delay = LOAD_RETRY_DELAYS[attempt];
@@ -452,25 +477,6 @@ class SessionManager implements SessionManagerService {
 
   getChildren(parentId: string): SessionInfo[] {
     return this.listSessions({ parentId });
-  }
-
-  getTree(rootId?: string): SessionTreeNode[] {
-    const buildNode = (session: SessionInfo): SessionTreeNode => ({
-      session,
-      children: session.children
-        .map(cid => this.sessions.get(cid))
-        .filter((s): s is SessionInfo => !!s)
-        .map(buildNode),
-    });
-
-    if (rootId) {
-      const root = this.sessions.get(rootId);
-      if (!root) return [];
-      return [buildNode(root)];
-    }
-
-    // 返回所有根会话的树
-    return this.listSessions({ parentId: null }).map(buildNode);
   }
 
   // ---- 生命周期 ----
@@ -835,6 +841,69 @@ function describeSession(
   const origin = resolveSessionOrigin(id);
   const audience = parentId ? undefined : (origin?.audience ?? 'owner');
   return { kind: sessionKind({ parentId, audience }), originPlatform: origin?.platform, audience };
+}
+
+const SESSION_STATUSES: ReadonlySet<unknown> = new Set<SessionInfo['status']>([
+  'active',
+  'waiting',
+  'completed',
+  'error',
+  'archived',
+]);
+const TURN_OUTCOMES: ReadonlySet<unknown> = new Set<NonNullable<SessionInfo['lastTurn']>['outcome']>([
+  'replied',
+  'silent',
+  'aborted',
+  'error',
+]);
+
+const isText = (value: unknown) => typeof value === 'string';
+const isTime = (value: unknown) => typeof value === 'number' && Number.isFinite(value);
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * 会话记录里会进会话列表与协议、类型不对会让读者出错的可选字段，各自的类型。种类、出生平台与受众载入时按 id 重算，
+ * 不在这里
+ */
+const OPTIONAL_FIELDS: Record<string, (value: unknown) => boolean> = {
+  title: isText,
+  parentId: isText,
+  originInstance: isText,
+  lastReplyAt: isTime,
+  lastTurn: value =>
+    isRecord(value) &&
+    TURN_OUTCOMES.has(value.outcome) &&
+    isTime(value.endedAt) &&
+    (value.error === undefined || isText(value.error)),
+  tokens: value => isRecord(value) && isTime(value.input) && isTime(value.output),
+};
+
+/**
+ * 读回的会话记录：存储把没有的可选字段存成 null 的（MongoDB 就是这样）去掉这个键。字段不对的（旧数据、手改或别的插件写坏的）：
+ * 可选字段去掉，记在 dropped 里；必填字段不对时回这个字段名，整条不载入
+ */
+function storedSession(
+  key: string,
+  data: Record<string, unknown>,
+): { session: SessionInfo; dropped: string[] } | { wrong: string } {
+  const record = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== null));
+  const required: Record<string, boolean> = {
+    id: record.id === key,
+    name: isText(record.name),
+    children: Array.isArray(record.children) && record.children.every(isText),
+    status: SESSION_STATUSES.has(record.status),
+    config: isRecord(record.config),
+    createdAt: isTime(record.createdAt),
+    updatedAt: isTime(record.updatedAt),
+  };
+  const wrong = Object.keys(required).find(field => !required[field]);
+  if (wrong) return { wrong };
+  const dropped = Object.entries(OPTIONAL_FIELDS)
+    .filter(([field, valid]) => record[field] !== undefined && !valid(record[field]))
+    .map(([field]) => field);
+  for (const field of dropped) delete record[field];
+  return { session: record as unknown as SessionInfo, dropped };
 }
 
 /** 一层在日志里的称呼 */

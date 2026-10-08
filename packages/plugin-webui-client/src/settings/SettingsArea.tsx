@@ -2,8 +2,7 @@ import type { DeclarativePageView, PageView } from '@aalis/api-webui';
 import { RotateCw } from 'lucide-react';
 import { type ComponentType, type ReactNode, useReducer } from 'react';
 import { Navigate, useParams } from 'react-router';
-import { Button } from '../components/Button';
-import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
@@ -11,7 +10,7 @@ import { PageContent } from '../pages/PageContent';
 import { PageMissing } from '../pages/PluginPage';
 import { instanceName, pageName, refOf, usePages } from '../pages/registry';
 import { PageScope } from '../pages/scope';
-import { usePlugins } from '../plugins/list';
+import { useHost, usePlugins } from '../plugins/list';
 import { paths } from '../routes';
 import { ServiceAbsent, useSessionService } from '../shell/SessionGate';
 import { Left, Main, usePhone } from '../shell/Shell';
@@ -65,8 +64,9 @@ function useSections(): SectionEntry[] | undefined {
 
 export function SettingsDirectory() {
   const sections = useSections();
-  const { pagesError, retry } = usePages();
-  const { error: pluginsError, refresh } = usePlugins();
+  const { pages, pagesError, retry } = usePages();
+  const { plugins, error: pluginsError, refresh } = usePlugins();
+  const host = useHost();
   const { section, instance, pageKey } = useParams();
   const current = (entry: SectionEntry) =>
     entry.host ? entry.host === section : entry.page?.instance === instance && entry.page?.key === pageKey;
@@ -75,20 +75,24 @@ export function SettingsDirectory() {
       <Panel title="设置" back={paths.home}>
         <div className="settings-directory">
           {pluginsError && (
-            <p className="settings-note" role="alert">
-              插件列表没取到：{pluginsError.message}
-              <Button variant="text" onClick={() => void refresh()}>
-                重试
-              </Button>
-            </p>
+            <FetchError
+              what="插件列表"
+              error={pluginsError}
+              retry={() => void refresh()}
+              stale={plugins !== undefined}
+              inline
+              source={host}
+            />
           )}
           {pagesError && (
-            <p className="settings-note" role="alert">
-              插件的设置页没取到：{pagesError.message}
-              <Button variant="text" onClick={retry}>
-                重试
-              </Button>
-            </p>
+            <FetchError
+              what="插件的设置页"
+              error={pagesError}
+              retry={retry}
+              stale={pages !== undefined}
+              inline
+              source={host}
+            />
           )}
           {sections && (
             <List label="分节">
@@ -150,14 +154,7 @@ export function SettingsSection() {
         {sessions === false ? (
           <ServiceAbsent />
         ) : (
-          pluginsError && (
-            <EmptyState
-              tone="danger"
-              title="插件列表没取到"
-              description={pluginsError.message}
-              action={<Button onClick={() => void refresh()}>重试</Button>}
-            />
-          )
+          pluginsError && <FetchError what="插件列表" error={pluginsError} retry={() => void refresh()} />
         )}
       </Section>
     );

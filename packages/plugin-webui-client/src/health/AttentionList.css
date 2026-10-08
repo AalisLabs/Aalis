@@ -38,6 +38,7 @@
 }
 
 .attention-summary {
+  --row-inset: 0;
   width: 100%;
   max-width: var(--measure-chat);
   margin: 0 auto;
@@ -53,15 +54,4 @@
 
 .attention-summary-head h2 {
   flex: 1;
-}
-
-.fetch-error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-2);
-  font-size: var(--text-sm);
-  line-height: var(--leading-sm);
-  color: var(--color-danger-text);
-  overflow-wrap: anywhere;
 }

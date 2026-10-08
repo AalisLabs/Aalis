@@ -5,12 +5,13 @@ import { downloadTheme, type ImportResult, type ThemeEntry, useAppearance } from
 import { Badge } from '../components/Badge';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { pageName, refOf, sameRef, usePages } from '../pages/registry';
-import { usePluginNames } from '../plugins/list';
+import { useHost, usePluginNames } from '../plugins/list';
 import { hostTabTitle } from '../workbench/panel-tabs';
 
 // 设置的「外观」：主题的选择（跟随系统时深浅各选一个），主题文件的导出与导入，快捷栏（图标栏上固定的页面）与会话面板
@@ -41,7 +42,8 @@ function useOrigin(): (entry: ThemeEntry) => string | undefined {
 }
 
 function Themes() {
-  const { themes, choice, shown, choose, pluginError } = useAppearance();
+  const { themes, choice, shown, choose, pluginError, retryPluginThemes } = useAppearance();
+  const host = useHost();
   const originOf = useOrigin();
   const labelOf = (entry: ThemeEntry) => {
     const origin = originOf(entry);
@@ -92,9 +94,7 @@ function Themes() {
       )}
       <p className="settings-note">主题的选择与导入的主题存在这个浏览器里。</p>
       {pluginError && (
-        <p className="settings-note" role="alert">
-          插件提供的主题没取到：{pluginError.message}
-        </p>
+        <FetchError what="插件提供的主题" error={pluginError} retry={retryPluginThemes} inline source={host} />
       )}
     </Block>
   );
@@ -199,8 +199,11 @@ function ThemeFiles() {
 function useLayoutChange() {
   const { changeLayout } = usePages();
   const toast = useToast();
+  const host = useHost();
   return (operation: LayoutOperation, label: string) =>
-    void changeLayout(operation).catch((err: Error) => toast({ kind: 'danger', text: `${label}失败：${err.message}` }));
+    void changeLayout(operation).catch((err: Error) =>
+      toast({ kind: 'danger', text: `${label}失败：${err.message}`, source: host }),
+    );
 }
 
 /** 所属插件没启用的页面：只知道实例与页面 key */
@@ -242,16 +245,22 @@ function OrderRow({ name, missing, first, last, up, down, extra, children }: Ord
 }
 
 function PinnedOrder() {
-  const { pages, layout, layoutError } = usePages();
+  const { pages, layout, layoutError, retry } = usePages();
+  const host = useHost();
   const change = useLayoutChange();
   const missingName = useMissingName();
   return (
     <Block title="快捷栏">
       <p className="settings-note">图标栏上固定的页面。插件页面的标题栏里可以固定。</p>
-      {layoutError && !layout && (
-        <p className="settings-note" role="alert">
-          布局记录没取到：{layoutError.message}
-        </p>
+      {layoutError && (
+        <FetchError
+          what="布局记录"
+          error={layoutError}
+          retry={retry}
+          stale={layout !== undefined}
+          inline
+          source={host}
+        />
       )}
       {layout && layout.pinned.length > 0 && (
         <ul className="settings-list" aria-label="快捷栏">
@@ -282,7 +291,8 @@ function PinnedOrder() {
 const tabKey = (tab: PanelTabRef) => ('host' in tab ? tab.host : `${tab.instance}\n${tab.pageKey}`);
 
 function PanelTabsOrder() {
-  const { pages, layout, layoutError } = usePages();
+  const { pages, layout, layoutError, retry } = usePages();
+  const host = useHost();
   const change = useLayoutChange();
   const missingName = useMissingName();
   return (
@@ -290,10 +300,15 @@ function PanelTabsOrder() {
       <p className="settings-note">
         会话右侧面板里的标签。隐藏的在面板的「+」里；插件的标签可以移出，下次从「+」打开时排在最后。
       </p>
-      {layoutError && !layout && (
-        <p className="settings-note" role="alert">
-          布局记录没取到：{layoutError.message}
-        </p>
+      {layoutError && (
+        <FetchError
+          what="布局记录"
+          error={layoutError}
+          retry={retry}
+          stale={layout !== undefined}
+          inline
+          source={host}
+        />
       )}
       {layout && (
         <ul className="settings-list" aria-label="会话面板标签">

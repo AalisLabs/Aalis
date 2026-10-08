@@ -3,6 +3,7 @@ import { useCallback, useId, useMemo, useState } from 'react';
 import { Select } from '../components/Select';
 import { useConnection } from '../connection';
 import type { SessionClient } from '../protocol/session-client';
+import { SessionsFetchError } from '../shell/SessionGate';
 import { SettingRows } from './SettingRows';
 import { useSessionQuery, useSettingRows } from './setting-rows';
 
@@ -45,11 +46,11 @@ function useLayers() {
 
 export function SessionDefaults() {
   const pickerId = useId();
-  const { value: layers, error: layersError } = useLayers();
+  const { value: layers, error: layersError, retry: retryLayers } = useLayers();
   const [chosen, setChosen] = useState(keyOf(DEFAULTS));
   if (layers && !layers.some(layer => keyOf(layer) === chosen)) setChosen(keyOf(DEFAULTS));
   const target = useMemo(() => ({ layer: JSON.parse(chosen) as SettingLayer }), [chosen]);
-  const { rows, error, update } = useSettingRows(target);
+  const { rows, error, update, retry } = useSettingRows(target);
   const problem = layersError ?? error;
 
   return (
@@ -68,9 +69,14 @@ export function SessionDefaults() {
         {target.layer.scope !== 'defaults' && <p className="settings-note">平台档按平台名生效，不区分实例。</p>}
       </div>
       {problem && (
-        <p className="settings-note" role="alert">
-          没取到：{problem.message}
-        </p>
+        <SessionsFetchError
+          what="会话默认"
+          error={problem}
+          retry={() => {
+            retryLayers();
+            retry();
+          }}
+        />
       )}
       {rows && (
         <div className="settings-rows">

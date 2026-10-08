@@ -16,12 +16,14 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// outputFormat 人设下 agent 定稿与落库的两件事（真 fs 角色卡 + mock LLM + 真 persona 钩子）：
+// agent 定稿、外发与落库（真 fs 角色卡 + mock LLM + 真 persona 钩子）：
 //   1. 上游吐空流：persona 判不合格请求重试，agent 曾因「原始输出为空」直接不进重试循环，
 //      回合静默、被 @ 也不回。现在空输出同样重试，只是不回放空的 assistant 消息。
 //   2. 落库口径：content 存整串 JSON 信封（保持 few-shot 格式），解码后的可见正文另写进
 //      assistant 消息 metadata 的 VisibleContent 键；客户端渲染模式下外发的是整串 JSON，
 //      可见正文照样是回复字段。没有信封时不写这个键。
+//   3. 外发与落库的分工：外发的回复只带正文与这条回复的模型和 token，思考与时间线只落库
+//      （客户端经会话协议拿思考，IM 适配器只发正文）。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -149,5 +151,39 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
     expect(archived.length).toBe(1);
     expect(archived[0].content).toBe('普通回复');
     expect(archived[0].metadata && WellKnownMetadataKeys.VisibleContent in archived[0].metadata).toBe(false);
+  });
+
+  it('外发的回复只带正文与这条回复的模型和 token；思考与时间线留在存档里', async () => {
+    const usage = { promptTokens: 12, completionTokens: 3, totalTokens: 15 };
+    const { sent, archived, say } = await boot('zz-plain', [
+      { content: '普通回复', reasoningContent: '想一想', usage },
+    ]);
+    await say();
+
+    const modelInfo = {
+      provider: '@aalis/test-fixture-mock-llm',
+      model: 'mock-model',
+      promptTokens: 12,
+      completionTokens: 3,
+    };
+    expect(sent.map(m => m.content)).toEqual(['普通回复']);
+    // 删掉的字段与存档 Message 上保留的同名，grep 分不开，用编译期用例钉住
+    // @ts-expect-error 出站消息不带思考
+    expect(sent[0].reasoningContent).toBeUndefined();
+    // @ts-expect-error 出站消息不带时间线
+    expect(sent[0].segments).toBeUndefined();
+    expect(sent[0].modelInfo).toStrictEqual(modelInfo);
+    // @ts-expect-error modelInfo 没有总数：总数是两项之和
+    expect(sent[0].modelInfo?.totalTokens).toBeUndefined();
+    // @ts-expect-error modelInfo 没有用时：要用时由时间线条目的时刻算出
+    expect(sent[0].modelInfo?.elapsedMs).toBeUndefined();
+
+    expect(archived).toHaveLength(1);
+    expect(archived[0].reasoningContent).toBe('想一想');
+    expect(archived[0].segments).toEqual([
+      { type: 'reasoning_text', content: '想一想' },
+      { type: 'text', content: '普通回复' },
+    ]);
+    expect(archived[0].metadata?.modelInfo).toStrictEqual(modelInfo);
   });
 });

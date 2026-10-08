@@ -32,6 +32,7 @@ import {
   type MessageAttachment,
   type OutgoingMessage,
   outboundMediaMessage,
+  WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
 
@@ -376,7 +377,7 @@ async function archiveOutboundAttachment(
   const message: Message = {
     ...outboundMediaMessage(kind, ref, description),
     timestamp: Date.now(),
-    metadata: { source: 'image-sender', ref },
+    metadata: { [WellKnownMetadataKeys.Source]: 'image-sender', [WellKnownMetadataKeys.SentRef]: ref },
   };
   try {
     await archive.saveMessage(sessionId, message, {

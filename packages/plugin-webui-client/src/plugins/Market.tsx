@@ -5,6 +5,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { Select } from '../components/Select';
@@ -15,6 +16,7 @@ import { paths } from '../routes';
 import { Main } from '../shell/Shell';
 import { usePluginAction } from './action';
 import { InstallDisclosure, UninstallWarning } from './disclosure';
+import { useHost } from './list';
 import './Market.css';
 
 // 市场：npm 上带 Aalis 类型关键词的包，加上本地已装的系统组件（内核、宿主、契约、规范、工具库，它们不经关键词检索，
@@ -143,6 +145,7 @@ export function Market() {
   });
   const [loading, setLoading] = useState(true);
   const action = usePluginAction();
+  const host = useHost();
   const toast = useToast();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -298,12 +301,7 @@ export function Market() {
             </div>
           )}
           {state.error ? (
-            <EmptyState
-              tone="danger"
-              title="市场没取到"
-              description={state.error.message}
-              action={<Button onClick={reload}>重试</Button>}
-            />
+            <FetchError what="市场" error={state.error} retry={reload} source={host} />
           ) : (
             state.packages &&
             (shown.length === 0 ? (

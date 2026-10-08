@@ -3,9 +3,11 @@ import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
+import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 
 // 回滚一轮：只回滚文件，或连这一轮的对话一起删。回滚撤不回来，先确认，焦点落在「取消」上。确认之前先查这一轮的检查点：
-// 执行过命令的写明命令的效果不会撤回（命令的副作用不经存储），没查到的写明原因，查完才能确认。
+// 执行过命令的写明命令的效果不会撤回（命令的副作用不经存储），没查到的写明原因，查完才能确认。这一轮有转到后台的调用的
+// 写明它们在这一轮结束之后写的文件不会撤回（回合提交之后的写入不进这一轮的检查点）。
 // 结果如实回报：恢复与删除了几个文件、删掉几条消息；之后的回合也改过的文件，那些改动一并撤掉了，点名写出；没能回滚的写原因。
 // 对话真的删掉了的，那一轮 owner 发的文字放回输入框，不自动发，附件不放回
 
@@ -14,6 +16,8 @@ export interface RewindTarget {
   scope: 'code' | 'code-and-chat';
   /** 那一轮 owner 发的文字 */
   prompt?: string;
+  /** 这一轮有转到后台的调用（工具卡带 taskId） */
+  backgrounded: boolean;
 }
 
 const TEXT = {
@@ -40,6 +44,7 @@ export function RewindDialog({
 }) {
   const client = useSessionClient();
   const toast = useToast();
+  const sessions = useProvider(SESSION_PROTOCOL);
   const [busy, setBusy] = useState(false);
   const [check, setCheck] = useState<{ execUsed: boolean } | { error: string }>();
 
@@ -77,10 +82,14 @@ export function RewindDialog({
       }
       const [first] = result.errors;
       if (first) {
-        toast({ kind: 'danger', text: `有 ${result.errors.length} 处没能回滚：${first.uri}（${first.reason}）` });
+        toast({
+          kind: 'danger',
+          text: `有 ${result.errors.length} 处没能回滚：${first.uri}（${first.reason}）`,
+          source: sessions,
+        });
       }
     } catch (err) {
-      toast({ kind: 'danger', text: `回滚失败：${(err as Error).message}` });
+      toast({ kind: 'danger', text: `回滚失败：${(err as Error).message}`, source: sessions });
     } finally {
       setBusy(false);
       onClose();
@@ -110,6 +119,7 @@ export function RewindDialog({
         <p role="alert">没能确认这一轮有没有执行过命令（{check.error}）；命令的效果不会随回滚撤回。</p>
       )}
       {check && 'execUsed' in check && check.execUsed && <p>这一轮执行过命令，命令的效果不会撤回。</p>}
+      {target?.backgrounded && <p>这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。</p>}
     </Dialog>
   );
 }

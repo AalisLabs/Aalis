@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type * as llmContract from '../../packages/api-llm/src/index.js';
+import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 已删除的机制不留痕迹：下表的标识在仓库的代码、测试与文档里一处都不能再出现（CHANGELOG 记的是历史，不查）。
@@ -79,6 +81,10 @@ const REMOVED: Array<[string, string]> = [
   ['exec-bg:', '后台命令结束通知的来源前缀，由后台任务结束通知的 bg: 取代'],
   ["'exec-background'", '后台命令结束通知的种类，由后台任务结束通知的 background-task 取代'],
   ['ChildSessions', '左栏会话行上的子任务展开：左栏只列根会话，子会话在会话面板的「后台」标签里按会话树列出'],
+  ['getTree', '会话管理服务的整棵会话树接口：没有调用方，会话树按 parentId 经 getChildren 逐层取'],
+  ['SessionTreeNode', '会话管理服务的整棵会话树接口'],
+  ['FileReaderService', 'plugin-file-reader 的 file-reader 服务：没有消费方，描述符又定义在实现包里'],
+  ['stripFileBlocks', '会话服务按文件读取插件的私有格式剥掉提问里的文件块，由存档另记的发言人写的话与附件清单取代'],
 ];
 
 /**
@@ -113,11 +119,22 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ['plugin-session-manager', 'api-webui', '会话页与它的页面动作，由会话协议取代'],
   ['plugin-checkpoint', 'api-webui', '检查点的页面动作，由会话协议的回滚取代'],
   ['plugin-todo-list', 'api-webui', '待办的页面动作，由会话协议的计划条目与清空取代'],
+  // 别的包里有 turnModelInfo 这类局部变量，只在本包查；类型上另有下面的编译期用例
+  ['api-llm', 'ModelInfo', '没有引用方的模型信息类型：模型列表的形状归 api-webui 的 REST 类型'],
+  // 常见的变量名，只在存档的写方与读方查
+  ['plugin-message-archive', 'fileNames', '存档只记文件名的附件清单，由登记的键 Attachments（种类、名字与地址）取代'],
+  ['plugin-session-server', 'fileNames', '存档只记文件名的附件清单，由登记的键 Attachments（种类、名字与地址）取代'],
   ['plugin-session-server', 'listLLMModels', '会话设置写死的可选项，可选项改由字段的 dynamicOptions 指向提供它的服务'],
   ['plugin-session-server', 'api-llm', '会话设置写死的可选项（模型列表）'],
   ['plugin-session-server', 'api-persona', '会话设置写死的可选项（人设列表）'],
   ['api-session-protocol', 'sessionDefaults', '写路径不带子会话默认值：新界面没有编辑它的地方'],
   ['plugin-session-server', 'sessionDefaults', '写路径不带子会话默认值：新界面没有编辑它的地方'],
+  ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
+  [
+    'plugin-tools',
+    "'background-task'",
+    '执行器私有的结束通知种类，挪进 api-tools 作契约常量 BACKGROUND_TASK_NOTICE，执行器与界面都引用它',
+  ],
   // 会话层不认识具体的设置项：设置项由拥有功能的插件登记，会话管理、会话协议与会话服务的源码里不出现它们的键。
   // 只列字面上不会误撞的键（llm、think、persona 这类常用词在这些包里另有正当用法）
   ...['api-session-manager', 'plugin-session-manager', 'api-session-protocol', 'plugin-session-server'].flatMap(pkg =>
@@ -186,5 +203,20 @@ describe('已删除的机制不留痕迹', () => {
       .filter(file => readFileSync(file, 'utf-8').includes(identifier))
       .map(file => relative(ROOT, file));
     expect(hits).toEqual([]);
+  });
+});
+
+// 删掉的类型与接口在类型上也不在：@ts-expect-error 不再报错时，test-types 的类型检查把它当错误报出。运行时只是空跑
+describe('已删除的类型与接口（编译期用例）', () => {
+  it('api-llm 不导出 ModelInfo', () => {
+    // @ts-expect-error api-llm 不再导出 ModelInfo
+    const removed: llmContract.ModelInfo | undefined = undefined;
+    expect(removed).toBeUndefined();
+  });
+
+  it('会话管理服务没有 getTree', () => {
+    const service: Partial<SessionManagerService> = {};
+    // @ts-expect-error 会话管理服务没有 getTree
+    expect(service.getTree).toBeUndefined();
   });
 });

@@ -91,7 +91,7 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
         },
         ask: question => new Promise(answer => setAsking({ question, answer })),
         openSession: id => navigate(paths.session(id)),
-        report: (kind, text) => toast({ kind, text }),
+        report: (kind, text) => toast({ kind, text, source: page.instance }),
       }),
     [],
   );

@@ -48,9 +48,17 @@ export interface PositionalArgSpec {
   name: string;
   type: PositionalArgType;
   required: boolean;
+  /** 说明，帮助里列在参数后面；由 builder 的 argument 添加 */
+  description?: string;
 }
 
 export type OptionValueType = 'string' | 'number' | 'boolean' | 'string[]';
+
+/** 选项的一个取值；说明在帮助里列在取值后面 */
+export interface OptionChoice {
+  value: string;
+  description?: string;
+}
 
 export interface OptionSpec {
   /** 长选项名 (--name) */
@@ -66,7 +74,8 @@ export interface OptionSpec {
   description?: string;
   default?: unknown;
   required: boolean;
-  choices?: readonly string[];
+  /** 可选的取值，帮助里逐项列出。`string` 选项只收其中之一；`string[]` 不按它校验，由指令自己核 */
+  choices?: readonly OptionChoice[];
 }
 
 // ===== 命令元数据 =====
@@ -139,12 +148,16 @@ export interface OptionRegisterOptions {
   description?: string;
   default?: unknown;
   required?: boolean;
-  choices?: readonly string[];
+  /** 可选的取值：只写值，或带上说明 */
+  choices?: readonly (string | OptionChoice)[];
 }
 
 export interface CommandBuilder {
   alias(name: string): CommandBuilder;
+  /** 声明选项。`-h` 与 `--help` 是保留选项（回这条指令的用法），声明它们时抛错 */
   option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
+  /** 给 DSL 里声明的位置参数加说明；名字不在 DSL 里时抛错 */
+  argument(name: string, description: string): CommandBuilder;
   action(handler: CommandHandler): CommandBuilder;
   usage(text: string): CommandBuilder;
   example(line: string): CommandBuilder;
@@ -163,6 +176,8 @@ export interface CommandService {
   /**
    * 启动 builder 注册一个命令。
    * @param name 完整点路径名，可含 inline DSL：`'memory.set <key:string> [value:text]'`
+   * @param description 说明。第一句（到第一个句号、分号、问号、叹号或换行为止）是 /help 概览与子指令列表里的摘要，
+   *   写成一句短话（24 字以内，过长会被截断），细节写在后面
    */
   command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
 
@@ -189,7 +204,8 @@ export interface CommandService {
   getNode(name: string | string[]): Command | undefined;
   getAll(): Command[];
 
-  setExecutionGuard(guard: ExecutionGuard): void;
+  /** 注入执行守卫，用于能力裁决与确认；传 undefined 摘掉，需要更高等级或确认的指令退回 fail-closed */
+  setExecutionGuard(guard: ExecutionGuard | undefined): void;
 }
 
 // ===== 指令 builder =====
@@ -197,6 +213,7 @@ export interface CommandService {
 type DeferredCall =
   | { kind: 'alias'; name: string }
   | { kind: 'option'; name: string; syntax: string; opts?: OptionRegisterOptions }
+  | { kind: 'argument'; name: string; description: string }
   | { kind: 'action'; handler: CommandHandler }
   | { kind: 'usage'; text: string }
   | { kind: 'example'; line: string };
@@ -223,6 +240,7 @@ function makeBuilder(
     for (const c of calls) {
       if (c.kind === 'alias') realBuilder.alias(c.name);
       else if (c.kind === 'option') realBuilder.option(c.name, c.syntax, c.opts);
+      else if (c.kind === 'argument') realBuilder.argument(c.name, c.description);
       else if (c.kind === 'action') realBuilder.action(c.handler);
       else if (c.kind === 'usage') realBuilder.usage(c.text);
       else if (c.kind === 'example') realBuilder.example(c.line);
@@ -244,6 +262,11 @@ function makeBuilder(
     option(n, syntax, opts) {
       calls.push({ kind: 'option', name: n, syntax, opts });
       realBuilder?.option(n, syntax, opts);
+      return self;
+    },
+    argument(n, description) {
+      calls.push({ kind: 'argument', name: n, description });
+      realBuilder?.argument(n, description);
       return self;
     },
     action(handler) {
@@ -269,6 +292,7 @@ function makeBuilder(
 
 /** `commands` 的绑定接口：指令声明自动归属这次激活（每个激活一层声明，撤回时被覆盖的声明自动复位） */
 export interface BoundCommands extends ServiceRef<CommandService> {
+  /** 同 {@link CommandService.command}：描述的第一句是 /help 里的摘要 */
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 }
 

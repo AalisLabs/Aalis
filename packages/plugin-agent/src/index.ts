@@ -769,15 +769,12 @@ class DefaultAgent implements AgentService {
         );
 
         const t0 = Date.now();
-        // 本轮初始时间与累加用量，用于最终 assistant 消息的 modelInfo 元数据。
-        const turnStartTs = t0;
+        // 本轮累加的用量，用于最终 assistant 消息的 modelInfo 元数据。
         // 注：缓存命中量（usage.cachedPromptTokens）不进这里——本对象只喂
         // assistant 消息的 modelInfo，而其字段是逐个挑的（见下方 turnModelInfo），
         // 加进来也不会流到下游。命中率的观测出口是 LLM 响应日志那一行。
-        const turnUsageAcc = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-        const accUsage = (
-          u: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined,
-        ) => {
+        const turnUsageAcc = { promptTokens: 0, completionTokens: 0 };
+        const accUsage = (u: { promptTokens?: number; completionTokens?: number } | undefined) => {
           if (!u) return;
           // promptTokens 语义 = "生成这条回复时的上下文大小"。工具迭代循环里每轮都把同一份
           // （不断增长的）上下文重新发给模型，若累加会把重复发送的上下文重复计入，导致单条
@@ -786,7 +783,6 @@ class DefaultAgent implements AgentService {
           // completionTokens 语义 = "本回合真正新生成的输出"（含中间 reasoning / tool-call 生成
           // 与最终回复文本），每次调用都是不重复的新输出，故逐次累加。
           turnUsageAcc.completionTokens += u.completionTokens ?? 0;
-          turnUsageAcc.totalTokens = turnUsageAcc.promptTokens + turnUsageAcc.completionTokens;
         };
         const firstResult = await this.consumeStream(
           llm,
@@ -818,12 +814,6 @@ class DefaultAgent implements AgentService {
         const llmAfterData = { response, messages: llmBeforeData.messages };
         await this.caps.hooks.run('agent:llm:after', llmAfterData);
         response = llmAfterData.response;
-
-        // 收集所有思考内容
-        const allReasoning: string[] = [];
-        if (response.reasoningContent) {
-          allReasoning.push(response.reasoningContent);
-        }
 
         // 收集工具调用摘要
         const toolCallSummaries: string[] = [];
@@ -1034,7 +1024,11 @@ class DefaultAgent implements AgentService {
               content: result,
               toolCallId: toolCall.id,
               ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
-              metadata: { ...resultMetadata, turnId, callId },
+              metadata: {
+                ...resultMetadata,
+                [WellKnownMetadataKeys.TurnId]: turnId,
+                [WellKnownMetadataKeys.CallId]: callId,
+              },
             };
             llmBeforeData.messages.push(toolMessage);
             toolMessages.push(toolMessage);
@@ -1109,10 +1103,6 @@ class DefaultAgent implements AgentService {
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
           await this.caps.hooks.run('agent:llm:after', nextLlmAfterData);
           response = nextLlmAfterData.response;
-
-          if (response.reasoningContent) {
-            allReasoning.push(response.reasoningContent);
-          }
         }
 
         // 检测是否因工具调用次数达到上限而退出循环
@@ -1192,7 +1182,6 @@ class DefaultAgent implements AgentService {
           response = retryResult;
           accUsage(response.usage);
           rawLlmContent = response.content ?? '';
-          if (response.reasoningContent) allReasoning.push(response.reasoningContent);
 
           // 用新输出再次跑 hook；hook 端根据 attempt 决定继续重试或走兜底（静默丢弃）
           responseData.content = rawLlmContent;
@@ -1244,23 +1233,19 @@ class DefaultAgent implements AgentService {
         if (replyContent.trim().length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
-          const combinedReasoning =
-            !reportOnly && allReasoning.length > 0 ? allReasoning.join('\n\n---\n\n') : undefined;
           const visibleSegments = !reportOnly && turnSegments.length > 0 ? turnSegments : undefined;
 
           // 在 assistant 最终持久化时记录 modelInfo：前端从消息历史可还原 "这条回复
-          // 由哪个 model 生成、用了多少 token、耗时多久"，方便用户验证模型切换是否生效。
+          // 由哪个 model 生成、用了多少 token"，方便用户验证模型切换是否生效。
           const turnModelInfo = {
             provider: llm.providerId,
             model: llm.id,
             promptTokens: turnUsageAcc.promptTokens || undefined,
             completionTokens: turnUsageAcc.completionTokens || undefined,
-            totalTokens: turnUsageAcc.totalTokens || undefined,
-            elapsedMs: Date.now() - turnStartTs,
           };
           const finalAssistantMetadata: Record<string, unknown> = {
             ...(assistantMetadata ?? {}),
-            modelInfo: turnModelInfo,
+            [WellKnownMetadataKeys.ModelInfo]: turnModelInfo,
           };
           // 落库的是信封（如 outputFormat 的整串 JSON）时，另带解码后的可见正文，供检索、摘要等按语义读历史的一方用
           if (visibleContent !== archiveContent) {
@@ -1278,7 +1263,7 @@ class DefaultAgent implements AgentService {
             segments: visibleSegments,
           });
 
-          // 外发给平台：思考是这一轮各次调用合并的全文，segments 是这一轮的有序时间线
+          // 外发给平台：只带正文与这条回复的模型和 token，思考与时间线只在上面落库的消息上
           await this.dispatchOutbound({
             content: replyContent,
             sessionId: incoming.sessionId,
@@ -1287,10 +1272,8 @@ class DefaultAgent implements AgentService {
               ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
               : {}),
             ...(incoming.hostNotice?.replyTo ? { replyTo: incoming.hostNotice.replyTo } : {}),
-            reasoningContent: combinedReasoning,
             source: 'agent',
             turnId,
-            segments: visibleSegments,
             modelInfo: turnModelInfo,
           });
         }
@@ -2023,12 +2006,12 @@ class DefaultAgent implements AgentService {
   private buildAssistantMetadata(incoming: IncomingMessage, turnId: string): Record<string, unknown> | undefined {
     const identity = getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
-      platform: incoming.platform,
+      [WellKnownMetadataKeys.Platform]: incoming.platform,
       senderType: 'assistant',
-      turnId,
+      [WellKnownMetadataKeys.TurnId]: turnId,
     };
-    if (identity?.selfId) metadata.userId = identity.selfId;
-    if (identity?.nickname) metadata.nickname = identity.nickname;
+    if (identity?.selfId) metadata[WellKnownMetadataKeys.UserId] = identity.selfId;
+    if (identity?.nickname) metadata[WellKnownMetadataKeys.Nickname] = identity.nickname;
     if (incoming.groupId) metadata.groupId = incoming.groupId;
     if (incoming.groupName) metadata.groupName = incoming.groupName;
     if (incoming.sessionType) metadata.sessionType = incoming.sessionType;
@@ -2378,7 +2361,7 @@ function run(caps: Caps): void {
   }
 
   caps.commands
-    .command('model [keyword:string]', '列出/搜索可用对话模型（分页，-p 翻页；如 /model grok）')
+    .command('model [keyword:string]', '列出/搜索可用对话模型。分页显示，-p 翻页；如 /model grok')
     .option('page', '-p <n:number>', { description: '页码（默认 1）' })
     .action(async (argv, keyword) => {
       const seen = new Set<string>();
@@ -2404,7 +2387,7 @@ function run(caps: Caps): void {
 
   // ---- 会话级「模型 + 人设 + 深度思考 + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
   caps.commands
-    .command('session', '查看当前对话生效的模型 / 人设 / 深度思考 / 名称及来源', { risk: 'sensitive' })
+    .command('session', '查看当前对话生效的设定及来源。设定指模型、人设、深度思考与名称', { risk: 'sensitive' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
@@ -2426,7 +2409,7 @@ function run(caps: Caps): void {
     });
 
   caps.commands
-    .command('session.set', '设定当前对话的模型 / 人设 / 深度思考 / 显示名（会话级覆盖，持久化，重启不丢）', {
+    .command('session.set', '设定当前对话的模型、人设、深度思考或显示名。会话级覆盖，持久化，重启不丢', {
       risk: 'sensitive',
       examples: [
         '/session.set -m @aalis/plugin-llm-openai:main/gpt-4o -p catgirl',
@@ -2449,7 +2432,7 @@ function run(caps: Caps): void {
       const level = typeof argv.options.think === 'string' ? argv.options.think.trim() : '';
       const displayName = typeof argv.options.name === 'string' ? argv.options.name.trim() : '';
       if (!modelRef && !personaName && !level && !displayName) {
-        return '用法: /session.set -m <provider/model> -p <人设名> -t <档位> [-n <显示名>]（至少给一项）';
+        return '至少给一项。敲 /session.set -h 看用法';
       }
       const config: SessionConfigPatch = {};
       // 模型：校验存在再落，避免错名静默回退默认
@@ -2502,7 +2485,7 @@ function run(caps: Caps): void {
     });
 
   caps.commands
-    .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设+深度思考；-m/-p/-t 单独清对应项）', {
+    .command('session.reset', '复位当前对话的会话级覆盖。默认清模型、人设与深度思考，-m/-p/-t 单独清对应项', {
       risk: 'sensitive',
       examples: ['/session.reset', '/session.reset -m', '/session.reset -p', '/session.reset -t'],
     })

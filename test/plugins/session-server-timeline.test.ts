@@ -96,7 +96,10 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
     memory,
     compression,
   });
-  host.provide(storage, memoryStorage(new Map()));
+  // 白纸与插件数据之外再有 data 根：媒体识别把图片落在这里，归档只把根表里有的根记成附件地址
+  const files = memoryStorage(new Map());
+  const dataRoot = { name: 'data', kind: 'data', browsable: true, readable: true, writable: true, deletable: true };
+  host.provide(storage, { ...files, listRoots: () => [...files.listRoots(), dataRoot] });
 
   const rewinds: Array<[string, string, string]> = [];
   host.provide(checkpoint, {
@@ -1036,7 +1039,7 @@ describe('条目', () => {
     ]);
   });
 
-  it('入站与她发出的附件按存档推送：用户消息带说话人，宿主通知是 notice，发出的图片是只有附件的消息', async () => {
+  it('入站与她发出的附件按存档推送：用户消息带说话人，宿主通知是 notice（带通知的 id 与给界面的事实），发出的图片是只有附件的消息', async () => {
     const { server, sm, host, archive } = await setup();
     await sm.ensureSession(ROOM, { name: '群' });
     const c = client(server());
@@ -1056,6 +1059,13 @@ describe('条目', () => {
       source: 'paper:1',
       hostNotice: { kind: 'paper-task', id: 'n1' },
     });
+    await archive.archiveIncoming({
+      content: '写给模型的那句话',
+      sessionId: ROOM,
+      platform: 'onebot',
+      source: 'bg:bg_1',
+      hostNotice: { kind: 'zz-kind', id: 'bg_1', facts: { tool: 'zz_tool', status: 'completed', durationMs: 1500 } },
+    });
     await archive.saveMessage(ROOM, {
       role: 'assistant',
       kind: 'outbound-image',
@@ -1070,17 +1080,61 @@ describe('条目', () => {
     expect(c.timeline(ROOM, sub).map(shape)).toEqual([
       {
         kind: 'user-message',
-        text: '[阿七(7)]: 大家好',
+        text: '大家好',
         attachments: [],
         speaker: { platform: 'onebot', userId: '7', nickname: '阿七', owner: false },
       },
-      { kind: 'notice', topic: 'paper-task', text: '白纸任务完成', attachments: [] },
+      { kind: 'notice', topic: 'paper-task', text: '白纸任务完成', attachments: [], noticeId: 'n1' },
+      {
+        kind: 'notice',
+        topic: 'zz-kind',
+        text: '写给模型的那句话',
+        attachments: [],
+        noticeId: 'bg_1',
+        facts: { tool: 'zz_tool', status: 'completed', durationMs: 1500 },
+      },
       { kind: 'agent-message', text: '', attachments: [{ kind: 'image', src: 'data:/cat.png' }] },
     ]);
     const fresh = client(server());
     await fresh.init();
     const snap = await fresh.subscribe(ROOM);
     expect(snap.snapshot.items, '实时推送与快照里的历史是同一批条目').toEqual(c.timeline(ROOM, sub));
+  });
+
+  it('带文件与图片的提问归档后：实时推送与快照里的正文只有发言人写的话，文件是带句柄的卡片、图片按地址；预处理器写的附件描述（file-reader 之外的写法也一样）不进正文', async () => {
+    const { server, sm, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const { message } = await archive.archiveIncoming({
+      content: '看看这两个',
+      sessionId: s.id,
+      platform: 'webui',
+      userId: 'console',
+      attachments: [
+        { kind: 'file', name: '报告.txt', data: 'paper:/up/报告.txt' },
+        { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA' },
+      ],
+      // 一个第三方的文件预处理器写的描述，与媒体识别落盘后按附件引用写的描述
+      _attachmentDescriptions: ['〔附件 报告.txt：三页的周报，ID 9f〕', '[图片: 一只橘猫 | ref:data/images/s/cat.png]'],
+    });
+    expect(message.content, '归档正文照旧带附件描述，给模型看').toContain('〔附件 报告.txt');
+    const asked = c.timeline(s.id, sub).map(shape);
+    expect(asked).toEqual([
+      {
+        kind: 'user-message',
+        text: '看看这两个',
+        attachments: [
+          { kind: 'file', name: '报告.txt', src: expect.any(String) },
+          { kind: 'image', name: 'cat.png', src: 'data:/images/s/cat.png' },
+        ],
+        speaker: { platform: 'webui', userId: 'console', owner: true },
+      },
+    ]);
+    const fresh = client(server());
+    await fresh.init();
+    expect((await fresh.subscribe(s.id)).snapshot.items.map(shape)).toEqual(asked);
   });
 
   it('plan：待办整份替换；快照带当前计划；plan/clear 清空并推空计划', async () => {

@@ -497,7 +497,7 @@ type LayoutOperation =
   | { op: 'remove-tab'; tab: PageRef };
 ```
 
-- **会话面板的标签：** 宿主的标签与插件的会话面板（位置为 `session` 的页面）在同一张表里，同一套写法。宿主的标签是封闭集合 `HOST_PANEL_TABS`，每个对应会话协议里的一类数据，由宿主按数据画、不走页面登记，以后按加法加。界面把表里开着、此刻可用的排成标签栏，关着的与适用、还没进表的插件页面列在「+」里；宿主标签按数据出现（计划要有计划条目，设置总有，用量要有用量数据，后台要有子会话或这个会话的后台任务），插件标签要这个会话适用。
+- **会话面板的标签：** 宿主的标签与插件的会话面板（位置为 `session` 的页面）在同一张表里，同一套写法。宿主的标签是封闭集合 `HOST_PANEL_TABS`，每个对应会话协议里的一类数据，由宿主按数据画、不走页面登记，以后按加法加。界面把表里开着、此刻可用的排成标签栏，关着的与适用、还没进表的插件页面列在「+」里；宿主标签按数据出现（计划要有计划条目、里面有待办；设置总有；用量要有用量条目；后台四项有一项即可：这个会话有子会话（摘要的 `childCount` 大于 0）、任务表里有这个会话的后台任务（含保留着的结束的）、摘要的 `background` 大于 0、任务表没取到——头部的「后台 N」点了要落到这个标签上，取数的错误与重试也在标签里），插件标签要这个会话适用。
 - **读出时：** 宿主标签缺哪个，就按 `HOST_PANEL_TABS` 的顺序补在末尾、开着，新记录因此是计划、设置、用量、后台都开着，以后加的宿主标签（如后来加的「后台」）对已有的记录也出现。认不出的宿主标签与形状不对的条目丢掉，重复的留第一个。
 - 按操作写，不整份覆盖：两台设备同时改，各自的操作都生效。请求体只收两个键：`pin`、`unpin`、`move-up`、`move-down` 带 `page`，`open-tab`、`close-tab`、`tab-up`、`tab-down` 带 `tab`，`remove-tab` 只带插件标签（宿主标签回 400）；`instance` 与 `pageKey` 是 1 到 512 个字符。
 - `pin` 只收此刻登记着、位置为 `plugin` 的页面；`open-tab` 打开插件标签时只收此刻登记着、位置为 `session` 的页面。页面不存在回 404，位置不对回 400。其余只动记录，所属插件停用时也能做。
@@ -601,7 +601,7 @@ interface MessageResponse extends OkResponse { message: string }
 | `POST /api/auth/logout` | — | `OkResponse`，清掉登录 cookie |
 | `GET /api/auth/login.js` | — | 登录页的脚本 |
 
-`identity` 是 `UserIdentity`（api-authority），单 owner 下恒为 `{ platform: 'webui', userId: 'console' }`。页面地址带 `?token=` 也能登录：对了设 cookie 并 302 到不带查询串的同一地址。
+`identity` 是 `UserIdentity`（api-authority），单 owner 下恒为 `{ platform: 'webui', userId: 'console' }`。页面地址带 `?token=` 也能登录：对了设 cookie 并 302 到同一地址，只去掉 `token`，其余查询串照留。
 
 ### 插件与宿主配置
 
@@ -700,6 +700,7 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 - `llm`：模型列表，模型字段的可选项走它。
 - 宿主回答的来源：`platform`（平台名）、`gateway-scopes`（会话范围）、`toolGroups`（工具分组，`'*'` 是全部分组）、`llm-thinking`（深度思考的档位，按 `dependency` 取那个模型声明的档位，`dependency` 是模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好，写法不对回 400；模型不能调时 `models` 与 `details` 为空）。
 - 其余服务名调那个服务各提供者的 `listModels()`，回 `{ models }`。
+- **局限**：只有上面宿主回答的几个来源带名字、说明与默认档，也只有 `llm-thinking` 收依赖项的值；它们都取自契约（api-platform、api-llm、api-tools），任何实现都成立。第三方插件给自己的设置项开新来源时走 `listModels()`，只拿得到取值，拿不到依赖值（行上的 `dependsOn` 对它不起作用）。有插件要用到名字或依赖值时再按加法加，现在不另设契约。
 - 刷新：`:contextId` 是提供者的插件实例，与模型的 `contextId` 相同；名下的模型都不能运行时刷新、或名下没有模型时回 404。
 
 ```ts

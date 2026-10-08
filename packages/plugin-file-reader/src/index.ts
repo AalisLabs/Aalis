@@ -8,17 +8,7 @@ import type {} from '@aalis/api-session-manager'; // declaration merging：sessi
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
 import { type ToolCallContext, tools, withToolGroups } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
-import {
-  type BoundOf,
-  config,
-  definePlugin,
-  defineService,
-  events,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { formatImageSection, recognizeImages } from './doc-images.js';
@@ -135,7 +125,7 @@ const EXT_MIME_MAP: Record<string, string> = {
 const ROOT_URI = 'pluginData:/file-reader';
 
 /** 元信息 sidecar（与文件同目录、同名 + .meta.json） */
-export interface FileMeta {
+interface FileMeta {
   id: string;
   name: string;
   mimeType: string;
@@ -145,32 +135,6 @@ export interface FileMeta {
   /** 已提取文本（小文件提取后顺手缓存，避免每次都重复 parse） */
   textCache?: string;
 }
-
-/**
- * 文件读取服务：查已上传文件的清单/元信息，取本地路径，删文件。
- *
- * 无独立 `-api` 包——它只有这一个实现，契约就住在实现包里（同 `web-search` /
- * `scheduler` 等）。第三方消费方 `import type { FileReaderService } from
- * '@aalis/plugin-file-reader'` 即可拿到完整类型。
- */
-export interface FileReaderService {
-  /** 恒为 true——供消费方在拿到服务实例时快速确认它已就绪 */
-  available: boolean;
-  /** 列出已上传文件（不含内部 URI）；传 sessionId 则只列该会话的。按上传时间倒序。 */
-  listFiles(sessionId?: string): FileMeta[];
-  /**
-   * 文件在本地文件系统上的绝对路径。
-   * 文件不存在、或当前 storage 实现不支持本地路径（如对象存储）时返回 null；其余存储错误照常抛出。
-   */
-  resolveLocalPath(fileId: string): Promise<string | null>;
-  /** 单个文件的元信息；不存在返回 null。 */
-  getMeta(fileId: string): FileMeta | null;
-  /** 删除文件及其 sidecar；文件不存在返回 false，存储删不掉时抛出（索引项保留，可以重试）。 */
-  deleteFile(fileId: string): Promise<boolean>;
-}
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const fileReader = defineService<FileReaderService>('file-reader');
 
 interface FileEntry extends FileMeta {
   /** 数据文件 URI */
@@ -219,7 +183,6 @@ const uses = {
   events,
   hooks,
   contributions,
-  provide,
   tools: optional(tools),
   agent: optional(agent),
   memory: optional(memory),
@@ -233,13 +196,12 @@ export default definePlugin({
   displayName: '文件读取',
   subsystem: 'tools',
   configSchema,
-  provides: [fileReader],
   uses,
   apply: run,
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { logger, lifecycle, events, hooks, contributions, provide, tools, agent, memory, media, webui } = caps;
+  const { logger, lifecycle, events, hooks, contributions, tools, agent, memory, media, webui } = caps;
   const cfg = parseConfig(configSchema, caps.config, logger);
 
   const maxFileSize = cfg.maxFileSizeMB * 1024 * 1024;
@@ -978,38 +940,6 @@ async function run(caps: Caps): Promise<void> {
       },
     });
   }
-
-  // ===== 暴露 file-reader 服务 =====
-
-  provide(fileReader, {
-    available: true,
-    listFiles(sessionId?: string): FileMeta[] {
-      return [...index.values()]
-        .filter(e => !sessionId || e.sessionId === sessionId)
-        .map(({ dataUri: _du, metaUri: _mu, ...meta }) => meta)
-        .sort((a, b) => b.uploadedAt - a.uploadedAt);
-    },
-    async resolveLocalPath(fileId: string): Promise<string | null> {
-      const entry = index.get(fileId);
-      if (!entry) return null;
-      try {
-        return await storage.resolveLocalPath(entry.dataUri, 'read');
-      } catch (err) {
-        // 契约只把这两种情况映射为 null：文件已不在磁盘，或存储根不支持本地路径（网关报「存储根 X 不支持 local-path」）。
-        // 其余错误（根不可读、路径不合法、提供者报的其它「不支持」等）照常抛出，不能让调用方误判成「文件不存在」。
-        if (isStorageNotFound(err) || /不支持 local-path/.test(err instanceof Error ? err.message : String(err)))
-          return null;
-        throw err;
-      }
-    },
-    getMeta(fileId: string): FileMeta | null {
-      const e = index.get(fileId);
-      if (!e) return null;
-      const { dataUri: _du, metaUri: _mu, ...meta } = e;
-      return meta;
-    },
-    deleteFile,
-  });
 
   logger.info(
     `文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, autoInline=${autoInlineLimit} 字符, 保留 ${retentionDays} 天, LRU=${(lruMaxTotalBytes / 1024 / 1024).toFixed(0)}MB, 已恢复 ${index.size} 个文件)`,

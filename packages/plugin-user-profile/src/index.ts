@@ -8,6 +8,7 @@ import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-
 import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
+import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
@@ -386,6 +387,8 @@ const uses = {
   commands: optional(commands),
   persona: optional(persona),
   userRelation: optional(userRelation),
+  /** 档案页；不在时照常记档案 */
+  webui: optional(webuiServer),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -411,6 +414,7 @@ function registerUserProfile({
   commands,
   persona,
   userRelation,
+  webui,
 }: Caps): void {
   const parsed = parseConfig(configSchema, config, logger);
   const cfg: UserProfileConfig = {
@@ -699,10 +703,13 @@ function registerUserProfile({
   async function loadProfile(mem: MemoryService | undefined, userKey: string): Promise<UserProfile | undefined> {
     if (!mem) return undefined;
     const doc = await mem.getMetadata(PROFILE_NS, userKey);
-    if (!doc) return undefined;
-    const facts = Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [];
+    return doc ? profileFrom(doc) : undefined;
+  }
+
+  /** 存着的档案文档按类型取出，读不懂的事实跳过 */
+  function profileFrom(doc: Record<string, unknown>): UserProfile {
     return {
-      facts,
+      facts: Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [],
       relationScore: typeof doc.relationScore === 'number' ? Math.min(100, Math.max(0, doc.relationScore)) : 0,
       interactionCount: typeof doc.interactionCount === 'number' ? Math.max(0, Math.floor(doc.interactionCount)) : 0,
       lastInteractionAt: typeof doc.lastInteractionAt === 'number' ? doc.lastInteractionAt : undefined,
@@ -732,6 +739,114 @@ function registerUserProfile({
     };
     await mem.saveMetadata(PROFILE_NS, userKey, payload);
   }
+
+  // ─── 档案页：插件详情里查看与删除，只删不改。事实变了（这里、指令、提取、全局清理）就 invalidate ───
+  /** 事实那一行的 rowKey 是 [用户键, 事实 id] 的 JSON：行动作只收 rowKey，靠它找回是谁的哪一条 */
+  function parseFactRef(rowKey: string): [string, string] {
+    let ref: unknown;
+    try {
+      ref = JSON.parse(rowKey);
+    } catch {
+      ref = undefined;
+    }
+    if (!Array.isArray(ref) || ref.length !== 2 || !ref.every(part => typeof part === 'string')) {
+      throw new Error(`不认识的事实：${rowKey}`);
+    }
+    return ref as [string, string];
+  }
+
+  const page = webui.definePage({
+    key: 'profiles',
+    title: '用户档案',
+    icon: 'contact',
+    actions: {
+      forgetFact: {
+        label: '删除',
+        effect: 'destructive',
+        confirm: '删掉后，以后的对话里不再带上这条事实。',
+        row: true,
+        async handler({ rowKey }) {
+          const [userKey, factId] = parseFactRef(rowKey);
+          const mem = memory.require();
+          const profile = await loadProfile(mem, userKey);
+          const hit = profile?.facts.find(f => f.id === factId);
+          if (!profile || !hit) throw new Error('这条事实已经不在档案里了');
+          await saveProfile(mem, userKey, {
+            ...profile,
+            facts: profile.facts.filter(f => f !== hit),
+            updatedAt: Date.now(),
+          });
+          page.invalidate();
+          return `已删除：${hit.text}`;
+        },
+      },
+      clearProfile: {
+        label: '清空档案',
+        effect: 'destructive',
+        confirm: '这个人的全部事实连同关系强度、互动次数一起清空。',
+        row: true,
+        async handler({ rowKey }) {
+          const mem = memory.require();
+          if (!(await mem.getMetadata(PROFILE_NS, rowKey))) throw new Error(`${rowKey} 已经没有档案了`);
+          await mem.deleteMetadata(PROFILE_NS, rowKey);
+          page.invalidate();
+          return `已清空 ${rowKey} 的档案`;
+        },
+      },
+    },
+    content: [
+      {
+        type: 'table',
+        id: 'profiles',
+        rowKey: 'key',
+        description: '她从对话里记下的关于各人的事实，会带进以后的对话。这里只能删除，不能改写。',
+        empty: '还没有人的档案',
+        columns: [
+          { key: 'key', label: '用户', primary: true },
+          { key: 'facts', label: '事实', primary: true },
+          { key: 'updatedAt', label: '最近记下', kind: 'time' },
+        ],
+        async data() {
+          const entries = await memory.require().listMetadata(PROFILE_NS);
+          return entries
+            .flatMap(({ key, data }) => {
+              const { facts } = profileFrom(data);
+              if (facts.length === 0) return [];
+              return [{ key, facts: facts.length, updatedAt: Math.max(...facts.map(f => f.updatedAt)) }];
+            })
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+        },
+        detail: [
+          {
+            type: 'table',
+            id: 'facts',
+            rowKey: 'ref',
+            empty: '这个人的档案里没有事实了',
+            columns: [
+              { key: 'text', label: '事实', primary: true },
+              { key: 'category', label: '分类' },
+              { key: 'temporality', label: '时效' },
+              { key: 'updatedAt', label: '记下', kind: 'time' },
+            ],
+            rowActions: [{ action: 'forgetFact' }],
+            async data({ rowKey }) {
+              const facts = (await loadProfile(memory.require(), rowKey))?.facts ?? [];
+              return facts
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .map(f => ({
+                  ref: JSON.stringify([rowKey, f.id]),
+                  text: f.text,
+                  category: f.category ?? '',
+                  temporality: f.temporality === 'temporary' ? '近期' : '长期',
+                  updatedAt: f.updatedAt,
+                }));
+            },
+          },
+          { type: 'actions', actions: ['clearProfile'] },
+        ],
+      },
+    ],
+  });
 
   interface ExtractAddItem {
     text: string;
@@ -1127,6 +1242,7 @@ function registerUserProfile({
         facts: newFacts,
         updatedAt: Date.now(),
       });
+      page.invalidate();
       logger.debug(
         `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
@@ -1680,6 +1796,7 @@ function registerUserProfile({
         message: `用户档案清空失败: ${m}`,
       });
     }
+    page.invalidate();
     // 同步清空第三方行为指令档案（per-persona）。指令是档案的兄弟概念，
     // memory:clear scope='all' 时一并清理；types 默认包含 user-profile 即也清。
     // 不看 enableInstructions：开关管功能用不用，不管已有数据能不能清。
@@ -1807,6 +1924,7 @@ function registerUserProfile({
       const existed = await mem.getMetadata(PROFILE_NS, userKey);
       if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
       await mem.deleteMetadata(PROFILE_NS, userKey);
+      page.invalidate();
       return `✅ 已清除你的档案 (${userKey})`;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1843,6 +1961,7 @@ function registerUserProfile({
           facts: profile.facts.filter(f => f.id !== factId),
           updatedAt: Date.now(),
         });
+        page.invalidate();
         return `✅ 已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
       } catch (err) {
         return `❌ 删除失败：${err instanceof Error ? err.message : String(err)}`;
@@ -1856,6 +1975,7 @@ function registerUserProfile({
     }
     try {
       const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger);
+      page.invalidate();
       return `✅ 已清空全部用户档案（${keys.length} 条）`;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1940,7 +2060,7 @@ function registerUserProfile({
     });
 
   commands
-    .command('instruct.clear', '【危险】清空当前 persona 的全部第三方行为指令', {
+    .command('instruct.clear', '【危险】清空全部第三方行为指令。范围是当前 persona', {
       visibility: 'restricted',
     })
     .action(async () => {

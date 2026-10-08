@@ -26,9 +26,9 @@ import { NewSession, SessionRoute } from './workbench/Workbench';
 export function App({ session, admin }: { session: SessionClient; admin: AdminClient }) {
   return (
     <ConnectionProvider session={session} admin={admin}>
-      <ToastProvider>
-        <SessionActionsProvider>
-          <PluginsProvider>
+      <PluginsProvider>
+        <ToastProvider>
+          <SessionActionsProvider>
             <PagesProvider>
               <AttentionProvider>
                 <MineProvider>
@@ -88,9 +88,9 @@ export function App({ session, admin }: { session: SessionClient; admin: AdminCl
                 </MineProvider>
               </AttentionProvider>
             </PagesProvider>
-          </PluginsProvider>
-        </SessionActionsProvider>
-      </ToastProvider>
+          </SessionActionsProvider>
+        </ToastProvider>
+      </PluginsProvider>
     </ConnectionProvider>
   );
 }

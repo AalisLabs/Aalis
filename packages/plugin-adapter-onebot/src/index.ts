@@ -20,6 +20,7 @@ import {
   type OutboundDeliveryResult,
   type OutgoingMessage,
   WellKnownKinds,
+  WellKnownMetadataKeys,
   WellKnownNoticeTypes,
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -2284,11 +2285,11 @@ function runAdapter(caps: Caps): void {
       content,
       timestamp: Date.now(),
       metadata: {
-        source: 'adapter-onebot',
-        error,
+        [WellKnownMetadataKeys.Source]: 'adapter-onebot',
+        [WellKnownMetadataKeys.DeliveryError]: error,
         unconfirmed,
-        ...(msg.turnId ? { turnId: msg.turnId } : {}),
-        ...(msg.callId ? { callId: msg.callId } : {}),
+        ...(msg.turnId ? { [WellKnownMetadataKeys.TurnId]: msg.turnId } : {}),
+        ...(msg.callId ? { [WellKnownMetadataKeys.CallId]: msg.callId } : {}),
       },
     };
     void Promise.resolve()

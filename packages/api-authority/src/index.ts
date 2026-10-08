@@ -179,7 +179,7 @@ export interface ExecutionGuardContext {
 
 /**
  * 执行守卫函数。返回 null 放行；返回 string 拦截（值为原因/提示）。
- * 由 plugin-authority 通过 setExecutionGuard() 注入。
+ * 由 plugin-authority 通过 setExecutionGuard() 注入，停用时摘掉。
  */
 export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 

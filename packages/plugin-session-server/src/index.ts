@@ -136,6 +136,7 @@ async function run(caps: Caps): Promise<void> {
     compressAt: () => caps.compression.current?.autoThreshold || undefined,
     approvalsOf: sessionId => approval.service.list({ sessionId }),
     signal: lifecycle.signal,
+    logger,
   });
   const approval = createApprovals({
     isOwner,

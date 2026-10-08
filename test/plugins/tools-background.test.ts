@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionGuardContext } from '../../packages/api-authority/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type {
-  BackgroundTaskChange,
-  RegisteredTool,
-  ToolCallContext,
-  ToolExecutionResult,
-  ToolOutputMessage,
+import {
+  BACKGROUND_TASK_NOTICE,
+  type BackgroundTaskChange,
+  type RegisteredTool,
+  type ToolCallContext,
+  type ToolExecutionResult,
+  type ToolOutputMessage,
 } from '../../packages/api-tools/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { BackgroundTasks } from '../../packages/plugin-tools/src/background.js';
@@ -819,9 +820,10 @@ describe('结束通知', () => {
       expect(notice.source).toBe(`bg:${taskId}`);
       expect(notice.actor).toEqual(c.actor);
       expect(notice.hostNotice).toEqual({
-        kind: 'background-task',
+        kind: BACKGROUND_TASK_NOTICE,
         id: taskId,
         ...(c.callerUserId !== undefined ? { callerUserId: c.callerUserId } : {}),
+        facts: { tool: 'zz_slow', status: 'completed', durationMs: 65_000 },
       });
       expect(notice.userId).toBeUndefined();
       expect(notice.content).toContain(String(taskId));
@@ -841,22 +843,31 @@ describe('结束通知', () => {
     w.runs[0].finish();
     await flush();
     expect(w.notices().map(n => n.hostNotice)).toEqual([
-      { kind: 'background-task', id: taskId, callerUserId: '30002', replyTo: 'zz-msg-1' },
+      {
+        kind: BACKGROUND_TASK_NOTICE,
+        id: taskId,
+        callerUserId: '30002',
+        replyTo: 'zz-msg-1',
+        facts: { tool: 'zz_slow', status: 'completed', durationMs: 0 },
+      },
     ]);
   });
 
-  it('失败的写失败与退出码；工具的错误文字不进通知', async () => {
+  it('失败的写失败与退出码，给界面的事实同样；工具的错误文字不进通知', async () => {
     const w = world();
     w.slow('zz_cmd', { display: { kind: 'command', fields: { command: 'text' }, result: { exitCode: 'exitCode' } } });
     await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx);
     await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx);
+    await vi.advanceTimersByTimeAsync(1_500);
     w.runs[0].finish(JSON.stringify({ exitCode: 3 }));
     w.runs[1].finish(JSON.stringify({ error: 'zz-tool-error' }));
     await flush();
     const [byCode, byError] = w.notices();
     expect(byCode.content).toContain('失败：退出码 3');
+    expect(byCode.hostNotice?.facts).toEqual({ tool: 'zz_cmd', status: 'failed', exitCode: 3, durationMs: 1_500 });
     expect(byError.content).toContain('失败');
-    expect(byError.content).not.toContain('zz-tool-error');
+    expect(byError.hostNotice?.facts).toEqual({ tool: 'zz_cmd', status: 'failed', durationMs: 1_500 });
+    expect(JSON.stringify(byError)).not.toContain('zz-tool-error');
   });
 
   it('由结束通知开的回合里转后台的不再通知，工具结果写明', async () => {

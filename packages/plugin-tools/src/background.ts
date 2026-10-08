@@ -6,7 +6,9 @@
 
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import {
+  BACKGROUND_TASK_NOTICE,
   type BackgroundTask,
+  type BackgroundTaskNoticeFacts,
   type BackgroundTaskOutput,
   type BackgroundTaskService,
   type BackgroundTaskStatus,
@@ -45,7 +47,6 @@ const MAX_ENDED_PER_SESSION = 20;
 const STOP_GRACE_MS = 3000;
 /** 失败原因最多多少字 */
 const REASON_MAX = 200;
-const NOTICE_KIND = 'background-task';
 const NOTICE_SOURCE_PREFIX = 'bg:';
 const STORE_URI = 'pluginData:/tools/background-tasks.json';
 const RESTART_REASON = 'Aalis 重启时还在跑';
@@ -602,10 +603,10 @@ export class BackgroundTasks implements BackgroundTaskService {
       this.land(record, 'stopped', ending);
       return;
     }
-    const failed = toolFailed(result.content, exitCode);
-    const reason = failed ? errorOf(result.content) : undefined;
-    this.land(record, failed ? 'failed' : 'completed', { ...ending, ...(reason !== undefined ? { reason } : {}) });
-    if (record.notice && !this.shuttingDown) this.notify(record, record.notice);
+    const status = toolFailed(result.content, exitCode) ? 'failed' : 'completed';
+    const reason = status === 'failed' ? errorOf(result.content) : undefined;
+    this.land(record, status, { ...ending, ...(reason !== undefined ? { reason } : {}) });
+    if (record.notice && !this.shuttingDown) this.notify(record, status, record.notice);
   }
 
   private land(
@@ -650,29 +651,41 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /**
-   * 结束通知只放宿主取得的事实：任务 id、工具名、结局与退出码、用时。参数由模型写出（可能受过注入），输出与结果受外部内容
-   * 左右，都不进通知（通知以 system 呈现且会归档）；它们由模型用 background_output 取，以 tool 角色进上下文
+   * 结束通知只放宿主取得的事实：任务 id、工具名、结局与退出码、用时，正文写给模型，同样的事实另给界面。参数由模型写出
+   * （可能受过注入），输出与结果受外部内容左右，都不进通知（通知以 system 呈现且会归档）；它们由模型用 background_output 取，
+   * 以 tool 角色进上下文。只有正常结束（completed、failed）的通知
    */
-  private notify({ task, starter }: TaskRecord, target: NoticeTarget): void {
-    const took = formatDuration((task.endedAt ?? task.startedAt) - task.startedAt);
+  private notify(
+    { task, starter }: TaskRecord,
+    status: BackgroundTaskNoticeFacts['status'],
+    target: NoticeTarget,
+  ): void {
+    const durationMs = (task.endedAt ?? task.startedAt) - task.startedAt;
     const { exitCode } = task;
     const ending =
-      task.status === 'completed'
+      status === 'completed'
         ? '已完成'
         : exitCode !== undefined && exitCode !== 0
           ? `失败：退出码 ${exitCode}`
           : '失败';
+    const facts: BackgroundTaskNoticeFacts = {
+      tool: task.label,
+      status,
+      durationMs,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+    };
     const message: IncomingMessage = {
-      content: `后台任务 ${task.id}（${task.label}）${ending}，用时 ${took}。结果与输出用 background_output 查看。`,
+      content: `后台任务 ${task.id}（${task.label}）${ending}，用时 ${formatDuration(durationMs)}。结果与输出用 background_output 查看。`,
       sessionId: task.sessionId,
       platform: target.platform,
       source: `${NOTICE_SOURCE_PREFIX}${task.id}`,
       actor: starter,
       hostNotice: {
-        kind: NOTICE_KIND,
+        kind: BACKGROUND_TASK_NOTICE,
         id: task.id,
         ...(target.callerUserId !== undefined ? { callerUserId: target.callerUserId } : {}),
         ...(target.replyTo !== undefined ? { replyTo: target.replyTo } : {}),
+        facts,
       },
     };
     this.logger.info(`后台任务 ${task.id} 已结束，结束通知注入会话 ${task.sessionId}`);

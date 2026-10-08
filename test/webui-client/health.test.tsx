@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { approvals } from '../../packages/api-approval/src/index.js';
 import type { SessionSummary } from '../../packages/api-session-protocol/src/index.js';
 import type { AttentionItem, LogFilter } from '../../packages/api-webui/src/index.js';
 import type { LogEntry, LogLevel } from '../../packages/core/src/index.js';
 import { SERVICE_ABSENT } from '../../packages/plugin-webui-client/src/connection.js';
+import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { deferred } from '../helpers/deferred.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
@@ -53,7 +55,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const SESSIONS = plugin('zz-sessions', { displayName: '会话服务', provides: ['session-protocol', 'approvals'] });
+const SESSIONS = plugin('zz-sessions', { displayName: '会话服务', provides: [SESSION_PROTOCOL, approvals.name] });
 const PLUGINS = [
   SESSIONS,
   plugin('zz-im', { displayName: '即时通讯', reusable: true }),
@@ -118,7 +120,7 @@ describe('入口与角标', () => {
   it('桌面：运行状况的角标是「需要处理」的数，读屏标签带上它，空了不出现', async () => {
     let items = ITEMS;
     app = await renderApp('/', noSessions, rest({ '/api/attention': () => ({ items }) }));
-    const health = await rail().findByRole('link', { name: '运行状况（2 项需要处理）' });
+    const health = await rail().findByRole('link', { name: '运行状况，2 项需要处理' });
     expect(health.getAttribute('href')).toBe('/health');
     expect(within(health).getByText('2')).toBeTruthy();
 
@@ -149,7 +151,7 @@ describe('入口与角标', () => {
     app = await renderApp('/', noSessions, rest());
     const entries = within(await screen.findByRole('list', { name: '入口' }));
     // 读屏名字与桌面图标栏同一写法（两段之间的空白由排版带出）
-    const health = await entries.findByRole('link', { name: /^运行状况\s*（2 项需要处理）$/ });
+    const health = await entries.findByRole('link', { name: /^运行状况\s*，2 项需要处理$/ });
     expect(within(health).getByText('2')).toBeTruthy();
     fireEvent.click(health);
     expect(app.where()).toBe('/health');
@@ -499,7 +501,7 @@ describe('日志', () => {
       '/health/logs',
       noSessions,
       rest({
-        '/api/plugins': { plugins: [{ ...SESSIONS, provides: ['session-protocol'] }], secretRefCounts: {} },
+        '/api/plugins': { plugins: [{ ...SESSIONS, provides: [SESSION_PROTOCOL] }], secretRefCounts: {} },
         [tail('')]: [],
       }),
     );

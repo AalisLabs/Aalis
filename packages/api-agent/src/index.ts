@@ -49,7 +49,11 @@ export interface PreprocessorInfo {
  * 组装系统提示、加载历史、调用 LLM、执行工具调用循环、发出回复。
  *
  * 默认由 @aalis/plugin-agent 提供。
- * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。
+ * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。实现者守两条约定，会话服务回看历史、标「未发出」
+ * 依据它们：
+ * - 落库的回复与工具结果在元数据里按 schema-message 登记的键（WellKnownMetadataKeys）记下回合与调用的 id、
+ *   这一轮的模型与 token、她在这个平台上的身份；
+ * - 房间里一轮只把最后一条回复交给平台，工具调用之前说的话与格式校验没通过而重试丢掉的几版不发出。
  */
 export interface AgentService {
   /** 处理一条传入消息，完成完整的对话循环 */
@@ -106,7 +110,7 @@ declare module '@aalis/api-hooks' {
     /**
      * 一次工具调用执行完：result 可以改写（回给模型、落库的都是改写后的）。metadata 是这次工具结果落库时 tool 消息的元数据，
      * 中间件写进去的键随结果落库，供回看历史的一方还原这次调用的结局（如会话服务记下的审批结算、发进房间的消息已被收下）；
-     * turnId 与 callId 由 agent 写，中间件不写这两个键
+     * 回合与调用的 id（登记的键 TurnId、CallId）由 agent 写，中间件不写这两个键
      */
     'agent:tool:after': {
       name: string;
