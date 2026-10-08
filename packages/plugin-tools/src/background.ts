@@ -26,7 +26,7 @@ export const DEFAULT_YIELD_SECONDS = 30;
 interface BackgroundLimits {
   /** 前台最多等多少秒：模型给的 waitSeconds 与工具的让出时限都不超过它 */
   maxWaitSeconds: number;
-  /** 同一会话里同时在跑的可转后台调用数，前台与后台一起数 */
+  /** 同一会话里对话回合中同时在跑的可转后台调用数，前台与后台一起数 */
   maxPerSession: number;
 }
 
@@ -421,7 +421,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /**
    * 跑一次占到位置、过了守卫的可转后台调用。让出时限从这里算起，前台时回合中止一并中止它。到时没结束或要求立即转后台：
-   * 对话回合里的调用登记成后台任务、摘掉与回合的联动，先回给模型任务 id 与已有输出的末尾；不在对话回合里的（没有 callId，
+   * 对话回合里的调用登记成后台任务、摘掉与回合的联动，先回给模型任务 id 与已有输出的末尾；不在对话回合里的（没有 turnId 或 callId，
    * 没有可通知的对话）中止并回报已有输出
    */
   async run(call: Call, spec: RunSpec): Promise<ToolExecutionResult> {
@@ -588,8 +588,8 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /**
-   * 后台任务的调用落定：按结局落成 completed、failed 或 stopped，记下结果与命令的退出码；失败的原因只取结果里的 error
-   * （退出码另有字段）。正常结束（含失败）的通知起它的会话
+   * 后台任务的调用落定：按结局落成 completed、failed 或 stopped，记下结果与命令的退出码；失败的原因只取结果里的 error。
+   * 正常结束（含失败）的通知起它的会话
    */
   private finish(record: TaskRecord, result: ToolExecutionResult, display: ToolDisplay | undefined): void {
     const call = record.call;
@@ -611,7 +611,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   private land(
     record: TaskRecord,
     status: BackgroundTaskStatus,
-    fields: Pick<BackgroundTask, 'reason' | 'result' | 'exitCode'> = {},
+    fields: Pick<BackgroundTask, 'reason' | 'result' | 'exitCode'>,
   ): void {
     Object.assign(record.task, { status, endedAt: Date.now(), ...fields });
     record.call = undefined;
@@ -698,11 +698,10 @@ export class BackgroundTasks implements BackgroundTaskService {
     const sessions = new Set<string>();
     for (const entry of entries) {
       const stored = parseStored(entry);
-      if (!stored) {
+      if (!stored || this.records.has(stored.task.id)) {
         dropped++;
         continue;
       }
-      if (this.records.has(stored.task.id)) continue;
       const { task } = stored;
       if (task.status === 'running') {
         Object.assign(task, {

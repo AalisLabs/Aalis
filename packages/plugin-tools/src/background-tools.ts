@@ -54,7 +54,7 @@ export function backgroundTaskTools(tasks: BackgroundTasks): Tool[] {
     tool(
       'background_list',
       '列出本会话里你起的后台任务（转到后台的工具调用）：任务 id、工具、状态、开始与结束时间、输出的最后一行与最后输出时间，' +
-        '失败或中断的带原因。',
+        '失败或中断的带原因，命令带退出码。',
       {},
       [],
       async (_args, ctx) => JSON.stringify({ tasks: tasks.visible(ctx).map(viewOf) }),

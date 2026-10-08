@@ -2208,6 +2208,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
+      '@aalis/util-text-normalize':
+        specifier: workspace:>=0.5.2 <1.0.0
+        version: link:../util-text-normalize
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

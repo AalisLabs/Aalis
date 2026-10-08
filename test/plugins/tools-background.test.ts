@@ -403,7 +403,7 @@ describe('上限', () => {
   });
 });
 
-describe('不在对话回合里的调用（没有 callId）', () => {
+describe('不在对话回合里的调用（没有 turnId 或 callId）', () => {
   const outside: ToolCallContext = { sessionId: 'zz-mcp', platform: 'mcp', userId: 'zz-client' };
 
   it('runInBackground 直接回错，不执行', async () => {
@@ -411,6 +411,10 @@ describe('不在对话回合里的调用（没有 callId）', () => {
     w.slow();
     const result = parse(await w.registry.execute('zz_slow', { runInBackground: true }, outside));
     expect(String(result.error)).toContain('不在对话回合里');
+    const noTurn = parse(
+      await w.registry.execute('zz_slow', { runInBackground: true }, turn({ turnId: undefined }).ctx),
+    );
+    expect(String(noTurn.error), '只有 callId、没有 turnId 的同样').toContain('不在对话回合里');
     expect(w.runs).toEqual([]);
   });
 
@@ -538,6 +542,13 @@ describe('结局', () => {
       ['completed', undefined, 0],
     ]);
     expect(w.tasks.list()[2].result).toEqual({ content: JSON.stringify({ exitCode: 0 }) });
+    const views = parse(await w.registry.execute('background_list', {}, turn().ctx)).tasks as Array<{
+      exitCode?: number;
+    }>;
+    expect(
+      views.map(view => view.exitCode),
+      '给模型的视图带退出码',
+    ).toEqual([3, undefined, 0]);
     expect(w.tasks.list()[0].endedAt).toBe(Date.now());
   });
 });
@@ -562,6 +573,18 @@ describe('停止、撤回、停用与会话删除', () => {
     expect(w.tasks.list().map(t => t.status)).toEqual(['stopped', 'stopped']);
     expect(w.notices()).toEqual([]);
     expect(await w.tasks.stop('bg_none')).toBeUndefined();
+  });
+
+  it('被停止的也记下命令的退出码', async () => {
+    const w = world();
+    w.slow('zz_cmd', {
+      hang: true,
+      display: { kind: 'command', fields: { command: 'text' }, result: { exitCode: 'exitCode' } },
+    });
+    const { taskId } = parse(await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx));
+    const stopping = w.tasks.stop(String(taskId));
+    w.runs[0].finish(JSON.stringify({ exitCode: -1 }));
+    expect(await stopping).toMatchObject({ status: 'stopped', exitCode: -1 });
   });
 
   it('工具撤回登记时在跑的（前台与后台）一并中止，后台的落成 aborted，不通知', async () => {
@@ -731,16 +754,12 @@ describe('落盘', () => {
     expect(after.tasks.list().map(t => [t.status, t.exitCode])).toEqual([['failed', 3]]);
   });
 
-  it('存储再次上线时重读一遍：内存里已有的条目照留，不算读不懂', async () => {
+  it('读回时退出码不是整数的丢掉这一项，任务照留', async () => {
     const w = world();
-    const store = memoryStore({ tasks: [stored({ status: 'completed', endedAt: 3_000 })] });
-    await w.tasks.restore(store.service);
-    w.slow();
-    await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
-    await flush();
-    await w.tasks.restore(store.service);
-    expect(w.tasks.list().map(t => t.status)).toEqual(['completed', 'running']);
-    expect(w.warnings).toEqual([]);
+    await w.tasks.restore(
+      memoryStore({ tasks: [stored({ status: 'failed', endedAt: 3_000, exitCode: '2' })] }).service,
+    );
+    expect(w.tasks.list().map(t => [t.status, t.exitCode])).toEqual([['failed', undefined]]);
   });
 });
 

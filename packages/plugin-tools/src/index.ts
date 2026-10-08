@@ -27,7 +27,8 @@ const configSchema = defineConfig({
         default: DEFAULT_LIMITS.maxPerSession,
         min: 1,
         integer: true,
-        description: '同一会话里同时在跑的可转后台工具调用（前台与后台一起数），满了时新的调用在执行之前就被拒绝',
+        description:
+          '同一会话里对话回合中同时在跑的可转后台工具调用（前台与后台一起数），满了时新的调用在执行之前就被拒绝；不在对话回合里的调用不会转后台，不占名额',
       },
     },
   },

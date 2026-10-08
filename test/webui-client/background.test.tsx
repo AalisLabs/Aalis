@@ -153,7 +153,8 @@ describe('「后台」标签', () => {
     };
     const tasks = [
       backgroundTask('t-fail', {
-        display: { kind: 'command', command: 'make test', exitCode: 2 },
+        exitCode: 2,
+        display: { kind: 'command', command: 'make test' },
         status: 'failed',
         endedAt: AT + 3000,
       }),
@@ -202,13 +203,8 @@ describe('「后台」标签', () => {
     expect(rowOf(within(calls).getByText('pdf_convert')).textContent).toContain('已停止');
   });
 
-  it('失败与中断的行写一句原因；退出码只写在结局里', async () => {
+  it('失败与中断的行写一句原因', async () => {
     const tasks = [
-      backgroundTask('t-exit', {
-        display: { kind: 'command', command: 'make test', exitCode: 2 },
-        status: 'failed',
-        endedAt: AT + 3000,
-      }),
       backgroundTask('t-error', { label: 'http_download', status: 'failed', endedAt: AT + 2000, reason: '连接被拒绝' }),
       backgroundTask('t-restart', {
         label: 'draw_image',
@@ -218,9 +214,8 @@ describe('「后台」标签', () => {
       }),
     ];
     app = await renderApp('/s/s1/background', handlers({ tasks }));
-    fireEvent.click(await panel().findByRole('button', { name: '已结束 · 3' }));
+    fireEvent.click(await panel().findByRole('button', { name: '已结束 · 2' }));
     const row = (name: string) => rowOf(panel().getByText(name));
-    expect(within(row('make test')).getAllByText(/退出码 2/)).toHaveLength(1);
     expect(row('http_download').textContent).toContain('失败');
     expect(within(row('http_download')).getByText('连接被拒绝').getAttribute('data-status')).toBe('failed');
     expect(row('draw_image').textContent).toContain('已中断');
@@ -540,7 +535,7 @@ describe('时间线里转了后台的工具卡', () => {
     expect(plain.textContent).toContain('0.8 秒');
     expect(within(plain).queryByRole('button', { name: /^输出/ })).toBeNull();
 
-    act(() => pushTasks([{ ...DEV, status: 'failed', endedAt: AT + 62_000, display: { ...command, exitCode: 1 } }]));
+    act(() => pushTasks([{ ...DEV, status: 'failed', endedAt: AT + 62_000, exitCode: 1 }]));
     expect(live.textContent).toContain('退出码 1');
     expect(within(live).queryByRole('button', { name: '停止「npm run dev」' })).toBeNull();
   });
