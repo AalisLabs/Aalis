@@ -27,10 +27,11 @@ import { Left, usePhone, useShell } from '../shell/Shell';
 import { useSessionActions } from './actions';
 import { useSessionList } from './live-list';
 import { useMine } from './mine';
-import { SessionStatus, statusOf } from './status';
+import { BackgroundStatus, SessionStatus, statusOf } from './status';
 import './SessionList.css';
 
-// 左栏的会话列表：「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的「已归档」。
+// 左栏的会话列表：只列根会话。「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的
+// 「已归档」。子会话不在这里展开，在会话面板的「后台」标签里按会话树列出；有后台工作的行写「后台 N」。
 // 手机上它是第一层，没有图标栏，「需要处理」的摘要、宿主的入口（运行状况带数）与固定的页面列在会话上面
 
 /** 组内露出近这么久她开过口的房间，其余收进「其余 N 个」 */
@@ -202,6 +203,7 @@ function GroupRooms({ query, label, accounts }: { query: RoomGroupAddress; label
       s.attention ||
       s.error ||
       s.running ||
+      s.background > 0 ||
       s.id === current ||
       (s.lastReplyAt !== undefined && now - s.lastReplyAt <= RECENT_REPLY_MS),
   );
@@ -250,29 +252,20 @@ function ArchivedSessions() {
   );
 }
 
-function ChildSessions({ parentId }: { parentId: string }) {
-  const list = useSessionList({ parentId });
-  if (list.error) return <ListError error={list.error} retry={list.retry} />;
-  if (!list.sessions) return null;
-  return (
-    <List label="子任务">
-      {list.sessions.map(session => (
-        <SessionRow key={session.id} session={session} />
-      ))}
-    </List>
-  );
-}
-
 /**
  * 会话的一行：整行可点，「更多」收改名、归档、删除（已归档的是恢复、删除）。
- * 「我的」与子任务是双行，状态句在第二行；房间是单行，不正常时状态代替时间写在右侧
+ * 「我的」是双行，状态句在第二行；房间是单行，不正常时状态代替时间写在右侧。最要紧的状态之外有后台工作时写「后台 N」
  */
 function SessionRow({ session, account }: { session: SessionSummary; account?: boolean }) {
   const actions = useSessionActions();
   const current = useSessionAddress()?.sessionId === session.id;
-  const [expanded, setExpanded] = useState(false);
   const status = statusOf(session);
-  const said = status === 'unread' || status === undefined ? undefined : <SessionStatus status={status} />;
+  const said =
+    status === 'unread' || status === undefined ? (
+      session.background > 0 && <BackgroundStatus count={session.background} />
+    ) : (
+      <SessionStatus session={session} status={status} />
+    );
   const time = <time dateTime={new Date(session.updatedAt).toISOString()}>{listTime(session.updatedAt)}</time>;
   const room = session.kind === 'room';
   const items = session.archived
@@ -295,17 +288,10 @@ function SessionRow({ session, account }: { session: SessionSummary; account?: b
         </>
       }
       detail={room ? undefined : said}
-      meta={room ? (said ?? time) : time}
+      meta={room ? said || time : time}
       marker={status === 'running' ? undefined : status}
       current={current}
       menu={<Menu label="更多" items={items} />}
-      expand={
-        session.childCount > 0
-          ? { expanded, onToggle: () => setExpanded(!expanded), label: `${session.childCount} 个子任务` }
-          : undefined
-      }
-    >
-      {expanded && <ChildSessions parentId={session.id} />}
-    </ListItem>
+    />
   );
 }

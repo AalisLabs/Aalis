@@ -1,13 +1,12 @@
 import 'katex/dist/katex.min.css';
-import { Check, Copy } from 'lucide-react';
-import { memo, type ReactNode, useEffect, useState } from 'react';
+import { memo, type ReactNode } from 'react';
 import ReactMarkdown, { type Components, type ExtraProps, type Options, type UrlTransform } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import { IconButton } from '../components/IconButton';
+import { CopyButton, canCopy } from '../components/CopyButton';
 import { Picture } from '../components/Picture';
 import { isWebUrl, mediaUrl } from '../media';
 import { preprocessLaTeX } from './latex';
@@ -84,39 +83,14 @@ const COMPONENTS: Components = {
   },
 };
 
-const canCopy = () => window.isSecureContext && navigator.clipboard !== undefined;
-
-const COPY_LABELS = { idle: '复制代码', copied: '已复制', failed: '没能复制' } as const;
-const COPY_RESET_MS = 2_000;
-
 /** 代码块：上方一条细的标题行写语言名与复制按钮，不压住代码；两样都没有时没有这一行 */
 function CodeBlock({ text, language, children }: { text: string; language?: string; children: ReactNode }) {
-  const [copy, setCopy] = useState<keyof typeof COPY_LABELS>('idle');
-  const copyable = canCopy();
-
-  useEffect(() => {
-    if (copy === 'idle') return;
-    const timer = setTimeout(() => setCopy('idle'), COPY_RESET_MS);
-    return () => clearTimeout(timer);
-  }, [copy]);
-
   return (
     <div className="markdown-code">
-      {(language || copyable) && (
+      {(language || canCopy()) && (
         <div className="markdown-code-head">
           {language}
-          {copyable && (
-            <IconButton
-              icon={copy === 'copied' ? Check : Copy}
-              label={COPY_LABELS[copy]}
-              onClick={() =>
-                navigator.clipboard.writeText(text).then(
-                  () => setCopy('copied'),
-                  () => setCopy('failed'),
-                )
-              }
-            />
-          )}
+          <CopyButton text={text} label="复制代码" />
         </div>
       )}
       <pre>{children}</pre>

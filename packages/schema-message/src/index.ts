@@ -259,7 +259,7 @@ export interface IncomingMessage {
   /**
    * 宿主撰写的事件通知（不是任何人的发言）。带这个字段的消息：
    * - 注入方必须同时设 `source`；不设 userId、nickname、sessionType、triggerType；
-   * - actor：不延续某次调用的通知用 {@link selfInitiatedActor}、不设 `callerUserId`；延续某次工具调用的（如后台命令
+   * - actor：不延续某次调用的通知用 {@link selfInitiatedActor}、不设 `callerUserId`；延续某次工具调用的（如后台任务
    *   结束通知），platform 同那次调用，actor 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为
    *   selfInitiatedActor），并设 `callerUserId`。延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记；
    * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
@@ -288,6 +288,11 @@ export interface IncomingMessage {
      * 消息打断这一轮；不当作发言者：归档、用户档案、关系与提示词钩子都不看它。须与 actor 取自同一次调用；不延续某次调用的通知不设。
      */
     callerUserId?: string;
+    /**
+     * 回复这条通知时引用哪条消息：平台消息 id，取自起那次调用的入站消息（ToolCallContext.inbound.messageId）。
+     * plugin-agent 回复时把它带进出站消息的 {@link OutgoingMessage.replyTo}；入站消息没有平台消息 id 的不设
+     */
+    replyTo?: string;
   };
 }
 
@@ -362,6 +367,11 @@ export interface OutgoingMessage {
   delivery?: Promise<OutboundDeliveryResult>;
   /** 宿主通知的最终转述或宿主正文兜底；用于关联通知派发，不给回合中的工具消息附带此标记。 */
   hostNotice?: { kind: string; id?: string };
+  /**
+   * 引用回复：被引用消息的平台消息 id。支持引用的适配器把引用加在这条消息的第一条分条前，不支持的忽略。
+   * 现在只有回复宿主通知时带（IncomingMessage.hostNotice.replyTo）
+   */
+  replyTo?: string;
   reasoningContent?: string;
   /** 助手输出的有序时间线（与 Message.segments 含义一致）：要按顺序展示思考与工具调用的适配器以它为准 */
   segments?: ContentSegment[];

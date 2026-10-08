@@ -54,6 +54,20 @@ const configSchema = defineConfig({
 
 type PluginConfig = ConfigOf<typeof configSchema>;
 
+/** 子任务报给父会话的状态：会话状态之外，最后一轮被停止、收口为 completed 的报成 stopped，不算完成 */
+type SubtaskStatus = SessionInfo['status'] | 'stopped';
+
+function subtaskStatus(session: SessionInfo): SubtaskStatus {
+  return session.status === 'completed' && session.lastTurn?.outcome === 'aborted' ? 'stopped' : session.status;
+}
+
+const STATUS_LABELS: Partial<Record<SubtaskStatus, string>> = {
+  active: '进行中',
+  completed: '已完成',
+  error: '出错',
+  stopped: '已停止',
+};
+
 // ===== 插件入口 =====
 
 const uses = {
@@ -236,7 +250,7 @@ function registerSubtask(
         name: 'check_subtask',
         description: [
           '查询一个或多个子任务的当前状态和结果。',
-          '返回每个子任务的状态（active=进行中, completed=已完成, error=出错）、结果摘要等。',
+          '返回每个子任务的状态（active=进行中, completed=已完成, error=出错, stopped=已停止）、结果摘要等。',
           '如果有子任务状态为 error，可使用 send_to_subtask 重新发送指令让其重试。',
         ].join('\n'),
         parameters: {
@@ -266,19 +280,12 @@ function registerSubtask(
       const results = ids.map(id => {
         const session = sm.getSession(id);
         if (!session) return { id, error: '会话不存在' };
-        const statusLabel =
-          session.status === 'active'
-            ? '进行中'
-            : session.status === 'completed'
-              ? '已完成'
-              : session.status === 'error'
-                ? '出错'
-                : session.status;
+        const status = subtaskStatus(session);
         return {
           id,
           name: session.name,
-          status: session.status,
-          statusLabel,
+          status,
+          statusLabel: STATUS_LABELS[status] ?? status,
           result: session.result || null,
           inputContext: session.inputContext || null,
         };
@@ -289,6 +296,7 @@ function registerSubtask(
         active: results.filter(r => !('error' in r) && r.status === 'active').length,
         completed: results.filter(r => !('error' in r) && r.status === 'completed').length,
         errored: results.filter(r => !('error' in r) && r.status === 'error').length,
+        stopped: results.filter(r => !('error' in r) && r.status === 'stopped').length,
       };
 
       return JSON.stringify({ summary, subtasks: results });
@@ -446,7 +454,7 @@ function registerSubtask(
         name: 'wait_subtasks',
         description: [
           '等待指定的子任务全部完成。阻塞直到所有子任务完成或超时。',
-          '返回每个子任务的状态和结果摘要。超时后仍返回当前状态（部分可能未完成）。',
+          '返回每个子任务的状态和结果摘要。超时后仍返回当前状态（部分可能未完成）。被停止的子任务状态为 stopped（已停止），不算完成。',
           '',
           '【必须调用】创建子任务后，必须调用此工具等待所有子任务完成。',
           '不等待就继续主任务会导致：子任务结果丢失、文档内容不完整、最终输出质量差。',
@@ -534,18 +542,20 @@ function registerSubtask(
       const results = ids.map(id => {
         const session = sm.getSession(id);
         if (!session) return { id, error: '会话不存在' };
+        const status = subtaskStatus(session);
         return {
           id,
           name: session.name,
-          status: session.status,
+          status,
           inputContext: session.inputContext || null,
           result: session.result || null,
-          completed: session.status === 'completed',
+          completed: status === 'completed',
         };
       });
 
       const allCompleted = results.every(r => 'completed' in r && r.completed);
-      const timedOut = !allCompleted;
+      // 出错、被停止的已经结束，不算超时：只有等满时还没结束的才算
+      const timedOut = !ids.every(isTerminal);
 
       return JSON.stringify({
         allCompleted,
@@ -638,18 +648,22 @@ function registerSubtask(
         const activeChildren: string[] = [];
         const completedChildren: string[] = [];
         const errorChildren: string[] = [];
+        const stoppedChildren: string[] = [];
 
         for (const childId of children) {
           const child = sm.getSession(childId);
           if (!child) continue;
-          if (child.status === 'active') {
+          const status = subtaskStatus(child);
+          if (status === 'active') {
             activeChildren.push(`  - [进行中] ${child.name} (ID: ${childId})`);
-          } else if (child.status === 'completed') {
+          } else if (status === 'completed') {
             const resultPreview = child.result ?? '(无结果)';
             completedChildren.push(`  - [已完成] ${child.name} (ID: ${childId}): ${resultPreview}`);
-          } else if (child.status === 'error') {
+          } else if (status === 'error') {
             const resultPreview = child.result ?? '(无错误详情)';
             errorChildren.push(`  - [出错] ${child.name} (ID: ${childId}): ${resultPreview}`);
+          } else if (status === 'stopped') {
+            stoppedChildren.push(`  - [已停止] ${child.name} (ID: ${childId})`);
           }
         }
 
@@ -658,7 +672,12 @@ function registerSubtask(
           if (messages[i].metadata?.injector === PARENT_STATUS_INJECTOR) messages.splice(i, 1);
         }
 
-        if (activeChildren.length > 0 || completedChildren.length > 0 || errorChildren.length > 0) {
+        if (
+          activeChildren.length > 0 ||
+          completedChildren.length > 0 ||
+          errorChildren.length > 0 ||
+          stoppedChildren.length > 0
+        ) {
           const lines: string[] = [PARENT_CONTEXT_MARKER];
 
           if (activeChildren.length > 0) {
@@ -675,6 +694,11 @@ function registerSubtask(
             lines.push(
               '可使用 send_to_subtask 向出错的子任务发送修正指令让其重试，或使用 check_subtask 查看详细状态。',
             );
+          }
+
+          if (stoppedChildren.length > 0) {
+            lines.push(`以下子任务已被停止：`);
+            lines.push(...stoppedChildren);
           }
 
           if (completedChildren.length > 0) {

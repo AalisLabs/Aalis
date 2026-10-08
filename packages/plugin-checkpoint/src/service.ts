@@ -47,7 +47,7 @@ export interface TurnManifest {
   files: CheckpointFileRecord[];
   /** 这一轮对话消息的时间戳，rollbackWithChat 据此删除消息与向量条目 */
   messageTimestamps?: number[];
-  /** 这一轮调用过 exec / exec_background / run_* 等命令类工具：它们的副作用不经存储，回滚覆盖不到 */
+  /** 这一轮调用过 exec / run_* 等命令类工具：它们的副作用不经存储，回滚覆盖不到 */
   execUsed?: boolean;
 }
 
@@ -90,7 +90,7 @@ interface ServiceConfig {
  *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
  * - 本插件在 `agent:input:before` 里用 agent 给的 turnId 把这一轮包进 `runTurn`：回合的异步上下文里发生的改动
  *   记进这一轮，回合跑完（含被下游拦下、出错）即提交。
- * - exec / exec_background / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
+ * - exec / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
  *   （前端 UI 标注「未保护」）。
  */
 export class CheckpointServiceImpl implements CheckpointService {
@@ -181,7 +181,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     return turn && this.turns.get(turn.manifest.turnId) === turn ? turn : undefined;
   }
 
-  /** 标记调用所在的那一轮调用过 exec / exec_background / run_* 等命令类工具：记进清单的 execUsed */
+  /** 标记调用所在的那一轮调用过 exec / run_* 等命令类工具：记进清单的 execUsed */
   markExecUsed(): void {
     const turn = this.currentTurn();
     if (turn) turn.manifest.execUsed = true;

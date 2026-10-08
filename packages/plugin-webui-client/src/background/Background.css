@@ -1,0 +1,227 @@
+.background {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+}
+
+.background > .button {
+  align-self: flex-start;
+}
+
+/* 字与列表行的字对齐 */
+.task {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-6);
+}
+
+.task-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--hit);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+.task-meta > .status-text,
+.task-log-bar > .status-text {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.task-name {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 命令：等宽单行，放不下时前一段截掉、末尾一段留着，省略号就落在中间；点开后折行显示全文 */
+.task-command {
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  text-align: left;
+  color: var(--color-text);
+  background: none;
+}
+
+.task-command > span {
+  white-space: pre;
+}
+
+.task-command > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-command > span:last-child {
+  flex-shrink: 0;
+}
+
+.task-command[aria-expanded="true"] {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-cwd,
+.task-last,
+.task-reason {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+.task-cwd,
+.task-last > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-last {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.task-last > span {
+  font-family: var(--font-mono);
+}
+
+.task-last > a {
+  flex-shrink: 0;
+}
+
+.task-reason {
+  overflow-wrap: anywhere;
+}
+
+.task-reason[data-status="failed"] {
+  color: var(--color-danger-text);
+}
+
+/* 与工具卡那一行的字对齐 */
+.task-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  padding-left: calc(var(--space-1) + var(--icon-sm) + var(--space-2));
+}
+
+.task-foot > .task-last {
+  flex: 1;
+}
+
+/* 放不下时截状态那一句（出错的原因） */
+.child-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.child-detail > * {
+  flex-shrink: 0;
+}
+
+.child-detail > .status-text {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.child-detail > * + *::before {
+  margin-right: var(--space-1);
+  content: "·";
+}
+
+.task-log {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* 手机的全屏弹层里，四边的留白由弹层给 */
+.dialog .task-log {
+  padding: 0;
+}
+
+.task-log-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.task-log-bar > .icon-button:first-child {
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.task-log-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-log-note,
+.task-log > .fetch-error {
+  flex-shrink: 0;
+  padding-bottom: var(--space-2);
+}
+
+.task-log-note {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-3);
+}
+
+/* 贴着底部：停在底部时新来的出现在视野里，往上翻看时不被拽走 */
+.task-log-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column-reverse;
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--color-fill-1);
+  scrollbar-gutter: stable;
+}
+
+.task-log-text {
+  margin: 0 0 auto;
+  padding: var(--space-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

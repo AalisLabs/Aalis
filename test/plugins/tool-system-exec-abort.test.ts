@@ -2,21 +2,20 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ProcessService } from '../../packages/api-process/src/index.js';
+import type { ProcessService, SpawnOptions } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
-import type { Events, LifecycleCap } from '../../packages/core/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
 import { registerShellTools } from '../../packages/plugin-tool-system/src/tools/shell.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 // ════════════════════════════════════════════════════════════
-// exec 接住回合中止：停止键停掉正在跑的命令，回合随即结束。
-//   - exec 把 callCtx.signal 交给 process 服务（按进程组停干净，见 process-local-abort.test.ts）；
-//   - 被信号结束的才报「命令已随回合中止」；中止前已正常退出的按实际退出回报、注明回合已中止，
+// exec 声明可转后台，只认执行器给这次调用的中止信号（前台时随回合中止，转后台之后随停止、撤回与停用中止），不另设超时。
+//   - exec 把 callCtx.signal 交给 process 服务（按进程组停干净，见 process-local-abort.test.ts），起进程不带超时；
+//   - 被信号结束的才报「命令已中止」；中止前已正常退出的按实际退出回报、注明调用已中止，
 //     免得下一轮把已经生效的命令再跑一遍；
-//   - exec_background 的后台进程不随回合中止（owner 改判时反转对应用例）。
+//   - shell 工具只有 exec：后台进程表与它的几个工具由执行器的转后台与后台任务工具取代。
 // 起真实进程的用例只在 POSIX 跑。
 // ════════════════════════════════════════════════════════════
 
@@ -32,16 +31,6 @@ const probe = (target: number): string | undefined => {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code;
   }
-};
-
-/** 轮询条件，ms 内成立返回 true */
-const waitFor = async (cond: () => boolean, ms: number): Promise<boolean> => {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    if (cond()) return true;
-    await sleep(50);
-  }
-  return cond();
 };
 
 /** ms 内落定则返回结果，否则抛错：变异下 handler 要等命令跑完，不让用例拖到 sleep 结束 */
@@ -94,14 +83,9 @@ function register(proc: ProcessService): Record<string, Handler> {
   });
   registerShellTools(tools, {
     logger: silentLogger(),
-    lifecycle: { signal: new AbortController().signal, onDispose: () => () => {} } as unknown as LifecycleCap,
-    events: { on: () => () => {}, emit: async () => {} } as unknown as Events,
-    isOwner: () => false,
     cwdUri: 'workspace:/',
     proc,
     storage: { resolveLocalPath: async () => dir } as unknown as StorageService,
-    defaultTimeout: 30000,
-    maxTimeout: 300000,
     maxOutputSize: 65536,
   });
   return handlers;
@@ -128,8 +112,8 @@ async function call(handler: Handler, args: Record<string, unknown>, signal?: Ab
   return JSON.parse(typeof out === 'string' ? out : out.content) as Record<string, unknown>;
 }
 
-describe('exec 接住回合中止（POSIX，真实进程）', () => {
-  it.skipIf(!posix)('安全：命令运行中回合中止，3 秒内返回 aborted，命令的进程已不存在', async () => {
+describe('exec 接住中止（POSIX，真实进程）', () => {
+  it.skipIf(!posix)('安全：命令运行中中止，3 秒内返回 aborted，命令的进程已不存在', async () => {
     const { exec } = register(recordingProcess());
     const ac = new AbortController();
     const pending = call(exec, { command: 'sleep 120' }, ac.signal);
@@ -138,8 +122,7 @@ describe('exec 接住回合中止（POSIX，真实进程）', () => {
     expect(probe(pids[0])).toBeUndefined(); // 防空跑：命令确实在跑
     ac.abort();
     const res = await within(pending, 3000);
-    expect(res).toMatchObject({ aborted: true, message: '命令已随回合中止' });
-    expect(res.timedOut).toBeUndefined();
+    expect(res).toMatchObject({ aborted: true, message: '命令已中止' });
     expect(probe(pids[0])).toBe('ESRCH');
     expect(probe(-pids[0])).toBe('ESRCH');
   });
@@ -151,7 +134,7 @@ describe('exec 接住回合中止（POSIX，真实进程）', () => {
     expect(res).toEqual({ exitCode: 0, stdout: 'zz-slice1-placeholder\n', stderr: '' });
   });
 
-  it.skipIf(!posix)('调用前回合已中止：返回 aborted，没有起进程', async () => {
+  it.skipIf(!posix)('调用前已中止：返回 aborted，没有起进程', async () => {
     const { exec } = register(recordingProcess());
     const marker = join(dir, 'zz-slice1-marker');
     const ac = new AbortController();
@@ -162,24 +145,10 @@ describe('exec 接住回合中止（POSIX，真实进程）', () => {
     await sleep(300);
     expect(existsSync(marker)).toBe(false);
   });
-
-  it.skipIf(!posix)('exec_background 起的进程不随回合中止，process_kill 能收掉', async () => {
-    const { exec_background, process_kill } = register(recordingProcess());
-    const ac = new AbortController();
-    const started = await call(exec_background, { command: 'sleep 30' }, ac.signal);
-    const pid = started.pid as number;
-    expect(pids).toEqual([pid]);
-    ac.abort();
-    await sleep(500);
-    expect(probe(pid)).toBeUndefined(); // 回合中止后仍在跑
-    const killed = await call(process_kill, { processId: started.processId });
-    expect(killed.error).toBeUndefined();
-    expect(await waitFor(() => probe(-pid) === 'ESRCH', 3000)).toBe(true);
-  });
 });
 
-describe('exec 接住回合中止（替身进程）', () => {
-  it('安全：命令已正常退出、wait 落定前回合中止：按实际退出回报并注明回合已中止，不报 aborted', async () => {
+describe('exec 接住中止（替身进程）', () => {
+  it('安全：命令已正常退出、wait 落定前中止：按实际退出回报并注明调用已中止，不报 aborted', async () => {
     const ac = new AbortController();
     const fake: ProcessService = {
       spawn: () => ({
@@ -207,6 +176,42 @@ describe('exec 接住回合中止（替身进程）', () => {
     const { exec } = register(fake);
     const res = await call(exec, { command: 'git push' }, ac.signal);
     expect(res.aborted).toBeUndefined();
-    expect(res).toMatchObject({ exitCode: 0, stdout: 'zz-slice1-done\n', note: '回合已中止' });
+    expect(res).toMatchObject({ exitCode: 0, stdout: 'zz-slice1-done\n', note: '调用已中止' });
+  });
+});
+
+describe('exec 的声明', () => {
+  it('shell 工具只有 exec：声明可转后台（让出时限用执行器的默认），参数没有 timeout；起进程不带超时，中止信号就是这次调用的', async () => {
+    const registered: Array<Omit<RegisteredTool, 'pluginName'>> = [];
+    const spawned: Array<SpawnOptions | undefined> = [];
+    const fake = {
+      spawn: (_cmd: string, _args: readonly string[], opts?: SpawnOptions) => {
+        spawned.push(opts);
+        return {
+          pid: undefined,
+          stdin: null,
+          stdout: null,
+          stderr: null,
+          wait: async () => ({ code: 0, signal: null, stdout: '', stderr: '' }),
+          kill: () => false,
+          unref: () => {},
+        };
+      },
+    } as unknown as ProcessService;
+    registerShellTools(stubBoundTools({ onRegister: t => registered.push(t) }), {
+      logger: silentLogger(),
+      cwdUri: 'workspace:/',
+      proc: fake,
+      storage: { resolveLocalPath: async () => dir } as unknown as StorageService,
+      maxOutputSize: 65536,
+    });
+    expect(registered.map(t => t.definition.function.name)).toEqual(['exec']);
+    const [exec] = registered;
+    expect(exec.background).toEqual({});
+    expect(Object.keys(exec.definition.function.parameters.properties)).toEqual(['command', 'cwd']);
+    expect(exec.definition.function.description).toContain('不要再加 & 或 nohup');
+    const ac = new AbortController();
+    await call(exec.handler, { command: 'make' }, ac.signal);
+    expect(spawned).toEqual([{ cwd: dir, signal: ac.signal }]);
   });
 });

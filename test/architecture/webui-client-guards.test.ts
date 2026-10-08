@@ -7,10 +7,10 @@ import { sessionMethods, sessionNotifications } from '../../packages/api-session
 // ════════════════════════════════════════════════════════════
 // WebUI 的写法守卫：
 // - 兼容与写法（客户端）：颜色只来自主题令牌，组件 CSS 不写 px（线宽 1px、2px 除外），字号与时长只引用令牌，内联 style 只设 CSS 变量，
-//   不用原生对话框与 window.open，浏览器存储只经存储模块（首帧主题脚本除外），不写死主机与端口，
-//   dangerouslySetInnerHTML 只许出现在白名单里的文件；
+//   不用原生对话框与 window.open，浏览器存储只经存储模块（首帧主题脚本除外），不写死主机与端口（认本机网址的模块写回环
+//   地址，是唯一的例外），dangerouslySetInnerHTML 只许出现在白名单里的文件；
 // - 客户端只认契约不认插件：不出现插件包名，不依赖对话代理的契约（用量分项名由条目给出），字符串字面量不等于任何插件
-//   登记的页面键、动作名、数据源名或设置键。
+//   登记的页面键、动作名、数据源名、设置键或工具名。
 //   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；
 // - 服务端只认契约不认插件：会话协议、webui-server（含框架托管与转发）、session-server 的源码不出现别的插件的名字，
 //   字符串字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名。
@@ -29,6 +29,10 @@ const TOKEN_FILE = 'src/styles/tokens.css';
 const STORAGE_MODULE = 'src/storage.ts';
 /** 首帧主题脚本：在打包的脚本之前执行，直接读浏览器存储 */
 const THEME_SCRIPT = 'public/theme.js';
+/** 认后台任务输出里的本机网址、判断页面是不是经回环地址打开的模块：唯一可以写回环地址的地方 */
+const LOOPBACK_MODULE = 'src/background/loopback.ts';
+/** 回环地址的写法 */
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1'];
 /** 可以用 dangerouslySetInnerHTML 的文件：只给 Mermaid 渲染组件（输出经严格安全级别） */
 const DANGEROUS_HTML_FILES = new Set<string>(['src/markdown/Mermaid.tsx']);
 /** 插件前端的框架模块：唯一画 iframe、收发框架消息的地方 */
@@ -395,13 +399,15 @@ describe('WebUI 客户端的写法', () => {
     expect(hits).toEqual([]);
   });
 
-  it('不写死主机、端口与 WebSocket 地址：地址由页面所在的源推出', () => {
+  it('不写死主机、端口与 WebSocket 地址：地址由页面所在的源推出；回环地址只出现在认本机网址的模块里', () => {
     const hits = SOURCES.flatMap(file =>
-      ['localhost', '127.0.0.1', 'ws://', 'wss://']
+      [...(rel(file) === LOOPBACK_MODULE ? [] : LOOPBACK_HOSTS), 'ws://', 'wss://']
         .filter(text => read(file).includes(text))
         .map(text => `${rel(file)} ${text}`),
     );
     expect(hits).toEqual([]);
+    const module = read(join(CLIENT, LOOPBACK_MODULE));
+    expect(LOOPBACK_HOSTS.filter(host => !module.includes(host))).toEqual([]);
   });
 
   it('dangerouslySetInnerHTML 只出现在白名单里的文件，白名单的文件都在', () => {
@@ -419,6 +425,7 @@ describe('WebUI 客户端只认契约不认插件', () => {
   const actions = collected(keys => keys.actions);
   const dataSources = collected(keys => keys.dataSources);
   const settings = collected(keys => keys.settings);
+  const tools = collected(keys => keys.tools);
   const excluded = new Set([...protocolFields(), ...adminFields(), ...frameFields()]);
 
   it('收集到的登记与排除表不空：判据没有因为写法变化失效', () => {
@@ -427,6 +434,7 @@ describe('WebUI 客户端只认契约不认插件', () => {
       expect.arrayContaining(['cancelTask', 'runDiagnostics', 'approveWork', 'deleteUpload']),
     );
     expect([...settings]).toEqual(expect.arrayContaining(['llm', 'persona', 'enabledToolGroups', 'paperEnabled']));
+    expect([...tools]).toEqual(expect.arrayContaining(['exec', 'file_write', 'analyze_image']));
     expect([...excluded]).toEqual(
       expect.arrayContaining(['sessionId', 'epoch', 'seq', 'type', 'entry', 'nonce', 'target', 'tokens', 'code']),
     );
@@ -464,12 +472,13 @@ describe('WebUI 客户端只认契约不认插件', () => {
     expect(files.filter(file => read(file).includes('@aalis/api-agent')).map(rel)).toEqual([]);
   });
 
-  it('字符串字面量不等于插件登记的页面键、动作名、数据源名或设置键', () => {
+  it('字符串字面量不等于插件登记的页面键、动作名、数据源名、设置键或工具名', () => {
     const forbidden = new Map<string, string>();
     for (const key of pages) forbidden.set(key, '页面键');
     for (const name of actions) forbidden.set(name, '动作名');
     for (const name of dataSources) forbidden.set(name, '数据源名');
     for (const key of settings) forbidden.set(key, '设置键');
+    for (const name of tools) forbidden.set(name, '工具名');
     const hits: string[] = [];
     for (const file of SCRIPTS) {
       const source = parse(file);

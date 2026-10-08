@@ -263,6 +263,25 @@ it('required 依赖到场后激活', async () => {
 - abort 监听器同步执行，不得抛错：Node 宿主把监听器的异常当成未捕获异常，runtime 会因此退出进程。
 - 转入后台期间，你经 `provide` 登记的服务不对外，经 `events.on` 挂的监听与经绑定门面（工具、指令、页面等）登记的条目照常生效：`app:ready` / `app:started` 监听器可能在 apply 完成之前被调用。需要自身就绪的逻辑放在 apply 末尾再挂（两者都是 sticky，晚挂照样收到），或在回调里自查就绪。
 
+工具调用的长任务（构建、下载、转换、渲染、远端调用）不要自己做后台进程表与轮询工具，在工具定义上声明 `background`，交给执行器转后台（见 [api-tools](./api/api-tools.md#可转后台)）：
+
+```typescript
+tools.register({
+  definition: { type: 'function', function: { name: 'acme_render', description: '…', parameters } },
+  background: { yieldSeconds: 20 }, // 不写用执行器的默认 30 秒
+  handler: async (args, ctx) => {
+    const job = startRender(args, { signal: ctx.signal });
+    job.on('log', line => ctx.output?.(`${line}\n`));
+    return JSON.stringify(await job.done);
+  },
+});
+```
+
+- 声明的前提：工具响应 `ctx.signal`（收到中止就停下并尽快返回，不留后台残余），晚些拿到结果仍有意义。顺序要紧或本来就快的工具（文件读写、浏览器交互、发消息与平台动作、搜索）不要声明。
+- `ctx.signal` 是执行器给这次调用的：在前台时随回合中止，转到后台之后只随停止、工具撤回登记与执行器停用中止。自己的超时不要再加一层「到时就杀」：等多久由让出时限管。
+- 进度写进 `ctx.output`：前台时推给界面，转到后台之后成为任务的最后一行与可取的输出。结果照旧在结束时一次返回。
+- 参数表里不要用 `runInBackground`、`waitSeconds` 这两个名字：执行器要补上它们，同名的工具被当作没声明。
+
 ---
 
 ## 10. 领域能力——写在实例 / 句柄上，不进 core

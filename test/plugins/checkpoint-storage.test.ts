@@ -30,7 +30,7 @@ const parseServiceConfig = (raw: unknown) => normalizeConfig(parseConfig(configS
 //      data 是别的平台/插件也在写的共享区 → 回滚会误删别人的文件
 // 另守：回滚逆序撤销（LIFO，「移走后又改写目标」才能一并回退）、回落删目标只豁免 ENOENT
 // （重复回滚仍 ok:true，权限失败则入 errors）、写目录在快照前就被拒（否则幽灵 write-new 让回滚删掉整棵目录）、
-// 以及 execUsed 判据（exec_background / run_* 也算「命令副作用不可回滚」）。
+// 以及 execUsed 判据（exec 与 run_* 算「命令副作用不可回滚」）。
 // ════════════════════════════════════════════════════════════
 
 describe('checkpoint × storage (真 fs)', () => {
@@ -354,12 +354,11 @@ describe('checkpoint × storage (真 fs)', () => {
     expect((await svc.listTurns('h2')).map(t => [t.turnId, t.fileCount])).toEqual([['turn-blocked', 1]]);
   });
 
-  it('execUsed：exec_background / run_python 也算命令副作用', async () => {
+  it('execUsed：exec 与 run_python 算命令副作用', async () => {
     for (const [sessionId, toolName] of [
       ['e1', 'exec'],
-      ['e2', 'exec_background'],
-      ['e3', 'run_python'],
-      ['e4', 'file_write'],
+      ['e2', 'run_python'],
+      ['e3', 'file_write'],
     ] as const) {
       const turnId = await runTurn(sessionId, async () => {
         await hooks.run('agent:tool:before', {
@@ -375,7 +374,7 @@ describe('checkpoint × storage (真 fs)', () => {
       expect(await svc.execUsed(sessionId, turnId), `契约上的查询：${toolName}`).toBe(toolName !== 'file_write');
     }
     expect(await svc.execUsed('e1', 'turn-nope'), '没有这一轮的检查点').toBe(false);
-    expect(await svc.execUsed('e4', 'turn-e1'), '回合 id 按会话找').toBe(false);
+    expect(await svc.execUsed('e3', 'turn-e1'), '回合 id 按会话找').toBe(false);
   });
 });
 

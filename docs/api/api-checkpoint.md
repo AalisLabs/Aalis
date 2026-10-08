@@ -32,7 +32,7 @@ interface CheckpointService {
 ```
 
 - `beforeMutate`：存储每次改动前都调它，写入不在任何一轮里时直接返回，不读原文件。改动记进调用所在的那一轮：同一会话里同时有几轮在跑时（agent 按会话与来源分 lane），按写入发生在哪一轮的异步上下文里归属。同一 URI 在一轮里只备份最早的原内容；`loadOriginal` 只有「不存在」与「是目录」返回 `null`，读不出来要抛出，否则回合前就存在的文件会被记成本轮新建、回滚时被删掉。`toUri` 只对 `rename` 有意义，回滚时据它原路移回。
-- `execUsed`：这一轮调用过命令类工具（`exec`、`exec_background`、`run_*` 这类直接起子进程的）。它们的副作用不经存储，回滚撤不回，界面在回滚确认里据此写明。只看已提交的回合，与 `rollback` 读同一份清单；没有这一轮的清单（不在记账的会话里、已被清理、还没提交）时为 `false`。
+- `execUsed`：这一轮调用过命令类工具（`exec`、`run_*` 这类直接起子进程的）。它们的副作用不经存储，回滚撤不回，界面在回滚确认里据此写明。只看已提交的回合，与 `rollback` 读同一份清单；没有这一轮的清单（不在记账的会话里、已被清理、还没提交）时为 `false`。
 - `rollbackWithChat`：先回滚文件，再按这一轮记下的消息时间戳删除这一轮的对话消息，并发出 `memory:messages-deleted` 与 `history:changed`。
 
 列出回合、读取清单与清理检查点是实现自己的事（plugin-checkpoint 的 `memory:clear` 中间件），不在契约里。

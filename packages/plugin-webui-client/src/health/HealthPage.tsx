@@ -1,7 +1,9 @@
+import type { SessionSummary } from '@aalis/api-session-protocol';
 import type { PlatformStatus } from '@aalis/api-webui';
 import { RotateCw } from 'lucide-react';
 import { useReducer } from 'react';
 import { useMatch, useNavigate } from 'react-router';
+import { RunningBelow, StopButton } from '../background/Background';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
@@ -9,16 +11,20 @@ import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
 import { Tabs } from '../components/Tabs';
+import { useSessionClient, useSessionless } from '../connection';
 import { withInstance } from '../pages/registry';
 import { isRecord, useJson } from '../rest';
 import { paths, routes } from '../routes';
+import { useSessionList } from '../sessions/live-list';
+import { BackgroundStatus } from '../sessions/status';
 import { Main } from '../shell/Shell';
 import { AttentionList, FetchError } from './AttentionList';
 import { useAttention } from './attention';
 import { Logs } from './Logs';
 import './Health.css';
 
-// 运行状况：概况（「需要处理」的全部与各适配器的连接）与日志两个标签，标签由地址决定。
+// 运行状况：概况（「需要处理」的全部、正在运行的后台工作与各适配器的连接）与日志两个标签，标签由地址决定。
+// 正在运行的按会话列出（归档的也列），每个会话下按会话树列出在跑的子会话与后台任务，都能停；会话服务不在时不出现。
 // 平台连接没有变化事件，打开时取一次，配手动刷新
 
 const TABS = [
@@ -49,6 +55,7 @@ export function HealthPage() {
           ) : (
             <div className="page-screen health-overview">
               <Attention />
+              <Running />
               <Platforms version={platformsVersion} refresh={refreshPlatforms} />
             </div>
           )}
@@ -75,6 +82,46 @@ function Attention() {
           />
         ))}
     </Block>
+  );
+}
+
+/** 有后台工作的根会话；没有、会话服务不在时不出现 */
+function Running() {
+  const sessionless = useSessionless();
+  const list = useSessionList({ background: true });
+  if (sessionless || (!list.error && !list.sessions?.length)) return null;
+  return (
+    <Block title="正在运行">
+      {list.error && <FetchError error={list.error} retry={list.retry} stale={list.sessions !== undefined} />}
+      {list.sessions && list.sessions.length > 0 && (
+        <List label="正在运行">
+          {list.sessions.map(session => (
+            <RunningSession key={session.id} session={session} />
+          ))}
+        </List>
+      )}
+    </Block>
+  );
+}
+
+/** 一个有后台工作的会话：链到它的「后台」标签，行尾停它下面的全部后台工作 */
+function RunningSession({ session }: { session: SessionSummary }) {
+  const client = useSessionClient();
+  return (
+    <ListItem
+      to={paths.session(session.id, 'background')}
+      title={session.title}
+      detail={<BackgroundStatus count={session.background} />}
+      meta={session.archived && '已归档'}
+      action={
+        <StopButton
+          label={`全部停止「${session.title}」`}
+          stop={() => client.request('background/stopAll', { sessionId: session.id })}
+        />
+      }
+    >
+      <RunningBelow session={session} />
+    </ListItem>
   );
 }
 

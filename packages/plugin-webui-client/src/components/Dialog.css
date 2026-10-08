@@ -53,4 +53,21 @@
     padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom));
     border-radius: var(--radius-md) var(--radius-md) 0 0;
   }
+
+  /* 占满全屏：标题与按钮行贴着上下，中间的正文撑满、自己滚动 */
+  .dialog[data-size="full"][open] {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    max-height: none;
+    padding-top: calc(var(--space-4) + env(safe-area-inset-top));
+    border-radius: 0;
+  }
+
+  .dialog[data-size="full"] .dialog-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
 }

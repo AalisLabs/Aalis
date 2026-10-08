@@ -125,6 +125,8 @@ export interface SendMessageParams {
   detailType: string;
   targetId: string;
   content: string;
+  /** 引用回复：被引用消息的平台消息 id */
+  replyTo?: string;
 }
 
 /** 协议处理器接口 */
@@ -353,7 +355,7 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
  * - `<video url="..."/>` → 视频
  * - `<reply id="..."/>` → 引用回复
  */
-export function parseContentToSegments(content: string): ParsedSegment[] {
+function parseContentToSegments(content: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   // 匹配新旧两种 at 格式 + face/image/record/video/reply
   const regex =
@@ -391,6 +393,13 @@ export function parseContentToSegments(content: string): ParsedSegment[] {
   }
 
   return segments.length > 0 ? segments : [{ type: 'text', data: { text: content } }];
+}
+
+/** 要发的消息段：有 replyTo 时在最前加引用段；正文里已有引用标记（模型自己写的）的，以它为准，不加第二个 */
+export function messageSegments(params: SendMessageParams): ParsedSegment[] {
+  const segments = parseContentToSegments(params.content);
+  if (params.replyTo === undefined || segments.some(seg => seg.type === 'reply')) return segments;
+  return [{ type: 'reply', data: { id: params.replyTo } }, ...segments];
 }
 
 /** 将抽象消息段转为 OneBot v11 格式 */

@@ -19,7 +19,7 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 ### 2.1 服务接口 `SessionManagerService`（`index.ts`）
 
 ```ts
-// CRUD（kind、originPlatform、audience、originInstance、lastReplyAt 由服务推出或写入，不收调用方传值；config 按登记的设置项校验）
+// CRUD（kind、originPlatform、audience、originInstance、lastReplyAt、lastTurn、tokens 由服务推出或写入，不收调用方传值；config 按登记的设置项校验）
 createSession(opts?: NewSessionFields): Promise<SessionInfo>;
 getSession(id: string): SessionInfo | undefined;
 listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
@@ -84,6 +84,8 @@ interface SessionInfo {
   audience?: 'owner' | 'private' | 'group';  // RoomAudience，只有根会话带：有出生平台的取 group 或 private，其余为 owner
   originInstance?: string;         // 有出生平台的房间：接管它的平台适配器的插件实例 id（§6.6），只供列表分组
   lastReplyAt?: number;            // 她最近一次开口的时间：回合结局为 replied 时写入（§7.1）
+  lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number; error?: string };  // 最近结束的一轮（§7.1）
+  tokens?: { input: number; output: number };  // 这个会话自己的模型调用累计的 token，不含子会话（§7.4）
 }
 ```
 
@@ -176,7 +178,7 @@ interface SessionSetting {
 | `plugin-agent` | 登记 `llm`、`think`、`maxToolIterations`；每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组；`/session.set`·`/session.reset` 走 `ensureSession()`、`updateSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-persona` | 登记人设、额外提示与结构化输出两项；`resolveConfig()` 取它们 | `plugin-persona/src/index.ts` |
 | `plugin-tools` | 登记 `enabledToolGroups`（agent 读它决定工具分组） | `plugin-tools/src/index.ts` |
-| `plugin-subtask` | `childConfig()` 取复制给子会话的配置，`createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
+| `plugin-subtask` | `childConfig()` 取复制给子会话的配置，`createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话；按 `status` 与 `lastTurn` 报子任务的状态（被停止的报已停止） | `plugin-subtask/src/index.ts` |
 | `plugin-session-server` | 会话协议的会话列表、增删改与设置：`listSessions`、`createSession`、`childConfig`、`updateSession`、`listSettings`、`resolveInheritance`、`getOwnConfig` 与各层的读写，分区按 `kind`（§2.2），入口平台的推法见 §2.4 | `plugin-session-server/src/sessions.ts` |
 | `plugin-paper` | 登记白纸与远端代理的六项；`resolveConfig()` 取它们决定房间用哪块白纸、每天能花多少，`listLayers()`、`getLayer()` 看各层写了什么 | `plugin-paper/src/rooms.ts` |
 | `plugin-memory-vector` / `plugin-memory-history` / `plugin-tool-session` / `plugin-user-relation` | 各自登记 `MEMORY_RECALL_SCOPE_SETTING`；每次检索或注入时 `resolveConfig()` 取 `memoryRecallScope`，按房间收窄召回范围（可选依赖，缺席时不收窄） | 各包 `src/` |
@@ -475,7 +477,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 - 前缀告警：出生平台既不是发来消息的平台、也不是已注册的平台名时，按前缀告警一次，多半是适配器的 id 前缀与平台名不一致（见 [platform 服务](platform.md) 的会话 ID 约定）。WebUI、CLI 往房间插话不参与判定：房间的适配器停用或还没加载时，它的平台名同样不在已注册之列。
 - 规模：每个来过真人消息的群与私聊都登记一次，没有上限。会话表按整表快照落盘（§7.3），每次写的条数随房间数线性增长。
 
-删除 IM 房间与删除其他会话相同，走 scope 为 session 的 `memory:clear`（§6.2），清空它在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等），聊天平台里的消息不受影响；房间里用 `exec_background` 起、仍在运行的后台进程由 plugin-tool-system 收到 `session:deleted` 后终止；房间之后再来真人消息会重新登记，记忆从零开始。
+删除 IM 房间与删除其他会话相同，走 scope 为 session 的 `memory:clear`（§6.2），清空它在 Aalis 里的消息历史与长期记忆（摘要、向量记忆等），聊天平台里的消息不受影响；房间里转到后台、仍在运行的工具调用由 plugin-tools 收到 `session:deleted` 后停掉，后台任务登记一并删掉；房间之后再来真人消息会重新登记，记忆从零开始。
 
 ### 6.7 liveOnly 的项不随复制冻结
 
@@ -489,15 +491,17 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 
 ### 7.1 会话状态：回合开始时翻 `active`，同一个中间件收口
 
-参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 按这一轮的结局收口仍为 `active` 的根会话：结局为 `error` 的收口为 `error`，其余（`replied`、`silent`、`aborted`，以及消息被拦下、没有结局的一轮）为 `completed`（`plugin-session-manager/src/index.ts`）。结局由另一个挂在 `agent:turn:after` 上的中间件按回合 id 记下：
+参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 记下这一轮（`lastTurn`），并按这一轮的结局收口仍为 `active` 的会话（根会话与子会话一样）：结局为 `error` 的收口为 `error`，其余（`replied`、`silent`、`aborted`，以及消息被拦下、没有结局的一轮）为 `completed`（`plugin-session-manager/src/index.ts`）。结局由另一个挂在 `agent:turn:after` 上的中间件按回合 id 记下：
 
 - `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行（agent 只在这个钩子的默认动作里发它）；
 - 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
 - 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 
-这是唯一的收口，只收口根会话；子会话由 plugin-subtask 收口。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合各占一条），中间件按回合 id 登记在飞的回合，会话里最后一轮结束才收口，按的是最后结束那一轮的结局；先结束的一轮不会把还在跑的会话显示成已完成。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
+这是唯一的收口。子会话以回复完成时，plugin-subtask 在 `agent:turn:after` 里先以回复为结果调 `completeSession()`，这里见它已不是 `active` 就不再改；出错、被停止或静默的子会话由这里收口，父会话的 `wait_subtasks` 随即返回，不等到超时。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知与真人回合各占一条），中间件按回合 id 登记在飞的回合，会话里最后一轮结束才收口，按的是最后结束那一轮的结局；先结束的一轮不会把还在跑的会话显示成已完成。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
 
 结局为 `replied` 的一轮结束时写入 `lastReplyAt`（她最近开口的时间），别的回合还在跑也照写，随 `session:updated` 推出并落盘；`silent`、`aborted`、`error` 不改它。
+
+每一轮结束时写入 `lastTurn`：结局、结束时间，结局为 `error` 时另带 `agent:turn:after` 的 `error`（一句原因），其余结局即使带了也不记；消息被拦下、没有结局的一轮记为 `silent`，不沿用上一轮的原因。别的回合还在跑也照写，随 `session:updated` 推出并落盘。会话状态里没有「已停止」：被停止的一轮收口为 `completed`，看 `lastTurn.outcome` 是不是 `aborted`。
 
 回合之外建档的会话（自动标题路径兜底建的 CLI 会话、`/session.set` 建的档）状态为 `waiting`：首条消息是被指令相位吞掉的指令时没有回合，指令回复不改状态。回合中建档的（如 `create_subtask` 给父会话兜底建档）为 `active`，由这一轮结束时收口。
 
@@ -510,6 +514,10 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
 写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随 memory 的当前胜者：运行中胜者换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随 memory 胜者卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+
+### 7.4 按会话累加 token
+
+参考实现订阅 `@aalis/api-llm` 的 `llm:usage`（服务商登记模型时经 `metered` 发出，对话、摘要、识图、转写的调用都带会话 id），把每次调用的输入与输出 token 累加进这个会话的 `tokens`（`plugin-session-manager/src/index.ts`）。只记已有的会话：没有会话 id 的调用、会话不存在（含已删除）的不记，也不为用量建会话。累加不改 `updatedAt`（用量不算会话的改动，不改列表的先后），记了就发 `session:updated`、随会话落盘；删除会话时一并清掉。`tokens` 只含这个会话自己的调用，子会话的另记在子会话上，按会话树合计由消费方做。按会话的累计放在会话树上，宿主界面不依赖记账插件就能显示。
 
 ## 8. 交叉链接
 

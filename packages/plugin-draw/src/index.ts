@@ -205,6 +205,8 @@ function registerDraw(caps: Caps): void {
     // 抗滥用不靠权限档而靠资源治理：单次成本被 maxPixels/maxFrames/体积封顶，
     // 跨会话并发由引擎信号量排队（不拒绝、只削峰），机器不会被刷图打垮。
     groups: ['draw'],
+    // 排队与渲染可能很久：等多久由执行器的让出时限管，停只认执行器给这次调用的中止信号
+    background: {},
     definition: {
       type: 'function',
       function: {
@@ -238,7 +240,9 @@ function registerDraw(caps: Caps): void {
         // 用折算后的 CSS 像素预算让设备像素峰值不超过 maxPixels 的既定内存含义
         const cssPixelBudget = Math.floor(cfg.maxPixels / (cfg.scale * cfg.scale));
         const plan = resolveCanvas(source, args.width as number | undefined, { ...cfg, maxPixels: cssPixelBudget });
-        const png = Buffer.from(await renderer.renderPng(renderRequest(plan, cfg.scale, cssPixelBudget)));
+        const png = Buffer.from(
+          await renderer.renderPng(renderRequest(plan, cfg.scale, cssPixelBudget, callCtx.signal)),
+        );
         const { width, height } = cssSize(png, cfg.scale);
 
         const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(png));
@@ -265,6 +269,7 @@ function registerDraw(caps: Caps): void {
   tools.register({
     // public 同 draw_image：人人可画，抗滥用靠资源治理不靠权限档。
     groups: ['draw'],
+    background: {},
     definition: {
       type: 'function',
       function: {
@@ -305,7 +310,7 @@ function registerDraw(caps: Caps): void {
         const fps = Number.isFinite(reqFps) && reqFps > 0 ? Math.min(Math.floor(reqFps), 25) : cfg.animDefaultFps;
 
         // 动图按 1x：帧数×像素才是体积主宰，清晰度靠画布宽
-        const r = await renderer.renderFrames(renderRequest(plan, 1, cfg.maxPixels), {
+        const r = await renderer.renderFrames(renderRequest(plan, 1, cfg.maxPixels, callCtx.signal), {
           fps,
           durationMs: Number.isFinite(reqDur) && reqDur > 0 ? Math.round(reqDur * 1000) : undefined,
           defaultDurationMs: 3000,
@@ -315,7 +320,7 @@ function registerDraw(caps: Caps): void {
         const frames = r.frames.map(f => Buffer.from(f));
         const { width, height } = cssSize(frames[0], 1);
 
-        const gif = await framesToGif(proc, storage, frames, fps);
+        const gif = await framesToGif(proc, storage, frames, fps, callCtx.signal);
         if (gif.byteLength > cfg.animMaxOutputMB * 1024 * 1024) {
           return JSON.stringify({
             error:

@@ -8,7 +8,8 @@
  */
 import type { PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionConfig } from '@aalis/api-session-manager';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
+import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
+import { truncateChars } from '@aalis/util-text-normalize';
 /**
  * 将时间戳格式化为可读的时间标签：同年 `M/D HH:mm`，跨年 `YYYY/M/D HH:mm`。
  *
@@ -212,5 +213,35 @@ export function formatToolArgsForLog(args: unknown): string {
     return JSON.stringify(args);
   } catch (err) {
     return `（无法序列化：${err instanceof Error ? err.message : '未知原因'}）`;
+  }
+}
+
+/** 坏工具参数回给模型时附带的原文最多多少字 */
+const RAW_ARGUMENTS_MAX = 200;
+
+/**
+ * 解析一次工具调用的参数。arguments 不是 JSON 对象时回 error（回给模型的错误，带截断的原文），调用里的 arguments 换成
+ * `{}`：这次调用随 assistant 消息进本回合的消息与存档，下一轮会被模型服务插件原样发回，坏 JSON 不能跟着重放。
+ * 无参工具的 arguments 常是空串（流式路径没有 argument delta 时拼出来就是 ''），按空对象算，原样保留
+ */
+export function parseToolArguments(
+  toolCall: ToolCall,
+): { toolCall: ToolCall; args: Record<string, unknown> } | { toolCall: ToolCall; error: string } {
+  const raw = toolCall.function.arguments?.trim() ?? '';
+  try {
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    // 工具按参数名取值：顶层是 null、数组或原始值的同坏 JSON 一样处理
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new TypeError(`顶层是 ${parsed === null ? 'null' : Array.isArray(parsed) ? '数组' : typeof parsed}`);
+    }
+    return { toolCall, args: parsed as Record<string, unknown> };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      toolCall: { ...toolCall, function: { ...toolCall.function, arguments: '{}' } },
+      error:
+        `工具参数不是合法 JSON 对象：${reason}；原文（前 ${RAW_ARGUMENTS_MAX} 字）：` +
+        `${truncateChars(raw, RAW_ARGUMENTS_MAX)}；请重新生成 arguments`,
+    };
   }
 }

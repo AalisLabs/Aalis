@@ -65,7 +65,7 @@ Word 与 PowerPoint 插入图片时，来源为 http(s) 链接的图片限时 15
 两条路径：
 
 - `pdf_create`、`pdf_add_text`、`pdf_add_page`、`pdf_save` 用 pdf-lib 直接生成简单文本 PDF，标准字体只支持 ASCII/Latin 字符。
-- `pdf_convert` 调用 LibreOffice（`soffice --headless --convert-to pdf`）把已保存的 docx/pptx/xlsx 文件转成 PDF，需要可选依赖 `process` 服务、存储支持本地路径解析（`resolveLocalPath`），并且系统装有 LibreOffice；前提不满足时返回失败提示。
+- `pdf_convert` 调用 LibreOffice（`soffice --headless --convert-to pdf`）把已保存的 docx/pptx/xlsx 文件转成 PDF，需要可选依赖 `process` 服务、存储支持本地路径解析（`resolveLocalPath`），并且系统装有 LibreOffice；前提不满足或转换失败时结果带 `error`（工具卡与后台任务据此记为失败）。它声明可转后台（让出时限用执行器的默认 30 秒）：大文档转换久，在前台等满让出时限还没结束就由 [plugin-tools](plugin-tools.md#转后台与后台任务) 的执行器转到后台；转换只认执行器给这次调用的中止信号，不另设超时，中止时 LibreOffice 按进程组停掉，结果为「PDF 转换已中止」。
 
 ## 共享 docId
 

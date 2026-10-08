@@ -96,6 +96,8 @@ declare module '@aalis/api-hooks' {
       message: IncomingMessage;
       reply: string;
       outcome: 'replied' | 'silent' | 'aborted' | 'error';
+      /** 结局为 error 时的一句原因（会话记下它，界面上出错的会话据此写原因）；其余结局不带 */
+      error?: string;
       sessionId: string;
       turnId: string;
       metadata: Record<string, unknown>;

@@ -334,6 +334,7 @@ function wrapLLMAsProcessor(
         requireImages: true,
         sessionId: input.sessionId,
         purpose: '识图',
+        signal: input.signal,
       });
       const rawLen = resp.content?.length ?? 0;
       const text = resp.content?.trim() ?? '';

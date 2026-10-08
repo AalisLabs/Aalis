@@ -46,7 +46,7 @@
 | [api-session-protocol](./api-session-protocol.md) | `sessionProtocol` 描述符（服务名 `session-protocol`）+ 会话协议的 zod schema：owner 客户端与守护进程之间的帧、会话列表、条目与回合控制（实验性） | plugin-session-server |
 | [api-storage](./api-storage.md) | `storage` 描述符 + `createStorageGateway` 等 helper（第一参吃 `ServiceRef`） | plugin-storage-local |
 | [api-todo-list](./api-todo-list.md) | `todoList` 描述符（服务名 `todo-list`）+ `TodoListService`：读与清空会话的待办；`TodoItem` 与 `todo:updated` 事件 | plugin-todo-list |
-| [api-tools](./api-tools.md) | `tools` 描述符 + `BoundTools` / `withToolGroups` | plugin-tools |
+| [api-tools](./api-tools.md) | `tools` 描述符 + `BoundTools` / `withToolGroups`；后台任务登记 `backgroundTasks` | plugin-tools |
 | [api-trigger](../services/trigger.md) | `trigger` 描述符（选出生效的触发插件，二选一）与触发插件共用的函数 | plugin-trigger-policy（规则判定） |
 | [api-user-relation](./api-user-relation.md) | `userRelation` 描述符（服务名 `user-relation`）+ 查询接口 `UserRelationService` | plugin-user-relation |
 | [api-vectorstore](./api-vectorstore.md) | `vectorstore` 描述符 | plugin-vectorstore-flat / plugin-vectorstore-lancedb |

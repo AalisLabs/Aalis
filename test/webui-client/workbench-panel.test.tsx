@@ -24,7 +24,8 @@ import { hostTab, layoutStore } from './pages.js';
 // ════════════════════════════════════════════════════════════
 // 右侧面板与会话头：设置（只列服务端给的行，composer 与 common 在前，advanced 收进默认折叠的「高级」按插件分组，
 // 每行写生效值与来源，就地修改即存，恢复继承，收到 session/config/changed 重取）、用量（头部百分比、压缩线与换色，
-// 拆分表的行名与次序取条目，不显示为 0 的行，带注入者明细的一行按插件合并，上方堆叠的进度条与图例、剩余一行）、
+// 拆分表的行名与次序取条目，不显示为 0 的行，带注入者明细的一行按插件合并，上方堆叠的进度条与图例、剩余一行，
+// 会话树累计的 token）、
 // 计划（有条目才有，可以清空），功能位决定压缩入口，手机上用量从底部弹出，最少插件组合下这些入口都不出现；
 // 面板标签里宿主的标签按数据出现、可以关闭与从「+」重新打开，别处指向标签的入口（用量百分比、输入框旁的设置项）
 // 在标签关着时先打开它
@@ -285,6 +286,40 @@ describe('右侧面板与会话头', () => {
     expect(table.queryByText(/%/)).toBeNull();
     expect(table.queryByRole('rowheader', { name: '剩余' }), '不知道窗口时没有剩余').toBeNull();
     expect(usageBar(), '不知道窗口时没有进度条').toBeNull();
+  });
+
+  it('用量：会话有累计的 token 时写一行累计的输入与输出，有子会话时写明含子会话；手机的底部弹层里一样', async () => {
+    const data = usage({ parts: [{ label: '历史消息', tokens: 10 }] });
+    const fields = { tokens: { input: 12_345, output: 678 } };
+    app = await renderApp('/s/s1/usage', {
+      'session/subscribe': () => snapshot([userMessage('u1', '在吗'), data], { session: fields }),
+    });
+    expect((await panel().findByText(/^累计/)).textContent).toBe('累计输入 12.3k，输出 678');
+    act(() =>
+      server().notify('sessions/changed', {
+        upserts: [summary('s1', { title: '整理周报', childCount: 1, tokens: { input: 20_000, output: 1_000 } })],
+        removes: [],
+        groups: [],
+      }),
+    );
+    expect(panel().getByText(/^累计/).textContent).toBe('累计输入 20.0k，输出 1.0k（含子会话）');
+    act(() =>
+      server().notify('sessions/changed', {
+        upserts: [summary('s1', { title: '整理周报' })],
+        removes: [],
+        groups: [],
+      }),
+    );
+    expect(panel().queryByText(/^累计/)).toBeNull();
+    app.close();
+
+    stubViewport(390);
+    FakeWebSocket.install();
+    app = await renderApp('/s/s1/usage', {
+      'session/subscribe': () => snapshot([userMessage('u1', '在吗'), data], { session: fields }),
+    });
+    const sheet = within(await screen.findByRole('dialog', { name: '上下文用量' }));
+    expect(sheet.getByText(/^累计/).textContent).toBe('累计输入 12.3k，输出 678');
   });
 
   it('用量的进度条：分项按占用从大到小堆叠着色，表里每行前一个同色的点作图例；为回复预留与剩余另有颜色，压缩线标在条上', async () => {

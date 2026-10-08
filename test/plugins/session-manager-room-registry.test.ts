@@ -485,7 +485,7 @@ describe('状态在回合开始时翻 active', () => {
     expect(seen).toEqual(['active', 'active']);
   });
 
-  it('同一会话两轮并行（后台命令结束通知与真人回合各占一条 lane）：先结束的一轮不收口，最后一轮结束才收口', async () => {
+  it('同一会话两轮并行（后台任务结束通知与真人回合各占一条 lane）：先结束的一轮不收口，最后一轮结束才收口', async () => {
     const { sm, inbound, running } = await setup();
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
     let release: () => void = () => {};

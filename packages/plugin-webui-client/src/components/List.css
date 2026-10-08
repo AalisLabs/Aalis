@@ -110,30 +110,9 @@
   color: var(--color-text-3);
 }
 
-.list-item-toggle {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: var(--hit);
-  height: var(--hit);
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-2);
-  background: transparent;
-}
-
-.list-item-toggle:hover {
-  background: var(--color-fill-1);
-}
-
-/* 同一列表里有可展开的行时，其余的行也留出展开按钮的位置，右侧的时间对齐 */
-.list:has(> .list-item > .list-item-row > .list-item-toggle)
-  > .list-item
-  > .list-item-row:not(:has(> .list-item-toggle))
-  .list-item-link {
-  margin-right: var(--hit);
+.list-item-action {
+  display: flex;
+  padding-right: var(--space-1);
 }
 
 .list-item-menu {

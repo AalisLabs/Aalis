@@ -49,3 +49,11 @@ export function stubViewport(
 export function stubPlatform(platform: 'MacIntel' | 'Win32' | 'Linux x86_64'): void {
   vi.spyOn(Navigator.prototype, 'platform', 'get').mockReturnValue(platform);
 }
+
+/** 组件测试里页面的默认地址（vitest 的 jsdom 环境的缺省） */
+export const DEFAULT_PAGE_URL = 'http://localhost:3000/';
+
+/** 换掉页面的地址（location）：vitest 把 JSDOM 实例挂在 globalThis.jsdom 上，经它的 reconfigure 换；用完换回 DEFAULT_PAGE_URL */
+export function setPageUrl(url: string): void {
+  (globalThis as unknown as { jsdom: { reconfigure(options: { url: string }): void } }).jsdom.reconfigure({ url });
+}

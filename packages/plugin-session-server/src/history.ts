@@ -4,14 +4,15 @@
 // 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；
 // 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成
 // 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与她发出的附件
-// 各自单独成条。工具卡的审批结算、「已发到群」、回合停止时还没结束与命令的退出码取自工具结果的元数据（会话服务在结果落库前写上），
-// 没有结果的调用（重启或中断）同样算没结束。
+// 各自单独成条。工具卡的审批结算、「已发到群」、回合停止时还没结束、命令的退出码与转到后台的任务 id 取自工具结果的元数据
+// （会话服务在结果落库前写上），没有结果的调用（重启或中断）同样算没结束。
 // 房间里她只把最后的回复发进群：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复按适配器记的投递失败
 // 标出，与实时推送一致。
 // ════════════════════════════════════════════════════════════
 
 import type { MemoryService } from '@aalis/api-memory';
 import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
+import { toolFailed } from '@aalis/api-tools';
 import {
   type ContentSegment,
   type Message,
@@ -20,7 +21,7 @@ import {
   WellKnownKinds,
 } from '@aalis/schema-message';
 import { failure } from './connection.js';
-import type { DisplayOf, ResolvedDisplay } from './display.js';
+import type { DisplayOf } from './display.js';
 
 /** 说话人是不是 owner */
 export type IsOwner = (platform: string, userId?: string) => boolean;
@@ -124,17 +125,6 @@ function archivedItemId(message: Message): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `${message.timestamp ?? 0}-${(hash >>> 0).toString(36)}`;
-}
-
-/** 工具结果是带 error 的 JSON 对象（工具与 agent 报失败的约定），或展示里的退出码不为 0，即为失败 */
-export function toolFailed(result: string, display: ResolvedDisplay | undefined): boolean {
-  if (display?.kind === 'command' && (display.exitCode ?? 0) !== 0) return true;
-  try {
-    const parsed: unknown = JSON.parse(result);
-    return typeof parsed === 'object' && parsed !== null && 'error' in parsed;
-  } catch {
-    return false;
-  }
 }
 
 const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
@@ -309,6 +299,7 @@ function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyM
       const { result, startTime, endTime, callId } = segment;
       const metadata = callId === undefined ? undefined : results.get(callId);
       const approval = recordedApproval(metadata);
+      const taskId = text(metadata?.backgroundTask);
       const args = isRecord(segment.args) ? segment.args : {};
       const resolved = context.display(segment.name, args, result);
       // 退出码以落库时记下的为准：结果过长时落库的是截断后的，从中取不到。没记下的（会话服务当时没在跑）从结果里取
@@ -329,7 +320,7 @@ function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyM
             ? 'aborted'
             : approval && approval.settlement.state !== 'approved'
               ? 'denied'
-              : toolFailed(result, display)
+              : toolFailed(result, display?.kind === 'command' ? display.exitCode : undefined)
                 ? 'failed'
                 : 'completed',
         result,
@@ -337,6 +328,7 @@ function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyM
         ...(display ? { display } : {}),
         ...(metadata?.sentToRoom === true ? { sentToRoom: true } : {}),
         ...approval,
+        ...(taskId === undefined ? {} : { taskId }),
       });
     } else if (segment.type === 'reasoning_text') {
       if (last?.kind === 'reasoning') last.text += segment.content;

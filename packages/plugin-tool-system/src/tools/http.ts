@@ -167,10 +167,6 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
               description:
                 '保存路径。支持 storage URI（如 workspace:/downloads/a.txt、tmp:/a.txt）；相对路径会保存到 workspace:/ 下；禁止宿主机绝对路径。',
             },
-            timeout: {
-              type: 'number',
-              description: `下载超时毫秒数（默认 ${config.defaultTimeout * 3}）`,
-            },
           },
           required: ['url', 'savePath'],
           additionalProperties: false,
@@ -181,19 +177,18 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
     // 防被注入的 LLM 静默/越权地把任意内容写进 storage（如覆写 data:/users.json）。
     visibility: 'restricted',
     confirm: 'session',
-    handler: async args => {
+    // 大文件下载可能很久：等多久由执行器的让出时限管，停只认执行器给这次调用的中止信号
+    background: {},
+    handler: async (args, callCtx) => {
       const url = args.url as string;
       const savePath = args.savePath as string;
-      const timeout = (args.timeout as number) || config.defaultTimeout * 3;
 
       if (!config.storage) {
         return JSON.stringify({ error: 'HTTP 下载需要 storage 服务' });
       }
 
       try {
-        const response = await safeFetch(url, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const response = await safeFetch(url, { signal: callCtx.signal });
 
         if (!response.ok) {
           return JSON.stringify({

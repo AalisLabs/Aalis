@@ -35,18 +35,6 @@ const configSchema = defineConfig({
       },
     },
   },
-  defaultTimeout: {
-    type: 'number',
-    label: '默认超时 (ms)',
-    default: 60000,
-    description: '脚本执行默认超时时间',
-  },
-  maxTimeout: {
-    type: 'number',
-    label: '最大超时 (ms)',
-    default: 300000,
-    description: '允许指定的最大超时时间',
-  },
   maxOutputSize: {
     type: 'number',
     label: '最大输出字节',
@@ -134,8 +122,6 @@ async function createRunnerConfig(
   const gateway = createStorageGateway(caps.storage);
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
   return {
-    defaultTimeout: cfg.defaultTimeout,
-    maxTimeout: cfg.maxTimeout,
     maxOutputSize: cfg.maxOutputSize,
     cwd: await gateway.resolveLocalPath!(cwdUri, 'read'),
     env: safeEnv(),
@@ -207,10 +193,6 @@ export default definePlugin({
                   type: 'string',
                   description: '完整的 Python 脚本源代码',
                 },
-                timeout: {
-                  type: 'number',
-                  description: `超时毫秒数（可选，默认 ${cfg.defaultTimeout}，最大 ${cfg.maxTimeout}）`,
-                },
               },
               required: ['code'],
               additionalProperties: false,
@@ -218,9 +200,9 @@ export default definePlugin({
           },
         },
         visibility: 'restricted',
+        background: {},
         handler: async (args, callCtx) => {
           const code = args.code as string;
-          const timeout = args.timeout as number | undefined;
           logger.debug(`run_python: ${code.length} 字符`);
           const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
           const result = await runCode(
@@ -230,7 +212,6 @@ export default definePlugin({
             code,
             '.py',
             runnerConfig,
-            timeout,
             [],
             callCtx.signal,
           );
@@ -268,10 +249,6 @@ export default definePlugin({
                   type: 'string',
                   description: '完整的 JavaScript (Node.js ESM) 脚本源代码',
                 },
-                timeout: {
-                  type: 'number',
-                  description: `超时毫秒数（可选，默认 ${cfg.defaultTimeout}，最大 ${cfg.maxTimeout}）`,
-                },
               },
               required: ['code'],
               additionalProperties: false,
@@ -279,9 +256,9 @@ export default definePlugin({
           },
         },
         visibility: 'restricted',
+        background: {},
         handler: async (args, callCtx) => {
           const code = args.code as string;
-          const timeout = args.timeout as number | undefined;
           logger.debug(`run_javascript: ${code.length} 字符`);
           const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
           const result = await runCode(
@@ -291,7 +268,6 @@ export default definePlugin({
             code,
             '.mjs',
             runnerConfig,
-            timeout,
             [],
             callCtx.signal,
           );

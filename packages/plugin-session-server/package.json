@@ -70,6 +70,7 @@
       "optional": [
         "agent",
         "authority",
+        "background-tasks",
         "checkpoint",
         "compression",
         "host-config",

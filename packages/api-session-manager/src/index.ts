@@ -164,8 +164,8 @@ export interface SessionInfo {
   /** 子会话 ID 列表 */
   children: string[];
   /**
-   * 会话状态。回合开始翻 active；根会话最后一轮结束时按这一轮的结局收口：出错为 error，其余为 completed
-   * （子会话由 plugin-subtask 收口）
+   * 会话状态。回合开始翻 active；最后一轮结束时仍为 active 的（根会话与子会话一样）按这一轮的结局收口：出错为 error，
+   * 其余为 completed，被停止的从 {@link lastTurn} 看出
    */
   status: 'active' | 'waiting' | 'completed' | 'error' | 'archived';
   /** 会话自己的设置覆盖（原样存储：含没启用的插件的键与旧数据里的 sessionDefaults） */
@@ -196,6 +196,13 @@ export interface SessionInfo {
   originInstance?: string;
   /** 她最近一次开口的时间：回合结局为 replied 时由 session-manager 写入。不收调用方传值 */
   lastReplyAt?: number;
+  /**
+   * 最近结束的一轮：结局（取值同 api-agent 的 agent:turn:after，被拦下、没有结局的一轮记为 silent）、结束时间，
+   * 结局为 error 时带 agent 给的一句原因。每一轮结束时由 session-manager 写入，不收调用方传值
+   */
+  lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number; error?: string };
+  /** 这个会话自己的模型调用累计的输入与输出 token（api-llm 的 llm:usage），不含子会话。由 session-manager 累加，不收调用方传值 */
+  tokens?: { input: number; output: number };
 }
 
 /**
@@ -221,6 +228,8 @@ export type NewSessionFields = Partial<
     | 'audience'
     | 'originInstance'
     | 'lastReplyAt'
+    | 'lastTurn'
+    | 'tokens'
     | 'config'
   >
 > & { config?: SessionConfigPatch };

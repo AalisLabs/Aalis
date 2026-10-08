@@ -131,6 +131,8 @@ export interface InboundTurn {
    * 那次调用是 owner 在自己会话里发起的，这一轮才是 owner 链的延续
    */
   callerUserId?: string;
+  /** 同 IncomingMessage.messageId：入站消息的平台消息 id。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
+  messageId?: string;
 }
 
 /** 执行守卫上下文 —— 操作执行前权限检查的最小信息 */

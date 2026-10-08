@@ -8,13 +8,14 @@ import { STATUS_ORDER, statusOf } from './status';
 // 一份会话列表：翻页取全，之后按 sessions/changed 的增量即时更新，断线重连后重取。
 // 增量里的会话按同一份筛选条件判断进不进这份列表，排序也照服务端的规则在本地重排
 
-/** 列表的范围，就是 sessions/list 的参数：「我的」区、一组房间、已归档的、某个会话的子会话 */
+/** 列表的范围，就是 sessions/list 的参数：「我的」区、一组房间、已归档的、某个会话的子会话、有后台工作的根会话 */
 type SessionListQuery =
   | { section: 'owner' }
   | { instance: string }
   | { platform: string }
   | { archived: true }
-  | { parentId: string };
+  | { parentId: string }
+  | { background: true };
 
 const PAGE_LIMIT = 200;
 /** 翻页途中来了推送时，排在后面的行可能挪进已经取过的页而漏掉：重取，最多这么多遍 */
@@ -23,6 +24,7 @@ const FETCH_ATTEMPTS = 3;
 function belongs(query: SessionListQuery, s: SessionSummary): boolean {
   if ('parentId' in query) return s.parentId === query.parentId && !s.archived;
   if (s.parentId !== undefined) return false;
+  if ('background' in query) return s.background > 0;
   if ('archived' in query) return s.archived;
   if (s.archived) return false;
   if ('section' in query) return s.section === query.section;

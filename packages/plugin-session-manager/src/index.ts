@@ -2,7 +2,7 @@ import { agent } from '@aalis/api-agent';
 import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { hostConfig } from '@aalis/api-host-config';
-import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
+import { type LLMUsageEvent, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import { getPlatformAdapters, getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
@@ -102,11 +102,11 @@ class SessionManager implements SessionManagerService {
   /** 已告警过的设置问题：取值无效、文档形状不对。解析每轮都跑，同一处只告警一次 */
   private readonly warned = new Set<string>();
   /**
-   * 在飞的回合：turnId → 所在会话与这一轮的结局。agent:input:before 进出登记与注销，结局由 agent:turn:after 记下
-   * （消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台命令结束通知、白纸通知与真人回合），
-   * 根会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
+   * 在飞的回合：turnId → 所在会话与这一轮的结局（出错时带原因）。agent:input:before 进出登记与注销，结局由
+   * agent:turn:after 记下（消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知
+   * 与真人回合），会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
    */
-  private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome }>();
+  private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome; error?: string }>();
   /** 正在解析所属实例的会话记录：同一条记录不并发解析，后到的调用不等它、直接返回 */
   private resolving = new WeakSet<SessionInfo>();
 
@@ -743,15 +743,17 @@ class SessionManager implements SessionManagerService {
     }
   }
 
-  /** 记下这一轮的结局，回合结束时用 */
-  recordOutcome(turnId: string, outcome: TurnOutcome): void {
+  /** 记下这一轮的结局与出错原因（只有结局为 error 时留原因），回合结束时用 */
+  recordOutcome(turnId: string, outcome: TurnOutcome, error: string | undefined): void {
     const turn = this.turns.get(turnId);
-    if (turn) turn.outcome = outcome;
+    if (!turn) return;
+    turn.outcome = outcome;
+    turn.error = outcome === 'error' ? error : undefined;
   }
 
   /**
-   * 回合结束：注销这一轮。结局为 replied 的记下她开口的时间；会话里的最后一轮结束时，仍为 active 的根会话按这一轮的
-   * 结局收口，出错为 error，其余（含被拦下、没有结局的一轮）为 completed。子会话由 plugin-subtask 收口
+   * 回合结束：注销这一轮，记下 lastTurn（被拦下、没有结局的一轮记为 silent），结局为 replied 的另记下她开口的时间。
+   * 会话里的最后一轮结束时，仍为 active 的会话（根会话与子会话一样）按这一轮的结局收口：出错为 error，其余为 completed
    */
   endTurn(turnId: string): void {
     const turn = this.turns.get(turnId);
@@ -759,11 +761,23 @@ class SessionManager implements SessionManagerService {
     this.turns.delete(turnId);
     const session = this.sessions.get(turn.sessionId);
     if (!session) return;
-    const settle = session.status === 'active' && !session.parentId && !this.hasTurnInFlight(session.id);
-    if (turn.outcome !== 'replied' && !settle) return;
-    if (turn.outcome === 'replied') session.lastReplyAt = Date.now();
-    const status = turn.outcome === 'error' ? 'error' : 'completed';
+    const { outcome = 'silent', error } = turn;
+    const endedAt = Date.now();
+    session.lastTurn = error === undefined ? { outcome, endedAt } : { outcome, endedAt, error };
+    if (outcome === 'replied') session.lastReplyAt = endedAt;
+    const settle = session.status === 'active' && !this.hasTurnInFlight(session.id);
+    const status = outcome === 'error' ? 'error' : 'completed';
     this.updateSession(session.id, settle ? { status } : {}).catch(() => {});
+  }
+
+  /** 按会话累加一次模型调用的 token：只记已有的会话，不改 updatedAt；记了就发 session:updated */
+  recordUsage({ sessionId, inputTokens, outputTokens }: LLMUsageEvent): void {
+    const session = sessionId === undefined ? undefined : this.sessions.get(sessionId);
+    if (!session) return;
+    const { input, output } = session.tokens ?? { input: 0, output: 0 };
+    session.tokens = { input: input + inputTokens, output: output + outputTokens };
+    this.markDirty();
+    void this.caps.events.emit('session:updated', session);
   }
 
   /**
@@ -926,10 +940,10 @@ async function run(caps: Caps): Promise<void> {
 
   // ===== 会话状态 =====
   // 回合真正开始时（agent:input:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」
-  //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里收口根会话，这是唯一的收口：next() 返回时
-  // 整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；后面的中间件不调 next()
-  // 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里最后一轮结束才收口，别的 lane 还在跑时
-  // 不显示已完成；回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。子会话由 plugin-subtask 收口。
+  //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里记下这一轮并收口，根会话与子会话一样，这是
+  // 唯一的收口：next() 返回时整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；
+  // 后面的中间件不调 next() 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里最后一轮结束
+  // 才收口，别的 lane 还在跑时不显示已完成；回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。
   hooks.middleware('agent:input:before', async (data, next) => {
     manager.beginTurn(data.message.sessionId, data.turnId);
     try {
@@ -939,9 +953,11 @@ async function run(caps: Caps): Promise<void> {
     }
   });
   hooks.middleware('agent:turn:after', async (data, next) => {
-    manager.recordOutcome(data.turnId, data.outcome);
+    manager.recordOutcome(data.turnId, data.outcome, data.error);
     await next();
   });
+  // 模型调用的 token 按会话累加：对话、摘要、识图、转写的调用都带会话 id
+  events.on('llm:usage', usage => manager.recordUsage(usage));
 
   // 监听用户消息事件 → 自动生成会话标题
   // 在用户首次发消息时即生成标题，无需等待 AI 回复

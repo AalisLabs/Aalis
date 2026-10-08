@@ -2,8 +2,16 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  max-width: 100%;
   white-space: nowrap;
   color: var(--color-text-2);
+}
+
+/* 一句原因可能很长：放不下时句末省略，不撑出所在的行 */
+.status-text > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-text[data-state="attention"] {

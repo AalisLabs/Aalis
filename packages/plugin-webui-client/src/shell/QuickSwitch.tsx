@@ -2,7 +2,7 @@ import type { RoomGroup, SessionSummary } from '@aalis/api-session-protocol';
 import { type KeyboardEvent, useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Dialog } from '../components/Dialog';
-import { SERVICE_ABSENT, useConnectionState, useSessionClient } from '../connection';
+import { useSessionClient, useSessionless } from '../connection';
 import { composing } from '../keys';
 import { pageAddress, pageName, usePages, withInstance } from '../pages/registry';
 import { labelOf, usePluginNames, usePlugins } from '../plugins/list';
@@ -45,8 +45,7 @@ export function QuickSwitch({ open, onClose }: { open: boolean; onClose(): void 
 
 function Search({ onClose }: { onClose(): void }) {
   const client = useSessionClient();
-  const state = useConnectionState(client);
-  const sessionless = state.status === 'stopped' || (state.status === 'retrying' && state.code === SERVICE_ABSENT);
+  const sessionless = useSessionless();
   const { pages, pagesError } = usePages();
   const { plugins, error: pluginsError } = usePlugins();
   const { instances } = usePluginNames();

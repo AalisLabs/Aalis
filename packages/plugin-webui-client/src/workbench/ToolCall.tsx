@@ -2,6 +2,8 @@ import { sanitizeForCard } from '@aalis/api-approval';
 import type { SessionItem } from '@aalis/api-session-protocol';
 import { FilePen, LoaderCircle, SquareTerminal, Wrench } from 'lucide-react';
 import { useState } from 'react';
+import { TaskFoot, TaskStatus } from '../background/Background';
+import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { type Approval, useSessionClient } from '../connection';
 import { clockTime, duration } from '../format';
@@ -12,6 +14,8 @@ import './ToolCall.css';
 // 失败用危险色，命令有退出码的写退出码；回合停止时还没结束的写「已停止」，与回合的结局同一个说法，不用危险色。
 // 按会话服务解析好的展示种类（display）渲染，没声明的与认不出的种类走通用卡、逐字列出参数；前端不认识任何工具名。
 // 要 owner 批准的调用，审批卡挂在这一行下面，事实完整列出、不限高（服务端已截断并写明省略多少）；结算后收成行上的一句。
+// 转到后台的调用（带 taskId）保持活的：状态与耗时取后台任务，行下面是最后一行与「输出」「停止」；登记表里找不到的
+// （超出保留被清掉的）只画这次调用本身。
 // 卡上来自参数的文字一律经审批契约的清洗（控制符、双向控制符、零宽字符都显示出来），免得看到的和要执行的不一样
 
 type ToolCallItem = Extract<SessionItem, { kind: 'tool-call' }>;
@@ -77,9 +81,13 @@ interface ToolCallProps {
   onToggle(): void;
   /** 这次调用未结的审批：推给这条连接的，或订阅快照里带来的 */
   approval?: Approval;
+  /** 打开后台任务的日志 */
+  openLog(taskId: string): void;
 }
 
-export function ToolCall({ item, open, onToggle, approval }: ToolCallProps) {
+export function ToolCall({ item, open, onToggle, approval, openLog }: ToolCallProps) {
+  const { tasks } = useBackground();
+  const task = item.taskId === undefined ? undefined : tasks?.get(item.taskId);
   const generating = item.status === 'generating';
   const waiting = awaitingApproval(item);
   const Icon = TOOL_ICONS[displayOf(item)?.kind ?? 'generic'];
@@ -88,7 +96,7 @@ export function ToolCall({ item, open, onToggle, approval }: ToolCallProps) {
     item.status === 'failed' && failureOf(item),
     item.status === 'aborted' && STOPPED,
     item.sentToRoom && '已发到群',
-    item.status === 'completed' && item.durationMs !== undefined && duration(item.durationMs),
+    !task && item.status === 'completed' && item.durationMs !== undefined && duration(item.durationMs),
   ].filter(part => typeof part === 'string');
   const tone = waiting ? 'attention' : item.status === 'failed' ? 'danger' : undefined;
   return (
@@ -110,11 +118,17 @@ export function ToolCall({ item, open, onToggle, approval }: ToolCallProps) {
               <LoaderCircle aria-hidden className="spin" />
               {generating ? '正在生成' : '运行中'}
             </>
+          ) : task ? (
+            <>
+              {parts.length > 0 && `${parts.join(' · ')} · `}
+              <TaskStatus task={task} />
+            </>
           ) : (
             parts.join(' · ')
           )}
         </span>
       </button>
+      {task && <TaskFoot task={task} onOutput={() => openLog(task.id)} />}
       {open && !generating && <ToolDetails item={item} />}
       {waiting && approval && <ApprovalCard approval={approval} />}
     </div>

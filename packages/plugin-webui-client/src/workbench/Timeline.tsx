@@ -1,6 +1,7 @@
 import type { SessionItem } from '@aalis/api-session-protocol';
 import { Info, LoaderCircle, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
+import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { Menu } from '../components/Menu';
@@ -17,7 +18,7 @@ import './Timeline.css';
 // 时间线：条目按回合成段，同一回合的条目挨在一起，回合的结局（停止、出错、没有回复）写在段尾，回滚在段的右上角。
 // 相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间。
 // 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
-// 或还在跑的，或者是还在跑的这一轮末尾那一组，不收，免得藏掉要看的东西；写给用户的正文不收。
+// 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮末尾那一组，不收，免得藏掉要看的东西；写给用户的正文不收。
 // 什么都没做就没有回复的一轮只写一行「没有回复」，中间只隔着提问的几轮合成一行「N 轮没有回复」，房间不刷屏靠合并
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
@@ -84,16 +85,21 @@ type Process = ToolCallItem | Item<'reasoning'>;
 /** 一段里的一项：一个条目，或收成一行的一组工具调用与夹着的思考 */
 type Row = { item: Exclude<TimelineItem, Item<'turn'>> } | { group: Process[] };
 
-/** 收起会藏掉要看的东西 */
-const holding = (call: ToolCallItem) =>
-  awaitingApproval(call) || call.status === 'failed' || call.status === 'generating' || call.status === 'running';
+/** 收起会藏掉要看的东西；taskRunning 是转到后台的调用的任务还在跑 */
+const holding = (call: ToolCallItem, taskRunning: (taskId: string) => boolean) =>
+  awaitingApproval(call) ||
+  call.status === 'failed' ||
+  call.status === 'generating' ||
+  call.status === 'running' ||
+  (call.taskId !== undefined && taskRunning(call.taskId));
 
-function rowsOf(items: Block['items'], live: boolean): Row[] {
+function rowsOf(items: Block['items'], live: boolean, taskRunning: (taskId: string) => boolean): Row[] {
   const rows: Row[] = [];
   let run: Process[] = [];
   const flush = (atEnd: boolean) => {
     const calls = run.filter(item => item.kind === 'tool-call');
-    if (calls.length >= COLLAPSE_FROM && !calls.some(holding) && !(live && atEnd)) rows.push({ group: run });
+    const held = calls.some(call => holding(call, taskRunning));
+    if (calls.length >= COLLAPSE_FROM && !held && !(live && atEnd)) rows.push({ group: run });
     else rows.push(...run.map(item => ({ item })));
     run = [];
   };
@@ -155,6 +161,8 @@ interface TimelineProps {
   loadEarlier(): Promise<void>;
   /** 连对话一起回滚之后，把那一轮 owner 发的文字放回输入框 */
   restore(prompt: string): void;
+  /** 打开一个后台任务的日志 */
+  openLog(taskId: string): void;
 }
 
 /** 一轮之前 owner 发的那条提问的文字：往前找到上一轮为止，中间隔着的通知不算 */
@@ -244,6 +252,7 @@ interface TurnBlockProps extends TimelineProps {
 
 function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) {
   const features = useFeatures();
+  const { tasks } = useBackground();
   const outcome = block.turn?.outcome;
   const settled = block.turn === undefined || outcome !== undefined;
   const rewindable = features.rewind && block.turnId !== undefined && settled && !props.running && !quiet(block);
@@ -257,7 +266,7 @@ function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) 
           : '没有回复';
   return (
     <div className="turn">
-      {rowsOf(block.items, !settled).map(row =>
+      {rowsOf(block.items, !settled, taskId => tasks?.get(taskId)?.status === 'running').map(row =>
         'group' in row ? (
           <CallGroup key={row.group[0].itemId} group={row.group} last={last} {...props} />
         ) : (
@@ -337,6 +346,7 @@ function Entry({ item, last, ...props }: EntryProps) {
           open={fold.isOpen(item.itemId)}
           onToggle={() => fold.toggle(item.itemId)}
           approval={item.approvalId === undefined ? undefined : props.approvalOf(item.approvalId)}
+          openLog={props.openLog}
         />
       );
     case 'notice':

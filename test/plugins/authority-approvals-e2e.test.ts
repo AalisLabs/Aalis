@@ -159,8 +159,8 @@ describe('能产生审批的回合：owner 本人与 owner 链的延续', () => 
     ['owner 在 WebUI 亲手发起', { sessionId: MINE, ...OWNER, inbound: {} }],
     ['owner 在自己的 QQ 私聊亲手发起（推到 WebUI）', { sessionId: OWNER_DM, ...OWNER_QQ, inbound: {} }],
     [
-      'owner 会话里后台命令结束后的续做',
-      { sessionId: MINE, ...OWNER, actor: OWNER, inbound: { source: 'exec-bg:proc_1', callerUserId: 'console' } },
+      'owner 会话里后台任务结束后的续做',
+      { sessionId: MINE, ...OWNER, actor: OWNER, inbound: { source: 'bg:bg_x_1', callerUserId: 'console' } },
     ],
   ];
 

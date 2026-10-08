@@ -2,7 +2,8 @@
  * @aalis/api-session-protocol — 会话协议（实验性）
  *
  * owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上格式：JSON-RPC 2.0 帧、握手、错误码，会话列表与增量、
- * 订阅与条目、回合控制、在场与审批。帧与参数都写成 zod schema，类型由 schema 推导：服务端按它校验收到的帧，客户端照它实现。
+ * 订阅与条目、回合控制、后台任务、在场与审批。帧与参数都写成 zod schema，类型由 schema 推导：服务端按它校验收到的帧，
+ * 客户端照它实现。
  * 本包只有 schema、协议版本与服务描述符 `sessionProtocol`；实现由提供 `sessionProtocol` 的插件给出，
  * 传输（WebSocket 等）由宿主插件接到 `sessionProtocol.connect`。
  *
@@ -138,6 +139,9 @@ export const InitializeResultSchema = z.object({
 export const SessionSectionSchema = z.enum(['owner', 'rooms']);
 export type SessionSection = z.infer<typeof SessionSectionSchema>;
 
+/** 回合的结局，取值同 api-agent 的 agent:turn:after */
+export const TurnOutcomeSchema = z.enum(['replied', 'silent', 'aborted', 'error']);
+
 /** 会话摘要：列表一行所需的全部字段 */
 export const SessionSummarySchema = z.object({
   id: z.string(),
@@ -173,6 +177,19 @@ export const SessionSummarySchema = z.object({
   /** 需要我处理：有未结的审批 */
   attention: z.boolean(),
   archived: z.boolean(),
+  /**
+   * 在跑的后台工作数：本会话在跑的后台任务，加各级子会话里有回合在跑或有后台任务在跑的会话数。本会话自己的回合不算，
+   * 那是 running
+   */
+  background: z.number().int().nonnegative(),
+  /** 本会话与各级子会话的模型调用累计的输入与输出 token；都还没有时没有 */
+  tokens: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).optional(),
+  /** 最近结束的一轮：结局与结束时间 */
+  lastTurn: z.object({ outcome: TurnOutcomeSchema, endedAt: z.number() }).optional(),
+  /** 出错（error 为真）时最近一轮的一句原因；没有原因的没有 */
+  reason: z.string().optional(),
+  /** 子会话才有：各级父会话的 id 与标题，根会话在前 */
+  ancestors: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -197,6 +214,7 @@ export type RoomGroup = z.infer<typeof RoomGroupSchema>;
  * - instance 只列这个适配器实例接管的房间，platform 只列这个平台还没记下实例的房间（groups 里没有 instance 的那一组），
  *   两者不同时给；房间表据此一次取全一组；
  * - archived 缺省不含已归档的会话，为 true 时只列已归档的；
+ * - background 只列 background 大于 0 的会话，已归档的与没归档的都列，不与 archived 同时给；
  * - query 按名称、标题、id 匹配（不分大小写），也认「平台:群号」。cursor 取上一页的 nextCursor。
  */
 export const SessionsListParamsSchema = z
@@ -206,11 +224,13 @@ export const SessionsListParamsSchema = z
     instance: z.string().optional(),
     platform: z.string().optional(),
     archived: z.boolean().optional(),
+    background: z.literal(true).optional(),
     query: z.string().optional(),
     cursor: z.string().optional(),
     limit: z.number().int().min(1).max(200).optional(),
   })
-  .refine(p => p.instance === undefined || p.platform === undefined, { message: 'instance 与 platform 不同时给' });
+  .refine(p => p.instance === undefined || p.platform === undefined, { message: 'instance 与 platform 不同时给' })
+  .refine(p => p.background === undefined || p.archived === undefined, { message: 'background 与 archived 不同时给' });
 
 export const SessionsListResultSchema = z.object({
   sessions: z.array(SessionSummarySchema),
@@ -346,9 +366,6 @@ export const SpeakerSchema = z.object({
   owner: z.boolean(),
 });
 
-/** 回合的结局，取值同 api-agent 的 agent:turn:after */
-export const TurnOutcomeSchema = z.enum(['replied', 'silent', 'aborted', 'error']);
-
 const ApprovalStateSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']);
 /** 结算之后的四种结局 */
 const SettledStateSchema = ApprovalStateSchema.exclude(['pending']);
@@ -405,7 +422,8 @@ const itemBase = {
  *   回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾。历史里没有结果的调用（重启或中断）是 aborted。
  *   这次调用要 owner 批准、审批推给了审批面时带 approvalId，再推一次 item/started；结算后带 approvalId 与 settlement，
  *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
- *   没人应答、撤销）状态是 denied。sentToRoom、approvalId、settlement 与停止时还没结束随工具结果落库，历史里同样还原；
+ *   没人应答、撤销）状态是 denied。转到后台的调用带 taskId（后台任务的 id），结果是转后台时回给模型的那段，任务的状态、
+ *   最后一行与输出看后台任务。sentToRoom、approvalId、settlement、taskId 与停止时还没结束随工具结果落库，历史里同样还原；
  * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
@@ -454,6 +472,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     sentToRoom: z.boolean().optional(),
     approvalId: z.string().optional(),
     settlement: ApprovalSettlementSchema.optional(),
+    taskId: z.string().optional(),
   }),
   z.object({
     kind: z.literal('notice'),
@@ -605,6 +624,61 @@ export const TurnRewindResultSchema = z.object({
 });
 
 // ════════════════════════════════════════════════════════════
+// 后台任务
+// ════════════════════════════════════════════════════════════
+
+/**
+ * 一个后台任务，取自后台任务登记（api-tools 的 backgroundTasks）。kind 是宿主维护的封闭集合，以后按加法加：现在只有
+ * tool-call，即转到后台的工具调用。界面按通用字段画，不认种类以外的细节。不下发模型给的参数与工具的结果；display 是
+ * 会话服务按工具声明的展示种类解析好的，同工具卡（命令种类在结束后带退出码，重启之前结束的取不到）
+ */
+export const BackgroundTaskSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  kind: z.enum(['tool-call']),
+  /** 显示名：工具调用是工具名 */
+  label: z.string(),
+  /** tool-call 才有：起它的那次工具调用的工具名、所在回合与调用的 id（即工具卡的 itemId） */
+  call: z.object({ tool: z.string(), turnId: z.string(), callId: z.string() }).optional(),
+  /** 在跑、完成、失败（结果带 error 或退出码不为 0）、被停止、被中断（工具撤回、停用、重启） */
+  status: z.enum(['running', 'completed', 'failed', 'stopped', 'aborted']),
+  startedAt: z.number(),
+  endedAt: z.number().optional(),
+  /** 输出的最后一行 */
+  lastLine: z.string().optional(),
+  /** 最后一次有输出的时刻 */
+  lastOutputAt: z.number().optional(),
+  /** 失败或中断的一句原因 */
+  reason: z.string().optional(),
+  display: ToolDisplaySchema.optional(),
+});
+export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
+
+const TaskTargetSchema = z.object({ taskId: z.string() });
+
+/** 取输出：after 是上次回的 end，只取之后新增的；缺省从缓冲的开头取 */
+export const BackgroundOutputParamsSchema = z.object({
+  taskId: z.string(),
+  after: z.number().int().nonnegative().optional(),
+});
+
+/**
+ * 一段输出：text 是 after 之后的部分；end 是至今的输出总字数，下次带作 after；缓冲只留末尾，after 早于缓冲的开头时
+ * truncated 为真。Aalis 重启之前的任务没有留下输出
+ */
+export const BackgroundOutputSchema = z.object({
+  text: z.string(),
+  end: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+/** `background/watch` 之后的增量：变了的任务给完整的一份，删掉的给 id */
+export const BackgroundChangedParamsSchema = z.object({
+  upserts: z.array(BackgroundTaskSchema),
+  removes: z.array(z.string()),
+});
+
+// ════════════════════════════════════════════════════════════
 // 在场与审批的方法与推送
 // ════════════════════════════════════════════════════════════
 
@@ -692,6 +766,18 @@ export const sessionMethods = {
   'presence/update': { params: PresenceUpdateParamsSchema, result: EmptySchema },
   /** 应答一个审批：先答先得，后到的回 approval-settled；应答人须是 owner，内容哈希须一致 */
   'approval/respond': { params: ApprovalRespondParamsSchema, result: EmptySchema },
+  /** 全部会话在跑的与保留的结束的后台任务；没有后台任务登记时回 unsupported */
+  'background/list': { params: EmptySchema, result: z.object({ tasks: z.array(BackgroundTaskSchema) }) },
+  /** 之后推 background/changed；后台任务登记晚些上线时照样推 */
+  'background/watch': { params: EmptySchema, result: EmptySchema },
+  /** 不认识的任务回 not-found，没有后台任务登记时回 unsupported */
+  'background/output': { params: BackgroundOutputParamsSchema, result: BackgroundOutputSchema },
+  /** 停一个后台任务：等它落定（最多几秒）才回，之后的状态经 background/changed 推出。被停止的不通知她 */
+  'background/stop': { params: TaskTargetSchema, result: EmptySchema },
+  /**
+   * 停掉这个会话下面的全部后台工作：它自己的后台任务、各级子会话的回合与它们的后台任务。不停它自己的回合（那是 turn/abort）
+   */
+  'background/stopAll': { params: SessionTargetSchema, result: EmptySchema },
 } as const;
 
 /** 服务端推送：名字 → 参数的 schema */
@@ -709,6 +795,8 @@ export const sessionNotifications = {
   'session/resync': SessionResyncParamsSchema,
   'approval/requested': ApprovalRequestedParamsSchema,
   'approval/settled': ApprovalSettledParamsSchema,
+  /** 后台任务变了：开始、结束、停止与删除立即推；只有最后一行与最后输出时间变了的合并起来，每秒至多一次 */
+  'background/changed': BackgroundChangedParamsSchema,
 } as const;
 
 export type SessionMethod = keyof typeof sessionMethods;

@@ -123,12 +123,12 @@ definePlugin({
    - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多 `maxToolIterations` 次）:
      - `agent:tool:before` → 执行工具 → `agent:tool:after`（中间件写进 `metadata` 的键随这次工具结果落库）
-     - 参数不是合法的 JSON 对象（坏 JSON，或顶层是 `null`、数组、原始值）时不执行，把错误作为这次调用的结果回给模型重新生成；空串按无参处理
+     - 参数不是合法的 JSON 对象（坏 JSON，或顶层是 `null`、数组、原始值）时不执行，把错误作为这次调用的结果回给模型重新生成，错误里带原文的前 200 字；写进本回合消息与存档的那次调用的 `arguments` 换成 `{}`，坏 JSON 不随 assistant 消息落库、下一轮不会被原样发回模型服务；空串按无参处理、原样保留
      - 每次调用都发一对 `tool:execute`（开始与结束）：没有执行就失败的（参数不合法、`agent:tool:before` 出错）同样发，结束带回给模型的错误，会话里的工具卡据此收尾
    - `agent:reply:before` — 后处理回复内容
    - `agent:turn:after` — 消息处理完成通知
 6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；每次工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段，没有执行就失败的调用同样记），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存
-7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件。回复的出站消息带这一轮的 `turnId`，平台适配器记投递失败时带上它
+7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件。回复的出站消息带这一轮的 `turnId`，平台适配器记投递失败时带上它；回复宿主通知时带上通知的 `hostNotice`（只有 `kind`、`id`），通知带 `replyTo` 的另带出站的 `replyTo`，支持引用的平台据此引用起那次工具调用的消息
 
 `message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
 
@@ -141,11 +141,11 @@ definePlugin({
 
 这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-context` 与 `turn-hint` 两个锚位的材料落在指令块之前、全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
 
-回合按「会话 + `source`」分道，同一道的新消息中止旧回合，不同道互不打断，宿主通知也从不打断别的回合。唯一的例外是本人说话打断通知回合：延续某次工具调用身份的宿主通知（带 `hostNotice.callerUserId`，如后台命令结束通知）开的回合，在同一会话收到 `userId` 等于 `callerUserId` 的真人消息（不带 `source`）时被中止，本人说话就停得下她自己开的一轮；别人的消息、不延续任何人身份的通知（白纸等）开的回合都不受影响。
+回合按「会话 + `source`」分道，同一道的新消息中止旧回合，不同道互不打断，宿主通知也从不打断别的回合。唯一的例外是本人说话打断通知回合：延续某次工具调用身份的宿主通知（带 `hostNotice.callerUserId`，如后台任务结束通知）开的回合，在同一会话收到 `userId` 等于 `callerUserId` 的真人消息（不带 `source`）时被中止，本人说话就停得下她自己开的一轮；别人的消息、不延续任何人身份的通知（白纸等）开的回合都不受影响。
 
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source, callerUserId: incoming.hostNotice?.callerUserId }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识；延续某次工具调用的宿主通知另带那次调用的发言者。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
+工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source, callerUserId: incoming.hostNotice?.callerUserId, messageId: incoming.messageId }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识；延续某次工具调用的宿主通知另带那次调用的发言者；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
 
 ## 上下文裁剪算法
 

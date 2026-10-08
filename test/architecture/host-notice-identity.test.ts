@@ -17,7 +17,7 @@ const ALLOWED = new Map<string, string>([
   ['api-authority/index.ts', '契约：执行守卫上下文的入站回合（InboundTurn）带着它，工具调用上下文沿用这个类型'],
   ['plugin-agent/index.ts', '消费方：填工具调用上下文的 userId 与 inbound.callerUserId'],
   ['plugin-authority/authority-model.ts', '消费方：判发起回合是不是 owner 链的延续（能否产生审批）'],
-  ['plugin-tool-system/tools/shell.ts', '注入方：后台命令结束通知延续起进程那次调用的身份'],
+  ['plugin-tools/background.ts', '注入方：后台任务的结束通知延续起它的那次工具调用的身份'],
 ]);
 
 function* walk(dir: string): Generator<string> {

@@ -1,4 +1,3 @@
-import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import './List.css';
@@ -26,14 +25,14 @@ interface ListItemProps {
   current?: boolean;
   /** 行尾的「更多」菜单：悬停、选中、键盘聚焦时出现，触屏上常显，手机上不带 */
   menu?: ReactNode;
-  /** 带子项时行尾的展开按钮；展开后的子列表作为 children 挂在这一行下面 */
-  expand?: { expanded: boolean; onToggle(): void; label: string };
+  /** 行尾常显的一个操作（停止） */
+  action?: ReactNode;
+  /** 挂在这一行下面、向里缩一级的子列表 */
   children?: ReactNode;
 }
 
 /** 列表的一行：整行是一个链接 */
-export function ListItem({ to, title, detail, meta, marker, current, menu, expand, children }: ListItemProps) {
-  const Chevron = expand?.expanded ? ChevronDown : ChevronRight;
+export function ListItem({ to, title, detail, meta, marker, current, menu, action, children }: ListItemProps) {
   return (
     <li className="list-item">
       <div
@@ -51,18 +50,7 @@ export function ListItem({ to, title, detail, meta, marker, current, menu, expan
           </span>
           {meta && <span className="list-item-meta">{meta}</span>}
         </Link>
-        {expand && (
-          <button
-            type="button"
-            className="list-item-toggle"
-            aria-expanded={expand.expanded}
-            aria-label={expand.label}
-            title={expand.label}
-            onClick={expand.onToggle}
-          >
-            <Chevron aria-hidden />
-          </button>
-        )}
+        {action && <div className="list-item-action">{action}</div>}
         {menu && <div className="list-item-menu">{menu}</div>}
       </div>
       {children}

@@ -72,7 +72,8 @@ plugins:
 - `inputSchema` 顶层非 `type: 'object'` 时自动包装为 `{ input: schema }`。
 - 某个 server 连不上（握手或列工具失败）时记一行 error 日志（`连接 MCP server "<id>" 失败: …`），并经 `webuiServer` 发一条 `level: 'error'` 的提示：id 为 `connect:<server-id>`，标题「MCP 服务器「<id>」连不上」，`detail` 是失败原因，跳转「去配置」。提示出现在 WebUI 的「需要处理」与本插件的详情里；它归属这次激活，改好配置后插件重载，旧提示随之撤回，新的激活连上了就不再发。连接只在激活时做一次，没有自动重连。WebUI 服务端不在时只记日志。
 - 启动时的握手与列工具在停用或停机时中止，中止不记连接失败，也不发提示。每个 server 连接成功后，经 `lifecycle.onDispose` 注册 `client.close()`；插件关闭时断开所有已连接的 server，关闭时抛出的错误被忽略，仅记 debug 日志。
-- 远端工具的返回文本经 `wrapUntrustedContent` 套上不可信内容边界；返回 `isError` 时不套边界，加 `MCP 工具返回错误:` 前缀返回。
+- 桥进来的工具声明可转后台（`background`，让出时限用执行器的默认 30 秒）：远端工具多久结束不可知，在前台等满让出时限还没结束，[plugin-tools](plugin-tools.md#转后台与后台任务) 的执行器把这次调用登记成后台任务、先回给模型，正常结束时通知起它的会话。调用带上执行器给这次调用的中止信号，中止时 SDK 向服务端发 `notifications/cancelled`；请求超时取 `setTimeout` 能表示的最大值 2147483647 毫秒（SDK 默认的 60 秒会把长任务截断，传 `Infinity` 又会被 Node 当成 1 毫秒），等多久由执行器的让出时限管。远端工具的参数表里已有 `runInBackground` 或 `waitSeconds` 的（按 api-tools 的 `takenBackgroundParams` 判断），执行器不会让它让出，本插件就不声明可转后台、记一条警告，请求超时照 SDK 默认的 60 秒，工具照常登记。
+- 远端工具的返回文本经 `wrapUntrustedContent` 套上不可信内容边界。返回 `isError` 时不套边界，结果为 `{ error: "MCP 工具返回错误:\n<正文>" }`；调用失败（含被中止）时结果为 `{ error: "MCP 调用 <server-id>/<工具名> 失败: <原因>" }`。两种都按工具报失败的约定放进 `error`，工具卡与后台任务据此记为失败。
 - 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出有效 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换列表中已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。后者以插件在配置文档里的原配置为底，只改目标条目的 `enabled`（`env` 的引用原样交回，密钥不变），经 `host-config` 的 `applyPluginConfig` 一步改运行态、写文档并落盘；`host-config` 缺席时返回失败，不改运行态；插件停机中或正在卸载、运行态不受理时返回失败，配置不变。落盘失败（如配置文件有尚未生效的外部修改而拒写）时运行态已经切换、插件照常 bounce，返回的文本注明这一点与写入失败的原因：配置文件里仍是原值，重启或配置重新载入后可能回退（拒写时配置重新载入以文件为准；其它写入错误时改动仍留在配置文档里，之后别处保存成功会一并写进文件）。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
 
 ## 安全注意事项

@@ -759,6 +759,7 @@ export class MediaServiceImpl implements MediaService {
               basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
               hint: opts.hint,
               sessionId: opts.sessionId,
+              signal: opts.signal,
             });
             result = r.descriptions[0] ?? '';
           }
@@ -788,6 +789,7 @@ export class MediaServiceImpl implements MediaService {
         basePrompt,
         hint: opts.hint,
         sessionId: opts.sessionId,
+        signal: opts.signal,
       });
       result = r.descriptions[0] ?? '';
     }

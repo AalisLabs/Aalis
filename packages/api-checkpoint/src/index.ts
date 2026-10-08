@@ -28,7 +28,7 @@ export interface CheckpointService {
     toUri?: string,
   ): Promise<void>;
   /**
-   * 这一轮调用过命令类工具（exec、exec_background、run_* 这类直接起子进程的）：它们的副作用不经存储，回滚撤不回。
+   * 这一轮调用过命令类工具（exec、run_* 这类直接起子进程的）：它们的副作用不经存储，回滚撤不回。
    * 只看已提交的回合，与 rollback 读同一份清单；没有这一轮的清单（不在记账的会话里、已被清理、还没提交）时为 false
    */
   execUsed(sessionId: string, turnId: string): Promise<boolean>;

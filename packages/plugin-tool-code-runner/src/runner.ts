@@ -11,8 +11,6 @@ import type { ProcessService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 
 export interface RunnerConfig {
-  defaultTimeout: number;
-  maxTimeout: number;
   maxOutputSize: number;
   /** 子进程 cwd（已通过 storage.resolveLocalPath 解析的本地路径） */
   cwd: string;
@@ -32,13 +30,12 @@ export interface RunResult {
   exitCode: number;
   stdout: string;
   stderr: string;
-  timedOut?: boolean;
   error?: string;
-  /** 回合中止且脚本是被信号结束的 */
+  /** 调用被中止且脚本是被信号结束的 */
   aborted?: true;
-  /** 随 aborted 给出的文字说明（与 exec 的「命令已随回合中止」同一口径） */
+  /** 随 aborted 给出的文字说明（与 exec 的「命令已中止」同一口径） */
   message?: string;
-  /** 回合已中止、但脚本不是被信号结束的（中止前已正常退出等）：按实际退出回报并加此注 */
+  /** 调用已中止、但脚本不是被信号结束的（中止前已正常退出等）：按实际退出回报并加此注 */
   note?: string;
 }
 
@@ -49,17 +46,16 @@ function truncateOutput(output: string, maxSize: number): string {
 }
 
 /**
- * 执行代码脚本
+ * 执行代码脚本。不另设超时：等多久由执行器的让出时限管，停只认 signal
  *
  * @param proc        ProcessService 句柄
  * @param storage     StorageService（用于写脚本到 tmp）
  * @param interpreter 解释器路径 (python3 / node)
  * @param code        完整源代码
  * @param ext         临时文件扩展名 (.py / .mjs)
- * @param config      超时 / 输出限制
- * @param timeout     可选自定义超时
+ * @param config      输出限制、工作目录与沙箱
  * @param extraArgs   额外的解释器参数
- * @param signal      回合的中止信号：中止时经 process 服务（或 code-sandbox）按进程组停掉脚本
+ * @param signal      执行器给这次调用的中止信号：中止时经 process 服务（或 code-sandbox）按进程组停掉脚本
  */
 export async function runCode(
   proc: ProcessService,
@@ -68,11 +64,9 @@ export async function runCode(
   code: string,
   ext: string,
   config: RunnerConfig,
-  timeout?: number,
   extraArgs: string[] = [],
   signal?: AbortSignal,
 ): Promise<RunResult> {
-  const effectiveTimeout = Math.min(Math.max(1000, timeout ?? config.defaultTimeout), config.maxTimeout);
   const tmp = await proc.makeTempDir('code-runner');
   try {
     const scriptUri = `${tmp.uri}/script${ext}`;
@@ -105,14 +99,12 @@ export async function runCode(
             args: [...extraArgs, scriptPath],
             cwd: config.cwd,
             env,
-            timeout: effectiveTimeout,
             signal,
             policy,
           })
         : await proc.execFile(interpreter, [...extraArgs, scriptPath], {
             cwd: config.cwd,
             env,
-            timeout: effectiveTimeout,
             signal,
           });
       const output = {
@@ -120,8 +112,8 @@ export async function runCode(
         stdout: truncateOutput(result.stdout, config.maxOutputSize),
         stderr: truncateOutput(result.stderr, config.maxOutputSize),
       };
-      // 退出码 0 不是被信号结束的：回合已中止也按实际退出回报，只注明
-      return signal?.aborted ? { ...output, note: '回合已中止' } : output;
+      // 退出码 0 不是被信号结束的：调用已中止也按实际退出回报，只注明
+      return signal?.aborted ? { ...output, note: '调用已中止' } : output;
     } catch (err) {
       // ProcessService.execFile 在非 0 退出时抛错，但会把 .result 挂上
       const e = err as Error & {
@@ -134,16 +126,15 @@ export async function runCode(
           stderr: truncateOutput(e.result.stderr, config.maxOutputSize),
         };
         if (signal?.aborted) {
-          // 判在 timedOut 之前：中止宽限到点的 SIGKILL 也算中止。被信号结束的才说被中止；中止前已退出
-          // 或 Windows 下强制结束（signal 可能为 null）的按实际退出回报，免得下一轮把已经生效的脚本再跑一遍
-          if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已随回合中止' };
-          return { ...output, note: '回合已中止' };
+          // 被信号结束的才说被中止（中止宽限到点的 SIGKILL 也算）；中止前已退出或 Windows 下强制结束
+          // （signal 可能为 null）的按实际退出回报，免得下一轮把已经生效的脚本再跑一遍
+          if (e.result.signal !== null) return { ...output, aborted: true, message: '代码已中止' };
+          return { ...output, note: '调用已中止' };
         }
-        const timedOut = e.result.signal === 'SIGKILL';
-        return { ...output, ...(timedOut ? { timedOut: true } : {}) };
+        return output;
       }
-      // 没有退出结果：spawn 失败，或回合已中止时 spawn 同步抛出（不起进程）
-      if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已随回合中止' };
+      // 没有退出结果：spawn 失败，或已中止时 spawn 同步抛出（不起进程）
+      if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已中止' };
       return {
         exitCode: -1,
         stdout: '',
