@@ -1,6 +1,7 @@
 import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // 分组闸此前只在列举面（getDefinitions/getSummaries）生效，execute 按名直调完全不校验。
@@ -21,7 +22,7 @@ interface Probe {
 }
 
 function setup(): Probe {
-  const reg = new ToolRegistry(makeLogger());
+  const reg = makeToolRegistry(makeLogger());
   let ran = false;
   reg.register(
     {

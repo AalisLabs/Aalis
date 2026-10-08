@@ -218,7 +218,7 @@ function TaskRow({ task, onOutput }: { task: BackgroundTask; onOutput?(): void }
         </span>
       </div>
       {task.lastLine !== undefined && <LastLine line={task.lastLine} />}
-      {task.reason !== undefined && task.reason !== endingOf(task) && (
+      {task.reason !== undefined && (
         <p className="task-reason" data-status={task.status}>
           {task.reason}
         </p>

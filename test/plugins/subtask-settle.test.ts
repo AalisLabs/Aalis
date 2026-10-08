@@ -13,7 +13,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 // 子会话与根会话同一套收口：最后一轮出错收口为 error，被停止收口为 completed、从 lastTurn 看出。
 // 父会话的 wait_subtasks 随即返回，不等到超时；check_subtask、wait_subtasks 与父会话的子任务提醒
-// 把被停止的报成「已停止」（stopped），不算完成。
+// 把被停止的报成「已停止」（stopped），不算完成；出错的三处都带出 lastTurn 里的原因。
 // ════════════════════════════════════════════════════════════
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
@@ -51,11 +51,12 @@ async function setup() {
   const call = async (tool: string, args: Record<string, unknown>) => JSON.parse(await handlers.get(tool)!(args, ctx));
 
   let turns = 0;
-  /** 子会话跑一轮，按 agent 的顺序发回合结束 */
-  const turn = (sessionId: string, outcome: Outcome, error?: string) => {
+  /** 子会话跑一轮，按 agent 的顺序发回合结束；during 在这一轮结束前跑（同一会话并行的另一轮） */
+  const turn = (sessionId: string, outcome: Outcome, error?: string, during?: () => Promise<unknown>) => {
     const message = { content: '<任务>', sessionId, platform: 'webui' };
     const turnId = `t${++turns}`;
     return host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+      await during?.();
       await host.hooks.run('agent:turn:after', {
         message,
         reply: outcome === 'replied' ? '<结果>' : '',
@@ -102,13 +103,15 @@ describe('子会话收口后父会话的等待随即返回', () => {
     const checked = await call('check_subtask', { subtask_ids: [child.id] });
     expect(checked.subtasks[0]).toMatchObject({ status: 'stopped', statusLabel: '已停止' });
     expect(checked.summary).toEqual({ total: 1, active: 0, completed: 0, errored: 0, stopped: 1 });
+    expect(checked.subtasks[0]).not.toHaveProperty('reason');
+    expect(waited.subtasks[0]).not.toHaveProperty('reason');
     const text = await reminder();
     expect(text).toContain('[已停止] <子任务>');
     expect(text).not.toContain('[已完成]');
   });
 
-  it('出错：报 error，不算完成、也不算超时', async () => {
-    const { sm, parent, call, turn } = await setup();
+  it('出错：报 error，不算完成、也不算超时；wait_subtasks、check_subtask 与子任务提醒都带出原因', async () => {
+    const { sm, parent, call, turn, reminder } = await setup();
     const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
 
     const waiting = call('wait_subtasks', { subtask_ids: [child.id] });
@@ -117,8 +120,26 @@ describe('子会话收口后父会话的等待随即返回', () => {
     expect(await within(waiting)).toMatchObject({
       allCompleted: false,
       timedOut: false,
-      subtasks: [{ id: child.id, status: 'error', completed: false }],
+      subtasks: [{ id: child.id, status: 'error', completed: false, reason: '<原因>' }],
     });
+    const checked = await call('check_subtask', { subtask_ids: [child.id] });
+    expect(checked.subtasks[0]).toMatchObject({ status: 'error', statusLabel: '出错', reason: '<原因>' });
+    expect(checked.summary).toEqual({ total: 1, active: 0, completed: 0, errored: 1, stopped: 0 });
+    expect(await reminder()).toContain(`[出错] <子任务> (ID: ${child.id}): <原因>`);
+  });
+
+  it('出错但没有原因：不带 reason，提醒写无错误详情，不拿上一轮的结果充当错误详情', async () => {
+    const { sm, parent, call, turn, reminder } = await setup();
+    const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
+    await turn(child.id, 'replied');
+    await turn(child.id, 'error');
+
+    const waited = await call('wait_subtasks', { subtask_ids: [child.id] });
+    expect(waited.subtasks[0]).toMatchObject({ status: 'error' });
+    expect(waited.subtasks[0]).not.toHaveProperty('reason');
+    const checked = await call('check_subtask', { subtask_ids: [child.id] });
+    expect(checked.subtasks[0]).not.toHaveProperty('reason');
+    expect(await reminder()).toContain(`[出错] <子任务> (ID: ${child.id}): (无错误详情)`);
   });
 
   it('正常回复：照旧由子任务以回复为结果收口为 completed', async () => {
@@ -133,6 +154,20 @@ describe('子会话收口后父会话的等待随即返回', () => {
       timedOut: false,
       subtasks: [{ id: child.id, status: 'completed', completed: true, result: '<结果>' }],
     });
+  });
+
+  it('最后结束的一轮出错、会话已由并行的另一轮收口为完成：报 completed，不带 reason', async () => {
+    const { sm, parent, call, turn } = await setup();
+    const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
+    await turn(child.id, 'error', '<原因>', () => turn(child.id, 'replied'));
+    expect(sm.getSession(child.id)).toMatchObject({ status: 'completed', lastTurn: { error: '<原因>' } });
+
+    const waited = await call('wait_subtasks', { subtask_ids: [child.id] });
+    expect(waited.subtasks[0]).toMatchObject({ status: 'completed' });
+    expect(waited.subtasks[0]).not.toHaveProperty('reason');
+    const checked = await call('check_subtask', { subtask_ids: [child.id] });
+    expect(checked.subtasks[0]).toMatchObject({ status: 'completed' });
+    expect(checked.subtasks[0]).not.toHaveProperty('reason');
   });
 
   it('等满时还在跑的报超时', async () => {

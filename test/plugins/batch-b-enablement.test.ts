@@ -3,9 +3,9 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import userRelation from '../../packages/plugin-user-relation/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -19,7 +19,7 @@ async function boot() {
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   expect(app.plugins.getPlugin(memoryInMemory.name)?.state).toBe('active');
-  const registry = new ToolRegistry(app.logger);
+  const registry = makeToolRegistry(app.logger);
   app.bind({ provide }).provide(tools, registry);
   return { app, registry };
 }

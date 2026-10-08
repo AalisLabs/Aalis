@@ -61,6 +61,17 @@ export default definePlugin({
 | `run_python` | 执行 Python 代码 |
 | `run_javascript` | 执行 JavaScript 代码 |
 
+结果是 JSON 对象：`exitCode`、`stdout`、`stderr`（各按 `maxOutputSize` 截断），以下情形另带 `error`，工具调用即按 [api-tools](../api/api-tools.md) 的 `toolFailed` 记为失败（工具卡、后台任务的结局与结束通知同此）：
+
+| 情形 | `error` |
+|---|---|
+| 脚本跑完、以非零退出，且调用没被中止 | `'退出码 N'`（N 为 `exitCode`） |
+| 脚本没被中止却被信号结束（如内存不够被系统杀掉，`exitCode` 为 -1） | `'被信号 <信号名> 结束'` |
+| 要求沙箱但没有可用后端（fail-closed） | 可操作的安装提示 |
+| 起脚本进程失败 | 失败原因 |
+
+退出码为 0 的不带 `error`；调用被中止时（下一节）也不带：标为 `aborted` 的与注明「调用已中止」的都不带。
+
 ## 转后台、停止与中止结果
 
 两个工具都声明可转后台（`background`，让出时限用执行器的默认 30 秒）：在前台等满让出时限还没结束，[plugin-tools](./plugin-tools.md#转后台与后台任务) 的执行器把这次调用登记成后台任务、先回给模型，脚本照常跑，正常结束时通知起它的会话。参数里没有超时，配置里也没有，等多久由执行器的让出时限管（模型可用 `waitSeconds` 改，`runInBackground` 立即转后台）。

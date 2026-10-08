@@ -61,6 +61,11 @@ function subtaskStatus(session: SessionInfo): SubtaskStatus {
   return session.status === 'completed' && session.lastTurn?.outcome === 'aborted' ? 'stopped' : session.status;
 }
 
+/** 出错的子任务的出错原因（session-manager 记在 lastTurn），其余状态不带：为 undefined 的键序列化后不出现在工具结果里 */
+function errorReason(session: SessionInfo, status: SubtaskStatus): string | undefined {
+  return status === 'error' ? session.lastTurn?.error : undefined;
+}
+
 const STATUS_LABELS: Partial<Record<SubtaskStatus, string>> = {
   active: '进行中',
   completed: '已完成',
@@ -250,7 +255,7 @@ function registerSubtask(
         name: 'check_subtask',
         description: [
           '查询一个或多个子任务的当前状态和结果。',
-          '返回每个子任务的状态（active=进行中, completed=已完成, error=出错, stopped=已停止）、结果摘要等。',
+          '返回每个子任务的状态（active=进行中, completed=已完成, error=出错, stopped=已停止）、结果摘要等；出错的带 reason（出错原因）。',
           '如果有子任务状态为 error，可使用 send_to_subtask 重新发送指令让其重试。',
         ].join('\n'),
         parameters: {
@@ -286,6 +291,7 @@ function registerSubtask(
           name: session.name,
           status,
           statusLabel: STATUS_LABELS[status] ?? status,
+          reason: errorReason(session, status),
           result: session.result || null,
           inputContext: session.inputContext || null,
         };
@@ -454,7 +460,7 @@ function registerSubtask(
         name: 'wait_subtasks',
         description: [
           '等待指定的子任务全部完成。阻塞直到所有子任务完成或超时。',
-          '返回每个子任务的状态和结果摘要。超时后仍返回当前状态（部分可能未完成）。被停止的子任务状态为 stopped（已停止），不算完成。',
+          '返回每个子任务的状态和结果摘要，出错的带 reason（出错原因）。超时后仍返回当前状态（部分可能未完成）。被停止的子任务状态为 stopped（已停止），不算完成。',
           '',
           '【必须调用】创建子任务后，必须调用此工具等待所有子任务完成。',
           '不等待就继续主任务会导致：子任务结果丢失、文档内容不完整、最终输出质量差。',
@@ -547,6 +553,7 @@ function registerSubtask(
           id,
           name: session.name,
           status,
+          reason: errorReason(session, status),
           inputContext: session.inputContext || null,
           result: session.result || null,
           completed: status === 'completed',
@@ -660,8 +667,9 @@ function registerSubtask(
             const resultPreview = child.result ?? '(无结果)';
             completedChildren.push(`  - [已完成] ${child.name} (ID: ${childId}): ${resultPreview}`);
           } else if (status === 'error') {
-            const resultPreview = child.result ?? '(无错误详情)';
-            errorChildren.push(`  - [出错] ${child.name} (ID: ${childId}): ${resultPreview}`);
+            // 不取 result：出错时它若有值，是此前某一轮回复收口时留下的结果，不是这次出错的详情
+            const reason = child.lastTurn?.error ?? '(无错误详情)';
+            errorChildren.push(`  - [出错] ${child.name} (ID: ${childId}): ${reason}`);
           } else if (status === 'stopped') {
             stoppedChildren.push(`  - [已停止] ${child.name} (ID: ${childId})`);
           }

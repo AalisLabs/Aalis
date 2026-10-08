@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { ExecutionGuardContext } from '../../packages/api-authority/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // 没有执行守卫（未装 plugin-authority）时 tools / commands 两处同一口径 fail-closed：
@@ -37,7 +38,7 @@ const ALLOWED: Record<string, Policy> = {
 };
 
 function toolRegistry(): { registry: ToolRegistry; ran: string[] } {
-  const registry = new ToolRegistry(silent);
+  const registry = makeToolRegistry(silent);
   const ran: string[] = [];
   for (const [name, policy] of Object.entries({ ...DENIED, ...ALLOWED })) {
     registry.register(

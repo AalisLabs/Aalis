@@ -71,6 +71,11 @@ function identityOf(ctx: ToolCallContext): Identity {
 
 const sameIdentity = (a: Identity, b: Identity) => a.platform === b.platform && a.userId === b.userId;
 
+/** 对话回合里的调用：有 turnId 与 callId，转到后台后有可以通知的对话 */
+export function inTurn(ctx: ToolCallContext): ctx is ToolCallContext & { turnId: string; callId: string } {
+  return ctx.turnId !== undefined && ctx.callId !== undefined;
+}
+
 /** text 的末尾 n 字，不从代理对中间切开 */
 function tailOf(text: string, n: number): string {
   if (text.length <= n) return text;
@@ -101,6 +106,7 @@ export function viewOf(task: BackgroundTask): Record<string, unknown> {
     ...(task.lastLine !== undefined ? { lastLine: task.lastLine } : {}),
     ...(task.lastOutputAt !== undefined ? { lastOutputAt: iso(task.lastOutputAt) } : {}),
     ...(task.reason !== undefined ? { reason: task.reason } : {}),
+    ...(task.exitCode !== undefined ? { exitCode: task.exitCode } : {}),
   };
 }
 
@@ -151,6 +157,8 @@ export interface Plan {
 /** 一次可转后台的调用：从占到位置到落定。转后台之后带上登记的任务 */
 interface Call {
   readonly sessionId: string;
+  /** 对话回合里的才占名额：不在回合里的不会转后台 */
+  readonly inTurn: boolean;
   /** 工具的登记项：撤回登记时按它找到在跑的调用 */
   readonly owner: object;
   readonly plan: Plan;
@@ -233,6 +241,7 @@ function parseStored(value: unknown): { task: BackgroundTask; starter: Identity 
   const lastLine = optionalOf<string>(value.lastLine, 'string');
   const lastOutputAt = optionalOf<number>(value.lastOutputAt, 'number');
   const reason = optionalOf<string>(value.reason, 'string');
+  const exitCode = Number.isInteger(value.exitCode) ? (value.exitCode as number) : undefined;
   return {
     task: {
       id,
@@ -246,18 +255,18 @@ function parseStored(value: unknown): { task: BackgroundTask; starter: Identity 
       ...(lastLine !== undefined ? { lastLine } : {}),
       ...(lastOutputAt !== undefined ? { lastOutputAt } : {}),
       ...(reason !== undefined ? { reason } : {}),
+      ...(exitCode !== undefined ? { exitCode } : {}),
     },
     starter: { platform: starter.platform, userId: starter.userId },
   };
 }
 
-/** 失败的一句原因：退出码不为 0 的写退出码，否则取结果里的 error */
-function failureOf(content: string, exitCode: number | undefined): string | undefined {
-  if (exitCode !== undefined && exitCode !== 0) return `退出码 ${exitCode}`;
+/** 结果里的 error 写成一句原因；结果不是 JSON 对象或没有 error 时没有 */
+function errorOf(content: string): string | undefined {
   try {
     const error: unknown = Reflect.get(JSON.parse(content) as object, 'error');
-    const reason = typeof error === 'string' ? error : JSON.stringify(error);
-    return truncateChars(reason, REASON_MAX, '…');
+    if (error === undefined) return undefined;
+    return truncateChars(typeof error === 'string' ? error : JSON.stringify(error), REASON_MAX, '…');
   } catch {
     return undefined;
   }
@@ -377,12 +386,13 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /**
-   * 占一个位置。同一会话里在跑的可转后台调用（前台与后台一起数，等审批的也算）满了时，回拒绝的结果（JSON），
-   * 列出调用者看得到的在跑的任务，不执行、不过守卫
+   * 占一个位置。同一会话里对话回合中在跑的可转后台调用（前台与后台一起数，等审批的也算）满了时，回拒绝的结果（JSON），
+   * 列出调用者看得到的在跑的任务，不执行、不过守卫。不在回合里的调用不会转后台，不占名额、不受上限挡
    */
   admit(ctx: ToolCallContext, owner: object, plan: Plan): Call | string {
-    const inSession = [...this.calls].filter(call => call.sessionId === ctx.sessionId);
-    if (inSession.length >= this.limits.maxPerSession) {
+    const counted = inTurn(ctx);
+    const inSession = [...this.calls].filter(call => call.inTurn && call.sessionId === ctx.sessionId);
+    if (counted && inSession.length >= this.limits.maxPerSession) {
       return JSON.stringify({
         error:
           `这个会话里已有 ${inSession.length} 个可转后台的工具调用在跑（上限 ${this.limits.maxPerSession}，前台与后台一起数），` +
@@ -394,6 +404,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     }
     const call: Call = {
       sessionId: ctx.sessionId,
+      inTurn: counted,
       owner,
       plan,
       controller: new AbortController(),
@@ -431,15 +442,14 @@ export class BackgroundTasks implements BackgroundTaskService {
       }
     }
     unlink();
-    const { turnId, callId } = ctx;
-    if (turnId === undefined || callId === undefined) {
+    if (!inTurn(ctx)) {
       call.controller.abort();
       await within(settled, STOP_GRACE_MS);
       return this.yielded(call, {
         error: `${waitSeconds} 秒内没有结束，已中止；要多等就给 waitSeconds`,
       });
     }
-    const record = this.register(call, spec, { turnId, callId, startedAt });
+    const record = this.register(call, spec, { turnId: ctx.turnId, callId: ctx.callId, startedAt });
     void settled.then(result => this.finish(record, result, spec.display));
     return this.yielded(call, {
       taskId: record.task.id,
@@ -505,10 +515,10 @@ export class BackgroundTasks implements BackgroundTaskService {
    * 界面按条目累加输出，前台最多要等 maxWaitSeconds，持续大量输出的命令不能把它撑满
    */
   private stream(ctx: ToolCallContext, text: string, sent: number): void {
-    const { sessionId, turnId, callId } = ctx;
     const room = OUTPUT_LIMIT - sent;
-    if (room <= 0 || turnId === undefined || callId === undefined) return;
+    if (room <= 0 || !inTurn(ctx)) return;
     const chunk = truncateChars(text, room);
+    const { sessionId, turnId, callId } = ctx;
     if (chunk) void this.events.emit('tool:output', { sessionId, turnId, callId, text: chunk });
   }
 
@@ -577,34 +587,33 @@ export class BackgroundTasks implements BackgroundTaskService {
     return record;
   }
 
-  /** 后台任务的调用落定：按结局落成 completed、failed 或 stopped；正常结束（含失败）的通知起它的会话 */
+  /**
+   * 后台任务的调用落定：按结局落成 completed、failed 或 stopped，记下结果与命令的退出码；失败的原因只取结果里的 error
+   * （退出码另有字段）。正常结束（含失败）的通知起它的会话
+   */
   private finish(record: TaskRecord, result: ToolExecutionResult, display: ToolDisplay | undefined): void {
     const call = record.call;
     // 已经落成 aborted（撤回、停用）或随会话删掉的不再改
     if (!call || this.records.get(record.task.id) !== record) return;
     const exitCode =
       display?.kind === 'command' && display.result ? integerIn(result.content, display.result.exitCode) : undefined;
+    const ending = { result, ...(exitCode !== undefined ? { exitCode } : {}) };
     if (call.stopRequested) {
-      this.land(record, 'stopped', undefined, result);
+      this.land(record, 'stopped', ending);
       return;
     }
     const failed = toolFailed(result.content, exitCode);
-    this.land(
-      record,
-      failed ? 'failed' : 'completed',
-      failed ? failureOf(result.content, exitCode) : undefined,
-      result,
-    );
-    if (record.notice && !this.shuttingDown) this.notify(record, record.notice, exitCode);
+    const reason = failed ? errorOf(result.content) : undefined;
+    this.land(record, failed ? 'failed' : 'completed', { ...ending, ...(reason !== undefined ? { reason } : {}) });
+    if (record.notice && !this.shuttingDown) this.notify(record, record.notice);
   }
 
-  private land(record: TaskRecord, status: BackgroundTaskStatus, reason?: string, result?: ToolExecutionResult): void {
-    Object.assign(record.task, {
-      status,
-      endedAt: Date.now(),
-      ...(reason !== undefined ? { reason } : {}),
-      ...(result ? { result } : {}),
-    });
+  private land(
+    record: TaskRecord,
+    status: BackgroundTaskStatus,
+    fields: Pick<BackgroundTask, 'reason' | 'result' | 'exitCode'> = {},
+  ): void {
+    Object.assign(record.task, { status, endedAt: Date.now(), ...fields });
     record.call = undefined;
     record.markEnded();
     this.changed(record);
@@ -616,7 +625,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     for (const call of this.calls) {
       if (!match(call)) continue;
       call.controller.abort();
-      if (call.record?.call === call) this.land(call.record, 'aborted', reason);
+      if (call.record?.call === call) this.land(call.record, 'aborted', { reason });
     }
   }
 
@@ -644,8 +653,9 @@ export class BackgroundTasks implements BackgroundTaskService {
    * 结束通知只放宿主取得的事实：任务 id、工具名、结局与退出码、用时。参数由模型写出（可能受过注入），输出与结果受外部内容
    * 左右，都不进通知（通知以 system 呈现且会归档）；它们由模型用 background_output 取，以 tool 角色进上下文
    */
-  private notify({ task, starter }: TaskRecord, target: NoticeTarget, exitCode: number | undefined): void {
+  private notify({ task, starter }: TaskRecord, target: NoticeTarget): void {
     const took = formatDuration((task.endedAt ?? task.startedAt) - task.startedAt);
+    const { exitCode } = task;
     const ending =
       task.status === 'completed'
         ? '已完成'
@@ -688,10 +698,11 @@ export class BackgroundTasks implements BackgroundTaskService {
     const sessions = new Set<string>();
     for (const entry of entries) {
       const stored = parseStored(entry);
-      if (!stored || this.records.has(stored.task.id)) {
+      if (!stored) {
         dropped++;
         continue;
       }
+      if (this.records.has(stored.task.id)) continue;
       const { task } = stored;
       if (task.status === 'running') {
         Object.assign(task, {

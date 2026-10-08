@@ -3,8 +3,8 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { pageHost } from '../fixtures/page-host.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // mcp-client 连不上某个 MCP 服务器时发 error 提示（标题写哪个服务器，detail 写原因，跳转去配置），出现在「需要处理」
@@ -49,7 +49,7 @@ describe('plugin-mcp-client 连不上时发提示', () => {
     const host = pageHost();
     const app = new App({ name: 'T', logLevel: 'error', logger });
     apps.push(app);
-    const registry = new ToolRegistry(logger);
+    const registry = makeToolRegistry(logger);
     app.bind({ provide }).provide(tools, registry);
     app.bind({ provide }).provide(webuiServer, host.service);
 

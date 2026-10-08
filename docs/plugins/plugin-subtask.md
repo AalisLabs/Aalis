@@ -33,10 +33,10 @@ export default definePlugin({
 | 工具 | 说明 |
 |---|---|
 | `create_subtask` | 创建子会话并异步派发任务（不阻塞当前会话） |
-| `check_subtask` | 查询一个或多个子任务的当前状态和结果；状态为 `active`、`completed`、`error` 或 `stopped`（已停止），汇总里另数已停止的个数 |
+| `check_subtask` | 查询一个或多个子任务的当前状态和结果；状态为 `active`、`completed`、`error` 或 `stopped`（已停止），汇总里另数已停止的个数。出错的另带 `reason`（出错原因） |
 | `send_to_subtask` | 向子任务追加消息（追问/补充指令；可重新激活已完成的子任务） |
 | `delete_subtask` | 递归删除子任务会话；仅允许删除当前会话的直接子任务 |
-| `wait_subtasks` | 阻塞直到指定子任务全部结束（完成、出错、被停止或会话已不存在）或超时；超时取 `timeout_seconds` 与 `maxWaitMs` 中的较小者（事件驱动，非轮询）。被停止的报 `stopped`，不算完成；`timedOut` 只在等满时还有没结束的才为真 |
+| `wait_subtasks` | 阻塞直到指定子任务全部结束（完成、出错、被停止或会话已不存在）或超时；超时取 `timeout_seconds` 与 `maxWaitMs` 中的较小者（事件驱动，非轮询）。被停止的报 `stopped`，不算完成；出错的另带 `reason`（出错原因）；`timedOut` 只在等满时还有没结束的才为真 |
 
 ## 工作方式
 
@@ -44,9 +44,9 @@ export default definePlugin({
    - 派发与 `send_to_subtask` 的追问都是内部注入：`source` 为 `subtask`，`userId` 为 `parent:<父会话 id>`（归档用的来源标记，authority 查不到，等价匿名），授权身份走 `actor`（创建者的有效授权身份）。它们不经触发判定、不查回复后冷却；带着 `source`，指令的意图确认不认它们；要求真人当面发起的工具（白纸的交任务与取消）拒绝子任务回合。派发与追问共用一条 lane，追问会打断子任务正在跑的那一轮
    - 子任务回合里需要确认的工具调用不转给 owner 审批，立即拒绝并写明原因（「子任务里需要确认的操作不会转给 owner，请在发起它的会话里执行」），需要确认的操作由父会话自己做；需要意图确认的指令带着 `source`、问不到发出者，直接拒绝
 2. 子会话的系统提示由 `agent:llm:before` 中间件注入子任务上下文（任务指令、共享资源规则）
-3. 父会话侧不改动首条系统提示（避免破坏 provider 前缀缓存），而是在消息列表尾部插入一条独立的 system 消息"活跃子任务提醒"，列出进行中、出错、已停止和已完成的子任务；最后一条是 user 消息时插在它之前，否则追加到末尾。每轮先移除上一轮的提醒，再按最新状态重新生成
+3. 父会话侧不改动首条系统提示（避免破坏 provider 前缀缓存），而是在消息列表尾部插入一条独立的 system 消息"活跃子任务提醒"，列出进行中、出错、已停止和已完成的子任务，出错的写出错原因；最后一条是 user 消息时插在它之前，否则追加到末尾。每轮先移除上一轮的提醒，再按最新状态重新生成
 4. 子任务 agent 本轮以 `replied` 结束、回复非空且子会话尚未完成或出错时，`agent:turn:after` 中间件以该回复为结果调用 `sm.completeSession`；若 `message-archive` 服务可用，调用前还会在子会话历史中合成一条 `report_to_parent` tool call 记录及其结果消息
-5. 子会话的收口由 session-manager 做，与根会话同一套：最后一轮出错收口为 `error`，被停止、静默的收口为 `completed`，并记下这一轮（`lastTurn`）。被停止的子会话（`completed` 且 `lastTurn.outcome` 为 `aborted`）三处都报已停止（`stopped`），不算完成：`check_subtask`、`wait_subtasks` 与父会话的子任务提醒
+5. 子会话的收口由 session-manager 做，与根会话同一套：最后一轮出错收口为 `error`，被停止、静默的收口为 `completed`，并记下这一轮（`lastTurn`）。被停止的子会话（`completed` 且 `lastTurn.outcome` 为 `aborted`）三处都报已停止（`stopped`），不算完成：`check_subtask`、`wait_subtasks` 与父会话的子任务提醒。出错的子会话三处都带出 `lastTurn.error` 里的原因（工具结果的 `reason` 键，提醒里写在名字后面）；没有原因时两个工具不带 `reason`，提醒写「(无错误详情)」。不拿 `result` 充当原因：出错时它若有值，是此前某一轮回复收口时留下的结果
 6. `wait_subtasks` 监听 `session:completed` / `session:updated` 事件等待全部子任务终结；子会话出错或被停止时随即返回，不等到超时
 
 ## 配置

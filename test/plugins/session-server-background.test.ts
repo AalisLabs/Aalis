@@ -199,7 +199,7 @@ function upserted(c: ReturnType<typeof client>, id: string): SessionSummary | un
 }
 
 describe('background/list 与投影', () => {
-  it('列出全部会话的任务：通用字段、按工具声明解析好的 display，不下发参数与结果；结束后带退出码', async () => {
+  it('列出全部会话的任务：通用字段、按工具声明解析好的 display，不下发参数与结果；结束后 display 带登记里的退出码', async () => {
     const w = await setup();
     const { P, O } = await w.tree();
     const c = await connect(w.server());
@@ -243,10 +243,12 @@ describe('background/list 与投影', () => {
     const ended = (await c.call('background/list', {})).tasks.find(task => task.id === second);
     expect(ended).toMatchObject({
       status: 'failed',
-      reason: '退出码 2',
       endedAt: expect.any(Number),
       display: { kind: 'command', command: 'make build', exitCode: 2 },
     });
+    expect(ended, '退出码只在 display 里，原因不重复写它').not.toHaveProperty('reason');
+    const wire = frames.find(frame => frame.id === 'raw') as { result: { tasks: Array<{ id: string }> } };
+    expect(wire.result.tasks.find(task => task.id === second)).not.toHaveProperty('exitCode');
   });
 });
 

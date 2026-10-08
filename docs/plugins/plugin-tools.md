@@ -31,7 +31,7 @@ export default definePlugin({
 - `events`：发 `tool:output`、`background:changed` 与后台任务的结束通知；收听 `session:deleted` 与 `app:stopping`。
 - `lifecycle`：停用时把在跑的后台任务落成 `aborted` 并写盘。
 - 可选 `sessionManager`：登记会话设置项「工具分组」；没有时各会话只拿到通用工具。
-- 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，有了插件数据根时读回一次。
+- 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，每次上线（有了插件数据根）都读回一遍，内存里已有的条目照留。
 - 可选 `authority`：后台任务工具放行 owner 看与停别人起的任务；没有时只认同一身份。
 
 权限钩子由消费方通过 `setExecutionGuard()` 注入。
@@ -41,7 +41,7 @@ export default definePlugin({
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `background.maxWaitSeconds` | 600 | 可转后台的工具调用在前台最多等多少秒：模型给的 `waitSeconds` 与工具声明的让出时限都不超过它。最大 2147483（计时器能表示的最长时限），超出时告警并回落默认 |
-| `background.maxPerSession` | 4 | 同一会话里同时在跑的可转后台工具调用（前台与后台一起数，等审批的也算），满了时新的调用在过守卫之前就被拒绝，回给模型在跑的任务与「先等待或停掉一个」 |
+| `background.maxPerSession` | 4 | 同一会话里对话回合中同时在跑的可转后台工具调用（前台与后台一起数，等审批的也算），满了时新的调用在过守卫之前就被拒绝，回给模型在跑的任务与「先等待或停掉一个」；不在对话回合里的调用不会转后台，不占名额 |
 
 ## 主要能力
 
@@ -72,9 +72,9 @@ export default definePlugin({
 - **让出**：参数表补 `runInBackground` 与 `waitSeconds`，执行时先取出。过了守卫之后在前台等让出时限（`waitSeconds`，缺省取工具的 `yieldSeconds`，再缺省 30 秒，上限 `background.maxWaitSeconds`）。执行器给这次调用自己的中止信号：在前台时回合中止一并中止它；转后台的那一刻摘掉与回合的联动，之后停止键、新消息打断都不动它。
 - **登记**：到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（`backgroundTasks`），回给模型任务 id、已有输出的末尾（最多 2000 字）与「已转到后台，结束时会通知你；不必等它，可以先回复」。所有会话同一句。没转后台的调用不进登记表。不在对话回合里的调用（没有 `callId`）不转后台：带 `runInBackground` 直接回错，到时中止并回报已有输出。
 - **输出**：执行器给每次调用一个输出口 `ToolCallContext.output`：有 `turnId` 与 `callId` 时转成 `tool:output`，一次调用推出的总量不超过 64 KiB（界面按条目累加输出，前台最多要等 `background.maxWaitSeconds`，持续大量输出的命令不能把它撑满）；可转后台的调用另留进输出缓冲（只留末尾 64 KiB），任务的最后一行、最后输出时间与 `output(id, after)` 都取它。转到后台之后不再发 `tool:output`，只更新登记表并发 `background:changed`。
-- **结局**：结果带 `error` 或命令种类的退出码不为 0 为 `failed`（与会话服务的工具卡同一判据 `toolFailed`），`stop` 停的为 `stopped`，其余 `completed`；结束的留着工具的结果。工具撤回登记（所属插件停用）时，执行器把它在跑的调用一并中止，后台的落成 `aborted`；本插件停用时全部落成 `aborted`。会话删除时停掉它的任务并删掉登记；归档不停。
+- **结局**：结果带 `error` 或命令种类的退出码不为 0 为 `failed`（与会话服务的工具卡同一判据 `toolFailed`），`stop` 停的为 `stopped`，其余 `completed`；结束的留着工具的结果。命令种类的退出码记在任务的 `exitCode`，失败的 `reason` 只取结果里的 `error`。工具撤回登记（所属插件停用）时，执行器把它在跑的调用一并中止，后台的落成 `aborted`；本插件停用时全部落成 `aborted`。会话删除时停掉它的任务并删掉登记；归档不停。
 - **检查点**：转到后台的调用在回合提交之后经存储写的文件不进这一轮的检查点，回滚撤不回（见 [plugin-checkpoint](plugin-checkpoint.md)）。
-- **落盘**：状态变了（登记、结束、删除）才写 `pluginData:/tools/background-tasks.json`，写入排队、整份写入；只记字段与起它的身份，不记输出与结果；每个会话留在跑的与最近 20 条结束的。启动读回时还在跑的落成 `aborted`，原因写「Aalis 重启时还在跑」。读不出来（权限、存储不可用）时告警，本次运行只记在内存里、不覆盖原文件。
+- **落盘**：状态变了（登记、结束、删除）才写 `pluginData:/tools/background-tasks.json`，写入排队、整份写入；只记字段（含退出码）与起它的身份，不记输出与结果；每个会话留在跑的与最近 20 条结束的。启动读回时还在跑的落成 `aborted`，原因写「Aalis 重启时还在跑」。读不出来（权限、存储不可用）时告警，本次运行只记在内存里、不覆盖原文件。
 - **结束通知**：正常结束（含失败）时注入一条宿主通知 `inbound:message`：`hostNotice.kind` 为 `background-task`、`id` 为任务 id，`source` 为 `bg:<任务 id>`，`platform`、`actor` 与 `hostNotice.callerUserId` 取起它的那次调用（身份跟链源头，见 [security-model](../concepts/security-model.md#宿主通知的身份)），`hostNotice.replyTo` 取起它那次调用的入站消息 id（`ToolCallContext.inbound.messageId`），她回复这条通知时引用那条消息（支持引用的平台，如 OneBot）。正文只写宿主取得的事实：任务 id、工具名、结局与退出码、用时；参数、输出与结果由模型用 `background_output` 取。由结束通知开的回合里转后台的任务不再通知，链只延续一层。被停止的、工具撤回或本插件停用中断的、收到 `app:stopping` 之后结束的都不通知。通知经网关入站，房间在 [plugin-flow-control](plugin-flow-control.md) 的作用域内时对它不查冷却、照查限速，超限吞掉并影子归档。
 
 ### 后台任务工具

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { validateConfig } from '../../packages/schema-config/src/index.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // mcp-client 的 configSchema 迁到 definePlugin 时漏挂：WebUI 表单、默认值、校验全部失效。
@@ -48,7 +48,7 @@ async function start(servers: unknown[]) {
   const { logger, warns } = captureLogger();
   const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
-  const registry = new ToolRegistry(logger);
+  const registry = makeToolRegistry(logger);
   app.bind({ provide }).provide(tools, registry);
   await app.plugin(mcpClient, { servers });
   await app.plugins.idle();
