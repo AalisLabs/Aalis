@@ -335,8 +335,10 @@ export interface BackgroundTask {
   lastLine?: string;
   /** 最后一次有输出的时刻 */
   lastOutputAt?: number;
-  /** 失败或中断的一句原因 */
+  /** 失败或中断的一句原因：失败的取自结果里的 error，退出码不在这里 */
   reason?: string;
+  /** 命令的退出码：工具声明了 command 种类的展示、结束时从结果里取得到才有；随登记落盘 */
+  exitCode?: number;
   /** 结束的任务：工具的结果。不落盘，Aalis 重启前结束的没有 */
   result?: ToolExecutionResult;
 }

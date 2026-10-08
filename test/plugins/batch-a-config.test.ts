@@ -12,8 +12,8 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import maimai from '../../packages/plugin-maimai/src/index.js';
 import okx from '../../packages/plugin-okx-trading/src/index.js';
 import browser from '../../packages/plugin-tool-browser/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // 实际走 App 激活路径；fetch 与进程服务均由替身接管，不连接外部服务。
 const apps: App[] = [];
@@ -33,7 +33,7 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
   );
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
-  const registry = new ToolRegistry(app.logger);
+  const registry = makeToolRegistry(app.logger);
   const registerTool = vi.spyOn(registry, 'register');
   const registerGroup = vi.spyOn(registry, 'registerGroup');
   app.bind({ provide }).provide(tools, registry);

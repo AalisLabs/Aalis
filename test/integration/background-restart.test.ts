@@ -133,5 +133,10 @@ describe('重启之后的后台任务', () => {
       ['npm run dev', 'aborted'],
     ]);
     expect(tasks.map(task => [task.id, task.status])).toEqual(registry().map(task => [task.id, task.status]));
+    expect(tasks[0].display, '重启前结束的命令照样带退出码').toEqual({
+      kind: 'command',
+      command: 'make build',
+      exitCode: 0,
+    });
   });
 });

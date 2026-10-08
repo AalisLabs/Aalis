@@ -13,8 +13,9 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
@@ -35,7 +36,7 @@ const def = (name: string) => ({
 
 describe('ToolRegistry 退订按条目身份', () => {
   it('同名重注册后，旧退订闭包不误删新登记；新闭包正常删', () => {
-    const reg = new ToolRegistry(silentLogger());
+    const reg = makeToolRegistry(silentLogger());
     const oldOff = reg.register({ definition: def('t'), handler: async () => 'old' }, 'p');
     const newOff = reg.register({ definition: def('t'), handler: async () => 'new' }, 'p');
 
@@ -50,7 +51,7 @@ describe('ToolRegistry 退订按条目身份', () => {
   });
 
   it('工具分组同一口径', () => {
-    const reg = new ToolRegistry(silentLogger());
+    const reg = makeToolRegistry(silentLogger());
     const oldOff = reg.registerGroup({ name: 'g', label: 'g', description: 'old' }, 'p');
     reg.registerGroup({ name: 'g', label: 'g', description: 'new' }, 'p');
 
@@ -93,7 +94,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
     apps.push(app);
     const host = app.bind({ provide });
-    const reg = new ToolRegistry(silentLogger());
+    const reg = makeToolRegistry(silentLogger());
     const offProvide = host.provide(tools, reg);
     let bound!: BoundTools;
     await app.plugin(
@@ -124,7 +125,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(names(reg), '当前登记由它自己的闭包摘掉').toEqual([]);
 
     offProvide();
-    const reg2 = new ToolRegistry(silentLogger());
+    const reg2 = makeToolRegistry(silentLogger());
     host.provide(tools, reg2);
     await app.plugins.idle();
     expect(names(reg2), '旧登记已随替换出账，换提供者不复活它').toEqual([]);
@@ -138,7 +139,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     off();
     expect(names(reg)).toEqual([]);
     offProvide();
-    const reg2 = new ToolRegistry(silentLogger());
+    const reg2 = makeToolRegistry(silentLogger());
     host.provide(tools, reg2);
     await app.plugins.idle();
     expect(names(reg2), '已退订的登记不随换提供者复活').toEqual([]);
@@ -151,7 +152,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     for (let i = 0; i < 100; i++) bound.register({ definition: def('t'), handler: async () => '' });
     expect(names(reg)).toEqual(['t']);
     offProvide();
-    const reg2 = new ToolRegistry(silentLogger());
+    const reg2 = makeToolRegistry(silentLogger());
     const registered = vi.spyOn(reg2, 'register');
     host.provide(tools, reg2);
     await app.plugins.idle();
@@ -165,7 +166,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     const total = 20;
     for (let i = 0; i < total; i++) bound.register({ definition: def(`t${i}`), handler: async () => '' });
     offProvide();
-    const reg2 = new ToolRegistry(silentLogger());
+    const reg2 = makeToolRegistry(silentLogger());
     host.provide(tools, reg2);
     const seen = new Set<number>();
     for (let hop = 0; hop < 50; hop++) {
@@ -186,7 +187,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(reg.getGroups().map(g => g.description)).toEqual(['new']);
     newOff();
     offProvide();
-    const reg2 = new ToolRegistry(silentLogger());
+    const reg2 = makeToolRegistry(silentLogger());
     host.provide(tools, reg2);
     await app.plugins.idle();
     expect(reg2.getGroups(), '被替换的旧分组不随换提供者复活').toEqual([]);
@@ -209,7 +210,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
       } as unknown as Logger,
     });
     apps.push(app);
-    const reg = new ToolRegistry(silentLogger());
+    const reg = makeToolRegistry(silentLogger());
     app.bind({ provide }).provide(tools, reg);
     return { app, reg, warnings, refusals: () => warnings.filter(w => w.includes('忽略 tools 登记')).length };
   }
@@ -290,7 +291,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(view.current).toBe(reg);
     offProvide();
     expect(view.current).toBeUndefined();
-    const reg2 = new ToolRegistry(silentLogger());
+    const reg2 = makeToolRegistry(silentLogger());
     host.provide(tools, reg2);
     expect(view.current).toBe(reg2);
   });

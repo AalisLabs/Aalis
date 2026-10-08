@@ -77,7 +77,6 @@ const task: BackgroundTask = {
   endedAt: 9,
   lastLine: 'npm ERR! missing script',
   lastOutputAt: 8,
-  reason: '退出码 1',
   display: { kind: 'command', command: 'npm run dev', cwd: 'workspace:/app', exitCode: 1 },
 };
 

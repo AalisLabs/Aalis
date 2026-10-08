@@ -8,7 +8,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -232,7 +232,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
 
   it('real tools cannot execute a same-key orphan after the consumer unloads', async () => {
     const { app, publish } = world();
-    const provider = new ToolRegistry(app.logger);
+    const provider = makeToolRegistry(app.logger);
     publish(tools, provider);
     let bound!: BoundTools;
     await app.plugin(

@@ -14,7 +14,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { makeToolRegistry } from '../fixtures/tool-registry.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -157,7 +157,7 @@ describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
 
   it('真实注册型能力 tools 与真实调用型服务 process 走同一声明', async () => {
     const { app, host } = world();
-    const registry = new ToolRegistry(app.bind({ logger }).logger);
+    const registry = makeToolRegistry(app.bind({ logger }).logger);
     host.provide(tools, registry);
     const fakeProcess = { execFile: async () => ({ stdout: 'v1', stderr: '', code: 0 }) } as unknown as ProcessService;
     host.provide(processService, fakeProcess);
