@@ -658,6 +658,18 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - api-commands：`OptionSpec.choices` 改为 `OptionChoice[]`（登记时仍收字符串）；`-h`、`--help` 成为保留选项，声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项时登记抛错。
 - **发布档位**：次版本：schema-message、api-llm、api-tools、api-commands、api-session-manager、api-session-protocol、plugin-session-manager、plugin-session-server、plugin-message-archive、plugin-file-reader、plugin-commands、plugin-user-profile、plugin-webui-client；其余为 patch。plugin-message-archive 新增依赖 api-storage（可选服务 storage），plugin-user-profile 新增依赖 api-webui（可选服务 webui-server）。
 
+### 改用 Node 自带的 node:sqlite，最低 Node 24.15.0（@aalis/plugin-memory-sqlite、@aalis/create-aalis、@aalis/runtime、@aalis/plugin-doctor、@aalis/plugin-package-manager）
+
+SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依赖，装机也不用编译工具。整个项目的最低 Node 版本随之定为 24.15.0，这一版起 `node:sqlite` 不再打实验警告。
+
+- **plugin-memory-sqlite**：改用 Node 自带的 `node:sqlite`，不再依赖 better-sqlite3。旧的数据库文件照常打开读写，不用迁移。开库设 WAL 与 `synchronous = NORMAL`（系统崩溃或断电时可能丢最后几次提交，库文件不会损坏），遇锁照旧最多等 5 秒；消息没有 `content` 时按空值落库，不再报错。Node 太旧（取不到 `node:sqlite`，或它缺本插件要用的事务状态与遇锁等待，即 22.16 之前与 23.x）时激活失败，报错写明需要 Node 24.15.0 起并指向升级说明；删掉原来原生模块版本不符时的 rebuild 提示。
+- **create-aalis**：一开头检查 Node 版本，低于 24.15.0 时不生成项目，写明需要的版本、当前版本、各平台的升级办法，以及旧项目换 Node 后怎么处理；生成的项目 package.json 写 `engines`。
+- **plugin-doctor**：`env.node` 按 24.15.0 判，低于它报错并写明升级办法（此前按 22 推荐）。
+- **engines**：根、runtime、create-aalis、plugin-memory-sqlite 写 `"node": ">=24.15.0"`。
+- **文档**：README、CONTRIBUTING、入门与脚手架页改为 Node 24.15 起；「第一次运行」新增「升级 Node」，写明各平台步骤、已装好的项目照常 `npm start`、旧库不用迁移，以及早先版本在旧 Node 上装好的项目换 Node 后先 `npm install @aalis/plugin-memory-sqlite@latest`。
+- **升级须知**：在 Node 22 上运行的实例，升级到本批之前先把 Node 换到 24.15 起；在新 Node 上，旧版 plugin-memory-sqlite 的原生模块会因版本不符激活失败，随本批一起升级即可。
+- **发布档位**：次版本：plugin-memory-sqlite、create-aalis；patch：runtime（只加 engines）、plugin-doctor；plugin-package-manager 只改注释，不发版。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
