@@ -9,8 +9,10 @@
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
  * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据），仍在激活中的提供者归为等待
  * - plugins.slow 点名激活超过阈值、已转入后台的插件
+ * - env.node 按最低版本 24.15.0 判定，不够时写明需要的版本与升级方法
  * - 诊断页过登记门槛；每次运行后推 invalidate，有错误或警告时发提示（跳到诊断页），全部通过后撤回
  */
+import { syncBuiltinESMExports } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { type CheckResult, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
@@ -241,6 +243,36 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     });
     release();
     await app.stop();
+  });
+
+  it('env.node：低于 24.15.0 报错并写明需要的版本与升级方法，24.15.0 起通过', async () => {
+    const { app, doctor } = await boot();
+    const realVersion = process.version;
+    const checkAt = async (version: string) => {
+      Object.defineProperty(process, 'version', { value: version });
+      syncBuiltinESMExports();
+      return (await doctor.runChecks()).checks.find(c => c.id === 'env.node');
+    };
+    try {
+      expect(await checkAt('v24.14.9')).toMatchObject({
+        level: 'error',
+        message: 'Node v24.14.9',
+        detail: '需要 Node 24.15.0 起；升级方法见 docs/guide/first-run.md「升级 Node」',
+      });
+      // 按字符串比较会排在 v24.15.0 之后
+      expect(await checkAt('v24.9.0')).toMatchObject({ level: 'error' });
+      expect(await checkAt('v24.15.0')).toEqual({
+        id: 'env.node',
+        category: 'env',
+        level: 'ok',
+        message: 'Node v24.15.0',
+      });
+      expect(await checkAt('v26.0.0')).toMatchObject({ level: 'ok' });
+    } finally {
+      Object.defineProperty(process, 'version', { value: realVersion });
+      syncBuiltinESMExports();
+      await app.stop();
+    }
   });
 
   it('registerCheck 返回 dispose 函数可移除项', async () => {

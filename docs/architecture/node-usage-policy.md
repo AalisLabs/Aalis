@@ -71,6 +71,7 @@
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
 | `node:net` | 出站建议用 fetch（受用户或 LLM 影响的 URL 走 `safeFetch`） | `plugin-tool-browser` | 浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标 |
 | `node:os` | 走 `system_info` 工具聚合返回 | `plugin-tool-system/src/tools/system.ts` | 该工具的本意就是暴露系统信息 |
+| `node:sqlite` | 消息与元数据走 `@aalis/api-memory`（`memory` 服务） | `plugin-memory-sqlite/src/index.ts` | `MemoryService` 的 SQLite 实现 |
 | `node:crypto` | 推荐 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`） | `plugin-tool-browser` | `createHash` 取截图 PNG 内容的 sha256 作文件名 |
 |  |  | `plugin-storage-local` | `randomBytes` 生成原子写临时文件名里的随机段 |
 |  |  | `runtime/src/providers.ts` | `randomBytes` 生成配置文件原子写临时文件名里的随机段 |
@@ -122,8 +123,8 @@
 
 ### 记忆后端
 
-- **`plugin-memory-sqlite/src/index.ts`** — `node:fs`（`statSync`）
-  better-sqlite3 本来就直接打开 `resolveLocalPath` 给出的本地文件，取这个文件的身份与开库属于同一层。开库后用 `statSync` 取设备号与 inode，按文件身份判断两个实例是否打开了同一个库：大小写不敏感的卷上只差大小写的两个路径、指向同一文件的硬链接，按路径字符串比较都认不出来。没有为此给 `StorageService` 增加文件身份字段，因为目前只有这一个消费者。这个文件不在 `overrides[1]` 里整条关掉 `noRestrictedImports`：`biome.json` 为它单独写了一段 override，`node:fs` 用 `allowImportNames` 只放行 `statSync`，其余受限的 `node:*` 照常报错。biome 的 override 会整体替换规则选项，这段 override 因此重抄了 `overrides[0]` 的全部路径，改 `overrides[0]` 时要一并改它。
+- **`plugin-memory-sqlite/src/index.ts`** — `node:fs`（`statSync`）+ `node:sqlite`（`DatabaseSync`）
+  数据库用 Node 自带的 `node:sqlite`，经 `process.getBuiltinModule` 取得：插件源码也在 vitest 里加载，而 vitest 解析不了静态的 `import 'node:sqlite'`。`node:sqlite` 不在受限清单里，不需要 lint 例外。它直接打开 `resolveLocalPath` 给出的本地文件，取这个文件的身份与开库属于同一层。开库后用 `statSync` 取设备号与 inode，按文件身份判断两个实例是否打开了同一个库：大小写不敏感的卷上只差大小写的两个路径、指向同一文件的硬链接，按路径字符串比较都认不出来。没有为此给 `StorageService` 增加文件身份字段，因为目前只有这一个消费者。这个文件不在 `overrides[1]` 里整条关掉 `noRestrictedImports`：`biome.json` 为它单独写了一段 override，`node:fs` 用 `allowImportNames` 只放行 `statSync`，其余受限的 `node:*` 照常报错。biome 的 override 会整体替换规则选项，这段 override 因此重抄了 `overrides[0]` 的全部路径，改 `overrides[0]` 时要一并改它。
 
 ### 会话服务
 

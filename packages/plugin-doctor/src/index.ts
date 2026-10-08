@@ -237,13 +237,14 @@ function registerBuiltinChecks(
     category: 'env',
     pluginName: PLUGIN_NAME,
     run() {
-      const major = Number(nodeVersion.replace(/^v/, '').split('.')[0]);
+      const [major, minor] = nodeVersion.slice(1).split('.').map(Number);
+      const supported = major > 24 || (major === 24 && minor >= 15);
       return {
         id: 'env.node',
         category: 'env',
-        level: major >= 22 ? 'ok' : 'error',
+        level: supported ? 'ok' : 'error',
         message: `Node ${nodeVersion}`,
-        detail: major >= 22 ? undefined : '推荐 Node ≥ 22',
+        detail: supported ? undefined : '需要 Node 24.15.0 起；升级方法见 docs/guide/first-run.md「升级 Node」',
       };
     },
   });

@@ -226,7 +226,7 @@ export default definePlugin({
 - **`getHistory` 只看未归档**，`getFullHistory` 才包含归档。trim 之后旧消息变为 `archived=1`，agent 上下文看不到它们；summary 正是利用这一点，把超长历史折叠成摘要再 trim。新 provider 如果不维护 `archived` 字段，`trimHistory` 的行为会与参考实现不一致。
 - **`excludeKinds` 的 NULL 语义**：sqlite 与 mongodb 采用「`kind IS NULL` 不被排除」的保守语义，新后端应对齐，否则跨实现切换时控制类消息的过滤行为会漂移。
 - **跨会话查询的 limit 收窄与 overscan**：`getRecentMessagesAcrossSessions` 会把 `query.limit` 收窄到 `crossSessionMaxLimit`（默认 1000），且 `platform` / `excludeSessionIds` 在内存中后过滤——sqlite 用 8x overscan 拉候选再过滤。如果候选 overscan 不足，在极端过滤下可能返回不满 limit 条。
-- **`updateMessageContent` / `deleteMessagesByTimestamps` 的作用域**：前者只在最近 `recentLimit`（默认 100）条内做文本替换；后者在 sqlite 中因变量上限 999 而分 500 条一批、以事务删除。新 provider 应注意同等的批量约束。
+- **`updateMessageContent` / `deleteMessagesByTimestamps` 的作用域**：前者只在最近 `recentLimit`（默认 100）条内做文本替换；后者在 sqlite 中因单条语句的绑定参数有上限（Node 自带的 SQLite 为 32766）而分 500 条一批、以事务删除。新 provider 应注意同等的批量约束。
 - **没有 schema 校验**：`saveMessage` 直接信任传入的 `Message`，不校验 `role` / `kind` 是否合法。脏数据由调用方（message-archive）负责清洗。
 
 ## 8. 交叉链接

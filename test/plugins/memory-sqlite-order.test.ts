@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/index.js';
 
@@ -10,10 +9,12 @@ import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/ind
 // sanitizeToolCallHistory 当孤儿+不完整组整组丢弃。id 次键杜绝此事。
 // ════════════════════════════════════════════════════════════
 
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+
 const SESSION = 'test:order:session';
 
 function makeService(): SQLiteMemoryService {
-  return new SQLiteMemoryService(new Database(':memory:'), { logger: { warn() {} } });
+  return new SQLiteMemoryService(new DatabaseSync(':memory:'), { logger: { warn() {} } });
 }
 
 async function seedSameMsToolPair(svc: SQLiteMemoryService): Promise<void> {

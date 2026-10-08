@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { clearMetadataNamespaces, type MemoryService } from '../../packages/api-memory/src/index.js';
 import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/index.js';
@@ -9,8 +8,10 @@ import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/ind
 // 没实现时退回 listMetadata。sqlite 用内存库。
 // ════════════════════════════════════════════════════════════
 
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+
 function world() {
-  const db = new Database(':memory:');
+  const db = new DatabaseSync(':memory:');
   const svc = new SQLiteMemoryService(db, { logger: { warn() {} } });
   const infos: string[] = [];
   const logger = { info: (message: string) => void infos.push(message) };

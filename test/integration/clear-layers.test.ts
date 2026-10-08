@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
@@ -29,6 +28,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 记忆后端的 clearAll 只清消息；各命名空间由归属插件的 memory:clear 中间件清理。
 // user-profile 关掉 enableInstructions：指令照样随 user-profile 清。
 // ════════════════════════════════════════════════════════════
+
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
 const SEED: Record<string, string[]> = {
   summary: ['s-cur', 's-other'],
@@ -239,7 +240,7 @@ describe('/clear 按层清理', () => {
 
   // 读不出的条目（手改或损坏）listMetadata 会跳过：此前按它枚举键清理，这些条目删不掉、回执条数也不含它们
   it('sqlite 后端：读不出的条目随所在命名空间一并清掉，回执条数计入，各插件记一条 info 点名', async () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
     const logHub = new LogHub();
     const infos: string[] = [];
     logHub.onEntry(e => {
@@ -283,7 +284,7 @@ describe('/clear 按层清理', () => {
   });
 
   it('sqlite 后端：/profile clear nuke 连读不出的档案一并清掉，回执条数计入，记一条 info 点名', async () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
     const logHub = new LogHub();
     const infos: string[] = [];
     logHub.onEntry(e => {
