@@ -44,7 +44,7 @@ pnpm monorepo，约 100 个包：
 
 ## 快速开始
 
-Node.js >= 22。
+Node.js 24.15.0 起，版本不够时的升级步骤见 [第一次运行](docs/guide/first-run.md#升级-node)。
 
 ```bash
 npm create aalis@latest my-bot

@@ -43,6 +43,10 @@ models/
 
 # 本地数据库 / 每开发者配置（预防误入库）
 *.db
+*.db-wal
+*.db-shm
+# 旧库夹具：内容全是占位符，验证旧库照常可用
+!test/fixtures/memory-sqlite/legacy.db
 *.sqlite
 *.sqlite3
 *.local

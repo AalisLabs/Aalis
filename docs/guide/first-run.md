@@ -5,7 +5,7 @@
 
 ## 你需要准备什么
 
-**运行环境**：Node.js >= 22（与 CI 一致）。
+**运行环境**：Node.js 24.15.0 起（与 CI 一致），`node -v` 可查看当前版本，版本不够时见下面的[升级 Node](#升级-node)。
 
 **API key**：`standard` 档（也就是 `--yes` 的默认档）会装上三个需要 key 的插件：
 
@@ -55,6 +55,15 @@ plugins:
 ```
 
 > 在**已经运行**的实例上装插件需要重启；若经 WebUI 的「插件市场」页安装，则由市场流程自动完成发现，无需手动重启。
+
+### 升级 Node
+
+当前 Node 低于 24.15.0 时，`npm create aalis` 一开头就会退出并给出下面的步骤。升级方法：
+
+- macOS 与 Linux：用 nvm 管理 Node 的，执行 `nvm install 24`，再执行 `nvm alias default 24`，之后新开的终端也默认使用 Node 24；也可以从 [Node.js 官网](https://nodejs.org) 下载 24 的安装包安装。
+- Windows：从 Node.js 官网下载 24 的安装包安装，或用 nvm-windows 装上 24 并切换过去。
+
+已经装过的 Aalis 项目，原有的数据库文件（默认是家目录里的 `state/aalis.db`）照常打开与读写，不用迁移。早先版本的记忆后端带原生模块，在旧 Node 上装好依赖的项目换到 Node 24 后，记忆后端激活失败，报错里有 `NODE_MODULE_VERSION`。这样的项目先在项目目录执行 `npm install @aalis/plugin-memory-sqlite@latest` 换成新版，再 `npm start`；`npm update` 只在 `package.json` 写的版本范围内更新，未必换得到新版。这一步报 ERESOLVE（peer 依赖冲突）时，说明项目里其它 Aalis 包的版本较旧，改为执行一次 `npm rebuild`，按新 Node 重新编译旧版的原生模块，这需要本机装有 C/C++ 编译工具。
 
 ## 启动
 

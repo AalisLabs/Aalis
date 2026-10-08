@@ -29,8 +29,8 @@ import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec'
 /** 短命令（cp、npm view 等）的超时。 */
 const QUICK_TIMEOUT_MS = 120_000;
 /**
- * 安装类命令的超时。`npm install` 要装全依赖树 + 原生编译（better-sqlite3、puppeteer
- * 都在脚手架默认依赖里），快机快网下已达 95 秒量级，而超时行为是 SIGKILL——留足余量，
+ * 安装类命令的超时。`npm install` 要装全依赖树并跑依赖的安装脚本（脚手架默认依赖里的 puppeteer
+ * 安装时下载浏览器），快机快网下已达 95 秒量级，而超时行为是 SIGKILL——留足余量，
  * 否则会在半装状态下被杀。
  */
 const INSTALL_TIMEOUT_MS = 600_000;
@@ -678,8 +678,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     log.info(`正在安装: ${npmPkg} → 根依赖 + node_modules`);
     // **刻意不加 `--ignore-scripts`**：依赖树的 preinstall/install/postinstall 会照常执行。
     // 三条理由：脚手架自身就是裸 `npm install`（其生成的 README 也教用户裸装），加了会让
-    // 「同一个包、同一个用户、两条途径」行为分叉；会打穿 plugin-memory-sqlite
-    // （better-sqlite3，脚手架默认勾选）与 plugin-tool-browser（puppeteer）；而真正的增量
+    // 「同一个包、同一个用户、两条途径」行为分叉；会打穿 plugin-tool-browser（puppeteer）；而真正的增量
     // 风险只有传递依赖的 install 脚本这一片——入口是 owner 级、包名由用户自己点选、包本体
     // 反正会被动态 import 执行（插件与内核同进程同权限，见 docs/concepts/security-model.md §1）。
     //
