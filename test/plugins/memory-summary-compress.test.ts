@@ -1,362 +1,222 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import type { Logger } from '../../packages/core/src/index.js';
-import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
+import type { App, Logger } from '../../packages/core/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
+import { endTurn, fakeSummaryLLM, setupSummary, startTurn, usageEvent } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
-// 自动压缩的触发条件
-//
-// 探测条数曾被写死为 200：它同时充当阈值判定的样本量，于是 threshold > 200 的
-// 配置下 totalCount 恒 ≤200 < threshold，压缩永不触发且零日志（生产 threshold=360
-// 实测 37.5 小时零次摘要）。这里用 threshold=240 钉死"探测条数须由配置推导"。
+// 全量压缩：切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样留在活跃历史里。
+// 后台压缩在回合结束时按这一轮最后一次调用的用量判定；手动压缩短对话也完整压一次。
+// 没压成什么都不动：不写摘要、不归档、不写分隔标记。
+// 用量的窗口与裁剪预算缺省都是 1000，默认压缩线 0.8 下有效阈值为 800。
 // ════════════════════════════════════════════════════════════
 
-/** 记下最后一次摘要请求的正文，用来数"这次摘要吃进去了多少条消息" */
-const lastSummaryInput = { text: '' };
-beforeEach(() => {
-  lastSummaryInput.text = '';
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 摘要正文里出现了多少条 seed 消息（seed 内容形如「第 N 条消息」） */
-function summarizedCount(): number {
-  return (lastSummaryInput.text.match(/第 \d+ 条消息/g) ?? []).length;
+async function setup(...args: Parameters<typeof setupSummary>) {
+  const env = await setupSummary(...args);
+  apps.push(env.app);
+  const statuses: string[] = [];
+  env.host.events.on('session:compressing', info => void statuses.push(`${info.sessionId}:${info.status}`));
+  return { ...env, statuses };
 }
 
-async function seedMessages(memory: MemoryService, sessionId: string, count: number): Promise<void> {
+async function seed(memory: MemoryService, sessionId: string, count: number): Promise<void> {
   for (let i = 0; i < count; i++) {
-    await memory.saveMessage(sessionId, {
-      role: i % 2 === 0 ? 'user' : 'assistant',
-      content: `第 ${i} 条消息`,
-    });
+    await memory.saveMessage(sessionId, { role: i % 2 === 0 ? 'user' : 'assistant', content: `第 ${i} 条消息` });
   }
 }
 
-describe('plugin-memory-summary: 自动压缩触发', () => {
-  it('threshold 大于历史探测条数时仍触发压缩并归档旧消息', async () => {
-    const threshold = 240;
-    const keepRecent = 40;
-    const { app, host, memory } = await setupSummary({ threshold, keepRecent }, fakeSummaryLLM(lastSummaryInput));
+const active = (memory: MemoryService, sessionId: string) => memory.getHistory(sessionId, Infinity);
+const summaryOf = async (memory: MemoryService, sessionId: string) =>
+  (await memory.getMetadata('summary', sessionId))?.summary;
+const MARKER = { role: 'system', kind: 'event-marker', content: '对话已压缩' };
+const shape = (m: Message) => ({ role: m.role, kind: m.kind, content: m.content });
+/** 没有触发的后台压缩不会有任何动静：等几拍再看 */
+const settle = () => new Promise<void>(r => setTimeout(r, 20));
 
-    await seedMessages(memory, 's-1', threshold + 5);
-    expect((await memory.getHistory('s-1', 1000)).length).toBe(threshold + 5);
-
-    // 走真实触发路径：agent:turn:after 钩子
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      {
-        message: { sessionId: 's-1' },
-        reply: 'ok',
-        outcome: 'replied',
-        sessionId: 's-1',
-        metadata: {},
-      } as never,
-    );
-    // 摘要是异步触发（不阻塞主流程），等它落地
-    await new Promise<void>(r => setTimeout(r, 50));
-
-    const after = await memory.getHistory('s-1', 1000);
-    expect(after.length, `压缩后应只剩 keepRecent 条，实际 ${after.length}`).toBeLessThanOrEqual(keepRecent + 5);
-    expect(after.length).toBeGreaterThan(0);
-    await app.stop();
-  });
-
-  it('小 threshold 配置的摘要输入量不因探测条数推导而缩水', async () => {
-    // 探测条数兼作单次摘要输入上界。若只按 threshold 推导，默认配置（30/20）
-    // 单次只摘 10 条，而 trimHistory 仍按 keepRecent 归档全部活跃历史——
-    // 超出探测窗的那批被归档却从未进摘要。
-    const { app, host, memory } = await setupSummary(
-      { threshold: 30, keepRecent: 20 },
-      fakeSummaryLLM(lastSummaryInput),
-    );
-    await seedMessages(memory, 's-3', 120);
-
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      {
-        message: { sessionId: 's-3' },
-        reply: 'ok',
-        outcome: 'replied',
-        sessionId: 's-3',
-        metadata: {},
-      } as never,
-    );
-    await new Promise<void>(r => setTimeout(r, 50));
-
-    // 120 条积压、keepRecent=20 → 应摘约 100 条；只按 threshold 推导时只有 10 条
-    expect(
-      summarizedCount(),
-      `摘要输入过少（实际 ${summarizedCount()} 条），探测窗口被 threshold 卡死了`,
-    ).toBeGreaterThan(50);
-    await app.stop();
-  });
-
-  it('消息数不足 threshold → 不压缩', async () => {
-    const { app, host, memory } = await setupSummary(
-      { threshold: 240, keepRecent: 40 },
-      fakeSummaryLLM(lastSummaryInput),
-    );
-    await seedMessages(memory, 's-2', 100);
-
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      {
-        message: { sessionId: 's-2' },
-        reply: 'ok',
-        outcome: 'replied',
-        sessionId: 's-2',
-        metadata: {},
-      } as never,
-    );
-    await new Promise<void>(r => setTimeout(r, 50));
-
-    expect((await memory.getHistory('s-2', 1000)).length).toBe(100);
-    await app.stop();
-  });
-
-  it('摘要 LLM 失败 → 降级为纯裁切，不滞留"涨破阈值原样重试"循环', async () => {
-    // 失败路径专用装配：LLM 恒抛错（模拟慢模型超时）
-    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
-      id: 'boom',
-      providerId: 'boom',
-      contextLength: 8192,
-      capabilities: [LLMCapabilities.Chat],
-      async chat() {
-        throw new Error('fake timeout');
-      },
-    } as unknown as LLMModel);
-    await seedMessages(memory, 's-4', 245);
-
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      {
-        message: { sessionId: 's-4' },
-        reply: 'ok',
-        outcome: 'replied',
-        sessionId: 's-4',
-        metadata: {},
-      } as never,
-    );
-    await new Promise<void>(r => setTimeout(r, 50));
-
-    // 旧行为：失败 → 什么都不动 → 245 条原样滞留，下次触发再烧一遍
-    const after = await memory.getHistory('s-4', 1000);
-    expect(after.length, `LLM 失败也应裁切到 keepRecent 附近，实际 ${after.length}`).toBeLessThanOrEqual(45);
-    // 失败不得产生（空的）摘要记录
-    expect(await memory.getMetadata('summary', 's-4')).toBeFalsy();
-    await app.stop();
-  });
-
-  it('摘要 LLM 返回空串（不抛错）→ 同样降级纯裁切、不写空摘要', async () => {
-    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
-      id: 'empty',
-      providerId: 'empty',
-      contextLength: 8192,
-      capabilities: [LLMCapabilities.Chat],
-      async chat() {
-        return { content: '' };
-      },
-    } as unknown as LLMModel);
-    await seedMessages(memory, 's-7', 245);
-
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      { message: { sessionId: 's-7' }, reply: 'ok', outcome: 'replied', sessionId: 's-7', metadata: {} } as never,
-    );
-    await new Promise<void>(r => setTimeout(r, 50));
-
-    const after = await memory.getHistory('s-7', 1000);
-    expect(after.length, `空响应也应裁切到 keepRecent 附近，实际 ${after.length}`).toBeLessThanOrEqual(45);
-    expect(await memory.getMetadata('summary', 's-7')).toBeFalsy();
-    await app.stop();
-  });
-
-  it('手动压缩：LLM 失败同样降级裁切，事件 start→error，压缩以「没压成」拒绝，旧摘要保留', async () => {
-    // compress 是 generateSummary 之外的第二份降级实现，必须单独钉住
-    const { app, host, memory, compression } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
-      id: 'boom2',
-      providerId: 'boom2',
-      contextLength: 8192,
-      capabilities: [LLMCapabilities.Chat],
-      async chat() {
-        throw new Error('fake timeout');
-      },
-    } as unknown as LLMModel);
-    await memory.saveMetadata('summary', 's-6', {
-      summary: 'GOOD-OLD-SUMMARY',
-      coveredUpTo: 1,
-      messageCount: 2,
-      updatedAt: new Date().toISOString(),
-    });
-    await seedMessages(memory, 's-6', 120);
-
-    const statuses: string[] = [];
-    host.events.on('session:compressing', info => {
-      if (info.sessionId === 's-6') statuses.push(info.status);
-    });
-
-    await expect(compression.compress('s-6', 'manual')).rejects.toThrow('摘要没有生成');
-
-    expect((await memory.getHistory('s-6', 1000)).length, '手动压缩失败也应降级裁切').toBeLessThanOrEqual(45);
-    expect((await memory.getMetadata('summary', 's-6'))?.summary, '旧摘要不得被失败覆盖').toBe('GOOD-OLD-SUMMARY');
-    expect(statuses[0], '应先报 start').toBe('start');
-    expect(statuses[statuses.length - 1], '降级应报 error 而非 done（done 会让前端插假成功分隔线）').toBe('error');
-    await app.stop();
-  });
-
-  it('流式中途失败：半截输出不得入库为摘要，旧摘要原样保留（降级纯裁切）', async () => {
-    // 生产主路径是 chatStream；provider 超时常在吐出部分内容后中断流。
-    // 半截文本一旦 upsert，会成为后续增量摘要的权威基底，链条被永久污染。
-    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
-      id: 'partial',
-      providerId: 'partial',
-      contextLength: 8192,
-      capabilities: [LLMCapabilities.Chat],
-      async chat() {
-        throw new Error('unreachable：本用例应走 chatStream');
-      },
-      async *chatStream() {
-        yield { contentDelta: '【对话概览】前半截…' };
-        yield { contentDelta: '还在继续…' };
-        throw new Error('fake stream timeout');
-      },
-    } as unknown as LLMModel);
-    // 预置一份完好的旧摘要：失败路径必须原样保留，不得被半截/空文本覆盖
-    await memory.saveMetadata('summary', 's-5', {
-      summary: 'GOOD-OLD-SUMMARY',
-      coveredUpTo: 100,
-      messageCount: 120,
-      updatedAt: new Date().toISOString(),
-    });
-    await seedMessages(memory, 's-5', 245);
-
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      {
-        message: { sessionId: 's-5' },
-        reply: 'ok',
-        outcome: 'replied',
-        sessionId: 's-5',
-        metadata: {},
-      } as never,
-    );
-    await new Promise<void>(r => setTimeout(r, 50));
-
-    // 降级裁切生效
-    const after = await memory.getHistory('s-5', 1000);
-    expect(after.length, `流式失败也应裁切，实际 ${after.length}`).toBeLessThanOrEqual(45);
-    // 半截输出未入库、旧摘要未被覆盖
-    const doc = await memory.getMetadata('summary', 's-5');
-    expect(doc?.summary, '半截流式输出不得成为权威摘要').toBe('GOOD-OLD-SUMMARY');
-    await app.stop();
-  });
-});
-
-// ════════════════════════════════════════════════════════════
-// 压缩服务（api-memory 的 compression）：会话服务的手动压缩调它，功能位与用量条目的压缩线看它在不在；
-// 用量达到自动压缩线时摘要插件直接调自己，不经事件
-// ════════════════════════════════════════════════════════════
-
-describe('plugin-memory-summary: 压缩服务', () => {
-  const usage = (sessionId: string, usageRatio: number) => ({
-    sessionId,
-    platform: 'webui',
-    contextWindow: 1000,
-    maxTokens: 100,
-    tokenBudget: 800,
-    used: usageRatio * 800,
-    usageRatio,
-    breakdown: {
-      system: 0,
-      persona: 0,
-      memorySummary: 0,
-      memoryVector: 0,
-      skills: 0,
-      platform: 0,
-      subtask: 0,
-      systemOther: 0,
-      history: 0,
-      toolResults: 0,
-      toolDefs: 0,
-      reservedForReply: 0,
+/** 摘要模型挂在闸门上：放行前可以往会话里写消息、改历史 */
+function gatedLLM() {
+  let release!: () => void;
+  const gate = new Promise<void>(r => (release = r));
+  const llm = fakeSummaryLLM({
+    reply: async () => {
+      await gate;
+      return 'SUMMARY-TEXT';
     },
-    parts: [],
+  });
+  return { ...llm, release };
+}
+
+/** 请求里交给摘要模型的这一块对话（不含提示语与已有摘要） */
+const chunkOf = (request: ChatModelRequest) => {
+  const content = String(request.messages.at(-1)?.content ?? '');
+  return content.slice(content.lastIndexOf('摘要：\n') + 4);
+};
+
+describe('plugin-memory-summary: 手动压缩', () => {
+  it('历史只有 3 条：照常报进度，三条全部进摘要，活跃历史只剩分隔标记', async () => {
+    const llm = fakeSummaryLLM();
+    const { memory, compression, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 3);
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(statuses).toEqual(['s:start', 's:done']);
+    for (const i of [0, 1, 2]) expect(llm.text()).toContain(`第 ${i} 条消息`);
+    expect(await summaryOf(memory, 's')).toBe('SUMMARY-TEXT');
+    expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
   });
 
-  it('自动压缩线取配置的 autoCompressThreshold；用量到线时自己压缩，进度照常广播，没到线不压', async () => {
-    const { app, host, memory, compression } = await setupSummary(
-      { threshold: 240, keepRecent: 4, autoCompressThreshold: 0.6 },
-      fakeSummaryLLM(lastSummaryInput),
-    );
-    expect(compression.autoThreshold).toBe(0.6);
-    await seedMessages(memory, 's-auto', 20);
-    const statuses: string[] = [];
-    host.events.on('session:compressing', info => void statuses.push(info.status));
-
-    await host.events.emit('token:usage', usage('s-auto', 0.59));
-    await new Promise<void>(r => setTimeout(r, 50));
+  it('历史为空、或只剩分隔标记时什么都不做，不报进度、不调模型', async () => {
+    const llm = fakeSummaryLLM();
+    const { memory, compression, statuses } = await setup({}, llm.model);
+    await compression.compress('s', { reason: 'manual' });
     expect(statuses).toEqual([]);
 
-    await host.events.emit('token:usage', usage('s-auto', 0.6));
-    await expect.poll(() => statuses).toEqual(['start', 'done']);
-    expect((await memory.getHistory('s-auto', 100)).length).toBeLessThanOrEqual(5);
-    expect(lastSummaryInput.text).toContain('自动触发');
-    await app.stop();
+    await seed(memory, 's', 2);
+    await compression.compress('s', { reason: 'manual' });
+    await compression.compress('s', { reason: 'manual' });
+    expect(statuses).toEqual(['s:start', 's:done']);
+    expect(llm.requests).toHaveLength(1);
+    expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
   });
 
-  it('历史不多于 keepRecent：什么都不做、照常落定，不报进度（不插「对话已压缩」）；用量过了线的自动触发也一样', async () => {
-    const { app, host, memory, compression } = await setupSummary(
-      { threshold: 240, keepRecent: 20, autoCompressThreshold: 0.6 },
-      fakeSummaryLLM(lastSummaryInput),
-    );
-    await seedMessages(memory, 's-few', 8);
-    const statuses: string[] = [];
-    host.events.on('session:compressing', info => void statuses.push(info.status));
-
-    await compression.compress('s-few', 'manual');
-    await host.events.emit('token:usage', usage('s-few', 0.9));
-    await new Promise<void>(r => setTimeout(r, 50));
-    expect(statuses).toEqual([]);
-    expect((await memory.getHistory('s-few', 100)).length).toBe(8);
-    expect(lastSummaryInput.text).toBe('');
-    await app.stop();
+  it('同一会话正在压缩时再压：拒绝并说明，不另起一次', async () => {
+    const llm = gatedLLM();
+    const { memory, compression } = await setup({}, llm.model);
+    await seed(memory, 's', 4);
+    const first = compression.compress('s', { reason: 'manual' });
+    await expect.poll(() => llm.requests.length).toBe(1);
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('正在压缩');
+    llm.release();
+    await first;
+    expect(llm.requests).toHaveLength(1);
   });
 
   it('开始压之前就失败（读不出历史）：拒绝并带原因，不报进度', async () => {
-    const { app, host, memory, compression } = await setupSummary(
-      { threshold: 240, keepRecent: 4 },
-      fakeSummaryLLM(lastSummaryInput),
-    );
+    const { memory, compression, statuses } = await setup();
     vi.spyOn(memory, 'getHistory').mockRejectedValueOnce(new Error('记忆库读不出'));
-    const statuses: string[] = [];
-    host.events.on('session:compressing', info => void statuses.push(info.status));
-    await expect(compression.compress('s-unread', 'manual')).rejects.toThrow('记忆库读不出');
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('记忆库读不出');
     expect(statuses).toEqual([]);
-    await app.stop();
   });
 
-  it('autoCompressThreshold 为 0：不自动压缩，压缩线为 0；手动压缩照常', async () => {
-    const { app, host, memory, compression } = await setupSummary(
-      { threshold: 240, keepRecent: 4, autoCompressThreshold: 0 },
-      fakeSummaryLLM(lastSummaryInput),
-    );
-    expect(compression.autoThreshold).toBe(0);
-    await seedMessages(memory, 's-off', 20);
-    const statuses: string[] = [];
-    host.events.on('session:compressing', info => void statuses.push(info.status));
-    await host.events.emit('token:usage', usage('s-off', 0.99));
-    await new Promise<void>(r => setTimeout(r, 50));
-    expect(statuses).toEqual([]);
+  it('压缩期间到达的消息不受影响：落定后仍在活跃历史里，不进这次的摘要', async () => {
+    const llm = gatedLLM();
+    const { memory, compression } = await setup({}, llm.model);
+    await seed(memory, 's', 4);
+    const done = compression.compress('s', { reason: 'manual' });
+    await expect.poll(() => llm.requests.length).toBe(1);
+    await memory.saveMessage('s', { role: 'user', content: '压缩期间的提问' });
+    await memory.saveMessage('s', { role: 'assistant', content: '压缩期间的回答' });
+    llm.release();
+    await done;
 
-    await compression.compress('s-off', 'manual');
-    expect(statuses).toEqual(['start', 'done']);
-    await app.stop();
+    expect((await active(memory, 's')).map(m => m.content)).toEqual(['压缩期间的提问', '压缩期间的回答', '对话已压缩']);
+    expect(llm.text()).not.toContain('压缩期间');
   });
+});
+
+describe('plugin-memory-summary: 切分点', () => {
+  const call = (id: string) => ({ id, type: 'function' as const, function: { name: `probe_${id}`, arguments: '{}' } });
 
   it.each([
-    -1, 70,
-  ])('autoCompressThreshold 写成 %d（不在 0 到 1 之间）：按 0 处理并告警一次，压缩线为 0、不自动压缩', async value => {
+    ['只写了 assistant', [] as string[]],
+    ['结果只写了一部分', ['a']],
+  ])('快照末尾的工具调用组没写全（%s）：切分点退到它之前，它与随后写入的结果都留在活跃历史里', async (_label, before) => {
+    const llm = gatedLLM();
+    const { memory, compression } = await setup({}, llm.model);
+    await seed(memory, 's', 3);
+    await memory.saveMessage('s', { role: 'assistant', content: '', toolCalls: [call('a'), call('b')] });
+    const result = (id: string) => memory.saveMessage('s', { role: 'tool', toolCallId: id, content: `结果 ${id}` });
+    for (const id of before) await result(id);
+
+    const done = compression.compress('s', { reason: 'manual' });
+    await expect.poll(() => llm.requests.length).toBe(1);
+    for (const id of ['a', 'b'].filter(id => !before.includes(id))) await result(id);
+    llm.release();
+    await done;
+
+    expect((await active(memory, 's')).map(m => [m.role, m.toolCallId ?? m.toolCalls?.map(c => c.id).join()])).toEqual([
+      ['assistant', 'a,b'],
+      ['tool', 'a'],
+      ['tool', 'b'],
+      ['system', undefined],
+    ]);
+    expect(llm.text()).toContain('第 2 条消息');
+    expect(llm.text()).not.toContain('probe_a');
+  });
+});
+
+describe('plugin-memory-summary: 落笔前核对', () => {
+  it('压缩期间前缀里的一条被删（回滚）：整次作废，不写摘要、不归档、不写分隔标记，以原因拒绝', async () => {
+    const llm = gatedLLM();
+    const { memory, compression, statuses } = await setup({}, llm.model);
+    for (let i = 0; i < 4; i++) {
+      await memory.saveMessage('s', {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `第 ${i} 条`,
+        timestamp: 1000 + i,
+      });
+    }
+    const done = compression.compress('s', { reason: 'manual' }).then(
+      () => 'done',
+      (err: Error) => err.message,
+    );
+    await expect.poll(() => llm.requests.length).toBe(1);
+    await memory.deleteMessagesByTimestamps?.('s', [1002]);
+    llm.release();
+
+    expect(await done).toContain('历史被改动');
+    expect(await summaryOf(memory, 's')).toBeUndefined();
+    expect((await active(memory, 's')).map(m => m.content)).toEqual(['第 0 条', '第 1 条', '第 3 条']);
+    expect(statuses).toEqual(['s:start', 's:error']);
+  });
+});
+
+describe('plugin-memory-summary: 没压成', () => {
+  const failing: Array<[string, Partial<LLMModel>]> = [
+    [
+      '抛错',
+      {
+        async chat() {
+          throw new Error('fake timeout');
+        },
+      },
+    ],
+    ['返回空白', { chat: async () => ({ content: '  ' }) }],
+    [
+      '流式中途断开',
+      {
+        async chat() {
+          throw new Error('本用例应走 chatStream');
+        },
+        async *chatStream() {
+          yield { contentDelta: '前半截…' };
+          throw new Error('fake stream timeout');
+        },
+      },
+    ],
+  ];
+
+  it.each(failing)('摘要模型%s：历史、摘要与分隔标记都不动，以原因拒绝并报 error', async (_label, behavior) => {
+    const model = { ...fakeSummaryLLM().model, ...behavior } as LLMModel;
+    const { memory, compression, statuses } = await setup({}, model);
+    await memory.saveMetadata('summary', 's', { summary: 'GOOD-OLD-SUMMARY' });
+    await seed(memory, 's', 6);
+
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('摘要模型');
+
+    expect(await summaryOf(memory, 's')).toBe('GOOD-OLD-SUMMARY');
+    expect((await active(memory, 's')).map(m => m.content)).toEqual([0, 1, 2, 3, 4, 5].map(i => `第 ${i} 条消息`));
+    expect(statuses).toEqual(['s:start', 's:error']);
+  });
+
+  it('custom 指向的摘要模型不在：以点名这个模型的原因拒绝并报 error，只记一条告警', async () => {
     const warns: string[] = [];
     const logger: Logger = {
       debug() {},
@@ -365,43 +225,351 @@ describe('plugin-memory-summary: 压缩服务', () => {
       error() {},
       child: () => logger,
     };
-    const { app, host, memory, compression } = await setupSummary(
-      { threshold: 240, keepRecent: 4, autoCompressThreshold: value },
-      fakeSummaryLLM(lastSummaryInput),
+    const { memory, compression, statuses } = await setup(
+      { summaryModelMode: 'custom', summaryLLM: { provider: 'gone', model: 'x' } },
+      undefined,
       logger,
     );
-    expect(compression.autoThreshold).toBe(0);
-    expect(warns.filter(w => w.includes('autoCompressThreshold'))).toHaveLength(1);
-    await seedMessages(memory, 's-bad', 20);
-    const statuses: string[] = [];
-    host.events.on('session:compressing', info => void statuses.push(info.status));
-    await host.events.emit('token:usage', usage('s-bad', 1.5));
-    await new Promise<void>(r => setTimeout(r, 50));
-    expect(statuses).toEqual([]);
-    await app.stop();
+    await seed(memory, 's', 2);
+
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow(
+      '摘要模型解析失败（gone/x 不存在或未激活）',
+    );
+    expect(warns.filter(line => line.includes('摘要模型'))).toHaveLength(1);
+    expect(statuses).toEqual(['s:start', 's:error']);
   });
 
-  it('同一会话正在压缩时再压：拒绝并说明，不另起一次', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>(r => {
-      release = r;
-    });
-    let calls = 0;
-    const { app, memory, compression } = await setupSummary({ threshold: 240, keepRecent: 4 }, {
-      ...fakeSummaryLLM(),
-      async chat() {
-        calls++;
-        await gate;
-        return { content: 'SUMMARY' };
+  it('流式摘要模型：增量拼成整段摘要', async () => {
+    const model = {
+      ...fakeSummaryLLM().model,
+      async *chatStream() {
+        yield { contentDelta: '流式' };
+        yield { contentDelta: '摘要' };
       },
-    } as LLMModel);
-    await seedMessages(memory, 's-busy', 20);
-    const first = compression.compress('s-busy', 'manual');
-    await expect.poll(() => calls).toBe(1);
-    await expect(compression.compress('s-busy', 'manual')).rejects.toThrow('正在压缩');
+    } as LLMModel;
+    const { memory, compression } = await setup({}, model);
+    await seed(memory, 's', 2);
+    await compression.compress('s', { reason: 'manual' });
+    expect(await summaryOf(memory, 's')).toBe('流式摘要');
+  });
+});
+
+describe('plugin-memory-summary: 后台触发', () => {
+  it('只认这一轮的用量：不带 turnId 的快照、上一轮留下的用量远超阈值也不触发', async () => {
+    const llm = fakeSummaryLLM();
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    const far = { used: 990, compressible: 900 };
+
+    await host.events.emit('token:usage', usageEvent('s', far));
+    await endTurn(host, 's');
+    await host.events.emit('token:usage', usageEvent('s', far, { turnId: 'earlier' }));
+    await endTurn(host, 's');
+    await settle();
+    expect(llm.requests).toHaveLength(0);
+
+    await endTurn(host, 's', far);
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
+  });
+
+  it.each(['aborted', 'error'] as const)('结局为 %s 的回合不判', async outcome => {
+    const llm = fakeSummaryLLM();
+    const { host, memory } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    await endTurn(host, 's', { used: 990, compressible: 900 }, { outcome });
+    await settle();
+    expect(llm.requests).toHaveLength(0);
+  });
+
+  it('回差：压完后用量仍到线、可压缩部分不到线的一半时不触发；涨到线的一半后再压', async () => {
+    const llm = fakeSummaryLLM();
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    await endTurn(host, 's', { used: 900, compressible: 500 });
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
+
+    await seed(memory, 's', 2);
+    await endTurn(host, 's', { used: 850, compressible: 399 });
+    await settle();
+    expect(llm.requests).toHaveLength(1);
+
+    await endTurn(host, 's', { used: 850, compressible: 400 });
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done', 's:start', 's:done']);
+  });
+
+  it('有效阈值：压缩线 × 窗口高于裁剪预算时按裁剪预算判', async () => {
+    const llm = fakeSummaryLLM();
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    await endTurn(host, 's', { used: 499, compressible: 400, tokenBudget: 500 });
+    await settle();
+    expect(statuses).toEqual([]);
+
+    await endTurn(host, 's', { used: 500, compressible: 250, tokenBudget: 500 });
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
+  });
+
+  // 用量是硬裁剪之后量的：裁剪预算 900、压不掉的部分 100，可压缩部分至多 800，失败之后涨不了多少
+  const trimmed = (compressible: number) => ({ used: compressible + 100, compressible, tokenBudget: 900 });
+
+  it('失败不裁切：历史、摘要与分隔标记都不动；之后隔一轮再试，用量已涨到裁剪预算也照样重试并压成', async () => {
+    let fail = true;
+    const llm = fakeSummaryLLM({
+      reply: () => {
+        if (fail) throw new Error('fake timeout');
+        return 'NEW-SUMMARY';
+      },
+    });
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await memory.saveMetadata('summary', 's', { summary: 'OLD-SUMMARY' });
+    await seed(memory, 's', 20);
+
+    await endTurn(host, 's', trimmed(750));
+    await expect.poll(() => statuses).toEqual(['s:start', 's:error']);
+    expect(await active(memory, 's')).toHaveLength(20);
+    expect(await summaryOf(memory, 's')).toBe('OLD-SUMMARY');
+
+    fail = false;
+    await endTurn(host, 's', trimmed(800));
+    await settle();
+    expect(llm.requests).toHaveLength(1);
+
+    await endTurn(host, 's', trimmed(800));
+    await expect.poll(() => statuses).toEqual(['s:start', 's:error', 's:start', 's:done']);
+    expect(await summaryOf(memory, 's')).toBe('NEW-SUMMARY');
+    expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
+  });
+
+  it('连续没压成：第 k 次失败之后隔 2 的 k 次方轮再试，封顶 32 轮', async () => {
+    const llm = fakeSummaryLLM({
+      reply: () => {
+        throw new Error('fake timeout');
+      },
+    });
+    const { host, memory } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    const retried: number[] = [];
+    for (let turn = 1; turn <= 100; turn++) {
+      const before = llm.requests.length;
+      await endTurn(host, 's', trimmed(800));
+      await settle();
+      if (llm.requests.length > before) retried.push(turn);
+    }
+    expect(retried).toEqual([1, 3, 7, 15, 31, 63, 95]);
+  });
+
+  it('压缩落定之前开始、落定之后才结束的一轮不判：它的用量是按压缩之前的历史算的', async () => {
+    const llm = gatedLLM();
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    await endTurn(host, 's', { used: 900, compressible: 500 });
+    await expect.poll(() => llm.requests.length).toBe(1);
+
+    const during = startTurn(host, 's');
+    await memory.saveMessage('s', { role: 'user', content: '压缩期间的提问' });
+    await memory.saveMessage('s', { role: 'assistant', content: '压缩期间的回答' });
+    llm.release();
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
+    await during.end({ used: 900, compressible: 500 });
+    await settle();
+    expect(llm.requests).toHaveLength(1);
+    expect((await active(memory, 's')).map(m => m.content)).toEqual(['压缩期间的提问', '压缩期间的回答', '对话已压缩']);
+
+    await endTurn(host, 's', { used: 900, compressible: 500 });
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done', 's:start', 's:done']);
+  });
+
+  it('这一轮最后一次用量之后、回合结束之前到了一条快照：仍按这一轮的用量判', async () => {
+    const llm = fakeSummaryLLM();
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    const turn = startTurn(host, 's');
+    await host.events.emit('token:usage', usageEvent('s', { used: 900, compressible: 500 }, { turnId: turn.turnId }));
+    await host.events.emit('token:usage', usageEvent('s', { used: 100, compressible: 50 }));
+    await turn.end();
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
+  });
+
+  it('清空之前开始、清空之后才结束的一轮不判：它的用量是按清空之前的历史算的', async () => {
+    const llm = fakeSummaryLLM();
+    const { host, memory, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    const turn = startTurn(host, 's');
+    await host.hooks.run('memory:clear', { scope: 'session', sessionId: 's', results: [] });
+    await turn.end({ used: 900, compressible: 500 });
+    await settle();
+    expect(llm.requests).toHaveLength(0);
+
+    await endTurn(host, 's', { used: 900, compressible: 500 });
+    await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
+  });
+
+  it.each([
+    ['手动压缩压成', 'manual'],
+    ['会话级清理（/clear、删除会话）', 'session'],
+    ['全局清理', 'all'],
+  ] as const)('失败记录在%s之后清掉：下一次到线照常压缩', async (_label, reset) => {
+    let fail = true;
+    const llm = fakeSummaryLLM({
+      reply: () => {
+        if (fail) throw new Error('fake timeout');
+        return 'NEW-SUMMARY';
+      },
+    });
+    const { host, memory, compression, statuses } = await setup({}, llm.model);
+    await seed(memory, 's', 6);
+    await endTurn(host, 's', { used: 900, compressible: 500 });
+    await expect.poll(() => statuses).toEqual(['s:start', 's:error']);
+
+    fail = false;
+    if (reset === 'manual') await compression.compress('s', { reason: 'manual' });
+    else await host.hooks.run('memory:clear', { scope: reset, sessionId: 's', results: [] });
+    await seed(memory, 's', 2);
+    const before = llm.requests.length;
+    await endTurn(host, 's', { used: 900, compressible: 500 });
+    await expect.poll(() => llm.requests.length).toBe(before + 1);
+  });
+});
+
+describe('plugin-memory-summary: 分块', () => {
+  it('输入超过摘要模型的单次容量：逐块增量，上一块的结果作为下一块的已有摘要，每块不超过分块上限，最终一份摘要', async () => {
+    // 窗口 1600、输出上限 512：每块至多 (1600 - 512) / 2 = 544 字
+    const llm = fakeSummaryLLM({ contextLength: 1600, maxOutputTokens: 512, reply: (_req, i) => `摘要${i}` });
+    const { memory, compression } = await setup({}, llm.model);
+    for (let i = 0; i < 30; i++) {
+      await memory.saveMessage('s', {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `第 ${i} 条消息。。。。。。。。。。`,
+      });
+    }
+    await memory.saveMessage('s', { role: 'user', content: `长消息${'甲'.repeat(1200)}完` });
+
+    await compression.compress('s', { reason: 'manual' });
+
+    const chunks = llm.requests.map(chunkOf);
+    expect(chunks.length).toBeGreaterThanOrEqual(4);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(544);
+    for (let i = 0; i < 30; i++) {
+      expect(
+        chunks.filter(chunk => chunk.includes(`第 ${i} 条消息`)),
+        `第 ${i} 条`,
+      ).toHaveLength(1);
+    }
+    expect(chunks.join('').match(/甲/g)).toHaveLength(1200);
+    expect(chunks.join('')).toContain('完');
+    for (let i = 1; i < chunks.length; i++) expect(llm.text(i)).toContain(`以下是之前的对话摘要：\n摘要${i - 1}`);
+    expect(await summaryOf(memory, 's')).toBe(`摘要${chunks.length - 1}`);
+    expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
+  });
+
+  it('待办参数作为最后一行一起分块：每块仍不超过分块上限，附的是待摘要部分里最后一次待办的参数', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 1600, maxOutputTokens: 512 });
+    const { memory, compression } = await setup({}, llm.model);
+    const todo = (label: string) => JSON.stringify({ todoList: [{ title: `${label}${'办'.repeat(380)}` }] });
+    const todoCall = async (id: string, label: string) => {
+      const call = { id, type: 'function' as const, function: { name: 'manage_todo_list', arguments: todo(label) } };
+      await memory.saveMessage('s', { role: 'assistant', content: '', toolCalls: [call] });
+      await memory.saveMessage('s', { role: 'tool', toolCallId: id, content: 'ok' });
+    };
+    await todoCall('t1', '旧');
+    for (let i = 0; i < 4; i++)
+      await memory.saveMessage('s', { role: 'user', content: `第 ${i} 条${'。'.repeat(260)}` });
+    await todoCall('t2', '新');
+
+    await compression.compress('s', { reason: 'manual' });
+
+    const chunks = llm.requests.map(chunkOf);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(544);
+    expect(chunks.at(-1)).toContain(`当前任务列表状态：\n${todo('新')}`);
+    expect(chunks.join('\n')).not.toContain(todo('旧'));
+  });
+
+  it('中间一块失败：整次失败，摘要与历史都不动', async () => {
+    const llm = fakeSummaryLLM({
+      contextLength: 1600,
+      maxOutputTokens: 512,
+      reply: (_req, i) => {
+        if (i === 1) throw new Error('第二块超时');
+        return `摘要${i}`;
+      },
+    });
+    const { memory, compression, statuses } = await setup({}, llm.model);
+    await memory.saveMetadata('summary', 's', { summary: 'OLD-SUMMARY' });
+    for (let i = 0; i < 60; i++) {
+      await memory.saveMessage('s', { role: 'user', content: `第 ${i} 条消息。。。。。。。。。。` });
+    }
+
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('第二块超时');
+
+    expect(llm.requests).toHaveLength(2);
+    expect(await summaryOf(memory, 's')).toBe('OLD-SUMMARY');
+    expect(await active(memory, 's')).toHaveLength(60);
+    expect(statuses).toEqual(['s:start', 's:error']);
+  });
+
+  it('分块途中会话被清空：不再请求后面的块，整次作废', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    const llm = fakeSummaryLLM({
+      contextLength: 1600,
+      maxOutputTokens: 512,
+      reply: async (_req, i) => {
+        if (i === 0) await gate;
+        return `摘要${i}`;
+      },
+    });
+    const { host, memory, compression } = await setup({}, llm.model);
+    for (let i = 0; i < 60; i++) {
+      await memory.saveMessage('s', { role: 'user', content: `第 ${i} 条消息。。。。。。。。。。` });
+    }
+    const done = compression.compress('s', { reason: 'manual' }).then(
+      () => 'done',
+      (err: Error) => err.message,
+    );
+    await expect.poll(() => llm.requests.length).toBe(1);
+    await host.hooks.run('memory:clear', { scope: 'session', sessionId: 's', results: [] });
     release();
-    await first;
-    expect(calls).toBe(1);
-    await app.stop();
+
+    expect(await done).toBe('压缩期间会话被清空');
+    expect(llm.requests).toHaveLength(1);
+  });
+
+  it('摘要模型的窗口装不下输出上限：拒绝并说明，不调模型', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 512, maxOutputTokens: 512 });
+    const { memory, compression } = await setup({}, llm.model);
+    await seed(memory, 's', 2);
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('装不下');
+    expect(llm.requests).toHaveLength(0);
+    expect(await active(memory, 's')).toHaveLength(2);
+  });
+});
+
+describe('plugin-memory-summary: 摘要预算', () => {
+  it('输出上限按会话最近一次用量的窗口算比例（快照也记），没有用量时按摘要模型的窗口；下限 512，不超过模型的输出上限', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 64_000, maxOutputTokens: 8000 });
+    const { host, memory, compression } = await setup({ summaryTokenRatio: 0.01 }, llm.model);
+    const windows: Array<[string, number | undefined, number]> = [
+      ['wide', 1_000_000, 8000],
+      ['narrow', 128_000, 1280],
+      ['tiny', 1000, 512],
+      ['fresh', undefined, 640],
+    ];
+    for (const [sessionId, contextWindow] of windows) {
+      await seed(memory, sessionId, 2);
+      if (contextWindow) {
+        await host.events.emit('token:usage', usageEvent(sessionId, { used: 1, compressible: 0, contextWindow }));
+      }
+    }
+    for (const [sessionId] of windows) await compression.compress(sessionId, { reason: 'manual' });
+    expect(llm.requests.map(r => [r.sessionId, r.maxTokens])).toEqual(windows.map(([s, , budget]) => [s, budget]));
+  });
+
+  it('摘要模型没声明输出上限时按 4096 封顶', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 64_000 });
+    const { host, memory, compression } = await setup({}, llm.model);
+    await seed(memory, 's', 2);
+    await host.events.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
+    await compression.compress('s', { reason: 'manual' });
+    expect(llm.requests[0].maxTokens).toBe(4096);
   });
 });

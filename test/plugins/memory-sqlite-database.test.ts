@@ -130,7 +130,7 @@ describe('plugin-memory-sqlite 旧库照常可用', () => {
     const added: Message = { role: 'user', content: '问题三', timestamp: 4000 };
     await first.mem.saveMessage('s-alpha', added);
     expect(await first.mem.updateMessageContent('s-alpha', '回答一', '回答一（改）')).toBe(1);
-    expect(await first.mem.trimHistory('s-alpha', 2)).toBe(3);
+    expect(await first.mem.archiveOldest('s-alpha', 3)).toBe(3);
     expect(await first.mem.deleteMessagesByTimestamps('s-beta', [1500, 1600])).toBe(2);
     await first.mem.saveMetadata('sessions', 's-gamma', { title: '会话丙' });
     await first.mem.commitMetadata([{ op: 'del', namespace: 'summary', key: 's-alpha' }]);

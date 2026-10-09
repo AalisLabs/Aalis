@@ -70,7 +70,7 @@ export function createTurnControl(deps: TurnControlDeps) {
       requireSession(sessionId);
       const compression = deps.compression.current;
       if (!compression) throw failure('unsupported', '没有压缩服务');
-      await compression.compress(sessionId, 'manual');
+      await compression.compress(sessionId, { reason: 'manual' });
       deps.requestUsage(sessionId, conn.peer.identity.platform);
       return {};
     },

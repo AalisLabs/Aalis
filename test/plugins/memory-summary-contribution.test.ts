@@ -18,10 +18,8 @@ const POINT = 'agent:prompt' as never;
 const SUMMARY_NAMESPACE = 'summary';
 /** 固定时间戳：摘要记录的 updatedAt 不参与 build，钉死避免时间敏感 */
 const FIXED_TS = '2026-01-01T00:00:00.000Z';
-/** 截断后缀（插件内硬编码） */
-const TRUNCATED_SUFFIX = '\n... [摘要已截断]';
 
-/** 只声明 chat 能力的假 LLM model entry：build 路径只读 contextLength，不发请求 */
+/** 只声明 chat 能力的假 LLM model entry：贡献不调模型 */
 function fakeLLMModel(contextLength: number): LLMModel {
   return {
     id: 'fake-model',
@@ -34,8 +32,8 @@ function fakeLLMModel(contextLength: number): LLMModel {
   };
 }
 
-/** 不指定窗口时用的大窗口：预算远超用例里的摘要长度，截断路径不会被误触发 */
-const ROOMY_CONTEXT_LENGTH = 128_000;
+/** 不指定窗口时用的窗口 */
+const DEFAULT_CONTEXT_LENGTH = 128_000;
 
 const started: App[] = [];
 afterEach(async () => {
@@ -57,7 +55,7 @@ async function setup(opts: { contextLength?: number; config?: Record<string, unk
   await app.plugins.idle();
   const store = host.services.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
-  host.provide(llm, fakeLLMModel(opts.contextLength ?? ROOMY_CONTEXT_LENGTH));
+  host.provide(llm, fakeLLMModel(opts.contextLength ?? DEFAULT_CONTEXT_LENGTH));
   await app.plugin(memorySummary, opts.config ?? {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') {
@@ -179,51 +177,15 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     expect(String(findSummaryBlock(messagesA)?.content)).toContain('A 会话摘要');
   });
 
-  it('超预算 → 按 contextLength×ratio 截断并带截断后缀', async () => {
-    // budget = floor(30000 × 0.02) = 600 → maxChars = 1800
+  it('长摘要全文注入，不按预算截断：生成时的输出上限已经限住它', async () => {
     const { assembly, memory } = await setup({ contextLength: 30000, config: { summaryTokenRatio: 0.02 } });
-    const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`; // 2022 字符 → 674 tokens > 600
-    await seedSummary(memory, 's-a', longSummary);
-
-    const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
-
-    const content = String(findSummaryBlock(messages)?.content);
-    expect(content).toContain('HEAD-MARKER');
-    expect(content).not.toContain('TAIL-MARKER');
-    expect(content.endsWith(longSummary.slice(0, 1800) + TRUNCATED_SUFFIX)).toBe(true);
-  });
-
-  it('摘要模型解析落空时按 4096 兜底 contextLength 计算预算（下限 512 tokens）', async () => {
-    // custom 指定的摘要模型不存在 → 解析落空（自动压缩静默不跑的那条路径）→ contextLength
-    // 兜底 4096；floor(4096 × 0.05)=204 被下限抬到 512 → maxChars = 1536。
-    // 在场的那个 llm 窗口是 128000：兜底若失效，预算 6400 → maxChars 19200，全文进、断言转红。
-    const { assembly, memory } = await setup({
-      config: { summaryModelMode: 'custom', summaryLLM: { provider: '不存在的供应商', model: '不存在的模型' } },
-    });
     const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`;
     await seedSummary(memory, 's-a', longSummary);
 
     const messages = baseMessages();
     await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
-    const content = String(findSummaryBlock(messages)?.content);
-    expect(content.endsWith(longSummary.slice(0, 1536) + TRUNCATED_SUFFIX)).toBe(true);
-  });
-
-  it('预算充足 → 全文注入，不加截断后缀', async () => {
-    // budget = floor(300000 × 0.02) = 6000 → maxChars = 18000，远超摘要长度
-    const { assembly, memory } = await setup({ contextLength: 300000, config: { summaryTokenRatio: 0.02 } });
-    const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`;
-    await seedSummary(memory, 's-a', longSummary);
-
-    const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
-
-    const content = String(findSummaryBlock(messages)?.content);
-    expect(content).toContain('TAIL-MARKER');
-    expect(content).not.toContain('摘要已截断');
-    expect(content.endsWith(longSummary)).toBe(true);
+    expect(String(findSummaryBlock(messages)?.content).endsWith(longSummary)).toBe(true);
   });
 
   // 与下一条幂等用例互补：这里验"键未物化 → 下一轮补跑"，下面验"键已物化 → 不重跑"。

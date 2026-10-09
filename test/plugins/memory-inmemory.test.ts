@@ -63,23 +63,6 @@ describe('plugin-memory-inmemory', () => {
     expect(m.timestamp).toBeLessThanOrEqual(after);
   });
 
-  it('trimHistory 把旧消息搬到 archived', async () => {
-    if (!mem.trimHistory) throw new Error('trimHistory missing');
-    for (let i = 0; i < 10; i++) await mem.saveMessage('s', msg('user', `m${i}`));
-    const removed = await mem.trimHistory('s', 3);
-    expect(removed).toBe(7);
-    const active = await mem.getHistory('s');
-    expect(active).toHaveLength(3);
-    const full = await mem.getFullHistory!('s');
-    expect(full).toHaveLength(10);
-  });
-
-  it('trimHistory keepRecent ≥ 长度时返回 0', async () => {
-    if (!mem.trimHistory) throw new Error('trimHistory missing');
-    await mem.saveMessage('s', msg('user', 'a'));
-    expect(await mem.trimHistory('s', 10)).toBe(0);
-  });
-
   it('getMessagesBySessionRange 按时间过滤 + role', async () => {
     await mem.saveMessage('s', msg('user', 'a', 1000));
     await mem.saveMessage('s', msg('assistant', 'b', 2000));
