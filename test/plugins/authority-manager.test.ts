@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js';
+import { mkConfig, noFileStorage, noSessions, silentLogger } from '../fixtures/authority.js';
 
 // ════════════════════════════════════════════════════════════
 // AuthorityManager —— 数字等级单轴（authorize: deny>owner>level>=minLevel；owner 管理 setUserLevel）
@@ -15,6 +15,7 @@ describe('isOwner', () => {
       mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }),
       silentLogger(),
       noFileStorage,
+      noSessions,
     );
     expect(m.isOwner('cli', 'console')).toBe(true);
     expect(m.isOwner('webui', 'console')).toBe(true);
@@ -26,7 +27,7 @@ describe('isOwner', () => {
 
 describe('authorize（deny > owner > level>=minLevel）', () => {
   it('默认等级(0)：public 放行、restricted 拒', () => {
-    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage, noSessions);
     expect(m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' })).toBeNull();
     expect(m.authorize(onebot('1'), { capability: 'tool:shutdown', visibility: 'restricted' })).toContain('权限不足');
   });
@@ -36,6 +37,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
       mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }),
       silentLogger(),
       noFileStorage,
+      noSessions,
     );
     m.setUserLevel(onebot('1'), 2); // restricted 兜底门槛 = 2
     expect(m.authorize(onebot('1'), { capability: 'tool:shutdown', visibility: 'restricted' })).toBeNull();
@@ -46,7 +48,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
   });
 
   it('等级 1 + risk:sensitive(门槛1) 放行；dangerous(门槛2) 拒', () => {
-    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage, noSessions);
     m.setUserLevel(onebot('1'), 1);
     expect(m.authorize(onebot('1'), { capability: 'tool:x', visibility: 'restricted', risk: 'sensitive' })).toBeNull();
     expect(
@@ -55,7 +57,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
   });
 
   it('封禁(-1) 压过 public/safe', () => {
-    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage, noSessions);
     m.setUserLevel(onebot('1'), -1);
     expect(m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' })).not.toBeNull();
   });
@@ -65,6 +67,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
       mkConfig({ authorityOverrides: { 'tool:weather': 5 } }),
       silentLogger(),
       noFileStorage,
+      noSessions,
     );
     // weather 默认 public(0)，被调到 5：等级 4 拒、5 放行
     m.setUserLevel(onebot('1'), 4);
@@ -78,6 +81,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
       mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }], deniedCapabilities: ['tool:forbidden'] }),
       silentLogger(),
       noFileStorage,
+      noSessions,
     );
     expect(m.authorize(onebot('boss'), { capability: 'tool:forbidden', visibility: 'public' })).toContain('系统禁用');
   });
@@ -85,14 +89,14 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
 
 describe('setUserLevel（owner 管理；覆盖式整数）', () => {
   it('设等级即时生效；改等级替换', () => {
-    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage, noSessions);
     m.setUserLevel(onebot('1'), 5);
     expect(m.listUsers().find(u => u.userId === '1')?.level).toBe(5);
     m.setUserLevel(onebot('1'), 1);
     expect(m.listUsers().find(u => u.userId === '1')?.level).toBe(1);
   });
   it('默认等级(0)清记录', async () => {
-    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage, noSessions);
     await m.init(); // 首次读取落定之后才按无备注清记录
     m.setUserLevel(onebot('1'), 5);
     m.setUserLevel(onebot('1'), 0);
@@ -119,14 +123,14 @@ describe('持久化（v5 save/load 往返）', () => {
 
   it('等级经 save/init 往返存活，写出 version:5', async () => {
     const s = memStorage();
-    const m = new AuthorityManager(mkConfig(), silentLogger(), s.svc);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), s.svc, noSessions);
     await m.init(); // 首次读取落定之前 save 不写盘
     m.setUserLevel({ platform: 'onebot', userId: 'a' }, 3);
     m.save();
     await new Promise(r => setTimeout(r, 0));
     expect(JSON.parse(s.written()).version).toBe(5);
 
-    const m2 = new AuthorityManager(mkConfig(), silentLogger(), s.svc);
+    const m2 = new AuthorityManager(mkConfig(), silentLogger(), s.svc, noSessions);
     await m2.init();
     expect(m2.listUsers().find(u => u.userId === 'a')?.level).toBe(3);
   });

@@ -48,6 +48,10 @@ interface Manifest {
 const manifestOf = (name: string): Manifest =>
   JSON.parse(readFileSync(`${PACKAGES}${name.replace('@aalis/', '')}/package.json`, 'utf-8'));
 
+/** 这一组插件提供的服务 */
+const servicesOf = (plugins: Iterable<string>) =>
+  new Set([...plugins].flatMap(name => manifestOf(name).aalis?.service?.provides ?? []));
+
 /** 装进来的插件里，required 服务既不由档内插件提供、也不由宿主提供的 → `插件: 服务` */
 function unmetRequirements(plugins: Iterable<string>): string[] {
   const list = [...plugins].filter(name => (manifestOf(name).keywords ?? []).includes('aalis-plugin'));
@@ -142,14 +146,16 @@ describe('create-aalis 生成的项目', () => {
   });
 
   it.each(['minimal', 'standard'] as const)('%s 档：带上会话协议与审批服务的提供者', tier => {
-    const provided = new Set(
-      [...pluginSet({ tier, picks: defaultPicks(tier, false) }, true)].flatMap(
-        name => manifestOf(name).aalis?.service?.provides ?? [],
-      ),
-    );
+    const provided = servicesOf(pluginSet({ tier, picks: defaultPicks(tier, false) }, true));
     // 没有审批服务时，需要确认的工具调用一律被拒；WebUI 的会话也要经会话协议才连得上
     expect(provided.has('approvals'), '审批').toBe(true);
     expect(provided.has('session-protocol'), '会话协议').toBe(true);
+  });
+
+  it('standard 与 full 档带上触及服务的提供者（本地工具要它签发凭据）', () => {
+    const standard = pluginSet({ tier: 'standard', picks: defaultPicks('standard', false) }, true);
+    expect(servicesOf(standard).has('reach')).toBe(true);
+    expect(servicesOf(pluginSet({ tier: 'full', catalog: null }, true)).has('reach')).toBe(true);
   });
 
   it('默认流程：对话模型三选一 × 平台组合 × 语义记忆要或不要 × 探到或没探到 Ollama，依赖都闭合', async () => {

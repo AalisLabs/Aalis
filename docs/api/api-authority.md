@@ -79,6 +79,11 @@ interface AuthorityService {
   // 是否 owner（owners 配置命中 → 拥有一切，level = ∞）
   isOwner(platform: string, userId?: string): boolean;
 
+  // 这一轮是谁发起的（api-approval 的 OriginKind）：按回合的来源判，不按授权身份判，会话的受众按会话管理里记下的字段判。
+  // 只有 owner 与 owner-chain 能产生审批；本地效果由触及服务按这一类别定主体：owner 与 owner-chain 为 owner，
+  // subtask 随派出它的那一轮父会话，其余没有本地效果
+  originOf(turn: OriginTurn): OriginKind;
+
   // capability 统一闸：null 放行 | string 拒绝原因
   // 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
   // minLevel 由 request.risk/visibility/config.authorityOverrides 派生。
@@ -98,6 +103,14 @@ interface AuthorityService {
   listUsers(): AuthorityUserEntry[]; // { platform, userId, isOwner, level, note? }
 }
 ```
+
+`OriginTurn` 是判发起类别要的回合信息，取执行守卫上下文的五项：
+
+```ts
+type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+```
+
+判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)。
 
 ## 守卫流程：授权与确认
 

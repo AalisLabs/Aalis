@@ -64,18 +64,19 @@ export async function setupSummary(
   return { app, host, memory: store, compression: compressor };
 }
 
-/** 判定用到的量；没给的取窗口 1000、裁剪预算 1000，默认压缩线 0.8 下有效阈值为 800 */
+/** 判定用到的量；没给的取窗口 1000、裁剪预算 1000（默认压缩线 0.8 下有效阈值为 800）、会话条数 0 */
 export interface TurnAmounts {
   used: number;
   compressible: number;
   contextWindow?: number;
   tokenBudget?: number;
+  historyMessages?: number;
 }
 
-/** 一条用量事件：可压缩部分全记在历史一项；不给 turnId 即 token:request 的快照 */
+/** 一条用量事件：没被硬裁剪，可压缩部分全记在历史一项；不给 turnId 即 token:request 的快照 */
 export function usageEvent(
   sessionId: string,
-  { used, compressible, contextWindow = 1000, tokenBudget = 1000 }: TurnAmounts,
+  { used, compressible, contextWindow = 1000, tokenBudget = 1000, historyMessages = 0 }: TurnAmounts,
   extra: { turnId?: string; platform?: string } = {},
 ): TokenUsageEvent {
   return {
@@ -87,6 +88,9 @@ export function usageEvent(
     tokenBudget,
     used,
     usageRatio: used / contextWindow,
+    trimmed: false,
+    untrimmedHistory: compressible,
+    historyMessages,
     breakdown: {
       system: 0,
       persona: 0,

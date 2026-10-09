@@ -66,11 +66,13 @@
 |  |  | `plugin-memory-sqlite/src/index.ts` | `statSync` 取数据库文件的设备号与 inode，判断两个实例是否打开了同一个库 |
 |  |  | `plugin-session-server/src/approvals.ts` | `appendFile` / `mkdir` 追加审批审计：只追加的记录，存储网关没有追加写 |
 |  |  | `plugin-usage-stats/src/index.ts` | `appendFile` / `mkdir` / `createReadStream` 追加与按行读回用量账本：只追加的记录，存储网关没有追加写与按行读 |
+|  |  | `plugin-reach` | 宿主路径的真实路径（安装集、用户家目录、链接装进来的包）、按 `.git` 找仓库的 git 目录、本会话临时区（0700、清扫）、沙箱用的 npm 配置副本：这些路径不在存储根内，临时区要按 0700 建、按 lstat 不跟随链接清扫，存储网关没有这些能力；存储单元之后网关的宿主路径根要经触及凭据，而凭据正是本插件签发的 |
 | `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
 | `node:net` | 出站建议用 fetch（受用户或 LLM 影响的 URL 走 `safeFetch`） | `plugin-tool-browser` | 浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标 |
 | `node:os` | 走 `system_info` 工具聚合返回 | `plugin-tool-system/src/tools/system.ts` | 该工具的本意就是暴露系统信息 |
+|  |  | `plugin-reach` | `homedir` / `userInfo`：拒读清单与落点按用户家目录生成，子进程环境取 owner 的 login shell |
 | `node:sqlite` | 消息与元数据走 `@aalis/api-memory`（`memory` 服务） | `plugin-memory-sqlite/src/index.ts` | `MemoryService` 的 SQLite 实现 |
 | `node:crypto` | 推荐 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`） | `plugin-tool-browser` | `createHash` 取截图 PNG 内容的 sha256 作文件名 |
 |  |  | `plugin-storage-local` | `randomBytes` 生成原子写临时文件名里的随机段 |
@@ -132,6 +134,11 @@
   审批的审计是只追加的 JSON 行文件，落在 host-paths 给的家目录 `state/audit/approvals.jsonl`；`StorageService` 没有追加写，整份重写会让每条记录的代价随文件变大。内容哈希要同步算：请求在发起的同一拍里定下去留与排队次序，Web Crypto 的异步摘要会让并行的请求按完成先后乱序。两处都只在这个文件里，用行内的 `biome-ignore` 写明理由，不整包放开。
 - **`plugin-session-server/src/files.ts`** — `node:crypto`（`createHmac` / `timingSafeEqual`）
   条目里的文件句柄是 HMAC 签名，条目在拼出的同一拍里就要带上它：实时推送按 `seq` 排序，历史按页同步归并，Web Crypto 的 HMAC 只有异步接口。核验用定长比较。密钥取自全局的 `crypto.getRandomValues`。同样用行内的 `biome-ignore` 写明理由。
+
+### 触及
+
+- **`plugin-reach`** — `node:fs/promises`（`realpath` / `lstat` / `stat` / `readdir` / `readFile` / `writeFile` / `rename` / `mkdir` / `rm` / `access`）+ `node:os`（`homedir` / `userInfo`）
+  它读写的路径不在存储根内（安装集与链接装进来的包、用户家目录、仓库的 `.git`），本会话临时区要按 0700 建、按 lstat 不跟随链接清扫，存储网关没有这些能力；存储单元之后，网关读写宿主路径时要经触及凭据判，而凭据正是本插件签发的。各处 import 用行内的 `biome-ignore` 写明理由。三张受保护清单按真实路径比较：安装集、用户家目录与经链接装进来的包先取真实路径；仓库的 git 目录从绑定目录往上读 `.git`；本会话临时区按 0700 建、随会话删、按修改时间清扫；沙箱里 npm 的用户配置是用户家目录 `.npmrc` 去掉凭据行的副本，以随机名独占创建再改名到位，不跟随沙箱换上的符号链接。owner 的 login shell 取自 `SHELL`，没有时取操作系统账户登记的（`userInfo`）；拉起它走 `ProcessService.execFile`。
 
 ### 宿主运行时
 

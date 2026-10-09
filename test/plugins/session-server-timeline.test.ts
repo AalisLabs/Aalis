@@ -1176,6 +1176,9 @@ describe('条目', () => {
       tokenBudget: 800,
       used: 200,
       usageRatio: 0.25,
+      trimmed: false,
+      untrimmedHistory: 100,
+      historyMessages: 0,
       breakdown: {
         system: 1,
         persona: 2,

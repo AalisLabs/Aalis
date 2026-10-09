@@ -6,7 +6,7 @@
 
 只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由生效的触发插件（见 [trigger 服务](../services/trigger.md)，如 [plugin-trigger-policy](./plugin-trigger-policy.md)）决定，本插件不参与。
 
-逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）决定哪些会话受冷却与限速约束：入站过闸与回复记账都只对作用域内会话，闲置选会话读的是这份记账，因此同样只对作用域内会话生效；禁言不看作用域。默认 `*:group`；默认作用域不含 WebUI/CLI（它们的消息不带会话类型），如需纳入，在 `scopes` 里显式添加（如 `webui`、`cli` 或 `*`）。`overrides` 里的数值按会话记录的 sessionType / targetId 匹配。
+逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）决定哪些会话受冷却与限速约束：入站过闸与回复记账都只对作用域内会话，闲置选会话读的是这份记账，因此同样只对作用域内会话生效；禁言不看作用域。默认 `*:group`；默认作用域不含 WebUI/CLI（它们的消息不带会话类型），纳入（如 `webui`、`cli` 或 `*`）管的是从它们发进房间（群与别人的私聊）与 `internal` 会话的消息。房间类别为 `owner-only` 的会话（owner 自己的会话）入站不经本相位：plugin-gateway 跳过它（[结构性放行](./plugin-gateway.md#结构性放行)），作用域怎么配都不受禁言、冷却与限速约束。`overrides` 里的数值按会话记录的 sessionType / targetId 匹配。
 
 ## 插件声明
 
@@ -52,11 +52,11 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 ## 出站联动
 
-监听 `outbound:message`：`source === 'agent'` 的出站消息对**作用域内**会话记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。作用域按会话已记下的平台、sessionType、targetId 判。会话没有流控状态（例如重启后没人说话的群、消息都被 trigger 吞掉的群），或只有缺会话类型的状态（例如只有禁言记录的群）时，取会话管理给这个会话记下的出生平台与聊天窗口（类型名与目标：群为群号、私聊为对方 id），不看出站消息的平台；子任务没有聊天窗口。结果只写进本插件的会话状态，用于回复记账与分作用域覆盖，不回写消息。入站带 `source` 的内部注入判作用域与这里同一口径（见「接入相位」第 2 步）。没有聊天窗口的会话（WebUI、CLI、子任务，或没装会话管理）类型未知，只有会话类型段为通配的作用域（如 `onebot:*`、`*`）命中。因此默认 `*:group` 下，定时任务、workflow 发往群的回复照常计入（平台写成 `internal` 的定时任务也一样，按会话记下的出生平台算）；发往私聊或 WebUI 的不计入，需要限制时在 `scopes` 里纳入。命令回复与系统回复不计入。
+监听 `outbound:message`：`source === 'agent'` 的出站消息对**作用域内**会话记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。作用域按会话已记下的平台、sessionType、targetId 判。会话没有流控状态（例如重启后没人说话的群、消息都被 trigger 吞掉的群），或只有缺会话类型的状态（例如只有禁言记录的群）时，取会话管理给这个会话记下的出生平台与聊天窗口（类型名与目标：群为群号、私聊为对方 id），不看出站消息的平台；子任务没有聊天窗口。结果只写进本插件的会话状态，用于回复记账与分作用域覆盖，不回写消息。入站带 `source` 的内部注入判作用域与这里同一口径（见「接入相位」第 2 步）。没有聊天窗口的会话（WebUI、CLI、子任务，或没装会话管理）类型未知，只有会话类型段为通配的作用域（如 `onebot:*`、`*`）命中。因此默认 `*:group` 下，定时任务、workflow 发往群的回复照常计入（平台写成 `internal` 的定时任务也一样，按会话记下的出生平台算）；发往私聊或 WebUI 的不计入；别人的私聊需要限制时在 `scopes` 里纳入，owner 自己的会话入站不经本相位，纳入了也只记账、不挡消息。命令回复与系统回复不计入。
 
 冷却与限速按真实回复计，不按"判定放行"计。trigger-policy 在判定放行时即复位计数，放行后若恰好处于冷却或限速期，这次触发作废。
 
-分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息，或会话管理记下的聊天窗口（入站带 `source` 的内部注入与回复记账）。两处都得不到的会话（从未有真人消息经过本相位、又没有聊天窗口，如仅经定时任务抵达的 WebUI 会话）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
+分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息，或会话管理记下的聊天窗口（入站带 `source` 的内部注入与回复记账）。两处都得不到的会话（从未有真人消息经过本相位、又没有聊天窗口，如仅经定时任务、编排抵达的内部会话）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
 
 ## 禁言
 
@@ -68,7 +68,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。 |
+| `scopes` | multiselect | `["*:group"]` | 冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（闲置选会话读的是这份记账）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认作用域不含 WebUI/CLI；纳入 `webui`、`cli` 管的是从它们发进房间（群与别人的私聊）与 `internal` 会话的消息，owner 自己的会话不经本相位，作用域怎么配都一样。 |
 | `cooldownSeconds` | number | `10` | 回复后冷却（秒） |
 | `rateLimitWindow` | number | `0` | 限速窗口（秒，0=关闭） |
 | `rateLimitMaxReplies` | number | `10` | 窗口内最大回复数 |

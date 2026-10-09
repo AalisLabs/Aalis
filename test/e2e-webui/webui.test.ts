@@ -4,7 +4,7 @@ import { type AddressInfo, connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ElementHandle, Frame, HTTPResponse, Page, Viewport } from 'puppeteer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -610,20 +610,19 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(response.headers()['content-security-policy']).toBe(CSP);
 
     await newSession(page);
+    // 发送前装好观察，每次变动都看一次：正在输出时正文至少长出过两个不同的前半段
+    await page.evaluate(() => {
+      const partials = new Set<string>();
+      (window as unknown as { partials: Set<string> }).partials = partials;
+      new MutationObserver(() => {
+        const shown = document.querySelector('[aria-label="对话"]')?.textContent ?? '';
+        if (document.querySelector('[aria-label="正在输出"]') && !shown.includes('流式显示')) partials.add(shown);
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
     await send(page, '你好');
     await sessionIdOf(page);
     const timeline = await page.waitForSelector(aria('对话', 'region'));
-    // 每来一块都看一次：正在输出时正文至少长出过两个不同的前半段
-    await page.waitForFunction(
-      () => {
-        const page = window as unknown as { partials?: Set<string> };
-        page.partials ??= new Set();
-        const shown = document.querySelector('[aria-label="对话"]')?.textContent ?? '';
-        if (document.querySelector('[aria-label="正在输出"]') && !shown.includes('流式显示')) page.partials.add(shown);
-        return page.partials.size >= 2;
-      },
-      { polling: 'mutation' },
-    );
+    await page.waitForFunction(() => (window as unknown as { partials: Set<string> }).partials.size >= 2);
     await page.waitForSelector('::-p-aria(正在输出)', { hidden: true });
     expect(await timeline?.evaluate(element => element.textContent ?? '')).toContain('用来看流式显示');
 
@@ -2144,8 +2143,10 @@ describe('插件前端的隔离', () => {
     expect(result).toEqual({ read: 'opaque', admin: '被拒' });
     expect(stack.heard('zz-frame-probe')).toBe(true);
     expect(stack.app.plugins.getPlugin(FRAMES)?.state).toBe('active');
-    expect([...problems].sort()).toEqual(
-      [`401 ${stack.origin}/api/pages?zz-frame-probe`, `403 ${stack.origin}${disable}`].sort(),
+    await vi.waitFor(() =>
+      expect([...problems].sort()).toEqual(
+        [`401 ${stack.origin}/api/pages?zz-frame-probe`, `403 ${stack.origin}${disable}`].sort(),
+      ),
     );
   }, 60_000);
 
@@ -2192,7 +2193,7 @@ describe('插件前端的隔离', () => {
         ),
       ),
     ).toBe('not-found');
-    expect(problems).toEqual([`404 ${stack.origin}/api/pages/${FRAMES}/probe/data/zz-missing`]);
+    await vi.waitFor(() => expect(problems).toEqual([`404 ${stack.origin}/api/pages/${FRAMES}/probe/data/zz-missing`]));
   }, 60_000);
 
   it('离开自己的地址：框架里注入 meta refresh 跳到挂着子资源的页面，宿主立即卸载、显示占位、记告警；跳到外站被宿主文档的 CSP 拦下，照样卸载；不用助手的框架改了地址，靠第二次 load 卸载', async () => {
@@ -2719,7 +2720,7 @@ describe('文档与主题', () => {
       return { status: res.status, body: await res.text() };
     });
     expect(missing).toEqual({ status: 404, body: '' });
-    expect(problems).toEqual([`404 ${stack.origin}/assets/missing-0000.js`]);
+    await vi.waitFor(() => expect(problems).toEqual([`404 ${stack.origin}/assets/missing-0000.js`]));
   }, 60_000);
 
   it('导入主题：在外观里导入并选中后整页换上它的令牌，插件前端照样收到；刷新时第一帧就是它', async () => {

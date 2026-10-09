@@ -1,12 +1,13 @@
-import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点与 token:usage 事件）——删掉会丢键类型，不可删
+import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点、token:usage 事件与会话设置的 historyLimit）——删掉会丢键类型，不可删
+import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
 import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
-import type { MemoryService } from '@aalis/api-memory';
+import type { CompressionLines, MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, compressionDue, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import { type SessionSetting, sessionManager } from '@aalis/api-session-manager';
+import { roomClass, type SessionSetting, sessionManager } from '@aalis/api-session-manager';
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -141,12 +142,6 @@ const configSchema = defineConfig({
     description:
       '摘要的输出上限占会话所用模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。窗口取这个会话最近一次模型调用的（还没有用量时取摘要模型的），上限不少于 512、不超过摘要模型的输出上限',
   },
-  summaryPrompt: {
-    type: 'string',
-    label: '摘要生成提示词',
-    description: '用于指导 LLM 生成摘要的系统提示词',
-    default: '',
-  },
   summaryModelMode: {
     type: 'select',
     label: '摘要模型来源',
@@ -173,7 +168,7 @@ type SummaryConfig = ConfigOf<typeof configSchema>;
 
 declare module '@aalis/api-session-manager' {
   interface SessionConfig {
-    /** 自动压缩线：用量占上下文窗口的比例，0 到 1；0 表示不按用量压缩 */
+    /** 自动压缩线：用量占上下文窗口的比例，0 到 1；0 表示不按用量压缩（条数线照样起作用） */
     compressAt?: number;
   }
 }
@@ -187,34 +182,52 @@ const COMPRESS_AT_SETTING: SessionSetting = {
     min: 0,
     max: 1,
     default: DEFAULT_COMPRESS_AT,
-    description: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩',
+    description: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩（条数线照样起作用）',
   },
   appliesTo: ['owner', 'room', 'task'],
   prominence: 'advanced',
   liveOnly: true,
 };
 
-// ===== 默认摘要生成提示词 =====
+// ===== 摘要模板 =====
 
-const DEFAULT_SUMMARY_PROMPT = `你是一个对话摘要助手。请将以下对话内容压缩成一段信息丰富的摘要。
+/** 摘要模板：对话的场合，与摘要的各小节（标题、这一节写什么），小节按顺序输出 */
+interface SummaryTemplate {
+  scene: string;
+  sections: ReadonlyArray<readonly [title: string, content: string]>;
+}
 
-要求：
-1. 保留关键信息：用户的核心需求、重要决策、达成的共识
-2. 保留重要的事实和数据
-3. 保留对话中提到的人名、地点、时间等关键实体
-4. 保留用户的偏好和习惯信息
-5. 保留情感状态变化、关系动态、讨论中形成的观点
-6. **特别重要**：保留每个发言者的昵称与ID的对应关系。消息中 [昵称(ID)] 格式标注了发言者身份，摘要中必须保留这种对应关系（如"小明(123456)"），以便后续能通过ID或昵称识别同一个人
-6. 忽略纯粹的寒暄和无信息量的重复内容
-7. 如果有之前的摘要，在此基础上整合新内容，确保旧摘要中的重要信息不因新内容加入而被丢弃
-8. 使用第三方视角描述，标注发言者身份（如"用户[小明]..."、"助手..."）
-9. 按话题或时间分段组织，便于后续检索
-10. **特别重要**：如果对话中存在正在进行的多步骤任务或计划（如任务列表、待办事项、分步实施方案），必须完整保留任务的目标、已完成的步骤、尚未完成的步骤及其状态。在摘要末尾用独立段落列出，格式如：
-    【进行中的任务】
-    - 目标：...
-    - 已完成：...
-    - 待完成：...
-11. 保留助手在对话中制定的工作计划、承诺要做的事情、以及用户尚未被满足的请求`;
+/** 聊天模板：场所是聊天窗口的根会话（多方窗口与别人的私聊），记谁在聊什么、谁还在等回应、哪些原话要记住 */
+const CHAT_TEMPLATE: SummaryTemplate = {
+  scene:
+    '对话来自一个聊天窗口。消息开头的 [昵称(ID)] 标注了发言人，摘要里提到人时一律写成「昵称(ID)」，之后才能凭 ID 或昵称认出同一个人。',
+  sections: [
+    ['最近在聊什么', '按话题分段，写明每段的发言人'],
+    ['谁有问题没回应', '点名提问或请求、还没得到回答的人与问题'],
+    ['关键原话要点', '值得原样记住的话：承诺、约定、数字、链接、对助手的请求，保留发言人与原文要点'],
+  ],
+};
+
+/** 工作模板：其余会话（owner 自己的会话、内部会话与全部子会话），按任务记 */
+const WORK_TEMPLATE: SummaryTemplate = {
+  scene: '对话是助手在完成任务：请求、回复、工具调用与工具结果。',
+  sections: [
+    ['目标', '这段对话要做成什么；最近一次请求，照录原话'],
+    ['做过的决定', '定下的方案、放弃的方案与理由'],
+    ['改过的文件', '路径与改了什么，只依据工具调用记录，不推测'],
+    ['未完成的事', '待办列表的状态（以对话末尾的「当前任务列表状态」为准）、下一步'],
+  ],
+};
+
+/** 摘要模型的系统提示：模板的场合与小节，加上输出上限 */
+function instructions({ scene, sections }: SummaryTemplate, maxTokens: number): string {
+  return [
+    `你是对话摘要助手，把对话压缩成一份摘要。${scene}`,
+    '按下面的小节依次输出，每节以小节标题（连同【】）单独一行开头，标题照写、顺序不变；某一小节没有内容时写「无」。',
+    ...sections.map(([title, content]) => `【${title}】${content}`),
+    `摘要的输出上限为 ${maxTokens} tokens（约 ${maxTokens * 4} 个英文字符，或约 ${Math.floor(maxTokens / 1.5)} 个中文字符），合理分配篇幅，每个小节都要完整输出。`,
+  ].join('\n');
+}
 
 // ===== 摘要存储 =====
 //
@@ -264,8 +277,13 @@ const uses = {
   memory,
   llm,
   messageArchive: optional(messageArchive),
-  /** 登记并解析会话设置项「自动压缩线」；不在场时一律按默认 0.8 */
+  /**
+   * 登记会话设置项「自动压缩线」，按会话解析它与条数线，读会话记录选摘要模板；不在场时压缩线按默认 0.8、不按条数压缩，
+   * 摘要用工作模板
+   */
   sessionManager: optional(sessionManager),
+  /** 选摘要模板时判一对一窗口的对端是不是 owner；不在场时按不是 */
+  authority: optional(authority),
   config,
   logger,
   events,
@@ -287,8 +305,19 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { memory, llm, messageArchive, sessionManager, logger, events, hooks, contributions, lifecycle, provide } =
-    caps;
+  const {
+    memory,
+    llm,
+    messageArchive,
+    sessionManager,
+    authority,
+    logger,
+    events,
+    hooks,
+    contributions,
+    lifecycle,
+    provide,
+  } = caps;
   const parsed = parseConfig(configSchema, caps.config, logger);
   const cfg: SummaryConfig = {
     ...parsed,
@@ -342,10 +371,13 @@ async function run(caps: Caps): Promise<void> {
   const compressions = new Map<string, number>();
   const turnStarts = new Map<string, { compressions: number; cleared: () => boolean }>();
 
-  /** 这个会话的自动压缩线：会话设置的各层都没设（或没有会话管理）时为默认 0.8；设为 0 时为 undefined */
-  function compressAt(sessionId: string, platform?: string): number | undefined {
-    const line = sessionManager.current?.resolveConfig(sessionId, platform).compressAt ?? DEFAULT_COMPRESS_AT;
-    return line > 0 ? line : undefined;
+  /**
+   * 这个会话的两条线：自动压缩线在会话设置的各层都没设（或没有会话管理）时为默认 0.8；条数线是 agent 登记的 historyLimit，
+   * 没设时不按条数压缩。platform 是入口平台：没有出生平台的会话按它选平台档
+   */
+  function linesOf(sessionId: string, platform?: string): CompressionLines {
+    const resolved = sessionManager.current?.resolveConfig(sessionId, platform);
+    return { compressAt: resolved?.compressAt ?? DEFAULT_COMPRESS_AT, historyLimit: resolved?.historyLimit };
   }
 
   /**
@@ -360,24 +392,33 @@ async function run(caps: Caps): Promise<void> {
     );
   }
 
-  // 摘要生成提示词
-  const summarySystemPrompt = cfg.summaryPrompt || DEFAULT_SUMMARY_PROMPT;
+  /**
+   * 选摘要模板：根会话且房间类别为 room（多方的聊天窗口，或对端不是 owner 的一对一）用聊天模板，其余用工作模板；
+   * 子会话执行任务，根会话是群也用工作模板。没有会话管理时按工作模板，没有权限服务时一对一的对端按不是 owner
+   */
+  function templateOf(sessionId: string): SummaryTemplate {
+    const sessions = sessionManager.current;
+    const info = sessions?.getSession(sessionId);
+    if (!sessions || info?.parentId) return WORK_TEMPLATE;
+    const isOwner = (platform: string, userId: string) => authority.current?.isOwner(platform, userId) ?? false;
+    return roomClass(info, id => sessions.getSession(id), isOwner) === 'room' ? CHAT_TEMPLATE : WORK_TEMPLATE;
+  }
 
-  /** 调一次摘要模型：模型失败、流式中途断开或返回空都以原因抛出 */
+  /** 调一次摘要模型：模型失败、流式中途断开或返回空都以原因抛出。有已有摘要时要求在它的同名小节上合并 */
   async function askSummaryModel(
     model: LLMModel,
     sessionId: string,
+    system: string,
     maxTokens: number,
     previous: string | undefined,
     conversation: string,
   ): Promise<string> {
-    const budgetHint = `\n\n重要：你的摘要输出上限为 ${maxTokens} tokens（约 ${maxTokens * 4} 个英文字符，或约 ${Math.floor(maxTokens / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
     const messages: Message[] = [
-      { role: 'system', content: summarySystemPrompt + budgetHint },
+      { role: 'system', content: system },
       {
         role: 'user',
         content: previous
-          ? `以下是之前的对话摘要：\n${previous}\n\n以下是新增的对话内容，请在之前摘要的基础上整合生成更新的摘要：\n${conversation}`
+          ? `以下是之前的对话摘要：\n${previous}\n\n以下是新增的对话内容。在之前摘要的同名小节上合并更新，旧内容里仍然成立的不要丢；之前的摘要没有这些小节、或小节与本模板不同时，把这些内容按意思归入对应小节，不保留模板之外的小节。输出完整的新摘要：\n${conversation}`
           : `请为以下对话生成摘要：\n${conversation}`,
       },
     ];
@@ -423,17 +464,21 @@ async function run(caps: Caps): Promise<void> {
     // 每块至少两个码元，切分才能前进（代理对不拆开）
     if (limit < 2)
       throw new Error(`摘要模型的上下文窗口（${model.contextLength}）装不下摘要的输出上限（${maxTokens}）`);
+    const template = templateOf(sessionId);
     const names = buildToolNameMap(part);
     const lines = part.map(m => formatMsgForSummary(m, names));
-    // 待摘要部分里最后一次待办的参数作为最后一行，与其余各行一起分块
-    const todo = part
-      .flatMap(m => m.toolCalls ?? [])
-      .filter(call => call.function.name === 'manage_todo_list')
-      .at(-1)?.function.arguments;
-    if (todo) lines.push(`当前任务列表状态：\n${todo}`);
+    // 工作模板的「未完成的事」以待办为准：待摘要部分里最后一次待办的参数作为最后一行，与其余各行一起分块
+    if (template === WORK_TEMPLATE) {
+      const todo = part
+        .flatMap(m => m.toolCalls ?? [])
+        .filter(call => call.function.name === 'manage_todo_list')
+        .at(-1)?.function.arguments;
+      if (todo) lines.push(`当前任务列表状态：\n${todo}`);
+    }
+    const system = instructions(template, maxTokens);
     let summary = '';
     for (const [i, chunk] of chunkLines(lines, limit).entries()) {
-      summary = await askSummaryModel(model, sessionId, maxTokens, i === 0 ? previous : summary, chunk);
+      summary = await askSummaryModel(model, sessionId, system, maxTokens, i === 0 ? previous : summary, chunk);
       if (cleared()) throw new Error('压缩期间会话被清空');
     }
     return summary;
@@ -552,7 +597,7 @@ async function run(caps: Caps): Promise<void> {
         logger.info(`收到压缩请求: session=${sessionId}, reason=${request.reason}`);
         return compressHistory(sessionId);
       },
-      compressAt,
+      compressAt: (sessionId, platform) => linesOf(sessionId, platform).compressAt || undefined,
     },
     { label: '会话压缩' },
   );
@@ -576,7 +621,8 @@ async function run(caps: Caps): Promise<void> {
   // === 回合结束时判一次是否该压缩（中止与出错的回合不判）===
   // 只认这一轮最后一次调用的用量：token:request 的快照不带 turnId，上一轮留下的属于别的回合；这一轮开始之后压成过或清空过的，
   // 它的用量是按那之前的历史算的，也不认。回合进行中不在后台改持久化的历史：长工具循环中途改历史，会与 agent 手里的
-  // 消息列表对不上
+  // 消息列表对不上。可压缩部分按硬裁剪之前的历史算：裁掉的仍在会话里，全量压缩一并压掉。会话条数是回合结束时的：
+  // 结局为 replied 时最终回复在最后一次调用之后落库，加上这一条
   hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (data.outcome === 'aborted' || data.outcome === 'error') return;
@@ -592,10 +638,14 @@ async function run(caps: Caps): Promise<void> {
       used: usage.used,
       contextWindow: usage.contextWindow,
       tokenBudget: usage.tokenBudget,
-      compressible: usage.breakdown.history + usage.breakdown.toolResults,
+      compressible: usage.untrimmedHistory,
+      trimmed: usage.trimmed,
+      historyMessages: usage.historyMessages + (data.outcome === 'replied' ? 1 : 0),
     };
-    if (!compressionDue(amounts, { compressAt: compressAt(sessionId, usage.platform) })) return;
-    logger.info(`用量 ${usage.used}/${usage.contextWindow} 到了自动压缩线，后台压缩: session=${sessionId}`);
+    if (!compressionDue(amounts, linesOf(sessionId, usage.platform))) return;
+    logger.info(
+      `到了压缩线（用量 ${usage.used}/${usage.contextWindow}${usage.trimmed ? '，被硬裁剪过' : ''}，会话条数 ${amounts.historyMessages}），后台压缩: session=${sessionId}`,
+    );
     const cleared = clearedSince(sessionId);
     compressHistory(sessionId).catch(() => {
       // 期间被清空的不记：清理已丢掉这个会话的记录，留下清理前的次数会让之后的压缩迟迟不来
