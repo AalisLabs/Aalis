@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { platform } from '../../packages/api-platform/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -22,16 +23,45 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function setup(stored: Record<string, Record<string, unknown>> = {}) {
+/** OneBot 的适配器：认领 onebot: 开头的会话 id。在终端之后登记，按 id 解析归属时终端排在它前面 */
+const onebotAdapter = definePlugin({
+  name: 'zz-adapter-onebot',
+  provides: [platform],
+  uses: { provide },
+  apply: ({ provide }) => {
+    provide(platform, {
+      adapterName: 'OneBot',
+      platform: 'onebot',
+      sessionTypes: [
+        { name: 'group', multiParty: true },
+        { name: 'private', multiParty: false },
+      ],
+      getConnections: () => [],
+      sendMessage: async () => {},
+      canHandle: (sid: string) => sid.startsWith('onebot:'),
+    });
+  },
+});
+
+async function setup(stored: Record<string, Record<string, unknown>> = {}, sessionId?: string) {
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   cleanups.push(fakeTty(30, 100).restore);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const warns: string[] = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+    error() {},
+    child: () => logger,
+  };
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide(memory, fakeMemory(stored) as never);
   await app.plugin(sessionManagerPlugin);
-  await app.plugin(cliPlugin, { startupView: 'chat' });
+  await app.plugin(cliPlugin, { startupView: 'chat', ...(sessionId ? { sessionId } : {}) });
+  await app.plugin(onebotAdapter);
   await app.plugins.idle();
   for (const name of [sessionManagerPlugin.name, cliPlugin.name]) {
     const state = app.plugins.getPlugin(name)?.state;
@@ -56,7 +86,7 @@ async function setup(stored: Record<string, Record<string, unknown>> = {}) {
     enterLine(text);
     await settle();
   };
-  return { sm, seen, sent, enterLine, say };
+  return { sm, seen, sent, enterLine, say, warns };
 }
 
 describe('终端的会话在入站之前建档', () => {
@@ -109,5 +139,21 @@ describe('终端的会话在入站之前建档', () => {
 
     expect(seen[0]).toMatchObject({ name: '<旧名>', updatedAt: 1 });
     expect(sm.getSession('cli-default')?.createdFrom).toBeUndefined();
+  });
+
+  it('配置的会话 id 由别的平台适配器认领：不建档、不写创建来源，告警一次', async () => {
+    const group = 'onebot:10000:group:20001';
+    const { sm, say, warns } = await setup({}, group);
+
+    await say('一');
+    expect(sm.getSession(group)?.createdFrom).toBeUndefined();
+    // 会话表里又没有它时，下一条照样不建档，也不再告警
+    await sm.deleteSession(group);
+    await say('二');
+
+    expect(sm.getSession(group)?.createdFrom).toBeUndefined();
+    const foreign = warns.filter(w => w.includes(group));
+    expect(foreign).toHaveLength(1);
+    expect(foreign[0]).toContain('onebot');
   });
 });

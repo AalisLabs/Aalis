@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { protectedLists } from '../../packages/api-reach/src/index.js';
+import { protectedLists, withRealRoots } from '../../packages/api-reach/src/index.js';
 import { derivePaths } from '../../packages/runtime/src/home.js';
-import { CODE_DIR, inList, LISTS, PATHS } from '../fixtures/reach.js';
+import { CODE_DIR, inList, LISTS, PATHS, USER } from '../fixtures/reach.js';
 
 // ════════════════════════════════════════════════════════════
 // 三张清单：宿主控制面（一律拒写）、持久化与自动执行落点、拒读清单。由家目录布局、用户家目录与平台生成，
@@ -25,7 +25,7 @@ describe('宿主控制面', () => {
       [`${PATHS.self.personas}/default.md`, true],
       [`${PATHS.stage.public}/index.html`, true],
       [`${PATHS.stage.paper}/p-default/a.md`, false],
-      [`${PATHS.tmp}/sessions/czE/x`, false],
+      [`${PATHS.tmp}/sessions/7331/x`, false],
       [`${PATHS.self.skills}/s/SKILL.md`, false],
       ['/opt/aalis/node_modules/@aalis/core/dist/index.js', true],
       ['/opt/aalis/dist/index.js', true],
@@ -34,7 +34,83 @@ describe('宿主控制面', () => {
       ['/opt/aalis/packages/core/src/index.ts', false],
       [`${CODE_DIR}/dist/index.js`, true],
       ['/u/code/proj/src/a.ts', false],
+      ['/opt/aalis/package.json', false], // 源码形态：在改的源码
     ]);
+  });
+
+  it('npm 形态（create-aalis 生成的项目，家目录在安装集里）：另有守护进程的入口与安装集的 package.json', () => {
+    const npm = (entry?: string) =>
+      protectedLists({
+        paths: derivePaths('/u/proj/home', '/u/proj'),
+        userHome: USER,
+        platform: 'linux',
+        form: 'npm',
+        codeDirs: [],
+        ...(entry ? { entry } : {}),
+      });
+    expectHits(
+      'control',
+      [
+        ['/u/proj/index.mjs', true],
+        ['/u/proj/package.json', true],
+        ['/u/proj/README.md', false],
+      ],
+      npm('/u/proj/index.mjs'),
+    );
+    expectHits(
+      'control',
+      [
+        ['/u/proj/index.mjs', false],
+        ['/u/proj/package.json', true],
+      ],
+      npm(),
+    );
+  });
+});
+
+describe('按真实路径补上链接出去的根', () => {
+  it('根的真实路径与写法不同时另加一份，根下的例外随根挪过去；按正则写的规则、取不到或相同的不加', () => {
+    const real: Record<string, string> = {
+      [PATHS.home]: '/data/aalis',
+      [PATHS.secrets]: '/u/dotfiles/secrets.yaml',
+      '/u/.zshrc': '/u/dotfiles/zshrc',
+      '/u/.ssh': '/u/.ssh',
+    };
+    const lists = withRealRoots(LISTS, path => real[path]);
+    expectHits(
+      'control',
+      [
+        ['/data/aalis/state/db', true],
+        ['/data/aalis/stage/paper/p-default/a.md', false],
+        ['/data/aalis/tmp/sessions/7331/x', false],
+        [`${PATHS.stage.paper}/p-default/a.md`, false],
+        ['/u/dotfiles/secrets.yaml', true],
+      ],
+      lists,
+    );
+    expectHits(
+      'denyRead',
+      [
+        ['/data/aalis/state/db', true],
+        ['/data/aalis/logs/latest.log', false],
+        ['/u/dotfiles/secrets.yaml', true],
+      ],
+      lists,
+    );
+    expectHits('landing', [['/u/dotfiles/zshrc', true]], lists);
+    expect(lists.landing.length - LISTS.landing.length, '只加 ~/.zshrc 一条').toBe(1);
+    expect(lists.denyRead.length - LISTS.denyRead.length, '家目录与 secrets.yaml 各一条').toBe(2);
+  });
+
+  it('macOS 上真实路径只差大小写的不加', () => {
+    const mac = protectedLists({
+      paths: derivePaths('/Users/u/.aalis', '/opt/aalis'),
+      userHome: '/Users/u',
+      platform: 'darwin',
+      form: 'source',
+      codeDirs: [],
+    });
+    expect(withRealRoots(mac, path => path.toLowerCase())).toEqual(mac);
   });
 });
 
@@ -83,6 +159,7 @@ describe('持久化与自动执行落点', () => {
       paths: derivePaths('/Users/u/.aalis', '/opt/aalis'),
       userHome: '/Users/u',
       platform: 'darwin',
+      form: 'source',
       codeDirs: [],
     });
     expectHits(
@@ -113,6 +190,7 @@ describe('持久化与自动执行落点', () => {
       paths: derivePaths('/Users/u/.aalis', '/opt/aalis'),
       userHome: '/Users/u',
       platform: 'darwin',
+      form: 'source',
       codeDirs: [],
     });
     expectHits('landing', [['/Users/u/Library/LaunchAgents/x.plist', true]], mac);
@@ -153,7 +231,7 @@ describe('拒读清单', () => {
       [`${PATHS.state}/db`, true],
       [`${PATHS.run}/aalis.sock`, true],
       [`${PATHS.cache}/x`, true],
-      [`${PATHS.tmp}/sessions/czE/x`, true], // 本会话临时区由触及按会话放行，清单里不放
+      [`${PATHS.tmp}/sessions/7331/x`, true], // 本会话临时区由触及按会话放行，清单里不放
       [`${PATHS.stage.paper}/p-default/a.md`, false],
       [`${PATHS.stage.public}/index.html`, false],
       [`${PATHS.self.skills}/s/SKILL.md`, false],
@@ -172,6 +250,7 @@ describe('拒读清单', () => {
       paths: derivePaths('/u/.aalis-dev', '/opt/aalis'),
       userHome: '/u',
       platform: 'linux',
+      form: 'source',
       codeDirs: [],
     });
     expectHits(
@@ -217,6 +296,7 @@ describe('拒读清单', () => {
       paths: derivePaths('/Users/u/.aalis', '/opt/aalis'),
       userHome: '/Users/u',
       platform: 'darwin',
+      form: 'source',
       codeDirs: [],
     });
     expectHits(
@@ -240,6 +320,7 @@ describe('用户家目录是根目录', () => {
       paths: derivePaths('/.aalis', '/opt/aalis'),
       userHome: '/',
       platform: 'linux',
+      form: 'source',
       codeDirs: [],
     });
     expectHits(
@@ -262,6 +343,7 @@ describe('大小写与分隔符', () => {
       paths: derivePaths('/Users/u/.aalis', '/opt/aalis'),
       userHome: '/Users/u',
       platform: 'darwin',
+      form: 'source',
       codeDirs: [],
     });
     expectHits(
@@ -301,6 +383,7 @@ describe('大小写与分隔符', () => {
       paths: derivePaths('C:\\Users\\u\\.aalis', 'C:\\aalis'),
       userHome: 'C:\\Users\\u',
       platform: 'win32',
+      form: 'source',
       codeDirs: [],
     });
     expectHits(

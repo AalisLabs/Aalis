@@ -1,11 +1,13 @@
 // ============================================================
-// 按磁盘取的几个目录：安装集以外守护进程加载了代码的目录、绑定所在仓库的 git 目录
+// 按磁盘取的几样：安装集的形态与守护进程的入口、安装集以外守护进程加载了代码的目录、清单里各个根的真实路径、
+// 绑定所在仓库的 git 目录
 // ============================================================
 
-// biome-ignore lint/style/noRestrictedImports: 安装集与链接装进来的包取真实路径、从绑定目录往上读 .git，这些路径不在存储根里
+// biome-ignore lint/style/noRestrictedImports: 安装集、入口、链接装进来的包与清单的根取真实路径、从绑定目录往上读 .git，这些路径不在存储根里
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { matchesRule } from '@aalis/api-reach';
+import { matchesRule, type ProtectedLists } from '@aalis/api-reach';
+import type { Logger } from '@aalis/core';
 
 /** 文件或目录不存在 */
 export function isMissing(err: unknown): boolean {
@@ -18,6 +20,41 @@ const entriesOf = (dir: string) =>
     if (isMissing(err) || (err as NodeJS.ErrnoException).code === 'ENOTDIR') return [];
     throw err;
   });
+
+/** 安装集的形态：下有 packages/ 目录的是源码形态，其余是 npm 形态（create-aalis 生成的项目） */
+export async function formOf(app: string): Promise<'source' | 'npm'> {
+  const packages = await stat(join(app, 'packages')).catch(err => {
+    if (isMissing(err)) return undefined;
+    throw err;
+  });
+  return packages?.isDirectory() ? 'source' : 'npm';
+}
+
+/** 守护进程的入口文件：启动脚本（process.argv[1]）的真实路径；没有或取不到时为 undefined */
+export async function entryOf(): Promise<string | undefined> {
+  const script = process.argv[1];
+  return script ? realpath(script).catch(() => undefined) : undefined;
+}
+
+/**
+ * 清单里以具体路径为根的规则，各个根的真实路径（交给 api-reach 的 withRealRoots）：不存在的不记；取不了的（没有权限、
+ * 链接成环）记 warn，这一条只按写法拦
+ */
+export async function realRootsOf(lists: ProtectedLists, logger: Pick<Logger, 'warn'>): Promise<Map<string, string>> {
+  const roots = new Set(
+    [...lists.control, ...lists.landing, ...lists.denyRead].flatMap(rule => ('path' in rule ? [rule.path] : [])),
+  );
+  const real = new Map<string, string>();
+  for (const root of roots) {
+    const resolved = await realpath(root).catch(err => {
+      if (!isMissing(err) && (err as NodeJS.ErrnoException).code !== 'ENOTDIR')
+        logger.warn(`取不到 ${root} 的真实路径，受保护清单里它只按写法拦:`, err);
+      return undefined;
+    });
+    if (resolved) real.set(root, resolved);
+  }
+  return real;
+}
 
 /**
  * 安装集以外、守护进程加载了代码的目录，归宿主控制面（安装集里的已由清单按安装集的目录覆盖）：

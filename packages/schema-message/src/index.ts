@@ -188,7 +188,7 @@ export interface IncomingMessage {
   _attachmentDescriptions?: Array<string | undefined>;
   /**
    * 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一（如 OneBot 的 group、private、channel）。
-   * 不带时按 private、一对一
+   * 不带时，平台声明了多方类型的按多方，没声明或只有一对一类型的按 private、一对一（api-platform 的 resolveSessionType）
    */
   sessionType?: string;
   /** 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id） */

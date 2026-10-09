@@ -14,13 +14,14 @@ import {
   type ReachService,
   reach,
   resolveReach,
+  withRealRoots,
 } from '@aalis/api-reach';
 import { placePaperId, roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { issueCredential } from './credential.js';
-import { codeDirsOf, gitDirOf } from './host-dirs.js';
+import { codeDirsOf, entryOf, formOf, gitDirOf, realRootsOf } from './host-dirs.js';
 import { loginEnvs } from './process-env.js';
 import { openProvenance } from './provenance.js';
 import { SWEEP_EVERY_MS, sessionTmpOf, sweepSessionTmp } from './session-tmp.js';
@@ -74,12 +75,21 @@ async function run(caps: Caps): Promise<void> {
   const lookup = (id: string) => sm.getSession(id);
   const isOwner = (platform: string, userId: string) => caps.authority.current?.isOwner(platform, userId) ?? false;
 
-  // 清单与路径比较一律用真实路径：安装集可能经符号链接给出，用户家目录同理
+  // 清单与路径比较一律用真实路径：安装集可能经符号链接给出，用户家目录同理；清单里链接出去的根按真实路径补一份
   const given = caps.paths.require();
   const app = await realpath(given.app);
   const userHome = await realpath(homedir());
   const paths: HostPaths = { ...given, app };
-  const lists = protectedLists({ paths, userHome, platform: process.platform, codeDirs: await codeDirsOf(app) });
+  const declared = protectedLists({
+    paths,
+    userHome,
+    platform: process.platform,
+    form: await formOf(app),
+    codeDirs: await codeDirsOf(app),
+    entry: await entryOf(),
+  });
+  const realRoots = await realRootsOf(declared, logger);
+  const lists = withRealRoots(declared, root => realRoots.get(root));
   const provenance = await openProvenance(createStorageGateway(caps.storage), logger);
   const loginEnv = loginEnvs({ process: caps.process, userHome, logger });
   /** 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名把 `:` 换成 `-`（与白纸插件同一写法） */
@@ -90,6 +100,8 @@ async function run(caps: Caps): Promise<void> {
   const lastPrincipal = new Map<string, 'owner' | 'other'>();
   /** 子会话：发来最近一条任务消息的那一轮父会话的主体 */
   const spawnedBy = new Map<string, 'owner' | 'other'>();
+  /** 删会话时在后台删着的临时区 */
+  const deleting = new Map<string, Promise<void>>();
 
   /**
    * 一个会话的触及，返回每次调用都重算的函数：绑定与仓库的 git 目录（按磁盘找，异步）在这里取好；档位与越界策略（子会话不读
@@ -143,8 +155,11 @@ async function run(caps: Caps): Promise<void> {
         loginEnv,
         record: provenance.record,
       });
-      if (credential.exec !== 'none')
+      if (credential.exec !== 'none') {
+        // 同一个 id 的会话删了又建：前一份还在删，先等它删完，免得删掉新建的
+        await deleting.get(call.sessionId);
         await mkdir(sessionTmpOf(paths.tmp, call.sessionId), { recursive: true, mode: 0o700 });
+      }
       return credential;
     },
     markTainted: provenance.markTainted,
@@ -157,25 +172,36 @@ async function run(caps: Caps): Promise<void> {
     const parentId = sm.getSession(msg.sessionId)?.parentId;
     spawnedBy.set(msg.sessionId, (parentId && lastPrincipal.get(parentId)) || 'other');
   });
-  events.on('session:deleted', async sessionId => {
+  // 删会话时在后台删它的临时区，不拖住删会话；删不掉记 warn
+  events.on('session:deleted', sessionId => {
     lastPrincipal.delete(sessionId);
     spawnedBy.delete(sessionId);
-    await rm(sessionTmpOf(paths.tmp, sessionId), { recursive: true, force: true });
+    const dir = sessionTmpOf(paths.tmp, sessionId);
+    const done = rm(dir, { recursive: true, force: true })
+      .catch(err => logger.warn(`删不掉会话 ${sessionId} 的临时区 ${dir}:`, err))
+      .finally(() => {
+        if (deleting.get(sessionId) === done) deleting.delete(sessionId);
+      });
+    deleting.set(sessionId, done);
   });
 
-  const sweep = async () => {
-    const removed = await sweepSessionTmp(paths.tmp, lookup, Date.now());
-    if (removed.length > 0) logger.debug(`清掉 ${removed.length} 个会话的临时区`);
+  // 清扫在后台排队跑，启动时的那一轮不拖住激活
+  let sweeping = Promise.resolve();
+  const sweep = () => {
+    sweeping = sweeping
+      .then(() => sweepSessionTmp(paths.tmp, lookup, Date.now(), logger))
+      .then(removed => {
+        if (removed.length > 0) logger.debug(`清掉 ${removed.length} 个会话的临时区`);
+      })
+      .catch(err => logger.warn('清扫本会话临时区失败:', err));
   };
-  await sweep().catch(err => logger.warn('清扫本会话临时区失败:', err));
-  const sweepTimer = setInterval(() => {
-    sweep().catch(err => logger.warn('清扫本会话临时区失败:', err));
-  }, SWEEP_EVERY_MS);
+  sweep();
+  const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS);
   sweepTimer.unref();
 
   lifecycle.onDispose(async () => {
     clearInterval(sweepTimer);
-    await provenance.flushed();
+    await Promise.all([sweeping, ...deleting.values(), provenance.flushed()]);
   });
 
   caps.provide(reach, service);

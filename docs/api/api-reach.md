@@ -111,16 +111,27 @@ type ReachDecision =
 type PathMatcher = { path: string } | { pattern: string };    // path：这个路径与它下面的全部；pattern：对整条路径的正则
 type PathRule = PathMatcher & { except?: readonly PathMatcher[] };
 
-function protectedLists(input: { paths: HostPaths; userHome: string; platform: NodeJS.Platform; codeDirs: readonly string[] }): ProtectedLists;
+function protectedLists(input: {
+  paths: HostPaths;
+  userHome: string;
+  platform: NodeJS.Platform;
+  form: 'source' | 'npm';
+  codeDirs: readonly string[];
+  entry?: string;
+}): ProtectedLists;
+function withRealRoots(lists: ProtectedLists, realOf: (path: string) => string | undefined): ProtectedLists;
 function matchesRule(rule: PathRule, path: string, platform: NodeJS.Platform): boolean;
 ```
 
-`codeDirs` 是安装集以外、守护进程加载了代码的目录（如经链接装进来的插件）。正则只用锚点、字符类、分组与选择、量词，沙箱的生成器要能翻译。
+`form` 是安装集的形态：源码形态下有 `packages/`，npm 形态是 create-aalis 生成的项目（家目录在安装集里）。`codeDirs` 是安装集以外、守护进程加载了代码的目录（如经链接装进来的插件）。`entry` 是守护进程的入口文件（启动脚本的真实路径），取不到时不给。正则只用锚点、字符类、分组与选择、量词，沙箱的生成器要能翻译。
+
+`withRealRoots` 按真实路径补上链接出去的根：以具体路径为根的规则（`{ path }`），根的路径上有符号链接、`realOf` 给出的真实路径与写法不同时，按真实路径再加一份同样的规则，根下的例外随根挪过去；按正则写的规则不动。真实路径要碰文件系统，由调用方在激活时取好（触及插件），之后链接改指向不跟踪。主配置与 `secrets.yaml` 在宿主控制面（`secrets.yaml` 另在拒读清单）里各单列一条，为的是它们链接到别处时能以它们为根补上。
 
 **宿主控制面**（`control`，一律拒写，不可申请）：
 
 - 家目录下除白纸（`stage/paper`）、临时区（`tmp`）、技能目录（`self/skills`）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`、人设卡、编排定义（只经定义工具写入）、公开区（只经发布插件写入）；
-- 守护进程加载的代码：安装集的 `node_modules`、`dist`，源码形态下各包的 `dist` 与 `node_modules`，以及 `codeDirs`。源码本身不在内。
+- 守护进程加载的代码：安装集的 `node_modules`、`dist`，源码形态下各包的 `dist` 与 `node_modules`，以及 `codeDirs`。源码本身不在内；
+- npm 形态下另有守护进程的入口文件（`entry`）与安装集的 `package.json`（插件发现读它的依赖）。源码形态下它们是在改的源码，不在内。
 
 **持久化与自动执行落点**（`landing`）：
 
