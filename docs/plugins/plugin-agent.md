@@ -33,6 +33,7 @@ definePlugin({
     storage: optional(storage),
     gateway: optional(gateway),
     plugins: optional(pluginsService),
+    services,
   },
   apply: run,
 })
@@ -106,7 +107,7 @@ definePlugin({
 /session.set -n 深夜助手
 ```
 
-> 全局默认模型是 llm 服务的偏好，在 WebUI 设置「会话默认」的全局默认层改「模型」，或写配置文件的 `servicePreferences.llm`；会话级设置优先于它。
+> 全局默认模型是 llm 服务的偏好，在 WebUI 设置「会话默认」的全局默认层改「模型」，或写配置文件的 `servicePreferences.llm`；会话级设置优先于它。偏好指向的模型不在（模型删了、提供者在重载或激活失败）时回合照常用服务落到的模型，每个（偏好，实际用的模型）组合记一条告警。
 
 ## 核心流程
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
@@ -15,10 +16,17 @@ import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 自动压缩线是会话设置项 compressAt（摘要插件登记）：占窗口比例，各层都没设时 0.8，0 表示不按用量压缩。
-// 全局默认、平台档与单个会话按层覆盖；没有出生平台的会话按入口平台选平台档。
+// 全局默认、平台档、平台类型档、场所与单个会话按层覆盖；没有出生平台的会话按入口平台选平台档。
 // ════════════════════════════════════════════════════════════
 
 const ROOM = 'onebot:10000:group:1';
+/** 同一个群里另一个机器人账号的会话 */
+const ROOM_B = 'onebot:20000:group:1';
+const WINDOW = 'onebot:group:1';
+/** 别人的私聊 */
+const OTHER_DM = 'onebot:10000:private:30001';
+/** owner 的 IM 私聊：场所是默认工作区 */
+const OWNER_DM = 'onebot:10000:private:99999';
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -33,8 +41,11 @@ async function setup() {
   const host = app.bind({ provide, events, hooks, memory, compression, sessionManager });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  // 群房间收录过（预置进会话表）：选平台档读会话记下的出生平台
-  await seedRooms(host.memory.require(), { [ROOM]: '群' });
+  // 房间收录过（预置进会话表）：选平台档读会话记下的出生平台
+  await seedRooms(host.memory.require(), { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
+  host.provide(authority, {
+    isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === '99999',
+  } as never);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
   host.provide(llm, summaryLLM.model);
@@ -77,6 +88,23 @@ describe('plugin-memory-summary: 自动压缩线', () => {
 
     await sm.updateSession(ROOM, { config: { compressAt: 0.1 } });
     expect(compressAt(ROOM)).toBe(0.1);
+  });
+
+  it('平台类型档：群的值给群里各个机器人账号的会话与群的子会话，别人的私聊与 WebUI 会话不受影响', async () => {
+    const { sm, owner, child, compressAt } = await setup();
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { compressAt: 0.06 });
+    expect([compressAt(ROOM), compressAt(ROOM_B), compressAt(child.id)]).toEqual([0.06, 0.06, 0.06]);
+    expect([compressAt(OTHER_DM), compressAt(owner.id, 'webui')]).toEqual([0.8, 0.8]);
+  });
+
+  it('场所压过平台类型档：窗口场所的值给这个群的会话；默认工作区的值压过 owner 的 IM 私聊上的类型档', async () => {
+    const { sm, compressAt } = await setup();
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { compressAt: 0.06 });
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'private' }, { compressAt: 0.1 });
+    await sm.updateLayer({ scope: 'place', key: WINDOW }, { compressAt: 0.2 });
+    await sm.updateLayer({ scope: 'place', key: 'workspace:default' }, { compressAt: 0.5 });
+    expect([compressAt(ROOM), compressAt(ROOM_B)]).toEqual([0.2, 0.2]);
+    expect([compressAt(OWNER_DM), compressAt(OTHER_DM)]).toEqual([0.5, 0.1]);
   });
 
   it.each([1.5, -0.1])('写 %d 被拒', async value => {

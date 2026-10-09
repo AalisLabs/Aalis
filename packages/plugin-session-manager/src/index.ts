@@ -453,14 +453,15 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * IM 房间收录的补记：按 id 兜底建档的根会话（没有来源字段、创建来源与绑定）收到原生入站时，记下与按这条消息建档时
-   * 一样的来源字段，名字还是 id 的一并补上，场所是窗口的确保窗口的场所记录。只认这个 id 归消息平台的适配器管的入站，
-   * WebUI 与终端往房间插话不算。解析是异步的：等待期间别的入站已补记、会话被删或换表的不再写
+   * IM 房间收录的补记：按 id 兜底建档的根会话（没有来源字段、创建来源与绑定）与升级前只记了出生平台的记录（没有聊天窗口，
+   * 出生平台与消息平台相同）收到原生入站时，记下与按这条消息建档时一样的来源字段，名字还是 id 的一并补上，场所是窗口的
+   * 确保窗口的场所记录。只认这个 id 归消息平台的适配器管的入站，WebUI 与终端往房间插话不算。解析是异步的：等待期间别的
+   * 入站已补记、会话被删或换表的不再写
    */
   async backfillRoom(session: SessionInfo, nativeName: string | undefined, origin: RoomOrigin): Promise<void> {
     const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
     if (entry?.instance.platform !== origin.originPlatform) return;
-    if (this.sessions.get(session.id) !== session || session.originPlatform) return;
+    if (this.sessions.get(session.id) !== session || session.originChat) return;
     Object.assign(session, origin, session.name === session.id && nativeName ? { name: nativeName } : {});
     Object.assign(session, describeSession(session));
     await this.noteWindow(session.id, nativeName);
@@ -1106,7 +1107,8 @@ class SessionManager implements SessionManagerService {
 
   /**
    * llm 服务的偏好写成模型引用：条目在时按它的提供者与模型 id；不在时按还装着的提供者拆（取能作为 `<提供者>/` 前缀的最长的
-   * 一个，模型 id 里的斜杠留在模型里），提供者也不在时按最后一个斜杠拆
+   * 一个，模型 id 里的斜杠留在模型里），提供者也不在时按最后一个斜杠拆。拆不出、或拆出的提供者只剩 npm scope（偏好只写了
+   * 提供者，如 `@scope/llm-x`）的读不成模型引用，偏好没有生效由 doctor 报出
    */
   private preferredModel(): ModelRef | undefined {
     const contextId = this.caps.services.preferred(llm);
@@ -1119,7 +1121,8 @@ class SessionManager implements SessionManagerService {
       .filter(id => contextId.startsWith(`${id}/`))
       .sort((a, b) => b.length - a.length)[0];
     const cut = provider === undefined ? contextId.lastIndexOf('/') : provider.length;
-    return cut > 0 ? { provider: contextId.slice(0, cut), model: contextId.slice(cut + 1) } : undefined;
+    const ref = { provider: contextId.slice(0, cut), model: contextId.slice(cut + 1) };
+    return cut > 0 && !/^@[^/]*$/.test(ref.provider) ? ref : undefined;
   }
 
   /**
@@ -1510,9 +1513,11 @@ async function run(caps: Caps): Promise<void> {
   // 类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，不经这里。带 source 的是
   // 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。消息带的类型名不在平台的
   // 声明里时按多方记下，每个平台与类型名告警一次。按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，
-  // 由第一条归它的适配器管的原生入站补记（backfillRoom）。
+  // 升级前的记录只记了出生平台、没有聊天窗口，两者都由第一条归它的适配器管的原生入站补记（backfillRoom；后者只认
+  // 出生平台的入站）。
   // 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省用 id（群的首条入站可能是不带群名的戳一戳，
-  // 不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动；没有聊天窗口的记录判不出该取哪个，不补。
+  // 不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，
+  // 不补。
   // 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
   // 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。
   const warnedTypes = new Set<string>();
@@ -1520,7 +1525,13 @@ async function run(caps: Caps): Promise<void> {
     const { sessionId } = msg;
     if (!sessionId || msg.source || sessionId.includes('::')) return;
     const session = manager.getSession(sessionId);
-    if (session && (session.originPlatform || session.createdFrom || session.work)) {
+    const unrecorded =
+      session &&
+      !session.originChat &&
+      !session.createdFrom &&
+      !session.work &&
+      (session.originPlatform ?? msg.platform) === msg.platform;
+    if (session && !unrecorded) {
       const chat = session.originChat;
       if (chat && session.originPlatform === msg.platform) {
         const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
@@ -1555,10 +1566,13 @@ async function run(caps: Caps): Promise<void> {
     ).catch(err => logger.warn(`IM 房间登记失败 (${sessionId}):`, err));
   });
 
-  // 全局默认层的「模型」就是 llm 服务的偏好：偏好从别处改了（系统页、宿主启动时应用）同样算会话设置变了
-  events.on('service:preference-changed', name => {
-    if (name === llm.name) void events.emit('session:config:changed');
-  });
+  // 全局默认层的「模型」就是 llm 服务的偏好：偏好从别处改了（宿主启动时应用）、llm 的提供者上下线（偏好指向的模型在不在、
+  // 服务实际用的那一个随之变）同样算会话设置变了
+  for (const event of ['service:registered', 'service:unregistered', 'service:preference-changed'] as const) {
+    events.on(event, name => {
+      if (name === llm.name) void events.emit('session:config:changed');
+    });
+  }
 
   // ===== 会话状态 =====
   // 回合真正开始时（agent:input:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」
