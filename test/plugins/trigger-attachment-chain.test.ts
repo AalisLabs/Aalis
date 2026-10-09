@@ -39,6 +39,7 @@ const groupMsg = (content: string, extra: Partial<IncomingMessage> = {}): Incomi
   platform: 'onebot',
   sessionType: 'group',
   sessionId: SESSION,
+  selfId: '10000',
   groupId: '20001',
   userId: '30001',
   nickname: '甲',

@@ -364,16 +364,18 @@ describe('各层：全局默认、平台档与受众条目', () => {
     });
   });
 
-  it('层的列表：平台档是已装适配器的平台加配置里写过的平台，群与私聊条目按适配器的 sessionTypes 加配置里写过的；按平台名排，每个平台先平台档、再群、私聊', async () => {
+  it('层的列表：平台档是已装适配器的平台加配置里写过的平台，群与私聊条目按适配器声明的类型名加配置里写过的（没声明类型的平台不单列）；按平台名排，每个平台先平台档、再群、私聊', async () => {
+    const GROUP = { name: 'group', multiParty: true };
+    const PRIVATE = { name: 'private', multiParty: false };
     const { app, sm } = await setup({
       doc: DOC,
       plugins: [
         settingsPlugin(SETTINGS, [PERSONA, TOOL_GROUPS, ITERATIONS, PAPER_NAME]),
-        adapterPlugin('zz-qq', { platform: 'qq', sessionTypes: ['group', 'private'] }),
-        adapterPlugin('zz-forum', { platform: 'forum', sessionTypes: ['group'] }),
+        adapterPlugin('zz-qq', { platform: 'qq', sessionTypes: [GROUP, PRIVATE] }),
+        adapterPlugin('zz-forum', { platform: 'forum', sessionTypes: [GROUP] }),
         adapterPlugin('zz-terminal', { platform: 'terminal', sessionTypes: [] }),
         adapterPlugin('zz-bare', { platform: 'bare' }),
-        adapterPlugin('zz-onebot', { platform: 'onebot', sessionTypes: ['group', 'private'] }),
+        adapterPlugin('zz-onebot', { platform: 'onebot', sessionTypes: [GROUP, PRIVATE] }),
       ],
     });
     const platformLayer = (platform: string) => ({ scope: 'platform', platform });

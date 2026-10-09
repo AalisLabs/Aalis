@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inferSessionScope, resolveSessionOrigin } from '../../packages/api-gateway/src/index.js';
+import { resolveSessionOrigin } from '../../packages/api-gateway/src/index.js';
 
 // 出生平台解析：只看会话 id，给选档与会话分区一个同步判据。
 
@@ -41,11 +41,5 @@ describe('resolveSessionOrigin', () => {
     ]) {
       expect(resolveSessionOrigin(id), id).toBeUndefined();
     }
-  });
-
-  it('与 inferSessionScope 分工不同：子任务有出生平台，但不推断触发闸门里的会话类型', () => {
-    const child = 'onebot:10000:group:20001::abcd1234';
-    expect(resolveSessionOrigin(child)?.platform).toBe('onebot');
-    expect(inferSessionScope('onebot', child)).toBeUndefined();
   });
 });

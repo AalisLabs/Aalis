@@ -189,7 +189,7 @@ definePlugin({
 
 首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
 
-`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
+`token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话管理记下的出生平台（`originPlatform`，子会话取根会话的，不从会话 id 推）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
 
 ```ts
 'token:usage': [{

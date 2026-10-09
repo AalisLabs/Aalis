@@ -14,6 +14,7 @@ import { unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { persona } from '@aalis/api-persona';
 import { getPlatformAdapters, type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
+import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import {
   type BoundOf,
@@ -129,13 +130,24 @@ const uses = {
   /** 欢迎行下面的指路：有没有插件没起来，与 /doctor 在不在 */
   plugins: optional(pluginsService),
   commands: optional(commands),
+  /** 发出入站之前给配置的会话建档，创建来源写 cli 审批面的登记名 */
+  sessionManager: optional(sessionManager),
 };
 type Caps = BoundOf<typeof uses>;
 
 /** TUI 实际用到的能力：界面层不碰配置解析、服务发布与存储 */
 type TuiCaps = Pick<
   Caps,
-  'events' | 'logger' | 'lifecycle' | 'services' | 'hostConfig' | 'platform' | 'persona' | 'plugins' | 'commands'
+  | 'events'
+  | 'logger'
+  | 'lifecycle'
+  | 'services'
+  | 'hostConfig'
+  | 'platform'
+  | 'persona'
+  | 'plugins'
+  | 'commands'
+  | 'sessionManager'
 >;
 
 export default definePlugin({
@@ -166,7 +178,6 @@ function startCli(caps: Caps): void {
   const adapter: PlatformAdapter = {
     adapterName: 'CLI',
     platform: 'cli',
-    sessionTypes: [], // CLI 单会话，不区分 sessionType
     // 终端界面在跑才有连接；后台运行（非 TTY）与界面起来之前没有连接，不是离线
     getConnections(): PlatformConnection[] {
       return tui?.isRunning() ? [{ id: sessionId, platform: 'cli', status: 'online' }] : [];
@@ -314,6 +325,8 @@ class CliTui {
   private cursor = 0;
   private history: string[] = [];
   private historyIndex: number | null = null;
+  /** 提交的行依次投递：会话缺档时要先等建档，后一行不能越过前一行先发出 */
+  private delivering: Promise<void> = Promise.resolve();
   private readonly chat = new ChatBuffer();
   private logLines: LogEntry[];
   private logScroll = 0;
@@ -337,7 +350,7 @@ class CliTui {
     private caps: TuiCaps,
     private config: CLIConfig,
     private sessionId: string,
-    approvalSurface: ApprovalSurface,
+    private readonly approvalSurface: ApprovalSurface,
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
@@ -345,7 +358,7 @@ class CliTui {
     // 之后通过 LogHub.onEntry 实时累积；按 seq 单调，下方 onEntry 用 lastSeq 去重避免与 initial 重复。
     this.logLines = initialEntries.slice();
     // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场
-    this.attendance = approvalSurface.attend(
+    this.attendance = this.approvalSurface.attend(
       { platform: 'cli', userId: 'console' },
       {
         requested: approval => {
@@ -515,7 +528,7 @@ class CliTui {
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
 
-  private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
+  private handleKeypress = (chunk: string, key: readline.Key): void => {
     if (!this.running) return;
     // 卡片只接它推出之后的按键：这次按键让终端变为在场而补推来的卡，owner 还没看到，这次按键照常处理
     const carded = this.cards.length > 0;
@@ -583,7 +596,7 @@ class CliTui {
     }
 
     if (key.name === 'return') {
-      await this.submitLine();
+      this.submitLine();
       return;
     }
     if (key.name === 'backspace') {
@@ -697,7 +710,7 @@ class CliTui {
     this.queueRender();
   }
 
-  private async submitLine(): Promise<void> {
+  private submitLine(): void {
     const text = this.inputLine.trim();
     this.inputLine = '';
     this.cursor = 0;
@@ -715,8 +728,22 @@ class CliTui {
     // 适配器不再内联解析：未注册命令被放行为普通消息进入 agent，命中命令
     // 由该相位执行并经 outbound:message 回送渲染到 TUI，与 onebot/webui 一致。
     // shutdown/restart 的 TUI 清理由 lifecycle.onDispose(() => this.stop()) 兜底。
-    // userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的
-    // cli:console owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority。
+    // 一行没发出去只记 warn，不挡后面的行
+    this.delivering = this.delivering
+      .then(() => this.deliver(text))
+      .catch(err => this.caps.logger.warn('终端消息没有发出:', err));
+  }
+
+  /**
+   * 发出一行。会话在入站之前建档、写创建来源：入站时会话表里已有它，房间收录不会把它当成 IM 房间；会话被删后下一条消息
+   * 照样补建，已有的记录不动。userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的 cli:console
+   * owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority
+   */
+  private async deliver(text: string): Promise<void> {
+    const sm = this.caps.sessionManager.current;
+    if (sm && !sm.getSession(this.sessionId)) {
+      await sm.ensureSession(this.sessionId, {}, { createdFrom: this.approvalSurface.name });
+    }
     await this.caps.events.emit('inbound:message', {
       content: text,
       sessionId: this.sessionId,

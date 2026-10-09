@@ -22,6 +22,7 @@ import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { recordRoom } from '../fixtures/rooms.js';
 import { CLIENT, client, DETACHED_SURFACE, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { ITERATIONS, MODEL, PAPER_NAME, PERSONA, settingsPlugin, TOOL_GROUPS } from '../fixtures/session-settings.js';
@@ -275,12 +276,12 @@ describe('握手', () => {
 
 describe('会话列表', () => {
   it('两区：我的会话在前、房间在后，section 只取一区；房间行带平台、实例、账号与受众', async () => {
-    const { server, sm } = await setup();
+    const { host, server, sm } = await setup();
     const mine = await sm.createSession({ name: '周报' });
     clock(2_000);
-    await sm.ensureSession('onebot:10000:group:20001', { name: '读书会' });
+    await recordRoom(host.events, 'onebot:10000:group:20001', '读书会');
     clock(3_000);
-    await sm.ensureSession('onebot:20000:private:30001', { name: '小明' });
+    await recordRoom(host.events, 'onebot:20000:private:30001', '小明');
     const c = client(server());
     await c.init();
 
@@ -310,13 +311,13 @@ describe('会话列表', () => {
   });
 
   it('「我的」区：出错、完成未读、运行中依次排在前面，其余按最后活动从新到旧；房间不记未读', async () => {
-    const { server, sm, turn } = await setup();
+    const { host, server, sm, turn } = await setup();
     const ids: Record<string, string> = {};
     for (const [i, name] of ['A', 'B', 'C', 'D', 'E'].entries()) {
       clock(1_000 + i);
       ids[name] = (await sm.createSession({ name })).id;
     }
-    await sm.ensureSession('onebot:10000:group:1', { name: '群' });
+    await recordRoom(host.events, 'onebot:10000:group:1', '群');
     clock(5_000);
     await turn(ids.D, 'replied');
     await turn(ids.B, 'error');
@@ -345,7 +346,7 @@ describe('会话列表', () => {
   });
 
   it('房间按最后活动排；按接管的适配器实例分组，组里有房间数与账号数，没记下实例的按平台成一组；组不受搜索影响', async () => {
-    const { server, sm } = await setup();
+    const { host, server } = await setup();
     for (const [at, id] of [
       [1_000, 'onebot:10000:group:1'],
       [1_500, 'onebot:10000:private:5'],
@@ -354,7 +355,7 @@ describe('会话列表', () => {
       [4_000, 'onebot:30000:group:4'],
     ] as const) {
       clock(at);
-      await sm.ensureSession(id, { name: id });
+      await recordRoom(host.events, id, id);
     }
     const c = client(server());
     await c.init();
@@ -379,7 +380,7 @@ describe('会话列表', () => {
   });
 
   it('一组房间：instance 只列这个实例接管的，platform 只列这个平台还没记下实例的；已归档的房间不进分组；组名是实例的显示名', async () => {
-    const { app, server, sm } = await setup();
+    const { app, host, server, sm } = await setup();
     const reusable = definePlugin({
       name: 'qq-adapter',
       displayName: 'QQ 机器人',
@@ -398,7 +399,7 @@ describe('会话列表', () => {
     await app.plugin(reusable, {}, 'qq-adapter:work');
     await app.plugins.idle();
     for (const id of ['onebot:10000:group:1', 'onebot:10000:group:2', 'onebot:40000:group:3', 'onebot:30000:group:4']) {
-      await sm.ensureSession(id, { name: id });
+      await recordRoom(host.events, id, id);
     }
     await sm.updateSession('onebot:10000:group:2', { status: 'archived' });
     const c = client(server());
@@ -427,11 +428,11 @@ describe('会话列表', () => {
   });
 
   it('搜索：名称、标题、id 与「平台:群号」都能命中，不分大小写', async () => {
-    const { server, sm } = await setup();
+    const { host, server, sm } = await setup();
     const weekly = await sm.createSession({ name: '会话 1' });
     await sm.updateSessionTitle(weekly.id, 'Weekly Report');
-    await sm.ensureSession('onebot:10000:group:20001', { name: '读书会' });
-    await sm.ensureSession('onebot:10000:group:20002', { name: '跑团' });
+    await recordRoom(host.events, 'onebot:10000:group:20001', '读书会');
+    await recordRoom(host.events, 'onebot:10000:group:20002', '跑团');
     const c = client(server());
     await c.init();
     const ids = async (query: string) => (await c.list({ query })).sessions.map(s => s.id);
@@ -467,11 +468,11 @@ describe('会话列表', () => {
   });
 
   it('parentId 列出直接子会话，子会话归在根会话的区里、不进根列表；父会话不存在回 not-found', async () => {
-    const { server, sm } = await setup();
+    const { host, server, sm } = await setup();
     const root = await sm.createSession({ name: '根' });
     const child = await sm.createChildSession(root.id, { name: '子' });
     const grandchild = await sm.createChildSession(child.id, { name: '孙' });
-    await sm.ensureSession('onebot:10000:group:1', { name: '群' });
+    await recordRoom(host.events, 'onebot:10000:group:1', '群');
     const roomChild = await sm.createChildSession('onebot:10000:group:1', { name: '群里的子任务' });
     const c = client(server());
     await c.init();
@@ -494,7 +495,7 @@ describe('会话列表', () => {
 
 describe('watch 增量', () => {
   it('建档、改名、子会话增删与删除各推一条增量，带最新的分组；没 watch 的连接收不到，连接关闭后不再推送', async () => {
-    const { server, sm } = await setup();
+    const { host, server, sm } = await setup();
     const watcher = client(server());
     const quiet = client(server());
     await watcher.init();
@@ -530,7 +531,7 @@ describe('watch 增量', () => {
         .at(-1)?.childCount,
     ).toBe(0);
 
-    await sm.ensureSession('onebot:10000:group:1', { name: '群' });
+    await recordRoom(host.events, 'onebot:10000:group:1', '群');
     expect(changes().at(-1)?.groups).toEqual([
       { platform: 'onebot', instance: 'onebot-a', label: 'onebot-a', rooms: 1, accounts: 1, attention: 0 },
     ]);
@@ -664,7 +665,7 @@ describe('建、改名、归档、删除与批量', () => {
 
     const { session: root } = await c.call('session/create', {});
     expect(root.title).toMatch(/^会话 /);
-    expect(sm.getSession(root.id)).toMatchObject({ status: 'waiting', createdBy: 'user' });
+    expect(sm.getSession(root.id)).toMatchObject({ status: 'waiting', createdFrom: 'webui' });
     expect(sm.getSession(root.id)?.config).toEqual({});
     const persona = (await c.call('session/config/get', { sessionId: root.id })).items.find(r => r.key === 'persona');
     expect([persona?.effective, persona?.source]).toEqual(['aalis-webui', 'platform']);
@@ -675,6 +676,19 @@ describe('建、改名、归档、删除与批量', () => {
     expect(sm.getSession(child.id)?.config).toEqual({ persona: 'aalis-webui', think: 'high' });
 
     expect((await c.fail('session/create', { parentId: 'session-nope' })).data?.code).toBe('not-found');
+  });
+
+  it('create 的创建来源取连接所在审批面的登记名，不取连接自报的客户端名与身份里的平台；子会话不带，按根会话取', async () => {
+    const { server, sm } = await setup();
+    const c = client(server(), { identity: { platform: 'cli', userId: 'console' }, surface: DETACHED_SURFACE });
+    await c.call('initialize', { protocolVersion: SESSION_PROTOCOL_VERSION, client: { name: 'cli', version: '0' } });
+
+    const { session } = await c.call('session/create', { name: '<新会话>' });
+    const { session: child } = await c.call('session/create', { name: '<子会话>', parentId: session.id });
+
+    expect(sm.getSession(session.id)?.createdFrom).toBe(DETACHED_SURFACE.name);
+    expect(sm.getSession(session.id)?.originPlatform).toBeUndefined();
+    expect(sm.getSession(child.id)).not.toHaveProperty('createdFrom');
   });
 
   it('rename、archive 与 unarchive（都连同子会话）、delete；已归档的只在 archived 的列表里；会话不存在回 not-found', async () => {
@@ -752,7 +766,7 @@ describe('会话设置', () => {
   const values = (rows: Rows) => rows.map(r => [r.key, r.value, r.effective, r.source]);
 
   it('config/get：只列适用于这种会话的项，composer、common 在前，composer 最多两项；每行带字段、所属插件、本会话的值、生效值与来源', async () => {
-    const { server, sm } = await setup({
+    const { host, server, sm } = await setup({
       layers: LAYERS,
       stored: {
         'session-old': {
@@ -766,7 +780,7 @@ describe('会话设置', () => {
         },
       },
     });
-    await sm.ensureSession('onebot:10000:group:1', { name: '群' });
+    await recordRoom(host.events, 'onebot:10000:group:1', '群');
     const c = client(server());
     await c.init();
 
@@ -923,8 +937,9 @@ describe('会话设置', () => {
   });
 
   it('插件启停推 session/config/changed：每条连接都收到；停用后它的项不再出现、值还在，重新启用后恢复', async () => {
-    const { app, server, sm } = await setup();
+    const { app, host, server, sm } = await setup();
     const room = 'onebot:10000:group:1';
+    await recordRoom(host.events, room);
     await sm.ensureSession(room, { config: { paperName: '<自己的白纸>' } });
     const a = client(server());
     const b = client(server());

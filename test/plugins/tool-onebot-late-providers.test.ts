@@ -2,18 +2,21 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { sessionHistory } from '../../packages/api-session-history/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, optional, provide } from '../../packages/core/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { roomScopeManager } from '../fixtures/room-scope.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // tool-onebot 与可选依赖的上线顺序无关。
 //
 // 1. 会话历史访问规则挂在 session-history 提供者实例的局部状态上：tool-session 重启、
 //    晚于本插件上线，规则都要重挂到新实例；不能只在 app:ready 那一刻对 current 注册一次。
-//    规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关。
+//    规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关。两个房间已收录（同平台范围按会话记下的出生平台判）。
 // 2. OneBot 工具只在出现 OneBot 平台时注册，但适配器可能晚于 app:ready 上线，
 //    且作为 platform 的非胜者上线（follow 不触发）：平台出现时补注册一次，之后不重复。
 // ════════════════════════════════════════════════════════════
@@ -57,6 +60,7 @@ async function setup() {
     registerGroup: () => () => {},
   } as never);
   host.provide(memory, { getHistory: async () => [] } as never);
+  host.provide(sessionManager, roomScopeManager({}, {}, [storedRoom(GROUP), storedRoom(PRIVATE)]));
 
   /** 群会话里读取同账号某私聊的历史（直接走 session-history 服务，与通用工具同一条规则链） */
   const readPrivateFromGroup = () => {

@@ -131,7 +131,7 @@ sessionConfig:
 
 哪一层都没设的项，消费方按「没有这个键」处理（例如 `llm` 没设时 agent 用 llm 服务的偏好）。
 
-**房间会话钉死出生平台：** 平台档按哪个平台选：会话有出生平台（api-gateway 的 `resolveSessionOrigin`，子任务按父会话算）时按出生平台，忽略调用方传入的 `platform`，并按它的受众叠加受众条目；没有出生平台的 owner 面会话（WebUI、CLI 等）按传入的入口平台，不取受众条目。因此从 WebUI 往 QQ 群插话，这一轮仍按 onebot 的平台档选工具组、人设与模型。`resolveConfig` 与 `resolveInheritance` 同一选法。
+**房间会话钉死平台前缀：** 平台档按哪个平台选：会话 ID 带平台前缀（api-gateway 的 `resolveSessionOrigin`，子任务按父会话算）时按这个前缀，忽略调用方传入的 `platform`，并按它的受众叠加受众条目；不带前缀的 owner 面会话（WebUI、CLI 等）按传入的入口平台，不取受众条目。因此从 WebUI 往 QQ 群插话，这一轮仍按 onebot 的平台档选工具组、人设与模型。`resolveConfig` 与 `resolveInheritance` 同一选法。
 
 ```ts
 type InheritanceSource = 'defaults' | 'platform' | 'audience' | 'parent';
@@ -165,6 +165,19 @@ type RoomAudience = 'owner' | 'private' | 'group';
 /** 子会话为 task，受众为群或私聊为 room（含 owner 自己的私聊），其余为 owner */
 function sessionKind(session: Pick<SessionInfo, 'parentId' | 'audience'>): SessionKind;
 
+interface OriginChat {
+  type: string;          // 平台类型名
+  multiParty: boolean;   // 多方标记：建档时按适配器的声明记下，之后不随声明改动
+  selfId?: string;       // 机器人账号：消息上带了才有
+  targetId: string;      // 多方为群号，一对一为对端账号；与作用域第三段同口径
+}
+
+interface WorkBinding {
+  root: string;          // 绑定目录（真实路径），建会话时定
+  extraRoots: string[];  // 附加可写目录
+  worktrees: string[];   // 本会话树经宿主建的同仓 worktree
+}
+
 interface SessionInfo {
   id: string;
   name: string;
@@ -175,13 +188,16 @@ interface SessionInfo {
   config: StoredSessionConfig;     // 原样存储：含没启用的插件的键
   createdAt: number;
   updatedAt: number;
-  createdBy?: 'user' | 'agent' | 'scheduler' | 'system';
+  createdFrom?: string;            // 创建来源：建这个会话的审批面的登记名（webui、cli）
   inputContext?: string;
   result?: string;
   metadata?: Record<string, unknown>;
   kind: SessionKind;               // sessionKind 的结果
-  originPlatform?: string;         // 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话没有
-  audience?: RoomAudience;         // 只有根会话带：有出生平台的取 group 或 private，其余为 owner
+  originPlatform?: string;         // 出生平台：IM 房间建档时记下；只有房间的根会话带
+  originChat?: OriginChat;         // 聊天窗口：与出生平台同时记下
+  work?: WorkBinding;              // 绑定：只有根工作会话带
+  currentDir?: string;             // 当前目录：工作会话与它的子会话各带一份
+  audience?: RoomAudience;         // 只有根会话带：id 带出生平台前缀的取 group 或 private，其余为 owner
   originInstance?: string;         // 有出生平台的房间：接管它的平台适配器的插件实例 id；只供列表分组
   lastReplyAt?: number;            // 她最近一次开口的时间：回合结局为 replied 时写入
   lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number; error?: string };  // 最近结束的一轮
@@ -191,9 +207,17 @@ interface SessionInfo {
 
 会话种类是会话列表的分区、设置项的 `appliesTo` 与会话协议的 `SessionSummary.kind` 共同的来源。它与审批的发起类别是两回事：owner 在自己的 QQ 私聊里亲手发起的回合照样能产生审批。
 
-`kind`、`originPlatform`、`audience` 由 session-manager 只按会话 ID 与 `parentId` 推出，新建、建档与加载时覆盖写入，调用方传的值与存储里的旧值都不采信；`createSession`、`createChildSession` 的参数类型里没有这三个字段，也没有下面四个由 session-manager 写入的字段。
+会话之间的差别按字段判，不按会话 ID 的写法：
 
-- `originInstance`：有出生平台的房间建档时，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析出接管它的适配器条目，记下它的插件实例 id（`contextId`），落盘保存，记下后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。还没有适配器认领（适配器没装好、连接还没上来、账号暂时不属于任何实例）的为 undefined，下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录已有解析在途的不重复解析。`ensureSession` 建档时先建好记录、发 `session:created`，记下实例后再发 `session:updated`，等它落定才返回；命中已有的记录时只合并更新，不解析。
+- 来源字段 `originPlatform` 与 `originChat`：会话表里还没有记录的会话收到第一条原生入站（不带 `source`、不是子会话）时，参考实现按这条消息记下（出生平台取消息的平台，聊天窗口经 api-gateway 的 `chatScopeOf` 按这个平台的类型声明解析），之后不变。只有 IM 房间的根会话带，子会话按根会话取（`rootSessionOf`）。按 ID 建档（`ensureSession`、`createChildSession` 给父会话兜底建档）的记录建档时不带，没有创建来源与绑定的根会话由之后第一条归消息平台的适配器管的原生入站补记；读表时缺这两个字段的记录按没有出生平台，运行时不从 ID 推。
+- 创建来源 `createdFrom`：建这个会话的审批面的登记名，只在建档时经专用参数写（`createSession` 的第二个参数、`ensureSession` 的第三个参数，类型 `SessionCreation`），只有会话服务（owner 连接的 `session/create`，写这条连接所在审批面的登记名）与终端（写 `cli`）传。专用参数只给根会话：`createSession` 带 `parentId` 又带它时抛错，子会话按根会话取。
+- 绑定 `work` 与当前目录 `currentDir`：`createSession` 的第二个参数带 `work: { root }` 即建工作会话（只用于根会话），当前目录取绑定目录；子会话建时取父会话此刻的当前目录，之后各改各的。之后只经 `setCurrentDir`、`setExtraRoots`、`addWorktree` 改，绑定写在根工作会话上。都随会话表持久化，任何清空都不清，删除会话时随记录删除。
+
+`createSession`、`createChildSession`、`ensureSession` 的会话字段参数里带上这几项一律丢弃。`kind`、`audience` 由 session-manager 只按会话 ID 与 `parentId` 推出，新建、建档与加载时覆盖写入，调用方传的值与存储里的旧值都不采信；参数类型里同样没有它们，也没有下面四个由 session-manager 写入的字段。
+
+房间类别 `roomClass(info, lookup, isOwner)` 是按这些字段判「受众里有谁」的纯函数，子会话取根会话的：有出生平台的，聊天窗口为多方的是 `room`，一对一而对端是 owner 身份的是 `owner-only`（`isOwner` 由调用方传入），其余一对一是 `room`，只认多方标记、不认类型名；没有出生平台、带创建来源的是 `owner-only`；其余（不在会话表里的、按 ID 建档的、`mcp-server`、编排与定时任务的会话）一律 `internal`。
+
+- `originInstance`：ID 带出生平台前缀的房间建档时，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析出接管它的适配器条目，记下它的插件实例 id（`contextId`），落盘保存，记下后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。还没有适配器认领（适配器没装好、连接还没上来、账号暂时不属于任何实例）的为 undefined，下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录已有解析在途的不重复解析。`ensureSession` 建档时先建好记录、发 `session:created`，记下实例后再发 `session:updated`，等它落定才返回；命中已有的记录时只合并更新，不解析。
 - `lastReplyAt`：回合结局（`agent:turn:after` 的 `outcome`）为 `replied` 时写入，`silent`、`aborted`、`error` 不改；同一会话别的回合还在跑时同样写入，随 `session:updated` 推出。
 - `lastTurn`：每一轮结束时写入这一轮的结局（取值同 `agent:turn:after` 的 `outcome`；消息被拦下、没有结局的一轮记为 `silent`）与结束时间；结局为 `error` 时带 `agent:turn:after` 给的一句原因（`error`，最多留 200 字，空串当作没给），其余结局不带。别的回合还在跑时同样写入，随 `session:updated` 推出并落盘。被停止的会话收口为 `completed`，从 `lastTurn.outcome` 为 `aborted` 看出。
 - `tokens`：按 `@aalis/api-llm` 的 `llm:usage` 累加这个会话自己的输入与输出 token（对话、摘要、识图、转写的调用都带会话 id），不含子会话。只记已有的会话，不为用量建会话；不改 `updatedAt`，记了就发 `session:updated`；随会话落盘，删除会话时一并清掉。
@@ -206,15 +230,19 @@ interface SessionInfo {
 
 ```ts
 interface SessionManagerService {
-  createSession(opts?): Promise<SessionInfo>;
+  createSession(opts?, creation?: SessionCreation): Promise<SessionInfo>;
   getSession(id: string): SessionInfo | undefined;
   listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
   updateSession(id, updates): Promise<SessionInfo>;
-  ensureSession(id, patch?): Promise<SessionInfo>;
+  ensureSession(id, patch?, creation?: { createdFrom: string }): Promise<SessionInfo>;
   deleteSession(id: string): Promise<void>;
   createChildSession(parentId, opts?): Promise<SessionInfo>;
   getChildren(parentId: string): SessionInfo[];
   completeSession(id: string, result?: string): Promise<void>;
+
+  setCurrentDir(sessionId: string, dir: string): Promise<void>;                    // 这个会话自己的当前目录
+  setExtraRoots(sessionId: string, extraRoots: readonly string[]): Promise<void>;  // 写到根工作会话上
+  addWorktree(sessionId: string, path: string): Promise<void>;                     // 写到根工作会话上
 
   registerSetting(setting: SessionSetting, plugin: string): () => void;  // 提供者一侧；插件用绑定门面
   listSettings(): RegisteredSessionSetting[];

@@ -14,7 +14,7 @@
 
 ```ts
 interface CommandArgv {
-  session: { sessionId: string; platform: string; userId?: string; sessionType?: 'group' | 'private' | 'channel'; raw: string };
+  session: { sessionId: string; platform: string; userId?: string; sessionType?: string; raw: string };
   options: Record<string, unknown>;
 }
 

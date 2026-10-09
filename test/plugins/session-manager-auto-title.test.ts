@@ -7,9 +7,8 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
-// 背景（C11）：自动标题监听在「会话不存在」时只打一条 warn 就返回，而平台派生会话
-// （cli-default、OneBot 会话 id）从不经 createSession 预建 —— 于是 CLI 会话永远没有标题，
-// 且每条消息告警一次。契约：缺档时先 ensureSession 兜底建档再生成标题（与 createChildSession 同路）。
+// 自动标题只给带创建来源的根会话（WebUI 新建的、终端建的）生成，按会话字段判，不按入口平台：
+// IM 房间、按 id 建档的会话与子会话不生成，owner 从 WebUI 往房间插话也不拿来给房间起名。
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
@@ -44,56 +43,49 @@ async function waitTitle(sm: SessionManagerService, id: string): Promise<string 
   return sm.getSession(id)?.title;
 }
 
-describe('自动标题：平台派生会话缺档时先兜底建档', () => {
-  it('cli-default 首条消息后有标题（会话也被建出来）', async () => {
+describe('自动标题按创建来源', () => {
+  it('WebUI 新建与终端建的会话：首条消息后有标题', async () => {
     const { app, host, sm } = await setup();
+    const webui = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
+    await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
 
+    await host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId: webui.id, platform: 'webui' });
     await host.events.emit('inbound:message', {
       content: '帮我算下装修预算',
       sessionId: 'cli-default',
       platform: 'cli',
     });
-    const title = await waitTitle(sm, 'cli-default');
-    const session = sm.getSession('cli-default');
+    const titles = [await waitTitle(sm, webui.id), await waitTitle(sm, 'cli-default')];
     await app.stop();
 
-    expect(session, 'cli-default 应被兜底建档').toBeDefined();
-    expect(title, '平台派生会话的首条消息也该拿到标题').toBe('装修预算');
+    expect(titles).toEqual(['装修预算', '装修预算']);
   });
 
-  it('缺 platform 的消息不建档也不生成标题：白名单是正向门，不兜底来路不明的会话', async () => {
-    const { app, host, sm, llmCalls } = await setup();
-
-    await host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId: 'no-platform' } as never);
-    await new Promise(r => setTimeout(r, 30));
-    const session = sm.getSession('no-platform');
-    await app.stop();
-
-    expect(session, '缺 platform 不该被兜底建档').toBeUndefined();
-    expect(llmCalls.chats, '缺 platform 不该烧一次 LLM 生成标题').toBe(0);
-  });
-
-  it('WebUI 入口往 IM 房间发消息：不生成标题（房间不拿 owner 的话起名）', async () => {
+  it('IM 房间、按 id 建档的会话与子会话不生成标题，owner 从 WebUI 往房间插话也一样', async () => {
     const { app, host, sm, llmCalls } = await setup();
     const group = 'onebot:10000:group:20001';
-    const priv = 'onebot:10000:private:30001';
-    // 已登记、还没有标题的房间同样跳过
-    await sm.ensureSession(priv, { name: priv });
+    const owner = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
+    await sm.updateSessionTitle(owner.id, '<已有标题>');
+    const child = await sm.createChildSession(owner.id, { name: '<子任务>' });
+    await sm.ensureSession('<按 id 建档>', {});
+    const emit = (sessionId: string, platform: string) =>
+      host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId, platform });
 
-    for (const sessionId of [group, priv]) {
-      await host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId, platform: 'webui' });
-    }
+    await emit(group, 'onebot');
+    await emit(group, 'webui');
+    await emit(child.id, 'webui');
+    await emit('<按 id 建档>', 'webui');
     await new Promise(r => setTimeout(r, 30));
-    const titles = [sm.getSession(group)?.title, sm.getSession(priv)?.title];
+    const titles = [group, child.id, '<按 id 建档>'].map(id => sm.getSession(id)?.title);
     await app.stop();
 
-    expect(titles).toEqual([undefined, undefined]);
-    expect(llmCalls.chats, '房间不该为起标题烧一次 LLM').toBe(0);
+    expect(titles).toEqual([undefined, undefined, undefined]);
+    expect(llmCalls.chats, '不该为起标题烧一次 LLM').toBe(0);
   });
 
-  it('已建档且已有标题的会话不重复生成', async () => {
+  it('已有标题的会话不重复生成', async () => {
     const { app, host, sm, llmCalls } = await setup();
-    await sm.ensureSession('cli-default', { name: 'CLI' });
+    await sm.ensureSession('cli-default', { name: 'CLI' }, { createdFrom: 'cli' });
     await sm.updateSessionTitle('cli-default', '旧标题');
 
     await host.events.emit('inbound:message', { content: '换个话题', sessionId: 'cli-default', platform: 'cli' });

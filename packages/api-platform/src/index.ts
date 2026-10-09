@@ -27,6 +27,16 @@ export interface PlatformSelfIdentity {
 }
 
 /**
+ * 平台类型：一个平台里聊天窗口的一种（如 OneBot 的群与私聊）。类型名由平台自定，消息经 IncomingMessage.sessionType 带上它
+ */
+export interface SessionTypeDecl {
+  /** 类型名：非空，不含 `:`，不是 `*`；与作用域 `平台:类型:目标` 的第二段同一套写法 */
+  name: string;
+  /** 多方（受众里不止机器人与对端两方）为 true，一对一为 false */
+  multiParty: boolean;
+}
+
+/**
  * 平台适配器 —— 每个平台插件实现此接口
  *
  * 提供统一的平台抽象，使核心可以查询所有已接入平台的连接状态，
@@ -40,14 +50,13 @@ export interface PlatformAdapter {
   /** 平台标识 (如 'cli', 'webui', 'onebot', 'telegram', 'discord') */
   platform: string;
   /**
-   * 平台可能发出的 IncomingMessage.sessionType 枚举。
+   * 这个平台的类型，消息在 IncomingMessage.sessionType 上带类型名。IM 房间建档时按它记下聊天窗口是一对一还是多方，
+   * 作用域的候选也按它列。
    *
-   * 消费者（plugin-webui-server 的 gateway-scopes 候选）从中汇总出
-   * 真实可选作用域，避免在 UI 上臆造不存在的选项。
-   *
-   * 未声明表示适配器不区分 sessionType（如 cli / webui 都是单会话）。
+   * 不声明（没写或空列表）的平台整个算一个一对一类型 `private`（见 {@link sessionTypesOf}）。有多方会话的平台必须声明
+   * 类型并在消息上带类型名，否则它的群按一对一处理：任何群员都会被当成那个唯一的对端
    */
-  sessionTypes?: readonly string[];
+  sessionTypes?: readonly SessionTypeDecl[];
   /** 获取当前所有连接 */
   getConnections(): PlatformConnection[];
   /** 向指定 sessionId 发送纯文本消息 */
@@ -67,9 +76,9 @@ export interface PlatformAdapter {
    * 路由仍优先本方法，前缀只是未实现时的兜底；选档则只看前缀。
    *
    * 会话 id 约定（实现了本方法的适配器也要遵守）：多人房间的会话 id 必须以 `<platform>:` 开头
-   * （`platform` 即本适配器的平台名），session-manager 据此（api-gateway 的 `resolveSessionOrigin`）
-   * 按出生平台选档、分区。不带前缀的 id 只适合单用户会话（如 cli），且不要含单冒号：
-   * 带单冒号的 id 一律按第一个 `:` 之前的一段认作出生平台。
+   * （`platform` 即本适配器的平台名），session-manager 目前据此（api-gateway 的 `resolveSessionOrigin`）
+   * 按 id 前缀选档、分区。不带前缀的 id 只适合单用户会话（如 cli），且不要含单冒号：
+   * 带单冒号的 id 一律按第一个 `:` 之前的一段认作平台前缀。
    */
   canHandle?(sessionId: string): boolean | Promise<boolean>;
   /** 获取当前平台账号自身身份；多连接平台可用 sessionId 定位具体连接 */
@@ -114,6 +123,35 @@ export function getPlatformNames(source: ServiceRef<PlatformAdapter>): string[] 
   const names = new Set<string>();
   for (const a of getPlatformAdapters(source)) names.add(a.platform);
   return [...names];
+}
+
+/** 不声明类型的平台的那一个类型 */
+const UNDECLARED_TYPES: readonly SessionTypeDecl[] = [{ name: 'private', multiParty: false }];
+
+/**
+ * 平台的类型：适配器声明的条目；没声明（没写或空列表）时整个平台算一个一对一类型 private。
+ * 平台没有适配器（没装、停用）时同没声明
+ */
+export function sessionTypesOf(adapter: Pick<PlatformAdapter, 'sessionTypes'> | undefined): readonly SessionTypeDecl[] {
+  return adapter?.sessionTypes?.length ? adapter.sessionTypes : UNDECLARED_TYPES;
+}
+
+/** 消息带的类型名按平台的类型解析的结果 */
+export interface ResolvedSessionType extends SessionTypeDecl {
+  /** 类型名不在平台的声明里：已按多方处理，调用方据此告警 */
+  undeclared: boolean;
+}
+
+/**
+ * 按平台的类型解析消息带的类型名：不带类型名按 private、一对一；声明里有的按声明，多方标记不是 false 的（漏写、写错）按多方；
+ * 声明里没有的按多方，标出 undeclared。都是失败关闭：宁可把一对一当多方
+ */
+export function resolveSessionType(types: readonly SessionTypeDecl[], name: string | undefined): ResolvedSessionType {
+  if (name === undefined) return { name: 'private', multiParty: false, undeclared: false };
+  const declared = types.find(type => type.name === name);
+  return declared
+    ? { name, multiParty: declared.multiParty !== false, undeclared: false }
+    : { name, multiParty: true, undeclared: true };
 }
 
 /** 聚合所有 adapter 的连接 */

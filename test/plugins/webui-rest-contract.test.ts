@@ -127,7 +127,7 @@ const doubles = definePlugin({
     const adapter: PlatformAdapter = {
       adapterName: 'ZZ',
       platform: 'zz',
-      sessionTypes: ['group'],
+      sessionTypes: [{ name: 'group', multiParty: true }],
       getConnections: () => {
         if (connectionsThrow) throw new Error('/zz/secret/path 读不出');
         return [{ id: 'zz-1', platform: 'zz', status: 'online', selfId: '10000' }];
@@ -311,6 +311,7 @@ describe('管理面 REST 的回应与契约', () => {
   const errors: Sample[] = [];
   let registered: string[] = [];
   let mixedModels: unknown;
+  let gatewayScopes: unknown;
   let home: string;
   let app: App;
 
@@ -467,9 +468,10 @@ describe('管理面 REST 的回应与契约', () => {
     await ok('GET /api/logs/tail', '/api/logs/tail?limit=5');
     await ok('GET /api/logs/range', '/api/logs/range?before=2&limit=5');
     await ok('GET /api/themes', '/api/themes');
-    for (const service of ['llm', 'llm-thinking', 'platform', 'gateway-scopes', 'toolGroups', 'zz-names']) {
+    for (const service of ['llm', 'llm-thinking', 'platform', 'toolGroups', 'zz-names']) {
       await ok('GET /api/models/:service', `/api/models/${service}`);
     }
+    gatewayScopes = (await ok('GET /api/models/:service', '/api/models/gateway-scopes')).models;
     mixedModels = await ok('GET /api/models/:service', '/api/models/zz-mixed');
     await ok(
       'GET /api/models/:service',
@@ -575,6 +577,10 @@ describe('管理面 REST 的回应与契约', () => {
     const expected = [...jsonKeys, ...fileKeys].filter(key => !key.startsWith('GET /frames/_base/'));
     expect(registered).toContain('GET /api/plugins');
     expect([...registered].sort()).toEqual(expected.sort());
+  });
+
+  it('作用域的候选按各平台声明的类型名列：没声明类型的平台（WebUI）只有一个类型 private', () => {
+    expect(gatewayScopes).toEqual(['*', '*:group', '*:private', 'zz:*', 'zz:group', 'webui:*', 'webui:private']);
   });
 
   it('/api/models 合起各提供者的 listModels()：胜出的提供者没有它时照样取排在后面的；取不到的跳过，记 warn 点名', () => {

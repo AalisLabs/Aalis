@@ -3,7 +3,6 @@ import type { Page, Viewport } from 'puppeteer';
 import { describe, expect, it } from 'vitest';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
@@ -105,11 +104,11 @@ async function start() {
     model: createMockLLMPlugin({ responses: script, latencyMs: 10 }),
     extra: [probeTools, userProfile, framesPlugin()],
     cleanups,
+    rooms: { [ROOM]: '读书会' },
   });
   await app.start();
   await waitListening(port);
-  const host = app.bind({ sessionManager, memory });
-  await host.sessionManager.require().ensureSession(ROOM, { name: '读书会' });
+  const host = app.bind({ memory });
   await host.memory.require().saveMetadata('user:profile', 'onebot:10001', {
     facts: [{ id: 'f1', text: '喜欢读科幻小说', temporality: 'permanent', observedAt: 1, updatedAt: 1 }],
     updatedAt: 1,

@@ -25,6 +25,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { recordRoom } from '../fixtures/rooms.js';
 import { client, DETACHED_SURFACE } from '../fixtures/session-client.js';
 import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { deferred } from '../helpers/deferred.js';
@@ -118,9 +119,9 @@ async function setup() {
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
   const sm = host.sessionManager.require();
-  const mine = (await sm.createSession({ name: '我的', createdBy: 'user' })).id;
-  await sm.ensureSession(ROOM, { name: '读书会' });
-  await sm.ensureSession(OWNER_DM, { name: 'owner 私聊' });
+  const mine = (await sm.createSession({ name: '我的' }, { createdFrom: 'webui' })).id;
+  await recordRoom(host.events, ROOM, '读书会');
+  await recordRoom(host.events, OWNER_DM, 'owner 私聊');
 
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
 
@@ -929,7 +930,7 @@ describe('会话协议上的审批', () => {
     const { sm, mine, connect, request, flush } = await setup();
     const c = await connect();
     await vi.advanceTimersByTimeAsync(1);
-    const newer = (await sm.createSession({ name: '更新的', createdBy: 'user' })).id;
+    const newer = (await sm.createSession({ name: '更新的' }, { createdFrom: 'webui' })).id;
     await c.call('sessions/watch', {});
     request(mine);
     request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });

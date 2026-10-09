@@ -343,6 +343,11 @@ export function buildRecallNoticeContent(opts: {
   return `[notice/${isGroup ? 'group_recall' : 'friend_recall'}] ${head}${detail}`;
 }
 
+/** 频道的窗口 id `<guild>:<channel>`：会话 id 的目标段与入站消息的 groupId 都用它 */
+function channelWindowId(guildId?: string, channelId?: string): string {
+  return `${guildId ?? 'unknown'}:${channelId ?? 'unknown'}`;
+}
+
 /** 生成 sessionId: onebot:{selfId}:{detailType}:{targetId} */
 function makeSessionId(
   selfId: string,
@@ -358,7 +363,7 @@ function makeSessionId(
   } else if (detailType === 'group') {
     targetId = groupId ?? 'unknown';
   } else if (detailType === 'channel') {
-    targetId = `${guildId ?? 'unknown'}:${channelId ?? 'unknown'}`;
+    targetId = channelWindowId(guildId, channelId);
   } else {
     targetId = 'unknown';
   }
@@ -1165,7 +1170,11 @@ function runAdapter(caps: Caps): void {
   const adapter = {
     adapterName: 'OneBot',
     platform: 'onebot',
-    sessionTypes: ['group', 'private'],
+    sessionTypes: [
+      { name: 'group', multiParty: true },
+      { name: 'private', multiParty: false },
+      { name: 'channel', multiParty: true },
+    ],
 
     getConnections(): PlatformConnection[] {
       return states.map(s => ({
@@ -1670,14 +1679,8 @@ function runAdapter(caps: Caps): void {
     // 注：指令解析已迁移到 plugin-commands 的 inbound:command 相位；
     // 适配器只负责将原始消息送入 inbound:message 总线，由 gateway 链路统一拦截。
 
-    const sessionType =
-      event.detailType === 'group'
-        ? 'group'
-        : event.detailType === 'private'
-          ? 'private'
-          : event.detailType === 'channel'
-            ? 'channel'
-            : undefined;
+    // 类型名原样带出实现端给的消息类型：声明里没有的（如部分 v11 实现扩展的 guild）由会话管理按多方记下并告警
+    const sessionType = event.detailType;
 
     // 异步获取群信息、引用消息，然后送入 inbound:message
     (async () => {
@@ -1800,6 +1803,7 @@ function runAdapter(caps: Caps): void {
         content: event.text,
         sessionId,
         platform: 'onebot',
+        selfId: event.selfId,
         messageId: event.messageId,
         userId: event.userId,
         nickname: event.nickname,
@@ -1818,7 +1822,8 @@ function runAdapter(caps: Caps): void {
         }),
         sessionType,
         groupName,
-        groupId: event.groupId,
+        // 多方窗口的 id：群为群号，频道为 `<guild>:<channel>`（与会话 id 的目标段一致）
+        groupId: sessionType === 'channel' ? channelWindowId(event.guildId, event.channelId) : event.groupId,
         senderRole: event.senderRole,
         senderTitle: event.senderTitle,
         selfRole,
@@ -1867,6 +1872,7 @@ function runAdapter(caps: Caps): void {
           content,
           sessionId,
           platform: 'onebot',
+          selfId: req.selfId,
           userId: req.userId,
           sessionType: 'private',
           source: REQUEST_SOURCE,
@@ -1894,6 +1900,7 @@ function runAdapter(caps: Caps): void {
             content,
             sessionId: gsId,
             platform: 'onebot',
+            selfId: req.selfId,
             userId: req.userId,
             sessionType: 'group',
             groupId: req.groupId,
@@ -1908,6 +1915,7 @@ function runAdapter(caps: Caps): void {
           content,
           sessionId,
           platform: 'onebot',
+          selfId: req.selfId,
           userId: req.userId,
           sessionType: 'private',
           source: REQUEST_SOURCE,
@@ -1950,6 +1958,7 @@ function runAdapter(caps: Caps): void {
           content: `[戳一戳: ${who} 戳了${target}]`,
           sessionId: makeSessionId(selfId, sessionType, notice.userId, notice.groupId),
           platform: 'onebot',
+          selfId,
           userId: notice.userId,
           nickname: nick,
           sessionType,
@@ -2162,6 +2171,7 @@ function runAdapter(caps: Caps): void {
         content,
         sessionId,
         platform: 'onebot',
+        selfId,
         userId: notice.userId,
         sessionType: 'group',
         groupId: notice.groupId,

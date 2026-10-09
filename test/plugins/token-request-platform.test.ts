@@ -1,18 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, events, LogHub } from '../../packages/core/src/index.js';
 import agent from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { recordRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // token:request 的 platform：处理器按它解析模型、会话配置与提示词贡献方的
 // 「当前平台」，缺了就会绕过平台档、算成另一个模型的窗口，末尾还真发一条
 // token:usage（platform 为空串），memory-summary 可据此触发一次无谓自动压缩。
-// 唯一发射方 webui-server 不填它；处理器按「显式传入 → 会话的出生平台
-// （api-gateway 的 resolveSessionOrigin）→ 'webui'」兜底。
+// 发射方会话服务对房间不填它；处理器按「显式传入 → 会话管理记下的出生平台（子会话取根会话的）→ 'webui'」兜底。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -46,10 +48,11 @@ async function boot() {
   await app.plugin(mockLLM);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.register(messageArchive, { debugLogs: false });
+  await app.plugins.register(sessionManagerPlugin, {});
   await app.plugins.register(agent, AGENT_CONFIG);
   await app.plugins.idle();
-  requireActive(mockLLM.name, memoryInMemory.name, messageArchive.name, agent.name);
-  const host = app.bind({ events });
+  requireActive(mockLLM.name, memoryInMemory.name, messageArchive.name, sessionManagerPlugin.name, agent.name);
+  const host = app.bind({ events, sessionManager });
   const seen: TokenUsageEvent[] = [];
   host.events.on('token:usage', (u: TokenUsageEvent) => {
     seen.push(u);
@@ -73,12 +76,21 @@ describe('token:request 的平台归属', () => {
     expect(seen[0].platform).toBe('cli');
   });
 
-  it('IM 房间缺省 platform：按出生平台归属，不查已注册的适配器', async () => {
-    // 不装 onebot 适配器：兜底只看会话 id，适配器没加载时同样按出生平台
+  it('IM 房间缺省 platform：按会话记下的出生平台归属，子会话取根会话的，不查已注册的适配器', async () => {
+    // 不装 onebot 适配器：出生平台是建档时记下的字段，适配器没加载时同样按它
     const { seen, host } = await boot();
-    await host.events.emit('token:request', { sessionId: 'onebot:10000:group:20001' });
-    expect(seen.length).toBe(1);
-    expect(seen[0].platform).toBe('onebot');
+    const room = 'onebot:10000:group:20001';
+    await recordRoom(host.events, room);
+    const task = await host.sessionManager.require().createChildSession(room);
+    await host.events.emit('token:request', { sessionId: room });
+    await host.events.emit('token:request', { sessionId: task.id });
+    expect(seen.map(u => u.platform)).toEqual(['onebot', 'onebot']);
+  });
+
+  it('会话表里没有出生平台的会话按 webui，不从会话 id 推', async () => {
+    const { seen, host } = await boot();
+    await host.events.emit('token:request', { sessionId: 'onebot:10000:group:20002' });
+    expect(seen.map(u => u.platform)).toEqual(['webui']);
   });
 });
 
