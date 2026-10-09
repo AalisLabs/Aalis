@@ -113,7 +113,7 @@ async function setup(
 }
 
 describe('IM 房间按首条真人入站登记', () => {
-  it('群消息建档：名字取群名，room、group，记下出生平台与聊天窗口，状态 waiting，没有创建来源；私聊以对方昵称为名', async () => {
+  it('群消息建档：名字取群名，room，记下出生平台与聊天窗口，状态 waiting，没有创建来源；私聊以对方昵称为名', async () => {
     const { sm, inbound } = await setup();
 
     await inbound({
@@ -130,13 +130,12 @@ describe('IM 房间按首条真人入站登记', () => {
     expect(group).toMatchObject({
       name: '<群名>',
       kind: 'room',
-      audience: 'group',
       originPlatform: 'onebot',
       originChat: { type: 'group', multiParty: true, targetId: '20001' },
       status: 'waiting',
     });
     expect(group?.createdFrom).toBeUndefined();
-    expect(sm.getSession(PRIVATE)).toMatchObject({ name: '<乙>', audience: 'private', status: 'waiting' });
+    expect(sm.getSession(PRIVATE)).toMatchObject({ name: '<乙>', kind: 'room', status: 'waiting' });
   });
 
   it('没有执行过 /session.set、也没开过子任务的群同样登记', async () => {
@@ -194,7 +193,7 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     return { adapter, state };
   }
 
-  /** 读表读进来的旧房间：没有 originInstance */
+  /** 读表读进来的旧房间：有来源字段，没有 originInstance */
   const STORED_ROOM: SessionInfo = {
     id: GROUP,
     name: '<群名>',
@@ -204,31 +203,39 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     createdAt: 1,
     updatedAt: 1,
     kind: 'room',
+    originPlatform: 'onebot',
+    originChat: { type: 'group', multiParty: true, targetId: '20001' },
   };
   const stored = (info: SessionInfo) => ({ [info.id]: info as unknown as Record<string, unknown> });
 
-  it('原生入站、子任务兜底、/session 落配置建出的房间各记各的实例；认不出的、owner 面会话与子任务不记', async () => {
+  it('原生入站建出的房间各记各的实例；按 id 建档的（子任务兜底、/session 落配置）在补记来源字段之后才记；认不出的、owner 面会话与子任务不记', async () => {
     const { sm, inbound } = await setup([], { instances: true });
     const B_GROUP = 'onebot:20000:group:20001';
     const B_PRIVATE = 'onebot:20000:private:30001';
     const UNKNOWN = 'onebot:30000:group:20001';
     const instanceOf = (id: string) => sm.getSession(id)?.originInstance;
 
-    // 建档的 ensureSession 等记下实例再返回
     await sm.ensureSession(B_PRIVATE, { config: { persona: '<人设>' } }); // /session.set 的落点
-    expect(instanceOf(B_PRIVATE)).toBe('onebot-b');
     const child = await sm.createChildSession(B_GROUP, { name: '<子任务>' });
-    expect(instanceOf(B_GROUP)).toBe('onebot-b');
-    expect(instanceOf(child.id), '子任务挂在父会话下').toBeUndefined();
     await sm.ensureSession(UNKNOWN, {});
-    expect(sm.getSession(UNKNOWN)).toBeDefined();
-    expect(instanceOf(UNKNOWN), '没有适配器认领').toBeUndefined();
+    expect([B_PRIVATE, B_GROUP, UNKNOWN].map(instanceOf), '没有来源字段，还不是房间').toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
 
+    await inbound({ sessionId: B_PRIVATE, platform: 'onebot', sessionType: 'private', userId: '30001' });
+    await inbound({ sessionId: B_GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001' });
+    await inbound({ sessionId: UNKNOWN, platform: 'onebot', sessionType: 'group', groupId: '20001' });
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
     // 终端的会话在入站之前建档（plugin-cli）；cli 适配器认领它，但它不是房间
     await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
     await inbound({ sessionId: 'cli-default', platform: 'cli', userId: 'console' });
     await settle();
+    expect(instanceOf(B_PRIVATE)).toBe('onebot-b');
+    expect(instanceOf(B_GROUP)).toBe('onebot-b');
+    expect(instanceOf(child.id), '子任务挂在父会话下').toBeUndefined();
+    expect(instanceOf(UNKNOWN), '没有适配器认领，也就不补记').toBeUndefined();
     expect(instanceOf(GROUP)).toBe('onebot-a');
     expect(sm.getSession('cli-default')).toBeDefined();
     expect(instanceOf('cli-default'), 'owner 面会话不分组').toBeUndefined();
@@ -236,14 +243,15 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
 
   it('解析期间别的建档调用合并进同一条记录：只建一次档，记下的实例也不丢', async () => {
     const gated = gatedAdapter();
-    const { sm, host } = await setup([gated.adapter]);
+    const { sm, host, inbound } = await setup([gated.adapter]);
     const created: string[] = [];
     host.events.on('session:created', session => void created.push(session.id));
 
-    const first = sm.ensureSession(GROUP, { name: '<群名>' });
+    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
+    expect(gated.asked, '建档后的解析已经发起').toContain(GROUP);
     await sm.ensureSession(GROUP, { config: { persona: '<人设>' } });
     gated.release();
-    await first;
+    await settle();
 
     expect(created).toEqual([GROUP]);
     expect(sm.getSession(GROUP)).toMatchObject({ name: '<群名>', config: { persona: '<人设>' } });
@@ -252,14 +260,15 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
 
   it('解析期间会话被删除：不写回，也不推送更新', async () => {
     const gated = gatedAdapter();
-    const { sm, host } = await setup([gated.adapter]);
-    const pending = sm.ensureSession(GROUP, {});
+    const { sm, host, inbound } = await setup([gated.adapter]);
+    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group' });
+    expect(gated.asked).toContain(GROUP);
     await sm.deleteSession(GROUP);
     const updated: string[] = [];
     host.events.on('session:updated', session => void updated.push(session.id));
 
     gated.release();
-    await pending;
+    await settle();
 
     expect(sm.getSession(GROUP)).toBeUndefined();
     expect(updated).toEqual([]);
@@ -267,16 +276,15 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
 
   it('解析晚于一次落盘：记下的实例照样落盘', async () => {
     const gated = gatedAdapter();
-    const { sm, mem } = await setup([gated.adapter]);
+    const { mem, inbound } = await setup([gated.adapter]);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
-    const pending = sm.ensureSession(GROUP, {});
+    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group' });
     await vi.advanceTimersByTimeAsync(1_000);
     expect(mem.meta.get(GROUP), '建档已落盘').toBeDefined();
     // 假后端存的是会话对象的引用：换成快照，才看得出之后有没有再落一次盘
     mem.meta.set(GROUP, { ...mem.meta.get(GROUP) });
     gated.release();
-    await pending;
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(mem.meta.get(GROUP)?.originInstance).toBeTypeOf('string');

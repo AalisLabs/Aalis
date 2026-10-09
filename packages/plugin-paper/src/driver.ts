@@ -540,12 +540,7 @@ export class PaperDriver {
     const type = spec.remoteAgentType;
     if (pausedReason(ledger.data, task.paperId, type)) return 'pause';
 
-    const roomPaper = await resolveRoomPaper(
-      this.#d.sessionManager.require(),
-      cfg,
-      task.room,
-      task.platform || undefined,
-    );
+    const roomPaper = resolveRoomPaper(this.#d.sessionManager.require(), cfg, task.room, task.platform || undefined);
     if ('unavailable' in roomPaper) return this.#fail(task, `出队时核对不过：${roomPaper.unavailable}`);
     if (roomPaper.paperId !== task.paperId) {
       return this.#fail(task, '出队时核对不过：发起房间现在用的不是这块白纸');

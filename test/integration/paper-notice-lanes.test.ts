@@ -196,7 +196,7 @@ async function boot(
       recallRoles: 'all',
     });
   }
-  await app.plugin(agentPlugin, { systemPrompt: 'persona', maxToolIterations: 5 });
+  await app.plugin(agentPlugin, { systemPrompt: 'persona' });
   await app.plugin(paperPlugin, PAPER_CONFIG);
   await app.plugins.idle();
   const names = [agentPlugin, gatewayPlugin, toolsPlugin, messageArchivePlugin, paperPlugin].map(p => p.name);

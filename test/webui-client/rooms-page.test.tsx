@@ -1,14 +1,27 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionMethodParams } from '../../packages/api-session-protocol/src/index.js';
+import type { SessionMethodParams, SettingLayer } from '../../packages/api-session-protocol/src/index.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { choose, group, type Harness, installDialog, listRequests, renderApp, room } from './harness.js';
+import {
+  choose,
+  group,
+  type Harness,
+  HOME_PLACE,
+  installDialog,
+  listRequests,
+  optionsOf,
+  renderApp,
+  requests,
+  room,
+} from './harness.js';
+import { row as settingRow } from './items.js';
 
 // ════════════════════════════════════════════════════════════
 // 房间表（/rooms?instance=）：一次取全这一组（翻页取完），类型与状态的筛选写进地址，排序、搜索与分页在客户端；
-// 批量动作只有归档与删除，全选只作用于筛选结果；窄时只留名称与状态（这里核列上的标记，窄容器里的真实排版在端到端里核）
+// 类型是平台自定的类型名，筛选只列本组出现过的，原样写；批量动作只有归档与删除，全选只作用于筛选结果；每行的「场所设置」
+// 在页内打开这一行所在窗口的设置；窄时只留名称与状态（这里核列上的标记，窄容器里的真实排版在端到端里核）
 // ════════════════════════════════════════════════════════════
 
 const NOW = new Date(2026, 9, 3, 15, 0).getTime();
@@ -45,7 +58,13 @@ const GROUPS = [
 const ROOMS = [
   room('g1', 'im-a', { title: '读书会', updatedAt: NOW - 1000, lastReplyAt: NOW - DAY }),
   room('g2', 'im-a', { title: '技术交流', error: true, updatedAt: NOW - 2000 }),
-  room('p1', 'im-a', { title: '小林', audience: 'private', running: true, updatedAt: NOW - 3000 }),
+  room('p1', 'im-a', {
+    title: '小林',
+    chat: { type: 'private', multiParty: false },
+    place: { key: 'onebot:private:p1', kind: 'window', name: '小林' },
+    running: true,
+    updatedAt: NOW - 3000,
+  }),
   room('g3', 'im-a', { title: '摄影分享', updatedAt: NOW - 3 * DAY }),
 ];
 
@@ -83,7 +102,7 @@ describe('房间表', () => {
       { instance: 'im-a', limit: 200, cursor: '2' },
     ]);
     const row = screen.getByRole('row', { name: /小林/ });
-    expect(row.textContent).toContain('私聊');
+    expect(row.querySelector('td[data-column="type"]')?.textContent).toBe('private');
     expect(row.textContent).toContain('运行中');
     expect(screen.getByRole('row', { name: /读书会/ }).textContent).toContain('10/2');
     expect(within(row).getByRole('link', { name: '小林' }).getAttribute('href')).toBe('/s/p1');
@@ -95,16 +114,15 @@ describe('房间表', () => {
       ['状态', true],
       ['最后活动', false],
       ['她最近开口', false],
+      ['操作', false],
     ]);
   });
 
-  it('表格下面一句提示：要统一设置一类房间，去设置的「会话默认」（平台档按平台名生效，不区分实例）', async () => {
+  it('表格下面一句提示：统一设置一个平台或一种类型去设置的「会话默认」，单个窗口在这里设', async () => {
     app = await renderApp('/rooms?instance=im-a', { 'sessions/list': serveRooms });
     await vi.waitFor(() => expect(names()).toHaveLength(4));
     const main = within(screen.getByRole('main'));
-    expect(main.getByText(/要统一设置一类房间/).textContent).toBe(
-      '要统一设置一类房间，用「会话默认」里这个平台的档或它的群、私聊条目；平台档按平台名生效，不区分实例。',
-    );
+    expect(main.getByText(/统一设置/).textContent).toBe('统一设置一个平台或一种类型去「会话默认」，单个窗口在这里设。');
     fireEvent.click(main.getByRole('link', { name: '去会话默认' }));
     expect(app.where()).toBe('/settings/session-defaults');
   });
@@ -115,15 +133,23 @@ describe('房间表', () => {
     expect(listRequests().some(p => p.platform === 'onebot' && p.instance === undefined)).toBe(true);
   });
 
-  it('类型与状态的筛选写进地址，从地址恢复；排序在客户端', async () => {
-    app = await renderApp('/rooms?instance=im-a&status=error', { 'sessions/list': serveRooms });
+  it('类型与状态的筛选写进地址，从地址恢复；类型只列本组出现过的类型名，原样写；排序在客户端', async () => {
+    // 平台自定的类型名（这里的 channel）照样列出、原样写
+    const channel = room('c1', 'im-a', { title: '公告频道', chat: { type: 'channel', multiParty: true } });
+    app = await renderApp('/rooms?instance=im-a&status=error', {
+      'sessions/list': () => ({ sessions: [...ROOMS, channel], groups: GROUPS }),
+    });
     await vi.waitFor(() => expect(names()).toEqual(['技术交流']));
     choose(screen.getByRole('combobox', { name: '状态' }), '全部');
     expect(app.where()).toBe('/rooms?instance=im-a');
-    choose(screen.getByRole('combobox', { name: '类型' }), '私聊');
+    expect(optionsOf(screen.getByRole('combobox', { name: '类型' }))).toEqual(['全部', 'channel', 'group', 'private']);
+    expect(screen.getByRole('row', { name: /公告频道/ }).querySelector('td[data-column="type"]')?.textContent).toBe(
+      'channel',
+    );
+    choose(screen.getByRole('combobox', { name: '类型' }), 'private');
     expect(app.where()).toBe('/rooms?instance=im-a&type=private');
     expect(names()).toEqual(['小林']);
-    choose(screen.getByRole('combobox', { name: '类型' }), '群');
+    choose(screen.getByRole('combobox', { name: '类型' }), 'group');
     fireEvent.click(within(screen.getByRole('columnheader', { name: /名称/ })).getByRole('button'));
     expect(names()).toEqual(['技术交流', '读书会', '摄影分享'].sort((a, b) => a.localeCompare(b)));
   });
@@ -133,7 +159,7 @@ describe('房间表', () => {
     app = await renderApp('/', { 'sessions/list': serveRooms });
     fireEvent.click(await screen.findByRole('button', { name: '用表格查看「QQ 主号」的全部房间' }));
     await vi.waitFor(() => expect(names()).toHaveLength(4));
-    choose(screen.getByRole('combobox', { name: '类型' }), '群');
+    choose(screen.getByRole('combobox', { name: '类型' }), 'group');
     expect(app.where()).toBe('/rooms?instance=im-a&type=group');
     fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: '返回' }));
     expect(app.where()).toBe('/');
@@ -162,6 +188,50 @@ describe('房间表', () => {
     const dialog = screen.getByRole('dialog', { name: '删除会话「读书会」？' });
     fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
     await vi.waitFor(() => expect(batches.at(-1)).toEqual({ op: 'delete', ids: ['g1'] }));
+  });
+
+  it('「场所设置」在页内打开这一行窗口的设置：按层读写这个场所，行与会话默认同一套；场所不是窗口的行（owner 的 IM 私聊）没有这个动作', async () => {
+    const place = { scope: 'place', key: 'onebot:group:g1' } as const;
+    const rows = [
+      settingRow('persona', { field: { type: 'string', label: '人设' }, effective: '<群人设>', source: 'type' }),
+      settingRow('paperEnabled', {
+        field: { type: 'boolean', label: '开启白纸' },
+        value: true,
+        effective: true,
+        source: 'place',
+      }),
+    ];
+    const mine = room('p0', 'im-a', {
+      title: '<我的私聊>',
+      chat: { type: 'private', multiParty: false },
+      place: HOME_PLACE,
+    });
+    app = await renderApp('/rooms?instance=im-a', {
+      'sessions/list': () => ({ sessions: [...ROOMS, mine], groups: GROUPS }),
+      'session/config/layer/get': () => ({ items: rows }),
+      'session/config/layer/update': () => ({ items: rows }),
+    });
+    await vi.waitFor(() => expect(names()).toHaveLength(5));
+    const own = screen.getByRole('row', { name: /<我的私聊>/ });
+    expect(within(own).queryByRole('button', { name: '场所设置' })).toBeNull();
+    fireEvent.click(within(screen.getByRole('row', { name: /读书会/ })).getByRole('button', { name: '场所设置' }));
+    const dialog = within(screen.getByRole('dialog', { name: '场所设置：读书会' }));
+    const persona = within(await dialog.findByRole('group', { name: '人设' }));
+    expect(requests('session/config/layer/get')).toEqual([{ layer: place }]);
+    expect(persona.getByText('<群人设>')).toBeTruthy();
+    expect(persona.getByText('平台类型档')).toBeTruthy();
+    expect(persona.queryByRole('button', { name: '恢复继承' })).toBeNull();
+    const paper = within(dialog.getByRole('group', { name: '开启白纸' }));
+    expect(paper.getByText('场所')).toBeTruthy();
+
+    fireEvent.click(paper.getByRole('switch', { name: '开启白纸' }));
+    await vi.waitFor(() =>
+      expect(requests('session/config/layer/update')).toEqual([
+        { layer: place satisfies SettingLayer, patch: { paperEnabled: false } },
+      ]),
+    );
+    fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('多账号的组有账号列', async () => {

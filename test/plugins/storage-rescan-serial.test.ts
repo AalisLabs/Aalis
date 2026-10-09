@@ -161,14 +161,14 @@ describe('persona / skills 的目录重扫', () => {
 
   it('persona：扫描进行中的多次目录变化只排一次尾随重扫，新卡不被进行中那次的旧清单剔掉', async () => {
     const DIR = 'data:/personas';
-    const fake = gatedStorage({ [`${DIR}/main.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
+    const fake = gatedStorage({ [`${DIR}/default.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
     await bootWith(fake);
-    await app.plugin(personaPlugin, { persona: 'main', personasDir: DIR, timeInjection: false });
+    await app.plugin(personaPlugin, { personasDir: DIR, timeInjection: false });
     await app.plugins.idle();
     await app.start();
     const svc = app.bind({ services }).services.get(persona);
     if (!svc?.listModels) throw new Error('persona 服务未就绪');
-    expect((await svc.listModels()).sort()).toEqual(['a', 'main']);
+    expect((await svc.listModels()).sort()).toEqual(['a', 'default']);
 
     const before = fake.listCount(DIR);
     const gate = fake.holdNextList(DIR);
@@ -181,27 +181,27 @@ describe('persona / skills 的目录重扫', () => {
     gate.resolve(undefined);
     await sleep(50);
 
-    expect((await svc.listModels()).sort(), 'b 被旧清单剔掉').toEqual(['a', 'b', 'main']);
+    expect((await svc.listModels()).sort(), 'b 被旧清单剔掉').toEqual(['a', 'b', 'default']);
     expect(fake.listCount(DIR) - before, '进行中的一次加一次尾随').toBe(2);
   });
 
   it('persona：目录列不出（不是不存在）时扫描失败并记 warn，已载入的卡不被剔掉', async () => {
     const DIR = 'data:/personas';
-    const fake = gatedStorage({ [`${DIR}/main.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
+    const fake = gatedStorage({ [`${DIR}/default.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
     await bootWith(fake);
-    await app.plugin(personaPlugin, { persona: 'main', personasDir: DIR, timeInjection: false });
+    await app.plugin(personaPlugin, { personasDir: DIR, timeInjection: false });
     await app.plugins.idle();
     await app.start();
     const svc = app.bind({ services }).services.get(persona);
     if (!svc?.listModels) throw new Error('persona 服务未就绪');
-    expect((await svc.listModels()).sort()).toEqual(['a', 'main']);
+    expect((await svc.listModels()).sort()).toEqual(['a', 'default']);
 
     const gate = fake.holdNextList(DIR);
     fake.fire(`${DIR}/a.yaml`);
     gate.reject(new Error('未知存储根: data'));
     await sleep(20);
 
-    expect((await svc.listModels()).sort(), '按空目录处理会剔掉 a').toEqual(['a', 'main']);
+    expect((await svc.listModels()).sort(), '按空目录处理会剔掉 a').toEqual(['a', 'default']);
     expect(logs.some(t => t.includes('persona 扫描失败') && t.includes('未知存储根'))).toBe(true);
   });
 

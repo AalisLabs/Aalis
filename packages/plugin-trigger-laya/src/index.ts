@@ -49,6 +49,9 @@ import { type Sidecar, sidecarTarget, superviseSidecar } from './sidecar.js';
 
 // ----- 元数据 -----
 
+/** 在 trigger 服务里的优先级：低于规则判定 trigger-policy 的 0，两个都启用、没有偏好时由它生效；选哪个用服务偏好 */
+const PRIORITY = -10;
+
 // ----- 侧车请求 -----
 
 /** 连续失败这么多次后熔断，判定转为不可用 */
@@ -180,7 +183,7 @@ function run(caps: Caps): void {
 
   // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行
   const self: TriggerService = { label: 'Laya 模型' };
-  caps.provide(trigger, self, { priority: cfg.priority, label: self.label });
+  caps.provide(trigger, self, { priority: PRIORITY, label: self.label });
   /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
   const botNames = createBotNames(caps.persona, caps.sessionManager, logger, '[laya]');
 
@@ -596,7 +599,7 @@ function run(caps: Caps): void {
 
   logger.info(
     `[laya] 已启用 (阈值=${cfg.threshold ?? '侧车'}, endpoint=${cfg.endpoint}, ` +
-      `侧车=${managed ? `托管 ${managed.dir}` : '外部运行'}, prio=${cfg.priority}, ` +
+      `侧车=${managed ? `托管 ${managed.dir}` : '外部运行'}, ` +
       `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,
   );
 }
