@@ -98,7 +98,7 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 - **`@aalis/plugin-persona`** —— `src/index.ts` 直接 import 本包：
   - `src/index.ts` 无 `outputFormat` 时，用 `tryParseJsonObject` 自动解包模型误用 JSON 包裹的回复，逐个尝试 `response`/`reply`/`content` 等字段（`index.ts`）。
   - `src/index.ts` 有 `outputFormat` 时，`extractJsonCandidate` + `tryParseJsonObject` 结构化解析，并把 `repairsApplied` 写进 debug 日志。
-- **`@aalis/plugin-user-profile`** —— `src/index.ts` import `parseLLMJsonObject`，在 `src/index.ts` 三处解析画像抽取结果。其中 `978-1006` 是范本：首解析失败后**带显式反馈重试一次**（提示模型「第一个字符必须是 `{`」），仍失败才放弃本批次。
+- **`@aalis/plugin-user-profile`** —— `src/index.ts` import `parseLLMJsonObject` 解析事实提取结果，是范本：首解析失败后**带显式反馈重试一次**（提示模型「第一个字符必须是 `{`」），仍失败才放弃本批次。
 - **`@aalis/plugin-user-relation`** —— `src/extractor.ts` import，`src/extractor.ts` 的 `parseExtraction` 用 `parseLLMJsonObject` 解析图谱抽取结果。注意它把所有 `persons`/`events`/`edges` 等**数组都包在一个顶层对象里**（`extractor.ts`），所以能用本库——这正是「对象内可以有数组、但顶层不能是数组」的正面示范。
 
 ---

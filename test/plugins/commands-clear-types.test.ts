@@ -148,10 +148,7 @@ describe('/clear 显式指定的类型没有处理者', () => {
   it('会话级显式指定 user-profile / user-relation：说明只在 /clear all 时清理；全局且无处理者时说明无处理者', async () => {
     const { exec } = await world();
     expect(await exec('/clear -t user-profile,user-relation')).toBe(
-      [
-        '⚠ 用户档案与第三方行为指令只在 /clear all 时清理，本次未清理',
-        '⚠ 用户关系图谱只在 /clear all 时清理，本次未清理',
-      ].join('\n'),
+      ['⚠ 用户档案只在 /clear all 时清理，本次未清理', '⚠ 用户关系图谱只在 /clear all 时清理，本次未清理'].join('\n'),
     );
     expect(await exec('/clear all -t user-relation')).toBe(`⚠ 用户关系图谱：${NO_HANDLER}，未清理`);
   });

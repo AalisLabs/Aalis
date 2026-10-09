@@ -33,7 +33,7 @@ export interface PersonaService {
 
 - `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，`options.systemPromptExtra`（会话级额外提示），以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
-- `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件按会话传入，做点名识别；CLI 标题、user-profile 的分堆 key 等全局用途不传。
+- `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件按会话传入，做点名识别；CLI 标题等全局用途不传。
 - `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
 - `isClientSideJsonRendering(options?)` — 该卡是否声明「JSON 由客户端渲染」。为真时服务端不提取回复字段，整段 JSON 透传给前端。
 - `listModels()` — 列出已扫描到的全部角色卡名，供 WebUI 与 session-manager 的下拉框使用。
@@ -87,7 +87,6 @@ export const persona = defineService<PersonaService>('persona');
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
 - `@aalis/plugin-webui-server` — 用 `getPersonaName()` 作展示名，用 `persona.current` 探测上报能力，`listModels()` 走通用的 `/models` 枚举。
 - `@aalis/plugin-cli` — 多处用 `persona.current?.getPersonaName() ?? 'Aalis'` 做命令行标题。
-- `@aalis/plugin-user-profile` — 用 `getPersonaName()` 按 persona 名给第三方行为指令分堆。
 
 关于消费模式，有一点值得说明：多数消费者对类型做了结构化窄化，只声明自己用到的那部分（例如 tool-system 只声明 `{ isTimeInjectionEnabled?(): boolean }`），以避免 import 全量类型造成包循环。`caps.services.get<T>(name)` 的 `T` 按设计就由消费侧窄化。
 

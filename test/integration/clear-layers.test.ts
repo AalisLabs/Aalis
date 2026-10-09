@@ -22,11 +22,10 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // /clear 按层清理（同一 App 装上持有各命名空间的插件，经 /clear 指令驱动）：
 //   - context 管会话级短期上下文：消息（含归档）、摘要、待办；全局时另清 OneBot 合并转发原文。
-//   - 向量、用户档案（含第三方行为指令）、关系图属跨会话长期层，只在显式指定类型或不带类型的
+//   - 向量、用户档案、关系图属跨会话长期层，只在显式指定类型或不带类型的
 //     /clear all 时清；会话级 /clear 不动档案与关系图。
 //   - 会话表（sessions）与第三方绑定（maimai-binding）任何类型都不清。
 // 记忆后端的 clearAll 只清消息；各命名空间由归属插件的 memory:clear 中间件清理。
-// user-profile 关掉 enableInstructions：指令照样随 user-profile 清。
 // ════════════════════════════════════════════════════════════
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -36,7 +35,6 @@ const SEED: Record<string, string[]> = {
   'todo-list': ['s-cur', 's-other'],
   'onebot:forward': ['F1'],
   'user:profile': ['onebot:u1'],
-  'aalis:instructions': ['Aalis'],
   'user-relation': ['person:onebot:u1'],
   'user-relation-vec': ['event:e1'],
   'memory-vector': ['legacy-model'],
@@ -94,7 +92,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
     },
     { definition: todoList, config: {} },
     { definition: onebot, config: { connections: [] } },
-    { definition: userProfile, config: { enableInstructions: false } },
+    { definition: userProfile, config: {} },
     { definition: userRelation, config: {} },
   ]);
   await app.plugins.idle();
@@ -159,7 +157,6 @@ describe('/clear 按层清理', () => {
         'todo-list',
         'onebot:forward',
         'user:profile',
-        'aalis:instructions',
         'user-relation',
         'user-relation-vec',
         'memory-vector',
@@ -182,14 +179,7 @@ describe('/clear 按层清理', () => {
   it('逐个指定已装插件处理的类型：各插件的结果行都标注了类型，回执不报「没有插件处理」', async () => {
     const { run } = await world();
     const out = await run('clear.all', ['context', 'summary', 'vector', 'user-profile', 'user-relation']);
-    for (const text of [
-      '所有消息历史',
-      '所有会话摘要',
-      '所有向量记忆',
-      '用户档案已清空',
-      '第三方行为指令已清空',
-      '关系图已清空',
-    ])
+    for (const text of ['所有消息历史', '所有会话摘要', '所有向量记忆', '用户档案已清空', '关系图已清空'])
       expect(out).toContain(text);
     expect(out).not.toContain('没有已启用的插件处理');
   });
@@ -225,7 +215,6 @@ describe('/clear 按层清理', () => {
       '⚠ 摘要清空失败: 后端故障',
       '⚠ 向量清空失败: 后端故障',
       '⚠ 用户档案清空失败: 后端故障',
-      '⚠ 指令清空失败: 后端故障',
       '⚠ 关系图清空失败: 后端故障',
     ])
       expect(all).toContain(text);
@@ -262,7 +251,6 @@ describe('/clear 按层清理', () => {
     ]);
     for (const text of [
       '用户档案已清空 (2 条)',
-      '第三方行为指令已清空 (2 条)',
       '关系图已清空 (2 条)',
       '所有会话待办已清空（3 个会话）',
       '合并转发原文已清空（2 条）',
@@ -275,7 +263,6 @@ describe('/clear 按层清理', () => {
         'todo-list/bad',
         'onebot:forward/bad',
         'user:profile/bad',
-        'aalis:instructions/bad',
         'user-relation/bad、user-relation-vec/bad',
       ]
         .map(named => `清理时一并删除了 ${named.split('、').length} 条读不出的数据：${named}`)

@@ -69,7 +69,7 @@ async function setup(extract?: unknown) {
   await mem.saveMetadata(NS, 'onebot:bob', { facts: [fact('f9', '会弹琴', 500)], updatedAt: 500 });
   // 只有关系分、没有事实的不算有档案
   await mem.saveMetadata(NS, 'onebot:carol', { facts: [], relationScore: 3, updatedAt: 950 });
-  await app.plugin(userProfile, extract === undefined ? {} : { extractEveryNMessages: 1, enableInstructions: false });
+  await app.plugin(userProfile, extract === undefined ? {} : { extractEveryNMessages: 1 });
   await app.plugins.idle();
   if (app.plugins.getPlugin(userProfile.name)?.state !== 'active') throw new Error('user-profile 未激活');
   const facts = async (key: string) =>
