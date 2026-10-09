@@ -31,7 +31,7 @@ interface InboundPhaseData {
 
 按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。消息上没有类型名的场合（定时任务、workflow 等合成回合）不从会话 ID 推断，改读会话记下的聊天窗口（session-manager 的 `originChat`，见 [会话管理](../services/session-manager.md)）。
 
-`chatScopeOf` 是入站消息所在聊天窗口的解析：平台取 `message.platform`；类型名与多方标记按这个平台的类型声明解析（api-platform 的 `sessionTypesOf` 与 `resolveSessionType`：不带类型名按 `private`、一对一，声明里没有的类型名按多方并标出 `undeclared`）；目标按多方标记取，多方取 `groupId`、一对一取 `userId`。OneBot 的临时会话在私聊消息上也带群号，所以目标按类型取，不按消息上有没有 `groupId` 取。session-manager 收录 IM 房间时用它记下聊天窗口。
+`chatScopeOf` 是入站消息所在聊天窗口的解析：平台取 `message.platform`；类型名与多方标记按这个平台的类型声明解析（api-platform 的 `sessionTypesOf` 与 `resolveSessionType`：不带类型名时，平台声明了多方类型的按其中第一个、多方，没声明或只有一对一类型的按 `private`、一对一；声明里没有的类型名按多方并标出 `undeclared`）；目标按多方标记取，多方取 `groupId`、一对一取 `userId`。OneBot 的临时会话在私聊消息上也带群号，所以目标按类型取，不按消息上有没有 `groupId` 取。session-manager 收录 IM 房间时用它记下聊天窗口。
 
 ```ts
 interface ChatScope {
