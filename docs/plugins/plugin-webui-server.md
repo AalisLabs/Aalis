@@ -68,6 +68,8 @@ WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSock
 
 persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（加载顺序、运行时才启用），WebUI 先用临时 token，storage 上线后读回 `data:/webui/token` 并改用它，同时重写 `access.txt`；没有 token 文件时把当前 token 写进去。已用临时 token 登录的浏览器此时需要重新登录。
 
+`token` 与 `access.txt` 都按凭据写（存储的 `secret` 写法）：只给运行 Aalis 的系统用户读（0600），家目录在别人也进得去的位置时同样读不到；读回的 token 文件按凭据重写一遍，原先权限更宽的一并收紧。
+
 ### 访问凭据文件
 
 - **URI**: `data:/webui/access.txt`

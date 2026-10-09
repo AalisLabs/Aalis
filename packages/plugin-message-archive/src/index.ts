@@ -2,7 +2,7 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive } from '@aalis/api-message-archive';
-import { isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
+import { aggregateStorageRoots, isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ArchivedAttachment, IncomingMessage, Message } from '@aalis/schema-message';
@@ -145,7 +145,8 @@ function createArchiveService(
       if (working.messageId) meta[WellKnownMetadataKeys.MessageId] = working.messageId;
       // 发言人写的话与附件清单：归档正文拼进了发送者前缀、引用与附件描述（给模型看），读历史给人看的一方取这两样
       if (working.content !== content) meta[WellKnownMetadataKeys.SpokenContent] = working.content;
-      const roots = new Set(storage.current?.listRoots().map(root => root.name));
+      // 存储按根逐条提供，胜者只是其中一个根：根表取全部提供者的
+      const roots = new Set(aggregateStorageRoots(storage).map(root => root.name));
       const attachments = attachmentList(working, roots);
       if (attachments.length > 0) meta[WellKnownMetadataKeys.Attachments] = attachments;
       // 触发与来源溯源：用于区分真实用户消息 vs proactive 代发任务/调度等系统注入，

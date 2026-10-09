@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -15,12 +15,13 @@ import { freePort } from '../helpers/net.js';
 // 内存里是新随机 token，持久化的那份被晾在一边——旧 cookie 与 `?token=<持久化>` 一律 401，
 // access.txt 写成新 token；没有 token 文件时也永远建不起来，persist 退化成 ephemeral。
 // 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），token 落在 data 根。
+// token 与 access.txt 是凭据：只给本机用户读（0600），已有的 token 文件读回后一并收紧。
 // ════════════════════════════════════════════════════════════
 
 const PERSISTED = 'zz-persisted-token-placeholder';
 const COOKIE = 'aalis_webui_token';
 
-describe('webui-server token：storage 晚于本插件上线', () => {
+describe('webui-server 的 token 与访问凭据文件', () => {
   let base: string;
   let app: App;
   let port: number;
@@ -141,6 +142,23 @@ describe('webui-server token：storage 晚于本插件上线', () => {
     await waitUntil(async () => (await loginStatus(PERSISTED)) === 302, '读回持久化 token');
     await waitUntil(() => accessToken() === PERSISTED, 'access.txt 重写为持久化 token');
     expect(readFileSync(tokenFile(), 'utf-8')).toBe(PERSISTED);
+  });
+
+  it.each([
+    ['已有 token 文件（权限 0644）', true],
+    ['没有 token 文件', false],
+  ])('token 与 access.txt 写出后只给本机用户读（0600）：%s', async (_label, seeded) => {
+    if (seeded) {
+      seedToken();
+      chmodSync(tokenFile(), 0o644);
+    }
+    await app.pluginAll([storageLocal(), webui()]);
+    await app.start();
+    await listening();
+
+    const mode = (file: string) => statSync(file).mode & 0o777;
+    expect(mode(tokenFile())).toBe(0o600);
+    expect(mode(accessFile())).toBe(0o600);
   });
 
   it('storage 在启动前上线、读回尚未落定：监听等读回完成，access.txt 从第一次写起就是持久化 token', async () => {
