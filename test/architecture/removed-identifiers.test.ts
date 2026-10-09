@@ -105,6 +105,9 @@ const REMOVED: Array<[string, string]> = [
   ['autoCompressThreshold', '摘要插件的全局自动压缩线配置，由会话设置项 compressAt 取代'],
   ['selectMessagesToSummarize', '摘要插件按保留条数选待摘要区间，由全量压缩的切分点取代'],
   ['getHistoryProbeLimit', '摘要插件按条数探测历史，由全量压缩读全部活跃历史取代'],
+  ['createdBy', '会话的创建者类型（没有读者），由只在建档时写的创建来源 createdFrom 取代'],
+  ['inferSessionScope', '按会话 id 约定推断会话类型与目标，由会话记下的聊天窗口 originChat 取代'],
+  ['OWNER_ENTRY_PLATFORMS', '会话管理按入口平台名单判自动标题，由会话的创建来源 createdFrom 取代'],
 ];
 
 /**
@@ -154,6 +157,12 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   // 常见的词，只在压缩的契约与实现里查
   ['api-memory', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
   ['plugin-memory-summary', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
+  // webui-client 另有同前缀的 parsePlatforms（解析平台状态接口），只在这两个包查
+  ...['plugin-memory-vector', 'plugin-tool-session'].map((pkg): [string, string, string] => [
+    pkg,
+    'parsePlatform',
+    '按会话 id 第一段取平台的私有函数，由会话管理记下的出生平台 originPlatform 取代',
+  ]),
   ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
   [
     'plugin-tools',

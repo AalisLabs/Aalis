@@ -249,7 +249,7 @@ export function rawLayer(layers: Layers, layer: SessionConfigLayer): SettingValu
 
 /**
  * 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上
- * 文档里写过的平台（卸了适配器后还能清掉）；受众条目按适配器声明的 sessionTypes 出，加上文档里写过的
+ * 文档里写过的平台（卸了适配器后还能清掉）；受众条目按适配器声明的类型名出，加上文档里写过的
  */
 export function listLayers(
   layers: Layers,
@@ -260,7 +260,11 @@ export function listLayers(
     audiences.set(platform, new Set([...(audiences.get(platform) ?? []), ...kinds]));
   for (const platform of layers.platforms.keys()) add(platform);
   for (const [platform, parts] of layers.audiences) add(platform, Object.keys(parts));
-  for (const adapter of adapters) add(adapter.platform, adapter.sessionTypes);
+  for (const adapter of adapters)
+    add(
+      adapter.platform,
+      adapter.sessionTypes?.map(type => type.name),
+    );
   const result: SessionConfigLayer[] = [{ scope: 'defaults' }];
   for (const platform of [...audiences.keys()].sort()) {
     result.push({ scope: 'platform', platform });

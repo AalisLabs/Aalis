@@ -1,17 +1,20 @@
 import { agent } from '@aalis/api-agent';
-import { resolveSessionOrigin } from '@aalis/api-gateway';
+import { chatScopeOf, resolveSessionOrigin } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { hostConfig } from '@aalis/api-host-config';
 import { type LLMUsageEvent, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
-import { getPlatformAdapters, getPlatformNames, platform, resolvePlatformBySession } from '@aalis/api-platform';
+import { getPlatformAdapters, platform, resolvePlatformBySession, sessionTypesOf } from '@aalis/api-platform';
 import {
   type InheritanceSource,
   type NewSessionFields,
+  type OriginChat,
   type RegisteredSessionSetting,
+  rootSessionOf,
   type SessionConfig,
   type SessionConfigLayer,
   type SessionConfigPatch,
+  type SessionCreation,
   type SessionInfo,
   type SessionInheritance,
   type SessionManagerService,
@@ -19,6 +22,7 @@ import {
   type SessionUpdates,
   sessionKind,
   sessionManager,
+  type WorkBinding,
 } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
@@ -47,11 +51,6 @@ const REJECTED_NAMESPACE = 'sessions-rejected';
 const LOAD_RETRY_DELAYS = [1000, 3000, 10_000];
 /** 最近一轮出错原因最多留多少字 */
 const ERROR_MAX = 200;
-/**
- * owner 面的交互入口：自动标题只给它们的会话生成；它们发进 IM 房间的消息是 owner 插话，不是房间的原生入站，
- * 不拿来判 id 前缀与平台名是否一致
- */
-const OWNER_ENTRY_PLATFORMS: ReadonlySet<string> = new Set(['webui', 'cli']);
 
 // ===== 辅助函数 =====
 
@@ -81,6 +80,9 @@ type ManagerCaps = Pick<
 
 /** 回合的结局（api-agent 的 agent:turn:after） */
 type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
+
+/** IM 房间收录按原生入站记下的来源字段 */
+type RoomOrigin = Required<Pick<SessionInfo, 'originPlatform' | 'originChat'>>;
 
 class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
@@ -263,20 +265,47 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），
-   * 未命中以传入 id 建记录（emit `session:created`），状态缺省按有没有回合在跑：有为 active（回合结束时收口），
-   * 没有为 waiting（指令回复等回合之外的出站不改状态，建成 active 就会一直停在进行中）。
-   * 平台派生 sessionId（onebot 等）首次落配置覆盖时用——那些 id 不经 createSession 预建。
+   * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），未命中以传入 id 建档，
+   * 创建来源只在建档时写。终端配置的会话 id、/session.set 落配置覆盖时用
    */
   async ensureSession(
     id: string,
-    patch: SessionUpdates & Pick<NewSessionFields, 'createdBy'> = {},
+    patch: SessionUpdates = {},
+    creation?: Pick<SessionCreation, 'createdFrom'>,
   ): Promise<SessionInfo> {
-    if (this.sessions.has(id)) {
-      // updateSession 不接受 createdBy（建档专用），命中路径剥离后转发
-      const { createdBy: _ignore, ...updates } = patch;
-      return this.updateSession(id, updates);
-    }
+    if (this.sessions.has(id)) return this.updateSession(id, patch);
+    return this.insert(id, patch, creation ? { createdFrom: creation.createdFrom } : {});
+  }
+
+  /** IM 房间收录：按原生入站记下的出生平台与聊天窗口建档。只给会话表里还没有的 id 调 */
+  recordRoom(id: string, name: string, origin: RoomOrigin): Promise<SessionInfo> {
+    return this.insert(id, { name, status: 'waiting' }, origin);
+  }
+
+  /**
+   * IM 房间收录的补记：按 id 兜底建档的根会话（没有来源字段、创建来源与绑定）收到原生入站时，记下与按这条消息建档时
+   * 一样的来源字段，名字还是 id 的一并补上。只认这个 id 归消息平台的适配器管的入站，WebUI 与终端往房间插话不算。
+   * 解析是异步的：等待期间别的入站已补记、会话被删或换表的不再写
+   */
+  async backfillRoom(session: SessionInfo, name: string, origin: RoomOrigin): Promise<void> {
+    const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
+    if (entry?.instance.platform !== origin.originPlatform) return;
+    if (this.sessions.get(session.id) !== session || session.originPlatform) return;
+    Object.assign(session, origin, session.name === session.id ? { name } : {});
+    this.markDirty();
+    await this.caps.events.emit('session:updated', session);
+    await this.recordOriginInstance(session);
+  }
+
+  /**
+   * 以传入 id 建档（emit `session:created`），fields 是只在建档时写的字段。状态缺省按有没有回合在跑：有为 active
+   * （回合结束时收口），没有为 waiting（指令回复等回合之外的出站不改状态，建成 active 就会一直停在进行中）
+   */
+  private async insert(
+    id: string,
+    patch: SessionUpdates,
+    fields: Pick<SessionInfo, 'createdFrom' | 'originPlatform' | 'originChat'>,
+  ): Promise<SessionInfo> {
     const config = this.checkedConfig(patch.config);
     const now = Date.now();
     const session: SessionInfo = {
@@ -291,9 +320,9 @@ class SessionManager implements SessionManagerService {
       config,
       createdAt: now,
       updatedAt: now,
-      createdBy: patch.createdBy || 'user',
       inputContext: patch.metadata?.inputContext as string | undefined,
       metadata: patch.metadata,
+      ...fields,
       ...describeSession(id, undefined),
     };
     this.sessions.set(id, session);
@@ -326,11 +355,13 @@ class SessionManager implements SessionManagerService {
 
   // ---- CRUD ----
 
-  async createSession(opts?: NewSessionFields): Promise<SessionInfo> {
+  async createSession(opts?: NewSessionFields, creation?: SessionCreation): Promise<SessionInfo> {
+    if (creation && opts?.parentId) throw new Error('建档专用参数只给根会话：子会话按根会话取创建来源与绑定');
     const config = this.checkedConfig(opts?.config);
     const id = opts?.parentId
       ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
       : `session-${crypto.randomUUID().slice(0, 8)}`;
+    const parent = opts?.parentId ? this.sessions.get(opts.parentId) : undefined;
 
     const now = Date.now();
     const session: SessionInfo = {
@@ -345,16 +376,20 @@ class SessionManager implements SessionManagerService {
       config,
       createdAt: now,
       updatedAt: now,
-      createdBy: opts?.createdBy || 'user',
       inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext as string | undefined),
       metadata: opts?.metadata,
+      ...(creation ? { createdFrom: creation.createdFrom } : {}),
+      ...(creation?.work
+        ? { work: { root: creation.work.root, extraRoots: [], worktrees: [] }, currentDir: creation.work.root }
+        : {}),
+      // 子会话的当前目录取父会话此刻的值，之后各改各的
+      ...(parent?.currentDir === undefined ? {} : { currentDir: parent.currentDir }),
       ...describeSession(id, opts?.parentId),
     };
 
     this.sessions.set(id, session);
 
     // 挂到父会话的 children 下：父会话的子会话列表变了，建档之后再给它发一次 session:updated
-    const parent = session.parentId ? this.sessions.get(session.parentId) : undefined;
     if (parent) {
       parent.children.push(id);
       parent.updatedAt = now;
@@ -461,22 +496,47 @@ class SessionManager implements SessionManagerService {
   // ---- 树形操作 ----
 
   async createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo> {
-    // 平台派生会话（cli-default、OneBot 会话 id）从不经 createSession 预建，父档缺失是常态；
-    // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。有出生平台的房间以 id 为名：带 source 的
-    // 注入回合开子任务时房间还没收录，名字留给出生平台之后的真人入站按「现名等于 id」补上群名或昵称。
-    if (!this.sessions.has(parentId)) {
-      await this.ensureSession(parentId, resolveSessionOrigin(parentId) ? { name: parentId } : {});
-    }
-
-    return this.createSession({
-      ...opts,
-      parentId,
-      createdBy: opts?.createdBy || 'agent',
-    });
+    // 带 source 的注入回合（定时任务、编排）可能落在还没建档的会话上：先按 id 兜底建档再挂子会话，否则 create_subtask
+    // 在这些会话里必败。兜底建档的会话没有来源字段与创建来源，名字为 id：是房间的由之后的原生入站补记来源字段与名字
+    if (!this.sessions.has(parentId)) await this.ensureSession(parentId, { name: parentId });
+    return this.createSession({ ...opts, parentId });
   }
 
   getChildren(parentId: string): SessionInfo[] {
     return this.listSessions({ parentId });
+  }
+
+  // ---- 工作会话 ----
+
+  async setCurrentDir(sessionId: string, dir: string): Promise<void> {
+    const { session } = this.inWorkTree(sessionId);
+    session.currentDir = dir;
+    this.markDirty();
+    await this.caps.events.emit('session:updated', session);
+  }
+
+  async setExtraRoots(sessionId: string, extraRoots: readonly string[]): Promise<void> {
+    const { root, work } = this.inWorkTree(sessionId);
+    work.extraRoots = [...extraRoots];
+    this.markDirty();
+    await this.caps.events.emit('session:updated', root);
+  }
+
+  async addWorktree(sessionId: string, path: string): Promise<void> {
+    const { root, work } = this.inWorkTree(sessionId);
+    if (work.worktrees.includes(path)) return;
+    work.worktrees.push(path);
+    this.markDirty();
+    await this.caps.events.emit('session:updated', root);
+  }
+
+  /** 会话与它所在工作会话树的根工作会话；会话不存在或不在工作会话树里时抛错 */
+  private inWorkTree(sessionId: string): { session: SessionInfo; root: SessionInfo; work: WorkBinding } {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`会话不存在: ${sessionId}`);
+    const root = rootSessionOf(session, id => this.sessions.get(id));
+    if (!root?.work) throw new Error(`会话 ${sessionId} 不在工作会话里：根会话没有绑定目录`);
+    return { session, root, work: root.work };
   }
 
   // ---- 生命周期 ----
@@ -831,16 +891,12 @@ class SessionManager implements SessionManagerService {
 // ===== 工具函数 =====
 
 /**
- * 会话的种类、出生平台与受众，只由 id 与 parentId 推出。新建、建档与加载入表时覆盖写入，调用方传的值与存储里的
- * 旧值都不采信；三个键都带上（没有的为 undefined），才盖得掉旧值。
+ * 会话的种类与受众，只由 id 与 parentId 推出。新建、建档与加载入表时覆盖写入，调用方传的值与存储里的旧值都不采信；
+ * 两个键都带上（没有的为 undefined），才盖得掉旧值。
  */
-function describeSession(
-  id: string,
-  parentId: string | undefined,
-): Pick<SessionInfo, 'kind' | 'originPlatform' | 'audience'> {
-  const origin = resolveSessionOrigin(id);
-  const audience = parentId ? undefined : (origin?.audience ?? 'owner');
-  return { kind: sessionKind({ parentId, audience }), originPlatform: origin?.platform, audience };
+function describeSession(id: string, parentId: string | undefined): Pick<SessionInfo, 'kind' | 'audience'> {
+  const audience = parentId ? undefined : (resolveSessionOrigin(id)?.audience ?? 'owner');
+  return { kind: sessionKind({ parentId, audience }), audience };
 }
 
 const SESSION_STATUSES: ReadonlySet<unknown> = new Set<SessionInfo['status']>([
@@ -858,17 +914,27 @@ const TURN_OUTCOMES: ReadonlySet<unknown> = new Set<NonNullable<SessionInfo['las
 ]);
 
 const isText = (value: unknown) => typeof value === 'string';
+const isTextList = (value: unknown) => Array.isArray(value) && value.every(isText);
 const isTime = (value: unknown) => typeof value === 'number' && Number.isFinite(value);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * 会话记录里会进会话列表与协议、类型不对会让读者出错的可选字段，各自的类型。种类、出生平台与受众载入时按 id 重算，
- * 不在这里
+ * 会话记录里会进会话列表与协议、类型不对会让读者出错的可选字段，各自的类型。种类与受众载入时按 id 重算，不在这里
  */
 const OPTIONAL_FIELDS: Record<string, (value: unknown) => boolean> = {
   title: isText,
   parentId: isText,
+  createdFrom: isText,
+  originPlatform: isText,
+  originChat: value =>
+    isRecord(value) &&
+    isText(value.type) &&
+    typeof value.multiParty === 'boolean' &&
+    isText(value.targetId) &&
+    (value.selfId === undefined || isText(value.selfId)),
+  work: value => isRecord(value) && isText(value.root) && isTextList(value.extraRoots) && isTextList(value.worktrees),
+  currentDir: isText,
   originInstance: isText,
   lastReplyAt: isTime,
   lastTurn: value =>
@@ -891,7 +957,7 @@ function storedSession(
   const required: Record<string, boolean> = {
     id: record.id === key,
     name: isText(record.name),
-    children: Array.isArray(record.children) && record.children.every(isText),
+    children: isTextList(record.children),
     status: SESSION_STATUSES.has(record.status),
     config: isRecord(record.config),
     createdAt: isTime(record.createdAt),
@@ -926,7 +992,7 @@ const uses = {
   agent: optional(agent),
   /** 自动标题的模型来源；没有 LLM 时退回用户消息首段 */
   llm: optional(llm),
-  /** 解析接管房间的适配器实例（originInstance），判断会话 id 前缀是不是已注册的平台名 */
+  /** 房间建档时取平台的类型声明记下聊天窗口；解析接管房间的适配器实例（originInstance） */
   platform: optional(platform),
   /**
    * 会话设置的全局默认、平台档与受众条目存放在宿主配置文档的 sessionConfig 字段里。由宿主在根上提供、没有插件
@@ -965,45 +1031,49 @@ async function run(caps: Caps): Promise<void> {
   provide(sessionManager, manager, { label: '会话管理' });
 
   // ===== IM 房间收录 =====
-  // 有出生平台、不是子任务的会话，首条真人入站（不带 source，触发判定之前）即登记。带 source 的是内部注入
-  //（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。
-  // 名字只采信出生平台自己的入站：群取群名、私聊取对方昵称，缺省用 id（从 WebUI 插话时消息带的是 owner 的昵称；
-  // 群的首条入站可能是不带群名的戳一戳，不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动。
+  // 会话表里还没有记录的真人入站（不带 source、不是子任务）按这条消息建档：出生平台取消息的平台，聊天窗口按这个平台的
+  // 类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，不经这里。带 source 的是
+  // 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。消息带的类型名不在平台的
+  // 声明里时按多方记下，每个平台与类型名告警一次。按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，
+  // 由第一条归它的适配器管的原生入站补记（backfillRoom）。
+  // 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省用 id（群的首条入站可能是不带群名的戳一戳，
+  // 不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动；没有聊天窗口的记录判不出该取哪个，不补。
   // 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。
-  const warnedPrefixes = new Set<string>();
+  const warnedTypes = new Set<string>();
   events.on('inbound:message', (msg: IncomingMessage) => {
     const { sessionId } = msg;
     if (!sessionId || msg.source || sessionId.includes('::')) return;
-    const origin = resolveSessionOrigin(sessionId);
-    if (!origin) return;
-    // 原生入站的前缀既不是发来消息的平台、也不是已注册的平台名：多半是适配器的 id 前缀与平台名不一致，这个前缀的
-    // 房间全部按一份不存在的平台档选档、落到全局默认。每个前缀告警一次。WebUI、CLI 往房间插话不在此列：
-    // 房间的适配器停用或还没加载时，它的平台名同样不在已注册之列
-    if (
-      origin.platform !== msg.platform &&
-      !OWNER_ENTRY_PLATFORMS.has(msg.platform) &&
-      !warnedPrefixes.has(origin.platform) &&
-      !getPlatformNames(caps.platform).includes(origin.platform)
-    ) {
-      warnedPrefixes.add(origin.platform);
-      logger.warn(
-        `会话 id 前缀「${origin.platform}」不是已注册的平台名，消息经平台「${msg.platform}」发来（${sessionId}）：` +
-          `这个前缀的房间按平台档「${origin.platform}」选档，没有这份档就落到全局默认。多人房间的会话 id 须以适配器自己的平台名加冒号开头`,
-      );
-    }
-    const nativeName =
-      msg.platform === origin.platform ? (origin.audience === 'group' ? msg.groupName : msg.nickname) : undefined;
     const session = manager.getSession(sessionId);
-    if (!session) {
-      manager
-        .ensureSession(sessionId, { name: nativeName || sessionId, createdBy: 'system', status: 'waiting' })
-        .catch(err => logger.warn(`IM 房间登记失败 (${sessionId}):`, err));
+    if (session && (session.originPlatform || session.createdFrom || session.work)) {
+      const chat = session.originChat;
+      if (chat && session.name === sessionId && session.originPlatform === msg.platform) {
+        const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
+        if (nativeName) manager.updateSession(sessionId, { name: nativeName }).catch(() => {});
+      }
+      void manager.recordOriginInstance(session);
       return;
     }
-    if (nativeName && session.name === sessionId) {
-      manager.updateSession(sessionId, { name: nativeName }).catch(() => {});
+    const adapter = getPlatformAdapters(caps.platform).find(a => a.platform === msg.platform);
+    const scope = chatScopeOf(msg, sessionTypesOf(adapter));
+    const typeKey = `${scope.platform}:${scope.type}`;
+    if (scope.undeclared && !warnedTypes.has(typeKey)) {
+      warnedTypes.add(typeKey);
+      logger.warn(
+        `平台「${scope.platform}」没有声明类型「${scope.type}」（${sessionId}）：这个聊天窗口按多方记下。` +
+          '适配器要在 sessionTypes 里声明它发出的类型名',
+      );
     }
-    void manager.recordOriginInstance(session);
+    const originChat: OriginChat = {
+      type: scope.type,
+      multiParty: scope.multiParty,
+      ...(msg.selfId === undefined ? {} : { selfId: msg.selfId }),
+      targetId: scope.targetId,
+    };
+    const name = (scope.multiParty ? msg.groupName : msg.nickname) || sessionId;
+    const origin = { originPlatform: msg.platform, originChat };
+    (session ? manager.backfillRoom(session, name, origin) : manager.recordRoom(sessionId, name, origin)).catch(err =>
+      logger.warn(`IM 房间登记失败 (${sessionId}):`, err),
+    );
   });
 
   // ===== 会话状态 =====
@@ -1027,32 +1097,17 @@ async function run(caps: Caps): Promise<void> {
   // 模型调用的 token 按会话累加：对话、摘要、识图、转写的调用都带会话 id
   events.on('llm:usage', usage => manager.recordUsage(usage));
 
-  // 监听用户消息事件 → 自动生成会话标题
-  // 在用户首次发消息时即生成标题，无需等待 AI 回复
-  // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题；从 WebUI 往 IM 房间插话同样不生成
+  // 自动标题：只给带创建来源的根会话（WebUI 新建的、终端建的）生成，在首条消息时生成、不等回复；IM 房间不生成，
+  // owner 从 WebUI 往房间插话也不拿来给房间起名。异步生成，不阻塞消息处理；直接传入这条消息，不依赖历史
   const titleGenerating = new Set<string>();
-  events.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
-    const { sessionId, platform } = msg;
-    if (!sessionId) {
-      logger.debug('标题生成跳过: 缺少 sessionId');
-      return;
-    }
-    if (titleGenerating.has(sessionId)) return;
-    // 仅对指定平台生成标题；非 webui/cli 平台（如 onebot）静默跳过，避免日志污染。
-    // platform 缺省同样跳过：白名单是正向门，来路不明的消息不该顺带建档 + 烧一次 LLM 生成标题。
-    if (!platform || !OWNER_ENTRY_PLATFORMS.has(platform)) return;
-    // 有出生平台的是 IM 房间：不拿 owner 插的话给房间起名，也不经这里建档
-    if (resolveSessionOrigin(sessionId)) return;
+  events.on('inbound:message', (msg: IncomingMessage) => {
+    const { sessionId } = msg;
     const session = manager.getSession(sessionId);
-    // 已有标题或子任务会话跳过（静默）
-    if (session && (session.title || session.parentId)) return;
+    if (!session?.createdFrom || session.title || titleGenerating.has(sessionId)) return;
     titleGenerating.add(sessionId);
-    logger.info(`开始生成会话标题: ${sessionId} (platform=${platform})`);
-    // 平台派生会话（cli-default 等）从不经 createSession 预建，缺档是常态：先兜底建档再生成
-    // 标题（与 createChildSession 同路），否则这些平台永远没有标题、且每条消息告警一次。
-    // 异步生成，不阻塞消息处理；直接传入用户消息避免依赖历史
-    (session ? Promise.resolve() : manager.ensureSession(sessionId).then(() => undefined))
-      .then(() => manager.generateTitle(sessionId, msg.content))
+    logger.info(`开始生成会话标题: ${sessionId}`);
+    manager
+      .generateTitle(sessionId, msg.content)
       .catch(err => logger.warn('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });

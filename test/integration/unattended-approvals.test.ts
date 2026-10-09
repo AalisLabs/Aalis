@@ -6,6 +6,7 @@ import { agent } from '../../packages/api-agent/src/index.js';
 import { approvals } from '../../packages/api-approval/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
@@ -52,7 +53,7 @@ describe('无人值守的多步任务', () => {
     const home = mkdtempSync(join(tmpdir(), 'aalis-unattended-'));
     homes.push(home);
     const { state } = provideHostPaths(app, home);
-    const host = app.bind({ provide, events, hooks, tools, agent, approvals });
+    const host = app.bind({ provide, events, hooks, tools, agent, approvals, sessionManager });
     host.provide(storage, memoryStorage(new Map()));
 
     const recorder: ChatModelRequest[] = [];
@@ -96,6 +97,8 @@ describe('无人值守的多步任务', () => {
     });
     const replies: string[] = [];
     host.events.on('outbound:message', msg => void replies.push(msg.content));
+    // owner 自己的会话：终端在发出入站之前建档，创建来源写 cli
+    await host.sessionManager.require().ensureSession('cli-default', {}, { createdFrom: 'cli' });
 
     await host.agent.require().handleMessage({
       content: '把服务部署上线，再记一下步骤',

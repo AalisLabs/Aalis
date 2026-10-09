@@ -4,7 +4,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -12,7 +12,8 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
-// IM 房间收录：有出生平台、不是子任务的会话，首条真人入站（不带 source）即登记，名字只采信出生平台自己的入站；
+// IM 房间收录：会话表里还没有记录、不是子任务的会话，首条真人入站（不带 source）即按这条消息登记，记下出生平台与
+// 聊天窗口（来源字段的细节见 session-origin-fields.test.ts），名字只采信出生平台自己的入站；
 // 带 source 的内部注入（工作流、好友申请的合成通知、空闲开话题等）不登记。
 // 状态在回合真正开始的 agent:input:before 翻 active（已归档的不翻），同一个中间件在 finally 里收口，
 // 后面的中间件拦下或抛错时房间也不停在「进行中」。收口按这一轮的结局：出错为 error，其余为 completed；
@@ -23,7 +24,8 @@ import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 const GROUP = 'onebot:10000:group:20001';
 const PRIVATE = 'onebot:10000:private:30001';
 
-const ONEBOT = { adapterName: 'OneBot', platform: 'onebot', getConnections: () => [], sendMessage: async () => {} };
+/** 入站收录不等建档与补记完成，让它落定 */
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -52,15 +54,7 @@ async function setup(
   adapters: Partial<PlatformAdapter>[] = [],
   { instances = false, stored = {} }: { instances?: boolean; stored?: Record<string, Record<string, unknown>> } = {},
 ) {
-  const warns: string[] = [];
-  const logger: Logger = {
-    debug() {},
-    info() {},
-    warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
-    error() {},
-    child: () => logger,
-  };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
@@ -115,17 +109,18 @@ async function setup(
       body,
     );
 
-  return { sm, host, mem, inbound, turn, running, warns };
+  return { sm, host, mem, inbound, turn, running };
 }
 
 describe('IM 房间按首条真人入站登记', () => {
-  it('群消息建档：名字取群名，room、group、onebot，状态 waiting，由 system 建；私聊以对方昵称为名', async () => {
+  it('群消息建档：名字取群名，room、group，记下出生平台与聊天窗口，状态 waiting，没有创建来源；私聊以对方昵称为名', async () => {
     const { sm, inbound } = await setup();
 
     await inbound({
       sessionId: GROUP,
       platform: 'onebot',
       sessionType: 'group',
+      groupId: '20001',
       groupName: '<群名>',
       nickname: '<甲>',
     });
@@ -137,9 +132,10 @@ describe('IM 房间按首条真人入站登记', () => {
       kind: 'room',
       audience: 'group',
       originPlatform: 'onebot',
+      originChat: { type: 'group', multiParty: true, targetId: '20001' },
       status: 'waiting',
-      createdBy: 'system',
     });
+    expect(group?.createdFrom).toBeUndefined();
     expect(sm.getSession(PRIVATE)).toMatchObject({ name: '<乙>', audience: 'private', status: 'waiting' });
   });
 
@@ -152,18 +148,12 @@ describe('IM 房间按首条真人入站登记', () => {
     expect(sm.getSession(GROUP), '首条真人入站就该登记').toBeDefined();
   });
 
-  it('子任务 id 的入站不建房间档；没有出生平台的会话不经这条路径建档', async () => {
+  it('子任务 id 的入站不建房间档，也不顺手登记它的父房间', async () => {
     const { sm, inbound } = await setup();
 
     await inbound({ sessionId: `${GROUP}::abcd1234`, platform: 'onebot', groupName: '<群名>' });
     expect(sm.getSession(`${GROUP}::abcd1234`), '子任务 id 不该被当成房间登记').toBeUndefined();
     expect(sm.getSession(GROUP), '也不顺手登记它的父房间').toBeUndefined();
-
-    // webui 入口的 session-<8位> 可能被自动标题兜底建档（既有行为），但不是由这里以 system 身份建的
-    await inbound({ sessionId: 'session-abcd1234', platform: 'webui' });
-    await inbound({ sessionId: 'mcp-server', platform: 'mcp' });
-    expect(sm.getSession('session-abcd1234')?.createdBy).not.toBe('system');
-    expect(sm.getSession('mcp-server')).toBeUndefined();
   });
 
   it('带 source 的内部注入不登记：工作流发往群、好友申请的合成通知、空闲开话题', async () => {
@@ -179,9 +169,6 @@ describe('IM 房间按首条真人入站登记', () => {
 });
 
 describe('房间记下接管它的适配器实例：建档时解析，没记下的下一次有消息进来时补记', () => {
-  /** 入站收录不等建档完成，让它落定 */
-  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
-
   /** canHandle 等到 release 才回答，用来卡住解析；asked 记下被问过的会话 */
   function gatedAdapter() {
     let release: () => void = () => {};
@@ -238,7 +225,8 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     expect(instanceOf(UNKNOWN), '没有适配器认领').toBeUndefined();
 
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
-    // CLI 会话由自动标题路径兜底建档；cli 适配器认领它，但它不是房间
+    // 终端的会话在入站之前建档（plugin-cli）；cli 适配器认领它，但它不是房间
+    await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
     await inbound({ sessionId: 'cli-default', platform: 'cli', userId: 'console' });
     await settle();
     expect(instanceOf(GROUP)).toBe('onebot-a');
@@ -386,33 +374,94 @@ describe('房间取名与补名', () => {
     expect(sm.getSession(GROUP)?.name).toBe('<显示名>');
   });
 
-  it('WebUI 往未登记的私聊房间插话：建档用 id 作名字，不取 owner 的昵称；之后对方的私聊补上昵称', async () => {
+  it('收录之前就起过名的房间（/session.set 先建档）：原生入站补记来源字段，名字不动', async () => {
+    const { sm, inbound } = await setup([], { instances: true });
+
+    await sm.ensureSession(GROUP, { name: '<显示名>' });
+    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
+    await settle();
+
+    expect(sm.getSession(GROUP)).toMatchObject({ name: '<显示名>', originPlatform: 'onebot' });
+  });
+
+  it('WebUI 往房间插话：不补名，不取 owner 的昵称；之后对方的私聊补上昵称', async () => {
     const { sm, inbound } = await setup();
+    await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', userId: '30001' });
+    expect(sm.getSession(PRIVATE)?.name).toBe(PRIVATE);
 
     await inbound({ sessionId: PRIVATE, platform: 'webui', userId: 'console', nickname: '<owner 昵称>' });
-    expect(sm.getSession(PRIVATE)).toMatchObject({ name: PRIVATE, audience: 'private', createdBy: 'system' });
-
-    await inbound({ sessionId: PRIVATE, platform: 'webui', nickname: '<owner 昵称>' });
     expect(sm.getSession(PRIVATE)?.name, '入口不是出生平台时不补名').toBe(PRIVATE);
 
     await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', nickname: '<乙>' });
     expect(sm.getSession(PRIVATE)?.name).toBe('<乙>');
   });
 
-  it('带 source 的注入回合在未登记的群房间下开子任务：父会话以 id 为名，之后原生群消息补上群名；没有出生平台的父会话照旧', async () => {
-    const { sm, inbound } = await setup();
+  it('有出生平台、没有聊天窗口的记录（读表时聊天窗口的类型不对被去掉）：判不出群还是私聊，不补名', async () => {
+    const { sm, inbound } = await setup([], {
+      stored: {
+        [GROUP]: {
+          id: GROUP,
+          name: GROUP,
+          children: [],
+          status: 'waiting',
+          config: {},
+          createdAt: 1,
+          updatedAt: 1,
+          originPlatform: 'onebot',
+        },
+      },
+    });
+
+    await inbound({
+      sessionId: GROUP,
+      platform: 'onebot',
+      sessionType: 'group',
+      groupName: '<群名>',
+      nickname: '<群员>',
+    });
+
+    expect(sm.getSession(GROUP)?.name).toBe(GROUP);
+  });
+
+  it('带 source 的注入回合在未登记的群房间下开子任务：父会话按 id 兜底建档、名字为 id；WebUI 插话不补记，之后的原生入站补记来源字段与群名', async () => {
+    const { sm, inbound } = await setup([], { instances: true });
 
     await inbound({ sessionId: GROUP, platform: 'onebot', source: 'workflow:<工作流>:<节点>' });
     expect(sm.getSession(GROUP), '带 source 的注入不登记').toBeUndefined();
     // create_subtask 的落点：父会话未登记时兜底建档
     await sm.createChildSession(GROUP, { name: '<子任务>' });
-    expect(sm.getSession(GROUP)?.name, '兜底建档的房间以 id 为名，留给出生平台的入站补名').toBe(GROUP);
+    expect(sm.getSession(GROUP)?.name).toBe(GROUP);
+    expect(sm.getSession(GROUP)?.originPlatform).toBeUndefined();
 
-    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
-    expect(sm.getSession(GROUP)?.name).toBe('<群名>');
+    await inbound({ sessionId: GROUP, platform: 'webui', userId: 'console', nickname: '<owner 昵称>' });
+    await settle();
+    expect(sm.getSession(GROUP)?.originPlatform, '这个 id 不归 webui 的适配器管').toBeUndefined();
 
-    await sm.createChildSession('cli-default', { name: '<子任务>' });
-    expect(sm.getSession('cli-default')?.name, '没有出生平台的父会话照旧用默认名').toMatch(/^会话 /);
+    await inbound({
+      sessionId: GROUP,
+      platform: 'onebot',
+      sessionType: 'group',
+      selfId: '10000',
+      groupId: '20001',
+      groupName: '<群名>',
+    });
+    await settle();
+    expect(sm.getSession(GROUP)).toMatchObject({
+      name: '<群名>',
+      originPlatform: 'onebot',
+      originChat: { type: 'group', multiParty: true, selfId: '10000', targetId: '20001' },
+      originInstance: 'onebot-a',
+    });
+  });
+
+  it('有创建来源的会话不经收录补记：终端的会话收到终端的入站仍没有出生平台', async () => {
+    const { sm, inbound } = await setup([], { instances: true });
+    await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
+
+    await inbound({ sessionId: 'cli-default', platform: 'cli', userId: 'console' });
+    await settle();
+
+    expect(sm.getSession('cli-default')?.originPlatform).toBeUndefined();
   });
 });
 
@@ -648,35 +697,5 @@ describe('收口按这一轮的结局，replied 记下她最近开口的时间',
       await vi.advanceTimersByTimeAsync(1_000);
       expect(mem.meta.get(GROUP)?.lastReplyAt).toBe(replied);
     });
-  });
-});
-
-describe('id 前缀与平台名不一致的告警', () => {
-  it('前缀不是发来消息的平台、也不是已注册的平台名：每个前缀只告警一次', async () => {
-    const { warns, inbound } = await setup([ONEBOT]);
-
-    await inbound({ sessionId: '<缩写>:<x>:group:<y>', platform: '<平台甲>' });
-    await inbound({ sessionId: '<缩写>:<x>:group:<z>', platform: '<平台甲>' });
-
-    const hits = warns.filter(w => w.includes('<缩写>'));
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toContain('<平台甲>');
-  });
-
-  it('onebot 适配器停用或还没加载时，WebUI、CLI 往 onebot 房间插话同样不告警：它们不是房间的原生入站', async () => {
-    const { warns, inbound } = await setup();
-
-    await inbound({ sessionId: GROUP, platform: 'webui', userId: 'console' });
-    await inbound({ sessionId: PRIVATE, platform: 'cli', userId: 'console' });
-
-    expect(warns.filter(w => w.includes('onebot'))).toEqual([]);
-  });
-
-  it('已注册 onebot 适配器时，WebUI 往 onebot 房间插话不告警', async () => {
-    const { warns, inbound } = await setup([ONEBOT]);
-
-    await inbound({ sessionId: GROUP, platform: 'webui', userId: 'console' });
-
-    expect(warns.filter(w => w.includes('onebot'))).toEqual([]);
   });
 });
