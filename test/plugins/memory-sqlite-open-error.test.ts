@@ -10,7 +10,7 @@ import memorySqlite from '../../packages/plugin-memory-sqlite/src/index.js';
 // ════════════════════════════════════════════════════════════
 // 开库失败。取不到 process.getBuiltinModule 或 node:sqlite，或 node:sqlite 缺本插件要用的接口（22.16 之前、23.x）时，
 // 都按 Node 太旧报错：写明需要 Node 24.15.0 起并指向文档站上的升级方法（经 npm 装的项目里没有 docs/）；其余失败
-// 带出原因与修法，原错误作 cause。
+// 带出原因与修法，原错误作 cause。path 填成本机路径是配置错误：写明要填 storage URI 与例子，不带堆栈。
 // ════════════════════════════════════════════════════════════
 
 const TOO_OLD =
@@ -55,12 +55,12 @@ function recordingLogger(): Logger & { errors: unknown[][] } {
   return logger as unknown as Logger & { errors: unknown[][] };
 }
 
-async function activate(path = join(dir, 'aalis.db'), resolveError?: Error) {
+async function activate(path = join(dir, 'aalis.db'), resolveError?: Error, config: Record<string, unknown> = {}) {
   const logger = recordingLogger();
   const app = new App({ name: 'T', logger });
   apps.push(app);
   app.bind({ provide }).provide(storage, fakeStorage(path, resolveError));
-  await app.plugins.register(memorySqlite, {});
+  await app.plugins.register(memorySqlite, config);
   await app.plugins.idle();
   const entry = app.plugins.getStatus().find(p => p.name === '@aalis/plugin-memory-sqlite');
   const thrown = logger.errors.flat().find((a): a is Error => a instanceof Error);
@@ -110,6 +110,18 @@ describe('plugin-memory-sqlite 开库失败', () => {
     expect(entry?.state).toBe('error');
     expect(entry?.error).toBe('无法解析数据库路径 data:/aalis.db（检查配置项 path）: 根 data 不可写');
     expect(thrown?.cause).toBe(original);
+  });
+
+  it('path 填本机绝对路径：写明要填 storage URI 与例子，是配置错误、不带堆栈', async () => {
+    const { entry, thrown } = await activate(undefined, undefined, { path: '/private/tmp/x/aalis.db' });
+
+    expect(entry?.state).toBe('error');
+    expect(entry?.error).toBe(
+      '这里要写 storage URI（<根名>:/<路径>，如 data:/aalis.db），不能写本机路径 "/private/tmp/x/aalis.db"；' +
+        '要用存储根以外的目录，先在「本地存储根」的 roots 里加一个指向它的根，并打开它的「允许写」；这个根文件工具也能访问',
+    );
+    expect(thrown?.name).toBe('ConfigError');
+    expect(thrown?.stack).toBeUndefined();
   });
 
   it('其它开库错误写明修法并带出原因，原错误作 cause', async () => {

@@ -187,7 +187,7 @@ async function run(caps: Caps): Promise<void> {
             id: `connect:${spec.id}`,
             level: 'error',
             title: `MCP 服务器「${spec.id}」连不上`,
-            detail: reason,
+            detail: `检查这台服务器的 command、args 与 env（它要的环境变量），改好后保存配置即重连。原因：${reason}`,
             open: 'config',
           });
         }),

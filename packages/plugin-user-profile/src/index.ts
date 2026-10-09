@@ -1918,8 +1918,7 @@ function registerUserProfile({
     const userId = argv.session.userId;
     if (!userId) return '当前会话未识别用户身份，无法清除档案。';
     const userKey = userKeyOf(argv.session.platform, userId);
-    const mem = memory.current;
-    if (!mem) return '记忆服务不支持档案删除。';
+    const mem = memory.require();
     try {
       const existed = await mem.getMetadata(PROFILE_NS, userKey);
       if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
@@ -1969,10 +1968,7 @@ function registerUserProfile({
     });
 
   commands.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
-    const mem = memory.current;
-    if (!mem) {
-      return '记忆服务不支持档案批量删除。';
-    }
+    const mem = memory.require();
     try {
       const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger);
       page.invalidate();
@@ -1988,8 +1984,10 @@ function registerUserProfile({
   // /instruct.add <text>   手动添加一条指令（authority=2）
   // /instruct.remove <id>  按 id 删除一条（authority=2）
   // /instruct.clear        清空当前 persona 的全部指令（authority=3, dangerous）
+  const INSTRUCTIONS_OFF =
+    '🚫 第三方行为指令没有开启：在「用户事实档案」的配置里打开「启用第三方行为指令」（enableInstructions）。';
   commands.command('instruct', '查看当前 persona 的第三方行为指令').action(async () => {
-    if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
+    if (!cfg.enableInstructions) return INSTRUCTIONS_OFF;
     const personaName = getCurrentPersonaName();
     const doc = await loadInstructionsLenient(memory.current);
     if (doc.instructions.length === 0) {
@@ -2009,7 +2007,7 @@ function registerUserProfile({
   commands
     .command('instruct.add <text:text>', '手动添加一条第三方行为指令', { visibility: 'restricted' })
     .action(async (argv, text) => {
-      if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
+      if (!cfg.enableInstructions) return INSTRUCTIONS_OFF;
       const body = typeof text === 'string' ? text.trim() : '';
       if (!body) return '❌ 指令内容不能为空。';
       const userId = argv.session.userId;
@@ -2043,7 +2041,7 @@ function registerUserProfile({
   commands
     .command('instruct.remove <id:string>', '按 id 删除一条第三方行为指令', { visibility: 'restricted' })
     .action(async (_argv, id) => {
-      if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
+      if (!cfg.enableInstructions) return INSTRUCTIONS_OFF;
       const targetId = typeof id === 'string' ? id.trim() : '';
       if (!targetId) return '❌ 需要提供指令 id。';
       const mem = memory.current;
@@ -2064,9 +2062,8 @@ function registerUserProfile({
       visibility: 'restricted',
     })
     .action(async () => {
-      if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
-      const mem = memory.current;
-      if (!mem) return '记忆服务不支持指令删除。';
+      if (!cfg.enableInstructions) return INSTRUCTIONS_OFF;
+      const mem = memory.require();
       try {
         const before = (await loadInstructionsLenient(mem)).instructions.length;
         await mem.deleteMetadata(INSTRUCTIONS_NS, getInstructionsKey());

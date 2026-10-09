@@ -1,4 +1,5 @@
 import { storage } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { App, type BoundOf, events, LogHub, provide, services } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
@@ -28,8 +29,12 @@ interface Harness {
   pages: PageHost;
   /** 新建任务（经闸门，输入按声明的字段校验） */
   create(input: Record<string, unknown>): ReturnType<PageHost['act']>;
+  /** 调 scheduler_create_job（确认放行），回解析后的回执 */
+  createByTool(args: Record<string, unknown>): Promise<Record<string, unknown>>;
   jobs(): JobView[];
   svc(): SchedulerService | undefined;
+  /** 内存 storage 里的文件：看落盘结果 */
+  files: Map<string, string>;
   warns: string[];
 }
 
@@ -40,6 +45,7 @@ async function withScheduler(
     persisted?: unknown;
     /** 配置文件里的静态任务 */
     jobs?: unknown[];
+    persistPath?: string;
   } = {},
 ) {
   const hub = new LogHub();
@@ -56,7 +62,10 @@ async function withScheduler(
   host.provide(webuiServer, pages.service);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(cronEnginePlugin, {});
-  await app.plugins.register(schedulerPlugin, { jobs: options.jobs ?? [] });
+  await app.plugins.register(schedulerPlugin, {
+    jobs: options.jobs ?? [],
+    ...(options.persistPath ? { persistPath: options.persistPath } : {}),
+  });
   await app.plugins.idle();
 
   const svc = () => host.services.get(scheduler);
@@ -66,8 +75,19 @@ async function withScheduler(
       host,
       pages,
       create: input => pages.act('scheduler', 'createJob', { input }),
+      async createByTool(args) {
+        const toolSvc = host.services.get(tools);
+        if (!toolSvc) throw new Error('tools 服务未注册');
+        toolSvc.setExecutionGuard(async () => null);
+        const res = await toolSvc.execute('scheduler_create_job', args, {
+          sessionId: 'internal',
+          platform: 'internal',
+        });
+        return JSON.parse(res.content) as Record<string, unknown>;
+      },
       jobs: () => svc()?.getJobs() ?? [],
       svc,
+      files: store.files,
       warns,
     });
   } finally {
@@ -177,6 +197,20 @@ describe('新建', () => {
     });
   });
 
+  it('cron 无效：页上新建与 scheduler_create_job 都当场拒收，任务不入表、不落盘', async () => {
+    await withScheduler(async ({ create, createByTool, jobs, files, pages }) => {
+      expect(await create({ ...base, cron: 'every five minutes' })).toEqual(
+        refused(500, '非法 cron 表达式（需 5 字段或别名）: every five minutes'),
+      );
+      expect(await createByTool({ name: 'k', cron: '61 * * * *', content: 'x' })).toEqual({
+        error: 'cron 第 1 字段非法（解析为空）: "61"',
+      });
+      expect(jobs()).toEqual([]);
+      expect(files.has('data:/scheduler-jobs.json')).toBe(false);
+      expect(pages.notices(), '拒收的输入不该再发「没有排上」').toEqual([]);
+    });
+  });
+
   it('同名任务已存在：新建被拒，改它要用「编辑」', async () => {
     await withScheduler(async ({ create, jobs }) => {
       await create({ ...base, interval: 60 });
@@ -190,7 +224,10 @@ describe('新建', () => {
       async ({ create, jobs }) => {
         expect(await create({ ...base, interval: 60 })).toEqual({
           status: 200,
-          body: { message: '已保存任务 j；仅本次运行生效，未写入 data:/scheduler-jobs.json（加载失败，见日志）' },
+          body: {
+            message:
+              '已保存任务 j；仅本次运行生效，未写入 data:/scheduler-jobs.json：它读不出来，处理办法见「需要处理」里的提示',
+          },
         });
         expect(
           jobs().find(j => j.name === 'j'),
@@ -214,6 +251,19 @@ describe('编辑', () => {
       ).toEqual(saved());
       expect(jobs()).toMatchObject([{ name: 'j', cron: '@daily', content: 'y' }]);
       expect(jobs()[0].interval).toBeUndefined();
+    });
+  });
+
+  it('改成无效的 cron：拒收，任务保持原样', async () => {
+    await withScheduler(async ({ pages, create, jobs }) => {
+      await create({ ...base, cron: '@daily' });
+      expect(
+        await pages.act('scheduler', 'editJob', {
+          rowKey: 'j',
+          input: { cron: '@every soon', sessionId: 'internal', platform: 'internal', content: 'y' },
+        }),
+      ).toEqual(refused(500, '无法识别的 @every 表达式: @every soon'));
+      expect(jobs()).toMatchObject([{ name: 'j', cron: '@daily', content: 'x' }]);
     });
   });
 
@@ -450,6 +500,144 @@ describe('存量持久化任务', () => {
             actorUserId: 'console',
             content: 'x',
           },
+        ],
+      },
+    );
+  });
+});
+
+// 用户看不见的故障发提示（「需要处理」）：持久化任务文件读不出来时里面的任务全没加载、新改动也不落盘；
+// cron 订阅不上的任务永远不会运行（页上与工具新建时已当场拒收，这里只剩配置文件与存量文件里的任务）。
+// 任务重排成功或删掉时撤回它的提示
+describe('读不出来与没排上的提示', () => {
+  const instance = '@aalis/plugin-scheduler';
+  const stored = (name: string, cron: string) => ({
+    name,
+    cron,
+    enabled: true,
+    sessionId: 'internal',
+    platform: 'internal',
+    actorPlatform: 'webui',
+    actorUserId: 'console',
+    content: 'x',
+  });
+
+  it('持久化任务文件内容不对：发 error 提示，写明修好文件与原因', async () => {
+    await withScheduler(
+      async ({ pages }) => {
+        expect(pages.notices()).toEqual([
+          {
+            instance,
+            id: 'jobs-load',
+            level: 'error',
+            title: '计划任务文件 data:/scheduler-jobs.json 读不出来，里面的任务没有加载',
+            detail:
+              '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。' +
+              '修好之前新建与改动的任务只在本次运行生效。原因：持久化任务文件不是数组（得到 object）',
+          },
+        ]);
+      },
+      { persisted: { jobs: [] } },
+    );
+  });
+
+  it('持久化任务文件读不到（根名写错、存储插件不在）：提示写去查 persistPath 与存储插件，不让修文件', async () => {
+    await withScheduler(
+      async ({ pages }) => {
+        expect(pages.notices()).toEqual([
+          {
+            instance,
+            id: 'jobs-load',
+            level: 'error',
+            title: '计划任务文件 dat:/scheduler-jobs.json 读不出来，里面的任务没有加载',
+            detail:
+              '确认本地存储插件在运行、配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。' +
+              '修好之前新建与改动的任务只在本次运行生效。原因：未知存储根: dat（已注册根: data）',
+          },
+        ]);
+      },
+      { persistPath: 'dat:/scheduler-jobs.json' },
+    );
+  });
+
+  it('存量文件里的任务 cron 无效：发提示去计划任务页改；改对后撤回，删掉也撤回', async () => {
+    await withScheduler(
+      async ({ pages }) => {
+        expect(pages.notices()).toEqual([
+          {
+            instance,
+            id: 'unscheduled:bad',
+            level: 'error',
+            title: '计划任务「bad」没有排上，不会运行',
+            detail: expect.stringMatching(/^在计划任务页编辑这个任务，改正它的 cron 后保存。原因：\S/),
+            open: { page: 'scheduler' },
+          },
+          expect.objectContaining({ id: 'unscheduled:worse' }),
+        ]);
+
+        await pages.act('scheduler', 'editJob', {
+          rowKey: 'bad',
+          input: { cron: '@daily', sessionId: 'internal', platform: 'internal', content: 'x' },
+        });
+        expect(pages.notices().map(n => n.id)).toEqual(['unscheduled:worse']);
+        await pages.act('scheduler', 'removeJob', { rowKey: 'worse' });
+        expect(pages.notices()).toEqual([]);
+      },
+      { persisted: [stored('bad', 'every five minutes'), stored('worse', 'nope')] },
+    );
+  });
+
+  it('配置文件里的任务 cron 无效：提示去配置里改', async () => {
+    await withScheduler(
+      async ({ pages }) => {
+        expect(pages.notices()).toEqual([
+          {
+            instance,
+            id: 'unscheduled:static',
+            level: 'error',
+            title: '计划任务「static」没有排上，不会运行',
+            detail: expect.stringMatching(/^在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：\S/),
+            open: 'config',
+          },
+        ]);
+      },
+      { jobs: [{ name: 'static', cron: 'nope', sessionId: 'internal', platform: 'internal', content: 'x' }] },
+    );
+  });
+
+  // 时区无效时估算下次执行（nextFireTime）同步抛错：曾从激活里冒出去，整个插件起不来、提示也发不出
+  it('配置文件里的任务 timeZone 无效：插件照常激活、发提示，停用的同类任务可恢复，其余任务照常', async () => {
+    const job = {
+      cron: '0 9 * * *',
+      timeZone: 'Mars/Olympus',
+      sessionId: 'internal',
+      platform: 'internal',
+      content: 'x',
+    };
+    await withScheduler(
+      async ({ app, pages, jobs }) => {
+        expect(app.plugins.getStatus().find(p => p.name === instance)?.state).toBe('active');
+        expect(pages.notices()).toEqual([
+          {
+            instance,
+            id: 'unscheduled:tz',
+            level: 'error',
+            title: '计划任务「tz」没有排上，不会运行',
+            detail: '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区: Mars/Olympus',
+            open: 'config',
+          },
+        ]);
+        expect(jobs().map(j => j.name)).toEqual(['tz', 'tz-off', 'every']);
+        expect(await pages.act('scheduler', 'resumeJob', { rowKey: 'tz-off' })).toEqual({
+          status: 200,
+          body: { message: '已恢复 tz-off' },
+        });
+      },
+      {
+        jobs: [
+          { ...job, name: 'tz' },
+          { ...job, name: 'tz-off', enabled: false },
+          { name: 'every', interval: 60, sessionId: 'internal', platform: 'internal', content: 'x' },
         ],
       },
     );

@@ -115,7 +115,7 @@ const uses = {
   storage: optional(storage),
   memory: optional(memory),
   authority: optional(authority),
-  app: optional(appService),
+  app: appService,
   events,
   hooks,
   /** 停用时结算等待中的意图确认 */
@@ -368,8 +368,7 @@ function registerCommands({
   });
 
   commands.command('shutdown', '关闭应用', { visibility: 'restricted' }).action(async () => {
-    const host = app.current;
-    if (!host) return '无法访问应用服务';
+    const host = app.require();
     setTimeout(async () => {
       await host.stop();
       process.exit(0);
@@ -378,9 +377,7 @@ function registerCommands({
   });
 
   commands.command('restart', '重启应用', { visibility: 'restricted' }).action(async () => {
-    const host = app.current;
-    if (!host) return '无法访问应用服务';
-    host.restart();
+    app.require().restart();
     return '正在重启应用…';
   });
 
@@ -397,7 +394,12 @@ function registerCommands({
     // 附件等，留下「消息还在、其余已清」的半截状态。预检只决定执行与否，清理时另取当时的记忆后端
     const clearsMessages = !types || types.includes('context');
     const memoryAtStart = memory.current;
-    if (clearsMessages && !memoryAtStart) return '⚠ 记忆服务不可用，本次未清理任何内容。';
+    if (clearsMessages && !memoryAtStart) {
+      return (
+        '⚠ 没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
+        '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因。'
+      );
+    }
     if (clearsMessages && isGlobal && !memoryAtStart?.clearAll) {
       return '⚠ 记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。';
     }

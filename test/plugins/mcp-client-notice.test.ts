@@ -7,7 +7,7 @@ import { pageHost } from '../fixtures/page-host.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
-// mcp-client 连不上某个 MCP 服务器时发 error 提示（标题写哪个服务器，detail 写原因，跳转去配置），出现在「需要处理」
+// mcp-client 连不上某个 MCP 服务器时发 error 提示（标题写哪个服务器，detail 先写怎么修再接原因，跳转去配置），出现在「需要处理」
 // 与插件详情；提示归属这次激活，改好配置重载后连上了，提示随旧激活撤回、新激活不再发。
 //
 // MCP 服务器用测试替身：node -e 起的 stdio 进程，按行收 JSON-RPC，答 initialize 与 tools/list；连不上的替身一启动就退出。
@@ -28,6 +28,8 @@ lines.on('line', line => {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n');
 });`;
 const BROKEN = 'process.exit(3)';
+/** 提示 detail 的修法部分，后面接连不上的原因 */
+const FIX = '检查这台服务器的 command、args 与 env（它要的环境变量），改好后保存配置即重连。原因：';
 
 const server = (id: string, script: string) => ({ id, command: process.execPath, args: ['-e', script] });
 
@@ -63,11 +65,11 @@ describe('plugin-mcp-client 连不上时发提示', () => {
         id: 'connect:flaky',
         level: 'error',
         title: 'MCP 服务器「flaky」连不上',
-        detail: expect.stringMatching(/\S/),
+        detail: expect.stringMatching(new RegExp(`^${FIX}\\S`)),
         open: 'config',
       },
     ]);
-    expect(errors).toEqual([`连接 MCP server "flaky" 失败: ${notice.detail}`]);
+    expect(errors).toEqual([`连接 MCP server "flaky" 失败: ${notice.detail?.slice(FIX.length)}`]);
     const names = () => registry.getAll().map(tool => tool.name);
     expect(names()).toContain('mcp_steady_echo');
     expect(names()).not.toContain('mcp_flaky_echo');

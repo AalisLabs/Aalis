@@ -564,6 +564,10 @@ importers:
         version: 5.9.3
 
   packages/api-storage:
+    dependencies:
+      '@aalis/schema-config':
+        specifier: workspace:>=0.14.0 <1.0.0
+        version: link:../schema-config
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1049,6 +1053,9 @@ importers:
       '@aalis/api-code-sandbox':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-code-sandbox
+      '@aalis/api-doctor':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-doctor
       '@aalis/api-process':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-process

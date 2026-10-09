@@ -20,11 +20,36 @@ const pexec = promisify(execFile);
 // 直到真跑才发现 npm 对命令行显式 spec 只 warn 且 exit 0。那条只有真 npm 能证伪。
 //
 // 联网不可用时整组跳过，不让 CI 因网络红。
+//
+// 不依赖调用方的 npm 配置：本文件起的 npm 用空的 userconfig 与 globalconfig、源用 npmmirror、不走代理。调用方的
+// userconfig 可能带发布令牌，代理可能按流量计费，都不该被测试用上。
 // ════════════════════════════════════════════════════════════
 
 // 探测必须在**顶层**做，不能放 beforeAll：`it.runIf(cond)` 在收集阶段就求值，
 // 那时 beforeAll 还没跑，条件恒为初始值，联网用例会被无声跳过（踩过一次）。
 const root = mkdtempSync(join(tmpdir(), 'aalis-install-chain-'));
+const npmDir = mkdtempSync(join(tmpdir(), 'aalis-install-chain-npm-'));
+const emptyUserconfig = join(npmDir, 'npmrc');
+/** npm 不让同一个文件既当 userconfig 又当 globalconfig */
+const emptyGlobalconfig = join(npmDir, 'global-npmrc');
+for (const file of [emptyUserconfig, emptyGlobalconfig]) writeFileSync(file, '');
+
+/**
+ * 就地把 env 改成给 npm 的环境：删掉调用方的 npm 配置（经 npm 起的进程里，调用方配置里的项会以 npm_config_*
+ * 出现在环境里）与所有以 proxy 结尾的变量（NO_PROXY 一并删掉无害），userconfig 与 globalconfig 都指向空文件，
+ * 源用 npmmirror。
+ */
+function isolateNpm(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  for (const key of Object.keys(env)) {
+    if (/^npm_config_|proxy$/i.test(key)) delete env[key];
+  }
+  env.NPM_CONFIG_USERCONFIG = emptyUserconfig;
+  env.NPM_CONFIG_GLOBALCONFIG = emptyGlobalconfig;
+  env.NPM_CONFIG_REGISTRY = 'https://registry.npmmirror.com';
+  return env;
+}
+// 本文件起的 npm 都继承 process.env，插件给 npm 的 env 也是叠在 process.env 上的整份环境，所以改它本身
+isolateNpm(process.env);
 
 interface ExecOpts {
   cwd?: string;
@@ -115,10 +140,39 @@ const npmUsable = await (async () => {
 })();
 
 afterAll(() => {
-  if (root) rmSync(root, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
+  rmSync(npmDir, { recursive: true, force: true });
 });
 
 describe('安装链（真实 npm）', () => {
+  it('调用方的 userconfig、npm 配置与代理传不进本文件起的 npm（不联网）', async () => {
+    // 本文件起的 npm 不另传 env，继承的就是 process.env：它得已经隔离过
+    const inherited = await pexec('npm', ['config', 'get', 'userconfig', 'registry', 'proxy', 'https-proxy'], {
+      cwd: npmDir,
+    });
+    expect(inherited.stdout).toBe(
+      `userconfig=${emptyUserconfig}\nregistry=https://registry.npmmirror.com\nproxy=null\nhttps-proxy=null\n`,
+    );
+
+    const callerRc = join(npmDir, 'caller-npmrc');
+    writeFileSync(callerRc, 'init-author-name=caller-userconfig\n');
+    const proxy = 'http://127.0.0.1:9';
+    const env = isolateNpm({
+      ...process.env,
+      NPM_CONFIG_USERCONFIG: callerRc,
+      npm_config_init_author_name: 'caller-exported',
+      HTTPS_PROXY: proxy,
+      NO_PROXY: 'localhost',
+      npm_config_proxy: proxy,
+    });
+    const { stdout } = await pexec('npm', ['config', 'get', 'init-author-name', 'registry', 'proxy'], {
+      cwd: npmDir,
+      env,
+    });
+    expect(stdout).toBe('init-author-name=\nregistry=https://registry.npmmirror.com\nproxy=null\n');
+    expect(Object.keys(env).filter(key => /proxy$/i.test(key))).toEqual([]);
+  }, 60_000);
+
   it.runIf(npmUsable)(
     '卸载：把包从根 dependencies 里摘掉（只 dispose 运行时实例不够，重启后会复活）',
     async () => {

@@ -1,3 +1,4 @@
+import type { BoundDoctor, DoctorService } from '../../packages/api-doctor/src/index.js';
 import type { Logger, ServiceRef, ServiceView } from '../../packages/core/src/index.js';
 import type { MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 
@@ -31,4 +32,9 @@ export function fixedRef<P>(current: P | undefined): ServiceRef<P> {
     all: () => [],
     follow: () => () => {},
   };
+}
+
+/** doctor 绑定接口替身：没有 doctor，登记的检查项只收下（要验检查项得经真实 App 装上 plugin-doctor） */
+export function absentDoctor(): BoundDoctor {
+  return { ...ref<DoctorService>(), registerCheck: () => () => {} };
 }

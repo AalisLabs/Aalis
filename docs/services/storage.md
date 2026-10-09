@@ -71,7 +71,8 @@ export interface StorageRootInfo {
 | `getStorageRootConflicts(source)` | 同名 root 冲突诊断。 |
 | `resolveStorageEntryForRoot(source, rootName, caps?)` / `resolveStorageByPath(source, uri, caps?)` | 按 root 名或 URI 找到负责该路径的 entry。 |
 | `isStorageUri(s)` | **权威文法判定**。 |
-| `parseUriRoot(uri)` / `toStorageUri(input, fallbackRoot='data')` / `parseStorageUri` / `resolveAgainstCwd` | 契约级路径文法。 |
+| `parseUriRoot(uri)` / `toStorageUri(input, fallbackRoot='data')` / `parseStorageUri` / `resolveAgainstCwd` | 契约级路径文法。`toStorageUri` 遇本机路径（宿主机绝对路径与 `~/…`）抛配置错误，写明要填 storage URI 并举例。 |
+| `isHostAbsolutePath(input)` | 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）判据。 |
 | `isStorageNotFound(err)` | 「目标不存在」判据：有 `code` 时只认 `'ENOENT'`，没有 `code` 才退回文案正则。整份读入再整份回写的消费者据它区分「全新」与「读不出」：后者应拒写，免得一次回写冲掉读不懂的原文件。 |
 
 ---

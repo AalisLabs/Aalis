@@ -20,6 +20,7 @@ import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api
 import {
   type SessionConfig,
   type SessionConfigPatch,
+  type SessionManagerService,
   type SessionSetting,
   sessionManager as sessionManagerService,
 } from '@aalis/api-session-manager';
@@ -2296,6 +2297,11 @@ function run(caps: Caps): void {
   // /session 查（模型+人设+名+来源） · /session.set 改 · /session.reset 复位 · /model 列可用模型
   // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
 
+  /** 会话设置存在会话管理里：它没在运行时三条会话指令都回这一句 */
+  const NO_SESSION_MANAGER =
+    '会话管理没有在运行，会话设置要靠它：在 WebUI 插件区启用「会话管理」，' +
+    '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因';
+
   /**
    * 组装某会话某字段的视图行：生效值与来源（会话覆盖 / 父会话 / 平台档 <平台>（<受众>） / 平台档 <平台> / 默认）；
    * 会话有覆盖时另起一行列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，
@@ -2303,14 +2309,13 @@ function run(caps: Caps): void {
    */
   type CfgView = SessionConfig | undefined;
   function resolutionLines(
+    smSvc: SessionManagerService,
     sessionId: string,
     platform: string,
     label: string,
     key: 'llm' | 'persona' | 'think',
     pick: (c: CfgView) => string | undefined,
   ): string[] {
-    const smSvc = caps.sessionManager.current;
-    if (!smSvc) return [`${label}: (session-manager 不可用)`];
     const inheritance = smSvc.resolveInheritance(sessionId, platform);
     const inherited = pick(inheritance.values);
     const layer = inheritance.sources[key];
@@ -2390,14 +2395,14 @@ function run(caps: Caps): void {
     .command('session', '查看当前对话生效的设定及来源。设定指模型、人设、深度思考与名称', { risk: 'sensitive' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
-      if (!smSvc) return 'session-manager 服务不可用';
+      if (!smSvc) return NO_SESSION_MANAGER;
       const sid = argv.session.sessionId;
       const session = smSvc.getSession(sid);
       return [
         `会话: ${session?.name ?? sid}`,
-        ...resolutionLines(sid, argv.session.platform, '模型', 'llm', fmtModel),
-        ...resolutionLines(sid, argv.session.platform, '人设', 'persona', fmtPersona),
-        ...resolutionLines(sid, argv.session.platform, '深度思考', 'think', fmtThink),
+        ...resolutionLines(smSvc, sid, argv.session.platform, '模型', 'llm', fmtModel),
+        ...resolutionLines(smSvc, sid, argv.session.platform, '人设', 'persona', fmtPersona),
+        ...resolutionLines(smSvc, sid, argv.session.platform, '深度思考', 'think', fmtThink),
         await thinkingNote(sid, argv.session.platform),
         session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
         '────',
@@ -2426,7 +2431,7 @@ function run(caps: Caps): void {
     .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
-      if (!smSvc) return 'session-manager 服务不可用';
+      if (!smSvc) return NO_SESSION_MANAGER;
       const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
       const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
       const level = typeof argv.options.think === 'string' ? argv.options.think.trim() : '';
@@ -2494,7 +2499,7 @@ function run(caps: Caps): void {
     .option('think', '-t', { description: '仅复位深度思考覆盖' })
     .action(async argv => {
       const smSvc = caps.sessionManager.current;
-      if (!smSvc) return 'session-manager 服务不可用';
+      if (!smSvc) return NO_SESSION_MANAGER;
       const mFlag = argv.options.model === true;
       const pFlag = argv.options.persona === true;
       const tFlag = argv.options.think === true;

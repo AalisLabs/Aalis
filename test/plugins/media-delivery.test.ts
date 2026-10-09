@@ -141,10 +141,13 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
     expect(m._attachmentDescriptions?.[0]).toContain('一只猫');
   });
 
-  it('关：不调识别模型；无落盘运行时（OneBot 场景正文已有 ref）描述位留空', async () => {
+  it('关：不调识别模型；OneBot 的图（data 是落盘后的相对路径、正文已有 ref）描述位留空', async () => {
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: false }));
     const calls = withFakeVision(svc);
-    const m = msg();
+    const m: IncomingMessage = {
+      ...msg(),
+      attachments: [{ kind: 'image', data: 'data/images/s/x.png', mimeType: 'image/png' }],
+    };
     const report = await svc.processMessage(m);
     expect(calls).toHaveLength(0);
     expect(report.successCount).toBe(0);

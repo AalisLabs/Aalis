@@ -1,5 +1,5 @@
 import { type CommandArgv, commands } from '@aalis/api-commands';
-import { memory } from '@aalis/api-memory';
+import { type MemoryService, memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -135,31 +135,22 @@ async function getBoundFriendCode(
   return typeof code === 'number' ? code : null;
 }
 
-async function setBoundFriendCode(
+/** 绑定要存进记忆后端、按发消息的人区分：缺了哪个就返回给用户的一句（含怎么办） */
+function bindingStore(
   memory: MemoryRef,
   platform: string | undefined,
   userId: string | undefined,
-  friendCode: number,
-): Promise<boolean> {
+): { service: MemoryService; key: string } | string {
   const key = bindKey(platform, userId);
-  if (!key) return false;
+  if (!key) return '认不出发消息的人（没有平台用户 id），绑定只能在认得出发送者的平台上做，如 QQ';
   const service = memory.current;
-  if (!service) return false; // 服务缺席（与「方法缺席」不同——后者已随契约必填而消失）
-  await service.saveMetadata(BIND_NAMESPACE, key, { friend_code: friendCode, updated_at: Date.now() });
-  return true;
-}
-
-async function clearBoundFriendCode(
-  memory: MemoryRef,
-  platform: string | undefined,
-  userId: string | undefined,
-): Promise<boolean> {
-  const key = bindKey(platform, userId);
-  if (!key) return false;
-  const service = memory.current;
-  if (!service) return false;
-  await service.deleteMetadata(BIND_NAMESPACE, key);
-  return true;
+  if (!service) {
+    return (
+      '没有在运行的记忆后端（绑定记在它里面）：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
+      '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因'
+    );
+  }
+  return { service, key };
 }
 
 // ===== HTTP 客户端 =====
@@ -182,13 +173,22 @@ class MaimaiClient {
       Accept: 'application/json',
     };
     this.logger.debug(`[maimai] GET ${url.toString()}`);
-    // 工具执行面与调用方都没有外层超时：对端不应答即那轮对话永久挂住（与已修的 embedding-openai 同形）。
-    const resp = await fetch(url.toString(), {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(Math.max(1000, this.cfg.timeoutMs)),
-    });
-    const text = await resp.text();
+    let resp: Response;
+    let text: string;
+    try {
+      // 工具执行面与调用方都没有外层超时：对端不应答即那轮对话永久挂住（与已修的 embedding-openai 同形）。
+      // 时限连读响应体一起算：响应头到了、响应体卡住时同样超时
+      resp = await fetch(url.toString(), {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(Math.max(1000, this.cfg.timeoutMs)),
+      });
+      text = await resp.text();
+    } catch (err) {
+      // 超时或连不上：底层原因常在 cause 里（fetch 只说 fetch failed）
+      const reason = err instanceof Error ? (err.cause instanceof Error ? err.cause : err).message : String(err);
+      throw new Error(`查分器暂时连不上，稍后再试（${reason}）`, { cause: err });
+    }
     let body: { success?: boolean; code?: number; message?: string; data?: T } | undefined;
     try {
       body = JSON.parse(text);
@@ -197,7 +197,10 @@ class MaimaiClient {
     }
     if (!resp.ok || (body && body.success === false)) {
       const msg = body?.message || `HTTP ${resp.status}`;
-      throw new Error(`maimai API 调用失败: ${msg}`);
+      if (resp.status === 401 || resp.status === 403) {
+        throw new Error(`查分器不认开发者凭据：检查配置项 developerToken（HTTP ${resp.status}：${msg}）`);
+      }
+      throw new Error(`查分器回复：${msg}`);
     }
     if (body && 'data' in body) return body.data as T;
     return text as unknown as T;
@@ -541,10 +544,7 @@ export default definePlugin({
             parameters: { type: 'object', properties: {}, required: [] },
           },
         },
-        handler: async (_args, callCtx) => {
-          const ok = await clearBoundFriendCode(memory, callCtx.platform, callCtx.userId);
-          return ok ? '已解绑你的舞萌 DX 好友码' : '解绑失败：记忆服务不可用或未绑定';
-        },
+        handler: async (_args, callCtx) => handleUnbind(memory, callCtx),
       });
 
       logger.info('[maimai] Agent 工具已注册');
@@ -605,10 +605,7 @@ export default definePlugin({
         .argument('code', '查分器上的好友码（数字）')
         .action(async (argv, code) => handleBind(memory, { friend_code: code }, callCtxOf(argv)));
 
-      commands.command('maimai.unbind', '解绑你的好友码').action(async argv => {
-        const ok = await clearBoundFriendCode(memory, argv.session.platform, argv.session.userId);
-        return ok ? '已解绑' : '解绑失败';
-      });
+      commands.command('maimai.unbind', '解绑你的好友码').action(async argv => handleUnbind(memory, callCtxOf(argv)));
 
       logger.info('[maimai] 斜杠指令已注册');
     }
@@ -616,6 +613,9 @@ export default definePlugin({
 });
 
 // ===== 处理函数（工具与指令共用） =====
+
+/** 按 QQ 号查到的玩家没带好友码：B50 与最近游玩只能按好友码查 */
+const NO_FRIEND_CODE = '按 QQ 号查到的玩家没有好友码：直接写好友码查，或先 /maimai bind <好友码> 绑定';
 
 async function handleGetPlayer(
   memory: MemoryRef,
@@ -651,7 +651,7 @@ async function handleGetBests(
       const p = await client.getPlayerByQQ(target.qq);
       friendCode = p.friend_code;
     }
-    if (!friendCode) return '无法解析好友码';
+    if (!friendCode) return NO_FRIEND_CODE;
     const apOnly = args.ap_only === true;
     const topN = parseIntStrict(args.top_n) ?? 50;
     const bests = apOnly ? await client.getApBests(friendCode) : await client.getBests(friendCode);
@@ -677,7 +677,7 @@ async function handleGetRecents(
       const p = await client.getPlayerByQQ(target.qq);
       friendCode = p.friend_code;
     }
-    if (!friendCode) return '无法解析好友码';
+    if (!friendCode) return NO_FRIEND_CODE;
     const limit = Math.min(50, Math.max(1, parseIntStrict(args.limit) ?? 10));
     const scores = await client.getRecents(friendCode);
     return formatRecents(scores, limit);
@@ -712,9 +712,17 @@ async function handleBind(
 ): Promise<string> {
   const fc = parseIntStrict(args.friend_code);
   if (!fc) return '请提供有效的好友码（数字）';
-  const ok = await setBoundFriendCode(memory, callCtx.platform, callCtx.userId, fc);
-  if (!ok) return '绑定失败：记忆服务不可用，或未识别到 platform:userId';
-  return `已将 ${callCtx.platform}:${callCtx.userId} 绑定到好友码 ${fc}`;
+  const store = bindingStore(memory, callCtx.platform, callCtx.userId);
+  if (typeof store === 'string') return `绑定失败：${store}`;
+  await store.service.saveMetadata(BIND_NAMESPACE, store.key, { friend_code: fc, updated_at: Date.now() });
+  return `已将 ${store.key} 绑定到好友码 ${fc}`;
+}
+
+async function handleUnbind(memory: MemoryRef, callCtx: { userId?: string; platform?: string }): Promise<string> {
+  const store = bindingStore(memory, callCtx.platform, callCtx.userId);
+  if (typeof store === 'string') return `解绑失败：${store}`;
+  await store.service.deleteMetadata(BIND_NAMESPACE, store.key);
+  return '已解绑你的舞萌 DX 好友码';
 }
 
 // ===== 指令参数解析 =====
