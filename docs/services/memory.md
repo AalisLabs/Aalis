@@ -95,7 +95,7 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 ### 消费方（典型读写点）
 
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
-- **`plugin-agent`**（构建 LLM 上下文）：调用 `memory.getHistory(sessionId, historyLimit)` 拉历史，拼进 messages。
+- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 调用 `memory.getHistory` 拉历史（0 或没设置时传 `Infinity`，读全部活跃历史），拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 ServiceRef，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveOldest` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。

@@ -12,8 +12,8 @@
  *   - 排重由组装器统一按全局键做，贡献方无需自查。
  *   - 同步注册 `recent_messages` 工具供 agent 主动查询。
  *
- * 与 agent.historyLimit 的关系：
- *   - historyLimit 加载的是当前 sessionId 的最近 N 条；
+ * 与对话代理读的本会话历史的关系：
+ *   - 对话代理按会话设置 historyLimit 读的是当前 sessionId 的历史；
  *   - 本插件注入的是跨 session 聚合的近期片段（独立 system 块）。
  *   - 两者可能内容重叠，header 文本中已说明"仅供参考"。
  */
@@ -82,7 +82,7 @@ const configSchema = defineConfig({
     onInvalid: 'error',
     label: '排除当前会话',
     default: true,
-    description: '注入时排除当前 sessionId（避免与 agent.historyLimit 重复）。',
+    description: '注入时排除当前 sessionId（避免与对话代理按会话设置 historyLimit 读的本会话历史重复）。',
   },
   headerText: {
     type: 'string',

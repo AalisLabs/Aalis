@@ -105,6 +105,7 @@ const REMOVED: Array<[string, string]> = [
   ['autoCompressThreshold', '摘要插件的全局自动压缩线配置，由会话设置项 compressAt 取代'],
   ['selectMessagesToSummarize', '摘要插件按保留条数选待摘要区间，由全量压缩的切分点取代'],
   ['getHistoryProbeLimit', '摘要插件按条数探测历史，由全量压缩读全部活跃历史取代'],
+  ['agent.historyLimit', '对话代理的插件配置键 historyLimit，由会话设置项 historyLimit（条数线）取代'],
 ];
 
 /**
@@ -154,6 +155,7 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   // 常见的词，只在压缩的契约与实现里查
   ['api-memory', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
   ['plugin-memory-summary', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
+  ['plugin-agent', 'this.historyLimit', '对话代理按插件配置读历史条数，改为按会话设置项 historyLimit 读'],
   ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
   [
     'plugin-tools',

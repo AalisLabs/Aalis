@@ -46,7 +46,7 @@ async function loadStack() {
   await app.plugin(flowControlPlugin, { scopes: ['*:group'] });
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(memoryHistoryPlugin, { scope: 'same-platform', maxAgeMinutes: 0, perSessionLimit: 0 });
-  await app.plugin(agentPlugin, { systemPrompt: 'test bot', historyLimit: 10 });
+  await app.plugin(agentPlugin, { systemPrompt: 'test bot' });
   await app.plugins.idle();
   // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「整条链根本没跑」伪装成绿
   for (const plugin of [

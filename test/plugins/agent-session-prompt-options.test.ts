@@ -55,7 +55,6 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     await app.plugin(personaPlugin, { persona: 'zz-card', personasDir: 'personas:/', timeInjection: false });
     await app.plugin(agentPlugin, {
       systemPrompt: '',
-      historyLimit: 50,
       memoryTokenBudget: 1024,
       maxToolIterations: 3,
       trimThresholdRatio,
