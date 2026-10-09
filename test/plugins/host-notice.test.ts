@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
-import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
@@ -404,11 +403,6 @@ describe('user-relation extractor：宿主通知不计数、不进抽取窗口',
 
 // ── user-profile ───────────────────────────────────────────
 
-const stubAuthority = {
-  isOwner: (p: string, userId?: string) => p === 'onebot' && userId === '30001',
-  listUsers: () => [],
-} as unknown as AuthorityService;
-
 async function setupProfile(config: Record<string, unknown>, opts: { withArchive?: boolean } = {}) {
   const app = newApp();
   await registerHubs(app);
@@ -422,13 +416,11 @@ async function setupProfile(config: Record<string, unknown>, opts: { withArchive
       return { content: '{"add":[],"update":[],"remove":[]}' };
     },
   } as never);
-  host.provide(authority, stubAuthority);
   await app.plugins.register(memoryInMemory, {});
   if (opts.withArchive) await app.plugins.register(messageArchivePlugin, { debugLogs: false });
   await app.plugins.idle();
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
-    enableInstructions: false,
     ...config,
   });
   await app.plugins.idle();
@@ -454,16 +446,9 @@ async function setupProfile(config: Record<string, unknown>, opts: { withArchive
   return { app, host, mem, requests, seedAndTrigger };
 }
 
-describe('user-profile：宿主通知不进两处抽取窗口', () => {
+describe('user-profile：宿主通知不进抽取窗口', () => {
   it('安全：用户事实抽取的输入不含通知正文', async () => {
     const { seedAndTrigger } = await setupProfile({ extractEveryNMessages: 1 });
-    const input = await seedAndTrigger();
-    expect(input).toContain('我喜欢猫');
-    expect(input).not.toContain('HOST-NOTICE-BODY');
-  });
-
-  it('安全：指令抽取的输入不含通知正文', async () => {
-    const { seedAndTrigger } = await setupProfile({ enableInstructions: true, instructionExtractEveryNMessages: 1 });
     const input = await seedAndTrigger();
     expect(input).toContain('我喜欢猫');
     expect(input).not.toContain('HOST-NOTICE-BODY');

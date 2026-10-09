@@ -98,7 +98,7 @@ export default definePlugin({
 | `file` | 文件缓存 |
 | `persona` | 会话角色状态 |
 | `checkpoint` | 检查点（对话回滚存档） |
-| `user-profile` | 用户档案与第三方行为指令，仅全局清理 |
+| `user-profile` | 用户档案，仅全局清理 |
 | `user-relation` | 用户关系图谱，仅全局清理 |
 
 不指定类型等于全部类型。`context` 只管会话级的短期上下文；向量、用户档案与关系图属于跨会话的长期记忆，不随 `context` 清理，只在指定对应类型或不指定类型时清理：会话级 `/clear` 只删除本会话的向量，档案与关系图只在 `/clear all` 时清理。OneBot 合并转发原文没有会话归属，会话级清理不动它，由适配器按 7 天期限回收。

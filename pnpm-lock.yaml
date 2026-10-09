@@ -2799,9 +2799,6 @@ importers:
 
   packages/plugin-user-profile:
     dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.10.0 <1.0.0
-        version: link:../api-authority
       '@aalis/api-commands':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-commands
@@ -2817,9 +2814,6 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.7.1 <1.0.0
         version: link:../api-memory
-      '@aalis/api-persona':
-        specifier: workspace:>=0.8.0 <1.0.0
-        version: link:../api-persona
       '@aalis/api-tools':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-tools

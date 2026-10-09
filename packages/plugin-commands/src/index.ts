@@ -60,7 +60,7 @@ export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: string; globalOnly?
   { id: 'file', label: '文件缓存' },
   { id: 'persona', label: '会话角色状态' },
   { id: 'checkpoint', label: '检查点（对话回滚存档）' },
-  { id: 'user-profile', label: '用户档案与第三方行为指令', globalOnly: true },
+  { id: 'user-profile', label: '用户档案', globalOnly: true },
   { id: 'user-relation', label: '用户关系图谱', globalOnly: true },
 ];
 
