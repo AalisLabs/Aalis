@@ -22,6 +22,9 @@ const usage: TokenUsageEvent = {
   tokenBudget: 27_904,
   used: 27_000,
   usageRatio: 0.9,
+  trimmed: false,
+  untrimmedHistory: 23_000,
+  historyMessages: 0,
   breakdown: {
     system: 5000,
     persona: 2500,

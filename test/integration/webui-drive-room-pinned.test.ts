@@ -70,7 +70,7 @@ async function loadStack() {
   await app.plugin(toolsPlugin, {});
   await app.plugin(sessionManagerPlugin);
   await app.plugin(personaSetting);
-  await app.plugin(agentPlugin, { systemPrompt: 'test bot', historyLimit: 10, maxToolIterations: 3 });
+  await app.plugin(agentPlugin, { systemPrompt: 'test bot', maxToolIterations: 3 });
   await app.plugins.idle();
   // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「整条链根本没跑」伪装成绿
   for (const plugin of [

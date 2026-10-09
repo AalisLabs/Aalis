@@ -71,7 +71,7 @@ export default definePlugin({
 
 ### 发起回合的类别
 
-按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）、`actor` 与会话的房间类别（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。房间类别按 session-manager 记下的会话字段判（api-session-manager 的 `roomClass`），不看会话 id 的写法，也不看平台类型名；审批服务的提供者 plugin-session-server 本身依赖 session-manager，它不在时也没有审批。
+按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）、`actor` 与会话的房间类别（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。权限服务以 `originOf(turn)` 对外给出同一个判定：执行守卫据它定审批的发起类别，触及服务（[plugin-reach](./plugin-reach.md)）据它定这一轮的主体。房间类别按 session-manager 记下的会话字段判（api-session-manager 的 `roomClass`），不看会话 id 的写法，也不看平台类型名；审批服务的提供者 plugin-session-server 本身依赖 session-manager，它不在时也没有审批。
 
 按下面的顺序判，先命中的算：
 

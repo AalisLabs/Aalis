@@ -38,6 +38,8 @@ export default definePlugin({
 inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发）
 ```
 
+房间类别为 `owner-only` 的会话（owner 自己的会话）入站不经本相位：plugin-gateway 跳过它（[结构性放行](./plugin-gateway.md#结构性放行)），作用域怎么配都不计数、不判定、不识别禁言关键词，也不进状态表、不排闲置话题。会话在本插件建过状态之后才变成 `owner-only` 的（如 owner 先在私聊里说过话、之后才登记为 owner），已建的状态与闲置定时器留到本插件停用或重启，其间闲置话题到点照常注入，注入直达 agent。
+
 判定流程（同步完成：记入站、判定、清零在同一拍做完，放行顺序即到达顺序）：
 
 0. 本插件不是生效的触发插件（`trigger` 服务的胜者另有其人）→ `next()`，什么都不做：不计数、不识别、不归档。胜者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
@@ -107,7 +109,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 生效作用域：格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。 |
+| `scopes` | multiselect | `["*:group"]` | 生效作用域：格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认作用域不含 WebUI/CLI；纳入 `webui`、`cli` 管的是从它们发进房间（群与别人的私聊）与 `internal` 会话的消息，owner 自己的会话不经本相位，作用域怎么配都一样。 |
 | `intervalMode` | select | `'both'` | 间隔模式：`fixed` / `dynamic` / `both` |
 | `triggerOnAt` | boolean | `true` | 检测 @ 提及：@ 自己算被点名，点名直接开口，回合记为 immediate |
 | `triggerOnPoke` | boolean | `true` | 戳一戳直触发：戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。 |

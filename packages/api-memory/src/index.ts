@@ -286,7 +286,7 @@ declare module '@aalis/core' {
 // ----- 会话压缩 -----
 //
 // 压缩把切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样接在摘要后面。提供方：plugin-memory-summary
-// （回合结束时用量到线，它自己在后台触发）；使用方：plugin-session-server（手动压缩；功能位与用量条目的压缩线看这个
+// （回合结束时用量或会话条数到线，它自己在后台触发）；使用方：plugin-session-server（手动压缩；功能位与用量条目的压缩线看这个
 // 服务在不在）。进度经 'session:compressing' 广播，会话服务转成时间线上的压缩通知。
 
 /** 会话压缩服务 */
@@ -312,25 +312,36 @@ export interface CompressionUsage {
   contextWindow: number;
   /** 硬裁剪的上限（token） */
   tokenBudget: number;
-  /** 历史与工具结果占的 token：全量压缩能压掉的部分 */
+  /** 历史与工具结果占的 token，按硬裁剪之前的列表算：全量压缩能压掉的部分 */
   compressible: number;
+  /** 经过了硬裁剪：到了丢内容的地步 */
+  trimmed: boolean;
+  /** 会话历史的条数 */
+  historyMessages: number;
 }
 
 /** 压缩的触发线：缺省或 0 表示这一维不判 */
 export interface CompressionLines {
   /** 自动压缩线，占窗口比例 */
   compressAt?: number;
+  /** 条数线 */
+  historyLimit?: number;
 }
 
 /**
- * 是否该压缩。用量一维的线是 min(压缩线 × 窗口, 裁剪预算)：压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪。
- * 用量到线、且能压掉的部分至少是线的一半时该压缩：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；压不掉的
- * 部分（人设、工具定义等）再大也不会让它空转
+ * 是否该压缩：任一维到线即该压缩。
+ *
+ * 用量一维的线是 min(压缩线 × 窗口, 裁剪预算)：压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪。用量到线或这次
+ * 被硬裁剪过（到了丢内容的地步），且能压掉的部分至少是线的一半时该压缩：压完只剩切分点之后的几条，到不了线的一半，不会
+ * 接着再触发；压不掉的部分（人设、工具定义等）再大也不会让它空转。
+ *
+ * 条数一维：来自会话历史的条数到条数线时该压缩；全量压缩之后只剩分隔标记与切分点之后的几条，远不到线
  */
 export function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean {
+  if (lines.historyLimit && usage.historyMessages >= lines.historyLimit) return true;
   if (!lines.compressAt) return false;
   const line = Math.min(lines.compressAt * usage.contextWindow, usage.tokenBudget);
-  return usage.used >= line && usage.compressible >= line / 2;
+  return (usage.used >= line || usage.trimmed) && usage.compressible >= line / 2;
 }
 
 declare module '@aalis/core' {

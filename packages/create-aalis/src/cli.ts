@@ -50,6 +50,7 @@ export const MINIMAL_BASE = [
 
 // standard 在 minimal 之上增加的常用能力（人设 / 记忆增强 / 常用工具 / 调度套件 / 技能 / 会话增强 / 诊断）。
 // 平台与语义记忆由提问选；联网搜索要 key，默认不装，需要时在插件市场装（full 档带它）。
+// 触及给本地工具签发凭据：读写文件、执行命令都要它，与系统工具同在这一档。
 export const STANDARD_EXTRA = [
   '@aalis/plugin-persona',
   '@aalis/plugin-memory-summary',
@@ -57,6 +58,7 @@ export const STANDARD_EXTRA = [
   '@aalis/plugin-user-relation',
   '@aalis/plugin-file-reader',
   '@aalis/plugin-tool-system',
+  '@aalis/plugin-reach',
   '@aalis/plugin-tool-search',
   '@aalis/plugin-media',
   '@aalis/plugin-scheduler',

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import puppeteer, { type Browser, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
-import { afterAll, afterEach, beforeAll, expect } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, vi } from 'vitest';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { webuiClient } from '../../packages/api-webui/src/index.js';
@@ -153,15 +153,20 @@ export async function webuiStack(options: {
     })),
   );
   await app.plugins.idle();
+  // 慢激活阈值调低时，忙的机器上基础插件也会超过阈值转入后台，idle 不等它们：逐个等到已激活
   for (const definition of definitions) {
-    expect(app.plugins.getPlugin(definition.name)?.state, `${definition.name} 未激活`).toBe('active');
+    await vi.waitFor(
+      () => expect(app.plugins.getPlugin(definition.name)?.state, `${definition.name} 未激活`).toBe('active'),
+      { timeout: 10_000 },
+    );
   }
   return { app, port };
 }
 
 /**
  * 开一个新的浏览器上下文（各用例的存储互不相通），按 token 登录后打开 origin 上的 path。页面里的未捕获异常、
- * CSP 拦下的加载与回 4xx、5xx 的请求都记进 problems，用例结束时应为空
+ * CSP 拦下的加载与回 4xx、5xx 的请求都记进 problems，用例结束时应为空。回错误码的请求要等浏览器补齐响应的附加信息
+ * 才记下，可能晚于页面里的请求结束：断言具体的错误请求时用 vi.waitFor 等它出现
  */
 export async function openWebui(browser: Browser, origin: string, viewport: Viewport, cleanups: Cleanups, path = '/') {
   const context = await browser.createBrowserContext();
