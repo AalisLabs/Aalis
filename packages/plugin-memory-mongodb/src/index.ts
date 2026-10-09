@@ -169,11 +169,10 @@ export class MongoMemoryService implements MemoryService {
     // sort 必须带 _id 次键：同毫秒写入的消息（如同一轮的 assistant+tool 合成对）
     // 在纯 timestamp 排序下平票顺序不稳定，读回时 tool 可能排到 assistant 前面，
     // 被 sanitizeToolCallHistory 当作孤儿整组丢弃。_id 单调递增即插入序。
-    const docs = await this.collection
-      .find({ sessionId, archived: { $ne: true } })
-      .sort({ timestamp: -1, _id: -1 })
-      .limit(limit)
-      .toArray();
+    const cursor = this.collection.find({ sessionId, archived: { $ne: true } }).sort({ timestamp: -1, _id: -1 });
+    // limit 要是整数，读全部就不设
+    if (limit !== Infinity) cursor.limit(limit);
+    const docs = await cursor.toArray();
     docs.reverse();
     return docs.map(doc => this.docToMessage(doc));
   }
@@ -234,18 +233,18 @@ export class MongoMemoryService implements MemoryService {
     }));
   }
 
-  async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
-    // 找到要保留的最近消息（仅在未归档消息中）
-    const keepDocs = await this.collection
+  async archiveOldest(sessionId: string, count: number): Promise<number> {
+    // MongoDB 的 limit(0) 表示不限条数，0 条要在这里挡下，否则归档全部
+    if (count === 0) return 0;
+    // 与 getHistory 同序：_id 次键让同毫秒的消息按插入序归档
+    const docs = await this.collection
       .find({ sessionId, archived: { $ne: true } })
-      .sort({ timestamp: -1 })
-      .limit(keepRecent)
+      .sort({ timestamp: 1, _id: 1 })
+      .limit(count)
       .project({ _id: 1 })
       .toArray();
-    const keepIds = keepDocs.map(d => d._id);
-    if (keepIds.length === 0) return 0;
     const result = await this.collection.updateMany(
-      { sessionId, archived: { $ne: true }, _id: { $nin: keepIds } },
+      { _id: { $in: docs.map(d => d._id) } },
       { $set: { archived: true } },
     );
     return result.modifiedCount;

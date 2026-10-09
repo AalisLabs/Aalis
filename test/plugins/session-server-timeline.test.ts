@@ -1210,23 +1210,38 @@ describe('条目', () => {
     expect(item, '没有压缩服务就没有压缩线').not.toHaveProperty('compressAt');
     expect(requests, '有用量就不再请求').toHaveLength(1);
 
-    // 压缩线取压缩服务给的自动压缩使用率，取快照与推送的那一刻现取；不自动压缩（0）时没有
-    const never = host.provide(compression, { autoThreshold: 0, compress: async () => {} });
+    // 压缩线按会话与用量事件上的平台取压缩服务给的，取快照与推送的那一刻现取；不按用量压缩（undefined）时没有
+    const never = host.provide(compression, { compressAt: () => undefined, compress: async () => {} });
     expect(await usageOf()).not.toHaveProperty('compressAt');
     never();
-    host.provide(compression, { autoThreshold: 0.7, compress: async () => {} });
+    const asked: Array<[string, string | undefined]> = [];
+    host.provide(compression, {
+      compressAt(sessionId, platform) {
+        asked.push([sessionId, platform]);
+        return sessionId === s.id ? 0.7 : 0.3;
+      },
+      compress: async () => {},
+    });
     expect(await usageOf()).toMatchObject({ compressAt: 0.7 });
     const c2 = client(server());
     await c2.init();
     const sub = await c2.subscribe(s.id);
     await host.events.emit('token:usage', { ...usage, used: 300 });
     expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ used: 300, compressAt: 0.7 });
+    const other = await sm.createSession({ name: 'O' });
+    const otherSub = await c2.subscribe(other.id);
+    await host.events.emit('token:usage', { ...usage, sessionId: other.id, platform: 'cli' });
+    expect(c2.timeline(other.id, otherSub).find(i => i.kind === 'usage')).toMatchObject({ compressAt: 0.3 });
+    expect(new Set(asked.map(pair => pair.join()))).toEqual(new Set([`${s.id},webui`, `${other.id},cli`]));
+    // 裁剪预算占窗口的比例低于压缩线时，到裁剪预算就压缩：条目给两者中较小的那个
+    await host.events.emit('token:usage', { ...usage, used: 300, tokenBudget: 600 });
+    expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ compressAt: 0.6 });
   });
 
   it('房间的用量按出生平台算：订阅之后、手动压缩之后请求用量都不填平台', async () => {
     const { server, sm, host } = await setup();
     await sm.ensureSession(ROOM, { name: '群' });
-    host.provide(compression, { autoThreshold: 0.7, compress: async () => {} });
+    host.provide(compression, { compressAt: () => 0.7, compress: async () => {} });
     const requests: Array<{ sessionId: string; platform?: string }> = [];
     host.events.on('token:request', req => void requests.push(req));
     const c = client(server());
@@ -1243,9 +1258,9 @@ describe('条目', () => {
     const calls: unknown[] = [];
     let failure: string | undefined;
     host.provide(compression, {
-      autoThreshold: 0.7,
-      async compress(sessionId, reason) {
-        calls.push([sessionId, reason]);
+      compressAt: () => 0.7,
+      async compress(sessionId, request) {
+        calls.push([sessionId, request]);
         await host.events.emit('session:compressing', { sessionId, status: 'start' });
         await host.events.emit('session:compressing', { sessionId, status: failure ? 'error' : 'done' });
         if (failure) throw new Error(failure);
@@ -1257,7 +1272,7 @@ describe('条目', () => {
     const sub = await c.subscribe(s.id);
     host.events.on('token:request', req => void requests.push(req));
     await c.call('session/compress', { sessionId: s.id });
-    expect(calls).toEqual([[s.id, 'manual']]);
+    expect(calls).toEqual([[s.id, { reason: 'manual' }]]);
     expect(requests).toEqual([{ sessionId: s.id, platform: 'webui' }]);
     const notices = c.timeline(s.id, sub).filter(i => i.kind === 'notice');
     expect(notices.map(shape)).toEqual([{ kind: 'notice', topic: 'compress', text: '对话已压缩', attachments: [] }]);
@@ -1615,7 +1630,7 @@ describe('回合控制', () => {
     const pushed = () => c.notifications('features/changed').map(p => p.features);
     const offCheckpoint = host.provide(checkpoint, {} as never);
     await vi.waitFor(() => expect(pushed()).toEqual([{ send: false, rewind: true, compress: false }]));
-    const offCompression = host.provide(compression, { autoThreshold: 0, compress: async () => {} });
+    const offCompression = host.provide(compression, { compressAt: () => undefined, compress: async () => {} });
     await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: true, compress: true }));
     offCheckpoint();
     await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: true }));
@@ -1638,7 +1653,7 @@ describe('回合控制', () => {
     ]);
 
     const later = client(host.sessionProtocol.require());
-    host.provide(compression, { autoThreshold: 0, compress: async () => {} });
+    host.provide(compression, { compressAt: () => undefined, compress: async () => {} });
     expect((await later.init()).features, '握手给的是当前的功能位').toEqual({
       send: false,
       rewind: false,

@@ -15,8 +15,8 @@ interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
+  archiveOldest(sessionId: string, count: number): Promise<number>;
   clearAll?(): Promise<void>;
-  trimHistory?(sessionId: string, keepRecent: number): Promise<number>;
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
   getMessagesBySessionRange?(
     sessionId: string,
@@ -38,6 +38,9 @@ interface MemoryService {
   deleteMessagesByTimestamps?(sessionId: string, timestamps: number[]): Promise<number>;
 }
 ```
+
+- **`getHistory`**：最近 `limit` 条活跃（未归档）消息；`limit` 为 `Infinity` 时返回全部活跃消息。
+- **`archiveOldest`**：把最早的 `count` 条活跃消息标为归档（顺序与 `getHistory` 相同），返回归档条数；`count` 为 0 时什么都不归档。归档的消息不再进 `getHistory`，`getFullHistory` 照样有。必填：压缩靠它落定，缺了没有降级可走。
 
 ## 消费方式
 
@@ -77,17 +80,35 @@ const MEMORY_RECALL_SCOPE_SETTING: SessionSetting;   // key 'memoryRecallScope'�
 import { compression } from '@aalis/api-memory';
 
 interface CompressionService {
-  compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void>;
-  readonly autoThreshold: number;   // 自动压缩的使用率（0 到 1），0 表示不自动压缩
+  compress(sessionId: string, request: { reason: 'manual' }): Promise<void>;
+  compressAt(sessionId: string, platform?: string): number | undefined;   // 这个会话的自动压缩线（占窗口比例），0 时为 undefined
 }
 ```
 
-服务名 `compression`。压缩把较早的历史压成摘要、只留最近若干条进上下文，提供方是 [plugin-memory-summary](../plugins/plugin-memory-summary.md)。
+服务名 `compression`。压缩把切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样接在摘要后面，提供方是 [plugin-memory-summary](../plugins/plugin-memory-summary.md)。
 
-- **`compress`**：`manual` 是 owner 手动，`auto` 是用量达到 `autoThreshold` 时提供方自己触发。压完才落定；没有压成时拒绝，原因在错误里（这个会话正在压缩或生成摘要、记忆或摘要模型不在、模型失败只做了裁切、期间会话被清空）。历史不多于要保留的条数时什么都不做，照常落定。
-- **`autoThreshold`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，界面的压缩线取它。
+- **`compress`**：`manual` 是 owner 手动，短对话也完整压一次。压成才落定；没压成时以原因拒绝（这个会话正在压缩、记忆或摘要模型不在、模型失败、期间被清空或历史被改动）。没有可压的对话（历史为空、只剩分隔标记）时什么都不做，照常落定。用量到线的自动压缩由提供方在后台自己发起，不经这个方法。
+- **`compressAt`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，按会话取。实际在它与裁剪预算占窗口的比例（`tokenBudget / contextWindow`）中较小的那个上压缩（见下文「触发判定」），界面的压缩线取这个较小值。`platform` 是入口平台：没有出生平台的会话按它选平台档。
 - **进度**：事件 `session:compressing { sessionId, status: 'start' | 'done' | 'error' }`，会话服务转成时间线上的压缩通知。只在真的开始压时报：`start` 之后压成报 `done`、没压成报 `error`；什么都不做的与开始之前就失败的（记忆不在、读不出历史）不报。
 - **使用方**：[plugin-session-server](../plugins/plugin-session-server.md) 的 `session/compress` 调它，功能位的「压缩」与用量条目的 `compressAt` 看它在不在。
+
+### 触发判定
+
+```ts
+interface CompressionUsage {
+  used: number;            // 这次调用的输入量（token）
+  contextWindow: number;   // 所用模型的上下文窗口（token）
+  tokenBudget: number;     // 硬裁剪的上限（token）
+  compressible: number;    // 历史与工具结果占的 token：全量压缩能压掉的部分
+}
+interface CompressionLines {
+  compressAt?: number;     // 自动压缩线，占窗口比例；缺省或 0 不按用量判
+}
+
+function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean;
+```
+
+判定是否该压缩的纯函数。用量这条线是 `min(compressAt × contextWindow, tokenBudget)`：压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪。用量到线、且 `compressible` 至少是线的一半时该压缩，这就是回差：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；人设、工具定义这些压不掉的部分再大也不会让它空转。没压成之后多久再试由调用方决定，不在这个函数里。
 
 ## 钩子（HookContextMap）
 

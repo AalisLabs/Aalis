@@ -24,15 +24,17 @@ agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖�
 saveMessage(sessionId: string, message: Message): Promise<void>;
 getHistory(sessionId: string, limit?: number): Promise<Message[]>;   // 仅未归档，按 timestamp 升序
 clearSession(sessionId: string): Promise<void>;
+archiveOldest(sessionId: string, count: number): Promise<number>;    // 归档最早的 count 条活跃消息，返回归档条数
 ```
 
-`getHistory` 的语义由参考实现确立：只返回 `archived=0` 的消息；内部先 `ORDER BY timestamp DESC LIMIT ?` 取最近 N 条，再升序输出；默认 `limit=50`。
+`getHistory` 的语义由参考实现确立：只返回 `archived=0` 的消息；内部先 `ORDER BY timestamp DESC, id DESC LIMIT ?` 取最近 N 条，再升序输出；默认 `limit=50`，`limit` 为 `Infinity` 时返回全部活跃消息。
+
+`archiveOldest` 按与 `getHistory` 相同的顺序（时间，同毫秒按写入序）把最早的 `count` 条活跃消息标为 `archived`，不做物理删除；`count` 为 0 时什么都不归档，大于活跃条数时归档全部。压缩靠它落定，缺了没有降级可走，所以是必填。
 
 ### 2.2 可选方法（`?` 修饰，按需实现）
 
 ```ts
 clearAll?(): Promise<void>;                                          // 清空所有会话 + 归档（不含元数据）
-trimHistory?(sessionId, keepRecent): Promise<number>;               // 归档旧消息，保留最近 keepRecent 条活跃，返回归档条数
 getFullHistory?(sessionId, limit?): Promise<Message[]>;             // 含已归档，供 UI 展示
 
 // 范围查询（向量召回时扩展上下文窗口用）
@@ -95,7 +97,7 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
 - **`plugin-agent`**（构建 LLM 上下文）：调用 `memory.getHistory(sessionId, historyLimit)` 拉历史，拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 ServiceRef，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
-- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, max(threshold, keepRecent + 1, 200))` + `trimHistory` 裁剪，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
+- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveOldest` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
 - 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
 
@@ -103,15 +105,14 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 ### 最小必须 vs 可选
 
-必须实现 `saveMessage` / `getHistory` / `clearSession`。其余方法带 `?` 可选，但缺失会导致对应功能降级：
+必须实现 `saveMessage` / `getHistory` / `clearSession` / `archiveOldest`。其余方法带 `?` 可选，但缺失会导致对应功能降级：
 
 - 不实现 `getRecentMessagesAcrossSessions` → 跨会话历史注入功能直接 no-op。
-- 不实现 `trimHistory` → summary 压缩会被跳过。
 - 不实现 `clearAll` → 含 `context` 的 `/clear all`（含不带类型的）整条拒绝执行、不清任何类型；不含 `context` 的类型照常清理。
 - 不实现 `deleteMessagesByTimestamps` → checkpoint 回滚失效。
 - 不实现 `listMetadataKeys` → 各插件经 `/clear` 整体清空命名空间时按 `listMetadata` 枚举键，读不出的条目留在库里。
 
-参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余八个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。`listMetadata` 遇到读不出的条目（数据损坏、不是对象）要跳过并记一条点名 namespace 与 key 的 warn，不让整个命名空间读失败；读不到写入时间时 `updatedAt` 返回 0。`listMetadataKeys` 只列键、不读 `data`，读不出的条目也要列出：插件整体清空命名空间时经 `clearMetadataNamespaces` 按它列键，连这些条目一并删除（见 [api-memory](../api/api-memory.md)）。
+参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.getFullHistory) … else 回落 getHistory`），缺失只触发功能降级、不会崩溃。`listMetadata` 遇到读不出的条目（数据损坏、不是对象）要跳过并记一条点名 namespace 与 key 的 warn，不让整个命名空间读失败；读不到写入时间时 `updatedAt` 返回 0。`listMetadataKeys` 只列键、不读 `data`，读不出的条目也要列出：插件整体清空命名空间时经 `clearMetadataNamespaces` 按它列键，连这些条目一并删除（见 [api-memory](../api/api-memory.md)）。
 
 ### 双源元数据必须同步
 
@@ -211,7 +212,7 @@ export default definePlugin({
 
 - **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件；运行期仍建议 `if (!m) throw`。
 - **可选依赖**：`optional(memory)` + `memory.current` 空守卫降级（agent 采用这种方式）。
-- **可选方法守卫**：调用可选方法前先判断存在性 —— `if (svc.trimHistory) await svc.trimHistory(...)`。
+- **可选方法守卫**：调用可选方法前先判断存在性 —— `if (svc.getFullHistory) await svc.getFullHistory(...)`。
 - **跨 provider 重载安全**：需要长期持有引用时，用 `memory.follow(attach)`，不要缓存 `.current`。
 
 ## 6. 能力 / 风险 → 影响
@@ -223,7 +224,7 @@ export default definePlugin({
 
 ## 7. 边界与注意事项
 
-- **`getHistory` 只看未归档**，`getFullHistory` 才包含归档。trim 之后旧消息变为 `archived=1`，agent 上下文看不到它们；summary 正是利用这一点，把超长历史折叠成摘要再 trim。新 provider 如果不维护 `archived` 字段，`trimHistory` 的行为会与参考实现不一致。
+- **`getHistory` 只看未归档**，`getFullHistory` 才包含归档。`archiveOldest` 之后旧消息变为 `archived=1`，agent 上下文看不到它们；summary 正是利用这一点，把历史压成摘要再归档。新 provider 要维护 `archived` 字段，`archiveOldest` 与 `getHistory` 用同一个顺序，否则归档的不是摘要覆盖的那一段。
 - **`excludeKinds` 的 NULL 语义**：sqlite 与 mongodb 采用「`kind IS NULL` 不被排除」的保守语义，新后端应对齐，否则跨实现切换时控制类消息的过滤行为会漂移。
 - **跨会话查询的 limit 收窄与 overscan**：`getRecentMessagesAcrossSessions` 会把 `query.limit` 收窄到 `crossSessionMaxLimit`（默认 1000），且 `platform` / `excludeSessionIds` 在内存中后过滤——sqlite 用 8x overscan 拉候选再过滤。如果候选 overscan 不足，在极端过滤下可能返回不满 limit 条。
 - **`updateMessageContent` / `deleteMessagesByTimestamps` 的作用域**：前者只在最近 `recentLimit`（默认 100）条内做文本替换；后者在 sqlite 中因单条语句的绑定参数有上限（Node 自带的 SQLite 为 32766）而分 500 条一批、以事务删除。新 provider 应注意同等的批量约束。

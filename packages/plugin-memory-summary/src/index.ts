@@ -1,11 +1,12 @@
-import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点与 token:usage 事件）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
 import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
-import { clearMetadataNamespaces, compression, memory } from '@aalis/api-memory';
+import { clearMetadataNamespaces, compression, compressionDue, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
+import { type SessionSetting, sessionManager } from '@aalis/api-session-manager';
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -13,15 +14,17 @@ import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
-/**
- * 历史探测条数的下限（即历史写死值）。见 {@link getHistoryProbeLimit}：
- * 探测条数兼作单次摘要输入上界，故不能只按 threshold 推导，否则小 threshold
- * 配置的摘要覆盖面会成倍缩水。
- */
-const DEFAULT_PROBE_FLOOR = 200;
-
 /** 工具相关条目进摘要输入时的每条硬截断（参数/结果各自适用），工具名不参与截断 */
 const TOOL_ENTRY_MAX_CHARS = 200;
+
+/** 摘要模型没声明输出上限时按这个数封顶，与对话代理对模型输出上限的缺省假设相同 */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+
+/** 自动压缩线的默认值：会话设置的各层都没设时用它，也是设置项字段的默认值 */
+const DEFAULT_COMPRESS_AT = 0.8;
+
+/** 后台压缩连续没压成时，两次尝试之间至多隔这么多轮 */
+const MAX_RETRY_INTERVAL_TURNS = 32;
 
 /**
  * toolCallId → 工具名映射。tool 消息的 `name` 是可选字段，由上游适配器决定是否回填，
@@ -49,9 +52,11 @@ function visibleText(m: Message): string | null {
   return typeof visible === 'string' ? visible : m.content;
 }
 
+/** 进摘要输入的消息：对话与工具回合（系统标记、平台通知不进） */
+const isConversation = (m: Message) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool';
+
 /**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
- * generateSummary 与压缩（compress）两条路径共用，避免格式漂移。
  *
  * 工具回合必须留痕：带 toolCalls 的 assistant 行 content 常为空，直译成「助手: (空)」
  * 等于告诉摘要模型「这一轮什么也没发生」；tool 结果整条丢掉则连做了什么都看不见。
@@ -80,35 +85,61 @@ function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, s
   return `${m.role === 'user' ? '用户' : '助手'}: ${visibleText(m) ?? '(空)'}`;
 }
 
+/**
+ * 切分点：快照末尾的工具调用组没写全时（快照恰好读在 agent 写这一组的几次写入之间）退到这组的 assistant 之前，
+ * 它与随后写入的结果都留在活跃历史里；否则为快照末尾
+ */
+function cutPoint(snapshot: Message[]): number {
+  let start = snapshot.length;
+  while (start > 0 && snapshot[start - 1].role === 'tool') start--;
+  const head = snapshot[start - 1];
+  if (head?.role !== 'assistant' || !head.toolCalls?.length) return snapshot.length;
+  const results = new Set(snapshot.slice(start).map(m => m.toolCallId));
+  return head.toolCalls.every(call => results.has(call.id)) ? snapshot.length : start - 1;
+}
+
+const toolCallIds = (m: Message) => m.toolCalls?.map(call => call.id).join() ?? '';
+
+/** 落笔前核对：现在的活跃历史前 count 条与快照逐条相同（时间戳、角色、正文与工具调用 id） */
+function samePrefix(snapshot: Message[], current: Message[], count: number): boolean {
+  return snapshot.slice(0, count).every((m, i) => {
+    const now = current[i];
+    return (
+      now !== undefined &&
+      now.timestamp === m.timestamp &&
+      now.role === m.role &&
+      now.content === m.content &&
+      now.toolCallId === m.toolCallId &&
+      toolCallIds(now) === toolCallIds(m)
+    );
+  });
+}
+
+/** 把格式化好的各行拼成每块不超过 limit 字的若干块；单行超过 limit 的切成几段（代理对不拆开） */
+function chunkLines(lines: string[], limit: number): string[] {
+  const chunks: string[] = [];
+  for (const line of lines) {
+    for (let rest = line; rest; ) {
+      const piece = truncateChars(rest, limit);
+      rest = rest.slice(piece.length);
+      const last = chunks.length - 1;
+      if (last >= 0 && chunks[last].length + 1 + piece.length <= limit) chunks[last] += `\n${piece}`;
+      else chunks.push(piece);
+    }
+  }
+  return chunks;
+}
+
 // ===== 插件元数据 =====
 
 const configSchema = defineConfig({
-  threshold: {
-    type: 'number',
-    label: '摘要触发阈值',
-    default: 30,
-    description: '当会话历史超过此条数时，触发旧消息摘要',
-  },
-  keepRecent: {
-    type: 'number',
-    label: '保留最近消息数',
-    default: 20,
-    description: '摘要后保留的最近消息条数（不参与摘要的部分）',
-  },
   summaryTokenRatio: {
     type: 'number',
-    label: '摘要 Token 占比',
+    label: '摘要 Token 上限（占窗口比例）',
     default: 0.05,
     secret: false,
     description:
-      '摘要占模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。 实际 token 上限 = contextLength × 比例，自动适配不同模型',
-  },
-  autoCompressThreshold: {
-    type: 'number',
-    label: 'Token 预压缩阈值',
-    default: 0.7,
-    description:
-      '监听 agent 发出的 token:usage 事件，当使用率超过此比例 (0~1) 时启动后台压缩。默认 0.7 实现“临界前预压缩”，让本轮调用仍然能用原始上下文完成，压缩后的成果下一轮生效。设为 0 则禁用 token 触发；不在 0 到 1 之间的值按 0 处理。',
+      '摘要的输出上限占会话所用模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。窗口取这个会话最近一次模型调用的（还没有用量时取摘要模型的），上限不少于 512、不超过摘要模型的输出上限',
   },
   summaryPrompt: {
     type: 'string',
@@ -137,6 +168,31 @@ const configSchema = defineConfig({
 // ===== 配置 =====
 
 type SummaryConfig = ConfigOf<typeof configSchema>;
+
+// ===== 会话设置项：自动压缩线 =====
+
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    /** 自动压缩线：用量占上下文窗口的比例，0 到 1；0 表示不按用量压缩 */
+    compressAt?: number;
+  }
+}
+
+/** 会话设置项「自动压缩线」：适用于全部会话；子会话按自己的继承链实时解析，不冻结父会话当时的值 */
+const COMPRESS_AT_SETTING: SessionSetting = {
+  key: 'compressAt',
+  field: {
+    type: 'number',
+    label: '自动压缩线（占窗口比例）',
+    min: 0,
+    max: 1,
+    default: DEFAULT_COMPRESS_AT,
+    description: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩',
+  },
+  appliesTo: ['owner', 'room', 'task'],
+  prominence: 'advanced',
+  liveOnly: true,
+};
 
 // ===== 默认摘要生成提示词 =====
 
@@ -173,9 +229,8 @@ interface SummaryRecord {
 }
 
 /**
- * 绑定一个提供者实例，按次构造：一次操作（读历史 → 调 LLM → 写摘要 → 裁切或回滚）全程只认开头
- * 取到的那一个。memory 胜者可能在 LLM 调用期间换人而本插件不重启，每步现取胜者会从 A 读历史、
- * 在 A 上裁切，摘要却写进 B。
+ * 绑定一个提供者实例，按次构造：一次压缩（读历史 → 调 LLM → 核对 → 写摘要 → 归档或回滚）全程只认开头取到的那一个。
+ * memory 胜者可能在 LLM 调用期间换人而本插件不重启，每步现取胜者会从 A 读历史、在 A 上归档，摘要却写进 B。
  */
 class SummaryStore {
   constructor(private readonly provider: MemoryService) {}
@@ -209,6 +264,8 @@ const uses = {
   memory,
   llm,
   messageArchive: optional(messageArchive),
+  /** 登记并解析会话设置项「自动压缩线」；不在场时一律按默认 0.8 */
+  sessionManager: optional(sessionManager),
   config,
   logger,
   events,
@@ -230,7 +287,8 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { memory, llm, messageArchive, logger, events, hooks, contributions, lifecycle, provide } = caps;
+  const { memory, llm, messageArchive, sessionManager, logger, events, hooks, contributions, lifecycle, provide } =
+    caps;
   const parsed = parseConfig(configSchema, caps.config, logger);
   const cfg: SummaryConfig = {
     ...parsed,
@@ -242,15 +300,16 @@ async function run(caps: Caps): Promise<void> {
         ? parsed.summaryLLM
         : undefined,
   };
+  sessionManager.registerSetting(COMPRESS_AT_SETTING);
 
   logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
-  // 正在摘要中的 session，避免并发重复摘要
+  /** 正在压缩的会话：同一会话同时只有一次压缩 */
   const summarizing = new Set<string>();
 
   /**
    * 清空代数：memory:clear 清摘要时递增（全局清空递增 clearAllEpoch，会话级递增该会话的代数）。
-   * 摘要在读历史前记下代数，模型返回后比对：期间清过就丢弃在途结果，不把已清掉的对话写回摘要。
+   * 压缩在读历史前记下代数，每块摘要返回后与落笔前比对：期间清过就丢弃在途结果，不把已清掉的对话写回摘要。
    * 已过比对、正在落库的那一段比对拦不住，由清理等它落定（见 committing）。
    */
   let clearAllEpoch = 0;
@@ -262,394 +321,211 @@ async function run(caps: Caps): Promise<void> {
     return () => clearAllEpoch !== all || (clearEpoch.get(sessionId) ?? 0) !== own;
   }
   /**
-   * 已过比对、正在落库（写摘要 → 裁切 → 写标记）的会话。比对与落库之间隔着数据库往返，清理在其间开始时
+   * 已过比对、正在落库（写摘要 → 归档 → 写标记）的会话。比对与落库之间隔着数据库往返，清理在其间开始时
    * 比对拦不住：清理先等这一段落定再删，删掉的就包括它刚写进去的
    */
   const committing = new Map<string, Promise<unknown>>();
 
+  /** 每个会话最近一条真实回合的用量（带 turnId）：回合结束时只认这一轮的那条做判定 */
+  const turnUsages = new Map<string, TokenUsageEvent>();
+  /** 每个会话最近一次用量的窗口（真实回合与 token:request 的快照都记），供摘要预算用 */
+  const windows = new Map<string, number>();
   /**
-   * 根据 summaryModelMode 解析出用于生成摘要的 LLMModel entry。
-   * - global：按默认优先级/preference 选首个 chat-capable entry
-   * - custom：按 cfg.summaryLLM 精确匹配
+   * 后台压缩连续没压成的次数，与最后一次之后判过的轮数：第 count 次之后隔 2^count 轮（至多 MAX_RETRY_INTERVAL_TURNS 轮）
+   * 才重试。按轮数退避而不按用量又涨了多少：用量是硬裁剪之后量的，涨到裁剪预算就不再涨
    */
-  let warnedUnresolvedSummaryLLM = false;
-  function resolveSummaryModel(): LLMModel | undefined {
-    const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
-    const resolved = resolveLLMModel(llm, ref, ['chat'])?.instance;
-    // custom 指定了模型却解析落空 → 自动压缩会静默不跑、上下文持续膨胀
-    //（2026-08「压缩静默死亡」事故的根因形态；手动路径已有报错，这里补自动路径）。
-    // 只警一次防刷屏，恢复后复位以便下次失效再警。
-    if (ref && !resolved) {
-      if (!warnedUnresolvedSummaryLLM) {
-        warnedUnresolvedSummaryLLM = true;
-        logger.warn(`摘要模型解析失败（${ref.provider}/${ref.model} 不存在或未激活），自动压缩将不运行`);
-      }
-    } else if (resolved) {
-      warnedUnresolvedSummaryLLM = false;
-    }
-    return resolved;
+  const failures = new Map<string, { count: number; turns: number }>();
+  /**
+   * 压缩代数：会话每压成一次加一。回合开始时记下当时的代数与清空代数（turnId → 两者），结束时任一变过的不判：
+   * 这一轮的用量是按压缩或清空之前的历史算的
+   */
+  const compressions = new Map<string, number>();
+  const turnStarts = new Map<string, { compressions: number; cleared: () => boolean }>();
+
+  /** 这个会话的自动压缩线：会话设置的各层都没设（或没有会话管理）时为默认 0.8；设为 0 时为 undefined */
+  function compressAt(sessionId: string, platform?: string): number | undefined {
+    const line = sessionManager.current?.resolveConfig(sessionId, platform).compressAt ?? DEFAULT_COMPRESS_AT;
+    return line > 0 ? line : undefined;
   }
 
   /**
-   * 根据实际使用的 LLMModel 计算摘要 token 上限。
-   * service-granularity 后每个 entry 直接拥有 contextLength，无需再反查 router。
+   * 摘要的输出上限：会话最近一次用量的窗口 × summaryTokenRatio（还没有用量时按摘要模型的窗口），下限 512，
+   * 不超过摘要模型的输出上限。摘要是每轮重发的常驻块，要收紧调 summaryTokenRatio
    */
-  function getSummaryTokenBudget(): number {
-    const model = resolveSummaryModel();
-    const contextLength = model?.contextLength ?? 4096;
-    // 注：摘要是每轮重发的常驻块，大窗口下 contextLength × ratio 会给出很大的预算
-    // （1e6 × 0.05 = 5 万 token）并被写进提示词。要收紧请调 summaryTokenRatio，
-    // 内核不代替宿主设绝对上限——窗口大小与"愿意为常驻块付多少"是宿主的决定。
-    return Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio));
-  }
-
-  /**
-   * 取多少条历史来判定"是否该压缩"，同时是单次摘要输入量的上界
-   * （摘要区间是 `[0, total - keepRecent)`）。这两个职责耦合在同一个数上。
-   *
-   * 三个下界缺一不可：
-   * - `cfg.threshold`：`totalCount` 充当阈值判定的样本，取少了会让
-   *   `totalCount < threshold` 恒真、压缩永不触发且零日志（曾写死 200，
-   *   threshold>200 的配置全部静默失效）。
-   * - `cfg.keepRecent + 1`：否则摘要区间为空，压缩空转。
-   * - `DEFAULT_PROBE_FLOOR`：**摘要输入量的下限**。只取前两者的话，
-   *   小 threshold 配置（如默认 30/20）单次只摘 10 条，而 `trimHistory` 仍按
-   *   keepRecent 归档**全部**活跃历史——超出探测窗的那批被归档却从未进摘要。
-   *   实测积压 800 条时摘要输入 180→10 条。此下界即原写死值，保住旧行为。
-   *
-   * 注：「归档范围 > 摘要范围」在积压极大时仍然存在，那是本函数解决不了的
-   * 设计耦合（判定样本与摘要窗口应当拆开），留待后续处理。
-   */
-  function getHistoryProbeLimit(): number {
-    return Math.max(cfg.threshold, cfg.keepRecent + 1, DEFAULT_PROBE_FLOOR);
+  function summaryBudget(sessionId: string, model: LLMModel): number {
+    const window = windows.get(sessionId) ?? model.contextLength;
+    return Math.min(
+      Math.max(512, Math.floor(window * cfg.summaryTokenRatio)),
+      model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    );
   }
 
   // 摘要生成提示词
   const summarySystemPrompt = cfg.summaryPrompt || DEFAULT_SUMMARY_PROMPT;
 
-  /**
-   * 待摘要区间 = 除最近 keepRecent 条之外的旧消息。历史不多于 keepRecent 时为空：此时裁切什么都
-   * 不归档，若照摘前段（slice 的负数下标会取出开头若干条），同一批消息每轮重摘一次、反复叠进摘要。
-   * 条数触发与压缩（compress）共用这一处判定。
-   */
-  function selectMessagesToSummarize(allHistory: Message[]): Message[] {
-    if (allHistory.length <= cfg.keepRecent) return [];
-    return allHistory.slice(0, allHistory.length - cfg.keepRecent);
+  /** 调一次摘要模型：模型失败、流式中途断开或返回空都以原因抛出 */
+  async function askSummaryModel(
+    model: LLMModel,
+    sessionId: string,
+    maxTokens: number,
+    previous: string | undefined,
+    conversation: string,
+  ): Promise<string> {
+    const budgetHint = `\n\n重要：你的摘要输出上限为 ${maxTokens} tokens（约 ${maxTokens * 4} 个英文字符，或约 ${Math.floor(maxTokens / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
+    const messages: Message[] = [
+      { role: 'system', content: summarySystemPrompt + budgetHint },
+      {
+        role: 'user',
+        content: previous
+          ? `以下是之前的对话摘要：\n${previous}\n\n以下是新增的对话内容，请在之前摘要的基础上整合生成更新的摘要：\n${conversation}`
+          : `请为以下对话生成摘要：\n${conversation}`,
+      },
+    ];
+    // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
+    // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞 provider 的 120s 超时。
+    // 「不思考的摘要」对「超时导致根本没有摘要」不是权衡。将来真出现需要思考版摘要的模型再补配置键。
+    const request = {
+      messages,
+      temperature: 0.3,
+      maxTokens,
+      think: lightestThinking(model),
+      sessionId,
+      purpose: '摘要',
+    };
+    let text = '';
+    try {
+      const stream = model.chatStream?.(request);
+      if (stream) for await (const chunk of stream) text += chunk.contentDelta ?? '';
+      else text = (await model.chat(request)).content ?? '';
+    } catch (err) {
+      // 半截流式输出一并丢弃：provider 超时常在吐出部分内容后中断流，截断的文本入库会成为之后所有增量摘要的基底
+      throw new Error(`摘要模型调用失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
+    }
+    const summary = text.trim();
+    if (!summary) throw new Error('摘要模型返回了空内容');
+    return summary;
   }
 
   /**
-   * 摘要并裁切（generateSummary 与 compress 共用）：格式化待摘要消息 → 联合已有摘要调用模型
-   * → 摘要落库 → 裁切活跃历史 → 写压缩分隔标记。`userSuffix` 追加在摘要请求正文末尾
-   * （compress 路径的任务列表状态与任务提示）。
-   *
-   * 模型失败或返回空时降级为只裁切、不写摘要；裁切抛错时先把摘要回滚到落库前再原样抛出。
-   * 模型返回时 `cleared()` 为真（开始摘要之后会话被清空过）则整次作废：不写摘要、不裁切、不写标记。
-   * 返回写入的摘要，降级或作废时为空串。
+   * 把待摘要部分连同已有摘要交给摘要模型，得到新摘要。格式化后的输入超过摘要模型的单次容量时分块增量：每块不超过
+   * (窗口 − 输出上限) ÷ 2 字（按每字至多 2 token 保守折算，留出提示词与已有摘要），上一块的结果作为下一块的已有摘要。
+   * 任何一块失败或返回空整次失败；每块返回后会话被清空过的，整次作废
    */
-  async function summarizeAndTrim(
-    provider: MemoryService,
-    summaryModel: LLMModel,
+  async function summarize(
+    model: LLMModel,
     sessionId: string,
-    allHistory: Message[],
-    messagesToSummarize: Message[],
-    userSuffix: string,
+    part: Message[],
+    previous: string | undefined,
     cleared: () => boolean,
   ): Promise<string> {
-    const store = new SummaryStore(provider);
-    const existing = await store.getSummary(sessionId);
-
-    // 映射建在 allHistory 上：比待摘要切片多扫几条，零成本。
-    // 工具名来源（assistant.toolCalls）恒早于 tool 结果，切片又是 allHistory 的前缀：只要 assistant 还在探测
-    // 窗口内就一定在切片内；窗口头部被截断的那组查不到，回落 m.name。
-    const nameByToolCallId = buildToolNameMap(allHistory);
-    const formattedMessages = messagesToSummarize
-      .filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
-      .map(m => formatMsgForSummary(m, nameByToolCallId))
-      .join('\n');
-
-    // 构建摘要请求
-    const summaryBudget = getSummaryTokenBudget();
-    const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
-    const summaryMessages: Message[] = [{ role: 'system', content: summarySystemPrompt + budgetHint }];
-
-    // 如果已有旧摘要，在提示中包含它
-    if (existing?.summary) {
-      summaryMessages.push({
-        role: 'user',
-        content: `以下是之前的对话摘要：\n${existing.summary}\n\n以下是新增的对话内容，请在之前摘要的基础上整合生成更新的摘要：\n${formattedMessages}${userSuffix}`,
-      });
-    } else {
-      summaryMessages.push({
-        role: 'user',
-        content: `请为以下对话生成摘要：\n${formattedMessages}${userSuffix}`,
-      });
+    const maxTokens = summaryBudget(sessionId, model);
+    const limit = Math.floor((model.contextLength - maxTokens) / 2);
+    // 每块至少两个码元，切分才能前进（代理对不拆开）
+    if (limit < 2)
+      throw new Error(`摘要模型的上下文窗口（${model.contextLength}）装不下摘要的输出上限（${maxTokens}）`);
+    const names = buildToolNameMap(part);
+    const lines = part.map(m => formatMsgForSummary(m, names));
+    // 待摘要部分里最后一次待办的参数作为最后一行，与其余各行一起分块
+    const todo = part
+      .flatMap(m => m.toolCalls ?? [])
+      .filter(call => call.function.name === 'manage_todo_list')
+      .at(-1)?.function.arguments;
+    if (todo) lines.push(`当前任务列表状态：\n${todo}`);
+    let summary = '';
+    for (const [i, chunk] of chunkLines(lines, limit).entries()) {
+      summary = await askSummaryModel(model, sessionId, maxTokens, i === 0 ? previous : summary, chunk);
+      if (cleared()) throw new Error('压缩期间会话被清空');
     }
-
-    logger.debug(
-      `正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`,
-    );
-
-    // 调用 LLM 生成摘要。生成失败不再滞留于"涨破阈值→超时→原样重试"的循环
-    // （慢模型场景实测每隔几分钟白烧一次 120s；usageRatio 触发的压缩同样会每次 LLM 调用都再触发一次）：
-    // 降级为纯裁切——该段历史无摘要但仍在归档层可检索，活跃上下文回到 keepRecent 以内，循环即断。
-    let summaryText = '';
-    try {
-      // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
-      // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞
-      // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
-      // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
-      // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
-      const request = {
-        messages: summaryMessages,
-        temperature: 0.3,
-        maxTokens: summaryBudget,
-        think: lightestThinking(summaryModel),
-        sessionId,
-        purpose: '摘要',
-      };
-      const stream = summaryModel.chatStream?.(request);
-      if (!stream) {
-        const resp = await summaryModel.chat(request);
-        summaryText = resp.content ?? '';
-      } else {
-        for await (const chunk of stream) {
-          if (chunk.contentDelta) {
-            summaryText += chunk.contentDelta;
-          }
-        }
-      }
-    } catch (err) {
-      // 半截流式输出必须丢弃：provider 超时常在吐出部分内容后中断流，把截断文本
-      // 入库会让它成为后续所有增量摘要的权威基底，链条被永久污染（对抗审计实测）
-      summaryText = '';
-      logger.warn('生成会话摘要失败，降级为纯裁切（该段历史无摘要，归档层仍可检索）:', err);
-    }
-    if (cleared()) {
-      logger.debug(`会话在摘要期间被清空，丢弃本次摘要: session=${sessionId}`);
-      return '';
-    }
-    const commit = commitSummary(provider, store, sessionId, allHistory, existing?.summary, summaryText.trim());
-    committing.set(sessionId, commit);
-    try {
-      return await commit;
-    } finally {
-      committing.delete(sessionId);
-    }
+    return summary;
   }
 
-  /** 摘要落库、裁切活跃历史、写压缩分隔标记：summarizeAndTrim 过了清理比对之后的落库段 */
-  async function commitSummary(
+  /** 落定：写摘要 → 归档切分点之前的 cut 条 → 写分隔标记。归档抛错时把摘要回滚到写入前，原样抛出 */
+  async function commitCompression(
     provider: MemoryService,
     store: SummaryStore,
     sessionId: string,
-    allHistory: Message[],
-    prevSummary: string | undefined,
-    finalSummary: string,
-  ): Promise<string> {
-    const summaryTs = Date.now();
-    // 摘要先落库、裁切后执行，两步不原子：裁切抛错（SQLITE_BUSY / Mongo 瞬时错，
-    // 两个 provider 的 trimHistory 都不内吞异常）时摘要已提交而历史没裁，getHistory
-    // 仍取到同一段（archived 没变、totalCount 不降），下一轮切的还是这批内容，而基底
-    // 已是刚写进去的新摘要——同一段历史被反复叠进摘要，每轮都花一次模型调用。
-    // 故记下旧摘要（prevSummary），裁切失败就把摘要回滚到落库前的样子，让下一轮从干净基底重摘。
-    if (finalSummary) {
-      await store.upsertSummary(sessionId, finalSummary);
-    }
-
-    // 真正的压缩：将旧消息标记为 archived，只保留最近 keepRecent 条作为热上下文。
-    // 摘要成功与失败共用这段——失败路径就是上述降级方案。
-    // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
-    // 下界 1：keepRecent=0 会让索引 allHistory.length - 0 越界、undefined.role 抛
-    // TypeError——异常被外层 catch 吞成一条 warn，摘要已花完却不裁切，之后每轮重摘全量历史
-    let safeKeepRecent = Math.max(1, Math.floor(cfg.keepRecent));
-    while (safeKeepRecent < allHistory.length) {
-      const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
-      if (firstKeptMsg.role === 'tool') {
-        safeKeepRecent++;
-      } else {
-        break;
-      }
-    }
-    let trimmed = false;
-    if (provider.trimHistory) {
-      let deleted: number;
-      try {
-        deleted = await provider.trimHistory(sessionId, safeKeepRecent);
-      } catch (trimErr) {
-        // 别把「摘要已写、历史没裁」这个半成品状态留下
-        if (finalSummary) {
-          try {
-            if (prevSummary) await store.upsertSummary(sessionId, prevSummary);
-            else await store.clearSession(sessionId);
-          } catch (rollbackErr) {
-            logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
-          }
-        }
-        throw trimErr;
-      }
-      trimmed = true;
-      logger.info(
-        finalSummary
-          ? `会话已压缩: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`
-          : `会话已裁切（无摘要）: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`,
-      );
-    } else {
-      logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
-    }
-
-    // 保存系统事件消息，供前端持久化显示压缩分隔线。
-    // 失败降级的"已裁切" marker 以真的裁切了为前提——provider 不支持 trimHistory 时
-    // 什么都没发生，写 marker 是说谎且每轮重复追加一条
-    const archive = messageArchive.current;
-    if (archive && (finalSummary || trimmed))
-      await archive.saveMessage(sessionId, {
-        role: 'system',
-        kind: WellKnownKinds.EventMarker,
-        content: finalSummary ? '对话已压缩' : '对话已裁切（摘要生成失败，该段无摘要）',
-        timestamp: summaryTs,
-      });
-
-    return finalSummary;
-  }
-
-  /**
-   * 为指定 session 生成/更新摘要
-   *
-   * 流程：
-   * 1. 从 memory 获取完整历史
-   * 2. 如果总消息数 < threshold，或不多于 keepRecent，不需要摘要
-   * 3. 取 [0, total - keepRecent) 区间的消息，联合已有摘要生成新摘要并裁切（见 summarizeAndTrim）
-   */
-  async function generateSummary(sessionId: string): Promise<void> {
-    if (summarizing.has(sessionId)) return;
-    summarizing.add(sessionId);
-    const cleared = clearedSince(sessionId);
-
+    cut: number,
+    previous: string | undefined,
+    summary: string,
+  ): Promise<void> {
+    const at = Date.now();
+    await store.upsertSummary(sessionId, summary);
+    let archived: number;
     try {
-      const provider = memory.current;
-      const summaryModel = resolveSummaryModel();
-      if (!provider || !summaryModel) return;
-
-      // 获取较多的历史消息来判断是否需要摘要
-      const allHistory = await provider.getHistory(sessionId, getHistoryProbeLimit());
-      if (allHistory.length < cfg.threshold) return;
-
-      // keepRecent ≥ threshold 的配置下，过了阈值也可能还不多于 keepRecent：此时区间为空，不摘
-      const messagesToSummarize = selectMessagesToSummarize(allHistory);
-      if (messagesToSummarize.length === 0) return;
-
-      await summarizeAndTrim(provider, summaryModel, sessionId, allHistory, messagesToSummarize, '', cleared);
+      archived = await provider.archiveOldest(sessionId, cut);
     } catch (err) {
-      logger.warn('生成会话摘要失败:', err);
-    } finally {
-      summarizing.delete(sessionId);
+      // 摘要已写、历史没归档：下一次压缩会把同一段历史再并进这份新摘要，故回滚到写入前
+      try {
+        if (previous) await store.upsertSummary(sessionId, previous);
+        else await store.clearSession(sessionId);
+      } catch (rollbackErr) {
+        logger.warn('归档失败后回滚摘要也失败（下一次压缩会把这一段再并进新摘要）:', rollbackErr);
+      }
+      throw err;
     }
+    logger.info(`会话已压缩: session=${sessionId}, 归档 ${archived} 条`);
+    // 系统事件消息，供前端持久化显示压缩分隔线
+    await messageArchive.current?.saveMessage(sessionId, {
+      role: 'system',
+      kind: WellKnownKinds.EventMarker,
+      content: '对话已压缩',
+      timestamp: at,
+    });
   }
 
-  // === 贡献：在 LLM 调用前注入摘要（agent:prompt / context 槽）===
-  contributions.contribute('agent:prompt', {
-    id: 'memory-summary',
-    anchor: 'context',
-    async build(view) {
-      const sessionId = view.sessionId;
-      if (!sessionId) return null;
-
-      const existing = await new SummaryStore(memory.require()).getSummary(sessionId);
-      if (!existing?.summary) return null;
-
-      // 动态计算摘要 token 预算
-      const summaryBudget = getSummaryTokenBudget();
-      const summaryTokens = Math.ceil(existing.summary.length / 3);
-      let summaryContent = existing.summary;
-
-      // 如果超出预算，截断
-      if (summaryTokens > summaryBudget) {
-        const maxChars = summaryBudget * 3;
-        // 代理安全截断：摘要会落库并每轮重注入上下文，切坏 emoji 出孤代理会让 DeepSeek 请求 400。
-        summaryContent = truncateChars(summaryContent, maxChars, '\n... [摘要已截断]');
-      }
-
-      return `以下是之前对话的摘要，包含了较早的对话上下文：\n${summaryContent}`;
-    },
-  });
-
-  // === 在 agent:turn:after 钩子触发摘要生成 ===
-  // 每轮对话结束后，异步检查是否需要生成摘要
-  hooks.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    // 中止/异常回合不触发摘要：本轮没有产生有效新内容（用户停止或报错），
-    // 摘要无意义且浪费算力。turn:after 现已在 aborted/error 路径也触发（生命周期收口），
-    // 故此处需显式跳过这两种 outcome。
-    if (data.outcome === 'aborted' || data.outcome === 'error') return;
-    // 异步触发，不阻塞主流程
-    generateSummary(data.sessionId).catch(err => {
-      logger.warn('异步摘要生成失败:', err);
-    });
-  });
-
   /**
-   * 压缩一个会话（compression 服务）：不看 threshold，历史多于 keepRecent 就摘要并裁切，进度经 session:compressing 广播。
-   * 没有压成时拒绝：报 error 的同时把原因抛给调用方，报 done 才算压成（done 会让界面插入「对话已压缩」的分隔线）。
-   * 历史不多于 keepRecent 时什么都不做、不报进度；开始压之前就失败的（记忆不在、读不出历史）只拒绝，也不报
+   * 全量压缩一次（后台与手动共用）：快照全部活跃历史，切分点之前的全部连同已有摘要压成一份新摘要，落笔前核对快照前缀
+   * 没被改过，再写摘要、归档切分点之前的消息、写分隔标记；切分点之后的消息（快照之后到达的、没写全的工具调用组）
+   * 原样留在活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面据此插「对话已压缩」）。
+   * 没压成（摘要模型不在、模型失败、期间被清空或历史被改动）时以原因拒绝，什么都不写；待摘要部分没有对话时什么都不做、
+   * 不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
    */
-  async function compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void> {
-    logger.info(`收到压缩请求: session=${sessionId}, reason=${reason}`);
-    if (summarizing.has(sessionId)) throw new Error('这个会话正在压缩或生成摘要，稍后再试');
+  async function compressHistory(sessionId: string): Promise<void> {
+    if (summarizing.has(sessionId)) throw new Error('这个会话正在压缩，稍后再试');
     summarizing.add(sessionId);
     const cleared = clearedSince(sessionId);
     const report = (status: 'start' | 'done' | 'error') =>
-      events.emit('session:compressing', { sessionId, status }).catch(() => {});
+      void events.emit('session:compressing', { sessionId, status });
 
     let started = false;
     try {
       const provider = memory.current;
       if (!provider) throw new Error('memory 服务不可用');
-      const allHistory = await provider.getHistory(sessionId, getHistoryProbeLimit());
-      // 只要有 > keepRecent 条消息就压缩
-      const messagesToSummarize = selectMessagesToSummarize(allHistory);
-      if (messagesToSummarize.length === 0) {
-        logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
-        return;
-      }
+      const snapshot = await provider.getHistory(sessionId, Infinity);
+      const cut = cutPoint(snapshot);
+      const part = snapshot.slice(0, cut).filter(isConversation);
+      if (part.length === 0) return;
       report('start');
       started = true;
-      const summaryModel = resolveSummaryModel();
-      // 常见触发：summaryModelMode=custom 指向的 provider 被卸载或重载中
-      if (!summaryModel) throw new Error('摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）');
-
-      // 从历史消息中提取最近的 todo-list 状态，注入到压缩上下文中
-      let todoContext = '';
-      const todoMsgs = allHistory
-        .slice(-cfg.keepRecent)
-        .filter(
-          m =>
-            m.role === 'assistant' &&
-            m.toolCalls?.some(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage'),
+      // global 按默认优先级选首个能对话的模型；custom 按 summaryLLM 精确匹配，常见的落空是它指向的 provider 被卸载或重载中
+      const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
+      const model = resolveLLMModel(llm, ref, ['chat'])?.instance;
+      if (!model) {
+        throw new Error(
+          ref
+            ? `摘要模型解析失败（${ref.provider}/${ref.model} 不存在或未激活）`
+            : '摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）',
         );
-      const tc = todoMsgs
-        .at(-1)
-        ?.toolCalls?.find(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage');
-      if (tc?.function.arguments) todoContext = `\n\n当前任务列表状态：\n${tc.function.arguments}`;
-
-      const taskHint =
-        reason === 'auto'
-          ? '\n\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
-          : '';
-
-      const finalSummary = await summarizeAndTrim(
-        provider,
-        summaryModel,
-        sessionId,
-        allHistory,
-        messagesToSummarize,
-        `${todoContext}${taskHint}`,
-        cleared,
-      );
-      // 模型失败只做了裁切（裁切结果经历史刷新可见）、期间被清空而作废，都算没压成
-      if (!finalSummary) throw new Error(cleared() ? '压缩期间会话被清空' : '摘要没有生成，只裁切了较早的历史');
+      }
+      const store = new SummaryStore(provider);
+      const previous = (await store.getSummary(sessionId))?.summary || undefined;
+      const summary = await summarize(model, sessionId, part, previous, cleared);
+      const current = await provider.getHistory(sessionId, Infinity);
+      if (cleared()) throw new Error('压缩期间会话被清空');
+      // 回滚删了前缀里的消息、晚到的消息时间戳插进了前缀：归档最早的 cut 条就会归掉没进摘要的消息
+      if (!samePrefix(snapshot, current, cut)) throw new Error('压缩期间历史被改动');
+      const commit = commitCompression(provider, store, sessionId, cut, previous, summary);
+      committing.set(sessionId, commit);
+      try {
+        await commit;
+      } finally {
+        committing.delete(sessionId);
+      }
+      compressions.set(sessionId, (compressions.get(sessionId) ?? 0) + 1);
+      failures.delete(sessionId);
       report('done');
     } catch (err) {
-      logger.warn('压缩会话失败:', err);
+      logger.warn(`压缩没有压成: session=${sessionId}`, err);
       if (started) report('error');
       throw err;
     } finally {
@@ -657,37 +533,97 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  // 压缩线是 0 到 1 的使用率，0 表示不自动压缩；写成负数或按百分比填成 70 的按 0 处理，交出去的与实际行为一致
-  const autoThreshold = cfg.autoCompressThreshold > 0 && cfg.autoCompressThreshold <= 1 ? cfg.autoCompressThreshold : 0;
-  if (autoThreshold !== cfg.autoCompressThreshold) {
-    logger.warn(`autoCompressThreshold 为 ${cfg.autoCompressThreshold}，不在 0 到 1 之间，按 0（不自动压缩）处理`);
-  }
-  provide(compression, { compress, autoThreshold }, { label: '会话压缩' });
-
-  // === 用量达到 autoCompressThreshold（默认 0.7）时在后台压缩 ===
-  // agent 在每次 LLM 调用前发出 token:usage；本轮调用仍用原始上下文完成，压缩的成果下一轮生效。
-  // 正在摘要或压缩的会话不再触发
-  events.on('token:usage', usage => {
-    if (!usage?.sessionId) return;
-    if (autoThreshold === 0) return;
-    if (usage.usageRatio < autoThreshold) return;
-    if (summarizing.has(usage.sessionId)) return;
-    logger.info(
-      `Token 使用率 ${(usage.usageRatio * 100).toFixed(1)}% 超过阈值 ${(autoThreshold * 100).toFixed(0)}%，触发后台压缩`,
-    );
-    compress(usage.sessionId, 'auto').catch(() => {});
+  // === 贡献：在 LLM 调用前注入摘要（agent:prompt / context 槽）===
+  // 不按预算截断：生成时的 maxTokens 已是上限；换了窗口更小的模型时，下一次压缩会重写摘要，期间由硬裁剪兜底
+  contributions.contribute('agent:prompt', {
+    id: 'memory-summary',
+    anchor: 'context',
+    async build(view) {
+      if (!view.sessionId) return null;
+      const existing = await new SummaryStore(memory.require()).getSummary(view.sessionId);
+      return existing?.summary ? `以下是之前对话的摘要，包含了较早的对话上下文：\n${existing.summary}` : null;
+    },
   });
 
-  // 统一记忆清除：通过 memory:clear hook 参与编排
+  provide(
+    compression,
+    {
+      compress(sessionId, request) {
+        logger.info(`收到压缩请求: session=${sessionId}, reason=${request.reason}`);
+        return compressHistory(sessionId);
+      },
+      compressAt,
+    },
+    { label: '会话压缩' },
+  );
+
+  events.on('token:usage', usage => {
+    windows.set(usage.sessionId, usage.contextWindow);
+    if (usage.turnId) turnUsages.set(usage.sessionId, usage);
+  });
+
+  // 回合从开始（agent:input:before）到它的 next 返回为止：记下开始时的压缩代数与清空代数，被下游拦下、出错的一轮同样在 finally 里丢掉
+  hooks.middleware('agent:input:before', async (data, next) => {
+    const sessionId = data.message.sessionId;
+    turnStarts.set(data.turnId, { compressions: compressions.get(sessionId) ?? 0, cleared: clearedSince(sessionId) });
+    try {
+      await next();
+    } finally {
+      turnStarts.delete(data.turnId);
+    }
+  });
+
+  // === 回合结束时判一次是否该压缩（中止与出错的回合不判）===
+  // 只认这一轮最后一次调用的用量：token:request 的快照不带 turnId，上一轮留下的属于别的回合；这一轮开始之后压成过或清空过的，
+  // 它的用量是按那之前的历史算的，也不认。回合进行中不在后台改持久化的历史：长工具循环中途改历史，会与 agent 手里的
+  // 消息列表对不上
+  hooks.middleware('agent:turn:after', async (data, next) => {
+    await next();
+    if (data.outcome === 'aborted' || data.outcome === 'error') return;
+    const { sessionId } = data;
+    const usage = turnUsages.get(sessionId);
+    const start = turnStarts.get(data.turnId);
+    if (usage?.turnId !== data.turnId || !start || start.cleared()) return;
+    if (start.compressions !== (compressions.get(sessionId) ?? 0)) return;
+    if (summarizing.has(sessionId)) return;
+    const failure = failures.get(sessionId);
+    if (failure && ++failure.turns < Math.min(2 ** failure.count, MAX_RETRY_INTERVAL_TURNS)) return;
+    const amounts = {
+      used: usage.used,
+      contextWindow: usage.contextWindow,
+      tokenBudget: usage.tokenBudget,
+      compressible: usage.breakdown.history + usage.breakdown.toolResults,
+    };
+    if (!compressionDue(amounts, { compressAt: compressAt(sessionId, usage.platform) })) return;
+    logger.info(`用量 ${usage.used}/${usage.contextWindow} 到了自动压缩线，后台压缩: session=${sessionId}`);
+    const cleared = clearedSince(sessionId);
+    compressHistory(sessionId).catch(() => {
+      // 期间被清空的不记：清理已丢掉这个会话的记录，留下清理前的次数会让之后的压缩迟迟不来
+      if (!cleared()) failures.set(sessionId, { count: (failures.get(sessionId)?.count ?? 0) + 1, turns: 0 });
+    });
+  });
+
+  // 统一记忆清除：通过 memory:clear hook 参与编排（删除会话也走它）
   hooks.middleware('memory:clear', async (data, next) => {
     // 类型过滤：摘要是归档消息的压缩，随 context 一起清（也可单独选 summary）；两者都不含时跳过
     if (data.types && !data.types.includes('summary') && !data.types.includes('context')) {
       await next();
       return;
     }
-    if (data.scope === 'all') clearAllEpoch++;
-    else if (data.sessionId) clearEpoch.set(data.sessionId, (clearEpoch.get(data.sessionId) ?? 0) + 1);
-    // 代数已变，之后不会再有摘要过比对；已在落库的等它落定（成败都算落定，失败由摘要路径自己上报）
+    if (data.scope === 'all') {
+      clearAllEpoch++;
+      turnUsages.clear();
+      windows.clear();
+      failures.clear();
+      compressions.clear();
+    } else if (data.sessionId) {
+      clearEpoch.set(data.sessionId, (clearEpoch.get(data.sessionId) ?? 0) + 1);
+      turnUsages.delete(data.sessionId);
+      windows.delete(data.sessionId);
+      failures.delete(data.sessionId);
+      compressions.delete(data.sessionId);
+    }
+    // 代数已变，之后不会再有压缩过比对；已在落库的等它落定（成败都算落定，失败由压缩自己上报）
     await Promise.allSettled(data.scope === 'all' ? committing.values() : [committing.get(data.sessionId ?? '')]);
 
     try {
