@@ -7,8 +7,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { settingsPlugin, THINK } from '../fixtures/session-settings.js';
 
-// 背景：平台派生会话（cli-default、OneBot 的 `onebot:bot:group:x`）从不经 createSession 预建，
-// createChildSession 原本对未建档的父直接抛「父会话不存在」，create_subtask 在这些平台必败。
+// 背景：带 source 的注入回合（定时任务、编排）可能落在还没建档的会话上，createChildSession 原本对未建档的父
+// 直接抛「父会话不存在」，create_subtask 在这些会话里必败。
 // 契约：父档缺失时先 ensureSession 兜底建档，再挂子会话。
 
 async function setup() {
@@ -26,14 +26,13 @@ async function setup() {
 }
 
 describe('createChildSession：父会话未建档时兜底建档', () => {
-  it('平台派生父 id 未建档也能建子会话，并把父挂进树', async () => {
+  it('父 id 未建档也能建子会话，并把父挂进树', async () => {
     const { app, sm } = await setup();
-    const parentId = 'cli-default';
+    const parentId = 'onebot:bot:group:g1';
 
     const child = await sm.createChildSession(parentId, { name: '子任务 A', inputContext: '去查个东西' });
 
     expect(child.parentId).toBe(parentId);
-    expect(child.createdBy).toBe('agent');
     // 父档被兜底建出来，且 children 已挂上（否则 getChildren 看不到）
     const parent = sm.getSession(parentId);
     expect(parent, '父会话应被兜底建档').toBeDefined();
@@ -44,15 +43,15 @@ describe('createChildSession：父会话未建档时兜底建档', () => {
 
   it('父会话已建档时不改动其既有字段（兜底不越权覆盖）', async () => {
     const { app, sm } = await setup();
-    const parentId = 'onebot:bot:group:g1';
-    await sm.ensureSession(parentId, { name: '群聊', config: { think: 'off' }, createdBy: 'user' });
+    const parentId = 'cli-default';
+    await sm.ensureSession(parentId, { name: '终端', config: { think: 'off' } }, { createdFrom: 'cli' });
 
     const child = await sm.createChildSession(parentId, { name: '子任务 B', config: { think: 'high' } });
 
     const parent = sm.getSession(parentId);
-    expect(parent?.name).toBe('群聊');
+    expect(parent?.name).toBe('终端');
     expect(parent?.config).toEqual({ think: 'off' });
-    expect(parent?.createdBy).toBe('user');
+    expect(parent?.createdFrom).toBe('cli');
     expect(parent?.children).toContain(child.id);
     await app.stop();
   });

@@ -1,17 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
+import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import maimaiPlugin from '../../packages/plugin-maimai/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // /maimai 的帮助由指令系统生成：裸敲 /maimai 回的就是 /help maimai，查询目标与条数是带说明的位置参数，
 // 不再手写一份帮助、也不把用法写进描述。recent 的条数跟在任何一种查询目标后面都生效。
 // 失败回复写出了什么事与怎么办：查分器不认凭据写去改 developerToken，连不上写稍后再试；
 // 绑定与解绑分开写「没有记忆后端」与「认不出发消息的人」两种原因。没有 memory 插件，记忆后端即缺席。
+// 没绑定时按调用者的 QQ 号查只在一对一的聊天窗口里：按会话管理记下的字段判（子会话取根会话的），不看会话 id 的写法。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -20,12 +23,17 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup() {
+/** sessionId 是指令所在的会话；sessions 是会话管理里的记录（只用 getSession），不给时不装会话管理 */
+async function setup(sessionId = 'onebot:10000:group:20001', sessions?: SessionInfo[]) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
   host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  if (sessions) {
+    const table = new Map(sessions.map(s => [s.id, s]));
+    host.provide(sessionManager, { getSession: (id: string) => table.get(id) } as never);
+  }
   await app.plugin(commandsPlugin, {});
   await app.plugin(maimaiPlugin, { developerToken: 'tok', enableTools: false });
   await app.plugins.idle();
@@ -35,10 +43,9 @@ async function setup() {
     const parsed = registry.parseCommand(line);
     if (!parsed) throw new Error(`不是指令: ${line}`);
     const out = await registry.execute(parsed.name, {
-      sessionId: 'onebot:10000:group:20001',
+      sessionId,
       platform: 'onebot',
       userId: anonymous ? undefined : '30001',
-      sessionType: 'group',
       args: parsed.args,
       raw: parsed.raw,
     });
@@ -153,5 +160,39 @@ describe('/maimai 的失败回复', () => {
     const fix = '认不出发消息的人（没有平台用户 id），绑定只能在认得出发送者的平台上做，如 QQ';
     expect(await run('/maimai bind 123456', true)).toBe(`绑定失败：${fix}`);
     expect(await run('/maimai unbind', true)).toBe(`解绑失败：${fix}`);
+  });
+});
+
+describe('/maimai 没绑定时按调用者的 QQ 号查', () => {
+  const GROUP = 'onebot:10000:group:20001';
+  const PRIVATE = 'onebot:10000:private:30001';
+  const TASK = `${PRIVATE}::abcd1234`;
+  const sessions = [
+    storedRoom(GROUP),
+    storedRoom(PRIVATE),
+    {
+      id: TASK,
+      name: TASK,
+      children: [],
+      status: 'waiting',
+      config: {},
+      createdAt: 0,
+      updatedAt: 0,
+      parentId: PRIVATE,
+    },
+  ] as unknown as SessionInfo[];
+  const BY_QQ = '使用你的 QQ 号查询查分器';
+  const NONE = '未找到查询目标';
+
+  it.each([
+    ['一对一的聊天窗口', PRIVATE, BY_QQ],
+    ['一对一窗口里的子会话（取根会话的）', TASK, BY_QQ],
+    ['多方的聊天窗口', GROUP, NONE],
+    ['会话表里没有记录的会话（id 写着 private 也不算）', 'onebot:10000:private:30002', NONE],
+  ])('%s', async (_label, sessionId, expected) => {
+    const player = { name: 'p', rating: 1, friend_code: 456 };
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ success: true, data: player }), { status: 200 }));
+    const run = await setup(sessionId, sessions);
+    expect(await run('/maimai info')).toContain(expected);
   });
 });

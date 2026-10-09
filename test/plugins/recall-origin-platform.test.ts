@@ -14,10 +14,11 @@ import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { roomScopeManager } from '../fixtures/room-scope.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 召回按出生平台：IM 房间不论从哪个入口驱动，跨会话料的「当前平台」都是房间的出生平台
-// （api-gateway 的 resolveSessionOrigin），入口平台只对没有出生平台的会话（WebUI、CLI 等）起作用。
+// 召回按出生平台：IM 房间不论从哪个入口驱动，跨会话料的「当前平台」都是会话管理记下的出生平台（子会话取根会话的），
+// 入口平台只对没有出生平台的会话（WebUI、CLI 等）起作用。出生平台只看会话表里的记录，不从会话 id 推。
 // owner 从 WebUI 往 onebot 群插话时，memory-history 的同平台注入、memory-vector 的 platform
 // 范围、session-history 服务的平台裁决都按 onebot 算，owner 自己 WebUI 会话的内容不进这一轮。
 // ════════════════════════════════════════════════════════════
@@ -28,6 +29,17 @@ const OWNER = 'session-abcd1234';
 const OWNER_OTHER = 'webui-default';
 const CLI = 'cli-default';
 const CLI_TASK = 'cli-default::efgh5678';
+/** id 不按 onebot 写法的房间：会话表里记下了出生平台 onebot */
+const PLAIN_ROOM = 'room-plain';
+/** id 写成 onebot 群的样子，会话表里却没有出生平台（按 id 建档的） */
+const UNRECORDED = 'onebot:10000:group:20009';
+
+/** 会话表：两个已收录的群与一个 id 不带平台前缀的房间 */
+const SESSIONS = [
+  storedRoom(GROUP),
+  storedRoom(OTHER_GROUP),
+  { ...storedRoom(GROUP), id: PLAIN_ROOM, name: PLAIN_ROOM },
+];
 
 /** WebUI 入口往群房间发消息时的调用上下文 */
 const WEBUI_INTO_GROUP = { sessionId: GROUP, platform: 'webui' };
@@ -81,6 +93,7 @@ describe('memory-history：同平台注入按出生平台', () => {
     }
     const { handlers, stub } = toolRecorder();
     host.provide(tools, stub);
+    host.provide(sessionManager, roomScopeManager({}, {}, SESSIONS));
     await app.plugin(memoryHistory, { scope: 'same-platform', maxAgeMinutes: 0, perSessionLimit: 0 });
     await app.plugins.idle();
     requireActive(app, memoryHistory.name);
@@ -116,6 +129,16 @@ describe('memory-history：同平台注入按出生平台', () => {
     expect(cli).toContain('CLI子任务原文');
     expect(cli).not.toContain('别的群原文');
     expect(cli).not.toContain('WebUI原文');
+  });
+
+  it('出生平台取会话表里记下的，不看 id：id 不带平台前缀的房间按 onebot，没有记录的按入口平台', async () => {
+    const { passive } = await setup();
+    const plain = await passive(PLAIN_ROOM, 'webui');
+    expect(plain).toContain('别的群原文');
+    expect(plain).not.toContain('WebUI原文');
+    const unrecorded = await passive(UNRECORDED, 'webui');
+    expect(unrecorded).toContain('WebUI原文');
+    expect(unrecorded).not.toContain('别的群原文');
   });
 });
 
@@ -162,6 +185,7 @@ describe('memory-vector：platform 范围按出生平台', () => {
     });
     const { handlers, stub } = toolRecorder();
     host.provide(tools, stub);
+    host.provide(sessionManager, roomScopeManager({}, {}, SESSIONS));
     await app.plugins.register(memoryVector, {
       search: { topK: 10, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
       contextExpand: { window: 0, crossSession: true },
@@ -212,16 +236,22 @@ describe('memory-vector：platform 范围按出生平台', () => {
     expect(out.texts).toContain('WebUI另一会话记忆');
     expect(out.texts).not.toContain('别的群记忆');
   });
+
+  it('出生平台取会话表里记下的，不看 id：id 不带平台前缀的房间按 onebot，没有记录的按入口平台', async () => {
+    const { passive } = await setup();
+    const plain = await passive(PLAIN_ROOM, 'webui');
+    expect(plain).toContain('别的群记忆');
+    expect(plain).not.toContain('WebUI记忆');
+    const unrecorded = await passive(UNRECORDED, 'webui');
+    expect(unrecorded).toContain('WebUI记忆');
+    expect(unrecorded).not.toContain('别的群记忆');
+  });
 });
 
 describe('session-history：平台裁决按出生平台', () => {
-  // WebUI 的会话 id（session-<8位>、webui-default）不带冒号，按 id 前缀比平台时本来就读不到；
-  // 带 webui: 前缀的目标代表「当前平台按入口算成 webui 时会被放行」的那一类
-  const WEBUI_PREFIXED = 'webui:console';
-
   async function setup(
     historyScope: 'platform' | 'all',
-    room?: { rooms?: Record<string, MemoryRecallScope>; profiles?: Record<string, MemoryRecallScope> },
+    room: { rooms?: Record<string, MemoryRecallScope>; profiles?: Record<string, MemoryRecallScope> } = {},
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
@@ -238,7 +268,7 @@ describe('session-history：平台裁决按出生平台', () => {
     host.provide(memoryService, {
       getHistory: async (sessionId: string) => [{ role: 'user', content: `${sessionId} 的原文`, timestamp: 1 }],
     } as never);
-    if (room) host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles));
+    host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles, SESSIONS));
     await app.plugin(sessionTools, { scope: historyScope });
     await app.plugins.idle();
     requireActive(app, sessionTools.name);
@@ -246,27 +276,30 @@ describe('session-history：平台裁决按出生平台', () => {
       JSON.parse((await handlers.get('session_get_history')!({ session_id: target }, ctx)) as string);
   }
 
-  it('安全：WebUI 入口往群房间发消息，同平台别的群照常可读，webui 一侧的会话被拒', async () => {
+  it('安全：WebUI 入口往群房间发消息，同平台别的群照常可读，WebUI 的会话被拒', async () => {
     const read = await setup('platform');
     expect(await read(WEBUI_INTO_GROUP, OTHER_GROUP)).toMatchObject({ ok: true, sessionId: OTHER_GROUP });
-    expect(await read(WEBUI_INTO_GROUP, WEBUI_PREFIXED)).toEqual({
-      error: expect.stringContaining('当前=onebot'),
-    });
-    expect(await read(WEBUI_INTO_GROUP, OWNER)).toMatchObject({ error: expect.any(String) });
+    expect(await read(WEBUI_INTO_GROUP, OWNER)).toEqual({ error: expect.stringContaining('当前=onebot') });
   });
 
   it('房间召回范围为 platform 时同样按出生平台裁决', async () => {
     const read = await setup('all', { rooms: { [GROUP]: 'platform' } });
     expect(await read(WEBUI_INTO_GROUP, OTHER_GROUP)).toMatchObject({ ok: true, sessionId: OTHER_GROUP });
-    expect(await read(WEBUI_INTO_GROUP, WEBUI_PREFIXED)).toEqual({
+    expect(await read(WEBUI_INTO_GROUP, OWNER)).toEqual({
       error: expect.stringContaining('本房间的召回范围限于同平台会话（当前=onebot'),
     });
   });
 
   it('owner 面会话照旧按入口平台：WebUI 会话读 onebot 群被拒', async () => {
     const read = await setup('platform');
-    const ctx = { sessionId: OWNER, platform: 'webui' };
-    expect(await read(ctx, OTHER_GROUP)).toEqual({ error: expect.stringContaining('当前=webui') });
-    expect(await read(ctx, WEBUI_PREFIXED)).toMatchObject({ ok: true, sessionId: WEBUI_PREFIXED });
+    expect(await read({ sessionId: OWNER, platform: 'webui' }, OTHER_GROUP)).toEqual({
+      error: expect.stringContaining('当前=webui'),
+    });
+  });
+
+  it('目标的平台取会话表里记下的，不看 id：id 不带平台前缀的房间可读，没有记录的被拒', async () => {
+    const read = await setup('platform');
+    expect(await read(WEBUI_INTO_GROUP, PLAIN_ROOM)).toMatchObject({ ok: true, sessionId: PLAIN_ROOM });
+    expect(await read(WEBUI_INTO_GROUP, UNRECORDED)).toEqual({ error: expect.stringContaining('目标=unknown') });
   });
 });

@@ -21,7 +21,7 @@ export const configSchema = defineConfig({
     type: 'array',
     label: '分作用域覆盖',
     description:
-      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。从未有真人消息经过本相位的会话，入站带 source 的内部注入（定时任务等）与回复记账都按会话 ID 约定（platform:self:type:target）推断类型与目标；不符合约定的（如 WebUI）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。从未有真人消息经过本相位的会话，入站带 source 的内部注入（定时任务等）与回复记账都取会话管理记下的聊天窗口的类型与目标；没有聊天窗口的（如 WebUI）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
     default: [],
     items: {
       scope: {

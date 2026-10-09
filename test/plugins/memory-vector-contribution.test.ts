@@ -4,6 +4,7 @@ import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/a
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
 import { vectorstore } from '../../packages/api-vectorstore/src/index.js';
@@ -14,6 +15,8 @@ import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { roomScopeManager } from '../fixtures/room-scope.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // 从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging 不在
 // 该路径生效——vitest 不做类型检查，用 never 断言绕过贡献点键约束（同 prompt-assembly.test.ts）。
@@ -108,6 +111,8 @@ interface SetupOptions {
   withArchive?: boolean;
   /** 覆盖查询 embedding 行为，用于取消传播等异步边界测试 */
   embedImpl?: (text: string, options?: EmbeddingRequestOptions) => Promise<number[]>;
+  /** 装上会话管理桩，会话表里是这些已收录的房间 */
+  rooms?: string[];
 }
 
 /** 本文件创建的 App 全部登记在此，用例结束统一停掉，避免索引队列与监听器泄漏到别的用例 */
@@ -127,6 +132,15 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.withMemory) await app.plugin(memoryInMemory);
   if (opts.withArchive) await app.plugin(messageArchivePlugin, { debugLogs: false });
 
+  if (opts.rooms)
+    host.provide(
+      sessionManager,
+      roomScopeManager(
+        {},
+        {},
+        opts.rooms.map(id => storedRoom(id)),
+      ),
+    );
   const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
   host.provide(embedding, embedder.service);
@@ -406,16 +420,19 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(block).not.toContain('别的会话消息');
   });
 
-  it('crossSessionMode=platform → metadata.platform 或 sessionId 前缀命中同平台均保留，异平台被滤除', async () => {
+  it('crossSessionMode=platform → metadata.platform 或会话记下的出生平台命中同平台均保留，异平台被滤除', async () => {
     const { assembly } = await setup({
       crossSessionMode: 'platform',
+      rooms: ['onebot:10000:group:9'],
       hits: [
-        // (a) sessionId 前缀不匹配（legacy-a），仅靠 metadata.platform 命中
+        // (a) 会话表里没有记录（legacy-a），仅靠 metadata.platform 命中
         hit(0.9, { sessionId: 'legacy-a', timestamp: BASE_TS, content: '平台字段命中的记忆', platform: 'onebot' }),
-        // (b) metadata.platform 缺失，仅靠 sessionId 前缀兜底命中
-        hit(0.85, { sessionId: 'onebot:g9', timestamp: BASE_TS + 1000, content: '会话前缀命中的记忆' }),
+        // (b) metadata.platform 缺失，靠会话表里记下的出生平台命中
+        hit(0.85, { sessionId: 'onebot:10000:group:9', timestamp: BASE_TS + 1000, content: '出生平台命中的记忆' }),
         // (c) 异平台：两个条件都不中
         hit(0.8, { sessionId: 'discord:z', timestamp: BASE_TS + 2000, content: '异平台的记忆', platform: 'discord' }),
+        // (d) metadata.platform 缺失、会话表里没有记录：id 写成 onebot 也不算同平台
+        hit(0.75, { sessionId: 'onebot:10000:group:8', timestamp: BASE_TS + 3000, content: '没有记录的记忆' }),
       ],
     });
     const messages = baseMessages();
@@ -423,8 +440,9 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('平台字段命中的记忆');
-    expect(block).toContain('会话前缀命中的记忆');
+    expect(block).toContain('出生平台命中的记忆');
     expect(block).not.toContain('异平台的记忆');
+    expect(block).not.toContain('没有记录的记忆');
   });
 
   it('contextExpand: memory 支持范围查询时，命中点带出前后各 N 条邻居', async () => {
@@ -655,6 +673,25 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
     expect(store.added[1].userId).toBe('bot1');
     expect(store.added[1].groupName).toBe('测试群');
     expect(store.added[1].sessionType).toBe('group');
+  });
+
+  it('索引侧：平台记的是这一轮的入口平台，与 user 侧同一口径，不从会话 id 取', async () => {
+    const { host, store } = await setup({});
+    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    // WebUI 自己的会话，与 owner 从 WebUI 往群里插话那一轮的回复
+    for (const sessionId of ['session-abcd1234', 'onebot:1:group:2']) {
+      await emitLoose('assistant:message:archived', {
+        sessionId,
+        message: {
+          role: 'assistant',
+          content: `回复 ${sessionId}`,
+          timestamp: BASE_TS,
+          metadata: { platform: 'webui' },
+        },
+      });
+    }
+    for (let i = 0; i < 50 && store.added.length < 2; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added.map(m => m.platform)).toEqual(['webui', 'webui']);
   });
 
   it('发射端全链：archive.saveMessage(assistant) 真的触发向量入库；tool 角色不发事件', async () => {

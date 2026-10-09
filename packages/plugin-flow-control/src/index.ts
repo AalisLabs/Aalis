@@ -1,13 +1,8 @@
 import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
-import {
-  extractTargetId,
-  INBOUND_PHASE,
-  inferSessionScope,
-  isScopeEnabled,
-  resolveEffectiveConfig,
-} from '@aalis/api-gateway';
+import { extractTargetId, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
+import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
@@ -27,6 +22,8 @@ const uses = {
   // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回，读不懂则本次运行拒写
   storage: optional(storage),
   messageArchive: optional(messageArchive),
+  /** 手里没有会话类型时，按会话记下的聊天窗口判作用域；缺席时只有类型段为通配的作用域命中 */
+  sessionManager: optional(sessionManager),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -174,9 +171,9 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 手里没有会话类型时判作用域用的平台、类型与目标：先用状态里记下的，状态没有或缺类型（没有真人消息经过本相位的群、
-   * 只有禁言记录的群）再按会话 ID 约定推断，平台也先用状态里的。入站带 source 且不带会话类型的内部注入（定时任务、
-   * workflow、闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
-   * （如 WebUI）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
+   * 只有禁言记录的群）再取会话记下的出生平台与聊天窗口。入站带 source 且不带会话类型的内部注入（定时任务、workflow、
+   * 闲置注入等合成回合）与出站回复记账都走这里，同一口径；结果只进本插件的状态、不回写消息。没有聊天窗口的会话
+   * （WebUI、终端、子任务）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
    */
   function knownScope(
     sessionId: string,
@@ -184,8 +181,13 @@ async function run(caps: Caps): Promise<void> {
   ): { platform: string; sessionType?: string; targetId?: string } {
     const s = states.get(sessionId);
     const p = s?.platform || platform || '';
-    const known = s?.sessionType ? s : inferSessionScope(p, sessionId);
-    return { platform: p, sessionType: known?.sessionType, targetId: known?.targetId };
+    if (s?.sessionType) return { platform: p, sessionType: s.sessionType, targetId: s.targetId };
+    const session = caps.sessionManager.current?.getSession(sessionId);
+    if (session?.originPlatform !== undefined && session.originChat) {
+      const { type, targetId } = session.originChat;
+      return { platform: session.originPlatform, sessionType: type, targetId };
+    }
+    return { platform: p };
   }
 
   /** agent 真实回复一次：补全会话元数据，设冷却、记限速时间戳 */

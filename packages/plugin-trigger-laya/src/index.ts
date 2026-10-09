@@ -20,7 +20,7 @@ import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
 import { processService } from '@aalis/api-process';
-import { sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
@@ -93,16 +93,6 @@ function toRows(history: Message[], limit: number): LayaRow[] {
   return rows.slice(-limit);
 }
 
-/**
- * 从 onebot 会话 ID（`onebot:{selfId}:{group|private}:{targetId}`，见适配器的 makeSessionId）取 bot 自己的账号。
- * 其它平台与会话类型（频道等，模型未见过）返回 undefined，这条按兜底处理。
- */
-function parseSelfId(sessionId: string): string | undefined {
-  const parts = sessionId.split(':');
-  if (parts.length < 4 || parts[0] !== 'onebot' || !parts[1]) return undefined;
-  return parts[2] === 'group' || parts[2] === 'private' ? parts[1] : undefined;
-}
-
 /** 侧车错误响应体 `{"error": "<code>"}` 里的错误码（只含码，不含消息内容） */
 function errorCode(text: string): string {
   try {
@@ -158,7 +148,7 @@ const uses = {
   flowControl: optional(flowControl),
   // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
-  // 名字表按会话取人设：解析会话配置里的角色卡；缺席时取全局默认的卡
+  // 名字表按会话取人设：解析会话配置里的角色卡；消息不带机器人账号时取房间记下的。缺席时取全局默认的卡，不带账号的兜底
   sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
@@ -314,7 +304,7 @@ function run(caps: Caps): void {
   /** 近期计入的带图消息（imagesPointerOnly）：图片是否都只有指针，最多 IMAGE_WINDOW 条，先进先出 */
   const recentImages: boolean[] = [];
 
-  /** 已告警过的模型没见过的会话类别（平台:会话类型）：这类会话每条都兜底，每类只告警一次 */
+  /** 已告警过的不带机器人账号的消息类别（平台:类型名）：这类消息每条都兜底，每类只告警一次 */
   const unsupported = new Set<string>();
 
   // 运行期自检：发请求前记下 cur，这条消息归档后与归档正文比对（归档事件带的 incoming 是拷贝，按键关联）
@@ -334,17 +324,22 @@ function run(caps: Caps): void {
     threshold?: number,
   ): Promise<Verdict> {
     const fallback = (why: string): Verdict => ({ speak: addressed, fallback: why });
-    const selfId = parseSelfId(message.sessionId);
+    // 侧车按机器人账号认出窗口里哪些是她自己说的：取消息上收到它的账号；消息不带（从 WebUI 往房间插话）时取房间建档时
+    // 记下的（子会话取根会话的），都没有的判定不了
+    const sm = caps.sessionManager.current;
+    const selfId =
+      message.selfId ??
+      (sm && rootSessionOf(sm.getSession(message.sessionId), id => sm.getSession(id))?.originChat?.selfId);
     if (!selfId) {
       const kind = `${message.platform}:${message.sessionType ?? ''}`;
       if (!unsupported.has(kind)) {
         unsupported.add(kind);
         logger.warn(
-          `[laya] ${kind} 的会话不是模型见过的 onebot 群聊或私聊，这类会话一律按兜底只回点名；` +
+          `[laya] ${kind} 的消息不带机器人账号，所在会话也没有记下（适配器没有填 selfId），这类消息一律按兜底只回点名；` +
             '要让它们照常回复，把它们移出 scopes，或切到 trigger-policy',
         );
       }
-      return fallback('会话不适用');
+      return fallback('没有机器人账号');
     }
     const mem = caps.memory.current;
     if (!mem) {

@@ -9,7 +9,7 @@
 
 取数只取 user、assistant、notice 三种角色，并排除指令类 kind（`DIRECTIVE_KINDS`，见 [schema-message](../api/schema-message.md#kind-常量)）：宿主通知与代发任务的指令只对所在会话的那一轮有意义，被动注入与 `recent_messages` 都不带别的会话的这类消息，戳一戳等普通通知照常带上。
 
-`same-platform` 的当前平台：IM 房间（群与私聊，含其子任务）取房间的出生平台（[api-gateway](../api/api-gateway.md#出生平台解析) 的 `resolveSessionOrigin`），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会取到 owner 自己 WebUI 会话的原文；没有出生平台的会话（WebUI、CLI 等）取入口平台。被动注入与 `recent_messages` 同一取法。同平台按消息落库时记下的 `metadata.platform` 过滤，这个值记的是入口平台：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`，不注入同平台别的房间，会出现在 owner 自己 WebUI 会话的同平台注入里。
+`same-platform` 的当前平台：IM 房间（群与私聊，含其子任务）取会话管理记下的出生平台（`originPlatform`，子会话取根会话的，不从会话 ID 推；见 [api-session-manager](../api/api-session-manager.md)），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会取到 owner 自己 WebUI 会话的原文；没有出生平台的会话（WebUI、CLI 等）取入口平台。被动注入与 `recent_messages` 同一取法。同平台按消息落库时记下的 `metadata.platform` 过滤，这个值记的是入口平台：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`，不注入同平台别的房间，会出现在 owner 自己 WebUI 会话的同平台注入里。
 
 ## 插件声明
 

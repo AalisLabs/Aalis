@@ -29,16 +29,24 @@ interface InboundPhaseData {
 
 ## 会话作用域匹配
 
-按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。`inferSessionScope` 用于消息上没有 sessionType 的场合（定时任务、workflow 等合成回合）：会话 ID 的四段约定来自适配器（如 OneBot），不是框架契约（框架只约定前缀，见下文「出生平台解析」），推断结果只供调用方自己判断，不要写回消息（flow-control 用它给回复记账、给入站不带会话类型的内部注入判作用域，persona 用它写提示词里的会话类型）。
+按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。消息上没有类型名的场合（定时任务、workflow 等合成回合）不从会话 ID 推断，改读会话记下的聊天窗口（session-manager 的 `originChat`，见 [会话管理](../services/session-manager.md)）。
+
+`chatScopeOf` 是入站消息所在聊天窗口的解析：平台取 `message.platform`；类型名与多方标记按这个平台的类型声明解析（api-platform 的 `sessionTypesOf` 与 `resolveSessionType`：不带类型名按 `private`、一对一，声明里没有的类型名按多方并标出 `undeclared`）；目标按多方标记取，多方取 `groupId`、一对一取 `userId`。OneBot 的临时会话在私聊消息上也带群号，所以目标按类型取，不按消息上有没有 `groupId` 取。session-manager 收录 IM 房间时用它记下聊天窗口。
 
 ```ts
+interface ChatScope {
+  platform: string;
+  type: string;         // 平台类型名
+  multiParty: boolean;  // 安全判断只认它，不认类型名
+  undeclared: boolean;  // 类型名不在平台的声明里（已按多方处理），调用方据此告警
+  targetId: string;     // 多方为群号，一对一为对端账号；消息上没有时为空串
+}
+function chatScopeOf(
+  message: Pick<IncomingMessage, 'platform' | 'sessionType' | 'groupId' | 'userId'>,
+  types: readonly SessionTypeDecl[],
+): ChatScope;
 /** 群聊取 groupId，私聊取 userId，其他为空串 */
 function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | 'groupId' | 'userId'>): string;
-/**
- * 按 `<platform>:<self>:<type>:<target>` 约定从会话 ID 推断会话类型与 targetId；只认前缀等于 platform 的 id，
- * 子任务会话（含 `::`）与不符合约定的 id 返回 undefined；targetId 与 extractTargetId 同口径（频道为空串）
- */
-function inferSessionScope(platform, sessionId): { sessionType: 'group' | 'private' | 'channel'; targetId: string } | undefined;
 /** 是否命中 scopes 或任一 overrides[].scope */
 function isScopeEnabled(cfg: { scopes; overrides }, platform, sessionType, targetId?): boolean;
 /** 取命中且最具体的一项 override 按键叠加到 base（跳过 scope 与 undefined）；具体度 targetId > sessionType > platform */
@@ -47,7 +55,7 @@ function resolveEffectiveConfig<T extends { overrides }>(base: T, platform, sess
 
 ## 出生平台解析
 
-`resolveSessionOrigin` 按会话 ID 推出房间会话的出生平台与受众。session-manager 用它选平台档、给会话列表分区、收录 IM 房间，persona 用它取会话环境，agent 用它给 `token:request` 的快照兜底平台，memory-history、memory-vector 与 tool-session 用它取跨会话召回的当前平台。它是同步纯函数，只看 ID，不查已注册的适配器：适配器没加载时结果不变。
+`resolveSessionOrigin` 按会话 ID 推出房间会话的出生平台与受众。只有 session-manager 还用它选平台档、推会话种类与受众；别处要出生平台的（权限的房间判定、`token:request` 的快照、跨会话召回的当前平台等）都读会话记录上的字段。会话记录上的出生平台（`originPlatform`）不从它来：那是 IM 房间建档时按入站消息记下的字段。它是同步纯函数，只看 ID，不查已注册的适配器：适配器没加载时结果不变。
 
 ```ts
 interface SessionOrigin {
@@ -70,8 +78,6 @@ function resolveSessionOrigin(sessionId: string): SessionOrigin | undefined;
 | `session-<8位>`、`webui-default`、`cli-default`、`mcp-server`、`workflow::<runId>::<nodeId>` | `undefined` |
 
 它依赖的会话 ID 约定写在 api-platform 的 `PlatformAdapter.canHandle` 说明里（见 [platform 服务](../services/platform.md)）：多人房间的会话 ID 以 `<平台名>:` 开头；非房间的内部会话 ID 不含单冒号，要分段用 `::`。返回 undefined 的会话由调用方按入口平台处理。
-
-与 `inferSessionScope` 回答的问题不同，两者不互相替代：`inferSessionScope` 回答会话自己在触发与流控的作用域里算群、私聊还是频道，只认前缀等于传入平台且符合四段约定的 ID，子任务返回 undefined；`resolveSessionOrigin` 回答房间属于哪个平台、面向哪类受众，子任务按父会话算。
 
 ## 服务接口
 

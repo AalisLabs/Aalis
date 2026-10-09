@@ -1,15 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { App, type BoundOf, provide, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话环境按出生平台：WebUI 往 IM 房间插话时，这一轮的回复发进房间，会话事实（平台、自身账号、会话类型与群号）
-// 按房间的出生平台取；说话人事实（发送者 ID、昵称、群身份）照旧取自消息；入口与出生平台不同时注明消息经哪个入口发来。
+// 会话环境按会话记下的来源字段：WebUI 往 IM 房间插话时，这一轮的回复发进房间，会话事实（平台、自身账号、会话类型与群号）
+// 按房间记下的出生平台与聊天窗口取；说话人事实（发送者 ID、昵称、群身份）照旧取自消息；入口与出生平台不同时注明消息经哪个
+// 入口发来。会话表里预置两个已收录的房间。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -26,6 +31,7 @@ describe('persona 会话环境按出生平台', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     host = app.bind(hostUses);
+    host.provide(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);
     host.provide(platform, {
       adapterName: 'OneBot',
       platform: 'onebot',
@@ -33,6 +39,7 @@ describe('persona 会话环境按出生平台', () => {
       sendMessage: async () => {},
       getSelfIdentity: () => ({ platform: 'onebot', selfId: '10000', nickname: 'Aalis' }),
     } as never);
+    await app.plugin(sessionManagerPlugin);
     await app.plugin(personaPlugin, { timeInjection: false });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');

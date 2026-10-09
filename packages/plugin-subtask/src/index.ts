@@ -208,7 +208,6 @@ function registerSubtask(
         // 创建子会话（存储 platform 用于后续自动触发）
         const child = await sm.createChildSession(parentId, {
           name: taskName,
-          createdBy: 'agent',
           inputContext: task,
           config: childConfig,
           metadata: { platform: callCtx.platform || 'internal', title: taskName },

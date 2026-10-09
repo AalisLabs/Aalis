@@ -6,11 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { type FlowControlService, flowControl } from '../../packages/api-flow-control/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -95,6 +99,8 @@ interface SetupOptions {
   files?: Map<string, string>;
   /** agent 收到消息后先等它（模拟回合在途） */
   hold?: (msg: IncomingMessage) => Promise<void>;
+  /** 装上会话管理，会话表里预置这些已收录的房间（带出生平台与聊天窗口） */
+  rooms?: string[];
 }
 
 const DATA_ROOT: StorageRootInfo = {
@@ -160,6 +166,10 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
     } as never);
   }
   if (opts.files) host.provide(storage, memoryStorage(opts.files));
+  if (opts.rooms) {
+    host.provide(memory, fakeMemory(Object.fromEntries(opts.rooms.map(id => [id, storedRoom(id)]))) as never);
+    await app.plugins.register(sessionManagerPlugin, {});
+  }
 
   const plugins = [gatewayPlugin, flowControlPlugin, triggerPolicyPlugin];
   await app.plugins.register(gatewayPlugin, {});
@@ -613,13 +623,14 @@ describe('冷却与限速', () => {
     expect(h.flow().isCoolingDown('webui-default')).toBe(true);
   });
 
-  it('回复记账：没有真人消息经过 flow 的群按会话 ID 推断为群，注入的回复计入冷却与限速', async () => {
+  it('回复记账：没有真人消息经过 flow 的群按会话记下的聊天窗口判为群，注入的回复计入冷却与限速', async () => {
     // 旧行为：没有流控状态即类型未知，默认 *:group 下不记账，发往这类群的注入不受限速
     const N = 2;
     for (const swallowedFirst of [false, true]) {
       const h = await setup({
         flow: { cooldownSeconds: 30, rateLimitWindow: 60, rateLimitMaxReplies: N },
         autoReply: () => true,
+        rooms: [sid('20001')],
       });
       const target = sid('20001');
       const label = swallowedFirst ? '真人消息被 trigger 吞掉的群' : '安静群';
@@ -647,6 +658,7 @@ describe('冷却与限速', () => {
         rateLimitMaxReplies: 1,
         overrides: [{ scope: `onebot:group:${G}`, cooldownSeconds: 30 }],
       },
+      rooms: [sid(G)],
     });
     h.flow().setMuted(sid(G), 1, 'onebot'); // 适配器同步平台禁言：只知道 sessionId 与平台
     await advance(2_000); // 解禁
@@ -656,19 +668,19 @@ describe('冷却与限速', () => {
     expect(h.flow().isCoolingDown(sid(G)), '按群号写的 30s 冷却生效（顶层为 0）').toBe(true);
   });
 
-  it('回复记账：不符合会话 ID 约定的会话不推断，默认作用域下不计', async () => {
-    const h = await setup({ flow: { cooldownSeconds: 30 } });
+  it('回复记账：没有聊天窗口的会话（WebUI、会话表里没有记录的群）类型未知，默认作用域下不计', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 30 }, rooms: [] });
     for (const [sessionId, platform] of [
       ['webui-default', 'webui'],
-      [sid('20001'), 'internal'], // 前缀与平台不符（如 WebUI 与配置文件里建的定时任务，平台默认 internal）
+      [sid('20001'), 'onebot'],
     ]) {
       await h.reply(sessionId, platform);
       expect(h.flow().isCoolingDown(sessionId), `${platform} / ${sessionId}`).toBe(false);
     }
   });
 
-  it('回复记账：子任务会话（`<父会话 id>::<uuid>`）不按父会话的类型推断，默认作用域下不计', async () => {
-    const h = await setup({ flow: { cooldownSeconds: 30 } });
+  it('回复记账：子任务会话不按父会话的聊天窗口判，默认作用域下不计', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 30 }, rooms: [sid('20001')] });
     const sub = `${sid('20001')}::abcd1234`;
     await h.reply(sub);
     expect(h.flow().isCoolingDown(sub)).toBe(false);
@@ -697,21 +709,24 @@ describe('冷却与限速', () => {
     expect(h.flow().isCoolingDown(sid(G))).toBe(true);
   });
 
-  it('回复记账：scopes 为空、只靠按群号写的覆盖启用的安静群，按推断出的目标判作用域', async () => {
+  it('回复记账：scopes 为空、只靠按群号写的覆盖启用的安静群，按会话记下的目标判作用域', async () => {
     const G = '20001';
     const h = await setup({
       flow: { scopes: [], cooldownSeconds: 0, overrides: [{ scope: `onebot:group:${G}`, cooldownSeconds: 30 }] },
+      rooms: [sid(G)],
     });
     await h.reply(sid(G)); // 没有任何入站经过 flow 相位
     expect(h.flow().isCoolingDown(sid(G))).toBe(true);
   });
 
-  it('回复记账：推断先用状态里记下的平台，再回落出站平台（只有禁言记录的群，回复的平台为 internal）', async () => {
-    const h = await setup({ flow: { cooldownSeconds: 30 } });
+  it('回复记账：状态缺类型时按会话记下的出生平台与聊天窗口判，不看出站平台（只有禁言记录的群、没有状态的群，回复的平台为 internal）', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 30 }, rooms: [sid('20001'), sid('20002')] });
     h.flow().setMuted(sid('20001'), 1, 'onebot'); // 状态只有平台
     await advance(2_000);
     await h.reply(sid('20001'), 'internal');
+    await h.reply(sid('20002'), 'internal');
     expect(h.flow().isCoolingDown(sid('20001'))).toBe(true);
+    expect(h.flow().isCoolingDown(sid('20002'))).toBe(true);
   });
 
   it('回复记账：作用域内的群照常计入冷却与限速，超限的注入被吞', async () => {
@@ -775,7 +790,7 @@ describe('冷却与限速', () => {
   });
 
   it('入站作用域：带会话类型的真人消息按消息自身字段判，会话 ID 不符合约定的第三方适配器第一条群消息即在 *:group 内', async () => {
-    // 若按状态或会话 ID 推断判：没有状态、ID 推断不出类型，这个群永远在作用域外，回复也不计
+    // 若按状态或会话记下的聊天窗口判：没有状态、也没有记录，这个群永远在作用域外，回复也不计
     const h = await setup({
       flow: { cooldownSeconds: 30 },
       trigger: { intervalMode: 'fixed', fixedInterval: 1 },
@@ -873,7 +888,7 @@ describe('冷却与限速', () => {
 // ────────────────────────────────────────────────────────────
 // 内部注入：带 source 的消息（闲置触发、定时任务、workflow）不经触发策略，
 // flow 相位对它不查回复后冷却，禁言与限速照常。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：
-// 先用会话记下的平台与类型，没有再按会话 ID 约定推断。真人消息由适配器投递，不设 source。
+// 先用流控状态里记下的平台与类型，没有再取会话管理记下的出生平台与聊天窗口。真人消息由适配器投递，不设 source。
 // ────────────────────────────────────────────────────────────
 describe('内部注入（带 source）', () => {
   /** 与 plugin-scheduler / plugin-workflow 投递的消息同形：无 sessionType */
@@ -925,7 +940,7 @@ describe('内部注入（带 source）', () => {
     expect(h.idles()).toHaveLength(1);
   });
 
-  it('flow：带 source 的消息不受冷却挡，但受禁言挡（默认作用域下按会话 ID 推断为群）', async () => {
+  it('flow：带 source 的消息不受冷却挡，但受禁言挡（默认作用域下按流控状态里记下的类型判为群）', async () => {
     const h = await setup({ flow: { cooldownSeconds: 60 }, autoReply: () => true });
     const G = '20001';
 
@@ -940,13 +955,14 @@ describe('内部注入（带 source）', () => {
     expect(h.contents(), '禁言期内部注入同样不说话').not.toContain('禁言中的定时提醒');
   });
 
-  it('定时任务发往安静群（默认作用域，按会话 ID 推断为群）：不受冷却挡；限速窗口已满时被吞并影子归档，窗口过后放行', async () => {
+  it('定时任务发往安静群（默认作用域，按会话记下的聊天窗口判为群）：不受冷却挡；限速窗口已满时被吞并影子归档，窗口过后放行', async () => {
     // 旧行为：入站只看消息自带的 sessionType，内部注入不带，默认 *:group 下算作用域外、不过限速闸
     const archived: IncomingMessage[] = [];
     const h = await setup({
       flow: { cooldownSeconds: 60, rateLimitWindow: 60, rateLimitMaxReplies: 2 },
       autoReply: () => true,
       archived,
+      rooms: [sid('20001')],
     });
     const G = '20001';
 
@@ -968,10 +984,11 @@ describe('内部注入（带 source）', () => {
     expect(h.contents()).toContain('窗口过后的提醒 4');
   });
 
-  it('发往私聊与 WebUI 的定时任务不受影响：推断为私聊或类型未知，默认作用域外照常放行', async () => {
+  it('发往私聊与 WebUI 的定时任务不受影响：聊天窗口是私聊或没有聊天窗口，默认作用域外照常放行', async () => {
     const h = await setup({
       flow: { cooldownSeconds: 60, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
       autoReply: () => true,
+      rooms: [privateSid('30001')],
     });
     const webui = (content: string): IncomingMessage => ({
       content,
@@ -987,21 +1004,24 @@ describe('内部注入（带 source）', () => {
     expect(h.contents()).toEqual(['私聊提醒 1', 'WebUI 提醒 1', '私聊提醒 2', 'WebUI 提醒 2']);
   });
 
-  it('平台为 internal、会话 ID 前缀为 onebot 的定时任务发往安静群：不推断，维持作用域外', async () => {
-    // WebUI 与配置文件里建的定时任务平台默认是 internal；回复沿用这个平台，同样不推断、不计
+  it('平台为 internal 的定时任务（WebUI 与配置文件里建的）发往安静群：按会话记下的出生平台与聊天窗口判，回复同样计入；会话表里没有记录的群维持作用域外', async () => {
     const h = await setup({
       flow: { cooldownSeconds: 60, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
       autoReply: () => true,
+      rooms: [sid('20001')],
     });
-    const internal = (content: string): IncomingMessage => ({
-      ...scheduled(sid('20001'), content),
+    const internal = (groupId: string, content: string): IncomingMessage => ({
+      ...scheduled(sid(groupId), content),
       platform: 'internal',
     });
 
-    await h.send(internal('提醒 1'));
-    await h.send(internal('提醒 2'));
-    expect(h.contents()).toEqual(['提醒 1', '提醒 2']);
-    expect(h.flow().isRateLimited(sid('20001'))).toBe(false);
+    await h.send(internal('20001', '提醒 1'));
+    await h.send(internal('20001', '限速中的提醒 2'));
+    await h.send(internal('20002', '没有记录的群 1'));
+    await h.send(internal('20002', '没有记录的群 2'));
+    expect(h.contents()).toEqual(['提醒 1', '没有记录的群 1', '没有记录的群 2']);
+    expect(h.flow().isRateLimited(sid('20001'))).toBe(true);
+    expect(h.flow().isRateLimited(sid('20002'))).toBe(false);
   });
 
   it('会话已记下平台与类型时，平台为 internal 的定时任务按记下的判作用域，回复同样计入', async () => {
@@ -1018,15 +1038,15 @@ describe('内部注入（带 source）', () => {
     expect(h.contents()).toEqual([`${AT}在吗`, '提醒 1']);
   });
 
-  it('定时注入到达 agent 时消息仍不带会话类型：按会话 ID 推断出的类型只进流控状态，不回写消息', async () => {
-    const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 } });
+  it('定时注入到达 agent 时消息仍不带会话类型：按会话记下的类型只进流控状态，不回写消息', async () => {
+    const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 }, rooms: [sid('20001')] });
     await h.send(scheduled(sid('20001'), '提醒'));
     expect(h.contents()).toEqual(['提醒']);
     expect(h.received[0]?.sessionType).toBeUndefined();
   });
 
-  it('自带会话类型的注入按消息自身字段判：会话 ID 不符合约定的第三方群，限速已满时同样被吞', async () => {
-    // 若一律按状态或会话 ID 推断判：没有状态、ID 推断不出类型，这个群永远在作用域外
+  it('自带会话类型的注入按消息自身字段判：会话表里没有记录的第三方群，限速已满时同样被吞', async () => {
+    // 若一律按状态或会话记下的聊天窗口判：没有状态、也没有记录，这个群永远在作用域外
     const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 }, autoReply: () => true });
     const room = 'example-room-20002';
     const injected = (content: string): IncomingMessage => ({
@@ -1043,9 +1063,14 @@ describe('内部注入（带 source）', () => {
     expect(h.contents()).toEqual(['提醒 1']);
   });
 
-  it('闲置注入与 agent 节点消息发往限速已满的群同样被吞（默认作用域，按会话 ID 推断为群）；闲置提示不做影子归档', async () => {
+  it('闲置注入与 agent 节点消息发往限速已满的群同样被吞（默认作用域，按会话记下的聊天窗口判为群）；闲置提示不做影子归档', async () => {
     const archived: IncomingMessage[] = [];
-    const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 }, autoReply: () => true, archived });
+    const h = await setup({
+      flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      autoReply: () => true,
+      archived,
+      rooms: [sid('20001')],
+    });
     const G = '20001';
 
     await h.send(scheduled(sid(G), '提醒')); // 放行并回复，占满 1 个名额

@@ -512,13 +512,18 @@ async function relay(target: number) {
  * 起运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件。
  * requests 是假模型收到的请求
  */
-async function startStack(replies: Record<string, string> = {}, extra: PluginDefinition[] = []) {
+async function startStack(
+  replies: Record<string, string> = {},
+  extra: PluginDefinition[] = [],
+  rooms?: Record<string, string>,
+) {
   const requests: ChatModelRequest[] = [];
   const { app, port } = await webuiStack({
     clientDir: e2e.clientDir,
     model: createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS, recorder: requests }),
     extra,
     cleanups,
+    rooms,
   });
   const runs: string[] = [];
   app.bind({ tools }).tools.register({
@@ -801,10 +806,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   }, 60_000);
 
   it('房间表：窄时（容器窄于 36em）只留名称与状态，宽时各列都在', async () => {
-    const stack = await startStack();
-    await stack.app.bind({ sessionManager }).sessionManager.require().ensureSession('onebot:10000:group:20001', {
-      name: '读书会',
-    });
+    const stack = await startStack({}, [], { 'onebot:10000:group:20001': '读书会' });
     const { page, problems } = await openPage(stack, viewport);
     await page.goto(`${stack.origin}/rooms?platform=onebot`);
     await page.waitForSelector(`td[data-column="name"] ${text('读书会')}`);
@@ -1064,7 +1066,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const { id: sessionId } = await stack.app
       .bind({ sessionManager })
       .sessionManager.require()
-      .createSession({ name: '审批探针', createdBy: 'user' });
+      .createSession({ name: '审批探针' });
     await stack.app
       .bind({ approvals })
       .approvals.require()
@@ -1828,10 +1830,10 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   it('子会话：「后台」标签按会话树列出子会话，带状态、耗时与 token；停掉父会话在等的那个，父会话的等待随即返回，「全部停止」停掉余下的；子会话页的路径逐层退回；父会话用量的累计含子会话', async () => {
     const stack = await startStack({}, [subtaskPlugin]);
     const sessions = stack.app.bind({ sessionManager }).sessionManager.require();
-    const { id: parentId } = await sessions.createSession({
-      createdBy: 'user',
-      config: { enabledToolGroups: ['subtask'] },
-    });
+    const { id: parentId } = await sessions.createSession(
+      { config: { enabledToolGroups: ['subtask'] } },
+      { createdFrom: 'webui' },
+    );
     const { page, problems } = await openPage(stack, viewport, `/s/${encodeURIComponent(parentId)}`);
     await send(page, SPLIT);
     // 整理目录的很快回完，另两个一直在跑
@@ -2607,9 +2609,8 @@ describe('控件与文字的比例', () => {
   }, 60_000);
 
   it('触屏：会话页（审批等着）、会话设置、房间表（选中一行）、计划任务、插件前端与它的两种确认框、平板的首页里，看得见的可点元素点按范围都不小于 44×44、贴在元素上、不被别的元素压住，有底色的按钮看得见的比点按范围矮；插件前端的按钮、输入框与宿主的次要按钮、输入框一样，插件自己整个重置掉的按钮不挡住页面别处', async () => {
-    const stack = await startStack({}, [cronEnginePlugin, schedulerPlugin, await scaffolded(), framesPlugin()]);
-    await stack.app.bind({ sessionManager }).sessionManager.require().ensureSession('onebot:10000:group:20001', {
-      name: '读书会',
+    const stack = await startStack({}, [cronEnginePlugin, schedulerPlugin, await scaffolded(), framesPlugin()], {
+      'onebot:10000:group:20001': '读书会',
     });
     const { page, problems } = await openPage(stack, VIEWPORTS.phone);
     const faults: Record<string, string[]> = {};
