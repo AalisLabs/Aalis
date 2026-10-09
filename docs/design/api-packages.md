@@ -110,13 +110,14 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
 | `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`、`PageDefinition`、`Notice`、管理面事件、管理面 REST 的路由表与请求和回应类型、主题格式等；绑定门面 `definePage` / `notify`；向 `PluginMeta` 注入 `extends` |
-| `api-authority` | — | `authority` | — | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `InboundTurn`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
+| `api-authority` | — | `authority` | — | `AuthorityService`（含按回合定发起类别的 `originOf`）, `ExecutionGuard`, `ExecutionGuardContext`, `InboundTurn`, `OriginTurn`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
 | `api-hooks` | （定义该扩展点） | `hooks` | — | `Hooks`, `HookRegistry`, `MiddlewareFn`, `MiddlewareNext`；默认提供者 plugin-hooks |
 | `api-contributions` | — | `contributions` | （定义该扩展点） | `Contributions`, `ContributionRegistry`, `ContributionSpec`, `ContributionHandle`；默认提供者 plugin-contributions |
 | `api-host-config` | — | `host-config` | — | `HostConfig`，配置文档类型 `AalisConfig`（declaration merging 目标）；由宿主提供 |
 | `api-host-paths` | — | `host-paths` | — | `HostPaths`：家目录、安装集与家目录布局的绝对路径；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
+| `api-reach` | — | `reach` | — | `ReachService`（`forCall` 签发凭据）、`ReachCredential` 与品牌符号、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、`SandboxPolicy` / `sandboxPolicyOf`；向 `SessionConfig`（`@aalis/api-session-manager`）注入 `accessTier`、`accessOnBoundary`；默认提供者 plugin-reach |
 | `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSettlement`, `ApprovalSurface`；绑定门面 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |
 | `api-asr` | — | `asr` | — | `ASRService`, `TranscribeInput`, `TranscribeResult` |
 | `api-checkpoint` | — | `checkpoint` | — | `CheckpointService`, `RollbackResult`, `RollbackWithChatResult`；默认提供者 plugin-checkpoint |
