@@ -59,8 +59,7 @@
       ],
       "optional": [
         "session-manager",
-        "storage",
-        "authority"
+        "storage"
       ]
     }
   }

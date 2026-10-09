@@ -127,7 +127,7 @@ ${LOGIN_STYLE}
 </style></head>
 <body><form id="f">
 <h1>Aalis WebUI</h1>
-<p>访问 token 在家目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；tokenMode 为 fixed 时就是配置里的 fixedToken。</p>
+<p>访问 token 在家目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在家目录的 secrets.yaml 里（配置文件里是引用）。</p>
 ${note}
 <input id="t" type="password" autocomplete="off" placeholder="访问 token" autofocus required>
 <button type="submit" id="b">登录</button>

@@ -589,7 +589,8 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 压缩一个会话（compression 服务）：不看 threshold，历史多于 keepRecent 就摘要并裁切，进度经 session:compressing 广播。
-   * 没有压成时拒绝：报 error 的同时把原因抛给调用方，报 done 才算压成（done 会让界面插入「对话已压缩」的分隔线）
+   * 没有压成时拒绝：报 error 的同时把原因抛给调用方，报 done 才算压成（done 会让界面插入「对话已压缩」的分隔线）。
+   * 历史不多于 keepRecent 时什么都不做、不报进度；开始压之前就失败的（记忆不在、读不出历史）只拒绝，也不报
    */
   async function compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void> {
     logger.info(`收到压缩请求: session=${sessionId}, reason=${reason}`);
@@ -599,21 +600,22 @@ async function run(caps: Caps): Promise<void> {
     const report = (status: 'start' | 'done' | 'error') =>
       events.emit('session:compressing', { sessionId, status }).catch(() => {});
 
-    report('start');
+    let started = false;
     try {
       const provider = memory.current;
-      const summaryModel = resolveSummaryModel();
-      // 常见触发：summaryModelMode=custom 指向的 provider 被卸载或重载中
       if (!provider) throw new Error('memory 服务不可用');
-      if (!summaryModel) throw new Error('摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）');
       const allHistory = await provider.getHistory(sessionId, getHistoryProbeLimit());
       // 只要有 > keepRecent 条消息就压缩
       const messagesToSummarize = selectMessagesToSummarize(allHistory);
       if (messagesToSummarize.length === 0) {
         logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
-        report('done');
         return;
       }
+      report('start');
+      started = true;
+      const summaryModel = resolveSummaryModel();
+      // 常见触发：summaryModelMode=custom 指向的 provider 被卸载或重载中
+      if (!summaryModel) throw new Error('摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）');
 
       // 从历史消息中提取最近的 todo-list 状态，注入到压缩上下文中
       let todoContext = '';
@@ -648,7 +650,7 @@ async function run(caps: Caps): Promise<void> {
       report('done');
     } catch (err) {
       logger.warn('压缩会话失败:', err);
-      report('error');
+      if (started) report('error');
       throw err;
     } finally {
       summarizing.delete(sessionId);

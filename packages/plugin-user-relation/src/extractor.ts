@@ -22,7 +22,7 @@ import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
-import { DIRECTIVE_KINDS, WellKnownKinds } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import type { RelationService } from './service.js';
 import type {
@@ -407,8 +407,8 @@ export class RelationExtractor {
         history = raw;
         messageIdToSessionId = new Map();
         for (const m of raw) {
-          const meta = (m.metadata as { messageId?: string } | undefined) ?? {};
-          if (meta.messageId) messageIdToSessionId.set(meta.messageId, sessionId);
+          const messageId = metaString(m, WellKnownMetadataKeys.MessageId);
+          if (messageId) messageIdToSessionId.set(messageId, sessionId);
         }
       } else {
         if (!memory.getRecentMessagesAcrossSessions) {
@@ -419,8 +419,8 @@ export class RelationExtractor {
           history = (await memory.getHistory(sessionId, limit)).filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
           messageIdToSessionId = new Map();
           for (const m of history) {
-            const meta = (m.metadata as { messageId?: string } | undefined) ?? {};
-            if (meta.messageId) messageIdToSessionId.set(meta.messageId, sessionId);
+            const messageId = metaString(m, WellKnownMetadataKeys.MessageId);
+            if (messageId) messageIdToSessionId.set(messageId, sessionId);
           }
         } else {
           // 推断当前 sessionId 的 platform：从首条带 platform 的 message 推；否则不限平台
@@ -438,11 +438,11 @@ export class RelationExtractor {
           messageIdToSessionId = new Map();
           // 把 sessionId 注入到 message.metadata.__extractorSessionId（运行时临时字段，仅用于渲染/反查）
           history = records.map(r => {
-            const meta = (r.message.metadata as Record<string, unknown> | undefined) ?? {};
-            if (typeof meta.messageId === 'string') messageIdToSessionId.set(meta.messageId, r.sessionId);
+            const messageId = metaString(r.message, WellKnownMetadataKeys.MessageId);
+            if (messageId) messageIdToSessionId.set(messageId, r.sessionId);
             return {
               ...r.message,
-              metadata: { ...meta, __extractorSessionId: r.sessionId },
+              metadata: { ...r.message.metadata, __extractorSessionId: r.sessionId },
             };
           });
         }
@@ -583,12 +583,10 @@ export class RelationExtractor {
     if (!limit || limit <= 0) return [];
     const senders = new Map<string, { platform: string; userId: string; nickname?: string }>();
     for (const m of userMsgs) {
-      const meta = (m.metadata as { userId?: string; nickname?: string; platform?: string } | undefined) ?? {};
-      if (!meta.userId || !meta.platform) continue;
-      const key = `${meta.platform}:${meta.userId}`;
-      if (!senders.has(key)) {
-        senders.set(key, { platform: meta.platform, userId: meta.userId, nickname: meta.nickname });
-      }
+      const { platform, userId, nickname } = senderOf(m);
+      if (!userId || !platform) continue;
+      const key = `${platform}:${userId}`;
+      if (!senders.has(key)) senders.set(key, { platform, userId, nickname });
     }
     if (senders.size === 0) return [];
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
@@ -639,14 +637,12 @@ export class RelationExtractor {
     const contentBySid = new Map<string, string>();
     const senderBySid = new Map<string, string>(); // messageId -> "platform:userId"
     for (const m of ctxInfo.history) {
-      const meta = (m.metadata as { messageId?: string; userId?: string; platform?: string } | undefined) ?? {};
-      const sid = meta.messageId;
+      const sid = metaString(m, WellKnownMetadataKeys.MessageId);
       if (sid) {
         validMessageIds.add(sid);
         contentBySid.set(sid, typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
-        if (m.role === 'user' && meta.userId) {
-          senderBySid.set(sid, `${meta.platform ?? ctxInfo.platform}:${meta.userId}`);
-        }
+        const { platform, userId } = senderOf(m);
+        if (m.role === 'user' && userId) senderBySid.set(sid, `${platform ?? ctxInfo.platform}:${userId}`);
       }
     }
     const strict = this.cfg.strictSelfAssertion;
@@ -1164,13 +1160,28 @@ export class RelationExtractor {
 
 // ───── helpers ─────
 
+/** 存档元数据里一个键的字符串值；不是字符串的没有 */
+function metaString(m: Message, key: string): string | undefined {
+  const value = m.metadata?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** 说话人：存档元数据里登记的平台、用户 id 与昵称 */
+function senderOf(m: Message): { platform?: string; userId?: string; nickname?: string } {
+  return {
+    platform: metaString(m, WellKnownMetadataKeys.Platform),
+    userId: metaString(m, WellKnownMetadataKeys.UserId),
+    nickname: metaString(m, WellKnownMetadataKeys.Nickname),
+  };
+}
+
 function hasMessageId(m: Message): boolean {
-  return typeof (m.metadata as { messageId?: string } | undefined)?.messageId === 'string';
+  return metaString(m, WellKnownMetadataKeys.MessageId) !== undefined;
 }
 
 function inferPlatform(msgs: Message[]): string {
   for (const m of msgs) {
-    const p = (m.metadata as { platform?: string } | undefined)?.platform;
+    const p = metaString(m, WellKnownMetadataKeys.Platform);
     if (p) return p;
   }
   return '';
@@ -1185,22 +1196,20 @@ function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean
   const lines: string[] = [];
   for (const m of history) {
     if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'notice') continue;
-    const meta =
-      (m.metadata as
-        | { messageId?: string; userId?: string; nickname?: string; __extractorSessionId?: string }
-        | undefined) ?? {};
+    const { userId, nickname } = senderOf(m);
     let sender: string;
     if (m.role === 'assistant') {
-      sender = meta.userId ? `${meta.nickname ?? 'Aalis'}(${meta.userId})` : 'Aalis（本机器人）';
+      sender = userId ? `${nickname ?? 'Aalis'}(${userId})` : 'Aalis（本机器人）';
     } else if (m.role === 'notice') {
       sender = '系统通知';
     } else {
-      sender = `${meta.nickname ?? '匿名'}(${meta.userId ?? '?'})`;
+      sender = `${nickname ?? '匿名'}(${userId ?? '?'})`;
     }
-    const mid = meta.messageId ?? '-';
+    const mid = metaString(m, WellKnownMetadataKeys.MessageId) ?? '-';
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
     // 跨会话模式下，[sid] 前缀帮 LLM 区分同名事件来自哪个群/会话
-    const sidPrefix = opts?.crossSession && meta.__extractorSessionId ? `[sid:${meta.__extractorSessionId}] ` : '';
+    const extractorSessionId = metaString(m, '__extractorSessionId');
+    const sidPrefix = opts?.crossSession && extractorSessionId ? `[sid:${extractorSessionId}] ` : '';
     lines.push(`${sidPrefix}[${mid}] (${sender}) ${content.replace(/\n+/g, ' ').slice(0, 400)}`);
   }
   return lines.join('\n');
@@ -1532,10 +1541,10 @@ function buildExtractionPrompt(
 function collectSenderList(userMsgs: Message[]): string {
   const seen = new Map<string, { nickname?: string; platform?: string }>();
   for (const m of userMsgs) {
-    const meta = (m.metadata as { userId?: string; nickname?: string; platform?: string } | undefined) ?? {};
-    if (!meta.userId) continue;
-    const key = `${meta.platform ?? ''}:${meta.userId}`;
-    if (!seen.has(key)) seen.set(key, { nickname: meta.nickname, platform: meta.platform });
+    const { platform, userId, nickname } = senderOf(m);
+    if (!userId) continue;
+    const key = `${platform ?? ''}:${userId}`;
+    if (!seen.has(key)) seen.set(key, { nickname, platform });
   }
   if (seen.size === 0) return '（窗口内未出现可识别的入站用户）';
   return [...seen.entries()]

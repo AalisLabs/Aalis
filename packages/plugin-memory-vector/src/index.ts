@@ -234,15 +234,15 @@ function visibleText(m: Message): string {
  * memory-history 的 Assistant/Notice，assistant 额外缀「你自己」强化自指
  * （tool 在彼处不渲染，此处自定）。 */
 function renderMessage(m: Message, max: number): string {
-  const meta = (m.metadata ?? {}) as Record<string, unknown>;
+  const meta = m.metadata ?? {};
   const ts = m.timestamp ?? 0;
   const date = new Date(ts).toLocaleString('zh-CN');
 
-  const userId = (meta.userId as string | undefined) ?? m.name ?? '';
-  const nickname = meta.nickname as string | undefined;
-  const groupName = meta.groupName as string | undefined;
-  const platform = platformLabel(meta.platform as string | undefined);
-  const sessionType = meta.sessionType as string | undefined;
+  const userId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? m.name ?? '';
+  const nickname = meta[WellKnownMetadataKeys.Nickname] as string | undefined;
+  const groupName = meta[WellKnownMetadataKeys.GroupName] as string | undefined;
+  const platform = platformLabel(meta[WellKnownMetadataKeys.Platform] as string | undefined);
+  const sessionType = meta[WellKnownMetadataKeys.SessionType] as string | undefined;
 
   // 位置描述：优先群名、其次会话类型
   let where = '';
@@ -696,14 +696,14 @@ async function run({
     if (!rawText) return;
     // 防御性冗余：EventMarker 现产者全是 role:system、被发射门先挡；此处兜第三方发射者
     if (message.kind === WellKnownKinds.EventMarker) return;
-    const meta = (message.metadata ?? {}) as Record<string, unknown>;
+    const meta = message.metadata ?? {};
     try {
-      const nickname = (meta.nickname as string | undefined) ?? '';
-      // 生产者是 plugin-agent 的 buildAssistantMetadata：自身标识写在 metadata.userId
-      //（值=identity.selfId），并带 groupName/groupId/sessionType——全部透传，
+      const nickname = (meta[WellKnownMetadataKeys.Nickname] as string | undefined) ?? '';
+      // 生产者是 plugin-agent 的 buildAssistantMetadata：自身标识写在 UserId 键
+      //（值=identity.selfId），并带群名、群号与会话类型——全部透传，
       // 使 assistant 条目的渲染位置段（群「X」/私聊/）与 user 侧对齐。
-      // 注意没有 metadata.selfId 这个键（2026-08-27 审计抓过一次读错字段名）。
-      const selfUserId = (meta.userId as string | undefined) ?? '';
+      // 注意没有 selfId 这个键（2026-08-27 审计抓过一次读错字段名）。
+      const selfUserId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? '';
       // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
       const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
       const provider = embedding.require();
@@ -716,9 +716,9 @@ async function run({
         userId: selfUserId,
         nickname,
         platform: parsePlatform(sessionId),
-        groupName: (meta.groupName as string | undefined) ?? '',
-        groupId: (meta.groupId as string | undefined) ?? '',
-        sessionType: (meta.sessionType as string | undefined) ?? '',
+        groupName: (meta[WellKnownMetadataKeys.GroupName] as string | undefined) ?? '',
+        groupId: (meta[WellKnownMetadataKeys.GroupId] as string | undefined) ?? '',
+        sessionType: (meta[WellKnownMetadataKeys.SessionType] as string | undefined) ?? '',
         timestamp: message.timestamp ?? Date.now(),
         content: rawText,
         mentions: extractMentions(rawText),

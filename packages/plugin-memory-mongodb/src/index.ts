@@ -20,7 +20,7 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
+import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { type Collection, type Db, MongoClient } from 'mongodb';
 
 const configSchema = defineConfig({
@@ -219,7 +219,7 @@ export class MongoMemoryService implements MemoryService {
       filter.timestamp = { $gte: query.sinceTs };
     }
     if (typeof query.platform === 'string') {
-      filter['metadata.platform'] = query.platform;
+      filter[`metadata.${WellKnownMetadataKeys.Platform}`] = query.platform;
     }
     if (query.excludeSessionIds && query.excludeSessionIds.length > 0) {
       filter.sessionId = { $nin: query.excludeSessionIds };
@@ -439,7 +439,7 @@ export async function openAndProvide(
     // 创建索引
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
     await collection.createIndex({ archived: 1, timestamp: -1 });
-    await collection.createIndex({ 'metadata.platform': 1, timestamp: -1 });
+    await collection.createIndex({ [`metadata.${WellKnownMetadataKeys.Platform}`]: 1, timestamp: -1 });
     lifecycle.signal.throwIfAborted();
 
     const service = new MongoMemoryService(collection, metaCollection, {

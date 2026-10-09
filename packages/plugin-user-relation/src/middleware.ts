@@ -17,6 +17,7 @@ import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { ServiceRef } from '@aalis/core';
+import { WellKnownMetadataKeys } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -89,8 +90,8 @@ async function buildBlock(
 
   if (cfg.groupOnly) {
     const looksLikeGroup = data.messages.some(m => {
-      const meta = (m.metadata as { groupId?: string; sessionType?: string } | undefined) ?? {};
-      return !!meta.groupId || meta.sessionType === 'group';
+      const meta = m.metadata ?? {};
+      return !!meta[WellKnownMetadataKeys.GroupId] || meta[WellKnownMetadataKeys.SessionType] === 'group';
     });
     if (!looksLikeGroup) return null;
   }

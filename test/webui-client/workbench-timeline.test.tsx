@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, INIT, installDialog, main, renderApp, requests, server, summary } from './harness.js';
+import { type Harness, INIT, installDialog, main, pluginRow, renderApp, requests, server, summary } from './harness.js';
 import { agentMessage, notice, push, pushDelta, reasoning, snapshot, toolCall, turn, userMessage } from './items.js';
 
 // ════════════════════════════════════════════════════════════
@@ -458,6 +459,32 @@ describe('时间线', () => {
     const texts = log.getAllByText(/的一句$/).map(node => node.textContent);
     expect(texts).toEqual(['更早的一句', '最近的一句']);
     expect(log.queryByRole('button', { name: '更早的消息' })).toBeNull();
+  });
+
+  it('更早的消息没取到：原地写明哪里没取到与原因，可以重试，「查看日志」去提供会话协议的插件', async () => {
+    let fail = true;
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () => snapshot([userMessage('u2', '最近的一句')], { before: 'cursor-1' }),
+        'session/history': () => {
+          if (fail) throw new Error('存档读不出来');
+          return { items: [userMessage('u1', '更早的一句')] };
+        },
+      },
+      { '/api/plugins': { plugins: [pluginRow('zz-sessions', { provides: [SESSION_PROTOCOL] })] } },
+    );
+    const log = within(await timeline());
+    fireEvent.click(log.getByRole('button', { name: '更早的消息' }));
+    const alert = await log.findByRole('alert');
+    expect(alert.textContent).toContain('更早的消息没取到：存档读不出来');
+    expect(within(alert).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-sessions',
+    );
+    fail = false;
+    fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    await log.findByText('更早的一句');
+    expect(log.queryByRole('alert')).toBeNull();
   });
 
   it('看着「我的」会话时清掉完成未读；会话被删掉时回首页', async () => {

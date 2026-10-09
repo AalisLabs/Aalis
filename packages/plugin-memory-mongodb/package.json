@@ -31,11 +31,11 @@
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
     "mongodb": "^6.12.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/schema-message": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

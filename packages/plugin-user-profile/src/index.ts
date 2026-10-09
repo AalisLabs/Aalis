@@ -12,7 +12,7 @@ import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
-import { DIRECTIVE_KINDS } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 
 // ════════════════════════════════════════════════════════════
@@ -309,14 +309,14 @@ function metadataString(message: Message, key: string): string | undefined {
 }
 
 function getMessageUserId(message: Message): string | undefined {
-  return metadataString(message, 'userId') ?? message.name;
+  return metadataString(message, WellKnownMetadataKeys.UserId) ?? message.name;
 }
 
 function isTargetUserMessage(message: Message, userId: string, platform: string): boolean {
   if (message.role !== 'user' || !message.content) return false;
   const msgUserId = getMessageUserId(message);
   if (msgUserId !== userId) return false;
-  const msgPlatform = metadataString(message, 'platform');
+  const msgPlatform = metadataString(message, WellKnownMetadataKeys.Platform);
   return !msgPlatform || !platform || msgPlatform === platform;
 }
 
@@ -362,9 +362,9 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
         // 平台事件（群禁言 / 撤回 / 成员进出 / poke 等），供提取判断「用户被谁怎么了」之类上下文
         return `[${time}] [系统通知]: ${content}`;
       }
-      const nickname = metadataString(m, 'nickname');
+      const nickname = metadataString(m, WellKnownMetadataKeys.Nickname);
       const msgUserId = getMessageUserId(m) ?? '';
-      const msgPlatform = metadataString(m, 'platform');
+      const msgPlatform = metadataString(m, WellKnownMetadataKeys.Platform);
       const isTarget = msgUserId === userId && (!msgPlatform || !platform || msgPlatform === platform);
       const label = nickname ? `${nickname}(${msgUserId || '?'})` : msgUserId || '?';
       const tag = isTarget ? '目标用户' : '其他用户';
@@ -1299,11 +1299,11 @@ function registerUserProfile({
         lines.push(`[${time}] [系统通知]: ${content}`);
       } else if (m.role === 'user') {
         const uid = getMessageUserId(m) ?? '';
-        const plat = metadataString(m, 'platform') ?? '';
+        const plat = metadataString(m, WellKnownMetadataKeys.Platform) ?? '';
         if (!uid) continue;
         const level = authorityFn(plat, uid);
         if (level < cfg.instructionMinAuthority) continue;
-        const nickname = metadataString(m, 'nickname');
+        const nickname = metadataString(m, WellKnownMetadataKeys.Nickname);
         const userKey = userKeyOf(plat, uid);
         const name = nickname ? `${nickname}(${uid})` : uid;
         allowedSpeakers.set(uid, { userKey, name });
@@ -1700,11 +1700,10 @@ function registerUserProfile({
         for (let i = data.messages.length - 1; i >= 0; i--) {
           const msg = data.messages[i];
           if (msg.role !== 'user') continue;
-          const meta = (msg.metadata ?? {}) as Record<string, unknown>;
-          const uid = typeof meta.userId === 'string' ? meta.userId.trim() : undefined;
+          const uid = metadataString(msg, WellKnownMetadataKeys.UserId);
           if (!uid) continue;
-          const plat = typeof meta.platform === 'string' ? meta.platform : (data.platform ?? '');
-          const nick = typeof meta.nickname === 'string' ? meta.nickname : undefined;
+          const plat = metadataString(msg, WellKnownMetadataKeys.Platform) ?? data.platform ?? '';
+          const nick = metadataString(msg, WellKnownMetadataKeys.Nickname);
           if (addOther(uid, plat, nick)) break;
         }
 

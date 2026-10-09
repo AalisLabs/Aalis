@@ -229,6 +229,23 @@ describe('开始使用', () => {
     ]);
   });
 
+  it('旧版服务端回的包没有 provides：按没有声明提供服务处理，不列为可装；包名不是文字时整张不认，写原因', async () => {
+    const { provides: _provides, ...deepseek } = MARKET.packages[0];
+    app = await renderApp('/', noSessions, rest({ '/api/marketplace?q=': { packages: [deepseek] } }));
+    let region = await card();
+    await vi.waitFor(() => expect(restCalls().some(call => call.path === '/api/marketplace?q=')).toBe(true));
+    expect(rows(region).map(row => row.text)).toEqual([
+      'OpenAI 对话待配置：apiKey',
+      '本地模型已停用',
+      'Ollama 对话在运行，但没有能对话的模型',
+    ]);
+    app.close();
+
+    app = await renderApp('/', noSessions, rest({ '/api/marketplace?q=': { packages: [{ ...deepseek, name: 42 }] } }));
+    region = await card();
+    expect(await within(region).findByText('市场没取到：市场的回应不是预期的形状', { exact: false })).toBeTruthy();
+  });
+
   it('市场离线降级时写服务端的说明', async () => {
     app = await renderApp(
       '/',

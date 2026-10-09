@@ -211,6 +211,20 @@ describe('新建', () => {
     });
   });
 
+  it('cron 无效：别的插件经 scheduler 服务 addJob、setJob 同样当场拒收', async () => {
+    await withScheduler(async ({ svc, jobs, files, pages }) => {
+      const service = svc();
+      if (!service) throw new Error('scheduler 服务未提供');
+      const job = { ...base, cron: 'every five minutes' };
+      const reason = '非法 cron 表达式（需 5 字段或别名）: every five minutes';
+      expect(() => service.addJob(job)).toThrow(reason);
+      expect(() => service.setJob(job)).toThrow(reason);
+      expect(jobs()).toEqual([]);
+      expect(files.has('data:/scheduler-jobs.json')).toBe(false);
+      expect(pages.notices(), '拒收的输入不该再发「没有排上」').toEqual([]);
+    });
+  });
+
   it('同名任务已存在：新建被拒，改它要用「编辑」', async () => {
     await withScheduler(async ({ create, jobs }) => {
       await create({ ...base, interval: 60 });

@@ -135,7 +135,7 @@ describe('目录与路由', () => {
 
     app = await renderApp('/settings/session-defaults', {}, settingsRest({}, [stopped, AUTH]));
     expect(await section().findByText('会话服务未启用')).toBeTruthy();
-    expect(section().getByRole('link', { name: '去插件详情' }).getAttribute('href')).toBe('/plugins/zz-sessions');
+    expect(section().getByRole('link', { name: '去处理' }).getAttribute('href')).toBe('/plugins/zz-sessions');
   });
 
   it('插件列表没取到：目录与会话默认写明原因、可以重试，不当成会话服务没启用', async () => {

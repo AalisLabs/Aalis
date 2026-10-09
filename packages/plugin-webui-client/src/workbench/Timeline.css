@@ -22,11 +22,6 @@
   color: var(--color-text-3);
 }
 
-.timeline-error {
-  font-size: var(--text-xs);
-  color: var(--color-danger-text);
-}
-
 /* 一段：条目排在第一列，回滚占第二列的第一行，不另占一行 */
 .turn {
   display: grid;

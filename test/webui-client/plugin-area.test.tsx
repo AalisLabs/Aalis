@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
+import { PACKAGE_MANAGER, SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
@@ -83,6 +83,9 @@ const PLUGINS = [
   plugin('zz-ui', { displayName: '界面服务', subsystem: 'platform', self: true }),
   plugin('zz-sessions', { displayName: '会话服务', subsystem: 'session', provides: [SESSION_PROTOCOL] }),
 ];
+
+/** 提供包管理服务的插件：市场的装卸更新由它做，失败的原因记在它的日志里 */
+const PACKAGES_PLUGIN = plugin('zz-packages', { displayName: '包管理', provides: [PACKAGE_MANAGER] });
 
 /** 插件列表与管理动作：动作按请求记下，改了状态再回列表 */
 function pluginRest(rows: Array<Record<string, unknown>> = PLUGINS, extra: FakeRest = {}): FakeRest {
@@ -223,6 +226,20 @@ describe('实例树', () => {
 });
 
 describe('详情', () => {
+  it('服务端比客户端新时认不出的根：照收，写「原因见日志」，状态与标记照旧；认得的根缺字段时整张列表不认', async () => {
+    const withRoot = (root: Record<string, unknown>) =>
+      PLUGINS.map(row =>
+        row.instanceId === 'zz-agent' ? { ...row, lacking: [{ service: 'zz-model', chain: ['zz-model'], root }] } : row,
+      );
+    app = await renderApp('/plugins/zz-agent', {}, pluginRest(withRoot({ kind: 'zz-future', instance: 'zz-model' })));
+    expect((await tree().findByRole('link', { name: /对话代理/ })).textContent).toBe('需要处理对话代理缺服务');
+    expect(await detail().findAllByText('模型服务（原因见日志）')).toHaveLength(2);
+    app.close();
+
+    app = await renderApp('/plugins/zz-agent', {}, pluginRest(withRoot({ kind: 'cycle' })));
+    expect((await tree().findByRole('alert')).textContent).toContain('插件 zz-agent 缺的服务认不出');
+  });
+
   it('头部写包名、版本、状态与原因；停用、重载按实例发，做完重取列表；出错用 Toast 写原因', async () => {
     let state = 'active';
     app = await renderApp(
@@ -562,13 +579,16 @@ describe('详情', () => {
     expect(await detail().findByText('backup', { exact: false })).toBeTruthy();
   });
 
-  it('卸载先确认（列出依赖它的），卸掉后回到插件区；没卸成时 Toast 写服务层给的原因；勾上才同时删除配置', async () => {
+  it('卸载先确认（列出依赖它的），卸掉后回到插件区；没卸成时 Toast 写服务层给的原因、链到包管理的日志；勾上才同时删除配置', async () => {
     let refuse = true;
-    const rows = PLUGINS.map(row =>
-      row.instanceId === 'zz-mongo'
-        ? { ...row, configSection: true, config: { uri: { $secret: 'zz-mongo.uri' } } }
-        : row,
-    );
+    const rows = [
+      ...PLUGINS.map(row =>
+        row.instanceId === 'zz-mongo'
+          ? { ...row, configSection: true, config: { uri: { $secret: 'zz-mongo.uri' } } }
+          : row,
+      ),
+      PACKAGES_PLUGIN,
+    ];
     app = await renderApp(
       '/plugins/zz-mongo',
       {},
@@ -596,7 +616,11 @@ describe('详情', () => {
     expect(dialog.getAllByText('zz-agent')).toHaveLength(2);
     expect(document.activeElement?.textContent).toBe('取消');
     fireEvent.click(dialog.getByRole('button', { name: '卸载' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('卸载失败：卸载会破坏依赖');
+    const refused = await screen.findByRole('alert');
+    expect(refused.textContent).toContain('卸载失败：卸载会破坏依赖');
+    expect(within(refused).getByRole('link', { name: '查看日志' }).getAttribute('href')).toBe(
+      '/health/logs?plugin=zz-packages',
+    );
     refuse = false;
     fireEvent.click(dialog.getByRole('checkbox', { name: '同时删除配置（含 1 个密钥）' }));
     fireEvent.click(dialog.getByRole('button', { name: '卸载' }));
@@ -659,7 +683,7 @@ describe('会话服务未启用', () => {
     expect(main.getByRole('link', { name: '去处理 文档库' }).getAttribute('href')).toBe('/plugins/zz-mongo');
   });
 
-  it('提供会话协议的插件只是在等：写「等待启动」与在等的插件，按钮去它的详情', async () => {
+  it('提供会话协议的插件只是在等：写「等待启动」与在等的插件，「去处理」去它的详情', async () => {
     const rows = PLUGINS.map(row =>
       row.instanceId === 'zz-sessions'
         ? {
@@ -675,15 +699,30 @@ describe('会话服务未启用', () => {
     act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
     const main = within(screen.getByRole('main'));
     expect(await main.findByText('等待启动：文档库')).toBeTruthy();
-    expect(main.getByRole('link', { name: '去插件详情' }).getAttribute('href')).toBe('/plugins/zz-sessions');
+    expect(main.getByRole('link', { name: '去处理' }).getAttribute('href')).toBe('/plugins/zz-sessions');
   });
 
-  it('链到提供会话协议的插件详情；它没装时链到市场', async () => {
+  it.each([
+    [{ error: '缺少配置项 x', unconfigured: ['x'] }, '待配置：x', ['去配置', '/plugins/zz-sessions#config']],
+    [{ error: '端口被占用' }, '失败：端口被占用', ['去处理', '/plugins/zz-sessions']],
+  ])('提供会话协议的插件自己没起来（%j）：写它的状态与原因，按钮与「需要处理」那一行同一个去处', async (over, text, [
+    name,
+    href,
+  ]) => {
+    const rows = PLUGINS.map(row => (row.instanceId === 'zz-sessions' ? { ...row, state: 'error', ...over } : row));
+    app = await renderApp('/', { 'sessions/list': lists(() => []) }, pluginRest(rows));
+    act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
+    const main = within(screen.getByRole('main'));
+    expect(await main.findByText(text)).toBeTruthy();
+    expect(main.getByRole('link', { name }).getAttribute('href')).toBe(href);
+  });
+
+  it('提供会话协议的插件启用着或停用着时写启用后自动连上，「去处理」去它的详情；它没装时链到市场', async () => {
     app = await renderApp('/', { 'sessions/list': lists(() => []) }, pluginRest());
     act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
-    const left = within(screen.getByRole('navigation', { name: '会话' }));
-    expect((await left.findByRole('link', { name: '去插件详情' })).getAttribute('href')).toBe('/plugins/zz-sessions');
-    expect(within(screen.getByRole('main')).getByRole('link', { name: '去插件详情' })).toBeTruthy();
+    const main = within(screen.getByRole('main'));
+    expect(await main.findByText('提供会话协议的插件启用后，这里会自动连上。')).toBeTruthy();
+    expect(main.getByRole('link', { name: '去处理' }).getAttribute('href')).toBe('/plugins/zz-sessions');
     app.close();
 
     app = await renderApp(
@@ -891,6 +930,58 @@ describe('市场', () => {
     expect(screen.getByText('已安装并加载: @aalis/plugin-zz-notes')).toBeTruthy();
     await vi.waitFor(() => expect(scrolled).toHaveBeenCalledWith('config'));
     expect(document.getElementById('config')?.textContent).toContain('目录');
+  });
+
+  it('装卸更新没成：「查看日志」链到提供包管理服务的插件，失败的原因记在它那里；没有它时链到提供界面的实例', async () => {
+    const empty = {
+      upstream: { name: 'zz-theme-ui', present: true, children: [] },
+      downstream: { name: 'zz-theme-ui', present: true, children: [] },
+      services: { required: [], provides: [] },
+      serviceDependents: [],
+    };
+    let rows = [...PLUGINS, PACKAGES_PLUGIN];
+    app = await renderApp(
+      '/market',
+      {},
+      marketRest({
+        '/api/plugins': () => ({ plugins: rows, secretRefCounts: {} }),
+        '/api/marketplace/depgraph?name=zz-theme-ui': empty,
+        '/api/marketplace/install': { ok: false, message: '连不上 npm 的源' },
+        '/api/marketplace/uninstall': { ok: false, message: '目录没有写入权限' },
+        '/api/marketplace/update': { ok: false, message: '连不上 npm 的源', conflicts: [] },
+      }),
+    );
+    const logsOf = (scope: HTMLElement) => within(scope).getByRole('link', { name: '查看日志' }).getAttribute('href');
+    const toastOf = async (text: string) => {
+      const toast = (await screen.findByText(text)).closest('[role="alert"]') as HTMLElement;
+      const href = logsOf(toast);
+      fireEvent.click(within(toast).getByRole('button', { name: '关闭' }));
+      return href;
+    };
+
+    fireEvent.click(await screen.findByRole('button', { name: '安装' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: '安装「@aalis/plugin-zz-notes」？' })).getByRole('button', {
+        name: '安装',
+      }),
+    );
+    expect(await toastOf('安装 @aalis/plugin-zz-notes失败：连不上 npm 的源')).toBe('/health/logs?plugin=zz-packages');
+
+    choose(screen.getByRole('combobox', { name: '类型' }), '前端界面');
+    fireEvent.click(await screen.findByRole('button', { name: '卸载' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: '卸载「zz-theme-ui」？' })).getByRole('button', { name: '卸载' }),
+    );
+    expect(await toastOf('卸载 zz-theme-ui失败：目录没有写入权限')).toBe('/health/logs?plugin=zz-packages');
+
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    fireEvent.click(screen.getByRole('button', { name: '更新所选（2）' }));
+    const result = (await screen.findByText('连不上 npm 的源')).closest('.market-updates-result') as HTMLElement;
+    expect(logsOf(result)).toBe('/health/logs?plugin=zz-packages');
+
+    rows = PLUGINS;
+    act(() => FakeWebSocket.at('/admin').push({ type: 'plugins.changed' }));
+    await vi.waitFor(() => expect(logsOf(result)).toBe('/health/logs?plugin=zz-ui'));
   });
 
   it('更新所选：可更新的勾上一起提交；选了内核写明会整个重启；没过预检时逐条列出冲突', async () => {

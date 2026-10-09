@@ -39,6 +39,7 @@ import {
   type IncomingMessage,
   type Message,
   parseAttachmentRefs,
+  WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import { toWellFormedText } from '@aalis/util-text-normalize';
 import { waitForAttachmentDescriptions } from './attachments.js';
@@ -85,8 +86,8 @@ function toRows(history: Message[], limit: number): LayaRow[] {
     rows.push({
       role: m.role,
       content: m.content,
-      userId: str(m.metadata?.userId),
-      nick: str(m.metadata?.nickname) ?? m.name,
+      userId: str(m.metadata?.[WellKnownMetadataKeys.UserId]),
+      nick: str(m.metadata?.[WellKnownMetadataKeys.Nickname]) ?? m.name,
     });
   }
   return rows.slice(-limit);

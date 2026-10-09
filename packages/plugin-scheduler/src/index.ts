@@ -125,8 +125,9 @@ export interface SchedulerService {
   pauseJob(name: string): boolean;
   resumeJob(name: string): boolean;
   triggerJob(name: string): Promise<boolean>;
+  /** cron 无效时抛出原因，不收下 */
   addJob(job: SchedulerJobConfig): void;
-  /** upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它 */
+  /** upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。cron 无效时抛出原因，原任务不变 */
   setJob(job: SchedulerJobConfig): void;
   removeJob(name: string): boolean;
 }
@@ -325,11 +326,6 @@ async function run(caps: Caps): Promise<void> {
     if (input.paused && runAt) throw new Error('暂停对一次性任务（一次性运行时间、X 秒后执行）没有可用语义');
     // 防误填高频任务：挡住 interval:0.5 这类会占满调度的间隔
     if (interval !== undefined && interval < 5) throw new Error('固定间隔不能小于 5 秒（防高频任务耗尽资源）');
-    // 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件
-    if (cron) {
-      const checked = cronEngine.require().validate(cron);
-      if (!checked.ok) throw new Error(checked.reason);
-    }
     const sessionId = input.sessionId.trim();
     if (!sessionId) throw new Error('目标会话 ID 不能为空');
     const content = input.content.trim();
@@ -845,6 +841,13 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 注册 scheduler 服务 ──
 
+  /** 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件。页面、工具与别的插件都经服务新建与修改 */
+  function rejectInvalidCron(job: SchedulerJobConfig): void {
+    if (!job.cron) return;
+    const checked = cronEngine.require().validate(job.cron);
+    if (!checked.ok) throw new Error(checked.reason);
+  }
+
   const service: SchedulerService = {
     getJobs() {
       return [...runtimes.values()].map(rt => ({
@@ -903,6 +906,7 @@ async function run(caps: Caps): Promise<void> {
       return true;
     },
     addJob(job) {
+      rejectInvalidCron(job);
       initJob(job);
       // 非配置中定义的任务需要持久化
       if (!configJobNames.has(job.name)) {
@@ -915,6 +919,7 @@ async function run(caps: Caps): Promise<void> {
       if (configJobNames.has(job.name)) {
         throw new Error(`任务 "${job.name}" 来自配置文件，无法通过 setJob 覆盖`);
       }
+      rejectInvalidCron(job);
       const existed = runtimes.get(job.name);
       if (existed) {
         if (existed.timer) clearInterval(existed.timer);
@@ -1011,10 +1016,6 @@ async function run(caps: Caps): Promise<void> {
       if (provided > 1) {
         return JSON.stringify({ error: 'cron / interval / delaySeconds / runAt 互斥，只能提供一个' });
       }
-      if (hasCron) {
-        const checked = cronEngine.require().validate((args.cron as string).trim());
-        if (!checked.ok) return JSON.stringify({ error: checked.reason });
-      }
       // delaySeconds → runAt 转换
       let runAt = hasRunAt ? (args.runAt as string).trim() : undefined;
       if (hasDelay) {
@@ -1037,7 +1038,11 @@ async function run(caps: Caps): Promise<void> {
         enabled: true,
       };
       if (runtimes.has(job.name)) return JSON.stringify({ error: `任务 "${job.name}" 已存在` });
-      service.addJob(job);
+      try {
+        service.addJob(job);
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
       const scheduleDesc = job.cron
         ? `cron="${job.cron}"`
         : job.interval

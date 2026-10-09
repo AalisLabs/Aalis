@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-code-sandbox-os
 `definePlugin` 默认导出：
 
 - provides：`codeSandbox`（服务名 `code-sandbox`）
-- uses：`processService`（`process`）、`logger`、`provide`
+- uses：`processService`（`process`）、`logger`、`lifecycle`、`provide`；可选 `doctor`
 
 ## 文档
 

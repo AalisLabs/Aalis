@@ -59,7 +59,6 @@ function slowTool(runs: Run[], name: string, spec: Spec = {}): Omit<RegisteredTo
 interface WorldOptions {
   maxWaitSeconds?: number;
   maxPerSession?: number;
-  isOwner?: (identity: { platform: string; userId: string }) => boolean;
   guard?: (ctx: ExecutionGuardContext) => Promise<string | null>;
 }
 
@@ -82,7 +81,6 @@ function world(opts: WorldOptions = {}) {
     logger,
     events: events as never,
     limits: { maxWaitSeconds: opts.maxWaitSeconds ?? 600, maxPerSession: opts.maxPerSession ?? 4 },
-    isOwner: opts.isOwner ?? (() => false),
   });
   const registry = new ToolRegistry(logger, tasks);
   const guarded: ExecutionGuardContext[] = [];
@@ -333,7 +331,7 @@ describe('让出', () => {
 });
 
 describe('上限', () => {
-  it('第 5 个可转后台调用在执行前被拒、列出在跑的任务，前台在跑的也算数；别的会话不受影响，结束一个就能再起', async () => {
+  it('第 5 个可转后台调用在执行前被拒、列出本会话在跑的任务（不论谁起的），前台在跑的也算数；别的会话不受影响，结束一个就能再起', async () => {
     const w = world();
     w.slow();
     const a = parse(await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx));
@@ -343,7 +341,7 @@ describe('上限', () => {
     await flush();
     expect(w.runs).toHaveLength(4);
     const guardedBefore = w.guarded.length;
-    const fifth = track(w.registry.execute('zz_slow', {}, turn().ctx));
+    const fifth = track(w.registry.execute('zz_slow', {}, turn({ userId: 'zz-someone-else' }).ctx));
     await flush();
     expect(fifth.done()).toBe(true);
     const refused = parse(await fifth.value);
@@ -648,7 +646,6 @@ describe('落盘', () => {
     startedAt: 1_000,
     lastLine: 'zz-old-line',
     lastOutputAt: 2_000,
-    starter: { platform: 'webui', userId: 'console' },
     ...over,
   });
 
@@ -672,16 +669,15 @@ describe('落盘', () => {
     expect(w.tasks.output('bg_old_1')).toEqual({ text: '', end: 0, truncated: false });
   });
 
-  it('只记字段与起它的身份，不记输出与结果；状态变了才写', async () => {
+  it('只记字段，不记起它的身份、输出与结果；状态变了才写', async () => {
     const w = world();
     const store = memoryStore();
     await w.tasks.restore(store.service);
     w.slow();
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     await flush();
-    expect(store.saved()?.tasks).toEqual([
-      expect.objectContaining({ status: 'running', starter: { platform: 'webui', userId: 'console' } }),
-    ]);
+    expect(store.saved()?.tasks).toEqual([expect.objectContaining({ status: 'running' })]);
+    expect(store.saved()?.tasks[0]).not.toHaveProperty('starter');
     w.runs[0].ctx.output?.('zz-secret-output\n');
     w.runs[0].finish('zz-secret-result');
     await flush();
@@ -934,22 +930,16 @@ describe('四个后台任务工具', () => {
     expect(w.warnings.some(m => m.includes('background_list'))).toBe(true);
   });
 
-  describe('只看本会话、同一身份或 owner 起的，别人的回「不存在」', () => {
+  describe('按会话放行：本会话里谁起的都看得到、停得了，别的会话里的回「不存在」', () => {
     const starter = { sessionId: GROUP, platform: 'onebot', userId: '30001' };
     const callers: Array<{ name: string; ctx: Partial<ToolCallContext>; sees: boolean }> = [
-      { name: '同一个人', ctx: starter, sees: true },
-      {
-        name: '同一个人经结束通知开的回合（actor 为起它的身份）',
-        ctx: { ...starter, actor: { platform: 'onebot', userId: '30001' }, inbound: { source: 'bg:x' } },
-        sees: true,
-      },
-      { name: '同一房间的另一个人', ctx: { ...starter, userId: '30002' }, sees: false },
-      { name: 'owner', ctx: { ...starter, userId: '10001' }, sees: true },
+      { name: '同一房间的另一个人', ctx: { ...starter, userId: '30002' }, sees: true },
+      { name: '没有主体的调用', ctx: { sessionId: GROUP, platform: 'onebot', userId: undefined }, sees: true },
       { name: '同一个人在别的会话', ctx: { ...starter, sessionId: OTHER }, sees: false },
     ];
     for (const caller of callers) {
       it(`${caller.name}：${caller.sees ? '看得到、停得了' : '不存在'}`, async () => {
-        const w = world({ isOwner: id => id.platform === 'onebot' && id.userId === '10001' });
+        const w = world();
         w.slow();
         const { taskId } = parse(await w.registry.execute('zz_slow', { runInBackground: true }, turn(starter).ctx));
         const ctx = turn(caller.ctx).ctx;

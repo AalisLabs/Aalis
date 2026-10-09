@@ -104,7 +104,7 @@ if (hadLeak) logger.warn('LLM content 残留特殊 token，已剥离');
 const md = fixGfmTables(rawMarkdown);
 ```
 
-`package.json` 依赖声明（util 库直接 import，无 DI；x.y.z 写开发时用的版本，写法见[插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)）：
+`package.json` 依赖声明（util 库直接 import，无 DI；x.y.z 写开发时用的版本，写法见[第三方插件开发者指南的「依赖怎么归类」](../guide/third-party-plugin.md#_5-1-类型从哪里-import-依赖怎么归类)）：
 
 ```json
 {

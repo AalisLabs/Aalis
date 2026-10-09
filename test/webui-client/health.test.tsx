@@ -28,7 +28,7 @@ import { AT, backgroundTask } from './items.js';
 
 // ════════════════════════════════════════════════════════════
 // 运行状况：图标栏下方（手机上第一层）的「运行状况」，角标是「需要处理」的数；页面有两个标签，概况列出「需要处理」、
-// 正在运行的后台工作（按会话与会话树，可停）与各适配器的连接（打开时取一次，配手动刷新），日志按级别、插件、文字筛，筛选写进地址，订阅实时日志与取历史都带上它；
+// 正在运行的后台工作（按会话与会话树，可停）与各适配器的连接（打开时与本页的会话连接接上时各取一次，配手动刷新），日志按级别、插件、文字筛，筛选写进地址，订阅实时日志与取历史都带上它；
 // 两个预设：「只看错误」与「审批」（提供审批服务的实例，按插件列表的 provides 找）。插件详情的「查看日志」按插件筛好
 // ════════════════════════════════════════════════════════════
 
@@ -169,7 +169,7 @@ describe('入口与角标', () => {
 });
 
 describe('概况', () => {
-  it('「需要处理」列出全部；平台连接按适配器实例与连接逐行写状态，离线的标出错，没有连接的写明，行链到适配器的插件详情；打开时取一次，刷新再取', async () => {
+  it('「需要处理」列出全部；平台连接按适配器实例与连接逐行写状态，离线的标出错，没有连接的写明，行链到适配器的插件详情；打开时与会话连接接上时各取一次，刷新再取', async () => {
     let calls = 0;
     app = await renderApp(
       '/health',
@@ -203,9 +203,37 @@ describe('概况', () => {
       ['/plugins/zz-im%3A2', 'QQ · 2', null, '连接中', null],
       ['/plugins/zz-cli', '终端', null, '没有连接', null],
     ]);
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
     fireEvent.click(main.getByRole('button', { name: '刷新平台连接' }));
-    await vi.waitFor(() => expect(calls).toBe(2));
+    await vi.waitFor(() => expect(calls).toBe(3));
+  });
+
+  it('平台连接：WebUI 那一行按本页的会话连接算：打开页面时会话连接还没接上，接上后再取一次写在线；断线时与重连后同样再取', async () => {
+    const own = PLATFORMS.platforms[0];
+    let calls = 0;
+    let down = false;
+    app = await renderApp(
+      '/health',
+      noSessions,
+      rest({
+        '/api/platforms': () => {
+          calls++;
+          return { platforms: [{ ...own, connections: calls > 1 && !down ? own.connections : [] }] };
+        },
+      }),
+    );
+    const main = within(screen.getByRole('main'));
+    const meta = async () =>
+      (await main.findByRole('list', { name: '平台连接' })).querySelector('.list-item-meta')?.textContent;
+    await vi.waitFor(async () => expect(await meta()).toBe('在线'));
+    vi.useFakeTimers();
+    down = true;
+    act(() => app?.server.drop());
+    await vi.waitFor(async () => expect(await meta()).toBe('没有连接'));
+    down = false;
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    await app.reconnect();
+    await vi.waitFor(async () => expect(await meta()).toBe('在线'));
   });
 
   it('「需要处理」空了写明没有；没有适配器时平台连接不出现；没取到时原地写明原因，可以重试', async () => {

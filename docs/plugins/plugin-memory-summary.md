@@ -45,7 +45,7 @@ export default definePlugin({
 
 1. 每轮对话结束后（`agent:turn:after`，中止或出错的回合除外）异步检查是否需要摘要
 2. 当消息数 ≥ `threshold` 且多于 `keepRecent` 时触发摘要（`keepRecent` 不小于 `threshold` 时以 `keepRecent` 为准）
-3. 另外监听 `token:usage` 事件，上下文使用率达到 `autoCompressThreshold` 时自己在后台压缩（`compress(sessionId, 'auto')`，这个会话正在摘要或压缩时不触发）。压缩服务的 `compress` 不看 `threshold`，只要历史条数多于 `keepRecent` 就压缩，通过 `session:compressing` 事件报告 start/done/error：压成报 `done` 并落定；没压成（这个会话正在压缩或生成摘要、记忆或摘要模型不在、模型失败只做了裁切、期间会话被清空）报 `error` 并以原因拒绝。历史不多于 `keepRecent` 时什么都不做，报 `done`
+3. 另外监听 `token:usage` 事件，上下文使用率达到 `autoCompressThreshold` 时自己在后台压缩（`compress(sessionId, 'auto')`，这个会话正在摘要或压缩时不触发）。压缩服务的 `compress` 不看 `threshold`，只要历史条数多于 `keepRecent` 就压缩，通过 `session:compressing` 事件报告 start/done/error：压成报 `done` 并落定；没压成（摘要模型不在、模型失败只做了裁切、期间会话被清空）报 `error` 并以原因拒绝。历史不多于 `keepRecent` 时什么都不做、照常落定，不报进度（报 `done` 会让界面插一条没有发生的「对话已压缩」）；开始之前就失败的（这个会话正在压缩或生成摘要、记忆不在、读不出历史）只以原因拒绝，也不报
 4. 读取最近 max(`threshold`, `keepRecent`+1, 200) 条历史，把除最近 `keepRecent` 条以外的 user/assistant/tool 消息连同已有摘要交给 LLM（assistant 消息取可见正文：落库内容是结构化输出的 JSON 信封时读 metadata 的 `visibleContent`；带工具调用的 assistant 渲染为「调用 <工具名>(参数)」，tool 结果渲染为「工具结果(工具名): …」，其中工具名按 `toolCallId` 从同段历史的 assistant `toolCalls` 反查、消息自带的 `name` 只作回落，两者的参数与正文按每条 200 字硬截断），生成更新后的摘要（提示词为 `summaryPrompt`，留空则用内置提示词）；这次模型调用带上会话 id 与用途「摘要」，供记账（见 [api-llm 的记账](../api/api-llm.md#记账)）
 5. 摘要写入后调用 memory 的 `trimHistory` 把较旧消息标记为归档，只保留最近 `keepRecent` 条（下限 1；裁剪点会避开 tool call 组中间）；摘要生成失败或返回空内容时降级为只裁切、不写摘要。若 `message-archive` 服务可用，额外写入一条压缩分隔事件消息
 6. 摘要通过 `agent:prompt` 贡献点（`context` 锚位）在 LLM 调用前注入，由 agent 组装为头部 system 区的一条 system 消息；摘要长度超出 token 预算（摘要模型上下文窗口 × `summaryTokenRatio`，下限 512）时截断

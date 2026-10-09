@@ -31,7 +31,7 @@ import { sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { DIRECTIVE_KINDS } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
 
 // ===== 配置 schema =====
 
@@ -163,10 +163,10 @@ function shortSession(sessionId: string, max = 24): string {
 function formatRecords(records: RecentMessageRecord[]): string {
   return records
     .map(({ sessionId, message }) => {
-      const meta = (message.metadata ?? {}) as Record<string, unknown>;
-      const platform = asString(meta.platform) ?? 'unknown';
-      const senderName = asString(meta.nickname);
-      const groupName = asString(meta.groupName);
+      const meta = message.metadata ?? {};
+      const platform = asString(meta[WellKnownMetadataKeys.Platform]) ?? 'unknown';
+      const senderName = asString(meta[WellKnownMetadataKeys.Nickname]);
+      const groupName = asString(meta[WellKnownMetadataKeys.GroupName]);
       const group = groupName ? `@${groupName}` : '';
       // notice 作为独立角色渲染为 [Notice]，后面不跟 sender（由 content 本身描述事件）
       if (message.role === 'notice') {

@@ -7,6 +7,7 @@ import { isRecord, postJson } from '../rest';
 import { paths } from '../routes';
 import { messageOf, type PluginAction } from './action';
 import { InstallDisclosure } from './disclosure';
+import { usePackageManager } from './list';
 
 interface InstallDialogProps {
   /** 要装的包；没有时确认框关着 */
@@ -21,6 +22,7 @@ interface InstallDialogProps {
 export function InstallDialog({ pkg, action, onClose, onSettled }: InstallDialogProps) {
   const toast = useToast();
   const navigate = useNavigate();
+  const source = usePackageManager();
   const install = async (name: string) => {
     await action.run(
       `安装 ${name}`,
@@ -30,6 +32,7 @@ export function InstallDialog({ pkg, action, onClose, onSettled }: InstallDialog
         toast({ kind: 'success', text: messageOf(reply) ?? `已安装 ${name}` });
         if (isRecord(reply) && typeof reply.plugin === 'string') navigate(paths.plugin(reply.plugin, 'config'));
       },
+      source,
     );
     onSettled?.();
   };

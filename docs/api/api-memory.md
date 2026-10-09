@@ -86,7 +86,7 @@ interface CompressionService {
 
 - **`compress`**：`manual` 是 owner 手动，`auto` 是用量达到 `autoThreshold` 时提供方自己触发。压完才落定；没有压成时拒绝，原因在错误里（这个会话正在压缩或生成摘要、记忆或摘要模型不在、模型失败只做了裁切、期间会话被清空）。历史不多于要保留的条数时什么都不做，照常落定。
 - **`autoThreshold`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，界面的压缩线取它。
-- **进度**：事件 `session:compressing { sessionId, status: 'start' | 'done' | 'error' }`，会话服务转成时间线上的压缩通知。
+- **进度**：事件 `session:compressing { sessionId, status: 'start' | 'done' | 'error' }`，会话服务转成时间线上的压缩通知。只在真的开始压时报：`start` 之后压成报 `done`、没压成报 `error`；什么都不做的与开始之前就失败的（记忆不在、读不出历史）不报。
 - **使用方**：[plugin-session-server](../plugins/plugin-session-server.md) 的 `session/compress` 调它，功能位的「压缩」与用量条目的 `compressAt` 看它在不在。
 
 ## 钩子（HookContextMap）

@@ -334,18 +334,16 @@ async function setup() {
   return { app, port, logs, received, pageList, frameOf, data, act };
 }
 
-/** 框架 CSP 的全文：来源按 Host 写成带路径、不带协议的来源 */
+/**
+ * 框架 CSP 的全文：除脚本外不按来源限，只留两道——脚本只认这一页的目录与公用目录（来源按 Host 写成带路径、不带协议的
+ * 来源），框架里不能再嵌别的网页；另有沙箱与只许宿主嵌它
+ */
 const frameCsp = (host: string, token: string) =>
   [
     'sandbox allow-scripts',
-    "default-src 'none'",
     `script-src ${host}/frames/${token}/ ${host}/frames/_base/`,
-    `style-src ${host}/frames/${token}/ ${host}/frames/_base/ 'unsafe-inline'`,
-    `img-src ${host}/frames/${token}/ data: blob:`,
-    `font-src ${host}/frames/${token}/ data:`,
-    "worker-src 'none'",
-    "form-action 'none'",
-    "base-uri 'none'",
+    "frame-src 'none'",
+    "object-src 'none'",
     `frame-ancestors ${host}`,
   ].join('; ');
 
@@ -392,7 +390,6 @@ describe('/frames/:token/ 的托管', () => {
     expect(res.headers['content-security-policy']).toBe(frameCsp(`127.0.0.1:${port}`, token));
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
-    expect(res.headers['x-dns-prefetch-control']).toBe('off');
     expect(res.headers['access-control-allow-origin']).toBe('*');
     expect(res.headers['cache-control']).toBe('no-cache');
     expect(res.headers.etag).toBeDefined();
