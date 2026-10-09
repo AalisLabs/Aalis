@@ -359,7 +359,9 @@ function registerBuiltinChecks(
             inUse
               ? `实际在用：${inUse.label ? `${inUse.label}（${inUse.contextId}）` : inUse.contextId}`
               : '这个服务现在没有提供者',
-            `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`,
+            name === 'llm'
+              ? `改选偏好：在 WebUI 设置「会话默认」的全局默认层改「模型」（写进配置文件的 servicePreferences.llm）；要用原来的，启用提供 ${preferred} 的插件`
+              : `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`,
           ].join('\n'),
         });
       }

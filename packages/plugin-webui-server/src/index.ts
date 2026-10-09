@@ -330,6 +330,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // - persist：首次生成后写入 storage data:/webui/token，重启复用（默认）
   // - fixed：使用 fixedToken 配置项，至少 FIXED_TOKEN_MIN_LENGTH 个字符；为空时降级为 persist
   // 所有模式都会写出 data:/webui/access.txt 便于查找访问 URL
+  // 两个文件都是凭据，按凭据写（只给本机用户读，0600）
   const tokenFileUri = 'data:/webui/token';
   const accessFileUri = 'data:/webui/access.txt';
   const fixedToken = uiConfig.tokenMode === 'fixed' ? uiConfig.fixedToken.trim() : '';
@@ -354,7 +355,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       '# 提示：将该一键登录链接粘贴到浏览器即可自动设置 cookie',
     ];
     try {
-      await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`);
+      await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`, { secret: true });
       return true;
     } catch (err) {
       logger.warn(`写入访问文件失败: ${(err as Error).message}`);
@@ -384,13 +385,17 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             authToken = existing;
             if (listeningUrl) void writeAccessFile(listeningUrl, authToken);
           }
+          // 读回的照样按凭据重写一遍：文件原先的权限（别处拷来、按默认权限写下的）一律收紧
+          await storage
+            .writeFile(tokenFileUri, existing, { secret: true })
+            .catch((err: Error) => logger.warn(`token 文件没能按凭据重写，别的系统用户可能读得到它: ${err.message}`));
           return;
         }
       } catch {
         /* 不存在或读不了 */
       }
       try {
-        await storage.writeFile(tokenFileUri, authToken);
+        await storage.writeFile(tokenFileUri, authToken, { secret: true });
         tokenSettled = true;
       } catch (err) {
         logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
@@ -1128,7 +1133,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             ? 'token 来自配置 fixedToken，固定不变'
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
       // 不把 token 打进日志（会落 latest.log / 被 /api/logs/* 回放 / 贴日志求助时外泄）。
-      // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（该文件应 0o600，见 token 落盘）。
+      // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（按凭据写，只给本机用户读）。
       logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
       void (async () => {
         // 先把文件写出来，再解析它的绝对路径：resolveLocalPath 走 realpath，文件尚未落盘会抛

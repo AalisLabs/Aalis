@@ -58,6 +58,10 @@ const chunkOf = (request: ChatModelRequest) => {
   return content.slice(content.lastIndexOf('摘要：\n') + 4);
 };
 
+/** 一次请求按每字 2 token 折算的输入，加上它的输出上限 */
+const requestTokens = (request: ChatModelRequest) =>
+  2 * request.messages.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + (request.maxTokens ?? 0);
+
 describe('plugin-memory-summary: 手动压缩', () => {
   it('历史只有 3 条：照常报进度，三条全部进摘要，活跃历史只剩分隔标记', async () => {
     const llm = fakeSummaryLLM();
@@ -432,9 +436,8 @@ describe('plugin-memory-summary: 后台触发', () => {
 });
 
 describe('plugin-memory-summary: 分块', () => {
-  it('输入超过摘要模型的单次容量：逐块增量，上一块的结果作为下一块的已有摘要，每块不超过分块上限，最终一份摘要', async () => {
-    // 窗口 1600、输出上限 512：每块至多 (1600 - 512) / 2 = 544 字
-    const llm = fakeSummaryLLM({ contextLength: 1600, maxOutputTokens: 512, reply: (_req, i) => `摘要${i}` });
+  it('输入超过摘要模型的单次容量：逐块增量，上一块的结果作为下一块的已有摘要，每次请求都装得下，最终一份摘要', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 3000, maxOutputTokens: 512, reply: (_req, i) => `摘要${i}` });
     const { memory, compression } = await setup({}, llm.model);
     for (let i = 0; i < 30; i++) {
       await memory.saveMessage('s', {
@@ -448,7 +451,7 @@ describe('plugin-memory-summary: 分块', () => {
 
     const chunks = llm.requests.map(chunkOf);
     expect(chunks.length).toBeGreaterThanOrEqual(4);
-    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(544);
+    for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(3000);
     for (let i = 0; i < 30; i++) {
       expect(
         chunks.filter(chunk => chunk.includes(`第 ${i} 条消息`)),
@@ -462,8 +465,8 @@ describe('plugin-memory-summary: 分块', () => {
     expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
   });
 
-  it('待办参数作为最后一行一起分块：每块仍不超过分块上限，附的是待摘要部分里最后一次待办的参数', async () => {
-    const llm = fakeSummaryLLM({ contextLength: 1600, maxOutputTokens: 512 });
+  it('待办参数作为最后一行一起分块：每次请求仍装得下，附的是待摘要部分里最后一次待办的参数', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 3000, maxOutputTokens: 512 });
     const { memory, compression } = await setup({}, llm.model);
     const todo = (label: string) => JSON.stringify({ todoList: [{ title: `${label}${'办'.repeat(380)}` }] });
     const todoCall = async (id: string, label: string) => {
@@ -479,14 +482,14 @@ describe('plugin-memory-summary: 分块', () => {
     await compression.compress('s', { reason: 'manual' });
 
     const chunks = llm.requests.map(chunkOf);
-    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(544);
+    for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(3000);
     expect(chunks.at(-1)).toContain(`当前任务列表状态：\n${todo('新')}`);
     expect(chunks.join('\n')).not.toContain(todo('旧'));
   });
 
   it('中间一块失败：整次失败，摘要与历史都不动', async () => {
     const llm = fakeSummaryLLM({
-      contextLength: 1600,
+      contextLength: 3000,
       maxOutputTokens: 512,
       reply: (_req, i) => {
         if (i === 1) throw new Error('第二块超时');
@@ -511,7 +514,7 @@ describe('plugin-memory-summary: 分块', () => {
     let release!: () => void;
     const gate = new Promise<void>(r => (release = r));
     const llm = fakeSummaryLLM({
-      contextLength: 1600,
+      contextLength: 3000,
       maxOutputTokens: 512,
       reply: async (_req, i) => {
         if (i === 0) await gate;
@@ -532,6 +535,29 @@ describe('plugin-memory-summary: 分块', () => {
 
     expect(await done).toBe('压缩期间会话被清空');
     expect(llm.requests).toHaveLength(1);
+  });
+
+  it('每次请求都装得下：输入（提示词、至多输出上限那么多的已有摘要、这一块）加输出上限不超过摘要模型的窗口', async () => {
+    // 会话主模型的窗口 100 万，按比例算的输出上限顶到摘要模型的 4096；摘要模型每次都回到输出上限（按每字 2 token 折算）
+    const llm = fakeSummaryLLM({
+      contextLength: 8192,
+      maxOutputTokens: 4096,
+      reply: request => '摘'.repeat(Math.floor((request.maxTokens ?? 0) / 2)),
+    });
+    const { host, memory, compression } = await setup({}, llm.model);
+    await host.events.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
+    for (let i = 0; i < 60; i++) {
+      await memory.saveMessage('s', {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `第 ${i} 条消息${'。'.repeat(100)}`,
+      });
+    }
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(llm.requests.length).toBeGreaterThan(1);
+    for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(8192);
+    expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
   });
 
   it('摘要模型的窗口装不下输出上限：拒绝并说明，不调模型', async () => {
@@ -571,5 +597,26 @@ describe('plugin-memory-summary: 摘要预算', () => {
     await host.events.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
     await compression.compress('s', { reason: 'manual' });
     expect(llm.requests[0].maxTokens).toBe(4096);
+  });
+});
+
+describe('plugin-memory-summary: 摘要输入里的通知', () => {
+  it('定时任务派来的指令等通知与对话一起进摘要输入、按每条 200 字截断；压缩分隔标记不进', async () => {
+    const llm = fakeSummaryLLM();
+    const { memory, compression } = await setup({}, llm.model);
+    await memory.saveMessage('s', { role: 'system', kind: 'event-marker', content: '对话已压缩' });
+    await memory.saveMessage('s', {
+      role: 'notice',
+      kind: 'cross-session-delegation',
+      content: `每天九点整理日报${'甲'.repeat(300)}`,
+    });
+    await memory.saveMessage('s', { role: 'assistant', content: '日报已整理' });
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(llm.text()).toContain(`通知: 每天九点整理日报${'甲'.repeat(192)}…`);
+    expect(llm.text()).not.toContain('甲'.repeat(193));
+    expect(llm.text()).toContain('助手: 日报已整理');
+    expect(llm.text()).not.toContain('对话已压缩');
   });
 });

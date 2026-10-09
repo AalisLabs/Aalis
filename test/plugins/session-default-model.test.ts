@@ -106,6 +106,14 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
     expect(sm.getLayer({ scope: 'defaults' }).llm).toEqual({ provider: A, model: 'org/gone' });
   });
 
+  it('偏好只写了提供者（没有模型段）：读不成模型引用，不拆成 npm scope 与包名', async () => {
+    const { sm, host } = await setup();
+    host.services.prefer(llm, B);
+    expect(sm.getLayer({ scope: 'defaults' }).llm).toBeUndefined();
+    host.services.prefer(llm, '@zz/llm-gone');
+    expect(sm.getLayer({ scope: 'defaults' }).llm, '提供者不在也一样').toBeUndefined();
+  });
+
   it('偏好不是模型引用的写法（手写的、不带斜杠）：改全局默认层的别的项不动偏好', async () => {
     const { sm, host, preferred, documented, sessionConfig } = await setup();
     host.services.prefer(llm, 'gpt-4o');
@@ -125,6 +133,20 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
     host.services.prefer(llm, `${A}/m1`);
     await vi.waitFor(() => expect(changes).toBeGreaterThan(0));
     expect(sm.getLayer({ scope: 'defaults' }).llm).toEqual({ provider: A, model: 'm1' });
+  });
+
+  it('llm 的提供者下线：发一次 session:config:changed，服务实际用的那一个随之变', async () => {
+    const { app, sm, host } = await setup();
+    let changes = 0;
+    host.events.on('session:config:changed', () => void changes++);
+    host.services.prefer(llm, `${A}/m1`);
+    await vi.waitFor(() => expect(changes).toBe(1));
+
+    await app.plugins.unload(A);
+    await vi.waitFor(() => expect(changes).toBe(2));
+    await new Promise<void>(r => setTimeout(r, 20));
+    expect(changes, '下线只发一次').toBe(2);
+    expect(sm.resolvedDefaults()).toEqual({ llm: { provider: B, model: 'org/m3' } });
   });
 
   it('落盘失败：偏好与文档都撤回，以拒绝传出', async () => {

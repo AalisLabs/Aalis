@@ -56,8 +56,11 @@ describe('诊断：服务偏好未生效', () => {
     // 实际在用的是服务此刻解析到的那一个：偏好不在，按优先级
     expect(results[0].detail?.split('\n')[0]).toBe('实际在用：m2（zz-b/m2）');
     expect(results[1].detail?.split('\n')[0]).toBe('实际在用：zz-asr');
+    expect(results[0].detail, 'llm 的改法指向「会话默认」的「模型」').toContain('「会话默认」');
     expect(results[0].detail).toContain('servicePreferences.llm');
+    expect(results[1].detail).toContain('servicePreferences.asr');
     expect(results[1].detail, '改法不写别的服务的入口').not.toContain('会话默认');
+    expect(results[0].detail, '系统页不列 llm 的偏好，指向「会话默认」').not.toContain('「系统」');
   });
 
   it('偏好指向的服务现在没有提供者：报警并写明没有提供者', async () => {

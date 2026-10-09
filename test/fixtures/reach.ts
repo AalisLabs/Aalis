@@ -16,8 +16,14 @@ export const USER = '/u';
 export const PATHS = derivePaths('/u/.aalis', '/opt/aalis');
 /** 安装集以外、守护进程加载了代码的插件目录 */
 export const CODE_DIR = '/opt/plugins/zz-ext';
-export const LISTS = protectedLists({ paths: PATHS, userHome: USER, platform: 'linux', codeDirs: [CODE_DIR] });
-export const SESSION_TMP = `${PATHS.tmp}/sessions/czE`;
+export const LISTS = protectedLists({
+  paths: PATHS,
+  userHome: USER,
+  platform: 'linux',
+  form: 'source',
+  codeDirs: [CODE_DIR],
+});
+export const SESSION_TMP = `${PATHS.tmp}/sessions/7331`;
 export const PAPERS = PATHS.stage.paper;
 
 /** 默认工作区：主目录就是它的白纸 */
