@@ -30,7 +30,7 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），审批（新 WebUI 的第二部分，取代 session-confirm 的确认链），新 WebUI 的其余各部分（管理推送与登录加固、外壳与会话设置、页面契约第二版、插件前端、控件比例、插件区与深度思考档位、需要处理与用量、后台任务），删除自档案，单元 7 收尾第一批，改用 node:sqlite，上手与故障说明，报错普查第二批，以及单元 7 第六步整批收尾。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十二个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），审批（新 WebUI 的第二部分，取代 session-confirm 的确认链），新 WebUI 的其余各部分（管理推送与登录加固、外壳与会话设置、页面契约第二版、插件前端、控件比例、插件区与深度思考档位、需要处理与用量、后台任务），删除自档案，删除第三方行为指令，单元 7 收尾第一批，改用 node:sqlite，上手与故障说明，报错普查第二批，以及单元 7 第六步整批收尾。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十二个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
@@ -744,6 +744,15 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - plugin-image-sender：`~/` 开头的 `storage_uri`、`history_ref` 被拒发。
   - plugin-scheduler：经服务新建或修改任务时，无效 cron 由收下改为抛错。
 - **发布档位**：次版本：schema-message（新键）、plugin-tools、plugin-webui-server、api-webui；其余为 patch。下面这些包对 schema-message 的下限抬到本批的新版本（现写 `>=0.9.0` 或 `>=0.9.1`）：plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-agent、plugin-adapter-onebot、plugin-user-profile、plugin-user-relation（plugin-trigger-laya 是 private 包，同步改下限、不发布）。
+
+### 删除第三方行为指令（@aalis/plugin-user-profile、@aalis/plugin-commands）
+
+user-profile 只管对他人的历史记忆，不再从管理员的发言里提取行为规则、注入每一次模型调用。
+
+- **删除**：配置项 `enableInstructions`、`instructionMinAuthority`、`instructionExtractEveryNMessages`、`instructionHistoryForExtraction`、`maxInstructions`、`maxInstructionCharsPerItem`；按入站消息计数的自动提取；注入每次模型调用的「第三方行为准则」块；`/instruct`、`/instruct.add`、`/instruct.remove`、`/instruct.clear`。插件不再使用 authority 与 persona 服务。
+- plugin-commands：`/clear` 的回执与类型说明里 `user-profile` 改名为「用户档案」。
+- **升级须知**：旧配置里的这六个键启动时按 schema 裁掉并告警，删掉即可。已存的 memory 元数据命名空间 `aalis:instructions` 不再读取，`/clear` 也不再清它；需要留底的先导出，再手动删除。
+- **发布档位**：plugin-user-profile 次版本；plugin-commands patch。
 
 ### 必须同批升级的包
 
