@@ -16,7 +16,7 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, isStorageUri, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, provide } from '@aalis/core';
-import { type ConfigOf, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 
 const configSchema = defineConfig({
@@ -33,8 +33,8 @@ const configSchema = defineConfig({
   modelPath: {
     type: 'string',
     label: '模型文件路径 (.bin)',
-    description: '模型文件的绝对路径。',
-    default: '',
+    description: 'GGML 模型文件（.bin）的绝对路径。',
+    required: true,
     format: 'absolute-path',
     onInvalid: 'error',
   },
@@ -179,11 +179,6 @@ export default definePlugin({
   uses,
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config, caps.logger);
-
-    if (!cfg.modelPath) {
-      // 缺必填配置抛清晰错误（而非静默 return），避免声明了提供 asr 却不注册触发难懂的校验错
-      throw missingConfigError('modelPath', 'GGML 模型文件 .bin 路径');
-    }
     const proc = createProcessGateway(caps.proc);
     const storage = createStorageGateway(caps.storage);
 

@@ -26,9 +26,9 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `apiKey` | string | `''` | API Key：在 OKX 设置中创建的 API Key（secret） |
-| `secretKey` | string | `''` | Secret Key（secret） |
-| `passphrase` | string | `''` | Passphrase：创建 API 时设定的口令（secret） |
+| `apiKey` | string | 必填 | API Key：在 OKX 设置中创建的 API Key（secret） |
+| `secretKey` | string | 必填 | Secret Key（secret） |
+| `passphrase` | string | 必填 | Passphrase：创建 API 时设定的口令（secret） |
 | `baseUrl` | string | `'https://www.okx.com'` | API 地址：默认实盘地址，可改为自定义域名 |
 | `demo` | boolean | `true` | 模拟盘：启用后将使用模拟交易环境，强烈建议先在模拟盘测试 |
 | `confirmRealMoney` | boolean | `false` | 确认实盘风险：仅当关闭模拟盘(demo:false)、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。 |
@@ -39,7 +39,7 @@ export default definePlugin({
 | `defaultPageLimit` | number | `20` | 分页查询默认条数：查询订单/账单/成交明细等接口，LLM 未传 limit 时使用。 |
 | `maxPageLimit` | number | `100` | 分页查询最大条数：LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。 |
 
-未配置 `apiKey` / `secretKey` / `passphrase` 时插件跳过初始化（仅打 warn）。
+`apiKey`、`secretKey`、`passphrase` 缺一个插件就激活失败，报缺的那一项，WebUI 把它标成待配置。
 
 ## 实盘安全闸
 
@@ -74,4 +74,4 @@ okx_place_algo_order   okx_cancel_algo_order   okx_transfer
 
 ## 配置校验
 
-未填凭证时仍告警并跳过初始化。凭证、地址、模拟盘与实盘确认开关、交易功能开关的显式无效值会报配置错误；有凭证时地址格式在工具注册前校验。分页上限仍夹在 1–1000，默认条数取整、至少 1 且不超过上限。
+凭证没填全时激活失败（见上）。凭证、地址、模拟盘与实盘确认开关、交易功能开关的显式无效值会报配置错误；地址格式在工具注册前校验。分页上限仍夹在 1–1000，默认条数取整、至少 1 且不超过上限。

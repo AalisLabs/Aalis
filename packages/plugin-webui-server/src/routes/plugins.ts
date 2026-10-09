@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CommandService } from '@aalis/api-commands';
+import { describeUnmet, unmetDependencies } from '@aalis/api-doctor';
 import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
@@ -18,7 +19,7 @@ import {
   validateConfig,
 } from '@aalis/schema-config';
 import type express from 'express';
-import { missingServices } from '../attention.js';
+import { blockedStatus } from '../attention.js';
 import type { RouteGate } from '../gate.js';
 import { route } from '../route.js';
 
@@ -98,11 +99,21 @@ async function settledEntry(pm: PluginManagerService, instanceId: string) {
   return pm.getPlugin(instanceId);
 }
 
-/** 落定后既没激活也没失败的说明：慢激活转入后台仍在进行，或在等 required 依赖满足；其余状态由各路由自己说明 */
-function notYetActive(state: PluginState | undefined): string | undefined {
+/**
+ * 落定后既没激活也没失败的说明：慢激活转入后台仍在进行，或 required 依赖没满足（缺什么、在等谁，按 api-doctor 的共享判据
+ * 沿链追到根，与插件列表同一说法；依赖都在、只是提供者正在关停换代时没有可说的）；其余状态由各路由自己说明
+ */
+function notYetActive(
+  pm: PluginManagerService,
+  services: Pick<Services, 'names'>,
+  instanceId: string,
+  state: PluginState | undefined,
+): string | undefined {
   if (state === 'activating') return '仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准';
-  if (state === 'pending') return '尚未激活，正在等待 required 依赖满足';
-  return undefined;
+  if (state !== 'pending') return undefined;
+  const unmet = unmetDependencies(pm.getStatus(), services.names()).get(instanceId);
+  const why = unmet && describeUnmet(unmet);
+  return why ? `尚未激活：${why}` : '尚未激活，结果以插件列表为准';
 }
 
 /**
@@ -132,8 +143,8 @@ interface PluginRoutesCaps {
   hostConfig: Pick<ServiceRef<HostConfig>, 'current'>;
   tools: Pick<ServiceRef<ToolService>, 'current'>;
   commands: Pick<ServiceRef<CommandService>, 'current'>;
-  /** 服务的登记情况：列表据它给出此刻没有提供者的 required 服务 */
-  services: Pick<Services, 'inspect'>;
+  /** 当前有提供者的服务名：列表与回执据它判缺与在等 */
+  services: Pick<Services, 'names'>;
   /** 提供这个界面的插件实例：经这些路由停用不了它，列表给它标 self */
   self: string;
   /** 家目录（宿主路径的 home）：宿主配置一并给出；宿主不提供路径时没有 */
@@ -221,8 +232,9 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       commandsByPlugin.set(owner, [...(commandsByPlugin.get(owner) ?? []), c.name]);
     }
     const doc = caps.hostConfig.current;
+    const sections = doc?.getAll().plugins ?? {};
     const versionOf = caps.versions();
-    const plugins = pm.getStatus().map(p => {
+    const plugins = blockedStatus({ plugins: pm, services: caps.services, doc }).map(p => {
       const entry = pm.getPlugin(p.instanceId);
       const schema = entry?.definition?.configSchema;
       return {
@@ -238,7 +250,9 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         provides: p.provides ?? [],
         requiredServices: p.requiredServices ?? [],
         optionalServices: p.optionalServices ?? [],
-        missing: missingServices(caps.services, p.requiredServices),
+        lacking: p.lacking,
+        waiting: p.waiting,
+        unconfigured: p.unconfigured,
         tools: toolsByPlugin.get(p.instanceId) ?? [],
         commands: commandsByPlugin.get(p.instanceId) ?? [],
         reusable: p.reusable ?? false,
@@ -247,6 +261,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         // 配置给文档形态：密钥字段上是引用，不是原值；前端据它建编辑草稿，引用原样发回即保持原值。
         // 宿主不提供配置文档时给运行态，去掉密钥字段（运行态里是原值）
         extends: entry?.definition?.extends,
+        configSection: Object.hasOwn(sections, p.instanceId),
         config: doc ? doc.getPluginConfig(p.instanceId) : mapSecretFields(schema, entry?.config ?? {}, () => undefined),
         configSchema: schema,
         defaultConfig: defaultsFrom(schema),
@@ -455,7 +470,10 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       after?.state === 'error'
         ? `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
         : undefined;
-    const aside = after?.state === 'disabled' ? '插件已禁用，启用时按新配置激活' : notYetActive(after?.state);
+    const aside =
+      after?.state === 'disabled'
+        ? '插件已禁用，启用时按新配置激活'
+        : notYetActive(pm, caps.services, pluginName, after?.state);
     if (result.saveError !== undefined) {
       reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
       return;
@@ -498,7 +516,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         after?.state === 'error'
           ? `插件 ${pluginName} 激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
           : undefined;
-      const aside = notYetActive(after?.state);
+      const aside = notYetActive(pm, caps.services, pluginName, after?.state);
       if (!(await saveAfterApply(doc, res, 'restart', failure ?? aside))) return;
       res.json({
         ok: true,
@@ -572,7 +590,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return;
     }
     const after = await settledEntry(pm, pluginName);
-    const aside = notYetActive(after?.state);
+    const aside = notYetActive(pm, caps.services, pluginName, after?.state);
     res.json({
       ok: true,
       message:
@@ -687,7 +705,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const aside =
       after?.state === 'disabled'
         ? '配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活'
-        : notYetActive(after?.state);
+        : notYetActive(pm, caps.services, instanceId, after?.state);
     if (result.saveError !== undefined) {
       reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
       return;

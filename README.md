@@ -2,7 +2,7 @@
 
 可扩展的插件化框架：极简内核 + 万物皆插件。当下的主场是 LLM Agent / Bot，但内核不认识任何业务词汇。
 
-技术文档在 [`docs/`](docs/)（文档站按「入门 → 概念 → 核心 → 服务 → 插件 → API」组织）；写插件先读
+文档站：<https://aalis.acenyan.com>，源码在 [`docs/`](docs/)（按「入门 → 概念 → 核心 → 服务 → 插件 → API」组织）；写插件先读
 [插件作者指南](docs/plugin-author-guide.md)。
 
 ## 内核做什么
@@ -44,17 +44,15 @@ pnpm monorepo，约 100 个包：
 
 ## 快速开始
 
-Node.js 24.15.0 起，版本不够时的升级步骤见 [第一次运行](docs/guide/first-run.md#升级-node)。
+Node.js 24.15.0 起，版本不够时的升级步骤见 [第一次运行](docs/guide/first-run.md#upgrade-node)。
 
 ```bash
-npm create aalis@latest my-bot
-cd my-bot
-# 在 home/aalis.config.yaml 里填大模型 API key 与平台账号（home/ 是家目录，已在 .gitignore 里）
-npm start
+npm create aalis@latest my-bot     # 问对话模型（可当场粘贴 key）、接入平台与要不要长期语义记忆，然后装好依赖
+cd my-bot && npm start
 ```
 
-要哪些 key、零 key 怎么起（本地 Ollama）、CLI 与 WebUI 两个入口，见 [第一次运行](docs/guide/first-run.md)；
-建项目的完整步骤见 [脚手架上手](docs/guide/scaffolding.md)。
+本机在跑 Ollama 时脚手架默认用它，不要任何 key。要准备什么、启动后在哪看没起来的插件、CLI 与 WebUI 两个入口，见 [第一次运行](docs/guide/first-run.md)；
+建项目的完整步骤见 [脚手架上手](docs/guide/scaffolding.md)，装不上或起不来见 [安装与启动排障](docs/guide/troubleshooting.md)。
 
 在本仓库里开发：`pnpm install && pnpm build`，第一次先 `pnpm dev --init` 初始化开发用的家目录 `.aalis-dev/`，之后 `pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
 

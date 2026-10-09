@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import {
   sessionMethods,
   sessionNotifications,
@@ -12,10 +13,12 @@ import {
 // WebUI 的写法守卫：
 // - 兼容与写法（客户端）：颜色只来自主题令牌，组件 CSS 不写 px（线宽 1px、2px 除外），字号与时长只引用令牌，内联 style 只设 CSS 变量，
 //   不用原生对话框与 window.open，浏览器存储只经存储模块（首帧主题脚本除外），不写死主机与端口（认本机网址的模块写回环
-//   地址，是唯一的例外），dangerouslySetInnerHTML 只许出现在白名单里的文件；
+//   地址，是唯一的例外），dangerouslySetInnerHTML 只许出现在白名单里的文件；发布的 dist 已经打好，package.json 不写
+//   dependencies，打包用的库都在 devDependencies，装进项目时不再跟着装一遍；
 // - 客户端只认契约不认插件：不出现插件包名，不依赖对话代理的契约（用量分项名由条目给出），字符串字面量（正则字面量按词
 //   拆开）不等于任何插件登记的页面键、动作名、数据源名、设置键或工具名。
-//   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；
+//   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；客户端手写的契约服务名
+//   （会话协议、对话模型）与能力名要与契约同名，它们是契约的词，同样不查；
 // - 服务端只认契约不认插件：会话协议、webui-server（含框架托管与转发）、session-server 的源码不出现别的插件的名字，
 //   字符串字面量与正则字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名。
 //   契约包里出现的词与字段声明的可选项来源不查，这份排除表从契约包的源码算出；
@@ -367,6 +370,15 @@ describe('WebUI 客户端的写法', () => {
     expect(SOURCES.map(rel)).toEqual(expect.arrayContaining([TOKEN_FILE, STORAGE_MODULE, THEME_SCRIPT, 'index.html']));
   });
 
+  it('发布的是打好的静态资源：package.json 没有 dependencies，打包用的库都在 devDependencies', () => {
+    const manifest = JSON.parse(read(join(CLIENT, 'package.json'))) as {
+      files?: string[];
+      dependencies?: Record<string, string>;
+    };
+    expect(manifest.files).toEqual(['dist']);
+    expect(manifest.dependencies ?? {}).toEqual({});
+  });
+
   it('颜色只来自主题令牌：客户端源码里没有颜色字面量', () => {
     const hex = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b/i;
     const fn = /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
@@ -487,7 +499,8 @@ describe('WebUI 客户端只认契约不认插件', () => {
   const dataSources = collected(keys => keys.dataSources);
   const settings = collected(keys => keys.settings);
   const tools = collected(keys => keys.tools);
-  const excluded = new Set([...protocolFields(), ...adminFields(), ...frameFields()]);
+  // 对话模型的服务名 llm 也是会话设置的键：客户端按服务名找提供者时写它，是契约的词
+  const excluded = new Set([...protocolFields(), ...adminFields(), ...frameFields(), llm.name]);
 
   it('收集到的登记与排除表不空：判据没有因为写法变化失效', () => {
     expect([...pages]).toEqual(expect.arrayContaining(['paper', 'paper-room', 'skills', 'doctor', 'uploads']));
@@ -504,6 +517,12 @@ describe('WebUI 客户端只认契约不认插件', () => {
   it('客户端手写的会话协议服务名与契约描述符同名：客户端不在运行时引会话协议的描述符（会把 schema 打进前端）', () => {
     const written = /export const SESSION_PROTOCOL = '([^']+)'/.exec(read(join(SRC, 'plugins/list.tsx')))?.[1];
     expect(written).toBe(sessionProtocol.name);
+  });
+
+  it('客户端手写的对话模型服务名与对话能力与契约同名：客户端不在运行时引模型服务的契约', () => {
+    const list = read(join(SRC, 'plugins/list.tsx'));
+    expect(/export const LLM = '([^']+)'/.exec(list)?.[1]).toBe(llm.name);
+    expect(/export const CHAT = '([^']+)'/.exec(list)?.[1]).toBe(LLMCapabilities.Chat);
   });
 
   it('插件前端页面也按判据收集：带 key、title 与 frame 的对象是页面，动作名与数据源名取它的 actions 与 sources', () => {

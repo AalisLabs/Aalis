@@ -5,8 +5,10 @@
 //   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'daemon'（传 argv: []，
 //                      startAalis 返回后自发 SIGTERM，验证守护路径的文件日志与优雅退出仍在）
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
-//   AALIS_E2E_APPLY_MS 设了才多登记两个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
-//                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc（验证启动收敛后的 pending 告警）
+//   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
+//                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc，e2e-patient 只依赖
+//                      e2e-slow-svc，e2e-chained 依赖 e2e-middle 提供的服务、e2e-middle 又依赖激活失败的 e2e-broken 提供的
+//                      （验证启动收敛后的告警：缺的沿链追到根，只在等的不算缺）
 //
 // 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若重启策略在子命令模式下被错误注入，`restart`
 // 子命令会 spawn 一个 argv 仍带 restart 的 detached 子进程——第二代在这里立刻退出，不再往下走，
@@ -81,7 +83,29 @@ const waitingPlugin = definePlugin({
   uses: { slow: slowService, missing: defineService<object>('e2e-missing-svc') },
   apply() {},
 });
-const inline = applyMs === undefined ? [plugin] : [plugin, slowPlugin, waitingPlugin];
+const patientPlugin = definePlugin({ name: 'e2e-patient', uses: { slow: slowService }, apply() {} });
+const brokenService = defineService<object>('e2e-broken-svc');
+const middleService = defineService<object>('e2e-middle-svc');
+const brokenPlugin = definePlugin({
+  name: 'e2e-broken',
+  provides: [brokenService],
+  apply() {
+    throw new Error('缺少配置项 apiKey');
+  },
+});
+const middlePlugin = definePlugin({
+  name: 'e2e-middle',
+  provides: [middleService],
+  uses: { provide, broken: brokenService },
+  apply({ provide }) {
+    provide(middleService, {});
+  },
+});
+const chainedPlugin = definePlugin({ name: 'e2e-chained', uses: { middle: middleService }, apply() {} });
+const inline =
+  applyMs === undefined
+    ? [plugin]
+    : [plugin, slowPlugin, waitingPlugin, patientPlugin, brokenPlugin, middlePlugin, chainedPlugin];
 
 const pluginLoader = {
   async discover() {

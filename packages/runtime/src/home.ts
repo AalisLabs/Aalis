@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, resolve } from 'node:path';
 import type { HostPaths } from '@aalis/api-host-paths';
@@ -207,12 +207,45 @@ export function isHomeInitialized(paths: HostPaths): boolean {
 }
 
 /**
- * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。
+ * 只有 owner 进得来的平台（本地终端、单 token 的 WebUI）：装了会话管理时，它们的平台档开箱给全部工具分组。
+ * 多人平台不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸。与 create-aalis 生成的平台档一致
+ */
+const OWNER_ONLY_PLATFORMS: ReadonlyArray<readonly [plugin: string, platform: string]> = [
+  ['@aalis/plugin-cli', 'cli'],
+  ['@aalis/plugin-webui-server', 'webui'],
+];
+
+/**
+ * 按安装集 package.json 的依赖（与 node_modules 加载器读的一样，dependencies 加 optionalDependencies）定平台档。
+ * `--init` 在插件发现之前跑，只能看声明；没有 package.json（还没装插件）时不写
+ */
+function ownerPlatformProfiles(app: string): Record<string, { enabledToolGroups: string[] }> {
+  const manifest = join(app, 'package.json');
+  if (!existsSync(manifest)) return {};
+  let deps: Record<string, unknown>;
+  try {
+    const pkg = JSON.parse(readFileSync(manifest, 'utf-8'));
+    deps = { ...pkg.dependencies, ...pkg.optionalDependencies };
+  } catch (err) {
+    throw new Error(`读不了安装集的 ${manifest}：${err instanceof Error ? err.message : String(err)}。修好它再初始化`);
+  }
+  if (!('@aalis/plugin-session-manager' in deps)) return {};
+  return Object.fromEntries(
+    OWNER_ONLY_PLATFORMS.filter(([plugin]) => plugin in deps).map(([, platform]) => [
+      platform,
+      { enabledToolGroups: ['*'] },
+    ]),
+  );
+}
+
+/**
+ * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置里按安装集写上 owner 平台的平台档。
  * 已初始化时拒绝，不覆盖任何文件。目录已存在时只接受空目录，或只有布局自己条目的目录（上次初始化中途失败），
  * 沿用并收紧为 0700：`--home ~ --init` 这类笔误不能把用户主目录改成 0700、再往里铺一层布局。
  */
 export function initHome(paths: HostPaths): void {
   if (isHomeInitialized(paths)) throw new HomeArgsError(`家目录已经初始化过：${paths.home}`);
+  const platforms = ownerPlatformProfiles(paths.app);
   if (existsSync(paths.home)) {
     const foreign = readdirSync(paths.home).filter(name => !LAYOUT_ENTRIES.has(name));
     if (foreign.length > 0) {
@@ -241,5 +274,9 @@ export function initHome(paths: HostPaths): void {
   if (existsSync(paths.secrets)) chmodSync(paths.secrets, 0o600);
   else writeFileSync(paths.secrets, '', { mode: 0o600, flag: 'wx' });
   const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
-  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins: {} }), { mode: 0o600, flag: 'wx' });
+  const sessionConfig = Object.keys(platforms).length > 0 ? { sessionConfig: { platforms } } : {};
+  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins: {}, ...sessionConfig }), {
+    mode: 0o600,
+    flag: 'wx',
+  });
 }

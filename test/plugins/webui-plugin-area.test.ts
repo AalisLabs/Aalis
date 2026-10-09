@@ -23,7 +23,7 @@ import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
-// 插件区要的列表字段与管理动作：列表给子系统（插件声明的原样给）、版本、此刻缺的 required 服务与「界面所在」的标记；
+// 插件区要的列表字段与管理动作：列表给子系统（插件声明的原样给）、版本、没起来的原因（缺与在等沿链追到根、待配置）与「界面所在」的标记；
 // 界面所在的插件经这些路由停用不了；重载经 bounce 重建插件，失败的插件重载即重试。
 // 真实 App 与真实路由，配置落盘用内存 provider。路由挂在一个叫 console 的插件里，它就是「界面所在」；
 // webui-server 自己的配置校验另起真的 webui-server
@@ -109,16 +109,51 @@ describe('插件列表', () => {
     expect(row('zz-plain')).not.toHaveProperty('version');
   });
 
-  it('missing 是此刻没有任何提供者的 required 服务：可选的不算，内置的总在；提供者上线后清空', async () => {
+  it('lacking 是此刻没有任何提供者的 required 服务，沿链追到根：可选的不算，内置的总在；提供者上线后清空', async () => {
     const w = world();
     await w.boot(definePlugin({ name: 'zz-waiting', uses: { db: store, extra: optional(cache), config }, apply() {} }));
     expect((await w.rows()).find(p => p.instanceId === 'zz-waiting')).toMatchObject({
       state: 'pending',
-      missing: ['zz-store'],
+      lacking: [{ service: 'zz-store', chain: [], root: { kind: 'unprovided', service: 'zz-store' } }],
+      waiting: [],
+      unconfigured: [],
     });
     w.app.bind({ provide }).provide(store, {});
     await w.app.plugins.idle();
-    expect((await w.rows()).find(p => p.instanceId === 'zz-waiting')).toMatchObject({ state: 'active', missing: [] });
+    expect((await w.rows()).find(p => p.instanceId === 'zz-waiting')).toMatchObject({
+      state: 'active',
+      lacking: [],
+      waiting: [],
+    });
+  });
+
+  it("unconfigured 只对失败的插件算：取自配置 schema 校验配置文档的 missing，`''` 算没填，密钥引用算填了，不合法的值不在里面", async () => {
+    const schema = {
+      apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
+      baseUrl: { type: 'string', label: '地址', required: true },
+      model: { type: 'string', label: '模型', required: true },
+      timeoutMs: { type: 'number', label: '超时', required: true, default: 30 },
+    } as const;
+    const w = world({
+      plugins: {
+        'zz-keyed': { apiKey: { $secret: 'k.keyed' }, baseUrl: '', model: 'placeholder-model', timeoutMs: 'soon' },
+        'zz-idle': { baseUrl: '' },
+      },
+      disabledPlugins: ['zz-idle'],
+    });
+    await w.boot(
+      definePlugin({
+        name: 'zz-keyed',
+        configSchema: schema,
+        apply() {
+          throw new Error('缺少配置项 baseUrl');
+        },
+      }),
+      definePlugin({ name: 'zz-idle', configSchema: schema, apply() {} }),
+    );
+    const rows = await w.rows();
+    expect(rows.find(p => p.instanceId === 'zz-keyed')).toMatchObject({ state: 'error', unconfigured: ['baseUrl'] });
+    expect(rows.find(p => p.instanceId === 'zz-idle')).toMatchObject({ state: 'disabled', unconfigured: [] });
   });
 
   it('只有界面所在的插件带 self 标记；列表不再给聚合的敏感能力', async () => {

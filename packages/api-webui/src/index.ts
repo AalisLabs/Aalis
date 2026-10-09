@@ -3,6 +3,7 @@
 // WebUI 服务契约、页面与提示的登记门面（页面契约见 page.ts，插件前端的消息通道见 frame.ts）、管理面推送（/admin）的
 // 事件类型、管理面 REST（rest.ts）、主题的令牌表与文件格式（theme.ts），以及服务描述符。
 
+import type { UnmetService } from '@aalis/api-doctor';
 import type { LogEntry, LogLevel, ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 import type { Notice, NoticeHandle, PageDefinition, PageHandle, PagePlacement } from './page.js';
@@ -110,9 +111,11 @@ export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.f
   { id: 'tools', label: '工具', order: 80 },
   { id: 'storage', label: '存储', order: 85 },
   { id: 'message', label: '消息', order: 90 },
+  { id: 'media', label: '媒体', order: 95 },
   { id: 'session', label: '会话', order: 100 },
   { id: 'skills', label: '技能', order: 110 },
   { id: 'scheduler', label: '调度', order: 120 },
+  { id: 'workflow', label: '工作流', order: 125 },
   { id: 'authority', label: '权限', order: 130 },
   { id: 'user', label: '用户', order: 140 },
   { id: 'external', label: '外部', order: 160 },
@@ -176,14 +179,30 @@ export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server
 // ----- 需要处理 -----
 
 /**
+ * 插件实例没起来的原因，插件列表与「需要处理」共用这一份，由服务端算好，界面照字段画：
+ * - `lacking`：pending 时缺的 required 服务。每条从直接提供者沿依赖链追到根（api-doctor 的共享判据）：根失败（带它的
+ *   失败说明）、停用、没有已装的插件提供、互相等待成环。一个服务有几个已装的提供者都没起来时，每个提供者各一条；
+ * - `waiting`：pending 时在等的服务，根插件在启动，它启动完就有。只在等的插件不算故障；
+ * - `unconfigured`：error 时必填却没填的配置项路径（schema-config 的 validateConfig 报的 missing：`''` 算没填，
+ *   密钥引用 `{ $secret }` 算填了）。
+ *
+ * 不是这两种状态时三项都为空。链的根插件待配置与否，看它自己那一行的 `unconfigured`。
+ */
+export interface PluginBlockers {
+  lacking: UnmetService[];
+  waiting: UnmetService[];
+  unconfigured: string[];
+}
+
+/**
  * 「需要处理」的一项，每项计 1：
  * - `approval`：推给了审批面、还没结算的审批（同一会话同一时刻最多一张）；`session` 是会话的标题，会话管理不在时没有；
- * - `plugin`：插件实例的故障：失败（`error`，带原因）或缺服务（`pending`，`missing` 是此刻没有提供者的 required 服务）；
+ * - `plugin`：插件实例的故障：失败（`error`，带原因），或缺服务（`pending` 且 `lacking` 不空）。只在等别的插件启动的不在这里；
  * - `notice`：插件的提示，`instance` 是发出它的插件实例。
  */
 export type AttentionItem =
   | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string }
-  | { kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string; missing: string[] }
+  | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string } & PluginBlockers)
   | ({ kind: 'notice'; instance: string } & Notice);
 
 // ----- 管理面推送 -----

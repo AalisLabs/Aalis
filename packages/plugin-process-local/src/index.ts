@@ -280,6 +280,8 @@ export class LocalProcessService implements ProcessService {
 
 export default definePlugin({
   name: '@aalis/plugin-process-local',
+  displayName: '本地进程',
+  subsystem: 'system',
   provides: [processService],
   // storage 只被 makeTempDir 用到，缺席时其余方法照常可用：声明为可选，不拦激活。
   uses: { provide, events, logger, storage: optional(storage) },

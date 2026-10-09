@@ -13,6 +13,9 @@
  *
  *   AalisEvents 的模块增强统一在本文件做，避免多包
  *   重复声明导致 TS 合并冲突。
+ *
+ *   另有「缺」与「在等」的共享判据（unmet.ts）：插件没起来时沿依赖链追到根，
+ *   runtime 的启动告警、plugin-doctor、WebUI 与终端界面都用它。
  */
 
 import type { ServiceRef } from '@aalis/core';
@@ -27,7 +30,9 @@ export interface CheckResult {
   id: string;
   category: CheckCategory;
   level: CheckLevel;
+  /** 一行结论：出了什么事 */
   message: string;
+  /** 多行详情；warn 与 error 在这里写用户该做什么，具体到配置项、命令或页面 */
   detail?: string;
 }
 
@@ -87,3 +92,12 @@ export const doctor = defineService<DoctorService, BoundDoctor>('doctor', port =
   });
   return serviceRef(port, { registerCheck: (spec: CheckSpec) => checks.add({ pluginName: port.id, ...spec }) });
 });
+
+export {
+  describeUnmet,
+  type PluginSnapshot,
+  type UnmetDependencies,
+  type UnmetRoot,
+  type UnmetService,
+  unmetDependencies,
+} from './unmet.js';

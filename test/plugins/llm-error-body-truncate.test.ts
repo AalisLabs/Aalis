@@ -23,7 +23,8 @@ afterEach(async () => {
 
 /** 约 20KB、多行的 HTML 错误页 */
 const HTML_PAGE = `<!DOCTYPE html>\r\n<html>\r\n<body>\r\n${'  <p>502 Bad Gateway</p>\r\n'.repeat(900)}</body>\r\n</html>\r\n`;
-const MAX_LEN = 600;
+/** 摘录上限 500 字符，加上前面的提示与修法、URL：整页 HTML（约 20KB）远超它 */
+const MAX_LEN = 700;
 const LINE_BREAK = /[\r\n]/;
 
 /**
@@ -111,7 +112,7 @@ describe('模型发现遇到非 2xx：原因里的响应体截断成一行，提
     expect(error).toContain('HTTP 404');
     expect(error.length, `错误信息带着整页 HTML，长 ${error.length}`).toBeLessThanOrEqual(MAX_LEN);
     expect(error, '错误信息带着响应体里的换行').not.toMatch(LINE_BREAK);
-    expect(error.indexOf('未配置 customModels，没有可注册的模型'), '提示没有写在响应体之前').toBe(0);
+    expect(error, '提示没有写在响应体之前').toMatch(/^取不到(?: Ollama 的)?模型列表，没有可注册的模型：/);
     expect(errors).toHaveLength(1);
     expect(errors[0], '激活失败日志带着响应体里的换行').not.toMatch(LINE_BREAK);
   });

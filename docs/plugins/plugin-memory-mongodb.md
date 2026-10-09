@@ -50,5 +50,5 @@ export default definePlugin({
   - 新库（没有记录、任何集合里也没有数据）直接记下本家目录。库里已有数据却没有记录时不默认认走，要写 `claimFrom: unowned`；记录坏了（缺家目录或实例）时同样报错，确认后写 `claimFrom: unowned` 改写。
   - 宿主不提供 `host-paths`（嵌入式宿主、测试夹具）时不做这项检查
 - dispose 时关闭 MongoDB 连接
-- 连接或建索引失败时关闭客户端，并抛出 `MongoDB 连接失败: <原因>`。激活失败（连接失败或归属不对）时本插件不提供 `memory` 服务；同时启用了 `@aalis/plugin-memory-sqlite` 或 `@aalis/plugin-memory-inmemory` 的，记忆改由它们提供，看起来像历史丢了、新消息也写到了那里。只用 MongoDB 的，把这两个插件写进 `disabledPlugins`
+- 连接或建索引失败时关闭客户端，并抛出 `MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: <原因>`。激活失败（连接失败或归属不对）时本插件不提供 `memory` 服务；同时启用了 `@aalis/plugin-memory-sqlite` 或 `@aalis/plugin-memory-inmemory` 的，记忆改由它们提供，看起来像历史丢了、新消息也写到了那里。只用 MongoDB 的，把这两个插件写进 `disabledPlugins`
 - 日志中打印的 URI 会隐去密码段（`mongodb://user:***@host`）

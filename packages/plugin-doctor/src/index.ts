@@ -7,7 +7,9 @@ import {
   type CheckSpec,
   type DoctorReport,
   type DoctorService,
+  describeUnmet,
   doctor,
+  unmetDependencies,
 } from '@aalis/api-doctor';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import {
@@ -17,7 +19,6 @@ import {
   logger,
   optional,
   type PluginManagerService,
-  type PluginStatusEntry,
   pluginsService,
   provide,
   type ServiceRef,
@@ -244,7 +245,9 @@ function registerBuiltinChecks(
         category: 'env',
         level: supported ? 'ok' : 'error',
         message: `Node ${nodeVersion}`,
-        detail: supported ? undefined : '需要 Node 24.15.0 起；升级方法见 docs/guide/first-run.md「升级 Node」',
+        detail: supported
+          ? undefined
+          : '需要 Node 24.15.0 起；升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
       };
     },
   });
@@ -274,28 +277,14 @@ function registerBuiltinChecks(
       }
       const status = pm.getStatus();
       const errored = status.filter(s => s.state === 'error');
-      const pending = status.filter(s => s.state === 'pending');
       const active = status.filter(s => s.state === 'active');
       // 激活超过 core 慢操作阈值、已转入后台的（依赖它服务的插件在它完成前保持 pending）
       const slow = status.filter(s => s.state === 'activating' && s.slow);
-      // 与 runtime 启动收敛后的 pending 告警同一判据：required 服务当前没有任何提供者登记；
-      // 由仍在激活中（含已转入后台）的插件声明提供的，归为「等待 <实例> 激活完成」，其余才是缺少
-      const activating = status.filter(s => s.state === 'activating');
-      const describePending = (p: PluginStatusEntry): string => {
-        const missing: string[] = [];
-        const waiting = new Set<string>();
-        for (const svc of p.requiredServices ?? []) {
-          if (services.inspect(svc).length > 0) continue;
-          const provider = activating.find(s => s.provides?.includes(svc));
-          if (provider) waiting.add(provider.instanceId);
-          else missing.push(svc);
-        }
-        const reasons = [
-          ...(missing.length > 0 ? [`缺少服务: ${missing.join('、')}`] : []),
-          ...[...waiting].map(id => `等待 ${id} 激活完成`),
-        ];
-        return reasons.length > 0 ? `${p.instanceId}: ${reasons.join('；')}` : p.instanceId;
-      };
+      // 缺与在等：与 runtime 启动告警、WebUI 同一判据（api-doctor），缺的沿链追到根；只在等提供者启动的不算未就绪
+      const unmet = [...unmetDependencies(status, services.names())];
+      const lacking = unmet.filter(([, u]) => u.lacking.length > 0);
+      const waiting = unmet.filter(([, u]) => u.lacking.length === 0 && u.waiting.length > 0);
+      const lines = (entries: typeof unmet) => entries.map(([id, u]) => `${id}: ${describeUnmet(u)}`).join('\n');
       return [
         {
           id: 'plugins.active',
@@ -314,16 +303,33 @@ function registerBuiltinChecks(
         {
           id: 'plugins.pending',
           category: 'plugins',
-          level: pending.length === 0 ? 'ok' : 'warn',
-          message: pending.length === 0 ? '无未就绪插件' : `${pending.length} 个插件 required deps 未满足`,
-          detail: pending.length > 0 ? pending.map(describePending).join('\n') : undefined,
+          level: lacking.length === 0 ? 'ok' : 'warn',
+          message: lacking.length === 0 ? '无未就绪插件' : `${lacking.length} 个插件缺服务，未就绪`,
+          detail: lacking.length > 0 ? lines(lacking) : undefined,
         },
+        ...(waiting.length > 0
+          ? [
+              {
+                id: 'plugins.waiting',
+                category: 'plugins' as const,
+                level: 'ok' as const,
+                message: `${waiting.length} 个插件在等别的插件启动`,
+                detail: lines(waiting),
+              },
+            ]
+          : []),
         {
           id: 'plugins.slow',
           category: 'plugins',
           level: slow.length === 0 ? 'ok' : 'warn',
           message: slow.length === 0 ? '无激活超时的插件' : `${slow.length} 个插件激活超过阈值，仍在后台进行`,
-          detail: slow.length > 0 ? slow.map(p => p.instanceId).join('\n') : undefined,
+          detail:
+            slow.length > 0
+              ? [
+                  ...slow.map(p => p.instanceId),
+                  '等它完成即可；长时间不完成时看它的日志（多为在等网络或外部服务），停用再启用可重试',
+                ].join('\n')
+              : undefined,
         },
       ];
     },

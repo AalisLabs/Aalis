@@ -17,17 +17,15 @@ const configSchema = defineConfig({
     required: true,
     secret: true,
     description: '在 OKX 设置中创建的 API Key',
-    default: '',
     onInvalid: 'error',
   },
-  secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true, default: '', onInvalid: 'error' },
+  secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true, onInvalid: 'error' },
   passphrase: {
     type: 'string',
     label: 'Passphrase',
     required: true,
     secret: true,
     description: '创建 API 时设定的口令',
-    default: '',
     onInvalid: 'error',
   },
   baseUrl: {
@@ -170,11 +168,6 @@ export default definePlugin({
 
 function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   const parsed = parseConfig(configSchema, config, logger);
-
-  if (!parsed.apiKey || !parsed.secretKey || !parsed.passphrase) {
-    logger.warn('OKX 交易插件缺少 API 凭证，已跳过初始化');
-    return;
-  }
   if (!URL.canParse(parsed.baseUrl) || new URL(parsed.baseUrl).username || new URL(parsed.baseUrl).password) {
     throw configError('baseUrl 需为不带用户名或密码的完整 URL');
   }

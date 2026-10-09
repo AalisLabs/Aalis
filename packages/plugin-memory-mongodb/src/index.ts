@@ -466,7 +466,7 @@ export async function openAndProvide(
     // 库的归属不对是配置问题，不是连接失败：原样抛出，宿主按配置错误报一行
     if ((err as { name?: unknown } | null)?.name === 'ConfigError') throw err;
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`MongoDB 连接失败: ${message}`, { cause: err });
+    throw new Error(`MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: ${message}`, { cause: err });
   } finally {
     lifecycle.signal.removeEventListener('abort', onAbort);
   }

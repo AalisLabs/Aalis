@@ -24,8 +24,8 @@ export interface CheckResult {
   id: string;            // 结果 id，可与 spec.id 不同（一个 spec 可产出多条带不同 id 的结果）
   category: CheckCategory;
   level: CheckLevel;
-  message: string;       // 一行人类可读结论
-  detail?: string;       // 可选多行详情（错误栈、命中清单等），\n 分隔
+  message: string;       // 一行结论：出了什么事
+  detail?: string;       // 多行详情，\n 分隔；warn 与 error 在这里写怎么修
 }
 
 export interface DoctorReport {
@@ -45,6 +45,8 @@ export interface CheckSpec {
   run(): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[]; // 用到的能力由注册方闭包带入
 }
 ```
+
+`warn` 与 `error` 的结果写两件事：`message` 写出了什么事，`detail` 写用户该做什么，具体到配置项、命令或页面，例如「在模型服务里加一个能看图的模型，再到识图插件的「识别模型」里选它」；原因（下层的报错原文）可以跟在修法前后，但不能只有原因。指向文档时写文档站上的完整地址，不写仓库路径。诊断是用户自查的入口，没装 WebUI 的用户只能靠 `/doctor` 看到这些（见[作者指南「报错与故障说明」](../plugin-author-guide.md#_9-5-报错与故障说明)）。
 
 `run` 可以同步或异步返回，也可以返回单条或多条 `CheckResult`。一个 spec 通常对应一个领域（如 `storage.roots`），但允许为每个被探测对象各产出一条结果——例如 storage-local 会为每个可写 root 产一条。
 
@@ -81,6 +83,45 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 
 `doctor.registerCheck` 走 `registrar`：同 id 替换、提供者换人自动重挂、随激活撤回，并自动把 `pluginName` 填成这次激活 id。
 
+### 缺与在等的共享判据 `unmetDependencies`
+
+插件停在 pending，是它有 required 服务此刻没有提供者。`unmetDependencies` 把每个这样的服务沿声明提供它的已装插件往下追，直到一个不是 pending 的插件或追不下去的地方，那里就是根。runtime 的启动告警、plugin-doctor 的 `plugins.pending`、WebUI 的插件列表与「需要处理」、终端界面的欢迎行都调它，几处的说法因此一致。
+
+```ts
+/** 判据读的插件状态：core 插件状态快照（PluginStatusEntry）里的这几项 */
+type PluginSnapshot = Pick<PluginStatusEntry, 'instanceId' | 'state' | 'provides' | 'uses' | 'error'>;
+
+type UnmetRoot =
+  | { kind: 'error'; instance: string; error?: string } // 根插件激活失败，带它的失败说明
+  | { kind: 'disabled'; instance: string } // 根插件已停用
+  | { kind: 'starting'; instance: string } // 根插件在启动：只是在等
+  | { kind: 'withdrawn'; instance: string; service: string } // 根插件在运行，却没在提供 service（激活后自己撤回了）
+  | { kind: 'unprovided'; service: string } // 没有已装的插件声明提供它
+  | { kind: 'cycle'; instances: string[] }; // 几个插件互相等待成环
+
+interface UnmetService {
+  service: string;
+  chain: string[]; // 从直接提供者往下、一路没起来的插件实例；根是插件时最后一个就是它
+  root: UnmetRoot;
+}
+
+interface UnmetDependencies {
+  lacking: UnmetService[]; // 缺：根失败、停用、在运行却没在提供、没有提供者或成环，要人处理
+  waiting: UnmetService[]; // 在等：根在启动，它启动完就满足
+}
+
+/** 每个 pending 插件没满足的 required 服务，按实例 id；available 是当前有提供者的服务名（services.names()） */
+function unmetDependencies(plugins: readonly PluginSnapshot[], available: Iterable<string>): Map<string, UnmetDependencies>;
+/** 写成一句（启动告警、诊断与回执用） */
+function describeUnmet(unmet: UnmetDependencies): string;
+```
+
+- 只收普通数据：插件状态快照与当前有提供者的服务名。required 与 optional 按快照里 `uses` 每项的 `kind` 分。
+- 判缺看服务名，不看谁声明提供：宿主在根上提供的服务（`host-config`、`host-paths` 等）不在任何插件的 `provides` 里，照样不算缺。声明提供它的已装插件（卸载在途的除外）只用来往下追根。
+- 提供者自己的状态：失败、停用就是根；在激活（含转入后台的慢激活）是「在启动」；在运行却没在提供这个服务（激活之后自己撤回了，例如模型全被删掉的模型插件）也是根，它不会自己补上，算缺；pending 的接着往下追它自己没满足的服务，它缺一样就是缺，只是在等就是在等，什么都不缺（马上激活）也算在启动。追回已经走过的插件就是成环。
+- 一个服务有几个已装的提供者：有一个只是在等，这个服务就是在等（它启动完就有）；都不是时每个提供者各一条，各写到自己的根。
+- `describeUnmet` 的写法：缺的逐条写「缺少服务 <服务>（<链> 失败：<说明> / 已停用 / 在运行但没有提供 <服务> / → 没有已装的插件提供 <服务> / 互相等待成环：<插件>）」，没有链时写「缺少服务 <服务>（没有已装的插件提供）」；在等的写「等待 <实例> 启动」，同一句只写一次；各条用「；」连起来。
+
 ---
 
 ## 2. 谁提供 / 谁消费
@@ -93,7 +134,7 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
 
-`plugins.status` 在插件管理服务在场时产出四条结果：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因；停用、重启、后台激活的 required 依赖下线时「未在宽限内停止」；或初始化期间 required 依赖反复缺失时「自动重试未收敛，已停止」。后两者依赖恢复后不自动重试，需 `enable` 或 `bounce`）、`plugins.pending`（逐个列出实例缺少的 required 服务，判据与 runtime 启动收敛后的「依赖未满足」告警相同；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`）与 `plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目；有则 warn）。后台激活的插件提供的服务在它完成前不对外，依赖它的插件会同时出现在 `plugins.pending` 里。缺的服务若由某个仍在激活中（含已转入后台）的插件声明提供，不算缺少，列为「等待 <实例> 激活完成」；runtime 的启动告警按同一规则区分。
+`plugins.status` 在插件管理服务在场时产出四条结果，有在等的插件时另加一条：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因；停用、重启、后台激活的 required 依赖下线时「未在宽限内停止」；或初始化期间 required 依赖反复缺失时「自动重试未收敛，已停止」。后两者依赖恢复后不自动重试，需 `enable` 或 `bounce`）、`plugins.pending`（未就绪：缺服务的实例，每个一行「<实例>: <describeUnmet 的一句>」，缺的沿依赖链追到根；有则 warn；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`，取 `services.names()`）、`plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目，最后一行写怎么办；有则 warn），以及 `plugins.waiting`（只在等别的插件启动的实例，写法同 `plugins.pending`；ok，没有在等的插件时不出这一条）。判据是上文的 `unmetDependencies`，与 runtime 的启动告警、WebUI 的「需要处理」相同：后台激活的插件提供的服务在它完成前不对外，依赖它的插件只是在等，不算未就绪。
 
 ---
 

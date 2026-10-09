@@ -13,7 +13,7 @@ import {
   optional,
   provide,
 } from '@aalis/core';
-import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
 
@@ -1169,8 +1169,8 @@ function resolvePersistPath(input: string): string {
   const s = input.trim();
   if (!s) return configSchema.persistPath.default;
   if (!isStorageUri(s)) {
-    throw new Error(
-      `plugin-scheduler 配置错误: persistPath="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/scheduler-jobs.json），或删掉该键使用默认值`,
+    throw configError(
+      `persistPath="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/scheduler-jobs.json），或删掉该键使用默认值`,
     );
   }
   return s;

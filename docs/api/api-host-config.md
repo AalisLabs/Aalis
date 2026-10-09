@@ -50,7 +50,7 @@ interface HostConfig {
   getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(instanceId: string): T;
   setPluginConfig(instanceId: string, config: Record<string, unknown>): void;
   applyPluginConfig(instanceId: string, submitted: Record<string, unknown>): Promise<ApplyPluginConfigResult>;
-  removePluginConfig(instanceId: string): void;
+  removePluginConfig(instanceId: string): void; // 只改文档；落盘后不再被任何配置引用的密钥由宿主一并删掉
   isPluginDisabled(instanceId: string): boolean;
   setPluginEnabled(instanceId: string, enabled: boolean): void;
   getServicePreferences(): Record<string, string>;
@@ -125,7 +125,7 @@ async function disablePersistently(id: string): Promise<boolean> {
 | plugin-webui-server | 全局配置、插件配置、启停、实例增删与服务偏好路由 | 读写文档的路由与服务偏好路由返回 503 |
 | plugin-cli | 记录最后视图 `lastView` | 不记录，下次启动回到默认视图 |
 | plugin-mcp-client | `mcp_set_server_enabled` 经 `applyPluginConfig` 改配置并落盘 | 工具返回失败，不改运行态 |
-| plugin-package-manager | 卸载后清理配置块与禁用标记 | 不清理 |
+| plugin-package-manager | 卸载后清掉禁用标记，选了同时删除配置时删配置块 | 不整理 |
 
 ## 相关
 

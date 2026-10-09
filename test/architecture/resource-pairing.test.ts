@@ -32,6 +32,10 @@ const WHITELIST = new Map<string, string>([
   ['spawn api-process/index.ts', '契约声明，无实现'],
   ['spawn plugin-process-local/index.ts', 'ProcessService 实现方，timeout 的武装逻辑在此'],
   ['spawn runtime/providers.ts', '进程自重生与回滚安装：寿命由用户/外部决定，不设超时'],
+  [
+    'spawn create-aalis/cli.ts',
+    '脚手架在终端前台跑 npm install：输出直通终端，用户看着进度、按 Ctrl+C 中止，耗时随网络与包量变，没有合理上限',
+  ],
   ['spawn plugin-webui-server/auth.ts', 'detached 拉起浏览器，fire-and-forget 不等其结束'],
   [
     'spawn plugin-trigger-laya/sidecar.ts',

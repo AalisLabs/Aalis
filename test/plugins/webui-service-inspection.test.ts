@@ -139,11 +139,23 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       ['uninstall', { name: 'zz-market-probe' }],
       ['update', { targets: [{ name: 'zz-market-probe', version: '1.0.0' }] }],
     ] as const;
-    for (const [path, body] of marketCalls) expect((await market(path, body)).status, path).toBe(503);
+    // 503 的说明写明怎么办：启用提供 package-manager 的插件，或在项目目录用 npm 自己装卸
+    const absent = {
+      install:
+        '没有提供 package-manager 服务的插件在运行，市场装不了插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
+      uninstall:
+        '没有提供 package-manager 服务的插件在运行，市场卸不了插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
+      update: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它',
+    };
+    for (const [path, body] of marketCalls) {
+      const res = await market(path, body);
+      expect(res.status, path).toBe(503);
+      expect(await res.json(), path).toEqual({ error: absent[path] });
+    }
     const serviceDependents = vi.fn((_name: string) => ['zz-dep']);
     const refused = { ok: false, message: 'zz-market-refused' };
     const install = vi.fn(async (_name: string) => refused);
-    const uninstall = vi.fn(async (_name: string) => refused);
+    const uninstall = vi.fn(async (_name: string, _options?: { removeConfig?: boolean }) => refused);
     const update = vi.fn(async (_targets: unknown) => refused);
     host.provide(packageManager, {
       serviceDependents,
@@ -159,7 +171,14 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       expect(await reply.json(), path).toEqual(refused);
     }
     expect(install).toHaveBeenCalledWith('zz-market-probe');
-    expect(uninstall).toHaveBeenCalledWith('zz-market-probe');
+    // 卸载默认留配置；勾了「同时删除配置」才带 removeConfig，不是布尔值的回 400、不调服务
+    expect(uninstall).toHaveBeenCalledWith('zz-market-probe', { removeConfig: false });
+    expect((await market('uninstall', { name: 'zz-market-probe', removeConfig: true })).status).toBe(200);
+    expect(uninstall).toHaveBeenLastCalledWith('zz-market-probe', { removeConfig: true });
+    const malformed = await market('uninstall', { name: 'zz-market-probe', removeConfig: 'yes' });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: 'removeConfig 字段必须是布尔值' });
+    expect(uninstall).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenCalledWith([{ name: 'zz-market-probe', version: '1.0.0' }]);
     const managedGraph = await fetch(`${base}/api/marketplace/depgraph?name=${encodeURIComponent(webuiServer.name)}`, {
       headers,

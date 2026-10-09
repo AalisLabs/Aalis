@@ -7,6 +7,8 @@
 
 基于 LanceDB 的向量存储实现，提供 `vectorstore` 服务。
 
+LanceDB 只有 macOS（Apple 芯片）、Linux（x64、arm64）与 Windows（x64、arm64）的预编译件，Intel Mac 上装不上，那里用 [Flat 向量库](./plugin-vectorstore-flat.md)；`npm create aalis` 在这样的机器上不列它，见[安装与启动排障](../guide/troubleshooting.md#intel-mac-与-lancedb)。
+
 ## 插件声明
 
 ```typescript

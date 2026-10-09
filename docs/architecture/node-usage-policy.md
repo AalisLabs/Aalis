@@ -113,7 +113,7 @@
 - **`create-aalis-plugin`** — `node:fs`（`existsSync`）+ `node:fs/promises`（`mkdir`/`writeFile`）
   `npm create aalis-plugin` 的 CLI，在工作区外生成新插件目录，无法、也不应通过 storage 网关。
 
-- **`create-aalis`** — `node:fs`（`existsSync` / `mkdirSync` / `writeFileSync` / `readdirSync` / `realpathSync`）+ `node:child_process`（`spawnSync`，用于 `npm install`）+ `node:url`（`fileURLToPath`）
+- **`create-aalis`** — `node:fs`（`existsSync` / `mkdirSync` / `writeFileSync` / `readdirSync` / `realpathSync`）+ `node:child_process`（`spawn`，用于 `npm install`）+ `node:url`（`fileURLToPath`）
   `npm create aalis` 的 CLI，在工作区外脚手架一个可运行的独立项目（生成目录、`aalis.config.yaml`、安装依赖），同样无法、也不应通过 storage 网关。
 
 ### 浏览器自动化

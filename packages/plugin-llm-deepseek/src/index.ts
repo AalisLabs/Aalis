@@ -1001,7 +1001,7 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
   if (allModelIds.length === 0) {
     throw configError(
       discoveryError
-        ? `未配置 customModels，没有可注册的模型；${discoveryError}`
+        ? `取不到模型列表，没有可注册的模型：检查 apiKey、baseUrl 与网络后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
         : `已连接 ${shownBaseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
     );
   }
