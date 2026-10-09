@@ -60,19 +60,25 @@ export type MetadataOp =
 
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
+  /** 最近 limit 条活跃（未归档）消息；limit 为 `Infinity` 时返回全部活跃消息 */
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
+  /**
+   * 把最早的 count 条活跃消息标为归档（顺序与 getHistory 相同），返回归档条数；count 为 0 时什么都不归档。
+   * 归档的消息不再进 getHistory，getFullHistory 照样有。必填：压缩靠它落定，缺了没有降级可走，只能拒绝压缩
+   */
+  archiveOldest(sessionId: string, count: number): Promise<number>;
   // ── 为什么这些是可选、而 metadata 五方法是必填 ──
   //
   // 判据不是「三家后端有没有全实现」（它们对两组都全实现了），而是**消费方缺了它能不能
-  // 降级**：下面这七个与 metadata 段的 `listMetadataKeys` 共八个，守卫都是有真实降级动作的
-  // 活分支——`trimHistory` 缺失记 warn 后跳过归档、`deleteMessagesByTimestamps` 缺失把
-  // checkpoint 回滚记成一条 error 返回、`getFullHistory` 缺失回落 `getHistory`、
-  // `getRecentMessagesAcrossSessions` 缺失就不注入跨会话历史、`listMetadataKeys` 缺失时整体
-  // 清理退回按 `listMetadata` 枚举键。而 metadata 五方法没有可用降级：无处存 = 功能坏，守卫
-  // 只能抛，于是那些守卫全是死分支，留着只会教人照抄一套永远进不去的判断。
+  // 降级**：下面这六个与 metadata 段的 `listMetadataKeys` 共七个，守卫都是有真实降级动作的
+  // 活分支——`deleteMessagesByTimestamps` 缺失把 checkpoint 回滚记成一条 error 返回、
+  // `getFullHistory` 缺失回落 `getHistory`、`getRecentMessagesAcrossSessions` 缺失就不注入
+  // 跨会话历史、`listMetadataKeys` 缺失时整体清理退回按 `listMetadata` 枚举键。而 metadata
+  // 五方法没有可用降级：无处存 = 功能坏，守卫只能抛，于是那些守卫全是死分支，留着只会教人
+  // 照抄一套永远进不去的判断。
   //
-  // 所以「另八个也补齐必填」不是欠债而是**倒退**：那会删掉这些真实降级路径，
+  // 所以「另七个也补齐必填」不是欠债而是**倒退**：那会删掉这些真实降级路径，
   // 并把第三方后端的实现门槛一次抬满。要改这条判据，先说明每处降级各自该怎么办。
 
   /**
@@ -80,8 +86,6 @@ export interface MemoryService {
    * 中间件自行清理（后端不知道哪个命名空间属于哪一层，一并删掉会连带清掉用户没选的类型）。
    */
   clearAll?(): Promise<void>;
-  /** 归档旧消息，仅保留最近 keepRecent 条为活跃状态，返回被归档的条数 */
-  trimHistory?(sessionId: string, keepRecent: number): Promise<number>;
   /** 获取完整历史（含已归档消息），用于 UI 展示 */
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
 
@@ -281,20 +285,52 @@ declare module '@aalis/core' {
 
 // ----- 会话压缩 -----
 //
-// 压缩把较早的历史压成摘要、只留最近若干条进上下文。提供方：plugin-memory-summary（用量达到自动压缩线时它自己触发）；
-// 使用方：plugin-session-server（手动压缩；功能位与用量条目的压缩线看这个服务在不在）。
-// 进度经 'session:compressing' 广播，会话服务转成时间线上的压缩通知。
+// 压缩把切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样接在摘要后面。提供方：plugin-memory-summary
+// （回合结束时用量到线，它自己在后台触发）；使用方：plugin-session-server（手动压缩；功能位与用量条目的压缩线看这个
+// 服务在不在）。进度经 'session:compressing' 广播，会话服务转成时间线上的压缩通知。
 
 /** 会话压缩服务 */
 export interface CompressionService {
   /**
-   * 压缩一个会话：manual 是 owner 手动，auto 是用量达到 autoThreshold 时提供方自己触发。压完才落定；没有压成时拒绝，
-   * 原因在错误里：这个会话正在压缩或生成摘要、记忆或摘要模型不在、模型失败只做了裁切、期间会话被清空。
-   * 历史不多于要保留的条数时什么都不做，照常落定
+   * 把切分点之前的全部活跃历史压成一份摘要；manual 是 owner 手动，短对话也完整压一次。压成才落定；没压成时以原因拒绝：
+   * 这个会话正在压缩、记忆或摘要模型不在、模型失败、期间被清空或历史被改动。没有可压的对话（历史为空、只剩分隔标记）
+   * 时什么都不做，照常落定
    */
-  compress(sessionId: string, reason: 'manual' | 'auto'): Promise<void>;
-  /** 自动压缩的使用率（0 到 1，与 api-agent 的 token:usage 里 usageRatio 同一口径）；0 表示不自动压缩 */
-  readonly autoThreshold: number;
+  compress(sessionId: string, request: { reason: 'manual' }): Promise<void>;
+  /**
+   * 这个会话的自动压缩线（占窗口比例，与 api-agent 的 token:usage 里 usageRatio 同一口径）；设为 0 时为 undefined。
+   * 实际在它与裁剪预算占窗口的比例中较小的那个上压缩（见 compressionDue）。platform 是入口平台：没有出生平台的会话按它选平台档
+   */
+  compressAt(sessionId: string, platform?: string): number | undefined;
+}
+
+/** 一次压缩判定用的量，取自真实回合的一次模型调用 */
+export interface CompressionUsage {
+  /** 这次调用的输入量（token） */
+  used: number;
+  /** 这次调用所用模型的上下文窗口（token） */
+  contextWindow: number;
+  /** 硬裁剪的上限（token） */
+  tokenBudget: number;
+  /** 历史与工具结果占的 token：全量压缩能压掉的部分 */
+  compressible: number;
+}
+
+/** 压缩的触发线：缺省或 0 表示这一维不判 */
+export interface CompressionLines {
+  /** 自动压缩线，占窗口比例 */
+  compressAt?: number;
+}
+
+/**
+ * 是否该压缩。用量一维的线是 min(压缩线 × 窗口, 裁剪预算)：压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪。
+ * 用量到线、且能压掉的部分至少是线的一半时该压缩：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；压不掉的
+ * 部分（人设、工具定义等）再大也不会让它空转
+ */
+export function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean {
+  if (!lines.compressAt) return false;
+  const line = Math.min(lines.compressAt * usage.contextWindow, usage.tokenBudget);
+  return usage.used >= line && usage.compressible >= line / 2;
 }
 
 declare module '@aalis/core' {

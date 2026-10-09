@@ -207,11 +207,8 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     headerText: '[HISTORY-HEADER]',
     toolEnabled: false,
   });
-  await app.plugin(memorySummaryPlugin, {
-    // 阈值拉高 + 关自动压缩：本测试内不触发任何后台摘要 LLM 调用
-    threshold: 9999,
-    autoCompressThreshold: 0,
-  });
+  // 用量远不到默认压缩线（窗口 32000 的 0.8）：本测试内不触发任何后台摘要 LLM 调用
+  await app.plugin(memorySummaryPlugin);
   await app.plugin(createProbeContributionPlugin(views, hookLayouts));
   await app.plugin(agentPlugin, {
     systemPrompt: 'PERSONA-BASE-PROMPT',

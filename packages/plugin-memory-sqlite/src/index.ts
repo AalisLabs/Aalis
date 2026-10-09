@@ -211,7 +211,10 @@ export class SQLiteMemoryService implements MemoryService {
         LIMIT ?
       ) sub ORDER BY timestamp ASC, id ASC
     `);
-    const rows = stmt.all(sessionId, limit) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
+    // LIMIT 绑不了 Infinity，取负数即不限条数
+    const rows = stmt.all(sessionId, limit === Infinity ? -1 : limit) as Array<
+      Parameters<typeof SQLiteMemoryService.rowToMessage>[0]
+    >;
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
@@ -300,14 +303,15 @@ export class SQLiteMemoryService implements MemoryService {
     return out.reverse();
   }
 
-  async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
+  async archiveOldest(sessionId: string, count: number): Promise<number> {
+    // 与 getHistory 同序：id 次键让同毫秒的消息按插入序归档
     const stmt = this.db.prepare(`
       UPDATE messages SET archived = 1
-      WHERE sessionId = ? AND archived = 0 AND id NOT IN (
-        SELECT id FROM messages WHERE sessionId = ? AND archived = 0 ORDER BY timestamp DESC LIMIT ?
+      WHERE id IN (
+        SELECT id FROM messages WHERE sessionId = ? AND archived = 0 ORDER BY timestamp ASC, id ASC LIMIT ?
       )
     `);
-    return Number(stmt.run(sessionId, sessionId, keepRecent).changes);
+    return Number(stmt.run(sessionId, count).changes);
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {

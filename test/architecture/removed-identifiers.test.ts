@@ -100,6 +100,11 @@ const REMOVED: Array<[string, string]> = [
   ['MarketPackage', 'WebUI 市场页自带的包类型，改用 api-webui 的 MarketplacePackage 与 SystemComponent'],
   ['vnd.npm.install-v1', '市场按精简元数据取整份版本清单，改取每包的 /{包}/latest'],
   ['missingServices', 'webui-server 只看直接提供者的缺服务判据，由 api-doctor 沿依赖链追到根的 unmetDependencies 取代'],
+  ['trimHistory', '记忆后端按保留条数归档，由全量压缩落定用的 archiveOldest 取代'],
+  ['autoThreshold', '压缩服务的全局自动压缩线，由按会话取的 compressAt 取代'],
+  ['autoCompressThreshold', '摘要插件的全局自动压缩线配置，由会话设置项 compressAt 取代'],
+  ['selectMessagesToSummarize', '摘要插件按保留条数选待摘要区间，由全量压缩的切分点取代'],
+  ['getHistoryProbeLimit', '摘要插件按条数探测历史，由全量压缩读全部活跃历史取代'],
 ];
 
 /**
@@ -146,6 +151,9 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ['plugin-user-profile', "'instruct", 'user-profile 查看与增删第三方行为指令的 /instruct 指令族'],
   ['plugin-user-profile', 'api-authority', 'user-profile 只为判第三方行为指令的发言人等级而用的权限服务'],
   ['plugin-user-profile', 'api-persona', 'user-profile 只为按人设名给第三方行为指令分堆而用的人设服务'],
+  // 常见的词，只在压缩的契约与实现里查
+  ['api-memory', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
+  ['plugin-memory-summary', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
   ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
   [
     'plugin-tools',

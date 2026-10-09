@@ -52,6 +52,6 @@ export default definePlugin({
 - `listMetadata` 逐行解析：`data` 不是 JSON 对象的行（手改或损坏）跳过并记一条 warn，点名命名空间与键，同一命名空间的其余条目照常返回。`listMetadataKeys` 只取键、不读 `data`，跳过的行也在其中：各插件经 `/clear` 整体清空命名空间时连同它们一并删除。`updatedAt` 读不出（被改成无法解析的文本或 BLOB）的行照常返回，`updatedAt` 记为 0
 - 开库后设 WAL 日志模式与 NORMAL 同步级别：读写互不阻塞；NORMAL 只在检查点时刷盘，系统崩溃或断电可能丢掉最后几次提交，库文件不会损坏。遇锁（别的进程正在写这个库）最多等 5 秒
 - `commitMetadata` 与 `deleteMessagesByTimestamps` 在一个事务里执行，中途出错整批回滚
-- `getHistory()`（默认 50 条）只取未归档消息，倒序取最新 N 条后正序返回；`trimHistory()` 是把旧消息标记为归档，不做物理删除
+- `getHistory()`（默认 50 条，传 `Infinity` 取全部）只取未归档消息，倒序取最新 N 条后正序返回；`archiveOldest()` 把最早的若干条未归档消息标记为归档，不做物理删除
 - `/clear` 经命令插件调用 `clearSession()`（删除该会话全部消息，含归档）；`/clear all` 调用 `clearAll()`，只清空 `messages` 表。两者均仅在清理类型为空或包含 `context` 时执行。`metadata` 表不经这两个方法清理，各命名空间由归属插件在 `memory:clear` 中间件里自行删除（见 [plugin-commands](./plugin-commands.md) 的「`/clear` 类型」一节）
 - dispose 时关闭数据库连接；激活时开库之后的任何一步失败（撞库、设 WAL、建表等），也先关掉刚打开的连接再报错
