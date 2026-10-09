@@ -1,10 +1,9 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
-import { resolveSessionOrigin } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { MEMORY_RECALL_SCOPE_SETTING, type MemoryRecallScope, memory } from '@aalis/api-memory';
-import { sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
@@ -173,20 +172,6 @@ function truncate(text: string | undefined | null, max: number): string {
   return `${s.slice(0, max)}…[已截断，还剩 ${remaining} 个字符未展示]`;
 }
 
-function parsePlatform(sessionId: string): string {
-  return sessionId.split(':')[0] ?? '';
-}
-
-/**
- * 检索的当前平台（platform 可见范围与房间的召回范围按它算）：房间会话按出生平台（api-gateway 的
- * resolveSessionOrigin），不论从哪个入口驱动，owner 从 WebUI 往群里插话时不召回 owner 自己的 WebUI 会话；
- * 没有出生平台的会话按入口平台，入口也缺省时按会话 id 推
- */
-function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string {
-  if (!sessionId) return entryPlatform ?? '';
-  return resolveSessionOrigin(sessionId)?.platform ?? entryPlatform ?? parsePlatform(sessionId);
-}
-
 /** 从消息文本中抽取 @提及的用户 ID（各 adapter 输出统一 <at id="X"> 标签） */
 function extractMentions(text: string): string[] {
   if (!text) return [];
@@ -296,7 +281,10 @@ const uses = {
   embedding,
   memory: optional(memory),
   tools: optional(tools),
-  /** 房间的召回范围（会话配置 memoryRecallScope）；不在场时只按插件配置 */
+  /**
+   * 房间的召回范围（会话配置 memoryRecallScope），与当前会话、候选所在会话的出生平台（子会话取根会话的）。不在场时只按
+   * 插件配置：当前平台取入口平台，同平台过滤只认向量记下的入口平台
+   */
   sessionManager: optional(sessionManager),
   events,
   hooks,
@@ -380,6 +368,20 @@ async function run({
   /** 插件配置对应的可见范围：user 档是「全库可见 + 同用户加权」，可见范围同 all */
   const cfgVisibility: Visibility =
     cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
+
+  /** 会话管理记下的出生平台（子会话取根会话的）；会话管理不在或会话没有出生平台时为 undefined */
+  function originPlatformOf(sessionId: string): string | undefined {
+    const sm = sessionManager.current;
+    return sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform;
+  }
+
+  /**
+   * 检索的当前平台（platform 可见范围与房间的召回范围按它算）：房间会话按出生平台，不论从哪个入口驱动，owner 从 WebUI
+   * 往群里插话时不召回 owner 自己的 WebUI 会话；没有出生平台的会话按入口平台
+   */
+  function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string {
+    return (sessionId === undefined ? undefined : originPlatformOf(sessionId)) ?? entryPlatform ?? '';
+  }
 
   /**
    * 当前会话的可见范围：插件配置再按房间的召回范围（会话配置 memoryRecallScope）收窄。
@@ -505,9 +507,10 @@ async function run({
           case 'session':
             return c.metadata.sessionId === scope.curSessionId;
           case 'platform':
+            // 向量记下的是那一轮的入口平台：房间里经 WebUI 插的话记为 webui，再按会话记下的出生平台认回房间的平台
             return (
               (c.metadata.platform as string) === scope.curPlatform ||
-              parsePlatform(c.metadata.sessionId as string) === scope.curPlatform
+              originPlatformOf(c.metadata.sessionId as string) === scope.curPlatform
             );
           default:
             return true;
@@ -658,7 +661,7 @@ async function run({
         role: 'user',
         userId: msg.userId ?? '',
         nickname: msg.nickname ?? '',
-        platform: msg.platform ?? parsePlatform(msg.sessionId),
+        platform: msg.platform,
         groupName: msg.groupName ?? '',
         groupId: msg.groupId ?? '',
         sessionType: msg.sessionType ?? '',
@@ -715,7 +718,8 @@ async function run({
         // 不会误中 bot 自身；空串与 user 侧缺省语义一致
         userId: selfUserId,
         nickname,
-        platform: parsePlatform(sessionId),
+        // 与 user 侧同一口径：这一轮的入口平台
+        platform: (meta[WellKnownMetadataKeys.Platform] as string | undefined) ?? '',
         groupName: (meta[WellKnownMetadataKeys.GroupName] as string | undefined) ?? '',
         groupId: (meta[WellKnownMetadataKeys.GroupId] as string | undefined) ?? '',
         sessionType: (meta[WellKnownMetadataKeys.SessionType] as string | undefined) ?? '',

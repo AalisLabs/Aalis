@@ -70,7 +70,9 @@ async function setup(crossSessionMode: string) {
 }
 
 async function recallTexts(recall: ToolHandler, scope?: string) {
-  const out = JSON.parse(await recall({ query: '记忆', ...(scope ? { scope } : {}) }, { sessionId: 'onebot:g1' }));
+  const out = JSON.parse(
+    await recall({ query: '记忆', ...(scope ? { scope } : {}) }, { sessionId: 'onebot:g1', platform: 'onebot' }),
+  );
   return (out.results ?? []).map((r: { text: string }) => r.text).join('\n');
 }
 

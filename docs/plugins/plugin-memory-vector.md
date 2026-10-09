@@ -79,7 +79,7 @@ export default definePlugin({
    （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
    `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
-可见范围为同平台时（`crossSessionMode: platform`、会话配置 `memoryRecallScope` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取房间的出生平台（[api-gateway](../api/api-gateway.md#出生平台解析) 的 `resolveSessionOrigin`），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台，入口也缺省时取会话 ID 第一个 `:` 之前的一段。候选向量记下的平台或其会话 ID 的第一段等于当前平台，即算同平台。
+可见范围为同平台时（`crossSessionMode: platform`、会话配置 `memoryRecallScope` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台。向量入库时记下的平台（`metadata.platform`）是那一轮的入口平台，user 与 assistant 两侧同一口径：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`。候选向量记下的平台等于当前平台，或它所在会话记下的出生平台等于当前平台，即算同平台；平台都不从会话 ID 推。
 
 ## 按房间收窄召回
 
@@ -103,4 +103,4 @@ export default definePlugin({
 - **vectorstore**: 向量存储服务（如 plugin-vectorstore-flat 或 plugin-vectorstore-lancedb）
 - **embedding**: 文本嵌入服务（如 plugin-embedding-ollama 或 plugin-embedding-openai）
 - **memory**（可选）: 消息存储服务，两个用途：提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身；记忆元数据存放存量标记（见上节），缺失时存量向量按当前模型对待。该服务在调用点惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效。plugin-memory-inmemory 的元数据不持久，与持久化向量库（plugin-vectorstore-flat / plugin-vectorstore-lancedb）搭配时，每次重启都会按当时的模型重记存量标记
-- **session-manager**（可选）: 读房间的 `memoryRecallScope`（见「按房间收窄召回」），在调用点现取；缺失时只按插件配置
+- **session-manager**（可选）: 读房间的 `memoryRecallScope`（见「按房间收窄召回」）与会话记下的出生平台，在调用点现取；缺失时只按插件配置，当前平台取入口平台，同平台过滤只认向量记下的入口平台

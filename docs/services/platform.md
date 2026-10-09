@@ -18,7 +18,7 @@
 export interface PlatformAdapter {
   adapterName: string;                       // 显示名，如 'OneBot' / 'CLI'
   platform: string;                          // 平台标识，如 'onebot'/'cli'/'webui'
-  sessionTypes?: readonly string[];          // 本平台可能发出的 sessionType 枚举（消费方据此生成作用域 UI，勿臆造）
+  sessionTypes?: readonly SessionTypeDecl[]; // 平台类型：类型名与一对一还是多方；不声明的平台整个算一个一对一类型 private
 
   getConnections(): PlatformConnection[];    // 必须：当前所有连接快照
   sendMessage(                               // 必须：向某 sessionId 发纯文本
@@ -41,6 +41,8 @@ export interface PlatformAdapter {
 
 `PlatformAdapterEntry`（`src/index.ts`）——helper 返回的条目：`{ instance: PlatformAdapter; contextId: string; label?: string }`。
 
+`SessionTypeDecl`（`src/index.ts`）——平台类型：`name`（类型名，非空、不含 `:`、不是 `*`，与作用域 `平台:类型:目标` 的第二段同一套写法）/ `multiParty`（多方为 true，一对一为 false）。类型名由平台自定，消息在 `IncomingMessage.sessionType` 上带它。
+
 ### 聚合 / 路由 helper（纯函数，第一参是 `ServiceRef<PlatformAdapter>`）
 
 | helper | 作用 |
@@ -51,6 +53,8 @@ export interface PlatformAdapter {
 | `aggregatePlatformConnections(source)` | 聚合所有连接 |
 | `aggregatePlatformDetails(source)` | 聚合展示详情（含 `contextId` + `connections`） |
 | `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份；同平台装了多个实例时，取第一个认得这个会话的实例给出的身份 |
+| `sessionTypesOf(adapter)` | 平台的类型：声明的条目；没声明（没写、空列表，或平台没有适配器）时为 `[{ name: 'private', multiParty: false }]` |
+| `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared` |
 | `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底） |
 | `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错，见下） |
 | `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（无 adapter 接管、或 adapter 不支持 `callAction` 则抛错） |
@@ -63,8 +67,8 @@ export interface PlatformAdapter {
 
 ### 参考实现（provider）
 
-- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `canHandle`、`getSelfIdentity`、`callAction`，`sessionTypes: ['group','private']`，在插件 `apply` 里注册。它可以装多个实例（`reusable`），每个实例可带多个账号：`canHandle` 只认本实例连接里的账号（含配置里写明、连接还没上来的），会话 ID `onebot:<selfId>:…` 因此按账号路由到所属实例。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
-- **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；`sessionTypes: []` 表示单会话不区分类型。
+- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `canHandle`、`getSelfIdentity`、`callAction`，声明 `group`（多方）、`private`（一对一）、`channel`（多方）三个类型，入站消息带类型名与机器人账号（`selfId`），在插件 `apply` 里注册。它可以装多个实例（`reusable`），每个实例可带多个账号：`canHandle` 只认本实例连接里的账号（含配置里写明、连接还没上来的），会话 ID `onebot:<selfId>:…` 因此按账号路由到所属实例。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
+- **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；不声明类型，整个平台算一个一对一类型 `private`。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。
 
@@ -74,8 +78,8 @@ export interface PlatformAdapter {
 - **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-authority**：`getPlatformNames(platform)` 进可选作用域候选（`src/index.ts`）。
-- **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypes` 生成 `gateway-scopes` 笛卡尔积。
-- **plugin-session-manager**：`getPlatformNames(platform)` 汇总已注册平台名，供页面下拉框使用；房间建档时用 `resolvePlatformBySession` 解析出接管它的实例，记进 `SessionInfo.originInstance`，供会话列表按实例分组（`src/index.ts`）。
+- **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypesOf` 生成 `gateway-scopes` 笛卡尔积（没声明类型的平台列 `<平台>:private`）。
+- **plugin-session-manager**：房间建档时按入站消息的平台取适配器的类型声明（`sessionTypesOf`），经 api-gateway 的 `chatScopeOf` 记下聊天窗口；用 `resolvePlatformBySession` 解析出接管它的实例，记进 `SessionInfo.originInstance`，供会话列表按实例分组（`src/index.ts`）。
 - **plugin-tool-onebot**：平台动作经 `callPlatformAction(platform, 'onebot:<selfId>:internal:0', action, params)` 发出，按账号路由到所属实例；撤回自己发的消息、处理好友申请与群请求按会话（或账号）用 `resolvePlatformBySession` 找到所属实例，自身禁言列表汇总所有 onebot 实例（`src/index.ts`）。
 
 ## 4. 写一个 provider
@@ -84,15 +88,18 @@ export interface PlatformAdapter {
 
 **必须实现**：`adapterName`、`platform`、`getConnections()`、`sendMessage()`。
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，`sendPlatformMessage` / `callPlatformAction` 都找不到你的 adapter。插件能装多个实例（`reusable`）时同样**必须**实现 `canHandle()`，只认自己实例的会话：前缀兜底会让第一个实例接下这个平台的全部会话。
-**按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`sessionTypes`（让 UI 能列出你的真实会话类型）。
+**按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）。
+**有多方会话就必须声明**：`sessionTypes`（类型名与一对一还是多方），并在入站消息上带类型名。不声明的平台整个算一个一对一类型 `private`：它的群会按一对一记下，群里任何人都会被当成那个唯一的对端。消息带了声明里没有的类型名时按多方记下，session-manager 每个平台与类型名告警一次。
 
 ### 会话 ID 约定
 
-多人房间（群、私聊、频道）的会话 ID 必须以本适配器的平台名加冒号开头，即 `<platform>:<...>`；实现了 `canHandle()` 的适配器也要遵守。session-manager 经 api-gateway 的 `resolveSessionOrigin` 按这个前缀认出房间的出生平台：房间不论从哪个入口驱动（包括 owner 从 WebUI 往群里插话），都按出生平台的平台档选工具组、人设与模型，并列进会话列表的「IM 房间」区。路由仍优先 `canHandle()`，选档只看前缀。
+会话表里还没有记录的会话收到第一条原生入站（不带 `source`）时，session-manager 按这条消息建档，记下出生平台（消息的平台）与聊天窗口（平台类型名、多方标记、机器人账号、目标），之后不变；这几项是会话字段（`originPlatform`、`originChat`），读方按字段判，不从 ID 里拆。
 
-- 不带前缀的 ID 只适合单用户会话（如 CLI 的 `cli-default`），且不要含单冒号：带单冒号的 ID 一律按第一个 `:` 之前的一段认作出生平台。内部会话 ID 要分段时用 `::`（如 workflow 的 `workflow::<runId>::<nodeId>`）。
-- ID 前缀与平台名不一致时（平台名为 `<平台甲>`，ID 写成 `<缩写>:...`、靠 `canHandle()` 认领），这个平台的全部房间（包括原生入站）都按 `<缩写>` 这份多半不存在的平台档选档，落到全局默认。session-manager 收到这类真人入站（不带 `source`，WebUI、CLI 插话除外）时，若前缀既不是发来消息的平台、也不是已注册的平台名，按前缀告警一次，不纠正。
-- 多人房间的 ID 不带冒号时出生平台认不出来：从 WebUI 驱动时按入口平台选档，登记后列在「我的会话」区。
+选平台档与会话列表分区目前仍按 ID 前缀认平台（api-gateway 的 `resolveSessionOrigin`），与会话记下的出生平台不是一回事：多人房间（群、私聊、频道）的会话 ID 必须以本适配器的平台名加冒号开头，即 `<platform>:<...>`；实现了 `canHandle()` 的适配器也要遵守。房间不论从哪个入口驱动（包括 owner 从 WebUI 往群里插话），都按这个前缀的平台档选工具组、人设与模型，并列进会话列表的「IM 房间」区。路由仍优先 `canHandle()`。
+
+- 不带前缀的 ID 只适合单用户会话（如 CLI 的 `cli-default`），且不要含单冒号：带单冒号的 ID 一律按第一个 `:` 之前的一段认作平台前缀。内部会话 ID 要分段时用 `::`（如 workflow 的 `workflow::<runId>::<nodeId>`）。
+- ID 前缀与平台名不一致时（平台名为 `<平台甲>`，ID 写成 `<缩写>:...`、靠 `canHandle()` 认领），这个平台的全部房间都按 `<缩写>` 这份多半不存在的平台档选档，落到全局默认。
+- 多人房间的 ID 不带冒号时选档认不出出生平台：从 WebUI 驱动时按入口平台选档，登记后列在「我的会话」区。
 
 ### 入站消息：出站接口之外还需 emit
 
@@ -117,7 +124,10 @@ export default definePlugin({
     const adapter: PlatformAdapter = {
       adapterName: 'Foo',
       platform: 'foo',
-      sessionTypes: ['private', 'group'],
+      sessionTypes: [
+        { name: 'private', multiParty: false },
+        { name: 'group', multiParty: true },
+      ],
 
       getConnections(): PlatformConnection[] {
         return [{ id: 'foo:bot', platform: 'foo', status: online ? 'online' : 'offline' }];

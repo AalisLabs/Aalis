@@ -20,14 +20,13 @@
 
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
-import { resolveSessionOrigin } from '@aalis/api-gateway';
 import {
   MEMORY_RECALL_SCOPE_SETTING,
   type MemoryRecallScope,
   memory,
   type RecentMessageRecord,
 } from '@aalis/api-memory';
-import { sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -136,14 +135,6 @@ function effectiveHistoryScope(cfgScope: HistoryScope, room: MemoryRecallScope |
   return cfgScope;
 }
 
-/**
- * same-platform 按哪个平台取：房间会话按出生平台（api-gateway 的 resolveSessionOrigin），不论从哪个入口驱动，
- * owner 从 WebUI 往群里插话时不取 owner 自己的 WebUI 会话；没有出生平台的会话（WebUI、CLI 等）按入口平台。
- */
-function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string | undefined {
-  return (sessionId ? resolveSessionOrigin(sessionId)?.platform : undefined) ?? entryPlatform;
-}
-
 function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined;
 }
@@ -187,7 +178,10 @@ const uses = {
   logger,
   contributions,
   tools: optional(tools),
-  /** 房间的召回范围（会话配置 memoryRecallScope）；不在场时只按插件配置 */
+  /**
+   * 房间的召回范围（会话配置 memoryRecallScope），与当前会话的出生平台（子会话取根会话的）。不在场时只按插件配置，
+   * 当前平台取入口平台
+   */
   sessionManager: optional(sessionManager),
 };
 
@@ -204,6 +198,16 @@ export default definePlugin({
     logger.info(
       `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
     );
+
+    /**
+     * same-platform 按哪个平台取：房间会话按会话管理记下的出生平台（子会话取根会话的），不论从哪个入口驱动，
+     * owner 从 WebUI 往群里插话时不取 owner 自己的 WebUI 会话；没有出生平台的会话（WebUI、CLI 等）按入口平台
+     */
+    function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string | undefined {
+      const sm = sessionManager.current;
+      if (!sm || sessionId === undefined) return entryPlatform;
+      return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform ?? entryPlatform;
+    }
 
     /** 按当前会话所在房间的召回范围收窄作用域；每次查询现算，房间或平台档改了下一轮即生效 */
     function roomScope(

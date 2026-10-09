@@ -14,6 +14,7 @@
 
 import type { AgentService } from '@aalis/api-agent';
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
+import { resolveSessionType, type SessionTypeDecl } from '@aalis/api-platform';
 import { defineService } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
@@ -181,24 +182,31 @@ export function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | '
   return '';
 }
 
+/** 入站消息所在的聊天窗口：作用域 `平台:类型:目标` 的三段与多方标记 */
+export interface ChatScope {
+  platform: string;
+  /** 平台类型名 */
+  type: string;
+  /** 多方为 true，一对一为 false；安全判断只认它，不认类型名 */
+  multiParty: boolean;
+  /** 消息带的类型名不在平台的声明里（已按多方处理），调用方据此告警 */
+  undeclared: boolean;
+  /** 目标：多方为窗口 id（群号），一对一为对端账号；消息上没有时为空串 */
+  targetId: string;
+}
+
 /**
- * 按 `<platform>:<self>:<type>:<target>` 约定从会话 ID 推断会话类型与作用域里的 targetId，供消息上
- * 没有 sessionType 的场合（定时任务、workflow 等合成回合）使用。这是适配器的命名约定而非契约：只认前缀等于
- * platform 的 id，不符合约定返回 undefined；推断结果只供调用方自己判断，不要写回消息。
- * 子任务会话（`<父会话 id>::<uuid>`）不推断：它沿用父会话的 platform，按段切分会把父会话的类型连同
- * 带后缀的假目标安到子任务头上。targetId 与 {@link extractTargetId} 同口径：群聊取群号、私聊取对方 id，
- * 频道的 id 段（`<guild>:<channel>`）与消息上的字段对不上，取空串。
+ * 入站消息所在的聊天窗口，types 是这个平台的类型（api-platform 的 sessionTypesOf）：平台取 message.platform，
+ * 类型名与多方标记经 resolveSessionType，目标按多方标记取（多方取 groupId，一对一取 userId：OneBot 的临时会话在私聊消息上
+ * 也带群号，所以按类型取，不按有没有 groupId 取）
  */
-export function inferSessionScope(
-  platform: string | undefined,
-  sessionId: string,
-): { sessionType: NonNullable<IncomingMessage['sessionType']>; targetId: string } | undefined {
-  if (sessionId.includes('::')) return undefined;
-  const parts = sessionId.split(':');
-  if (parts.length < 4 || parts[0] !== platform) return undefined;
-  const t = parts[2];
-  if (t !== 'group' && t !== 'private' && t !== 'channel') return undefined;
-  return { sessionType: t, targetId: t === 'channel' ? '' : parts.slice(3).join(':') };
+export function chatScopeOf(
+  message: Pick<IncomingMessage, 'platform' | 'sessionType' | 'groupId' | 'userId'>,
+  types: readonly SessionTypeDecl[],
+): ChatScope {
+  const { name, multiParty, undeclared } = resolveSessionType(types, message.sessionType);
+  const targetId = (multiParty ? message.groupId : message.userId) ?? '';
+  return { platform: message.platform, type: name, multiParty, undeclared, targetId };
 }
 
 /** 房间会话的出生：平台与受众 */
@@ -214,7 +222,6 @@ export interface SessionOrigin {
  * （适配器没加载时同样钉死）。子任务 `<父会话>::<后缀>` 按父会话算。约定：多人房间的会话 id 以
  * `<platform>:` 开头；非房间的内部会话 id 不含单冒号（要分段用 `::`），截掉 `::` 之后不含 `:` 的 id
  * 返回 undefined，由调用方按入口平台处理。
- * 与 {@link inferSessionScope} 回答的问题不同（那个回答会话自己在触发闸门里算群还是私聊，子任务不推断），不要互相替代。
  */
 export function resolveSessionOrigin(sessionId: string): SessionOrigin | undefined {
   const cut = sessionId.indexOf('::');

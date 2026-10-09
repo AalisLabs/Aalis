@@ -8,7 +8,7 @@ import {
 } from '@aalis/api-agent';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
-import { gateway as gatewayService, resolveSessionOrigin } from '@aalis/api-gateway';
+import { gateway as gatewayService } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry, ThinkingLevels } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
@@ -18,6 +18,7 @@ import { messageArchive as messageArchiveService } from '@aalis/api-message-arch
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
 import {
+  rootSessionOf,
   type SessionConfig,
   type SessionConfigPatch,
   type SessionManagerService,
@@ -2475,11 +2476,7 @@ function run(caps: Caps): void {
         }
         config.persona = personaName;
       }
-      await smSvc.ensureSession(argv.session.sessionId, {
-        config,
-        createdBy: 'user',
-        ...(displayName ? { name: displayName } : {}),
-      });
+      await smSvc.ensureSession(argv.session.sessionId, { config, ...(displayName ? { name: displayName } : {}) });
       const lines = ['本对话已切换 →'];
       if (config.llm) lines.push(`· 模型: ${config.llm.provider}/${config.llm.model}`);
       if (config.persona) lines.push(`· 人设: ${config.persona}`);
@@ -2530,8 +2527,11 @@ function run(caps: Caps): void {
   caps.events.on('token:request', async data => {
     if (!data?.sessionId) return;
     // platform 是调用方的入口平台（owner 面会话的快照按它选档）；会话服务对房间不填、其余填连接的平台。
-    // 缺省时 IM 房间按出生平台、其余按 'webui'：它还是提示词贡献方的「当前平台」（按平台取跨会话料），不能缺省成空
-    const platform = data.platform ?? resolveSessionOrigin(data.sessionId)?.platform ?? 'webui';
+    // 缺省时 IM 房间按会话记下的出生平台（子会话取根会话的）、其余按 'webui'：它还是提示词贡献方的「当前平台」
+    //（按平台取跨会话料），不能缺省成空
+    const sm = caps.sessionManager.current;
+    const origin = sm && rootSessionOf(sm.getSession(data.sessionId), id => sm.getSession(id))?.originPlatform;
+    const platform = data.platform ?? origin ?? 'webui';
 
     try {
       const resolved = await agent.resolveLLM(platform, data.sessionId);
@@ -2543,7 +2543,6 @@ function run(caps: Caps): void {
       const tokenBudget = agent.computeTokenBudget(contextLength, maxTokens);
 
       // 与真实回合同一份会话解析：人设覆盖、结构化输出开关、额外提示都影响系统提示长度
-      const sm = caps.sessionManager.current;
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
 
       // 获取历史消息并构建基础消息列表

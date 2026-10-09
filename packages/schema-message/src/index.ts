@@ -186,8 +186,13 @@ export interface IncomingMessage {
    * 由 plugin-media 写入。
    */
   _attachmentDescriptions?: Array<string | undefined>;
-  /** 会话类型：群聊、私聊、频道等 */
-  sessionType?: 'group' | 'private' | 'channel';
+  /**
+   * 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一（如 OneBot 的 group、private、channel）。
+   * 不带时按 private、一对一
+   */
+  sessionType?: string;
+  /** 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id） */
+  selfId?: string;
   /**
    * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'）。
    * 平台适配器投递真人消息**不设置**此字段：带 source 的消息被视为内部注入——不经触发策略、
@@ -196,7 +201,7 @@ export interface IncomingMessage {
   source?: string;
   /** 群名称（仅群聊时可用） */
   groupName?: string;
-  /** 群组 ID（直接字段，无需从 sessionId 解析） */
+  /** 多方聊天窗口的 id，由适配器填（如 OneBot 的群号，频道为 `<guild>:<channel>`） */
   groupId?: string;
   /**
    * 群聊中发送者在群内的角色：owner=群主, admin=管理员, member=普通成员。

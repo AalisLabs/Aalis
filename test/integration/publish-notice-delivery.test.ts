@@ -3,6 +3,7 @@ import { agent } from '../../packages/api-agent/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import type { PublishOrigin } from '../../packages/api-publish/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -15,6 +16,7 @@ import { configSchema } from '../../packages/plugin-publish-review/src/config.js
 import { isNoticeUndelivered, ReviewNotices } from '../../packages/plugin-publish-review/src/notices.js';
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
 import type {
@@ -25,6 +27,8 @@ import type {
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin, type MockLLMOptions } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { storedRoom } from '../fixtures/rooms.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 const ROOM = 'onebot:10000:group:20001';
 const URL = 'https://works.invalid/w/test-work/';
@@ -45,6 +49,8 @@ async function boot(
   modelOptions: MockLLMOptions = {},
   /** 目标平台适配器对每条出站消息的回执；缺省立即确认收下，返回 undefined 表示没有适配器认领 */
   deliver: (message: OutgoingMessage) => Promise<OutboundDeliveryResult> | undefined = async () => ({ ok: true }),
+  /** 装上会话管理，会话表里预置这些已收录的房间 */
+  rooms?: string[],
 ) {
   const app = new App({ logLevel: 'error' });
   apps.push(app);
@@ -58,6 +64,10 @@ async function boot(
   ]);
   host.provide(storage, memoryStorage(files));
   const recorder: ChatModelRequest[] = [];
+  if (rooms) {
+    host.provide(memory, fakeMemory(Object.fromEntries(rooms.map(id => [id, storedRoom(id)]))) as never);
+    await app.plugin(sessionManagerPlugin);
+  }
   await app.plugin(createMockLLMPlugin({ responses, recorder, ...modelOptions }));
   await app.plugin(personaPlugin, { persona: 'test', personasDir: 'pluginData:/personas' });
   await app.plugin(gatewayPlugin);
@@ -429,7 +439,8 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
   });
 
   it('固定通知也计入会话限速，不能靠连续静默通知绕过回复上限', async () => {
-    const h = await boot([{ content: '{"message":"","mood":"平静"}' }]);
+    // 房间已收录：通知不带会话类型，流控按会话记下的聊天窗口判作用域
+    const h = await boot([{ content: '{"message":"","mood":"平静"}' }], {}, undefined, [ROOM]);
     await h.app.plugin(flowControlPlugin, { scopes: ['onebot:group'], rateLimitWindow: 60, rateLimitMaxReplies: 1 });
     await h.app.plugins.idle();
     expect(h.app.plugins.getPlugin(flowControlPlugin.name)?.state).toBe('active');

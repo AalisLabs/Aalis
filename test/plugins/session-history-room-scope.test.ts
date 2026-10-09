@@ -8,12 +8,14 @@ import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { roomScopeManager } from '../fixtures/room-scope.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 召回按房间收窄（session-history 服务）：session_get_history 与 onebot_get_session_history
 // 都经这个服务的规则链。房间 memoryRecallScope 在插件范围与各平台规则之前裁决：
 // session 时目标不是当前会话一律拒绝，platform 时跨平台拒绝。平台规则只能在它放行之后再收窄。
 // 访问规则按生产的宽松取值（群读私聊、跨群、跨私聊都开），拒绝只能来自房间范围。
+// 装上会话管理时三个房间已收录，同平台按会话记下的出生平台判；没有会话管理时没有出生平台，同平台范围读不到别的会话。
 // ════════════════════════════════════════════════════════════
 
 const SELF = '10000';
@@ -21,6 +23,7 @@ const CUR = `onebot:${SELF}:group:20001`;
 const OTHER_GROUP = `onebot:${SELF}:group:20002`;
 const PRIV = `onebot:${SELF}:private:30001`;
 const WEB = 'webui:console';
+const ROOMS = [CUR, OTHER_GROUP, PRIV].map(id => storedRoom(id));
 
 const apps: App[] = [];
 
@@ -52,7 +55,7 @@ async function setup(
     getHistory: async (sessionId: string) => [{ role: 'user', content: `${sessionId} 的原文`, timestamp: 1 }],
   } as never);
   host.provide(platform, adapter('onebot'));
-  if (room) host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles));
+  if (room) host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles, ROOMS));
   await app.pluginAll([
     { definition: sessionTools, config: { scope: historyScope } },
     {
@@ -108,10 +111,12 @@ describe('session-history: 召回按房间收窄', () => {
     expect(await generic(WEB)).toEqual({ error: expect.stringContaining('仅允许读取同平台会话历史') });
   });
 
-  it('session-manager 不在场：维持现状，交给插件范围与平台规则', async () => {
-    const { generic, onebot } = await setup('platform');
-    expect(await generic(OTHER_GROUP)).toMatchObject({ ok: true, sessionId: OTHER_GROUP });
-    expect(await generic(PRIV)).toMatchObject({ ok: true, sessionId: PRIV });
-    expect(await onebot('private', '30001')).toMatchObject({ ok: true, sessionId: PRIV });
+  it('session-manager 不在场：插件范围 all 时交给平台规则；platform 时没有记下的出生平台，读不到别的会话', async () => {
+    const all = await setup('all');
+    expect(await all.generic(OTHER_GROUP)).toMatchObject({ ok: true, sessionId: OTHER_GROUP });
+    expect(await all.onebot('private', '30001')).toMatchObject({ ok: true, sessionId: PRIV });
+    const platformScope = await setup('platform');
+    expect(await platformScope.generic(OTHER_GROUP)).toEqual({ error: expect.stringContaining('目标=unknown') });
+    expect(await platformScope.generic(CUR)).toMatchObject({ ok: true, sessionId: CUR });
   });
 });

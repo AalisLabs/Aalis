@@ -50,7 +50,7 @@ export default definePlugin({
 - `app:started` 后接管终端进入全屏界面；stdin / stdout 任一不是 TTY（日志重定向、容器、systemd）时不接管、不画界面，控制台日志照常输出，发往 cli 会话的消息退化为一行日志
 - 平台连接：界面在跑时一条在线的连接；不画界面时没有连接（运行状况写「没有连接」，不算离线）
 - 欢迎行下面的指路：界面起来后等插件状态静置（`plugins.idle()`），有失败或缺服务的插件时在聊天页加一行「有 N 个插件没起来，输入 /doctor 查看原因与修法」，N 是失败（`error`）的与缺服务的（按 api-doctor 的共享判据 `unmetDependencies`，只在等别的插件启动的不算）之和，与 `/doctor` 的「失败」「未就绪」两项之和一致；`commands` 服务里没有 `doctor` 指令时改说「按 Ctrl+L 看日志」，都起来了不加这一行
-- 用户输入经 `inbound:message` 事件发出（`platform: 'cli'`，`userId: 'console'`，即本地终端身份）
+- 用户输入经 `inbound:message` 事件发出（`platform: 'cli'`，`userId: 'console'`，即本地终端身份）。发出之前确认配置的会话已建档：会话表里没有它（第一次发消息、会话被删之后）就建档，创建来源写本插件登记的审批面名 `cli`，与 WebUI 新建的会话一样是 owner 的会话；已有的记录不改。没装会话管理时不建档。提交的各行依次发出，建档期间后一行（如一次粘贴的多行）不越过前一行；一行没发出去记 warn，不挡后面的行
 - 斜杠指令不在本插件内解析，由 `commands` 服务（plugin-commands）在 `inbound:command` 相位统一处理（如 `/help`、`/status`），执行结果经 `outbound:message` 回显到终端
 - 指令的意图确认（权限模型轴 B）：声明了 `confirm` 的指令由 plugin-commands 把确认提示作为消息发进聊天区，在输入框回复 `y` 后回车即确认，其它输入取消，60 秒无回复视为取消；回复在 `inbound:command` 相位被吞掉，不会当成对话发给模型。在 logs/status/help 视图下有消息（含确认提示）进入聊天区时，header 的 CHAT 页签会带计数高亮，Ctrl+T 切回 chat 即可看到并回答
 - sessionId 默认为 `cli-default`
