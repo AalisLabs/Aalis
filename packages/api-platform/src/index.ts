@@ -73,12 +73,8 @@ export interface PlatformAdapter {
    *   前缀兜底会让第一个实例接下所有同平台会话
    *
    * 与 LLMService.supportsModel 的设计意图对称：每个 provider 自报"我接不接这个 key"，
-   * 路由仍优先本方法，前缀只是未实现时的兜底；选档则只看前缀。
-   *
-   * 会话 id 约定（实现了本方法的适配器也要遵守）：多人房间的会话 id 必须以 `<platform>:` 开头
-   * （`platform` 即本适配器的平台名），session-manager 目前据此（api-gateway 的 `resolveSessionOrigin`）
-   * 按 id 前缀选档、分区。不带前缀的 id 只适合单用户会话（如 cli），且不要含单冒号：
-   * 带单冒号的 id 一律按第一个 `:` 之前的一段认作平台前缀。
+   * 路由优先本方法，前缀只是未实现时的兜底。会话 id 的写法归适配器自己：选层、场所与会话列表都读会话记下的字段，
+   * 不看 id。
    */
   canHandle?(sessionId: string): boolean | Promise<boolean>;
   /** 获取当前平台账号自身身份；多连接平台可用 sessionId 定位具体连接 */

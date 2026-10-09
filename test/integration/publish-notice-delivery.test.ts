@@ -58,7 +58,7 @@ async function boot(
   const host = app.bind({ events, provide, hooks, gateway, agent, tools });
   const files = new Map<string, string | Uint8Array>([
     [
-      'pluginData:/personas/test.yaml',
+      'pluginData:/personas/default.yaml',
       'name: 测试\ndescription: d\nprompt: p\noutputFormat:\n  message:\n    description: 回复\n    reply: true\n  mood:\n    description: 心情\n',
     ],
   ]);
@@ -69,7 +69,7 @@ async function boot(
     await app.plugin(sessionManagerPlugin);
   }
   await app.plugin(createMockLLMPlugin({ responses, recorder, ...modelOptions }));
-  await app.plugin(personaPlugin, { persona: 'test', personasDir: 'pluginData:/personas' });
+  await app.plugin(personaPlugin, { personasDir: 'pluginData:/personas' });
   await app.plugin(gatewayPlugin);
   await app.plugin(agentPlugin);
   await app.plugins.idle();

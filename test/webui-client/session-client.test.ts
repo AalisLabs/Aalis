@@ -42,6 +42,7 @@ function snapshot(sessionId: string, epoch: string, seq: number): Snapshot {
       childCount: 0,
       kind: 'owner',
       section: 'owner',
+      place: { key: 'workspace:default', kind: 'workspace', name: '默认工作区' },
       createdAt: 1,
       updatedAt: 1,
       running: false,

@@ -1,20 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import {
   isSessionConfigError,
   type SessionSetting,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
-import {
-  App,
-  definePlugin,
-  events,
-  type Logger,
-  type PluginDefinition,
-  provide,
-} from '../../packages/core/src/index.js';
+import { App, events, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -26,6 +18,7 @@ import {
   PERSONA,
   ROOM_CENTS,
   settingsPlugin,
+  THINK,
   TOOL_GROUPS,
 } from '../fixtures/session-settings.js';
 
@@ -35,7 +28,8 @@ import {
 // - 登记过的键才参与解析；插件停用后它的键不显示、不参与解析，值原样保留，重新启用后恢复；
 // - 写入按登记的字段校验，没登记的键与不合字段的值拒绝，null 删掉这一项、恢复继承；
 // - 同一个键可由几个插件以同一份定义登记；
-// - 全局默认、平台档与受众条目存放在宿主配置文档的 sessionConfig 里，按层读写；
+// - 全局默认、平台档与平台类型档存放在宿主配置文档的 sessionConfig 里，按层读写（层表与场所层见 session-layers.test.ts）；
+// - 只能设到场所为止的项（narrowest）不收进会话自己的覆盖；
 // - 登记表与各层的改动发 session:config:changed。
 // ════════════════════════════════════════════════════════════
 
@@ -92,22 +86,6 @@ async function setup({
   const layers = () => (doc ? app.bind({ hostConfig }).hostConfig.require().get('sessionConfig') : undefined);
   return { app, sm: host.sessionManager.require(), warns, changes: () => changes, layers };
 }
-
-/** 以插件实例提供一个平台适配器 */
-const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
-  definePlugin({
-    name,
-    provides: [platform],
-    uses: { provide },
-    apply: ({ provide }) => {
-      provide(platform, {
-        adapterName: name,
-        getConnections: () => [],
-        sendMessage: async () => {},
-        ...adapter,
-      } as never);
-    },
-  });
 
 describe('设置项登记', () => {
   it('登记过的键参与解析；插件停用后不列出、不参与解析，值原样保留；重新启用后恢复', async () => {
@@ -180,9 +158,9 @@ describe('设置项登记', () => {
     };
     const { sm, warns } = await setup({ doc, plugins: [settingsPlugin(SETTINGS, [ROOM_CENTS])] });
 
-    expect(sm.resolveConfig(GROUP)).toEqual({ remoteAgentRoomDailyCents: -1 });
-    expect(sm.resolveInheritance(GROUP).sources).toEqual({ remoteAgentRoomDailyCents: 'platform' });
-    expect(sm.resolveConfig(GROUP)).toEqual({ remoteAgentRoomDailyCents: -1 });
+    expect(sm.resolveConfig(GROUP, 'onebot')).toEqual({ remoteAgentRoomDailyCents: -1 });
+    expect(sm.resolveInheritance(GROUP, 'onebot').sources).toEqual({ remoteAgentRoomDailyCents: 'platform' });
+    expect(sm.resolveConfig(GROUP, 'onebot')).toEqual({ remoteAgentRoomDailyCents: -1 });
     expect(warns.filter(w => w.includes('remoteAgentRoomDailyCents'))).toHaveLength(1);
     await expect(sm.ensureSession(GROUP, { config: { remoteAgentRoomDailyCents: -1 } })).rejects.toThrow(
       'remoteAgentRoomDailyCents',
@@ -317,25 +295,105 @@ describe('设置项登记', () => {
   });
 });
 
-describe('各层：全局默认、平台档与受众条目', () => {
+describe('只能设到场所为止的项（narrowest）', () => {
+  const NARROW: SessionSetting = { ...PAPER_NAME, key: 'paperName', narrowest: 'place' };
+
+  it('写进会话自己的覆盖被拒（建会话、改会话、按 id 建档），清掉照收；全局默认、平台档、平台类型档照收；建子会话不复制它', async () => {
+    const save = vi.fn(async () => {});
+    const { sm } = await setup({
+      doc: { sessionConfig: { defaults: { paperName: '<默认白纸>' } } },
+      save,
+      plugins: [settingsPlugin(SETTINGS, [PERSONA, { ...NARROW, liveOnly: undefined }])],
+    });
+    const stored = await sm.createSession({ config: { persona: '<人设>' } });
+
+    for (const write of [
+      sm.createSession({ config: { paperName: '<白纸>' } }),
+      sm.updateSession(stored.id, { config: { paperName: '<白纸>' } }),
+      sm.ensureSession(GROUP, { config: { paperName: '<白纸>' } }),
+      sm.createChildSession(stored.id, { config: { paperName: '<白纸>' } }),
+    ]) {
+      await expect(write).rejects.toThrow('场所及以上');
+      await write.catch(err => expect(isSessionConfigError(err)).toBe(true));
+    }
+    await sm.updateSession(stored.id, { config: { paperName: null } });
+
+    await sm.updateLayer({ scope: 'defaults' }, { paperName: '<默认白纸二>' });
+    await sm.updateLayer({ scope: 'platform', platform: 'onebot' }, { paperName: '<平台白纸>' });
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { paperName: '<群白纸>' });
+    expect(sm.resolveConfig(stored.id).paperName).toBe('<默认白纸二>');
+    expect(sm.childConfig(stored.id)).toEqual({ persona: '<人设>' });
+  });
+
+  it('会话记录里留着的这类值（旧数据）不生效、压不过场所，各告警一次点名会话与键；父会话给子会话的默认值里的同样', async () => {
+    const record = { children: [], status: 'waiting', createdAt: 1, updatedAt: 1 };
+    const { sm, warns } = await setup({
+      stored: {
+        old: {
+          ...record,
+          id: 'old',
+          name: '旧',
+          children: ['old::a'],
+          config: { persona: '<人设>', paperName: '<会话里的>', sessionDefaults: { paperName: '<给子会话的>' } },
+        },
+        'old::a': { ...record, id: 'old::a', name: '旧子任务', parentId: 'old', config: {} },
+      },
+      plugins: [settingsPlugin(SETTINGS, [PERSONA, NARROW])],
+    });
+    await sm.updateLayer({ scope: 'place', key: 'workspace:default' }, { paperName: '<场所的>' });
+
+    expect(sm.getOwnConfig('old')).toEqual({ persona: '<人设>' });
+    expect(sm.resolveConfig('old').paperName).toBe('<场所的>');
+    expect(sm.resolveInheritance('old::a').sources.paperName).toBe('place');
+    expect(sm.resolveConfig('old::a').paperName).toBe('<场所的>');
+    expect(warns.filter(w => w.includes('paperName') && w.includes('会话 old'))).toHaveLength(2);
+  });
+
+  it('登记写别的值被拒', async () => {
+    const { app, sm } = await setup({ plugins: [settingsPlugin(SETTINGS, [PERSONA, NARROW])] });
+    expect(sm.listSettings().map(s => [s.key, s.narrowest])).toEqual([
+      ['persona', undefined],
+      ['paperName', 'place'],
+    ]);
+    for (const [name, narrowest] of [
+      ['session', 'session'],
+      ['flag', true],
+    ] as const) {
+      await app.plugin(settingsPlugin(name, [{ ...THINK, narrowest } as unknown as SessionSetting]));
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin(name)?.state, name).toBe('error');
+    }
+  });
+});
+
+describe('各层：全局默认与平台档', () => {
+  const ROOM_RECORD = {
+    name: '<私聊>',
+    children: [],
+    status: 'waiting',
+    createdAt: 1,
+    updatedAt: 1,
+    config: {},
+    originPlatform: 'onebot',
+    originChat: { type: 'private', multiParty: false, targetId: '30001' },
+  };
   const DOC: Partial<AalisConfig> = {
     sessionConfig: {
       defaults: { persona: '<默认人设>' },
       platforms: { onebot: { enabledToolGroups: ['search'] }, webui: { enabledToolGroups: ['*'] } },
-      audiences: { onebot: { private: { enabledToolGroups: ['search', 'scheduler'], paperName: '<私聊白纸>' } } },
+      types: { onebot: { private: { enabledToolGroups: ['search', 'scheduler'], paperName: '<私聊白纸>' } } },
     },
   };
 
-  it('取自宿主配置文档的 sessionConfig：房间按出生平台与受众叠加，owner 的会话按入口平台，来源逐键记下', async () => {
-    const { sm } = await setup({ doc: DOC });
+  it('取自宿主配置文档的 sessionConfig：有出生平台的会话按出生平台，其余按入口平台，来源逐键记下', async () => {
+    const { sm } = await setup({ doc: DOC, stored: { [PRIVATE]: { ...ROOM_RECORD, id: PRIVATE } } });
 
-    expect(sm.resolveInheritance(PRIVATE, 'webui')).toEqual({
+    expect(sm.resolveInheritance(PRIVATE, 'webui')).toMatchObject({
       platform: 'onebot',
-      audience: 'private',
+      type: 'private',
       values: { persona: '<默认人设>', enabledToolGroups: ['search', 'scheduler'], paperName: '<私聊白纸>' },
-      sources: { persona: 'defaults', enabledToolGroups: 'audience', paperName: 'audience' },
+      sources: { persona: 'defaults', enabledToolGroups: 'type', paperName: 'type' },
     });
-    expect(sm.resolveConfig(GROUP, 'webui')).toEqual({ persona: '<默认人设>', enabledToolGroups: ['search'] });
     const mine = await sm.createSession({});
     expect(sm.resolveInheritance(mine.id, 'webui').sources).toEqual({
       persona: 'defaults',
@@ -343,80 +401,19 @@ describe('各层：全局默认、平台档与受众条目', () => {
     });
   });
 
-  it('按层读：listLayers 列出写过的层，getLayer 是这一层自己的值，resolveLayer 解析到这一层为止', async () => {
+  it('按层读：getLayer 是这一层自己的值，resolveLayer 解析到这一层为止', async () => {
     const { sm } = await setup({ doc: DOC });
-    const priv = { scope: 'audience', platform: 'onebot', audience: 'private' } as const;
+    const priv = { scope: 'type', platform: 'onebot', type: 'private' } as const;
 
-    expect(sm.listLayers()).toEqual([
-      { scope: 'defaults' },
-      { scope: 'platform', platform: 'onebot' },
-      priv,
-      { scope: 'platform', platform: 'webui' },
-    ]);
     expect(sm.getLayer(priv)).toEqual({ enabledToolGroups: ['search', 'scheduler'], paperName: '<私聊白纸>' });
     expect(sm.resolveLayer(priv)).toEqual({
       values: { persona: '<默认人设>', enabledToolGroups: ['search', 'scheduler'], paperName: '<私聊白纸>' },
-      sources: { persona: 'defaults', enabledToolGroups: 'audience', paperName: 'audience' },
+      sources: { persona: 'defaults', enabledToolGroups: 'type', paperName: 'type' },
     });
     expect(sm.resolveLayer({ scope: 'platform', platform: 'cli' })).toEqual({
       values: { persona: '<默认人设>' },
       sources: { persona: 'defaults' },
     });
-  });
-
-  it('层的列表：平台档是已装适配器的平台加配置里写过的平台，群与私聊条目按适配器声明的类型名加配置里写过的（没声明类型的平台不单列）；按平台名排，每个平台先平台档、再群、私聊', async () => {
-    const GROUP = { name: 'group', multiParty: true };
-    const PRIVATE = { name: 'private', multiParty: false };
-    const { app, sm } = await setup({
-      doc: DOC,
-      plugins: [
-        settingsPlugin(SETTINGS, [PERSONA, TOOL_GROUPS, ITERATIONS, PAPER_NAME]),
-        adapterPlugin('zz-qq', { platform: 'qq', sessionTypes: [GROUP, PRIVATE] }),
-        adapterPlugin('zz-forum', { platform: 'forum', sessionTypes: [GROUP] }),
-        adapterPlugin('zz-terminal', { platform: 'terminal', sessionTypes: [] }),
-        adapterPlugin('zz-bare', { platform: 'bare' }),
-        adapterPlugin('zz-onebot', { platform: 'onebot', sessionTypes: [GROUP, PRIVATE] }),
-      ],
-    });
-    const platformLayer = (platform: string) => ({ scope: 'platform', platform });
-    const audience = (platform: string, which: 'group' | 'private') => ({
-      scope: 'audience',
-      platform,
-      audience: which,
-    });
-    expect(sm.listLayers()).toEqual([
-      { scope: 'defaults' },
-      platformLayer('bare'),
-      platformLayer('forum'),
-      audience('forum', 'group'),
-      platformLayer('onebot'),
-      audience('onebot', 'group'),
-      audience('onebot', 'private'),
-      platformLayer('qq'),
-      audience('qq', 'group'),
-      audience('qq', 'private'),
-      platformLayer('terminal'),
-      platformLayer('webui'),
-    ]);
-
-    // 卸了适配器：没写过的平台档跟着消失，写过的仍在，能清掉
-    await app.plugins.disable('zz-qq');
-    await app.plugins.disable('zz-onebot');
-    const after = sm.listLayers();
-    expect(after).not.toContainEqual(platformLayer('qq'));
-    expect(after).toEqual(
-      expect.arrayContaining([platformLayer('onebot'), audience('onebot', 'private'), platformLayer('webui')]),
-    );
-    expect(after).not.toContainEqual(audience('onebot', 'group'));
-    await sm.updateLayer(
-      { scope: 'audience', platform: 'onebot', audience: 'private' },
-      {
-        enabledToolGroups: null,
-        paperName: null,
-      },
-    );
-    await sm.updateLayer({ scope: 'platform', platform: 'onebot' }, { enabledToolGroups: null });
-    expect(sm.listLayers()).not.toContainEqual(platformLayer('onebot'));
   });
 
   it('按层写：校验后写进文档并保存，null 删掉这一项；没启用的插件写在这一层的键不受影响', async () => {
@@ -434,12 +431,11 @@ describe('各层：全局默认、平台档与受众条目', () => {
     expect(save).toHaveBeenCalledTimes(1);
 
     await sm.updateLayer(onebot, { persona: null });
-    await sm.updateLayer({ scope: 'audience', platform: 'onebot', audience: 'group' }, { paperName: '<群白纸>' });
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { paperName: '<群白纸>' });
     expect(layers()).toEqual({
       platforms: { onebot: { remoteAgentTypes: ['<没启用的插件的值>'], enabledToolGroups: ['search'] } },
-      audiences: { onebot: { group: { paperName: '<群白纸>' } } },
+      types: { onebot: { group: { paperName: '<群白纸>' } } },
     });
-    expect(sm.resolveConfig(GROUP)).toEqual({ enabledToolGroups: ['search'], paperName: '<群白纸>' });
   });
 
   it('按层写被拒时文档不变：没登记的键、不合字段的值、不合法的层', async () => {
@@ -452,7 +448,7 @@ describe('各层：全局默认、平台档与受众条目', () => {
       [{ scope: 'defaults' }, { maxToolIterations: 1.5 }],
       [{ scope: 'platform', platform: '' }, { persona: '<人设>' }],
       [{ scope: 'platform', platform: '__proto__' }, { persona: '<人设>' }],
-      [{ scope: 'audience', platform: 'onebot', audience: 'owner' }, { persona: '<人设>' }],
+      [{ scope: 'type', platform: 'onebot', type: '*' }, { persona: '<人设>' }],
     ] as const) {
       const write = sm.updateLayer(layer as never, patch as never);
       await expect(write, JSON.stringify(layer)).rejects.toThrow();
@@ -480,13 +476,13 @@ describe('各层：全局默认、平台档与受众条目', () => {
         sessionConfig: {
           defaults: { persona: '<默认人设>' },
           platforms: { onebot: 'search' },
-          audiences: 7,
+          types: 7,
           platfroms: { onebot: { persona: '<拼错的层>' } },
         } as never,
       },
     });
-    expect(sm.resolveConfig(GROUP)).toEqual({ persona: '<默认人设>' });
-    expect(sm.resolveConfig(PRIVATE)).toEqual({ persona: '<默认人设>' });
+    expect(sm.resolveConfig(GROUP, 'onebot')).toEqual({ persona: '<默认人设>' });
+    expect(sm.resolveConfig(PRIVATE, 'onebot')).toEqual({ persona: '<默认人设>' });
     expect(warns.filter(w => w.includes('sessionConfig'))).toHaveLength(3);
     expect(warns.filter(w => w.includes('sessionConfig.platfroms'))).toHaveLength(1);
   });
@@ -514,9 +510,9 @@ describe('各层：全局默认、平台档与受众条目', () => {
     await expect(sm.updateSession(GROUP, { config: { sessionDefaults } as never })).rejects.toThrow('sessionDefaults');
   });
 
-  it('宿主没有提供配置文档：各层为空，按层写被拒', async () => {
+  it('宿主没有提供配置文档：宿主配置里的三层为空，按层写被拒', async () => {
     const { sm } = await setup();
-    expect(sm.listLayers()).toEqual([{ scope: 'defaults' }]);
+    expect(sm.listLayers()).toEqual([{ scope: 'defaults' }, { scope: 'place', key: 'workspace:default' }]);
     expect(sm.resolveConfig(GROUP)).toEqual({});
     await expect(sm.updateLayer({ scope: 'defaults' }, { persona: '<人设>' })).rejects.toThrow('host-config');
   });

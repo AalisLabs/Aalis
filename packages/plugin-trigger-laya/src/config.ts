@@ -61,12 +61,6 @@ export const configSchema = defineConfig({
     default: 80,
     description: '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
   },
-  priority: {
-    type: 'number',
-    label: '优先级 (越大越优先)',
-    default: -10,
-    description: 'trigger 服务按偏好 > 优先级 > 注册顺序选出生效的触发插件；规则判定 trigger-policy 为 0。',
-  },
   overrides: {
     type: 'array',
     label: '分作用域覆盖',

@@ -1,3 +1,4 @@
+import { windowKey } from '../../packages/api-gateway/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { Events } from '../../packages/core/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
@@ -53,16 +54,24 @@ export function storedRoom(sessionId: string, name = sessionId): Record<string, 
 }
 
 /**
- * 把已收录的房间（会话 id → 名字）预置进记忆后端的会话表，要在会话管理读表之前调用：起了整条入站链的用例发原生入站会跑
- * 一轮回合，改用预置
+ * 把已收录的房间（会话 id → 名字）预置进记忆后端：会话表里的房间记录，与它们所在窗口的场所记录（同一窗口一条，显示名取
+ * 先列的那个房间的名字，与房间建档时建的一样）。要在会话管理读表之前调用：起了整条入站链的用例发原生入站会跑一轮回合，
+ * 改用预置
  */
 export async function seedRooms(memory: Pick<MemoryService, 'commitMetadata'>, rooms: Record<string, string>) {
-  await memory.commitMetadata(
-    Object.entries(rooms).map(([id, name]) => ({
-      op: 'put',
+  const windows = new Map<string, Record<string, unknown>>();
+  for (const [id, name] of Object.entries(rooms)) {
+    const { platform, sessionType, targetId } = parse(id);
+    const key = windowKey({ platform, type: sessionType, targetId });
+    if (!windows.has(key)) windows.set(key, { key, kind: 'window', name, config: {}, createdAt: 0, updatedAt: 0 });
+  }
+  await memory.commitMetadata([
+    ...Object.entries(rooms).map(([id, name]) => ({
+      op: 'put' as const,
       namespace: 'sessions',
       key: id,
       data: storedRoom(id, name),
     })),
-  );
+    ...[...windows].map(([key, data]) => ({ op: 'put' as const, namespace: 'places', key, data })),
+  ]);
 }

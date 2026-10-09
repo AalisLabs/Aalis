@@ -1,16 +1,19 @@
-import type { SessionSummary } from '@aalis/api-session-protocol';
+import type { SessionSummary, SettingLayer } from '@aalis/api-session-protocol';
 import { MessagesSquare } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
+import { Dialog } from '../components/Dialog';
 import { FetchError } from '../components/FetchError';
 import { Panel } from '../components/Panel';
 import { Table, type TableColumn } from '../components/Table';
 import { listTime } from '../format';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { groupFromParams, inGroup, paths, type RoomGroupAddress } from '../routes';
-import { SessionGate } from '../shell/SessionGate';
+import { LayerRows } from '../settings/LayerRows';
+import { useLayers } from '../settings/layers';
+import { SessionGate, SessionsFetchError } from '../shell/SessionGate';
 import { Main } from '../shell/Shell';
 import { useSessionActions } from './actions';
 import { useSessionList } from './live-list';
@@ -18,29 +21,31 @@ import { SessionStatus, STATUS_ORDER, statusOf } from './status';
 import './RoomsPage.css';
 
 // 房间表：一组房间（一个适配器实例，或还没记下实例的一个平台）一次取全，筛选、排序、搜索与分页都在客户端。
-// 类型与状态的筛选写进地址；批量动作只有归档与删除。统一设置一类房间在设置的「会话默认」，表格下面一句话指过去
+// 类型与状态的筛选写进地址；类型是平台自定的类型名，按本组出现过的原样列出。批量动作只有归档与删除。
+// 每行的「场所设置」在页内打开这一行所在窗口的设置（与「会话默认」同一套行）；统一设置一个平台或一种类型在设置的
+// 「会话默认」，表格下面一句话指过去
 
-const FILTER_FIELDS = [
-  {
+const STATUS_FIELD = {
+  key: 'status',
+  label: '状态',
+  options: [
+    { value: 'attention', label: '需要处理' },
+    { value: 'error', label: '出错' },
+    { value: 'running', label: '运行中' },
+  ],
+  matches: (s: SessionSummary, value: string) => s[value as 'attention' | 'error' | 'running'],
+};
+
+/** 类型的筛选：本组出现过的类型名，原样写 */
+function typeField(sessions: readonly SessionSummary[]) {
+  const types = [...new Set(sessions.flatMap(s => (s.chat ? [s.chat.type] : [])))].sort();
+  return {
     key: 'type',
     label: '类型',
-    options: [
-      { value: 'group', label: '群' },
-      { value: 'private', label: '私聊' },
-    ],
-    matches: (s: SessionSummary, value: string) => s.audience === value,
-  },
-  {
-    key: 'status',
-    label: '状态',
-    options: [
-      { value: 'attention', label: '需要处理' },
-      { value: 'error', label: '出错' },
-      { value: 'running', label: '运行中' },
-    ],
-    matches: (s: SessionSummary, value: string) => s[value as 'attention' | 'error' | 'running'],
-  },
-];
+    options: types.map(type => ({ value: type, label: type })),
+    matches: (s: SessionSummary, value: string) => s.chat?.type === value,
+  };
+}
 
 const time = (at: number) => <time dateTime={new Date(at).toISOString()}>{listTime(at)}</time>;
 
@@ -57,6 +62,11 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
   const actions = useSessionActions();
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  /** 打开着「场所设置」的那个窗口 */
+  const [place, setPlace] = useState<SessionSummary['place']>();
+  const layer = useMemo((): SettingLayer | undefined => place && { scope: 'place', key: place.key }, [place]);
+  const layers = useLayers();
+  const filterFields = [typeField(list.sessions ?? []), STATUS_FIELD];
   const group = list.groups.find(g => inGroup(g, query));
   const title = group?.label ?? ('instance' in query ? query.instance : query.platform);
 
@@ -68,7 +78,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
       render: s => <Link to={paths.session(s.id)}>{s.title}</Link>,
       sortValue: s => s.title,
     },
-    { key: 'type', label: '类型', render: s => (s.audience === 'private' ? '私聊' : '群') },
+    { key: 'type', label: '类型', render: s => s.chat?.type },
     ...(group && group.accounts > 1
       ? [
           {
@@ -102,7 +112,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
   ];
 
   const filterValues = Object.fromEntries(
-    FILTER_FIELDS.flatMap(field => {
+    filterFields.flatMap(field => {
       const value = params.get(field.key);
       return value ? [[field.key, value]] : [];
     }),
@@ -112,7 +122,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
     setParams(
       current => {
         const next = new URLSearchParams(current);
-        for (const field of FILTER_FIELDS) {
+        for (const field of filterFields) {
           if (values[field.key]) next.set(field.key, values[field.key]);
           else next.delete(field.key);
         }
@@ -139,7 +149,14 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                   columns={columns}
                   empty="这一组没有房间"
                   search={s => `${s.title} ${s.id}`}
-                  filter={{ fields: FILTER_FIELDS, values: filterValues, onChange: setFilter }}
+                  filter={{ fields: filterFields, values: filterValues, onChange: setFilter }}
+                  rowActions={s =>
+                    s.place.kind === 'window' && (
+                      <Button variant="text" onClick={() => setPlace(s.place)}>
+                        场所设置
+                      </Button>
+                    )
+                  }
                   selection={{
                     selected,
                     onChange: setSelected,
@@ -164,9 +181,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
               )
             )}
             <div className="rooms-hint">
-              <p>
-                要统一设置一类房间，用「会话默认」里这个平台的档或它的群、私聊条目；平台档按平台名生效，不区分实例。
-              </p>
+              <p>统一设置一个平台或一种类型去「会话默认」，单个窗口在这里设。</p>
               <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
                 去会话默认
               </ButtonLink>
@@ -174,6 +189,16 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
           </div>
         </SessionGate>
       </Panel>
+      <Dialog
+        open={place !== undefined}
+        title={`场所设置：${place?.name ?? ''}`}
+        size="form"
+        onClose={() => setPlace(undefined)}
+        footer={<Button onClick={() => setPlace(undefined)}>关闭</Button>}
+      >
+        {layers.error && <SessionsFetchError what="会话设置的层" error={layers.error} retry={layers.retry} />}
+        {layer && layers.value && <LayerRows layer={layer} order={layers.value.order} what="场所设置" />}
+      </Dialog>
     </Main>
   );
 }

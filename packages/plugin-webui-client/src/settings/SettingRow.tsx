@@ -9,7 +9,7 @@ import { type Dependency, type Field, formatValue, isModelField, optionLabel, va
 import { useFieldOptions } from './options';
 import './SettingRow.css';
 
-// 设置的一行：名称、来源徽标、生效时机与生效值，点这一行就地修改、改完即存；开关直接拨。编辑控件就是表单用的 FieldInput，
+// 设置的一行：名称、来源（徽标，或值下面的一句「来自：…」）、生效时机与生效值，点这一行就地修改、改完即存；开关直接拨。编辑控件就是表单用的 FieldInput，
 // 可选项由这一行取一次交给它：选择与多选选了即存，其余回车或离开时存，Esc 放弃；数字清空、选择选空的一项写 null，与行尾的
 // 恢复按钮一样回到下一层，文字与列表清空写的是空值。存的时候编辑控件不可用。
 // 值按可选项的标签显示（动态可选项一并取来，不在可选项里的按来源另给的名字）；没有值时写可选项接口标了默认的那一项，
@@ -20,8 +20,12 @@ interface SettingRowProps {
   field: Field;
   /** 生效值；哪里都没设时是字段的默认值，没有默认值时为 undefined */
   value: unknown;
-  /** 生效值出自哪里：默认、配置文件、平台档、本会话等 */
+  /** 生效值出自哪里，写成徽标：默认、配置文件、平台档、本会话等 */
   source?: string;
+  /** 生效值出自哪里，写成值下面的一句（会话的设置面板写「来自：工作区『论文』」这类，徽标放不下） */
+  origin?: string;
+  /** 值下面另写的一句（如所选模型已不在） */
+  note?: string;
   /** 什么时候生效，例如要重启的写「重启后生效」 */
   timing?: string;
   /** 这一处写了值时行尾的恢复按钮上的字（恢复继承、恢复默认），点了写 null */
@@ -34,7 +38,18 @@ interface SettingRowProps {
   save(value: unknown): Promise<void>;
 }
 
-export function SettingRow({ field, value, source, timing, reset, dependency, unset, save }: SettingRowProps) {
+export function SettingRow({
+  field,
+  value,
+  source,
+  origin,
+  note: extra,
+  timing,
+  reset,
+  dependency,
+  unset,
+  save,
+}: SettingRowProps) {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
   const { options, names, loaded, error: optionsError } = useFieldOptions(field, version, dependency?.value);
   const labelId = useId();
@@ -68,12 +83,12 @@ export function SettingRow({ field, value, source, timing, reset, dependency, un
   const fixed = dependency !== undefined && loaded && options.length === 0;
   const note =
     dependency === undefined || !loaded
-      ? undefined
+      ? extra
       : fixed
         ? `当前${dependency.label}不能调`
         : value !== undefined && !options.some(option => option.key === valueKey(field, value))
           ? `当前${dependency.label}没有这一档，按默认${fallback ? `（${fallback.label}）` : ''}`
-          : undefined;
+          : extra;
   const head = (
     <>
       <span id={labelId} className="setting-row-label">
@@ -97,6 +112,7 @@ export function SettingRow({ field, value, source, timing, reset, dependency, un
               onChange={checked => commit(checked)}
             />
             {value === undefined && unset && <span className="setting-row-note">{unset}</span>}
+            {origin && <span className="setting-row-note">{origin}</span>}
           </div>
         ) : editing ? (
           <div className="setting-row-edit">
@@ -125,6 +141,7 @@ export function SettingRow({ field, value, source, timing, reset, dependency, un
             {head}
             {shown !== undefined && <span className="setting-row-value">{shown}</span>}
             {note && <span className="setting-row-note">{note}</span>}
+            {origin && <span className="setting-row-note">{origin}</span>}
           </button>
         )}
         {reset && (

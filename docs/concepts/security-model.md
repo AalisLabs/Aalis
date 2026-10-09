@@ -143,7 +143,7 @@ commands.command('profile.clear.nuke', '【危险】清空所有用户档案', {
 > 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
 > `npm create aalis` 只给已选装的 `cli` / `webui` 写 `['*']`，多人平台一律不代开。
 >
-> 房间会话按出生平台与受众选档（见 [session-manager 服务](../services/session-manager.md) §2.4），
+> 房间会话按出生平台与聊天窗口的类型选档（见 [session-manager 服务](../services/session-manager.md) §2.4），
 > 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。
 > 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`，`workflow_define`
 > 为 sensitive、不需确认），`tool` 节点又不过分组闸，所以房间的平台档不要开 `workflow` 组：
