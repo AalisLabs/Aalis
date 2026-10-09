@@ -185,10 +185,10 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await toastSays(page, '已回滚：删除 1 个文件');
     await expect(files.stat(REPORT)).rejects.toThrow();
 
-    // 压缩线：用量取摘要插件的自动压缩线
+    // 压缩线：用量取会话设置项「自动压缩线」，各层都没设时为默认 0.8
     const meter = await page.waitForSelector('[aria-label^="上下文已用"]');
     expect(await meter?.evaluate(element => element.getAttribute('title'))).toMatch(
-      /^上下文已用 \d+%，到 70% 自动压缩$/,
+      /^上下文已用 \d+%，到 80% 自动压缩$/,
     );
 
     // 计划：待办插件的工具写入计划，面板里出现计划标签

@@ -133,7 +133,7 @@ async function run(caps: Caps): Promise<void> {
     isRoom,
     notify: (sessionId, method, params) => server.notifySession(sessionId, method, params),
     requestUsage,
-    compressAt: () => caps.compression.current?.autoThreshold || undefined,
+    compressAt: (sessionId, platform) => caps.compression.current?.compressAt(sessionId, platform),
     approvalsOf: sessionId => approval.service.list({ sessionId }),
     signal: lifecycle.signal,
     logger,

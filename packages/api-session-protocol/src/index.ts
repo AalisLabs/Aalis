@@ -431,8 +431,8 @@ const itemBase = {
  *   如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId 是任务 id）；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
- *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是自动压缩的使用率（由压缩服务给出），
- *   没有压缩服务或不自动压缩时没有；
+ *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是实际压缩的使用率（会话服务取压缩服务给的
+ *   自动压缩线与裁剪预算占窗口比例中较小的那个），没有压缩服务或不自动压缩时没有；
  * - turn：回合开始（by 是发起方）与结束（outcome）。
  */
 export const SessionItemSchema = z.discriminatedUnion('kind', [

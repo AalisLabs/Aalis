@@ -68,7 +68,7 @@ definePlugin({
 - `hooks`：`agent:input:before` 判运行中、拼出在途回合的条目；`agent:turn:after` 记下结局；`agent:reply:before` 切分重试的几版回复；`agent:tool:after` 把审批的结算、「已发到群」、「回合停止时还没结束」、退出码与转到后台的任务 id 写进工具结果的元数据；`memory:clear` 清掉消息历史之后通知订阅的客户端重新取快照。
 - `plugins`：房间分组的组名取适配器实例的显示名。
 - `platform`：owner 自己的会话按哪个入口平台选档。
-- `agent`、`checkpoint`、`compression`、`todoList`：停止回合（含全部停止里子会话的回合）、回滚（与回滚之前查检查点）、压缩（用量条目的压缩线取它的 `autoThreshold`）、计划的快照与清空；缺席时对应的方法回 `unsupported`，功能位对应的一项为 false，快照不带计划与压缩线。
+- `agent`、`checkpoint`、`compression`、`todoList`：停止回合（含全部停止里子会话的回合）、回滚（与回滚之前查检查点）、压缩（用量条目的压缩线按会话取它的 `compressAt`）、计划的快照与清空；缺席时对应的方法回 `unsupported`，功能位对应的一项为 false，快照不带计划与压缩线。
 - `authority`：判说话人、审批的发起主体与应答人是不是 owner；缺席时都不是，审批一律按发起者不能产生审批拒绝。
 - `tools`：工具定义上声明的展示种类；缺席时工具卡与后台任务都没有 `display`，审批卡逐字列出全部参数。
 - `backgroundTasks`：后台任务的列表、增量、取输出与停止，摘要里在跑的后台任务数，工具卡的 `taskId`；缺席时摘要只按子会话的回合算 `background`，`background/list`、`output`、`stop` 回 `unsupported`。
@@ -86,7 +86,7 @@ definePlugin({
 | `notice` | `session:compressing`（`compress`）；流结束标记带 `toolLimitReached` 时给 `tool-limit`；落库的宿主通知按存档推 |
 | `user-message`，她发出的附件 | `inbound:message:archived`、`assistant:message:archived` 带出的存档消息，与历史归并用同一套规则，`itemId` 相同 |
 | `plan` | `todo:updated`；快照从待办服务读当前计划 |
-| `usage` | `token:usage`，按会话记下最近一次，分项取事件的 `parts` 原样放进条目；快照带它，还没有时订阅之后发 `token:request`。房间的请求不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的入口平台，与从这条连接发起的回合一致。压缩线 `compressAt` 在推送与取快照时现取压缩服务的 `autoThreshold`（为 0 或没有服务时不给） |
+| `usage` | `token:usage`，按会话记下最近一次，分项取事件的 `parts` 原样放进条目；快照带它，还没有时订阅之后发 `token:request`。房间的请求不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的入口平台，与从这条连接发起的回合一致。压缩线 `compressAt` 在推送与取快照时现取压缩服务的 `compressAt(会话, 用量事件上的平台)`，与条目的 `tokenBudget / contextWindow` 取较小者（压缩线写得比裁剪预算还高时，到裁剪预算就压缩；不按用量压缩或没有服务时不给） |
 
 回复与回合的对应靠异步上下文：`agent:input:before` 的 `next` 在这一轮的上下文里跑，其中发出的回复与定稿校验归到这一轮，同一会话并行的几轮互不串。
 
