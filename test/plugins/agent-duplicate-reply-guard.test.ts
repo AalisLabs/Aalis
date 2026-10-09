@@ -27,7 +27,6 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 const AGENT_CONFIG = {
   systemPrompt: 'test',
-  historyLimit: 50,
   memoryTokenBudget: 1024,
   maxToolIterations: 5,
   toolResultMaxRatio: 0.15,
