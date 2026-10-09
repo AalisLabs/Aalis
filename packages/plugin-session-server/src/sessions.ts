@@ -1,19 +1,21 @@
 // ════════════════════════════════════════════════════════════
 // 会话列表与会话的增删改：摘要、分区与分组、排序与分页、搜索、按组取与归档区；建、改名、归档与恢复、删除与批量；
-// 会话设置的各行（会话与各层）；已读。会话本身都在 session-manager 里，这里只做投影与转发。
+// 会话设置的各行（会话与各层，层表取自 api-session-manager）；已读。会话本身都在 session-manager 里，这里只做投影与转发。
 // 「需要我处理」由未结的审批驱动；房间按接管的适配器实例分组，组名取实例的显示名。
-// 摘要里有几项按会话树算：在跑的后台工作数与 token 合计含各级子会话，子会话另带各级父会话。
+// 摘要里有几项按会话树算：在跑的后台工作数与 token 合计含各级子会话，子会话另带各级父会话；聊天窗口与场所取根会话的。
 // ════════════════════════════════════════════════════════════
 
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   isSessionConfigError,
   type RegisteredSessionSetting,
+  SESSION_LAYERS,
   type SessionConfig,
   type SessionConfigPatch,
   type SessionInfo,
   type SessionKind,
   type SessionManagerService,
+  type SessionPlace,
 } from '@aalis/api-session-manager';
 import {
   type RoomGroup,
@@ -22,6 +24,7 @@ import {
   type SessionMethodResult,
   type SessionPeer,
   type SessionSummary,
+  type SettingLayer,
   type SettingRow,
 } from '@aalis/api-session-protocol';
 import type { Logger, PluginManagerService, ServiceRef } from '@aalis/core';
@@ -51,6 +54,10 @@ interface SessionDeps {
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 const KIND_NAMES: Record<SessionKind, string> = { owner: '我的会话', room: '房间', task: '子任务' };
+/** 场所按它的类别列与收设置项：窗口按房间，工作区按 owner 的会话 */
+const PLACE_KINDS: Record<SessionPlace['kind'], SessionKind> = { window: 'room', workspace: 'owner' };
+/** 层表：名字与称呼，按先后 */
+const LAYER_ORDER = SESSION_LAYERS.map(({ name, label }) => ({ name, label }));
 
 /** 输入框旁的快捷切换最多放几项：多出的 composer 退到 common */
 const COMPOSER_LIMIT = 2;
@@ -61,10 +68,10 @@ const byProminence = (a: RegisteredSessionSetting, b: RegisteredSessionSetting) 
   PROMINENCE_RANK[a.prominence] - PROMINENCE_RANK[b.prominence] ||
   (a.order ?? Number.POSITIVE_INFINITY) - (b.order ?? Number.POSITIVE_INFINITY);
 
-/** 写设置被拒（没登记的键、不合字段的值、不合法的层）是参数错误，别的照常上抛 */
-async function writing(write: () => Promise<unknown>): Promise<void> {
+/** 会话管理拒绝的读写（没登记的键、不合字段的值、只能设到场所为止的项、不合法的层）是参数错误，别的照常上抛 */
+async function checked<T>(run: () => T | Promise<T>): Promise<T> {
   try {
-    await write();
+    return await run();
   } catch (err) {
     if (isSessionConfigError(err)) throw new ProtocolError(RPC_ERROR_CODES.invalidParams, (err as Error).message);
     throw err;
@@ -127,10 +134,17 @@ export function createSessions(deps: SessionDeps) {
     return counted.reduce((sum, t) => ({ input: sum.input + t.input, output: sum.output + t.output }));
   }
 
+  /** 会话的场所：键与类别取 placeOf，显示名取场所记录（窗口还没有记录时是场所键） */
+  function placeOf(info: SessionInfo): SessionSummary['place'] {
+    const place = sm.placeOf(info.id);
+    return { ...place, name: sm.getPlace(place.key)?.name ?? place.key };
+  }
+
   /** tasks 是各会话在跑的后台任务数，一批摘要共用一份 */
   function summarize(info: SessionInfo, tasks: ReadonlyMap<string, number> = deps.runningTasks()): SessionSummary {
     const root = rootOf(info);
     const room = root.kind === 'room';
+    const chat = root.originPlatform === undefined ? undefined : root.originChat;
     const seenAt = seen.get(info.id);
     const below = descendantsOf(info);
     const tokens = tokensOf([info, ...below]);
@@ -146,7 +160,8 @@ export function createSessions(deps: SessionDeps) {
       platform: root.originPlatform,
       instance: info.originInstance,
       account: root.originChat?.selfId,
-      audience: info.audience,
+      ...(chat ? { chat: { type: chat.type, multiParty: chat.multiParty } } : {}),
+      place: placeOf(info),
       createdAt: info.createdAt,
       updatedAt: info.updatedAt,
       lastReplyAt: info.lastReplyAt,
@@ -270,7 +285,8 @@ export function createSessions(deps: SessionDeps) {
 
   /**
    * 设置项的各行：只列 applies 选中的项，排好显眼程度与先后，composer 多出的退到 common。own 是这一层自己的值，
-   * effective 与 sources 是解析到这一层为止（含这一层）的生效值与来源
+   * effective 与 sources 是解析到这一层为止（含这一层）的生效值与来源。生效值出自全局默认或哪一层都没设的行另带服务此刻实际
+   * 用的那一个（只有全局默认层由服务偏好承担的项有）
    */
   function rows(
     applies: (setting: RegisteredSessionSetting) => boolean,
@@ -291,6 +307,7 @@ export function createSessions(deps: SessionDeps) {
       .sort(byProminence);
     const ownValues = own as Record<string, unknown>;
     const effectiveValues = effective as Record<string, unknown>;
+    const resolved = sm.resolvedDefaults() as Record<string, unknown>;
     return {
       items: settings.map(({ key, field, plugin, prominence, dependsOn, unset }) => ({
         key,
@@ -302,11 +319,12 @@ export function createSessions(deps: SessionDeps) {
         value: ownValues[key],
         effective: effectiveValues[key],
         source: sources[key],
+        resolved: sources[key] === undefined || sources[key] === 'defaults' ? resolved[key] : undefined,
       })),
     };
   }
 
-  /** 一个会话的各行：只列适用于它的种类的项，本层是会话自己的覆盖 */
+  /** 一个会话的各行：只列适用于它的种类的项，只能设到场所为止的不列；本层是会话自己的覆盖 */
   async function sessionRows(
     session: SessionInfo,
     peer: SessionPeer,
@@ -316,7 +334,12 @@ export function createSessions(deps: SessionDeps) {
     const own = sm.getOwnConfig(session.id);
     const sources: Record<string, SettingRow['source']> = { ...inheritance.sources };
     for (const key of Object.keys(own)) sources[key] = 'session';
-    return rows(setting => setting.appliesTo.includes(session.kind), own, { ...inheritance.values, ...own }, sources);
+    return rows(
+      setting => setting.appliesTo.includes(session.kind) && !setting.narrowest,
+      own,
+      { ...inheritance.values, ...own },
+      sources,
+    );
   }
 
   /**
@@ -334,14 +357,28 @@ export function createSessions(deps: SessionDeps) {
     }
   }
 
-  /** 一层的各行：受众条目只列适用于房间的项，全局默认与平台档列全部 */
-  function layerRows(layer: SessionMethodParams<'session/config/layer/get'>['layer']) {
-    const { values, sources } = sm.resolveLayer(layer);
-    const applies =
-      layer.scope === 'audience'
-        ? (setting: RegisteredSessionSetting) => setting.appliesTo.includes('room')
-        : () => true;
-    return rows(applies, sm.getLayer(layer), values, sources);
+  /**
+   * 一层按哪种会话列与收设置项：场所按它的类别；全局默认、平台档与平台类型档不限（owner 的 IM 私聊带平台类型，场所却是
+   * 工作区，两类项都可能落到它）。没有记录的场所键由会话管理拒绝
+   */
+  function layerKind(layer: SettingLayer): SessionKind | undefined {
+    if (layer.scope !== 'place') return undefined;
+    const place = sm.getPlace(layer.key);
+    return place && PLACE_KINDS[place.kind];
+  }
+
+  /** 一层的各行：只列这一层适用的项，各带解析到这一层为止的生效值与来源 */
+  function layerRows(layer: SettingLayer) {
+    const kind = layerKind(layer);
+    return checked(() => {
+      const { values, sources } = sm.resolveLayer(layer);
+      return rows(
+        setting => kind === undefined || setting.appliesTo.includes(kind),
+        sm.getLayer(layer),
+        values,
+        sources,
+      );
+    });
   }
 
   const handlers: Pick<
@@ -412,14 +449,15 @@ export function createSessions(deps: SessionDeps) {
     'session/config/get': ({ sessionId }, conn) => sessionRows(requireSession(sessionId), conn.peer),
     'session/config/update': async ({ sessionId, patch }, conn) => {
       assertApplies(requireSession(sessionId).kind, patch);
-      await writing(() => sm.updateSession(sessionId, { config: patch as SessionConfigPatch }));
+      await checked(() => sm.updateSession(sessionId, { config: patch as SessionConfigPatch }));
       return sessionRows(requireSession(sessionId), conn.peer);
     },
-    'session/config/layers': () => ({ layers: sm.listLayers() }),
+    'session/config/layers': () => ({ layers: sm.listLayers(), order: LAYER_ORDER }),
     'session/config/layer/get': ({ layer }) => layerRows(layer),
     'session/config/layer/update': async ({ layer, patch }) => {
-      if (layer.scope === 'audience') assertApplies('room', patch);
-      await writing(() => sm.updateLayer(layer, patch as SessionConfigPatch));
+      const kind = layerKind(layer);
+      if (kind) assertApplies(kind, patch);
+      await checked(() => sm.updateLayer(layer, patch as SessionConfigPatch));
       return layerRows(layer);
     },
     'session/markSeen': async ({ sessionId }) => {

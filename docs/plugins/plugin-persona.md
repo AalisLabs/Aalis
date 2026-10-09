@@ -31,7 +31,6 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `persona` | select | `'default'` | 人设：人设文件名（不含后缀） |
 | `personasDir` | string | `'personas:/'` | 人设目录：人设文件所在目录的 storage URI（默认 `personas:/`，即家目录的 `self/personas`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
 | `statePersistence` | boolean | `false` | 状态持久化：启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中 |
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
@@ -39,11 +38,11 @@ export default definePlugin({
 
 ## 会话设置项
 
-本插件在 session-manager 上登记四个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：`persona`（人设，可选项来自 `listModels()`，common）、`systemPromptExtra`（额外提示，追加在人设提示之后、结构化输出格式说明之前，common）、`disableOutputFormat`（不用结构化输出，advanced）、`clientSideJsonRendering`（JSON 留给客户端渲染，advanced）。没设置时分别用本插件配置的 `persona`、不追加、按角色卡、按角色卡。本插件没启用时这几项不出现，写过的值保留。
+本插件在 session-manager 上登记四个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：`persona`（人设，可选项来自 `listModels()`，common）、`systemPromptExtra`（额外提示，追加在人设提示之后、结构化输出格式说明之前，common）、`disableOutputFormat`（不用结构化输出，advanced）、`clientSideJsonRendering`（JSON 留给客户端渲染，advanced）。没设置时分别用主卡 `default`、不追加、按角色卡、按角色卡。用哪张卡只在这一处设：全局默认在「会话默认」，也可以设到平台档、平台类型档、场所或单个会话，本插件的配置里没有人设一项。本插件没启用时这几项不出现，写过的值保留。
 
 ## 角色卡格式
 
-人设以 YAML 文件定义，放在 `personasDir` 下，文件名（不含 `.yaml` / `.yml` 后缀）即 `persona` 配置值。找不到指定人设时使用内置默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
+人设以 YAML 文件定义，放在 `personasDir` 下，文件名（不含 `.yaml` / `.yml` 后缀）即会话设置 `persona` 的取值。主卡是 `default`（`default.yaml`），会话没设人设、或设的卡找不到时用它；目录里没有 `default.yaml`（或它解析失败）时，主卡是内置的默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
 
 ```yaml
 name: Alice
@@ -99,4 +98,4 @@ outputFormat:
 
 ## 配置校验
 
-`persona` 与 `personasDir` 的显式无效类型会报配置错误；两者的空字符串仍按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则；写成本机路径（绝对路径或 `~/…`）时报配置错误，写明要填 storage URI 并举例。
+`personasDir` 的显式无效类型会报配置错误；空字符串按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则；写成本机路径（绝对路径或 `~/…`）时报配置错误，写明要填 storage URI 并举例。

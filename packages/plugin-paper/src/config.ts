@@ -331,7 +331,7 @@ export interface PaperConfig {
   brokenPapers: ReadonlyMap<string, string>;
 }
 
-/** 一块白纸的属性：n:<名> 取具名白纸（配置里没有了返回 undefined），r:<哈希> 取默认属性 */
+/** 一块白纸的属性：n:<名> 取具名白纸（配置里没有了返回 undefined），场所的白纸取默认属性 */
 export function specOf(cfg: PaperConfig, paperId: string): PaperSpec | undefined {
   return paperId.startsWith('n:') ? cfg.papers.get(paperId.slice(2)) : cfg.defaults;
 }

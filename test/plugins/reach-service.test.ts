@@ -8,10 +8,11 @@ import type { App } from '../../packages/core/src/index.js';
 import reachPlugin from '../../packages/plugin-reach/src/index.js';
 import { sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
 import {
-  defaultPaperOf,
   OWNER_QQ,
   OWNER_TURN,
   ownerTurn,
+  paperOf,
+  projectSession,
   type ReachDirs,
   reachDirs,
   removeDirs,
@@ -31,6 +32,7 @@ const OWNER_DM = `onebot:10000:private:${OWNER_QQ}`;
 const MEMBER_DM = 'onebot:10000:private:30001';
 const GROUP = 'onebot:10000:group:20001';
 const ALL_KINDS = ['owner', 'room', 'task'] as const;
+const DEFAULT_WORKSPACE = 'workspace:default';
 
 const TIER: SessionSetting = {
   key: 'accessTier',
@@ -146,7 +148,7 @@ describe('场所、绑定与档位', () => {
     await recordRoom(host.events, OWNER_DM);
     const fromWeb = await svc.forCall(ownerTurn(webui));
     const fromDm = await svc.forCall({ sessionId: OWNER_DM, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
-    const paper = defaultPaperOf(dirs.home);
+    const paper = paperOf(dirs.home, DEFAULT_WORKSPACE);
     const requests: ReachRequest[] = [
       write(join(paper, 'a.md')),
       write(join(dirs.user, 'code', 'x.ts')),
@@ -168,7 +170,20 @@ describe('场所、绑定与档位', () => {
     expect(fromWeb).toMatchObject({ exec: 'sandbox', home: paper, paper });
   });
 
-  it('项目会话：主目录是绑定目录；绑定在 worktree 上时仓库的 git 目录可写、落点要问，仓库的其他 worktree 不可写', async () => {
+  it('项目工作区里的 owner 会话：主目录是绑定目录，白纸是这个工作区的；默认工作区的会话主目录与白纸都是默认工作区的白纸', async () => {
+    const { sm, svc, webui } = await start();
+    const root = join(dirs.base, 'code', 'proj');
+    mkdirSync(root, { recursive: true });
+    const project = await projectSession(sm, root);
+
+    const paper = paperOf(dirs.home, sm.placeOf(project).key);
+    expect(paper).not.toBe(paperOf(dirs.home, DEFAULT_WORKSPACE));
+    expect(await svc.forCall(ownerTurn(project))).toMatchObject({ home: root, paper });
+    const home = paperOf(dirs.home, DEFAULT_WORKSPACE);
+    expect(await svc.forCall(ownerTurn(webui))).toMatchObject({ home, paper: home });
+  });
+
+  it('项目会话绑定在 worktree 上：仓库的 git 目录可写、落点要问，仓库的其他 worktree 不可写', async () => {
     const { sm, svc } = await start();
     const main = join(dirs.base, 'code', 'main');
     const common = join(main, '.git');
@@ -178,10 +193,7 @@ describe('场所、绑定与档位', () => {
     writeFileSync(join(common, 'HEAD'), 'ref: refs/heads/main\n');
     writeFileSync(join(common, 'worktrees', 'a', 'commondir'), '../..\n');
     writeFileSync(join(wt, '.git'), `gitdir: ${join(common, 'worktrees', 'a')}\n`);
-    const project = (await sm.createSession({ name: 'p' }, { createdFrom: 'webui', work: { root: wt } })).id;
-
-    const cred = await svc.forCall(ownerTurn(project));
-    expect(cred).toMatchObject({ home: wt, paper: defaultPaperOf(dirs.home) });
+    const cred = await svc.forCall(ownerTurn(await projectSession(sm, wt, main)));
     expect(cred.allows('write', join(wt, 'src', 'a.ts'))).toBe(true);
     expect(cred.allows('write', join(common, 'objects', 'ab', 'cd'))).toBe(true);
     expect(cred.allows('write', join(common, 'worktrees', 'a', 'index'))).toBe(true);
@@ -197,8 +209,9 @@ describe('场所、绑定与档位', () => {
     mkdirSync(fake, { recursive: true });
     mkdirSync(proj, { recursive: true });
     writeFileSync(join(proj, '.git'), `gitdir: ${fake}\n`);
-    const project = (await sm.createSession({ name: 'p' }, { createdFrom: 'webui', work: { root: proj } })).id;
-    expect((await svc.forCall(ownerTurn(project))).allows('write', join(fake, 'credentials'))).toBe(false);
+    expect(
+      (await svc.forCall(ownerTurn(await projectSession(sm, proj)))).allows('write', join(fake, 'credentials')),
+    ).toBe(false);
   });
 
   it('.git 是符号链接时按它指向的 git 目录算，不往上找外层仓库；.git 文件读不到时按不在仓库里', async () => {
@@ -211,8 +224,7 @@ describe('场所、绑定与档位', () => {
     writeFileSync(join(outer, '.git', 'HEAD'), 'ref: refs/heads/main\n');
     writeFileSync(join(real, 'HEAD'), 'ref: refs/heads/main\n');
     symlinkSync(real, join(proj, '.git'));
-    const linked = (await sm.createSession({ name: 'p' }, { createdFrom: 'webui', work: { root: proj } })).id;
-    const cred = await svc.forCall(ownerTurn(linked));
+    const cred = await svc.forCall(ownerTurn(await projectSession(sm, proj)));
     expect(cred.allows('write', join(real, 'objects', 'ab')), '链接指向的 git 目录').toBe(true);
     expect(cred.allows('write', join(outer, '.git', 'objects', 'ab')), '外层仓库').toBe(false);
 
@@ -220,8 +232,10 @@ describe('场所、绑定与档位', () => {
     mkdirSync(locked, { recursive: true });
     writeFileSync(join(locked, '.git'), `gitdir: ${real}\n`);
     chmodSync(join(locked, '.git'), 0);
-    const unreadable = (await sm.createSession({ name: 'l' }, { createdFrom: 'webui', work: { root: locked } })).id;
-    await expect(svc.forCall(ownerTurn(unreadable))).resolves.toMatchObject({ exec: 'sandbox', home: locked });
+    await expect(svc.forCall(ownerTurn(await projectSession(sm, locked)))).resolves.toMatchObject({
+      exec: 'sandbox',
+      home: locked,
+    });
   });
 
   it('档位与越界策略取根会话的生效设置；没设时为工作区档、越界要问；子会话自己的设置不起作用', async () => {
@@ -249,7 +263,7 @@ describe('场所、绑定与档位', () => {
     const { sm, svc, webui } = await start();
     sm.registerSetting(TIER, 'zz-test');
     const cred = await svc.forCall(ownerTurn(webui));
-    const note = join(defaultPaperOf(dirs.home), 'a.md');
+    const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
     expect(await verdict(cred, { effect: 'network', via: 'url' })).toBe('allow');
     expect(cred.allows('write', note)).toBe(true);
 
@@ -292,9 +306,9 @@ describe('子任务随发起它的那一轮父会话', () => {
     await dispatch(host, child, webui);
 
     const issued = await svc.forCall(subtaskTurn(child, webui));
-    expect(issued).toMatchObject({ exec: 'sandbox', home: defaultPaperOf(dirs.home) });
+    expect(issued).toMatchObject({ exec: 'sandbox', home: paperOf(dirs.home, DEFAULT_WORKSPACE) });
     expect(issued.allows('write', join(sessionTmpIn(dirs.home, child), 'x'))).toBe(true);
-    const note = join(defaultPaperOf(dirs.home), 'a.md');
+    const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
     expect(issued.allows('write', note)).toBe(true);
 
     await sm.updateSession(webui, { config: { accessTier: 'readonly' } });
@@ -483,7 +497,7 @@ describe('污点与来源账本', () => {
 
   it('受污染的会话经凭据写进白纸的文件记进账本；干净时、白纸以外不记；重启后仍在', async () => {
     const first = await start();
-    const paper = defaultPaperOf(dirs.home);
+    const paper = paperOf(dirs.home, DEFAULT_WORKSPACE);
     const clean = await first.svc.forCall(ownerTurn(first.webui));
     clean.noteWrite(join(paper, 'clean.md'));
     first.svc.markTainted(first.webui, ['群「<群名>」']);
@@ -512,7 +526,7 @@ describe('污点与来源账本', () => {
     svc.markTainted(webui, ['群「<群名>」']);
     const cred = await svc.forCall(ownerTurn(webui));
     expect(cred.tainted).toBeUndefined();
-    const file = join(defaultPaperOf(dirs.home), 'from-group.md');
+    const file = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'from-group.md');
     cred.noteWrite(file);
     expect(svc.provenanceOf(file)).toMatchObject({ sessionId: webui, sources: ['群「<群名>」'] });
   });
@@ -536,7 +550,9 @@ describe('沙箱策略', () => {
   it('只读与工作区档有：可写根含场所的主目录与本会话临时区；修改确认与全权没有', async () => {
     const { sm, svc, webui } = await start();
     const policy = (await svc.forCall(ownerTurn(webui))).sandboxPolicy();
-    expect(policy.write).toEqual(expect.arrayContaining([defaultPaperOf(dirs.home), sessionTmpIn(dirs.home, webui)]));
+    expect(policy.write).toEqual(
+      expect.arrayContaining([paperOf(dirs.home, DEFAULT_WORKSPACE), sessionTmpIn(dirs.home, webui)]),
+    );
     expect(policy.network).toBe('on');
 
     sm.registerSetting(TIER, 'zz-test');

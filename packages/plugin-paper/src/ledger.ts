@@ -56,7 +56,7 @@ export type TaskState = 'queued' | 'starting' | 'running' | 'collecting' | 'done
 export interface TaskRecord {
   /** t-<8 位十六进制> */
   id: string;
-  /** n:<名> 或 r:<房间会话 id 的 sha256 前 12 位> */
+  /** n:<名>，或场所的白纸 id（api-session-manager 的 placePaperId） */
   paperId: string;
   /** 发起任务的房间会话 id */
   room: string;

@@ -68,7 +68,7 @@ describe('无人值守的多步任务', () => {
     await app.plugin(sessionManagerPlugin, {});
     await app.plugin(sessionServerPlugin, {});
     await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(agentPlugin, { systemPrompt: 'test', maxToolIterations: 5 });
+    await app.plugin(agentPlugin, { systemPrompt: 'test' });
     await app.plugins.idle();
     for (const definition of [toolsPlugin, authorityPlugin, sessionServerPlugin, agentPlugin]) {
       expect(app.plugins.getPlugin(definition.name)?.state, `${definition.name} 未激活`).toBe('active');

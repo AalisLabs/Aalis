@@ -17,9 +17,8 @@ import { refOf, sameRef, usePages } from '../pages/registry';
 import { PageScope } from '../pages/scope';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { paths } from '../routes';
-import { SettingRows } from '../settings/SettingRows';
+import { SessionSettings } from '../settings/SessionSettings';
 import type { useSettingRows } from '../settings/setting-rows';
-import { SessionsFetchError } from '../shell/SessionGate';
 import { Aside, usePhone } from '../shell/Shell';
 import type { PlanItem, UsageItem } from './live-session';
 import type { SessionTabs } from './panel-tabs';
@@ -109,7 +108,7 @@ export function SessionPanel({
     >
       {gone && <PageGone instance={gone.instance} />}
       {host === 'plan' && plan && <PlanTab sessionId={sessionId} plan={plan} />}
-      {host === 'settings' && <SettingsTab settings={settings} />}
+      {host === 'settings' && <SessionSettings summary={summary} settings={settings} />}
       {host === 'usage' && usage && <UsageTable usage={usage} session={summary} />}
       {host === 'background' && summary && <BackgroundTab session={summary} tasks={tasks} log={log} onLog={onLog} />}
       {current?.page &&
@@ -173,25 +172,6 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
       >
         清空
       </Button>
-    </div>
-  );
-}
-
-function SettingsTab({ settings }: { settings: SessionPanelProps['settings'] }) {
-  const { rows, error, update, retry } = settings;
-  if (error) {
-    return (
-      <div className="session-panel-section">
-        <SessionsFetchError what="设置" error={error} retry={retry} />
-      </div>
-    );
-  }
-  if (!rows) return null;
-  if (rows.length === 0) return <p className="session-panel-note">这个会话没有可以设置的项</p>;
-  return (
-    <div className="session-panel-section">
-      <p className="session-panel-note">改动从下一轮起生效</p>
-      <SettingRows rows={rows} update={update} />
     </div>
   );
 }

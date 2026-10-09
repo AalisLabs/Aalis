@@ -38,7 +38,6 @@ async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModel
   await app.plugin(agentPlugin, {
     systemPrompt: 'you are a test bot',
     memoryTokenBudget: 1024,
-    maxToolIterations: 5,
     toolResultMaxRatio: 0.15,
     trimThresholdRatio: 1.0,
     preferredModel: '',

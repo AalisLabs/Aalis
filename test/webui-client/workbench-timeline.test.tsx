@@ -4,7 +4,18 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, INIT, installDialog, main, pluginRow, renderApp, requests, server, summary } from './harness.js';
+import {
+  type Harness,
+  INIT,
+  installDialog,
+  main,
+  pluginRow,
+  renderApp,
+  requests,
+  room,
+  server,
+  summary,
+} from './harness.js';
 import { agentMessage, notice, push, pushDelta, reasoning, snapshot, toolCall, turn, userMessage } from './items.js';
 
 // ════════════════════════════════════════════════════════════
@@ -47,7 +58,7 @@ afterEach(() => {
 const timeline = () => main().findByRole('region', { name: '对话' });
 
 describe('时间线', () => {
-  it('条目按种类渲染：提问、回复（Markdown，下面一行写模型与这一轮的 token）、默认折叠的思考、宿主通知；头部写标题与会话种类', async () => {
+  it('条目按种类渲染：提问、回复（Markdown，下面一行写模型与这一轮的 token）、默认折叠的思考、宿主通知；头部写标题与所在场所', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot([
@@ -77,7 +88,7 @@ describe('时间线', () => {
     fireEvent.click(thinking);
     expect(log.getByText('先读三份草稿')).toBeTruthy();
     expect(main().getByRole('heading', { name: '整理周报' })).toBeTruthy();
-    expect(main().getByText('我的会话')).toBeTruthy();
+    expect(main().getByText('默认工作区')).toBeTruthy();
   });
 
   it('流式：started 之后的增量接在正文后面，completed 的全文是正本', async () => {
@@ -424,12 +435,12 @@ describe('时间线', () => {
             userMessage('u2', '我来讲', { speaker: { platform: 'webui', userId: 'console', owner: true } }),
             agentMessage('a1', '不客气', { undelivered: { reason: '没有发出：这一轮静默结束' } }),
           ],
-          { session: { kind: 'room', section: 'rooms', platform: 'onebot', audience: 'group', title: '示例群 A' } },
+          { session: room('onebot:10000:group:20001', 'im-a', { title: '示例群 A' }) },
         ),
     });
     const log = within(await timeline());
     expect(main().getByText('你正在以 owner 身份在「示例群 A」发言，按群的人设和能力运行')).toBeTruthy();
-    expect(main().getByText('群 · onebot')).toBeTruthy();
+    expect(main().getByText('group · onebot')).toBeTruthy();
     expect(log.getByText('小林')).toBeTruthy();
     expect(log.getByText('你')).toBeTruthy();
     const reply = log.getByText('不客气').closest('.message') as HTMLElement;
@@ -815,7 +826,7 @@ describe('收起、没有回复与运行指示', () => {
       userMessage('u5', '第五句'),
       turn('t5', { outcome: 'silent' }),
     ];
-    for (const session of [{}, { kind: 'room', section: 'rooms', platform: 'onebot', audience: 'group' }] as const) {
+    for (const session of [{}, room('s1', 'im-a')]) {
       app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot(items, { session }) });
       const log = await timeline();
       const lines = [...log.querySelectorAll('.message-text, .markdown, .turn-outcome')].map(node => node.textContent);

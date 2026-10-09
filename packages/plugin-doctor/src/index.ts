@@ -11,6 +11,7 @@ import {
   doctor,
   unmetDependencies,
 } from '@aalis/api-doctor';
+import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
@@ -36,6 +37,7 @@ const uses = {
   plugins: optional(pluginsService),
   commands: optional(commands),
   webui: optional(webuiServer),
+  hostConfig: optional(hostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -127,7 +129,7 @@ export default definePlugin({
   subsystem: 'platform',
   provides: [doctor],
   uses,
-  apply({ provide, logger, events, services, plugins, commands, webui }) {
+  apply({ provide, logger, events, services, plugins, commands, webui, hostConfig }) {
     // 诊断页只读本次激活的 registry：页面属于本插件，不该去查「当前胜出的 doctor」
     const page = webui.definePage({
       key: 'doctor',
@@ -208,7 +210,7 @@ export default definePlugin({
     provide(doctor, registry);
 
     // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
-    registerBuiltinChecks(registry, plugins, services);
+    registerBuiltinChecks(registry, plugins, services, hostConfig);
 
     // 注册 /doctor 命令 —— chat 与 CLI 通用入口。受限（等级 2）：报告带存储根的宿主路径、
     // 插件报错原文（其中可能有内网地址与端口），不该让群里人人都能看到
@@ -227,11 +229,12 @@ export default definePlugin({
 // plugin-storage-local，经 doctor 契约自行注册——避免 doctor 反向硬依赖业务插件。
 //
 // `plugins.status` 留在这里：它读 PluginManager（核心服务），不属于任何业务插件领域；
-// 若未来 PluginManager 自带 self-check，可一并迁走。
+// 若未来 PluginManager 自带 self-check，可一并迁走。`services.preferences` 同理，读的是宿主配置与服务容器。
 function registerBuiltinChecks(
   reg: DoctorRegistry,
   plugins: ServiceRef<PluginManagerService>,
   services: Services,
+  host: ServiceRef<HostConfig>,
 ): void {
   reg.registerCheck({
     id: 'env.node',
@@ -332,6 +335,37 @@ function registerBuiltinChecks(
               : undefined,
         },
       ];
+    },
+  });
+
+  // 配置文档里的服务偏好指向的提供者此刻不在这个服务里：偏好没有生效，服务落到了别的提供者上（模型删了、插件停用了）。
+  // 每个这样的服务一条，写明实际在用哪个；服务容器的解析序是偏好 > 优先级 > 注册顺序，偏好不在时排第一的就是在用的
+  reg.registerCheck({
+    id: 'services.preferences',
+    category: 'service',
+    pluginName: PLUGIN_NAME,
+    run() {
+      const results: CheckResult[] = [];
+      for (const [name, preferred] of Object.entries(host.current?.getServicePreferences() ?? {})) {
+        const entries = services.inspect(name);
+        if (entries.some(entry => entry.contextId === preferred)) continue;
+        const [inUse] = entries;
+        results.push({
+          id: `services.preferences.${name}`,
+          category: 'service',
+          level: 'warn',
+          message: `服务 ${name} 的偏好 ${preferred} 不在提供者里，没有生效`,
+          detail: [
+            inUse
+              ? `实际在用：${inUse.label ? `${inUse.label}（${inUse.contextId}）` : inUse.contextId}`
+              : '这个服务现在没有提供者',
+            `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`,
+          ].join('\n'),
+        });
+      }
+      return results.length > 0
+        ? results
+        : { id: 'services.preferences', category: 'service', level: 'ok', message: '没有未生效的服务偏好' };
     },
   });
 }

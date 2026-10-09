@@ -110,6 +110,14 @@ const REMOVED: Array<[string, string]> = [
   ['inferSessionScope', '按会话 id 约定推断会话类型与目标，由会话记下的聊天窗口 originChat 取代'],
   ['OWNER_ENTRY_PLATFORMS', '会话管理按入口平台名单判自动标题，由会话的创建来源 createdFrom 取代'],
   ['agent.historyLimit', '对话代理的插件配置键 historyLimit，由会话设置项 historyLimit（条数线）取代'],
+  ['RoomAudience', '会话的受众（按会话 id 推出），由聊天窗口 originChat 的类型名与多方标记取代'],
+  ['AUDIENCE_NAMES', '白纸插件里受众条目的称呼，由层表的称呼加平台与类型名取代'],
+  ['resolveSessionOrigin', '按会话 id 推出出生平台与受众，由会话记下的出生平台与聊天窗口取代'],
+  ['SessionOrigin', '按会话 id 推出的出生平台与受众，由会话记下的出生平台与聊天窗口取代'],
+  [
+    'defaultLLM',
+    '对话代理的插件配置键 defaultLLM（激活时改 llm 服务的偏好）：默认模型只有 llm 服务的偏好一处，经会话设置「模型」的全局默认层改',
+  ],
 ];
 
 /**

@@ -26,6 +26,13 @@ export const optionLabel = (option: Option) => (option.isDefault ? `${option.lab
 /** 一行的生效值：哪一层都没设时按字段的默认值 */
 export const effectiveOf = (row: SettingRow) => (row.source === undefined ? row.field.default : row.effective);
 
+/**
+ * 一行哪一层都没设时写的一句：全局默认层由服务偏好承担的项写服务此刻实际用的那一个（「默认（<模型名>）」），其余是登记方给的
+ * 「没设时」
+ */
+export const unsetOf = (row: SettingRow) =>
+  row.resolved === undefined ? row.unset : `默认（${formatValue(row.field, row.resolved)}）`;
+
 /** 可选项依赖的另一项（设置项的 dependsOn）：它的名字与生效值 */
 export interface Dependency {
   label: string;

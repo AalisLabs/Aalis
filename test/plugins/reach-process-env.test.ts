@@ -11,7 +11,15 @@ import {
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../packages/core/src/index.js';
-import { ownerTurn, type ReachDirs, reachDirs, removeDirs, sessionTmpIn, startReach } from '../fixtures/reach-host.js';
+import {
+  ownerTurn,
+  projectSession,
+  type ReachDirs,
+  reachDirs,
+  removeDirs,
+  sessionTmpIn,
+  startReach,
+} from '../fixtures/reach-host.js';
 
 // ════════════════════════════════════════════════════════════
 // 子进程环境只从凭据来：在场所的主目录下用 owner 的 login shell 取完整环境（同一个主目录取到一次就一直用），取不到时用守护
@@ -141,8 +149,7 @@ describe('取 login shell 的环境', () => {
 
     const proj = join(dirs.base, 'code', 'proj');
     mkdirSync(proj, { recursive: true });
-    const project = (await sm.createSession({ name: 'p' }, { createdFrom: 'webui', work: { root: proj } })).id;
-    await (await svc.forCall(ownerTurn(project))).processEnv('host');
+    await (await svc.forCall(ownerTurn(await projectSession(sm, proj)))).processEnv('host');
     expect(shellCalls()).toEqual([dirs.user, proj]);
   });
 

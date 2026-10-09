@@ -40,7 +40,6 @@ const configSchema = defineConfig({
   },
   language: { type: 'string', label: '默认语种', default: 'auto', onInvalid: 'error' },
   threads: { type: 'number', label: '线程数', default: 4, onInvalid: 'error' },
-  priority: { type: 'number', label: '优先级 (越大越优先)', default: 80 },
   timeoutMs: {
     type: 'number',
     label: '子进程超时 (ms)',
@@ -52,6 +51,9 @@ const configSchema = defineConfig({
   },
 });
 type Cfg = ConfigOf<typeof configSchema>;
+
+/** 在 asr 服务里的优先级：只作第一方提供者之间的默认先后（本地转写在云端接口的 50 之前）；选哪个用服务偏好 */
+const PRIORITY = 80;
 
 /**
  * 猜音频文件扩展名（只用来拼临时文件名，ffmpeg 按内容探测格式）。
@@ -182,8 +184,8 @@ export default definePlugin({
     const proc = createProcessGateway(caps.proc);
     const storage = createStorageGateway(caps.storage);
 
-    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: cfg.priority });
-    caps.logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
+    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
+    caps.logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath})`);
   },
 });
 
