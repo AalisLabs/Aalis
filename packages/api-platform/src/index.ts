@@ -54,7 +54,8 @@ export interface PlatformAdapter {
    * 作用域的候选也按它列。
    *
    * 不声明（没写或空列表）的平台整个算一个一对一类型 `private`（见 {@link sessionTypesOf}）。有多方会话的平台必须声明
-   * 类型并在消息上带类型名，否则它的群按一对一处理：任何群员都会被当成那个唯一的对端
+   * 类型并在消息上带类型名：不声明的，它的群按一对一处理，任何群员都会被当成那个唯一的对端；声明了却没在消息上带类型名的，
+   * 一对一的聊天也按多方处理（见 {@link resolveSessionType}）
    */
   sessionTypes?: readonly SessionTypeDecl[];
   /** 获取当前所有连接 */
@@ -105,7 +106,7 @@ export interface PlatformAdapterEntry {
 }
 
 /** 枚举所有 platform adapter 条目 */
-export function getPlatformAdapterEntries(source: ServiceRef<PlatformAdapter>): PlatformAdapterEntry[] {
+export function getPlatformAdapterEntries(source: Pick<ServiceRef<PlatformAdapter>, 'all'>): PlatformAdapterEntry[] {
   return source.all();
 }
 
@@ -139,14 +140,23 @@ export interface ResolvedSessionType extends SessionTypeDecl {
 }
 
 /**
- * 按平台的类型解析消息带的类型名：不带类型名按 private、一对一；声明里有的按声明，多方标记不是 false 的（漏写、写错）按多方；
- * 声明里没有的按多方，标出 undeclared。都是失败关闭：宁可把一对一当多方
+ * 按平台的类型解析消息带的类型名，都是失败关闭：宁可把一对一当多方。
+ * - 不带类型名：声明里有多方类型的按其中第一个（适配器漏带了类型名，调用方据消息上没有类型名告警，每个平台一次）；
+ *   没声明、或声明里只有一对一类型的按 private、一对一；
+ * - 声明里有的按声明，多方标记不是 false 的（漏写、写错）按多方；
+ * - 声明里没有的按多方，标出 undeclared
  */
 export function resolveSessionType(types: readonly SessionTypeDecl[], name: string | undefined): ResolvedSessionType {
-  if (name === undefined) return { name: 'private', multiParty: false, undeclared: false };
+  const multiParty = (type: SessionTypeDecl) => type.multiParty !== false;
+  if (name === undefined) {
+    const shared = types.find(multiParty);
+    return shared
+      ? { name: shared.name, multiParty: true, undeclared: false }
+      : { name: 'private', multiParty: false, undeclared: false };
+  }
   const declared = types.find(type => type.name === name);
   return declared
-    ? { name, multiParty: declared.multiParty !== false, undeclared: false }
+    ? { name, multiParty: multiParty(declared), undeclared: false }
     : { name, multiParty: true, undeclared: true };
 }
 
@@ -189,10 +199,10 @@ export function getPlatformSelfIdentity(
 
 /**
  * 按 sessionId 找到接管它的 adapter 条目（带插件实例 id `contextId`）；优先 `canHandle`，否则 fallback 为
- * `sessionId.startsWith(platform + ':')`（只适合同平台单实例的适配器）。
+ * `sessionId.startsWith(platform + ':')`（只适合同平台单实例的适配器）。只在部分 adapter 里找时，source 给一个只列它们的 `all`
  */
 export async function resolvePlatformBySession(
-  source: ServiceRef<PlatformAdapter>,
+  source: Pick<ServiceRef<PlatformAdapter>, 'all'>,
   sessionId: string,
   logger?: Pick<Logger, 'warn'>,
 ): Promise<PlatformAdapterEntry | undefined> {

@@ -13,7 +13,13 @@ import { commands } from '@aalis/api-commands';
 import { unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { persona } from '@aalis/api-persona';
-import { getPlatformAdapters, type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
+import {
+  getPlatformAdapters,
+  type PlatformAdapter,
+  type PlatformConnection,
+  platform,
+  resolvePlatformBySession,
+} from '@aalis/api-platform';
 import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import {
@@ -327,6 +333,8 @@ class CliTui {
   private historyIndex: number | null = null;
   /** 提交的行依次投递：会话缺档时要先等建档，后一行不能越过前一行先发出 */
   private delivering: Promise<void> = Promise.resolve();
+  /** 已告警过配置的会话 id 由别的平台适配器认领 */
+  private warnedForeign = false;
   private readonly chat = new ChatBuffer();
   private logLines: LogEntry[];
   private logScroll = 0;
@@ -742,12 +750,13 @@ class CliTui {
 
   /**
    * 发出一行。会话在入站之前建档、写创建来源：入站时会话表里已有它，房间收录不会把它当成 IM 房间；会话被删后下一条消息
-   * 照样补建，已有的记录不动。userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的 cli:console
+   * 照样补建，已有的记录不动。配置的 id 由别的平台适配器认领（配错了）时不建档、不写创建来源：配错的 id 不能把别人的窗口
+   * 变成 owner 自己的会话。userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的 cli:console
    * owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority
    */
   private async deliver(text: string): Promise<void> {
     const sm = this.caps.sessionManager.current;
-    if (sm && !sm.getSession(this.sessionId)) {
+    if (sm && !sm.getSession(this.sessionId) && !(await this.claimedElsewhere())) {
       await sm.ensureSession(this.sessionId, {}, { createdFrom: this.approvalSurface.name });
     }
     await this.caps.events.emit('inbound:message', {
@@ -756,6 +765,21 @@ class CliTui {
       platform: 'cli',
       userId: 'console',
     });
+  }
+
+  /** 配置的会话 id 由终端以外的平台适配器认领；第一次发现时告警 */
+  private async claimedElsewhere(): Promise<boolean> {
+    const { platform, logger } = this.caps;
+    const others = { all: () => platform.all().filter(({ instance }) => instance.platform !== 'cli') };
+    const owner = await resolvePlatformBySession(others, this.sessionId, logger);
+    if (owner && !this.warnedForeign) {
+      this.warnedForeign = true;
+      logger.warn(
+        `终端配置的会话 ${this.sessionId} 由平台「${owner.instance.platform}」（${owner.contextId}）认领：终端不给它建档、` +
+          '不写创建来源。改配置里的 sessionId',
+      );
+    }
+    return owner !== undefined;
   }
 
   private recallHistory(delta: -1 | 1): void {

@@ -407,9 +407,11 @@ describe('工作区', () => {
 describe('白纸 id', () => {
   it('对同一个场所键稳定，不同键不同；同一个群里两个机器人账号的会话用同一张白纸', async () => {
     expect(placePaperId(WINDOW)).toBe(placePaperId(WINDOW));
-    expect(placePaperId(WINDOW)).toMatch(/^p:[A-Za-z0-9_-]+$/);
+    expect(placePaperId(WINDOW)).toBe(`p:${Buffer.from(WINDOW).toString('hex')}`);
     expect(placePaperId(WINDOW)).not.toBe(placePaperId('onebot:group:20002'));
     expect(placePaperId('workspace:default')).not.toBe(placePaperId('workspace:defaulu'));
+    // 白纸目录按 id 取名：大小写不敏感的文件系统上，只差大小写的两个 id 会落进同一个目录
+    expect(placePaperId('tg:private:aaa').toLowerCase()).not.toBe(placePaperId('tg:private:Gaa').toLowerCase());
 
     const { sm, inbound } = await setup();
     await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001', selfId: '10000' });

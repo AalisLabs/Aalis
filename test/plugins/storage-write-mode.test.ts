@@ -15,6 +15,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 // storage.writeFile 原子写的权限位回归（真 fs）。
 //   tmp+rename 的副作用：tmp 以默认 mode 创建，rename 后目标继承之——
 //   可执行脚本被 file_write/file_edit 覆盖一次就从 755 掉到 644。
+// 凭据（secret）一律 0600：新建的与覆盖已有的都是。
 // ════════════════════════════════════════════════════════════
 
 const mode = (p: string) => statSync(p).mode & 0o777;
@@ -78,6 +79,17 @@ describe('storage.writeFile 权限位（真 fs）', () => {
     writeFileSync(baseline, 'x');
     await storage.writeFile('ws:/fresh.txt', 'x');
     expect(mode(join(ws, 'fresh.txt'))).toBe(mode(baseline));
+  });
+
+  it('凭据（secret）：新文件与覆盖已有的 644 文件都是 0600', async () => {
+    const existing = join(ws, 'old-token');
+    writeFileSync(existing, 'old');
+    chmodSync(existing, 0o644);
+    await storage.writeFile('ws:/old-token', 'new', { secret: true });
+    await storage.writeFile('ws:/token', 'new', { secret: true });
+    expect(mode(existing)).toBe(0o600);
+    expect(readFileSync(existing, 'utf-8')).toBe('new');
+    expect(mode(join(ws, 'token'))).toBe(0o600);
   });
 
   it('并发覆盖同一路径：tmp 名互不相撞，写入全部成功且落盘内容是其中之一', async () => {
