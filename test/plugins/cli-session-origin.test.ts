@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
-import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { roomClass, type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -11,8 +11,8 @@ import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
 // 终端的会话由 plugin-cli 在发出入站之前建档，创建来源写它登记的审批面名 cli：与 WebUI 新建的会话一样是
-// owner 的会话，入站时会话表里已有记录，房间收录不会把它当成 IM 房间。会话被删后下一条消息照样补建，
-// 已有的记录不改。起真 TUI（假 TTY），按键输入发消息。
+// owner 的会话，入站时会话表里已有记录，房间收录不会把它当成 IM 房间。会话被删后下一条消息照样补建；按 id 兜底建档
+// 留下的空记录（没有创建来源、出生平台与绑定）补写创建来源，其余已有的记录不改。起真 TUI（假 TTY），按键输入发消息。
 // ════════════════════════════════════════════════════════════
 
 const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
@@ -122,7 +122,31 @@ describe('终端的会话在入站之前建档', () => {
     expect(seen[1]).toMatchObject({ id: 'cli-default', createdFrom: 'cli' });
   });
 
-  it('已有的记录不改：没有创建来源的旧记录照旧，名字与更新时间不动', async () => {
+  it('会话被删后子任务兜底重建的空记录：终端说话时补写创建来源，是 owner 的会话，不被补记成房间', async () => {
+    const { sm, seen, say } = await setup();
+    // 会话被删后定时任务在它里面派子任务：父会话按 id 兜底建档，没有创建来源、出生平台与绑定
+    await sm.createChildSession('cli-default', { name: '<子任务>' });
+
+    await say('你好');
+
+    expect(seen[0]).toMatchObject({ id: 'cli-default', createdFrom: 'cli' });
+    const info = sm.getSession('cli-default');
+    expect(info?.originPlatform).toBeUndefined();
+    expect(info?.originChat).toBeUndefined();
+    expect(
+      roomClass(
+        info,
+        id => sm.getSession(id),
+        () => false,
+      ),
+    ).toBe('owner-only');
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['已有创建来源', { createdFrom: 'webui' }],
+    ['有出生平台', { originPlatform: 'cli', originChat: { type: 'private', multiParty: false, targetId: 'console' } }],
+    ['有绑定', { work: { root: '/x', extraRoots: [], worktrees: [] } }],
+  ])('%s的记录不改：名字、更新时间与创建来源照旧', async (_, fields) => {
     const { sm, seen, say } = await setup({
       'cli-default': {
         id: 'cli-default',
@@ -132,27 +156,26 @@ describe('终端的会话在入站之前建档', () => {
         config: {},
         createdAt: 1,
         updatedAt: 1,
+        ...fields,
       },
     });
 
     await say('你好');
 
     expect(seen[0]).toMatchObject({ name: '<旧名>', updatedAt: 1 });
-    expect(sm.getSession('cli-default')?.createdFrom).toBeUndefined();
+    expect(sm.getSession('cli-default')?.createdFrom).toBe(fields.createdFrom);
   });
 
-  it('配置的会话 id 由别的平台适配器认领：不建档、不写创建来源，告警一次', async () => {
+  it('配置的会话 id 由别的平台适配器认领：不建档、不写创建来源，告警一次；房间收录判不出是谁的窗口，也不收录', async () => {
     const group = 'onebot:10000:group:20001';
     const { sm, say, warns } = await setup({}, group);
 
     await say('一');
-    expect(sm.getSession(group)?.createdFrom).toBeUndefined();
-    // 会话表里又没有它时，下一条照样不建档，也不再告警
-    await sm.deleteSession(group);
+    expect(sm.getSession(group)).toBeUndefined();
     await say('二');
 
-    expect(sm.getSession(group)?.createdFrom).toBeUndefined();
-    const foreign = warns.filter(w => w.includes(group));
+    expect(sm.getSession(group)).toBeUndefined();
+    const foreign = warns.filter(w => w.includes(`终端配置的会话 ${group}`));
     expect(foreign).toHaveLength(1);
     expect(foreign[0]).toContain('onebot');
   });

@@ -4,12 +4,12 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
+import { ONEBOT_TYPES, PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // IM 房间收录：会话表里还没有记录、不是子任务的会话，首条真人入站（不带 source）即按这条消息登记，记下出生平台与
@@ -54,7 +54,15 @@ async function setup(
   adapters: Partial<PlatformAdapter>[] = [],
   { instances = false, stored = {} }: { instances?: boolean; stored?: Record<string, Record<string, unknown>> } = {},
 ) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const warns: string[] = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+    error() {},
+    child: () => logger,
+  };
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
@@ -109,7 +117,7 @@ async function setup(
       body,
     );
 
-  return { sm, host, mem, inbound, turn, running };
+  return { app, sm, host, mem, inbound, turn, running, warns };
 }
 
 describe('IM 房间按首条真人入站登记', () => {
@@ -164,6 +172,56 @@ describe('IM 房间按首条真人入站登记', () => {
     await inbound({ sessionId: IDLE_GROUP, platform: 'onebot', source: 'idle-trigger' });
 
     expect([GROUP, PRIVATE, IDLE_GROUP].map(id => sm.getSession(id))).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe('一个会话 id 由不止一个平台认领：判不出是谁的窗口，不收录也不补记', () => {
+  /** 终端配置的会话 id 配成了 OneBot 的群 id */
+  const CLI_ON_GROUP: Partial<PlatformAdapter> = { platform: 'cli', canHandle: id => id === GROUP };
+  const ONEBOT: Partial<PlatformAdapter> = {
+    platform: 'onebot',
+    sessionTypes: ONEBOT_TYPES,
+    canHandle: id => id.startsWith('onebot:10000:'),
+  };
+  const fromCli = { sessionId: GROUP, platform: 'cli', userId: 'console' };
+  const fromGroup = {
+    sessionId: GROUP,
+    platform: 'onebot',
+    sessionType: 'group',
+    groupId: '20001',
+    groupName: '<群名>',
+  };
+
+  it.each([
+    ['终端先登记', [CLI_ON_GROUP, ONEBOT]],
+    ['OneBot 先登记', [ONEBOT, CLI_ON_GROUP]],
+  ])('%s：终端与 OneBot 的入站都不收录，兜底建档的空记录也不补记；每个 id 告警一次', async (_, adapters) => {
+    const { sm, inbound, warns } = await setup(adapters);
+
+    await inbound(fromCli);
+    await inbound(fromGroup);
+    expect(sm.getSession(GROUP), '不收录').toBeUndefined();
+    await sm.createChildSession(GROUP, { name: '<子任务>' });
+    await inbound(fromCli);
+    await inbound(fromGroup);
+    await settle();
+
+    expect(sm.getSession(GROUP)?.originPlatform, '不补记').toBeUndefined();
+    const ambiguous = warns.filter(w => w.includes(GROUP));
+    expect(ambiguous).toHaveLength(1);
+    expect(ambiguous[0]).toContain('「cli」');
+    expect(ambiguous[0]).toContain('「onebot」');
+  });
+
+  it('只有 OneBot 认领：照常收录，不告警；同一平台的两个实例都认领仍算一个平台', async () => {
+    const { app, sm, inbound, warns } = await setup([ONEBOT]);
+    await app.plugin(adapterPlugin('onebot-2', ONEBOT));
+    await app.plugins.idle();
+
+    await inbound(fromGroup);
+
+    expect(sm.getSession(GROUP)).toMatchObject({ originPlatform: 'onebot', originChat: { type: 'group' } });
+    expect(warns).toEqual([]);
   });
 });
 
@@ -241,47 +299,34 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     expect(instanceOf('cli-default'), 'owner 面会话不分组').toBeUndefined();
   });
 
-  it('解析期间别的建档调用合并进同一条记录：只建一次档，记下的实例也不丢', async () => {
+  it('收录之前问认领的期间别处按 id 建了档：只建一次档，问完按这条记录补记来源字段，实例也记下', async () => {
     const gated = gatedAdapter();
     const { sm, host, inbound } = await setup([gated.adapter]);
     const created: string[] = [];
     host.events.on('session:created', session => void created.push(session.id));
 
-    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
-    expect(gated.asked, '建档后的解析已经发起').toContain(GROUP);
+    const arriving = inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
+    expect(gated.asked, '认领已经在问').toContain(GROUP);
     await sm.ensureSession(GROUP, { config: { persona: '<人设>' } });
     gated.release();
+    await arriving;
     await settle();
 
     expect(created).toEqual([GROUP]);
-    expect(sm.getSession(GROUP)).toMatchObject({ name: '<群名>', config: { persona: '<人设>' } });
+    expect(sm.getSession(GROUP)).toMatchObject({ originPlatform: 'onebot', config: { persona: '<人设>' } });
     expect(sm.getSession(GROUP)?.originInstance).toBeTypeOf('string');
   });
 
-  it('解析期间会话被删除：不写回，也不推送更新', async () => {
+  it('补记实例的解析晚于一次落盘：记下的实例照样落盘', async () => {
     const gated = gatedAdapter();
-    const { sm, host, inbound } = await setup([gated.adapter]);
-    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group' });
-    expect(gated.asked).toContain(GROUP);
-    await sm.deleteSession(GROUP);
-    const updated: string[] = [];
-    host.events.on('session:updated', session => void updated.push(session.id));
-
-    gated.release();
-    await settle();
-
-    expect(sm.getSession(GROUP)).toBeUndefined();
-    expect(updated).toEqual([]);
-  });
-
-  it('解析晚于一次落盘：记下的实例照样落盘', async () => {
-    const gated = gatedAdapter();
-    const { mem, inbound } = await setup([gated.adapter]);
+    const { sm, mem, inbound } = await setup([gated.adapter], { stored: stored(STORED_ROOM) });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
-    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group' });
+    await inbound({ sessionId: GROUP, platform: 'onebot' });
+    expect(gated.asked, '补记的解析已经发起').toContain(GROUP);
+    await sm.updateSession(GROUP, { name: '<改名>' });
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(mem.meta.get(GROUP), '建档已落盘').toBeDefined();
+    expect(mem.meta.get(GROUP)?.name, '改名已落盘').toBe('<改名>');
     // 假后端存的是会话对象的引用：换成快照，才看得出之后有没有再落一次盘
     mem.meta.set(GROUP, { ...mem.meta.get(GROUP) });
     gated.release();

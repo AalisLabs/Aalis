@@ -750,13 +750,16 @@ class CliTui {
 
   /**
    * 发出一行。会话在入站之前建档、写创建来源：入站时会话表里已有它，房间收录不会把它当成 IM 房间；会话被删后下一条消息
-   * 照样补建，已有的记录不动。配置的 id 由别的平台适配器认领（配错了）时不建档、不写创建来源：配错的 id 不能把别人的窗口
-   * 变成 owner 自己的会话。userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的 cli:console
-   * owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority
+   * 照样补建。已有的记录只有按 id 兜底建档留下的空记录（没有创建来源、出生平台与绑定，如会话被删后定时任务在它里面派了
+   * 子任务）补写创建来源，其余不动。配置的 id 由别的平台适配器认领（配错了）时不建档、不写创建来源：配错的 id 不能把
+   * 别人的窗口变成 owner 自己的会话。userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的
+   * cli:console owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority
    */
   private async deliver(text: string): Promise<void> {
     const sm = this.caps.sessionManager.current;
-    if (sm && !sm.getSession(this.sessionId) && !(await this.claimedElsewhere())) {
+    const session = sm?.getSession(this.sessionId);
+    const unfiled = !session || (!session.createdFrom && !session.originPlatform && !session.work);
+    if (sm && unfiled && !(await this.claimedElsewhere())) {
       await sm.ensureSession(this.sessionId, {}, { createdFrom: this.approvalSurface.name });
     }
     await this.caps.events.emit('inbound:message', {

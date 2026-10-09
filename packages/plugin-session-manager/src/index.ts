@@ -7,7 +7,13 @@ import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { type LLMUsageEvent, lightestThinking, llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
-import { getPlatformAdapters, platform, resolvePlatformBySession, sessionTypesOf } from '@aalis/api-platform';
+import {
+  claimantsOf,
+  getPlatformAdapters,
+  platform,
+  resolvePlatformBySession,
+  sessionTypesOf,
+} from '@aalis/api-platform';
 import {
   type InheritanceSource,
   type NewSessionFields,
@@ -99,8 +105,8 @@ type ManagerCaps = Pick<
 /** 回合的结局（api-agent 的 agent:turn:after） */
 type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
 
-/** IM 房间收录按原生入站记下的来源字段 */
-type RoomOrigin = Required<Pick<SessionInfo, 'originPlatform' | 'originChat'>>;
+/** IM 房间收录按原生入站记下的来源字段，与收录之前解析到的接管它的适配器实例（没有适配器认领时不带） */
+type RoomOrigin = Required<Pick<SessionInfo, 'originPlatform' | 'originChat'>> & Pick<SessionInfo, 'originInstance'>;
 
 /** 场所记录：显示名、项目工作区的目录，与这个场所对各设置项的值（与层同一套校验，没登记的键原样保留） */
 interface PlaceRecord extends PlaceInfo {
@@ -428,21 +434,26 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），未命中以传入 id 建档，
-   * 创建来源只在建档时写。终端配置的会话 id、/session.set 落配置覆盖时用
+   * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），未命中以传入 id 建档。
+   * 创建来源在建档时写；命中按 id 兜底建档留下的空记录（没有创建来源、出生平台与绑定）时补写，随这次更新落盘。
+   * 终端配置的会话 id、/session.set 落配置覆盖时用
    */
   async ensureSession(
     id: string,
     patch: SessionUpdates = {},
     creation?: Pick<SessionCreation, 'createdFrom'>,
   ): Promise<SessionInfo> {
-    if (this.sessions.has(id)) return this.updateSession(id, patch);
-    return this.insert(id, patch, creation ? { createdFrom: creation.createdFrom } : {});
+    const session = this.sessions.get(id);
+    if (!session) return this.insert(id, patch, creation ? { createdFrom: creation.createdFrom } : {});
+    if (creation && !session.createdFrom && !session.originPlatform && !session.work) {
+      session.createdFrom = creation.createdFrom;
+    }
+    return this.updateSession(id, patch);
   }
 
   /**
    * IM 房间收录：按原生入站记下的出生平台与聊天窗口建档，名字取出生平台给的群名或昵称（没有时为 id）。只给会话表里
-   * 还没有的 id 调。场所是窗口的同时确保窗口的场所记录：insert 在第一次等待之前已同步占住 id、记下来源字段
+   * 还没有的 id 同步调用。场所是窗口的同时确保窗口的场所记录：insert 在第一次等待之前已同步占住 id、记下来源字段
    */
   async recordRoom(id: string, nativeName: string | undefined, origin: RoomOrigin): Promise<SessionInfo> {
     const [created] = await Promise.all([
@@ -455,19 +466,14 @@ class SessionManager implements SessionManagerService {
   /**
    * IM 房间收录的补记：按 id 兜底建档的根会话（没有来源字段、创建来源与绑定）与升级前只记了出生平台的记录（没有聊天窗口，
    * 出生平台与消息平台相同）收到原生入站时，记下与按这条消息建档时一样的来源字段，名字还是 id 的一并补上，场所是窗口的
-   * 确保窗口的场所记录。只认这个 id 归消息平台的适配器管的入站，WebUI 与终端往房间插话不算。解析是异步的：等待期间别的
-   * 入站已补记、会话被删或换表的不再写
+   * 确保窗口的场所记录。只给表里这条记录同步调用，由收录监听判定这个 id 归消息平台的适配器管
    */
   async backfillRoom(session: SessionInfo, nativeName: string | undefined, origin: RoomOrigin): Promise<void> {
-    const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
-    if (entry?.instance.platform !== origin.originPlatform) return;
-    if (this.sessions.get(session.id) !== session || session.originChat) return;
     Object.assign(session, origin, session.name === session.id && nativeName ? { name: nativeName } : {});
     Object.assign(session, describeSession(session));
     await this.noteWindow(session.id, nativeName);
     this.markDirty();
     await this.caps.events.emit('session:updated', session);
-    await this.recordOriginInstance(session);
   }
 
   /**
@@ -500,7 +506,7 @@ class SessionManager implements SessionManagerService {
   private async insert(
     id: string,
     patch: SessionUpdates,
-    fields: Pick<SessionInfo, 'createdFrom' | 'originPlatform' | 'originChat'>,
+    fields: Pick<SessionInfo, 'createdFrom' | 'originPlatform' | 'originChat' | 'originInstance'>,
   ): Promise<SessionInfo> {
     const config = this.checkedConfig(patch.config);
     const now = Date.now();
@@ -525,15 +531,14 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     await this.caps.events.emit('session:created', session);
     this.caps.logger.info(`会话建档(ensure): ${session.name} (${id})`);
-    await this.recordOriginInstance(session);
     return session;
   }
 
   /**
    * 有出生平台的房间还没记下接管它的适配器实例时，解析并记下，会话列表按它分组；已记下的不改，子任务与 owner 面
-   * 会话不记。建档与真人入站调用它：建档时没有适配器认领（适配器没装好、连接还没上来、账号暂时
-   * 不属于任何实例）的房间与读表读进来的旧房间，下一次有消息进来时补记。建档时记录先建好再解析：解析是异步的，
-   * 先占住 id，等待期间别的建档调用走合并更新，不会重复建档。解析期间会话被删除或换表的不再写回。不会拒绝。
+   * 会话不记。收录与补记时实例随来源字段一起记下（收录之前已解析）；收录时没有适配器认领（适配器没装好、连接还没上来、
+   * 账号暂时不属于任何实例）的房间与读表读进来的旧房间，由之后的真人入站调它补记。解析期间会话被删除或换表的不再写回，
+   * 同一条记录的解析不并发。不会拒绝。
    */
   async recordOriginInstance(session: SessionInfo): Promise<void> {
     if (session.kind !== 'room' || session.originInstance || this.resolving.has(session)) return;
@@ -1512,44 +1517,77 @@ async function run(caps: Caps): Promise<void> {
   // 会话表里还没有记录的真人入站（不带 source、不是子任务）按这条消息建档：出生平台取消息的平台，聊天窗口按这个平台的
   // 类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，不经这里。带 source 的是
   // 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。消息带的类型名不在平台的
-  // 声明里时按多方记下，每个平台与类型名告警一次。按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，
-  // 升级前的记录只记了出生平台、没有聊天窗口，两者都由第一条归它的适配器管的原生入站补记（backfillRoom；后者只认
-  // 出生平台的入站）。
+  // 声明里时按多方记下，每个平台与类型名告警一次；消息没带类型名、按平台声明的第一个多方类型记下时，每个平台告警一次。
+  // 按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，升级前的记录只记了出生平台、没有聊天窗口，
+  // 两者都由第一条归它的适配器管的原生入站补记（backfillRoom；后者只认出生平台的入站）。
+  // 收录与补记之前问遍认领这个 id 的适配器（claimantsOf），第一个认领者随来源字段记作所属实例。认领它的平台不止一个
+  // （如终端配置的会话 id 配成了群的 id）时判不出它是谁的窗口，不收录、不补记，每个 id 告警一次：结果不能取决于
+  // 适配器的登记先后。问的期间别的入站可能已收录，问完按会话表此刻的记录判，再同步建档或补记。
   // 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省用 id（群的首条入站可能是不带群名的戳一戳，
   // 不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，
   // 不补。
   // 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
   // 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。
-  const warnedTypes = new Set<string>();
-  events.on('inbound:message', (msg: IncomingMessage) => {
+  const warned = new Set<string>();
+  const warnOnce = (key: string, message: string) => {
+    if (warned.has(key)) return;
+    warned.add(key);
+    logger.warn(message);
+  };
+  /** 不经这条入站收录或补记的会话：有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
+  const recorded = (session: SessionInfo | undefined, msg: IncomingMessage): session is SessionInfo =>
+    session !== undefined &&
+    (Boolean(session.originChat || session.createdFrom || session.work) ||
+      (session.originPlatform ?? msg.platform) !== msg.platform);
+  /** 已收录的会话：出生平台的入站补名、更新窗口的显示名，还没记下所属实例的再解析一次 */
+  const noteRecorded = (session: SessionInfo, msg: IncomingMessage) => {
+    const chat = session.originChat;
+    if (chat && session.originPlatform === msg.platform) {
+      const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
+      if (nativeName && session.name === session.id)
+        manager.updateSession(session.id, { name: nativeName }).catch(() => {});
+      void manager.noteWindow(session.id, nativeName);
+    }
+    void manager.recordOriginInstance(session);
+  };
+  events.on('inbound:message', async (msg: IncomingMessage) => {
     const { sessionId } = msg;
     if (!sessionId || msg.source || sessionId.includes('::')) return;
-    const session = manager.getSession(sessionId);
-    const unrecorded =
-      session &&
-      !session.originChat &&
-      !session.createdFrom &&
-      !session.work &&
-      (session.originPlatform ?? msg.platform) === msg.platform;
-    if (session && !unrecorded) {
-      const chat = session.originChat;
-      if (chat && session.originPlatform === msg.platform) {
-        const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
-        if (nativeName && session.name === sessionId)
-          manager.updateSession(sessionId, { name: nativeName }).catch(() => {});
-        void manager.noteWindow(sessionId, nativeName);
-      }
-      void manager.recordOriginInstance(session);
+    const known = manager.getSession(sessionId);
+    if (recorded(known, msg)) {
+      noteRecorded(known, msg);
       return;
     }
+    const claimants = await claimantsOf(caps.platform, sessionId, logger);
+    const session = manager.getSession(sessionId);
+    if (recorded(session, msg)) {
+      noteRecorded(session, msg);
+      return;
+    }
+    const platforms = [...new Set(claimants.map(({ instance }) => instance.platform))];
+    if (platforms.length > 1) {
+      warnOnce(
+        `claim:${sessionId}`,
+        `会话 ${sessionId} 同时由平台「${platforms.join('」「')}」认领：判不出它是哪个平台的聊天窗口，不收录。` +
+          '改配置，一个会话 id 只归一个平台',
+      );
+      return;
+    }
+    // 补记只认这个 id 归消息平台的适配器管的入站：WebUI 与终端往房间插话不算
+    if (session && platforms[0] !== msg.platform) return;
     const adapter = getPlatformAdapters(caps.platform).find(a => a.platform === msg.platform);
     const scope = chatScopeOf(msg, sessionTypesOf(adapter));
-    const typeKey = `${scope.platform}:${scope.type}`;
-    if (scope.undeclared && !warnedTypes.has(typeKey)) {
-      warnedTypes.add(typeKey);
-      logger.warn(
+    if (scope.undeclared) {
+      warnOnce(
+        `type:${scope.platform}:${scope.type}`,
         `平台「${scope.platform}」没有声明类型「${scope.type}」（${sessionId}）：这个聊天窗口按多方记下。` +
           '适配器要在 sessionTypes 里声明它发出的类型名',
+      );
+    } else if (msg.sessionType === undefined && scope.multiParty) {
+      warnOnce(
+        `untyped:${scope.platform}`,
+        `平台「${scope.platform}」的消息没带类型名（${sessionId}）：这个聊天窗口按类型「${scope.type}」、多方记下。` +
+          '适配器要在消息上带类型名',
       );
     }
     const originChat: OriginChat = {
@@ -1559,7 +1597,11 @@ async function run(caps: Caps): Promise<void> {
       targetId: scope.targetId,
     };
     const nativeName = scope.multiParty ? msg.groupName : msg.nickname;
-    const origin = { originPlatform: msg.platform, originChat };
+    const origin: RoomOrigin = {
+      originPlatform: msg.platform,
+      originChat,
+      ...(claimants[0] ? { originInstance: claimants[0].contextId } : {}),
+    };
     (session
       ? manager.backfillRoom(session, nativeName, origin)
       : manager.recordRoom(sessionId, nativeName, origin)
