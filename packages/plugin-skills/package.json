@@ -30,6 +30,7 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.11.0 <1.0.0",
@@ -50,6 +51,7 @@
     "service": {
       "optional": [
         "persona",
+        "session-manager",
         "storage",
         "tools",
         "webui-server"

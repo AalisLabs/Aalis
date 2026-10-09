@@ -47,6 +47,7 @@ import {
   optional,
   pluginsService,
   provide,
+  services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
@@ -99,6 +100,8 @@ const uses = {
   storage: optional(storageService),
   gateway: optional(gatewayService),
   plugins: optional(pluginsService),
+  /** 会话没设模型时比对 llm 服务的偏好与实际用的模型 */
+  services,
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -200,6 +203,9 @@ class DefaultAgent implements AgentService {
    */
   private tokenLogState = new Map<string, { count: number; lastRatioBucket: number }>();
 
+  /** 已告警过的（llm 服务的偏好，实际用的模型）组合 */
+  private readonly preferenceFallbacks = new Set<string>();
+
   /** 已注册的预处理器（name → { dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
@@ -219,6 +225,7 @@ class DefaultAgent implements AgentService {
    *
    * 会话设置的 llm 交给 session-manager.resolveConfig 解析（按层表叠加，全局默认层即 llm 服务的偏好）；
    * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到服务此刻解析到的那一个（偏好 > 提供者优先级 > 登记先后）。
+   * 这时偏好指向的模型不在（模型删了、提供者在重载或激活失败），服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
    *
    * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
@@ -227,7 +234,18 @@ class DefaultAgent implements AgentService {
     const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
-    return resolveLLMModel(this.caps.llm, ref, ['chat']);
+    const entry = resolveLLMModel(this.caps.llm, ref, ['chat']);
+    const preferred = ref ? undefined : this.caps.services.preferred(llmService);
+    if (entry && preferred !== undefined && entry.contextId !== preferred) {
+      const combo = `${preferred}\n${entry.contextId}`;
+      if (!this.preferenceFallbacks.has(combo)) {
+        this.preferenceFallbacks.add(combo);
+        this.logger.warn(
+          `llm 服务的偏好 ${preferred} 没有生效（指向的模型不在、提供者在重载或激活失败），实际用的是 ${entry.contextId}`,
+        );
+      }
+    }
+    return entry;
   }
 
   /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */

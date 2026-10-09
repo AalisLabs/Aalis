@@ -52,7 +52,10 @@ const configSchema = defineConfig({
 });
 type Cfg = ConfigOf<typeof configSchema>;
 
-/** 在 asr 服务里的优先级：只作第一方提供者之间的默认先后（本地转写在云端接口的 50 之前）；选哪个用服务偏好 */
+/**
+ * 在 asr 服务里的优先级：只作第一方提供者之间的默认先后（本地转写在云端接口的 50 之前）。选哪个由 media 的 `audio.prefer`
+ * 决定，服务偏好只在优先级相同时决胜
+ */
 const PRIORITY = 80;
 
 /**
