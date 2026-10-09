@@ -97,6 +97,8 @@ packages/
 
 包类型由 `package.json` 的 `keywords` 标识：契约包打 `aalis-api`，插件打 `aalis-plugin`（完整词表见 [manifest-metadata](docs/concepts/manifest-metadata.md)）。插件的 `subsystem` 写在 `definePlugin({ subsystem })` 上，不写进 `package.json`。
 
+包间 `dependencies` 写 `workspace:>=<被依赖包当前版本> <1.0.0`，不用 `workspace:^`（发布成 `^0.x.y`，跨次版本即断）与 `workspace:*`（发布成精确版本），`test/architecture/dep-ranges.test.ts` 守着；`devDependencies` 不受这条约束。第一方包由根目录的 `pnpm publish:all` 批量发布：先构建，再按拓扑序逐包发布，跳过 private 包，workspace 协议在发布时换成实际范围。
+
 ## 5. 提交规范（Conventional Commits）
 
 ```

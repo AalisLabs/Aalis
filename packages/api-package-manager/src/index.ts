@@ -20,12 +20,17 @@ import { defineService } from '@aalis/core';
 export interface PackageManagerService {
   /** 装进根 `dependencies` + node_modules，随后 rescan 让加载器发现它；只接受插件与前端界面包 */
   install(npmPkg: string): Promise<InstallResult>;
-  /** 从根 `dependencies` 摘掉并 npm uninstall；闸在服务层（类型 / 撤销通道 / 来源 / 服务依赖者） */
-  uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
   /**
-   * 卸载 name 会打断哪些插件：name 提供的某服务没有别的插件正在提供（已激活或激活中），而它们 required 该服务
-   * （已禁用的不算）。卸载闸与市场的卸载前预警共用这一份判定。name 是插件定义 name；市场的预警按 npm 包名近似，
-   * 定义 name 与包名不同的插件在那里查不到、预警为空，卸载闸按解析出的定义 name 查，不受影响。
+   * 从根 `dependencies` 摘掉并 npm uninstall，卸掉它的全部实例并清掉它们的停用标记；闸在服务层（类型 / 撤销通道 / 来源 /
+   * 服务依赖者）。配置文档没写成时包已卸掉，ok 仍为 true，message 写明原因与要手动处理的残留
+   */
+  uninstall(pluginName: string, options?: UninstallOptions): Promise<{ ok: boolean; message: string }>;
+  /**
+   * 卸载 name 会打断哪些插件：name 正在提供（已激活或激活中）或马上就提供（pending 而只是在等，按 api-doctor 的共享
+   * 判据）的某服务没有别的插件正在提供，而它们 required 该服务（已禁用的不算）；name 自己没在提供时（失败、停用、pending 而
+   * 缺服务）卸掉它断不了谁，为空。卸载闸与市场的卸载前预警共用这一份判定。
+   * name 是插件定义 name；市场的预警按 npm 包名近似，定义 name 与包名不同的插件在那里查不到、预警为空，
+   * 卸载闸按解析出的定义 name 查，不受影响。
    */
   serviceDependents(name: string): string[];
   /**
@@ -57,6 +62,15 @@ export interface InstallResult {
    * 前端界面这类不进插件列表的包、以及没装成的不给
    */
   plugin?: string;
+}
+
+/** 卸载的选项 */
+export interface UninstallOptions {
+  /**
+   * 同时删掉它各实例在配置文档里的配置段，落盘后只有这些段引用的密钥随之删除。缺省为 false：配置段与密钥留着，
+   * 重装后照原配置启动，与在终端里 npm uninstall 一致
+   */
+  removeConfig?: boolean;
 }
 
 /** 一个待更新目标：包名 + 目标版本（不带范围符，由调用方从市场卡片取安装源上的 latest）。 */

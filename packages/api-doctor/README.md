@@ -1,6 +1,6 @@
 # @aalis/api-doctor
 
-诊断子系统契约：检查项注册、报告类型与 `doctor` 描述符。
+诊断子系统契约：检查项注册、报告类型与 `doctor` 描述符，以及插件没起来时「缺」与「在等」的共享判据 `unmetDependencies`（沿依赖链追到根，runtime 的启动告警、诊断、WebUI 与终端界面共用）。
 
 ## 安装
 

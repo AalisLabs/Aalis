@@ -9,6 +9,8 @@ import {
   type SettledState,
   sanitizeForCard,
 } from '@aalis/api-approval';
+import { commands } from '@aalis/api-commands';
+import { unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { persona } from '@aalis/api-persona';
 import { getPlatformAdapters, type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
@@ -23,6 +25,7 @@ import {
   lifecycle,
   logger,
   optional,
+  pluginsService,
   provide,
   services,
 } from '@aalis/core';
@@ -123,11 +126,17 @@ const uses = {
   persona: optional(persona),
   /** 登记 cli 审批面：终端界面在场时审批推到这里，应答记在这个登记身份名下 */
   approvals: optional(approvals),
+  /** 欢迎行下面的指路：有没有插件没起来，与 /doctor 在不在 */
+  plugins: optional(pluginsService),
+  commands: optional(commands),
 };
 type Caps = BoundOf<typeof uses>;
 
 /** TUI 实际用到的能力：界面层不碰配置解析、服务发布与存储 */
-type TuiCaps = Pick<Caps, 'events' | 'logger' | 'lifecycle' | 'services' | 'hostConfig' | 'platform' | 'persona'>;
+type TuiCaps = Pick<
+  Caps,
+  'events' | 'logger' | 'lifecycle' | 'services' | 'hostConfig' | 'platform' | 'persona' | 'plugins' | 'commands'
+>;
 
 export default definePlugin({
   name,
@@ -386,12 +395,34 @@ class CliTui {
     this.chat.append([
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
     ]);
+    void this.pointToUnready();
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
 
     this.caps.lifecycle.onDispose(() => this.stop());
     this.render();
+  }
+
+  /**
+   * 插件状态静置之后，有插件没起来时在欢迎行下面指路：数目是失败与缺服务之和（缺服务按 api-doctor 的共享判据，只在等
+   * 别的插件启动的不算），与 /doctor 的「失败」「未就绪」两项一致；有 doctor 指令时指向它，没有时指向日志页
+   */
+  private async pointToUnready(): Promise<void> {
+    const plugins = this.caps.plugins.current;
+    if (!plugins) return;
+    await plugins.idle();
+    const status = plugins.getStatus();
+    const lacking = [...unmetDependencies(status, this.caps.services.names()).values()].filter(
+      u => u.lacking.length > 0,
+    );
+    const count = status.filter(p => p.state === 'error').length + lacking.length;
+    if (count === 0) return;
+    const how = this.caps.commands.current?.has('doctor')
+      ? `输入 ${chalk.cyan('/doctor')} 查看原因与修法`
+      : `按 ${chalk.cyan('Ctrl+L')} 看日志`;
+    this.chat.append([chalk.gray(this.formatCont()) + chalk.yellow(`有 ${count} 个插件没起来，${how}`)]);
+    this.queueRender();
   }
 
   stop(): void {

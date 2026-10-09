@@ -14,7 +14,7 @@ import { type BoundWebui, markdownCode, webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { parse, stringify } from 'yaml';
 
 import { runDag, validateGraph } from './engine.js';
@@ -285,9 +285,7 @@ function resolveUri(key: 'defsDir' | 'runsFile', input: string, fallback: string
   const s = input.trim();
   if (!s) return fallback;
   if (!isStorageUri(s)) {
-    throw new Error(
-      `plugin-workflow 配置错误: ${key}="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 ${fallback}），或删掉该键使用默认值`,
-    );
+    throw configError(`${key}="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 ${fallback}），或删掉该键使用默认值`);
   }
   return s;
 }

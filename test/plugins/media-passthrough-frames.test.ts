@@ -52,6 +52,15 @@ function makeSvc(recognizeOnArrival = false): MediaServiceImpl {
   return new MediaServiceImpl(caps, cfg);
 }
 
+/** 挂一个能看图的处理器：没有模型看得到图时图片一律只留指针并加「无法查看」一行，这里要的是有模型时的两条路径 */
+function withVision(svc: MediaServiceImpl): void {
+  svc.registerProcessor({
+    name: 'fake-vision',
+    capabilities: ['vision'],
+    describe: async () => ({ descriptions: ['动图'] }),
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.materializeAttachment.mockResolvedValue({ path: '/tmp/x.gif', cleanup: mocks.cleanup });
@@ -106,6 +115,7 @@ describe('transformModelImages 交付形态真值表', () => {
 
   it('mimeType 线索：URL 无扩展名的 GIF 经归档期登记后，出口能识别为动图', async () => {
     const svc = makeSvc();
+    withVision(svc);
     const msg = {
       sessionId: 's',
       platform: 'test',
@@ -119,7 +129,8 @@ describe('transformModelImages 交付形态真值表', () => {
   });
 
   it('mimeType 线索在识别路径（recognizeOnArrival=true）下同样登记——线索登记不随识别开关走', async () => {
-    const svc = makeSvc(true); // 无 vision processor：识别分支空跑，但线索必须已登记
+    const svc = makeSvc(true);
+    withVision(svc); // 走识别分支（动图抽帧后识别），线索同样必须已登记
     const msg = {
       sessionId: 's',
       platform: 'test',

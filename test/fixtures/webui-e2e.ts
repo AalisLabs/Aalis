@@ -96,18 +96,21 @@ export function framePackage(name: string, files: Record<string, string>, cleanu
 }
 
 /**
- * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件）、webui-server 与 extra，逐个核已激活。
+ * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
+ * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值。
  * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。收尾登记进 cleanups
  */
 export async function webuiStack(options: {
   clientDir: string;
-  model: PluginDefinition;
+  model?: PluginDefinition;
   extra: PluginDefinition[];
   cleanups: Cleanups;
+  webui?: Record<string, unknown>;
+  slowThresholdMs?: number;
 }): Promise<{ app: App; port: number }> {
-  const { clientDir, model, extra, cleanups } = options;
+  const { clientDir, model, extra, cleanups, webui, slowThresholdMs } = options;
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
-  const { app } = hostedApp({ logLevel: 'info' });
+  const { app } = hostedApp({ logLevel: 'info' }, { slowThresholdMs });
   cleanups.push(async () => {
     await app.stop();
     rmSync(home, { recursive: true, force: true });
@@ -120,13 +123,13 @@ export async function webuiStack(options: {
     MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
   );
   const port = await freePort();
-  const definitions = [...minimal, memoryInMemoryPlugin, model, webuiServerPlugin, ...extra];
+  const definitions = [...minimal, memoryInMemoryPlugin, ...(model ? [model] : []), webuiServerPlugin, ...extra];
   await app.pluginAll(
     definitions.map(definition => ({
       definition,
       config:
         definition === webuiServerPlugin
-          ? { host: '127.0.0.1', port, autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN }
+          ? { host: '127.0.0.1', port, autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN, ...webui }
           : {},
     })),
   );

@@ -104,12 +104,12 @@ if (hadLeak) logger.warn('LLM content 残留特殊 token，已剥离');
 const md = fixGfmTables(rawMarkdown);
 ```
 
-`package.json` 依赖声明（util 库直接 import，无 DI）：
+`package.json` 依赖声明（util 库直接 import，无 DI；x.y.z 写开发时用的版本，写法见[插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)）：
 
 ```json
 {
   "dependencies": {
-    "@aalis/util-text-normalize": "latest"
+    "@aalis/util-text-normalize": ">=x.y.z <1.0.0"
   }
 }
 ```

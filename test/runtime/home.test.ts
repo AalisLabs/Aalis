@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { setupFileLogger } from '../../packages/runtime/src/file-logger.js';
 import {
   assertAbsolute,
@@ -300,6 +301,40 @@ describe('initHome', () => {
     expect(isHomeInitialized(paths)).toBe(true);
     expect(readFileSync(paths.secrets, 'utf-8')).toBe('k: v\n');
     expect(statSync(paths.secrets).mode & 0o777).toBe(0o600);
+  });
+
+  it('安装集装了会话管理与终端、WebUI：两个平台档开箱给全部工具分组；多人平台不代开', () => {
+    const app = join(tmp(), 'app');
+    mkdirSync(app);
+    writeFileSync(
+      join(app, 'package.json'),
+      JSON.stringify({
+        dependencies: { '@aalis/plugin-session-manager': '^0.1.0', '@aalis/plugin-cli': '^0.1.0' },
+        optionalDependencies: { '@aalis/plugin-webui-server': '^0.1.0', '@aalis/plugin-adapter-onebot': '^0.1.0' },
+      }),
+    );
+    const paths = derivePaths(join(tmp(), 'h'), app);
+    initHome(paths);
+    expect(parseYaml(readFileSync(paths.config, 'utf-8'))).toEqual({
+      name: 'Aalis',
+      logLevel: 'info',
+      plugins: {},
+      sessionConfig: { platforms: { cli: { enabledToolGroups: ['*'] }, webui: { enabledToolGroups: ['*'] } } },
+    });
+  });
+
+  it('安装集没有 package.json（还没装插件）：不写平台档', () => {
+    const paths = derivePaths(join(tmp(), 'h'), join(tmp(), 'app'));
+    initHome(paths);
+    expect(parseYaml(readFileSync(paths.config, 'utf-8'))).toEqual({ name: 'Aalis', logLevel: 'info', plugins: {} });
+  });
+
+  it('安装集的 package.json 读不了：点名文件报错，什么都不建', () => {
+    const app = tmp();
+    writeFileSync(join(app, 'package.json'), '{ not json');
+    const paths = derivePaths(join(tmp(), 'h'), app);
+    expect(() => initHome(paths)).toThrow(join(app, 'package.json'));
+    expect(existsSync(paths.home)).toBe(false);
   });
 
   it('目录里有布局以外的东西时拒绝：不把用户主目录或仓库改成 0700、再往里铺布局', () => {

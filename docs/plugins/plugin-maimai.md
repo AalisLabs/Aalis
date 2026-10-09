@@ -5,7 +5,7 @@
 
 ## 概述
 
-基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口。工具经 `tools` 绑定门面登记到 `maimai` 工具组，指令经 `commands.command` 登记为 `/maimai` 及其子指令，两者调用同一组处理函数（`handleGetPlayer` / `handleGetBests` / `handleGetRecents` / `handleSearchSong` / `handleBind`），解绑则都直接清除绑定记录。用户与好友码的绑定关系存放在 `memory` 服务的元数据中，命名空间为 `maimai-binding`，键为 `platform:userId`。未配置 `developerToken` 时插件只输出一条警告，不注册任何工具或指令。
+基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口。工具经 `tools` 绑定门面登记到 `maimai` 工具组，指令经 `commands.command` 登记为 `/maimai` 及其子指令，两者调用同一组处理函数（`handleGetPlayer` / `handleGetBests` / `handleGetRecents` / `handleSearchSong` / `handleBind`），解绑则都直接清除绑定记录。用户与好友码的绑定关系存放在 `memory` 服务的元数据中，命名空间为 `maimai-binding`，键为 `platform:userId`。
 
 ## 插件声明
 
@@ -28,7 +28,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `developerToken` | string | `''` | 开发者 API Token：在 https://maimai.lxns.net 申请的开发者 token，必须配置（secret） |
+| `developerToken` | string | 必填 | 开发者 API Token：在 https://maimai.lxns.net 申请的开发者 token（secret） |
 | `baseUrl` | string | `'https://maimai.lxns.net'` | API Base URL：查分器域名，一般无需修改 |
 | `enableTools` | boolean | `true` | 注册 Agent 工具：为 LLM Agent 注册结构化工具（推荐保持开启） |
 | `enableCommands` | boolean | `true` | 注册斜杠指令：为用户注册 /maimai 等斜杠指令 |
@@ -55,4 +55,4 @@ export default definePlugin({
 
 ## 配置校验
 
-未填 `developerToken` 时仍只告警并不注册工具或指令。显式无效的 token、地址或功能开关会报配置错误；有 token 时地址格式在注册前校验。数字字符串 `timeoutMs` 按数值解析。
+没填 `developerToken` 时插件激活失败，报「缺少配置项 developerToken」，WebUI 把它标成待配置。显式无效的 token、地址或功能开关会报配置错误，地址格式在注册前校验。数字字符串 `timeoutMs` 按数值解析。

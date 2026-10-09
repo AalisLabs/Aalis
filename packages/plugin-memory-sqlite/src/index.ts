@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import {
   type MemoryService,
@@ -465,7 +466,7 @@ export default definePlugin({
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`, { cause: err });
+      throw new Error(`无法解析数据库路径 ${dbUri}（检查配置项 path）: ${msg}`, { cause: err });
     }
 
     caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
@@ -474,7 +475,7 @@ export default definePlugin({
     // 取不到 process.getBuiltinModule 或 node:sqlite，或 node:sqlite 缺本插件要用的接口（22.16 之前、23.x）时，都按 Node 太旧报错
     const tooOld =
       `SQLite 打开失败: 当前 Node（${process.version}）版本过低，需要 Node 24.15.0 起；` +
-      '升级方法见 docs/guide/first-run.md「升级 Node」';
+      '升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node';
     const sqlite = process.getBuiltinModule?.('node:sqlite');
     if (!sqlite) throw new Error(tooOld);
     let db: DatabaseSync;
@@ -482,7 +483,10 @@ export default definePlugin({
       // 遇锁（别的进程正写这个库）最多等 5 秒再报 SQLITE_BUSY
       db = new sqlite.DatabaseSync(dbPath, { timeout: 5000 });
     } catch (err) {
-      throw new Error(`SQLite 打开失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+      throw new Error(
+        `SQLite 打开失败（检查目录 ${dirname(dbPath)} 存在且可写，或在配置项 path 换个位置）: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
     }
 
     // 开库之后任何一步失败（接口不全、取文件身份、撞库、设 WAL、建表、发布服务），都先关掉刚开的句柄再抛

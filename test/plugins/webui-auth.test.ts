@@ -431,6 +431,15 @@ describe('未认证拦截', () => {
     expect(script.res.htmlBody).toContain('/api/auth/login');
   });
 
+  it('登录页写明 token 在哪：启动日志不打印 token，只给 access.txt 的位置；fixed 模式就是配置里的 fixedToken', async () => {
+    const page = await run(makeAuth(), makeReq({ path: '/' }));
+    const hint = page.res.htmlBody?.match(/<h1>Aalis WebUI<\/h1>\s*<p>([^<]*)<\/p>/)?.[1];
+    expect(hint).toBe(
+      '访问 token 在家目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；' +
+        'tokenMode 为 fixed 时就是配置里的 fixedToken。',
+    );
+  });
+
   it('登录页按默认主题的令牌着色，深浅跟随系统；不用卡片、不加阴影，圆角只用小档', async () => {
     const page = await run(makeAuth(), makeReq({ path: '/' }));
     const style = page.res.htmlBody?.match(/<style>([\s\S]*)<\/style>/)?.[1] ?? '';

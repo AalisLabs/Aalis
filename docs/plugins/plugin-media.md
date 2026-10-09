@@ -28,10 +28,21 @@ export default definePlugin({
     tools: optional(tools),
     memory: optional(memory),
     sessionManager: optional(sessionManager),
+    doctor: optional(doctor),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
+
+## 图片到达时
+
+- 识别用 `vision.prefer` 选出的识图处理器（留空按优先级自动选）。静态图先落盘、写成引用 `[图片 | ref:…]`，识别成功时描述写进引用：`[图片: <描述> | ref:…]`。
+- 识别失败或返回空串：引用照留，描述写「获取或识别失败，内容未知」，主模型可以据引用再经 `analyze_image` 看一次。
+- 没有任何能看图的模型（没有识图处理器，或选中的处理器不会描述图片；主模型若能看图，它自己就是处理器）：不识别，每张图只落盘写成不带描述的引用（与关掉 `vision.recognizeOnArrival` 时同一形态），这条消息另加一行 `[附了 N 张图，当前无法查看]`。这一行接在最后一张图的描述后面另起一行，不进任何引用的描述，消息存档的附件清单照样带上这些图的地址。OneBot 的图在适配器里已落盘、正文已带引用，这时只加这一行。
+
+## 诊断
+
+向 doctor 注册检查项 `service/media.vision`（「识图」）：没有能看图的识别模型时报 warn，说明后果（图片照样存下，主模型看不到内容）与修法（在模型服务里加一个能看图的模型，再到「图像识别 → 识别模型」里选它，留空则自动选用）；有了报 ok，写出当前的识别模型。没装 doctor 时不登记。
 
 ## 配置
 

@@ -1321,7 +1321,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   if (initialIds.length === 0) {
     throw configError(
       discoveryError
-        ? `未配置 customModels，没有可注册的模型；${discoveryError}`
+        ? `取不到 Ollama 的模型列表，没有可注册的模型：确认 Ollama 在运行、baseUrl 写对后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
         : `Ollama 已连接 ${shownBaseUrl}，但未发现任何可用模型；先用 ollama pull 下载模型，或在 customModels 里写明要用的模型`,
     );
   }

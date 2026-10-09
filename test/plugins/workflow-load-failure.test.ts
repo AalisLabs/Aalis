@@ -6,7 +6,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
-import { App, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { App, type Logger, LogHub, provide, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
@@ -310,12 +310,21 @@ describe('workflow 路径配置只接受 storage URI', () => {
   it.each([
     ['defsDir', 'workspace/workflows'],
     ['runsFile', 'data/workflow-runs.json'],
-  ])('%s 写成相对路径（%s）：拒绝激活', async (key, value) => {
-    app = new App({ name: 'T', logLevel: 'error' });
+  ])('%s 写成相对路径（%s）：拒绝激活，报一行不带堆栈的配置错误并给出正确写法', async (key, value) => {
+    const errors: string[] = [];
+    const logHub = new LogHub();
+    logHub.onEntry(entry => {
+      if (entry.level === 'error') errors.push(entry.message);
+    });
+    app = new App({ name: 'T', logLevel: 'error', logHub });
     await registerHubs(app);
     await app.plugin(cronEnginePlugin, {});
     await app.plugin(workflowPlugin, { enableTools: false, [key]: value });
     await app.plugins.idle();
-    expect(app.plugins.getPlugin('@aalis/plugin-workflow')?.state).toBe('error');
+    const entry = app.plugins.getPlugin('@aalis/plugin-workflow');
+    expect(entry?.state).toBe('error');
+    expect(entry?.error).toMatch(new RegExp(`^${key}=.*不是 storage URI，请写成 <根名>:/<路径>`));
+    expect(errors, '应只有一条激活失败日志').toHaveLength(1);
+    expect(errors[0], '配置错误的日志不该带堆栈').not.toMatch(/\n\s+at /);
   });
 });

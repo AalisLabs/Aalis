@@ -85,7 +85,7 @@ export default definePlugin({
 
 数组也可声明 `onInvalid: 'error'`：非对象元素或元素内不可恢复的字段会拒绝整个数组，避免丢弃坏项后触发空数组的业务默认；元素内普通字段仍按自身的回落策略解析。未声明时继续逐项跳过，适合相互独立的 server 列表。
 
-`validateConfig(schema, config)` 用同一份判定做只读检查，返回问题清单（`kind` 为 `missing` 或 `invalid`），不转换、不回填、不裁剪；它只把 `undefined` / `null` 当作未配置，只在 `required` 且无 `default` 时报缺。`onInvalid` 改变 `parseConfig` 的处置，不改变校验器的判定或报告。宿主用它告警或拦截保存：runtime 的配置同步对启用中的插件打告警，WebUI 保存插件配置时拒绝本次新引入的 `invalid`。
+`validateConfig(schema, config)` 用同一份判定做只读检查，返回问题清单（`kind` 为 `missing` 或 `invalid`），不转换、不回填、不裁剪；它把 `undefined` / `null` 当作未配置，`required` 字段另把 `''`（声明了 `format` 的字符串只有空白也算）当作缺失，与 `parseConfig` 同一判定；只在 `required` 且无 `default` 时报缺，声明了 `default` 的永远不算缺。`onInvalid` 改变 `parseConfig` 的处置，不改变校验器的判定或报告。宿主用它告警或拦截保存：runtime 的配置同步对启用中的插件打告警，WebUI 保存插件配置时拒绝本次新引入的 `invalid`。
 
 `list` 与 `map` 的补充约定：
 

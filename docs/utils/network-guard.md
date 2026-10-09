@@ -151,10 +151,10 @@ const safe = await assertSafeUrl(rawUrl); // 抛错即拒绝；通过返回 URL
 await assertSafeHost(parsedUrl.hostname);
 ```
 
-在 `package.json` 里声明依赖。util 用 `latest` 而非 workspace 协议，外部作者也能安装：
+在 `package.json` 里声明依赖，x.y.z 写开发时用的版本，写法见[插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)：
 
 ```json
-{ "dependencies": { "@aalis/util-network-guard": "latest" } }
+{ "dependencies": { "@aalis/util-network-guard": ">=x.y.z <1.0.0" } }
 ```
 
 ---

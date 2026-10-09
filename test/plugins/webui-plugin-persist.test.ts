@@ -11,6 +11,7 @@ import {
   type PluginDefinition,
   pluginsService,
   provide,
+  services,
 } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { type ConfigProvider, createConfigStore } from '../../packages/runtime/src/config-store.js';
@@ -87,7 +88,7 @@ function world(
   const { expressApp, invoke } = captureRoutes();
   const panel = definePlugin({
     name: 'console',
-    uses: { app: optional(appService), plugins: optional(pluginsService), hostConfig: optional(hostConfig) },
+    uses: { app: optional(appService), plugins: optional(pluginsService), hostConfig: optional(hostConfig), services },
     apply(caps) {
       const plugins = {
         ...caps.plugins,
@@ -114,7 +115,6 @@ function world(
           source: { current: undefined },
           tools: { current: undefined },
           commands: { current: undefined },
-          services: { inspect: () => [] },
           self: 'console',
           versions: () => () => undefined,
         },
@@ -449,14 +449,26 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     });
   });
 
-  it('落定后仍在后台激活、或在等 required 依赖：回 200，如实说明尚未激活', async () => {
+  it('落定后仍在后台激活、或缺 required 依赖：回 200，如实说明尚未激活，缺什么、在等谁', async () => {
     const w = world(
-      { name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['deaf', 'needy'] },
+      { name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['deaf', 'needy', 'listener'] },
       { timing: { slowThresholdMs: 20 } },
     );
     const gate = deferred();
+    const heard = defineService<object>('zz-heard');
+    // deaf 激活时先登记它提供的服务，再停在 apply 里：服务在激活完成前不对外，listener 只是在等它
+    const deaf = definePlugin({
+      name: 'deaf',
+      provides: [heard],
+      uses: { provide },
+      async apply({ provide }) {
+        provide(heard, {});
+        await gate.promise;
+      },
+    });
+    const listener = definePlugin({ name: 'listener', uses: { heard }, apply() {} });
     try {
-      await w.boot(definePlugin({ name: 'deaf', apply: () => gate.promise }), needy);
+      await w.boot(deaf, needy, listener);
 
       expect(await w.enable('deaf')).toEqual({
         status: 200,
@@ -465,7 +477,11 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
       expect(w.app.plugins.getStatus().find(p => p.instanceId === 'deaf')?.slow).toBe(true);
       expect(await w.enable('needy')).toEqual({
         status: 200,
-        body: { ok: true, message: '插件 needy 已启用；尚未激活，正在等待 required 依赖满足' },
+        body: { ok: true, message: '插件 needy 已启用；尚未激活：缺少服务 zz-absent（没有已装的插件提供）' },
+      });
+      expect(await w.enable('listener')).toEqual({
+        status: 200,
+        body: { ok: true, message: '插件 listener 已启用；尚未激活：等待 deaf 启动' },
       });
     } finally {
       gate.resolve();
@@ -487,7 +503,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     });
 
     expect(await w.put('target', { v: 5 })).toEqual(failed('插件已禁用，启用时按新配置激活'));
-    expect(await w.enable('needy')).toEqual(failed('尚未激活，正在等待 required 依赖满足'));
+    expect(await w.enable('needy')).toEqual(failed('尚未激活：缺少服务 zz-absent（没有已装的插件提供）'));
     expect(await w.createInstance('multi', 'x', { v: 3 })).toEqual(
       failed('配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活'),
     );

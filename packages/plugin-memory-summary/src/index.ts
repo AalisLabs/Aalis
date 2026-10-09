@@ -243,11 +243,6 @@ async function run(caps: Caps): Promise<void> {
         : undefined,
   };
 
-  if (!memory.current) {
-    logger.warn('memory 服务不可用，摘要插件将不会启动');
-    return;
-  }
-
   logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
   // 正在摘要中的 session，避免并发重复摘要

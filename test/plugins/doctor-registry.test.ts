@@ -7,7 +7,8 @@
  * - spec.run 抛错时被收纳为 error 级别 check，不影响其它检查
  * - generatedAt / summary 正确生成
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
- * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据），仍在激活中的提供者归为等待
+ * - plugins.pending 逐条列出缺服务的插件，沿链追到根（api-doctor 的共享判据，与 runtime 启动告警、WebUI 同一份）；
+ *   只在等提供者启动的不算未就绪，列在 plugins.waiting
  * - plugins.slow 点名激活超过阈值、已转入后台的插件
  * - env.node 按最低版本 24.15.0 判定，不够时写明需要的版本与升级方法
  * - 诊断页过登记门槛；每次运行后推 invalidate，有错误或警告时发提示（跳到诊断页），全部通过后撤回
@@ -185,13 +186,38 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.plugins.idle();
 
     const report = await doctor.runChecks();
-    const pending = report.checks.find(c => c.id === 'plugins.pending');
-    expect(pending?.level).toBe('warn');
-    expect(pending?.detail).toBe('zz-doctor-pending-probe: 缺少服务: zz-doctor-missing-a、zz-doctor-missing-b');
+    expect(report.checks.find(c => c.id === 'plugins.pending')).toMatchObject({
+      level: 'warn',
+      message: '1 个插件缺服务，未就绪',
+      detail:
+        'zz-doctor-pending-probe: 缺少服务 zz-doctor-missing-a（没有已装的插件提供）；缺少服务 zz-doctor-missing-b（没有已装的插件提供）',
+    });
     await app.stop();
   });
 
-  it('plugins.pending 把仍在激活中的插件声明提供的服务归为等待它激活完成，其余仍报缺少', async () => {
+  it('plugins.pending 沿链追到根：缺的服务由失败的插件提供时写出它与它的失败说明', async () => {
+    const { app, doctor } = await boot();
+    const rootService = defineService<object>('zz-doctor-root-svc');
+    const broken = definePlugin({
+      name: 'zz-doctor-broken',
+      provides: [rootService],
+      apply() {
+        throw new Error('缺少配置项 apiKey');
+      },
+    });
+    const probe = definePlugin({ name: 'zz-doctor-chained', uses: { root: rootService }, apply() {} });
+    await app.plugins.register(broken, {});
+    await app.plugins.register(probe, {});
+    await app.plugins.idle();
+
+    const report = await doctor.runChecks();
+    expect(report.checks.find(c => c.id === 'plugins.pending')?.detail).toBe(
+      'zz-doctor-chained: 缺少服务 zz-doctor-root-svc（zz-doctor-broken 失败：缺少配置项 apiKey）',
+    );
+    await app.stop();
+  });
+
+  it('plugins.pending 把仍在激活中的插件声明提供的服务归为等待它启动；只在等的不算未就绪，列在 plugins.waiting', async () => {
     const { app, doctor } = await boot({ slowThresholdMs: 20 });
     const slowService = defineService<object>('zz-doctor-slow-svc');
     let release!: () => void;
@@ -212,13 +238,56 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       uses: { slow: slowService, missing: defineService<unknown>('zz-doctor-missing-c') },
       apply() {},
     });
+    const patient = definePlugin({ name: 'zz-doctor-patient', uses: { slow: slowService }, apply() {} });
     await app.plugins.register(provider, {});
     await app.plugins.register(probe, {});
+    await app.plugins.register(patient, {});
     await app.plugins.idle();
 
-    const pending = (await doctor.runChecks()).checks.find(c => c.id === 'plugins.pending');
-    expect(pending?.detail).toBe(
-      'zz-doctor-waiting-probe: 缺少服务: zz-doctor-missing-c；等待 zz-doctor-slow-provider 激活完成',
+    const checks = (await doctor.runChecks()).checks;
+    expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({
+      message: '1 个插件缺服务，未就绪',
+      detail:
+        'zz-doctor-waiting-probe: 缺少服务 zz-doctor-missing-c（没有已装的插件提供）；等待 zz-doctor-slow-provider 启动',
+    });
+    expect(checks.find(c => c.id === 'plugins.waiting')).toEqual({
+      id: 'plugins.waiting',
+      category: 'plugins',
+      level: 'ok',
+      message: '1 个插件在等别的插件启动',
+      detail: 'zz-doctor-patient: 等待 zz-doctor-slow-provider 启动',
+    });
+    release();
+    await app.stop();
+  });
+
+  it('只有在等的插件：plugins.pending 为 ok', async () => {
+    const { app, doctor } = await boot({ slowThresholdMs: 20 });
+    const slowService = defineService<object>('zz-doctor-slow-only');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const provider = definePlugin({
+      name: 'zz-doctor-slow-only-provider',
+      provides: [slowService],
+      uses: { provide },
+      async apply({ provide }) {
+        provide(slowService, {});
+        await gate;
+      },
+    });
+    await app.plugins.register(provider, {});
+    await app.plugins.register(
+      definePlugin({ name: 'zz-doctor-patient', uses: { slow: slowService }, apply() {} }),
+      {},
+    );
+    await app.plugins.idle();
+
+    const checks = (await doctor.runChecks()).checks;
+    expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({ level: 'ok', message: '无未就绪插件' });
+    expect(checks.find(c => c.id === 'plugins.waiting')?.detail).toBe(
+      'zz-doctor-patient: 等待 zz-doctor-slow-only-provider 启动',
     );
     release();
     await app.stop();
@@ -239,7 +308,8 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(report.checks.find(c => c.id === 'plugins.slow')).toMatchObject({
       level: 'warn',
       message: '1 个插件激活超过阈值，仍在后台进行',
-      detail: 'zz-doctor-slow-probe',
+      detail:
+        'zz-doctor-slow-probe\n等它完成即可；长时间不完成时看它的日志（多为在等网络或外部服务），停用再启用可重试',
     });
     release();
     await app.stop();
@@ -257,7 +327,8 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       expect(await checkAt('v24.14.9')).toMatchObject({
         level: 'error',
         message: 'Node v24.14.9',
-        detail: '需要 Node 24.15.0 起；升级方法见 docs/guide/first-run.md「升级 Node」',
+        // 经 npm 装的项目里没有 docs/：指向文档站上那一节
+        detail: '需要 Node 24.15.0 起；升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
       });
       // 按字符串比较会排在 v24.15.0 之后
       expect(await checkAt('v24.9.0')).toMatchObject({ level: 'error' });

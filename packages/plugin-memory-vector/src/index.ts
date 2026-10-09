@@ -59,8 +59,10 @@ const configSchema = defineConfig({
         type: 'number',
         label: '扩展窗口（前后各 N 条消息）',
         default: 2,
+        min: 0,
+        integer: true,
         onInvalid: 'error',
-        description: '0 = 仅命中本身。建议 2~5。负数会报错',
+        description: '0 = 仅命中本身。建议 2~5',
       },
       crossSession: {
         type: 'boolean',
@@ -337,15 +339,6 @@ async function run({
   const parsed = parseConfig(configSchema, config, logger);
   sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
 
-  // 配置校验
-  const windowNum = parsed.contextExpand.window;
-  if (windowNum < 0) {
-    throw new Error(`memory-vector 配置错误: contextExpand.window=${windowNum} 不能为负数`);
-  }
-  if (!Number.isInteger(windowNum)) {
-    throw new Error(`memory-vector 配置错误: contextExpand.window=${windowNum} 必须是整数`);
-  }
-
   const cfg: VectorMemoryConfig = {
     search: {
       ...parsed.search,
@@ -354,10 +347,7 @@ async function run({
       perItemMaxChars: Math.max(0, parsed.search.perItemMaxChars),
       minScore: Math.max(0, Math.min(1, parsed.search.minScore)),
     },
-    contextExpand: {
-      ...parsed.contextExpand,
-      window: Math.floor(windowNum),
-    },
+    contextExpand: parsed.contextExpand,
     indexing: {
       concurrency: Math.floor(parsed.indexing.concurrency),
       maxQueueSize: Math.floor(parsed.indexing.maxQueueSize),

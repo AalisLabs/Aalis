@@ -73,13 +73,14 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 - **URI**: `data:/webui/access.txt`
 - **物理路径**: `data` 存储根对应目录下的 `webui/access.txt`，即家目录的 `state/webui/access.txt`；启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
 - **内容**: 注释 + `URL:` + `Token:` + `一键登录:`（带 `?token=` 的完整 URL）
+- **写不进去时**：启动日志写「访问凭据未能写入」与两种修法：修好家目录 `state/webui/` 的写权限后重启；或改用 `tokenMode: fixed`，在 `fixedToken` 里填一个至少 32 个字符的 token，用它登录。`ephemeral` 模式的 token 只写在这个文件里，文件写不成就没有别处可查
 
 > 历史路径 `data/webui-access.txt` 早已被 `data/webui/access.txt` 取代；家目录布局调整后 `data` 根映射到 `state/`，现行文件是 `<家目录>/state/webui/access.txt`（URI 仍是 `data:/webui/access.txt`），不要再读家目录 `data/` 下的旧文件。
 
 ### 登录方式
 
 1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到同一路径，只去掉 `token`，其余查询串（如日志的筛选）照留。
-2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
+2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页写明 token 在哪：家目录的 `state/webui/access.txt`（启动日志「访问凭据已写入」那行给出完整路径；日志本身不打印 token），`fixed` 模式就是配置里的 `fixedToken`。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
 
 ### 登录失败限速
@@ -144,7 +145,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/status` · `/api/auth/login.js` | POST · POST · GET · GET | 登录换 cookie / 登出 / 登录状态 / 登录页的脚本 |
-| `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息）。每项另给插件声明的 `subsystem`（没声明的不给，分组与组名由界面按 api-webui 的 `DEFAULT_SUBSYSTEM_METADATA` 定）、已装的包的 `version`（本地查不到的不给）、`missing`（此刻没有任何提供者的 required 服务，插件「缺服务」缺的就是它们），提供这个界面的实例（本插件）带 `self: true`；配置取配置文档里的形态：宿主提供密钥存储时，`secret` 字段上是引用 `{ $secret: '<键>' }`，不回原值；没有密钥存储的自组装宿主，文档里本就是明文，接口原样返回（表单只遮蔽显示）。顶层另给 `secretRefCounts`（键 → 配置文档里引用它的处数），表单据此提示替换会影响几处。宿主不提供 `host-config` 时给运行态配置并去掉 `secret` 字段。激活超过慢激活阈值、已转入后台的插件带 `slow: true` |
+| `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息）。每项另给插件声明的 `subsystem`（没声明的不给，分组与组名由界面按 api-webui 的 `DEFAULT_SUBSYSTEM_METADATA` 定）、已装的包的 `version`（本地查不到的不给）、没起来的原因 `lacking`、`waiting`、`unconfigured`（见下文「需要处理」），提供这个界面的实例（本插件）带 `self: true`；配置取配置文档里的形态：宿主提供密钥存储时，`secret` 字段上是引用 `{ $secret: '<键>' }`，不回原值；没有密钥存储的自组装宿主，文档里本就是明文，接口原样返回（表单只遮蔽显示）。顶层另给 `secretRefCounts`（键 → 配置文档里引用它的处数），表单据此提示替换会影响几处。宿主不提供 `host-config` 时给运行态配置并去掉 `secret` 字段。激活超过慢激活阈值、已转入后台的插件带 `slow: true` |
 | `/api/plugins/:name/config` | PUT | 改单个插件的配置（要读配置，取 `GET /api/plugins` 里那一项的 `config`）。体为 `{ config }`，经 `host-config` 的 `applyPluginConfig` 热重载该插件、写回配置文档并落盘。`secret` 字段上原样回传引用表示保持原值，写新值表示替换：新值存进宿主的密钥存储（Node 宿主是 `secrets.yaml`），配置文档里只留引用（写入规则见 [api-host-config](../api/api-host-config.md#改插件配置)）。提交里新引入的悬空引用（键不在密钥存储里、也不是这次写入的）返回 400，运行态与文档都不动。PUT 是部分更新：提交的顶层键整键替换原值（分组、数组整块替换），没提交的保持原值，值为 `null` 的顶层键视为删除；之后按 schema 默认值深合并补齐缺的键，删除的键有默认值时回到默认值（`secret` 字段的默认值不写进文档，删除后由插件解析时补上）。插件有 `configSchema`、且宿主按裁剪政策运行（`host-config` 的 `trimUnknownFields`，Node 宿主缺省开启，`startAalis({ configSync: { trimUnknownFields: false } })` 关闭）时裁掉未声明的字段；宿主保留未知字段时这里同样保留，不附下述点名：本次提交里的在响应 `ignored` 里点名；配置文档里原有、本次没有提交的随写回从配置文件删除，在响应 `removed` 里点名；两者都附在 `message` 末尾。插件运行中、且解析出的配置与运行态相同时，不重载插件，仍把配置文档写回文件（此前保存写文件失败时，原样重试即可补写）；配置文档也没有变化时回复「配置无改动，已写回配置文件」。按新配置重新激活失败、插件转为 `error` 态时，配置照样写回，仍返回 200 与 `{ ok: true }`，`message` 说明激活失败及原因：这个接口回 2xx 即表示配置已写进配置文件，WebUI 据此收起表单、刷新状态，非 2xx 时表单留着供改正。插件处于禁用态时照样换上新配置并写回，插件保持禁用，启用时按新配置激活，回执说明这一点。插件不存在时返回 404（没登记的实例不在这里新建，新建走 `POST /api/plugins/:name/instances`）；插件还在但停机中或正在卸载、拒绝了这次更新时返回 409，配置文件不变 |
 | `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins`。本插件拒绝停用自己，返回 409，见下文「界面自我保护」。启用后激活失败、转为 `error` 态时，照样写回启用，仍返回 200 与 `{ ok: true }`，`message` 说明激活失败及原因；停用仍在初始化的插件而它未在宽限内停止、转为 `error` 态时，照样写回禁用，同样返回 200，`message` 说明它未在宽限内停止、已转为 `error` 态。插件不存在时返回 404；停机中或插件正在卸载时拒绝，返回 409，配置文件不变 |
 | `/api/plugins/:name/reload` | POST | 重载：拆掉当前激活、按原配置重新激活（core 的 `bounce`），不写配置文件；失败的插件重载即重试。等状态机静置后按实例状态写回执：重新激活失败、转为 `error` 态时仍返回 200，`message` 说明原因。已停用的插件返回 409（启用后才能重载）；插件不存在返回 404；停机中或正在卸载返回 409 |
@@ -154,7 +155,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/pages/:instance/:pageKey/data/:componentId` · `/api/pages/:instance/:pageKey/actions/:action` | GET · POST | 页面组件或插件前端数据源的数据 / 页面动作，经服务端闸门调用，见下文「声明式页面」「插件前端」 |
 | `/api/page-file` | GET | 页面单元格里的文件按句柄下载（`?handle=<文件单元格的 handle>`），句柄由本插件签发；下发方式与错误同 `/api/session-file` |
 | `/api/layout` | GET · POST | owner 的布局记录（图标栏上固定的页面、会话面板的标签）/ 按一个操作改它，见下文「布局记录」 |
-| `/api/attention` | GET | 「需要处理」：`{ items: AttentionItem[] }`，推出未结的审批在前（审批服务不在时没有这一类），其后是插件故障（失败与缺服务的实例）与插件的提示，每项计 1。见下文「需要处理」 |
+| `/api/attention` | GET | 「需要处理」：`{ items: AttentionItem[] }`，推出未结的审批在前（审批服务不在时没有这一类），其后是插件故障（失败与缺服务的实例，只在等别的插件启动的不算）与插件的提示，每项计 1。见下文「需要处理」 |
 | `/api/config` | GET / PUT | 宿主配置：GET 回 `{ config, schema, restartKeys, home? }`：`config` 是配置文档里写了的核心键（`CORE_CONFIG_SCHEMA` 的键，不带插件配置等其余部分），`schema` 是 `CORE_CONFIG_SCHEMA`，`restartKeys` 是要重启才生效的键（本插件的常量，现在是 `logLevel`、`slowThresholdMs`；`name` 只是显示用的应用名称，保存即生效），`home` 是宿主路径的家目录（宿主不提供路径时没有）。PUT 只收核心键，请求体里有别的顶层键（插件配置、禁用名单等各有自己的路由）时回 400 并点名，什么都不写；文档里没写的核心键按 schema 默认值比较（回传的默认值不算改动、不写进文件）；提交 `null` 回到默认值并从文档删掉这个键。PUT 只保存、不重启，回执 `restartNeeded` 写明改了的键里有没有要重启的（界面据此出「重启以生效」）；落盘被拒回 409、写入失败回 500，两种都撤回文档里的改动 |
 | `/api/restart` | POST | 重启应用：发起之后回复，停机是异步的（先广播 `app:restarting`，`/admin` 随之推 `app.restarting`）；宿主没注入重启策略时回 500，写明改动在下次启动时生效，并记一条错误日志 |
 | `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除服务偏好提供者（持久化到 `servicePreferences`） |
@@ -163,8 +164,8 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/platforms` | GET | 平台连接状态。`webui` 平台的连接数是打开着的 `/session` 连接数 |
 | `/api/models/:service` | GET | 按服务取可选项：`llm` 回 `{ providers }`，每项是一个模型（`model`、显示名 `provider`、`contextId`、`capabilities`），`contextId` 是提供它的插件实例 id（`llm-ref` 的取值 `{ provider, model }` 认的就是它）；`llm-thinking` 是深度思考的档位，按查询参数 `dependency`（模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好，与对话时同一种解析）取那个模型声明的档位，回 `{ models, details: [{ value, label, default? }], labels }`，默认档带 `default: true`（会话没设这一项时界面据它写生效的档位，名字后的「（默认）」由界面加），`labels` 是全部模型声明过的档位 id → 名字（同一个 id 取先登记的，换了模型以后存着的档位不在可选项里，界面按它写名字），模型不能调时 `models` 与 `details` 为空，`dependency` 不是模型引用时回 400；工具分组、会话范围与平台有各自的写法，其余服务合起各提供者的 `listModels()`，回 `{ models }` |
 | `/api/llm-providers/:contextId/refresh` | POST | 触发该 provider 重新探测模型列表（仅对支持运行时刷新的 provider 有效）。`:contextId` 是提供者的插件实例 id，与 `/api/models/llm` 给的 `contextId` 相同。名下的模型都不提供运行时刷新（如关闭了 `discoverModels`）、或名下没有已注册的模型时返回 404，分别说明 |
-| `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图。检索走 `marketplaceRegistry`，结果再按搜索词在包名、描述、关键词上过滤（不区分大小写，空格分隔的每个词都要命中）。检索源不可达时只列本地已装的包，同样按搜索词过滤，响应带 `warning` 说明。卡片的最新版（`version`）与 `updatable`、`/api/system-components` 的 `latest`、依赖图里未安装包的依赖与服务，都按包名向安装实际使用的源（`package-manager` 报告的 npm registry）查；`package-manager` 缺席时退回检索源；安装源查不到时不给最新版与可更新，响应带 `warning` 说明原因 |
-| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；插件装上但激活失败、转为 `error` 态时仍返回 `{ ok: true }`，`message` 说明激活失败及原因；慢激活转入后台仍在进行、或在等 required 依赖时同样返回 `{ ok: true }`，`message` 说明尚未激活。装卸只接受插件与前端界面包；若有其它插件依赖该包提供的服务，且没有别的插件正在提供该服务，卸载被拒绝；正在提供这个界面（WebUI 服务端、前端、包管理）的包也不能卸。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }`。装上的是插件且已登记时，回执另带 `plugin`（它的主实例 id），界面据此打开它的详情 |
+| `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图。检索走 `marketplaceRegistry`，结果再按搜索词在包名、描述、关键词与提供的服务上过滤（不区分大小写，空格分隔的每个词都要命中）。检索源不可达时只列本地已装的包，同样按搜索词过滤，响应带 `warning` 说明。卡片的最新版（`version`）、`updatable` 与没装的包提供的服务（`provides`）、`/api/system-components` 的 `latest`、依赖图里未安装包的依赖与服务，都按包名向安装实际使用的源（`package-manager` 报告的 npm registry）查，卡片与系统组件每包取一次 `/{包}/latest`；`package-manager` 缺席时退回检索源；安装源查不到时不给最新版与可更新，响应带 `warning` 说明原因。已装的包提供的服务取本地 package.json 的 `aalis.service.provides`，与卡片上的本地版本对得上 |
+| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`，卸载另收 `removeConfig`（布尔值，不给为 `false`，别的类型回 400）；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；卸载默认留着配置段与密钥，`removeConfig` 为 `true` 时一并删掉配置段与只有它用的密钥，停用标记都清掉；插件装上但激活失败、转为 `error` 态时仍返回 `{ ok: true }`，`message` 说明激活失败及原因；慢激活转入后台仍在进行、或在等 required 依赖时同样返回 `{ ok: true }`，`message` 说明尚未激活。装卸只接受插件与前端界面包；若有其它插件依赖该包正在提供的服务，且没有别的插件正在提供该服务，卸载被拒绝（该包自己激活失败、待配置或已停用时没在提供，卸掉它断不了谁，不拦）；正在提供这个界面（WebUI 服务端、前端、包管理）的包也不能卸。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }`。装上的是插件且已登记时，回执另带 `plugin`（它的主实例 id），界面据此打开它的详情 |
 | `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程；需 `package-manager` 服务（缺失时 503） |
 | `/api/logs/tail` · `/api/logs/range` | GET | 日志的历史，读 `logs:/latest.log`：最后 N 条（`?limit=`，默认 200，上限 5000）/ 往前翻（`?before=<seq>&limit=`，seq 小于 before 的最后 N 条）。两条都收筛选 `level`、`plugin`、`text`（api-webui 的 `LogFilter`，见下文「日志的筛选」），回的是符合筛选的最后 N 条；筛选写法不对（级别不是四种之一、同一项给了几次）回 400。从文件末尾往前最多扫 16 MiB，更早的去看文件本体。实时日志在 `/admin` 上订阅 |
 | `/api/proxy/image` | GET | 图片代理 |
@@ -177,7 +178,7 @@ core 的插件管理动作与 `services.prefer` 只改运行态；启停、删�
 
 **界面自我保护**：本插件经自己的接口停用自己就回不来了，所以停用自己返回 409，插件列表给它标 `self: true`，界面上停用与卸载不可点并写明原因；卸载由 `package-manager` 拒绝（它不卸正在提供这个界面的包）。重载与改配置会重建本插件，照常受理；会让它起不来的端口（不是 0–65535 的整数）与监听地址（空白）在配置的 schema 里就是无效值，保存时回 400、不重建。只保护本插件自身，不按依赖闭包推导：停掉会话服务、记忆后端这类插件后，插件区仍能把它们重新启用。
 
-启用、改插件配置与新建实例在管理动作之后等插件状态机静置（`plugins.idle()`），再按实例状态写回执：动作撞上在飞的重算时只排队、立即返回，直接读状态会把随后的激活失败报成成功。转入后台的慢激活不等，重算对单个激活至多等到慢激活阈值；这时回执说明插件仍在激活，在等 required 依赖的说明尚未激活，两者都返回 200。市场安装由 `package-manager` 按同一口径回执。
+启用、改插件配置、重载与新建实例在管理动作之后等插件状态机静置（`plugins.idle()`），再按实例状态写回执：动作撞上在飞的重算时只排队、立即返回，直接读状态会把随后的激活失败报成成功。转入后台的慢激活不等，重算对单个激活至多等到慢激活阈值；这时回执说明插件仍在激活；required 依赖没满足的写「尚未激活：」加缺什么、在等谁（api-doctor 的 `describeUnmet`，与 runtime 的启动告警同一句，例如「尚未激活：缺少服务 llm（模型插件 失败：缺少配置项 apiKey…）」「尚未激活：等待 <实例> 启动」），两者都返回 200。市场安装由 `package-manager` 按它自己的口径回执。
 
 ## WebSocket
 
@@ -249,9 +250,9 @@ socket.onmessage = event => {
 
 插件经 `webuiServer` 的 `definePage` 与 `notify` 登记页面与提示（契约见 [api-webui](../api/api-webui.md#声明式页面)），本插件按插件实例收下，插件停用时同一拍撤回。提示进「需要处理」（见下文）。
 
-- **登记时的质量门槛**（`page-check.ts`）：嵌套、一屏组件数与标签数、组件 id、动作的引用与放置、不认识的字段，不过就不登记，记一条错误日志「页面 <key>（<实例>）没过登记校验，未登记：…」，列出每个问题与位置。提示的 `open` 要指向本实例已登记、位置为 `plugin` 或 `settings` 的页面，否则同样不登记、记错误日志。
+- **登记时的质量门槛**（`page-check.ts`）：嵌套、一屏组件数与标签数、组件 id、动作的引用与放置、不认识的字段，不过就不登记，记一条错误日志「页面 \<key>（<实例>）没过登记校验，未登记：…」，列出每个问题与位置。提示的 `open` 要指向本实例已登记、位置为 `plugin` 或 `settings` 的页面，否则同样不登记、记错误日志。
 - **服务端闸门**（`pages.ts`）：数据源与动作按实例、页面与组件或动作分派，只许调声明过的；参数只收用得上的键（`sessionId` 给会话面板，`rowKey` 给详情里的组件与行动作，`input` 给声明了输入的动作），多的、缺的回 400；`input` 按声明的字段校验并解析，没过时回 400 与 `issues`。会话面板的 `sessionId` 经会话管理（`session-manager`，可选使用）核过存在，把规范化后的 id 交给插件；会话不存在回 404，会话管理不在回 503。页面的数据源与动作要把调用者交给插件，这两条路由自己解析身份（与其余路由的 owner 闸同一判定），不是 owner 回 403。
-- **审计**：`write` 与 `destructive` 的动作每次调用记一行 info 日志「页面动作 <名>（<效果>）：<实例> 的页面 <key>，来自 <来源地址>」。结构化审计随设备分级另做。
+- **审计**：`write` 与 `destructive` 的动作每次调用记一行 info 日志「页面动作 <名>（<效果>）：<实例> 的页面 \<key>，来自 <来源地址>」。结构化审计随设备分级另做。
 - **调用的结果**：数据源或处理函数抛错回 500 与原因。数据源返回的形状不对（表格行缺 `rowKey` 或重复、`visibleWhen` 指名的字段不是布尔值、图片与文件列不是存储地址、关系图的边连着不存在的节点、文字不是字符串等）、处理函数返回的不是一句话，回 500 并记告警。
 - **单元格里的图片与文件**：图片列的存储地址换成 `/api/media?uri=…`；文件列换成本插件签发的句柄（`page-files.ts`），经 `/api/page-file` 下载。句柄是「载荷.签名」：载荷是存储地址与文件名，签名是每次激活随机生成的密钥对载荷的 HMAC-SHA256，本插件重载后旧句柄失效，界面重新取数就拿到新的。哪些文件不签发与会话条目的句柄同一条规则（api-storage 的 `canIssueFileHandle`）：`data`、`pluginData` 两类根里的不签发，只给名字。会话条目的句柄由会话服务签发、绑定会话；页面的文件不属于哪个会话，会话服务也可能没启用，所以页面的句柄由本插件另设签发器。
 - **会话面板**：`GET /api/session-pages` 按会话一次算完，`applies` 并行地问，抛错、超过 2 秒或没回布尔值按不适用处理，记一条告警。
@@ -264,7 +265,7 @@ socket.onmessage = event => {
 - **登记时找包根**（`pages.ts`）：`frame.module` 要是 `file:` 地址；从它所在目录往上找最近一个带 `name` 的 `package.json`（只写 `type` 的跳过），`name` 要等于插件名（实例 id 第一个「:」之前的部分）；包根下的 `webui/` 要是目录，入口要是按 realpath 落在 `webui/` 之内的文件。不过就不登记，错误日志写明是哪一条、在哪个目录。包根在登记时解析一次，`webui/` 的 realpath 记进登记条目，另随机一个 128 位的 `token`（base64url）。
 - **托管**（`routes/frames.ts`）：`GET /frames/:token/<路径>` 按 `token` 找到这一次登记的 `webui/`，`GET /frames/_base/<路径>` 给出 `@aalis/api-webui` 包里 `dist/frame/` 的公用文件（助手 `frame.js` 与样式基线 `frame.css`）。注册在认证之前，不看 cookie。用 `express.static` 托管（关掉目录索引与目录重定向，点开头的段不给），前面另加两道：扩展名白名单（`html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`）与 realpath 落在目录之内。不合的一律 404，不发 3xx；只收 GET 与 HEAD，别的方法回 405。页面撤回或重新登记后旧的 `token` 回 404。
 - **响应头**：框架 CSP（盖过全局的文档级 CSP）、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *`、`Cache-Control: no-cache`。CSP 全文见 api-webui；其中的来源按请求的 Host 写成带路径、不带协议的来源，Host 去掉默认端口 `:80`、`:443`。Host 在本插件按「主机名或 IPv4 地址，加可选端口」核对，IPv6 字面地址与带分号、空白、斜杠等的回 400。
-- **数据源**：`componentId` 是数据源名，没声明的回 404；查询参数只收 `sessionId`（会话面板）与 `input`（声明了输入的数据源），`input` 是 JSON 字符串，解不开、不是对象、类型不对、缺必填、带多余的键都回 400。返回不能转成 JSON 的值时回 500，记告警「页面 <key>（<实例>）的数据源 <名> 返回的数据不对：不能转成 JSON…」。动作的请求体不收 `rowKey`。
+- **数据源**：`componentId` 是数据源名，没声明的回 404；查询参数只收 `sessionId`（会话面板）与 `input`（声明了输入的数据源），`input` 是 JSON 字符串，解不开、不是对象、类型不对、缺必填、带多余的键都回 400。返回不能转成 JSON 的值时回 500，记告警「页面 \<key>（<实例>）的数据源 <名> 返回的数据不对：不能转成 JSON…」。动作的请求体不收 `rowKey`。
 - **`GET /api/pages`**：插件前端页面按字段组装，只给 `frame: { src, host }` 与 `actions`；不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里；数据源也不下发。
 
 ### 布局记录
@@ -281,10 +282,10 @@ socket.onmessage = event => {
 `GET /api/attention` 把三样汇总成一个列表，每项计 1，界面的首页摘要、插件详情、运行状况与标签页标题都读它（`src/attention.ts`）：
 
 - **审批**：审批服务（`approvals`，本插件可选使用）的 `list()`，即推给了审批面、还没结算的审批；带会话管理给出的会话标题（会话管理不在或不认识这个会话时没有）。审批服务不在时没有这一类。
-- **插件故障**：状态为失败（`error`，带原因）或缺服务（`pending`，带此刻没有提供者的 required 服务）的插件实例。
+- **插件故障**：状态为失败（`error`，带原因与必填却没填的配置项 `unconfigured`）或缺服务（`pending` 且 `lacking` 不空）的插件实例，每个实例计 1。缺与在等按 api-doctor 的共享判据 `unmetDependencies` 算（与 runtime 的启动告警、plugin-doctor、plugin-cli 同一份，见 [缺与在等的共享判据](../services/doctor.md#缺与在等的共享判据-unmetdependencies)）。只在等的插件不进这个列表、不计数，插件列表里照样带着 `waiting`。`unconfigured` 是 `validateConfig` 对配置文档（宿主不提供时对运行态配置）报的 `missing` 路径，只对失败的插件算。插件列表与这里共用同一份计算（`blockedStatus`）。
 - **提示**：登记着的提示，带发出它的插件实例。
 
-变了就经 `/admin` 推 `attention.changed`，前端重取；推送的来源见上文 `/admin` 一节。
+变了就经 `/admin` 推 `attention.changed`，前端重取；插件登记表每次重算之后比一次故障，连同链与根比较（链上的提供者换了状态、被卸掉都算变化）；推送的来源见上文 `/admin` 一节。
 
 ## WebUI 会话的收件箱
 

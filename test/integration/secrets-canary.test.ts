@@ -113,7 +113,7 @@ describe('金丝雀密钥不进主配置文件', () => {
         hostConfig: refStub(bound.hostConfig.require()),
         tools: { current: undefined },
         commands: { current: undefined },
-        services: { inspect: () => [] },
+        services: { names: () => [] },
         self: 'zz-webui',
         versions: () => () => undefined,
       },

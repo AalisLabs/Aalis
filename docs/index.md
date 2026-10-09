@@ -33,5 +33,5 @@ features:
 npm create aalis@latest my-bot
 ```
 
-进入目录，在 `home/aalis.config.yaml` 里填好大模型 API 与平台账号，启动即可。`home/` 是这个实例的家目录，配置、数据与日志都在里面，已写进生成的 `.gitignore`。
-建项目的完整步骤见 [脚手架上手指南](/guide/scaffolding)；启动之后怎么用（要哪些 key、零 key 怎么起、CLI 与 WebUI 两个入口）见 [第一次运行](/guide/first-run)。
+脚手架问对话模型（可当场粘贴 key）、接入平台与要不要长期语义记忆，装好依赖后进入目录 `npm start` 即可；本机在跑 Ollama 时默认用它，不要任何 key。`home/` 是这个实例的家目录，配置、数据与日志都在里面，已写进生成的 `.gitignore`。
+建项目的完整步骤见 [脚手架上手指南](/guide/scaffolding)；启动之后怎么用（要准备什么、没起来的插件怎么看、CLI 与 WebUI 两个入口）见 [第一次运行](/guide/first-run)；装不上或起不来见 [安装与启动排障](/guide/troubleshooting)。

@@ -253,7 +253,7 @@ it('required 依赖到场后激活', async () => {
 - 直接修改全局 process 状态（`process.env`、信号 handler）
 - 跨插件 import 实现细节（应只 import `@aalis/api-xxx`）
 - 绕过绑定门面直接打容器底层 API
-- 在 apply 内 throw —— 用 `logger.error` + 优雅降级；throw 会让 entry 进 `error` 态直到下次配置变更。**例外**：声明了 `provides` 却因缺配置无法真正 `provide` 时，静默 return 会变成更难懂的 provides 校验错，应抛清晰错误（见 `plugin-asr-openai`）
+- 整体用不了时写一行日志就 return：插件显示在运行，用户却不知道它什么都没做。缺必填配置、连不上必需的后端、运行环境不满足时在 apply 里抛错，插件进 `error` 态，原因出现在「需要处理」与 `/doctor`；只有部分功能坏了才降级并记日志。写法见下一节「报错与故障说明」
 
 ### 长任务与取消
 
@@ -281,6 +281,29 @@ tools.register({
 - `ctx.signal` 是执行器给这次调用的：在前台时随回合中止，转到后台之后只随停止、工具撤回登记与执行器停用中止。自己的超时不要再加一层「到时就杀」：等多久由让出时限管。
 - 进度写进 `ctx.output`：前台时推给界面，转到后台之后成为任务的最后一行与可取的输出。结果照旧在结束时一次返回。
 - 参数表里不要用 `runInBackground`、`waitSeconds` 这两个名字：执行器要补上它们，同名的工具被当作没声明。
+
+---
+
+## 9.5 报错与故障说明
+
+用户看得到的报错写两件事：出了什么事，用户该做什么。「该做什么」具体到配置项、命令或页面，例如 schema-config 的 `missingConfigError('apiKey')` 给出的「缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效」。用户看得到的报错有：激活失败的原因、WebUI 提示、诊断结果、指令回复的失败分支、安装与卸载的回执。抛给模型的工具错误（写给模型看，让它换个做法）与抛给调用方的契约错误（由调用方转述）不在此列。
+
+- 修法写在前面，原因放在最后：原因里常带一段响应体或系统报错，放前面会把修法挤到看不见的地方。包装下层错误时把原错误作 `cause`，宿主显示插件的错误信息时会把它的消息接在后面（「… ← 原因」），不用自己再拼一遍。
+- 指向文档时写文档站上那一页的完整地址（`https://aalis.acenyan.com/...`），不写仓库里的路径：经 npm 装的项目里没有 `docs/`。
+- 配置问题用 schema-config 的 `missingConfigError` / `configError` 抛：不带堆栈，激活失败的日志只有一行，不像程序崩溃。
+
+整体用不了的故障要落到用户看得见的地方，只写一行日志不算告诉了用户：
+
+| 什么时候发现 | 怎么报 | 用户在哪看到 |
+|---|---|---|
+| 激活时：缺配置、连不上必需的后端、运行环境不满足 | 在 `apply` 里抛错 | 「需要处理」、插件详情与 `/doctor` 的 `plugins.errored`；依赖它的插件写到它为止的依赖链，链尾就是这句 |
+| 激活后：凭据过期、后台任务一直失败、外部服务掉线 | `webui.notify` 发提示，`detail` 写修法，问题解决后 `clear` | 「需要处理」与插件详情 |
+| 能自己检查的状态：模型能不能用、目录能不能写 | 登记 doctor 检查，`warn` 与 `error` 的 `detail` 写修法 | `/doctor` 与 WebUI 的诊断页；没装 WebUI 的用户靠 `/doctor` |
+
+- 缺了就整体用不了的配置项在 schema 里写 `required: true`，不配 `default`：`parseConfig` 缺了就抛 `missingConfigError`，WebUI 把插件标成「待配置」并列出没填的键。带 `default` 的必填项永远算填了。不要自己判空后写日志、return；只在一定条件下才必填的（比如只在用官方地址时必填 `apiKey`）自己判，同样抛 `missingConfigError`。
+- 取值范围交给 schema 的约束键（number 的 `min`、`max`、`integer`，string 的 `pattern`、`format`）：WebUI 保存时就拦下，激活时报出是哪一项、错在哪。
+- 只有部分功能坏了才降级：一个自定义存储根建不了、一张角色卡读不懂。日志写明是哪一项、为什么、怎么修。
+- 空 `catch` 与 `.catch(() => {})` 只用于尽力而为的收尾（关连接、删临时文件、取消读流）与有明确兜底的解析；吞下的若是用户该知道的故障，改成抛错、提示或诊断。
 
 ---
 
@@ -457,14 +480,14 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
    （市场标「官方」）；社区插件任意包名（标「社区」）。
 2. **依赖正确归类**（决定发布后能否被正确安装——脚手架已产出正确形态）：
    - `@aalis/core` → **`peerDependencies: ">=0.17.0 <1.0.0"`**（用了哪版 API 就把下限写到哪版）
-     + `devDependencies: "latest"`（外部项目）或 workspace 协议（本仓开发期编译）。**不要用 caret**（`^0.17.0` 只匹配 `0.17.x`）。
+     + `devDependencies: ">=x.y.z <1.0.0"`（本地编译用，x.y.z 是开发时用的版本）。**不要用 caret**（`^0.17.0` 只匹配 `0.17.x`）。
      进程里只能装一份 core，插件解析到另一份即被拒绝加载，见 [装了两份 @aalis/core](guide/third-party-plugin.md#two-cores)。
      > **注意**：这条宽松 peer 只针对 `@aalis/core` 本身。你依赖的 `@aalis/api-*`
      > 契约包**不在稳定性承诺内**——0.x 期间仍可能改签名。消费它们的插件要关注 CHANGELOG。
    - 仅 `import type` 的 api 包 → **`devDependencies`**（编译期擦除）。
      **注意**：描述符是值导入，所在契约包进 `dependencies`。若你写的是 `-api` 契约包且其导出类型引用别的包，那些要留 `dependencies`。
-   - 运行时用到值（描述符、helper、常量）的 api/util 包 → `dependencies: workspace:>=<被依赖包当前版本> <1.0.0`（本仓）或 `>=x.y.z <1.0.0`（外部）。
-     **不要用 `workspace:^` 或 `workspace:*`**：`^` 发布成 `^0.x.y`，caret 在 0.x 下只匹配 `0.x.*`，**跨 minor 就断**；若同时依赖两个包而它们各锁不同 minor，npm 会装进**两份**同一 api 包，两份 `declare module '@aalis/core'` 撞成 `TS2717`，而 `skipLibCheck: true` 会把这个错误彻底吞掉。`*` 发布成精确版本，同样锁死。写成 `>=x.y.z <1.0.0` 范围时 pnpm **原样保留**，跨 minor 自动拉新版。
+   - 运行时用到值（描述符、helper、常量）的 api/util 包 → `dependencies: ">=x.y.z <1.0.0"`。
+     **不要用 caret**：caret 在 0.x 下只匹配 `0.x.*`，**跨 minor 就断**；若同时依赖两个包而它们各锁不同 minor，npm 会装进**两份**同一 api 包，两份 `declare module '@aalis/core'` 撞成 `TS2717`，而 `skipLibCheck: true` 会把这个错误彻底吞掉。也不要写精确版本或 `latest`：前者同样锁死，后者发布出去等于不设上限。`create-aalis-plugin` 生成的依赖已是这种写法。
    - 市场展示字段直接读 `package.json`：`description`/`author`/`license`/`repository`/`version`。
 3. **声明 `aalis.service` 供装前披露**：市场在 npm 上**安装前**只能读 `package.json`
    （拿不到 `definePlugin`），所以在 `package.json` 加：
@@ -472,11 +495,10 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
    "aalis": { "service": { "required": ["llm"], "optional": ["memory"], "provides": ["my-service"] } }
    ```
    与 `definePlugin` 的 `uses` / `provides` 一致（描述符 `.name`；内置能力同样写）。装后市场仍会按实际定义聚合细化。
+   **`provides` 要写**：市场按服务搜靠它，卡片写「提供：…」；用户缺某个服务时，界面提示的正是「在插件市场按服务搜」。
 4. **breaking change 记 changelog**：**1.0 之前 core 的公开面可能在次版本被删**。宽 peerDep 区间是为了让不用新 API 的插件不必随次版本频繁重发，不是兼容性承诺。
    稳定性承诺自 **1.0** 起生效，条款见 `docs/design/core-contract.md`。
-5. **发布**：在插件包目录执行 `npm publish`。私有/未发布插件仍可走 monorepo 本地安装。
-   Aalis 仓库内的第一方包另由根目录的 `pnpm publish:all` 批量发布（递归拓扑序发 core→api→util→插件、
-   跳 private、转 workspace 协议），第三方插件用不到它。
+5. **发布**：在插件包目录执行 `npm publish`。不发布的插件用 `npm install --install-links <插件目录>` 或 `npm pack` 出的 tarball 装进 Aalis 项目，见 [第三方插件开发者指南](guide/third-party-plugin.md#two-cores) 里拷贝安装的写法。
 
 > 安全模型：市场是**透明披露 + 用户知情同意**，不是技术隔离。安装第三方插件
 > 等于授予它声明的能力；真正的执行隔离（如 code_runner 沙箱）由容器化层负责。

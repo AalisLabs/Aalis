@@ -287,7 +287,11 @@ describe('输入框', () => {
       }),
       row('extra', { field: { type: 'string', label: '额外提示', default: '<默认提示>' }, prominence: 'composer' }),
     ];
-    app = await renderApp('/s/s1', { ...session, 'session/config/get': () => ({ items: rows }) });
+    app = await renderApp(
+      '/s/s1',
+      { ...session, 'session/config/get': () => ({ items: rows }) },
+      { '/api/models/llm': () => Response.json({ error: '模型服务不在' }, { status: 503 }) },
+    );
     const model = await main().findByRole('combobox', { name: '模型' });
     await vi.waitFor(() => expect(model.title).toContain('可选项没取到'));
     fireEvent.click(model);

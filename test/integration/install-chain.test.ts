@@ -90,7 +90,6 @@ function makePm(projectRoot: string, restarts: unknown[] = [], proc: PackageMana
     rescanPlugins: async () => [],
     isPluginRegistered: () => false,
     unloadPlugin: async () => {},
-    cleanupConfig: () => {},
     restartApp: r => {
       restarts.push(r);
     },

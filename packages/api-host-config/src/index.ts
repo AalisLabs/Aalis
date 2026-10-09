@@ -82,6 +82,7 @@ export interface HostConfig {
    * 参数不合法时抛错：id 不合法，或实例没登记、也没有可用来新建它的同模块定义（模块须已登记且声明 reusable）。
    */
   applyPluginConfig(instanceId: string, submitted: Record<string, unknown>): Promise<ApplyPluginConfigResult>;
+  /** 删掉实例的配置段，只改文档；落盘之后，不再被任何配置引用的密钥由宿主从密钥存储里一并删掉 */
   removePluginConfig(instanceId: string): void;
   isPluginDisabled(instanceId: string): boolean;
   setPluginEnabled(instanceId: string, enabled: boolean): void;

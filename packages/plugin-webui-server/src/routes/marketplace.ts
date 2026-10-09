@@ -7,7 +7,7 @@ import type { DependencyNode, MarketplacePackage, PackageCategory, SystemCompone
 import type { Logger, PluginManagerService, ServiceRef, Services } from '@aalis/core';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
-import type { LocalScanEntry } from '../client-discovery.js';
+import { declaredProvides, type LocalScanEntry } from '../client-discovery.js';
 import type { RouteGate } from '../gate.js';
 import { route } from '../route.js';
 
@@ -15,7 +15,7 @@ import { route } from '../route.js';
 // 安装/卸载/更新走 package-manager（npm install / uninstall）。
 // 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故检索源基址可配置
 // （marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
-// 检索源只管「有哪些包」：卡片上的最新版、可更新、系统组件的 latest 与装前依赖图，一律按包名向
+// 检索源只管「有哪些包」：卡片上的最新版、可更新、提供的服务、系统组件的 latest 与装前依赖图，一律按包名向
 // 安装实际使用的源（package-manager 报告的 npm registry）查，否则两源版本不同步时会显示装不到的版本。
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // 市场收录五类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 数据规范 aalis-schema / 前端 aalis-interface。
@@ -144,7 +144,12 @@ export interface LocalPkgInfo {
   origin: DepOrigin;
   keywords?: string[];
   description?: string;
+  /** 本地这份声明提供的服务 */
+  provides: string[];
 }
+
+/** 本地一份 package.json 里市场要用的元数据 */
+type LocalMeta = Pick<LocalPkgInfo, 'version' | 'keywords' | 'description' | 'provides'>;
 
 /**
  * 汇总三路信号判定本地实况。纯函数，便于单测——这处判断依赖部署形态，易错，必须能被测住。
@@ -155,8 +160,8 @@ export interface LocalPkgInfo {
  */
 export function resolveLocalInfo(
   request: string | undefined,
-  meta: { version?: string; keywords?: string[]; description?: string } | undefined,
-  scanned: { version?: string; keywords?: string[]; description?: string } | undefined,
+  meta: LocalMeta | undefined,
+  scanned: LocalMeta | undefined,
 ): LocalPkgInfo | undefined {
   if (meta) {
     return {
@@ -165,6 +170,7 @@ export function resolveLocalInfo(
       origin: classifyDepSpec(request),
       keywords: meta.keywords,
       description: meta.description,
+      provides: meta.provides,
     };
   }
   // resolve 不到（不在 node_modules）却被扫描扫出来 → 只能来自 monorepo 的 packages/ 源码目录。
@@ -185,6 +191,7 @@ export function resolveLocalInfo(
       origin: 'workspace',
       keywords: scanned.keywords,
       description: scanned.description,
+      provides: scanned.provides,
     };
   }
   return undefined;
@@ -216,12 +223,17 @@ export function localPackageLookup(
   const projectRequire = createRequire(pathToFileURL(join(appDir, 'package.json')));
   const rootDeps = readRootDependencies(appDir);
   /** 读本地 package.json。用 resolve+readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。 */
-  const readPkgJson = (name: string) => {
+  const readPkgJson = (name: string): LocalMeta | undefined => {
     try {
-      return JSON.parse(readFileSync(projectRequire.resolve(`${name}/package.json`), 'utf-8')) as {
-        version?: string;
-        keywords?: string[];
-        description?: string;
+      const pkg = JSON.parse(readFileSync(projectRequire.resolve(`${name}/package.json`), 'utf-8')) as Omit<
+        LocalMeta,
+        'provides'
+      >;
+      return {
+        version: pkg.version,
+        keywords: pkg.keywords,
+        description: pkg.description,
+        provides: declaredProvides(pkg),
       };
     } catch {
       return undefined;
@@ -261,40 +273,58 @@ export function sortSystemComponents(list: SystemComponent[]): SystemComponent[]
 }
 
 /**
- * 检索结果按搜索词在 name、description、keywords 上做本地包含过滤：不区分大小写，按空白分词，每个词都要命中。
- * npm search 的匹配范围由检索源决定（全文、相近词），会带回这三处都不含该词的包。空搜索词全部保留。纯函数，便于单测。
+ * 检索结果按搜索词在 name、description、keywords 与提供的服务上做本地包含过滤：不区分大小写，按空白分词，每个词都要命中。
+ * npm search 的匹配范围由检索源决定（全文、相近词），会带回这几处都不含该词的包。空搜索词全部保留。纯函数，便于单测。
  */
-export function matchesQuery(pkg: { name: string; description?: string; keywords?: string[] }, q: string): boolean {
+export function matchesQuery(
+  pkg: { name: string; description?: string; keywords?: string[]; provides?: string[] },
+  q: string,
+): boolean {
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hay = `${pkg.name} ${pkg.description ?? ''} ${(pkg.keywords ?? []).join(' ')}`.toLowerCase();
+  const hay = [pkg.name, pkg.description ?? '', ...(pkg.keywords ?? []), ...(pkg.provides ?? [])]
+    .join(' ')
+    .toLowerCase();
   return terms.every(t => hay.includes(t));
 }
 
-/** npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息）。纯函数，便于单测。 */
+/** 安装源上最新版的清单里市场要用的：版本号与声明提供的服务 */
+interface LatestManifest {
+  version: string;
+  provides: string[];
+}
+
+/**
+ * npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息），按搜索词 {@link matchesQuery} 过滤。
+ * 提供的服务：已装的取本地这份（与卡片上的本地版本对得上），没装的取安装源上的最新版。纯函数，便于单测。
+ */
 export function toMarketplacePackages(
   data: NpmSearchResponse,
   installed: Set<string>,
-  /** 安装源上的最新版；查不到返回 undefined，卡片的 version 为空串、不可更新。 */
-  latestOf: (name: string) => string | undefined,
+  /** 安装源上的最新版清单；查不到返回 undefined，卡片的 version 为空串、不可更新。 */
+  latestOf: (name: string) => LatestManifest | undefined,
   /** 本地实况查询。缺省则卡片无 resolved，前端退化为「已安装但版本未知」。 */
   localOf: (name: string) => LocalPkgInfo | undefined = () => undefined,
+  q = '',
 ): MarketplacePackage[] {
-  return (data.objects ?? []).map(o => {
+  return (data.objects ?? []).flatMap(o => {
     const local = localOf(o.package.name);
     const latest = latestOf(o.package.name);
+    const provides = local?.provides ?? latest?.provides ?? [];
+    if (!matchesQuery({ ...o.package, provides }, q)) return [];
     return {
       name: o.package.name,
-      version: latest ?? '',
+      version: latest?.version ?? '',
       resolved: local?.version,
       request: local?.request,
       origin: local?.origin,
       // 与 package-manager 的更新闸同一份实现（@aalis/util-dep-spec），定义上不可能分岔。
-      updatable: isRegistryDep(local?.request) && isUpgrade(local?.version, latest),
+      updatable: isRegistryDep(local?.request) && isUpgrade(local?.version, latest?.version),
       description: o.package.description ?? '',
       author: o.package.publisher?.username,
       installed: installed.has(o.package.name),
       official: o.package.name.startsWith('@aalis/'),
       category: classifyPackage(o.package.keywords ?? []),
+      provides,
       keywords: (o.package.keywords ?? []).filter(k => !AALIS_KEYWORDS.includes(k)),
       downloads: o.downloads?.monthly,
       updated: o.updated ?? o.package.date,
@@ -310,12 +340,12 @@ export function toMarketplacePackages(
  * npm 检索不可达时的降级卡片：只用本地实况拼。
  * 国内多数镜像不支持 search API，这是常态而非边角情形——降级必须仍能管理已装插件，
  * 而不是给一句 warning 配一张空列表。分类走本地 keywords，与在线路径同一判据；搜索词同样按 {@link matchesQuery}
- * 在包名、描述、原始 keywords 上过滤。纯函数，便于单测。
+ * 在包名、描述、原始 keywords 与提供的服务上过滤。纯函数，便于单测。
  */
 export function toLocalPackages(local: ReadonlyMap<string, LocalPkgInfo>, q = ''): MarketplacePackage[] {
   return [...local.entries()]
     .filter(([, info]) => (info.keywords ?? []).some(k => AALIS_KEYWORDS.includes(k)))
-    .filter(([name, info]) => matchesQuery({ name, description: info.description, keywords: info.keywords }, q))
+    .filter(([name, info]) => matchesQuery({ name, ...info }, q))
     .map(([name, info]) => ({
       name,
       // 离线拿不到 npm latest，用本地版本占位。
@@ -329,6 +359,7 @@ export function toLocalPackages(local: ReadonlyMap<string, LocalPkgInfo>, q = ''
       installed: true,
       official: name.startsWith('@aalis/'),
       category: classifyPackage(info.keywords ?? []),
+      provides: info.provides,
       keywords: (info.keywords ?? []).filter(k => !AALIS_KEYWORDS.includes(k)),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -380,20 +411,19 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
 }
 
 /**
- * 按精确包名向 base 源查 dist-tags.latest。查不到（离线、源上没有该包、非 2xx、超时、格式不对）返回 undefined，
- * 调用方当作「最新版未知」：不显示可更新。
- * 带 npm 客户端同款的精简元数据 Accept 头：市场列表每次要查一批包，完整 packument 带全部版本的清单，体积大得多；
- * 不认这个头的源照常回完整文档，两者都有 dist-tags。
+ * 按精确包名向 base 源取 `/{包}/latest`：最新版这一份的清单，版本与声明提供的服务一次拿到，每包一次请求。
+ * 查不到（离线、源上没有该包、非 2xx、超时、格式不对、包名不合法）返回 undefined，调用方当作「最新版未知」：不显示可更新。
+ * 包名来自检索结果，进 URL 路径前过 {@link PKG_NAME_RE}；带作用域的包名不转义斜杠，各源都认这种写法。
  */
-async function fetchLatest(base: string, name: string): Promise<string | undefined> {
+async function fetchLatest(base: string, name: string): Promise<LatestManifest | undefined> {
+  if (!PKG_NAME_RE.test(name)) return undefined;
   try {
-    const r = await fetch(`${base}/${name.replace('/', '%2F')}`, {
-      headers: { accept: 'application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8' },
-      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-    });
+    const r = await fetch(`${base}/${name}/latest`, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
     if (!r.ok) return undefined;
-    const latest = ((await r.json()) as { 'dist-tags'?: { latest?: unknown } })['dist-tags']?.latest;
-    return typeof latest === 'string' ? latest : undefined;
+    const manifest = (await r.json()) as { version?: unknown };
+    return typeof manifest.version === 'string'
+      ? { version: manifest.version, provides: declaredProvides(manifest) }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -487,9 +517,7 @@ export function registerMarketplaceRoutes(
       return;
     }
     const byName = new Map<string, NonNullable<NpmSearchResponse['objects']>[number]>();
-    for (const r of okResults) {
-      for (const o of r.value.objects ?? []) if (matchesQuery(o.package, q)) byName.set(o.package.name, o);
-    }
+    for (const r of okResults) for (const o of r.value.objects ?? []) byName.set(o.package.name, o);
     const merged: NpmSearchResponse = { objects: [...byName.values()] };
     const installed = augmentInstalled(
       [...byName.keys()],
@@ -497,18 +525,19 @@ export function registerMarketplaceRoutes(
       n => localOf(n) !== undefined,
     );
     // 按包名并发查安装源上的最新版；任何一条失败只让该卡片缺最新版，不拖垮整页。
+    // 搜索词也要在提供的服务上匹配，所以先取清单、建卡片时再按搜索词过滤
     const source = await versionSource();
-    const latest = new Map<string, string>();
+    const latest = new Map<string, LatestManifest>();
     if ('base' in source) {
       await Promise.all(
         [...byName.keys()].map(async n => {
-          const v = await fetchLatest(source.base, n);
-          if (v !== undefined) latest.set(n, v);
+          const manifest = await fetchLatest(source.base, n);
+          if (manifest) latest.set(n, manifest);
         }),
       );
     }
     res.json({
-      packages: toMarketplacePackages(merged, installed, n => latest.get(n), localOf),
+      packages: toMarketplacePackages(merged, installed, n => latest.get(n), localOf, q),
       ...('error' in source ? { warning: source.error } : {}),
     });
   });
@@ -557,7 +586,7 @@ export function registerMarketplaceRoutes(
     if ('base' in source) {
       await Promise.all(
         components.map(async c => {
-          c.latest = await fetchLatest(source.base, c.name);
+          c.latest = (await fetchLatest(source.base, c.name))?.version;
         }),
       );
     }
@@ -645,7 +674,10 @@ export function registerMarketplaceRoutes(
     }
     const pkgMgr = caps.packageManager.current;
     if (!pkgMgr) {
-      res.status(503).json({ error: 'package-manager 服务未启用，无法安装插件' });
+      res.status(503).json({
+        error:
+          '没有提供 package-manager 服务的插件在运行，市场装不了插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
+      });
       return;
     }
     try {
@@ -660,19 +692,28 @@ export function registerMarketplaceRoutes(
 
   // 卸载：owner 级。闸全在服务层（见 package-manager 的 uninstallOne）：市场只卸插件与
   // 前端界面；承载撤销通道的提供者、非 registry 来源、会断别人服务依赖的包同样拒绝。
+  // 配置段与密钥默认留着，removeConfig 为 true 才一并删掉。
   route(expressApp, 'POST /api/marketplace/uninstall', gate(), async (req, res) => {
     const name = req.body?.name;
     if (typeof name !== 'string') {
       res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
+    const removeConfig = req.body?.removeConfig ?? false;
+    if (typeof removeConfig !== 'boolean') {
+      res.status(400).json({ error: 'removeConfig 字段必须是布尔值' });
+      return;
+    }
     const pkgMgr = caps.packageManager.current;
     if (!pkgMgr) {
-      res.status(503).json({ error: 'package-manager 服务未启用，无法卸载插件' });
+      res.status(503).json({
+        error:
+          '没有提供 package-manager 服务的插件在运行，市场卸不了插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
+      });
       return;
     }
     try {
-      const result = await pkgMgr.uninstall(name);
+      const result = await pkgMgr.uninstall(name, { removeConfig });
       // 卸成功也要重跑发现——与 install 那侧对称。卸载会真删 node_modules，不对账就会留下
       // 指向已删目录的前端候选与它那条 webui-client provider，被解析到即整站 404。
       if (result.ok) rediscoverClients();
@@ -699,7 +740,7 @@ export function registerMarketplaceRoutes(
     }));
     const pkgMgr = caps.packageManager.current;
     if (!pkgMgr) {
-      res.status(503).json({ error: 'package-manager 服务未启用，无法更新' });
+      res.status(503).json({ error: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它' });
       return;
     }
     try {

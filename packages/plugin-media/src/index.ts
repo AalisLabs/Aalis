@@ -14,6 +14,7 @@
 
 import { agent } from '@aalis/api-agent';
 import { asr } from '@aalis/api-asr';
+import { doctor } from '@aalis/api-doctor';
 import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
@@ -293,6 +294,7 @@ const uses = {
   tools: optional(tools),
   memory: optional(memory),
   sessionManager: optional(sessionManager),
+  doctor: optional(doctor),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -314,6 +316,30 @@ function run(caps: Caps): void {
   const svc = new MediaServiceImpl(caps, cfg);
 
   caps.provide(media, svc);
+
+  // 没有模型看得到图时图照样落盘、正文写明看不了（见 service.recognizeMessage），整体缺了看图能力要让用户在诊断里看到
+  caps.doctor.registerCheck({
+    id: 'media.vision',
+    category: 'service',
+    run() {
+      const vision = svc.imageDescriber();
+      return vision
+        ? {
+            id: 'media.vision',
+            category: 'service',
+            level: 'ok',
+            message: `识图可用，识别模型：${vision.displayName ?? vision.name}`,
+          }
+        : {
+            id: 'media.vision',
+            category: 'service',
+            level: 'warn',
+            message: '装了识图插件，但没有能看图的识别模型：图片照样存下，主模型看不到内容',
+            detail:
+              '在模型服务里加一个能看图的模型，再到「多模态媒体识别」的「图像识别 → 识别模型」里选它（留空则自动选用）',
+          };
+    },
+  });
 
   // 描述缓存续命：识别一次动辄十几秒（动图近一分钟），纯内存缓存重启即全丢。
   // 启动灌回快照、dispose 落盘；读写失败都只降级为「本次不复用」，不影响识别。

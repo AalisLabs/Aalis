@@ -344,11 +344,16 @@ async function scaffolded(): Promise<PluginDefinition> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-e2e-scaffold-')));
   cleanups.push(async () => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, SCAFFOLD);
-  await generate(dir, {
-    packageName: SCAFFOLD,
-    displayName: SCAFFOLD_NAME,
-    features: { tool: false, command: false, webui: 'frame' },
-  });
+  await generate(
+    dir,
+    {
+      packageName: SCAFFOLD,
+      displayName: SCAFFOLD_NAME,
+      features: { tool: false, command: false, webui: 'frame', sessionSetting: false },
+    },
+    // 只用生成的源码与网页，依赖的版本不进这条用例
+    { '@aalis/core': '0.1.0', '@aalis/api-webui': '0.1.0' },
+  );
   return ((await import(join(dir, 'src/index.ts'))) as { default: PluginDefinition }).default;
 }
 
@@ -1123,7 +1128,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('需要处理：失败的插件与插件的提示在首页摘要（手机上在第一层顶部）里，标签页标题、运行状况的角标（手机上是第一层入口的数）带上数目；「去处理」进插件详情，改好配置后少一条；提示也在发出它的插件详情里，运行状况列出同样的几条', async () => {
+  it('需要处理：待配置的插件与插件的提示在首页摘要（手机上在第一层顶部）里，标签页标题、运行状况的角标（手机上是第一层入口的数）带上数目；「去配置」进插件详情的配置区，改好配置后少一条；提示也在发出它的插件详情里，运行状况列出同样的几条', async () => {
     const stack = await startStack({}, [noticeProbe]);
     await stack.app.plugin(needsConfig, {});
     await stack.app.plugins.idle();
@@ -1138,7 +1143,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
         ),
       );
     expect(await rows(summary)).toEqual([
-      ['要配置的探针', '失败：缺少服务地址', '去处理'],
+      ['要配置的探针', '待配置：endpoint', '去配置'],
       ['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核'],
     ]);
     await page.waitForFunction(() => document.title === '(2) T');
@@ -1148,8 +1153,12 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       expect(await page.$eval(entry, link => link.getAttribute('aria-label'))).toBe('运行状况，2 项需要处理');
     }
 
-    await page.locator(`${summary} ${aria('去处理', 'link')}`).click();
-    await page.waitForFunction(name => location.pathname === `/plugins/${name}`, {}, NEEDS_CONFIG);
+    await page.locator(`${summary} ${aria('去配置', 'link')}`).click();
+    await page.waitForFunction(
+      name => location.pathname === `/plugins/${name}` && location.hash === '#config',
+      {},
+      NEEDS_CONFIG,
+    );
     await stack.app.plugins.updateConfig(NEEDS_CONFIG, { endpoint: 'http://upstream.invalid' });
     await page.waitForFunction(() => document.title === '(1) T');
 
@@ -1167,16 +1176,16 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('失败的插件：树上标着失败，详情写原因；照样能改配置（改了以后行尾出现撤销，正在填的输入框不挪位置、不变窄），保存即重新激活，转为运行中', async () => {
+  it('缺必填配置起不来的插件：树上标着待配置，详情写没填的键；照样能改配置（改了以后行尾出现撤销，正在填的输入框不挪位置、不变窄），保存即重新激活，转为运行中', async () => {
     const stack = await startStack();
     await stack.app.plugin(needsConfig, {});
     await stack.app.plugins.idle();
     expect(stack.app.plugins.getPlugin(NEEDS_CONFIG)?.state).toBe('error');
     const { page, problems } = await openPage(stack, viewport, '/plugins');
     const row = await page.waitForSelector(pluginLink(NEEDS_CONFIG));
-    expect(await row?.evaluate(link => link.textContent)).toBe('出错要配置的探针失败');
+    expect(await row?.evaluate(link => link.textContent)).toBe('需要处理要配置的探针待配置');
     await row?.click();
-    await page.waitForSelector(`.plugin-summary ${text('缺少服务地址')}`);
+    await page.waitForSelector(`.plugin-summary ${text('endpoint')}`);
     const field = await page.waitForSelector(`main ${aria('服务地址', 'textbox')}`);
     const box = () =>
       field?.evaluate(element => {

@@ -48,13 +48,21 @@ afterEach(() => {
   localStorage.clear();
 });
 
+/** 没起来的原因都为空 */
+const clear = { lacking: [], waiting: [], unconfigured: [] };
+const MODEL_FAILED = {
+  service: 'zz-model',
+  chain: ['zz-model'],
+  root: { kind: 'error' as const, instance: 'zz-model', error: '缺少 API 密钥' },
+};
+
 const PLUGINS = [
   plugin('zz-model', { displayName: '模型服务', state: 'error', error: '缺少 API 密钥' }),
   plugin('zz-agent', {
     displayName: '对话代理',
     state: 'pending',
     requiredServices: ['zz-model'],
-    missing: ['zz-model'],
+    lacking: [MODEL_FAILED],
   }),
   plugin('zz-jobs:night', { displayName: '计划任务', reusable: true }),
   plugin('zz-auth', { displayName: '权限' }),
@@ -62,8 +70,8 @@ const PLUGINS = [
 
 const ITEMS: AttentionItem[] = [
   { kind: 'approval', id: 'ap-1', sessionId: 's1', session: '整理周报', tool: 'exec' },
-  { kind: 'plugin', instance: 'zz-model', state: 'error', error: '缺少 API 密钥', missing: [] },
-  { kind: 'plugin', instance: 'zz-agent', state: 'pending', missing: ['zz-model'] },
+  { kind: 'plugin', instance: 'zz-model', state: 'error', error: '缺少 API 密钥', ...clear },
+  { kind: 'plugin', instance: 'zz-agent', state: 'pending', ...clear, lacking: [MODEL_FAILED] },
   {
     kind: 'notice',
     instance: 'zz-jobs:night',
@@ -122,7 +130,11 @@ describe('首页摘要', () => {
     expect(rows(region)).toEqual([
       { text: '整理周报等你批准：exec', tone: '需要处理', action: ['去处理', '/s/s1'] },
       { text: '模型服务失败：缺少 API 密钥', tone: '出错', action: ['去处理', '/plugins/zz-model'] },
-      { text: '对话代理缺服务：zz-model', tone: '需要处理', action: ['去处理', '/plugins/zz-agent'] },
+      {
+        text: '对话代理缺服务：模型服务（失败：缺少 API 密钥）',
+        tone: '需要处理',
+        action: ['去处理 模型服务', '/plugins/zz-model'],
+      },
       { text: '3 个任务没跑计划任务 · night', tone: '需要处理', action: ['打开计划', '/p/zz-jobs%3Anight/jobs'] },
       {
         text: '规则文件读不出权限 · 第 3 行格式不对',
@@ -207,6 +219,168 @@ describe('首页摘要', () => {
     await main.findByRole('textbox', { name: '消息' });
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(main.queryByRole('region', { name: '需要处理' })).toBeNull();
+  });
+});
+
+describe('插件故障的写法', () => {
+  /** 链：会话服务要会话管理提供的，会话管理要 SQLite 记忆提供的 */
+  const CHAIN_PLUGINS = [
+    plugin('zz-session-server', { displayName: '会话服务', state: 'pending' }),
+    plugin('zz-manager', { displayName: '会话管理', state: 'pending' }),
+    plugin('zz-sqlite', { displayName: 'SQLite 记忆', state: 'error', error: '打不开数据库' }),
+    plugin('zz-embed', {
+      displayName: 'OpenAI Embedding',
+      state: 'error',
+      error: '缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效',
+      unconfigured: ['apiKey'],
+    }),
+    plugin('zz-vector', { displayName: '向量记忆', state: 'pending' }),
+    plugin('zz-off', { displayName: '停用的提供者', state: 'disabled' }),
+    plugin('zz-ollama', { displayName: 'Ollama 对话' }),
+    plugin('zz-a', { displayName: '甲', state: 'pending' }),
+    plugin('zz-b', { displayName: '乙', state: 'pending' }),
+    plugin('zz-lonely', { displayName: '孤儿', state: 'pending' }),
+    plugin('zz-routed', { displayName: '路由', state: 'pending' }),
+  ];
+  const pending = (instance: string, lacking: unknown[]): AttentionItem =>
+    ({ kind: 'plugin', instance, state: 'pending', ...clear, lacking }) as AttentionItem;
+
+  it.each([
+    {
+      name: '根失败：链与根的失败说明，按钮去根插件',
+      item: pending('zz-session-server', [
+        {
+          service: 'zz-session',
+          chain: ['zz-manager', 'zz-sqlite'],
+          root: { kind: 'error', instance: 'zz-sqlite', error: '打不开数据库' },
+        },
+      ]),
+      row: {
+        text: '会话服务缺服务：会话管理 → SQLite 记忆（失败：打不开数据库）',
+        tone: '需要处理',
+        action: ['去处理 SQLite 记忆', '/plugins/zz-sqlite'],
+      },
+    },
+    {
+      name: '同一个根只写一次：会话服务既要记忆、又要要记忆的会话管理，留最短的那条链',
+      item: pending('zz-session-server', [
+        {
+          service: 'zz-session',
+          chain: ['zz-manager', 'zz-sqlite'],
+          root: { kind: 'error', instance: 'zz-sqlite', error: '打不开数据库' },
+        },
+        {
+          service: 'memory',
+          chain: ['zz-sqlite'],
+          root: { kind: 'error', instance: 'zz-sqlite', error: '打不开数据库' },
+        },
+      ]),
+      row: {
+        text: '会话服务缺服务：SQLite 记忆（失败：打不开数据库）',
+        tone: '需要处理',
+        action: ['去处理 SQLite 记忆', '/plugins/zz-sqlite'],
+      },
+    },
+    {
+      name: '根待配置：写待配置的键，按钮去根插件的配置区',
+      item: pending('zz-vector', [
+        {
+          service: 'embedding',
+          chain: ['zz-embed'],
+          root: { kind: 'error', instance: 'zz-embed', error: '缺少配置项 apiKey' },
+        },
+      ]),
+      row: {
+        text: '向量记忆缺服务：OpenAI Embedding（待配置：apiKey）',
+        tone: '需要处理',
+        action: ['去配置 OpenAI Embedding', '/plugins/zz-embed#config'],
+      },
+    },
+    {
+      name: '根已停用',
+      item: pending('zz-routed', [
+        { service: 'zz-x', chain: ['zz-off'], root: { kind: 'disabled', instance: 'zz-off' } },
+      ]),
+      row: {
+        text: '路由缺服务：停用的提供者（已停用）',
+        tone: '需要处理',
+        action: ['去处理 停用的提供者', '/plugins/zz-off'],
+      },
+    },
+    {
+      name: '根在运行却没在提供：写它没提供的服务，按钮去根插件',
+      item: pending('zz-routed', [
+        { service: 'llm', chain: ['zz-ollama'], root: { kind: 'withdrawn', instance: 'zz-ollama', service: 'llm' } },
+      ]),
+      row: {
+        text: '路由缺服务：Ollama 对话（在运行但没有提供 llm）',
+        tone: '需要处理',
+        action: ['去处理 Ollama 对话', '/plugins/zz-ollama'],
+      },
+    },
+    {
+      name: '没有提供者：写可以在市场按服务搜，按钮进这个插件的详情',
+      item: pending('zz-lonely', [{ service: 'llm', chain: [], root: { kind: 'unprovided', service: 'llm' } }]),
+      row: {
+        text: '孤儿缺服务：没有已装的插件提供 llm，可以在插件市场按服务搜 llm',
+        tone: '需要处理',
+        action: ['去处理', '/plugins/zz-lonely'],
+      },
+    },
+    {
+      name: '成环：点名环上的插件，按钮进这个插件的详情',
+      item: pending('zz-a', [
+        { service: 'zz-sb', chain: ['zz-b'], root: { kind: 'cycle', instances: ['zz-a', 'zz-b'] } },
+      ]),
+      row: { text: '甲缺服务：乙（互相等待成环：甲、乙）', tone: '需要处理', action: ['去处理', '/plugins/zz-a'] },
+    },
+    {
+      name: '待配置的插件自己：提醒色，写没填的键，按钮去配置区',
+      item: {
+        kind: 'plugin',
+        instance: 'zz-embed',
+        state: 'error',
+        error: '缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效',
+        ...clear,
+        unconfigured: ['apiKey'],
+      } as AttentionItem,
+      row: { text: 'OpenAI Embedding待配置：apiKey', tone: '需要处理', action: ['去配置', '/plugins/zz-embed#config'] },
+    },
+  ])('$name', async ({ item, row }) => {
+    app = await renderApp('/health', noSessions, {
+      '/api/plugins': { plugins: CHAIN_PLUGINS, secretRefCounts: {} },
+      '/api/attention': { items: [item] },
+    });
+    const region = await screen.findByRole('region', { name: '需要处理' });
+    await vi.waitFor(() => expect(rows(region)).toEqual([row]));
+  });
+
+  it('一个服务两个提供者各自的根：逐个写到根，按钮去第一个根', async () => {
+    app = await renderApp('/health', noSessions, {
+      '/api/plugins': { plugins: CHAIN_PLUGINS, secretRefCounts: {} },
+      '/api/attention': {
+        items: [
+          pending('zz-routed', [
+            {
+              service: 'zz-x',
+              chain: ['zz-sqlite'],
+              root: { kind: 'error', instance: 'zz-sqlite', error: '打不开数据库' },
+            },
+            { service: 'zz-x', chain: ['zz-off'], root: { kind: 'disabled', instance: 'zz-off' } },
+          ]),
+        ],
+      },
+    });
+    const region = await screen.findByRole('region', { name: '需要处理' });
+    await vi.waitFor(() =>
+      expect(rows(region)).toEqual([
+        {
+          text: '路由缺服务：SQLite 记忆（失败：打不开数据库）；停用的提供者（已停用）',
+          tone: '需要处理',
+          action: ['去处理 SQLite 记忆', '/plugins/zz-sqlite'],
+        },
+      ]),
+    );
   });
 });
 

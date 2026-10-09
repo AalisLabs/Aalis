@@ -9,12 +9,13 @@ import memorySqlite from '../../packages/plugin-memory-sqlite/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 开库失败。取不到 process.getBuiltinModule 或 node:sqlite，或 node:sqlite 缺本插件要用的接口（22.16 之前、23.x）时，
-// 都按 Node 太旧报错：写明需要 Node 24.15.0 起并指向升级方法；其余失败带出原因，原错误作 cause。
+// 都按 Node 太旧报错：写明需要 Node 24.15.0 起并指向文档站上的升级方法（经 npm 装的项目里没有 docs/）；其余失败
+// 带出原因与修法，原错误作 cause。
 // ════════════════════════════════════════════════════════════
 
 const TOO_OLD =
   `SQLite 打开失败: 当前 Node（${process.version}）版本过低，需要 Node 24.15.0 起；` +
-  '升级方法见 docs/guide/first-run.md「升级 Node」';
+  '升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node';
 
 let dir: string;
 const apps: App[] = [];
@@ -102,20 +103,22 @@ describe('plugin-memory-sqlite 开库失败', () => {
     expect(opened).toEqual([{ closed: true }]);
   });
 
-  it('数据库路径解析失败：消息点名 URI 与原因，原错误作 cause', async () => {
+  it('数据库路径解析失败：消息点名 URI、修法与原因，原错误作 cause', async () => {
     const original = new Error('根 data 不可写');
     const { entry, thrown } = await activate(undefined, original);
 
     expect(entry?.state).toBe('error');
-    expect(entry?.error).toBe('无法解析数据库路径 data:/aalis.db: 根 data 不可写');
+    expect(entry?.error).toBe('无法解析数据库路径 data:/aalis.db（检查配置项 path）: 根 data 不可写');
     expect(thrown?.cause).toBe(original);
   });
 
-  it('其它开库错误带出原因，原错误作 cause', async () => {
+  it('其它开库错误写明修法并带出原因，原错误作 cause', async () => {
     const { entry, thrown } = await activate(join(dir, 'missing', 'aalis.db'));
 
     expect(entry?.state).toBe('error');
-    expect(entry?.error).toBe('SQLite 打开失败: unable to open database file');
+    expect(entry?.error).toBe(
+      `SQLite 打开失败（检查目录 ${join(dir, 'missing')} 存在且可写，或在配置项 path 换个位置）: unable to open database file`,
+    );
     expect((thrown?.cause as NodeJS.ErrnoException | undefined)?.code).toBe('ERR_SQLITE_ERROR');
   });
 });

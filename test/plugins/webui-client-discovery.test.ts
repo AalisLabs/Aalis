@@ -142,6 +142,22 @@ describe('collectLocalPackageDeps（扫盘 → name→{version,deps}；keys 补�
     expect(map.get('@aalis/api-webui')?.version, '无 version 字段则 undefined').toBeUndefined();
   });
 
+  it('provides 取 aalis.service.provides 里的字符串：市场离线时按服务搜靠它；没声明、写法不对的为空', () => {
+    const env = makeEnv({
+      dirs: { '/p': ['a', 'b', 'c'] },
+      exists: ['/p', '/p/a/package.json', '/p/b/package.json', '/p/c/package.json'],
+      pkgs: {
+        '/p/a/package.json': { name: '@x/a', aalis: { service: { provides: ['embedding', 7, 'llm'] } } },
+        '/p/b/package.json': { name: '@x/b', aalis: { service: { provides: 'embedding' } } },
+        '/p/c/package.json': { name: '@x/c' },
+      },
+    });
+    const map = collectLocalPackageDeps(['/p'], env);
+    expect(map.get('@x/a')?.provides).toEqual(['embedding', 'llm']);
+    expect(map.get('@x/b')?.provides).toEqual([]);
+    expect(map.get('@x/c')?.provides).toEqual([]);
+  });
+
   it('跳过无 package.json / 无 name 的子目录；不存在的 scanDir 安全略过', () => {
     const env = makeEnv({
       dirs: { '/p': ['a', 'broken'] },

@@ -78,6 +78,7 @@ class OsCodeSandboxService implements CodeSandboxService {
 export default definePlugin({
   name: '@aalis/plugin-code-sandbox-os',
   displayName: '代码沙箱（OS）',
+  subsystem: 'tools',
   provides: [codeSandbox],
   uses: { processService, logger, lifecycle, provide },
   async apply(caps) {

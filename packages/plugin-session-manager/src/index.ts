@@ -953,11 +953,6 @@ export default definePlugin({
 async function run(caps: Caps): Promise<void> {
   const { memory, events, hooks, lifecycle, logger, provide } = caps;
 
-  if (memory.current === undefined) {
-    logger.error('memory 服务不可用，会话管理无法启动');
-    return;
-  }
-
   const manager = new SessionManager(caps);
 
   // 会话表跟随 memory 胜者：首次挂接即加载；运行中胜者换人时先写回旧后端再读新后端

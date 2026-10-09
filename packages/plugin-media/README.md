@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-media
 `definePlugin` 默认导出：
 
 - provides：`media`
-- uses：`logger`、`config`、`lifecycle`、`events`、`hooks`、`provide`、`proc`（`process`）、`storage`；可选 `llm`、`agent`、`asr`、`tools`、`memory`、`sessionManager`（`session-manager`）
+- uses：`logger`、`config`、`lifecycle`、`events`、`hooks`、`provide`、`proc`（`process`）、`storage`；可选 `llm`、`agent`、`asr`、`tools`、`memory`、`sessionManager`（`session-manager`）、`doctor`
 
 ## 文档
 

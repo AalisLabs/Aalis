@@ -10,9 +10,11 @@ import embeddingOpenai from '../../packages/plugin-embedding-openai/src/index.js
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import maimai from '../../packages/plugin-maimai/src/index.js';
+import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import okx from '../../packages/plugin-okx-trading/src/index.js';
 import browser from '../../packages/plugin-tool-browser/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
+import { parseConfig, validateConfig } from '../../packages/schema-config/src/index.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // 实际走 App 激活路径；fetch 与进程服务均由替身接管，不连接外部服务。
@@ -129,13 +131,51 @@ describe('批 A：关键配置在副作用前拒绝', () => {
     expect(app.plugins.getPlugin(embeddingOpenai.name)?.state).toBe('active');
     expect(requests).toEqual(['https://api.openai.com/v1/embeddings']);
   });
+});
 
-  it('缺省 maimai token 与 OKX 凭证继续降级为 active', async () => {
-    const maimaiStarted = await activate(maimai, {});
-    const okxStarted = await activate(okx, {});
-    expect(maimaiStarted.app.plugins.getPlugin(maimai.name)?.state).toBe('active');
-    expect(okxStarted.app.plugins.getPlugin(okx.name)?.state).toBe('active');
-    expect(maimaiStarted.requests).toEqual([]);
-    expect(okxStarted.requests).toEqual([]);
+// 缺了就整体用不了的配置项在 schema 里标必填、不带默认值：parseConfig 抛出点名缺项的配置错误，插件激活失败而不是
+// 起来了却什么都不做；validateConfig 报 missing，WebUI 据此把插件标成「待配置」并列出没填的键
+describe('缺必填配置：激活失败并点名缺的键，WebUI 标「待配置」', () => {
+  it.each([
+    { plugin: maimai, missing: ['developerToken'], withProcess: false },
+    { plugin: okx, missing: ['apiKey', 'secretKey', 'passphrase'], withProcess: false },
+    { plugin: asrOpenai, missing: ['apiKey'], withProcess: false },
+    { plugin: whisper, missing: ['modelPath'], withProcess: true },
+  ])('$plugin.name', async ({ plugin, missing, withProcess }) => {
+    const { app, requests, processes, registerTool } = await activate(plugin, {}, withProcess);
+    const entry = app.plugins.getPlugin(plugin.name);
+    expect(entry?.state).toBe('error');
+    expect(entry?.error).toBe(`缺少配置项 ${missing[0]}，在 WebUI 或配置文件中填入后生效`);
+    expect(
+      validateConfig(plugin.configSchema, {})
+        .filter(issue => issue.kind === 'missing')
+        .map(issue => issue.path),
+    ).toEqual(missing);
+    expect(requests).toEqual([]);
+    expect(processes).toEqual([]);
+    expect(registerTool).not.toHaveBeenCalled();
+  });
+});
+
+// 取值范围交给 schema 的约束键：配置错误不带堆栈、写明哪一项与怎么改，WebUI 保存时就拦下
+describe('memory-vector 的扩展窗口', () => {
+  it.each([
+    { window: -1, reason: '小于下限 0' },
+    { window: 1.5, reason: '期望整数' },
+  ])('contextExpand.window = $window：$reason', ({ window, reason }) => {
+    const raw = { contextExpand: { window } };
+    expect(validateConfig(memoryVector.configSchema, raw)).toContainEqual(
+      expect.objectContaining({ path: 'contextExpand.window', kind: 'invalid' }),
+    );
+    let thrown: unknown;
+    try {
+      parseConfig(memoryVector.configSchema!, raw);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toMatchObject({
+      name: 'ConfigError',
+      message: `配置项 contextExpand.window ${reason}，在 WebUI 或配置文件中改正后生效`,
+    });
   });
 });

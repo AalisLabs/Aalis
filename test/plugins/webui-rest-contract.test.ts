@@ -355,7 +355,10 @@ describe('管理面 REST 的回应与契约', () => {
             : [],
         });
       }
-      if (url === `${INSTALL}/zz-plugin-remote`) return reply({ 'dist-tags': { latest: '3.0.0' } });
+      if (url === `${INSTALL}/zz-plugin-remote/latest`) {
+        return reply({ name: 'zz-plugin-remote', version: '3.0.0', aalis: { service: { provides: ['zz-remote'] } } });
+      }
+      if (url === `${INSTALL}/@zz/api-probe/latest`) return reply({ name: '@zz/api-probe', version: '0.2.0' });
       if (url === `${INSTALL}/@zz%2Fapi-probe`) {
         return reply({
           'dist-tags': { latest: '0.2.0' },
@@ -486,7 +489,10 @@ describe('管理面 REST 的回应与契约', () => {
     await ok('GET /api/system-components', '/api/system-components');
     await ok('GET /api/marketplace/depgraph', `/api/marketplace/depgraph?name=${enc('@zz/api-probe')}`);
     await ok('POST /api/marketplace/install', '/api/marketplace/install', { name: 'zz-plugin-remote' });
-    await ok('POST /api/marketplace/uninstall', '/api/marketplace/uninstall', { name: 'zz-plugin-remote' });
+    await ok('POST /api/marketplace/uninstall', '/api/marketplace/uninstall', {
+      name: 'zz-plugin-remote',
+      removeConfig: true,
+    });
     await ok('POST /api/marketplace/update', '/api/marketplace/update', {
       targets: [{ name: '@zz/api-probe', version: '0.2.0' }],
     });

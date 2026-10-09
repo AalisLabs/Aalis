@@ -102,7 +102,7 @@ export default definePlugin({
 
 ## 单 token WebUI 鉴权
 
-WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 token → 身份 `webui:console`（owner 语义——token 存于服务器磁盘 / 启动日志，持有 token ≈ 控制服务器 ≈ owner）。**无账户密码**（无 `setPassword` / `verifyPassword`）。
+WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 token → 身份 `webui:console`（owner 语义——token 存于服务器磁盘（家目录的 `state/webui/`，启动日志只给文件位置），持有 token ≈ 控制服务器 ≈ owner）。**无账户密码**（无 `setPassword` / `verifyPassword`）。
 
 ## 权限页
 

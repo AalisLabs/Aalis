@@ -1,6 +1,6 @@
+import type { MarketplacePackage, SystemComponent } from '@aalis/api-webui';
 import { Package, RotateCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useId, useReducer, useState } from 'react';
-import { useNavigate } from 'react-router';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
@@ -14,37 +14,22 @@ import { listTime } from '../format';
 import { getJson, isRecord, postJson } from '../rest';
 import { paths } from '../routes';
 import { Main } from '../shell/Shell';
-import { usePluginAction } from './action';
-import { InstallDisclosure, UninstallWarning } from './disclosure';
+import { messageOf, usePluginAction } from './action';
+import { UninstallWarning } from './disclosure';
+import { InstallDialog } from './InstallDialog';
 import { useHost } from './list';
 import './Market.css';
 
 // 市场：npm 上带 Aalis 类型关键词的包，加上本地已装的系统组件（内核、宿主、契约、规范、工具库，它们不经关键词检索，
 // 免得有人发个同名关键词的包冒充）。插件与前端界面可以装卸，系统组件只能更新；「可更新」由服务端判定，前端不自己比版本。
-// 筛选与搜索在本页做；装卸更新同一时刻只做一个（服务端一次只受理一个）。装上插件后跳到它的配置区
+// 筛选与搜索在本页做，搜索也匹配包声明提供的服务；装卸更新同一时刻只做一个（服务端一次只受理一个）。装上插件后跳到它的配置区
 
-type Category = 'plugin' | 'interface' | 'api' | 'schema' | 'util' | 'core' | 'runtime';
-type Origin = 'registry' | 'workspace' | 'link' | 'git' | 'alias' | 'transitive';
-
-interface MarketPackage {
-  name: string;
-  description: string;
-  /** 安装源上的最新版，查不到为空串 */
-  version: string;
-  /** 本地已装的版本 */
-  resolved?: string;
-  origin?: Origin;
-  updatable: boolean;
-  author?: string;
-  installed: boolean;
-  official: boolean;
-  category: Category;
-  downloads?: number;
-  updated?: string;
-  insecure?: boolean;
-  license?: string;
-  links?: { npm?: string; homepage?: string; repository?: string };
-}
+/** 一行：检索出的包，或并进来的系统组件（类别另有内核与宿主） */
+type MarketItem = Omit<MarketplacePackage, 'category'> & {
+  category: MarketplacePackage['category'] | SystemComponent['kind'];
+};
+type Category = MarketItem['category'];
+type Origin = NonNullable<MarketItem['origin']>;
 
 /** 只有插件与前端界面是自己装的；其余随脚手架就位，或随依赖它的插件自动装卸 */
 const INSTALLABLE: ReadonlySet<Category> = new Set(['plugin', 'interface']);
@@ -79,30 +64,34 @@ const CATEGORY_NAMES: Record<Category, string> = {
   runtime: '宿主',
 };
 
-function parseMarket(body: unknown): { packages: MarketPackage[]; warning?: string } {
+/** GET /api/marketplace 的回应；「开始使用」也用它 */
+export function parseMarket(body: unknown): { packages: MarketplacePackage[]; warning?: string } {
   if (!isRecord(body) || !Array.isArray(body.packages)) throw new Error('市场的回应不是预期的形状');
   return {
-    packages: body.packages.filter(isRecord) as unknown as MarketPackage[],
+    packages: body.packages.filter(isRecord) as unknown as MarketplacePackage[],
     warning: typeof body.warning === 'string' ? body.warning : undefined,
   };
 }
 
 /** 本地已装的系统组件，并进检索结果（检索已有的不再加）；取不到时只少这一部分，写明原因 */
-async function systemComponents(signal: AbortSignal): Promise<{ packages: MarketPackage[]; warning?: string }> {
+async function systemComponents(signal: AbortSignal): Promise<{ packages: MarketItem[]; warning?: string }> {
   try {
     const body = await getJson('/api/system-components', signal);
-    const components = isRecord(body) && Array.isArray(body.components) ? body.components.filter(isRecord) : [];
+    const components = (isRecord(body) && Array.isArray(body.components)
+      ? body.components.filter(isRecord)
+      : []) as unknown as SystemComponent[];
     return {
       packages: components.map(component => ({
-        name: String(component.name),
-        description: typeof component.description === 'string' ? component.description : '',
-        version: typeof component.latest === 'string' ? component.latest : '',
-        resolved: typeof component.version === 'string' ? component.version : undefined,
-        origin: component.origin as Origin | undefined,
-        updatable: component.updatable === true,
+        name: component.name,
+        description: component.description ?? '',
+        version: component.latest ?? '',
+        resolved: component.version,
+        origin: component.origin,
+        updatable: component.updatable,
         installed: true,
-        official: String(component.name).startsWith('@aalis/'),
-        category: component.kind as Category,
+        official: component.name.startsWith('@aalis/'),
+        category: component.kind,
+        provides: [],
       })),
       warning: isRecord(body) && typeof body.warning === 'string' ? body.warning : undefined,
     };
@@ -133,28 +122,29 @@ const downloads = (count: number) =>
       : `${count}`;
 
 /** 只认 http、https 的链接：检索结果原样透传，恶意包可以塞 javascript: 地址 */
-const safeLink = (pkg: MarketPackage) => {
+const safeLink = (pkg: MarketItem) => {
   const link = pkg.links?.homepage ?? pkg.links?.repository ?? pkg.links?.npm;
   return link && /^https?:\/\//i.test(link) ? link : undefined;
 };
 
 export function Market() {
   const [version, reload] = useReducer((n: number) => n + 1, 0);
-  const [state, setState] = useState<{ packages?: MarketPackage[]; warnings: string[]; error?: Error }>({
+  const [state, setState] = useState<{ packages?: MarketItem[]; warnings: string[]; error?: Error }>({
     warnings: [],
   });
   const [loading, setLoading] = useState(true);
   const action = usePluginAction();
   const host = useHost();
   const toast = useToast();
-  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<Kind>('plugin');
   const [status, setStatus] = useState<State>('all');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [updating, setUpdating] = useState(false);
   const busy = action.busy ?? (updating ? '更新' : undefined);
-  const [asking, setAsking] = useState<{ pkg: MarketPackage; install: boolean }>();
+  const [installing, setInstalling] = useState<MarketItem>();
+  /** 卸载确认框开着时是要卸的包与框里的选择 */
+  const [uninstalling, setUninstalling] = useState<{ pkg: MarketItem; removeConfig: boolean }>();
   const [update, setUpdate] = useState<{ ok: boolean; message: string; conflicts: string[] }>();
   const searchId = useId();
 
@@ -184,21 +174,18 @@ export function Market() {
     if (kind !== 'all' && kindOf(pkg.category) !== kind) return false;
     if (status === 'installed' && !pkg.installed) return false;
     if (status === 'available' && pkg.installed) return false;
-    const text = `${pkg.name} ${pkg.description} ${pkg.author ?? ''}`.toLowerCase();
+    const text = [pkg.name, pkg.description, pkg.author ?? '', ...pkg.provides].join(' ').toLowerCase();
     return terms.every(term => text.includes(term));
   });
 
   // 装卸做完连同市场一起重取
-  const proceed = async (pkg: MarketPackage, install: boolean) => {
+  const uninstall = async ({ pkg, removeConfig }: NonNullable<typeof uninstalling>) => {
     await action.run(
-      install ? `安装 ${pkg.name}` : `卸载 ${pkg.name}`,
-      () => postJson(install ? '/api/marketplace/install' : '/api/marketplace/uninstall', { name: pkg.name }),
+      `卸载 ${pkg.name}`,
+      () => postJson('/api/marketplace/uninstall', { name: pkg.name, removeConfig }),
       reply => {
-        const body = isRecord(reply) ? reply : {};
-        setAsking(undefined);
-        const message = typeof body.message === 'string' ? body.message : undefined;
-        toast({ kind: 'success', text: message ?? `${install ? '已安装' : '已卸载'} ${pkg.name}` });
-        if (install && typeof body.plugin === 'string') navigate(paths.plugin(body.plugin, 'config'));
+        setUninstalling(undefined);
+        toast({ kind: 'success', text: messageOf(reply) ?? `已卸载 ${pkg.name}` });
       },
     );
     reload();
@@ -243,7 +230,7 @@ export function Market() {
               id={searchId}
               type="search"
               value={query}
-              placeholder="搜名称、说明或作者"
+              placeholder="搜名称、说明、作者或提供的服务"
               onChange={event => setQuery(event.target.value)}
             />
             <Select
@@ -307,6 +294,7 @@ export function Market() {
             (shown.length === 0 ? (
               <EmptyState
                 title={packages.length === 0 ? '市场里没有包' : '没有符合筛选的包'}
+                description={terms.length > 0 ? '按服务搜只找得到在 package.json 里声明了提供服务的包' : undefined}
                 action={
                   packages.length > 0 && (
                     <Button
@@ -338,7 +326,7 @@ export function Market() {
                         return next;
                       })
                     }
-                    onAsk={install => setAsking({ pkg, install })}
+                    onAsk={install => (install ? setInstalling(pkg) : setUninstalling({ pkg, removeConfig: false }))}
                   />
                 ))}
               </ul>
@@ -346,38 +334,31 @@ export function Market() {
           )}
         </div>
       </Panel>
+      <InstallDialog pkg={installing} action={action} onClose={() => setInstalling(undefined)} onSettled={reload} />
       <Dialog
-        open={asking !== undefined}
-        title={asking ? `${asking.install ? '安装' : '卸载'}「${asking.pkg.name}」？` : ''}
+        open={uninstalling !== undefined}
+        title={uninstalling ? `卸载「${uninstalling.pkg.name}」？` : ''}
         size="form"
-        onClose={() => setAsking(undefined)}
+        onClose={() => setUninstalling(undefined)}
         footer={
-          asking && (
+          uninstalling && (
             <>
-              <Button data-autofocus onClick={() => setAsking(undefined)}>
+              <Button data-autofocus onClick={() => setUninstalling(undefined)}>
                 取消
               </Button>
-              <Button
-                variant="primary"
-                danger={!asking.install}
-                busy={busy !== undefined}
-                onClick={() => void proceed(asking.pkg, asking.install)}
-              >
-                {asking.install ? '安装' : '卸载'}
+              <Button variant="primary" danger busy={busy !== undefined} onClick={() => void uninstall(uninstalling)}>
+                卸载
               </Button>
             </>
           )
         }
       >
-        {asking?.install ? (
-          <>
-            <InstallDisclosure name={asking.pkg.name} />
-            <p>
-              {`从 npm 安装${asking.pkg.official ? '' : '第三方社区的包'}。装上后它以你授予的能力运行，请确认来源可信。`}
-            </p>
-          </>
-        ) : (
-          asking && <UninstallWarning name={asking.pkg.name} />
+        {uninstalling && (
+          <UninstallWarning
+            name={uninstalling.pkg.name}
+            removeConfig={uninstalling.removeConfig}
+            onRemoveConfig={removeConfig => setUninstalling({ ...uninstalling, removeConfig })}
+          />
         )}
       </Dialog>
     </Main>
@@ -385,7 +366,7 @@ export function Market() {
 }
 
 interface MarketEntryProps {
-  pkg: MarketPackage;
+  pkg: MarketItem;
   busy?: string;
   selected: boolean;
   onSelect(selected: boolean): void;
@@ -426,6 +407,7 @@ function MarketEntry({ pkg, busy, selected, onSelect, onAsk }: MarketEntryProps)
           </p>
         )}
         {pkg.description && <p className="market-entry-description">{pkg.description}</p>}
+        {pkg.provides.length > 0 && <p className="market-entry-meta">{`提供：${pkg.provides.join('、')}`}</p>}
         {meta.length > 0 && <p className="market-entry-meta">{meta.join(' · ')}</p>}
         <div className="market-entry-actions">
           {pkg.updatable && (

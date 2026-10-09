@@ -317,6 +317,21 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     expect(body.secretRefCounts).toEqual({ 'k.top': 2, 'k.group': 1, 'k.item': 1 });
   });
 
+  it('configSection：配置文件里有这个实例的段才为 true，空段也算；没有段的为 false', async () => {
+    const { app, store } = hostedApp({ plugins: { 'blank-probe': {} } });
+    apps.push(app);
+    await registerFromDoc(app, store, definePlugin({ name: 'blank-probe', apply() {} }));
+    await registerFromDoc(app, store, definePlugin({ name: 'bare-probe', apply() {} }));
+    await app.plugins.idle();
+    const { invoke } = mountPluginRoutes(app);
+    const body = (await invoke('GET /api/plugins')).body as {
+      plugins: Array<{ instanceId: string; configSection: boolean }>;
+    };
+    const section = (id: string) => body.plugins.find(p => p.instanceId === id)?.configSection;
+    expect(section('blank-probe')).toBe(true);
+    expect(section('bare-probe')).toBe(false);
+  });
+
   it('宿主不提供配置文档：给运行态配置，去掉密钥字段（运行态里是原值）', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
@@ -329,14 +344,16 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
     await app.plugins.idle();
     const { invoke } = mountPluginRoutes(app);
     const body = (await invoke('GET /api/plugins')).body as {
-      plugins: Array<{ instanceId: string; config: Record<string, unknown> }>;
+      plugins: Array<{ instanceId: string; configSection: boolean; config: Record<string, unknown> }>;
       secretRefCounts: Record<string, number>;
     };
-    expect(body.plugins.find(p => p.instanceId === 'secret-probe')?.config).toEqual({
+    const probe = body.plugins.find(p => p.instanceId === 'secret-probe');
+    expect(probe?.config).toEqual({
       auth: { user: 'placeholder-user' },
       connections: [{ url: 'ws://127.0.0.1:0' }],
       timeoutMs: 30,
     });
+    expect(probe?.configSection, '没有配置文件，也就没有配置段').toBe(false);
     expect(body.secretRefCounts).toEqual({});
   });
 });

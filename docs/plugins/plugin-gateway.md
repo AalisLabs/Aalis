@@ -100,7 +100,7 @@ events.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, pla
 
 完整发行应加载 `@aalis/plugin-gateway`（提供 `gateway` 服务）。core 没有入站路由兜底：不加载 gateway 时 `inbound:message` 无人消费，消息被静默丢弃。
 
-本插件 required `hooks`，还须装上其提供者 [`@aalis/plugin-hooks`](./plugin-hooks.md)；缺少时本插件停在 pending，启动日志报「依赖未满足，未激活（缺少服务: hooks）」。
+本插件 required `hooks`，还须装上其提供者 [`@aalis/plugin-hooks`](./plugin-hooks.md)；缺少时本插件停在 pending，启动日志报「依赖未满足，未激活：缺少服务 hooks（没有已装的插件提供）」。
 
 ## 配置项
 

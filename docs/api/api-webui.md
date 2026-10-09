@@ -444,6 +444,7 @@ interface Notice {
 ```
 
 - 出现在「需要处理」与插件详情，每条计 1。跳转按钮的文字由宿主推出：「去配置」或「打开 <页面标题>」。
+- `title` 写出了什么事，`detail` 写用户该做什么，具体到配置项、命令或页面；能一键去处理的给 `open`。激活之后才出的、让插件整体用不了的故障（凭据过期、后台任务一直失败、外部服务掉线）用提示告诉用户，只写日志不算（见[作者指南「报错与故障说明」](../plugin-author-guide.md#_9-5-报错与故障说明)）。
 - 归属这次激活，插件停用就撤回；只能由插件自己 `clear`，问题没解决就一直在，没有用户忽略。
 - 插件不能弹 Toast：Toast 只回报用户自己操作的结果，后台的事走提示。
 - 第一次使用时模型插件缺密钥起不来这类故障，由宿主推导的插件故障覆盖，不靠提示。
@@ -455,14 +456,24 @@ interface Notice {
 ```ts
 type AttentionItem =
   | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string } // session 是会话的标题
-  | { kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string; missing: string[] }
+  | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string } & PluginBlockers)
   | ({ kind: 'notice'; instance: string } & Notice);
 interface AttentionResponse { items: AttentionItem[] }
+
+/** 插件没起来的原因：插件列表（PluginListItem）与这里共用一份，由服务端算好 */
+interface PluginBlockers {
+  lacking: UnmetService[]; // pending 时缺的 required 服务，每条从直接提供者沿依赖链追到根
+  waiting: UnmetService[]; // pending 时在等的服务：根插件在启动，它启动完就有
+  unconfigured: string[]; // error 时必填却没填的配置项路径
+}
 ```
 
 - 顺序：审批在前，其后是插件故障与提示，各按先后。审批服务不在时没有审批这一类；会话管理不在或不认识这个会话时审批没有 `session`。
-- 插件故障：`error` 是失败（带原因 `error`），`pending` 是缺服务；`missing` 是此刻没有提供者的 required 服务（失败的也可能有）。
-- 跳转由前端按项推出：审批进它的会话；插件故障进插件详情；提示按 `open` 去配置或打开那个页面（按 `instance` 与页面 key 在 `GET /api/pages` 里找标题与位置），没有 `open` 的没有跳转。
+- 插件故障：`error` 是失败（带原因 `error`），`pending` 是缺服务（`lacking` 不空）。只在等别的插件启动的（`lacking` 空、`waiting` 不空）不是故障，不在列表里、不计数；它们仍在插件列表里，带着 `waiting`。
+- `UnmetService` 与它的根 `UnmetRoot` 来自 api-doctor，形状与判据见 [缺与在等的共享判据](../services/doctor.md#缺与在等的共享判据-unmetdependencies)；根插件待配置与否，看它自己那一项的 `unconfigured`。
+- `unconfigured` 是 schema-config 的 `validateConfig` 对这个实例的配置文档报的 `missing`（`''` 算没填，密钥引用 `{ $secret }` 算填了），只对失败的插件算；不合法的值不在这里。
+- `attention.changed` 在故障连同链与根变了时推：链上的提供者换了状态、被卸掉，依赖它的插件那一项也跟着变。
+- 跳转由前端按项推出：审批进它的会话；插件故障去根插件（根待配置时去它的配置区），没有根插件可去（没有提供者、成环）时进这个插件的详情，自己待配置的去它的配置区；提示按 `open` 去配置或打开那个页面（按 `instance` 与页面 key 在 `GET /api/pages` 里找标题与位置），没有 `open` 的没有跳转。
 
 ## 页面的调用与布局
 
@@ -634,11 +645,14 @@ interface PluginListItem {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
-  missing: string[]; // 此刻没有提供者的 required 服务
+  lacking: UnmetService[]; // 缺与在等、待配置三项见上文「需要处理」的 PluginBlockers
+  waiting: UnmetService[];
+  unconfigured: string[];
   tools: string[];
   commands: string[];
   reusable: boolean;
   extends?: ExtendDeclaration;
+  configSection: boolean; // 配置文件里有这个实例的段（空段也算），宿主不提供配置文档时为 false
   config: Record<string, unknown>; // 配置文档里这一段，密钥字段上是引用 { $secret }
   configSchema?: ConfigSchema;
   defaultConfig: Record<string, unknown>;
@@ -755,11 +769,11 @@ interface PageActionRequest {
 
 | 路由 | 请求 | 返回 |
 |---|---|---|
-| `GET /api/marketplace` | 查询参数 `q?`：空格分隔的每个词都要在包名、描述或关键词里 | `{ packages: MarketplacePackage[], warning? }` |
+| `GET /api/marketplace` | 查询参数 `q?`：空格分隔的每个词都要在包名、描述、关键词或提供的服务里 | `{ packages: MarketplacePackage[], warning? }` |
 | `GET /api/system-components` | — | `{ components: SystemComponent[], warning? }` |
 | `GET /api/marketplace/depgraph` | 查询参数 `name`：包名 | `DependencyGraphResponse` |
 | `POST /api/marketplace/install` | `{ name }` | `InstallResult`（api-package-manager） |
-| `POST /api/marketplace/uninstall` | `{ name }` | `{ ok, message }` |
+| `POST /api/marketplace/uninstall` | `{ name, removeConfig? }`（`UninstallRequest`），`removeConfig` 不给为 `false` | `{ ok, message }` |
 | `POST /api/marketplace/update` | `{ targets: [{ name, version }] }`，整批 | `UpdateResult`（api-package-manager），成功后进程重启 |
 
 装卸与更新被包管理拒绝时也回 200，`ok` 为 `false`、`message` 写原因；`warning` 是检索源或安装源查不到时的说明。
@@ -777,6 +791,7 @@ interface MarketplacePackage {
   updatable: boolean; // 能否经市场更新，界面直接用它，不自己比版本
   official: boolean; // @aalis/ 下的包
   category: 'plugin' | 'api' | 'schema' | 'interface' | 'util';
+  provides: string[]; // 声明提供的服务（aalis.service.provides）：已装的取本地这份，没装的取安装源上的最新版
   keywords?: string[];
   downloads?: number; // 月下载量
   updated?: string; // ISO 时间

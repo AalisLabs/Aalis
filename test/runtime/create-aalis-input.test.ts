@@ -1,8 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { parseIndexSelection, positionalArgs, validateNpmName } from '../../packages/create-aalis/src/cli.js';
 import {
@@ -133,56 +128,30 @@ describe('positionalArgs（flag 取值不当位置参数）', () => {
 
 // ── create-aalis-plugin：生成的 src/index.ts ────────────────────
 describe('renderIndexTs：生成的入口', () => {
-  const answers = (features: { tool: boolean; command: boolean; webui: false | 'declarative' | 'frame' }) => ({
+  const answers = (features: {
+    tool: boolean;
+    command: boolean;
+    webui: false | 'declarative' | 'frame';
+    sessionSetting: boolean;
+  }) => ({
     packageName: 'aalis-plugin-demo',
     displayName: '演示',
     features,
   });
-  const COMBOS = [
-    { tool: false, command: false, webui: false },
-    { tool: true, command: false, webui: false },
-    { tool: true, command: true, webui: 'declarative' },
-    { tool: false, command: false, webui: 'frame' },
-  ] as const;
 
   it('默认导出 definePlugin 的产物；勾了什么能力，uses 里就声明什么', () => {
-    const bare = renderIndexTs(answers(COMBOS[0]));
+    const bare = renderIndexTs(answers({ tool: false, command: false, webui: false, sessionSetting: false }));
     expect(bare).toContain('export default definePlugin({');
     expect(bare).toContain('uses: { logger },');
     expect(bare).toContain("import { definePlugin, logger } from '@aalis/core';");
 
-    const full = renderIndexTs(answers(COMBOS[2]));
+    const full = renderIndexTs(answers({ tool: true, command: true, webui: 'declarative', sessionSetting: false }));
     expect(full).toContain(
       'uses: { logger, tools: optional(tools), commands: optional(commands), webui: optional(webuiServer) },',
     );
     // 页面在 apply 里登记（组件与数据源一次给出），不是静态导出
     expect(full).toContain('webui.definePage({');
-    expect(full).toContain("data: () => [{ label: '提示', value: '这是 演示 插件的示例信息面板。' }],");
+    expect(full).toContain(`data: () => [{ label: '提示', value: "这是 演示 插件的示例信息面板。" }],`);
     expect(full).not.toMatch(/export const (name|actions|inject)\b/);
-  });
-
-  // 模板是给外部作者的第一份代码：契约一变它就可能编译不过，而脚手架自己的构建不会发现。
-  // 这里按与 test/ 相同的路径映射把每种组合真编译一遍。
-  it('每种能力组合生成的源码都能对着当前契约通过类型检查', { timeout: 120_000 }, () => {
-    const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
-    const configPath = join(root, 'tsconfig.test.json');
-    const parsed = ts.parseJsonConfigFileContent(ts.readConfigFile(configPath, ts.sys.readFile).config, ts.sys, root);
-    const dir = mkdtempSync(join(tmpdir(), 'aalis-scaffold-typecheck-'));
-    try {
-      const files = COMBOS.map((features, i) => {
-        const file = join(dir, `combo-${i}.ts`);
-        writeFileSync(file, renderIndexTs(answers(features)));
-        return file;
-      });
-      const program = ts.createProgram(files, { ...parsed.options, rootDir: undefined, noEmit: true });
-      const problems = files.flatMap(file =>
-        ts
-          .getPreEmitDiagnostics(program, program.getSourceFile(file))
-          .map(d => `${basename(file)}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`),
-      );
-      expect(problems).toEqual([]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

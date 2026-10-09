@@ -9,9 +9,10 @@ import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // ════════════════════════════════════════════════════════════
 // 市场的检索源（marketplaceRegistry）只管「有哪些包」：多数镜像不支持 search，检索源常与安装源不同。
-// 卡片的最新版与可更新、系统组件的 latest、依赖图里未安装包的 packument，都要向安装实际使用的源
+// 卡片的最新版、可更新与提供的服务、系统组件的 latest、依赖图里未安装包的 packument，都要向安装实际使用的源
 // （package-manager 报告的 npm registry）查——否则检索源比安装源新时，卡片给出的「可更新 v9.9.9」
-// 装不到，update 还会拿这个版本号去预检。检索结果另按搜索词在包名、描述、关键词上本地过滤。
+// 装不到，update 还会拿这个版本号去预检。卡片每包只取一次 `/{包}/latest`（这一版的清单，版本与提供的服务一次拿到）。
+// 检索结果另按搜索词在包名、描述、关键词与提供的服务上本地过滤。
 // 全程替身：fetch 被截下，项目根是临时目录，不发真实请求。
 // ════════════════════════════════════════════════════════════
 
@@ -25,19 +26,29 @@ const json = (body: unknown) =>
 const SEARCH_HITS = [
   { package: { name: 'zz-plugin-a', version: '9.9.9', description: 'Vector memory', keywords: ['aalis-plugin'] } },
   { package: { name: 'zz-plugin-c', version: '9.9.9', description: 'Browser tools', keywords: ['aalis-plugin'] } },
+  // 检索结果是外来数据：不合法的包名不拼进安装源的地址
+  { package: { name: '../zz-escape', version: '9.9.9', description: '', keywords: ['aalis-plugin'] } },
 ];
 
 const PACKUMENTS: Record<string, unknown> = {
-  [`${INSTALL}/zz-plugin-a`]: { 'dist-tags': { latest: '1.1.0' } },
-  [`${INSTALL}/zz-plugin-c`]: { 'dist-tags': { latest: '2.0.0' } },
-  [`${INSTALL}/@zz%2Fapi-b`]: { 'dist-tags': { latest: '0.2.0' } },
+  [`${INSTALL}/zz-plugin-a/latest`]: {
+    name: 'zz-plugin-a',
+    version: '1.1.0',
+    aalis: { service: { provides: ['zz-vec'] } },
+  },
+  [`${INSTALL}/zz-plugin-c/latest`]: {
+    name: 'zz-plugin-c',
+    version: '2.0.0',
+    aalis: { service: { provides: ['embedding', { evil: true }] } },
+  },
+  [`${INSTALL}/@zz/api-b/latest`]: { name: '@zz/api-b', version: '0.2.0' },
   [`${INSTALL}/zz-plugin-remote`]: {
     'dist-tags': { latest: '3.0.0' },
     versions: {
       '3.0.0': { dependencies: { '@aalis/zz-dep': '^1.0.0' }, aalis: { service: { provides: ['zz-svc'] } } },
     },
   },
-  [`${SEARCH}/zz-plugin-a`]: { 'dist-tags': { latest: '9.9.9' } },
+  [`${SEARCH}/zz-plugin-a/latest`]: { name: 'zz-plugin-a', version: '9.9.9' },
 };
 
 let project: string;
@@ -50,14 +61,15 @@ beforeEach(() => {
     join(project, 'package.json'),
     JSON.stringify({ dependencies: { 'zz-plugin-a': '^1.0.0', '@zz/api-b': '^0.1.0' } }),
   );
-  for (const [name, version, keyword] of [
-    ['zz-plugin-a', '1.0.0', 'aalis-plugin'],
-    ['@zz/api-b', '0.1.0', 'aalis-api'],
-  ]) {
+  // zz-plugin-a 本地这版只提供 zz-local；安装源上的新版另提供 zz-vec
+  for (const [name, version, keyword, provides] of [
+    ['zz-plugin-a', '1.0.0', 'aalis-plugin', ['zz-local']],
+    ['@zz/api-b', '0.1.0', 'aalis-api', []],
+  ] as const) {
     mkdirSync(join(project, 'node_modules', name), { recursive: true });
     writeFileSync(
       join(project, 'node_modules', name, 'package.json'),
-      JSON.stringify({ name, version, keywords: ['aalis', keyword] }),
+      JSON.stringify({ name, version, keywords: ['aalis', keyword], aalis: { service: { provides } } }),
     );
   }
   requested = [];
@@ -102,27 +114,38 @@ function mount(
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     SEARCH,
-    () => new Map(local.map(name => [name, { deps: [] }])),
+    () => new Map(local.map(name => [name, { deps: [], provides: [] }])),
     () => {},
   );
   const get = (path: string, query: Record<string, string> = {}) => invoke(`GET ${path}`, { query });
   return { get, warns };
 }
 
-type Card = { name: string; version: string; updatable: boolean };
+type Card = { name: string; version: string; updatable: boolean; provides: string[] };
 type Component = { name: string; latest?: string; updatable: boolean };
 
 const installSource = { registry: async () => INSTALL, serviceDependents: () => [] };
 
 describe('市场的版本来源与安装源一致', () => {
-  it('卡片的最新版与可更新按安装源查，不用检索结果自带的版本号', async () => {
+  it('卡片的最新版与可更新按安装源查，不用检索结果自带的版本号；每包只取一次 /{包}/latest', async () => {
     const { get } = mount(installSource);
     const reply = await get('/api/marketplace', { q: '' });
     const { packages, warning } = reply.body as { packages: Card[]; warning?: string };
     expect(warning).toBeUndefined();
     expect(packages.find(p => p.name === 'zz-plugin-a')).toMatchObject({ version: '1.1.0', updatable: true });
     expect(packages.find(p => p.name === 'zz-plugin-c')).toMatchObject({ version: '2.0.0', updatable: false });
-    expect(requested, '版本不该向检索源查').not.toContain(`${SEARCH}/zz-plugin-a`);
+    expect(packages.find(p => p.name === '../zz-escape')).toMatchObject({ version: '', updatable: false });
+    expect(requested.filter(url => !url.includes('/-/v1/search')).sort()).toEqual([
+      `${INSTALL}/zz-plugin-a/latest`,
+      `${INSTALL}/zz-plugin-c/latest`,
+    ]);
+  });
+
+  it('提供的服务：没装的取安装源最新版声明的（不是字符串的项丢掉），已装的取本地那份', async () => {
+    const { get } = mount(installSource);
+    const { packages } = (await get('/api/marketplace', { q: '' })).body as { packages: Card[] };
+    expect(packages.find(p => p.name === 'zz-plugin-c')?.provides).toEqual(['embedding']);
+    expect(packages.find(p => p.name === 'zz-plugin-a')?.provides).toEqual(['zz-local']);
   });
 
   it('系统组件的 latest 与依赖图里未安装包的 packument 同样向安装源查', async () => {
@@ -140,14 +163,16 @@ describe('市场的版本来源与安装源一致', () => {
     expect(requested).toContain(`${INSTALL}/zz-plugin-remote`);
   });
 
-  it('检索结果按搜索词在包名、描述、关键词上本地过滤，被滤掉的包不查版本', async () => {
+  it('检索结果按搜索词在包名、描述、关键词与提供的服务上本地过滤', async () => {
     const { get } = mount(installSource);
-    const { packages } = (await get('/api/marketplace', { q: 'vector' })).body as { packages: Card[] };
-    expect(packages.map(p => p.name)).toEqual(['zz-plugin-a']);
-    expect(requested).not.toContain(`${INSTALL}/zz-plugin-c`);
+    const names = async (q: string) =>
+      ((await get('/api/marketplace', { q })).body as { packages: Card[] }).packages.map(p => p.name);
+    expect(await names('vector')).toEqual(['zz-plugin-a']);
+    expect(await names('embedding'), '按服务名搜得到提供者').toEqual(['zz-plugin-c']);
+    expect(await names('zz-local')).toEqual(['zz-plugin-a']);
   });
 
-  it('检索源不可达：降级为本地已装列表，同样按搜索词过滤', async () => {
+  it('检索源不可达：降级为本地已装列表，同样按搜索词（含提供的服务）过滤，服务取本地 package.json', async () => {
     vi.mocked(globalThis.fetch).mockImplementation(async () => {
       throw new TypeError('fetch failed');
     });
@@ -158,6 +183,9 @@ describe('市场的版本来源与安装源一致', () => {
     };
     expect(warning).toBe('无法连接 npm 仓库（fetch failed），暂时只能管理本地已装插件');
     expect(packages.map(p => p.name)).toEqual(['zz-plugin-a']);
+    expect(packages[0].provides).toEqual(['zz-local']);
+    const byService = (await get('/api/marketplace', { q: 'zz-local' })).body as { packages: Card[] };
+    expect(byService.packages.map(p => p.name)).toEqual(['zz-plugin-a']);
   });
 
   it('安装源查不到：不给最新版与可更新，响应带 warning 说明，并记一条告警', async () => {
@@ -189,6 +217,6 @@ describe('市场的版本来源与安装源一致', () => {
     };
     expect(warning).toBeUndefined();
     expect(packages.find(p => p.name === 'zz-plugin-a')?.version).toBe('9.9.9');
-    expect(requested).toContain(`${SEARCH}/zz-plugin-a`);
+    expect(requested).toContain(`${SEARCH}/zz-plugin-a/latest`);
   });
 });

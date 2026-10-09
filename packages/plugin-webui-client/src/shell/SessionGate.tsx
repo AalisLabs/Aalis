@@ -3,7 +3,8 @@ import { ButtonLink } from '../components/ButtonLink';
 import { EmptyState } from '../components/EmptyState';
 import { FetchError } from '../components/FetchError';
 import { SERVICE_ABSENT, useConnectionState, useSessionClient } from '../connection';
-import { SESSION_PROTOCOL, usePlugins, useProvider } from '../plugins/list';
+import { SESSION_PROTOCOL, useFindPlugin, usePlugins, useProvider } from '../plugins/list';
+import { byRoot, pluginName, rootAction, statusLine, unmetText } from '../plugins/status';
 import { paths } from '../routes';
 
 /** 会话服务在不在：有提供会话协议、正在运行的插件；插件列表还没取到（在取或取数出错）时为 undefined */
@@ -20,19 +21,34 @@ export function SessionGate({ children }: { children: ReactNode }) {
   return children;
 }
 
-/** 链到提供会话协议的插件详情，没装时链到市场 */
+/**
+ * 提供会话协议的插件缺服务时写它的链与根、去根插件（记忆后端坏了，首页就看得到根因）；在等时写「等待启动」与在等谁；它失败、
+ * 停用或别的情形链到它的详情；没装时链到市场
+ */
 export function ServiceAbsent() {
   const { plugins } = usePlugins();
-  const provider = useProvider(SESSION_PROTOCOL);
+  const find = useFindPlugin();
+  const provider = plugins?.find(plugin => plugin.provides.includes(SESSION_PROTOCOL));
+  const root = provider?.lacking[0] && rootAction(provider.lacking[0].root, find);
+  const description =
+    provider && provider.lacking.length > 0
+      ? byRoot(provider.lacking)
+          .map(unmet => `${pluginName(provider.instanceId, find)} → ${unmetText(unmet, find)}`)
+          .join('；')
+      : provider && provider.waiting.length > 0
+        ? statusLine(provider, find)
+        : '提供会话协议的插件启用后，这里会自动连上。';
   return (
     <EmptyState
       title="会话服务未启用"
-      description="提供会话协议的插件启用后，这里会自动连上。"
+      description={description}
       action={
-        provider ? (
-          <ButtonLink to={paths.plugin(provider)}>去插件详情</ButtonLink>
-        ) : (
+        !provider ? (
           plugins && <ButtonLink to={paths.market}>去市场</ButtonLink>
+        ) : root ? (
+          <ButtonLink to={root.to}>{root.label}</ButtonLink>
+        ) : (
+          <ButtonLink to={paths.plugin(provider.instanceId)}>去插件详情</ButtonLink>
         )
       }
     />

@@ -86,6 +86,12 @@ const REMOVED: Array<[string, string]> = [
   ['FileReaderService', 'plugin-file-reader 的 file-reader 服务：没有消费方，描述符又定义在实现包里'],
   ['stripFileBlocks', '会话服务按文件读取插件的私有格式剥掉提问里的文件块，由存档另记的发言人写的话与附件清单取代'],
   ['better-sqlite3', 'memory-sqlite 依赖的原生 SQLite 模块，由 Node 自带的 node:sqlite 取代'],
+  ['AdapterGroup', 'create-aalis 的同类适配器组，由对话模型、平台与语义记忆几问取代'],
+  ['baseEnabled', 'create-aalis 按档算基础集，由按所选算插件集的 pluginSet 取代'],
+  ['fullCatalog', 'create-aalis 的 full 档目录，并进 pluginSet'],
+  ['MarketPackage', 'WebUI 市场页自带的包类型，改用 api-webui 的 MarketplacePackage 与 SystemComponent'],
+  ['vnd.npm.install-v1', '市场按精简元数据取整份版本清单，改取每包的 /{包}/latest'],
+  ['missingServices', 'webui-server 只看直接提供者的缺服务判据，由 api-doctor 沿依赖链追到根的 unmetDependencies 取代'],
 ];
 
 /**
@@ -110,7 +116,6 @@ const PAGE_SYNTAX_EXEMPT = [
 /** [包目录, 标识, 删掉的是什么]：只在这个包的源码与 package.json 里查 */
 const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ['plugin-webui-server', 'doctor:updated', '旧 /ws 上诊断页的刷新特判'],
-  ['plugin-webui-server', 'api-doctor', '旧 /ws 上诊断页的刷新特判'],
   ['plugin-webui-server', 'api-todo-list', '旧 /ws 推送待办'],
   [
     'plugin-webui-server',

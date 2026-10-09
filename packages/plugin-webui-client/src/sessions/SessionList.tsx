@@ -10,6 +10,7 @@ import { List, ListItem } from '../components/List';
 import { Menu } from '../components/Menu';
 import { listTime } from '../format';
 import { AttentionSummary } from '../health/AttentionList';
+import { GetStarted } from '../health/GetStarted';
 import { shortcutLabel } from '../keys';
 import { PinnedList } from '../pages/Pinned';
 import {
@@ -32,7 +33,7 @@ import './SessionList.css';
 
 // 左栏的会话列表：只列根会话。「我的」在上；房间按适配器实例分组，组默认折叠，有需要处理的自动展开；底部是默认折叠的
 // 「已归档」。子会话不在这里展开，在会话面板的「后台」标签里按会话树列出；有后台工作的行写「后台 N」。
-// 手机上它是第一层，没有图标栏，「需要处理」的摘要、宿主的入口（运行状况带数）与固定的页面列在会话上面
+// 手机上它是第一层，没有图标栏，「开始使用」（没有能对话的模型时）、「需要处理」的摘要、宿主的入口（运行状况带数）与固定的页面列在会话上面
 
 /** 组内露出近这么久她开过口的房间，其余收进「其余 N 个」 */
 const RECENT_REPLY_MS = 7 * 24 * 60 * 60_000;
@@ -59,6 +60,7 @@ export function SessionList() {
         </div>
       )}
       <div className="session-list-body">
+        {phone && <GetStarted />}
         {phone && <AttentionSummary />}
         {phone && <Entries />}
         {phone && <PinnedList />}

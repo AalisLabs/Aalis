@@ -1,10 +1,12 @@
 import { createRequire } from 'node:module';
+import { unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
 import {
   type InstallResult,
   type PackageManagerService,
   packageManager,
+  type UninstallOptions,
   type UpdateResult,
   type UpdateTarget,
 } from '@aalis/api-package-manager';
@@ -123,24 +125,32 @@ export function nonMarketKind(keywords: unknown): string | undefined {
   return '非插件包';
 }
 
+/** 服务依赖者闸读的插件状态：判谁在提供、谁 required 什么，以及 pending 的目标是缺还是在等（api-doctor 的共享判据） */
+type ServiceStatus = Pick<
+  PluginStatusEntry,
+  'name' | 'instanceId' | 'state' | 'error' | 'provides' | 'requiredServices' | 'uses'
+>;
+
 /**
- * 找出「卸载 target 会断其服务依赖」的插件：target 提供的某服务 S 没有别的插件正在提供（只认 active 与
- * activating；disabled / error / pending 的同类提供者不在提供），且有别的插件 requiredServices 含 S → 这些插件
- * 会被打断。已禁用（disabled / disposed）的依赖者不算。纯函数，便于单测。
+ * 找出「卸载 target 会断其服务依赖」的插件：target 正在提供或马上就提供的某服务 S 没有别的插件正在提供，且有别的插件
+ * requiredServices 含 S → 这些插件会被打断。target 算在提供的是 active、activating，以及 pending 而只是在等的（按 api-doctor
+ * 的共享判据不缺什么，它要的在启动，起来就提供）；disabled、error 与 pending 而缺服务的不在提供，卸掉它断不了谁。别的提供者
+ * 只算 active 与 activating（替代得是确定的）。已禁用（disabled / disposed）的依赖者不算。available 是当前有提供者的服务名
+ * （services.names()）。纯函数，便于单测。
  */
 export function findServiceDependents(
   targetName: string,
-  status: ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'state' | 'provides' | 'requiredServices'>>,
+  status: ReadonlyArray<ServiceStatus>,
+  available: Iterable<string>,
 ): string[] {
+  const providing = (p: Pick<PluginStatusEntry, 'state'>) => p.state === 'active' || p.state === 'activating';
   const target = status.find(p => p.name === targetName);
-  const provided = target?.provides ?? [];
-  if (provided.length === 0) return [];
+  if (!target) return [];
+  const waits = () => unmetDependencies(status, available).get(target.instanceId)?.lacking.length === 0;
+  if (!providing(target) && !(target.state === 'pending' && waits())) return [];
   const dependents = new Set<string>();
-  for (const svc of provided) {
-    const otherProvider = status.some(
-      p =>
-        p.name !== targetName && (p.state === 'active' || p.state === 'activating') && (p.provides ?? []).includes(svc),
-    );
+  for (const svc of target.provides ?? []) {
+    const otherProvider = status.some(p => p.name !== targetName && providing(p) && (p.provides ?? []).includes(svc));
     if (otherProvider) continue; // 还有别的提供者在提供，删了不致命
     for (const p of status) {
       if (
@@ -242,6 +252,7 @@ function createService(caps: Caps): PackageManagerService {
     // 也不要在真没装上时谎报成功。
     isPluginRegistered: name => caps.plugins.current?.getStatus().some(p => p.name === name) ?? false,
     pluginStatus: () => caps.plugins.current?.getStatus() ?? [],
+    availableServices: () => caps.services.names(),
     idle: async () => {
       await caps.plugins.current?.idle();
     },
@@ -278,15 +289,20 @@ function createService(caps: Caps): PackageManagerService {
     unloadPlugin: async name => {
       await caps.plugins.current?.unload(name);
     },
-    // 卸载后清残留配置：删 plugins.<name> 配置块 + 从 disabledPlugins 移除
-    // （否则重装会被"上次禁用"标记带成已禁用状态），并持久化。宿主没提供配置文档时无可清理。
-    cleanupConfig: name => {
+    // 文档没有改动时不保存：没东西要写，也就不该因配置文件的状况报失败
+    cleanupConfig: async (instanceIds, removeConfig) => {
       const doc = caps.hostConfig.current;
       if (!doc) return;
-      doc.removePluginConfig(name);
-      doc.setPluginEnabled(name, true);
-      // cleanupConfig 契约返 void；落盘失败只 warn，内存态已清、下次保存会带上
-      doc.save().catch(err => log.warn(`${name}: 卸载后配置清理落盘失败:`, err));
+      const plugins = doc.getAll().plugins;
+      const touched = instanceIds.filter(
+        id => doc.isPluginDisabled(id) || (removeConfig && Object.hasOwn(plugins, id)),
+      );
+      if (touched.length === 0) return;
+      for (const id of touched) {
+        doc.setPluginEnabled(id, true);
+        if (removeConfig) doc.removePluginConfig(id);
+      }
+      await doc.save();
     },
   });
 }
@@ -317,9 +333,9 @@ export interface PackageManagerDeps {
    * 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）与装后回执（按主实例状态说明）。
    * 缺省视为没有活跃插件。
    */
-  pluginStatus?(): ReadonlyArray<
-    Pick<PluginStatusEntry, 'name' | 'instanceId' | 'state' | 'error' | 'provides' | 'requiredServices'>
-  >;
+  pluginStatus?(): ReadonlyArray<ServiceStatus>;
+  /** 当前有提供者的服务名（`services.names()`，含宿主在根上提供的），服务依赖者判定用。缺省视为没有 */
+  availableServices?(): Iterable<string>;
   /**
    * 等插件状态机静置（plugins 服务的 `idle()`），装后回执读状态之前调用：rescan 登记新插件时若已有重算在飞，
    * 登记只排队、立即返回，主实例还是 pending。不等转入后台的慢激活。缺省不等。
@@ -332,8 +348,11 @@ export interface PackageManagerDeps {
    * shell 恢复——与内核/宿主同一条判据。见 uninstallOne 的闸一之二。
    */
   recoveryChannelProviders?(): string[];
-  /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
-  cleanupConfig?(name: string): void;
+  /**
+   * 卸载后整理配置文档并落盘：清掉这些实例的停用标记（否则重装时带着上次的停用态登记）；removeConfig 时再删它们的配置段，
+   * 落盘后只有这些段引用的密钥由宿主一并删掉。落盘失败以拒绝传出。缺省则不整理
+   */
+  cleanupConfig?(instanceIds: string[], removeConfig: boolean): Promise<void>;
   /**
    * 解析已装 npm 包的插件定义 name（与 `@aalis/api-plugin-source` 的 `pluginDefinitionOf` 同一口径：入口 default.name）。
    * 解析不到则返回 undefined，调用方回退到包名。name≠包名时由 createPackageManager warn。
@@ -465,6 +484,102 @@ export function extractPeerConflicts(output: string): string[] {
   return picked.map(l => l.replace(/^npm (ERR!|error|warn)\s*/i, '').trim()).filter(l => l.length > 0);
 }
 
+/** npm 失败的几类：与 create-aalis 装依赖失败认的同一套，对账用例钉住 */
+type NpmFailureKind = 'disk' | 'permission' | 'platform' | 'peer' | 'browser' | 'native' | 'missing' | 'network';
+
+/**
+ * npm 失败的几类与给用户看的一句（原因与修法）。浏览器下载与原生编译先于网络认：它们的输出里也可能带网络错误码，但修法
+ * 不同
+ */
+const NPM_FAILURES: Array<{
+  kind: NpmFailureKind;
+  match: RegExp;
+  describe(output: string, found: RegExpExecArray): string;
+}> = [
+  { kind: 'disk', match: /\bENOSPC\b/, describe: () => '磁盘空间不够（ENOSPC）：腾出空间后重试' },
+  {
+    kind: 'permission',
+    match: /\bEACCES\b/,
+    describe: () =>
+      '没有写入权限（EACCES）：把项目目录与 npm 的缓存目录（npm config get cache 查看）改回运行 Aalis 的用户所有后重试，不要用 sudo',
+  },
+  {
+    kind: 'platform',
+    match: /\bEBADPLATFORM\b/,
+    describe: output => {
+      const pkg = /Unsupported platform for (\S+?)@\d/.exec(output)?.[1] ?? '某个依赖';
+      return `依赖 ${pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了`;
+    },
+  },
+  {
+    kind: 'peer',
+    match: /\bERESOLVE\b/,
+    describe: output =>
+      `peer 依赖冲突（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：${extractPeerConflicts(output).join('；')}`,
+  },
+  {
+    kind: 'browser',
+    match: /Failed to set up (?:chrome|chrome-headless-shell|firefox)\b|node_modules[\\/]puppeteer\s*$/m,
+    describe: () =>
+      '下载浏览器失败：这个插件装的时候要下载 Chrome。给 Aalis 的进程设好镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）后重启再装',
+  },
+  {
+    kind: 'native',
+    match: /gyp ERR!|node-gyp|prebuild-install/,
+    describe: output => {
+      const pkg =
+        /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(output)?.[1] ??
+        '某个依赖';
+      return (
+        `原生模块 ${pkg} 编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；` +
+        'Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试'
+      );
+    },
+  },
+  {
+    kind: 'missing',
+    match: /\b(E404|ETARGET)\b/,
+    // 镜像源同步有延迟，刚发布的版本可能还没有
+    describe: (_output, [, code]) =>
+      `源上没有这个包或这个版本（${code}）：核对包名与版本；用的是镜像源时它可能还没同步，稍后重试`,
+  },
+  {
+    kind: 'network',
+    match: /\b(ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN)\b/,
+    describe: (_output, [, code]) =>
+      `连不上 npm 源（${code}）：检查网络与代理后重试；默认源不通时在终端执行 npm config set registry <源地址> 换一个源`,
+  },
+];
+
+/** 按先后认 npm 的失败输出：第一个对上的类别与匹配结果 */
+function recognizeNpmFailure(output: string) {
+  for (const failure of NPM_FAILURES) {
+    const found = failure.match.exec(output);
+    if (found) return { failure, found };
+  }
+  return undefined;
+}
+
+/** npm 的失败输出认出是哪一类，认不出时为 undefined。纯函数，便于单测 */
+export function npmFailureKind(output: string): NpmFailureKind | undefined {
+  return recognizeNpmFailure(output)?.failure.kind;
+}
+
+/**
+ * 把 npm 的失败输出归成一句给用户看的话：认得出的写原因与修法，认不出的写 npm 的最后一条报错，并指向日志与排障页。
+ * 整段输出由调用方记进日志，回执与提示里只放这一句。纯函数，便于单测。
+ */
+export function describeNpmFailure(output: string): string {
+  const known = recognizeNpmFailure(output);
+  if (known) return known.failure.describe(output, known.found);
+  const errors = output
+    .split('\n')
+    .map(line => /^npm (?:error|ERR!)\s*(.*)$/.exec(line.trim())?.[1]?.trim())
+    .filter((line): line is string => !!line && !line.startsWith('A complete log of this run'));
+  const last = errors.at(-1) ?? output.trim().split('\n').at(-1)?.trim();
+  return `npm 出错：${last}。完整输出在日志里，常见原因与修法见 https://aalis.acenyan.com/guide/troubleshooting`;
+}
+
 /**
  * 从 **成功**（exit 0）的 dry-run 输出里找出因本次目标而无法满足的 peer 依赖。
  *
@@ -542,6 +657,22 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
+  /** 跑一条 npm 命令：失败时整段输出记进日志，抛出的错误只带 {@link describeNpmFailure} 认出的原因与修法 */
+  async function npm(
+    args: string[],
+    cwd: string,
+    timeout?: number,
+    extraEnv?: Record<string, string>,
+  ): Promise<string> {
+    try {
+      return (await execProcBoth(proc, 'npm', args, cwd, timeout, extraEnv)).stdout;
+    } catch (err) {
+      const output = err instanceof Error ? err.message : String(err);
+      log.error(`npm ${args.join(' ')} 失败: ${output}`);
+      throw new Error(describeNpmFailure(output));
+    }
+  }
+
   /** 安装源查询的缓存：只留成功的结果，失败时清掉，下次调用重查 */
   let registryUrl: Promise<string> | undefined;
   function registry(): Promise<string> {
@@ -607,7 +738,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * HTTP 路由——本服务对外公开，任何插件都能绕过路由直接调。返回拒绝理由，`undefined` = 放行。
    */
   async function installKindRefusal(npmPkg: string, root: string): Promise<string | undefined> {
-    const out = (await execProc(proc, 'npm', ['view', npmPkg, 'keywords', '--json'], root)).trim();
+    const out = (await npm(['view', npmPkg, 'keywords', '--json'], root)).trim();
     // 包没有 keywords 字段时 npm 什么都不输出；spec 是版本范围时按版本逐个给出、返回二维数组
     const parsed: unknown = out ? JSON.parse(out) : [];
     const perVersion = Array.isArray(parsed) && parsed.length > 0 && parsed.every(Array.isArray) ? parsed : [parsed];
@@ -683,23 +814,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 反正会被动态 import 执行（插件与内核同进程同权限，见 docs/concepts/security-model.md §1）。
     //
     // peer 护栏与更新预检相同（STRICT_PEERS_ENV）。代价：本就靠 legacy-peer-deps 容忍既有
-    // peer 冲突的项目，市场安装会整体失败，故失败文案要点明原因。
-    try {
-      await execProcBoth(
-        proc,
-        'npm',
-        ['install', npmPkg, '--no-audit', '--no-fund'],
-        root,
-        INSTALL_TIMEOUT_MS,
-        STRICT_PEERS_ENV,
-      );
-    } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
-      if (!raw.includes('ERESOLVE')) throw err;
-      throw new Error(
-        `peer 依赖冲突，未安装（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：${extractPeerConflicts(raw).join('；')}`,
-      );
-    }
+    // peer 冲突的项目，市场安装会整体失败，故失败文案要点明原因（见 describeNpmFailure）。
+    await npm(['install', npmPkg, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS, STRICT_PEERS_ENV);
     const bare = stripVersion(npmPkg);
     return settleInstall(npmPkg, `${root}/node_modules/${bare}/package.json`, 'node_modules');
   }
@@ -738,21 +854,26 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       if (await pathExists(lock, 'f')) {
         await execProc(proc, 'cp', [lock, `${tmp.path}/package-lock.json`], tmp.path);
       }
-      const { stdout, stderr } = await execProcBoth(
-        proc,
-        'npm',
-        ['install', ...specs, '--dry-run', '--no-audit', '--no-fund'],
-        tmp.path,
-        INSTALL_TIMEOUT_MS,
-        STRICT_PEERS_ENV,
-      );
-      const unmet = findUnmetPeers(`${stderr}\n${stdout}`, specs.map(stripVersion));
+      let output: { stdout: string; stderr: string };
+      try {
+        output = await execProcBoth(
+          proc,
+          'npm',
+          ['install', ...specs, '--dry-run', '--no-audit', '--no-fund'],
+          tmp.path,
+          INSTALL_TIMEOUT_MS,
+          STRICT_PEERS_ENV,
+        );
+      } catch (err) {
+        // 非零退出：npm 判定 peer 无解（ERESOLVE 等）时报冲突要点；别的失败（连不上源等）不是冲突，抛出原因与修法
+        const raw = err instanceof Error ? err.message : String(err);
+        const conflicts = extractPeerConflicts(raw);
+        if (conflicts.length > 0) return conflicts;
+        log.error(`更新预检失败: ${raw}`);
+        throw new Error(describeNpmFailure(raw));
+      }
+      const unmet = findUnmetPeers(`${output.stderr}\n${output.stdout}`, specs.map(stripVersion));
       return unmet.length > 0 ? unmet : undefined;
-    } catch (err) {
-      // 非零退出 = npm 自己判定无解（ERESOLVE 等）。原样上报，不猜。
-      const raw = err instanceof Error ? err.message : String(err);
-      const conflicts = extractPeerConflicts(raw);
-      return conflicts.length > 0 ? conflicts : [raw.slice(0, 2000)];
     } finally {
       await tmp.cleanup().catch(() => {});
     }
@@ -831,7 +952,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       message: '依赖预检未通过，未改动任何文件。若是 peer 版本要求，请把被依赖方一并勾选后重试。',
       conflicts,
     });
-    const verdict = await preflightInSandbox(specs, root);
+    let verdict: string[] | undefined;
+    try {
+      verdict = await preflightInSandbox(specs, root);
+    } catch (err) {
+      return { ok: false, message: `依赖预检没跑成：${err instanceof Error ? err.message : String(err)}` };
+    }
     if (verdict) return reject(verdict);
 
     // ── 快照：预检过了才有必要 ──
@@ -865,11 +991,9 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // ── 提交 ──
     // 预检在副本里做，live tree 此刻**未被任何 dry-run 触碰**，可以直接装。
     try {
-      await execProc(proc, 'npm', ['install', ...specs, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
+      await npm(['install', ...specs, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.error(`更新安装失败: ${message}`);
-      return { ok: false, message: `安装失败（工程未重启，可重试）: ${message}` };
+      return { ok: false, message: `安装失败（工程未重启，可重试）：${(err as Error).message}` };
     }
 
     // ── 重启接管 ──
@@ -924,9 +1048,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         }
       }),
 
-    uninstall: pluginName => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName)),
+    uninstall: (pluginName, options) => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName, options)),
 
-    serviceDependents: name => findServiceDependents(name, deps.pluginStatus?.() ?? []),
+    serviceDependents: name =>
+      findServiceDependents(name, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []),
 
     registry,
   };
@@ -938,14 +1063,20 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * （与 `buildUpdateSpecs`、`isRegistryDep` 同一理由）。前端早就有正确策略
    * （只给 plugin/interface 卡片渲染卸载按钮），但那只是客户端校验，服务端不设防。
    */
-  async function uninstallOne(pluginName: string): Promise<{ ok: boolean; message: string }> {
+  async function uninstallOne(
+    pluginName: string,
+    { removeConfig = false }: UninstallOptions = {},
+  ): Promise<{ ok: boolean; message: string }> {
     const bad = validatePackageSpec(pluginName);
     if (bad) return { ok: false, message: bad };
 
     const root = deps.projectRoot();
     const meta = await readJson(`${root}/node_modules/${pluginName}/package.json`);
     if (!meta) {
-      return { ok: false, message: `读不到 ${pluginName} 的 package.json，无法确认它是什么，已拒绝卸载` };
+      return {
+        ok: false,
+        message: `读不到 ${pluginName} 的 package.json，无法确认它是什么，市场不卸；确认要卸就在项目目录执行 npm uninstall ${pluginName} 后重启`,
+      };
     }
 
     // ── 闸一：类型 ──
@@ -1013,7 +1144,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // ── 闸三：服务依赖者 ──
     // 某服务没有别的插件正在提供时，卸掉它的提供者会打断 required 该服务的插件（已禁用的不算）。
     // 与市场卸载前的预警同一份判定（serviceDependents），按加载器解析出的定义 name 查。
-    const dependents = findServiceDependents(defName, deps.pluginStatus?.() ?? []);
+    const dependents = findServiceDependents(defName, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []);
     if (dependents.length > 0) {
       return {
         ok: false,
@@ -1022,19 +1153,27 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
 
     try {
-      await execProc(proc, 'npm', ['uninstall', pluginName, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
-      for (const id of instanceIds) {
-        await deps.unloadPlugin(id); // 从运行时注册表彻底移除（dispose + delete），幂等
-        deps.cleanupConfig?.(id); // 清残留配置（含禁用标记）
-      }
-      log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
-      return {
-        ok: true,
-        message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）。它写在家目录 state/ 等处的数据不会删除，需要时请手动清理。`,
-      };
+      await npm(['uninstall', pluginName, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
+      // 从运行时注册表彻底移除（dispose + delete），幂等
+      for (const id of instanceIds) await deps.unloadPlugin(id);
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
+    log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
+    const removed = `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）`;
+    // 包已经卸掉了，配置文件没写成不改变这一点：回执照样 ok，写明原因与残留
+    try {
+      await deps.cleanupConfig?.(instanceIds, removeConfig);
+    } catch (err) {
+      return {
+        ok: true,
+        message: `${removed}，但配置文件没写成（${err instanceof Error ? err.message : String(err)}）：需要时手动删掉配置文件里它的${removeConfig ? '配置段与' : ''}停用标记。`,
+      };
+    }
+    return {
+      ok: true,
+      message: `${removed}。${removeConfig ? '它的配置已从配置文件删除，只有它用的密钥一并删除' : '它的配置留在配置文件里，重装后照原配置启动'}；写在家目录 state/ 等处的数据不会删除，需要时请手动清理。`,
+    };
   }
 }
 

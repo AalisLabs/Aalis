@@ -65,7 +65,15 @@ const PLUGINS = [
 
 const ITEMS: AttentionItem[] = [
   { kind: 'approval', id: 'ap-1', sessionId: 's1', session: '整理周报', tool: 'exec' },
-  { kind: 'plugin', instance: 'zz-model', state: 'error', error: '缺少 API 密钥', missing: [] },
+  {
+    kind: 'plugin',
+    instance: 'zz-model',
+    state: 'error',
+    error: '缺少 API 密钥',
+    lacking: [],
+    waiting: [],
+    unconfigured: [],
+  },
 ];
 
 const PLATFORMS = {

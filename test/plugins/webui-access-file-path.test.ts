@@ -216,6 +216,9 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     }
 
     expect(failLine, '写失败要明确说没写成，并给出替代办法').toBeDefined();
+    // 每次启动随机的 token 不落在别处：登录页手工粘贴无从粘起，得给能做到的修法
+    expect(failLine).toContain('修好家目录 state/webui/ 的写权限后重启');
+    expect(failLine).toContain('把 tokenMode 设为 fixed、在 fixedToken 里填一个至少 32 个字符的 token');
     expect(
       lines.some(l => l.includes('访问凭据已写入')),
       '写失败还说「已写入」会让人去找一个不存在的文件',

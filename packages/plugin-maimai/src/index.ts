@@ -8,8 +8,8 @@ const configSchema = defineConfig({
   developerToken: {
     type: 'string',
     label: '开发者 API Token',
-    default: '',
-    description: '在 https://maimai.lxns.net 申请的开发者 token，必须配置',
+    required: true,
+    description: '在 https://maimai.lxns.net 申请的开发者 token',
     secret: true,
     onInvalid: 'error',
   },
@@ -171,9 +171,6 @@ class MaimaiClient {
   ) {}
 
   private async request<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T> {
-    if (!this.cfg.developerToken) {
-      throw new Error('未配置 developerToken，请在 aalis.config.yaml 中填入 maimai.lxns.net 申请的开发者 token');
-    }
     const url = new URL(path, this.cfg.baseUrl);
     if (params) {
       for (const [k, v] of Object.entries(params)) {
@@ -408,10 +405,6 @@ export default definePlugin({
   uses,
   apply({ tools, commands, memory, logger, config }) {
     const cfg = parseConfig(configSchema, config, logger);
-    if (!cfg.developerToken) {
-      logger.warn('[maimai] 未配置 developerToken，插件不会注册任何工具/指令');
-      return;
-    }
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }

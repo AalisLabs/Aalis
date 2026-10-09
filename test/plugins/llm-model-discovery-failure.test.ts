@@ -165,7 +165,14 @@ describe('没有可注册的模型：实例转 error，错误信息写明原因'
     expect(instance?.state).toBe('error');
     expect(instance?.error, '错误信息没有写明原因').toContain(reason);
     expect(instance?.error, '错误信息退回了 core 的通用文案').not.toContain('声明 provides');
-    if (mode !== 'empty') expect(instance?.error, '发现失败却说已连接').not.toContain('已连接');
+    if (mode !== 'empty') {
+      expect(instance?.error, '发现失败却说已连接').not.toContain('已连接');
+      // 修法写在原因之前：原因里可能带着一段响应体
+      const fix = plugin === llmOllama ? '确认 Ollama 在运行、baseUrl 写对' : '检查 apiKey、baseUrl 与网络';
+      expect(instance?.error, '错误信息没有写怎么修').toMatch(
+        new RegExp(`^取不到(?: Ollama 的)?模型列表，没有可注册的模型：${fix}`),
+      );
+    }
     expect(warns, `原因已在错误信息里，不该另记 warn: ${JSON.stringify(warns)}`).toEqual([]);
     expect(errors, `应只有一条激活失败日志: ${JSON.stringify(errors)}`).toHaveLength(1);
     expect(errors[0], '配置错误的日志不该带堆栈').not.toMatch(STACK_FRAME);

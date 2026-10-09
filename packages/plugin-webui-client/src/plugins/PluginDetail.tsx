@@ -22,12 +22,13 @@ import { Main, useShell } from '../shell/Shell';
 import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
-import { labelOf, type PluginRow, useHost, usePlugins } from './list';
-import { markerOf, statusOf } from './status';
+import { labelOf, type PluginRow, useFindPlugin, useHost, usePlugins } from './list';
+import { markerOf, pluginName, reasonOf, rootAction, rootText, statusOf, unmetText } from './status';
 import './PluginDetail.css';
 
 // 插件详情，由宿主拼装，自上而下：头部（包名、版本、状态与原因，启停、重载、查看日志，主实例卸载、其余实例移除）、需要处理（这个插件的
-// 提示）、配置、依赖与贡献、页面、实例。没有内容的块不出现。管理动作写进去了就看头部的状态，出错用 Toast 报；无论成败都重取插件列表
+// 提示）、配置、依赖与贡献（缺的服务写链与根）、页面、实例。没有内容的块不出现。管理动作写进去了就看头部的状态，出错用 Toast 报；
+// 无论成败都重取插件列表
 
 /** 插件前端申请的宿主数据能力怎么写 */
 const CAPABILITIES: Record<FrameHostCapability, string> = {
@@ -115,17 +116,19 @@ function Summary({ row }: { row: PluginRow }) {
   const { busy, run } = action;
   const toast = useToast();
   const navigate = useNavigate();
-  const [uninstalling, setUninstalling] = useState(false);
+  /** 卸载确认框开着时是框里的选择 */
+  const [uninstalling, setUninstalling] = useState<{ removeConfig: boolean }>();
   const [removing, setRemoving] = useState<PluginRow>();
   const status = statusOf(row);
+  const reason = reasonOf(row, useFindPlugin());
   const base = `/api/plugins/${enc(row.instanceId)}`;
   const locked = row.self || busy !== undefined;
-  const uninstall = () =>
+  const uninstall = (removeConfig: boolean) =>
     run(
       '卸载',
-      () => postJson('/api/marketplace/uninstall', { name: row.name }),
+      () => postJson('/api/marketplace/uninstall', { name: row.name, removeConfig }),
       reply => {
-        setUninstalling(false);
+        setUninstalling(undefined);
         toast({ kind: 'success', text: messageOf(reply) ?? `已卸载 ${labelOf(row)}` });
         navigate(paths.plugins);
       },
@@ -135,7 +138,7 @@ function Summary({ row }: { row: PluginRow }) {
       <p className="plugin-summary-meta">{row.version ? `${row.name} · 版本 ${row.version}` : row.name}</p>
       <p className="plugin-summary-status">
         <StatusText state={status.state}>{status.short}</StatusText>
-        {status.reason && <span className="plugin-summary-reason">{status.reason}</span>}
+        {reason && <span className="plugin-summary-reason">{reason}</span>}
       </p>
       {row.self && <p className="plugin-summary-note">这个界面由它提供，不能从界面停用或卸载。</p>}
       <div className="page-actions">
@@ -168,7 +171,7 @@ function Summary({ row }: { row: PluginRow }) {
         )}
         <LogsLink source={row.instanceId} />
         {row.instanceId === row.name ? (
-          <Button variant="text" danger disabled={locked} onClick={() => setUninstalling(true)}>
+          <Button variant="text" danger disabled={locked} onClick={() => setUninstalling({ removeConfig: false })}>
             卸载
           </Button>
         ) : (
@@ -178,21 +181,34 @@ function Summary({ row }: { row: PluginRow }) {
         )}
       </div>
       <Dialog
-        open={uninstalling}
+        open={uninstalling !== undefined}
         title={`卸载「${labelOf(row)}」？`}
-        onClose={() => setUninstalling(false)}
+        onClose={() => setUninstalling(undefined)}
         footer={
-          <>
-            <Button data-autofocus onClick={() => setUninstalling(false)}>
-              取消
-            </Button>
-            <Button variant="primary" danger busy={busy === '卸载'} onClick={() => void uninstall()}>
-              卸载
-            </Button>
-          </>
+          uninstalling && (
+            <>
+              <Button data-autofocus onClick={() => setUninstalling(undefined)}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                danger
+                busy={busy === '卸载'}
+                onClick={() => void uninstall(uninstalling.removeConfig)}
+              >
+                卸载
+              </Button>
+            </>
+          )
         }
       >
-        <UninstallWarning name={row.name} />
+        {uninstalling && (
+          <UninstallWarning
+            name={row.name}
+            removeConfig={uninstalling.removeConfig}
+            onRemoveConfig={removeConfig => setUninstalling({ removeConfig })}
+          />
+        )}
       </Dialog>
       <RemoveInstanceDialog target={removing} current={row} action={action} onClose={() => setRemoving(undefined)} />
     </div>
@@ -280,17 +296,21 @@ function ConfigSection({ row, schema }: { row: PluginRow; schema: ConfigSchema }
   );
 }
 
-/** 依赖与贡献：要的服务就绪没有（缺的服务有已装没启用的提供者时可以一键启用），它提供的服务、工具、指令与扩展 */
+/**
+ * 依赖与贡献：要的服务就绪没有。缺的服务每条写链与根，根停用的一键启用它，根失败或待配置的去它那里处理（失败时启用只是重试，
+ * 配置错了还会失败），没有提供者与成环只写说明；在等的写等谁启动。另写它提供的服务、工具、指令与扩展
+ */
 function Relations({ row }: { row: PluginRow }) {
   const { plugins } = usePlugins();
+  const find = useFindPlugin();
   const { busy, run } = usePluginAction();
   const providersOf = (service: string) => (plugins ?? []).filter(plugin => plugin.provides.includes(service));
   const names = (rows: PluginRow[]) => rows.map(labelOf).join('、');
+  const unmet = new Set([...row.lacking, ...row.waiting].map(({ service }) => service));
   // 宿主自己提供的服务（不在任何插件的 provides 里、此刻也不缺）不列
-  const needs = row.requiredServices.flatMap(service => {
+  const satisfied = row.requiredServices.flatMap(service => {
     const by = providersOf(service);
-    if (row.missing.includes(service)) return [{ service, missing: true, by }];
-    return by.length > 0 ? [{ service, missing: false, by }] : [];
+    return unmet.has(service) || by.length === 0 ? [] : [`${service}（${names(by)}）`];
   });
   const optional = row.optionalServices.flatMap(service => {
     const by = providersOf(service);
@@ -304,44 +324,50 @@ function Relations({ row }: { row: PluginRow }) {
     ['扩展的事件', row.extends?.events ?? []],
     ['扩展的钩子', row.extends?.hooks ?? []],
   ];
-  if (needs.length === 0 && lines.every(([, items]) => items.length === 0)) return null;
+  if (unmet.size + satisfied.length === 0 && lines.every(([, items]) => items.length === 0)) return null;
   return (
     <Block title="依赖与贡献">
       <Lines lines={lines}>
-        {needs.length > 0 && (
+        {unmet.size + satisfied.length > 0 && (
           <div className="page-info-item">
             <dt>依赖</dt>
             <dd>
               <ul className="plugin-needs">
-                {needs.map(({ service, missing, by }) => (
-                  <li key={service}>
-                    {missing ? (
-                      <>
-                        <StatusText state="attention">{`${service}：缺`}</StatusText>
-                        {by
-                          .filter(plugin => plugin.state === 'disabled' || plugin.state === 'error')
-                          .map(plugin => {
-                            const suffix = instanceName(plugin.instanceId);
-                            return (
-                              <Button
-                                key={plugin.instanceId}
-                                busy={busy === plugin.instanceId}
-                                disabled={busy !== undefined}
-                                onClick={() =>
-                                  run(plugin.instanceId, () =>
-                                    postJson(`/api/plugins/${enc(plugin.instanceId)}/enable`, {}),
-                                  )
-                                }
-                              >
-                                {`启用${labelOf(plugin)}${suffix ? ` · ${suffix}` : ''}`}
-                              </Button>
-                            );
-                          })}
-                      </>
-                    ) : (
-                      `${service}（${names(by)}）`
-                    )}
+                {row.lacking.map(({ service, chain, root }) => {
+                  const go = rootAction(root, find);
+                  const enable = root.kind === 'disabled' && `启用 ${pluginName(root.instance, find)}`;
+                  return (
+                    <li key={JSON.stringify([service, chain, root])}>
+                      <StatusText state="attention">{`${service}：缺`}</StatusText>
+                      <span>{unmetText({ service, chain, root }, find)}</span>
+                      {enable ? (
+                        <Button
+                          busy={busy === enable}
+                          disabled={busy !== undefined}
+                          onClick={() =>
+                            run(
+                              enable,
+                              () => postJson(`/api/plugins/${enc(root.instance)}/enable`, {}),
+                              undefined,
+                              root.instance,
+                            )
+                          }
+                        >
+                          {enable}
+                        </Button>
+                      ) : (
+                        go && <ButtonLink to={go.to}>{go.label}</ButtonLink>
+                      )}
+                    </li>
+                  );
+                })}
+                {row.waiting.map(({ service, chain, root }) => (
+                  <li key={JSON.stringify([service, chain, root])}>
+                    <StatusText state="running">{`${service}：${rootText(root, find)}`}</StatusText>
                   </li>
+                ))}
+                {satisfied.map(line => (
+                  <li key={line}>{line}</li>
                 ))}
               </ul>
             </dd>

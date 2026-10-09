@@ -59,7 +59,7 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
-      services: { inspect: () => [] },
+      services: { names: () => [] },
       self: 'zz-webui',
       home: '/home/zz/.aalis',
       versions: () => () => undefined,
