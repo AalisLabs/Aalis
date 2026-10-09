@@ -167,6 +167,9 @@ importers:
 
   packages/api-authority:
     dependencies:
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
@@ -489,6 +492,28 @@ importers:
         version: 5.9.3
 
   packages/api-publish:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-reach:
+    dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-authority
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -2134,6 +2159,40 @@ importers:
       '@aalis/util-offline-render':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-offline-render
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-reach:
+    dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-authority
+      '@aalis/api-host-paths':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-paths
+      '@aalis/api-process':
+        specifier: workspace:>=0.8.0 <1.0.0
+        version: link:../api-process
+      '@aalis/api-reach':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-reach
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/api-storage':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-storage
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

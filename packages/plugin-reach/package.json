@@ -1,0 +1,67 @@
+{
+  "name": "@aalis/plugin-reach",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-reach"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "触及：按一次工具调用签发触及凭据（主体、房间类别、档位、污点与场所定下本机能读写执行什么），管本会话临时区、子进程环境、会话的污点与白纸的来源账本",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-reach": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "optional": [
+        "authority",
+        "process"
+      ],
+      "provides": [
+        "reach"
+      ],
+      "required": [
+        "events",
+        "host-paths",
+        "lifecycle",
+        "logger",
+        "provide",
+        "session-manager",
+        "storage"
+      ]
+    }
+  }
+}
