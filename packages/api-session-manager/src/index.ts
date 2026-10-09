@@ -256,7 +256,8 @@ export interface SessionInfo {
   updatedAt: number;
   /**
    * 创建来源：建这个会话的审批面的登记名（api-approval 的 registerSurface，如 webui、cli）。只有会话服务的
-   * session/create 与终端在建档时经专用参数（{@link SessionCreation}）写，不收调用方经会话字段传值
+   * session/create 与终端经专用参数（{@link SessionCreation}）写：建档时写，终端另给按 id 兜底建档留下的空记录补写；
+   * 不收调用方经会话字段传值
    */
   createdFrom?: string;
   /** 父会话传入的指令/上下文（创建子会话时由父会话填写） */
@@ -326,7 +327,8 @@ export type NewSessionFields = Partial<
 > & { config?: SessionConfigPatch };
 
 /**
- * 建档专用的参数：只在建档时生效，不并进 {@link NewSessionFields}。只有会话服务（owner 连接的 session/create）与终端传
+ * 建档专用的参数：只在建档时生效（例外是 ensureSession 给兜底建档留下的空记录补写创建来源），不并进
+ * {@link NewSessionFields}。只有会话服务（owner 连接的 session/create）与终端传
  */
 export interface SessionCreation {
   /** 创建来源：建这个会话的审批面的登记名 */
@@ -420,12 +422,10 @@ export interface SessionManagerService {
    * - 不存在 → 以传入 id（**不自生成**）建记录（emit `session:created`）；`status` 缺省时，这个会话有回合在跑为
    *   `active`（回合结束时收口），否则为 `waiting`
    *
-   * 两种情况下，还没记下 `originInstance` 的房间随后都解析一次，认领到就记下并 emit `session:updated`，
-   * 本方法等它落定再返回；同一条记录已有解析在途的不重复解析，也不等它
-   *
    * 用于按固定 id 落档：终端配置的会话 id、/session.set 落配置覆盖等。createSession 会自生成 id、updateSession
    * 缺记录会抛错，故需要本方法。按 id 建出的记录不带来源字段：IM 房间的来源字段由原生入站建档时记下，按 id 建出的由之后的原生入站补记。
-   * creation 是建档专用的创建来源，已有记录时不生效
+   * creation 是创建来源：建档时写；已有记录既没有创建来源、也没有出生平台与绑定（按 id 兜底建档留下的空记录）时补写，
+   * 随这次更新落盘、发 `session:updated`；其余已有记录不改
    */
   ensureSession(
     id: string,
