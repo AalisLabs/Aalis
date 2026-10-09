@@ -94,7 +94,7 @@ interface SessionSummary {
   section: 'owner' | 'rooms'; // 子会话归在根会话的区里
   platform?: string;          // 出生平台；owner 自己的会话没有
   instance?: string;          // 房间：接管它的适配器实例（插件实例 id）
-  account?: string;           // 房间：会话 id 第二段，即机器人账号
+  account?: string;           // 房间：根会话聊天窗口记下的机器人账号（originChat.selfId）
   audience?: 'owner' | 'private' | 'group';
   createdAt: number;
   updatedAt: number;          // 最后活动：会话档案最近一次变化

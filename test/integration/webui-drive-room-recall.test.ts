@@ -14,12 +14,13 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 从 WebUI 驱动 IM 群房间时，提示词贡献方取跨会话料的「当前平台」是房间的出生平台：
 // memory-history 的同平台注入只取 onebot 的会话，不带 owner 自己 WebUI 会话的原文。
 // token:request 快照（webui-server 只带 sessionId，agent 按出生平台兜底）与真实回合同一口径，
-// 两处注入的是同一块内容。
+// 两处注入的是同一块内容。群房间已收录（出生平台是会话管理记下的字段），在会话管理读表之前预置。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -40,6 +41,8 @@ async function loadStack() {
   const recorder: ChatModelRequest[] = [];
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '<回复占位>' }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
+  await app.plugins.idle();
+  await seedRooms(app.bind({ memory: memoryService }).memory.require(), { [GROUP]: '<群名占位>' });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
   await app.plugin(triggerPolicyPlugin, { scopes: ['*:group'] });

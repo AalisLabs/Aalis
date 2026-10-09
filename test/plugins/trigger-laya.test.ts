@@ -10,7 +10,11 @@ import { type MemoryService, memory } from '../../packages/api-memory/src/index.
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type PersonaService, type PersonaSessionOptions, persona } from '../../packages/api-persona/src/index.js';
 import { type ExecResult, type ProcessService, processService } from '../../packages/api-process/src/index.js';
-import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import {
+  type SessionInfo,
+  type SessionManagerService,
+  sessionManager,
+} from '../../packages/api-session-manager/src/index.js';
 import { trigger } from '../../packages/api-trigger/src/index.js';
 import { App, events, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -19,6 +23,7 @@ import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import { createSelfCheck } from '../../packages/plugin-trigger-laya/src/self-check.js';
 import { buildIncomingContent, type IncomingMessage, type Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort } from '../helpers/net.js';
 
@@ -130,6 +135,7 @@ const groupMsg = (content: string, extra: Partial<IncomingMessage> = {}): Incomi
   platform: 'onebot',
   sessionType: 'group',
   sessionId: GROUP_SID,
+  selfId: '10000',
   groupId: '20001',
   userId: '30001',
   nickname: '甲',
@@ -141,6 +147,7 @@ const privateMsg = (content: string): IncomingMessage => ({
   platform: 'onebot',
   sessionType: 'private',
   sessionId: 'onebot:10001:private:30001',
+  selfId: '10001',
   userId: '30001',
   nickname: '甲',
 });
@@ -206,8 +213,8 @@ interface SetupOptions {
   media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
   /** persona 提供者，按顺序登记（先登记者为胜者） */
   personas?: PersonaService[];
-  /** session-manager 替身：只用 resolveConfig */
-  sessionManager?: Pick<SessionManagerService, 'resolveConfig'>;
+  /** session-manager 替身：只用 resolveConfig 与 getSession */
+  sessionManager?: Partial<Pick<SessionManagerService, 'resolveConfig' | 'getSession'>>;
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
   realArchive?: boolean;
   /** process 服务替身（托管侧车用） */
@@ -898,17 +905,49 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect(byLevel(logs, 'error')).toEqual([]);
   });
 
-  it('作用域内但模型没见过的会话（非 onebot、频道）：只回点名，不发请求', async () => {
+  it('消息不带机器人账号（如 WebUI）：只回点名，不发请求', async () => {
     const { send } = await setup({ laya: { scopes: ['*'] } });
-    const webui: IncomingMessage = { content: 'hi', platform: 'webui', sessionId: 'webui:default' };
-    const channel = groupMsg('频道', { sessionType: 'channel', sessionId: 'onebot:10000:channel:40001:50001' });
+    const webui: IncomingMessage = { content: 'hi', platform: 'webui', sessionId: 'session-a1b2c3d4' };
     expect((await send(webui)).reached).toBe(false);
-    expect((await send(channel)).reached).toBe(false);
-    expect((await send({ ...channel, content: `${AT}频道` })).reached).toBe(true);
+    expect((await send({ ...webui, content: `${AT}在吗` })).reached).toBe(true);
     expect(sidecar.requests).toHaveLength(0);
   });
 
-  it('模型没见过的会话：每类（平台与会话类型）首次遇到记一条 warn，默认 info 级日志看得到', async () => {
+  it('消息不带机器人账号时取房间记下的（WebUI 往群里插话，子会话取根会话的）：照常问侧车', async () => {
+    const rooms = new Map<string, SessionInfo>([
+      [GROUP_SID, storedRoom(GROUP_SID) as unknown as SessionInfo],
+      [`${GROUP_SID}::abcd1234`, { id: `${GROUP_SID}::abcd1234`, parentId: GROUP_SID } as SessionInfo],
+    ]);
+    const { send } = await setup({
+      laya: { scopes: ['*'] },
+      sessionManager: { resolveConfig: () => ({}), getSession: id => rooms.get(id) },
+    });
+    const webui = (sessionId: string): IncomingMessage => ({ content: '插一句', platform: 'webui', sessionId });
+
+    expect((await send(webui(GROUP_SID))).reached).toBe(true);
+    expect((await send(webui(`${GROUP_SID}::abcd1234`))).reached).toBe(true);
+    expect((await send(webui('session-a1b2c3d4'))).reached, '没有记下账号的会话照旧兜底').toBe(false);
+    expect(sidecar.requests.map(r => r.body.selfId)).toEqual(['10000', '10000']);
+  });
+
+  it('机器人账号取消息上的：别的平台、别的类型名（频道、thread）带了账号就照常问侧车', async () => {
+    const { send } = await setup({ laya: { scopes: ['*'] } });
+    const channel = groupMsg('频道', { sessionType: 'channel', sessionId: 'onebot:10000:channel:40001:50001' });
+    const thread: IncomingMessage = {
+      content: '帖子里说话',
+      platform: 'forum',
+      sessionType: 'thread',
+      sessionId: 'forum-thread-t1',
+      selfId: 'bot-1',
+      groupId: 't1',
+      userId: 'u1',
+    };
+    expect((await send(channel)).reached).toBe(true);
+    expect((await send(thread)).reached).toBe(true);
+    expect(sidecar.requests.map(r => r.body.selfId)).toEqual(['10000', 'bot-1']);
+  });
+
+  it('不带机器人账号的消息：每类（平台与类型名）首次遇到记一条 warn，默认 info 级日志看得到', async () => {
     const { send, logs } = await setup();
     const other = (gid: string): IncomingMessage => ({
       content: 'hi',

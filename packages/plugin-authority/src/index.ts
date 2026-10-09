@@ -3,6 +3,7 @@ import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aa
 import { authority as authorityService, capabilityMinLevel } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
+import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
@@ -17,7 +18,8 @@ import { DEFAULT_AUTHORITY, originKind } from './authority-model.js';
 // 故 apply 里 require()、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
 // （commands / tools / webui / storage）缺席时只是少一条接线，不该拦住权限服务本身上线。
-// approvals 缺席时需要确认的工具调用一律拒绝。
+// approvals 缺席时需要确认的工具调用一律拒绝。房间类别按 session-manager 记下的会话字段判：审批服务的提供者
+// plugin-session-server 本身依赖它，它缺席时也没有审批服务。
 const uses = {
   provide,
   hostConfig: optional(hostConfig),
@@ -28,6 +30,7 @@ const uses = {
   tools: optional(toolsService),
   storage: optional(storageService),
   approvals: optional(approvals),
+  sessionManager: optional(sessionManager),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -129,7 +132,15 @@ async function run(caps: Caps): Promise<void> {
         sessionId: g.sessionId,
         turnId: g.turnId,
         callId: g.callId,
-        origin: { kind: originKind(g, (p, u) => manager.isOwner(p, u)), platform: g.platform, userId: g.userId },
+        origin: {
+          kind: originKind(
+            g,
+            (p, u) => manager.isOwner(p, u),
+            id => caps.sessionManager.current?.getSession(id),
+          ),
+          platform: g.platform,
+          userId: g.userId,
+        },
         tool: g.name,
         args: g.args ?? {},
         rule: cOv ? `confirmOverrides 把 ${capability} 设为 ${cOv}` : `${capability} 声明 confirm=${confirm}`,

@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import { inferSessionScope, resolveSessionOrigin } from '@aalis/api-gateway';
 import { hooks as hooksCap } from '@aalis/api-hooks';
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 import {
@@ -11,7 +10,11 @@ import {
   persona,
 } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
-import { type SessionSetting, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import {
+  rootSessionOf,
+  type SessionSetting,
+  sessionManager as sessionManagerService,
+} from '@aalis/api-session-manager';
 import {
   createStorageGateway,
   isStorageNotFound,
@@ -39,7 +42,10 @@ interface PersonaIdentity {
   platform?: string;
   /** 消息的入口平台，只在与房间的出生平台不同时填（如从 WebUI 往群里插话） */
   entryPlatform?: string;
-  sessionType?: 'group' | 'private' | 'channel';
+  /** 平台类型名 */
+  sessionType?: string;
+  /** 群号：多方聊天窗口的目标 */
+  groupId?: string;
   selfId?: string;
   selfNickname?: string;
   userId?: string;
@@ -347,12 +353,9 @@ class PersonaServiceImpl implements PersonaService {
         prompt += `你在当前平台的账号：${selfLabel}\n`;
       }
       if (id.sessionType === 'group') {
-        // 解析 sessionId 提取群号
-        const parts = id.sessionId.split(':');
-        const groupId = parts.length >= 4 ? parts.slice(3).join(':') : undefined;
         prompt += '会话类型：群聊\n';
         if (id.groupName) prompt += `群名称：${id.groupName}\n`;
-        if (groupId) prompt += `群号：${groupId}\n`;
+        if (id.groupId) prompt += `群号：${id.groupId}\n`;
         // 自身群身份（关键：避免 LLM 误以为自己是普通群员）
         if (id.selfRole) {
           const roleLabel = id.selfRole === 'owner' ? '群主' : id.selfRole === 'admin' ? '管理员' : '普通成员';
@@ -756,29 +759,33 @@ async function run(caps: Caps): Promise<void> {
 
   // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
-  // 会话事实（平台、自身账号、会话类型与群号）按房间的出生平台取：从 WebUI 往群里插话时回复发进群里；
-  // 说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
+  // 会话事实（平台、自身账号、会话类型与群号）按会话记下的来源字段取：出生平台取根会话的（房间里的子任务也在房间的
+  // 平台上），聊天窗口只取会话自己的（子任务不是群里的对话）；从 WebUI 往群里插话时回复发进群里。没有来源字段的会话
+  // 按消息。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
   hooks.middleware('agent:input:before', async (data, next) => {
-    const origin = resolveSessionOrigin(data.message.sessionId);
-    const sessionPlatform = origin?.platform ?? data.message.platform;
-    const selfIdentity = getPlatformSelfIdentity(caps.platform, sessionPlatform, data.message.sessionId);
+    const { message } = data;
+    const sm = caps.sessionManager.current;
+    const session = sm?.getSession(message.sessionId);
+    const origin = sm && rootSessionOf(session, id => sm.getSession(id))?.originPlatform;
+    const chat = session?.originChat;
+    const sessionPlatform = origin ?? message.platform;
+    const selfIdentity = getPlatformSelfIdentity(caps.platform, sessionPlatform, message.sessionId);
     const identity: PersonaIdentity = {
-      sessionId: data.message.sessionId,
+      sessionId: message.sessionId,
       platform: sessionPlatform,
-      entryPlatform: origin && origin.platform !== data.message.platform ? data.message.platform : undefined,
-      // 合成回合（scheduler / workflow / idle）与经别的入口发来的消息没有 sessionType：按会话 ID 约定推断（与上方
-      // 取群号同一约定）。只用于提示词、不回写消息：这时入站相位已跑完（flow-control 判作用域时自己推断），写回
-      // 只会让这个按约定的推断随归档写进消息元数据，被下游当成适配器给出的类型
-      sessionType: data.message.sessionType ?? inferSessionScope(sessionPlatform, data.message.sessionId)?.sessionType,
+      entryPlatform: origin !== undefined && origin !== message.platform ? message.platform : undefined,
+      // 合成回合（定时任务、编排、闲置）与经别的入口发来的消息不带类型名：按会话记下的聊天窗口。只用于提示词，不回写消息
+      sessionType: message.sessionType ?? chat?.type,
+      groupId: chat?.multiParty ? chat.targetId : message.groupId,
       selfId: selfIdentity?.selfId,
       selfNickname: selfIdentity?.nickname,
-      userId: data.message.userId,
-      nickname: data.message.nickname,
-      groupName: data.message.groupName,
-      selfRole: data.message.selfRole,
-      selfTitle: data.message.selfTitle,
-      senderRole: data.message.senderRole,
-      senderTitle: data.message.senderTitle,
+      userId: message.userId,
+      nickname: message.nickname,
+      groupName: message.groupName,
+      selfRole: message.selfRole,
+      selfTitle: message.selfTitle,
+      senderRole: message.senderRole,
+      senderTitle: message.senderTitle,
     };
     await service.runWithIdentity(identity, () => next());
   });

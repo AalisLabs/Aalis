@@ -27,7 +27,8 @@ import { defineService, serviceRef } from '@aalis/core';
  * - `subtask`：子任务回合；
  * - `autonomous`：定时任务、定时触发、空闲与主动发言、开话题，以及它们触发的编排；
  * - `room`：群房间，以及对端不是 owner 的私聊，owner 在 WebUI 里驱动房间也算；
- * - `other`：群成员或其他用户发起。
+ * - `other`：其余真人回合与续做：群成员或其他用户发起的，以及受众判不出的会话（没有来源字段也没有创建来源）里
+ *   owner 发起的。
  *
  * 只有 `owner` 与 `owner-chain` 能产生审批，其余一律直接拒绝，不推给任何审批面。
  */

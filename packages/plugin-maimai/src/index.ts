@@ -1,5 +1,6 @@
 import { type CommandArgv, commands } from '@aalis/api-commands';
 import { type MemoryService, memory } from '@aalis/api-memory';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -106,11 +107,20 @@ const LEVEL_NAMES = ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'Re:MASTER'];
 
 // ===== 能力声明 =====
 
-// memory / tools / commands 都是 optional：缺了只是少一部分功能（绑定不可用、工具或指令无人接），
-// 不该把整个插件挡在激活闸外。
-const uses = { tools: optional(tools), commands: optional(commands), memory: optional(memory), logger, config };
+// memory / tools / commands / sessionManager 都是 optional：缺了只是少一部分功能（绑定不可用、工具或指令无人接、
+// 私聊里没绑定时不按调用者的 QQ 号查），不该把整个插件挡在激活闸外。
+const uses = {
+  tools: optional(tools),
+  commands: optional(commands),
+  memory: optional(memory),
+  sessionManager: optional(sessionManager),
+  logger,
+  config,
+};
 type Caps = BoundOf<typeof uses>;
 type MemoryRef = Caps['memory'];
+/** 查询目标要用的：绑定记在记忆后端里，私聊按会话管理记下的聊天窗口认 */
+type TargetRefs = Pick<Caps, 'memory' | 'sessionManager'>;
 
 // ===== 持久化（QQ ↔ 好友码 绑定） =====
 
@@ -244,6 +254,13 @@ interface ResolveResult {
   hint?: string;
 }
 
+/** 会话所在的聊天窗口是一对一的（会话管理记下的，子会话取根会话的）；没有会话管理或会话没有聊天窗口时为 false */
+function inOneToOneChat(sessions: Caps['sessionManager'], sessionId: string): boolean {
+  const sm = sessions.current;
+  if (!sm) return false;
+  return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.multiParty === false;
+}
+
 /**
  * 根据用户输入和上下文解析要查的目标。
  * 优先级：
@@ -253,7 +270,7 @@ interface ResolveResult {
  *   4. （仅 OneBot 私聊 + 配置允许）以触发者 QQ 查询（可能无对应账号，但让 API 自行判断）
  */
 async function resolveTarget(
-  memory: MemoryRef,
+  refs: TargetRefs,
   cfg: MaimaiConfig,
   callCtx: { sessionId: string; userId?: string; platform?: string },
   args: { friend_code?: unknown; qq?: unknown },
@@ -263,15 +280,15 @@ async function resolveTarget(
   const qq = parseIntStrict(args.qq);
   if (qq) return { qq, source: 'arg-qq' };
 
-  const bound = await getBoundFriendCode(memory, callCtx.platform, callCtx.userId);
+  const bound = await getBoundFriendCode(refs.memory, callCtx.platform, callCtx.userId);
   if (bound) return { friend_code: bound, source: 'bound' };
 
-  // OneBot 私聊场景下尝试用调用者 QQ 查
+  // OneBot 私聊（一对一的聊天窗口）里尝试用调用者 QQ 查
   if (
     cfg.defaultBindOnPrivateChat &&
     callCtx.platform === 'onebot' &&
     callCtx.userId &&
-    callCtx.sessionId.includes(':private:')
+    inOneToOneChat(refs.sessionManager, callCtx.sessionId)
   ) {
     const userQq = parseIntStrict(callCtx.userId);
     if (userQq)
@@ -406,7 +423,7 @@ export default definePlugin({
   subsystem: 'skills',
   configSchema,
   uses,
-  apply({ tools, commands, memory, logger, config }) {
+  apply({ tools, commands, memory, sessionManager, logger, config }) {
     const cfg = parseConfig(configSchema, config, logger);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
@@ -414,6 +431,7 @@ export default definePlugin({
 
     const client = new MaimaiClient(cfg, logger);
     const songCache: { ref: SongIndex | null } = { ref: null };
+    const refs: TargetRefs = { memory, sessionManager };
 
     // ===== Agent 工具（结构化参数） =====
     if (cfg.enableTools) {
@@ -442,7 +460,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleGetPlayer(memory, cfg, client, args, callCtx),
+        handler: async (args, callCtx) => handleGetPlayer(refs, cfg, client, args, callCtx),
       });
 
       // B50
@@ -466,7 +484,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleGetBests(memory, cfg, client, args, callCtx),
+        handler: async (args, callCtx) => handleGetBests(refs, cfg, client, args, callCtx),
       });
 
       // Recent
@@ -489,7 +507,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleGetRecents(memory, cfg, client, args, callCtx),
+        handler: async (args, callCtx) => handleGetRecents(refs, cfg, client, args, callCtx),
       });
 
       // 搜索曲目
@@ -572,7 +590,7 @@ export default definePlugin({
         .argument('target', TARGET)
         .action(async (argv, target) => {
           const args = parseTarget(target as string | undefined);
-          return handleGetPlayer(memory, cfg, client, args, callCtxOf(argv));
+          return handleGetPlayer(refs, cfg, client, args, callCtxOf(argv));
         });
 
       commands
@@ -582,7 +600,7 @@ export default definePlugin({
         .action(async (argv, target) => {
           const args = parseTarget(target as string | undefined);
           if (argv.options.ap === true) args.ap_only = true;
-          return handleGetBests(memory, cfg, client, args, callCtxOf(argv));
+          return handleGetBests(refs, cfg, client, args, callCtxOf(argv));
         });
 
       commands
@@ -592,7 +610,7 @@ export default definePlugin({
         .action(async (argv, target, count) => {
           const args = parseTarget(target as string | undefined);
           if (count !== undefined) args.limit = count;
-          return handleGetRecents(memory, cfg, client, args, callCtxOf(argv));
+          return handleGetRecents(refs, cfg, client, args, callCtxOf(argv));
         });
 
       commands
@@ -618,13 +636,13 @@ export default definePlugin({
 const NO_FRIEND_CODE = '按 QQ 号查到的玩家没有好友码：直接写好友码查，或先 /maimai bind <好友码> 绑定';
 
 async function handleGetPlayer(
-  memory: MemoryRef,
+  refs: TargetRefs,
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
   callCtx: { sessionId: string; userId?: string; platform?: string },
 ): Promise<string> {
-  const target = await resolveTarget(memory, cfg, callCtx, args);
+  const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   try {
     const player = await fetchPlayer(client, target);
@@ -636,13 +654,13 @@ async function handleGetPlayer(
 }
 
 async function handleGetBests(
-  memory: MemoryRef,
+  refs: TargetRefs,
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
   callCtx: { sessionId: string; userId?: string; platform?: string },
 ): Promise<string> {
-  const target = await resolveTarget(memory, cfg, callCtx, args);
+  const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   // bests 接口仅支持 friend_code；若来源是 qq，先 lookup
   let friendCode = target.friend_code;
@@ -663,13 +681,13 @@ async function handleGetBests(
 }
 
 async function handleGetRecents(
-  memory: MemoryRef,
+  refs: TargetRefs,
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
   callCtx: { sessionId: string; userId?: string; platform?: string },
 ): Promise<string> {
-  const target = await resolveTarget(memory, cfg, callCtx, args);
+  const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   let friendCode = target.friend_code;
   try {

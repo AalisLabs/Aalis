@@ -7,7 +7,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { type App, definePlugin, optional, provide } from '../../packages/core/src/index.js';
+import { type App, definePlugin, events, optional, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -18,13 +18,14 @@ import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { recordRoom } from '../fixtures/rooms.js';
 import { client } from '../fixtures/session-client.js';
 
 // ════════════════════════════════════════════════════════════
 // 需要确认的工具调用 → 执行守卫 → owner 审批，整条接线：真实的工具注册表、权限插件与会话服务，
 // 一个 WebUI 审批面上有一条在场的 owner 连接。探针工具人人有权调用、声明需要确认，
 // 所以每一行只看发起回合的类别：只有 owner 本人与 owner 链的延续出卡，其余直接拒、不推给任何面，
-// 模型收到对应的话。上下文按 agent 工具循环的填法构造。
+// 模型收到对应的话。上下文按 agent 工具循环的填法构造。房间经原生入站收录，房间类别按会话管理记下的字段判。
 // ════════════════════════════════════════════════════════════
 
 const OWNER = { platform: 'webui', userId: 'console' };
@@ -72,7 +73,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   const home = mkdtempSync(join(tmpdir(), 'aalis-guard-approvals-'));
   homes.push(home);
   const { state } = provideHostPaths(app, home);
-  const host = app.bind({ provide, tools, sessionManager, sessionProtocol });
+  const host = app.bind({ provide, events, tools, sessionManager, sessionProtocol });
   host.provide(storage, memoryStorage(new Map()));
   await app.plugin(toolsPlugin, {});
   await app.plugin(authorityPlugin, {});
@@ -113,8 +114,9 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   let conn: ReturnType<typeof client> | undefined;
   if (!withoutApprovals) {
     const sm = host.sessionManager.require();
-    await sm.ensureSession(MINE, { name: '我的' });
-    for (const id of [ROOM, OWNER_DM, MEMBER_DM]) await sm.ensureSession(id, { name: id });
+    // owner 自己的会话：与 WebUI 新建的一样带创建来源
+    await sm.ensureSession(MINE, { name: '我的' }, { createdFrom: 'webui' });
+    for (const id of [ROOM, OWNER_DM, MEMBER_DM]) await recordRoom(host.events, id);
     if (!out.surface) throw new Error('审批面没登记上');
     conn = client(host.sessionProtocol.require(), { identity: OWNER, surface: out.surface });
     await conn.init();

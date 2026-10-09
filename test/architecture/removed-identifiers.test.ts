@@ -100,6 +100,9 @@ const REMOVED: Array<[string, string]> = [
   ['MarketPackage', 'WebUI 市场页自带的包类型，改用 api-webui 的 MarketplacePackage 与 SystemComponent'],
   ['vnd.npm.install-v1', '市场按精简元数据取整份版本清单，改取每包的 /{包}/latest'],
   ['missingServices', 'webui-server 只看直接提供者的缺服务判据，由 api-doctor 沿依赖链追到根的 unmetDependencies 取代'],
+  ['createdBy', '会话的创建者类型（没有读者），由只在建档时写的创建来源 createdFrom 取代'],
+  ['inferSessionScope', '按会话 id 约定推断会话类型与目标，由会话记下的聊天窗口 originChat 取代'],
+  ['OWNER_ENTRY_PLATFORMS', '会话管理按入口平台名单判自动标题，由会话的创建来源 createdFrom 取代'],
 ];
 
 /**
@@ -146,6 +149,12 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ['plugin-user-profile', "'instruct", 'user-profile 查看与增删第三方行为指令的 /instruct 指令族'],
   ['plugin-user-profile', 'api-authority', 'user-profile 只为判第三方行为指令的发言人等级而用的权限服务'],
   ['plugin-user-profile', 'api-persona', 'user-profile 只为按人设名给第三方行为指令分堆而用的人设服务'],
+  // webui-client 另有同前缀的 parsePlatforms（解析平台状态接口），只在这两个包查
+  ...['plugin-memory-vector', 'plugin-tool-session'].map((pkg): [string, string, string] => [
+    pkg,
+    'parsePlatform',
+    '按会话 id 第一段取平台的私有函数，由会话管理记下的出生平台 originPlatform 取代',
+  ]),
   ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
   [
     'plugin-tools',

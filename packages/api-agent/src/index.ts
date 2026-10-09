@@ -320,7 +320,7 @@ declare module '@aalis/core' {
      * 发射方：plugin-session-server（订阅时还没有这个会话的用量、手动压缩之后；房间不填，其余填连接的入口平台）；
      * 消费方：plugin-agent。
      * platform 是调用方的入口平台，没有出生平台的会话（WebUI、CLI 等）的快照按它选档；缺省时消费方对
-     * IM 房间按出生平台（api-gateway 的 resolveSessionOrigin）、其余按 'webui' 兜底。
+     * IM 房间按会话管理记下的出生平台（子会话取根会话的）、其余按 'webui' 兜底。
      */
     'token:request': [req: { sessionId: string; platform?: string }];
   }

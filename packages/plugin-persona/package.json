@@ -29,7 +29,6 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
-    "@aalis/api-gateway": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.1 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",

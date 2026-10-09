@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type MessageArchiveService, messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSender from '../../packages/plugin-image-sender/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import type { Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { storedRoom } from '../fixtures/rooms.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，回执表示这条消息已经进了会话历史，
-// 不看有没有页面在线（打开着的页面由会话服务推送）。
+// 不看有没有页面在线（打开着的页面由会话服务推送）。owner 从 WebUI 驱动的 IM 房间（根会话记下了出生平台）
+// 由那个平台的适配器认领，按会话字段判，不看会话 id 的写法。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -16,13 +19,25 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** archive 给了就登记成 message-archive 服务；只用到 saveMessage。withImageSender 时同时装上 image-sender */
-async function startWebui(archive?: Pick<MessageArchiveService, 'saveMessage'>, withImageSender = false) {
+/**
+ * archive 给了就登记成 message-archive 服务；只用到 saveMessage。withImageSender 时同时装上 image-sender。
+ * sessions 给了就登记一个只有 getSession 的会话管理，会话表里是这些记录
+ */
+async function startWebui(
+  archive?: Pick<MessageArchiveService, 'saveMessage'>,
+  withImageSender = false,
+  sessions?: SessionInfo[],
+) {
   const port = await freePort();
   const token = 'outbound-delivery-test-token-0000';
   const app = new App({ name: 'WebUI delivery test', logLevel: 'error' });
   apps.push(app);
-  if (archive) app.bind({ provide }).provide(messageArchive, archive as never);
+  const host = app.bind({ provide });
+  if (archive) host.provide(messageArchive, archive as never);
+  if (sessions) {
+    const table = new Map(sessions.map(s => [s.id, s]));
+    host.provide(sessionManager, { getSession: (id: string) => table.get(id) } as never);
+  }
   await app.pluginAll([
     {
       definition: webuiServer,
@@ -234,17 +249,50 @@ describe('WebUI outbound delivery confirmation', () => {
     ]);
   });
 
-  it.each([undefined, 'webui'])('does not claim OneBot traffic when entry platform is %s', async platform => {
-    const { app } = await startWebui();
-    const message: OutgoingMessage = {
-      sessionId: 'onebot:123:private:456',
-      platform,
-      content: '',
-      attachments: [{ kind: 'image', data: 'https://example.com/image.png' }],
-      source: 'agent',
+  describe('IM rooms driven from WebUI belong to their own platform', () => {
+    const ROOM = 'onebot:123:private:456';
+    const TASK = `${ROOM}::abcd1234`;
+    /** WebUI 的会话：按字段认出，不看 id 的写法 */
+    const MINE = 'zz:session-mine';
+    const sessions = [
+      storedRoom(ROOM),
+      { id: TASK, name: TASK, children: [], status: 'waiting', config: {}, createdAt: 0, updatedAt: 0, parentId: ROOM },
+      {
+        id: MINE,
+        name: MINE,
+        children: [],
+        status: 'waiting',
+        config: {},
+        createdAt: 0,
+        updatedAt: 0,
+        createdFrom: 'webui',
+      },
+    ] as unknown as SessionInfo[];
+    const send = async (app: App, sessionId: string, platform?: string) => {
+      const message: OutgoingMessage = {
+        sessionId,
+        platform,
+        content: '',
+        attachments: [{ kind: 'image', data: 'https://example.com/image.png' }],
+        source: 'agent',
+      };
+      await app.bind({ events }).events.emit('outbound:message', message);
+      return message.delivery;
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
-    expect(message.delivery).toBeUndefined();
+
+    it.each([
+      undefined,
+      'webui',
+    ])('does not claim the room or its subtasks when entry platform is %s', async platform => {
+      const { app } = await startWebui({ async saveMessage() {} }, false, sessions);
+      expect(await send(app, ROOM, platform)).toBeUndefined();
+      expect(await send(app, TASK, platform)).toBeUndefined();
+    });
+
+    it('claims a WebUI session even when its id contains a colon', async () => {
+      const { app } = await startWebui({ async saveMessage() {} }, false, sessions);
+      expect(await send(app, MINE, 'webui')).toEqual({ ok: true });
+    });
   });
 
   it('does not claim a message that names no platform: another transport may own that session', async () => {
