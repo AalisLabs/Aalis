@@ -1,12 +1,12 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OriginTurn } from '../../packages/api-authority/src/index.js';
 import { isReachCredential, type ReachCredential, type ReachRequest } from '../../packages/api-reach/src/index.js';
 import type { SessionInfo, SessionSetting } from '../../packages/api-session-manager/src/index.js';
-import type { App } from '../../packages/core/src/index.js';
+import type { App, Logger } from '../../packages/core/src/index.js';
 import reachPlugin from '../../packages/plugin-reach/src/index.js';
-import { sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
+import { sessionTmpOf, sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
 import {
   OWNER_QQ,
   OWNER_TURN,
@@ -378,10 +378,122 @@ describe('清单按真实路径', () => {
       expect(await verdict(cred, write(path)), `源码不在内：${path}`).toBe('allow');
     }
   });
+
+  /** 全权档的 owner 会话 */
+  async function fullSession(started: Awaited<ReturnType<typeof start>>) {
+    started.sm.registerSetting(TIER, 'zz-test');
+    const session = await started.sm.createSession(
+      { name: 'f', config: { accessTier: 'full' } },
+      { createdFrom: 'webui' },
+    );
+    return started.svc.forCall(ownerTurn(session.id));
+  }
+
+  /** 起实例时守护进程的入口（插件激活时按 process.argv[1] 取） */
+  async function startWithEntry(entry: string, opts: Parameters<typeof startReach>[1] = {}) {
+    const saved = process.argv[1];
+    process.argv[1] = entry;
+    try {
+      return await start(opts);
+    } finally {
+      process.argv[1] = saved;
+    }
+  }
+
+  describe('以具体路径为根的规则，路径上有符号链接时按真实路径另加一份', () => {
+    const dotfiles = () => join(dirs.base, 'dotfiles');
+    /** 在 dotfiles 仓库里放好文件，再从 at 链接过去 */
+    const linkFromDotfiles = (name: string, at: string, dir = false) => {
+      const real = join(dotfiles(), name);
+      mkdirSync(dir ? real : dotfiles(), { recursive: true });
+      if (!dir) writeFileSync(real, '');
+      symlinkSync(real, at);
+      return real;
+    };
+
+    it('拒读：家目录里的 secrets.yaml、链接出去的 ~/.ssh，读真实路径照样拒', async () => {
+      const secrets = linkFromDotfiles('secrets.yaml', join(dirs.home, 'secrets.yaml'));
+      const ssh = linkFromDotfiles('ssh', join(dirs.user, '.ssh'), true);
+      const { svc, webui } = await start();
+      const cred = await svc.forCall(ownerTurn(webui));
+      for (const path of [secrets, join(ssh, 'id_ed25519')]) {
+        expect(await verdict(cred, read(path)), path).toContain('拒读清单');
+      }
+    });
+
+    it('宿主控制面：全权档写 secrets.yaml 与主配置的真实路径照样拒', async () => {
+      const secrets = linkFromDotfiles('secrets.yaml', join(dirs.home, 'secrets.yaml'));
+      const config = linkFromDotfiles('aalis.config.yaml', join(dirs.home, 'aalis.config.yaml'));
+      const cred = await fullSession(await start());
+      for (const path of [secrets, config]) {
+        expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
+      }
+    });
+
+    it('落点：工作区档在 dotfiles 仓库里写 ~/.zshrc 与 ~/.gitconfig 链接到的文件要问', async () => {
+      const zshrc = linkFromDotfiles('zshrc', join(dirs.user, '.zshrc'));
+      const gitconfig = linkFromDotfiles('gitconfig', join(dirs.user, '.gitconfig'));
+      const { sm, svc } = await start();
+      const cred = await svc.forCall(ownerTurn(await projectSession(sm, dotfiles())));
+      expect(await verdict(cred, write(join(dotfiles(), 'README.md')))).toBe('allow');
+      for (const path of [zshrc, gitconfig]) {
+        expect(await verdict(cred, write(path)), path).toContain('自动执行');
+      }
+    });
+
+    it('取不到真实路径（链接成环）的根记 warn，照常激活', async () => {
+      symlinkSync('.zshrc', join(dirs.user, '.zshrc'));
+      const warns: string[] = [];
+      const logger: Logger = {
+        debug() {},
+        info() {},
+        warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+        error() {},
+        child: () => logger,
+      };
+      const { svc, webui } = await start({ logger });
+      expect((await svc.forCall(ownerTurn(webui))).exec).toBe('sandbox');
+      expect(warns.filter(w => w.includes(join(dirs.user, '.zshrc')))).toHaveLength(1);
+    });
+  });
+
+  describe('守护进程的入口与安装集的 package.json', () => {
+    it('npm 形态（create-aalis 生成的项目，家目录在安装集里）：两个都是宿主控制面', async () => {
+      const entry = join(dirs.app, 'index.mjs');
+      writeFileSync(entry, '');
+      writeFileSync(join(dirs.app, 'package.json'), '{}');
+      dirs.home = join(dirs.app, 'home');
+      mkdirSync(dirs.home);
+      const cred = await fullSession(await startWithEntry(entry));
+      for (const path of [entry, join(dirs.app, 'package.json')]) {
+        expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
+      }
+    });
+
+    it('源码形态（安装集下有 packages/）照旧：入口与 package.json 是在改的源码', async () => {
+      const entry = join(dirs.app, 'src', 'index.ts');
+      mkdirSync(join(dirs.app, 'src'));
+      mkdirSync(join(dirs.app, 'packages'));
+      writeFileSync(entry, '');
+      writeFileSync(join(dirs.app, 'package.json'), '{}');
+      const cred = await fullSession(await startWithEntry(entry));
+      for (const path of [entry, join(dirs.app, 'package.json')]) {
+        expect(await verdict(cred, write(path)), path).toBe('allow');
+      }
+    });
+  });
 });
 
 describe('本会话临时区', () => {
   const tmpOf = (id: string) => sessionTmpIn(dirs.home, id);
+
+  it('目录名是会话 id 的十六进制：大小写不敏感的文件系统上，两个会话的临时区不会落到同一个目录', () => {
+    const tmp = join(dirs.home, 'tmp');
+    // 这两个 id 的 base64url 只差大小写
+    expect(sessionTmpOf(tmp, 'tg:private:aaa').toLowerCase()).not.toBe(
+      sessionTmpOf(tmp, 'tg:private:Gaa').toLowerCase(),
+    );
+  });
 
   it('有本地效果时建好（0700），没有本地效果不建；删会话时删', async () => {
     const { host, sm, svc, webui } = await start();
@@ -393,7 +505,8 @@ describe('本会话临时区', () => {
     expect(statSync(tmpOf(webui)).mode & 0o777).toBe(0o700);
     writeFileSync(join(tmpOf(webui), 'scratch.txt'), 'x');
     await sm.deleteSession(webui);
-    expect(existsSync(tmpOf(webui))).toBe(false);
+    // 删临时区在后台跑
+    await vi.waitFor(() => expect(existsSync(tmpOf(webui))).toBe(false));
   });
 
   it('启动时清扫：7 天没改动、会话不在运行（含会话表里查不到）的删；在运行的与最近改过的留着', async () => {
@@ -431,16 +544,24 @@ describe('本会话临时区', () => {
     writeFileSync(join(tmpOf('session-deep'), 'sub', 'b.txt'), 'z');
     utimesSync(join(tmpOf('session-deep'), 'sub'), old, old);
     utimesSync(tmpOf('session-deep'), old, old);
-    mkdirSync(join(dirs.home, 'tmp', 'sessions', 'not base64url!'), { recursive: true });
+    // 不是会话 id 的编码（大写的十六进制解得出来，往回编码却对不上）：再旧也不动
+    const strays = ['not hex!', Buffer.from('session-other').toString('hex').toUpperCase()];
+    for (const name of strays) {
+      mkdirSync(join(dirs.home, 'tmp', 'sessions', name), { recursive: true });
+      utimesSync(join(dirs.home, 'tmp', 'sessions', name), old, old);
+    }
 
-    await start({ stored });
+    // 清扫在后台跑，收尾时等它跑完
+    await (await start({ stored })).app.stop();
     expect(existsSync(tmpOf('session-gone')), '会话表里没有、7 天没改动').toBe(false);
     expect(existsSync(tmpOf('session-unknown-fresh')), '会话表里没有、最近改过').toBe(true);
     expect(existsSync(tmpOf('session-stale')), '7 天没改动').toBe(false);
     expect(existsSync(tmpOf('session-running')), '会话在运行').toBe(true);
     expect(existsSync(tmpOf('session-fresh')), '最近改过').toBe(true);
     expect(existsSync(tmpOf('session-deep')), '深层文件最近改过').toBe(true);
-    expect(existsSync(join(dirs.home, 'tmp', 'sessions', 'not base64url!')), '不是会话临时区的目录不动').toBe(true);
+    for (const name of strays) {
+      expect(existsSync(join(dirs.home, 'tmp', 'sessions', name)), `不是会话临时区的目录不动：${name}`).toBe(true);
+    }
   });
 
   describe('清扫与并发', () => {
@@ -451,6 +572,13 @@ describe('本会话临时区', () => {
       for (const p of [join(tmpOf(id), 'sub', 'a.txt'), join(tmpOf(id), 'sub'), tmpOf(id)]) utimesSync(p, old, old);
     };
     const session = (status: string) => ({ status }) as SessionInfo;
+    const warns: string[] = [];
+    const logger = { warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')) };
+    const sweep = (sessionOf: (id: string) => SessionInfo | undefined) =>
+      sweepSessionTmp(join(dirs.home, 'tmp'), sessionOf, Date.now(), logger);
+    beforeEach(() => {
+      warns.length = 0;
+    });
 
     it('遍历时临时区被别处删掉：跳过它，别的照常清扫', async () => {
       stale('session-vanish');
@@ -459,15 +587,32 @@ describe('本会话临时区', () => {
         if (id === 'session-vanish') rmSync(tmpOf(id), { recursive: true });
         return session('completed');
       };
-      await expect(sweepSessionTmp(join(dirs.home, 'tmp'), sessionOf, Date.now())).resolves.toEqual(['session-stale']);
+      await expect(sweep(sessionOf)).resolves.toEqual(['session-stale']);
+      expect(warns).toEqual([]);
     });
 
     it('遍历期间会话开了新回合：删之前再查一次，在运行的不删', async () => {
       stale('session-woke');
       let calls = 0;
       const sessionOf = () => session(calls++ === 0 ? 'completed' : 'active');
-      await expect(sweepSessionTmp(join(dirs.home, 'tmp'), sessionOf, Date.now())).resolves.toEqual([]);
+      await expect(sweep(sessionOf)).resolves.toEqual([]);
       expect(existsSync(tmpOf('session-woke'))).toBe(true);
+    });
+
+    it('删不掉的临时区记一条 warn，写明目录；不妨碍别的照常清扫', async () => {
+      stale('session-locked');
+      stale('session-stale');
+      // 只读的子目录：里面的文件删不掉
+      const locked = join(tmpOf('session-locked'), 'sub');
+      chmodSync(locked, 0o555);
+      try {
+        await expect(sweep(() => session('completed'))).resolves.toEqual(['session-stale']);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toContain(tmpOf('session-locked'));
+      expect(warns[0]).toContain('EACCES');
     });
   });
 });

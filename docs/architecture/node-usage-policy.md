@@ -66,7 +66,7 @@
 |  |  | `plugin-memory-sqlite/src/index.ts` | `statSync` 取数据库文件的设备号与 inode，判断两个实例是否打开了同一个库 |
 |  |  | `plugin-session-server/src/approvals.ts` | `appendFile` / `mkdir` 追加审批审计：只追加的记录，存储网关没有追加写 |
 |  |  | `plugin-usage-stats/src/index.ts` | `appendFile` / `mkdir` / `createReadStream` 追加与按行读回用量账本：只追加的记录，存储网关没有追加写与按行读 |
-|  |  | `plugin-reach` | 宿主路径的真实路径（安装集、用户家目录、链接装进来的包）、按 `.git` 找仓库的 git 目录、本会话临时区（0700、清扫）、沙箱用的 npm 配置副本：这些路径不在存储根内，临时区要按 0700 建、按 lstat 不跟随链接清扫，存储网关没有这些能力；存储单元之后网关的宿主路径根要经触及凭据，而凭据正是本插件签发的 |
+|  |  | `plugin-reach` | 宿主路径的真实路径（安装集、用户家目录、守护进程的入口、链接装进来的包、清单里各规则的根）、按 `.git` 找仓库的 git 目录、本会话临时区（0700、清扫）、沙箱用的 npm 配置副本：这些路径不在存储根内，临时区要按 0700 建、按 lstat 不跟随链接清扫，存储网关没有这些能力；存储单元之后网关的宿主路径根要经触及凭据，而凭据正是本插件签发的 |
 | `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |

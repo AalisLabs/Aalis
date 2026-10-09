@@ -54,8 +54,8 @@ export interface PlatformAdapter {
 | `aggregatePlatformDetails(source)` | 聚合展示详情（含 `contextId` + `connections`） |
 | `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份；同平台装了多个实例时，取第一个认得这个会话的实例给出的身份 |
 | `sessionTypesOf(adapter)` | 平台的类型：声明的条目；没声明（没写、空列表，或平台没有适配器）时为 `[{ name: 'private', multiParty: false }]` |
-| `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared` |
-| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底） |
+| `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带类型名时，声明里有多方类型的按其中第一个、多方，没声明或只有一对一类型的按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared` |
+| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底）。只在部分 adapter 里找时，`source` 给一个只列它们的 `all` |
 | `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错，见下） |
 | `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（无 adapter 接管、或 adapter 不支持 `callAction` 则抛错） |
 
@@ -89,7 +89,7 @@ export interface PlatformAdapter {
 **必须实现**：`adapterName`、`platform`、`getConnections()`、`sendMessage()`。
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，`sendPlatformMessage` / `callPlatformAction` 都找不到你的 adapter。插件能装多个实例（`reusable`）时同样**必须**实现 `canHandle()`，只认自己实例的会话：前缀兜底会让第一个实例接下这个平台的全部会话。
 **按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）。
-**有多方会话就必须声明**：`sessionTypes`（类型名与一对一还是多方），并在入站消息上带类型名。不声明的平台整个算一个一对一类型 `private`：它的群会按一对一记下，群里任何人都会被当成那个唯一的对端。消息带了声明里没有的类型名时按多方记下，session-manager 每个平台与类型名告警一次。
+**有多方会话就必须声明**：`sessionTypes`（类型名与一对一还是多方），并在入站消息上带类型名。不声明的平台整个算一个一对一类型 `private`：它的群会按一对一记下，群里任何人都会被当成那个唯一的对端。声明了多方类型、消息却没带类型名的，按声明里第一个多方类型记下（失败关闭，一对一的聊天也当多方）。消息带了声明里没有的类型名时按多方记下，session-manager 每个平台与类型名告警一次。
 
 ### 会话 ID 约定
 

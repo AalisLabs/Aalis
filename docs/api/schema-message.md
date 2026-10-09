@@ -20,7 +20,7 @@ interface IncomingMessage {
   images?: string[];                   // base64 或 URL
   files?: Array<{ name; data; mimeType? }>;
   attachmentOrder?: Array<'image' | 'file'>;
-  sessionType?: string;                // 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一；不带按 private、一对一
+  sessionType?: string;                // 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一；不带时平台声明了多方类型的按多方，否则按 private、一对一
   selfId?: string;                     // 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id）
   source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却），并用于并发隔离
   groupName?: string;
