@@ -10,7 +10,7 @@ import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
-import { DEFAULT_AUTHORITY, originKind } from './authority-model.js';
+import { DEFAULT_AUTHORITY } from './authority-model.js';
 
 // ===== 插件入口 =====
 
@@ -47,7 +47,9 @@ async function run(caps: Caps): Promise<void> {
   const { commands, lifecycle, logger, storage, tools, webui } = caps;
   const config = caps.hostConfig.require();
 
-  const manager = new AuthorityManager(config, logger, createStorageGateway(storage));
+  const manager = new AuthorityManager(config, logger, createStorageGateway(storage), id =>
+    caps.sessionManager.current?.getSession(id),
+  );
   caps.provide(authorityService, manager);
   const page = defineAuthorityPage({ webui, commands, tools, config, manager });
 
@@ -133,11 +135,7 @@ async function run(caps: Caps): Promise<void> {
         turnId: g.turnId,
         callId: g.callId,
         origin: {
-          kind: originKind(
-            g,
-            (p, u) => manager.isOwner(p, u),
-            id => caps.sessionManager.current?.getSession(id),
-          ),
+          kind: manager.originOf(g),
           platform: g.platform,
           userId: g.userId,
         },

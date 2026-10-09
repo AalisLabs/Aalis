@@ -50,6 +50,9 @@ export interface AuthorityService {
   // 是否 owner（owners 配置命中 → 拥有 `*`）
   isOwner(platform: string, userId?: string): boolean;
 
+  // 这一轮是谁发起的（api-approval 的 OriginKind）：按回合的来源判、不按授权身份判，会话受众按会话管理里记下的字段判
+  originOf(turn: OriginTurn): OriginKind;
+
   // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > level >= minLevel
   authorize(identity: UserIdentity | { platform: string; userId?: string },
@@ -71,6 +74,7 @@ export interface AuthorityService {
 interface AuthorizeRequest { capability: CapabilityId; visibility: CapabilityVisibility; risk?: CapabilityRisk; }
 interface UserIdentity { platform: string; userId: string; }
 interface AuthorityUserEntry { platform; userId; isOwner: boolean; level: number; note?: string; }
+type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
 ```
 
 `CapabilityId` 是 `string`，按惯例为 `<type>:<name>`，如 `tool:exec`、`command:shutdown`（守卫处由 `${g.type}:${g.name}` 拼装，见 `packages/plugin-authority/src/index.ts`）。
@@ -136,9 +140,9 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 4.1 必须实现 vs 可选
 
-`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
+`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`originOf`（触及服务据它定主体）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
-- **必须**：`isOwner`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
+- **必须**：`isOwner`、`originOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。
 - **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；等级不够即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按回合的来源判、不按 `actor` 判，只有 owner 本人与 owner 链的延续能产生审批。
 
@@ -169,12 +173,14 @@ uses: { commands: optional(commands), tools: optional(tools) }; // 反向注入�
 ### 4.4 可编译最小骨架
 
 ```ts
+import type { OriginKind } from '@aalis/api-approval';
 import { authority } from '@aalis/api-authority';
 import type {
   AuthorityService,
   AuthorityUserEntry,
   AuthorizeRequest,
   ExecutionGuardContext,
+  OriginTurn,
   UserIdentity,
 } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
@@ -183,6 +189,10 @@ import { definePlugin, optional, provide } from '@aalis/core';
 
 class MyAuthority implements AuthorityService {
   isOwner(platform: string, userId?: string) { /* owners 命中判定 */ return false; }
+  originOf(turn: OriginTurn): OriginKind {
+    // 按回合的来源判：不在入站回合里为 autonomous，子任务为 subtask，房间为 room……（判据见 plugin-authority）
+    return 'other';
+  }
   authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | null {
     // 1) deniedCapabilities 硬禁（压过 owner） 2) owner 放行 3) level >= minLevel
     return null; // null 放行 / string 拒绝原因
