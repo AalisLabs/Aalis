@@ -30,18 +30,19 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），以及审批（新 WebUI 的第二部分，取代 session-confirm 的确认链）。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十二个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），审批（新 WebUI 的第二部分，取代 session-confirm 的确认链），新 WebUI 的其余各部分（管理推送与登录加固、外壳与会话设置、页面契约第二版、插件前端、控件比例、插件区与深度思考档位、需要处理与用量、后台任务），删除自档案，单元 7 收尾第一批，改用 node:sqlite，上手与故障说明，报错普查第二批，以及单元 7 第六步整批收尾。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十二个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
 - 有代码或契约改动（46 个）：schema-message、schema-config、runtime、create-aalis、api-code-sandbox、api-gateway、api-host-config、api-persona、api-process、api-session-manager、api-tools、api-webui、plugin-adapter-onebot、plugin-agent、plugin-asr-whisper-cpp、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-draw、plugin-flow-control、plugin-image-sender、plugin-llm-deepseek、plugin-mcp-client、plugin-media、plugin-memory-history、plugin-memory-mongodb、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-package-manager、plugin-persona、plugin-process-local、plugin-session-manager、plugin-skills、plugin-storage-local、plugin-subtask、plugin-tool-browser、plugin-tool-code-runner、plugin-tool-session、plugin-tool-system、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow
 - 按次版本发布（28 个）：runtime（家目录；删掉 `startAalis` 的 `configPath`、`projectDir`、`subcommands` 等选项；`createConfigStore` 增加密钥存储参数，`createPluginDiscovery` 改收配置存储）、schema-config（新增字段属性 `format`；`secret` 改为语义属性，新增 `SecretRef` 等导出）、api-host-config（`HostConfig` 新增必需的 `applyPluginConfig`，读写改为文档形态）、api-webui（删除向 `SchemaField` 注入的 `secret`）、create-aalis（生成的项目带家目录 `home/`）、plugin-package-manager（删掉配置项 `projectRoot`，改为依赖 `host-paths`）、plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-mcp-client（路径类配置不再收相对路径；`env` 改为密钥字段）、plugin-skills（`skillsUri` 默认改为 `skills:/`）、plugin-memory-mongodb（库名加 profile 一段、库的归属记录与新配置项 `claimFrom`；`uri` 改为密钥字段）、schema-message（删除 `IncomingMessage.proactiveDepth`）、api-persona（删除 `PersonaService.getSessionState`）、api-session-manager（删除 `resolveInheritedDefaults`，`SessionInfo.kind` 必填）、plugin-persona（删除 `getSessionState` 的实现；`personasDir` 默认改为 `personas:/`）、plugin-tool-session（删除跨会话委派工具组与两个配置项）、plugin-memory-history（`recent_messages` 提档）、plugin-session-manager（删除页面动作 `getInheritedDefaults`，`getSessionTree` 的回包改为分区）、plugin-adapter-onebot（出站媒体按文件头分流）、plugin-storage-local（依赖 `host-paths`；内置根按家目录布局，保留 data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public 十个根名；宿主控制文件兜底）、plugin-agent（`/session` 改调 `resolveInheritance`，须与 plugin-session-manager 同批升级；输出格式同改）、plugin-tool-system（`process_kill` 删除 `signal` 参数）、plugin-webui-server（删除导出函数 `resolveSessionPlatform`；插件配置接口改回引用、不回原值）、plugin-webui-client（密钥字段只显示「已设置」，认引用）、plugin-workflow（agent 节点的默认会话 ID）、plugin-code-sandbox-os（`@aalis/core` peer 下限抬到 0.18）、plugin-image-sender（交给平台适配器的附件改为 storage URI）
 - 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执；日志位置的说明）、plugin-media（图片来源的裸路径不再路由到插件私有的内置根；说明里的临时目录）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）、plugin-memory-summary（`summaryTokenRatio` 标 `secret: false`）
-- 不发版：plugin-asr-openai、plugin-embedding-openai、plugin-llm-openai、plugin-maimai、plugin-okx-trading、plugin-websearch-serper 只删了为 `secret` 写的类型导入（编译后擦除）与 api-webui 开发依赖，编译出的 JS 与类型声明不变（只差 source map 行号与 devDependencies），运行行为不变，停在已发布版本。
+- 不发版：plugin-embedding-openai、plugin-websearch-serper 只删了为 `secret` 写的类型导入（编译后擦除）与 api-webui 开发依赖，编译出的 JS 与类型声明不变（只差 source map 行号与 devDependencies），运行行为不变，停在已发布版本。
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
 - 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0、api-checkpoint 0.1.0、api-session-protocol 0.1.0、api-todo-list 0.1.0、plugin-session-server 0.1.0、api-approval 0.1.0
 - plugin-session-confirm 与 api-session-confirm 在「审批」一节删除，发布时对它们执行 npm deprecate，不再发新版。
-- 「会话协议与会话服务」「审批」两节的包还没并进上面三张清单：api-agent、api-tools、api-platform、api-session-manager、schema-message、plugin-agent、plugin-checkpoint、plugin-todo-list、plugin-tool-onebot、plugin-adapter-onebot、plugin-session-manager、plugin-storage-local、plugin-tool-system、plugin-image-sender、plugin-paper、plugin-webui-server；api-approval（新包）、api-authority、api-commands、api-gateway、plugin-authority、plugin-commands、plugin-gateway、plugin-tools、plugin-cli、plugin-webui-client、create-aalis。档位按各节末尾的说明，新 WebUI 各单元做完后统一并账。
+- plugin-asr-openai、plugin-llm-openai、plugin-maimai、plugin-okx-trading 在后面几节另有改动（深度思考档位、上手与故障说明、报错普查第二批），按那几节发版。
+- 「会话协议与会话服务」「审批」及其后各节的包还没并进上面三张清单：api-agent、api-tools、api-platform、api-session-manager、schema-message、plugin-agent、plugin-checkpoint、plugin-todo-list、plugin-tool-onebot、plugin-adapter-onebot、plugin-session-manager、plugin-storage-local、plugin-tool-system、plugin-image-sender、plugin-paper、plugin-webui-server；api-approval（新包）、api-authority、api-commands、api-gateway、plugin-authority、plugin-commands、plugin-gateway、plugin-tools、plugin-cli、plugin-webui-client、create-aalis。档位按各节末尾的说明，新 WebUI 各单元做完后统一并账。
 - plugin-trigger-laya 是 `private` 包，只改了说明与注释，不发布到 npm。
 - 上面的清单没收的：api-trigger、plugin-draw、plugin-tool-search 自上次发布以来也有源码改动（plugin-draw 见「作品提名与上站」；api-trigger、plugin-tool-search 的改动还没有写进本节），发布时按源码与 npm 实况核定档位并补写说明。
 - api-agent、api-authority、api-flow-control、api-platform、api-storage、api-workflow、plugin-authority、plugin-scheduler、plugin-trigger-policy 只改了注释（去掉跨会话委派的提法；api-platform 写明会话 ID 约定，api-agent、api-workflow 改了 `token:request` 与会话 ID 的说明；api-storage 的 URI 示例改为 `skills:/`），本批不单独发布。
@@ -194,6 +195,8 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - api-code-sandbox、plugin-process-local、plugin-tool-code-runner 本节有改动，但不用 core 0.18 的接口，`@aalis/core` peer 仍是 `>=0.17.0 <1.0.0`。
 
 ### 后台命令结束通知（@aalis/plugin-tool-system、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-subtask、@aalis/plugin-webui-client）
+
+本节的 `exec_background`、`process_*` 工具与按进程发的结束通知，已在「后台任务」一节由后台任务取代；最终形态以那一节为准，本节保留 `hostNotice.callerUserId`、通知回合的身份与中止规则。
 
 `exec_background` 起的后台进程在本次运行期间自行退出时，她会自己开口说结果；让她停时她直接停，不再弹确认。不需要改配置。
 
@@ -520,7 +523,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 新 WebUI 的第六部分：插件页面默认仍是声明式，声明式表达不了时可以带自己的前端，在隔离的框架里显示；外壳的顶部横线贯穿各栏，两侧栏宽可以拖动。
 
 - **插件前端**（api-webui，实验性）：`definePage` 多一种形态，`frame: { module, entry?, host? }` 加 `sources`，与声明式的 `content` 二选一；位置只有插件页与会话面板（设置位置只收声明式），动作不收 `row`；数据源与动作的输入按声明推导。登记时从 `frame.module` 往上取最近一个带 `name` 的 `package.json` 作包根，`name` 要等于插件名，入口要在包的 `webui/` 目录里，数据源名与动作名不超过 128 个字符。
-- **托管与隔离**：webui-server 新增 `GET /frames/:token/*`（每次登记随机一个 token，撤回或重新登记后旧的作废）与 `/frames/_base/*`（助手与样式基线）。不要登录，只收 GET 与 HEAD，扩展名白名单与 realpath 两道检查，不合一律 404、不发重定向；响应带只放行本页目录的框架 CSP（`default-src 'none'`，脚本、样式、图片、字体只认自己的目录）与 `sandbox`、`nosniff`、`no-referrer`、DNS 预取关闭。iframe 只给 `FRAME_SANDBOX` 的权限，与宿主不同源，读不到宿主的 cookie 与页面。框架发不出网络请求、取不到外站资源；跳转、WebRTC 与 preconnect 仍可能把数据带出去，插件的服务端代码本来就能联网，文档如实写明。以 IPv6 字面地址访问时不显示插件前端。
+- **托管与隔离**：webui-server 新增 `GET /frames/:token/*`（每次登记随机一个 token，撤回或重新登记后旧的作废）与 `/frames/_base/*`（助手与样式基线）。不要登录，只收 GET 与 HEAD，扩展名白名单与 realpath 两道检查，不合一律 404、不发重定向；响应带框架 CSP 与 `sandbox`、`nosniff`、`no-referrer`：脚本只认插件自己打包的文件与 `/frames/_base`，框架里不能再嵌别的网页（`frame-src`、`object-src` 为 `none`），其余（样式、字体、图片、音视频与数据请求）可以联网（单元 7 第六步按看板定论放开）。iframe 只给 `FRAME_SANDBOX` 的权限，与宿主不同源，读不到宿主的 cookie 与页面，宿主接口不认框架的请求。以 IPv6 字面地址访问时不显示插件前端。
 - **消息通道**：宿主在地址片段里放一个随机数，框架带着它握手，之后改走专用端口；协议版本主版本不同时不挂载。数据源、动作与宿主数据能力都由宿主转发，实例、页面与会话一律取挂载时的值。外链与 destructive 动作经宿主画的对话框，同一时刻一个，打开后 500 毫秒内不接受确认，确认框列出这次的输入值，连续取消 3 次就停止显示这个页面；外链经对话框里的真实链接打开，与宿主同源的地址不收。框架离开自己的地址、每秒超过 200 条消息时立即卸载并显示占位。错误码是封闭集合。消息校验纯函数 `parseFrameHello`、`parseFrameMessage`、能力表与能力词表（第一版 `sessions:read`、`turn:abort`）在 api-webui，第三方宿主前端共用。
 - **助手与样式基线**：`/frames/_base/frame.js` 的 `connect()` 负责握手、主题令牌、请求配对与离开时通知宿主，类型是 `FrameClient`；`/frames/_base/frame.css` 只给元素级样式，颜色取主题令牌。两者随 api-webui 发布在 `dist/frame/`。
 - **界面**：框架上面写一行「来自 <插件显示名>」，手动刷新就是重新挂载；握手完成前不显示，第一次加载后 10 秒没有回应时写明「页面没有响应」；插件推来的 `invalidate`、重连与主题切换都转发给框架。
@@ -615,7 +618,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 
 - **转后台**（api-tools、plugin-tools）：工具定义可以声明 `background`（可带 `yieldSeconds`，缺省 30 秒）。执行器给声明了的工具的参数表补两项：`waitSeconds`（前台最多等多少秒）与 `runInBackground`（立即转），执行时先取出，审批事实与工具拿到的参数里都没有它们；参数表里已有同名项的工具当作没声明。过了守卫之后先在前台等，在前台时回合中止一并中止它；到时没结束或要求立即转的，对话回合里的调用登记成后台任务，先回给模型任务 id 与已有输出的末尾，此后停止键与新消息打断都不动它。不在对话回合里的调用（workflow 的工具节点、mcp-server）没有可以通知的对话，到时中止并回报已有输出。调用上下文新增输出口 `output`，进度写进它，执行器转成 `tool:output`（一次调用最多推 64 KiB）并留进输出缓冲。
 - **后台任务登记**：新服务 `background-tasks`（描述符 `backgroundTasks`，类型 `BackgroundTask`、`BackgroundTaskService`）可查、可取输出、可停，变化发 `background:changed`；共用的结局判据 `toolFailed`、`integerIn` 与参数名判据 `takenBackgroundParams` 进 api-tools。结局：结果带 `error` 或命令的退出码不为 0 为失败（退出码记在任务的 `exitCode`），被停止为 `stopped`，工具撤回、插件停用、重启时还在跑的为 `aborted`。同一会话里对话回合中在跑的可转后台调用最多 `background.maxPerSession`（默认 4，前台与后台一起数），满了时在过守卫之前就拒绝；守卫拒绝或抛错都让出名额。登记写进插件数据 `pluginData:/tools/background-tasks.json`（不记输出与结果，每个会话留最近 20 条结束的），重启后读回，还在跑的落成 `aborted`。新配置 `background.maxWaitSeconds`（默认 600，最大 2147483）与 `background.maxPerSession`。
-- **四个后台任务工具**：可见的工具里有可转后台的时，模型多拿到 `background_list`、`background_output`、`background_wait`、`background_stop`，只看得到、停得了同一身份起的任务，owner 看得到全部。
+- **四个后台任务工具**：可见的工具里有可转后台的时，模型多拿到 `background_list`、`background_output`、`background_wait`、`background_stop`，按会话放行：本会话里谁起的任务都看得到、停得了，别的会话里的回「不存在」（单元 7 第六步定）。
 - **结束通知**：后台任务正常结束（含失败）时向起它的会话注入一条宿主通知（`hostNotice.kind` 为 `background-task`），身份取起它的那次调用，正文只写任务 id、工具名、结局与退出码、用时；回复时引用起它的那条消息（`InboundTurn.messageId`、`hostNotice.replyTo`、`OutgoingMessage.replyTo`，OneBot 只给第一条分条加引用段）。由结束通知开的回合里转后台的不再通知；被停止、被中断、停机期间结束的不通知。
 - **第一方工具**：exec、http_download（plugin-tool-system），run_python、run_javascript（plugin-tool-code-runner），pdf_convert（plugin-office），draw_image、draw_animation（plugin-draw），analyze_image（plugin-media）与 MCP 桥进来的工具声明可转后台，并跟随中止信号（api-media 的 `DescribeInput`、`DescribeImageOptions` 加 `signal`）；pdf_convert 与 GIF 编码去掉固定的 60 秒。MCP 工具的请求超时交给让出时限，参数撞名的仍用 SDK 默认的 60 秒。代码执行的脚本非零退出或被信号结束算失败（结果带 `error`）。
 - **会话数据**（api-agent、api-session-manager、plugin-session-manager、plugin-subtask）：`agent:turn:after` 带出错原因；`SessionInfo` 加 `lastTurn`（最近一轮的结局、结束时间与出错原因，原因最多留 200 字）与按会话累加的 `tokens`（订阅 `llm:usage`，不改 `updatedAt`）。子会话与根会话同一套收口，最后一轮出错为 error，其余为 completed。子任务被停止时在 `check_subtask`、`wait_subtasks` 与父会话提醒里报「已停止」，`wait_subtasks` 随即返回；出错的带上原因。
@@ -686,11 +689,12 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - webui-client 打包用的库挪进 `devDependencies`，装进项目时不再拉 React 等运行库（默认集实测从 458 个包、290M 降到 214 个包、58M）。
 - **插件市场**（plugin-package-manager、plugin-webui-server、plugin-webui-client）：按包声明提供的服务检索，卡片标「提供：…」。卸载默认保留配置段与它引用的密钥，与 `npm uninstall` 一致，重装后按原段启动；配置文件里有这一段时卸载框给「同时删除配置（含 N 个密钥）」，默认不勾，勾了只删没人再引用的密钥。只有被卸的插件自己正在提供服务时才拦依赖它的插件，待配置、失败或已停用的唯一提供者可以直接卸掉换一个。装卸失败的回执与脚手架用同一张类别表写原因与修法。
 - **plugin-cli**：有插件没起来时，欢迎行加一句「有 N 个插件没起来，输入 /doctor 查看原因与修法」（没有诊断插件时改说看日志）。
-- **plugin-media**：看不了图时（没有能看图的模型，或识别返回空），图照样落盘、在正文留引用，消息另加一行「附了 N 张图，当前无法查看」；新增 doctor 检查「识图」。
+- **plugin-media**：图一律落盘、在正文留引用；没有能看图的模型时，消息另加一行「附了 N 张图，当前无法查看」；识别失败或返回空的，引用照留，描述写获取或识别失败。新增 doctor 检查「识图」。
 - **报错写明怎么修**：作者指南新增「报错与故障说明」，第 9 节「apply 里别 throw、记日志后优雅降级」改为「部分功能坏了才降级，整体用不了就抛错或发提示」。第一批普查改了激活失败、doctor 检查、脚手架与市场的报错：对话模型取不到模型列表、SQLite 与 MongoDB 开库或连接失败、配置不是 storage URI 等都写明修法；指向升级说明的地址改成文档站完整地址；登录页「token 在启动日志里」的失实文案改正。
 - **破坏性**：
   - api-webui：删除 `PluginListItem.missing` 与「需要处理」插件项的 `missing`。
-  - api-package-manager：`uninstall` 默认保留配置段与密钥（此前市场卸载删段），要删段传 `removeConfig`；导出函数 `findServiceDependents` 多了必填参数 `available`。
+  - api-package-manager：`uninstall` 默认保留配置段与密钥（此前市场卸载删段），要删段传 `removeConfig`。
+  - plugin-package-manager：导出函数 `findServiceDependents` 多了必填参数 `available`。
   - plugin-maimai、plugin-okx-trading 缺凭据时从「告警后跳过」改为激活失败，WebUI 标「待配置」；plugin-asr-openai、plugin-asr-whisper-cpp 的必需项改为 schema 必填。
   - create-aalis：默认集不含联网搜索；`--tier minimal` 默认也带 WebUI；`--advanced` 的 embedding 改为单选。
   - create-aalis-plugin：生成的依赖不再是 `latest`，查不到版本时退出。
@@ -715,8 +719,35 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - plugin-commands：`app` 改为必需依赖（声明与清单），运行时无变化。
 - **发布档位**：次版本：api-storage（新增依赖 schema-config）、plugin-scheduler、plugin-image-sender；patch：其余。plugin-code-sandbox-os 新增依赖 api-doctor 并可选使用 doctor。
 
+### 单元 7 第六步整批收尾：后台任务按会话放行、插件前端可以联网、存档元数据只经登记的键（@aalis/plugin-tools、@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/create-aalis-plugin、@aalis/create-aalis、@aalis/schema-message、@aalis/plugin-package-manager、@aalis/plugin-scheduler、@aalis/plugin-image-sender、@aalis/plugin-cli、@aalis/plugin-memory-summary、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-message-archive、@aalis/plugin-agent、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-paper、@aalis/api-doctor）
+
+单元 7 这批、依赖升级、上手与故障说明与报错普查第二批合起来做了一次全面检查（审计与否定者分开审，逐条核实后修掉），并做完看板定下的几项收尾。
+
+- **后台任务工具按会话放行**（plugin-tools）：`background_list`、`background_output`、`background_wait`、`background_stop` 对本会话里谁起的任务都能查、能停，别的会话里的回「不存在」；不再可选使用 authority；`background-tasks.json` 不再记起它的身份，旧文件里多出的这个字段读时忽略。
+- **插件前端可以联网**（plugin-webui-server、api-webui、create-aalis-plugin）：框架 CSP 只限脚本（只认插件自己打包的文件）与嵌套（`frame-src`、`object-src` 为 `none`），外站的样式、字体、图片、音视频与数据请求都放行；不再发 `X-DNS-Prefetch-Control`，`FrameFileHeaders` 去掉这个字段；脚手架生成的插件前端说明随之改写。
+- **存档元数据只经登记的键**（schema-message 与读写存档的各插件）：`WellKnownMetadataKeys` 新增 `GroupId`、`GroupName`、`SessionType`、`MessageId`（键名不变，存量数据不用迁移）；第一方插件读写这些键一律引用常量，守卫扩到全部第一方插件与按路径拼的查询、索引。memory-inmemory、memory-sqlite、memory-mongodb 把 schema-message 从开发依赖改为运行时依赖。
+- **需要处理与会话服务未启用**（plugin-webui-client）：依赖者那一行只写根报错的第一行，全文只在根插件自己那一行与它的详情里；桌面上「会话服务未启用」只写在主区，房间表同样写明，按钮与说明与「需要处理」一致（待配置的去配置，失败的写原因）。服务端比客户端新时，认不出的根写「原因见日志」，缺字段的根与没有 `provides` 的旧版市场回应不再让整页白屏。
+- **市场与插件区**（plugin-package-manager、plugin-webui-client）：卸载闸按同名的全部实例判服务依赖者，不再受实例先后影响（本批引入的回归）；装卸与更新失败时「查看日志」链到提供包管理服务的插件，市场更新条失败时也有这个链接。
+- **其余修正**：
+  - plugin-scheduler：scheduler 服务的 `addJob`、`setJob` 遇无效 cron 当场抛出原因，别的插件经服务建的任务同样拒收。
+  - plugin-image-sender：`storage_uri`、`history_ref` 写成 `~/…` 时按本机路径拒发，给出工具口径的报错。
+  - create-aalis：Node 版本不够时，报错末行给出文档站「升级 Node」的链接。
+  - plugin-webui-server：登录页写明 fixedToken 存在 secrets.yaml 里。
+  - plugin-webui-client：标签页按 Delete 关闭，Mac 上也认 Backspace（提示写 ⌫），关闭后焦点交给新选中的标签；「更早的消息」加载失败时用统一的出错块，可重试、查看日志；运行状况的平台连接随会话连接接上与断开再取，直接打开这一页时不再误写「没有连接」。
+  - plugin-cli：没有终端界面时（后台运行）不再报一条离线的连接。
+  - plugin-memory-summary：历史不多于保留条数时压缩什么都不做、不报进度，时间线不再插假的「对话已压缩」；开始压之前就失败的只拒绝、不报进度。
+  - plugin-paper：说明与包描述改为「白纸是与本机隔离的地方，把任务交给远端代理是在上面干活的一种方式」。
+  - api-doctor、api-webui：`lacking` 的说明补上「在运行却没在提供」，消费方补上市场的卸载闸。
+- **破坏性**：
+  - api-webui：`FrameFileHeaders` 删除 `x-dns-prefetch-control`。
+  - plugin-tools：插件声明的 optional 去掉 `authority`；后台任务工具的可见范围从「同一身份，owner 看全部」改为「本会话」。
+  - plugin-image-sender：`~/` 开头的 `storage_uri`、`history_ref` 被拒发。
+  - plugin-scheduler：经服务新建或修改任务时，无效 cron 由收下改为抛错。
+- **发布档位**：次版本：schema-message（新键）、plugin-tools、plugin-webui-server、api-webui；其余为 patch。下面这些包对 schema-message 的下限抬到本批的新版本（现写 `>=0.9.0` 或 `>=0.9.1`）：plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-agent、plugin-adapter-onebot、plugin-user-profile、plugin-user-relation（plugin-trigger-laya 是 private 包，同步改下限、不发布）。
+
 ### 必须同批升级的包
 
+- plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-agent、plugin-adapter-onebot、plugin-user-profile、plugin-user-relation 与 schema-message 同批升级：它们在运行时引用 `WellKnownMetadataKeys` 新增的 `GroupId`、`GroupName`、`SessionType`、`MessageId`，配旧版 schema-message 时常量为 undefined，按它读的元数据静默读空。
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
 - plugin-gateway 与 api-gateway 同批升级：旧版 gateway 仍调度已删的 `inbound:confirm` 相位。
 - plugin-agent、plugin-checkpoint、plugin-session-manager、plugin-storage-local 与 api-agent、api-checkpoint 同批升级：checkpoint 改从 `agent:input:before` 取 agent 的 `turnId` 记回合，配旧版 agent 时拿不到回合 id、写入不再记账；新版 session-manager 按 `turnId` 登记在飞回合；新版 storage-local 经 api-checkpoint 的描述符找 checkpoint，配旧版 checkpoint（描述符在插件包里）时找不到、写入不受保护。
