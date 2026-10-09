@@ -1,8 +1,23 @@
-import type { AuthorityService, AuthorityUserEntry, AuthorizeRequest, UserIdentity } from '@aalis/api-authority';
+import type { OriginKind } from '@aalis/api-approval';
+import type {
+  AuthorityService,
+  AuthorityUserEntry,
+  AuthorizeRequest,
+  OriginTurn,
+  UserIdentity,
+} from '@aalis/api-authority';
 import type { HostConfig } from '@aalis/api-host-config';
+import type { SessionInfo } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import { DEFAULT_AUTHORITY, matchAnyCap, OWNER_RANK, resolveAccess, resolveMinLevel } from './authority-model.js';
+import {
+  DEFAULT_AUTHORITY,
+  matchAnyCap,
+  OWNER_RANK,
+  originKind,
+  resolveAccess,
+  resolveMinLevel,
+} from './authority-model.js';
 import { UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
@@ -19,10 +34,14 @@ export class AuthorityManager implements AuthorityService {
   /** 免确认白名单（restrictedPolicy）的开启时间戳（运行时态，不持久化；重启即失效） */
   private policyEnabledAt: number | null = null;
 
+  /**
+   * @param sessions 按 id 取会话管理里的记录：发起类别按记下的会话字段判受众，会话管理不在时取不到（失败关闭）
+   */
   constructor(
     private readonly config: HostConfig,
     private readonly logger: Logger,
     storage: StorageService,
+    private readonly sessions: (sessionId: string) => SessionInfo | undefined,
   ) {
     this.store = new UserStore(storage, this.logger.child('authority'));
   }
@@ -42,6 +61,10 @@ export class AuthorityManager implements AuthorityService {
     if ((platform === 'webui' || platform === 'cli') && userId === 'console') return true;
     const owners = this.config.get('owners') ?? [];
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
+  }
+
+  originOf(turn: OriginTurn): OriginKind {
+    return originKind(turn, (platform, userId) => this.isOwner(platform, userId), this.sessions);
   }
 
   /** 触发者有效等级（owner→∞；登记等级；无记录→默认 0）。v1 无访问器（onebot 群角色待 sender.role 透传后接线）。 */

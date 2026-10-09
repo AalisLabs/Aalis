@@ -5,7 +5,7 @@ import { type App, type Logger, provide } from '../../packages/core/src/index.js
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
-import { mkConfig, silentLogger } from '../fixtures/authority.js';
+import { mkConfig, noSessions, silentLogger } from '../fixtures/authority.js';
 
 // users.json 落盘：save() 只把写挂到 saveChain 上就同步返回。拆卸路径必须 await flushed()，
 // 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDispose 里
@@ -56,7 +56,7 @@ afterEach(async () => {
 describe('authority 落盘必须可被拆卸路径等待', () => {
   it('flushed() 等到写真正完成；不等它则写还在飞', async () => {
     const done = { written: false };
-    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done));
+    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done), noSessions);
     await m.init(); // 首次读取落定之前 save 不写盘
 
     m.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5); // 封禁：安全语义，丢不得
@@ -70,7 +70,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
 
   it('没有待写内容时 flushed() 也能正常返回', async () => {
     const done = { written: false };
-    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done));
+    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done), noSessions);
     await expect(m.flushed()).resolves.toBeUndefined();
   });
 
@@ -87,7 +87,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
         if (payloads.length === 1) throw new Error('ENOSPC');
       },
     } as unknown as StorageService;
-    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), flaky);
+    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), flaky, noSessions);
     await m.init();
     const alice = { platform: 'onebot', userId: 'alice' };
 
@@ -121,7 +121,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
         throw Object.create(null);
       },
     } as unknown as StorageService;
-    const m = new AuthorityManager(mkConfig({ owners: [] }), logger, storage);
+    const m = new AuthorityManager(mkConfig({ owners: [] }), logger, storage, noSessions);
     await m.init();
 
     m.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5);
@@ -151,7 +151,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     };
     const storeLogger = { child: () => storeLogger, debug: sink, info: sink, warn: sink, error: sink };
     const logger = { child: () => storeLogger, debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
-    const m = new AuthorityManager(mkConfig({ owners: [] }), logger, storage);
+    const m = new AuthorityManager(mkConfig({ owners: [] }), logger, storage, noSessions);
     await m.init();
     sinkBroken = true;
     const alice = { platform: 'onebot', userId: 'alice' };

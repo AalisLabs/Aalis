@@ -11,6 +11,7 @@ import { defineService } from '@aalis/core';
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
 
+import type { OriginKind } from '@aalis/api-approval';
 import type {} from '@aalis/api-host-config'; // declaration merging 锚点（下方 AalisConfig 增强）
 
 /** 细粒度能力标识，如 tool:file.write、command:shutdown */
@@ -177,6 +178,9 @@ export interface ExecutionGuardContext {
   signal?: AbortSignal;
 }
 
+/** 判发起回合的类别要的信息：执行守卫上下文的这几项，调用方按同样的口径填 */
+export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+
 /**
  * 执行守卫函数。返回 null 放行；返回 string 拦截（值为原因/提示）。
  * 由 plugin-authority 通过 setExecutionGuard() 注入，停用时摘掉。
@@ -230,6 +234,13 @@ export interface AuthorityUserEntry {
 export interface AuthorityService {
   /** 是否为 owner（owners 配置命中 → 拥有 `*`） */
   isOwner(platform: string, userId?: string): boolean;
+
+  /**
+   * 这一轮是谁发起的（契约见 api-approval 的 OriginKind）：按回合的来源判，不按授权身份判，会话的受众按会话管理里
+   * 记下的字段判。只有 owner 与 owner-chain 能产生审批；本地效果由触及服务按这一类别定主体：owner 与 owner-chain 为
+   * owner，subtask 随派出它的那一轮父会话，其余没有本地效果
+   */
+  originOf(turn: OriginTurn): OriginKind;
 
   /**
    * 统一权限闸 —— tools / commands 的执行守卫在操作边界调用本方法。

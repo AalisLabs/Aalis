@@ -39,6 +39,7 @@
 | [api-package-manager](./api-package-manager.md) | `packageManager` 描述符（服务名 `package-manager`）+ `PackageManagerService` | plugin-package-manager |
 | [api-plugin-source](./api-plugin-source.md) | `pluginSource` 描述符（服务名 `plugin-source`）+ 插件入口判定 `pluginDefinitionOf` | 宿主提供（`@aalis/runtime`） |
 | [api-publish](./api-publish.md) | `publish` 描述符、提名快照、发布账本和展示面绑定 | plugin-publish-review；plugin-works-site 提供展示面 |
+| [api-reach](./api-reach.md) | `reach` 描述符（服务名 `reach`）+ `ReachService`；档位与越界策略（会话设置的两个键）、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、沙箱策略 `sandboxPolicyOf`、触及凭据的类型与品牌符号 | plugin-reach |
 | [api-remote-agent](./api-remote-agent.md) | `remoteAgent` 描述符（服务名 `remote-agent`）+ 提供者接口 `RemoteAgentProvider` + 按实例 id 精确取的 `resolveRemoteAgent` | plugin-remote-agent-cursor |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |

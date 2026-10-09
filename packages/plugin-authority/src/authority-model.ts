@@ -19,7 +19,7 @@ export const OWNER_RANK = Number.POSITIVE_INFINITY;
 // 判断「两份能力声明谁更严」的地方不止这里（plugin-commands 合并同名指令的多份声明时也要），
 // 两份实现必然漂移 —— 曾因此漏掉「risk 遮蔽 visibility」这条性质，酿成一条提权面。
 import type { OriginKind } from '@aalis/api-approval';
-import { capabilityMinLevel, DEFAULT_AUTHORITY, type ExecutionGuardContext } from '@aalis/api-authority';
+import { capabilityMinLevel, DEFAULT_AUTHORITY, type OriginTurn } from '@aalis/api-authority';
 import { roomClass, type SessionInfo } from '@aalis/api-session-manager';
 
 export { DEFAULT_AUTHORITY };
@@ -92,7 +92,7 @@ type IsOwner = (platform: string, userId?: string) => boolean;
  * - 其余注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知）是 autonomous。
  */
 export function originKind(
-  turn: Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>,
+  turn: OriginTurn,
   isOwner: IsOwner,
   lookup: (sessionId: string) => SessionInfo | undefined,
 ): OriginKind {
