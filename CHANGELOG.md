@@ -670,6 +670,32 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
 - **升级须知**：在 Node 22 上运行的实例，升级到本批之前先把 Node 换到 24.15 起；在新 Node 上，旧版 plugin-memory-sqlite 的原生模块会因版本不符激活失败，随本批一起升级即可。
 - **发布档位**：次版本：plugin-memory-sqlite、create-aalis；patch：runtime（只加 engines）、plugin-doctor；plugin-package-manager 只改注释，不发版。
 
+### 上手与故障说明：脚手架、开始使用与需要处理、看不了图、报错写明怎么修（@aalis/create-aalis、@aalis/create-aalis-plugin、@aalis/runtime、@aalis/api-doctor、@aalis/plugin-doctor、@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-package-manager、@aalis/plugin-package-manager、@aalis/plugin-cli、@aalis/plugin-media、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-vector、@aalis/plugin-memory-summary、@aalis/plugin-session-manager、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/plugin-embedding-ollama、@aalis/plugin-maimai、@aalis/plugin-okx-trading、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-office、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-usage-stats、@aalis/plugin-process-local、@aalis/plugin-code-sandbox-os、@aalis/schema-config、@aalis/api-host-config）
+
+新用户从建项目到第一次对话少走弯路，出了问题界面直接说清是哪个插件、为什么、怎么修。
+
+- **create-aalis**：默认流程只问四件事：项目名、对话模型（选了要 key 的可以当场粘贴，输入不回显）、接入平台、要不要长期语义记忆。默认集不再装联网搜索（full 档照旧装），WebUI 挪进平台组；档位、记忆后端、embedding、向量库收进 `--advanced`。按对话能力探测本机 Ollama（认 `OLLAMA_HOST`），探到时对话模型与语义记忆默认用它、零 key 可用，没有对话模型时提示先 `ollama pull`。LanceDB 在没有预编译件的平台上不出现。装依赖失败时按类别写出原因与修法（网络与源、源上没有这个包或版本、权限、磁盘、原生模块编译、平台不支持、浏览器下载、peer 冲突）。生成的 README 与结尾提示和实际一致（WebUI 端口、装插件后要重启或「重新扫描」）。提问时按 Ctrl+C 写「已取消，没有生成任何文件」、退出码 130。断网时 full 档的离线清单补上联网搜索与绘图。
+- **create-aalis-plugin**：生成的依赖写成「源上当前版本起、1.0 之前」的区间，查不到版本就退出并写明怎么修（新增 `--registry`），不再写 `latest`；示例工具声明 `risk`，注释写三档与可转后台的声明；新增一问「登记会话设置项？」；指引全部改用 npm；显示名按字面量转义写进源码。
+- **runtime**：`--init` 建的家目录按安装集写上 cli、webui 两个平台档（`enabledToolGroups: ["*"]`），与 create-aalis 生成的一致；启动告警改用共享判据，沿依赖链写到根。
+- **缺服务与等待启动的共享判据**（api-doctor 新增 `unmetDependencies`、`describeUnmet` 与相关类型）：沿依赖链追到根，根的情形分失败、已停用、待配置、没有提供者、成环、在运行却没在提供，以及在启动；只收插件状态快照与当前可用的服务名。runtime 启动告警、plugin-doctor 的 `plugins.pending`、WebUI 的「需要处理」、CLI 欢迎行与市场卸载闸共用这一份，说法一致。
+- **WebUI**：
+  - 「需要处理」每个缺服务的插件一行，说明写到根插件的链与根的情形，按钮直达根插件（待配置的「去配置」，用提醒色）；提供者还在启动的写「等待 <提供者> 启动」，不计数，插件树不加标记。插件详情、「会话服务未启用」与启用、保存的回执用同一句。
+  - 首页按状态出现「开始使用」：还没有能对话的模型时列出已装的对话模型插件与状态，以及市场里可装的提供者，有了模型就消失。
+  - api-webui：删掉 `PluginListItem.missing` 与「需要处理」插件项的 `missing`，换成 `lacking`、`waiting`、`unconfigured`；`PluginListItem` 新增 `configSection`；`MarketplacePackage` 新增 `provides`；默认子系统表新增「媒体」「工作流」。
+  - 插件树：本地进程有了显示名并归「系统」，代码沙箱归「工具」。
+  - webui-client 打包用的库挪进 `devDependencies`，装进项目时不再拉 React 等运行库（默认集实测从 458 个包、290M 降到 214 个包、58M）。
+- **插件市场**（plugin-package-manager、plugin-webui-server、plugin-webui-client）：按包声明提供的服务检索，卡片标「提供：…」。卸载默认保留配置段与它引用的密钥，与 `npm uninstall` 一致，重装后按原段启动；配置文件里有这一段时卸载框给「同时删除配置（含 N 个密钥）」，默认不勾，勾了只删没人再引用的密钥。只有被卸的插件自己正在提供服务时才拦依赖它的插件，待配置、失败或已停用的唯一提供者可以直接卸掉换一个。装卸失败的回执与脚手架用同一张类别表写原因与修法。
+- **plugin-cli**：有插件没起来时，欢迎行加一句「有 N 个插件没起来，输入 /doctor 查看原因与修法」（没有诊断插件时改说看日志）。
+- **plugin-media**：看不了图时（没有能看图的模型，或识别返回空），图照样落盘、在正文留引用，消息另加一行「附了 N 张图，当前无法查看」；新增 doctor 检查「识图」。
+- **报错写明怎么修**：作者指南新增「报错与故障说明」，第 9 节「apply 里别 throw、记日志后优雅降级」改为「部分功能坏了才降级，整体用不了就抛错或发提示」。第一批普查改了激活失败、doctor 检查、脚手架与市场的报错：对话模型取不到模型列表、SQLite 与 MongoDB 开库或连接失败、配置不是 storage URI 等都写明修法；指向升级说明的地址改成文档站完整地址；登录页「token 在启动日志里」的失实文案改正。
+- **破坏性**：
+  - api-webui：删除 `PluginListItem.missing` 与「需要处理」插件项的 `missing`。
+  - api-package-manager：`uninstall` 默认保留配置段与密钥（此前市场卸载删段），要删段传 `removeConfig`；导出函数 `findServiceDependents` 多了必填参数 `available`。
+  - plugin-maimai、plugin-okx-trading 缺凭据时从「告警后跳过」改为激活失败，WebUI 标「待配置」；plugin-asr-openai、plugin-asr-whisper-cpp 的必需项改为 schema 必填。
+  - create-aalis：默认集不含联网搜索；`--tier minimal` 默认也带 WebUI；`--advanced` 的 embedding 改为单选。
+  - create-aalis-plugin：生成的依赖不再是 `latest`，查不到版本时退出。
+- **发布档位**：次版本：api-webui、api-doctor、api-package-manager、plugin-package-manager、plugin-webui-server、plugin-webui-client、plugin-doctor、plugin-media、create-aalis、create-aalis-plugin、plugin-maimai、plugin-okx-trading；其余为 patch。新增依赖：api-webui、plugin-package-manager、plugin-webui-server、plugin-media 依赖 api-doctor，plugin-cli 依赖 api-doctor 与 api-commands（可选使用 plugins、commands），plugin-media 可选使用 doctor；这些对 api-doctor 的下限发布时抬到本批 api-doctor 的新版本。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
