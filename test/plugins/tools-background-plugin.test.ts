@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { authority } from '../../packages/api-authority/src/index.js';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import {
@@ -16,7 +15,7 @@ import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tools 的转后台接线：配置的两项上限、backgroundTasks 服务、会话删除与 app:stopping 两个事件、
-// 停用时落成 aborted 并写进插件数据、storage 晚于本插件上线时照样读回、判 owner 经 authority。
+// 停用时落成 aborted 并写进插件数据、storage 晚于本插件上线时照样读回。
 // 执行器本身的规则见 tools-background.test.ts，重启读回见 test/integration/background-restart.test.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -83,7 +82,7 @@ async function start(config: Record<string, unknown> = {}, opts: { storage?: Sto
     notices.push(message);
   });
   let seq = 0;
-  const run = async (args: Record<string, unknown>, over: Partial<ToolCallContext> = {}) => {
+  const run = async (args: Record<string, unknown>) => {
     seq++;
     const result: ToolExecutionResult = await host.tools.require().execute('zz_slow', args, {
       sessionId: SESSION,
@@ -93,7 +92,6 @@ async function start(config: Record<string, unknown> = {}, opts: { storage?: Sto
       inbound: {},
       turnId: `zz-turn-${seq}`,
       callId: `zz-call-${seq}`,
-      ...over,
     });
     return JSON.parse(result.content) as Record<string, unknown>;
   };
@@ -152,24 +150,6 @@ describe('plugin-tools 的转后台接线', () => {
     expect(w.notices).toHaveLength(1);
   });
 
-  it('判 owner 经 authority：owner 看得到别人起的任务', async () => {
-    const w = await start();
-    w.host.provide(authority, { isOwner: (_platform: string, userId?: string) => userId === '10001' } as never);
-    await w.run({ runInBackground: true }, { platform: 'onebot', userId: '30001' });
-    const list = async (userId: string) => {
-      const result = await w.host.tools
-        .require()
-        .execute(
-          'background_list',
-          {},
-          { sessionId: SESSION, platform: 'onebot', userId, enabledGroups: [], inbound: {} },
-        );
-      return (JSON.parse(result.content).tasks as unknown[]).length;
-    };
-    expect(await list('30002')).toBe(0);
-    expect(await list('10001')).toBe(1);
-  });
-
   it('停用时在跑的落成 aborted 并写进插件数据', async () => {
     const files = new Map<string, string>();
     const w = await start({}, { storage: pluginDataStorage(files) });
@@ -200,7 +180,6 @@ describe('plugin-tools 的转后台接线', () => {
               status: 'completed',
               startedAt: 1,
               endedAt: 2,
-              starter: { platform: 'webui', userId: 'console' },
             },
           ],
         }),

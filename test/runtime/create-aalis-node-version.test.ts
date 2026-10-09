@@ -26,7 +26,7 @@ describe('checkNodeVersion', () => {
     expect(checkNodeVersion(version).ok).toBe(false);
   });
 
-  it('不够时写明需要的版本、当前版本、各平台的升级方法，以及旧 Node 上装好的项目怎样换新版记忆后端、旧库不用迁移', () => {
+  it('不够时写明需要的版本、当前版本、各平台的升级方法，旧 Node 上装好的项目怎样换新版记忆后端、旧库不用迁移，末行指向文档站的升级一节', () => {
     const result = checkNodeVersion('v22.16.0');
     if (result.ok) throw new Error('v22.16.0 应当不够');
     expect(result.error).toContain('Aalis 需要 Node.js 24.15.0 起，当前是 v22.16.0');
@@ -46,6 +46,9 @@ describe('checkNodeVersion', () => {
     ]) {
       expect(result.error).toContain(part);
     }
+    expect(result.error.split('\n').at(-1)).toBe(
+      '升级步骤与已有项目换 Node 后的处理见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
+    );
   });
 });
 

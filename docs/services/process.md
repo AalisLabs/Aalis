@@ -191,7 +191,7 @@ process 是框架里**权限最高的能力**之一。约束分两层：
 
 ### Consumer 侧
 
-process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。`plugin-tool-system` 的 `exec` 设 `visibility: 'restricted'` + `confirm: 'session'`；转到后台的 `exec` 由执行器的 `background_stop` 按中止契约停掉，只停得了同一会话里与调用者同一身份起的任务（owner 除外）。shell 工具**继承宿主完整环境**。需要环境隔离的执行走 code-sandbox-os。
+process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。`plugin-tool-system` 的 `exec` 设 `visibility: 'restricted'` + `confirm: 'session'`；转到后台的 `exec` 由执行器的 `background_stop` 按中止契约停掉，只停得了同一会话里的任务。shell 工具**继承宿主完整环境**。需要环境隔离的执行走 code-sandbox-os。
 
 ### 不是沙箱
 

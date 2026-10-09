@@ -1,5 +1,4 @@
 import { createServer } from 'node:http';
-import type { Page } from 'puppeteer';
 import { describe, expect, it } from 'vitest';
 import { llm, metered } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -14,7 +13,16 @@ import {
 } from '../../packages/core/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
 import { MockLLMService } from '../fixtures/mock-llm.js';
-import { aria, onViewport, openWebui, text, useWebuiE2E, VIEWPORTS, webuiStack } from '../fixtures/webui-e2e.js';
+import {
+  aria,
+  attentionRows,
+  onViewport,
+  openWebui,
+  text,
+  useWebuiE2E,
+  VIEWPORTS,
+  webuiStack,
+} from '../fixtures/webui-e2e.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
@@ -124,46 +132,37 @@ async function start(extra: PluginDefinition[], options: { slowThresholdMs?: num
   return { app, origin: `http://127.0.0.1:${port}` };
 }
 
-/** 一组行（「需要处理」与「开始使用」同一个样子）：标题、说明与行尾的操作 */
-const rows = (page: Page, scope: string) =>
-  page.$$eval(`${scope} .attention-row`, items =>
-    items.map(row =>
-      ['.attention-title', '.attention-detail', 'a, button'].map(part => row.querySelector(part)?.textContent),
-    ),
-  );
-
 describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   const phone = width === 'phone';
   const { newSession, send } = onViewport(phone);
   /** 首页上方的一块：桌面在主区，手机在第一层 */
   const home = (name: string) => `${phone ? 'nav[aria-label="会话"]' : 'main'} ${aria(name, 'region')}`;
 
-  it('开始使用：列出待配置的模型插件与市场里可装的提供者；填上 key 后消失，发消息有回复；市场按服务搜得到提供者', async () => {
+  it('开始使用：列出待配置的模型插件与市场里可装的提供者；在另一个标签页填上 key 后首页的它随之消失，发消息有回复；市场按服务搜得到提供者', async () => {
     const stack = await start([keyedModel]);
     const { page, problems } = await openWebui(e2e.browser, stack.origin, viewport, cleanups);
     const card = home('开始使用');
     await page.waitForSelector(`${card} ${text('@aalis/plugin-zz-onboard-chat')}`);
-    expect(await rows(page, card)).toEqual([
+    expect(await attentionRows(page, card)).toEqual([
       ['测试模型', '待配置：apiKey', '去配置'],
       ['@aalis/plugin-zz-onboard-chat', '另一个对话模型', '安装'],
     ]);
 
-    await page.locator(`${card} ${aria('去配置', 'link')}`).click();
-    await page.waitForFunction(
-      name => location.pathname === `/plugins/${name}` && location.hash === '#config',
-      {},
-      MODEL,
+    expect(await page.$eval(`${card} ${aria('去配置', 'link')}`, link => link.getAttribute('href'))).toBe(
+      `/plugins/${MODEL}#config`,
     );
-    await page.locator('main ::-p-aria(API Key)').fill('sk-placeholder-0000');
-    await page.locator(`main ${aria('保存并重载', 'button')}`).click();
-    await page.waitForSelector(`.plugin-summary ${text('运行中')}`);
-    expect(stack.app.plugins.getPlugin(MODEL)?.state).toBe('active');
 
-    await page.goto(`${stack.origin}/`);
+    // 首页开着，在另一个标签页里填 key：插件列表一变，首页重取模型列表，「开始使用」随之消失
+    const settings = await openWebui(e2e.browser, stack.origin, viewport, cleanups, `/plugins/${MODEL}`);
+    await settings.page.locator('main ::-p-aria(API Key)').fill('sk-placeholder-0000');
+    await settings.page.locator(`main ${aria('保存并重载', 'button')}`).click();
+    await settings.page.waitForSelector(`.plugin-summary ${text('运行中')}`);
+    expect(stack.app.plugins.getPlugin(MODEL)?.state).toBe('active');
+    await page.waitForSelector(card, { hidden: true });
+
     await newSession(page);
     await send(page, '在吗');
     await page.waitForSelector(text(REPLY));
-    expect(await page.$(card)).toBeNull();
 
     await page.goto(`${stack.origin}/market`);
     await page.locator(`main ${aria('搜索', 'searchbox')}`).fill('embedding');
@@ -173,6 +172,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     );
     expect(listed).toEqual(['@aalis/plugin-zz-onboard-embed']);
     expect(problems).toEqual([]);
+    expect(settings.problems).toEqual([]);
   }, 90_000);
 
   it('需要处理：缺的服务沿链追到根，每个没起来的插件计 1；没有提供者、成环各有写法；只在等别的插件启动的不计数、启动完转为运行', async () => {
@@ -204,7 +204,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const { page, problems } = await openWebui(e2e.browser, stack.origin, viewport, cleanups, '/health');
     const block = `main ${aria('需要处理', 'region')}`;
     await page.waitForSelector(`${block} ${text('链顶')}`);
-    expect(await rows(page, block)).toEqual([
+    expect(await attentionRows(page, block)).toEqual([
       ['链根', '失败：打不开数据库', '去处理'],
       ['链中', '缺服务：链根（失败：打不开数据库）', '去处理 链根'],
       ['链顶', '缺服务：链中 → 链根（失败：打不开数据库）', '去处理 链根'],
@@ -266,16 +266,6 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
 /** 换掉记忆后端：卸掉内存记忆，换上一个激活就失败的 */
 async function replaceMemory(app: App) {
   await app.plugins.unload('@aalis/plugin-memory-inmemory');
-  await app.plugin(
-    definePlugin({
-      name: 'zz-onboard-memory',
-      displayName: '坏的记忆',
-      provides: [memory],
-      apply() {
-        throw new Error('打不开数据库');
-      },
-    }),
-    {},
-  );
+  await app.plugin(broken('zz-onboard-memory', '坏的记忆', [memory.name], '打不开数据库'), {});
   await app.plugins.idle();
 }

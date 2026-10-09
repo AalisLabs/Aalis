@@ -4,7 +4,7 @@ import { EmptyState } from '../components/EmptyState';
 import { FetchError } from '../components/FetchError';
 import { SERVICE_ABSENT, useConnectionState, useSessionClient } from '../connection';
 import { SESSION_PROTOCOL, useFindPlugin, usePlugins, useProvider } from '../plugins/list';
-import { byRoot, pluginName, rootAction, statusLine, unmetText } from '../plugins/status';
+import { byRoot, fixLink, pluginName, statusLine, unmetText } from '../plugins/status';
 import { paths } from '../routes';
 
 /** 会话服务在不在：有提供会话协议、正在运行的插件；插件列表还没取到（在取或取数出错）时为 undefined */
@@ -13,42 +13,48 @@ export function useSessionService(): boolean | undefined {
   return plugins?.some(plugin => plugin.state === 'active' && plugin.provides.includes(SESSION_PROTOCOL));
 }
 
-/** 会话区：会话连接停止（握手被拒）或会话服务不在时写明原因，否则照常显示 */
-export function SessionGate({ children }: { children: ReactNode }) {
+/**
+ * 会话区：会话连接停止（握手被拒）或会话服务不在时写明原因，否则照常显示。quiet 时不写原因、什么都不显示：桌面上会话列表
+ * 与主区同时在，原因只写在主区
+ */
+export function SessionGate({ children, quiet = false }: { children: ReactNode; quiet?: boolean }) {
   const state = useConnectionState(useSessionClient());
-  if (state.status === 'stopped') return <EmptyState tone="danger" title="会话连接已停止" description={state.reason} />;
-  if (state.status === 'retrying' && state.code === SERVICE_ABSENT) return <ServiceAbsent />;
-  return children;
+  const reason =
+    state.status === 'stopped' ? (
+      <EmptyState tone="danger" title="会话连接已停止" description={state.reason} />
+    ) : state.status === 'retrying' && state.code === SERVICE_ABSENT ? (
+      <ServiceAbsent />
+    ) : undefined;
+  if (!reason) return children;
+  return quiet ? null : reason;
 }
 
 /**
- * 提供会话协议的插件缺服务时写它的链与根、去根插件（记忆后端坏了，首页就看得到根因）；在等时写「等待启动」与在等谁；它失败、
- * 停用或别的情形链到它的详情；没装时链到市场
+ * 提供会话协议的插件缺服务时写它的链与根（记忆后端坏了，首页就看得到根因）；在等、失败或待配置时写它的状态与原因；停用着、
+ * 启用着时写启用后自动连上。按钮与「需要处理」里它那一行同一个去处；没装时链到市场
  */
 export function ServiceAbsent() {
   const { plugins } = usePlugins();
   const find = useFindPlugin();
   const provider = plugins?.find(plugin => plugin.provides.includes(SESSION_PROTOCOL));
-  const root = provider?.lacking[0] && rootAction(provider.lacking[0].root, find);
   const description =
     provider && provider.lacking.length > 0
       ? byRoot(provider.lacking)
           .map(unmet => `${pluginName(provider.instanceId, find)} → ${unmetText(unmet, find)}`)
           .join('；')
-      : provider && provider.waiting.length > 0
+      : provider && (provider.state === 'error' || provider.waiting.length > 0)
         ? statusLine(provider, find)
         : '提供会话协议的插件启用后，这里会自动连上。';
+  const fix = provider && fixLink(provider.instanceId, provider, find);
   return (
     <EmptyState
       title="会话服务未启用"
       description={description}
       action={
-        !provider ? (
-          plugins && <ButtonLink to={paths.market}>去市场</ButtonLink>
-        ) : root ? (
-          <ButtonLink to={root.to}>{root.label}</ButtonLink>
+        fix ? (
+          <ButtonLink to={fix.to}>{fix.label}</ButtonLink>
         ) : (
-          <ButtonLink to={paths.plugin(provider.instanceId)}>去插件详情</ButtonLink>
+          plugins && <ButtonLink to={paths.market}>去市场</ButtonLink>
         )
       }
     />

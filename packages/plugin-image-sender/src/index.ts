@@ -18,7 +18,6 @@ import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import {
   createStorageGateway,
-  isHostAbsolutePath,
   isStorageNotFound,
   isStorageUri,
   type StorageService,
@@ -226,12 +225,13 @@ function registerImageSender(caps: Caps): void {
           refTag = url;
           via = 'url';
         } else if (storageUri) {
-          if (isHostAbsolutePath(storageUri)) {
-            return JSON.stringify({ error: 'storage_uri 要写存储地址（如 data:/images/…），不能写本机路径' });
-          }
           // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
           // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
-          const loaded = await loadStorageMedia(toStorageUri(storageUri), kind);
+          const uri = storeUriOf(storageUri);
+          if (!uri) {
+            return JSON.stringify({ error: 'storage_uri 要写存储地址（如 data:/images/…），不能写本机路径' });
+          }
+          const loaded = await loadStorageMedia(uri, kind);
           if (!loaded.ok) return JSON.stringify({ error: loaded.error });
           data = loaded.data;
           // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致，供 history_ref 回查匹配。
@@ -243,9 +243,9 @@ function registerImageSender(caps: Caps): void {
           if (found.startsWith('http://') || found.startsWith('https://')) {
             data = found;
           } else {
-            // 本地来源只认存储库内的文件：storage URI 或历史相对路径（data/images/…）。宿主机绝对路径、
+            // 本地来源只认存储库内的文件：storage URI 或历史相对路径（data/images/…）。本机路径、
             // file://、data URI 等来源不在存储库内，读不了文件头，无从核对格式
-            const uri = isHostAbsolutePath(found) ? undefined : toStorageUri(found);
+            const uri = storeUriOf(found);
             if (!uri || !isStorageUri(uri)) {
               return JSON.stringify({ error: `引用 ${historyRef} 的来源不在存储库内，无法核对格式，不能发送` });
             }
@@ -390,6 +390,15 @@ async function archiveOutboundAttachment(
   }
 }
 
+/** 输入对应的存储地址；本机路径（宿主机绝对路径与家目录简写）不是存储地址，没有。toStorageUri 只在遇到本机路径时抛错 */
+function storeUriOf(input: string): string | undefined {
+  try {
+    return toStorageUri(input);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 在最近 200 条消息里寻找匹配 historyRef 的媒体来源：http(s) URL、存储库内文件的 storage URI，
  * 或历史附件里的原样数据串（能否发送由调用方判定）。
@@ -413,9 +422,9 @@ async function resolveHistoryRef(
   // storage URI / 历史相对路径：归一化后 stat；命中即用，未命中 fallthrough 到子串匹配。
   // 完整相对路径 `data/images/x.jpg` → `data:/images/x.jpg` 能直接命中；
   // 单段 hash（如 `abc123.jpg`）归一化成 `data:/abc123.jpg` stat 失败，正确回落子串匹配。
-  // 宿主机绝对路径不是存储地址，直接走子串匹配
-  if (!isHostAbsolutePath(normalized)) {
-    const asUri = toStorageUri(normalized);
+  // 本机路径不是存储地址，直接走子串匹配
+  const asUri = storeUriOf(normalized);
+  if (asUri) {
     try {
       await storage.stat(asUri);
       return asUri;

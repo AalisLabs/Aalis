@@ -186,7 +186,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
         timestamp: 3,
         attachments: [{ kind: 'image', data: 'https://example.invalid/pics/dog.png' }],
       } as Message,
-      // 入站落盘失败时 onebot 退回平台给的本机路径；首段 data 与存储根同名，Windows 路径带盘符
+      // 入站落盘失败时 onebot 退回平台给的本机路径；首段 data 与存储根同名，Windows 路径带盘符，另有家目录简写
       {
         role: 'user',
         content: '[语音]',
@@ -195,6 +195,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
           { kind: 'audio', data: '/data/images/s/song.mp3' },
           { kind: 'audio', data: '/root/.config/QQ/Ptt/abc.amr' },
           { kind: 'audio', data: 'C:\\Users\\napcat\\Ptt\\def.amr' },
+          { kind: 'audio', data: '~/Ptt/ghi.amr' },
         ],
       } as Message,
     ];
@@ -248,6 +249,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   it.each([
     '/data/images/s/cat.png',
     'C:\\pics\\cat.png',
+    '~/pics/cat.png',
   ])('storage_uri 写成本机路径 %s → 拒发，说明要写存储地址', async uri => {
     const out = await send({ kind: 'image', storage_uri: uri });
     expect(out.error).toBe('storage_uri 要写存储地址（如 data:/images/…），不能写本机路径');
@@ -290,17 +292,19 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     ['首段与存储根同名', 'song.mp3'],
     ['首段不是存储根', 'abc.amr'],
     ['Windows 盘符路径', 'def.amr'],
-  ])('history_ref 命中历史里的宿主机绝对路径（%s）→ 按库外来源拒发', async (_label, ref) => {
+    ['家目录简写', 'ghi.amr'],
+  ])('history_ref 命中历史里的本机路径（%s）→ 按库外来源拒发', async (_label, ref) => {
     const out = await send({ kind: 'audio', history_ref: ref });
     expect(out.error).toBe(`引用 ${ref} 的来源不在存储库内，无法核对格式，不能发送`);
     expect(outbound).toHaveLength(0);
   });
 
-  // 宿主机绝对路径不是存储地址：不当 storage URI 去查，照样在历史里找，找到后按库外来源拒发
+  // 本机路径不是存储地址：不当 storage URI 去查，照样在历史里找，找到后按库外来源拒发
   it.each([
     '/root/.config/QQ/Ptt/abc.amr',
     'C:\\Users\\napcat\\Ptt\\def.amr',
-  ])('history_ref 直接写宿主机绝对路径 %s → 按库外来源拒发', async ref => {
+    '~/Ptt/ghi.amr',
+  ])('history_ref 直接写本机路径 %s → 按库外来源拒发', async ref => {
     const out = await send({ kind: 'audio', history_ref: ref });
     expect(out.error).toBe(`引用 ${ref} 的来源不在存储库内，无法核对格式，不能发送`);
     expect(outbound).toHaveLength(0);

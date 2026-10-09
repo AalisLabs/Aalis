@@ -13,6 +13,7 @@ import {
   openWebui,
   sessionIdOf,
   text,
+  toastSays,
   useWebuiE2E,
   VIEWPORTS,
   webuiStack,
@@ -230,11 +231,8 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const confirm = aria('回滚这一轮的文件改动？', 'dialog');
     await page.waitForSelector(`${confirm} ${text('这一轮执行过命令，命令的效果不会撤回。')}`);
     await page.locator(`${confirm} ${aria('回滚', 'button')}`).click();
-    await page.waitForSelector(`.toast ${text('已回滚：恢复 1 个文件')}`);
+    await toastSays(page, '已回滚：恢复 1 个文件');
     expect(stack.rewound).toHaveLength(1);
-    // 手机上 Toast 在顶部，会盖住头部的按钮
-    await page.locator(`.toast ${aria('关闭', 'button')}`).click();
-    await page.waitForSelector('.toast', { hidden: true });
 
     // 计划：待办替身发 todo:updated，计划标签出现
     await stack.plan(sessionId, PLAN);

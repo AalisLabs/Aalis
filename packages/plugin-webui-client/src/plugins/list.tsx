@@ -1,4 +1,5 @@
-import type { UnmetRoot, UnmetService } from '@aalis/api-doctor';
+import type { UnmetService } from '@aalis/api-doctor';
+import type { PluginBlockers } from '@aalis/api-webui';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useConnection } from '../connection';
@@ -18,8 +19,8 @@ const STATES: ReadonlySet<string> = new Set<PluginState>([
   'error',
 ]);
 
-/** GET /api/plugins 的一项（一个插件实例） */
-export interface PluginRow {
+/** GET /api/plugins 的一项（一个插件实例）；没起来的原因（缺、在等、待配置）照契约 */
+export interface PluginRow extends PluginBlockers {
   /** 插件包名：同一插件的几个实例按它合在一起 */
   name: string;
   instanceId: string;
@@ -35,12 +36,6 @@ export interface PluginRow {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
-  /** 缺的 required 服务，每条从直接提供者沿依赖链追到根（pending 时） */
-  lacking: UnmetService[];
-  /** 在等的：根插件在启动（pending 时） */
-  waiting: UnmetService[];
-  /** 必填却没填的配置项（error 时） */
-  unconfigured: string[];
   tools: string[];
   commands: string[];
   extends?: { events?: string[]; hooks?: string[] };
@@ -52,40 +47,50 @@ export interface PluginRow {
   defaultConfig: Record<string, unknown>;
 }
 
-const strings = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+const isString = (value: unknown): value is string => typeof value === 'string';
+
+/** 文字数组：不是数组时是空的，不是文字的项丢掉 */
+export const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter(isString) : []);
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 
-/** 认得的根：契约加了一种根而这里没跟上时编译不过 */
-const ROOTS: ReadonlySet<string> = new Set(
-  Object.keys({
-    error: true,
-    disabled: true,
-    starting: true,
-    withdrawn: true,
-    unprovided: true,
-    cycle: true,
-  } satisfies Record<UnmetRoot['kind'], true>),
-);
+/** 根的字段按种类核；服务端比客户端新时的根这里不认识，只核有种类，写兜底的说明（见 status.ts 的 rootText） */
+function rootOk(root: Record<string, unknown>): boolean {
+  switch (root.kind) {
+    case 'error':
+      return isString(root.instance) && (root.error === undefined || isString(root.error));
+    case 'disabled':
+    case 'starting':
+      return isString(root.instance);
+    case 'withdrawn':
+      return isString(root.instance) && isString(root.service);
+    case 'unprovided':
+      return isString(root.service);
+    case 'cycle':
+      return Array.isArray(root.instances) && root.instances.every(isString);
+    default:
+      return isString(root.kind);
+  }
+}
 
-/** 缺与在等的各条：形状不对的整张列表都不认，免得画出半截的链 */
-function unmet(value: unknown, instanceId: string): UnmetService[] {
+/**
+ * 缺与在等的各条，插件列表与「需要处理」的插件项共用：形状不对时没有（插件列表整张不认，「需要处理」只丢这一项），
+ * 免得画出半截的链；没给时是空的
+ */
+export function unmetOf(value: unknown): UnmetService[] | undefined {
   if (value === undefined) return [];
   const ok =
     Array.isArray(value) &&
     value.every(
       item =>
         isRecord(item) &&
-        typeof item.service === 'string' &&
+        isString(item.service) &&
         Array.isArray(item.chain) &&
-        item.chain.every(link => typeof link === 'string') &&
+        item.chain.every(isString) &&
         isRecord(item.root) &&
-        typeof item.root.kind === 'string' &&
-        ROOTS.has(item.root.kind),
+        rootOk(item.root),
     );
-  if (!ok) throw new Error(`插件 ${instanceId} 缺的服务认不出`);
-  return value as UnmetService[];
+  return ok ? (value as UnmetService[]) : undefined;
 }
 
 function parseRow(row: unknown): PluginRow {
@@ -93,6 +98,9 @@ function parseRow(row: unknown): PluginRow {
     throw new Error('插件列表里有一项不是预期的形状');
   }
   if (typeof row.state !== 'string' || !STATES.has(row.state)) throw new Error(`插件 ${row.instanceId} 的状态认不出`);
+  const lacking = unmetOf(row.lacking);
+  const waiting = unmetOf(row.waiting);
+  if (!lacking || !waiting) throw new Error(`插件 ${row.instanceId} 缺的服务认不出`);
   const extended = isRecord(row.extends) ? row.extends : undefined;
   return {
     name: row.name,
@@ -107,8 +115,8 @@ function parseRow(row: unknown): PluginRow {
     provides: strings(row.provides),
     requiredServices: strings(row.requiredServices),
     optionalServices: strings(row.optionalServices),
-    lacking: unmet(row.lacking, row.instanceId),
-    waiting: unmet(row.waiting, row.instanceId),
+    lacking,
+    waiting,
     unconfigured: strings(row.unconfigured),
     tools: strings(row.tools),
     commands: strings(row.commands),
@@ -199,6 +207,9 @@ export const SESSION_PROTOCOL = 'session-protocol';
 export const LLM = 'llm';
 export const CHAT = 'chat';
 
+/** 包管理的服务名（契约 api-package-manager 的 packageManager） */
+export const PACKAGE_MANAGER = 'package-manager';
+
 /** 按服务名找提供它的插件实例（插件列表的 provides，不认插件名）；插件列表没取到或没有提供者时为 undefined */
 export function useProvider(service: string): string | undefined {
   return usePlugins().plugins?.find(plugin => plugin.provides.includes(service))?.instanceId;
@@ -207,6 +218,12 @@ export function useProvider(service: string): string | undefined {
 /** 提供这个界面的插件实例：界面自己的接口出了错，看它的日志；插件列表没取到时为 undefined */
 export function useHost(): string | undefined {
   return usePlugins().plugins?.find(plugin => plugin.self)?.instanceId;
+}
+
+/** 市场的装卸更新没成时看谁的日志：npm 的输出与原因记在提供包管理服务的实例那里；没有它时请求错在提供界面的实例 */
+export function usePackageManager(): string | undefined {
+  const host = useHost();
+  return useProvider(PACKAGE_MANAGER) ?? host;
 }
 
 /** 插件实例的显示名：显示名，没有时是包名 */

@@ -172,7 +172,7 @@ export interface IncomingMessage {
   nickname?: string;
   /**
    * 平台侧消息 ID（如 OneBot 的 message_id）。
-   * 由适配器填充；归档插件会写入 metadata.messageId，供"引用回复"反查归档原文以保留图片描述等富信息。
+   * 由适配器填充；归档插件写进元数据的 {@link WellKnownMetadataKeys}.MessageId，供"引用回复"反查归档原文以保留图片描述等富信息。
    */
   messageId?: string;
   /**
@@ -515,9 +515,9 @@ export interface ArchivedAttachment {
 }
 
 /**
- * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表登记由一方写入、另一方读取的键：写方与会话服务引用这里的
- * 常量，第三方的 agent、存档与适配器照着写，读历史的一方（会话服务回看历史等）才还原得出说话人、文件、回复的模型与 token、
- * 工具卡的归组。
+ * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表登记由一方写入、另一方读取的键：写方与读方都引用这里的
+ * 常量，第三方的 agent、存档与适配器照着写，读历史与记忆的一方（会话服务回看历史、向量记忆、用户档案与关系等）才还原得出
+ * 说话人、群、文件、回复的模型与 token、工具卡的归组。
  *
  * - `VisibleContent`：assistant 消息的可见正文（字符串）。回复经结构化输出（persona 的 outputFormat）
  *   时，`content` 存整串 JSON 信封（保持历史 few-shot 的格式），用户实际看到的是其中的回复字段。
@@ -530,6 +530,11 @@ export interface ArchivedAttachment {
  *   图片等按地址显示。没有附件时不写。
  * - `Platform`、`UserId`、`Nickname`：说话人的平台、用户 id 与昵称（字符串）。存档写入站消息的；agent 给她自己的回复写
  *   这一轮的平台与她在那里的账号、昵称。会话服务据此标出说话人与是不是 owner，向量记忆、用户档案与关系等也读。
+ * - `GroupId`、`GroupName`、`SessionType`：说话所在的群号、群名与会话类型（字符串，即入站消息的 `groupId`、`groupName`、
+ *   `sessionType`）。存档写入站消息的，agent 给她自己的回复写这一轮的；向量记忆与最近消息据此写出说话的位置，关系插件据此
+ *   判断是不是群聊。
+ * - `MessageId`：平台侧的消息 id（字符串，即入站消息的 `messageId`），存档写；存档按它反查被引用的原文，关系插件据此把
+ *   引用与回复对回消息。
  * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；插件自己写的记录（发出的
  *   附件、投递失败）写插件的名字。会话服务据此标出提问是不是内部注入的。
  * - `HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`：宿主通知的子类（`hostNotice.kind`）、id（`hostNotice.id`）与给界面的
@@ -552,6 +557,10 @@ export const WellKnownMetadataKeys = {
   Platform: 'platform',
   UserId: 'userId',
   Nickname: 'nickname',
+  GroupId: 'groupId',
+  GroupName: 'groupName',
+  SessionType: 'sessionType',
+  MessageId: 'messageId',
   Source: 'source',
   HostNoticeKind: 'hostNoticeKind',
   HostNoticeId: 'hostNoticeId',

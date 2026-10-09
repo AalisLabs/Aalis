@@ -10,6 +10,7 @@ import { Table, type TableColumn } from '../components/Table';
 import { listTime } from '../format';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { groupFromParams, inGroup, paths, type RoomGroupAddress } from '../routes';
+import { SessionGate } from '../shell/SessionGate';
 import { Main } from '../shell/Shell';
 import { useSessionActions } from './actions';
 import { useSessionList } from './live-list';
@@ -125,49 +126,53 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
   return (
     <Main>
       <Panel icon={MessagesSquare} title={title} back={paths.home}>
-        <div className="rooms-page">
-          {list.error ? (
-            <FetchError what="房间" error={list.error} retry={list.retry} source={sessions} />
-          ) : (
-            list.sessions && (
-              <Table
-                label={`${title}的房间`}
-                rows={list.sessions}
-                rowKey={s => s.id}
-                columns={columns}
-                empty="这一组没有房间"
-                search={s => `${s.title} ${s.id}`}
-                filter={{ fields: FILTER_FIELDS, values: filterValues, onChange: setFilter }}
-                selection={{
-                  selected,
-                  onChange: setSelected,
-                  rowLabel: s => s.title,
-                  actions: keys => (
-                    <>
-                      <Button
-                        onClick={() => {
-                          actions.archive(rowsOf(keys));
-                          setSelected(new Set());
-                        }}
-                      >
-                        归档
-                      </Button>
-                      <Button variant="text" danger onClick={() => actions.remove(rowsOf(keys))}>
-                        删除
-                      </Button>
-                    </>
-                  ),
-                }}
-              />
-            )
-          )}
-          <div className="rooms-hint">
-            <p>要统一设置一类房间，用「会话默认」里这个平台的档或它的群、私聊条目；平台档按平台名生效，不区分实例。</p>
-            <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
-              去会话默认
-            </ButtonLink>
+        <SessionGate>
+          <div className="rooms-page">
+            {list.error ? (
+              <FetchError what="房间" error={list.error} retry={list.retry} source={sessions} />
+            ) : (
+              list.sessions && (
+                <Table
+                  label={`${title}的房间`}
+                  rows={list.sessions}
+                  rowKey={s => s.id}
+                  columns={columns}
+                  empty="这一组没有房间"
+                  search={s => `${s.title} ${s.id}`}
+                  filter={{ fields: FILTER_FIELDS, values: filterValues, onChange: setFilter }}
+                  selection={{
+                    selected,
+                    onChange: setSelected,
+                    rowLabel: s => s.title,
+                    actions: keys => (
+                      <>
+                        <Button
+                          onClick={() => {
+                            actions.archive(rowsOf(keys));
+                            setSelected(new Set());
+                          }}
+                        >
+                          归档
+                        </Button>
+                        <Button variant="text" danger onClick={() => actions.remove(rowsOf(keys))}>
+                          删除
+                        </Button>
+                      </>
+                    ),
+                  }}
+                />
+              )
+            )}
+            <div className="rooms-hint">
+              <p>
+                要统一设置一类房间，用「会话默认」里这个平台的档或它的群、私聊条目；平台档按平台名生效，不区分实例。
+              </p>
+              <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
+                去会话默认
+              </ButtonLink>
+            </div>
           </div>
-        </div>
+        </SessionGate>
       </Panel>
     </Main>
   );

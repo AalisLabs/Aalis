@@ -8,7 +8,7 @@ import {
 } from '@aalis/api-memory';
 import { config, definePlugin, logger, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
+import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 
 // ===== InMemoryFallbackService 实现 =====
 
@@ -122,7 +122,7 @@ class InMemoryFallbackService implements MemoryService {
         const ts = m.timestamp ?? 0;
         if (typeof query.sinceTs === 'number' && ts < query.sinceTs) continue;
         if (typeof query.platform === 'string') {
-          const p = (m.metadata as { platform?: unknown } | undefined)?.platform;
+          const p = m.metadata?.[WellKnownMetadataKeys.Platform];
           if (p !== query.platform) continue;
         }
         all.push({ sessionId, message: m });

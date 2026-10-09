@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
@@ -302,6 +302,37 @@ describe('plugin-memory-summary: 压缩服务', () => {
     await expect.poll(() => statuses).toEqual(['start', 'done']);
     expect((await memory.getHistory('s-auto', 100)).length).toBeLessThanOrEqual(5);
     expect(lastSummaryInput.text).toContain('自动触发');
+    await app.stop();
+  });
+
+  it('历史不多于 keepRecent：什么都不做、照常落定，不报进度（不插「对话已压缩」）；用量过了线的自动触发也一样', async () => {
+    const { app, host, memory, compression } = await setupSummary(
+      { threshold: 240, keepRecent: 20, autoCompressThreshold: 0.6 },
+      fakeSummaryLLM(lastSummaryInput),
+    );
+    await seedMessages(memory, 's-few', 8);
+    const statuses: string[] = [];
+    host.events.on('session:compressing', info => void statuses.push(info.status));
+
+    await compression.compress('s-few', 'manual');
+    await host.events.emit('token:usage', usage('s-few', 0.9));
+    await new Promise<void>(r => setTimeout(r, 50));
+    expect(statuses).toEqual([]);
+    expect((await memory.getHistory('s-few', 100)).length).toBe(8);
+    expect(lastSummaryInput.text).toBe('');
+    await app.stop();
+  });
+
+  it('开始压之前就失败（读不出历史）：拒绝并带原因，不报进度', async () => {
+    const { app, host, memory, compression } = await setupSummary(
+      { threshold: 240, keepRecent: 4 },
+      fakeSummaryLLM(lastSummaryInput),
+    );
+    vi.spyOn(memory, 'getHistory').mockRejectedValueOnce(new Error('记忆库读不出'));
+    const statuses: string[] = [];
+    host.events.on('session:compressing', info => void statuses.push(info.status));
+    await expect(compression.compress('s-unread', 'manual')).rejects.toThrow('记忆库读不出');
+    expect(statuses).toEqual([]);
     await app.stop();
   });
 

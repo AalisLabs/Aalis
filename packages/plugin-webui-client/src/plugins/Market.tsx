@@ -5,7 +5,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
-import { FetchError } from '../components/FetchError';
+import { FetchError, LogsLink } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { Select } from '../components/Select';
@@ -17,7 +17,7 @@ import { Main } from '../shell/Shell';
 import { messageOf, usePluginAction } from './action';
 import { UninstallWarning } from './disclosure';
 import { InstallDialog } from './InstallDialog';
-import { useHost } from './list';
+import { strings, useHost, usePackageManager } from './list';
 import './Market.css';
 
 // 市场：npm 上带 Aalis 类型关键词的包，加上本地已装的系统组件（内核、宿主、契约、规范、工具库，它们不经关键词检索，
@@ -64,11 +64,17 @@ const CATEGORY_NAMES: Record<Category, string> = {
   runtime: '宿主',
 };
 
-/** GET /api/marketplace 的回应；「开始使用」也用它 */
+/** GET /api/marketplace 的回应；「开始使用」也用它。旧版服务端的包没有 provides，按没有声明提供服务处理 */
 export function parseMarket(body: unknown): { packages: MarketplacePackage[]; warning?: string } {
-  if (!isRecord(body) || !Array.isArray(body.packages)) throw new Error('市场的回应不是预期的形状');
+  if (
+    !isRecord(body) ||
+    !Array.isArray(body.packages) ||
+    !body.packages.every(pkg => isRecord(pkg) && typeof pkg.name === 'string')
+  ) {
+    throw new Error('市场的回应不是预期的形状');
+  }
   return {
-    packages: body.packages.filter(isRecord) as unknown as MarketplacePackage[],
+    packages: body.packages.map(pkg => ({ ...pkg, provides: strings(pkg.provides) })) as MarketplacePackage[],
     warning: typeof body.warning === 'string' ? body.warning : undefined,
   };
 }
@@ -135,6 +141,7 @@ export function Market() {
   const [loading, setLoading] = useState(true);
   const action = usePluginAction();
   const host = useHost();
+  const packageManager = usePackageManager();
   const toast = useToast();
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<Kind>('plugin');
@@ -187,6 +194,7 @@ export function Market() {
         setUninstalling(undefined);
         toast({ kind: 'success', text: messageOf(reply) ?? `已卸载 ${pkg.name}` });
       },
+      packageManager,
     );
     reload();
   };
@@ -276,6 +284,7 @@ export function Market() {
                   data-ok={update.ok || undefined}
                 >
                   <p>{update.message}</p>
+                  {!update.ok && packageManager && <LogsLink source={packageManager} />}
                   {update.conflicts.length > 0 && (
                     <ul>
                       {update.conflicts.map(conflict => (

@@ -85,7 +85,7 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 
 ### 缺与在等的共享判据 `unmetDependencies`
 
-插件停在 pending，是它有 required 服务此刻没有提供者。`unmetDependencies` 把每个这样的服务沿声明提供它的已装插件往下追，直到一个不是 pending 的插件或追不下去的地方，那里就是根。runtime 的启动告警、plugin-doctor 的 `plugins.pending`、WebUI 的插件列表与「需要处理」、终端界面的欢迎行都调它，几处的说法因此一致。
+插件停在 pending，是它有 required 服务此刻没有提供者。`unmetDependencies` 把每个这样的服务沿声明提供它的已装插件往下追，直到一个不是 pending 的插件或追不下去的地方，那里就是根。runtime 的启动告警、plugin-doctor 的 `plugins.pending`、WebUI 的插件列表与「需要处理」、终端界面的欢迎行与市场的卸载闸都调它，几处的判断与说法因此一致。
 
 ```ts
 /** 判据读的插件状态：core 插件状态快照（PluginStatusEntry）里的这几项 */

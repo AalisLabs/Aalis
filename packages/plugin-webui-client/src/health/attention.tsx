@@ -1,6 +1,7 @@
 import type { AttentionItem } from '@aalis/api-webui';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useReducer } from 'react';
 import { useConnection } from '../connection';
+import { unmetOf } from '../plugins/list';
 import { isRecord, useJson } from '../rest';
 
 // 「需要处理」：整页取一份，收到 attention.changed 或管理连接重连后重取。首页摘要、插件详情、运行状况与标签页标题都读它
@@ -20,9 +21,14 @@ export function useAttention(): Attention {
   return attention;
 }
 
+/** 插件项缺与在等的各条形状不对的只丢这一项，别的照常 */
+const readable = (item: unknown) =>
+  isRecord(item) &&
+  (item.kind !== 'plugin' || (unmetOf(item.lacking) !== undefined && unmetOf(item.waiting) !== undefined));
+
 function parse(body: unknown): AttentionItem[] {
   if (!isRecord(body) || !Array.isArray(body.items)) throw new Error('「需要处理」的回应不是预期的形状');
-  return body.items as AttentionItem[];
+  return body.items.filter(readable) as AttentionItem[];
 }
 
 export function AttentionProvider({ children }: { children: ReactNode }) {

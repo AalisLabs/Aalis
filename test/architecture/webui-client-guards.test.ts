@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
+import { packageManager } from '../../packages/api-package-manager/src/index.js';
 import {
   sessionMethods,
   sessionNotifications,
@@ -15,10 +16,10 @@ import {
 //   不用原生对话框与 window.open，浏览器存储只经存储模块（首帧主题脚本除外），不写死主机与端口（认本机网址的模块写回环
 //   地址，是唯一的例外），dangerouslySetInnerHTML 只许出现在白名单里的文件；发布的 dist 已经打好，package.json 不写
 //   dependencies，打包用的库都在 devDependencies，装进项目时不再跟着装一遍；
-// - 客户端只认契约不认插件：不出现插件包名，不依赖对话代理的契约（用量分项名由条目给出），字符串字面量（正则字面量按词
-//   拆开）不等于任何插件登记的页面键、动作名、数据源名、设置键或工具名。
+// - 客户端只认契约不认插件：不出现插件包名，引的 @aalis 包都是 MIT 许可（第三方前端照着同样的包就能实现），不依赖对话代理的
+//   契约（用量分项名由条目给出），字符串字面量（正则字面量按词拆开）不等于任何插件登记的页面键、动作名、数据源名、设置键或工具名。
 //   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；客户端手写的契约服务名
-//   （会话协议、对话模型）与能力名要与契约同名，它们是契约的词，同样不查；
+//   （会话协议、对话模型、包管理）与能力名要与契约同名，它们是契约的词，同样不查；
 // - 服务端只认契约不认插件：会话协议、webui-server（含框架托管与转发）、session-server 的源码不出现别的插件的名字，
 //   字符串字面量与正则字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名。
 //   契约包里出现的词与字段声明的可选项来源不查，这份排除表从契约包的源码算出；
@@ -525,6 +526,12 @@ describe('WebUI 客户端只认契约不认插件', () => {
     expect(/export const CHAT = '([^']+)'/.exec(list)?.[1]).toBe(LLMCapabilities.Chat);
   });
 
+  it('客户端手写的包管理服务名与契约同名：市场装卸更新出错时按它找日志的来源', () => {
+    expect(/export const PACKAGE_MANAGER = '([^']+)'/.exec(read(join(SRC, 'plugins/list.tsx')))?.[1]).toBe(
+      packageManager.name,
+    );
+  });
+
   it('插件前端页面也按判据收集：带 key、title 与 frame 的对象是页面，动作名与数据源名取它的 actions 与 sources', () => {
     const declared = ts.createSourceFile(
       'zz-frame-page.ts',
@@ -563,6 +570,15 @@ describe('WebUI 客户端只认契约不认插件', () => {
   it('客户端源码不出现插件包名', () => {
     const hits = SOURCES.filter(file => read(file).includes('@aalis/plugin-')).map(rel);
     expect(hits).toEqual([]);
+  });
+
+  it('客户端引的 @aalis 包都是 MIT 许可：第三方前端只依赖这些公开的包就能照着实现', () => {
+    const imported = new Set(
+      SCRIPTS.flatMap(file => [...read(file).matchAll(/from '@aalis\/([a-z0-9-]+)'/g)].map(match => match[1])),
+    );
+    expect(imported).toContain('api-session-protocol');
+    const licenses = [...imported].map(name => [name, JSON.parse(read(join(PACKAGES, name, 'package.json'))).license]);
+    expect(licenses.filter(([, license]) => license !== 'MIT')).toEqual([]);
   });
 
   it('客户端不依赖对话代理的契约：源码与 package.json 都不出现 api-agent，用量的分项名由条目给出', () => {

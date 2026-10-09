@@ -1,8 +1,7 @@
 // ════════════════════════════════════════════════════════════
-// 四个后台任务工具（执行器提供）：列出、取输出、等待、停止本会话里的后台任务。只看本会话里与本轮同一授权身份起的
-// （owner 看得到全部），别的一律回「不存在」。不设 restricted 与 risk：可转后台的工具多是 public，房间里谁都能起；
-// 结束通知开的那一轮按起它的人的身份运行，取结果的工具挡掉 0 级就取不到。按身份放行等同前台：同一个人在前台本来就
-// 拿得到这次结果。
+// 四个后台任务工具（执行器提供）：列出、取输出、等待、停止本会话里的后台任务。按会话放行：本会话里的后台任务谁都能查、
+// 能停，不论是谁起的；别的会话里的回「不存在」。不设 restricted 与 risk，取输出也不另设等级闸：任务的输出与结果本来就在
+// 这个会话里，与前台调用的结果一样谁在场谁看得到。结束通知开的那一轮仍按起它的人的身份运行。
 // ════════════════════════════════════════════════════════════
 
 import type { BackgroundTask, RegisteredTool, ToolCallContext, ToolExecutionResult } from '@aalis/api-tools';
@@ -47,17 +46,18 @@ function tool(
 
 export function backgroundTaskTools(tasks: BackgroundTasks): Tool[] {
   const { maxWaitSeconds } = tasks.limits;
-  const find = (ctx: ToolCallContext, id: unknown) => tasks.visible(ctx).find(task => task.id === id);
+  const inSession = (ctx: ToolCallContext) => tasks.list({ sessionId: ctx.sessionId });
+  const find = (ctx: ToolCallContext, id: unknown) => inSession(ctx).find(task => task.id === id);
   const taskId = { type: 'string', description: '任务 id（转到后台时回给你的 taskId）' };
 
   return [
     tool(
       'background_list',
-      '列出本会话里你起的后台任务（转到后台的工具调用）：任务 id、工具、状态、开始与结束时间、输出的最后一行与最后输出时间，' +
+      '列出本会话里的后台任务（转到后台的工具调用）：任务 id、工具、状态、开始与结束时间、输出的最后一行与最后输出时间，' +
         '失败或中断的带原因，命令带退出码。',
       {},
       [],
-      async (_args, ctx) => JSON.stringify({ tasks: tasks.visible(ctx).map(viewOf) }),
+      async (_args, ctx) => JSON.stringify({ tasks: inSession(ctx).map(viewOf) }),
     ),
 
     tool(

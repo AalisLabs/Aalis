@@ -17,6 +17,7 @@ import { TABLE_PAGE_SIZE, Table, type TableColumn } from '../../packages/plugin-
 import { Tabs } from '../../packages/plugin-webui-client/src/components/Tabs.js';
 import { ToastProvider, useToast } from '../../packages/plugin-webui-client/src/components/Toast.js';
 import { Toggle } from '../../packages/plugin-webui-client/src/components/Toggle.js';
+import { stubPlatform } from '../helpers/browser.js';
 import { choose, installDialog } from './harness.js';
 
 // ════════════════════════════════════════════════════════════
@@ -26,6 +27,7 @@ import { choose, installDialog } from './harness.js';
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('Button 与 IconButton', () => {
@@ -340,6 +342,7 @@ describe('Tabs', () => {
   });
 
   it('可以关闭时：标签列表里只有标签；列表之后是关闭选中标签的按钮，在 Tab 顺序与读屏树里，提示写出 Delete；选中的标签按 Delete 也能关', () => {
+    stubPlatform('Win32');
     const onClose = vi.fn();
     render(
       <Tabs
@@ -371,6 +374,79 @@ describe('Tabs', () => {
     expect(close.title).toBe('关闭「设置」（Delete）');
     fireEvent.click(close);
     expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(settings, { key: 'Backspace' });
+    expect(onClose, 'Mac 以外 Backspace 不关').toHaveBeenCalledTimes(2);
+  });
+
+  it('Mac 上标着 delete 的键送出 Backspace：选中的标签按它（或 fn+delete 送出的 Delete）都能关，提示写 ⌫', () => {
+    stubPlatform('MacIntel');
+    const onClose = vi.fn();
+    render(
+      <Tabs
+        label="会话面板"
+        items={[{ key: 'settings', title: '设置' }]}
+        value="settings"
+        onChange={() => {}}
+        onClose={onClose}
+      >
+        内容
+      </Tabs>,
+    );
+    const settings = screen.getByRole('tab', { name: '设置' });
+    expect(settings.getAttribute('aria-keyshortcuts')).toBe('Backspace');
+    expect(screen.getByRole('button', { name: '关闭「设置」' }).title).toBe('关闭「设置」（⌫）');
+    fireEvent.keyDown(settings, { key: 'Backspace' });
+    fireEvent.keyDown(settings, { key: 'Delete' });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('按键关掉选中的标签：关闭落定后（可能要等写入回来）焦点交给新选中的标签，不掉到页面上；这期间焦点已被移走的不抢', () => {
+    stubPlatform('Win32');
+    function Deferred() {
+      const [items, setItems] = useState([
+        { key: 'plan', title: '计划' },
+        { key: 'settings', title: '设置' },
+        { key: 'usage', title: '用量' },
+      ]);
+      const [value, setValue] = useState('usage');
+      const [closing, setClosing] = useState<string>();
+      return (
+        <>
+          <Tabs label="会话面板" items={items} value={value} onChange={setValue} onClose={() => setClosing(value)}>
+            {`内容：${value}`}
+          </Tabs>
+          <button
+            type="button"
+            onClick={() => {
+              setItems(current => current.filter(item => item.key !== closing));
+              setValue('plan');
+            }}
+          >
+            写入回来
+          </button>
+          <input aria-label="别处" />
+        </>
+      );
+    }
+    render(<Deferred />);
+    const tab = (name: string) => screen.getByRole('tab', { name });
+    const settle = () => fireEvent.click(screen.getByRole('button', { name: '写入回来' }));
+
+    tab('用量').focus();
+    fireEvent.keyDown(tab('用量'), { key: 'Delete' });
+    expect(document.activeElement, '写入回来之前标签还在，焦点不动').toBe(tab('用量'));
+    settle();
+    expect(screen.queryByRole('tab', { name: '用量' })).toBeNull();
+    expect(document.activeElement).toBe(tab('计划'));
+
+    fireEvent.click(tab('设置'));
+    tab('设置').focus();
+    fireEvent.keyDown(tab('设置'), { key: 'Delete' });
+    const elsewhere = screen.getByRole('textbox', { name: '别处' });
+    elsewhere.focus();
+    settle();
+    expect(screen.queryByRole('tab', { name: '设置' })).toBeNull();
+    expect(document.activeElement).toBe(elsewhere);
   });
 });
 

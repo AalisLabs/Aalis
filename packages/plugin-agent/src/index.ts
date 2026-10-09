@@ -2013,9 +2013,9 @@ class DefaultAgent implements AgentService {
     };
     if (identity?.selfId) metadata[WellKnownMetadataKeys.UserId] = identity.selfId;
     if (identity?.nickname) metadata[WellKnownMetadataKeys.Nickname] = identity.nickname;
-    if (incoming.groupId) metadata.groupId = incoming.groupId;
-    if (incoming.groupName) metadata.groupName = incoming.groupName;
-    if (incoming.sessionType) metadata.sessionType = incoming.sessionType;
+    if (incoming.groupId) metadata[WellKnownMetadataKeys.GroupId] = incoming.groupId;
+    if (incoming.groupName) metadata[WellKnownMetadataKeys.GroupName] = incoming.groupName;
+    if (incoming.sessionType) metadata[WellKnownMetadataKeys.SessionType] = incoming.sessionType;
     return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 
