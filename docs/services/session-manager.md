@@ -130,7 +130,7 @@ interface SessionInheritance {
 'session:updated':   [session: SessionInfo];
 'session:completed': [session: SessionInfo];
 'session:deleted':   [sessionId: string];
-'session:config:changed': [];   // 设置项登记或撤回、某一层或某个会话的覆盖被改写
+'session:config:changed': [];   // 设置项登记或撤回、某一层或某个会话的覆盖被改写、全局默认的模型变了
 ```
 
 建、删子会话时父会话的子会话列表也变了：子会话的 `session:created` 或 `session:deleted` 之后，父会话随后发一次 `session:updated`。会话列表据此更新父会话的子会话数（[plugin-session-server](../plugins/plugin-session-server.md) 的增量推送）。
@@ -162,7 +162,7 @@ sessionConfig:
 
 选层：子会话一律按根会话取。有出生平台的会话按出生平台选平台档、按聊天窗口的类型名选平台类型档，忽略传入的 `platform`，适配器没加载时同样如此：owner 从 WebUI 往 QQ 群插话，这一轮的工具组、人设与模型仍取 onebot 与群的档，入口平台只用来认出说话的人。没有出生平台的会话（WebUI 的 `session-<8位>`、CLI 的 `cli-default` 等）按调用方传入的入口平台选平台档，没有平台类型档。场所按 `placeOf`。会话表里没有的 id 按没有出生平台处理，不从 id 推。
 
-**全局默认层由服务偏好承担的项：** 字段类型为 `llm-ref` 的设置项（plugin-agent 的「模型」）在全局默认层不另存值，读写的就是 llm 服务的偏好（运行态与文档的 `servicePreferences.llm`），默认模型只此一处：`sessionConfig.defaults` 不收它（写了的告警后忽略），按层写全局默认层即改偏好（`null` 取消偏好，落盘失败时偏好与文档一并撤回），偏好从别处改了同样发 `session:config:changed`。`resolveConfig` 在全局默认之上各层都没设时不给它的值，取用方交给 `resolveLLMModel`，偏好指向的模型不在时落到服务此刻解析到的那一个；`resolvedDefaults()` 给出这个「此刻解析到的那一个」，会话服务的设置行据此写「默认（<模型名>）」。
+**全局默认层由服务偏好承担的项：** 字段类型为 `llm-ref` 的设置项（plugin-agent 的「模型」）在全局默认层不另存值，读写的就是 llm 服务的偏好（运行态与文档的 `servicePreferences.llm`），默认模型只此一处：`sessionConfig.defaults` 不收它（写了的告警后忽略），按层写全局默认层即改偏好（`null` 取消偏好，落盘失败时偏好与文档一并撤回），偏好从别处改了、llm 的提供者上下线同样发 `session:config:changed`。`resolveConfig` 在全局默认之上各层都没设时不给它的值，取用方交给 `resolveLLMModel`，偏好指向的模型不在时落到服务此刻解析到的那一个；`resolvedDefaults()` 给出这个「此刻解析到的那一个」，会话服务的设置行据此写「默认（<模型名>）」。
 
 会话服务（plugin-session-server）的 `session/config/get` 对有出生平台的会话直接按出生平台解析；没有出生平台的会话先按「会话 metadata 记下的平台 → 接管这个 id 的平台适配器 → 这条连接的入口平台」推出入口平台，再解析。plugin-agent 的 `/session` 同样读 `resolveInheritance`，每个字段显示生效值与来源。
 
@@ -219,7 +219,7 @@ interface SessionSetting {
 1. 有出生平台：一对一而对端是 owner 身份的（owner 的 IM 私聊）为默认工作区 `workspace:default`；其余为窗口，键是 api-gateway 的 `windowKey` 拼出的 `平台:类型:目标`，不含机器人账号，同一个群里两个账号的会话是同一个窗口。聊天窗口缺失（读表时类型不对被去掉）或目标为空的坏数据同样为窗口，键里缺的段按空串拼，日志点名一次，不落进默认工作区，免得 owner 给工作区设的值套到房间上。owner 谓词取 authority 的 `isOwner`，与房间类别同一判据；参考实现以 `optional(authority)` 取它（plugin-authority 也以 optional 用会话管理，两边成可选环），没有 authority 时一对一窗口按窗口算。
 2. 没有出生平台的按根会话记下的工作区：有值的为 `workspace:<id>`，不看绑定目录；没有的为默认工作区（默认工作区里建的 WebUI 与终端会话、`mcp-server`、编排与定时任务的会话、按 id 建档且还没补记来源字段的会话、会话表里没有的 id）。记下的工作区没有记录（坏数据）时按默认工作区，日志点名。
 
-场所记录 `{ key, kind, name, root?, config, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随记忆后端的胜者加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（显示名「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的设置。`getPlace(key)` 回显示名（工作区的目录经 `listWorkspaces` 取）。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 base64url），一个场所一张。
+场所记录 `{ key, kind, name, root?, config, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随记忆后端的胜者加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（显示名「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的设置。`getPlace(key)` 回显示名（工作区的目录经 `listWorkspaces` 取）。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 UTF-8 十六进制，只有小写，白纸目录在大小写不敏感的文件系统上也不撞），一个场所一张。
 
 工作区由 owner 经会话服务登记，会话管理只管记录：
 
@@ -235,9 +235,11 @@ interface SessionSetting {
 
 | 消费方 | 用法 | file:line |
 | --- | --- | --- |
-| `plugin-agent` | 登记 `llm`、`think`、`maxToolIterations`；每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组；`/session.set`·`/session.reset` 走 `ensureSession()`、`updateSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
+| `plugin-agent` | 登记 `llm`、`think`、`maxToolIterations`、`historyLimit`；每条消息 `resolveConfig()` 决定 LLM、persona 与结构化输出的会话选项、工具分组、思考档、最大工具迭代与一轮读的历史条数；`/session.set`·`/session.reset` 走 `ensureSession()`、`updateSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-persona` | 登记人设、额外提示与结构化输出两项；`resolveConfig()` 取它们 | `plugin-persona/src/index.ts` |
 | `plugin-tools` | 登记 `enabledToolGroups`（agent 读它决定工具分组） | `plugin-tools/src/index.ts` |
+| `plugin-skills` | 按会话 `resolveConfig().persona` 取人设卡，过滤 `list_skills`、`load_skill`、技能发现那一行与触发词自动激活看得到的技能（可选依赖，缺席时取主卡的白名单） | `plugin-skills/src/index.ts` |
+| `plugin-memory-summary` | 登记 `compressAt`；回合结束与压缩服务的 `compressAt` 按会话 `resolveConfig()` 取压缩线与条数线（`historyLimit`），选摘要模板读会话记录与 `roomClass`（可选依赖，缺席时压缩线按 0.8、不按条数，摘要用工作模板） | `plugin-memory-summary/src/index.ts` |
 | `plugin-subtask` | `childConfig()` 取复制给子会话的配置，`createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话；按 `status` 与 `lastTurn` 报子任务的状态（被停止的报已停止） | `plugin-subtask/src/index.ts` |
 | `plugin-session-server` | 会话协议的会话列表、增删改与设置：`listSessions`、`createSession`、`childConfig`、`updateSession`、`listSettings`、`resolveInheritance`、`getOwnConfig`、`resolvedDefaults` 与各层的读写，摘要的场所取 `placeOf`、`getPlace`，分区按 `kind`（§2.2），入口平台的推法见 §2.4 | `plugin-session-server/src/sessions.ts` |
 | `plugin-paper` | 登记白纸与远端代理的六项；`resolveConfig()` 取它们决定房间用哪块白纸、每天能花多少，`listLayers()`、`getLayer()` 看各层写了什么 | `plugin-paper/src/rooms.ts` |
@@ -572,7 +574,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 参考实现在 `inbound:message` 上收录 IM 房间：会话表里还没有记录、不是子任务（id 不含 `::`）的会话，首条真人入站（不带 `source`）到达即按这条消息建档，与是否执行过 `/session.set`、开过子任务无关。WebUI 与终端的会话在入站之前都已建档（§2.6），不经这里。带 `source` 的是内部注入（workflow 的 send-message 与 agent 节点、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不触发登记，每次 workflow 运行不会多出一个持久的房间。
 
 - 登记：状态为 `waiting`，记下来源字段（§2.6）：出生平台取消息的平台；聊天窗口按这个平台适配器的类型声明经 api-gateway 的 `chatScopeOf` 解析，记下类型名、多方标记、机器人账号（消息上的 `selfId`，没有就不记）与目标（多方为群号，一对一为对端账号）。没有适配器的平台同没声明类型，整个平台算一个一对一类型 `private`；消息带的类型名不在平台的声明里时按多方记下，每个平台与类型名告警一次。来源字段之后不变，同一窗口后来的消息带了别的类型名也不改。收录只登记与补名，不改状态；状态翻转见 §7.1。
-- 补记来源字段：按 id 兜底建档的根会话（`createChildSession` 给父会话兜底建的、收录之前 `/session.set` 建的）没有来源字段、创建来源与绑定，第一条原生入站到达时按这条消息补记，与按它建档时记下的相同，现名还是 id 的一并补名。只认这个 id 归消息平台的适配器管（`resolvePlatformBySession` 解析到的适配器平台等于 `msg.platform`）的入站，WebUI 与终端往房间插话不算；解析期间别的入站已补记或会话被删的不再写。带创建来源的（WebUI 与终端预先建档的）、已有来源字段的不补记。
+- 补记来源字段：按 id 兜底建档的根会话（`createChildSession` 给父会话兜底建的、收录之前 `/session.set` 建的）没有来源字段、创建来源与绑定，第一条原生入站到达时按这条消息补记，与按它建档时记下的相同，现名还是 id 的一并补名。只认这个 id 归消息平台的适配器管（`resolvePlatformBySession` 解析到的适配器平台等于 `msg.platform`）的入站，WebUI 与终端往房间插话不算；解析期间别的入站已补记或会话被删的不再写。升级前的记录只记了出生平台、没有聊天窗口（也没有创建来源与绑定）的同样补记，只认出生平台的入站：不补记时它们按窗口 `<平台>::` 共用一个场所。带创建来源的（WebUI 与终端预先建档的）、已有聊天窗口的不补记。
 - 所属实例：有出生平台的房间建档或补记来源字段之后，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析接管它的适配器，把插件实例 id 记进 `originInstance` 并发 `session:updated`。会话列表据此把同一插件的多个实例（如两个 OneBot 实例）分组显示；路由不读它。按 id 建档（`createChildSession` 兜底、`/session.set`）的记录在补记来源字段之后才解析。先建记录再解析，解析期间别的建档调用走合并更新，不会重复建档；解析期间会话被删的不写回。没有适配器认领的（适配器没装好、连接还没上来、账号暂时不属于任何实例）先不记，与读表读进来、还没有 `originInstance` 的房间一样，在下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录的解析不并发。已记下的不改；owner 面会话与子任务不记。
 - 窗口的场所记录：场所是窗口的房间建档或补记时建它的场所记录（§2.7），显示名取群名或对方昵称（缺省为场所键），之后随出生平台的原生入站更新；owner 的 IM 私聊在默认工作区，不建。
 - 取名按多方标记：多方取消息的 `groupName`，一对一取 `nickname`，缺省用会话 id。群的首条入站可能是不带群名的戳一戳，这时同样用 id，不回退到发送者昵称。

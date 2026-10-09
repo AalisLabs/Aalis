@@ -3,6 +3,7 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { persona } from '@aalis/api-persona';
+import { sessionManager } from '@aalis/api-session-manager';
 import {
   createStorageGateway,
   isStorageNotFound,
@@ -31,7 +32,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 //   2. Activation: 调用 load_skill(name) 或 triggers regex 命中自动激活
 //   3. Execution: SKILL.md body 注入下一轮，agent 按指令使用 scripts/references
 //
-// 与 persona 协同：persona 卡可声明 `skills: [...]` 白名单。
+// 与 persona 协同：persona 卡可声明 `skills: [...]` 白名单，按调用所在会话的人设取。
 // ════════════════════════════════════════════════════════════
 
 // ──────────── 数据结构 ────────────
@@ -273,6 +274,8 @@ const uses = {
   webui: optional(webuiServer),
   storage: optional(storage),
   persona: optional(persona),
+  /** 会话用哪张人设卡：按调用所在会话的生效设置取；不在场时取主卡 */
+  sessionManager: optional(sessionManager),
   contributions,
   hooks,
   events,
@@ -293,7 +296,7 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { tools, webui, persona, contributions, hooks, events, provide } = caps;
+  const { tools, webui, persona, sessionManager, contributions, hooks, events, provide } = caps;
   const logger = caps.logger.child('skills');
   const config: SkillsConfig = parseConfig(configSchema, caps.config, logger);
   if (!isStorageUri(config.skillsUri)) throw configError('skillsUri 必须是 storage URI');
@@ -511,10 +514,11 @@ function run(caps: Caps): void {
     return s;
   }
 
-  // ── 获取 persona 允许的 skill 白名单 ──
-  function getAllowedSkills(): SkillDefinition[] {
+  // ── 会话的人设卡允许的技能：卡取会话生效设置里的人设（没有会话管理或没有会话时为主卡），白名单由人设服务给 ──
+  function getAllowedSkills(sessionId: string | undefined, platform: string | undefined): SkillDefinition[] {
     const all = [...skillsCache.values()];
-    const whitelist = persona.current?.getPersonaSkills?.();
+    const card = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).persona : undefined;
+    const whitelist = persona.current?.getPersonaSkills?.({ persona: card });
     if (whitelist === undefined) return all;
     const set = new Set(whitelist);
     return all.filter(s => set.has(s.name));
@@ -531,8 +535,8 @@ function run(caps: Caps): void {
     contributions.contribute('agent:prompt', {
       id: DISCOVERY_SOURCE,
       anchor: 'knowledge',
-      build() {
-        if (getAllowedSkills().length === 0) return null;
+      build(view) {
+        if (getAllowedSkills(view.sessionId, view.platform).length === 0) return null;
         return (
           '存在可复用技能库。当任务可能有现成技能（专项工作流、操作指引等）时，' +
           '先调用 list_skills 检索（可传 keyword，翻页用 offset），' +
@@ -592,7 +596,7 @@ function run(caps: Caps): void {
       const sessionId = data.message?.sessionId;
       const text = data.message?.content;
       if (sessionId && typeof text === 'string' && text.length > 0) {
-        const visible = getAllowedSkills();
+        const visible = getAllowedSkills(sessionId, data.message.platform);
         const session = ensureSessionSet(sessionId);
         // ReDoS 兜底：triggers 现仅由 sensitive 门禁的 skill 工具写入，但仍对被测输入截断上界，
         // 使任意（含病态回溯）正则的匹配耗时有界。触发匹配只需看开头一段，2000 字符足够。
@@ -827,6 +831,9 @@ function run(caps: Caps): void {
         skill = skillsCache.get(skillName);
       }
       if (!skill) return JSON.stringify({ error: `skill "${skillName}" 不存在` });
+      if (!getAllowedSkills(callCtx?.sessionId, callCtx?.platform).includes(skill)) {
+        return JSON.stringify({ error: `skill "${skillName}" 不在这个会话的角色卡的技能白名单里` });
+      }
       const sessionId = callCtx?.sessionId;
       if (!sessionId) {
         // 无 sessionId 直接返回 body
@@ -870,10 +877,10 @@ function run(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       // 若缓存为空，先做一次 lazy rescan（覆盖"服务启动后才放入 skill"的场景）
       if (skillsCache.size === 0) await rescanSkills();
-      const visible = getAllowedSkills();
+      const visible = getAllowedSkills(callCtx?.sessionId, callCtx?.platform);
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const filtered = visible.filter(s => {
         if (!keyword) return true;

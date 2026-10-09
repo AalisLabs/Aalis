@@ -179,9 +179,12 @@ export interface WorkspaceInfo {
   root?: string;
 }
 
-/** 场所的白纸 id：`p:` 加场所键的 base64url。同一个场所一张白纸，换会话照样是它 */
+/**
+ * 场所的白纸 id：`p:` 加场所键的 UTF-8 十六进制。同一个场所一张白纸，换会话照样是它。白纸目录按 id 取名，十六进制只有
+ * 小写，大小写不敏感的文件系统上不同的键不会落进同一个目录
+ */
 export function placePaperId(key: string): string {
-  return `p:${Buffer.from(key, 'utf8').toString('base64url')}`;
+  return `p:${Buffer.from(key, 'utf8').toString('hex')}`;
 }
 
 /** 继承链的解析结果：选层用的平台与类型（场所经 {@link SessionManagerService.placeOf} 取），继承值与每个键的来源层 */
@@ -556,7 +559,10 @@ declare module '@aalis/core' {
     'session:updated': [session: SessionInfo];
     'session:completed': [session: SessionInfo];
     'session:deleted': [sessionId: string];
-    /** 会话设置可能变了：设置项登记或撤回（插件启停）、某一层的值被改写、某个会话的覆盖被改写 */
+    /**
+     * 会话设置可能变了：设置项登记或撤回（插件启停）、某一层的值被改写、某个会话的覆盖被改写、全局默认的模型变了（llm 服务
+     * 的偏好改了、提供者上下线）
+     */
     'session:config:changed': [];
   }
 }

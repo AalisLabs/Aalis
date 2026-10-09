@@ -462,6 +462,36 @@ describe('房间取名与补名', () => {
     });
   });
 
+  it('升级前只记了出生平台的记录（没有聊天窗口、创建来源与绑定）：出生平台的原生入站补记聊天窗口与群名，场所成为它自己的窗口', async () => {
+    const legacy = { id: GROUP, name: GROUP, children: [], status: 'waiting', config: {}, createdAt: 1, updatedAt: 1 };
+    const { sm, inbound } = await setup([], {
+      instances: true,
+      stored: { [GROUP]: { ...legacy, originPlatform: 'onebot' } },
+    });
+    expect(sm.placeOf(GROUP), '补记之前按窗口 onebot:: 算').toEqual({ kind: 'window', key: 'onebot::' });
+
+    await inbound({ sessionId: GROUP, platform: 'webui', userId: 'console', nickname: '<owner 昵称>' });
+    await settle();
+    expect(sm.getSession(GROUP)?.originChat, '入口不是出生平台时不补记').toBeUndefined();
+
+    await inbound({
+      sessionId: GROUP,
+      platform: 'onebot',
+      sessionType: 'group',
+      selfId: '10000',
+      groupId: '20001',
+      groupName: '<群名>',
+    });
+    await settle();
+    expect(sm.getSession(GROUP)).toMatchObject({
+      name: '<群名>',
+      originPlatform: 'onebot',
+      originChat: { type: 'group', multiParty: true, selfId: '10000', targetId: '20001' },
+      originInstance: 'onebot-a',
+    });
+    expect(sm.placeOf(GROUP)).toEqual({ kind: 'window', key: 'onebot:group:20001' });
+  });
+
   it('有创建来源的会话不经收录补记：终端的会话收到终端的入站仍没有出生平台', async () => {
     const { sm, inbound } = await setup([], { instances: true });
     await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
