@@ -23,6 +23,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
