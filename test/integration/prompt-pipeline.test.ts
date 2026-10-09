@@ -212,7 +212,6 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   await app.plugin(createProbeContributionPlugin(views, hookLayouts));
   await app.plugin(agentPlugin, {
     systemPrompt: 'PERSONA-BASE-PROMPT',
-    historyLimit: 50,
     memoryTokenBudget: 4096,
     maxToolIterations: 5,
     toolResultMaxRatio: 0.15,

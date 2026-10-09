@@ -81,7 +81,6 @@ async function loadStack(
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
-    historyLimit: 10,
     memoryTokenBudget: 1024,
     maxToolIterations: 3,
     preferredModel: '',

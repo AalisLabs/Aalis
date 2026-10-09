@@ -1,9 +1,9 @@
-import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点与 token:usage 事件）——删掉会丢键类型，不可删
+import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点、token:usage 事件与会话设置的 historyLimit）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
 import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
-import type { MemoryService } from '@aalis/api-memory';
+import type { CompressionLines, MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, compressionDue, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionSetting, sessionManager } from '@aalis/api-session-manager';
@@ -173,7 +173,7 @@ type SummaryConfig = ConfigOf<typeof configSchema>;
 
 declare module '@aalis/api-session-manager' {
   interface SessionConfig {
-    /** 自动压缩线：用量占上下文窗口的比例，0 到 1；0 表示不按用量压缩 */
+    /** 自动压缩线：用量占上下文窗口的比例，0 到 1；0 表示不按用量压缩（条数线照样起作用） */
     compressAt?: number;
   }
 }
@@ -187,7 +187,7 @@ const COMPRESS_AT_SETTING: SessionSetting = {
     min: 0,
     max: 1,
     default: DEFAULT_COMPRESS_AT,
-    description: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩',
+    description: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩（条数线照样起作用）',
   },
   appliesTo: ['owner', 'room', 'task'],
   prominence: 'advanced',
@@ -264,7 +264,7 @@ const uses = {
   memory,
   llm,
   messageArchive: optional(messageArchive),
-  /** 登记并解析会话设置项「自动压缩线」；不在场时一律按默认 0.8 */
+  /** 登记会话设置项「自动压缩线」，按会话解析它与条数线；不在场时压缩线按默认 0.8、不按条数压缩 */
   sessionManager: optional(sessionManager),
   config,
   logger,
@@ -342,10 +342,13 @@ async function run(caps: Caps): Promise<void> {
   const compressions = new Map<string, number>();
   const turnStarts = new Map<string, { compressions: number; cleared: () => boolean }>();
 
-  /** 这个会话的自动压缩线：会话设置的各层都没设（或没有会话管理）时为默认 0.8；设为 0 时为 undefined */
-  function compressAt(sessionId: string, platform?: string): number | undefined {
-    const line = sessionManager.current?.resolveConfig(sessionId, platform).compressAt ?? DEFAULT_COMPRESS_AT;
-    return line > 0 ? line : undefined;
+  /**
+   * 这个会话的两条线：自动压缩线在会话设置的各层都没设（或没有会话管理）时为默认 0.8；条数线是 agent 登记的 historyLimit，
+   * 没设时不按条数压缩。platform 是入口平台：没有出生平台的会话按它选平台档
+   */
+  function linesOf(sessionId: string, platform?: string): CompressionLines {
+    const resolved = sessionManager.current?.resolveConfig(sessionId, platform);
+    return { compressAt: resolved?.compressAt ?? DEFAULT_COMPRESS_AT, historyLimit: resolved?.historyLimit };
   }
 
   /**
@@ -552,7 +555,7 @@ async function run(caps: Caps): Promise<void> {
         logger.info(`收到压缩请求: session=${sessionId}, reason=${request.reason}`);
         return compressHistory(sessionId);
       },
-      compressAt,
+      compressAt: (sessionId, platform) => linesOf(sessionId, platform).compressAt || undefined,
     },
     { label: '会话压缩' },
   );
@@ -576,7 +579,8 @@ async function run(caps: Caps): Promise<void> {
   // === 回合结束时判一次是否该压缩（中止与出错的回合不判）===
   // 只认这一轮最后一次调用的用量：token:request 的快照不带 turnId，上一轮留下的属于别的回合；这一轮开始之后压成过或清空过的，
   // 它的用量是按那之前的历史算的，也不认。回合进行中不在后台改持久化的历史：长工具循环中途改历史，会与 agent 手里的
-  // 消息列表对不上
+  // 消息列表对不上。可压缩部分按硬裁剪之前的历史算：裁掉的仍在会话里，全量压缩一并压掉。会话条数是回合结束时的：
+  // 结局为 replied 时最终回复在最后一次调用之后落库，加上这一条
   hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (data.outcome === 'aborted' || data.outcome === 'error') return;
@@ -592,10 +596,14 @@ async function run(caps: Caps): Promise<void> {
       used: usage.used,
       contextWindow: usage.contextWindow,
       tokenBudget: usage.tokenBudget,
-      compressible: usage.breakdown.history + usage.breakdown.toolResults,
+      compressible: usage.untrimmedHistory,
+      trimmed: usage.trimmed,
+      historyMessages: usage.historyMessages + (data.outcome === 'replied' ? 1 : 0),
     };
-    if (!compressionDue(amounts, { compressAt: compressAt(sessionId, usage.platform) })) return;
-    logger.info(`用量 ${usage.used}/${usage.contextWindow} 到了自动压缩线，后台压缩: session=${sessionId}`);
+    if (!compressionDue(amounts, linesOf(sessionId, usage.platform))) return;
+    logger.info(
+      `到了压缩线（用量 ${usage.used}/${usage.contextWindow}${usage.trimmed ? '，被硬裁剪过' : ''}，会话条数 ${amounts.historyMessages}），后台压缩: session=${sessionId}`,
+    );
     const cleared = clearedSince(sessionId);
     compressHistory(sessionId).catch(() => {
       // 期间被清空的不记：清理已丢掉这个会话的记录，留下清理前的次数会让之后的压缩迟迟不来

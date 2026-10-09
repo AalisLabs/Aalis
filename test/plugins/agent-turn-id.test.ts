@@ -127,7 +127,7 @@ describe('回合 id 贯穿一轮的各个事件', () => {
     expect(seen.toolEvents.every(e => e.callId === ctx?.callId)).toBe(true);
     expect(ctx?.callId, 'callId 不直接取模型给的 tool call id').not.toBe('call-1');
 
-    expect(seen.usages.length, '每次 LLM 调用前都推用量').toBe(2);
+    expect(seen.usages.length, '每次 LLM 调用之后推一次用量').toBe(2);
     expect(seen.usages.every(u => u.turnId === turnId)).toBe(true);
 
     expect(seen.turnEnds).toEqual([{ sessionId: 'test:turn-id', turnId, outcome: 'replied' }]);
