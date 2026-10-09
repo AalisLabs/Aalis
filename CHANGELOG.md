@@ -783,13 +783,13 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 会话的出生平台、聊天窗口与创建来源在建档时记成会话字段，权限判定、选档、召回范围与会话列表一律读这些字段，不再从会话 id 推；平台的类型（一对一还是多方）由适配器声明。
 
 - **来源字段**（api-session-manager、plugin-session-manager、plugin-session-server、plugin-cli）：
-  - IM 房间的首条真人入站建档时记下出生平台 `originPlatform` 与聊天窗口 `originChat`（平台类型名、多方标记、机器人账号、目标），之后不变。会话表里还没有来源字段的根会话（升级前的房间、按 id 兜底建档的根会话），由之后第一条真人入站补记来源字段与名字，只认这个会话 id 归消息平台的适配器管的入站；从 WebUI、终端往房间插话不补记。
+  - IM 房间的首条真人入站建档时记下出生平台 `originPlatform` 与聊天窗口 `originChat`（平台类型名、多方标记、机器人账号、目标），之后不变。会话表里还没有来源字段的根会话（升级前的房间、按 id 兜底建档的根会话），由之后第一条真人入站补记来源字段与名字，只认这个会话 id 归消息平台的适配器管的入站；会话 id 被不止一个平台的适配器认领（配错的 id）时不收录、不补记，每个 id 告警一次；从 WebUI、终端往房间插话不补记。
   - WebUI 新建的根会话记创建来源 `createdFrom`（会话服务取这条连接所在审批面的登记名 `webui`），子会话不带。终端在发出第一条消息前给配置的会话建档、记 `createdFrom: 'cli'`；配置的会话 id 由别的平台适配器认领时不建档、不写来源，告警一次。终端一次粘贴的多行按输入顺序发出。
   - 自动标题只给带创建来源的根会话生成。会话摘要里的机器人账号、房间组的账号数与「平台:目标」搜索改读来源字段。
 - **房间类别**（api-session-manager 新增纯函数 `roomClass`）：受众只有 owner 的为 `owner-only`（带创建来源的根会话、对端是 owner 的一对一窗口），受众里有别人的为 `room`（多方窗口、对端不是 owner 的一对一窗口），其余为 `internal`（不在会话表里的、没有来源字段也没有创建来源的、编排与定时任务的会话），子会话取根会话的。安全判断只认多方标记，不认类型名。
 - **权限**（plugin-authority、api-approval）：发起类别里的「房间」改按房间类别判，不再按会话 id；受众判不出的会话（`internal`，以及没装会话管理时的全部会话）失败关闭，owner 在其中发起的回合与续做归 `other`，不能产生审批。新增可选依赖 session-manager，不再依赖 api-gateway。
 - **平台类型**（api-platform、schema-message、plugin-adapter-onebot、plugin-cli、plugin-webui-server）：
-  - 适配器以 `sessionTypes` 声明类型名与多方标记；不声明的平台（webui、cli）整个算一个一对一类型 `private`。消息带的类型名不在声明里时按多方记下并告警；声明了多方类型、消息却没带类型名时按第一个多方类型处理。
+  - 适配器以 `sessionTypes` 声明类型名与多方标记；不声明的平台（webui、cli）整个算一个一对一类型 `private`。消息带的类型名不在声明里时按多方记下并告警；声明了多方类型、消息却没带类型名时按第一个多方类型处理，会话管理每个平台告警一次。api-platform 新增 `claimantsOf`，按登记顺序列出认领某个会话 id 的全部适配器。
   - OneBot 声明 `group`、`channel`（多方）与 `private`（一对一），入站带 `selfId`。`sessionType` 原样带出实现端的消息类型，声明以外的（如部分 v11 实现的 `guild`）按多方记下并告警，此前这类消息不带类型。频道消息带上 `groupId`，写作 `<guild>:<channel>`，与会话 id 的目标段一致；开了 `groupOnly` 的 plugin-user-relation 因此也把频道算作群聊。
   - WebUI 的作用域候选按各平台的类型列出，webui、cli 多出 `<平台>:private`。
   - 选层、场所与会话列表都不再看会话 id 的写法：内部会话的 id 可以带单冒号，WebUI 会话的 id 带冒号也由 webui 认领出站，session-manager 的 id 前缀告警删除。没实现 `canHandle` 的适配器仍按 `<平台名>:` 前缀路由。
@@ -809,7 +809,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
   - plugin-adapter-onebot：频道消息新带的 `groupId` 是 `<guild>:<channel>`；声明以外的消息类型不再丢掉。
 - **升级须知**（会话表在记忆后端的元数据命名空间 `sessions`，键为会话 id）：
   - IM 房间（根会话 id 形如 `<平台>:<机器人账号>:<类型>:<目标>`）不用处理：那个群或私聊的下一条真人消息会补记来源字段与名字。补记之前它们按内部会话处理，列在「我的会话」。
-  - WebUI 与终端的旧会话要补 `createdFrom` 才算 owner 自己的会话：终端配置的会话 id（plugin-cli 的 `sessionId`，默认 `cli-default`）写 `createdFrom: 'cli'`，记录已在表里时终端不会补写；在 WebUI 里建的写 `createdFrom: 'webui'`。不补的按内部会话处理：owner 在里面发起的回合不能产生审批、不生成自动标题，入站照常经过触发判定与流控（见下文「工作会话的结构性放行」）。升级之后新建的会话自动带上。
+  - WebUI 与终端的旧会话要补 `createdFrom` 才算 owner 自己的会话：终端配置的会话 id（plugin-cli 的 `sessionId`，默认 `cli-default`）写 `createdFrom: 'cli'`，记录已在表里且已有出生平台、绑定或创建来源时终端不会补写（按 id 兜底建档留下的空记录，终端说话时会补写）；在 WebUI 里建的写 `createdFrom: 'webui'`。不补的按内部会话处理：owner 在里面发起的回合不能产生审批、不生成自动标题，入站照常经过触发判定与流控（见下文「工作会话的结构性放行」）。升级之后新建的会话自动带上。
   - `createdBy` 不再读取，可以删掉。
   - 自己实现平台适配器的，先按上面改好 `sessionTypes` 与 `selfId`，再升级 plugin-session-manager。
 - **发布档位**：次版本：api-session-manager、api-platform、api-gateway、schema-message、api-commands、plugin-session-manager、plugin-authority、plugin-adapter-onebot；plugin-session-server 随首发；api-approval 只改注释；plugin-trigger-laya 不发布；其余为 patch。要抬的依赖下限（抬到本批的新版本）：
