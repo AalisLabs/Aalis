@@ -150,7 +150,11 @@ async function sessionWaitingApproval(page: Page, phone: boolean): Promise<strin
 async function opened(viewport: Viewport, scheme: 'dark' | 'light') {
   const origin = await start();
   const { page, problems } = await openWebui(e2e.browser, origin, viewport, cleanups);
-  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+  // 关掉过渡：按钮换形态时文字颜色立即变、背景色渐变，扫描落在过渡里会把半途的颜色量成对比度不足
+  await page.emulateMediaFeatures([
+    { name: 'prefers-color-scheme', value: scheme },
+    { name: 'prefers-reduced-motion', value: 'reduce' },
+  ]);
   await page.waitForFunction(scheme => document.documentElement.dataset.theme === `calm-${scheme}`, {}, scheme);
   return { origin, page, problems };
 }
