@@ -203,10 +203,11 @@ describe('IM 房间建档时记下来源字段', () => {
     expect(sm.getSession(CHANNEL)?.originChat).toMatchObject({ type: 'channel', multiParty: true });
   });
 
-  it('消息不带类型名：平台声明了多方类型的记多方；不声明类型的平台记 private、一对一', async () => {
-    const { sm, inbound } = await setup();
+  it('消息不带类型名：平台声明了多方类型的记多方，每个平台告警一次；不声明类型的平台记 private、一对一，不告警', async () => {
+    const { sm, inbound, warns } = await setup();
 
     await inbound({ sessionId: 'onebot:10000:group:20003', platform: 'onebot', groupId: '20003', userId: '30003' });
+    await inbound({ sessionId: 'onebot:10000:group:20004', platform: 'onebot', groupId: '20004', userId: '30004' });
     await inbound({ sessionId: 'plain-room', platform: 'plain', userId: '<对端>' });
 
     expect(sm.getSession('onebot:10000:group:20003')?.originChat).toEqual({
@@ -218,6 +219,10 @@ describe('IM 房间建档时记下来源字段', () => {
       originPlatform: 'plain',
       originChat: { type: 'private', multiParty: false, targetId: '<对端>' },
     });
+    const untyped = warns.filter(w => w.includes('没带类型名'));
+    expect(untyped).toHaveLength(1);
+    expect(untyped[0]).toContain('「onebot」');
+    expect(untyped[0]).toContain('「group」');
   });
 
   it('带了声明里没有的类型名：记多方，每个平台与类型名告警一次', async () => {
@@ -449,7 +454,7 @@ describe('创建来源与来源字段不收调用方传值', () => {
     expect(sm.getChildren(root.id)).toEqual([]);
   });
 
-  it('专用参数：createSession 与 ensureSession 建档时写创建来源；ensureSession 碰上已有记录不改', async () => {
+  it('专用参数：createSession 与 ensureSession 建档时写创建来源；ensureSession 碰上已有创建来源的记录不改', async () => {
     const { sm } = await setup();
 
     const created = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
@@ -459,6 +464,26 @@ describe('创建来源与来源字段不收调用方传值', () => {
     expect(created.createdFrom).toBe('webui');
     expect(ensured.createdFrom).toBe('cli');
     expect(again).toMatchObject({ name: '<改名>', createdFrom: 'cli' });
+  });
+
+  it('ensureSession 碰上已有记录：只给按 id 兜底建档留下的空记录补写创建来源，有出生平台或绑定的不写', async () => {
+    const base = { children: [], status: 'waiting', config: {}, createdAt: 1, updatedAt: 1 };
+    const ids = ['<空记录>', GROUP, '<项目>'];
+    const { sm } = await setup({
+      '<空记录>': { ...base, id: '<空记录>', name: '<空记录>' },
+      [GROUP]: {
+        ...base,
+        id: GROUP,
+        name: GROUP,
+        originPlatform: 'onebot',
+        originChat: { type: 'group', multiParty: true, targetId: '20001' },
+      },
+      '<项目>': { ...base, id: '<项目>', name: '<项目>', work: { root: '/x', extraRoots: [], worktrees: [] } },
+    });
+
+    for (const id of ids) await sm.ensureSession(id, {}, { createdFrom: 'cli' });
+
+    expect(ids.map(id => sm.getSession(id)?.createdFrom)).toEqual(['cli', undefined, undefined]);
   });
 });
 

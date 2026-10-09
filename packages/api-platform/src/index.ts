@@ -65,7 +65,7 @@ export interface PlatformAdapter {
   /**
    * 判断该 adapter 是否能处理给定 sessionId（**路由用**）。
    *
-   * - `resolvePlatformBySession(source, sid)` 枚举所有 adapter 调此方法定位归属
+   * - `resolvePlatformBySession(source, sid)`、`claimantsOf(source, sid)` 枚举所有 adapter 调此方法定位归属
    * - 未实现时 helper 默认 fallback 为 `sessionId.startsWith(this.platform + ':')`
    *   —— 只适合同一平台只装一个实例的适配器
    * - sessionId 不携带 platform 前缀的 adapter（如 cli 的自定义 sessionId）
@@ -198,8 +198,27 @@ export function getPlatformSelfIdentity(
 }
 
 /**
- * 按 sessionId 找到接管它的 adapter 条目（带插件实例 id `contextId`）；优先 `canHandle`，否则 fallback 为
- * `sessionId.startsWith(platform + ':')`（只适合同平台单实例的适配器）。只在部分 adapter 里找时，source 给一个只列它们的 `all`
+ * 这个 adapter 认不认领 sessionId：优先 `canHandle`，否则 fallback 为 `sessionId.startsWith(platform + ':')`（只适合
+ * 同平台单实例的适配器）。`canHandle` 抛错按不认领，告警
+ */
+async function claims(
+  { instance, contextId }: PlatformAdapterEntry,
+  sessionId: string,
+  logger?: Pick<Logger, 'warn'>,
+): Promise<boolean> {
+  try {
+    return typeof instance.canHandle === 'function'
+      ? await instance.canHandle(sessionId)
+      : sessionId.startsWith(`${instance.platform}:`);
+  } catch (err) {
+    logger?.warn(`canHandle 抛错 [${contextId}]:`, err);
+    return false;
+  }
+}
+
+/**
+ * 按 sessionId 找到接管它的 adapter 条目（带插件实例 id `contextId`）：按登记顺序第一个认领它的。
+ * 只在部分 adapter 里找时，source 给一个只列它们的 `all`
  */
 export async function resolvePlatformBySession(
   source: Pick<ServiceRef<PlatformAdapter>, 'all'>,
@@ -207,18 +226,25 @@ export async function resolvePlatformBySession(
   logger?: Pick<Logger, 'warn'>,
 ): Promise<PlatformAdapterEntry | undefined> {
   for (const entry of getPlatformAdapterEntries(source)) {
-    const { instance, contextId } = entry;
-    try {
-      const ok =
-        typeof instance.canHandle === 'function'
-          ? await instance.canHandle(sessionId)
-          : sessionId.startsWith(`${instance.platform}:`);
-      if (ok) return entry;
-    } catch (err) {
-      logger?.warn(`canHandle 抛错 [${contextId}]:`, err);
-    }
+    if (await claims(entry, sessionId, logger)) return entry;
   }
   return undefined;
+}
+
+/**
+ * 认领 sessionId 的全部 adapter 条目，按登记顺序：判定与 {@link resolvePlatformBySession} 相同，逐个问，不在第一个认领者
+ * 处停（第一个就是它解析到的那个）。用来看出一个 id 是不是同时归几个平台
+ */
+export async function claimantsOf(
+  source: Pick<ServiceRef<PlatformAdapter>, 'all'>,
+  sessionId: string,
+  logger?: Pick<Logger, 'warn'>,
+): Promise<PlatformAdapterEntry[]> {
+  const claimants: PlatformAdapterEntry[] = [];
+  for (const entry of getPlatformAdapterEntries(source)) {
+    if (await claims(entry, sessionId, logger)) claimants.push(entry);
+  }
+  return claimants;
 }
 
 /**
