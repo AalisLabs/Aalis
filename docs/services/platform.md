@@ -55,7 +55,8 @@ export interface PlatformAdapter {
 | `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份；同平台装了多个实例时，取第一个认得这个会话的实例给出的身份 |
 | `sessionTypesOf(adapter)` | 平台的类型：声明的条目；没声明（没写、空列表，或平台没有适配器）时为 `[{ name: 'private', multiParty: false }]` |
 | `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带类型名时，声明里有多方类型的按其中第一个、多方，没声明或只有一对一类型的按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared` |
-| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底）。只在部分 adapter 里找时，`source` 给一个只列它们的 `all` |
+| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底），按登记顺序取第一个认领者。只在部分 adapter 里找时，`source` 给一个只列它们的 `all` |
+| `claimantsOf(source, sessionId)` | 认领 sessionId 的全部 adapter 条目，按登记顺序；判定与 `resolvePlatformBySession` 相同，逐个问、不在第一个认领者处停。用来看出一个 id 是不是同时归几个平台 |
 | `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错，见下） |
 | `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（无 adapter 接管、或 adapter 不支持 `callAction` 则抛错） |
 
@@ -79,7 +80,7 @@ export interface PlatformAdapter {
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-authority**：`getPlatformNames(platform)` 进可选作用域候选（`src/index.ts`）。
 - **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypesOf` 生成 `gateway-scopes` 笛卡尔积（没声明类型的平台列 `<平台>:private`）。
-- **plugin-session-manager**：房间建档时按入站消息的平台取适配器的类型声明（`sessionTypesOf`），经 api-gateway 的 `chatScopeOf` 记下聊天窗口；用 `resolvePlatformBySession` 解析出接管它的实例，记进 `SessionInfo.originInstance`，供会话列表按实例分组（`src/index.ts`）。
+- **plugin-session-manager**：房间建档时按入站消息的平台取适配器的类型声明（`sessionTypesOf`），经 api-gateway 的 `chatScopeOf` 记下聊天窗口；建档与补记之前用 `claimantsOf` 问遍认领这个会话 id 的适配器，不止一个平台认领时不建档、不补记，否则第一个认领者记进 `SessionInfo.originInstance`，供会话列表按实例分组；建档时没有认领者的，之后用 `resolvePlatformBySession` 补记（`src/index.ts`）。
 - **plugin-tool-onebot**：平台动作经 `callPlatformAction(platform, 'onebot:<selfId>:internal:0', action, params)` 发出，按账号路由到所属实例；撤回自己发的消息、处理好友申请与群请求按会话（或账号）用 `resolvePlatformBySession` 找到所属实例，自身禁言列表汇总所有 onebot 实例（`src/index.ts`）。
 
 ## 4. 写一个 provider
@@ -154,7 +155,7 @@ export default definePlugin({
 - **优先用 helper，而非裸 `platform.current`**：要发消息用 `sendPlatformMessage(platform, sessionId, text)`；要按名取身份用 `getPlatformSelfIdentity(platform, name, sessionId)`；要列平台用 `getPlatformNames(platform)`；要调原生 API 用 `callPlatformAction(platform, sessionId, action, params)`。这些 helper 内部都走 `source.all()` 聚合，天然处理多 adapter。
 - **lazy 访问、勿缓存**：每次用时现取（helper 每次读 `source.all()` / `source.current`）。adapter 会随 provider bounce 失效，缓存住 instance 会指向僵尸。见 [lazy-service-access](../concepts/lazy-service-access.md)。
 - **platform 是可选依赖**：上面所有消费者都在 `uses` 里以 `optional(platform)` 声明它。没有任何 adapter 时，`getPlatformNames` 返回 `[]`、`getPlatformSelfIdentity` 返回 `undefined`、`sendPlatformMessage`/`callPlatformAction` 抛错（无 adapter 接管 / 不支持 callAction）。消费方必须容忍这些：persona/agent 在 `identity?.selfId` 处用可选链优雅降级（`plugin-agent/src/index.ts`）。
-- **错误边界**：`resolvePlatformBySession` 内部对每个 adapter 的 `canHandle` 抛错只 `logger.warn` 不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
+- **错误边界**：`resolvePlatformBySession` 与 `claimantsOf` 对每个 adapter 的 `canHandle` 抛错只 `logger.warn`、按不认领处理，不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
 
 ## 6. 能力 / 风险 → 影响
 
