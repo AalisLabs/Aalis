@@ -48,23 +48,25 @@ definePlugin({
 | `defaultLLM` | llm-ref | — | 默认对话模型：全局默认 LLM。apply 时经 `services.prefer(llm, \`${provider}/${model}\`)` 锁定偏好。会话 / 平台 profile 未覆盖时生效。 |
 | `systemPrompt` | textarea | `''` | 行为准则提示词：定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。 |
 | `memoryTokenBudget` | number | `4096` | 长期记忆预留 Token：为注入的 system 消息预留的 token 额度，超出时先按比例缩减，极端情况下（阶段 5）仍会删除 |
-| `historyLimit` | number | `50` | 历史消息条数：从记忆中加载的最近对话历史条数 |
 | `maxToolIterations` | number | `30` | 最大工具迭代：工具调用循环的最大迭代次数 |
 | `promptBuildTimeoutMs` | number | `10000` | 提示词贡献构建超时 (ms)：单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。 |
 | `toolResultMaxRatio` | number | `0.15` | 工具结果最大比例：单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15% |
-| `trimThresholdRatio` | number | `1` | 裁剪触发比例：裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。 |
+| `trimThresholdRatio` | number | `1` | 裁剪触发比例：裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件登记）与历史条数上限（本插件登记）。 |
 
 ## 会话设置项
 
-本插件在 session-manager 上登记三个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：
+本插件在 session-manager 上登记四个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：
 
 | 键 | 字段 | 显眼程度 | 没设置时 |
 |---|---|---|---|
 | `llm` | `llm-ref`「模型」，只收服务与模型都是非空字符串的 `{ provider, model }`（登记时给的 `validate` 核） | composer（也出现在输入框旁） | 用 llm 服务的偏好（本插件的 `defaultLLM`） |
 | `think` | select「深度思考」，存档位 id（非空字符串，`validate` 核） | common | 按模型的默认档 |
 | `maxToolIterations` | number「最大工具迭代」，不小于 1 的整数 | advanced | 用本插件配置的 `maxToolIterations` |
+| `historyLimit` | number「历史条数上限」，不小于 0 的整数，默认 0；只经继承链实时解析，建子会话时不复制 | advanced | 读全部活跃历史，不按条数压缩 |
 
 「深度思考」的可选项是会话所用模型声明的档位（[api-llm](../api/api-llm.md) 的「深度思考的档位」）：字段的 `dynamicOptions` 是 `llm-thinking`，登记上写 `dependsOn: 'llm'`，界面取可选项时带上「模型」这一项的生效值，模型变了就重取。每一轮里，当前模型有这一档才把它带进请求；没设置、换到了没有这一档的模型或模型不能调时不带，模型服务按它的默认档。设置的界面上，生效的档位当前模型没有时写这一档的名字与「当前模型没有这一档，按默认（<默认档的名字>）」，模型不能调时写「当前模型不能调」。「模型」没设时界面写「跟随服务偏好」（登记的 `unset`）；「最大工具迭代」的默认值是插件配置的 `maxToolIterations`，没设时界面写出这个数。
+
+「历史条数上限」是一个数两种用途：一轮最多从记忆读进这么多条会话历史（真实回合与 `token:request` 的快照都按会话取），装了摘要插件时也是按条数压缩的线，会话的消息到这个条数就全量压缩，不让旧消息悄悄滑出上下文；压缩在途或没压成的几轮里，它是每轮历史条数的上限。0 表示不按条数：读全部活跃历史，只按摘要插件的自动压缩线压缩。默认 0 面向本机使用；在线平台在平台档或平台受众条目上设。不装摘要插件的部署没有压缩，默认 0 时每轮读全部活跃历史、输入一路涨到裁剪预算，应在全局默认上设这一项。
 
 ## 指令
 
@@ -113,13 +115,14 @@ definePlugin({
 
 1. **`agent:input:before`**: 消息预处理 / 拦截；中间件不调用 `next()` 则以下步骤（含 LLM 调用）均不执行
 2. **构建系统提示词**: persona 提示词 + 配置的 `systemPrompt`（无人设时仅 `systemPrompt`），末尾固定追加输入约定块
-3. **加载历史**: 从 memory 服务获取最近 `historyLimit` 条消息，跳过不完整的工具调用组与控制类消息
+3. **加载历史**: 按会话设置 `historyLimit` 从 memory 服务读最近的 N 条消息（0 或没设置时读全部活跃历史），跳过不完整的工具调用组与控制类消息
 4. **收集工具**: 从 `tools` 服务获取工具定义：无分组的通用工具恒在，带分组的只取会话生效配置 `enabledToolGroups` 列出的分组（`'*'` 为全部，未配置则一个都不取）
 5. **执行 Hook 管道**:
    - 组装 `agent:prompt` 贡献 — 记忆 / 摘要 / 技能 / 档案等提示词块按锚位物化进消息列表，单个贡献 build 超过 `promptBuildTimeoutMs` 时本轮缺席
    - `agent:llm:before` — 拦截、修改消息列表或工具列表（如工具搜索过滤、媒体规范化）
    - `trimMessages()` — 按 token 预算裁剪上下文
    - `chatStream()` — 流式调用 LLM；模型生成工具调用的参数时，每个调用配一个 `callId` 随流式片段的工具调用进度推出（`outbound:stream` 的 `toolCallProgress`），执行它时用同一个
+   - 调用返回之后发 `token:usage`（见下文「Token 预算追踪与日志」）；调用抛错时不发
    - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多 `maxToolIterations` 次）:
      - `agent:tool:before` → 执行工具 → `agent:tool:after`（中间件写进 `metadata` 的键随这次工具结果落库）
@@ -187,14 +190,16 @@ definePlugin({
 
 ## Token 预算追踪与日志
 
-首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
+每次模型调用之后（首次调用、工具循环里的每次调用、格式重试），Agent 发出一条 `token:usage`，调用抛错的那次不发。`used` 取模型服务返回的这次调用的输入 token，没有返回或不是正的有限数时取按发出的消息与工具定义的估算；各项拆分按发出的（裁剪之后的）消息估算。`trimmed` 标出本回合到这次调用为止经过了硬裁剪（某次调用组装后的估算超过裁剪预算；首次调用裁剪过的列表是之后各次调用的底稿，有过一次本回合之后各次都算）；`untrimmedHistory` 是按没经过硬裁剪的列表估算的历史与工具结果；`historyMessages` 是这一轮开头读进的历史条数加本回合到这次调用为止追加的工具调用与结果，与硬裁剪无关。硬裁剪删了消息时记一行 info 日志，带会话 id 与前后条数。
+
+收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，按当前会话组一份快照：历史按会话的条数线读，过同样的硬裁剪（不记日志），`used` 为估算，`historyMessages` 是读进的条数，不带 `turnId`。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建。
 
 `token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话的出生平台（api-gateway 的 `resolveSessionOrigin`，即 IM 房间 id 的前缀）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
 
 ```ts
 'token:usage': [{
-  sessionId, platform, contextWindow, maxTokens, tokenBudget,
-  used, usageRatio,
+  sessionId, turnId /* 快照不带 */, platform, contextWindow, maxTokens, tokenBudget,
+  used, usageRatio, trimmed, untrimmedHistory, historyMessages,
   breakdown: {
     system, persona, memorySummary, memoryVector, skills, platform,
     subtask, systemOther, history, toolResults, toolDefs, reservedForReply,
@@ -212,7 +217,7 @@ definePlugin({
 消费者：
 
 - [plugin-session-server](./plugin-session-server.md) → 会话协议的 `usage` 条目（取 `parts`）
-- [plugin-memory-summary](./plugin-memory-summary.md) → 超阈值触发自动压缩
+- [plugin-memory-summary](./plugin-memory-summary.md) → 回合结束时按这一轮最后一条用量判定自动压缩
 - [plugin-prompt-budget](./plugin-prompt-budget.md) → AI 自查工具 `prompt_budget_info`
 
 Agent 自身额外维护一个**节流日志记录器**：

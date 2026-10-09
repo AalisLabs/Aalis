@@ -37,7 +37,14 @@ interface AgentService {
 
 ## 用量（token:usage）
 
-`token:usage` 是每次 LLM 调用前的 prompt 预算快照（`TokenUsageEvent`），`breakdown` 是按固定桶的数，供 AI 自检（plugin-prompt-budget）判断；`parts` 是同一份数按显示的次序排好、带显示名的拆分表，不含为回复预留的 `maxTokens`，供界面照画：
+`token:usage`（`TokenUsageEvent`）是一次模型调用的输入用量。实现者在每次调用模型之后发一次：首次调用、工具循环里的每次调用、格式重试的每次调用，调用抛错的那次不发。回应 `token:request` 时按会话现组一份消息列表发快照，不调用模型，快照不带 `turnId`；按用量触发动作的消费方（如摘要插件的自动压缩）据此排除快照。
+
+- `used` 与 `usageRatio`：`used` 取模型服务返回的这次调用的输入 token（`ChatResponse.usage.promptTokens`），没有返回或不是正的有限数时（以及快照）按发出的消息与工具定义估算；`usageRatio` 是 `used / contextWindow`。
+- `trimmed`：本回合到这次调用为止经过了硬裁剪，即这次或之前某次调用组装后的估算超过了 `tokenBudget`（不一定真裁掉了内容）。之后的调用在首次调用裁剪过的列表上追加，所以有过一次，本回合之后各次都算。
+- `untrimmedHistory`：按没经过硬裁剪的消息列表估算的历史与工具结果 token；`breakdown` 的 `history`、`toolResults` 两项按发出的列表算。裁掉的部分仍在会话历史里，全量压缩能把它们一并压掉，摘要插件以它为可压缩部分。
+- `historyMessages`：这次的消息列表里来自会话历史的条数，即这一轮开头从记忆读进的条数（含这一轮的入站消息），加本回合到这次调用为止追加的工具调用与结果。按读进与追加的算，与硬裁剪无关；快照只有读进的条数。
+
+`breakdown` 与 `parts` 是同一份输入按来源估算的拆分，各项之和不必等于 `used`。`breakdown` 是按固定桶的数，供 AI 自检（plugin-prompt-budget）判断；`parts` 是同一份数按显示的次序排好、带显示名的拆分表，不含为回复预留的 `maxTokens`，供界面照画：
 
 ```ts
 interface TokenUsagePart {
@@ -51,13 +58,14 @@ interface TokenUsagePart {
 
 ## 会话设置项的键
 
-本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加三个键，由 plugin-agent 登记：
+本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加四个键，由 plugin-agent 登记：
 
 ```ts
 interface SessionConfig {
   llm?: ModelRef;               // 会话用的模型；没设置时跟随 llm 服务的偏好
   think?: string;               // 深度思考的档位 id；没设置、当前模型没有这一档或不能调时按模型的默认档
   maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置
+  historyLimit?: number;        // 历史条数上限（非负整数）：一轮最多读进的会话历史条数，也是按条数压缩的线；0 或没设置时读全部活跃历史
 }
 ```
 
@@ -126,6 +134,6 @@ export default definePlugin({
 ## 相关
 
 - `IncomingMessage` / `Message` 定义在 [schema-message](./schema-message.md)
-- `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted | error`（四条退出路径都会触发，供生命周期订阅方收口）；结局为 `error` 时 `error` 是一句原因（默认实现填发到会话的 `[错误]` 那句，或解析不出模型时 `[系统]` 那句），会话管理记进 `SessionInfo.lastTurn`，其余结局不带
+- `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted | error`（四条退出路径都会触发，供生命周期订阅方收口）；结局为 `replied` 时最终回复已写进会话历史，它在最后一次模型调用之后落库，不在那次用量的 `historyMessages` 里，其余结局不落库最终回复；结局为 `error` 时 `error` 是一句原因（默认实现填发到会话的 `[错误]` 那句，或解析不出模型时 `[系统]` 那句），会话管理记进 `SessionInfo.lastTurn`，其余结局不带
 - token 自检见 [plugin-prompt-budget](../plugins/plugin-prompt-budget.md)
 - 关停时默认实现在 `lifecycle.onDrain` 中止在飞回合，见 [services/agent](../services/agent.md)

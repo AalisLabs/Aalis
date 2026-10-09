@@ -95,6 +95,8 @@ declare module '@aalis/api-hooks' {
     'agent:input:before': { message: IncomingMessage; turnId: string; metadata: Record<string, unknown> };
     /**
      * 一轮 agent 处理结束时触发，回复已发出或这一轮已静默、中止、出错。消息在 agent:input:before 被拦下时不触发。
+     * 结局为 replied 时最终回复已写进会话历史：它在最后一次模型调用之后落库，不在那次用量的 historyMessages 里；
+     * 其余结局不落库最终回复
      */
     'agent:turn:after': {
       message: IncomingMessage;
@@ -292,15 +294,19 @@ export interface TokenUsagePart {
 }
 
 /**
- * agent 每次 LLM 调用后 emit 的 prompt 预算快照。breakdown 是按固定桶的数，供程序判断；parts 是同一份数按显示的次序
- * 排好、带显示名的拆分表（不含为回复预留的 maxTokens），供界面照画。
+ * 一次模型调用的输入用量：agent 在每次调用模型之后发一次（首次调用、工具循环里的每次调用、格式重试），调用抛错的那次不发；
+ * 回应 token:request 时按会话现组一份消息列表发快照，不调用模型。
+ *
+ * used 是这次调用的输入 token：取模型服务返回的 promptTokens，没有返回时（以及快照）按发出的消息与工具定义估算。
+ * breakdown 与 parts 是同一份输入按来源估算的拆分，各项之和不必等于 used。breakdown 是按固定桶的数，供程序判断；
+ * parts 是同一份数按显示的次序排好、带显示名的拆分表（不含为回复预留的 maxTokens），供界面照画。
  *
  * 发射方：plugin-agent；已知消费方：plugin-session-server（会话的用量条目）、
- * plugin-memory-summary（预压缩触发）、plugin-prompt-budget（AI 自检工具）。
+ * plugin-memory-summary（回合结束时判定自动压缩）、plugin-prompt-budget（AI 自检工具）。
  */
 export interface TokenUsageEvent {
   sessionId: string;
-  /** 所在回合的 id；回应 token:request 的快照不在任何回合里，缺省 */
+  /** 所在回合的 id；回应 token:request 的快照不在任何回合里，缺省。按用量触发动作的消费方据此排除快照 */
   turnId?: string;
   platform: string;
   contextWindow: number;
@@ -308,6 +314,21 @@ export interface TokenUsageEvent {
   tokenBudget: number;
   used: number;
   usageRatio: number;
+  /**
+   * 本回合到这次调用为止经过了硬裁剪：这次或之前某次调用组装后的估算超过了 tokenBudget（不一定真裁掉了内容）。之后的
+   * 调用在首次调用裁剪过的列表上追加，所以有过一次，本回合之后各次都算
+   */
+  trimmed: boolean;
+  /**
+   * 按没经过硬裁剪的消息列表估算的历史与工具结果 token（breakdown 的 history、toolResults 两项按发出的列表算）：
+   * 裁掉的部分仍在会话历史里，全量压缩能把它们一并压掉
+   */
+  untrimmedHistory: number;
+  /**
+   * 这次的消息列表里来自会话历史的条数：这一轮开头从记忆读进的条数（含这一轮的入站消息），加本回合到这次调用为止追加的
+   * 工具调用与结果。按读进与追加的算，与硬裁剪无关；快照只有读进的条数
+   */
+  historyMessages: number;
   breakdown: TokenUsageBreakdown;
   parts: TokenUsagePart[];
 }
@@ -359,5 +380,10 @@ declare module '@aalis/api-session-manager' {
     think?: string;
     /** 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置 */
     maxToolIterations?: number;
+    /**
+     * 历史条数上限（非负整数）：一轮最多从记忆读进这么多条会话历史，也是按条数压缩的线。0 或没设置时读全部活跃历史、
+     * 不按条数压缩
+     */
+    historyLimit?: number;
   }
 }
