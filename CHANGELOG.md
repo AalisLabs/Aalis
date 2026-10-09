@@ -696,6 +696,25 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - create-aalis-plugin：生成的依赖不再是 `latest`，查不到版本时退出。
 - **发布档位**：次版本：api-webui、api-doctor、api-package-manager、plugin-package-manager、plugin-webui-server、plugin-webui-client、plugin-doctor、plugin-media、create-aalis、create-aalis-plugin、plugin-maimai、plugin-okx-trading；其余为 patch。新增依赖：api-webui、plugin-package-manager、plugin-webui-server、plugin-media 依赖 api-doctor，plugin-cli 依赖 api-doctor 与 api-commands（可选使用 plugins、commands），plugin-media 可选使用 doctor；这些对 api-doctor 的下限发布时抬到本批 api-doctor 的新版本。
 
+### 报错普查第二批：指令回复与提示写明修法，吞掉的故障交到用户眼前（@aalis/api-storage、@aalis/plugin-scheduler、@aalis/plugin-authority、@aalis/plugin-media、@aalis/plugin-code-sandbox-os、@aalis/plugin-mcp-client、@aalis/plugin-image-sender、@aalis/plugin-commands、@aalis/plugin-agent、@aalis/plugin-maimai、@aalis/plugin-user-profile、@aalis/plugin-webui-server）
+
+接着「上手与故障说明」的第一批，把剩下会到用户眼前的报错改成写明出了什么事、该做什么。
+
+- **存储路径填错**（api-storage；SQLite 记忆、Flat 与 LanceDB 向量库、人设等用存储路径的插件）：新增 `isHostAbsolutePath`；配置里的路径写成本机路径（`/abs`、盘符路径、`~/`）时激活失败只有一行，写明这里要填 storage URI（如 `data:/aalis.db`）、要用存储根以外的目录就先在「本地存储根」加一个根并打开「允许写」，不再报「未知存储根」加整段堆栈。
+- **计划任务**（plugin-scheduler）：配置文件里某个任务的 `timeZone` 写错，不再让整个插件起不来，只这个任务发「没有排上」提示；计划任务页新建、编辑与 `scheduler_create_job` 当场校验 cron，无效的拒收、不落盘（此前收下后永远不跑）；持久化任务文件读不出来时发提示，按原因给修法；拒写期间的回执指向「需要处理」里的提示。
+- **权限管理**（plugin-authority）：`users.json` 读不出来时在「需要处理」里发提示并带出原因（读取报错、JSON 解析错误或版本不对），修好后撤回；`/level` 的回执写明怎么修。
+- **多模态媒体识别**（plugin-media）：图片落盘失败不再悄悄丢图：记 warn 并写进报告条目，识别照常进行。
+- **代码沙箱**（plugin-code-sandbox-os）：没有可用后端时的告警写修法与原因；新增 doctor 检查「代码沙箱」。
+- **MCP 客户端**（plugin-mcp-client）：连不上的提示先写修法（检查 command、args、env，保存即重连）再接原因。
+- **发图**（plugin-image-sender）：`send_attachment` 的 `storage_uri` 或历史引用写成本机路径时，回一句要写存储地址，按库外来源拒发。
+- **指令回复**（plugin-commands、plugin-agent、plugin-maimai、plugin-user-profile）：`/session` 系列、`/clear` 在会话管理或记忆后端不在时，写明在 WebUI 插件区启用或从配置文件的 `disabledPlugins` 删掉，起不来时用 `/doctor`；舞萌查分凭据被拒时写检查 `developerToken`，连不上或读到超时写稍后再试并带原因，绑定与解绑分开写两种原因；用户事实档案的行为指令关着时写明打开 `enableInstructions`。删掉几处不可达的分支（`/shutdown`、`/restart` 的「无法访问应用服务」等）。
+- **WebUI 服务端**（plugin-webui-server）：配置下拉某个提供者取值失败时记 warn，点名提供者与原因。
+- **破坏性**：
+  - api-storage：`toStorageUri` 遇本机路径抛配置错误；此前 `/data/x` 会被归一成 `data:/x`，现在不再接受。
+  - plugin-image-sender：`storage_uri` 写成本机路径时拒发（此前 `/data/...` 能发）。
+  - plugin-commands：`app` 改为必需依赖（声明与清单），运行时无变化。
+- **发布档位**：次版本：api-storage（新增依赖 schema-config）、plugin-scheduler、plugin-image-sender；patch：其余。plugin-code-sandbox-os 新增依赖 api-doctor 并可选使用 doctor。
+
 ### 必须同批升级的包
 
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
