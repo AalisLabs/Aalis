@@ -30,7 +30,7 @@
 
 ## 未发布 · Harness
 
-删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），审批（新 WebUI 的第二部分，取代 session-confirm 的确认链），新 WebUI 的其余各部分（管理推送与登录加固、外壳与会话设置、页面契约第二版、插件前端、控件比例、插件区与深度思考档位、需要处理与用量、后台任务），删除自档案，删除第三方行为指令，单元 7 收尾第一批，改用 node:sqlite，上手与故障说明，报错普查第二批，以及单元 7 第六步整批收尾。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十二个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
+删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，后台命令结束通知，send_attachment 的格式签名移入新包，作品提名与上站，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），审批（新 WebUI 的第二部分，取代 session-confirm 的确认链），新 WebUI 的其余各部分（管理推送与登录加固、外壳与会话设置、页面契约第二版、插件前端、控件比例、插件区与深度思考档位、需要处理与用量、后台任务），删除自档案，删除第三方行为指令，单元 7 收尾第一批，改用 node:sqlite，上手与故障说明，报错普查第二批，单元 7 第六步整批收尾，全量压缩与按比例触发，会话来源字段，真实用量、裁剪标记与条数线，工作会话的结构性放行，结构化摘要，触及解析与受保护清单，设置层表与场所，以及凭据文件的权限与时间线里的图片。Harness 的发布档位尚待统一确认；已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0，最终发布时按合并后源码与 npm 实况核定，以下版本基线仅用于标明 Harness 接口新增的位置。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0、`@aalis/api-memory` 0.7.1、`@aalis/api-agent` 0.9.1、`@aalis/api-platform` 0.9.0、`@aalis/api-authority` 0.10.0、`@aalis/api-storage` 0.7.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。带 `@aalis/core` peer 的包沿用已发布的区间，新包里带 core peer 的十五个写 `>=0.18.0 <1.0.0`；只有 plugin-code-sandbox-os 由 `>=0.17.0 <1.0.0` 抬到 `>=0.18.0 <1.0.0`（见「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节）。
 
 待发布的包：
 
@@ -39,7 +39,7 @@
 - 按 patch 发布（18 个）：api-code-sandbox、api-gateway、api-process、api-tools、plugin-checkpoint、plugin-cli（附件与纯文本消息的投递回执；日志位置的说明）、plugin-media（图片来源的裸路径不再路由到插件私有的内置根；说明里的临时目录）、plugin-llm-deepseek、plugin-memory-vector、plugin-message-archive、plugin-process-local、plugin-subtask、plugin-tool-code-runner、plugin-user-profile、plugin-user-relation、plugin-flow-control（只改 `scopes` 的配置说明，去掉「委派闸门」）、plugin-memory-summary（`summaryTokenRatio` 标 `secret: false`）
 - 不发版：plugin-embedding-openai、plugin-websearch-serper 只删了为 `secret` 写的类型导入（编译后擦除）与 api-webui 开发依赖，编译出的 JS 与类型声明不变（只差 source map 行号与 devDependencies），运行行为不变，停在已发布版本。
 - 上面的档位是各节合起来定的；各节末尾的「发布档位」只按那一节的改动说，同一个包在几节里都有改动的，以这里为准。
-- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0、api-checkpoint 0.1.0、api-session-protocol 0.1.0、api-todo-list 0.1.0、plugin-session-server 0.1.0、api-approval 0.1.0
+- 新包：api-remote-agent 0.1.0、plugin-remote-agent-cursor 0.1.0、plugin-paper 0.1.0、util-media-signature 0.1.0、api-publish 0.1.0、plugin-publish-review 0.1.0、plugin-works-site 0.1.0、util-offline-render 0.1.0、api-host-paths 0.1.0、api-checkpoint 0.1.0、api-session-protocol 0.1.0、api-todo-list 0.1.0、plugin-session-server 0.1.0、api-approval 0.1.0、plugin-usage-stats 0.1.0、api-reach 0.1.0、plugin-reach 0.1.0
 - plugin-session-confirm 与 api-session-confirm 在「审批」一节删除，发布时对它们执行 npm deprecate，不再发新版。
 - plugin-asr-openai、plugin-llm-openai、plugin-maimai、plugin-okx-trading 在后面几节另有改动（深度思考档位、上手与故障说明、报错普查第二批），按那几节发版。
 - 「会话协议与会话服务」「审批」及其后各节的包还没并进上面三张清单：api-agent、api-tools、api-platform、api-session-manager、schema-message、plugin-agent、plugin-checkpoint、plugin-todo-list、plugin-tool-onebot、plugin-adapter-onebot、plugin-session-manager、plugin-storage-local、plugin-tool-system、plugin-image-sender、plugin-paper、plugin-webui-server；api-approval（新包）、api-authority、api-commands、api-gateway、plugin-authority、plugin-commands、plugin-gateway、plugin-tools、plugin-cli、plugin-webui-client、create-aalis。档位按各节末尾的说明，新 WebUI 各单元做完后统一并账。
@@ -666,10 +666,10 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依赖，装机也不用编译工具。整个项目的最低 Node 版本随之定为 24.15.0，这一版起 `node:sqlite` 不再打实验警告。
 
 - **plugin-memory-sqlite**：改用 Node 自带的 `node:sqlite`，不再依赖 better-sqlite3。旧的数据库文件照常打开读写，不用迁移。开库设 WAL 与 `synchronous = NORMAL`（系统崩溃或断电时可能丢最后几次提交，库文件不会损坏），遇锁照旧最多等 5 秒；消息没有 `content` 时按空值落库，不再报错。Node 太旧（取不到 `node:sqlite`，或它缺本插件要用的事务状态与遇锁等待，即 22.16 之前与 23.x）时激活失败，报错写明需要 Node 24.15.0 起并指向升级说明；删掉原来原生模块版本不符时的 rebuild 提示。
-- **create-aalis**：一开头检查 Node 版本，低于 24.15.0 时不生成项目，写明需要的版本、当前版本、各平台的升级办法，以及旧项目换 Node 后怎么处理；生成的项目 package.json 写 `engines`。
+- **create-aalis**：一开头检查 Node 版本，低于 24.15.0 时不生成项目，报错只写需要的版本、当前版本与文档站「升级 Node」一节的地址；生成的项目 package.json 写 `engines`。
 - **plugin-doctor**：`env.node` 按 24.15.0 判，低于它报错并写明升级办法（此前按 22 推荐）。
 - **engines**：根、runtime、create-aalis、plugin-memory-sqlite 写 `"node": ">=24.15.0"`。
-- **文档**：README、CONTRIBUTING、入门与脚手架页改为 Node 24.15 起；「第一次运行」新增「升级 Node」，写明各平台步骤、已装好的项目照常 `npm start`、旧库不用迁移，以及早先版本在旧 Node 上装好的项目换 Node 后先 `npm install @aalis/plugin-memory-sqlite@latest`。
+- **文档**：README、CONTRIBUTING、入门与脚手架页改为 Node 24.15 起；「第一次运行」新增「升级 Node」，写明各平台的升级步骤。
 - **升级须知**：在 Node 22 上运行的实例，升级到本批之前先把 Node 换到 24.15 起；在新 Node 上，旧版 plugin-memory-sqlite 的原生模块会因版本不符激活失败，随本批一起升级即可。
 - **发布档位**：次版本：plugin-memory-sqlite、create-aalis；patch：runtime（只加 engines）、plugin-doctor；plugin-package-manager 只改注释，不发版。
 
@@ -754,6 +754,175 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 - **升级须知**：旧配置里的这六个键启动时按 schema 裁掉并告警，删掉即可。已存的 memory 元数据命名空间 `aalis:instructions` 不再读取，`/clear` 也不再清它；需要留底的先导出，再手动删除。
 - **发布档位**：plugin-user-profile 次版本；plugin-commands patch。
 
+### 全量压缩与按比例触发（@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server、@aalis/api-session-protocol）
+
+压缩把切分点之前的全部活跃历史压成一份摘要，不再保留最近若干条原文；自动压缩改按用量占上下文窗口的比例，在回合结束时判。
+
+- **全量压缩**（plugin-memory-summary）：
+  - 切分点之前的全部活跃历史连同已有摘要压成一份新摘要，再归档这一段；快照之后到达的消息与没写全的工具调用组原样留在活跃历史里，接在摘要后面。落笔前核对历史前缀，压缩期间被回滚或改动就作废。
+  - 没压成时以原因拒绝，不再退化为只裁切历史。后台压缩没压成时按轮数退避重试（隔 2、4、8、16、32 轮，之后每 32 轮一次），压成或清空后重置。手动压缩对短对话也完整压一次，没有可压的对话时什么都不做。
+  - 摘要的输出上限为会话最近一次模型调用的窗口乘 `summaryTokenRatio`（还没有用量时按摘要模型的窗口），下限 512，不超过摘要模型的输出上限与它窗口的四分之一。待摘要部分装不进摘要模型的窗口时分块增量，每次请求连同提示词、已有摘要与输出上限都装得下。宿主通知、代发的指令与平台通知也进摘要输入。注入的摘要不再按预算截断。
+  - `summaryModelMode` 为 `custom` 而指向的模型不在时，报错写明 provider/model。
+- **自动压缩**（plugin-memory-summary、api-memory）：新增会话设置项「自动压缩线」`compressAt`（占窗口比例，0 到 1，默认 0.8，0 表示不按用量压缩），各种会话都适用，按会话设置的层设；为此新增可选依赖 session-manager。回合结束时只按这一轮最后一次模型调用的用量判：`token:request` 的快照不触发，中止、出错的回合与压缩或清空之前开始的回合不判。实际的线取「自动压缩线 × 窗口」与裁剪预算中较小的那个；能压掉的部分（历史与工具结果）不到线的一半时不压。判定是 api-memory 的纯函数 `compressionDue`。
+- **会话服务**（plugin-session-server）：用量条目与会话头部的压缩刻度取实际压缩的那条线（自动压缩线与裁剪预算占窗口比例中较小的那个）。
+- **破坏性**：
+  - api-memory：`MemoryService` 删除可选方法 `trimHistory`，新增必填方法 `archiveOldest(sessionId, count)`：把最早的 count 条活跃消息标为归档（顺序与 `getHistory` 相同），返回归档条数，count 为 0 时什么都不归档；`getHistory` 的 `limit` 为 `Infinity` 时返回全部活跃消息。第三方记忆后端要实现这两点，没有 `archiveOldest` 时压缩一律失败。
+  - api-memory：`CompressionService.compress(sessionId, reason)` 改为 `compress(sessionId, { reason: 'manual' })`，删除 `reason: 'auto'` 与 `autoThreshold`，新增按会话取的 `compressAt(sessionId, platform?)`（设为 0 时为 `undefined`）；新增纯函数 `compressionDue(usage, lines)` 与类型 `CompressionUsage`、`CompressionLines`，失败退避由调用方负责。
+  - plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb：删除 `trimHistory`（sqlite 与 mongodb 导出的服务类同样），改为实现 `archiveOldest`，同一毫秒的消息按写入先后归档；sqlite 与 mongodb 的 `getHistory` 支持读全部活跃消息。
+  - plugin-memory-summary：删除配置键 `threshold`、`keepRecent`、`autoCompressThreshold`。
+- **升级须知**：
+  - 这三个键在新版启动时按 schema 裁掉并告警，要搬的值在升级前记下。
+  - 原来靠 `threshold` 按条数触发压缩的，把旧值写进会话设置的条数线 `historyLimit`（见下文「真实用量、裁剪标记与条数线」）。`keepRecent` 没有对应：压完之后，模型手里只有摘要与切分点之后的几条消息。
+  - `autoCompressThreshold` 不换算：它全局一个值、按单次调用判，新的自动压缩线按会话分层、在回合结束时判。默认 0.8；要更早压缩或不按用量压缩的，在 `sessionConfig` 的相应层写 `compressAt`（不按用量写 0）。
+  - `summaryTokenRatio` 保留，分母改为会话所用模型的窗口：会话模型与摘要模型的窗口差得多的，按新口径核一下这个比例。
+  - 现有摘要与历史数据不用迁移。
+- **发布档位**：次版本：api-memory、plugin-memory-summary、plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb；plugin-session-server 随首发；api-session-protocol 只改注释。对 `@aalis/api-memory` 的下限抬到本批的新版本（这几个现写 `>=0.7.1`）：plugin-memory-summary（运行时导入 `compressionDue`）、plugin-session-server、plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb。
+
+### 会话来源字段（@aalis/api-session-manager、@aalis/api-platform、@aalis/api-gateway、@aalis/schema-message、@aalis/api-commands、@aalis/api-approval、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-cli、@aalis/plugin-adapter-onebot、@aalis/plugin-webui-server、@aalis/plugin-authority、@aalis/plugin-flow-control、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-maimai、@aalis/plugin-agent、@aalis/plugin-subtask、@aalis/plugin-trigger-laya）
+
+会话的出生平台、聊天窗口与创建来源在建档时记成会话字段，权限判定、选档、召回范围与会话列表一律读这些字段，不再从会话 id 推；平台的类型（一对一还是多方）由适配器声明。
+
+- **来源字段**（api-session-manager、plugin-session-manager、plugin-session-server、plugin-cli）：
+  - IM 房间的首条真人入站建档时记下出生平台 `originPlatform` 与聊天窗口 `originChat`（平台类型名、多方标记、机器人账号、目标），之后不变。会话表里还没有来源字段的根会话（升级前的房间、按 id 兜底建档的根会话），由之后第一条真人入站补记来源字段与名字，只认这个会话 id 归消息平台的适配器管的入站；从 WebUI、终端往房间插话不补记。
+  - WebUI 新建的根会话记创建来源 `createdFrom`（会话服务取这条连接所在审批面的登记名 `webui`），子会话不带。终端在发出第一条消息前给配置的会话建档、记 `createdFrom: 'cli'`；配置的会话 id 由别的平台适配器认领时不建档、不写来源，告警一次。终端一次粘贴的多行按输入顺序发出。
+  - 自动标题只给带创建来源的根会话生成。会话摘要里的机器人账号、房间组的账号数与「平台:目标」搜索改读来源字段。
+- **房间类别**（api-session-manager 新增纯函数 `roomClass`）：受众只有 owner 的为 `owner-only`（带创建来源的根会话、对端是 owner 的一对一窗口），受众里有别人的为 `room`（多方窗口、对端不是 owner 的一对一窗口），其余为 `internal`（不在会话表里的、没有来源字段也没有创建来源的、编排与定时任务的会话），子会话取根会话的。安全判断只认多方标记，不认类型名。
+- **权限**（plugin-authority、api-approval）：发起类别里的「房间」改按房间类别判，不再按会话 id；受众判不出的会话（`internal`，以及没装会话管理时的全部会话）失败关闭，owner 在其中发起的回合与续做归 `other`，不能产生审批。新增可选依赖 session-manager，不再依赖 api-gateway。
+- **平台类型**（api-platform、schema-message、plugin-adapter-onebot、plugin-cli、plugin-webui-server）：
+  - 适配器以 `sessionTypes` 声明类型名与多方标记；不声明的平台（webui、cli）整个算一个一对一类型 `private`。消息带的类型名不在声明里时按多方记下并告警；声明了多方类型、消息却没带类型名时按第一个多方类型处理。
+  - OneBot 声明 `group`、`channel`（多方）与 `private`（一对一），入站带 `selfId`。`sessionType` 原样带出实现端的消息类型，声明以外的（如部分 v11 实现的 `guild`）按多方记下并告警，此前这类消息不带类型。频道消息带上 `groupId`，写作 `<guild>:<channel>`，与会话 id 的目标段一致；开了 `groupOnly` 的 plugin-user-relation 因此也把频道算作群聊。
+  - WebUI 的作用域候选按各平台的类型列出，webui、cli 多出 `<平台>:private`。
+  - 选层、场所与会话列表都不再看会话 id 的写法：内部会话的 id 可以带单冒号，WebUI 会话的 id 带冒号也由 webui 认领出站，session-manager 的 id 前缀告警删除。没实现 `canHandle` 的适配器仍按 `<平台名>:` 前缀路由。
+- **读来源字段的插件**：
+  - plugin-flow-control：手里没有会话类型时按会话记下的聊天窗口判作用域；平台为 internal 的定时任务与 WebUI 驱动的回复进已收录的群时，按群的出生平台进作用域，受限速并计入回复额度。
+  - plugin-persona：会话环境里的会话类型与群号取会话记下的聊天窗口，不再拆会话 id；不再依赖 api-gateway。
+  - plugin-memory-history、plugin-memory-vector、plugin-tool-session：同平台范围按根会话记下的出生平台判，不再依赖 api-gateway；没装会话管理时，tool-session 的 `platform` 范围读不到别的会话。
+  - plugin-maimai：没绑定时按调用者 QQ 号查，判据由会话 id 含 `:private:` 改为会话记下的一对一窗口；新增可选依赖 session-manager。
+  - plugin-agent：`token:request` 缺平台时取根会话的出生平台。plugin-agent 与 plugin-subtask 不再写 `createdBy`。
+  - plugin-trigger-laya（private 包）：机器人账号取消息上的 `selfId`，没有时取房间记下的，从 WebUI 往群里插话照常问侧车；不再只认 OneBot 的群与私聊；兜底原因改为「没有机器人账号」。
+- **破坏性**：
+  - api-session-manager：删除 `SessionInfo.createdBy`，`ensureSession` 的 `patch` 也不再收它；新增 `createdFrom`、`originChat`、`work`、`currentDir` 与类型 `OriginChat`、`WorkBinding`、`SessionCreation`、`RoomClass`；`originPlatform` 改为建档时记下的存储字段，不收调用方传值，自研 session-manager 不再按会话 id 推。`createSession(opts?, creation?)` 与 `ensureSession(id, patch?, creation?)` 的末参数 `SessionCreation` 是建档专用的参数（`ensureSession` 只收其中的创建来源），只给根会话，带 `parentId` 时抛错。新增纯函数 `rootSessionOf`（父会话链断了或成环时为 `undefined`）与 `roomClass`，以及当前目录与项目会话绑定的方法 `setCurrentDir`、`setExtraRoots`、`addWorktree`。
+  - api-platform：`PlatformAdapter.sessionTypes` 由 `string[]` 改为 `SessionTypeDecl[]`（`{ name, multiParty }`，`multiParty` 不是 `false` 的按多方）；新增 `sessionTypesOf`、`resolveSessionType` 与类型 `ResolvedSessionType`；`resolvePlatformBySession`、`getPlatformAdapterEntries` 的 source 只需 `all`。第三方适配器要改声明，并在消息上带类型名与 `selfId`。聊天窗口建档后不再改：按字符串声明类型的旧适配器配新版 session-manager 时，它的私聊也按多方记下，记错的要改会话记录里的 `originChat`。有多方会话的平台不声明类型时，它的群按一对一处理，任何群员都会被当成那个唯一的对端。
+  - schema-message：`IncomingMessage.sessionType` 由 `'group' | 'private' | 'channel'` 改为任意类型名字符串，新增 `selfId`；按三个字面量穷举的代码要补默认分支。api-commands 的 `CommandArgv.session.sessionType` 与 `ExecutionInput.sessionType` 同样改为字符串。
+  - api-gateway：删除 `inferSessionScope`；新增 `chatScopeOf`（入站消息所在的聊天窗口）与类型 `ChatScope`，依赖加 `@aalis/api-platform`。消息上没有会话类型时，改取会话管理记下的 `originChat`。
+  - plugin-authority：没装 plugin-session-manager 的部署，owner 的回合一律不能产生审批，要审批的工具直接拒绝；没有来源字段的旧会话同样（见升级须知）。
+  - plugin-adapter-onebot：频道消息新带的 `groupId` 是 `<guild>:<channel>`；声明以外的消息类型不再丢掉。
+- **升级须知**（会话表在记忆后端的元数据命名空间 `sessions`，键为会话 id）：
+  - IM 房间（根会话 id 形如 `<平台>:<机器人账号>:<类型>:<目标>`）不用处理：那个群或私聊的下一条真人消息会补记来源字段与名字。补记之前它们按内部会话处理，列在「我的会话」。
+  - WebUI 与终端的旧会话要补 `createdFrom` 才算 owner 自己的会话：终端配置的会话 id（plugin-cli 的 `sessionId`，默认 `cli-default`）写 `createdFrom: 'cli'`，记录已在表里时终端不会补写；在 WebUI 里建的写 `createdFrom: 'webui'`。不补的按内部会话处理：owner 在里面发起的回合不能产生审批、不生成自动标题，入站照常经过触发判定与流控（见下文「工作会话的结构性放行」）。升级之后新建的会话自动带上。
+  - `createdBy` 不再读取，可以删掉。
+  - 自己实现平台适配器的，先按上面改好 `sessionTypes` 与 `selfId`，再升级 plugin-session-manager。
+- **发布档位**：次版本：api-session-manager、api-platform、api-gateway、schema-message、api-commands、plugin-session-manager、plugin-authority、plugin-adapter-onebot；plugin-session-server 随首发；api-approval 只改注释；plugin-trigger-laya 不发布；其余为 patch。要抬的依赖下限（抬到本批的新版本）：
+  - `@aalis/api-session-manager`（来源字段、`rootSessionOf`、`roomClass`、建档参数）：plugin-authority、plugin-cli、plugin-flow-control、plugin-maimai（本节新增的依赖，现写 `>=0.10.0`），以及 plugin-session-manager、plugin-session-server、plugin-agent、plugin-persona、plugin-memory-history、plugin-memory-vector、plugin-tool-session、plugin-webui-server。其中运行时导入 `rootSessionOf` 或 `roomClass` 的，装到旧版时加载失败。plugin-trigger-laya 同步改。
+  - `@aalis/api-platform`（`SessionTypeDecl`、`sessionTypesOf`、`resolveSessionType`）：api-gateway（新增的依赖，运行时导入 `resolveSessionType`，现写 `>=0.9.0`）、plugin-session-manager 与 plugin-webui-server（运行时导入 `sessionTypesOf`）、plugin-adapter-onebot、plugin-cli。
+  - `@aalis/api-gateway`（`chatScopeOf`）：plugin-session-manager（运行时导入，现写 `>=0.7.0`）。
+  - `@aalis/schema-message`（`selfId`）：plugin-adapter-onebot；plugin-trigger-laya 同步改。
+  - 前文「房间会话钉死出生平台、会话列表分区与停止键停掉子进程」一节为 `resolveSessionOrigin` 列的 api-gateway 下限，除 plugin-session-manager 外都不用再抬：plugin-persona、plugin-memory-history、plugin-memory-vector、plugin-tool-session、plugin-authority 去掉了对 api-gateway 的依赖，plugin-agent 只用已发布版本里就有的 `gateway`。
+
+### 真实用量、裁剪标记与条数线（@aalis/api-agent、@aalis/plugin-agent、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-history）
+
+用量取模型服务返回的输入 token，每次模型调用之后都报；自动压缩按硬裁剪之前的历史算能压掉的部分，并加上按条数的一维；对话代理每轮读多少条历史改由会话设置定。
+
+- **用量**（api-agent、plugin-agent）：`token:usage` 在每次模型调用之后发一次（首次调用、工具循环里的每次、格式重试），调用抛错的那次不发；`used` 取模型服务返回的输入 token，只采用正的有限数，0、NaN 与没有返回时按估算，界面不再出现 0% 或 NaN%。plugin-agent 等 `token:usage` 的监听者处理完才继续这一轮。
+- **硬裁剪**（plugin-agent）：真实回合里删了消息时记一行「上下文硬裁剪: session=<id>, N → M 条消息」，快照不记；原来的「上下文压缩/截断 … 约 X tokens」不再输出。`token:request` 的快照按会话的条数线读历史，并过同样的硬裁剪。`trimThresholdRatio` 的说明改为指向会话设置里的两条线。
+- **条数线**（plugin-agent 登记会话设置项「历史条数上限」`historyLimit`）：一轮最多从记忆读进这么多条会话历史；装了摘要插件时，会话的消息到这个条数就压缩。默认 0：读全部活跃历史、不按条数压缩。各种会话都适用，子会话按自己的继承链实时解析。
+- **压缩判定**（api-memory、plugin-memory-summary）：`compressionDue` 加条数一维（会话历史条数到线即压缩）与 `trimmed`（用量没到线、但这一轮被硬裁剪过也算到线）。能压掉的部分按硬裁剪之前的历史算，人设与注入块很大的小窗口模型不再只裁不压；首次调用被裁剪、之后又调了工具的回合，结束时同样压缩；结局为 `replied` 时，会话条数计入这一轮落库的最终回复，一问一答到线的那一轮结束就压缩。条数触发与用量触发共用按轮数的退避。「自动压缩线」的说明补「0 表示不按用量压缩（条数线照样起作用）」。
+- plugin-memory-history：`excludeCurrentSession` 的说明改为指向会话设置 `historyLimit`，行为不变。
+- **破坏性**：
+  - api-agent：`TokenUsageEvent` 新增必填字段 `trimmed`（本回合到这次调用为止进入过硬裁剪）、`untrimmedHistory`（按没经过硬裁剪的消息列表估算的历史与工具结果 token）、`historyMessages`（这次的消息列表里来自会话历史的条数）。自己发 `token:usage` 的第三方要补上；按用量触发动作的消费方以有没有 `turnId` 区分真实回合与快照。`SessionConfig` 新增 `historyLimit`；`agent:turn:after` 写明结局为 `replied` 时最终回复已写进会话历史。
+  - plugin-agent：删除插件配置键 `historyLimit`（原默认 50）。
+- **升级须知**：
+  - plugin-agent 的 `historyLimit` 在新版启动时按 schema 裁掉并告警。要保留每轮读进条数的上限，把旧值写进 `sessionConfig` 某一层的 `historyLimit`；不装摘要插件的部署要写在 `sessionConfig.defaults` 上，否则每轮读进全部活跃历史，只靠硬裁剪兜底。
+  - 这一项同时是按条数压缩的线，上一节 memory-summary 的 `threshold` 也搬到这里：两个旧值都写过的，按想要的压缩时机取一个。
+- **发布档位**：次版本：api-agent、plugin-agent（api-memory、plugin-memory-summary 见「全量压缩与按比例触发」）；plugin-memory-history 本节只改说明。plugin-agent 对 `@aalis/api-agent` 的下限抬到本批的新版本。
+
+### 工作会话的结构性放行（@aalis/plugin-gateway）
+
+受众只有 owner 的会话（房间类别 `owner-only`）没有「要不要开口」的问题，也没有刷屏要限，入站不再经过触发判定与流控。
+
+- plugin-gateway：WebUI 与终端建的会话（不论在哪个工作区）、owner 的 IM 私聊以及它们的子会话跳过 `inbound:trigger` 与 `inbound:flow` 两个相位，指令相位之后直接派发：触发判定、禁言关键词与自禁言、禁言期的吞噬、冷却与限速对它们都不起作用，与 trigger-policy、flow-control 的作用域配置无关。群、别人的私聊与内部会话不变。新增可选依赖 session-manager 与 authority：会话管理不在时全部照常走，authority 不在时 owner 的 IM 私聊照常走全部相位。
+- trigger-policy、flow-control 的 `scopes` 里写 `webui`、`cli` 的，管的只剩从 WebUI 或终端发进群、别人私聊与内部会话的消息。
+- 已知局限：会话在 trigger-policy 建过状态之后才变成 owner-only 的，已有的闲置话题定时器保留到插件停用或重启。
+- **破坏性**：挂在 `inbound:trigger`、`inbound:flow` 上的第三方中间件收不到 owner-only 会话的消息，这两个相位也不为它们发 `gateway:phase:done`；要覆盖全部入站的，挂在 `inbound:command`。
+- **发布档位**：plugin-gateway 次版本。对 `@aalis/api-session-manager` 的下限抬到本批的新版本（运行时导入 `roomClass`）；新增的 `@aalis/api-authority` 依赖写 `>=0.10.0`，要用的 `isOwner` 已发布版本里就有。
+
+### 结构化摘要（@aalis/plugin-memory-summary）
+
+摘要改为按会话选的固定小节，不能再自定义提示词。
+
+- 场所是聊天窗口的根会话（多方窗口、对端不是 owner 的一对一窗口）用「最近在聊什么」「谁有问题没回应」「关键原话要点」；其余会话（owner 自己的、内部的与全部子会话）用「目标」「做过的决定」「改过的文件」「未完成的事」。没有内容的小节写「无」；有旧摘要时按同名小节合并，旧摘要没有这些小节或换过模板时按意思归入对应小节。用工作模板时，待摘要部分里最后一次 `manage_todo_list` 的参数作为最后一行，「未完成的事」以它为准。
+- 新增可选依赖 authority，判一对一窗口的对端是不是 owner，不装时按不是；没有会话管理时一律用工作模板。
+- **破坏性**：删除配置键 `summaryPrompt`。
+- **升级须知**：`summaryPrompt` 在新版启动时按 schema 裁掉并告警。现有的无结构摘要不用迁移，下一次压缩时按模板合并重写。
+- **发布档位**：plugin-memory-summary 次版本（与「全量压缩与按比例触发」同一版）。对 `@aalis/api-session-manager` 的下限抬到本批的新版本（运行时导入 `roomClass`）；新增的 `@aalis/api-authority` 依赖写 `>=0.10.0` 即可。
+
+### 触及解析与受保护清单（新包 @aalis/api-reach、@aalis/plugin-reach；@aalis/api-authority、@aalis/plugin-authority、@aalis/create-aalis）
+
+新增触及：一次工具调用能读写本机的哪些路径、命令在沙箱里还是宿主上执行、能不能联网，由触及服务按调用签发的凭据回答。本批只交付契约与服务，工具与存储还没有接入，装上它不改变现有工具的行为。说明见 `docs/plugins/plugin-reach.md` 与 `docs/api/api-reach.md`。
+
+- **新包 `@aalis/api-reach` 0.1.0**：
+  - 权限四档 `ACCESS_TIERS`（只读、修改确认、工作区、全权）与越界策略 `BoundaryPolicy`（`ask`、`deny`），经 declaration merging 加会话设置键 `accessTier`、`accessOnBoundary`。这两项本批还没有插件登记，设不了，一律按默认的工作区档、越界时问。
+  - 纯函数 `resolveReach`：按主体与房间类别定上限，只有 owner 在 owner-only 的会话里有本地效果，再按档位收窄；子任务与父会话实时的触及取较小值。`judgeReach` 判一个目标放行、问或拒，会话受污染时（读进过别人写的内容）全权以外的档位把送出会话的动作改成问。
+  - 三张受保护清单 `protectedLists`：宿主控制面，任何档位拒写、不可申请（实例家目录里白纸、临时区与技能目录以外的部分，主配置与 secrets.yaml，守护进程加载代码的目录，npm 形态下另有守护进程的入口文件与安装集的 `package.json`）；持久化与自动执行落点（git 目录里的配置、钩子、`commondir`、整棵 `modules` 与 worktree 管理目录，不叫 `.git` 的 git 目录按真实路径锚定、里面的 `HEAD` 照常可写；shell 与登录配置、`~/.ssh`、git 的用户配置与开机自启的目录；项目里会被工具自动执行的配置与项目指令文件，编辑器与其他代理的项目配置目录本身；`~/.config`、Linux 的 `~/.config/systemd`、macOS 的 `~/Library` 目录本身；白纸里项目自己的 `.aalis/`）；拒读清单（实例家目录里 `stage/`、`self/`、日志与主配置以外的部分与 secrets.yaml，同一用户下其他实例的家目录，凭据目录与文件，`.env` 一类文件，浏览器的配置与数据）。`matchesRule` 判路径落不落在一条规则里，`withRealRoots` 给链接到别处的根按真实路径补一份。
+  - 沙箱策略 `sandboxPolicyOf`：提权分范围外写（`writePaths`，并进可写的根，其下的落点照样拒写）与按落点批准（`landingPaths`，只放回那一个确切路径）。
+  - 凭据类型 `ReachCredential` 与不可枚举的品牌 `REACH_CREDENTIAL`、`isReachCredential`；服务描述符 `reach` 与 `ReachService`（`forCall`、`markTainted`、`provenanceOf`）。
+- **新包 `@aalis/plugin-reach` 0.1.0**：提供 `reach` 服务。按一次工具调用签发凭据：发起类别取权限服务的 `originOf`，房间类别、档位、场所与绑定取会话管理里的记录；降档与受污染对已签发的凭据立即生效，全权档的凭据不带来源。另管：
+  - 本会话临时区：实例家目录的 `tmp/sessions/<会话 id 的十六进制>/`，0700，随会话删；启动时与每天清扫一次 7 天没有改动、会话也不在运行的。删除与清扫在后台跑，单个删不掉记 warn。
+  - 子进程环境：取 owner 的 login shell 的环境，取不到时用守护进程的环境、1 分钟后再取；沙箱内去掉凭据类变量、密码管理器的会话令牌、名字含 WEBHOOK 的变量、带密码的网址、npmrc 的凭据行与证书私钥、git 的命令行配置。
+  - 会话的污点与白纸的来源账本，存在插件数据 `reach/provenance.json`。
+  - 清单按真实路径生效：链接到别处的 shell 配置、git 配置、`~/.ssh`、主配置与 secrets.yaml 同样受保护。场所的白纸与主目录按会话的场所取（见下文「设置层表与场所」）。
+- **create-aalis**：standard 与 full 档带上 `@aalis/plugin-reach`。
+- **破坏性**：api-authority 的 `AuthorityService` 新增必填方法 `originOf(turn)`（这一轮由谁发起，取值见 api-approval 的 `OriginKind`）与类型 `OriginTurn`，自己实现权限服务的要补上；api-authority 新增对 `@aalis/api-approval` 的依赖（只用类型）。plugin-authority 实现它，执行守卫改用它，行为不变。
+- **发布档位**：api-reach、plugin-reach 首发 0.1.0；api-authority 次版本；plugin-authority、create-aalis 为 patch。两个新包对 `@aalis/api-authority`（`originOf`、`OriginTurn`）与 `@aalis/api-session-manager`（`roomClass`、`rootSessionOf`、`placePaperId` 与相关类型）的下限现写 `>=0.10.0`，发布时抬到本批的新版本；plugin-authority 对 `@aalis/api-authority` 的下限同样抬。新包对 api-host-paths（本批新包）、api-process、api-storage、schema-message 的下限，用到的接口在已发布版本里都有。
+
+### 设置层表与场所（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-gateway、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-paper、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-cli、@aalis/plugin-skills、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-trigger-laya、@aalis/plugin-doctor、@aalis/plugin-reach）
+
+会话设置的层由一张层表定义：全局默认 → 平台档 → 平台类型档 → 场所 → 父会话 → 本会话。每个会话恰好属于一个场所，按房间的设置设在场所上，换会话不丢；平台档下的群与私聊条目换成按平台类型的一档。默认模型只在 llm 服务偏好一处，与会话设置项重复的插件配置删除，每个值只在一处设。说明见 `docs/plugins/plugin-session-manager.md` 的「层表」。
+
+- **层表与场所**（api-session-manager、plugin-session-manager、api-gateway）：
+  - 场所：IM 的群与别人的私聊是窗口，键为 `平台:类型:目标`（api-gateway 的 `windowKey`，不含机器人账号，同一个群几个账号的会话是同一个窗口；平台名、类型名里的 `%` 与 `:` 转义）；本机的会话与 owner 的 IM 私聊在工作区，键为 `workspace:<id>`，默认工作区为 `workspace:default`。子会话取根会话的场所。有出生平台的根会话一律按窗口，聊天窗口缺失或目标为空的坏数据也按窗口（日志点名），不落进默认工作区；认 owner 的 IM 私聊用 `optional(authority)`，不装时按窗口算。
+  - 场所记录存在记忆后端的元数据命名空间 `places`，随会话表加载与落盘：默认工作区激活时就在；窗口的记录在房间建档时、或那个窗口下一条真人消息到达时建，显示名随入站更新，群改名后同一窗口各账号的会话都刷新。项目工作区由 `addWorkspace` 登记（同一个真实路径只登记一个，编号随机），`removeWorkspace` 只删记录与场所设置、不动文件；会话协议与界面本批还没有登记工作区的入口。
+  - 设置项登记可写 `narrowest: 'place'`：只能设到场所为止，会话自己的覆盖不收它；会话上存着的旧值（本会话的覆盖、父会话给子会话的默认值）不参与解析，每个会话每项告警一次。
+  - 宿主配置的 `sessionConfig` 只认 `defaults`、`platforms`、`types` 三段；`audiences` 等不认识的段与名字不合写法的平台名、类型名（空串、`*`、带 `:`）告警一次后忽略，从界面改任一层时从配置文件删掉。选层读会话记下的字段，不从会话 id 推平台。
+  - 默认模型只有一处：字段类型为 `llm-ref` 的设置项（「模型」）在全局默认层读写的就是 llm 服务的偏好（运行态与配置文件的 `servicePreferences.llm`），写在 `sessionConfig.defaults` 里的告警后忽略。全局默认之上各层都没设时，会话的生效配置里没有模型，交给 llm 服务按偏好、提供者优先级与登记先后解析。只写了提供者的偏好不再拆成模型引用。偏好改了、llm 提供者上下线时同样发 `session:config:changed`。
+- **会话协议与界面**（api-session-protocol、plugin-session-server、plugin-webui-client）：
+  - 会话摘要删 `audience`，加 `chat`（类型名与多方标记）与 `place`（键、类别、显示名）；设置层为 `defaults`、`platform`、`type`、`place`，设置行的来源为层名，`session/config/layers` 另回层表 `order`（各层的名字与称呼，按先后）；设置行加 `resolved`（服务此刻实际用的模型）。只能设到场所为止的项不进会话的行；没有记录的场所键回参数错误。
+  - 「会话默认」可选平台类型档；全局默认层的「模型」就是默认模型，没设时写「默认（…）」，偏好指向的模型不在时标出。会话设置面板每项写来源，可以改到这个会话、这个场所或所有会话，被更窄的层压住时写明改了不生效。房间页每行有「场所设置」。会话头部写场所与平台。系统页的服务偏好不再单列模型服务，改为指向「会话默认」。
+- **plugin-paper**：白纸与远端代理的六项设置只能设到场所为止，按窗口设，换会话不丢。不写名字的房间白纸一个窗口一张，id 为 `p:` 加场所键的 UTF-8 十六进制（api-session-manager 的 `placePaperId`），白纸目录名随之改变。诊断项与「共用的房间」按平台档、平台类型档与场所判。
+- **plugin-agent**：默认模型只在 llm 服务偏好，激活与重载不再改写它。偏好指向的模型不在、服务落到别的模型上时照常用它，每个（偏好，实际）组合告警一次。「最大工具迭代」没设时为 30。「模型」设置项的说明改为没设置时用全局默认层的，那里也没设时用第一个可用的对话模型。`/session` 的来源按层表写，模型那一行之后另写这一轮实际会用的模型。
+- **人设与技能**（plugin-persona、plugin-cli、plugin-skills）：主卡固定为人设目录里的 `default`，换卡只经会话设置「人设」。终端的欢迎行、头部、回复署名与状态页按终端会话生效的人设取名字。角色卡的技能白名单按调用所在会话的人设取（`list_skills`、`load_skill`、技能发现与触发词），`load_skill` 拒绝白名单之外的技能；plugin-skills 新增可选依赖 session-manager。
+- **服务优先级**（plugin-asr-openai、plugin-asr-whisper-cpp、plugin-trigger-laya）：登记优先级改为常量（asr-openai 50、whisper.cpp 80、Laya -10）。转写后端由 plugin-media 的 `audio.prefer` 选，服务偏好 `servicePreferences.asr` 只在优先级相同时决胜；要用 Laya，改 `trigger` 的服务偏好。
+- **plugin-doctor**：新增内置检查「服务偏好未生效」（`services.preferences`）：配置文件里的服务偏好指向的提供者不在时报 warn，写明实际在用哪个与改法（llm 指向「会话默认」的「模型」）；新增可选依赖 host-config。
+- **破坏性**：
+  - api-session-manager：新增层表 `SESSION_LAYERS` 与类型 `SessionLayerName`；`SessionConfigLayer` 删 `audience`，加 `type`（平台名加类型名）与 `place`（场所键）；`SessionInheritance` 删 `audience`、加 `type`（场所经 `placeOf` 取）；`InheritanceSource` 的取值为 `defaults`、`platform`、`type`、`place`、`parent`。新增 `SessionPlace`、`PlaceInfo`、`WorkspaceInfo`、`placePaperId`，服务方法 `placeOf`、`getPlace`、`addWorkspace`、`listWorkspaces`、`removeWorkspace`、`resolvedDefaults`，`SessionInfo.workspace` 与 `SessionCreation.workspace`（须是已有的工作区；在项目工作区里建会话必带绑定 `work`，默认工作区不收），`SessionSetting.narrowest`。删除本批前文加的 `RoomAudience` 与 `SessionInfo.audience`；`sessionKind` 改按有没有出生平台判；`setCurrentDir` 对全部会话开放；`getOwnConfig` 不交出只能设到场所为止的项，`childConfig` 也不复制它们。自研 session-manager 要实现层表上的各层、场所与工作区。
+  - api-gateway：新增 `windowKey`、`parseWindowKey`；删除本批前文加的 `resolveSessionOrigin` 与 `SessionOrigin`。
+  - api-session-protocol：摘要、设置层、来源与 `session/config/layers` 的回包如上，第三方前端照新的形状改。
+  - plugin-agent：删除插件配置 `defaultLLM`、`maxToolIterations`。`/session` 的来源称呼改为「全局默认」「平台档 <平台>」「平台类型档 <平台> · <类型>」「场所『<显示名>』」「父会话」，按文本解析它的脚本要改。
+  - plugin-persona：删除插件配置 `persona`。
+  - plugin-asr-openai、plugin-asr-whisper-cpp：删除配置 `priority`；plugin-trigger-laya 同样删除。
+  - plugin-skills：技能白名单由总按主卡改为按会话的人设。
+  - plugin-session-manager：`sessionConfig.audiences` 不再读取。
+- **升级须知**：
+  - plugin-agent 的 `defaultLLM`、`maxToolIterations`，plugin-persona 的 `persona`，plugin-asr-openai 与 plugin-asr-whisper-cpp 的 `priority` 在新版启动时按 schema 裁掉并告警，要搬的值在升级前记下。
+  - 宿主配置 `sessionConfig.audiences` 原样改名为 `types`，里面的 `<平台>.group`、`<平台>.private` 不变。要在升级后第一次从界面改会话设置之前改：那一次保存会把 `audiences` 从配置文件删掉。照前文「新 WebUI：外壳、会话与插件登记的会话设置」的升级须知迁 `platformProfiles` 时，带 `audience` 的条目直接写到 `sessionConfig.types.<平台>.<group 或 private>`。
+  - 默认模型：`sessionConfig.defaults.llm` 与 plugin-agent 的 `defaultLLM` 并进 `servicePreferences.llm`，写作 `<提供者实例 id>/<模型>`；两处都写了的取 `sessionConfig.defaults.llm`（原来决定回复的是它），都没写的保持现有偏好；然后删掉 `sessionConfig.defaults.llm`。
+  - plugin-persona 的 `persona` 不是 `default` 的，写进 `sessionConfig.defaults.persona`；plugin-agent 的 `maxToolIterations` 不是 30 的，写进 `sessionConfig.defaults.maxToolIterations`。
+  - 改过 asr 的 `priority`、使按原优先级选出的后端与现在不同的，写 plugin-media 的 `audio.prefer`（处理器名为 `asr:<插件实例 id>`）。靠 plugin-trigger-laya 的 `priority` 让 Laya 生效的，改为在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`。
+  - 会话自己的覆盖里写着白纸六项的，改设到这个窗口的场所上（房间页的「场所设置」，或在会话设置面板改到「这个场所」），再清掉会话上的值；同一窗口几个会话写了不同的值时，自己定取哪个。
+  - 场所记录不用预建：默认工作区激活时就在，窗口的记录在那个窗口下一条真人消息到达时建，建了之后才能在这个场所上设值。
+- **发布档位**：次版本：api-session-manager、plugin-session-manager、api-gateway、plugin-agent、plugin-persona、plugin-asr-openai、plugin-asr-whisper-cpp、plugin-skills；plugin-paper、plugin-session-server、api-session-protocol、plugin-reach 随首发；plugin-webui-client、plugin-cli、plugin-doctor 为 patch；plugin-trigger-laya 不发布。要抬的依赖下限（抬到本批的新版本）：`@aalis/api-session-manager`（`SESSION_LAYERS`、`placePaperId`、`placeOf` 等）由 plugin-session-manager、plugin-session-server、plugin-agent、plugin-paper、plugin-reach 抬，它们运行时导入 `SESSION_LAYERS` 或 `placePaperId`；`@aalis/api-gateway`（`windowKey`、`parseWindowKey`）由 plugin-session-manager 抬。plugin-skills 新增的 `@aalis/api-session-manager` 依赖、plugin-session-manager 新增的 `@aalis/api-authority` 依赖与 plugin-doctor 新增的 `@aalis/api-host-config` 依赖，用到的接口在已发布版本里都有，分别写 `>=0.10.0`、`>=0.10.0`、`>=0.1.0` 即可。
+
+### 凭据文件的权限与时间线里的图片（@aalis/api-storage、@aalis/plugin-storage-local、@aalis/plugin-webui-server、@aalis/plugin-message-archive）
+
+WebUI 的登录凭据只给运行 Aalis 的系统用户读写；WebUI 上传与 OneBot 落盘的图片在时间线里显示成图片。
+
+- **api-storage**：`StorageService.writeFile` 新增可选参数 `options`（类型 `StorageWriteOptions`）。`secret: true` 表示内容是凭据，只给运行 Aalis 的系统用户读写；做不到的提供者应拒写，不得写成别人读得到的文件。存储网关（`createStorageGateway`）把它传给提供者。
+- **plugin-storage-local**：实现 `secret`，以 0600 写，覆写已有文件时一并收紧；临时文件建出时就带目标权限位，内容从不以更宽的权限落盘。
+- **plugin-webui-server**：登录 token 文件与 `access.txt` 按凭据写（0600），读回的已有 token 文件一并收紧，收紧失败记 warn。此前按默认权限写，同一台机器上的其他系统用户可能读得到。
+- **plugin-message-archive**：入站附件的地址按存储全部提供者的根认定（此前只认当前胜者的根），WebUI 上传的图片与 OneBot 落盘的图片在时间线里显示成图片。
+- **升级须知**：升级后第一次启动即按凭据重写 `access.txt` 与持久化的 token 文件。自己实现存储提供者的，带 `secret` 时按凭据写或拒写。
+- **发布档位**：patch（api-storage 只加可选参数）。plugin-storage-local、plugin-webui-server 对 `@aalis/api-storage` 的下限抬到本批的新版本：webui-server 经 api-storage 的存储网关传 `secret`，旧版网关会把这个选项丢掉。
+
 ### 必须同批升级的包
 
 - plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-agent、plugin-adapter-onebot、plugin-user-profile、plugin-user-relation 与 schema-message 同批升级：它们在运行时引用 `WellKnownMetadataKeys` 新增的 `GroupId`、`GroupName`、`SessionType`、`MessageId`，配旧版 schema-message 时常量为 undefined，按它读的元数据静默读空。
@@ -794,8 +963,16 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 - plugin-tools 与 plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-draw、plugin-media、plugin-mcp-client、api-tools 同批升级：新版工具不再自带超时，等多久交给新版执行器的让出时限；配旧版 plugin-tools 时不会转后台、也没有让出时限，exec 等调用一直等到回合被停止。
 - plugin-session-server、plugin-webui-client 与 api-session-protocol、plugin-tools 同批升级：新版前端读摘要必填的 `background` 与 `background/*` 方法，旧版会话服务没有；新版会话服务投影的后台任务登记只有新版 plugin-tools 提供。
 - plugin-subtask 与 plugin-session-manager 同批升级：新版子任务等子会话由 session-manager 收口（出错为 error、被停止为 completed 且最近一轮为 aborted），配旧版 session-manager 时出错或被停止的子会话一直停在进行中，`wait_subtasks` 等满才返回。
+- plugin-agent、plugin-memory-summary 与 plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、api-memory 同批升级：新版 agent 没设条数线时、新版摘要插件压缩时都以 `Infinity` 读全部活跃历史，压缩以 `archiveOldest` 归档；旧版 sqlite 后端遇 `Infinity` 报错，对话读不出历史，三家旧版后端都没有 `archiveOldest`，压缩一律失败。第三方记忆后端照「全量压缩与按比例触发」一节补上这两点。
+- plugin-memory-summary 与 plugin-agent、api-agent 同批升级：自动压缩按 `token:usage` 新带的 `trimmed`、`untrimmedHistory`、`historyMessages` 判，旧版 agent 不带，自动压缩不会触发；条数线 `historyLimit` 也由新版 agent 登记。
+- plugin-session-server 与 plugin-memory-summary、api-memory 同批升级：新版会话服务按会话调压缩服务的 `compressAt`，旧版 memory-summary 没有它，用量条目推不出去；旧版会话服务配新版 memory-summary 时界面上没有压缩刻度。
+- plugin-authority、plugin-cli、plugin-session-server 与 plugin-session-manager、api-session-manager 同批升级：新版 authority 按会话管理记下的来源字段判发起类别，旧版 session-manager 不记这些字段，所有会话都判不出受众，owner 在哪里都不能产生审批；终端与 WebUI 的会话由新版 plugin-cli 与会话服务经建档参数写创建来源，配旧版 session-manager 时写不进去；新版会话服务还调 `placeOf`、`getPlace`、`resolvedDefaults`，旧版 session-manager 没有，会话列表取不出来。
+- plugin-adapter-onebot 与 plugin-session-manager、api-platform 同批升级：新版 session-manager 在 IM 房间建档时按适配器的类型声明记下聊天窗口，之后不再改；旧版适配器按字符串声明类型、入站不带 `selfId`，配新版 session-manager 时它的私聊也按多方记下、聊天窗口里没有机器人账号，要改会话记录的 `originChat` 才能纠正。第三方平台适配器同理，先改好声明再升级 session-manager。
+- plugin-persona、plugin-memory-history、plugin-memory-vector、plugin-tool-session、plugin-flow-control、plugin-maimai 与 plugin-session-manager 同批升级：它们读会话管理记下的出生平台与聊天窗口，旧版 session-manager 不记，从 WebUI 往房间插话时一律按入口平台算，合成回合取不到会话类型与群号，私聊里认不出一对一窗口。
+- plugin-paper、plugin-reach 与 plugin-session-manager 同批升级：两者按 `placeOf` 取场所、按 `placePaperId` 算白纸，旧版 session-manager 没有 `placeOf`，白纸工具与签发凭据抛 TypeError；plugin-reach 另要新版 plugin-authority 的 `originOf`。
+- plugin-webui-server 与 plugin-storage-local、api-storage 同批升级：token 与 `access.txt` 按凭据写（0600）要新版 storage-local 实现 `secret`、新版 api-storage 的存储网关把它传下去，配旧版时照旧按默认权限写，不报错。
 - 走插件市场的，以上各组各自同一批勾选更新。
-- 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager、plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session：它们要用本批 api-gateway 新增的 `resolveSessionOrigin`（persona 另要 0.8.0 的 `inferSessionScope`）。要升级它们，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。
+- 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager：它要用本批 api-gateway 新增的 `chatScopeOf`、`windowKey`、`parseWindowKey`，新版 api-gateway 另要本批 api-platform 的 `resolveSessionType`。要升级它，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session 不再要求新版 api-gateway。
 
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 
