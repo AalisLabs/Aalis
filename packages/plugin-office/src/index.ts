@@ -2,7 +2,7 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
-import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { DocSessionManager } from './session.js';
 import { registerDocxTools } from './tools/docx.js';
 import { registerPdfTools } from './tools/pdf.js';
@@ -63,7 +63,7 @@ function registerOffice(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config, logger);
   const outputUri = cfg.outputDir || configSchema.outputDir.default;
   if (!isStorageUri(outputUri)) {
-    throw new Error(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${outputUri}"`);
+    throw configError(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${outputUri}"`);
   }
   const storage = createStorageGateway(caps.storage);
   const sessions = new DocSessionManager();

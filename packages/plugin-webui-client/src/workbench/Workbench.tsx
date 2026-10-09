@@ -15,6 +15,7 @@ import { Panel } from '../components/Panel';
 import { useToast } from '../components/Toast';
 import { useConnection, useFeatures, useSessionClient } from '../connection';
 import { AttentionSummary } from '../health/AttentionList';
+import { GetStarted } from '../health/GetStarted';
 import { composing, shortcutLabel } from '../keys';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { RequestError, unlessLost } from '../protocol/session-client';
@@ -35,7 +36,8 @@ import './Workbench.css';
 
 // 会话工作台：头部（标题、种类与平台、回合进行中的运行指示、后台工作数、用量、全部折叠、会话面板、更多）、时间线、
 // 输入框与右侧面板。子会话的标题前写各级父会话，可以逐层退回。后台任务的日志桌面上在「后台」标签里，手机上从底部全屏弹出。
-// 首页与 /new 是空白的新会话：发出第一条消息时先建会话，再打开它；桌面的首页上方是「需要处理」的摘要（手机上它在第一层）
+// 首页与 /new 是空白的新会话：发出第一条消息时先建会话，再打开它；桌面的首页上方是「开始使用」（没有能对话的模型时）与
+// 「需要处理」的摘要（手机上它们在第一层）
 
 export function NewSession() {
   const client = useSessionClient();
@@ -52,6 +54,7 @@ export function NewSession() {
   return (
     <Main>
       <Panel title="新会话" back={paths.home} footer={<Composer sessionId={NEW_SESSION} send={send} />}>
+        {!phone && <GetStarted />}
         {!phone && <AttentionSummary />}
         <SessionGate>{null}</SessionGate>
       </Panel>

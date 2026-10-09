@@ -65,7 +65,7 @@ import {
 import express from 'express';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
-import { createAttention } from './attention.js';
+import { blockedStatus, createAttention } from './attention.js';
 import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { CLIENT_SWITCH_SCRIPT, renderClientSwitchPage } from './client-switch-page.js';
@@ -586,8 +586,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const attention = createAttention({
     approvals: () => caps.approvals.current?.list() ?? [],
     sessions: () => caps.sessions.current,
-    plugins: () => caps.plugins.current?.getStatus() ?? [],
-    services,
+    plugins: () => {
+      const pm = caps.plugins.current;
+      return pm ? blockedStatus({ plugins: pm, services, doc: caps.hostConfig.current }) : [];
+    },
     notices: pages.notices,
     send: event => admin.send(event),
   });
@@ -1137,7 +1139,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         // 这行的时刻）必然命中，二次启动因文件已在反而正常。两者原先都是 void，谁先到看调度。
         if (!(await writeAccessFile(url, authToken))) {
           // 写失败上面已 warn 过；再打一条「已写入」只会让人去找一个不存在的文件
-          logger.warn(`访问凭据未能写入 ${accessFileUri}；请用 WebUI 登录页手工粘贴 token`);
+          logger.warn(
+            `访问凭据未能写入 ${accessFileUri}：修好家目录 state/webui/ 的写权限后重启；` +
+              `或把 tokenMode 设为 fixed、在 fixedToken 里填一个至少 ${FIXED_TOKEN_MIN_LENGTH} 个字符的 token，用它在登录页登录`,
+          );
           return;
         }
         let absHint = accessFileUri;

@@ -1,3 +1,4 @@
+import type { UnmetRoot, UnmetService } from '@aalis/api-doctor';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useConnection } from '../connection';
@@ -34,11 +35,17 @@ export interface PluginRow {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
-  /** 此刻没有提供者的 required 服务 */
-  missing: string[];
+  /** 缺的 required 服务，每条从直接提供者沿依赖链追到根（pending 时） */
+  lacking: UnmetService[];
+  /** 在等的：根插件在启动（pending 时） */
+  waiting: UnmetService[];
+  /** 必填却没填的配置项（error 时） */
+  unconfigured: string[];
   tools: string[];
   commands: string[];
   extends?: { events?: string[]; hooks?: string[] };
+  /** 配置文件里有这个实例的配置段（空段也算） */
+  configSection: boolean;
   /** 配置文档里这一段：密钥字段上是引用 */
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
@@ -49,6 +56,37 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
+
+/** 认得的根：契约加了一种根而这里没跟上时编译不过 */
+const ROOTS: ReadonlySet<string> = new Set(
+  Object.keys({
+    error: true,
+    disabled: true,
+    starting: true,
+    withdrawn: true,
+    unprovided: true,
+    cycle: true,
+  } satisfies Record<UnmetRoot['kind'], true>),
+);
+
+/** 缺与在等的各条：形状不对的整张列表都不认，免得画出半截的链 */
+function unmet(value: unknown, instanceId: string): UnmetService[] {
+  if (value === undefined) return [];
+  const ok =
+    Array.isArray(value) &&
+    value.every(
+      item =>
+        isRecord(item) &&
+        typeof item.service === 'string' &&
+        Array.isArray(item.chain) &&
+        item.chain.every(link => typeof link === 'string') &&
+        isRecord(item.root) &&
+        typeof item.root.kind === 'string' &&
+        ROOTS.has(item.root.kind),
+    );
+  if (!ok) throw new Error(`插件 ${instanceId} 缺的服务认不出`);
+  return value as UnmetService[];
+}
 
 function parseRow(row: unknown): PluginRow {
   if (!isRecord(row) || typeof row.name !== 'string' || typeof row.instanceId !== 'string') {
@@ -69,10 +107,13 @@ function parseRow(row: unknown): PluginRow {
     provides: strings(row.provides),
     requiredServices: strings(row.requiredServices),
     optionalServices: strings(row.optionalServices),
-    missing: strings(row.missing),
+    lacking: unmet(row.lacking, row.instanceId),
+    waiting: unmet(row.waiting, row.instanceId),
+    unconfigured: strings(row.unconfigured),
     tools: strings(row.tools),
     commands: strings(row.commands),
     extends: extended && { events: strings(extended.events), hooks: strings(extended.hooks) },
+    configSection: row.configSection === true,
     config: isRecord(row.config) ? row.config : {},
     configSchema: isRecord(row.configSchema) ? (row.configSchema as ConfigSchema) : undefined,
     defaultConfig: isRecord(row.defaultConfig) ? row.defaultConfig : {},
@@ -154,6 +195,10 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
 /** 会话协议的服务名（契约 api-session-protocol 的 sessionProtocol） */
 export const SESSION_PROTOCOL = 'session-protocol';
 
+/** 对话模型的服务名与对话能力（契约 api-llm 的 llm 服务与 LLMCapabilities.Chat） */
+export const LLM = 'llm';
+export const CHAT = 'chat';
+
 /** 按服务名找提供它的插件实例（插件列表的 provides，不认插件名）；插件列表没取到或没有提供者时为 undefined */
 export function useProvider(service: string): string | undefined {
   return usePlugins().plugins?.find(plugin => plugin.provides.includes(service))?.instanceId;
@@ -166,6 +211,15 @@ export function useHost(): string | undefined {
 
 /** 插件实例的显示名：显示名，没有时是包名 */
 export const labelOf = (row: Pick<PluginRow, 'name' | 'displayName'>): string => row.displayName ?? row.name;
+
+/** 按实例找插件列表里的一行：链上的显示名与根插件的待配置项从它取；插件列表没取到时都找不到 */
+export function useFindPlugin(): (instance: string) => PluginRow | undefined {
+  const { plugins } = usePlugins();
+  return useMemo(() => {
+    const byInstance = new Map((plugins ?? []).map(row => [row.instanceId, row]));
+    return (instance: string) => byInstance.get(instance);
+  }, [plugins]);
+}
 
 /** 实例 id → 包名与显示名：会话设置「高级」里的分组名、用量里按插件合并的行名、插件前端的出处都取它 */
 export function usePluginNames(): {

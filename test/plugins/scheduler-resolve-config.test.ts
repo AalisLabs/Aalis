@@ -78,9 +78,14 @@ describe('resolveConfig persistPath', () => {
     expect(() => resolveParsedConfig({ persistPath: { path: 'data:/a.json' } })).toThrow(/persistPath/);
   });
 
-  it.each(['data/scheduler-jobs.json', 'scheduler-jobs.json'])('非 URI 写法（%s）报错，文案给出正确写法', input => {
+  it.each([
+    'data/scheduler-jobs.json',
+    'scheduler-jobs.json',
+  ])('非 URI 写法（%s）报配置错误，文案给出正确写法', input => {
     expect(() => resolveParsedConfig({ persistPath: input })).toThrow(
-      /persistPath=.*不是 storage URI.*data:\/scheduler-jobs\.json/,
+      /^persistPath=.*不是 storage URI.*data:\/scheduler-jobs\.json/,
     );
+    // 配置错误不带堆栈：激活失败日志只有一行
+    expect(() => resolveParsedConfig({ persistPath: input })).toThrow(expect.objectContaining({ name: 'ConfigError' }));
   });
 });

@@ -1,10 +1,11 @@
 import type { AttentionItem } from '@aalis/api-webui';
+import type { ReactNode } from 'react';
 import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { MARKERS } from '../components/List';
-import { pageAddress, usePages, withInstance } from '../pages/registry';
-import { useHost, usePluginNames } from '../plugins/list';
-import { statusOf } from '../plugins/status';
+import { pageAddress, usePages } from '../pages/registry';
+import { useFindPlugin, useHost } from '../plugins/list';
+import { fixLink, markerOf, pluginName, statusLine, statusOf } from '../plugins/status';
 import { paths } from '../routes';
 import { useAttention } from './attention';
 import './AttentionList.css';
@@ -12,22 +13,43 @@ import './AttentionList.css';
 /** 首页摘要最多列这么多条 */
 const SUMMARY_LIMIT = 5;
 
-interface Row {
+/** 一行：行首的标记（没有时不标），标题与说明两行，行尾一个操作 */
+export interface Row {
   key: string;
-  tone: 'attention' | 'error';
+  tone?: 'attention' | 'error';
   title: string;
   detail?: string;
-  action?: { to: string; label: string };
+  action?: ReactNode;
 }
 
-/** 每项一行：审批进它的会话，插件故障进插件详情，提示的跳转由宿主推出（去配置、打开它指向的页面） */
+/** 一组行：「需要处理」与「开始使用」都是这个样子 */
+export function Rows({ rows }: { rows: readonly Row[] }) {
+  return (
+    <ul className="attention-list">
+      {rows.map(row => (
+        <li key={row.key} className="attention-row" data-marker={row.tone}>
+          <span className="list-item-marker" aria-hidden />
+          {row.tone && <span className="visually-hidden">{MARKERS[row.tone]}</span>}
+          <span className="attention-text">
+            <span className="attention-title">{row.title}</span>
+            {row.detail && <span className="attention-detail">{row.detail}</span>}
+          </span>
+          {row.action}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const link = (to: string, label: string) => <ButtonLink to={to}>{label}</ButtonLink>;
+
+/**
+ * 每项一行：审批进它的会话；插件故障写状态与原因，缺服务的去第一条链的根插件（没有根插件可去时进这个插件的详情），
+ * 待配置的去配置区；提示的跳转由宿主推出（去配置、打开它指向的页面）
+ */
 function useRows(items: readonly AttentionItem[], named: boolean): Row[] {
-  const { instances } = usePluginNames();
+  const find = useFindPlugin();
   const { pages } = usePages();
-  const pluginOf = (instance: string) => {
-    const label = instances.get(instance)?.label;
-    return label === undefined ? instance : withInstance(label, instance);
-  };
   return items.map((item): Row => {
     if (item.kind === 'approval') {
       return {
@@ -35,17 +57,17 @@ function useRows(items: readonly AttentionItem[], named: boolean): Row[] {
         tone: 'attention',
         title: item.session ?? item.sessionId,
         detail: `等你批准：${item.tool}`,
-        action: { to: paths.session(item.sessionId), label: '去处理' },
+        action: link(paths.session(item.sessionId), '去处理'),
       };
     }
     if (item.kind === 'plugin') {
-      const status = statusOf(item);
+      const fix = fixLink(item.instance, item, find);
       return {
         key: `plugin:${item.instance}`,
-        tone: item.state === 'error' ? 'error' : 'attention',
-        title: pluginOf(item.instance),
-        detail: status.reason ? `${status.short}：${status.reason}` : status.short,
-        action: { to: paths.plugin(item.instance), label: '去处理' },
+        tone: markerOf(statusOf(item)),
+        title: pluginName(item.instance, find),
+        detail: statusLine(item, find),
+        action: link(fix.to, fix.label),
       };
     }
     const { instance, open } = item;
@@ -56,12 +78,12 @@ function useRows(items: readonly AttentionItem[], named: boolean): Row[] {
       key: `notice:${instance}:${item.id}`,
       tone: item.level === 'error' ? 'error' : 'attention',
       title: item.title,
-      detail: [named && pluginOf(instance), item.detail].filter(Boolean).join(' · ') || undefined,
+      detail: [named && pluginName(instance, find), item.detail].filter(Boolean).join(' · ') || undefined,
       action:
         open === 'config'
-          ? { to: paths.plugin(instance, 'config'), label: '去配置' }
+          ? link(paths.plugin(instance, 'config'), '去配置')
           : page && to
-            ? { to, label: `打开${page.title}` }
+            ? link(to, `打开${page.title}`)
             : undefined,
     };
   });
@@ -69,21 +91,7 @@ function useRows(items: readonly AttentionItem[], named: boolean): Row[] {
 
 /** named 时说明里带上提示来自哪个插件 */
 export function AttentionList({ items, named = true }: { items: readonly AttentionItem[]; named?: boolean }) {
-  return (
-    <ul className="attention-list">
-      {useRows(items, named).map(row => (
-        <li key={row.key} className="attention-row" data-marker={row.tone}>
-          <span className="list-item-marker" aria-hidden />
-          <span className="visually-hidden">{MARKERS[row.tone]}</span>
-          <span className="attention-text">
-            <span className="attention-title">{row.title}</span>
-            {row.detail && <span className="attention-detail">{row.detail}</span>}
-          </span>
-          {row.action && <ButtonLink to={row.action.to}>{row.action.label}</ButtonLink>}
-        </li>
-      ))}
-    </ul>
-  );
+  return <Rows rows={useRows(items, named)} />;
 }
 
 /** 首页（手机上是第一层顶部）的摘要：最多五条，标题写总数，「全部」链到运行状况；空了又没出错时整条不出现 */

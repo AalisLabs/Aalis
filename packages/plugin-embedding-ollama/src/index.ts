@@ -275,7 +275,7 @@ async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor
           category: 'service',
           level: 'error',
           message: `Ollama Embedding 不可用 (${model} @ ${baseUrl})——向量记忆不工作`,
-          detail: formatError(err),
+          detail: `${formatError(err)}\n确认 Ollama 在运行，并已执行 ollama pull ${model}（或把配置项 model 改成本机已有的嵌入模型）`,
         };
       } finally {
         if (timer) clearTimeout(timer);

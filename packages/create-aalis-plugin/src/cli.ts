@@ -6,9 +6,10 @@
  *   create-aalis-plugin                 → 交互式 prompts
  *   create-aalis-plugin <name>          → 仅指定名称，其余 prompts
  *   create-aalis-plugin <name> --yes    → 全默认值（tool 模板，无 webui）
+ *   --registry <源地址>                  → 查依赖最新版本用的 npm 源（默认官方源）
  *
  * 输出：在 cwd 下创建 `<name>/` 目录，含完整 package.json / tsconfig.json /
- * src/index.ts。生成完毕后打印下一步命令。
+ * src/index.ts。依赖的 @aalis 包按源上的最新版写下界。生成完毕后打印下一步命令。
  */
 
 import { existsSync, realpathSync } from 'node:fs';
@@ -29,11 +30,16 @@ interface Answers {
     command: boolean;
     /** WebUI 页面：不要、声明式，或自带前端（插件前端） */
     webui: false | 'declarative' | 'frame';
+    /** 登记一个会话设置项 */
+    sessionSetting: boolean;
   };
 }
 
+/** 依赖的 @aalis 包 → 生成时向源查到的最新版本 */
+type Versions = Record<string, string>;
+
 // ── 输入校验（纯函数，便于单测）─────────────────────────────────
-// 注：validateNpmName 与 create-aalis 中实现刻意一致——两者都是零运行时依赖的独立脚手架，
+// 注：validateNpmName、parseYesNo 与参数解析和 create-aalis 中实现刻意一致——两者都是零运行时依赖的独立脚手架，
 // 为不引入共享依赖而各留一份；改规则时需同步。
 
 export type ValidationResult = { ok: true } | { ok: false; error: string };
@@ -69,11 +75,54 @@ export function parseYesNo(ans: string, def: boolean): boolean | null {
   return null;
 }
 
+/** 带取值的 flag：紧随其后的一个 token 是它的值，不当包名 */
+const VALUE_FLAGS = new Set(['--registry']);
+
+function positionalArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith('-')) out.push(args[i]);
+    else if (VALUE_FLAGS.has(args[i])) i++;
+  }
+  return out;
+}
+
+/** `--registry <值>` 与 `--registry=<值>` 两种写法 */
+function argValue(args: string[], flag: string): string | undefined {
+  const eq = args.find(a => a.startsWith(`${flag}=`));
+  if (eq !== undefined) return eq.slice(flag.length + 1);
+  const i = args.indexOf(flag);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
+
+/** 向源查一个包的最新版本；查不到时抛错，写明是哪个包、为什么 */
+async function latestVersion(registry: string, pkg: string): Promise<string> {
+  const url = `${registry.replace(/\/+$/, '')}/${pkg}/latest`;
+  let r: Response;
+  try {
+    r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  } catch (err) {
+    throw new Error(`查不到 ${pkg} 的最新版本：连不上 ${url}（${(err as Error).message}）`);
+  }
+  if (!r.ok) throw new Error(`查不到 ${pkg} 的最新版本：${url} 回应 ${r.status}`);
+  let body: unknown;
+  try {
+    body = await r.json();
+  } catch (err) {
+    throw new Error(`查不到 ${pkg} 的最新版本：${url} 的回应读不出 JSON（${(err as Error).message}）`);
+  }
+  const version = (body as { version?: unknown } | null)?.version;
+  if (typeof version !== 'string') throw new Error(`查不到 ${pkg} 的最新版本：${url} 的回应里没有版本号`);
+  return version;
+}
+
 async function main(): Promise<void> {
   const args = argv.slice(2);
   const skipPrompts = args.includes('--yes') || args.includes('-y');
-  const positional = args.filter(a => !a.startsWith('-'));
-  const cliName = positional[0];
+  const registry = argValue(args, '--registry') ?? DEFAULT_REGISTRY;
+  const cliName = positionalArgs(args)[0];
 
   // 非交互终端下进交互会在 readline 遇 EOF 时静默空退；提前拦截并给指引（与 create-aalis 一致）。
   if (!skipPrompts && !stdin.isTTY) {
@@ -128,28 +177,50 @@ async function main(): Promise<void> {
     const command = await askYesNo('注册斜杠命令？', false);
     const page = await askYesNo('提供 WebUI 页面？', false);
     const frame = page && (await askYesNo('页面用自带前端？', false));
-    const features: Answers['features'] = { tool, command, webui: page && (frame ? 'frame' : 'declarative') };
+    const sessionSetting = await askYesNo('登记会话设置项？', false);
+    const features: Answers['features'] = {
+      tool,
+      command,
+      webui: page && (frame ? 'frame' : 'declarative'),
+      sessionSetting,
+    };
 
     const answers: Answers = { packageName, displayName, features };
-    const targetDir = resolve(process.cwd(), shortName(packageName));
+    const dir = shortName(packageName);
+    const targetDir = resolve(process.cwd(), dir);
 
     if (existsSync(targetDir)) {
-      console.error(`目录已存在: ${targetDir}`);
+      console.error(`目录已存在: ${targetDir}：换一个插件名，或先移走这个目录`);
       exit(1);
     }
 
-    await generate(targetDir, answers);
+    let versions: Versions;
+    try {
+      const packages = dependencyPackages(features);
+      versions = Object.fromEntries(
+        await Promise.all(packages.map(async pkg => [pkg, await latestVersion(registry, pkg)])),
+      );
+    } catch (err) {
+      console.error(
+        `${(err as Error).message}\n检查网络与代理后重试，或用 --registry <源地址> 指定一个能访问的 npm 源（npm config get registry 可查本机在用的源）。`,
+      );
+      exit(1);
+    }
+
+    await generate(targetDir, answers, versions);
 
     console.log(`\n✓ 已生成插件骨架: ${targetDir}\n`);
     console.log('下一步：');
-    console.log(`  cd ${shortName(packageName)}`);
-    console.log('  pnpm install');
-    console.log('  pnpm build');
-    console.log('\n要让 Aalis 加载它：在你的 Aalis 项目目录里执行 `npm install --install-links <本目录路径>`，');
-    console.log('并在该项目的 .npmrc 写 `install-links=true`（否则下次普通 npm install 会改回符号链接）；');
-    console.log('pnpm 项目用 `pnpm add file:<本目录路径>`。不能装成符号链接：本目录 devDependencies 里的 @aalis/core');
-    console.log('会成为进程里的第二份，插件会被拒绝加载。');
-    console.log('装进 dependencies 即被自动发现并加载（插件默认启用；停用是把包名写进 disabledPlugins）。');
+    console.log(`  cd ${dir}`);
+    console.log('  npm install');
+    console.log('  npm run build');
+    console.log('\n装进 Aalis 项目：在项目目录里执行 npm install --install-links <本目录路径>，');
+    console.log('并在项目的 .npmrc 写一行 install-links=true（否则下次普通 npm install 会改回符号链接）；');
+    console.log('或在本目录执行 npm pack，再在项目目录 npm install <生成的 .tgz 路径>。不能装成符号链接：');
+    console.log('本目录 devDependencies 里的 @aalis/core 会成为进程里的第二份，插件会被拒绝加载。');
+    console.log(
+      '装好后重启实例，或在 WebUI 插件区点「重新扫描」，插件才会加载（插件默认启用；停用是把包名写进 disabledPlugins）。',
+    );
   } finally {
     rl.close();
   }
@@ -167,10 +238,23 @@ function shortName(pkg: string): string {
   return slash >= 0 ? pkg.slice(slash + 1) : pkg;
 }
 
-export async function generate(dir: string, a: Answers): Promise<void> {
+/** 页面的 key：包名最后一段去掉 plugin- 前缀 */
+function pageKeyOf(pkg: string): string {
+  return shortName(pkg).replace(/^plugin-/, '');
+}
+
+/** 示例会话设置项的键：各插件的设置项共用一张表，接上包名免得撞上别的插件 */
+function settingKeyOf(pkg: string): string {
+  const words = pageKeyOf(pkg)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  return `greeting${words.map(w => w[0].toUpperCase() + w.slice(1)).join('')}`;
+}
+
+export async function generate(dir: string, a: Answers, versions: Versions): Promise<void> {
   await mkdir(resolve(dir, 'src'), { recursive: true });
 
-  await writeFile(resolve(dir, 'package.json'), renderPackageJson(a));
+  await writeFile(resolve(dir, 'package.json'), renderPackageJson(a, versions));
   await writeFile(resolve(dir, 'tsconfig.json'), renderTsconfig());
   await writeFile(resolve(dir, 'src/index.ts'), renderIndexTs(a));
   await writeFile(resolve(dir, 'README.md'), renderReadme(a));
@@ -181,25 +265,21 @@ export async function generate(dir: string, a: Answers): Promise<void> {
   }
 }
 
-export function renderPackageJson(a: Answers): string {
-  // 运行时依赖：服务描述符是值导入，用到的 api 包进 dependencies；@aalis/core
-  // 是宿主必有的核心，走 peerDependencies + devDep。
-  // 注意：这里写进的是【生成给外部作者项目】的字面版本，不能用 workspace:（脚手架产物不在
-  // 本 monorepo，workspace: 协议在外部装不上）——统一用 'latest'：npm install 时取最新、自我
-  // 修正，不硬编码会过时的版本（与 create-aalis 同策略）。
+/** 要向源查版本的 @aalis 包：开发依赖 core，加上所选能力的契约包 */
+function dependencyPackages(features: Answers['features']): string[] {
+  return ['@aalis/core', ...selectedCapabilityUses(features).map(c => c.pkg)];
+}
+
+/** 写进依赖的范围：下界是生成时源上的最新版，上界统一到 1.0 之前——0.x 下 caret 跨次版本即断 */
+const rangeOf = (version: string) => `>=${version} <1.0.0`;
+
+export function renderPackageJson(a: Answers, versions: Versions): string {
+  // 运行时依赖：服务描述符是值导入，用到的 api 包进 dependencies；@aalis/core 是宿主必有的核心，走 peerDependencies + devDep。
   // core peerDep 的下限是 definePlugin / 服务描述符首次出现的版本；上限放到 1.0 之前，插件不必随
   // core 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删——用了某版本才有的 API，
   // 就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
-  const deps: Record<string, string> = {};
-  // 与 renderIndexTs 生成的 uses 对应的服务名
-  const optionalServices = [
-    ...(a.features.tool ? ['tools'] : []),
-    ...(a.features.command ? ['commands'] : []),
-    ...(a.features.webui ? ['webui-server'] : []),
-  ];
-  if (a.features.tool) deps['@aalis/api-tools'] = 'latest';
-  if (a.features.command) deps['@aalis/api-commands'] = 'latest';
-  if (a.features.webui) deps['@aalis/api-webui'] = 'latest';
+  const caps = selectedCapabilityUses(a.features);
+  const deps = Object.fromEntries(caps.map(c => [c.pkg, rangeOf(versions[c.pkg])]));
 
   // aalis.service：声明运行时服务依赖/提供，供市场装前披露，须与 definePlugin 的 uses / provides 一致。
   const json: Record<string, unknown> = {
@@ -218,18 +298,20 @@ export function renderPackageJson(a: Answers): string {
       build: 'tsc',
       dev: 'tsc --watch',
     },
-    ...(Object.keys(deps).length ? { dependencies: deps } : {}),
+    ...(caps.length ? { dependencies: deps } : {}),
     peerDependencies: {
       '@aalis/core': '>=0.17.0 <1.0.0',
     },
     devDependencies: {
-      '@aalis/core': 'latest',
+      '@aalis/core': rangeOf(versions['@aalis/core']),
       typescript: '^5.7.0',
       '@types/node': '^22.0.0',
     },
     // 市场据此做安装前能力披露，须与 definePlugin 的 uses / provides 保持一致：
     // { service: { required: ['llm'], optional: ['memory'], provides: ['my-service'] } }
-    aalis: { service: { required: ['logger'], ...(optionalServices.length ? { optional: optionalServices } : {}) } },
+    aalis: {
+      service: { required: ['logger'], ...(caps.length ? { optional: caps.map(c => c.service) } : {}) },
+    },
   };
   return `${JSON.stringify(json, null, 2)}\n`;
 }
@@ -258,12 +340,15 @@ function renderTsconfig(): string {
   )}\n`;
 }
 
-/** 用户勾选 → uses 键 / 描述符。README 与 index 共用，避免一边列了未勾选的能力。 */
+/** 用户勾选的能力：uses 键、描述符、契约包与服务名。package.json、README 与 index 共用，避免一边列了未勾选的能力 */
 interface CapabilityUse {
   usesKey: string;
+  /** 契约包导出的描述符 */
   descriptor: string;
-  importLine: string;
-  bullet: string;
+  pkg: string;
+  service: string;
+  /** README 里这一项的说法 */
+  what: string;
 }
 
 function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] {
@@ -271,25 +356,37 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
   if (features.tool) {
     out.push({
       usesKey: 'tools',
-      descriptor: 'optional(tools)',
-      importLine: `import { tools } from '@aalis/api-tools';`,
-      bullet: '- ✓ 注册 AI 工具（`uses: { tools: optional(tools) }`，从 `@aalis/api-tools` 导入描述符）',
+      descriptor: 'tools',
+      pkg: '@aalis/api-tools',
+      service: 'tools',
+      what: '注册 AI 工具',
     });
   }
   if (features.command) {
     out.push({
       usesKey: 'commands',
-      descriptor: 'optional(commands)',
-      importLine: `import { commands } from '@aalis/api-commands';`,
-      bullet: '- ✓ 注册斜杠命令（`uses: { commands: optional(commands) }`，从 `@aalis/api-commands` 导入描述符）',
+      descriptor: 'commands',
+      pkg: '@aalis/api-commands',
+      service: 'commands',
+      what: '注册斜杠命令',
     });
   }
   if (features.webui) {
     out.push({
       usesKey: 'webui',
-      descriptor: 'optional(webuiServer)',
-      importLine: `import { webuiServer } from '@aalis/api-webui';`,
-      bullet: `- ✓ WebUI 页面${features.webui === 'frame' ? '，自带前端（见下文「插件前端」）' : ''}（\`uses: { webui: optional(webuiServer) }\`，从 \`@aalis/api-webui\` 导入描述符）`,
+      descriptor: 'webuiServer',
+      pkg: '@aalis/api-webui',
+      service: 'webui-server',
+      what: `WebUI 页面${features.webui === 'frame' ? '，自带前端（见下文「插件前端」）' : ''}`,
+    });
+  }
+  if (features.sessionSetting) {
+    out.push({
+      usesKey: 'sessionManager',
+      descriptor: 'sessionManager',
+      pkg: '@aalis/api-session-manager',
+      service: 'session-manager',
+      what: '会话设置项',
     });
   }
   return out;
@@ -297,7 +394,7 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
 
 function usesObjectLiteral(features: Answers['features']): string {
   const caps = selectedCapabilityUses(features);
-  const parts = ['logger', ...caps.map(c => `${c.usesKey}: ${c.descriptor}`)];
+  const parts = ['logger', ...caps.map(c => `${c.usesKey}: optional(${c.descriptor})`)];
   return `{ ${parts.join(', ')} }`;
 }
 
@@ -307,18 +404,41 @@ export function renderIndexTs(a: Answers): string {
   const coreImports = ['definePlugin', 'logger'];
   if (caps.length > 0) coreImports.push('optional');
   const imports: string[] = [
-    ...caps.map(c => c.importLine),
+    ...caps.map(c => `import { ${c.descriptor} } from '${c.pkg}';`),
     `import { ${coreImports.sort().join(', ')} } from '@aalis/core';`,
   ];
+  const settingKey = settingKeyOf(a.packageName);
+  const declarations = a.features.sessionSetting
+    ? `
+// 会话设置项的值类型：经 declaration merging 加进 SessionConfig，与登记的键对应
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    ${settingKey}?: string;
+  }
+}
+`
+    : '';
 
   const params = ['logger', ...caps.map(c => c.usesKey)];
   const body: string[] = [];
   if (a.features.tool) {
+    const handler = a.features.sessionSetting
+      ? `      async handler(args, ctx) {
+        // 按这次调用所在的会话读设置项的生效值（会话自己的、平台档与全局默认逐层叠出）；哪层都没设时用默认的问候语
+        const greeting = sessionManager.current?.resolveConfig(ctx.sessionId, ctx.platform).${settingKey} ?? '你好';
+        return \`\${greeting}, \${(args as { name: string }).name}!\`;
+      },`
+      : `      async handler(args) {
+        return \`你好, \${(args as { name: string }).name}!\`;
+      },`;
     body.push(`    // 注册 AI 可调用的工具。登记随这次激活撤回；tools 服务晚上线或换人时自动重挂
     tools.register({
-      // 能力档位：不声明 = public（任意等级 0 用户可经自然语言驱动）。
-      // 只读但涉隐私 → risk: 'sensitive'；写/删/执行 → visibility: 'restricted' + confirm: 'session'。
+      // 风险档位，决定谁能经自然语言驱动它、要不要确认：只读且不涉隐私写 'safe'，任何人可用；只读但涉隐私写 'sensitive'，
+      // 限有权限的用户；写、删、执行写 'dangerous'，限高权限的用户，owner 用也要确认。
       // 参见 Aalis 安全模型文档 concepts/security-model.md「插件作者怎么标操作风险」。
+      risk: 'safe',
+      // 耗时长、晚些拿到结果仍有用的工具（构建、下载、渲染）可以声明 background: {} 让执行器转后台：handler 要响应
+      // ctx.signal 的中止并尽快返回，进度写进 ctx.output。见 Aalis 插件作者指南「长任务与取消」。本示例是即时的，不声明
       definition: {
         type: 'function',
         function: {
@@ -328,27 +448,25 @@ export function renderIndexTs(a: Answers): string {
         },
       },
       // handler 返回 string 即纯文本结果；需要把图交给主模型时返回 { content, images }
-      async handler(args) {
-        return \`你好, \${(args as { name: string }).name}!\`;
-      },
+${handler}
     });`);
   }
   if (a.features.command) {
     body.push(`    // 注册斜杠命令
     commands.command('hello', '示例命令').action(async () => '你好');`);
   }
-  const pageKey = shortName(a.packageName).replace(/^plugin-/, '');
+  const pageKey = pageKeyOf(a.packageName);
   if (a.features.webui === 'declarative') {
     body.push(`    // 登记 WebUI 页面：组件、数据源与动作一次给出，出现在本插件详情里；登记随这次激活撤回
     webui.definePage({
       key: '${pageKey}',
-      title: '${a.displayName}',
+      title: ${JSON.stringify(a.displayName)},
       content: [
         {
           type: 'info',
           id: 'info',
           label: '示例信息',
-          data: () => [{ label: '提示', value: '这是 ${a.displayName} 插件的示例信息面板。' }],
+          data: () => [{ label: '提示', value: ${JSON.stringify(`这是 ${a.displayName} 插件的示例信息面板。`)} }],
         },
       ],
     });`);
@@ -359,7 +477,7 @@ export function renderIndexTs(a: Answers): string {
     const items = ['示例条目一', '示例条目二', '示例条目三'];
     const page = webui.definePage({
       key: '${pageKey}',
-      title: '${a.displayName}',
+      title: ${JSON.stringify(a.displayName)},
       // 宿主从这个模块往上找到插件包根，托管包根下 webui/ 里的文件
       frame: { module: import.meta.url },
       sources: {
@@ -384,13 +502,26 @@ export function renderIndexTs(a: Answers): string {
       },
     });`);
   }
+  if (a.features.sessionSetting) {
+    body.push(`    // 登记一个会话设置项：出现在会话设置里，各会话、各平台档可以各自设；登记随这次激活撤回，会话管理晚上线时自动补上。
+    // 读法：sessionManager.current?.resolveConfig(会话 id, 平台).${settingKey}，哪层都没设时没有这个键
+    sessionManager.registerSetting({
+      key: '${settingKey}',
+      // 字段：类型、标签与说明，写入时按它校验；default 只供界面显示，要与哪层都没设时的行为一致
+      field: { type: 'string', label: '问候语', description: '示例设置项：按会话设一个问候语', default: '你好' },
+      // 适用的会话种类：owner 是 WebUI 与终端里 owner 的会话，room 是群与私聊，task 是子会话
+      appliesTo: ['owner', 'room', 'task'],
+      // 显眼程度：composer 放在输入框旁，common 排在设置前面，advanced 收进「高级」
+      prominence: 'advanced',
+    });`);
+  }
 
   return `${imports.join('\n')}
-
+${declarations}
 // 入口必须默认导出 definePlugin 的产物：加载器只认它
 export default definePlugin({
   name: '${a.packageName}',
-  displayName: '${a.displayName}',
+  displayName: ${JSON.stringify(a.displayName)},
   // 用到的全部能力。可选依赖包一层 optional()：缺席不拦激活，到场后自动接上
   uses: ${usesObjectLiteral(a.features)},
   apply({ ${params.join(', ')} }) {
@@ -403,18 +534,32 @@ ${body.length ? `\n${body.join('\n\n')}\n` : ''}  },
 export function renderReadme(a: Answers): string {
   const caps = selectedCapabilityUses(a.features);
   const usesLine = `uses: ${usesObjectLiteral(a.features)}`;
-  const bullets = caps.map(c => c.bullet).join('\n');
+  const bullets = caps
+    .map(c => `- ✓ ${c.what}（\`uses: { ${c.usesKey}: optional(${c.descriptor}) }\`，从 \`${c.pkg}\` 导入描述符）`)
+    .join('\n');
   return `# ${a.packageName}
 
 ${a.displayName} —— 由 \`create-aalis-plugin\` 生成的 Aalis 插件骨架。
 
-## 启用
-
-构建并发布（或 \`npm pack\`）后，在 Aalis 部署目录安装即被自动发现并加载：
+## 构建
 
 \`\`\`bash
-npm install ${a.packageName}
+npm install
+npm run build
 \`\`\`
+
+## 装进 Aalis 项目
+
+在 Aalis 项目目录里任选一种：
+
+\`\`\`bash
+npm install --install-links <本目录路径>    # 再在项目的 .npmrc 写一行 install-links=true，否则下次 npm install 会改回符号链接
+npm install <本目录里 npm pack 生成的 .tgz>  # 先在本目录执行 npm pack
+npm install ${a.packageName}                 # 发布到 npm 之后
+\`\`\`
+
+不能装成符号链接：本目录 devDependencies 里的 \`@aalis/core\` 会成为进程里的第二份，插件会被拒绝加载。
+装好后重启实例，或在 WebUI 插件区点「重新扫描」，插件才会加载。
 
 发现机制依赖 package.json 的 \`"keywords": ["aalis-plugin"]\`（脚手架已带，勿删）。
 插件默认启用；停用是把包名加入 \`aalis.config.yaml\` 顶层的 \`disabledPlugins\` 数组。

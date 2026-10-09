@@ -2,32 +2,33 @@
 // ============================================================
 // create-aalis — 在新目录脚手架一个可运行的独立 Aalis 项目（纯 npm）
 //
-//   npm create aalis@latest my-bot           → 交互：选模板档 + 同类适配器
-//   npm create aalis@latest my-bot -- --yes  → 非交互：standard 档 + 默认适配器
+//   npm create aalis@latest my-bot                → 交互：对话模型（可当场粘贴 key）、接入平台、要不要长期语义记忆
+//   npm create aalis@latest my-bot -- --advanced  → 另问模板档、记忆后端、embedding 与向量库
+//   npm create aalis@latest my-bot -- --yes       → 非交互：上面几问全取默认
 //   npm create aalis@latest my-bot -- --tier minimal --no-install
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
 // index.mjs（一行 startAalis 启动）、家目录 home/（aalis.config.yaml 与 secrets.yaml）、README、.gitignore，
-// 随后自动 npm install。启动：cd my-bot && npm start。
+// 随后自动 npm install，失败时按 npm 的报错写明是哪一类、怎么修。启动：cd my-bot && npm start。
 //
-// 选插件心智：模板（bare/minimal/standard/full）+ 同类适配器组（LLM/平台/记忆/
-// embedding/向量库）交互选用哪些，避免同类全塞冲突。所选插件即写入 dependencies，
-// 由 @aalis/runtime 的 node_modules 加载器在启动时发现并加载。
+// 默认装 standard 档的常用一套；本机有 Ollama（认 OLLAMA_HOST）时对话模型默认用它，零 key 可用。
+// 所选插件即写入 dependencies，由 @aalis/runtime 的 node_modules 加载器在启动时发现并加载。
 // ============================================================
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { argv, cwd, exit, stdin, stdout, version } from 'node:process';
+import { arch, argv, cwd, env, exit, platform, stderr, stdin, stdout, version } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-/** 模板档：每档是“基础启用集”，full 为全部目录、bare 为空。 */
+/** 模板档：bare 只有 core 与 runtime，full 为全部官方插件 */
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
 // 会话 → 权限 → 消息归档 + 跨会话历史）。会话服务提供会话协议与审批：没有它，需要确认的工具调用一律被拒。
-// 同类适配器不在此列，由 GROUPS 交互选择补入。钩子与贡献点由插件提供（core 不内置），
+// 对话模型、平台与记忆后端由提问选。钩子与贡献点由插件提供（core 不内置），
 // gateway / agent / 指令等都 required 它们，缺了整个机器人挂起，故排在最前。
 export const MINIMAL_BASE = [
   '@aalis/plugin-hooks',
@@ -47,19 +48,16 @@ export const MINIMAL_BASE = [
   '@aalis/plugin-memory-history',
 ];
 
-// standard 在 minimal 之上增加的常用能力（管理界面 / 人设 / 记忆增强 / 常用工具 /
-// 调度套件 / 技能 / 会话增强 / 诊断）。同类适配器仍由 GROUPS 选择。
+// standard 在 minimal 之上增加的常用能力（人设 / 记忆增强 / 常用工具 / 调度套件 / 技能 / 会话增强 / 诊断）。
+// 平台与语义记忆由提问选；联网搜索要 key，默认不装，需要时在插件市场装（full 档带它）。
 export const STANDARD_EXTRA = [
-  '@aalis/plugin-webui-server',
   '@aalis/plugin-persona',
-  '@aalis/plugin-memory-vector',
   '@aalis/plugin-memory-summary',
   '@aalis/plugin-user-profile',
   '@aalis/plugin-user-relation',
   '@aalis/plugin-file-reader',
   '@aalis/plugin-tool-system',
   '@aalis/plugin-tool-search',
-  '@aalis/plugin-websearch-serper',
   '@aalis/plugin-media',
   '@aalis/plugin-scheduler',
   '@aalis/plugin-cron-engine',
@@ -73,96 +71,259 @@ export const STANDARD_EXTRA = [
   '@aalis/plugin-mcp-client',
 ];
 
-/** 同类适配器组：交互选用哪些（exclusive=单选，multi=可多选）。 */
-interface AdapterGroup {
-  key: string;
+/** 一个选项：插件包名（模板档的选项是档名）与终端里显示的说明 */
+export interface Option {
+  name: string;
   label: string;
-  mode: 'exclusive' | 'multi';
-  members: Array<{ name: string; label: string; default?: boolean }>;
-  tiers: Tier[];
 }
 
-export const GROUPS: AdapterGroup[] = [
-  {
-    key: 'llm',
-    label: 'LLM 提供者（对话模型，可多选）',
-    mode: 'multi',
-    tiers: ['minimal', 'standard'],
-    members: [
-      { name: '@aalis/plugin-llm-deepseek', label: 'DeepSeek', default: true },
-      { name: '@aalis/plugin-llm-openai', label: 'OpenAI' },
-      { name: '@aalis/plugin-llm-ollama', label: 'Ollama（本地）' },
-    ],
-  },
-  {
-    key: 'platform',
-    label: '接入平台（消息入口，可多选）',
-    mode: 'multi',
-    tiers: ['minimal', 'standard'],
-    members: [
-      { name: '@aalis/plugin-cli', label: 'CLI 终端', default: true },
-      { name: '@aalis/plugin-adapter-onebot', label: 'OneBot（QQ 等）' },
-      { name: '@aalis/plugin-webui-server', label: 'WebUI 管理界面' },
-    ],
-  },
-  {
-    key: 'memory',
-    label: '记忆后端（持久化，单选）',
-    mode: 'exclusive',
-    tiers: ['minimal', 'standard'],
-    members: [
-      { name: '@aalis/plugin-memory-sqlite', label: 'SQLite（本地文件，推荐）', default: true },
-      { name: '@aalis/plugin-memory-inmemory', label: '内存（重启丢失）' },
-      { name: '@aalis/plugin-memory-mongodb', label: 'MongoDB（需外部服务）' },
-    ],
-  },
-  {
-    key: 'embedding',
-    label: 'Embedding 提供者（向量记忆所需，可多选）',
-    mode: 'multi',
-    tiers: ['standard'],
-    members: [
-      { name: '@aalis/plugin-embedding-openai', label: 'OpenAI Embedding', default: true },
-      { name: '@aalis/plugin-embedding-ollama', label: 'Ollama Embedding（本地）' },
-    ],
-  },
-  {
-    key: 'vectorstore',
-    label: '向量库（向量记忆所需，单选）',
-    mode: 'exclusive',
-    tiers: ['standard'],
-    members: [
-      { name: '@aalis/plugin-vectorstore-flat', label: 'Flat（内置，零依赖）', default: true },
-      { name: '@aalis/plugin-vectorstore-lancedb', label: 'LanceDB（高性能）' },
-    ],
-  },
+const DEEPSEEK = '@aalis/plugin-llm-deepseek';
+const OLLAMA_LLM = '@aalis/plugin-llm-ollama';
+const OPENAI_EMBEDDING = '@aalis/plugin-embedding-openai';
+const OLLAMA_EMBEDDING = '@aalis/plugin-embedding-ollama';
+const SQLITE = '@aalis/plugin-memory-sqlite';
+const FLAT = '@aalis/plugin-vectorstore-flat';
+const LANCEDB = '@aalis/plugin-vectorstore-lancedb';
+const WEBUI = '@aalis/plugin-webui-server';
+/** 语义记忆：向量记忆加一个 embedding 提供者与一个向量库 */
+const SEMANTIC_MEMORY = '@aalis/plugin-memory-vector';
+/** 语义记忆用 Ollama Embedding 时的模型：那个插件的默认值 */
+const OLLAMA_EMBEDDING_MODEL = 'nomic-embed-text';
+
+/** 对话模型：单选，多装几个以后在插件市场装 */
+export const CHAT_MODELS: Option[] = [
+  { name: DEEPSEEK, label: 'DeepSeek' },
+  { name: '@aalis/plugin-llm-openai', label: 'OpenAI' },
+  { name: OLLAMA_LLM, label: 'Ollama（本机运行，零 key）' },
 ];
 
-// 已知插件的配置桩。密钥留空由用户填 —— 直接写进 home/aalis.config.yaml，home/ 不入库
-// （见 renderGitignore）。不走 `.env` + `${VAR}` 插值：它承载的东西与 config 完全重合，
-// 唯一区别只是「哪个文件进 git」，而配置文件本身已被 ignore，那一层纯属多余。
-// 仅覆盖需密钥/地址的常见适配器；其余插件用默认配置启动。
-const KNOWN_CONFIG: Record<string, { config: Record<string, string> }> = {
-  '@aalis/plugin-llm-deepseek': { config: { apiKey: '' } },
-  '@aalis/plugin-llm-openai': { config: { apiKey: '' } },
-  '@aalis/plugin-embedding-openai': { config: { apiKey: '' } },
-  '@aalis/plugin-websearch-serper': { config: { apiKey: '' } },
+export const PLATFORMS: Option[] = [
+  { name: '@aalis/plugin-cli', label: 'CLI 终端' },
+  { name: WEBUI, label: 'WebUI 管理界面' },
+  { name: '@aalis/plugin-adapter-onebot', label: 'OneBot（QQ 等）' },
+];
+const DEFAULT_PLATFORMS = ['@aalis/plugin-cli', WEBUI];
+
+export const MEMORY_BACKENDS: Option[] = [
+  { name: SQLITE, label: 'SQLite（本地文件，推荐）' },
+  { name: '@aalis/plugin-memory-inmemory', label: '内存（重启丢失）' },
+  { name: '@aalis/plugin-memory-mongodb', label: 'MongoDB（需外部服务）' },
+];
+
+export const EMBEDDINGS: Option[] = [
+  { name: OPENAI_EMBEDDING, label: 'OpenAI Embedding' },
+  { name: OLLAMA_EMBEDDING, label: 'Ollama Embedding（本机运行，零 key）' },
+];
+
+export const VECTORSTORES: Option[] = [
+  { name: FLAT, label: 'Flat（内置，零依赖）' },
+  { name: LANCEDB, label: 'LanceDB（高性能）' },
+];
+
+const TIER_OPTIONS: Array<{ name: Tier; label: string }> = [
+  { name: 'bare', label: 'bare：只装 core 与 runtime（完全自定义的起点）' },
+  { name: 'minimal', label: 'minimal：最简对话实例（网关、Agent、权限、会话、对话模型、平台与记忆后端）' },
+  {
+    name: 'standard',
+    label: 'standard：常用的一套（minimal 加人设、记忆增强、工具、调度、技能、诊断等，可选语义记忆）',
+  },
+  { name: 'full', label: 'full：全部已发布的官方插件（实时查 npm，含联网搜索）' },
+];
+
+// 要密钥的插件与它的键：提问时当场粘贴，没粘贴的写成空桩，由用户在 WebUI 或配置文件里填。直接写进
+// home/aalis.config.yaml（home/ 不入库，见 renderGitignore），首次启动时宿主把密钥移进 secrets.yaml、配置里换成引用。
+// 不走 `.env` + `${VAR}` 插值：配置文件本身已被 ignore，那一层纯属多余。
+const KNOWN_CONFIG: Record<string, string[]> = {
+  [DEEPSEEK]: ['apiKey'],
+  '@aalis/plugin-llm-openai': ['apiKey'],
+  [OPENAI_EMBEDDING]: ['apiKey'],
+  '@aalis/plugin-websearch-serper': ['apiKey'],
 };
 
-/** full 档 = 全目录（base ∪ extra ∪ 所有组成员）。 */
-function fullCatalog(): string[] {
-  const all = new Set<string>([...MINIMAL_BASE, ...STANDARD_EXTRA]);
-  for (const g of GROUPS) for (const m of g.members) all.add(m.name);
-  return [...all];
+/** 当场粘贴的密钥：插件 → 键 → 值 */
+export type Keys = Record<string, Record<string, string>>;
+
+/** minimal 与 standard 档里选的插件 */
+export interface Picks {
+  chat: string;
+  platforms: string[];
+  memory: string;
+  /** 语义记忆（只在 standard 档）：不要时没有 */
+  semantic?: { embedding: string; vectorstore: string };
 }
 
-/** 计算启用集（不含交互组；full 档的 live 目录由 main 补入）。 */
-function baseEnabled(tier: Tier): Set<string> {
-  if (tier === 'full') return new Set(fullCatalog());
-  if (tier === 'bare') return new Set();
-  const set = new Set(MINIMAL_BASE);
-  if (tier === 'standard') for (const n of STANDARD_EXTRA) set.add(n);
+/** 装哪些插件：full 档另带实时查到的官方插件（查不到为 null，回退离线表） */
+export type Plan =
+  | { tier: 'bare' }
+  | { tier: 'full'; catalog: string[] | null }
+  | { tier: 'minimal' | 'standard'; picks: Picks };
+
+/** 语义记忆的 embedding：有 Ollama 可用（探到了，或对话模型选了它）时用它，零 key；否则用 OpenAI */
+function embeddingFor(chat: string, ollama: boolean): string {
+  return ollama || chat === OLLAMA_LLM ? OLLAMA_EMBEDDING : OPENAI_EMBEDDING;
+}
+
+/** 各问的默认答案（--yes、--tier 与回车）：探到 Ollama 时对话模型与语义记忆都用它，否则 DeepSeek、不装语义记忆 */
+export function defaultPicks(tier: 'minimal' | 'standard', ollama: boolean): Picks {
+  const chat = ollama ? OLLAMA_LLM : DEEPSEEK;
+  const picks: Picks = { chat, platforms: [...DEFAULT_PLATFORMS], memory: SQLITE };
+  if (tier === 'standard' && ollama) picks.semantic = { embedding: embeddingFor(chat, ollama), vectorstore: FLAT };
+  return picks;
+}
+
+/**
+ * 逐项提问：对话模型（要 key 的当场粘贴）、接入平台、要不要语义记忆（standard 档）；advanced 另问记忆后端、
+ * embedding 与向量库。没有 LanceDB 预编译件的平台不列它
+ */
+export async function askPicks(
+  p: Prompter,
+  o: { tier: 'minimal' | 'standard'; advanced: boolean; ollama: boolean; lancedb: boolean },
+): Promise<{ picks: Picks; keys: Keys }> {
+  const keys: Keys = {};
+  const paste = async (plugin: Option) => {
+    for (const key of KNOWN_CONFIG[plugin.name] ?? []) {
+      const value = await p.secret(`粘贴 ${plugin.label} 的 ${key}（输入不显示，回车跳过）`);
+      if (value) keys[plugin.name] = { ...keys[plugin.name], [key]: value };
+    }
+  };
+  const chat = await p.choose('对话模型', CHAT_MODELS, o.ollama ? OLLAMA_LLM : DEEPSEEK);
+  await paste(chat);
+  const platforms = await p.chooseMany('接入平台（可多选）', PLATFORMS, DEFAULT_PLATFORMS);
+  const memory = o.advanced ? (await p.choose('记忆后端', MEMORY_BACKENDS, SQLITE)).name : SQLITE;
+  const picks: Picks = { chat: chat.name, platforms, memory };
+  if (
+    o.tier === 'standard' &&
+    (await p.confirm('要长期语义记忆吗？按意思找回很久以前聊过的内容，需要一个 embedding 模型', o.ollama))
+  ) {
+    const fallback = embeddingFor(chat.name, o.ollama);
+    const embedding = o.advanced
+      ? await p.choose('Embedding 提供者', EMBEDDINGS, fallback)
+      : EMBEDDINGS.find(e => e.name === fallback)!;
+    await paste(embedding);
+    const stores = VECTORSTORES.filter(v => o.lancedb || v.name !== LANCEDB);
+    const vectorstore = o.advanced ? (await p.choose('向量库', stores, FLAT)).name : FLAT;
+    picks.semantic = { embedding: embedding.name, vectorstore };
+  }
+  return { picks, keys };
+}
+
+/** @lancedb/lancedb 带预编译件的平台（它 optionalDependencies 里的平台包）：别的平台装上也起不来 */
+const LANCEDB_PLATFORMS = new Set(['darwin-arm64', 'linux-x64', 'linux-arm64', 'win32-x64', 'win32-arm64']);
+
+export function lancedbSupported(os: string, cpu: string): boolean {
+  return LANCEDB_PLATFORMS.has(`${os}-${cpu}`);
+}
+
+/** 要装的插件：档的基础集加所选，再带上伴生包。lancedb 为 false 时 full 档也不装 LanceDB */
+export function pluginSet(plan: Plan, lancedb: boolean): Set<string> {
+  const set = new Set<string>();
+  if (plan.tier === 'full') {
+    const options = [CHAT_MODELS, PLATFORMS, MEMORY_BACKENDS, EMBEDDINGS, VECTORSTORES].flat().map(o => o.name);
+    for (const name of [...MINIMAL_BASE, ...STANDARD_EXTRA, SEMANTIC_MEMORY, ...options]) set.add(name);
+    for (const name of plan.catalog ?? STATIC_OTHERS) set.add(name);
+    if (!lancedb) set.delete(LANCEDB);
+  } else if (plan.tier !== 'bare') {
+    const { picks } = plan;
+    for (const name of [...MINIMAL_BASE, picks.chat, ...picks.platforms, picks.memory]) set.add(name);
+    if (plan.tier === 'standard') {
+      for (const name of STANDARD_EXTRA) set.add(name);
+      if (picks.semantic) for (const name of [SEMANTIC_MEMORY, ...Object.values(picks.semantic)]) set.add(name);
+    }
+  }
+  // 选了 WebUI 后端就自动带上前端 + 安装引擎：
+  // - webui-client：webui-server 仅托管前端静态资源，自身不含；缺它会 404
+  //   「请安装 webui-client 插件」。它非运行时插件（无 apply），装上即被自动发现挂载。
+  // - package-manager：否则市场页"安装"会报 503（webui-server 仅把它列为 dev 依赖）。
+  if (set.has(WEBUI)) {
+    set.add('@aalis/plugin-webui-client');
+    set.add('@aalis/plugin-package-manager');
+  }
+  // 选了 code_runner 就自动带上 OS 沙箱实现：默认 sandbox.mode=auto，缺沙箱后端会 fail-closed
+  // 拒绝执行代码，故把隔离实现一并装上（macOS sandbox-exec 自带；Linux 还需系统装 bubblewrap）。
+  if (set.has('@aalis/plugin-tool-code-runner')) set.add('@aalis/plugin-code-sandbox-os');
   return set;
+}
+
+// ── Ollama ──────────────────────────────────────────────
+
+/** 没设 OLLAMA_HOST 时探的地址 */
+const OLLAMA_DEFAULT = 'http://127.0.0.1:11434';
+
+/**
+ * OLLAMA_HOST（Ollama 自己的地址变量）→ 完整地址；没设返回 undefined，解析不了时抛错写明怎么改。
+ * 与 Ollama 的解析一致：不写协议按 http、端口默认 11434；写了 http:// 或 https:// 的用协议的默认端口。
+ */
+export function ollamaHost(raw: string | undefined): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  const withScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(value);
+  const href = withScheme ? value : `http://${value}`;
+  if (!URL.canParse(href)) {
+    throw new Error(
+      `OLLAMA_HOST 的值「${value}」不是有效的地址：写成 主机:端口（如 127.0.0.1:11434）或完整地址（如 http://主机:端口）`,
+    );
+  }
+  const url = new URL(href);
+  if (!withScheme && !/:\d+$/.test(value.split('/')[0])) url.port = '11434';
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
+
+export interface OllamaProbe {
+  base: string;
+  /** 已拉的模型名，如 qwen3:8b */
+  models: string[];
+  /** 其中有对话模型 */
+  chat: boolean;
+}
+
+/**
+ * 探一下 Ollama：请求 /api/tags，1 秒拿不到像样的回应就当没有；同一个 1 秒里再逐个查 /api/show 报的能力。有没有对话模型与
+ * Ollama 对话模型插件同一判据：能力里没有 completion 的（嵌入模型）不算，查不到能力的照对话模型算
+ */
+export async function probeOllama(base: string): Promise<OllamaProbe | null> {
+  const signal = AbortSignal.timeout(1000);
+  try {
+    const r = await fetch(`${base}/api/tags`, { signal });
+    if (!r.ok) return null;
+    const body = (await r.json()) as { models?: unknown };
+    if (!Array.isArray(body.models)) return null;
+    const models = body.models.map(m => (m as { name?: unknown }).name).filter(n => typeof n === 'string');
+    const capabilities = await Promise.all(models.map(model => ollamaCapabilities(base, model, signal)));
+    return { base, models, chat: capabilities.some(caps => !caps?.length || caps.includes('completion')) };
+  } catch {
+    return null;
+  }
+}
+
+/** 一个模型在 /api/show 里报的能力；查不到时为 undefined */
+async function ollamaCapabilities(base: string, model: string, signal: AbortSignal): Promise<unknown[] | undefined> {
+  try {
+    const r = await fetch(`${base}/api/show`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model }),
+      signal,
+    });
+    if (!r.ok) return undefined;
+    const body = (await r.json()) as { capabilities?: unknown };
+    return Array.isArray(body.capabilities) ? body.capabilities : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 用到 Ollama 时启动前要拉的模型：探不到时不知道里面有什么，照样提示 */
+export function ollamaSteps(picks: Picks, probe: OllamaProbe | null): string[] {
+  const models = probe?.models ?? [];
+  const steps: string[] = [];
+  if (picks.chat === OLLAMA_LLM && !probe?.chat) steps.push('ollama pull <对话模型名>    # 先拉一个对话模型');
+  if (
+    picks.semantic?.embedding === OLLAMA_EMBEDDING &&
+    !models.some(m => m === OLLAMA_EMBEDDING_MODEL || m.startsWith(`${OLLAMA_EMBEDDING_MODEL}:`))
+  ) {
+    steps.push(`ollama pull ${OLLAMA_EMBEDDING_MODEL}    # 语义记忆用的 embedding 模型`);
+  }
+  return steps;
 }
 
 // ── live 插件目录（full 档枚举 + 版本号复用） ────────────
@@ -189,10 +350,11 @@ export function countPlugins(enabled: Iterable<string>): number {
   return n;
 }
 
-// 离线回退：仓库内已知、但不在 base/extra/groups 目录里的"其他"官方插件。
+// 离线回退：已发布、但不在基础集与各问选项里的其他官方插件。
 const STATIC_OTHERS = [
   'asr-openai',
   'asr-whisper-cpp',
+  'draw',
   'image-sender',
   'maimai',
   'mcp-server',
@@ -202,6 +364,7 @@ const STATIC_OTHERS = [
   'tool-code-runner',
   'tool-math',
   'tool-onebot',
+  'websearch-serper',
   'workflow',
 ].map(s => `@aalis/plugin-${s}`);
 
@@ -267,6 +430,15 @@ export function parseIndexSelection(raw: string, count: number, mode: 'multi' | 
   return { ok: true, indices };
 }
 
+/** 解析 yes/no 输入：空=默认；y/yes/true/1=真；n/no/false/0=假；其余=null（调用方重问）。与 create-aalis-plugin 的一致 */
+export function parseYesNo(ans: string, def: boolean): boolean | null {
+  const a = ans.trim().toLowerCase();
+  if (a === '') return def;
+  if (['y', 'yes', 'true', '1'].includes(a)) return true;
+  if (['n', 'no', 'false', '0'].includes(a)) return false;
+  return null;
+}
+
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 
 /**
@@ -317,6 +489,91 @@ export function checkNodeVersion(current: string): ValidationResult {
     ].join('\n'),
   };
 }
+
+// ── 终端提问 ──────────────────────────────────────────────
+
+/** 终端提问：坏输入说明原因后重问，不静默接受 */
+export interface Prompter {
+  text(question: string, def: string, validate: (value: string) => ValidationResult): Promise<string>;
+  /** 单选：回车取 def */
+  choose<T extends Option>(title: string, options: readonly T[], def: string): Promise<T>;
+  /** 多选，返回所选的 name：回车取 defs */
+  chooseMany(title: string, options: readonly Option[], defs: readonly string[]): Promise<string[]>;
+  confirm(question: string, def: boolean): Promise<boolean>;
+  /** 不回显的输入（密钥）：回车跳过，得到空串 */
+  secret(question: string): Promise<string>;
+  close(): void;
+}
+
+export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): Prompter {
+  // 读密钥时关掉回显：终端模式下键入的字由 readline 写到输出，经这一层转发，关掉时丢弃
+  let muted = false;
+  const echo = new Writable({
+    write(chunk, _encoding, done) {
+      if (!muted) output.write(chunk);
+      done();
+    },
+  });
+  // 不留输入历史：粘贴的密钥不能被上箭头翻出来
+  const rl = createInterface({ input, output: echo, terminal: true, historySize: 0 });
+  const say = (line: string) => output.write(`${line}\n`);
+  const ask = async (question: string) => (await rl.question(question)).trim();
+
+  async function select<T extends Option>(
+    title: string,
+    options: readonly T[],
+    mode: 'multi' | 'exclusive',
+    defs: readonly string[],
+  ): Promise<T[]> {
+    say(`\n${title}：`);
+    for (const [i, o] of options.entries()) say(`  ${i + 1}. ${o.label}`);
+    const defaults = options.filter(o => defs.includes(o.name));
+    const shown = defaults.map(o => options.indexOf(o) + 1).join(',');
+    const prompt =
+      mode === 'exclusive' ? `选一个（序号，回车 = ${shown}）: ` : `选若干（逗号或空格分隔序号，回车 = ${shown}）: `;
+    while (true) {
+      const raw = await ask(prompt);
+      if (raw === '') return defaults;
+      const r = parseIndexSelection(raw, options.length, mode);
+      if (r.ok) return r.indices.map(i => options[i - 1]);
+      say(`  ⚠ ${r.error}`);
+    }
+  }
+
+  return {
+    async text(question, def, validate) {
+      while (true) {
+        const value = (await ask(`${question} (${def}): `)) || def;
+        const r = validate(value);
+        if (r.ok) return value;
+        say(`  ⚠ ${r.error}`);
+      }
+    },
+    choose: async (title, options, def) => (await select(title, options, 'exclusive', [def]))[0],
+    chooseMany: async (title, options, defs) => (await select(title, options, 'multi', defs)).map(o => o.name),
+    async confirm(question, def) {
+      while (true) {
+        const r = parseYesNo(await ask(`${question} (${def ? 'Y/n' : 'y/N'}): `), def);
+        if (r !== null) return r;
+        say('  ⚠ 请输入 y 或 n。');
+      }
+    },
+    async secret(question) {
+      // 提示在 question 里同步写出，之后才关回显
+      const answer = rl.question(`${question}: `);
+      muted = true;
+      try {
+        return (await answer).trim();
+      } finally {
+        muted = false;
+        say('');
+      }
+    },
+    close: () => rl.close(),
+  };
+}
+
+// ── 版本 ──────────────────────────────────────────────────
 
 /** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
 async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
@@ -370,13 +627,19 @@ async function resolveDepRanges(
 
 // ── 生成的文件 ──────────────────────────────────────────────
 
-function renderPackageJson(projectName: string, enabled: string[], versions: Map<string, string>): string {
+const DOCS = 'https://aalis.acenyan.com';
+const FIRST_RUN_URL = `${DOCS}/guide/first-run`;
+const TROUBLESHOOTING_URL = `${DOCS}/guide/troubleshooting`;
+/** webui-server 的默认监听地址与端口 */
+const WEBUI_URL = 'http://127.0.0.1:3000';
+
+function renderPackageJson(projectName: string, enabled: Set<string>, versions: Map<string, string>): string {
   const range = (n: string): string => versions.get(n) ?? 'latest';
   const deps: Record<string, string> = {
     '@aalis/core': range('@aalis/core'),
     '@aalis/runtime': range('@aalis/runtime'),
   };
-  for (const n of enabled.sort()) deps[n] = range(n);
+  for (const n of [...enabled].sort()) deps[n] = range(n);
   return `${JSON.stringify(
     {
       name: projectName,
@@ -416,21 +679,39 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 // 只有 owner 能进的平台（本地终端 / 单 token WebUI）的平台档开箱给全部工具分组。多人平台（OneBot 等）不代开：
 // 带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸（docs/concepts/security-model.md），
 // 由 owner 在平台档里按需列组。平台档是会话设置的一层，写在配置文档的 sessionConfig 里，由 session-manager 读。
+// runtime 的 `--init`（home.ts 的 initHome）写同样的平台档，两边由用例逐项对齐。
 const OWNER_ONLY_PLATFORMS: ReadonlyArray<readonly [plugin: string, platform: string]> = [
   ['@aalis/plugin-cli', 'cli'],
-  ['@aalis/plugin-webui-server', 'webui'],
+  [WEBUI, 'webui'],
 ];
 
-export function renderConfig(enabled: Set<string>): string {
+/** Ollama 的两个插件：设了 OLLAMA_HOST 时写上它的 baseUrl */
+const OLLAMA_PLUGINS = new Set([OLLAMA_LLM, OLLAMA_EMBEDDING]);
+
+/** 写进配置的插件段：要密钥的插件写上粘贴的值（没粘贴的留空桩），设了 OLLAMA_HOST 时 Ollama 插件写上它 */
+export function pluginSettings(
+  enabled: Set<string>,
+  keys: Keys,
+  ollama?: string,
+): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const name of [...enabled].sort()) {
+    const stub = KNOWN_CONFIG[name]?.map(key => [key, keys[name]?.[key] ?? '']) ?? [];
+    const host = ollama !== undefined && OLLAMA_PLUGINS.has(name) ? [['baseUrl', ollama]] : [];
+    if (stub.length + host.length > 0) out[name] = Object.fromEntries([...stub, ...host]);
+  }
+  return out;
+}
+
+export function renderConfig(enabled: Set<string>, settings: Record<string, Record<string, string>>): string {
   const lines = ['name: Aalis', 'logLevel: info'];
-  const configured = [...enabled].filter(n => KNOWN_CONFIG[n]).sort();
+  const configured = Object.keys(settings);
   if (configured.length > 0) {
     lines.push('plugins:');
-    for (const n of configured) {
-      lines.push(`  "${n}":`);
-      for (const [k, v] of Object.entries(KNOWN_CONFIG[n].config)) {
-        lines.push(`    ${k}: "${v}"`);
-      }
+    for (const name of configured) {
+      lines.push(`  "${name}":`);
+      // 值写成 JSON 字符串，同时也是合法的 YAML 双引号串：引号、反斜杠、冒号与 # 原样读回
+      for (const [key, value] of Object.entries(settings[name])) lines.push(`    ${key}: ${JSON.stringify(value)}`);
     }
   } else {
     lines.push(
@@ -455,32 +736,214 @@ function renderGitignore(): string {
 }
 
 export function renderReadme(projectName: string, enabled: Set<string>): string {
-  const hasWebui = enabled.has('@aalis/plugin-webui-server');
+  const hasWebui = enabled.has(WEBUI);
   return `# ${projectName}
 
-基于 [Aalis](https://www.npmjs.com/package/@aalis/core) 脚手架生成的独立 AI 助手项目。
+基于 [Aalis](${DOCS}) 的 AI 助手项目，由 create-aalis 生成。
 
 ## 启动
 
 \`\`\`bash
-npm install        # 若 create 时跳过了安装
+npm install        # 生成时跳过了安装的话
 npm start
 \`\`\`
+
+- 第一次运行要做什么：${FIRST_RUN_URL}
+- 装不上或起不来：${TROUBLESHOOTING_URL}
 
 ## 配置
 
 - 家目录是 \`home/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_HOME\` 或用 \`npm start -- --home <目录>\` 可换到别处。
 - 编辑 \`home/aalis.config.yaml\` 调整插件与参数。
-- 密钥/令牌：填进 \`home/aalis.config.yaml\`${hasWebui ? '，或启动后在 WebUI 配置页填写' : ''}。启动时它们会被移进 \`home/secrets.yaml\`（0600），配置文件里换成引用；备份家目录时连同 \`secrets.yaml\` 一起备份。
-${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:3000 。\n' : ''}
+- 密钥/令牌：填进 \`home/aalis.config.yaml\` 里该插件的段${hasWebui ? '，或启动后在 WebUI 插件区打开该插件填写' : ''}。启动时它们会被移进 \`home/secrets.yaml\`（0600），配置文件里换成引用；备份家目录时连同 \`secrets.yaml\` 一起备份。
+${hasWebui ? `- WebUI 管理界面默认 ${WEBUI_URL} 。\n` : ''}
 ## 装更多插件
 
 \`\`\`bash
-npm install @aalis/plugin-<name>   # 装上即被自动发现加载
+npm install @aalis/plugin-<name>
 \`\`\`
-${hasWebui ? '或在 WebUI 的「插件市场」页搜索安装。\n' : ''}
+
+装好后重启实例${hasWebui ? '，或在 WebUI 插件区点「重新扫描」' : ''}，新插件才会加载。${hasWebui ? '也可以在 WebUI 的插件市场里搜索安装。' : ''}
+
 > 启用集：${countPlugins(enabled)} 个插件。完整生态见 npm 上的 \`aalis-plugin\` 关键词。
 `;
+}
+
+/** 结尾的「下一步」：进目录、Ollama 要拉的模型、启动，再点名还没填的密钥与去哪填 */
+export function renderNextSteps(o: {
+  dir: string;
+  installed: boolean;
+  enabled: Set<string>;
+  keys: Keys;
+  /** ollamaSteps 算出的命令 */
+  ollama: string[];
+  tier: Tier;
+}): string {
+  const hasWebui = o.enabled.has(WEBUI);
+  const lines = ['下一步：', `  cd ${o.dir}${o.installed ? '' : ' && npm install'}`, ...o.ollama.map(s => `  ${s}`)];
+  lines.push('  npm start');
+  const unfilled = [...o.enabled]
+    .sort()
+    .flatMap(name => (KNOWN_CONFIG[name] ?? []).filter(key => !o.keys[name]?.[key]).map(key => `  ${name} 的 ${key}`));
+  if (unfilled.length > 0) {
+    lines.push(
+      '',
+      '还没填的密钥（填好之前对应的插件起不来）：',
+      ...unfilled,
+      `  填法：${hasWebui ? '启动后在 WebUI 插件区打开该插件填写，或' : ''}填进 home/aalis.config.yaml 里 plugins 下该插件的段`,
+    );
+  }
+  // full 档另装了不少要手配的插件（OneBot 的连接、MongoDB 的 uri 等），上面点名的不是全部
+  if (o.tier === 'full') {
+    lines.push('', '其余要填凭据、地址或路径的插件：启动后在 WebUI 的「需要处理」里标待配置或失败，照着去配置。');
+  }
+  lines.push('', `第一次运行：${FIRST_RUN_URL}`);
+  if (o.tier !== 'full') {
+    lines.push(
+      hasWebui
+        ? '更多插件：启动后在 WebUI 的插件市场搜索安装；或 npm install @aalis/plugin-<名>，装好后重启实例或在插件区点「重新扫描」。'
+        : '更多插件：npm install @aalis/plugin-<名>，装好后重启实例才会加载。',
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+// ── npm install ───────────────────────────────────────────
+
+/** npm 失败的几类：与插件市场（plugin-package-manager 的 npmFailureKind）同一套，对账用例钉住 */
+type InstallFailureKind = 'disk' | 'permission' | 'platform' | 'peer' | 'browser' | 'native' | 'missing' | 'network';
+
+/**
+ * npm install 失败的几类原因：按 npm 的报错认，第一行是原因，其余是修法。浏览器下载与原生编译先于网络认：它们的输出里也可能
+ * 带网络错误码，但修法不同
+ */
+const INSTALL_FAILURES: Array<{
+  kind: InstallFailureKind;
+  match: RegExp;
+  explain(stderr: string, found: RegExpExecArray): string[];
+}> = [
+  {
+    kind: 'disk',
+    match: /\bENOSPC\b/,
+    explain: () => ['磁盘空间不够（ENOSPC）。', '腾出空间后再装。'],
+  },
+  {
+    kind: 'permission',
+    match: /\bEACCES\b/,
+    explain: () => [
+      '没有写入权限（EACCES）。',
+      '不要用 sudo 重试：把项目目录与 npm 的缓存目录（npm config get cache 查看）改回当前用户所有，',
+      '例如 sudo chown -R "$(whoami)" <目录>；报的是全局目录时，用 nvm 装的 Node，或 npm config set prefix ~/.npm-global。',
+    ],
+  },
+  {
+    kind: 'platform',
+    match: /\bEBADPLATFORM\b/,
+    explain: stderr => {
+      const pkg = /Unsupported platform for (\S+?)@\d/.exec(stderr)?.[1] ?? '某个依赖';
+      return [
+        `依赖 ${pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM）。`,
+        `加 --advanced 重新生成，换掉用到它的插件（npm ls ${pkg} 查是哪个）。`,
+      ];
+    },
+  },
+  {
+    kind: 'peer',
+    match: /\bERESOLVE\b/,
+    explain: () => [
+      'npm 解不开依赖版本（ERESOLVE）。',
+      '新生成的项目里不该出现：请把上面的日志附进问题报告 https://github.com/AalisLabs/Aalis/issues',
+    ],
+  },
+  {
+    kind: 'browser',
+    match: /Failed to set up (?:chrome|chrome-headless-shell|firefox)\b|node_modules[\\/]puppeteer\s*$/m,
+    explain: () => [
+      '下载浏览器失败：用到浏览器的插件装的时候要下载 Chrome。',
+      '设镜像地址后重装：PUPPETEER_CHROME_DOWNLOAD_BASE_URL=<镜像地址> PUPPETEER_CHROME_HEADLESS_SHELL_DOWNLOAD_BASE_URL=<镜像地址> npm install；',
+      '或先不装用到浏览器的插件：从 package.json 的 dependencies 删掉它们再 npm install（npm ls puppeteer 查是哪几个）。',
+    ],
+  },
+  {
+    kind: 'native',
+    match: /gyp ERR!|node-gyp|prebuild-install/,
+    explain: stderr => {
+      const pkg =
+        /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(stderr)?.[1] ??
+        '某个依赖';
+      return [
+        `原生模块 ${pkg} 编译失败：本机缺 C/C++ 编译工具。`,
+        '装上编译工具后重装：macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」。',
+        `或加 --advanced 重新生成，换掉用到它的插件（npm ls ${pkg} 查是哪个）。`,
+      ];
+    },
+  },
+  {
+    kind: 'missing',
+    match: /\b(E404|ETARGET)\b/,
+    explain: (_stderr, [, code]) => [
+      `源上没有这个包或这个版本（${code}）。`,
+      '核对包名与版本；用的是镜像源时，刚发布的版本可能还没同步，稍后重试或临时换回官方源：npm install --registry=https://registry.npmjs.org。',
+    ],
+  },
+  {
+    kind: 'network',
+    match: /\b(ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN)\b/,
+    explain: (_stderr, [, code]) => [
+      `连不上 npm 源（${code}）。`,
+      '检查网络与代理设置后重试；默认源不通时换一个：npm config set registry <源地址>，再 npm install。',
+    ],
+  },
+];
+
+/** 按先后认 npm 的报错：第一个对上的类别与匹配结果 */
+function recognize(stderr: string) {
+  for (const failure of INSTALL_FAILURES) {
+    const found = failure.match.exec(stderr);
+    if (found) return { failure, found };
+  }
+  return undefined;
+}
+
+/** npm 的报错认出是哪一类，认不出时为 undefined */
+export function installFailureKind(stderr: string): InstallFailureKind | undefined {
+  return recognize(stderr)?.failure.kind;
+}
+
+/** npm install 失败后给用户的说明：认得出的写明原因与修法，认不出的指向上面 npm 的报错；都带重试命令与日志位置 */
+export function describeInstallFailure(stderr: string, dir: string): string {
+  const known = recognize(stderr);
+  const [reason, ...fixes] = known ? known.failure.explain(stderr, known.found) : ['原因见上面 npm 的报错。'];
+  const log = /A complete log of this run can be found in:\s*(\S+)/.exec(stderr)?.[1];
+  return [
+    `npm install 失败：${reason}`,
+    ...fixes.map(line => `  ${line}`),
+    `重试：cd ${dir} && npm install`,
+    ...(log ? [`npm 的完整日志：${log}`] : []),
+    `安装排障：${TROUBLESHOOTING_URL}`,
+  ].join('\n');
+}
+
+/** 失败时留下的 stderr 末尾长度：npm 的报错在最后，前面多是告警 */
+const STDERR_TAIL = 32 * 1024;
+
+/** 装依赖：npm 的输出照常显示在终端，stderr 另留末尾一段，失败时据此认原因 */
+function npmInstall(dir: string): Promise<{ ok: true } | { ok: false; stderr: string }> {
+  return new Promise((done, fail) => {
+    const child = spawn('npm', ['install'], {
+      cwd: dir,
+      stdio: ['inherit', 'inherit', 'pipe'],
+      shell: process.platform === 'win32',
+    });
+    let tail = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr.write(chunk);
+      tail = (tail + chunk).slice(-STDERR_TAIL);
+    });
+    child.on('error', fail);
+    child.on('close', code => done(code === 0 ? { ok: true } : { ok: false, stderr: tail }));
+  });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────
@@ -516,207 +979,148 @@ export function positionalArgs(args: string[]): string[] {
   return out;
 }
 
+function fail(message: string): never {
+  console.error(message);
+  exit(1);
+}
+
+// 非交互终端（管道 / 某些 IDE 终端 / CI）下进交互模式会在 readline 遇 EOF 时静默空退
+// （exit 0、无项目、无报错）。提前拦截并给可操作指引，避免「看着像用不了」。
+const NON_TTY_GUIDE = [
+  '',
+  '检测到非交互式环境（stdin 不是 TTY），没法逐项提问。改用非交互的写法：',
+  '  npm create aalis@latest <名> -- --yes             # 全取默认：探到本机 Ollama 时对话模型与语义记忆都用它，否则 DeepSeek、不装语义记忆；平台是 CLI 与 WebUI',
+  '  npm create aalis@latest <名> -- --tier minimal    # 按某一档的默认装：bare、minimal、standard、full',
+  '要密钥的插件，生成后在 home/aalis.config.yaml 里填，或启动后在 WebUI 插件区填。',
+  '',
+].join('\n');
+
+/** 提问得到的答案：minimal 与 standard 档另有所选、粘贴的密钥与 Ollama 的探测结果 */
+type Answers =
+  | { projectName: string; tier: 'bare' | 'full' }
+  | { projectName: string; tier: 'minimal' | 'standard'; picks: Picks; keys: Keys; probe: OllamaProbe | null };
+
+async function collect(
+  prompter: Prompter | undefined,
+  o: { name?: string; tier?: Tier; advanced: boolean; force: boolean; host?: string; lancedb: boolean },
+): Promise<Answers> {
+  console.log('\n=== 创建 Aalis 项目 ===\n');
+  const projectName =
+    o.name ?? (prompter ? await prompter.text('项目目录名', 'my-aalis-bot', validateNpmName) : 'my-aalis-bot');
+  const targetDir = resolve(cwd(), projectName);
+  if (existsSync(targetDir) && readdirSync(targetDir).length > 0 && !o.force) {
+    fail(`目录已存在且非空: ${targetDir}（加 --force 覆盖写入）`);
+  }
+  const advanced = prompter !== undefined && o.advanced;
+  if (prompter && !advanced) {
+    console.log('默认装常用的一套。要选模板档、记忆后端、embedding 或向量库，加 --advanced 重新运行。');
+  }
+  const tier =
+    o.tier ?? (prompter && advanced ? (await prompter.choose('模板档', TIER_OPTIONS, 'standard')).name : 'standard');
+  if (tier === 'bare' || tier === 'full') return { projectName, tier };
+
+  const probe = await probeOllama(o.host ?? OLLAMA_DEFAULT);
+  if (probe) {
+    console.log(
+      `探到 Ollama（${probe.base}），零 key 可用${probe.chat ? '' : '；里面还没有对话模型，启动前先 ollama pull 一个对话模型'}。`,
+    );
+  }
+  const ollama = probe !== null;
+  const { picks, keys } = prompter
+    ? await askPicks(prompter, { tier, advanced, ollama, lancedb: o.lancedb })
+    : { picks: defaultPicks(tier, ollama), keys: {} };
+  return { projectName, tier, picks, keys, probe };
+}
+
 async function main(): Promise<void> {
   const node = checkNodeVersion(version);
-  if (!node.ok) {
-    console.error(node.error);
-    exit(1);
-  }
+  if (!node.ok) fail(node.error);
 
-  const tierFlag = argValue('--tier') as Tier | undefined;
-  const skip = argv.includes('--yes') || argv.includes('-y') || tierFlag !== undefined;
-  const noInstall = argv.includes('--no-install');
-  const force = argv.includes('--force');
+  const args = argv.slice(2);
+  const tierFlag = argValue('--tier');
+  const interactive = !(args.includes('--yes') || args.includes('-y') || tierFlag !== undefined);
   const registry = argValue('--registry') ?? DEFAULT_REGISTRY;
-  const positional = positionalArgs(argv.slice(2));
-  const cliName = positional[0];
-
-  // 非交互终端（管道 / 某些 IDE 终端 / CI）下进交互模式会在 readline 遇 EOF 时静默空退
-  // （exit 0、无项目、无报错）。提前拦截并给可操作指引，避免「看着像用不了」。
-  if (!skip && !stdin.isTTY) {
-    console.error(
-      '\n检测到非交互式环境（stdin 不是 TTY），无法进入选择界面。请改用非交互模式，例如：\n' +
-        '  npm create aalis@latest <名> -- --yes              # standard 档 + 默认适配器\n' +
-        '  npm create aalis@latest <名> -- --tier minimal     # 指定模板档 bare/minimal/standard/full\n',
-    );
-    exit(1);
+  const name = positionalArgs(args)[0];
+  if (interactive && !stdin.isTTY) fail(NON_TTY_GUIDE);
+  if (name !== undefined) {
+    const r = validateNpmName(name);
+    if (!r.ok) fail(`非法项目名「${name}」：${r.error}`);
   }
-
-  const rl = createInterface({ input: stdin, output: stdout });
-  // 重问式提问：校验失败时打印错误并重问，不静默接受坏输入。
-  const askValid = async (q: string, def: string, validate: (v: string) => ValidationResult): Promise<string> => {
-    while (true) {
-      const ans = (await rl.question(`${q} (${def}): `)).trim() || def;
-      const r = validate(ans);
-      if (r.ok) return ans;
-      console.log(`  ⚠ ${r.error}`);
-    }
-  };
-  // 序号选择：兼容逗号或空格分隔，坏输入重问；空串=用默认集。
-  const askIndices = async (
-    q: string,
-    count: number,
-    mode: 'multi' | 'exclusive',
-    defaults: number[],
-  ): Promise<number[]> => {
-    while (true) {
-      const raw = (await rl.question(`${q}: `)).trim();
-      if (raw === '') return defaults;
-      const r = parseIndexSelection(raw, count, mode);
-      if (r.ok) return r.indices;
-      console.log(`  ⚠ ${r.error}`);
-    }
-  };
-
+  const tier = tierFlag === undefined ? undefined : TIER_OPTIONS.find(t => t.name === tierFlag.toLowerCase())?.name;
+  if (tierFlag !== undefined && tier === undefined) {
+    fail(`未知模板档「${tierFlag}」，请输入 bare / minimal / standard / full。`);
+  }
+  let host: string | undefined;
   try {
-    console.log('\n=== 创建 Aalis 项目 ===\n');
-
-    // 项目名 → 生成 package.json 的 name，须为合法 npm 包名（交互时重问，flag/arg 给错则退出）。
-    let projectName: string;
-    if (cliName !== undefined) {
-      const r = validateNpmName(cliName);
-      if (!r.ok) {
-        console.error(`非法项目名「${cliName}」：${r.error}`);
-        exit(1);
-      }
-      projectName = cliName;
-    } else if (skip) {
-      projectName = 'my-aalis-bot';
-    } else {
-      projectName = await askValid('项目目录名', 'my-aalis-bot', validateNpmName);
-    }
-
-    const targetDir = resolve(cwd(), projectName);
-    if (existsSync(targetDir) && readdirSync(targetDir).length > 0 && !force) {
-      console.error(`目录已存在且非空: ${targetDir}（加 --force 覆盖写入）`);
-      exit(1);
-    }
-
-    console.log('\n模板档：');
-    console.log('  bare      只装 Aalis Core + runtime（完全自定义起点）');
-    console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 LLM+1 平台+记忆）');
-    console.log('  standard  常用全家桶（minimal + WebUI/人设/向量记忆/工具/调度/技能…）');
-    console.log('  full      全部官方插件（实时查 npm 全装，可能需手动取舍）\n');
-    console.log('（更多插件不在终端铺列——建好后在 WebUI 插件市场搜索安装）\n');
-
-    const validTier = (v: string): ValidationResult =>
-      ['bare', 'minimal', 'standard', 'full'].includes(v.toLowerCase())
-        ? { ok: true }
-        : { ok: false, error: `未知模板档「${v}」，请输入 bare / minimal / standard / full。` };
-    let tier: Tier;
-    if (tierFlag !== undefined) {
-      const r = validTier(tierFlag);
-      if (!r.ok) {
-        console.error(r.error);
-        exit(1);
-      }
-      tier = tierFlag.toLowerCase() as Tier;
-    } else if (skip) {
-      tier = 'standard';
-    } else {
-      tier = (await askValid('模板档 [bare/minimal/standard/full]', 'standard', validTier)).toLowerCase() as Tier;
-    }
-
-    const enabled = baseEnabled(tier);
-
-    // 同类适配器交互选择（仅 minimal/standard，且仅该档出现的组）；坏输入重问。
-    if (tier === 'minimal' || tier === 'standard') {
-      for (const group of GROUPS) {
-        if (!group.tiers.includes(tier)) continue;
-        console.log(`\n${group.label}:`);
-        for (const [i, m] of group.members.entries()) console.log(`  ${i + 1}. ${m.label}`);
-        const defaults = group.members.filter(m => m.default).map(m => group.members.indexOf(m) + 1);
-        const defStr = group.mode === 'exclusive' ? String(defaults[0] ?? 1) : defaults.join(',') || '无';
-        const q =
-          group.mode === 'exclusive'
-            ? `选一个（序号，回车=默认 ${defStr}）`
-            : `选若干（逗号或空格分隔序号，回车=默认 ${defStr}）`;
-        const picks = skip ? defaults : await askIndices(q, group.members.length, group.mode, defaults);
-        for (const idx of picks) enabled.add(group.members[idx - 1].name);
-      }
-    }
-
-    // 插件目录：full 档用它枚举全部官方插件；非 bare 档也复用其版本号，省去逐包查询。
-    // 注意：此处不做「其他插件」live 全列表多选——长尾插件发现交给 WebUI 市场（见上提示）。
-    let catalog: CatalogEntry[] | null = null;
-    if (tier !== 'bare') {
-      catalog = await fetchCatalog(registry);
-      if (!catalog && tier === 'full') console.warn('（无法连接 npm，full 档回退离线静态表）');
-    }
-    if (tier === 'full') {
-      // full = 全部官方插件：live 优先，失败回退静态（baseEnabled(full) 已含 base∪extra∪groups）
-      if (catalog) {
-        for (const e of catalog) if (e.official) enabled.add(e.name);
-      } else {
-        for (const n of STATIC_OTHERS) enabled.add(n);
-      }
-    }
-
-    // 选了 WebUI 后端就自动带上前端 + 安装引擎：
-    // - webui-client：webui-server 仅托管前端静态资源，自身不含；缺它会 404
-    //   「请安装 webui-client 插件」。它非运行时插件（无 apply），装上即被自动发现挂载。
-    // - package-manager：否则市场页"安装"会报 503（webui-server 仅把它列为 dev 依赖）。
-    if (enabled.has('@aalis/plugin-webui-server')) {
-      enabled.add('@aalis/plugin-webui-client');
-      enabled.add('@aalis/plugin-package-manager');
-    }
-
-    // 选了 code_runner 就自动带上 OS 沙箱实现：默认 sandbox.mode=auto，缺沙箱后端会 fail-closed
-    // 拒绝执行代码，故把隔离实现一并装上（macOS sandbox-exec 自带；Linux 还需系统装 bubblewrap）。
-    if (enabled.has('@aalis/plugin-tool-code-runner')) {
-      enabled.add('@aalis/plugin-code-sandbox-os');
-    }
-
-    // 写文件
-    mkdirSync(targetDir, { recursive: true });
-    const enabledList = [...enabled];
-    // 逐包解析当前最新版本（复用 catalog；core/runtime 实时查；失败回退 latest）
-    const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabledList], catalog);
-    writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabledList, versions), 'utf-8');
-    writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
-    // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
-    const homeDir = resolve(targetDir, 'home');
-    mkdirSync(homeDir, { recursive: true, mode: 0o700 });
-    writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });
-    writeFileSync(resolve(homeDir, 'aalis.config.yaml'), renderConfig(enabled), { encoding: 'utf-8', mode: 0o600 });
-    writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
-    writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
-
-    console.log(`\n✓ 已生成项目: ${targetDir}（启用 ${countPlugins(enabledList)} 个插件）`);
-
-    // 安装依赖
-    if (!noInstall) {
-      console.log('\n正在 npm install（可能需要几分钟）…\n');
-      const r = spawnSync('npm', ['install'], {
-        cwd: targetDir,
-        stdio: 'inherit',
-        shell: process.platform === 'win32',
-      });
-      if (r.status !== 0) {
-        console.error('\nnpm install 失败。可手动进入目录重试：');
-        console.error(`  cd ${projectName} && npm install`);
-        exit(1);
-      }
-    }
-
-    console.log('\n下一步：');
-    if (noInstall) console.log(`  cd ${projectName} && npm install`);
-    else console.log(`  cd ${projectName}`);
-    const needsKey = enabledList.some(n => KNOWN_CONFIG[n]);
-    if (needsKey) console.log('  # 在 home/aalis.config.yaml 里填入 API key（启动时移进 secrets.yaml）');
-    console.log('  npm start');
-    if (tier !== 'full') {
-      const hasWebui = enabled.has('@aalis/plugin-webui-server');
-      console.log(
-        hasWebui
-          ? '\n更多插件：启动后在 WebUI 的「插件市场」页搜索安装（或 npm install @aalis/plugin-<name>）。'
-          : '\n更多插件：npm install @aalis/plugin-<name> 即可（装上自动发现加载）；装 webui-server 后还可用图形化插件市场。',
-      );
-    }
-    console.log('');
-  } finally {
-    rl.close();
+    host = ollamaHost(env.OLLAMA_HOST);
+  } catch (err) {
+    fail((err as Error).message);
   }
+  const lancedb = lancedbSupported(platform, arch);
+
+  // 问完就关掉终端提问：装依赖期间 Ctrl+C 要照常能中止 npm
+  const prompter = interactive ? createPrompter(stdin, stdout) : undefined;
+  let answers: Answers;
+  try {
+    answers = await collect(prompter, {
+      name,
+      tier,
+      advanced: args.includes('--advanced'),
+      force: args.includes('--force'),
+      host,
+      lancedb,
+    });
+  } catch (err) {
+    // 提问时按了 Ctrl+C：readline 随之关闭，没答完的那一问以 AbortError 结束。这时还没写任何文件
+    if ((err as Error).name !== 'AbortError') throw err;
+    console.error('\n已取消，没有生成任何文件。');
+    exit(130);
+  } finally {
+    prompter?.close();
+  }
+  const { projectName } = answers;
+  const chosen = answers.tier === 'minimal' || answers.tier === 'standard' ? answers : undefined;
+  const keys = chosen?.keys ?? {};
+
+  // 插件目录：full 档用它枚举全部官方插件；非 bare 档也复用其版本号，省去逐包查询。
+  const catalog = answers.tier === 'bare' ? null : await fetchCatalog(registry);
+  if (!catalog && answers.tier === 'full') console.warn('（无法连接 npm，full 档回退离线静态表）');
+  const plan: Plan =
+    answers.tier === 'full'
+      ? { tier: 'full', catalog: catalog ? catalog.filter(e => e.official).map(e => e.name) : null }
+      : chosen
+        ? { tier: chosen.tier, picks: chosen.picks }
+        : { tier: 'bare' };
+  const enabled = pluginSet(plan, lancedb);
+
+  const targetDir = resolve(cwd(), projectName);
+  mkdirSync(targetDir, { recursive: true });
+  // 逐包解析当前最新版本（复用 catalog；core/runtime 实时查；失败回退 latest）
+  const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabled], catalog);
+  writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabled, versions), 'utf-8');
+  writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
+  // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
+  const homeDir = resolve(targetDir, 'home');
+  mkdirSync(homeDir, { recursive: true, mode: 0o700 });
+  writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });
+  writeFileSync(resolve(homeDir, 'aalis.config.yaml'), renderConfig(enabled, pluginSettings(enabled, keys, host)), {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+  writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
+  writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
+  console.log(`\n✓ 已生成项目: ${targetDir}（启用 ${countPlugins(enabled)} 个插件）`);
+
+  const install = !args.includes('--no-install');
+  if (install) {
+    console.log('\n正在 npm install（可能需要几分钟）…\n');
+    const result = await npmInstall(targetDir);
+    if (!result.ok) fail(`\n${describeInstallFailure(result.stderr, projectName)}`);
+  }
+  const ollama = chosen ? ollamaSteps(chosen.picks, chosen.probe) : [];
+  console.log(
+    `\n${renderNextSteps({ dir: projectName, installed: install, enabled, keys, ollama, tier: answers.tier })}`,
+  );
 }
 
 // 仅在作为 CLI 直接执行时运行 main；被 import（单测纯函数）时不自动跑。

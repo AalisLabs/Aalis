@@ -4,18 +4,30 @@
   list-style: none;
 }
 
-/* 行与行之间不加线：行首的标记（与列表行同一个）、两行文字，行尾的跳转 */
+/* 行与行之间不加线：行首的标记（与列表行同一个）、两行文字，行尾的跳转。跳转写着根插件的名字，放不下时换到下一行靠右，
+   不把说明挤窄；再长也不超出行宽 */
 .attention-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-2line);
   padding: var(--space-1) 0;
 }
 
+.attention-row > .button {
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.attention-row > .button .button-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .attention-text {
   display: flex;
-  flex: 1;
+  flex: 1 1 12rem;
   flex-direction: column;
   gap: var(--space-0-5);
   min-width: 0;

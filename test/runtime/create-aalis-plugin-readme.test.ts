@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type FramePageDefinition, type PageHandle, webuiServer } from '../../packages/api-webui/src/index.js';
 import { optionalNames, requiredNames } from '../../packages/core/src/composition/descriptors.js';
@@ -33,18 +34,29 @@ function usesKeys(source: string): string[] {
 
 type Webui = false | 'declarative' | 'frame';
 
-const answers = (features: { tool: boolean; command: boolean; webui: Webui }) => ({
+const answers = (features: { tool: boolean; command: boolean; webui: Webui; sessionSetting: boolean }) => ({
   packageName: 'aalis-plugin-demo',
   displayName: '演示',
   features,
 });
 
+/** 生成时向源查到的版本 */
+const VERSIONS = {
+  '@aalis/core': '0.19.1',
+  '@aalis/api-tools': '0.9.0',
+  '@aalis/api-commands': '0.8.0',
+  '@aalis/api-webui': '0.12.0',
+  '@aalis/api-session-manager': '0.10.0',
+};
+
 const COMBOS = [
-  { tool: false, command: false, webui: false },
-  { tool: true, command: false, webui: false },
-  { tool: false, command: true, webui: false },
-  { tool: true, command: true, webui: 'declarative' },
-  { tool: false, command: false, webui: 'frame' },
+  { tool: false, command: false, webui: false, sessionSetting: false },
+  { tool: true, command: false, webui: false, sessionSetting: false },
+  { tool: false, command: true, webui: false, sessionSetting: false },
+  { tool: true, command: true, webui: 'declarative', sessionSetting: false },
+  { tool: false, command: false, webui: 'frame', sessionSetting: false },
+  { tool: true, command: false, webui: false, sessionSetting: true },
+  { tool: false, command: false, webui: false, sessionSetting: true },
 ] as const;
 
 const quiet = () => {};
@@ -60,21 +72,27 @@ async function generated(a: ReturnType<typeof answers>): Promise<string> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-scaffold-')));
   dirs.push(base);
   const dir = join(base, a.packageName);
-  await generate(dir, a);
+  await generate(dir, a, VERSIONS);
   return dir;
 }
 
 describe('create-aalis-plugin README 与 index 同源', () => {
-  it('全部十二种功能组合：生成清单与实际定义依赖对账，空功能也声明 logger', () => {
+  it('全部二十四种功能组合：生成清单与实际定义依赖对账，空功能也声明 logger', () => {
     const imports: Record<string, unknown> = {
       '@aalis/core': core,
       '@aalis/api-tools': { tools },
       '@aalis/api-commands': { commands },
       '@aalis/api-webui': { webuiServer },
+      '@aalis/api-session-manager': { sessionManager },
     };
-    for (let mask = 0; mask < 4; mask++) {
+    for (let mask = 0; mask < 8; mask++) {
       for (const webui of [false, 'declarative', 'frame'] as const) {
-        const a = answers({ tool: Boolean(mask & 1), command: Boolean(mask & 2), webui });
+        const a = answers({
+          tool: Boolean(mask & 1),
+          command: Boolean(mask & 2),
+          webui,
+          sessionSetting: Boolean(mask & 4),
+        });
         const source = ts.transpileModule(renderIndexTs(a), {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
         }).outputText;
@@ -89,7 +107,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
           exports,
         );
         expect(exports.default).toBeDefined();
-        const declared = JSON.parse(renderPackageJson(a)).aalis.service;
+        const declared = JSON.parse(renderPackageJson(a, VERSIONS)).aalis.service;
         expect(declared.required).toEqual(['logger']);
         expect(declared.required).toEqual(requiredNames(exports.default!.uses ?? {}));
         expect(declared.optional ?? []).toEqual(optionalNames(exports.default!.uses ?? {}));
@@ -98,9 +116,12 @@ describe('create-aalis-plugin README 与 index 同源', () => {
   });
 
   it('勾了 webui：apply 登记的示例页面过登记时的质量门槛，数据源给出键值', async () => {
-    const source = ts.transpileModule(renderIndexTs(answers({ tool: false, command: false, webui: 'declarative' })), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-    }).outputText;
+    const source = ts.transpileModule(
+      renderIndexTs(answers({ tool: false, command: false, webui: 'declarative', sessionSetting: false })),
+      {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      },
+    ).outputText;
     const exports: { default?: core.PluginDefinition } = {};
     const imports: Record<string, unknown> = { '@aalis/core': core, '@aalis/api-webui': { webuiServer } };
     new Function('require', 'exports', source)((name: string) => imports[name], exports);
@@ -114,7 +135,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
   });
 
   it('页面用自带前端：生成 webui/ 的入口与脚本，files 带上 webui；登记成插件前端页面，webui-server 找得到包根与入口；删除动作删一条并通知重取', async () => {
-    const a = answers({ tool: false, command: false, webui: 'frame' });
+    const a = answers({ tool: false, command: false, webui: 'frame', sessionSetting: false });
     const dir = await generated(a);
     expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).files).toEqual(['dist', 'webui']);
     const html = readFileSync(join(dir, 'webui/index.html'), 'utf-8');
@@ -169,7 +190,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
     const dir = await generated({
       packageName: 'zz-escape',
       displayName: '<b>看板</b> & "计数"',
-      features: { tool: false, command: false, webui: 'frame' },
+      features: { tool: false, command: false, webui: 'frame', sessionSetting: false },
     });
     expect(readFileSync(join(dir, 'webui/index.html'), 'utf-8')).toContain(
       '<title>&lt;b&gt;看板&lt;/b&gt; &amp; &quot;计数&quot;</title>',
@@ -184,7 +205,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
   });
 
   it('README 不再列出未勾选的能力，optional(tools) 等措辞与 index 一致；没选自带前端时没有「插件前端」一节', () => {
-    const none = renderReadme(answers({ tool: false, command: false, webui: false }));
+    const none = renderReadme(answers({ tool: false, command: false, webui: false, sessionSetting: false }));
     expect(none).not.toContain('optional(tools)');
     expect(none).not.toContain('optional(commands)');
     expect(none).not.toContain('optional(webuiServer)');
@@ -192,14 +213,16 @@ describe('create-aalis-plugin README 与 index 同源', () => {
     expect(none).not.toContain('@aalis/api-commands');
     expect(none).not.toContain('@aalis/api-webui');
     expect(none).not.toContain('配置原样透传给 apply');
-    expect(renderReadme(answers({ tool: false, command: false, webui: 'declarative' }))).not.toContain('插件前端');
+    expect(
+      renderReadme(answers({ tool: false, command: false, webui: 'declarative', sessionSetting: false })),
+    ).not.toContain('插件前端');
 
-    const toolOnly = renderReadme(answers({ tool: true, command: false, webui: false }));
+    const toolOnly = renderReadme(answers({ tool: true, command: false, webui: false, sessionSetting: false }));
     expect(toolOnly).toContain('uses: { tools: optional(tools) }');
     expect(toolOnly).not.toContain('optional(commands)');
     expect(toolOnly).not.toContain('optional(webuiServer)');
 
-    const indexTool = renderIndexTs(answers({ tool: true, command: false, webui: false }));
+    const indexTool = renderIndexTs(answers({ tool: true, command: false, webui: false, sessionSetting: false }));
     expect(indexTool).toContain('tools: optional(tools)');
   });
 });

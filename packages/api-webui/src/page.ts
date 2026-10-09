@@ -372,8 +372,9 @@ export interface Notice {
   id: string;
   /** action 需要你处理，error 出错 */
   level: 'action' | 'error';
-  /** 数量写进标题，例如「3 件作品待裁决」 */
+  /** 出了什么事；数量写进标题，例如「3 件作品待裁决」 */
   title: string;
+  /** 用户该做什么，具体到配置项、命令或页面 */
   detail?: string;
   /** 跳转：去本插件的配置，或打开本插件位置为 plugin 或 settings 的页面（按页面的 key）；按钮上的字由宿主推出 */
   open?: 'config' | { page: string };

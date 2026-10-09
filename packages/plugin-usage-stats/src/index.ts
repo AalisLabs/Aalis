@@ -184,7 +184,9 @@ async function run(caps: Caps): Promise<void> {
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw new Error(`用量账本 ${file} 读不出来`, { cause: err });
+      throw new Error(`用量账本 ${file} 读不出来：检查它的读写权限；要从空账本开始就把它移走后重载本插件`, {
+        cause: err,
+      });
     }
   }
   if (unreadable > 0) logger.warn(`用量账本 ${file} 有 ${unreadable} 行读不懂，已跳过`);

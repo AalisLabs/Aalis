@@ -11,11 +11,11 @@ import { type ASRService, asr, type TranscribeInput, type TranscribeResult } fro
 import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
 import { createStorageGateway, isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, optional, provide } from '@aalis/core';
-import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 
 const configSchema = defineConfig({
-  apiKey: { type: 'string', label: 'API Key', secret: true, default: '', onInvalid: 'error' },
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
   baseUrl: { type: 'string', label: 'Base URL', default: 'https://api.openai.com/v1', onInvalid: 'error' },
   model: { type: 'string', label: '模型', default: 'whisper-1' },
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 50 },
@@ -153,12 +153,6 @@ export default definePlugin({
   uses,
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config, caps.logger);
-
-    if (!cfg.apiKey) {
-      // 与 openai/embedding-openai 一致：缺必填配置时抛清晰错误（而非静默 return，
-      // 否则声明了提供 asr 却不注册会触发难懂的 provides 校验错）。
-      throw missingConfigError('apiKey', '不使用 OpenAI ASR 可在插件管理里禁用本插件');
-    }
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }

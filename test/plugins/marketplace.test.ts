@@ -49,7 +49,7 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
 
   it('映射字段 + 已装标注 + @aalis scope 判官方（无 keyword 时为空数组）', () => {
     // version 取安装源上的最新版，检索结果自带的 1.2.0 不用；安装源查不到的为空串
-    const latest = (n: string) => (n === '@aalis/plugin-foo' ? '1.3.0' : undefined);
+    const latest = (n: string) => (n === '@aalis/plugin-foo' ? { version: '1.3.0', provides: [] } : undefined);
     const pkgs = toMarketplacePackages(resp, new Set(['@aalis/plugin-foo']), latest);
     expect(pkgs[0]).toMatchObject({
       name: '@aalis/plugin-foo',
@@ -303,7 +303,7 @@ describe('classifyPackage（按类型关键词分类）', () => {
 
 describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱）', () => {
   it('脚手架形态：根声明了 semver + 装在 node_modules → registry，可更新', () => {
-    const info = resolveLocalInfo('^0.9.1', { version: '0.9.1', keywords: ['aalis-plugin'] }, undefined);
+    const info = resolveLocalInfo('^0.9.1', { version: '0.9.1', keywords: ['aalis-plugin'], provides: [] }, undefined);
     expect(info?.origin).toBe('registry');
     expect(info?.version).toBe('0.9.1');
     expect(info?.request).toBe('^0.9.1');
@@ -312,13 +312,13 @@ describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱
   it('脚手架形态：装在 node_modules 但不在根 dependencies → transitive（父包拉进来的）', () => {
     // 实测：@aalis/api-memory 由 plugin-memory-inmemory 引入，与直装包路径同形，
     // 只有「不在根 dependencies」这一条能把它们分开。
-    expect(resolveLocalInfo(undefined, { version: '0.9.0' }, undefined)?.origin).toBe('transitive');
+    expect(resolveLocalInfo(undefined, { version: '0.9.0', provides: [] }, undefined)?.origin).toBe('transitive');
   });
 
   it('monorepo 形态：resolve 不到但扫描扫得到 → workspace，不是 transitive', () => {
     // 实测：本仓库 @aalis/plugin-commands 不在根 dependencies 且从仓库根 resolve 失败，
     // 但它是 packages/ 下的工作区源码。若沿用 classifyDepSpec(undefined) 会误判为「依赖引入」。
-    const info = resolveLocalInfo(undefined, undefined, { version: '0.9.0' });
+    const info = resolveLocalInfo(undefined, undefined, { version: '0.9.0', provides: [] });
     expect(info?.origin).toBe('workspace');
     // 版本取自扫描时读到的那份 package.json。不带上它，前端的 `resolved ?? version` 兜底就会
     // 把 npm latest 当成已装版本显示——实测本仓库 93 张卡片里 91 张显示的是远端版本号。
@@ -326,20 +326,35 @@ describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱
   });
 
   it('monorepo 形态：根声明 workspace: 且能 resolve → workspace（本仓库 @aalis/core 即如此）', () => {
-    expect(resolveLocalInfo('workspace:*', { version: '0.9.1' }, { version: '0.9.1' })?.origin).toBe('workspace');
+    expect(
+      resolveLocalInfo('workspace:*', { version: '0.9.1', provides: [] }, { version: '0.9.1', provides: [] })?.origin,
+    ).toBe('workspace');
   });
 
   it('三路都没有 → undefined（未安装）', () => {
     expect(resolveLocalInfo(undefined, undefined, undefined)).toBeUndefined();
   });
+
+  it('提供的服务取本地那份 package.json 声明的：装在 node_modules 的取解析到的，工作区的取扫描读到的', () => {
+    expect(resolveLocalInfo('^1.0.0', { version: '1.0.0', provides: ['llm'] }, undefined)?.provides).toEqual(['llm']);
+    expect(resolveLocalInfo(undefined, undefined, { version: '1.0.0', provides: ['embedding'] })?.provides).toEqual([
+      'embedding',
+    ]);
+  });
 });
 
 describe('toLocalPackages（npm 检索不可达时的降级卡片）', () => {
   const local = new Map<string, LocalPkgInfo>([
-    ['@aalis/plugin-b', { version: '0.9.0', request: '^0.9.0', origin: 'registry', keywords: ['aalis-plugin'] }],
-    ['@aalis/plugin-a', { version: '0.9.1', request: 'workspace:*', origin: 'workspace', keywords: ['aalis-plugin'] }],
-    ['express', { version: '4.0.0', request: '^4', origin: 'registry', keywords: ['http'] }],
-    ['@aalis/api-c', { version: '0.9.0', origin: 'transitive', keywords: ['aalis-api'] }],
+    [
+      '@aalis/plugin-b',
+      { version: '0.9.0', request: '^0.9.0', origin: 'registry', keywords: ['aalis-plugin'], provides: [] },
+    ],
+    [
+      '@aalis/plugin-a',
+      { version: '0.9.1', request: 'workspace:*', origin: 'workspace', keywords: ['aalis-plugin'], provides: [] },
+    ],
+    ['express', { version: '4.0.0', request: '^4', origin: 'registry', keywords: ['http'], provides: [] }],
+    ['@aalis/api-c', { version: '0.9.0', origin: 'transitive', keywords: ['aalis-api'], provides: [] }],
   ]);
 
   it('只收带 Aalis 类型关键词的包，按名排序', () => {
@@ -370,15 +385,20 @@ describe('toLocalPackages（npm 检索不可达时的降级卡片）', () => {
 
   it('搜索词与在线路径同一判据：按包名、描述、原始关键词收窄，空搜索词全部保留', () => {
     const described = new Map<string, LocalPkgInfo>([
-      ['@aalis/plugin-a', { origin: 'registry', keywords: ['aalis-plugin'], description: 'Vector memory' }],
-      ['@aalis/plugin-b', { origin: 'registry', keywords: ['aalis-plugin', 'browser'] }],
-      ['@aalis/api-c', { origin: 'transitive', keywords: ['aalis-api'] }],
+      [
+        '@aalis/plugin-a',
+        { origin: 'registry', keywords: ['aalis-plugin'], description: 'Vector memory', provides: ['embedding'] },
+      ],
+      ['@aalis/plugin-b', { origin: 'registry', keywords: ['aalis-plugin', 'browser'], provides: [] }],
+      ['@aalis/api-c', { origin: 'transitive', keywords: ['aalis-api'], provides: [] }],
     ]);
     const names = (q: string) => toLocalPackages(described, q).map(p => p.name);
     expect(names('plugin-a')).toEqual(['@aalis/plugin-a']);
     expect(names('VECTOR memory')).toEqual(['@aalis/plugin-a']);
     expect(names('browser')).toEqual(['@aalis/plugin-b']);
     expect(names('aalis-api')).toEqual(['@aalis/api-c']);
+    expect(names('embedding'), '按提供的服务搜').toEqual(['@aalis/plugin-a']);
+    expect(toLocalPackages(described).find(p => p.name === '@aalis/plugin-a')?.provides).toEqual(['embedding']);
     expect(names('')).toEqual(['@aalis/api-c', '@aalis/plugin-a', '@aalis/plugin-b']);
   });
 });
@@ -392,10 +412,11 @@ describe('toMarketplacePackages 的本地实况注入', () => {
   };
 
   const localX = (name: string): LocalPkgInfo | undefined =>
-    name === '@aalis/plugin-x' ? { version: '1.0.0', request: '^1.0.0', origin: 'registry' } : undefined;
+    name === '@aalis/plugin-x' ? { version: '1.0.0', request: '^1.0.0', origin: 'registry', provides: [] } : undefined;
+  const latest = (version: string) => () => ({ version, provides: [] });
 
   it('version 是安装源上的 latest，resolved 才是本地已装版本——两者不可混同', () => {
-    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.2.0', localX);
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), latest('1.2.0'), localX);
     const x = pkgs.find(p => p.name === '@aalis/plugin-x');
     expect(x?.version, 'version 必须是安装源上的 latest').toBe('1.2.0');
     expect(x?.resolved, 'resolved 必须是本地已装版本').toBe('1.0.0');
@@ -403,9 +424,9 @@ describe('toMarketplacePackages 的本地实况注入', () => {
 
   it('可更新按安装源上的 latest 判：检索源版本更新、安装源还没有时不可更新', () => {
     // 检索结果说 1.2.0，安装源（镜像未同步）的 latest 仍是本地的 1.0.0：更新只会装回 1.0.0
-    const lagging = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.0.0', localX);
+    const lagging = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), latest('1.0.0'), localX);
     expect(lagging.find(p => p.name === '@aalis/plugin-x')).toMatchObject({ version: '1.0.0', updatable: false });
-    const synced = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.1.0', localX);
+    const synced = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), latest('1.1.0'), localX);
     expect(synced.find(p => p.name === '@aalis/plugin-x')).toMatchObject({ version: '1.1.0', updatable: true });
   });
 
@@ -415,22 +436,42 @@ describe('toMarketplacePackages 的本地实况注入', () => {
   });
 
   it('未装的包没有 resolved / origin（前端据此不显示任何版本落后提示）', () => {
-    const pkgs = toMarketplacePackages(
-      data,
-      new Set(),
-      () => '1.2.0',
-      () => undefined,
-    );
+    const pkgs = toMarketplacePackages(data, new Set(), latest('1.2.0'), () => undefined);
     expect(pkgs.every(p => p.resolved === undefined && p.origin === undefined)).toBe(true);
   });
 
+  it('提供的服务：已装的取本地 package.json 声明的（与卡片上的本地版本一致），没装的取安装源最新版的，都没有为空', () => {
+    const remote = (name: string) =>
+      name === '@aalis/plugin-y'
+        ? { version: '1.0.0', provides: ['embedding'] }
+        : { version: '1.2.0', provides: ['zz-new'] };
+    const local = (name: string): LocalPkgInfo | undefined =>
+      name === '@aalis/plugin-x' ? { version: '1.0.0', origin: 'registry', provides: ['llm'] } : undefined;
+    const byName = new Map(
+      toMarketplacePackages(data, new Set(['@aalis/plugin-x']), remote, local).map(p => [p.name, p.provides]),
+    );
+    expect(byName.get('@aalis/plugin-x')).toEqual(['llm']);
+    expect(byName.get('@aalis/plugin-y')).toEqual(['embedding']);
+    expect(toMarketplacePackages(data, new Set(), () => undefined).map(p => p.provides)).toEqual([[], []]);
+  });
+
+  it('搜索词在包名、描述、原始关键词与提供的服务上匹配，都不含的滤掉', () => {
+    const remote = (name: string) =>
+      name === '@aalis/plugin-y' ? { version: '1.0.0', provides: ['embedding'] } : undefined;
+    const names = (q: string) => toMarketplacePackages(data, new Set(), remote, () => undefined, q).map(p => p.name);
+    expect(names('embedding')).toEqual(['@aalis/plugin-y']);
+    expect(names('plugin-x')).toEqual(['@aalis/plugin-x']);
+    expect(names('aalis-plugin')).toEqual(['@aalis/plugin-x', '@aalis/plugin-y']);
+    expect(names('rerank')).toEqual([]);
+  });
+
   it('不给 localOf 时卡片没有 resolved（缺省参数）', () => {
-    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.2.0');
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), latest('1.2.0'));
     expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.resolved).toBeUndefined();
   });
 });
 
-describe('matchesQuery（检索结果按搜索词本地过滤）', () => {
+describe('matchesQuery（检索结果按搜索词本地过滤：包名、描述、关键词与提供的服务）', () => {
   const pkg = { name: '@aalis/plugin-memory-vector', description: 'Vector recall', keywords: ['aalis-plugin', 'rag'] };
 
   it('在包名、描述、关键词里做不区分大小写的包含匹配', () => {
@@ -438,6 +479,12 @@ describe('matchesQuery（检索结果按搜索词本地过滤）', () => {
     expect(matchesQuery(pkg, 'RECALL')).toBe(true);
     expect(matchesQuery(pkg, 'rag')).toBe(true);
     expect(matchesQuery(pkg, 'browser')).toBe(false);
+  });
+
+  it('提供的服务同样参与匹配', () => {
+    expect(matchesQuery({ ...pkg, provides: ['embedding'] }, 'EMBEDDING')).toBe(true);
+    expect(matchesQuery({ ...pkg, provides: ['embedding'] }, 'vector embedding')).toBe(true);
+    expect(matchesQuery(pkg, 'embedding')).toBe(false);
   });
 
   it('空格分词后每个词都要命中；空搜索词全部保留', () => {

@@ -34,7 +34,7 @@ export default definePlugin({
 
 - `npm create aalis` 的 minimal / standard / full 档已包含本插件与 [plugin-hooks](./plugin-hooks.md)；bare 档不带任何插件，需自行安装。
 - 已有项目需执行 `npm i @aalis/plugin-hooks @aalis/plugin-contributions`。npm 加载器只发现项目 `package.json` 的直接依赖，市场的「更新」不会补装这两个包。
-- 漏装时，required `contributions` 的插件停在 pending，启动日志对每个这样的插件打印 `插件 "<id>" 依赖未满足，未激活（缺少服务: …）`，列出缺少的服务名。
+- 漏装时，required `contributions` 的插件停在 pending，启动日志对每个这样的插件打印 `插件 "<id>" 依赖未满足，未激活：缺少服务 contributions（没有已装的插件提供）`，缺的服务沿依赖链追到根。
 
 ## 相关
 

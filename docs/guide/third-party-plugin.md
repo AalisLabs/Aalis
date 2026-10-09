@@ -213,8 +213,7 @@ apply({ lifecycle }) {
 
 判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间——区间可被包管理器去重到与宿主同一份安装，避免同名契约装出两份（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）。
 
-> 脚手架生成的依赖用 `latest`（硬编码版本会过时，workspace: 协议在外部装不上）——那只是
-> 首次安装的引导值，发布前请按上述规则收紧为区间。
+`create-aalis-plugin` 生成的依赖已按这条规则写好，下限是生成时源上的最新版。
 
 全部扩展点（事件 / 钩子 / 贡献点 / 配置字段 / 描述符）的归属表见
 [docs/extensions/index.md](../extensions/index.md)。
@@ -225,13 +224,15 @@ apply({ lifecycle }) {
 npm publish --access public
 ```
 
-用户安装：
+发布前的清单（关键词、依赖归类、`aalis.service`）见 [插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)。
+
+用户在 WebUI 的插件市场里安装，装上立即加载；或在 Aalis 项目目录里安装：
 
 ```bash
-pnpm add @your-scope/plugin-hello
+npm install @your-scope/plugin-hello
 ```
 
-装进依赖即被自动发现并加载（靠 `keywords` 含 `aalis-plugin`），**插件默认启用**。
+终端里装的，重启实例或在 WebUI 插件区点「重新扫描」后加载（靠 `keywords` 含 `aalis-plugin` 被发现），**插件默认启用**。
 `aalis.config.yaml` 的 `plugins` 段只放该包的**配置项**，不是启用开关：
 
 ```yaml
@@ -241,8 +242,6 @@ plugins:
 ```
 
 停用是把包名写进顶层 `disabledPlugins` 数组。
-
-或在 WebUI 的「插件市场」里点击安装。
 
 <a id="two-cores"></a>
 ## 7. 装了两份 @aalis/core
@@ -341,6 +340,8 @@ pnpm 可以直接引用根依赖的范围：
 ## 9. 进一步阅读
 
 - [脚手架上手指南](./scaffolding.md)：用 `create-aalis-plugin` 生成本文所述的包结构
+- [插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)：发布前的清单
+- [插件作者指南「报错与故障说明」](../plugin-author-guide.md#_9-5-报错与故障说明)：用户看得到的报错怎么写
 - [架构总览](../architecture.md)
 - [api 包设计](../design/api-packages.md)
 - [枢纽服务：第三方能力的登记契约](../design/hub-services.md)

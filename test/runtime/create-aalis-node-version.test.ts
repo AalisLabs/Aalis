@@ -63,7 +63,7 @@ describe('create-aalis 在 Node 不够新时', () => {
       );
       const failure = await run(
         process.execPath,
-        // 没有这道检查时会往下生成项目：registry 指向本机不监听的端口，查版本立即失败、不出网
+        // 没有这道检查时会往下生成项目：registry 与 Ollama 探测都指向本机不监听的端口，立即失败、不出网，也不碰本机真的 Ollama
         [
           '--import',
           preload,
@@ -76,7 +76,7 @@ describe('create-aalis 在 Node 不够新时', () => {
           '--registry',
           'http://127.0.0.1:9',
         ],
-        { cwd: dir, timeout: 10_000 },
+        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
       ).then(
         () => undefined,
         (error: { code?: number; stderr?: string }) => error,

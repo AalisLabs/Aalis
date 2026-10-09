@@ -59,6 +59,12 @@ import {
 import { normalizeAttachments } from './normalize.js';
 import { getMediaRuntime } from './runtime.js';
 
+/** 附件取不到或识别失败（含识别返回空串）时写进描述位的实话 */
+const UNRECOGNIZED = '获取或识别失败，内容未知';
+
+/** 能描述图片的识图处理器 */
+type ImageDescriber = MediaProcessor & Required<Pick<MediaProcessor, 'describe'>>;
+
 /**
  * 调度器用到的能力。llm / asr 是 processor 池的两个来源；sessionManager 供 auto 交付形态
  * 解析本会话主模型；memory 供识别上下文取历史与发送者画像。四者都可缺席（各自路径降级）。
@@ -210,6 +216,15 @@ export class MediaServiceImpl implements MediaService {
     }
     // 按 priority 降序，再按外部 backend 优先
     return [...candidates].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+  }
+
+  /**
+   * 到达识别用哪个识图处理器：按 vision.prefer 选。没有、或选中的不会描述图片时为 null——这时没有模型看得到图
+   * （主模型若能看图，它自己就在处理器池里）。到达识别与 doctor 的「识图」检查共用
+   */
+  imageDescriber(): ImageDescriber | null {
+    const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
+    return proc?.describe ? (proc as ImageDescriber) : null;
   }
 
   async describe(attachments: MessageAttachment[], opts: DescribeOptions = {}): Promise<Array<string | undefined>> {
@@ -365,17 +380,20 @@ export class MediaServiceImpl implements MediaService {
     const shareable = !ctxText;
 
     const descriptions: Array<string | undefined> = new Array(attachments.length).fill(undefined);
+    const vision = this.imageDescriber();
 
     for (let i = 0; i < attachments.length; i++) {
       const att = attachments[i];
       const item: MediaProcessReport['items'][number] = { kind: att.kind };
+      /** 这张静态图落盘后的引用；识别失败时照留 */
+      let imageRef: string | null = null;
       try {
         if (att.kind === 'image') {
           // 动图线索先登记：直通出口的抽帧（agent:llm:before 中间件，见 index.ts）拿到的
           // images[] 只剩 data 串，而 QQ 图 URL 常无扩展名，mimeType 只有归档期（现在）看得到。
           if (!isAnimatedFormat(att.data) && att.mimeType === 'image/gif') this.rememberAnimated(att.data);
-          if (!this.cfg.vision.recognizeOnArrival) {
-            // 只留指针：不调 processor。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
+          if (!this.cfg.vision.recognizeOnArrival || !vision) {
+            // 只留指针：不识别（关了到达即识别，或没有模型看得到图）。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
             // base64 上传没有落盘 ref，这里落一份并写指针，否则档案里图片零痕迹、按需看无从下手。
             const ref = await this.cacheImageRef(att, msg.sessionId);
             item.description = ref ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref }) : undefined;
@@ -406,41 +424,36 @@ export class MediaServiceImpl implements MediaService {
                 rememberDescription(att.data, text, shareable);
               }
             } else {
-              const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
               item.cap = 'vision';
-              item.processor = proc?.name;
-              if (proc?.describe) {
-                // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
-                // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
-                // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
-                // 避免两段 prompt 同时存在产生指令冲突。
-                const basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
-                this.logger.info(
-                  `[vision.describe] source=auto promptChars=${basePrompt.length} (session=${msg.sessionId})`,
-                );
-                const [r, ref] = await Promise.all([
-                  proc.describe({
-                    attachments: [att],
-                    mode: 'single',
-                    maxTokens: this.cfg.vision.maxTokens,
-                    basePrompt,
-                    context: ctxText,
-                    sessionId: msg.sessionId,
-                  }),
-                  this.cacheImageRef(att, msg.sessionId),
-                ]);
-                const raw = r.descriptions[0];
-                if (raw) {
-                  item.description = ref
-                    ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: raw, ref })
-                    : `[图片描述] ${raw}`;
-                  descriptions[i] = item.description;
-                  // 缓存只存裸描述：无上下文时键空间与 describeImage（转发/工具路径）
-                  // 共用同一内容哈希；带上下文时退回会话内私有键（见 rememberDescription）。
-                  // 存格式化文本会让另一侧拿到嵌套包装，存裸描述则各消费点按自己的形态包装。
-                  rememberDescription(att.data, raw, shareable);
-                }
-              }
+              item.processor = vision.name;
+              // 先落盘：识别失败或返回空串时引用照留，原图不丢
+              imageRef = await this.cacheImageRef(att, msg.sessionId);
+              // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
+              // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
+              // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
+              // 避免两段 prompt 同时存在产生指令冲突。
+              const basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
+              this.logger.info(
+                `[vision.describe] source=auto promptChars=${basePrompt.length} (session=${msg.sessionId})`,
+              );
+              const r = await vision.describe({
+                attachments: [att],
+                mode: 'single',
+                maxTokens: this.cfg.vision.maxTokens,
+                basePrompt,
+                context: ctxText,
+                sessionId: msg.sessionId,
+              });
+              const raw = r.descriptions[0];
+              if (!raw) throw new Error('识别模型没有返回内容');
+              item.description = imageRef
+                ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: raw, ref: imageRef })
+                : `[图片描述] ${raw}`;
+              descriptions[i] = item.description;
+              // 缓存只存裸描述：无上下文时键空间与 describeImage（转发/工具路径）
+              // 共用同一内容哈希；带上下文时退回会话内私有键（见 rememberDescription）。
+              // 存格式化文本会让另一侧拿到嵌套包装，存裸描述则各消费点按自己的形态包装。
+              rememberDescription(att.data, raw, shareable);
             }
           }
         } else if (att.kind === 'audio') {
@@ -473,10 +486,22 @@ export class MediaServiceImpl implements MediaService {
         this.logger.warn(`附件处理失败 [${att.kind}]: ${item.error}`);
         // 把失败如实写进描述位：留空的话渲染出来只是个裸占位，LLM 无从区分
         // 「这里有张图但没识别出来」和「这条消息本来就没图」。写一句实话，
-        // 它才能据此追问或跳过，而不是被一段幻觉描述当成事实喂进上下文。
-        descriptions[i] = `[${ATTACHMENT_KIND_LABEL[att.kind]}：获取或识别失败，内容未知]`;
+        // 它才能据此追问或跳过，而不是被一段幻觉描述当成事实喂进上下文。已落盘的图带上引用，按需看还找得到它
+        descriptions[i] = imageRef
+          ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: UNRECOGNIZED, ref: imageRef })
+          : `[${ATTACHMENT_KIND_LABEL[att.kind]}：${UNRECOGNIZED}]`;
       }
       report.items.push(item);
+    }
+
+    // 没有模型看得到图：一条消息一行告诉主模型，接在最后一张图的描述位后面另起一行，不进任何引用的描述
+    if (!vision) {
+      const images = attachments.flatMap((a, i) => (a.kind === 'image' ? [i] : []));
+      const last = images.at(-1);
+      if (last !== undefined) {
+        const note = `[附了 ${images.length} 张图，当前无法查看]`;
+        descriptions[last] = descriptions[last] ? `${descriptions[last]}\n${note}` : note;
+      }
     }
 
     // 写回 IncomingMessage：只补不换，都按写回这一刻的消息读。识别期间 file-reader 可能已把文件附件

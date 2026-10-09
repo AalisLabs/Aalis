@@ -31,13 +31,13 @@ definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `binaryPath` | string | `'whisper-cli'` | whisper-cli 路径：绝对路径，或 PATH 里能找到的命令名；留空时用默认值 |
-| `modelPath` | string | `''` | 模型文件路径 (.bin)：模型文件的绝对路径 |
+| `modelPath` | string | 必填 | 模型文件路径 (.bin)：GGML 模型文件（.bin）的绝对路径 |
 | `language` | string | `'auto'` | 默认语种 |
 | `threads` | number | `4` | 线程数 |
 | `priority` | number | `80` | 优先级 (越大越优先) |
 | `timeoutMs` | number | `600000` | 子进程超时 (ms)：转码与识别子进程的最长运行时间。设 0 表示不限——届时卡住的子进程会把整轮对话一起挂住 |
 
-`modelPath` 为必填：未配置时 `apply` 直接抛错，插件不会注册 `asr` 服务。`binaryPath` 声明为必填并带默认值，留空时回到默认的 `whisper-cli`，不会以空命令运行。两个路径字段都不收相对路径（宿主进程的 cwd 不带语义），写了相对路径时插件拒绝激活。`priority` 作为 `provide(asr, impl, { priority })` 的注册优先级。
+`modelPath` 为必填：没填时插件激活失败，报「缺少配置项 modelPath」，WebUI 把它标成待配置，不注册 `asr` 服务。`binaryPath` 声明为必填并带默认值，留空时回到默认的 `whisper-cli`，不会以空命令运行。两个路径字段都不收相对路径（宿主进程的 cwd 不带语义），写了相对路径时插件拒绝激活。`priority` 作为 `provide(asr, impl, { priority })` 的注册优先级。
 
 ## 相关
 

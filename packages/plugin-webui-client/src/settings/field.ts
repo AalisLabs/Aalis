@@ -6,12 +6,16 @@ import { isRecord } from '../rest';
 
 export type Field = SettingRow['field'];
 
-/** 一个可选项：key 用来比较，也是选择器里选项的值；value 是写回去的取值；isDefault 是可选项接口标的默认那一项 */
+/**
+ * 一个可选项：key 用来比较，也是选择器里选项的值；value 是写回去的取值；isDefault 是可选项接口标的默认那一项；
+ * capabilities 是模型的能力（如 chat、vision），只有模型的可选项有
+ */
 export interface Option {
   key: string;
   label: string;
   value: unknown;
   isDefault?: boolean;
+  capabilities?: string[];
 }
 
 export const isModelField = (field: Field) => String(field.type) === 'llm-ref';
@@ -67,7 +71,7 @@ export function parseNames(body: unknown): Option[] {
 }
 
 /**
- * 可选项接口（/api/models/:service）的回应：模型服务给 providers（每个模型带提供它的插件实例 id，即 contextId），分组等给 details
+ * 可选项接口（/api/models/:service）的回应：模型服务给 providers（每个模型带提供它的插件实例 id，即 contextId，与它的能力），分组等给 details
  * （标了 default 的是没设时生效的那一项），其余给 models 的名字列表
  */
 export function parseOptions(models: boolean, body: unknown): Option[] {
@@ -76,13 +80,19 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
   if (models) {
     const entries = (list('providers') ?? []).flatMap(entry => {
       const model = modelOf({ provider: entry.contextId, model: entry.model });
-      return model ? [{ ...model, label: typeof entry.provider === 'string' ? entry.provider : model.provider }] : [];
+      const capabilities = Array.isArray(entry.capabilities)
+        ? entry.capabilities.filter(item => typeof item === 'string')
+        : [];
+      return model
+        ? [{ ...model, label: typeof entry.provider === 'string' ? entry.provider : model.provider, capabilities }]
+        : [];
     });
     const repeated = (name: string) => entries.filter(m => m.model === name).length > 1;
-    return entries.map(({ provider, model, label }) => ({
+    return entries.map(({ provider, model, label, capabilities }) => ({
       key: `${provider}\n${model}`,
       label: repeated(model) ? `${model}（${label}）` : model,
       value: { provider, model },
+      capabilities,
     }));
   }
   const details = list('details');

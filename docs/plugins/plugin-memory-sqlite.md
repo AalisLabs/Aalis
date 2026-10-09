@@ -9,7 +9,7 @@
 
 ## 运行要求
 
-需要 Node.js 24.15.0 起：从这一版起使用 `node:sqlite` 不再打印实验特性警告。在更早的 Node 上安装会收到 engines 不符的警告；Node 22.16 之前与 23.x 的 `node:sqlite` 缺失或缺本插件要用的接口（事务状态、遇锁等待），插件激活失败，报错写明当前 Node 版本、需要 24.15.0 起，并指向[第一次运行](../guide/first-run.md#升级-node)里的升级步骤。
+需要 Node.js 24.15.0 起：从这一版起使用 `node:sqlite` 不再打印实验特性警告。在更早的 Node 上安装会收到 engines 不符的警告；Node 22.16 之前与 23.x 的 `node:sqlite` 缺失或缺本插件要用的接口（事务状态、遇锁等待），插件激活失败，报错写明当前 Node 版本、需要 24.15.0 起，并指向文档站上[第一次运行](../guide/first-run.md#upgrade-node)里的升级步骤（报错里写的是完整地址，经 npm 装的项目里没有 `docs/`）。
 
 升级后照常启动。本插件没有原生模块，换 Node 版本后不用为它重装或重编依赖。本插件早先版本写下的数据库文件格式相同，照常打开与读写，不用迁移。
 
@@ -47,7 +47,7 @@ export default definePlugin({
 - `path` 按 storage URI 解析：首段路径视为存储根名（如 `data/aalis.db` 即 `data:/aalis.db`），也可以直接写 `data:/xxx.db`；对应存储根须支持写入和本地路径解析（`resolveLocalPath`），否则启动时报错
 - `path` 缺省或为 `null` 时仍按实例派生；显式给出布尔值、数组或对象等无效类型时拒绝激活，不会回落到默认数据库文件。
 - 可多实例（`@aalis/plugin-memory-sqlite:<后缀>`）。`path` 留空时按实例派生：主实例用 `data:/aalis.db`，带后缀的实例在文件名上加后缀（如 `:b` 实例用 `data:/aalis-b.db`）；配置里写明的 `path` 照用。两个实例打开的是同一个文件时，后激活的那个激活失败，报一行 `ConfigError`，点名占用该文件的实例；两边路径写法不同时一并给出占用者打开的路径。是否同一个文件按文件身份（设备号与 inode）判断，大小写不敏感的卷上只差大小写的路径、硬链接都算同一个文件；文件系统不提供 inode 时退回按本地路径比较
-- 开库失败时报错带出 SQLite 给出的原因，原错误作 `cause`；取不到 `node:sqlite` 的情况见「运行要求」
+- 开库失败时报错先写怎么修（检查数据库文件所在目录存在且可写，或在 `path` 换个位置；路径解析失败的检查 `path`），再带出 SQLite 给出的原因，原错误作 `cause`；取不到 `node:sqlite` 的情况见「运行要求」
 - 自动创建 `messages` 表（含 `(sessionId, timestamp)` 与 `(archived, timestamp)` 两个索引）和 `metadata` 表
 - `listMetadata` 逐行解析：`data` 不是 JSON 对象的行（手改或损坏）跳过并记一条 warn，点名命名空间与键，同一命名空间的其余条目照常返回。`listMetadataKeys` 只取键、不读 `data`，跳过的行也在其中：各插件经 `/clear` 整体清空命名空间时连同它们一并删除。`updatedAt` 读不出（被改成无法解析的文本或 BLOB）的行照常返回，`updatedAt` 记为 0
 - 开库后设 WAL 日志模式与 NORMAL 同步级别：读写互不阻塞；NORMAL 只在检查点时刷盘，系统崩溃或断电可能丢掉最后几次提交，库文件不会损坏。遇锁（别的进程正在写这个库）最多等 5 秒

@@ -159,6 +159,10 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     expect(r.detail, '只报 404 会把人引向端点/网络方向；要带上「模型没 pull」这句原话').toContain(
       'try pulling it first',
     );
+    // 原话之后写怎么修
+    expect(r.detail).toMatch(
+      /try pulling it first[\s\S]*\n确认 Ollama 在运行，并已执行 ollama pull nomic-embed-text（或把配置项 model 改成本机已有的嵌入模型）$/,
+    );
   });
 
   it('模型可用：doctor 报 ok', async () => {

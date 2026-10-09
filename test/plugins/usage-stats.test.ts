@@ -190,7 +190,10 @@ describe('plugin-usage-stats', () => {
     mkdirSync(ledgerOf(home), { recursive: true });
     const stack = await start(home);
     expect(stack.state()).toBe('error');
-    expect(stack.error()).toContain('用量账本');
+    // 写明怎么修，原因（EISDIR）跟在后面
+    expect(stack.error()).toMatch(
+      /^用量账本 .+ 读不出来：检查它的读写权限；要从空账本开始就把它移走后重载本插件 ← .*EISDIR/,
+    );
   });
 
   it('按天、按周、按模型列出输入、缓存命中与输出；没报缓存命中的不算 0，整格没有就空着；没填单价时没有费用', async () => {

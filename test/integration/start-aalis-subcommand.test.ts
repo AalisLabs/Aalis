@@ -229,16 +229,26 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(saved).toContain('servicePreferences:\n  commands: e2e-probe\n');
   });
 
-  it('守护路径：pending 告警把仍在后台激活的插件所提供的服务报成等待，其余报缺少', async () => {
+  it('守护路径：启动收敛后的告警把缺的沿链追到根，仍在后台激活的插件所提供的服务报成等待，只在等的不告警', async () => {
     const dir = project();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nslowThresholdMs: 50\nplugins: {}\n');
     // e2e-slow 激活 1500ms，超过 50ms 阈值转入后台，它的 e2e-slow-svc 在完成前不对外
     const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_APPLY_MS: '1500' });
     expect(r.signal).toBeNull();
     expect(r.code).toBe(0);
-    expect(r.stderr).toContain(
-      '插件 "e2e-waiting" 依赖未满足，未激活（缺少服务: e2e-missing-svc；等待 e2e-slow 激活完成）',
-    );
+    // 文件日志一行一条：前缀之后是 JSON
+    const said = readLog(dir)
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line.slice(line.indexOf(' ') + 1)) as { level: string; scope: string; message: string })
+      .filter(entry => entry.scope === 'aalis' && /^插件 "e2e-(waiting|patient|middle|chained)"/.test(entry.message))
+      .map(({ level, message }) => `${level} ${message}`);
+    expect(said).toEqual([
+      'warn 插件 "e2e-waiting" 依赖未满足，未激活：缺少服务 e2e-missing-svc（没有已装的插件提供）；等待 e2e-slow 启动',
+      'info 插件 "e2e-patient" 在等依赖启动：等待 e2e-slow 启动',
+      'warn 插件 "e2e-middle" 依赖未满足，未激活：缺少服务 e2e-broken-svc（e2e-broken 失败：缺少配置项 apiKey）',
+      'warn 插件 "e2e-chained" 依赖未满足，未激活：缺少服务 e2e-middle-svc（e2e-middle → e2e-broken 失败：缺少配置项 apiKey）',
+    ]);
   });
 });
 

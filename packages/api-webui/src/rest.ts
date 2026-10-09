@@ -10,12 +10,12 @@
 // 改状态的请求（非 GET）另校验来源：带 Origin 的要与本服务同源。登记表里没有的 /api/ 路径回 404 与 ErrorResponse。
 
 import type { UserIdentity } from '@aalis/api-authority';
-import type { InstallResult, UpdateResult, UpdateTarget } from '@aalis/api-package-manager';
+import type { InstallResult, UninstallOptions, UpdateResult, UpdateTarget } from '@aalis/api-package-manager';
 import type { PlatformConnection } from '@aalis/api-platform';
 import type { LogEntry, PluginState } from '@aalis/core';
 import type { ConfigSchema, SchemaIssue } from '@aalis/schema-config';
 import type { DepOrigin } from '@aalis/util-dep-spec';
-import type { AttentionItem, ExtendDeclaration, LogFilter } from './index.js';
+import type { AttentionItem, ExtendDeclaration, LogFilter, PluginBlockers } from './index.js';
 import type { LayoutOperation, LayoutRecords, PageDataByType, PageRef, PageView } from './page.js';
 import type { PluginTheme } from './theme.js';
 
@@ -57,8 +57,8 @@ export interface AuthStatusResponse {
 
 // ----- 插件 -----
 
-/** GET /api/plugins 的一项：一个插件实例 */
-export interface PluginListItem {
+/** GET /api/plugins 的一项：一个插件实例；没起来的原因见 PluginBlockers */
+export interface PluginListItem extends PluginBlockers {
   /** 插件包名：同一插件的几个实例按它合在一起 */
   name: string;
   instanceId: string;
@@ -76,12 +76,12 @@ export interface PluginListItem {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
-  /** 此刻没有提供者的 required 服务 */
-  missing: string[];
   tools: string[];
   commands: string[];
   reusable: boolean;
   extends?: ExtendDeclaration;
+  /** 配置文件里有这个实例的配置段（空段也算）：市场卸载时「同时删除配置」看它；宿主不提供配置文档时为 false */
+  configSection: boolean;
   /** 配置文档里这一段：密钥字段上是引用 `{ $secret }`；宿主不提供配置文档时是运行态配置，去掉密钥字段 */
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
@@ -297,6 +297,11 @@ export interface MarketplacePackage {
   /** `@aalis/` 下的包 */
   official: boolean;
   category: PackageCategory;
+  /**
+   * 声明提供的服务（package.json 的 `aalis.service.provides`），市场按服务搜靠它：已装的取本地这份（与本地版本对得上），
+   * 没装的取安装源上的最新版；都查不到或没声明时为空
+   */
+  provides: string[];
   /** 关键词，去掉了类型词 */
   keywords?: string[];
   /** 月下载量 */
@@ -362,6 +367,9 @@ export interface PackageRequest {
   name: string;
 }
 
+/** 卸载：removeConfig 不给为 false，配置段与密钥留着 */
+export interface UninstallRequest extends PackageRequest, UninstallOptions {}
+
 export interface UpdateRequest {
   targets: UpdateTarget[];
 }
@@ -420,7 +428,7 @@ export interface WebuiRestRoutes {
   'GET /api/marketplace/depgraph': { query: { name: string }; response: DependencyGraphResponse };
   /** 包管理拒绝时也回 200，ok 为 false、message 写原因 */
   'POST /api/marketplace/install': { body: PackageRequest; response: InstallResult };
-  'POST /api/marketplace/uninstall': { body: PackageRequest; response: { ok: boolean; message: string } };
+  'POST /api/marketplace/uninstall': { body: UninstallRequest; response: { ok: boolean; message: string } };
   /** 整批更新，成功后进程重启 */
   'POST /api/marketplace/update': { body: UpdateRequest; response: UpdateResult };
 }

@@ -48,6 +48,9 @@ export function summary(id: string, fields: Partial<SessionSummary> = {}): Sessi
   };
 }
 
+/** 模型列表（GET /api/models/llm）里一个能对话的模型 */
+export const CHAT_MODEL = { model: 'zz-chat', provider: '测试模型', contextId: 'zz-llm', capabilities: ['chat'] };
+
 /** 插件列表（GET /api/plugins）的一行，名字取实例 id 第一个「:」之前的部分 */
 export function pluginRow(instanceId: string, fields: Record<string, unknown> = {}) {
   return {
@@ -58,9 +61,12 @@ export function pluginRow(instanceId: string, fields: Record<string, unknown> = 
     provides: [],
     requiredServices: [],
     optionalServices: [],
-    missing: [],
+    lacking: [],
+    waiting: [],
+    unconfigured: [],
     tools: [],
     commands: [],
+    configSection: false,
     config: {},
     defaultConfig: {},
     ...fields,
@@ -174,7 +180,8 @@ export interface FakeRequest {
 
 /**
  * 假的 REST：路径（含查询串）→ 回应的 JSON，或按请求算回应的函数（返回 Response 时原样回，可以带状态码）；
- * 登录状态、插件列表、页面表、布局记录与「需要处理」有缺省的回应，没有的路径回 404
+ * 登录状态、插件列表、页面表、布局记录、「需要处理」与模型列表有缺省的回应（缺省有一个能对话的模型，首页不出「开始使用」），
+ * 没有的路径回 404
  */
 export type FakeRest = Record<string, unknown>;
 
@@ -194,6 +201,7 @@ export function stubRest(rest: FakeRest = {}): void {
     '/api/pages': { pages: [] },
     '/api/layout': { pinned: [], panelTabs: hostTabs() },
     '/api/attention': { items: [] },
+    '/api/models/llm': { providers: [CHAT_MODEL] },
     ...rest,
   };
   const answer = async (input: string, init?: RequestInit) => {

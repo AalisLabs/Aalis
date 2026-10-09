@@ -40,7 +40,7 @@ function world(config: Partial<AalisConfig>) {
           source: { current: undefined },
           tools: { current: undefined },
           commands: { current: undefined },
-          services: { inspect: () => [] },
+          services: { names: () => [] },
           self: 'console',
           versions: () => () => undefined,
         },
