@@ -159,6 +159,7 @@ export const StorageCapabilities = {
 
 import type { ServiceRef } from '@aalis/core';
 import { defineService } from '@aalis/core';
+import { configError } from '@aalis/schema-config';
 
 // ----- 聚合 / 路由 helper -----
 //
@@ -339,18 +340,36 @@ export function canIssueFileHandle(roots: readonly StorageRootInfo[], uri: strin
 }
 
 /**
+ * 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）：不是存储地址，配置路径与工具路径都不接受。
+ * Windows 盘符文法与单字母根名冲突，一律按盘符认（根名文法见 docs/concepts/storage-uri-grammar.md）
+ */
+export function isHostAbsolutePath(input: string): boolean {
+  return /^(?:\/|[a-zA-Z]:[\\/])/.test(input);
+}
+
+/**
  * 把配置里的路径/裸名归一为 storage URI —— 契约级文法，全体后端消费者（memory/vectorstore/
  * checkpoint/scheduler/persona…）复用，勿各自重抄。
+ * - 本机路径（宿主机绝对路径与家目录简写 `~/…`）→ 抛配置错误（不带堆栈），写明要填 storage URI 并举例：
+ *   首段当根名只会撞上「未知存储根」，而首段恰好与某个根同名时（如 `/data/x`）会悄悄落到那个根里。
+ *   家目录简写不进 {@link isHostAbsolutePath}：那是工具路径也用的判据，工具侧的 `~` 按普通目录名相对 cwd 求值
  * - 已是 storage URI（含 `:/`）→ 原样返回。
- * - `foo/bar`（含 `/`）→ `foo:/bar`（首段当根名）。
+ * - `foo/bar`（含 `/`，可带前导 `./`）→ `foo:/bar`（首段当根名）。
  * - `name`（单段裸名）→ `<fallbackRoot>:/name`（默认归 data 根相对路径，而非把裸名当根名——
  *   后者会让 gateway 抛「未知根」）。
  * 空输入留给调用方各自处理（各包默认文件名不同）。
  */
 export function toStorageUri(input: string, fallbackRoot = 'data'): string {
   const s = input.trim();
+  if (isHostAbsolutePath(s) || /^~[\\/]/.test(s)) {
+    const example = `${fallbackRoot}:/${s.split(/[\\/]/).filter(Boolean).at(-1) ?? ''}`;
+    throw configError(
+      `这里要写 storage URI（<根名>:/<路径>，如 ${example}），不能写本机路径 "${s}"；` +
+        '要用存储根以外的目录，先在「本地存储根」的 roots 里加一个指向它的根，并打开它的「允许写」；这个根文件工具也能访问',
+    );
+  }
   if (s.includes(':/')) return s;
-  const cleaned = s.replace(/^\.?\/+/, '');
+  const cleaned = s.replace(/^\.\/+/, '');
   const idx = cleaned.indexOf('/');
   return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `${fallbackRoot}:/${cleaned}`;
 }
@@ -401,9 +420,8 @@ function unifySlashes(input: string): string {
  * 把**工具用户输入的路径**求值为完整 storage URI —— 工具侧路径解析的唯一入口，
  * 与 `toStorageUri`（配置路径归一）语义不同。规则（按顺序）：
  * 1. 空 / `.` → 当前 `cwd` 自身
- * 2. 宿主机绝对路径（`/abs`、`C:\path` 或 `C:/path`）→ 抛错（安全：禁止越出存储体系访问宿主文件系统）。
- *    Windows 盘符文法与单字母根名冲突：工具路径输入侧一律按盘符处理，单字母根名在这里不可达（根名文法本身
- *    见 docs/concepts/storage-uri-grammar.md）
+ * 2. 宿主机绝对路径（{@link isHostAbsolutePath}）→ 抛错（安全：禁止越出存储体系访问宿主文件系统）。
+ *    单字母根名在这里不可达
  * 3. 含 `:/` → 视为完整 storage URI，归一化（消 `.`/`..`）后返回（任意根；根级访问控制在别处做）
  * 4. 其它 → 相对 `cwd` 求值（与 unix shell 一致：`foo` 落在 cwd 之下）
  *
@@ -413,7 +431,7 @@ export function resolveAgainstCwd(input: string | undefined, cwd: string): strin
   const raw = (input ?? '').trim();
   const cwdParsed = parseStorageUri(cwd);
   if (!raw || raw === '.') return joinStorageUri(cwdParsed.root, cwdParsed.segments);
-  if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('/')) {
+  if (isHostAbsolutePath(raw)) {
     throw new Error(
       `不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 aalis:/packages/core）` +
         `或相对当前 cwd 的路径。调用 cwd 工具可查看当前目录与所有可用 storage 根。`,

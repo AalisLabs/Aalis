@@ -53,4 +53,4 @@ export default definePlugin({
 
 ## 配置校验
 
-`path` 和 `tableName` 的显式无效类型会在解析本地路径或打开数据库前报配置错误；空表名也会拒绝激活。空路径仍按默认 `data:/lancedb` 处理，合法裸名和相对路径继续归一。`optimizeEvery` 的 0 或负数仍关闭压实。
+`path` 和 `tableName` 的显式无效类型会在解析本地路径或打开数据库前报配置错误；空表名也会拒绝激活。空路径仍按默认 `data:/lancedb` 处理，合法裸名和相对路径继续归一，本机路径（绝对路径或 `~/…`）报配置错误（写明要填 storage URI 并举例）。`optimizeEvery` 的 0 或负数仍关闭压实。

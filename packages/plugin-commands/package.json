@@ -48,6 +48,7 @@
   "aalis": {
     "service": {
       "required": [
+        "app",
         "config",
         "events",
         "gateway",
@@ -61,8 +62,7 @@
         "commands",
         "storage",
         "memory",
-        "authority",
-        "app"
+        "authority"
       ],
       "provides": [
         "commands"

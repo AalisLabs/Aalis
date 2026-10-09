@@ -13,7 +13,7 @@ import { LocalProcessService } from '../../packages/plugin-process-local/src/ind
 import codeRunner from '../../packages/plugin-tool-code-runner/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
-import { ref } from '../fixtures/service-ref.js';
+import { absentDoctor, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 代码执行声明可转后台，只认执行器给这次调用的中止信号，不另设超时：run_python、run_javascript 在沙箱与无沙箱
@@ -194,7 +194,13 @@ async function applySandbox(proc: ProcessService): Promise<CodeSandboxService> {
     onDrain: () => () => {},
     onDispose: () => () => {},
   };
-  await codeSandboxOs.apply({ processService: ref(view(proc)), logger: silentLogger(), provide, lifecycle });
+  await codeSandboxOs.apply({
+    processService: ref(view(proc)),
+    doctor: absentDoctor(),
+    logger: silentLogger(),
+    provide,
+    lifecycle,
+  });
   if (!provided) throw new Error('code-sandbox-os 没有提供服务');
   return provided;
 }

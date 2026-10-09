@@ -5,7 +5,7 @@ import { commands as commandsService } from '@aalis/api-commands';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
-import { webuiServer } from '@aalis/api-webui';
+import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
@@ -52,6 +52,23 @@ async function run(caps: Caps): Promise<void> {
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
   // 再 load，规避初始化时序竞态。follow 对「已在线」的服务也会立即触发，故任意加载序都成立。
   let loading: Promise<void> | undefined;
+  // users.json 读不出来时拒写，文件里的封禁与等级也没载入：发提示让 owner 在「需要处理」看到，重读成功后撤回
+  let loadNotice: NoticeHandle | undefined;
+  const reportLoad = (): void => {
+    loadNotice?.clear();
+    const reason = manager.lastLoadError;
+    loadNotice =
+      reason === undefined
+        ? undefined
+        : webui.notify({
+            id: 'users-load',
+            level: 'error',
+            title: '用户等级表 users.json 读不出来，文件里的封禁与等级没有载入',
+            detail:
+              '修好家目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。' +
+              `修好之前改的等级只在本次运行生效。原因：${reason}`,
+          });
+  };
   // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
   storage.follow(() => {
     loading = manager
@@ -61,6 +78,7 @@ async function run(caps: Caps): Promise<void> {
         // err 作参数交给 logger 渲染：模板字符串遇到转不成字符串的值会抛，被下面的兜底吞掉、一条告警都不留
         err => logger.warn('授权用户等级加载失败:', err),
       )
+      .then(reportLoad)
       // 上报器自身失败（宿主经 AppOptions 注入的 logger 或时钟抛错）不再外抛，成败两条回调都算：
       // storage 已在线时下面的 await 会让激活失败，晚上线时没人等这个 Promise，未处理的拒绝会被宿主当致命错误退出进程
       .catch(() => {});
@@ -209,7 +227,9 @@ async function applyUserChange(manager: AuthorityManager, change: () => void, me
   change();
   manager.save();
   await manager.flushed();
-  if (manager.persistBlocked) return `${message}；仅本次运行生效，未写入 users.json（加载失败，见日志）`;
+  if (manager.persistBlocked) {
+    return `${message}；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启`;
+  }
   if (manager.awaitingFirstLoad) return `${message}；未写入 users.json（等级表尚未载入），载入后写入`;
   if (manager.lastSaveFailed) return `${message}；未写入 users.json（写入失败，见日志），下次保存时重试`;
   return message;

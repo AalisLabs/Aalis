@@ -43,4 +43,4 @@ export default definePlugin({
 
 ## 配置校验
 
-`path` 的显式无效类型会在读写存储前报配置错误；合法的 `data/vectorstore` 相对路径仍归一为 `data:/vectorstore`。
+`path` 的显式无效类型会在读写存储前报配置错误；合法的 `data/vectorstore` 相对路径仍归一为 `data:/vectorstore`。写成本机路径（绝对路径或 `~/…`）时同样报配置错误，写明要填 storage URI 并举例。

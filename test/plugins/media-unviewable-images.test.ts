@@ -198,6 +198,73 @@ describe('有能看图的模型', () => {
   });
 });
 
+// 图片落盘失败（磁盘满、没有写权限）不能悄悄丢掉：记进这张图的条目并告警。没法识别时正文按「获取或识别失败」写，
+// 还能识别时照常识别、描述只是不带引用
+describe('图片落盘失败', () => {
+  const FAILED = '图片落盘失败：ENOSPC: no space left on device';
+
+  function failingStorage(): void {
+    setMediaRuntime({
+      proc: {} as never,
+      storage: {
+        writeFile: async () => {
+          throw new Error('ENOSPC: no space left on device');
+        },
+      } as never,
+    });
+  }
+
+  function warnRecorder() {
+    const warns: string[] = [];
+    const recorded = {
+      ...logger,
+      warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+    } as unknown as Logger;
+    return { warns, recorded };
+  }
+
+  it('没有能看图的模型：描述写「获取或识别失败」，条目记下落盘失败并告警', async () => {
+    failingStorage();
+    const { warns, recorded } = warnRecorder();
+    const svc = new MediaServiceImpl(emptyMediaCaps(recorded), cfg(true));
+    const msg = webui([{ kind: 'image', data: png('f1') }]);
+    const report = await svc.processMessage(msg);
+
+    expect(msg._attachmentDescriptions).toEqual([`[图片：获取或识别失败，内容未知]\n${UNVIEWABLE(1)}`]);
+    expect(report.items[0].error).toBe(FAILED);
+    expect(warns.some(w => w.includes(FAILED))).toBe(true);
+  });
+
+  it('有能看图的模型：照常识别，描述不带引用；条目记下落盘失败并告警', async () => {
+    failingStorage();
+    const { warns, recorded } = warnRecorder();
+    const svc = new MediaServiceImpl(emptyMediaCaps(recorded), cfg(true));
+    svc.registerProcessor(vision(async () => ({ descriptions: ['一只猫'] })));
+    const msg = webui([{ kind: 'image', data: png('f2') }]);
+    const report = await svc.processMessage(msg);
+
+    expect(msg._attachmentDescriptions).toEqual(['[图片描述] 一只猫']);
+    expect(report.items[0].error).toBe(FAILED);
+    expect(warns.some(w => w.includes(FAILED))).toBe(true);
+  });
+
+  it('描述缓存命中：照用缓存的描述，不带引用；条目记下落盘失败并告警', async () => {
+    landInMemory();
+    const { warns, recorded } = warnRecorder();
+    const svc = new MediaServiceImpl(emptyMediaCaps(recorded), cfg(true));
+    svc.registerProcessor(vision(async () => ({ descriptions: ['一只狗'] })));
+    await svc.processMessage(webui([{ kind: 'image', data: png('f3') }]));
+
+    failingStorage();
+    const msg = webui([{ kind: 'image', data: png('f3') }]);
+    const report = await svc.processMessage(msg);
+
+    expect(msg._attachmentDescriptions).toEqual(['[图片描述] 一只狗']);
+    expect(report.items[0].error).toBe(FAILED);
+    expect(warns.some(w => w.includes(FAILED))).toBe(true);
+  });
+});
+
 // ===== doctor 的「识图」项 =====
 
 function seer(): LLMModel {

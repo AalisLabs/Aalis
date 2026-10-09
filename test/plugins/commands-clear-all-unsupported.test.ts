@@ -92,7 +92,10 @@ describe('/clear：记忆服务缺席', () => {
       ['clear', ['context']],
       ['clear.all', undefined],
     ] as const) {
-      expect(await run(name, type ? [...type] : undefined)).toBe('⚠ 记忆服务不可用，本次未清理任何内容。');
+      expect(await run(name, type ? [...type] : undefined)).toBe(
+        '⚠ 没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
+          '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因。',
+      );
     }
     expect(middlewareRuns).toEqual([]);
 

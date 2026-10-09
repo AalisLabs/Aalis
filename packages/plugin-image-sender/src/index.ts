@@ -18,6 +18,7 @@ import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import {
   createStorageGateway,
+  isHostAbsolutePath,
   isStorageNotFound,
   isStorageUri,
   type StorageService,
@@ -45,8 +46,6 @@ const ARCHIVE_DESCRIBE_TIMEOUT_MS = 25_000;
 const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
-/** 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）。toStorageUri 会把它的首段当成根名，须先认出来挡在存储库外。 */
-const HOST_ABSOLUTE_PATH = /^(?:\/|[a-zA-Z]:[\\/])/;
 
 // tools 不入激活闸：出站附件归档（outbound:delivered 监听）只靠 archive / media，
 // 没有工具服务时也该照常挂上；工具登记走注册账本，提供者上线后自动补挂。
@@ -227,6 +226,9 @@ function registerImageSender(caps: Caps): void {
           refTag = url;
           via = 'url';
         } else if (storageUri) {
+          if (isHostAbsolutePath(storageUri)) {
+            return JSON.stringify({ error: 'storage_uri 要写存储地址（如 data:/images/…），不能写本机路径' });
+          }
           // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
           // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
           const loaded = await loadStorageMedia(toStorageUri(storageUri), kind);
@@ -243,8 +245,8 @@ function registerImageSender(caps: Caps): void {
           } else {
             // 本地来源只认存储库内的文件：storage URI 或历史相对路径（data/images/…）。宿主机绝对路径、
             // file://、data URI 等来源不在存储库内，读不了文件头，无从核对格式
-            const uri = toStorageUri(found);
-            if (HOST_ABSOLUTE_PATH.test(found) || !isStorageUri(uri)) {
+            const uri = isHostAbsolutePath(found) ? undefined : toStorageUri(found);
+            if (!uri || !isStorageUri(uri)) {
               return JSON.stringify({ error: `引用 ${historyRef} 的来源不在存储库内，无法核对格式，不能发送` });
             }
             const loaded = await loadStorageMedia(uri, kind);
@@ -411,12 +413,15 @@ async function resolveHistoryRef(
   // storage URI / 历史相对路径：归一化后 stat；命中即用，未命中 fallthrough 到子串匹配。
   // 完整相对路径 `data/images/x.jpg` → `data:/images/x.jpg` 能直接命中；
   // 单段 hash（如 `abc123.jpg`）归一化成 `data:/abc123.jpg` stat 失败，正确回落子串匹配。
-  const asUri = normalized.includes(':/') ? normalized : toStorageUri(normalized);
-  try {
-    await storage.stat(asUri);
-    return asUri;
-  } catch {
-    // fallthrough 到历史子串匹配
+  // 宿主机绝对路径不是存储地址，直接走子串匹配
+  if (!isHostAbsolutePath(normalized)) {
+    const asUri = toStorageUri(normalized);
+    try {
+      await storage.stat(asUri);
+      return asUri;
+    } catch {
+      // fallthrough 到历史子串匹配
+    }
   }
   // 回退：搜历史里 images / attachments 数组里包含 normalized 子串的项
   for (const msg of history) {

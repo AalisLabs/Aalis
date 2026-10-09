@@ -23,6 +23,7 @@ export default definePlugin({
   provides: [codeSandbox],
   uses: {
     processService,
+    doctor: optional(doctor),
     logger,
     lifecycle,
     provide,
@@ -43,6 +44,12 @@ export default definePlugin({
   探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测，激活随之落定，不必等满探测超时，也不会被判「未在宽限内停止」。
   因此本插件依赖 `lifecycle`，core peer 为 `>=0.18.0`（`lifecycle.signal` 自 core 0.18 起提供）。
 - **可换可叠**：未来 `-docker` / `-wasm` / `-e2b` 等不同机制各自提供 `code-sandbox`，经优先级/偏好替换。
+
+## 没有后端时
+
+探测不通或平台没有后端时，本插件照样提供 `code-sandbox`（`available=false`），记一条 warn：「没有可用的 OS 沙箱，code_runner 的 auto 模式会拒绝执行代码」，后接修法与原因。修法按平台写：Linux 装上 bubblewrap、开启非特权用户命名空间，在容器里运行时还要能挂 `/proc`；macOS 确认 `/usr/bin/sandbox-exec` 能执行；其它平台在 macOS、Linux 或 WSL 上运行。原因是探测命令的退出码、终止信号或启动失败的报错。
+
+装了诊断插件时登记检查项 `env/code-sandbox.backend`（「代码沙箱」）：没有后端时报 warn，`detail` 是上面的修法与原因；有后端时报 ok，写出后端（`seatbelt` 或 `bwrap`）。没装 doctor 时不登记。
 
 ## 隔离语义（v1）
 

@@ -59,7 +59,15 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
   'base64',
 );
-const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
+/** 只留 warn：取下拉可选值时失败的提供者要点名 */
+const warns: string[] = [];
+const logger: Logger = {
+  debug() {},
+  info() {},
+  warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+  error() {},
+  child: () => logger,
+};
 
 /** 不比的响应头：传输层的与 express 自带的 */
 const TRANSPORT_HEADERS = new Set([
@@ -88,7 +96,7 @@ const APPROVAL: Approval = {
 
 /** 契约的各服务：审批、会话、会话协议、平台、模型、工具、指令、插件来源与包管理，另有带 listModels 的服务 */
 const names = defineService<{ listModels(): Promise<string[]> }>('zz-names');
-/** 胜出的提供者没有 listModels、排在后面的有 */
+/** 胜出的提供者没有 listModels、排在后面的有，最后一个取不到 */
 const mixed = defineService<{ listModels?(): Promise<string[]> }>('zz-mixed');
 /** 置上时平台适配器取连接抛错：处理函数抛错的样本 */
 let connectionsThrow = false;
@@ -145,6 +153,15 @@ const doubles = definePlugin({
     provide(names, { listModels: async () => ['zz-name'] });
     provide(mixed, {}, { entryId: 'zz-mixed/first' });
     provide(mixed, { listModels: async () => ['zz-late'] }, { entryId: 'zz-mixed/second' });
+    provide(
+      mixed,
+      {
+        listModels: async () => {
+          throw new Error('人设目录读不出');
+        },
+      },
+      { entryId: 'zz-mixed/broken' },
+    );
   },
 });
 
@@ -378,7 +395,7 @@ describe('管理面 REST 的回应与契约', () => {
     const port = await freePort();
     ({ app } = hostedApp(
       { plugins: { [PROBE]: { level: 1 } } },
-      { logger: silent, provider: { save() {} }, restartStrategy: { restart() {} } },
+      { logger, provider: { save() {} }, restartStrategy: { restart() {} } },
     ));
     provideHostPaths(app, home);
     app.bind({ provide }).provide(webuiClient, { getClientDir: () => join(home, 'client') });
@@ -560,8 +577,11 @@ describe('管理面 REST 的回应与契约', () => {
     expect([...registered].sort()).toEqual(expected.sort());
   });
 
-  it('/api/models 合起各提供者的 listModels()：胜出的提供者没有它时照样取排在后面的', () => {
+  it('/api/models 合起各提供者的 listModels()：胜出的提供者没有它时照样取排在后面的；取不到的跳过，记 warn 点名', () => {
     expect(mixedModels).toEqual({ models: ['zz-late'] });
+    expect(warns.filter(w => w.startsWith('取 zz-mixed '))).toEqual([
+      '取 zz-mixed 的可选值时 zz-mixed/broken 失败，它的取值不在下拉里: Error: 人设目录读不出',
+    ]);
   });
 
   it('JSON 的回应、文件的响应头与失败的回应都与契约的类型对得上', () => {

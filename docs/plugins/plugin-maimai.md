@@ -5,7 +5,7 @@
 
 ## 概述
 
-基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口。工具经 `tools` 绑定门面登记到 `maimai` 工具组，指令经 `commands.command` 登记为 `/maimai` 及其子指令，两者调用同一组处理函数（`handleGetPlayer` / `handleGetBests` / `handleGetRecents` / `handleSearchSong` / `handleBind`），解绑则都直接清除绑定记录。用户与好友码的绑定关系存放在 `memory` 服务的元数据中，命名空间为 `maimai-binding`，键为 `platform:userId`。
+基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口。工具经 `tools` 绑定门面登记到 `maimai` 工具组，指令经 `commands.command` 登记为 `/maimai` 及其子指令，两者调用同一组处理函数（`handleGetPlayer` / `handleGetBests` / `handleGetRecents` / `handleSearchSong` / `handleBind` / `handleUnbind`）。用户与好友码的绑定关系存放在 `memory` 服务的元数据中，命名空间为 `maimai-binding`，键为 `platform:userId`。
 
 ## 插件声明
 
@@ -46,6 +46,8 @@ export default definePlugin({
 | `/maimai unbind` | 解绑你的好友码 |
 
 `target` 是好友码或 `qq:QQ 号`；不写时查你绑定的好友码，开着 `defaultBindOnPrivateChat` 时 OneBot 私聊里没绑定也按你的 QQ 号查。裸敲 `/maimai` 回的就是 `/help maimai`。
+
+查询失败时回复写明怎么办：查分器不认开发者凭据（HTTP 401、403）时写去检查 `developerToken`，超时或连不上时写稍后再试并带出底层原因，其余照查分器的原话。绑定与解绑分开写两种原因：没有在运行的记忆后端（写去启用一个记忆后端），会话认不出发消息的人（没有平台用户 id）。
 
 ## 相关
 

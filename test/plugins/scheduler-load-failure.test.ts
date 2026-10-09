@@ -148,7 +148,9 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     writeFileSync(join(base, jobsFile), '[{"name":"zz-old-1"');
     await registerStorage();
     await registerScheduler();
-    expect(await create('zz-new')).toContain(`仅本次运行生效，未写入 data:/${JOBS}（加载失败，见日志）`);
+    expect(await create('zz-new')).toContain(
+      `仅本次运行生效，未写入 data:/${JOBS}：它读不出来，处理办法见「需要处理」里的提示`,
+    );
 
     await app.stop();
     rmSync(join(base, jobsFile));

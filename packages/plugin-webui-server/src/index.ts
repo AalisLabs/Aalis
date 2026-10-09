@@ -881,8 +881,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       if (typeof provider.instance.listModels !== 'function') continue;
       try {
         models.push(...(await provider.instance.listModels()).map(String));
-      } catch {
-        // 单个提供者获取失败不影响整体
+      } catch (err) {
+        // 单个提供者获取失败不影响整体，它的取值从下拉里消失：记下是谁、为什么
+        logger.warn(`取 ${serviceName} 的可选值时 ${provider.contextId} 失败，它的取值不在下拉里:`, err);
       }
     }
     res.json({ models });

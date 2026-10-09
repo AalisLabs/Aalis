@@ -62,9 +62,32 @@ describe('toStorageUri（配置路径归一）', () => {
     expect(toStorageUri('lancedb')).toBe('data:/lancedb');
     expect(toStorageUri('foo', 'workspace')).toBe('workspace:/foo');
   });
-  it('去前导 ./ 与 /', () => {
+  it('去前导 ./', () => {
     expect(toStorageUri('./data/x')).toBe('data:/x');
-    expect(toStorageUri('/data/x')).toBe('data:/x');
+  });
+  // 本机路径的首段曾被当成根名（/private/tmp/a.db → private:/tmp/a.db，~/a.db → ~:/a.db），激活时报「未知存储根」并带整段堆栈
+  it.each([
+    ['/private/tmp/x/aalis.db', 'data:/aalis.db'],
+    ['/data/x', 'data:/x'],
+    ['C:\\Users\\me\\personas\\', 'data:/personas'],
+    ['C:/aalis/lancedb', 'data:/lancedb'],
+    ['~/aalis.db', 'data:/aalis.db'],
+    ['~\\aalis\\lancedb', 'data:/lancedb'],
+  ])('本机路径 %s：抛配置错误（不带堆栈），写明要填 storage URI 并以 %s 为例', (input, example) => {
+    let thrown: unknown;
+    try {
+      toStorageUri(input);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const error = thrown as Error;
+    expect(error.name).toBe('ConfigError');
+    expect(error.stack).toBeUndefined();
+    expect(error.message).toBe(
+      `这里要写 storage URI（<根名>:/<路径>，如 ${example}），不能写本机路径 "${input}"；` +
+        '要用存储根以外的目录，先在「本地存储根」的 roots 里加一个指向它的根，并打开它的「允许写」；这个根文件工具也能访问',
+    );
   });
 });
 

@@ -32,8 +32,8 @@ export class UserStore {
   /** 最近一次写盘失败（成功即清除） */
   private saveFailed = false;
   private saveChain: Promise<void> = Promise.resolve();
-  /** load 时「文件在但读不出/解析不了」——此后一律拒写，别让全量快照覆盖掉封禁/等级记录 */
-  private loadFailed = false;
+  /** load 时「文件在但读不出/解析不了」的原因——有值时一律拒写，别让全量快照覆盖掉封禁/等级记录 */
+  private loadError: string | undefined;
   /** 在飞的 load（首载或重读，含收尾补落盘）：期间 save 只保留 dirty、不写盘 */
   private loading: Promise<void> | undefined;
   /** 首次读取已落定（读成功、文件不存在或判为读不懂）：此前 save 与 load 在飞时一样只保留 dirty、不写盘 */
@@ -71,7 +71,12 @@ export class UserStore {
   // ── 持久化（版本见 USERS_VERSION；非当前版本按加载失败拒写，无迁移）──
   /** 上次加载失败、正在拒写：此时的等级改动只在本次运行生效，不会写入 users.json */
   get persistBlocked(): boolean {
-    return this.loadFailed;
+    return this.loadError !== undefined;
+  }
+
+  /** 上次加载失败的原因（读不出的报错、解析错误、版本不对）；没有失败时为 undefined */
+  get lastLoadError(): string | undefined {
+    return this.loadError;
   }
 
   /** 最近一次写盘失败（storage 不在线、权限、磁盘满）：改动仍只在内存，下次 save 重写整份快照 */
@@ -91,7 +96,7 @@ export class UserStore {
     // dirty 保持为 true，由 load 收尾按正常路径补落盘；首次读取发起之前停机或卸载，这些改动不写盘
     // （已发起的读取由 flushed 等它落定再写）。
     if (!this.firstLoadSettled || this.loading) return;
-    if (this.loadFailed) {
+    if (this.loadError !== undefined) {
       // 写的是**全量快照**：坏文件没载进内存时一次 save 就把原有记录清空。
       // 宁可这一程的改动不落盘（内存里仍生效），也不能静默销毁封禁/等级数据。
       this.logger.error('users.json 上次加载失败，拒绝写入以免覆盖原数据；请人工修复或移走该文件后重启');
@@ -147,9 +152,9 @@ export class UserStore {
   load(): Promise<void> {
     // 重读即重判：storage 重新上线（follow 重挂）或重启后 load 成功即恢复落盘；
     // 同一进程内不会自动重读——没有新的 load，这一程就一直拒写。
-    const settle = (failed: boolean): void => {
-      // 判定要等读完、解析完才落到 loadFailed：重读在飞期间 persistBlocked 沿用上一次的判定
-      this.loadFailed = failed;
+    const settle = (error: string | undefined): void => {
+      // 判定要等读完、解析完才落到 loadError：重读在飞期间 persistBlocked 沿用上一次的判定
+      this.loadError = error;
       this.firstLoadSettled = true;
       // 重叠的 load 只由最后发起的那次解除推迟：还有一次在读时，快照照样残缺
       if (this.loading === run) this.loading = undefined;
@@ -159,15 +164,16 @@ export class UserStore {
     const run: Promise<void> = this.readUsersFile().then(settle, err => {
       // readUsersFile 自己的兜底也抛了（storage 抛出转不成字符串的值、宿主注入的 logger 抛错等）：
       // 文件状态不明，按读不懂拒写；推迟照常解除，否则 save 与 flushed 会一直等这次 load。错误交还调用方
-      settle(true);
+      // （它可能转不成字符串，原因不从它取）
+      settle('读取时出错，文件状态不明');
       throw err;
     });
     this.loading = run;
     return run;
   }
 
-  /** 读入并解析 users.json（以文件重建内存表，再叠加尚未落盘的改动）；返回 true 表示文件在但读不出或解析不了 */
-  private async readUsersFile(): Promise<boolean> {
+  /** 读入并解析 users.json（以文件重建内存表，再叠加尚未落盘的改动）；文件在但读不出或解析不了时返回原因 */
+  private async readUsersFile(): Promise<string | undefined> {
     // 开读时已标脏的键：读取期间在飞的写成功会清掉它们，读到的却可能是写入前的内容，
     // 只看读完时的脏键就会按旧文件重建、撤回刚写进去的改动
     const dirtyAtStart = [...this.dirtyKeys.keys()];
@@ -180,11 +186,11 @@ export class UserStore {
         // 无文件 = 全新（owners 配置 seed owner）。内存表不动：首载时本就是空表，
         // 重读时按空表重建会把内存里的封禁一并清掉
         this.logger.debug(`users.json 不存在，按全新开始: ${msg}`);
-        return false;
+        return undefined;
       }
       // 文件在但读不出（权限/storage 未就绪等）：标记失败并拒写，否则下一次等级改动即清空原表
       this.logger.error(`读取 users.json 失败，本次运行不再写入该文件: ${msg}`);
-      return true;
+      return msg;
     }
     try {
       const data = JSON.parse(raw) as { version?: number; users?: Record<string, UserRecord> };
@@ -207,18 +213,18 @@ export class UserStore {
         }
         this.users = next;
         this.logger.debug(`加载 ${this.users.size} 条用户等级记录`);
-        return false;
+        return undefined;
       }
       // 版本不是 v5（旧的能力/密码/档位模型或更高版本）或 users 不是对象（截断/被外部工具写坏）：
       // 原表仍可能在文件里，等同解析失败按拒写处理，别让一次全量快照抹掉它。
-      this.logger.error(
-        `users.json 不是有效的 v5 结构（version: ${data.version ?? '未知'}），本次运行不再写入该文件；请人工修复，或删除/移走该文件后重启按全新开始`,
-      );
-      return true;
+      const reason = `不是有效的 v5 结构（version: ${data.version ?? '未知'}）`;
+      this.logger.error(`users.json ${reason}，本次运行不再写入该文件；请人工修复，或删除/移走该文件后重启按全新开始`);
+      return reason;
     } catch (err) {
       // 解析失败同理：坏文件不能被一次全量快照覆盖掉
-      this.logger.error(`解析 users.json 失败，本次运行不再写入该文件: ${err}`);
-      return true;
+      const reason = `JSON 解析失败：${err instanceof Error ? err.message : String(err)}`;
+      this.logger.error(`users.json ${reason}，本次运行不再写入该文件`);
+      return reason;
     }
   }
 }

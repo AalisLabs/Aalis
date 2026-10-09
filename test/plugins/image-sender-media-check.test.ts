@@ -244,6 +244,16 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(outbound).toHaveLength(0);
   });
 
+  // 本机路径不是存储地址：回给模型的是工具层的说明，不是写给配置作者的「去 roots 里加根」
+  it.each([
+    '/data/images/s/cat.png',
+    'C:\\pics\\cat.png',
+  ])('storage_uri 写成本机路径 %s → 拒发，说明要写存储地址', async uri => {
+    const out = await send({ kind: 'image', storage_uri: uri });
+    expect(out.error).toBe('storage_uri 要写存储地址（如 data:/images/…），不能写本机路径');
+    expect(outbound).toHaveLength(0);
+  });
+
   it('storage_uri 指向合法 PNG → 照常发出', async () => {
     const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
     expect(out).toEqual({ ok: true, sent: { kind: 'image', via: 'storage_uri', ref: 'data/images/s/cat.png' } });
@@ -281,6 +291,16 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     ['首段不是存储根', 'abc.amr'],
     ['Windows 盘符路径', 'def.amr'],
   ])('history_ref 命中历史里的宿主机绝对路径（%s）→ 按库外来源拒发', async (_label, ref) => {
+    const out = await send({ kind: 'audio', history_ref: ref });
+    expect(out.error).toBe(`引用 ${ref} 的来源不在存储库内，无法核对格式，不能发送`);
+    expect(outbound).toHaveLength(0);
+  });
+
+  // 宿主机绝对路径不是存储地址：不当 storage URI 去查，照样在历史里找，找到后按库外来源拒发
+  it.each([
+    '/root/.config/QQ/Ptt/abc.amr',
+    'C:\\Users\\napcat\\Ptt\\def.amr',
+  ])('history_ref 直接写宿主机绝对路径 %s → 按库外来源拒发', async ref => {
     const out = await send({ kind: 'audio', history_ref: ref });
     expect(out.error).toBe(`引用 ${ref} 的来源不在存储库内，无法核对格式，不能发送`);
     expect(outbound).toHaveLength(0);

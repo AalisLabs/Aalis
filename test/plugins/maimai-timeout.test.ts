@@ -18,6 +18,19 @@ function hangingFetch(): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
+/** 响应头按时到达、响应体卡住：读体时随 signal 中止 */
+function stallingBodyFetch(): typeof fetch {
+  return ((_url: unknown, init?: RequestInit) => {
+    const sig = init?.signal;
+    const body = new ReadableStream({
+      start(controller) {
+        sig?.addEventListener('abort', () => controller.error(sig.reason), { once: true });
+      },
+    });
+    return Promise.resolve(new Response(body, { status: 200 }));
+  }) as unknown as typeof fetch;
+}
+
 const PLAYER = { name: '测试玩家', rating: 12345, friend_code: 123 };
 
 describe('plugin-maimai: 查分器请求必须带超时', () => {
@@ -53,7 +66,16 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
     ]);
     expect(outcome, '没有 signal 就会一直挂着').not.toBe('still-hanging');
     // handler 把异常包成「查询失败: <message>」纯文本回给模型，不是 JSON error 键
-    expect(outcome, '超时应作为工具错误结果返回').toMatch(/^result:查询失败:.*timeout/i);
+    expect(outcome, '超时应作为工具错误结果返回').toMatch(
+      /^result:查询失败: 查分器暂时连不上，稍后再试（.*timeout.*）$/i,
+    );
+  });
+
+  it('响应体读到超时：与连不上同一句，写稍后再试', async () => {
+    vi.stubGlobal('fetch', stallingBodyFetch());
+    const registry = await setup(1000);
+    const r = await registry.execute('maimai_get_player_info', { friend_code: '123' }, { sessionId: 's1' });
+    expect(r.content).toMatch(/^查询失败: 查分器暂时连不上，稍后再试（.*timeout.*）$/i);
   });
 
   it('正常对端照常返回', async () => {
