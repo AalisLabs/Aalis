@@ -2,8 +2,8 @@
 // 诊断项 paper.config：让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题
 //
 // - error：账本读取失败；同一远端账号下多于一块具名白纸；有停开的白纸；有未读的账本外代理告警。
-// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档或它的受众条目写了 remoteAgentTypes（这个平台的
-//   全部房间或全部群、私聊房间都继承）；具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到 3 次（写类别与次数，
+// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档或平台类型档写了 remoteAgentTypes（这个平台或这种
+//   类型的全部房间都继承）；具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到 3 次（写类别与次数，
 //   不写提供者报错的原文）；有任务认领失败后仍在开轮中（与放弃跟踪同一判据：账本里有它的 claim-failed 告警，不论
 //   是否已读；报出时 owner 就能在任务表放弃跟踪）。
 // - 出网方式取自 owner 配置（提供者核实不了）时在说明里标「未核实」，不影响级别。
@@ -15,7 +15,7 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { ServiceRef } from '@aalis/core';
 import type { PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
-import { AUDIENCE_NAMES, type Isolation, layersWith, paperLabel, sharingRooms } from './rooms.js';
+import { type Isolation, layersWith, paperLabel, profileName, sharingRooms } from './rooms.js';
 import { describe } from './util.js';
 
 const CHECK_ID = 'paper.config';
@@ -66,10 +66,9 @@ export function registerPaperDoctor(deps: {
       }
       for (const { layer, value } of layersWith(sm, 'remoteAgentTypes')) {
         if (value.length === 0) continue;
-        const who = layer.scope === 'audience' ? AUDIENCE_NAMES[layer.audience] : '';
         warnings.push(
-          `平台档 ${layer.platform} ${who ? `的${who}条目` : ''}写了 remoteAgentTypes（${value.join('、')}），` +
-            `这个平台所有开了白纸的${who}房间都会继承；只写在房间自己的会话配置里即可`,
+          `${profileName(layer)} 写了 remoteAgentTypes（${value.join('、')}），这一档覆盖的开了白纸的房间都会继承；` +
+            '按窗口写在房间的场所设置里即可',
         );
       }
       for (const [name, spec] of cfg.papers) {

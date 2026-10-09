@@ -216,9 +216,10 @@ async function setup(opts: SetupOptions) {
 
 type Harness = Awaited<ReturnType<typeof setup>>;
 
-/** WebUI 新建的会话（带 work 的是项目会话） */
+/** WebUI 新建的会话（带 work 的是项目会话：建在以绑定目录登记的项目工作区里） */
 async function webuiSession(h: Harness, work?: { root: string }): Promise<string> {
-  return (await h.sm().createSession({ name: '<会话>' }, { createdFrom: 'webui', work })).id;
+  const workspace = work && h.sm().addWorkspace(work.root).workspace.id;
+  return (await h.sm().createSession({ name: '<会话>' }, { createdFrom: 'webui', workspace, work })).id;
 }
 
 const childOf = async (h: Harness, parentId: string) => (await h.sm().createChildSession(parentId)).id;

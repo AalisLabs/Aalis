@@ -617,7 +617,7 @@ export function registerPaperPage(deps: {
         effect: 'write',
         async handler({ ctx }) {
           writable();
-          const paper = await resolveRoomPaper(deps.sessionManager.require(), cfg, ctx.sessionId, undefined);
+          const paper = resolveRoomPaper(deps.sessionManager.require(), cfg, ctx.sessionId, undefined);
           if ('unavailable' in paper) throw new Error(paper.unavailable);
           if (!(await driver.resume(paper.paperId))) throw new Error('这块白纸没有停开');
           return '已恢复';
@@ -629,7 +629,7 @@ export function registerPaperPage(deps: {
         type: 'info',
         id: 'room',
         async data({ ctx }) {
-          const paper = await resolveRoomPaper(deps.sessionManager.require(), cfg, ctx.sessionId, undefined);
+          const paper = resolveRoomPaper(deps.sessionManager.require(), cfg, ctx.sessionId, undefined);
           if ('unavailable' in paper) return [{ label: '白纸', value: paper.unavailable }];
           const day = today();
           const usage = paperBudgetUsage(ledger.data, day, paper.paperId);

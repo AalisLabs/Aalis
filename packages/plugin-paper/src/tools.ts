@@ -69,7 +69,7 @@ export async function enterPaperRoom(
   const sm = deps.sessionManager.require();
   const refused = checkEligibility(sm, ctx, kind);
   if (refused) return { refused };
-  const paper = await resolveRoomPaper(sm, deps.cfg, ctx.sessionId, ctx.platform);
+  const paper = resolveRoomPaper(sm, deps.cfg, ctx.sessionId, ctx.platform);
   return 'unavailable' in paper ? { refused: paper.unavailable } : { paper };
 }
 

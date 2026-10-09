@@ -67,7 +67,7 @@ async function boot() {
   const personasDir = join(base, 'self', 'personas');
   mkdirSync(join(base, 'workspace'), { recursive: true });
   mkdirSync(personasDir, { recursive: true });
-  writeFileSync(join(personasDir, 'main.yaml'), 'name: 主卡名\nnick_name: [主卡昵称]\ndescription: d\nprompt: p\n');
+  writeFileSync(join(personasDir, 'default.yaml'), 'name: 主卡名\nnick_name: [主卡昵称]\ndescription: d\nprompt: p\n');
   writeFileSync(join(personasDir, 'bob.yaml'), 'name: 副卡名\nnick_name: [副卡昵称]\ndescription: d\nprompt: p\n');
 
   app = new App({ name: 'T', logLevel: 'error' });
@@ -80,7 +80,7 @@ async function boot() {
     },
     {
       definition: personaPlugin,
-      config: { persona: 'main', personasDir: 'personas:/', timeInjection: false },
+      config: { personasDir: 'personas:/', timeInjection: false },
     },
   ]);
   await app.plugins.idle();

@@ -820,6 +820,73 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
+  it('场所与在哪用就在哪改：房间表一行的「场所设置」写这个窗口，同一个群里另一个机器人账号的会话取到、写明来自这个群；会话设置里改到「这个工作区」写进默认工作区、新会话取到，改到「所有会话」写进全局默认；「模型」没设时写「默认（<模型名>）」；系统页的服务偏好写一行指向「会话默认」', async () => {
+    const stack = await startStack({}, [], {
+      'onebot:10000:group:20001': '读书会',
+      'onebot:10001:group:20001': '读书会小号',
+    });
+    const sm = stack.app.bind({ sessionManager }).sessionManager.require();
+    const { page, problems } = await openPage(stack, viewport);
+    const ITERATIONS = '.setting-row[aria-label="最大工具迭代"]';
+    /** 在 scope 里把「最大工具迭代」改成 value（编辑框里先是生效值，全选后改写），按回车存 */
+    const typeIterations = async (scope: string, value: string) => {
+      await page.locator(`${scope} ${ITERATIONS} .setting-row-main`).click();
+      const box = await page.waitForSelector(`${scope} ${ITERATIONS} ${aria('最大工具迭代', 'textbox')}`);
+      await box?.click({ count: 3 });
+      await box?.type(value);
+      await page.keyboard.press('Enter');
+    };
+    /** 展开「高级」改「最大工具迭代」，等这一行出现「恢复继承」（生效值出自写进的那一层） */
+    const setIterations = async (scope: string, value: string) => {
+      await page.locator(`${scope} ${aria('高级', 'button')}`).click();
+      await typeIterations(scope, value);
+      await page.waitForSelector(`${scope} ${ITERATIONS} ${aria('恢复继承', 'button')}`);
+    };
+    /** 打开一个会话的「设置」标签，展开「高级」，回「最大工具迭代」这一行的字 */
+    const iterationsOf = async (sessionId: string) => {
+      await page.goto(`${stack.origin}/s/${encodeURIComponent(sessionId)}/settings`);
+      await page.locator(aria('高级', 'button')).click();
+      return (await page.waitForSelector(ITERATIONS))?.evaluate(row => row.textContent);
+    };
+
+    await page.goto(`${stack.origin}/rooms?platform=onebot`);
+    const roomRow = `tr:has(a[href="/s/${encodeURIComponent('onebot:10000:group:20001')}"])`;
+    await page.locator(`${roomRow} ${aria('场所设置', 'button')}`).click();
+    const dialog = aria('场所设置：读书会', 'dialog');
+    await page.waitForSelector(`${dialog} .setting-row`);
+    await setIterations(dialog, '7');
+    expect(sm.getLayer({ scope: 'place', key: 'onebot:group:20001' }).maxToolIterations).toBe(7);
+    await page.locator(`${dialog} ${aria('关闭', 'button')}`).click();
+    await page.waitForSelector(dialog, { hidden: true });
+    expect(await iterationsOf('onebot:10001:group:20001')).toBe('最大工具迭代7来自：群『读书会』');
+
+    const mine = await sm.createSession({ name: '<甲>' }, { createdFrom: 'webui' });
+    await page.goto(`${stack.origin}/s/${encodeURIComponent(mine.id)}/settings`);
+    const scope = await page.waitForSelector(aria('改到', 'combobox'));
+    await scope?.click();
+    await page.locator(aria('这个工作区', 'option')).click();
+    await setIterations('body', '9');
+    expect(sm.getLayer({ scope: 'place', key: 'workspace:default' }).maxToolIterations).toBe(9);
+    const other = await sm.createSession({ name: '<乙>' }, { createdFrom: 'webui' });
+    expect(await iterationsOf(other.id)).toBe('最大工具迭代9来自：工作区『默认工作区』');
+    expect(await page.$eval('.setting-row[aria-label="模型"]', row => row.textContent)).toBe('模型默认（mock-model）');
+
+    await (await page.waitForSelector(aria('改到', 'combobox')))?.click();
+    await page.locator(aria('所有会话', 'option')).click();
+    await typeIterations('body', '11');
+    await page.waitForSelector(`${ITERATIONS} ${aria('最大工具迭代', 'textbox')}`, { hidden: true });
+    expect(sm.getLayer({ scope: 'defaults' }).maxToolIterations).toBe(11);
+    await page.goto(`${stack.origin}/s/${encodeURIComponent(other.id)}`);
+    const model = await page.waitForSelector(`main ${aria('模型', 'combobox')}`);
+    expect(await model?.evaluate(select => select.textContent)).toBe('默认（mock-model）');
+
+    await page.goto(`${stack.origin}/settings/system`);
+    await page.waitForSelector(`main ${text('默认模型在「会话默认」里设')}`);
+    await page.locator(`main ${aria('去会话默认', 'link')}`).click();
+    await page.waitForFunction(() => location.pathname === '/settings/session-defaults');
+    expect(problems).toEqual([]);
+  }, 60_000);
+
   it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有应用名，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架；没有可转后台的工具与派生子会话的插件，模型拿到的工具里没有后台任务工具，没有「后台」标签，头部、左栏与运行状况都没有后台工作，会话行没有子任务展开', async () => {
     const stack = await startStack({ 你好: '好的。' });
     const { page, problems } = await openPage(stack, viewport);

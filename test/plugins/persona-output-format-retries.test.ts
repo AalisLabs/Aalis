@@ -24,13 +24,15 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   let app: App;
   let host: BoundOf<typeof hostUses>;
 
-  const boot = async (personaName: string): Promise<PersonaService> => {
+  /** 选中的卡写成主卡 default.yaml */
+  const boot = async (name: string): Promise<PersonaService> => {
+    writeFileSync(join(base, 'self', 'personas', 'default.yaml'), card(RETRIES[name]));
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {});
-    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'personas:/' });
+    await app.plugin(personaPlugin, { personasDir: 'personas:/' });
     await app.plugins.idle();
     // 停在 pending 的插件既不提供服务也不挂中间件，下面的钩子断言会退化成恒真
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
@@ -41,18 +43,22 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     return svc;
   };
 
+  /** 各张卡的 outputFormatRetries 一行 */
+  const RETRIES: Record<string, string> = {
+    'zz-no-retry': 'outputFormatRetries: 0\n',
+    'zz-default': '',
+    // 脏值三种：负数 / 小数 / 字符串——asCard 的非负整数清洗是唯一防线
+    'zz-negative': 'outputFormatRetries: -1\n',
+    'zz-fractional': 'outputFormatRetries: 2.5\n',
+    'zz-string': "outputFormatRetries: '3'\n",
+  };
+
   const card = (retriesLine: string) =>
     `name: 测试卡\ndescription: d\nprompt: p\n${retriesLine}outputFormat:\n  message:\n    description: 回复内容\n    reply: true\n  mood:\n    description: 心情\n`;
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-persona-retries-'));
     mkdirSync(join(base, 'self', 'personas'), { recursive: true });
-    writeFileSync(join(base, 'self', 'personas', 'zz-no-retry.yaml'), card('outputFormatRetries: 0\n'));
-    writeFileSync(join(base, 'self', 'personas', 'zz-default.yaml'), card(''));
-    // 脏值三种：负数 / 小数 / 字符串——asCard 的非负整数清洗是唯一防线
-    writeFileSync(join(base, 'self', 'personas', 'zz-negative.yaml'), card('outputFormatRetries: -1\n'));
-    writeFileSync(join(base, 'self', 'personas', 'zz-fractional.yaml'), card('outputFormatRetries: 2.5\n'));
-    writeFileSync(join(base, 'self', 'personas', 'zz-string.yaml'), card("outputFormatRetries: '3'\n"));
   });
 
   afterEach(async () => {
@@ -154,8 +160,8 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     ['zz-negative', '负数'],
     ['zz-fractional', '小数'],
     ['zz-string', '字符串'],
-  ])('角色卡 outputFormatRetries 写脏值（%s，%s）→ 按未设处理，回落缺省 1', async personaName => {
-    const svc = await boot(personaName);
+  ])('角色卡 outputFormatRetries 写脏值（%s，%s）→ 按未设处理，回落缺省 1', async name => {
+    const svc = await boot(name);
     expect(svc.getOutputFormat?.()?.retries).toBe(1);
   });
 });

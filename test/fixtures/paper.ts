@@ -1,14 +1,16 @@
 import { type CheckResult, type CheckSpec, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
-import { type GatewayService, gateway, resolveSessionOrigin } from '../../packages/api-gateway/src/index.js';
+import { type GatewayService, gateway, windowKey } from '../../packages/api-gateway/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { type EgressReport, type RemoteAgentProvider, remoteAgent } from '../../packages/api-remote-agent/src/index.js';
 import {
   type InheritanceSource,
+  rootSessionOf,
   type SessionConfig,
   type SessionConfigLayer,
   type SessionInfo,
   type SessionInheritance,
   type SessionManagerService,
+  type SessionPlace,
   sessionKind,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
@@ -30,11 +32,13 @@ import type {
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from './hubs.js';
 import { type PageHost, pageHost } from './page-host.js';
+import { storedRoom } from './rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
 // - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
-// - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；平台档分基础条目与受众条目，继承链按参考实现的口径解析；
+// - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；OneBot 写法的房间 id 带上收录时记下的来源字段；
+//   平台档、平台类型档与场所按参考实现的口径叠加；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
 // - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行；网关替身像目标适配器一样填 delivery，
 //   缺省立即确认收下；
@@ -180,35 +184,54 @@ export function memoryStorage(files: PaperFiles): StorageService {
   } as unknown as StorageService;
 }
 
-/** session-manager 替身回的会话档：种类、出生平台与受众按会话 id 与 parentId 推出，与参考实现同一口径 */
+/**
+ * session-manager 替身回的会话档：OneBot 写法的房间 id（四段）带上收录时记下的出生平台与聊天窗口（与预置会话表的
+ * storedRoom 相同），种类按父会话与出生平台推出，与参考实现同一口径
+ */
 export function sessionInfoOf(id: string, parentId?: string): SessionInfo {
-  const origin = resolveSessionOrigin(id);
-  return {
+  const { originPlatform, originChat } =
+    parentId === undefined && id.split(':').length >= 4
+      ? storedRoom(id)
+      : { originPlatform: undefined, originChat: undefined };
+  const info = {
     id,
     name: id,
     parentId,
     children: [],
-    status: 'active',
+    status: 'active' as const,
     config: {},
     createdAt: 0,
     updatedAt: 0,
-    kind: sessionKind({ parentId, audience: origin?.audience }),
-    originPlatform: origin?.platform,
-    audience: parentId ? undefined : (origin?.audience ?? 'owner'),
+    ...(originPlatform === undefined
+      ? {}
+      : { originPlatform: originPlatform as string, originChat: originChat as SessionInfo['originChat'] }),
   };
+  return { ...info, kind: sessionKind(info) };
+}
+
+/** session-manager 替身的场所：子会话按根会话取，有聊天窗口的房间为窗口，其余为默认工作区（owner 的 IM 私聊不模拟） */
+function placeOf(id: string, lookup: (id: string) => SessionInfo): SessionPlace {
+  const root = rootSessionOf(lookup(id), lookup);
+  const chat = root?.originChat;
+  return root?.originPlatform !== undefined && chat
+    ? { kind: 'window', key: windowKey({ platform: root.originPlatform, type: chat.type, targetId: chat.targetId }) }
+    : { kind: 'workspace', key: 'workspace:default' };
 }
 
 /**
- * session-manager 替身的继承链解析：与参考实现同一口径，有出生平台的会话按出生平台取基础条目、再按受众叠加受众条目，
- * 其余按入口平台取基础条目；全局默认与父会话的 sessionDefaults 两层不模拟
+ * session-manager 替身的继承链解析：与参考实现同一口径，子会话按根会话取；有出生平台的会话按出生平台取平台档、按聊天窗口的
+ * 类型名叠加平台类型档，其余按入口平台取平台档；再叠加场所（{@link placeOf}）的设置。全局默认与父会话的 sessionDefaults
+ * 两层不模拟
  */
 function inheritanceOf(
   id: string,
   platform: string | undefined,
-  opts: Pick<PaperHubOptions, 'profiles' | 'audienceProfiles'>,
+  opts: Pick<PaperHubOptions, 'profiles' | 'typeProfiles' | 'placeProfiles'>,
+  lookup: (id: string) => SessionInfo,
 ): SessionInheritance {
-  const origin = resolveSessionOrigin(id);
-  const pinned = origin?.platform ?? platform;
+  const root = rootSessionOf(lookup(id), lookup);
+  const pinned = root?.originPlatform ?? platform;
+  const chat = root?.originPlatform === undefined ? undefined : root.originChat;
   const values: Record<string, unknown> = {};
   const sources: SessionInheritance['sources'] = {};
   const layer = (config: SessionConfig | undefined, source: InheritanceSource) => {
@@ -218,8 +241,9 @@ function inheritanceOf(
     }
   };
   if (pinned) layer(opts.profiles?.[pinned], 'platform');
-  if (origin) layer(opts.audienceProfiles?.[`${origin.platform}/${origin.audience}`], 'audience');
-  return { platform: pinned, audience: origin?.audience, values, sources };
+  if (pinned && chat) layer(opts.typeProfiles?.[`${pinned}/${chat.type}`], 'type');
+  layer(opts.placeProfiles?.[placeOf(id, lookup).key], 'place');
+  return { platform: pinned, type: chat?.type, values, sources };
 }
 
 /** 空账本（与枢纽写出的结构相同），供用例预置 */
@@ -247,8 +271,10 @@ export interface PaperHubOptions {
   children?: Record<string, string>;
   /** 平台档，键为平台名；缺省没有 */
   profiles?: Record<string, SessionConfig>;
-  /** 平台档的受众条目，键为 `<平台>/<受众>`；缺省没有 */
-  audienceProfiles?: Record<string, SessionConfig>;
+  /** 平台类型档，键为 `<平台>/<类型名>`；缺省没有 */
+  typeProfiles?: Record<string, SessionConfig>;
+  /** 场所的设置，键为场所键（窗口为 `平台:类型:目标`）；缺省没有 */
+  placeProfiles?: Record<string, SessionConfig>;
   /** 会话列表里的会话 id → 会话自身的 config（listSessions 的结果）；缺省没有 */
   listed?: Record<string, SessionConfig>;
   /** 实例 id → 替身提供者；缺省只有 REMOTE 一个 */
@@ -334,19 +360,24 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     registerSetting: () => () => {},
     listLayers: (): SessionConfigLayer[] => [
       ...Object.keys(opts.profiles ?? {}).map(platform => ({ scope: 'platform' as const, platform })),
-      ...Object.keys(opts.audienceProfiles ?? {}).map(key => {
-        const [platform, audience] = key.split('/') as [string, 'group' | 'private'];
-        return { scope: 'audience' as const, platform, audience };
+      ...Object.keys(opts.typeProfiles ?? {}).map(key => {
+        const [platform, type] = key.split('/') as [string, string];
+        return { scope: 'type' as const, platform, type };
       }),
+      ...Object.keys(opts.placeProfiles ?? {}).map(key => ({ scope: 'place' as const, key })),
     ],
     getLayer: (layer: SessionConfigLayer) =>
       layer.scope === 'platform'
         ? (opts.profiles?.[layer.platform] ?? {})
-        : layer.scope === 'audience'
-          ? (opts.audienceProfiles?.[`${layer.platform}/${layer.audience}`] ?? {})
-          : {},
+        : layer.scope === 'type'
+          ? (opts.typeProfiles?.[`${layer.platform}/${layer.type}`] ?? {})
+          : layer.scope === 'place'
+            ? (opts.placeProfiles?.[layer.key] ?? {})
+            : {},
     getOwnConfig: (id: string) => ({ ...(opts.listed?.[id] ?? {}) }),
-    resolveInheritance: (id: string, platform?: string) => inheritanceOf(id, platform, opts),
+    resolveInheritance: (id: string, platform?: string) =>
+      inheritanceOf(id, platform, opts, x => sessionInfoOf(x, children[x])),
+    placeOf: (id: string) => placeOf(id, x => sessionInfoOf(x, children[x])),
     listSessions: (): SessionInfo[] =>
       Object.entries(opts.listed ?? {}).map(([id, config]) => ({ ...sessionInfoOf(id, children[id]), config })),
     getSession: (id: string): SessionInfo => sessionInfoOf(id, children[id]),

@@ -34,7 +34,7 @@ import { Timeline, useFold } from './Timeline';
 import { UsageMeter, UsageTable } from './Usage';
 import './Workbench.css';
 
-// 会话工作台：头部（标题、种类与平台、回合进行中的运行指示、后台工作数、用量、全部折叠、会话面板、更多）、时间线、
+// 会话工作台：头部（标题、场所与平台、回合进行中的运行指示、后台工作数、用量、全部折叠、会话面板、更多）、时间线、
 // 输入框与右侧面板。子会话的标题前写各级父会话，可以逐层退回。后台任务的日志桌面上在「后台」标签里，手机上从底部全屏弹出。
 // 首页与 /new 是空白的新会话：发出第一条消息时先建会话，再打开它；桌面的首页上方是「开始使用」（没有能对话的模型时）与
 // 「需要处理」的摘要（手机上它们在第一层）
@@ -83,11 +83,14 @@ function SessionTitle({ summary }: { summary: SessionSummary }) {
   );
 }
 
-/** 头部的副信息：会话种类与平台。子会话的标题前已写着各级父会话，不另写 */
-function kindOf(summary: SessionSummary): string | undefined {
-  if (summary.kind === 'owner') return '我的会话';
-  if (summary.kind === 'task') return undefined;
-  return [summary.audience === 'private' ? '私聊' : '群', summary.platform].filter(Boolean).join(' · ');
+/**
+ * 头部的副信息：场所是窗口的写「类型名 · 平台」，是工作区的写场所的显示名，出生平台是 IM 的另写平台（owner 的 IM 私聊）。
+ * 子会话的标题前已写着各级父会话，不另写
+ */
+function whereOf(summary: SessionSummary): string | undefined {
+  if (summary.parentId) return undefined;
+  const head = summary.place.kind === 'window' ? summary.chat?.type : summary.place.name;
+  return [head, summary.platform].filter(Boolean).join(' · ');
 }
 
 function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostPanelTab; panel?: PageRef }) {
@@ -210,7 +213,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
       <Main>
         <Panel
           title={summary && <SessionTitle summary={summary} />}
-          meta={summary && kindOf(summary)}
+          meta={summary && whereOf(summary)}
           back={parent ? paths.session(parent.id) : paths.home}
           anchor="end"
           banner={summary?.kind === 'room' && `你正在以 owner 身份在「${summary.title}」发言，按群的人设和能力运行`}

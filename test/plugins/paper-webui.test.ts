@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type PublishService, publish } from '../../packages/api-publish/src/index.js';
+import { placePaperId } from '../../packages/api-session-manager/src/index.js';
 import type { ComponentView, DeclarativePageView, InfoItem } from '../../packages/api-webui/src/index.js';
 import { provide } from '../../packages/core/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
@@ -31,6 +32,8 @@ import { PNG, ScriptedRemote, text } from '../fixtures/paper-remote.js';
 afterEach(stopPaperHubs);
 
 const PAPER_ID = `n:${PAPER}`;
+/** ROOM 所在窗口的白纸（不写名字） */
+const WINDOW_PAPER = placePaperId('onebot:group:20001');
 const DIR = `paper:/n-${PAPER}`;
 const ROOMY_CONFIG = { ...PILOT_CONFIG, globalDailyCents: 100_000 };
 const ROOMY_ROOM = { ...PILOT_ROOM, remoteAgentRoomDailyCents: 100_000 };
@@ -205,10 +208,10 @@ describe('页面登记', () => {
     const anonymous = await startPaperHub({
       config: { defaults: { dailyCents: 120 } },
       files: seeded([], ledger => {
-        ledger.papers['r:abcdef012345'] = { lastClearedAt: 0 };
+        ledger.papers[WINDOW_PAPER] = { lastClearedAt: 0 };
       }),
     });
-    expect(String((await info(anonymous, 'r:abcdef012345')).get('每日额度'))).toContain('上限 120 美分');
+    expect(String((await info(anonymous, WINDOW_PAPER)).get('每日额度'))).toContain('上限 120 美分');
     await expect(info(anonymous, 'n:zz-no-such')).rejects.toThrow('没有这块白纸');
   });
 
@@ -244,7 +247,8 @@ describe('页面登记', () => {
         papers: [{ name: PAPER, remoteAgentType: REMOTE, dailyCents: 200 }],
       },
       rooms: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
-      listed: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
+      listed: { [ROOM]: {}, [ROOM2]: {} },
+      placeProfiles: { 'onebot:group:20001': PILOT_ROOM, 'onebot:group:20002': PILOT_ROOM },
     });
     const detail = await info(hub);
     expect(String(detail.get('共用的房间'))).toContain('共用（2）');
@@ -402,16 +406,19 @@ describe('跑完一件任务后的几张表', () => {
 });
 
 describe('白纸详情的「共用的房间」', () => {
-  it('受众条目写了 paperName：列出继承它的已登记房间与这个受众的全部房间，标为共用', async () => {
+  it('平台类型档写了 paperName：列出继承它的已登记房间与这一档的全部房间，标为共用', async () => {
     const hub = await startPaperHub({
       listed: { [ROOM]: {} },
-      audienceProfiles: { 'onebot/group': { paperName: PAPER } },
+      typeProfiles: { 'onebot/group': { paperName: PAPER } },
     });
-    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台档 onebot 的全部群房间`);
+    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台类型档 onebot · group 的全部房间`);
   });
 
-  it('对照：只有房间自己的配置写了 paperName、没有平台档时不算共用', async () => {
-    const hub = await startPaperHub({ listed: { [ROOM]: { paperName: PAPER } } });
+  it('对照：只有一个窗口的场所写了 paperName、没有平台档与平台类型档时不算共用', async () => {
+    const hub = await startPaperHub({
+      listed: { [ROOM]: {} },
+      placeProfiles: { 'onebot:group:20001': { paperName: PAPER } },
+    });
     expect((await info(hub)).get('共用的房间')).toBe(ROOM);
   });
 });

@@ -52,10 +52,11 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     await app.plugin(sessionManagerPlugin, {});
-    await app.plugin(personaPlugin, { persona: 'zz-card', personasDir: 'personas:/', timeInjection: false });
+    await app.plugin(personaPlugin, { personasDir: 'personas:/', timeInjection: false });
     await app.plugin(agentPlugin, {
       systemPrompt: '',
       memoryTokenBudget: 1024,
+      // 插件配置里留着的旧键：不再起作用，「最大工具迭代」没设时是 30
       maxToolIterations: 3,
       trimThresholdRatio,
       preferredModel: '',
@@ -83,7 +84,7 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-session-prompt-'));
     mkdirSync(join(base, 'self', 'personas'), { recursive: true });
-    writeFileSync(join(base, 'self', 'personas', 'zz-card.yaml'), CARD);
+    writeFileSync(join(base, 'self', 'personas', 'default.yaml'), CARD);
   });
 
   afterEach(async () => {
@@ -91,15 +92,15 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('登记的设置项写得出没设时的样子：人设与工具迭代上限的默认值取插件配置，其余给没设时的含义', async () => {
+  it('登记的设置项写得出没设时的样子：人设的默认值是自带的 default，工具迭代上限的默认值是 30、与插件配置无关，模型不写（界面写服务实际用的那一个），其余给没设时的含义', async () => {
     const { sm } = await boot(1);
     const unsetOf = Object.fromEntries(
       sm.listSettings().map(setting => [setting.key, setting.field.default ?? setting.unset]),
     );
     expect(unsetOf).toMatchObject({
-      llm: '跟随服务偏好',
-      maxToolIterations: 3,
-      persona: 'zz-card',
+      llm: undefined,
+      maxToolIterations: 30,
+      persona: 'default',
       systemPromptExtra: '不追加',
       clientSideJsonRendering: '按角色卡',
     });

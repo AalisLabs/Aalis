@@ -89,7 +89,6 @@ async function loadStack(sent: Sent[]) {
   await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
     memoryTokenBudget: 1024,
-    maxToolIterations: 3,
     preferredModel: '',
   });
   await app.plugins.idle();

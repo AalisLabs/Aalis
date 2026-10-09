@@ -75,7 +75,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 | `session/batch` | `{ op: 'archive' \| 'delete', ids }` | `{ failed: Array<{ sessionId, message }> }` |
 | `session/config/get` | `{ sessionId }` | `{ items: SettingRow[] }`，见下文「会话设置」 |
 | `session/config/update` | `{ sessionId, patch }` | 同 `session/config/get` |
-| `session/config/layers` | `{}` | `{ layers: SettingLayer[] }` |
+| `session/config/layers` | `{}` | `{ layers: SettingLayer[], order: Array<{ name, label }> }` |
 | `session/config/layer/get` | `{ layer }` | `{ items: SettingRow[] }` |
 | `session/config/layer/update` | `{ layer, patch }` | 同 `session/config/layer/get` |
 | `session/config/changed`（通知） | `{}` | — |
@@ -92,10 +92,11 @@ interface SessionSummary {
   childCount: number;
   kind: 'owner' | 'room' | 'task';  // 会话种类（api-session-manager 的 sessionKind）：task 子任务，room IM 房间（含 owner 自己的私聊），owner 其余
   section: 'owner' | 'rooms'; // 子会话归在根会话的区里
-  platform?: string;          // 出生平台；owner 自己的会话没有
+  platform?: string;          // 根会话的出生平台；owner 在 WebUI、终端的会话等没有
   instance?: string;          // 房间：接管它的适配器实例（插件实例 id）
   account?: string;           // 房间：根会话聊天窗口记下的机器人账号（originChat.selfId）
-  audience?: 'owner' | 'private' | 'group';
+  chat?: { type: string; multiParty: boolean };  // 根会话的聊天窗口：平台类型名（平台自定，界面原样显示）与多方标记；IM 的群与私聊才有
+  place: { key: string; kind: 'window' | 'workspace'; name: string };  // 根会话的场所：场所键、类别与显示名
   createdAt: number;
   updatedAt: number;          // 最后活动：会话档案最近一次变化
   lastReplyAt?: number;       // 她最近一次开口（回合结局为 replied）
@@ -120,6 +121,8 @@ interface RoomGroup {
   attention: number;          // 组里需要我处理的房间数
 }
 ```
+
+- **`chat` 与 `place`**：子会话取根会话的。场所的类别 `window` 是 IM 的群与别人的私聊，`workspace` 是本机的工作区（默认工作区、项目工作区），owner 的 IM 私聊在默认工作区（见 [api-session-manager](./api-session-manager.md) 的场所）。显示名：窗口取群名或对方昵称，默认工作区为「默认工作区」，项目工作区默认取文件夹名；窗口还没有场所记录时是场所键。按层读写场所时层为 `{ scope: 'place', key }`。
 
 ### 列表的规则
 
@@ -162,22 +165,26 @@ interface SettingRow {
   unset?: string;                  // 哪一层都没设、字段又没有默认值时这一项的含义（登记方给），界面写在生效值的位置
   value?: unknown;                 // 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值
   effective?: unknown;             // 生效值；哪一层都没设时没有，界面按字段的默认值显示
-  source?: 'session' | 'parent' | 'audience' | 'platform' | 'defaults';  // 生效值出自哪一层
+  source?: string;                 // 生效值出自哪一层：层名，称呼取 session/config/layers 的层表
+  resolved?: unknown;              // 全局默认层由服务偏好承担的项：服务此刻实际用的那一个，见下文
 }
 
 type SettingLayer =
   | { scope: 'defaults' }
-  | { scope: 'platform'; platform: string }                               // 按平台名生效，不区分适配器实例
-  | { scope: 'audience'; platform: string; audience: 'group' | 'private' };
+  | { scope: 'platform'; platform: string }                 // 按平台名生效，不区分适配器实例
+  | { scope: 'type'; platform: string; type: string }       // 平台类型档：这个平台这种类型的聊天窗口
+  | { scope: 'place'; key: string };                        // 场所：键取自会话摘要的 place
 ```
 
-- **哪些行：** 会话只列适用于它的种类（`SessionSummary.kind`）的项；全局默认与平台档列全部，受众条目只列适用于房间的项。登记它的插件没装或没启用时不列，值保留。
+- **层表：** `session/config/layers` 回包的 `order` 是全部层的名字与称呼，按先后（后面的压过前面的）：全局默认（`defaults`）、平台档（`platform`）、平台类型档（`type`）、场所（`place`）、父会话（`parent`）、本会话（`session`）。层表定义在 api-session-manager 的 `SESSION_LAYERS`，客户端的来源文字、先后说明与选层的称呼都按回包里的这一份，不另存。
+- **哪些行：** 会话只列适用于它的种类（`SessionSummary.kind`）的项，只能设到场所为止的项（登记了 `narrowest: 'place'`，如白纸的六项）不列；全局默认、平台档与平台类型档列全部（owner 的 IM 私聊带平台类型，场所却是工作区，两类项都可能落到它）；场所按它的类别列：窗口列适用于房间的项，工作区列适用于 owner 的会话的项。登记它的插件没装或没启用时不列，值保留。
 - **排序：** `composer`、`common` 在前，`advanced` 在后；同一显眼程度按登记时给的 `order`，没给的按登记的先后排在后面。`composer` 也放进输入框旁的快捷切换，同一组最多两项，多出的已退到 `common`。
 - **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。带 `dependsOn` 的行取可选项时把那一行的生效值（没有时取字段默认值）写成 JSON 放在 `dependency` 查询参数里，那一行变了就重取；例如深度思考（`llm-thinking`）按「模型」这一行取档位，回应另带 `labels`（各模型声明过的档位的名字），存着的档位不在这个模型的可选项里时按它写出名字。
-- **生效值：** 哪一层都没设时依次写字段的默认值、可选项接口标了默认的那一项、`unset`。
-- **选档：** 房间按出生平台与受众选档；owner 自己的会话按入口平台选档，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台。继承先后：本会话、父会话（旧数据）、受众条目、平台档、全局默认。
-- **写：** `patch` 里给值即写入这一层（按登记的字段校验），`null` 删掉这一项、恢复继承，没给的键不动。没登记的键、不合字段的值，以及不适用于这个会话种类的项（受众条目按房间算）回 `invalidParams`，什么都不改；`null` 不看适用范围，已经写进去的照样清得掉。层写进宿主的配置文档，保存失败时撤回、回内部错误。
-- **`session/config/layers`：** 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上配置里写过的平台（卸了适配器后还能清掉）；受众条目按适配器声明的会话类型（`sessionTypes` 里的 `group`、`private`）出，加上配置里写过的。
+- **生效值：** 哪一层都没设时依次写字段的默认值、可选项接口标了默认的那一项、`unset`。按层读写的各行带解析到这一层为止的生效值与来源：这一层没写的项写它从更低的哪一层继承来；窗口场所在它的平台档与平台类型档之上，工作区场所只在全局默认之上。
+- **服务实际用的那一个：** 字段类型为 `llm-ref` 的项（「模型」）在全局默认层读写的就是 llm 服务的偏好（默认模型只在这一处）。这一行的生效值出自全局默认、或哪一层都没设时带 `resolved`：llm 服务此刻按偏好、提供者自带的优先级与注册先后解析到的模型。哪一层都没设时界面写「默认（<模型名>）」；生效值出自全局默认而与 `resolved` 不同，即偏好指向的模型已不在，界面写「所选模型不在，正在用<模型名>」。
+- **选层：** 子会话按根会话取。平台档：有出生平台的按出生平台，owner 自己的会话按入口平台，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台；平台类型档按聊天窗口的类型名，没有聊天窗口的不取；场所按会话的场所。
+- **写：** `patch` 里给值即写入这一层（按登记的字段校验），`null` 删掉这一项、恢复继承，没给的键不动。没登记的键、不合字段的值、不适用于这个会话种类的项（场所按它的类别算），以及写进本会话的只能设到场所为止的项（错误说明写「这一项在场所及以上设置」）回 `invalidParams`，什么都不改；`null` 不看适用范围，已经写进去的照样清得掉。全局默认、平台档与平台类型档写进宿主的配置文档，保存失败时撤回、回内部错误；场所写进场所记录；没有记录的场所键回 `invalidParams`。
+- **`session/config/layers`：** 可以设的各层，按层表的先后：全局默认；各平台档（已装适配器的平台加上配置里写过的平台，卸了适配器后还能清掉）；各平台类型档（适配器声明的类型加上配置里写过的，没声明类型的平台不单列）；全部场所（默认工作区在前）。
 - **`session/config/changed`：** 插件启停使设置项增减，或某一层、某个会话的覆盖被改写时推给每条连接，不带参数；客户端重取打开着的会话的设置与快捷切换。
 
 ## 订阅与条目
