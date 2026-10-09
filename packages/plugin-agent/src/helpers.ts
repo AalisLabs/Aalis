@@ -137,6 +137,11 @@ export function estimateTokens(messages: Message[]): number {
   return total;
 }
 
+/** 估算一组消息里历史与工具结果（system 以外的消息）的 token 数，与用量拆分的 history、toolResults 两项同一口径 */
+export function estimateHistoryTokens(messages: Message[]): number {
+  return estimateTokens(messages.filter(m => m.role !== 'system'));
+}
+
 /** 比较两条消息是否在 role/timestamp/name/content 维度上等价（不比较 toolCalls / id） */
 export function isSameMessage(a: Message, b: Message): boolean {
   return (

@@ -5,6 +5,7 @@ import {
   type PluginGroupInfo,
   type PreprocessorFn,
   type PreprocessorInfo,
+  type TokenUsageEvent,
 } from '@aalis/api-agent';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
@@ -58,6 +59,7 @@ import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } fr
 import {
   buildFocusGuidance,
   describeLLMFailure,
+  estimateHistoryTokens,
   estimateMsgTokens,
   estimateTextTokens,
   estimateTokens,
@@ -124,12 +126,36 @@ function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
   return llm.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
+/** 硬裁剪的结果：trimmed 为入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容） */
+interface TrimmedMessages {
+  messages: Message[];
+  trimmed: boolean;
+}
+
+/** 一条 token:usage 的素材：事件里直传的字段，加发出的（快照是组好的）消息与工具定义 */
+type UsageReport = Pick<
+  TokenUsageEvent,
+  | 'sessionId'
+  | 'platform'
+  | 'turnId'
+  | 'contextWindow'
+  | 'maxTokens'
+  | 'tokenBudget'
+  | 'trimmed'
+  | 'untrimmedHistory'
+  | 'historyMessages'
+> & {
+  messages: Message[];
+  tools: ToolDefinition[];
+  /** 模型服务返回的这次调用的输入 token；没有返回时与快照缺省，按消息与工具定义估算 */
+  promptTokens?: number;
+};
+
 class DefaultAgent implements AgentService {
   private caps: AgentCaps;
   private logger: Logger;
   private systemPrompt: string;
   private memoryTokenBudget: number;
-  private historyLimit: number;
   private maxToolIterations: number;
   /** 单个 agent:prompt 贡献 build 的等待上限（毫秒；0=不设限）——见 prompt-assembly 的护栏说明 */
   readonly promptBuildTimeoutMs: number;
@@ -180,7 +206,6 @@ class DefaultAgent implements AgentService {
     this.logger = caps.logger.child('agent');
     this.systemPrompt = cfg.systemPrompt;
     this.memoryTokenBudget = cfg.memoryTokenBudget;
-    this.historyLimit = cfg.historyLimit;
     this.maxToolIterations = cfg.maxToolIterations;
     this.promptBuildTimeoutMs = cfg.promptBuildTimeoutMs;
     this.toolResultMaxRatio = cfg.toolResultMaxRatio;
@@ -668,7 +693,10 @@ class DefaultAgent implements AgentService {
         const level = resolved?.think;
         const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
 
-        const messages = await this.buildMessages(incoming, personaOpts, archivedIncoming);
+        const built = await this.buildMessages(incoming, resolved?.historyLimit, personaOpts, archivedIncoming);
+        const messages = built.messages;
+        /** 这次调用的消息列表里来自会话历史的条数：读进的，加本回合追加的工具调用与结果 */
+        let historyMessages = built.historyMessages;
         // 通过 resolved config 获取工具分组
         let enabledGroups: string[] | undefined;
         if (resolved?.enabledToolGroups && resolved.enabledToolGroups.length > 0) {
@@ -749,20 +777,47 @@ class DefaultAgent implements AgentService {
           });
         }
 
-        // 裁剪消息以确保不超过上下文窗口
-        llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
+        /** 本回合到目前为止经过了硬裁剪：首次调用的裁剪结果写回底稿，之后各次调用都在它上面追加 */
+        let turnTrimmed = false;
+        /** 首次调用的硬裁剪从底稿里去掉的历史与工具结果：之后各次调用按底稿估算没裁剪的量时补回 */
+        let trimmedFromBase = 0;
+        /** 硬裁剪这次要发出的列表，删了消息时记一行日志；untrimmedHistory 按没经过硬裁剪的列表估算 */
+        const trimForCall = (list: Message[]) => {
+          const sent = this.trimMessages(list, tokenBudget);
+          if (sent.messages.length < list.length) {
+            this.logger.info(
+              `上下文硬裁剪: session=${incoming.sessionId}, ${list.length} → ${sent.messages.length} 条消息`,
+            );
+          }
+          turnTrimmed ||= sent.trimmed;
+          return { messages: sent.messages, untrimmedHistory: estimateHistoryTokens(list) + trimmedFromBase };
+        };
 
-        // 推送 token 使用量统计
-        this.emitTokenUsage(
-          incoming.sessionId,
-          incoming.platform,
-          llmBeforeData.messages,
-          llmBeforeData.tools,
-          contextLength,
-          maxTokens,
-          tokenBudget,
-          turnId,
-        );
+        // 裁剪消息以确保不超过上下文窗口；裁剪结果写回，作为之后各次调用的底稿
+        const firstSent = trimForCall(llmBeforeData.messages);
+        trimmedFromBase = firstSent.untrimmedHistory - estimateHistoryTokens(firstSent.messages);
+        llmBeforeData.messages = firstSent.messages;
+
+        // 每次模型调用之后发一次用量：拆分按这次发出的消息与工具定义估算，used 取模型服务返回的输入 token
+        const reportUsage = (
+          sent: ReturnType<typeof trimForCall>,
+          sentTools: ToolDefinition[],
+          response: ChatResponse,
+        ) =>
+          this.emitTokenUsage({
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            turnId,
+            contextWindow: contextLength,
+            maxTokens,
+            tokenBudget,
+            messages: sent.messages,
+            tools: sentTools,
+            trimmed: turnTrimmed,
+            untrimmedHistory: sent.untrimmedHistory,
+            historyMessages,
+            promptTokens: response.usage?.promptTokens,
+          });
 
         this.logger.debug(
           `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
@@ -800,6 +855,7 @@ class DefaultAgent implements AgentService {
           incoming.platform,
           !reportOnly,
         );
+        await reportUsage(firstSent, llmBeforeData.tools, firstResult);
         accUsage(firstResult.usage);
         /** 这一次模型回复里各工具调用在生成进度里配好的 callId 与工具名，按调用的位置 */
         let generating = firstResult.generating;
@@ -1046,6 +1102,7 @@ class DefaultAgent implements AgentService {
               callId,
             });
           }
+          historyMessages += 1 + toolMessages.length;
 
           await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages, turnPersistedTimestamps);
 
@@ -1067,19 +1124,8 @@ class DefaultAgent implements AgentService {
           await this.caps.hooks.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
-          nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
-
-          // 推送 token 使用量统计
-          this.emitTokenUsage(
-            incoming.sessionId,
-            incoming.platform,
-            nextLlmData.messages,
-            nextLlmData.tools,
-            contextLength,
-            maxTokens,
-            tokenBudget,
-            turnId,
-          );
+          const nextSent = trimForCall(nextLlmData.messages);
+          nextLlmData.messages = nextSent.messages;
 
           const tN = Date.now();
           const nextResult = await this.consumeStream(
@@ -1095,6 +1141,7 @@ class DefaultAgent implements AgentService {
             incoming.sessionId,
             incoming.platform,
           );
+          await reportUsage(nextSent, nextLlmData.tools, nextResult);
           turnSegments.push(...nextResult.segments);
           response = nextResult;
           generating = nextResult.generating;
@@ -1165,11 +1212,11 @@ class DefaultAgent implements AgentService {
             content:
               responseData.retryFeedback ?? '上一次回复未能通过格式校验，请严格按照系统提示中规定的格式重新输出。',
           });
-          const retryTrimmed = this.trimMessages(llmBeforeData.messages, tokenBudget);
+          const retrySent = trimForCall(llmBeforeData.messages);
           const retryResult = await this.consumeStream(
             llm,
             {
-              messages: retryTrimmed,
+              messages: retrySent.messages,
               tools: undefined,
               maxTokens,
               signal,
@@ -1180,6 +1227,7 @@ class DefaultAgent implements AgentService {
             incoming.platform,
             !reportOnly,
           );
+          await reportUsage(retrySent, [], retryResult);
           turnSegments.push(...retryResult.segments);
           response = retryResult;
           accUsage(response.usage);
@@ -1377,14 +1425,17 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 构建发送给 LLM 的消息列表
+   * 构建发送给 LLM 的消息列表。历史按会话的条数线读：historyLimit 为 0 或没设置时读全部活跃历史。
+   * historyMessages 是从记忆读进的条数（含已归档的这一轮入站消息），与之后的清洗、裁剪无关
    */
   private async buildMessages(
     incoming: IncomingMessage,
+    historyLimit: number | undefined,
     personaOpts?: PersonaSessionOptions,
     archivedIncoming?: Message,
-  ): Promise<Message[]> {
+  ): Promise<{ messages: Message[]; historyMessages: number }> {
     const messages: Message[] = [];
+    let historyMessages = 0;
 
     // 1. 系统提示
     const systemPrompt = this.buildSystemPrompt(personaOpts);
@@ -1394,10 +1445,9 @@ class DefaultAgent implements AgentService {
     const memory = this.caps.memory.current;
     if (memory) {
       try {
-        const history = this.sanitizeToolCallHistory(
-          await memory.getHistory(incoming.sessionId, this.historyLimit),
-          incoming.sessionId,
-        );
+        const stored = await memory.getHistory(incoming.sessionId, historyLimit || Infinity);
+        historyMessages = stored.length;
+        const history = this.sanitizeToolCallHistory(stored, incoming.sessionId);
         const now = Date.now();
         for (const m of history) {
           if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
@@ -1438,7 +1488,7 @@ class DefaultAgent implements AgentService {
         content: `[宿主通知]\n${incoming.content}${untrusted ? `\n\n${untrusted}` : ''}`,
         metadata: { injector: WellKnownKinds.HostNotice },
       });
-      return messages;
+      return { messages, historyMessages };
     }
 
     // 3a. proactive 分支：系统代发给本会话的任务指令（如 workflow 的 agent 节点）
@@ -1456,7 +1506,7 @@ class DefaultAgent implements AgentService {
           `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n`,
         metadata: { injector: WellKnownKinds.CrossSessionDelegation },
       });
-      return messages;
+      return { messages, historyMessages };
     }
 
     // 3b. 普通用户消息分支
@@ -1523,7 +1573,7 @@ class DefaultAgent implements AgentService {
 
     messages.push(userMessage);
 
-    return messages;
+    return { messages, historyMessages };
   }
 
   /**
@@ -1556,21 +1606,23 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 推送 token 使用量统计事件
-   *
-   * 包含各维度的 token 使用分解，供前端展示和自动压缩判断。
+   * 发 token:usage：各维度的拆分按消息与工具定义估算，used 取模型服务返回的输入 token，没有时取估算。
+   * 等全部监听者处理完才返回：摘要插件在回合结束时按这一轮最后一条用量判定，不能让它晚于回合结束
    */
-  private emitTokenUsage(
-    sessionId: string,
-    platform: string,
-    messages: Message[],
-    tools: ToolDefinition[],
-    contextLength: number,
-    maxTokens: number,
-    tokenBudget: number,
-    /** 所在回合；回应 token:request 的快照不在回合里 */
-    turnId?: string,
-  ): void {
+  private async emitTokenUsage({
+    sessionId,
+    platform,
+    turnId,
+    contextWindow,
+    maxTokens,
+    tokenBudget,
+    messages,
+    tools,
+    trimmed,
+    untrimmedHistory,
+    historyMessages,
+    promptTokens,
+  }: UsageReport): Promise<void> {
     // 按来源分类统计各消息的 token 占用
     let historyTokens = 0;
     let toolResultTokens = 0;
@@ -1645,48 +1697,53 @@ class DefaultAgent implements AgentService {
       platformTokens +
       subtaskTokens +
       systemOtherTokens;
-    const totalUsed = systemTokens + historyTokens + toolResultTokens + toolDefsTokens;
-    const usageRatio = contextLength > 0 ? totalUsed / contextLength : 0;
+    // 服务商回的数没人核过：不是正的有限数（缺省、0、NaN）时按估算，一次调用的输入不会是 0 token
+    const used =
+      promptTokens !== undefined && promptTokens > 0 && Number.isFinite(promptTokens)
+        ? promptTokens
+        : systemTokens + historyTokens + toolResultTokens + toolDefsTokens;
+    const usageRatio = contextWindow > 0 ? used / contextWindow : 0;
 
-    this.caps.events
-      .emit('token:usage', {
-        sessionId,
-        turnId,
-        platform,
-        contextWindow: contextLength,
-        maxTokens,
-        tokenBudget,
-        used: totalUsed,
-        usageRatio,
-        breakdown: {
-          system: systemTokens,
-          persona: personaTokens,
-          memorySummary: memorySummaryTokens,
-          memoryVector: memoryVectorTokens,
-          skills: skillsTokens,
-          platform: platformTokens,
-          subtask: subtaskTokens,
-          systemOther: systemOtherTokens,
-          injectors: injectorTokens,
-          history: historyTokens,
-          toolResults: toolResultTokens,
-          toolDefs: toolDefsTokens,
-          reservedForReply: maxTokens,
-        },
-        parts: [
-          { label: '历史消息', tokens: historyTokens },
-          { label: '工具结果', tokens: toolResultTokens },
-          { label: '工具定义', tokens: toolDefsTokens },
-          { label: '人设', tokens: personaTokens },
-          { label: '对话摘要', tokens: memorySummaryTokens },
-          { label: '向量记忆', tokens: memoryVectorTokens },
-          { label: '技能', tokens: skillsTokens },
-          { label: '平台提示', tokens: platformTokens },
-          { label: '子任务', tokens: subtaskTokens },
-          { label: '其余系统提示', tokens: systemOtherTokens, injectors: injectorTokens },
-        ],
-      })
-      .catch(() => {});
+    await this.caps.events.emit('token:usage', {
+      sessionId,
+      turnId,
+      platform,
+      contextWindow,
+      maxTokens,
+      tokenBudget,
+      used,
+      usageRatio,
+      trimmed,
+      untrimmedHistory,
+      historyMessages,
+      breakdown: {
+        system: systemTokens,
+        persona: personaTokens,
+        memorySummary: memorySummaryTokens,
+        memoryVector: memoryVectorTokens,
+        skills: skillsTokens,
+        platform: platformTokens,
+        subtask: subtaskTokens,
+        systemOther: systemOtherTokens,
+        injectors: injectorTokens,
+        history: historyTokens,
+        toolResults: toolResultTokens,
+        toolDefs: toolDefsTokens,
+        reservedForReply: maxTokens,
+      },
+      parts: [
+        { label: '历史消息', tokens: historyTokens },
+        { label: '工具结果', tokens: toolResultTokens },
+        { label: '工具定义', tokens: toolDefsTokens },
+        { label: '人设', tokens: personaTokens },
+        { label: '对话摘要', tokens: memorySummaryTokens },
+        { label: '向量记忆', tokens: memoryVectorTokens },
+        { label: '技能', tokens: skillsTokens },
+        { label: '平台提示', tokens: platformTokens },
+        { label: '子任务', tokens: subtaskTokens },
+        { label: '其余系统提示', tokens: systemOtherTokens, injectors: injectorTokens },
+      ],
+    });
 
     // 节流日志：与 WebUI 看到的同一份数据，让 CLI / 文件日志使用者也能看见预算消耗。
     // 跨过 0.5 / 0.7 / 0.85 阈值必输出，否则每 10 轮一次。
@@ -1697,7 +1754,7 @@ class DefaultAgent implements AgentService {
     if (crossedBucket || st.count % 10 === 1) {
       const tag = bucket >= 3 ? 'CRITICAL' : bucket >= 2 ? 'WARN' : bucket >= 1 ? 'INFO' : 'OK';
       this.logger.info(
-        `[token-usage:${tag}] ${sessionId} ${totalUsed}/${contextLength} (${(usageRatio * 100).toFixed(1)}%) ` +
+        `[token-usage:${tag}] ${sessionId} ${used}/${contextWindow} (${(usageRatio * 100).toFixed(1)}%) ` +
           `sys=${systemTokens}(persona=${personaTokens} mem=${memorySummaryTokens + memoryVectorTokens} ` +
           `skills=${skillsTokens} subtask=${subtaskTokens} other=${systemOtherTokens}) ` +
           `hist=${historyTokens} tools=${toolResultTokens}+${toolDefsTokens}def reserve=${maxTokens}`,
@@ -1739,7 +1796,8 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 裁剪消息列表，使总 token 数不超过预算
+   * 裁剪消息列表，使总 token 数不超过预算；trimmed 报告入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容）。
+   * 不记日志：token:request 的快照同样走这里，删了消息的日志由真实回合的调用点记
    *
    * 渐进式压缩策略（保证 agent 在长工具链中无限运行）：
    *  1. 首条 system（主提示词）和末条消息永不删除
@@ -1749,10 +1807,10 @@ class DefaultAgent implements AgentService {
    *  5. 删除最旧的非 system 消息
    *  6. 最后手段：删除 hook 注入的 system 消息
    */
-  private trimMessages(messages: Message[], budget: number): Message[] {
+  private trimMessages(messages: Message[], budget: number): TrimmedMessages {
     const result = messages.map(m => ({ ...m }));
     let estimated = this.estimateTokens(result);
-    if (estimated <= budget) return result;
+    if (estimated <= budget) return { messages: result, trimmed: false };
 
     /** 重新扫描 system 消息索引（首条和末条之间） */
     const findSystemIndices = (): number[] => {
@@ -1780,7 +1838,7 @@ class DefaultAgent implements AgentService {
         }
       }
     }
-    if (estimated <= budget) return result;
+    if (estimated <= budget) return { messages: result, trimmed: true };
 
     // === Phase 2: 截断过长的 tool 输出 ===
     for (let i = 1; i < result.length - 1; i++) {
@@ -1791,7 +1849,7 @@ class DefaultAgent implements AgentService {
         estimated -= oldTokens - estimateMsgTokens(result[i]);
       }
     }
-    if (estimated <= budget) return result;
+    if (estimated <= budget) return { messages: result, trimmed: true };
 
     // === Phase 2.5: 缩减 assistant 消息的 reasoningContent ===
     // 深度思考模型的推理内容可能非常长（数万 token），优先缩减旧迭代的推理，
@@ -1817,7 +1875,7 @@ class DefaultAgent implements AgentService {
         estimated -= oldTokens - estimateMsgTokens(msg);
       }
     }
-    if (estimated <= budget) return result;
+    if (estimated <= budget) return { messages: result, trimmed: true };
 
     // === Phase 3: 将旧的 assistant+tool 组压缩为摘要 ===
     // 识别所有工具调用组 (assistant(toolCalls) + 紧跟的 tool 消息)
@@ -1868,12 +1926,7 @@ class DefaultAgent implements AgentService {
         }
       }
     }
-    if (estimated <= budget) {
-      if (result.length < messages.length) {
-        this.logger.info(`上下文压缩: ${messages.length} → ${result.length} 条消息 (约 ${estimated} tokens)`);
-      }
-      return result;
-    }
+    if (estimated <= budget) return { messages: result, trimmed: true };
 
     // === Phase 4: 删除最旧的非 system 消息（保护最后一组工具调用 + 最新用户消息） ===
     {
@@ -1932,10 +1985,7 @@ class DefaultAgent implements AgentService {
         adjustAfterSplice(i);
       }
     }
-    if (estimated <= budget) {
-      this.logger.info(`上下文截断: ${messages.length} → ${result.length} 条消息 (约 ${estimated} tokens)`);
-      return result;
-    }
+    if (estimated <= budget) return { messages: result, trimmed: true };
 
     // === Phase 5: 极端情况 — 删除 hook 注入的 system 消息 ===
     // 从最靠前的块开始删。turn-context 迁移后头部只剩技能正文/会话摘要、
@@ -1972,13 +2022,9 @@ class DefaultAgent implements AgentService {
         }
       }
       result.splice(insertIdx, 0, hint);
-      estimated += estimateMsgTokens(hint);
     }
 
-    if (result.length < messages.length) {
-      this.logger.info(`上下文截断: ${messages.length} → ${result.length} 条消息 (约 ${estimated} tokens)`);
-    }
-    return result;
+    return { messages: result, trimmed: true };
   }
 
   private getArchiveForWrite() {
@@ -2164,12 +2210,6 @@ const configSchema = defineConfig({
     secret: false,
     description: '为注入的 system 消息预留的 token 额度：超出时先按比例缩减，极端情况下（最后阶段）仍会删除',
   },
-  historyLimit: {
-    type: 'number',
-    label: '历史消息条数',
-    default: 50,
-    description: '从记忆中加载的最近对话历史条数',
-  },
   maxToolIterations: {
     type: 'number',
     label: '最大工具迭代',
@@ -2194,13 +2234,13 @@ const configSchema = defineConfig({
     label: '裁剪触发比例',
     default: 1.0,
     description:
-      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
+      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件登记）与历史条数上限（本插件登记）。',
   },
 });
 
 /**
- * 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考与工具迭代上限，各种会话都适用。工具迭代上限没设置时
- * 用插件配置的值，写进字段的默认值
+ * 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考、工具迭代上限与历史条数上限，各种会话都适用。工具迭代上限
+ * 没设置时用插件配置的值，写进字段的默认值
  */
 const sessionSettings = (maxToolIterations: number): SessionSetting[] => [
   {
@@ -2248,26 +2288,33 @@ const sessionSettings = (maxToolIterations: number): SessionSetting[] => [
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'advanced',
   },
+  {
+    key: 'historyLimit',
+    field: {
+      type: 'number',
+      label: '历史条数上限',
+      integer: true,
+      min: 0,
+      default: 0,
+      description:
+        '一轮最多读进这么多条会话历史；装了摘要插件时，会话的消息到这个条数就压缩。0 表示不按条数：读全部活跃历史，只按自动压缩线压缩',
+    },
+    appliesTo: ['owner', 'room', 'task'],
+    prominence: 'advanced',
+    // 子会话按自己的继承链实时解析，不冻结父会话当时的值
+    liveOnly: true,
+  },
 ];
 
 // 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
-  historyLimit: number;
   promptBuildTimeoutMs: number;
   resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined>;
   computeTokenBudget(contextLength: number, maxTokens: number): number;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
-  emitTokenUsage(
-    sessionId: string,
-    platform: string,
-    messages: Message[],
-    tools: ToolDefinition[],
-    contextLength: number,
-    maxTokens: number,
-    tokenBudget: number,
-    turnId?: string,
-  ): void;
+  trimMessages(messages: Message[], budget: number): TrimmedMessages;
+  emitTokenUsage(usage: UsageReport): Promise<void>;
 };
 
 function run(caps: Caps): void {
@@ -2553,11 +2600,9 @@ function run(caps: Caps): void {
       const systemPrompt = agent.buildSystemPrompt(toPersonaOptions(sessionResolved));
       messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
-      // 历史消息
-      if (memory) {
-        const history = await memory.getHistory(data.sessionId, agent.historyLimit);
-        messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
-      }
+      // 历史消息：与真实回合同样按会话的条数线读
+      const history = memory ? await memory.getHistory(data.sessionId, sessionResolved?.historyLimit || Infinity) : [];
+      messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
@@ -2575,15 +2620,20 @@ function run(caps: Caps): void {
       await assemblePromptContributions(caps, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
       await caps.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
-      agent.emitTokenUsage(
-        data.sessionId,
+      // 与真实回合同样过硬裁剪，拆分按裁剪之后的消息算
+      const sent = agent.trimMessages(llmBeforeData.messages, tokenBudget);
+      await agent.emitTokenUsage({
+        sessionId: data.sessionId,
         platform,
-        llmBeforeData.messages,
-        llmBeforeData.tools,
-        contextLength,
+        contextWindow: contextLength,
         maxTokens,
         tokenBudget,
-      );
+        messages: sent.messages,
+        tools: llmBeforeData.tools,
+        trimmed: sent.trimmed,
+        untrimmedHistory: estimateHistoryTokens(llmBeforeData.messages),
+        historyMessages: history.length,
+      });
     } catch (err) {
       caps.logger.debug('token:request 处理失败:', err);
     }

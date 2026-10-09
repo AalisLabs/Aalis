@@ -57,7 +57,6 @@ it('全局默认设了模型时会话用它；会话设置链都没设时用服�
   await app.plugin(sessionManagerPlugin);
   await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
-    historyLimit: 10,
     memoryTokenBudget: 1024,
     maxToolIterations: 3,
     preferredModel: '',

@@ -55,7 +55,7 @@ describe('LLM 全部激活失败：发回会话的提示只点名实例', () => 
     }
     await use(app, memoryInMemoryPlugin);
     await use(app, messageArchivePlugin, { debugLogs: false });
-    await use(app, agentPlugin, { systemPrompt: 'test', historyLimit: 50, memoryTokenBudget: 1024 });
+    await use(app, agentPlugin, { systemPrompt: 'test', memoryTokenBudget: 1024 });
 
     const host = app.bind({ events, agent });
     const sent: string[] = [];
