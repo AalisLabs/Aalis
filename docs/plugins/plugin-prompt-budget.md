@@ -90,7 +90,7 @@ export default definePlugin({
 
 阈值与 `plugin-agent` 内的节流 logger 一致，便于 WebUI 日志、AI 自检、人类观察对齐口径。
 
-advice 文案不写压缩阈值数字、也不承诺"压缩一定会发生"：自动压缩的阈值是 [plugin-memory-summary](./plugin-memory-summary.md) 自己的配置项，没装该插件时就没有自动压缩。对模型只讲它自己能做的事——减少后续工具输出体量。
+advice 文案不写压缩阈值数字、也不承诺"压缩一定会发生"：自动压缩线是 [plugin-memory-summary](./plugin-memory-summary.md) 登记的会话设置项「自动压缩线」，各层可以设成不同的值，没装该插件时就没有自动压缩。对模型只讲它自己能做的事——减少后续工具输出体量。
 
 ## 与其他模块的关系
 

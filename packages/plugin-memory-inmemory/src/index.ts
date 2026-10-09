@@ -62,15 +62,12 @@ class InMemoryFallbackService implements MemoryService {
     this.archivedSessions.clear();
   }
 
-  async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
+  async archiveOldest(sessionId: string, count: number): Promise<number> {
     const history = this.sessions.get(sessionId);
-    if (!history || history.length <= keepRecent) return 0;
-    const removed = history.length - keepRecent;
-    const archived = history.slice(0, -keepRecent);
-    const existing = this.archivedSessions.get(sessionId) ?? [];
-    this.archivedSessions.set(sessionId, [...existing, ...archived]);
-    this.sessions.set(sessionId, history.slice(-keepRecent));
-    return removed;
+    if (!history) return 0;
+    const archived = history.splice(0, count);
+    this.archivedSessions.set(sessionId, [...(this.archivedSessions.get(sessionId) ?? []), ...archived]);
+    return archived.length;
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {

@@ -22,7 +22,7 @@ async function seed(mem: MemoryService): Promise<void> {
   for (const s of ['s1', 's2']) {
     for (let i = 0; i < 3; i++) await mem.saveMessage(s, msg(`${s}-${i}`, 1000 + i));
   }
-  await mem.trimHistory!('s1', 1);
+  await mem.archiveOldest('s1', 2);
   await mem.saveMetadata('user:profile', 'onebot:u1', { facts: ['喜欢猫'] });
   await mem.saveMetadata('sessions', 's1', { name: '会话一' });
 }

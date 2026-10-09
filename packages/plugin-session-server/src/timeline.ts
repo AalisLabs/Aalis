@@ -111,8 +111,8 @@ interface TimelineDeps {
   notify<N extends SessionNotification>(sessionId: string, method: N, params: SessionNotificationParams<N>): void;
   /** 请 agent 重发某会话的用量 */
   requestUsage(sessionId: string, platform: string): void;
-  /** 自动压缩的使用率（用量条目的压缩线）；没有压缩服务或不自动压缩时没有 */
-  compressAt(): number | undefined;
+  /** 这个会话的自动压缩线，platform 取用量事件上的；没有压缩服务或不按用量压缩时没有 */
+  compressAt(sessionId: string, platform: string): number | undefined;
   /** 这个会话已推出、还没结的审批 */
   approvalsOf(sessionId: string): Approval[];
   /** 插件停用时中止：不再等平台的送达结果 */
@@ -127,8 +127,8 @@ export function createTimeline(deps: TimelineDeps) {
   const turns = new Map<string, Turn>();
   /** 正在读历史的快照各自的 seq */
   const pending: number[] = [];
-  /** 每个会话最近一次的用量，不含压缩线：压缩线在推送与取快照时现取 */
-  const usages = new Map<string, Item<'usage'>>();
+  /** 每个会话最近一次的用量与它的平台，不含压缩线：压缩线在推送与取快照时现取 */
+  const usages = new Map<string, { item: Item<'usage'>; platform: string }>();
   /** 每个会话进行中的压缩 */
   const compressions = new Map<string, Item<'notice'>>();
   /** 回合的异步上下文：她的回复与定稿校验经它认出属于哪一轮 */
@@ -292,9 +292,12 @@ export function createTimeline(deps: TimelineDeps) {
   const unsettledOf = (sessionId: string) =>
     [...turns.values()].filter(turn => turn.sessionId === sessionId && (turn.end === undefined || turn.receipts > 0));
 
-  const withCompressAt = (item: Item<'usage'>): Item<'usage'> => {
-    const compressAt = deps.compressAt();
-    return compressAt === undefined ? item : { ...item, compressAt };
+  /** 压缩线：会话的自动压缩线与裁剪预算占窗口的比例中较小的那个，压缩实际在这里发生（见 api-memory 的 compressionDue） */
+  const withCompressAt = (sessionId: string, { item, platform }: { item: Item<'usage'>; platform: string }) => {
+    const compressAt = deps.compressAt(sessionId, platform);
+    return compressAt === undefined
+      ? item
+      : { ...item, compressAt: Math.min(compressAt, item.tokenBudget / item.contextWindow) };
   };
 
   const planItem = (entries: TodoItem[]): Item<'plan'> => ({
@@ -552,8 +555,9 @@ export function createTimeline(deps: TimelineDeps) {
       usageRatio: event.usageRatio,
       parts: event.parts,
     };
-    usages.set(event.sessionId, item);
-    emit(event.sessionId, 'item/completed', withCompressAt(item));
+    const latest = { item, platform: event.platform };
+    usages.set(event.sessionId, latest);
+    emit(event.sessionId, 'item/completed', withCompressAt(event.sessionId, latest));
   }
 
   function compressing(sessionId: string, status: 'start' | 'done' | 'error'): void {
@@ -603,7 +607,7 @@ export function createTimeline(deps: TimelineDeps) {
     const open = unsettledOf(sessionId);
     const ongoing = structuredClone([
       ...open.flatMap(turn => [...turn.items.values()]),
-      ...[compressions.get(sessionId), usage && withCompressAt(usage)].filter(item => item !== undefined),
+      ...[compressions.get(sessionId), usage && withCompressAt(sessionId, usage)].filter(item => item !== undefined),
     ]);
     const approvals = structuredClone(deps.approvalsOf(sessionId));
     // 读历史期间这些回合可能收尾、被清掉，按此刻抄下的回合排除它们的存档
