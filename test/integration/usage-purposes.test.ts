@@ -76,7 +76,7 @@ describe('模型调用的用途与会话', () => {
     await app.plugin(createMockLLMPlugin({ responses: () => ({ content: '好的', usage: USAGE }) }));
     await app.plugin(visionProvider);
     await app.plugin(agentPlugin, { systemPrompt: 'test' });
-    await app.plugin(memorySummaryPlugin, { keepRecent: 1 });
+    await app.plugin(memorySummaryPlugin);
     await app.plugin(usageStatsPlugin);
     await app.plugins.idle();
     for (const plugin of [agentPlugin, memorySummaryPlugin, usageStatsPlugin, sessionManagerPlugin]) {
@@ -99,7 +99,7 @@ describe('模型调用的用途与会话', () => {
     for (const content of ['第一条', '第二条', '第三条']) {
       await host.memory.require().saveMessage(owner.id, { role: 'user', content });
     }
-    await host.compression.require().compress(owner.id, 'manual');
+    await host.compression.require().compress(owner.id, { reason: 'manual' });
     const media = new MediaServiceImpl(
       { logger: quiet, llm: host.llm, asr: ref(), sessionManager: ref(), memory: ref() },
       MEDIA_CONFIG,

@@ -92,7 +92,7 @@ function doubles() {
           await events.emit('session:compressing', { sessionId, status: 'start' });
           await events.emit('session:compressing', { sessionId, status: 'done' });
         },
-        autoThreshold: AUTO_COMPRESS,
+        compressAt: () => AUTO_COMPRESS,
       });
     },
   });
@@ -218,7 +218,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.locator(aria('批准', 'button')).click();
     await page.waitForSelector(text('发布好了。'));
 
-    // 压缩线：用量取压缩服务声明的自动压缩线
+    // 压缩线：用量条目取压缩服务按会话给的自动压缩线
     const meter = await page.waitForSelector('[aria-label^="上下文已用"]');
     expect(await meter?.evaluate(element => element.getAttribute('title'))).toContain(
       `，到 ${AUTO_COMPRESS * 100}% 自动压缩`,

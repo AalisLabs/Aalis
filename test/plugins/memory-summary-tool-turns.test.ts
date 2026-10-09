@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 
@@ -8,18 +8,12 @@ import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 //   - 带 toolCalls 的 assistant 渲染成「助手: (空)」，等于告诉模型这一轮什么也没发生。
 // 现在渲染成「调用 <工具名>(精简参数)」与「工具结果(名): …」，每条硬截断、名字优先；
 // tool 结果的工具名按 toolCallId 从 assistant.toolCalls 反查（消息自带 name 只作回落）。
-// generateSummary 与压缩两条路径同款。
 // ════════════════════════════════════════════════════════════
 
 const LONG_RESULT = `晴${'气温二十六度'.repeat(60)}`; // 远超每条上限
 
-const lastInput = { text: '' };
-beforeEach(() => {
-  lastInput.text = '';
-});
-
 /** 一个真实形状的工具回合：user 提问 → assistant(toolCalls, content 空) → tool 结果 → assistant 回答 */
-async function seedToolTurn(store: MemoryService, sessionId: string, filler: number): Promise<void> {
+async function seedToolTurn(store: MemoryService, sessionId: string): Promise<void> {
   await store.saveMessage(sessionId, { role: 'user', content: '北京天气怎么样' });
   await store.saveMessage(sessionId, {
     role: 'assistant',
@@ -30,9 +24,6 @@ async function seedToolTurn(store: MemoryService, sessionId: string, filler: num
   // 工具名以同回合 assistant.toolCalls 按 toolCallId 反查为准，m.name 只作回落
   await store.saveMessage(sessionId, { role: 'tool', toolCallId: 'c1', name: 'stale_name', content: LONG_RESULT });
   await store.saveMessage(sessionId, { role: 'assistant', content: '北京今天晴' });
-  for (let i = 0; i < filler; i++) {
-    await store.saveMessage(sessionId, { role: i % 2 === 0 ? 'user' : 'assistant', content: `填充 ${i}` });
-  }
 }
 
 function assertToolTurnRendered(text: string): void {
@@ -47,30 +38,14 @@ function assertToolTurnRendered(text: string): void {
 }
 
 describe('plugin-memory-summary: 工具回合进摘要输入', () => {
-  it('generateSummary 路径：渲染工具调用与工具结果（每条硬截断）', async () => {
-    const { app, host, memory } = await setupSummary({ threshold: 10, keepRecent: 4 }, fakeSummaryLLM(lastInput));
-    await seedToolTurn(memory, 's-t0', 20);
+  it('渲染工具调用与工具结果（每条硬截断）', async () => {
+    const llm = fakeSummaryLLM();
+    const { app, memory, compression } = await setupSummary({}, llm.model);
+    await seedToolTurn(memory, 's-t1');
 
-    await host.hooks.run(
-      'agent:turn:after' as never,
-      { message: { sessionId: 's-t0' }, reply: 'ok', outcome: 'replied', sessionId: 's-t0', metadata: {} } as never,
-    );
-    await new Promise<void>(r => setTimeout(r, 50));
+    await compression.compress('s-t1', { reason: 'manual' });
 
-    assertToolTurnRendered(lastInput.text);
-    await app.stop();
-  });
-
-  it('压缩路径：同款渲染', async () => {
-    const { app, memory, compression } = await setupSummary(
-      { threshold: 10, keepRecent: 4 },
-      fakeSummaryLLM(lastInput),
-    );
-    await seedToolTurn(memory, 's-t1', 20);
-
-    await compression.compress('s-t1', 'manual');
-
-    assertToolTurnRendered(lastInput.text);
+    assertToolTurnRendered(llm.text());
     await app.stop();
   });
 });

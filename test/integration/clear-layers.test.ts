@@ -107,7 +107,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
     for (const key of keys) await mem.saveMetadata(ns, key, { seeded: true });
   for (const s of ['s-cur', 's-other']) {
     for (let i = 0; i < 3; i++) await mem.saveMessage(s, { role: 'user', content: `${s}-${i}`, timestamp: 1000 + i });
-    await mem.trimHistory!(s, 1);
+    await mem.archiveOldest(s, 2);
   }
 
   async function run(name: 'clear' | 'clear.all' | 'profile.clear.nuke', types?: string[]): Promise<string> {

@@ -7,13 +7,14 @@ import { App, events, provide } from '../../packages/core/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { endTurn } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
 // 一次摘要只认开头取到的 memory 实例。
 //
-// 读历史 → 调 LLM（数十秒到 120 秒）→ 写摘要 → 裁切（失败则回滚摘要），中间 memory 胜者
-// 可能换人，本插件不重启。摘要若每步现取胜者，就会从 A 读历史、在 A 上裁切，摘要却写进 B；
-// 裁切失败时的回滚也落到 B，把 A 的旧摘要盖在 B 上。
+// 读历史 → 调 LLM（数十秒到 120 秒）→ 核对 → 写摘要 → 归档（失败则回滚摘要），中间 memory 胜者
+// 可能换人，本插件不重启。摘要若每步现取胜者，就会从 A 读历史、在 A 上归档，摘要却写进 B；
+// 归档失败时的回滚也落到 B，把 A 的旧摘要盖在 B 上。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 's-1';
@@ -44,10 +45,10 @@ function gatedLLM() {
 
 class StubMemory {
   readonly metadata = new Map<string, Record<string, unknown>>();
-  trimCalls = 0;
+  archiveCalls = 0;
   constructor(
     readonly history: Message[] = [],
-    private readonly trimError?: Error,
+    private readonly archiveError?: Error,
   ) {}
 
   async saveMessage(_sessionId: string, message: Message): Promise<void> {
@@ -57,10 +58,10 @@ class StubMemory {
     return [...this.history];
   }
   async clearSession(): Promise<void> {}
-  async trimHistory(_sessionId: string, keepRecent: number): Promise<number> {
-    this.trimCalls++;
-    if (this.trimError) throw this.trimError;
-    return this.history.splice(0, Math.max(0, this.history.length - keepRecent)).length;
+  async archiveOldest(_sessionId: string, count: number): Promise<number> {
+    this.archiveCalls++;
+    if (this.archiveError) throw this.archiveError;
+    return this.history.splice(0, count).length;
   }
   async saveMetadata(ns: string, key: string, data: Record<string, unknown>): Promise<void> {
     this.metadata.set(`${ns}/${key}`, data);
@@ -101,7 +102,7 @@ async function setup(first: StubMemory, model: LLMModel) {
   const host = app.bind({ provide, events, hooks, compression });
   host.provide(memory, first as unknown as MemoryService);
   host.provide(llm, model);
-  await app.plugin(memorySummary, { threshold: 30, keepRecent: 10 });
+  await app.plugin(memorySummary);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
   return { app, host };
@@ -116,35 +117,28 @@ async function switchWinnerMidway({ app, host }: Booted, gated: ReturnType<typeo
   gated.release();
 }
 
-/** 等这次操作走完：裁切之后只剩写摘要 / 回滚这几步微任务，一拍宏任务足够落定 */
+/** 等这次操作走完：归档之后只剩回滚这几步微任务，一拍宏任务足够落定 */
 async function settle(first: StubMemory, pending: Promise<unknown>): Promise<void> {
   await pending;
-  await vi.waitFor(() => expect(first.trimCalls).toBe(1));
+  await vi.waitFor(() => expect(first.archiveCalls).toBe(1));
   await new Promise<void>(r => setTimeout(r, 20));
 }
 
-/** 两条摘要路径：agent:turn:after 触发的 generateSummary（后台跑，不阻塞钩子）与压缩（裁切失败时以失败落定，这里只看写在哪） */
+/** 两个入口：回合结束时用量到线的后台压缩（不阻塞钩子）与手动压缩（归档失败时以失败落定，这里只看写在哪） */
 const paths: Array<[string, (host: Booted['host']) => Promise<unknown>]> = [
+  ['后台压缩', host => endTurn(host, SESSION, { used: 900, compressible: 500 })],
   [
-    'generateSummary',
-    host =>
-      host.hooks.run(
-        'agent:turn:after' as never,
-        { message: { sessionId: SESSION }, reply: 'ok', outcome: 'replied', sessionId: SESSION, metadata: {} } as never,
-      ),
-  ],
-  [
-    'compress',
+    '手动压缩',
     host =>
       host.compression
         .require()
-        .compress(SESSION, 'manual')
+        .compress(SESSION, { reason: 'manual' })
         .catch(() => {}),
   ],
 ];
 
 describe.each(paths)('plugin-memory-summary %s：一次操作只认开头取到的 memory 实例', (_name, trigger) => {
-  it('LLM 挂起期间换胜者：摘要写在读历史、裁切的同一个 A 上，B 无摘要', async () => {
+  it('LLM 挂起期间换胜者：摘要写在读历史、归档的同一个 A 上，B 无摘要', async () => {
     const gated = gatedLLM();
     const first = new StubMemory(seedHistory(40));
     const second = new StubMemory();
@@ -154,13 +148,13 @@ describe.each(paths)('plugin-memory-summary %s：一次操作只认开头取到�
     await switchWinnerMidway(booted, gated, second);
     await settle(first, pending);
 
-    expect(first.history, 'A 上的历史应被裁切').toHaveLength(10);
+    expect(first.history, 'A 上的历史应全部归档').toHaveLength(0);
     expect(first.summary(), '摘要应写在 A').toBe('SUMMARY-FROM-A');
     expect(second.summary(), 'B 不得出现摘要').toBeUndefined();
-    expect(second.trimCalls).toBe(0);
+    expect(second.archiveCalls).toBe(0);
   });
 
-  it('裁切失败：摘要回滚在 A 上，B 原有摘要不被覆盖', async () => {
+  it('归档失败：摘要回滚在 A 上，B 原有摘要不被覆盖', async () => {
     const gated = gatedLLM();
     const first = new StubMemory(seedHistory(40), new Error('SQLITE_BUSY'));
     first.metadata.set(`summary/${SESSION}`, { summary: 'A-OLD' });
