@@ -8,11 +8,11 @@
 
 Gateway 是 Aalis 的运行时编排中枢，负责：
 
-- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行触发五个相位的钩子链：
+- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行触发四个相位的钩子链：
   ```
   inbound:command → inbound:trigger → inbound:flow → inbound:dispatch
   ```
-  任一相位 handler 不调用 `next()` 即"吞掉"消息，后续相位不再触发。`inbound:trigger` 判定要不要开口并写 `triggerType`，`inbound:flow` 按禁言、冷却、限速把关（`immediate` 穿透冷却与限速）。`inbound:dispatch` 默认动作是调用 `agent.handleMessage(message)`。
+  任一相位 handler 不调用 `next()` 即"吞掉"消息，后续相位不再触发。`inbound:trigger` 判定要不要开口并写 `triggerType`，`inbound:flow` 按禁言、冷却、限速把关（`immediate` 穿透冷却与限速）。`inbound:dispatch` 默认动作是调用 `agent.handleMessage(message)`。默认实现 plugin-gateway 对房间类别为 `owner-only` 的会话（owner 自己的会话）跳过 `inbound:trigger` 与 `inbound:flow`（插件页「结构性放行」）。
 - **出站**：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链；默认动作是 emit `outbound:message` 给平台 adapter。
 
 ## 关键类型
@@ -25,7 +25,7 @@ interface InboundPhaseData {
 }
 ```
 
-五个入站相位的 payload 都是 `InboundPhaseData`，**同一消息在各相位间共享同一对象引用**——可以在 command 相位写入 metadata 让 trigger 读到。
+四个入站相位的 payload 都是 `InboundPhaseData`，**同一消息在各相位间共享同一对象引用**——可以在 command 相位写入 metadata 让 trigger 读到。
 
 ## 会话作用域匹配
 
