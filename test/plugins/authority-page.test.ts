@@ -80,6 +80,8 @@ interface BootOptions {
   usersJson?: string;
   /** 给出即替换 users.json 的写入；缺省照写即成功 */
   writeFile?: () => Promise<void>;
+  /** 给出即替换 users.json 的读取（优先于 usersJson） */
+  readFile?: () => Promise<string>;
 }
 
 const DATA_ROOT: StorageRootInfo = {
@@ -102,10 +104,12 @@ async function boot(opts: BootOptions = {}) {
   // 等级表落盘用；多数用例不验持久化，读到「无文件」即空表
   host.provide(storage, {
     listRoots: () => [DATA_ROOT],
-    readFile: async () => {
-      if (opts.usersJson === undefined) throw new Error('不存在');
-      return opts.usersJson;
-    },
+    readFile:
+      opts.readFile ??
+      (async () => {
+        if (opts.usersJson === undefined) throw new Error('不存在');
+        return opts.usersJson;
+      }),
     writeFile: opts.writeFile ?? (async () => undefined),
   } as never);
   host.provide(commands, fakeCommandService(opts.operations ?? [], handlers) as never);
@@ -333,5 +337,59 @@ describe('未落盘时的等级管理回执', () => {
     expect(await runCommand('level', 'onebot:777', -1)).toBe('已设 onebot:777 等级: -1');
     expect(await act('setUserLevel', { rowKey: 'onebot:777', input: { level: -1 } })).not.toContain(NOTE);
     expect(await act('deleteUser', { rowKey: 'onebot:777' })).not.toContain(NOTE);
+  });
+});
+
+// users.json 读不出来时拒写，文件里的封禁与等级也没载入：只记一行日志 owner 看不到，要发 error 提示写明怎么修，
+// 读好之后撤回。/level 的回执同样写明怎么修
+describe('users.json 读不出来时的提示', () => {
+  const NOTICE = {
+    instance: authorityPlugin.name,
+    id: 'users-load',
+    level: 'error',
+    title: '用户等级表 users.json 读不出来，文件里的封禁与等级没有载入',
+    detail:
+      '修好家目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。' +
+      '修好之前改的等级只在本次运行生效。原因：不是有效的 v5 结构（version: 4）',
+  };
+
+  it('发 error 提示写明修法；/level 回执写明怎么修；换上读得出的 storage、重读成功后提示撤回', async () => {
+    const legacy = JSON.stringify({ version: 4, users: { 'onebot:777': { tier: 'blocked' } } });
+    const { app, pages, runCommand } = await boot({ usersJson: legacy });
+
+    expect(pages.notices()).toEqual([NOTICE]);
+    expect(await runCommand('level', 'onebot:777', -1)).toBe(
+      '已设 onebot:777 等级: -1；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
+    );
+
+    // 排在前面的 storage 提供者上线：follow 换人即重读
+    app.bind({ provide }).provide(
+      storage,
+      {
+        listRoots: () => [DATA_ROOT],
+        readFile: async () => JSON.stringify({ version: 5, users: {} }),
+        writeFile: async () => undefined,
+      } as never,
+      { priority: 1 },
+    );
+    await expect.poll(() => pages.notices()).toEqual([]);
+  });
+
+  it.each([
+    ['解析不了', { usersJson: '{"version":5,' }, /^JSON 解析失败：\S/],
+    [
+      '读不出来',
+      { readFile: () => Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })) },
+      /^EACCES: permission denied$/,
+    ],
+  ])('%s：提示末尾带出原因', async (_label, opts, reason) => {
+    const { pages } = await boot(opts);
+    const [notice] = pages.notices();
+    expect(notice?.detail?.split('原因：')[1]).toMatch(reason);
+  });
+
+  it('users.json 正常或不存在：不发提示', async () => {
+    const { pages } = await boot();
+    expect(pages.notices()).toEqual([]);
   });
 });

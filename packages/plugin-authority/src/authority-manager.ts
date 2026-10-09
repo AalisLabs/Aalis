@@ -150,6 +150,11 @@ export class AuthorityManager implements AuthorityService {
     return this.store.persistBlocked;
   }
 
+  /** users.json 上次加载失败的原因（实现层状态，不在契约里）：读不出来的提示据此写明原因 */
+  get lastLoadError(): string | undefined {
+    return this.store.lastLoadError;
+  }
+
   /** 最近一次写 users.json 失败（实现层状态，不在契约里）：管理动作据此在回执里注明改动未落盘 */
   get lastSaveFailed(): boolean {
     return this.store.lastSaveFailed;

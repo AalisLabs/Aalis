@@ -38,7 +38,7 @@ checkpoint …）都复用它们。自行重写一份正则，迟早与它们漂
 const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
 ```
 
-- 根名（scheme）**以字母开头**，后接字母/数字/下划线/连字符。工具路径输入（`resolveAgainstCwd`）会把 `X:/…` 这种单字母形态判为 Windows 盘符绝对路径并拒绝，所以单字母根名在工具侧不可达——给根起名至少用两个字符。
+- 根名（scheme）**以字母开头**，后接字母/数字/下划线/连字符。工具路径（`resolveAgainstCwd`）与配置路径（`toStorageUri`）都把 `X:/…` 这种单字母形态判为 Windows 盘符绝对路径并拒绝，所以单字母根名在两侧都不可达——给根起名至少用两个字符。
 - 紧跟 `:/`（冒号 + 斜杠）——这一点是整套歧义消解的关键（见下文 data 根）。
 - `:/` 之后是根内相对路径。前导斜杠会被各后端归一掉（`plugin-storage-local` 的 `normalizeRelPath`，`index.ts`）。
 
@@ -116,10 +116,11 @@ parseUriRoot('not-a-uri');          // throws: 存储 URI 不合法
 ### `toStorageUri(input, fallbackRoot = 'data'): string` — 归一
 
 `index.ts`。把用户在配置里填的路径/裸名归一成合法 URI。**契约级文法**，
-memory / vectorstore / persona 等后端消费者复用它。三条规则：
+memory / vectorstore / persona 等后端消费者复用它。四条规则：
 
 | 输入 | 输出 | 说明 |
 |---|---|---|
+| 本机路径：宿主机绝对路径（`/abs`、`C:\path`、`C:/path`，判据是 `isHostAbsolutePath`）与家目录简写 `~/…` | 抛配置错误 | 写明要填 storage URI，并按 fallbackRoot 与路径末段举例（`/private/tmp/aalis.db` → 如 `data:/aalis.db`）；不带堆栈 |
 | 已含 `:/`（如 `data:/x`） | 原样返回 | 已是 URI |
 | `foo/bar`（含 `/`） | `foo:/bar` | 首段当根名 |
 | `name`（单段裸名，无 `/`） | `data:/name` | **裸名归到 fallbackRoot 的相对路径，不当成根名** |
@@ -132,7 +133,9 @@ toStorageUri('checkpoints');        // 'data:/checkpoints'（单段 → data 根
 toStorageUri('persona', 'data');    // 'data:/persona'
 ```
 
-输入还会先 `trim()` 并剥掉前导 `./` 和 `/`（`index.ts` 的 `replace(/^\.?\/+/, '')`）。
+输入还会先 `trim()` 并剥掉前导 `./`。本机路径直接报配置错误：若按首段当根名，首段与某个根同名时（如 `/data/x`）会悄悄落到那个根里，
+不同名时只会撞上「未知存储根」。要用存储根以外的目录，先在本地存储插件的 `roots` 里加一个指向它的根，并打开它的「允许写」
+（数据库、索引等要写入）；这个根文件工具也能访问。
 真实用法：`plugin-memory-sqlite/src/index.ts` 的 `toUri`（非空走 `toStorageUri(s)`，留空按实例派生 `data:/aalis.db` / `data:/aalis-<后缀>.db`）、
 `plugin-persona/src/index.ts` 的 `toStorageUri(personasDirRaw)`。
 

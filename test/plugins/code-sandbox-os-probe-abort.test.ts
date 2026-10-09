@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CodeSandboxService } from '../../packages/api-code-sandbox/src/index.js';
+import { type CheckResult, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import {
   type ExecResult,
   type ProcessService,
@@ -7,10 +8,12 @@ import {
   type SpawnHandle,
   type SpawnOptions,
 } from '../../packages/api-process/src/index.js';
-import { App, type LifecycleCap, type Logger, type Provide, provide } from '../../packages/core/src/index.js';
+import { App, type LifecycleCap, type Logger, type Provide, provide, services } from '../../packages/core/src/index.js';
 import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
 import { buildBwrapArgs } from '../../packages/plugin-code-sandbox-os/src/sandbox.js';
-import { ref } from '../fixtures/service-ref.js';
+import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
+import { absentDoctor, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // code-sandbox-os 的启动探测接 lifecycle.signal：启动器挂住时，停用与停机随 abort 落定，不拖满停机宽限、
@@ -24,6 +27,16 @@ import { ref } from '../fixtures/service-ref.js';
 const probes = process.platform === 'darwin' || process.platform === 'linux';
 
 const GRACE_MS = 200;
+
+/** 没有后端时的结论、各平台的修法与没有探测分支时的那一句 */
+const NONE = '没有可用的 OS 沙箱，code_runner 的 auto 模式会拒绝执行代码';
+const FIX: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: 'sandbox-exec 是 macOS 自带的，确认 /usr/bin/sandbox-exec 能执行后重载本插件',
+  linux:
+    '装上 bubblewrap（bwrap），并开启非特权用户命名空间（unprivileged user namespaces）；在容器里运行时还要能挂 /proc。改好后重载本插件',
+};
+const UNSUPPORTED = (platform: string) =>
+  `这个平台（${platform}）没有 OS 沙箱后端：要用沙箱就在 macOS、Linux 或 WSL 上运行 Aalis`;
 
 const EXITED: ExecResult = { code: 0, signal: null, stdout: '', stderr: '' };
 
@@ -103,6 +116,7 @@ function applyWith(proc: ProcessService, signal: AbortSignal) {
   const applying = Promise.resolve(
     codeSandboxOs.apply({
       processService: ref([{ instance: proc, contextId: 'zz-slice1', priority: 0 }]),
+      doctor: absentDoctor(),
       logger,
       provide: provideStub,
       lifecycle,
@@ -206,15 +220,36 @@ describe('code-sandbox-os 探测失败与后端选择', () => {
       'wait 被拒（启动器不存在）',
       { wait: () => Promise.reject(Object.assign(new Error('zz-slice1 替身：ENOENT'), { code: 'ENOENT' })) },
     ],
-  ] as Array<[string, Behaviour]>)('%s（未中止）：后端为 none，记一条 warn', async (_case, behaviour) => {
-    const { service, calls } = fakeProcess(behaviour);
-    const { applying, lines, provided } = applyWith(service, new AbortController().signal);
-    await applying;
+  ] as Array<[string, Behaviour]>)(
+    '%s（未中止）：后端为 none，记一条 warn，写明修法与原因',
+    async (_case, behaviour) => {
+      const { service, calls } = fakeProcess(behaviour);
+      const { applying, lines, provided } = applyWith(service, new AbortController().signal);
+      await applying;
 
-    expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(1);
+      expect(provided()?.backend).toBe('none');
+      expect(provided()?.available).toBe(false);
+      expect(lines).toEqual([
+        {
+          level: 'warn',
+          text: expect.stringMatching(new RegExp(`^${NONE}：${FIX[process.platform]}。探测 \\S+ 失败：\\S`)),
+        },
+      ]);
+    },
+  );
+
+  it('平台没有探测分支：不起进程，后端为 none，warn 写明换到哪些平台', async () => {
+    const { service, calls } = fakeProcess({ wait: async () => EXITED });
+    const { lines, provided } = await onPlatform('win32', async () => {
+      const run = applyWith(service, new AbortController().signal);
+      await run.applying;
+      return run;
+    });
+
+    expect(calls).toEqual([]);
     expect(provided()?.backend).toBe('none');
-    expect(provided()?.available).toBe(false);
-    expect(lines.map(line => line.level)).toEqual(['warn']);
+    expect(lines).toEqual([{ level: 'warn', text: `${NONE}：${UNSUPPORTED('win32')}` }]);
   });
 
   it.each([
@@ -249,5 +284,41 @@ describe('code-sandbox-os 探测失败与后端选择', () => {
     for (const option of ['--ro-bind / /', '--dev /dev', '--proc /proc', '--unshare-all']) {
       expect(formal, option).toContain(` ${option} `);
     }
+  });
+});
+
+// 这台机器上整个插件用不了时只写一行日志不够：登记 doctor 检查「代码沙箱」，没有后端时 warn，写明修法与原因
+describe('doctor 的「代码沙箱」项', () => {
+  async function check(behaviour: Behaviour): Promise<CheckResult | undefined> {
+    const { service } = fakeProcess(behaviour);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    const host = app.bind({ provide, services });
+    host.provide(processService, service);
+    await app.plugins.register(doctorPlugin, {});
+    await app.plugins.register(codeSandboxOs, {});
+    await app.plugins.idle();
+    const report = await (host.services.get(doctor) as DoctorService).runChecks();
+    return report.checks.find(c => c.id === 'code-sandbox.backend');
+  }
+
+  it.skipIf(!probes)('探测失败：warn，说明写修法与探测失败的原因', async () => {
+    expect(await check({ wait: async () => ({ ...EXITED, code: 1 }) })).toEqual({
+      id: 'code-sandbox.backend',
+      category: 'env',
+      level: 'warn',
+      message: NONE,
+      detail: expect.stringMatching(new RegExp(`^${FIX[process.platform]}。探测 \\S+ 失败：退出码 1$`)),
+    });
+  });
+
+  it.skipIf(!probes)('探测成功：ok，写出后端', async () => {
+    expect(await check({ wait: async () => EXITED })).toEqual({
+      id: 'code-sandbox.backend',
+      category: 'env',
+      level: 'ok',
+      message: `OS 沙箱可用（${process.platform === 'darwin' ? 'seatbelt' : 'bwrap'}）`,
+    });
   });
 });

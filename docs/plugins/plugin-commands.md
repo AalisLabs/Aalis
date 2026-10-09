@@ -19,7 +19,7 @@ export default definePlugin({
     storage: optional(storage),
     memory: optional(memory),
     authority: optional(authority),
-    app: optional(appService),
+    app: appService,
     events,
     hooks,
     logger,
@@ -107,7 +107,7 @@ export default definePlugin({
 
 回执逐行列出各部分的结果。用 `--type` 显式指定的类型若没有插件处理（插件未安装或未激活），回执另加一行说明该类型未清理；会话级 `/clear` 显式指定 `user-profile` 或 `user-relation` 时，说明它们只在 `/clear all` 时清理。不指定类型时不加这类说明。判断依据是各插件在 `memory:clear` 结果行上标注的 `type`（见 [记忆服务](../services/memory.md)）。
 
-要清消息历史（指定了 `context` 或不指定类型）而记忆服务不可用，或 `/clear all` 时记忆后端没有实现 `clearAll`，整条指令不执行、不清任何类型，回执说明原因；不含 `context` 的类型照常清理。
+要清消息历史（指定了 `context` 或不指定类型）而没有在运行的记忆后端，或 `/clear all` 时记忆后端没有实现 `clearAll`，整条指令不执行、不清任何类型，回执说明原因与怎么办（前者写在 WebUI 插件区启用一个记忆后端，或把它从配置文件的 `disabledPlugins` 里删掉，启用了还起不来就用 `/doctor` 看原因）；不含 `context` 的类型照常清理。
 
 示例：
 

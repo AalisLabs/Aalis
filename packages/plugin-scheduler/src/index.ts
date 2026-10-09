@@ -1,7 +1,7 @@
 import { cronEngine } from '@aalis/api-cron-engine';
 import { createStorageGateway, isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import { type PageContext, webuiServer } from '@aalis/api-webui';
+import { type NoticeHandle, type PageContext, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   config,
@@ -299,7 +299,8 @@ async function run(caps: Caps): Promise<void> {
    */
   let loadFailed = false;
   /** 拒写期间新建或改动的任务只在内存、重启即失：回执末尾如实注明（AI 工具与计划任务页同一附注），文件正常时为空串 */
-  const persistNote = () => (loadFailed ? `；仅本次运行生效，未写入 ${persistUri}（加载失败，见日志）` : '');
+  const persistNote = () =>
+    loadFailed ? `；仅本次运行生效，未写入 ${persistUri}：它读不出来，处理办法见「需要处理」里的提示` : '';
 
   // 先读完持久化任务再登记页面：登记之后到服务就绪之间不再有等待，页面一出现取数与动作就可用
   const persisted = await loadDynamicJobs();
@@ -324,6 +325,11 @@ async function run(caps: Caps): Promise<void> {
     if (input.paused && runAt) throw new Error('暂停对一次性任务（一次性运行时间、X 秒后执行）没有可用语义');
     // 防误填高频任务：挡住 interval:0.5 这类会占满调度的间隔
     if (interval !== undefined && interval < 5) throw new Error('固定间隔不能小于 5 秒（防高频任务耗尽资源）');
+    // 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件
+    if (cron) {
+      const checked = cronEngine.require().validate(cron);
+      if (!checked.ok) throw new Error(checked.reason);
+    }
     const sessionId = input.sessionId.trim();
     if (!sessionId) throw new Error('目标会话 ID 不能为空');
     const content = input.content.trim();
@@ -479,6 +485,8 @@ async function run(caps: Caps): Promise<void> {
   });
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
+    /** 失败出在读文件这一步（存储插件不在、persistPath 的根名写错、文件读不了），文件内容未必有错 */
+    let reading = true;
     try {
       let raw: string;
       try {
@@ -488,6 +496,7 @@ async function run(caps: Caps): Promise<void> {
         if (isStorageNotFound(err)) return [];
         throw err;
       }
+      reading = false;
       const data = JSON.parse(raw);
       if (!Array.isArray(data)) {
         throw new Error(`持久化任务文件不是数组（得到 ${data === null ? 'null' : typeof data}）`);
@@ -525,6 +534,17 @@ async function run(caps: Caps): Promise<void> {
     } catch (err) {
       loadFailed = true;
       logger.warn(`加载持久化任务失败，本次运行不再写入该文件: ${err}`);
+      // 里面的任务全没加载、新改动也不落盘：只记日志用户看不到
+      webui.notify({
+        id: 'jobs-load',
+        level: 'error',
+        title: `计划任务文件 ${persistUri} 读不出来，里面的任务没有加载`,
+        detail:
+          (reading
+            ? '确认本地存储插件在运行、配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。'
+            : '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。') +
+          `修好之前新建与改动的任务只在本次运行生效。原因：${err instanceof Error ? err.message : String(err)}`,
+      });
       return [];
     }
   }
@@ -630,16 +650,31 @@ async function run(caps: Caps): Promise<void> {
     }
     if (job.cron) {
       const tz = job.timeZone?.trim() || undefined;
-      // 每次求值取当前提供者：cron-engine 换人后不会算在旧实例上
-      return cronEngine.require().nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0;
+      // 每次求值取当前提供者：cron-engine 换人后不会算在旧实例上。时区无效时它同步抛错：这只是展示用的估计，
+      // 按「不知道」处理，任务排不上的原因由订阅失败的提示报出
+      try {
+        return (
+          cronEngine.require().nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0
+        );
+      } catch {
+        return 0;
+      }
     }
     return 0;
   }
 
   // ── 初始化所有任务 ──
 
+  /** cron 订阅不上、永远不会运行的任务各一条提示：任务重排或删掉时撤回 */
+  const unscheduled = new Map<string, NoticeHandle>();
+  function clearUnscheduled(name: string): void {
+    unscheduled.get(name)?.clear();
+    unscheduled.delete(name);
+  }
+
   function initJob(jobCfg: SchedulerJobConfig): void {
     if (runtimes.has(jobCfg.name)) return;
+    clearUnscheduled(jobCfg.name);
 
     // 归一化 cron 快捷符；"@every Ns" 转成 interval 通道
     if (jobCfg.cron) {
@@ -696,7 +731,21 @@ async function run(caps: Caps): Promise<void> {
           tz ? { timeZone: tz } : undefined,
         );
       } catch (err) {
-        logger.warn(`任务 ${jobCfg.name} cron 订阅失败: ${err instanceof Error ? err.message : err}`);
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.warn(`任务 ${jobCfg.name} cron 订阅失败: ${reason}`);
+        const fromConfig = configJobNames.has(jobCfg.name);
+        unscheduled.set(
+          jobCfg.name,
+          webui.notify({
+            id: `unscheduled:${jobCfg.name}`,
+            level: 'error',
+            title: `计划任务「${jobCfg.name}」没有排上，不会运行`,
+            detail: fromConfig
+              ? `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${reason}`
+              : `在计划任务页编辑这个任务，改正它的 cron 后保存。原因：${reason}`,
+            open: fromConfig ? 'config' : { page: 'scheduler' },
+          }),
+        );
       }
     }
 
@@ -886,6 +935,7 @@ async function run(caps: Caps): Promise<void> {
         dynamicJobs.delete(jobName);
         saveDynamicJobs();
       }
+      clearUnscheduled(jobName);
       jobsPage.invalidate();
       logger.info(`任务已删除: ${jobName}`);
       return true;
@@ -960,6 +1010,10 @@ async function run(caps: Caps): Promise<void> {
       }
       if (provided > 1) {
         return JSON.stringify({ error: 'cron / interval / delaySeconds / runAt 互斥，只能提供一个' });
+      }
+      if (hasCron) {
+        const checked = cronEngine.require().validate((args.cron as string).trim());
+        if (!checked.ok) return JSON.stringify({ error: checked.reason });
       }
       // delaySeconds → runAt 转换
       let runAt = hasRunAt ? (args.runAt as string).trim() : undefined;

@@ -99,4 +99,4 @@ outputFormat:
 
 ## 配置校验
 
-`persona` 与 `personasDir` 的显式无效类型会报配置错误；两者的空字符串仍按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则。
+`persona` 与 `personasDir` 的显式无效类型会报配置错误；两者的空字符串仍按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则；写成本机路径（绝对路径或 `~/…`）时报配置错误，写明要填 storage URI 并举例。

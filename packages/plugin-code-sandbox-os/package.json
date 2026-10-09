@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aalis/api-code-sandbox": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.7.0 <1.0.0"
   },
   "devDependencies": {
@@ -46,6 +47,9 @@
         "logger",
         "process",
         "provide"
+      ],
+      "optional": [
+        "doctor"
       ],
       "provides": [
         "code-sandbox"

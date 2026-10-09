@@ -313,6 +313,8 @@ export class MediaServiceImpl implements MediaService {
    * - `http(s)://` URL → 直接返回原 URL（analyze_image 可直接处理）。
    * - 已是 storage URI（如 `data:/images/...`，OneBot 已落盘）→ 转换为相对路径。
    * - 其它无法处理的格式 → 返回 null（描述仍写入，不含 ref）。
+   * - 落盘失败（磁盘满、没有写权限）→ 抛出，消息以「图片落盘失败」开头：没法识别时调用方整条按失败写，
+   *   还能识别时照常识别、描述不带引用。
    */
   private async cacheImageRef(att: MessageAttachment, sessionId: string): Promise<string | null> {
     const data = att.data;
@@ -325,29 +327,28 @@ export class MediaServiceImpl implements MediaService {
     }
     // base64 data URI（WebUI 上传的原始图片）
     if (!data.startsWith('data:')) return null;
+    const m = data.match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) return null;
+    const mimeType = m[1];
+    const rawExt = mimeType.split('/')[1] ?? 'bin';
+    const ext = rawExt === 'jpeg' ? 'jpg' : rawExt === 'svg+xml' ? 'svg' : rawExt;
+    const buf = Buffer.from(m[2], 'base64');
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    const hash = Buffer.from(digest).toString('hex').slice(0, 16);
+    const safeSession = sessionId.replace(/[:/\\]/g, '_');
+    const dirRel = `images/${safeSession}`;
+    const filename = `${hash}.${ext}`;
+    const { storage } = getMediaRuntime();
     try {
-      const m = data.match(/^data:([^;]+);base64,(.*)$/);
-      if (!m) return null;
-      const mimeType = m[1];
-      const rawExt = mimeType.split('/')[1] ?? 'bin';
-      const ext = rawExt === 'jpeg' ? 'jpg' : rawExt === 'svg+xml' ? 'svg' : rawExt;
-      const buf = Buffer.from(m[2], 'base64');
-      const digest = await crypto.subtle.digest('SHA-256', buf);
-      const hash = Buffer.from(digest).toString('hex').slice(0, 16);
-      const safeSession = sessionId.replace(/[:/\\]/g, '_');
-      const dirRel = `images/${safeSession}`;
-      const filename = `${hash}.${ext}`;
-      const { storage } = getMediaRuntime();
       await storage.writeFile(`data:/${dirRel}/${filename}`, buf);
-      const ref = `data/${dirRel}/${filename}`;
-      // 落盘时登记一次别名：原始来源串（这条整段 base64 data URI）此后经别名落到
-      // ref 的内容哈希键上——同一张图从别的来源再进来只识别一次，描述也进得了快照。
-      rememberDescriptionAlias(data, ref);
-      return ref;
     } catch (err) {
-      this.logger.debug(`图片落盘失败，将不含 ref: ${err instanceof Error ? err.message : err}`);
-      return null;
+      throw new Error(`图片落盘失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
+    const ref = `data/${dirRel}/${filename}`;
+    // 落盘时登记一次别名：原始来源串（这条整段 base64 data URI）此后经别名落到
+    // ref 的内容哈希键上——同一张图从别的来源再进来只识别一次，描述也进得了快照。
+    rememberDescriptionAlias(data, ref);
+    return ref;
   }
 
   /**
@@ -387,6 +388,12 @@ export class MediaServiceImpl implements MediaService {
       const item: MediaProcessReport['items'][number] = { kind: att.kind };
       /** 这张静态图落盘后的引用；识别失败时照留 */
       let imageRef: string | null = null;
+      /** 落盘失败但还能识别：记进条目并告警，描述照写、只是不带引用 */
+      const unstored = (err: unknown): null => {
+        item.error = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`${item.error}，描述不带引用（session=${msg.sessionId}）`);
+        return null;
+      };
       try {
         if (att.kind === 'image') {
           // 动图线索先登记：直通出口的抽帧（agent:llm:before 中间件，见 index.ts）拿到的
@@ -409,7 +416,7 @@ export class MediaServiceImpl implements MediaService {
               if (animated) {
                 item.description = cached;
               } else {
-                const ref = await this.cacheImageRef(att, msg.sessionId);
+                const ref = await this.cacheImageRef(att, msg.sessionId).catch(unstored);
                 item.description = ref
                   ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: cached, ref })
                   : `[图片描述] ${cached}`;
@@ -427,7 +434,7 @@ export class MediaServiceImpl implements MediaService {
               item.cap = 'vision';
               item.processor = vision.name;
               // 先落盘：识别失败或返回空串时引用照留，原图不丢
-              imageRef = await this.cacheImageRef(att, msg.sessionId);
+              imageRef = await this.cacheImageRef(att, msg.sessionId).catch(unstored);
               // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
               // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
               // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
