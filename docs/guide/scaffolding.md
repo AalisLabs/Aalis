@@ -159,7 +159,7 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 - 要密钥的插件（DeepSeek、OpenAI、OpenAI Embedding，以及 `full` 档的联网搜索）写一个 `apiKey` 段：粘贴了的写成 JSON 字符串（同时是合法的 YAML 双引号串，引号、反斜杠、冒号与 `#` 原样读回），跳过的留空 `apiKey: ""`。空串不算填了，插件激活失败并在 WebUI 标「待配置」；填了值的在启动时移进 `secrets.yaml`。
 - 设了 `OLLAMA_HOST` 时，两个 Ollama 插件写上 `baseUrl`。
 
-装了 `plugin-session-manager` 时，还会给已选装的 owner 专用平台（`cli`、`webui`）各写一个平台档，开放全部工具分组。平台档是会话设置在会话之上的一层，写在配置文档的顶层字段 `sessionConfig` 里（见 [plugin-session-manager](../plugins/plugin-session-manager.md#会话之上的各层)）。runtime 的 `--init` 按安装集的依赖写同样的平台档：
+还会给两个只有 owner 进得来的平台（`cli`、`webui`）各写一个平台档，开放全部工具分组；这两项无条件写，平台没装时不起作用，之后从市场装上即生效。多人平台（如 OneBot）不代开。平台档是会话设置在会话之上的一层，写在配置文档的顶层字段 `sessionConfig` 里（见 [plugin-session-manager](../plugins/plugin-session-manager.md#会话之上的各层)）。runtime 的 `--init` 写同样的平台档：
 
 ```yaml
 sessionConfig:

@@ -288,6 +288,7 @@ describe('startAalis 家目录（真实子进程）', () => {
       name: 'Aalis',
       logLevel: 'info',
       plugins: {},
+      sessionConfig: { platforms: { cli: { enabledToolGroups: ['*'] }, webui: { enabledToolGroups: ['*'] } } },
     });
     for (const sub of ['state', 'logs', 'run', 'tmp', 'self/skills', 'stage/paper']) {
       expect(existsSync(join(home, sub)), sub).toBe(true);
