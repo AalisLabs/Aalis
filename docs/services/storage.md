@@ -23,7 +23,7 @@ export interface StorageService {
   readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
   readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
-  writeFile(uri: string, data: string | Buffer): Promise<void>;
+  writeFile(uri: string, data: string | Buffer, options?: StorageWriteOptions): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
   move(fromUri: string, toUri: string): Promise<string>;
   mkdir(uri: string): Promise<string>;
@@ -52,6 +52,8 @@ export interface StorageRootInfo {
 **`StorageEntry`** 与 **`StorageStat`** 字段相近，都带 `uri`/`path`/`isDirectory`/`size`/`mtime`/`ext`；`StorageStat` 额外有 `birthtime`。
 
 **`StorageWatchEvent`**：`{ type: 'change'; uri: string; path: string }`——当前实现把创建/修改/删除统一上报为 `change`。
+
+**`StorageWriteOptions`**：`{ secret?: boolean }`——`secret` 表示内容是凭据（访问 token 一类），只给运行 Aalis 的系统用户读写。
 
 ### 能力声明常量（可选互操作用）
 
@@ -98,6 +100,8 @@ export interface StorageRootInfo {
 | `listRoots` `list` `stat` `readFile` `createReadStream` `writeFile` `rename` `move` `mkdir` `delete` | `resolveLocalPath`、`watch`、`readFileRange` |
 
 不实现可选方法时，`createStorageGateway` 会在调用方抛出明确报错，不会静默。
+
+`writeFile` 带 `secret` 时内容不得落成别的系统用户读得到的文件：本地文件以 0600 建出、覆写已有文件时一并收紧（参考实现的临时文件建出来就是 0600）；做不到的提供者拒写。
 
 目标不存在时，`readFile` / `list` / `stat` / `delete` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误；权限不足、根不可读等其它失败不得用这个 code，否则消费者会把「读不出」当成「全新」并覆盖原文件。
 
@@ -237,7 +241,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 
 ### data 根：可删 + 持久化原子写
 
-内部根 `data`（家目录的 `state/`）可删——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖。
+内部根 `data`（家目录的 `state/`）可删——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖；覆写沿用原文件的权限位，凭据（`secret`）一律 0600。
 
 ### 宿主控制文件
 

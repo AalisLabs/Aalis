@@ -103,12 +103,24 @@ describe('平台类型的声明', () => {
     expect(sessionTypesOf(adapter('plain', []))).toEqual([{ name: 'private', multiParty: false }]);
   });
 
-  it('resolveSessionType：不带类型名按 private、一对一；声明里有的按声明；声明里没有的按多方并标出', () => {
-    expect(resolveSessionType(ONEBOT_TYPES, undefined)).toEqual({
+  it('resolveSessionType：不带类型名时，声明里有多方类型的按它（失败关闭），没声明或只有一对一类型的按 private、一对一', () => {
+    expect(resolveSessionType(ONEBOT_TYPES, undefined)).toEqual({ name: 'group', multiParty: true, undeclared: false });
+    expect(resolveSessionType(FORUM_TYPES, undefined)).toEqual({ name: 'thread', multiParty: true, undeclared: false });
+    const privateOnly = [{ name: 'private', multiParty: false }];
+    expect(resolveSessionType(privateOnly, undefined)).toEqual({
       name: 'private',
       multiParty: false,
       undeclared: false,
     });
+    // WebUI、终端不声明类型
+    expect(resolveSessionType(sessionTypesOf(adapter('plain')), undefined)).toEqual({
+      name: 'private',
+      multiParty: false,
+      undeclared: false,
+    });
+  });
+
+  it('resolveSessionType：声明里有的按声明；声明里没有的按多方并标出', () => {
     expect(resolveSessionType(ONEBOT_TYPES, 'group')).toEqual({ name: 'group', multiParty: true, undeclared: false });
     expect(resolveSessionType(ONEBOT_TYPES, 'private')).toEqual({
       name: 'private',
@@ -191,22 +203,21 @@ describe('IM 房间建档时记下来源字段', () => {
     expect(sm.getSession(CHANNEL)?.originChat).toMatchObject({ type: 'channel', multiParty: true });
   });
 
-  it('消息不带类型名记 private、一对一；不声明类型的平台同样记 private、一对一', async () => {
-    const { sm, inbound, warns } = await setup();
+  it('消息不带类型名：平台声明了多方类型的记多方；不声明类型的平台记 private、一对一', async () => {
+    const { sm, inbound } = await setup();
 
-    await inbound({ sessionId: 'onebot:10000:private:30003', platform: 'onebot', userId: '30003' });
+    await inbound({ sessionId: 'onebot:10000:group:20003', platform: 'onebot', groupId: '20003', userId: '30003' });
     await inbound({ sessionId: 'plain-room', platform: 'plain', userId: '<对端>' });
 
-    expect(sm.getSession('onebot:10000:private:30003')?.originChat).toEqual({
-      type: 'private',
-      multiParty: false,
-      targetId: '30003',
+    expect(sm.getSession('onebot:10000:group:20003')?.originChat).toEqual({
+      type: 'group',
+      multiParty: true,
+      targetId: '20003',
     });
     expect(sm.getSession('plain-room')).toMatchObject({
       originPlatform: 'plain',
       originChat: { type: 'private', multiParty: false, targetId: '<对端>' },
     });
-    expect(warns).toEqual([]);
   });
 
   it('带了声明里没有的类型名：记多方，每个平台与类型名告警一次', async () => {

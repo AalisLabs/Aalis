@@ -5,7 +5,8 @@
  * 再按档位收窄，按污点把送出会话的动作改成问；子任务另与父会话实时的触及取较小值。本包只有类型与纯函数：
  * - 档位与越界策略，经 declaration merging 成为会话设置的两个键；
  * - `resolveReach` 解析出一份触及，`judgeReach` 判一个目标放行、问或拒；
- * - `protectedLists` 生成宿主控制面、持久化与自动执行落点、拒读清单三张清单，工具边界与沙箱用同一份；
+ * - `protectedLists` 生成宿主控制面、持久化与自动执行落点、拒读清单三张清单，`withRealRoots` 按真实路径补上链接出去的根，
+ *   工具边界与沙箱用同一份；
  * - `sandboxPolicyOf` 按触及生成沙箱策略；
  * - 触及凭据 `ReachCredential` 的类型与品牌符号：凭据只由触及插件构造，工具从调用上下文取得后转交；
  * - 触及服务 `reach`：按一次工具调用签发凭据，存会话的污点与白纸的来源账本。
@@ -79,8 +80,12 @@ export interface ProtectedListsInput {
   /** 操作系统用户的家目录 */
   readonly userHome: string;
   readonly platform: NodeJS.Platform;
+  /** 安装集的形态：源码形态下有 packages/；npm 形态是 create-aalis 生成的项目，家目录在安装集里 */
+  readonly form: 'source' | 'npm';
   /** 安装集以外、守护进程加载了代码的目录，如经链接装进来的插件 */
   readonly codeDirs: readonly string[];
+  /** 守护进程的入口文件（启动脚本的真实路径），取不到时不给；只在 npm 形态下归宿主控制面 */
+  readonly entry?: string;
 }
 
 export interface ProtectedLists {
@@ -158,13 +163,20 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
   return {
     platform,
     control: [
-      // 家目录下只有白纸、临时区与技能目录可写：公开区只经发布插件写入，编排定义只经定义工具写入
+      // 家目录下只有白纸、临时区与技能目录可写：公开区只经发布插件写入，编排定义只经定义工具写入。主配置与 secrets.yaml
+      // 常链接到别处（dotfiles 仓库），另以它们为根各列一条，才能按真实路径补上（withRealRoots）
       { path: paths.home, except: [{ path: paths.stage.paper }, { path: paths.tmp }, { path: paths.self.skills }] },
+      { path: paths.config },
+      { path: paths.secrets },
       // 守护进程加载的代码：安装集的依赖与构建产物（源码形态下另有各包的），以及安装集以外加载的插件
       { path: `${paths.app}/node_modules` },
       { path: `${paths.app}/dist` },
       { pattern: `^${literal(paths.app, platform)}/packages/[^/]+/(dist|node_modules)(/|$)` },
       ...input.codeDirs.map(path => ({ path })),
+      // npm 形态：每次启动在宿主上执行的入口，与插件发现读依赖的 package.json（源码形态下它们是在改的源码）
+      ...(input.form === 'npm'
+        ? [{ path: `${paths.app}/package.json` }, ...(input.entry ? [{ path: input.entry }] : [])]
+        : []),
     ],
     landing: [
       // git：.git 本身（子模块工作树里文件形式的也是），与它里面的落点
@@ -215,13 +227,15 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
       { pattern: `^${literal(paths.home, platform)}/.+/\\.aalis(/|$)` },
     ],
     denyRead: [
-      // 家目录下只放行舞台、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回
+      // 家目录下只放行舞台、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回。secrets.yaml 另列一条，
+      // 理由同宿主控制面
       {
         path: paths.home,
         except: [parentOf(paths.stage.paper), parentOf(paths.self.skills), paths.logs, paths.config].map(path => ({
           path,
         })),
       },
+      { path: paths.secrets },
       // 同一用户下其他实例的家目录
       { pattern: `^${literal(userHome, platform)}/\\.aalis(-[^/]*)?(/|$)`, except: [{ path: paths.home }] },
       // 凭据
@@ -243,6 +257,27 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
       ...(linux ? inUserHome(...LINUX_BROWSERS) : []),
     ],
   };
+}
+
+/**
+ * 按真实路径补一份：以具体路径为根的规则，根的路径上有符号链接（`realOf` 给出的真实路径与写法不同）时，按真实路径再加
+ * 一份同样的规则，根下的例外随根挪过去。真实路径由调用方在激活时取好，路径不存在的不给；激活之后链接改指向不跟踪
+ */
+export function withRealRoots(lists: ProtectedLists, realOf: (path: string) => string | undefined): ProtectedLists {
+  const { platform } = lists;
+  const expand = (rules: readonly PathRule[]) =>
+    rules.flatMap((rule): PathRule[] => {
+      if (!('path' in rule)) return [rule];
+      const root = rule.path;
+      const real = realOf(root);
+      if (real === undefined || keyOf(real, platform) === keyOf(root, platform)) return [rule];
+      const moved = (matcher: PathMatcher): PathMatcher =>
+        'path' in matcher && hit({ path: root }, matcher.path, platform)
+          ? { path: real + matcher.path.slice(root.length) }
+          : matcher;
+      return [rule, { path: real, ...(rule.except && { except: rule.except.map(moved) }) }];
+    });
+  return { ...lists, control: expand(lists.control), landing: expand(lists.landing), denyRead: expand(lists.denyRead) };
 }
 
 // ════════════════════════════════════════════════════════════

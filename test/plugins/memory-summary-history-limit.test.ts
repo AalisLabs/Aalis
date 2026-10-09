@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -12,12 +13,23 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { endTurn, fakeSummaryLLM } from '../fixtures/memory-summary.js';
+import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 条数线是 agent 登记的会话设置项 historyLimit：回合结束时的会话条数（这一轮最后一次调用里来自会话历史的条数，结局为
 // replied 时加上之后落库的最终回复）到了它，摘要插件就在后台全量压缩，与用量到线同一条流程、同一套按轮数的失败退避。
-// 0 或哪一层都没设时不按条数压缩。下面的用量都远不到压缩线（窗口与裁剪预算 1000，用量 10）。
+// 0 或哪一层都没设时不按条数压缩。条数线与压缩线同一套层：全局默认、平台档、平台类型档、场所与单个会话。
+// 下面的用量都远不到压缩线（窗口与裁剪预算 1000，用量 10）。
 // ════════════════════════════════════════════════════════════
+
+const ROOM = 'onebot:10000:group:1';
+/** 同一个群里另一个机器人账号的会话 */
+const ROOM_B = 'onebot:20000:group:1';
+const WINDOW = 'onebot:group:1';
+/** 别人的私聊 */
+const OTHER_DM = 'onebot:10000:private:30001';
+/** owner 的 IM 私聊：场所是默认工作区 */
+const OWNER_DM = 'onebot:10000:private:99999';
 
 const settle = () => new Promise<void>(r => setTimeout(r, 20));
 /** 用量远不到压缩线，只有会话条数 */
@@ -34,6 +46,12 @@ async function setup(summaryLLM = fakeSummaryLLM()) {
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, memory, sessionManager });
   await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  // 房间收录过（预置进会话表）：选平台档与平台类型档读会话记下的出生平台与聊天窗口
+  await seedRooms(host.memory.require(), { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
+  host.provide(authority, {
+    isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === '99999',
+  } as never);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
   host.provide(llm, summaryLLM.model);
@@ -47,7 +65,19 @@ async function setup(summaryLLM = fakeSummaryLLM()) {
   host.events.on('session:compressing', info => void statuses.push(`${info.sessionId}:${info.status}`));
   const sm = host.sessionManager.require();
   const say = (sessionId: string) => host.memory.require().saveMessage(sessionId, { role: 'user', content: '在吗' });
-  return { host, sm, summaryLLM, statuses, say };
+  /** 每个会话说一句、再以这些条数结束一轮，返回至今压成过的会话（排好序） */
+  const turns = async (sessionIds: string[], historyMessages: number) => {
+    for (const id of sessionIds) {
+      await say(id);
+      await endTurn(host, id, counted(historyMessages), { platform: id.startsWith('onebot:') ? 'onebot' : 'webui' });
+    }
+    await settle();
+    return statuses
+      .filter(s => s.endsWith(':done'))
+      .map(s => s.slice(0, -':done'.length))
+      .sort();
+  };
+  return { host, sm, summaryLLM, statuses, say, turns };
 }
 
 describe('plugin-memory-summary: 条数线', () => {
@@ -99,5 +129,25 @@ describe('plugin-memory-summary: 条数线', () => {
     await endTurn(host, owner.id, counted(7));
     await expect.poll(() => statuses.slice(2)).toEqual([`${owner.id}:start`, `${owner.id}:done`]);
     expect((await host.memory.require().getMetadata('summary', owner.id))?.summary).toBe('NEW-SUMMARY');
+  });
+
+  it('平台类型档：群的条数线给群里各个机器人账号的会话与群的子会话，别人的私聊与 WebUI 会话不受影响', async () => {
+    const { sm, turns } = await setup();
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { historyLimit: 5 });
+    const child = await sm.createChildSession(ROOM, { name: '群里派出的子任务' });
+    const owner = await sm.createSession({ name: '本机会话' });
+
+    expect(await turns([ROOM, ROOM_B, child.id, OTHER_DM, owner.id], 5)).toEqual([ROOM, ROOM_B, child.id].sort());
+  });
+
+  it('场所压过平台类型档：窗口场所的值给这个群的会话；默认工作区的值压过 owner 的 IM 私聊上的类型档', async () => {
+    const { sm, turns } = await setup();
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { historyLimit: 5 });
+    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'private' }, { historyLimit: 5 });
+    await sm.updateLayer({ scope: 'place', key: WINDOW }, { historyLimit: 50 });
+    await sm.updateLayer({ scope: 'place', key: 'workspace:default' }, { historyLimit: 50 });
+
+    expect(await turns([ROOM, ROOM_B, OWNER_DM, OTHER_DM], 5), '只有别人的私聊按类型档的 5 压').toEqual([OTHER_DM]);
+    expect(await turns([ROOM, OWNER_DM], 50)).toEqual([OTHER_DM, ROOM, OWNER_DM].sort());
   });
 });

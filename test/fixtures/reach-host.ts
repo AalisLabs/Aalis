@@ -9,7 +9,7 @@ import {
   type SessionManagerService,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
-import { events, provide } from '../../packages/core/src/index.js';
+import { events, type Logger, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import processLocalPlugin from '../../packages/plugin-process-local/src/index.js';
 import reachPlugin from '../../packages/plugin-reach/src/index.js';
@@ -36,9 +36,9 @@ export async function projectSession(sm: SessionManagerService, root: string, wo
   return (await sm.createSession({ name: root }, { createdFrom: 'webui', workspace: workspace.id, work: { root } })).id;
 }
 
-/** 本会话临时区：tmp/sessions/<会话 id 的 base64url> */
+/** 本会话临时区：tmp/sessions/<会话 id 的 UTF-8 十六进制> */
 export const sessionTmpIn = (home: string, sessionId: string) =>
-  join(home, 'tmp', 'sessions', Buffer.from(sessionId).toString('base64url'));
+  join(home, 'tmp', 'sessions', Buffer.from(sessionId).toString('hex'));
 
 /** 一轮 owner 在会话里亲手发来的回合 */
 export const ownerTurn = (sessionId: string): OriginTurn => ({ sessionId, ...OWNER_TURN, inbound: {} });
@@ -74,14 +74,17 @@ export function seedProvenance(dirs: ReachDirs, content: string): void {
 }
 
 /**
- * 起一个实例。`appPath` 是交给 host-paths 的安装集路径（缺省为 dirs.app）；`stored` 预置会话表。
+ * 起一个实例。`appPath` 是交给 host-paths 的安装集路径（缺省为 dirs.app）；`stored` 预置会话表；`logger` 接住各插件的日志。
  * 操作系统用户的家目录取 HOME：调用方先把 HOME 指到 dirs.user
  */
 export async function startReach(
   dirs: ReachDirs,
-  opts: { appPath?: string; stored?: Record<string, Record<string, unknown>> } = {},
+  opts: { appPath?: string; stored?: Record<string, Record<string, unknown>>; logger?: Logger } = {},
 ) {
-  const { app, store } = hostedApp({ owners: [{ platform: 'onebot', userId: OWNER_QQ }] });
+  const { app, store } = hostedApp(
+    { owners: [{ platform: 'onebot', userId: OWNER_QQ }] },
+    opts.logger ? { logger: opts.logger } : {},
+  );
   await registerHubs(app);
   provideHostPaths(app, dirs.home, opts.appPath ?? dirs.app);
   const host = app.bind({ provide, events, sessionManager, reach });

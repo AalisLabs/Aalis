@@ -48,7 +48,7 @@ interface StorageService {
   readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
   readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
-  writeFile(uri: string, data: string | Buffer): Promise<void>;
+  writeFile(uri: string, data: string | Buffer, options?: StorageWriteOptions): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
   move(fromUri: string, toUri: string): Promise<string>;
   mkdir(uri: string): Promise<string>;
@@ -58,7 +58,7 @@ interface StorageService {
 }
 ```
 
-目标不存在时，`readFile` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误，其它失败不用这个 code；消费方用 `isStorageNotFound(err)` 区分「不存在」与「读不出」。`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时网关抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
+目标不存在时，`readFile` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误，其它失败不用这个 code；消费方用 `isStorageNotFound(err)` 区分「不存在」与「读不出」。`writeFile` 的 `options.secret` 表示内容是凭据（访问 token 一类），只给运行 Aalis 的系统用户读写：参考实现以 0600 建文件，覆写已有文件时一并收紧，内容从不以更宽的权限落盘；做不到的提供者应拒写，不得照常写成别人读得到的文件。`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时网关抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
 
 描述符 `storage` 是普通调用型：绑定接口是 `ServiceRef<StorageService>`。每个 entry 只负责一个根，以 `entryId = '${激活id}/${rootName}'` 名义 `provide`。上层跨 root 调度用 `createStorageGateway(storage)`（第一参是 `ServiceRef`，不是激活记录）。gateway **不**注册进容器。
 

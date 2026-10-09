@@ -47,6 +47,7 @@ import {
   optional,
   pluginsService,
   provide,
+  services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
@@ -99,6 +100,8 @@ const uses = {
   storage: optional(storageService),
   gateway: optional(gatewayService),
   plugins: optional(pluginsService),
+  /** 会话没设模型时比对 llm 服务的偏好与实际用的模型 */
+  services,
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -200,6 +203,9 @@ class DefaultAgent implements AgentService {
    */
   private tokenLogState = new Map<string, { count: number; lastRatioBucket: number }>();
 
+  /** 已告警过的（llm 服务的偏好，实际用的模型）组合 */
+  private readonly preferenceFallbacks = new Set<string>();
+
   /** 已注册的预处理器（name → { dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
@@ -219,6 +225,7 @@ class DefaultAgent implements AgentService {
    *
    * 会话设置的 llm 交给 session-manager.resolveConfig 解析（按层表叠加，全局默认层即 llm 服务的偏好）；
    * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到服务此刻解析到的那一个（偏好 > 提供者优先级 > 登记先后）。
+   * 这时偏好指向的模型不在（模型删了、提供者在重载或激活失败），服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
    *
    * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
@@ -227,7 +234,18 @@ class DefaultAgent implements AgentService {
     const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
-    return resolveLLMModel(this.caps.llm, ref, ['chat']);
+    const entry = resolveLLMModel(this.caps.llm, ref, ['chat']);
+    const preferred = ref ? undefined : this.caps.services.preferred(llmService);
+    if (entry && preferred !== undefined && entry.contextId !== preferred) {
+      const combo = `${preferred}\n${entry.contextId}`;
+      if (!this.preferenceFallbacks.has(combo)) {
+        this.preferenceFallbacks.add(combo);
+        this.logger.warn(
+          `llm 服务的偏好 ${preferred} 没有生效（指向的模型不在、提供者在重载或激活失败），实际用的是 ${entry.contextId}`,
+        );
+      }
+    }
+    return entry;
   }
 
   /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */
@@ -2234,7 +2252,11 @@ const configSchema = defineConfig({
 const SESSION_SETTINGS: SessionSetting[] = [
   {
     key: 'llm',
-    field: { type: 'llm-ref', label: '模型', description: '没设置时用 llm 服务的偏好（默认对话模型）' },
+    field: {
+      type: 'llm-ref',
+      label: '模型',
+      description: '没设置时用默认模型：全局默认层的「模型」，那里也没设时用第一个可用的对话模型',
+    },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'composer',
     // 会话选的是一个具体的模型：服务与模型都要给
@@ -2373,6 +2395,17 @@ function run(caps: Caps): void {
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
   const fmtThink = (c: CfgView): string | undefined => c?.think;
+  /**
+   * /session 模型那一行之后：这一轮实际会用的模型与显示的生效值不同时写出来（哪一层都没设、偏好也没有时，或偏好指向的
+   * 模型不在时，服务落到别的模型上）
+   */
+  async function modelNote(smSvc: SessionManagerService, sessionId: string, platform: string): Promise<string> {
+    const actual = (await agent.resolveLLM(platform, sessionId))?.contextId;
+    const shown =
+      fmtModel(smSvc.getOwnConfig(sessionId)) ?? fmtModel(smSvc.resolveInheritance(sessionId, platform).values);
+    return actual && actual !== shown ? `  这一轮会用: ${actual}` : '';
+  }
+
   /** 模型的档位写成一句：id（名字），由浅到深 */
   const levelList = (thinking: ThinkingLevels) =>
     thinking.levels.map(({ id, label }) => `${id}（${label}）`).join('、');
@@ -2439,6 +2472,7 @@ function run(caps: Caps): void {
       return [
         `会话: ${session?.name ?? sid}`,
         ...resolutionLines(smSvc, sid, argv.session.platform, '模型', 'llm', fmtModel),
+        await modelNote(smSvc, sid, argv.session.platform),
         ...resolutionLines(smSvc, sid, argv.session.platform, '人设', 'persona', fmtPersona),
         ...resolutionLines(smSvc, sid, argv.session.platform, '深度思考', 'think', fmtThink),
         await thinkingNote(sid, argv.session.platform),

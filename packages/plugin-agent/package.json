@@ -80,7 +80,8 @@
         "hooks",
         "lifecycle",
         "logger",
-        "provide"
+        "provide",
+        "services"
       ]
     }
   }

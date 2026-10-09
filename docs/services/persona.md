@@ -33,7 +33,7 @@ export interface PersonaService {
 
 - `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，`options.systemPromptExtra`（会话级额外提示），以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
-- `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件按会话传入，做点名识别；CLI 标题等全局用途不传。
+- `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件、终端的标题与署名都按会话传入（终端取它自己会话的生效人设）；没有会话的用途不传。
 - `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
 - `isClientSideJsonRendering(options?)` — 该卡是否声明「JSON 由客户端渲染」。为真时服务端不提取回复字段，整段 JSON 透传给前端。
 - `listModels()` — 列出已扫描到的全部角色卡名，供 WebUI 与 session-manager 的下拉框使用。
@@ -81,7 +81,7 @@ export const persona = defineService<PersonaService>('persona');
 典型消费点如下，它们全部走可选依赖 + 存在性判断：
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.current`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
-- `@aalis/plugin-skills` — `getAllowedSkills()` 用 `persona?.getPersonaSkills?.()` 过滤暴露给 LLM 的 skill 列表。
+- `@aalis/plugin-skills` — 按会话取白名单：`getPersonaSkills({ persona })`（`persona` 取自 session-manager 解析的会话配置，没有会话管理或没有会话时不指定、即主卡）过滤 `list_skills`、`load_skill`、技能发现那一行与触发词自动激活看得到的 skill。
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`（`options.persona` 取自 session-manager 解析的会话配置），收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-tool-system` — 通过 `persona.current` 判断，已注入时间则跳过注册 `system_time` 工具。
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。

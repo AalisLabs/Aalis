@@ -15,8 +15,8 @@ import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
-/** 工具相关条目进摘要输入时的每条硬截断（参数/结果各自适用），工具名不参与截断 */
-const TOOL_ENTRY_MAX_CHARS = 200;
+/** 工具相关条目与通知进摘要输入时的每条硬截断（工具参数、结果各自适用），工具名不参与截断 */
+const ENTRY_MAX_CHARS = 200;
 
 /** 摘要模型没声明输出上限时按这个数封顶，与对话代理对模型输出上限的缺省假设相同 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
@@ -53,23 +53,28 @@ function visibleText(m: Message): string | null {
   return typeof visible === 'string' ? visible : m.content;
 }
 
-/** 进摘要输入的消息：对话与工具回合（系统标记、平台通知不进） */
-const isConversation = (m: Message) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool';
+/**
+ * 进摘要输入的消息：对话、工具回合与通知（宿主通知、编排或定时任务派来的指令、平台通知）。system 消息不进，压缩分隔
+ * 这类事件标记因此也不进
+ */
+const entersSummary = (m: Message) =>
+  m.role === 'user' || m.role === 'assistant' || m.role === 'tool' || m.role === 'notice';
 
 /**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
  *
  * 工具回合必须留痕：带 toolCalls 的 assistant 行 content 常为空，直译成「助手: (空)」
  * 等于告诉摘要模型「这一轮什么也没发生」；tool 结果整条丢掉则连做了什么都看不见。
- * 故两者都渲染成可读一行，名字优先保住、正文按 TOOL_ENTRY_MAX_CHARS 硬截断。
+ * 故两者都渲染成可读一行，名字优先保住、正文按 ENTRY_MAX_CHARS 硬截断。通知同样按它截断。
  *
  * 工具名按 toolCallId 从 `nameByToolCallId` 反查（见 {@link buildToolNameMap}），
  * 查不到才回落消息自带的 `name`。形参必填，避免误写成 `.map(formatMsgForSummary)`
  * 把数组下标当成映射传进来。
  */
 function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, string>): string {
+  if (m.role === 'notice') return `通知: ${truncateChars((m.content ?? '').trim(), ENTRY_MAX_CHARS, '…') || '(空)'}`;
   if (m.role === 'tool') {
-    const body = truncateChars((m.content ?? '').trim(), TOOL_ENTRY_MAX_CHARS, '…');
+    const body = truncateChars((m.content ?? '').trim(), ENTRY_MAX_CHARS, '…');
     const toolName = (m.toolCallId ? nameByToolCallId.get(m.toolCallId) : undefined) ?? m.name;
     return `工具结果${toolName ? `(${toolName})` : ''}: ${body || '(空)'}`;
   }
@@ -77,7 +82,7 @@ function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, s
     const calls = m.toolCalls
       .map(
         tc =>
-          `${tc.function?.name ?? '未知工具'}(${truncateChars(tc.function?.arguments ?? '', TOOL_ENTRY_MAX_CHARS, '…')})`,
+          `${tc.function?.name ?? '未知工具'}(${truncateChars(tc.function?.arguments ?? '', ENTRY_MAX_CHARS, '…')})`,
       )
       .join('、');
     const preamble = visibleText(m)?.trim();
@@ -140,7 +145,7 @@ const configSchema = defineConfig({
     default: 0.05,
     secret: false,
     description:
-      '摘要的输出上限占会话所用模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。窗口取这个会话最近一次模型调用的（还没有用量时取摘要模型的），上限不少于 512、不超过摘要模型的输出上限',
+      '摘要的输出上限占会话所用模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。窗口取这个会话最近一次模型调用的（还没有用量时取摘要模型的），上限不少于 512、不超过摘要模型的输出上限与它窗口的四分之一',
   },
   summaryModelMode: {
     type: 'select',
@@ -227,6 +232,13 @@ function instructions({ scene, sections }: SummaryTemplate, maxTokens: number): 
     ...sections.map(([title, content]) => `【${title}】${content}`),
     `摘要的输出上限为 ${maxTokens} tokens（约 ${maxTokens * 4} 个英文字符，或约 ${Math.floor(maxTokens / 1.5)} 个中文字符），合理分配篇幅，每个小节都要完整输出。`,
   ].join('\n');
+}
+
+/** 摘要请求的正文：给了已有摘要时要求在它的同名小节上合并 */
+function summaryRequest(previous: string | undefined, conversation: string): string {
+  return previous === undefined
+    ? `请为以下对话生成摘要：\n${conversation}`
+    : `以下是之前的对话摘要：\n${previous}\n\n以下是新增的对话内容。在之前摘要的同名小节上合并更新，旧内容里仍然成立的不要丢；之前的摘要没有这些小节、或小节与本模板不同时，把这些内容按意思归入对应小节，不保留模板之外的小节。输出完整的新摘要：\n${conversation}`;
 }
 
 // ===== 摘要存储 =====
@@ -382,13 +394,15 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 摘要的输出上限：会话最近一次用量的窗口 × summaryTokenRatio（还没有用量时按摘要模型的窗口），下限 512，
-   * 不超过摘要模型的输出上限。摘要是每轮重发的常驻块，要收紧调 summaryTokenRatio
+   * 不超过摘要模型的输出上限与它窗口的四分之一（请求里的已有摘要与输出各占至多四分之一，另一半留给提示词与对话）。
+   * 摘要是每轮重发的常驻块，要收紧调 summaryTokenRatio
    */
   function summaryBudget(sessionId: string, model: LLMModel): number {
     const window = windows.get(sessionId) ?? model.contextLength;
     return Math.min(
       Math.max(512, Math.floor(window * cfg.summaryTokenRatio)),
       model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      Math.floor(model.contextLength / 4),
     );
   }
 
@@ -415,12 +429,7 @@ async function run(caps: Caps): Promise<void> {
   ): Promise<string> {
     const messages: Message[] = [
       { role: 'system', content: system },
-      {
-        role: 'user',
-        content: previous
-          ? `以下是之前的对话摘要：\n${previous}\n\n以下是新增的对话内容。在之前摘要的同名小节上合并更新，旧内容里仍然成立的不要丢；之前的摘要没有这些小节、或小节与本模板不同时，把这些内容按意思归入对应小节，不保留模板之外的小节。输出完整的新摘要：\n${conversation}`
-          : `请为以下对话生成摘要：\n${conversation}`,
-      },
+      { role: 'user', content: summaryRequest(previous, conversation) },
     ];
     // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
     // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞 provider 的 120s 超时。
@@ -448,8 +457,9 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 把待摘要部分连同已有摘要交给摘要模型，得到新摘要。格式化后的输入超过摘要模型的单次容量时分块增量：每块不超过
-   * (窗口 − 输出上限) ÷ 2 字（按每字至多 2 token 保守折算，留出提示词与已有摘要），上一块的结果作为下一块的已有摘要。
+   * 把待摘要部分连同已有摘要交给摘要模型，得到新摘要。每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多
+   * 输出上限那么多 token 算（它是按这个上限生成的摘要），系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，
+   * 余下的折成每块的字数。格式化后的输入超过一块时分块增量，上一块的结果作为下一块的已有摘要。
    * 任何一块失败或返回空整次失败；每块返回后会话被清空过的，整次作废
    */
   async function summarize(
@@ -460,11 +470,17 @@ async function run(caps: Caps): Promise<void> {
     cleared: () => boolean,
   ): Promise<string> {
     const maxTokens = summaryBudget(sessionId, model);
-    const limit = Math.floor((model.contextLength - maxTokens) / 2);
-    // 每块至少两个码元，切分才能前进（代理对不拆开）
-    if (limit < 2)
-      throw new Error(`摘要模型的上下文窗口（${model.contextLength}）装不下摘要的输出上限（${maxTokens}）`);
     const template = templateOf(sessionId);
+    const system = instructions(template, maxTokens);
+    // 请求里的固定文字按带已有摘要的那一种（较长）算
+    const prompt = system.length + summaryRequest('', '').length;
+    const limit = Math.floor((model.contextLength - 2 * maxTokens - 2 * prompt) / 2);
+    // 每块至少两个码元，切分才能前进（代理对不拆开）
+    if (limit < 2) {
+      throw new Error(
+        `摘要模型的上下文窗口（${model.contextLength}）装不下提示词、已有摘要与摘要的输出上限（${maxTokens}）`,
+      );
+    }
     const names = buildToolNameMap(part);
     const lines = part.map(m => formatMsgForSummary(m, names));
     // 工作模板的「未完成的事」以待办为准：待摘要部分里最后一次待办的参数作为最后一行，与其余各行一起分块
@@ -475,7 +491,6 @@ async function run(caps: Caps): Promise<void> {
         .at(-1)?.function.arguments;
       if (todo) lines.push(`当前任务列表状态：\n${todo}`);
     }
-    const system = instructions(template, maxTokens);
     let summary = '';
     for (const [i, chunk] of chunkLines(lines, limit).entries()) {
       summary = await askSummaryModel(model, sessionId, system, maxTokens, i === 0 ? previous : summary, chunk);
@@ -538,7 +553,7 @@ async function run(caps: Caps): Promise<void> {
       if (!provider) throw new Error('memory 服务不可用');
       const snapshot = await provider.getHistory(sessionId, Infinity);
       const cut = cutPoint(snapshot);
-      const part = snapshot.slice(0, cut).filter(isConversation);
+      const part = snapshot.slice(0, cut).filter(entersSummary);
       if (part.length === 0) return;
       report('start');
       started = true;
