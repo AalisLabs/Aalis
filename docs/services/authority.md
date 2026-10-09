@@ -127,6 +127,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | commands / tools 服务 | `packages/plugin-authority/src/index.ts` | `commands.follow` / `tools.follow` 调 `setExecutionGuard(guard)` 注入闸（反向注入），返回的清理调 `setExecutionGuard(undefined)` 摘掉 |
 | plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`，非 null 即拦截 |
 | plugin-commands 执行点 | `packages/plugin-commands/src/index.ts` | 人亲手输入的指令带 `confirmIntent`，守卫需要确认时经它问发出者本人 |
+| plugin-gateway 入站 | `packages/plugin-gateway/src/index.ts` | 以 `isOwner` 作 `roomClass` 的 owner 谓词判会话的房间类别，`owner-only` 的跳过触发与流控（结构性放行）；缺席时没有人是 owner |
 | 权限页 | `packages/plugin-authority/src/index.ts` | 设置里的声明式页面（用户等级、owner、操作门槛、禁用与免确认），处理函数经闭包里本次激活的 manager 调用 |
 
 ## 4. 写一个 provider（替换默认 authority 实现）
