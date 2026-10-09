@@ -9,6 +9,7 @@ import {
   platform,
   resolvePlatformBySession,
   sendPlatformMessage,
+  sessionTypesOf,
 } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -214,9 +215,9 @@ describe('OneBot 多实例：会话按账号路由到所属实例', () => {
   });
 });
 
-describe('会话管理收录房间时记下所属实例', () => {
-  it('原生入站、owner 插话、配置里写明还没连上的账号，各记各的实例；认不出的账号不记', async () => {
-    const { server, host, sm } = await world(TWO_INSTANCES);
+describe('会话管理按原生入站收录房间：所属实例与来源字段', () => {
+  it('群与私聊各记下出生平台、平台类型、多方标记、机器人账号与目标，以及所属实例；临时会话的私聊带群号，目标仍是对端', async () => {
+    const { server, sm } = await world(TWO_INSTANCES);
 
     server('222').push({
       post_type: 'message',
@@ -229,20 +230,43 @@ describe('会话管理收录房间时记下所属实例', () => {
       raw_message: '<群消息>',
       sender: { user_id: 40001, nickname: '<甲>' },
     });
-    const owner = (sessionId: string) =>
-      host.events.emit('inbound:message', { content: '<插话>', sessionId, platform: 'webui', userId: 'console' });
-    await owner('onebot:111:private:7');
-    await owner('onebot:333:group:9');
-    await owner('onebot:999:group:9');
+    server('111').push({
+      post_type: 'message',
+      message_type: 'private',
+      sub_type: 'group',
+      user_id: 40002,
+      group_id: 50002,
+      message_id: 2,
+      message: [{ type: 'text', data: { text: '<临时会话>' } }],
+      raw_message: '<临时会话>',
+      sender: { user_id: 40002, nickname: '<乙>' },
+    });
 
-    const instanceOf = (id: string) => sm().getSession(id)?.originInstance;
-    await until(() => instanceOf('onebot:222:group:50001') !== undefined, 'b 的群房间收录');
-    await until(() => instanceOf('onebot:333:group:9') !== undefined, 'owner 插话建出的房间');
-    expect(instanceOf('onebot:222:group:50001')).toBe(B);
-    expect(instanceOf('onebot:111:private:7')).toBe(A);
-    expect(instanceOf('onebot:333:group:9')).toBe(B);
-    expect(sm().getSession('onebot:999:group:9'), '认不出的账号照样收录').toBeDefined();
-    expect(instanceOf('onebot:999:group:9')).toBeUndefined();
+    const recorded = (id: string) => sm().getSession(id)?.originInstance !== undefined;
+    await until(() => recorded('onebot:222:group:50001'), 'b 的群房间收录');
+    await until(() => recorded('onebot:111:private:40002'), 'a 的私聊房间收录');
+    expect(sm().getSession('onebot:222:group:50001')).toMatchObject({
+      originInstance: B,
+      originPlatform: 'onebot',
+      originChat: { type: 'group', multiParty: true, selfId: '222', targetId: '50001' },
+    });
+    expect(sm().getSession('onebot:111:private:40002')).toMatchObject({
+      originInstance: A,
+      originPlatform: 'onebot',
+      originChat: { type: 'private', multiParty: false, selfId: '111', targetId: '40002' },
+    });
+  });
+
+  it('适配器声明 group、private 与 channel 三个类型', async () => {
+    const { host } = await world(TWO_INSTANCES);
+
+    for (const entry of host.platform.all()) {
+      expect(sessionTypesOf(entry.instance), entry.contextId).toEqual([
+        { name: 'group', multiParty: true },
+        { name: 'private', multiParty: false },
+        { name: 'channel', multiParty: true },
+      ]);
+    }
   });
 });
 

@@ -116,7 +116,7 @@ describe('坏数据只坏它自己', () => {
       'webui:turn': record('webui:turn', { status: 'error', lastTurn: 'x' }),
       'webui:tokens': record('webui:tokens', { tokens: { input: 'many', output: 1 } }),
       // 没有读者会因类型不对出错的字段不核
-      'webui:metadata': record('webui:metadata', { metadata: 3, createdBy: 1 }),
+      'webui:metadata': record('webui:metadata', { metadata: 3, result: 1 }),
       ...rejected,
     });
     const { sessions } = await c.list();

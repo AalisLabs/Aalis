@@ -21,10 +21,11 @@ import {
   getPlatformNames,
   type PlatformConnection,
   platform,
+  sessionTypesOf,
 } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
-import { sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
 import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
@@ -769,14 +770,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 特殊处理 gateway-scopes：基于已注册 adapter.sessionTypes 真实声明生成
-    // platform×sessionType 的笛卡尔积。无声明的 adapter 视为单会话（不展开 sessionType）。
+    // 特殊处理 gateway-scopes：已注册平台与它们的类型名（sessionTypesOf：没声明类型的平台只有一个类型 private）
+    // 的笛卡尔积
     if (serviceName === 'gateway-scopes') {
-      const adapters = getPlatformAdapters(caps.platform);
-      const platformTypes = new Map<string, readonly string[]>();
+      const platformTypes = new Map<string, string[]>();
       const allTypes = new Set<string>();
-      for (const a of adapters) {
-        const types = a.sessionTypes ?? [];
+      for (const a of getPlatformAdapters(caps.platform)) {
+        const types = sessionTypesOf(a).map(t => t.name);
         platformTypes.set(a.platform, types);
         for (const t of types) allTypes.add(t);
       }
@@ -786,13 +786,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         scopes.push({ value: `*:${t}`, label: `*:${t} （所有平台的 ${t} 会话）` });
       }
       for (const [p, types] of platformTypes) {
-        if (types.length === 0) {
-          // 单会话平台 (cli/webui)：只列 platform 通配
-          scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 单会话）` });
-        } else {
-          scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部类型）` });
-          for (const t of types) scopes.push({ value: `${p}:${t}`, label: `${p}:${t}` });
-        }
+        scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部类型）` });
+        for (const t of types) scopes.push({ value: `${p}:${t}`, label: `${p}:${t}` });
       }
       res.json({ models: scopes.map(s => s.value), details: scopes });
       return;
@@ -923,12 +918,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   events.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
 
   // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。
-  // 回执表示这条消息已经进了会话历史，不看有没有页面在线。owner 从 WebUI 驱动的房间由那个平台的适配器认领
+  // 回执表示这条消息已经进了会话历史，不看有没有页面在线。owner 从 WebUI 驱动的 IM 房间（根会话记下了出生平台）
+  // 由那个平台的适配器认领
   events.on('outbound:message', (msg: OutgoingMessage) => {
-    const sessionRoot = msg.sessionId.split('::')[0];
-    const colon = sessionRoot.indexOf(':');
-    const externalTarget = colon >= 0 && sessionRoot.slice(0, colon) !== 'webui';
-    if (msg.delivery || externalTarget || msg.platform !== 'webui') return;
+    if (msg.delivery || msg.platform !== 'webui') return;
+    const sm = caps.sessions.current;
+    const root = sm && rootSessionOf(sm.getSession(msg.sessionId), id => sm.getSession(id));
+    if (root?.originPlatform !== undefined) return;
     // 同步挂上 Promise，始终 resolve，即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
     msg.delivery = (async () => {
       try {
@@ -1189,7 +1185,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   provide(platform, {
     adapterName: 'WebUI',
     platform: 'webui',
-    sessionTypes: [],
     getConnections(): PlatformConnection[] {
       const clients = sessionSockets.size;
       return clients === 0 ? [] : [{ id: 'webui', platform: 'webui', status: 'online', detail: { clients } }];

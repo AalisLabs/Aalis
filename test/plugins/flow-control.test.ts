@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
-import { App, events, services } from '../../packages/core/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { App, events, provide, services } from '../../packages/core/src/index.js';
 import { configSchema, normalizeScopes } from '../../packages/plugin-flow-control/src/config.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import {
@@ -9,8 +10,11 @@ import {
   SESSION_TTL_MS,
   sweepStaleStates,
 } from '../../packages/plugin-flow-control/src/state.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { recordRoom } from '../fixtures/rooms.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 /** 与插件 apply 同一条路径：parseConfig 之后做作用域核对 */
 function readConfig(raw: Record<string, unknown>) {
@@ -65,11 +69,15 @@ describe('flow-control config', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     try {
       await registerHubs(app);
+      const host = app.bind({ events, provide, services });
+      host.provide(memory, fakeMemory() as never);
+      await app.plugin(sessionManagerPlugin);
       await app.plugin(flowControlPlugin, { scopes: ['onebot:group', '', '   '], cooldownSeconds: 30 });
       await app.plugins.idle();
-      const host = app.bind({ events, services });
       const svc = host.services.get(flowControl);
       if (!svc) throw new Error('flow-control 服务未注册');
+      // 群按原生入站收录，会话管理记下它的聊天窗口，回复记账按它判作用域
+      await recordRoom(host.events, 'onebot:10001:group:20002');
       for (const [sessionId, platform] of [
         ['webui:console', 'webui'],
         ['onebot:10001:group:20002', 'onebot'],

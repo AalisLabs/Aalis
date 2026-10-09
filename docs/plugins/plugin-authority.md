@@ -23,12 +23,13 @@ export default definePlugin({
     tools: optional(tools),
     storage: optional(storage),
     approvals: optional(approvals),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内仍 `require()`：宿主未提供配置文档时本插件激活失败。其余 optional 依赖缺席时只少对应的接线；`approvals` 缺席时需要确认的工具调用一律拒绝。WebUI 权限页改动配置后经 `host-config` 的 `save()` 落盘。
+裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内仍 `require()`：宿主未提供配置文档时本插件激活失败。其余 optional 依赖缺席时只少对应的接线；`approvals` 缺席时需要确认的工具调用一律拒绝；`sessionManager` 用来按会话字段判房间（见「发起回合的类别」）。WebUI 权限页改动配置后经 `host-config` 的 `save()` 落盘。
 
 ## 两轴正交模型
 
@@ -70,15 +71,15 @@ export default definePlugin({
 
 ### 发起回合的类别
 
-按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）、`actor` 与会话 id（`originKind`，`packages/plugin-authority/src/authority-model.ts`）：
+按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）、`actor` 与会话的房间类别（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。房间类别按 session-manager 记下的会话字段判（api-session-manager 的 `roomClass`），不看会话 id 的写法，也不看平台类型名；审批服务的提供者 plugin-session-server 本身依赖 session-manager，它不在时也没有审批。
 
 按下面的顺序判，先命中的算：
 
 1. 调用不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：`autonomous`；
 2. `source: 'subtask'`：`subtask`；
-3. 群房间，以及对端不是 owner 的私聊（按会话 id 判，子任务按它所在的房间算）：`room`，不论谁发言，owner 在 WebUI 里驱动房间也一样；
-4. 真人消息（没有 `source`）：带 `actor` 的是触发器把这一轮记成了自发的（例如频率触发），为 `autonomous`；否则发言者是 owner 为 `owner`，不是为 `other`；
-5. 宿主通知延续某次工具调用（`hostNotice.callerUserId`）：那次调用的发言者与授权身份都是 owner 为 `owner-chain`，否则 `other`；
+3. 房间：聊天窗口为多方的（群、频道等），以及一对一而对端不是 owner 身份的（子会话按根会话算）：`room`，不论谁发言，owner 在 WebUI 里驱动房间也一样；
+4. 真人消息（没有 `source`）：带 `actor` 的是触发器把这一轮记成了自发的（例如频率触发），为 `autonomous`；否则在受众只有 owner 的会话（房间类别 `owner-only`）里发言者是 owner 为 `owner`，其余为 `other`。受众判不出的会话（房间类别 `internal`：按 id 建档、没有来源字段与创建来源的，会话管理不在时的全部会话）失败关闭，owner 发言也是 `other`；
+5. 宿主通知延续某次工具调用（`hostNotice.callerUserId`）：在 `owner-only` 的会话里、那次调用的发言者与授权身份都是 owner 为 `owner-chain`，否则 `other`；
 6. 其余带 `source` 的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知）：`autonomous`。
 
 ## 配置项

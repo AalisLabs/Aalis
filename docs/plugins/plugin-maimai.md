@@ -16,6 +16,7 @@ export default definePlugin({
     tools: optional(tools),
     commands: optional(commands),
     memory: optional(memory),
+    sessionManager: optional(sessionManager),
     logger,
     config,
   },
@@ -45,7 +46,7 @@ export default definePlugin({
 | `/maimai bind <code>` | 绑定你的好友码 |
 | `/maimai unbind` | 解绑你的好友码 |
 
-`target` 是好友码或 `qq:QQ 号`；不写时查你绑定的好友码，开着 `defaultBindOnPrivateChat` 时 OneBot 私聊里没绑定也按你的 QQ 号查。裸敲 `/maimai` 回的就是 `/help maimai`。
+`target` 是好友码或 `qq:QQ 号`；不写时查你绑定的好友码，开着 `defaultBindOnPrivateChat` 时 OneBot 私聊里没绑定也按你的 QQ 号查。私聊指会话管理记下的一对一聊天窗口（`originChat.multiParty` 为 false，子会话取根会话的），不看会话 id 的写法；session-manager 不在场时不这样查。裸敲 `/maimai` 回的就是 `/help maimai`。
 
 查询失败时回复写明怎么办：查分器不认开发者凭据（HTTP 401、403）时写去检查 `developerToken`，超时或连不上时写稍后再试并带出底层原因，其余照查分器的原话。绑定与解绑分开写两种原因：没有在运行的记忆后端（写去启用一个记忆后端），会话认不出发消息的人（没有平台用户 id）。
 

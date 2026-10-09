@@ -72,15 +72,18 @@ async function writing(write: () => Promise<unknown>): Promise<void> {
 }
 
 /**
- * 搜索：名称、标题、id 包含查询串（不分大小写），或查询串是「平台:群号」——
- * 平台是会话 id 第一段、群号是最后一段（onebot:20001 命中 onebot:<账号>:group:20001）
+ * 搜索：名称、标题、id 包含查询串（不分大小写），或查询串是「平台:目标」——出生平台与聊天窗口的目标
+ * （群号或对端账号），如 onebot:20001 命中 QQ 群 20001
  */
 function matches(info: SessionInfo, query: string): boolean {
   const q = query.trim().toLowerCase();
   if ([info.title, info.name, info.id].some(v => v?.toLowerCase().includes(q))) return true;
-  const [platform, target, ...rest] = q.split(':');
-  const segments = info.id.toLowerCase().split(':');
-  return rest.length === 0 && target !== undefined && segments[0] === platform && segments.at(-1) === target;
+  const at = q.indexOf(':');
+  return (
+    at > 0 &&
+    info.originPlatform?.toLowerCase() === q.slice(0, at) &&
+    info.originChat?.targetId.toLowerCase() === q.slice(at + 1)
+  );
 }
 
 export function createSessions(deps: SessionDeps) {
@@ -140,10 +143,9 @@ export function createSessions(deps: SessionDeps) {
       childCount: info.children.length,
       kind: info.kind,
       section: sectionOfRoot(root),
-      platform: info.originPlatform,
+      platform: root.originPlatform,
       instance: info.originInstance,
-      // 房间 id 是「平台:账号:类型:对象」，第二段是机器人账号
-      account: room ? root.id.split(':')[1] : undefined,
+      account: root.originChat?.selfId,
       audience: info.audience,
       createdAt: info.createdAt,
       updatedAt: info.updatedAt,
@@ -187,7 +189,7 @@ export function createSessions(deps: SessionDeps) {
         attention: 0,
       };
       group.rooms++;
-      group.accounts.add(info.id.split(':')[1]);
+      if (info.originChat?.selfId !== undefined) group.accounts.add(info.originChat.selfId);
       if (deps.hasApproval(info.id)) group.attention++;
       byKey.set(key, group);
     }
@@ -256,10 +258,10 @@ export function createSessions(deps: SessionDeps) {
 
   /**
    * owner 自己的会话按哪个入口平台选档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，
-   * 都没有时取这条连接的平台。房间钉死出生平台，不看入口。
+   * 都没有时取这条连接的平台。房间与它的子会话钉死出生平台，不看入口。
    */
   async function entryPlatform(session: SessionInfo, peer: SessionPeer): Promise<string | undefined> {
-    if (session.originPlatform) return undefined;
+    if (rootOf(session).originPlatform) return undefined;
     const recorded = session.metadata?.platform;
     if (typeof recorded === 'string' && recorded) return recorded;
     const adapter = await resolvePlatformBySession(deps.platform, session.id, deps.logger);
@@ -368,7 +370,11 @@ export function createSessions(deps: SessionDeps) {
       const parent = parentId === undefined ? undefined : requireSession(parentId);
       // 根会话不复制各层，配置经继承链实时生效；子会话复制父会话的生效配置（继承链不经父会话自己的配置）
       const config = parent ? sm.childConfig(parent.id, await entryPlatform(parent, conn.peer)) : {};
-      const session = await sm.createSession({ name, parentId, config, createdBy: 'user', status: 'waiting' });
+      // 根会话的创建来源取这条连接所在审批面的登记名（传输层登记得到），不取连接自报的；子会话不带，按根会话取
+      const session = await sm.createSession(
+        { name, parentId, config, status: 'waiting' },
+        parent ? undefined : { createdFrom: conn.peer.surface.name },
+      );
       return { session: summarize(session) };
     },
     'session/rename': async ({ sessionId, title }) => {

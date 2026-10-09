@@ -32,6 +32,7 @@ const groupMsg = (content: string): IncomingMessage => ({
   platform: 'onebot',
   sessionType: 'group',
   sessionId: 'onebot:10000:group:20001',
+  selfId: '10000',
   groupId: '20001',
   userId: '30001',
   nickname: '甲',

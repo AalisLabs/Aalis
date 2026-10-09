@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import puppeteer, { type Browser, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { webuiClient } from '../../packages/api-webui/src/index.js';
 import { type App, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import { MINIMAL_BASE } from '../../packages/create-aalis/src/cli.js';
@@ -16,6 +17,7 @@ import { setupFileLogger } from '../../packages/runtime/src/file-logger.js';
 import { freePort } from '../helpers/net.js';
 import { hostedApp } from './app.js';
 import { provideHostPaths } from './host-paths.js';
+import { seedRooms } from './rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 端到端的共用部分：构建前端、起浏览器、起最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、
@@ -98,7 +100,8 @@ export function framePackage(name: string, files: Record<string, string>, cleanu
 
 /**
  * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
- * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值，doc 是宿主配置文档（如脚手架写的那份）。
+ * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值，doc 是宿主配置文档（如脚手架写的那份），
+ * rooms 是会话表里预置的已收录房间（会话 id → 名字）。
  * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。收尾登记进 cleanups
  */
 export async function webuiStack(options: {
@@ -109,8 +112,9 @@ export async function webuiStack(options: {
   webui?: Record<string, unknown>;
   slowThresholdMs?: number;
   doc?: Partial<AalisConfig>;
+  rooms?: Record<string, string>;
 }): Promise<{ app: App; port: number }> {
-  const { clientDir, model, extra, cleanups, webui, slowThresholdMs, doc } = options;
+  const { clientDir, model, extra, cleanups, webui, slowThresholdMs, doc, rooms } = options;
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
   const { app } = hostedApp({ ...doc, logLevel: 'info' }, { slowThresholdMs });
   cleanups.push(async () => {
@@ -125,7 +129,20 @@ export async function webuiStack(options: {
     MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
   );
   const port = await freePort();
-  const definitions = [...minimal, memoryInMemoryPlugin, ...(model ? [model] : []), webuiServerPlugin, ...extra];
+  // 房间的来源字段只经原生入站记下，而这里起的是整条入站链（发原生入站会跑一轮回合）：要房间时内存记忆先起，
+  // 在会话管理读表之前把收录过的记录预置进去
+  if (rooms) {
+    await app.plugin(memoryInMemoryPlugin, {});
+    await app.plugins.idle();
+    await seedRooms(app.bind({ memory }).memory.require(), rooms);
+  }
+  const definitions = [
+    ...minimal,
+    ...(rooms ? [] : [memoryInMemoryPlugin]),
+    ...(model ? [model] : []),
+    webuiServerPlugin,
+    ...extra,
+  ];
   await app.pluginAll(
     definitions.map(definition => ({
       definition,

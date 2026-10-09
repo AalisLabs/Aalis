@@ -6,7 +6,8 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
-// 会话种类、受众与出生平台：入表时按 id 与 parentId 推出并覆盖写入，调用方传的值与存储里的旧值都不采信。
+// 会话种类与受众：入表时按 id 与 parentId 推出并覆盖写入，调用方传的值与存储里的旧值都不采信。
+// 出生平台不在此列：它是 IM 房间建档时记下的字段（见 session-origin-fields.test.ts）。
 // 种类由纯函数 sessionKind 按父会话与受众给出：子会话为 task，受众为群或私聊为 room（含 owner 自己的私聊），其余为 owner。
 
 const GROUP = 'onebot:10000:group:20001';
@@ -30,10 +31,9 @@ async function setup(initial: Record<string, Record<string, unknown>> = {}) {
   return host.sessionManager.require();
 }
 
-const describeOf = (s: { kind?: unknown; audience?: unknown; originPlatform?: unknown } | undefined) => ({
+const describeOf = (s: { kind?: unknown; audience?: unknown } | undefined) => ({
   kind: s?.kind,
   audience: s?.audience,
-  originPlatform: s?.originPlatform,
 });
 
 describe('sessionKind', () => {
@@ -50,26 +50,26 @@ describe('sessionKind', () => {
 });
 
 describe('会话种类字段', () => {
-  it('owner 面会话：WebUI 根会话与 cli-default 为 owner、无出生平台，WebUI 会话的子会话为 task、无受众', async () => {
+  it('owner 面会话：WebUI 根会话与 cli-default 为 owner，WebUI 会话的子会话为 task、无受众', async () => {
     const sm = await setup();
     const root = await sm.createSession({ name: '新会话' });
     const child = await sm.createChildSession(root.id, { name: '子会话' });
     const cli = await sm.ensureSession('cli-default');
 
-    expect(describeOf(root)).toEqual({ kind: 'owner', audience: 'owner', originPlatform: undefined });
-    expect(describeOf(child)).toEqual({ kind: 'task', audience: undefined, originPlatform: undefined });
-    expect(describeOf(cli)).toEqual({ kind: 'owner', audience: 'owner', originPlatform: undefined });
+    expect(describeOf(root)).toEqual({ kind: 'owner', audience: 'owner' });
+    expect(describeOf(child)).toEqual({ kind: 'task', audience: undefined });
+    expect(describeOf(cli)).toEqual({ kind: 'owner', audience: 'owner' });
   });
 
-  it('IM 房间：群为 group、私聊为 private，出生平台取 id 前缀；房间下的子会话为 task、带出生平台', async () => {
+  it('IM 房间：群为 group、私聊为 private；房间下的子会话为 task', async () => {
     const sm = await setup();
     const group = await sm.ensureSession(GROUP);
     const priv = await sm.ensureSession(PRIVATE);
     const task = await sm.createChildSession(GROUP, { name: '子任务' });
 
-    expect(describeOf(group)).toEqual({ kind: 'room', audience: 'group', originPlatform: 'onebot' });
-    expect(describeOf(priv)).toEqual({ kind: 'room', audience: 'private', originPlatform: 'onebot' });
-    expect(describeOf(task)).toEqual({ kind: 'task', audience: undefined, originPlatform: 'onebot' });
+    expect(describeOf(group)).toEqual({ kind: 'room', audience: 'group' });
+    expect(describeOf(priv)).toEqual({ kind: 'room', audience: 'private' });
+    expect(describeOf(task)).toEqual({ kind: 'task', audience: undefined });
   });
 
   it('加载时不采信存储值：存成 owner 的群房间读回为 group 与 room，没有这些字段的旧记录补上', async () => {
@@ -80,30 +80,27 @@ describe('会话种类字段', () => {
       'session-abcd1234': { ...stale, id: 'session-abcd1234' },
     });
 
-    expect(describeOf(sm.getSession(GROUP))).toEqual({ kind: 'room', audience: 'group', originPlatform: 'onebot' });
+    expect(describeOf(sm.getSession(GROUP))).toEqual({ kind: 'room', audience: 'group' });
     expect(describeOf(sm.getSession(`${GROUP}::abcd1234`))).toEqual({
       kind: 'task',
       audience: undefined,
-      originPlatform: 'onebot',
     });
     expect(describeOf(sm.getSession('session-abcd1234'))).toEqual({
       kind: 'owner',
       audience: 'owner',
-      originPlatform: undefined,
     });
   });
 
-  it('调用方传的种类、受众与出生平台被忽略', async () => {
+  it('调用方传的种类与受众被忽略', async () => {
     const sm = await setup();
     const root = await sm.createSession({
       name: '新会话',
       kind: 'task',
       audience: 'group',
-      originPlatform: 'onebot',
     } as never);
     const child = await sm.createChildSession(GROUP, { name: '子任务', kind: 'room', audience: 'private' } as never);
 
-    expect(describeOf(root)).toEqual({ kind: 'owner', audience: 'owner', originPlatform: undefined });
-    expect(describeOf(child)).toEqual({ kind: 'task', audience: undefined, originPlatform: 'onebot' });
+    expect(describeOf(root)).toEqual({ kind: 'owner', audience: 'owner' });
+    expect(describeOf(child)).toEqual({ kind: 'task', audience: undefined });
   });
 });

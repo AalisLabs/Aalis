@@ -147,10 +147,37 @@ export interface SessionInheritance {
 }
 
 /**
+ * IM 房间的聊天窗口：建档时按入站消息记下（api-gateway 的 chatScopeOf），之后不变
+ */
+export interface OriginChat {
+  /** 平台类型名 */
+  type: string;
+  /** 多方标记：建档时按适配器的声明记下，之后不随声明改动。安全判断只认它，不认类型名 */
+  multiParty: boolean;
+  /** 机器人账号：消息上带了才有 */
+  selfId?: string;
+  /** 目标：多方为窗口 id（群号），一对一为对端账号；与作用域第三段同口径 */
+  targetId: string;
+}
+
+/** 工作会话的绑定：目录都是真实路径 */
+export interface WorkBinding {
+  /** 绑定目录：建会话时定 */
+  root: string;
+  /** 附加可写目录 */
+  extraRoots: string[];
+  /** 本会话树经宿主建的同仓 worktree */
+  worktrees: string[];
+}
+
+/**
  * 会话信息
  *
  * 代表一个独立的对话会话，可拥有独立配置和树形层级关系。
  * 树形结构为未来 agent 任务拆分和协作奠定基础。
+ *
+ * 会话之间的差别一律按字段判（出生平台、聊天窗口、创建来源、绑定），不按会话 id 的写法，也不靠 id 里有没有冒号：
+ * 来源字段与创建来源在建档时记下，子会话不带，按根会话取（{@link rootSessionOf}）
  */
 export interface SessionInfo {
   /** 会话唯一标识 */
@@ -174,8 +201,11 @@ export interface SessionInfo {
   createdAt: number;
   /** 最后更新时间戳 */
   updatedAt: number;
-  /** 创建者类型 */
-  createdBy?: 'user' | 'agent' | 'scheduler' | 'system';
+  /**
+   * 创建来源：建这个会话的审批面的登记名（api-approval 的 registerSurface，如 webui、cli）。只有会话服务的
+   * session/create 与终端在建档时经专用参数（{@link SessionCreation}）写，不收调用方经会话字段传值
+   */
+  createdFrom?: string;
   /** 父会话传入的指令/上下文（创建子会话时由父会话填写） */
   inputContext?: string;
   /** 完成结果摘要（子会话完成后填充，用于向父会话汇报） */
@@ -184,9 +214,18 @@ export interface SessionInfo {
   metadata?: Record<string, unknown>;
   /** 会话种类（{@link sessionKind}），由 session-manager 按 parentId 与受众推出，不收调用方传值 */
   kind: SessionKind;
-  /** 出生平台（api-gateway 的 resolveSessionOrigin）；owner 面会话及其子会话为 undefined */
+  /**
+   * 出生平台：IM 房间建档时按入站消息记下，之后不变。只有有出生平台的根会话带（与 {@link originChat} 同时记下），
+   * 读方不从会话 id 推；不收调用方传值
+   */
   originPlatform?: string;
-  /** 只有根会话带：有出生平台的取 group 或 private，其余为 owner */
+  /** 聊天窗口：与出生平台同时记下，只有 IM 房间的根会话带。不收调用方传值 */
+  originChat?: OriginChat;
+  /** 绑定：只有根工作会话带，只经会话管理的专用方法写 */
+  work?: WorkBinding;
+  /** 当前目录（真实路径）：工作会话与它的子会话各带一份，子会话建时取父会话此刻的值；只经 setCurrentDir 改 */
+  currentDir?: string;
+  /** 只有根会话带：会话 id 带平台前缀的（api-gateway 的 resolveSessionOrigin）取 group 或 private，其余为 owner */
   audience?: RoomAudience;
   /**
    * 有出生平台的房间：接管它的平台适配器的插件实例 id（api-platform 的 `resolvePlatformBySession`）。
@@ -214,7 +253,11 @@ export type NewSessionFields = Partial<
     | 'createdAt'
     | 'updatedAt'
     | 'kind'
+    | 'createdFrom'
     | 'originPlatform'
+    | 'originChat'
+    | 'work'
+    | 'currentDir'
     | 'audience'
     | 'originInstance'
     | 'lastReplyAt'
@@ -223,6 +266,57 @@ export type NewSessionFields = Partial<
     | 'config'
   >
 > & { config?: SessionConfigPatch };
+
+/**
+ * 建档专用的参数：只在建档时生效，不并进 {@link NewSessionFields}。只有会话服务（owner 连接的 session/create）与终端传
+ */
+export interface SessionCreation {
+  /** 创建来源：建这个会话的审批面的登记名 */
+  createdFrom: string;
+  /** 建成工作会话：绑定目录（真实路径，由调用方校验）。只用于根会话，当前目录取绑定目录 */
+  work?: { root: string };
+}
+
+/**
+ * 会话树的根会话：沿父会话上溯；会话不在表里、某一级父会话不在表里，或父会话链成环（坏数据）时为 undefined
+ */
+export function rootSessionOf(
+  info: SessionInfo | undefined,
+  lookup: (id: string) => SessionInfo | undefined,
+): SessionInfo | undefined {
+  const visited = new Set<string>();
+  let session = info;
+  while (session?.parentId) {
+    if (visited.has(session.id)) return undefined;
+    visited.add(session.id);
+    session = lookup(session.parentId);
+  }
+  return session;
+}
+
+/**
+ * 房间类别：这个会话的受众里有谁，由此定回合最多能触及什么。owner-only 是受众只有 owner 的会话，room 是受众里有别人的，
+ * internal 是没有受众的内部会话与判不出的
+ */
+export type RoomClass = 'owner-only' | 'room' | 'internal';
+
+/**
+ * 按会话字段判房间类别，子会话取根会话的：有出生平台的，聊天窗口为多方的是 room，一对一而对端是 owner 身份的是
+ * owner-only，其余一对一是 room（只认多方标记，不认类型名）；没有出生平台、带创建来源的是 owner-only；其余（不在会话表里的、
+ * 按 id 建档的、mcp-server、编排与定时任务的会话）一律 internal，失败关闭。isOwner 由调用方传入（如 authority 的 owner 判定）
+ */
+export function roomClass(
+  info: SessionInfo | undefined,
+  lookup: (id: string) => SessionInfo | undefined,
+  isOwner: (platform: string, userId: string) => boolean,
+): RoomClass {
+  const root = rootSessionOf(info, lookup);
+  if (root?.originPlatform !== undefined) {
+    const chat = root.originChat;
+    return chat && !chat.multiParty && isOwner(root.originPlatform, chat.targetId) ? 'owner-only' : 'room';
+  }
+  return root?.createdFrom !== undefined ? 'owner-only' : 'internal';
+}
 
 /** 改会话时调用方能给的字段：配置按登记的设置项校验，与原有覆盖合并 */
 export type SessionUpdates = Partial<Pick<SessionInfo, 'name' | 'status' | 'metadata'>> & {
@@ -245,8 +339,11 @@ export type SessionUpdates = Partial<Pick<SessionInfo, 'name' | 'status' | 'meta
 export interface SessionManagerService {
   // ---- CRUD ----
 
-  /** 创建新会话，返回完整的 SessionInfo */
-  createSession(opts?: NewSessionFields): Promise<SessionInfo>;
+  /**
+   * 创建新会话，返回完整的 SessionInfo。creation 是建档专用的参数（创建来源、绑定），只给根会话：带 parentId 时抛错。
+   * 子会话的当前目录取父会话此刻的值
+   */
+  createSession(opts?: NewSessionFields, creation?: SessionCreation): Promise<SessionInfo>;
   /** 获取指定会话（不存在返回 undefined） */
   getSession(id: string): SessionInfo | undefined;
   /** 列出会话（可按 parentId 和 status 过滤） */
@@ -262,20 +359,35 @@ export interface SessionManagerService {
    * 两种情况下，还没记下 `originInstance` 的房间随后都解析一次，认领到就记下并 emit `session:updated`，
    * 本方法等它落定再返回；同一条记录已有解析在途的不重复解析，也不等它
    *
-   * 用于平台派生 sessionId（如 `onebot:<self>:group:<gid>`）：这些 id 不经
-   * createSession 预建，首次设置模型/人设覆盖时需按其原样 id 落档——而 createSession
-   * 会自生成 id、updateSession 缺记录会抛错，故需要本方法。
+   * 用于按固定 id 落档：终端配置的会话 id、/session.set 落配置覆盖等。createSession 会自生成 id、updateSession
+   * 缺记录会抛错，故需要本方法。按 id 建出的记录不带来源字段：IM 房间的来源字段由原生入站建档时记下，按 id 建出的由之后的原生入站补记。
+   * creation 是建档专用的创建来源，已有记录时不生效
    */
-  ensureSession(id: string, patch?: SessionUpdates & Pick<NewSessionFields, 'createdBy'>): Promise<SessionInfo>;
+  ensureSession(
+    id: string,
+    patch?: SessionUpdates,
+    creation?: Pick<SessionCreation, 'createdFrom'>,
+  ): Promise<SessionInfo>;
   /** 删除会话（同时清理其消息历史） */
   deleteSession(id: string): Promise<void>;
 
   // ---- 树形操作 ----
 
-  /** 创建子会话 */
+  /** 创建子会话；父会话还没建档时先按 id 兜底建档（名字为 id、不带来源字段，是房间的由参考实现的入站收录补记） */
   createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];
+
+  // ---- 工作会话 ----
+  // 绑定写在根工作会话上，子会话里的改动也写到那里；当前目录是每个会话自己的。都随会话表持久化，任何清空都不清，
+  // 删除会话时随记录删除。会话不存在或不在工作会话树里时抛错。改了发 session:updated
+
+  /** 改这个会话自己的当前目录（真实路径） */
+  setCurrentDir(sessionId: string, dir: string): Promise<void>;
+  /** 整份替换附加可写目录（真实路径，由调用方校验） */
+  setExtraRoots(sessionId: string, extraRoots: readonly string[]): Promise<void>;
+  /** 记下本会话树经宿主建的 worktree（真实路径）；已记过的不重复记 */
+  addWorktree(sessionId: string, path: string): Promise<void>;
 
   // ---- 生命周期 ----
 
@@ -295,14 +407,14 @@ export interface SessionManagerService {
   /**
    * 解析指定会话的最终生效配置：会话自己的覆盖 > 父会话的 sessionDefaults（旧数据）> 受众条目 > 平台档 > 全局默认。
    * 只含已登记、取值合法的键；取值不合登记的字段的跳过并告警一次。平台档的选法同 {@link resolveInheritance}：
-   * 房间会话钉死出生平台，传入的入口平台只对没有出生平台的会话起作用。
+   * 会话 id 带平台前缀的钉死这个前缀，传入的入口平台只对不带前缀的会话起作用。
    */
   resolveConfig(sessionId: string, platform?: string): SessionConfig;
 
   /**
    * 继承链解析（不含会话自身 config）：全局默认 → 平台档 → 平台档的受众条目 → 父会话 sessionDefaults。
-   * 会话有出生平台（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按出生平台选档、忽略传入的 platform，
-   * 并按它的受众（group 或 private）叠加受众条目；没有时（WebUI、CLI 等 owner 面会话）按传入的入口平台，不取受众条目。
+   * 会话 id 带平台前缀（api-gateway 的 resolveSessionOrigin，子任务按父会话算）时按这个前缀选档、忽略传入的 platform，
+   * 并按它的受众（group 或 private）叠加受众条目；不带时（WebUI、CLI 等 owner 面会话）按传入的入口平台，不取受众条目。
    * 只看继承值，才不会把会话自己的覆盖当成继承来的。
    */
   resolveInheritance(sessionId: string, platform?: string): SessionInheritance;
