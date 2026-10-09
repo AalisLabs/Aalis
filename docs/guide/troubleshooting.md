@@ -14,7 +14,7 @@
 
 ## Node 版本
 
-Aalis 要 Node.js 24.15.0 起。`npm create aalis` 一开头检查版本，不够就退出并写明升级方法；已有项目在旧 Node 上运行时，`/doctor` 的 `env.node` 报 error，Node 22.16 之前或 23.x 上 SQLite 记忆还会激活失败，报错写明当前版本。升级步骤，以及已有项目换 Node 之后报 `NODE_MODULE_VERSION` 的处理，见[第一次运行的「升级 Node」](./first-run.md#upgrade-node)。
+Aalis 要 Node.js 24.15.0 起。`npm create aalis` 一开头检查版本，不够就退出并给出升级步骤的地址；已有项目在旧 Node 上运行时，`/doctor` 的 `env.node` 报 error，Node 22.16 之前或 23.x 上 SQLite 记忆还会激活失败，报错写明当前版本。升级步骤见[第一次运行的「升级 Node」](./first-run.md#upgrade-node)。
 
 ## `npm install` 失败
 
