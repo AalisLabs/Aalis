@@ -29,8 +29,10 @@
   },
   "dependencies": {
     "@aalis/api-agent": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -44,7 +46,9 @@
   "aalis": {
     "service": {
       "optional": [
-        "agent"
+        "agent",
+        "authority",
+        "session-manager"
       ],
       "provides": [
         "gateway"

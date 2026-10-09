@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { mkConfig, silentLogger } from '../fixtures/authority.js';
+import { mkConfig, noSessions, silentLogger } from '../fixtures/authority.js';
 
 // users.json 重读与写盘失败：重读以文件重建内存表，再叠加自上次成功落盘以来改过的键（内存优先）。
 // 读取在飞或 storage 离线期间的改动还没进文件，按文件值覆盖就是静默撤回封禁；
@@ -53,7 +53,7 @@ const levelOf = (m: AuthorityManager, userId: string) =>
 describe('UserStore 重读：以文件重建，未落盘的改动以内存为准', () => {
   it('运行中从文件删掉的记录随重读消失，下次保存不写回', async () => {
     const disk = memStorage({ 'onebot:a': { level: 2 }, 'onebot:b': { level: -1 } });
-    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage, noSessions);
     await m.init();
     disk.edit({ 'onebot:a': { level: 2 } }); // 手工删掉 b
     await m.init(); // storage 重新上线触发重读
@@ -67,7 +67,7 @@ describe('UserStore 重读：以文件重建，未落盘的改动以内存为准
 
   it('重读在飞期间改的是文件里已有的用户：以内存为准并落盘', async () => {
     const disk = memStorage({ 'onebot:x': { level: 3 } });
-    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage, noSessions);
     await m.init();
     const g = gate();
     disk.state.readGate = g.promise;
@@ -92,7 +92,7 @@ describe('UserStore 重读：以文件重建，未落盘的改动以内存为准
       warn() {},
       error: (msg: string) => errors.push(msg),
     } as unknown as Logger;
-    const m = new AuthorityManager(mkConfig(), logger, disk.storage);
+    const m = new AuthorityManager(mkConfig(), logger, disk.storage, noSessions);
     await m.init();
 
     disk.state.offline = true;
@@ -118,7 +118,7 @@ describe('UserStore 重读：以文件重建，未落盘的改动以内存为准
 
   it('写盘成功只清掉快照已含的改动：写在飞时又改的键，重读时仍以内存为准', async () => {
     const disk = memStorage({});
-    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage, noSessions);
     await m.init();
     const x = { platform: 'onebot', userId: 'x' };
 
@@ -138,7 +138,7 @@ describe('UserStore 重读：以文件重建，未落盘的改动以内存为准
 
   it('重读与在飞的写重叠：读到写入前的内容、写先成功，刚写入的封禁仍以内存为准', async () => {
     const disk = memStorage({ 'onebot:x': { level: 3 } });
-    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage, noSessions);
     await m.init();
 
     const w = gate();
@@ -165,7 +165,7 @@ describe('UserStore 重读：以文件重建，未落盘的改动以内存为准
 
   it('写盘成功后改动不再占优：之后手工改文件，重读以文件为准', async () => {
     const disk = memStorage({});
-    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), disk.storage, noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'x' }, 1);
     m.save();

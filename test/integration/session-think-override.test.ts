@@ -88,7 +88,6 @@ async function loadStack(sent: Sent[]) {
   await app.plugin(settingsPlugin('persona-settings', [PERSONA]));
   await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
-    historyLimit: 10,
     memoryTokenBudget: 1024,
     maxToolIterations: 3,
     preferredModel: '',

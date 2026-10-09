@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
+    "@aalis/api-authority": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
@@ -61,6 +62,7 @@
         "provide"
       ],
       "optional": [
+        "authority",
         "message-archive",
         "session-manager"
       ],

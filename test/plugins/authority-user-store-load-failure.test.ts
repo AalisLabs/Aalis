@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { mkConfig, silentLogger } from '../fixtures/authority.js';
+import { mkConfig, noSessions, silentLogger } from '../fixtures/authority.js';
 
 // 背景：users.json 读/解析失败时只记一行日志、不留失败标记，而 save() 写的是**全量快照**——
 // 坏文件 load 之后任何一次等级改动都会把原有封禁/等级记录静默覆盖成「只剩新记录」。
@@ -34,7 +34,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     const broken = '{"version":5,"users":{"onebot:banned":{"level":-5}';
     await writeFile(file, broken);
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage(), noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -53,7 +53,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), failing);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), failing, noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -66,7 +66,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     const file = join(dir, 'users.json');
     await writeFile(file, '{"version":5,"users":{"onebot:banned":{"level":-5}');
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage(), noSessions);
     await m.init(); // 坏文件 → 拒写
     // 人工修好文件（或换上可读的 storage）后再 load：重读成功即恢复落盘
     await writeFile(file, '{"version":5,"users":{"onebot:banned":{"level":-5}}}');
@@ -94,7 +94,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), firstReadFails);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), firstReadFails, noSessions);
     await m.init(); // 读不出 → 拒写
     m.setUserLevel({ platform: 'onebot', userId: 'x' }, 0);
     await m.init(); // storage 重新上线，重读成功
@@ -124,7 +124,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       },
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), slowReload);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), slowReload, noSessions);
     await m.init(); // 非 v5 → 拒写
     // storage 重新上线时 follow 对同一个 manager 再跑一次 init；读还没回来时插进一次等级改动
     let release = () => {};
@@ -159,7 +159,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       },
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), gated);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), gated, noSessions);
     const first = m.init();
     const second = m.init(); // storage 换人时 follow 再挂一次，前一次还没读完
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
@@ -200,7 +200,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       },
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), logger, weird);
+    const m = new AuthorityManager(mkConfig(), logger, weird, noSessions);
     await expect(m.init(), '意外异常应交还调用方').rejects.toThrow();
     expect(m.persistBlocked, '文件状态不明，应按读不懂拒写').toBe(true);
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
@@ -225,7 +225,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), enoentish);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), enoentish, noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -244,7 +244,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), misleading);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), misleading, noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -260,7 +260,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     const broken = '{"version":5,"users":"onebot:banned"}';
     await writeFile(file, broken);
 
-    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage(), noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -282,7 +282,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       error: (msg: string) => errors.push(msg),
     } as unknown as Logger;
 
-    const m = new AuthorityManager(mkConfig(), logger, fsStorage());
+    const m = new AuthorityManager(mkConfig(), logger, fsStorage(), noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -293,7 +293,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
   });
 
   it('文件不存在（ENOENT）仍照常写入：拒写闸不误伤全新安装', async () => {
-    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage(), noSessions);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();

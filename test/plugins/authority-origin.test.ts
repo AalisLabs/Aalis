@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { OriginKind } from '../../packages/api-approval/src/index.js';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
+import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import { originKind } from '../../packages/plugin-authority/src/authority-model.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
@@ -203,5 +205,24 @@ const rows: Array<[string, Turn, OriginKind]> = [
 describe('发起回合的类别', () => {
   it.each(rows)('%s', (_label, turn, kind) => {
     expect(originKind(turn, isOwner, lookup)).toBe(kind);
+  });
+});
+
+describe('权限服务的 originOf', () => {
+  // 判据就是 originKind：owner 取宿主配置的 owners（本机控制台恒为 owner），会话按构造时给的会话表取
+  const manager = new AuthorityManager(
+    mkConfig({
+      owners: [
+        { platform: 'onebot', userId: OWNER_QQ },
+        { platform: 'forum', userId: OWNER_FORUM },
+      ],
+    }),
+    silentLogger(),
+    noFileStorage,
+    lookup,
+  );
+
+  it.each(rows)('%s', (_label, turn, kind) => {
+    expect(manager.originOf(turn)).toBe(kind);
   });
 });

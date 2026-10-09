@@ -10,7 +10,7 @@
 
 它做两件事：
 
-- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行运行 `inbound:command → inbound:trigger → inbound:flow → inbound:dispatch` 四个命名相位；终相 `dispatch` 的默认动作是调用 `agent.handleMessage`。前三相位任一被 swallow（handler 未调用 `next()`）即停止后续调度，消息不触达 agent（`packages/plugin-gateway/src/index.ts`）。
+- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行运行 `inbound:command → inbound:trigger → inbound:flow → inbound:dispatch` 四个命名相位；终相 `dispatch` 的默认动作是调用 `agent.handleMessage`。前三相位任一被 swallow（handler 未调用 `next()`）即停止后续调度，消息不触达 agent；房间类别为 `owner-only` 的会话（owner 自己的会话）跳过 trigger 与 flow 两个相位，见插件页「结构性放行」（`packages/plugin-gateway/src/index.ts`）。
 - **出站**：提供 `dispatchOutbound()`，运行 `outbound:dispatch` 钩子链，默认动作是向 `outbound:message` 事件总线广播，由平台适配器接收并发送（`packages/plugin-gateway/src/index.ts`）。
 
 > core 自身不再绑定任何路由实现。`packages/core/src/orchestration/app.ts` 的注释明确：「消息路由由网关插件承担，不在 core。」最小应用若不加载 gateway，则**没有人**监听 `inbound:message`，消息不会被处理 —— gateway 是路由的必要部件，不存在 core 兜底。
@@ -63,7 +63,7 @@ export interface InboundPhaseData {
 }
 ```
 
-相位 hook 与出站 hook 经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`（`packages/api-gateway/src/index.ts`）：五个 `inbound:*` 相位载荷均为 `InboundPhaseData`；`outbound:dispatch` 载荷为 `{ message: OutgoingMessage; metadata: Record<string, unknown> }`。
+相位 hook 与出站 hook 经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`（`packages/api-gateway/src/index.ts`）：四个 `inbound:*` 相位载荷均为 `InboundPhaseData`；`outbound:dispatch` 载荷为 `{ message: OutgoingMessage; metadata: Record<string, unknown> }`。
 
 ### 2.3 遥测事件
 
@@ -86,7 +86,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide(gateway, service)`）。required `hooks`（由 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示。
+**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide(gateway, service)`）。required `hooks`（由 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent', 'session-manager', 'authority']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示；会话管理与 authority 用来判房间类别做结构性放行，会话管理不在时全部照常走，authority 不在时没有人是 owner。
 
 **消费方分两类：**
 
@@ -103,11 +103,11 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ## 4. 写一个 provider（替换 gateway 实现 —— 少见）
 
-通常你不需要重写 gateway；默认实现已覆盖五相位 + 出站钩子链。仅当你要替换整套编排策略时才自己 provide `gateway`。
+通常你不需要重写 gateway；默认实现已覆盖四个入站相位、结构性放行与出站钩子链。仅当你要替换整套编排策略时才自己 provide `gateway`。
 
-**最小必须实现**：`ingressMessage` 与 `dispatchOutbound` 两个方法 + 监听 `inbound:message` 把消息送入 `ingressMessage`。**可选但强烈建议**：保留相位调度与 `gateway:phase:done` 遥测，否则现有 `plugin-commands` / `plugin-flow-control` 等相位插件会失效。
+**最小必须实现**：`ingressMessage` 与 `dispatchOutbound` 两个方法 + 监听 `inbound:message` 把消息送入 `ingressMessage`。**可选但强烈建议**：保留相位调度与 `gateway:phase:done` 遥测，否则现有 `plugin-commands` / `plugin-flow-control` 等相位插件会失效；保留结构性放行，否则 owner 自己的会话会被触发判定与流控挡住。
 
-`package.json` 的 `aalis.service` 与源码 `provides` / `uses` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `required: ['events', 'hooks', 'logger', 'provide']` + `optional: ['agent']`）：
+`package.json` 的 `aalis.service` 与源码 `provides` / `uses` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `required: ['events', 'hooks', 'logger', 'provide']` + `optional: ['agent', 'authority', 'session-manager']`）：
 
 ```jsonc
 // package.json（与下方骨架的 uses 对应）
