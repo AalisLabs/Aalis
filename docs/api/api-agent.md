@@ -32,7 +32,7 @@ interface AgentService {
 
 会话服务回看历史、在实时推送里标出「未发出」都依据下面几条，别的 agent 实现照此做，历史才与实时推送、与群里看到的一致：
 
-- **元数据的键**：落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在元数据里记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的元数据与时间线的 `tool_call` 段记下这次调用的 `callId`；最终回复另记这一轮的模型与 token、这一轮的平台与她在那里的身份。键一律用 schema-message 登记的 `WellKnownMetadataKeys`（`TurnId`、`CallId`、`ModelInfo`、`Platform`、`UserId`、`Nickname`，见 [schema-message 的「存档元数据的键」](./schema-message.md#存档元数据的键)）。`agent:tool:after` 里别的插件写进 `metadata` 的键随 tool 结果原样落库。
+- **元数据的键**：落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在元数据里记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的元数据与时间线的 `tool_call` 段记下这次调用的 `callId`；最终回复另记这一轮的模型与 token、这一轮的平台与她在那里的身份、这一轮的群与会话类型，回复是结构化输出的信封时另记解码后的可见正文。键一律用 schema-message 登记的 `WellKnownMetadataKeys`，各键见 [schema-message 的「存档元数据的键」](./schema-message.md#存档元数据的键)表里写方为 agent 的各项。`agent:tool:after` 里别的插件写进 `metadata` 的键随 tool 结果原样落库。
 - **房间里一轮只把最后一条回复交给平台**：房间（会话种类为 `room` 的 IM 群与私聊）里，一轮里工具调用之前说的话、格式校验没通过而重试丢掉的几版都不发出（不经 `outbound:message`），只有最后一条回复发出。会话服务回看历史时据此把那几段标「未发出」；实时推送按平台的送达结果标，不受影响。
 
 ## 用量（token:usage）

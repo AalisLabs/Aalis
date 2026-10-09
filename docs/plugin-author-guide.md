@@ -398,6 +398,17 @@ declare module '@aalis/core' {
 
 插件不画宿主的界面，只声明自己有什么，由宿主按契约画出来；没装、没启用就不出现，界面不报错、不留空壳。页面默认声明式：用 `webui.definePage` 交出组件、数据源与动作，样式、窄屏变形、确认框与输入表单都由宿主统一画（见 [api-webui 的「声明式页面」](api/api-webui.md#声明式页面)）。声明式表达不了的页面（自绘的画布、拖拽编排这类交互）才用插件前端：插件包里的一份静态网页，在宿主画的隔离框架里运行，与宿主页面不同源，只能经宿主调这一页声明过的数据源与动作（见 [api-webui 的「插件前端」](api/api-webui.md#插件前端)）。
 
+**插件前端可以联网；脚本只认插件自己打包的文件。** 外站的样式、字体、图片、音视频与数据请求都放行；脚本只认包里 `webui/` 下的文件与宿主的公用目录，页面里写的内联脚本、`eval` 与外站脚本都不执行，框架里也不能再嵌别的网页。显示别人给的文字（群成员的昵称与消息、作品、网页标题）一律用只显示纯文字的写法：
+
+```js
+// 对：按纯文字显示
+cell.textContent = member.nickname;
+// 错：别人的文字会被当成标记
+cell.innerHTML = member.nickname;
+```
+
+写错时注入的标记虽然跑不了脚本，仍能借样式把页面上的链接地址、输入框的值带到外站（属性选择器配外站的背景图），也能让框架跳走。
+
 **能放在哪：**
 
 | 位置 | 插件声明什么 | 出现在哪 |
@@ -486,8 +497,7 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
      > 契约包**不在稳定性承诺内**——0.x 期间仍可能改签名。消费它们的插件要关注 CHANGELOG。
    - 仅 `import type` 的 api 包 → **`devDependencies`**（编译期擦除）。
      **注意**：描述符是值导入，所在契约包进 `dependencies`。若你写的是 `-api` 契约包且其导出类型引用别的包，那些要留 `dependencies`。
-   - 运行时用到值（描述符、helper、常量）的 api/util 包 → `dependencies: ">=x.y.z <1.0.0"`。
-     **不要用 caret**：caret 在 0.x 下只匹配 `0.x.*`，**跨 minor 就断**；若同时依赖两个包而它们各锁不同 minor，npm 会装进**两份**同一 api 包，两份 `declare module '@aalis/core'` 撞成 `TS2717`，而 `skipLibCheck: true` 会把这个错误彻底吞掉。也不要写精确版本或 `latest`：前者同样锁死，后者发布出去等于不设上限。`create-aalis-plugin` 生成的依赖已是这种写法。
+   - 运行时用到值（描述符、helper、常量）的 api/util 包 → `dependencies: ">=x.y.z <1.0.0"`，不写 caret、精确版本或 `latest`，理由见[第三方插件开发者指南的「依赖怎么归类」](guide/third-party-plugin.md#_5-1-类型从哪里-import-依赖怎么归类)。`create-aalis-plugin` 生成的依赖已是这种写法。
    - 市场展示字段直接读 `package.json`：`description`/`author`/`license`/`repository`/`version`。
 3. **声明 `aalis.service` 供装前披露**：市场在 npm 上**安装前**只能读 `package.json`
    （拿不到 `definePlugin`），所以在 `package.json` 加：

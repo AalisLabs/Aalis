@@ -1662,13 +1662,13 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1687,6 +1687,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
       mongodb:
         specifier: ^6.12.0
         version: 6.21.0(socks@2.8.7)
@@ -1694,9 +1697,6 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1715,13 +1715,13 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.9.1 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15

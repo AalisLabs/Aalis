@@ -597,13 +597,25 @@ describe('连接状态', () => {
     expect(bar().textContent).toBe('连接断开，正在重连…');
   });
 
-  it('会话服务不在（关闭码 1013）不算断线，会话列表与主区都写「会话服务未启用」', async () => {
+  it('会话服务不在（关闭码 1013）不算断线；桌面上只在主区写「会话服务未启用」，房间表同样写在主区；手机第一层写在会话列表里', async () => {
     stubViewport(1440);
     app = await renderApp('/', handlers);
     act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
     expect(bar().textContent).toBe('');
-    expect(within(screen.getByRole('navigation', { name: '会话' })).getByText('会话服务未启用')).toBeTruthy();
     expect(within(screen.getByRole('main')).getByText('会话服务未启用')).toBeTruthy();
+    expect(screen.getAllByText('会话服务未启用')).toHaveLength(1);
+
+    app.close();
+    app = await renderApp('/rooms?platform=onebot', handlers);
+    act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
+    expect(within(screen.getByRole('main')).getByText('会话服务未启用')).toBeTruthy();
+    expect(screen.getAllByText('会话服务未启用')).toHaveLength(1);
+
+    app.close();
+    stubViewport(390);
+    app = await renderApp('/', handlers);
+    act(() => FakeWebSocket.at('/session').drop(1013, '会话服务不在'));
+    expect(within(screen.getByRole('navigation', { name: '会话' })).getByText('会话服务未启用')).toBeTruthy();
   });
 
   it('应用重启：横条写明，管理连接重连上以后整页重新加载；client.reload 立即重新加载', async () => {

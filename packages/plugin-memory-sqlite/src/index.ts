@@ -21,7 +21,7 @@ import {
   provide,
 } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import type { ContentSegment, Message } from '@aalis/schema-message';
+import { type ContentSegment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 
 /** 配置的 path 归一为 storage URI；留空按实例派生：主实例 data:/aalis.db，`name:b` 实例 data:/aalis-b.db */
 function toUri(input: string, instanceId: string): string {
@@ -287,7 +287,9 @@ export class SQLiteMemoryService implements MemoryService {
     for (const row of rows) {
       if (excludeSet?.has(row.sessionId)) continue;
       const message = SQLiteMemoryService.rowToMessage(row);
-      if (typeof query.platform === 'string' && message.metadata?.platform !== query.platform) continue;
+      if (typeof query.platform === 'string' && message.metadata?.[WellKnownMetadataKeys.Platform] !== query.platform) {
+        continue;
+      }
       out.push({
         sessionId: row.sessionId,
         message,

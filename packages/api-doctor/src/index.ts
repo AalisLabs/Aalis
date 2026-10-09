@@ -15,7 +15,7 @@
  *   重复声明导致 TS 合并冲突。
  *
  *   另有「缺」与「在等」的共享判据（unmet.ts）：插件没起来时沿依赖链追到根，
- *   runtime 的启动告警、plugin-doctor、WebUI 与终端界面都用它。
+ *   runtime 的启动告警、plugin-doctor、WebUI、终端界面与市场的卸载闸都用它。
  */
 
 import type { ServiceRef } from '@aalis/core';

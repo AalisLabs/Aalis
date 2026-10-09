@@ -181,7 +181,8 @@ export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server
 /**
  * 插件实例没起来的原因，插件列表与「需要处理」共用这一份，由服务端算好，界面照字段画：
  * - `lacking`：pending 时缺的 required 服务。每条从直接提供者沿依赖链追到根（api-doctor 的共享判据）：根失败（带它的
- *   失败说明）、停用、没有已装的插件提供、互相等待成环。一个服务有几个已装的提供者都没起来时，每个提供者各一条；
+ *   失败说明）、停用、在运行却没在提供、没有已装的插件提供、互相等待成环。一个服务有几个已装的提供者都没起来时，
+ *   每个提供者各一条；
  * - `waiting`：pending 时在等的服务，根插件在启动，它启动完就有。只在等的插件不算故障；
  * - `unconfigured`：error 时必填却没填的配置项路径（schema-config 的 validateConfig 报的 missing：`''` 算没填，
  *   密钥引用 `{ $secret }` 算填了）。

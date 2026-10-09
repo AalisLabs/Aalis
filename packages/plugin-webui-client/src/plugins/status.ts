@@ -4,7 +4,8 @@ import { paths } from '../routes';
 import { labelOf, type PluginRow } from './list';
 
 // 插件实例的状态写成一句：插件树上只写短的一句，详情的头部与「需要处理」另写原因，依赖块逐条写缺的服务。缺的服务写链与根
-// （服务端按共享判据算好，这里照字段写），链上的显示名与根插件的待配置项从插件列表取。正常运行不上色
+// （服务端按共享判据算好，这里照字段写），链上的显示名与根插件的待配置项从插件列表取；根失败的报错只写第一行，全文在根插件
+// 自己的那一行与它的详情里。正常运行不上色
 
 interface PluginStatus {
   state?: 'attention' | 'error' | 'running' | 'inactive';
@@ -87,12 +88,15 @@ export function reasonOf(
   return undefined;
 }
 
-/** 链的根是什么情形 */
+/**
+ * 链的根是什么情形：失败的只写报错的第一行，依赖它的每一行都带这一句，全文在根插件自己那一行。服务端比客户端新时会有
+ * 这里不认识的根，写「原因见日志」
+ */
 export function rootText(root: UnmetRoot, find: FindPlugin): string {
   switch (root.kind) {
     case 'error': {
       const keys = find(root.instance)?.unconfigured ?? [];
-      return keys.length > 0 ? `待配置：${keys.join('、')}` : `失败：${root.error ?? '原因见日志'}`;
+      return keys.length > 0 ? `待配置：${keys.join('、')}` : `失败：${root.error?.split('\n')[0] ?? '原因见日志'}`;
     }
     case 'disabled':
       return '已停用';
@@ -104,6 +108,10 @@ export function rootText(root: UnmetRoot, find: FindPlugin): string {
       return `没有已装的插件提供 ${root.service}，可以在插件市场按服务搜 ${root.service}`;
     case 'cycle':
       return `互相等待成环：${root.instances.map(instance => pluginName(instance, find)).join('、')}`;
+    default:
+      // 契约加了一种根而这里没跟上时编译不过
+      root satisfies never;
+      return '原因见日志';
   }
 }
 

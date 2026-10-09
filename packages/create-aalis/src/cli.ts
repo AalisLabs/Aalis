@@ -486,6 +486,7 @@ export function checkNodeVersion(current: string): ValidationResult {
       '已经装过的 Aalis 项目，原有的数据库 aalis.db 照常可用，不用迁移。早先版本的记忆后端带原生模块，在旧 Node 上装好依赖的项目换到 Node 24 后：',
       '  先在项目目录执行 npm install @aalis/plugin-memory-sqlite@latest 换成新版，再 npm start（npm update 只在 package.json 写的版本范围内更新，未必换得到新版）',
       '  这一步报 ERESOLVE（peer 依赖冲突）时，改为执行一次 npm rebuild，按新 Node 重新编译旧版的原生模块，需要本机装有 C/C++ 编译工具',
+      `升级步骤与已有项目换 Node 后的处理见 ${DOCS}/guide/first-run#upgrade-node`,
     ].join('\n'),
   };
 }

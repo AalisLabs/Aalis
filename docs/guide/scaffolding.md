@@ -108,7 +108,7 @@ npm start -- status
 
 ### 安装失败时
 
-`npm install` 的输出照常显示在终端。失败时脚手架按 npm 的报错认出是哪一类（网络与源、权限、磁盘、平台不支持、依赖版本冲突、浏览器下载、原生模块编译），写明原因与修法，再给出重试命令、npm 完整日志的位置与[安装与启动排障](./troubleshooting.md)的地址；认不出的写「原因见上面 npm 的报错」。默认装的插件都不需要在本机编译。
+`npm install` 的输出照常显示在终端。失败时脚手架按 npm 的报错认出是哪一类，写明原因与修法，再给出重试命令、npm 完整日志的位置与[安装与启动排障](./troubleshooting.md)的地址，各类见那一页的[「`npm install` 失败」](./troubleshooting.md#npm-install-失败)；认不出的写「原因见上面 npm 的报错」。默认装的插件都不需要在本机编译。
 
 ### 生成了什么（项目布局）
 
@@ -156,7 +156,7 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 
 `home/aalis.config.yaml` 只写需要的几段，其余插件用默认配置启动：
 
-- 要密钥的插件（DeepSeek、OpenAI、OpenAI Embedding，以及 `full` 档的联网搜索）写一个 `apiKey` 段：粘贴了的写成 JSON 字符串（同时是合法的 YAML 双引号串，引号、反斜杠、冒号与 `#` 原样读回），跳过的留空 `apiKey: ""`。空串不算填了，插件激活失败并在 WebUI 标「待配置」；填了值的在启动时移进 `secrets.yaml`。
+- 要密钥的插件（DeepSeek、OpenAI、OpenAI Embedding，以及 `full` 档的联网搜索）写一个 `apiKey` 段：粘贴了的写成 JSON 字符串（同时是合法的 YAML 双引号串，引号、反斜杠、冒号与 `#` 原样读回），跳过的留空 `apiKey: ""`。空串不算填了：DeepSeek、OpenAI Embedding 与联网搜索激活失败，在 WebUI 标「待配置」；OpenAI 对话模型的 apiKey 只在连官方地址时必填，显示为「失败」加原因，按钮「去处理」（见[第一次运行](./first-run.md)）。填了值的在启动时移进 `secrets.yaml`。
 - 设了 `OLLAMA_HOST` 时，两个 Ollama 插件写上 `baseUrl`。
 
 还会给两个只有 owner 进得来的平台（`cli`、`webui`）各写一个平台档，开放全部工具分组；这两项无条件写，平台没装时不起作用，之后从市场装上即生效。多人平台（如 OneBot）不代开。平台档是会话设置在会话之上的一层，写在配置文档的顶层字段 `sessionConfig` 里（见 [plugin-session-manager](../plugins/plugin-session-manager.md#会话之上的各层)）。runtime 的 `--init` 写同样的平台档：

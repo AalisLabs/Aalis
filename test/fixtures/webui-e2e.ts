@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import puppeteer, { type Browser, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
+import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { webuiClient } from '../../packages/api-webui/src/index.js';
 import { type App, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import { MINIMAL_BASE } from '../../packages/create-aalis/src/cli.js';
@@ -39,7 +40,7 @@ export const text = (content: string) => `::-p-text(${content})`;
 export type Cleanups = Array<() => Promise<void>>;
 
 /** 构建前端到一个临时目录，回这个目录 */
-export function buildClient(): string {
+function buildClient(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-client-'));
   const vite = join(dirname(createRequire(join(CLIENT, 'package.json')).resolve('vite/package.json')), 'bin/vite.js');
   const build = spawnSync(process.execPath, [vite, 'build', '--outDir', dir, '--emptyOutDir', '--logLevel', 'error'], {
@@ -52,10 +53,10 @@ export function buildClient(): string {
   return dir;
 }
 
-export const launchBrowser = () => puppeteer.launch({ headless: true, args: ['--no-sandbox', '--no-proxy-server'] });
+const launchBrowser = () => puppeteer.launch({ headless: true, args: ['--no-sandbox', '--no-proxy-server'] });
 
 /** 收尾须有界：浏览器 10 秒仍未关掉就直接杀进程，不留残余 Chrome；再删掉构建出的前端 */
-export async function closeBrowser(browser: Browser | undefined, clientDir: string): Promise<void> {
+async function closeBrowser(browser: Browser | undefined, clientDir: string): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
     browser?.close().catch(() => {}),
@@ -97,7 +98,7 @@ export function framePackage(name: string, files: Record<string, string>, cleanu
 
 /**
  * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
- * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值。
+ * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值，doc 是宿主配置文档（如脚手架写的那份）。
  * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。收尾登记进 cleanups
  */
 export async function webuiStack(options: {
@@ -107,10 +108,11 @@ export async function webuiStack(options: {
   cleanups: Cleanups;
   webui?: Record<string, unknown>;
   slowThresholdMs?: number;
+  doc?: Partial<AalisConfig>;
 }): Promise<{ app: App; port: number }> {
-  const { clientDir, model, extra, cleanups, webui, slowThresholdMs } = options;
+  const { clientDir, model, extra, cleanups, webui, slowThresholdMs, doc } = options;
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
-  const { app } = hostedApp({ logLevel: 'info' }, { slowThresholdMs });
+  const { app } = hostedApp({ ...doc, logLevel: 'info' }, { slowThresholdMs });
   cleanups.push(async () => {
     await app.stop();
     rmSync(home, { recursive: true, force: true });
@@ -164,6 +166,21 @@ export async function openWebui(browser: Browser, origin: string, viewport: View
   });
   const response = (await page.goto(`${origin}${path}?token=${TOKEN}`)) as HTTPResponse;
   return { page, problems, response };
+}
+
+/** scope 里的一组行（「需要处理」与「开始使用」同一个样子）：标题、说明与行尾的操作 */
+export const attentionRows = (page: Page, scope: string) =>
+  page.$$eval(`${scope} .attention-row`, items =>
+    items.map(row =>
+      ['.attention-title', '.attention-detail', 'a, button'].map(part => row.querySelector(part)?.textContent),
+    ),
+  );
+
+/** 等到写着 message 的 Toast 再关掉它：手机上 Toast 在顶部，会盖住下面的按钮 */
+export async function toastSays(page: Page, message: string) {
+  await page.waitForSelector(`.toast ${text(message)}`);
+  await page.locator(`.toast ${aria('关闭', 'button')}`).click();
+  await page.waitForSelector('.toast', { hidden: true });
 }
 
 /** 当前会话的 id：地址是 /s/:id */

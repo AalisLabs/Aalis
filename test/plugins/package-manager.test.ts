@@ -286,6 +286,20 @@ describe('纯函数判据', () => {
         '@aalis/plugin-recall',
       ]);
     });
+
+    it.each([
+      ['disabled', 'active'],
+      ['error', 'active'],
+      ['active', 'error'],
+    ] as const)('目标两个实例为 %s、%s：任一实例在提供就列出依赖方，与实例的先后无关', (first, second) => {
+      const name = '@aalis/plugin-memory-sqlite';
+      const main = snap(name, first, { provides: ['memory'] });
+      const extra = { ...snap(name, second, { provides: ['memory'] }), instanceId: `${name}:b` };
+      const dependent = snap('@aalis/plugin-session-manager', 'active', { requires: ['memory'] });
+      expect(findServiceDependents(name, [main, extra, dependent], ['memory'])).toEqual([
+        '@aalis/plugin-session-manager',
+      ]);
+    });
   });
 
   it('stripVersion：剥版本保 scope', () => {
@@ -351,18 +365,6 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect((await createPackageManager(h.deps).install('@scope/foo')).ok).toBe(true);
     const install = h.execCalls.find(c => c.cmd === 'npm' && c.args[0] === 'install');
     expect(install?.env?.npm_config_legacy_peer_deps).toBe('false');
-  });
-
-  it('peer 冲突（ERESOLVE）→ 失败文案点明市场安装不沿用 legacy-peer-deps', async () => {
-    const h = makeHarness({
-      failOn: 'npm',
-      failStderr: 'npm error code ERESOLVE\nnpm error peer react@"^19.0.0" from react-dom@19.0.0',
-      json: { [rootPkg]: {} },
-    });
-    const r = await createPackageManager(h.deps).install('@scope/foo');
-    expect(r.ok).toBe(false);
-    expect(r.message).toContain('legacy-peer-deps');
-    expect(r.message).toContain('peer react@"^19.0.0" from react-dom@19.0.0');
   });
 
   it('非法包名在**服务层**被拒，一次 npm 都不发', async () => {

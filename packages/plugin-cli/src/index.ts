@@ -167,8 +167,9 @@ function startCli(caps: Caps): void {
     adapterName: 'CLI',
     platform: 'cli',
     sessionTypes: [], // CLI 单会话，不区分 sessionType
+    // 终端界面在跑才有连接；后台运行（非 TTY）与界面起来之前没有连接，不是离线
     getConnections(): PlatformConnection[] {
-      return [{ id: sessionId, platform: 'cli', status: tui?.isRunning() ? 'online' : 'offline' }];
+      return tui?.isRunning() ? [{ id: sessionId, platform: 'cli', status: 'online' }] : [];
     },
     // sessionId 由配置直接给出（不带 platform 前缀），需显式声明只接管自己的 sessionId
     canHandle(sid: string): boolean {

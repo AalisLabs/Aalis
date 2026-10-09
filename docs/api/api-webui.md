@@ -238,7 +238,7 @@ webui-server 登记时整份核一遍，不过就不登记并记一条错误日�
 
 ## 插件前端
 
-声明式页面是默认。声明式表达不了的页面，插件可以自带一份静态网页（插件前端）：由 webui-server 托管，宿主把它画进 iframe，与宿主页面不同源。它拿不到登录状态，发不出网络请求、取不到外站资源；跳转、WebRTC 与 preconnect 仍可能把数据带出去（见下文「托管与隔离」的残余）。要数据与执行动作只能经消息通道请宿主代办，且只能调这一页声明过的数据源与动作，走与声明式页面同一道服务端闸门。
+声明式页面是默认。声明式表达不了的页面，插件可以自带一份静态网页（插件前端）：由 webui-server 托管，宿主把它画进 iframe，与宿主页面不同源。它拿不到登录状态；可以联网，脚本只认插件自己打包的文件（见下文「托管与隔离」）。要宿主的数据与执行动作只能经消息通道请宿主代办，且只能调这一页声明过的数据源与动作，走与声明式页面同一道服务端闸门。
 
 位置只有插件页面（`plugin`）与会话面板（`session`），设置不收插件前端。
 
@@ -306,16 +306,16 @@ webui.definePage({
 - `GET /frames/:token/<路径>`：插件前端的文件。`token` 是页面登记时随机生成的 128 位标识（base64url），页面撤回或重新登记后旧的回 404；地址变了界面就重新挂载，插件升级后不会读到旧缓存。不要登录：`token` 只出现在要登录的 `GET /api/pages` 里，文件是随包发布的代码，不含数据。
 - `GET /frames/_base/<路径>`：宿主给框架的公用文件，随本包发布，只有助手 `frame.js` 与样式基线 `frame.css`（见下文「助手」「样式基线」）。
 - 只收 `GET` 与 `HEAD`，别的方法回 405。扩展名只有 `html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`；文件要按 realpath 落在 `webui/` 之内，指向外面的符号链接也算越界；点开头的段、目录与其余不合的一律 404，不回目录列表、不发 3xx。
-- 响应头：框架 CSP、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *`（框架是不透明来源，模块脚本连取自己目录下的文件也走 CORS）、`Cache-Control: no-cache`（用 ETag 再验证）。
+- 响应头：框架 CSP、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`（框架取外站资源时不带上框架地址）、`Access-Control-Allow-Origin: *`（框架是不透明来源，模块脚本连取自己目录下的文件也走 CORS）、`Cache-Control: no-cache`（用 ETag 再验证）。
 - 框架 CSP，`<Host>` 是请求的 Host 去掉默认端口 `:80`、`:443`：
 
   ```text
-  sandbox allow-scripts; default-src 'none'; script-src <Host>/frames/<token>/ <Host>/frames/_base/; style-src <Host>/frames/<token>/ <Host>/frames/_base/ 'unsafe-inline'; img-src <Host>/frames/<token>/ data: blob:; font-src <Host>/frames/<token>/ data:; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors <Host>
+  sandbox allow-scripts; script-src <Host>/frames/<token>/ <Host>/frames/_base/; frame-src 'none'; object-src 'none'; frame-ancestors <Host>
   ```
 
-  来源写成带路径、不带协议的来源：只放行这一页自己的目录，http 访问与经 TLS 代理的 https 访问都成立。Host 只收主机名或 IPv4 地址加可选端口；IPv6 字面地址写不进 CSP 的来源，与带非法字符的一样回 400。经反向代理访问时，代理要把原始的 Host 转过来。
-- 宿主的 iframe 带 `sandbox`，值是 `FRAME_SANDBOX`（`'allow-scripts'`），与 CSP 的 `sandbox` 指令同一个常量：不给同源、表单、弹窗、原生对话框、顶层跳转与下载。框架读不到 cookie 与浏览器存储，碰不到宿主页面；发不出 fetch、XHR、WebSocket 一类请求，取不到外站的脚本、样式、图片。别人把框架地址当顶层页面打开，它照样是不透明来源。
-- **残余：** 跳转、WebRTC 与 preconnect 仍可能把数据带出去。WebRTC 能连任意主机的 STUN、TURN（CSP 的 `webrtc` 指令，当前的 Chromium 不认）。`<link rel="preconnect">`（写在标记里或由脚本插入）不受 CSP 约束，本地 Chrome 实测框架里的 preconnect 能向任意主机建立 TCP 连接；主机名的 DNS 解析也可能把数据带出去，`X-DNS-Prefetch-Control: off` 不能保证拦住。框架能让自己跳到别的地址：沙箱挡不住框架自我导航，注入的 `<meta http-equiv="refresh">` 不需要脚本；宿主在它离开时立即卸载（助手在 `pagehide` 时发 `leaving`，第二次 `load` 兜底），但跳到不返回页面的地址（例如回 204）时察觉不到，新页面开始显示到卸载之间也有一小段。
+  除脚本外按类型放开、不按来源限，只留两道：脚本只认这一页自己的目录与宿主的公用目录，不许内联与 `eval`（worker 的回退链经过 `script-src`，同样只认它们）；框架里不能再嵌别的网页。脚本的来源写成带路径、不带协议的来源：只放行这一页自己的目录，http 访问与经 TLS 代理的 https 访问都成立。Host 只收主机名或 IPv4 地址加可选端口；IPv6 字面地址写不进 CSP 的来源，与带非法字符的一样回 400。经反向代理访问时，代理要把原始的 Host 转过来。
+- 宿主的 iframe 带 `sandbox`，值是 `FRAME_SANDBOX`（`'allow-scripts'`），与 CSP 的 `sandbox` 指令同一个常量：不给同源、表单、弹窗、原生对话框、顶层跳转与下载。框架读不到 cookie 与浏览器存储，碰不到宿主页面。外站的样式、字体、图片、音视频与 fetch、XHR、WebSocket 一类请求都放行；外站脚本、内联脚本、`eval` 与 WebAssembly 不行，`<iframe>`、`<object>` 嵌不进别的网页。宿主接口不认框架的请求：框架是不透明来源，请求不带登录状态（取数回 401），改状态的请求与 WebSocket 握手按来源回 403。别人把框架地址当顶层页面打开，它照样是不透明来源。
+- **残余：** 框架能联网，读得到的数据都可能被带出去。存心外传的只有插件前端自己的代码，而插件的服务端代码本来就能联网。作者写法出错、把别人给的文字当 HTML 插入时，注入的标记跑不了脚本，但能借样式把页面上的东西带到外站（属性选择器配外站的背景图，能把链接地址、输入框的值逐字送出去），也能插外站的图片得知 owner 打开页面的时间与 IP。框架能让自己跳到别的地址：沙箱挡不住框架自我导航，注入的 `<meta http-equiv="refresh">` 不需要脚本；宿主在它离开时立即卸载（助手在 `pagehide` 时发 `leaving`，第二次 `load` 兜底），但跳到不返回页面的地址（例如回 204）时察觉不到，新页面开始显示到卸载之间也有一小段。
 
 ### 消息通道
 
@@ -427,8 +427,9 @@ frame.onInvalidate(source => { /* 重取 source 这个数据源；没带 source 
 - 宽度：插件页面跟着主区，会话面板约 340 像素，手机 390 像素。按容器宽度排版，尺寸用 rem，触屏可点区 44 像素，输入框字号不小于 16 像素（iOS 聚焦时不放大整页）。框架占满它的区域，内容在框架里自己滚动。
 - 只有一个文档：页面内的切换只用内存里的状态，不改地址（History API 与片段都会往会话历史里加条目，手机上按返回会先退框架里的条目）。离开这个文档就会被卸载。
 - 链接一律经 `open` 请宿主打开；要确认的操作交给动作的 `effect: 'destructive'`，由宿主弹确认框。
-- 不受信的文本（群成员的昵称与消息、作品、网页标题）只用文本节点或转义后的输出插入，不当 HTML。注入的标记跑不了脚本，但仍能让框架跳走。
-- 框架里做不到的：发网络请求、取外站资源；`eval`、worker 与 WebAssembly；浏览器存储（状态存在插件自己的数据里，经数据源与动作读写）；存储里的图片（只能用 `data:` 或打包进 `webui/`）；剪贴板写入多半也不可用。
+- 别人给的文字（群成员的昵称与消息、作品、网页标题）只用显示纯文字的写法插入（`textContent`、文本节点或框架的转义输出），不用 `innerHTML`。注入的标记跑不了脚本，但能借样式把页面上的链接地址、输入框的值带到外站，也能让框架跳走。
+- 可以联网：外站的样式、字体、图片、音视频与数据请求都放行；框架是不透明来源（`Origin` 为 `null`），读外站的回应要对方的 CORS 放行。
+- 框架里做不到的：外站脚本、内联脚本与 `eval`，worker 与 WebAssembly；嵌别的网页（`<iframe>`、`<object>`）；直接调宿主接口（不带登录状态，数据与动作经宿主代办）；浏览器存储（状态存在插件自己的数据里，经数据源与动作读写）；存储里的图片（只能用 `data:` 或打包进 `webui/`）；剪贴板写入多半也不可用。
 - 宿主切走就卸载、切回来重新挂载，不保活；需要保留的状态由插件存在自己的数据里。
 
 ## 提示
@@ -841,7 +842,7 @@ interface DependencyNode {
 | `GET /frames/_base/frame.js` | 宿主给框架的助手 |
 | `GET /frames/_base/frame.css` | 宿主给框架的样式基线 |
 
-只收 GET 与 HEAD，别的方法回 405；不要登录。响应头带框架 CSP（`sandbox allow-scripts; …`）、`nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *` 与 `Cache-Control: no-cache`，规则见上文「托管与隔离」。
+只收 GET 与 HEAD，别的方法回 405；不要登录。响应头与框架 CSP 见上文「托管与隔离」。
 
 ### 前端托管
 

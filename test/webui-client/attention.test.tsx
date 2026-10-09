@@ -355,6 +355,50 @@ describe('插件故障的写法', () => {
     await vi.waitFor(() => expect(rows(region)).toEqual([row]));
   });
 
+  it('根的报错有多行：根插件自己那一行写全文，依赖它的插件那一行只写第一行', async () => {
+    const error = '打不开数据库\n文件：/zz/home/data/aalis.db\n    at open (zz-sqlite.js:1:1)';
+    app = await renderApp('/health', noSessions, {
+      '/api/plugins': { plugins: CHAIN_PLUGINS, secretRefCounts: {} },
+      '/api/attention': {
+        items: [
+          { kind: 'plugin', instance: 'zz-sqlite', state: 'error', error, ...clear },
+          pending('zz-session-server', [
+            { service: 'zz-session', chain: ['zz-sqlite'], root: { kind: 'error', instance: 'zz-sqlite', error } },
+          ]),
+        ],
+      },
+    });
+    const region = await screen.findByRole('region', { name: '需要处理' });
+    await vi.waitFor(() =>
+      expect(rows(region).map(row => row.text)).toEqual([
+        `SQLite 记忆失败：${error}`,
+        '会话服务缺服务：SQLite 记忆（失败：打不开数据库）',
+      ]),
+    );
+  });
+
+  it('服务端比客户端新时认不出的根：照收，写「原因见日志」；认得的根缺字段的那一项只丢这一项，别的照常', async () => {
+    app = await renderApp('/health', noSessions, {
+      '/api/plugins': { plugins: CHAIN_PLUGINS, secretRefCounts: {} },
+      '/api/attention': {
+        items: [
+          pending('zz-routed', [
+            { service: 'zz-x', chain: ['zz-sqlite'], root: { kind: 'zz-future', instance: 'zz-sqlite' } },
+          ]),
+          pending('zz-a', [{ service: 'zz-y', chain: ['zz-a', 'zz-b'], root: { kind: 'cycle' } }]),
+          { kind: 'plugin', instance: 'zz-sqlite', state: 'error', error: '打不开数据库', ...clear },
+        ],
+      },
+    });
+    const region = await screen.findByRole('region', { name: '需要处理' });
+    await vi.waitFor(() =>
+      expect(rows(region)).toEqual([
+        { text: '路由缺服务：SQLite 记忆（原因见日志）', tone: '需要处理', action: ['去处理', '/plugins/zz-routed'] },
+        { text: 'SQLite 记忆失败：打不开数据库', tone: '出错', action: ['去处理', '/plugins/zz-sqlite'] },
+      ]),
+    );
+  });
+
   it('一个服务两个提供者各自的根：逐个写到根，按钮去第一个根', async () => {
     app = await renderApp('/health', noSessions, {
       '/api/plugins': { plugins: CHAIN_PLUGINS, secretRefCounts: {} },

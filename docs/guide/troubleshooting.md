@@ -8,7 +8,7 @@
 | 在哪 | 有什么 |
 |---|---|
 | 脚手架或插件市场的报错 | `npm install` 失败时认出的原因与修法，各类见下文「`npm install` 失败」 |
-| npm 的完整日志 | 脚手架报错的末尾一行「npm 的完整日志」给出路径（在 npm 缓存目录的 `_logs/` 下）；经插件市场安装时，npm 的整段输出记在 Aalis 的日志里（`npm install … 失败:` 那一行） |
+| npm 的完整日志 | 脚手架报错里「npm 的完整日志：」那一行给出路径（在 npm 缓存目录的 `_logs/` 下，npm 打印了日志位置时才有这一行）；经插件市场安装时，npm 的整段输出记在 Aalis 的日志里（`npm install … 失败:` 那一行） |
 | `home/logs/latest.log` | Aalis 的完整日志，CLI 接管终端时照常写。终端里按 `Ctrl+L` 看，WebUI 在「运行状况」的日志标签 |
 | `/doctor` | 失败与没起来的插件逐个写原因与修法，以及各插件登记的检查项（如识图 `service/media.vision`、Ollama Embedding 的 `service/embedding.ollama`）。在 CLI 或 WebUI 的聊天里输入；也可以在项目目录执行 `npm start -- doctor`，在一次性的进程里诊断完就退出，不占 WebUI 的端口、不连聊天平台 |
 
@@ -119,7 +119,7 @@ WebUI 要 token 登录。一键登录的链接写在家目录的 `state/webui/ac
 
 - 默认的 `tokenMode: persist` 把 token 存在 `state/webui/token`，重启沿用；要换一个新的，删掉这个文件后重启。
 - `ephemeral` 每次启动换一个新的，只写在 `access.txt` 里。
-- `fixed` 用配置里的 `fixedToken`（至少 32 个字符），就在配置里。
+- `fixed` 用配置项 `fixedToken`（至少 32 个字符）；它是密钥字段，启动后值存在家目录的 `secrets.yaml` 里（配置文件里是引用），`access.txt` 里同样写着。
 - `access.txt` 写不进去时，日志写「访问凭据未能写入」：修好家目录 `state/webui/` 的写权限后重启；或改用 `fixed`，在 `fixedToken` 里填一个 token，用它登录。
 
 持有 token 的人等同 owner。对外暴露之前先读 [plugin-webui-server 的「登录身份与权限」](../plugins/plugin-webui-server.md)。

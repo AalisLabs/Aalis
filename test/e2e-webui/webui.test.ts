@@ -20,12 +20,14 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { settingsPlugin } from '../fixtures/session-settings.js';
 import {
   aria,
+  attentionRows,
   framePackage,
   onViewport,
   openWebui,
   sessionIdOf,
   TOKEN,
   text,
+  toastSays,
   useWebuiE2E,
   VIEWPORTS,
   webuiStack,
@@ -423,13 +425,13 @@ function framesPlugin(): PluginDefinition {
   });
 }
 
-/** 本机起的「外站」：按路径数收到的请求，一律回 404 */
+/** 本机起的「外站」：按路径数收到的请求，一律回空的 200 */
 async function externalSite() {
   const hits = new Map<string, number>();
   const server = createHttpServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
     hits.set(path, (hits.get(path) ?? 0) + 1);
-    res.writeHead(404).end();
+    res.writeHead(200).end();
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanups.push(
@@ -576,13 +578,6 @@ const shownColumns = (page: Page, scope: string) =>
   page.$$eval(`${scope} .table th[data-column]`, cells =>
     cells.filter(cell => getComputedStyle(cell).display !== 'none').map(cell => cell.getAttribute('data-column')),
   );
-
-/** 等到写着 message 的 Toast 再关掉它：手机上 Toast 在顶部，会盖住下面的按钮 */
-async function toastSays(page: Page, message: string) {
-  await page.waitForSelector(`.toast ${text(message)}`);
-  await page.locator(`.toast ${aria('关闭', 'button')}`).click();
-  await page.waitForSelector('.toast', { hidden: true });
-}
 
 /** 带输入的动作弹出的表单里，按标签找到输入框填进去 */
 async function fill(page: Page, dialog: string, fields: Record<string, string>) {
@@ -1109,9 +1104,11 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       await page.locator(`.shell-rail ${aria('会话', 'link')}`).click();
     }
     await page.waitForFunction(() => location.pathname === '/');
-    const gate = `nav[aria-label="会话"] ${aria('去插件详情', 'link')}`;
-    await page.waitForSelector(`nav[aria-label="会话"] ${text('会话服务未启用')}`);
-    await page.locator(gate).click();
+    // 手机第一层写在会话列表里，桌面上只写在主区
+    const area = phone ? 'nav[aria-label="会话"]' : 'main';
+    await page.waitForSelector(`${area} ${text('会话服务未启用')}`);
+    if (!phone) expect(await page.$$(text('会话服务未启用'))).toHaveLength(1);
+    await page.locator(`${area} ${aria('去处理', 'link')}`).click();
     await page.waitForFunction(id => location.pathname === `/plugins/${encodeURIComponent(id)}`, {}, SERVER);
     await page.locator(`main ${aria('启用', 'button')}`).click();
     await page.waitForSelector(`main ${aria('停用', 'button')}`);
@@ -1136,13 +1133,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const summary = `${phone ? 'nav[aria-label="会话"]' : 'main'} ${aria('需要处理', 'region')}`;
     await page.waitForSelector(`${summary} ${text('打开作品审核')}`);
     expect(await page.$eval(`${summary} h2`, heading => heading.textContent)).toBe('需要处理 · 2');
-    const rows = (scope: string) =>
-      page.$$eval(`${scope} .attention-row`, items =>
-        items.map(row =>
-          ['.attention-title', '.attention-detail', 'a'].map(part => row.querySelector(part)?.textContent),
-        ),
-      );
-    expect(await rows(summary)).toEqual([
+    expect(await attentionRows(page, summary)).toEqual([
       ['要配置的探针', '待配置：endpoint', '去配置'],
       ['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核'],
     ]);
@@ -1165,13 +1156,15 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.goto(`${stack.origin}/plugins/${NOTICE_PROBE}`);
     const block = `main ${aria('需要处理', 'region')}`;
     await page.waitForSelector(`${block} ${text('打开作品审核')}`);
-    expect(await rows(block)).toEqual([['2 件作品待裁决', '最早的一件已等 3 天', '打开作品审核']]);
+    expect(await attentionRows(page, block)).toEqual([['2 件作品待裁决', '最早的一件已等 3 天', '打开作品审核']]);
     await page.locator(`${block} ${aria('打开作品审核', 'link')}`).click();
     await page.waitForFunction(path => location.pathname === path, {}, pagePath(NOTICE_PROBE, 'queue'));
 
     await page.goto(`${stack.origin}/health`);
     await page.waitForSelector(`${block} ${text('打开作品审核')}`);
-    expect(await rows(block)).toEqual([['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核']]);
+    expect(await attentionRows(page, block)).toEqual([
+      ['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核'],
+    ]);
     if (!phone) expect(await page.$eval(`${entry} .badge`, badge => badge.textContent)).toBe('1');
     expect(problems).toEqual([]);
   }, 60_000);
@@ -2083,24 +2076,26 @@ describe('插件前端的隔离', () => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('框架里注入的内联脚本与 onerror 都不执行；fetch 与外站图片都被拦下，服务端与外站都没收到请求', async () => {
+  it('框架里注入的内联脚本与 onerror 都不执行，嵌不了别的网页；外站的图片、样式与数据请求都放行', async () => {
     const site = await externalSite();
     const stack = await startStack({}, [framesPlugin()]);
     const { frame, problems } = await openFrame(stack);
-    const result = await frame?.evaluate(async image => {
+    const result = await frame?.evaluate(async outside => {
       const violations: string[] = [];
       document.addEventListener('securitypolicyviolation', event => violations.push(event.effectiveDirective));
-      const script = document.createElement('script');
-      script.textContent = 'window.zzInline = 1';
-      document.body.append(script);
-      const broken = document.createElement('img');
-      broken.setAttribute('onerror', 'window.zzOnerror = 1');
-      broken.src = 'data:,';
-      document.body.append(broken);
-      const outside = document.createElement('img');
-      outside.src = image;
-      document.body.append(outside);
-      const fetched = await fetch('/api/pages?zz-frame-probe').then(
+      const add = (tag: string, attributes: Record<string, string>, text = '') => {
+        const element = document.createElement(tag);
+        for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+        element.textContent = text;
+        document.body.append(element);
+      };
+      add('script', {}, 'window.zzInline = 1');
+      add('img', { onerror: 'window.zzOnerror = 1', src: 'data:,' });
+      add('img', { src: `${outside}/zz-image.png` });
+      add('link', { rel: 'stylesheet', href: `${outside}/zz-style.css` });
+      add('iframe', { src: `${outside}/zz-page.html` });
+      add('object', { data: `${outside}/zz-object.html` });
+      const fetched = await fetch(`${outside}/zz-data`, { mode: 'no-cors' }).then(
         () => '取到了',
         (error: Error) => error.name,
       );
@@ -2111,22 +2106,44 @@ describe('插件前端的隔离', () => {
         fetched,
         violations: [...new Set(violations)].sort(),
       };
-    }, `${site.origin}/zz-probe.png`);
+    }, site.origin);
     expect(result).toEqual({
       inline: false,
       onerror: false,
-      fetched: 'TypeError',
-      violations: ['connect-src', 'img-src', 'script-src-attr', 'script-src-elem'],
+      fetched: '取到了',
+      violations: ['frame-src', 'object-src', 'script-src-attr', 'script-src-elem'],
     });
-    expect(site.hits('/zz-probe.png')).toBe(0);
-    expect(stack.heard('zz-frame-probe')).toBe(false);
+    expect(['/zz-image.png', '/zz-style.css', '/zz-data'].map(site.hits)).toEqual([1, 1, 1]);
+    expect(['/zz-page.html', '/zz-object.html'].map(site.hits)).toEqual([0, 0]);
     expect([...problems].sort()).toEqual(
       [
         'CSP 拦下了 inline（script-src-elem）',
         'CSP 拦下了 inline（script-src-attr）',
-        `CSP 拦下了 ${stack.origin}/api/pages?zz-frame-probe（connect-src）`,
-        `CSP 拦下了 ${site.origin}/zz-probe.png（img-src）`,
+        `CSP 拦下了 ${site.origin}（frame-src）`,
+        `CSP 拦下了 ${site.origin}（object-src）`,
       ].sort(),
+    );
+  }, 60_000);
+
+  it('宿主接口不认框架的请求：取数不带登录状态回 401，改状态的请求按来源回 403，管理连接握手被拒', async () => {
+    const stack = await startStack({}, [framesPlugin()]);
+    const { frame, problems } = await openFrame(stack);
+    const disable = `/api/plugins/${encodeURIComponent(FRAMES)}/disable`;
+    const result = await frame?.evaluate(async disable => {
+      const read = await fetch('/api/pages?zz-frame-probe', { credentials: 'include', mode: 'no-cors' });
+      await fetch(disable, { method: 'POST', credentials: 'include', mode: 'no-cors' });
+      const admin = await new Promise(resolve => {
+        const socket = new WebSocket(`ws://${location.host}/admin`);
+        socket.onopen = () => resolve('连上了');
+        socket.onerror = () => resolve('被拒');
+      });
+      return { read: read.type, admin };
+    }, disable);
+    expect(result).toEqual({ read: 'opaque', admin: '被拒' });
+    expect(stack.heard('zz-frame-probe')).toBe(true);
+    expect(stack.app.plugins.getPlugin(FRAMES)?.state).toBe('active');
+    expect([...problems].sort()).toEqual(
+      [`401 ${stack.origin}/api/pages?zz-frame-probe`, `403 ${stack.origin}${disable}`].sort(),
     );
   }, 60_000);
 

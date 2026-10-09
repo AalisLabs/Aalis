@@ -956,9 +956,10 @@ function runAdapter(caps: Caps): void {
         try {
           const archived = await archive.findByMessageId(sessionId, messageId);
           if (archived) {
-            const meta = (archived.metadata ?? {}) as Record<string, unknown>;
-            const userId = meta.userId != null ? String(meta.userId) : undefined;
-            const nickname = meta.nickname != null ? String(meta.nickname) : undefined;
+            const { [WellKnownMetadataKeys.UserId]: rawUserId, [WellKnownMetadataKeys.Nickname]: rawNickname } =
+              archived.metadata ?? {};
+            const userId = rawUserId != null ? String(rawUserId) : undefined;
+            const nickname = rawNickname != null ? String(rawNickname) : undefined;
             // 归档正文带 `[nick(id)]: ` 前缀（prefixSender 的产物），引用渲染层会再加发送者标签，
             // 这里剥掉首行前缀避免重复。
             let body = archived.content ?? '';

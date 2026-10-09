@@ -31,8 +31,8 @@ import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec'
 /** 短命令（cp、npm view 等）的超时。 */
 const QUICK_TIMEOUT_MS = 120_000;
 /**
- * 安装类命令的超时。`npm install` 要装全依赖树并跑依赖的安装脚本（脚手架默认依赖里的 puppeteer
- * 安装时下载浏览器），快机快网下已达 95 秒量级，而超时行为是 SIGKILL——留足余量，
+ * 安装类命令的超时。`npm install` 要装全依赖树并跑依赖的安装脚本（比如 plugin-tool-browser
+ * 依赖的 puppeteer 安装时要下载 Chrome），快机快网下已达 95 秒量级，而超时行为是 SIGKILL——留足余量，
  * 否则会在半装状态下被杀。
  */
 const INSTALL_TIMEOUT_MS = 600_000;
@@ -132,11 +132,11 @@ type ServiceStatus = Pick<
 >;
 
 /**
- * 找出「卸载 target 会断其服务依赖」的插件：target 正在提供或马上就提供的某服务 S 没有别的插件正在提供，且有别的插件
- * requiredServices 含 S → 这些插件会被打断。target 算在提供的是 active、activating，以及 pending 而只是在等的（按 api-doctor
- * 的共享判据不缺什么，它要的在启动，起来就提供）；disabled、error 与 pending 而缺服务的不在提供，卸掉它断不了谁。别的提供者
- * 只算 active 与 activating（替代得是确定的）。已禁用（disabled / disposed）的依赖者不算。available 是当前有提供者的服务名
- * （services.names()）。纯函数，便于单测。
+ * 找出「卸载 target 会断其服务依赖」的插件：target 的某个实例正在提供或马上就提供的某服务 S 没有别的插件正在提供，且有别的
+ * 插件 requiredServices 含 S → 这些插件会被打断。卸载连同 target 的全部实例一起卸下，所以按同名的每个实例判：算在提供的是
+ * active、activating，以及 pending 而只是在等的（按 api-doctor 的共享判据不缺什么，它要的在启动，起来就提供）；disabled、
+ * error 与 pending 而缺服务的不在提供。别的提供者只算 active 与 activating（替代得是确定的）。已禁用（disabled / disposed）
+ * 的依赖者不算。available 是当前有提供者的服务名（services.names()）。纯函数，便于单测。
  */
 export function findServiceDependents(
   targetName: string,
@@ -144,12 +144,14 @@ export function findServiceDependents(
   available: Iterable<string>,
 ): string[] {
   const providing = (p: Pick<PluginStatusEntry, 'state'>) => p.state === 'active' || p.state === 'activating';
-  const target = status.find(p => p.name === targetName);
-  if (!target) return [];
-  const waits = () => unmetDependencies(status, available).get(target.instanceId)?.lacking.length === 0;
-  if (!providing(target) && !(target.state === 'pending' && waits())) return [];
+  const unmet = unmetDependencies(status, available);
+  const live = status.filter(
+    p =>
+      p.name === targetName &&
+      (providing(p) || (p.state === 'pending' && unmet.get(p.instanceId)?.lacking.length === 0)),
+  );
   const dependents = new Set<string>();
-  for (const svc of target.provides ?? []) {
+  for (const svc of new Set(live.flatMap(p => p.provides ?? []))) {
     const otherProvider = status.some(p => p.name !== targetName && providing(p) && (p.provides ?? []).includes(svc));
     if (otherProvider) continue; // 还有别的提供者在提供，删了不致命
     for (const p of status) {

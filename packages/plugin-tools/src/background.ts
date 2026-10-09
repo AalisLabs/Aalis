@@ -70,8 +70,6 @@ function identityOf(ctx: ToolCallContext): Identity {
   return ctx.actor ?? { platform: ctx.platform ?? '', userId: ctx.userId ?? '' };
 }
 
-const sameIdentity = (a: Identity, b: Identity) => a.platform === b.platform && a.userId === b.userId;
-
 /** 对话回合里的调用：有 turnId 与 callId，转到后台后有可以通知的对话 */
 export function inTurn(ctx: ToolCallContext): ctx is ToolCallContext & { turnId: string; callId: string } {
   return ctx.turnId !== undefined && ctx.callId !== undefined;
@@ -170,17 +168,20 @@ interface Call {
   stopRequested?: boolean;
 }
 
-/** 结束通知送到哪个平台、调用者是谁、回复时引用哪条消息：起它那次调用上下文的快照；会话取任务的，身份取 starter */
+/**
+ * 结束通知送到哪个平台、以谁的身份运行、调用者是谁、回复时引用哪条消息：起它那次调用上下文的快照，会话取任务的。
+ * 只在本次运行里有，不落盘：读回的任务不通知
+ */
 interface NoticeTarget {
   platform: string;
+  /** 起它的那次调用的授权身份：结束通知开的那一轮按它的身份运行 */
+  actor: Identity;
   callerUserId?: string;
   replyTo?: string;
 }
 
 interface TaskRecord {
   task: BackgroundTask;
-  /** 起它的那次调用的授权身份：后台任务工具只放行同一身份与 owner，结束通知按它的身份 */
-  starter: Identity;
   output: OutputTail;
   /** 没有的不通知：由结束通知开的回合里转后台的，链只延续一层 */
   notice?: NoticeTarget;
@@ -209,8 +210,6 @@ interface BackgroundTasksDeps {
   /** 发 tool:output、background:changed 与结束通知 */
   events: Pick<Events, 'emit'>;
   limits: BackgroundLimits;
-  /** owner 看得到、停得了别人起的任务；没有 authority 时恒为 false，只认同一身份 */
-  isOwner: (identity: Identity) => boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -219,9 +218,9 @@ const optionalOf = <T>(value: unknown, type: 'string' | 'number'): T | undefined
   typeof value === type ? (value as T) : undefined;
 
 /** 读回的一条：形状不对的没有 */
-function parseStored(value: unknown): { task: BackgroundTask; starter: Identity } | undefined {
+function parseStored(value: unknown): BackgroundTask | undefined {
   if (!isRecord(value)) return undefined;
-  const { id, sessionId, kind, label, call, status, startedAt, starter } = value;
+  const { id, sessionId, kind, label, call, status, startedAt } = value;
   if (typeof id !== 'string' || typeof sessionId !== 'string' || kind !== 'tool-call' || typeof label !== 'string') {
     return undefined;
   }
@@ -235,30 +234,24 @@ function parseStored(value: unknown): { task: BackgroundTask; starter: Identity 
   ) {
     return undefined;
   }
-  if (!isRecord(starter) || typeof starter.platform !== 'string' || typeof starter.userId !== 'string') {
-    return undefined;
-  }
   const endedAt = optionalOf<number>(value.endedAt, 'number');
   const lastLine = optionalOf<string>(value.lastLine, 'string');
   const lastOutputAt = optionalOf<number>(value.lastOutputAt, 'number');
   const reason = optionalOf<string>(value.reason, 'string');
   const exitCode = Number.isInteger(value.exitCode) ? (value.exitCode as number) : undefined;
   return {
-    task: {
-      id,
-      sessionId,
-      kind,
-      label,
-      call: { tool: call.tool, args: call.args, turnId: call.turnId, callId: call.callId },
-      status: status as BackgroundTaskStatus,
-      startedAt,
-      ...(endedAt !== undefined ? { endedAt } : {}),
-      ...(lastLine !== undefined ? { lastLine } : {}),
-      ...(lastOutputAt !== undefined ? { lastOutputAt } : {}),
-      ...(reason !== undefined ? { reason } : {}),
-      ...(exitCode !== undefined ? { exitCode } : {}),
-    },
-    starter: { platform: starter.platform, userId: starter.userId },
+    id,
+    sessionId,
+    kind,
+    label,
+    call: { tool: call.tool, args: call.args, turnId: call.turnId, callId: call.callId },
+    status: status as BackgroundTaskStatus,
+    startedAt,
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    ...(lastLine !== undefined ? { lastLine } : {}),
+    ...(lastOutputAt !== undefined ? { lastOutputAt } : {}),
+    ...(reason !== undefined ? { reason } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
   };
 }
 
@@ -313,7 +306,6 @@ export class BackgroundTasks implements BackgroundTaskService {
   readonly limits: BackgroundLimits;
   private readonly logger: Logger;
   private readonly events: Pick<Events, 'emit'>;
-  private readonly isOwner: (identity: Identity) => boolean;
   private readonly records = new Map<string, TaskRecord>();
   /** 占着位置的可转后台调用：从过守卫之前到落定 */
   private readonly calls = new Set<Call>();
@@ -332,7 +324,6 @@ export class BackgroundTasks implements BackgroundTaskService {
     this.logger = deps.logger;
     this.events = deps.events;
     this.limits = deps.limits;
-    this.isOwner = deps.isOwner;
   }
 
   // ---- 服务 ----
@@ -361,15 +352,6 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   // ---- 后台任务工具 ----
 
-  /** 本会话里调用者看得到的任务：同一授权身份起的，owner 看得到全部 */
-  visible(ctx: ToolCallContext): BackgroundTask[] {
-    const caller = identityOf(ctx);
-    const owner = this.isOwner(caller);
-    return [...this.records.values()]
-      .filter(record => record.task.sessionId === ctx.sessionId && (owner || sameIdentity(record.starter, caller)))
-      .map(record => ({ ...record.task }));
-  }
-
   /** 等这些任务都落定，最多等 ms，中止信号到达即返回 */
   wait(ids: string[], ms: number, signal?: AbortSignal): Promise<void> {
     return within(Promise.all(ids.flatMap(id => this.records.get(id)?.ended ?? [])), ms, signal);
@@ -388,7 +370,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /**
    * 占一个位置。同一会话里对话回合中在跑的可转后台调用（前台与后台一起数，等审批的也算）满了时，回拒绝的结果（JSON），
-   * 列出调用者看得到的在跑的任务，不执行、不过守卫。不在回合里的调用不会转后台，不占名额、不受上限挡
+   * 列出这个会话在跑的后台任务，不执行、不过守卫。不在回合里的调用不会转后台，不占名额、不受上限挡
    */
   admit(ctx: ToolCallContext, owner: object, plan: Plan): Call | string {
     const counted = inTurn(ctx);
@@ -398,7 +380,7 @@ export class BackgroundTasks implements BackgroundTaskService {
         error:
           `这个会话里已有 ${inSession.length} 个可转后台的工具调用在跑（上限 ${this.limits.maxPerSession}，前台与后台一起数），` +
           '先等待或停掉一个',
-        running: this.visible(ctx)
+        running: this.list({ sessionId: ctx.sessionId })
           .filter(task => task.status === 'running')
           .map(viewOf),
       });
@@ -564,7 +546,6 @@ export class BackgroundTasks implements BackgroundTaskService {
         ...(lastLine !== undefined ? { lastLine } : {}),
         ...(lastAt !== undefined ? { lastOutputAt: lastAt } : {}),
       },
-      starter: identityOf(ctx),
       output: call.output,
       // 身份跟链源头：platform、actor 与 callerUserId 都取这次调用，通知回合的权限不高于它
       ...(chained
@@ -572,6 +553,7 @@ export class BackgroundTasks implements BackgroundTaskService {
         : {
             notice: {
               platform: ctx.platform ?? 'unknown',
+              actor: identityOf(ctx),
               ...(ctx.userId !== undefined ? { callerUserId: ctx.userId } : {}),
               ...(ctx.inbound?.messageId !== undefined ? { replyTo: ctx.inbound.messageId } : {}),
             },
@@ -655,11 +637,7 @@ export class BackgroundTasks implements BackgroundTaskService {
    * （可能受过注入），输出与结果受外部内容左右，都不进通知（通知以 system 呈现且会归档）；它们由模型用 background_output 取，
    * 以 tool 角色进上下文。只有正常结束（completed、failed）的通知
    */
-  private notify(
-    { task, starter }: TaskRecord,
-    status: BackgroundTaskNoticeFacts['status'],
-    target: NoticeTarget,
-  ): void {
+  private notify({ task }: TaskRecord, status: BackgroundTaskNoticeFacts['status'], target: NoticeTarget): void {
     const durationMs = (task.endedAt ?? task.startedAt) - task.startedAt;
     const { exitCode } = task;
     const ending =
@@ -679,7 +657,7 @@ export class BackgroundTasks implements BackgroundTaskService {
       sessionId: task.sessionId,
       platform: target.platform,
       source: `${NOTICE_SOURCE_PREFIX}${task.id}`,
-      actor: starter,
+      actor: target.actor,
       hostNotice: {
         kind: BACKGROUND_TASK_NOTICE,
         id: task.id,
@@ -710,12 +688,11 @@ export class BackgroundTasks implements BackgroundTaskService {
     let dropped = 0;
     const sessions = new Set<string>();
     for (const entry of entries) {
-      const stored = parseStored(entry);
-      if (!stored || this.records.has(stored.task.id)) {
+      const task = parseStored(entry);
+      if (!task || this.records.has(task.id)) {
         dropped++;
         continue;
       }
-      const { task } = stored;
       if (task.status === 'running') {
         Object.assign(task, {
           status: 'aborted',
@@ -723,7 +700,7 @@ export class BackgroundTasks implements BackgroundTaskService {
           endedAt: task.lastOutputAt ?? task.startedAt,
         });
       }
-      const record: TaskRecord = { ...stored, output: new OutputTail(), ended: Promise.resolve(), markEnded: () => {} };
+      const record: TaskRecord = { task, output: new OutputTail(), ended: Promise.resolve(), markEnded: () => {} };
       this.records.set(task.id, record);
       sessions.add(task.sessionId);
       this.changed(record);
@@ -732,17 +709,14 @@ export class BackgroundTasks implements BackgroundTaskService {
     for (const sessionId of sessions) this.prune(sessionId);
   }
 
-  /** 写盘排队：整份写入，只记字段与起它的身份，不记输出与结果；已排上、还没开始的那次写会带上之后的变化 */
+  /** 写盘排队：整份写入，只记字段，不记起它的身份、输出与结果；已排上、还没开始的那次写会带上之后的变化 */
   private persist(): void {
     const storage = this.storage;
     if (!storage || this.writeQueued) return;
     this.writeQueued = true;
     this.writing = this.writing.then(async () => {
       this.writeQueued = false;
-      const tasks = [...this.records.values()].map(({ task: { result: _result, ...fields }, starter }) => ({
-        ...fields,
-        starter,
-      }));
+      const tasks = [...this.records.values()].map(({ task: { result: _result, ...fields } }) => fields);
       try {
         await storage.writeFile(STORE_URI, JSON.stringify({ tasks }));
       } catch (err) {

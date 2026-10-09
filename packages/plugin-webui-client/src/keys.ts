@@ -38,6 +38,13 @@ export function shortcutOf(event: KeyboardEvent): ShortcutName | undefined {
   });
 }
 
+/** 在选中的标签上关闭它的键，按平台写：Mac 上标着 delete 的键送出 Backspace（fn+delete 才送出 Delete），两个都认 */
+export function closeTabKey(): { aria: string; label: string; matches(key: string): boolean } {
+  return isMac()
+    ? { aria: 'Backspace', label: '⌫', matches: key => key === 'Backspace' || key === 'Delete' }
+    : { aria: 'Delete', label: 'Delete', matches: key => key === 'Delete' };
+}
+
 /** 输入法组字时的按键（回车上屏、Esc 取消候选）不算：Safari 在组字结束后仍会送出这次按键的 keydown，keyCode 是 229 */
 export function composing(event: KeyboardEvent): boolean {
   return event.isComposing || event.keyCode === 229;

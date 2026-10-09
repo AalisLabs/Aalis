@@ -25,7 +25,7 @@
 
 | 工具 | 版本 |
 |---|---|
-| Node.js | ≥ 24.15.0（CI 跑 24 LTS；升级步骤见 [第一次运行](docs/guide/first-run.md#升级-node)） |
+| Node.js | ≥ 24.15.0（CI 跑 24 LTS；升级步骤见 [第一次运行](docs/guide/first-run.md#upgrade-node)） |
 | pnpm | ≥ 10.0 |
 | TypeScript | 5.7+ |
 

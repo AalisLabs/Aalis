@@ -41,20 +41,17 @@ const EXTENSIONS = new Set([
 /** 主机名或 IPv4 地址，加可选端口。IPv6 字面地址写不进 CSP 的来源，带分号、空白、斜杠的会改写 CSP，都不收 */
 const HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;
 
-/** 框架 CSP：脚本只认这一页的目录与公用目录，网络请求、worker、表单与内嵌框架都落在 default-src 'none' 上 */
+/**
+ * 框架 CSP：除脚本外按类型放开、不按来源限，样式、字体、图片、音视频与数据请求都能取外站的。只留两道：脚本只认这一页的
+ * 目录与公用目录（不许内联与 eval，worker 经回退链同样只认它们），框架里不能再嵌别的网页（frame 与 object 都不给）。
+ * 宿主接口靠不同源挡：框架是不透明来源，请求不带登录状态，改状态的请求与 WebSocket 握手按来源被拒
+ */
 function frameCsp(host: string, token: string): string {
-  const dir = `${host}/frames/${token}/`;
-  const base = `${host}/frames/${BASE}/`;
   return [
     `sandbox ${FRAME_SANDBOX}`,
-    "default-src 'none'",
-    `script-src ${dir} ${base}`,
-    `style-src ${dir} ${base} 'unsafe-inline'`,
-    `img-src ${dir} data: blob:`,
-    `font-src ${dir} data:`,
-    "worker-src 'none'",
-    "form-action 'none'",
-    "base-uri 'none'",
+    `script-src ${host}/frames/${token}/ ${host}/frames/${BASE}/`,
+    "frame-src 'none'",
+    "object-src 'none'",
     `frame-ancestors ${host}`,
   ].join('; ');
 }
@@ -97,9 +94,8 @@ export function registerFrameRoutes(expressApp: express.Express, dirOf: (token: 
       setHeaders: served => {
         served.setHeader('Content-Security-Policy', frameCsp(host, token));
         served.setHeader('X-Content-Type-Options', 'nosniff');
+        // 框架能取外站的资源：不把框架地址带给外站
         served.setHeader('Referrer-Policy', 'no-referrer');
-        // DNS 预取不一定受 CSP 约束
-        served.setHeader('X-DNS-Prefetch-Control', 'off');
         // 框架文档是不透明来源，模块脚本连取自己目录下的文件也走 CORS
         served.setHeader('Access-Control-Allow-Origin', '*');
         served.setHeader('Cache-Control', 'no-cache');

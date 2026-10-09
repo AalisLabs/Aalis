@@ -4,7 +4,7 @@
 // pending 的插件是有 required 服务此刻没有提供者。每个这样的服务沿声明提供它的已装插件往下追，直到一个不是 pending 的
 // 插件或追不下去的地方，那里就是根。根失败、停用、在运行却没在提供、没有已装的插件提供、互相等待成环，是「缺」：要人
 // 处理；根在启动，是「在等」：它启动完就有。runtime 的启动告警、plugin-doctor 的诊断、webui-server 的插件列表与「需要
-// 处理」、plugin-cli 的欢迎行都调这里，几处的说法因此一致。
+// 处理」、plugin-cli 的欢迎行与 plugin-package-manager 的卸载闸都调这里，几处的判断与说法因此一致。
 //
 // 只收普通数据：插件状态快照与当前有提供者的服务名（core 的 `services.names()`）。required 与 optional 按快照里 `uses`
 // 每项的 kind 分。判缺看服务名，不看谁声明提供：宿主在根上提供的服务不在任何插件的 provides 里；声明提供它的插件
@@ -43,7 +43,7 @@ export interface UnmetService {
 
 /** 一个 pending 插件没满足的 required 服务 */
 export interface UnmetDependencies {
-  /** 缺：根失败、停用、没有提供者或成环，要人处理 */
+  /** 缺：根失败、停用、在运行却没在提供、没有提供者或成环，要人处理 */
   lacking: UnmetService[];
   /** 在等：根在启动，它启动完就满足 */
   waiting: UnmetService[];

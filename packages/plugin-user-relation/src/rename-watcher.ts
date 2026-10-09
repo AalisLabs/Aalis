@@ -11,7 +11,7 @@
  * - 与 extractionEnabled 解耦：即便关掉写入提取，改名同步仍生效。
  */
 import type { Events, Logger } from '@aalis/core';
-import type { Message } from '@aalis/schema-message';
+import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 
 interface ArchivedPayload {
@@ -27,11 +27,11 @@ interface RenameWatcherCaps {
 export function startRenameWatcher({ events, logger }: RenameWatcherCaps, service: RelationService): void {
   events.on('inbound:message:archived', (...args: unknown[]) => {
     const data = args[0] as ArchivedPayload | undefined;
-    const meta = data?.archivedMessage?.metadata as
-      | { platform?: string; userId?: string; nickname?: string }
-      | undefined;
+    const meta = data?.archivedMessage?.metadata;
     if (!meta) return;
-    const { platform, userId, nickname } = meta;
+    const platform = meta[WellKnownMetadataKeys.Platform] as string | undefined;
+    const userId = meta[WellKnownMetadataKeys.UserId] as string | undefined;
+    const nickname = meta[WellKnownMetadataKeys.Nickname] as string | undefined;
     if (!platform || !userId || !nickname) return;
 
     const pid = `${platform}:${userId}`;

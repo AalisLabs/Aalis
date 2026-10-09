@@ -80,7 +80,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 ### 登录方式
 
 1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到同一路径，只去掉 `token`，其余查询串（如日志的筛选）照留。
-2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页写明 token 在哪：家目录的 `state/webui/access.txt`（启动日志「访问凭据已写入」那行给出完整路径；日志本身不打印 token），`fixed` 模式就是配置里的 `fixedToken`。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
+2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页写明 token 在哪：家目录的 `state/webui/access.txt`（启动日志「访问凭据已写入」那行给出完整路径；日志本身不打印 token），`fixed` 模式是配置项 `fixedToken`（密钥字段，启动后值存在家目录的 `secrets.yaml` 里，配置文件里是引用）。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
 
 ### 登录失败限速
@@ -264,7 +264,7 @@ socket.onmessage = event => {
 
 - **登记时找包根**（`pages.ts`）：`frame.module` 要是 `file:` 地址；从它所在目录往上找最近一个带 `name` 的 `package.json`（只写 `type` 的跳过），`name` 要等于插件名（实例 id 第一个「:」之前的部分）；包根下的 `webui/` 要是目录，入口要是按 realpath 落在 `webui/` 之内的文件。不过就不登记，错误日志写明是哪一条、在哪个目录。包根在登记时解析一次，`webui/` 的 realpath 记进登记条目，另随机一个 128 位的 `token`（base64url）。
 - **托管**（`routes/frames.ts`）：`GET /frames/:token/<路径>` 按 `token` 找到这一次登记的 `webui/`，`GET /frames/_base/<路径>` 给出 `@aalis/api-webui` 包里 `dist/frame/` 的公用文件（助手 `frame.js` 与样式基线 `frame.css`）。注册在认证之前，不看 cookie。用 `express.static` 托管（关掉目录索引与目录重定向，点开头的段不给），前面另加两道：扩展名白名单（`html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`）与 realpath 落在目录之内。不合的一律 404，不发 3xx；只收 GET 与 HEAD，别的方法回 405。页面撤回或重新登记后旧的 `token` 回 404。
-- **响应头**：框架 CSP（盖过全局的文档级 CSP）、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`X-DNS-Prefetch-Control: off`、`Access-Control-Allow-Origin: *`、`Cache-Control: no-cache`。CSP 全文见 api-webui；其中的来源按请求的 Host 写成带路径、不带协议的来源，Host 去掉默认端口 `:80`、`:443`。Host 在本插件按「主机名或 IPv4 地址，加可选端口」核对，IPv6 字面地址与带分号、空白、斜杠等的回 400。
+- **响应头**：框架 CSP（盖过全局的文档级 CSP）与其余响应头见 [api-webui 的「托管与隔离」](../api/api-webui.md#托管与隔离)；脚本的来源按请求的 Host 写成带路径、不带协议的来源，Host 去掉默认端口 `:80`、`:443`。Host 在本插件按「主机名或 IPv4 地址，加可选端口」核对，IPv6 字面地址与带分号、空白、斜杠等的回 400。
 - **数据源**：`componentId` 是数据源名，没声明的回 404；查询参数只收 `sessionId`（会话面板）与 `input`（声明了输入的数据源），`input` 是 JSON 字符串，解不开、不是对象、类型不对、缺必填、带多余的键都回 400。返回不能转成 JSON 的值时回 500，记告警「页面 \<key>（<实例>）的数据源 <名> 返回的数据不对：不能转成 JSON…」。动作的请求体不收 `rowKey`。
 - **`GET /api/pages`**：插件前端页面按字段组装，只给 `frame: { src, host }` 与 `actions`；不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里；数据源也不下发。
 

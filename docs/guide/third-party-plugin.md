@@ -211,7 +211,7 @@ apply({ lifecycle }) {
 
 `@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceRef` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里；钩子与贡献点也不在 core，`hooks` / `contributions` 分别从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
 
-判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间——区间可被包管理器去重到与宿主同一份安装，避免同名契约装出两份（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）。
+判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间，不写 caret、精确版本或 `latest`：区间可被包管理器去重到与宿主同一份安装；caret 在 0.x 下只匹配同一个次版本，跨次版本就断，两个依赖各锁不同次版本时会装进两份同一契约包（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）；精确版本同样锁死；`latest` 发布出去等于不设上限。
 
 `create-aalis-plugin` 生成的依赖已按这条规则写好，下限是生成时源上的最新版。
 

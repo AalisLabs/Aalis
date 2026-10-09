@@ -151,7 +151,7 @@ const safe = await assertSafeUrl(rawUrl); // 抛错即拒绝；通过返回 URL
 await assertSafeHost(parsedUrl.hostname);
 ```
 
-在 `package.json` 里声明依赖，x.y.z 写开发时用的版本，写法见[插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)：
+在 `package.json` 里声明依赖，x.y.z 写开发时用的版本，写法见[第三方插件开发者指南的「依赖怎么归类」](../guide/third-party-plugin.md#_5-1-类型从哪里-import-依赖怎么归类)：
 
 ```json
 { "dependencies": { "@aalis/util-network-guard": ">=x.y.z <1.0.0" } }

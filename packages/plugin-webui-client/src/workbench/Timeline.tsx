@@ -13,6 +13,7 @@ import { type Approval, useConnection, useFeatures, useSessionClient } from '../
 import { clockTime, tokens } from '../format';
 import { Markdown } from '../markdown/Markdown';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import { SessionsFetchError } from '../shell/SessionGate';
 import { Attachments } from './Attachments';
 import type { TimelineItem } from './live-session';
 import { RewindDialog, type RewindTarget } from './Rewind';
@@ -230,27 +231,20 @@ export function Timeline(props: TimelineProps) {
 
 function Earlier({ load }: { load(): Promise<void> }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<Error>();
+  const run = () => {
+    setBusy(true);
+    setError(undefined);
+    load()
+      .catch((err: Error) => setError(err))
+      .finally(() => setBusy(false));
+  };
   return (
     <div className="timeline-earlier">
-      <Button
-        variant="text"
-        busy={busy}
-        onClick={() => {
-          setBusy(true);
-          setError(undefined);
-          load()
-            .catch((err: Error) => setError(err.message))
-            .finally(() => setBusy(false));
-        }}
-      >
+      <Button variant="text" busy={busy} onClick={run}>
         更早的消息
       </Button>
-      {error && (
-        <p className="timeline-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <SessionsFetchError what="更早的消息" error={error} retry={run} />}
     </div>
   );
 }

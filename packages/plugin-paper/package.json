@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "白纸 —— 把群里的任务交给远端代理去做，排队、记账、取回成品",
+  "description": "白纸 —— 房间里与本机隔离的成品目录，以及把任务交给远端代理去做的排队、记账与取回",
   "type": "module",
   "keywords": [
     "aalis",

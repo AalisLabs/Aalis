@@ -22,7 +22,7 @@ import { Main, useShell } from '../shell/Shell';
 import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
-import { labelOf, type PluginRow, useFindPlugin, useHost, usePlugins } from './list';
+import { labelOf, type PluginRow, useFindPlugin, usePackageManager, usePlugins } from './list';
 import { markerOf, pluginName, reasonOf, rootAction, rootText, statusOf, unmetText } from './status';
 import './PluginDetail.css';
 
@@ -116,6 +116,7 @@ function Summary({ row }: { row: PluginRow }) {
   const { busy, run } = action;
   const toast = useToast();
   const navigate = useNavigate();
+  const packageManager = usePackageManager();
   /** 卸载确认框开着时是框里的选择 */
   const [uninstalling, setUninstalling] = useState<{ removeConfig: boolean }>();
   const [removing, setRemoving] = useState<PluginRow>();
@@ -132,6 +133,7 @@ function Summary({ row }: { row: PluginRow }) {
         toast({ kind: 'success', text: messageOf(reply) ?? `已卸载 ${labelOf(row)}` });
         navigate(paths.plugins);
       },
+      packageManager,
     );
   return (
     <div className="plugin-summary">
@@ -410,8 +412,7 @@ function Pages({ row }: { row: PluginRow }) {
 /** 多开的插件：列出全部实例，新建与移除（主实例不能移除） */
 function Instances({ row }: { row: PluginRow }) {
   const { plugins } = usePlugins();
-  const host = useHost();
-  const action = usePluginAction(row.instanceId);
+  const action = usePluginAction();
   const { busy, run } = action;
   const toast = useToast();
   const navigate = useNavigate();
@@ -450,7 +451,6 @@ function Instances({ row }: { row: PluginRow }) {
         setSuffix('');
         navigate(paths.plugin(reply.instanceId));
       },
-      host,
     );
   };
 

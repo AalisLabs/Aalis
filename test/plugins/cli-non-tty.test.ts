@@ -7,6 +7,7 @@ import cliPlugin from '../../packages/plugin-cli/src/index.js';
 // stdin / stdout 不是 TTY（日志重定向、容器、systemd）时 CLI 不得接管终端：
 // 不写备用屏序列、不宣告 terminal:claimed（否则 runtime 的控制台日志会停写 stdout），
 // 发往 cli 会话的消息退化为一行日志。旧行为是无条件进全屏界面，日志文件被 ANSI 占满。
+// 没有终端界面时也就没有连接：运行状况写「没有连接」，不把后台运行标成离线。
 
 const ALT_SCREEN = '\x1b[?1049h';
 
@@ -19,7 +20,7 @@ describe('plugin-cli 非 TTY', () => {
   it.each([
     { name: 'stdin/stdout 都非 TTY', stdin: false },
     { name: '只有 stdout 非 TTY', stdin: true },
-  ])('$name：不接管终端；出站消息落成日志', async ({ stdin }) => {
+  ])('$name：不接管终端，没有连接；出站消息落成日志', async ({ stdin }) => {
     const tty = { out: process.stdout.isTTY, in: process.stdin.isTTY };
     Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
     Object.defineProperty(process.stdin, 'isTTY', { value: stdin, configurable: true });
@@ -48,6 +49,7 @@ describe('plugin-cli 非 TTY', () => {
 
       const cli = host.platform.all().find(p => p.instance.platform === 'cli');
       expect(cli, 'cli 平台服务应已注册').toBeDefined();
+      expect(cli?.instance.getConnections()).toEqual([]);
       await cli?.instance.sendMessage('cli-default', 'probe-reply');
       expect(entries.some(e => e.message.includes('[cli] probe-reply'))).toBe(true);
     } finally {

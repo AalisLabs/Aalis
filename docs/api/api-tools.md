@@ -206,6 +206,8 @@ export const backgroundTasks = defineService<BackgroundTaskService>('background-
 
 由 [plugin-tools](../plugins/plugin-tools.md) 提供，现在唯一的登记方是它的执行器（转到后台的工具调用）。会话服务（[plugin-session-server](../plugins/plugin-session-server.md)）把它投影成会话协议的后台任务（[api-session-protocol](./api-session-protocol.md#后台任务) 的 `background/*`），不下发参数与结果。
 
+**局限：** 契约只有列出、取输出与停止，没有登记的口。别的插件自己的长任务进不了 WebUI 的「后台」标签与运行状况的「正在运行」，第三方的替代面板也只看得到转后台的工具调用与子会话。通用的登记口（经 registrar 登记、随激活撤回，执行器也改走同一个口，`kind` 按加法加一个通用种类）在远端任务拆成独立插件时开，那是第一个执行器之外的登记方。
+
 - `list`：在跑的与保留的结束的任务（每个会话留最近 20 条结束的），给 `sessionId` 时只列这个会话的。
 - `output`：`text` 是 `after` 之后的输出；`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾 64 KiB，早于缓冲的部分取不到时 `truncated` 为 true。Aalis 重启前的任务没有留下输出。
 - `stop`：中止并等它落定（宽限 3 秒），回落定后的任务；宽限内没停下的仍是 `running`，之后停下时记为 `stopped`。被停止的不通知。

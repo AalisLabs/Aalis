@@ -138,11 +138,11 @@ function createArchiveService(
       if (working.userId) meta[WellKnownMetadataKeys.UserId] = working.userId;
       if (working.nickname) meta[WellKnownMetadataKeys.Nickname] = working.nickname;
       if (working.platform) meta[WellKnownMetadataKeys.Platform] = working.platform;
-      if (working.groupId) meta.groupId = working.groupId;
-      if (working.groupName) meta.groupName = working.groupName;
-      if (working.sessionType) meta.sessionType = working.sessionType;
+      if (working.groupId) meta[WellKnownMetadataKeys.GroupId] = working.groupId;
+      if (working.groupName) meta[WellKnownMetadataKeys.GroupName] = working.groupName;
+      if (working.sessionType) meta[WellKnownMetadataKeys.SessionType] = working.sessionType;
       // 平台侧消息 ID（如 OneBot message_id），用于"引用回复"反查归档原文
-      if (working.messageId) meta.messageId = working.messageId;
+      if (working.messageId) meta[WellKnownMetadataKeys.MessageId] = working.messageId;
       // 发言人写的话与附件清单：归档正文拼进了发送者前缀、引用与附件描述（给模型看），读历史给人看的一方取这两样
       if (working.content !== content) meta[WellKnownMetadataKeys.SpokenContent] = working.content;
       const roots = new Set(storage.current?.listRoots().map(root => root.name));
@@ -216,7 +216,7 @@ function createArchiveService(
       if (opts.platform) metadata[WellKnownMetadataKeys.Platform] = opts.platform;
       if (opts.userId) metadata[WellKnownMetadataKeys.UserId] = opts.userId;
       if (opts.targetId) metadata.targetId = opts.targetId;
-      if (opts.groupId) metadata.groupId = opts.groupId;
+      if (opts.groupId) metadata[WellKnownMetadataKeys.GroupId] = opts.groupId;
       if (opts.operatorId) metadata.operatorId = opts.operatorId;
       if (opts.data) Object.assign(metadata, opts.data);
 
@@ -248,7 +248,7 @@ function createArchiveService(
       // 从最新往旧找：引用通常指向最近发的消息
       for (let i = history.length - 1; i >= 0; i -= 1) {
         const m = history[i];
-        const mid = m.metadata?.messageId;
+        const mid = m.metadata?.[WellKnownMetadataKeys.MessageId];
         if (mid != null && String(mid) === messageId) return m;
       }
       return null;

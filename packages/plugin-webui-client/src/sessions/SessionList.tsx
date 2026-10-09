@@ -64,7 +64,7 @@ export function SessionList() {
         {phone && <AttentionSummary />}
         {phone && <Entries />}
         {phone && <PinnedList />}
-        <SessionGate>
+        <SessionGate quiet={!phone}>
           <Sections />
         </SessionGate>
       </div>

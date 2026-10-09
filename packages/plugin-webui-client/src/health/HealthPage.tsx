@@ -10,7 +10,7 @@ import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
 import { Tabs } from '../components/Tabs';
-import { useSessionClient, useSessionless } from '../connection';
+import { useConnectionState, useSessionClient, useSessionless } from '../connection';
 import { withInstance } from '../pages/registry';
 import { SESSION_PROTOCOL, useHost, useProvider } from '../plugins/list';
 import { isRecord, useJson } from '../rest';
@@ -25,7 +25,7 @@ import './Health.css';
 
 // 运行状况：概况（「需要处理」的全部、正在运行的后台工作与各适配器的连接）与日志两个标签，标签由地址决定。
 // 正在运行的按会话列出（归档的也列），每个会话下按会话树列出在跑的子会话与后台任务，都能停；会话服务不在时不出现。
-// 平台连接没有变化事件，打开时取一次，配手动刷新
+// 平台连接没有变化事件，打开时取一次，配手动刷新；WebUI 那一行数的是会话连接，本页的会话连接接上与断开时再取
 
 const TABS = [
   { key: 'overview', title: '概况' },
@@ -153,7 +153,8 @@ function parsePlatforms(body: unknown): PlatformStatus[] {
 
 /** 没有适配器时不出现 */
 function Platforms({ version, refresh }: { version: number; refresh(): void }) {
-  const { value: platforms, error } = useJson('/api/platforms', parsePlatforms, version);
+  const open = useConnectionState(useSessionClient()).status === 'open';
+  const { value: platforms, error } = useJson('/api/platforms', parsePlatforms, `${version}/${open}`);
   const host = useHost();
   if ((!platforms || platforms.length === 0) && !error) return null;
   return (

@@ -34,6 +34,10 @@ export interface MockLLMOptions {
   throwOnce?: Error;
   /** 只为这些序号的工具调用报生成进度；缺省全报 */
   progress?: (index: number) => boolean;
+  /** 上下文长度，缺省 8192 */
+  contextLength?: number;
+  /** 流式的正文流出第一块后，等它回的 Promise 落定再流下去（回 undefined 不停）：用例借此看回复流到一半时的界面 */
+  hold?: (request: ChatModelRequest) => Promise<void> | undefined;
 }
 
 export class MockLLMService implements LLMModel {
@@ -43,25 +47,28 @@ export class MockLLMService implements LLMModel {
     recorder?: ChatModelRequest[];
     responses: NonNullable<MockLLMOptions['responses']>;
     progress: NonNullable<MockLLMOptions['progress']>;
+    hold?: MockLLMOptions['hold'];
   };
   private cursor = 0;
 
   readonly id = 'mock-model';
   readonly providerId = '@aalis/test-fixture-mock-llm';
   /** 上下文长度。**agent 的 tokenBudget 直接吃它**，缺了会让预算变 NaN。 */
-  readonly contextLength = 8192;
+  readonly contextLength: number;
   /** provider 建议的最大输出 token */
   readonly maxOutputTokens = 1024;
   /** 能力元数据（与真实 provider 一致，挂在 model handle 实例上供 resolveLLMModel/listLLMModels 读取）。 */
   readonly capabilities = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling, LLMCapabilities.Streaming];
 
   constructor(options: MockLLMOptions = {}) {
+    this.contextLength = options.contextLength ?? 8192;
     this.opts = {
       responses: options.responses ?? [{ content: 'mock response' }],
       recorder: options.recorder,
       latencyMs: options.latencyMs ?? 0,
       throwOnce: options.throwOnce,
       progress: options.progress ?? (() => true),
+      hold: options.hold,
     };
   }
 
@@ -97,6 +104,7 @@ export class MockLLMService implements LLMModel {
     for (let i = 0; i < text.length; i += 4) {
       if (this.opts.latencyMs > 0) await new Promise(r => setTimeout(r, this.opts.latencyMs));
       yield { contentDelta: text.slice(i, i + 4) };
+      if (i === 0) await this.opts.hold?.(request);
     }
     // 与真实 provider 一样，生成工具调用的参数时按调用的序号报进度（这里每个调用报两次：刚有名字、参数生成完）
     for (const [index, call] of (resp.toolCalls ?? []).entries()) {

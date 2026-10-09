@@ -709,7 +709,7 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'gpt-4.1': [Chat, ToolCalling, Streaming, Vision],
   'gpt-4-turbo': [Chat, ToolCalling, Streaming],
   'gpt-4': [Chat, ToolCalling, Streaming],
-  // gpt-5-chat 是 ChatGPT 用的非推理模型，不收思考档位
+  // gpt-5-chat 是非推理的对话模型，不收思考档位
   'gpt-5-chat': [Chat, ToolCalling, Streaming, Vision],
   'gpt-5': [Chat, ToolCalling, Streaming, Vision, Thinking],
   'gpt-3.5-turbo': [Chat, ToolCalling, Streaming],

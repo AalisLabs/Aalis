@@ -442,14 +442,13 @@ interface AttachmentHeaders {
   'content-security-policy': string;
 }
 
-/** 插件前端的文件：框架 CSP 只放行这一页的目录与公用目录 */
+/** 插件前端的文件：框架 CSP 的脚本只认这一页的目录与公用目录 */
 interface FrameFileHeaders {
   'content-type': string;
   'content-length': `${number}`;
   'content-security-policy': `sandbox allow-scripts; ${string}`;
   'x-content-type-options': 'nosniff';
   'referrer-policy': 'no-referrer';
-  'x-dns-prefetch-control': 'off';
   'access-control-allow-origin': '*';
   'cache-control': 'no-cache';
 }
