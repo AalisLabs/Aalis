@@ -11,6 +11,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { endTurn, fakeSummaryLLM } from '../fixtures/memory-summary.js';
+import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 自动压缩线是会话设置项 compressAt（摘要插件登记）：占窗口比例，各层都没设时 0.8，0 表示不按用量压缩。
@@ -31,6 +32,9 @@ async function setup() {
   const summaryLLM = fakeSummaryLLM();
   const host = app.bind({ provide, events, hooks, memory, compression, sessionManager });
   await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  // 群房间收录过（预置进会话表）：选平台档读会话记下的出生平台
+  await seedRooms(host.memory.require(), { [ROOM]: '群' });
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
   host.provide(llm, summaryLLM.model);
@@ -39,7 +43,6 @@ async function setup() {
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
   const sm = host.sessionManager.require();
   const owner = await sm.createSession({ name: '本机会话' });
-  await sm.ensureSession(ROOM, { name: '群' });
   const child = await sm.createChildSession(ROOM, { name: '群里派出的子任务' });
   return { host, sm, owner, child, summaryLLM, compressAt: host.compression.require().compressAt };
 }

@@ -34,6 +34,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { recordRoom } from '../fixtures/rooms.js';
 import { client } from '../fixtures/session-client.js';
 import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { deferred } from '../helpers/deferred.js';
@@ -555,8 +556,8 @@ describe('订阅与快照', () => {
 
 describe('条目', () => {
   it('turn：开始带发起方，结束带结局；被下游拦下、没有结局的一轮按 silent 收尾', async () => {
-    const { server, sm, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(ROOM);
@@ -573,7 +574,7 @@ describe('条目', () => {
 
   it('房间里没发出去的标「未发出」：重试丢掉的那版、静默结束的、平台没收下的；owner 自己的会话不标', async () => {
     const { server, sm, host, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    await recordRoom(host.events, ROOM, '群');
     const mine = await sm.createSession({ name: '我的' });
     host.events.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery)
@@ -617,7 +618,7 @@ describe('条目', () => {
 
   it('房间里工具调用之前说的话没有发进群，标「未发出」；之后的回复照常；重新订阅后历史里同样标出', async () => {
     const { server, sm, host, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    await recordRoom(host.events, ROOM, '群');
     const mine = await sm.createSession({ name: '我的' });
     host.events.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = Promise.resolve({ ok: true });
@@ -684,8 +685,8 @@ describe('条目', () => {
   });
 
   it('回合结束之后、送达结果到达之前订阅的连接：迟到的结果落在快照里的同一条回复上，不多出一条', async () => {
-    const { server, sm, host, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     const settle = deferred<OutboundDeliveryResult>();
     host.events.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = settle.promise;
@@ -714,8 +715,8 @@ describe('条目', () => {
   });
 
   it('平台的送达结果以拒绝结算：回复标「发送出错」，经工具发出的不标，都不留未处理的拒绝', async () => {
-    const { server, sm, host, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     const deliveries: Array<ReturnType<typeof deferred<OutboundDeliveryResult>>> = [];
     host.events.on('outbound:message', msg => {
       if (msg.sessionId !== ROOM || msg.delivery) return;
@@ -762,8 +763,8 @@ describe('条目', () => {
   });
 
   it('房间里经工具发出、平台收下的消息：工具卡标「已发到群」并写进工具结果的元数据；没收下的不标', async () => {
-    const { server, sm, host, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     host.events.on('outbound:message', msg => {
       if (msg.sessionId !== ROOM || msg.delivery) return;
       msg.delivery = Promise.resolve(msg.callId === 'call-ok' ? { ok: true } : { ok: false, error: '上传失败' });
@@ -904,8 +905,8 @@ describe('条目', () => {
   });
 
   it('房间里达到工具调用上限：生成了、没执行的调用之前说的话就是回复，不标「未发出」', async () => {
-    const { server, sm, host, openTurn } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     host.events.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = Promise.resolve({ ok: true });
     });
@@ -1040,8 +1041,8 @@ describe('条目', () => {
   });
 
   it('入站与她发出的附件按存档推送：用户消息带说话人，宿主通知是 notice（带通知的 id 与给界面的事实），发出的图片是只有附件的消息', async () => {
-    const { server, sm, host, archive } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, archive } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(ROOM);
@@ -1242,8 +1243,8 @@ describe('条目', () => {
   });
 
   it('房间的用量按出生平台算：订阅之后、手动压缩之后请求用量都不填平台', async () => {
-    const { server, sm, host } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     host.provide(compression, { compressAt: () => 0.7, compress: async () => {} });
     const requests: Array<{ sessionId: string; platform?: string }> = [];
     host.events.on('token:request', req => void requests.push(req));
@@ -1342,8 +1343,8 @@ describe('历史', () => {
   });
 
   it('重试的各版正文各成一条：房间里最后一版是回复，之前的标「未发出」；owner 自己的会话不标', async () => {
-    const { server, sm, archive } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, sm, host, archive } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     const mine = await sm.createSession({ name: '我的' });
     for (const sessionId of [ROOM, mine.id]) {
       await archive.saveMessage(sessionId, {
@@ -1412,8 +1413,8 @@ describe('历史', () => {
   });
 
   it('刷新后仍在：平台没收下的回复按投递失败记录标出，已发到群与审批的结局按工具结果的元数据还原', async () => {
-    const { server, sm, archive } = await setup();
-    await sm.ensureSession(ROOM, { name: '群' });
+    const { server, host, archive } = await setup();
+    await recordRoom(host.events, ROOM, '群');
     const save = (m: Message) => archive.saveMessage(ROOM, m);
     const settlement = { state: 'expired', source: 'absent', at: 7 } as const;
     await save({

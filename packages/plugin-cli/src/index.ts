@@ -405,7 +405,7 @@ class CliTui {
       if (this.view === 'logs') this.queueRender();
     });
 
-    const assistantName = this.caps.persona.current?.getPersonaName() ?? 'Aalis';
+    const assistantName = this.personaName() ?? 'Aalis';
     this.chat.append([
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
     ]);
@@ -498,9 +498,15 @@ class CliTui {
     if (this.view === 'chat') this.queueRender();
   }
 
+  /** 终端会话生效的人设的名字：按会话设置的「人设」取卡，与回合同一口径；没有人设服务时为 undefined */
+  private personaName(): string | undefined {
+    const config = this.caps.sessionManager.current?.resolveConfig(this.sessionId, 'cli');
+    return this.caps.persona.current?.getPersonaName({ persona: config?.persona });
+  }
+
   /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */
   private labelCol(): number {
-    const persona = this.caps.persona.current?.getPersonaName() ?? 'Aalis';
+    const persona = this.personaName() ?? 'Aalis';
     return Math.max(
       visibleLen(`✦ ${persona}`), // assistant
       visibleLen(`❯ ${this.config.prompt}`), // user
@@ -522,7 +528,7 @@ class CliTui {
   }
 
   private formatAssistantBlock(content: string): string[] {
-    const persona = this.caps.persona.current?.getPersonaName() ?? 'Aalis';
+    const persona = this.personaName() ?? 'Aalis';
     const firstHead = this.formatHead(chalk.green(`✦ ${persona}`));
     const contHead = this.formatCont();
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
@@ -837,7 +843,7 @@ class CliTui {
   }
 
   private renderHeader(width: number): string {
-    const persona = this.caps.persona.current?.getPersonaName() ?? 'default';
+    const persona = this.personaName() ?? 'default';
     const left = ` ${chalk.bold.magenta('●')} ${chalk.bold('Aalis')} ${chalk.gray('·')} ${chalk.cyan(persona)} `;
     const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[])
       .map(v => {
@@ -977,7 +983,7 @@ class CliTui {
     const serviceNames = this.caps.services.names();
     const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === 'cli');
     const connections = adapter?.getConnections?.() ?? [];
-    const persona = this.caps.persona.current?.getPersonaName() ?? '-';
+    const persona = this.personaName() ?? '-';
     const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
     const kv = (k: string, v: string) => `    ${chalk.gray(k.padEnd(14))} ${v}`;
     const out: string[] = [];

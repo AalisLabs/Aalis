@@ -150,19 +150,27 @@ export const SessionSummarySchema = z.object({
   parentId: z.string().optional(),
   childCount: z.number().int().nonnegative(),
   /**
-   * 会话种类（api-session-manager 的 sessionKind）：task 是子任务，room 是 IM 房间（受众为群或私聊，含 owner 自己的私聊），
+   * 会话种类（api-session-manager 的 sessionKind）：task 是子任务，room 是 IM 房间（有出生平台的根会话，含 owner 自己的私聊），
    * owner 是其余（owner 在 WebUI、终端的会话等）。适用于这个会话的设置项按它选
    */
   kind: z.enum(['owner', 'room', 'task']),
   section: SessionSectionSchema,
-  /** 出生平台；owner 自己的会话没有 */
+  /** 根会话的出生平台；没有出生平台的（owner 在 WebUI、终端的会话等）没有 */
   platform: z.string().optional(),
   /** 房间：接管它的适配器实例（插件实例 id），列表按它分组；还没有适配器认领的没有 */
   instance: z.string().optional(),
-  /** 房间：会话 id 里的机器人账号；同一实例带多个账号时界面据此标出 */
+  /** 根会话的聊天窗口里的机器人账号；同一实例带多个账号时界面据此标出 */
   account: z.string().optional(),
-  /** 根会话的受众：group、private 为 IM 房间，owner 为其余 */
-  audience: z.enum(['owner', 'private', 'group']).optional(),
+  /**
+   * 根会话的聊天窗口：平台类型名（由平台自定，界面原样显示）与多方标记（受众里不止机器人与对端两方）。有聊天窗口（IM 的群与
+   * 私聊）才有
+   */
+  chat: z.object({ type: z.string(), multiParty: z.boolean() }).optional(),
+  /**
+   * 根会话的场所：场所键、类别（window 是 IM 的群与别人的私聊，workspace 是本机的工作区）与显示名。按层读写场所时层为
+   * `{ scope: 'place', key }`
+   */
+  place: z.object({ key: z.string(), kind: z.enum(['window', 'workspace']), name: z.string() }),
   createdAt: z.number(),
   /** 最后活动时间：会话档案最近一次变化 */
   updatedAt: z.number(),
@@ -279,8 +287,8 @@ const SettingFieldSchema = z.custom<SchemaField>(
   { message: '期望 schema-config 字段（带 type 与 label）' },
 );
 
-/** 生效值出自哪一层：本会话、父会话给子会话的默认值（旧数据）、受众条目、平台档、全局默认 */
-export const SettingSourceSchema = z.enum(['session', 'parent', 'audience', 'platform', 'defaults']);
+/** 生效值出自哪一层：层名，取自 `session/config/layers` 回包的层表（order），界面按它写称呼 */
+export const SettingSourceSchema = z.string();
 
 /**
  * 一个设置项的一行。设置项由插件登记，协议与客户端都不认识具体的键，按 field 渲染。一组行已排好：composer、common
@@ -302,6 +310,11 @@ export const SettingRowSchema = z.object({
   effective: z.unknown().optional(),
   /** 生效值出自哪一层；哪一层都没设时没有 */
   source: SettingSourceSchema.optional(),
+  /**
+   * 全局默认层由服务偏好承担的项（字段类型为 llm-ref 的「模型」，全局默认层读写的就是 llm 服务的偏好）：服务此刻实际用的那一个。
+   * 生效值出自全局默认、或哪一层都没设时才有；生效值出自全局默认而与它不同，即偏好指向的已不在
+   */
+  resolved: z.unknown().optional(),
 });
 export type SettingRow = z.infer<typeof SettingRowSchema>;
 
@@ -309,21 +322,25 @@ export const SettingRowsSchema = z.object({ items: z.array(SettingRowSchema) });
 
 /**
  * 写设置：给值即写入这一层（按登记的校验与字段），null 删掉这一项、恢复继承，没给的键不动。给值的键须适用于这个会话种类
- * （受众条目按房间），null 不受限
+ * （场所按它的类别），null 不受限
  */
 const SettingPatchSchema = z.record(z.unknown());
 
-/** 改本会话的覆盖；没登记的键、不合字段的值、不适用于这个会话种类的项回参数错误，什么都不改 */
+/**
+ * 改本会话的覆盖；没登记的键、不合字段的值、不适用于这个会话种类的项、只能设到场所为止的项（会话的行里不列）回参数错误，
+ * 什么都不改
+ */
 export const SessionConfigUpdateParamsSchema = z.object({ sessionId: z.string(), patch: SettingPatchSchema });
 
 /**
- * 会话之上的一层：全局默认、平台档（按平台名生效，不区分适配器实例）、平台档的受众条目（只对这个平台的群或私聊房间）。
- * 继承的先后：本会话、父会话、受众条目、平台档、全局默认
+ * 会话之上能单独读写的一层：全局默认、平台档（按平台名生效，不区分适配器实例）、平台类型档（这个平台这种类型的聊天窗口）、
+ * 场所（键取自会话摘要的 place）。各层的先后与称呼见 `session/config/layers` 回包的层表
  */
 export const SettingLayerSchema = z.discriminatedUnion('scope', [
   z.object({ scope: z.literal('defaults') }),
   z.object({ scope: z.literal('platform'), platform: z.string().min(1) }),
-  z.object({ scope: z.literal('audience'), platform: z.string().min(1), audience: z.enum(['group', 'private']) }),
+  z.object({ scope: z.literal('type'), platform: z.string().min(1), type: z.string().min(1) }),
+  z.object({ scope: z.literal('place'), key: z.string().min(1) }),
 ]);
 export type SettingLayer = z.infer<typeof SettingLayerSchema>;
 
@@ -730,18 +747,28 @@ export const sessionMethods = {
   /** 删除会话连同子会话，并清空它们的消息历史与长期记忆 */
   'session/delete': { params: SessionTargetSchema, result: EmptySchema },
   'session/batch': { params: SessionBatchParamsSchema, result: SessionBatchResultSchema },
-  /** 适用于这个会话的设置项，各带本会话的值、生效值与来源 */
+  /** 适用于这个会话的设置项（只能设到场所为止的不列），各带本会话的值、生效值与来源 */
   'session/config/get': { params: SessionTargetSchema, result: SettingRowsSchema },
   /** 按键改本会话的覆盖，回最新的各行 */
   'session/config/update': { params: SessionConfigUpdateParamsSchema, result: SettingRowsSchema },
   /**
-   * 可以设的各层：全局默认总在第一个，其后按平台名，每个平台先平台档、再群与私聊的受众条目。平台档是已装适配器的平台加上
-   * 配置里写过的平台；受众条目按适配器声明的会话类型出，加上配置里写过的
+   * 可以设的各层，按层的先后：全局默认；各平台档（已装适配器的平台加配置里写过的）；各平台类型档（适配器声明的类型加配置里
+   * 写过的，没声明类型的平台不单列）；全部场所。order 是层表：全部层的名字与称呼，按先后（后面的压过前面的），界面的来源文字、
+   * 先后说明与选层都按它
    */
-  'session/config/layers': { params: EmptySchema, result: z.object({ layers: z.array(SettingLayerSchema) }) },
-  /** 一层的各行，形状与会话的相同；受众条目只列适用于房间的项 */
+  'session/config/layers': {
+    params: EmptySchema,
+    result: z.object({
+      layers: z.array(SettingLayerSchema),
+      order: z.array(z.object({ name: z.string(), label: z.string() })),
+    }),
+  },
+  /** 一层的各行，形状与会话的相同，各带解析到这一层为止的生效值与来源；场所只列适用于它的类别的项 */
   'session/config/layer/get': { params: SettingLayerTargetSchema, result: SettingRowsSchema },
-  /** 按键改一层的值，回最新的各行；改动写进宿主的配置文档 */
+  /**
+   * 按键改一层的值，回最新的各行。全局默认、平台档与平台类型档写进宿主的配置文档（全局默认层的「模型」写的是 llm 服务的
+   * 偏好），场所写进场所记录
+   */
   'session/config/layer/update': { params: SettingLayerUpdateParamsSchema, result: SettingRowsSchema },
   /** 记下 owner 看过这个会话，用于「我的」区的完成未读 */
   'session/markSeen': { params: SessionTargetSchema, result: EmptySchema },

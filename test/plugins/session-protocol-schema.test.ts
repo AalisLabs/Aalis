@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Approval, ApprovalSettlement } from '../../packages/api-approval/src/index.js';
+import type { SessionConfigLayer, SessionPlace } from '../../packages/api-session-manager/src/index.js';
 import {
   type ApprovalSchema,
   type ApprovalSettlementSchema,
@@ -17,6 +18,7 @@ import {
   type SessionNotification,
   type SessionNotificationParams,
   type SessionSummary,
+  type SettingLayer,
   sessionMethods,
   sessionNotifications,
 } from '../../packages/api-session-protocol/src/index.js';
@@ -36,7 +38,8 @@ const summary: SessionSummary = {
   platform: 'onebot',
   instance: '@aalis/plugin-adapter-onebot:a',
   account: '10000',
-  audience: 'group',
+  chat: { type: 'group', multiParty: true },
+  place: { key: 'onebot:group:20001', kind: 'window', name: '读书会' },
   createdAt: 1,
   updatedAt: 2,
   lastReplyAt: 2,
@@ -102,6 +105,7 @@ const settingRows: SessionMethodResult<'session/config/get'> = {
       field: { type: 'llm-ref', label: '模型' },
       plugin: '@aalis/plugin-agent',
       prominence: 'composer',
+      resolved: { provider: 'zz-llm', model: 'zz-chat' },
     },
     {
       key: 'persona',
@@ -225,7 +229,7 @@ const methodSamples: MethodSamples = {
     params: { valid: { sessionId: 'session-1' }, invalid: { id: 'session-1' } },
     result: {
       valid: settingRows,
-      invalid: { items: [{ ...personaRow, source: 'session-override' }] },
+      invalid: { items: [{ ...personaRow, source: 1 }] },
     },
   },
   'session/config/update': {
@@ -242,23 +246,29 @@ const methodSamples: MethodSamples = {
         layers: [
           { scope: 'defaults' },
           { scope: 'platform', platform: 'onebot' },
-          { scope: 'audience', platform: 'onebot', audience: 'group' },
+          { scope: 'type', platform: 'onebot', type: 'group' },
+          { scope: 'place', key: 'workspace:default' },
+        ],
+        order: [
+          { name: 'defaults', label: '全局默认' },
+          { name: 'platform', label: '平台档' },
         ],
       },
-      invalid: { layers: [{ scope: 'audience', platform: 'onebot' }] },
+      // 层表随回包给出，客户端不另存一份
+      invalid: { layers: [{ scope: 'defaults' }] },
     },
   },
   'session/config/layer/get': {
     params: {
-      valid: { layer: { scope: 'platform', platform: 'onebot' } },
-      invalid: { layer: { scope: 'platform', platform: '' } },
+      valid: { layer: { scope: 'place', key: 'onebot:group:20001' } },
+      invalid: { layer: { scope: 'place', key: '' } },
     },
     result: { valid: settingRows, invalid: { items: [{ ...modelRow, prominence: 'pinned' }] } },
   },
   'session/config/layer/update': {
     params: {
-      valid: { layer: { scope: 'audience', platform: 'onebot', audience: 'private' }, patch: { persona: 'aalis' } },
-      invalid: { layer: { scope: 'audience', platform: 'onebot', audience: 'owner' }, patch: {} },
+      valid: { layer: { scope: 'type', platform: 'onebot', type: 'private' }, patch: { persona: 'aalis' } },
+      invalid: { layer: { scope: 'type', platform: 'onebot' }, patch: {} },
     },
     result: { valid: settingRows, invalid: { items: [{ ...modelRow, plugin: undefined }] } },
   },
@@ -589,6 +599,9 @@ type ProtocolTask = ReturnType<(typeof BackgroundTaskSchema)['parse']>;
 /** 后台任务的种类与状态取 api-tools 登记表的同一组值（类型检查守） */
 const taskKindInSync: Same<ProtocolTask['kind'], RegisteredTask['kind']> = true;
 const taskStatusInSync: Same<ProtocolTask['status'], RegisteredTask['status']> = true;
+/** 按层读写的层与 api-session-manager 的 SessionConfigLayer 同形，摘要里场所的类别与 SessionPlace 同一组值（类型检查守） */
+const layerInSync: Same<SettingLayer, SessionConfigLayer> = true;
+const placeKindInSync: Same<SessionSummary['place']['kind'], SessionPlace['kind']> = true;
 
 /** 经 JSON 往返后用 schema 解析：结果与原样例相等 */
 function roundTrip(schema: { parse(value: unknown): unknown }, value: unknown): unknown {
@@ -604,6 +617,24 @@ describe('会话协议 schema 往返', () => {
   it('后台任务的种类与状态与 api-tools 的登记同一组值（类型检查守）', () => {
     expect(taskKindInSync).toBe(true);
     expect(taskStatusInSync).toBe(true);
+  });
+
+  it('层与 SessionConfigLayer 同形，场所的类别与 SessionPlace 同一组值（类型检查守）', () => {
+    expect(layerInSync).toBe(true);
+    expect(placeKindInSync).toBe(true);
+  });
+
+  it('摘要：每个会话都有场所（键、类别、显示名），聊天窗口只带类型名与多方标记', () => {
+    const schema = sessionMethods['session/create'].result;
+    const { place: _, ...placeless } = summary;
+    expect(schema.safeParse({ session: placeless }).success).toBe(false);
+    expect(schema.safeParse({ session: { ...summary, place: { ...summary.place, kind: 'room' } } }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ session: { ...summary, chat: { type: 'group' } } }).success).toBe(false);
+    const { chat: __, ...local } = summary;
+    const own = { ...local, place: { key: 'workspace:default', kind: 'workspace', name: '默认工作区' } };
+    expect(roundTrip(schema, { session: own })).toEqual({ session: own });
   });
 
   it('sessions/list 的 background 只取 true，不与 archived 同给', () => {

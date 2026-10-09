@@ -15,7 +15,7 @@ import {
   reach,
   resolveReach,
 } from '@aalis/api-reach';
-import { roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { placePaperId, roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -29,9 +29,9 @@ import { SWEEP_EVERY_MS, sessionTmpOf, sweepSessionTmp } from './session-tmp.js'
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
 //
 // 按一次工具调用签发凭据：发起类别取权限服务的 originOf（只有 owner 本人与 owner 链的延续算 owner，子任务随发起它的那一轮
-// 父会话），房间类别、档位与越界策略（根会话的生效设置）、绑定取会话管理里的记录，仓库的 git 目录按磁盘找，三张清单在激活时
-// 按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次判定时取当时的，
-// 降档与受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源账本。
+// 父会话），房间类别、档位与越界策略（根会话的生效设置）、场所与绑定取会话管理里的记录，仓库的 git 目录按磁盘找，三张清单
+// 在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次判定时取
+// 当时的，降档与受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源账本。
 // ════════════════════════════════════════════════════════════
 
 /** 哪一层都没设时的档位与越界策略 */
@@ -82,8 +82,9 @@ async function run(caps: Caps): Promise<void> {
   const lists = protectedLists({ paths, userHome, platform: process.platform, codeDirs: await codeDirsOf(app) });
   const provenance = await openProvenance(createStorageGateway(caps.storage), logger);
   const loginEnv = loginEnvs({ process: caps.process, userHome, logger });
-  /** 默认工作区的白纸：场所键 workspace:default 的白纸目录（白纸 id 是 `p:` 加场所键的 base64url，目录名把 `:` 换成 `-`） */
-  const defaultPaper = join(paths.stage.paper, `p-${Buffer.from('workspace:default').toString('base64url')}`);
+  /** 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名把 `:` 换成 `-`（与白纸插件同一写法） */
+  const paperOf = (sessionId: string) =>
+    join(paths.stage.paper, placePaperId(sm.placeOf(sessionId).key).replace(':', '-'));
 
   /** 每个会话最近一次签发凭据的那一轮的主体：子任务的任务消息发出时，据它定那条消息之后的子任务回合随谁 */
   const lastPrincipal = new Map<string, 'owner' | 'other'>();
@@ -100,13 +101,15 @@ async function run(caps: Caps): Promise<void> {
     return () => {
       const info = sm.getSession(sessionId);
       const config = sm.resolveConfig(rootSessionOf(info, lookup)?.id ?? sessionId, platform);
+      const paper = paperOf(sessionId);
       return resolveReach({
         principal: typeof principal === 'function' ? { subtaskOf: principal() } : principal,
         roomClass: roomClass(info, lookup, isOwner),
         tier: config.accessTier ?? DEFAULT_TIER,
         onBoundary: config.accessOnBoundary ?? DEFAULT_BOUNDARY,
         tainted: provenance.taintOf(sessionId),
-        place: { home: work?.root ?? defaultPaper, paper: defaultPaper },
+        // 主目录：项目工作区是绑定目录，其余是场所的白纸
+        place: { home: work?.root ?? paper, paper },
         binding: work,
         gitDirs: gitDir ? [gitDir] : [],
         sessionTmp: sessionTmpOf(paths.tmp, sessionId),

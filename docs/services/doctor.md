@@ -6,7 +6,7 @@
 
 为什么单独抽出 `-api` 包。如果 storage、commands 等下游插件必须直接 runtime depend 实现包 `plugin-doctor` 才能注册检查项，就会形成「实现包 ↔ 业务插件」的双向耦合。doctor 仿照 storage-api、commands-api 的做法，把类型和一个 `doctor.registerCheck` helper 抽到 `-api`，业务插件只依赖契约，doctor 自身不反向硬依赖任何业务插件。
 
-参考实现是 `@aalis/plugin-doctor`，它是唯一的 provider，内置 `env.node`、`env.platform`、`plugins.status` 三条与领域无关的检查。典型 consumer 是注册检查项的插件，例如 `@aalis/plugin-storage-local` 注册 `storage.roots` 探测可写性。
+参考实现是 `@aalis/plugin-doctor`，它是唯一的 provider，内置 `env.node`、`env.platform`、`plugins.status`、`services.preferences` 四条与领域无关的检查。典型 consumer 是注册检查项的插件，例如 `@aalis/plugin-storage-local` 注册 `storage.roots` 探测可写性。
 
 ---
 
@@ -128,13 +128,15 @@ function describeUnmet(unmet: UnmetDependencies): string;
 
 | 角色 | 包 | 关键点 |
 | --- | --- | --- |
-| Provider（唯一） | `@aalis/plugin-doctor` | `provide(doctor, registry)`；内置 `env.node` / `env.platform` / `plugins.status`；挂 `/doctor` 命令与 WebUI 页面 |
+| Provider（唯一） | `@aalis/plugin-doctor` | `provide(doctor, registry)`；内置 `env.node` / `env.platform` / `plugins.status` / `services.preferences`；挂 `/doctor` 命令与 WebUI 页面 |
 | Consumer（注册检查项） | `@aalis/plugin-storage-local` | `doctor.registerCheck({ id: 'storage.roots', ... })` |
 | Consumer（注册检查项） | `@aalis/runtime`（宿主，经根绑定） | `config.secrets`：配置里引用的密钥不在 `secrets.yaml` 里时，每个这样的实例报一条 error（id `config.secrets.<实例 id>`，点名字段与键），都在时报一条 ok。不走 `parseConfig` 的插件拿到悬空引用不会激活失败，靠这一项发现 |
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
 
 `plugins.status` 在插件管理服务在场时产出四条结果，有在等的插件时另加一条：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因；停用、重启、后台激活的 required 依赖下线时「未在宽限内停止」；或初始化期间 required 依赖反复缺失时「自动重试未收敛，已停止」。后两者依赖恢复后不自动重试，需 `enable` 或 `bounce`）、`plugins.pending`（未就绪：缺服务的实例，每个一行「<实例>: <describeUnmet 的一句>」，缺的沿依赖链追到根；有则 warn；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`，取 `services.names()`）、`plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目，最后一行写怎么办；有则 warn），以及 `plugins.waiting`（只在等别的插件启动的实例，写法同 `plugins.pending`；ok，没有在等的插件时不出这一条）。判据是上文的 `unmetDependencies`，与 runtime 的启动告警、WebUI 的「需要处理」相同：后台激活的插件提供的服务在它完成前不对外，依赖它的插件只是在等，不算未就绪。
+
+`services.preferences`（服务偏好未生效）逐个看配置文档里的服务偏好（`hostConfig.getServicePreferences()`，为此 plugin-doctor 以 optional 声明 `host-config`）：偏好指向的提供者不在这个服务此刻的提供者里（`services.inspect(name)`；例如偏好的模型删了、提供它的插件停用了），这个服务就落到了别的提供者上。每个这样的服务报一条 warn（id `services.preferences.<服务名>`），`detail` 第一行写实际在用哪个（服务按「偏好 > 优先级 > 注册顺序」解析，偏好不在时排第一的那个；没有提供者时写没有），第二行写怎么改。不只查 llm，哪个服务的偏好悬空都报；偏好都在生效时报一条 ok。宿主没有提供配置文档时没有可查的偏好，同样报 ok。
 
 ---
 

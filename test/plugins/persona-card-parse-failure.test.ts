@@ -39,19 +39,24 @@ function recordingLogger(sink: Recorded[]): Logger {
   return logger;
 }
 
+const BROKEN = 'name: {unclosed\nprompt: 你好\n';
+const SCALAR = '只是一行字符串\n';
+
 describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
   let base: string;
   let app: App;
   let logs: Recorded[];
 
-  const bootPersona = async (personaName: string): Promise<PersonaService> => {
+  /** 给了主卡的原文就写成 default.yaml */
+  const bootPersona = async (primary?: string): Promise<PersonaService> => {
+    if (primary !== undefined) writeFileSync(join(base, 'self', 'personas', 'default.yaml'), primary);
     logs = [];
     app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
     await registerHubs(app);
     provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {});
-    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'personas:/' });
+    await app.plugin(personaPlugin, { personasDir: 'personas:/' });
     await app.plugins.idle();
     // 停在 pending 的插件一行都不跑，日志断言会退化成「什么都没发生」的假绿
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
@@ -65,8 +70,8 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-persona-bad-'));
     mkdirSync(join(base, 'self', 'personas'), { recursive: true });
     // 语法坏卡（未闭合流式映射）、合法但非对象的卡、一张好卡
-    writeFileSync(join(base, 'self', 'personas', 'zz-broken.yaml'), 'name: {unclosed\nprompt: 你好\n');
-    writeFileSync(join(base, 'self', 'personas', 'zz-scalar.yaml'), '只是一行字符串\n');
+    writeFileSync(join(base, 'self', 'personas', 'zz-broken.yaml'), BROKEN);
+    writeFileSync(join(base, 'self', 'personas', 'zz-scalar.yaml'), SCALAR);
     writeFileSync(join(base, 'self', 'personas', 'zz-good.yaml'), 'name: 好卡\ndescription: d\nprompt: p\n');
   });
 
@@ -76,22 +81,22 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
   });
 
   it('主卡 YAML 语法坏：点名 warn 含 uri 与原因，且不说"未找到角色卡"', async () => {
-    await bootPersona('zz-broken');
+    await bootPersona(BROKEN);
     const warns = logs.filter(l => l.level === 'warn').map(l => l.text);
-    expect(warns.some(t => t.includes('解析失败') && t.includes('personas:/zz-broken.yaml'))).toBe(true);
+    expect(warns.some(t => t.includes('解析失败') && t.includes('personas:/default.yaml'))).toBe(true);
     expect(warns.some(t => t.includes('存在但解析失败'))).toBe(true);
     expect(logs.some(l => l.text.includes('未找到角色卡'))).toBe(false);
   });
 
   it('合法但非对象的 YAML 不再被当成空卡"已加载"，退回内置默认人设', async () => {
-    const svc = await bootPersona('zz-scalar');
+    const svc = await bootPersona(SCALAR);
     expect(logs.some(l => l.text.includes('已加载角色卡'))).toBe(false);
     expect(logs.filter(l => l.level === 'warn').some(t => t.text.includes('YAML 顶层不是对象'))).toBe(true);
     expect(svc.getSystemPrompt()).toContain('请友好、专业地与用户交流。');
   });
 
   it('启动扫描跳过坏卡：可选人设只剩好卡', async () => {
-    const svc = await bootPersona('zz-good');
+    const svc = await bootPersona();
     await app.start();
     expect(await svc.listModels?.()).toEqual(['zz-good']);
   });

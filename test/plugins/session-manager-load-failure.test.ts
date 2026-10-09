@@ -31,13 +31,13 @@ const ALL_RETRIES_MS = 1000 + 3000 + 10_000;
 const LOAD_FAILED = '加载会话数据失败，在这个后端上的会话改动不落盘（以免覆盖原有记录）:';
 const LOAD_ABORTED = '已中止加载会话数据（停用、停机或换后端）';
 
-/** 前 failures 次读表失败（Infinity 为始终失败），state.calls 记读表次数 */
+/** 前 failures 次读会话表失败（Infinity 为始终失败），state.calls 记读会话表的次数；场所记录照常读 */
 function failing(store: ReturnType<typeof fakeMemory>, failures: number) {
   const list = store.listMetadata;
   const state = { calls: 0 };
-  store.listMetadata = async () => {
-    if (state.calls++ < failures) throw new Error('network blip');
-    return list();
+  store.listMetadata = async namespace => {
+    if (namespace === 'sessions' && state.calls++ < failures) throw new Error('network blip');
+    return list(namespace);
   };
   return Object.assign(store, { state });
 }

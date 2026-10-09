@@ -209,26 +209,32 @@ export function chatScopeOf(
   return { platform: message.platform, type: name, multiParty, undeclared, targetId };
 }
 
-/** 房间会话的出生：平台与受众 */
-export interface SessionOrigin {
-  /** 出生平台：会话 id（子任务取第一个 `::` 之前）第一个 `:` 之前的一段 */
-  platform: string;
-  /** 类型段为 private 的是私聊；group、channel 与不认识的类型段一律按群 */
-  audience: 'group' | 'private';
-}
+/** 聊天窗口在作用域里的三段：平台、类型名、目标 */
+type WindowParts = Pick<ChatScope, 'platform' | 'type' | 'targetId'>;
+
+/** 键的前两段里的 `%` 与 `:` 按百分号转义：不合写法的名字（带 `:`）拼出来也不与别的窗口撞键 */
+const escapeSegment = (segment: string) => segment.replace(/[%:]/g, char => (char === '%' ? '%25' : '%3A'));
+const unescapeSegment = (segment: string) => segment.replace(/%25|%3A/g, code => (code === '%25' ? '%' : ':'));
 
 /**
- * 按会话 id 推出房间会话的出生平台与受众，供选档与会话分区用。同步，只看 id，不查已注册的适配器
- * （适配器没加载时同样钉死）。子任务 `<父会话>::<后缀>` 按父会话算。约定：多人房间的会话 id 以
- * `<platform>:` 开头；非房间的内部会话 id 不含单冒号（要分段用 `::`），截掉 `::` 之后不含 `:` 的 id
- * 返回 undefined，由调用方按入口平台处理。
+ * 聊天窗口的键 `平台:类型:目标`：场所的窗口键与作用域同一套写法。不含机器人账号，同一个群里几个账号的会话是同一个窗口。
+ * 平台名与类型名按约定不含 `:`；适配器发出不合约定的名字时，前两段里的 `%` 与 `:` 转义成 `%25`、`%3A`，不同的窗口不会拼成
+ * 同一个键。目标可以含 `:`（如频道的 `<guild>:<channel>`），原样放在最后
  */
-export function resolveSessionOrigin(sessionId: string): SessionOrigin | undefined {
-  const cut = sessionId.indexOf('::');
-  const root = cut === -1 ? sessionId : sessionId.slice(0, cut);
-  const colon = root.indexOf(':');
-  if (colon <= 0) return undefined;
-  return { platform: root.slice(0, colon), audience: root.split(':')[2] === 'private' ? 'private' : 'group' };
+export function windowKey({ platform, type, targetId }: WindowParts): string {
+  return `${escapeSegment(platform)}:${escapeSegment(type)}:${targetId}`;
+}
+
+/** 拆开 {@link windowKey} 拼出的键：前两段还原转义，目标取第二个 `:` 之后的全部；不到三段时为 undefined */
+export function parseWindowKey(key: string): WindowParts | undefined {
+  const first = key.indexOf(':');
+  const second = key.indexOf(':', first + 1);
+  if (second < 0) return undefined;
+  return {
+    platform: unescapeSegment(key.slice(0, first)),
+    type: unescapeSegment(key.slice(first + 1, second)),
+    targetId: key.slice(second + 1),
+  };
 }
 
 /** `(platform, sessionType, targetId)` 是否命中 `scopes` 或任一 `overrides[].scope`。 */

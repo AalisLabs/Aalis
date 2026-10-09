@@ -1,16 +1,21 @@
 import { useEffect, useReducer, useState } from 'react';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
+import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
-import { useHost } from '../plugins/list';
+import { LLM, useHost } from '../plugins/list';
 import { deleteJson, isRecord, postJson, putJson, useJson } from '../rest';
-import type { Field } from './field';
+import { paths } from '../routes';
+import { useSessionService } from '../shell/SessionGate';
+import { type Field, isModelField } from './field';
 import { SettingRow } from './SettingRow';
+import { useSettingRows } from './setting-rows';
 
 // 设置的「系统」：宿主配置的核心键（来源是配置文件或默认，要重启的键写明，改了之后出「重启以生效」与重启按钮）、
-// 服务偏好（有几个提供者的服务选用哪一个，界面前端也在其中）与家目录
+// 服务偏好（有几个提供者的服务选用哪一个，界面前端也在其中）与家目录。会话设置的全局默认层里有模型字段的设置项时，
+// 模型服务的偏好就是它（默认模型），不在这里单列，写一行指向「会话默认」
 
 const PREFERENCES_NOTE =
   '同一个服务有几个提供者时选用哪一个，改了立即生效。界面前端（webui-client）也在其中，换了以后页面会重新加载；' +
@@ -125,10 +130,20 @@ function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
   );
 }
 
+const DEFAULTS_LAYER = { layer: { scope: 'defaults' } } as const;
+
+/** 偏好由会话设置承担的服务：全局默认层里有模型字段的设置项时是模型服务（按字段类型认，不认插件名） */
+function useDelegatedService(): string | undefined {
+  const sessions = useSessionService();
+  const { rows } = useSettingRows(DEFAULTS_LAYER);
+  return sessions && rows?.some(row => isModelField(row.field)) ? LLM : undefined;
+}
+
 /** 有几个提供者（或写过偏好）的服务：选用哪一个，改了立即生效并写进配置文件。插件启停、管理连接重连后重取 */
 function ServicePreferences() {
   const { admin } = useConnection();
   const host = useHost();
+  const delegated = useDelegatedService();
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
   const { value, error } = useJson('/api/services', parseServices, version);
   useEffect(() => {
@@ -137,8 +152,10 @@ function ServicePreferences() {
       for (const off of offs) off();
     };
   }, [admin]);
-  const services = (value ?? []).filter(service => service.providers.length > 1 || service.preferred !== null);
-  if (!error && services.length === 0) return null;
+  const services = (value ?? []).filter(
+    service => service.name !== delegated && (service.providers.length > 1 || service.preferred !== null),
+  );
+  if (!error && services.length === 0 && !delegated) return null;
   const base = (name: string) => `/api/services/${encodeURIComponent(name)}/prefer`;
   const save = (name: string) => async (contextId: unknown) => {
     await (contextId === null ? deleteJson(base(name)) : postJson(base(name), { contextId }));
@@ -147,6 +164,14 @@ function ServicePreferences() {
   return (
     <Block title="服务偏好">
       <p className="settings-note">{PREFERENCES_NOTE}</p>
+      {delegated && (
+        <p className="settings-note">
+          默认模型在「会话默认」里设
+          <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
+            去会话默认
+          </ButtonLink>
+        </p>
+      )}
       {error && (
         <FetchError what="服务列表" error={error} retry={refetch} stale={value !== undefined} inline source={host} />
       )}

@@ -19,9 +19,12 @@ import { messageArchive as messageArchiveService } from '@aalis/api-message-arch
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
 import {
+  type InheritanceSource,
   rootSessionOf,
+  SESSION_LAYERS,
   type SessionConfig,
   type SessionConfigPatch,
+  type SessionInheritance,
   type SessionManagerService,
   type SessionSetting,
   sessionManager as sessionManagerService,
@@ -44,7 +47,6 @@ import {
   optional,
   pluginsService,
   provide,
-  services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
@@ -85,7 +87,6 @@ const uses = {
   contributions,
   lifecycle,
   provide,
-  services,
   commands: optional(commandsService),
   tools: optional(toolsService),
   llm: optional(llmService),
@@ -101,8 +102,8 @@ const uses = {
 };
 type Caps = BoundOf<typeof uses>;
 
-/** 编排器自己要用的能力：装配面（发布服务、偏好、指令、生命周期）留在 apply，不进类里 */
-type AgentCaps = Omit<Caps, 'provide' | 'services' | 'commands' | 'lifecycle'>;
+/** 编排器自己要用的能力：装配面（发布服务、指令、生命周期）留在 apply，不进类里 */
+type AgentCaps = Omit<Caps, 'provide' | 'commands' | 'lifecycle'>;
 
 /**
  * 默认 Agent 实现 —— 对话编排器
@@ -120,6 +121,8 @@ type AgentCaps = Omit<Caps, 'provide' | 'services' | 'commands' | 'lifecycle'>;
 
 /** 统一读取 LLM 单次最大输出 token；缺省回退 4096（与各 adapter 默认一致）。 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+/** 会话设置「最大工具迭代」没设时一轮里工具调用循环的最大次数 */
+const MAX_TOOL_ITERATIONS = 30;
 // 宿主通知的公开链接须在最终正文保留；同时识别普通文本和 Markdown 链接的边界。
 const NOTICE_URL = /https?:\/\/[^\s<>()[\]"'`*“”‘’，。！？；、]+/gu;
 function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
@@ -156,7 +159,6 @@ class DefaultAgent implements AgentService {
   private logger: Logger;
   private systemPrompt: string;
   private memoryTokenBudget: number;
-  private maxToolIterations: number;
   /** 单个 agent:prompt 贡献 build 的等待上限（毫秒；0=不设限）——见 prompt-assembly 的护栏说明 */
   readonly promptBuildTimeoutMs: number;
   /** 单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断 */
@@ -206,7 +208,6 @@ class DefaultAgent implements AgentService {
     this.logger = caps.logger.child('agent');
     this.systemPrompt = cfg.systemPrompt;
     this.memoryTokenBudget = cfg.memoryTokenBudget;
-    this.maxToolIterations = cfg.maxToolIterations;
     this.promptBuildTimeoutMs = cfg.promptBuildTimeoutMs;
     this.toolResultMaxRatio = cfg.toolResultMaxRatio;
     this.trimThresholdRatio = cfg.trimThresholdRatio;
@@ -216,8 +217,8 @@ class DefaultAgent implements AgentService {
   /**
    * 根据优先级链解析当前会话该用哪个 LLMModel entry。
    *
-   * 会话设置的 llm 交给 session-manager.resolveConfig 解析（会话自己、父会话、受众条目、平台档、全局默认）；
-   * 哪一层都没设时用 ServicePreference（由 agent 启动时锁定的全局默认 entry）。
+   * 会话设置的 llm 交给 session-manager.resolveConfig 解析（按层表叠加，全局默认层即 llm 服务的偏好）；
+   * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到服务此刻解析到的那一个（偏好 > 提供者优先级 > 登记先后）。
    *
    * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
@@ -683,8 +684,8 @@ class DefaultAgent implements AgentService {
           sessionMgr && incoming.sessionId
             ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
             : undefined;
-        // 会话设置的 maxToolIterations 按登记的字段解析过（正整数），没设置时用全局配置
-        const maxToolIterations = resolved?.maxToolIterations ?? this.maxToolIterations;
+        // 会话设置的 maxToolIterations 按登记的字段解析过（正整数），没设置时用默认值
+        const maxToolIterations = resolved?.maxToolIterations ?? MAX_TOOL_ITERATIONS;
 
         // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
         const personaOpts = toPersonaOptions(resolved);
@@ -2191,12 +2192,6 @@ class DefaultAgent implements AgentService {
 // ----- 插件导出 -----
 
 const configSchema = defineConfig({
-  defaultLLM: {
-    type: 'llm-ref',
-    label: '默认对话模型',
-    description:
-      '全局默认 LLM。apply() 时经 services.prefer 锁定 llm 服务的偏好提供者。会话 / 平台 profile 未覆盖时生效。',
-  },
   systemPrompt: {
     type: 'textarea',
     label: '行为准则提示词',
@@ -2209,12 +2204,6 @@ const configSchema = defineConfig({
     default: 4096,
     secret: false,
     description: '为注入的 system 消息预留的 token 额度：超出时先按比例缩减，极端情况下（最后阶段）仍会删除',
-  },
-  maxToolIterations: {
-    type: 'number',
-    label: '最大工具迭代',
-    default: 30,
-    description: '工具调用循环的最大迭代次数',
   },
   promptBuildTimeoutMs: {
     type: 'number',
@@ -2239,16 +2228,15 @@ const configSchema = defineConfig({
 });
 
 /**
- * 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考、工具迭代上限与历史条数上限，各种会话都适用。工具迭代上限
- * 没设置时用插件配置的值，写进字段的默认值
+ * 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考、工具迭代上限与历史条数上限，各种会话都适用。模型的全局
+ * 默认层就是 llm 服务的偏好（会话管理按字段类型承担），界面写服务实际用的那一个
  */
-const sessionSettings = (maxToolIterations: number): SessionSetting[] => [
+const SESSION_SETTINGS: SessionSetting[] = [
   {
     key: 'llm',
-    field: { type: 'llm-ref', label: '模型', description: '没设置时跟随 llm 服务的偏好（默认对话模型）' },
+    field: { type: 'llm-ref', label: '模型', description: '没设置时用 llm 服务的偏好（默认对话模型）' },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'composer',
-    unset: '跟随服务偏好',
     // 会话选的是一个具体的模型：服务与模型都要给
     validate: value => {
       const ref = value as { provider?: unknown; model?: unknown } | null;
@@ -2282,8 +2270,8 @@ const sessionSettings = (maxToolIterations: number): SessionSetting[] => [
       label: '最大工具迭代',
       integer: true,
       min: 1,
-      default: maxToolIterations,
-      description: '一轮里工具调用循环的最大次数；没设置时用对话代理插件的配置',
+      default: MAX_TOOL_ITERATIONS,
+      description: '一轮里工具调用循环的最大次数',
     },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'advanced',
@@ -2319,7 +2307,7 @@ type InternalAgent = {
 
 function run(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config, caps.logger);
-  for (const setting of sessionSettings(cfg.maxToolIterations)) caps.sessionManager.registerSetting(setting);
+  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
   const agentImpl = new DefaultAgent(caps, cfg);
   caps.provide(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。
@@ -2333,14 +2321,6 @@ function run(caps: Caps): void {
   caps.events.on('session:deleted', sessionId => agentImpl.dropTokenLogState(sessionId));
   const agent = agentImpl as unknown as InternalAgent;
 
-  // 全局默认 LLM：通过 ServicePreference 锁定 llm 服务的首选 entry。
-  // 偏好的持久化在宿主配置文档（servicePreferences 字段，WebUI 切换时写入）；这里只是开机时按 agent
-  // 自己的 cfg.defaultLLM 覆写一次，便于纯文件配置流（无 webui 干预）也能生效。
-  const defaultLLM = cfg.defaultLLM;
-  if (defaultLLM?.provider && defaultLLM?.model) {
-    caps.services.prefer(llmService, `${defaultLLM.provider}/${defaultLLM.model}`);
-  }
-
   // ===== 会话级配置指令 =====
   // /session 查（模型+人设+名+来源） · /session.set 改 · /session.reset 复位 · /model 列可用模型
   // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
@@ -2351,9 +2331,28 @@ function run(caps: Caps): void {
     '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因';
 
   /**
-   * 组装某会话某字段的视图行：生效值与来源（会话覆盖 / 父会话 / 平台档 <平台>（<受众>） / 平台档 <平台> / 默认）；
-   * 会话有覆盖时另起一行列出被覆盖的继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，
-   * 与实际回合同一口径（房间会话按出生平台与受众选档）。pick 从配置里提取并格式化该字段。
+   * 继承值的来源：层表里这一层的称呼，平台档、平台类型档与场所另写这个会话取的是哪一份（「平台档 onebot」
+   * 「平台类型档 onebot · group」「场所『<显示名>』」）；哪一层都没设时为「默认」
+   */
+  function sourceName(
+    smSvc: SessionManagerService,
+    sessionId: string,
+    inheritance: SessionInheritance,
+    layer: InheritanceSource | undefined,
+  ): string {
+    if (layer === undefined) return '默认';
+    const label = SESSION_LAYERS.find(({ name }) => name === layer)!.label;
+    if (layer === 'platform') return `${label} ${inheritance.platform}`;
+    if (layer === 'type') return `${label} ${inheritance.platform} · ${inheritance.type}`;
+    if (layer !== 'place') return label;
+    const { key } = smSvc.placeOf(sessionId);
+    return `${label}『${smSvc.getPlace(key)?.name ?? key}』`;
+  }
+
+  /**
+   * 组装某会话某字段的视图行：生效值与来源（会话覆盖，或继承链上的层，见 sourceName）；会话有覆盖时另起一行列出被覆盖的
+   * 继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，与实际回合同一口径（房间会话按出生平台与聊天
+   * 窗口的类型名选档）。pick 从配置里提取并格式化该字段。
    */
   type CfgView = SessionConfig | undefined;
   function resolutionLines(
@@ -2366,16 +2365,7 @@ function run(caps: Caps): void {
   ): string[] {
     const inheritance = smSvc.resolveInheritance(sessionId, platform);
     const inherited = pick(inheritance.values);
-    const layer = inheritance.sources[key];
-    const profile = `平台档 ${inheritance.platform}`;
-    const from =
-      layer === 'parent'
-        ? '父会话'
-        : layer === 'audience'
-          ? `${profile}（${inheritance.audience === 'private' ? '私聊' : '群'}）`
-          : layer === 'platform'
-            ? profile
-            : '默认';
+    const from = sourceName(smSvc, sessionId, inheritance, inheritance.sources[key]);
     const own = pick(smSvc.getOwnConfig(sessionId));
     if (own == null) return [`${label}: ${inherited ?? '(默认)'}  [来源: ${from}]`];
     return [`${label}: ${own}  [来源: 会话覆盖]`, `  被覆盖的继承值: ${inherited ?? '(默认)'}  [来源: ${from}]`];

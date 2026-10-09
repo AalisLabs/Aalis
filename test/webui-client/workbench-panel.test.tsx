@@ -6,6 +6,7 @@ import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
+  choose,
   type FakeRest,
   type Harness,
   INIT,
@@ -26,7 +27,8 @@ import { hostTab, layoutStore } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
 // 右侧面板与会话头：设置（只列服务端给的行，composer 与 common 在前，advanced 收进默认折叠的「高级」按插件分组，
-// 每行写生效值与来源，就地修改即存，恢复继承，收到 session/config/changed 重取）、用量（头部百分比、压缩线与换色，
+// 每行写生效值与「来自：…」（场所、平台档与平台类型档写这个会话取的是哪一份），改时选写到哪一层（只这个会话、这个场所、
+// 所有会话），就地修改即存，恢复继承，收到 session/config/changed 重取）、会话头的副信息（场所与平台）、用量（头部百分比、压缩线与换色，
 // 拆分表的行名与次序取条目，不显示为 0 的行，带注入者明细的一行按插件合并，上方堆叠的进度条与图例、剩余一行，
 // 会话树累计的 token）、
 // 计划（有条目才有，可以清空），功能位决定压缩入口，手机上用量从底部弹出，最少插件组合下这些入口都不出现；
@@ -131,9 +133,9 @@ describe('右侧面板与会话头', () => {
     expect(requests('session/config/get')).toEqual([{ sessionId: 's1' }]);
     expect(panel().getByText('改动从下一轮起生效')).toBeTruthy();
     expect(settingRow('人设').getByText('群聊人设')).toBeTruthy();
-    expect(settingRow('人设').getByText('平台档')).toBeTruthy();
+    expect(settingRow('人设').getByText('来自：平台档')).toBeTruthy();
     expect(settingRow('开关项').getByRole('switch', { name: '开关项' }).getAttribute('aria-checked')).toBe('true');
-    expect(settingRow('开关项').getByText('本会话')).toBeTruthy();
+    expect(settingRow('开关项').getByText('来自：本会话')).toBeTruthy();
     expect(panel().queryByRole('group', { name: '最大工具迭代' })).toBeNull();
 
     const advanced = panel().getByRole('button', { name: '高级' });
@@ -141,7 +143,7 @@ describe('右侧面板与会话头', () => {
     fireEvent.click(advanced);
     const agent = within(panel().getByRole('region', { name: '对话代理' }));
     expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('20')).toBeTruthy();
-    expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('默认')).toBeTruthy();
+    expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('来自：全局默认')).toBeTruthy();
     expect(within(panel().getByRole('region', { name: '白纸' })).getByRole('group', { name: '开启白纸' })).toBeTruthy();
   });
 
@@ -239,6 +241,198 @@ describe('右侧面板与会话头', () => {
     rows = ROWS;
     act(() => server().notify('session/config/changed', {}));
     expect(await panel().findByRole('group', { name: '人设' })).toBeTruthy();
+  });
+
+  it('设置的来源写「来自：…」：场所写工作区或群、私聊与它的显示名，平台档与平台类型档写这个会话取的是哪个平台与类型', async () => {
+    const sources = ['session', 'parent', 'place', 'type', 'platform', 'defaults'];
+    const rows = sources.map(source =>
+      row(source, { field: { type: 'string', label: `<${source}>` }, effective: '<值>', source }),
+    );
+    const window = {
+      platform: 'onebot',
+      chat: { type: 'group', multiParty: true },
+      place: { key: 'onebot:group:20001', kind: 'window', name: '读书会' },
+    } as const;
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([], { session: window }),
+      'session/config/get': () => ({ items: rows }),
+    });
+    await panel().findByRole('group', { name: '<place>' });
+    const origin = (source: string) => settingRow(`<${source}>`).getByText(/^来自：/).textContent;
+    expect(sources.map(origin)).toEqual([
+      '来自：本会话',
+      '来自：父会话',
+      '来自：群『读书会』',
+      '来自：平台类型档 onebot · group',
+      '来自：平台档 onebot',
+      '来自：全局默认',
+    ]);
+    app.close();
+
+    const project = { place: { key: 'workspace:p1', kind: 'workspace', name: '论文' } } as const;
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([], { session: project }),
+      'session/config/get': () => ({ items: rows }),
+    });
+    await panel().findByRole('group', { name: '<place>' });
+    expect(origin('place')).toBe('来自：工作区『论文』');
+    expect(origin('platform'), '没有出生平台的会话不写平台').toBe('来自：平台档');
+  });
+
+  it('改时选写到哪一层：只这个会话、这个场所（工作区、群、私聊）、所有会话，平台档与平台类型档不在选项里；选哪个写进哪一层，生效值出自那一层的行有「恢复继承」', async () => {
+    const rows = [
+      row('extra', { field: { type: 'string', label: '额外提示' }, effective: '<场所的>', source: 'place' }),
+      row('persona', {
+        field: { type: 'string', label: '人设' },
+        value: '<自己的>',
+        effective: '<自己的>',
+        source: 'session',
+      }),
+    ];
+    const place = { key: 'workspace:p1', kind: 'workspace', name: '论文' } as const;
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([], { session: { place } }),
+      'session/config/get': () => ({ items: rows }),
+      'session/config/update': () => ({ items: rows }),
+      'session/config/layer/update': () => ({ items: [] }),
+    });
+    const scope = await panel().findByRole('combobox', { name: '改到' });
+    expect(optionsOf(scope)).toEqual(['只这个会话', '这个工作区', '所有会话']);
+    expect(scope.textContent).toBe('只这个会话');
+    expect(settingRow('额外提示').queryByRole('button', { name: '恢复继承' })).toBeNull();
+    const edit = async (label: string, value: string) => {
+      fireEvent.click(settingRow(label).getByRole('button', { name: new RegExp(label) }));
+      const box = settingRow(label).getByRole('textbox', { name: label });
+      fireEvent.change(box, { target: { value } });
+      fireEvent.keyDown(box, { key: 'Enter' });
+      await vi.waitFor(() => expect(settingRow(label).queryByRole('textbox')).toBeNull());
+    };
+
+    await edit('人设', '<改本会话>');
+    expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { persona: '<改本会话>' } }]);
+
+    choose(scope, '这个工作区');
+    expect(settingRow('人设').queryByRole('button', { name: '恢复继承' })).toBeNull();
+    await edit('人设', '<改工作区>');
+    fireEvent.click(settingRow('额外提示').getByRole('button', { name: '恢复继承' }));
+    await vi.waitFor(() =>
+      expect(requests('session/config/layer/update')).toEqual([
+        { layer: { scope: 'place', key: 'workspace:p1' }, patch: { persona: '<改工作区>' } },
+        { layer: { scope: 'place', key: 'workspace:p1' }, patch: { extra: null } },
+      ]),
+    );
+
+    choose(scope, '所有会话');
+    await edit('人设', '<改全部>');
+    expect(requests('session/config/layer/update').at(-1)).toEqual({
+      layer: { scope: 'defaults' },
+      patch: { persona: '<改全部>' },
+    });
+    expect(requests('session/config/update')).toHaveLength(1);
+    app.close();
+
+    for (const [multiParty, label] of [
+      [true, '这个群'],
+      [false, '这个私聊'],
+    ] as const) {
+      const window = {
+        platform: 'onebot',
+        chat: { type: '<类型>', multiParty },
+        place: { key: 'onebot:<类型>:1', kind: 'window', name: '<窗口>' },
+      } as const;
+      app = await renderApp('/s/s1/settings', {
+        'session/subscribe': () => snapshot([], { session: window }),
+        'session/config/get': () => ({ items: rows }),
+      });
+      expect(optionsOf(await panel().findByRole('combobox', { name: '改到' }))).toEqual([
+        '只这个会话',
+        label,
+        '所有会话',
+      ]);
+      app.close();
+    }
+  });
+
+  it('选的那一层被更窄的层压住时，行下写明改了不生效：本会话压过场所与所有会话，场所压过所有会话', async () => {
+    const rows = [
+      row('extra', { field: { type: 'string', label: '额外提示' }, effective: '<场所的>', source: 'place' }),
+      row('persona', {
+        field: { type: 'string', label: '人设' },
+        value: '<自己的>',
+        effective: '<自己的>',
+        source: 'session',
+      }),
+      row('style', { field: { type: 'string', label: '风格' }, effective: '<全局的>', source: 'defaults' }),
+    ];
+    const place = { key: 'workspace:p1', kind: 'workspace', name: '论文' } as const;
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([], { session: { place } }),
+      'session/config/get': () => ({ items: rows }),
+    });
+    const scope = await panel().findByRole('combobox', { name: '改到' });
+    const masked = () => ['额外提示', '人设', '风格'].filter(label => settingRow(label).queryByText(/改了不生效/));
+
+    expect(masked()).toEqual([]);
+    choose(scope, '这个工作区');
+    expect(masked()).toEqual(['人设']);
+    expect(settingRow('人设').getByText(/^来自：/).textContent).toBe('来自：本会话（压过「这个工作区」，改了不生效）');
+    choose(scope, '所有会话');
+    expect(masked()).toEqual(['额外提示', '人设']);
+  });
+
+  it('层表没取到：设置行照常列出，来源按层名写，另写一句层表没取到', async () => {
+    const rows = [row('persona', { field: { type: 'string', label: '人设' }, effective: '<值>', source: 'defaults' })];
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([]),
+      'session/config/get': () => ({ items: rows }),
+      'session/config/layers': () => {
+        throw new Error('<层表坏了>');
+      },
+    });
+    await panel().findByRole('group', { name: '人设' });
+    expect(settingRow('人设').getByText(/^来自：/).textContent).toBe('来自：defaults');
+    expect(panel().getByText(/层表没取到/).textContent).toContain('<层表坏了>');
+  });
+
+  it('全局默认层的「模型」哪一层都没设时，设置与输入框旁写「默认（<服务实际用的模型>）」', async () => {
+    const model = row('llm', {
+      field: { type: 'llm-ref', label: '模型' },
+      prominence: 'composer',
+      unset: '跟随服务偏好',
+      resolved: { provider: 'zz-llm', model: 'zz-chat' },
+    });
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([]),
+      'session/config/get': () => ({ items: [model] }),
+    });
+    expect(await settingRow('模型').findByText('默认（zz-chat）')).toBeTruthy();
+    expect(main().getByRole('combobox', { name: '模型' }).textContent).toContain('默认（zz-chat）');
+  });
+
+  it('会话头的副信息：场所是窗口的写「类型名 · 平台」，是工作区的写场所的显示名，出生平台是 IM 的另写平台；子会话不写', async () => {
+    const headOf = async (session: NonNullable<Parameters<typeof snapshot>[1]>['session']) => {
+      app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([], { session }) });
+      await vi.waitFor(() => expect(document.querySelector('.panel-title')?.textContent).toContain('整理周报'));
+      const meta = document.querySelector('.panel-meta')?.textContent;
+      app.close();
+      return meta;
+    };
+    expect(
+      await headOf({
+        platform: 'onebot',
+        chat: { type: 'group', multiParty: true },
+        place: { key: 'onebot:group:1', kind: 'window', name: '读书会' },
+      }),
+    ).toBe('group · onebot');
+    expect(await headOf({ place: { key: 'workspace:p1', kind: 'workspace', name: '论文' } })).toBe('论文');
+    expect(
+      await headOf({
+        platform: 'onebot',
+        chat: { type: 'private', multiParty: false },
+        place: { key: 'workspace:default', kind: 'workspace', name: '默认工作区' },
+      }),
+    ).toBe('默认工作区 · onebot');
+    expect(await headOf({ parentId: 'root', ancestors: [{ id: 'root', title: '根' }] })).toBeUndefined();
   });
 
   it('用量：头部百分比在有用量时才出现，达到压缩线换警告色；拆分表的行名与次序取条目里的分项，不显示为 0 的行，带注入者明细的一行按插件合并，写明压缩线', async () => {

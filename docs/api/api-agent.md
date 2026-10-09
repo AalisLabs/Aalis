@@ -64,7 +64,7 @@ interface TokenUsagePart {
 interface SessionConfig {
   llm?: ModelRef;               // 会话用的模型；没设置时跟随 llm 服务的偏好
   think?: string;               // 深度思考的档位 id；没设置、当前模型没有这一档或不能调时按模型的默认档
-  maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时用对话代理的配置
+  maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时为 30
   historyLimit?: number;        // 历史条数上限（非负整数）：一轮最多读进的会话历史条数，也是按条数压缩的线；0 或没设置时读全部活跃历史
 }
 ```

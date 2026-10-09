@@ -53,7 +53,7 @@ export interface TranscribeResult {
 
 ### Provider（两个参考实现）
 
-| 包 | 后端 | uses | 默认 priority |
+| 包 | 后端 | uses | priority |
 |---|---|---|---|
 | `@aalis/plugin-asr-openai` | OpenAI 兼容 `/audio/transcriptions`（OpenAI / Groq / 本地网关） | `optional: ['process','storage']`（`plugin-asr-openai/src/index.ts`） | 50 |
 | `@aalis/plugin-asr-whisper-cpp` | 本地 `whisper-cli` 二进制 + ffmpeg 转码 | `required: ['process','storage']`（`plugin-asr-whisper-cpp/src/index.ts`） | 80 |
@@ -98,7 +98,7 @@ import { asr } from '@aalis/api-asr';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
-import { config, definePlugin, logger, optional, provide } from '@aalis/core';
+import { definePlugin, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-asr-mybackend',
@@ -107,12 +107,10 @@ export default definePlugin({
   uses: {
     provide,
     logger,
-    config,
     process: optional(processService),
     storage: optional(storage),
   },
-  apply({ provide, logger, config, process, storage }) {
-    const priority = (config.priority as number | undefined) ?? 50;
+  apply({ provide, logger, process, storage }) {
     const impl: ASRService = {
       async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
         void process.current;
@@ -121,7 +119,7 @@ export default definePlugin({
         return { text: String(input.language ?? '') };
       },
     };
-    provide(asr, impl, { priority });
+    provide(asr, impl, { priority: 50 });
     logger.info('asr provider ready');
   },
 });
@@ -130,7 +128,7 @@ export default definePlugin({
 ### 注册要点
 
 - `provide(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
-- **priority**：普通数字，越大越优先，含义自行记载。参考实现用 50（云）/ 80（本地，质量更高默认更优先），并把 priority 暴露为可配置项让用户重排。
+- **priority**：普通数字，越大越优先，含义自行记载。写成插件里的常量，只作提供者之间的默认先后：参考实现用 50（云）/ 80（本地，质量更高默认更优先）。不要把 priority 开成插件配置：用户要换转写后端，设 media 的 `audio.prefer`，再开一个优先级配置，同一件事就有了两个入口。服务偏好只决定 `asr.current`，media 回退时按 priority 排，偏好只在优先级相同时决胜。
 - **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
 - 若你想被 media 的 `audio.prefer` 精确选中，注意 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
 

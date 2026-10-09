@@ -10,6 +10,7 @@ import {
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { ROOM_SETTINGS } from '../../packages/plugin-paper/src/rooms.js';
 import { emptyLedger, human, PILOT_ROOM, ROOM, startPaperHub, stopPaperHubs } from '../fixtures/paper.js';
+import { storedRoom } from '../fixtures/rooms.js';
 import { startSessionManager } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
@@ -393,6 +394,7 @@ describe('房间设置项经会话管理交给预算', () => {
   it('平台档里写坏的金额原样交出、按 0 拒绝：不回落到全局默认里的金额，也不退成不限', async () => {
     const { app, sm } = await startSessionManager({
       settings: ROOM_SETTINGS,
+      stored: { [ROOM]: storedRoom(ROOM) },
       layers: {
         defaults: { remoteAgentRoomDailyCents: 10_000 },
         platforms: { onebot: { remoteAgentRoomDailyCents: -1, remoteAgentUserDailyCents: 'many' } },

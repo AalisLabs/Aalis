@@ -13,6 +13,7 @@ import {
   roomClass,
   rootSessionOf,
   type SessionInfo,
+  type SessionManagerService,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
 import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
@@ -20,6 +21,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { ONEBOT_TYPES } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话的来源字段：出生平台与聊天窗口（平台类型名、多方标记、机器人账号、目标）在 IM 房间建档时按入站消息记下，
@@ -32,12 +34,6 @@ const GROUP = 'onebot:10000:group:20001';
 const PRIVATE = 'onebot:10000:private:30001';
 const CHANNEL = 'onebot:10000:channel:40001:50001';
 
-/** 与 OneBot 适配器相同的声明 */
-const ONEBOT_TYPES: SessionTypeDecl[] = [
-  { name: 'group', multiParty: true },
-  { name: 'private', multiParty: false },
-  { name: 'channel', multiParty: true },
-];
 /** 另一个平台：类型名自定，结果与 OneBot 相同 */
 const FORUM_TYPES: SessionTypeDecl[] = [
   { name: 'thread', multiParty: true },
@@ -68,8 +64,11 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 会话管理加 onebot、forum 与不声明类型的 plain 三个平台；stored 预置会话表 */
-async function setup(stored: Record<string, Record<string, unknown>> = {}) {
+/** 会话管理加 onebot、forum 与不声明类型的 plain 三个平台；stored 与 places 预置会话表与场所记录 */
+async function setup(
+  stored: Record<string, Record<string, unknown>> = {},
+  places: Record<string, Record<string, unknown>> = {},
+) {
   const warns: string[] = [];
   const logger: Logger = {
     debug() {},
@@ -82,7 +81,7 @@ async function setup(stored: Record<string, Record<string, unknown>> = {}) {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  const mem = fakeMemory(stored);
+  const mem = fakeMemory(stored, places);
   host.provide(memory, mem as never);
   await app.plugin(adapterPlugin('onebot', ONEBOT_TYPES));
   await app.plugin(adapterPlugin('forum', FORUM_TYPES));
@@ -275,38 +274,44 @@ describe('来源字段只存不推', () => {
     expect(rootSessionOf(fallback, lookup)?.id).toBe('onebot:10000:group:20002');
   });
 
-  it('来源字段、创建来源、绑定与当前目录随会话表落盘，重启后仍在', async () => {
+  it('来源字段、创建来源、所属工作区、绑定与当前目录随会话表落盘，重启后仍在', async () => {
     const first = await setup();
     await first.inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001', selfId: '1' });
-    const work = await first.sm.createSession({ name: '<工作>' }, { createdFrom: 'webui', work: { root: '/x' } });
+    const { workspace } = first.sm.addWorkspace('/x');
+    const work = await first.sm.createSession(
+      { name: '<工作>' },
+      { createdFrom: 'webui', workspace: workspace.id, work: { root: '/x' } },
+    );
     const child = await first.sm.createChildSession(work.id, { name: '<子任务>' });
     await first.sm.setCurrentDir(child.id, '/x/sub');
     await first.sm.setExtraRoots(work.id, ['/y']);
     await first.sm.addWorktree(child.id, '/x-wt');
     await first.app.stop();
 
-    const second = await setup(Object.fromEntries(first.mem.meta));
+    const second = await setup(Object.fromEntries(first.mem.meta), Object.fromEntries(first.mem.places));
     expect(second.sm.getSession(GROUP)).toMatchObject({
       originPlatform: 'onebot',
       originChat: { type: 'group', multiParty: true, selfId: '1', targetId: '20001' },
     });
     expect(second.sm.getSession(work.id)).toMatchObject({
       createdFrom: 'webui',
+      workspace: workspace.id,
       work: { root: '/x', extraRoots: ['/y'], worktrees: ['/x-wt'] },
-      currentDir: '/x',
     });
+    expect(second.sm.placeOf(work.id)).toEqual({ kind: 'workspace', key: `workspace:${workspace.id}` });
     expect(second.sm.getSession(child.id)?.currentDir).toBe('/x/sub');
   });
 
-  it('读表时来源字段、绑定与当前目录的类型不对：去掉这些字段照常载入', async () => {
+  it('读表时来源字段、所属工作区、绑定与当前目录的类型不对：去掉这些字段照常载入', async () => {
     const { sm, warns } = await setup({
       [GROUP]: { ...RECORD, id: GROUP, originPlatform: 'onebot', originChat: { type: 'group', multiParty: 'yes' } },
-      'session-a': { ...RECORD, id: 'session-a', createdFrom: 3, work: { root: '/x' }, currentDir: 5 },
+      'session-a': { ...RECORD, id: 'session-a', createdFrom: 3, workspace: 4, work: { root: '/x' }, currentDir: 5 },
     });
 
     expect(sm.getSession(GROUP)?.originChat).toBeUndefined();
     expect(sm.getSession(GROUP)?.originPlatform).toBe('onebot');
     expect(sm.getSession('session-a')).not.toHaveProperty('createdFrom');
+    expect(sm.getSession('session-a')).not.toHaveProperty('workspace');
     expect(sm.getSession('session-a')).not.toHaveProperty('work');
     expect(sm.getSession('session-a')).not.toHaveProperty('currentDir');
     expect(warns.join('\n')).toContain('originChat');
@@ -402,6 +407,7 @@ describe('创建来源与来源字段不收调用方传值', () => {
     createdFrom: 'webui',
     originPlatform: 'onebot',
     originChat: { type: 'private', multiParty: false, targetId: '30001' },
+    workspace: 'default',
     work: { root: '/', extraRoots: [], worktrees: [] },
     currentDir: '/',
   };
@@ -409,6 +415,7 @@ describe('创建来源与来源字段不收调用方传值', () => {
     createdFrom: info?.createdFrom,
     originPlatform: info?.originPlatform,
     originChat: info?.originChat,
+    workspace: info?.workspace,
     work: info?.work,
     currentDir: info?.currentDir,
   });
@@ -444,28 +451,40 @@ describe('创建来源与来源字段不收调用方传值', () => {
   });
 });
 
-describe('工作会话的绑定与当前目录', () => {
-  it('建工作会话：绑定目录、空的附加目录与 worktree，当前目录是绑定目录；子会话取父会话此刻的当前目录', async () => {
+describe('项目会话的绑定与当前目录', () => {
+  /** 登记 /x 为项目工作区，在它里面建一个会话 */
+  async function project(sm: SessionManagerService) {
+    const { workspace } = sm.addWorkspace('/x');
+    return sm.createSession(
+      { name: '<工作>' },
+      { createdFrom: 'webui', workspace: workspace.id, work: { root: '/x' } },
+    );
+  }
+
+  it('建项目会话：绑定目录、空的附加目录与 worktree，不写当前目录；子会话取父会话此刻的当前目录', async () => {
     const { sm } = await setup();
 
-    const work = await sm.createSession({ name: '<工作>' }, { createdFrom: 'webui', work: { root: '/x' } });
+    const work = await project(sm);
+    expect(work).toMatchObject({ work: { root: '/x', extraRoots: [], worktrees: [] } });
+    expect(work.currentDir).toBeUndefined();
     await sm.setCurrentDir(work.id, '/x/a');
     const child = await sm.createChildSession(work.id, { name: '<子任务>' });
     const plain = await sm.createSession({ name: '<聊天>' }, { createdFrom: 'webui' });
     const plainChild = await sm.createChildSession(plain.id, { name: '<子任务>' });
 
-    expect(work).toMatchObject({ work: { root: '/x', extraRoots: [], worktrees: [] } });
     expect(sm.getSession(work.id)?.currentDir).toBe('/x/a');
     expect(child.currentDir).toBe('/x/a');
-    expect(child.work, '绑定只在根工作会话上').toBeUndefined();
+    expect(child.work, '绑定只在根会话上').toBeUndefined();
+    expect(child.workspace, '所属工作区只在根会话上').toBeUndefined();
     expect(plain.work).toBeUndefined();
     expect(plain.currentDir).toBeUndefined();
     expect(plainChild.currentDir).toBeUndefined();
   });
 
-  it('子会话改当前目录不影响父会话；父会话增删附加目录后子会话实时看到；子会话里记的 worktree 记进根工作会话', async () => {
+  it('子会话改当前目录不影响父会话；父会话增删附加目录后子会话实时看到；子会话里记的 worktree 记进根会话', async () => {
     const { sm } = await setup();
-    const work = await sm.createSession({ name: '<工作>' }, { createdFrom: 'webui', work: { root: '/x' } });
+    const work = await project(sm);
+    await sm.setCurrentDir(work.id, '/x');
     const child = await sm.createChildSession(work.id, { name: '<子任务>' });
     const grandchild = await sm.createChildSession(child.id, { name: '<孙任务>' });
     const lookup = (id: string) => sm.getSession(id);
@@ -477,7 +496,7 @@ describe('工作会话的绑定与当前目录', () => {
     await sm.setExtraRoots(work.id, ['/y', '/z']);
     expect(rootSessionOf(sm.getSession(grandchild.id), lookup)?.work?.extraRoots).toEqual(['/y', '/z']);
     await sm.setExtraRoots(child.id, ['/z']);
-    expect(sm.getSession(work.id)?.work?.extraRoots, '子会话增删的也是根工作会话的').toEqual(['/z']);
+    expect(sm.getSession(work.id)?.work?.extraRoots, '子会话增删的也是根会话的').toEqual(['/z']);
 
     await sm.addWorktree(grandchild.id, '/x-wt');
     await sm.addWorktree(work.id, '/x-wt');
@@ -485,18 +504,19 @@ describe('工作会话的绑定与当前目录', () => {
     expect(sm.getSession(grandchild.id)?.work).toBeUndefined();
   });
 
-  it('改动发 session:updated；不在工作会话树里、会话不存在时被拒；子会话不能带绑定', async () => {
+  it('改动发 session:updated；当前目录对全部会话开放，附加目录与 worktree 不在项目会话树里时被拒；会话不存在时被拒；子会话不能带绑定', async () => {
     const { app, sm } = await setup();
     const updated: string[] = [];
     app.bind({ events }).events.on('session:updated', s => void updated.push(s.id));
-    const work = await sm.createSession({ name: '<工作>' }, { createdFrom: 'webui', work: { root: '/x' } });
+    const work = await project(sm);
     const plain = await sm.createSession({ name: '<聊天>' }, { createdFrom: 'webui' });
 
     await sm.setCurrentDir(work.id, '/x/a');
     await sm.setExtraRoots(work.id, ['/y']);
-    expect(updated).toEqual([work.id, work.id]);
+    await sm.setCurrentDir(plain.id, '/tmp');
+    expect(updated).toEqual([work.id, work.id, plain.id]);
+    expect(sm.getSession(plain.id)?.currentDir).toBe('/tmp');
 
-    await expect(sm.setCurrentDir(plain.id, '/x')).rejects.toThrow();
     await expect(sm.setExtraRoots(plain.id, ['/y'])).rejects.toThrow();
     await expect(sm.addWorktree(plain.id, '/x-wt')).rejects.toThrow();
     await expect(sm.setCurrentDir('<不存在>', '/x')).rejects.toThrow();

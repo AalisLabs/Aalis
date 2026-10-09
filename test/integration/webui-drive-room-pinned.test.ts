@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events } from '../../packages/core/src/index.js';
@@ -18,10 +19,11 @@ import type { OutgoingMessage } from '../../packages/schema-message/src/index.js
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { seedRooms } from '../fixtures/rooms.js';
 import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
-// 从 WebUI 驱动 IM 群房间：这一轮按房间的出生平台（onebot）档运行。
+// 从 WebUI 驱动收录过的 IM 群房间：这一轮按房间记下的出生平台（onebot）档运行。
 // webui 档开 system 组（exec）、onebot 档只开 search 组；模型第一轮就叫 exec，
 // 钉死时它既不在下发的工具列表里、按名直调也被分组闸挡成「未找到」。`/session` 的来源显示与实际一致。
 // ════════════════════════════════════════════════════════════
@@ -36,7 +38,7 @@ const LAYERS = {
     webui: { enabledToolGroups: ['system'], persona: '<webui 人设>' },
     onebot: { enabledToolGroups: ['search'], persona: '<群人设>' },
   },
-  audiences: { onebot: { private: { persona: '<私聊人设>' } } },
+  types: { onebot: { private: { persona: '<私聊人设>' } } },
 };
 /** 人设这一项由人设插件登记，这里不装人设插件，由测试插件代登 */
 const personaSetting = settingsPlugin('persona-settings', [PERSONA]);
@@ -62,6 +64,9 @@ async function loadStack() {
   };
   await app.plugin(createMockLLMPlugin({ responses: [callExec, { content: REPLY }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
+  await app.plugins.idle();
+  // 房间先由原生入站收录过（预置进会话表）：选档读会话记下的出生平台，不看 id
+  await seedRooms(app.bind({ memory }).memory.require(), { [GROUP]: '<群名>', [PRIVATE]: '<对端>' });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
   await app.plugin(commandsPlugin, {});
@@ -70,7 +75,7 @@ async function loadStack() {
   await app.plugin(toolsPlugin, {});
   await app.plugin(sessionManagerPlugin);
   await app.plugin(personaSetting);
-  await app.plugin(agentPlugin, { systemPrompt: 'test bot', maxToolIterations: 3 });
+  await app.plugin(agentPlugin, { systemPrompt: 'test bot' });
   await app.plugins.idle();
   // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「整条链根本没跑」伪装成绿
   for (const plugin of [
@@ -133,11 +138,13 @@ describe('WebUI 驱动 IM 房间按出生平台选档', () => {
     expect(overridden).toContain('被覆盖的继承值: <群人设>  [来源: 平台档 onebot]');
   });
 
-  it('/session 对私聊房间：来源标出平台档的私聊条目', async () => {
-    const { commands } = await loadStack();
+  it('/session 对私聊房间：来源写平台类型档的平台与类型名；场所写了的，来源写场所的显示名', async () => {
+    const { sm, commands } = await loadStack();
     const input = { sessionId: PRIVATE, platform: 'webui', userId: 'console', args: [], raw: '' };
 
-    const shown = await commands.execute('session', input);
-    expect(shown).toContain('人设: <私聊人设>  [来源: 平台档 onebot（私聊）]');
+    expect(await commands.execute('session', input)).toContain('人设: <私聊人设>  [来源: 平台类型档 onebot · private]');
+
+    await sm.updateLayer({ scope: 'place', key: sm.placeOf(PRIVATE).key }, { persona: '<窗口人设>' });
+    expect(await commands.execute('session', input)).toContain('人设: <窗口人设>  [来源: 场所『<对端>』]');
   });
 });

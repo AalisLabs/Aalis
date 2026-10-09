@@ -14,14 +14,15 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
 // agent 登记的会话设置项。
-// - maxToolIterations：曾经契约里有这个字段，agent 却从不读——死配置。正整数生效，没设置回落全局配置；登记的字段
-//   要求不小于 1 的整数，写不进别的值。模型每轮都要求调工具（响应耗尽后重复最后一条），工具真实执行次数即循环轮数。
+// - maxToolIterations：曾经契约里有这个字段，agent 却从不读——死配置。正整数生效，没设置时是 30，与插件配置无关；登记的
+//   字段要求不小于 1 的整数，写不进别的值。模型每轮都要求调工具（响应耗尽后重复最后一条），工具真实执行次数即循环轮数。
 // - llm：字段类型 llm-ref 不经 schema-config 校验，形状由登记给的 validate 核：服务与模型都是非空字符串。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
   systemPrompt: 'test',
   memoryTokenBudget: 1024,
+  // 插件配置里留着的旧键：不再起作用
   maxToolIterations: 5,
   toolResultMaxRatio: 0.15,
   trimThresholdRatio: 1.0,
@@ -87,7 +88,7 @@ const ask = (host: Host, sessionId: string) =>
   });
 
 describe('会话级 maxToolIterations', () => {
-  it('会话设 2 → 循环两轮即停；未设置走全局 5；非正整数写不进去', async () => {
+  it('会话设 2 → 循环两轮即停；未设置是 30，不取插件配置；非正整数写不进去', async () => {
     const { app, host, executed, reset } = await boot();
     const sm = host.sessionManager.require();
     try {
@@ -96,8 +97,8 @@ describe('会话级 maxToolIterations', () => {
       expect(executed(), '会话级上限应生效').toBe(2);
 
       reset();
-      await ask(host, 'test:iter-global');
-      expect(executed(), '未设置的会话走全局上限').toBe(5);
+      await ask(host, 'test:iter-default');
+      expect(executed(), '未设置的会话用默认的 30').toBe(30);
 
       await expect(sm.ensureSession('test:iter-zero', { config: { maxToolIterations: 0 } })).rejects.toThrow(
         'maxToolIterations',
