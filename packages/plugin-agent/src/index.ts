@@ -2252,7 +2252,11 @@ const configSchema = defineConfig({
 const SESSION_SETTINGS: SessionSetting[] = [
   {
     key: 'llm',
-    field: { type: 'llm-ref', label: '模型', description: '没设置时用 llm 服务的偏好（默认对话模型）' },
+    field: {
+      type: 'llm-ref',
+      label: '模型',
+      description: '没设置时用默认模型：全局默认层的「模型」，那里也没设时用第一个可用的对话模型',
+    },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'composer',
     // 会话选的是一个具体的模型：服务与模型都要给
@@ -2391,6 +2395,17 @@ function run(caps: Caps): void {
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
   const fmtThink = (c: CfgView): string | undefined => c?.think;
+  /**
+   * /session 模型那一行之后：这一轮实际会用的模型与显示的生效值不同时写出来（哪一层都没设、偏好也没有时，或偏好指向的
+   * 模型不在时，服务落到别的模型上）
+   */
+  async function modelNote(smSvc: SessionManagerService, sessionId: string, platform: string): Promise<string> {
+    const actual = (await agent.resolveLLM(platform, sessionId))?.contextId;
+    const shown =
+      fmtModel(smSvc.getOwnConfig(sessionId)) ?? fmtModel(smSvc.resolveInheritance(sessionId, platform).values);
+    return actual && actual !== shown ? `  这一轮会用: ${actual}` : '';
+  }
+
   /** 模型的档位写成一句：id（名字），由浅到深 */
   const levelList = (thinking: ThinkingLevels) =>
     thinking.levels.map(({ id, label }) => `${id}（${label}）`).join('、');
@@ -2457,6 +2472,7 @@ function run(caps: Caps): void {
       return [
         `会话: ${session?.name ?? sid}`,
         ...resolutionLines(smSvc, sid, argv.session.platform, '模型', 'llm', fmtModel),
+        await modelNote(smSvc, sid, argv.session.platform),
         ...resolutionLines(smSvc, sid, argv.session.platform, '人设', 'persona', fmtPersona),
         ...resolutionLines(smSvc, sid, argv.session.platform, '深度思考', 'think', fmtThink),
         await thinkingNote(sid, argv.session.platform),

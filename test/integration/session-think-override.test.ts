@@ -3,7 +3,7 @@ import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { type ChatModelRequest, type LLMModel, llm, type ThinkingLevels } from '../../packages/api-llm/src/index.js';
 import { sessionManager as sessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import { App, definePlugin, lifecycle, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -181,6 +181,27 @@ describe('会话的深度思考档位端到端', () => {
     expect(eff.think, 'reset -t 清深度思考').toBeUndefined();
     expect(eff.persona, 'reset -t 不动人设').toBe('keep-me');
     expect(eff.llm, 'reset -t 不动模型').toEqual({ provider: PROVIDER, model: 'deep' });
+
+    await app.stop();
+  });
+});
+
+describe('/session 写明这一轮会用的模型', () => {
+  it('哪一层都没设、偏好也没有时写实际用的模型；偏好指向的模型不在时同样写出实际用的；会话设了模型就不另写', async () => {
+    const sent: Sent[] = [];
+    const { app, commands } = await loadStack(sent);
+    const view = async () => String(await commands.execute('session', cmdInput('s4', [])));
+
+    const unset = await view();
+    expect(unset).toContain('模型: (默认)');
+    expect(unset, '没有偏好：服务解析到登记在先的 deep').toContain(`这一轮会用: ${PROVIDER}/deep`);
+
+    // 全局默认层的「模型」即服务偏好；这个栈没有宿主配置文档，直接经服务门面设偏好
+    expect(app.bind({ services }).services.prefer(llm, `${PROVIDER}/gone`)).toBe(true);
+    expect(await view(), '偏好指向的模型不在：回落到 deep').toContain(`这一轮会用: ${PROVIDER}/deep`);
+
+    await commands.execute('session.set', cmdInput('s4', ['-m', `${PROVIDER}/switch`]));
+    expect(await view()).not.toContain('这一轮会用');
 
     await app.stop();
   });
