@@ -236,8 +236,8 @@ interface SessionInfo {
 
 会话之间的差别按字段判，不按会话 ID 的写法：
 
-- 来源字段 `originPlatform` 与 `originChat`：会话表里还没有记录的会话收到第一条原生入站（不带 `source`、不是子会话）时，参考实现按这条消息记下（出生平台取消息的平台，聊天窗口经 api-gateway 的 `chatScopeOf` 按这个平台的类型声明解析），之后不变。只有 IM 房间的根会话带，子会话按根会话取（`rootSessionOf`）。按 ID 建档（`ensureSession`、`createChildSession` 给父会话兜底建档）的记录建档时不带，没有创建来源与绑定的根会话由之后第一条归消息平台的适配器管的原生入站补记；读表时缺这两个字段的记录按没有出生平台，运行时不从 ID 推。
-- 创建来源 `createdFrom`：建这个会话的审批面的登记名，只在建档时经专用参数写（`createSession` 的第二个参数、`ensureSession` 的第三个参数，类型 `SessionCreation`），只有会话服务（owner 连接的 `session/create`，写这条连接所在审批面的登记名）与终端（写 `cli`）传。专用参数只给根会话：`createSession` 带 `parentId` 又带它时抛错，子会话按根会话取。
+- 来源字段 `originPlatform` 与 `originChat`：会话表里还没有记录的会话收到第一条原生入站（不带 `source`、不是子会话）时，参考实现按这条消息记下（出生平台取消息的平台，聊天窗口经 api-gateway 的 `chatScopeOf` 按这个平台的类型声明解析），之后不变。只有 IM 房间的根会话带，子会话按根会话取（`rootSessionOf`）。按 ID 建档（`ensureSession`、`createChildSession` 给父会话兜底建档）的记录建档时不带，没有创建来源与绑定的根会话由之后第一条归消息平台的适配器管的原生入站补记；认领这个 ID 的平台不止一个时判不出它是谁的窗口，不收录、不补记。读表时缺这两个字段的记录按没有出生平台，运行时不从 ID 推。
+- 创建来源 `createdFrom`：建这个会话的审批面的登记名，经专用参数写（`createSession` 的第二个参数、`ensureSession` 的第三个参数，类型 `SessionCreation`），只有会话服务（owner 连接的 `session/create`，写这条连接所在审批面的登记名）与终端（写 `cli`）传。建档时写；`ensureSession` 碰上既没有创建来源、也没有出生平台与绑定的已有记录（按 ID 兜底建档留下的空记录）时补写，随这次更新落盘、发 `session:updated`，其余已有记录不改。专用参数只给根会话：`createSession` 带 `parentId` 又带它时抛错，子会话按根会话取。
 - 所属工作区 `workspace` 与绑定 `work`：只在建档时经 `SessionCreation` 写，只用于根会话，子会话随根会话。`workspace` 是工作区的 id，须有记录（没有时抛错）；不带或带 `default` 即默认工作区，不记。在项目工作区（有目录的）里建会话必带 `work: { root }`（绑定目录，由调用方校验：工作区的目录，或为这个会话建的 worktree），默认工作区带绑定抛错。之后绑定只经 `setExtraRoots`、`addWorktree` 改（写在根会话上），取消登记工作区时清掉。
 - 当前目录 `currentDir`：建档不写，没有值即场所的主目录；子会话建时取父会话此刻的值，之后各改各的。只经 `setCurrentDir` 改，全部会话都有。
 - 所属工作区、绑定与当前目录随会话表持久化，任何清空都不清，删除会话时随记录删除。
@@ -246,7 +246,7 @@ interface SessionInfo {
 
 房间类别 `roomClass(info, lookup, isOwner)` 是按这些字段判「受众里有谁」的纯函数，子会话取根会话的：有出生平台的，聊天窗口为多方的是 `room`，一对一而对端是 owner 身份的是 `owner-only`（`isOwner` 由调用方传入），其余一对一是 `room`，只认多方标记、不认类型名；没有出生平台、带创建来源的是 `owner-only`；其余（不在会话表里的、按 ID 建档的、`mcp-server`、编排与定时任务的会话）一律 `internal`。
 
-- `originInstance`：有出生平台的房间建档或补记来源字段时，用 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析出接管它的适配器条目，记下它的插件实例 id（`contextId`），落盘保存，记下后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。还没有适配器认领（适配器没装好、连接还没上来、账号暂时不属于任何实例）的为 undefined，下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录已有解析在途的不重复解析。建档时先建好记录、发 `session:created`，记下实例后再发 `session:updated`；按 ID 建档（`ensureSession`）的记录没有出生平台，补记来源字段之后才解析。
+- `originInstance`：接管这个房间的适配器的插件实例 id（`contextId`），与 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析到的相同：收录与补记来源字段之前已问过认领这个 ID 的适配器（`claimantsOf`），第一个认领者随来源字段一起记下，落盘保存，记下后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。还没有适配器认领（适配器没装好、连接还没上来、账号暂时不属于任何实例）的为 undefined，下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录已有解析在途的不重复解析。按 ID 建档（`ensureSession`）的记录没有出生平台，补记来源字段时才记下。
 - `lastReplyAt`：回合结局（`agent:turn:after` 的 `outcome`）为 `replied` 时写入，`silent`、`aborted`、`error` 不改；同一会话别的回合还在跑时同样写入，随 `session:updated` 推出。
 - `lastTurn`：每一轮结束时写入这一轮的结局（取值同 `agent:turn:after` 的 `outcome`；消息被拦下、没有结局的一轮记为 `silent`）与结束时间；结局为 `error` 时带 `agent:turn:after` 给的一句原因（`error`，最多留 200 字，空串当作没给），其余结局不带。别的回合还在跑时同样写入，随 `session:updated` 推出并落盘。被停止的会话收口为 `completed`，从 `lastTurn.outcome` 为 `aborted` 看出。
 - `tokens`：按 `@aalis/api-llm` 的 `llm:usage` 累加这个会话自己的输入与输出 token（对话、摘要、识图、转写的调用都带会话 id），不含子会话。只记已有的会话，不为用量建会话；不改 `updatedAt`，记了就发 `session:updated`；随会话落盘，删除会话时一并清掉。
