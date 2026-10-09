@@ -2,6 +2,7 @@ import type { Logger } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { noSessions } from '../fixtures/authority.js';
 
 // ════════════════════════════════════════════════════════════
 // authority — restrictedPolicy 免确认白名单（可限时）
@@ -18,7 +19,7 @@ function makeLogger(): Logger {
 function makeManager(cfg: Record<string, unknown> = {}): AuthorityManager {
   const config = { get: (k: string) => cfg[k] } as unknown as HostConfig;
   const storage = {} as ConstructorParameters<typeof AuthorityManager>[2];
-  return new AuthorityManager(config, makeLogger(), storage);
+  return new AuthorityManager(config, makeLogger(), storage, noSessions);
 }
 
 const CAP = 'tool:shell.exec';
