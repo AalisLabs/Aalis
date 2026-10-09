@@ -328,6 +328,8 @@ defaultAction()        ← 所有 handler 通过后执行
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)` |
 
+房间类别为 `owner-only` 的会话（owner 自己的会话）跳过 `inbound:trigger` 与 `inbound:flow`，指令相位之后直接派发，见 plugin-gateway 的[结构性放行](plugins/plugin-gateway.md#结构性放行)。
+
 `InboundPhaseData = { message, metadata, agent }`，对象在各相位间共享传递。
 第三方插件可注册到任一相位获得清晰的语义位置——无需理解优先级数字、无需与其他插件协商占位。
 
