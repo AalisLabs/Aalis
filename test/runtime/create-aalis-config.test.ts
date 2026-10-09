@@ -16,36 +16,31 @@ const WEBUI = '@aalis/plugin-webui-server';
 const ONEBOT = '@aalis/plugin-adapter-onebot';
 
 const configOf = (enabled: Set<string>, keys = {}, ollama?: string) =>
-  parse(renderConfig(enabled, pluginSettings(enabled, keys, ollama)));
-const platformsOf = (enabled: Set<string>): Record<string, unknown> => configOf(enabled).sessionConfig?.platforms ?? {};
+  parse(renderConfig(pluginSettings(enabled, keys, ollama)));
+const OWNER_PROFILES = { platforms: { cli: { enabledToolGroups: ['*'] }, webui: { enabledToolGroups: ['*'] } } };
 
 describe('create-aalis renderConfig', () => {
-  it('装了 session-manager + cli + webui：两个平台档都给 ["*"]', () => {
-    const enabled = new Set([SESSION_MANAGER, CLI, WEBUI]);
-    expect(platformsOf(enabled)).toEqual({ cli: { enabledToolGroups: ['*'] }, webui: { enabledToolGroups: ['*'] } });
-    expect(configOf(enabled).plugins[SESSION_MANAGER], '平台档不在插件配置里').toBeUndefined();
+  it.each([
+    [[SESSION_MANAGER, CLI, WEBUI]],
+    [[SESSION_MANAGER, ONEBOT]],
+    [[CLI, '@aalis/plugin-llm-deepseek']],
+    [[]],
+  ])('cli、webui 两个平台档无条件写，与装了哪些插件无关；多人平台不代开（%j）', plugins => {
+    const cfg = configOf(new Set(plugins));
+    expect(cfg.sessionConfig).toEqual(OWNER_PROFILES);
+    expect(cfg.plugins[SESSION_MANAGER], '平台档不在插件配置里').toBeUndefined();
   });
 
-  it('多人平台（onebot）不代开', () => {
-    expect(platformsOf(new Set([SESSION_MANAGER, ONEBOT]))).toEqual({});
-  });
-
-  it('没装 session-manager 不写平台档（没人读）；密钥桩照旧', () => {
-    const cfg = configOf(new Set([CLI, '@aalis/plugin-llm-deepseek']));
-    expect(cfg.sessionConfig).toBeUndefined();
-    expect(cfg.plugins['@aalis/plugin-llm-deepseek']).toEqual({ apiKey: '' });
+  it('密钥桩照旧写在插件段', () => {
+    expect(configOf(new Set([CLI, '@aalis/plugin-llm-deepseek'])).plugins['@aalis/plugin-llm-deepseek']).toEqual({
+      apiKey: '',
+    });
   });
 
   it('bare 档（空集）：仍是合法 YAML，plugins 为空对象', () => {
     const cfg = configOf(new Set());
     expect(cfg.plugins).toEqual({});
     expect(cfg.disabledPlugins).toEqual([]);
-  });
-
-  it('只有平台档、没有要写配置的插件：plugins 为空对象，平台档照写', () => {
-    const cfg = configOf(new Set([SESSION_MANAGER, CLI]));
-    expect(cfg.plugins).toEqual({});
-    expect(cfg.sessionConfig).toEqual({ platforms: { cli: { enabledToolGroups: ['*'] } } });
   });
 
   it('粘贴的 key 写进对应插件段，YAML 读出来与输入逐字相同', () => {
@@ -73,7 +68,7 @@ describe('create-aalis renderConfig', () => {
   });
 });
 
-// `--init` 建的家目录与脚手架生成的家目录写同样的平台档：两份实现（脚手架引用不了 runtime），在这里逐项对齐
+// `--init` 建的家目录与脚手架生成的家目录写同样的平台档：两份实现（脚手架引用不了 runtime），在这里核完全相等
 describe('平台档：create-aalis 与 --init 一致', () => {
   const dirs: string[] = [];
   afterEach(() => {
@@ -81,24 +76,17 @@ describe('平台档：create-aalis 与 --init 一致', () => {
   });
 
   it.each([
-    [[SESSION_MANAGER, CLI, WEBUI]],
-    [[SESSION_MANAGER, CLI]],
-    [[SESSION_MANAGER, WEBUI, ONEBOT]],
-    [[SESSION_MANAGER, ONEBOT]],
-    [[CLI, WEBUI]],
-    [[]],
-  ])('安装集 %j', plugins => {
+    ['还没有 package.json', undefined],
+    ['装了会话管理与终端', { dependencies: { [SESSION_MANAGER]: '^0.1.0', [CLI]: '^0.1.0' } }],
+    ['只装了多人平台', { dependencies: { [ONEBOT]: '^0.1.0' } }],
+  ])('%s', (_label, manifest) => {
     const dir = mkdtempSync(join(tmpdir(), 'aalis-init-parity-'));
     dirs.push(dir);
     const app = join(dir, 'app');
     mkdirSync(app);
-    writeFileSync(
-      join(app, 'package.json'),
-      JSON.stringify({ dependencies: Object.fromEntries(plugins.map(name => [name, '^0.1.0'])) }),
-    );
+    if (manifest) writeFileSync(join(app, 'package.json'), JSON.stringify(manifest));
     const paths = derivePaths(join(dir, 'home'), app);
     initHome(paths);
-    const initialized = parse(readFileSync(paths.config, 'utf-8')).sessionConfig;
-    expect(initialized).toEqual(configOf(new Set(plugins)).sessionConfig);
+    expect(parse(readFileSync(paths.config, 'utf-8')).sessionConfig).toEqual(configOf(new Set()).sessionConfig);
   });
 });

@@ -676,14 +676,11 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 `;
 }
 
-// 只有 owner 能进的平台（本地终端 / 单 token WebUI）的平台档开箱给全部工具分组。多人平台（OneBot 等）不代开：
-// 带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸（docs/concepts/security-model.md），
-// 由 owner 在平台档里按需列组。平台档是会话设置的一层，写在配置文档的 sessionConfig 里，由 session-manager 读。
-// runtime 的 `--init`（home.ts 的 initHome）写同样的平台档，两边由用例逐项对齐。
-const OWNER_ONLY_PLATFORMS: ReadonlyArray<readonly [plugin: string, platform: string]> = [
-  ['@aalis/plugin-cli', 'cli'],
-  [WEBUI, 'webui'],
-];
+// 只有 owner 能进的平台（本地终端 / 单 token WebUI）的平台档开箱给全部工具分组，无条件写：平台没装时这一层不起作用，
+// 之后从市场装上即生效。多人平台（OneBot 等）不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸
+// （docs/concepts/security-model.md），由 owner 在平台档里按需列组。平台档是会话设置的一层，写在配置文档的 sessionConfig 里，
+// 由 session-manager 读。runtime 的 `--init`（home.ts 的 initHome）写同样的平台档，两边由用例核完全相等。
+const OWNER_PLATFORMS = ['cli', 'webui'];
 
 /** Ollama 的两个插件：设了 OLLAMA_HOST 时写上它的 baseUrl */
 const OLLAMA_PLUGINS = new Set([OLLAMA_LLM, OLLAMA_EMBEDDING]);
@@ -703,7 +700,7 @@ export function pluginSettings(
   return out;
 }
 
-export function renderConfig(enabled: Set<string>, settings: Record<string, Record<string, string>>): string {
+export function renderConfig(settings: Record<string, Record<string, string>>): string {
   const lines = ['name: Aalis', 'logLevel: info'];
   const configured = Object.keys(settings);
   if (configured.length > 0) {
@@ -719,13 +716,8 @@ export function renderConfig(enabled: Set<string>, settings: Record<string, Reco
     );
     lines.push('plugins: {}');
   }
-  const fullToolPlatforms = enabled.has('@aalis/plugin-session-manager')
-    ? OWNER_ONLY_PLATFORMS.filter(([plugin]) => enabled.has(plugin)).map(([, platform]) => platform)
-    : [];
-  if (fullToolPlatforms.length > 0) {
-    lines.push('sessionConfig:', '  platforms:');
-    for (const platform of fullToolPlatforms) lines.push(`    ${platform}:`, '      enabledToolGroups: ["*"]');
-  }
+  lines.push('sessionConfig:', '  platforms:');
+  for (const platform of OWNER_PLATFORMS) lines.push(`    ${platform}:`, '      enabledToolGroups: ["*"]');
   lines.push('disabledPlugins: []');
   return `${lines.join('\n')}\n`;
 }
@@ -1103,7 +1095,7 @@ async function main(): Promise<void> {
   const homeDir = resolve(targetDir, 'home');
   mkdirSync(homeDir, { recursive: true, mode: 0o700 });
   writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });
-  writeFileSync(resolve(homeDir, 'aalis.config.yaml'), renderConfig(enabled, pluginSettings(enabled, keys, host)), {
+  writeFileSync(resolve(homeDir, 'aalis.config.yaml'), renderConfig(pluginSettings(enabled, keys, host)), {
     encoding: 'utf-8',
     mode: 0o600,
   });
