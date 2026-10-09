@@ -1,10 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  type CommandBuilder,
-  type CommandHandler,
-  type CommandService,
-  commands,
-} from '../../packages/api-commands/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, type MetadataOp, memory } from '../../packages/api-memory/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
@@ -15,12 +9,11 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // 先读后改再写的路径必须严格读取：getMetadata 抛错时中止本次写入，只有返回空才算「不存在」。
 // 读档案曾把任何读错都当成「不存在」，调用方拿默认值覆盖写回：一次瞬时读错（Mongo 超时、
-// SQLITE_BUSY）就让该用户的事实、关系分、互动次数全部清零，或让整张指令表只剩新加的一条。
+// SQLITE_BUSY）就让该用户的事实、关系分、互动次数全部清零。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'onebot:g1';
 const PROFILE_KEY = 'user:profile/onebot:u1';
-const INSTRUCTIONS_KEY = 'aalis:instructions/Aalis';
 
 const SEED_PROFILE = {
   facts: [
@@ -79,39 +72,6 @@ class FlakyMemory {
   }
 }
 
-/** 桩 commands 服务：只收集 action，按指令名直接调用 */
-function captureCommands() {
-  const handlers = new Map<string, CommandHandler>();
-  const service = {
-    command(name: string): CommandBuilder {
-      const builder: CommandBuilder = {
-        alias: () => builder,
-        option: () => builder,
-        argument: () => builder,
-        usage: () => builder,
-        example: () => builder,
-        action(handler) {
-          handlers.set(name.trim().split(/\s+/)[0], handler);
-          return builder;
-        },
-      };
-      return builder;
-    },
-    unregister() {},
-  } as unknown as CommandService;
-  return {
-    service,
-    async run(name: string, ...args: unknown[]): Promise<unknown> {
-      const handler = handlers.get(name);
-      if (!handler) throw new Error(`指令未注册：${name}`);
-      return handler(
-        { session: { sessionId: SESSION, platform: 'onebot', userId: 'admin-1', raw: '' }, options: {} },
-        ...args,
-      );
-    },
-  };
-}
-
 const apps: App[] = [];
 
 afterEach(async () => {
@@ -129,14 +89,11 @@ async function setup(config: Record<string, unknown>, history: Message[] = []) {
     }),
   }));
   host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat } as never);
-  const cmd = captureCommands();
-  host.provide(commands, cmd.service);
   const mem = new FlakyMemory(history);
   mem.metadata.set(PROFILE_KEY, structuredClone(SEED_PROFILE));
   host.provide(memory, mem as unknown as MemoryService);
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
-    enableInstructions: false,
     ...config,
   });
   await app.plugins.idle();
@@ -148,7 +105,7 @@ async function setup(config: Record<string, unknown>, history: Message[] = []) {
     } as never);
     await new Promise<void>(r => setTimeout(r, 20));
   };
-  return { mem, chat, cmd, inbound };
+  return { mem, chat, inbound };
 }
 
 describe('plugin-user-profile: 读改写路径遇读错中止，不以默认值覆盖', () => {
@@ -178,17 +135,5 @@ describe('plugin-user-profile: 读改写路径遇读错中止，不以默认值�
     expect(chat, '读不出现有事实时不该拿空表去问 LLM').not.toHaveBeenCalled();
     const facts = mem.metadata.get(PROFILE_KEY)?.facts as Array<{ text: string }>;
     expect(facts.map(f => f.text)).toEqual(['事实一', '事实二']);
-  });
-
-  it('/instruct.add：读失败时报错且不写，原有指令保留', async () => {
-    const { mem, cmd } = await setup({ enableInstructions: true, instructionExtractEveryNMessages: 0 });
-    const seed = { instructions: [{ id: 'i1', text: '既有指令', updatedAt: 1, observedAt: 1 }], updatedAt: 1 };
-    mem.metadata.set(INSTRUCTIONS_KEY, structuredClone(seed));
-
-    mem.failNextRead = true;
-    const reply = await cmd.run('instruct.add', '新指令');
-
-    expect(String(reply)).toContain('添加失败');
-    expect(mem.metadata.get(INSTRUCTIONS_KEY), '原有指令不得被只含新指令的表覆盖').toEqual(seed);
   });
 });

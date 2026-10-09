@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
 import {
   type CommandBuilder,
   type CommandHandler,
@@ -15,15 +14,14 @@ import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 事实提取、指令提取都是「读快照 → 调 LLM（几秒到几十秒）→ 合并写回」。
-// 合并曾以调用前的快照为基底：LLM 调用期间执行的 /clear、/profile.forget、
-// /instruct.clear 回执报成功，LLM 返回后清掉的内容整份写回。
+// 事实提取是「读快照 → 调 LLM（几秒到几十秒）→ 合并写回」。
+// 合并曾以调用前的快照为基底：LLM 调用期间执行的 /clear、/profile.forget
+// 回执报成功，LLM 返回后清掉的内容整份写回。
 // 合并基底须是 LLM 返回后重读的结果，快照里有、重读后已不在的事实不得借 update 复活。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'onebot:g1';
 const PROFILE_NS = 'user:profile';
-const INSTRUCTIONS_NS = 'aalis:instructions';
 
 /** 桩 commands 服务：只收集 action，按指令名直接调用 */
 function captureCommands() {
@@ -87,17 +85,12 @@ async function setup(config: Record<string, unknown>, reply: unknown) {
   host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat: llmStub.chat } as never);
   const cmd = captureCommands();
   host.provide(commands, cmd.service);
-  host.provide(authority, {
-    isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === 'admin-1',
-    listUsers: () => [],
-  } as unknown as AuthorityService);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
   const mem = host.memory.current;
   if (!mem) throw new Error('memory 服务未就绪');
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
-    enableInstructions: false,
     relationIncrementWitness: 0,
     ...config,
   });
@@ -237,42 +230,5 @@ describe('plugin-user-profile: LLM 调用期间的清除不被合并写回撤销
     llm.release();
     await vi.waitFor(async () => expect(factTexts(await mem.getMetadata(PROFILE_NS, 'onebot:u1'))).toContain('喜欢鱼'));
     expect(factTexts(await mem.getMetadata(PROFILE_NS, 'onebot:u1'))).toEqual([...seeded.slice(1), '喜欢鱼']);
-  });
-
-  it('指令提取挂起期间 /instruct.clear：旧指令不回来', async () => {
-    const { mem, cmd, llm, inbound } = await setup(
-      { enableInstructions: true, instructionExtractEveryNMessages: 1 },
-      {
-        add: [
-          {
-            text: '禁言不超过一天',
-            category: '审核与处罚',
-            severity: 'must',
-            sourceUserKey: 'onebot:admin-1',
-            sourceUserName: '管理员',
-          },
-        ],
-      },
-    );
-    await mem.saveMessage(SESSION, {
-      role: 'user',
-      content: '以后禁言不超过一天',
-      metadata: { userId: 'admin-1', platform: 'onebot' },
-    });
-    await mem.saveMetadata(INSTRUCTIONS_NS, 'Aalis', {
-      instructions: [{ id: 'i1', text: '旧指令', updatedAt: 1, observedAt: 1 }],
-      updatedAt: 1,
-    });
-
-    await inbound('admin-1');
-    await llm.entered;
-    expect(String(await cmd.run('instruct.clear'))).toContain('已清空');
-
-    llm.release();
-    const texts = async () =>
-      ((await mem.getMetadata(INSTRUCTIONS_NS, 'Aalis'))?.instructions as Array<{ text: string }> | undefined)?.map(
-        i => i.text,
-      );
-    await vi.waitFor(async () => expect(await texts()).toEqual(['禁言不超过一天']));
   });
 });

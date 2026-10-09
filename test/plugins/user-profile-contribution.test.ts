@@ -10,15 +10,13 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// plugin-user-profile 的 agent:prompt 贡献 build（anchor='identity'，多块返回）
+// plugin-user-profile 的 agent:prompt 贡献 build（anchor='turn-context'，多块返回）
 //
 // 档案落在 memory 的 metadata 上，本测试直接经 memory.saveMetadata 种入：
 //   - user:profile / `${platform}:${userId}`  → 用户档案（facts / relationScore …）
-//   - aalis:instructions / `<persona>`        → 第三方行为指令（persona 服务缺席时 persona 名 = 'Aalis'）
 // ════════════════════════════════════════════════════════════
 
 const PROFILE_NS = 'user:profile';
-const INSTRUCTIONS_NS = 'aalis:instructions';
 /** 固定时间戳，避免渲染「记录于」等时间派生内容随运行时刻漂移 */
 const TS = Date.UTC(2026, 0, 15, 8, 0, 0);
 
@@ -144,26 +142,8 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(messages[3]).toMatchObject({ role: 'user', content: '在吗' });
   });
 
-  it('多块返回：准则 → 主发言者档案 → 其他参与者，块序稳定且共用同一 injector 键', async () => {
-    const { host, memory } = await setup({
-      enableInstructions: true,
-      maxOtherParticipants: 3,
-    });
-
-    await memory.saveMetadata(INSTRUCTIONS_NS, 'Aalis', {
-      instructions: [
-        {
-          id: 'i001',
-          text: '不要单条禁言超过 24 小时',
-          category: '审核与处罚',
-          severity: 'must',
-          sourceUserName: '管理员甲',
-          observedAt: TS,
-          updatedAt: TS,
-        },
-      ],
-      updatedAt: TS,
-    });
+  it('多块返回：主发言者档案 → 其他参与者，块序稳定且共用同一 injector 键', async () => {
+    const { host, memory } = await setup({ maxOtherParticipants: 3 });
     await seedPrimaryProfile(memory);
     await memory.saveMetadata(PROFILE_NS, 'onebot:u2', {
       facts: [makeFact('f201', '常在深夜发言', '其他')],
@@ -185,32 +165,27 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     });
 
     const blocks = injectedBlocks(messages);
-    expect(blocks).toHaveLength(3);
+    expect(blocks).toHaveLength(2);
     const contents = blocks.map(b => String(b.content));
-    expect(contents[0]).toContain('第三方行为准则（最高优先）');
-    expect(contents[0]).toContain('不要单条禁言超过 24 小时');
-    expect(contents[0]).toContain('【必须】');
-    // 准则块不提已不存在的块
-    expect(contents[0]).not.toContain('内心状态');
-    expect(contents[1]).toContain('关于当前对话者（u1）的已知事实');
-    expect(contents[2]).toContain('群聊其他参与者背景摘要');
-    expect(contents[2]).toContain('小二（u2）');
-    expect(contents[2]).toContain('常在深夜发言');
+    expect(contents[0]).toContain('关于当前对话者（u1）的已知事实');
+    expect(contents[1]).toContain('群聊其他参与者背景摘要');
+    expect(contents[1]).toContain('小二（u2）');
+    expect(contents[1]).toContain('常在深夜发言');
     // 主发言者不出现在「其他参与者」里
-    expect(contents[2]).not.toContain('喜欢养猫');
+    expect(contents[1]).not.toContain('喜欢养猫');
 
     // 多块共用同一全局键
     const keys = new Set(blocks.map(b => String(b.metadata?.injector)));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toMatch(/\/user-profile$/);
 
-    // 三块连续落在头部 system 区之后、最后一条 user 之前（turn-context 锚位），
+    // 两块连续落在头部 system 区之后、最后一条 user 之前（turn-context 锚位），
     // 中间不夹别的消息。档案按当前发言者取材、换人即变——放历史前会掐断
     // 前缀缓存，故必须在历史后（见 api-agent 的 PromptAnchor 契约注释）。
     const first = messages.indexOf(blocks[0]);
     expect(first).toBe(3);
-    expect(messages.slice(first, first + 3)).toEqual(blocks);
-    expect(messages[first + 3], '三块之后紧跟当前 user 消息').toMatchObject({ role: 'user', content: '在吗' });
+    expect(messages.slice(first, first + 2)).toEqual(blocks);
+    expect(messages[first + 2], '两块之后紧跟当前 user 消息').toMatchObject({ role: 'user', content: '在吗' });
   });
 
   it('triggerType=interval：不注入主发言者完整档案，改为「在场参与者」compact 摘要', async () => {

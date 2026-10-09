@@ -254,7 +254,7 @@ auth.setUserLevel({ platform, userId }, level);
 auth.save();
 ```
 
-消费方判空的真实写法见 `packages/plugin-commands/src/index.ts`、`packages/plugin-user-profile/src/index.ts`（`authority.current` 缺席时，前者按非 owner、等级 0 处理，后者直接跳过指令提取）。要让 owner 在新的界面上应答审批，经 `approvals.registerSurface(name)` 登记审批面（见 docs/api/api-approval.md），不经 authority。
+消费方判空的真实写法见 `packages/plugin-commands/src/index.ts`（`authority.current` 缺席时按非 owner、等级 0 处理）。要让 owner 在新的界面上应答审批，经 `approvals.registerSurface(name)` 登记审批面（见 docs/api/api-approval.md），不经 authority。
 
 ### 5.3 错误边界
 
