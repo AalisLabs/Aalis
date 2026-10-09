@@ -1740,6 +1740,9 @@ importers:
 
   packages/plugin-memory-summary:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-contributions':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-contributions
