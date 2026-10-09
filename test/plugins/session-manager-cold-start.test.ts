@@ -75,10 +75,10 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
     const gate = new Promise<void>(resolve => {
       release = resolve;
     });
-    preferred.listMetadata = async () => {
+    preferred.listMetadata = async namespace => {
       listing = true;
       await gate;
-      return list();
+      return list(namespace);
     };
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);

@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { expect, vi } from 'vitest';
+import { SESSION_LAYERS } from '../../packages/api-session-manager/src/index.js';
 import type {
   RoomGroup,
   SessionMethodParams,
@@ -29,6 +30,14 @@ export const INIT: SessionMethodResult<'initialize'> = {
   appName: 'Aalis',
 };
 
+/** 层表：session/config/layers 回包的 order，与会话服务给的同一份 */
+export const LAYER_ORDER: SessionMethodResult<'session/config/layers'>['order'] = SESSION_LAYERS.map(
+  ({ name, label }) => ({ name, label }),
+);
+
+/** 默认工作区：没有聊天窗口的会话的场所 */
+export const HOME_PLACE: SessionSummary['place'] = { key: 'workspace:default', kind: 'workspace', name: '默认工作区' };
+
 export function summary(id: string, fields: Partial<SessionSummary> = {}): SessionSummary {
   return {
     id,
@@ -36,6 +45,7 @@ export function summary(id: string, fields: Partial<SessionSummary> = {}): Sessi
     childCount: 0,
     kind: 'owner',
     section: 'owner',
+    place: HOME_PLACE,
     createdAt: 0,
     updatedAt: 0,
     running: false,
@@ -73,6 +83,7 @@ export function pluginRow(instanceId: string, fields: Record<string, unknown> = 
   };
 }
 
+/** IM 房间：缺省是 onebot 的一个群，场所是它的窗口 */
 export function room(id: string, instance: string | undefined, fields: Partial<SessionSummary> = {}): SessionSummary {
   return summary(id, {
     kind: 'room',
@@ -80,7 +91,8 @@ export function room(id: string, instance: string | undefined, fields: Partial<S
     platform: 'onebot',
     instance,
     account: '10001',
-    audience: 'group',
+    chat: { type: 'group', multiParty: true },
+    place: { key: `onebot:group:${id}`, kind: 'window', name: fields.title ?? id },
     ...fields,
   });
 }
@@ -239,7 +251,12 @@ export function restCalls(): Array<FakeRequest & { path: string }> {
  */
 export async function renderApp(url: string | string[], handlers: FakeHandlers, rest?: FakeRest): Promise<Harness> {
   stubRest(rest);
-  const all: FakeHandlers = { initialize: () => INIT, 'sessions/watch': () => ({}), ...handlers };
+  const all: FakeHandlers = {
+    initialize: () => INIT,
+    'sessions/watch': () => ({}),
+    'session/config/layers': () => ({ layers: [{ scope: 'defaults' }], order: LAYER_ORDER }),
+    ...handlers,
+  };
   const session = createSessionClient();
   const admin = createAdminClient();
   const connect = async () => {

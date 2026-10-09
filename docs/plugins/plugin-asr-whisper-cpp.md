@@ -34,10 +34,9 @@ definePlugin({
 | `modelPath` | string | 必填 | 模型文件路径 (.bin)：GGML 模型文件（.bin）的绝对路径 |
 | `language` | string | `'auto'` | 默认语种 |
 | `threads` | number | `4` | 线程数 |
-| `priority` | number | `80` | 优先级 (越大越优先) |
 | `timeoutMs` | number | `600000` | 子进程超时 (ms)：转码与识别子进程的最长运行时间。设 0 表示不限——届时卡住的子进程会把整轮对话一起挂住 |
 
-`modelPath` 为必填：没填时插件激活失败，报「缺少配置项 modelPath」，WebUI 把它标成待配置，不注册 `asr` 服务。`binaryPath` 声明为必填并带默认值，留空时回到默认的 `whisper-cli`，不会以空命令运行。两个路径字段都不收相对路径（宿主进程的 cwd 不带语义），写了相对路径时插件拒绝激活。`priority` 作为 `provide(asr, impl, { priority })` 的注册优先级。
+`modelPath` 为必填：没填时插件激活失败，报「缺少配置项 modelPath」，WebUI 把它标成待配置，不注册 `asr` 服务。`binaryPath` 声明为必填并带默认值，留空时回到默认的 `whisper-cli`，不会以空命令运行。两个路径字段都不收相对路径（宿主进程的 cwd 不带语义），写了相对路径时插件拒绝激活。登记 `asr` 服务时的优先级是插件里的常量 80（云端接口 plugin-asr-openai 为 50），只作第一方提供者之间的默认先后，不可配置。转写由 media 调用，用哪个音频后端由 media 的 `audio.prefer` 定（处理器名为 `asr:<插件实例 id>`），没指定时取统一音频池里优先级最高的；服务偏好 `servicePreferences.asr` 在那里只在优先级相同时决胜。
 
 ## 相关
 

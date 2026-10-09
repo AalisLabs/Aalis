@@ -18,7 +18,6 @@ const configSchema = defineConfig({
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
   baseUrl: { type: 'string', label: 'Base URL', default: 'https://api.openai.com/v1', onInvalid: 'error' },
   model: { type: 'string', label: '模型', default: 'whisper-1' },
-  priority: { type: 'number', label: '优先级 (越大越优先)', default: 50 },
   timeoutMs: {
     type: 'number',
     label: '请求超时 (ms)',
@@ -27,6 +26,9 @@ const configSchema = defineConfig({
   },
 });
 type Cfg = ConfigOf<typeof configSchema>;
+
+/** 在 asr 服务里的优先级：只作第一方提供者之间的默认先后（本地的 whisper.cpp 为 80，在前）；选哪个用服务偏好 */
+const PRIORITY = 50;
 
 /**
  * Whisper API 实际接受的后缀集（其余一律被判 400，包括 opus、amr 这类常见语音容器）。
@@ -160,8 +162,8 @@ export default definePlugin({
     const proc = createProcessGateway(caps.proc);
     const storage = createStorageGateway(caps.storage);
 
-    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: cfg.priority });
-    caps.logger.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model}, prio=${cfg.priority})`);
+    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
+    caps.logger.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model})`);
   },
 });
 

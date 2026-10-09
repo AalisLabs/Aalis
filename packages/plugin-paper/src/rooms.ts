@@ -1,13 +1,14 @@
 // ============================================================
 // 房间与资格：房间用哪块白纸、谁能发起、远端条件是否成立
 //
-// - 房间白纸：会话配置 paperEnabled 为 true 才开；写了 paperName 用同名的具名白纸，否则每个房间一块。
+// - 房间白纸：会话配置 paperEnabled 为 true 才开；写了 paperName 用同名的具名白纸，否则每个窗口（场所）一块。
 // - 资格：交任务与取消只受理真人在房间会话本身里当面发起的回合（ctx.inbound 存在且 source 缺省、
 //   有效授权身份的 userId 非空）；查状态与发成品只要求房间会话本身与入站回合。
 // - 远端条件：提供者按白纸写的实例 id 精确取（不用 current，不回落到别的提供者），出网不超过白纸上限，
 //   不违反同账号隔离，账本读取正常，白纸没有停开，提供者实例没有未读的账本外代理告警。
 // - 共用：一块具名白纸被哪些房间共用（WebUI 白纸页与诊断项用），长期代理的对话与工作区对它们都可见。
-// - 房间的开关与上限是本插件登记的会话设置项（ROOM_SETTINGS），只对房间适用，不随建子会话复制。
+// - 房间的开关与上限是本插件登记的会话设置项（ROOM_SETTINGS），只对房间适用，只能设到场所为止（按窗口设，换会话不丢），
+//   不随建子会话复制。
 // ============================================================
 
 import {
@@ -17,13 +18,16 @@ import {
   type RemoteAgentProvider,
   resolveRemoteAgent,
 } from '@aalis/api-remote-agent';
-import type {
-  SessionConfig,
-  SessionConfigLayer,
-  SessionInfo,
-  SessionInheritance,
-  SessionManagerService,
-  SessionSetting,
+import {
+  type InheritanceSource,
+  placePaperId,
+  SESSION_LAYERS,
+  type SessionConfig,
+  type SessionConfigLayer,
+  type SessionInfo,
+  type SessionInheritance,
+  type SessionManagerService,
+  type SessionSetting,
 } from '@aalis/api-session-manager';
 import type { ToolCallContext } from '@aalis/api-tools';
 import type { Logger, ServiceRef } from '@aalis/core';
@@ -52,7 +56,8 @@ declare module '@aalis/api-session-manager' {
 }
 
 /**
- * 房间专用的一项：只对房间适用，只经继承链实时解析（建子会话不复制，免得子会话凭冻结的值开远端任务）；unset 是没设时的含义
+ * 房间专用的一项：只对房间适用，只能设到场所为止（按窗口设，换会话不丢），只经继承链实时解析（建子会话不复制，免得子会话
+ * 凭冻结的值开远端任务）；unset 是没设时的含义
  */
 const roomSetting = (
   order: number,
@@ -63,6 +68,7 @@ const roomSetting = (
   key,
   field,
   appliesTo: ['room'],
+  narrowest: 'place',
   prominence: 'advanced',
   order,
   liveOnly: true,
@@ -78,9 +84,9 @@ export const ROOM_SETTINGS: SessionSetting[] = [
     {
       type: 'string',
       label: '白纸名',
-      description: '留空则每个房间各一块白纸，属性取白纸插件配置的 defaults；几个房间写同一个名字就共用一块',
+      description: '留空则每个窗口各一块白纸，属性取白纸插件配置的 defaults；几个窗口写同一个名字就共用一块',
     },
-    '每个房间各一块',
+    '每个窗口各一块',
   ),
   roomSetting(
     2,
@@ -131,30 +137,24 @@ export const ROOM_SETTINGS: SessionSetting[] = [
 ];
 
 export interface RoomPaper {
-  /** n:<名> 或 r:<房间会话 id 的 sha256 前 12 位> */
+  /** n:<名>，或场所的白纸 id（api-session-manager 的 placePaperId） */
   paperId: string;
   spec: PaperSpec;
   /** 房间的生效会话配置 */
   room: SessionConfig;
 }
 
-/** 房间白纸的 id：房间会话 id 的 SHA-256 前 12 位十六进制 */
-async function roomPaperId(sessionId: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sessionId)));
-  return `r:${Buffer.from(digest).toString('hex').slice(0, 12)}`;
-}
-
-/** 房间用哪块白纸；不开时给出原因 */
-export async function resolveRoomPaper(
+/** 房间用哪块白纸；不开时给出原因。不写名字的用房间所在场所的那一块：同一个窗口里几个机器人账号的会话共用 */
+export function resolveRoomPaper(
   sm: SessionManagerService,
   cfg: PaperConfig,
   sessionId: string,
   platform: string | undefined,
-): Promise<RoomPaper | { unavailable: string }> {
+): RoomPaper | { unavailable: string } {
   const room = sm.resolveConfig(sessionId, platform);
   if (room.paperEnabled !== true) return { unavailable: '本房间没有开启白纸' };
   const name = room.paperName?.trim() ?? '';
-  if (!name) return { paperId: await roomPaperId(sessionId), spec: cfg.defaults, room };
+  if (!name) return { paperId: placePaperId(sm.placeOf(sessionId).key), spec: cfg.defaults, room };
   const broken = cfg.brokenPapers.get(name);
   if (broken) return { unavailable: `白纸「${name}」的配置有误（${broken}），改对之前不能用` };
   const spec = cfg.papers.get(name);
@@ -167,13 +167,7 @@ export function paperLabel(paperId: string): string {
   return paperId.startsWith('n:') ? paperId.slice(2) : `房间白纸 ${paperId}`;
 }
 
-/** 受众条目在称呼里的写法 */
-export const AUDIENCE_NAMES: Record<NonNullable<SessionInheritance['audience']>, string> = {
-  group: '群',
-  private: '私聊',
-};
-
-/** 已登记的 IM 房间与各自的继承链：平台档的某个键落到了哪些房间、来自平台档还是受众条目，对房间逐个看 */
+/** 已登记的 IM 房间与各自的继承链：某个键落到了哪些房间、来自哪一层，对房间逐个看 */
 function imRoomInheritance(
   sm: SessionManagerService,
 ): Array<{ session: SessionInfo; inheritance: SessionInheritance }> {
@@ -183,34 +177,38 @@ function imRoomInheritance(
     .map(session => ({ session, inheritance: sm.resolveInheritance(session.id) }));
 }
 
-type PlatformLayer = Exclude<SessionConfigLayer, { scope: 'defaults' }>;
+/** 覆盖一类房间的层：平台档覆盖这个平台的全部房间，平台类型档覆盖这个平台这种类型的全部房间（包括还没登记的） */
+type ProfileLayer = Extract<SessionConfigLayer, { scope: 'platform' | 'type' }>;
 
-/** 写了某个设置项的平台档与受众条目，各带这一层的值 */
+/** 房间的白纸设置继承自这几层时算进共用：覆盖一类房间的两档与房间所在的窗口 */
+const SHARING_SOURCES: ReadonlySet<InheritanceSource> = new Set(['platform', 'type', 'place']);
+
+/** 写了某个设置项的平台档与平台类型档，各带这一层的值 */
 export function layersWith<K extends 'paperName' | 'remoteAgentTypes'>(
   sm: SessionManagerService,
   key: K,
-): Array<{ layer: PlatformLayer; value: NonNullable<SessionConfig[K]> }> {
-  const found: Array<{ layer: PlatformLayer; value: NonNullable<SessionConfig[K]> }> = [];
+): Array<{ layer: ProfileLayer; value: NonNullable<SessionConfig[K]> }> {
+  const found: Array<{ layer: ProfileLayer; value: NonNullable<SessionConfig[K]> }> = [];
   for (const layer of sm.listLayers()) {
-    if (layer.scope === 'defaults') continue;
+    if (layer.scope !== 'platform' && layer.scope !== 'type') continue;
     const value = sm.getLayer(layer)[key];
     if (value !== undefined) found.push({ layer, value });
   }
   return found;
 }
 
-/** 平台档覆盖到的房间的称呼：「平台档 X 的全部房间」「平台档 X 的全部群房间」 */
-function layerRooms(layer: PlatformLayer): string {
-  return `平台档 ${layer.platform} 的全部${layer.scope === 'audience' ? AUDIENCE_NAMES[layer.audience] : ''}房间`;
+/** 平台档与平台类型档的称呼：层表里的称呼加平台（与类型名），如「平台档 onebot」「平台类型档 onebot · group」 */
+export function profileName(layer: ProfileLayer): string {
+  const label = SESSION_LAYERS.find(({ name }) => name === layer.scope)?.label;
+  return layer.scope === 'type' ? `${label} ${layer.platform} · ${layer.type}` : `${label} ${layer.platform}`;
 }
 
 /**
- * 共用一块白纸的房间：会话自身配置写了这个白纸名的房间会话；已登记的 IM 房间里，自身配置没写白纸名、从平台档
- * （基础条目或受众条目）继承了这个名字的；写了它的平台档与受众条目（平台档覆盖这个平台的所有房间，受众条目覆盖这个
- * 平台的全部群或全部私聊，包括还没登记的）；以及账本里还没结束、或在上次清空之后才结束的任务所在的房间（它们的
- * 原文还在代理的对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。房间白纸只有账本里的那个房间。
- * labels 是显示用的称呼（房间会话 id，平台档条目写成「平台档 X 的全部房间」「平台档 X 的全部群房间」）；
- * shared：多于一个房间，或有平台档条目。
+ * 共用一块白纸的房间：已登记的 IM 房间里，从平台档、平台类型档或所在窗口的场所继承了这个白纸名的；写了它的平台档与平台
+ * 类型档（覆盖一类房间，包括还没登记的）；以及账本里还没结束、或在上次清空之后才结束的任务所在的房间（它们的原文还在代理的
+ * 对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。不写名字的白纸只有账本里的房间。
+ * labels 是显示用的称呼（房间会话 id，两档写成「平台档 X 的全部房间」「平台类型档 X · T 的全部房间」）；
+ * shared：多于一个房间，或有平台档、平台类型档写了它。
  */
 export function sharingRooms(
   sm: SessionManagerService,
@@ -222,16 +220,12 @@ export function sharingRooms(
   if (paperId.startsWith('n:')) {
     const name = paperId.slice(2);
     const names = (value: string | undefined) => value?.trim() === name;
-    for (const session of sm.listSessions()) {
-      if (!session.parentId && names(sm.getOwnConfig(session.id).paperName)) rooms.add(session.id);
+    for (const { layer, value } of layersWith(sm, 'paperName')) {
+      if (names(value)) profiles.add(`${profileName(layer)} 的全部房间`);
     }
-    for (const { layer, value } of layersWith(sm, 'paperName')) if (names(value)) profiles.add(layerRooms(layer));
     for (const { session, inheritance } of imRoomInheritance(sm)) {
       const source = inheritance.sources.paperName;
-      // 自身配置写了白纸名（空串也算）的，生效的是自己写的
-      if ((source === 'platform' || source === 'audience') && names(inheritance.values.paperName)) {
-        if (sm.getOwnConfig(session.id).paperName === undefined) rooms.add(session.id);
-      }
+      if (source && SHARING_SOURCES.has(source) && names(inheritance.values.paperName)) rooms.add(session.id);
     }
   }
   const since = ledger.papers[paperId]?.lastClearedAt ?? 0;

@@ -59,15 +59,10 @@ interface PersonaIdentity {
 
 // ===== 插件元数据 =====
 
+/** 主卡：会话设置「人设」没设时用的角色卡（人设目录里的 default.yaml，没有时用内置的默认角色） */
+const DEFAULT_PERSONA = 'default';
+
 const configSchema = defineConfig({
-  persona: {
-    type: 'select',
-    label: '人设',
-    description: '人设文件名（不含后缀）',
-    default: 'default',
-    onInvalid: 'error',
-    dynamicOptions: 'persona',
-  },
   personasDir: {
     type: 'string',
     label: '人设目录',
@@ -123,7 +118,6 @@ interface PersonaCard {
 class PersonaServiceImpl implements PersonaService {
   private card: PersonaCard;
   private _outputFormat?: OutputFormat;
-  private fileName: string;
   private statePersistence: boolean;
   private timeInjection: boolean;
   private timeZone: string;
@@ -137,13 +131,8 @@ class PersonaServiceImpl implements PersonaService {
   /** 当前处理消息的会话身份（按异步上下文隔离，杜绝并发会话间串档）。 */
   private identityStore = new AsyncLocalStorage<PersonaIdentity>();
 
-  constructor(
-    card: PersonaCard,
-    fileName: string,
-    options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
-  ) {
+  constructor(card: PersonaCard, options: { statePersistence: boolean; timeInjection: boolean; timeZone: string }) {
     this.card = card;
-    this.fileName = fileName;
     this.statePersistence = options.statePersistence;
     this.timeInjection = options.timeInjection;
     this.timeZone = options.timeZone;
@@ -163,9 +152,9 @@ class PersonaServiceImpl implements PersonaService {
     this.cardCache.delete(name);
   }
 
-  /** 重新加载“主角色卡”（fileName 对应的卡），供 watch 调用 */
+  /** 重新加载主卡，供 watch 调用 */
   reloadPrimaryCardFromCache(): void {
-    const refreshed = this.cardCache.get(this.fileName);
+    const refreshed = this.cardCache.get(DEFAULT_PERSONA);
     if (refreshed) {
       this.card = refreshed;
       this._outputFormat = refreshed.outputFormat
@@ -212,7 +201,7 @@ class PersonaServiceImpl implements PersonaService {
 
   /** 根据 options 获取生效的角色卡（不查 session-manager，由调用方传入） */
   private getEffectiveCard(options?: PersonaSessionOptions): PersonaCard {
-    if (options?.persona && options.persona !== this.fileName) {
+    if (options?.persona && options.persona !== DEFAULT_PERSONA) {
       return this.loadCard(options.persona) ?? this.card;
     }
     return this.card;
@@ -415,7 +404,7 @@ class PersonaServiceImpl implements PersonaService {
 
   getPersonaName(options?: PersonaSessionOptions): string {
     const card = this.getEffectiveCard(options);
-    return card.name || `${card === this.card ? this.fileName : options?.persona}，未设置名字`;
+    return card.name || `${card === this.card ? DEFAULT_PERSONA : options?.persona}，未设置名字`;
   }
 
   /** 该角色卡是否配置为客户端渲染 JSON */
@@ -457,7 +446,7 @@ class PersonaServiceImpl implements PersonaService {
  * 本插件登记的会话设置项：人设、额外提示与结构化输出的两个开关。都由人设服务生效，各种会话都适用；
  * 人设的可选项来自人设服务的 listModels
  */
-const sessionSettings = (persona: string): SessionSetting[] => [
+const SESSION_SETTINGS: SessionSetting[] = [
   {
     key: 'persona',
     field: {
@@ -465,8 +454,8 @@ const sessionSettings = (persona: string): SessionSetting[] => [
       label: '人设',
       dynamicOptions: 'persona',
       allowCustom: true,
-      default: persona,
-      description: '角色卡名（不含后缀）；没设置时用人设插件配置的默认卡',
+      default: DEFAULT_PERSONA,
+      description: '角色卡名（不含后缀）；没设置时用 default 卡',
     },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'common',
@@ -524,7 +513,6 @@ export default definePlugin({
 async function run(caps: Caps): Promise<void> {
   const { provide, config, logger, events, hooks } = caps;
   const cfg = parseConfig(configSchema, config, logger);
-  const personaName = cfg.persona || configSchema.persona.default;
   const personasDirRaw = cfg.personasDir || configSchema.personasDir.default;
   const { statePersistence, timeInjection, timeZone } = cfg;
 
@@ -636,7 +624,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   let card: PersonaCard;
-  const found = await findCard(personaName);
+  const found = await findCard(DEFAULT_PERSONA);
   if (found && found !== INVALID) {
     card = found.card;
     logger.info(`已加载角色卡: ${card.name} (${found.uri})`);
@@ -647,18 +635,18 @@ async function run(caps: Caps): Promise<void> {
       prompt: '请友好、专业地与用户交流。',
     };
     if (found === INVALID) {
-      logger.warn(`角色卡 "${personaName}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
+      logger.warn(`角色卡 "${DEFAULT_PERSONA}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
     } else {
-      logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
+      logger.info(`未找到角色卡 "${DEFAULT_PERSONA}"，使用内置默认角色`);
     }
   }
 
-  const service = new PersonaServiceImpl(card, personaName as string, {
+  const service = new PersonaServiceImpl(card, {
     statePersistence,
     timeInjection,
     timeZone,
   });
-  for (const setting of sessionSettings(personaName as string)) caps.sessionManager.registerSetting(setting);
+  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
   provide(persona, service);
 
   /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */
@@ -666,7 +654,7 @@ async function run(caps: Caps): Promise<void> {
     try {
       const known = await scanAll(service);
       for (const n of await service.listModels()) {
-        if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
+        if (!known.has(n) && n !== DEFAULT_PERSONA) service.removeCardCacheEntry(n);
       }
       service.reloadPrimaryCardFromCache();
       logger.debug(`persona ${reason}，已知 ${known.size} 张卡`);

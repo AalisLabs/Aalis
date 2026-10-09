@@ -76,7 +76,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     roots: [root('workspace', join(base, 'workspace')), root('store', join(base, storeDir))],
   });
   const consumers = () => [
-    { definition: personaPlugin, config: { persona: 'default', personasDir: 'store:/personas' } },
+    { definition: personaPlugin, config: { personasDir: 'store:/personas' } },
     { definition: skillsPlugin, config: { skillsUri: 'store:/skills' } },
   ];
   const skillNames = (): string[] => (app.bind({ services }).services.get(skills)?.listSkills() ?? []).map(s => s.name);

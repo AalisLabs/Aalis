@@ -213,7 +213,6 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   await app.plugin(agentPlugin, {
     systemPrompt: 'PERSONA-BASE-PROMPT',
     memoryTokenBudget: 4096,
-    maxToolIterations: 5,
     toolResultMaxRatio: 0.15,
     trimThresholdRatio: 1.0,
   });

@@ -27,6 +27,7 @@ export default definePlugin({
     approvals: optional(approvals),
     plugins: optional(pluginsService),
     commands: optional(commands),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -54,6 +55,7 @@ export default definePlugin({
 - 斜杠指令不在本插件内解析，由 `commands` 服务（plugin-commands）在 `inbound:command` 相位统一处理（如 `/help`、`/status`），执行结果经 `outbound:message` 回显到终端
 - 指令的意图确认（权限模型轴 B）：声明了 `confirm` 的指令由 plugin-commands 把确认提示作为消息发进聊天区，在输入框回复 `y` 后回车即确认，其它输入取消，60 秒无回复视为取消；回复在 `inbound:command` 相位被吞掉，不会当成对话发给模型。在 logs/status/help 视图下有消息（含确认提示）进入聊天区时，header 的 CHAT 页签会带计数高亮，Ctrl+T 切回 chat 即可看到并回答
 - sessionId 默认为 `cli-default`
+- 欢迎行、头部、回复前的署名与状态页写的人设名，按终端会话生效的「人设」取卡（会话管理的 `resolveConfig`，入口平台 `cli`），与回合同一口径；没装会话管理时是人设服务的主卡
 - 审批面：激活时经 `approvals.registerSurface('cli')` 登记 `cli` 审批面，终端界面启动后以本地终端身份（`platform: 'cli'`，`userId: 'console'`）接入，审计里的审批面记为 `cli` 与本插件实例。详见下文「审批卡」
 - 切换视图时（help 视图除外）经 `host-config` 把 `lastView` 写回配置文档并落盘；宿主未提供配置文档时不记录，下次启动回到默认视图
 

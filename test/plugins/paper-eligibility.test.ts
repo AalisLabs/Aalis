@@ -1,6 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
+import { placePaperId, type SessionConfig } from '../../packages/api-session-manager/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
+import { ROOM_SETTINGS } from '../../packages/plugin-paper/src/rooms.js';
 import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { type FakeCursor, startFakeCursor } from '../fixtures/fake-cursor.js';
@@ -19,6 +21,8 @@ import {
   startPaperHub,
   stopPaperHubs,
 } from '../fixtures/paper.js';
+import { recordRoom } from '../fixtures/rooms.js';
+import { ONEBOT_TYPES, startSessionManager } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的资格判定（U10a）：paper_task 只受理真人在房间会话本身里当面发起的任务，房间要开了白纸、
@@ -250,6 +254,58 @@ describe('同账号隔离：声明 shared 的提供者，同一账号下只给�
     });
     await expectAccepted(named);
     await expectAccepted(named, human('30001', ROOM2));
+  });
+});
+
+describe('房间白纸一个窗口一张', () => {
+  it('不写名字的房间白纸按场所键取 id：同一个群里两个机器人账号的会话交的任务落在同一块白纸上，别的群是另一块', async () => {
+    const other = 'onebot:10001:group:20001';
+    const unnamed = { ...PILOT_ROOM, paperName: undefined };
+    const hub = await startPaperHub({
+      config: { globalDailyCents: 1000, defaults: { remoteAgentType: REMOTE } },
+      rooms: { [ROOM]: unnamed, [other]: unnamed, [ROOM2]: unnamed },
+      remotes: { [REMOTE]: fakeRemote({ isolation: 'per-agent' }) },
+    });
+    for (const sessionId of [ROOM, other, ROOM2]) await expectAccepted(hub, human('30001', sessionId));
+    const papers = Object.values(hub.ledger().tasks).map(task => [task.room, task.paperId]);
+    expect(papers).toEqual([
+      [ROOM, placePaperId('onebot:group:20001')],
+      [other, placePaperId('onebot:group:20001')],
+      [ROOM2, placePaperId('onebot:group:20002')],
+    ]);
+  });
+});
+
+describe('房间设置项设在窗口的场所上', () => {
+  /** 六项各一个合法的值 */
+  const SAMPLES: SessionConfig = {
+    paperEnabled: true,
+    paperName: PAPER,
+    remoteAgentTypes: [REMOTE],
+    remoteAgentUserDailyCents: 100,
+    remoteAgentUserDailyTasks: 3,
+    remoteAgentRoomDailyCents: 500,
+  };
+
+  it('只能设到场所为止：写进会话自己的覆盖被拒；窗口的场所照收，同一窗口里另一个机器人账号的会话取到场所的值', async () => {
+    const { app, host, sm } = await startSessionManager({
+      settings: ROOM_SETTINGS,
+      adapters: [{ platform: 'onebot', sessionTypes: ONEBOT_TYPES }],
+    });
+    try {
+      await recordRoom(host.events, ROOM, '群');
+      expect(ROOM_SETTINGS.map(setting => setting.key).sort()).toEqual(Object.keys(SAMPLES).sort());
+      for (const [key, value] of Object.entries(SAMPLES)) {
+        await expect(sm.updateSession(ROOM, { config: { [key]: value } }), key).rejects.toThrow(
+          '这一项在场所及以上设置',
+        );
+      }
+      await sm.updateLayer({ scope: 'place', key: 'onebot:group:20001' }, SAMPLES);
+      await recordRoom(host.events, 'onebot:10001:group:20001', '群');
+      expect(sm.resolveConfig('onebot:10001:group:20001')).toMatchObject(SAMPLES);
+    } finally {
+      await app.stop();
+    }
   });
 });
 

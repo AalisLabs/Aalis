@@ -53,31 +53,22 @@ function isScopeEnabled(cfg: { scopes; overrides }, platform, sessionType, targe
 function resolveEffectiveConfig<T extends { overrides }>(base: T, platform, sessionType, targetId?): T;
 ```
 
-## 出生平台解析
+## 窗口键
 
-`resolveSessionOrigin` 按会话 ID 推出房间会话的出生平台与受众。只有 session-manager 还用它选平台档、推会话种类与受众；别处要出生平台的（权限的房间判定、`token:request` 的快照、跨会话召回的当前平台等）都读会话记录上的字段。会话记录上的出生平台（`originPlatform`）不从它来：那是 IM 房间建档时按入站消息记下的字段。它是同步纯函数，只看 ID，不查已注册的适配器：适配器没加载时结果不变。
+`windowKey` 拼出聊天窗口的键 `平台:类型:目标`，与作用域同一套写法；session-manager 拿它作场所的窗口键（见 [会话管理](../services/session-manager.md) 的「场所」）。键里不含机器人账号：同一个群里几个账号的会话是同一个窗口。平台名与类型名按约定不含 `:`；适配器发出不合约定的名字时，前两段里的 `%` 与 `:` 转义成 `%25`、`%3A`，不同的窗口不会拼成同一个键。目标可以含 `:`（OneBot 频道的目标是 `<频道组>:<频道>`），原样放在最后。`parseWindowKey` 拆键时还原前两段的转义，目标取第二个 `:` 之后的全部，不到三段时返回 undefined。
 
 ```ts
-interface SessionOrigin {
-  /** 出生平台：会话 ID（子任务取第一个 `::` 之前）第一个 `:` 之前的一段 */
-  platform: string;
-  /** 类型段为 private 的是私聊；group、channel 与不认识的类型段一律按群 */
-  audience: 'group' | 'private';
-}
-function resolveSessionOrigin(sessionId: string): SessionOrigin | undefined;
+function windowKey(window: { platform: string; type: string; targetId: string }): string;
+function parseWindowKey(key: string): { platform: string; type: string; targetId: string } | undefined;
 ```
 
-判法：先截掉第一个 `::` 及之后的部分（子任务 `<父会话>::<后缀>` 按父会话算），再取第一个 `:` 之前的一段作为出生平台；截掉之后不含 `:`、或以 `:` 开头的 ID 不是房间，返回 undefined。受众看第三段，只有 `private` 算私聊，其余（含缺失的类型段）按群算。不要求四段：只要 ID 以 `<平台名>:` 开头就能认出平台。
-
-| 会话 ID | 结果 |
+| 聊天窗口 | 键 |
 |---|---|
-| `onebot:<self>:group:<群号>` | `{ platform: 'onebot', audience: 'group' }` |
-| `onebot:<self>:private:<QQ号>` | `{ platform: 'onebot', audience: 'private' }` |
-| `onebot:<self>:channel:<频道组>:<频道>` | `{ platform: 'onebot', audience: 'group' }` |
-| `onebot:<self>:group:<群号>::<8位>` | 与父会话相同 |
-| `session-<8位>`、`webui-default`、`cli-default`、`mcp-server`、`workflow::<runId>::<nodeId>` | `undefined` |
+| OneBot 群 `<群号>` | `onebot:group:<群号>` |
+| OneBot 私聊，对端 `<对端>` | `onebot:private:<对端>` |
+| OneBot 频道 | `onebot:channel:<频道组>:<频道>` |
 
-它依赖的会话 ID 约定写在 api-platform 的 `PlatformAdapter.canHandle` 说明里（见 [platform 服务](../services/platform.md)）：多人房间的会话 ID 以 `<平台名>:` 开头；非房间的内部会话 ID 不含单冒号，要分段用 `::`。返回 undefined 的会话由调用方按入口平台处理。
+会话的出生平台与聊天窗口是会话记录上的字段（`originPlatform`、`originChat`），IM 房间建档时按入站消息记下，读方一律读字段，不从会话 ID 推。
 
 ## 服务接口
 

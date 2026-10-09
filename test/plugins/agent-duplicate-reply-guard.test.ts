@@ -28,7 +28,6 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 const AGENT_CONFIG = {
   systemPrompt: 'test',
   memoryTokenBudget: 1024,
-  maxToolIterations: 5,
   toolResultMaxRatio: 0.15,
   trimThresholdRatio: 1.0,
   preferredModel: '',
@@ -61,7 +60,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
   let host: ReturnType<typeof bindHost>;
 
   const boot = async (clientSide: boolean): Promise<{ sent: OutgoingMessage[]; sessionId: string }> => {
-    writeFileSync(join(base, 'self', 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
+    writeFileSync(join(base, 'self', 'personas', 'default.yaml'), cardYaml(clientSide));
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -69,7 +68,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
     await app.plugin(createMockLLMPlugin({ responses: [{ content: RAW_JSON }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(personaPlugin, { persona: 'zz-fmt', personasDir: 'personas:/' });
+    await app.plugin(personaPlugin, { personasDir: 'personas:/' });
     await app.plugin(agentPlugin, AGENT_CONFIG);
     await app.plugins.idle();
     // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「守卫根本没跑」伪装成绿

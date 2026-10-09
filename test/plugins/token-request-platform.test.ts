@@ -20,7 +20,6 @@ import { recordRoom } from '../fixtures/rooms.js';
 const AGENT_CONFIG = {
   systemPrompt: 'test',
   memoryTokenBudget: 1024,
-  maxToolIterations: 5,
   toolResultMaxRatio: 0.15,
   trimThresholdRatio: 1.0,
   preferredModel: '',

@@ -4,9 +4,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
-import { type SessionSetting, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { SESSION_LAYERS, type SessionSetting, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import {
   ErrorFrameSchema,
   RPC_ERROR_CODES,
@@ -14,7 +15,7 @@ import {
   sessionProtocol,
 } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
@@ -22,15 +23,24 @@ import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
-import { recordRoom } from '../fixtures/rooms.js';
+import { recordRoom, storedRoom } from '../fixtures/rooms.js';
 import { CLIENT, client, DETACHED_SURFACE, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { ITERATIONS, MODEL, PAPER_NAME, PERSONA, settingsPlugin, TOOL_GROUPS } from '../fixtures/session-settings.js';
+import {
+  ITERATIONS,
+  MODEL,
+  modelPlugin,
+  PAPER_NAME,
+  PERSONA,
+  settingsPlugin,
+  TOOL_GROUPS,
+} from '../fixtures/session-settings.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话服务（plugin-session-server）的前一半：握手；会话列表的分区、分组、状态、排序、搜索与分页；
-// watch 的增量推送；建、改名、归档、删除与批量；会话设置的各行与各层；「我的」区的已读。
+// 会话服务（plugin-session-server）的前一半：握手；会话列表的分区、分组、状态、排序、搜索与分页，摘要的聊天窗口与场所；
+// watch 的增量推送；建、改名、归档、删除与批量；会话设置的各行与各层（层表、场所、只能设到场所为止的项、全局默认层由
+// 服务偏好承担的「模型」）；「我的」区的已读。
 // 全部经 sessionProtocol.connect 直接收发帧，不走网络；收到的每个结果与通知都先过协议 schema。
 // ════════════════════════════════════════════════════════════
 
@@ -86,6 +96,8 @@ const EXTRA: SessionSetting = {
   order: 5,
   unset: '<不追加>',
 };
+/** 白纸名：与白纸插件的登记一样只能设到场所为止 */
+const PAPER_AT_PLACE: SessionSetting = { ...PAPER_NAME, narrowest: 'place' };
 /** 只对 owner 的会话 */
 const JSON_RENDERING: SessionSetting = {
   key: 'clientSideJsonRendering',
@@ -98,7 +110,7 @@ const SETTING_PLUGINS = [
   settingsPlugin('agent-settings', [MODEL_FIRST, THINK, ITERATIONS]),
   settingsPlugin('persona-settings', [PERSONA, EXTRA, JSON_RENDERING]),
   settingsPlugin('tools-settings', [TOOL_GROUPS]),
-  settingsPlugin('paper-settings', [PAPER_NAME]),
+  settingsPlugin('paper-settings', [PAPER_AT_PLACE]),
 ];
 
 /** 时钟只假 Date：会话的创建、改动与开口时间取 Date.now()，定时器照常走 */
@@ -108,7 +120,7 @@ function clock(at: number): void {
 
 /**
  * stored：会话表里预置的记录；files：插件数据（已读记录）；layers：宿主配置文档里会话设置的各层；
- * unreadable：这些 URI 存在但读不出来（权限错，不是不存在）
+ * unreadable：这些 URI 存在但读不出来（权限错，不是不存在）；models：llm 服务的模型（[provider, model]，各由一个插件提供）
  */
 async function setup({
   stored = {},
@@ -116,12 +128,14 @@ async function setup({
   layers,
   unreadable = [],
   unwritable = false,
+  models = [],
 }: {
   stored?: Record<string, Record<string, unknown>>;
   files?: Map<string, string | Uint8Array>;
   layers?: AalisConfig['sessionConfig'];
   unreadable?: string[];
   unwritable?: boolean;
+  models?: Array<[provider: string, model: string]>;
 } = {}) {
   vi.useFakeTimers({ toFake: ['Date'] });
   clock(1_000);
@@ -137,7 +151,7 @@ async function setup({
   apps.push(app);
   provideHome(app);
   await registerHubs(app);
-  const host = app.bind({ provide, events, hooks, sessionManager, sessionProtocol, hostConfig });
+  const host = app.bind({ provide, events, hooks, services, sessionManager, sessionProtocol, hostConfig });
   host.provide(memory, fakeMemory(stored) as never);
   const disk = memoryStorage(files);
   const readFile = disk.readFile.bind(disk);
@@ -150,6 +164,9 @@ async function setup({
   await app.plugin(adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => /^onebot:1000[01]:/.test(id) }));
   await app.plugin(adapterPlugin('onebot-b', { platform: 'onebot', canHandle: id => id.startsWith('onebot:20000:') }));
   await app.plugin(adapterPlugin('cli', { platform: 'cli', canHandle: id => id === 'cli-default' }));
+  const providers = new Map<string, string[]>();
+  for (const [provider, model] of models) providers.set(provider, [...(providers.get(provider) ?? []), model]);
+  for (const [provider, ids] of providers) await app.plugin(modelPlugin(provider, ids));
   await app.plugin(sessionManagerPlugin);
   for (const plugin of SETTING_PLUGINS) await app.plugin(plugin);
   await app.plugin(sessionServerPlugin, {});
@@ -275,7 +292,7 @@ describe('握手', () => {
 });
 
 describe('会话列表', () => {
-  it('两区：我的会话在前、房间在后，section 只取一区；房间行带平台、实例、账号与受众', async () => {
+  it('两区：我的会话在前、房间在后，section 只取一区；房间行带平台、实例、账号与聊天窗口，每个会话带场所', async () => {
     const { host, server, sm } = await setup();
     const mine = await sm.createSession({ name: '周报' });
     clock(2_000);
@@ -302,12 +319,22 @@ describe('会话列表', () => {
       platform: 'onebot',
       instance: 'onebot-a',
       account: '10000',
-      audience: 'group',
+      chat: { type: 'group', multiParty: true },
+      place: { key: 'onebot:group:20001', kind: 'window', name: '读书会' },
+    });
+    expect(all.sessions.find(s => s.id === 'onebot:20000:private:30001')).toMatchObject({
+      chat: { type: 'private', multiParty: false },
+      place: { key: 'onebot:private:30001', kind: 'window', name: '小明' },
     });
     const own = all.sessions.find(s => s.id === mine.id);
-    expect(own).toMatchObject({ title: '周报', kind: 'owner', audience: 'owner' });
+    expect(own).toMatchObject({
+      title: '周报',
+      kind: 'owner',
+      place: { key: 'workspace:default', kind: 'workspace', name: '默认工作区' },
+    });
     expect(own?.instance).toBeUndefined();
     expect(own?.account).toBeUndefined();
+    expect(own?.chat).toBeUndefined();
   });
 
   it('「我的」区：出错、完成未读、运行中依次排在前面，其余按最后活动从新到旧；房间不记未读', async () => {
@@ -489,6 +516,15 @@ describe('会话列表', () => {
     expect((await c.list({ parentId: 'onebot:10000:group:1' })).sessions.map(s => [s.id, s.section])).toEqual([
       [roomChild.id, 'rooms'],
     ]);
+    // 子会话的场所与聊天窗口取根会话的
+    const [deep] = (await c.list({ parentId: child.id })).sessions;
+    expect(deep).toMatchObject({ place: { key: 'workspace:default', kind: 'workspace' } });
+    expect(deep.chat).toBeUndefined();
+    const [inRoom] = (await c.list({ parentId: 'onebot:10000:group:1' })).sessions;
+    expect(inRoom).toMatchObject({
+      chat: { type: 'group', multiParty: true },
+      place: { key: 'onebot:group:1', kind: 'window', name: '群' },
+    });
     expect((await c.fail('sessions/list', { parentId: 'session-nope' })).data?.code).toBe('not-found');
   });
 });
@@ -759,13 +795,19 @@ describe('会话设置', () => {
       cli: { persona: 'aalis-cli' },
       onebot: { enabledToolGroups: ['onebot'] },
     },
-    audiences: { onebot: { group: { paperName: '<群白纸>' } } },
+    types: { onebot: { group: { think: 'high', paperName: '<群白纸>' } } },
   };
+  const ROOM = 'onebot:10000:group:1';
+  /** ROOM 所在的窗口与默认工作区两个场所 */
+  const WINDOW = { scope: 'place', key: 'onebot:group:1' } as const;
+  const HOME = { scope: 'place', key: 'workspace:default' } as const;
+  const GROUP = { scope: 'type', platform: 'onebot', type: 'group' } as const;
   type Rows = Array<{ key: string; value?: unknown; effective?: unknown; source?: string }>;
   /** 每行的键、本层的值、生效值与来源 */
   const values = (rows: Rows) => rows.map(r => [r.key, r.value, r.effective, r.source]);
+  const keys = (rows: Rows) => rows.map(r => r.key);
 
-  it('config/get：只列适用于这种会话的项，composer、common 在前，composer 最多两项；每行带字段、所属插件、本会话的值、生效值与来源', async () => {
+  it('config/get：只列适用于这种会话的项，composer、common 在前，composer 最多两项；每行带字段、所属插件、本会话的值、生效值与来源（层名）', async () => {
     const { host, server, sm } = await setup({
       layers: LAYERS,
       stored: {
@@ -780,7 +822,8 @@ describe('会话设置', () => {
         },
       },
     });
-    await recordRoom(host.events, 'onebot:10000:group:1', '群');
+    await recordRoom(host.events, ROOM, '群');
+    await sm.updateLayer(WINDOW, { persona: '<群人设>' });
     const c = client(server());
     await c.init();
 
@@ -809,15 +852,15 @@ describe('会话设置', () => {
       ['clientSideJsonRendering', undefined, undefined, undefined],
     ]);
 
-    const room = await c.call('session/config/get', { sessionId: 'onebot:10000:group:1' });
+    // 房间按层表叠加：平台档、平台类型档（聊天窗口的类型名）、场所（它的窗口）；只能设到场所为止的白纸名不列
+    const room = await c.call('session/config/get', { sessionId: ROOM });
     expect(values(room.items)).toEqual([
       ['llm', undefined, undefined, undefined],
-      ['think', undefined, undefined, undefined],
+      ['think', undefined, 'high', 'type'],
       ['systemPromptExtra', undefined, undefined, undefined],
-      ['persona', undefined, 'aalis', 'defaults'],
+      ['persona', undefined, '<群人设>', 'place'],
       ['enabledToolGroups', undefined, ['onebot'], 'platform'],
       ['maxToolIterations', undefined, undefined, undefined],
-      ['paperName', undefined, '<群白纸>', 'audience'],
     ]);
 
     // owner 的会话按连接的入口平台选档：先看会话记下的平台，再看接管会话 id 的适配器，最后才取连接的平台
@@ -869,93 +912,206 @@ describe('会话设置', () => {
     );
   });
 
-  it('写入只收适用于这个种类的项（受众条目按房间）：不适用的回参数错误、什么都不改；null 照常删掉旧值', async () => {
-    const { server, sm, doc } = await setup({ layers: LAYERS });
-    const s = await sm.createSession({ name: 'S' });
-    await sm.ensureSession('session-legacy', { config: { paperName: '<旧数据>' } });
+  it('只能设到场所为止的项：会话的行里没有，写进本会话被拒（这一项在场所及以上设置）、清掉照收；全局默认、平台档、平台类型档与场所照列照收', async () => {
+    const { host, server, sm, doc } = await setup({
+      stored: { [`${ROOM}-legacy`]: { ...storedRoom(`${ROOM}-legacy`), config: { paperName: '<旧数据>' } } },
+    });
+    await recordRoom(host.events, ROOM, '群');
     const c = client(server());
     await c.init();
-    const group = { scope: 'audience', platform: 'onebot', audience: 'group' } as const;
 
-    const err = await c.fail('session/config/update', { sessionId: s.id, patch: { paperName: '<白纸>' } });
+    expect(keys((await c.call('session/config/get', { sessionId: ROOM })).items)).not.toContain('paperName');
+    const err = await c.fail('session/config/update', { sessionId: ROOM, patch: { paperName: '<白纸>' } });
     expect(err.code).toBe(RPC_ERROR_CODES.invalidParams);
-    expect(sm.getSession(s.id)?.config).toEqual({});
-    const layerErr = await c.fail('session/config/layer/update', {
-      layer: group,
-      patch: { clientSideJsonRendering: true },
-    });
-    expect(layerErr.code).toBe(RPC_ERROR_CODES.invalidParams);
-    expect(doc()?.audiences).toEqual(LAYERS.audiences);
+    expect(err.message).toContain('这一项在场所及以上设置');
+    expect(sm.getSession(ROOM)?.config).toEqual({});
+    await c.call('session/config/update', { sessionId: `${ROOM}-legacy`, patch: { paperName: null } });
+    expect(sm.getSession(`${ROOM}-legacy`)?.config).toEqual({});
 
-    await c.call('session/config/update', { sessionId: 'session-legacy', patch: { paperName: null } });
-    expect(sm.getSession('session-legacy')?.config).toEqual({});
+    const onebot = { scope: 'platform', platform: 'onebot' } as const;
+    for (const layer of [{ scope: 'defaults' } as const, onebot, GROUP, WINDOW]) {
+      const rows = (await c.call('session/config/layer/update', { layer, patch: { paperName: '<白纸>' } })).items;
+      expect(
+        rows.find(r => r.key === 'paperName'),
+        JSON.stringify(layer),
+      ).toMatchObject({ value: '<白纸>' });
+    }
+    expect(doc()).toEqual({
+      defaults: { paperName: '<白纸>' },
+      platforms: { onebot: { paperName: '<白纸>' } },
+      types: { onebot: { group: { paperName: '<白纸>' } } },
+    });
+    expect(sm.getLayer(WINDOW)).toEqual({ paperName: '<白纸>' });
   });
 
-  it('按层读写：layers 列出可以设的各层；一层的行与会话的同形，受众条目只列适用于房间的项；改动写进宿主配置文档', async () => {
-    const { server, doc } = await setup({ layers: LAYERS });
+  it('场所写入只收适用于它的类别的项（窗口按房间、工作区按 owner 的会话）：不适用的回参数错误、什么都不改；平台类型档收全部', async () => {
+    const { host, server, sm, doc } = await setup({ layers: LAYERS });
+    await recordRoom(host.events, ROOM, '群');
     const c = client(server());
     await c.init();
-    const group = { scope: 'audience', platform: 'onebot', audience: 'group' } as const;
+    const rejected = async (params: object) =>
+      expect((await c.fail('session/config/layer/update', params)).code, JSON.stringify(params)).toBe(
+        RPC_ERROR_CODES.invalidParams,
+      );
+
+    await rejected({ layer: WINDOW, patch: { clientSideJsonRendering: true } });
+    await rejected({ layer: HOME, patch: { paperName: '<白纸>' } });
+    expect(sm.getLayer(WINDOW)).toEqual({});
+    expect(sm.getLayer(HOME)).toEqual({});
+
+    await c.call('session/config/layer/update', { layer: GROUP, patch: { clientSideJsonRendering: true } });
+    expect(doc()?.types).toEqual({
+      onebot: { group: { think: 'high', paperName: '<群白纸>', clientSideJsonRendering: true } },
+    });
+  });
+
+  it('按层读写：layers 按层表的先后列出可以设的各层，另带层表；一层的行与会话的同形，各带解析到这一层为止的生效值与来源；场所只列适用于它的类别的项', async () => {
+    const { host, server, sm, doc } = await setup({ layers: LAYERS });
+    await recordRoom(host.events, ROOM, '群');
+    const c = client(server());
+    await c.init();
     const onebot = { scope: 'platform', platform: 'onebot' } as const;
 
-    expect((await c.call('session/config/layers', {})).layers).toEqual([
-      { scope: 'defaults' },
-      { scope: 'platform', platform: 'cli' },
-      onebot,
-      group,
-      { scope: 'platform', platform: 'webui' },
-    ]);
+    expect(await c.call('session/config/layers', {})).toEqual({
+      layers: [
+        { scope: 'defaults' },
+        { scope: 'platform', platform: 'cli' },
+        onebot,
+        { scope: 'platform', platform: 'webui' },
+        GROUP,
+        HOME,
+        WINDOW,
+      ],
+      order: SESSION_LAYERS.map(({ name, label }) => ({ name, label })),
+    });
     const defaults = await c.call('session/config/layer/get', { layer: { scope: 'defaults' } });
-    expect(defaults.items.map(r => r.key)).toContain('clientSideJsonRendering');
-    const rows = (await c.call('session/config/layer/get', { layer: group })).items;
-    expect(rows.map(r => r.key)).not.toContain('clientSideJsonRendering');
-    expect(values(rows).filter(([, , effective]) => effective !== undefined)).toEqual([
+    expect(keys(defaults.items)).toEqual(expect.arrayContaining(['clientSideJsonRendering', 'paperName']));
+    const group = (await c.call('session/config/layer/get', { layer: GROUP })).items;
+    expect(keys(group)).toEqual(expect.arrayContaining(['clientSideJsonRendering', 'paperName']));
+    expect(values(group).filter(([, , effective]) => effective !== undefined)).toEqual([
+      ['think', 'high', 'high', 'type'],
       ['persona', undefined, 'aalis', 'defaults'],
       ['enabledToolGroups', undefined, ['onebot'], 'platform'],
-      ['paperName', '<群白纸>', '<群白纸>', 'audience'],
+      ['paperName', '<群白纸>', '<群白纸>', 'type'],
     ]);
 
-    const updated = await c.call('session/config/layer/update', { layer: onebot, patch: { persona: '<群人设>' } });
+    // 窗口场所在它的平台档与平台类型档之上；工作区场所只在全局默认之上
+    await sm.updateLayer(WINDOW, { persona: '<群人设>' });
+    const window = (await c.call('session/config/layer/get', { layer: WINDOW })).items;
+    expect(keys(window)).not.toContain('clientSideJsonRendering');
+    expect(values(window).filter(([, , effective]) => effective !== undefined)).toEqual([
+      ['think', undefined, 'high', 'type'],
+      ['persona', '<群人设>', '<群人设>', 'place'],
+      ['enabledToolGroups', undefined, ['onebot'], 'platform'],
+      ['paperName', undefined, '<群白纸>', 'type'],
+    ]);
+    const home = (await c.call('session/config/layer/get', { layer: HOME })).items;
+    expect(keys(home)).toContain('clientSideJsonRendering');
+    expect(keys(home)).not.toContain('paperName');
+    expect(values(home).filter(([, , effective]) => effective !== undefined)).toEqual([
+      ['persona', undefined, 'aalis', 'defaults'],
+    ]);
+
+    // 场所写进场所记录，不进宿主配置；同一窗口里另一个机器人账号的会话照样取到
+    const updated = await c.call('session/config/layer/update', { layer: WINDOW, patch: { persona: '<新群人设>' } });
     expect(values(updated.items).find(([key]) => key === 'persona')).toEqual([
       'persona',
-      '<群人设>',
-      '<群人设>',
-      'platform',
+      '<新群人设>',
+      '<新群人设>',
+      'place',
     ]);
-    expect(doc()?.platforms?.onebot).toEqual({ enabledToolGroups: ['onebot'], persona: '<群人设>' });
+    expect(doc()).toEqual(LAYERS);
+    await recordRoom(host.events, 'onebot:10001:group:1', '群');
+    const other = (await c.call('session/config/get', { sessionId: 'onebot:10001:group:1' })).items;
+    expect(values(other).find(([key]) => key === 'persona')).toEqual(['persona', undefined, '<新群人设>', 'place']);
+
+    await c.call('session/config/layer/update', { layer: onebot, patch: { persona: '<平台人设>' } });
+    expect(doc()?.platforms?.onebot).toEqual({ enabledToolGroups: ['onebot'], persona: '<平台人设>' });
 
     for (const params of [
       { layer: onebot, patch: { bogus: 1 } },
       { layer: onebot, patch: { think: 1 } },
       { layer: { scope: 'platform', platform: '' }, patch: { persona: '<人设>' } },
-      { layer: { scope: 'audience', platform: 'onebot', audience: 'owner' }, patch: { persona: '<人设>' } },
+      { layer: { scope: 'type', platform: 'onebot', type: '*' }, patch: { persona: '<人设>' } },
+      { layer: { scope: 'place', key: 'onebot:group:404' }, patch: { persona: '<人设>' } },
+      { layer: { scope: 'audience', platform: 'onebot', audience: 'group' }, patch: { persona: '<人设>' } },
     ]) {
       const err = await c.fail('session/config/layer/update', params);
       expect(err.code, JSON.stringify(params)).toBe(RPC_ERROR_CODES.invalidParams);
     }
-    expect(doc()?.platforms?.onebot).toEqual({ enabledToolGroups: ['onebot'], persona: '<群人设>' });
+    expect(doc()?.platforms?.onebot).toEqual({ enabledToolGroups: ['onebot'], persona: '<平台人设>' });
+  });
+
+  it('全局默认层的「模型」：生效值出自全局默认或哪一层都没设时，行上带服务此刻实际用的那一个；偏好指向的模型不在时两者不同；上面的层设了不带', async () => {
+    const A = '@zz/llm-a';
+    const { host, server, sm } = await setup({
+      models: [
+        [A, 'm1'],
+        [A, 'm2'],
+      ],
+    });
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const model = async () =>
+      (await c.call('session/config/get', { sessionId: s.id })).items.find(r => r.key === 'llm');
+    const atDefaults = async () =>
+      (await c.call('session/config/layer/get', { layer: { scope: 'defaults' } })).items.find(r => r.key === 'llm');
+    const m1 = { provider: A, model: 'm1' };
+
+    const unset = await model();
+    expect([unset?.effective, unset?.source, unset?.resolved]).toEqual([undefined, undefined, m1]);
+    const layer = await atDefaults();
+    expect([layer?.value, layer?.resolved]).toEqual([undefined, m1]);
+    expect(
+      (await c.call('session/config/get', { sessionId: s.id })).items.filter(r => r.resolved !== undefined),
+    ).toHaveLength(1);
+
+    const set = await c.call('session/config/layer/update', {
+      layer: { scope: 'defaults' },
+      patch: { llm: { provider: A, model: 'm2' } },
+    });
+    expect(host.services.preferred(llm)).toBe(`${A}/m2`);
+    expect(set.items.find(r => r.key === 'llm')).toMatchObject({
+      value: { provider: A, model: 'm2' },
+      source: 'defaults',
+      resolved: { provider: A, model: 'm2' },
+    });
+
+    await c.call('session/config/layer/update', {
+      layer: { scope: 'defaults' },
+      patch: { llm: { provider: A, model: 'gone' } },
+    });
+    expect(await model()).toMatchObject({
+      effective: { provider: A, model: 'gone' },
+      source: 'defaults',
+      resolved: m1,
+    });
+
+    await c.call('session/config/update', { sessionId: s.id, patch: { llm: { provider: A, model: 'm2' } } });
+    const own = await model();
+    expect(own).toMatchObject({ source: 'session' });
+    expect(own).not.toHaveProperty('resolved');
   });
 
   it('插件启停推 session/config/changed：每条连接都收到；停用后它的项不再出现、值还在，重新启用后恢复', async () => {
     const { app, host, server, sm } = await setup();
-    const room = 'onebot:10000:group:1';
-    await recordRoom(host.events, room);
-    await sm.ensureSession(room, { config: { paperName: '<自己的白纸>' } });
+    await recordRoom(host.events, ROOM);
+    await sm.updateLayer(WINDOW, { paperName: '<窗口白纸>' });
     const a = client(server());
     const b = client(server());
     await a.init();
     await b.init();
     const paperRow = async () =>
-      (await a.call('session/config/get', { sessionId: room })).items.find(r => r.key === 'paperName');
+      (await a.call('session/config/layer/get', { layer: WINDOW })).items.find(r => r.key === 'paperName');
 
     await app.plugins.disable('paper-settings');
     expect(a.notifications('session/config/changed')).toHaveLength(1);
     expect(b.notifications('session/config/changed')).toHaveLength(1);
     expect(await paperRow()).toBeUndefined();
-    expect(sm.getSession(room)?.config).toEqual({ paperName: '<自己的白纸>' });
-
+    expect(sm.getPlace(WINDOW.key)).toBeDefined();
     await app.plugins.enable('paper-settings');
     expect(b.notifications('session/config/changed')).toHaveLength(2);
-    expect(await paperRow()).toMatchObject({ value: '<自己的白纸>', source: 'session' });
+    expect(await paperRow()).toMatchObject({ value: '<窗口白纸>', source: 'place' });
   });
 });

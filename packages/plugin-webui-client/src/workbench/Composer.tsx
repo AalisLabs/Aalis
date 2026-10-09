@@ -25,6 +25,7 @@ import {
   hasChoices,
   type Option,
   optionLabel,
+  unsetOf,
   valueKey,
   withCurrent,
 } from '../settings/field';
@@ -314,7 +315,7 @@ function SettingLink({
 }: { row: SettingRow; dependency: unknown } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
   const { options, names } = useFieldOptions(row.field, 0, dependency);
   const effective = effectiveOf(row);
-  const shown = effective === undefined ? row.unset : formatValue(row.field, effective, [...options, ...names]);
+  const shown = effective === undefined ? unsetOf(row) : formatValue(row.field, effective, [...options, ...names]);
   const name = shown === undefined ? row.field.label : `${row.field.label}：${shown}`;
   return (
     <Link
@@ -361,7 +362,7 @@ function SettingSelect({
       aria-label={field.label}
       title={failed || field.label}
       value={current === undefined ? '' : valueKey(field, current)}
-      placeholder={fallback ? optionLabel(fallback) : (row.unset ?? field.label)}
+      placeholder={fallback ? optionLabel(fallback) : (unsetOf(row) ?? field.label)}
       options={[
         ...choices.map(option => ({ value: option.key, label: optionLabel(option) })),
         ...(failed ? [{ value: FAILED, label: failed, disabled: true }] : []),
