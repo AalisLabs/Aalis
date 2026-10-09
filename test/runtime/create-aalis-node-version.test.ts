@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { checkNodeVersion } from '../../packages/create-aalis/src/cli.js';
 
 // 最低 Node 版本是 24.15.0：从这一版起，默认记忆后端用的 node:sqlite 不再打印实验特性警告。
-// 脚手架一开头就检查，不够时写明需要的版本、当前版本与升级方法后退出，不生成任何文件。
+// 脚手架一开头就检查，不够时写明需要的版本、当前版本与文档站升级一节的地址后退出，不生成任何文件。
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../../packages/create-aalis/src/cli.ts', import.meta.url));
@@ -26,29 +26,13 @@ describe('checkNodeVersion', () => {
     expect(checkNodeVersion(version).ok).toBe(false);
   });
 
-  it('不够时写明需要的版本、当前版本、各平台的升级方法，旧 Node 上装好的项目怎样换新版记忆后端、旧库不用迁移，末行指向文档站的升级一节', () => {
-    const result = checkNodeVersion('v22.16.0');
-    if (result.ok) throw new Error('v22.16.0 应当不够');
-    expect(result.error).toContain('Aalis 需要 Node.js 24.15.0 起，当前是 v22.16.0');
-    for (const part of [
-      'macOS / Linux',
-      'nvm install 24',
-      'nvm alias default 24',
-      'Windows',
-      'nvm-windows',
-      'https://nodejs.org',
-      'aalis.db',
-      '不用迁移',
-      'npm install @aalis/plugin-memory-sqlite@latest',
-      'npm update',
-      'npm start',
-      'npm rebuild',
-    ]) {
-      expect(result.error).toContain(part);
-    }
-    expect(result.error.split('\n').at(-1)).toBe(
-      '升级步骤与已有项目换 Node 后的处理见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
-    );
+  it('不够时全文只有需要的版本、当前版本与文档站升级一节的地址', () => {
+    expect(checkNodeVersion('v22.16.0')).toEqual({
+      ok: false,
+      error:
+        'Aalis 需要 Node.js 24.15.0 起，当前是 v22.16.0。\n' +
+        '升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
+    });
   });
 });
 
