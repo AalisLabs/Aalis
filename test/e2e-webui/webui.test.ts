@@ -13,6 +13,7 @@ import { type FrameClient, type PageHandle, type TableRow, webuiServer } from '.
 import { config, definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
 import { generate } from '../../packages/create-aalis-plugin/src/cli.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
+import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
@@ -41,7 +42,8 @@ import { waitListening } from '../helpers/net.js';
 // 真实插件的页面。插件前端用脚手架生成的插件，加一个在临时目录里搭的测试插件（会话面板，与隔离的各项核查）。
 // 浏览器经一个可以切断的中转连到 webui-server，断线重连靠它模拟。假模型按这一轮的
 // 最后一条消息回话，流式回复逐块慢慢出；需要批准的是一个声明了命令展示的探针工具，可转后台的是另一个测试插件登记的命令工具
-// （会写输出、响应中止），子会话由子任务插件派生。页面里的请求只到这个中转与本机起的「外站」，外站一律不连。
+// （会写输出、响应中止），子会话由子任务插件派生，发图片的用例另装媒体识别（把上传的图片落盘）。页面里的请求只到这个中转与
+// 本机起的「外站」，外站一律不连。
 // ════════════════════════════════════════════════════════════
 
 const CSP =
@@ -2885,6 +2887,43 @@ describe('文档与主题', () => {
     expect(await page.evaluate(() => (window as unknown as { firstFrame: unknown[] }).firstFrame[0])).toBe(
       'brand-dark',
     );
+    expect(problems).toEqual([]);
+  }, 60_000);
+});
+
+describe('附件', () => {
+  it('发一张图片：媒体识别把它落盘到状态根，时间线里是这张图（经媒体地址取到），刷新后照样', async () => {
+    const stack = await startStack({ 看看这只猫: '看到了。' }, [mediaPlugin]);
+    const { page, problems } = await openPage(stack, VIEWPORTS.desktop);
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-e2e-image-'));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, 'orange-cat.png');
+    writeFileSync(
+      file,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    const picker = (await page.waitForSelector('form.composer input[type="file"]')) as ElementHandle<HTMLInputElement>;
+    await picker.uploadFile(file);
+    // 附件读完之前不能发
+    await page.waitForSelector('form.composer button[type="submit"]:not([disabled])');
+    await onViewport(false).send(page, '看看这只猫');
+    await page.waitForSelector(text('看到了。'));
+
+    /** 提问里的图片：加载出来以后回它的地址与替代文字 */
+    const shown = async () => {
+      const image = (await page.waitForSelector(
+        '.message[data-from="user"] img.attachment-image',
+      )) as ElementHandle<HTMLImageElement>;
+      await page.waitForFunction(element => element.complete && element.naturalWidth > 0, {}, image);
+      return image.evaluate(element => [element.getAttribute('src'), element.alt]);
+    };
+    const media = [expect.stringMatching(/^\/api\/media\?uri=data%3A%2Fimages%2F/), 'orange-cat.png'];
+    expect(await shown()).toEqual(media);
+    await page.reload();
+    expect(await shown()).toEqual(media);
     expect(problems).toEqual([]);
   }, 60_000);
 });

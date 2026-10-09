@@ -67,6 +67,15 @@ export interface StorageWatchEvent {
 
 export type StorageWatchListener = (event: StorageWatchEvent) => void;
 
+/** 写文件的选项 */
+export interface StorageWriteOptions {
+  /**
+   * 内容是凭据（访问 token 一类）：只给运行 Aalis 的系统用户读写。本地提供者以 0600 建文件，覆写已有文件时一并收紧，
+   * 内容从不以更宽的权限落盘；做不到的提供者应拒写，不得照常写成别人读得到的文件
+   */
+  secret?: boolean;
+}
+
 /** 取消监听 */
 export type StorageUnwatch = () => void;
 
@@ -101,7 +110,7 @@ export interface StorageService {
    */
   readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
-  writeFile(uri: string, data: string | Buffer): Promise<void>;
+  writeFile(uri: string, data: string | Buffer, options?: StorageWriteOptions): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
   /**
    * 移动/重命名到任意目标 URI（可跨目录，须同存储根）。自动创建目标父目录，
@@ -502,7 +511,7 @@ export function createStorageGateway(
       return target.readFileRange(uri, start, end);
     },
     createReadStream: uri => dispatch(uri, ['read']).createReadStream(uri),
-    writeFile: (uri, data) => dispatch(uri, ['write']).writeFile(uri, data),
+    writeFile: (uri, data, options) => dispatch(uri, ['write']).writeFile(uri, data, options),
     rename: (uri, newName) => dispatch(uri, ['write']).rename(uri, newName),
     move: (fromUri, toUri) => dispatch(fromUri, ['write']).move(fromUri, toUri),
     mkdir: uri => dispatch(uri, ['write']).mkdir(uri),
