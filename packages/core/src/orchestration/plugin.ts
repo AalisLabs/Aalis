@@ -170,9 +170,7 @@ export class PluginManager implements PluginManagerService {
    * @param config    实例配置，原样生效（入参会被拷贝，调用方之后改它不影响实例）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
    * @param options.disabled 以禁用态登记，不激活；之后经 enable 启用
-   * @returns 口径见 {@link PluginManagerService}：false = 重名、未声明 reusable 却要多实例、定义 / 实例 id 校验失败或配置无法拷贝
-   *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId、定义里有另一份 core 造的对象）；true = 已落账（含注册为
-   *   disabled 态），激活是否已发生另看 idle()
+   * @returns 见 {@link PluginManagerService}
    */
   async register(
     definition: PluginDefinition,
@@ -199,8 +197,7 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 校验并落账一条（同步）。返回落账时的状态；被拒返回 false，拒因已记一笔：实例因此不会运行的记 error，重名只是重复请求
-   * 被忽略、记 warn，停机中 debug
+   * 校验并落账一条（同步）。返回落账时的状态；被拒返回 false，拒因已记一笔（级别见 {@link PluginManagerService}）
    */
   #admit(
     definition: PluginDefinition,
@@ -301,7 +298,7 @@ export class PluginManager implements PluginManagerService {
 
   /**
    * 管理动作被前置检查挡下时记 debug 而非 warn：这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测，
-   * 停机中的请求常见于收尾路径；被政策挡下的其余分支各自就地 warn。
+   * 停机中的请求常见于收尾路径。
    */
   #refuse(action: string, instanceId: string, why: string): false {
     this.#logger.debug(`${action}: 插件 "${instanceId}" ${why}`);
@@ -309,7 +306,7 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * unload / enable / disable / bounce 的前置检查，依次为：不在注册表、停机中、'disposed' 终态，挡下时经 {@link #refuse}
+   * 管理动作的前置检查，依次为：不在注册表、停机中、'disposed' 终态，挡下时经 {@link #refuse}
    * 记一笔并返回 false。停机先于 'disposed'：清理回调里的 unload 若去 join 在途卸载，会与停机计划互等。
    * 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态）：unload 写入终态与从注册表摘除之间隔着 retire 的
    * 微任务，此窗口内把它改回 pending 会激活出注册表外的孤儿实例。joinDisposed 时交回该条目，由 unload join 在途卸载。
@@ -442,10 +439,7 @@ export class PluginManager implements PluginManagerService {
     return { definition, instanceId, config, state, error };
   }
 
-  /**
-   * 更新插件配置并热重载：换上新 config 后按 bounce 重启。禁用态只换配置、保持禁用，启用时按新配置激活。
-   * @returns false 表示找不到 entry、'disposed' 终态、停机进行中，或新 config 无法拷贝（保留旧配置）；其余同 bounce
-   */
+  /** 换上新配置并按 bounce 重启（见 {@link PluginManagerService.updateConfig}） */
   async updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
     const entry = this.#target('updateConfig', instanceId);
     if (!entry) return false;
@@ -466,9 +460,7 @@ export class PluginManager implements PluginManagerService {
    *
    * 正在用本插件所提供服务的 required 下游随之重启：先于本插件收尾、关闭，本插件重新激活后按拓扑序
    * 重新激活；optional 依赖经 follow 在换人时交接。不换代码：跑的仍是注册时的那份定义。要换代码走
-   * `unload` + `register`。
-   *
-   * @returns false 表示找不到 entry、disabled 态、'disposed' 终态、停机进行中（拒绝重建）。
+   * `unload` + `register`。返回值见 {@link PluginManagerService.bounce}。
    */
   async bounce(instanceId: string): Promise<boolean> {
     const entry = this.#target('bounce', instanceId);
