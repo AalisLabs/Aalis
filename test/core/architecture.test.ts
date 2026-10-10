@@ -698,7 +698,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 可用（不按 id 打到同 id 的新实例），资源口加 present。
 // 2626 → 2633：同一决定的审修（协调者定）——list() 条目的句柄钉在那一条登记、钉住的目标退役时撤掉 bind 经资源口登记的
 // 切断项与 track、管理面 inspect 加 { for }（约 +20）；删去按容器版本的解析缓存与 #version（约 -13）。
-const CORE_CODE_LINE_CEILING = 2633;
+// 2633 → 2631：b5 P0-4 + X5（用户选甲、乙）——删 sticky 缓存清除（clearSticky 与 App 两处调用），EventBus 的 sticky 名单与
+// 三个回调改为构造参数、字段私有只读。
+const CORE_CODE_LINE_CEILING = 2631;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

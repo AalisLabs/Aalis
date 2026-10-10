@@ -38,9 +38,8 @@ describe('EventBus', () => {
 
 describe('EventBus per-handler 隔离（#8.1）', () => {
   it('单个 handler 抛错不中断其余 handler，emit 不 reject，错误经 onHandlerError 上报', async () => {
-    const bus = new EventBus();
     const reported: Array<[string, unknown]> = [];
-    bus.onHandlerError = (event, err) => reported.push([event, err]);
+    const bus = new EventBus({ onHandlerError: (event, err) => reported.push([event, err]) });
 
     const order: string[] = [];
     bus.on('plugin:loaded', () => {
@@ -83,9 +82,8 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
   });
 
   it('onHandlerError 点名注册者：经门面注册的报 ctx.id，无 owner 的裸登记报 undefined', async () => {
-    const bus = new EventBus();
     const who: Array<string | undefined> = [];
-    bus.onHandlerError = (_event, _err, contextId) => who.push(contextId);
+    const bus = new EventBus({ onHandlerError: (_event, _err, contextId) => who.push(contextId) });
     bus.on(
       'plugin:loaded',
       () => {
@@ -109,10 +107,11 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
   });
 
   it('onHandlerError 自身抛错不向外传播', async () => {
-    const bus = new EventBus();
-    bus.onHandlerError = () => {
-      throw new Error('reporter-boom');
-    };
+    const bus = new EventBus({
+      onHandlerError: () => {
+        throw new Error('reporter-boom');
+      },
+    });
     bus.on('plugin:loaded', () => {
       throw new Error('inner');
     });
@@ -122,11 +121,8 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
 
 describe('EventBus sticky 补发护栏（#8.2）', () => {
   it('sticky 补发时 handler 同步抛错被捕获并上报（不直达 uncaughtException）', async () => {
-    const bus = new EventBus();
     const reported: string[] = [];
-    bus.onHandlerError = event => reported.push(event);
-
-    bus.markSticky('app:ready');
+    const bus = new EventBus({ sticky: ['app:ready'], onHandlerError: event => reported.push(event) });
     await bus.emit('app:ready');
 
     bus.on('app:ready', () => {
@@ -138,11 +134,8 @@ describe('EventBus sticky 补发护栏（#8.2）', () => {
   });
 
   it('sticky 补发时 handler 异步抛错同样被捕获（不变 unhandledRejection）', async () => {
-    const bus = new EventBus();
     const reported: string[] = [];
-    bus.onHandlerError = event => reported.push(event);
-
-    bus.markSticky('app:ready');
+    const bus = new EventBus({ sticky: ['app:ready'], onHandlerError: event => reported.push(event) });
     await bus.emit('app:ready');
 
     bus.on('app:ready', async () => {
@@ -150,26 +143,6 @@ describe('EventBus sticky 补发护栏（#8.2）', () => {
     });
     await new Promise(r => setTimeout(r, 0));
     expect(reported).toEqual(['app:ready']);
-  });
-
-  it('clearSticky() 无参清空全部 sticky 缓存（#8.6 app:started 残留）', async () => {
-    const bus = new EventBus();
-    bus.markSticky('app:ready');
-    bus.markSticky('app:started');
-    await bus.emit('app:ready');
-    await bus.emit('app:started');
-
-    bus.clearSticky();
-
-    const fired: string[] = [];
-    bus.on('app:ready', () => {
-      fired.push('app:ready');
-    });
-    bus.on('app:started', () => {
-      fired.push('app:started');
-    });
-    await new Promise(r => setTimeout(r, 0));
-    expect(fired).toEqual([]);
   });
 });
 
