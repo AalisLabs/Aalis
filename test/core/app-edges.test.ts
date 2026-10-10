@@ -3,10 +3,12 @@ import {
   App,
   type AppOptions,
   createApp,
+  DefaultLogger,
   definePlugin,
   defineService,
   events,
   type Logger,
+  LogHub,
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
@@ -142,6 +144,20 @@ describe('启动横幅', () => {
     const log = recordingLogger();
     track(new App({ logger: log }));
     expect(log.messages('info')).toEqual(['Aalis Core - Aalis']);
+  });
+});
+
+describe('日志时钟', () => {
+  it('AppOptions 不收 now：纯 JS 传了也不生效；要固定日志时钟就注入带 now 的 DefaultLogger', () => {
+    const fixed = new Date('2001-02-03T04:05:06Z');
+    const hub = new LogHub();
+    const seen: string[] = [];
+    hub.onEntry(entry => void seen.push(new Date(entry.timestamp).toISOString()));
+    track(new App({ name: 'Clock', logHub: hub, now: () => fixed } as AppOptions));
+    expect(seen, '纯 JS 传的 now 不生效').not.toContain(fixed.toISOString());
+    seen.length = 0;
+    track(new App({ name: 'Clock', logger: new DefaultLogger('aalis', 'info', hub, () => fixed) }));
+    expect(seen).toEqual([fixed.toISOString()]);
   });
 });
 
