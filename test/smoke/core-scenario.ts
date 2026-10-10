@@ -48,11 +48,20 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
 
   const host = app.bind({ events });
   const loaded: string[] = [];
-  let slowLoaded: (() => void) | undefined;
+  const waiters = new Map<string, () => void>();
   host.events.on('plugin:loaded', id => {
     loaded.push(id);
-    if (id === 'slow') slowLoaded?.();
+    waiters.get(id)?.();
   });
+  const nextLoad = (id: string) =>
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${WAIT_MS}ms 内没等到 ${id} 激活`)), WAIT_MS);
+      waiters.set(id, () => {
+        clearTimeout(timer);
+        waiters.delete(id);
+        resolve();
+      });
+    });
   const status = (id: string) => {
     const entry = app.plugins.getStatus().find(item => item.instanceId === id);
     return { state: entry?.state, slow: entry?.slow === true };
@@ -75,8 +84,8 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
         await Promise.resolve();
         flushed.push(`provider#${generation}`);
       });
-      // 永不落定：拆卸等满 disposeTimeoutMs 后放弃它，接着执行先登记的那一项
-      lifecycle.onDispose(() => new Promise<void>(() => {}), 'hang');
+      // 超过宽限才落定：拆卸等满 disposeTimeoutMs 后放弃它、接着执行先登记的那一项；它落定之前同 id 不起新实例
+      lifecycle.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, LIMIT_MS * 3)), 'hang');
     },
   });
 
@@ -113,9 +122,11 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   );
   await app.plugins.idle();
 
-  // bounce 提供者：依赖方先拆后建；提供者卡住的清理超时放弃，其后的异步清理照常执行
+  // bounce 提供者：依赖方先拆后建；提供者卡住的清理超时放弃，其后的异步清理照常执行，旧实例停下后才起新实例
   loaded.length = 0;
+  const reloaded = nextLoad('consumer');
   await app.plugins.bounce('provider');
+  await reloaded;
   await app.plugins.idle();
   const bounce = { loaded: loaded.splice(0), consumerSaw: [...consumerSaw], consumerDisposed: [...consumerDisposed] };
 
@@ -124,15 +135,9 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   const gate = new Promise<void>(resolve => {
     release = resolve;
   });
+  const landed = nextLoad('slow');
   await app.plugin(definePlugin({ name: 'slow', apply: () => gate }));
   const during = status('slow');
-  const landed = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${WAIT_MS}ms 内没等到慢激活落定`)), WAIT_MS);
-    slowLoaded = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-  });
   release();
   await landed;
   await app.plugins.idle();

@@ -112,6 +112,7 @@ describe('插件错误恢复', () => {
         },
       });
       await app.plugins.register(bad);
+      await app.plugins.idle();
       // 插件激活应被拆掉，注入的 service 不应残留
       expect(host.halfLeak.current).toBeUndefined();
       const status = app.plugins.getStatus().find(s => s.instanceId === '@test/half');
