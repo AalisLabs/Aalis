@@ -31,7 +31,6 @@ function describe(label?: string, index?: number): string {
  * 用途：需要累积「注册 → 卸载」副作用的宿主，提供：
  * - `push(fn, label?, phase?)` 追加清理函数（label 仅进诊断日志；phase 见 {@link DisposePhase}，默认 cleanup）
  * - `remove(fn)` 精确移除单个清理函数（不执行）
- * - `seal()` 只标记已取走（链为空时用），此后的登记就地执行
  * - `disposeAsync(timeoutMs?)` 按段逆序**串行等待**每个清理函数（含异步返回值）
  *
  * 相比散落的 `this._disposables: (() => void)[]`，集中管理能避免
@@ -39,7 +38,7 @@ function describe(label?: string, index?: number): string {
  */
 export class DisposableChain {
   #items: Entry[] = [];
-  /** 链是否已被取走（见 `#take`）；对外读口是 `disposed`。 */
+  /** 链是否已被取走（见 disposeAsync）；对外读口是 `disposed`。 */
   #disposed = false;
 
   /** disposeAsync 排空期间迟到登记、就地执行的异步清理：段收口等它们落定（拒绝已接住） */
@@ -65,7 +64,7 @@ export class DisposableChain {
 
   /**
    * 追加一个清理函数。链已取走后追加会立刻执行，与段无关；拒绝记 warn。异步返回值：链还在
-   * disposeAsync 排空途中就由当前段的收口等到，排空已结束（或链经 seal 取走）则无人等待。
+   * disposeAsync 排空途中就由当前段的收口等到，排空已结束则无人等待。
    */
   push(fn: () => unknown, label?: string, phase: DisposePhase = 'cleanup'): void {
     if (this.#disposed) {
@@ -120,27 +119,6 @@ export class DisposableChain {
   }
 
   /**
-   * 置位 `#disposed`、快照并清空 `#items`——seal 与 disposeAsync 共用，避免逻辑漂移。
-   *
-   * 先清空再迭代快照：dispose 期间 disposer 常回调 remove(自身)（provide /
-   * 订阅句柄的自移除语义）。若在迭代中 splice 活动数组，索引
-   * 会错位、长度缩短，导致取到 undefined 而抛 "is not a function"。清空在前
-   * 则这些 remove 作用于空数组、安全 no-op（返回 false，符合各自移除点注释
-   * 的预期），快照索引也始终稳定。
-   */
-  #take(): Entry[] {
-    this.#disposed = true;
-    const items = this.#items;
-    this.#items = [];
-    return items;
-  }
-
-  /** 只标记已取走、不执行任何清理：调用方保证此刻链为空，此后的登记就地执行。重复调用无效果。 */
-  seal(): void {
-    this.#take();
-  }
-
-  /**
    * 按段**串行**等待所有清理函数完成：撤回段先、清理段后，段内逆序。
    *
    * 串行而非并发是刻意的：逆序是本类对外承诺的语义（消费侧清理先于提供侧），
@@ -152,7 +130,12 @@ export class DisposableChain {
    */
   async disposeAsync(timeoutMs?: number): Promise<void> {
     if (this.#disposed) return;
-    const items = this.#take();
+    // 先清空再迭代快照：dispose 期间 disposer 常回调 remove(自身)（provide / 订阅句柄的自移除语义）。
+    // 在迭代中 splice 活动数组，索引会错位、长度缩短，取到 undefined 而抛 "is not a function"；清空在前则
+    // 这些 remove 作用于空数组、安全 no-op（返回 false，符合各自移除点注释的预期），快照索引也始终稳定。
+    this.#disposed = true;
+    const items = this.#items;
+    this.#items = [];
     this.#draining = true;
     for (const phase of PHASES) {
       for (let i = items.length - 1; i >= 0; i--) {

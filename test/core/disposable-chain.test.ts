@@ -30,9 +30,9 @@ describe('DisposableChain', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
-  it('seal 后再 push 立即执行', () => {
+  it('取走后再 push 立即执行', async () => {
     const chain = new DisposableChain();
-    chain.seal();
+    await chain.disposeAsync();
     let ran = false;
     chain.push(() => {
       ran = true;
@@ -215,7 +215,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
     expect(escaped).toEqual([]);
   });
 
-  it('reporter 抛错：seal 后迟到登记的异步拒绝上报不逃逸', async () => {
+  it('reporter 抛错：取走后迟到登记的异步拒绝上报不逃逸', async () => {
     const escaped: unknown[] = [];
     const onEscape = (err: unknown) => {
       escaped.push(err);
@@ -223,7 +223,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
     process.on('unhandledRejection', onEscape);
     try {
       const chain = new DisposableChain(brokenSink);
-      chain.seal();
+      await chain.disposeAsync();
       chain.push(async () => {
         throw new Error('boom');
       });
@@ -234,9 +234,9 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
     expect(escaped).toEqual([]);
   });
 
-  it('reporter 抛错：关闭后迟到登记的执行失败不抛给登记方', () => {
+  it('reporter 抛错：关闭后迟到登记的执行失败不抛给登记方', async () => {
     const chain = new DisposableChain(brokenSink);
-    chain.seal();
+    await chain.disposeAsync();
     expect(() =>
       chain.push(() => {
         throw new Error('boom');
