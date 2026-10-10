@@ -16,11 +16,11 @@
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import { defineService, type Logger, type ServiceRef } from '@aalis/core';
+import { defineService, type Logger, type ServiceSelection } from '@aalis/core';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 
 /**
- * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿胜者与自己的实例比身份，
+ * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿选中那一条的 id 与自己的实例 id 比，
  * 不调用方法，所以接口只有名字，进诊断（如 Laya 诊断项报「生效的触发插件是某某」）。WebUI 设置「系统」的
  * 服务偏好显示的是 provide 时传的 label，两处取同一个值。
  */
@@ -30,11 +30,6 @@ export interface TriggerService {
 
 export const trigger = defineService<TriggerService>('trigger');
 
-/** 只读当前胜者的那一面：这里的函数只在调用的那一刻读 current，不建立跟随状态 */
-type CurrentOf<P> = Pick<ServiceRef<P>, 'current'>;
-/** 只读全部提供者的那一面，同样只在调用的那一刻枚举 */
-type AllOf<P> = Pick<ServiceRef<P>, 'all'>;
-
 // ----- 生效者 -----
 
 /**
@@ -43,18 +38,23 @@ type AllOf<P> = Pick<ServiceRef<P>, 'all'>;
  * 或两个都不判
  */
 const JUDGED_BY = Symbol.for('@aalis/api-trigger.judgedBy');
-const shared = globalThis as Record<symbol, WeakMap<object, TriggerService | undefined> | undefined>;
+const shared = globalThis as Record<symbol, WeakMap<object, string | undefined> | undefined>;
 shared[JUDGED_BY] ??= new WeakMap();
 const judgedBy = shared[JUDGED_BY];
 
 /**
- * 这次入站是否由 self 判定。胜者每次入站只取一次：相位里先跑到的触发插件取下 trigger.current，
- * 以这次的相位数据为键记在共用的表里，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，
- * 同一条消息不会被两个触发插件各判一次。
+ * 这次入站是否由 selfId（触发插件登记 trigger 时的条目 id，缺省即它的实例 id）判定。胜者每次入站只取一次：相位里
+ * 先跑到的触发插件取下 trigger 选中的那一条的 id，以这次的相位数据为键记在共用的表里，后跑到的沿用它。判定途中切换
+ * 偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次。
+ * 只在调用的那一刻读选择层，不建立跟随状态
  */
-export function isActiveTrigger(phase: object, ref: CurrentOf<TriggerService>, self: TriggerService): boolean {
-  if (!judgedBy.has(phase)) judgedBy.set(phase, ref.current);
-  return judgedBy.get(phase) === self;
+export function isActiveTrigger(
+  phase: object,
+  ref: Pick<ServiceSelection<TriggerService>, 'list'>,
+  selfId: string,
+): boolean {
+  if (!judgedBy.has(phase)) judgedBy.set(phase, ref.list().find(p => p.selected)?.id);
+  return judgedBy.get(phase) === selfId;
 }
 
 // ----- 禁言关键词与点名 -----
@@ -100,27 +100,26 @@ function mentionsSelf(content: string): boolean {
  * 那张卡的名字、昵称算点名，主卡的不算。session-manager 缺席时不带参数取（全局默认的卡）；解析抛错时同样
  * 不带参数取，记一条 warn，同一原因只记一次（解析成功一次后再出错会再记）。
  *
- * 取全部人设提供者（persona.all()）而不只取当前胜者：同时装了多个人设插件时，叫其中任何一个的名字都算点名。
+ * 取全部人设提供者（persona.list()）而不只取当前胜者：同时装了多个人设插件时，叫其中任何一个的名字都算点名。
  * 某个人设提供者读名字抛错时只跳过它的名字，其余照常：记一条 warn，同一提供者同一原因只记一次（它读成功一次后
  * 再出错会再记）。禁言关键词不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
  */
 export function createBotNames(
-  persona: AllOf<PersonaService>,
-  sessionManager: CurrentOf<SessionManagerService>,
+  persona: Pick<ServiceSelection<PersonaService>, 'list'>,
+  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
   logger: Logger,
   tag: string,
 ): (triggerNames: readonly string[], message: Pick<IncomingMessage, 'sessionId' | 'platform'>) => string[] {
-  /** 正在出错的提供者 → 已告警的原因 */
-  const failing = new WeakMap<PersonaService, string>();
+  /** 正在出错的提供者（条目 id）→ 已告警的原因 */
+  const failing = new Map<string, string>();
   /** session-manager 解析会话配置时已告警的原因；undefined = 上次解析成功 */
   let resolveFailure: string | undefined;
 
   /** 这个会话的人设选项；session-manager 缺席或解析抛错时为 undefined（全局默认的卡） */
   function sessionOptions(message: Pick<IncomingMessage, 'sessionId' | 'platform'>): PersonaSessionOptions | undefined {
-    const sm = sessionManager.current;
-    if (!sm) return undefined;
+    if (!sessionManager.present) return undefined;
     try {
-      const options = { persona: sm.resolveConfig(message.sessionId, message.platform).persona };
+      const options = { persona: sessionManager.use.resolveConfig(message.sessionId, message.platform).persona };
       resolveFailure = undefined;
       return options;
     } catch (err) {
@@ -140,19 +139,19 @@ export function createBotNames(
     };
     for (const n of triggerNames) add(n);
     const options = sessionOptions(message);
-    for (const { instance, contextId, label } of persona.all()) {
+    for (const { use, id, label } of persona.list()) {
       let own: unknown[];
       try {
-        own = [instance.getPersonaName(options), ...(instance.getNickNames?.(options) ?? [])];
+        own = [use.getPersonaName(options), ...(use.getNickNames?.(options) ?? [])];
       } catch (err) {
         const reason = `${err}`;
-        if (failing.get(instance) !== reason) {
-          failing.set(instance, reason);
-          logger.warn(`${tag} 人设「${label ?? contextId}」读名字失败，点名识别跳过它的名字: ${reason}`);
+        if (failing.get(id) !== reason) {
+          failing.set(id, reason);
+          logger.warn(`${tag} 人设「${label ?? id}」读名字失败，点名识别跳过它的名字: ${reason}`);
         }
         continue;
       }
-      failing.delete(instance);
+      failing.delete(id);
       for (const n of own) add(n);
     }
     return [...names];
@@ -195,14 +194,13 @@ export function markTriggered(message: IncomingMessage, addressed: boolean): voi
 /** 吞掉前把消息影子归档（与 flow-control 吞掉时的归档对齐）。message-archive 缺席时跳过，归档失败记 warn，不抛错 */
 export async function archiveSwallowed(
   message: IncomingMessage,
-  archive: CurrentOf<MessageArchiveService>,
+  archive: Pick<ServiceSelection<MessageArchiveService>, 'present' | 'use'>,
   logger: Logger,
   tag: string,
 ): Promise<void> {
-  const svc = archive.current;
-  if (!svc) return;
+  if (!archive.present) return;
   try {
-    await svc.archiveIncoming(message);
+    await archive.use.archiveIncoming(message);
   } catch (err) {
     logger.warn(`${tag} shadow 归档失败: ${err}`);
   }

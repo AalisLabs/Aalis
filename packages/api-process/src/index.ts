@@ -9,7 +9,6 @@
 
 import type { Readable, Writable } from 'node:stream';
 import type { StorageService } from '@aalis/api-storage';
-import type { ServiceRef } from '@aalis/core';
 import { defineService } from '@aalis/core';
 
 export interface SpawnOptions {
@@ -117,25 +116,6 @@ export interface ProcessService {
   readExternalFile(path: string, maxBytes?: number): Promise<Uint8Array>;
 }
 
-/**
- * 返回一个无服务实例时抛错、单实例时直接转发的 ProcessService 网关。
- */
-export function createProcessGateway(ref: ServiceRef<ProcessService>): ProcessService {
-  const pick = (): ProcessService => {
-    const inst = ref.current;
-    if (!inst) {
-      throw new Error('未找到 process 服务（请启用 @aalis/plugin-process-local 或其他 process 提供方）');
-    }
-    return inst;
-  };
-  return {
-    spawn: (cmd, args, opts) => pick().spawn(cmd, args, opts),
-    execFile: (cmd, args, opts) => pick().execFile(cmd, args, opts),
-    makeTempDir: prefix => pick().makeTempDir(prefix),
-    readExternalFile: (path, maxBytes) => pick().readExternalFile(path, maxBytes),
-  };
-}
-
 // 给本地实现使用的辅助：基于 storage 的 makeTempDir 默认骨架
 export async function makeTempDirViaStorage(storage: StorageService, prefix: string): Promise<TempDirHandle> {
   if (!storage.resolveLocalPath) {
@@ -158,5 +138,5 @@ export async function makeTempDirViaStorage(storage: StorageService, prefix: str
   };
 }
 
-/** `process` 是普通调用型服务：绑定接口是 ServiceRef，每次读当前胜者。 */
+/** `process` 是普通调用型服务：业务层就是提供者的形状，每次调用打到选中的那一家。 */
 export const processService = defineService<ProcessService>('process');

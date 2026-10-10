@@ -18,8 +18,7 @@
  *   runtime 的启动告警、plugin-doctor、WebUI、终端界面与市场的卸载闸都用它。
  */
 
-import type { ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ===== 公共类型 =====
 
@@ -79,8 +78,8 @@ declare module '@aalis/core' {
 
 // ===== 服务描述符（按激活绑定）=====
 
-/** `doctor` 的绑定接口：调用那一半是 ServiceRef，登记检查项自动归属这次激活 */
-export interface BoundDoctor extends ServiceRef<DoctorService> {
+/** `doctor` 的业务层：调用转发给选中的那一家，登记检查项自动归属这次激活 */
+export interface BoundDoctor extends DoctorService {
   /** 登记一条检查项：同 id 替换，提供者换人自动重挂，随激活撤回 */
   registerCheck(spec: CheckSpec): () => void;
 }
@@ -90,7 +89,9 @@ export const doctor = defineService<DoctorService, BoundDoctor>('doctor', port =
     key: spec => spec.id,
     register: (service, spec) => service.registerCheck(spec),
   });
-  return serviceRef(port, { registerCheck: (spec: CheckSpec) => checks.add({ pluginName: port.id, ...spec }) });
+  return Object.assign(Object.create(port.provider) as BoundDoctor, {
+    registerCheck: (spec: CheckSpec) => checks.add({ pluginName: port.id, ...spec }),
+  });
 });
 
 export {

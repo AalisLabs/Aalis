@@ -88,5 +88,5 @@ export interface UpdateResult {
   restarting?: boolean;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const packageManager = defineService<PackageManagerService>('package-manager');

@@ -8,7 +8,7 @@
 import { Buffer } from 'node:buffer';
 // 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
 import type {} from '@aalis/core';
-import { defineService, type ServiceRef, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { SchemaField } from '@aalis/schema-config';
 
 /**
@@ -567,8 +567,8 @@ declare module '@aalis/core' {
   }
 }
 
-/** `sessionManager` 的绑定接口：调用面之外，登记的设置项随本次激活撤回 */
-export interface BoundSessionManager extends ServiceRef<SessionManagerService> {
+/** `sessionManager` 的业务层：调用转发给选中的那一家，登记的设置项随本次激活撤回 */
+export interface BoundSessionManager extends SessionManagerService {
   /** 登记一个会话设置项（同一激活内同键重复登记为替换）；返回撤回 */
   registerSetting(setting: SessionSetting): () => void;
 }
@@ -579,5 +579,7 @@ export const sessionManager = defineService<SessionManagerService, BoundSessionM
     key: setting => setting.key,
     register: (service, setting) => service.registerSetting(setting, port.id),
   });
-  return serviceRef(port, { registerSetting: (setting: SessionSetting) => settings.add(setting) });
+  return Object.assign(Object.create(port.provider) as BoundSessionManager, {
+    registerSetting: (setting: SessionSetting) => settings.add(setting),
+  });
 });

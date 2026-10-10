@@ -24,8 +24,7 @@ import type {
   InboundTurn,
 } from '@aalis/api-authority';
 import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
-import type { ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
@@ -396,15 +395,15 @@ declare module '@aalis/core' {
 
 // ===== 服务描述符（按激活绑定）=====
 
-/** `tools` 的按激活绑定接口：登记自动归属这次激活，同名替换、提供者换人整体重挂、关闭后拒收。 */
-export interface BoundTools extends ServiceRef<ToolService> {
+/** `tools` 的业务层：调用转发给选中的那一家，登记自动归属这次激活，同名替换、提供者换人整体重挂、关闭后拒收。 */
+export interface BoundTools extends ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
 }
 
 /** 给一份 tools 绑定接口加默认分组：经它登记的工具自动带上这些分组（一组工具共用分组时用） */
 export function withToolGroups(bound: BoundTools, groups: string[]): BoundTools {
-  // 只覆盖 register，其余（含 current 这个 getter）沿原型链落到原接口上，跟着提供者换人
+  // 只覆盖 register，其余沿原型链落到原接口上，跟着提供者换人
   return Object.assign(Object.create(bound) as BoundTools, {
     register: (tool: Omit<RegisteredTool, 'pluginName'>) =>
       bound.register({ ...tool, groups: [...(tool.groups ?? []), ...groups] }),
@@ -421,7 +420,7 @@ export const tools = defineService<ToolService, BoundTools>('tools', port => {
     key: tool => tool.definition.function.name,
     register: (service, tool) => service.register(tool, port.id),
   });
-  return serviceRef(port, {
+  return Object.assign(Object.create(port.provider) as BoundTools, {
     register: (tool: Omit<RegisteredTool, 'pluginName'>) => entries.add(tool),
     registerGroup: (group: Omit<ToolGroupInfo, 'pluginName'>) => groups.add(group),
   });

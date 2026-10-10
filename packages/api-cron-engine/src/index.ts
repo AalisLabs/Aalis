@@ -49,5 +49,5 @@ export interface CronEngine {
   nextFireTime(expr: string, from?: Date, lookaheadMinutes?: number, options?: CronSubscribeOptions): number | null;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const cronEngine = defineService<CronEngine>('cron-engine');
