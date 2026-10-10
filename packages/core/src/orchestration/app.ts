@@ -108,6 +108,10 @@ export class App {
   readonly #events: EventBus;
 
   readonly #restartStrategy?: RestartStrategy;
+  /** 启动单飞：重入返回同一 Promise */
+  #starting?: Promise<void>;
+  /** 已受理过重启：再调 restart() 静默返回 */
+  #restartAccepted = false;
   /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
   #stopping?: Promise<void>;
 
@@ -225,16 +229,25 @@ export class App {
   }
 
   /**
-   * 启动应用
+   * 启动应用：依次发 `app:ready`、`app:started`。单飞：重入返回同一 Promise。停机开始后（含停机完成后）调用记 warn
+   * 后直接返回；启动途中停机开始，进行中的 start 照常落定，不再发后续事件。
    *
    * 配置外部变更的热重载编排（diff + bounce）属宿主政策，由宿主自行接管。
    */
-  async start(): Promise<void> {
-    this.logger.info('正在启动...');
+  start(): Promise<void> {
+    if (this.#stopping) {
+      this.logger.warn('应用已开始停机，忽略 start()');
+      return Promise.resolve();
+    }
+    this.#starting ??= this.#runStart();
+    return this.#starting;
+  }
 
+  async #runStart(): Promise<void> {
+    this.logger.info('正在启动...');
     // 注：消息路由由网关插件承担，不在 core。
     await this.#events.emit('app:ready');
-
+    if (this.#stopping) return;
     this.logger.info('启动完成');
     await this.#events.emit('app:started');
   }
@@ -245,12 +258,16 @@ export class App {
    * core 只负责发出 `app:restarting` 事件并把 `stop` 回调交给策略；
    * **任何"等响应返回"的延迟、stop 与 restart 的顺序都由策略决定**。
    *
+   * 只受理一次：已受理过的再调静默返回（策略交出的 stop 已开始也是）；未受理过而停机已开始时抛错。
    * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
    */
   restart(opts?: { rollback?: unknown }): void {
     if (!this.#restartStrategy) {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
+    if (this.#restartAccepted) return;
+    if (this.#stopping) throw new Error('App.restart() 不可用：应用已开始停机。');
+    this.#restartAccepted = true;
     const strategy = this.#restartStrategy;
     this.#events
       .emit('app:restarting')
