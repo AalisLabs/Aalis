@@ -19,6 +19,8 @@ import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const MAX_OUTPUT_PREVIEW = 1000;
+/** 运行被取消时，阻塞中的节点以此失败 */
+const CANCELLED = '运行已取消';
 
 /**
  * 执行一次 DAG 用到的能力：tool 节点调工具、send-message / agent 节点派发消息、
@@ -148,6 +150,7 @@ interface ExecCtx extends EngineCaps {
   vars: Record<string, unknown>;
   outputs: Record<string, unknown>;
   toolCallContext: ToolCallContext;
+  signal: AbortSignal;
 }
 
 async function execTool(node: ToolNodeSpec, ec: ExecCtx): Promise<string> {
@@ -175,10 +178,19 @@ async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<
   return `sent to ${sessionId}@${platform} (${content.length} chars)`;
 }
 
-async function execWait(node: WaitNodeSpec): Promise<string> {
+function execWait(node: WaitNodeSpec, signal: AbortSignal): Promise<string> {
   const ms = Math.max(0, Math.floor(node.seconds * 1000));
-  await new Promise<void>(resolve => setTimeout(resolve, ms));
-  return `waited ${node.seconds}s`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', stop);
+      resolve(`waited ${node.seconds}s`);
+    }, ms);
+    const stop = () => {
+      clearTimeout(timer);
+      reject(new Error(CANCELLED));
+    };
+    signal.addEventListener('abort', stop, { once: true });
+  });
 }
 
 const DEFAULT_AGENT_TIMEOUT_SEC = 120;
@@ -192,7 +204,7 @@ const DEFAULT_AGENT_TIMEOUT_SEC = 120;
  * - `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane——否则同一会话上的
  *   两个 agent 回合会因 lane 相同而互相 abort。但**显式指定相同 sessionId 的并行 agent 节点**仍会
  *   因 `agent:turn:after` 按 sessionId 匹配而串扰捕获——省略 sessionId（默认一次性子会话）可彻底避免。
- * - 等待期间不感知 run 取消（与 wait 节点一致），最长阻塞至 timeoutSeconds。
+ * - run 取消时立即停止等待、节点失败；已派发的回合不随之中止，照常跑完，回复不再被捕获。
  * - 目标会话处于禁言期时（禁言不看作用域），或落在 flow-control 作用域内且限速窗口已满时，消息会被 flow 相位
  *   吞掉而永不回本节点的 `agent:turn:after`，节点会等到超时才失败。带 source 的消息不经触发策略、不受回复后冷却；限速只在目标会话落入 flow-control 作用域时生效。
  */
@@ -234,16 +246,20 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   // （2026-08-24 审计），与 execSendMessage 同源补齐；无调用者保持匿名。
   if (ec.toolCallContext.actor) incoming.actor = ec.toolCallContext.actor;
 
-  const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
+  const stopWaiting = () => resolveWait?.();
+  const timeoutHandle = setTimeout(stopWaiting, timeoutMs);
+  ec.signal.addEventListener('abort', stopWaiting, { once: true });
   try {
     await ec.events.emit('inbound:message', incoming);
     await waitPromise;
   } finally {
     clearTimeout(timeoutHandle);
+    ec.signal.removeEventListener('abort', stopWaiting);
     dispose();
   }
 
   if (!captured) {
+    if (ec.signal.aborted) throw new Error(CANCELLED);
     throw new Error(`agent 节点超时（${timeoutSec}s 内未收到 agent:turn:after，会话=${sessionId}）`);
   }
   if (captured.outcome === 'error' || captured.outcome === 'aborted') {
@@ -259,7 +275,7 @@ async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
     case 'send-message':
       return await execSendMessage(node, ec);
     case 'wait':
-      return await execWait(node);
+      return await execWait(node, ec.signal);
     case 'agent':
       return await execAgent(node, ec);
     default: {
@@ -276,8 +292,11 @@ interface RunOptions extends EngineCaps {
   runId: string;
   vars: Record<string, unknown>;
   toolCallContext: ToolCallContext;
-  /** 取消信号容器；外部置 cancelled=true 后引擎不再调度新节点 */
-  cancelToken: { cancelled: boolean };
+  /**
+   * 取消信号：中止后不再调度新节点，阻塞中的 wait / agent 节点立即失败；tool 节点经 toolCallContext.signal 收到，
+   * 是否提前返回由工具决定
+   */
+  signal: AbortSignal;
   /** 节点完成回调（用于持久化进度 + 发事件） */
   onNodeDone?: (info: NodeRunInfo) => void;
 }
@@ -292,8 +311,22 @@ export async function runDag(opts: RunOptions): Promise<{
   outputs: Record<string, unknown>;
   error?: string;
 }> {
-  const { def, vars, tools, events, hooks, logger, runId, toolCallContext, cancelToken, onNodeDone } = opts;
+  const { def, vars, tools, events, hooks, logger, runId, signal, onNodeDone } = opts;
   const outputs: Record<string, unknown> = {};
+  // tool 节点经 toolCallContext.signal 收到取消
+  const toolCallContext = { ...opts.toolCallContext, signal };
+  const ec: ExecCtx = {
+    tools,
+    events,
+    hooks,
+    logger,
+    workflowId: def.id,
+    runId,
+    vars,
+    outputs,
+    toolCallContext,
+    signal,
+  };
 
   const nodeMap = new Map(def.nodes.map(n => [n.id, n]));
   const indeg = new Map<string, number>();
@@ -314,14 +347,13 @@ export async function runDag(opts: RunOptions): Promise<{
   async function runOne(id: string): Promise<void> {
     const node = nodeMap.get(id)!;
     const info = nodeRuns.get(id)!;
-    if (cancelToken.cancelled) {
+    if (signal.aborted) {
       info.status = 'skipped';
       onNodeDone?.(info);
       return;
     }
     info.status = 'running';
     info.startedAt = Date.now();
-    const ec: ExecCtx = { tools, events, hooks, logger, workflowId: def.id, runId, vars, outputs, toolCallContext };
     try {
       const result = await executeNode(node, ec);
       info.status = 'success';
@@ -342,11 +374,11 @@ export async function runDag(opts: RunOptions): Promise<{
 
   // 按层调度
   while (true) {
-    if (cancelToken.cancelled || firstError) break;
+    if (signal.aborted || firstError) break;
     const ready = [...indeg.entries()].filter(([id, d]) => d === 0 && nodeRuns.get(id)!.status === 'pending');
     if (ready.length === 0) break;
     await Promise.all(ready.map(([id]) => runOne(id)));
-    if (firstError || cancelToken.cancelled) break;
+    if (firstError || signal.aborted) break;
     // 把成功节点的下游 indeg 减一
     for (const [id] of ready) {
       const st = nodeRuns.get(id)!.status;
@@ -362,7 +394,7 @@ export async function runDag(opts: RunOptions): Promise<{
   }
 
   const allNodes = def.nodes.map(n => nodeRuns.get(n.id)!);
-  if (cancelToken.cancelled) return { status: 'cancelled', nodes: allNodes, outputs, error: firstError ?? undefined };
+  if (signal.aborted) return { status: 'cancelled', nodes: allNodes, outputs, error: firstError ?? undefined };
   if (firstError) return { status: 'failed', nodes: allNodes, outputs, error: firstError };
   return { status: 'success', nodes: allNodes, outputs };
 }

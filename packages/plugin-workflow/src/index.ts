@@ -341,8 +341,9 @@ async function run(caps: Caps): Promise<void> {
   const runStore = new RunStore(caps.storage.use, config.runsFile, config.maxRuns, logger);
   await runStore.init();
 
-  const cancelTokens = new Map<string, { cancelled: boolean }>();
-  /** 在飞的 run：拆卸先置取消，再等它们收尾，被取消的 run 也要把终态写进运行历史 */
+  /** 在飞 run 的取消开关，按 runId */
+  const aborts = new Map<string, AbortController>();
+  /** 在飞的 run：拆卸先中止，再等它们收尾，被取消的 run 也要把终态写进运行历史 */
   const running = new Set<Promise<WorkflowRun>>();
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
@@ -392,8 +393,8 @@ async function run(caps: Caps): Promise<void> {
 
     const runId = `${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const vars = { ...(def.vars ?? {}), ...extraVars };
-    const cancelToken = { cancelled: false };
-    cancelTokens.set(runId, cancelToken);
+    const abort = new AbortController();
+    aborts.set(runId, abort);
 
     const run: WorkflowRun = {
       runId,
@@ -428,7 +429,7 @@ async function run(caps: Caps): Promise<void> {
           platform: 'workflow',
           actor: caller?.platform && caller?.userId ? { platform: caller.platform, userId: caller.userId } : undefined,
         },
-        cancelToken,
+        signal: abort.signal,
         onNodeDone: (info: NodeRunInfo) => {
           const idx = run.nodes.findIndex(n => n.id === info.id);
           if (idx >= 0) run.nodes[idx] = info;
@@ -455,7 +456,7 @@ async function run(caps: Caps): Promise<void> {
       await events.use.emit('workflow:run:error', run);
       logger.error(`run=${runId} 异常: ${run.error}`);
     } finally {
-      cancelTokens.delete(runId);
+      aborts.delete(runId);
       page.invalidate();
     }
     return run;
@@ -494,9 +495,9 @@ async function run(caps: Caps): Promise<void> {
       return await runById(id, vars ?? {}, source ?? 'manual', caller);
     },
     cancelRun(runId) {
-      const t = cancelTokens.get(runId);
-      if (!t) return false;
-      t.cancelled = true;
+      const abort = aborts.get(runId);
+      if (!abort) return false;
+      abort.abort();
       return true;
     },
     getRun(runId) {
@@ -519,12 +520,10 @@ async function run(caps: Caps): Promise<void> {
   // ── 清理 ──
   lifecycle.use.onDispose(async () => {
     triggers.dispose();
-    // 先置 cancelled 再清表：只 clear 的话在飞 run 仍持有自己的 token 引用，会继续跑完剩余
-    // 节点、发事件，并把结果写回旧 RunStore 的历史快照
-    for (const t of cancelTokens.values()) t.cancelled = true;
-    cancelTokens.clear();
-    // 等在飞 run 收尾、再等排队中的运行历史 / once 记账写完才结束拆卸：否则 app.stop() 返回后仍有落盘在飞，
-    // bounce 时迟到的快照会盖掉新实例的记账。wait / agent 节点不感知取消，最长等到 disposeTimeoutMs
+    // 中止全部在飞 run：不再调度新节点，阻塞中的 wait / agent 节点立即结束。再等它们收尾、排队中的运行历史 /
+    // once 记账写完才结束拆卸：否则 app.stop() 返回后仍有落盘在飞，bounce 时迟到的快照会盖掉新实例的记账。
+    // 不响应中止信号的工具节点至多让这里等到 disposeTimeoutMs
+    for (const abort of aborts.values()) abort.abort();
     await Promise.allSettled(running);
     await runStore.flushed();
   });
