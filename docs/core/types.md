@@ -30,7 +30,7 @@ function definePlugin<U extends object = {}>(
 ): PluginDefinition<U>;
 ```
 
-`name` 须为非空字符串，不含保留字符 `#`，也不含 `:suffix`（只用于 instanceId）。
+`name` 须为 trim 后非空的字符串，不含 `:suffix`（只用于 instanceId），也不能是 `__proto__` / `constructor` / `prototype`（只保证 id 写进普通对象当键时安全）。
 
 `uses` 逐项核对：某一项不是描述符（也不是 `optional()` 的返回值）时，编译错误只落在这一项上，其余绑定照常推导，apply 里不会连带出现「类型为 never」的报错。
 

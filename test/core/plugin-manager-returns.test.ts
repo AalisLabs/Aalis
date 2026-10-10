@@ -45,7 +45,7 @@ describe('register 的返回值', () => {
     await app.stop();
   });
 
-  it('手写缺 name / 空串 / 非法分隔符：false + error 一次 + 不落账', async () => {
+  it('手写缺 name / 空串 / 危险键 / 带实例后缀：false + error 一次 + 不落账', async () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
@@ -54,7 +54,7 @@ describe('register 的返回值', () => {
     // 手写对象绕过 definePlugin：类型上缺 name，运行期必须拒落账
     expect(await app.plugins.register({ apply() {} } as unknown as PluginDefinition)).toBe(false);
     expect(await app.plugins.register({ name: '', apply() {} })).toBe(false);
-    expect(await app.plugins.register({ name: 'a#b', apply() {} })).toBe(false);
+    expect(await app.plugins.register({ name: 'constructor', apply() {} })).toBe(false);
     expect(await app.plugins.register({ name: 'a:b', apply() {} })).toBe(false);
 
     await app.plugins.idle();
@@ -82,17 +82,17 @@ describe('register 的返回值', () => {
     const reusable = plugin('q', { reusable: true });
 
     expect(await app.plugins.register(reusable, {}, '')).toBe(false);
-    expect(await app.plugins.register(reusable, {}, 'q#x')).toBe(false);
+    expect(await app.plugins.register(reusable, {}, 'constructor')).toBe(false);
     expect(await app.plugins.register(reusable, {}, 'q:second')).toBe(true);
     await app.plugins.idle();
     expect(app.plugins.getPlugin('q:second')?.state).toBe('active');
     expect(app.plugins.getPlugin('')).toBeUndefined();
-    expect(app.plugins.getPlugin('q#x')).toBeUndefined();
+    expect(app.plugins.getPlugin('constructor')).toBeUndefined();
 
     const errors = lines.filter(l => l.startsWith('error:') && l.includes('拒绝注册'));
-    expect(errors, '空串与 # 各 error 一次').toHaveLength(2);
+    expect(errors, '空串与危险键各 error 一次').toHaveLength(2);
     expect(errors.some(l => l.includes('缺少合法 instanceId'))).toBe(true);
-    expect(errors.some(l => l.includes('#') && l.includes('instanceId'))).toBe(true);
+    expect(errors.some(l => l.includes('危险键') && l.includes('instanceId'))).toBe(true);
     await app.stop();
   });
 
