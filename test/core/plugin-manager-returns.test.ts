@@ -195,7 +195,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     await app.stop();
   });
 
-  it('disabled 态带配置的 updateConfig / bounce：只换配置、保持禁用、不记 warn，返回 true；启用时按新配置激活', async () => {
+  it('disabled 态的 updateConfig：只换配置、保持禁用、不记 warn，返回 true；启用时按新配置激活', async () => {
     const hub = new LogHub();
     const warns: string[] = [];
     hub.onEntry(e => void (e.level === 'warn' && warns.push(e.message)));
@@ -210,24 +210,38 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
 
     expect(await app.plugins.updateConfig('p', { v: 2 })).toBe(true);
     expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'disabled', config: { v: 2 } });
-    expect(await app.plugins.bounce('p', { config: { v: 3 } })).toBe(true);
-    expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'disabled', config: { v: 3 } });
     await app.plugins.idle();
     expect(seen, '禁用期间不激活').toEqual([1]);
     expect(warns).toEqual([]);
 
     expect(await app.plugins.enable('p')).toBe(true);
     await app.plugins.idle();
-    expect(seen).toEqual([1, 3]);
+    expect(seen).toEqual([1, 2]);
     await app.stop();
   });
 
-  it('停机进行中：disabled 态带配置的 bounce 同样为 false，不换配置', async () => {
+  it('bounce 只按现有配置重启：纯 JS 调用方还传 config 时被忽略，照旧配置重启并返回 true', async () => {
+    const app = silentApp();
+    const seen: unknown[] = [];
+    await app.plugins.register(
+      definePlugin({ name: 'p', uses: { config }, apply: ({ config }) => void seen.push(config.use.v) }),
+      { v: 1 },
+    );
+    await app.plugins.idle();
+    const untyped = app.plugins as unknown as { bounce(id: string, opts: unknown): Promise<boolean> };
+    expect(await untyped.bounce('p', { config: { v: 2 } })).toBe(true);
+    await app.plugins.idle();
+    expect(seen).toEqual([1, 1]);
+    expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 1 });
+    await app.stop();
+  });
+
+  it('停机进行中：disabled 态的 updateConfig 同样为 false，不换配置', async () => {
     const app = silentApp();
     await app.plugins.register(plugin('p'), { v: 1 }, undefined, { disabled: true });
     let bounced: boolean | undefined;
     app.bind({ events }).events.use.on('app:stopping', async () => {
-      bounced = await app.plugins.bounce('p', { config: { v: 2 } });
+      bounced = await app.plugins.updateConfig('p', { v: 2 });
     });
     await app.stop();
     expect(bounced).toBe(false);
