@@ -120,15 +120,13 @@ export class Activation {
   }
 
   /**
-   * 关闭本激活并等它关完。生产调用恒在 joinPlan 之后，只走第一支：等所在关闭计划落定。
-   * 未入关闭计划的两支（叶子直接拆资源、带子树时现组计划）只供测试夹具直接拆激活。
+   * 关闭本激活并等它关完。已在某张关闭计划里时按超时等那张计划关完它（等在飞关闭只在这一层），否则现组一张计划。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
     if (this.#closing)
       return awaitWithTimeout(this.#closing, timeoutMs, limit =>
         this.logger.warn(`激活 "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`),
       );
-    if (this.children.size === 0) return this.resources.disposeAsync(timeoutMs);
     return closeActivations([this], timeoutMs, this.logger);
   }
 }

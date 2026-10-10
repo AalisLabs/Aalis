@@ -666,7 +666,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2613 → 2620：S5 根修补全（批审发现）——注入 logger 的 child 派生抛错时沿用上一层，不让 App 构造与插件激活失败。
 // 2620 → 2607：core 0.20 计划 b4 关闭链，P0-1 剩余——停机移出重算队列：删去重算种类与停机排队接管，stopAll 直接执行冻好的计划。
 // 2607 → 2560：同批 P1-1，关闭一律异步——删去同步快路径、seal 与「同步取得段」操作计数（run），关闭不在调用方的栈上执行回调。
-const CORE_CODE_LINE_CEILING = 2560;
+// 2560 → 2547：同批 P1-2 与 X14，等在飞关闭只在激活一层——删去 Resources 第二调用者的限时等待与 Activation 只供测试的
+// 叶子直拆分支；已在别的计划里的激活照样排进计划，轮到它时按超时等那边关完（取代计划末尾单独 join 根的一步）。
+const CORE_CODE_LINE_CEILING = 2547;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

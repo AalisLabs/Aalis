@@ -91,30 +91,6 @@ describe('Resources 的关闭过程', () => {
     expect(trace).toEqual(['abort', 'start', 'end', 'finished']);
   });
 
-  it('一个等待者超时不结束原关闭，也不放行其他等待者', async () => {
-    vi.useFakeTimers();
-    try {
-      const released = gate();
-      const warn = vi.fn();
-      const life = new Resources('t', stubLogger(warn));
-      life.disposables.push(() => released.promise);
-      let originalDone = false;
-      const original = life.disposeAsync().then(() => {
-        originalDone = true;
-      });
-      const impatient = life.disposeAsync(10);
-      await vi.advanceTimersByTimeAsync(10);
-      await impatient;
-      expect(warn.mock.calls.map(args => String(args[0]))).toEqual(['Resources "t": 等待在飞拆卸超过 10ms，放弃等待']);
-      expect(originalDone).toBe(false);
-      released.open();
-      await original;
-      expect(originalDone).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('清理失败隔离，已关闭的资源账不会再次清理', async () => {
     const trace: string[] = [];
     const warn = vi.fn();

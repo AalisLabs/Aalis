@@ -64,8 +64,9 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
 }
 
 /**
- * 关闭一组激活（连同它们的子树）。roots 的给定次序就是无依赖关系时的关闭次序。
+ * 关闭一组激活（连同它们的子树），返回时都已关完。roots 的给定次序就是无依赖关系时的关闭次序。
  * 逐阶段串行等待；关闭位与取消信号同步设置，收尾、撤回与清理回调都不在调用方的栈上执行（见 Resources.drain）。
+ * 已在别的计划里的激活照样排进本计划，只是不替那边收尾：轮到它关闭时按超时等那边关完它。
  *
  * `settle` 传入时复用已冻的计划（停机：先冻再发 `app:stopping`，监听器里的 dispose 汇入同一张图）。
  */
@@ -76,24 +77,21 @@ export async function closeActivations(
   settle?: Map<Activation, () => void>,
 ): Promise<void> {
   const owned = settle ?? freezeActivations(roots);
-  const mine = roots.filter(root => owned.has(root));
   try {
-    for (const stage of planClose(mine, logger)) {
+    for (const { ctx, kind } of planClose(roots, logger)) {
       // 单阶段失败不拖垮同批：与清理链「单项失败继续后续」同一政策
       try {
-        await (stage.kind === 'drain'
-          ? stage.ctx.resources.drain(timeoutMs)
-          : stage.ctx.resources.disposeAsync(timeoutMs));
+        if (owned.has(ctx))
+          await (kind === 'drain' ? ctx.resources.drain(timeoutMs) : ctx.resources.disposeAsync(timeoutMs));
+        else if (kind === 'close') await ctx.disposeAsync(timeoutMs);
       } catch (err) {
-        logger.error(`关停 "${stage.ctx.id}" 的${stage.kind === 'drain' ? '收尾' : '关闭'}阶段抛错:`, err);
+        logger.error(`关停 "${ctx.id}" 的${kind === 'drain' ? '收尾' : '关闭'}阶段抛错:`, err);
       }
-      if (stage.kind === 'close') owned.get(stage.ctx)?.();
+      if (kind === 'close') owned.get(ctx)?.();
     }
   } finally {
     for (const done of owned.values()) done();
   }
-  // 根里有已被别的计划接管的：等它们各自关完，调用方拿到的仍是「全部已关闭」
-  await Promise.all(roots.filter(root => !owned.has(root)).map(root => root.disposeAsync(timeoutMs)));
 }
 
 function planClose(roots: Activation[], logger: Logger): Stage[] {
