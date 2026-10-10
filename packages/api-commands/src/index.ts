@@ -11,8 +11,7 @@
 // 实现见 @aalis/plugin-commands。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import type { ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ===== handler 接口 =====
 
@@ -292,14 +291,14 @@ function makeBuilder(entry: CommandEntry): CommandBuilder {
  * `commands` 的绑定接口：指令声明自动归属这次激活（每个激活一层声明，撤回时被覆盖的声明自动复位）。
  * 同一激活再登记同名指令替换先前那次；提供者换人时整体重挂，关闭时与原语同一拍撤回。
  */
-export interface BoundCommands extends ServiceRef<CommandService> {
+export interface BoundCommands extends CommandService {
   /** 同 {@link CommandService.command}：描述的第一句是 /help 里的摘要 */
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 }
 
 export const commands = defineService<CommandService, BoundCommands>('commands', port => {
   const entries = port.registrar<CommandEntry>({ key: entry => entry.key, register: registerEntry });
-  return serviceRef(port, {
+  return Object.assign(Object.create(port.provider) as BoundCommands, {
     command: (name: string, description?: string, meta?: CommandMeta) => {
       const entry: CommandEntry = {
         key: name.trim().split(/\s+/)[0],

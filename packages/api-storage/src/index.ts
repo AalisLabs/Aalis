@@ -105,7 +105,7 @@ export interface StorageService {
   readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
   /**
    * 可选：按字节区间读取文件（[start, end) 半开区间）。为大文件的窗口化访问
-   * （日志尾读等）而设，避免整文件载入内存。根/提供者未实现时网关抛错——
+   * （日志尾读等）而设，避免整文件载入内存。提供者未实现时业务层的 readFileRange 抛错——
    * 调用方应 try/catch 回退到 readFile（readTailLines 已内置该回退）。
    */
   readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
@@ -144,159 +144,8 @@ export interface StorageService {
   watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;
 }
 
-// ----- 存储能力声明 -----
-
-export interface StorageCapabilityRegistry {
-  List: 'list';
-  Read: 'read';
-  Write: 'write';
-  Delete: 'delete';
-  LocalPath: 'local-path';
-  Watch: 'watch';
-}
-
-export type StorageCapability = StorageCapabilityRegistry[keyof StorageCapabilityRegistry];
-
-export const StorageCapabilities = {
-  List: 'list',
-  Read: 'read',
-  Write: 'write',
-  Delete: 'delete',
-  LocalPath: 'local-path',
-  Watch: 'watch',
-} as const satisfies StorageCapabilityRegistry;
-
-import type { ServiceRef } from '@aalis/core';
 import { defineService } from '@aalis/core';
 import { configError } from '@aalis/schema-config';
-
-// ----- 聚合 / 路由 helper -----
-//
-// 每个 storage 后端按 root 拆出独立 entry：
-//   contextId = `${plugin-instance-id}/${root.name}`
-//
-// 没有 "router facade entry"。所有按 URI / root 名查询的逻辑都是纯函数。
-
-export interface AggregatedStorageRoot extends StorageRootInfo {
-  /** 提供该根的 entry contextId（便于排查同名冲突） */
-  providerId: string;
-  /** entry 的 label（来自 provide 的 label 选项） */
-  provider?: string;
-}
-
-export interface StorageRootConflict {
-  /** 冲突的根名 */
-  name: string;
-  /** 当前实际生效的根（按枚举顺序首个） */
-  selected: AggregatedStorageRoot;
-  /** 被遮蔽的同名根：不带能力要求的调用（如 stat）不会路由到它，但排在前面的根缺少所需能力（如只读根上的写）时，按能力过滤的调用仍会落到它上面 */
-  shadowed: AggregatedStorageRoot[];
-  /** 所有候选根，按 entry 顺序从高到低排列 */
-  providers: Array<AggregatedStorageRoot & { selected: boolean }>;
-}
-
-export interface StorageProviderEntry {
-  instance: StorageService;
-  contextId: string;
-  label?: string;
-}
-
-function safeListRoots(entry: { instance: StorageService; contextId: string }): StorageRootInfo[] {
-  try {
-    return entry.instance.listRoots() ?? [];
-  } catch {
-    return [];
-  }
-}
-
-/** 枚举所有 storage entry。 */
-export function getStorageEntries(source: ServiceRef<StorageService>): StorageProviderEntry[] {
-  return source.all();
-}
-
-/** 聚合所有 entry 的 root 列表（保留 providerId/label） */
-export function aggregateStorageRoots(source: ServiceRef<StorageService>): AggregatedStorageRoot[] {
-  const out: AggregatedStorageRoot[] = [];
-  for (const entry of getStorageEntries(source)) {
-    for (const r of safeListRoots(entry)) {
-      out.push({ ...r, providerId: entry.contextId, provider: entry.label });
-    }
-  }
-  return out;
-}
-
-/** 同名 root 冲突诊断（用于 doctor / 启动日志） */
-export function getStorageRootConflicts(source: ServiceRef<StorageService>): StorageRootConflict[] {
-  const grouped = new Map<string, AggregatedStorageRoot[]>();
-  for (const r of aggregateStorageRoots(source)) {
-    const arr = grouped.get(r.name);
-    if (arr) arr.push(r);
-    else grouped.set(r.name, [r]);
-  }
-  const conflicts: StorageRootConflict[] = [];
-  for (const [name, roots] of grouped) {
-    if (roots.length <= 1) continue;
-    const [selected, ...shadowed] = roots;
-    conflicts.push({
-      name,
-      selected,
-      shadowed,
-      providers: roots.map((r, i) => ({ ...r, selected: i === 0 })),
-    });
-  }
-  return conflicts;
-}
-
-/**
- * 判断某 root 是否满足所需能力：按 root 真实权限位（readable/writable/deletable）
- * + resolveLocalPath/watch 方法存在性判定，不依赖 DI 能力声明。
- */
-function rootSatisfies(
-  root: StorageRootInfo,
-  instance: StorageService,
-  requiredCaps?: readonly StorageCapability[],
-): boolean {
-  if (!requiredCaps || requiredCaps.length === 0) return true;
-  return requiredCaps.every(c => {
-    switch (c) {
-      case 'read':
-      case 'list':
-        return root.readable;
-      case 'write':
-        return root.writable;
-      case 'delete':
-        return root.deletable;
-      case 'local-path':
-        return typeof instance.resolveLocalPath === 'function';
-      case 'watch':
-        return typeof instance.watch === 'function';
-      default:
-        return true;
-    }
-  });
-}
-
-/** 按 root 名查找首个服务该 root 且满足 caps（按 root 权限位）的 entry */
-export function resolveStorageEntryForRoot(
-  source: ServiceRef<StorageService>,
-  rootName: string,
-  requiredCaps?: readonly StorageCapability[],
-): StorageProviderEntry | undefined {
-  for (const entry of getStorageEntries(source)) {
-    const root = safeListRoots(entry).find(r => r.name === rootName);
-    if (root && rootSatisfies(root, entry.instance, requiredCaps)) return entry;
-  }
-  return undefined;
-}
-
-/** 按 storage URI（`<root>:/<path>`）找到对应 entry */
-export function resolveStorageByPath(
-  source: ServiceRef<StorageService>,
-  uri: string,
-  requiredCaps?: readonly StorageCapability[],
-): StorageProviderEntry | undefined {
-  return resolveStorageEntryForRoot(source, parseUriRoot(uri), requiredCaps);
-}
 
 /** 存储 URI 的 scheme 文法：`<root>:/<path>`，root 以字母开头 + 字母/数字/下划线/连字符。 */
 const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
@@ -320,7 +169,7 @@ export function isStorageUri(s: string): boolean {
  * 判定 storage 操作抛出的错误是否表示「目标不存在」—— 契约级判据，全体消费者复用，勿各自重抄。
  *
  * 先看 `code`：有 code 时只认 `'ENOENT'`，文案里带 not found 的其它错误（EACCES 等）不算；
- * 没有 code 时才退回文案正则，兼顾不透传 errno 的提供者。网关的「未知存储根」不含这些字样，
+ * 没有 code 时才退回文案正则，兼顾不透传 errno 的提供者。提供者的「未知存储根」不含这些字样，
  * 判为读失败而非不存在。
  */
 export function isStorageNotFound(err: unknown): boolean {
@@ -365,7 +214,7 @@ export function isHostAbsolutePath(input: string): boolean {
  * - 已是 storage URI（含 `:/`）→ 原样返回。
  * - `foo/bar`（含 `/`，可带前导 `./`）→ `foo:/bar`（首段当根名）。
  * - `name`（单段裸名）→ `<fallbackRoot>:/name`（默认归 data 根相对路径，而非把裸名当根名——
- *   后者会让 gateway 抛「未知根」）。
+ *   后者会让提供者抛「未知存储根」）。
  * 空输入留给调用方各自处理（各包默认文件名不同）。
  */
 export function toStorageUri(input: string, fallbackRoot = 'data'): string {
@@ -454,79 +303,6 @@ export function resolveAgainstCwd(input: string | undefined, cwd: string): strin
   return joinStorageUri(cwdParsed.root, normalizeSegments([...cwdParsed.segments, ...relSegments]));
 }
 
-/**
- * 创建一个面向调用方的 StorageService 网关：每次方法调用按 URI 路由到对应 entry。
- *
- * 不注册到 ServiceContainer——纯本地构造，没有 facade entry。适用于 tools / shell /
- * checkpoint 等需要单一 StorageService 句柄、又想透明跨 root 调度的场景。
- *
- * 调用方无需关心当前有哪些 root 由哪个后端提供；URI 即标识 + 路由 key。
- *
- * 网关恒定义 resolveLocalPath / readFileRange / watch（返回类型据此收窄，调用方无需判存在）：
- * 目标根或其提供者不支持时，由调用本身抛错。
- */
-export function createStorageGateway(
-  source: ServiceRef<StorageService>,
-): StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>> {
-  const knownRootsList = (): string[] => {
-    const set = new Set<string>();
-    for (const entry of getStorageEntries(source)) {
-      for (const r of safeListRoots(entry)) set.add(r.name);
-    }
-    return [...set];
-  };
-  const dispatch = (uri: string, caps?: readonly StorageCapability[]): StorageService => {
-    const target = resolveStorageByPath(source, uri, caps);
-    if (target) return target.instance;
-    const rootName = parseUriRoot(uri);
-    // 根已注册、只是没有满足所需能力的提供者：按枚举顺序首个同名根点明缺哪项，别报成「未知」
-    for (const entry of getStorageEntries(source)) {
-      const root = safeListRoots(entry).find(r => r.name === rootName);
-      if (!root) continue;
-      const missing = (caps ?? []).filter(c => !rootSatisfies(root, entry.instance, [c]));
-      throw new Error(`存储根 ${rootName} 不支持 ${missing.join(', ')}`);
-    }
-    const known = knownRootsList();
-    throw new Error(`未知存储根: ${rootName}（已注册根: ${known.join(', ') || '(无)'}）`);
-  };
-
-  return {
-    listRoots() {
-      const seen = new Map<string, StorageRootInfo>();
-      for (const r of aggregateStorageRoots(source)) {
-        if (seen.has(r.name)) continue;
-        const { providerId: _p, provider: _l, ...info } = r;
-        seen.set(r.name, info);
-      }
-      return [...seen.values()];
-    },
-    list: uri => dispatch(uri, ['list']).list(uri),
-    stat: uri => dispatch(uri).stat(uri),
-    readFile: (uri, encoding) => dispatch(uri, ['read']).readFile(uri, encoding),
-    readFileRange: (uri, start, end) => {
-      const target = dispatch(uri, ['read']);
-      if (!target.readFileRange) {
-        throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 readFileRange（提供者未实现字节区间读取）`);
-      }
-      return target.readFileRange(uri, start, end);
-    },
-    createReadStream: uri => dispatch(uri, ['read']).createReadStream(uri),
-    writeFile: (uri, data, options) => dispatch(uri, ['write']).writeFile(uri, data, options),
-    rename: (uri, newName) => dispatch(uri, ['write']).rename(uri, newName),
-    move: (fromUri, toUri) => dispatch(fromUri, ['write']).move(fromUri, toUri),
-    mkdir: uri => dispatch(uri, ['write']).mkdir(uri),
-    delete: uri => dispatch(uri, ['delete']).delete(uri),
-    resolveLocalPath: (uri, access) => {
-      const caps: StorageCapability[] =
-        access === 'write' ? ['write', 'local-path'] : access === 'delete' ? ['delete', 'local-path'] : ['local-path'];
-      // dispatch 已按 local-path 能力（方法存在性）过滤，路由到的提供者必有此方法
-      return dispatch(uri, caps).resolveLocalPath!(uri, access);
-    },
-    // 同上：dispatch 已按 watch 能力过滤
-    watch: (uri, listener) => dispatch(uri, ['watch']).watch!(uri, listener),
-  };
-}
-
 // ----- 大文件尾读工具 -----
 
 export interface ReadTailOptions {
@@ -611,5 +387,25 @@ export async function readTailLines(
   }
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const storage = defineService<StorageService>('storage');
+// ----- 服务描述符 -----
+
+/** 业务层恒定义的几个可选方法：选中的那一家不支持时由调用本身抛错，调用方无需判存在 */
+type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
+
+/** `storage` 的业务层：调用转发给选中的那一家 */
+export type BoundStorage = StorageMethods;
+
+export const storage = defineService<StorageService, BoundStorage>('storage', port => {
+  const provider = port.provider;
+  const supported = <K extends 'resolveLocalPath' | 'readFileRange' | 'watch'>(name: K): StorageMethods[K] => {
+    const method = provider[name];
+    if (typeof method !== 'function') throw new Error(`存储提供者不支持 ${name}`);
+    return method as StorageMethods[K];
+  };
+  const extra: Pick<StorageMethods, 'resolveLocalPath' | 'readFileRange' | 'watch'> = {
+    resolveLocalPath: (uri, access) => supported('resolveLocalPath')(uri, access),
+    readFileRange: (uri, start, end) => supported('readFileRange')(uri, start, end),
+    watch: (uri, listener) => supported('watch')(uri, listener),
+  };
+  return Object.assign(Object.create(provider) as StorageMethods, extra);
+});

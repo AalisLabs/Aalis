@@ -614,5 +614,5 @@ export interface ReachService {
   provenanceOf(realPath: string): ProvenanceRecord | undefined;
 }
 
-/** 调用型服务：绑定接口是 ServiceRef */
+/** 调用型服务：业务层就是提供者的形状 */
 export const reach = defineService<ReachService>('reach');

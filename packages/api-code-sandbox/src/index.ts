@@ -63,5 +63,5 @@ export interface CodeSandboxService {
   run(req: SandboxRunRequest): Promise<ExecResult>;
 }
 
-/** `code-sandbox` 是普通调用型服务：绑定接口是 ServiceRef，每次读当前胜者。 */
+/** `code-sandbox` 是普通调用型服务：业务层就是提供者的形状，每次调用打到选中的那一家。 */
 export const codeSandbox = defineService<CodeSandboxService>('code-sandbox');

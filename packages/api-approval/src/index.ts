@@ -12,8 +12,7 @@
  * - 展示方：`list()` 与 `approval:created`、`approval:settled` 事件。
  */
 
-import type { ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
 // 发起
@@ -205,8 +204,8 @@ export interface ApprovalService {
   attachSurface(name: string, registrant: string): SurfaceBinding;
 }
 
-/** `approvals` 的绑定接口：调用那一半是 ServiceRef，审批面登记自动归属这次激活 */
-export interface BoundApprovals extends ServiceRef<ApprovalService> {
+/** `approvals` 的业务层：调用转发给选中的那一家，审批面登记自动归属这次激活 */
+export interface BoundApprovals extends ApprovalService {
   /**
    * 登记审批面：同一激活同名再登记替换旧的；提供者换人自动重挂，随激活撤回。
    * 提供者不在场时接入的客户端照样拿到句柄：在场上报不生效，应答回 `unavailable`；提供者上线后下一次上报时接上
@@ -253,8 +252,7 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
     };
   }
 
-  return serviceRef(port, {
-    // 箭头函数：对象字面量方法带隐式 this，会被当成上下文敏感、让 E 改从返回类型推断
+  return Object.assign(Object.create(port.provider) as BoundApprovals, {
     registerSurface: (name: string): ApprovalSurface => {
       const entry: Entry = { name };
       surfaces.add(entry);

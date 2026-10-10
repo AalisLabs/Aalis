@@ -4,8 +4,8 @@
 // 事件类型、管理面 REST（rest.ts）、主题的令牌表与文件格式（theme.ts），以及服务描述符。
 
 import type { UnmetService } from '@aalis/api-doctor';
-import type { LogEntry, LogLevel, ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import type { LogEntry, LogLevel } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { Notice, NoticeHandle, PageDefinition, PageHandle, PagePlacement } from './page.js';
 
 /**
@@ -134,13 +134,13 @@ export interface WebuiClientProvider {
   getClientDir(): string;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const webuiClient = defineService<WebuiClientProvider>('webui-client');
 
 // ===== 服务描述符（按激活绑定）=====
 
-/** `webui-server` 的绑定接口：页面与提示的登记归属这次激活，提供者换人自动重挂，停用时同一拍撤回 */
-export interface BoundWebui extends ServiceRef<WebUIService> {
+/** `webui-server` 的业务层：调用转发给选中的那一家，页面与提示的登记归属这次激活，提供者换人自动重挂，停用时同一拍撤回 */
+export interface BoundWebui extends WebUIService {
   /**
    * 登记一个页面：声明式页面的组件、数据源、动作与处理函数一次给出，返回形状按组件种类推出，引用了没声明的动作在编译期
    * 报错；插件前端页面给出框架所在的模块、数据源与动作，输入按声明推出。要在引用它的 notify 之前登记
@@ -168,12 +168,14 @@ export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server
     definePage(page) {
       pages.add(page as PageDefinition);
       return {
-        invalidate: (componentId, sessionId) => port.current()?.invalidate(port.id, page.key, componentId, sessionId),
+        invalidate: (componentId, sessionId) => {
+          if (port.present) port.provider.invalidate(port.id, page.key, componentId, sessionId);
+        },
       };
     },
     notify: notice => ({ clear: notices.add(notice) }),
   };
-  return serviceRef(port, facade);
+  return Object.assign(Object.create(port.provider) as BoundWebui, facade);
 });
 
 // ----- 需要处理 -----

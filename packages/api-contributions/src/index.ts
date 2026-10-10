@@ -78,7 +78,7 @@ export const contributions = defineService<ContributionRegistry, Contributions>(
       return ledger.add({ point, spec });
     },
     collect: point =>
-      port.require().collect(point) as ReadonlyArray<
+      port.provider.collect(point) as ReadonlyArray<
         ContributionHandle<ContributionPointMap[typeof point] & ContributionSpec>
       >,
   };

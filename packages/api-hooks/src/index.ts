@@ -77,6 +77,6 @@ export const hooks = defineService<HookRegistry, Hooks>('hooks', port => {
   return {
     middleware: (hook, fn) => ledger.add({ hook, fn: fn as MiddlewareFn<unknown>, order: ++orderCounter.n }),
     // async：没有提供者时以被拒的 Promise 传出，不在调用点同步抛（与提供者 run 的异步口径一致）
-    run: async (hook, data, defaultAction, opts) => port.require().run(hook, data, defaultAction, opts),
+    run: async (hook, data, defaultAction, opts) => port.provider.run(hook, data, defaultAction, opts),
   };
 });

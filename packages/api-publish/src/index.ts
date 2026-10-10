@@ -9,8 +9,7 @@
 // 作品与展示页的响应头策略（展示面的中间件与 _headers、审核的本机隔离预览）。
 // ============================================================
 
-import type { ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ----- 作品编号与公开路径 -----
 
@@ -219,8 +218,8 @@ export function isIntegrityError(err: unknown): err is IntegrityError {
 
 // ----- 服务描述符（按激活绑定）-----
 
-/** `publish` 的绑定接口：调用那一半是 ServiceRef，变更订阅与展示面登记自动归属这次激活 */
-export interface BoundPublish extends ServiceRef<PublishService> {
+/** `publish` 的业务层：调用转发给选中的那一家，变更订阅与展示面登记自动归属这次激活 */
+export interface BoundPublish extends PublishService {
   /** 订阅已发布集合的变化：提供者换人自动重挂，随激活撤回 */
   onChange(listener: () => void): () => void;
   /**
@@ -254,9 +253,8 @@ export const publish = defineService<PublishService, BoundPublish>('publish', po
       };
     },
   });
-  return serviceRef(port, {
+  return Object.assign(Object.create(port.provider) as BoundPublish, {
     onChange: (listener: () => void) => changes.add({ seq: ++changeSeq, listener }),
-    // 箭头函数：对象字面量方法带隐式 this，会被当成上下文敏感、让 E 改从返回类型推断
     attachSurface: (surface: PublishSurface): SurfaceBinding => {
       const entry: SurfaceEntry = { surface };
       const detach = surfaces.add(entry);

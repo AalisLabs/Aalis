@@ -96,27 +96,19 @@ export interface PlatformAdapter {
 // 所有按 sessionId 分发、按平台名汇总的逻辑都用纯函数表达，调用方传 ctx 即可，
 // 没有 router facade entry，没有自递归隐患。
 
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import { defineService } from '@aalis/core';
 
-export interface PlatformAdapterEntry {
-  instance: PlatformAdapter;
-  contextId: string;
-  label?: string;
-}
+/** 只枚举提供者的那一面：只在部分 adapter 里找时，给一个只列它们的 `list` */
+type Adapters = Pick<ServiceSelection<PlatformAdapter>, 'list'>;
 
-/** 枚举所有 platform adapter 条目 */
-export function getPlatformAdapterEntries(source: Pick<ServiceRef<PlatformAdapter>, 'all'>): PlatformAdapterEntry[] {
-  return source.all();
-}
-
-/** 枚举所有 platform adapter 实例 */
-export function getPlatformAdapters(source: ServiceRef<PlatformAdapter>): PlatformAdapter[] {
-  return getPlatformAdapterEntries(source).map(e => e.instance);
+/** 枚举所有 platform adapter（各家的业务句柄） */
+export function getPlatformAdapters(source: Adapters): PlatformAdapter[] {
+  return source.list().map(e => e.use);
 }
 
 /** 枚举所有平台名（来自 adapter.platform 字段，去重） */
-export function getPlatformNames(source: ServiceRef<PlatformAdapter>): string[] {
+export function getPlatformNames(source: Adapters): string[] {
   const names = new Set<string>();
   for (const a of getPlatformAdapters(source)) names.add(a.platform);
   return [...names];
@@ -161,22 +153,22 @@ export function resolveSessionType(types: readonly SessionTypeDecl[], name: stri
 }
 
 /** 聚合所有 adapter 的连接 */
-export function aggregatePlatformConnections(source: ServiceRef<PlatformAdapter>): PlatformConnection[] {
+export function aggregatePlatformConnections(source: Adapters): PlatformConnection[] {
   return getPlatformAdapters(source).flatMap(a => a.getConnections());
 }
 
 /** 聚合所有 adapter 的展示详情（含 contextId / connections） */
-export function aggregatePlatformDetails(source: ServiceRef<PlatformAdapter>): Array<{
+export function aggregatePlatformDetails(source: Adapters): Array<{
   adapterName: string;
   platform: string;
   contextId: string;
   connections: PlatformConnection[];
 }> {
-  return getPlatformAdapterEntries(source).map(({ instance, contextId }) => ({
-    adapterName: instance.adapterName,
-    platform: instance.platform,
-    contextId,
-    connections: instance.getConnections(),
+  return source.list().map(({ use, id }) => ({
+    adapterName: use.adapterName,
+    platform: use.platform,
+    contextId: id,
+    connections: use.getConnections(),
   }));
 }
 
@@ -185,7 +177,7 @@ export function aggregatePlatformDetails(source: ServiceRef<PlatformAdapter>): A
  * （多账号适配器按 sessionId 定位自己的连接，认不出时返回 undefined）
  */
 export function getPlatformSelfIdentity(
-  source: ServiceRef<PlatformAdapter>,
+  source: Adapters,
   platform: string,
   sessionId?: string,
 ): PlatformSelfIdentity | undefined {
@@ -202,30 +194,30 @@ export function getPlatformSelfIdentity(
  * 同平台单实例的适配器）。`canHandle` 抛错按不认领，告警
  */
 async function claims(
-  { instance, contextId }: PlatformAdapterEntry,
+  { use, id }: ProviderEntry<PlatformAdapter>,
   sessionId: string,
   logger?: Pick<Logger, 'warn'>,
 ): Promise<boolean> {
   try {
-    return typeof instance.canHandle === 'function'
-      ? await instance.canHandle(sessionId)
-      : sessionId.startsWith(`${instance.platform}:`);
+    return typeof use.canHandle === 'function'
+      ? await use.canHandle(sessionId)
+      : sessionId.startsWith(`${use.platform}:`);
   } catch (err) {
-    logger?.warn(`canHandle 抛错 [${contextId}]:`, err);
+    logger?.warn(`canHandle 抛错 [${id}]:`, err);
     return false;
   }
 }
 
 /**
- * 按 sessionId 找到接管它的 adapter 条目（带插件实例 id `contextId`）：按登记顺序第一个认领它的。
- * 只在部分 adapter 里找时，source 给一个只列它们的 `all`
+ * 按 sessionId 找到接管它的 adapter 条目（带插件实例 id `id`）：按 `list()` 的顺序第一个认领它的。
+ * 只在部分 adapter 里找时，source 给一个只列它们的 `list`
  */
 export async function resolvePlatformBySession(
-  source: Pick<ServiceRef<PlatformAdapter>, 'all'>,
+  source: Adapters,
   sessionId: string,
   logger?: Pick<Logger, 'warn'>,
-): Promise<PlatformAdapterEntry | undefined> {
-  for (const entry of getPlatformAdapterEntries(source)) {
+): Promise<ProviderEntry<PlatformAdapter> | undefined> {
+  for (const entry of source.list()) {
     if (await claims(entry, sessionId, logger)) return entry;
   }
   return undefined;
@@ -236,12 +228,12 @@ export async function resolvePlatformBySession(
  * 处停（第一个就是它解析到的那个）。用来看出一个 id 是不是同时归几个平台
  */
 export async function claimantsOf(
-  source: Pick<ServiceRef<PlatformAdapter>, 'all'>,
+  source: Adapters,
   sessionId: string,
   logger?: Pick<Logger, 'warn'>,
-): Promise<PlatformAdapterEntry[]> {
-  const claimants: PlatformAdapterEntry[] = [];
-  for (const entry of getPlatformAdapterEntries(source)) {
+): Promise<ProviderEntry<PlatformAdapter>[]> {
+  const claimants: ProviderEntry<PlatformAdapter>[] = [];
+  for (const entry of source.list()) {
     if (await claims(entry, sessionId, logger)) claimants.push(entry);
   }
   return claimants;
@@ -251,13 +243,14 @@ export async function claimantsOf(
  * 没有 adapter 接管时的报错。会话 id 带平台前缀时，列出这个平台各实例的已知账号与连接状态，
  * 分得清是账号写错、账号不属于任何实例，还是连接没上来。
  */
-function unroutable(source: ServiceRef<PlatformAdapter>, sessionId: string): Error {
+function unroutable(source: Adapters, sessionId: string): Error {
   const prefix = sessionId.split(':')[0];
-  const known = getPlatformAdapterEntries(source)
-    .filter(({ instance }) => instance.platform === prefix)
-    .map(({ instance, contextId }) => {
-      const connections = instance.getConnections().map(c => `${c.selfId ?? '?'}(${c.status})`);
-      return `${contextId}: ${connections.join('、') || '无连接'}`;
+  const known = source
+    .list()
+    .filter(({ use }) => use.platform === prefix)
+    .map(({ use, id }) => {
+      const connections = use.getConnections().map(c => `${c.selfId ?? '?'}(${c.status})`);
+      return `${id}: ${connections.join('、') || '无连接'}`;
     });
   const detail = known.length > 0 ? `（已知连接：${known.join('；')}）` : '';
   return new Error(`没有 platform adapter 能处理 sessionId="${sessionId}"${detail}`);
@@ -265,24 +258,24 @@ function unroutable(source: ServiceRef<PlatformAdapter>, sessionId: string): Err
 
 /** 按 sessionId 路由发送纯文本消息 */
 export async function sendPlatformMessage(
-  source: ServiceRef<PlatformAdapter>,
+  source: Adapters,
   sessionId: string,
   content: string,
   options?: { skipSplit?: boolean },
 ): Promise<void> {
-  const adapter = (await resolvePlatformBySession(source, sessionId))?.instance;
+  const adapter = (await resolvePlatformBySession(source, sessionId))?.use;
   if (!adapter) throw unroutable(source, sessionId);
   return adapter.sendMessage(sessionId, content, options);
 }
 
 /** 按 sessionId 路由调用平台原生 action */
 export async function callPlatformAction(
-  source: ServiceRef<PlatformAdapter>,
+  source: Adapters,
   sessionId: string,
   action: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
-  const adapter = (await resolvePlatformBySession(source, sessionId))?.instance;
+  const adapter = (await resolvePlatformBySession(source, sessionId))?.use;
   if (!adapter) throw unroutable(source, sessionId);
   if (typeof adapter.callAction !== 'function') {
     throw new Error(`platform adapter "${adapter.adapterName}" 不支持 callAction`);
@@ -290,5 +283,5 @@ export async function callPlatformAction(
   return adapter.callAction(sessionId, action, params);
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const platform = defineService<PlatformAdapter>('platform');

@@ -5,7 +5,7 @@
 // `provide(asr, impl, { priority })` 注册为多 provider。
 // 第一方消费者 plugin-media 枚举全部 asr 提供者，与音频 LLM 同池，按 media 的
 // audio.prefer、再按 priority 选择（服务偏好只在优先级相同时决胜）；直接用
-// asr.current 的第三方消费方按核心的「偏好 > 优先级 > 注册顺序」取胜者。
+// asr.use 的第三方消费方按核心的挑选规则（本插件偏好 > 全局偏好 > 优先级 > 注册顺序）打到选中的那一家。
 //
 // 依赖：仅 @aalis/core 与 @aalis/schema-message。
 // ============================================================
@@ -45,5 +45,5 @@ export interface ASRService {
   transcribe(input: TranscribeInput): Promise<TranscribeResult>;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const asr = defineService<ASRService>('asr');
