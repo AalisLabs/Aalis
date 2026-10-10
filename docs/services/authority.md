@@ -255,7 +255,7 @@ commands.use.command('level <target> <n:number>', '设等级', { visibility: 're
 
 ### 5.2 直接消费 authority 服务（管理面 / 自定义 surface）
 
-业务句柄 `authority.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人（见 docs/concepts/lazy-service-access.md）。可选依赖先看 `present`：
+业务句柄 `authority.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。可选依赖先看 `present`：
 
 ```ts
 if (!authority.present) throw new Error('Authority 服务不可用'); // 可选依赖：缺失要兜底

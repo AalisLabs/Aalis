@@ -32,7 +32,7 @@ export interface GatewayService {
 }
 ```
 
-契约包导出服务描述符 `gateway = defineService<GatewayService>('gateway')`（`packages/api-gateway/src/index.ts`），服务类型随描述符携带，不经 declaration merging。插件在 `uses` 里声明 `gateway` 后，`gateway.use` 推断为 `GatewayService`（缺席时访问成员抛错，可选依赖先看 `gateway.present`）；按字符串名动态查询（`services.use.get('gateway')`）不带类型。
+契约包导出服务描述符 `gateway = defineService<GatewayService>('gateway')`（`packages/api-gateway/src/index.ts`），服务类型随描述符携带，不经 declaration merging。插件在 `uses` 里声明 `gateway` 后，`gateway.use` 推断为 `GatewayService`；按字符串名动态查询（`services.use.get('gateway')`）不带类型。
 
 ### 2.2 入站相位常量与相位数据
 
@@ -208,7 +208,7 @@ export default definePlugin({
 
 ## 6. 标准消费方式
 
-- **业务句柄是活的**：`gateway.use` 每次访问成员都解析到本插件当前选中的那一家，provider bounce（卸载/重载）后，存进模块/闭包变量的句柄也会跟着换人；一段操作要固定同一家时取 `gateway.list().find(p => p.selected)?.use`。详见 `concepts/lazy-service-access.md`。
+- **业务句柄是活的**：`gateway.use` 的选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 - **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway.present ? gateway.use.dispatchOutbound(msg) : events.use.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 plugin-commands 靠它回送指令结果与确认提示，`packages/plugin-commands/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
 - **注册相位 = 用 `hooks.use.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.use.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.use.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。

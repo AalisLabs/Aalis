@@ -189,7 +189,7 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-**业务句柄 `memory.use` 是活的。** memory provider 可能被 bounce 或热重载，`memory.use` 每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人；一段操作要固定同一家时取 `memory.list().find(p => p.selected)?.use`。详见 `docs/concepts/lazy-service-access.md`。
+业务句柄 `memory.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ```ts
 import { memory } from '@aalis/api-memory';
@@ -209,10 +209,10 @@ export default definePlugin({
 });
 ```
 
-- **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件；运行期短暂缺席时访问 `memory.use` 的成员同步抛 `ServiceUnavailableError`，不必另写判空。
+- **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件，调用处不必另写判空。
 - **可选依赖**：`optional(memory)` + 先看 `memory.present` 降级（agent 采用这种方式）。
 - **可选方法守卫**：调用可选方法前先判断存在性 —— `if (svc.getFullHistory) await svc.getFullHistory(...)`。
-- **有状态资源随换人重挂**：要跟着提供者建立有状态资源时用 `memory.follow(attach)`：以选中那一家的业务句柄调 attach，换人时先跑上次的清理再重挂。
+- **有状态资源随换人重挂**：用 `memory.follow(attach)`，见 [follow](../core/context.md#follow)。
 
 ## 6. 能力 / 风险 → 影响
 

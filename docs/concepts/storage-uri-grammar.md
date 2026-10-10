@@ -155,7 +155,7 @@ await storage.use.readFile('workspace:/a.txt');        // 落到 workspace 根
 URI 即标识 + 路由 key，调用方无需关心根落在磁盘哪里。根名不认识时抛
 「未知存储根: X（已注册根: ...）」；根的权限位不允许这次操作（如只读根上的写）时抛
 「存储根 X 不允许该操作 (writable)」一类的错误（`plugin-storage-local/src/index.ts`）。业务层恒定义 `resolveLocalPath` / `readFileRange` / `watch`，
-提供者不支持时由调用本身抛错。插件自己的私有数据经 `caps.storage.use.own` 读写：它是 `pluginData:/<插件名>/` 上的视图，
+提供者不支持时由调用本身抛错。插件自己的私有数据经 `caps.storage.use.own` 读写：它是 `pluginData:/<目录名>/` 上的视图（目录名的规则见 [api-storage](../api/api-storage.md)），
 路径参数相对这个目录，见 [storage 服务](../services/storage.md)。
 
 ---

@@ -146,7 +146,7 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-直接经业务句柄 `process.use` 调用。它是活的：每次方法调用都解析到本插件当前选中的那一家，可以存进字段；选不到提供者时访问成员同步抛 `ServiceUnavailableError`。一段操作要固定同一家时取 `process.list().find(p => p.selected)?.use`。
+直接经业务句柄 `process.use` 调用。它是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ```ts
 import { processService } from '@aalis/api-process';
@@ -170,7 +170,7 @@ export default definePlugin({
 
 ### 服务缺失 / 可选依赖
 
-- **硬依赖**：`uses: { process: processService }`；提供者缺席时访问 `process.use` 的成员同步抛 `ServiceUnavailableError`（错误类不导出，认 `err.name === 'ServiceUnavailableError'`）。
+- **硬依赖**：`uses: { process: processService }`。
 - **可选依赖**：`optional(processService)`，先看 `process.present` 再调用。
 
 ### 错误边界

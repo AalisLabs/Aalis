@@ -39,7 +39,7 @@ export interface MediaService {
 }
 ```
 
-取服务：`media.use`；`plugin-media` 未就绪时 `media.present` 为 `false`，访问成员同步抛 `ServiceUnavailableError`。
+取服务：`media.use`；`plugin-media` 未就绪时 `media.present` 为 `false`。
 
 ### `MediaProcessor`（backend 子契约）
 
@@ -111,7 +111,7 @@ export interface MediaProcessor {
 有三条前提对使用 `media` 是必要的：
 
 - DI 按**名字**解析，每个消费方只选中一家 `media`：本插件偏好 > 全局偏好 > priority > 注册顺序。0.5.0 起**没有** capability-based 的服务选择——capability 概念活在 `MediaProcessor.capabilities`（实例内部池）里，不是 DI 的选择维度。见 [docs/concepts/service-model.md](../concepts/service-model.md)。
-- 业务句柄 **`media.use` 是活的**：每次访问成员都解析到本插件当前选中的那一家，provider bounce 或 reload 后存起来的句柄也会跟着换人；一段操作要固定同一家时取 `media.list().find(p => p.selected)?.use`。见 [docs/concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。
+- 业务句柄 **`media.use` 是活的**，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 - manifest 的双源（`package.json` 里的 `aalis.service` 与模块导出的 `provides`/`uses`）需要保持一致。见 [docs/concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
 ---

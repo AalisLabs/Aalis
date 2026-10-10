@@ -449,11 +449,12 @@ cell.innerHTML = member.nickname;
 | --- | --- |
 | `caps.x.current` / `caps.x.require()` 取到实例再调用 | `caps.x.use.方法()`：活的转发句柄，可以存起来；选不到提供者时访问成员同步抛 `ServiceUnavailableError`（按 `err.name` 认），optional 依赖先看 `caps.x.present` |
 | `caps.x.all()`，条目 `{ instance, contextId, label }` | `caps.x.list()`，条目 `{ id, label, priority, selected, basis, use }`；固定某一家用 `caps.x.of(id)` |
-| 取一次 `current` 固定一段操作的提供者；拿它与自己的实例比身份 | `caps.x.list().find(p => p.selected)?.use`；比条目 id：`…?.id === caps.lifecycle.use.id` |
+| `caps.x.current` 当判空用：有就用，没有就跳过 | `caps.x.present ? caps.x.use : undefined` |
+| 取一次 `current` 固定一段操作的提供者；拿它与自己的实例比身份 | `caps.x.list().find(p => p.selected)?.use`：钉在那一条登记上，途中那一家撤回后访问抛错，不跟到同一个 id 的新实例；选不到时是 `undefined`，要照样抛不可用错误写 `?? caps.x.use`。比条目 id：`…?.id === caps.lifecycle.use.id` |
 | 登记方法直接挂在 `caps.x` 上（`tools.register`、`commands.command`、`hooks.middleware`、`webui.definePage` …） | 挂在业务层上：`caps.tools.use.register`、`caps.commands.use.command`、`caps.hooks.use.middleware`、`caps.webui.use.definePage` … |
 | 内置项直接调用：`logger.info`、`events.on`、`lifecycle.onDispose` / `id` / `signal`、`provide(desc, impl)`、`services.get` | 同样经业务层：`logger.use.info`、`events.use.on`、`lifecycle.use.onDispose` / `id` / `signal`、`provide.use(desc, impl)`、`services.use.get` |
 | `parseConfig(schema, caps.config, caps.logger)` | `parseConfig(schema, caps.config.use, caps.logger.use)` |
-| storage 的网关 helper 与按条目路由的函数 | 删除。直接 `caps.storage.use.readFile(...)`；插件私有数据经 `caps.storage.use.own`（`pluginData:/<插件名>/`） |
+| storage 的网关 helper 与按条目路由的函数 | 删除。直接 `caps.storage.use.readFile(...)`；插件私有数据经 `caps.storage.use.own`（`pluginData:/<目录名>/`：`@aalis` 与不带作用域的包是包名去掉 `plugin-`，别的作用域另带作用域，如 `@acme/plugin-x` → `acme+x`） |
 | process 的网关 helper | 删除。用 `caps.process.use` |
 | `resolveLLMModel` / `listLLMModels`、api-platform 与 api-remote-agent 的 helper 返回 `{ instance, contextId }` | 返回 `ProviderEntry`，句柄在 `use`、条目 id 在 `id`；按模型取写 `caps.llm.of('<provider>/<model>')` |
 | `isActiveTrigger(phase, trigger, self)` | 第三参是自己的条目 id：`isActiveTrigger(phase, caps.trigger, caps.lifecycle.use.id)` |

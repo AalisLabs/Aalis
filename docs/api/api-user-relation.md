@@ -45,7 +45,7 @@ export default definePlugin({
 });
 ```
 
-业务句柄 `userRelation.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人。
+业务句柄 `userRelation.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ## 消费方
 

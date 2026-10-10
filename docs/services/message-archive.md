@@ -121,7 +121,7 @@ export default definePlugin({
 
 ## 5. 标准消费姿势
 
-**业务句柄是活的。** `messageArchive.use`、`memory.use` 每次访问成员都解析到本插件当前选中的那一家，provider bounce/重载后存起来的句柄也会跟着换人。参考实现直接经 `memory.use` 调用（`packages/plugin-message-archive/src/index.ts` 的注释说明了这一点），消费方同理，可选依赖先看 `present`：
+`messageArchive.use`、`memory.use` 是活的业务句柄，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。参考实现直接经 `memory.use` 调用（`packages/plugin-message-archive/src/index.ts` 的注释说明了这一点），消费方同理，可选依赖先看 `present`：
 
 ```ts
 if (!messageArchive.present) return;        // 服务缺失：优雅降级，不要抛

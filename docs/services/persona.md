@@ -72,7 +72,7 @@ export interface PersonaSessionOptions {
 export const persona = defineService<PersonaService>('persona');
 ```
 
-消费方把描述符写进 `uses`，`persona.use` 即推断为 `PersonaService`（缺席时访问成员抛错，可选依赖先看 `persona.present`）。
+消费方把描述符写进 `uses`，`persona.use` 即推断为 `PersonaService`。
 
 ## 3. 谁提供 / 谁消费
 
@@ -156,7 +156,7 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-- 业务句柄是活的。`persona.use` 每次访问成员都解析到本插件当前选中的那一家，存成字段也会跟着换人，provider bounce（卸载或重载）后照常可用（见 `docs/concepts/lazy-service-access.md`）；一段操作要固定同一家时取 `persona.list().find(p => p.selected)?.use`。
+- 业务句柄是活的。`persona.use` 的选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 - persona 是可选依赖。在 `uses optional` 里声明它（agent、session-manager、tool-system 都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
 - 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`、`persona?.getPersonaSkills?.()`，因为第三方 provider 可能没有实现。
 - 用类型窄化避免包循环。如果只用一两个方法，按消费侧的需要声明窄类型（如按名字动态查询 `services.use.get('persona')` 的结果），不必 import 全量的 `PersonaService`。

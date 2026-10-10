@@ -105,15 +105,16 @@ caps.provide.use(llm, handle, {
 
 写进 `uses` 之后，apply 里拿到的是选择层。required 与 optional 拿到的是**同一接口**——两者只差激活闸：required 缺席会让顶层插件 pending；optional 缺席不拦激活，到场后自动接上。
 
-- `use`：默认业务句柄，转发给本插件当前选中的那一家。活的：每次访问成员重新解析，存起来也会跟着换人；选不到提供者时访问成员同步抛 `ServiceUnavailableError`（按 `err.name` 认）。required 依赖丢失到调度收敛之间也可能短暂选不到。
-- `present`：本插件此刻能否选到一家。可选依赖先看它。
-- `list()`：全部对外可见的提供者（`ProviderEntry`），每次调用重新枚举，本插件选中的那一条在前。一段操作要固定同一家，取 `list().find(p => p.selected)?.use`。
-- `of(id)`：固定某一家的业务句柄，那一家不在时访问成员抛错。
-- `follow(attach)`：跟随选中的那一家建立有状态资源。详见 [惰性服务访问](./lazy-service-access.md)。
+- `use`：默认业务句柄，转发给本插件当前选中的那一家；`present`：此刻能否选到一家。
+- `list()`：全部对外可见的提供者（`ProviderEntry`），本插件选中的那一条在前，条目的 `use` 钉在那一条登记上。
+- `of(id)`：按 id 固定某一家的业务句柄。
+- `follow(attach)`：跟随选中的那一家建立有状态资源。
+
+挑选规则、缺席时的行为与三种句柄各打到哪一家见 [选择层与业务层](../core/context.md#选择层与业务层)，`follow` 的交接见 [follow](../core/context.md#follow)。
 
 ### 4.2 动态查询：`services`
 
-管理、展示面用 `services.use.get` / `all` / `names` / `inspect` / `prefer`。按描述符查带类型，按运行期字符串查则由调用方收窄。`get` / `all` 给的是原始实例，存起来不会跟着换人。动态查询**不产生依赖边**，不参与激活闸，关停期可能拿空。需要保证就写进 `uses`。
+管理、展示面用 `services.use.get` / `all` / `names` / `inspect` / `prefer`；`inspect(key, { for })` 给出那个插件的解析顺序与选中依据。按描述符查带类型，按运行期字符串查则由调用方收窄。`get` / `all` 给的是原始实例，存起来不会跟着换人。动态查询**不产生依赖边**，不参与激活闸，关停期可能拿空。需要保证就写进 `uses`。
 
 ### 4.3 登记型业务层
 

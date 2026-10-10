@@ -165,7 +165,7 @@ export default definePlugin({
 ## 5. 标准消费方式
 
 1. 在 `uses required` 声明 `'cron-engine'`，让运行时保证服务就绪后才 `apply`（scheduler / workflow 的 `uses required`）。
-2. 经业务句柄 `cronEngine.use` 调用——缺失时访问成员同步抛 `ServiceUnavailableError`。句柄是活的：每次访问成员都解析到本插件当前选中的那一家，provider 反弹后存起来的句柄也会跟着换（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
+2. 经业务句柄 `cronEngine.use` 调用。句柄是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 3. 创建前先 `validate` 或捕获 `subscribe` 的抛错——参考实现两个消费方都用 `try/catch` 包住 subscribe 并 `logger.warn`，避免一条坏表达式中断整批注册（scheduler `initJob`、workflow `triggers.ts`）。
 4. 保存好 `subscribe` 返回的 dispose，在任务删除/禁用/插件卸载时调用（scheduler 存 `rt.cronDispose`、workflow 存 `cronDisposers` Map）。
 5. 可选依赖：若你的插件在没有 cron-engine 时仍能降级运行，则不要放进 `required`，改为运行时先看 `cronEngine.present` 再调用。

@@ -45,7 +45,7 @@ export interface TranscribeResult {
 
 输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/schema-message/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
 
-经 `defineService` 描述符 `asr` 取得强类型（`index.ts`）：契约不给 bind，`asr.use` 就是 `ASRService` 形状的活句柄；无可用后端时 `asr.present` 为 `false`，访问成员同步抛 `ServiceUnavailableError`。
+经 `defineService` 描述符 `asr` 取得强类型（`index.ts`）：契约不给 bind，`asr.use` 就是 `ASRService` 形状的活句柄；无可用后端时 `asr.present` 为 `false`。
 
 ---
 
@@ -173,7 +173,7 @@ export default definePlugin({
 });
 ```
 
-`asr.use` 是**活的转发句柄**：每次访问成员都解析到本插件当前选中的那一家，provider 换人（热插拔 / 偏好切换）后，存进类字段的句柄也会跟着换（`packages/core/src/composition/descriptors.ts`）。一段操作要固定同一家时，取 `asr.list().find(p => p.selected)?.use`。详见 `docs/concepts/lazy-service-access.md`。
+`asr.use` 是活的业务句柄，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ### asr 是可选依赖，缺失要降级
 

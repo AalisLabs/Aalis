@@ -6,7 +6,7 @@
 
 ## 概述
 
-`MemoryService` 是 Agent 的"长期记忆"——保存每轮 Message、按 sessionId 检索历史、提供结构化元数据 K/V 存储。可以同时装载多个实现，但每个消费方的 `memory` 只选中一家（本插件偏好 > 全局偏好 > 优先级 > 注册顺序）；语义检索由 `plugin-memory-vector` 经 vectorstore 另行提供，不是 `MemoryService` 的实现。描述符 `memory` 不给 bind，业务层就是 `MemoryService` 形状的活句柄（`caps.memory.use`）。
+`MemoryService` 是 Agent 的"长期记忆"——保存每轮 Message、按 sessionId 检索历史、提供结构化元数据 K/V 存储。可以同时装载多个实现，但每个消费方的 `memory` 只选中一家；语义检索由 `plugin-memory-vector` 经 vectorstore 另行提供，不是 `MemoryService` 的实现。描述符 `memory` 不给 bind，业务层就是 `MemoryService` 形状的活句柄（`caps.memory.use`），选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ## 核心方法
 

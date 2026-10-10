@@ -100,7 +100,7 @@ interface ProviderEntry<B> {
   readonly priority: number;
   readonly selected: boolean;
   readonly basis?: SelectionBasis; // 'plugin' | 'global' | 'rank'
-  readonly use: B;
+  readonly use: B;                 // 钉在这一条登记上
 }
 
 interface ServiceView<T = unknown> {
@@ -126,7 +126,7 @@ function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B>;
 
 `BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），即调用方身份，见 [资源身份](service.md#资源身份)。
 
-`ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`exclusive: boolean`。由 `services.inspect(key)` 返回。
+`ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`exclusive: boolean`、`selected: boolean`，选中的那一条另带 `basis`。由 `services.inspect(key, { for? })` 返回，顺序与选中按所查口径（给 `for` 为那个插件，不给为全局）。
 
 ---
 

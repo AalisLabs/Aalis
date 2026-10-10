@@ -107,7 +107,7 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-按 [concepts/lazy-service-access](../concepts/lazy-service-access.md)：**业务句柄 `flowControl.use` 是活的**，每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人。缺席时访问成员抛错，先看 `present`，缺席按"不设闸"处理：
+业务句柄 `flowControl.use` 是活的（规则见 [选择层与业务层](../core/context.md#选择层与业务层)）。缺席时先看 `present`，缺席按"不设闸"处理：
 
 ```ts
 // platform 档闲置挑候选时（packages/plugin-trigger-policy/src/idle-scheduler.ts）

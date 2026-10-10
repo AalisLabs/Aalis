@@ -70,7 +70,7 @@ export interface BoundStorage extends StorageMethods {
 ```
 
 - `caps.storage.use` 的调用转发给本插件选中的存储提供者。`resolveLocalPath` / `readFileRange` / `watch` 在业务层上恒定义（类型不带 `?`）：选中的那一家不支持时，调用本身抛「存储提供者不支持 X」，调用方不必先判方法是否存在。
-- `own` 是本插件私有目录 `pluginData:/<插件名>/` 上的存储视图。插件名取定义名的最后一段、去掉 `plugin-` 前缀（`@aalis/plugin-paper` → `paper`）；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址（交给别处、写进记录时用），不给参数即目录本身。
+- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-paper` → `paper`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-paper` → `acme+paper`），取不出单段目录名的插件名在绑定时抛错；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址（交给别处、写进记录时用），不给参数即目录本身。
 
 ---
 
@@ -211,12 +211,12 @@ export default definePlugin({
 });
 ```
 
-业务句柄是活的：每次调用都转发给本插件此刻选中的存储提供者，存进字段也会跟着换人。一段操作要固定同一家时取 `storage.list().find(p => p.selected)?.use`。**不要把 `services.use.get(storage)` 拿到的原始实例存进字段**：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护这份引用。
+业务句柄 `storage.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。**不要把 `services.use.get(storage)` 拿到的原始实例存进字段**：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护这份引用。
 
 ### 5.2 required 还是 optional
 
 - 强依赖文件 → `uses: { storage }`（required）。框架保证激活时 storage 已就绪。
-- 非必需增强 → `optional(storage)`，调用前先看 `storage.present`；选不到存储提供者时访问业务句柄的成员同步抛 `ServiceUnavailableError`。
+- 非必需增强 → `optional(storage)`，调用前先看 `storage.present`。
 
 ### 5.3 错误边界
 

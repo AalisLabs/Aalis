@@ -158,7 +158,7 @@ export default definePlugin({
 
 ## 5. 标准消费写法
 
-业务句柄 `tools.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人；一段操作要固定同一家时取 `tools.list().find(p => p.selected)?.use`。可选依赖先看 `present`：
+业务句柄 `tools.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。可选依赖时按 `present` 降级：
 
 ```ts
 const defs = tools.present ? tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) : [];
