@@ -355,31 +355,42 @@ function registerBuiltinChecks(
   });
 
   // 配置文档里的服务偏好指向的提供者此刻不在这个服务里：偏好没有生效，服务落到了别的提供者上（模型删了、插件停用了）。
-  // 每个这样的服务一条，写明实际在用哪个；服务容器的解析序是偏好 > 优先级 > 注册顺序，偏好不在时排第一的就是在用的
+  // 全局偏好与各插件的本插件偏好（pluginServicePreferences）各查一遍，每个这样的偏好一条，写明实际在用哪个：按偏好所在
+  // 口径的解析顺序排第一的就是在用的
   reg.registerCheck({
     id: 'services.preferences',
     category: 'service',
     pluginName: PLUGIN_NAME,
     run() {
       const results: CheckResult[] = [];
-      for (const [name, preferred] of Object.entries(host.present ? host.use.getServicePreferences() : {})) {
-        const entries = services.inspect(name);
-        if (entries.some(entry => entry.contextId === preferred)) continue;
-        const [inUse] = entries;
-        results.push({
-          id: `services.preferences.${name}`,
-          category: 'service',
-          level: 'warn',
-          message: `服务 ${name} 的偏好 ${preferred} 不在提供者里，没有生效`,
-          detail: [
-            inUse
-              ? `实际在用：${inUse.label ? `${inUse.label}（${inUse.contextId}）` : inUse.contextId}`
-              : '这个服务现在没有提供者',
-            name === 'llm'
-              ? `改选偏好：在 WebUI 设置「会话默认」的全局默认层改「模型」（写进配置文件的 servicePreferences.llm）；要用原来的，启用提供 ${preferred} 的插件`
-              : `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`,
-          ].join('\n'),
-        });
+      const doc = host.present ? host.use : undefined;
+      for (const plugin of [undefined, ...Object.keys(doc?.get('pluginServicePreferences') ?? {})]) {
+        for (const [name, preferred] of Object.entries(doc?.getServicePreferences({ for: plugin }) ?? {})) {
+          const entries = services.inspect(name, { for: plugin });
+          if (entries.some(entry => entry.contextId === preferred)) continue;
+          const [inUse] = entries;
+          const fix =
+            plugin !== undefined
+              ? `改选偏好：WebUI 插件详情（${plugin}）的服务偏好，或配置文件的 pluginServicePreferences；要用原来的，启用提供 ${preferred} 的插件`
+              : name === 'llm'
+                ? `改选偏好：在 WebUI 设置「会话默认」的全局默认层改「模型」（写进配置文件的 servicePreferences.llm）；要用原来的，启用提供 ${preferred} 的插件`
+                : `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`;
+          results.push({
+            id: plugin === undefined ? `services.preferences.${name}` : `services.preferences.${plugin}.${name}`,
+            category: 'service',
+            level: 'warn',
+            message:
+              plugin === undefined
+                ? `服务 ${name} 的偏好 ${preferred} 不在提供者里，没有生效`
+                : `插件 ${plugin} 的服务 ${name} 偏好 ${preferred} 不在提供者里，没有生效`,
+            detail: [
+              inUse
+                ? `实际在用：${inUse.label ? `${inUse.label}（${inUse.contextId}）` : inUse.contextId}`
+                : '这个服务现在没有提供者',
+              fix,
+            ].join('\n'),
+          });
+        }
       }
       return results.length > 0
         ? results

@@ -223,8 +223,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const now = Date.now();
     if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
     lastSweepAt = now;
-    if (!memory.present) return;
-    const store = memory.use;
+    // 先列后删：固定同一家
+    const store = memory.list().find(p => p.selected)?.use;
+    if (!store) return;
     try {
       const cutoff = Date.now() - FORWARD_PERSIST_TTL_MS;
       const stale = (await store.listMetadata(FORWARD_METADATA_NS)).filter(e => e.updatedAt < cutoff);
@@ -238,8 +239,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   async function clearAll(): Promise<number> {
     forwardCache.clear();
-    if (!memory.present) return 0;
-    const store = memory.use;
+    const store = memory.list().find(p => p.selected)?.use;
+    if (!store) return 0;
     // 与 sweepPersisted 同样一次批量提交，原子性按后端分档（见 api-memory 契约）；读不出的条目一并删除，计入条数
     const [keys] = await clearMetadataNamespaces(store, [FORWARD_METADATA_NS], logger);
     return keys.length;

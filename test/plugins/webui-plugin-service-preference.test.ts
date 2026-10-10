@@ -81,11 +81,11 @@ async function start() {
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
   const chosen = (name: string) => selections[name].list().find(p => p.selected)?.id;
-  /** 插件列表里这个插件的本插件偏好 */
-  const listed = async (name: string) =>
+  /** 插件列表里这个插件的本插件偏好（或给的另一项） */
+  const listed = async (name: string, field = 'servicePreferences') =>
     ((await call('GET', '/api/plugins')).body.plugins as Array<Record<string, unknown>>).find(
       p => p.instanceId === name,
-    )?.servicePreferences;
+    )?.[field];
   return { store, saved, call, chosen, listed };
 }
 
@@ -107,6 +107,13 @@ describe('本插件偏好的 REST', () => {
     expect(store.getServicePreferences({ for: 'zz-picky' })).toEqual({});
     expect(saved).toHaveLength(2);
     expect(await listed('zz-picky')).toEqual({});
+  });
+
+  it('插件列表的每项带它声明的服务此刻落到的那一家与依据', async () => {
+    const { call, listed } = await start();
+    await call('POST', '/api/plugins/zz-picky/services/zz-svc/prefer', { contextId: 'zz-b' });
+    expect(await listed('zz-picky', 'serviceSelections')).toEqual({ 'zz-svc': { contextId: 'zz-b', basis: 'plugin' } });
+    expect(await listed('zz-plain', 'serviceSelections')).toEqual({ 'zz-svc': { contextId: 'zz-a', basis: 'rank' } });
   });
 
   it('没给 contextId 回 400；插件或提供者不在回 404，运行态与文档都不动', async () => {

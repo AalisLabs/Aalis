@@ -235,7 +235,8 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
       const sessionId =
         typeof args.session_id === 'string' && args.session_id.trim() ? args.session_id.trim() : callCtx.sessionId;
 
-      const memory = caps.memory.present ? caps.memory.use : undefined;
+      // 先读历史再改写：固定同一家
+      const memory = caps.memory.list().find(p => p.selected)?.use;
       if (!memory?.updateMessageContent) {
         return JSON.stringify({ error: '记忆服务不可用或不支持内容更新' });
       }

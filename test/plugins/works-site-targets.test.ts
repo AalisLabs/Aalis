@@ -65,6 +65,24 @@ describe('works-site target ownership', () => {
     releaseIndependent();
   });
 
+  it('a second real instance with the same target in one App fails activation', async () => {
+    const app = new App({ name: 'works-same-target', logger: silent, logLevel: 'error' });
+    app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
+    try {
+      await app.plugin(worksSite, baseConfig);
+      await app.plugin(worksSite, { ...baseConfig, siteTitle: 'dup' }, '@aalis/plugin-works-site:dup');
+      await app.plugins.idle();
+      expect(
+        app.plugins
+          .getStatus()
+          .filter(item => item.name === worksSite.name)
+          .map(item => item.state),
+      ).toEqual(['active', 'error']);
+    } finally {
+      await app.stop();
+    }
+  });
+
   it('registers two real plugin instances with independent WebUI contexts before any Pages traffic', async () => {
     const pages = pageHost();
     const disk = new Map<string, string>();

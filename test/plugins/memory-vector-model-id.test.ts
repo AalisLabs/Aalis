@@ -93,7 +93,12 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup(opts: { modelId?: string; hits?: VectorSearchResult[]; memory?: MemoryService }) {
+async function setup(opts: {
+  modelId?: string;
+  embedder?: EmbeddingService;
+  hits?: VectorSearchResult[];
+  memory?: MemoryService;
+}) {
   const hub = new LogHub();
   const warns: string[] = [];
   hub.onEntry(e => {
@@ -103,7 +108,7 @@ async function setup(opts: { modelId?: string; hits?: VectorSearchResult[]; memo
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, contributions, logger, hooks });
-  host.provide.use(embedding, makeEmbedder(opts.modelId));
+  const offEmbedding = host.provide.use(embedding, opts.embedder ?? makeEmbedder(opts.modelId));
   if (opts.memory) host.provide.use(memory, opts.memory);
 
   const hits = opts.hits ?? [];
@@ -160,7 +165,7 @@ async function setup(opts: { modelId?: string; hits?: VectorSearchResult[]; memo
     return (out.results ?? []).map((r: { text: string }) => r.text).join('\n');
   }
 
-  return { app, host, added, warns, injected, recalled };
+  return { app, host, offEmbedding, added, warns, injected, recalled };
 }
 
 /** 照 /clear 的调度驱动 memory:clear：默认动作在全部中间件放行后执行，全局且含 context 时调 clearAll */
@@ -202,6 +207,34 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
         expect(added.some(m => 'modelId' in m)).toBe(false);
       }
     }
+  });
+
+  it('算向量途中同一个 id 换了新实例：记下的 modelId 出自算这条向量的那一家', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    let entered!: () => void;
+    const started = new Promise<void>(r => (entered = r));
+    const slow: EmbeddingService = {
+      modelId: 'test:A',
+      async embed() {
+        entered();
+        await gate;
+        return FIXED_VEC;
+      },
+    };
+    const { host, offEmbedding, added } = await setup({ embedder: slow });
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: { content: '对方的话', sessionId: 's1', platform: 'onebot', userId: 'u1' },
+      archivedMessage: { role: 'user', content: '对方的话', timestamp: BASE_TS },
+    });
+    await started;
+    offEmbedding();
+    host.provide.use(embedding, makeEmbedder('test:B'));
+    release();
+    for (let i = 0; i < 50 && added.length < 1; i++) await new Promise(r => setTimeout(r, 20));
+    expect(added.map(m => m.modelId)).toEqual(['test:A']);
   });
 
   it('首次运行：无存量标记时记下当前模型，存量向量在模型未变时照常召回', async () => {

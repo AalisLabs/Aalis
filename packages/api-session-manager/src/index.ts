@@ -515,8 +515,9 @@ export interface SessionManagerService {
   childConfig(parentId: string, platform?: string): SessionConfig;
 
   /**
-   * 全局默认层由服务偏好承担的项此刻实际落到的值：llm 服务按偏好、提供者自带的优先级与注册先后解析到的能对话的模型（偏好
-   * 指向的模型不在时是服务落到的那一个）。没有可用的模型时没有这一项。设置界面据此写「默认（…）」、标出偏好指向的模型不在
+   * 全局默认层由服务偏好承担的项此刻实际落到的值：真正调模型的 agent 插件按它的偏好、全局偏好、提供者自带的优先级与注册
+   * 先后解析到的能对话的模型（偏好指向的模型不在时是服务落到的那一个）。没有可用的模型时没有这一项。设置界面据此写
+   * 「默认（…）」、标出偏好指向的模型不在
    */
   resolvedDefaults(): SessionConfig;
 

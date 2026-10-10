@@ -99,7 +99,17 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
  */
 type ManagerCaps = Pick<
   Caps,
-  'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'lifecycle' | 'platform' | 'hostConfig' | 'authority' | 'services'
+  | 'memory'
+  | 'events'
+  | 'hooks'
+  | 'logger'
+  | 'llm'
+  | 'agent'
+  | 'lifecycle'
+  | 'platform'
+  | 'hostConfig'
+  | 'authority'
+  | 'services'
 >;
 
 /** 回合的结局（api-agent 的 agent:turn:after） */
@@ -994,7 +1004,16 @@ class SessionManager implements SessionManagerService {
   }
 
   resolvedDefaults(): SessionConfig {
-    const entry = resolveLLMModel(this.caps.llm, undefined, ['chat']);
+    // 按真正调模型的 agent 插件的解析顺序取（它可能设了本插件偏好）；没装 agent 时按本插件的
+    const agentId = this.caps.agent.list().find(p => p.selected)?.id;
+    const entries = this.caps.llm.list();
+    const ordered =
+      agentId === undefined
+        ? entries
+        : this.caps.services.use
+            .inspect(llm, { for: agentId })
+            .flatMap(info => entries.filter(e => e.id === info.contextId));
+    const entry = resolveLLMModel({ list: () => ordered }, undefined, ['chat']);
     if (!entry) return {};
     const model: ModelRef = { provider: entry.use.providerId, model: entry.use.id };
     return Object.fromEntries(this.settings.list().flatMap(s => (preferenceBacked(s) ? [[s.key, model]] : [])));
@@ -1473,7 +1492,7 @@ const uses = {
   /** 会话档案与消息历史的唯一落点：没有 memory 就没有会话管理 */
   memory,
   /**
-   * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
+   * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型，并据它认出真正调模型的那个插件（默认模型按它的选择写）。
    * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
    * 此处 onDrain 兜的是未装 agent 或钩子未挂上的路径。
    */

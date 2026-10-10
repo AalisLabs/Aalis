@@ -383,9 +383,12 @@ function Relations({ row }: { row: PluginRow }) {
   );
 }
 
+/** 此刻选中那一家的依据 */
+const BASIS: Record<string, string> = { plugin: '本插件偏好', global: '全局偏好', rank: '没有偏好，按优先级' };
+
 /**
- * 本插件偏好：它声明的服务里有几个提供者（或设过偏好）的各一行，设了只对它生效，「跟随全局」清除。什么时候不该设写在提示里，
- * 两类会出错的服务见用户文档的服务偏好一节
+ * 本插件偏好：它声明的服务里有几个提供者（或设过偏好）的各一行，设了只对它生效，「跟随全局」清除；每行写它此刻用的那一家
+ * 与依据。什么时候不该设写在提示里，两类会出错的服务见用户文档的服务偏好一节
  */
 function ServicePreferences({ row }: { row: PluginRow }) {
   const { services, error, refetch } = useServices();
@@ -413,6 +416,11 @@ function ServicePreferences({ row }: { row: PluginRow }) {
         {shown.map(service => {
           const preferred = own(service.name);
           const missing = preferred !== undefined && !service.providers.some(p => p.contextId === preferred);
+          const effective = row.serviceSelections[service.name];
+          const label =
+            service.providers.find(p => p.contextId === effective?.contextId)?.label ?? effective?.contextId;
+          const basis = effective?.basis && BASIS[effective.basis];
+          const using = effective && `现在用：${label}${basis ? `（${basis}）` : ''}`;
           return (
             <SettingRow
               key={service.name}
@@ -423,7 +431,7 @@ function ServicePreferences({ row }: { row: PluginRow }) {
               }}
               value={preferred}
               source={preferred === undefined ? undefined : '本插件偏好'}
-              note={missing ? '这一家现在不在，先按全局的选择' : undefined}
+              note={[missing && '这一家现在不在', using].filter(Boolean).join('，') || undefined}
               unset="跟随全局偏好"
               reset={preferred === undefined ? undefined : '跟随全局'}
               save={save(service.name)}

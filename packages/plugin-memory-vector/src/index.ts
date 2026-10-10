@@ -170,15 +170,15 @@ function recencyScore(timestampMs: number, nowMs: number): number {
  * 同一上限也作用于兜底 metadata.content，避免向量库存整篇文件正文。
  */
 const MAX_EMBED_CHARS = 4000;
-/** 代理对安全截断：裸 slice 会切出孤代理，经 JSON 送到 embedder 端点同样会被严格解析器拒收。 */
 /**
- * 一段操作固定选中的那一家：算向量与记下 modelId（向量空间标识）、判方法与删除再落盘都要落在同一个实例上，
- * 途中换了人也不会混用两家。选不到时退回业务句柄，访问成员即抛不可用错误
+ * 一段操作固定选中的那一家：算向量与记下 modelId（向量空间标识）、写入与清空再落盘、判方法与删除再落盘都要落在同一个
+ * 实例上，途中换了人（含同一个 id 换了新实例）也不会混用两家。选不到时退回业务句柄，访问成员即抛不可用错误
  */
 function pinned<P>(selection: ServiceSelection<P>): P {
   return selection.list().find(p => p.selected)?.use ?? selection.use;
 }
 
+/** 代理对安全截断：裸 slice 会切出孤代理，经 JSON 送到 embedder 端点同样会被严格解析器拒收。 */
 function clipForEmbed(text: string): string {
   return truncateChars(text, MAX_EMBED_CHARS);
 }
@@ -457,8 +457,9 @@ async function run({
   /** 读取或记下存量标记（在标记队列里执行）。排队期间已有别的读写确定了标记，直接用它 */
   async function loadLegacyModelId(currentModelId: string): Promise<string | undefined> {
     if (legacyModel) return legacyModel.modelId;
-    if (!memory.present) return undefined;
-    const mem = memory.use;
+    // 先读后写：固定同一家
+    const mem = memory.list().find(p => p.selected)?.use;
+    if (!mem) return undefined;
     try {
       const data = await mem.getMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
       if (data) {
@@ -674,7 +675,9 @@ async function run({
     // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
     const messageTimestamp = archived.timestamp ?? Date.now();
     try {
+      // 向量空间标识与向量出自同一实例，在发起计算时一并读下：那一家中途撤回后钉住的句柄就不可用了
       const provider = pinned(embedding);
+      const { modelId } = provider;
       const vec = await provider.embed(rawText);
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
@@ -693,10 +696,11 @@ async function run({
         // @提及到的用户 ID 列表，用于检索时同用户加权
         mentions,
       };
-      // 向量空间标识取自算这条向量的同一实例，检索时只与同模型的查询向量比较
-      if (provider.modelId) metadata.modelId = provider.modelId;
-      await vectorstore.use.add(vec, metadata);
-      await vectorstore.use.save();
+      // 检索时只与同模型的查询向量比较
+      if (modelId) metadata.modelId = modelId;
+      const store = pinned(vectorstore);
+      await store.add(vec, metadata);
+      await store.save();
     } catch (err) {
       logger.use.warn('向量索引失败:', err);
     }
@@ -732,6 +736,7 @@ async function run({
       // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
       const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
       const provider = pinned(embedding);
+      const { modelId } = provider;
       const vec = await provider.embed(embedText);
       const metadata: Record<string, unknown> = {
         sessionId,
@@ -749,9 +754,10 @@ async function run({
         content: rawText,
         mentions: extractMentions(rawText),
       };
-      if (provider.modelId) metadata.modelId = provider.modelId;
-      await vectorstore.use.add(vec, metadata);
-      await vectorstore.use.save();
+      if (modelId) metadata.modelId = modelId;
+      const store = pinned(vectorstore);
+      await store.add(vec, metadata);
+      await store.save();
     } catch (err) {
       logger.use.warn('assistant 向量索引失败:', err);
     }
@@ -793,8 +799,9 @@ async function run({
 
     try {
       if (data.scope === 'all') {
-        await vectorstore.use.clear();
-        await vectorstore.use.save();
+        const store = pinned(vectorstore);
+        await store.clear();
+        await store.save();
         await dropLegacyModel();
         data.results.push({ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' });
         logger.use.info('向量记忆已全部清空');
@@ -854,9 +861,10 @@ async function run({
         if (candidateCount === 0) return null;
 
         const provider = pinned(embedding);
+        const { modelId } = provider;
         const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
-        const ranked = await rankCandidates(queryVec, provider.modelId, candidateCount, {
+        const ranked = await rankCandidates(queryVec, modelId, candidateCount, {
           visibility: sessionVisibility(curSessionId, curPlatform),
           curSessionId,
           curPlatform,
@@ -1070,11 +1078,12 @@ async function run({
         }
 
         const provider = pinned(embedding);
+        const { modelId } = provider;
         const queryVec = await provider.embed(query, { signal: callCtx.signal });
         // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）
         const ranked = await rankCandidates(
           queryVec,
-          provider.modelId,
+          modelId,
           Math.min(requestedTopK * candidateOversample, storeSize),
           {
             visibility: effectiveScope,
