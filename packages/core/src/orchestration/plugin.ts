@@ -394,8 +394,7 @@ export class PluginManager implements PluginManagerService {
     try {
       entry.error = undefined;
       await this.#retire(entry, 'disabled');
-      // 宽限内没停下来的已转 error，上一条 error 日志已说明
-      if (entry.state !== 'error') this.#logger.info(`插件已禁用: ${instanceId}`);
+      this.#logger.info(`插件已禁用: ${instanceId}`);
     } finally {
       this.#suspendDepth--;
     }

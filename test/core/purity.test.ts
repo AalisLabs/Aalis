@@ -241,6 +241,7 @@ function activationViolations(source: string): string[] {
     'retainBinding',
     'dropOutbound',
     'handover',
+    'closingConsumers',
     'closeInfo',
     'joinPlan',
     'disposeAsync',

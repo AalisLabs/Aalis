@@ -246,6 +246,52 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
   });
 });
 
+describe('两份管理关闭计划重叠', () => {
+  it('后一份计划等前一份里还没关完、依赖它服务的消费者关完，提供者才收尾', async () => {
+    const app = world();
+    const S = defineService<object>('t:overlap:s');
+    const T = defineService<object>('t:overlap:t');
+    const seen: string[] = [];
+    let entered!: () => void;
+    const cDraining = new Promise<void>(resolve => {
+      entered = resolve;
+    });
+    await app.plugin(
+      definePlugin({ name: 'a', provides: [S], uses: { provide }, apply: ({ provide }) => void provide(S, {}) }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'b',
+        provides: [T],
+        uses: { s: S, provide, lifecycle },
+        apply({ s, provide, lifecycle }) {
+          provide(T, {});
+          lifecycle.onDrain(() => void seen.push(`b 收尾时 S ${s.current ? '在' : '不在'}`));
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'c',
+        uses: { t: T, lifecycle },
+        apply({ lifecycle }) {
+          lifecycle.onDrain(async () => {
+            entered();
+            await new Promise(resolve => setTimeout(resolve, 20));
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const first = app.plugins.bounce('b');
+    await cDraining;
+    // b 已随前一份计划转 pending、还没收尾：后一份计划拆 a 时要等它关完
+    await Promise.all([first, app.plugins.bounce('a')]);
+    await app.plugins.idle();
+    expect(seen[0]).toBe('b 收尾时 S 在');
+  });
+});
+
 describe('提供者清理之前，跟随者交接落定', () => {
   it('optional 跟随者的异步清理在提供者 onDispose 之前完成，清理期间提供者仍活着', async () => {
     const app = world();
