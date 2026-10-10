@@ -417,20 +417,6 @@ describe('Activation.disposeAsync 不变量', () => {
     expect(flushed).toBe(true);
   });
 
-  it('disposeAsync() 与调用同栈发起首个清理回调（以同步副作用断言，不用微任务）', async () => {
-    const ctx = makeFixture('plugin-a');
-    const order: string[] = [];
-    ctx.caps.lifecycle.onDispose(() => {
-      order.push('cleanup');
-    });
-    const done = ctx.activation.disposeAsync();
-    order.push('after-return');
-    // 无收尾项、无初始化待等时不多让出一拍：同步清理在 disposeAsync() 返回前已执行
-    expect(order).toEqual(['cleanup', 'after-return']);
-    expect(ctx.activation.resources.disposed).toBe(true);
-    await done;
-  });
-
   it('disposeAsync() 内清理抛错不外泄（不同步抛出，也不拒绝）', async () => {
     const ctx = makeFixture('plugin-a');
     ctx.caps.lifecycle.onDispose(() => {
@@ -473,10 +459,17 @@ describe('Activation.disposeAsync 不变量', () => {
     expect(observer.list()).toEqual(['plugin-a/blk=v']);
     // provide 不进清理链：窗口内 svc 消失只能是 beforeCleanup 的 unregisterByOwner 干的，钉住 provide 带 owner
     ctx.caps.provide(defineService('svc'), { alive: true });
-    ctx.caps.lifecycle.onDispose(() => gate); // 人为拉长 flush 窗口
+    let entered!: () => void;
+    const flushing = new Promise<void>(r => {
+      entered = r;
+    });
+    ctx.caps.lifecycle.onDispose(() => {
+      entered();
+      return gate; // 人为拉长 flush 窗口
+    });
 
     const done = ctx.activation.disposeAsync();
-    await Promise.resolve(); // 进入等待窗口
+    await flushing; // 进入等待窗口
     // 窗口内：账本登记与服务都已撤回
     expect(observer.list()).toEqual([]);
     expect(root.caps.services.get('svc')).toBeUndefined();

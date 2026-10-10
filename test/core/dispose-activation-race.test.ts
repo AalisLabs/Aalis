@@ -81,15 +81,12 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     const ctx = host.create(root, 'p');
     const { applying, state, acquire } = startPlugin(ctx, false);
 
-    // 未登记 = 改动前的行为：拆卸不等 apply，链是空的、直接排空返回。
-    // disposer 即便赶在返回前挂上，也走 post-dispose 分支就地执行、返回值被丢弃，
-    // 其跨宏任务的收尾必然落在 `await disposing` 之后 —— 承诺落空。
-    const disposing = ctx.disposeAsync();
-    acquire.resolve();
-    await disposing;
+    // 未登记 = 改动前的行为：拆卸不等 apply，闸门未开也照样排空返回 —— 承诺落空。
+    await ctx.disposeAsync();
     expect(state.released).toBe(false);
 
-    // 但资源不会泄漏，只是没被等到。
+    // 但资源不会泄漏：迟到的 disposer 走 post-dispose 分支就地执行，只是没被等到。
+    acquire.resolve();
     await applying;
     await sleep(1);
     expect(state.released).toBe(true);

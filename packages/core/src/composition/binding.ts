@@ -80,64 +80,63 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
     follower.cancelled || scope.resources.disposed ? undefined : scope.services.get<P>(name);
 
   /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
-  const pump = (follower: Follower): void =>
-    scope.resources.run(() => {
-      if (follower.busy || follower.attaching) return;
-      let desired = desiredProvider(follower);
-      if (follower.attached !== undefined && follower.attached !== desired) {
-        const cleanup = follower.cleanup;
-        const releaseEdge = follower.releaseEdge;
-        follower.attached = undefined;
-        follower.cleanup = undefined;
-        follower.releaseEdge = undefined;
-        // 旧清理同步段内的重入 pump 让步：它可能同步改胜者，新实例须等本次收敛决定
+  const pump = (follower: Follower): void => {
+    if (follower.busy || follower.attaching) return;
+    let desired = desiredProvider(follower);
+    if (follower.attached !== undefined && follower.attached !== desired) {
+      const cleanup = follower.cleanup;
+      const releaseEdge = follower.releaseEdge;
+      follower.attached = undefined;
+      follower.cleanup = undefined;
+      follower.releaseEdge = undefined;
+      // 旧清理同步段内的重入 pump 让步：它可能同步改胜者，新实例须等本次收敛决定
+      follower.busy = true;
+      const pending = cleanup ? withdraw(cleanup, name) : undefined;
+      follower.busy = false;
+      // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边；提供者撤回段等它
+      const settled = pending
+        ? Promise.resolve(pending).then(
+            () => undefined,
+            () => undefined,
+          )
+        : undefined;
+      releaseEdge!(settled);
+      if (settled && !follower.overlap) {
         follower.busy = true;
-        const pending = cleanup ? withdraw(cleanup, name) : undefined;
-        follower.busy = false;
-        // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边；提供者撤回段等它
-        const settled = pending
-          ? Promise.resolve(pending).then(
-              () => undefined,
-              () => undefined,
-            )
-          : undefined;
-        releaseEdge!(settled);
-        if (settled && !follower.overlap) {
-          follower.busy = true;
-          settled.then(() => {
-            follower.busy = false;
-            pump(follower);
-          });
-          return;
-        }
-      }
-      // 旧清理可以同步改偏好、退订或关闭；不能拿回调之前的胜者继续挂载。
-      desired = desiredProvider(follower);
-      if (follower.attached === undefined && desired !== undefined) {
-        follower.attached = desired;
-        follower.releaseEdge = scope.retainBinding(name, () => pump(follower));
-        follower.attaching = true;
-        try {
-          const ret: unknown = follower.attach(desired);
-          if (typeof ret === 'function') {
-            follower.cleanup = ret as () => unknown;
-          } else if (isThenable(ret)) {
-            // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
-            scope.logger.warn(
-              `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
-            );
-            ret.then(undefined, () => undefined);
-          }
-        } catch (err) {
-          scope.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err);
-        } finally {
-          follower.attaching = false;
-        }
-        // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
-        if (follower.cancelled || scope.resources.disposed || follower.attached !== desiredProvider(follower))
+        settled.then(() => {
+          follower.busy = false;
           pump(follower);
+        });
+        return;
       }
-    });
+    }
+    // 旧清理可以同步改偏好、退订或关闭；不能拿回调之前的胜者继续挂载。
+    desired = desiredProvider(follower);
+    if (follower.attached === undefined && desired !== undefined) {
+      follower.attached = desired;
+      follower.releaseEdge = scope.retainBinding(name, () => pump(follower));
+      follower.attaching = true;
+      try {
+        const ret: unknown = follower.attach(desired);
+        if (typeof ret === 'function') {
+          follower.cleanup = ret as () => unknown;
+        } else if (isThenable(ret)) {
+          // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
+          scope.logger.warn(
+            `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
+          );
+          ret.then(undefined, () => undefined);
+        }
+      } catch (err) {
+        scope.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err);
+      } finally {
+        follower.attaching = false;
+      }
+      // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
+      if (follower.cancelled || scope.resources.disposed || follower.attached !== desiredProvider(follower))
+        pump(follower);
+    }
+  };
 
   const pumpAll = (): void => {
     for (const follower of [...followers]) pump(follower);
@@ -201,24 +200,18 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
       const entries = new Map<string, Entry>();
       let provider: P | undefined;
 
-      const attachOne = (target: P, entry: Entry, key: string): void =>
-        scope.resources.run(() => {
-          if (entries.get(key) !== entry || entry.off !== undefined || provider !== target || scope.resources.disposed)
-            return;
-          const off = options.register(target, entry.item);
-          // register 也能替换当前键、切换提供者或关闭激活。回调返回时重新核验所有权，
-          // 失效登记就地撤回；不得覆盖重入调用已接住的句柄。
-          if (
-            entries.get(key) === entry &&
-            provider === target &&
-            !scope.resources.disposed &&
-            entry.off === undefined
-          ) {
-            entry.off = off;
-          } else {
-            withdraw(off, `${name} "${key}"`);
-          }
-        });
+      const attachOne = (target: P, entry: Entry, key: string): void => {
+        if (entries.get(key) !== entry || entry.off !== undefined || provider !== target || scope.resources.disposed)
+          return;
+        const off = options.register(target, entry.item);
+        // register 也能替换当前键、切换提供者或关闭激活。回调返回时重新核验所有权，
+        // 失效登记就地撤回；不得覆盖重入调用已接住的句柄。
+        if (entries.get(key) === entry && provider === target && !scope.resources.disposed && entry.off === undefined) {
+          entry.off = off;
+        } else {
+          withdraw(off, `${name} "${key}"`);
+        }
+      };
 
       // 账本创建即跟随：同口多账本的重挂次序 = 创建次序（如分组先于工具），不取决于谁先被登记。
       // 被动注册表换人时立即重挂（旧条目的撤回在后台落定、关闭会等）——走内部的 overlap 路径

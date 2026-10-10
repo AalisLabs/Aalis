@@ -22,9 +22,6 @@ export class Resources {
   /** 收尾段：默认在撤回前执行；编排者可用 drain() 提前执行。 */
   readonly draining: DisposableChain;
   readonly #inflight = new Map<Promise<void>, string>();
-  #operations = 0;
-  #operationsDone?: Promise<void>;
-  #finishOperations?: () => void;
   #closing = false;
   #drained?: Promise<void>;
   #completion?: Promise<void>;
@@ -41,8 +38,7 @@ export class Resources {
     this.#id = id;
     this.#logger = logger;
     this.#hooks = hooks;
-    const settle = (timeoutMs?: number) =>
-      this.#operations === 0 && this.#inflight.size === 0 ? undefined : this.#settle(timeoutMs);
+    const settle = (timeoutMs?: number) => (this.#inflight.size === 0 ? undefined : this.#settle(timeoutMs));
     this.disposables = new DisposableChain(logger, settle);
     this.draining = new DisposableChain(logger, settle);
   }
@@ -99,21 +95,18 @@ export class Resources {
   /**
    * 提前执行收尾段（幂等）：置关闭位、断开取消信号、等初始化落定、排空收尾链。撤回与清理不在此列——
    * 编排层据此把「谁先收尾」与「谁先撤回」分开安排；不调用它时 disposeAsync 照旧自己收尾。
-   * 先断后收尾：收尾回调执行时信号已断。没有待等的东西时同栈完成、返回 undefined。
+   * 关闭位与取消信号同步设置；收尾回调至少晚一拍，不在调用方的栈上执行。先发布本次收尾再断信号：
+   * abort 监听重入拿到的是同一个 Promise。
    */
-  drain(timeoutMs?: number): Promise<void> | undefined {
+  drain(timeoutMs?: number): Promise<void> {
     if (this.#drained) return this.#drained;
     this.#closing = true;
-    this.abort();
-    if (!this.#initialization && this.draining.size === 0) {
-      this.draining.seal();
-      return undefined;
-    }
-    this.#drained = (async () => {
+    this.#drained = Promise.resolve().then(async () => {
       if (this.#initialization)
         await awaitWithTimeout(this.#initialization, timeoutMs, this.#timeout('等待初始化落定'));
       await this.draining.disposeAsync(timeoutMs);
-    })();
+    });
+    this.abort();
     return this.#drained;
   }
 
@@ -134,10 +127,8 @@ export class Resources {
   }
 
   async #teardown(timeoutMs?: number): Promise<void> {
-    // 收尾段（等初始化、排空收尾链）已由编排者提前执行时只等它，不再等第二遍初始化。
-    // 没有收尾项时不得多让出一拍：撤回一向与 disposeAsync() 同栈发起；没有待等的下游交接时，清理的首个回调也同栈
-    const drained = this.drain(timeoutMs);
-    if (drained) await drained;
+    // 收尾段（等初始化、排空收尾链）已由编排者提前执行时只等它，不再等第二遍初始化
+    await this.drain(timeoutMs);
     this.#hooks.beforeCleanup?.();
     for (const cut of this.#cuts) cut();
     const handover = this.#hooks.afterWithdraw?.();
@@ -147,25 +138,9 @@ export class Resources {
   }
 
   /**
-   * 覆盖「同步取得资源并拿到它的清理句柄」这一段：回调可以在返回句柄之前就开始关闭，段收口须等本栈
-   * 展开。平时只计数；关闭与 run 重叠时才分配等待信号。不追踪 fn 返回的 Promise：异步工作须显式
-   * holdInflight。
+   * 已发起的异步清理只观察一次，在下一段收口时等待。关闭不在调用方的栈上收口：同步取得资源、拿到清理句柄的
+   * 那一段即使在中途发起了关闭，也在收口之前走完，句柄可以在这里补登。
    */
-  run<T>(fn: () => T): T {
-    this.#operations++;
-    try {
-      return fn();
-    } finally {
-      if (--this.#operations === 0) {
-        const finish = this.#finishOperations;
-        this.#finishOperations = undefined;
-        this.#operationsDone = undefined;
-        finish?.();
-      }
-    }
-  }
-
-  /** 已发起的异步清理只观察一次，在下一段收口时等待。 */
   holdInflight(work: PromiseLike<unknown>, what: string): void {
     const settled: Promise<void> = Promise.resolve(work)
       .then(
@@ -179,15 +154,8 @@ export class Resources {
   }
 
   async #settle(timeoutMs?: number): Promise<void> {
-    while (this.#operations > 0 || this.#inflight.size > 0) {
-      if (this.#operations > 0) {
-        this.#operationsDone ??= new Promise<void>(resolve => {
-          this.#finishOperations = resolve;
-        });
-        await this.#operationsDone;
-      }
+    while (this.#inflight.size > 0) {
       const batch = [...this.#inflight];
-      if (batch.length === 0) continue;
       await awaitWithTimeout(Promise.all(batch.map(([work]) => work)), timeoutMs, limit => {
         for (const [work, what] of batch) {
           if (!this.#inflight.delete(work)) continue;
@@ -218,18 +186,16 @@ export class Resources {
 
   /** 清理异常就地隔离；异步拒绝被观察，并在相位边界等待。 */
   withdraw(off: () => unknown, label: string): PromiseLike<unknown> | undefined {
-    return this.run(() => {
-      try {
-        const result = off();
-        if (typeof (result as PromiseLike<unknown> | undefined)?.then !== 'function') return undefined;
-        const pending = Promise.resolve(result);
-        this.holdInflight(pending, label);
-        return pending;
-      } catch (error) {
-        this.#logger.warn(`${label} 撤回抛错（已忽略）:`, error);
-        return undefined;
-      }
-    });
+    try {
+      const result = off();
+      if (typeof (result as PromiseLike<unknown> | undefined)?.then !== 'function') return undefined;
+      const pending = Promise.resolve(result);
+      this.holdInflight(pending, label);
+      return pending;
+    } catch (error) {
+      this.#logger.warn(`${label} 撤回抛错（已忽略）:`, error);
+      return undefined;
+    }
   }
 
   /** 绑定撤回排在用户清理之前（撤回段）；返回值原样交给清理链等待。 */

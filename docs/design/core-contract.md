@@ -33,6 +33,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 ## 二、生命周期不变量
 
 - `lifecycle.signal` 是这次激活的取消信号（reason 为 `AbortError` 的 `DOMException`）：`apply` 尚未完成时被停机或管理动作接手，或后台激活因 required 依赖下线被拆，关闭计划冻结完成后立即 abort；其余情形在本激活的收尾段开始时 abort，`onDrain` 执行时已断，依赖方先关时提供者的信号未断。abort 监听器同步执行，不得抛错。
+- 关闭一律异步：关闭位（此后不再接新登记）与 `lifecycle.signal` 的 abort 在发起关闭时同步设置；`onDrain`、撤回与 `onDispose` 都不在发起关闭的调用方的栈上执行（abort 监听器除外）。未 await 的管理动作返回时，目标可能尚未下线。
 - 经这次激活的能力门面登记的一切副作用（事件监听、服务、`onDrain` / `onDispose`、`follow` / `track` / `registrar`，含经 `registrar` 登记的钩子与贡献），
   在该激活关闭后**必然消失**——包括寄存在枢纽服务里、按激活身份清扫的条目。
 - 经门面登记的原语条目（事件监听、服务）按归属记在各自的注册表里，不逐条进清理链：退订即原语撤回这一条（同步、幂等，只撤自己那一条：条目已被同键替换时旧退订无动作）；关闭时在排空清理链之前按归属同栈整体切断。

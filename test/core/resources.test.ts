@@ -42,18 +42,16 @@ describe('Resources', () => {
     const cleanup = deferred();
     let closing!: Promise<void>;
     let withdrew = false;
-    resources.run(() => {
-      // This is the synchronous provider register callback. The caller receives off only after it returns.
-      const register = () => {
-        closing = resources.disposeAsync();
-        return () => {
-          withdrew = true;
-          return cleanup.promise;
-        };
+    // This is the synchronous provider register callback. The caller receives off only after it returns.
+    const register = () => {
+      closing = resources.disposeAsync();
+      return () => {
+        withdrew = true;
+        return cleanup.promise;
       };
-      const off = register();
-      if (resources.disposed) resources.holdInflight(off(), 'late registration');
-    });
+    };
+    const off = register();
+    if (resources.disposed) resources.holdInflight(off(), 'late registration');
     let closed = false;
     const observed = closing.then(() => {
       closed = true;
@@ -64,29 +62,6 @@ describe('Resources', () => {
     cleanup.resolve();
     await observed;
     expect(closed).toBe(true);
-  });
-
-  it('nested synchronous runs release their wait even when the acquisition throws', async () => {
-    const { resources } = world();
-    const cleanup = deferred();
-    let closing!: Promise<void>;
-    expect(() =>
-      resources.run(() => {
-        resources.run(() => {
-          closing = resources.disposeAsync();
-        });
-        resources.holdInflight(cleanup.promise, 'rollback');
-        throw new Error('acquire failed');
-      }),
-    ).toThrow('acquire failed');
-    let closed = false;
-    const observed = closing.then(() => {
-      closed = true;
-    });
-    await tick();
-    expect(closed).toBe(false);
-    cleanup.resolve();
-    await observed;
   });
 
   it('tracks cleanup spawned while an earlier cleanup settles, and isolates rejection', async () => {

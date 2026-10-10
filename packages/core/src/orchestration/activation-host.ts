@@ -72,13 +72,11 @@ export class ActivationHost {
       retainBinding: (name: string, pump: () => void) => activation.retainBinding(name, pump),
     };
     const caps: Record<string, unknown> = {};
-    return activation.resources.run(() => {
-      for (const [key, use] of Object.entries(uses)) {
-        const descriptor = isOptional(use) ? use.optional : use;
-        caps[key] = descriptor.bind(createPort(binding, descriptor.name, !isOptional(use)));
-      }
-      return caps as BoundOf<U>;
-    });
+    for (const [key, use] of Object.entries(uses)) {
+      const descriptor = isOptional(use) ? use.optional : use;
+      caps[key] = descriptor.bind(createPort(binding, descriptor.name, !isOptional(use)));
+    }
+    return caps as BoundOf<U>;
   }
 
   /** 该归属的激活已进关闭计划（容器里的条目都出自仍在册的激活：撤回先于除名） */
