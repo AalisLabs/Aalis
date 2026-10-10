@@ -258,7 +258,7 @@ export default definePlugin({
 });
 ```
 
-登记不强制把 `tools` 标成 required：绑定门面在提供者未就绪时排队，就绪后挂上。若还要读 `getDefinitions` / `getAll` / `execute`，应 `uses: { tools }`（required），经 `tools.use` 调用（缺席时同步抛 `ServiceUnavailableError`），或先看 `tools.present`。
+登记不强制把 `tools` 标成 required：绑定门面在提供者未就绪时排队，就绪后挂上。若还要读 `getDefinitions` / `getAll` / `execute`，应 `uses: { tools }`（required），经 `tools.use` 调用（缺席规则见 [选择层与业务层](../core/context.md#选择层与业务层)），或先看 `tools.present`。
 
 ## 实现者
 

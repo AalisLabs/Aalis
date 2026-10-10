@@ -73,7 +73,7 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 
 **参考消费者 `@aalis/plugin-memory-vector`**（向量记忆，硬依赖）：
 - 声明依赖：`uses: { vectorstore, embedding, memory: optional(memory) }`（`packages/plugin-memory-vector/src/index.ts`），并同步写在 `package.json` 的 `aalis.service.required`。
-- 取用与调用点：索引与查询各取一次 `embedding.use`（活句柄，每次访问成员重新解析当前提供者），用它 `embed`，得到的向量交给 `vectorstore` 写入或检索。
+- 取用与调用点：索引与查询各取一次选中那一条的 `use` 固定下来，用它 `embed`，得到的向量交给 `vectorstore` 写入或检索。
 - 模型标识：写入的向量 metadata 带同一句柄读到的 `modelId`；检索只保留与查询向量同模型的候选，升级前不带 `modelId` 的存量向量按记忆元数据里的存量标记认定模型（见 [plugin-memory-vector](../plugins/plugin-memory-vector.md)）。
 
 **可选消费者 `@aalis/plugin-user-relation`**（实体 / 事件去重的语义召回，软依赖）：
@@ -176,7 +176,7 @@ export default definePlugin({
 
 ### 业务句柄是活的
 
-`embedding.use` 每次访问成员都解析到本插件当前选中的那一家，提供者重新 `provide` / 切换后，存起来的句柄也会跟着换人（见 [lazy-service-access](../concepts/lazy-service-access.md)）。`embed` 与 `modelId` 要出自同一家时，取 `list()` 里选中那一条的 `use` 固定下来：
+`embedding.use` 是活的业务句柄，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。`embed` 与 `modelId` 要出自同一家时，取 `list()` 里选中那一条的 `use` 固定下来：
 
 ```ts
 const provider = embedding.list().find(p => p.selected)?.use;
@@ -187,7 +187,7 @@ const vec = await provider.embed(text);
 
 ### 硬依赖 vs 可选依赖
 
-- **硬依赖**：声明 `uses required = ['embedding']`（双源同步到 `package.json`）。经 `embedding.use` 调用（如 memory-vector），无提供者时访问成员同步抛 `ServiceUnavailableError`：required 依赖丢失到调度收敛之间也可能短暂缺席，由调用点的错误边界兜住（见下文）。
+- **硬依赖**：声明 `uses required = ['embedding']`（双源同步到 `package.json`，如 memory-vector）。缺席时的抛错由调用点的错误边界兜住（见下文）。
 - **可选依赖**：声明 `uses optional`（或干脆不声明），先看 `present` 降级：
 
 ```ts

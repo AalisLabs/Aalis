@@ -17,14 +17,15 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - sticky 事件（`app:ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发；派发进行中登记的监听器排在本轮末尾送达，要等前面的监听器返回或超时（未设上限时一直等）。每个监听器只收到一次。
 
 **services（`provide` / `ServiceSelection` / `services`）——供需**
-- 挑选规则恒为 **本插件偏好 > 全局偏好 > 优先级 > 注册顺序**：偏好指向的那家不在场就按下一级挑，回来后切回。选择层（`use` / `of()` / `list()` / `present` / `follow()`）按本插件的口径，`services.get` / `services.all` / `services.inspect` / `services.names` 按全局口径（不看本插件偏好），排序同一套规则。激活超过 `slowThresholdMs` 转入后台的提供者，在激活完成前不参与解析：所有读口与激活闸都看不到它登记的服务。
+- 挑选规则恒为 **本插件偏好 > 全局偏好 > 优先级 > 注册顺序**：偏好指向的那家不在场就按下一级挑，回来后切回。选择层（`use` / `of()` / `list()` / `present` / `follow()`）按本插件的口径，`services.get` / `services.all` / `services.names` 与不给 `for` 的 `services.inspect` 按全局口径（不看本插件偏好），`services.inspect(key, { for })` 按那个插件的口径，排序同一套规则。激活超过 `slowThresholdMs` 转入后台的提供者，在激活完成前不参与解析：所有读口与激活闸都看不到它登记的服务。
 - 非独占服务允许同名多提供者并存；独占登记与任何已有条目冲突，其存在期间也拒绝第二条登记（暂不对外的后台提供者同样占位）。选中的那一家可能变化时发 `service:changed(name)`，含义是「可能变了，请重读」，不保证恰好一次：登记、退订、拆卸、偏好切换、转入后台时撤下已登记的服务、激活完成时上线都发。
-- 业务句柄（`use`、`of(id)` 与 `list()` 条目的 `use`）是活的转发句柄：每次访问成员重新解析，不等待服务上线、不 await；已经开始的一次调用在原来那一家上完成。只转发属性读取与调用，`then`、symbol 键、`toJSON` 不转发，在句柄上写属性落不到提供者。选不到提供者时访问成员同步抛 `ServiceUnavailableError`（错误类不导出，按 `name` 认）；required 依赖丢失到调度收敛之间也可能短暂抛错。
+- 业务句柄（`use`、`of(id)` 与 `list()` 条目的 `use`）是活的转发句柄：每次访问成员重新解析，不等待服务上线、不 await；已经开始的一次调用在原来那一家上完成。只转发属性读取与调用，`then`、symbol 键、`toJSON` 不转发，在句柄上写属性落不到提供者（其余边界见 [句柄的边界](../core/context.md#句柄的边界)）。选不到提供者时访问成员同步抛 `ServiceUnavailableError`（错误类不导出，按 `name` 认）；required 依赖丢失到调度收敛之间也可能短暂抛错。
+- 三种句柄的目标不同：`use` 是本插件此刻选中的那一家；`of(id)` 按 id，同一个 id 换了新实例照常打到新的；`list()` 条目的 `use` 钉在那一条登记上，它撤回之后访问抛错，不跟到同 id 的新实例。取选中那一条的 `use` 即可让一段操作固定同一家。
 - `list()` 每次调用重新枚举全部对外可见的提供者，本插件选中的那一条在前。关停边对声明的服务在编排那一刻的全部对外提供者建，不只是选中的那一家；不保护主动提前卸载的提供者。
 - `follow(attach)`：选中的那一条不变则不动；换人时先跑上次返回的清理，等其 Promise 落定之后才以新选中那一家的业务句柄再挂；选不到、下线与关闭时清理。交给 `attach` 的句柄钉在挂上的那一条登记上，直到这次挂载的清理落定。`attach` 必须同步——需要清理就返回函数，不需要就不返回；thenable 会被接住并 warn，不会当 cleanup。拒绝被隔离并报告，但不证明旧资源已释放。
 - 偏好只经 `services.prefer` / `unprefer` 写（给 `{ for }` 为那个插件的本插件偏好，不给为全局偏好），供管理面使用；选择层没有写偏好的入口。
 - `services.get` / `services.all` 是动态查询：不增加声明、不参与激活闸、不自动跟随、不建立依赖边，关停期可能拿空。需要声明等待与跟随就把描述符写进 `uses`。动态查到的内置服务是提供者函数，以调用方自己的身份调用得到它自己的门面，认不出的身份即抛错。
-- `services.inspect` 只投影登记元数据，不返回实例。`services.get` / `services.all` 返回登记进容器的对象本身。
+- `services.inspect` 只投影登记元数据（选中的那一条带 `selected` 与 `basis`），不返回实例。`services.get` / `services.all` 返回登记进容器的对象本身。
 - `provide.use(descriptor, impl, options?)` 是唯一发布入口。`options.entryId` 给条目指定逻辑身份（偏好、展示与 `of(id)` 认它，core 不检查格式），清理仍归本激活；同一激活登记同一服务的多条时各给一个。`provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方。
 - 资源口的 `identity` 是这次激活的不透明资源身份，即调用方身份：提供者据它认出调用方、把登记归到这次激活。每次激活各不相同，同一 id 的前后两次激活也不同。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝（注册期按 error 记），宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。

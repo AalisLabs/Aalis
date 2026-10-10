@@ -61,7 +61,7 @@ export interface SandboxPolicy {
 
 返回值 `ExecResult` 复用 `process` 契约，结构是 `{ code, signal, stdout, stderr, truncated? }`。非零退出会 reject，错误对象上挂 `.result`——这与 `ProcessService.execFile` 的约定一致，详见 §5 错误处理。
 
-契约包的 `package.json` 没有 `aalis.service` 块，因为它是契约包（`keywords: ["aalis","aalis-api"]`）——导出 interface、type 与描述符 `codeSandbox`（`defineService<CodeSandboxService>('code-sandbox')`），不在运行时注册服务。真正的 `provides: [codeSandbox]` 由实现包声明（见 §4）。消费方在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，经 `codeSandbox.use` 调用；服务未就绪或实现未安装时 `codeSandbox.present` 为 `false`，访问成员同步抛 `ServiceUnavailableError`。
+契约包的 `package.json` 没有 `aalis.service` 块，因为它是契约包（`keywords: ["aalis","aalis-api"]`）——导出 interface、type 与描述符 `codeSandbox`（`defineService<CodeSandboxService>('code-sandbox')`），不在运行时注册服务。真正的 `provides: [codeSandbox]` 由实现包声明（见 §4）。消费方在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，经 `codeSandbox.use` 调用；服务未就绪或实现未安装时 `codeSandbox.present` 为 `false`。
 
 ---
 
@@ -194,7 +194,7 @@ uses: { storage, process, codeSandbox: optional(codeSandbox) };
 ```
 
 ### 先看 `present` + fail-closed
-业务句柄 `codeSandbox.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，provider 替换或 bounce 后存起来的句柄也会跟着换，见 [惰性服务访问](../concepts/lazy-service-access.md)。它是可选依赖，缺席时访问成员抛错。`code_runner` 在每次工具调用前经 `createRunnerConfig` 取 `codeSandbox.present ? codeSandbox.use : undefined`，再在 `runCode` 里检查 `available`：
+业务句柄 `codeSandbox.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。它是可选依赖，`code_runner` 在每次工具调用前经 `createRunnerConfig` 取 `codeSandbox.present ? codeSandbox.use : undefined`，再在 `runCode` 里检查 `available`：
 
 ```ts
 // 节选

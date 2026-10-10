@@ -74,7 +74,7 @@ interface ChatModelRequest {
 
 - `resolveLLMModel(source, ref?, requiredCaps?): ProviderEntry<LLMModel> | undefined`——`source` 是 `Pick<ServiceSelection<LLMModel>, 'list'>`（传 `caps.llm` 即可），在 `list()` 上把 `{ provider?, model? }` 解析为最匹配的条目。解析顺序：① provider+model 都有 → 拼条目 id `${provider}/${model}` 精确查；② 仅 provider → 该 provider 下首个；③ 仅 model → 按模型自己的 `use.id` 严格匹配；④ 都空 → 取首个满足能力者（本插件选中的那一家在前，其余按挑选规则排）。
 - `listLLMModels(source, { caps? }): ProviderEntry<LLMModel>[]`——列举（可按能力过滤），供 `/model` 列表与前端下拉。
-- 条目是 core 的 `ProviderEntry<LLMModel>`：`{ id, label?, priority, selected, basis?, use }`，`use` 是这个模型的业务句柄（等同 `llm.of(id)`）。按模型选直接 `caps.llm.of('<provider>/<model>')`；按能力筛遍历 `caps.llm.list()`，读 `p.use.capabilities`。
+- 条目是 core 的 `ProviderEntry<LLMModel>`：`{ id, label?, priority, selected, basis?, use }`，`use` 是这个模型的业务句柄，钉在这一条登记上（与按 id 解析的 `llm.of(id)` 不同，见 [选择层与业务层](../core/context.md#选择层与业务层)）。按模型选直接 `caps.llm.of('<provider>/<model>')`；按能力筛遍历 `caps.llm.list()`，读 `p.use.capabilities`。
 - `ModelRef`：`{ provider?, model? }`，由 ConfigSchema `type: 'llm-ref'` 字段编辑，YAML 存为嵌套对象。
 - `requestedThinking(model, request)`：提供者用，请求带的档位不是这个模型声明的（含模型不能调时带了）就抛错。
 - `lightestThinking(model)`：消费方用，机械任务要压低思考时带模型最浅的一档；模型不能调时为 `undefined`。
@@ -171,7 +171,7 @@ export default definePlugin({
 
 ### 业务句柄是活的 + 按 ref 解析
 
-`llm.use` 与条目的 `use` 都是活的转发句柄：每次访问成员都重新解析，provider bounce（重载）后存起来的句柄也会跟着换人（见 [惰性服务访问](../concepts/lazy-service-access.md)）。按配置里的 `ModelRef` 选模型时用 `resolveLLMModel`，它顺带做 ref 解析与能力过滤；调用经条目的 `use`，`llm` 的绑定给请求盖上 `caller`：
+`llm.use` 是活的业务句柄，条目的 `use` 钉在那一条登记上，两者的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。按配置里的 `ModelRef` 选模型时用 `resolveLLMModel`，它顺带做 ref 解析与能力过滤；调用经条目的 `use`，`llm` 的绑定给请求盖上 `caller`：
 
 ```ts
 import { resolveLLMModel } from '@aalis/api-llm';

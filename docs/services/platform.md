@@ -154,7 +154,7 @@ export default definePlugin({
 ## 5. 标准消费方式
 
 - **优先用 helper，而非裸 `platform.use`**：要发消息用 `sendPlatformMessage(platform, sessionId, text)`；要按名取身份用 `getPlatformSelfIdentity(platform, name, sessionId)`；要列平台用 `getPlatformNames(platform)`；要调原生 API 用 `callPlatformAction(platform, sessionId, action, params)`。这些 helper 内部都走 `source.list()` 聚合，天然处理多 adapter。
-- **helper 每次重新枚举**：helper 每次调用都读 `source.list()`；条目的 `use` 是活的业务句柄（等同 `platform.of(id)`），钉在那个实例 id 上，那一家下线时访问成员抛错，同一 id 回来后照常可用。见 [lazy-service-access](../concepts/lazy-service-access.md)。
+- **helper 每次重新枚举**：helper 每次调用都读 `source.list()`；条目的 `use` 钉在那一条登记上，一次发送从认领到发出都落在同一个适配器实例上，它中途撤回则访问成员抛错，同一 id 重新登记的新实例由下一次调用重新枚举取到。见 [选择层与业务层](../core/context.md#选择层与业务层)。
 - **platform 是可选依赖**：上面所有消费者都在 `uses` 里以 `optional(platform)` 声明它。没有任何 adapter 时，`getPlatformNames` 返回 `[]`、`getPlatformSelfIdentity` 返回 `undefined`、`sendPlatformMessage`/`callPlatformAction` 抛错（无 adapter 接管 / 不支持 callAction）。消费方必须容忍这些：persona/agent 在 `identity?.selfId` 处用可选链优雅降级（`plugin-agent/src/index.ts`）。
 - **错误边界**：`resolvePlatformBySession` 与 `claimantsOf` 对每个 adapter 的 `canHandle` 抛错只告警（传了 `logger` 时）、按不认领处理，不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
 

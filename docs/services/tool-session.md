@@ -136,7 +136,7 @@ sessionHistory.follow(history =>
 
 `registerAccessChecker` 返回的注销函数作为跟随的清理：提供者离场或本插件关闭时撤回。`sessionHistory` 缺席时回调不执行，可选依赖无需额外判断。
 
-**直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：可选依赖先看 `present`，再经业务句柄 `sessionHistory.use` 调用（句柄是活的，provider bounce 后跟着换人，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
+**直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：可选依赖先看 `present`，再经业务句柄 `sessionHistory.use` 调用（句柄的规则见 [选择层与业务层](../core/context.md#选择层与业务层)）：
 
 ```ts
 if (!sessionHistory.present) return JSON.stringify({ error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session' });

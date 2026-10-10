@@ -253,7 +253,7 @@ export default definePlugin({
 
 ### 业务句柄是活的
 
-`workflow.use` 每次访问成员都解析到本插件当前选中的那一家，提供者重新 `provide` / 切换后，存起来的句柄也会跟着换人（见 [lazy-service-access](../concepts/lazy-service-access.md)）。可选依赖先看 `present`：
+`workflow.use` 是活的业务句柄，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。可选依赖先看 `present`：
 
 ```ts
 if (!workflow.present) return { ok: false, error: 'workflow 服务未就绪' };

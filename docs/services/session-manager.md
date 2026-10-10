@@ -162,7 +162,7 @@ sessionConfig:
 
 选层：子会话一律按根会话取。有出生平台的会话按出生平台选平台档、按聊天窗口的类型名选平台类型档，忽略传入的 `platform`，适配器没加载时同样如此：owner 从 WebUI 往 QQ 群插话，这一轮的工具组、人设与模型仍取 onebot 与群的档，入口平台只用来认出说话的人。没有出生平台的会话（WebUI 的 `session-<8位>`、CLI 的 `cli-default` 等）按调用方传入的入口平台选平台档，没有平台类型档。场所按 `placeOf`。会话表里没有的 id 按没有出生平台处理，不从 id 推。
 
-**全局默认层由服务偏好承担的项：** 字段类型为 `llm-ref` 的设置项（plugin-agent 的「模型」）在全局默认层不另存值，读写的就是 llm 服务的偏好（运行态与文档的 `servicePreferences.llm`），默认模型只此一处：`sessionConfig.defaults` 不收它（写了的告警后忽略），按层写全局默认层即改偏好（`null` 取消偏好，落盘失败时偏好与文档一并撤回），偏好从别处改了、llm 的提供者上下线同样发 `session:config:changed`。`resolveConfig` 在全局默认之上各层都没设时不给它的值，取用方交给 `resolveLLMModel`，偏好指向的模型不在时落到服务此刻解析到的那一个；`resolvedDefaults()` 给出这个「此刻解析到的那一个」，会话服务的设置行据此写「默认（<模型名>）」。
+**全局默认层由服务偏好承担的项：** 字段类型为 `llm-ref` 的设置项（plugin-agent 的「模型」）在全局默认层不另存值，读写的就是 llm 服务的偏好（运行态与文档的 `servicePreferences.llm`），默认模型只此一处：`sessionConfig.defaults` 不收它（写了的告警后忽略），按层写全局默认层即改偏好（`null` 取消偏好，落盘失败时偏好与文档一并撤回），偏好从别处改了、llm 的提供者上下线同样发 `session:config:changed`。`resolveConfig` 在全局默认之上各层都没设时不给它的值，取用方交给 `resolveLLMModel`，偏好指向的模型不在时落到服务此刻解析到的那一个；`resolvedDefaults()` 给出这个「此刻解析到的那一个」，按真正调模型的 agent 插件的解析顺序取（它设了本插件偏好时就是它偏好的那个，经 `services.inspect(llm, { for: <agent 实例 id> })`；没装 agent 时按 session-manager 自己的），会话服务的设置行据此写「默认（<模型名>）」。
 
 会话服务（plugin-session-server）的 `session/config/get` 对有出生平台的会话直接按出生平台解析；没有出生平台的会话先按「会话 metadata 记下的平台 → 接管这个 id 的平台适配器 → 这条连接的入口平台」推出入口平台，再解析。plugin-agent 的 `/session` 同样读 `resolveInheritance`，每个字段显示生效值与来源。
 
@@ -518,7 +518,7 @@ export default definePlugin({
 
 ### 5.1 先看 present + 可选降级
 
-`session-manager` 在很多场景是**可选依赖**（`uses optional`）——它可能没装。业务句柄 `sessionManager.use` 是活的，每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人；缺席时访问成员抛错，所以先看 `present`（见 [惰性服务访问](../concepts/lazy-service-access.md)）：
+`session-manager` 在很多场景是**可选依赖**（`uses optional`）——它可能没装。业务句柄 `sessionManager.use` 是活的，缺席时访问成员抛错，所以先看 `present`（规则见 [选择层与业务层](../core/context.md#选择层与业务层)）：
 
 ```ts
 // Agent 的标准写法（plugin-agent/src/index.ts）

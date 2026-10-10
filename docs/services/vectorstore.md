@@ -167,7 +167,7 @@ export default definePlugin({
 });
 ```
 
-错误边界：`search` 在空库返回 `[]`（flat、lancedb 均如此）。required 依赖丢失到调度收敛之间，提供者也可能短暂缺席：此时 `vectorstore.present` 为 `false`，访问 `vectorstore.use` 的成员同步抛 `ServiceUnavailableError`。
+错误边界：`search` 在空库返回 `[]`（flat、lancedb 均如此）。上例对 required 依赖也先看 `present`，缺席规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ## 6. 跨后端可比性、风险与隔离
 
