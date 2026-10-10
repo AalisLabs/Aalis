@@ -94,7 +94,7 @@ import { storage, resolveStorageByPath } from '@aalis/api-storage';
 const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 ```
 
-`provide` 的 options 是 `{ priority?, label?, entryId?, onBehalfOf? }`，没有 `capabilities`；`ServiceRef` 与 `services.get` 只按名字解析。能力字符串也会随模型列表上送前端（webui-server 的 `/api/models/llm` 里各模型的 `capabilities`）供下拉展示与过滤——同样是元数据用途，不是 DI 通道。
+`provide` 的 options 是 `{ priority?, exclusive?, label?, entryId? }`，没有 `capabilities`；`ServiceRef` 与 `services.get` 只按名字解析。能力字符串也会随模型列表上送前端（webui-server 的 `/api/models/llm` 里各模型的 `capabilities`）供下拉展示与过滤——同样是元数据用途，不是 DI 通道。
 
 ## 当前 api 包索引
 

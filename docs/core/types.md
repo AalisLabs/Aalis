@@ -141,7 +141,6 @@ interface ProvideOptions {
   exclusive?: boolean;
   label?: string;
   entryId?: string;
-  onBehalfOf?: string;
 }
 
 type Provide = <D extends ServiceDescriptor<any, any>>(

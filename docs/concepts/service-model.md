@@ -67,8 +67,7 @@ export default definePlugin({
 
 - `priority?: number`
 - `label?: string` —— 供管控视图展示
-- `entryId?: string` —— 条目的逻辑身份，缺省为本激活 id；一个激活登记多条时各给一个。格式由服务契约约定，core 不检查
-- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好与 WebUI 的服务偏好认这个 id），清理仍归本激活。与 `entryId` 二选一。`provides` 按实际登记的激活核对：代登记的条目计入代理人，不替被代者满足 `provides`。
+- `entryId?: string` —— 条目的逻辑身份（偏好与展示认它），缺省为本激活 id。一个激活登记多条时各给一个；托管自己不运行代码的包（如 WebUI 服务端替扫描到的前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；清理与 `provides` 核对仍归本激活
 
 内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
 

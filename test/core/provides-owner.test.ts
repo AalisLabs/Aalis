@@ -30,7 +30,7 @@ describe('provides checks the registering activation', () => {
         name: 'donor',
         uses: { provide },
         apply({ provide }) {
-          provide(service, { source: 'donor' }, { onBehalfOf: 'claimant/model' });
+          provide(service, { source: 'donor' }, { entryId: 'claimant/model' });
         },
       }),
     );
@@ -58,7 +58,7 @@ describe('provides checks the registering activation', () => {
         name: 'donor',
         uses: { provide },
         apply({ provide }) {
-          provide(foreign, { source: 'donor' }, { onBehalfOf: 'claimant/foreign' });
+          provide(foreign, { source: 'donor' }, { entryId: 'claimant/foreign' });
         },
       }),
     );
@@ -76,7 +76,7 @@ describe('provides checks the registering activation', () => {
         provides: [service],
         uses: { provide },
         apply({ provide }) {
-          provide(service, { source: 'proxy' }, { onBehalfOf: 'other' });
+          provide(service, { source: 'proxy' }, { entryId: 'other' });
         },
       }),
     );

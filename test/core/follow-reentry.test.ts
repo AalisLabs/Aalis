@@ -12,9 +12,9 @@ describe('follow 串行交接在旧清理同步改胜者时仍成立', () => {
     apps.push(app);
     const S = defineService<{ name: string }>('t:reentry:s');
     const host = app.bind({ provide, services });
-    host.provide(S, { name: 'A' }, { priority: 2, onBehalfOf: 'prov-a' });
-    host.provide(S, { name: 'B' }, { priority: 1, onBehalfOf: 'prov-b' });
-    host.provide(S, { name: 'C' }, { priority: 0, onBehalfOf: 'prov-c' });
+    host.provide(S, { name: 'A' }, { priority: 2, entryId: 'prov-a' });
+    host.provide(S, { name: 'B' }, { priority: 1, entryId: 'prov-b' });
+    host.provide(S, { name: 'C' }, { priority: 0, entryId: 'prov-c' });
     const log: string[] = [];
     let pending = 0;
     await app.plugin(

@@ -65,7 +65,7 @@ export interface WebuiClientProvider {
 **提供方**
 
 - `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时以 `webui` 平台名登记一个 `platform` adapter：平台名标明说话的是从 WebUI 来的 owner，连接状态数的是打开着的 `/session` 连接；WebUI 的会话不经它收发。`sessionProtocol`、`approvals` 等为 optional。
-- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（可用 `onBehalfOf` 让偏好认前端包名；`provides` 仍按登记的激活核对）。
+- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（`entryId` 取前端包名，偏好认它；条目归 webui-server 这次激活）。
 
 **消费方**（经 `webui.definePage` / `notify`）：
 
@@ -124,7 +124,7 @@ export default definePlugin({
 ### 4b. 替换前端（`webui-client`）
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 提供 `dist/index.html`，被 webui-server 自动发现挂载，**无需 `apply`**。多前端共存时各成一个 `webui-client` provider，活跃者由「服务偏好」在 WebUI 设置「系统」里切换；卡住可访问 `/__clients` 逃生页切回。
-- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, { getClientDir: () => myDir }, { label: '我的前端' })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。`onBehalfOf` 代登记的条目取被代者身份，`provides` 仍按登记的激活核对。
+- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, { getClientDir: () => myDir }, { label: '我的前端' })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。替别的包登记时 `entryId` 取被托管包的 id；条目仍归登记的激活清理，计入它的 `provides`。
 
 ### 4c. 替换整个后端（`webui-server`）
 
