@@ -12,6 +12,7 @@ import {
 import { commands } from '@aalis/api-commands';
 import { unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
+import { hostLogs } from '@aalis/api-host-logs';
 import { persona } from '@aalis/api-persona';
 import {
   getPlatformAdapters,
@@ -28,7 +29,6 @@ import {
   definePlugin,
   defineService,
   events,
-  LogHub,
   lifecycle,
   logger,
   optional,
@@ -48,7 +48,6 @@ import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
 import { ChatBuffer } from './chat-buffer.js';
-import { readLogFileTail } from './log-file.js';
 import type { CLIService } from './types.js';
 
 /** 附件说明里的大小 */
@@ -128,6 +127,8 @@ const uses = {
   provide,
   services,
   hostConfig: optional(hostConfig),
+  /** 日志页：订阅时补发最近的历史（启动期的也在里面），之后接实时 */
+  logs: optional(hostLogs),
   platform: optional(platform),
   storage: optional(storage),
   persona: optional(persona),
@@ -271,48 +272,22 @@ function startCli(caps: Caps): void {
     tui?.applyStreamChunk(chunk);
   });
 
-  // 临时缓冲：插件装配早于 app:started，但晚于 bootstrap-buffer.dispose()；
-  // 我们订阅一个 onEntry 把这段窗口的实时 entry 留住，并在 app:started 时合并
-  // logs/latest.log 尾部（覆盖装配之前的早期 boot 日志）。
-  const liveBuffer: LogEntry[] = [];
-  let liveBufferActive = true;
-  const stopLiveBuffer = LogHub.default.onEntry(entry => {
-    if (liveBufferActive) liveBuffer.push(entry);
-  });
+  // 日志从激活起订阅：先补发最近 2000 条，之后实时接着送，seq 连续。界面起来之前攒着，起来之后交给它
+  const earlyLogs: LogEntry[] = [];
+  let onLog: (entry: LogEntry) => void = entry => earlyLogs.push(entry);
+  const stopLogs = caps.logs.use.subscribe(entry => onLog(entry), { history: 2000 });
 
-  events.use.on('app:started', async () => {
+  events.use.on('app:started', () => {
     // 非交互终端（日志重定向 / 容器 / systemd）：不接管终端、不画界面，控制台日志照常走 stdout；
     // 服务仍在线（平台枚举、子命令分发不受影响），出站消息退化为日志（见 sendMessage）。
     if (!output.isTTY || !input.isTTY) {
-      liveBufferActive = false;
-      stopLiveBuffer();
+      stopLogs();
       logger.use.info('stdin/stdout 非 TTY，CLI 界面未启动');
       return;
     }
-    let initial: LogEntry[] = [];
-    try {
-      initial = await readLogFileTail(caps.storage.use, 2000);
-    } catch {
-      // 文件未就绪可忽略——只是无早期历史
-    }
-    // 合并：file tail 与 live buffer 都可能含同一 seq，按 seq 去重排序
-    const seen = new Set<number>();
-    const merged: LogEntry[] = [];
-    for (const e of initial) {
-      if (seen.has(e.seq)) continue;
-      seen.add(e.seq);
-      merged.push(e);
-    }
-    for (const e of liveBuffer) {
-      if (seen.has(e.seq)) continue;
-      seen.add(e.seq);
-      merged.push(e);
-    }
-    merged.sort((a, b) => a.seq - b.seq);
-    liveBufferActive = false;
-    stopLiveBuffer();
-
-    tui = new CliTui(caps, cliConfig, sessionId, approvalSurface, merged);
+    const started = new CliTui(caps, cliConfig, sessionId, approvalSurface, earlyLogs);
+    onLog = entry => started.appendLog(entry);
+    tui = started;
     tui.start();
   });
 }
@@ -341,7 +316,6 @@ class CliTui {
   private logWrap = false;
   private statusScroll = 0;
   private helpScroll = 0;
-  private removeLogListener: (() => void) | null = null;
   // 流式状态：正在生成的 assistant 回复，其行由 ChatBuffer 维护为末尾一段
   private streamingContent = '';
   private streamedRecently = false;
@@ -362,8 +336,7 @@ class CliTui {
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    // 启动期日志由插件入口通过尾读 logs/latest.log + 实时 buffer 合并后注入，
-    // 之后通过 LogHub.onEntry 实时累积；按 seq 单调，下方 onEntry 用 lastSeq 去重避免与 initial 重复。
+    // 日志由插件入口的订阅送来：界面起来之前的这一批，之后经 appendLog 一条条接着
     this.logLines = initialEntries.slice();
     // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场
     this.attendance = this.approvalSurface.attend(
@@ -398,20 +371,6 @@ class CliTui {
     if (input.isTTY) input.setRawMode(true);
     input.resume();
     process.once('exit', this.restoreOnExit);
-
-    // 已注入 initialEntries 中最大的 seq；onEntry 收到 seq <= 此值的视为重复跳过
-    let lastSeq = this.logLines.length > 0 ? this.logLines[this.logLines.length - 1].seq : -1;
-    this.removeLogListener = LogHub.default.onEntry(entry => {
-      if (entry.seq <= lastSeq) return;
-      lastSeq = entry.seq;
-      // 不限长——启动期起累积，渲染仅访问可见窗口，内存价格可接受
-      this.logLines.push(entry);
-      if (this.logLines.length > this.config.maxLogEntries) this.trimLogHead();
-      // 用户已主动向上滚（logScroll > 0）时，新日志到来应保持视图锚定在原历史位置，
-      // 而非随 raw.length 增长把旧内容挤出可见区。logScroll === 0 表示跟随底部。
-      if (this.view === 'logs' && this.logScroll > 0) this.logScroll += 1;
-      if (this.view === 'logs') this.queueRender();
-    });
 
     const assistantName = this.personaName() ?? 'Aalis';
     this.chat.append([
@@ -451,14 +410,22 @@ class CliTui {
     if (this.closing) return;
     this.closing = true;
     this.running = false;
-    this.removeLogListener?.();
-    this.removeLogListener = null;
     input.off('keypress', this.handleKeypress);
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
     // 归还终端——sink 等订阅者可自行恢复
     this.caps.events.use.emit('terminal:released', 'cli').catch(() => {});
+  }
+
+  appendLog(entry: LogEntry): void {
+    // 启动期起累积，渲染只访问可见窗口
+    this.logLines.push(entry);
+    if (this.logLines.length > this.config.maxLogEntries) this.trimLogHead();
+    // 用户已主动向上滚（logScroll > 0）时，新日志到来应保持视图锚定在原历史位置，
+    // 而非随 raw.length 增长把旧内容挤出可见区。logScroll === 0 表示跟随底部。
+    if (this.view === 'logs' && this.logScroll > 0) this.logScroll += 1;
+    if (this.view === 'logs') this.queueRender();
   }
 
   pushAssistant(content: string): void {

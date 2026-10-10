@@ -39,6 +39,7 @@
     "@aalis/schema-log": "workspace:>=0.2.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0"
@@ -58,6 +59,7 @@
         "persona",
         "storage",
         "host-config",
+        "host-logs",
         "approvals",
         "plugins",
         "commands",

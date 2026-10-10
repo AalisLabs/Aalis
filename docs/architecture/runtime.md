@@ -139,7 +139,7 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
 2. **文档与密钥**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<家目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
 3. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
-4. **host-paths 与 host-config**：在根上独占提供 `host-paths`，再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
+4. **host-paths、host-logs 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史），再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。
 6. **发现**：`createPluginDiscovery(app, loader, store)` 建发现驱动，`startAalis` 以它的 `rescan` 在根上独占提供 `plugin-source`；`loadAll()` 整批登记全部插件，随后 `finishInitialLoad()` 落盘首批规范化结果。子命令模式在此分发并退出，否则 `app.start()`。
 7. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；`app:stopping` 时停止监听。
@@ -175,15 +175,16 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 - **重启策略**：实现 `RestartStrategy`，经 `AppOptions.restartStrategy` 注入（例：浏览器里「重启」改为重建实例）；
   不注入时 `app.restart()` 抛错。
 
-三项宿主服务都经根绑定 `app.bind({ provide })` 登记：
+四项宿主服务都经根绑定 `app.bind({ provide })` 登记：
 
 - `hostPaths`（`@aalis/api-host-paths`）：家目录与安装集的绝对路径。`@aalis/plugin-storage-local` 与
   `@aalis/plugin-package-manager` 以 required 声明它，不提供时两者停在 pending；WebUI 以 `optional` 声明，
   缺席时市场与系统组件接口返回 503，也发现不到前端。
+- `hostLogs`（`@aalis/api-host-logs`）：要让插件读日志流时提供（CLI 与 WebUI 的日志页以 `optional` 声明，缺席时日志页为空、WebUI 的日志历史接口返回 503）。
 - `hostConfig`（`@aalis/api-host-config`）：要让管理类插件读写配置文档时提供。
 - `pluginSource`（`@aalis/api-plugin-source`）：能在运行中重新发现插件时提供。
 
 `hostPaths` 与 `hostConfig` 都要在登记任何插件之前就位，顺序为先提供 `hostPaths`，再 `installHostConfig`。
-后两项不提供时，以 `optional` 声明它们的插件自行降级：市场视同没有新插件，WebUI 读写配置文档与扫描插件的接口返回 503。
+后三项不提供时，以 `optional` 声明它们的插件自行降级：市场视同没有新插件，WebUI 读写配置文档与扫描插件的接口返回 503。
 
 在此之上再写一个等价的 `startXxx`。**core 与各插件契约不变**——这正是把 runtime 单独成包的目的。

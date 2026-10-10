@@ -2,9 +2,10 @@ import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, normalize } from 'node:path';
 import { describeUnmet, unmetDependencies } from '@aalis/api-doctor';
+import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
 import { pluginSource } from '@aalis/api-plugin-source';
-import { App, events, type LogLevel, provide, services } from '@aalis/core';
+import { App, events, LogHub, type LogLevel, provide, services } from '@aalis/core';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
@@ -20,6 +21,7 @@ import {
   profileOfRealHome,
   resolveHome,
 } from './home.js';
+import { createHostLogs } from './host-logs.js';
 import { acquireInstanceLock, type InstanceLock } from './instance-lock.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
 import { createPluginDiscovery, type PluginLoader } from './plugin-discovery.js';
@@ -299,8 +301,10 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
 
   // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
   const host = app.bind({ events, provide, services });
-  // 宿主路径与配置文档先于任何插件接上：插件激活时就要用到，文档里的服务偏好要在全部提供者上线前生效
+  // 宿主路径、日志与配置文档先于任何插件接上：插件激活时就要用到，文档里的服务偏好要在全部提供者上线前生效。
+  // 日志接 App 写的那个中枢（runtime 不注入，即默认中枢），历史读本轮的文件日志
   host.provide.use(hostPaths, paths, { exclusive: true });
+  host.provide.use(hostLogs, createHostLogs(LogHub.default, fileLogger, app.logger), { exclusive: true });
   installHostConfig(app, store, opts.configSync);
   // 默认值从 configSchema 派生（唯一声明来源），导入定义后、登记前深合并进文档；登记时原样交给 core
   const configLoader = withPluginConfigSync(

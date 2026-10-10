@@ -14,6 +14,7 @@ import {
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { formatLogLine } from '../../packages/schema-log/src/index.js';
+import { provideHostLogs } from '../fixtures/host-logs.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
@@ -62,17 +63,19 @@ const HISTORY = [
 ];
 
 /**
- * 起 webui-server：日志根在临时家目录的 logs/，装着 zz-log-a、它的实例 2 与 zz-log-b。应用自己的日志进 hub（只收告警及以上），
- * 不进推给页面的默认中枢
+ * 起 webui-server：host-logs 的历史读临时家目录的 logs/latest.log，实时接进程级的默认中枢；装着 zz-log-a、它的实例 2 与
+ * zz-log-b。应用自己的日志进 hub（只收告警及以上），不进推给页面的默认中枢
  */
 async function start(hub = new LogHub()) {
   const home = mkdtempSync(join(tmpdir(), 'aalis-webui-logs-'));
   homes.push(home);
   mkdirSync(join(home, 'logs'));
-  writeFileSync(join(home, 'logs', 'latest.log'), HISTORY.map(formatLogLine).join(''));
+  const file = join(home, 'logs', 'latest.log');
+  writeFileSync(file, HISTORY.map(formatLogLine).join(''));
   const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
   apps.push(app);
   provideHostPaths(app, home);
+  provideHostLogs(app, { file });
   const port = await freePort();
   await app.plugin(storageLocal, {});
   await app.plugin(probe);
@@ -168,7 +171,7 @@ describe('实时日志', () => {
       if (entry.level === 'warn' && entry.message.startsWith('WebUI /admin')) warns.push(entry.message);
     });
     const port = await start(hub);
-    // 推给页面的日志取进程级的默认中枢；探针往那里写，作用域与插件的一样
+    // 推给页面的日志取 host-logs，它接进程级的默认中枢；探针往那里写，作用域与插件的一样
     const a = new DefaultLogger('aalis:zz-log-a', 'debug');
     const a2 = new DefaultLogger('aalis:zz-log-a:2', 'debug');
     const b = new DefaultLogger('aalis:zz-log-b', 'debug');
