@@ -399,7 +399,7 @@ function usesObjectLiteral(features: Answers['features']): string {
 }
 
 export function renderIndexTs(a: Answers): string {
-  // uses 里声明了什么，apply 就只能碰到什么：没有默认注入
+  // 没有默认注入：apply 只收到 uses 里声明的各项
   const caps = selectedCapabilityUses(a.features);
   const coreImports = ['definePlugin', 'logger'];
   if (caps.length > 0) coreImports.push('optional');

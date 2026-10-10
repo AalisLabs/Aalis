@@ -290,7 +290,7 @@ export default definePlugin({
 });
 ```
 
-没有默认注入：`uses` 写了什么，`apply` 就只能碰到什么。`optional(tools)` 缺席不拦激活，登记会在 tools 到场或换人时由描述符的 registrar 重挂。
+没有默认注入：`apply` 只收到 `uses` 里声明的各项。`optional(tools)` 缺席不拦激活，登记会在 tools 到场或换人时由描述符的 registrar 重挂。
 
 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`packages/api-tools/src/index.ts`），不是平铺的 `{ name, description }`。`handler` 返回 `Promise<string | ToolExecutionResult>`——字符串即纯文本；需要把图片交给主模型时返回 `{ content, images }`。
 

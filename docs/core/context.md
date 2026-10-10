@@ -41,7 +41,7 @@ export default definePlugin({
 
 ## uses 与装配
 
-声明即装配：写了什么，插件就只能碰到什么。Core 基础服务与第三方服务共用容器与装配路径——都是描述符，放进 `uses`，每一项装配成一个选择层，业务层由各自的 `bind` 生成。
+声明即装配：`apply` 只收到 `uses` 里声明的各项。`uses` 说明插件依赖什么，激活闸与关停编排据此安排；它不是授权边界，插件是同进程的可信代码，经 `services` 能动态查到任何服务（见 [安全模型](../concepts/security-model.md)）。Core 基础服务与第三方服务共用容器与装配路径——都是描述符，放进 `uses`，每一项装配成一个选择层，业务层由各自的 `bind` 生成。
 
 ```typescript
 import { definePlugin, optional, events, logger, provide } from '@aalis/core';
@@ -268,8 +268,8 @@ lifecycle.use.onDispose(async () => {
 承诺按依赖形状分三种，不是一条无条件规则：
 
 1. 插件用别的插件的服务（声明的 required 与 optional，对外的全部提供者）：消费者整个 close 完，提供者才 drain。
-2. 根激活使用插件的服务（宿主经 `app.bind` 取用）：根 drain 先于该插件的 close；根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。到根 close 时插件已按归属关闭。
-3. 插件使用根激活登记的服务（基础服务、宿主服务，以及宿主经 `app.bind({ provide })` 发布的服务）：不额外增加依赖边。归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭；这不保证根还没执行 drain。根也依赖该插件时，按第 2 条安排根 drain，避免把互用变成两个 drain 互相等待。
+2. 根激活使用插件的服务（宿主经 `app.bind` 取用）：根 drain 先于该插件的 close，根 `onDrain` 期间该插件尚未关闭（可能已 drain）。
+3. 插件使用根激活登记的服务（基础服务、宿主服务，以及宿主经 `app.bind({ provide })` 发布的服务）：不加边，归属保证插件 close 先于根 close；这不保证根还没 drain。
 
 环：先只让仅被 optional 边挡着的成员 drain（不告警），required 消费者仍先关完；环全由 required 边构成时，环内成员先全部 drain 再关并告警：drain 期间双方都能调用对方，`onDispose` 时提供者可能已收尾。环外与归属约束不松。单独 unload / disable / bounce 提供者时，正在用它的 required 下游（传递闭包）并入同一批关闭，上述交接同样成立；提供者因 required 依赖丢失退场时，随它一起失去全部提供者的 required 下游同样并入同批（还有后备提供者的不算，别的计划正关着的提供者不算后备）；这覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游；并发管理动作里已在收尾、依赖本次要关的插件所提供服务的下游，本次动作等它关完才让提供者收尾（不另设时限：那份计划逐项受同一上限约束，总会关完）；动作期间才开始激活的下游、动作进行中发生的停机，与本次动作彼此不排序。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
 
