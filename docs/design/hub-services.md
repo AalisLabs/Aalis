@@ -110,7 +110,7 @@ export default definePlugin({
 | 撤回钥匙 | 这次激活的资源身份：core 发、经资源口的 `identity` 交给 binder、拆卸时自己收；同 id 的两次激活互不误清 | 条目引用（退订闭包）；逻辑 id 只给枢纽自己的展示 / `pluginName` | `test/core/owner-identity.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 异步撤回 | 无，同步摘除 | cleanup 可返回 promise；关闭等它落地（含手动退订、换人启动的在飞项），拒绝记 warn | `test/core/whenservice-async-cleanup.test.ts` |
 | 关闭后登记 | warn + no-op | `registrar.add` / `follow` 同口径 | `test/core/post-dispose-policy.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
-| 同键重复 | `on` 并存；`provide` 同名多提供者并存 | 由能力自定并写进契约包：贡献点同局部 id 替换；钩子中间件并存；工具与分组替换（helper 与枢纽两层）；命令按激活分层；页面并存 | `test/plugins/plugin-contributions.test.ts`、`test/plugins/hooks-lifecycle.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
+| 同键重复 | `on` 并存；`provide` 同名多提供者并存 | 由能力自定并写进契约包：贡献点同局部 id 替换；钩子中间件并存；工具与分组替换（helper 与枢纽两层）；命令同一激活同名替换、不同激活分层；页面并存 | `test/plugins/plugin-contributions.test.ts`、`test/plugins/hooks-lifecycle.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 提供者换人 | 不适用 | `registrar`：立即在新提供者重挂，旧撤回可重叠（钩子登记带登记序，重挂后链序不变）；`follow`：先跑上次 cleanup、等落定再用新实例 | `test/core/binding-hardening.test.ts`、`test/plugins/hooks-provider-switch.test.ts` |
 | 退订闭包幂等 | 是 | 是 | 同上 |
 
