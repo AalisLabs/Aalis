@@ -173,8 +173,8 @@ export class App {
         getPlugin: instanceId => {
           const entry = this.plugins.getPlugin(instanceId);
           if (!entry) return undefined;
-          const { definition, config, state, error, required, optional } = entry;
-          return { definition, instanceId: entry.instanceId, config, state, error, required, optional };
+          const { definition, config, state, error } = entry;
+          return { definition, instanceId: entry.instanceId, config, state, error };
         },
       },
       { exclusive: true },

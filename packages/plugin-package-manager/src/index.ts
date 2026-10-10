@@ -126,14 +126,11 @@ export function nonMarketKind(keywords: unknown): string | undefined {
 }
 
 /** 服务依赖者闸读的插件状态：判谁在提供、谁 required 什么，以及 pending 的目标是缺还是在等（api-doctor 的共享判据） */
-type ServiceStatus = Pick<
-  PluginStatusEntry,
-  'name' | 'instanceId' | 'state' | 'error' | 'provides' | 'requiredServices' | 'uses'
->;
+type ServiceStatus = Pick<PluginStatusEntry, 'name' | 'instanceId' | 'state' | 'error' | 'provides' | 'uses'>;
 
 /**
  * 找出「卸载 target 会断其服务依赖」的插件：target 的某个实例正在提供或马上就提供的某服务 S 没有别的插件正在提供，且有别的
- * 插件 requiredServices 含 S → 这些插件会被打断。卸载连同 target 的全部实例一起卸下，所以按同名的每个实例判：算在提供的是
+ * 插件 required 依赖 S（uses 里未包 optional）→ 这些插件会被打断。卸载连同 target 的全部实例一起卸下，所以按同名的每个实例判：算在提供的是
  * active、activating，以及 pending 而只是在等的（按 api-doctor 的共享判据不缺什么，它要的在启动，起来就提供）；disabled、
  * error 与 pending 而缺服务的不在提供。别的提供者只算 active 与 activating（替代得是确定的）。已禁用（disabled / disposed）
  * 的依赖者不算。available 是当前有提供者的服务名（services.names()）。纯函数，便于单测。
@@ -159,7 +156,7 @@ export function findServiceDependents(
         p.name !== targetName &&
         p.state !== 'disabled' &&
         p.state !== 'disposed' &&
-        (p.requiredServices ?? []).includes(svc)
+        p.uses.some(use => use.kind === 'required' && use.service === svc)
       ) {
         dependents.add(p.name);
       }

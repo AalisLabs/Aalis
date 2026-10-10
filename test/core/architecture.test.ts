@@ -704,7 +704,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // app:started；restart 只受理一次、未受理而停机已开始时抛错。抬高 14 行对应 S6 方案甲。
 // 2645 → 2641：b5 P0-7（用户选甲）——独占期间不再拒绝偏好，prefer 一律记下、返回 void。
 // 2641 → 2635：b5 P0-8（用户选丁）——删 provide 处的副本检查与 ForeignCoreError；注册被拒、实例因此不会运行的一律记 error。
-const CORE_CODE_LINE_CEILING = 2635;
+// 2635 → 2629：b5 P1-11（用户选甲）——插件状态的依赖信息只留 uses：删 PluginStatusEntry.requiredServices / optionalServices
+// 与公开 PluginEntry.required / optional（required 留在内部 PluginRecord）。
+const CORE_CODE_LINE_CEILING = 2629;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

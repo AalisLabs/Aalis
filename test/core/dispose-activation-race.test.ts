@@ -173,7 +173,6 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
       config: {},
       state: 'pending',
       required: [],
-      optional: [],
     };
 
     const activating = activatePlugin(entry, {
