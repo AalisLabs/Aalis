@@ -8,6 +8,139 @@
 
 ---
 
+## 未发布 · core 0.20（全面简化与服务调用形状统一）
+
+core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三个服务事件合成一个，关闭链去掉多余的内部概念并保证同一实例 id 的旧实例停下之前不起新实例，宿主与管理面每件事只留一种写法。同批迁移全部第一方契约包、插件与宿主，新增读日志的宿主服务 `@aalis/api-host-logs` 与按插件的服务偏好。core 定为 0.20.0；其余各包的档位与版本号在发布时按源码与 npm 实况核定，本节不写。
+
+> **插件与契约包必须与 core 同批升级。** 已发布的插件与契约包的 `@aalis/core` peer 区间（`>=0.17.0`、`>=0.18.0`、`>=0.19.0`，上限都是 `<1.0.0`）都接受 0.20，包管理器不会拦下只升 core 的安装。配 core 0.20 时：
+>
+> - 旧版 api-agent、api-approval、api-commands、api-doctor、api-publish、api-session-manager、api-tools、api-webui 以值导入已删的 `serviceRef`，加载时就失败，依赖它们的插件随之加载失败；旧版 api-hooks、api-contributions 的 `run` / `collect` 调已删的 `port.require()`，每次调用抛 TypeError。
+> - 在 `apply` 里直接调内置项（`events.on`、`logger.info`、`lifecycle.onDispose`、`provide(...)`）或调 `.require()`、`.all()` 的插件抛 TypeError，进 `error`。
+> - 以下几种不报错，静默失效：`caps.x.current?.m()` 什么都不做；`if (caps.x.current)` 的分支不再进入；`parseConfig(schema, caps.config)` 读到的是默认配置；监听 `service:registered` / `service:unregistered` / `service:preference-changed` 的监听器不再触发。
+> - 旧版契约包发布的类型声明引用已删的 `ServiceRef`，只改了注释的契约包也要重发。
+>
+> 发布时受影响的第一方包同批发出，带 core peer 的包下限抬到 `>=0.20.0 <1.0.0`（脚手架 create-aalis-plugin 生成的项目同样要抬，它生成的代码已经是 0.20 的写法）。第三方插件按 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」一节改写后，把 core peer 下限抬到 `>=0.20.0`。走插件市场的，全部插件同一批勾选更新。
+
+待发布的包（共 115 个，其中 plugin-trigger-laya 是 `private` 包，不发布到 npm）：
+
+- 公开接口有不兼容改动：core；api-agent、api-approval、api-commands、api-doctor、api-llm、api-platform、api-process、api-publish、api-remote-agent、api-session-manager、api-storage、api-tools、api-trigger、api-webui。
+- 行为变化或新增：runtime、create-aalis-plugin、api-host-config、plugin-adapter-onebot、plugin-agent、plugin-cli、plugin-commands、plugin-doctor、plugin-file-reader、plugin-media、plugin-memory-summary、plugin-memory-vector、plugin-package-manager、plugin-paper、plugin-session-manager、plugin-storage-local、plugin-tool-code-runner、plugin-tool-system、plugin-trigger-laya、plugin-user-profile、plugin-webui-client、plugin-webui-server、plugin-workflow、plugin-works-site。
+- 只迁移到新的调用形状，运行时需要 core 0.20：api-hooks、api-contributions 与其余 50 个插件（plugin-asr-openai、plugin-asr-whisper-cpp、plugin-authority、plugin-checkpoint、plugin-code-sandbox-os、plugin-contributions、plugin-cron-engine、plugin-draw、plugin-embedding-ollama、plugin-embedding-openai、plugin-flow-control、plugin-gateway、plugin-hooks、plugin-image-sender、plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai、plugin-maimai、plugin-mcp-client、plugin-mcp-server、plugin-memory-history、plugin-memory-inmemory、plugin-memory-mongodb、plugin-memory-sqlite、plugin-message-archive、plugin-office、plugin-okx-trading、plugin-persona、plugin-process-local、plugin-prompt-budget、plugin-publish-review、plugin-reach、plugin-remote-agent-cursor、plugin-scheduler、plugin-session-server、plugin-skills、plugin-subtask、plugin-todo-list、plugin-tool-browser、plugin-tool-math、plugin-tool-onebot、plugin-tool-search、plugin-tool-session、plugin-tools、plugin-trigger-policy、plugin-usage-stats、plugin-user-relation、plugin-vectorstore-flat、plugin-vectorstore-lancedb、plugin-websearch-serper）。
+- 只改注释或 README（类型声明随 core 变化，同样重发）：api-asr、api-authority、api-checkpoint、api-code-sandbox、api-cron-engine、api-embedding、api-flow-control、api-gateway、api-host-paths、api-media、api-memory、api-message-archive、api-package-manager、api-persona、api-plugin-source、api-reach、api-session-history、api-session-protocol、api-todo-list、api-user-relation、api-vectorstore、api-workflow、schema-config。
+- 新包：api-host-logs 0.1.0。
+
+### 不兼容变更与迁移
+
+插件作者要改的写法逐条对照见 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」，本节不重复那张表；编译器能找出全部旧写法。
+
+#### 服务调用的两层形状（@aalis/core；全部契约包、插件与宿主）
+
+- 删 `ServiceRef` 类型与 `serviceRef` 函数，选择层上没有 `current`、`require()`、`all()`。`uses` 里每一项装配成选择层 `ServiceSelection<B>`：`list()`、`use`、`of(id)`、`present`、`follow(attach)`，由 core 定义、每个服务一样、只读。业务层 `B` 是契约的接口（不给 `bind` 时就是提供者接口），经活句柄调用。规则见 [插件定义与能力](docs/core/context.md)。
+- 内置六项同样两层：`logger.use.info`、`events.use.on`、`lifecycle.use.onDispose` / `id` / `signal`、`provide.use(desc, impl)`、`config.use`、`services.use.get`。内置项的业务句柄在装配时取好本次激活的门面，拆卸之后照常可用；`of(非根 id)` 当场抛错。
+- 业务句柄是活的转发句柄：每次访问成员重新解析到当前那一家，已经开始的调用在原来那一家上完成。选不到提供者时访问任何成员同步抛 `ServiceUnavailableError`（不导出，按 `err.name` 认），与成员本身同步还是异步无关；可选依赖先看 `present`。句柄是代理：`then`、symbol 键、`toJSON` 不转发，展开、`Object.keys`、`JSON.stringify` 看不到提供者的成员，`typeof` 为 `'function'`；每个激活、每个目标各有自己的句柄，拿句柄比对象身份或当 WeakMap 的键不再成立。边界的完整清单见 [句柄的边界](docs/core/context.md)。
+- 三种句柄的目标：`use` 是本插件此刻选中的那一家；`of(id)` 按 id，同一个 id 换了新实例照常打到；`list()` 条目的 `use` 与 `follow` 交给 `attach` 的句柄钉在那一条登记上，那一条撤回后访问抛错（`follow` 的到这次挂载的清理落定为止）。一段操作要固定同一家，取 `list().find(p => p.selected)?.use`；比身份比条目的 `id`。
+- 宿主：`app.bind(uses)` 返回的也是选择层，写 `app.bind({ events }).events.use.on(...)`、`app.bind({ provide }).provide.use(...)`。`BoundOf<U>` 映射到 `ServiceSelection<B>`。
+- 契约作者：
+  - `defineService<P>(name)` 返回 `ServiceDescriptor<P, P>`（此前是 `ServiceDescriptor<P, ServiceRef<P>>`），`ServiceDescriptor<P, B>` 的 `B` 缺省为 `P`。
+  - `bind` 改为每个目标调一次（`use`、每个 `of(id)`、每个 `list()` 条目、每次 `follow` 挂载），不再每次激活调一次。钉住的目标退役时，它的 `bind` 经资源口登记的跟随、登记与 `track` 随之撤回。
+  - `BindingPort` 的成员只剩 `id`、`identity`、`logger`、`present`、`provider`、`follow`、`track`、`registrar`：删 `name`、`current()`、`require()`、`all()`，新增 `provider`（目标那一家的活句柄）与 `present`。`port.follow` 的 `attach` 与 `registrar` 的 `register` 收到的是提供者实例。
+  - 加登记方法或包装业务方法的绑定写 `Object.assign(Object.create(port.provider), { ... })`；`Bound*` 接口 `extends` 提供者接口。写新契约照 [契约约定](docs/design/contract-conventions.md)。
+- 包根新增类型导出 `ServiceSelection`、`ProviderEntry`、`SelectionBasis`、`PreferenceScope`。
+
+#### 服务事件与偏好（@aalis/core、@aalis/api-host-config、@aalis/runtime、@aalis/plugin-webui-server）
+
+- 删 `service:registered`、`service:unregistered`、`service:preference-changed`，合成 `service:changed(name)`：这个服务的提供者或选择可能变了，请重读。可能变化时就发，不保证恰好一次，也不说明变了什么；`provide`、退订、激活拆卸、激活转入后台与完成后上线、全局与本插件偏好的切换都发，转入后台的激活期间登记的服务同样发（此前不发，重读照样看不到它）。监听旧事件名的代码不报错、不再触发。
+- 删屏障事件 `app:starting`。
+- `services.prefer` / `unprefer` 返回 `void`（此前是 `boolean`），一律记下并发 `service:changed`。独占服务存续期间也接受偏好（此前拒绝），指向别家的偏好在那期间不生效；内置服务上的偏好按排名落回根。
+- 偏好分两级：`services.prefer(name, id, { for })` 给 `for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好；`unprefer`、`preferred`、`inspect` 同样收 `{ for }`。挑选规则是本插件偏好 > 全局偏好 > 优先级 > 注册顺序；`services.get` / `all` 与不给 `for` 的 `inspect` 按全局口径。`ServiceInfo` 新增必有的 `selected` 与选中那一条才有的 `basis`（`'plugin'` / `'global'` / `'rank'`）。
+- 删 `ProvideOptions.onBehalfOf`，并入 `entryId`：托管自己不运行代码的包时，`entryId` 取被托管包的 id。core 不检查 `entryId` 的格式，也不再对它的前缀告警。纯 JS 调用方仍传 `onBehalfOf` 时被静默忽略，条目 id 回落为本激活 id。
+- api-host-config：`HostConfig` 的 `getServicePreferences`、`setServicePreference`、`removeServicePreference` 加可选的 `scope`（同 `{ for }`），`AalisConfig` 加 `pluginServicePreferences`（插件实例 id → 服务名 → 偏好的 contextId）。自行实现 `HostConfig` 的宿主要认这个参数，否则按插件设的偏好会写成全局偏好。
+
+**迁移**：
+
+- 监听三个旧服务事件的改听 `service:changed`，在回调里重读 `list()`、`present` 或 `services.use.get` / `all`，不要按事件次数记账。
+- 依赖 `prefer` / `unprefer` 返回值的调用方删掉这层判断。偏好只由用户经管理面写（WebUI、配置文件），普通插件不调它们；插件要用某一家，在文档里写明，由用户设本插件偏好。
+- 传 `onBehalfOf` 的改传 `entryId`。
+
+#### 插件状态与管理动作（@aalis/core、@aalis/runtime、@aalis/plugin-webui-server、@aalis/plugin-package-manager）
+
+- 旧实例停下之前不起新实例：激活关完仍有工作没落定（`apply` 或清理超过 `disposeTimeoutMs` 被放弃等待，或关闭后就地执行的清理还在跑）时，条目照写目标态，`PluginStatusEntry.lingering` 为 true，记一条 warn；这些工作落定之前同一 id 不起新实例（`bounce`、`updateConfig`、`enable`、依赖恢复与卸载后同 id 重新登记都一样），落定后按目标态继续，管理动作与 `idle()` 不等它。此前被放弃的初始化转 `error`（「未在宽限内停止」）、依赖恢复后不自动重试，清理超时只记 warn，新旧实例可能并存。永不落定的工作会让这个 id 一直等下去，只有重启进程能解决。
+- 删 `PluginStatusEntry.requiredServices` / `optionalServices` 与公开的 `PluginEntry.required` / `optional`。依赖信息只在 `getStatus()` 条目的 `uses` 里（每项 `{ key, service, kind }`）。webui-server 的 `/api/plugins` 照旧在服务端派生 `requiredServices` / `optionalServices`，HTTP 格式不变；市场依赖图与 package-manager 改从 `uses` 派生。
+- `bounce(instanceId)` 不再收 `{ config }`，只按现有配置重启，换配置走 `updateConfig`。纯 JS 调用方仍传 `config` 时被忽略、按旧配置重启。禁用态的 `bounce` 记 warn、返回 false；禁用态的 `updateConfig` 只换配置、保持禁用、返回 true。
+- 宿主侧 `app.plugins.getPlugin()` 交调用时刻的浅快照（此前是运行中的内部记录）：之后的状态变化不改它，缓存返回对象再读 `state` 会读到旧值；写它进不了注册表。`config` 与 `definition` 仍是运行中的同一对象，只读。插件经 `plugins` 服务拿到的此前已是快照。
+- 删 `AppOptions.now`。要固定日志时间戳，注入 `new DefaultLogger(name, level, hub, now)` 作 `AppOptions.logger`。
+- 注入的 logger 由 App 包一层再用：日志方法抛错或返回被拒的 Promise、`child` 派生失败都不传进 core 与插件；`app.logger` 不再是传入的那个对象。
+- App 只有一轮生命周期：`start()` 单飞（重入返回同一 Promise）；停机开始后再调记 warn 后直接返回；启动途中停机开始则不再发后续事件（不发 `app:started`）。`restart()` 每个 App 只受理一次：已受理过的再调记 debug 后返回，未受理过而停机已开始时抛错。要重新跑一轮就新建 App。
+- 内置服务不再核对 `uses` 声明：经 `services.use.get(events)` 动态查到的是提供者函数，以调用方自己的身份调用得到它自己的门面；认不出的身份抛「内置服务 "x" 收到的身份不属于任何在册的激活」。资源口的 `identity` 是调用方身份，不是凭据。
+
+**迁移**：
+
+- 读 `requiredServices` / `optionalServices` 或 `PluginEntry.required` / `optional` 的，改为 `status.uses.filter(u => u.kind === 'required').map(u => u.service)`（optional 同理）。
+- `bounce(id, { config })` 改为 `updateConfig(id, config)`。
+- 缓存 `getPlugin()` 返回值再读状态的，改为每次现取或读 `getStatus()`。
+- 传 `AppOptions.now` 的改为把时钟交给注入的 `DefaultLogger`。
+- 靠「未在宽限内停止」的 `error` 发现卡住清理的，改看 `getStatus()` 的 `lingering` 与 doctor 的 `plugins.lingering`；清理里不要放永不落定的工作。
+- 停机后再 `start()` 一个 App 的嵌入宿主改为新建 App。
+
+#### 契约包
+
+- **api-storage**：删 `createStorageGateway`、`getStorageEntries`、`aggregateStorageRoots`、`getStorageRootConflicts`、`resolveStorageEntryForRoot`、`resolveStorageByPath` 与类型 `StorageProviderEntry`、`AggregatedStorageRoot`、`StorageRootConflict`、`StorageCapabilityRegistry`、`StorageCapability`、`StorageCapabilities`；直接调 `caps.storage.use`。业务层 `BoundStorage` 恒有 `resolveLocalPath`、`readFileRange`、`watch`，选中的那一家不支持时调用同步抛「存储提供者不支持 x」。新增 `own`（类型 `OwnStorage`）：插件私有目录 `pluginData:/<目录名>/` 的视图，目录名在 `@aalis` 与不带作用域的包是包名去掉开头的 `plugin-`，别的作用域写成 `<作用域>+<名>`（`@acme/plugin-x` 是 `acme+x`）；只收相对路径，越出目录、宿主绝对路径、存储地址都抛错，`own.uri(path)` 给完整地址。插件名取不出目录名时绑定抛错，声明了 `storage` 的插件激活失败，不论用不用 `own`。第一方插件原有的数据路径不变。
+- **api-process**：删 `createProcessGateway`，改用 `caps.process.use`（缺席时抛 `ServiceUnavailableError`）。
+- **api-platform**：删 `PlatformAdapterEntry`、`getPlatformAdapterEntries`。辅助函数改收 `Pick<ServiceSelection<PlatformAdapter>, 'list'>`，返回的条目是 `ProviderEntry`（`use` / `id`，原 `instance` / `contextId`）。
+- **api-remote-agent**：删 `RemoteAgentEntry`；`resolveRemoteAgent` 收选择层的 `list`，返回 `ProviderEntry`。
+- **api-llm**：删 `LLMModelEntry`（api-webui 的同名 REST 类型保留）。`resolveLLMModel` / `listLLMModels` 收选择层的 `list`，返回 `ProviderEntry<LLMModel>`；不给模型引用时先取调用方插件选中的那一条。按模型取写 `caps.llm.of('<provider>/<model>')`。绑定不再按实例缓存盖过章的对象，只在 `chat` / `chatStream` 的请求上盖调用方。
+- **api-trigger**：`isActiveTrigger(phase, trigger, self)` 的第二参改为 `Pick<ServiceSelection<TriggerService>, 'list'>`，第三参由实例改为触发插件自己的条目 id。`createBotNames`、`archiveSwallowed` 改收选择层。生效者表改记条目 id，进程里有两个不同版本的 api-trigger 时彼此认不出。
+- **带登记方法的契约**（api-agent、api-approval、api-commands、api-doctor、api-publish、api-session-manager、api-tools、api-webui）：`Bound*` 改为 `extends` 提供者接口，登记方法在业务层上（`caps.tools.use.register`、`caps.commands.use.command`、`caps.webui.use.definePage`、`caps.agent.use.registerPreprocessor` 等）。
+- **api-commands**：指令登记改走资源口的 `registrar`。同一激活再登记同名指令是替换（只留一层），此前叠层；提供者在场时它拒收的登记（如指令名不合法）原样抛给调用方，此前只记 warn；本激活关闭时登记与原语同一拍撤回，不再等下游交接。缺席时登记照收，上线时重放失败只记 warn，重放到一半压上的那一层随之撤掉。
+- **api-doctor**：`UnmetRoot` 新增 `{ kind: 'lingering', instance }`（「等待 X 的旧实例停下」），`PluginSnapshot` 带 `lingering`。按 `kind` 穷举的消费方补上这一支。
+- **api-webui**：`PluginListItem` 新增必有的 `servicePreferences`（本插件偏好）与 `serviceSelections`（声明的服务此刻各落到哪一家、依据是什么），以及 `lingering`；REST 契约新增 `POST` / `DELETE /api/plugins/:instanceId/services/:name/prefer`。
+
+#### 插件
+
+- **plugin-storage-local**：只登记一个 `storage` 提供者（label「本地存储」，条目 id 即实例 id），全部根就绪后才登记，根在它内部路由。此前按根各登记一条（`${实例 id}/${根名}`），这些条目 id 与按根设的 storage 偏好随之失效：偏好不报错，按排名落回这唯一的一家，plugin-doctor 的 `services.preferences` 检查会报出，升级后从配置文件的 `servicePreferences` 里删掉。未知根同步抛「未知存储根: x（已注册根: …）」；跨根移动的报错改为「不能跨根移动」。
+- **plugin-file-reader**：删去 agent 不支持预处理器时退到 `agent:input:before` 中间件的回退，不再声明 `hooks`。agent 提供者不支持预处理器时，文件附件不被处理，插件也不记日志。
+
+### 行为变化
+
+- **core**：关闭一律异步，清理回调（`onDrain`、撤回、`onDispose`）不再在发起关闭的调用方的栈上执行（abort 监听器除外）；未 await 的管理动作返回时，目标可能尚未下线。
+- **core**：关停依赖边对声明的服务（required 与 optional）在编排那一刻的全部对外提供者建，此前只对选中的那一家。整机停机时，经 `of(id)` 或 `list()` 条目用到的非选中者也等消费者关完才收尾。
+- **core**：纯 required 依赖环里的成员先全部收尾再关，并记 warn（此前强制放行其中一边）。提供者因 required 依赖丢失退场时，随它一起失去全部提供者的 required 下游按传递闭包并入同一批。后一份关闭计划要等前一份计划里还没关完、依赖本计划成员所提供服务的消费者，加入在飞关闭不另设时限。
+- **core**：偏好切换触发一次重算；外部 `prefer` 之后 `follow` 的重挂晚一个微任务。
+- **core**：sticky 事件（`app:ready` / `app:started`）的补发在 App 存续期间一直有效，重启与停机都不清空。
+- **core**：`provides` 按归属核对：本次激活以任何逻辑身份登记的条目都计入它；重复 `provide` 的劝告（devMode）只在同一激活、同一服务、同一 contextId 时出现。
+- **core**：同一服务名以不同的描述符对象登记时照常登记，记一条 warn 点名两边（不看 devMode）。第三方契约的服务名带包名前缀，见 [契约约定](docs/design/contract-conventions.md)。
+- **core**：插件 `name` 与实例 id 删去 `#` 禁令与 trim 后的危险键复查（只放宽）：规则只剩 trim 后非空、不是 `__proto__` / `constructor` / `prototype`，`name` 另不含 `:`。
+- **core**：`provide` 处不再检查描述符是否来自另一份 core（定义校验处照旧拒绝）；内部的 `ForeignCoreError` 删除。注册被拒、插件或实例因此不会运行的一律记 error（定义或实例 id 校验失败、未声明 `reusable` 的多实例、注册时配置无法拷贝）；重名、禁用态的 `bounce`、`updateConfig` 的新配置无法拷贝仍记 warn。「装了两份 @aalis/core」的报错改指文档站地址。
+- **runtime**：在根上提供 `host-logs`；启动与配置热重载时应用 `pluginServicePreferences`，全局 `servicePreferences` 同样随热重载生效，从文件里删掉的偏好同时从运行态撤回（此前手改需重启）。
+- **plugin-webui-server**：插件列表带本插件偏好与此刻的选择；新增按插件设偏好的两条路由；全局偏好路由删去拒绝偏好时的 409 分支，配置文件拒写时回执改写「修好该文件后会按文件内容重载」（此前说以重启为准）；读日志改走 `host-logs`，宿主不提供时 `/api/logs/*` 回 503；`app:ready` 里先等插件状态静置再发现前端，bounce 不再误报未声明的服务；声明 `optional(contributions)` 与 `optional(hostLogs)`。
+- **plugin-webui-client**：插件详情新增「服务偏好」一块与「现在用」一行；插件列表显示旧实例未停下的原因。
+- **plugin-cli**：日志页读 `host-logs`，先补最近 2000 条再接实时；宿主不提供时日志页为空。
+- **plugin-commands**：声明 `optional(tools)`（`@aalis/api-tools` 进 dependencies），`/status` 的工具数经它取。
+- **plugin-session-manager**：会话的默认模型按 agent 插件的选择显示（含它的本插件偏好）。
+- **plugin-agent**：默认模型与「偏好未生效」的提示按本插件偏好算。
+- **plugin-doctor**：新增按插件的偏好检查 `services.preferences.<插件>.<服务>`（全局的仍是 `services.preferences.<服务>`）与 `plugins.lingering`。
+- **plugin-tool-code-runner、plugin-tool-system**：激活前只看 `storage` 在不在；提供者不支持 `resolveLocalPath` 时，改为调用时报错，不再在激活时失败。
+- **plugin-workflow**：每次运行带一个 `AbortSignal`，取消与拆卸会打断等待中的 `wait`、`agent`、`tool` 节点（`tool` 节点的 `toolCallContext.signal` 即它，覆盖调用方传入的；agent 回合本身不中止），拆卸等进行中的运行落定。
+- **plugin-trigger-laya**（`private`）：托管的侧车停止宽限由 5 秒改为 3 秒，在 core 默认 5 秒的清理宽限内停下；`uses` 声明 `lifecycle`。
+- **plugin-works-site**：`uses` 由 `app` 改为 `services`，按宿主实例认领目标的判据随之改为 `services.get(appService)`（每个激活的句柄各不相同）；同宿主同目标的第二个实例照旧激活失败。
+
+### 新增
+
+- **@aalis/api-host-logs**（新包）：`hostLogs` 描述符（服务名 `host-logs`），`recent(limit, { before?, match? })` 取本轮启动以来最后若干条，`subscribe(listener, { history? })` 先补发最近若干条再送此后的每一条，按 `seq` 递增、不重不漏，订阅归本次激活。由宿主提供，runtime 的 `createHostLogs()` 是 Node 宿主的实现（历史读家目录的 `logs/latest.log`）。插件读日志流改走它，不再直接订阅 core 的 `LogHub`（architecture 守卫拦下 core 与 runtime 之外的引用）。
+- **本插件偏好**：`services.prefer(name, id, { for })`、配置文件的 `pluginServicePreferences`、WebUI 插件详情的「服务偏好」。说明与「哪些服务不宜按插件分开选」见 [运行态与配置文档](docs/core/config.md) 的「服务偏好」一节。
+- **`services.inspect(key, { for })`**：按那个插件的口径排列，选中的那一条带 `selected` 与 `basis`。
+- **api-storage 的 `own`**：插件私有目录的视图，见上文契约包一节。
+- **契约约定**：[docs/design/contract-conventions.md](docs/design/contract-conventions.md) 写下服务名、业务层、登记方法、在场判断、同步与异步、本插件偏好与业务调用入口的约定；现有契约与它不一致的地方另批收敛。
+
+### 修复
+
+- 注入的 logger 抛错不再卡住插件状态机，`child` 派生失败也不外传。
+- 清理超时之后新旧实例不再并存（见上文「旧实例停下之前不起新实例」）。
+- 依赖丢失引起的连带退场按传递闭包成批，下游收尾时不再失去上游；前一份管理计划里还没收尾的消费者不再被后一份计划越过。
+- 一段操作固定在同一家：memory-vector（算向量与记 `modelId`、判方法与删除落盘）、user-profile、adapter-onebot 的合并转发展开、media 的描述回写、memory-summary 的压缩、paper 的发布与提名，在换提供者的空档里不会一半打到旧的、一半打到新的。
+- WebUI 页面里的文件单元格在 storage 缺席时不再回 500。
+- plugin-workflow 拆卸之后不再补触发过期的单次任务、不再写盘。
+
 ## 2026-10-01（core 0.19.1 patch；schema-config 0.14.0 minor；60 个包：9 minor / 51 patch）
 
 插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列、服务归属校验、sticky 事件重复送达与配置拷贝失败的回执，并统一停机后的管理回执。停机回执的变化修的是「返回 true 却没有做任何事」的缺陷，core 按 patch 发布 0.19.1；core 0.20 留给内核全面简化。
