@@ -1136,13 +1136,13 @@ importers:
       '@aalis/api-storage':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-storage
+      '@aalis/api-tools':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-tools
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/api-tools':
-        specifier: workspace:*
-        version: link:../api-tools
       '@aalis/core':
         specifier: workspace:*
         version: link:../core

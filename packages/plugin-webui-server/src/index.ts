@@ -302,6 +302,8 @@ const uses = {
   sessions: optional(sessionManager),
   tools: optional(tools),
   llm: optional(llm),
+  /** 插件经贡献点 webui:theme 提供的主题（GET /api/themes） */
+  contributions: optional(contributions),
   // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
   archive: optional(messageArchive),
 };
@@ -490,6 +492,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const clientProviderDisposers = new Map<string, () => void>();
   /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）。 */
   function currentClientDir(): string | undefined {
+    // 动态查而不写进 uses：条目多由本插件代前端包登记，声明它会让本插件的按插件偏好也改到选择，静态目录的重挂只跟全局偏好
     return services.use.get(webuiClient)?.getClientDir?.();
   }
   /**
@@ -751,7 +754,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const warnedThemes = new WeakSet<object>();
   route(expressApp, 'GET /api/themes', gate(), (_req, res) => {
     const themes: PluginTheme[] = [];
-    for (const { key, spec } of services.use.get(contributions)?.collect('webui:theme') ?? []) {
+    for (const { key, spec } of caps.contributions.present ? caps.contributions.use.collect('webui:theme') : []) {
       const parsed = parseTheme((spec as { theme?: unknown }).theme);
       if (parsed.ok) themes.push({ id: key, instance: key.slice(0, key.lastIndexOf('/')), theme: parsed.theme });
       else if (!warnedThemes.has(spec)) {

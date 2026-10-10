@@ -25,7 +25,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - `follow(attach)`：选中的那一条不变则不动；换人时先跑上次返回的清理，等其 Promise 落定之后才以新选中那一家的业务句柄再挂；选不到、下线与关闭时清理。交给 `attach` 的句柄钉在挂上的那一条登记上，直到这次挂载的清理落定。`attach` 必须同步——需要清理就返回函数，不需要就不返回；thenable 会被接住并 warn，不会当 cleanup。拒绝被隔离并报告，但不证明旧资源已释放。
 - 偏好只经 `services.prefer` / `unprefer` 写（给 `{ for }` 为那个插件的本插件偏好，不给为全局偏好），供管理面使用；选择层没有写偏好的入口。
 - `services.get` / `services.all` 是动态查询：不增加声明、不参与激活闸、不自动跟随、不建立依赖边，关停期可能拿空。需要声明等待与跟随就把描述符写进 `uses`。动态查到的内置服务是提供者函数，以调用方自己的身份调用得到它自己的门面，认不出的身份即抛错。
-- `services.inspect` 只投影登记元数据（选中的那一条带 `selected` 与 `basis`），不返回实例。`services.get` / `services.all` 返回登记进容器的对象本身。
+- 分工：要实例用 `services.get` / `services.all`（返回登记进容器的对象本身），展示与对外输出用 `services.inspect`（只投影登记元数据，选中的那一条带 `selected` 与 `basis`，不返回实例，可以放心序列化）。插件的业务调用只经 `uses` 声明的选择层，`get` / `all` 只用来查在不在、列运行期服务名的提供者与取身份键。
 - `provide.use(descriptor, impl, options?)` 是唯一发布入口。`options.entryId` 给条目指定逻辑身份（偏好、展示与 `of(id)` 认它，core 不检查格式），清理仍归本激活；同一激活登记同一服务的多条时各给一个。`provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方。
 - 资源口的 `identity` 是这次激活的不透明资源身份，即调用方身份：提供者据它认出调用方、把登记归到这次激活。每次激活各不相同，同一 id 的前后两次激活也不同。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验处（`definePlugin` 与注册）一律拒绝，宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。`provide` 只按服务名登记，不查副本。

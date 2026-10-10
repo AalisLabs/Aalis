@@ -84,7 +84,8 @@
         "llm",
         "message-archive",
         "plugin-source",
-        "package-manager"
+        "package-manager",
+        "contributions"
       ],
       "provides": [
         "webui-server",
