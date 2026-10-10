@@ -706,11 +706,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     if (contextId === null) {
       services.use.unprefer(svcName, scope);
       host.removeServicePreference(svcName, scope);
-    } else if (services.use.prefer(svcName, contextId, scope)) {
-      host.setServicePreference(svcName, contextId, scope);
     } else {
-      res.status(409).json({ error: `service "${svcName}" rejected provider preference "${contextId}"` });
-      return;
+      services.use.prefer(svcName, contextId, scope);
+      host.setServicePreference(svcName, contextId, scope);
     }
     // 切换前端：webui-client 是「前端」服务，全局偏好变更需重挂静态目录 + 通知客户端刷新。
     // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。

@@ -197,7 +197,7 @@ describe('/session 写明这一轮会用的模型', () => {
     expect(unset, '没有偏好：服务解析到登记在先的 deep').toContain(`这一轮会用: ${PROVIDER}/deep`);
 
     // 全局默认层的「模型」即服务偏好；这个栈没有宿主配置文档，直接经服务门面设偏好
-    expect(app.bind({ services }).services.use.prefer(llm, `${PROVIDER}/gone`)).toBe(true);
+    app.bind({ services }).services.use.prefer(llm, `${PROVIDER}/gone`);
     expect(await view(), '偏好指向的模型不在：回落到 deep').toContain(`这一轮会用: ${PROVIDER}/deep`);
 
     await commands.execute('session.set', cmdInput('s4', ['-m', `${PROVIDER}/switch`]));

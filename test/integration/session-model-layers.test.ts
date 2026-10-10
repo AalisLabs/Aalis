@@ -77,7 +77,7 @@ it('全局默认层的「模型」就是服务偏好：没有任何一层设时�
     return answered.at(-1);
   };
 
-  expect(host.services.use.prefer(llm, `${PROVIDER}/b`)).toBe(true);
+  host.services.use.prefer(llm, `${PROVIDER}/b`);
   expect(await turn(), '都没设：服务偏好').toBe('b');
   expect(sm.getLayer({ scope: 'defaults' }).llm, '全局默认层读到的就是偏好').toEqual({
     provider: PROVIDER,
