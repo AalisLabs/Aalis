@@ -110,20 +110,13 @@ export class Resources {
     return this.#drained;
   }
 
-  async disposeAsync(timeoutMs?: number): Promise<void> {
-    if (this.#completion) {
-      await awaitWithTimeout(this.#completion, timeoutMs, this.#timeout('等待在飞拆卸'));
-      return;
-    }
-    let resolve!: () => void;
-    let reject!: (error: unknown) => void;
-    // 必须先发布完成对象，再同栈执行 teardown：清理回调可以重入关闭并注册观察者。
-    this.#completion = new Promise<void>((done, fail) => {
-      resolve = done;
-      reject = fail;
-    });
-    this.#teardown(timeoutMs).then(resolve, reject);
-    await this.#completion;
+  /**
+   * 关闭并等它关完（幂等：重复调用拿到同一个 Promise）。关停编排在本激活的收尾段之后才调它，此刻 abort 早已发出，
+   * 完成对象发布之前没有插件代码运行；按超时等别人的在飞关闭在激活一层（Activation.disposeAsync）。
+   */
+  disposeAsync(timeoutMs?: number): Promise<void> {
+    this.#completion ??= this.#teardown(timeoutMs);
+    return this.#completion;
   }
 
   async #teardown(timeoutMs?: number): Promise<void> {
