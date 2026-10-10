@@ -25,7 +25,7 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 | `logLevel` | `LogLevel` | 默认 Logger 的级别；缺省 `'info'`。注入了 `logger` 时不用 |
 | `restartStrategy` | `RestartStrategy` | 重启策略；缺省=`restart()` 抛错 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
-| `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub） |
+| `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`app.logger` 也是包过的这层 |
 | `devMode` | `boolean` | 传给根激活，决定 `provide` 与激活路径是否跑一致性校验；默认 `true` |
 | `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时 abort 后的宽限（见下文）。0=不设限 |
 | `slowThresholdMs` | `number` | 慢操作阈值（毫秒），默认 60000：插件激活超过它仍未完成即告警、转入后台；`app:*` 屏障事件的单个监听器超过它即告警、不再等待。0=不设限 |

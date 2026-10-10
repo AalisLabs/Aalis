@@ -1,4 +1,4 @@
-import { awaitWithTimeout, reportQuietly } from '../kernel/disposable-chain.js';
+import { awaitWithTimeout } from '../kernel/disposable-chain.js';
 
 import type { ServiceContainer } from '../primitives/services.js';
 
@@ -126,7 +126,7 @@ export class Activation {
   disposeAsync(timeoutMs?: number): Promise<void> {
     if (this.#closing)
       return awaitWithTimeout(this.#closing, timeoutMs, limit =>
-        reportQuietly(() => this.logger.warn(`激活 "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`)),
+        this.logger.warn(`激活 "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`),
       );
     if (this.children.size === 0) return this.resources.disposeAsync(timeoutMs);
     return closeActivations([this], timeoutMs, this.logger);
