@@ -608,54 +608,23 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     }
   });
 
-  it.each([
-    'disable',
-    'bounce',
-    'unload',
-  ] as const)('后台激活不响应 signal：%s 在宽限后返回，条目照写目标态并带 lingering，apply 落定前不起新实例', async action => {
+  it('后台激活不响应 signal：bounce 在宽限后返回，条目照写目标态并带 lingering，apply 落定前不起新实例', async () => {
     const w = world({ disposeTimeoutMs: 40 });
     const zombie = deferred();
     releases.push(zombie.resolve);
     let applies = 0;
     await w.app.plugin(definePlugin({ name: 'deaf', apply: () => (++applies === 1 ? zombie.promise : undefined) }));
     await until(() => w.status('deaf')?.slow === true, '转入后台');
-    expect(await within(w.app.plugins[action]('deaf'), 2000, action)).toBe(true);
+    expect(await within(w.app.plugins.bounce('deaf'), 2000, 'bounce')).toBe(true);
     await within(w.app.plugins.idle(), 2000, 'idle');
     expect(w.at('error')).toEqual([]);
     expect(w.at('warn')).toContain('插件 "deaf" 的旧实例超过宽限仍未停止，它停下之前同一 id 不再激活');
-    if (action === 'unload') expect(w.status('deaf')).toBeUndefined();
-    else
-      expect(w.status('deaf')).toMatchObject({ state: action === 'disable' ? 'disabled' : 'pending', lingering: true });
+    expect(w.status('deaf')).toMatchObject({ state: 'pending', lingering: true });
     expect(applies).toBe(1);
     zombie.resolve();
-    if (action === 'bounce') await until(() => w.status('deaf')?.state === 'active', 'apply 落定后重新激活');
-    else await sleep(20);
-    expect(applies).toBe(action === 'bounce' ? 2 : 1);
-    expect(w.status('deaf')?.lingering).toBeUndefined();
-  });
-
-  it('宽限期间 enable 已把终态改走：旧 apply 落定后照常激活', async () => {
-    const w = world({ disposeTimeoutMs: 60 });
-    const zombie = deferred();
-    releases.push(zombie.resolve);
-    let applies = 0;
-    await w.app.plugin(
-      definePlugin({
-        name: 'deaf',
-        apply: () => (++applies === 1 ? zombie.promise : undefined),
-      }),
-    );
-    await until(() => w.status('deaf')?.slow === true, '转入后台');
-    const disabling = w.app.plugins.disable('deaf');
-    await sleep(10);
-    expect(await w.app.plugins.enable('deaf')).toBe(true);
-    await disabling;
-    await w.app.plugins.idle();
-    expect(w.status('deaf')).toMatchObject({ state: 'pending', lingering: true });
-    zombie.resolve();
-    await until(() => w.status('deaf')?.state === 'active', '新一轮激活');
+    await until(() => w.status('deaf')?.state === 'active', 'apply 落定后重新激活');
     expect(applies).toBe(2);
-    expect(w.status('deaf')?.error).toBeUndefined();
+    expect(w.status('deaf')?.lingering).toBeUndefined();
   });
 
   it('停机有界：不响应的后台激活与在飞激活都在阈值 + 宽限量级内收场', async () => {

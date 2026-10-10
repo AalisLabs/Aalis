@@ -5,11 +5,8 @@ import { activationHost, createInspectableApp, rootActivation } from '../helpers
 // ════════════════════════════════════════════════════════════
 // 拆卸路径的并发正确性
 //
-// disposed 在清理开始前置位，若仅凭它早退，后来者会拿到"已完成"的假象而
-// 清理其实没落；停机若撞上在飞 recompute，shutdown 请求被单飞排队后立即返回，
-// 拓扑逆序编排整个落空 → 消费者的落盘写进已关闭的提供者。
-// App.stop 先 await idle 再 stopAll，把这一窗口堵上；本文件仍用 bounce 在飞
-// 去撞停机，钉住消费者落盘先于提供者关闭。
+// disposed 在清理开始前置位，若仅凭它早退，后来者会拿到"已完成"的假象而清理其实没落：后来者加入在飞的关闭，
+// 返回时清理已经完成。停机撞上在飞的 bounce：App.stop 先 idle 再执行冻好的停机计划，消费者落盘仍先于提供者关闭。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
