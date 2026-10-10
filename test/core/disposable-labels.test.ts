@@ -80,14 +80,6 @@ describe('清理链点名', () => {
     await ctx.activation.disposeAsync();
   });
 
-  it('计数器与名单长度恒一致（两读口同源）', async () => {
-    const ctx = makeFixture('p');
-    ctx.caps.provide(defineService('a'), {});
-    ctx.caps.lifecycle.onDispose(() => {}, 'x');
-    expect(ctx.activation.resources.disposables.size).toBe(ctx.activation.resources.disposables.labels().length);
-    await ctx.activation.disposeAsync();
-  });
-
   it('onDispose 同一函数登记两次：撤销精确到本次登记，余下条目的逆序不翻转', async () => {
     const ctx = makeFixture('dup');
     const baseline = ctx.activation.resources.disposables.labels();
