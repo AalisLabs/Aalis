@@ -156,6 +156,8 @@ export function resolveLLMModel(
 ): LLMModelEntry | undefined;
 ```
 
+`entryId` 写成 `` `${lifecycle.id}/${modelId}` `` 是本契约的约定，core 不检查：`resolveLLMModel` 给全两项时按 `${provider}/${model}` 精确比较条目的 `contextId`，只给 provider 时按 `${provider}/` 前缀匹配，不按约定写的条目这两种引用都命不中。
+
 按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按偏好 > priority > 注册顺序拿首个。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
 
 ## 提供方骨架

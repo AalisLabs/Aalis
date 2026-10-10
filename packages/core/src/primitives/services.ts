@@ -27,7 +27,7 @@ interface ServiceEntry {
   contextId: string;
   /**
    * 清理归属：注册方本次激活的身份。与 `contextId`（逻辑身份，供
-   * 路由 / 显示 / 偏好 / 前缀查询）分开——同名激活各有各的 owner，一方拆卸不清另一方。
+   * 路由 / 显示 / 偏好）分开——同名激活各有各的 owner，一方拆卸不清另一方。
    * @internal
    */
   owner: symbol;
@@ -44,9 +44,9 @@ const NO_ENTRIES: readonly ServiceEntry[] = [];
  * - 同一个服务名可以有多个提供者（按 priority + 偏好解析）
  * - 服务选择走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 -api 自理，不在内核 DI
  * - 经 provide 能力注册的条目带清理归属 owner，插件卸载时按它批量清理（unregisterByOwner）；
- *   contextId 只是逻辑身份（路由 / 显示 / 偏好 / 前缀查询），不参与清理
+ *   contextId 只是逻辑身份（路由 / 显示 / 偏好），不参与清理，core 不规定它的格式
  * - 归属可暂不对外（hold，编排层对转入后台的激活使用）：解析类读口一律看不见它的条目，
- *   登记事实类读口（hasByContext / getServiceNames / 独占冲突）照常看得见
+ *   登记事实类读口（namesOf / hasEntry / getServiceNames / 独占冲突）照常看得见
  */
 export class ServiceContainer {
   #entries = new Map<string, ServiceEntry[]>();
@@ -115,7 +115,7 @@ export class ServiceContainer {
    */
   hold(owner: symbol): string[] {
     this.#held.add(owner);
-    return this.#namesOf(owner);
+    return this.namesOf(owner);
   }
 
   /**
@@ -123,7 +123,7 @@ export class ServiceContainer {
    * @internal
    */
   release(owner: symbol): string[] {
-    return this.#held.delete(owner) ? this.#namesOf(owner) : [];
+    return this.#held.delete(owner) ? this.namesOf(owner) : [];
   }
 
   /**
@@ -134,8 +134,20 @@ export class ServiceContainer {
     return this.#held.has(owner);
   }
 
-  #namesOf(owner: symbol): string[] {
+  /**
+   * 该归属名下有条目的服务名（登记事实：暂不对外的也算）。provides 按它核对：插件以任何逻辑身份登记的条目都算它自己的
+   * @internal
+   */
+  namesOf(owner: symbol): string[] {
     return [...this.#entries].filter(([, list]) => list.some(entry => entry.owner === owner)).map(([name]) => name);
+  }
+
+  /**
+   * 该归属是否已以这个逻辑身份登记过该服务（登记事实：暂不对外的也算）
+   * @internal
+   */
+  hasEntry(name: string, contextId: string, owner: symbol): boolean {
+    return this.#entries.get(name)?.some(entry => entry.owner === owner && entry.contextId === contextId) === true;
   }
 
   /** 参与解析的条目：暂不对外的归属不算。没有暂扣时原样返回登记数组，不另分配 */
@@ -163,24 +175,10 @@ export class ServiceContainer {
   }
 
   /**
-   * 检查指定激活是否以自身逻辑身份注册了某个服务。
-   *
-   * owner 必须相同；逻辑身份匹配 contextId 本身或以 `contextId + '/'` 为前缀的
-   * per-entry 子条目（如 `@aalis/plugin-llm-ollama:main/llama3`），不计代其他身份登记的条目。
-   */
-  hasByContext(name: string, contextId: string, owner: symbol): boolean {
-    const list = this.#entries.get(name);
-    if (!list) return false;
-    const prefix = `${contextId}/`;
-    return list.some(e => e.owner === owner && (e.contextId === contextId || e.contextId.startsWith(prefix)));
-  }
-
-  /**
    * 按清理归属移除本次激活注册的所有 entry，返回对外少了提供者的服务名列表（归属暂不对外时为空）。
    *
    * 按 owner 而非 contextId：同名激活（内部构造重名、拆卸在飞时同名新激活）各有各的
-   * owner，互不误清。per-entry 子 entry（`id/sub`）与主 entry 同 owner，一并清掉——
-   * 不再依赖 id 前缀约定，前缀只留给 {@link hasByContext} 这类逻辑身份查询。
+   * owner，互不误清。一个激活登记的多条（各带 entryId）同 owner，一并清掉。
    */
   unregisterByOwner(owner: symbol): string[] {
     const removed: string[] = [];
@@ -196,9 +194,7 @@ export class ServiceContainer {
     return this.#held.delete(owner) ? [] : removed;
   }
 
-  /**
-   * 列出所有已登记的服务名，含暂不对外的归属名下的（登记事实：provides 反向检查要看得到自己）
-   */
+  /** 列出所有已登记的服务名，含暂不对外的归属名下的（登记事实） */
   getServiceNames(): string[] {
     return [...this.#entries.keys()];
   }

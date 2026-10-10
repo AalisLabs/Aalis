@@ -156,8 +156,10 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       return;
     }
 
+    // 按归属核对：本次激活以任何逻辑身份登记的条目都算它的，别的激活登记的同 id 条目不算
     const provides = entry.definition.provides?.map(descriptor => descriptor.name) ?? [];
-    const missing = provides.filter(name => !services.hasByContext(name, entry.instanceId, activation.owner));
+    const registered = services.namesOf(activation.owner);
+    const missing = provides.filter(name => !registered.includes(name));
     if (missing.length > 0) {
       throw new Error(`声明 provides [${missing.join(', ')}] 但未实际注册这些服务`);
     }
@@ -166,11 +168,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     // provides 供启动排序使用；关闭编排仍按激活实际持有的依赖建边
     // 注：是否 dev 由宿主通过 `App({ devMode })` 显式注入，core 不读 process.env
     if (host.runtime.devMode) {
-      const declared = new Set(provides);
-      const actuallyProvided = services
-        .getServiceNames()
-        .filter(name => services.hasByContext(name, entry.instanceId, activation.owner));
-      const undeclared = actuallyProvided.filter(name => !declared.has(name));
+      const undeclared = registered.filter(name => !provides.includes(name));
       if (undeclared.length > 0) {
         logger.warn(
           `插件 "${entry.instanceId}" 注册了服务 [${undeclared.join(', ')}] 但未在 provides 中声明 —— ` +

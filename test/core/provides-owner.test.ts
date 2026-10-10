@@ -50,7 +50,7 @@ describe('provides checks the registering activation', () => {
     expect(app.plugins.getPlugin('donor')?.state).toBe('active');
   });
 
-  it('another activation’s entry is excluded from the claimant’s dev-mode reverse check', async () => {
+  it('the dev-mode reverse check matches by owner: an entry registered for another identity counts for its registrant', async () => {
     const foreign = defineService<{ source: string }>('__t:owner-foreign');
     const { app, warnings } = world();
     await app.plugin(
@@ -69,7 +69,7 @@ describe('provides checks the registering activation', () => {
 
     expect(app.plugins.getPlugin('claimant')?.state).toBe('active');
     expect(warnings.filter(line => line.includes('插件 "claimant"') && line.includes('未在 provides'))).toEqual([]);
-    expect(warnings.filter(line => line.includes('插件 "donor"') && line.includes('未在 provides'))).toEqual([]);
+    expect(warnings.filter(line => line.includes('插件 "donor"') && line.includes('未在 provides'))).toHaveLength(1);
   });
 
   it('the activation’s own id/sub entry satisfies provides', async () => {
@@ -91,9 +91,9 @@ describe('provides checks the registering activation', () => {
     expect(app.bind({ services }).services.all(service)[0]?.contextId).toBe('owner/model');
   });
 
-  it('onBehalfOf remains outside the registering activation’s provides', async () => {
+  it('an entry registered for another identity satisfies the registrant’s provides', async () => {
     const service = defineService<{ source: string }>('__t:owner-proxy');
-    const { app, warnings } = world();
+    const { app } = world();
     await app.plugin(
       definePlugin({
         name: 'proxy',
@@ -106,8 +106,30 @@ describe('provides checks the registering activation', () => {
     );
     await app.plugins.idle();
 
-    expect(app.plugins.getPlugin('proxy')?.state).toBe('error');
-    expect(app.plugins.getPlugin('proxy')?.error).toContain('声明 provides');
-    expect(warnings.filter(line => line.includes('为前缀'))).toEqual([]);
+    expect(app.plugins.getPlugin('proxy')?.state).toBe('active');
+  });
+});
+
+describe('dev-mode duplicate provide advisory', () => {
+  it('warns only for the same activation, service and contextId', async () => {
+    const service = defineService<{ n: number }>('__t:owner-duplicate');
+    const { app, warnings } = world();
+    await app.plugin(
+      definePlugin({
+        name: 'dup',
+        provides: [service],
+        uses: { provide },
+        apply({ provide }) {
+          provide(service, { n: 1 }, { entryId: 'dup/sub' });
+          provide(service, { n: 2 });
+          provide(service, { n: 3 });
+        },
+      }),
+    );
+    await app.plugins.idle();
+
+    expect(warnings.filter(line => line.includes('provide 过一次'))).toEqual([
+      expect.stringContaining('服务 "__t:owner-duplicate" 已由本激活以 "dup" provide 过一次'),
+    ]);
   });
 });

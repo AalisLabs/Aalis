@@ -67,14 +67,14 @@ export default definePlugin({
 
 - `priority?: number`
 - `label?: string` —— 供管控视图展示
-- `entryId?: string` —— 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
-- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好与 WebUI 的服务偏好认这个 id），清理仍归本激活。代登记不替被代者满足 `provides`：校验同时核对实际登记的激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
+- `entryId?: string` —— 条目的逻辑身份，缺省为本激活 id；一个激活登记多条时各给一个。格式由服务契约约定，core 不检查
+- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好与 WebUI 的服务偏好认这个 id），清理仍归本激活。与 `entryId` 二选一。`provides` 按实际登记的激活核对：代登记的条目计入代理人，不替被代者满足 `provides`。
 
 内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
 
 ### 2.2 同一激活默认只 provide 一次同名服务
 
-同一个激活对同一个服务名默认只能 `provide` 一次。重复 provide（不带显式 `entryId`）会被 dev 校验 warn：下游若按 `contextId` 路由，只能命中第一条。
+同一个激活对同一个服务名默认只能 `provide` 一次。以同一 id 重复 provide（都不带 `entryId`，或带了相同的 `entryId`）会被 dev 校验 warn：下游若按 `contextId` 路由，只能命中第一条。
 
 要在同一个插件里跑多套配置（例如多个 API key），在定义上声明 `reusable: true`，再用 `name:suffix` 注册多个插件实例。要在单实例里拆子粒度，用 `entryId`。
 
@@ -87,7 +87,7 @@ export default definePlugin({
 - **per-model LLM**：一个 OpenAI 插件实例挂载多个模型，每个模型一条 `llm` entry。
 - **per-root storage**：一个存储插件挂载多个 root，每个 root 一条 entry。
 
-`entryId` 必须以本次激活 id 为前缀、以 `/` 分隔，即 `` `${lifecycle.id}/${子粒度}` ``。
+`entryId` 的格式由服务契约约定，core 不检查。第一方契约都约定为本次激活 id 加 `/` 加子粒度，即 `` `${lifecycle.id}/${子粒度}` ``；api-llm 按 `provider/model` 解析模型引用依赖这一格式。
 
 ```ts
 caps.provide(storage, scoped, {
@@ -96,7 +96,7 @@ caps.provide(storage, scoped, {
 });
 ```
 
-插件卸载时按清理归属批量清理，per-entry 与主 entry 同 owner，一并清掉——清理不依赖前缀。前缀约定服务的是逻辑身份：`hasByContext` 的前缀查询、api-llm 按 `provider/model` 解析模型引用都靠它。dev 模式对此校验并 warn。
+插件卸载时按清理归属批量清理，per-entry 与主 entry 同 owner，一并清掉；`provides` 同样按归属核对。两者都不依赖 `entryId` 的格式。
 
 ---
 
@@ -168,12 +168,11 @@ caps.provide(storage, scoped, {
 
 1. **缓存裸引用**：`const svc = x.current` 存进类字段，provider 换人后失效。每次读 `current`，或 `follow`。
 2. **重复 provide 同名服务**：同一激活不带 `entryId` 二次 provide 会静默失效。多套配置用 `reusable` + `name:suffix`；拆子粒度用 `entryId`。
-3. **`entryId` 不带激活 id 前缀**：前缀查询与模型引用命不中。永远用 `` `${lifecycle.id}/${sub}` ``。
-4. **把代登记写进自己的 `provides`**：`onBehalfOf` 归属被代者，不计入代理人。
-5. **动态 `services.get` 当依赖**：无激活闸、无关停边、关停期可能拿空。
-6. **期待内核按能力选服务**：把能力写进实例元数据，靠 `*-api` helper 过滤。
-7. **manifest 与 `definePlugin` 不一致**：两条独立链路都要写、要对齐。
-8. **缺 `name` / 非法 `instanceId`**：`definePlugin` 与 `register` 两层拒绝（非空字符串；`name` 不含 `:suffix` 与 `#`；`instanceId` 允许 `name:suffix`）。
+3. **`entryId` 不按契约的格式写**：core 不检查，但依赖格式的契约 helper 会命不中（如 api-llm 的模型引用）。照所用契约的约定写，第一方契约都是 `` `${lifecycle.id}/${sub}` ``。
+4. **动态 `services.get` 当依赖**：无激活闸、无关停边、关停期可能拿空。
+5. **期待内核按能力选服务**：把能力写进实例元数据，靠 `*-api` helper 过滤。
+6. **manifest 与 `definePlugin` 不一致**：两条独立链路都要写、要对齐。
+7. **缺 `name` / 非法 `instanceId`**：`definePlugin` 与 `register` 两层拒绝（非空字符串；`name` 不含 `:suffix` 与 `#`；`instanceId` 允许 `name:suffix`）。
 
 ---
 
