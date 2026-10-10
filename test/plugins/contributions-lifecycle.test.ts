@@ -47,7 +47,7 @@ describe('contributions 门面：交付随激活撤回', () => {
   it('登记与退订对称；全局键与局部 id 往返不失真（id 含空格等字符）', async () => {
     const root = createActivationFixture();
     root.caps.provide(contributions, new Registry());
-    const p = root.host.create(root.activation, 'p');
+    const p = root.host.create('p');
     const bound = root.host.bind(p, { contributions }).contributions;
     const off = bound.contribute('__t:lifecycle-point', { id: 'a b', label: 'x' });
     expect(bound.collect('__t:lifecycle-point').map(entry => [entry.key, entry.spec.id])).toEqual([['p/a b', 'a b']]);

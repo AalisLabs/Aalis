@@ -446,9 +446,4 @@ describe('保留的安全网：故障注入', () => {
     runtime.notify = notify;
     expect(at('error')).toEqual([`recompute(service:unregistered:${dep.name}) 报错: Error: 注入的通知故障`]);
   });
-
-  it('不传 logger 直接建根激活：给出明确报错', () => {
-    const { app } = world();
-    expect(() => activationHost(app).create(undefined, 'orphan')).toThrow('根激活需要 logger');
-  });
 });

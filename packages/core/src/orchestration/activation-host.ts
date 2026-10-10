@@ -15,7 +15,7 @@ export class ActivationHost {
 
   constructor(runtime: ServiceRuntime, logger: Logger) {
     this.runtime = runtime;
-    this.root = this.create(undefined, 'root', {}, logger);
+    this.root = this.#make('root', {}, logger);
     const providers = coreProviders(runtime, (identity, name) => {
       const activation = this.#owners.get(identity);
       if (!activation?.declared.has(name)) throw new Error(`内置服务 "${name}" 只能由在 uses 里声明了它的激活取用`);
@@ -27,14 +27,15 @@ export class ActivationHost {
     for (const [descriptor, provider] of providers.rest) root.provide(descriptor, provider, { exclusive: true });
   }
 
-  create(
-    parent: Activation | undefined,
-    id: string,
-    config: Record<string, unknown> = {},
-    logger = parent?.logger.child(id),
-  ): Activation {
-    if (parent?.resources.disposed) throw new Error(`激活 "${parent.id}" 已 dispose，无法创建子激活 "${id}"`);
-    if (!logger) throw new Error('根激活需要 logger');
+  /** 插件激活：一律挂在根激活名下 */
+  create(id: string, config: Record<string, unknown> = {}): Activation {
+    if (this.root.resources.disposed) throw new Error(`激活 "${this.root.id}" 已 dispose，无法创建子激活 "${id}"`);
+    const activation = this.#make(id, config, this.root.logger.child(id));
+    this.root.children.add(activation);
+    return activation;
+  }
+
+  #make(id: string, config: Record<string, unknown>, logger: Logger): Activation {
     const owner = Symbol(id);
     const runtime = this.runtime;
     const resources = new Resources(id, logger, {
@@ -43,7 +44,7 @@ export class ActivationHost {
       afterCleanup: () => {
         activation.dropOutbound();
         this.#owners.delete(owner);
-        parent?.children.delete(activation);
+        this.root.children.delete(activation);
       },
     });
     // 第一个切断项：原语按归属整体切断，不能逐条 await 时让一半监听仍然对外可用
@@ -54,7 +55,6 @@ export class ActivationHost {
     });
     const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners);
     this.#owners.set(owner, activation);
-    parent?.children.add(activation);
     return activation;
   }
 

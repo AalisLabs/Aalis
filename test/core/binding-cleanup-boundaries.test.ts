@@ -36,8 +36,8 @@ describe('binding cleanup boundaries', () => {
   it('a throwing cleanup then getter does not block other followers or retain the old dependency edge', async () => {
     const { host, activation } = createActivationFixture({ id: 'consumer' });
     const service = defineService<{ label: string }>('cleanup-result');
-    const first = host.create(host.root, 'first');
-    const second = host.create(host.root, 'second');
+    const first = host.create('first');
+    const second = host.create('second');
     host.bind(first, { provide }).provide(service, { label: 'A' });
     const { ref } = host.bind(activation, { ref: service });
     const active = new Set<string>();

@@ -26,8 +26,8 @@ describe('清理身份与逻辑身份分离', () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
-    const left = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
-    const right = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
+    const left = bindActivationFixture(root.host, root.host.create('dup'));
+    const right = bindActivationFixture(root.host, root.host.create('dup'));
     left.caps.provide(defineService('svc'), { who: 'L' });
     right.caps.provide(defineService('svc'), { who: 'R' });
     await left.activation.disposeAsync();
@@ -41,8 +41,8 @@ describe('清理身份与逻辑身份分离', () => {
     const root = bindActivationFixture(host, host.root);
     const registry = new HubRegistry();
     root.caps.provide(hub, registry);
-    const left = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
-    const right = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
+    const left = bindActivationFixture(root.host, root.host.create('dup'));
+    const right = bindActivationFixture(root.host, root.host.create('dup'));
     const leftHub = root.host.bind(left.activation, { hub }).hub;
     const rightHub = root.host.bind(right.activation, { hub }).hub;
     const seen: string[] = [];
@@ -70,12 +70,12 @@ describe('清理身份与逻辑身份分离', () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
-    const old = bindActivationFixture(root.host, root.host.create(root.activation, 'again'));
+    const old = bindActivationFixture(root.host, root.host.create('again'));
     old.caps.provide(defineService('svc'), { gen: 1 });
     // 关闭一律异步：撤注册段在 disposeAsync() 返回之后才跑，新激活赶在它之前登记
     const closing = old.activation.disposeAsync();
 
-    const fresh = bindActivationFixture(root.host, root.host.create(root.activation, 'again'));
+    const fresh = bindActivationFixture(root.host, root.host.create('again'));
     fresh.caps.provide(defineService('svc'), { gen: 2 });
 
     await closing;
@@ -89,7 +89,7 @@ describe('清理身份与逻辑身份分离', () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
-    const p = bindActivationFixture(root.host, root.host.create(root.activation, 'prov'));
+    const p = bindActivationFixture(root.host, root.host.create('prov'));
     p.caps.provide(defineService('llm'), { m: 'a' } as never, { entryId: 'prov/a' });
     p.caps.provide(defineService('llm'), { m: 'b' } as never, { entryId: 'prov/b' });
     expect(root.caps.services.all('llm')).toHaveLength(2);
@@ -107,8 +107,8 @@ describe('监听登记按次计身份：同一函数对象不因共享而互相�
     function shared() {
       calls.push('hit');
     }
-    const left = bindActivationFixture(root.host, root.host.create(root.activation, 'l'));
-    const right = bindActivationFixture(root.host, root.host.create(root.activation, 'r'));
+    const left = bindActivationFixture(root.host, root.host.create('l'));
+    const right = bindActivationFixture(root.host, root.host.create('r'));
     const offLeft = left.caps.events.on('plugin:loaded', shared);
     left.caps.events.on('plugin:loaded', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
     right.caps.events.on('plugin:loaded', shared);

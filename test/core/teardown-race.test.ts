@@ -20,7 +20,7 @@ describe('Activation 并发拆卸', () => {
   it('并发 disposeAsync：后来者 join 在飞拆卸，返回时清理已真正完成', async () => {
     const app = createInspectableApp({ name: 'T', logLevel: 'error' });
     const log: string[] = [];
-    const child = activationHost(app).create(rootActivation(app), 'slow-child');
+    const child = activationHost(app).create('slow-child');
     child.resources.onDispose(async () => {
       log.push('flush-start');
       await sleep(40);
@@ -36,11 +36,11 @@ describe('Activation 并发拆卸', () => {
     await app.stop();
   });
 
-  it('父级联撞上半拆的子 ctx：父的 disposeAsync 等到子清理落地', async () => {
+  it('根激活级联撞上半拆的插件激活：根的 disposeAsync 等到它清理落地', async () => {
     const app = createInspectableApp({ name: 'T', logLevel: 'error' });
     const log: string[] = [];
-    const parent = activationHost(app).create(rootActivation(app), 'parent');
-    const child = activationHost(app).create(parent, 'parent/child');
+    const parent = rootActivation(app);
+    const child = activationHost(app).create('child');
     child.resources.onDispose(async () => {
       await sleep(40);
       log.push('child-flushed');
@@ -48,15 +48,15 @@ describe('Activation 并发拆卸', () => {
 
     void child.disposeAsync(); // 子先自行拆卸
     await sleep(5);
-    await parent.disposeAsync(); // 父级联撞上半拆的子
-    expect(log, '父返回时子的异步清理必须已完成').toEqual(['child-flushed']);
+    await parent.disposeAsync(); // 根级联撞上半拆的插件激活
+    expect(log, '根返回时插件激活的异步清理必须已完成').toEqual(['child-flushed']);
     await app.stop();
   });
 
   it('join 在飞拆卸时受本次调用者的 timeoutMs 约束（在飞方用更松的上限也不拖垮停机）', async () => {
     // disposeTimeoutMs 配短：末尾 app.stop 同样要等这个永不 resolve 的清理项
     const app = createInspectableApp({ name: 'T', logLevel: 'error', disposeTimeoutMs: 100 });
-    const child = activationHost(app).create(rootActivation(app), 'never-settles');
+    const child = activationHost(app).create('never-settles');
     child.resources.onDispose(() => new Promise<void>(() => {})); // 永不 resolve
 
     void child.disposeAsync(); // 先以「不设限」启动在飞拆卸
@@ -72,7 +72,7 @@ describe('Activation 并发拆卸', () => {
   it('拆卸完成后再次 disposeAsync 立即返回（幂等，不重跑清理）', async () => {
     const app = createInspectableApp({ name: 'T', logLevel: 'error' });
     let runs = 0;
-    const child = activationHost(app).create(rootActivation(app), 'idempotent');
+    const child = activationHost(app).create('idempotent');
     child.resources.onDispose(async () => {
       runs++;
       await sleep(10);

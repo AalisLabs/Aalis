@@ -14,7 +14,7 @@ import {
   provide,
 } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 段 A 对抗审计（39 个代理，探针在 Aalis-local-only/…/audit-a-*）确认的契约违例，逐条转成回归测试。
@@ -200,7 +200,7 @@ describe('关停编排', () => {
 describe('等待业务交出来的 Promise', () => {
   it('收尾段里才登记的 onDrain：同样被等到', async () => {
     const w = world();
-    const activation = activationHost(w.app).create(rootActivation(w.app), 'p');
+    const activation = activationHost(w.app).create('p');
     let finished = false;
     activation.resources.onDrain(() => {
       activation.resources.onDrain(async () => {
@@ -214,7 +214,7 @@ describe('等待业务交出来的 Promise', () => {
 
   it('在飞清理永不落定：超时点名一次、随即出账，后续各段不再重复计时', async () => {
     const w = world();
-    const activation = activationHost(w.app).create(rootActivation(w.app), 'p');
+    const activation = activationHost(w.app).create('p');
     const port = activationHost(w.app).bind(activation, {
       port: defineService<unknown, BindingPort<unknown>>('zz-aa-stuck', port => port),
     }).port;

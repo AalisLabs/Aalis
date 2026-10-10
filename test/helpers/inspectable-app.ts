@@ -8,10 +8,10 @@ const hosts = new WeakMap<App, ActivationHost>();
 /** 白盒测试观察真实 App 的装配器；生产 App 无测试读口，也不另造一套激活树。 */
 export function createInspectableApp(options: AppOptions): App {
   let host: ActivationHost | undefined;
-  const create = ActivationHost.prototype.create;
-  const spy = vi.spyOn(ActivationHost.prototype, 'create').mockImplementation(function (this: ActivationHost, ...args) {
+  const bind = ActivationHost.prototype.bind;
+  const spy = vi.spyOn(ActivationHost.prototype, 'bind').mockImplementation(function (this: ActivationHost, ...args) {
     host ??= this;
-    return create.apply(this, args);
+    return bind.apply(this, args);
   });
   try {
     // App 构造为同步调用；捕获与恢复之间没有 await，不跨测试持有 spy。

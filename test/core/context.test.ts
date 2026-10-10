@@ -151,7 +151,7 @@ describe('Activation ownership / dispose', () => {
   it('fork 共享服务容器但拥有独立 disposables', async () => {
     const ctx = makeFixture();
     ctx.caps.provide(defineService('__shared'), { v: 1 });
-    const child = bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'child'));
+    const child = bindActivationFixture(ctx.host, ctx.host.create('child'));
     expect(child.caps.services.get('__shared')).toEqual({ v: 1 });
     await child.activation.disposeAsync();
     // fork 后 dispose 不会清父级服务
@@ -309,7 +309,7 @@ describe('ServiceRef.follow 多 provider（#8.3）', () => {
     const cleaned: string[] = [];
 
     ctx.caps.provide(defineService('__llm'), { id: 'default' }, { priority: 50 });
-    const child = bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'plugin-alt'));
+    const child = bindActivationFixture(ctx.host, ctx.host.create('plugin-alt'));
     child.caps.provide(defineService('__llm'), { id: 'alt' }, { priority: 0 });
 
     ctx.host.bind(ctx.activation, { ref: defineService<{ id: string }>('__llm') }).ref.follow(svc => {
@@ -431,14 +431,14 @@ describe('Activation.disposeAsync 不变量', () => {
     root.caps.events.on('service:unregistered', name => {
       seen.push(name);
     });
-    const childA = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
+    const childA = bindActivationFixture(root.host, root.host.create('plugin-a'));
     const off = childA.caps.provide(defineService('__t:svc'), { v: 1 });
     off();
     off();
     await new Promise(r => setTimeout(r, 0));
     expect(seen).toEqual(['__t:svc']);
 
-    const child = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-b'));
+    const child = bindActivationFixture(root.host, root.host.create('plugin-b'));
     const offB = child.caps.provide(defineService('__t:svc2'), { v: 2 });
     await child.activation.disposeAsync(); // 原语切断的 unregisterByOwner 已摘掉条目并广播过一次
     offB();
@@ -449,7 +449,7 @@ describe('Activation.disposeAsync 不变量', () => {
   it('异步 flush 窗口内：服务已不可取、账本登记已不可见（注销先于清理链）', async () => {
     const root = makeFixture();
     root.caps.provide(hub, new HubRegistry());
-    const ctx = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
+    const ctx = bindActivationFixture(root.host, root.host.create('plugin-a'));
     let release!: () => void;
     const gate = new Promise<void>(r => {
       release = r;

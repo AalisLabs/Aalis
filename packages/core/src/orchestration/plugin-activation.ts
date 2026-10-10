@@ -62,7 +62,7 @@ export interface ActivationDeps {
  *   重激活闸永挂、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
  *
- * 「拆激活」对整批统一编排：消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序
+ * 「拆激活」对整批统一编排：消费者先于它依赖的提供者关闭，归属与服务依赖一起决定顺序
  * （见 close-plan.ts）。同一轮里要停的插件必须一起传入，否则它们之间的关闭次序只剩注册序。
  * entries 的给定次序是无依赖关系时的关闭次序。
  *
@@ -124,7 +124,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   // 先标记为 activating，防止 service:registered 事件导致重入
   entry.state = 'activating';
 
-  const activation = host.create(host.root, entry.instanceId, entry.config);
+  const activation = host.create(entry.instanceId, entry.config);
   entry.activation = activation;
 
   try {

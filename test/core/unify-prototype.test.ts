@@ -15,7 +15,7 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 统一服务架构纵向原型：插件不接收 Context，声明描述符、拿按激活绑定的接口。
@@ -197,8 +197,8 @@ describe('资源身份：同名不同激活互不清扫', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const left = activationHost(app).create(rootActivation(app), 'dup');
-    const right = activationHost(app).create(rootActivation(app), 'dup');
+    const left = activationHost(app).create('dup');
+    const right = activationHost(app).create('dup');
     activationHost(app).bind(left, { hub }).hub.register({ name: 'from-left' });
     activationHost(app).bind(right, { hub }).hub.register({ name: 'from-right' });
     expect(instance.list()).toEqual(['from-left', 'from-right']);
@@ -425,7 +425,7 @@ describe('失败回滚', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const activation = activationHost(app).create('p');
     const bound = activationHost(app).bind(activation, { hub }).hub;
     expect(() => bound.register({ name: 'bad', failOnRegister: true })).toThrow('拒绝登记');
     const second = makeHub('second');
@@ -473,7 +473,7 @@ describe('关闭契约', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const activation = activationHost(app).create('p');
     const bound = activationHost(app).bind(activation, { hub }).hub;
     const off = bound.register({ name: 'manual', off: 'slow' });
     bound.register({ name: 'replaced', off: 'slow' });
@@ -524,7 +524,7 @@ describe('关闭契约', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const activation = activationHost(app).create('p');
     const bound = activationHost(app).bind(activation, { hub }).hub;
     const oldOff = bound.register({ name: 'x' });
     bound.register({ name: 'x' });

@@ -24,7 +24,7 @@ function world() {
     registry,
     caps: root.host.bind(activation, { contributions }),
   });
-  return { ...bind(root.activation), at: (id: string) => bind(root.host.create(root.activation, id)) };
+  return { ...bind(root.activation), at: (id: string) => bind(root.host.create(id)) };
 }
 
 /** 单个子激活 id 的夹具（'root' 即根自身） */

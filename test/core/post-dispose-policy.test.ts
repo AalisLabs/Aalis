@@ -30,7 +30,7 @@ function makeWorld() {
   const registry = new HubRegistry();
   world.caps.provide(hub, registry);
   const make = (id: string) => {
-    const activation = world.host.create(world.activation, id);
+    const activation = world.host.create(id);
     return { ...bindActivationFixture(world.host, activation), hub: world.host.bind(activation, { hub }).hub };
   };
   return { make, lines, events: world.events, services: world.services, registry };
@@ -142,9 +142,7 @@ describe('构造类 post-dispose：抛错', () => {
   it('create：抛错且不残留孤儿子激活（此前会塞进 _children 永不排空）', async () => {
     const ctx = createActivationFixture();
     await ctx.activation.disposeAsync();
-    expect(() => bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'orphan'))).toThrowError(
-      /无法创建子激活 "orphan"/,
-    );
+    expect(() => bindActivationFixture(ctx.host, ctx.host.create('orphan'))).toThrowError(/无法创建子激活 "orphan"/);
     expect(ctx.activation.children.size).toBe(0);
   });
 });
@@ -197,7 +195,7 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
 
   it('create 在活激活上照常可用', async () => {
     const ctx = createActivationFixture();
-    const child = bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'kid'));
+    const child = bindActivationFixture(ctx.host, ctx.host.create('kid'));
     expect(child.activation.id).toBe('kid');
     await ctx.activation.disposeAsync();
   });
