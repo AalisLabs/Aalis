@@ -51,6 +51,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
       'id',
       'identity',
       'logger',
+      'present',
       'provider',
       'registrar',
       'track',

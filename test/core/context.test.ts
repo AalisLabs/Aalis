@@ -56,7 +56,7 @@ describe('provide / services.get', () => {
   });
 });
 
-describe('follow：attach 收到选中那一家的 of(id) 句柄', () => {
+describe('follow：attach 收到钉在那一家的句柄', () => {
   it('服务未就绪时延迟订阅，注册后立即触发回调', async () => {
     const ctx = makeFixture();
     let received: unknown = null;
@@ -88,9 +88,7 @@ describe('follow：attach 收到选中那一家的 of(id) 句柄', () => {
     const cleaned: string[] = [];
     const disposeSvc = ctx.caps.provide.use(defineService('__hub'), { mark: 'a' });
     ctx.host.bind(ctx.activation, { ref: defineService<{ mark: string }>('__hub') }).ref.follow(svc => {
-      // 那一家撤回之后句柄就打不到它了：清理要用的东西在 attach 里取好
-      const { mark } = svc;
-      return () => cleaned.push(`cleanup-${mark}`);
+      return () => cleaned.push(`cleanup-${svc.mark}`);
     });
     await Promise.resolve();
     expect(cleaned).toEqual([]);
@@ -104,9 +102,8 @@ describe('follow：attach 收到选中那一家的 of(id) 句柄', () => {
     const attached: string[] = [];
     const cleaned: string[] = [];
     ctx.host.bind(ctx.activation, { ref: defineService<{ id: string }>('__hub') }).ref.follow(svc => {
-      const { id } = svc;
-      attached.push(id);
-      return () => cleaned.push(id);
+      attached.push(svc.id);
+      return () => cleaned.push(svc.id);
     });
 
     const dispose1 = ctx.caps.provide.use(defineService('__hub'), { id: 'v1' });
@@ -282,9 +279,8 @@ describe('follow 多 provider（#8.3）', () => {
     const disposeLoser = ctx.caps.provide.use(defineService('__hub'), loser, { priority: 0, entryId: 'root/loser' });
 
     ctx.host.bind(ctx.activation, { ref: defineService<{ id: string }>('__hub') }).ref.follow(svc => {
-      const { id } = svc;
-      attached.push(id);
-      return () => cleaned.push(id);
+      attached.push(svc.id);
+      return () => cleaned.push(svc.id);
     });
     await Promise.resolve();
     expect(attached).toEqual(['winner']);

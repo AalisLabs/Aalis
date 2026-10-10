@@ -86,6 +86,32 @@ export function createSelection<P, B>(
     return targets.get(id)!;
   };
   const selected = target();
+  // follow 交给 attach 的句柄钉在挂上的这一条登记：同 id 换了新实例也打不到新的；这次挂载的清理落定之前一直可用
+  const pin = (entry: ServiceEntry, attach: (handle: B) => FollowCleanup): FollowCleanup => {
+    const pinned = createTarget(scope, descriptor, false, entry);
+    let ret: FollowCleanup;
+    try {
+      ret = attach(pinned.business);
+    } catch (err) {
+      pinned.retire();
+      throw err;
+    }
+    // 违约的异步 attach 没有清理可等：句柄当场失效，Promise 原样交回由跟随者告警
+    if (isThenable(ret)) {
+      pinned.retire();
+      return ret;
+    }
+    return () => {
+      let pending = false;
+      try {
+        const result = typeof ret === 'function' ? ret() : undefined;
+        pending = isThenable(result);
+        return pending ? Promise.resolve(result).finally(pinned.retire) : result;
+      } finally {
+        if (!pending) pinned.retire();
+      }
+    };
+  };
   return {
     list: () => {
       const { entries, basis } = scope.services.ranked(descriptor.name, scope.id);
@@ -105,21 +131,30 @@ export function createSelection<P, B>(
     get present() {
       return selected.current() !== undefined;
     },
-    follow: attach => selected.follow(entry => attach(target(entry.contextId).business), false),
+    follow: attach => selected.follow(entry => pin(entry, attach), false),
   };
 }
 
 /**
- * 一个目标：`use` 的是本插件选中的那一家（id 为 undefined），`of(id)` 的固定那一家。交出此刻对应的那一条（current）、
- * 跟随它的入口（follow，overlap 见 Follower）与 bind 给它的业务句柄（business）
+ * 一个目标：`use` 的是本插件选中的那一家（at 为 undefined），`of(id)` 的固定 id 那一家，follow 的钉在那一条登记上（at 为
+ * 登记本身，retire 之前一直是它）。交出此刻对应的那一条（current）、跟随它的入口（follow，overlap 见 Follower）、bind 给它
+ * 的业务句柄（business），以及退役（retire：钉住的目标失效，名下的跟随者收尾并退订）
  */
-function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P, B>, required: boolean, id?: string) {
+function createTarget<P, B>(
+  scope: BindingScope,
+  descriptor: ServiceDescriptor<P, B>,
+  required: boolean,
+  at?: string | ServiceEntry,
+) {
   const { name } = descriptor;
+  const id = typeof at === 'object' ? at.contextId : at;
   const withdraw = (off: () => unknown, what: string) => scope.resources.withdraw(off, what);
 
   // 解析结果按容器版本缓存：登记、撤回、暂扣、偏好任何一项变了就作废，与 service:changed 同一批触发点
   let cache: { version: number; entry: ServiceEntry | undefined } | undefined;
+  let retired = false;
   const current = (): ServiceEntry | undefined => {
+    if (typeof at === 'object') return retired ? undefined : at;
     const { version } = scope.services;
     if (cache?.version !== version) {
       const ranked = scope.services.ranked(name, scope.id).entries;
@@ -149,7 +184,7 @@ function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P
     cancelled: boolean;
   }
   const followers = new Set<Follower>();
-  let subscribed = false;
+  let unwatch: (() => unknown) | undefined;
 
   const desired = (follower: Follower): ServiceEntry | undefined =>
     follower.cancelled || scope.resources.disposed ? undefined : current();
@@ -219,11 +254,10 @@ function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P
 
   // 选择可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
   const subscribe = (): void => {
-    subscribed = true;
     const off = scope.events.on('service:changed', service => {
       if (service === name && !scope.resources.disposed) pumpAll();
     });
-    scope.resources.trackWithdrawal(() => {
+    unwatch = scope.resources.trackWithdrawal(() => {
       off();
       pumpAll();
     }, `watch:${name}`);
@@ -238,7 +272,7 @@ function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P
     followers.add(follower);
     // 登记账本的条目是本激活对外可见的能力，关闭时与原语同一拍撤掉，不等下游交接
     if (overlap) scope.resources.onCut(() => pump(follower));
-    if (!subscribed) subscribe();
+    if (!unwatch) subscribe();
     pump(follower);
     return () => {
       if (follower.cancelled) return;
@@ -252,6 +286,9 @@ function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P
     id: scope.id,
     identity: scope.owner,
     logger: scope.logger,
+    get present() {
+      return current() !== undefined;
+    },
     provider: forward(instance),
     follow: attach => follow(entry => attach(entry.instance as P), false),
     track: (off, label) => scope.resources.track(off, label ?? name),
@@ -347,5 +384,9 @@ function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P
       };
     },
   };
-  return { current, follow, business: descriptor.bind(port) };
+  const retire = (): void => {
+    retired = true;
+    unwatch?.();
+  };
+  return { current, follow, business: descriptor.bind(port), retire };
 }
