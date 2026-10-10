@@ -45,6 +45,21 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     );
   });
 
+  it('资源口成员定格：不带服务名，binder 写在 defineService(name, …) 的闭包里', () => {
+    const shape = defineService<unknown, string[]>('__t:unified-port', port => Object.keys(port).sort());
+    expect(makeApp().bind({ shape }).shape).toEqual([
+      'all',
+      'current',
+      'follow',
+      'id',
+      'identity',
+      'logger',
+      'registrar',
+      'require',
+      'track',
+    ]);
+  });
+
   it('动态查询 config 和 lifecycle 得到提供者，凭调用者自身身份解析出与显式声明一致的视图', async () => {
     const app = makeApp();
     const seen = new Map<
