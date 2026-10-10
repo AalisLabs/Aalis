@@ -72,21 +72,12 @@ describe('清理身份与逻辑身份分离', () => {
     const root = bindActivationFixture(host, host.root);
     const old = bindActivationFixture(root.host, root.host.create(root.activation, 'again'));
     old.caps.provide(defineService('svc'), { gen: 1 });
-    // 用子 ctx 的慢清理把旧 ctx 的撤注册段推到 await 之后——否则 beforeCleanup 在
-    // disposeAsync() 返回前就同步跑完，新旧实现都绿，用例没有鉴别力。
-    let release!: () => void;
-    bindActivationFixture(old.host, old.host.create(old.activation, 'again-kid')).caps.lifecycle.onDispose(
-      () =>
-        new Promise<void>(r => {
-          release = r;
-        }),
-    );
+    // 关闭一律异步：撤注册段在 disposeAsync() 返回之后才跑，新激活赶在它之前登记
     const closing = old.activation.disposeAsync();
 
     const fresh = bindActivationFixture(root.host, root.host.create(root.activation, 'again'));
     fresh.caps.provide(defineService('svc'), { gen: 2 });
 
-    release();
     await closing;
     expect(
       root.caps.services.get(defineService<{ gen: number }>('svc'))?.gen,

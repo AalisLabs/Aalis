@@ -65,7 +65,7 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
 
 /**
  * 关闭一组激活（连同它们的子树）。roots 的给定次序就是无依赖关系时的关闭次序。
- * 逐阶段串行等待；没有待等的阶段不让出——单个叶子激活的撤回与调用同栈发起，没有待等的下游交接时首个清理回调也同栈。
+ * 逐阶段串行等待；关闭位与取消信号同步设置，收尾、撤回与清理回调都不在调用方的栈上执行（见 Resources.drain）。
  *
  * `settle` 传入时复用已冻的计划（停机：先冻再发 `app:stopping`，监听器里的 dispose 汇入同一张图）。
  */
@@ -81,9 +81,9 @@ export async function closeActivations(
     for (const stage of planClose(mine, logger)) {
       // 单阶段失败不拖垮同批：与清理链「单项失败继续后续」同一政策
       try {
-        const pending =
-          stage.kind === 'drain' ? stage.ctx.resources.drain(timeoutMs) : stage.ctx.resources.disposeAsync(timeoutMs);
-        if (pending) await pending;
+        await (stage.kind === 'drain'
+          ? stage.ctx.resources.drain(timeoutMs)
+          : stage.ctx.resources.disposeAsync(timeoutMs));
       } catch (err) {
         logger.error(`关停 "${stage.ctx.id}" 的${stage.kind === 'drain' ? '收尾' : '关闭'}阶段抛错:`, err);
       }

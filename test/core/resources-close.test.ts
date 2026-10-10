@@ -74,20 +74,21 @@ describe('Resources 的关闭过程', () => {
     ]);
   });
 
-  it('异步关闭与调用同栈发起首个清理回调，收尾等异步清理落定', async () => {
+  it('关闭一律异步：清理回调不在调用方的栈上执行（abort 监听除外），收尾等异步清理落定', async () => {
     const released = gate();
     const trace: string[] = [];
     const life = new Resources('t', stubLogger(), { afterCleanup: () => void trace.push('finished') });
+    life.signal.addEventListener('abort', () => void trace.push('abort'));
     life.disposables.push(async () => {
       trace.push('start');
       await released.promise;
       trace.push('end');
     });
     const closing = life.disposeAsync();
-    expect(trace).toEqual(['start']);
+    expect(trace).toEqual(['abort']);
     released.open();
     await closing;
-    expect(trace).toEqual(['start', 'end', 'finished']);
+    expect(trace).toEqual(['abort', 'start', 'end', 'finished']);
   });
 
   it('一个等待者超时不结束原关闭，也不放行其他等待者', async () => {

@@ -24,7 +24,7 @@ describe('DisposableChain 异步拒绝兜底（内核自足）', () => {
   it('post-dispose 追加：就地执行的异步拒绝被接住并按 label 点名', async () => {
     const r = reporter();
     const chain = new DisposableChain(r);
-    chain.seal();
+    await chain.disposeAsync();
     const late = new Error('late');
     chain.push(async () => {
       throw late;
