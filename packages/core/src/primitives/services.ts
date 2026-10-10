@@ -144,39 +144,22 @@ export class ServiceContainer {
     return this.#held.size === 0 ? list : list.filter(entry => !this.#held.has(entry.owner));
   }
 
-  /**
-   * 按解析顺序返回某服务的所有 entry：
-   *
-   *   1. 用户偏好的 entry（如有，且仍存在）
-   *   2. 其余 entry，按 priority 降序 + 注册顺序
-   *
-   * 这是 get/getAll 的共同基础——保证「偏好 > 优先级 > 注册顺序」语义在所有读路径一致。
-   */
-  #resolveEntries(name: string): readonly ServiceEntry[] {
-    const list = this.#visible(name);
-    const preferredCtxId = this.#preferences.get(name);
-    if (!preferredCtxId) return list;
-    const preferred = list.find(e => e.contextId === preferredCtxId);
-    if (!preferred) return list;
-    return [preferred, ...list.filter(e => e !== preferred)];
+  /** 胜者：偏好的条目（仍在场时），否则 list[0]——register 已按 priority 稳定降序排好。各读路径的胜者都出自这里 */
+  #winner(list: readonly ServiceEntry[], name: string): ServiceEntry | undefined {
+    const preferred = this.#preferences.get(name);
+    return (preferred ? list.find(entry => entry.contextId === preferred) : undefined) ?? list[0];
   }
 
-  /**
-   * 获取当前胜者实例（偏好 > 优先级 > 注册顺序）。
-   *
-   * 不走 `#resolveEntries`：那里在设了偏好时要 `find` + `filter` + spread 出一条全新的重排
-   * 数组，而这里只取首个、其余全丢。每次 `current` / `require()` 都走到这里，是最频繁的读，
-   * 且「锁定默认 LLM」这类偏好在真实部署里是常态，那条被算出来又被丢掉的尾巴不划算。
-   *
-   * 语义与 `#resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
-   * `list` 在 `register` 里就按 priority 降序排好（稳定排序，同优先级保持注册顺序）。
-   * 没有暂不对外的归属时 `#visible` 原样交回登记数组，这条路径不分配。
-   */
-  get<T = unknown>(name: string): T | undefined {
+  /** 按解析顺序（偏好 > 优先级 > 注册顺序）的全部条目：胜者在前，其余保持原序；胜者已在首位时原样返回 */
+  #resolveEntries(name: string): readonly ServiceEntry[] {
     const list = this.#visible(name);
-    const preferredCtxId = this.#preferences.get(name);
-    const preferred = preferredCtxId ? list.find(e => e.contextId === preferredCtxId) : undefined;
-    return (preferred ?? list[0])?.instance as T | undefined;
+    const winner = this.#winner(list, name);
+    return winner === list[0] ? list : [winner!, ...list.filter(entry => entry !== winner)];
+  }
+
+  /** 获取当前胜者实例（偏好 > 优先级 > 注册顺序） */
+  get<T = unknown>(name: string): T | undefined {
+    return this.#winner(this.#visible(name), name)?.instance as T | undefined;
   }
 
   /**
@@ -225,7 +208,7 @@ export class ServiceContainer {
    * @internal
    */
   ownerOf(name: string): symbol | undefined {
-    return this.#resolveEntries(name)[0]?.owner;
+    return this.#winner(this.#visible(name), name)?.owner;
   }
 
   /** 只读登记元数据（不含实例）：展示与诊断用 */

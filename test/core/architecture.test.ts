@@ -658,7 +658,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // （quietLogger），core 与插件的 logger 都由它派生，删去各处只为保护日志调用的 reportQuietly。
 // 2642 → 2635：同批 P0-9，去掉多余的诊断——拆卸进行中登记 onDispose 的 debug 删去、只留关闭后就地执行的 warn；
 // trackInitialization 只承诺「至多一次」，删去覆盖前一次的身份核对。
-const CORE_CODE_LINE_CEILING = 2635;
+// 2635 → 2633：同批 P0-6，服务容器的胜者只在 #winner 写一次，get / ownerOf / 全表解析共用。
+const CORE_CODE_LINE_CEILING = 2633;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
