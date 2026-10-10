@@ -116,7 +116,7 @@ interface Services {
   names(): string[];
   preferred(key: ServiceDescriptor | string, scope?: { for?: string }): string | undefined;
   prefer(key: ServiceDescriptor | string, contextId: string, scope?: { for?: string }): void;
-  unprefer(key: ServiceDescriptor | string, scope?: { for?: string }): boolean;
+  unprefer(key: ServiceDescriptor | string, scope?: { for?: string }): void;
 }
 ```
 
