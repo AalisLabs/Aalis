@@ -60,7 +60,7 @@ export interface ActivationDeps {
  *   同一 id 等它落定才起新实例（含卸载后同 id 重新登记）。
  * - 拆激活统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
  *   重激活闸永挂、插件静默不可激活）。
- * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
+ * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空；join 超过宽限、那边还没关完的，留给那边清。
  *
  * 「拆激活」对整批统一编排：消费者先于它依赖的提供者关闭，归属与服务依赖一起决定顺序
  * （见 close-plan.ts）。同一轮里要停的插件必须一起传入，否则它们之间的关闭次序只剩注册序。
@@ -91,6 +91,8 @@ export async function retireBatch(
     deps.logger.error('拆卸抛错:', err);
   }
   for (const { entry, activation, loaded } of closing) {
+    // 别的计划还在关它（这边等过了宽限）：清引用与记账归那份计划，引用还在，同 id 就不会先起新实例
+    if (deps.host.root.children.has(activation)) continue;
     const rest = activation.resources.lingering();
     if (rest) deps.linger(entry.instanceId, rest);
     if (entry.activation === activation) entry.activation = undefined;
