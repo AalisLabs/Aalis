@@ -671,7 +671,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2547 → 2550：同批 P1-3 与 S2（用户 10-02 选定 S2 方案丁，按 id 记账）——清理链去掉分段与链内迟到账，两本在飞账合成一本
 // （约 -20）；关完仍有工作没落定的旧实例按 id 记着、落定前不起同 id 新实例、状态给 lingering（约 +23）；删去被它取代的
 // 「未在宽限内停止」转 error 与激活身份复查。抬高 3 行对应 S2 方案丁。
-const CORE_CODE_LINE_CEILING = 2550;
+// 2550 → 2543：同批 P1-5（用户选方案丁）——关停依赖环保留 required / optional 区分，纯 required 环放行环内全部收尾并告警，
+// 删去强行放行一个阶段的分支与「激活树只有两层」的前提。
+const CORE_CODE_LINE_CEILING = 2543;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

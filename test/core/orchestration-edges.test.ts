@@ -5,6 +5,7 @@ import {
   defineService,
   type Logger,
   lifecycle,
+  optional,
   type PluginDefinition,
   provide,
 } from '../../packages/core/src/index.js';
@@ -176,7 +177,7 @@ describe('插件拓扑：同一提供者的多项服务', () => {
 });
 
 describe('关停编排：缠绕的 required 环', () => {
-  it('两个 required 环共用一个插件：每次只放开环内一个阶段，残环再点名一次，停机不悬挂', async () => {
+  it('两个 required 环共用一个插件：放开整个源分量的收尾，点名一次，停机不悬挂', async () => {
     const w = world();
     const a = defineService<object>('zz-oe-fig-a');
     const b = defineService<object>('zz-oe-fig-b');
@@ -233,10 +234,34 @@ describe('关停编排：缠绕的 required 环', () => {
     await w.app.stop();
     const cycles = w.at('warn').filter(x => x.includes('required 依赖成环'));
     expect(cycles).toEqual([
-      '关停顺序：required 依赖成环 [right, left, hub]，环内无法保证都先于各自的提供者，其余顺序不受影响',
-      '关停顺序：required 依赖成环 [left, hub]，环内无法保证都先于各自的提供者，其余顺序不受影响',
+      '关停顺序：required 依赖成环 [right, left, hub]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾',
     ]);
     expect(closed).toEqual(['right', 'left', 'hub']);
+  });
+
+  it('混合环先放行只被 optional 边挡着的收尾，剩下的纯 required 环再放行全部收尾并告警', async () => {
+    const w = world();
+    const s = defineService<object>('zz-oe-mix-s');
+    const t = defineService<object>('zz-oe-mix-t');
+    const x = defineService<object>('zz-oe-mix-x');
+    await w.app.plugin(definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide(s, {}) }));
+    // y required s、optional 用 x 的服务；x required y 的 t：x ⇄ y 是混合环
+    await w.app.plugin(
+      definePlugin({ name: 'y', uses: { s, xs: optional(x), provide }, apply: ({ provide }) => void provide(t, {}) }),
+    );
+    await w.app.plugin(definePlugin({ name: 'x', uses: { t, provide }, apply: ({ provide }) => void provide(x, {}) }));
+    // w required t，又以更高优先级顶替 s：y ⇄ w 是纯 required 环
+    await w.app.plugin(
+      definePlugin({ name: 'w', uses: { t, provide }, apply: ({ provide }) => void provide(s, {}, { priority: 10 }) }),
+    );
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getStatus().every(p => p.state === 'active')).toBe(true);
+
+    await w.app.stop();
+    expect(w.at('debug').filter(line => line.includes('optional 依赖成环'))).toHaveLength(1);
+    expect(w.at('warn').filter(line => line.includes('required 依赖成环'))).toEqual([
+      '关停顺序：required 依赖成环 [w, y]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾',
+    ]);
   });
 });
 
