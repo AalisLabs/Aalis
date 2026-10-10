@@ -66,12 +66,7 @@ export class EventBus {
   }
 
   /**
-   * 监听事件，返回 dispose 函数
-   *
-   * 若该事件已被标记为 sticky 且历史上 emit 过，则在下一个微任务里
-   * 立即用缓存的参数调用 handler 一次（保证语义同步：调用方注册完返回后
-   * 再触发，避免 handler 内部的 await 影响调用方流程）。该事件正在派发、
-   * 登记落进正被遍历的表时不补发：本轮遍历会在末尾访问到它，要等前面的监听器返回或超时。
+   * 监听事件，返回 dispose 函数；sticky 事件的补发见 {@link EventBusOptions.sticky}。
    * @param owner 清理归属（events 能力传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   on<E extends string & keyof AalisEvents>(
@@ -87,7 +82,7 @@ export class EventBus {
     const entry: EventEntry = { handler, owner };
     set.add(entry);
 
-    if (this.#sticky.has(event) && this.#stickyArgs.has(event) && !this.#dispatching.has(set)) {
+    if (this.#stickyArgs.has(event) && !this.#dispatching.has(set)) {
       const args = this.#stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发

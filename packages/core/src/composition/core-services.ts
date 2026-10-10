@@ -133,10 +133,7 @@ export interface Services {
   inspect(key: ServiceKey, scope?: PreferenceScope): ServiceInfo[];
   /** 偏好的提供者（contextId）；无偏好为 undefined */
   preferred(key: ServiceKey, scope?: PreferenceScope): string | undefined;
-  /**
-   * 设偏好，一律记下：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。独占服务同样记下，独占条目存续期间
-   * 没有别家可选，指向别家的偏好在那期间不生效（展示时看 inspect 条目的 exclusive）
-   */
+  /** 设偏好，一律记下：指向的那家不在场（含独占条目存续期间）就按下一级挑，在场后生效 */
   prefer(key: ServiceKey, contextId: string, scope?: PreferenceScope): void;
   unprefer(key: ServiceKey, scope?: PreferenceScope): void;
 }
