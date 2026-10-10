@@ -85,8 +85,7 @@ describe('Resources 段收口等在飞撤回', () => {
 
 describe('EventBus sticky 补发', () => {
   it('补发微任务执行前已退订的监听不再收到补发，仍在的监听照常收到', async () => {
-    const bus = new EventBus();
-    bus.markSticky('app:ready');
+    const bus = new EventBus({ sticky: ['app:ready'] });
     await bus.emit('app:ready');
 
     const fired: string[] = [];

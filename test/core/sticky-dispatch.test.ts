@@ -151,3 +151,29 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
     expect(calls).toBe(0);
   });
 });
+
+describe('sticky 补发在 App 存续期间一直有效', () => {
+  it('重启已受理、策略还没停机：此时 bounce 出来的新实例照样收到 app:ready', async () => {
+    const app = new App({ name: 'S1', logger: quiet, restartStrategy: { restart() {} } });
+    apps.push(app);
+    let generation = 0;
+    let readyCalls = 0;
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { events },
+        apply({ events }) {
+          const gen = ++generation;
+          events.use.on('app:ready', () => {
+            if (gen === 2) readyCalls++;
+          });
+        },
+      }),
+    );
+    await app.start();
+    app.restart();
+    await app.plugins.bounce('p');
+    await sleep(5);
+    expect(readyCalls).toBe(1);
+  });
+});

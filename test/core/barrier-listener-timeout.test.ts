@@ -120,10 +120,11 @@ describe('屏障监听器超时', () => {
 
 describe('EventBus 的等待上限', () => {
   it('上限按事件给出：没给上限的事件照旧等到底；给了上限的超时后上报并继续', async () => {
-    const bus = new EventBus();
     const slow: string[] = [];
-    bus.handlerLimit = event => (event.startsWith('app:') ? 10 : undefined);
-    bus.onHandlerSlow = (event, limit, contextId) => void slow.push(`${event}:${limit}:${contextId}`);
+    const bus = new EventBus({
+      handlerLimit: event => (event.startsWith('app:') ? 10 : undefined),
+      onHandlerSlow: (event, limit, contextId) => void slow.push(`${event}:${limit}:${contextId}`),
+    });
     const order: string[] = [];
     bus.on('plugin:loaded', async () => {
       await sleep(40);
@@ -138,8 +139,7 @@ describe('EventBus 的等待上限', () => {
   });
 
   it('只设上限、未设上报器：超时静默继续，不抛错', async () => {
-    const bus = new EventBus();
-    bus.handlerLimit = () => 10;
+    const bus = new EventBus({ handlerLimit: () => 10 });
     bus.on('app:ready', never);
     await expect(within(bus.emit('app:ready'), 1000, 'emit')).resolves.toBeUndefined();
   });

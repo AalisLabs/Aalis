@@ -80,7 +80,6 @@ bus.use.on('app:started', () => log.use.info('已启动'));
 2. `plugins.idle()`：排干在飞的 bounce / unload recompute；重算不再等已 abort 的激活
 3. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.use.onDrain` / `onDispose`）。逐个等监听器返回，单个至多等 `slowThresholdMs`。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
 4. `plugins.stopAll()`：执行已冻计划的 drain / close，根激活也在这张计划里，返回时都已关完
-5. 清空 sticky 缓存（`app:ready` / `app:started`）
 
 监听器与清理回调不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等（监听器至多等到 `slowThresholdMs`、清理项至多等到 `disposeTimeoutMs` 后被放弃）。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
 
@@ -103,7 +102,7 @@ resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手�
 
 ### `app.restart()`
 
-委托给注入的 `restartStrategy`：清空 sticky 缓存 → 发出 `app:restarting` 事件 → 调用
+委托给注入的 `restartStrategy`：发出 `app:restarting` 事件 → 调用
 `strategy.restart({ stop })`（stop / restart 时序由策略决定）。**未注入 `restartStrategy` 时抛错**，
 自身不保存任何数据、也不直接 spawn 进程。
 
