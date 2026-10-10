@@ -33,6 +33,8 @@ interface ServiceEntry {
   owner: symbol;
   /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
   label?: string;
+  /** 登记所用的描述符，只比身份（见 {@link ServiceContainer.rivalOf}） */
+  descriptor?: object;
 }
 
 const NO_ENTRIES: readonly ServiceEntry[] = [];
@@ -68,7 +70,7 @@ export class ServiceContainer {
     instance: unknown,
     contextId: string,
     owner: symbol,
-    options?: { priority?: number; label?: string; exclusive?: boolean },
+    options?: { priority?: number; label?: string; exclusive?: boolean; descriptor?: object },
   ): () => boolean {
     // 空实现会骗过 require() 的缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
     if (instance === null || instance === undefined) {
@@ -92,6 +94,7 @@ export class ServiceContainer {
       contextId,
       owner,
       label: options?.label,
+      descriptor: options?.descriptor,
     };
     list.push(entry);
     // 按优先级降序排列（稳定排序：同优先级先注册者在前）
@@ -148,6 +151,14 @@ export class ServiceContainer {
    */
   hasEntry(name: string, contextId: string, owner: symbol): boolean {
     return this.#entries.get(name)?.some(entry => entry.owner === owner && entry.contextId === contextId) === true;
+  }
+
+  /**
+   * 同名条目里不是以这个描述符登记的一条的逻辑身份（登记事实：暂不对外的也算）；没有则 undefined
+   * @internal
+   */
+  rivalOf(name: string, descriptor: object): string | undefined {
+    return this.#entries.get(name)?.find(entry => entry.descriptor !== descriptor)?.contextId;
   }
 
   /** 参与解析的条目：暂不对外的归属不算。没有暂扣时原样返回登记数组，不另分配 */

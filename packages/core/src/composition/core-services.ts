@@ -176,7 +176,15 @@ export function coreProviders(
         `服务 "${name}" 已由本激活以 "${entryId}" provide 过一次，按 contextId 路由与设偏好只能命中其中一条。` +
           `一个激活登记多条时各传不同的 options.entryId；多套配置请在定义上声明 reusable，以 "<name>:<suffix>" 注册多个实例。`,
       );
-    const off = container.register(name, implementation, entryId, c.owner, options);
+    // 服务身份是名字：同名的另一个描述符对象照常登记，只提醒（契约撞名或同一 api 包装了两份）
+    const rival = container.rivalOf(name, descriptor);
+    if (rival !== undefined)
+      c.logger.warn(
+        `服务 "${name}" 的登记来自两个不同的描述符对象：已有 "${rival}"，现在 "${c.id}"（照常登记）。` +
+          `可能是两个无关的契约取了同一个服务名，也可能是同一个 api 包装了两份：对照两边导入描述符的包，` +
+          `包名不同是撞名（服务名应带包名前缀），包名相同用 npm ls <包名> 查重复安装、去重后只留一份。`,
+      );
+    const off = container.register(name, implementation, entryId, c.owner, { ...options, descriptor });
     // 暂不对外的激活（转入后台的）登记照收，上线时才通知
     if (!container.isHeld(c.owner)) runtime.notify('service:registered', name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分

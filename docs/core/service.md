@@ -40,7 +40,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 ```
 
 - 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
-- 服务身份是描述符的 `name`。契约包装了两份也指向同一服务。
+- 服务身份是描述符的 `name`。契约包装了两份也指向同一服务；同一服务名以不同的描述符对象登记时照常登记，`provide` 处记一条 warn 点名两边（无关契约撞名，或同一契约包装了两份），不看 `devMode`。第三方契约的服务名带包名前缀，见 [契约包](../design/api-packages.md)。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#two-cores)。
 - `provide(descriptor, impl)` 按描述符约束实现类型。
 - Core 默认登记的六项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。

@@ -130,3 +130,44 @@ describe('内置能力', () => {
     expect(definition?.__tMeta).toEqual({ tag: 'x' });
   });
 });
+
+describe('同名服务的描述符', () => {
+  it('同一服务名以另一个描述符对象登记：照常登记，warn 点名两边并说明两种成因（不看 devMode）', async () => {
+    const warnings: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warnings.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const app = new App({ name: 'T', logLevel: 'error', logger, devMode: false });
+    apps.push(app);
+    const shared = defineService<{ from: string }>('__t:same-name');
+    const copy = defineService<{ from: string }>('__t:same-name');
+    const provider = (name: string, descriptor: typeof shared) =>
+      definePlugin({
+        name,
+        uses: { provide },
+        apply({ provide }) {
+          provide(descriptor, { from: name });
+        },
+      });
+    await app.pluginAll([
+      { definition: provider('first', shared) },
+      { definition: provider('second', shared) },
+      { definition: provider('third', copy) },
+    ]);
+    await app.plugins.idle();
+
+    expect(
+      app
+        .bind({ services })
+        .services.all(shared)
+        .map(view => view.instance.from),
+    ).toEqual(['first', 'second', 'third']);
+    expect(warnings.filter(line => line.includes('描述符对象'))).toEqual([
+      expect.stringMatching(/服务 "__t:same-name".*"first".*"third".*同一个服务名.*装了两份/),
+    ]);
+  });
+});
