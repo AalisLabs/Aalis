@@ -1,13 +1,15 @@
 /**
  * api-commands — `commands` 绑定门面的回归测试
  *
- * 门面把指令声明挂在「跟随 commands 提供者」上，于是有三条关键路径：
+ * 门面把指令声明记在资源口的登记账本（registrar）上，于是有这几条关键路径：
  *  1. **hot-forward**：提供者已在场时，链式调用在 apply 返回前就落到真 builder
  *  2. **buffer-replay**：提供者缺席时链式调用全部缓冲，提供者上线后一次性重放
  *  3. **provider 换人重挂**：提供者被注销 → 换一个新的，先前声明的指令带全部
  *     alias/option/action 自动挂到新提供者上，旧提供者上不留残留
+ *  4. **关闭时与原语同一拍撤回**，不等本插件所提供服务的下游交接
+ *  5. **同一激活同名再登记是替换**：只留后一次的那一层
  */
-import { App, definePlugin, optional, type PluginDefinition, provide } from '@aalis/core';
+import { App, definePlugin, defineService, optional, type PluginDefinition, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { BoundCommands, ExecutionInput } from '../../packages/api-commands/src/index.js';
 import {
@@ -253,6 +255,45 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     expect(b.cmds.get('find <q:string>')?.arguments).toEqual(described);
     await app.stop();
   });
+
+  it('登记指令的激活关闭：指令与原语同一拍撤回，不等它所提供服务的下游交接', async () => {
+    const app = newApp();
+    const host = app.bind({ provide });
+    const { svc, cmds } = makeCommandService();
+    host.provide(commands, svc);
+    const owned = defineService<object>('__t:commands-owned');
+    await app.plugin(
+      definePlugin({
+        name: 'owner',
+        provides: [owned],
+        uses: { commands: optional(commands), provide },
+        apply({ commands, provide }) {
+          provide(owned, {});
+          commands.command('ping', 'p').action(async () => undefined);
+        },
+      }),
+    );
+    let releaseHandover!: () => void;
+    await app.plugin(
+      definePlugin({
+        name: 'downstream',
+        uses: { owned: optional(owned) },
+        apply({ owned }) {
+          owned.follow(() => () => new Promise<void>(resolve => (releaseHandover = resolve)));
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(cmds.has('ping')).toBe(true);
+
+    const unloading = app.plugins.unload('owner');
+    await new Promise(r => setTimeout(r, 5));
+    const duringHandover = cmds.has('ping');
+    releaseHandover();
+    await unloading;
+    expect(duringHandover, '下游交接还没落定时指令已撤下').toBe(false);
+    await app.stop();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -294,6 +335,26 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
       'B 卸载后 A 的声明必须还在（连根删除会让整个节点消失）',
     ).toBeDefined();
     expect(await registry.execute('ping', execInput()), '复位到 A 的实现').toBe('a');
+    await app.stop();
+  });
+
+  it('同一激活再登记同名指令：替换先前那次，只留一层', async () => {
+    const app = newApp();
+    const host = app.bind({ provide });
+    const registry = new CommandRegistry(mkLogger() as never, () => undefined);
+    host.provide(commands, registry);
+
+    await loadProbe(
+      app,
+      commandProbe('probe-dup', commands => {
+        commands.command('ping', '第一次', { risk: 'dangerous' }).action(async () => 'first');
+        commands.command('ping', '第二次').action(async () => 'second');
+      }),
+    );
+
+    const ping = registry.get('ping');
+    expect(ping?.description).toBe('第二次');
+    expect(ping?.risk, '先前那层已撤下，不再参与取最严').toBeUndefined();
     await app.stop();
   });
 });

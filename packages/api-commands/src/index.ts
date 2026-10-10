@@ -11,7 +11,7 @@
 // 实现见 @aalis/plugin-commands。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import type { BindingPort, ServiceRef } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 
 // ===== handler 接口 =====
@@ -218,70 +218,68 @@ type DeferredCall =
   | { kind: 'usage'; text: string }
   | { kind: 'example'; line: string };
 
-/**
- * 同时支持热转发与提供者换人重放的 builder：
- * - calls[] 是权威源：provider 每次上线的回调里重新创建 real builder 并重放。
- * - 同时保留 realBuilder 引用：有值时同步转发调用。
- */
-function makeBuilder(
-  port: BindingPort<CommandService>,
-  name: string,
-  description: string | undefined,
-  meta: InternalCommandMeta,
-): CommandBuilder {
-  const calls: DeferredCall[] = [];
-  let realBuilder: CommandBuilder | undefined;
-  // 注册表按点路径建键（inline 位置参数 DSL 在注册时被 parseCommandName 切掉），
-  // 注销必须用同一份键：直接传 'memory.clear <key:string>' 这类原始名会键不匹配、整条注销静默 no-op。
-  const registryKey = name.trim().split(/\s+/)[0];
+/** 一条指令登记：builder 调用按序记下，提供者在场时同步转发，换人时在新提供者上重建并重放 */
+interface CommandEntry {
+  /** 注册表按点路径建键（inline 位置参数 DSL 在注册时被切掉），注销与同名替换都用它 */
+  key: string;
+  name: string;
+  description?: string;
+  meta: InternalCommandMeta;
+  calls: DeferredCall[];
+  /** 当前提供者上的真 builder；撤回后清空 */
+  real?: CommandBuilder;
+}
 
-  port.follow(svc => {
-    realBuilder = svc.command(name, description, meta);
-    for (const c of calls) {
-      if (c.kind === 'alias') realBuilder.alias(c.name);
-      else if (c.kind === 'option') realBuilder.option(c.name, c.syntax, c.opts);
-      else if (c.kind === 'argument') realBuilder.argument(c.name, c.description);
-      else if (c.kind === 'action') realBuilder.action(c.handler);
-      else if (c.kind === 'usage') realBuilder.usage(c.text);
-      else if (c.kind === 'example') realBuilder.example(c.line);
-    }
-    return () => {
-      // 必须带上 contextId（meta.pluginName）：只摘自己那一层声明。不带的话会把同名指令的**全部**声明
-      // 一起删掉——包括别的插件先注册的那份，且它不会重新出现。
-      svc.unregister(registryKey, meta.pluginName);
-      realBuilder = undefined;
-    };
-  });
+function registerEntry(svc: CommandService, entry: CommandEntry): () => void {
+  const real = svc.command(entry.name, entry.description, entry.meta);
+  for (const c of entry.calls) {
+    if (c.kind === 'alias') real.alias(c.name);
+    else if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
+    else if (c.kind === 'argument') real.argument(c.name, c.description);
+    else if (c.kind === 'action') real.action(c.handler);
+    else if (c.kind === 'usage') real.usage(c.text);
+    else if (c.kind === 'example') real.example(c.line);
+  }
+  entry.real = real;
+  return () => {
+    entry.real = undefined;
+    // 必须带上 contextId（meta.pluginName）：只摘自己那一层声明。不带的话会把同名指令的**全部**声明
+    // 一起删掉——包括别的插件先注册的那份，且它不会重新出现。
+    svc.unregister(entry.key, entry.meta.pluginName);
+  };
+}
 
+function makeBuilder(entry: CommandEntry): CommandBuilder {
+  const { calls } = entry;
   const self: CommandBuilder = {
     alias(n) {
       calls.push({ kind: 'alias', name: n });
-      realBuilder?.alias(n);
+      entry.real?.alias(n);
       return self;
     },
     option(n, syntax, opts) {
       calls.push({ kind: 'option', name: n, syntax, opts });
-      realBuilder?.option(n, syntax, opts);
+      entry.real?.option(n, syntax, opts);
       return self;
     },
     argument(n, description) {
       calls.push({ kind: 'argument', name: n, description });
-      realBuilder?.argument(n, description);
+      entry.real?.argument(n, description);
       return self;
     },
     action(handler) {
       calls.push({ kind: 'action', handler });
-      realBuilder?.action(handler);
+      entry.real?.action(handler);
       return self;
     },
     usage(text) {
       calls.push({ kind: 'usage', text });
-      realBuilder?.usage(text);
+      entry.real?.usage(text);
       return self;
     },
     example(line) {
       calls.push({ kind: 'example', line });
-      realBuilder?.example(line);
+      entry.real?.example(line);
       return self;
     },
   };
@@ -290,15 +288,28 @@ function makeBuilder(
 
 // ===== 服务描述符（按激活绑定）=====
 
-/** `commands` 的绑定接口：指令声明自动归属这次激活（每个激活一层声明，撤回时被覆盖的声明自动复位） */
+/**
+ * `commands` 的绑定接口：指令声明自动归属这次激活（每个激活一层声明，撤回时被覆盖的声明自动复位）。
+ * 同一激活再登记同名指令替换先前那次；提供者换人时整体重挂，关闭时与原语同一拍撤回。
+ */
 export interface BoundCommands extends ServiceRef<CommandService> {
   /** 同 {@link CommandService.command}：描述的第一句是 /help 里的摘要 */
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 }
 
-export const commands = defineService<CommandService, BoundCommands>('commands', port =>
-  serviceRef(port, {
-    command: (name: string, description?: string, meta?: CommandMeta) =>
-      makeBuilder(port, name, description, { ...meta, pluginName: port.id }),
-  }),
-);
+export const commands = defineService<CommandService, BoundCommands>('commands', port => {
+  const entries = port.registrar<CommandEntry>({ key: entry => entry.key, register: registerEntry });
+  return serviceRef(port, {
+    command: (name: string, description?: string, meta?: CommandMeta) => {
+      const entry: CommandEntry = {
+        key: name.trim().split(/\s+/)[0],
+        name,
+        description,
+        meta: { ...meta, pluginName: port.id },
+        calls: [],
+      };
+      entries.add(entry);
+      return makeBuilder(entry);
+    },
+  });
+});
