@@ -120,9 +120,8 @@ export class DefaultLogger implements Logger {
     minLevel: LogLevel = 'info',
     hub: LogHub = LogHub.default,
     /**
-     * 时钟：日志时间戳的唯一时间来源。缺省 `() => new Date()`（独立运行/测试兜底，保持现行为）；
-     * 宿主（@aalis/runtime）经 `App({ now })` 显式注入,从而 core 逻辑不含 ambient 时间效应、
-     * 测试可注入固定时钟得到确定性时间戳。
+     * 时钟：日志时间戳的唯一时间来源，缺省墙上时间。要按 App 固定时间戳（快照测试、回放），构造时传入，
+     * 再作为 `AppOptions.logger` 注入；child 继承同一时钟。
      */
     now: () => Date = () => new Date(),
   ) {

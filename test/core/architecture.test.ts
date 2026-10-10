@@ -709,7 +709,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2629 → 2625：b5 X15（用户选甲）——宿主侧 getPlugin 也交调用时刻的浅快照，pluginsService 直接收窄同一个方法。
 // 2625 → 2623：b5 P1-12（用户选甲）——bounce 不再收 config，拷贝保护与禁用态只换配置都归 updateConfig。
 // 2623 → 2618：b5 P0-5（用户选乙）——插件 id 规则只留两条：删 `#` 禁令与 trim 后的危险键复查，危险键闸保留。
-const CORE_CODE_LINE_CEILING = 2618;
+// 2618 → 2616：b5 P1-10（用户选乙）——删 AppOptions.now，日志时钟随注入的 logger 走（DefaultLogger 的 now 参数保留）。
+const CORE_CODE_LINE_CEILING = 2616;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
