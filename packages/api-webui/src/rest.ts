@@ -78,6 +78,8 @@ export interface PluginListItem extends PluginBlockers {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
+  /** 本插件偏好（用户设的、只对这个实例生效）：服务名 → 偏好的提供者（contextId），只列它声明了的、设了的服务 */
+  servicePreferences: Record<string, string>;
   tools: string[];
   commands: string[];
   reusable: boolean;
@@ -392,6 +394,9 @@ export interface WebuiRestRoutes {
   'POST /api/plugins/scan': { response: PluginScanResponse };
   'POST /api/plugins/:name/instances': { body: InstanceCreateRequest; response: InstanceCreateResponse };
   'DELETE /api/plugins/:instanceId/instance': { response: MessageResponse };
+  /** 本插件偏好：只对这个实例生效，校验、持久化与回应同全局偏好的两条 */
+  'POST /api/plugins/:instanceId/services/:name/prefer': { body: PreferRequest; response: OkResponse };
+  'DELETE /api/plugins/:instanceId/services/:name/prefer': { response: OkResponse };
 
   'GET /api/config': { response: HostConfigResponse };
   'PUT /api/config': { body: HostConfigRequest; response: HostConfigSaved };

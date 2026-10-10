@@ -529,6 +529,9 @@ describe('管理面 REST 的回应与契约', () => {
     await ok('PUT /api/config', '/api/config', { name: 'T2' });
     await ok('POST /api/services/:name/prefer', '/api/services/platform/prefer', { contextId: 'zz-rest-doubles' });
     await ok('DELETE /api/services/:name/prefer', '/api/services/platform/prefer');
+    const ownPrefer = `/api/plugins/${PROBE}/services/platform/prefer`;
+    await ok('POST /api/plugins/:instanceId/services/:name/prefer', ownPrefer, { contextId: 'zz-rest-doubles' });
+    await ok('DELETE /api/plugins/:instanceId/services/:name/prefer', ownPrefer);
 
     // 失败
     await fail('GET /api/plugins', '/api/plugins', undefined, false);

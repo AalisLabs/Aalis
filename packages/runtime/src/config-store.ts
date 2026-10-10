@@ -2,7 +2,8 @@
 // config-store —— 宿主配置文档（内存态 + 危险键闸 + 落盘委托）、密钥存储与 host-config 服务
 //
 // 运行态（实例配置、禁用态、服务偏好）在 core；本模块持「下次启动用什么」的文档：
-//   - 启动：宿主从文档取每个实例的配置（解析密钥引用后）与禁用标记交给 app.pluginAll，偏好经根绑定 services.prefer 应用；
+//   - 启动：宿主从文档取每个实例的配置（解析密钥引用后）与禁用标记交给 app.pluginAll，偏好（全局与本插件）经根绑定
+//     services.prefer 应用，热重载时按改动前后的文档对账；
 //   - 运行：改插件配置经 host-config 的 applyPluginConfig 一步完成；启停、偏好等管理动作只改运行态，
 //     要跨重启保留的调用方经 host-config 自己写文档并 save()。
 // 文档是文档形态：schema 里 `secret: true` 的字段只放引用 `{ $secret: '<键>' }`，值在密钥存储里（见 secrets.ts）。
@@ -18,7 +19,15 @@ import {
   hostConfig,
   isConfigSaveRefused,
 } from '@aalis/api-host-config';
-import { type App, type PluginDefinition, parseInstanceId, provide, services } from '@aalis/core';
+import {
+  type App,
+  type PluginDefinition,
+  type PreferenceScope,
+  parseInstanceId,
+  provide,
+  type Services,
+  services,
+} from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
   type ConfigSchema,
@@ -178,15 +187,24 @@ export function createConfigStore(
       if (enabled && idx >= 0) config.disabledPlugins.splice(idx, 1);
       else if (!enabled && idx < 0) config.disabledPlugins.push(instanceId);
     },
-    getServicePreferences: () => config.servicePreferences ?? {},
-    setServicePreference(name, contextId) {
+    getServicePreferences: scope => preferencesIn(config, scope) ?? {},
+    setServicePreference(name, contextId, scope) {
       if (isUnsafeConfigKey(name)) return;
-      config.servicePreferences ??= {};
-      config.servicePreferences[name] = contextId;
+      let prefs = preferencesIn(config, scope);
+      if (!prefs) {
+        prefs = {};
+        if (scope?.for === undefined) config.servicePreferences = prefs;
+        else config.pluginServicePreferences = { ...config.pluginServicePreferences, [scope.for]: prefs };
+      }
+      prefs[name] = contextId;
     },
-    removeServicePreference(name) {
-      if (!config.servicePreferences || isUnsafeConfigKey(name)) return;
-      delete config.servicePreferences[name];
+    removeServicePreference(name, scope) {
+      const prefs = preferencesIn(config, scope);
+      if (!prefs || isUnsafeConfigKey(name)) return;
+      delete prefs[name];
+      // 本插件偏好删空了就整段去掉，文件里不留空段
+      if (scope?.for !== undefined && Object.keys(prefs).length === 0)
+        delete config.pluginServicePreferences?.[scope.for];
     },
     resolvePluginConfig(instanceId, schema, doc, staged) {
       const source = doc ?? store.getPluginConfig(instanceId);
@@ -493,8 +511,33 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
         : { id: 'config.secrets', category: 'config', level: 'ok', message: '配置引用的密钥都在 secrets.yaml 里' };
     },
   });
-  for (const [name, contextId] of Object.entries(store.getServicePreferences()))
-    host.services.use.prefer(name, contextId);
+  applyServicePreferences(host.services.use, store.getAll());
+}
+
+/**
+ * 文档里的服务偏好（全局与本插件）对到运行态：`previous` 是改动前的文档（热重载时给），这一份没有、它有的撤回，
+ * 没变的不动；不给时（启动）全部应用
+ */
+export function applyServicePreferences(
+  live: Pick<Services, 'prefer' | 'unprefer'>,
+  next: Readonly<AalisConfig>,
+  previous?: Readonly<AalisConfig>,
+): void {
+  const scopes = (doc: Readonly<AalisConfig> | undefined): Array<PreferenceScope | undefined> =>
+    doc ? [undefined, ...Object.keys(doc.pluginServicePreferences ?? {}).map(id => ({ for: id }))] : [];
+  const prefsOf = (doc: Readonly<AalisConfig> | undefined, scope?: PreferenceScope) =>
+    (doc && preferencesIn(doc, scope)) ?? {};
+  for (const scope of scopes(previous)) {
+    const kept = prefsOf(next, scope);
+    for (const name of Object.keys(prefsOf(previous, scope)))
+      if (!Object.hasOwn(kept, name)) live.unprefer(name, scope);
+  }
+  for (const scope of scopes(next)) {
+    const before = prefsOf(previous, scope);
+    for (const [name, contextId] of Object.entries(prefsOf(next, scope))) {
+      if (!Object.hasOwn(before, name) || before[name] !== contextId) live.prefer(name, contextId, scope);
+    }
+  }
 }
 
 // ----- helpers -----
@@ -504,9 +547,29 @@ function snapshot(doc: AalisConfig): AalisConfig {
   return cloneConfigObject(doc) as AalisConfig;
 }
 
+/** 一个范围里的偏好：不给 `for` 是全局偏好，给了是那个插件实例的本插件偏好；还没有时为 undefined */
+function preferencesIn(doc: Readonly<AalisConfig>, scope?: PreferenceScope): Record<string, string> | undefined {
+  if (scope?.for === undefined) return doc.servicePreferences;
+  assertSafePluginId(scope.for);
+  const byPlugin = doc.pluginServicePreferences;
+  return byPlugin && Object.hasOwn(byPlugin, scope.for) ? byPlugin[scope.for] : undefined;
+}
+
 /** 密钥文件的键值：危险键不收 */
 function secretMap(input: Record<string, unknown>): Map<string, unknown> {
   return new Map(Object.entries(input).filter(([key]) => !isUnsafeConfigKey(key)));
+}
+
+/** 本插件偏好：插件实例 id → 服务偏好，危险键不收，空段不留 */
+function copyPluginPreferences(input: unknown): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const id of Object.keys(input)) {
+    if (isUnsafeConfigKey(id)) continue;
+    const prefs = copyOwnSafeStringDict((input as Record<string, unknown>)[id]);
+    if (Object.keys(prefs).length > 0) out[id] = prefs;
+  }
+  return out;
 }
 
 function copyOwnSafeStringDict(input: unknown): Record<string, string> {
@@ -535,6 +598,10 @@ function normalize(input: Partial<AalisConfig>): AalisConfig {
     if (isUnsafeConfigKey(key)) continue;
     if (key === 'servicePreferences') {
       merged.servicePreferences = copyOwnSafeStringDict(value);
+      continue;
+    }
+    if (key === 'pluginServicePreferences') {
+      merged.pluginServicePreferences = copyPluginPreferences(value);
       continue;
     }
     merged[key] = value;

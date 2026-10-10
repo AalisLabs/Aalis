@@ -64,7 +64,7 @@ async function setup(register: (app: App) => Promise<unknown> = app => app.plugi
       hostConfig: refStub(bound.hostConfig.use),
       tools: ref(),
       commands: ref(),
-      services: { names: () => [] },
+      services: { names: () => [], preferred: () => undefined },
       self: 'zz-webui',
       versions: () => () => undefined,
       logger,

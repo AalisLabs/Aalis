@@ -38,6 +38,8 @@ export interface PluginRow extends PluginBlockers {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
+  /** 本插件偏好：服务名 → 偏好的提供者（contextId），只有设了的 */
+  servicePreferences: Record<string, string>;
   tools: string[];
   commands: string[];
   extends?: { events?: string[]; hooks?: string[] };
@@ -119,6 +121,11 @@ function parseRow(row: unknown): PluginRow {
     provides: strings(row.provides),
     requiredServices: strings(row.requiredServices),
     optionalServices: strings(row.optionalServices),
+    servicePreferences: isRecord(row.servicePreferences)
+      ? Object.fromEntries(
+          Object.entries(row.servicePreferences).filter((entry): entry is [string, string] => isString(entry[1])),
+        )
+      : {},
     lacking,
     waiting,
     unconfigured: strings(row.unconfigured),

@@ -19,8 +19,10 @@ interface AalisConfig {
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件实例 id；宿主登记插件时据此以禁用态登记 */
   disabledPlugins?: string[];
-  /** 服务偏好：serviceName → preferred contextId；宿主启动时应用到服务容器 */
+  /** 服务偏好：serviceName → preferred contextId；宿主启动时与配置热重载时应用到服务容器 */
   servicePreferences?: Record<string, string>;
+  /** 本插件偏好：插件实例 id → (serviceName → preferred contextId)，只对那个插件生效；应用时机同 servicePreferences */
+  pluginServicePreferences?: Record<string, Record<string, string>>;
   [key: string]: unknown;
 }
 ```
@@ -53,9 +55,9 @@ interface HostConfig {
   removePluginConfig(instanceId: string): void; // 只改文档；落盘后不再被任何配置引用的密钥由宿主一并删掉
   isPluginDisabled(instanceId: string): boolean;
   setPluginEnabled(instanceId: string, enabled: boolean): void;
-  getServicePreferences(): Record<string, string>;
-  setServicePreference(name: string, contextId: string): void;
-  removeServicePreference(name: string): void;
+  getServicePreferences(scope?: { for?: string }): Record<string, string>;
+  setServicePreference(name: string, contextId: string, scope?: { for?: string }): void;
+  removeServicePreference(name: string, scope?: { for?: string }): void;
   save(): Promise<void>;
 }
 
@@ -71,6 +73,7 @@ type ApplyPluginConfigResult =
 - `getPluginConfig` 返回实例在文档里的配置，密钥字段上是引用、不是原值；插件要原值读自己的 `config`。返回的是文档里的活对象，改写前先复制。
 - `setPluginConfig` 只写文档、不改运行态，只收文档形态：宿主有密钥存储、且查得到该实例的 schema 时，密钥字段上的非空明文（例如把 `config` 服务给的运行态原样写回）抛错，不让原值进文档。
 - `applyPluginConfig` 改一个实例的配置并让它生效，见下文[改插件配置](#改插件配置)。
+- 三个服务偏好方法的 `scope` 与 core 的 `services.prefer` 同形：给 `for`（插件实例 id）读写那个插件的本插件偏好（文档的 `pluginServicePreferences`），不给读写全局偏好（`servicePreferences`）。删掉一个插件的最后一条本插件偏好时，它那一段一并去掉。两种偏好的用法与什么时候不该设本插件偏好，见 [运行态与配置文档](../core/config.md#服务偏好)。
 - 其余写方法只改文档，不改运行态。
 - 按实例 id 取放的方法遇到 `__proto__` / `constructor` / `prototype` 这类 id 抛「插件 id 不合法」。
 - `save()` 持久化当前文档，宿主有密钥存储时先写密钥、再写文档。返回的 Promise 兑现时保存已完成（宿主不持久化时立即兑现、不写盘）；失败以拒绝传出，调用方应 `await`。配置源有尚未生效的外部修改而拒写时，拒绝原因是本包导出的 `ConfigSaveRefusedError`，调用方用本包的 `isConfigSaveRefused(err)` 把它与写入失败等其它原因区分（WebUI 前者回 409、后者回 500）。判据按错误的 `name` 判定，不用 `instanceof`：进程里装有两份本包时，宿主抛出的是它那份的类。失败时提供方已记一笔日志（拒写记告警，其它记 error）并把拒绝标记为已处理，不 `await` 的调用不会变成未处理拒绝。不保证并发保存的先后，也不负责与外部编辑合并。

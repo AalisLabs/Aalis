@@ -11,9 +11,9 @@
 
 import { isDeepStrictEqual } from 'node:util';
 import { type AalisConfig, isConfigSaveRefused } from '@aalis/api-host-config';
-import { type App, events, type PluginDefinition, parseInstanceId } from '@aalis/core';
+import { type App, events, type PluginDefinition, parseInstanceId, services } from '@aalis/core';
 import { deepMergeDefaults, defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
-import type { ConfigStore } from './config-store.js';
+import { applyServicePreferences, type ConfigStore } from './config-store.js';
 import { moduleDefinitionOf, type PluginDiscovery, type PluginLoader } from './plugin-discovery.js';
 import { describeDangling } from './secrets.js';
 
@@ -111,9 +111,10 @@ export function withPluginConfigSync(loader: PluginLoader, app: App, store: Conf
 }
 
 /**
- * 配置外部变更时的处理：先卸载文件里已没有配置段的 `name:suffix` 实例，再按启动路径同一政策同步，
+ * 配置外部变更时的处理：先对账服务偏好（全局与本插件），卸载文件里已没有配置段的 `name:suffix` 实例，再按启动路径同一政策同步，
  * 重新计算各插件配置并热重载差异（updateConfig → bounce），最后经发现驱动登记文件里新出现的后缀实例
- * （判据同冷启动与热扫描）。`previous` 是变更前的文档，交给同步作拆密钥的基线（见 {@link syncPluginDefaults}）。
+ * （判据同冷启动与热扫描）。`previous` 是变更前的文档：对账偏好的基线（不给时只应用新文档里的），也交给同步作拆密钥的基线
+ * （见 {@link syncPluginDefaults}）。
  */
 export async function handleConfigChanged(
   app: App,
@@ -124,6 +125,7 @@ export async function handleConfigChanged(
 ): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
   try {
+    applyServicePreferences(app.bind({ services }).services.use, store.getAll(), previous);
     // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载，新出现的在最后登记。
     // 留着不管的话，下面的同步会把它当成缺配置的实例：运行态配置被换成默认值（无默认值时是 {}），
     // 默认值还会作为一个新配置段写回文件。

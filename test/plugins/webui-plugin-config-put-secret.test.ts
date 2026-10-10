@@ -61,7 +61,7 @@ function setup() {
       hostConfig: stub<HostConfig>(hostConfig),
       tools: ref(),
       commands: ref(),
-      services: { names: () => [] },
+      services: { names: () => [], preferred: () => undefined },
       self: 'zz-webui',
       versions: () => () => undefined,
     },

@@ -28,8 +28,8 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * 落盘被拒后运行态怎样与文件对齐：插件配置与新建的实例随配置文件热重载（文件里没有配置段的后缀实例会被卸载）；
- * 启停与服务偏好只在重启时按文件登记。被拒的可能是配置文件，也可能是密钥文件，拒写原因里点了名，这里不指具体哪个文件
+ * 落盘被拒后运行态怎样与文件对齐：插件配置、新建的实例与服务偏好随配置文件热重载（文件里没有配置段的后缀实例会被卸载）；
+ * 启停只在重启时按文件登记。被拒的可能是配置文件，也可能是密钥文件，拒写原因里点了名，这里不指具体哪个文件
  */
 const RECONCILE = {
   reload: '修好该文件后会按文件内容重载',
@@ -143,8 +143,8 @@ interface PluginRoutesCaps {
   hostConfig: Pick<ServiceSelection<HostConfig>, 'present' | 'use'>;
   tools: Pick<ServiceSelection<ToolService>, 'present' | 'use'>;
   commands: Pick<ServiceSelection<CommandService>, 'present' | 'use'>;
-  /** 当前有提供者的服务名：列表与回执据它判缺与在等 */
-  services: Pick<Services, 'names'>;
+  /** 当前有提供者的服务名：列表与回执据它判缺与在等；列表另据它读各插件的本插件偏好 */
+  services: Pick<Services, 'names' | 'preferred'>;
   /** 提供这个界面的插件实例：经这些路由停用不了它，列表给它标 self */
   self: string;
   /** 家目录（宿主路径的 home）：宿主配置一并给出；宿主不提供路径时没有 */
@@ -251,6 +251,12 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         provides: p.provides ?? [],
         requiredServices: p.requiredServices ?? [],
         optionalServices: p.optionalServices ?? [],
+        servicePreferences: Object.fromEntries(
+          [...(p.requiredServices ?? []), ...(p.optionalServices ?? [])].flatMap(name => {
+            const preferred = caps.services.preferred(name, { for: p.instanceId });
+            return preferred === undefined ? [] : [[name, preferred]];
+          }),
+        ),
         lacking: p.lacking,
         waiting: p.waiting,
         unconfigured: p.unconfigured,

@@ -126,7 +126,7 @@ interface Services {
 
 动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的 `identity` 调用才得到门面，认不出的身份即抛错。要用内置服务，在 `uses` 里声明它。
 
-`prefer(key, contextId, scope?)` 设偏好，无视 priority：给 `scope.for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。服务有独占条目且不是它时返回 false。切换偏好发出 `service:changed`，业务句柄随之打到新选中的那一家，`follow` 订阅者按选中的变化重挂。偏好只由用户经管理面写，普通插件不调 `prefer` / `unprefer`：WebUI 的 Services 页与配置项 `servicePreferences` 设的是全局偏好。
+`prefer(key, contextId, scope?)` 设偏好，无视 priority：给 `scope.for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。服务有独占条目且不是它时返回 false。切换偏好发出 `service:changed`，业务句柄随之打到新选中的那一家，`follow` 订阅者按选中的变化重挂。偏好只由用户经管理面写，普通插件不调 `prefer` / `unprefer`：WebUI 设置「系统」的服务偏好与配置项 `servicePreferences` 设的是全局偏好，插件详情的服务偏好与配置项 `pluginServicePreferences` 设的是本插件偏好（见 [运行态与配置文档](config.md#服务偏好)）。
 
 跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是进程级的（全局，或按插件实例），不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#_13-用户偏好放哪里-——-per-user-不进容器)。
 
