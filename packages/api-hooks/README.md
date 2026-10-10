@@ -35,7 +35,7 @@ pnpm add @aalis/api-hooks
 import { hooks } from '@aalis/api-hooks';
 
 // uses: { hooks }
-hooks.middleware('agent:llm:before', async (data, next) => {
+hooks.use.middleware('agent:llm:before', async (data, next) => {
   // 改 data 后交棒；不调 next 即截停
   await next();
 });

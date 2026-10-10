@@ -57,7 +57,7 @@ definePlugin({
 
 | 键 | 字段 | 显眼程度 | 没设置时 |
 |---|---|---|---|
-| `llm` | `llm-ref`「模型」，只收服务与模型都是非空字符串的 `{ provider, model }`（登记时给的 `validate` 核） | composer（也出现在输入框旁） | 用 llm 服务此刻解析到的模型（偏好 > 提供者优先级 > 登记先后） |
+| `llm` | `llm-ref`「模型」，只收服务与模型都是非空字符串的 `{ provider, model }`（登记时给的 `validate` 核） | composer（也出现在输入框旁） | 用 llm 服务此刻解析到的模型（本插件偏好 > 全局偏好 > 提供者优先级 > 登记先后） |
 | `think` | select「深度思考」，存档位 id（非空字符串，`validate` 核） | common | 按模型的默认档 |
 | `maxToolIterations` | number「最大工具迭代」，不小于 1 的整数，默认 30 | advanced | 30 |
 | `historyLimit` | number「历史条数上限」，不小于 0 的整数，默认 0；只经继承链实时解析，建子会话时不复制 | advanced | 读全部活跃历史，不按条数压缩 |

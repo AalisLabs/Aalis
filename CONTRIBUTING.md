@@ -130,7 +130,7 @@ packages/
 ```
 fix(webui-server): 插件列表按实例归属工具与指令
 refactor(agent): 拆出 prompt-assembly（提示词贡献组装）
-test(core): ServiceRef.follow 换代时先清理再重挂
+test(core): follow 换人时先清理再重挂
 ```
 
 破坏性变更在 footer 加：
@@ -164,8 +164,8 @@ export default definePlugin({
   uses: { logger, provide },
   provides: [myService],
   apply({ logger, provide }) {
-    logger.info('my-plugin 已加载');
-    provide(myService, { ping: () => 'ok' });
+    logger.use.info('my-plugin 已加载');
+    provide.use(myService, { ping: () => 'ok' });
   },
 });
 ```

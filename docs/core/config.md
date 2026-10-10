@@ -6,7 +6,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 ## 插件配置解析
 
-插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config, logger)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务仍提供原始只读视图，不依赖 schema-config。
+插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config.use, logger.use)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务仍提供原始只读视图，不依赖 schema-config。
 
 缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。写宿主文件路径的 `string` / `textarea` 字段声明 `format: 'absolute-path'`（只收绝对路径）或 `'executable'`（绝对路径或按 PATH 查找的命令名），相对路径按无效处理；判定忽略首尾空白，交给插件的值也去掉首尾空白，空串与只有空白都表示未填（必填字段算缺失），只看写法、与宿主平台无关。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。标了 `secret: true` 的字段由宿主在交给插件之前把引用解析成原值（见[密钥配置](#密钥配置)），插件读到的就是原值；字段上仍是引用时说明键不在宿主的密钥存储里，`parseConfig` 一律拒绝激活并点名键名，不回落默认值，数组元素里的也让整次解析失败。
 
@@ -16,12 +16,12 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 | 运行态 | 写入口 | 读入口 |
 |---|---|---|
-| 实例配置 | 登记时传入（`app.plugin` / `app.pluginAll` / `plugins.register`）；`plugins.updateConfig` / `bounce(id, { config })` 替换（禁用态同样替换、保持禁用，启用时按新配置激活） | 插件经内置服务 `config`（本激活的只读视图）；管理面经 `plugins.getPlugin(id).config` |
+| 实例配置 | 登记时传入（`app.plugin` / `app.pluginAll` / `plugins.register`）；`plugins.updateConfig` / `bounce(id, { config })` 替换（禁用态同样替换、保持禁用，启用时按新配置激活） | 插件经内置服务 `config`（`config.use`，本激活的只读视图）；管理面经 `plugins.getPlugin(id).config` |
 | 禁用态 | 登记时的 `{ disabled }`；`plugins.enable` / `disable` | `plugins.getStatus()`、`plugins.getPlugin(id).state` |
-| 服务偏好 | `services.prefer` / `unprefer` | `services.preferred` |
+| 服务偏好 | `services.use.prefer` / `unprefer`（全局，或给 `{ for }` 按插件实例） | `services.use.preferred` |
 
 - 登记时交入的配置原样生效：core 不合并默认值，也不读禁用名单。入参会被拷贝，危险键（`__proto__` / `constructor` / `prototype`）跳过，调用方之后改它不影响实例；拷贝失败（环状引用、读取抛错）时管理动作返回 false。
-- 管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`、`services.prefer` / `unprefer`）只改运行态，不写配置文档。要跨重启保留，见下文[跨重启保留](#跨重启保留)。
+- 管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`、`services.use.prefer` / `unprefer`）只改运行态，不写配置文档。要跨重启保留，见下文[跨重启保留](#跨重启保留)。
 
 ## 配置文档（宿主）
 
@@ -56,13 +56,13 @@ interface AalisConfig {
 
 ### host-config 服务
 
-插件在 `uses` 里声明 `hostConfig`（从 `@aalis/api-host-config` 导入）后拿到文档读写面 `HostConfig`。host-config 由宿主提供，core 不保证在场；宿主可能不提供时声明为 `optional(hostConfig)` 并自行降级。
+插件在 `uses` 里声明 `hostConfig`（从 `@aalis/api-host-config` 导入）后经 `hostConfig.use` 拿到文档读写面 `HostConfig`。host-config 由宿主提供，core 不保证在场；宿主可能不提供时声明为 `optional(hostConfig)` 并自行降级。
 
 ```typescript
 import { hostConfig } from '@aalis/api-host-config';
 
 // uses: { hostConfig }，apply 里：
-const doc = hostConfig.require();
+const doc = hostConfig.use;
 
 // 读取
 doc.get('name')                        // 顶层字段
@@ -100,11 +100,10 @@ import { optional, pluginsService } from '@aalis/core';
 import { hostConfig } from '@aalis/api-host-config';
 
 // uses: { plugins: pluginsService, doc: optional(hostConfig) }，apply 里：
-if (await plugins.require().disable(id)) {
-  const store = doc.current;
-  if (store) {
-    store.setPluginEnabled(id, false);
-    await store.save();
+if (await plugins.use.disable(id)) {
+  if (doc.present) {
+    doc.use.setPluginEnabled(id, false);
+    await doc.use.save();
   }
 }
 ```
@@ -115,7 +114,7 @@ WebUI 的启停路由按这种方式持久化；WebUI 的改配置与新建实�
 
 - `createConfigStore(initial, provider?, secrets?)`：文档的内存态、危险键闸与落盘委托。`ConfigProvider` 负责持久化（`save`）与外部变更监听（`watch`），`createFsYamlConfigProvider` 是读写 YAML 的实现。第三个参数是密钥存储 `{ values, provider? }`，`createFsSecretsProvider` 是读写 `secrets.yaml` 的实现；不给时没有密钥存储，密钥字段照旧以明文留在文档里。给了密钥存储却没给它的 `provider.save`、配置又会落盘（给了 `provider.save`）时直接抛错：否则密钥只在内存里，重启后引用落空。
 - `createFsYamlConfigProvider` 保存前比对盘上内容：文件里有尚未生效的外部修改（手改尚未热重载、改坏未能解析、另一个进程写过）时拒绝本次保存、不覆盖（拒绝原因为 `@aalis/api-host-config` 的 `ConfigSaveRefusedError`，用同包的 `isConfigSaveRefused` 判定；错误只带文件路径），宿主记一条告警。写入先写临时文件再改名替换，临时文件创建时即沿用原文件的权限位，没有原文件时为 0600；写临时文件或改名失败时删掉临时文件再传出原错误。拒绝之后调用方的文档已领先于文件，下一次文件变更即使内容与上次生效的那份相同也照常热重载，按文件重新对账；监听武装后立即对账一次，武装前的手改随之生效；平台不支持文件监听时记一条告警，此后手改需重启才生效。
-- `installHostConfig(app, store, opts)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.prefer` 应用文档里的服务偏好。`opts` 与交给 `withPluginConfigSync` 的是同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主是否裁剪 schema 外字段，WebUI 保存插件配置时按它行事。须在登记任何插件之前调用，偏好才先于全部提供者生效。
+- `installHostConfig(app, store, opts)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.use.prefer` 应用文档里的服务偏好（全局偏好）。`opts` 与交给 `withPluginConfigSync` 的是同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主是否裁剪 schema 外字段，WebUI 保存插件配置时按它行事。须在登记任何插件之前调用，偏好才先于全部提供者生效。
 - 插件发现驱动 `createPluginDiscovery(app, loader, store)` 登记插件时，按实例 id 从文档取配置（解析密钥引用后）与禁用标记，交给 `app.pluginAll`（见 [App](app.md)）。冷启动时，`plugins` 下找不到对应插件的配置段（多为直接 `npm uninstall` 后的残留）逐段告警一次，提示已卸载的可删除该段（其中可能含密钥）；文档本身不改。
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档（密钥字段的默认值不写进文档），按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留），并把密钥字段上的明文移进密钥存储。首次 apply 拿到的就是规范化后的配置。
 - `installConfigHotReload(app, store, discovery, opts)`：文档或 `secrets.yaml` 被外部修改后，先卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对解析后的配置与运行态有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
@@ -140,7 +139,7 @@ const paths = derivePaths('/srv/aalis/home', '/srv/aalis/app');
 const { config, provider } = createFsYamlConfigProvider(paths.config);
 const store = createConfigStore(config, provider, createFsSecretsProvider(paths.secrets)); // 不给第三个参数则没有密钥存储
 const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel });
-app.bind({ provide }).provide(hostPaths, paths, { exclusive: true }); // 先 host-paths
+app.bind({ provide }).provide.use(hostPaths, paths, { exclusive: true }); // 先 host-paths
 installHostConfig(app, store); // 再 host-config
 // 登记插件时按 store.resolvePluginConfig 解析出的配置与 { disabled } 登记（createPluginDiscovery 即如此）
 ```

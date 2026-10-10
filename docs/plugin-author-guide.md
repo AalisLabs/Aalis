@@ -3,7 +3,7 @@
 本文档整理 Aalis 插件作者需要遵守、但 API 文档不会显式提醒的几条约定。
 写完一个插件、确认它能运行之后，建议通读本指南，核对是否遗漏了其中任何一条。
 
-> **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/api-storage` / `@aalis/api-process` 等网关访问。biome 会拦截违例。
+> **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/api-storage` / `@aalis/api-process` 等服务访问（`caps.storage.use` / `caps.process.use`）。biome 会拦截违例。
 
 > **完整参考文档**（给第三方作者与维护者的全景）：
 > - [概念层 concepts/](concepts/README.md) —— 服务模型、惰性访问、双源 manifest、存储文法、安全模型、消息管线（**写插件前先通读这 6 篇**）。
@@ -20,15 +20,15 @@
 | 场景 | 你要不要做什么 |
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，激活撤回会从容器注销 |
-| 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记会被 warn，下游按 identity 只命中第一条。要换实现：`bounce` 自己 |
+| 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记会被 warn，下游按条目 id（`of(id)`、偏好）只命中其中一条。要换实现：`bounce` 自己 |
 | 插件配置变更触发热重载 | **调用 `updateConfig()`**（`bounce(instanceId, { config })` 的薄壳）。PluginManager 负责拆掉激活并重算。下游**不会**一律级联重启 |
 
-胜者替换不一律重启消费者。下游应通过 `current` 每次查询重新解析，或用 `follow` / 登记型门面处理有状态资源。
+选中的那一家换人不一律重启消费者。下游的业务句柄 `use` 每次访问都重新解析；有状态资源用 `follow`，登记用登记型业务层。
 
 在 active 期间二次 `provide` 同一描述符（不带新 `entryId`）换实现，是反模式。正确做法是让 PluginManager 走完整 bounce：
 
 ```typescript
-await plugins.require().bounce(lifecycle.id);
+await plugins.use.bounce(lifecycle.use.id);
 ```
 
 `plugins` 与 `lifecycle` 都须写进 `uses`（`plugins` 是普通宿主服务，`pluginsService` 描述符）。几乎从不需要在 apply 内部替换实例：配置变了 → `updateConfig`；运行时事件让服务能力变了 → 改服务内部状态而非重新 provide。
@@ -41,7 +41,7 @@ await plugins.require().bounce(lifecycle.id);
 |---|---|
 | 没这个服务无法 apply | 有更好，没有也能跑（功能降级） |
 | 服务消失时必须停下（顶层插件转 pending） | 服务消失时可以保留主功能 |
-| 绑定接口与 optional **相同**（都是 `ServiceRef` 或自定义门面） | 只差激活闸，不差 API |
+| 选择层与业务层与 optional **相同**（业务层是提供者形状的活句柄或契约自定义的绑定） | 只差激活闸，不差 API；用前先看 `present` |
 
 没有默认注入——`uses` 写了什么，插件就只能碰到什么。内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）同样要声明才会出现在 `apply` 参数里；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。
 
@@ -52,7 +52,7 @@ await plugins.require().bounce(lifecycle.id);
 - `hostPaths`（家目录与安装集的绝对路径，`@aalis/api-host-paths`）：由宿主提供，Node 宿主同样会提供。插件要定位这些目录时声明它，不读 `process.cwd()`。
 - `hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
 
-`uses` 的值是描述符（或 `optional()` 包着的描述符），不是字符串。领域能力（LLM 的 tool-calling、storage 的 local-path）不是 core DI 的一维：用各域 `*-api` helper 按实例 / 句柄元数据过滤（见第 10 节）。
+`uses` 的值是描述符（或 `optional()` 包着的描述符），不是字符串。领域能力（LLM 的 tool-calling / vision）不是 core DI 的一维：用各域 `*-api` helper 按实例 / 句柄元数据过滤（见第 10 节）。
 
 ---
 
@@ -68,24 +68,25 @@ dev 模式下，实际 `provide` 了但未在 `provides` 声明的服务名会 w
 
 ## 3.5 提供者换人与 `follow`
 
-胜者替换默认**不**级联重启下游。调用型服务每次读 `current` / `require()` 即重新解析。要把有状态资源（SDK 句柄、订阅、登记在提供者实例上的规则）挂到会换人的提供者上，用 `follow`：
+选中的那一家换人默认**不**级联重启下游。业务句柄 `caps.x.use` 每次访问成员即重新解析，存起来也会跟着换人。要把有状态资源（SDK 句柄、订阅、登记在提供者实例上的规则）挂到会换人的提供者上，用 `follow`：
 
 ```typescript
-sessionHistory.follow(provider => {
-  const off = provider.registerAccessChecker(checker);
+sessionHistory.follow(history => {
+  const off = history.registerAccessChecker(checker);
   return off;
 });
 ```
 
 - `attach` 必须同步返回 `void` 或清理函数。`async` 回调类型上被拒；运行期 thenable 会被接住并 warn，不会当清理器。
-- 换人时先跑上次清理，等 Promise 落定（完成或被拒）才挂新实例；等待期间多次切换合并到最新。
+- 交给 `attach` 的是选中那一家的业务句柄，钉在挂上的那一条登记上，直到这次挂载的清理落定。
+- 换人时先跑上次清理，等 Promise 落定（完成或被拒）才挂新选中的那一家；等待期间多次切换合并到最新。
 - 拒绝被隔离并报告，不证明旧资源已释放。旧清理永不落定会阻塞交接。
 
-往 hub 登记（工具 / 命令 / 页面 / 预处理器）走描述符绑定门面：`tools.register`、`commands.command`、`webui.definePage`、`agent.registerPreprocessor`。门面用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
+往 hub 登记（工具 / 命令 / 页面 / 预处理器）走业务层的登记方法：`tools.use.register`、`commands.use.command`、`webui.use.definePage`、`agent.use.registerPreprocessor`。它们用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
 
-长期缓存 `current` 或 `all()[i].instance`：关停边不保护这份引用。提供者有失效逻辑则抛，没有则可能静默成功。
+长期缓存 `services.use.get` / `services.use.all(desc)[i].instance` 拿到的原始实例：关停边不保护这份引用。提供者有失效逻辑则抛，没有则可能静默成功。
 
-动态 `services.get` 不产生依赖边，关停期可能拿空。
+动态 `services.use.get` 不产生依赖边，关停期可能拿空。
 
 ---
 
@@ -101,15 +102,15 @@ export default definePlugin({
 
 声明后允许同一份定义通过 `name:suffix` 注册多次（典型用例：多个 LLM provider 配多套 API key）。需要保证：
 
-- `apply` 内**不直接注册全局命令**（会重复注册），改为通过 `commands` 服务路由，handler 内根据 `lifecycle.id` 区分实例
-- 如果 `provides` 服务，所有实例提供的服务**同名**，下游通过 priority + preference 选胜者（域能力另由 `*-api` helper 按实例/句柄元数据过滤）；服务实例之间互不串扰
+- `apply` 内**不直接注册全局命令**（会重复注册），改为通过 `commands` 服务路由，handler 内根据 `lifecycle.use.id` 区分实例
+- 如果 `provides` 服务，所有实例提供的服务**同名**，下游各按 priority + preference 选中其中一家（域能力另由 `*-api` helper 按实例/句柄元数据过滤）；服务实例之间互不串扰
 - `displayName` 内最好包含配置区分信息（`` displayName: `OpenAI / ${cfg.model}` ``）让 WebUI 能区分
 
 没有多实例需求就不要声明 reusable——重复注册会从直接挡下变成静默允许，掩盖配置 bug。
 
 ### 反模式：单实例 apply 内多次 `provide` 同一服务名
 
-不带 `entryId` 二次登记，下游按 identity 只会命中第一个。`provide` 会 warn。
+不带 `entryId` 二次登记，下游按条目 id 只会命中其中一个。`provide` 会 warn。
 
 正确做法二选一：
 
@@ -125,17 +126,17 @@ plugins:
 
 ```typescript
 apply({ provide, lifecycle, config, logger }) {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   for (const model of cfg.models) {
-    provide(llm, new LLMBackend(model), {
-      entryId: `${lifecycle.id}/${model.id}`,
+    provide.use(llm, new LLMBackend(model), {
+      entryId: `${lifecycle.use.id}/${model.id}`,
       label: `OpenAI / ${model.id}`,
     });
   }
 }
 ```
 
-下游走 preference 选默认胜者，或在请求参数中显式传 `provider` / `model` hint，由 `*-api` helper（如 `resolveLLMModel(llm, { provider, model })`）按 handle 元数据定位。
+下游的 `use` 按 preference 打到默认那一家，或在请求参数中显式传 `provider` / `model` hint，由 `*-api` helper（如 `resolveLLMModel(caps.llm, { provider, model })`）按条目 id 与 handle 元数据定位；按模型直接取写 `caps.llm.of('<provider>/<model>')`。
 
 ---
 
@@ -144,7 +145,7 @@ apply({ provide, lifecycle, config, logger }) {
 ### 应该放入 `onDispose`
 
 ```typescript
-lifecycle.onDispose(() => {
+lifecycle.use.onDispose(() => {
   clearInterval(timer);
   childProcess.kill();
   websocket.close();
@@ -158,15 +159,15 @@ lifecycle.onDispose(() => {
 
 收尾段：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等它确认。**依赖交接放这里**；`onDispose` 阶段依赖可能已不可用。
 
-关停以激活为单位，分 drain 与 close。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain，所以整机停机时这里调下层是安全的。宿主根激活使用插件服务：根 drain 先于该插件 close，交接仍放根的 `onDrain`。插件使用根激活登记的服务（基础服务、宿主服务）：不加排序边，归属保证插件 close 先于根 close。依赖成环时的处理见 [插件定义与能力](core/context.md)，交接放 `onDrain` 才不丢。
+关停以激活为单位，分 drain 与 close。插件用别的插件的服务（声明的 required 与 optional，对外的全部提供者）：消费者整个 close 完，提供者才 drain，所以整机停机时这里调下层是安全的。宿主根激活使用插件服务：根 drain 先于该插件 close，交接仍放根的 `onDrain`。插件使用根激活登记的服务（基础服务、宿主服务）：不加排序边，归属保证插件 close 先于根 close。依赖成环时的处理见 [插件定义与能力](core/context.md)，交接放 `onDrain` 才不丢。
 
 ### 不要放入
 
-通过 `events.on` / `hooks.middleware` / `provide` / 绑定门面 `register` 登记的东西都会随激活撤回。手动再退订可能 double-free。
+通过 `events.use.on` / `hooks.use.middleware` / `provide.use` / 业务层的 `register` 登记的东西都会随激活撤回。手动再退订可能 double-free。
 
 ### 边界：在清理回调里访问其它服务
 
-依赖交接放 `lifecycle.onDrain`（依赖仍可用）。`onDispose` 只释放自己的资源，**不能**假定 `x.current` 还在：拿不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在；随后消费者转 pending（bounce 后重新激活）。动态 `services.get` 不产生依赖边，关停期间可能取到空。
+依赖交接放 `lifecycle.use.onDrain`（依赖仍可用）。`onDispose` 只释放自己的资源，**不能**假定 `x.present` 还为真：选不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在；随后消费者转 pending（bounce 后重新激活）。动态 `services.use.get` 不产生依赖边，关停期间可能取到空。
 
 `App.stop()` 先冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成（单个至多等 `slowThresholdMs`）后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。
 
@@ -174,7 +175,7 @@ lifecycle.onDispose(() => {
 
 ## 6. 配置 schema：能力比形式重要
 
-`configSchema` 写在 `definePlugin` 上，同时描述表单、配置类型与解析规则。使用 `@aalis/schema-config` 的 `defineConfig` 保留类型信息，在 apply 开头调用 `parseConfig(configSchema, config, logger)`，后续只使用解析结果。Core 不解释 schema。
+`configSchema` 写在 `definePlugin` 上，同时描述表单、配置类型与解析规则。使用 `@aalis/schema-config` 的 `defineConfig` 保留类型信息，在 apply 开头调用 `parseConfig(configSchema, config.use, logger.use)`，后续只使用解析结果。Core 不解释 schema。
 
 - `secret: true` 表示值是凭据（API key、token、带账号密码的连接串）：宿主把值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只放引用，WebUI 只显示「已设置」、不回显原值。插件经 `parseConfig` 读到的仍是原值；引用的键不在密钥存储里时 `parseConfig` 拒绝激活，不回落默认值（不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出）。名字像凭据却不是凭据的字段（如 `maxTokens`）写 `secret: false`。存放与写入规则见 [运行态与配置文档](./core/config.md#密钥配置)
 - `required: true` 且没有默认值的字段未填时，`parseConfig` 抛出配置错误；数组元素中此类错误只丢弃该元素并告警。跨字段、条件必填等语义仍由插件核对
@@ -192,7 +193,7 @@ lifecycle.onDispose(() => {
 2. 如果当前 active：`disposeAsync` 你的激活（`onDrain` 然后 `onDispose`，异步清理会被等待）→ pending → `recompute()` 按拓扑重激活
 3. 如果之前 error：直接 pending → recompute 重试
 
-**你 apply 内不需要做任何特殊处理**。无状态服务的下游在下一次 `current` 查询时会自然拿到新实例。
+**你 apply 内不需要做任何特殊处理**。无状态服务的下游经业务句柄的下一次调用会自然打到新实例。
 
 ---
 
@@ -239,34 +240,34 @@ it('required 依赖到场后激活', async () => {
 
 ### 应该在 apply 里做
 
-- `provide(desc, impl)` 登记服务
-- `events.on` / `events.emit`
-- `hooks.middleware` / `hooks.run`
+- `provide.use(desc, impl)` 登记服务
+- `events.use.on` / `events.use.emit`
+- `hooks.use.middleware` / `hooks.use.run`
 - `x.follow(attach)` 跟随会换人的提供者
-- `tools.register` / `commands.command` / `webui.definePage` / `agent.registerPreprocessor`（经 `uses` 拿到的绑定门面）
-- `lifecycle.onDispose` / `onDrain` 清理外部资源与交接
+- `tools.use.register` / `commands.use.command` / `webui.use.definePage` / `agent.use.registerPreprocessor`（经 `uses` 拿到的业务层登记方法）
+- `lifecycle.use.onDispose` / `onDrain` 清理外部资源与交接
 - 启动后台 worker / 连接外部服务（发起即可，不要在 apply 里等它就绪，见下）
 
 ### 不应该在 apply 里做
 
-- 长时间下载、等外部服务就绪或其它可能很久不返回的 `await`。激活超过 `slowThresholdMs`（默认 60 秒）仍未完成会被告警、转入后台，依赖你所提供服务的插件一直等在 pending；停用、重启、停机或 required 依赖下线时 `lifecycle.signal` abort 之后只有 `disposeTimeoutMs`（默认 5 秒）的宽限，到期仍没停下的，你的插件在它停下之前不会重新激活（状态带 `lingering`）。做法见下文「长任务与取消」
+- 长时间下载、等外部服务就绪或其它可能很久不返回的 `await`。激活超过 `slowThresholdMs`（默认 60 秒）仍未完成会被告警、转入后台，依赖你所提供服务的插件一直等在 pending；停用、重启、停机或 required 依赖下线时 `lifecycle.use.signal` abort 之后只有 `disposeTimeoutMs`（默认 5 秒）的宽限，到期仍没停下的，你的插件在它停下之前不会重新激活（状态带 `lingering`）。做法见下文「长任务与取消」
 - 直接修改全局 process 状态（`process.env`、信号 handler）
 - 跨插件 import 实现细节（应只 import `@aalis/api-xxx`）
-- 绕过绑定门面直接打容器底层 API
+- 绕过业务层的登记方法、拿动态查询的原始实例直接登记
 - 整体用不了时写一行日志就 return：插件显示在运行，用户却不知道它什么都没做。缺必填配置、连不上必需的后端、运行环境不满足时在 apply 里抛错，插件进 `error` 态，原因出现在「需要处理」与 `/doctor`；只有部分功能坏了才降级并记日志。写法见下一节「报错与故障说明」
 
 ### 长任务与取消
 
 - 长任务放后台：在 apply 里发起、不 `await`，就绪状态由服务自己表达（如 `isReady()`、首次调用时等就绪）；或推迟到首次使用时再做。apply 本身尽快返回。
-- 用 `lifecycle.signal` 取消：`fetch(url, { signal: lifecycle.signal })`、`lifecycle.signal.addEventListener('abort', …)`、循环里查 `lifecycle.signal.aborted`。定时器、重连等回调里判断「本激活是否已开始关闭」也查它。
+- 用 `lifecycle.use.signal` 取消：`fetch(url, { signal: lifecycle.use.signal })`、`lifecycle.use.signal.addEventListener('abort', …)`、循环里查 `lifecycle.use.signal.aborted`。定时器、重连等回调里判断「本激活是否已开始关闭」也查它。
 - abort 的两个时机：apply 尚未完成时被停机或停用、卸载、重启接手，或后台激活因 required 依赖下线被拆，关闭计划冻结后立即 abort；其余情形在本激活的收尾段开始时 abort（`onDrain` 执行时已断，依赖你的插件先关闭时你的 signal 仍未断）。reason 是 `AbortError`。
 - abort 监听器同步执行，不得抛错：Node 宿主把监听器的异常当成未捕获异常，runtime 会因此退出进程。
-- 转入后台期间，你经 `provide` 登记的服务不对外，经 `events.on` 挂的监听与经绑定门面（工具、指令、页面等）登记的条目照常生效：`app:ready` / `app:started` 监听器可能在 apply 完成之前被调用。需要自身就绪的逻辑放在 apply 末尾再挂（两者都是 sticky，晚挂照样收到），或在回调里自查就绪。
+- 转入后台期间，你经 `provide.use` 登记的服务不对外，经 `events.use.on` 挂的监听与经业务层登记方法（工具、指令、页面等）登记的条目照常生效：`app:ready` / `app:started` 监听器可能在 apply 完成之前被调用。需要自身就绪的逻辑放在 apply 末尾再挂（两者都是 sticky，晚挂照样收到），或在回调里自查就绪。
 
 工具调用的长任务（构建、下载、转换、渲染、远端调用）不要自己做后台进程表与轮询工具，在工具定义上声明 `background`，交给执行器转后台（见 [api-tools](./api/api-tools.md#可转后台)）：
 
 ```typescript
-tools.register({
+tools.use.register({
   definition: { type: 'function', function: { name: 'acme_render', description: '…', parameters } },
   background: { yieldSeconds: 20 }, // 不写用执行器的默认 30 秒
   handler: async (args, ctx) => {
@@ -297,7 +298,7 @@ tools.register({
 | 什么时候发现 | 怎么报 | 用户在哪看到 |
 |---|---|---|
 | 激活时：缺配置、连不上必需的后端、运行环境不满足 | 在 `apply` 里抛错 | 「需要处理」、插件详情与 `/doctor` 的 `plugins.errored`；依赖它的插件写到它为止的依赖链，链尾就是这句 |
-| 激活后：凭据过期、后台任务一直失败、外部服务掉线 | `webui.notify` 发提示，`detail` 写修法，问题解决后 `clear` | 「需要处理」与插件详情 |
+| 激活后：凭据过期、后台任务一直失败、外部服务掉线 | `webui.use.notify` 发提示，`detail` 写修法，问题解决后 `clear` | 「需要处理」与插件详情 |
 | 能自己检查的状态：模型能不能用、目录能不能写 | 登记 doctor 检查，`warn` 与 `error` 的 `detail` 写修法 | `/doctor` 与 WebUI 的诊断页；没装 WebUI 的用户靠 `/doctor` |
 
 - 缺了就整体用不了的配置项在 schema 里写 `required: true`，不配 `default`：`parseConfig` 缺了就抛 `missingConfigError`，WebUI 把插件标成「待配置」并列出没填的键。带 `default` 的必填项永远算填了。不要自己判空后写日志、return；只在一定条件下才必填的（比如只在用官方地址时必填 `apiKey`）自己判，同样抛 `missingConfigError`。
@@ -311,26 +312,24 @@ tools.register({
 
 declaration-merging 扩展点：core 的 `AalisEvents`（自持基础设施事件），`@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`（空接口，由各 `-api` 填）。服务类型随描述符走，没有「服务名 → 实例」的核心类型表可 augment。
 
-领域能力（LLM 的 tool-calling / vision、storage 的 read/write/local-path）落在**服务实例 / model-handle 的元数据**上，由各 `-api` 包导出能力枚举 + 过滤 helper：
+领域能力（LLM 的 tool-calling / vision）落在**服务实例 / model-handle 的元数据**上，由各 `-api` 包导出能力枚举 + 过滤 helper：
 
 ```typescript
-export interface StorageCapabilityRegistry {
-  List: 'list';
-  Read: 'read';
-  Write: 'write';
-  Delete: 'delete';
-  LocalPath: 'local-path';
-  Watch: 'watch';
+export interface LLMCapabilityRegistry {
+  Chat: 'chat';
+  ToolCalling: 'tool_calling';
+  Vision: 'vision';
+  // …
 }
 ```
 
-运行时由各域 helper 做过滤（如 `resolveStorageEntryForRoot(storage, root, caps)` / `resolveLLMModel(llm, { provider, model })`），不是 core DI。
+运行时由各域 helper 在选择层的 `list()` 上做过滤（如 `resolveLLMModel(caps.llm, { provider, model }, requiredCaps)` 读条目的 `use.capabilities`），不是 core DI。存储根的读写删由根的权限位携带，提供者在每个操作前核对，不按能力挑提供者。
 
 不要在每个实现包里也声明自己的能力枚举——只 `-api` 包声明，实现包按需引用。
 
 ### `AalisEvents` 是封闭的：动态事件名怎么办？
 
-`AalisEvents` / `HookContextMap` **没有** `[key: string]` 兜底：没声明过的事件名会在 `events.on` / `events.emit` 处直接编译报错。固定事件逐条 declare；事件名需要运行时动态生成时，在自己命名空间内合并一条模板字面量签名：
+`AalisEvents` / `HookContextMap` **没有** `[key: string]` 兜底：没声明过的事件名会在 `events.use.on` / `events.use.emit` 处直接编译报错。固定事件逐条 declare；事件名需要运行时动态生成时，在自己命名空间内合并一条模板字面量签名：
 
 ```typescript
 declare module '@aalis/core' {
@@ -352,12 +351,12 @@ declare module '@aalis/core' {
 
 | 顺序 | 写法 | 何时用 |
 |---|---|---|
-| ① | `uses: { tools }` 等描述符 + 绑定门面 | 契约包导出了登记门面（tools / commands / webui / agent） |
+| ① | `uses: { tools }` 等描述符 + 业务层的登记方法 | 契约包的业务层带登记方法（tools / commands / webui / agent） |
 | ② | `x.follow(attach)` | 跨插件消费 + 需要在 provider 换人时自动重接有状态资源 |
-| ③ | `uses: { x }`（required）+ `x.require()` / `x.current` | 已声明依赖；激活时 provider 应在，但收敛间隙仍可能短暂为空 |
-| ④ | `optional(x)` + `x.current?.…` | 探测性可选依赖 |
+| ③ | `uses: { x }`（required）+ `x.use.…` | 已声明依赖；激活时 provider 应在，但收敛间隙仍可能短暂选不到（访问成员抛 `ServiceUnavailableError`） |
+| ④ | `optional(x)` + 先看 `x.present` 再 `x.use.…` | 探测性可选依赖 |
 
-反模式：没写进 `uses`，又去 `services.get` 当依赖用——无激活闸、无关停边。
+反模式：没写进 `uses`，又去 `services.use.get` 当依赖用——无激活闸、无关停边。
 
 `follow` 比自己监听 `service:changed` 轻量：已就绪立刻同步触发、反复上下线重接、关闭自动清理。
 
@@ -367,7 +366,7 @@ declare module '@aalis/core' {
 
 消费方 `import { llm } from '@aalis/api-llm'`（值导入）即可：`uses: { llm }` 之后 `apply` 参数类型从描述符推导，无需手写服务名字符串、也无需副作用 import 一张类型表。
 
-没把描述符写进 `uses` 时，动态 `services.get('llm')` 没有类型可依凭，由调用方自行收窄。
+没把描述符写进 `uses` 时，动态 `services.use.get('llm')` 没有类型可依凭，由调用方自行收窄。
 
 实现包的 `provides` 也用同一份描述符——保持「接口契约 → `-api` 包 / 实现 → 实现包」的单向依赖。
 
@@ -375,13 +374,13 @@ declare module '@aalis/core' {
 
 ## 13. 用户偏好放哪里？—— per-user 不进容器
 
-容器的 `services.prefer(key, contextId)` 用来锁定某个服务的胜者。**这个机制只用于管理员级 / App 级 default**，不要拿来存 per-user 偏好。
+容器的 `services.prefer(key, contextId)` 用来锁定某个服务选中的那一家（全局，或给 `{ for }` 只对某个插件实例）。**这个机制只用于管理员级 / App 级 default**，由用户经管理面设，不要拿来存 per-user 偏好。
 
 - 容器是进程级单例。A 用户锁定 OpenAI、B 用户锁定 DeepSeek 会互相覆盖
-- preferences 没有 user 维度
+- preferences 只有全局与插件实例两级，没有 user 维度
 - per-user 偏好语义是**请求维度的 hint**，不是容器维度的 default
 
-把用户偏好的 LLM/embedding 存在用户 profile 里，每次请求显式传入。优先级链：**req 显式 ref > user 偏好 ref > `services.prefer` > 注册顺序**——最后两级由 `resolveLLMModel(llm, undefined)` 回落到 `all()[0]`。
+把用户偏好的 LLM/embedding 存在用户 profile 里，每次请求显式传入。优先级链：**req 显式 ref > user 偏好 ref > `services.prefer` > 优先级与注册顺序**——最后两级由 `resolveLLMModel(caps.llm, undefined)` 回落到 `list()[0]`（本插件选中的那一家）。
 
 多租户：
 
@@ -396,7 +395,7 @@ declare module '@aalis/core' {
 <a id="ui-placement"></a>
 ## 14. 界面：声明式页面与插件前端
 
-插件不画宿主的界面，只声明自己有什么，由宿主按契约画出来；没装、没启用就不出现，界面不报错、不留空壳。页面默认声明式：用 `webui.definePage` 交出组件、数据源与动作，样式、窄屏变形、确认框与输入表单都由宿主统一画（见 [api-webui 的「声明式页面」](api/api-webui.md#声明式页面)）。声明式表达不了的页面（自绘的画布、拖拽编排这类交互）才用插件前端：插件包里的一份静态网页，在宿主画的隔离框架里运行，与宿主页面不同源，只能经宿主调这一页声明过的数据源与动作（见 [api-webui 的「插件前端」](api/api-webui.md#插件前端)）。
+插件不画宿主的界面，只声明自己有什么，由宿主按契约画出来；没装、没启用就不出现，界面不报错、不留空壳。页面默认声明式：用 `webui.use.definePage` 交出组件、数据源与动作，样式、窄屏变形、确认框与输入表单都由宿主统一画（见 [api-webui 的「声明式页面」](api/api-webui.md#声明式页面)）。声明式表达不了的页面（自绘的画布、拖拽编排这类交互）才用插件前端：插件包里的一份静态网页，在宿主画的隔离框架里运行，与宿主页面不同源，只能经宿主调这一页声明过的数据源与动作（见 [api-webui 的「插件前端」](api/api-webui.md#插件前端)）。
 
 **插件前端可以联网；脚本只认插件自己打包的文件。** 外站的样式、字体、图片、音视频与数据请求都放行；脚本只认包里 `webui/` 下的文件与宿主的公用目录，页面里写的内联脚本、`eval` 与外站脚本都不执行，框架里也不能再嵌别的网页。显示别人给的文字（群成员的昵称与消息、作品、网页标题）一律用只显示纯文字的写法：
 
@@ -416,9 +415,9 @@ cell.innerHTML = member.nickname;
 | 插件详情的页面（`placement: 'plugin'`，默认） | 声明式页面或插件前端 | 插件详情里的页面入口，地址 `/p/:instance/:pageKey`；用户可以把它固定到图标栏 |
 | 设置的一节（`placement: 'settings'`） | 只收声明式页面 | 设置的分节目录 |
 | 会话右侧面板（`placement: 'session'`） | 声明式页面或插件前端，可用 `applies` 只对部分会话适用 | 面板标签栏的「+」，用户打开后记住 |
-| 会话设置项 | `sessionManager.registerSetting`：一个配置字段，加适用的会话种类与显眼程度；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-manager 的「登记设置项」](api/api-session-manager.md#登记设置项)）。可选项要按服务现取的，字段的 `dynamicOptions` 指向提供它的服务，界面调那个服务各提供者的 `listModels()`，只拿得到取值、拿不到依赖项的值（见 [api-webui 的「可选项与模型」](api/api-webui.md#可选项与模型)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
-| 提示 | `webui.notify`：一条待处理事项或故障，带级别，可附跳转；事情处理好了就撤回 | 「需要处理」（运行状况页、首页摘要、运行状况的角标与标签页标题的数，每条计 1）与发出它的插件详情 |
-| 主题 | 经贡献点 `webui:theme` 交一份主题文件（`contributions.contribute('webui:theme', { id, theme })`，见 [api-webui 的「插件提供的主题」](api/api-webui.md#插件提供的主题)），只收颜色令牌，与导入的主题走同一套校验 | 设置「外观」的主题选择；插件停用后消失，正在用的回到同深浅的偏中性 |
+| 会话设置项 | `sessionManager.use.registerSetting`：一个配置字段，加适用的会话种类与显眼程度；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-manager 的「登记设置项」](api/api-session-manager.md#登记设置项)）。可选项要按服务现取的，字段的 `dynamicOptions` 指向提供它的服务，界面调那个服务各提供者的 `listModels()`，只拿得到取值、拿不到依赖项的值（见 [api-webui 的「可选项与模型」](api/api-webui.md#可选项与模型)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
+| 提示 | `webui.use.notify`：一条待处理事项或故障，带级别，可附跳转；事情处理好了就撤回 | 「需要处理」（运行状况页、首页摘要、运行状况的角标与标签页标题的数，每条计 1）与发出它的插件详情 |
+| 主题 | 经贡献点 `webui:theme` 交一份主题文件（`contributions.use.contribute('webui:theme', { id, theme })`，见 [api-webui 的「插件提供的主题」](api/api-webui.md#插件提供的主题)），只收颜色令牌，与导入的主题走同一套校验 | 设置「外观」的主题选择；插件停用后消失，正在用的回到同深浅的偏中性 |
 | 工具卡的展示 | 工具定义上的 `display`（命令、文件改动） | 时间线的工具卡与审批卡上的事实 |
 
 **不能放在哪：** 图标栏（里面的页面全由用户固定）、会话头部、输入框旁（快捷切换只收会话设置项）、时间线与消息、会话列表的行、浮层与弹窗、宿主自己的设置分区；工具卡只认 `display` 的种类，不收插件画的卡片。
@@ -435,11 +434,30 @@ cell.innerHTML = member.nickname;
 
 ## 16. 模型服务商：记账与余额
 
-写一个 LLM 服务商插件时，登记模型要套一层 `metered`：`provide(llm, metered(handle, events), { entryId })`。每次调用拿到用量时它发一条 `llm:usage`，记账插件（如 [plugin-usage-stats](plugins/plugin-usage-stats.md)）靠这条事件记账；不套就不记账，用量统计里看不到这个服务商的调用。插件的 `uses` 因此要带上 `events`。服务商有余额接口时可以在模型上实现 `balance`，用量统计页按服务商有没有实现决定出不出现「余额」。写法见 [api-llm 的「记账」](api/api-llm.md#记账)。
+写一个 LLM 服务商插件时，登记模型要套一层 `metered`：`provide.use(llm, metered(handle, events.use), { entryId })`。每次调用拿到用量时它发一条 `llm:usage`，记账插件（如 [plugin-usage-stats](plugins/plugin-usage-stats.md)）靠这条事件记账；不套就不记账，用量统计里看不到这个服务商的调用。插件的 `uses` 因此要带上 `events`。服务商有余额接口时可以在模型上实现 `balance`，用量统计页按服务商有没有实现决定出不出现「余额」。写法见 [api-llm 的「记账」](api/api-llm.md#记账)。
 
-调模型的插件在请求里带 `purpose`（给人看的短语，如「摘要」）与 `sessionId`，记账才知道这次调用做什么用、算在哪个会话上；调用方的实例由 `llm` 的绑定接口填，不用自己写。
+调模型的插件在请求里带 `purpose`（给人看的短语，如「摘要」）与 `sessionId`，记账才知道这次调用做什么用、算在哪个会话上；调用方的实例由 `llm` 的业务层填，不用自己写。
 
 ---
+
+## 从 0.19 迁移
+
+下列对照只列插件作者要改的写法。0.20 起 `caps.xxx` 分两层：选择层（`list()` / `use` / `of(id)` / `present` / `follow()`）与业务层（`use` 的形状），见 [插件定义与能力](core/context.md#选择层与业务层)。
+
+| 0.19 | 0.20 |
+| --- | --- |
+| `caps.x.current` / `caps.x.require()` 取到实例再调用 | `caps.x.use.方法()`：活的转发句柄，可以存起来；选不到提供者时访问成员同步抛 `ServiceUnavailableError`（按 `err.name` 认），optional 依赖先看 `caps.x.present` |
+| `caps.x.all()`，条目 `{ instance, contextId, label }` | `caps.x.list()`，条目 `{ id, label, priority, selected, basis, use }`；固定某一家用 `caps.x.of(id)` |
+| 取一次 `current` 固定一段操作的提供者；拿它与自己的实例比身份 | `caps.x.list().find(p => p.selected)?.use`；比条目 id：`…?.id === caps.lifecycle.use.id` |
+| 登记方法直接挂在 `caps.x` 上（`tools.register`、`commands.command`、`hooks.middleware`、`webui.definePage` …） | 挂在业务层上：`caps.tools.use.register`、`caps.commands.use.command`、`caps.hooks.use.middleware`、`caps.webui.use.definePage` … |
+| 内置项直接调用：`logger.info`、`events.on`、`lifecycle.onDispose` / `id` / `signal`、`provide(desc, impl)`、`services.get` | 同样经业务层：`logger.use.info`、`events.use.on`、`lifecycle.use.onDispose` / `id` / `signal`、`provide.use(desc, impl)`、`services.use.get` |
+| `parseConfig(schema, caps.config, caps.logger)` | `parseConfig(schema, caps.config.use, caps.logger.use)` |
+| storage 的网关 helper 与按条目路由的函数 | 删除。直接 `caps.storage.use.readFile(...)`；插件私有数据经 `caps.storage.use.own`（`pluginData:/<插件名>/`） |
+| process 的网关 helper | 删除。用 `caps.process.use` |
+| `resolveLLMModel` / `listLLMModels`、api-platform 与 api-remote-agent 的 helper 返回 `{ instance, contextId }` | 返回 `ProviderEntry`，句柄在 `use`、条目 id 在 `id`；按模型取写 `caps.llm.of('<provider>/<model>')` |
+| `isActiveTrigger(phase, trigger, self)` | 第三参是自己的条目 id：`isActiveTrigger(phase, caps.trigger, caps.lifecycle.use.id)` |
+| 插件代码里调 `services.prefer` 设偏好 | 偏好只由用户经管理面写（WebUI、`servicePreferences`）；`services.use.prefer(key, id, { for })` 供管理面用 |
+| 契约作者在 `bind` 里拼单层服务引用；`Bound*` 接口继承它 | `bind` 返回 `Object.assign(Object.create(port.provider), { ... })`；`Bound*` 接口 `extends` 提供者接口；资源口用 `port.provider` / `port.present` |
 
 ## 从 0.17 迁移
 
@@ -468,17 +486,16 @@ cell.innerHTML = member.nickname;
 | 0.16 | 0.17 |
 | --- | --- |
 | 具名 `name` / 依赖表 / 提供表（字符串）+ 函数 `apply`；配置为第二参 | `export default definePlugin({ name, uses, provides, apply(caps) })`；配置经 `uses: { config }` |
-| 第一参 Context：`on`/`emit`、`logger`、`onDispose`、`provide(name, impl)`、按名取服务、跟随订阅、`middleware`/`runHook`、`contribute`/`collect` | `uses` 里写描述符后解构：`events`、`logger`、`lifecycle`（`onDispose` / `onDrain`）、`provide(desc, impl)`、`x.current` / `require()` / `all()` / `follow`、`hooks`、`contributions` |
+| 第一参 Context：`on`/`emit`、`logger`、`onDispose`、`provide(name, impl)`、按名取服务、跟随订阅、`middleware`/`runHook`、`contribute`/`collect` | `uses` 里写描述符后解构：`events`、`logger`、`lifecycle`（`onDispose` / `onDrain`）、`provide(desc, impl)`、按名取服务与 `follow`（单层的服务引用，0.20 起分为选择层与业务层，见「从 0.19 迁移」）、`hooks`、`contributions` |
 | 整份宿主配置默认可取 | `hostConfig` 须显式 uses（普通宿主服务） |
 | `useModule` 子上下文 | 删除。改用顶层插件：定义声明 `reusable`，以 `name:suffix` 注册多实例 |
 | 契约包 `useXxxService` helper | 描述符值导入进 `uses` 与 `dependencies`；apply 里用绑定门面（`tools.register`、`commands.command`、`webui.definePage` / `notify`、`agent.registerPreprocessor`） |
-| 网关 helper 第一参为 Context | `createStorageGateway` / `createProcessGateway` / `resolveLLMModel` 第一参为 `ServiceRef` |
-| 依赖变更时整插件级联重启开关 | 删除。调用型每次读 `current`；有状态资源用 `follow`；登记型由 registrar 随换人重挂 |
+| 网关 helper 第一参为 Context | storage / process 的网关 helper 与 `resolveLLMModel` 第一参改为 `uses` 里声明的那一项（网关 helper 在 0.20 删除） |
+| 依赖变更时整插件级联重启开关 | 删除。调用型每次查询重新解析；有状态资源用 `follow`；登记型由 registrar 随换人重挂 |
 | 服务名→实例的 declaration merging 表 | 删除。类型随描述符走 |
 | 加载器接受具名导出与函数 default | 只认 `export default definePlugin({…})`；其它形状 warn 并跳过 |
 | `App` 上的公开 Context | `app.plugin` / `app.bind` / `app.config` / `app.plugins` / 四注册表 |
 | 公开条目 `module` / `requiredDeps` | `definition` / `required` / `optional`（服务名数组）；不含内部激活记录 |
-| `onBehalfOf` 是否计入代理人提供表 | 归属被代者，不计入代理人 `provides` |
 
 ---
 

@@ -26,11 +26,11 @@
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
 | `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
 | `tools` | `@aalis/plugin-tool-system` | tool 定义 Map | n/a | 否 | 同上 |
-| `webui-server` | `@aalis/plugin-webui-server` | 页面与提示的登记表 | n/a | 否 | bounce 后下游插件通过绑定门面 `definePage` / `notify` 由 registrar 跟随重挂；owner 的布局记录在插件数据里，不随之丢失 |
+| `webui-server` | `@aalis/plugin-webui-server` | 页面与提示的登记表 | n/a | 否 | bounce 后下游插件经业务层的 `definePage` / `notify` 由 registrar 跟随重挂；owner 的布局记录在插件数据里，不随之丢失 |
 | `doctor` | `@aalis/plugin-doctor` | `lastReport` 单例 | n/a | 否 | 重载后报告丢失，需重新 `runChecks` |
 | `scheduler` | `@aalis/plugin-scheduler` | 任务调度状态 | `data/scheduler-jobs.json` | 是（持久部分） | bounce 后从 JSON 读回；运行中的 timer 会重建 |
 | `authority` | `@aalis/plugin-authority` | 角色规则 | 配置文件 | 是 | 规则随配置一起回填 |
-| `session-manager` | `@aalis/plugin-session-manager` | 活跃 session Map | 视下游 memory 插件 | 部分 | 历史走 memory 服务，活跃句柄丢失需重建；会话表跟随 memory 胜者，换后端时先把未落盘的变更写回旧后端，再从新后端读表整体替换（不跨后端合并） |
+| `session-manager` | `@aalis/plugin-session-manager` | 活跃 session Map | 视下游 memory 插件 | 部分 | 历史走 memory 服务，活跃句柄丢失需重建；会话表跟随 memory 选中的那一家，换后端时先把未落盘的变更写回旧后端，再从新后端读表整体替换（不跨后端合并） |
 | `memory` | `@aalis/plugin-memory-sqlite` / `-mongodb` / `-summary` / `-inmemory` | LRU / 缓存 | SQLite / MongoDB（内存版除外） | 是（持久驱动）/ 否（inmemory） | inmemory 驱动 bounce 即清空 |
 | `vectorstore` | `@aalis/plugin-vectorstore-lancedb` / `-flat` | 索引句柄 | `data/lancedb/` / 平铺文件 | 是 | 句柄重建后数据可用 |
 | `embedding` | `@aalis/plugin-embedding-*` | HTTP client | n/a | n/a（无状态） | 重建即可用 |
@@ -44,9 +44,9 @@
 
 ## 重载注意事项
 
-provider bounce 时，此刻 required 解析到它的 active 下游（传递闭包）随之重启：并入同一批先收尾、先关，provider 重新激活后按拓扑序重新激活；有后备提供者时同样重启，不在空档里切到后备。其余下游不重启：消费者经 `ServiceRef` 每次查询解析当前提供者；有状态接线（SDK 句柄、订阅）用 `follow` 跟随重建。登记型能力（工具、页面、命令）由描述符的 `registrar` 在提供者换人时整体重挂。
+provider bounce 时，此刻 required 选中它的 active 下游（传递闭包）随之重启：并入同一批先收尾、先关，provider 重新激活后按拓扑序重新激活；有后备提供者时同样重启，不在空档里切到后备。其余下游不重启：消费者的业务句柄每次访问都重新解析到选中的那一家；有状态接线（SDK 句柄、订阅）用 `follow` 跟随重建。登记型能力（工具、页面、命令）由描述符的 `registrar` 在提供者换人时整体重挂。
 
-1. **bounce 连带重启 required 下游**：`bounce(target)` 拆掉 target 的激活，其 provided 服务从容器移除；此刻 required 解析到 target 的 active 下游同批重启，其进程内态随重启丢失。其余下游目标态不变（optional 上下线不改变目标态），下次读 `current` / `require` 拿到新胜者；`follow` / `registrar` 负责交接。
+1. **bounce 连带重启 required 下游**：`bounce(target)` 拆掉 target 的激活，其 provided 服务从容器移除；此刻 required 选中 target 的 active 下游同批重启，其进程内态随重启丢失。其余下游目标态不变（optional 上下线不改变目标态），业务句柄下一次访问打到新选中的那一家；`follow` / `registrar` 负责交接。
 
 2. **避免 bounce 持有外部连接的插件**：上表中标注 "重建即可用" 的插件可以
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，
@@ -66,7 +66,7 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
 
 - **不存在**：`@aalis/api-storage` 的 `isStorageNotFound(err)` 为真，按全新处理，照常写入。
 - **读取成功**：读取、解析、结构校验都通过，照常写入。
-- **读不懂**：其余一切情况，包括其它读取错误（含网关的「未知存储根」）、解析失败、合法 JSON 但结构不对。本次运行拒绝整份写入并告警，改动只在内存生效，原文件保持原样；重新读取（storage 换人时经 `follow` 重读，或重启）时重新判定。
+- **读不懂**：其余一切情况，包括其它读取错误（含存储提供者的「未知存储根」）、解析失败、合法 JSON 但结构不对。本次运行拒绝整份写入并告警，改动只在内存生效，原文件保持原样；重新读取（storage 换人时经 `follow` 重读，或重启）时重新判定。
 
 实现上：读取与解析分两段，解析报错不进入「不存在」判据；结构不对抛错归入「读不懂」，不当空处理；写入闸放在串行写链里，等进行中的读取完成后再判；从记账派生的行为（workflow 的 once）在「读不懂」时不据空状态执行。
 
@@ -74,10 +74,10 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
 
 ```ts
 // dispose + 重新 apply（不重新 import：从磁盘重载代码是宿主的事，见 @aalis/runtime 的 PluginLoader.reload）
-await plugins.require().bounce('@aalis/plugin-foo');
+await plugins.use.bounce('@aalis/plugin-foo');
 
 // 配置变化后的标准入口（bounce(id, { config }) 的薄壳）
-await plugins.require().updateConfig(instanceId, newConfig);
+await plugins.use.updateConfig(instanceId, newConfig);
 ```
 
 全局收敛（`recompute`）由 `PluginManager` 内部驱动，不在 `PluginManagerService` 接口上；`app.plugins` 对外也只是这个接口。管理类插件在 `uses` 里声明 `pluginsService`。

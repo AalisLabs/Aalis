@@ -8,7 +8,7 @@
 
 **这份文档是建议而非铁律。** 除了下面 § 1 明确写出的「`@aalis/core` 不 import 任何 `node:*`」这一条之外，其它所有规则都是：
 
-- **lint 默认值**：通过 `biome.json` 把一些 `node:*` 加入 `noRestrictedImports`，目的是当你绕过 storage / process 网关时**给出一个带解释的报错**，而不是默默引入难以审计的耦合。
+- **lint 默认值**：通过 `biome.json` 把一些 `node:*` 加入 `noRestrictedImports`，目的是当你绕过 storage / process 服务时**给出一个带解释的报错**，而不是默默引入难以审计的耦合。
 - **社区约定**：让生态里的插件优先用同一套抽象（storage / process / fetch），便于用户切换后端、便于重构、便于给某些场景做沙箱。
 
 如果你写的是**第三方插件**，并且：
@@ -26,16 +26,16 @@
 
 基于这条红线，对插件层给出以下默认建议：
 
-- **业务插件**（agent、memory、tools、persona、scheduler、websearch、image-recognition、…）建议**优先**通过以下网关访问宿主能力，而不是直接 import `node:*`：
-  - 文件系统 → `@aalis/api-storage`（`createStorageGateway(storage)`，`storage` 为 `uses` 里声明的 ServiceRef；命名根如 workspace、data、pluginData、tmp、cache、logs、personas、skills）
-  - 子进程 / 外部文件 / 临时目录 → `@aalis/api-process`（`createProcessGateway(proc)`，`proc` 为 `uses` 里声明的 ServiceRef；方法含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`）
+- **业务插件**（agent、memory、tools、persona、scheduler、websearch、image-recognition、…）建议**优先**通过以下服务访问宿主能力，而不是直接 import `node:*`：
+  - 文件系统 → `@aalis/api-storage`（`uses` 里声明 `storage` 后调 `caps.storage.use`；命名根如 workspace、data、pluginData、tmp、cache、logs、personas、skills）
+  - 子进程 / 外部文件 / 临时目录 → `@aalis/api-process`（`uses` 里声明 `processService` 后调 `caps.process.use`；方法含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`）
   - 出站网络 → `useNetwork()` / fetch
   - 入站网络 → 服务端类插件（webui-server / mcp-server）
   - 系统信息（CPU/内存/用户名）→ `plugin-tool-system` 的 `system_info` 工具
 
-  这样做的好处：用户切换 storage 后端（local / S3 / 内存）时插件不用改，重构时影响面可控，集成测试也更便于用 mock 网关替换。
+  这样做的好处：用户切换 storage 后端（local / S3 / 内存）时插件不用改，重构时影响面可控，集成测试也更便于用 mock 提供者替换。
 
-- **基础设施插件**（提供上述网关的实现，或本身就是宿主服务，例如 HTTP 入站）通常需要直接使用对应的 `node:*`，这是它们的本职。每个例外在 `biome.json` 的 `overrides` 例外清单中显式列出，**并在本文件登记原因**——新增例外时建议同步更新两处，方便审阅者理解。
+- **基础设施插件**（提供上述服务的实现，或本身就是宿主服务，例如 HTTP 入站）通常需要直接使用对应的 `node:*`，这是它们的本职。每个例外在 `biome.json` 的 `overrides` 例外清单中显式列出，**并在本文件登记原因**——新增例外时建议同步更新两处，方便审阅者理解。
 
 - **几乎总是可以直接用**的 `node:*` 模块（详见 § 1.5 边界说明）：
   - `node:buffer` —— Web 标准 `Uint8Array` 不能完全覆盖二进制 API（`Buffer.from(x,'base64')` / `Buffer.concat` / `Buffer.toString('hex')` 一行即可），且 `StorageService.writeFile` 签名 `string | Buffer` 等 API 直接要求 Buffer。
@@ -64,9 +64,9 @@
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
 |  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
 |  |  | `plugin-memory-sqlite/src/index.ts` | `statSync` 取数据库文件的设备号与 inode，判断两个实例是否打开了同一个库 |
-|  |  | `plugin-session-server/src/approvals.ts` | `appendFile` / `mkdir` 追加审批审计：只追加的记录，存储网关没有追加写 |
-|  |  | `plugin-usage-stats/src/index.ts` | `appendFile` / `mkdir` / `createReadStream` 追加与按行读回用量账本：只追加的记录，存储网关没有追加写与按行读 |
-|  |  | `plugin-reach` | 宿主路径的真实路径（安装集、用户家目录、守护进程的入口、链接装进来的包、清单里各规则的根）、按 `.git` 找仓库的 git 目录、本会话临时区（0700、清扫）、沙箱用的 npm 配置副本：这些路径不在存储根内，临时区要按 0700 建、按 lstat 不跟随链接清扫，存储网关没有这些能力；存储单元之后网关的宿主路径根要经触及凭据，而凭据正是本插件签发的 |
+|  |  | `plugin-session-server/src/approvals.ts` | `appendFile` / `mkdir` 追加审批审计：只追加的记录，存储服务没有追加写 |
+|  |  | `plugin-usage-stats/src/index.ts` | `appendFile` / `mkdir` / `createReadStream` 追加与按行读回用量账本：只追加的记录，存储服务没有追加写与按行读 |
+|  |  | `plugin-reach` | 宿主路径的真实路径（安装集、用户家目录、守护进程的入口、链接装进来的包、清单里各规则的根）、按 `.git` 找仓库的 git 目录、本会话临时区（0700、清扫）、沙箱用的 npm 配置副本：这些路径不在存储根内，临时区要按 0700 建、按 lstat 不跟随链接清扫，存储服务没有这些能力；存储单元之后存储服务的宿主路径根要经触及凭据，而凭据正是本插件签发的 |
 | `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
@@ -86,10 +86,10 @@
 
 每行格式：`插件 — 引入的 node:* — 用途`。biome.json `overrides[1].includes` 与此清单保持一致即可让 lint 通过（plugin-memory-sqlite 除外，见其条目）。
 
-### 基础设施（网关实现）
+### 基础设施（服务实现）
 
 - **`plugin-storage-local`** — `node:fs`（`createReadStream` / `watch`）+ `node:fs/promises`（CRUD）+ `node:crypto`（`randomBytes`）
-  本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `createStorageGateway(storage)` 即可，无需绕过它。`randomBytes` 为原子写的临时文件名生成随机段，避免同进程同一毫秒并发写同一路径时临时文件重名。
+  本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `caps.storage.use` 即可，无需绕过它。`randomBytes` 为原子写的临时文件名生成随机段，避免同进程同一毫秒并发写同一路径时临时文件重名。
 
 - **`plugin-process-local`** — `node:child_process`（`spawn`）+ `node:fs/promises`（`readFile`）
   `ProcessService` 的当前实现：负责 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`。`readExternalFile` 用于 OneBot 等推流场景，源端给的是 OS 直读路径（如 `/tmp/xxx.jpg`），不属于任何 storage 根，所以刻意绕过 storage 沙箱直接 `fs.readFile`；该方法不受沙箱约束，调用方自行保证路径安全。
@@ -113,15 +113,15 @@
 ### 脚手架
 
 - **`create-aalis-plugin`** — `node:fs`（`existsSync`）+ `node:fs/promises`（`mkdir`/`writeFile`）
-  `npm create aalis-plugin` 的 CLI，在工作区外生成新插件目录，无法、也不应通过 storage 网关。
+  `npm create aalis-plugin` 的 CLI，在工作区外生成新插件目录，无法、也不应通过 storage 服务。
 
 - **`create-aalis`** — `node:fs`（`existsSync` / `mkdirSync` / `writeFileSync` / `readdirSync` / `realpathSync`）+ `node:child_process`（`spawn`，用于 `npm install`）+ `node:url`（`fileURLToPath`）
-  `npm create aalis` 的 CLI，在工作区外脚手架一个可运行的独立项目（生成目录、`aalis.config.yaml`、安装依赖），同样无法、也不应通过 storage 网关。
+  `npm create aalis` 的 CLI，在工作区外脚手架一个可运行的独立项目（生成目录、`aalis.config.yaml`、安装依赖），同样无法、也不应通过 storage 服务。
 
 ### 浏览器自动化
 
 - **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）+ `node:crypto`（`createHash`）+ `node:net`（`createServer` / `connect` / `isIP`）
-  动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 网关覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
+  动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
 
 ### 记忆后端
 
@@ -138,7 +138,7 @@
 ### 触及
 
 - **`plugin-reach`** — `node:fs/promises`（`realpath` / `lstat` / `stat` / `readdir` / `readFile` / `writeFile` / `rename` / `mkdir` / `rm` / `access`）+ `node:os`（`homedir` / `userInfo`）
-  它读写的路径不在存储根内（安装集与链接装进来的包、用户家目录、仓库的 `.git`），本会话临时区要按 0700 建、按 lstat 不跟随链接清扫，存储网关没有这些能力；存储单元之后，网关读写宿主路径时要经触及凭据判，而凭据正是本插件签发的。各处 import 用行内的 `biome-ignore` 写明理由。三张受保护清单按真实路径比较：安装集、用户家目录与经链接装进来的包先取真实路径；仓库的 git 目录从绑定目录往上读 `.git`；本会话临时区按 0700 建、随会话删、按修改时间清扫；沙箱里 npm 的用户配置是用户家目录 `.npmrc` 去掉凭据行的副本，以随机名独占创建再改名到位，不跟随沙箱换上的符号链接。owner 的 login shell 取自 `SHELL`，没有时取操作系统账户登记的（`userInfo`）；拉起它走 `ProcessService.execFile`。
+  它读写的路径不在存储根内（安装集与链接装进来的包、用户家目录、仓库的 `.git`），本会话临时区要按 0700 建、按 lstat 不跟随链接清扫，存储服务没有这些能力；存储单元之后，存储服务读写宿主路径时要经触及凭据判，而凭据正是本插件签发的。各处 import 用行内的 `biome-ignore` 写明理由。三张受保护清单按真实路径比较：安装集、用户家目录与经链接装进来的包先取真实路径；仓库的 git 目录从绑定目录往上读 `.git`；本会话临时区按 0700 建、随会话删、按修改时间清扫；沙箱里 npm 的用户配置是用户家目录 `.npmrc` 去掉凭据行的副本，以随机名独占创建再改名到位，不跟随沙箱换上的符号链接。owner 的 login shell 取自 `SHELL`，没有时取操作系统账户登记的（`userInfo`）；拉起它走 `ProcessService.execFile`。
 
 ### 宿主运行时
 
@@ -149,7 +149,7 @@
 
 ## 4. 增加新例外的流程（仅当你想合入社区 / 让 lint 通过）
 
-1. **先评估**：能否扩展 `StorageService` / `ProcessService` 接口（如为 `ProcessService` 增补 `readExternalFile` 这样的方法）使你的需求落到既有网关里？能就走网关——通常对集成测试和后端切换更友好。
+1. **先评估**：能否扩展 `StorageService` / `ProcessService` 接口（如为 `ProcessService` 增补 `readExternalFile` 这样的方法）使你的需求落到既有服务里？能就走服务——通常对集成测试和后端切换更友好。
 2. 若确实需要新插件直接持有某个 `node:*`：
    - 在本文件 § 3 增加条目，写清「引入的模块 + 必要理由」。
    - 在 `biome.json` `overrides[1].includes` 增加对应路径。

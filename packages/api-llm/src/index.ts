@@ -61,7 +61,7 @@ export interface ChatStreamChunk {
 //
 // 每个 LLM model 是 ServiceContainer 'llm' 服务名下独立的 entry。
 //   - capability 声明 100% 反映该 model 的实际能力（无 router facade 谎言）
-//   - `resolveLLMModel(llm, ref, ['vision'])` 按 handle 元数据 `instance.capabilities` 直接命中合适 model
+//   - `resolveLLMModel(llm, ref, ['vision'])` 按条目业务句柄上的元数据 `use.capabilities` 直接命中合适 model
 //     （消费方过滤，不是 DI 选择）
 //   - ChatModelRequest 不含 model/provider 字段：entry 已绑定具体 (provider, model)
 
@@ -105,10 +105,10 @@ export interface ChatModelRequest {
  * model handle 上的 capabilities 字段诚实地反映该 model 的能力。
  *
  * 调用约定：
- *   const handle = resolveLLMModel(llm, ref, ['vision'])?.instance;
+ *   const handle = resolveLLMModel(llm, ref, ['vision'])?.use;
  *   await handle?.chat({ messages });   // entry 已知道是哪个 model
  *
- * 选择默认 model：`services.prefer('llm', '<provider>/<model>')` 或宿主配置的 `servicePreferences`。
+ * 默认 model 是 llm 服务的偏好，由用户经管理面（WebUI 或宿主配置的 `servicePreferences`）设为 `<provider>/<model>`。
  */
 export interface LLMModel {
   /** model id（provider 内唯一，如 'gpt-4o'）。来源：provider plugin 注册时填入。 */

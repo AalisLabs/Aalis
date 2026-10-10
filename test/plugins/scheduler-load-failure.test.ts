@@ -11,8 +11,8 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
-// 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（storage 不在场时网关抛
-// 「未知存储根」、文件损坏），曾经一律当成空表，之后第一次增删改把整表写回，原有动态任务全丢。
+// 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（storage 不在场时访问即抛错、
+// 文件损坏），曾经一律当成空表，之后第一次增删改把整表写回，原有动态任务全丢。
 // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
 // 拒写期间 scheduler_create_job 的回执注明新任务仅本次运行生效，别让用户以为已经存下。
 // 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），任务文件落在 data 根。
@@ -76,7 +76,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('激活时 storage 不在场（未知存储根）：storage 随后上线，addJob 不冲掉原有动态任务', async () => {
+  it('激活时 storage 不在场：storage 随后上线，addJob 不冲掉原有动态任务', async () => {
     const seeded = JSON.stringify([job('zz-old-1'), job('zz-old-2')], null, 2);
     writeFileSync(join(base, jobsFile), seeded);
 

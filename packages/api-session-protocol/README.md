@@ -24,8 +24,8 @@ import { approvals } from '@aalis/api-approval';
 import { sessionProtocol } from '@aalis/api-session-protocol';
 
 // uses: { sessionProtocol: optional(sessionProtocol), approvals: optional(approvals) }
-const surface = caps.approvals.registerSurface('webui');
-const conn = caps.sessionProtocol.require().connect(
+const surface = caps.approvals.use.registerSurface('webui');
+const conn = caps.sessionProtocol.use.connect(
   { identity: { platform: 'webui', userId: 'console' }, surface, disconnect: reason => socket.close(1000, reason) },
   frame => socket.send(frame),
 );

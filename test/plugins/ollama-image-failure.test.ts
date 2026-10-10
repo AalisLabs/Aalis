@@ -171,7 +171,7 @@ describe('识别失败的如实上报', () => {
         throw new Error('图片全部获取失败（共 1 张），拒绝降级为纯文本请求');
       },
     } as never);
-    // media 的 required 依赖：本用例只走 data URL 内联路径，两个网关都不会被调到
+    // media 的 required 依赖：本用例只走 data URL 内联路径，这两个服务都不会被调到
     host.provide.use(processService, {} as never);
     host.provide.use(storage, {} as never);
     await app.plugin(mediaPlugin, {});

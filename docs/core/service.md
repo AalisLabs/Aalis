@@ -1,6 +1,6 @@
 # 服务：描述符、按名解析、偏好
 
-插件通过**服务描述符**声明与发布服务；容器按名保存多个提供者，按「偏好 > 优先级 > 注册顺序」选出胜者。
+插件通过**服务描述符**声明与发布服务；容器按名保存多个提供者，每个消费方按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选中其中一家。
 
 **源码**: `packages/core/src/composition/descriptors.ts`、`packages/core/src/composition/binding.ts`、`packages/core/src/primitives/services.ts`、`packages/core/src/composition/core-services.ts`
 
@@ -8,23 +8,23 @@
 
 ## 描述符
 
-一个服务有两张面：容器中的提供者登记，与消费方通过描述符得到的绑定接口。容器保存 `provide` 交进来的实现对象本身；描述符的 `bind` 用资源口为消费方的这次激活造调用接口。
+一个服务有两张面：容器中的提供者登记，与消费方通过描述符得到的两层接口——选择层（`ServiceSelection`，core 定义，每个服务都一样）与业务层（契约定义）。容器保存 `provide` 交进来的实现对象本身；描述符的 `bind` 用资源口为消费方的这次激活造业务层。两层的形状见 [插件定义与能力](context.md#选择层与业务层)。
 
 ```typescript
-import { defineService, type BindingPort, serviceRef, type ServiceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 interface Clock {
   now(): number;
 }
 
-// 普通调用型：不给 bind，绑定接口是 ServiceRef<Clock>
+// 普通调用型：不给 bind，业务层就是按 Clock 形状转发的活句柄
 export const clock = defineService<Clock>('clock');
 
-// 注册型：给 bind，用资源口的 registrar / follow / track 造自动归属的门面
+// 注册型：给 bind，用资源口的 registrar / follow / track 造自动归属的登记方法
 interface Inbox {
   add(handler: (msg: string) => void): () => void;
 }
-export interface BoundInbox extends ServiceRef<Inbox> {
+export interface BoundInbox extends Inbox {
   register(handler: (msg: string) => void): () => void;
 }
 export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
@@ -32,28 +32,29 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
     key: item => item.id,
     register: (provider, item) => provider.add(item.handler),
   });
-  const extra = {
+  // 只加 register，其余成员沿原型链落到活句柄上
+  return Object.assign(Object.create(port.provider) as BoundInbox, {
     register: (handler: (msg: string) => void) => entries.add({ id: 'default', handler }),
-  };
-  return serviceRef(port, extra);
+  });
 });
 ```
 
 - 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
 - 服务身份是描述符的 `name`。契约包装了两份也指向同一服务；同一服务名以不同的描述符对象登记时照常登记，`provide` 处记一条 warn 点名两边（无关契约撞名，或同一契约包装了两份），不看 `devMode`。第三方契约的服务名带包名前缀，见 [契约包](../design/api-packages.md)。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#two-cores)。
-- `provide(descriptor, impl)` 按描述符约束实现类型。
+- `provide.use(descriptor, impl)` 按描述符约束实现类型。
 - Core 默认登记的六项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
-- 领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
+- 领域能力（LLM 的 `vision` / `tool_calling`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
 
 ### 资源口：binder 的范围
 
-消费方每次激活装配 `uses` 时，每项声明调一次描述符的 `bind`，传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
+消费方每次激活装配 `uses` 时，core 为每项声明造一个选择层，并对每个目标（`use` 与各个 `of(id)`）各调一次描述符的 `bind`，返回值就是该目标的业务句柄：`use` 的目标是本插件选中的那一家（随偏好与上下线换人），`of(id)` 的目标固定那一家。bind 可以包装业务方法（如 `llm` 给请求盖上调用方 id：`chat: req => port.provider.chat({ ...req, caller: port.id })`）、加登记方法，改不了选谁。传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
 
 - `follow(attach)`：随提供者换人的有状态资源。换人时先跑上次返回的清理（异步的等它落定）再挂新实例，下线与关闭时清理。
 - `registrar({ key, register })`：按键登记到提供者上的条目。同键替换，提供者换人时整体重挂，关闭时与原语同一拍撤回。
 - `track(off, label?)`：binder 自己持有、不属于任何提供者的资源，例如它自建的定时器或对外部来源的订阅。`off` 在这次激活的撤回段执行；返回一次性的退订，手动退订启动的异步清理同样由关闭等到。
-- `id` / `identity` / `logger`：这次激活的逻辑名、资源身份（见下文）与日志器。`current()` / `require()` / `all()` 每次调用按当时的胜者解析。
+- `id` / `identity` / `logger`：这次激活的逻辑名、资源身份（见下文）与日志器。
+- `provider` / `present`：目标那一家的活句柄（规则同业务句柄：每次访问成员重新解析，缺席时访问成员抛错；提供者是函数时可直接调用），与它此刻在不在。在转发之上加或改成员用 `Object.assign(Object.create(port.provider), { ... })`。
 
 跟提供者有关的状态用 `follow`，按键登记的条目用 `registrar`，两者都不合适时才用 `track`。
 
@@ -65,7 +66,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 钩子与贡献点不是内置服务：`hooks` / `contributions` 的契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，由插件 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 以普通（非独占）登记提供，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
 
-内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听与服务都归这次激活。内置描述符的 `bind` 是 `port => port.require()(port.identity)`，只用公开的资源口。提供者按身份认出调用方的激活，认不出就抛错。与第三方服务一样，提供者不核对 `uses` 里的声明：经 `services.get(events)` 动态查到的是提供者函数，以调用方自己的 `identity` 调用，得到的是它自己的门面。
+内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听与服务都归这次激活。内置描述符的 `bind` 是 `port => port.provider(port.identity)`，只用公开的资源口；业务句柄在装配时就取好这次激活的门面，本次激活拆卸之后门面照常可用。提供者按身份认出调用方的激活，认不出就抛错。与第三方服务一样，提供者不核对 `uses` 里的声明：经 `services.use.get(events)` 动态查到的是提供者函数，以调用方自己的 `identity` 调用，得到的是它自己的门面。
 
 ## 资源身份
 
@@ -75,9 +76,9 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 ## 解析顺序
 
-同一服务名可有多个提供者。`current` / `get` 的解析顺序为 **偏好 > 优先级 > 注册顺序**：先看是否有偏好的提供者（且仍存在），否则取优先级最高、最先注册者。无提供者返回 `undefined`。
+同一服务名可有多个提供者。挑选规则只有一条：**本插件偏好 > 全局偏好 > 优先级 > 注册顺序**。业务句柄 `use` 打到本插件按这条规则选中的那一家：先看本插件偏好、再看全局偏好指向的那家是否在场，都不在就取优先级最高、最先注册者；偏好指向的那家回来后切回。`services.get` / `all` / `inspect` 按全局口径，不看本插件偏好。无提供者时 `present` 为 false，`get` 返回 `undefined`。
 
-`provide(descriptor, impl, { exclusive: true })` 要求这个服务名下没有其他登记；该条目存在期间，任何第二条登记都被拒绝。它不改变解析顺序，也不赋予永久驻留权；退订后可以重新登记。
+`provide.use(descriptor, impl, { exclusive: true })` 要求这个服务名下没有其他登记；该条目存在期间，任何第二条登记都被拒绝。它不改变解析顺序，也不赋予永久驻留权；退订后可以重新登记。
 
 ## ServiceView
 
@@ -92,20 +93,20 @@ interface ServiceView<T = unknown> {
 }
 ```
 
-`all()` / `services.all(key)` 返回该投影的数组快照，顺序同样遵循「偏好 > 优先级 > 注册顺序」。
+`services.use.all(key)` 返回该投影的数组快照，顺序遵循「全局偏好 > 优先级 > 注册顺序」。选择层的 `list()` 给的是 `ProviderEntry`（`id` / `label` / `priority` / `selected` / `basis` / `use`），按本插件的口径排序，不含原始实例。
 
 `instance` 是登记进容器的对象本身。只查看登记信息应使用 `services.inspect(key)`：返回 `contextId` / `priority` / `label` 与 `exclusive`，不含实例。WebUI 服务列表使用这一元数据入口。
 
 ## 行为边界
 
-- `current` / `require` 返回本次解析到的登记对象。缓存不是自动转发代理。
-- 手动缓存的 `all()[i]` 不产生关停边。
-- `services.get` / `services.all` 不增加声明、不参与激活闸、不自动跟随，也不产生关停边。关停期仍可能拿空；需要声明等待与跟随的，写进 `uses` 并使用 `follow`。
-- 顶层 required 缺席会 `pending`，恢复重新激活；胜者替换不一律重启消费者。
+- 业务句柄是活的转发句柄：每次访问成员重新解析到本插件选中的那一家，存起来也会跟着换人；选不到时访问成员同步抛 `ServiceUnavailableError`。
+- 关停边对本插件已声明服务（required 与 optional）在编排那一刻对外的全部提供者建，不只是选中的那一家。
+- `services.get` / `services.all` 给的是原始实例：存起来不会跟着换人。它们不增加声明、不参与激活闸、不自动跟随，也不产生关停边。关停期仍可能拿空；需要声明等待与跟随的，写进 `uses` 并使用 `follow`。
+- 顶层 required 缺席会 `pending`，恢复重新激活；选中的那一家换人不一律重启消费者。
 
 ## `services`：动态查询与偏好
 
-管理、展示面用。插件在 `uses` 里声明 `services` 后拿到：
+管理、展示面用。插件在 `uses` 里声明 `services` 后经 `services.use` 拿到：
 
 ```typescript
 interface Services {
@@ -113,28 +114,28 @@ interface Services {
   all(key: ServiceDescriptor | string): ServiceView[];
   inspect(key: ServiceDescriptor | string): ServiceInfo[];
   names(): string[];
-  preferred(key: ServiceDescriptor | string): string | undefined;
-  prefer(key: ServiceDescriptor | string, contextId: string): boolean;
-  unprefer(key: ServiceDescriptor | string): boolean;
+  preferred(key: ServiceDescriptor | string, scope?: { for?: string }): string | undefined;
+  prefer(key: ServiceDescriptor | string, contextId: string, scope?: { for?: string }): boolean;
+  unprefer(key: ServiceDescriptor | string, scope?: { for?: string }): boolean;
 }
 ```
 
 有描述符就用描述符（带类型）；只有运行期字符串（URL、配置里的服务名）就用名字，类型由调用方收窄。
 
-`get` / `all` / `inspect` / `names` 与 `ServiceRef` 的读口同一口径：激活超过 `slowThresholdMs` 转入后台的提供者，在它激活完成前不参与解析，它登记的服务都看不到（`names` 只列有对外提供者的服务名）。
+`get` / `all` / `inspect` / `names` 与选择层的 `list()` 同一口径：激活超过 `slowThresholdMs` 转入后台的提供者，在它激活完成前不参与解析，它登记的服务都看不到（`names` 只列有对外提供者的服务名）。
 
 动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的 `identity` 调用才得到门面，认不出的身份即抛错。要用内置服务，在 `uses` 里声明它。
 
-`prefer(key, contextId)` 把该服务的胜者钉到指定逻辑身份，无视 priority。偏好可在目标 entry 注册前提前设置。切换偏好发出 `service:changed`，驱动 `follow` 订阅者按胜者变化重挂。也可在 WebUI 的 Services 页设置；配置项为 `servicePreferences`。
+`prefer(key, contextId, scope?)` 设偏好，无视 priority：给 `scope.for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。服务有独占条目且不是它时返回 false。切换偏好发出 `service:changed`，业务句柄随之打到新选中的那一家，`follow` 订阅者按选中的变化重挂。偏好只由用户经管理面写，普通插件不调 `prefer` / `unprefer`：WebUI 的 Services 页与配置项 `servicePreferences` 设的是全局偏好。
 
-跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是全局、进程级单例，不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#_13-用户偏好放哪里-——-per-user-不进容器)。
+跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是进程级的（全局，或按插件实例），不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#_13-用户偏好放哪里-——-per-user-不进容器)。
 
 ## ServiceContainer
 
-容器不外露：注册走 `provide(descriptor, impl)`，消费走 `uses` 后的 `ServiceRef` 或 `services.get`，宿主同样经 `app.bind` 取这两项。
+容器不外露：注册走 `provide.use(descriptor, impl)`，消费走 `uses` 后的选择层或 `services.use.get`，宿主同样经 `app.bind` 取这两项。
 
 容器按名字存取，不认识类型——实现是否满足契约由描述符在 `provide` 处约束。`register` 的 `owner` 是清理归属，必填（激活门面自动传入）。`unregisterByOwner` 按 owner 而非 contextId 批量清理，同名激活互不误清。
 
-宿主要用内置六项的接口经 `app.bind`，如 `app.bind({ events }).events`；动态查询与登记元数据经 `app.bind({ services })`。
+宿主要用内置六项的接口经 `app.bind`，如 `app.bind({ events }).events.use`；动态查询与登记元数据经 `app.bind({ services }).services.use`。
 
 `provides` 按实际登记的激活（owner）核对：本次激活以任何逻辑身份登记的条目都算它的；其他激活即使登记了相同 id，也不能替本激活满足 `provides`。条目 id 的格式由服务契约约定，core 不检查。dev 模式下，同一激活以同一 id 重复登记同一服务会 warn。

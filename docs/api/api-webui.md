@@ -33,7 +33,7 @@ interface WebUIService {
 ## 绑定接口
 
 ```ts
-interface BoundWebui extends ServiceRef<WebUIService> {
+interface BoundWebui extends WebUIService {
   definePage<
     const P extends PagePlacement = 'plugin',
     const S extends Record<string, unknown> = Record<never, never>,
@@ -55,7 +55,7 @@ interface NoticeHandle {
 
 `webui-server` 未就绪时登记排队，就绪后挂上；不必把 `webuiServer` 标成 required。
 
-另有调用型描述符 `webuiClient`（`WebuiClientProvider`），绑定接口是普通 `ServiceRef`。
+另有调用型描述符 `webuiClient`（`WebuiClientProvider`），不给 bind，业务层就是 `WebuiClientProvider` 形状的活句柄。
 
 ## 展示元数据（declaration merging）
 
@@ -75,7 +75,7 @@ export default definePlugin({
   name: '@acme/plugin-jobs',
   uses: { webui: optional(webuiServer) },
   apply({ webui }) {
-    const page = webui.definePage({
+    const page = webui.use.definePage({
       key: 'jobs',
       title: '任务',
       icon: 'calendar-clock',
@@ -245,7 +245,7 @@ webui-server 登记时整份核一遍，不过就不登记并记一条错误日�
 ### 声明
 
 ```ts
-webui.definePage({
+webui.use.definePage({
   key: 'board',
   title: '看板',
   icon: 'layout-grid',
@@ -523,7 +523,7 @@ type LayoutOperation =
 `WebuiClientProvider`：`getClientDir()` 返回含 `index.html` 的静态目录。两条接入：
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 含 `dist/index.html`，被 webui-server 自动发现挂载（无需 `apply`）。
-- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl, { label })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。替别的包登记时 `entryId` 取被托管包的 id；条目仍归登记的激活清理，计入它的 `provides`。
+- **主动覆盖**：插件 `apply` 里 `provide.use(webuiClient, impl, { label })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。替别的包登记时 `entryId` 取被托管包的 id；条目仍归登记的激活清理，计入它的 `provides`。
 
 ## 管理面推送（/admin）
 
@@ -944,7 +944,7 @@ interface ThemeContribution {
 }
 
 // apply 里
-contributions.contribute('webui:theme', {
+contributions.use.contribute('webui:theme', {
   id: 'dusk',
   theme: { format: 'aalis-theme', version: 1, name: '黄昏', kind: 'dark', colors: { '--color-bg': '#201a18' } },
 });

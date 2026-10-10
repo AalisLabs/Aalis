@@ -4,7 +4,7 @@
 
 `gateway` 是 Aalis 的**消息流编排中枢**：把平台适配器（OneBot / WebUI / CLI 等）和 agent 之间的入站 / 出站消息路由统一收口到一条带相位的管道里。
 
-- 服务注册名：`gateway` —— 即 `gateway.current` 里的字符串。
+- 服务注册名：`'gateway'`（描述符 `gateway`，消费方经 `gateway.use` 调用）。
 - 契约包：`@aalis/api-gateway`（`packages/api-gateway/src/index.ts`）。
 - 默认实现包：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provides: [gateway]`）。
 
@@ -32,7 +32,7 @@ export interface GatewayService {
 }
 ```
 
-契约包导出服务描述符 `gateway = defineService<GatewayService>('gateway')`（`packages/api-gateway/src/index.ts`），服务类型随描述符携带，不经 declaration merging。插件在 `uses` 里声明 `gateway` 后，`gateway.current` 推断为 `GatewayService | undefined`；按字符串名动态查询（`services.get('gateway')`）不带类型。
+契约包导出服务描述符 `gateway = defineService<GatewayService>('gateway')`（`packages/api-gateway/src/index.ts`），服务类型随描述符携带，不经 declaration merging。插件在 `uses` 里声明 `gateway` 后，`gateway.use` 推断为 `GatewayService`（缺席时访问成员抛错，可选依赖先看 `gateway.present`）；按字符串名动态查询（`services.use.get('gateway')`）不带类型。
 
 ### 2.2 入站相位常量与相位数据
 
@@ -86,20 +86,20 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide(gateway, service)`）。required `hooks`（由 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent', 'session-manager', 'authority']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示；会话管理与 authority 用来判房间类别做结构性放行，会话管理不在时全部照常走，authority 不在时没有人是 owner。
+**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide.use(gateway, service)`）。required `hooks`（由 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent', 'session-manager', 'authority']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示；会话管理与 authority 用来判房间类别做结构性放行，会话管理不在时全部照常走，authority 不在时没有人是 owner。
 
 **消费方分两类：**
 
-- **直接调服务（`gateway.current`）** —— 主要是 agent 自己回话，外加主动注入消息的系统侧触发器：
-  - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后 `gateway.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `events.emit('outbound:message', message)`，中间件链被跳过）。
-  - `packages/plugin-trigger-policy/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`（gateway 是 trigger-policy 的必需依赖，缺席的瞬间放弃这次注入）。
-  - `packages/plugin-commands/src/index.ts`：指令结果与意图确认的提示经 `gateway.dispatchOutbound` 回到会话。
+- **直接调服务（`gateway.use`）** —— 主要是 agent 自己回话，外加主动注入消息的系统侧触发器：
+  - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后先看 `gateway.present`，再 `gateway.use.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `events.use.emit('outbound:message', message)`，中间件链被跳过）。
+  - `packages/plugin-trigger-policy/src/idle-scheduler.ts`：idle 触发，`gateway.use.ingressMessage(msg)`（gateway 是 trigger-policy 的必需依赖，缺席的瞬间放弃这次注入）。
+  - `packages/plugin-commands/src/index.ts`：指令结果与意图确认的提示经 `gateway.use.dispatchOutbound` 回到会话。
 - **注册到相位 hook（不经服务接口；hook 键后期绑定，注册与 gateway 的加载先后无关）** —— 各中间件占据一个语义相位：
   - `plugin-commands` → `INBOUND_PHASE.COMMAND`（`packages/plugin-commands/src/index.ts`）
-  - 触发插件（`plugin-trigger-policy` 等，只有 `trigger` 服务的胜者判定）→ `INBOUND_PHASE.TRIGGER`
+  - 触发插件（`plugin-trigger-policy` 等，只有 `trigger` 服务选中的那一家判定）→ `INBOUND_PHASE.TRIGGER`
   - `plugin-flow-control` → `INBOUND_PHASE.FLOW`
 
-**平台适配器既不直接调服务、也不注册相位**：它只往事件总线发 `inbound:message`、监听 `outbound:message`。例如 `@aalis/plugin-adapter-onebot`（`provides: [platform]`，`packages/plugin-adapter-onebot/src/index.ts`）在多处 `events.emit('inbound:message', {...})`，并 `events.on('outbound:message', ...)` 发送。这种「适配器只与事件总线交互，gateway 接管编排」是有意的解耦：适配器**不需要**把 `gateway` 写进 `uses`，加载顺序也无所谓（事件是后期绑定的）。
+**平台适配器既不直接调服务、也不注册相位**：它只往事件总线发 `inbound:message`、监听 `outbound:message`。例如 `@aalis/plugin-adapter-onebot`（`provides: [platform]`，`packages/plugin-adapter-onebot/src/index.ts`）在多处 `events.use.emit('inbound:message', {...})`，并 `events.use.on('outbound:message', ...)` 发送。这种「适配器只与事件总线交互，gateway 接管编排」是有意的解耦：适配器**不需要**把 `gateway` 写进 `uses`，加载顺序也无所谓（事件是后期绑定的）。
 
 ## 4. 写一个 provider（替换 gateway 实现 —— 少见）
 
@@ -143,24 +143,24 @@ export default definePlugin({
   apply({ provide, events, hooks, agent }) {
     async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
       const data = { message, metadata: {} as Record<string, unknown> };
-      await hooks.run('outbound:dispatch', data, async () => {
-        await events.emit('outbound:message', data.message);
+      await hooks.use.run('outbound:dispatch', data, async () => {
+        await events.use.emit('outbound:message', data.message);
       });
     }
 
     async function processInbound(message: IncomingMessage): Promise<void> {
-      const agentSvc: AgentService | undefined = agent.current;
+      const agentSvc: AgentService | undefined = agent.present ? agent.use : undefined;
       const data: InboundPhaseData = { message, metadata: {}, agent: agentSvc };
       for (const phase of INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH)) {
-        const reachedEnd = await hooks.run(phase, data);
+        const reachedEnd = await hooks.use.run(phase, data);
         if (!reachedEnd) return;
       }
-      await hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
+      await hooks.use.run(INBOUND_PHASE.DISPATCH, data, async () => {
         if (data.agent) await data.agent.handleMessage(data.message);
       });
     }
 
-    events.on('inbound:message', msg => {
+    events.use.on('inbound:message', msg => {
       void processInbound(msg);
     });
 
@@ -168,19 +168,19 @@ export default definePlugin({
       ingressMessage: msg => processInbound(msg),
       dispatchOutbound,
     };
-    provide(gateway, service);
+    provide.use(gateway, service);
   },
 });
 ```
 
-> `provide` 无需传 priority —— gateway 一般是单提供方。同名竞争时的胜者规则是 `preference > priority > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
+> `provide.use` 无需传 priority —— gateway 一般是单提供方。同名竞争时消费方选中哪一家按 `本插件偏好 > 全局偏好 > priority > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
 
 ## 5. 写一个平台适配器（最常见）
 
 平台适配器是「适配器如何插入」的答案。它不实现 `gateway`，也不把 gateway 写进 `uses`，只 `provides: [platform]`，与事件总线交互：
 
-- **入站**：把平台原始消息映射成 `IncomingMessage`，`events.emit('inbound:message', msg)`。gateway 会自动接管相位链；适配器**不要**自己做命令/流控/触发判定（这些是相位插件的职责，参考 `packages/plugin-adapter-onebot/src/index.ts` 注释「适配器不再做流控/触发判定」）。
-- **出站**：`events.on('outbound:message', msg)`，按 `msg.sessionId` 前缀（如 `'onebot:'`）认领属于自己平台的消息再发送（`packages/plugin-adapter-onebot/src/index.ts`）。
+- **入站**：把平台原始消息映射成 `IncomingMessage`，`events.use.emit('inbound:message', msg)`。gateway 会自动接管相位链；适配器**不要**自己做命令/流控/触发判定（这些是相位插件的职责，参考 `packages/plugin-adapter-onebot/src/index.ts` 注释「适配器不再做流控/触发判定」）。
+- **出站**：`events.use.on('outbound:message', msg)`，按 `msg.sessionId` 前缀（如 `'onebot:'`）认领属于自己平台的消息再发送（`packages/plugin-adapter-onebot/src/index.ts`）。
 
 ```ts
 import { platform } from '@aalis/api-platform';
@@ -191,31 +191,31 @@ export default definePlugin({
   provides: [platform],
   uses: { provide, events },
   apply({ provide, events }) {
-    provide(platform, {
+    provide.use(platform, {
       adapterName: 'MyPlat',
       platform: 'myplat',
       getConnections: () => [],
       async sendMessage() {},
     });
-    events.on('outbound:message', async msg => {
+    events.use.on('outbound:message', async msg => {
       if (!msg.sessionId.startsWith('myplat:')) return;
     });
   },
 });
 ```
 
-> 想从系统侧（非用户消息）主动喂入一条消息（idle / 定时 / 自检），调 `gateway.current?.ingressMessage(msg)`，或 `events.emit('inbound:message', msg)`（plugin-scheduler 的写法）。两者都由 gateway 插件走完整入站相位链；gateway 缺席时两者都无人处理（见 §8），emit 不能当作 gateway 缺席时的回退。系统侧注入要设置 `source`（见 §7）。
+> 想从系统侧（非用户消息）主动喂入一条消息（idle / 定时 / 自检），先看 `gateway.present` 再调 `gateway.use.ingressMessage(msg)`，或 `events.use.emit('inbound:message', msg)`（plugin-scheduler 的写法）。两者都由 gateway 插件走完整入站相位链；gateway 缺席时两者都无人处理（见 §8），emit 不能当作 gateway 缺席时的回退。系统侧注入要设置 `source`（见 §7）。
 
 ## 6. 标准消费方式
 
-- **惰性读取 `.current`，每次用时重新取，不缓存**：`const gw = gateway.current`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
-- **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway ? gateway.dispatchOutbound(msg) : events.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 plugin-commands 靠它回送指令结果与确认提示，`packages/plugin-commands/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
-- **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
-- **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
+- **业务句柄是活的**：`gateway.use` 每次访问成员都解析到本插件当前选中的那一家，provider bounce（卸载/重载）后，存进模块/闭包变量的句柄也会跟着换人；一段操作要固定同一家时取 `gateway.list().find(p => p.selected)?.use`。详见 `concepts/lazy-service-access.md`。
+- **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway.present ? gateway.use.dispatchOutbound(msg) : events.use.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 plugin-commands 靠它回送指令结果与确认提示，`packages/plugin-commands/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
+- **注册相位 = 用 `hooks.use.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.use.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
+- **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.use.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
 ## 7. 能力 / 风险 → 影响
 
-- **出站统一收口**：业务层**不应**再直接 `events.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
+- **出站统一收口**：业务层**不应**再直接 `events.use.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
 - **COMMAND 相位与在途生成的 abort**：`inbound:command` 排在最前。指令意图确认的回复（发出者本人在同一会话的下一条消息）在这里命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort（`packages/plugin-commands/src/index.ts`）。若你新增相位插在 COMMAND 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `plugins/plugin-authority.md`。
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / workflow）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 构造工具调用上下文时优先用 `actor` 查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
 - **`source` 标识系统侧注入**：闲置触发、定时任务、workflow 等触发器投递的消息必须设置 `IncomingMessage.source`；平台适配器投递真人消息**不得**设置。带 `source` 的消息被视为内部注入：不经触发策略（不计数、不改写 `triggerType`），不过回复后冷却，禁言与限速照常生效。`source` 同时用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。
@@ -232,7 +232,7 @@ export default definePlugin({
 ## 9. 交叉链接
 
 - 服务模型 / 同名竞争 / DI 选择规则：`concepts/service-model.md`、`core/service.md`
-- 懒取服务、provider bounce：`concepts/lazy-service-access.md`
+- 业务句柄是活的、provider bounce：`concepts/lazy-service-access.md`
 - 双源 manifest（`package.json aalis.service` vs `provides`/`uses`）：`concepts/manifest-metadata.md`
 - 消息载体类型与端到端流水线：`concepts/message-llm-pipeline.md`（`IncomingMessage` / `OutgoingMessage` 在 `@aalis/schema-message`）
 - 确认 / 人在回路 / 授权：`concepts/security-model.md`、`plugins/plugin-authority.md`

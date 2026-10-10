@@ -1,8 +1,8 @@
 # asr 语音识别服务
 
-把「单条音频附件 → 文本」抽象成核心可替换服务。消费方用 `asr.current` 拿到当前胜出的后端（whisper.cpp / 云 ASR / 兼容 OpenAI 的网关），无需感知具体实现。
+把「单条音频附件 → 文本」抽象成核心可替换服务。消费方经 `asr.use` 调用本插件选中的那一家后端（whisper.cpp / 云 ASR / 兼容 OpenAI 的网关），无需感知具体实现。
 
-- 服务注册名：`'asr'`（`asr.current`）
+- 服务注册名：`'asr'`（消费方经 `asr.use` 调用）
 - 契约包：`@aalis/api-asr`（`packages/api-asr/src/index.ts`）
 - 参考实现：`@aalis/plugin-asr-openai`、`@aalis/plugin-asr-whisper-cpp`
 - 典型消费方：`@aalis/plugin-media`（把每个 asr provider 包成 `cap='audio'` 的 MediaProcessor）
@@ -45,7 +45,7 @@ export interface TranscribeResult {
 
 输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/schema-message/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
 
-经 `defineService` 描述符 `asr` 取得强类型（`index.ts`）：`asr.current` 为 `ASRService | undefined`，无可用后端时即为 `undefined`。
+经 `defineService` 描述符 `asr` 取得强类型（`index.ts`）：契约不给 bind，`asr.use` 就是 `ASRService` 形状的活句柄；无可用后端时 `asr.present` 为 `false`，访问成员同步抛 `ServiceUnavailableError`。
 
 ---
 
@@ -58,7 +58,7 @@ export interface TranscribeResult {
 | `@aalis/plugin-asr-openai` | OpenAI 兼容 `/audio/transcriptions`（OpenAI / Groq / 本地网关） | `optional: ['process','storage']`（`plugin-asr-openai/src/index.ts`） | 50 |
 | `@aalis/plugin-asr-whisper-cpp` | 本地 `whisper-cli` 二进制 + ffmpeg 转码 | `required: ['process','storage']`（`plugin-asr-whisper-cpp/src/index.ts`） | 80 |
 
-两者都 `provides: [asr]`，都在 `apply` 内 `provide(asr, asr, { priority })` 注册（`plugin-asr-openai/src/index.ts`；`plugin-asr-whisper-cpp/src/index.ts`）。
+两者都 `provides: [asr]`，都在 `apply` 内 `caps.provide.use(asr, impl, { priority })` 注册（`plugin-asr-openai/src/index.ts`；`plugin-asr-whisper-cpp/src/index.ts`）。
 
 `uses` 一个 optional 一个 required 的原因：openai 后端只在「附件是本地路径/storage URI」时才需要 process/storage（base64/http 自带数据），所以可选；whisper-cpp 永远要落临时文件并跑 ffmpeg/whisper-cli，process/storage 是硬依赖。
 
@@ -68,9 +68,9 @@ export interface TranscribeResult {
 
 ```ts
 private asrProcessors(): MediaProcessor[] {
-  return this.caps.asr.all().map(e => {
-    const asr = e.instance;
-    const name = `asr:${e.contextId}`;
+  return this.caps.asr.list().map(e => {
+    const asr = e.use;
+    const name = `asr:${e.id}`;
     return {
       name, capabilities: ['audio'], priority: e.priority,
       transcribe: async input => {
@@ -83,7 +83,7 @@ private asrProcessors(): MediaProcessor[] {
 }
 ```
 
-它用 `asr.all()` 拿**全部** provider（不是单一胜者），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
+它用 `asr.list()` 拿**全部** provider（不只是本插件选中的那一家；条目的 `use` 是那一家的业务句柄，`id` 是条目身份），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
 
 ---
 
@@ -113,24 +113,25 @@ export default definePlugin({
   apply({ provide, logger, process, storage }) {
     const impl: ASRService = {
       async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-        void process.current;
-        void storage.current;
+        // process / storage 是可选依赖：用前先看 present，再经 process.use / storage.use 调用
+        void process.present;
+        void storage.present;
         // input.attachment.data 形态见 §4「物化附件」；远程下载必须走 safeFetch
         return { text: String(input.language ?? '') };
       },
     };
-    provide(asr, impl, { priority: 50 });
-    logger.info('asr provider ready');
+    provide.use(asr, impl, { priority: 50 });
+    logger.use.info('asr provider ready');
   },
 });
 ```
 
 ### 注册要点
 
-- `provide(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
-- **priority**：普通数字，越大越优先，含义自行记载。写成插件里的常量，只作提供者之间的默认先后：参考实现用 50（云）/ 80（本地，质量更高默认更优先）。不要把 priority 开成插件配置：用户要换转写后端，设 media 的 `audio.prefer`，再开一个优先级配置，同一件事就有了两个入口。服务偏好只决定 `asr.current`，media 回退时按 priority 排，偏好只在优先级相同时决胜。
+- `provide.use(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，消费方选中哪一家按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
+- **priority**：普通数字，越大越优先，含义自行记载。写成插件里的常量，只作提供者之间的默认先后：参考实现用 50（云）/ 80（本地，质量更高默认更优先）。不要把 priority 开成插件配置：用户要换转写后端，设 media 的 `audio.prefer`，再开一个优先级配置，同一件事就有了两个入口。服务偏好只决定 `asr.use` 打到哪一家，media 回退时按 priority 排，偏好只在优先级相同时决胜。
 - **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
-- 若你想被 media 的 `audio.prefer` 精确选中，注意 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
+- 若你想被 media 的 `audio.prefer` 精确选中，注意 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide.use` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
 
 ### 双源元数据要对齐
 
@@ -151,7 +152,7 @@ manifest 是双源的（`docs/concepts/manifest-metadata.md`）：
 
 ## 4. 标准消费方式
 
-### lazy 取服务，不要缓存实例
+### 业务句柄是活的
 
 ```ts
 import type { MessageAttachment } from '@aalis/schema-message';
@@ -163,9 +164,8 @@ export default definePlugin({
   uses: { asr: optional(asr) },
   apply({ asr }) {
     async function transcribeOne(att: MessageAttachment) {
-      const svc = asr.current;
-      if (!svc) return undefined;
-      const { text } = await svc.transcribe({ attachment: att, language: 'zh' });
+      if (!asr.present) return undefined;
+      const { text } = await asr.use.transcribe({ attachment: att, language: 'zh' });
       return text;
     }
     void transcribeOne;
@@ -173,11 +173,11 @@ export default definePlugin({
 });
 ```
 
-`.current` 返回的是**当时点的裸实例**，provider 发生换跳（热插拔 / 偏好切换）不会跟随（`packages/core/src/composition/descriptors.ts`）。所以每次用都重新读取 `.current`，不要缓存到类字段。详见 `docs/concepts/lazy-service-access.md`。
+`asr.use` 是**活的转发句柄**：每次访问成员都解析到本插件当前选中的那一家，provider 换人（热插拔 / 偏好切换）后，存进类字段的句柄也会跟着换（`packages/core/src/composition/descriptors.ts`）。一段操作要固定同一家时，取 `asr.list().find(p => p.selected)?.use`。详见 `docs/concepts/lazy-service-access.md`。
 
 ### asr 是可选依赖，缺失要降级
 
-`asr` 几乎总该声明为 `uses optional`（像 media 那样），因为单 owner 工程可能未安装任何语音后端。消费方拿到 `undefined` 时应静默返回「未识别」占位，而不是抛错——media 的做法是日志 debug 后 `return undefined`（`plugin-media/src/service.ts`），并在最终描述里补占位文本让主 LLM 知情「有音频但没识别」（`service.ts`）。
+`asr` 几乎总该声明为 `uses optional`（像 media 那样），因为单 owner 工程可能未安装任何语音后端。消费方在 `asr.present` 为 `false` 时应静默返回「未识别」占位，而不是抛错——media 的做法是日志 debug 后 `return undefined`（`plugin-media/src/service.ts`），并在最终描述里补占位文本让主 LLM 知情「有音频但没识别」（`service.ts`）。
 
 ### 错误边界
 
@@ -194,7 +194,7 @@ export default definePlugin({
 3. **`http(s)://`**：**必须用 `safeFetch`（`@aalis/util-network-guard`）下载**，不要用裸 `fetch`（见 §6）。`safeFetch` 只管 SSRF 与重定向，不带超时也不限体积，下载方要自己补上：两个参考实现与 plugin-media 同口径，超时 15 秒（覆盖连接与读完响应体）、体积上限 20 MiB（按流式累计判定，超限即断并抛错），不要整读 `arrayBuffer()`。
 4. **storage URI / 历史裸相对路径**：`isStorageUri(data)` 判定（`packages/api-storage/src/index.ts`）；历史格式 `data/...` 补成 `data:/...`。openai 用 `storage.readFile(uri)` 读字节；whisper-cpp 用 `storage.resolveLocalPath?.(uri, 'read')` 拿本地路径喂 ffmpeg。
 
-process/storage 经 gateway 注入：`createProcessGateway(process)` / `createStorageGateway(storage)`（`api-process/src/index.ts`、`api-storage/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`api-process/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`plugin-asr-whisper-cpp/src/index.ts`）。
+process/storage 取业务句柄 `caps.proc.use` / `caps.storage.use` 传给实现（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`api-process/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`plugin-asr-whisper-cpp/src/index.ts`）。
 
 ### SSRF / 网络出口
 
@@ -224,7 +224,7 @@ process/storage 经 gateway 注入：`createProcessGateway(process)` / `createSt
 ## 7. 交叉链接
 
 - `docs/concepts/service-model.md` —— DI 按名仲裁（偏好 > 优先级 > 注册顺序）、无 capability 选择
-- `docs/concepts/lazy-service-access.md` —— 为什么每次读取 `.current`、provider bounce
+- `docs/concepts/lazy-service-access.md` —— 业务句柄为什么是活的、provider bounce
 - `docs/concepts/manifest-metadata.md` —— `provides`/`uses` 双源、市场披露
 - `docs/concepts/storage-uri-grammar.md` —— `<root>:/path` 文法、`isStorageUri`
 - `docs/concepts/security-model.md` —— `safeFetch` SSRF 防护、storage 非沙箱

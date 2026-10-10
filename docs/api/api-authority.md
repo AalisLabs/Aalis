@@ -4,7 +4,7 @@
 **源码**: `packages/api-authority/src/index.ts`  
 **实现**: `@aalis/plugin-authority`
 
-描述符 `authority`（`name: 'authority'`），绑定接口是普通 `ServiceRef<AuthorityService>`。
+描述符 `authority`（`name: 'authority'`），不给 bind，业务层就是 `AuthorityService` 形状的活句柄（`caps.authority.use`）。
 
 ## 概述
 

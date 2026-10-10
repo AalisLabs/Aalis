@@ -4,7 +4,7 @@
 
 把**原始入站消息流 + 我方出站富文本 + 平台 notice 事件**持久化成 `Message` 历史条目，写入底层 `memory` 服务，供后续上下文渲染、向量检索、引用回复反查、用户档案事实提取等场景消费。它是「消息文本最终成形（发送者前缀 / 引用回复 / 图片描述 / 附件名）」的**唯一烘焙入口**——预处理器只写元信息，content 的拼接全在归档阶段一锤定音。
 
-- 服务注册名：`'message-archive'`（描述符 `messageArchive`，读 `messageArchive.current`）
+- 服务注册名：`'message-archive'`（描述符 `messageArchive`，消费方经 `messageArchive.use` 调用）
 - 契约包：`@aalis/api-message-archive`
 - 参考实现：`@aalis/plugin-message-archive`
 
@@ -43,9 +43,9 @@ export interface MessageArchiveService {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方**：`@aalis/plugin-message-archive`，在 `apply` 末尾 `provide(messageArchive, service)`（`packages/plugin-message-archive/src/index.ts`）。manifest 见 `package.json` 的 `aalis.service.provides: ['message-archive']` + 源码 `provides: [messageArchive]`。
+**提供方**：`@aalis/plugin-message-archive`，在 `apply` 末尾 `provide.use(messageArchive, service)`（`packages/plugin-message-archive/src/index.ts`）。manifest 见 `package.json` 的 `aalis.service.provides: ['message-archive']` + 源码 `provides: [messageArchive]`。
 
-**典型消费点**（全部走 `messageArchive.current`，且都列为 `uses optional`）：
+**典型消费点**（全部先看 `messageArchive.present` 再经 `messageArchive.use` 调用，且都列为 `uses optional`）：
 
 - `plugin-agent`：主链路。`archiveIncomingMessageInOrder` 串行入档入站消息（`packages/plugin-agent/src/index.ts`），并用 `saveMessage` 回档 assistant 产物。
 - `plugin-adapter-onebot`：`archiveNotice` 入档群事件；`findByMessageId` 反查引用原文；`saveMessage` 入档投递失败提示（一处）。
@@ -79,7 +79,6 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
 
 ```ts
 import { memory } from '@aalis/api-memory';
-import type { MemoryService } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import { definePlugin, events, logger, provide } from '@aalis/core';
@@ -90,50 +89,43 @@ export default definePlugin({
   provides: [messageArchive],
   uses: { provide, events, logger, memory },
   apply({ provide, events, logger, memory }) {
-    const getMemory = (): MemoryService => {
-      const m = memory.current;
-      if (!m) throw new Error('message-archive 需要 memory 服务');
-      return m;
-    };
-
     const service: MessageArchiveService = {
       async saveMessage(sessionId, message) {
-        await getMemory().saveMessage(sessionId, message);
+        await memory.use.saveMessage(sessionId, message);
       },
       async archiveIncoming(incoming: IncomingMessage) {
         const content = incoming.content;
         const message: Message = { role: 'user', content, timestamp: Date.now() };
-        await getMemory().saveMessage(incoming.sessionId, message);
-        events
+        await memory.use.saveMessage(incoming.sessionId, message);
+        events.use
           .emit('inbound:message:archived', {
             sessionId: incoming.sessionId,
             incoming,
             archivedMessage: message,
           })
-          .catch(err => logger.debug(`inbound:message:archived 分发失败: ${err}`));
+          .catch(err => logger.use.debug(`inbound:message:archived 分发失败: ${err}`));
         return { message, content };
       },
     };
 
-    provide(messageArchive, service);
+    provide.use(messageArchive, service);
   },
 });
 ```
 
 注册要点（参考 `docs/concepts/service-model.md`）：
 
-- `priority`：默认 `0`。要覆盖内置归档实现取更高值（数字越大越优先，含义自行记载）。同名竞争胜者 = 偏好 > priority > 注册顺序。
-- `entryId`：单实例服务无须分桶；若一个插件按子来源拆多个归档实例，用 `entryId: '${lifecycle.id}/${sub}'`（见 `docs/concepts/manifest-metadata.md`）。
+- `priority`：默认 `0`。要覆盖内置归档实现取更高值（数字越大越优先，含义自行记载）。同名竞争时消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序。
+- `entryId`：单实例服务无须分桶；若一个插件按子来源拆多个归档实例，用 `entryId: '${lifecycle.use.id}/${sub}'`（见 `docs/concepts/manifest-metadata.md`）。
 - `label`：可选展示名，便于 WebUI 服务面板辨识。
 
 ## 5. 标准消费姿势
 
-**永远 lazy `current`，不要缓存裸引用。** memory provider bounce/重载会让缓存引用失效，缓存还会让你被级联 dispose。参考实现在每个方法体里现查 `memory`（`packages/plugin-message-archive/src/index.ts` 的注释把这条说透了），消费方同理：
+**业务句柄是活的。** `messageArchive.use`、`memory.use` 每次访问成员都解析到本插件当前选中的那一家，provider bounce/重载后存起来的句柄也会跟着换人。参考实现直接经 `memory.use` 调用（`packages/plugin-message-archive/src/index.ts` 的注释说明了这一点），消费方同理，可选依赖先看 `present`：
 
 ```ts
-const archive = messageArchive.current;
-if (!archive) return;                       // 服务缺失：优雅降级，不要抛
-await archive.archiveIncoming(message);
+if (!messageArchive.present) return;        // 服务缺失：优雅降级，不要抛
+await messageArchive.use.archiveIncoming(message);
 ```
 
 - 把 `message-archive` 放进 `uses optional`（所有现有消费方都这么做），缺失时降级而非崩溃。
@@ -164,7 +156,7 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 - 设计意图见 `MEMORY` 注释「同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入」。
 
 > ⚠️ **审计 caveat——绕过串行队列的 shadow 归档会乱序。**
-> `plugin-flow-control` 与触发插件直接 `await archive.archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），**没有经过 `archiveIncomingMessageInOrder` 的 per-lane 队列**。当 shadow 归档与 agent 主链路归档落在同一 `sessionId`/`source` 上并发触发时，两条写入彼此无序，可能造成归档时间线乱序（后吞的消息先落库、连续消息漏看前一条）。
+> `plugin-flow-control` 与触发插件直接 `await` message-archive 的 `archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），**没有经过 `archiveIncomingMessageInOrder` 的 per-lane 队列**。当 shadow 归档与 agent 主链路归档落在同一 `sessionId`/`source` 上并发触发时，两条写入彼此无序，可能造成归档时间线乱序（后吞的消息先落库、连续消息漏看前一条）。
 >
 > 现状：服务契约本身**不提供**跨调用方的串行保证——有序性是 `plugin-agent` 在消费侧自建的，且队列状态私有，shadow 路径触达不到。
 > 规避：

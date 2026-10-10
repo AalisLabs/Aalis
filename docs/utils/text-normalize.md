@@ -98,7 +98,7 @@ const display = normalizeAssistantContent(llmResponse.content);
 
 // B. 需要告警/遥测时：拆开调，拿到 hadLeak
 const { sanitized, hadLeak } = stripLeakedSpecialTokens(llmResponse.content);
-if (hadLeak) logger.warn('LLM content 残留特殊 token，已剥离');
+if (hadLeak) logger.use.warn('LLM content 残留特殊 token，已剥离');
 
 // C. 纯前端渲染器：只想修表格，不碰 token
 const md = fixGfmTables(rawMarkdown);

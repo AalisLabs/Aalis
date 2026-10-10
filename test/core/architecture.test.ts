@@ -693,7 +693,7 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2512 → 2510：b5a P0-3（用户选甲）——资源口只删 name（binder 写在 defineService(name, …) 的闭包里），track 与 logger 保留。
 // 2510 → 2509：b5a P2-2 剩余（用户选中间方案）——provide 删 onBehalfOf，并入 entryId（托管别的包时取被托管包的 id）。
 // 2509 → 2587：服务调用形状统一（owner 10-08 定，并入 0.20）——caps.xxx 两层（选择层 list / use / of / present / follow，
-// 业务层活句柄），按插件偏好进挑选规则，关停边建给声明服务的全部提供者；删 ServiceRef 与 serviceRef。
+// 业务层活句柄），按插件偏好进挑选规则，关停边建给声明服务的全部提供者；删去旧的单层服务引用。
 // 2587 → 2626：同一决定的后续（owner 定稿 follow 句柄）——follow 交给 attach 的句柄钉在挂上的那条登记、清理落定之前一直
 // 可用（不按 id 打到同 id 的新实例），资源口加 present。
 const CORE_CODE_LINE_CEILING = 2626;

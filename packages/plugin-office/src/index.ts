@@ -92,8 +92,8 @@ function registerOffice(caps: Caps): void {
   }
 
   if (cfg.pdf.enabled) {
-    // 不给网关兜底：缺 process 时 pdf_convert 要回「请启用 process 提供方」的明确提示，
-    // 而不是让网关在调用点抛出被当成转换失败
+    // 缺 process 时不取句柄：pdf_convert 要回「请启用 process 提供方」的明确提示，
+    // 而不是让句柄在调用点抛出被当成转换失败
     const proc = caps.processService.present ? caps.processService.use : undefined;
     registerPdfTools(tools, sessions, storage, outputUri, proc);
     logger.use.info('PDF 工具已启用');

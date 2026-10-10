@@ -7,13 +7,13 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 注意服务注册名（描述符 `name`）有**两个**，而非单个 `'webui'`：
 
 - `'webui-server'` —— 后端服务，契约 `WebUIService`。描述符 `webuiServer`，绑定接口 `BoundWebui`（`packages/api-webui/src/index.ts`）。
-- `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，绑定接口是普通 `ServiceRef`。
+- `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，契约不给 bind，业务层就是 `WebuiClientProvider` 形状的活句柄。
 
 契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts` 与 `page.ts`、`frame.ts`、`theme.ts`、`rest.ts`），**MIT**。它导出运行时服务契约、页面与提示的类型、插件前端的消息通道（消息类型、校验函数与宿主数据能力）、管理面事件、管理面 REST 的路由表与请求和回应类型、主题格式，以及向 `PluginMeta` 注入的 `extends`。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
-页面与提示不是静态模块字段：在 `apply` 里经 `webui.definePage` / `webui.notify` 登记，随本次激活撤回。契约的全文（组件、动作、会话面板、质量门槛、路由）见 [api-webui](../api/api-webui.md#声明式页面)。
+页面与提示不是静态模块字段：在 `apply` 里经 `webui.use.definePage` / `webui.use.notify` 登记，随本次激活撤回。契约的全文（组件、动作、会话面板、质量门槛、路由）见 [api-webui](../api/api-webui.md#声明式页面)。
 
 ## 2. 契约
 
@@ -32,7 +32,7 @@ export interface WebUIService {
 ### 绑定接口 `BoundWebui`
 
 ```ts
-export interface BoundWebui extends ServiceRef<WebUIService> {
+export interface BoundWebui extends WebUIService {
   definePage(page: PageDefinition): PageHandle; // 泛型推断动作输入与引用，见 api-webui
   notify(notice: Notice): NoticeHandle;
 }
@@ -64,10 +64,10 @@ export interface WebuiClientProvider {
 
 **提供方**
 
-- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时以 `webui` 平台名登记一个 `platform` adapter：平台名标明说话的是从 WebUI 来的 owner，连接状态数的是打开着的 `/session` 连接；WebUI 的会话不经它收发。`sessionProtocol`、`approvals` 等为 optional。
+- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide.use(webuiServer, impl)`。它同时以 `webui` 平台名登记一个 `platform` adapter：平台名标明说话的是从 WebUI 来的 owner，连接状态数的是打开着的 `/session` 连接；WebUI 的会话不经它收发。`sessionProtocol`、`approvals` 等为 optional。
 - `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（`entryId` 取前端包名，偏好认它；条目归 webui-server 这次激活）。
 
-**消费方**（经 `webui.definePage` / `notify`）：
+**消费方**（经 `webui.use.definePage` / `notify`）：
 
 | 插件 | 页面 |
 | --- | --- |
@@ -102,7 +102,7 @@ export default definePlugin({
   subsystem: 'tools',
   uses: { webui: optional(webuiServer) },
   apply({ webui }) {
-    const page = webui.definePage({
+    const page = webui.use.definePage({
       key: 'my-plugin',
       title: '我的插件',
       icon: 'wrench',
@@ -119,21 +119,21 @@ export default definePlugin({
 
 `webui-server` 缺失时登记排队、就绪后挂上，页面不显示。不必把 `webuiServer` 标成 required。
 
-不要把 `webui.current` 存进字段：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护缓存引用。登记门面本身会随提供者换人重挂。
+业务句柄 `webui.use` 是活的：存进字段也会跟着换人，`definePage` / `notify` 的账本随提供者换人整体重挂。经 `services.use.get(webuiServer)` 动态查到的是原始实例，不随换人重挂，不要长期持有。
 
 ### 4b. 替换前端（`webui-client`）
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 提供 `dist/index.html`，被 webui-server 自动发现挂载，**无需 `apply`**。多前端共存时各成一个 `webui-client` provider，活跃者由「服务偏好」在 WebUI 设置「系统」里切换；卡住可访问 `/__clients` 逃生页切回。
-- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, { getClientDir: () => myDir }, { label: '我的前端' })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。替别的包登记时 `entryId` 取被托管包的 id；条目仍归登记的激活清理，计入它的 `provides`。
+- **主动覆盖**：插件 `apply` 里 `provide.use(webuiClient, { getClientDir: () => myDir }, { label: '我的前端' })`，展示名优先取提供方插件的 `displayName`，没有时取 `provide.use` 的 `label` 选项。替别的包登记时 `entryId` 取被托管包的 id；条目仍归登记的激活清理，计入它的 `provides`。
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。实现全部 `WebUIService` 必须方法（`addPage`、`addNotice` 要真正维护登记表，`invalidate` 要推给界面），用更高的 priority 或 `services.prefer` 压过默认实现。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide(webuiServer, impl); } })`。同名胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
+罕见。实现全部 `WebUIService` 必须方法（`addPage`、`addNotice` 要真正维护登记表，`invalidate` 要推给界面），用更高的 priority 压过默认实现，或由用户在 WebUI 设置「系统」的服务偏好 / 配置 `servicePreferences` 选中它。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide.use(webuiServer, impl); } })`。同名时选中哪一家的规则见 `docs/concepts/service-model.md`：本插件偏好 > 全局偏好 > priority > 注册顺序。
 
 ## 5. 标准消费方式
 
 - **登记**：始终经 `BoundWebui.definePage` / `notify`，不要绕过门面直接调 `WebUIService.addPage(..., instance)`——否则提供者换人时不会自动重挂，激活撤回也不会按条目退订。
-- **服务缺失**：`webui.current` 在未就绪时为 `undefined`。登记用门面即可。
+- **服务缺失**：未就绪时 `webui.present` 为 `false`，访问查询类成员同步抛 `ServiceUnavailableError`；登记方法不受影响，用门面即可。
 - **错误边界**：数据源或处理函数抛错，路由回 `500 { error }`，界面在那一块或操作的人那里显示原因；处理函数成功时可以返回一句话，宿主用 Toast 显示。
 - **动态选项**：表单字段标 `dynamicOptions: '<serviceName>'`，前端经 webui-server 聚合调该服务的 `listModels()`（`llm` 走 per-model entry 枚举）。
 - **密钥字段**：`secret: true` 的字段，宿主提供密钥存储时 `GET /api/plugins` 回的是配置文档里的引用 `{ $secret: '<键>' }`，不回原值（没有密钥存储的自组装宿主，文档里本就是明文，接口原样返回）。表单对已设置的字段显示「已设置」和键名，不显示值；输入新值即替换，不动（或输入后删空、点撤销）则原样回传引用、保持原值，点清除则清空。顶层与分组里的字段，键被几处配置共用时提示替换会一并影响它们；数组元素里的字段替换时另建新键，不影响共用者，不提示。标在 map、list 上的字段整个值算一个密钥，只写不回显，要改就整份重填。存放与写入规则见 [`docs/core/config.md`](../core/config.md#密钥配置) 的「密钥配置」一节。

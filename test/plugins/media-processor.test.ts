@@ -12,7 +12,7 @@ import { fixedRef, ref } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 // MediaService.pickProcessor — 模型选择
 // 覆盖 issue 3：vision/audio 的 prefer 配置支持 ModelRef，能钉死「具体模型」而非只认提供者名；
-// 匹配不到时确定性按 priority 回落（而非静默乱用）。无 LLM 提供者（llm.all()→[]）时只用外部注册的 processor。
+// 匹配不到时确定性按 priority 回落（而非静默乱用）。无 LLM 提供者（llm.list() 为空）时只用外部注册的 processor。
 // ════════════════════════════════════════════════════════════
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
@@ -189,9 +189,9 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
 
 // ════════════════════════════════════════════════════════════
 // LLM processor 缓存跟随偏好切换：LLM processor 的 priority 恒为 0，vision.prefer 留空时
-// pickProcessor 靠稳定排序取 llm.all() 的先后（偏好 > 优先级 > 注册顺序）。缓存签名曾把条目
+// pickProcessor 靠稳定排序取 llm.list() 的先后（偏好 > 优先级 > 注册顺序）。缓存签名曾把条目
 // 排序后拼接，偏好一换签名不变、缓存不重建，自动选择停在旧模型上。
-// llm.all() 取自真 App 容器 + services.prefer，不手搓顺序。
+// llm.list() 取自真 App 容器 + services.prefer，不手搓顺序。
 // ════════════════════════════════════════════════════════════
 
 describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {

@@ -10,7 +10,7 @@
 
 两类使用方：
 
-- **存储实现**在每次改动前探测本服务，在场就调 `beforeMutate` 留一次快照机会。`@aalis/plugin-storage-local` 经 `services.get(checkpoint)` 动态查它，不写进 `uses`：checkpoint 自己要用存储，写进 `uses` 会让两者互为依赖。
+- **存储实现**在每次改动前探测本服务，在场就调 `beforeMutate` 留一次快照机会。`@aalis/plugin-storage-local` 经 `services.use.get(checkpoint)` 动态查它，不写进 `uses`：checkpoint 自己要用存储，写进 `uses` 会让两者互为依赖。
 - **会话服务**按回合回滚（会话协议的 `turn/rewind`，见 [api-session-protocol](./api-session-protocol.md)），回滚之前查这一轮执行过命令没有（`turn/checkpoint`）。
 
 回合 id 与 agent 的回合 id 相同（见 [api-agent](./api-agent.md#回合-id)），调用方可以直接拿 `agent:turn:after`、`outbound:stream` 等带的 `turnId` 去回滚那一轮。
@@ -68,7 +68,7 @@ export default definePlugin({
   uses: { checkpoint: optional(checkpoint) },
   apply({ checkpoint }) {
     async function rewind(sessionId: string, turnId: string) {
-      const result = await checkpoint.require().rollback(sessionId, turnId);
+      const result = await checkpoint.use.rollback(sessionId, turnId);
       for (const { uri, turnIds } of result.alsoChangedBy) {
         // 告诉用户：这些回合也改过 uri，回滚撤掉了它们在这一轮之后的改动
       }

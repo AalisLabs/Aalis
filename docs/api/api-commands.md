@@ -74,12 +74,12 @@ interface CommandMeta {
 ## 绑定门面
 
 ```ts
-interface BoundCommands extends ServiceRef<CommandService> {
+interface BoundCommands extends CommandService {
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 }
 ```
 
-`commands.command(...)` 把 `pluginName` 填成本次激活 id，登记记在资源口的 `registrar` 上，按点路径名（去掉 inline 位置参数）为键：
+`commands.use.command(...)` 把 `pluginName` 填成本次激活 id，登记记在资源口的 `registrar` 上，按点路径名（去掉 inline 位置参数）为键：
 
 - 提供者在场时 builder 的 `alias` / `option` / `action` 等调用同步转发；缺席时记下，上线后按序重放。
 - 提供者换人时整体重挂到新提供者；本次激活关闭时与原语同一拍撤回，不等它所提供服务的下游交接。
@@ -118,7 +118,7 @@ export default definePlugin({
   name: '@acme/plugin-example-commands',
   uses: { commands: optional(commands) },
   apply({ commands }) {
-    commands
+    commands.use
       .command('persona [persona:string]', '查看或切换人格', { visibility: 'restricted' })
       .argument('persona', '要切换到的人格；不写时查看当前人格')
       .action(async (argv, persona) => {

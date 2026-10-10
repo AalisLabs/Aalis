@@ -4,7 +4,7 @@
 
 声明式的「触发器 + DAG」编排引擎：把多步骤任务（工具调用 / 发消息 / 等待 / 派发给 agent）按依赖图拓扑分层并行执行，支持 cron / interval / once / event / manual 多种触发方式。
 
-- 服务注册名：`'workflow'`（`workflow.current`）。
+- 服务注册名：`'workflow'`（消费方经 `workflow.use` 调用）。
 - 契约包：`@aalis/api-workflow`。
 - 该契约**有运行时服务**：`-api` 包只导出 interface + DSL 类型 + 事件契约，实现由 `@aalis/plugin-workflow` 提供。
 - 设计取向（`packages/api-workflow/src/index.ts`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
@@ -111,7 +111,7 @@ export interface WorkflowRun {
 ### 参考实现（provider）
 
 唯一一等实现 **`@aalis/plugin-workflow`**：
-- 注册：`provide(workflow, service)`（`packages/plugin-workflow/src/index.ts`）。
+- 注册：`provide.use(workflow, service)`（`packages/plugin-workflow/src/index.ts`）。
 - 模块拆分：`engine.ts`（DAG 拓扑调度 + 节点执行 + `{{...}}` 插值）、`triggers.ts`（`TriggerManager`，cron/interval/once/event 接线）、`loader.ts`（YAML 定义加载/持久化）、`persistence.ts`（`RunStore` 运行历史滚动写盘）、`index.ts`（服务装配 + AI 工具 + WebUI 页）。
 - 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['config', 'cron-engine', 'events', 'hooks', 'lifecycle', 'logger', 'provide']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['storage', 'tools', 'webui-server']`。
 
@@ -120,7 +120,7 @@ export interface WorkflowRun {
 **`@aalis/plugin-scheduler`** 在执行调度任务时同时广播 `trigger:fired`，供 workflow 订阅（`packages/plugin-scheduler/src/index.ts`）：
 
 ```ts
-await events.emit('trigger:fired' as any, {
+await events.use.emit('trigger:fired' as any, {
   source: `scheduler:${jobName}`,
   type: rt.config.cron ? 'cron' : 'interval',
   payload: { jobName, sessionId, platform, content },
@@ -133,7 +133,7 @@ await events.emit('trigger:fired' as any, {
 
 - **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖；登记口在 tools 提供者缺席时先挂账，上线后自动补挂）。
 - **工作流页**（同插件内）：数据源与动作处理函数是闭包，直接使用本次激活构造的 service，不按名回查容器（查到的可能是别人提供的同名服务）。
-- 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `workflow.current` 编程式触发/查询。
+- 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `workflow.use` 编程式触发/查询。
 
 ## 4. 写一个 provider
 
@@ -235,30 +235,29 @@ export default definePlugin({
     },
   };
 
-    provide(workflow, service);
+    provide.use(workflow, service);
   },
 });
 ```
 
 ### priority / entryId / label
 
-`provide(name, instance, { priority?, label?, entryId? })`：
-- `priority`：默认 `0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
-- `entryId`：条目的逻辑身份，默认 `lifecycle.id`；格式由契约约定，core 不检查。卸载时按激活清理，与 entryId 无关。
+`provide.use(workflow, instance, { priority?, label?, entryId? })`：
+- `priority`：默认 `0`。同名服务竞争时消费方选中哪一家按 **本插件偏好 > 全局偏好 > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
+- `entryId`：条目的逻辑身份，默认 `lifecycle.use.id`；格式由契约约定，core 不检查。卸载时按激活清理，与 entryId 无关。
 - `label`：WebUI 选择器展示名。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
 
 ## 5. 标准消费方式
 
-### 惰性读取 `.current`（不要缓存实例）
+### 业务句柄是活的
 
-提供者重新 `provide` / 切换会使旧实例失效，所以第三方消费者**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）：
+`workflow.use` 每次访问成员都解析到本插件当前选中的那一家，提供者重新 `provide` / 切换后，存起来的句柄也会跟着换人（见 [lazy-service-access](../concepts/lazy-service-access.md)）。可选依赖先看 `present`：
 
 ```ts
-const svc = workflow.current;
-if (!svc) return { ok: false, error: 'workflow 服务未就绪' };
-const run = await svc.runWorkflow(id, vars, 'manual:foo', { platform, userId });
+if (!workflow.present) return { ok: false, error: 'workflow 服务未就绪' };
+const run = await workflow.use.runWorkflow(id, vars, 'manual:foo', { platform, userId });
 ```
 
 ### 编程式触发
@@ -266,10 +265,9 @@ const run = await svc.runWorkflow(id, vars, 'manual:foo', { platform, userId });
 ```ts
 import type { WorkflowService } from '@aalis/api-workflow';
 
-const wf = workflow.current;   // 可能 undefined
-if (!wf) return;                             // optional 依赖：判空降级
-const run = await wf.runWorkflow('daily-report', { date: '2026-06-22' }, 'event:custom');
-if (run.status !== 'success') logger.warn(run.error);
+if (!workflow.present) return;               // optional 依赖：先看 present 降级
+const run = await workflow.use.runWorkflow('daily-report', { date: '2026-06-22' }, 'event:custom');
+if (run.status !== 'success') logger.use.warn(run.error);
 ```
 
 ### 用事件触发（解耦，推荐跨插件做法）
@@ -277,7 +275,7 @@ if (run.status !== 'success') logger.warn(run.error);
 不直接拿服务，而是 emit `trigger:fired`（像 scheduler 那样）——workflow 订阅后会按 `workflowId` 跑，并把 `payload` 注入 `vars`：
 
 ```ts
-await events.emit('trigger:fired', {
+await events.use.emit('trigger:fired', {
   source: 'myplugin:something',
   type: 'event',
   workflowId: 'my-workflow',
@@ -298,9 +296,9 @@ await events.emit('trigger:fired', {
 
 工作流定义是 owner 资产，但**「谁触发就按谁的权限裁决」**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）：
 
-- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`，引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.execute`）。
+- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`，引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.use.execute`）。
 - cron / event / once / WebUI「立即运行」触发**无调用者** → 保持匿名（`platform: 'workflow'`、`userId: undefined`），只能跑 `public`（risk safe、minLevel 0）工具（`index.ts`）。
-- provider 作者重实现时**必须保留这条透传链**：否则匿名触发的工作流能跑 owner 才允许的危险工具，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.execute` 那层裁决，workflow 只负责传对身份。
+- provider 作者重实现时**必须保留这条透传链**：否则匿名触发的工作流能跑 owner 才允许的危险工具，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
 
 ### agent 节点：join 串扰与隔离
 
@@ -312,11 +310,11 @@ await events.emit('trigger:fired', {
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记账重放已触发过的一次性工作流；**定义不存在时记账随之清除**——`removeWorkflow` 删掉定义文件后当场清（有文件的定义删不掉文件时抛错、不清账；只在内存里的定义照常删除），手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `events.on` 订阅（`triggers.ts`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记账重放已触发过的一次性工作流；**定义不存在时记账随之清除**——`removeWorkflow` 删掉定义文件后当场清（有文件的定义删不掉文件时抛错、不清账；只在内存里的定义照常删除），手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `events.use.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
-定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都只接受 storage URI，写成相对路径等其它形态时拒绝激活（`index.ts`、`createStorageGateway`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
+定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都只接受 storage URI，写成相对路径等其它形态时拒绝激活（`index.ts`、`isStorageUri`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
 
 ## 7. 边界与注意事项
 
@@ -330,6 +328,6 @@ await events.emit('trigger:fired', {
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（每次读取 `.current`）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经 `inbound:message` 接入主链路）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经 `inbound:message` 接入主链路）。
 - 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[core/events](../core/events.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)。
 - 相关服务：[services/tools](./tools.md)（`tool` 节点的执行面 + `workflow_*` 工具）、[services/agent](./agent.md)（`agent` 节点的回复 join）、[services/storage](./storage.md)（定义/历史落盘）。相关插件：`@aalis/plugin-scheduler`（`trigger:fired` 触发源）、`@aalis/plugin-cron-engine`（cron/interval 调度底座）。

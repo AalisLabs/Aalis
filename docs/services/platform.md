@@ -4,11 +4,11 @@
 
 `platform` 是 Aalis 的**平台抽象服务**：每个聊天/终端平台（OneBot、CLI、WebUI、Telegram、Discord……）实现一个 `PlatformAdapter` 并以服务名 `platform` 注册。它统一了「查询连接状态 / 按 sessionId 发消息 / 调平台原生 API / 自报机器人身份」这几件事，使核心与其它插件无须知道具体平台细节。
 
-- 服务注册名（DI key）：`'platform'` —— `platform.current` 取胜者，`platform.all()` 取全部（**多 adapter 并存是常态**）。
+- 服务注册名（DI key）：`'platform'` —— `platform.use` 打到本插件选中的那一家，`platform.list()` 列出全部（**多 adapter 并存是常态**）。
 - 契约包：`@aalis/api-platform`（`packages/api-platform/src/index.ts`）。
-- 该契约包**既是 runtime 服务契约也带聚合/路由 helper 纯函数**：`PlatformAdapter` 接口是要 `provide(platform, …)` 注册的真实服务；而 `getPlatform*` / `resolvePlatformBySession` / `sendPlatformMessage` / `callPlatformAction` 等是消费方应优先使用的纯函数 helper（传描述符绑定的 `ServiceRef` 即可，没有 entry、无自递归隐患，取代了历史上的 `PlatformRouter` facade，见 `src/index.ts`）。
+- 该契约包**既是 runtime 服务契约也带聚合/路由 helper 纯函数**：`PlatformAdapter` 接口是要 `provide.use(platform, …)` 注册的真实服务；而 `getPlatform*` / `resolvePlatformBySession` / `sendPlatformMessage` / `callPlatformAction` 等是消费方应优先使用的纯函数 helper（传 `caps.platform` 即可，没有 entry、无自递归隐患，取代了历史上的 `PlatformRouter` facade，见 `src/index.ts`）。
 
-> 关键认知：**`platform` 是天然的多实例服务**。同时跑 CLI + OneBot 时，`'platform'` 名下有两个 entry。消费方几乎从不用 `platform.current` 取「那个胜者」，而是用 helper 按 `platform` 名或按 `sessionId` 路由到正确的 adapter。
+> 关键认知：**`platform` 是天然的多实例服务**。同时跑 CLI + OneBot 时，`'platform'` 名下有两个 entry。消费方几乎从不用 `platform.use` 打「选中的那一家」，而是用 helper 按 `platform` 名或按 `sessionId` 路由到正确的 adapter。
 
 ## 2. 契约
 
@@ -39,30 +39,31 @@ export interface PlatformAdapter {
 
 `PlatformSelfIdentity`（`src/index.ts`）——机器人自身身份，用于 prompt 注入与归档：`platform` / `selfId?` / `nickname?`。
 
-`PlatformAdapterEntry`（`src/index.ts`）——helper 返回的条目：`{ instance: PlatformAdapter; contextId: string; label?: string }`。
+helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（这个 adapter 的业务句柄）、`id`（插件实例 id，即 contextId），另有 `label?` / `priority` / `selected`。
 
 `SessionTypeDecl`（`src/index.ts`）——平台类型：`name`（类型名，非空、不含 `:`、不是 `*`，与作用域 `平台:类型:目标` 的第二段同一套写法）/ `multiParty`（多方为 true，一对一为 false）。类型名由平台自定，消息在 `IncomingMessage.sessionType` 上带它。
 
-### 聚合 / 路由 helper（纯函数，第一参是 `ServiceRef<PlatformAdapter>`）
+### 聚合 / 路由 helper（纯函数，第一参是 `Pick<ServiceSelection<PlatformAdapter>, 'list'>`）
+
+第一参传 `caps.platform` 即可：helper 只调它的 `list()`，每次调用重新枚举。只在部分 adapter 里找时，给一个只列它们的 `{ list }`。要条目本身直接用 `caps.platform.list()`。
 
 | helper | 作用 |
 | --- | --- |
-| `getPlatformAdapterEntries(source)` | 枚举所有 adapter 条目 |
-| `getPlatformAdapters(source)` | 枚举所有 adapter 实例 |
+| `getPlatformAdapters(source)` | 枚举所有 adapter（`list()` 各条的 `use`） |
 | `getPlatformNames(source)` | 枚举所有平台名（`adapter.platform` 去重） |
 | `aggregatePlatformConnections(source)` | 聚合所有连接 |
-| `aggregatePlatformDetails(source)` | 聚合展示详情（含 `contextId` + `connections`） |
+| `aggregatePlatformDetails(source)` | 聚合展示详情（每项 `{ adapterName, platform, contextId, connections }`，`contextId` 取条目的 `id`） |
 | `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份；同平台装了多个实例时，取第一个认得这个会话的实例给出的身份 |
 | `sessionTypesOf(adapter)` | 平台的类型：声明的条目；没声明（没写、空列表，或平台没有适配器）时为 `[{ name: 'private', multiParty: false }]` |
 | `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带类型名时，声明里有多方类型的按其中第一个、多方，没声明或只有一对一类型的按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared` |
-| `resolvePlatformBySession(source, sessionId)` | 按 sessionId 找接管它的 adapter 条目（`PlatformAdapterEntry`，带插件实例 id `contextId`；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底），按登记顺序取第一个认领者。只在部分 adapter 里找时，`source` 给一个只列它们的 `all` |
-| `claimantsOf(source, sessionId)` | 认领 sessionId 的全部 adapter 条目，按登记顺序；判定与 `resolvePlatformBySession` 相同，逐个问、不在第一个认领者处停。用来看出一个 id 是不是同时归几个平台 |
+| `resolvePlatformBySession(source, sessionId, logger?)` | 按 sessionId 找接管它的 adapter 条目（`ProviderEntry<PlatformAdapter>`，`use` 是那个 adapter，`id` 是插件实例 id；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底），按 `list()` 的顺序取第一个认领者；`canHandle` 抛错按不认领，经 `logger` 告警 |
+| `claimantsOf(source, sessionId, logger?)` | 认领 sessionId 的全部 adapter 条目，按 `list()` 的顺序；判定与 `resolvePlatformBySession` 相同，逐个问、不在第一个认领者处停。用来看出一个 id 是不是同时归几个平台 |
 | `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错，见下） |
 | `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（无 adapter 接管、或 adapter 不支持 `callAction` 则抛错） |
 
-没有 adapter 接管时，两个发送 helper 的报错写明 sessionId；sessionId 带平台前缀时，另列出这个平台各实例（`contextId`）的已知账号与连接状态，如 `<实例甲>: 111(online)；<实例乙>: 222(online)、333(offline)`，分得清是账号写错、账号不属于任何实例，还是连接没上来。
+没有 adapter 接管时，两个发送 helper 的报错写明 sessionId；sessionId 带平台前缀时，另列出这个平台各实例（条目 `id`）的已知账号与连接状态，如 `<实例甲>: 111(online)；<实例乙>: 222(online)、333(offline)`，分得清是账号写错、账号不属于任何实例，还是连接没上来。
 
-类型随描述符提供：`defineService<PlatformAdapter>('platform')`（`src/index.ts`），消费方把描述符写进 `uses` 即得类型，`platform.current` 推断为 `PlatformAdapter | undefined`。
+类型随描述符提供：`defineService<PlatformAdapter>('platform')`（`src/index.ts`），消费方把描述符写进 `uses` 即得类型，`platform.use` 推断为 `PlatformAdapter`，`platform.list()` 的条目为 `ProviderEntry<PlatformAdapter>`。
 
 ## 3. 谁提供 / 谁消费
 
@@ -100,7 +101,7 @@ export interface PlatformAdapter {
 
 ### 入站消息：出站接口之外还需 emit
 
-`PlatformAdapter` 只覆盖**出站**与查询。**入站**不在接口里——adapter 收到平台消息后须 `events.emit('inbound:message', msg)`（msg 为 `IncomingMessage`，`packages/schema-message/src/index.ts`），由 `plugin-gateway`（`src/index.ts` 监听）接管路由到 agent。OneBot 见 `src/index.ts` 一带的 `events.emit('inbound:message', …)`；CLI 见 `src/index.ts`。出站文本回显则可订阅 `events.on('outbound:message', …)`（CLI `src/index.ts`）。详见 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。
+`PlatformAdapter` 只覆盖**出站**与查询。**入站**不在接口里——adapter 收到平台消息后须 `events.use.emit('inbound:message', msg)`（msg 为 `IncomingMessage`，`packages/schema-message/src/index.ts`），由 `plugin-gateway`（`src/index.ts` 监听）接管路由到 agent。OneBot 见 `src/index.ts` 一带的 `events.use.emit('inbound:message', …)`；CLI 见 `src/index.ts`。出站文本回显则可订阅 `events.use.on('outbound:message', …)`（CLI `src/index.ts`）。详见 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。
 
 ### 注册（`provide`）
 
@@ -138,24 +139,24 @@ export default definePlugin({
       async sendMessage(_sessionId, _content) {},
     };
 
-    provide(platform, adapter);
+    provide.use(platform, adapter);
   },
 });
 ```
 
-注册选项（`provide(descriptor, instance, { priority?, label?, entryId? })`，`packages/core/src/composition/core-services.ts`）：
+注册选项（`provide.use(descriptor, instance, { priority?, label?, entryId? })`，`packages/core/src/composition/core-services.ts`）：
 
 - **priority**：普通数字，越大越优先。platform 通常用默认 `0`。
-- **entryId**：单插件多连接想拆成多 entry 时用 `'${lifecycle.id}/${sub}'`（per-entry provide，见 [service-model](../concepts/service-model.md)）；单 adapter 内自管多连接（如 OneBot 的 `states[]`）则不需要。
-- **label**：展示用，会进 `all()` / `services.inspect` 返回条目的 `label`。
+- **entryId**：单插件多连接想拆成多 entry 时用 `'${lifecycle.use.id}/${sub}'`（per-entry provide，见 [service-model](../concepts/service-model.md)）；单 adapter 内自管多连接（如 OneBot 的 `states[]`）则不需要。
+- **label**：展示用，会进 `list()` / `services.use.inspect` 返回条目的 `label`。
 - **双源同步**：`provides: [platform]` 与 `package.json` 的 `aalis.service.provides` 必须一致；激活后 core 会校验「声明了 `provides` 却没真 `provide`」直接打成 error，dev-mode 还会反向 warn「provide 了但没声明」。见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
 ## 5. 标准消费方式
 
-- **优先用 helper，而非裸 `platform.current`**：要发消息用 `sendPlatformMessage(platform, sessionId, text)`；要按名取身份用 `getPlatformSelfIdentity(platform, name, sessionId)`；要列平台用 `getPlatformNames(platform)`；要调原生 API 用 `callPlatformAction(platform, sessionId, action, params)`。这些 helper 内部都走 `source.all()` 聚合，天然处理多 adapter。
-- **lazy 访问、勿缓存**：每次用时现取（helper 每次读 `source.all()` / `source.current`）。adapter 会随 provider bounce 失效，缓存住 instance 会指向僵尸。见 [lazy-service-access](../concepts/lazy-service-access.md)。
+- **优先用 helper，而非裸 `platform.use`**：要发消息用 `sendPlatformMessage(platform, sessionId, text)`；要按名取身份用 `getPlatformSelfIdentity(platform, name, sessionId)`；要列平台用 `getPlatformNames(platform)`；要调原生 API 用 `callPlatformAction(platform, sessionId, action, params)`。这些 helper 内部都走 `source.list()` 聚合，天然处理多 adapter。
+- **helper 每次重新枚举**：helper 每次调用都读 `source.list()`；条目的 `use` 是活的业务句柄（等同 `platform.of(id)`），钉在那个实例 id 上，那一家下线时访问成员抛错，同一 id 回来后照常可用。见 [lazy-service-access](../concepts/lazy-service-access.md)。
 - **platform 是可选依赖**：上面所有消费者都在 `uses` 里以 `optional(platform)` 声明它。没有任何 adapter 时，`getPlatformNames` 返回 `[]`、`getPlatformSelfIdentity` 返回 `undefined`、`sendPlatformMessage`/`callPlatformAction` 抛错（无 adapter 接管 / 不支持 callAction）。消费方必须容忍这些：persona/agent 在 `identity?.selfId` 处用可选链优雅降级（`plugin-agent/src/index.ts`）。
-- **错误边界**：`resolvePlatformBySession` 与 `claimantsOf` 对每个 adapter 的 `canHandle` 抛错只 `logger.warn`、按不认领处理，不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
+- **错误边界**：`resolvePlatformBySession` 与 `claimantsOf` 对每个 adapter 的 `canHandle` 抛错只告警（传了 `logger` 时）、按不认领处理，不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -168,10 +169,10 @@ export default definePlugin({
 - **路由依赖 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 即是典型反例（`plugin-cli/src/index.ts`）。前缀兜底只认平台名、不认实例，同一插件装多个实例时按注册顺序落到第一个，所以能多实例的适配器要自己实现 `canHandle`（OneBot 即是）。
 - **`getPlatformNames` 用 `adapter.platform` 字段去重，不是用服务名**：同一 `platform` 字符串值的多个 adapter 会被并成一个名。确保 `platform` 字段在你的生态里唯一且稳定（它会进 authority 作用域、user-relation 白名单、归档 metadata）。
 - **非标准扩展方法不在契约里**：OneBot 的 `getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等是 `PlatformAdapter & {…}` 交叉类型上附加的扩展（`adapter-onebot/src/index.ts`），只对知情消费者（`plugin-tool-onebot`，按会话路由到所属实例后用 `typeof` 探测方法）可见。第三方 adapter **不要**依赖这些；要扩展平台专属能力，沿用「`callAction(sessionId, action, params)` 走平台原生 API」这条标准通道，或自己另起一个独立服务名而非污染 `platform` 契约。
-- **多 entry 的 `platform.current` 胜者基本无意义**：因为 platform 是按名/按 sessionId 路由的多实例服务。误用 `platform.current` 当「主平台」会在多 adapter 时拿到不确定的那一个（按 priority>注册顺序）。一律用 helper。
+- **多 entry 时 `platform.use` 选中的那一家基本无意义**：因为 platform 是按名/按 sessionId 路由的多实例服务。误用 `platform.use` 当「主平台」会在多 adapter 时打到不确定的那一个（按本插件偏好 > 全局偏好 > priority > 注册顺序）。一律用 helper。
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名、多 entry、per-entry provide）、[lazy-service-access](../concepts/lazy-service-access.md)（勿缓存、bounce 失效）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`uses` 双源 + `subsystem`）、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（`inbound:message`/`outbound:message` 与 agent 路由）、[security-model](../concepts/security-model.md)、[storage-uri-grammar](../concepts/storage-uri-grammar.md)。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名、多 entry、per-entry provide）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的、provider bounce）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`uses` 双源 + `subsystem`）、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（`inbound:message`/`outbound:message` 与 agent 路由）、[security-model](../concepts/security-model.md)、[storage-uri-grammar](../concepts/storage-uri-grammar.md)。
 - 核心：`docs/core/service.md`、`docs/plugins/plugin-authority.md`、`docs/core/context.md`、`docs/core/events.md`。
 - 相关契约包：`@aalis/schema-message`（`IncomingMessage`/`OutgoingMessage`）、`plugin-gateway`（入站路由）、`plugin-flow-control`（限速闸门后端）。

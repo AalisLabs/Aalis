@@ -4,7 +4,7 @@
 
 把所有 `node:child_process` / `node:os` / `node:fs` 直读用法收口到一个能力插件后面，让业务插件无需直接 import 这些 Node 内置模块，即可**执行子进程、创建临时目录、读取 OS 外部文件**。
 
-- 服务注册名：描述符 `processService`（`name: 'process'`），绑定接口是 `ServiceRef<ProcessService>`。
+- 服务注册名：描述符 `processService`（`name: 'process'`）。契约不给 bind，业务层就是 `ProcessService` 形状的活句柄（`caps.process.use`）。
 - 契约包：`@aalis/api-process`（`packages/api-process/src/index.ts`）。
 - 默认实现：`@aalis/plugin-process-local`（`packages/plugin-process-local/src/index.ts`）。
 
@@ -82,8 +82,9 @@ interface TempDirHandle {
 
 ### 2.4 导出的工具函数
 
-- `createProcessGateway(ref: ServiceRef<ProcessService>): ProcessService` ——**消费方标准入口**。无实例时抛错；每次方法调用读 `ref.current` 后转发。
-- `makeTempDirViaStorage(storage, prefix): Promise<TempDirHandle>` ——**供 provider 使用的辅助**。基于一个支持 `resolveLocalPath` 的 `StorageService`。
+- `makeTempDirViaStorage(storage, prefix): Promise<TempDirHandle>` ——**供 provider 使用的辅助**。基于一个支持 `resolveLocalPath` 的 `StorageService`（传 `caps.storage.use` 即可）。
+
+消费方没有单独的入口函数，直接经业务句柄 `caps.process.use` 调用（见 §5）。
 
 ---
 
@@ -91,13 +92,13 @@ interface TempDirHandle {
 
 ### 提供方
 
-`@aalis/plugin-process-local`——`provide(processService, service)`。
+`@aalis/plugin-process-local`——`provide.use(processService, service)`。
 
-### 典型消费点（均经 `createProcessGateway`）
+### 典型消费点（均经业务句柄 `use` 调用）
 
 `plugin-tool-system`、`plugin-tool-code-runner`、`plugin-code-sandbox-os`、`plugin-media`、`plugin-office`、`plugin-adapter-onebot`、`plugin-asr-*`、`plugin-llm-ollama`、`plugin-package-manager`、`plugin-tool-browser`、`plugin-webui-server`。
 
-传 `signal` 的消费点：`plugin-tool-system` 的 `exec`、`plugin-tool-code-runner` 的无沙箱路径、`plugin-office` 的 `pdf_convert` 与 `plugin-draw` 的动图编码传工具执行器给这次调用的中止信号（这些工具都声明可转后台：在前台时随回合中止，停止键即停掉命令；转到后台之后随停止、工具撤回登记与执行器停用中止，见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)），不另设超时；`plugin-code-sandbox-os` 的沙箱内运行转交调用方的信号、启动探测传本次激活的 `lifecycle.signal`。
+传 `signal` 的消费点：`plugin-tool-system` 的 `exec`、`plugin-tool-code-runner` 的无沙箱路径、`plugin-office` 的 `pdf_convert` 与 `plugin-draw` 的动图编码传工具执行器给这次调用的中止信号（这些工具都声明可转后台：在前台时随回合中止，停止键即停掉命令；转到后台之后随停止、工具撤回登记与执行器停用中止，见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)），不另设超时；`plugin-code-sandbox-os` 的沙箱内运行转交调用方的信号、启动探测传本次激活的 `lifecycle.use.signal`。
 
 ---
 
@@ -107,11 +108,11 @@ interface TempDirHandle {
 
 ```ts
 import { makeTempDirViaStorage, processService, type ExecResult, type ProcessService, type SpawnHandle, type SpawnOptions, type TempDirHandle } from '@aalis/api-process';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { type StorageService, storage } from '@aalis/api-storage';
 import { definePlugin, provide } from '@aalis/core';
 
 class RemoteProcessService implements ProcessService {
-  files!: ReturnType<typeof createStorageGateway>;
+  files!: StorageService;
   spawn(_cmd: string, _args: readonly string[], _opts?: SpawnOptions): SpawnHandle {
     throw new Error('未实现');
   }
@@ -132,8 +133,8 @@ export default definePlugin({
   uses: { provide, storage },
   apply({ provide, storage }) {
     const svc = new RemoteProcessService();
-    svc.files = createStorageGateway(storage);
-    provide(processService, svc, {
+    svc.files = storage.use;
+    provide.use(processService, svc, {
       priority: 50,
       label: 'Process / remote',
     });
@@ -145,19 +146,19 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-始终使用 `createProcessGateway(process)`。网关内部每次方法调用都重新读 `ref.current`。可以持有网关；不要把 `process.current` 或某个 `SpawnHandle` 之外的服务实例缓存进字段。
+直接经业务句柄 `process.use` 调用。它是活的：每次方法调用都解析到本插件当前选中的那一家，可以存进字段；选不到提供者时访问成员同步抛 `ServiceUnavailableError`。一段操作要固定同一家时取 `process.list().find(p => p.selected)?.use`。
 
 ```ts
-import { createProcessGateway, processService } from '@aalis/api-process';
+import { processService } from '@aalis/api-process';
 import { definePlugin, logger } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-process',
   uses: { process: processService, logger },
   apply({ process, logger }) {
-    const proc = createProcessGateway(process);
+    const proc = process.use;
     void proc.execFile('git', ['rev-parse', 'HEAD'], { timeout: 5000 }).then(result => {
-      logger.info(result.stdout.trim());
+      logger.use.info(result.stdout.trim());
     });
   },
 });
@@ -169,8 +170,8 @@ export default definePlugin({
 
 ### 服务缺失 / 可选依赖
 
-- **硬依赖**：`uses: { process: processService }`；网关在缺失时抛 `未找到 process 服务...`。
-- **可选依赖**：`optional(processService)`，先判 `process.current !== undefined` 再构造网关。
+- **硬依赖**：`uses: { process: processService }`；提供者缺席时访问 `process.use` 的成员同步抛 `ServiceUnavailableError`（错误类不导出，认 `err.name === 'ServiceUnavailableError'`）。
+- **可选依赖**：`optional(processService)`，先看 `process.present` 再调用。
 
 ### 错误边界
 
@@ -203,7 +204,7 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 本地实现在 POSIX 下**对所有子进程都设 `detached`**，目的是让子进程自成进程组组长，超时、中止与 `kill()` 才能打到孙进程。
 
-`App.stop()` 先冻结激活，再发 `app:stopping`（知会，不驱动 drain/close），再执行关停计划。本地实现把补杀挂在 `events.on('app:stopping', () => service.killAll())` 上——**不是** `lifecycle.onDispose`：bounce 本插件时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。未显式 `detached: true` 的进程组在登记表里，停机知会时对仍有成员的组补 `SIGKILL`，维持「Aalis 退出，工具子进程一起退出」；显式 `detached: true` 的 fire-and-forget 不登记。停机开始后新发起的管理动作一律返回 false。单独卸载本提供者时，正在用它的 required 下游先收尾再关；子进程仍只挂在被拆掉的那份实例上。
+`App.stop()` 先冻结激活，再发 `app:stopping`（知会，不驱动 drain/close），再执行关停计划。本地实现把补杀挂在 `events.use.on('app:stopping', () => service.killAll())` 上——**不是** `lifecycle.use.onDispose`：bounce 本插件时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。未显式 `detached: true` 的进程组在登记表里，停机知会时对仍有成员的组补 `SIGKILL`，维持「Aalis 退出，工具子进程一起退出」；显式 `detached: true` 的 fire-and-forget 不登记。停机开始后新发起的管理动作一律返回 false。单独卸载本提供者时，正在用它的 required 下游先收尾再关；子进程仍只挂在被拆掉的那份实例上。
 
 ---
 

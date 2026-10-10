@@ -5,7 +5,7 @@
 
 ## 1. 定位
 
-session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / 树形父子关系），并把分层的会话设置合并成一份「最终生效配置」交给 Agent 消费。取用名 `sessionManager.current`，契约包 `@aalis/api-session-manager`，参考实现 `@aalis/plugin-session-manager`。
+session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / 树形父子关系），并把分层的会话设置合并成一份「最终生效配置」交给 Agent 消费。消费方经 `sessionManager.use` 调用，契约包 `@aalis/api-session-manager`，参考实现 `@aalis/plugin-session-manager`。
 
 核心职责两件：
 
@@ -168,7 +168,7 @@ sessionConfig:
 
 ### 2.5 设置项的登记与解析
 
-设置项由拥有功能的插件经绑定门面 `sessionManager.registerSetting(setting)` 登记，随它的激活撤回（描述符的 bind 用资源口的 `registrar`，会话管理换提供者时整体重挂）：
+设置项由拥有功能的插件经绑定门面 `sessionManager.use.registerSetting(setting)` 登记，随它的激活撤回（描述符的 bind 用资源口的 `registrar`，会话管理换提供者时整体重挂）：
 
 ```ts
 interface SessionSetting {
@@ -219,7 +219,7 @@ interface SessionSetting {
 1. 有出生平台：一对一而对端是 owner 身份的（owner 的 IM 私聊）为默认工作区 `workspace:default`；其余为窗口，键是 api-gateway 的 `windowKey` 拼出的 `平台:类型:目标`，不含机器人账号，同一个群里两个账号的会话是同一个窗口。聊天窗口缺失（读表时类型不对被去掉）或目标为空的坏数据同样为窗口，键里缺的段按空串拼，日志点名一次，不落进默认工作区，免得 owner 给工作区设的值套到房间上。owner 谓词取 authority 的 `isOwner`，与房间类别同一判据；参考实现以 `optional(authority)` 取它（plugin-authority 也以 optional 用会话管理，两边成可选环），没有 authority 时一对一窗口按窗口算。
 2. 没有出生平台的按根会话记下的工作区：有值的为 `workspace:<id>`，不看绑定目录；没有的为默认工作区（默认工作区里建的 WebUI 与终端会话、`mcp-server`、编排与定时任务的会话、按 id 建档且还没补记来源字段的会话、会话表里没有的 id）。记下的工作区没有记录（坏数据）时按默认工作区，日志点名。
 
-场所记录 `{ key, kind, name, root?, config, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随记忆后端的胜者加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（显示名「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的设置。`getPlace(key)` 回显示名（工作区的目录经 `listWorkspaces` 取）。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 UTF-8 十六进制，只有小写，白纸目录在大小写不敏感的文件系统上也不撞），一个场所一张。
+场所记录 `{ key, kind, name, root?, config, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随本插件选中的记忆后端加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（显示名「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的设置。`getPlace(key)` 回显示名（工作区的目录经 `listWorkspaces` 取）。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 UTF-8 十六进制，只有小写，白纸目录在大小写不敏感的文件系统上也不撞），一个场所一张。
 
 工作区由 owner 经会话服务登记，会话管理只管记录：
 
@@ -229,7 +229,7 @@ interface SessionSetting {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`（另有内置的 `services` 等）、`optional = ['agent','authority','host-config','llm','platform']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
+**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide.use(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`（另有内置的 `services` 等）、`optional = ['agent','authority','host-config','llm','platform']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
 
 **典型消费点**：
 
@@ -490,11 +490,11 @@ export default definePlugin({
   provides: [sessionManager],
   uses: { provide, events, logger, memory },
   apply({ provide, events, logger, memory }) {
-    if (memory.current === undefined) {
-      logger.error('需要 memory 服务');
+    if (!memory.present) {
+      logger.use.error('需要 memory 服务');
       return;
     }
-    provide(sessionManager, new MySessionManager(events), { label: '会话管理', priority: 50 });
+    provide.use(sessionManager, new MySessionManager(events.use), { label: '会话管理', priority: 50 });
   },
 });
 ```
@@ -512,22 +512,22 @@ export default definePlugin({
 }
 ```
 
-双源校验细节见 [清单元数据](../concepts/manifest-metadata.md)。同名竞争的胜出规则（preference > priority > 注册顺序）见 [服务模型](../concepts/service-model.md)。
+双源校验细节见 [清单元数据](../concepts/manifest-metadata.md)。同名时消费方选中哪一家的规则（本插件偏好 > 全局偏好 > priority > 注册顺序）见 [服务模型](../concepts/service-model.md)。
 
 ## 5. 标准消费方式
 
-### 5.1 惰性取用 + 可选降级
+### 5.1 先看 present + 可选降级
 
-`session-manager` 在很多场景是**可选依赖**（`uses optional`）——它可能没装。每次用都现取，**不要缓存到字段**（provider bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
+`session-manager` 在很多场景是**可选依赖**（`uses optional`）——它可能没装。业务句柄 `sessionManager.use` 是活的，每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人；缺席时访问成员抛错，所以先看 `present`（见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
 ```ts
 // Agent 的标准写法（plugin-agent/src/index.ts）
-const sm = sessionManager.current;
+const sm = sessionManager.present ? sessionManager.use : undefined;
 const resolved = sm && sessionId ? sm.resolveConfig(sessionId, platform) : undefined;
 // sm 缺失 → resolved 为 undefined → 回落到全局 ServicePreference / 默认行为，不致中断
 ```
 
-写操作的标准错误边界是「服务不可用即报错或返回错误对象」，参考 action 写法 `if (!sm) throw new Error('session-manager 服务不可用')`（`plugin-session-manager/src/index.ts`）或工具里 `return JSON.stringify({ error: 'session-manager 服务不可用' })`（`plugin-subtask/src/index.ts`）。
+写操作的标准错误边界是「服务不可用即报错或返回错误对象」：先看 `sessionManager.present`，缺席时抛错，或像工具里那样 `if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' })`（`plugin-subtask/src/index.ts`）。
 
 ### 5.2 读别的插件登记的键
 
@@ -535,7 +535,7 @@ const resolved = sm && sessionId ? sm.resolveConfig(sessionId, platform) : undef
 
 ```ts
 import type {} from '@aalis/api-persona'; // 带来 SessionConfig.persona 的类型
-const persona = sessionManager.current?.resolveConfig(sessionId, platform).persona;
+const persona = sessionManager.present ? sessionManager.use.resolveConfig(sessionId, platform).persona : undefined;
 ```
 
 ### 5.3 监听生命周期事件
@@ -614,11 +614,11 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 
 ### 7.2 配置解析是同步快照
 
-`resolveConfig` 读内存 Map，不 `await`、不持久等待。若你在 provider 切换瞬间调用，可能拿到旧 manager 的快照——遵守 §5.1「每次现取」即可。
+`resolveConfig` 读内存 Map，不 `await`、不持久等待。若你在 provider 切换瞬间调用，可能拿到旧 manager 的快照；经 §5.1 的业务句柄 `sessionManager.use` 调用，下一次即打到新的那一家，不要把解析结果长期留存。
 
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
-写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随 memory 的当前胜者：运行中胜者换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随 memory 胜者卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.use.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.use.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随本插件选中的 memory 后端（`memory.follow`）：运行中换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随选中的 memory 后端卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ### 7.4 按会话累加 token
 
@@ -627,7 +627,7 @@ onebot 等平台派生的房间会话（如 `onebot:<self>:group:<群>`）在首
 ## 8. 交叉链接
 
 - [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（preference > priority > 注册顺序）。
-- [惰性服务访问](../concepts/lazy-service-access.md) —— 为何每次 `current`、不要缓存。
+- [惰性服务访问](../concepts/lazy-service-access.md) —— 业务句柄为什么是活的。
 - [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`uses` 与 `package.json aalis.service` 双源同步与校验。
 - [消息-LLM 流水线](../concepts/message-llm-pipeline.md) —— `resolveConfig` 的产物如何进入 `agent:input:before` / `agent:llm:before` / `agent:turn:after`。
 - [Agent 服务](agent.md) —— 头号消费方。

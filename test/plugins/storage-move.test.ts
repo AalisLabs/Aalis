@@ -41,7 +41,7 @@ describe('storage.move (真 fs)', () => {
       ],
     });
     await app.plugins.idle();
-    // 停在 pending 会让网关的「未知存储根」看起来像路由出错，先把激活闸的结果钉死
+    // 停在 pending 会让「没有提供者」看起来像路由出错，先把激活闸的结果钉死
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
     storage = app.bind({ storage: storageService }).storage.use;
   });
