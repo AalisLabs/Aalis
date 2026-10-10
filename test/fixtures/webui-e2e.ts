@@ -7,13 +7,15 @@ import { pathToFileURL } from 'node:url';
 import puppeteer, { type Browser, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
 import { afterAll, afterEach, beforeAll, expect, vi } from 'vitest';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
+import { hostLogs } from '../../packages/api-host-logs/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { webuiClient } from '../../packages/api-webui/src/index.js';
-import { type App, type PluginDefinition, provide } from '../../packages/core/src/index.js';
+import { type App, LogHub, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import { MINIMAL_BASE } from '../../packages/create-aalis/src/cli.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { setupFileLogger } from '../../packages/runtime/src/file-logger.js';
+import { createHostLogs } from '../../packages/runtime/src/host-logs.js';
 import { freePort } from '../helpers/net.js';
 import { hostedApp } from './app.js';
 import { provideHostPaths } from './host-paths.js';
@@ -124,7 +126,10 @@ export async function webuiStack(options: {
   const { logs } = provideHostPaths(app, home);
   const fileLog = await setupFileLogger(join(logs, 'latest.log'));
   cleanups.push(() => fileLog.dispose());
-  app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => clientDir });
+  // 与 runtime 一样在根上提供读日志的 host-logs：历史读这份文件日志，实时接默认中枢
+  const host = app.bind({ provide }).provide;
+  host.use(hostLogs, createHostLogs(LogHub.default, fileLog, app.logger), { exclusive: true });
+  host.use(webuiClient, { getClientDir: () => clientDir });
   const minimal = await Promise.all(
     MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
   );
