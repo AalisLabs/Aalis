@@ -107,7 +107,7 @@ resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手�
 `strategy.restart({ stop })`（stop / restart 时序由策略决定）。**未注入 `restartStrategy` 时抛错**，
 自身不保存任何数据、也不直接 spawn 进程。
 
-只受理一次：已受理过的再调静默返回，策略交出的 `stop` 已开始也是（只发一次 `app:restarting`、只调一次策略）；未受理过而停机已开始时抛错。
+每个 App 只受理一次重启：已受理过的再调记一条 debug 后返回，策略交出的 `stop` 已开始也是（只发一次 `app:restarting`、只调一次策略）；未受理过而停机已开始时抛错。策略失败（记 error）而没有停机时，App 照常运行，之后再调 `restart()` 仍只记 debug、不再受理。
 
 ## 基础指令
 
