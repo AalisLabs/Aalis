@@ -120,7 +120,7 @@ export function assertOwnCopy(value: unknown, what: string): void {
   const stamp = (value as { [MINTED]?: unknown } | null)?.[MINTED];
   if (stamp !== undefined && stamp !== THIS_COPY) {
     throw new ForeignCoreError(
-      `${what}来自另一份 @aalis/core：进程里装了两份 core，只能装一份（插件以 peerDependencies 引用 core；排查见 docs/guide/third-party-plugin.md「装了两份 @aalis/core」）`,
+      `${what}来自另一份 @aalis/core：进程里装了两份 core，只能装一份（插件以 peerDependencies 引用 core；排查见 https://aalis.acenyan.com/guide/third-party-plugin#two-cores）`,
     );
   }
 }
