@@ -234,7 +234,7 @@ describe('registrar 换提供者重挂', () => {
     const { app, warnings } = world();
     const host = app.bind({ provide });
     const first = hub();
-    host.provide(Registry, first, { onBehalfOf: 'prov-1' });
+    host.provide(Registry, first, { entryId: 'prov-1' });
 
     let offB!: () => void;
     await app.plugin(
@@ -253,7 +253,7 @@ describe('registrar 换提供者重挂', () => {
     const second = hub(item => {
       if (item.key === 'a') offB();
     });
-    host.provide(Registry, second, { priority: 1, onBehalfOf: 'prov-2' });
+    host.provide(Registry, second, { priority: 1, entryId: 'prov-2' });
     await tick();
 
     expect(first.values()).toEqual([]);

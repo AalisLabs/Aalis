@@ -25,13 +25,12 @@ export interface ProvideOptions {
   exclusive?: boolean;
   /** 展示名（服务页下拉等） */
   label?: string;
-  /** 条目的逻辑身份，缺省为本激活 id；一个激活登记多条时各给一个。格式由服务契约约定，core 不检查 */
-  entryId?: string;
   /**
-   * 代为登记：条目的逻辑身份取这个 id（而非本激活的），用于托管自己不运行代码的包——如 WebUI 服务端
-   * 替扫描到的静态前端包登记，偏好与展示认的是前端包名。清理仍归本激活。与 entryId 二选一。
+   * 条目的逻辑身份（偏好与展示认它），缺省为本激活 id。一个激活登记多条时各给一个；托管自己不运行代码的包
+   * （如 WebUI 服务端替扫描到的静态前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；
+   * 清理与 provides 核对仍归本激活。
    */
-  onBehalfOf?: string;
+  entryId?: string;
 }
 
 /** 提供者按身份认出的调用方激活（结构上即激活记录的这几项） */
@@ -95,8 +94,6 @@ type AnyDescriptor = ServiceDescriptor<any, any>;
 
 /**
  * 发布服务：唯一的发布入口。实现按描述符的提供者类型约束；返回退订，随这次激活撤回。
- *
- * `options.onBehalfOf`：条目的逻辑身份取被代者 id（用于偏好与服务页），清理仍归本激活。
  * `provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方，不替别的激活满足 `provides`。
  */
 export type Provide = <D extends AnyDescriptor>(
@@ -169,8 +166,8 @@ export function coreProviders(
     const name = descriptor.name;
     if (!accepts(c, `provide("${name}")`)) return () => {};
     assertOwnCopy(descriptor, 'provide 的描述符');
-    const entryId = options?.onBehalfOf ?? options?.entryId ?? c.id;
-    if (runtime.devMode && options?.onBehalfOf === undefined && container.hasEntry(name, entryId, c.owner))
+    const entryId = options?.entryId ?? c.id;
+    if (runtime.devMode && container.hasEntry(name, entryId, c.owner))
       c.logger.warn(
         `服务 "${name}" 已由本激活以 "${entryId}" provide 过一次，按 contextId 路由与设偏好只能命中其中一条。` +
           `一个激活登记多条时各传不同的 options.entryId；多套配置请在定义上声明 reusable，以 "<name>:<suffix>" 注册多个实例。`,

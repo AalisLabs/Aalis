@@ -35,7 +35,7 @@ export interface PluginDefinition<U = {}> extends PluginMeta {
   uses?: U;
   /**
    * 本插件提供的服务（激活后按本次激活实际登记的条目校验确已提供）。以任何逻辑身份登记的条目
-   * （含 `entryId`、`provide(..., { onBehalfOf })` 代登记）都计入本插件；别的激活登记的同 id 条目不算。
+   * （含以 `entryId` 登记的）都计入本插件；别的激活登记的同 id 条目不算。
    */
   // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
   provides?: ServiceDescriptor<any, any>[];

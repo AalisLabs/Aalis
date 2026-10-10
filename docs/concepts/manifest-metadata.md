@@ -65,7 +65,7 @@ export default definePlugin({
 
 `provides` 是描述符数组。`apply` 跑完后，core 按本次激活实际登记的条目检查每个名字是否确已提供。缺一个就把插件打成 `error`。
 
-以任何逻辑身份登记的条目（含 `entryId` 与 `provide(..., { onBehalfOf })` 代登记）都计入登记的激活；别的激活登记的同 id 条目不算。
+以任何逻辑身份登记的条目（含以 `entryId` 替别的包登记的）都计入登记的激活；别的激活登记的同 id 条目不算。
 
 dev 模式下，实际 `provide` 了但没有在 `provides` 里声明的服务名会 warn（下游依赖排序将无法找到该 provider）。
 
