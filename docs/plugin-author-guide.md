@@ -158,7 +158,7 @@ lifecycle.onDispose(() => {
 
 收尾段：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等它确认。**依赖交接放这里**；`onDispose` 阶段依赖可能已不可用。
 
-关停以激活为单位，分 drain 与 close。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain，所以整机停机时这里调下层是安全的。宿主根激活使用插件服务：根 drain 先于该插件 close，交接仍放根的 `onDrain`。插件使用根激活登记的服务（基础服务、宿主服务）：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。
+关停以激活为单位，分 drain 与 close。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain，所以整机停机时这里调下层是安全的。宿主根激活使用插件服务：根 drain 先于该插件 close，交接仍放根的 `onDrain`。插件使用根激活登记的服务（基础服务、宿主服务）：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；全由 required 边构成的环先全部 drain 再关，并告警，交接放 `onDrain` 才不丢。
 
 ### 不要放入
 

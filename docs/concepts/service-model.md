@@ -129,7 +129,7 @@ caps.provide(storage, scoped, {
 
 `bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳；插件处于禁用态时只换上新配置、保持禁用，启用时按新配置激活。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中六个管理动作一律返回 false。
 
-关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
+关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；全由 required 边构成的环先全部 drain 再关，并告警。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 
 `App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 

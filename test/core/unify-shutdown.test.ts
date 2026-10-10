@@ -255,7 +255,7 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     expect(lastHandoff).toBeLessThan(w.log.indexOf('close:b'));
   });
 
-  it('required 依赖成环（胜者换人造成）：点名告警并按确定顺序关闭，停机不悬挂', async () => {
+  it('required 依赖成环（胜者换人造成）：环内成员先全部收尾、收尾时都拿得到对方，点名告警，停机不悬挂', async () => {
     const w = world();
     const app = makeApp(w);
     const ping = defineService<{ hit(): void }>('zz-rping');
@@ -275,8 +275,9 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
       definePlugin({
         name: 'a',
         uses: { ping, provide, lifecycle },
-        apply({ provide, lifecycle }) {
+        apply({ ping, provide, lifecycle }) {
           provide(pong, { hit() {} });
+          lifecycle.onDrain(() => void w.log.push(`drain:a ping=${ping.current ? 'alive' : 'gone'}`));
           lifecycle.onDispose(closes('a'));
         },
       }),
@@ -297,8 +298,8 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     const cycle = w.warnings.filter(x => x.includes('required 依赖成环'));
     expect(cycle).toHaveLength(1);
     expect(cycle[0]).toContain('[b, a]');
-    // seed 已被顶替、无人依赖，不受环牵连：环卡住时它是唯一就绪的，先走；环内按自然次序 b、a
-    expect(w.log).toEqual(['close:seed', 'close:b', 'close:a']);
+    // seed 已被顶替、无人依赖，不受环牵连：环卡住时它是唯一就绪的，先走；环内先都收尾，再按自然次序 b、a 关
+    expect(w.log).toEqual(['close:seed', 'drain:a ping=alive', 'close:b', 'close:a']);
   });
 });
 

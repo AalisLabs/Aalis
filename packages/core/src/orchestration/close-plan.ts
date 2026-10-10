@@ -16,9 +16,9 @@
 // 依赖交接放 onDrain；onDispose 阶段依赖可能已不可用。
 // 资源内核只提供「分阶段关闭」，不认识服务；依赖政策全在这里。
 //
-// 依赖成环时：optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——
-// drain 期间对方仍活着，双方 onDrain 都能 require。不告警（互为 optional 是常态）。
-// 环里只剩 required 边仍无解才告警并强行放行。归属约束与环外的约束一条不松。
+// 依赖成环时：先只放行仅被 optional 边挡着的收尾，不告警（互为 optional 是常态，required 消费者照样先关完）；
+// 环全由 required 边构成时才放行环内全部收尾并告警——drain 期间对方仍活着，双方 onDrain 都能 require，
+// 只是有的消费者清理时提供者已收尾。归属约束与环外的约束一条不松。
 //
 // 边只来自框架自己管理的关系：每个激活声明的依赖（含尚未访问的 optional）在编排
 // 那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。不追踪调用方缓存的裸引用，
@@ -143,7 +143,7 @@ function planClose(roots: Activation[], logger: Logger): Stage[] {
     }
   }
 
-  // Kahn：就绪阶段里取自然次序最小的。卡住即有环——只放开环内的一个阶段，环外的约束一条不松
+  // Kahn：就绪阶段里取自然次序最小的。卡住即有环——只放开环内的收尾，环外的约束一条不松
   const order: Stage[] = [];
   const blockers = new Map(stages.map(stage => [stage, stage.after.size]));
   const remaining = new Set(stages);
@@ -166,23 +166,16 @@ function planClose(roots: Activation[], logger: Logger): Stage[] {
     // 按自然次序排：点名的顺序就是环内实际的关闭次序，与图的遍历次序无关
     const cycle = sourceCycle(remaining).sort((x, y) => x.index - y.index);
     const names = [...new Set(cycle.map(stage => stage.ctx.id))].join(', ');
-    // 源分量之外没有未放行的前驱，故只被软约束挡着的收尾阶段放行后不违反任何硬约束。
-    // 关闭阶段的软前驱只可能是祖先的收尾；激活树只有根与插件两层，根的收尾没有前驱、卡住之前必已放行
-    const yielding = cycle.filter(
-      stage => stage.kind === 'drain' && ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)),
-    );
-    if (yielding.length > 0) {
-      logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内成员先全部收尾再撤回`);
-      for (const stage of yielding) {
-        blockers.set(stage, 0);
-        release(stage);
-      }
-      continue;
+    // 环必经某条依赖边进出收尾阶段（归属边与「收尾先于关闭」不成环），收尾的前驱只有依赖边且都在源分量内：
+    // 放行环内的收尾总能解开它
+    const drains = cycle.filter(stage => stage.kind === 'drain');
+    const soft = drains.filter(stage => ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)));
+    if (soft.length > 0) logger.debug(`关停顺序：optional 依赖成环 [${names}]，只被 optional 边挡着的成员先收尾`);
+    else logger.warn(`关停顺序：required 依赖成环 [${names}]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾`);
+    for (const stage of soft.length > 0 ? soft : drains) {
+      blockers.set(stage, 0);
+      release(stage);
     }
-    logger.warn(`关停顺序：required 依赖成环 [${names}]，环内无法保证都先于各自的提供者，其余顺序不受影响`);
-    const forced = cycle[0];
-    blockers.set(forced, 0);
-    release(forced);
   }
   return order;
 }
