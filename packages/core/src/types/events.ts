@@ -29,18 +29,10 @@ export interface AalisEvents {
   // 业务事件由各契约包经 declaration merging 注入：消息事件在 @aalis/schema-message，
   // 工具事件在 @aalis/api-tools，网关相位事件在 @aalis/api-gateway。
   /**
-   * 通知：某服务多了一个对外可见的提供者（`provide(descriptor, implementation)`，或转入后台的激活完成时
-   * 上线它登记的服务）
+   * 通知：某服务的提供者或胜者可能变了，请重读（`get` / `all`）。可能变化时就发，不保证恰好一次、也不说明
+   * 变了什么：`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换都发
    */
-  'service:registered': [name: string];
-  /** 通知：某服务少了一个对外可见的提供者（退订闭包、激活拆卸，或激活转入后台时撤下它已登记的服务） */
-  'service:unregistered': [name: string];
-  /**
-   * 通知：某服务的偏好 provider 发生切换（services.prefer / services.unprefer）。
-   * 偏好切换会改变当前胜者但不改变 entry 集合，
-   * 因此不能复用 registered/unregistered 语义；绑定层借此事件跟随重挂。
-   */
-  'service:preference-changed': [name: string];
+  'service:changed': [name: string];
   /** 通知：插件已激活。同一轮 recompute 可能紧接着激活下一个插件，不等本事件的监听器 */
   'plugin:loaded': [instanceId: string];
   /**
@@ -50,8 +42,6 @@ export interface AalisEvents {
   'plugin:unloaded': [instanceId: string];
   /** 通知：一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 */
   'plugins:changed': [];
-  /** 屏障：`start()` 的第一步，早于 `app:ready` */
-  'app:starting': [];
   /**
    * 屏障：应用启动的第一相位，插件在此建立「启动后才成立」的东西。
    *

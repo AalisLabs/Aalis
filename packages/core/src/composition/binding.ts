@@ -144,13 +144,11 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
   // 胜者可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
   const subscribe = (): void => {
     subscribed = true;
-    const offs = (['service:registered', 'service:unregistered', 'service:preference-changed'] as const).map(event =>
-      scope.events.on(event, service => {
-        if (service === name && !scope.resources.disposed) pumpAll();
-      }),
-    );
+    const off = scope.events.on('service:changed', service => {
+      if (service === name && !scope.resources.disposed) pumpAll();
+    });
     scope.resources.trackWithdrawal(() => {
-      for (const off of offs) off();
+      off();
       pumpAll();
     }, `watch:${name}`);
   };

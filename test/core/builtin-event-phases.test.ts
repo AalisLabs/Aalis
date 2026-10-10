@@ -62,7 +62,7 @@ describe('内置事件：通知节不等监听器', () => {
 });
 
 describe('内置事件：屏障节等监听器', () => {
-  it('start() 的三个屏障按序推进，每一步都等上一步的监听器全部完成', async () => {
+  it('start() 的两个屏障按序推进，每一步都等上一步的监听器全部完成', async () => {
     const app = silentApp();
     const { events: bus } = app.bind({ events });
     const order: string[] = [];
@@ -70,12 +70,11 @@ describe('内置事件：屏障节等监听器', () => {
       await new Promise<void>(r => setTimeout(r, 15));
       order.push(tag);
     };
-    bus.on('app:starting', slow('starting'));
     bus.on('app:ready', slow('ready'));
     bus.on('app:started', () => void order.push('started'));
 
     await app.start();
-    expect(order).toEqual(['starting', 'ready', 'started']);
+    expect(order).toEqual(['ready', 'started']);
     await app.stop();
   });
 

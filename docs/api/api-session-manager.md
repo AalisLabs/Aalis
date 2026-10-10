@@ -171,7 +171,7 @@ interface SessionInheritance {
 - 按层读全局默认层（`getLayer`、`resolveLayer`、继承链）时，这一项取偏好指向的模型：条目在时按它的提供者与模型 ID；不在时按还装着的提供者拆（取能作为 `<提供者>/` 前缀的最长的一个，模型 ID 里的 `/` 留在模型里），提供者也不在时按最后一个 `/` 拆。读不成模型引用的偏好（手写的、不带 `/`，或只写了提供者、拆出的提供者只剩 npm scope，如 `@scope/llm-x`）读出来没有这一项，偏好没有生效由 doctor 报出。
 - 按层写全局默认层时写的是偏好（`services.prefer`，`null` 即取消偏好），连同文档的 `servicePreferences` 一起落盘；落盘失败时偏好与文档一并撤回。只有这一项与读出的值不同时才动偏好：改这一层的别的项不碰偏好，读不成模型引用的偏好也原样留着。`sessionConfig.defaults` 不收这一项，配置文件里写了的告警一次后忽略。
 - `resolveConfig` 在全局默认之上的各层都没设时不给它的值：取用方交给 api-llm 的 `resolveLLMModel`，落到服务此刻解析到的那一个（偏好 > 提供者自带优先级 > 登记先后），偏好指向的模型不在时也有着落。`childConfig` 同样不带它。
-- 偏好从别处改了（`service:preference-changed`）、llm 的提供者上下线（`service:registered`、`service:unregistered`）同样发 `session:config:changed`：偏好指向的模型在不在、服务实际用的那一个随之变。
+- llm 服务可能变了（`service:changed`：偏好从别处改了、提供者上下线）同样发 `session:config:changed`：偏好指向的模型在不在、服务实际用的那一个随之变。
 - `resolvedDefaults()` 给出这些项此刻实际落到的值：llm 服务按偏好、提供者自带的优先级与登记先后解析到的能对话的模型（偏好指向的模型不在时是服务落到的那一个），没有可用模型时没有。会话服务据此在设置行上带 `resolved`，界面写「默认（<模型名>）」、标出偏好指向的模型不在。
 
 ### 写入

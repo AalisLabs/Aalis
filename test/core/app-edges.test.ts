@@ -156,10 +156,10 @@ describe('事件监听器抛错的告警', () => {
         name: 'bad-listener',
         uses: { events },
         apply({ events }) {
-          events.on('app:starting', () => {
+          events.on('app:started', () => {
             throw boom;
           });
-          events.on('app:starting', () => void reached.push('after'));
+          events.on('app:started', () => void reached.push('after'));
         },
       }),
     );
@@ -168,7 +168,7 @@ describe('事件监听器抛错的告警', () => {
     await app.start();
 
     const warns = log.records.filter(r => r.level === 'warn');
-    expect(warns.map(r => r.message)).toEqual(['事件 "app:starting" 的监听器抛错（已隔离，来自 bad-listener）:']);
+    expect(warns.map(r => r.message)).toEqual(['事件 "app:started" 的监听器抛错（已隔离，来自 bad-listener）:']);
     expect(warns[0].args).toEqual([boom]);
     expect(reached).toEqual(['after']);
   });
@@ -178,14 +178,14 @@ describe('事件监听器抛错的告警', () => {
     const app = track(createInspectableApp({ ...base(), logger: log }));
     const boom = new Error('ownerless');
     // 公开面拿不到总线；core 内部确有不带 owner 的订阅（binding 的提供者跟随），这里白盒复现同一形状
-    activationHost(app).runtime.events.on('app:starting', () => {
+    activationHost(app).runtime.events.on('app:started', () => {
       throw boom;
     });
 
     await app.start();
 
     const warns = log.records.filter(r => r.level === 'warn');
-    expect(warns.map(r => r.message)).toEqual(['事件 "app:starting" 的监听器抛错（已隔离）:']);
+    expect(warns.map(r => r.message)).toEqual(['事件 "app:started" 的监听器抛错（已隔离）:']);
     expect(warns[0].args).toEqual([boom]);
   });
 });

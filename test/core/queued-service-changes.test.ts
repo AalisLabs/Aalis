@@ -194,8 +194,8 @@ describe('排队的服务下线变化', () => {
 
     removeA();
     removeB();
-    await host.events.emit('service:unregistered', svcA.name);
-    await host.events.emit('service:unregistered', svcB.name);
+    await host.events.emit('service:changed', svcA.name);
+    await host.events.emit('service:changed', svcB.name);
     host.provide(svcNever, {});
     await (app.plugins as PluginManager).recompute();
     busy.release();

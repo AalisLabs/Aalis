@@ -342,7 +342,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
     expect(state(app, 'early')).toBe('active');
     const instance = makeHub();
     host.provide(hub, instance);
-    await sleep(0); // 重挂随 service:registered 的广播到达，不与 provide 同栈
+    await sleep(0); // 重挂随 service:changed 的广播到达，不与 provide 同栈
     expect(instance.list()).toEqual(['queued']);
   });
 });

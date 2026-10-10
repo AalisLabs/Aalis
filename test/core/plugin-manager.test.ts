@@ -286,7 +286,7 @@ describe('App plugin lifecycle', () => {
     expect(await app.plugins.bounce('svc-A'), '停机后拒绝重建').toBe(false);
   });
 
-  it('停机：关机标志屏蔽 service:unregistered 反应式重算', async () => {
+  it('停机：关机标志屏蔽 service:changed 反应式重算', async () => {
     const { app } = makeApp();
     const log: string[] = [];
     await app.plugin(

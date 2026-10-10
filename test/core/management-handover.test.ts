@@ -374,7 +374,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
   it.each([
     'unload',
     'disable',
-  ] as const)('%s 提供者：前一个跟随者的清理挂住，后一个仍在提供者 onDispose 之前清理，后登记的下线监听照常收到', async action => {
+  ] as const)('%s 提供者：前一个跟随者的清理挂住，后一个仍在提供者 onDispose 之前清理，后登记的变更监听照常收到', async action => {
     const app = world(50);
     const log: string[] = [];
     await app.plugin(provider(log, 'p'));
@@ -385,8 +385,8 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
         name: 'listener',
         uses: { events },
         apply({ events }) {
-          events.on('service:unregistered', name => {
-            if (name === S.name) log.push('listener got unregistered');
+          events.on('service:changed', name => {
+            if (name === S.name) log.push('listener got changed');
           });
         },
       }),
@@ -397,7 +397,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
     const fast = log.indexOf('fast cleanup p alive=true');
     expect(fast).toBeGreaterThan(-1);
     expect(fast).toBeLessThan(log.indexOf('p dispose'));
-    expect(log).toContain('listener got unregistered');
+    expect(log).toContain('listener got changed');
   });
 
   it('注册更高优先级的提供者：前一个跟随者的清理挂住，后一个仍换到新胜者', async () => {
@@ -428,7 +428,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
     expect(log.indexOf('f cleanup end')).toBeLessThan(log.indexOf('p1 dispose'));
   });
 
-  it('下线监听里 await plugins.idle() 不与撤回互等', async () => {
+  it('变更监听里 await plugins.idle() 不与撤回互等', async () => {
     const app = world(0);
     const log: string[] = [];
     await app.plugin(provider(log, 'p'));
@@ -437,7 +437,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
         name: 'waiter',
         uses: { events },
         apply({ events }) {
-          events.on('service:unregistered', async () => {
+          events.on('service:changed', async () => {
             await app.plugins.idle();
             log.push('waiter settled');
           });
@@ -572,7 +572,7 @@ describe('登记账本条目与原语同一拍撤掉，不等下游交接', () =
         apply({ h, events, provide }) {
           provide(Q, {});
           h.register('tool-p');
-          events.on('service:registered', () => void heard++);
+          events.on('service:changed', () => void heard++);
         },
       }),
     );

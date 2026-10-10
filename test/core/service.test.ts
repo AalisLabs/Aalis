@@ -64,9 +64,12 @@ describe('ServiceContainer', () => {
     const off = c.register('svc', { g: 0 }, 'dup', OWNER);
     c.unregisterByOwner(Symbol('dup'));
     expect(c.getAll('svc')).toHaveLength(1);
-    expect(off(), '退订闭包报告真的摘掉了').toBe(true);
+    off();
     expect(c.getAll('svc')).toHaveLength(0);
-    expect(off(), '再退订一次：条目已不在，报 false').toBe(false);
+    off();
+    c.register('svc', { g: 1 }, 'later', OWNER);
+    off();
+    expect(c.getAll('svc'), '条目已不在时再退订无动作，不误删同名的新条目').toHaveLength(1);
   });
 
   it('没有任何提供者时 prefer 照收（返回 true），提供者登记后偏好生效', () => {

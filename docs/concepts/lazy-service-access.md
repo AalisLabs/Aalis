@@ -58,13 +58,13 @@ export default definePlugin({
 
 一次 `bounce` 的流程是：换上新的运行配置（传了 `config` 时）→ 拆掉当前激活 → 转入 pending → 重算后重新 `apply`。销毁会把该插件登记的服务一并注销，重新激活时新实例重新 `provide`。服务名没变，实例却是全新的——这正是缓存裸引用会出事的原因。
 
-改变「谁是当前胜者」的信号：
+改变「谁是当前胜者」的信号都发同一个事件 `service:changed(name)`，含义是「可能变了，请重读」：
 
-| 信号 | 触发 | 事件 |
-| --- | --- | --- |
-| provider 注册 | `provide(desc, impl)`；转入后台的激活完成时上线它登记的服务 | `service:registered` |
-| provider 注销 | 激活撤回；激活超过 `slowThresholdMs` 转入后台时撤下它已登记的服务 | `service:unregistered` |
-| 偏好切换 | `services.prefer` / `unprefer` | `service:preference-changed` |
+| 信号 | 触发 |
+| --- | --- |
+| provider 注册 | `provide(desc, impl)`；转入后台的激活完成时上线它登记的服务 |
+| provider 注销 | 激活撤回；激活超过 `slowThresholdMs` 转入后台时撤下它已登记的服务 |
+| 偏好切换 | `services.prefer` / `unprefer` |
 
 激活超过 `slowThresholdMs` 仍未完成的提供者在完成前不参与解析：`current` / `require()` / `all()` 都看不到它登记的服务。阈值之前它在 `apply` 里登记的服务照常可见，转入后台时撤下，`follow` 随之交接回其余提供者。
 
@@ -165,7 +165,7 @@ export default definePlugin({
 | --- | --- | --- |
 | 偶尔读一次某服务的当前胜者 | `x.current` / `x.require()`，即取即用 | 不要把读出的值存进类字段或闭包 |
 | 长期持有一个自动跟随换人的句柄 | `createStorageGateway(storage)` / `createProcessGateway(process)` | 不要缓存 `current` 的裸实例 |
-| 把有状态资源挂到会换人的提供者上 | `x.follow(attach)`，attach 同步返回 cleanup | 不要 `async` attach；不要手写监听 `service:registered` |
+| 把有状态资源挂到会换人的提供者上 | `x.follow(attach)`，attach 同步返回 cleanup | 不要 `async` attach；不要手写监听 `service:changed` |
 | 往 hub 登记工具 / 命令 / 页面 | `uses` 描述符的绑定门面（`register` / `command` / `definePage`） | 不要绕过门面直接打到 `current` 上（会丢掉换人重挂） |
 | 跨 root 或跨 model 透明路由 | `*-api` 的 `resolveXxx` 或网关 helper | 不要自己重抄聚合逻辑 |
 | 清理资源（连接、定时器、外部句柄） | `lifecycle.onDispose`；交接在手数据用 `onDrain` | 不要用 `app:stopping` 当清理通道 |

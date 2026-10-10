@@ -100,8 +100,9 @@ export function createWorld(seed: number, profile: Profile) {
   };
   const app = new App({ name: 'fuzz', logger: capture('app'), disposeTimeoutMs: TIMEOUT, slowThresholdMs: 60 });
   const host = app.bind({ services, events });
-  host.events.on('service:registered', name => {
-    if (host.services.get(name) !== undefined) lost.delete(name);
+  // 有不在退场的提供者才算找回：撤回自己发的变更通知到达时，退场中的提供者可能还没摘掉
+  host.events.on('service:changed', name => {
+    if (host.services.all(name).some(v => running(v.contextId))) lost.delete(name);
   });
 
   const n = 6 + r.int(5);

@@ -47,7 +47,7 @@ register(definition, config?, instanceId?, { disabled? })
   ├─ 从 uses 抽出 required / optional
   └─ recompute()（只登记了禁用条目时不重算）
         required 已满足 → 激活（ActivationHost.create → mount：装配能力并调用 apply → 校验 provides）
-        否则保持 pending，等待 service:registered
+        否则保持 pending，等待 service:changed
 ```
 
 `app.pluginAll(items)` 是同一流程的批量形式：整批同步落账后只 recompute 一次，依赖方因此在同一次重算里排在它 required 服务的全部提供者之后激活。
@@ -58,8 +58,8 @@ register(definition, config?, instanceId?, { disabled? })
 
 - 超过阈值仍未完成：记一条 warn 点名，转入后台继续，重算接着激活后面的插件；`register` / `pluginAll` / `idle()` 照常在阈值处返回，启动流程不再卡在插件登记。此后不再提醒，后台状态看 `getStatus()` 的 `slow`；阈值定时器只触发一次，没调 `stop()` 的宿主进程至多被它拖到阈值到点才退出。
 - 重算逐个激活，每个慢激活都单独等满一个阈值：排在前面的慢插件有 N 个时，后面插件的激活与 `register` / `pluginAll` / `idle()` 的返回约晚 N×阈值。
-- 后台期间条目停在 `activating`，`getStatus()` 对它给出 `slow: true`。它经 `provide` 登记的服务不对外：`get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（发 `service:unregistered`），后台期间新登记的不发事件；依赖它的插件保持 `pending`。它经 `registrar` 登记到别处的条目与事件监听照常生效，它的 `app:ready` / `app:started` 监听器可能在 `apply` 完成之前被调用。
-- 落定：成功则先转 `active` 再上线服务（发 `service:registered`），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（计入下文的重试预算）。无论哪种都另补一次重算。
+- 后台期间条目停在 `activating`，`getStatus()` 对它给出 `slow: true`。它经 `provide` 登记的服务不对外：`get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（发 `service:changed`），后台期间新登记的照常发事件但重读看不到；依赖它的插件保持 `pending`。它经 `registrar` 登记到别处的条目与事件监听照常生效，它的 `app:ready` / `app:started` 监听器可能在 `apply` 完成之前被调用。
+- 落定：成功则先转 `active` 再上线服务（发 `service:changed`），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（计入下文的重试预算）。无论哪种都另补一次重算。
 - 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），abort 与宽限同下文，回到 `pending` 并计入下文的重试预算（用尽转 `error`）。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
 
 `apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.signal` 在关闭计划冻结后立即 abort，重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定，到期仍未落定就不再等待，流程继续。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态），它迟到的 `provide` / `events.on` 按已关闭的激活拒收、`onDispose` 就地执行。
@@ -133,7 +133,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ## 反应式监听
 
-- `service:registered` / `service:unregistered` → `recompute()`
+- `service:changed` → `recompute()`
 - flight 不再等的激活（转入后台，或被接手）落定 → `recompute()`
 
 单飞 / 挂起 / 关机的取舍都在 `recompute` 内部：在飞期间排队，关机后跳过。

@@ -382,6 +382,6 @@ describe('保留的安全网：故障注入', () => {
     withdraw();
     await new Promise<void>(resolve => setImmediate(resolve));
     runtime.notify = notify;
-    expect(at('error')).toEqual([`recompute(service:unregistered:${dep.name}) 报错: Error: 注入的通知故障`]);
+    expect(at('error')).toEqual([`recompute(service:changed:${dep.name}) 报错: Error: 注入的通知故障`]);
   });
 });

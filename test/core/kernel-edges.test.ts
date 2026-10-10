@@ -129,8 +129,9 @@ describe('ServiceContainer 偏好与独占登记', () => {
     const Solo = defineService<{ v: number }>('__t:kernel-edges:solo');
     const host = app.bind({ provide, services, events });
     host.provide(Solo, { v: 1 }, { exclusive: true });
+    await tick();
     const changed: string[] = [];
-    host.events.on('service:preference-changed', name => void changed.push(name));
+    host.events.on('service:changed', name => void changed.push(name));
 
     expect(host.services.prefer(Solo, 'someone-else')).toBe(false);
     expect(host.services.preferred(Solo)).toBeUndefined();

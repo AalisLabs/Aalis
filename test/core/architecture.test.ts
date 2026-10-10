@@ -688,7 +688,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 段收口等一次（删去链上的第二次等待），注册账本的聚合不再重复记账。
 // 2530 → 2523：同批审查删减——关停计划经 children 遍历插件激活，closeInfo 只剩提供者（改名 providers，冻结计划
 // 不再调它）；删去清理链只供测试的 size、App 里根激活的别名；切断之后的交接钩子改名 afterCut。
-const CORE_CODE_LINE_CEILING = 2523;
+// 2523 → 2512：b5a P1-6 + P0-2（用户选甲、丁）——三个服务事件合成「可能变了，请重读」的 service:changed，删去只为恰好一次
+// 写的 isHeld、退订闭包的布尔返回与暂扣摘除特判；删 app:starting。
+const CORE_CODE_LINE_CEILING = 2512;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
