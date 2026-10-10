@@ -295,7 +295,7 @@ describe('两份管理关闭计划重叠', () => {
 describe('提供者清理之前，跟随者交接落定', () => {
   it('optional 跟随者的异步清理在提供者 onDispose 之前完成，清理期间提供者仍活着', async () => {
     const app = world();
-    const S = defineService<{ state(): { alive: boolean } }>('t:handover:s');
+    const S = defineService<{ alive: boolean }>('t:handover:s');
     const log: string[] = [];
     await app.plugin(
       definePlugin({
@@ -303,10 +303,10 @@ describe('提供者清理之前，跟随者交接落定', () => {
         provides: [S],
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
-          const state = { alive: true };
-          provide.use(S, { state: () => state });
+          const instance = { alive: true };
+          provide.use(S, instance);
           lifecycle.use.onDispose(() => {
-            state.alive = false;
+            instance.alive = false;
             log.push('p dispose');
           });
         },
@@ -317,15 +317,11 @@ describe('提供者清理之前，跟随者交接落定', () => {
         name: 'follower',
         uses: { s: optional(S) },
         apply({ s }) {
-          // 提供者方法交出的对象属于提供者：交接时它还活着；句柄本身在那一家撤回后就打不到它
-          s.follow(handle => {
-            const state = handle.state();
-            return () => {
-              log.push(`cleanup start alive=${state.alive}`);
-              return new Promise<void>(r => setTimeout(r, 10)).then(
-                () => void log.push(`cleanup end alive=${state.alive}`),
-              );
-            };
+          s.follow(instance => () => {
+            log.push(`cleanup start alive=${instance.alive}`);
+            return new Promise<void>(r => setTimeout(r, 10)).then(
+              () => void log.push(`cleanup end alive=${instance.alive}`),
+            );
           });
         },
       }),
@@ -338,7 +334,7 @@ describe('提供者清理之前，跟随者交接落定', () => {
 });
 
 describe('交接不经事件投递：慢跟随者不拖住别人，通知不等监听器', () => {
-  const S = defineService<{ name: string; state(): { alive: boolean } }>('t:handover:shared');
+  const S = defineService<{ name: string; alive: boolean }>('t:handover:shared');
   const never = () => new Promise<void>(() => {});
 
   function provider(log: string[], name: string, priority = 0) {
@@ -347,10 +343,10 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
       provides: [S],
       uses: { provide, lifecycle },
       apply({ provide, lifecycle }) {
-        const state = { alive: true };
-        provide.use(S, { name, state: () => state }, { priority });
+        const instance = { name, alive: true };
+        provide.use(S, instance, { priority });
         lifecycle.use.onDispose(() => {
-          state.alive = false;
+          instance.alive = false;
           log.push(`${name} dispose`);
         });
       },
@@ -362,12 +358,10 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
       name,
       uses: { s: optional(S) },
       apply({ s }) {
-        s.follow(handle => {
-          const provider = handle.name;
-          const state = handle.state();
-          log.push(`${name} attach ${provider}`);
+        s.follow(instance => {
+          log.push(`${name} attach ${instance.name}`);
           return () => {
-            log.push(`${name} cleanup ${provider} alive=${state.alive}`);
+            log.push(`${name} cleanup ${instance.name} alive=${instance.alive}`);
             return cleanup();
           };
         });

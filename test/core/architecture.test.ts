@@ -694,7 +694,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2510 → 2509：b5a P2-2 剩余（用户选中间方案）——provide 删 onBehalfOf，并入 entryId（托管别的包时取被托管包的 id）。
 // 2509 → 2587：服务调用形状统一（owner 10-08 定，并入 0.20）——caps.xxx 两层（选择层 list / use / of / present / follow，
 // 业务层活句柄），按插件偏好进挑选规则，关停边建给声明服务的全部提供者；删 ServiceRef 与 serviceRef。
-const CORE_CODE_LINE_CEILING = 2587;
+// 2587 → 2626：同一决定的后续（owner 定稿 follow 句柄）——follow 交给 attach 的句柄钉在挂上的那条登记、清理落定之前一直
+// 可用（不按 id 打到同 id 的新实例），资源口加 present。
+const CORE_CODE_LINE_CEILING = 2626;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

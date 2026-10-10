@@ -28,18 +28,45 @@ interface Kv {
 const kv = defineService<Kv>('zz-shape-kv');
 const impl = (tag: string): Kv => ({ tag, get: () => tag });
 
-const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
+/** 登记型契约：提供者是一张登记表，业务层只有登记口 */
+interface Hub {
+  items: string[];
+  add(item: string): () => void;
+}
+const hub = (): Hub => {
+  const items: string[] = [];
+  return {
+    items,
+    add: item => {
+      items.push(item);
+      return () => void items.splice(items.indexOf(item), 1);
+    },
+  };
+};
+const registry = defineService<Hub, { register(item: string): () => void }>('zz-shape-registry', port => {
+  const ledger = port.registrar<string>({ key: item => item, register: (h, item) => h.add(item) });
+  return { register: item => ledger.add(item) };
+});
+
 const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
 function world() {
-  const app = new App({ name: 'shape', logger: silent });
+  const warns: string[] = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+    error() {},
+    child: () => logger,
+  };
+  const app = new App({ name: 'shape', logger });
   apps.push(app);
   const host = app.bind({ provide, services });
   const give = (tag: string, priority = 0) => host.provide.use(kv, impl(tag), { priority, entryId: tag });
-  return { app, host, give };
+  return { app, host, give, warns };
 }
 
 /** 一个只声明 kv 的插件，交出它的选择层 */
@@ -178,7 +205,7 @@ describe('选择层', () => {
     expect(kvs.use.tag).toBe('b');
   });
 
-  it('本插件偏好变化时 follow 先跑旧清理再以新的 of(id) 句柄重挂', async () => {
+  it('本插件偏好变化时 follow 先跑旧清理再以新的那一家重挂', async () => {
     const { app, host, give } = world();
     give('a');
     give('b');
@@ -195,28 +222,8 @@ describe('选择层', () => {
   });
 
   it('use 上的登记在本插件的选择换人时整体重挂', async () => {
-    interface Hub {
-      tag: string;
-      items: string[];
-      add(item: string): () => void;
-    }
-    const hub = (tag: string): Hub => {
-      const items: string[] = [];
-      return {
-        tag,
-        items,
-        add: item => {
-          items.push(item);
-          return () => void items.splice(items.indexOf(item), 1);
-        },
-      };
-    };
-    const registry = defineService<Hub, { register(item: string): () => void }>('zz-shape-registry', port => {
-      const ledger = port.registrar<string>({ key: item => item, register: (h, item) => h.add(item) });
-      return { register: item => ledger.add(item) };
-    });
     const { app, host } = world();
-    const [a, b] = [hub('a'), hub('b')];
+    const [a, b] = [hub(), hub()];
     host.provide.use(registry, a, { entryId: 'a' });
     host.provide.use(registry, b, { entryId: 'b' });
     await app.plugin(
@@ -232,7 +239,119 @@ describe('选择层', () => {
   });
 });
 
+describe('follow 的句柄钉在挂上的那一条登记', () => {
+  interface Marked {
+    marks: string[];
+    mark(m: string): void;
+  }
+  const marked = defineService<Marked>('zz-shape-marked');
+  const make = (): Marked => {
+    const marks: string[] = [];
+    return { marks, mark: m => void marks.push(m) };
+  };
+
+  it('同一个 id 换了新实例：旧挂载的异步清理仍打到旧实例，新实例另挂一次，不告警', async () => {
+    const { app, host, warns } = world();
+    const [v1, v2] = [make(), make()];
+    const off = host.provide.use(marked, v1, { entryId: 'same' });
+    let selection!: ServiceSelection<Marked>;
+    await app.plugin(
+      definePlugin({
+        name: 'follower',
+        uses: { marked: optional(marked) },
+        apply: caps => {
+          selection = caps.marked;
+        },
+      }),
+    );
+    selection.follow(handle => {
+      handle.mark('attach');
+      return async () => {
+        await Promise.resolve();
+        handle.mark('cleanup');
+      };
+    });
+    off();
+    host.provide.use(marked, v2, { entryId: 'same' });
+    await expect.poll(() => v2.marks).toEqual(['attach']);
+    expect(v1.marks).toEqual(['attach', 'cleanup']);
+    expect(warns).toEqual([]);
+  });
+
+  it('提供者撤回时清理仍调得到它（守卫式的 setter），不告警；清理落定之后句柄才失效', async () => {
+    interface Guarded {
+      guard?: string;
+      setGuard(guard?: string): void;
+    }
+    const guarded = defineService<Guarded>('zz-shape-guarded');
+    const hub: Guarded = {
+      setGuard(guard) {
+        this.guard = guard;
+      },
+    };
+    const { app, warns } = world();
+    await app.plugin(
+      definePlugin({
+        name: 'hub',
+        provides: [guarded],
+        uses: { provide },
+        apply: ({ provide }) => void provide.use(guarded, hub),
+      }),
+    );
+    let held!: Guarded;
+    await app.plugin(
+      definePlugin({
+        name: 'guard',
+        uses: { guarded: optional(guarded) },
+        apply: ({ guarded }) =>
+          void guarded.follow(handle => {
+            held = handle;
+            handle.setGuard('on');
+            return () => handle.setGuard(undefined);
+          }),
+      }),
+    );
+    expect(hub.guard).toBe('on');
+    await app.plugins.unload('hub');
+    expect(hub.guard).toBeUndefined();
+    expect(warns).toEqual([]);
+    expect(() => held.guard).toThrow(expect.objectContaining({ name: 'ServiceUnavailableError' }));
+  });
+});
+
 describe('自定义绑定', () => {
+  it('经 follow 句柄做的登记打到挂上的那一家，随这次挂载一起撤回', async () => {
+    const { app, host } = world();
+    const [a, b] = [hub(), hub()];
+    host.provide.use(registry, a, { entryId: 'a' });
+    host.provide.use(registry, b, { entryId: 'b' });
+    await app.plugin(
+      definePlugin({
+        name: 'registrant',
+        uses: { registry },
+        apply: ({ registry }) => void registry.follow(handle => void handle.register('x')),
+      }),
+    );
+    expect([a.items, b.items]).toEqual([['x'], []]);
+    host.services.use.prefer(registry, 'b', { for: 'registrant' });
+    await expect.poll(() => [a.items, b.items]).toEqual([[], ['x']]);
+  });
+
+  it('资源口的 present 与选择层同口径：绑定判在不在不必接错误', () => {
+    const probe = defineService<object, { present(): boolean }>('zz-shape-probe', port => ({
+      present: () => port.present,
+    }));
+    const { app, host } = world();
+    const caps = app.bind({ probe: optional(probe) });
+    expect(caps.probe.use.present()).toBe(false);
+    host.provide.use(probe, {});
+    expect([caps.probe.use.present(), caps.probe.of('root').present(), caps.probe.of('x').present()]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+  });
+
   it('在活句柄之上包装或添加成员：没覆盖的成员照常转发，选谁仍由 core 定', async () => {
     interface Chat {
       tag: string;
