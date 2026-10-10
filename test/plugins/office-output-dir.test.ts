@@ -24,14 +24,14 @@ async function activate(outputDir: string) {
   const app = new App({ name: 'T', logLevel: 'error', logHub });
   apps.push(app);
   const host = app.bind({ provide });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: { definition: { function: { name: string } } }) {
       registered.push(tool.definition.function.name);
       return () => {};
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(storage, { listRoots: () => [] } as never);
+  host.provide.use(storage, { listRoots: () => [] } as never);
   await app.plugins.register(office, { outputDir });
   await app.plugins.idle();
   return { entry: app.plugins.getPlugin(office.name), registered, errors };

@@ -107,7 +107,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logger: makeCapturingLogger(lines),
     });
     apps.push(app);
-    app.bind({ provide }).provide(storage, makeFakeStorage());
+    app.bind({ provide }).provide.use(storage, makeFakeStorage());
     await app.plugins.register(webuiServer, {
       port: 0,
       host: '127.0.0.1',
@@ -145,7 +145,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logger: makeCapturingLogger([]),
     });
     apps.push(app);
-    app.bind({ provide }).provide(storage, makeFakeStorage());
+    app.bind({ provide }).provide.use(storage, makeFakeStorage());
     await app.plugins.register(webuiServer, {
       port,
       host: '127.0.0.1',
@@ -199,7 +199,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logger: makeCapturingLogger(lines),
     });
     apps.push(app);
-    app.bind({ provide }).provide(storage, makeFakeStorage({ failWrite: true }));
+    app.bind({ provide }).provide.use(storage, makeFakeStorage({ failWrite: true }));
     await app.plugins.register(webuiServer, {
       port: 0,
       host: '127.0.0.1',

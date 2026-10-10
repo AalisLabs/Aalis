@@ -64,7 +64,7 @@ afterEach(async () => {
 async function start() {
   const started = await startReach(dirs, { logger });
   apps.push(started.app);
-  return { ...started, sm: started.host.sessionManager.require(), svc: started.host.reach.require() };
+  return { ...started, sm: started.host.sessionManager.use, svc: started.host.reach.use };
 }
 
 describe('本会话临时区的删除在后台跑', () => {

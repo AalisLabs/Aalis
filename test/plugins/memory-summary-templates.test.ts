@@ -45,16 +45,16 @@ async function setup({ withAuthority = true } = {}) {
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
   if (withAuthority)
-    host.provide(authority, {
+    host.provide.use(authority, {
       isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === OWNER_QQ,
     } as never);
-  host.provide(llm, summaryLLM.model);
+  host.provide.use(llm, summaryLLM.model);
   await app.plugin(memorySummary);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
-  for (const id of [GROUP, CHANNEL, MEMBER_DM, OWNER_DM]) await recordRoom(host.events, id);
-  const store = host.memory.require();
-  const compressor = host.compression.require();
+  for (const id of [GROUP, CHANNEL, MEMBER_DM, OWNER_DM]) await recordRoom(host.events.use, id);
+  const store = host.memory.use;
+  const compressor = host.compression.use;
   /** 往会话里写一条消息再手动压缩，返回这次的摘要请求 */
   const summarize = async (sessionId: string): Promise<ChatModelRequest> => {
     await store.saveMessage(sessionId, { role: 'user', content: '[甲(30001)] 明天下午三点开会' });
@@ -63,7 +63,7 @@ async function setup({ withAuthority = true } = {}) {
     if (request?.sessionId !== sessionId) throw new Error(`没有 ${sessionId} 的摘要请求`);
     return request;
   };
-  return { sm: host.sessionManager.require(), store, summarize };
+  return { sm: host.sessionManager.use, store, summarize };
 }
 
 const systemOf = (request: ChatModelRequest) => String(request.messages[0]?.content ?? '');

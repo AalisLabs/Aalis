@@ -4,7 +4,7 @@ import { media as mediaService } from '../../packages/api-media/src/index.js';
 import type {} from '../../packages/api-memory/src/index.js'; // declaration merging：memory:clear 钩子类型
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, provide } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import {
   flushDescriptionCache,
   lookupCachedDescription,
@@ -72,18 +72,19 @@ async function boot(seed: Record<string, string>, opts: StorageOpts = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
-  const host = app.bind({ provide, hooks, media: mediaService });
-  host.provide(processService, {} as never);
-  host.provide(storage, store.service as never);
+  const host = app.bind({ provide, hooks, media: mediaService, services });
+  host.provide.use(processService, {} as never);
+  host.provide.use(storage, store.service as never);
   await app.plugin(media, {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(media.name)?.state !== 'active') throw new Error('plugin-media 未激活');
   const clear = async (req: Omit<HookContextMap['memory:clear'], 'results'>) => {
     const data: HookContextMap['memory:clear'] = { ...req, results: [] };
-    await host.hooks.run('memory:clear', data, async () => {});
+    await host.hooks.use.run('memory:clear', data, async () => {});
     return data.results.filter(r => r.source === 'media-description');
   };
-  return { files: store.files, clear, media: host.media.require() };
+  // 交出提供者实例本身：用例要替换它的方法，业务句柄上的写落不到提供者
+  return { files: store.files, clear, media: host.services.use.get(mediaService)! };
 }
 
 function gate(): { wait: Promise<void>; release: () => void } {

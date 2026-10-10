@@ -45,7 +45,7 @@ describe('plugin-llm-ollama: 并发刷新不重复计入新增', () => {
     apps.push(app);
     await app.plugin(llmOllama, { baseUrl: 'http://127.0.0.1:11434' });
     await app.plugins.idle();
-    const [entry] = app.bind({ services }).services.all(llm);
+    const [entry] = app.bind({ services }).services.use.all(llm);
     if (!entry?.instance.refresh) throw new Error('ollama 未登记可刷新的条目');
 
     tags = ['qwen3:8b', 'llama3:8b'];
@@ -86,7 +86,7 @@ describe('plugin-llm-ollama: 并发刷新不重复计入新增', () => {
     apps.push(app);
     await app.plugin(llmOllama, { baseUrl: 'http://127.0.0.1:11434' });
     await app.plugins.idle();
-    const [entry] = app.bind({ services }).services.all(llm);
+    const [entry] = app.bind({ services }).services.use.all(llm);
     if (!entry?.instance.refresh) throw new Error('ollama 未登记可刷新的条目');
 
     tags = ['qwen3:8b', ...fresh];

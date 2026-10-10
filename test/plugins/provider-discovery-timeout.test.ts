@@ -96,7 +96,7 @@ describe('serper search_images 带超时（挂起时不占死限流槽）', () =
     const cap = captureFetch();
     const app = new App({ name: 'T', logLevel: 'error' });
     const handlers: Record<string, Handler> = {};
-    app.bind({ provide }).provide(tools, {
+    app.bind({ provide }).provide.use(tools, {
       register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
         handlers[t.definition.function.name] = t.handler;
         return () => {};

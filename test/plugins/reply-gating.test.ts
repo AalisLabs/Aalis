@@ -147,9 +147,9 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
 
   const received: IncomingMessage[] = [];
   const reply = async (sessionId: string, platform = 'onebot'): Promise<void> => {
-    await host.gateway.require().dispatchOutbound({ content: '好的', sessionId, platform, source: 'agent' });
+    await host.gateway.use.dispatchOutbound({ content: '好的', sessionId, platform, source: 'agent' });
   };
-  host.provide(agent, {
+  host.provide.use(agent, {
     async handleMessage(msg: IncomingMessage) {
       received.push(msg);
       await opts.hold?.(msg);
@@ -159,15 +159,15 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
 
   if (opts.archived) {
     const archived = opts.archived;
-    host.provide(messageArchive, {
+    host.provide.use(messageArchive, {
       async archiveIncoming(m: IncomingMessage) {
         archived.push(m);
       },
     } as never);
   }
-  if (opts.files) host.provide(storage, memoryStorage(opts.files));
+  if (opts.files) host.provide.use(storage, memoryStorage(opts.files));
   if (opts.rooms) {
-    host.provide(memory, fakeMemory(Object.fromEntries(opts.rooms.map(id => [id, storedRoom(id)]))) as never);
+    host.provide.use(memory, fakeMemory(Object.fromEntries(opts.rooms.map(id => [id, storedRoom(id)]))) as never);
     await app.plugins.register(sessionManagerPlugin, {});
   }
 
@@ -188,9 +188,9 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
     received,
     contents: () => received.map(m => m.content),
     idles: () => received.filter(m => m.source === 'idle-trigger'),
-    send: msg => host.gateway.require().ingressMessage(msg),
+    send: msg => host.gateway.use.ingressMessage(msg),
     reply,
-    flow: () => host.flowControl.require(),
+    flow: () => host.flowControl.use,
   };
 }
 
@@ -817,7 +817,7 @@ describe('冷却与限速', () => {
   it('非 agent 出站（命令回复）不设冷却', async () => {
     const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 1 } });
     const G = '20001';
-    const gw = h.app.bind({ gateway }).gateway.require();
+    const gw = h.app.bind({ gateway }).gateway.use;
 
     await gw.dispatchOutbound({ content: '命令结果', sessionId: sid(G), platform: 'onebot', source: 'command' });
     await h.send(groupMsg(G, '命令后的普通消息'));

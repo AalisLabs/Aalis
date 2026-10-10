@@ -8,7 +8,7 @@ import {
   resolvePlatformBySession,
 } from '@aalis/api-platform';
 import { type AccessChecker, sessionHistory } from '@aalis/api-session-history';
-import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
+import { type StorageService, storage } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
@@ -350,7 +350,7 @@ async function resolveForwardImageSource(
       return resolvedSource;
     }
   } catch (err) {
-    logger.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
+    logger.use.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
   }
 
   const dataUri = await localImageToDataUri(storage, ref.source);
@@ -369,11 +369,11 @@ async function recognizeForwardImages(
   if (refs.length === 0) return { imageDescriptions };
 
   const { logger, media } = caps;
-  const mediaService = media.current;
-  if (!mediaService) {
-    logger.debug(`合并转发包含 ${refs.length} 张图片，但 media 服务不可用`);
+  if (!media.present) {
+    logger.use.debug(`合并转发包含 ${refs.length} 张图片，但 media 服务不可用`);
     return { imageDescriptions };
   }
+  const mediaService = media.use;
 
   const seen = new Set<string>();
   for (const ref of refs) {
@@ -385,7 +385,7 @@ async function recognizeForwardImages(
       const description = await mediaService.describeImage(imageSource);
       if (description) imageDescriptions.set(key, description);
     } catch (err) {
-      logger.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
+      logger.use.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
     }
   }
 
@@ -559,12 +559,12 @@ export default definePlugin({
   uses,
   apply(caps) {
     const { tools, events, logger, platform } = caps;
-    const cfg = parseConfig(configSchema, caps.config, logger);
-    const storage = createStorageGateway(caps.storage);
+    const cfg = parseConfig(configSchema, caps.config.use, logger.use);
+    const storage = caps.storage.use;
     const bundle: OneBotToolBundle = {
-      daily: withToolGroups(tools, ['onebot-daily']),
-      group: withToolGroups(tools, ['onebot-group']),
-      personal: withToolGroups(tools, ['onebot-personal']),
+      daily: withToolGroups(tools.use, ['onebot-daily']),
+      group: withToolGroups(tools.use, ['onebot-group']),
+      personal: withToolGroups(tools.use, ['onebot-personal']),
     };
 
     const maxLimit = Math.max(1, Math.min(1000, cfg.sessionHistory.maxLimit || 100));
@@ -590,20 +590,20 @@ export default definePlugin({
       if (toolsRegistered || !getPlatformNames(platform).includes('onebot')) return;
       toolsRegistered = true;
 
-      logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
+      logger.use.info('检测到 OneBot 平台，开始注册 OneBot 工具');
 
       // 注册工具分组：按职责语义切分，彼此不重叠
-      tools.registerGroup({
+      tools.use.registerGroup({
         name: 'onebot-daily',
         label: 'OneBot 只读与日常',
         description: '只读查询（群信息/成员/好友列表/历史/登录信息）+ 日常低风险互动（戳一戳、好友赞）',
       });
-      tools.registerGroup({
+      tools.use.registerGroup({
         name: 'onebot-group',
         label: 'OneBot 群务',
         description: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请 等',
       });
-      tools.registerGroup({
+      tools.use.registerGroup({
         name: 'onebot-personal',
         label: 'OneBot 个人/私聊',
         description: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
@@ -616,11 +616,11 @@ export default definePlugin({
       if (cfg.sessionHistory.enabled) registerSessionHistoryTools(caps, bundle, historyCfg);
       registerRequestTools(caps, bundle);
     };
-    events.on('app:ready', () => {
+    events.use.on('app:ready', () => {
       registerToolsOnce();
-      if (!toolsRegistered) logger.info('未检测到 OneBot 平台，暂不注册 OneBot 工具（平台上线后自动补注册）');
+      if (!toolsRegistered) logger.use.info('未检测到 OneBot 平台，暂不注册 OneBot 工具（平台上线后自动补注册）');
     });
-    events.on('service:changed', name => {
+    events.use.on('service:changed', name => {
       if (name === platformService.name) registerToolsOnce();
     });
   },
@@ -971,7 +971,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
       }
 
       // 发出记录在发消息的那个实例里：按目标会话路由
-      const adapter = (await resolvePlatformBySession(platform, targetSessionId))?.instance as
+      const adapter = (await resolvePlatformBySession(platform, targetSessionId))?.use as
         | (PlatformAdapter & {
             getSentMessages?: (
               sessionId: string,
@@ -1012,7 +1012,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     },
   });
 
-  logger.info('OneBot 群管理工具已注册');
+  logger.use.info('OneBot 群管理工具已注册');
 }
 
 // ===== 群信息查询工具 =====
@@ -1376,7 +1376,7 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
     },
   });
 
-  logger.info('OneBot 群信息查询工具已注册');
+  logger.use.info('OneBot 群信息查询工具已注册');
 }
 
 // ===== 账号 / 好友 / 群列表查询工具 =====
@@ -1574,7 +1574,7 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
     },
   });
 
-  logger.info('OneBot 账号 / 好友 / 群列表查询工具已注册');
+  logger.use.info('OneBot 账号 / 好友 / 群列表查询工具已注册');
 }
 
 // ===== 特殊交互工具 =====
@@ -1699,7 +1699,7 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
     },
   });
 
-  logger.info('OneBot 特殊交互工具已注册');
+  logger.use.info('OneBot 特殊交互工具已注册');
 }
 
 /** 平台专属历史工具：查历史服务 + 平台适配器解析 selfId */
@@ -1761,7 +1761,7 @@ function registerOneBotHistoryAccessChecker(caps: HistoryCheckerCaps, cfg: OneBo
   // 须跟随提供者重挂；返回的注销作为跟随清理，本插件 bounce / 卸载时一并撤回，不在下层泄漏。
   sessionHistory.follow(svc => {
     const dispose = svc.registerAccessChecker(checker);
-    logger.info('OneBot 会话历史访问规则已注册到 session-history');
+    logger.use.info('OneBot 会话历史访问规则已注册到 session-history');
     return dispose;
   });
 }
@@ -1867,11 +1867,11 @@ function registerSessionHistoryTools(
       const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(platform) || '';
       if (!selfId) return JSON.stringify({ error: '无法确定 self_id，且未找到可用的 OneBot 连接' });
 
-      const history = sessionHistory.current;
-      if (!history)
+      if (!sessionHistory.present)
         return JSON.stringify({
           error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session',
         });
+      const history = sessionHistory.use;
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || cfg.defaultLimit)));
       const sessionId = buildOneBotSessionId(selfId, targetType, targetId);
@@ -1891,13 +1891,13 @@ function registerSessionHistoryTools(
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.warn(`onebot_get_session_history 失败 (${sessionId}): ${message}`);
+        logger.use.warn(`onebot_get_session_history 失败 (${sessionId}): ${message}`);
         return JSON.stringify({ error: `读取 OneBot 会话历史失败: ${message}` });
       }
     },
   });
 
-  logger.info('OneBot 会话历史工具已注册');
+  logger.use.info('OneBot 会话历史工具已注册');
 }
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
@@ -1920,7 +1920,7 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
     args: Record<string, unknown>,
   ): Promise<RequestAdapter | undefined> {
     const entry = await resolvePlatformBySession(platform, selfSessionId(resolveSelfId(platform, callCtx, args)));
-    const adapter = entry?.instance as Partial<RequestAdapter> | undefined;
+    const adapter = entry?.use as Partial<RequestAdapter> | undefined;
     return typeof adapter?.handleFriendRequest === 'function' ? (adapter as RequestAdapter) : undefined;
   }
 
@@ -2018,5 +2018,5 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
     },
   });
 
-  logger.info('OneBot 请求处理工具已注册');
+  logger.use.info('OneBot 请求处理工具已注册');
 }

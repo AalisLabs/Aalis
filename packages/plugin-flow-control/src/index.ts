@@ -3,7 +3,7 @@ import { extractTargetId, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig 
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
+import { isStorageNotFound, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
@@ -39,13 +39,13 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { logger, events, hooks, lifecycle, provide, messageArchive } = caps;
-  const cfg = normalizeScopes(parseConfig(configSchema, caps.config, logger), logger);
+  const cfg = normalizeScopes(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
   const states = new Map<string, MutableFlowSessionState>();
 
   // ===== mutedUntil 持久化（仅此字段） =====
   // 冷却与限速都是秒级短期态，重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，
   // 丢失会导致重启后静默解除。
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
   const muteStateUri = 'data:/flow-control-mutes.json';
   /**
    * 禁言表读不懂（不是「文件不存在」的读失败、解析失败、结构不对）：写的是整表，此后拒写，
@@ -74,7 +74,7 @@ async function run(caps: Caps): Promise<void> {
     } catch (err) {
       if (isStorageNotFound(err)) return;
       loadFailed = true;
-      logger.warn(`[flow] 读取禁言表失败，本次运行不再写入该文件: ${err}`);
+      logger.use.warn(`[flow] 读取禁言表失败，本次运行不再写入该文件: ${err}`);
       return;
     }
     try {
@@ -98,10 +98,10 @@ async function run(caps: Caps): Promise<void> {
         }
         restored++;
       }
-      if (restored > 0) logger.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
+      if (restored > 0) logger.use.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
     } catch (err) {
       loadFailed = true;
-      logger.warn(`[flow] 解析禁言表失败，本次运行不再写入该文件: ${err}`);
+      logger.use.warn(`[flow] 解析禁言表失败，本次运行不再写入该文件: ${err}`);
     }
   }
 
@@ -128,7 +128,7 @@ async function run(caps: Caps): Promise<void> {
           await loading;
         } while (gen !== loadGen);
         if (loadFailed) {
-          logger.warn('[flow] 禁言表加载失败，跳过写入以免覆盖（本次改动仅在内存生效）');
+          logger.use.warn('[flow] 禁言表加载失败，跳过写入以免覆盖（本次改动仅在内存生效）');
           return;
         }
         const now = Date.now();
@@ -142,7 +142,7 @@ async function run(caps: Caps): Promise<void> {
         for (const [sessionId, rev] of unsavedMutes) if (rev <= upTo) unsavedMutes.delete(sessionId);
       })
       .catch(err => {
-        logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
+        logger.use.warn(`[flow] 持久化禁言状态失败: ${err}`);
       });
   }
 
@@ -182,7 +182,7 @@ async function run(caps: Caps): Promise<void> {
     const s = states.get(sessionId);
     const p = s?.platform || platform || '';
     if (s?.sessionType) return { platform: p, sessionType: s.sessionType, targetId: s.targetId };
-    const session = caps.sessionManager.current?.getSession(sessionId);
+    const session = caps.sessionManager.present ? caps.sessionManager.use.getSession(sessionId) : undefined;
     if (session?.originPlatform !== undefined && session.originChat) {
       const { type, targetId } = session.originChat;
       return { platform: session.originPlatform, sessionType: type, targetId };
@@ -205,12 +205,12 @@ async function run(caps: Caps): Promise<void> {
   async function shadowArchive(message: IncomingMessage): Promise<void> {
     // 闲置触发是合成的系统提示，不作为用户消息入档（与 agent 的归档规则一致）
     if (message.source === 'idle-trigger') return;
-    const archive = messageArchive.current;
-    if (!archive) return;
+    if (!messageArchive.present) return;
+    const archive = messageArchive.use;
     try {
       await archive.archiveIncoming(message);
     } catch (err) {
-      logger.warn(`[flow] shadow 归档失败: ${err}`);
+      logger.use.warn(`[flow] shadow 归档失败: ${err}`);
     }
   }
 
@@ -243,18 +243,18 @@ async function run(caps: Caps): Promise<void> {
       if (durationSec <= 0) {
         s.mutedUntil = 0;
         saveMuteState();
-        logger.info(`[flow] 已解除自禁言: session=${sessionId}`);
+        logger.use.info(`[flow] 已解除自禁言: session=${sessionId}`);
         return;
       }
       s.mutedUntil = Date.now() + durationSec * 1000;
       saveMuteState();
-      logger.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
+      logger.use.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
     },
   };
 
-  provide(flowControl, service);
+  provide.use(flowControl, service);
 
-  logger.info(
+  logger.use.info(
     `[flow] 已启用 (冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
       `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,
   );
@@ -262,7 +262,7 @@ async function run(caps: Caps): Promise<void> {
   // ===== inbound:flow 相位：节流硬闸 =====
   // 由 plugin-gateway 在 inbound:trigger 之后、inbound:dispatch 之前触发，此时生效的触发插件
   // 已判定要开口并写好 message.triggerType。
-  hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
+  hooks.use.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;
     const sessionId = message.sessionId;
 
@@ -271,7 +271,7 @@ async function run(caps: Caps): Promise<void> {
     // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
     if (loading) await loading;
     if (service.isMuted(sessionId)) {
-      logger.debug(`[flow] 禁言中 → 吞噬 | session=${sessionId}`);
+      logger.use.debug(`[flow] 禁言中 → 吞噬 | session=${sessionId}`);
       await shadowArchive(message);
       return; // swallow
     }
@@ -290,12 +290,12 @@ async function run(caps: Caps): Promise<void> {
     // 不过冷却——定时提醒等不该被回复后冷却静默吞掉——但仍受限速约束（防刷屏护栏）。
     if (message.triggerType !== 'immediate') {
       if (!message.source && service.isCoolingDown(sessionId)) {
-        logger.debug(`[flow] 冷却中 → 吞噬 | session=${sessionId}`);
+        logger.use.debug(`[flow] 冷却中 → 吞噬 | session=${sessionId}`);
         await shadowArchive(message);
         return; // swallow
       }
       if (service.isRateLimited(sessionId)) {
-        logger.debug(`[flow] 限速 → 吞噬 | session=${sessionId}`);
+        logger.use.debug(`[flow] 限速 → 吞噬 | session=${sessionId}`);
         await shadowArchive(message);
         return; // swallow
       }
@@ -305,7 +305,7 @@ async function run(caps: Caps): Promise<void> {
 
   // agent 真实回复后记冷却与限速，只对作用域内会话，闲置选会话读的就是这份记账。作用域与入站带 source 的
   // 内部注入同一口径（knownScope）
-  events.on('outbound:message', (msg: OutgoingMessage) => {
+  events.use.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     // 宿主通知的固定正文代替了 Agent 转述，同样占用回复额度；普通命令/系统提示不计。
     if (msg.source !== 'agent' && !(msg.source === 'system' && msg.hostNotice)) return;
@@ -318,11 +318,11 @@ async function run(caps: Caps): Promise<void> {
   const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
   const sweepTimer = setInterval(() => {
     const cleaned = sweepStaleStates(states, Date.now());
-    if (cleaned > 0) logger.debug(`[flow] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
+    if (cleaned > 0) logger.use.debug(`[flow] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  lifecycle.onDispose(async () => {
+  lifecycle.use.onDispose(async () => {
     clearInterval(sweepTimer);
     // 整表快照在写链里才取：先等排队的写落完再清表，否则清空后的空表会被写回磁盘
     await saveChain;

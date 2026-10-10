@@ -43,15 +43,14 @@ async function bootAsr(
   apps.push(app);
   const host = app.bind({ provide, asr });
   // 桩先就位：whisper-cpp 把 process / storage 声明成 required，缺席会被激活闸挡在 pending
-  host.provide(processService, services.process as never);
-  host.provide(storage, services.storage as never);
+  host.provide.use(processService, services.process as never);
+  host.provide.use(storage, services.storage as never);
   await app.plugin(plugin, config);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(plugin.name)?.state;
   if (state !== 'active') throw new Error(`插件 ${plugin.name} 未激活（state=${state}）`);
-  const service = host.asr.current;
-  if (!service) throw new Error('插件未注册 asr');
-  return service;
+  if (!host.asr.present) throw new Error('插件未注册 asr');
+  return host.asr.use;
 }
 
 /** 真 fs 的 process 网关面：readExternalFile 真读盘，makeTempDir 指向真目录 */

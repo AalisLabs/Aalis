@@ -55,13 +55,13 @@ const probeTools = definePlugin({
   uses: { tools },
   apply({ tools }) {
     const parameters = { type: 'object' as const, properties: { command: { type: 'string' } } };
-    tools.register({
+    tools.use.register({
       confirm: 'session',
       display: { kind: 'command', fields: { command: 'command' } },
       definition: { type: 'function', function: { name: DEPLOY, description: '部署', parameters } },
       handler: async () => '已部署',
     });
-    tools.register({
+    tools.use.register({
       display: { kind: 'command', fields: { command: 'command' } },
       background: { yieldSeconds: 1 },
       definition: { type: 'function', function: { name: JOB, description: '跑一个命令', parameters } },
@@ -92,7 +92,7 @@ function framesPlugin(): PluginDefinition {
     displayName: '便签',
     uses: { webui: webuiServer },
     apply({ webui }) {
-      webui.definePage({ key: 'notes', title: '便签', frame: { module, entry: 'page.html' } });
+      webui.use.definePage({ key: 'notes', title: '便签', frame: { module, entry: 'page.html' } });
     },
   });
 }
@@ -109,7 +109,7 @@ async function start() {
   await app.start();
   await waitListening(port);
   const host = app.bind({ memory });
-  await host.memory.require().saveMetadata('user:profile', 'onebot:10001', {
+  await host.memory.use.saveMetadata('user:profile', 'onebot:10001', {
     facts: [{ id: 'f1', text: '喜欢读科幻小说', temporality: 'permanent', observedAt: 1, updatedAt: 1 }],
     updatedAt: 1,
   });

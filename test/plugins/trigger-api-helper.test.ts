@@ -11,21 +11,20 @@ import {
   markTriggered,
   type TriggerService,
 } from '../../packages/api-trigger/src/index.js';
-import type { Logger, ServiceView } from '../../packages/core/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // @aalis/api-trigger 里触发插件共用的函数：两个触发插件（规则 trigger-policy、模型 trigger-laya）
 // 的生效者判断、禁言关键词、名字表与点名识别、放行收尾与吞掉归档都走这里。
 // ════════════════════════════════════════════════════════════
 
-/** 名字表枚举 persona 的全部提供者：给出 all 即可 */
-const personasRef = (...services: PersonaService[]) => ({
-  all: (): ServiceView<PersonaService>[] =>
-    services.map((instance, i) => ({ instance, contextId: `persona-${i}`, priority: 0 })),
-});
+/** 名字表枚举 persona 的全部提供者：给出 list 即可 */
+const personasRef = (...services: PersonaService[]) =>
+  ref(services.map((instance, i) => ({ instance, contextId: `persona-${i}` })));
 /** session-manager 缺席：名字表不带参数取（全局默认的卡） */
-const NO_SM = { current: undefined };
+const NO_SM = ref<SessionManagerService>();
 /** 名字表按会话取时传的消息：只用 sessionId 与 platform */
 const AT_GROUP = { sessionId: 'onebot:10000:group:20001', platform: 'onebot' };
 const NO_NAMES: string[] = [];
@@ -155,7 +154,7 @@ describe('createBotNames', () => {
         return { persona: byId[sessionId] };
       },
     } as unknown as SessionManagerService;
-    return { ref: { current: svc }, resolved };
+    return { ref: fixedRef(svc), resolved };
   }
 
   it('按会话取：session-manager 解析会话配置，其中的 persona 传给每个人设提供者；两个会话各用各的卡', () => {
@@ -187,14 +186,12 @@ describe('createBotNames', () => {
     const { logger, warns } = recordingLogger();
     const one = cards(['Aalis', []], { bob: ['Bob', []] });
     let failure: string | undefined = '会话库不可用';
-    const sm = {
-      current: {
-        resolveConfig: () => {
-          if (failure) throw new Error(failure);
-          return { persona: 'bob' };
-        },
-      } as unknown as SessionManagerService,
-    };
+    const sm = fixedRef({
+      resolveConfig: () => {
+        if (failure) throw new Error(failure);
+        return { persona: 'bob' };
+      },
+    } as unknown as SessionManagerService);
     const names = createBotNames(personasRef(one.svc), sm, logger, '[t]');
     expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis']);
     expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis']);
@@ -294,36 +291,38 @@ describe('archiveSwallowed', () => {
 
   it('message-archive 缺席时跳过；归档失败记 warn（前缀由调用方给），不抛错', async () => {
     const { logger, warns } = recordingLogger();
-    await archiveSwallowed(msg, { current: undefined }, logger, '[laya]');
-    const broken = {
-      current: {
-        archiveIncoming: async () => {
-          throw new Error('库不可用');
-        },
-      } as never,
-    };
+    await archiveSwallowed(msg, ref(), logger, '[laya]');
+    const broken = fixedRef({
+      archiveIncoming: async () => {
+        throw new Error('库不可用');
+      },
+    } as never);
     await expect(archiveSwallowed(msg, broken, logger, '[laya]')).resolves.toBeUndefined();
     expect(warns).toEqual(['[laya] shadow 归档失败: Error: 库不可用']);
   });
 });
 
 describe('isActiveTrigger', () => {
+  /** trigger 选中的那一家（条目 id）可以在两次判定之间换 */
+  function triggerSelection(selected: string) {
+    const state = { selected };
+    const list = () => ref<TriggerService>([{ instance: { label: state.selected }, contextId: state.selected }]).list();
+    return { state, ref: { list } };
+  }
+
   it('胜者每次入站只取一次：取下之后换胜者，这次入站仍按取下的算', () => {
-    const rule: TriggerService = { label: '规则' };
-    const laya: TriggerService = { label: '模型' };
-    const ref: { current: TriggerService | undefined } = { current: laya };
+    const { state, ref: trigger } = triggerSelection('laya');
     const phase = {};
-    expect(isActiveTrigger(phase, ref, rule)).toBe(false);
-    ref.current = rule; // 判定途中切了偏好
-    expect(isActiveTrigger(phase, ref, rule), '同一次入站不再换人').toBe(false);
-    expect(isActiveTrigger(phase, ref, laya)).toBe(true);
+    expect(isActiveTrigger(phase, trigger, 'rule')).toBe(false);
+    state.selected = 'rule'; // 判定途中切了偏好
+    expect(isActiveTrigger(phase, trigger, 'rule'), '同一次入站不再换人').toBe(false);
+    expect(isActiveTrigger(phase, trigger, 'laya')).toBe(true);
     // 下一次入站按新的胜者
-    expect(isActiveTrigger({}, ref, rule)).toBe(true);
+    expect(isActiveTrigger({}, trigger, 'rule')).toBe(true);
   });
 
   it('没有胜者时谁都不判', () => {
-    const self: TriggerService = { label: '规则' };
-    expect(isActiveTrigger({}, { current: undefined }, self)).toBe(false);
+    expect(isActiveTrigger({}, ref<TriggerService>(), 'rule')).toBe(false);
   });
 
   it('进程内装了两份 api-trigger：两个触发插件各用一份时，同一次入站仍只取一次胜者', async () => {
@@ -333,13 +332,11 @@ describe('isActiveTrigger', () => {
     const copyB = await import('../../packages/api-trigger/src/index.js');
     expect(copyA.isActiveTrigger, '确是两份模块').not.toBe(copyB.isActiveTrigger);
 
-    const rule: TriggerService = { label: '规则' };
-    const other: TriggerService = { label: '第三方' };
-    const ref: { current: TriggerService | undefined } = { current: rule };
+    const { state, ref: trigger } = triggerSelection('rule');
     const phase = {};
     // 第三方插件用副本 B 先跑到，取下胜者（规则）；随后偏好切到第三方，规则插件用副本 A 判
-    expect(copyB.isActiveTrigger(phase, ref, other)).toBe(false);
-    ref.current = other;
-    expect(copyA.isActiveTrigger(phase, ref, rule), '各记各的表时这条消息谁都不判').toBe(true);
+    expect(copyB.isActiveTrigger(phase, trigger, 'other')).toBe(false);
+    state.selected = 'other';
+    expect(copyA.isActiveTrigger(phase, trigger, 'rule'), '各记各的表时这条消息谁都不判').toBe(true);
   });
 });

@@ -3,7 +3,7 @@ import type { MediaService } from '@aalis/api-media';
 import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
 import type { ProcessService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { cacheOneAttachment } from './attachment-cache.js';
 import type { ForwardMediaTask } from './forward.js';
 import { buildEnvelope, expandForward } from './forward.js';
@@ -60,24 +60,23 @@ export interface ForwardConfig {
 }
 
 /**
- * 展开器要用到的能力。逐项传入而非整包转交：这里只碰日志、四个服务引用与 storage 网关，
- * 服务引用每次调用重新解析当前提供者（展开发生在消息到达时，提供者可能已换人）。
+ * 展开器要用到的能力。逐项传入而非整包转交：这里只碰日志、四个服务的选择层与 storage 的业务句柄，
+ * 每次调用都打到当时选中的那一家（展开发生在消息到达时，提供者可能已换人）。
  */
 export interface ForwardExpanderDeps<TState> {
   logger: Logger;
   /** 原文持久化（缺席时只走内存缓存） */
-  memory: ServiceRef<MemoryService>;
+  memory: ServiceSelection<MemoryService>;
   /** 转发内媒体识别（缺席时保留占位符） */
-  media: ServiceRef<MediaService>;
+  media: ServiceSelection<MediaService>;
   /** 摘要模型（缺席时不生成摘要） */
-  llm: ServiceRef<LLMModel>;
+  llm: ServiceSelection<LLMModel>;
   /**
-   * storage 网关（createStorageGateway），按 URI 路由到对应根：媒体落盘写 data 根、音频转码写 tmp 根。
-   * 不能传胜者——storage 按根逐条提供，胜者只是其中一个根（多根时通常是 workspace），写不了 data:/。
-   * 缺对应根时网关抛错，落盘回退原始 src。
+   * storage 的业务句柄，按 URI 路由到对应根：媒体落盘写 data 根、音频转码写 tmp 根。
+   * 缺对应根时抛错，落盘回退原始 src。
    */
   storage: StorageService;
-  processService: ServiceRef<ProcessService>;
+  processService: ServiceSelection<ProcessService>;
   forwardCfg: ForwardConfig;
   /** 单附件落盘字节上限（与入站附件缓存同源） */
   attachmentMaxBytes: number;
@@ -197,7 +196,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 只回收死条目（原本永不删→堆积成泄漏），绝不淘汰未过期的有效缓存。
     const now = Date.now();
     for (const [k, v] of forwardCache) if (v.expiresAt < now) forwardCache.delete(k);
-    const store = memory.current;
+    const store = memory.present ? memory.use : undefined;
     if (store) {
       store
         .saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
@@ -224,8 +223,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const now = Date.now();
     if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
     lastSweepAt = now;
-    const store = memory.current;
-    if (!store) return;
+    if (!memory.present) return;
+    const store = memory.use;
     try {
       const cutoff = Date.now() - FORWARD_PERSIST_TTL_MS;
       const stale = (await store.listMetadata(FORWARD_METADATA_NS)).filter(e => e.updatedAt < cutoff);
@@ -239,8 +238,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   async function clearAll(): Promise<number> {
     forwardCache.clear();
-    const store = memory.current;
-    if (!store) return 0;
+    if (!memory.present) return 0;
+    const store = memory.use;
     // 与 sweepPersisted 同样一次批量提交，原子性按后端分档（见 api-memory 契约）；读不出的条目一并删除，计入条数
     const [keys] = await clearMetadataNamespaces(store, [FORWARD_METADATA_NS], logger);
     return keys.length;
@@ -248,8 +247,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   /** 从持久化层加载（缓存未命中时尝试） */
   async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
-    const store = memory.current;
-    if (!store) return undefined;
+    if (!memory.present) return undefined;
+    const store = memory.use;
     try {
       const data = await store.getMetadata(FORWARD_METADATA_NS, id);
       if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {
@@ -300,7 +299,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       logger.debug('forward 摘要：无可用 LLM 服务，跳过');
       return null;
     }
-    const model = entry.instance;
+    const model = entry.use;
 
     const inputLimit = forwardCfg.summaryInputLimit;
     const trimmedInput =
@@ -366,8 +365,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 全身 try：任何单点异常（含服务解析）都只降级本项为原始 src，绝不让整批 Promise.all 崩掉
     const download = createConcurrencyLimited(async (task: ForwardMediaTask): Promise<string> => {
       try {
-        const proc = processService.current;
-        if (!proc) return task.src;
+        if (!processService.present) return task.src;
+        const proc = processService.use;
         const local = await cacheOneAttachment(
           storage,
           proc,
@@ -450,7 +449,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       expandIds = expandIds.slice(0, MAX_FORWARD_IDS_PER_MESSAGE);
     }
 
-    const mediaSvc = media.current;
+    const mediaSvc = media.present ? media.use : undefined;
     const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
     const resolveMedia = mediaSvc ? createMediaResolver(sessionId, mediaSvc, concurrency) : undefined;
 

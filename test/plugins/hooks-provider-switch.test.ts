@@ -45,7 +45,7 @@ const altHooks = definePlugin({
   provides: [hooks],
   apply: ({ provide }) => {
     altTable = new HookTable();
-    provide(hooks, altTable, { priority: 10 });
+    provide.use(hooks, altTable, { priority: 10 });
   },
 });
 
@@ -56,8 +56,8 @@ function consumer(name: string, trail: string[], applied: string[], facades?: Ma
     uses: { hooks },
     apply({ hooks }) {
       applied.push(name);
-      facades?.set(name, hooks);
-      hooks.middleware(H, async (_d, next) => {
+      facades?.set(name, hooks.use);
+      hooks.use.middleware(H, async (_d, next) => {
         trail.push(`${name}1`);
         await next();
       });
@@ -82,18 +82,18 @@ describe('卡链告警与无提供者', () => {
         definePlugin({
           name: 'stuck',
           uses: { hooks },
-          apply: ({ hooks }) => void hooks.middleware(H, async () => {}),
+          apply: ({ hooks }) => void hooks.use.middleware(H, async () => {}),
         }),
         definePlugin({
           name: 'after',
           uses: { hooks },
-          apply: ({ hooks }) => void hooks.middleware(H, async (_d, next) => next()),
+          apply: ({ hooks }) => void hooks.use.middleware(H, async (_d, next) => next()),
         }),
       ].map(definition => ({ definition })),
     );
     await app.plugins.idle();
     const host = app.bind({ hooks });
-    expect(await host.hooks.run(H, {} as never, undefined, { warnOnStall: true })).toBe(false);
+    expect(await host.hooks.use.run(H, {} as never, undefined, { warnOnStall: true })).toBe(false);
     expect(warns).toContain(`钩子 ${H}: handler(来自 stuck) 未调用 next()，其后 1 个 handler 被跳过`);
   });
 
@@ -103,7 +103,7 @@ describe('卡链告警与无提供者', () => {
     let ran = false;
     let pending: Promise<boolean> | undefined;
     expect(() => {
-      pending = host.hooks.run(H, {} as never, async () => {
+      pending = host.hooks.use.run(H, {} as never, async () => {
         ran = true;
       });
     }).not.toThrow();
@@ -128,7 +128,7 @@ describe('提供者 bounce：依赖方重启，链与冷启动同序', () => {
     );
     await app.plugins.idle();
     const host = app.bind({ hooks });
-    await host.hooks.run(H, {} as never);
+    await host.hooks.use.run(H, {} as never);
     const cold = [...trail];
     expect(cold).toEqual(['a1', 'b1', 'c1']);
 
@@ -136,7 +136,7 @@ describe('提供者 bounce：依赖方重启，链与冷启动同序', () => {
     await app.plugins.idle();
     expect(applied, '三个 required 消费者都随提供者重启').toEqual(['a', 'b', 'c', 'a', 'b', 'c']);
     trail.length = 0;
-    await host.hooks.run(H, {} as never);
+    await host.hooks.use.run(H, {} as never);
     expect(trail).toEqual(cold);
   });
 });
@@ -160,14 +160,14 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
       await next();
     });
     const host = app.bind({ hooks });
-    await host.hooks.run(H, {} as never);
+    await host.hooks.use.run(H, {} as never);
     expect(trail).toEqual(['a1', 'b1', 'a2']);
 
     await app.plugin(altHooks);
     await app.plugins.idle();
-    expect(app.bind({ services }).services.get(hooks), '胜者已换成新表').toBe(altTable);
+    expect(app.bind({ services }).services.use.get(hooks), '胜者已换成新表').toBe(altTable);
     trail.length = 0;
-    await host.hooks.run(H, {} as never);
+    await host.hooks.use.run(H, {} as never);
     expect(applied, '消费者没有重启').toEqual(['a', 'b']);
     expect(trail, '账本整批重挂，但新提供者按登记序排链：仍是 a1、b1、a2 交错').toEqual(['a1', 'b1', 'a2']);
   });
@@ -189,7 +189,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
           name: 'slow',
           uses: { hooks },
           apply: ({ hooks }) =>
-            void hooks.middleware(H, async (_d, next) => {
+            void hooks.use.middleware(H, async (_d, next) => {
               entered();
               await gate;
               await next();
@@ -199,7 +199,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
         definePlugin({
           name: 'guard',
           uses: { hooks },
-          apply: ({ hooks }) => void hooks.middleware(H, async () => {}),
+          apply: ({ hooks }) => void hooks.use.middleware(H, async () => {}),
         }),
       ].map(definition => ({ definition })),
     );
@@ -208,7 +208,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
 
     // 对照：不换人时被截停
     let defaulted = false;
-    const control = host.hooks.run(H, {} as never, async () => {
+    const control = host.hooks.use.run(H, {} as never, async () => {
       defaulted = true;
     });
     await inFirst;
@@ -229,7 +229,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
       name: 'slow2',
       uses: { hooks },
       apply: ({ hooks }) =>
-        void hooks.middleware('__t:switch-2' as never, async (_d, next) => {
+        void hooks.use.middleware('__t:switch-2' as never, async (_d, next) => {
           entered2();
           await gate2;
           await next();
@@ -238,12 +238,12 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     const guardAgain = definePlugin({
       name: 'guard2',
       uses: { hooks },
-      apply: ({ hooks }) => void hooks.middleware('__t:switch-2' as never, async () => {}),
+      apply: ({ hooks }) => void hooks.use.middleware('__t:switch-2' as never, async () => {}),
     });
     await app.pluginAll([slowAgain, guardAgain].map(definition => ({ definition })));
     await app.plugins.idle();
     let defaulted2 = false;
-    const running = host.hooks.run('__t:switch-2' as never, {} as never, async () => {
+    const running = host.hooks.use.run('__t:switch-2' as never, {} as never, async () => {
       defaulted2 = true;
     });
     await inFirst2;
@@ -262,13 +262,13 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
         definition: definePlugin({
           name,
           uses: { contributions },
-          apply: ({ contributions }) => void contributions.contribute(POINT, { id: 'blk' } as never),
+          apply: ({ contributions }) => void contributions.use.contribute(POINT, { id: 'blk' } as never),
         }),
       })),
     );
     await app.plugins.idle();
     const host = app.bind({ contributions });
-    const before = host.contributions.collect(POINT).map(h => h.key);
+    const before = host.contributions.use.collect(POINT).map(h => h.key);
     expect(before).toEqual(['x/blk', 'y/blk']);
     const alt = new ContributionTable();
     await app.plugin(
@@ -276,12 +276,12 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
         name: 'alt-contributions',
         uses: { provide },
         provides: [contributions],
-        apply: ({ provide }) => void provide(contributions, alt, { priority: 10 }),
+        apply: ({ provide }) => void provide.use(contributions, alt, { priority: 10 }),
       }),
     );
     await app.plugins.idle();
-    expect(app.bind({ services }).services.get(contributions), '胜者已换成新表').toBe(alt);
-    expect(host.contributions.collect(POINT).map(h => h.key)).toEqual(before);
+    expect(app.bind({ services }).services.use.get(contributions), '胜者已换成新表').toBe(alt);
+    expect(host.contributions.use.collect(POINT).map(h => h.key)).toEqual(before);
   });
 
   it('已知现状：换人到各账本重挂完成前新发起的链落在不完整的新表上，截停者可能缺席；重挂完成后恢复截停', async () => {
@@ -292,23 +292,23 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
         definePlugin({
           name: 'a',
           uses: { hooks },
-          apply: ({ hooks }) => void hooks.middleware(H, async (_d, next) => next()),
+          apply: ({ hooks }) => void hooks.use.middleware(H, async (_d, next) => next()),
         }),
         definePlugin({
           name: 'guard',
           uses: { hooks },
-          apply: ({ hooks }) => void hooks.middleware(H, async () => {}),
+          apply: ({ hooks }) => void hooks.use.middleware(H, async () => {}),
         }),
       ].map(definition => ({ definition })),
     );
     await app.plugins.idle();
     const host = app.bind({ hooks, provide });
-    expect(await host.hooks.run(H, {} as never), '对照：换人前被截停').toBe(false);
+    expect(await host.hooks.use.run(H, {} as never), '对照：换人前被截停').toBe(false);
 
     let defaulted = false;
-    host.provide(hooks, new HookTable(), { priority: 10, entryId: 'root/alt-hooks' });
+    host.provide.use(hooks, new HookTable(), { priority: 10, entryId: 'root/alt-hooks' });
     // 与 provide 同一拍发起：新表上还没有 guard 的登记
-    const inWindow = await host.hooks.run(H, {} as never, async () => {
+    const inWindow = await host.hooks.use.run(H, {} as never, async () => {
       defaulted = true;
     });
     expect(inWindow).toBe(true);
@@ -316,7 +316,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
 
     await app.plugins.idle();
     await new Promise(r => setTimeout(r, 0));
-    expect(await host.hooks.run(H, {} as never), '各账本重挂完成后恢复截停').toBe(false);
+    expect(await host.hooks.use.run(H, {} as never), '各账本重挂完成后恢复截停').toBe(false);
   });
 });
 
@@ -337,7 +337,7 @@ describe('登记序跨契约包副本', () => {
           name,
           uses: { hooks },
           apply: ({ hooks }) =>
-            void hooks.middleware(H, async (_d, next) => {
+            void hooks.use.middleware(H, async (_d, next) => {
               trail.push(name);
               await next();
             }),
@@ -350,14 +350,14 @@ describe('登记序跨契约包副本', () => {
           name: 'later',
           uses: { hooks: second.hooks },
           apply: ({ hooks: other }) =>
-            void other.middleware(H, async (_d, next) => {
+            void other.use.middleware(H, async (_d, next) => {
               trail.push('later');
               await next();
             }),
         }),
       );
       await app.plugins.idle();
-      await app.bind({ hooks }).hooks.run(H, {} as never);
+      await app.bind({ hooks }).hooks.use.run(H, {} as never);
       expect(trail).toEqual(['p1', 'p2', 'p3', 'later']);
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -13,7 +13,7 @@ import { access, lstat, readFile, realpath, rename, stat, writeFile } from 'node
 import { userInfo } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import type { ProcessService } from '@aalis/api-process';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { isMissing } from './host-dirs.js';
 
 type Env = Record<string, string>;
@@ -51,14 +51,14 @@ function isSecret(name: string, value: string): boolean {
 }
 
 /** 按 owner 的 login shell 取环境的入口：同一个主目录取到一次就一直用，同时来的调用共用一次取 */
-export function loginEnvs(deps: { process: ServiceRef<ProcessService>; userHome: string; logger: Logger }) {
+export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; userHome: string; logger: Logger }) {
   const cache = new Map<string, { env: Promise<Env>; retryAt: number }>();
 
   /** 取不到时为 undefined */
   async function capture(home: string): Promise<Env | undefined> {
     try {
-      const proc = deps.process.current;
-      if (!proc) throw new Error('没有进程服务');
+      if (!deps.process.present) throw new Error('没有进程服务');
+      const proc = deps.process.use;
       const shell = process.env.SHELL || userInfo().shell;
       if (!shell) throw new Error('不知道 owner 的 login shell（没有 SHELL，账户也没登记）');
       // 白纸首次写入时才建：主目录还不在时在用户家目录下取，与新开一个终端相同

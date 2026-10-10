@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/index.js';
 import type { AdapterCaps } from '../../packages/plugin-media/src/llm-adapter.js';
@@ -11,6 +11,7 @@ import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.j
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import { safeDownloadToTemp } from '../../packages/plugin-media/src/safe-fetch.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 音频附件物化：http 下载件与 file:// 件都必须能喂给 LLM 转写。
@@ -69,12 +70,7 @@ function audioLLMCaps(): { caps: AdapterCaps; audios: () => string[]; request: (
     },
   } as unknown as LLMModel;
   const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
-  const llm: ServiceRef<LLMModel> = {
-    current: instance,
-    require: () => instance,
-    all: () => [{ contextId: 'p/fake-audio', instance, priority: 0 }],
-    follow: () => () => {},
-  };
+  const llm = ref([{ contextId: 'p/fake-audio', instance }]);
   return { caps: { llm, logger }, audios: () => seen?.messages[0]?.audios ?? [], request: () => seen };
 }
 

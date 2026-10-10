@@ -177,7 +177,7 @@ class SessionManager implements SessionManagerService {
   /** 最近一次挂接的加载；apply 等它完成再对外提供服务 */
   loading: Promise<void> = Promise.resolve();
   /** 插件登记的设置项：登记与撤回都发 session:config:changed */
-  private readonly settings = new SettingRegistry(() => void this.caps.events.emit('session:config:changed'));
+  private readonly settings = new SettingRegistry(() => void this.caps.events.use.emit('session:config:changed'));
   /** 已告警过的设置问题：取值无效、文档形状不对。解析每轮都跑，同一处只告警一次 */
   private readonly warned = new Set<string>();
   /**
@@ -266,9 +266,8 @@ class SessionManager implements SessionManagerService {
    * 会话表另经 {@link store} 跟随，见 {@link attach}。
    */
   private get memory(): MemoryService {
-    const m = this.caps.memory.current;
-    if (!m) throw new Error('session-manager 需要 memory 服务');
-    return m;
+    if (!this.caps.memory.present) throw new Error('session-manager 需要 memory 服务');
+    return this.caps.memory.use;
   }
 
   /**
@@ -277,7 +276,10 @@ class SessionManager implements SessionManagerService {
    */
   attach(instance: MemoryService): () => Promise<void> {
     const detached = new AbortController();
-    this.loading = this.load(instance, AbortSignal.any([detached.signal, this.caps.lifecycle.signal]));
+    // 挂上的句柄只活到这次挂载的清理落定；之后的落盘（换人后的加载窗口、停机时的收尾）按条目 id 打到这一家
+    const id = this.caps.memory.list().find(p => p.selected)?.id;
+    const target = id === undefined ? instance : this.caps.memory.of(id);
+    this.loading = this.load(instance, target, AbortSignal.any([detached.signal, this.caps.lifecycle.use.signal]));
     return async () => {
       detached.abort();
       await this.loading;
@@ -285,7 +287,8 @@ class SessionManager implements SessionManagerService {
         clearTimeout(this.persistTimer);
         this.persistTimer = null;
       }
-      await this.persist().catch(err => this.caps.logger.warn('换后端前落盘会话失败:', err));
+      // 这一家可能已经撤回：清理期间经挂上的句柄落盘
+      await this.persist(instance).catch(err => this.caps.logger.use.warn('换后端前落盘会话失败:', err));
     };
   }
 
@@ -294,7 +297,7 @@ class SessionManager implements SessionManagerService {
    * 有限重试，其间仍用原来的表与落盘目标；用尽或被中止（换人、停机）时两张表为空且不落盘。默认工作区的记录不在时补上
    * （随下一次落盘写进后端）。
    */
-  private async load(instance: MemoryService, signal: AbortSignal): Promise<void> {
+  private async load(instance: MemoryService, target: MemoryService, signal: AbortSignal): Promise<void> {
     let loaded: { sessions: Map<string, SessionInfo>; places: Map<string, PlaceRecord> } | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -311,16 +314,16 @@ class SessionManager implements SessionManagerService {
       } catch (err) {
         const delay = LOAD_RETRY_DELAYS[attempt];
         if (delay !== undefined && !signal.aborted) {
-          this.caps.logger.warn(`加载会话数据失败，${delay}ms 后重试:`, err);
+          this.caps.logger.use.warn(`加载会话数据失败，${delay}ms 后重试:`, err);
           await wait(delay, signal);
           if (!signal.aborted) continue;
         }
-        if (signal.aborted) this.caps.logger.info('已中止加载会话数据（停用、停机或换后端）');
-        else this.caps.logger.error('加载会话数据失败，在这个后端上的会话改动不落盘（以免覆盖原有记录）:', err);
+        if (signal.aborted) this.caps.logger.use.info('已中止加载会话数据（停用、停机或换后端）');
+        else this.caps.logger.use.error('加载会话数据失败，在这个后端上的会话改动不落盘（以免覆盖原有记录）:', err);
         break;
       }
     }
-    // 加载窗口里旧表的改动：落盘目标此前仍是旧实例，换表前取快照，换表后写回
+    // 加载窗口里旧表的改动：落盘目标此前仍是旧的那一家，换表前取快照，换表后写回
     const previous = this.store;
     const pending = previous && this.dirty ? this.snapshot().ops : undefined;
     this.sessions = loaded?.sessions ?? new Map();
@@ -328,10 +331,15 @@ class SessionManager implements SessionManagerService {
     if (!this.places.has(DEFAULT_PLACE.key)) this.places.set(DEFAULT_PLACE.key, newPlace(DEFAULT_PLACE, '默认工作区'));
     this.deleted = { [SESSIONS]: new Map(), [PLACES]: new Map() };
     this.dirty = false;
-    this.store = loaded ? instance : undefined;
-    if (loaded) this.caps.logger.info(`已加载 ${loaded.sessions.size} 个会话、${loaded.places.size} 个场所`);
-    if (previous && pending)
-      await previous.commitMetadata(pending).catch(err => this.caps.logger.warn('换后端时写回旧后端失败:', err));
+    this.store = loaded ? target : undefined;
+    if (loaded) this.caps.logger.use.info(`已加载 ${loaded.sessions.size} 个会话、${loaded.places.size} 个场所`);
+    if (previous && pending) {
+      try {
+        await previous.commitMetadata(pending);
+      } catch (err) {
+        this.caps.logger.use.warn('换后端时写回旧后端失败:', err);
+      }
+    }
   }
 
   /**
@@ -364,13 +372,13 @@ class SessionManager implements SessionManagerService {
           { op: 'del', namespace, key },
         ]),
       );
-      this.caps.logger.warn(
+      this.caps.logger.use.warn(
         `${label}的必填字段不对，没有载入，原记录已移到 metadata 命名空间 ${aside}：` +
           rejected.map(({ key, field }) => `${key}（${field}）`).join('、'),
       );
     }
     if (dropped.length > 0)
-      this.caps.logger.warn(`${label}有字段类型不对，去掉这些字段后照常载入：${dropped.join('、')}`);
+      this.caps.logger.use.warn(`${label}有字段类型不对，去掉这些字段后照常载入：${dropped.join('、')}`);
     return rows;
   }
 
@@ -380,7 +388,7 @@ class SessionManager implements SessionManagerService {
     if (!this.persistTimer) {
       this.persistTimer = setTimeout(() => {
         this.persistTimer = null;
-        this.persist().catch(err => this.caps.logger.warn('持久化会话失败:', err));
+        this.persist().catch(err => this.caps.logger.use.warn('持久化会话失败:', err));
       }, 1000);
     }
   }
@@ -396,9 +404,8 @@ class SessionManager implements SessionManagerService {
    * 而是**幂等 + 可重试**：每次写的是全量快照（不是增量），删除只针对墓碑；失败时 dirty 复位、
    * 墓碑保留，下一次 markDirty 会把完整状态重写一遍，前一次的半成品被整体覆盖。
    */
-  async persist(): Promise<void> {
-    const target = this.store;
-    if (!this.dirty || !target) return;
+  async persist(target = this.store): Promise<void> {
+    if (!this.dirty || !this.store || !target) return;
     this.dirty = false;
 
     const { ops, tombstones } = this.snapshot();
@@ -473,7 +480,7 @@ class SessionManager implements SessionManagerService {
     Object.assign(session, describeSession(session));
     await this.noteWindow(session.id, nativeName);
     this.markDirty();
-    await this.caps.events.emit('session:updated', session);
+    await this.caps.events.use.emit('session:updated', session);
   }
 
   /**
@@ -494,7 +501,7 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     for (const session of [...this.sessions.values()]) {
       if (!session.parentId && this.placeOf(session.id).key === place.key) {
-        await this.caps.events.emit('session:updated', session);
+        await this.caps.events.use.emit('session:updated', session);
       }
     }
   }
@@ -529,8 +536,8 @@ class SessionManager implements SessionManagerService {
     };
     this.sessions.set(id, session);
     this.markDirty();
-    await this.caps.events.emit('session:created', session);
-    this.caps.logger.info(`会话建档(ensure): ${session.name} (${id})`);
+    await this.caps.events.use.emit('session:created', session);
+    this.caps.logger.use.info(`会话建档(ensure): ${session.name} (${id})`);
     return session;
   }
 
@@ -544,11 +551,11 @@ class SessionManager implements SessionManagerService {
     if (session.kind !== 'room' || session.originInstance || this.resolving.has(session)) return;
     this.resolving.add(session);
     try {
-      const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger);
+      const entry = await resolvePlatformBySession(this.caps.platform, session.id, this.caps.logger.use);
       if (!entry || this.sessions.get(session.id) !== session) return;
-      session.originInstance = entry.contextId;
+      session.originInstance = entry.id;
       this.markDirty();
-      await this.caps.events.emit('session:updated', session);
+      await this.caps.events.use.emit('session:updated', session);
     } finally {
       this.resolving.delete(session);
     }
@@ -596,9 +603,9 @@ class SessionManager implements SessionManagerService {
     }
 
     this.markDirty();
-    await this.caps.events.emit('session:created', session);
-    if (parent) await this.caps.events.emit('session:updated', parent);
-    this.caps.logger.info(`会话创建: ${session.name} (${id})`);
+    await this.caps.events.use.emit('session:created', session);
+    if (parent) await this.caps.events.use.emit('session:updated', parent);
+    this.caps.logger.use.info(`会话创建: ${session.name} (${id})`);
     return session;
   }
 
@@ -656,8 +663,8 @@ class SessionManager implements SessionManagerService {
     session.updatedAt = Date.now();
 
     this.markDirty();
-    await this.caps.events.emit('session:updated', session);
-    if (config) await this.caps.events.emit('session:config:changed');
+    await this.caps.events.use.emit('session:updated', session);
+    if (config) await this.caps.events.use.emit('session:config:changed');
     return session;
   }
 
@@ -683,9 +690,9 @@ class SessionManager implements SessionManagerService {
     await this.clearDeletedSessionData(id);
 
     this.markDirty();
-    await this.caps.events.emit('session:deleted', id);
-    if (parent) await this.caps.events.emit('session:updated', parent);
-    this.caps.logger.info(`会话删除: ${session.name} (${id})`);
+    await this.caps.events.use.emit('session:deleted', id);
+    if (parent) await this.caps.events.use.emit('session:updated', parent);
+    this.caps.logger.use.info(`会话删除: ${session.name} (${id})`);
   }
 
   private async clearDeletedSessionData(id: string): Promise<void> {
@@ -695,7 +702,7 @@ class SessionManager implements SessionManagerService {
       results: [],
     };
 
-    await this.caps.hooks.run('memory:clear', clearData, async () => {
+    await this.caps.hooks.use.run('memory:clear', clearData, async () => {
       try {
         await this.memory.clearSession(id);
         clearData.results.push({ source: 'memory', success: true, message: '会话消息历史已清空' });
@@ -707,7 +714,7 @@ class SessionManager implements SessionManagerService {
 
     const failed = clearData.results.filter(r => !r.success);
     if (failed.length > 0) {
-      this.caps.logger.warn(
+      this.caps.logger.use.warn(
         `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`,
       );
     }
@@ -733,14 +740,14 @@ class SessionManager implements SessionManagerService {
     if (!session) throw new Error(`会话不存在: ${sessionId}`);
     session.currentDir = dir;
     this.markDirty();
-    await this.caps.events.emit('session:updated', session);
+    await this.caps.events.use.emit('session:updated', session);
   }
 
   async setExtraRoots(sessionId: string, extraRoots: readonly string[]): Promise<void> {
     const { root, work } = this.inWorkTree(sessionId);
     work.extraRoots = [...extraRoots];
     this.markDirty();
-    await this.caps.events.emit('session:updated', root);
+    await this.caps.events.use.emit('session:updated', root);
   }
 
   async addWorktree(sessionId: string, path: string): Promise<void> {
@@ -748,7 +755,7 @@ class SessionManager implements SessionManagerService {
     if (work.worktrees.includes(path)) return;
     work.worktrees.push(path);
     this.markDirty();
-    await this.caps.events.emit('session:updated', root);
+    await this.caps.events.use.emit('session:updated', root);
   }
 
   /** 项目会话树的根会话与它的绑定；会话不存在或不在项目会话树里时抛错 */
@@ -769,7 +776,9 @@ class SessionManager implements SessionManagerService {
       const targetId = chat?.targetId ?? '';
       // owner 的 IM 私聊是默认工作区的入口；没有 authority 时认不出 owner，按窗口算（与房间类别的失败关闭同向）
       const owner =
-        targetId !== '' && !chat?.multiParty && this.caps.authority.current?.isOwner(root.originPlatform, targetId);
+        targetId !== '' &&
+        !chat?.multiParty &&
+        (this.caps.authority.present ? this.caps.authority.use.isOwner(root.originPlatform, targetId) : undefined);
       if (owner) return DEFAULT_PLACE;
       const key = windowKey({ platform: root.originPlatform, type: chat?.type ?? '', targetId });
       // 聊天窗口缺失或没有目标的坏数据同样是窗口：落进默认工作区会把 owner 给工作区设的值套到房间上
@@ -798,7 +807,7 @@ class SessionManager implements SessionManagerService {
     );
     this.places.set(record.key, record);
     this.markDirty();
-    this.caps.logger.info(`登记工作区: ${record.name} (${record.key}) ${root}`);
+    this.caps.logger.use.info(`登记工作区: ${record.name} (${record.key}) ${root}`);
     return { workspace: workspaceInfo(record), existed: false };
   }
 
@@ -827,9 +836,9 @@ class SessionManager implements SessionManagerService {
     this.places.delete(key);
     this.deleted[PLACES].set(key, Symbol(key));
     this.markDirty();
-    this.caps.logger.info(`取消登记工作区: ${record.name} (${key})，${affected.length} 个会话归默认工作区`);
-    for (const session of changed) await this.caps.events.emit('session:updated', session);
-    await this.caps.events.emit('session:config:changed');
+    this.caps.logger.use.info(`取消登记工作区: ${record.name} (${key})，${affected.length} 个会话归默认工作区`);
+    for (const session of changed) await this.caps.events.use.emit('session:updated', session);
+    await this.caps.events.use.emit('session:config:changed');
   }
 
   // ---- 生命周期 ----
@@ -845,9 +854,9 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
 
     // 发事件通知（wait_subtasks 通过事件驱动感知完成）
-    await this.caps.events.emit('session:completed', session);
+    await this.caps.events.use.emit('session:completed', session);
 
-    this.caps.logger.info(`会话完成: ${session.name} (${id})${result ? ` - ${result.slice(0, 100)}` : ''}`);
+    this.caps.logger.use.info(`会话完成: ${session.name} (${id})${result ? ` - ${result.slice(0, 100)}` : ''}`);
   }
 
   // ---- 标题管理 ----
@@ -860,11 +869,11 @@ class SessionManager implements SessionManagerService {
 
     const entry = resolveLLMModel(this.caps.llm, undefined, ['chat']);
     if (!entry) {
-      this.caps.logger.warn(`无可用 LLM，无法生成标题: ${sessionId}`);
+      this.caps.logger.use.warn(`无可用 LLM，无法生成标题: ${sessionId}`);
       return undefined;
     }
-    this.caps.logger.debug(`标题生成使用 LLM: ${entry.contextId}`);
-    const model = entry.instance;
+    this.caps.logger.use.debug(`标题生成使用 LLM: ${entry.id}`);
+    const model = entry.use;
 
     // 优先使用直接传入的用户消息；否则从历史获取
     let contextStr: string;
@@ -899,26 +908,26 @@ class SessionManager implements SessionManagerService {
       });
       title = (resp.content || '').trim().slice(0, 50);
       if (!title) {
-        this.caps.logger.warn(
+        this.caps.logger.use.warn(
           `会话标题 LLM 返回空内容: ${sessionId} (resp.content=${JSON.stringify(resp.content)}, reasoning=${(resp.reasoningContent ?? '').length}字)`,
         );
       }
     } catch (err) {
-      this.caps.logger.warn(`自动生成标题失败 [${sessionId}]:`, err);
+      this.caps.logger.use.warn(`自动生成标题失败 [${sessionId}]:`, err);
     }
 
     // 兜底：LLM 失败或返回空时，用用户消息首段作为临时标题，避免会话永远没有标题
     if (!title && userMessage?.trim()) {
       title = userMessage.trim().replace(/\s+/g, ' ').slice(0, 20);
-      this.caps.logger.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
+      this.caps.logger.use.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
     }
 
     if (title) {
       session.title = title;
       session.updatedAt = Date.now();
       this.markDirty();
-      await this.caps.events.emit('session:updated', session);
-      this.caps.logger.info(`会话标题已生成: [${sessionId}] ${title}`);
+      await this.caps.events.use.emit('session:updated', session);
+      this.caps.logger.use.info(`会话标题已生成: [${sessionId}] ${title}`);
       return title;
     }
     return undefined;
@@ -930,7 +939,7 @@ class SessionManager implements SessionManagerService {
     session.title = title;
     session.updatedAt = Date.now();
     this.markDirty();
-    await this.caps.events.emit('session:updated', session);
+    await this.caps.events.use.emit('session:updated', session);
   }
 
   // ---- 会话设置 ----
@@ -987,7 +996,7 @@ class SessionManager implements SessionManagerService {
   resolvedDefaults(): SessionConfig {
     const entry = resolveLLMModel(this.caps.llm, undefined, ['chat']);
     if (!entry) return {};
-    const model: ModelRef = { provider: entry.instance.providerId, model: entry.instance.id };
+    const model: ModelRef = { provider: entry.use.providerId, model: entry.use.id };
     return Object.fromEntries(this.settings.list().flatMap(s => (preferenceBacked(s) ? [[s.key, model]] : [])));
   }
 
@@ -1014,8 +1023,8 @@ class SessionManager implements SessionManagerService {
     impl.assert(layer);
     const checked = checkPatch(this.settings, patch);
     await impl.write(layer, applyPatch(impl.read(layer), checked));
-    this.caps.logger.info(`会话设置已改：${impl.describe(layer)}（${[...checked.keys()].join('、')}）`);
-    void this.caps.events.emit('session:config:changed');
+    this.caps.logger.use.info(`会话设置已改：${impl.describe(layer)}（${[...checked.keys()].join('、')}）`);
+    void this.caps.events.use.emit('session:config:changed');
   }
 
   /** 这一层的实现；不认识的层抛 {@link SessionConfigError} */
@@ -1062,13 +1071,16 @@ class SessionManager implements SessionManagerService {
 
   /** 宿主配置文档里的三层；没有文档时为空 */
   private docLayers(): DocLayers {
-    return readLayers(this.caps.hostConfig.current?.get('sessionConfig'), message => this.warnOnce(message));
+    return readLayers(
+      this.caps.hostConfig.present ? this.caps.hostConfig.use.get('sessionConfig') : undefined,
+      message => this.warnOnce(message),
+    );
   }
 
   /** 改宿主配置文档并落盘：change 改文档并返回撤回它的函数。没有文档时抛错；落盘失败时撤回、以拒绝传出 */
   private async saveHost(change: (host: HostConfig) => () => void): Promise<void> {
-    const host = this.caps.hostConfig.current;
-    if (!host) throw new Error('宿主没有提供配置文档（host-config），会话设置的各层无处保存');
+    if (!this.caps.hostConfig.present) throw new Error('宿主没有提供配置文档（host-config），会话设置的各层无处保存');
+    const host = this.caps.hostConfig.use;
     const revert = change(host);
     try {
       await host.save();
@@ -1116,13 +1128,13 @@ class SessionManager implements SessionManagerService {
    * 提供者，如 `@scope/llm-x`）的读不成模型引用，偏好没有生效由 doctor 报出
    */
   private preferredModel(): ModelRef | undefined {
-    const contextId = this.caps.services.preferred(llm);
+    const contextId = this.caps.services.use.preferred(llm);
     if (contextId === undefined) return undefined;
-    const entries = this.caps.llm.all();
-    const entry = entries.find(e => e.contextId === contextId);
-    if (entry) return { provider: entry.instance.providerId, model: entry.instance.id };
+    const entries = this.caps.llm.list();
+    const entry = entries.find(e => e.id === contextId);
+    if (entry) return { provider: entry.use.providerId, model: entry.use.id };
     const provider = entries
-      .map(e => e.instance.providerId)
+      .map(e => e.use.providerId)
       .filter(id => contextId.startsWith(`${id}/`))
       .sort((a, b) => b.length - a.length)[0];
     const cut = provider === undefined ? contextId.lastIndexOf('/') : provider.length;
@@ -1155,11 +1167,11 @@ class SessionManager implements SessionManagerService {
 
   /** 改 llm 服务的偏好（运行态与文档），返回撤回它的函数。运行态拒绝（服务有独占的提供者）时抛错，什么都不改 */
   private setPreference(host: HostConfig, contextId: string | undefined): () => void {
-    const runtime = this.caps.services.preferred(llm);
+    const runtime = this.caps.services.use.preferred(llm);
     const documented = host.getServicePreferences()[llm.name];
     const apply = (live: string | undefined, doc: string | undefined) => {
-      if (live === undefined) this.caps.services.unprefer(llm);
-      else if (!this.caps.services.prefer(llm, live)) throw new Error(`llm 服务不接受偏好 ${live}`);
+      if (live === undefined) this.caps.services.use.unprefer(llm);
+      else if (!this.caps.services.use.prefer(llm, live)) throw new Error(`llm 服务不接受偏好 ${live}`);
       if (doc === undefined) host.removeServicePreference(llm.name);
       else host.setServicePreference(llm.name, doc);
     };
@@ -1231,7 +1243,7 @@ class SessionManager implements SessionManagerService {
   private warnOnce(message: string): void {
     if (this.warned.has(message)) return;
     this.warned.add(message);
-    this.caps.logger.warn(message);
+    this.caps.logger.use.warn(message);
   }
 
   private hasTurnInFlight(sessionId: string): boolean {
@@ -1286,7 +1298,7 @@ class SessionManager implements SessionManagerService {
     const { input, output } = session.tokens ?? { input: 0, output: 0 };
     session.tokens = { input: input + inputTokens, output: output + outputTokens };
     this.markDirty();
-    void this.caps.events.emit('session:updated', session);
+    void this.caps.events.use.emit('session:updated', session);
   }
 
   /**
@@ -1508,10 +1520,10 @@ async function run(caps: Caps): Promise<void> {
   memory.follow(instance => manager.attach(instance));
   await manager.loading;
   // 读表（含重试等待）期间停用或停机的，不再发布服务与登记
-  lifecycle.signal.throwIfAborted();
+  lifecycle.use.signal.throwIfAborted();
 
   // 注册服务
-  provide(sessionManager, manager, { label: '会话管理' });
+  provide.use(sessionManager, manager, { label: '会话管理' });
 
   // ===== IM 房间收录 =====
   // 会话表里还没有记录的真人入站（不带 source、不是子任务）按这条消息建档：出生平台取消息的平台，聊天窗口按这个平台的
@@ -1532,7 +1544,7 @@ async function run(caps: Caps): Promise<void> {
   const warnOnce = (key: string, message: string) => {
     if (warned.has(key)) return;
     warned.add(key);
-    logger.warn(message);
+    logger.use.warn(message);
   };
   /** 不经这条入站收录或补记的会话：有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
   const recorded = (session: SessionInfo | undefined, msg: IncomingMessage): session is SessionInfo =>
@@ -1550,7 +1562,7 @@ async function run(caps: Caps): Promise<void> {
     }
     void manager.recordOriginInstance(session);
   };
-  events.on('inbound:message', async (msg: IncomingMessage) => {
+  events.use.on('inbound:message', async (msg: IncomingMessage) => {
     const { sessionId } = msg;
     if (!sessionId || msg.source || sessionId.includes('::')) return;
     const known = manager.getSession(sessionId);
@@ -1558,13 +1570,13 @@ async function run(caps: Caps): Promise<void> {
       noteRecorded(known, msg);
       return;
     }
-    const claimants = await claimantsOf(caps.platform, sessionId, logger);
+    const claimants = await claimantsOf(caps.platform, sessionId, logger.use);
     const session = manager.getSession(sessionId);
     if (recorded(session, msg)) {
       noteRecorded(session, msg);
       return;
     }
-    const platforms = [...new Set(claimants.map(({ instance }) => instance.platform))];
+    const platforms = [...new Set(claimants.map(({ use: instance }) => instance.platform))];
     if (platforms.length > 1) {
       warnOnce(
         `claim:${sessionId}`,
@@ -1600,18 +1612,18 @@ async function run(caps: Caps): Promise<void> {
     const origin: RoomOrigin = {
       originPlatform: msg.platform,
       originChat,
-      ...(claimants[0] ? { originInstance: claimants[0].contextId } : {}),
+      ...(claimants[0] ? { originInstance: claimants[0].id } : {}),
     };
     (session
       ? manager.backfillRoom(session, nativeName, origin)
       : manager.recordRoom(sessionId, nativeName, origin)
-    ).catch(err => logger.warn(`IM 房间登记失败 (${sessionId}):`, err));
+    ).catch(err => logger.use.warn(`IM 房间登记失败 (${sessionId}):`, err));
   });
 
   // 全局默认层的「模型」就是 llm 服务的偏好：偏好从别处改了（宿主启动时应用）、llm 的提供者上下线（偏好指向的模型在不在、
   // 服务实际用的那一个随之变）同样算会话设置变了
-  events.on('service:changed', name => {
-    if (name === llm.name) void events.emit('session:config:changed');
+  events.use.on('service:changed', name => {
+    if (name === llm.name) void events.use.emit('session:config:changed');
   });
 
   // ===== 会话状态 =====
@@ -1620,7 +1632,7 @@ async function run(caps: Caps): Promise<void> {
   // 唯一的收口：next() 返回时整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；
   // 后面的中间件不调 next() 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里最后一轮结束
   // 才收口，别的 lane 还在跑时不显示已完成；回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。
-  hooks.middleware('agent:input:before', async (data, next) => {
+  hooks.use.middleware('agent:input:before', async (data, next) => {
     manager.beginTurn(data.message.sessionId, data.turnId);
     try {
       await next();
@@ -1628,25 +1640,25 @@ async function run(caps: Caps): Promise<void> {
       manager.endTurn(data.turnId);
     }
   });
-  hooks.middleware('agent:turn:after', async (data, next) => {
+  hooks.use.middleware('agent:turn:after', async (data, next) => {
     manager.recordOutcome(data.turnId, data.outcome, data.error);
     await next();
   });
   // 模型调用的 token 按会话累加：对话、摘要、识图、转写的调用都带会话 id
-  events.on('llm:usage', usage => manager.recordUsage(usage));
+  events.use.on('llm:usage', usage => manager.recordUsage(usage));
 
   // 自动标题：只给带创建来源的根会话（WebUI 新建的、终端建的）生成，在首条消息时生成、不等回复；IM 房间不生成，
   // owner 从 WebUI 往房间插话也不拿来给房间起名。异步生成，不阻塞消息处理；直接传入这条消息，不依赖历史
   const titleGenerating = new Set<string>();
-  events.on('inbound:message', (msg: IncomingMessage) => {
+  events.use.on('inbound:message', (msg: IncomingMessage) => {
     const { sessionId } = msg;
     const session = manager.getSession(sessionId);
     if (!session?.createdFrom || session.title || titleGenerating.has(sessionId)) return;
     titleGenerating.add(sessionId);
-    logger.info(`开始生成会话标题: ${sessionId}`);
+    logger.use.info(`开始生成会话标题: ${sessionId}`);
     manager
       .generateTitle(sessionId, msg.content)
-      .catch(err => logger.warn('标题生成失败:', err))
+      .catch(err => logger.use.warn('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });
 
@@ -1657,8 +1669,8 @@ async function run(caps: Caps): Promise<void> {
   // （只在全局停机触发的话，热重载即丢会话元数据）。
   // 异步收尾由编排层的 disposeAsync 等待完成；app.stop() 的拓扑逆序保证此时 memory 提供者
   // 尚未关闭，单独热重载/禁用 memory 提供者时无此保证。shutdown() 幂等：清 timer + 置 dirty + 落盘。
-  lifecycle.onDrain(() => manager.settleActiveOnDrain(), '收口在飞会话');
-  lifecycle.onDispose(() => manager.shutdown());
+  lifecycle.use.onDrain(() => manager.settleActiveOnDrain(), '收口在飞会话');
+  lifecycle.use.onDispose(() => manager.shutdown());
 
-  logger.info('会话管理服务已启用');
+  logger.use.info('会话管理服务已启用');
 }

@@ -80,14 +80,14 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
     host = bindHost(app);
 
     const sent: OutgoingMessage[] = [];
-    host.events.on('outbound:message', msg => {
+    host.events.use.on('outbound:message', msg => {
       sent.push(msg);
     });
     return { sent, sessionId: `test:dup-${clientSide ? 'client' : 'server'}` };
   };
 
   const say = async (sessionId: string): Promise<void> => {
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '你好',
       sessionId,
       platform: 'test',
@@ -115,7 +115,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
     expect(sent.length, '第二轮应被重复守卫拦下').toBe(1);
 
     // 历史里只留一条 assistant，且是整串 JSON（落库口径 = archiveContent）
-    const history = await host.memory.require().getHistory(sessionId, 50);
+    const history = await host.memory.use.getHistory(sessionId, 50);
     const assistants = history.filter(m => m.role === 'assistant');
     expect(assistants.length).toBe(1);
     expect(assistants[0].content).toBe(JSON.stringify({ mood: '平静', message: '你好呀' }));

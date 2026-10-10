@@ -43,12 +43,12 @@ async function world() {
   /** 本轮发给模型的工具名（不含 search_tools） */
   async function visible(messages: Message[]): Promise<string[]> {
     const data: HookContextMap['agent:llm:before'] = { messages, tools: [...ALL_TOOLS], sessionId: 's1' };
-    await host.hooks.run('agent:llm:before', data, async () => {});
+    await host.hooks.use.run('agent:llm:before', data, async () => {});
     return data.tools.map(t => t.function.name).filter(n => n !== 'search_tools');
   }
   async function clear(scope: 'session' | 'all', types?: string[]) {
     const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 's1', results: [] };
-    await host.hooks.run('memory:clear', data, async () => {});
+    await host.hooks.use.run('memory:clear', data, async () => {});
   }
   expect(await visible(withEvidence)).toEqual(['fetch_url']);
   expect(await visible([]), '证据消失后注册表仍记得').toEqual(['fetch_url']);

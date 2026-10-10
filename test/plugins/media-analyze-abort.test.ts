@@ -6,7 +6,7 @@ import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.j
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
-import { emptyMediaCaps, ref } from '../fixtures/service-ref.js';
+import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // analyze_image（识图）声明可转后台：执行器给这次调用的中止信号经 media 服务一路传到识图的模型调用，中止时识图停住。
@@ -45,11 +45,13 @@ function setup() {
   let analyze: Omit<RegisteredTool, 'pluginName'> | undefined;
   registerMediaTools(
     {
-      tools: stubBoundTools({
-        onRegister: t => {
-          if (t.definition.function.name === 'analyze_image') analyze = t;
-        },
-      }),
+      tools: fixedRef(
+        stubBoundTools({
+          onRegister: t => {
+            if (t.definition.function.name === 'analyze_image') analyze = t;
+          },
+        }),
+      ),
       memory: ref(),
     },
     svc,

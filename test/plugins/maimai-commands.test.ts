@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
@@ -29,15 +29,15 @@ async function setup(sessionId = 'onebot:10000:group:20001', sessions?: SessionI
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   if (sessions) {
     const table = new Map(sessions.map(s => [s.id, s]));
-    host.provide(sessionManager, { getSession: (id: string) => table.get(id) } as never);
+    host.provide.use(sessionManager, { getSession: (id: string) => table.get(id) } as never);
   }
   await app.plugin(commandsPlugin, {});
   await app.plugin(maimaiPlugin, { developerToken: 'tok', enableTools: false });
   await app.plugins.idle();
-  const registry = (host.commands as BoundCommands).current as unknown as CommandRegistry;
+  const registry = host.commands.use as unknown as CommandRegistry;
   /** anonymous：会话认不出发消息的人（没有 userId） */
   return async (line: string, anonymous = false): Promise<string> => {
     const parsed = registry.parseCommand(line);

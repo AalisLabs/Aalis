@@ -33,10 +33,10 @@ async function startWebui(
   const app = new App({ name: 'WebUI delivery test', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide });
-  if (archive) host.provide(messageArchive, archive as never);
+  if (archive) host.provide.use(messageArchive, archive as never);
   if (sessions) {
     const table = new Map(sessions.map(s => [s.id, s]));
-    host.provide(sessionManager, { getSession: (id: string) => table.get(id) } as never);
+    host.provide.use(sessionManager, { getSession: (id: string) => table.get(id) } as never);
   }
   await app.pluginAll([
     {
@@ -53,7 +53,7 @@ describe('WebUI outbound delivery confirmation', () => {
   it('fails when there is no archive to save into', async () => {
     const { app } = await startWebui();
     const delivered: OutgoingMessage[] = [];
-    app.bind({ events }).events.on('outbound:delivered', message => {
+    app.bind({ events }).events.use.on('outbound:delivered', message => {
       delivered.push(message);
     });
     const message: OutgoingMessage = {
@@ -63,7 +63,7 @@ describe('WebUI outbound delivery confirmation', () => {
       attachments: [{ kind: 'image', data: 'https://example.com/image.png' }],
       source: 'agent',
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(message.delivery).toBeDefined();
     expect(await message.delivery).toEqual({ ok: false, error: expect.stringContaining('没有存进') });
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -79,12 +79,12 @@ describe('WebUI outbound delivery confirmation', () => {
     });
     const host = app.bind({ events });
     const delivered: OutgoingMessage[] = [];
-    host.events.on('outbound:delivered', message => {
+    host.events.use.on('outbound:delivered', message => {
       delivered.push(message);
     });
     const sessionId = 'webui-offline';
     const send = async (message: OutgoingMessage) => {
-      await host.events.emit('outbound:message', message);
+      await host.events.use.emit('outbound:message', message);
       return message.delivery;
     };
 
@@ -146,7 +146,7 @@ describe('WebUI outbound delivery confirmation', () => {
       source: 'agent',
       attachments: [{ kind: 'image', data: 'paper:/n-a/tasks/t-1/out/a-1.png', name: '猫.png' }],
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(await message.delivery).toEqual({ ok: true });
     expect(saved.map(({ role, kind, content }) => ({ role, kind, content }))).toEqual([
       { role: 'assistant', kind: 'outbound-image', content: '[图片 | ref:paper:/n-a/tasks/t-1/out/a-1.png]' },
@@ -165,7 +165,7 @@ describe('WebUI outbound delivery confirmation', () => {
     );
     const host = app.bind({ events });
     const delivered: OutgoingMessage[] = [];
-    host.events.on('outbound:delivered', message => {
+    host.events.use.on('outbound:delivered', message => {
       delivered.push(message);
     });
     const message: OutgoingMessage = {
@@ -175,7 +175,7 @@ describe('WebUI outbound delivery confirmation', () => {
       source: 'agent',
       attachments: [{ kind: 'image', data: 'data:/images/new.png', ref: 'data/images/new.png', description: '猫' }],
     };
-    await host.events.emit('outbound:message', message);
+    await host.events.use.emit('outbound:message', message);
     expect(await message.delivery).toEqual({ ok: true });
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
     // 只给快照标 skipArchive，生产者手里的消息不动
@@ -199,7 +199,7 @@ describe('WebUI outbound delivery confirmation', () => {
       content: '[作品通知] 《猫》已上线',
       source: 'system',
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(await message.delivery).toEqual({ ok: false, error: 'zz-disk-full' });
   });
 
@@ -217,7 +217,7 @@ describe('WebUI outbound delivery confirmation', () => {
       source: 'command',
       attachments: [{ kind: 'image', data: 'data:/images/chart.png' }],
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(await message.delivery).toEqual({ ok: true });
     expect(saved.map(({ role, kind, content }) => ({ role, kind, content }))).toEqual([
       { role: 'assistant', kind: 'outbound-image', content: '[图片 | ref:data:/images/chart.png]' },
@@ -241,7 +241,7 @@ describe('WebUI outbound delivery confirmation', () => {
         { kind: 'video', data: 'data:/video/clip.mp4' },
       ],
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(await message.delivery).toEqual({ ok: true });
     expect(saved.map(({ role, kind, content }) => ({ role, kind, content }))).toEqual([
       { role: 'assistant', kind: 'outbound-audio', content: '[音频: 问好 | ref:data:/audio/hello.mp3]' },
@@ -276,7 +276,7 @@ describe('WebUI outbound delivery confirmation', () => {
         attachments: [{ kind: 'image', data: 'https://example.com/image.png' }],
         source: 'agent',
       };
-      await app.bind({ events }).events.emit('outbound:message', message);
+      await app.bind({ events }).events.use.emit('outbound:message', message);
       return message.delivery;
     };
 
@@ -298,7 +298,7 @@ describe('WebUI outbound delivery confirmation', () => {
   it('does not claim a message that names no platform: another transport may own that session', async () => {
     const { app } = await startWebui({ async saveMessage() {} });
     const message: OutgoingMessage = { sessionId: 'session-x', content: 'reply', source: 'agent' };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(message.delivery).toBeUndefined();
   });
 
@@ -311,7 +311,7 @@ describe('WebUI outbound delivery confirmation', () => {
       content: 'reply',
       delivery: receipt,
     };
-    await app.bind({ events }).events.emit('outbound:message', message);
+    await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(message.delivery).toBe(receipt);
     expect(await message.delivery).toEqual({ ok: false, error: 'original failure' });
   });

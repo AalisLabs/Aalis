@@ -79,7 +79,7 @@ describe('memory-history：同平台注入按出生平台', () => {
     const assembly = app.bind({ contributions, logger });
     await app.plugin(memoryInMemory);
     await app.plugins.idle();
-    const memory = host.services.get(memoryService);
+    const memory = host.services.use.get(memoryService);
     if (!memory) throw new Error('memory 服务未就绪');
     const baseTs = Date.now() - 10_000;
     const entries: Array<[string, string, string]> = [
@@ -92,8 +92,8 @@ describe('memory-history：同平台注入按出生平台', () => {
       await memory.saveMessage(sessionId, { role: 'user', content, timestamp: baseTs + i, metadata: { platform } });
     }
     const { handlers, stub } = toolRecorder();
-    host.provide(tools, stub);
-    host.provide(sessionManager, roomScopeManager({}, {}, SESSIONS));
+    host.provide.use(tools, stub);
+    host.provide.use(sessionManager, roomScopeManager({}, {}, SESSIONS));
     await app.plugin(memoryHistory, { scope: 'same-platform', maxAgeMinutes: 0, perSessionLimit: 0 });
     await app.plugins.idle();
     requireActive(app, memoryHistory.name);
@@ -166,13 +166,13 @@ describe('memory-vector：platform 范围按出生平台', () => {
     await registerHubs(app);
     const host = app.bind({ provide });
     const assembly = app.bind({ contributions, logger });
-    host.provide(embedding, {
+    host.provide.use(embedding, {
       async embed(): Promise<number[]> {
         return [0.1, 0.2, 0.3];
       },
     });
     const all = hits();
-    host.provide(vectorstore, {
+    host.provide.use(vectorstore, {
       async add(): Promise<void> {},
       async search(_q: number[], topK: number): Promise<VectorSearchResult[]> {
         return all.slice(0, topK);
@@ -184,8 +184,8 @@ describe('memory-vector：platform 范围按出生平台', () => {
       async save(): Promise<void> {},
     });
     const { handlers, stub } = toolRecorder();
-    host.provide(tools, stub);
-    host.provide(sessionManager, roomScopeManager({}, {}, SESSIONS));
+    host.provide.use(tools, stub);
+    host.provide.use(sessionManager, roomScopeManager({}, {}, SESSIONS));
     await app.plugins.register(memoryVector, {
       search: { topK: 10, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
       contextExpand: { window: 0, crossSession: true },
@@ -258,17 +258,17 @@ describe('session-history：平台裁决按出生平台', () => {
     await registerHubs(app);
     const host = app.bind({ provide });
     const handlers = new Map<string, RegisteredTool['handler']>();
-    host.provide(tools, {
+    host.provide.use(tools, {
       register(tool: Omit<RegisteredTool, 'pluginName'>) {
         handlers.set(tool.definition.function.name, tool.handler);
         return () => {};
       },
       registerGroup: () => () => {},
     } as never);
-    host.provide(memoryService, {
+    host.provide.use(memoryService, {
       getHistory: async (sessionId: string) => [{ role: 'user', content: `${sessionId} 的原文`, timestamp: 1 }],
     } as never);
-    host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles, SESSIONS));
+    host.provide.use(sessionManager, roomScopeManager(room.rooms, room.profiles, SESSIONS));
     await app.plugin(sessionTools, { scope: historyScope });
     await app.plugins.idle();
     requireActive(app, sessionTools.name);

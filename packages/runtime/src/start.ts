@@ -300,7 +300,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
   const host = app.bind({ events, provide, services });
   // 宿主路径与配置文档先于任何插件接上：插件激活时就要用到，文档里的服务偏好要在全部提供者上线前生效
-  host.provide(hostPaths, paths, { exclusive: true });
+  host.provide.use(hostPaths, paths, { exclusive: true });
   installHostConfig(app, store, opts.configSync);
   // 默认值从 configSchema 派生（唯一声明来源），导入定义后、登记前深合并进文档；登记时原样交给 core
   const configLoader = withPluginConfigSync(
@@ -310,9 +310,9 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     opts.configSync,
   );
   const discovery = createPluginDiscovery(app, configLoader.loader, store);
-  host.provide(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
+  host.provide.use(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
-  consoleHandle.bindEvents(host.events);
+  consoleHandle.bindEvents(host.events.use);
 
   try {
     // 每个定义交给 Core 前已经规范化；首次 apply 与配置快照用同一份字段。
@@ -327,7 +327,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 两种情况都干净退出、**绝不进守护进程**——打错的命令名若照常起守护，就是与运行中实例并存的
   // 第二个实例（同时连 onebot、每条消息回两遍）。与具体命令解耦——各插件自行注册命令。
   if (subcommandMode) {
-    const exitCode = await tryDispatchSubcommand(host.services, subcommands);
+    const exitCode = await tryDispatchSubcommand(host.services.use, subcommands);
     await app.stop();
     await new Promise<void>(r => setImmediate(r));
     process.exit(exitCode);
@@ -342,7 +342,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // （实例：embedding-openai 缺 key → memory-vector 永远不激活，向量记忆整个不工作）。
   // 缺的沿依赖链追到根（失败、停用、没有提供者、成环）报 warn；只是在等提供者启动（含转入后台的慢激活）的报 info。
   // 判据与写法同 plugin-doctor、WebUI 与终端界面（api-doctor 的 unmetDependencies）
-  for (const [instance, unmet] of unmetDependencies(app.plugins.getStatus(), host.services.names())) {
+  for (const [instance, unmet] of unmetDependencies(app.plugins.getStatus(), host.services.use.names())) {
     if (unmet.lacking.length > 0) app.logger.warn(`插件 "${instance}" 依赖未满足，未激活：${describeUnmet(unmet)}`);
     else if (unmet.waiting.length > 0) app.logger.info(`插件 "${instance}" 在等依赖启动：${describeUnmet(unmet)}`);
   }

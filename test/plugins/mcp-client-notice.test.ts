@@ -52,8 +52,8 @@ describe('plugin-mcp-client 连不上时发提示', () => {
     const app = new App({ name: 'T', logLevel: 'error', logger });
     apps.push(app);
     const registry = makeToolRegistry(logger);
-    app.bind({ provide }).provide(tools, registry);
-    app.bind({ provide }).provide(webuiServer, host.service);
+    app.bind({ provide }).provide.use(tools, registry);
+    app.bind({ provide }).provide.use(webuiServer, host.service);
 
     await app.plugin(mcpClient, { servers: [server('flaky', BROKEN), server('steady', DOUBLE)] });
     await app.plugins.idle();

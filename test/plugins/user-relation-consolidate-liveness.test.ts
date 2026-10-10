@@ -26,8 +26,8 @@ async function makeService(logger?: Logger) {
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.current;
-  if (!mem) throw new Error('memory service missing');
+  if (!host.memory.present) throw new Error('memory service missing');
+  const mem = host.memory.use;
   const store = new RelationStore(() => mem);
   return { app, store, service: new RelationService(store, logger) };
 }

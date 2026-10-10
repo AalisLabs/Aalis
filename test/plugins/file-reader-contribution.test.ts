@@ -146,7 +146,7 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
   await registerHubs(app);
   const host = app.bind({ provide, services, events, contributions, logger });
   const store = createMemoryStorage();
-  host.provide(storage, store);
+  host.provide.use(storage, store);
 
   // agent 桩：只负责把插件的 preprocessor 交到测试手上（file-reader 走
   // registerPreprocessor 分支，因为桩实现了这个可选方法）
@@ -162,7 +162,7 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
       };
     },
   };
-  host.provide(agent, agentStub);
+  host.provide.use(agent, agentStub);
 
   const load = async (cfg: Record<string, unknown> = config): Promise<void> => {
     await app.plugin(fileReaderPlugin, cfg);
@@ -174,8 +174,8 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
     app,
     store,
     promptCaps: { contributions: host.contributions, logger: host.logger },
-    serviceNames: () => host.services.names(),
-    emitSessionDeleted: sessionId => host.events.emit('session:deleted', sessionId),
+    serviceNames: () => host.services.use.names(),
+    emitSessionDeleted: sessionId => host.events.use.emit('session:deleted', sessionId),
     async upload(sessionId: string, name: string, content: string | Buffer, mimeType = 'text/plain') {
       if (!preprocessor) throw new Error('插件未注册 preprocessor');
       const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
@@ -233,7 +233,7 @@ function anchorProbe(name: string, id: string, anchor: string, out: string) {
     name,
     uses: { contributions },
     apply(caps) {
-      caps.contributions.contribute('agent:prompt' as never, { id, anchor, build: () => out } as never);
+      caps.contributions.use.contribute('agent:prompt' as never, { id, anchor, build: () => out } as never);
     },
   });
 }
@@ -614,7 +614,7 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
       await fx.app.plugin(memoryInMemoryPlugin);
       await fx.app.plugin(messageArchivePlugin, { debugLogs: false });
       await fx.app.plugins.idle();
-      const archive = fx.app.bind({ messageArchive }).messageArchive.require();
+      const archive = fx.app.bind({ messageArchive }).messageArchive.use;
       const { message: uploaded } = await fx.upload('s-inj', 'report (1).txt', FORGED);
       const { message } = await archive.archiveIncoming(uploaded);
       expect(message.content, '归档正文照旧带附件描述，给模型看').toContain('[文件: report (1).txt');
@@ -705,8 +705,8 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
     try {
       await fx.app.plugin(toolsPlugin, {});
       await fx.app.plugins.idle();
-      const toolService = fx.app.bind({ tools }).tools.current;
-      if (!toolService) throw new Error('tools 服务未注册');
+      if (!fx.app.bind({ tools }).tools.present) throw new Error('tools 服务未注册');
+      const toolService = fx.app.bind({ tools }).tools.use;
       const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');
 
       const other = await toolService.execute('read_uploaded_file', { fileId: id }, { sessionId: 's-B' });
@@ -725,8 +725,8 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
     try {
       await fx.app.plugin(toolsPlugin, {});
       await fx.app.plugins.idle();
-      const toolService = fx.app.bind({ tools }).tools.current;
-      if (!toolService) throw new Error('tools 服务未注册');
+      if (!fx.app.bind({ tools }).tools.present) throw new Error('tools 服务未注册');
+      const toolService = fx.app.bind({ tools }).tools.use;
       // 删除工具是 restricted：没有 authority 时执行闸拒绝一切，这里放行以便走到 handler 自身的归属校验
       toolService.setExecutionGuard(async () => null);
       const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');

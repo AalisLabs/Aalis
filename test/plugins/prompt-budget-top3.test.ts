@@ -56,7 +56,7 @@ describe('prompt_budget_info 的 top3 与 advice', () => {
       if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
     }
     const host = app.bind({ services, events });
-    const registry = host.services.get(tools)!;
+    const registry = host.services.use.get(tools)!;
 
     const query = async () => {
       const result = await registry.execute(
@@ -71,11 +71,11 @@ describe('prompt_budget_info 的 top3 与 advice', () => {
       };
     };
 
-    await host.events.emit('token:usage', usage);
+    await host.events.use.emit('token:usage', usage);
     const payload = await query();
 
     // 0.75 落在 WARN 支路：这条支路与 CRITICAL 共用同一句 compressionNote，别漏改
-    await host.events.emit('token:usage', { ...usage, usageRatio: 0.75 });
+    await host.events.use.emit('token:usage', { ...usage, usageRatio: 0.75 });
     const warn = await query();
     await app.stop();
 

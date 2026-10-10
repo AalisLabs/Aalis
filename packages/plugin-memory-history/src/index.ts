@@ -192,10 +192,10 @@ export default definePlugin({
   configSchema,
   uses,
   apply({ memory, config, logger, contributions, tools, sessionManager }) {
-    const cfg = normalizeConfig(parseConfig(configSchema, config, logger));
-    sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
+    const cfg = normalizeConfig(parseConfig(configSchema, config.use, logger.use));
+    sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
 
-    logger.info(
+    logger.use.info(
       `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
     );
 
@@ -204,7 +204,7 @@ export default definePlugin({
      * owner 从 WebUI 往群里插话时不取 owner 自己的 WebUI 会话；没有出生平台的会话（WebUI、CLI 等）按入口平台
      */
     function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string | undefined {
-      const sm = sessionManager.current;
+      const sm = sessionManager.present ? sessionManager.use : undefined;
       if (!sm || sessionId === undefined) return entryPlatform;
       return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform ?? entryPlatform;
     }
@@ -215,15 +215,19 @@ export default definePlugin({
       sessionId: string | undefined,
       platform: string | undefined,
     ): HistoryScope | undefined {
-      const room = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).memoryRecallScope : undefined;
+      const room = sessionId
+        ? sessionManager.present
+          ? sessionManager.use.resolveConfig(sessionId, platform).memoryRecallScope
+          : undefined
+        : undefined;
       return effectiveHistoryScope(scope, room);
     }
 
     async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
       // 每次查询取当前提供者：换后端时下一次查询自然走新实例
-      const backend = memory.current;
+      const backend = memory.present ? memory.use : undefined;
       if (!backend?.getRecentMessagesAcrossSessions) {
-        logger.debug('memory-history: 当前 memory 后端不支持 getRecentMessagesAcrossSessions，跳过');
+        logger.use.debug('memory-history: 当前 memory 后端不支持 getRecentMessagesAcrossSessions，跳过');
         return [];
       }
 
@@ -269,7 +273,7 @@ export default definePlugin({
     // ---- 注入贡献（agent:prompt / turn-context 槽；幂等与落点由组装器统一保障）----
 
     if (cfg.injectEnabled) {
-      contributions.contribute('agent:prompt', {
+      contributions.use.contribute('agent:prompt', {
         id: 'memory-history',
         anchor: 'turn-context',
         async build(view) {
@@ -285,17 +289,17 @@ export default definePlugin({
               currentSessionId: view.sessionId,
             });
           } catch (err) {
-            logger.warn('memory-history: 查询近期消息失败，跳过注入:', err);
+            logger.use.warn('memory-history: 查询近期消息失败，跳过注入:', err);
             return null;
           }
           if (records.length === 0) {
-            logger.debug(
+            logger.use.debug(
               `memory-history: 未找到可注入的跨会话消息 (scope=${scope}, platform=${platform ?? '?'}, session=${view.sessionId ?? '?'})`,
             );
             return null;
           }
           const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
-          logger.debug(
+          logger.use.debug(
             `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${scope}, platform=${platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
           );
           return block;
@@ -306,7 +310,7 @@ export default definePlugin({
     // ---- 工具注册 ----
 
     if (cfg.toolEnabled) {
-      tools.register({
+      tools.use.register({
         // 归入 plugin-tool-session 的 'session-history' 分组（同属"读取/聚合会话历史"语义）。
         // 若 plugin-tool-session 未启用，本工具落入未分组，WebUI 会以"其他"兜底展示。
         groups: ['session-history'],

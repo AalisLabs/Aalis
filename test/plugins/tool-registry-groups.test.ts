@@ -19,11 +19,11 @@ async function withRegistry(
     type: 'function' as const,
     function: { name, description: name, parameters: { type: 'object' as const, properties: {} } },
   });
-  tools.register({ definition: def('plain'), handler: async () => '' });
-  tools.register({ definition: def('sys_a'), handler: async () => '', groups: ['system'] });
-  tools.register({ definition: def('skill_a'), handler: async () => '', groups: ['skills'] });
-  const reg = tools.current;
-  if (!reg) throw new Error('tools 服务未注册');
+  tools.use.register({ definition: def('plain'), handler: async () => '' });
+  tools.use.register({ definition: def('sys_a'), handler: async () => '', groups: ['system'] });
+  tools.use.register({ definition: def('skill_a'), handler: async () => '', groups: ['skills'] });
+  if (!tools.present) throw new Error('tools 服务未注册');
+  const reg = tools.use;
   try {
     fn(
       f =>

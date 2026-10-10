@@ -39,12 +39,12 @@ function registerBudgetTool({ tools, events, lifecycle, logger }: Caps): void {
   /** sessionId → 最新一次的 token:usage 快照（派生只读，逐出后 AI 重查即重算）；有界防长跑泄漏 */
   const cache = createBoundedMap<string, TokenUsage>({ max: 500, ttlMs: 6 * 60 * 60 * 1000 });
 
-  events.on('token:usage', u => {
+  events.use.on('token:usage', u => {
     if (!u || typeof u.sessionId !== 'string') return;
     cache.set(u.sessionId, { ...u, observedAt: Date.now() });
   });
 
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -117,6 +117,6 @@ function registerBudgetTool({ tools, events, lifecycle, logger }: Caps): void {
     },
   });
 
-  lifecycle.onDispose(() => cache.clear());
-  logger.info('prompt_budget_info 工具已注册');
+  lifecycle.use.onDispose(() => cache.clear());
+  logger.use.info('prompt_budget_info 工具已注册');
 }

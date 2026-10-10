@@ -75,7 +75,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     let downstreamRuns = 0;
     // 宿主侧登记测试工具：与插件同一套描述符装配，登记归属根激活
     const { tools } = app.bind({ tools: toolsService });
-    tools.register({
+    tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'zz_gate', description: '闸门', parameters: { type: 'object', properties: {} } },
@@ -86,7 +86,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
         return { content: 'gate-ok' };
       },
     });
-    tools.register({
+    tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'zz_downstream', description: '下游', parameters: { type: 'object', properties: {} } },
@@ -106,7 +106,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
       '@aalis/plugin-workflow',
     ]);
     const host = app.bind({ services });
-    const svc = host.services.get(workflow)!;
+    const svc = host.services.use.get(workflow)!;
     await svc.defineWorkflow(
       {
         id: 'zz-dispose',

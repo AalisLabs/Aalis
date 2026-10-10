@@ -8,7 +8,7 @@ import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import type { RenderRequest } from '../../packages/util-offline-render/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
-import { ref } from '../fixtures/service-ref.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // draw_image、draw_animation 声明可转后台，只认执行器给这次调用的中止信号：渲染请求带上它，动图的两遍 ffmpeg 编码
@@ -36,16 +36,18 @@ vi.mock(import('../../packages/util-offline-render/src/index.js'), async importO
 async function apply() {
   const registered: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
   await drawPlugin.apply({
-    tools: stubBoundTools({
-      onRegister: t => {
-        registered[t.definition.function.name] = t;
-      },
-    }),
+    tools: fixedRef(
+      stubBoundTools({
+        onRegister: t => {
+          registered[t.definition.function.name] = t;
+        },
+      }),
+    ),
     storage: ref(),
     processService: ref(),
-    logger: silentLogger(),
-    lifecycle: { signal: new AbortController().signal, onDispose: () => () => {} } as unknown as LifecycleCap,
-    config: {},
+    logger: fixedRef(silentLogger()),
+    lifecycle: fixedRef({ signal: new AbortController().signal, onDispose: () => () => {} } as unknown as LifecycleCap),
+    config: fixedRef({}),
   });
   return registered;
 }

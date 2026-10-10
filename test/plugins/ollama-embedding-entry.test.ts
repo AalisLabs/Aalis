@@ -35,7 +35,7 @@ async function registeredEntries(caps: Record<string, string[] | null>, config: 
   // 插件没激活时 entry 表恒空，`toEqual([...])` 只会红在"少了谁"上；先点名真实原因。
   if (app.plugins.getPlugin('@aalis/plugin-llm-ollama')?.state !== 'active')
     throw new Error('plugin-llm-ollama 未激活');
-  const entries = host.llm.all().map(e => ({ id: e.instance.id, capabilities: [...e.instance.capabilities] }));
+  const entries = host.llm.list().map(e => ({ id: e.use.id, capabilities: [...e.use.capabilities] }));
   await app.stop();
   return entries;
 }

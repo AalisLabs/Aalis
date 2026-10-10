@@ -12,6 +12,7 @@ import {
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import type { ConfigProvider } from '../../packages/runtime/src/config-store.js';
 import { hostedApp } from '../fixtures/app.js';
+import { ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // 停机开始后 core 的管理动作一律返回 false。插件还在注册表里时，路由要回「拒绝」（409），不能说插件不存在。
@@ -37,9 +38,9 @@ function world(config: Partial<AalisConfig>) {
         expressApp,
         {
           ...caps,
-          source: { current: undefined },
-          tools: { current: undefined },
-          commands: { current: undefined },
+          source: ref(),
+          tools: ref(),
+          commands: ref(),
           services: { names: () => [] },
           self: 'console',
           versions: () => () => undefined,

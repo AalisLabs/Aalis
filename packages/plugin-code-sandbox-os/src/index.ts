@@ -8,7 +8,7 @@
 
 import { type CodeSandboxService, codeSandbox, type SandboxRunRequest } from '@aalis/api-code-sandbox';
 import { doctor } from '@aalis/api-doctor';
-import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
+import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import { definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
 
@@ -106,14 +106,14 @@ export default definePlugin({
   provides: [codeSandbox],
   uses: { processService, doctor: optional(doctor), logger, lifecycle, provide },
   async apply(caps) {
-    const log = caps.logger.child('code-sandbox-os');
+    const log = caps.logger.use.child('code-sandbox-os');
     // 网关每次调用重新解析当前胜者，process 提供者换人后无需重启本插件
-    const proc = createProcessGateway(caps.processService);
-    const { backend, problem } = await probeBackend(proc, caps.lifecycle.signal);
+    const proc = caps.processService.use;
+    const { backend, problem } = await probeBackend(proc, caps.lifecycle.use.signal);
     if (problem) log.warn(`${NONE}：${problem}`);
-    caps.provide(codeSandbox, new OsCodeSandboxService(proc, backend));
+    caps.provide.use(codeSandbox, new OsCodeSandboxService(proc, backend));
     // 这台机器上没有沙箱时整个插件用不了：在诊断里给出修法，没装 WebUI 的用户靠 /doctor 看到
-    caps.doctor.registerCheck({
+    caps.doctor.use.registerCheck({
       id: 'code-sandbox.backend',
       category: 'env',
       run: () =>

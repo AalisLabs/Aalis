@@ -1,4 +1,4 @@
-import { App, events, logger, provide } from '@aalis/core';
+import { App, events, logger, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { type ChatModelRequest, type ChatResponse, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -69,8 +69,8 @@ async function setup(llmContent: string) {
   const host = bindHost(app);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.current;
-  if (!mem) throw new Error('no memory');
+  if (!host.memory.present) throw new Error('no memory');
+  const mem = app.bind({ services }).services.use.get(memory)!;
   const store = new RelationStore(() => mem);
   const service = new RelationService(store);
   // 注册若干 mock platform adapter，让 `getPlatformNames(platform)` 在测试里也有
@@ -82,10 +82,10 @@ async function setup(llmContent: string) {
     getConnections: () => [],
     sendMessage: () => Promise.resolve(),
   });
-  host.provide(platform, mkMockAdapter('onebot') as never, { entryId: 'mock/onebot' });
-  host.provide(platform, mkMockAdapter('test') as never, { entryId: 'mock/test' });
+  host.provide.use(platform, mkMockAdapter('onebot') as never, { entryId: 'mock/onebot' });
+  host.provide.use(platform, mkMockAdapter('test') as never, { entryId: 'mock/test' });
   const { model, calls, fail } = makeFakeLLM(llmContent);
-  host.provide(llm, model, {
+  host.provide.use(llm, model, {
     label: 'fake-llm',
     entryId: 'fake/extractor',
   });
@@ -271,10 +271,10 @@ describe('plugin-user-relation: extractor', () => {
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.idle();
-    const mem = host.memory.current;
-    if (!mem) throw new Error('no memory');
+    if (!host.memory.present) throw new Error('no memory');
+    const mem = app.bind({ services }).services.use.get(memory)!;
     const service = new RelationService(new RelationStore(() => mem));
-    host.provide(llm, slowLLM, { entryId: 'slow/x' });
+    host.provide.use(llm, slowLLM, { entryId: 'slow/x' });
     const extractor = new RelationExtractor(host, service, {
       ...EXTRACTOR_DEFAULTS,
       triggerEveryNMessages: 1,
@@ -323,11 +323,11 @@ describe('plugin-user-relation: extractor', () => {
     const { host, mem, service, calls } = await setup(llmJson);
     await mem.saveMessage('sess2', mkUserMsg('m1', 'c', '消息1'));
     // 阈值 3：emit 两次不触发
-    host.events.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
-    host.events.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.use.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.use.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
     expect(calls).toHaveLength(0);
     // 第三次触发
-    host.events.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.use.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
     // 提取是异步的，等一拍
     await new Promise(r => setTimeout(r, 20));
     expect(calls.length).toBeGreaterThanOrEqual(1);
@@ -354,7 +354,7 @@ describe('plugin-user-relation: extractor', () => {
     // 逐个触发点推进（阈值 3 → 每点 3 条消息），点间等提取落定，保证时序确定
     const advance = async (points: number) => {
       for (let p = 0; p < points; p++) {
-        for (let i = 0; i < 3; i++) host.events.emit('inbound:message:archived', { sessionId: 'sb' } as never);
+        for (let i = 0; i < 3; i++) host.events.use.emit('inbound:message:archived', { sessionId: 'sb' } as never);
         await new Promise(r => setTimeout(r, 15));
       }
     };
@@ -419,7 +419,7 @@ describe('plugin-user-relation: extractor', () => {
     });
     // 第二轮用空 LLM 输出，只为捕获 prompt 中的 neighbor 渲染
     const probeJson = '{}';
-    const { host, mem, service, extractor, calls } = await setup(seedJson);
+    const { app, mem, service, extractor, calls } = await setup(seedJson);
     // 把 cfg 中的 senderNeighborhoodEdgeLimit 改成 5（setup 默认为 0）
     (extractor as unknown as { cfg: { senderNeighborhoodEdgeLimit: number } }).cfg.senderNeighborhoodEdgeLimit = 5;
 
@@ -429,7 +429,8 @@ describe('plugin-user-relation: extractor', () => {
     expect(snapAfterSeed.entities.some(e => e.name === '三角洲')).toBe(true);
 
     // 切换 fake LLM 的 canned response 到 probe（替换 model 内部回应）
-    const llmHandle = host.llm.current;
+    // 改提供者交出的实例本身：业务句柄是转发句柄，在它上面改方法落不到提供者
+    const llmHandle = app.bind({ services }).services.use.get(llm);
     // 简单 hack: 用新的 fake 替换原本的；改用直接修改原 chat 行为
     type LlmInternal = { chat: (req: unknown) => Promise<{ content: string }> };
     (llmHandle as unknown as LlmInternal).chat = (req: unknown) => {

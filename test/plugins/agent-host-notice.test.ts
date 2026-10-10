@@ -61,7 +61,7 @@ function promptProbe(name: string, id: string, anchor: string, out: string) {
     name,
     uses: { contributions },
     apply(caps) {
-      caps.contributions.contribute('agent:prompt' as never, { id, anchor, build: () => out } as never);
+      caps.contributions.use.contribute('agent:prompt' as never, { id, anchor, build: () => out } as never);
     },
   });
 }
@@ -87,14 +87,14 @@ async function boot(opts: { probes?: boolean; replies?: string[] } = {}) {
   }
   const host = app.bind({ agent, memory, events });
   const outbound: OutgoingMessage[] = [];
-  host.events.on('outbound:message', message => {
+  host.events.use.on('outbound:message', message => {
     outbound.push(message);
   });
   return {
     recorder,
     outbound,
-    send: (msg: IncomingMessage) => host.agent.require().handleMessage(msg),
-    history: () => host.memory.require().getHistory(SESSION, 50),
+    send: (msg: IncomingMessage) => host.agent.use.handleMessage(msg),
+    history: () => host.memory.use.getHistory(SESSION, 50),
   };
 }
 

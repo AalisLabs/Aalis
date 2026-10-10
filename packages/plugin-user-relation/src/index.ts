@@ -410,15 +410,15 @@ const configSchema = defineConfig({
 });
 
 function start(caps: Caps): void {
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
-  const store = new RelationStore(() => caps.memory.require());
-  const service = new RelationService(store, caps.logger, caps.embedding);
+  const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
+  const store = new RelationStore(() => caps.memory.use);
+  const service = new RelationService(store, caps.logger.use, caps.embedding);
 
-  caps.provide(userRelation, service);
+  caps.provide.use(userRelation, service);
 
   // 平台 displayName 同步：与 extractionEnabled 解耦，即便关掉写入提取，
   // 改名也应反映到已存在的 Person 节点（仅同步，不创建新节点）。
-  startRenameWatcher({ events: caps.events, logger: caps.logger }, service);
+  startRenameWatcher({ events: caps.events.use, logger: caps.logger.use }, service);
 
   const debug = cfg.debug;
 
@@ -443,13 +443,7 @@ function start(caps: Caps): void {
   const triggerEveryN = cfg.triggerEveryNMessages;
   if (extractionEnabled && triggerEveryN > 0) {
     const extractor = new RelationExtractor(
-      {
-        events: caps.events,
-        logger: caps.logger,
-        memory: caps.memory,
-        llm: caps.llm,
-        platform: caps.platform,
-      },
+      { events: caps.events, logger: caps.logger, memory: caps.memory, llm: caps.llm, platform: caps.platform },
       service,
       {
         triggerEveryNMessages: triggerEveryN,
@@ -491,7 +485,7 @@ function start(caps: Caps): void {
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (cfg.agentInjection) {
-    caps.sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
+    caps.sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
     registerRelationContribution({ contributions: caps.contributions, sessionManager: caps.sessionManager }, service, {
       maxDepth: cfg.injectionMaxDepth,
       maxBreadth: cfg.injectionMaxBreadth,
@@ -507,7 +501,7 @@ function start(caps: Caps): void {
 
   // ─── Agent 工具 ─── 受 toolsEnabled 控制
   if (cfg.toolsEnabled) {
-    registerRelationTools({ tools: caps.tools, logger: caps.logger }, service, {
+    registerRelationTools({ tools: caps.tools.use, logger: caps.logger.use }, service, {
       defaultMaxDepth: cfg.digToolDefaultMaxDepth,
       defaultMaxBreadth: cfg.digToolDefaultMaxBreadth,
       hardMaxDepth: cfg.digToolHardMaxDepth,
@@ -522,14 +516,14 @@ function start(caps: Caps): void {
   }
 
   // 关系图页与原始数据页
-  registerRelationPages(caps.webui, service, caps.logger, cfg.graphSpacing);
+  registerRelationPages(caps.webui.use, service, caps.logger.use, cfg.graphSpacing);
 
   // /relation 指令
   if (cfg.commandsEnabled) {
     const ref = cfg.consolidationModel;
     const consolidateModel = ref?.provider && ref.model ? { provider: ref.provider, model: ref.model } : undefined;
     registerRelationCommands(
-      { commands: caps.commands, platform: caps.platform, llm: caps.llm, logger: caps.logger },
+      { commands: caps.commands.use, platform: caps.platform, llm: caps.llm, logger: caps.logger.use },
       service,
       {
         ...(consolidateModel
@@ -551,7 +545,7 @@ function start(caps: Caps): void {
   // ─── 参与统一的 memory:clear（与 plugin-user-profile 对称） ───
   // scope='all'：清空整个关系图；scope='session'：跨会话存储，不动。
   // types 过滤：未指定 / 包含 'user-relation' 时执行。
-  caps.hooks.middleware('memory:clear', async (data, next) => {
+  caps.hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('user-relation')) {
       await next();
       return;
@@ -564,8 +558,8 @@ function start(caps: Caps): void {
       // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量提交
       // （原子性按后端分档，见 store.clearAll），
       // 逐条删会在中途失败时留下半张图。
-      const cleared = await store.clearAll(caps.logger);
-      caps.logger.info(`[user-relation] 关系图已清空 (${cleared} 条)`);
+      const cleared = await store.clearAll(caps.logger.use);
+      caps.logger.use.info(`[user-relation] 关系图已清空 (${cleared} 条)`);
       data.results.push({
         source: 'user-relation',
         type: 'user-relation',
@@ -574,7 +568,7 @@ function start(caps: Caps): void {
       });
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      caps.logger.warn(`[user-relation] 清空失败: ${m}`);
+      caps.logger.use.warn(`[user-relation] 清空失败: ${m}`);
       data.results.push({
         source: 'user-relation',
         type: 'user-relation',

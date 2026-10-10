@@ -210,7 +210,7 @@ export default definePlugin({
 });
 
 async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor }: Caps): Promise<void> {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
     throw configError('baseUrl 需为不带用户名或密码的完整 URL');
   }
@@ -219,15 +219,15 @@ async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor
 
   // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
   try {
-    await service.embed('ping', { signal: lifecycle.signal });
-    logger.info(`Ollama Embedding 已就绪: ${model} @ ${baseUrl}`);
+    await service.embed('ping', { signal: lifecycle.use.signal });
+    logger.use.info(`Ollama Embedding 已就绪: ${model} @ ${baseUrl}`);
   } catch (err) {
-    lifecycle.signal.throwIfAborted();
+    lifecycle.use.signal.throwIfAborted();
     const msg = err instanceof Error ? err.message : String(err);
-    logger.warn(`Ollama Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
+    logger.use.warn(`Ollama Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
   }
 
-  provide(embedding, service, { label: `Ollama / ${model}` });
+  provide.use(embedding, service, { label: `Ollama / ${model}` });
 
   // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 起来）。
   // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只判存在性，
@@ -241,10 +241,10 @@ async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor
   // 本插件 reusable=true，可按 `name:suffix` 起多实例；doctor 以 spec.id 为键，
   // 同 id 重复注册后者覆盖前者——两个实例共用一个 id 就只有一个的健康度可见，
   // 恰是这条检查要堵的洞。默认实例保持 `embedding.ollama`，多实例带上后缀。
-  const checkId = lifecycle.id.startsWith(`${name}:`)
-    ? `embedding.ollama.${lifecycle.id.slice(name.length + 1)}`
+  const checkId = lifecycle.use.id.startsWith(`${name}:`)
+    ? `embedding.ollama.${lifecycle.use.id.slice(name.length + 1)}`
     : 'embedding.ollama';
-  doctor.registerCheck({
+  doctor.use.registerCheck({
     id: checkId,
     category: 'service',
     // 不写死 pluginName：绑定门面会填这次激活的 id，多实例才分得清是哪一个

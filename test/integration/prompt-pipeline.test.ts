@@ -88,7 +88,7 @@ function createProbeLLMPlugin(opts: { replies: ProbeReply[]; recorder: Message[]
     uses: { provide },
     apply(caps) {
       // 能力挂在 handle 自身的 capabilities 字段（model 上已声明），不是 provide 的选项。
-      caps.provide(llm, model, { entryId: `${model.providerId}/${model.id}` });
+      caps.provide.use(llm, model, { entryId: `${model.providerId}/${model.id}` });
     },
   });
 }
@@ -100,7 +100,7 @@ function createProbeContributionPlugin(views: PromptContributionView[], hookLayo
     name: '@aalis/test-fixture-prompt-probe',
     uses: { contributions, hooks },
     apply({ contributions, hooks }) {
-      contributions.contribute(POINT, {
+      contributions.use.contribute(POINT, {
         id: 'identity-probe',
         anchor: 'identity',
         build(view: PromptContributionView) {
@@ -108,19 +108,19 @@ function createProbeContributionPlugin(views: PromptContributionView[], hookLayo
           return 'IDENTITY-PROBE-BLOCK';
         },
       } as never);
-      contributions.contribute(POINT, {
+      contributions.use.contribute(POINT, {
         id: 'knowledge-probe',
         anchor: 'knowledge',
         build: () => 'KNOWLEDGE-PROBE-BLOCK',
       } as never);
-      contributions.contribute(POINT, {
+      contributions.use.contribute(POINT, {
         id: 'turn-hint-probe',
         anchor: 'turn-hint',
         build: () => 'TURN-HINT-PROBE-BLOCK',
       } as never);
       // 进链探针：录下 agent:llm:before 链看到的布局。组装先于链是核心时序保证——
       // 进链时全部贡献块应已物化，拦截者审的是完整成品。
-      hooks.middleware(
+      hooks.use.middleware(
         'agent:llm:before' as never,
         async (data: { messages: Message[] }, next: () => Promise<void>) => {
           hookLayouts.push(layoutOf(data.messages));
@@ -129,8 +129,8 @@ function createProbeContributionPlugin(views: PromptContributionView[], hookLayo
       );
       // 中场贡献探针：工具执行后（工具循环的二次组装之前）注册新贡献。
       // MIDTURN 块只能由二次 assemblePromptContributions 物化——该调用被删则测试必挂。
-      hooks.middleware('agent:tool:after' as never, async (_data: unknown, next: () => Promise<void>) => {
-        contributions.contribute(POINT, {
+      hooks.use.middleware('agent:tool:after' as never, async (_data: unknown, next: () => Promise<void>) => {
+        contributions.use.contribute(POINT, {
           id: 'midturn-probe',
           anchor: 'knowledge',
           build: () => 'MIDTURN',
@@ -181,8 +181,8 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   await app.plugin(memoryInMemoryPlugin);
   // 装载请求可能排队，种子要写进真实的 memory 提供者，先静置
   await app.plugins.idle();
-  const memoryService = host.memory.current;
-  if (!memoryService) throw new Error('memory 服务未就绪');
+  if (!host.memory.present) throw new Error('memory 服务未就绪');
+  const memoryService = host.memory.use;
 
   // 种子一：另一会话的消息 → memory-history 的 context 贡献料
   await memoryService.saveMessage(CROSS_SESSION, {
@@ -217,7 +217,7 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     trimThresholdRatio: 1.0,
   });
 
-  host.events.on('outbound:message', (m: OutgoingMessage) => {
+  host.events.use.on('outbound:message', (m: OutgoingMessage) => {
     outbound.push(m);
   });
 
@@ -228,8 +228,8 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
   }
 
-  const agentService = host.agent.current;
-  if (!agentService) throw new Error('agent 服务未就绪');
+  if (!host.agent.present) throw new Error('agent 服务未就绪');
+  const agentService = host.agent.use;
 
   return {
     app,

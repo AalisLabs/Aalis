@@ -3,11 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
@@ -47,9 +43,9 @@ describe('checkpoint × 公开根', () => {
     await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint });
-    storage = createStorageGateway(host.storage);
+    storage = host.storage.use;
     // runTurn 是实现类上的驱动面，不在对外服务契约里
-    svc = host.checkpoint.require() as CheckpointServiceImpl;
+    svc = host.checkpoint.use as CheckpointServiceImpl;
   });
 
   afterEach(async () => {

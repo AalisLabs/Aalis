@@ -58,7 +58,7 @@ async function boot(): Promise<{ app: App; host: Host; executed: () => number; r
   await use(app, agentPlugin, AGENT_CONFIG);
   const host = app.bind(uses);
   let n = 0;
-  host.tools.register({
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -79,7 +79,7 @@ async function boot(): Promise<{ app: App; host: Host; executed: () => number; r
 }
 
 const ask = (host: Host, sessionId: string) =>
-  host.agent.require().handleMessage({
+  host.agent.use.handleMessage({
     content: '调工具',
     sessionId,
     platform: 'test',
@@ -90,7 +90,7 @@ const ask = (host: Host, sessionId: string) =>
 describe('会话级 maxToolIterations', () => {
   it('会话设 2 → 循环两轮即停；未设置是 30，不取插件配置；非正整数写不进去', async () => {
     const { app, host, executed, reset } = await boot();
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     try {
       await sm.ensureSession('test:iter-two', { config: { maxToolIterations: 2 } });
       await ask(host, 'test:iter-two');
@@ -112,7 +112,7 @@ describe('会话级 maxToolIterations', () => {
 describe('会话级模型', () => {
   it('只收服务与模型都是非空字符串的 { provider, model }，别的写不进去', async () => {
     const { app, host } = await boot();
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     try {
       const model = { provider: '<服务>', model: '<模型>' };
       await sm.ensureSession('test:model', { config: { llm: model } });

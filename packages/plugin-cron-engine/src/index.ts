@@ -66,13 +66,13 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
   function ensureCronLoop(): void {
     if (tickTimer) return;
     scheduleNextTick();
-    logger.debug('cron-engine 主循环已对齐启动');
+    logger.use.debug('cron-engine 主循环已对齐启动');
   }
 
   /** 把下一轮 tick 排到下一个整分钟边界（多 20ms 余量，避免边界前一毫秒醒来空转一轮） */
   function scheduleNextTick(): void {
     // 收尾段一开始（signal 已断）就不再排：清理段清掉的定时器不会被后续一轮重新排出来
-    if (lifecycle.signal.aborted) return;
+    if (lifecycle.use.signal.aborted) return;
     if (tickTimer) return;
     const now = Date.now();
     tickTimer = setTimeout(cronTick, floorToMinute(now) + MINUTE_MS - now + 20);
@@ -86,13 +86,13 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
     // 墙钟被向后拨（NTP 校正 / 手动改表）：lastTickMinute 会停在未来，
     // 不重锚就会一直静默不触发，直到墙钟追回来
     if (current < lastTickMinute) {
-      logger.warn('检测到墙钟回拨，按当前时刻重锚，回拨跨过的分钟不补跑');
+      logger.use.warn('检测到墙钟回拨，按当前时刻重锚，回拨跨过的分钟不补跑');
       lastTickMinute = current - MINUTE_MS;
     }
     if (current > lastTickMinute) {
       const pending = (current - lastTickMinute) / MINUTE_MS;
       if (pending > MAX_CATCHUP_MINUTES) {
-        logger.warn(
+        logger.use.warn(
           `cron-engine 落后 ${pending} 分钟（事件循环阻塞或机器休眠），只回补最近 ${MAX_CATCHUP_MINUTES} 分钟，跳过 ${pending - MAX_CATCHUP_MINUTES} 分钟`,
         );
         lastTickMinute = current - MAX_CATCHUP_MINUTES * MINUTE_MS;
@@ -110,10 +110,10 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
         try {
           const r = sub.handler();
           if (r instanceof Promise) {
-            r.catch(err => logger.error(`cron handler (id=${sub.id}, expr="${sub.normalized}") 异步异常:`, err));
+            r.catch(err => logger.use.error(`cron handler (id=${sub.id}, expr="${sub.normalized}") 异步异常:`, err));
           }
         } catch (err) {
-          logger.error(`cron handler (id=${sub.id}, expr="${sub.normalized}") 同步异常:`, err);
+          logger.use.error(`cron handler (id=${sub.id}, expr="${sub.normalized}") 同步异常:`, err);
         }
       }
     }
@@ -125,8 +125,8 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
       if (!v.ok) throw new Error(v.reason);
       // 卸载后仍被握着的陈旧服务引用：cron 与 interval 两条通道一律不再建定时器
       // （interval 分支建出的 setInterval 没有任何东西会再清它，会越过卸载一直活着）
-      if (lifecycle.signal.aborted) {
-        logger.warn('cron-engine 已卸载，忽略迟到的 subscribe');
+      if (lifecycle.use.signal.aborted) {
+        logger.use.warn('cron-engine 已卸载，忽略迟到的 subscribe');
         return () => {};
       }
       const id = nextId++;
@@ -136,10 +136,10 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
           try {
             const r = handler();
             if (r instanceof Promise) {
-              r.catch(err => logger.error(`interval handler (id=${id}, expr="${expr}") 异步异常:`, err));
+              r.catch(err => logger.use.error(`interval handler (id=${id}, expr="${expr}") 异步异常:`, err));
             }
           } catch (err) {
-            logger.error(`interval handler (id=${id}, expr="${expr}") 同步异常:`, err);
+            logger.use.error(`interval handler (id=${id}, expr="${expr}") 同步异常:`, err);
           }
         }, ms);
         intervalSubs.set(id, { id, timer });
@@ -190,9 +190,9 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
     },
   };
 
-  provide(cronEngine, service);
+  provide.use(cronEngine, service);
 
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     if (tickTimer) clearTimeout(tickTimer);
     tickTimer = null;
     for (const s of intervalSubs.values()) clearInterval(s.timer);
@@ -200,5 +200,5 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
     intervalSubs.clear();
   });
 
-  logger.info('cron-engine 已就绪');
+  logger.use.info('cron-engine 已就绪');
 }

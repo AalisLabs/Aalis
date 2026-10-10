@@ -272,7 +272,7 @@ describe('页面登记', () => {
         ],
       },
     });
-    hub.app.bind({ provide }).provide(publish, {
+    hub.app.bind({ provide }).provide.use(publish, {
       listSurfaces: () => [
         { name: 'one', label: '主站', baseUrl: 'https://aalis1.example.test', available: true },
         { name: 'two', label: '画板', baseUrl: 'https://aalis2.example.test/draw', available: false, reason: '暂停' },

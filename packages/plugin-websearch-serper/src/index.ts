@@ -12,7 +12,7 @@ export type {
   WebSearchService,
 } from './types.js';
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const webSearch = defineService<WebSearchService>('web-search');
 
 const configSchema = defineConfig({
@@ -217,7 +217,7 @@ export default definePlugin({
 });
 
 function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   // 部分引用沿用默认模型，不把不完整的对象传入解析器。
   const compressionLLM = cfg.compressionLLM?.provider && cfg.compressionLLM.model ? cfg.compressionLLM : undefined;
 
@@ -239,19 +239,19 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
     const messages: Message[] = [{ role: 'user', content: prompt }];
 
     try {
-      const response = await entry.instance.chat({
+      const response = await entry.use.chat({
         messages,
         maxTokens: 1024,
       });
       return response.content?.trim() || rawResults;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);
+      logger.use.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);
       return rawResults;
     }
   }
 
-  logger.info(
+  logger.use.info(
     `网络搜索已启用 (provider: serper, ` +
       `限制: ${cfg.maxPerMinute}/min, ${cfg.maxPerDay}/day, ` +
       `并发: ${cfg.maxConcurrent}` +
@@ -272,19 +272,19 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
       };
     },
   };
-  provide(webSearch, serperService, {
+  provide.use(webSearch, serperService, {
     label: 'Serper',
   });
 
   // 注册工具分组
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'search',
     label: '网页搜索',
     description: '通过 Serper API 搜索互联网获取最新信息',
   });
 
   // 注册搜索工具
-  tools.register({
+  tools.use.register({
     groups: ['search'],
     definition: {
       type: 'function',
@@ -321,7 +321,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
       // 速率限制检查
       const rejectReason = limiter.check();
       if (rejectReason) {
-        logger.warn(`搜索被限流: ${rejectReason}`);
+        logger.use.warn(`搜索被限流: ${rejectReason}`);
         return JSON.stringify({
           error: `搜索请求被限流: ${rejectReason}`,
           status: limiter.getStatus(),
@@ -330,21 +330,21 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
 
       limiter.acquire();
       try {
-        logger.debug(`执行搜索: "${query}" (${numResults} 条结果)`);
+        logger.use.debug(`执行搜索: "${query}" (${numResults} 条结果)`);
         const data = await serperSearch(query, cfg.apiKey, numResults);
         let result = formatSearchResults(data);
 
         // 压缩整合
         if (cfg.enableCompression) {
-          logger.debug(`压缩搜索结果 (原始长度: ${result.length})`);
+          logger.use.debug(`压缩搜索结果 (原始长度: ${result.length})`);
           result = await compressResults(query, result);
-          logger.debug(`压缩完成 (压缩后长度: ${result.length})`);
+          logger.use.debug(`压缩完成 (压缩后长度: ${result.length})`);
         }
 
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error(`搜索失败: ${message}`);
+        logger.use.error(`搜索失败: ${message}`);
         return JSON.stringify({ error: `搜索失败: ${message}` });
       } finally {
         limiter.release();
@@ -353,7 +353,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
   });
 
   // 图片搜索工具：返回候选图片 URL 列表，配合 send_attachment 使用
-  tools.register({
+  tools.use.register({
     groups: ['search'],
     definition: {
       type: 'function',

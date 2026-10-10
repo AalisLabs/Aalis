@@ -50,7 +50,7 @@ async function captureRegistrations(): Promise<Captured[]> {
   const captured: Captured[] = [];
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       captured.push({ name: tool.definition.function.name, risk: tool.risk, visibility: tool.visibility });
       return () => {};

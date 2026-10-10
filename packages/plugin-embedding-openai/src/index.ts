@@ -100,7 +100,7 @@ export default definePlugin({
   provides: [embedding],
   uses: { config, logger, lifecycle, provide },
   async apply({ config, logger, lifecycle, provide }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
@@ -108,14 +108,14 @@ export default definePlugin({
 
     // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
     try {
-      await service.embed('ping', { signal: lifecycle.signal });
-      logger.info(`OpenAI Embedding 已就绪: ${cfg.model} @ ${cfg.baseUrl}`);
+      await service.embed('ping', { signal: lifecycle.use.signal });
+      logger.use.info(`OpenAI Embedding 已就绪: ${cfg.model} @ ${cfg.baseUrl}`);
     } catch (err) {
-      lifecycle.signal.throwIfAborted();
+      lifecycle.use.signal.throwIfAborted();
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`OpenAI Embedding 连通性检查失败 (${cfg.baseUrl}, model=${cfg.model}): ${msg}，服务仍将注册`);
+      logger.use.warn(`OpenAI Embedding 连通性检查失败 (${cfg.baseUrl}, model=${cfg.model}): ${msg}，服务仍将注册`);
     }
 
-    provide(embedding, service, { label: `OpenAI / ${cfg.model}` });
+    provide.use(embedding, service, { label: `OpenAI / ${cfg.model}` });
   },
 });

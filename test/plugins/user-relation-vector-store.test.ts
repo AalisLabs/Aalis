@@ -54,7 +54,7 @@ async function makeStore() {
   if (app.plugins.getPlugin(memoryInMemory.name)?.state !== 'active') {
     throw new Error('memory 插件未激活');
   }
-  const mem = app.bind({ memory }).memory.require();
+  const mem = app.bind({ memory }).memory.use;
   return { app, mem, store: new RelationStore(() => mem) };
 }
 
@@ -250,7 +250,7 @@ describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真
     // 宿主侧绑定：桩服务经描述符发布，服务引用直接交给 RelationService
     const host = app.bind({ provide, embedding, llm });
     const embedCalls: string[] = [];
-    host.provide(embedding, {
+    host.provide.use(embedding, {
       ...(modelId ? { modelId } : {}),
       embed: async (text: string) => {
         embedCalls.push(text);
@@ -258,7 +258,7 @@ describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真
       },
     });
     // 最小 chat 模型：宽召回的 LLM 终判会拿到不可解析回复而跳过——本测试只关心召回前的向量路径
-    host.provide(llm, { id: 'fake-chat', capabilities: ['chat'], chat: async () => ({ content: '{}' }) } as never);
+    host.provide.use(llm, { id: 'fake-chat', capabilities: ['chat'], chat: async () => ({ content: '{}' }) } as never);
     const service = new RelationService(store, app.logger, host.embedding);
     return { app, mem, store, service, host, embedCalls };
   }

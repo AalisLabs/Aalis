@@ -1275,9 +1275,6 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-contributions
-      '@aalis/api-hooks':
-        specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../api-hooks
       '@aalis/api-media':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-media

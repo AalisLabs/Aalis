@@ -164,8 +164,9 @@ async function setupPolicy(config: Record<string, unknown> = {}, personas: Perso
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, hooks });
-  host.provide(gateway, {} as never); // 满足 required 依赖；相位判定本身不经过 gateway
-  for (const p of personas) host.provide(persona, p);
+  host.provide.use(gateway, {} as never); // 满足 required 依赖；相位判定本身不经过 gateway
+  // 同一激活登记多家：各给一个条目 id，list() 才分得清
+  for (const [i, p] of personas.entries()) host.provide.use(persona, p, { entryId: `persona-${i}` });
   await app.plugins.register(triggerPolicyPlugin, config);
   await app.plugins.idle();
   // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -203,8 +204,8 @@ describe('trigger-policy inbound:trigger（poke）', () => {
     const { app, host } = await setupPolicy({ intervalMode: 'fixed', fixedInterval: 2 });
     try {
       const message = () => ({ ...pokeMsg(), noticeTargetIsSelf: false });
-      expect((await runTriggerPhase(host.hooks, message())).reached).toBe(false);
-      const second = await runTriggerPhase(host.hooks, message());
+      expect((await runTriggerPhase(host.hooks.use, message())).reached).toBe(false);
+      const second = await runTriggerPhase(host.hooks.use, message());
       expect(second.reached).toBe(true);
       expect(second.message.triggerType).toBe('interval');
       expect(second.message.actor).toEqual({ platform: 'onebot', userId: '' });
@@ -216,7 +217,7 @@ describe('trigger-policy inbound:trigger（poke）', () => {
   it('真实激活时纯空白 scopes 不扩大到所有会话', async () => {
     const { app, host } = await setupPolicy({ scopes: ['   '], ...EVERY_MESSAGE });
     try {
-      const { reached, message } = await runTriggerPhase(host.hooks, pokeMsg());
+      const { reached, message } = await runTriggerPhase(host.hooks.use, pokeMsg());
       expect(reached).toBe(true);
       expect(message.triggerType).toBeUndefined();
     } finally {
@@ -226,7 +227,7 @@ describe('trigger-policy inbound:trigger（poke）', () => {
 
   it('默认：poke 直触发（immediate）', async () => {
     const { app, host } = await setupPolicy();
-    const { reached, message } = await runTriggerPhase(host.hooks, pokeMsg());
+    const { reached, message } = await runTriggerPhase(host.hooks.use, pokeMsg());
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('immediate');
@@ -234,7 +235,7 @@ describe('trigger-policy inbound:trigger（poke）', () => {
 
   it('triggerOnPoke=false：不直触发，落回正常意愿评估', async () => {
     const { app, host } = await setupPolicy({ triggerOnPoke: false, ...EVERY_MESSAGE });
-    const { reached, message } = await runTriggerPhase(host.hooks, pokeMsg());
+    const { reached, message } = await runTriggerPhase(host.hooks.use, pokeMsg());
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType, '走到了计数判定而不是直触发').toBe('interval');
@@ -242,7 +243,7 @@ describe('trigger-policy inbound:trigger（poke）', () => {
 
   it('triggerOnPoke=false 且未到阈值：poke 被吞', async () => {
     const { app, host } = await setupPolicy({ triggerOnPoke: false });
-    const { reached } = await runTriggerPhase(host.hooks, pokeMsg());
+    const { reached } = await runTriggerPhase(host.hooks.use, pokeMsg());
     await app.stop();
     expect(reached).toBe(false);
   });
@@ -252,8 +253,8 @@ describe('trigger-policy inbound:trigger（poke）', () => {
       ...EVERY_MESSAGE,
       overrides: [{ scope: 'onebot:group', triggerOnPoke: false }],
     });
-    const onebot = await runTriggerPhase(host.hooks, pokeMsg('onebot'));
-    const telegram = await runTriggerPhase(host.hooks, pokeMsg('telegram'));
+    const onebot = await runTriggerPhase(host.hooks.use, pokeMsg('onebot'));
+    const telegram = await runTriggerPhase(host.hooks.use, pokeMsg('telegram'));
     await app.stop();
     expect(onebot.message.triggerType).toBe('interval');
     expect(telegram.message.triggerType).toBe('immediate');
@@ -262,7 +263,7 @@ describe('trigger-policy inbound:trigger（poke）', () => {
   it('非 poke 的 noticeType 不享受直触发（谓词只认词汇表里的 poke）', async () => {
     const { app, host } = await setupPolicy(EVERY_MESSAGE);
     const msg = { ...pokeMsg(), noticeType: 'group_increase' } as IncomingMessage;
-    const { message } = await runTriggerPhase(host.hooks, msg);
+    const { message } = await runTriggerPhase(host.hooks.use, msg);
     await app.stop();
     expect(message.triggerType).toBe('interval');
   });
@@ -271,9 +272,9 @@ describe('trigger-policy inbound:trigger（poke）', () => {
     const { app, host } = await setupPolicy({ triggerOnPoke: false, triggerNames: 'Aalis', ...EVERY_MESSAGE });
     // adapter 真实合成格式：昵称内嵌在 content 里，用户可控
     const msg = { ...pokeMsg(), content: '[戳一戳: Aalis的小跟班(12345) 戳了你]' } as IncomingMessage;
-    const poke = await runTriggerPhase(host.hooks, msg);
+    const poke = await runTriggerPhase(host.hooks.use, msg);
     // 对照：同样内容的普通消息（非 poke）该命中名字检测
-    const normal = await runTriggerPhase(host.hooks, { ...msg, noticeType: undefined } as IncomingMessage);
+    const normal = await runTriggerPhase(host.hooks.use, { ...msg, noticeType: undefined } as IncomingMessage);
     await app.stop();
     expect(poke.message.triggerType, '昵称含 bot 名的用户不得让开关对自己失效').toBe('interval');
     expect(normal.message.triggerType).toBe('immediate');
@@ -299,8 +300,8 @@ describe('trigger-policy inbound:trigger（人设故障）', () => {
         userId: 'u1',
         content,
       }) as IncomingMessage;
-    const plain = await runTriggerPhase(host.hooks, msg('随便聊聊'));
-    const named = await runTriggerPhase(host.hooks, msg('Aalis 在吗'));
+    const plain = await runTriggerPhase(host.hooks.use, msg('随便聊聊'));
+    const named = await runTriggerPhase(host.hooks.use, msg('Aalis 在吗'));
     await app.stop();
     expect(plain.reached, '没点名、计数未到：照常判定后吞掉').toBe(false);
     expect(named.message.triggerType, '另一个人设的名字照常算点名').toBe('immediate');
@@ -336,7 +337,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     // 事故形态（2026-09 日志实测 1415 次 interval 触发）：authority 经 actor ?? {platform,userId}
     // 回退到最后发言者——99.4% 回合按陌生人 0 级判权，owner 恰好最后发言时整轮按 owner 执行。
     const { app, host } = await setupPolicy(EVERY_MESSAGE);
-    const { reached, message } = await runTriggerPhase(host.hooks, groupMsg('随便聊聊'));
+    const { reached, message } = await runTriggerPhase(host.hooks.use, groupMsg('随便聊聊'));
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('interval');
@@ -347,7 +348,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
 
   it('immediate（被 @）：点名者就是主体，actor 维持缺省', async () => {
     const { app, host } = await setupPolicy();
-    const { reached, message } = await runTriggerPhase(host.hooks, groupMsg('<at self id="bot">Aalis</at> 在吗'));
+    const { reached, message } = await runTriggerPhase(host.hooks.use, groupMsg('<at self id="bot">Aalis</at> 在吗'));
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('immediate');
@@ -365,7 +366,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
       userId: 'owner-1',
       content: '帮我看下日志',
     } as unknown as IncomingMessage;
-    const { reached, message } = await runTriggerPhase(host.hooks, msg);
+    const { reached, message } = await runTriggerPhase(host.hooks.use, msg);
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('interval');
@@ -376,7 +377,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     const { app, host } = await setupPolicy(EVERY_MESSAGE);
     const msg = groupMsg('派发任务');
     msg.actor = { platform: 'webui', userId: 'console' };
-    const { message } = await runTriggerPhase(host.hooks, msg);
+    const { message } = await runTriggerPhase(host.hooks.use, msg);
     await app.stop();
     expect(message.triggerType).toBe('interval');
     expect(message.actor).toEqual({ platform: 'webui', userId: 'console' });
@@ -394,7 +395,7 @@ describe('trigger-policy inbound:trigger（同一会话突发）', () => {
 
   it('同一 tick 发 4 条、fixedInterval=2：逐条计数，放行第 2、4 条', async () => {
     const { app, host } = await setupPolicy(EVERY_TWO);
-    const results = await Promise.all([1, 2, 3, 4].map(i => runTriggerPhase(host.hooks, groupMsg(`第 ${i} 条`))));
+    const results = await Promise.all([1, 2, 3, 4].map(i => runTriggerPhase(host.hooks.use, groupMsg(`第 ${i} 条`))));
     await app.stop();
     expect(results.map(r => r.reached)).toEqual([false, true, false, true]);
     expect(results.map(r => r.message.triggerType)).toEqual([undefined, 'interval', undefined, 'interval']);
@@ -403,7 +404,7 @@ describe('trigger-policy inbound:trigger（同一会话突发）', () => {
   it('突发里被点名的消息照常放行（immediate），并清零计数', async () => {
     const { app, host } = await setupPolicy(EVERY_TWO);
     const contents = ['第 1 条', '第 2 条', `${AT}第 3 条`, '第 4 条', '第 5 条'];
-    const results = await Promise.all(contents.map(c => runTriggerPhase(host.hooks, groupMsg(c))));
+    const results = await Promise.all(contents.map(c => runTriggerPhase(host.hooks.use, groupMsg(c))));
     await app.stop();
     expect(results.map(r => r.reached)).toEqual([false, true, true, false, true]);
     expect(results[2].message.triggerType).toBe('immediate');
@@ -420,11 +421,11 @@ describe('trigger-policy inbound:trigger（判定日志）', () => {
     const app = new App({ name: 'T', logLevel: 'debug', logHub });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
-    host.provide(gateway, {} as never);
+    host.provide.use(gateway, {} as never);
     await app.plugins.register(triggerPolicyPlugin, { intervalMode: 'fixed', fixedInterval: 3 });
     await app.plugins.idle();
-    await runTriggerPhase(host.hooks, groupMsg('这是一段不该进日志的正文'));
-    await runTriggerPhase(host.hooks, groupMsg('<at self id="bot">Aalis</at> 在吗'));
+    await runTriggerPhase(host.hooks.use, groupMsg('这是一段不该进日志的正文'));
+    await runTriggerPhase(host.hooks.use, groupMsg('<at self id="bot">Aalis</at> 在吗'));
     await app.stop();
     expect(lines.map(e => e.level)).toEqual(['debug', 'debug']);
     expect(lines[0].message).toMatch(

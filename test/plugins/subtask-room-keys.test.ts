@@ -38,7 +38,7 @@ async function setup() {
     settings: [PERSONA, MODEL, MEMORY_RECALL_SCOPE_SETTING, ...ROOM_SETTINGS],
   });
   apps.push(app);
-  await recordRoom(host.events, ROOM);
+  await recordRoom(host.events.use, ROOM);
   await sm.updateLayer(
     { scope: 'place', key: 'onebot:group:g1' },
     {
@@ -52,7 +52,7 @@ async function setup() {
   );
   await sm.updateSession(ROOM, { config: { persona: 'from-parent', memoryRecallScope: 'session' } });
   const handlers = new Map<string, Handler>();
-  app.bind({ provide }).provide(tools, {
+  app.bind({ provide }).provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: Handler }) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => void handlers.delete(tool.definition.function.name);

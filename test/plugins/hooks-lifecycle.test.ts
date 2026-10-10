@@ -39,7 +39,7 @@ function tracer(name: string) {
     name,
     uses: { hooks },
     apply({ hooks }) {
-      hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+      hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
         data.trail.push(name);
         await next();
       });
@@ -55,12 +55,12 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
 
     const host = app.bind({ hooks });
     const first = { trail: [] as string[] };
-    expect(await host.hooks.run('__t:lifecycle-hook', first)).toBe(true);
+    expect(await host.hooks.use.run('__t:lifecycle-hook', first)).toBe(true);
     expect(first.trail).toEqual(['plugin-a']);
 
     await app.plugins.unload('plugin-a');
     const second = { trail: [] as string[] };
-    await host.hooks.run('__t:lifecycle-hook', second);
+    await host.hooks.use.run('__t:lifecycle-hook', second);
     expect(second.trail).toEqual([]);
   });
 
@@ -73,7 +73,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
 
     await app.plugins.unload('plugin-a');
     const data = { trail: [] as string[] };
-    await app.bind({ hooks }).hooks.run('__t:lifecycle-hook', data);
+    await app.bind({ hooks }).hooks.use.run('__t:lifecycle-hook', data);
     expect(data.trail).toEqual(['plugin-b']);
   });
 
@@ -85,7 +85,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
         uses: { hooks },
         apply({ hooks }) {
           for (const tag of ['a1', 'a2']) {
-            hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+            hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
               data.trail.push(tag);
               await next();
             });
@@ -95,7 +95,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     );
     await expectActive(app, 'plugin-a');
     const data = { trail: [] as string[] };
-    await app.bind({ hooks }).hooks.run('__t:lifecycle-hook', data);
+    await app.bind({ hooks }).hooks.use.run('__t:lifecycle-hook', data);
     expect(data.trail).toEqual(['a1', 'a2']);
   });
 
@@ -107,7 +107,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
         uses: { hooks },
         apply({ hooks }) {
           for (const tag of tags) {
-            hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+            hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
               data.trail.push(tag);
               await next();
             });
@@ -117,7 +117,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     await app.pluginAll([{ definition: multi('plugin-a', ['a1', 'a2']) }, { definition: multi('plugin-b', ['b1']) }]);
     await expectActive(app, 'plugin-b');
     const data = { trail: [] as string[] };
-    await app.bind({ hooks }).hooks.run('__t:lifecycle-hook', data);
+    await app.bind({ hooks }).hooks.use.run('__t:lifecycle-hook', data);
     expect(data.trail).toEqual(['a1', 'a2', 'b1']);
   });
 
@@ -129,7 +129,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
         name: 'plugin-a',
         uses: { hooks },
         apply({ hooks }) {
-          off = hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+          off = hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
             data.trail.push('a');
             await next();
           });
@@ -139,10 +139,10 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     await expectActive(app, 'plugin-a');
     const host = app.bind({ hooks });
     const first = { trail: [] as string[] };
-    await host.hooks.run('__t:lifecycle-hook', first);
+    await host.hooks.use.run('__t:lifecycle-hook', first);
     off();
     const second = { trail: [] as string[] };
-    await host.hooks.run('__t:lifecycle-hook', second);
+    await host.hooks.use.run('__t:lifecycle-hook', second);
     expect([first.trail, second.trail]).toEqual([['a'], []]);
   });
 
@@ -150,24 +150,24 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     const app = await makeApp();
     const host = app.bind({ hooks, services });
     // 公开的是按激活绑定的门面，登记经它才盖上本激活身份、随激活撤回
-    expect(host.hooks).not.toBe(host.services.get(hooks));
-    expect('register' in host.hooks).toBe(false);
-    expect(typeof host.hooks.run).toBe('function');
-    expect(typeof host.hooks.middleware).toBe('function');
+    expect(host.hooks.use).not.toBe(host.services.use.get(hooks));
+    expect('register' in host.hooks.use).toBe(false);
+    expect(typeof host.hooks.use.run).toBe('function');
+    expect(typeof host.hooks.use.middleware).toBe('function');
   });
 
   it('middleware 不进清理链：登记与退订都不改变链长，登记随激活关闭整体切断', async () => {
     const root = createActivationFixture();
-    root.caps.provide(hooks, new HookTable());
+    root.caps.provide.use(hooks, new HookTable());
     const child = root.host.create('plugin-a');
     const caps = root.host.bind(child, { hooks });
     const trace = async () => {
       const data = { trail: [] as string[] };
-      await root.host.bind(root.activation, { hooks }).hooks.run('__t:lifecycle-hook', data);
+      await root.host.bind(root.activation, { hooks }).hooks.use.run('__t:lifecycle-hook', data);
       return data.trail;
     };
     const push = (tag: string) =>
-      caps.hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+      caps.hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
         data.trail.push(tag);
         await next();
       });

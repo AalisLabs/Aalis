@@ -19,7 +19,7 @@ describe('tryDispatchSubcommand', () => {
     const errors: string[] = [];
     try {
       const result = await tryDispatchSubcommand(
-        app.bind({ services }).services,
+        app.bind({ services }).services.use,
         ['doctor'],
         () => {},
         msg => errors.push(msg),
@@ -39,7 +39,7 @@ describe('tryDispatchSubcommand', () => {
     let executed = false;
     try {
       const host = app.bind({ provide, services });
-      host.provide(commands, {
+      host.provide.use(commands, {
         has: (_: string) => false,
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => {
@@ -48,7 +48,7 @@ describe('tryDispatchSubcommand', () => {
         },
       } as never);
       const result = await tryDispatchSubcommand(
-        host.services,
+        host.services.use,
         ['nonexistent', 'arg1'],
         () => {},
         msg => errors.push(msg),
@@ -69,7 +69,7 @@ describe('tryDispatchSubcommand', () => {
     let executedWith: { name: string; args: string[]; raw: string } | undefined;
     try {
       const host = app.bind({ provide, services });
-      host.provide(commands, {
+      host.provide.use(commands, {
         has: (name: string) => name === 'demo',
         execute: async (name: string, input: { args: string[]; raw: string }) => {
           executedWith = { name, args: input.args, raw: input.raw };
@@ -77,7 +77,7 @@ describe('tryDispatchSubcommand', () => {
         },
       } as never);
       const result = await tryDispatchSubcommand(
-        host.services,
+        host.services.use,
         ['demo', 'foo', 'bar'],
         msg => captured.push(msg),
         msg => errors.push(msg),
@@ -96,12 +96,12 @@ describe('tryDispatchSubcommand', () => {
     const captured: string[] = [];
     try {
       const host = app.bind({ provide, services });
-      host.provide(commands, {
+      host.provide.use(commands, {
         has: (name: string) => name === 'silent',
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => undefined,
       } as never);
-      const result = await tryDispatchSubcommand(host.services, ['silent'], msg => captured.push(msg));
+      const result = await tryDispatchSubcommand(host.services.use, ['silent'], msg => captured.push(msg));
       expect(result).toBe(0);
       expect(captured).toEqual([]);
     } finally {

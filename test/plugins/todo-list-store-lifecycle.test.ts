@@ -21,7 +21,7 @@ async function boot() {
   await app.plugins.register(memoryInMemory, {});
   const host = app.bind({ provide, services, hooks, events });
   const handlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => void handlers.delete(tool.definition.function.name);
@@ -30,7 +30,7 @@ async function boot() {
   } as never);
   await app.plugins.register(todoList, { enabled: true });
   await app.plugins.idle();
-  const getTodos = (sessionId: string) => host.services.get(todoListService)!.get(sessionId);
+  const getTodos = (sessionId: string) => host.services.use.get(todoListService)!.get(sessionId);
   return { app, host, manage: () => handlers.get('manage_todo_list')!, getTodos };
 }
 
@@ -52,7 +52,7 @@ describe('plugin-todo-list: 缓存随激活存亡', () => {
     expect(await getTodos('s-3')).toHaveLength(1);
 
     await app.plugins.unload(todoList.name);
-    const store = host.services.get(memory) as MemoryService;
+    const store = host.services.use.get(memory) as MemoryService;
     await store.deleteMetadata('todo-list', 's-3');
 
     await app.plugins.register(todoList, { enabled: true });
@@ -73,7 +73,7 @@ describe('plugin-todo-list: 缓存随激活存亡', () => {
 describe('plugin-todo-list: memory 换胜者后读当前胜者', () => {
   it('更高优先级的 memory 上线后，服务返回新胜者里的清单，不命中旧后端读进来的缓存', async () => {
     const { app, host, manage, getTodos } = await boot();
-    const first = host.services.get(memory) as MemoryService;
+    const first = host.services.use.get(memory) as MemoryService;
     await first.saveMetadata('todo-list', 's-4', { items: [{ id: 1, title: 'A 的任务', status: 'in-progress' }] });
     expect(await getTodos('s-4')).toEqual([{ id: 1, title: 'A 的任务', status: 'in-progress' }]);
     // 经工具写入的会话同时落进本地 store：有 memory 时 store 也不得充当读缓存
@@ -83,7 +83,7 @@ describe('plugin-todo-list: memory 换胜者后读当前胜者', () => {
     const second = new Map<string, Record<string, unknown>>([
       ['todo-list/s-4', { items: [{ id: 1, title: 'B 的任务', status: 'completed' }] }],
     ]);
-    host.provide(memory, { getMetadata: async (ns: string, key: string) => second.get(`${ns}/${key}`) } as never, {
+    host.provide.use(memory, { getMetadata: async (ns: string, key: string) => second.get(`${ns}/${key}`) } as never, {
       priority: 10,
     });
     await app.plugins.idle();
@@ -104,14 +104,14 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
     const task = (title: string) => [{ id: 1, title, status: 'in-progress' }];
     for (const s of ['s-a', 's-b']) await env.manage()({ todoList: task(`${s} 的任务`) }, { sessionId: s });
     const updates: Array<[string, TodoItem[]]> = [];
-    env.host.events.on('todo:updated', (sessionId, items) => void updates.push([sessionId, items]));
+    env.host.events.use.on('todo:updated', (sessionId, items) => void updates.push([sessionId, items]));
     async function clear(scope: 'session' | 'all', types?: string[]) {
       const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 's-a', results: [] };
-      await env.host.hooks.run('memory:clear', data, async () => {});
+      await env.host.hooks.use.run('memory:clear', data, async () => {});
       return data.results;
     }
     const stored = async (s: string) =>
-      (await env.host.services.get(memory)!.getMetadata('todo-list', s)) !== undefined;
+      (await env.host.services.use.get(memory)!.getMetadata('todo-list', s)) !== undefined;
     return { ...env, clear, stored, updates };
   }
 
@@ -147,7 +147,7 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
     const { app, host, manage, getTodos, clear, updates } = await world();
     await app.plugins.unload(memoryInMemory.name);
     await app.plugins.idle();
-    expect(host.services.get(memory)).toBeUndefined();
+    expect(host.services.use.get(memory)).toBeUndefined();
     for (const s of ['s-a', 's-c'])
       await manage()({ todoList: [{ id: 1, title: s, status: 'in-progress' }] }, { sessionId: s });
     updates.length = 0;
@@ -171,7 +171,7 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
 
   it('memory 读写出错：回显一条失败，不发空列表', async () => {
     const { app, host, clear, updates } = await world();
-    vi.spyOn(host.services.get(memory)!, 'listMetadata').mockRejectedValueOnce(new Error('后端故障'));
+    vi.spyOn(host.services.use.get(memory)!, 'listMetadata').mockRejectedValueOnce(new Error('后端故障'));
     expect(await clear('all')).toEqual([{ source: 'todo-list', success: false, message: '待办清空失败: 后端故障' }]);
     expect(updates).toEqual([]);
     await app.stop();

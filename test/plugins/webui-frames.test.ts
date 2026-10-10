@@ -289,12 +289,12 @@ async function setup() {
     'webui:real': { id: 'webui:real', kind: 'owner' },
     alias: { id: 'webui:real', kind: 'owner' },
   };
-  app.bind({ provide }).provide(sessionManager, { getSession: (id: string) => sessions[id] } as never);
+  app.bind({ provide }).provide.use(sessionManager, { getSession: (id: string) => sessions[id] } as never);
   const received: unknown[] = [];
   const owner = definePlugin({
     name: OWNER,
     uses: { webui: optional(webuiServer) },
-    apply: ({ webui }) => definePages(webui, module, received),
+    apply: ({ webui }) => definePages(webui.use, module, received),
   });
   await app.pluginAll([
     { definition: storageLocalPlugin, config: {} },

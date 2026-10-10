@@ -45,11 +45,11 @@ async function setup(extract?: unknown) {
   hosts.push(pages);
   const host = app.bind({ provide, services, hooks, events });
   const reply = JSON.stringify(extract ?? {});
-  host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat: async () => ({ content: reply }) } as never);
-  host.provide(webuiServer, pages.service);
+  host.provide.use(llm, { id: 'stub-model', capabilities: ['chat'], chat: async () => ({ content: reply }) } as never);
+  host.provide.use(webuiServer, pages.service);
   // 指令只收下处理函数，按名字直接调用；调用的人是 onebot 上的 admin
   const handlers = new Map<string, CommandHandler>();
-  host.provide(commands, {
+  host.provide.use(commands, {
     command: (name: string) => ({ action: (handler: CommandHandler) => handlers.set(name.split(' ')[0], handler) }),
     unregister() {},
   } as never);
@@ -59,7 +59,7 @@ async function setup(extract?: unknown) {
       ...args,
     );
   await app.plugins.idle();
-  const mem = host.services.get(memory);
+  const mem = host.services.use.get(memory);
   if (!mem) throw new Error('memory 服务未就绪');
   await mem.saveMetadata(NS, 'onebot:alice', {
     facts: [fact('f1', '喜欢猫', 100, { category: '偏好' }), fact('f2', '在读研', 300, { temporality: 'temporary' })],
@@ -130,7 +130,7 @@ describe('用户档案页', () => {
     const { pages, host } = await setup();
     const clear = (scope: 'session' | 'all') => {
       const data: HookContextMap['memory:clear'] = { scope, sessionId: 's1', results: [] };
-      return host.hooks.run('memory:clear', data, async () => {});
+      return host.hooks.use.run('memory:clear', data, async () => {});
     };
     await clear('session');
     expect(pages.invalidations).toEqual([]);
@@ -159,7 +159,7 @@ describe('用户档案页', () => {
       content: '我家柴犬今天又拆家了',
       metadata: { userId: 'bob', platform: 'onebot' },
     });
-    await host.events.emit('inbound:message:archived', {
+    await host.events.use.emit('inbound:message:archived', {
       sessionId: 'onebot:g1',
       incoming: { userId: 'bob', platform: 'onebot' },
     } as never);

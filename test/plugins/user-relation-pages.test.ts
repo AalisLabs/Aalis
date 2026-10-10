@@ -26,16 +26,16 @@ async function boot() {
   const app = new App({ name: 'T', logLevel: 'error' });
   const pages = pageHost();
   running.push({ app, pages });
-  app.bind({ provide }).provide(webuiServer, pages.service);
+  app.bind({ provide }).provide.use(webuiServer, pages.service);
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  const mem = app.bind({ memory }).memory.require();
+  const mem = app.bind({ memory }).memory.use;
   const service = new RelationService(new RelationStore(() => mem));
   await app.plugin(
     definePlugin({
       name: 'zz-relation-pages',
       uses: { webui: webuiServer, logger },
-      apply: ({ webui, logger }) => registerRelationPages(webui, service, logger, 90),
+      apply: ({ webui, logger }) => registerRelationPages(webui.use, service, logger.use, 90),
     }),
   );
   await app.plugins.idle();
@@ -154,7 +154,7 @@ describe('关系图的疏密配置', () => {
     const pages = pageHost();
     running.push({ app, pages });
     await registerHubs(app);
-    app.bind({ provide }).provide(webuiServer, pages.service);
+    app.bind({ provide }).provide.use(webuiServer, pages.service);
     await app.plugin(memoryInMemory);
     await app.plugin(relationPlugin, { extractionEnabled: false, ...config });
     await app.plugins.idle();

@@ -71,7 +71,7 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
     provides: [platform],
     uses: { provide },
     apply: ({ provide }) => {
-      provide(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
+      provide.use(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
     },
   });
 
@@ -152,7 +152,7 @@ async function setup({
   provideHome(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, services, sessionManager, sessionProtocol, hostConfig });
-  host.provide(memory, fakeMemory(stored) as never);
+  host.provide.use(memory, fakeMemory(stored) as never);
   const disk = memoryStorage(files);
   const readFile = disk.readFile.bind(disk);
   disk.readFile = (async (uri: string, encoding?: BufferEncoding) => {
@@ -160,7 +160,7 @@ async function setup({
     return readFile(uri, encoding);
   }) as typeof disk.readFile;
   if (unwritable) disk.writeFile = async () => Promise.reject(new Error('ENOSPC: 磁盘已满'));
-  host.provide(storage, disk);
+  host.provide.use(storage, disk);
   await app.plugin(adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => /^onebot:1000[01]:/.test(id) }));
   await app.plugin(adapterPlugin('onebot-b', { platform: 'onebot', canHandle: id => id.startsWith('onebot:20000:') }));
   await app.plugin(adapterPlugin('cli', { platform: 'cli', canHandle: id => id === 'cli-default' }));
@@ -175,7 +175,7 @@ async function setup({
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
 
   let turns = 0;
   const messageOf = (sessionId: string): IncomingMessage => ({
@@ -187,9 +187,9 @@ async function setup({
   const turn = async (sessionId: string, outcome: Outcome = 'replied', during?: () => Promise<void>) => {
     const message = messageOf(sessionId);
     const turnId = `t${++turns}`;
-    await host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
       await during?.();
-      await host.hooks.run('agent:turn:after', {
+      await host.hooks.use.run('agent:turn:after', {
         message,
         reply: outcome === 'replied' ? '<回复>' : '',
         outcome,
@@ -200,8 +200,8 @@ async function setup({
     });
   };
 
-  const doc = () => host.hostConfig.require().get('sessionConfig');
-  return { app, host, sm, files, warns, turn, doc, server: () => host.sessionProtocol.require() };
+  const doc = () => host.hostConfig.use.get('sessionConfig');
+  return { app, host, sm, files, warns, turn, doc, server: () => host.sessionProtocol.use };
 }
 
 describe('握手', () => {
@@ -222,7 +222,7 @@ describe('握手', () => {
 
   it('应用名取宿主配置的 name，每次握手现读：改名之后新连接拿到新名字，不用重启', async () => {
     const { server, host } = await setup();
-    host.hostConfig.require().set('name', '<新名字>');
+    host.hostConfig.use.set('name', '<新名字>');
     expect((await client(server()).init()).appName).toBe('<新名字>');
   });
 
@@ -232,12 +232,12 @@ describe('握手', () => {
     provideHome(app);
     await registerHubs(app);
     const host = app.bind({ provide, sessionProtocol });
-    host.provide(memory, fakeMemory({}) as never);
-    host.provide(storage, memoryStorage(new Map()));
+    host.provide.use(memory, fakeMemory({}) as never);
+    host.provide.use(storage, memoryStorage(new Map()));
     await app.plugin(sessionManagerPlugin);
     await app.plugin(sessionServerPlugin, {});
     await app.plugins.idle();
-    expect((await client(host.sessionProtocol.require()).init()).appName).toBe('Aalis');
+    expect((await client(host.sessionProtocol.use).init()).appName).toBe('Aalis');
   });
 
   it('主版本不同：回 unsupported 并断开，原因写明两边的版本，之后的帧不再处理；只差次版本照常握手', async () => {
@@ -296,9 +296,9 @@ describe('会话列表', () => {
     const { host, server, sm } = await setup();
     const mine = await sm.createSession({ name: '周报' });
     clock(2_000);
-    await recordRoom(host.events, 'onebot:10000:group:20001', '读书会');
+    await recordRoom(host.events.use, 'onebot:10000:group:20001', '读书会');
     clock(3_000);
-    await recordRoom(host.events, 'onebot:20000:private:30001', '小明');
+    await recordRoom(host.events.use, 'onebot:20000:private:30001', '小明');
     const c = client(server());
     await c.init();
 
@@ -344,7 +344,7 @@ describe('会话列表', () => {
       clock(1_000 + i);
       ids[name] = (await sm.createSession({ name })).id;
     }
-    await recordRoom(host.events, 'onebot:10000:group:1', '群');
+    await recordRoom(host.events.use, 'onebot:10000:group:1', '群');
     clock(5_000);
     await turn(ids.D, 'replied');
     await turn(ids.B, 'error');
@@ -382,7 +382,7 @@ describe('会话列表', () => {
       [4_000, 'onebot:30000:group:4'],
     ] as const) {
       clock(at);
-      await recordRoom(host.events, id, id);
+      await recordRoom(host.events.use, id, id);
     }
     const c = client(server());
     await c.init();
@@ -415,7 +415,7 @@ describe('会话列表', () => {
       provides: [platform],
       uses: { provide },
       apply: ({ provide }) => {
-        provide(platform, {
+        provide.use(platform, {
           platform: 'onebot',
           canHandle: (id: string) => id.startsWith('onebot:40000:'),
           getConnections: () => [],
@@ -426,7 +426,7 @@ describe('会话列表', () => {
     await app.plugin(reusable, {}, 'qq-adapter:work');
     await app.plugins.idle();
     for (const id of ['onebot:10000:group:1', 'onebot:10000:group:2', 'onebot:40000:group:3', 'onebot:30000:group:4']) {
-      await recordRoom(host.events, id, id);
+      await recordRoom(host.events.use, id, id);
     }
     await sm.updateSession('onebot:10000:group:2', { status: 'archived' });
     const c = client(server());
@@ -458,8 +458,8 @@ describe('会话列表', () => {
     const { host, server, sm } = await setup();
     const weekly = await sm.createSession({ name: '会话 1' });
     await sm.updateSessionTitle(weekly.id, 'Weekly Report');
-    await recordRoom(host.events, 'onebot:10000:group:20001', '读书会');
-    await recordRoom(host.events, 'onebot:10000:group:20002', '跑团');
+    await recordRoom(host.events.use, 'onebot:10000:group:20001', '读书会');
+    await recordRoom(host.events.use, 'onebot:10000:group:20002', '跑团');
     const c = client(server());
     await c.init();
     const ids = async (query: string) => (await c.list({ query })).sessions.map(s => s.id);
@@ -499,7 +499,7 @@ describe('会话列表', () => {
     const root = await sm.createSession({ name: '根' });
     const child = await sm.createChildSession(root.id, { name: '子' });
     const grandchild = await sm.createChildSession(child.id, { name: '孙' });
-    await recordRoom(host.events, 'onebot:10000:group:1', '群');
+    await recordRoom(host.events.use, 'onebot:10000:group:1', '群');
     const roomChild = await sm.createChildSession('onebot:10000:group:1', { name: '群里的子任务' });
     const c = client(server());
     await c.init();
@@ -567,7 +567,7 @@ describe('watch 增量', () => {
         .at(-1)?.childCount,
     ).toBe(0);
 
-    await recordRoom(host.events, 'onebot:10000:group:1', '群');
+    await recordRoom(host.events.use, 'onebot:10000:group:1', '群');
     expect(changes().at(-1)?.groups).toEqual([
       { platform: 'onebot', instance: 'onebot-a', label: 'onebot-a', rooms: 1, accounts: 1, attention: 0 },
     ]);
@@ -777,7 +777,7 @@ describe('建、改名、归档、删除与批量', () => {
     expect([a, b, bChild].map(s => sm.getSession(s.id)?.status)).toEqual(['archived', 'archived', 'archived']);
 
     // A 的清理出错：列进 failed，后面的 B 与它的子会话照常删除
-    host.hooks.middleware('memory:clear', async (data, next) => {
+    host.hooks.use.middleware('memory:clear', async (data, next) => {
       if (data.sessionId === a.id) throw new Error('清理失败');
       await next();
     });
@@ -822,7 +822,7 @@ describe('会话设置', () => {
         },
       },
     });
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     await sm.updateLayer(WINDOW, { persona: '<群人设>' });
     const c = client(server());
     await c.init();
@@ -916,7 +916,7 @@ describe('会话设置', () => {
     const { host, server, sm, doc } = await setup({
       stored: { [`${ROOM}-legacy`]: { ...storedRoom(`${ROOM}-legacy`), config: { paperName: '<旧数据>' } } },
     });
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const c = client(server());
     await c.init();
 
@@ -946,7 +946,7 @@ describe('会话设置', () => {
 
   it('场所写入只收适用于它的类别的项（窗口按房间、工作区按 owner 的会话）：不适用的回参数错误、什么都不改；平台类型档收全部', async () => {
     const { host, server, sm, doc } = await setup({ layers: LAYERS });
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const c = client(server());
     await c.init();
     const rejected = async (params: object) =>
@@ -967,7 +967,7 @@ describe('会话设置', () => {
 
   it('按层读写：layers 按层表的先后列出可以设的各层，另带层表；一层的行与会话的同形，各带解析到这一层为止的生效值与来源；场所只列适用于它的类别的项', async () => {
     const { host, server, sm, doc } = await setup({ layers: LAYERS });
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const c = client(server());
     await c.init();
     const onebot = { scope: 'platform', platform: 'onebot' } as const;
@@ -1021,7 +1021,7 @@ describe('会话设置', () => {
       'place',
     ]);
     expect(doc()).toEqual(LAYERS);
-    await recordRoom(host.events, 'onebot:10001:group:1', '群');
+    await recordRoom(host.events.use, 'onebot:10001:group:1', '群');
     const other = (await c.call('session/config/get', { sessionId: 'onebot:10001:group:1' })).items;
     expect(values(other).find(([key]) => key === 'persona')).toEqual(['persona', undefined, '<新群人设>', 'place']);
 
@@ -1071,7 +1071,7 @@ describe('会话设置', () => {
       layer: { scope: 'defaults' },
       patch: { llm: { provider: A, model: 'm2' } },
     });
-    expect(host.services.preferred(llm)).toBe(`${A}/m2`);
+    expect(host.services.use.preferred(llm)).toBe(`${A}/m2`);
     expect(set.items.find(r => r.key === 'llm')).toMatchObject({
       value: { provider: A, model: 'm2' },
       source: 'defaults',
@@ -1096,7 +1096,7 @@ describe('会话设置', () => {
 
   it('插件启停推 session/config/changed：每条连接都收到；停用后它的项不再出现、值还在，重新启用后恢复', async () => {
     const { app, host, server, sm } = await setup();
-    await recordRoom(host.events, ROOM);
+    await recordRoom(host.events.use, ROOM);
     await sm.updateLayer(WINDOW, { paperName: '<窗口白纸>' });
     const a = client(server());
     const b = client(server());

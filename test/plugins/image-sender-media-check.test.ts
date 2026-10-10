@@ -133,14 +133,14 @@ function startApp(history: Message[]) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const handlers: Record<string, ToolHandler> = {};
   const host = app.bind({ provide, events });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (t: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       handlers[t.definition.function.name] = t.handler;
       return () => {};
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(memory, { getHistory: async () => history } as never);
+  host.provide.use(memory, { getHistory: async () => history } as never);
   return { app, host, handlers };
 }
 
@@ -205,7 +205,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     outbound = [];
     deliveryResult = { ok: true };
     // 本组只验证文件头与来源选择，平台发送由显式模拟确认。
-    started.host.events.on('outbound:message', m => {
+    started.host.events.use.on('outbound:message', m => {
       outbound.push(m as (typeof outbound)[number]);
       if (deliveryResult) m.delivery = Promise.resolve(deliveryResult);
     });
@@ -370,9 +370,9 @@ describe('send_attachment 只读文件头，不整份载入', () => {
         throw new Error('不应整份读取');
       },
     };
-    started.host.provide(storage, fake as StorageService);
+    started.host.provide.use(storage, fake as StorageService);
     // 大文件测试只量区间读取；平台 ACK 在此显式模拟。
-    started.host.events.on('outbound:message', msg => {
+    started.host.events.use.on('outbound:message', msg => {
       msg.delivery = Promise.resolve({ ok: true });
     });
     await app.plugins.register(imageSenderPlugin, {});

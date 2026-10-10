@@ -14,7 +14,7 @@ import {
   events,
   type PluginDefinition,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
 } from '../../packages/core/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
@@ -64,10 +64,10 @@ async function setup(reported: ChatResponse['usage'] | null = USAGE) {
     provides: [llm],
     uses: { provide, events },
     apply({ provide, events }) {
-      provide(llm, metered(model, events), { entryId: 'fake-llm/m' });
+      provide.use(llm, metered(model, events.use), { entryId: 'fake-llm/m' });
     },
   });
-  let bound: ServiceRef<LLMModel> | undefined;
+  let bound: ServiceSelection<LLMModel> | undefined;
   const consumer = definePlugin({
     name: 'consumer',
     uses: { llm },
@@ -78,7 +78,7 @@ async function setup(reported: ChatResponse['usage'] | null = USAGE) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const usages: LLMUsageEvent[] = [];
-  app.bind({ events }).events.on('llm:usage', usage => void usages.push(usage));
+  app.bind({ events }).events.use.on('llm:usage', usage => void usages.push(usage));
   await app.plugin(provider, {});
   await app.plugin(consumer, {});
   await app.plugins.idle();
@@ -89,7 +89,7 @@ async function setup(reported: ChatResponse['usage'] | null = USAGE) {
 describe('模型调用的记账', () => {
   it('chat 拿到用量发一次 llm:usage：服务商与模型取登记的模型，调用方取调用方的实例，用途与会话取请求', async () => {
     const { bound, seen, usages } = await setup();
-    await bound.require().chat({ messages: [], purpose: '摘要', sessionId: 's1', caller: '伪造的调用方' });
+    await bound.use.chat({ messages: [], purpose: '摘要', sessionId: 's1', caller: '伪造的调用方' });
     expect(seen[0]?.caller).toBe('consumer');
     expect(usages).toEqual([
       {
@@ -107,14 +107,14 @@ describe('模型调用的记账', () => {
 
   it('chatStream 在流结束时按最后一次报的用量发一次；没报用量的调用不记', async () => {
     const { bound, usages } = await setup();
-    const model = resolveLLMModel(bound)?.instance;
+    const model = resolveLLMModel(bound)?.use;
     const chunks: unknown[] = [];
     for await (const chunk of model?.chatStream?.({ messages: [], purpose: '对话' }) ?? []) chunks.push(chunk);
     expect(chunks).toHaveLength(3);
     expect(usages).toEqual([expect.objectContaining({ caller: 'consumer', purpose: '对话', inputTokens: 100 })]);
 
     const silent = await setup(null);
-    await silent.bound.require().chat({ messages: [] });
+    await silent.bound.use.chat({ messages: [] });
     expect(silent.usages).toEqual([]);
   });
 
@@ -129,17 +129,18 @@ describe('模型调用的记账', () => {
     ];
     for (const [reported, expected] of cases) {
       const { bound, usages } = await setup(reported as ChatResponse['usage']);
-      await bound.require().chat({ messages: [] });
+      await bound.use.chat({ messages: [] });
       const event = { provider: 'fake-llm', model: 'm', caller: 'consumer', inputTokens: 100, outputTokens: 20 };
       expect(usages, JSON.stringify(reported)).toEqual(expected ? [{ ...event, ...expected }] : []);
     }
   });
 
-  it('经绑定接口拿到的模型字段与其余方法照原样，同一个模型每次拿到的是同一个对象', async () => {
+  it('经绑定接口拿到的模型字段与其余方法照原样；句柄每次取到的是同一个', async () => {
     const { bound, usages } = await setup();
-    const model = bound.require();
-    expect(bound.current).toBe(model);
-    expect(bound.all()[0]?.instance).toBe(model);
+    const model = bound.use;
+    expect(bound.use).toBe(model);
+    const [entry] = bound.list();
+    expect(entry?.use).toBe(bound.of(entry?.id ?? ''));
     expect([model.id, model.providerId, model.contextLength, model.capabilities]).toEqual([
       'm',
       'fake-llm',
@@ -148,9 +149,9 @@ describe('模型调用的记账', () => {
     ]);
     expect(await model.refresh?.()).toEqual({ added: [], removed: [], total: 1 });
     expect(await model.balance?.()).toEqual([{ currency: 'CNY', amount: 12.5 }]);
-    const followed: LLMModel[] = [];
-    bound.follow(provider => void followed.push(provider));
-    expect(followed).toEqual([model]);
+    const followed: string[] = [];
+    bound.follow(provider => void followed.push(provider.id));
+    expect(followed).toEqual(['m']);
     expect(usages).toEqual([]);
   });
 });
@@ -179,7 +180,7 @@ describe('第一方服务商登记的模型都记账', () => {
     ['Ollama', ollamaPlugin, { baseUrl: 'http://127.0.0.1:1', discoverModels: false, customModels: 'm1' }],
   ] as Array<[string, PluginDefinition, Record<string, unknown>]>)('%s', async (_name, plugin, config) => {
     stubFetch('m1');
-    let bound: ServiceRef<LLMModel> | undefined;
+    let bound: ServiceSelection<LLMModel> | undefined;
     const consumer = definePlugin({
       name: 'consumer',
       uses: { llm },
@@ -190,11 +191,11 @@ describe('第一方服务商登记的模型都记账', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     const usages: LLMUsageEvent[] = [];
-    app.bind({ events }).events.on('llm:usage', usage => void usages.push(usage));
+    app.bind({ events }).events.use.on('llm:usage', usage => void usages.push(usage));
     await app.plugin(plugin, config);
     await app.plugin(consumer, {});
     await app.plugins.idle();
-    await bound?.require().chat({ messages: [{ role: 'user', content: '在吗' }], purpose: '对话', sessionId: 's1' });
+    await bound?.use.chat({ messages: [{ role: 'user', content: '在吗' }], purpose: '对话', sessionId: 's1' });
     expect(usages).toEqual([
       expect.objectContaining({
         provider: plugin.name,

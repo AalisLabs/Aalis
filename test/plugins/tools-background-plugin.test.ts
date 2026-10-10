@@ -61,7 +61,7 @@ async function start(config: Record<string, unknown> = {}, opts: { storage?: Sto
   const { app } = hostedApp();
   apps.push(app);
   const host = app.bind({ provide, events, tools, backgroundTasks });
-  if (opts.storage) host.provide(storage, opts.storage);
+  if (opts.storage) host.provide.use(storage, opts.storage);
   await app.plugins.register(toolsPlugin, config);
   await app.plugins.idle();
   const runs: Run[] = [];
@@ -76,15 +76,15 @@ async function start(config: Record<string, unknown> = {}, opts: { storage?: Sto
         runs.push({ ctx, finish: (result = 'zz-done') => resolve(result) });
       }),
   };
-  host.tools.register(tool);
+  host.tools.use.register(tool);
   const notices: IncomingMessage[] = [];
-  host.events.on('inbound:message', message => {
+  host.events.use.on('inbound:message', message => {
     notices.push(message);
   });
   let seq = 0;
   const run = async (args: Record<string, unknown>) => {
     seq++;
-    const result: ToolExecutionResult = await host.tools.require().execute('zz_slow', args, {
+    const result: ToolExecutionResult = await host.tools.use.execute('zz_slow', args, {
       sessionId: SESSION,
       platform: 'webui',
       userId: 'console',
@@ -96,7 +96,7 @@ async function start(config: Record<string, unknown> = {}, opts: { storage?: Sto
     return JSON.parse(result.content) as Record<string, unknown>;
   };
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
-  return { app, host, runs, notices, run, settle, tasks: () => host.backgroundTasks.require() };
+  return { app, host, runs, notices, run, settle, tasks: () => host.backgroundTasks.use };
 }
 
 describe('plugin-tools 的转后台接线', () => {
@@ -116,7 +116,7 @@ describe('plugin-tools 的转后台接线', () => {
 
   it('前台最多等待超出计时器能表示的范围时不认，回落默认值', async () => {
     const w = await start({ background: { maxWaitSeconds: 9_999_999 } });
-    const [def] = w.host.tools.require().getDefinitions();
+    const [def] = w.host.tools.use.getDefinitions();
     const { description } = def.function.parameters.properties.waitSeconds as { description: string };
     expect(description).toContain('最多 600');
   });
@@ -124,7 +124,7 @@ describe('plugin-tools 的转后台接线', () => {
   it('会话删除事件停掉并删掉登记；归档（会话更新为 archived）不停', async () => {
     const w = await start();
     await w.run({ runInBackground: true });
-    await w.host.events.emit('session:updated', { id: SESSION, status: 'archived' } as SessionInfo);
+    await w.host.events.use.emit('session:updated', { id: SESSION, status: 'archived' } as SessionInfo);
     expect(
       w
         .tasks()
@@ -132,7 +132,7 @@ describe('plugin-tools 的转后台接线', () => {
         .map(t => t.status),
     ).toEqual(['running']);
     expect(w.runs[0].ctx.signal?.aborted).toBe(false);
-    await w.host.events.emit('session:deleted', SESSION);
+    await w.host.events.use.emit('session:deleted', SESSION);
     expect(w.runs[0].ctx.signal?.aborted).toBe(true);
     expect(w.tasks().list()).toEqual([]);
   });
@@ -144,7 +144,7 @@ describe('plugin-tools 的转后台接线', () => {
     w.runs[0].finish();
     await w.settle();
     expect(w.notices).toHaveLength(1);
-    await w.host.events.emit('app:stopping');
+    await w.host.events.use.emit('app:stopping');
     w.runs[1].finish();
     await w.settle();
     expect(w.notices).toHaveLength(1);
@@ -187,7 +187,7 @@ describe('plugin-tools 的转后台接线', () => {
     ]);
     const w = await start();
     expect(w.tasks().list()).toEqual([]);
-    w.host.provide(storage, pluginDataStorage(files));
+    w.host.provide.use(storage, pluginDataStorage(files));
     await w.settle();
     expect(
       w

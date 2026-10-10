@@ -20,8 +20,8 @@ async function makeService() {
   // 激活闸下「没激活」不报错，核一下状态，别让空存储伪装成绿
   const state = app.plugins.getPlugin(memoryInMemory.name)?.state;
   if (state !== 'active') throw new Error(`memory-inmemory 插件未激活（state=${state}）`);
-  const ref = app.bind({ memory }).memory;
-  const store = new RelationStore(() => ref.require());
+  const ref = app.bind({ memory }).memory.use;
+  const store = new RelationStore(() => ref);
   return { app, service: new RelationService(store) };
 }
 

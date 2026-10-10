@@ -33,7 +33,7 @@ describe('终端显示的人设名', () => {
     });
     cleanups.push(() => app.stop());
     const names: Record<string, string> = { '<别的卡>': '<别的卡的名字>' };
-    host.provide(persona, {
+    host.provide.use(persona, {
       getPersonaName: (options?: PersonaSessionOptions) => names[options?.persona ?? ''] ?? '<主卡的名字>',
     } as never);
     await app.plugin(cliPlugin, { startupView: 'chat' });
@@ -46,7 +46,7 @@ describe('终端显示的人设名', () => {
       return all.slice(all.lastIndexOf(FRAME_SPLIT)).replace(ANSI_RE, '');
     };
 
-    await host.events.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', content: '<回复>' });
+    await host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', content: '<回复>' });
     await vi.waitFor(() => expect(frame()).toContain('✦ <别的卡的名字>'));
     expect(frame()).toContain('欢迎使用 <别的卡的名字>。');
     expect(frame()).toContain('Aalis · <别的卡的名字>');

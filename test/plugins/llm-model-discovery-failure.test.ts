@@ -96,7 +96,7 @@ function world() {
   const modelIds = (): string[] =>
     app
       .bind({ services })
-      .services.all(llm)
+      .services.use.all(llm)
       .map(e => e.instance.id);
   return { app, warns, errors, logs, modelIds };
 }
@@ -220,7 +220,7 @@ describe('刷新时模型发现失败：报错并带上原因，已注册条目�
     await app.plugins.idle();
     const before = modelIds();
     expect(before, '前置：启动时发现了模型').toHaveLength(1);
-    const [entry] = app.bind({ services }).services.all(llm);
+    const [entry] = app.bind({ services }).services.use.all(llm);
     if (!entry?.instance.refresh) throw new Error(`${plugin.name} 未登记可刷新的条目`);
 
     state.mode = mode;
@@ -274,7 +274,7 @@ describe('关闭 discoverModels：不发发现请求、不记 warn，只注册 c
       logs.filter(m => m.includes('未开启模型发现')),
       `注册结果应有一行说明未开启模型发现: ${JSON.stringify(logs)}`,
     ).toHaveLength(1);
-    const [entry] = app.bind({ services }).services.all(llm);
+    const [entry] = app.bind({ services }).services.use.all(llm);
     expect(entry?.instance.refresh, '关闭模型发现后不该提供刷新').toBeUndefined();
     expect(state.shown, 'Ollama 关闭模型发现时仍要经 /api/show 探测能力').toEqual(plugin === llmOllama ? ['mine'] : []);
   });

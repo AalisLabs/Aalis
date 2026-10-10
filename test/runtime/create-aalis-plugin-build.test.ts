@@ -57,14 +57,14 @@ for (const desc of await loader.discover()) {
   logger.child = () => logger;
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, tools, sessionManager });
-  host.provide(memory, {
+  host.provide.use(memory, {
     listMetadata: async () => [],
     commitMetadata: async () => {},
     getHistory: async () => [],
     clearSession: async () => {},
   });
   const commandNames = [];
-  host.provide(commands, {
+  host.provide.use(commands, {
     prefix: '/',
     command(name) {
       commandNames.push(name);
@@ -74,7 +74,7 @@ for (const desc of await loader.discover()) {
     unregister: quiet,
   });
   const pages = createPageRegistry({ logger, send: quiet, sessions: () => undefined, signFile: () => undefined });
-  host.provide(webuiServer, {
+  host.provide.use(webuiServer, {
     getPort: () => 0,
     getHost: () => '127.0.0.1',
     addPage: (page, instance) => pages.addPage(page, instance),
@@ -84,8 +84,8 @@ for (const desc of await loader.discover()) {
   for (const plugin of hostPlugins) await app.plugin(plugin);
   await app.plugin(await loader.load(desc));
   await app.plugins.idle();
-  const sm = host.sessionManager.require();
-  const toolService = host.tools.require();
+  const sm = host.sessionManager.use;
+  const toolService = host.tools.use;
   const settings = sm.listSettings().filter(s => s.plugin === desc.name).map(s => s.key);
   const greet = async sessionId => (await toolService.execute('hello', { name: '小明' }, { sessionId, platform: 'webui' })).content;
   const toolList = toolService.getAll().filter(t => t.pluginName === desc.name);

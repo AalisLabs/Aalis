@@ -107,7 +107,7 @@ export default definePlugin({
   configSchema,
   uses: { config, logger },
   apply({ config, logger }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
     assertType<Equal<typeof cfg, Config>>();
     cfg.port = Math.max(1, cfg.port);
     cfg.args.push('-v');

@@ -31,7 +31,7 @@ async function makeApp() {
   const host = app.bind({ provide, commands: commandsService });
   // plugin-commands 把 gateway 声明为 required（指令结果经它出站）。本测直接调 execute，
   // 不走出站管道，给一份只满足「在场」的桩即可让它过激活闸。
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   await app.plugin(commandsPlugin, {});
   await app.plugin(authorityPlugin, {});
   await app.plugins.idle();
@@ -57,12 +57,12 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
   it('restricted 指令：匿名用户执行不到（守卫 fail-open 时此断言会失败）', async () => {
     const { app, commands } = await makeApp();
     let ran = false;
-    commands.command('probe', '探针', { visibility: 'restricted' }).action(async () => {
+    commands.use.command('probe', '探针', { visibility: 'restricted' }).action(async () => {
       ran = true;
       return 'ran';
     });
 
-    const out = await commands.require().execute('probe', input());
+    const out = await commands.use.execute('probe', input());
     await app.stop();
 
     expect(ran, 'restricted 指令被匿名用户执行了 —— 守卫没生效').toBe(false);
@@ -72,12 +72,12 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
   it('restricted 指令：owner（webui:console）可以执行', async () => {
     const { app, commands } = await makeApp();
     let ran = false;
-    commands.command('probe', '探针', { visibility: 'restricted' }).action(async () => {
+    commands.use.command('probe', '探针', { visibility: 'restricted' }).action(async () => {
       ran = true;
       return 'ran';
     });
 
-    await commands.require().execute('probe', input({ platform: 'webui', userId: 'console' }));
+    await commands.use.execute('probe', input({ platform: 'webui', userId: 'console' }));
     await app.stop();
 
     expect(ran, 'owner 被守卫误拦 —— 权限系统把自己锁死了').toBe(true);
@@ -86,12 +86,12 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
   it('public 指令：匿名用户照常执行（守卫不得误伤）', async () => {
     const { app, commands } = await makeApp();
     let ran = false;
-    commands.command('open', '公开指令').action(async () => {
+    commands.use.command('open', '公开指令').action(async () => {
       ran = true;
       return 'ok';
     });
 
-    const out = await commands.require().execute('open', input({ raw: '/open' }));
+    const out = await commands.use.execute('open', input({ raw: '/open' }));
     await app.stop();
 
     expect(ran, 'public 指令被误拦').toBe(true);

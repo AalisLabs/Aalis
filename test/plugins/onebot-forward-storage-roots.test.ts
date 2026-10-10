@@ -7,8 +7,8 @@ import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { ProcessService } from '../../packages/api-process/src/index.js';
-import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { App, type Logger, type ServiceRef } from '../../packages/core/src/index.js';
+import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { App, type Logger, type ServiceSelection } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -49,7 +49,7 @@ const logger: Logger = {
 describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根）', () => {
   let base: string;
   let app: App;
-  let storageRef: ServiceRef<StorageService>;
+  let storageRef: ServiceSelection<StorageService>;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-onebot-fwd-roots-'));
@@ -79,7 +79,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
 
   it('workspace 排第一时，转发内图片落盘到 data 根，识别拿到落盘 ref 而非原始 src', async () => {
     // 前提锚：胜者是 workspace 根且写不了 data:/。夹具若改成单根或换了顺序，本用例就测不到这条
-    const winner = storageRef.require();
+    const winner = storageRef.use;
     expect(winner.listRoots().map(r => r.name)).toEqual(['workspace']);
     await expect(winner.writeFile('data:/probe.txt', 'x')).rejects.toThrow();
 
@@ -95,7 +95,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
       memory: fixedRef<MemoryService>(undefined),
       media: fixedRef(media as MediaService),
       llm: fixedRef<LLMModel>(undefined),
-      storage: createStorageGateway(storageRef),
+      storage: storageRef.use,
       // data URI 源的落盘不经 process，只需在场
       processService: fixedRef({} as ProcessService),
       forwardCfg: CFG,

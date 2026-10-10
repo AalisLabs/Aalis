@@ -48,8 +48,8 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
   const inspected = defineService<{ id: string }>('inspection-probe');
   try {
     const host = app.bind({ provide });
-    host.provide(storage, fakeStorage);
-    for (const id of ['probe-a', 'probe-b']) host.provide(inspected, { id }, { entryId: id });
+    host.provide.use(storage, fakeStorage);
+    for (const id of ['probe-a', 'probe-b']) host.provide.use(inspected, { id }, { entryId: id });
     await app.plugin(webuiServer, {
       port,
       host: '127.0.0.1',
@@ -157,7 +157,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     const install = vi.fn(async (_name: string) => refused);
     const uninstall = vi.fn(async (_name: string, _options?: { removeConfig?: boolean }) => refused);
     const update = vi.fn(async (_targets: unknown) => refused);
-    host.provide(packageManager, {
+    host.provide.use(packageManager, {
       serviceDependents,
       install,
       uninstall,

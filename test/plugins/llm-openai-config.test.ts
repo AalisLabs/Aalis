@@ -58,7 +58,7 @@ async function start(config: Record<string, unknown>) {
   await app.plugin(llmOpenai, config);
   await app.plugins.idle();
   const model = (): LLMModel => {
-    const found = app.bind({ services }).services.all(llm)[0]?.instance;
+    const found = app.bind({ services }).services.use.all(llm)[0]?.instance;
     if (!found) throw new Error(`未登记模型：${app.plugins.getPlugin(llmOpenai.name)?.error}`);
     return found;
   };

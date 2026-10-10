@@ -63,14 +63,14 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     const host = app.bind({ events, agent });
 
     const timeline: string[] = [];
-    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+    host.events.use.on('outbound:stream', (chunk: StreamChunkMessage) => {
       if (chunk.done) timeline.push('done');
     });
-    host.events.on('outbound:message', (msg: OutgoingMessage) => {
+    host.events.use.on('outbound:message', (msg: OutgoingMessage) => {
       timeline.push(`message:${msg.content}`);
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '你好',
       sessionId: 'test:error-done',
       platform: 'test',
@@ -93,7 +93,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     const host = app.bind({ agent, memory, tools });
 
     let executed = 0;
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -105,14 +105,14 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     });
 
     const sessionId = 'test:bad-tool-args';
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调工具',
       sessionId,
       platform: 'test',
       userId: 'u1',
       sessionType: 'private',
     });
-    const history = await host.memory.require().getHistory(sessionId, 50);
+    const history = await host.memory.use.getHistory(sessionId, 50);
     await app.stop();
 
     expect(executed, '参数不合法时工具不应真的执行').toBe(0);
@@ -146,7 +146,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     };
     await bootAgentStack(app, createMockLLMPlugin({ responses: [calls, { content: '已收到' }], recorder }), true);
     const host = app.bind({ agent, memory, tools });
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -155,14 +155,14 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     });
 
     const sessionId = 'test:bad-tool-args-replay';
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调工具',
       sessionId,
       platform: 'test',
       userId: 'u1',
       sessionType: 'private',
     });
-    const history = await host.memory.require().getHistory(sessionId, 50);
+    const history = await host.memory.use.getHistory(sessionId, 50);
     await app.stop();
 
     const argumentsOf = (messages: Message[]) =>
@@ -193,7 +193,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     await bootAgentStack(app, createMockLLMPlugin({ responses: [call, { content: '已收到' }], recorder }), true);
     const host = app.bind({ agent, tools, events });
     let executed = 0;
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -204,9 +204,9 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       },
     });
     const announced: Array<[string, string | undefined]> = [];
-    host.events.on('tool:execute', info => void announced.push([info.phase, info.result]));
+    host.events.use.on('tool:execute', info => void announced.push([info.phase, info.result]));
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调工具',
       sessionId: 'test:non-object-args',
       platform: 'test',
@@ -239,7 +239,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     await bootAgentStack(app, createMockLLMPlugin({ responses: [calls, { content: '好' }] }), true);
     const host = app.bind({ agent, tools, events });
     const ctxIds: string[] = [];
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -250,12 +250,12 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       },
     });
     const progress: Array<[number, string, string]> = [];
-    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+    host.events.use.on('outbound:stream', (chunk: StreamChunkMessage) => {
       const p = chunk.toolCallProgress;
       if (p) progress.push([p.index, p.name, p.callId]);
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调两次',
       sessionId: 'test:tool-progress',
       platform: 'test',
@@ -288,7 +288,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     await bootAgentStack(app, llmPlugin, true);
     const host = app.bind({ agent, tools, events });
     const ctxIds: string[] = [];
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -299,11 +299,11 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       },
     });
     const progressIds: string[] = [];
-    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+    host.events.use.on('outbound:stream', (chunk: StreamChunkMessage) => {
       if (chunk.toolCallProgress) progressIds.push(chunk.toolCallProgress.callId);
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调两次',
       sessionId: 'test:tool-progress-partial',
       platform: 'test',
@@ -329,7 +329,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     };
     await bootAgentStack(app, createMockLLMPlugin({ responses: [calls, { content: '好' }] }), true);
     const host = app.bind({ agent, tools, events, hooks });
-    host.hooks.middleware('agent:llm:after', async (data, next) => {
+    host.hooks.use.middleware('agent:llm:after', async (data, next) => {
       data.response = {
         ...data.response,
         toolCalls: data.response.toolCalls?.filter(c => c.function.name !== 'probe_a'),
@@ -338,7 +338,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     });
     const executed: Array<[string, string]> = [];
     for (const name of ['probe_a', 'probe_b']) {
-      host.tools.register({
+      host.tools.use.register({
         definition: {
           type: 'function',
           function: { name, description: '探针', parameters: { type: 'object', properties: {} } },
@@ -350,12 +350,12 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       });
     }
     const cards = new Map<string, string>();
-    host.events.on('outbound:stream', (chunk: StreamChunkMessage) => {
+    host.events.use.on('outbound:stream', (chunk: StreamChunkMessage) => {
       const p = chunk.toolCallProgress;
       if (p) cards.set(p.callId, p.name);
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调两个',
       sessionId: 'test:tool-progress-hook',
       platform: 'test',
@@ -379,7 +379,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     const host = app.bind({ agent, tools });
 
     let executed = 0;
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -390,7 +390,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       },
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调工具',
       sessionId: 'test:empty-tool-args',
       platform: 'test',
@@ -413,7 +413,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
 
     let seen: AbortSignal | undefined;
     let abortedInsideTool = false;
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -427,7 +427,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     });
 
     const sessionId = 'test:tool-signal';
-    const agentService = host.agent.require();
+    const agentService = host.agent.use;
     const turn = agentService.handleMessage({
       content: '调工具',
       sessionId,
@@ -453,13 +453,13 @@ describe('agent 错误路径：回合结束带出错原因', () => {
     const host = app.bind({ agent, events, hooks });
     const ends: TurnEnd[] = [];
     const sent: string[] = [];
-    host.hooks.middleware('agent:turn:after', async (data, next) => {
+    host.hooks.use.middleware('agent:turn:after', async (data, next) => {
       ends.push(data.error === undefined ? { outcome: data.outcome } : { outcome: data.outcome, error: data.error });
       await next();
     });
-    host.events.on('outbound:message', (msg: OutgoingMessage) => void sent.push(msg.content));
+    host.events.use.on('outbound:message', (msg: OutgoingMessage) => void sent.push(msg.content));
     const send = (sessionId: string) =>
-      host.agent.require().handleMessage({ content: '你好', sessionId, platform: 'test', userId: 'u1' });
+      host.agent.use.handleMessage({ content: '你好', sessionId, platform: 'test', userId: 'u1' });
     return { ends, sent, send };
   }
 
@@ -510,7 +510,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     const host = bindHost(app);
 
     let sideEffects = 0;
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'side_effect', description: '有副作用', parameters: { type: 'object', properties: {} } },
@@ -520,7 +520,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
         return { content: '{"sent":true}' };
       },
     });
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'guarded', description: '出事的工具', parameters: { type: 'object', properties: {} } },
@@ -530,22 +530,22 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     arrange(host);
 
     const outbound: string[] = [];
-    host.events.on('outbound:message', (msg: OutgoingMessage) => {
+    host.events.use.on('outbound:message', (msg: OutgoingMessage) => {
       outbound.push(msg.content);
     });
     const toolEvents: Array<{ phase: string; toolName: string; result?: string }> = [];
-    host.events.on('tool:execute', e => {
+    host.events.use.on('tool:execute', e => {
       toolEvents.push({ phase: e.phase, toolName: e.toolName, result: e.result });
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '做两件事',
       sessionId,
       platform: 'test',
       userId: 'u1',
       sessionType: 'private',
     });
-    const history = await host.memory.require().getHistory(sessionId, 50);
+    const history = await host.memory.use.getHistory(sessionId, 50);
     await app.stop();
 
     const toolMsgs = history.filter(m => m.role === 'tool');
@@ -572,7 +572,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
 
   it('agent:tool:before 抛错：该工具得到「工具调用失败」结果，整组照常落库', async () => {
     const r = await runBatch('test:batch-before-throw', host => {
-      host.hooks.middleware('agent:tool:before', async (data, next) => {
+      host.hooks.use.middleware('agent:tool:before', async (data, next) => {
         if (data.name === 'guarded') throw new Error('钩子拦截');
         await next();
       });
@@ -591,7 +591,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
 
   it('agent:tool:after 抛错：结果写明「已执行」，且不回退到原始输出（fail-closed）', async () => {
     const r = await runBatch('test:batch-after-throw', host => {
-      host.hooks.middleware('agent:tool:after', async (data, next) => {
+      host.hooks.use.middleware('agent:tool:after', async (data, next) => {
         if (data.name === 'guarded') throw new Error('脱敏失败');
         await next();
       });
@@ -608,7 +608,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
 
   it('守卫返回拒绝文案（不抛错）：本来就只影响该工具', async () => {
     const r = await runBatch('test:batch-guard-deny', host => {
-      host.tools.require().setExecutionGuard(async req => (req.name === 'guarded' ? '权限不足' : null));
+      host.tools.use.setExecutionGuard(async req => (req.name === 'guarded' ? '权限不足' : null));
     });
     expectWholeGroupKept(r);
     expect(r.guardedResult).toContain('权限不足');
@@ -632,12 +632,12 @@ describe('agent 错误路径：调试日志序列化不了工具参数', () => {
     const host = app.bind({ agent, tools, hooks });
 
     const big = BigInt('100000000000000000000');
-    host.hooks.middleware('agent:tool:before', async (data, next) => {
+    host.hooks.use.middleware('agent:tool:before', async (data, next) => {
       data.args.id = big;
       await next();
     });
     let seen: unknown;
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -648,7 +648,7 @@ describe('agent 错误路径：调试日志序列化不了工具参数', () => {
       },
     });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '调工具',
       sessionId: 'test:bigint-tool-args',
       platform: 'test',

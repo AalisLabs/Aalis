@@ -15,14 +15,14 @@ async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  host.provide(memory, fakeMemory() as never);
+  host.provide.use(memory, fakeMemory() as never);
   await app.plugin(sessionManagerPlugin);
   await app.plugin(settingsPlugin('test-settings', [THINK]));
   await app.plugins.idle();
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  return { app, host, sm: host.sessionManager.require() };
+  return { app, host, sm: host.sessionManager.use };
 }
 
 describe('createChildSession：父会话未建档时兜底建档', () => {
@@ -62,9 +62,9 @@ describe('子会话增删：父会话的子会话列表变了，发 session:upda
     const { app, host, sm } = await setup();
     const parent = await sm.createSession({ name: '父' });
     const seen: Array<[string, string, number]> = [];
-    host.events.on('session:created', s => void seen.push(['created', s.id, s.children.length]));
-    host.events.on('session:updated', s => void seen.push(['updated', s.id, s.children.length]));
-    host.events.on('session:deleted', id => void seen.push(['deleted', id, 0]));
+    host.events.use.on('session:created', s => void seen.push(['created', s.id, s.children.length]));
+    host.events.use.on('session:updated', s => void seen.push(['updated', s.id, s.children.length]));
+    host.events.use.on('session:deleted', id => void seen.push(['deleted', id, 0]));
 
     const child = await sm.createChildSession(parent.id, { name: '子' });
     expect(seen).toEqual([

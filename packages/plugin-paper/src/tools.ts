@@ -13,7 +13,7 @@ import type { GatewayService } from '@aalis/api-gateway';
 import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
-import type { Events, Logger, ServiceRef } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
 import { deliverArtifacts, failedBeforeSubmission, rawDeliveryAllowed, sendRefusal } from './deliver.js';
@@ -42,9 +42,9 @@ const STATUS_NOTE_MAX = 500;
 interface PaperToolDeps {
   journal?: TaskJournal;
   tools: BoundTools;
-  sessionManager: ServiceRef<SessionManagerService>;
-  remote: ServiceRef<RemoteAgentProvider>;
-  gateway: ServiceRef<GatewayService>;
+  sessionManager: ServiceSelection<SessionManagerService>;
+  remote: ServiceSelection<RemoteAgentProvider>;
+  gateway: ServiceSelection<GatewayService>;
   events: Events;
   ledger: LedgerStore;
   isolation: Isolation;
@@ -66,7 +66,7 @@ export async function enterPaperRoom(
   ctx: ToolCallContext,
   kind: 'initiate' | 'use',
 ): Promise<{ paper: RoomPaper } | { refused: string }> {
-  const sm = deps.sessionManager.require();
+  const sm = deps.sessionManager.use;
   const refused = checkEligibility(sm, ctx, kind);
   if (refused) return { refused };
   const paper = resolveRoomPaper(sm, deps.cfg, ctx.sessionId, ctx.platform);

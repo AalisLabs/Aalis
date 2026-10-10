@@ -365,16 +365,21 @@ export default definePlugin({
 
 async function connectAndProvide(caps: Caps): Promise<void> {
   const { logger, lifecycle, provide } = caps;
-  const cfg = parseConfig(configSchema, caps.config, logger);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
   const mongoConfig: MongoMemoryConfig = { ...cfg, database: cfg.database.trim(), claimFrom: cfg.claimFrom.trim() };
 
-  logger.info(`正在连接 MongoDB: ${redactMongoUri(mongoConfig.uri)} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
+  logger.use.info(`正在连接 MongoDB: ${redactMongoUri(mongoConfig.uri)} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
 
   const client = new MongoClient(mongoConfig.uri, {
     serverSelectionTimeoutMS: mongoConfig.connectTimeoutMs,
     connectTimeoutMS: mongoConfig.connectTimeoutMs,
   });
-  await openAndProvide(client, mongoConfig, { logger, lifecycle, provide }, caps.paths.current);
+  await openAndProvide(
+    client,
+    mongoConfig,
+    { logger, lifecycle, provide },
+    caps.paths.present ? caps.paths.use : undefined,
+  );
 }
 
 /**
@@ -395,30 +400,30 @@ export async function openAndProvide(
   /** 本次激活所在的家目录（宿主经 host-paths 给出；宿主不提供时不做归属检查） */
   owner?: Pick<HostPaths, 'home' | 'profile'>,
 ): Promise<void> {
-  const { suffix } = parseInstanceId(lifecycle.id);
+  const { suffix } = parseInstanceId(lifecycle.use.id);
   const database = mongoConfig.database || deriveDatabase(owner?.profile, suffix);
   if (Buffer.byteLength(database) > 63) {
-    throw configError(`MongoDB 库名 ${database} 超过 63 字节的上限：请给 ${lifecycle.id} 另配一个短些的 database`);
+    throw configError(`MongoDB 库名 ${database} 超过 63 字节的上限：请给 ${lifecycle.use.id} 另配一个短些的 database`);
   }
   const location = `${mongoConfig.uri}\n${database}`;
   const holder = openedBy.get(location);
-  if (holder && holder.id !== lifecycle.id) {
+  if (holder && holder.id !== lifecycle.use.id) {
     throw configError(
-      `MongoDB 库 ${database} 已被实例 ${holder.id} 使用（同一连接串），两个实例不能共用一个库：请给 ${lifecycle.id} 另配 database`,
+      `MongoDB 库 ${database} 已被实例 ${holder.id} 使用（同一连接串），两个实例不能共用一个库：请给 ${lifecycle.use.id} 另配 database`,
     );
   }
-  openedBy.set(location, lifecycle);
-  lifecycle.onDispose(() => {
-    if (openedBy.get(location) === lifecycle) openedBy.delete(location);
+  openedBy.set(location, lifecycle.use);
+  lifecycle.use.onDispose(() => {
+    if (openedBy.get(location) === lifecycle.use) openedBy.delete(location);
   });
 
   // 监听器同步执行、不得抛错：close 的拒绝吞掉
   const onAbort = (): void => void client.close().catch(() => {});
-  lifecycle.signal.addEventListener('abort', onAbort, { once: true });
+  lifecycle.use.signal.addEventListener('abort', onAbort, { once: true });
   try {
     await client.connect();
     // mongodb+srv 在 SRV 解析期间 close 不生效，连接会在 abort 之后照常建成：由这里抛出、下方 catch 关闭
-    lifecycle.signal.throwIfAborted();
+    lifecycle.use.signal.throwIfAborted();
     const db: Db = client.db(database);
     const collection = db.collection<MessageDocument>(mongoConfig.collection!);
     const metaCollection = db.collection<MetadataDocument>('metadata');
@@ -428,37 +433,37 @@ export async function openAndProvide(
       await claimOwnership(
         db,
         metaCollection,
-        { home: owner.home, instance: lifecycle.id },
+        { home: owner.home, instance: lifecycle.use.id },
         database,
         mongoConfig.claimFrom ?? '',
-        logger,
+        logger.use,
       );
-    lifecycle.signal.throwIfAborted();
+    lifecycle.use.signal.throwIfAborted();
 
     // 创建索引
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
     await collection.createIndex({ archived: 1, timestamp: -1 });
     await collection.createIndex({ [`metadata.${WellKnownMetadataKeys.Platform}`]: 1, timestamp: -1 });
-    lifecycle.signal.throwIfAborted();
+    lifecycle.use.signal.throwIfAborted();
 
     const service = new MongoMemoryService(collection, metaCollection, {
       rangeQueryLimit: mongoConfig.rangeQueryLimit,
       crossSessionMaxLimit: mongoConfig.crossSessionMaxLimit,
-      logger,
+      logger: logger.use,
     });
-    provide(memory, service, {
+    provide.use(memory, service, {
       // priority 与同类 memory provider 自文档化对照：
       //   sqlite=10（零配置默认）, mongodb=5（需服务，但更强）, inmemory=-100（仅测试）
       // 用户通过 servicePreferences 显式偏好时该字段不影响选择。
       priority: 5,
     });
 
-    logger.info(`MongoDB 已连接: ${database}/${mongoConfig.collection}`);
+    logger.use.info(`MongoDB 已连接: ${database}/${mongoConfig.collection}`);
 
     // 连接握手跨 await，关闭可能已开始；迟到的清理照样被执行
-    lifecycle.onDispose(async () => {
+    lifecycle.use.onDispose(async () => {
       await client.close();
-      logger.info('MongoDB 连接已关闭');
+      logger.use.info('MongoDB 连接已关闭');
     }, 'mongodb:client.close');
   } catch (err) {
     await client.close().catch(() => {});
@@ -467,7 +472,7 @@ export async function openAndProvide(
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: ${message}`, { cause: err });
   } finally {
-    lifecycle.signal.removeEventListener('abort', onAbort);
+    lifecycle.use.signal.removeEventListener('abort', onAbort);
   }
 }
 

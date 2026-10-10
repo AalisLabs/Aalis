@@ -68,17 +68,17 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     }
     const host = app.bind({ events, agent: agentService, sessionManager: sessionManagerService });
     const usage: TokenUsageEvent[] = [];
-    host.events.on('token:usage', u => {
+    host.events.use.on('token:usage', u => {
       usage.push(u);
     });
     /** 发 token:request 并取回这一次的快照 */
     const snapshot = async (sessionId: string): Promise<TokenUsageEvent> => {
       const before = usage.length;
-      await host.events.emit('token:request', { sessionId, platform: 'test' });
+      await host.events.use.emit('token:request', { sessionId, platform: 'test' });
       expect(usage.length, 'token:request 未产出快照').toBe(before + 1);
       return usage[usage.length - 1];
     };
-    return { host, recorder, usage, snapshot, sm: host.sessionManager.require(), agent: host.agent.require() };
+    return { host, recorder, usage, snapshot, sm: host.sessionManager.use, agent: host.agent.use };
   };
 
   beforeEach(() => {

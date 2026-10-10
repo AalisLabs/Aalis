@@ -20,7 +20,7 @@ async function boot() {
   await app.plugins.idle();
   expect(app.plugins.getPlugin(memoryInMemory.name)?.state).toBe('active');
   const registry = makeToolRegistry(app.logger);
-  app.bind({ provide }).provide(tools, registry);
+  app.bind({ provide }).provide.use(tools, registry);
   return { app, registry };
 }
 

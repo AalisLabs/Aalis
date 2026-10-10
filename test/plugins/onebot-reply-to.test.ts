@@ -99,8 +99,8 @@ async function boot(protocol: 'v11' | 'v12') {
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events });
-  host.provide(storage, { listRoots: () => [] } as never);
-  host.provide(processService, {} as never);
+  host.provide.use(storage, { listRoots: () => [] } as never);
+  host.provide.use(processService, {} as never);
   await app.plugins.register(onebotPlugin, {
     connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol, selfId: SELF }],
     splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] },
@@ -112,7 +112,7 @@ async function boot(protocol: 'v11' | 'v12') {
 
   return {
     async send(msg: OutgoingMessage) {
-      await host.events.emit('outbound:message', msg);
+      await host.events.use.emit('outbound:message', msg);
       expect(await msg.delivery).toEqual({ ok: true });
     },
     /** 发出的各条消息的消息段 */

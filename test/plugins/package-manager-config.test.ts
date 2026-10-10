@@ -9,12 +9,12 @@ it('宿主不提供 host-paths 时不激活，不回落到工作目录操作包'
   const caps = app.bind({ provide, services });
   const execFile = vi.fn();
   const readExternalFile = vi.fn();
-  caps.provide(defineService<object>('process'), { execFile, readExternalFile });
+  caps.provide.use(defineService<object>('process'), { execFile, readExternalFile });
   try {
     await app.plugin(plugin);
     await app.plugins.idle();
     expect(app.plugins.getPlugin(plugin.name)?.state).toBe('pending');
-    expect(caps.services.get(packageManager)).toBeUndefined();
+    expect(caps.services.use.get(packageManager)).toBeUndefined();
     expect(execFile).not.toHaveBeenCalled();
     expect(readExternalFile).not.toHaveBeenCalled();
   } finally {

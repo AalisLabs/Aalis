@@ -3,11 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
@@ -41,8 +37,8 @@ describe('checkpoint × 家目录布局的内置根', () => {
     await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint });
-    storage = createStorageGateway(host.storage);
-    svc = host.checkpoint.require() as CheckpointServiceImpl;
+    storage = host.storage.use;
+    svc = host.checkpoint.use as CheckpointServiceImpl;
   });
 
   afterEach(async () => {

@@ -53,7 +53,7 @@ function models(sent: Sent[]) {
       ] as const) {
         const handle: LLMModel = {
           id,
-          providerId: caps.lifecycle.id,
+          providerId: caps.lifecycle.use.id,
           contextLength: 8192,
           maxOutputTokens: 1024,
           capabilities: ['chat', 'streaming'],
@@ -68,7 +68,7 @@ function models(sent: Sent[]) {
             yield { done: true };
           },
         };
-        caps.provide(llm, handle, { entryId: `${caps.lifecycle.id}/${id}` });
+        caps.provide.use(llm, handle, { entryId: `${caps.lifecycle.use.id}/${id}` });
       }
     },
   });
@@ -98,10 +98,10 @@ async function loadStack(sent: Sent[]) {
     if (state !== 'active') throw new Error(`插件 ${id} 未激活（state=${state}）`);
   }
   const host = app.bind({ agent: agentService, sessionManager: sessionManagerService, commands: commandsService });
-  const commands = host.commands.require();
+  const commands = host.commands.use;
   // /session.* 声明了 risk:'sensitive'，没有守卫时会被拒：放行守卫代替 plugin-authority（本文件测的不是鉴权）
   commands.setExecutionGuard(async () => null);
-  return { app, agent: host.agent.require(), sm: host.sessionManager.require(), commands };
+  return { app, agent: host.agent.use, sm: host.sessionManager.use, commands };
 }
 
 const incoming = (sessionId: string): IncomingMessage => ({
@@ -197,7 +197,7 @@ describe('/session 写明这一轮会用的模型', () => {
     expect(unset, '没有偏好：服务解析到登记在先的 deep').toContain(`这一轮会用: ${PROVIDER}/deep`);
 
     // 全局默认层的「模型」即服务偏好；这个栈没有宿主配置文档，直接经服务门面设偏好
-    expect(app.bind({ services }).services.prefer(llm, `${PROVIDER}/gone`)).toBe(true);
+    expect(app.bind({ services }).services.use.prefer(llm, `${PROVIDER}/gone`)).toBe(true);
     expect(await view(), '偏好指向的模型不在：回落到 deep').toContain(`这一轮会用: ${PROVIDER}/deep`);
 
     await commands.execute('session.set', cmdInput('s4', ['-m', `${PROVIDER}/switch`]));

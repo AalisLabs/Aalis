@@ -16,7 +16,7 @@
 import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import { WellKnownMetadataKeys } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 import type {
@@ -52,9 +52,9 @@ interface MiddlewareConfig {
 
 /** 注入贡献用到的能力 */
 interface ContributionCaps {
-  contributions: Contributions;
+  contributions: ServiceSelection<Contributions>;
   /** 房间的召回范围（可选依赖）；不在场时不收窄 */
-  sessionManager: ServiceRef<SessionManagerService>;
+  sessionManager: ServiceSelection<SessionManagerService>;
 }
 
 export function registerRelationContribution(
@@ -62,7 +62,7 @@ export function registerRelationContribution(
   service: RelationService,
   cfg: MiddlewareConfig,
 ): void {
-  contributions.contribute('agent:prompt', {
+  contributions.use.contribute('agent:prompt', {
     id: 'user-relation',
     anchor: 'turn-context',
     async build(view) {
@@ -71,7 +71,9 @@ export function registerRelationContribution(
       // 房间的召回范围每轮现算：房间或平台档改了下一轮即生效
       const sessionOnly =
         !!view.sessionId &&
-        sessionManager.current?.resolveConfig(view.sessionId, view.platform).memoryRecallScope === 'session';
+        (sessionManager.present
+          ? sessionManager.use.resolveConfig(view.sessionId, view.platform).memoryRecallScope
+          : undefined) === 'session';
       return buildBlock(service, view, cfg, sessionOnly);
     },
   });

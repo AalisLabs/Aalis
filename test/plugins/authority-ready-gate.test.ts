@@ -70,7 +70,7 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
   it('装载返回即可读到 users.json 里的封禁记录（未调 idle）', async () => {
     const { app } = hostedApp();
     const host = app.bind({ provide, authority });
-    host.provide(storage, fsStorage() as never);
+    host.provide.use(storage, fsStorage() as never);
     // provide 触发的反应式 recompute 还在飞时，装载请求会排队、在激活发生前就返回。
     // 先静置一次，下面这次装载才是「返回即 apply 已跑完」——被测的正是 apply 自己。
     await app.plugins.idle();
@@ -79,8 +79,8 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
     // 把状态先钉死，免得这条回归换个失败原因继续「红得对不上」。
     expect(app.plugins.getPlugin(authorityPlugin.name)?.state, '装载返回时插件尚未激活').toBe('active');
 
-    const auth = host.authority.current;
-    if (!auth) throw new Error('authority 服务未注册');
+    if (!host.authority.present) throw new Error('authority 服务未注册');
+    const auth = host.authority.use;
     const banned = auth.listUsers().find(u => u.userId === 'banned');
     await app.stop();
 
@@ -178,15 +178,15 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
     const reading = new Promise<void>(r => {
       markReading = () => r();
     });
-    host.provide(storage, {
+    host.provide.use(storage, {
       ...disk,
       readFile: (uri: string) => {
         markReading();
         return disk.readFile(uri);
       },
     } as never);
-    const manager = host.authority.current as AuthorityManager | undefined;
-    if (!manager) throw new Error('authority 服务未注册');
+    if (!host.authority.present) throw new Error('authority 服务未注册');
+    const manager = host.authority.use as AuthorityManager;
     await reading;
     await manager.flushed();
     const data = JSON.parse(await readFile(join(dir, 'users.json'), 'utf-8'));
@@ -231,15 +231,15 @@ describe('authority：storage 上线前（首次读取尚未开始）的等级�
 describe('authority：storage 刚上线、首次读取尚未发起时的保存', () => {
   it('不写盘，首次读取落定后按正常路径写入，原有记录保留', async () => {
     const { app, host } = await bootWithoutStorage();
-    const manager = host.authority.current as AuthorityManager | undefined;
-    if (!manager) throw new Error('authority 服务未注册');
+    if (!host.authority.present) throw new Error('authority 服务未注册');
+    const manager = host.authority.use as AuthorityManager;
     const disk = fsStorage();
     const events: string[] = [];
     let markReading = () => {};
     const reading = new Promise<void>(r => {
       markReading = () => r();
     });
-    host.provide(storage, {
+    host.provide.use(storage, {
       ...disk,
       readFile: (uri: string) => {
         events.push('read');
@@ -271,7 +271,7 @@ async function bootWithoutStorage() {
   const host = app.bind({ provide, authority });
   const pages = pageHost();
   hosts.push(pages);
-  host.provide(webuiServer, pages.service);
+  host.provide.use(webuiServer, pages.service);
   await app.plugins.idle();
   await app.plugin(authorityPlugin, {}); // storage 缺席：apply 不等加载就返回
   await app.plugins.idle();
@@ -297,7 +297,7 @@ async function bootLateStorage(beforeStorage?: (pages: PageHost) => Promise<void
     markReading = () => r();
   });
   let writes = 0;
-  host.provide(storage, {
+  host.provide.use(storage, {
     listRoots: () => [ROOT],
     readFile: async (uri: string) => {
       markReading();
@@ -333,7 +333,7 @@ describe('authority：加载结果的上报自身抛错', () => {
       const logger = throwingLogger('warn', m => m.startsWith('授权用户等级加载失败'));
       const { app } = hostedApp({}, { logger });
       const host = app.bind({ provide, authority });
-      host.provide(storage, fsStorage() as never);
+      host.provide.use(storage, fsStorage() as never);
       await app.plugins.idle();
       await app.plugin(authorityPlugin, {});
       const state = app.plugins.getPlugin(authorityPlugin.name)?.state;
@@ -350,7 +350,7 @@ describe('authority：加载结果的上报自身抛错', () => {
     const logger = throwingLogger('debug', m => m === '授权用户等级已加载');
     const { app } = hostedApp({}, { logger });
     const host = app.bind({ provide, authority });
-    host.provide(storage, fsStorage() as never);
+    host.provide.use(storage, fsStorage() as never);
     await app.plugins.idle();
     await app.plugin(authorityPlugin, {});
     const state = app.plugins.getPlugin(authorityPlugin.name)?.state;
@@ -370,7 +370,7 @@ describe('authority：加载结果的上报自身抛错', () => {
     try {
       const { app } = hostedApp({ logLevel: 'warn' }, { logHub: hub });
       const host = app.bind({ provide, authority });
-      host.provide(storage, fsStorage() as never);
+      host.provide.use(storage, fsStorage() as never);
       await app.plugins.idle();
       await app.plugin(authorityPlugin, {});
       await app.stop();

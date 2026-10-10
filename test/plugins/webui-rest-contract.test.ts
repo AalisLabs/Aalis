@@ -116,11 +116,11 @@ const doubles = definePlugin({
         detach() {},
       }),
     };
-    provide(approvals, service);
-    provide(sessionManager, {
+    provide.use(approvals, service);
+    provide.use(sessionManager, {
       getSession: (id: string) => ({ id, name: id, title: '整理周报', kind: 'owner' }) as unknown as SessionInfo,
     } as never);
-    provide(sessionProtocol, {
+    provide.use(sessionProtocol, {
       connect: () => ({ receive: async () => {}, close() {} }),
       resolveFile: () => ({ uri: 'tmp:/zz.txt', name: 'zz.txt' }),
     });
@@ -134,26 +134,26 @@ const doubles = definePlugin({
       },
       sendMessage: async () => {},
     } as unknown as PlatformAdapter;
-    provide(platform, adapter);
-    provide(tools, {
+    provide.use(platform, adapter);
+    provide.use(tools, {
       getAll: () => [{ name: 'zz_probe', pluginName: PROBE, groups: ['zz-group'] }],
       getGroups: () => [
         { name: 'zz-group', label: '探针', description: '探针工具\n给模型看的说明', pluginName: PROBE },
       ],
     } as never);
-    provide(commands, { getAll: () => [{ name: 'zz', pluginName: PROBE }] } as never);
-    provide(pluginSource, { rescan: async () => [] });
-    provide(packageManager, {
+    provide.use(commands, { getAll: () => [{ name: 'zz', pluginName: PROBE }] } as never);
+    provide.use(pluginSource, { rescan: async () => [] });
+    provide.use(packageManager, {
       install: async () => ({ ok: true, message: '已安装 zz-plugin-remote', plugin: PROBE }),
       uninstall: async () => ({ ok: false, message: '它提供的服务还有人在用' }),
       update: async () => ({ ok: false, message: '没过预检', conflicts: ['zz 要 core >=9'] }),
       registry: async () => INSTALL,
       serviceDependents: () => [PROBE],
     });
-    provide(names, { listModels: async () => ['zz-name'] });
-    provide(mixed, {}, { entryId: 'zz-mixed/first' });
-    provide(mixed, { listModels: async () => ['zz-late'] }, { entryId: 'zz-mixed/second' });
-    provide(
+    provide.use(names, { listModels: async () => ['zz-name'] });
+    provide.use(mixed, {}, { entryId: 'zz-mixed/first' });
+    provide.use(mixed, { listModels: async () => ['zz-late'] }, { entryId: 'zz-mixed/second' });
+    provide.use(
       mixed,
       {
         listModels: async () => {
@@ -173,7 +173,7 @@ const model = definePlugin({
     const refresh = async () => ({ added: ['zz-new'], removed: [], total: 2 });
     const handle = {
       id: 'zz-model',
-      providerId: lifecycle.id,
+      providerId: lifecycle.use.id,
       contextLength: 8192,
       capabilities: ['chat'],
       thinking: {
@@ -186,7 +186,7 @@ const model = definePlugin({
       chat: async () => ({ content: '' }),
       refresh,
     } as unknown as LLMModel;
-    provide(llm, handle, { entryId: `${lifecycle.id}/zz-model` });
+    provide.use(llm, handle, { entryId: `${lifecycle.use.id}/zz-model` });
   },
 });
 
@@ -206,7 +206,7 @@ function probe(home: string) {
     configSchema: { level: { type: 'number', label: '级别', default: 0 } },
     uses: { webui: webuiServer, contributions, config },
     apply({ webui, contributions }) {
-      webui.definePage({
+      webui.use.definePage({
         key: 'board',
         title: '看板',
         actions: { touch: { label: '标记', effect: 'write', handler: () => '已标记' } },
@@ -224,19 +224,19 @@ function probe(home: string) {
           { type: 'actions', actions: ['touch'] },
         ],
       });
-      webui.definePage({
+      webui.use.definePage({
         key: 'side',
         title: '侧栏',
         placement: 'session',
         content: [{ type: 'info', id: 'facts', data: () => [{ label: '条数', value: 1 }] }],
       });
-      webui.definePage({
+      webui.use.definePage({
         key: 'canvas',
         title: '画布',
         frame: { module: pathToFileURL(join(home, 'probe', 'dist', 'index.js')).href },
       });
-      webui.notify({ id: 'review', level: 'action', title: '1 件待裁决', open: { page: 'board' } });
-      contributions.contribute('webui:theme', {
+      webui.use.notify({ id: 'review', level: 'action', title: '1 件待裁决', open: { page: 'board' } });
+      contributions.use.contribute('webui:theme', {
         id: 'dusk',
         theme: {
           format: THEME_FILE_FORMAT,
@@ -399,7 +399,7 @@ describe('管理面 REST 的回应与契约', () => {
       { logger, provider: { save() {} }, restartStrategy: { restart() {} } },
     ));
     provideHostPaths(app, home);
-    app.bind({ provide }).provide(webuiClient, { getClientDir: () => join(home, 'client') });
+    app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => join(home, 'client') });
     await app.pluginAll(
       [storageLocalPlugin, contributionsPlugin, doubles, model, failing, probe(home)].map(definition => ({
         definition,

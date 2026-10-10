@@ -183,7 +183,7 @@ describe('停用权限插件：它注入 tools 与 commands 的守卫随之摘�
     for (const plugin of [gatewayPlugin, toolsPlugin, commandsPlugin, authorityPlugin]) await app.plugin(plugin);
     await app.plugins.idle();
     const host = app.bind({ tools, commands });
-    host.tools.register({
+    host.tools.use.register({
       visibility: 'restricted',
       definition: {
         type: 'function',
@@ -191,10 +191,10 @@ describe('停用权限插件：它注入 tools 与 commands 的守卫随之摘�
       },
       handler: async () => 'ok',
     });
-    host.commands.command('restricted', '受限', { visibility: 'restricted' }).action(async () => 'ok');
+    host.commands.use.command('restricted', '受限', { visibility: 'restricted' }).action(async () => 'ok');
     const owner = { sessionId: 'webui:s1', platform: 'webui', userId: 'console' };
-    const callTool = async () => (await host.tools.require().execute('restricted', {}, owner)).content;
-    const runCommand = () => host.commands.require().execute('restricted', { ...owner, args: [], raw: '' });
+    const callTool = async () => (await host.tools.use.execute('restricted', {}, owner)).content;
+    const runCommand = () => host.commands.use.execute('restricted', { ...owner, args: [], raw: '' });
     expect(await callTool()).toBe('ok');
     expect(await runCommand()).toBe('ok');
 

@@ -5,7 +5,7 @@ import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } fr
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { ErrorResponse } from '@aalis/api-webui';
-import type { AppService, Logger, PluginManagerService, PluginState, ServiceRef, Services } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, PluginState, ServiceSelection, Services } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
@@ -135,14 +135,14 @@ function refuse(
 
 /** 插件管理 + 全局配置路由用到的能力 */
 interface PluginRoutesCaps {
-  app: ServiceRef<AppService>;
-  plugins: ServiceRef<PluginManagerService>;
+  app: Pick<ServiceSelection<AppService>, 'present' | 'use'>;
+  plugins: Pick<ServiceSelection<PluginManagerService>, 'present' | 'use'>;
   /** 宿主的插件来源；打包宿主不提供，扫描路由随之报不可用 */
-  source: Pick<ServiceRef<PluginSourceService>, 'current'>;
+  source: Pick<ServiceSelection<PluginSourceService>, 'present' | 'use'>;
   /** 配置文档的读写与落盘（宿主提供；缺席时读写文档的路由返回 503） */
-  hostConfig: Pick<ServiceRef<HostConfig>, 'current'>;
-  tools: Pick<ServiceRef<ToolService>, 'current'>;
-  commands: Pick<ServiceRef<CommandService>, 'current'>;
+  hostConfig: Pick<ServiceSelection<HostConfig>, 'present' | 'use'>;
+  tools: Pick<ServiceSelection<ToolService>, 'present' | 'use'>;
+  commands: Pick<ServiceSelection<CommandService>, 'present' | 'use'>;
   /** 当前有提供者的服务名：列表与回执据它判缺与在等 */
   services: Pick<Services, 'names'>;
   /** 提供这个界面的插件实例：经这些路由停用不了它，列表给它标 self */
@@ -157,11 +157,11 @@ interface PluginRoutesCaps {
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
 export function registerPluginRoutes(expressApp: express.Express, caps: PluginRoutesCaps, gate: RouteGate): void {
-  const getApp = (): AppService | undefined => caps.app.current;
-  const getPluginMgr = (): PluginManagerService | undefined => caps.plugins.current;
+  const getApp = (): AppService | undefined => (caps.app.present ? caps.app.use : undefined);
+  const getPluginMgr = (): PluginManagerService | undefined => (caps.plugins.present ? caps.plugins.use : undefined);
   /** 配置文档由宿主提供；没有时读写文档的路由一律 503，与扫描、市场路由的缺席口径一致 */
   const docOr503 = (res: express.Response<ErrorResponse>): HostConfig | undefined => {
-    const doc = caps.hostConfig.current;
+    const doc = caps.hostConfig.present ? caps.hostConfig.use : undefined;
     if (!doc) res.status(503).json({ error: '宿主未提供配置文档（host-config），无法读写配置' });
     return doc;
   };
@@ -223,15 +223,15 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     // 反向索引：instanceId -> tools / commands。生产登记的 pluginName 就是 contextId（= instanceId）；
     // 按 definition.name 索引会让 name:suffix 误挂主实例的工具
     const toolsByPlugin = new Map<string, string[]>();
-    for (const t of caps.tools.current?.getAll() ?? []) {
+    for (const t of caps.tools.present ? caps.tools.use.getAll() : []) {
       toolsByPlugin.set(t.pluginName, [...(toolsByPlugin.get(t.pluginName) ?? []), t.name]);
     }
     const commandsByPlugin = new Map<string, string[]>();
-    for (const c of caps.commands.current?.getAll() ?? []) {
+    for (const c of caps.commands.present ? caps.commands.use.getAll() : []) {
       const owner = c.pluginName ?? 'unknown';
       commandsByPlugin.set(owner, [...(commandsByPlugin.get(owner) ?? []), c.name]);
     }
-    const doc = caps.hostConfig.current;
+    const doc = caps.hostConfig.present ? caps.hostConfig.use : undefined;
     const sections = doc?.getAll().plugins ?? {};
     const versionOf = caps.versions();
     const plugins = blockedStatus({ plugins: pm, services: caps.services, doc }).map(p => {
@@ -601,11 +601,11 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
 
   // 经宿主 plugin-source 重新扫描并加载新插件
   route(expressApp, 'POST /api/plugins/scan', gate(), async (_req, res) => {
-    const source = caps.source.current;
-    if (!source) {
+    if (!caps.source.present) {
       res.status(503).json({ error: '宿主未提供插件来源，无法扫描' });
       return;
     }
+    const source = caps.source.use;
     try {
       const loaded = await source.rescan();
       res.json({ ok: true, loaded, message: loaded.length > 0 ? `新加载 ${loaded.length} 个插件` : '无新插件' });

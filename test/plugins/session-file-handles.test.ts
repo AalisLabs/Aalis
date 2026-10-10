@@ -57,7 +57,7 @@ async function setup() {
   const paths = provideHostPaths(app, home);
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager, sessionProtocol });
-  host.provide(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
+  host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
   await app.pluginAll([
     { definition: storageLocalPlugin, config: {} },
     { definition: memoryInMemoryPlugin },
@@ -93,7 +93,7 @@ async function setup() {
   /** 她往 WebUI 会话发一条只有附件的消息（白纸交付成品就是这样发的），等回执 */
   const send = async (sessionId: string, attachments: MessageAttachment[]) => {
     const out: OutgoingMessage = { sessionId, platform: 'webui', content: '', source: 'agent', attachments };
-    await host.events.emit('outbound:message', out);
+    await host.events.use.emit('outbound:message', out);
     expect(await out.delivery).toEqual({ ok: true });
   };
 
@@ -105,13 +105,13 @@ async function setup() {
 
   /** 订阅一个会话；items 是快照叠上之后的推送 */
   const watch = async (sessionId: string) => {
-    const c = client(host.sessionProtocol.require());
+    const c = client(host.sessionProtocol.use);
     await c.init();
     const sub = await c.subscribe(sessionId);
     return { snapshot: sub.snapshot, items: () => c.timeline(sessionId, sub) };
   };
 
-  return { app, sm: host.sessionManager.require(), put, fileOf, send, download, watch };
+  return { app, sm: host.sessionManager.use, put, fileOf, send, download, watch };
 }
 
 /** 条目里唯一一个附件的句柄 */

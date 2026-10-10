@@ -138,8 +138,8 @@ async function getBoundFriendCode(
 ): Promise<number | null> {
   const key = bindKey(platform, userId);
   if (!key) return null;
-  const service = memory.current;
-  if (!service) return null;
+  if (!memory.present) return null;
+  const service = memory.use;
   const data = await service.getMetadata(BIND_NAMESPACE, key);
   const code = data?.friend_code;
   return typeof code === 'number' ? code : null;
@@ -153,13 +153,13 @@ function bindingStore(
 ): { service: MemoryService; key: string } | string {
   const key = bindKey(platform, userId);
   if (!key) return '认不出发消息的人（没有平台用户 id），绑定只能在认得出发送者的平台上做，如 QQ';
-  const service = memory.current;
-  if (!service) {
+  if (!memory.present) {
     return (
       '没有在运行的记忆后端（绑定记在它里面）：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
       '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因'
     );
   }
+  const service = memory.use;
   return { service, key };
 }
 
@@ -256,8 +256,8 @@ interface ResolveResult {
 
 /** 会话所在的聊天窗口是一对一的（会话管理记下的，子会话取根会话的）；没有会话管理或会话没有聊天窗口时为 false */
 function inOneToOneChat(sessions: Caps['sessionManager'], sessionId: string): boolean {
-  const sm = sessions.current;
-  if (!sm) return false;
+  if (!sessions.present) return false;
+  const sm = sessions.use;
   return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.multiParty === false;
 }
 
@@ -424,25 +424,25 @@ export default definePlugin({
   configSchema,
   uses,
   apply({ tools, commands, memory, sessionManager, logger, config }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
 
-    const client = new MaimaiClient(cfg, logger);
+    const client = new MaimaiClient(cfg, logger.use);
     const songCache: { ref: SongIndex | null } = { ref: null };
     const refs: TargetRefs = { memory, sessionManager };
 
     // ===== Agent 工具（结构化参数） =====
     if (cfg.enableTools) {
-      tools.registerGroup({
+      tools.use.registerGroup({
         name: 'maimai',
         label: '舞萌 DX 查分',
         description: '查询舞萌 DX 玩家信息、Best 50、最近成绩、曲库等',
       });
 
       // 玩家信息
-      tools.register({
+      tools.use.register({
         groups: ['maimai'],
         definition: {
           type: 'function',
@@ -464,7 +464,7 @@ export default definePlugin({
       });
 
       // B50
-      tools.register({
+      tools.use.register({
         groups: ['maimai'],
         definition: {
           type: 'function',
@@ -488,7 +488,7 @@ export default definePlugin({
       });
 
       // Recent
-      tools.register({
+      tools.use.register({
         groups: ['maimai'],
         definition: {
           type: 'function',
@@ -511,7 +511,7 @@ export default definePlugin({
       });
 
       // 搜索曲目
-      tools.register({
+      tools.use.register({
         groups: ['maimai'],
         definition: {
           type: 'function',
@@ -533,7 +533,7 @@ export default definePlugin({
       });
 
       // 绑定好友码
-      tools.register({
+      tools.use.register({
         groups: ['maimai'],
         definition: {
           type: 'function',
@@ -552,7 +552,7 @@ export default definePlugin({
         handler: async (args, callCtx) => handleBind(memory, args, callCtx),
       });
 
-      tools.register({
+      tools.use.register({
         groups: ['maimai'],
         definition: {
           type: 'function',
@@ -565,7 +565,7 @@ export default definePlugin({
         handler: async (_args, callCtx) => handleUnbind(memory, callCtx),
       });
 
-      logger.info('[maimai] Agent 工具已注册');
+      logger.use.info('[maimai] Agent 工具已注册');
     }
 
     // ===== 用户指令（同样的功能，文本入口） =====
@@ -579,13 +579,13 @@ export default definePlugin({
       });
 
       // 裸敲 /maimai 回指令系统生成的用法（列出子指令）
-      commands.command('maimai', '舞萌 DX 查分。绑定好友码后，info、b50、recent 可以不写查询目标');
+      commands.use.command('maimai', '舞萌 DX 查分。绑定好友码后，info、b50、recent 可以不写查询目标');
 
       const TARGET = `好友码，或 qq:QQ 号；不写时查你绑定的好友码${
         cfg.defaultBindOnPrivateChat ? '，OneBot 私聊里没绑定时按你的 QQ 号查' : ''
       }`;
 
-      commands
+      commands.use
         .command('maimai.info [target:string]', '查询玩家信息')
         .argument('target', TARGET)
         .action(async (argv, target) => {
@@ -593,7 +593,7 @@ export default definePlugin({
           return handleGetPlayer(refs, cfg, client, args, callCtxOf(argv));
         });
 
-      commands
+      commands.use
         .command('maimai.b50 [target:string]', '查询 Best 50')
         .argument('target', TARGET)
         .option('ap', '--ap', { description: '仅查询 AP 成绩' })
@@ -603,7 +603,7 @@ export default definePlugin({
           return handleGetBests(refs, cfg, client, args, callCtxOf(argv));
         });
 
-      commands
+      commands.use
         .command('maimai.recent [target:string] [count:number]', '查询最近游玩')
         .argument('target', TARGET)
         .argument('count', '显示几条，默认 10，最多 50')
@@ -613,19 +613,21 @@ export default definePlugin({
           return handleGetRecents(refs, cfg, client, args, callCtxOf(argv));
         });
 
-      commands
+      commands.use
         .command('maimai.song <keyword:text>', '搜索曲目')
         .argument('keyword', '曲名、艺术家或别名')
         .action(async (_argv, keyword) => handleSearchSong(client, songCache, { keyword, limit: 5 }));
 
-      commands
+      commands.use
         .command('maimai.bind <code:string>', '绑定你的好友码')
         .argument('code', '查分器上的好友码（数字）')
         .action(async (argv, code) => handleBind(memory, { friend_code: code }, callCtxOf(argv)));
 
-      commands.command('maimai.unbind', '解绑你的好友码').action(async argv => handleUnbind(memory, callCtxOf(argv)));
+      commands.use
+        .command('maimai.unbind', '解绑你的好友码')
+        .action(async argv => handleUnbind(memory, callCtxOf(argv)));
 
-      logger.info('[maimai] 斜杠指令已注册');
+      logger.use.info('[maimai] 斜杠指令已注册');
     }
   },
 });

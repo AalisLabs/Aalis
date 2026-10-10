@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createStorageGateway } from '../../packages/api-storage/src/index.js';
-import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
+import type { Logger, ServiceSelection } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // `<forward id=...>` 的 id 来自对**正文**的正则扫描，而 text 段在 segmentsToText 里原样透传
@@ -23,15 +24,8 @@ const CFG: ForwardConfig = {
 };
 
 /** 无提供者的服务引用：本用例只数协议端请求，memory/media/llm/storage/process 一律缺席。 */
-function absentRef<P>(): ServiceRef<P> {
-  return {
-    current: undefined,
-    require: () => {
-      throw new Error('本用例不该取用该服务');
-    },
-    all: () => [],
-    follow: () => () => {},
-  };
+function absentRef<P>(): ServiceSelection<P> {
+  return ref();
 }
 
 function setup() {
@@ -49,7 +43,7 @@ function setup() {
     memory: absentRef(),
     media: absentRef(),
     llm: absentRef(),
-    storage: createStorageGateway(absentRef()),
+    storage: absentRef<StorageService>().use,
     processService: absentRef(),
     forwardCfg: CFG,
     attachmentMaxBytes: 1024 * 1024,

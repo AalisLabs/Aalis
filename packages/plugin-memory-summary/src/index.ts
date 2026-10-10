@@ -330,7 +330,7 @@ async function run(caps: Caps): Promise<void> {
     lifecycle,
     provide,
   } = caps;
-  const parsed = parseConfig(configSchema, caps.config, logger);
+  const parsed = parseConfig(configSchema, caps.config.use, logger.use);
   const cfg: SummaryConfig = {
     ...parsed,
     summaryLLM:
@@ -341,9 +341,9 @@ async function run(caps: Caps): Promise<void> {
         ? parsed.summaryLLM
         : undefined,
   };
-  sessionManager.registerSetting(COMPRESS_AT_SETTING);
+  sessionManager.use.registerSetting(COMPRESS_AT_SETTING);
 
-  logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
+  logger.use.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
   /** 正在压缩的会话：同一会话同时只有一次压缩 */
   const summarizing = new Set<string>();
@@ -388,7 +388,7 @@ async function run(caps: Caps): Promise<void> {
    * 没设时不按条数压缩。platform 是入口平台：没有出生平台的会话按它选平台档
    */
   function linesOf(sessionId: string, platform?: string): CompressionLines {
-    const resolved = sessionManager.current?.resolveConfig(sessionId, platform);
+    const resolved = sessionManager.present ? sessionManager.use.resolveConfig(sessionId, platform) : undefined;
     return { compressAt: resolved?.compressAt ?? DEFAULT_COMPRESS_AT, historyLimit: resolved?.historyLimit };
   }
 
@@ -411,10 +411,11 @@ async function run(caps: Caps): Promise<void> {
    * 子会话执行任务，根会话是群也用工作模板。没有会话管理时按工作模板，没有权限服务时一对一的对端按不是 owner
    */
   function templateOf(sessionId: string): SummaryTemplate {
-    const sessions = sessionManager.current;
+    const sessions = sessionManager.present ? sessionManager.use : undefined;
     const info = sessions?.getSession(sessionId);
     if (!sessions || info?.parentId) return WORK_TEMPLATE;
-    const isOwner = (platform: string, userId: string) => authority.current?.isOwner(platform, userId) ?? false;
+    const isOwner = (platform: string, userId: string) =>
+      authority.present ? authority.use.isOwner(platform, userId) : false;
     return roomClass(info, id => sessions.getSession(id), isOwner) === 'room' ? CHAT_TEMPLATE : WORK_TEMPLATE;
   }
 
@@ -519,18 +520,19 @@ async function run(caps: Caps): Promise<void> {
         if (previous) await store.upsertSummary(sessionId, previous);
         else await store.clearSession(sessionId);
       } catch (rollbackErr) {
-        logger.warn('归档失败后回滚摘要也失败（下一次压缩会把这一段再并进新摘要）:', rollbackErr);
+        logger.use.warn('归档失败后回滚摘要也失败（下一次压缩会把这一段再并进新摘要）:', rollbackErr);
       }
       throw err;
     }
-    logger.info(`会话已压缩: session=${sessionId}, 归档 ${archived} 条`);
+    logger.use.info(`会话已压缩: session=${sessionId}, 归档 ${archived} 条`);
     // 系统事件消息，供前端持久化显示压缩分隔线
-    await messageArchive.current?.saveMessage(sessionId, {
-      role: 'system',
-      kind: WellKnownKinds.EventMarker,
-      content: '对话已压缩',
-      timestamp: at,
-    });
+    if (messageArchive.present)
+      await messageArchive.use.saveMessage(sessionId, {
+        role: 'system',
+        kind: WellKnownKinds.EventMarker,
+        content: '对话已压缩',
+        timestamp: at,
+      });
   }
 
   /**
@@ -545,11 +547,12 @@ async function run(caps: Caps): Promise<void> {
     summarizing.add(sessionId);
     const cleared = clearedSince(sessionId);
     const report = (status: 'start' | 'done' | 'error') =>
-      void events.emit('session:compressing', { sessionId, status });
+      void events.use.emit('session:compressing', { sessionId, status });
 
     let started = false;
     try {
-      const provider = memory.current;
+      // 读快照、核对前缀到落定压缩固定同一家记忆后端：途中换了人也不会读一家、写另一家
+      const provider = memory.list().find(p => p.selected)?.use;
       if (!provider) throw new Error('memory 服务不可用');
       const snapshot = await provider.getHistory(sessionId, Infinity);
       const cut = cutPoint(snapshot);
@@ -559,7 +562,7 @@ async function run(caps: Caps): Promise<void> {
       started = true;
       // global 按默认优先级选首个能对话的模型；custom 按 summaryLLM 精确匹配，常见的落空是它指向的 provider 被卸载或重载中
       const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
-      const model = resolveLLMModel(llm, ref, ['chat'])?.instance;
+      const model = resolveLLMModel(llm, ref, ['chat'])?.use;
       if (!model) {
         throw new Error(
           ref
@@ -585,7 +588,7 @@ async function run(caps: Caps): Promise<void> {
       failures.delete(sessionId);
       report('done');
     } catch (err) {
-      logger.warn(`压缩没有压成: session=${sessionId}`, err);
+      logger.use.warn(`压缩没有压成: session=${sessionId}`, err);
       if (started) report('error');
       throw err;
     } finally {
@@ -595,21 +598,21 @@ async function run(caps: Caps): Promise<void> {
 
   // === 贡献：在 LLM 调用前注入摘要（agent:prompt / context 槽）===
   // 不按预算截断：生成时的 maxTokens 已是上限；换了窗口更小的模型时，下一次压缩会重写摘要，期间由硬裁剪兜底
-  contributions.contribute('agent:prompt', {
+  contributions.use.contribute('agent:prompt', {
     id: 'memory-summary',
     anchor: 'context',
     async build(view) {
       if (!view.sessionId) return null;
-      const existing = await new SummaryStore(memory.require()).getSummary(view.sessionId);
+      const existing = await new SummaryStore(memory.use).getSummary(view.sessionId);
       return existing?.summary ? `以下是之前对话的摘要，包含了较早的对话上下文：\n${existing.summary}` : null;
     },
   });
 
-  provide(
+  provide.use(
     compression,
     {
       compress(sessionId, request) {
-        logger.info(`收到压缩请求: session=${sessionId}, reason=${request.reason}`);
+        logger.use.info(`收到压缩请求: session=${sessionId}, reason=${request.reason}`);
         return compressHistory(sessionId);
       },
       compressAt: (sessionId, platform) => linesOf(sessionId, platform).compressAt || undefined,
@@ -617,13 +620,13 @@ async function run(caps: Caps): Promise<void> {
     { label: '会话压缩' },
   );
 
-  events.on('token:usage', usage => {
+  events.use.on('token:usage', usage => {
     windows.set(usage.sessionId, usage.contextWindow);
     if (usage.turnId) turnUsages.set(usage.sessionId, usage);
   });
 
   // 回合从开始（agent:input:before）到它的 next 返回为止：记下开始时的压缩代数与清空代数，被下游拦下、出错的一轮同样在 finally 里丢掉
-  hooks.middleware('agent:input:before', async (data, next) => {
+  hooks.use.middleware('agent:input:before', async (data, next) => {
     const sessionId = data.message.sessionId;
     turnStarts.set(data.turnId, { compressions: compressions.get(sessionId) ?? 0, cleared: clearedSince(sessionId) });
     try {
@@ -638,7 +641,7 @@ async function run(caps: Caps): Promise<void> {
   // 它的用量是按那之前的历史算的，也不认。回合进行中不在后台改持久化的历史：长工具循环中途改历史，会与 agent 手里的
   // 消息列表对不上。可压缩部分按硬裁剪之前的历史算：裁掉的仍在会话里，全量压缩一并压掉。会话条数是回合结束时的：
   // 结局为 replied 时最终回复在最后一次调用之后落库，加上这一条
-  hooks.middleware('agent:turn:after', async (data, next) => {
+  hooks.use.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (data.outcome === 'aborted' || data.outcome === 'error') return;
     const { sessionId } = data;
@@ -658,7 +661,7 @@ async function run(caps: Caps): Promise<void> {
       historyMessages: usage.historyMessages + (data.outcome === 'replied' ? 1 : 0),
     };
     if (!compressionDue(amounts, linesOf(sessionId, usage.platform))) return;
-    logger.info(
+    logger.use.info(
       `到了压缩线（用量 ${usage.used}/${usage.contextWindow}${usage.trimmed ? '，被硬裁剪过' : ''}，会话条数 ${amounts.historyMessages}），后台压缩: session=${sessionId}`,
     );
     const cleared = clearedSince(sessionId);
@@ -669,7 +672,7 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // 统一记忆清除：通过 memory:clear hook 参与编排（删除会话也走它）
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     // 类型过滤：摘要是归档消息的压缩，随 context 一起清（也可单独选 summary）；两者都不含时跳过
     if (data.types && !data.types.includes('summary') && !data.types.includes('context')) {
       await next();
@@ -692,27 +695,27 @@ async function run(caps: Caps): Promise<void> {
     await Promise.allSettled(data.scope === 'all' ? committing.values() : [committing.get(data.sessionId ?? '')]);
 
     try {
-      const store = new SummaryStore(memory.require());
+      const store = new SummaryStore(memory.use);
       if (data.scope === 'all') {
-        await store.clearAll(logger);
+        await store.clearAll(logger.use);
         data.results.push({ source: 'summary', type: 'summary', success: true, message: '所有会话摘要已清空' });
-        logger.info('所有会话摘要已清空');
+        logger.use.info('所有会话摘要已清空');
       } else if (data.sessionId) {
         await store.clearSession(data.sessionId);
         data.results.push({ source: 'summary', type: 'summary', success: true, message: '当前会话摘要已清空' });
-        logger.info(`会话摘要已清空: session=${data.sessionId}`);
+        logger.use.info(`会话摘要已清空: session=${data.sessionId}`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       data.results.push({ source: 'summary', type: 'summary', success: false, message: `摘要清空失败: ${msg}` });
-      logger.warn('摘要清空失败:', err);
+      logger.use.warn('摘要清空失败:', err);
     }
 
     await next();
   });
 
   // 清理
-  lifecycle.onDispose(() => {
-    logger.info('会话摘要插件已卸载');
+  lifecycle.use.onDispose(() => {
+    logger.use.info('会话摘要插件已卸载');
   });
 }

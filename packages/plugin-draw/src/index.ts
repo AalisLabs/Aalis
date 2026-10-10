@@ -12,8 +12,8 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { createProcessGateway, processService } from '@aalis/api-process';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -176,10 +176,10 @@ export default definePlugin({
 });
 
 function registerDraw(caps: Caps): void {
-  const cfg = resolveConfig(parseConfig(configSchema, caps.config, caps.logger));
-  const logger = caps.logger.child('draw');
-  const storage = createStorageGateway(caps.storage);
-  const proc = createProcessGateway(caps.processService);
+  const cfg = resolveConfig(parseConfig(configSchema, caps.config.use, caps.logger.use));
+  const logger = caps.logger.use.child('draw');
+  const storage = caps.storage.use;
+  const proc = caps.processService.use;
   const { tools } = caps;
 
   // 沙箱起不来时回落到不带沙箱（任何平台）：draw 的输入是模型写的标记，回落的理由与平台无关
@@ -192,15 +192,15 @@ function registerDraw(caps: Caps): void {
     stepTimeoutMs: 15_000,
     logger,
   });
-  caps.lifecycle.onDispose(() => renderer.dispose());
+  caps.lifecycle.use.onDispose(() => renderer.dispose());
 
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'draw',
     label: '绘图',
     description: '把模型编写的 SVG/HTML 标记渲染为图片，配合 send_attachment 发进聊天',
   });
 
-  tools.register({
+  tools.use.register({
     // 刻意 public：绘图是人人可要求的能力（用户产品决定）——群里谁都能让 bot 画图。
     // 抗滥用不靠权限档而靠资源治理：单次成本被 maxPixels/maxFrames/体积封顶，
     // 跨会话并发由引擎信号量排队（不拒绝、只削峰），机器不会被刷图打垮。
@@ -266,7 +266,7 @@ function registerDraw(caps: Caps): void {
     },
   });
 
-  tools.register({
+  tools.use.register({
     // public 同 draw_image：人人可画，抗滥用靠资源治理不靠权限档。
     groups: ['draw'],
     background: {},

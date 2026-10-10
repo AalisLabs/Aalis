@@ -167,7 +167,7 @@ const probePages = definePlugin({
       { id: 'b', name: '部署文档', owner: '小红', state: { text: '待办' }, note: '' },
       { id: 'c', name: LONG_NAME, owner: '小刚', state: { text: '待办' }, note: '' },
     ];
-    board.page = webui.definePage({
+    board.page = webui.use.definePage({
       key: 'board',
       title: '看板',
       icon: 'kanban',
@@ -193,7 +193,7 @@ const probePages = definePlugin({
         },
       ],
     });
-    webui.definePage({
+    webui.use.definePage({
       key: 'stats',
       title: '统计',
       content: [
@@ -245,7 +245,7 @@ const probePages = definePlugin({
         },
       ],
     });
-    webui.definePage({
+    webui.use.definePage({
       key: 'notes',
       title: '便签',
       placement: 'session',
@@ -273,7 +273,7 @@ const needsConfig = definePlugin({
   configSchema: { endpoint: { type: 'string', label: '服务地址', required: true } },
   uses: { config },
   apply({ config: value }) {
-    if (!value.endpoint) throw new Error('缺少服务地址');
+    if (!value.use.endpoint) throw new Error('缺少服务地址');
   },
 });
 
@@ -284,8 +284,12 @@ const noticeProbe = definePlugin({
   displayName: '提示的探针',
   uses: { webui: webuiServer },
   apply({ webui }) {
-    webui.definePage({ key: 'queue', title: '作品审核', content: [{ type: 'markdown', id: 'note', data: () => '' }] });
-    webui.notify({
+    webui.use.definePage({
+      key: 'queue',
+      title: '作品审核',
+      content: [{ type: 'markdown', id: 'note', data: () => '' }],
+    });
+    webui.use.notify({
       id: 'pending',
       level: 'action',
       title: '2 件作品待裁决',
@@ -309,7 +313,7 @@ const backgroundProbe = definePlugin({
   name: 'zz-e2e-background',
   uses: { tools },
   apply({ tools }) {
-    tools.register({
+    tools.use.register({
       display: { kind: 'command', fields: { command: 'command' }, result: { exitCode: 'exitCode' } },
       background: { yieldSeconds: 1 },
       definition: {
@@ -402,7 +406,7 @@ function framesPlugin(): PluginDefinition {
     displayName: FRAMES_NAME,
     uses: { webui: webuiServer },
     apply({ webui }) {
-      webui.definePage({
+      webui.use.definePage({
         key: 'probe',
         title: '探针',
         frame: { module, entry: 'probe.html' },
@@ -415,9 +419,9 @@ function framesPlugin(): PluginDefinition {
           },
         },
       });
-      webui.definePage({ key: 'controls', title: '控件', frame: { module, entry: 'controls.html' } });
-      webui.definePage({ key: 'raw', title: '不用助手', frame: { module, entry: 'raw.html' } });
-      webui.definePage({
+      webui.use.definePage({ key: 'controls', title: '控件', frame: { module, entry: 'controls.html' } });
+      webui.use.definePage({ key: 'raw', title: '不用助手', frame: { module, entry: 'raw.html' } });
+      webui.use.definePage({
         key: 'roster',
         title: '子会话',
         placement: 'session',
@@ -528,7 +532,7 @@ async function startStack(
     rooms,
   });
   const runs: string[] = [];
-  app.bind({ tools }).tools.register({
+  app.bind({ tools }).tools.use.register({
     confirm: 'session',
     display: { kind: 'command', fields: { command: 'command' } },
     definition: {
@@ -827,7 +831,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       'onebot:10000:group:20001': '读书会',
       'onebot:10001:group:20001': '读书会小号',
     });
-    const sm = stack.app.bind({ sessionManager }).sessionManager.require();
+    const sm = stack.app.bind({ sessionManager }).sessionManager.use;
     const { page, problems } = await openPage(stack, viewport);
     const ITERATIONS = '.setting-row[aria-label="最大工具迭代"]';
     /** 在 scope 里把「最大工具迭代」改成 value（编辑框里先是生效值，全选后改写），按回车存 */
@@ -1084,8 +1088,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const rows = await page.$$eval('main .setting-row', fieldsets => fieldsets.map(f => f.getAttribute('aria-label')));
     const registered = stack.app
       .bind({ sessionManager })
-      .sessionManager.require()
-      .listSettings()
+      .sessionManager.use.listSettings()
       .map(setting => setting.field.label);
     expect([...rows].sort()).toEqual([...registered].sort());
     await page.waitForSelector(`main .setting-row[aria-label="深度思考"] ${text('当前模型不能调')}`);
@@ -1133,18 +1136,14 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     // 自主回合发起的审批发起时就按拒绝结算，会话服务记一行
     const { id: sessionId } = await stack.app
       .bind({ sessionManager })
-      .sessionManager.require()
-      .createSession({ name: '审批探针' });
-    await stack.app
-      .bind({ approvals })
-      .approvals.require()
-      .request({
-        sessionId,
-        origin: { kind: 'autonomous', platform: 'webui', userId: 'console' },
-        tool: DEPLOY,
-        args: { command: COMMAND },
-        rule: 'e2e',
-      });
+      .sessionManager.use.createSession({ name: '审批探针' });
+    await stack.app.bind({ approvals }).approvals.use.request({
+      sessionId,
+      origin: { kind: 'autonomous', platform: 'webui', userId: 'console' },
+      tool: DEPLOY,
+      args: { command: COMMAND },
+      rule: 'e2e',
+    });
     const settled = `main ${aria('日志', 'list')} ${text(`审批结算：会话 ${sessionId}，工具 ${DEPLOY}，拒绝`)}`;
     await page.waitForSelector(settled);
     const scopes = () =>
@@ -1642,7 +1641,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const first = await sessionIdOf(page);
     await page.waitForSelector(text('好的。'));
     // 宿主的「后台」标签两组都有：一个子会话，一个转到后台的工具调用
-    await stack.app.bind({ sessionManager }).sessionManager.require().createChildSession(first, { name: '整理一节' });
+    await stack.app.bind({ sessionManager }).sessionManager.use.createChildSession(first, { name: '整理一节' });
     await send(page, '后台跑 delta');
     await page.waitForSelector(text(MOVED));
     await page.waitForSelector('[aria-label^="上下文已用"]');
@@ -1851,8 +1850,8 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const sessionId = await sessionIdOf(page);
     await page.waitForSelector(text(MOVED));
     // 立即转：起它的那一轮不等让出时限（1 秒）就收了尾
-    const sessions = stack.app.bind({ sessionManager }).sessionManager.require();
-    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.require();
+    const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
+    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.use;
     await expect.poll(() => sessions.getSession(sessionId)?.lastTurn).toBeDefined();
     const [alpha] = tasks.list({ sessionId });
     expect(sessions.getSession(sessionId)?.lastTurn?.endedAt).toBeLessThan(alpha.startedAt + 1000);
@@ -1897,7 +1896,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
 
   it('子会话：「后台」标签按会话树列出子会话，带状态、耗时与 token；停掉父会话在等的那个，父会话的等待随即返回，「全部停止」停掉余下的；子会话页的路径逐层退回；父会话用量的累计含子会话', async () => {
     const stack = await startStack({}, [subtaskPlugin]);
-    const sessions = stack.app.bind({ sessionManager }).sessionManager.require();
+    const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
     const { id: parentId } = await sessions.createSession(
       { config: { enabledToolGroups: ['subtask'] } },
       { createdFrom: 'webui' },
@@ -1981,7 +1980,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.locator(`main ${aria('更多', 'button')}`).click();
     await page.locator(aria('归档', 'menuitem')).click();
     await toastSays(page, '已归档「测试会话」');
-    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.require();
+    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.use;
     expect(tasks.list({ sessionId }).map(task => task.status)).toEqual(['running']);
 
     const health = await openPage(stack, viewport, '/health');

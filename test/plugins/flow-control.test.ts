@@ -70,19 +70,19 @@ describe('flow-control config', () => {
     try {
       await registerHubs(app);
       const host = app.bind({ events, provide, services });
-      host.provide(memory, fakeMemory() as never);
+      host.provide.use(memory, fakeMemory() as never);
       await app.plugin(sessionManagerPlugin);
       await app.plugin(flowControlPlugin, { scopes: ['onebot:group', '', '   '], cooldownSeconds: 30 });
       await app.plugins.idle();
-      const svc = host.services.get(flowControl);
+      const svc = host.services.use.get(flowControl);
       if (!svc) throw new Error('flow-control 服务未注册');
       // 群按原生入站收录，会话管理记下它的聊天窗口，回复记账按它判作用域
-      await recordRoom(host.events, 'onebot:10001:group:20002');
+      await recordRoom(host.events.use, 'onebot:10001:group:20002');
       for (const [sessionId, platform] of [
         ['webui:console', 'webui'],
         ['onebot:10001:group:20002', 'onebot'],
       ]) {
-        await host.events.emit('outbound:message', { content: '好的', sessionId, platform, source: 'agent' });
+        await host.events.use.emit('outbound:message', { content: '好的', sessionId, platform, source: 'agent' });
       }
       expect(svc.isCoolingDown('webui:console')).toBe(false);
       expect(svc.isCoolingDown('onebot:10001:group:20002')).toBe(true);

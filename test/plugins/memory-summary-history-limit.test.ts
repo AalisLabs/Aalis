@@ -48,13 +48,13 @@ async function setup(summaryLLM = fakeSummaryLLM()) {
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   // 房间收录过（预置进会话表）：选平台档与平台类型档读会话记下的出生平台与聊天窗口
-  await seedRooms(host.memory.require(), { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
-  host.provide(authority, {
+  await seedRooms(host.memory.use, { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
+  host.provide.use(authority, {
     isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === '99999',
   } as never);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
-  host.provide(llm, summaryLLM.model);
+  host.provide.use(llm, summaryLLM.model);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await app.plugin(memorySummary);
   await app.plugins.idle();
@@ -62,9 +62,9 @@ async function setup(summaryLLM = fakeSummaryLLM()) {
     expect(app.plugins.getPlugin(plugin.name)?.state, `${plugin.name} 未激活`).toBe('active');
   }
   const statuses: string[] = [];
-  host.events.on('session:compressing', info => void statuses.push(`${info.sessionId}:${info.status}`));
-  const sm = host.sessionManager.require();
-  const say = (sessionId: string) => host.memory.require().saveMessage(sessionId, { role: 'user', content: '在吗' });
+  host.events.use.on('session:compressing', info => void statuses.push(`${info.sessionId}:${info.status}`));
+  const sm = host.sessionManager.use;
+  const say = (sessionId: string) => host.memory.use.saveMessage(sessionId, { role: 'user', content: '在吗' });
   /** 每个会话说一句、再以这些条数结束一轮，返回至今压成过的会话（排好序） */
   const turns = async (sessionIds: string[], historyMessages: number) => {
     for (const id of sessionIds) {
@@ -128,7 +128,7 @@ describe('plugin-memory-summary: 条数线', () => {
 
     await endTurn(host, owner.id, counted(7));
     await expect.poll(() => statuses.slice(2)).toEqual([`${owner.id}:start`, `${owner.id}:done`]);
-    expect((await host.memory.require().getMetadata('summary', owner.id))?.summary).toBe('NEW-SUMMARY');
+    expect((await host.memory.use.getMetadata('summary', owner.id))?.summary).toBe('NEW-SUMMARY');
   });
 
   it('平台类型档：群的条数线给群里各个机器人账号的会话与群的子会话，别人的私聊与 WebUI 会话不受影响', async () => {

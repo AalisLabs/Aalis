@@ -433,7 +433,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     return { status: 'applied', reloaded };
   };
 
-  host.provide(
+  host.provide.use(
     hostConfig,
     {
       get: store.get,
@@ -471,7 +471,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
   );
   // 悬空的密钥引用除了日志，也在诊断里报出来：不走 parseConfig 的第三方插件拿到引用对象不会激活失败，
   // 只看日志的话这种情况没人发现。诊断插件没上线时登记排队，上线后生效
-  app.bind({ doctor }).doctor.registerCheck({
+  app.bind({ doctor }).doctor.use.registerCheck({
     id: 'config.secrets',
     category: 'config',
     run: () => {
@@ -493,7 +493,8 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
         : { id: 'config.secrets', category: 'config', level: 'ok', message: '配置引用的密钥都在 secrets.yaml 里' };
     },
   });
-  for (const [name, contextId] of Object.entries(store.getServicePreferences())) host.services.prefer(name, contextId);
+  for (const [name, contextId] of Object.entries(store.getServicePreferences()))
+    host.services.use.prefer(name, contextId);
 }
 
 // ----- helpers -----

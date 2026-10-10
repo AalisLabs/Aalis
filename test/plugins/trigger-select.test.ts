@@ -96,12 +96,12 @@ async function setup(opts: SetupOptions = {}) {
   const host = app.bind({ provide, hooks, services, events });
   // 规则插件的 required 依赖；闲置注入经它进入站（这里只记下）
   const injected: IncomingMessage[] = [];
-  host.provide(gateway, {
+  host.provide.use(gateway, {
     async ingressMessage(m: IncomingMessage) {
       injected.push(m);
     },
   } as never);
-  host.provide(memory, { getFullHistory: async () => [] } as never);
+  host.provide.use(memory, { getFullHistory: async () => [] } as never);
   const plugins: Array<[typeof triggerPolicyPlugin | typeof layaPlugin, Record<string, unknown>]> = [];
   if (opts.policy !== false) plugins.push([triggerPolicyPlugin, opts.policy ?? {}]);
   if (opts.laya !== false) plugins.push([layaPlugin, { endpoint: sidecar.url, ...opts.laya }]);
@@ -119,12 +119,12 @@ async function setup(opts: SetupOptions = {}) {
     host,
     logs,
     injected,
-    send: (message: IncomingMessage) => run(host.hooks, message),
+    send: (message: IncomingMessage) => run(host.hooks.use, message),
     /** WebUI 服务偏好切换的等价操作 */
     prefer: (label: string) => {
-      const view = host.services.all(trigger).find(v => v.label === label);
+      const view = host.services.use.all(trigger).find(v => v.label === label);
       if (!view) throw new Error(`trigger 服务里没有「${label}」`);
-      host.services.prefer(trigger, view.contextId);
+      host.services.use.prefer(trigger, view.contextId);
     },
     ruleDecisions: () => logs.filter(e => e.message.startsWith('[trigger] 判定')).map(e => e.message),
   };
@@ -146,7 +146,7 @@ describe('触发插件二选一', () => {
   it('都启用、没有偏好：规则生效（Laya 的优先级 -10 低于规则的 0），Laya 不请求侧车', async () => {
     // Laya 先登记，与从源码发现的次序一致（readdir 下 trigger-laya 排在 trigger-policy 前）：优先级相等时按登记次序决胜
     const h = await setup({ policy: EVERY_MESSAGE, layaFirst: true });
-    expect(h.host.services.all(trigger).map(v => v.label)).toEqual([RULE_LABEL, 'Laya 模型']);
+    expect(h.host.services.use.all(trigger).map(v => v.label)).toEqual([RULE_LABEL, 'Laya 模型']);
     const r = await h.send(groupMsg('随便聊聊'));
     expect(r.reached).toBe(true);
     expect(r.message.triggerType).toBe('interval');
@@ -156,7 +156,7 @@ describe('触发插件二选一', () => {
 
   it('都启用、配置文件的 servicePreferences 指向 Laya：Laya 生效，规则插件什么都不做（不判定、不计数）', async () => {
     const h = await setup({ policy: EVERY_TWO, hostConfig: PREFER_LAYA });
-    expect(h.host.services.all(trigger).map(v => v.label)).toEqual(['Laya 模型', RULE_LABEL]);
+    expect(h.host.services.use.all(trigger).map(v => v.label)).toEqual(['Laya 模型', RULE_LABEL]);
 
     // 模型判不回：吞掉。规则若也在判，fixedInterval=2 的第 2 条会被它放行
     expect((await h.send(groupMsg('第 1 条'))).reached).toBe(false);
@@ -210,7 +210,7 @@ describe('触发插件二选一', () => {
     const h = await setup({ policy: EVERY_TWO });
     await h.app.plugins.disable(layaPlugin.name);
     await h.app.plugins.disable(triggerPolicyPlugin.name);
-    expect(h.host.services.all(trigger)).toEqual([]);
+    expect(h.host.services.use.all(trigger)).toEqual([]);
     const r = await h.send(groupMsg('随便聊聊'));
     expect(r.reached).toBe(true);
     expect(r.message.triggerType).toBeUndefined();
@@ -267,7 +267,7 @@ describe('规则插件的闲置开口只在它生效时', () => {
 
     // T0+30s：Laya 生效期间 agent 回复。记下的话会把闲置定时器重排到 T0+90s
     await vi.advanceTimersByTimeAsync(30_000);
-    await h.host.events.emit('outbound:message', {
+    await h.host.events.use.emit('outbound:message', {
       content: '好的',
       sessionId: message.sessionId,
       platform: 'onebot',

@@ -113,7 +113,7 @@ async function start(instances: Array<[string, Record<string, unknown>]>) {
   const logger = recordingLogger();
   const app = new App({ name: 'T', logger });
   apps.push(app);
-  app.bind({ provide }).provide(storage, fakeStorage());
+  app.bind({ provide }).provide.use(storage, fakeStorage());
   const register = async (id: string, config: Record<string, unknown>) => {
     await app.plugins.register(memorySqlite, config, id);
     await app.plugins.idle();

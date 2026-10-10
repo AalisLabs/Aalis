@@ -4,6 +4,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type LifecycleCap, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -84,7 +85,7 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
     const { logger, lines } = recorder();
     const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
     apps.push(app);
-    app.bind({ provide }).provide(tools, makeToolRegistry(logger));
+    app.bind({ provide }).provide.use(tools, makeToolRegistry(logger));
     const registering = app.plugin(mcpClient, SERVERS);
     await until(() => fake.requests.includes(method), `${method} 请求`);
 
@@ -115,11 +116,11 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
     const registered: string[] = [];
     const { logger, lines } = recorder();
     await mcpClient.apply({
-      tools: stubBoundTools({ onRegister: tool => void registered.push(tool.definition.function.name) }),
-      logger,
-      lifecycle,
-      config: SERVERS,
-      hostConfig: { current: undefined } as never,
+      tools: fixedRef(stubBoundTools({ onRegister: tool => void registered.push(tool.definition.function.name) })),
+      logger: fixedRef(logger),
+      lifecycle: fixedRef(lifecycle),
+      config: fixedRef(SERVERS),
+      hostConfig: ref(),
       webui: { notify: () => ({ clear() {} }) } as never,
     });
 

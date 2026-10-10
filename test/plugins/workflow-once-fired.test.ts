@@ -13,6 +13,7 @@ import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { type TriggerCaps, TriggerManager } from '../../packages/plugin-workflow/src/triggers.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // once 触发器一生只触发一次：firedAt 与运行历史同落 runsFile，
@@ -66,7 +67,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
     // 宿主侧登记测试工具：与插件同一套描述符装配，登记归属根激活
-    app.bind({ tools: toolsService }).tools.register({
+    app.bind({ tools: toolsService }).tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'zz_count', description: '计数', parameters: { type: 'object', properties: {} } },
@@ -88,7 +89,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
       const state = app.plugins.getPlugin(id)?.state;
       if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
     }
-    return { app, svc: app.bind({ services }).services.get(workflow) as WorkflowService };
+    return { app, svc: app.bind({ services }).services.use.get(workflow) as WorkflowService };
   };
 
   /** 读 runsFile 里的 once 记账（文件还没落盘视为空） */
@@ -219,12 +220,7 @@ describe('once 触发器的远期 runAt 分段重排', () => {
       throw new Error(`once 触发器不应使用 ${what}`);
     };
     const caps: TriggerCaps = {
-      cronEngine: {
-        current: undefined,
-        require: unusable('cron-engine'),
-        all: unusable('cron-engine'),
-        follow: unusable('cron-engine'),
-      },
+      cronEngine: ref(),
       events: { on: unusable('事件总线'), emit: unusable('事件总线') },
       logger: noopLogger,
     };

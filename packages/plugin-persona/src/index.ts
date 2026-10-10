@@ -15,13 +15,7 @@ import {
   type SessionSetting,
   sessionManager as sessionManagerService,
 } from '@aalis/api-session-manager';
-import {
-  createStorageGateway,
-  isStorageNotFound,
-  type StorageService,
-  storage as storageService,
-  toStorageUri,
-} from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService, storage as storageService, toStorageUri } from '@aalis/api-storage';
 import {
   type BoundOf,
   config as configCap,
@@ -512,11 +506,11 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { provide, config, logger, events, hooks } = caps;
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   const personasDirRaw = cfg.personasDir || configSchema.personasDir.default;
   const { statePersistence, timeInjection, timeZone } = cfg;
 
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
 
   const personasDir = toStorageUri(personasDirRaw);
 
@@ -537,7 +531,7 @@ async function run(caps: Caps): Promise<void> {
       }
       return asCard(parsed as Record<string, unknown>, uri);
     } catch (err) {
-      logger.warn(`角色卡解析失败，已跳过：${uri} —— ${err instanceof Error ? err.message : err}`);
+      logger.use.warn(`角色卡解析失败，已跳过：${uri} —— ${err instanceof Error ? err.message : err}`);
       return INVALID;
     }
   }
@@ -551,7 +545,7 @@ async function run(caps: Caps): Promise<void> {
     if (value === undefined || value === null) return undefined;
     const list = typeof value === 'string' ? [value] : Array.isArray(value) ? (value as unknown[]) : undefined;
     if (!list) {
-      logger.warn(`角色卡的 nick_name 应为字符串列表，已忽略：${uri}`);
+      logger.use.warn(`角色卡的 nick_name 应为字符串列表，已忽略：${uri}`);
       return undefined;
     }
     return list.flatMap(n => (typeof n === 'string' && n.trim() ? [n.trim()] : []));
@@ -627,7 +621,7 @@ async function run(caps: Caps): Promise<void> {
   const found = await findCard(DEFAULT_PERSONA);
   if (found && found !== INVALID) {
     card = found.card;
-    logger.info(`已加载角色卡: ${card.name} (${found.uri})`);
+    logger.use.info(`已加载角色卡: ${card.name} (${found.uri})`);
   } else {
     card = {
       name: 'Aalis',
@@ -635,9 +629,9 @@ async function run(caps: Caps): Promise<void> {
       prompt: '请友好、专业地与用户交流。',
     };
     if (found === INVALID) {
-      logger.warn(`角色卡 "${DEFAULT_PERSONA}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
+      logger.use.warn(`角色卡 "${DEFAULT_PERSONA}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
     } else {
-      logger.info(`未找到角色卡 "${DEFAULT_PERSONA}"，使用内置默认角色`);
+      logger.use.info(`未找到角色卡 "${DEFAULT_PERSONA}"，使用内置默认角色`);
     }
   }
 
@@ -646,8 +640,8 @@ async function run(caps: Caps): Promise<void> {
     timeInjection,
     timeZone,
   });
-  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
-  provide(persona, service);
+  for (const setting of SESSION_SETTINGS) caps.sessionManager.use.registerSetting(setting);
+  provide.use(persona, service);
 
   /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */
   async function scanOnce(reason: string): Promise<void> {
@@ -657,9 +651,9 @@ async function run(caps: Caps): Promise<void> {
         if (!known.has(n) && n !== DEFAULT_PERSONA) service.removeCardCacheEntry(n);
       }
       service.reloadPrimaryCardFromCache();
-      logger.debug(`persona ${reason}，已知 ${known.size} 张卡`);
+      logger.use.debug(`persona ${reason}，已知 ${known.size} 张卡`);
     } catch (err) {
-      logger.warn(`persona 扫描失败（${reason}）：${err}`);
+      logger.use.warn(`persona 扫描失败（${reason}）：${err}`);
     }
   }
 
@@ -687,7 +681,7 @@ async function run(caps: Caps): Promise<void> {
   // 跟随 storage：在场即补建人设目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂。
   // 换代时 follow 先跑上次返回的清理，关掉挂在旧提供者上的监听。
   // 首挂放在 sticky 的 app:ready 里并等它扫完，保持「start() 返回时主卡已按存储加载」；此刻 storage 不在场则等它上线再挂。
-  events.on('app:ready', async () => {
+  events.use.on('app:ready', async () => {
     let first: Promise<void> | undefined;
     caps.storage.follow(() => {
       const offs: Array<() => void> = [];
@@ -709,7 +703,7 @@ async function run(caps: Caps): Promise<void> {
         try {
           offs.push(storage.watch(personasDir, () => void refresh(`目录变化已重新加载（${personasDir}）`)));
         } catch (err) {
-          logger.warn(`persona 目录监听失败（${personasDir}）：${err}`);
+          logger.use.warn(`persona 目录监听失败（${personasDir}）：${err}`);
         }
         await refresh('扫描完成');
       })();
@@ -723,7 +717,7 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // 参与 memory:clear 清除当前会话的 persona 状态
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     // 类型过滤：仅在清除 context/persona/全部 时参与
     if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {
       await next();
@@ -750,9 +744,9 @@ async function run(caps: Caps): Promise<void> {
   // 会话事实（平台、自身账号、会话类型与群号）按会话记下的来源字段取：出生平台取根会话的（房间里的子任务也在房间的
   // 平台上），聊天窗口只取会话自己的（子任务不是群里的对话）；从 WebUI 往群里插话时回复发进群里。没有来源字段的会话
   // 按消息。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
-  hooks.middleware('agent:input:before', async (data, next) => {
+  hooks.use.middleware('agent:input:before', async (data, next) => {
     const { message } = data;
-    const sm = caps.sessionManager.current;
+    const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const session = sm?.getSession(message.sessionId);
     const origin = sm && rootSessionOf(session, id => sm.getSession(id))?.originPlatform;
     const chat = session?.originChat;
@@ -784,16 +778,16 @@ async function run(caps: Caps): Promise<void> {
   const baseFormat = service.getOutputFormat();
 
   if (baseFormat) {
-    logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
+    logger.use.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
   }
 
-  hooks.middleware('agent:reply:before', async (data, next) => {
+  hooks.use.middleware('agent:reply:before', async (data, next) => {
     await next();
 
     // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
     let personaOpts: PersonaSessionOptions | undefined;
     try {
-      const sm = caps.sessionManager.current;
+      const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
       if (sm && data.sessionId) {
         const resolved = sm.resolveConfig(data.sessionId, data.platform);
         personaOpts = {
@@ -820,7 +814,7 @@ async function run(caps: Caps): Promise<void> {
       for (const key of replyKeys) {
         if (typeof obj[key] === 'string') {
           data.content = obj[key] as string;
-          logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
+          logger.use.debug(`JSON 回退提取: 使用字段 "${key}"`);
           return;
         }
       }
@@ -851,14 +845,14 @@ async function run(caps: Caps): Promise<void> {
       }
       if (Object.keys(state).length > 0) {
         service.saveSessionState(data.sessionId, state);
-        logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
+        logger.use.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
       }
     };
 
     const jsonStr = extractJsonCandidate(data.content);
     const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
     if (parsed && repairsApplied.length > 0) {
-      logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
+      logger.use.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
     }
     try {
       if (!parsed) throw new Error('JSON 解析失败');
@@ -870,7 +864,7 @@ async function run(caps: Caps): Promise<void> {
         for (const alias of aliases) {
           if (alias !== outputFormat.replyField && typeof parsed[alias] === 'string') {
             reply = parsed[alias];
-            logger.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
+            logger.use.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
             break;
           }
         }
@@ -881,7 +875,7 @@ async function run(caps: Caps): Promise<void> {
         const stringEntries = Object.entries(parsed).filter(([, v]) => typeof v === 'string');
         if (stringEntries.length === 1) {
           reply = stringEntries[0][1] as string;
-          logger.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
+          logger.use.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
         }
       }
 
@@ -938,9 +932,11 @@ async function run(caps: Caps): Promise<void> {
           })
           .join(', ');
         if (reply.length > 0) {
-          logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`);
+          logger.use.debug(
+            `outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`,
+          );
         } else {
-          logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
+          logger.use.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
         }
         // 状态持久化：保存非回复字段（按 field type 强制类型）
         if (statePersistence) {
@@ -966,7 +962,9 @@ async function run(caps: Caps): Promise<void> {
 
       if (attempt < maxRetries) {
         // 还有重试名额：要求模型严格按照 outputFormat 重新输出 JSON
-        logger.debug(`outputFormat 解码失败 (attempt=${attempt}/${maxRetries})，请求重试：${message}; json=${preview}`);
+        logger.use.debug(
+          `outputFormat 解码失败 (attempt=${attempt}/${maxRetries})，请求重试：${message}; json=${preview}`,
+        );
         const fieldSpec = Object.entries(outputFormat.fields)
           .map(
             ([k, v]) =>
@@ -984,7 +982,7 @@ async function run(caps: Caps): Promise<void> {
       } else {
         // 重试用尽：静默丢弃（避免原始 JSON 被当成回复发出）
         // 同时通过 archiveContent 写入一条"系统提醒"，让下一轮 LLM 看到自己上次因格式不符被丢弃
-        logger.warn(
+        logger.use.warn(
           `outputFormat 解码连续 ${attempt + 1} 次失败（已用尽 ${maxRetries} 次重试），静默丢弃回复：${message}; json=${preview}`,
         );
         data.retryRequested = false;

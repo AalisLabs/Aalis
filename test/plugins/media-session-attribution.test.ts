@@ -91,9 +91,9 @@ async function boot() {
     provides: [processService, storage, llm],
     uses: { provide, events },
     apply({ provide, events }) {
-      provide(processService, proc.service);
-      provide(storage, memory.service);
-      provide(llm, metered(model, events), { entryId: 'fake-host/seer' });
+      provide.use(processService, proc.service);
+      provide.use(storage, memory.service);
+      provide.use(llm, metered(model, events.use), { entryId: 'fake-host/seer' });
     },
   });
   const app = new App({ name: 'T', logLevel: 'error' });
@@ -101,7 +101,7 @@ async function boot() {
   await registerHubs(app);
   const usages: LLMUsageEvent[] = [];
   const bound = app.bind({ events, media });
-  bound.events.on('llm:usage', usage => void usages.push(usage));
+  bound.events.use.on('llm:usage', usage => void usages.push(usage));
   await app.plugin(host, {});
   await app.plugin(mediaPlugin, {
     video: { mode: 'frames+asr' },
@@ -110,8 +110,8 @@ async function boot() {
     senderContext: { enabled: false },
   });
   await app.plugins.idle();
-  const service: MediaService | undefined = bound.media.current;
-  if (!service) throw new Error(`plugin-media 没有激活：${app.plugins.getPlugin(mediaPlugin.name)?.error}`);
+  if (!bound.media.present) throw new Error(`plugin-media 没有激活：${app.plugins.getPlugin(mediaPlugin.name)?.error}`);
+  const service: MediaService | undefined = bound.media.use;
   return { service, usages, calls: proc.calls };
 }
 

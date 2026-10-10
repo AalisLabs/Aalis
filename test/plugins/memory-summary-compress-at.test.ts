@@ -42,20 +42,20 @@ async function setup() {
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   // 房间收录过（预置进会话表）：选平台档读会话记下的出生平台
-  await seedRooms(host.memory.require(), { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
-  host.provide(authority, {
+  await seedRooms(host.memory.use, { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
+  host.provide.use(authority, {
     isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === '99999',
   } as never);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
-  host.provide(llm, summaryLLM.model);
+  host.provide.use(llm, summaryLLM.model);
   await app.plugin(memorySummary);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   const owner = await sm.createSession({ name: '本机会话' });
   const child = await sm.createChildSession(ROOM, { name: '群里派出的子任务' });
-  return { host, sm, owner, child, summaryLLM, compressAt: host.compression.require().compressAt };
+  return { host, sm, owner, child, summaryLLM, compressAt: host.compression.use.compressAt };
 }
 
 describe('plugin-memory-summary: 自动压缩线', () => {
@@ -121,13 +121,13 @@ describe('plugin-memory-summary: 自动压缩线', () => {
     const { host, sm, owner, summaryLLM, compressAt } = await setup();
     await sm.updateSession(owner.id, { config: { compressAt: 0 } });
     expect(compressAt(owner.id, 'webui')).toBeUndefined();
-    await host.memory.require().saveMessage(owner.id, { role: 'user', content: '在吗' });
+    await host.memory.use.saveMessage(owner.id, { role: 'user', content: '在吗' });
 
     await endTurn(host, owner.id, { used: 990, compressible: 900 });
     await new Promise<void>(r => setTimeout(r, 20));
     expect(summaryLLM.requests).toHaveLength(0);
 
-    await host.compression.require().compress(owner.id, { reason: 'manual' });
+    await host.compression.use.compress(owner.id, { reason: 'manual' });
     expect(summaryLLM.requests).toHaveLength(1);
   });
 
@@ -135,8 +135,7 @@ describe('plugin-memory-summary: 自动压缩线', () => {
     const { host, sm, owner, summaryLLM } = await setup();
     await sm.updateLayer({ scope: 'platform', platform: 'webui' }, { compressAt: 0.3 });
     const other = await sm.createSession({ name: '终端会话' });
-    for (const id of [owner.id, other.id])
-      await host.memory.require().saveMessage(id, { role: 'user', content: '在吗' });
+    for (const id of [owner.id, other.id]) await host.memory.use.saveMessage(id, { role: 'user', content: '在吗' });
 
     // 有效阈值：webui 平台档 0.3 × 1000 = 300；cli 没有平台档，按默认 0.8 为 800
     await endTurn(host, other.id, { used: 400, compressible: 400 }, { platform: 'cli' });

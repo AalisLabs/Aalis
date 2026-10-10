@@ -5,7 +5,7 @@ import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { publish } from '@aalis/api-publish';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { webuiServer } from '@aalis/api-webui';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
@@ -41,15 +41,15 @@ export default definePlugin({
     doctor: optional(doctor),
   },
   async apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
-    const storage = createStorageGateway(caps.storage);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
+    const storage = caps.storage.use;
     const store = new ReviewStore(storage);
     await store.load();
     const renderer = new OfflineRenderer({
       sandbox: 'required',
       headless: cfg.chrome.headless,
       executablePath: cfg.chrome.executablePath || undefined,
-      logger: caps.logger,
+      logger: caps.logger.use,
     });
     const ffprobePath = /[/\\]/.test(cfg.ffmpegPath) ? join(dirname(cfg.ffmpegPath), 'ffprobe') : 'ffprobe';
     const pipeline = createReviewPipeline({
@@ -61,26 +61,32 @@ export default definePlugin({
       ffmpegPath: cfg.ffmpegPath,
       ffprobePath,
     });
-    const notices = new ReviewNotices(caps.events, caps.logger, caps.gateway, caps.hooks, caps.lifecycle.signal);
+    const notices = new ReviewNotices(
+      caps.events.use,
+      caps.logger.use,
+      caps.gateway,
+      caps.hooks.use,
+      caps.lifecycle.use.signal,
+    );
     const service = new PublishReviewService({
       storage,
       store,
       config: cfg,
       pipeline,
-      signal: caps.lifecycle.signal,
+      signal: caps.lifecycle.use.signal,
       notice: (origin, content, id, title, opts) => notices.enqueue(origin, content, id, title, opts),
       noticeReady: () => notices.ready(),
     });
-    const driver = new ReviewDriver(service, store, caps.lifecycle.signal, caps.logger);
-    const preview = new ReviewPreviewServer({ store, storage, signal: caps.lifecycle.signal });
+    const driver = new ReviewDriver(service, store, caps.lifecycle.use.signal, caps.logger.use);
+    const preview = new ReviewPreviewServer({ store, storage, signal: caps.lifecycle.use.signal });
     const off = service.onQueueChange(() => preview.prune());
-    caps.lifecycle.onDrain(async () => {
+    caps.lifecycle.use.onDrain(async () => {
       off();
       preview.close();
       await Promise.all([driver.stop(), service.close(), notices.close(), renderer.dispose()]);
     }, '作品审核停止出队、通知、预览与渲染');
     registerReviewPage({
-      webui: caps.webui,
+      webui: caps.webui.use,
       service,
       store,
       preview,
@@ -88,18 +94,18 @@ export default definePlugin({
       reviewEnabled: cfg.reviewEnabled,
     });
     registerReviewDoctor({
-      doctor: caps.doctor,
+      doctor: caps.doctor.use,
       store,
       config: cfg,
       llm: caps.llm,
       sandbox: caps.sandbox,
       renderer,
       ffprobePath,
-      signal: caps.lifecycle.signal,
+      signal: caps.lifecycle.use.signal,
     });
-    caps.provide(publish, service);
+    caps.provide.use(publish, service);
     // sticky 事件覆盖热启用；回调只开后台任务，不让慢审核阻塞应用启动屏障。
-    caps.events.on('app:started', () => {
+    caps.events.use.on('app:started', () => {
       notices.open();
       driver.start();
     });

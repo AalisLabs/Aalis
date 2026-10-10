@@ -6,6 +6,7 @@ import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { type App, appService, config, definePlugin, pluginsService, services } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
@@ -79,7 +80,7 @@ async function boot(
       name,
       configSchema,
       uses: { config },
-      apply: caps => apply(caps.config as Record<string, unknown>),
+      apply: caps => apply(caps.config.use as Record<string, unknown>),
     }),
   );
   await app.plugins.idle();
@@ -89,12 +90,12 @@ async function boot(
     expressApp,
     {
       app: bound.app,
-      source: { current: undefined },
+      source: ref(),
       plugins: bound.plugins,
       hostConfig: bound.hostConfig,
-      tools: { current: undefined },
-      commands: { current: undefined },
-      services: bound.services,
+      tools: ref(),
+      commands: ref(),
+      services: bound.services.use,
       self: 'zz-webui',
       versions: () => () => undefined,
     },

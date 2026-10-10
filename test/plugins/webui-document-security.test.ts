@@ -35,7 +35,7 @@ describe('WebUI 的文档级安全', () => {
     port = await freePort();
     app = new App({ name: 'document security test', logLevel: 'error' });
     provideHostPaths(app, base);
-    app.bind({ provide }).provide(webuiClient, { getClientDir: () => dist });
+    app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => dist });
     await app.pluginAll([
       { definition: storageLocalPlugin, config: {} },
       {

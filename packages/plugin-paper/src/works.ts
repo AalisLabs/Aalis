@@ -13,7 +13,7 @@ import {
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import { artifactUri, EXTENSIONS } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { rawDeliveryAllowed } from './deliver.js';
@@ -25,8 +25,8 @@ interface WorksDeps {
   producer: string;
   signal: AbortSignal;
   tools: BoundTools;
-  sessionManager: ServiceRef<SessionManagerService>;
-  publish: ServiceRef<PublishService>;
+  sessionManager: ServiceSelection<SessionManagerService>;
+  publish: ServiceSelection<PublishService>;
   storage: StorageService;
   ledger: LedgerStore;
   cfg: PaperConfig;
@@ -129,8 +129,8 @@ export function registerWorksTools(deps: WorksDeps): void {
     const entered = await enterPaperRoom(deps, ctx, 'initiate');
     if (deps.signal.aborted) return fail('白纸已停止');
     if ('refused' in entered) return fail(entered.refused);
-    const service = deps.publish.current;
-    if (!service) return fail('作品发布服务不可用');
+    if (!deps.publish.present) return fail('作品发布服务不可用');
+    const service = deps.publish.use;
     try {
       const spec = specOf(deps.cfg, entered.paper.paperId);
       const listed = allowedSurfaces(service, entered.paper.paperId);
@@ -159,8 +159,11 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (deps.signal.aborted) return fail('白纸已停止');
     if ('refused' in entered) return fail(entered.refused);
     if (ledger.failure) return fail('白纸账本读取失败，等 owner 处理');
-    const service = deps.publish.current;
-    if (!service) return fail('作品发布服务不可用');
+    // 固定这一次提名用的那一家：途中换了人就请对方重试
+    const publisher = deps.publish.list().find(p => p.selected);
+    if (!publisher) return fail('作品发布服务不可用');
+    const service = publisher.use;
+    const switched = () => deps.publish.list().find(p => p.selected)?.id !== publisher.id;
     const spec = specOf(deps.cfg, entered.paper.paperId);
     const allowed = spec?.publishTargets ?? [];
     if (allowed.length === 0) return fail('这块白纸未获准发布作品');
@@ -289,7 +292,7 @@ export function registerWorksTools(deps: WorksDeps): void {
       return queued('读取成品失败，等 owner 检查白纸存储');
     }
 
-    if (deps.publish.current !== service || !specOf(deps.cfg, task.paperId)?.publishTargets.includes(target)) {
+    if (switched() || !specOf(deps.cfg, task.paperId)?.publishTargets.includes(target)) {
       return fail('发布目标状态已变化，请重试');
     }
     if (repair && (task.publication !== repair || task.state !== 'done' || task.artifactsCleared)) {
@@ -315,7 +318,7 @@ export function registerWorksTools(deps: WorksDeps): void {
         files,
         cover,
       });
-      if (deps.publish.current !== service || task.state !== 'done' || task.artifactsCleared) {
+      if (switched() || task.state !== 'done' || task.artifactsCleared) {
         return fail('任务或发布服务状态已变化，请稍后重试');
       }
       if ('refused' in result) {
@@ -375,10 +378,10 @@ export function registerWorksTools(deps: WorksDeps): void {
 
   async function takedown(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
     if (deps.signal.aborted) return fail('白纸已停止');
-    const refused = checkEligibility(deps.sessionManager.require(), ctx, 'use');
+    const refused = checkEligibility(deps.sessionManager.use, ctx, 'use');
     if (refused) return fail(refused);
-    const service = deps.publish.current;
-    if (!service) return fail('作品发布服务不可用');
+    if (!deps.publish.present) return fail('作品发布服务不可用');
+    const service = deps.publish.use;
     const id = workId(args.work);
     if (!id) return fail('作品编号无效');
     try {

@@ -178,7 +178,7 @@ describe('运行期刷新随 lifecycle.signal 中止', () => {
     const { app, lines } = world();
     await app.plugin(plugin, config);
     await app.plugins.idle();
-    const [entry] = app.bind({ services }).services.all(llm);
+    const [entry] = app.bind({ services }).services.use.all(llm);
     if (!entry?.instance.refresh) throw new Error(`${plugin.name} 未登记可刷新的条目`);
 
     state.armed = true;

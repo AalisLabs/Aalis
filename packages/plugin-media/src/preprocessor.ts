@@ -8,13 +8,13 @@
 
 import type { PreprocessorFn } from '@aalis/api-agent';
 import type { MediaService } from '@aalis/api-media';
-import type { Events, Logger } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 /** 预处理器用到的能力：广播 media:processed 的 events，与记失败的 logger */
 interface PreprocessorCaps {
-  events: Events;
-  logger: Logger;
+  events: ServiceSelection<Events>;
+  logger: ServiceSelection<Logger>;
 }
 
 export function buildPreprocessor(caps: PreprocessorCaps, svc: MediaService): PreprocessorFn {
@@ -24,9 +24,9 @@ export function buildPreprocessor(caps: PreprocessorCaps, svc: MediaService): Pr
 
     try {
       const report = await svc.processMessage(message);
-      await caps.events.emit('media:processed', { sessionId: message.sessionId, report });
+      await caps.events.use.emit('media:processed', { sessionId: message.sessionId, report });
     } catch (err) {
-      caps.logger.warn(`media preprocessor 失败: ${err instanceof Error ? err.message : err}`);
+      caps.logger.use.warn(`media preprocessor 失败: ${err instanceof Error ? err.message : err}`);
     }
     return next();
   };

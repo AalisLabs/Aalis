@@ -69,14 +69,14 @@ describe('标准第一方组合的关停', () => {
     const host = app.bind({ hooks, agent: agentService, sessionManager });
     const order: string[] = [];
     let smLiveAtAbort = false;
-    host.hooks.middleware('agent:turn:after', async (data, next) => {
+    host.hooks.use.middleware('agent:turn:after', async (data, next) => {
       await next();
       if (data.outcome !== 'aborted') return;
-      smLiveAtAbort = host.sessionManager.current !== undefined;
+      smLiveAtAbort = host.sessionManager.present;
       order.push(smLiveAtAbort ? 'abort:sm-live' : 'abort:sm-dead');
     });
 
-    const turn = host.agent.require().handleMessage({
+    const turn = host.agent.use.handleMessage({
       content: 'in-flight',
       sessionId: 'fp:stop-abort',
       platform: 'test',

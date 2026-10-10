@@ -19,7 +19,7 @@ import type {
 import type { MemoryService } from '@aalis/api-memory';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import { AttachmentRefKind, formatAttachmentRef } from '@aalis/schema-message';
 
@@ -70,11 +70,11 @@ type ImageDescriber = MediaProcessor & Required<Pick<MediaProcessor, 'describe'>
  * 解析本会话主模型；memory 供识别上下文取历史与发送者画像。四者都可缺席（各自路径降级）。
  */
 export interface MediaServiceCaps {
-  logger: Logger;
-  llm: ServiceRef<LLMModel>;
-  asr: ServiceRef<ASRService>;
-  sessionManager: ServiceRef<SessionManagerService>;
-  memory: ServiceRef<MemoryService>;
+  logger: ServiceSelection<Logger>;
+  llm: ServiceSelection<LLMModel>;
+  asr: ServiceSelection<ASRService>;
+  sessionManager: ServiceSelection<SessionManagerService>;
+  memory: ServiceSelection<MemoryService>;
 }
 
 export interface MediaConfigResolved {
@@ -145,7 +145,7 @@ export class MediaServiceImpl implements MediaService {
     private readonly caps: MediaServiceCaps,
     private readonly cfg: MediaConfigResolved,
   ) {
-    this.logger = caps.logger;
+    this.logger = caps.logger.use;
   }
 
   /** 识别上下文的能力切片（memory 可能缺席，失败一律降级为无上下文） */
@@ -171,13 +171,13 @@ export class MediaServiceImpl implements MediaService {
    * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务。
    */
   private asrProcessors(): MediaProcessor[] {
-    return this.caps.asr.all().map(e => {
-      const asr = e.instance;
-      const name = `asr:${e.contextId}`;
+    return this.caps.asr.list().map(e => {
+      const asr = e.use;
+      const name = `asr:${e.id}`;
       return {
         name,
         capabilities: ['audio'],
-        displayName: `Whisper/ASR · ${e.label ?? e.contextId}`,
+        displayName: `Whisper/ASR · ${e.label ?? e.id}`,
         priority: e.priority,
         // asr-api 的 meta.processor 可选、media-api 必填 → 显式映射并盖上桥接器名。
         transcribe: async input => {
@@ -557,10 +557,10 @@ export class MediaServiceImpl implements MediaService {
    */
   resolveDelivery(sessionId?: string, platform?: string): 'passthrough' | 'describe' {
     if (this.cfg.vision.delivery !== 'auto') return this.cfg.vision.delivery;
-    const sm = this.caps.sessionManager.current;
+    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
     const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
     const entry = resolveLLMModel(this.caps.llm, ref?.provider && ref?.model ? ref : undefined, ['chat']);
-    return entry?.instance.capabilities.includes(LLMCapabilities.Vision) ? 'passthrough' : 'describe';
+    return entry?.use.capabilities.includes(LLMCapabilities.Vision) ? 'passthrough' : 'describe';
   }
 
   /**
@@ -709,22 +709,25 @@ export class MediaServiceImpl implements MediaService {
    * prefer 留空时 pickProcessor 就取这个先后，偏好切换也得让缓存重建。
    */
   private refreshLLMProcessors(): MediaProcessor[] {
-    const all = this.caps.llm.all();
-    const sig = all.map(e => `${e.contextId}:${e.instance.capabilities.join(',')}`).join('|');
+    const all = this.caps.llm.list();
+    const sig = all.map(e => `${e.id}:${e.use.capabilities.join(',')}`).join('|');
     if (this.llmCache?.signature === sig) return this.llmCache.processors;
-    const processors = scanLLMProcessors(this.caps, {
-      vision: {
-        prompt: this.cfg.vision.prompt,
-        batchPrompt: this.cfg.vision.batchPrompt,
-        maxTokens: this.cfg.vision.maxTokens,
-        think: this.cfg.vision.think,
+    const processors = scanLLMProcessors(
+      { llm: this.caps.llm, logger: this.logger },
+      {
+        vision: {
+          prompt: this.cfg.vision.prompt,
+          batchPrompt: this.cfg.vision.batchPrompt,
+          maxTokens: this.cfg.vision.maxTokens,
+          think: this.cfg.vision.think,
+        },
+        audio: {
+          prompt: this.cfg.audio.prompt,
+          maxTokens: this.cfg.audio.maxTokens,
+          think: this.cfg.audio.think,
+        },
       },
-      audio: {
-        prompt: this.cfg.audio.prompt,
-        maxTokens: this.cfg.audio.maxTokens,
-        think: this.cfg.audio.think,
-      },
-    });
+    );
     this.llmCache = { processors, signature: sig };
     return processors;
   }

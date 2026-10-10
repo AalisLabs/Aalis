@@ -6,7 +6,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { publish } from '../../packages/api-publish/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, provide } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import review from '../../packages/plugin-publish-review/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
@@ -38,9 +38,9 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
   apps.push({ app, pages });
   await registerHubs(app);
   const host = app.bind({ provide, hooks, gateway, publish });
-  host.provide(agent, {
+  host.provide.use(agent, {
     async handleMessage(message) {
-      await host.gateway.require().dispatchOutbound({
+      await host.gateway.use.dispatchOutbound({
         content: '作品通知已收到',
         sessionId: message.sessionId,
         platform: message.platform,
@@ -64,10 +64,10 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
       writable: true,
       deletable: true,
     }));
-  host.provide(storage, memory);
-  host.provide(webuiServer, pages.service);
+  host.provide.use(storage, memory);
+  host.provide.use(webuiServer, pages.service);
   const checks = new Map<string, CheckSpec>();
-  host.provide(doctor, {
+  host.provide.use(doctor, {
     registerCheck: spec => {
       checks.set(spec.id, spec);
       return () => {
@@ -79,7 +79,7 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
     listChecks: () => [...checks.values()].map(spec => ({ id: spec.id, category: spec.category })),
   });
   const messages: unknown[] = [];
-  host.hooks.middleware('inbound:dispatch', async (data, next) => {
+  host.hooks.use.middleware('inbound:dispatch', async (data, next) => {
     messages.push(data.message);
     await next();
   });
@@ -87,7 +87,7 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
   await app.plugin(review, { manualReview, reviewEnabled });
   await app.plugins.idle();
   expect(app.plugins.getPlugin(review.name)?.state).toBe('active');
-  const service = host.publish.require();
+  const service = host.publish.use;
   const surface = service.attachSurface({
     name: 'works',
     urlFor: id => `https://works.invalid/w/${id}/`,
@@ -120,11 +120,13 @@ describe('审核插件实际入口', () => {
     expect(h.messages[0]).toMatchObject({ source: `publish:${result.id}`, hostNotice: { kind: 'publish-review' } });
     expect((h.messages[0] as IncomingMessage).hostNotice?.untrusted).toContain('作品');
     expect(h.messages[0]).not.toHaveProperty('callerUserId');
+    // 停用之前取下提供者实例本身：停用后业务句柄打不到它，要看的是这个实例自己拒收
+    const stopped = h.app.bind({ services }).services.use.get(publish)!;
     await h.app.plugins.disable(review.name);
-    expect(h.host.publish.current).toBeUndefined();
+    expect(h.host.publish.present).toBe(false);
     expect(h.pages.pages()).toEqual([]);
     expect(h.pages.notices()).toEqual([]);
-    expect(await h.service.nominate(nomination())).toHaveProperty('refused');
+    expect(await stopped.nominate(nomination())).toHaveProperty('refused');
   });
   it('标题里的地址和指令仅进入非可信段，宿主正文只有已核验地址', async () => {
     const h = await setup(false);

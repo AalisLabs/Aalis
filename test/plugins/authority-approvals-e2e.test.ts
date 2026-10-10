@@ -54,7 +54,7 @@ const surfacePlugin = (out: { surface?: ApprovalSurface }) =>
     name: '@test/webui-surface',
     uses: { approvals: optional(approvals) },
     apply: ({ approvals }) => {
-      out.surface = approvals.registerSurface('webui');
+      out.surface = approvals.use.registerSurface('webui');
     },
   });
 
@@ -74,7 +74,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   homes.push(home);
   const { state } = provideHostPaths(app, home);
   const host = app.bind({ provide, events, tools, sessionManager, sessionProtocol });
-  host.provide(storage, memoryStorage(new Map()));
+  host.provide.use(storage, memoryStorage(new Map()));
   await app.plugin(toolsPlugin, {});
   await app.plugin(authorityPlugin, {});
   const out: { surface?: ApprovalSurface } = {};
@@ -93,7 +93,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
 
   /** 探针每次执行收到的参数 */
   const received: Array<Record<string, unknown>> = [];
-  host.tools.register({
+  host.tools.use.register({
     confirm,
     // 卡上的事实按声明的展示种类取：探针把 command 声明成命令
     display: { kind: 'command', fields: { command: 'command' } },
@@ -113,12 +113,12 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
 
   let conn: ReturnType<typeof client> | undefined;
   if (!withoutApprovals) {
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     // owner 自己的会话：与 WebUI 新建的一样带创建来源
     await sm.ensureSession(MINE, { name: '我的' }, { createdFrom: 'webui' });
-    for (const id of [ROOM, OWNER_DM, MEMBER_DM]) await recordRoom(host.events, id);
+    for (const id of [ROOM, OWNER_DM, MEMBER_DM]) await recordRoom(host.events.use, id);
     if (!out.surface) throw new Error('审批面没登记上');
-    conn = client(host.sessionProtocol.require(), { identity: OWNER, surface: out.surface });
+    conn = client(host.sessionProtocol.use, { identity: OWNER, surface: out.surface });
     await conn.init();
     await conn.call('presence/update', { active: true });
   }
@@ -132,7 +132,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   ) => {
     seq++;
     const full: ToolCallContext = { ...ctx, turnId: `turn-${seq}`, callId: `call-${seq}`, signal };
-    return { ctx: full, result: host.tools.require().execute(PROBE, args, full) };
+    return { ctx: full, result: host.tools.use.execute(PROBE, args, full) };
   };
   const pushed = (): Approval[] => conn?.notifications('approval/requested').map(p => p.approval) ?? [];
   /** 等第 n 张卡推到 WebUI */

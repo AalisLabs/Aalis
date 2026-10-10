@@ -55,8 +55,8 @@ interface Run {
 }
 
 /** 登记可转后台的测试工具：每次调用挂着，直到 finish 或这次调用的中止信号 */
-function registerBackgroundTool(host: { tools: { register(tool: never): unknown } }, runs: Run[]): void {
-  host.tools.register({
+function registerBackgroundTool(host: { tools: { use: { register(tool: never): unknown } } }, runs: Run[]): void {
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -90,7 +90,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugins.idle();
   const host = app.bind({ provide, events, hooks, tools, backgroundTasks, sessionManager, sessionProtocol });
-  host.provide(storage, memoryStorage(new Map()));
+  host.provide.use(storage, memoryStorage(new Map()));
 
   const aborted: string[] = [];
   /** 各会话挂着的回合：agent.abort 以 aborted 结束它们 */
@@ -105,7 +105,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
       return ends.length > 0;
     },
   };
-  host.provide(agent, agentDouble);
+  host.provide.use(agent, agentDouble);
   if (registry) await app.plugin(toolsPlugin, {});
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
@@ -114,7 +114,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   const runs: Run[] = [];
   if (registry) registerBackgroundTool(host, runs);
 
@@ -122,7 +122,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
   /** 在会话里起一次测试工具，带 runInBackground 立即转后台；回任务 id */
   const start = async (sessionId: string, command = 'npm run dev') => {
     calls++;
-    const result = await host.tools.require().execute(
+    const result = await host.tools.use.execute(
       BG,
       { command, runInBackground: true },
       {
@@ -149,9 +149,9 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
       end = resolve;
     });
     hanging.set(sessionId, [...(hanging.get(sessionId) ?? []), () => end({ outcome: 'aborted' })]);
-    const done = host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    const done = host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
       const { outcome, error } = await ended;
-      await host.hooks.run('agent:turn:after', {
+      await host.hooks.use.run('agent:turn:after', {
         message,
         reply: '',
         outcome,
@@ -179,7 +179,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
     return { P: P.id, C: C.id, G: G.id, O: O.id };
   };
 
-  return { app, host, sm, runs, aborted, start, openTurn, tree, server: () => host.sessionProtocol.require() };
+  return { app, host, sm, runs, aborted, start, openTurn, tree, server: () => host.sessionProtocol.use };
 }
 
 /** 一条连接，握过手 */
@@ -356,11 +356,7 @@ describe('background/stopAll', () => {
     await child.done;
     expect(w.aborted).toContain(C);
     expect(w.aborted, '本会话自己的回合留给输入框的停止键').not.toContain(P);
-    const status = (id: string) =>
-      w.host.backgroundTasks
-        .require()
-        .list()
-        .find(task => task.id === id)?.status;
+    const status = (id: string) => w.host.backgroundTasks.use.list().find(task => task.id === id)?.status;
     expect([status(inP), status(inG), status(inO)]).toEqual(['stopped', 'stopped', 'running']);
     expect(await Promise.race([own.done.then(() => 'ended'), tick().then(() => 'running')])).toBe('running');
     await own.finish('replied');
@@ -408,7 +404,7 @@ describe('摘要里的子树字段', () => {
     const c = await connect(w.server());
     await c.call('sessions/watch', {});
     const usage = (sessionId: string, inputTokens: number, outputTokens: number) =>
-      w.host.events.emit('llm:usage', { provider: 'zz', model: 'zz', sessionId, inputTokens, outputTokens });
+      w.host.events.use.emit('llm:usage', { provider: 'zz', model: 'zz', sessionId, inputTokens, outputTokens });
 
     await usage(C, 100, 10);
     await usage(G, 5, 1);
@@ -509,21 +505,24 @@ describe('接真的 agent', () => {
     await app.plugin(agentPlugin, { systemPrompt: 'test' });
     await app.plugins.idle();
     const host = app.bind({ provide, tools, backgroundTasks, agent, sessionManager, sessionProtocol });
-    host.provide(storage, memoryStorage(new Map()));
+    host.provide.use(storage, memoryStorage(new Map()));
     const runs: Run[] = [];
     registerBackgroundTool(host, runs);
     await app.plugin(sessionManagerPlugin, {});
     await app.plugin(sessionServerPlugin, {});
     await app.plugins.idle();
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     const s = await sm.createSession({ name: 'S' });
     await sm.updateSessionTitle(s.id, 'S');
-    const c = await connect(host.sessionProtocol.require());
+    const c = await connect(host.sessionProtocol.use);
     const sub = await c.subscribe(s.id);
 
-    await host.agent
-      .require()
-      .handleMessage({ content: '起开发服务器', sessionId: s.id, platform: 'webui', userId: 'console' });
+    await host.agent.use.handleMessage({
+      content: '起开发服务器',
+      sessionId: s.id,
+      platform: 'webui',
+      userId: 'console',
+    });
     const live = c.timeline(s.id, sub).find(item => item.kind === 'tool-call');
     const [task] = (await c.call('background/list', {})).tasks;
     expect(live).toMatchObject({ name: BG, status: 'completed', taskId: task.id });

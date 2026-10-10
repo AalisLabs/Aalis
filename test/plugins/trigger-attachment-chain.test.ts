@@ -16,7 +16,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { emptyMediaCaps } from '../fixtures/service-ref.js';
+import { emptyMediaCaps, fixedRef } from '../fixtures/service-ref.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -119,21 +119,21 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
       return { descriptions: ['一只橘猫'] };
     },
   } as MediaProcessor);
-  host.provide(media, svc);
+  host.provide.use(media, svc);
 
-  const preprocess = buildPreprocessor({ events: host.events, logger: silent }, svc);
+  const preprocess = buildPreprocessor({ events: host.events, logger: fixedRef(silent) }, svc);
   const entered: IncomingMessage[] = [];
-  host.provide(agent, {
+  host.provide.use(agent, {
     async handleMessage(msg: IncomingMessage) {
       entered.push(msg);
       await preprocess(msg, async () => {
-        await host.messageArchive.require().archiveIncoming(msg);
+        await host.messageArchive.use.archiveIncoming(msg);
       });
     },
   } as never);
 
   const archived: string[] = [];
-  host.events.on('inbound:message:archived', ({ archivedMessage }) => {
+  host.events.use.on('inbound:message:archived', ({ archivedMessage }) => {
     archived.push(archivedMessage.content ?? '');
   });
 
@@ -157,11 +157,9 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
     entered,
     archived,
     decided: () => sidecar.decided,
-    send: (msg: IncomingMessage) => host.gateway.require().ingressMessage(msg),
+    send: (msg: IncomingMessage) => host.gateway.use.ingressMessage(msg),
     reply: () =>
-      host.gateway
-        .require()
-        .dispatchOutbound({ content: '好的', sessionId: SESSION, platform: 'onebot', source: 'agent' }),
+      host.gateway.use.dispatchOutbound({ content: '好的', sessionId: SESSION, platform: 'onebot', source: 'agent' }),
   };
 }
 

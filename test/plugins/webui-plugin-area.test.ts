@@ -22,6 +22,7 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import type { ConfigProvider } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort, waitListening } from '../helpers/net.js';
@@ -62,9 +63,10 @@ function world(
         expressApp,
         {
           ...caps,
-          source: { current: undefined },
-          tools: { current: undefined },
-          commands: { current: undefined },
+          services: caps.services.use,
+          source: ref(),
+          tools: ref(),
+          commands: ref(),
           self: SELF,
           versions: () => name => versions[name],
         },
@@ -125,7 +127,7 @@ describe('插件列表', () => {
         definePlugin({
           name: 'zz-slowstop',
           uses: { lifecycle },
-          apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.onDispose(() => gate.promise)),
+          apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.use.onDispose(() => gate.promise)),
         }),
       );
       await w.app.plugins.bounce('zz-slowstop');
@@ -147,7 +149,7 @@ describe('插件列表', () => {
       waiting: [],
       unconfigured: [],
     });
-    w.app.bind({ provide }).provide(store, {});
+    w.app.bind({ provide }).provide.use(store, {});
     await w.app.plugins.idle();
     expect((await w.rows()).find(p => p.instanceId === 'zz-waiting')).toMatchObject({
       state: 'active',

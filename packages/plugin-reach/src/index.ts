@@ -17,7 +17,7 @@ import {
   withRealRoots,
 } from '@aalis/api-reach';
 import { placePaperId, roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { issueCredential } from './credential.js';
@@ -71,15 +71,17 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { events, lifecycle, logger } = caps;
-  const sm = caps.sessionManager.require();
+  const sm = caps.sessionManager.use;
   const lookup = (id: string) => sm.getSession(id);
-  const isOwner = (platform: string, userId: string) => caps.authority.current?.isOwner(platform, userId) ?? false;
+  const isOwner = (platform: string, userId: string) =>
+    caps.authority.present ? caps.authority.use.isOwner(platform, userId) : false;
 
   // 清单与路径比较一律用真实路径：安装集可能经符号链接给出，用户家目录同理；清单里链接出去的根按真实路径补一份
-  const given = caps.paths.require();
+  const given = caps.paths.use;
   const app = await realpath(given.app);
   const userHome = await realpath(homedir());
-  const paths: HostPaths = { ...given, app };
+  // 业务句柄是转发句柄，展开得不到成员：在它之上只换掉 app，其余沿原型链读
+  const paths: HostPaths = Object.assign(Object.create(given) as HostPaths, { app });
   const declared = protectedLists({
     paths,
     userHome,
@@ -88,10 +90,10 @@ async function run(caps: Caps): Promise<void> {
     codeDirs: await codeDirsOf(app),
     entry: await entryOf(),
   });
-  const realRoots = await realRootsOf(declared, logger);
+  const realRoots = await realRootsOf(declared, logger.use);
   const lists = withRealRoots(declared, root => realRoots.get(root));
-  const provenance = await openProvenance(createStorageGateway(caps.storage), logger);
-  const loginEnv = loginEnvs({ process: caps.process, userHome, logger });
+  const provenance = await openProvenance(caps.storage.use, logger.use);
+  const loginEnv = loginEnvs({ process: caps.process, userHome, logger: logger.use });
   /** 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名把 `:` 换成 `-`（与白纸插件同一写法） */
   const paperOf = (sessionId: string) =>
     join(paths.stage.paper, placePaperId(sm.placeOf(sessionId).key).replace(':', '-'));
@@ -134,7 +136,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   async function principalOf(call: OriginTurn): Promise<Principal> {
-    const origin = caps.authority.current?.originOf(call);
+    const origin = caps.authority.present ? caps.authority.use.originOf(call) : undefined;
     if (origin === 'subtask') {
       const parentId = sm.getSession(call.sessionId)?.parentId;
       return parentId && spawnedBy.get(call.sessionId) === 'owner'
@@ -167,18 +169,18 @@ async function run(caps: Caps): Promise<void> {
   };
 
   // 子任务插件在父会话的一轮里发出任务消息（source 为 subtask）：那一轮的主体就是这条消息之后的子任务回合的主体
-  events.on('inbound:message', (msg: IncomingMessage) => {
+  events.use.on('inbound:message', (msg: IncomingMessage) => {
     if (msg.source !== 'subtask' || !msg.sessionId) return;
     const parentId = sm.getSession(msg.sessionId)?.parentId;
     spawnedBy.set(msg.sessionId, (parentId && lastPrincipal.get(parentId)) || 'other');
   });
   // 删会话时在后台删它的临时区，不拖住删会话；删不掉记 warn
-  events.on('session:deleted', sessionId => {
+  events.use.on('session:deleted', sessionId => {
     lastPrincipal.delete(sessionId);
     spawnedBy.delete(sessionId);
     const dir = sessionTmpOf(paths.tmp, sessionId);
     const done = rm(dir, { recursive: true, force: true })
-      .catch(err => logger.warn(`删不掉会话 ${sessionId} 的临时区 ${dir}:`, err))
+      .catch(err => logger.use.warn(`删不掉会话 ${sessionId} 的临时区 ${dir}:`, err))
       .finally(() => {
         if (deleting.get(sessionId) === done) deleting.delete(sessionId);
       });
@@ -189,20 +191,20 @@ async function run(caps: Caps): Promise<void> {
   let sweeping = Promise.resolve();
   const sweep = () => {
     sweeping = sweeping
-      .then(() => sweepSessionTmp(paths.tmp, lookup, Date.now(), logger))
+      .then(() => sweepSessionTmp(paths.tmp, lookup, Date.now(), logger.use))
       .then(removed => {
-        if (removed.length > 0) logger.debug(`清掉 ${removed.length} 个会话的临时区`);
+        if (removed.length > 0) logger.use.debug(`清掉 ${removed.length} 个会话的临时区`);
       })
-      .catch(err => logger.warn('清扫本会话临时区失败:', err));
+      .catch(err => logger.use.warn('清扫本会话临时区失败:', err));
   };
   sweep();
   const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS);
   sweepTimer.unref();
 
-  lifecycle.onDispose(async () => {
+  lifecycle.use.onDispose(async () => {
     clearInterval(sweepTimer);
     await Promise.all([sweeping, ...deleting.values(), provenance.flushed()]);
   });
 
-  caps.provide(reach, service);
+  caps.provide.use(reach, service);
 }

@@ -5,7 +5,7 @@
 // 副作用引入：激活 api-agent 对 @aalis/api-hooks 的 HookContextMap 的 'agent:turn:after' 增广
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { Hooks } from '@aalis/api-hooks';
-import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
+import type { ToolCallContext, ToolService } from '@aalis/api-tools';
 import type {
   AgentNodeSpec,
   NodeRunInfo,
@@ -15,7 +15,7 @@ import type {
   WaitNodeSpec,
   WorkflowDef,
 } from '@aalis/api-workflow';
-import type { Events, Logger } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const MAX_OUTPUT_PREVIEW = 1000;
@@ -25,7 +25,7 @@ const MAX_OUTPUT_PREVIEW = 1000;
  * agent 节点经钩子捕获本轮回复。引擎不持有插件激活本身，只收这几样。
  */
 export interface EngineCaps {
-  tools: BoundTools;
+  tools: Pick<ServiceSelection<ToolService>, 'present' | 'use'>;
   events: Events;
   hooks: Hooks;
   logger: Logger;
@@ -151,8 +151,8 @@ interface ExecCtx extends EngineCaps {
 }
 
 async function execTool(node: ToolNodeSpec, ec: ExecCtx): Promise<string> {
-  const service = ec.tools.current;
-  if (!service) throw new Error("'tools' 服务不可用");
+  if (!ec.tools.present) throw new Error("'tools' 服务不可用");
+  const service = ec.tools.use;
   const args = (interpolateValue(node.args ?? {}, ec.vars, ec.outputs) ?? {}) as Record<string, unknown>;
   // 工作流节点产出是文本：工具交给主模型看的图（images）没有消费者，只取 content
   return (await service.execute(node.tool, args, ec.toolCallContext)).content;

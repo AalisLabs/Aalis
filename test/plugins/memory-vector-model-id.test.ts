@@ -103,8 +103,8 @@ async function setup(opts: { modelId?: string; hits?: VectorSearchResult[]; memo
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, contributions, logger, hooks });
-  host.provide(embedding, makeEmbedder(opts.modelId));
-  if (opts.memory) host.provide(memory, opts.memory);
+  host.provide.use(embedding, makeEmbedder(opts.modelId));
+  if (opts.memory) host.provide.use(memory, opts.memory);
 
   const hits = opts.hits ?? [];
   const added: Array<Record<string, unknown>> = [];
@@ -121,10 +121,10 @@ async function setup(opts: { modelId?: string; hits?: VectorSearchResult[]; memo
     async clear(): Promise<void> {},
     async save(): Promise<void> {},
   };
-  host.provide(vectorstore, store);
+  host.provide.use(vectorstore, store);
 
   const toolHandlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};
@@ -171,7 +171,7 @@ async function runClear(
   types?: string[],
 ) {
   const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 's-cur', results: [] };
-  const completed = await host.hooks.run('memory:clear', data, async () => {
+  const completed = await host.hooks.use.run('memory:clear', data, async () => {
     if (scope === 'all' && (!types || types.includes('context'))) {
       await mem.clearAll!();
       data.results.push({ source: 'memory', success: true, message: '所有消息历史和归档已清空' });
@@ -184,7 +184,7 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
   it('索引：新写入的 user 与 assistant 向量都带提供者的 modelId；提供者未声明时不带该键', async () => {
     for (const modelId of ['test:A', undefined]) {
       const { host, added } = await setup({ modelId });
-      const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+      const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
       await emitLoose('inbound:message:archived', {
         sessionId: 's1',
         incoming: { content: '对方的话', sessionId: 's1', platform: 'onebot', userId: 'u1' },
@@ -292,7 +292,7 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
 
     // 更高优先级的提供者接手，之后算查询向量的是 test:C。
     // 同一上下文有意再登记一个提供者，显式 entryId 免去重复 provide 的告警
-    host.provide(embedding, makeEmbedder('test:C'), { priority: 10, entryId: 'root/zz-embed-c' });
+    host.provide.use(embedding, makeEmbedder('test:C'), { priority: 10, entryId: 'root/zz-embed-c' });
     for (const text of [await injected(), await recalled(), await injected()]) {
       expect(text).toContain('丙模型记忆');
       expect(text).not.toContain('乙模型记忆');
@@ -315,7 +315,7 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
     expect(warns).toEqual([]);
 
     const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
-    host.provide(memory, mem.service);
+    host.provide.use(memory, mem.service);
     const after = await injected();
     expect(after).toContain('新模型记忆');
     expect(after).not.toContain('存量记忆');

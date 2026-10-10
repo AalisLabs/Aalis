@@ -61,7 +61,7 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
     dir = mkdtempSync(join(tmpdir(), 'aalis-flat-'));
     app = new App({ name: 'T', logLevel: 'error' });
     host = app.bind(hostUses);
-    host.provide(
+    host.provide.use(
       storage,
       makeStorage(() => dir),
     );
@@ -75,7 +75,7 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
   async function loadFlat(): Promise<VectorStoreService> {
     await app.plugin(vectorstoreFlat, { path: 'ws:/vectorstore' });
     await app.plugins.idle();
-    const store = host.services.get(vectorstore);
+    const store = host.services.use.get(vectorstore);
     if (!store) throw new Error('vectorstore 服务未就绪');
     return store;
   }
@@ -182,11 +182,11 @@ describe('plugin-vectorstore-flat 的 storage 依赖（拓扑序）', () => {
       provides: [storage],
       uses: { provide, lifecycle },
       apply(caps) {
-        caps.provide(
+        caps.provide.use(
           storage,
           makeStorage(() => dir, state),
         );
-        caps.lifecycle.onDispose(() => {
+        caps.lifecycle.use.onDispose(() => {
           state.closed = true;
         }, 'test-storage:close');
       },
@@ -195,12 +195,12 @@ describe('plugin-vectorstore-flat 的 storage 依赖（拓扑序）', () => {
     // 注册序刻意「消费者先、提供者后」：没有 required 边时停机会按注册序反向关，
     // 即先关 storage 再关 flat，落盘写到已关停的 storage 上。
     await app.plugins.register(vectorstoreFlat, { path: 'ws:/vectorstore' });
-    expect(host.services.get(vectorstore), 'storage 缺位时 flat 不该激活').toBeUndefined();
+    expect(host.services.use.get(vectorstore), 'storage 缺位时 flat 不该激活').toBeUndefined();
 
     await app.plugins.register(storagePlugin);
     await app.plugins.idle();
 
-    const store = host.services.get(vectorstore);
+    const store = host.services.use.get(vectorstore);
     expect(store, 'storage 就绪后 flat 应被激活').toBeDefined();
     await store!.add([1, 0, 0], { id: 'topo' });
 

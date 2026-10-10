@@ -59,7 +59,7 @@ async function withEngine(startWall: number, fn: (h: Harness) => Promise<void> |
   try {
     await fn({
       app,
-      engine: host.services.get(cronEngine) as CronEngine,
+      engine: host.services.use.get(cronEngine) as CronEngine,
       setWall,
       fireTickAt(ms) {
         setWall(ms);
@@ -182,10 +182,10 @@ describe('cron-engine 整分钟 tick', () => {
       // 根 required 绑定 cronEngine：根的收尾排在 cron-engine 收尾之后、撤回之前，窗口里 signal 已断、清理段未跑
       const host = app.bind({ cronEngine, lifecycle });
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
-      host.cronEngine.require().subscribe('* * * * *', () => {});
+      host.cronEngine.use.subscribe('* * * * *', () => {});
       expect(vi.getTimerCount(), '订阅起了主循环').toBe(1);
       let pending = -1;
-      host.lifecycle.onDrain(() => {
+      host.lifecycle.use.onDrain(() => {
         vi.runOnlyPendingTimers();
         pending = vi.getTimerCount();
       });

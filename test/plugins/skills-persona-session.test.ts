@@ -50,9 +50,9 @@ async function setup() {
   });
   apps.push(app);
   provideHostPaths(app, base);
-  host.provide(persona, personaService);
+  host.provide.use(persona, personaService);
   const handlers = new Map<string, RegisteredTool['handler']>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: RegisteredTool) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => {};
@@ -64,7 +64,7 @@ async function setup() {
   });
   await app.plugin(skillsPlugin, { skillsUri: 'store:/skills' });
   await app.plugins.idle();
-  const service = host.services.get(skills);
+  const service = host.services.use.get(skills);
   if (!service) throw new Error('plugin-skills 未激活');
   await service.rescan();
   const call = async (name: string, args: Record<string, unknown>, sessionId: string, platform: string) => {
@@ -84,7 +84,10 @@ async function setup() {
   };
   /** 这个会话收到一条消息：触发词命中的技能自动激活，返回这个会话已激活的技能 */
   const say = async (sessionId: string, platform: string, content: string) => {
-    await caps.hooks.run('agent:input:before', { message: { sessionId, platform, content }, metadata: {} } as never);
+    await caps.hooks.use.run('agent:input:before', {
+      message: { sessionId, platform, content },
+      metadata: {},
+    } as never);
     return service.getLoadedSkills(sessionId);
   };
   return { sm, call, discovery, say };

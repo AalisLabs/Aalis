@@ -150,12 +150,12 @@ describe('没有能看图的模型', () => {
     await app.plugins.idle();
     const host = app.bind({ provide, messageArchive });
     const dataRoot = { name: 'data', kind: 'data', browsable: true, readable: true, writable: true, deletable: true };
-    host.provide(storage, { listRoots: () => [dataRoot] } as unknown as StorageService);
-    host.provide(media, new MediaServiceImpl(emptyMediaCaps(logger), cfg(true)));
+    host.provide.use(storage, { listRoots: () => [dataRoot] } as unknown as StorageService);
+    host.provide.use(media, new MediaServiceImpl(emptyMediaCaps(logger), cfg(true)));
 
-    const { message } = await host.messageArchive
-      .require()
-      .archiveIncoming(webui([{ kind: 'image', data: png('c1') }], '看看这个'));
+    const { message } = await host.messageArchive.use.archiveIncoming(
+      webui([{ kind: 'image', data: png('c1') }], '看看这个'),
+    );
     expect(message.metadata?.[WellKnownMetadataKeys.Attachments]).toEqual([{ kind: 'image', ref: written[0] }]);
     expect(message.content?.split('\n')).toEqual(['看看这个', expect.stringMatching(LANDED), UNVIEWABLE(1)]);
   });
@@ -297,13 +297,13 @@ async function bootWithDoctor() {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, services });
-  host.provide(processService, {} as never);
-  host.provide(storage, store);
+  host.provide.use(processService, {} as never);
+  host.provide.use(storage, store);
   await app.plugins.register(doctorPlugin, {});
   await app.plugins.register(mediaPlugin, {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(mediaPlugin.name)?.state !== 'active') throw new Error('plugin-media 没有激活');
-  const service = host.services.get(doctor) as DoctorService;
+  const service = host.services.use.get(doctor) as DoctorService;
   const check = async (): Promise<CheckResult | undefined> =>
     (await service.runChecks()).checks.find(c => c.id === 'media.vision');
   return { app, check };
@@ -326,7 +326,7 @@ describe('doctor 的「识图」项', () => {
         provides: [llm],
         uses: { provide },
         apply({ provide }) {
-          provide(llm, seer(), { entryId: 'eyes/seer' });
+          provide.use(llm, seer(), { entryId: 'eyes/seer' });
         },
       }),
       {},

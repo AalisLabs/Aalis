@@ -100,14 +100,14 @@ beforeAll(async () => {
   host = app.bind(hostUses);
   handlers = {};
   pages = pageHost();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
       handlers[t.definition.function.name] = t.handler;
       return () => {};
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(webuiServer, pages.service);
+  host.provide.use(webuiServer, pages.service);
   // blockPrivate:false 才连得上本机测试服务（同时不起网络闸）
   await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false });
   await app.plugins.idle();
@@ -176,7 +176,7 @@ describe('browser_screenshot 的交付形态', () => {
   it('落盘失败：接得住图的仍拿到图（只丢 storage_uri），只读 content 的拿到明确错误而非 base64', async () => {
     const pageId = await navigate();
     // 真 storage 的写口上挂失败：落盘那一步失败，其余全真。storage-local 按根逐条提供，取登记了 tmp 根的那个
-    const storageSvc = host.services
+    const storageSvc = host.services.use
       .all(storage)
       .map(view => view.instance)
       .find(instance => instance.listRoots().some(r => r.name === 'tmp'))!;

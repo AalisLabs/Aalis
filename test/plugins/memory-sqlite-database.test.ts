@@ -62,13 +62,13 @@ async function activate(): Promise<{ app: App; mem: SQLiteMemoryService }> {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const roots = [{ name: 'data', readable: true, writable: true, deletable: true }] as unknown as StorageRootInfo[];
-  app.bind({ provide }).provide(storage, {
+  app.bind({ provide }).provide.use(storage, {
     listRoots: () => roots,
     resolveLocalPath: async () => join(dir, 'aalis.db'),
   } as unknown as StorageService);
   await app.plugins.register(memorySqlite, {});
   await app.plugins.idle();
-  const mem = app.bind({ services }).services.get(memory);
+  const mem = app.bind({ services }).services.use.get(memory);
   expect(mem).toBeInstanceOf(SQLiteMemoryService);
   return { app, mem: mem as SQLiteMemoryService };
 }

@@ -64,7 +64,7 @@ const approvalsDouble = definePlugin({
         detach() {},
       }),
     };
-    provide(approvals, service);
+    provide.use(approvals, service);
   },
 });
 
@@ -75,7 +75,7 @@ const sessionsDouble = definePlugin({
   provides: [sessionManager],
   uses: { provide },
   apply({ provide }) {
-    provide(sessionManager, {
+    provide.use(sessionManager, {
       getSession: (id: string) => (TITLES[id] ? ({ id, name: id, title: TITLES[id] } as SessionInfo) : undefined),
     } as never);
   },
@@ -86,7 +86,7 @@ const failing = definePlugin({
   name: 'zz-attention-failing',
   uses: { config },
   apply({ config: value }) {
-    if (value.ok !== true) throw new Error('缺少服务地址');
+    if (value.use.ok !== true) throw new Error('缺少服务地址');
   },
 });
 
@@ -102,8 +102,8 @@ const failingRoot = definePlugin({
   provides: [rootService],
   uses: { config, provide },
   apply({ config: value, provide }) {
-    if (value.ok !== true) throw new Error('打不开数据库');
-    provide(rootService, {});
+    if (value.use.ok !== true) throw new Error('打不开数据库');
+    provide.use(rootService, {});
   },
 });
 const middle = definePlugin({
@@ -111,7 +111,7 @@ const middle = definePlugin({
   provides: [middleService],
   uses: { provide, root: rootService },
   apply({ provide }) {
-    provide(middleService, {});
+    provide.use(middleService, {});
   },
 });
 const top = definePlugin({ name: 'zz-attention-top', uses: { middle: middleService }, apply() {} });
@@ -122,7 +122,7 @@ const unconfigured = definePlugin({
   configSchema: { apiKey: { type: 'string', label: 'API Key', required: true } },
   uses: { config },
   apply({ config: value }) {
-    if (!value.apiKey) throw new Error('缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效');
+    if (!value.use.apiKey) throw new Error('缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效');
   },
 });
 
@@ -134,7 +134,7 @@ function slowProvider(gate: Promise<void>) {
     provides: [slowService],
     uses: { provide },
     async apply({ provide }) {
-      provide(slowService, {});
+      provide.use(slowService, {});
       await gate;
     },
   });
@@ -200,7 +200,7 @@ async function start(extra: Parameters<App['plugin']>[0][] = [], options: { slow
     await vi.waitFor(() => expect(pushes()).toBe(before + 1));
     return attention();
   };
-  return { app, received, pushes, attention, row, next, emit: app.bind({ events }).events.emit };
+  return { app, received, pushes, attention, row, next, emit: app.bind({ events }).events.use.emit };
 }
 
 describe('「需要处理」的读口与 attention.changed', () => {
@@ -255,7 +255,7 @@ describe('「需要处理」的读口与 attention.changed', () => {
     await app.plugins.updateConfig(failing.name, { ok: true });
     expect(await next(0)).toEqual([needyItem]);
 
-    app.bind({ provide }).provide(absent, {});
+    app.bind({ provide }).provide.use(absent, {});
     expect(await next(1)).toEqual([]);
 
     await app.plugins.updateConfig(failing.name, {});
@@ -368,7 +368,7 @@ describe('「需要处理」的读口与 attention.changed', () => {
 
   it('提示登记、替换与撤回各推一次，带所属实例；审批在前，其后是插件故障与提示', async () => {
     const { app, pushes, next, emit } = await start([approvalsDouble, failing]);
-    const service = app.bind({ services }).services.get(webuiServer)!;
+    const service = app.bind({ services }).services.use.get(webuiServer)!;
 
     const off = service.addNotice(
       { id: 'pending', level: 'action', title: '1 件作品待裁决', open: 'config' },

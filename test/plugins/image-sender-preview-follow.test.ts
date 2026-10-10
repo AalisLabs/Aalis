@@ -20,7 +20,7 @@ describe('preview_image 跟随 media 在场', () => {
     registered.clear();
     app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, events });
-    host.provide(tools, {
+    host.provide.use(tools, {
       register: (t: { definition: { function: { name: string } } }) => {
         const name = t.definition.function.name;
         registered.add(name);
@@ -28,7 +28,7 @@ describe('preview_image 跟随 media 在场', () => {
       },
       registerGroup: () => () => {},
     } as never);
-    provideMedia = () => host.provide(media, { describeImage: async () => '一只猫' } as never);
+    provideMedia = () => host.provide.use(media, { describeImage: async () => '一只猫' } as never);
     await app.plugins.register(imageSenderPlugin, {});
     await app.plugins.idle();
   });

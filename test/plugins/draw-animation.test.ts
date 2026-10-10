@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createProcessGateway, processService } from '../../packages/api-process/src/index.js';
-import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
+import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import { ffmpegEncodeArgs, ffmpegPaletteArgs, framesToGif } from '../../packages/plugin-draw/src/gif.js';
@@ -31,7 +31,7 @@ type ToolHandler = (args: Record<string, unknown>, callCtx: { sessionId: string 
 /** 宿主侧最小 tools 提供者：把插件登记的 handler 交到测试手上。 */
 function provideCapturingTools(app: App): Record<string, ToolHandler> {
   const handlers: Record<string, ToolHandler> = {};
-  app.bind({ provide }).provide(tools, {
+  app.bind({ provide }).provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
       const name = tool.definition.function.name;
       handlers[name] = tool.handler;
@@ -94,7 +94,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
     });
     await app.plugin(processLocal);
     await app.plugins.idle();
-    storageGateway = createStorageGateway(app.bind({ storage }).storage);
+    storageGateway = app.bind({ storage }).storage.use;
   });
 
   afterEach(async () => {
@@ -122,7 +122,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
         expect(same(a.frames[i], b.frames[i]), `frame ${i}`).toBe(true);
       }
 
-      const proc = createProcessGateway(app.bind({ processService }).processService);
+      const proc = app.bind({ processService }).processService.use;
       const gif = await framesToGif(
         proc,
         storageGateway,
@@ -149,7 +149,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
       provideHostPaths(app2, base2);
       await app2.plugin(storageLocal, {});
       await app2.plugin(processLocal);
-      const storage2 = createStorageGateway(app2.bind({ storage }).storage);
+      const storage2 = app2.bind({ storage }).storage.use;
       const captured = provideCapturingTools(app2);
       await app2.plugin(drawPlugin, { idleShutdownSec: 0 });
       await app2.plugins.idle();
@@ -223,7 +223,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
       provideHostPaths(app5, base5);
       await app5.plugin(storageLocal, {});
       await app5.plugin(processLocal);
-      const storage5 = createStorageGateway(app5.bind({ storage }).storage);
+      const storage5 = app5.bind({ storage }).storage.use;
       const captured = provideCapturingTools(app5);
       await app5.plugin(drawPlugin, { idleShutdownSec: 0, scale: 2 });
       await app5.plugins.idle();

@@ -69,7 +69,7 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
     provides: [platform],
     uses: { provide },
     apply: ({ provide }) => {
-      provide(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
+      provide.use(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
     },
   });
 
@@ -79,7 +79,7 @@ const surfacePlugin = (pluginName: string, surfaceName: string, out: Record<stri
     name: pluginName,
     uses: { approvals: optional(approvals) },
     apply: ({ approvals }) => {
-      out[surfaceName] = approvals.registerSurface(surfaceName);
+      out[surfaceName] = approvals.use.registerSurface(surfaceName);
     },
   });
 
@@ -102,12 +102,12 @@ async function setup() {
   homes.push(home);
   const { state } = provideHostPaths(app, home);
   const host = app.bind({ provide, events, hooks, sessionManager, sessionProtocol, approvals, tools });
-  host.provide(storage, memoryStorage(new Map()));
-  host.provide(authority, { isOwner } as never);
+  host.provide.use(storage, memoryStorage(new Map()));
+  host.provide.use(authority, { isOwner } as never);
   // 卡上的事实按工具定义上声明的展示种类取：登记与系统工具同样声明的空工具
   await app.plugin(toolsPlugin, {});
   await app.plugins.idle();
-  declareToolSystemDisplays(host.tools);
+  declareToolSystemDisplays(host.tools.use);
   await app.plugin(adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => id.startsWith('onebot:10000:') }));
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
@@ -118,17 +118,17 @@ async function setup() {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   const mine = (await sm.createSession({ name: '我的' }, { createdFrom: 'webui' })).id;
-  await recordRoom(host.events, ROOM, '读书会');
-  await recordRoom(host.events, OWNER_DM, 'owner 私聊');
+  await recordRoom(host.events.use, ROOM, '读书会');
+  await recordRoom(host.events.use, OWNER_DM, 'owner 私聊');
 
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
 
-  const service = () => host.approvals.require();
+  const service = () => host.approvals.use;
   /** 一条 WebUI 连接：握手，active 为真时上报在场 */
   const connect = async ({ identity = OWNER, active = true }: { identity?: typeof OWNER; active?: boolean } = {}) => {
-    const c = client(host.sessionProtocol.require(), { identity, surface: surfaces.webui });
+    const c = client(host.sessionProtocol.use, { identity, surface: surfaces.webui });
     await c.init();
     if (active) await c.call('presence/update', { active: true });
     return c;
@@ -171,9 +171,9 @@ async function setup() {
     const turnId = `turn-${++turnSeq}`;
     const message = { content: '<提问>', sessionId, ...OWNER };
     const release = deferred();
-    const ended = host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, () => release.promise);
+    const ended = host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, () => release.promise);
     const tool = (phase: 'start' | 'end', callId: string, args: Record<string, unknown>, result?: string) =>
-      host.events.emit('tool:execute', {
+      host.events.use.emit('tool:execute', {
         sessionId,
         turnId,
         callId,
@@ -477,7 +477,7 @@ describe('应答', () => {
     expect((await owner.fail('approval/respond', { ...answer, approvalId: 'forged' })).data?.code).toBe('not-found');
     expect((await stranger.fail('approval/respond', answer)).data?.code).toBe('forbidden');
     // 所在审批面接不上审批服务的连接：回 unsupported
-    const detached = client(host.sessionProtocol.require(), { identity: OWNER, surface: DETACHED_SURFACE });
+    const detached = client(host.sessionProtocol.use, { identity: OWNER, surface: DETACHED_SURFACE });
     await detached.init();
     expect((await detached.fail('approval/respond', answer)).data?.code).toBe('unsupported');
     await flush();
@@ -663,7 +663,7 @@ describe('结算', () => {
   it('会话列表的推送出错（传输层发送抛错）：审批照常推出、等满时限照常结算', async () => {
     const { host, mine, connect, request, flush } = await setup();
     const c = await connect();
-    const watcher = client(host.sessionProtocol.require(), { identity: OWNER, surface: DETACHED_SURFACE });
+    const watcher = client(host.sessionProtocol.use, { identity: OWNER, surface: DETACHED_SURFACE });
     await watcher.init();
     await watcher.call('sessions/watch', {});
     watcher.frames.push = () => {
@@ -857,7 +857,7 @@ describe('审计', () => {
     vi.useRealTimers();
     await app.plugin(surfacePlugin('@test/other-surface', 'webui', other));
     await app.plugins.idle();
-    const c = client(host.sessionProtocol.require(), { identity: OWNER, surface: other.webui });
+    const c = client(host.sessionProtocol.use, { identity: OWNER, surface: other.webui });
     await c.init();
     await c.call('presence/update', { active: true });
     request(mine);
@@ -994,7 +994,7 @@ describe('会话协议上的审批', () => {
       toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
       metadata: {} as Record<string, unknown>,
     };
-    await host.hooks.run('agent:tool:after', after);
+    await host.hooks.use.run('agent:tool:after', after);
     expect(after.metadata).toEqual({ approval: { id: approval.id, ...settlement } });
     await turn.tool('end', 'call-1', { command: 'ls' }, '{"error":"需要 owner 批准的操作没有执行"}');
     expect(card(watcher.timeline(mine, sub))).toMatchObject({ status: 'denied', approvalId: approval.id, settlement });
@@ -1038,7 +1038,7 @@ describe('会话协议上的审批', () => {
       toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
       metadata: {} as Record<string, unknown>,
     };
-    await host.hooks.run('agent:tool:after', after);
+    await host.hooks.use.run('agent:tool:after', after);
     expect(after.metadata).toEqual({ approval: { id: approvalId, ...settlement } });
     await turn.tool('end', 'call-1', { command: 'ls' }, denial);
     expect(card()).toMatchObject({ status: 'denied', approvalId, settlement });
@@ -1069,8 +1069,8 @@ describe('会话协议上的审批', () => {
     const { host, mine, connect, request, flush } = await setup();
     const c = await connect();
     const seen: Array<[string, string]> = [];
-    host.events.on('approval:created', approval => void seen.push(['created', approval.state]));
-    host.events.on('approval:settled', approval => void seen.push(['settled', approval.state]));
+    host.events.use.on('approval:created', approval => void seen.push(['created', approval.state]));
+    host.events.use.on('approval:settled', approval => void seen.push(['settled', approval.state]));
     request(mine, { origin: { kind: 'autonomous', ...OWNER } });
     request(mine);
     await flush();

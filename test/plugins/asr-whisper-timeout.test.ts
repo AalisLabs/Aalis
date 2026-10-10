@@ -20,7 +20,7 @@ function makeApp(calls: Call[]) {
   const app = new App({ name: 'T', logLevel: 'error' });
   // 宿主侧按根激活取绑定接口：桩服务与真实插件经同一条发布门面进容器
   const host = app.bind({ provide, asr });
-  host.provide(processService, {
+  host.provide.use(processService, {
     execFile: async (cmd: string, _args: readonly string[], opts?: { timeout?: number }) => {
       calls.push({ cmd, timeout: opts?.timeout });
       return { stdout: '识别结果', stderr: '', code: 0 };
@@ -31,7 +31,7 @@ function makeApp(calls: Call[]) {
     },
     readExternalFile: async () => new Uint8Array(),
   } as never);
-  host.provide(storage, {
+  host.provide.use(storage, {
     listRoots: () => [{ name: 'tmp', readable: true, writable: true, deletable: true }],
     writeFile: async () => {},
     readFile: async () => {
@@ -63,7 +63,7 @@ describe('plugin-asr-whisper-cpp: 子进程必须带超时', () => {
     // 下面的断言会退化成「没人调 execFile」而恒真，故先核激活状态
     expect(app.plugins.getPlugin(whisper.name)?.state, 'whisper 插件未激活').toBe('active');
 
-    const service = host.asr.current;
+    const service = host.asr.present ? host.asr.use : undefined;
     expect(service, 'asr 服务应已注册').toBeDefined();
 
     await service!.transcribe({ attachment: { kind: 'audio', data: 'data:audio/wav;base64,AAAA' } });

@@ -424,15 +424,18 @@ declare module '@aalis/api-session-manager' {
   if (a.features.tool) {
     const handler = a.features.sessionSetting
       ? `      async handler(args, ctx) {
-        // 按这次调用所在的会话读设置项的生效值（会话自己的、平台档与全局默认逐层叠出）；哪层都没设时用默认的问候语
-        const greeting = sessionManager.current?.resolveConfig(ctx.sessionId, ctx.platform).${settingKey} ?? '你好';
+        // 按这次调用所在的会话读设置项的生效值（会话自己的、平台档与全局默认逐层叠出）；会话管理是可选依赖，先看它在不在，
+        // 不在或哪层都没设时用默认的问候语
+        const greeting =
+          (sessionManager.present ? sessionManager.use.resolveConfig(ctx.sessionId, ctx.platform).${settingKey} : undefined) ??
+          '你好';
         return \`\${greeting}, \${(args as { name: string }).name}!\`;
       },`
       : `      async handler(args) {
         return \`你好, \${(args as { name: string }).name}!\`;
       },`;
     body.push(`    // 注册 AI 可调用的工具。登记随这次激活撤回；tools 服务晚上线或换人时自动重挂
-    tools.register({
+    tools.use.register({
       // 风险档位，决定谁能经自然语言驱动它、要不要确认：只读且不涉隐私写 'safe'，任何人可用；只读但涉隐私写 'sensitive'，
       // 限有权限的用户；写、删、执行写 'dangerous'，限高权限的用户，owner 用也要确认。
       // 参见 Aalis 安全模型文档 concepts/security-model.md「插件作者怎么标操作风险」。
@@ -453,12 +456,12 @@ ${handler}
   }
   if (a.features.command) {
     body.push(`    // 注册斜杠命令
-    commands.command('hello', '示例命令').action(async () => '你好');`);
+    commands.use.command('hello', '示例命令').action(async () => '你好');`);
   }
   const pageKey = pageKeyOf(a.packageName);
   if (a.features.webui === 'declarative') {
     body.push(`    // 登记 WebUI 页面：组件、数据源与动作一次给出，出现在本插件详情里；登记随这次激活撤回
-    webui.definePage({
+    webui.use.definePage({
       key: '${pageKey}',
       title: ${JSON.stringify(a.displayName)},
       content: [
@@ -475,7 +478,7 @@ ${handler}
     body.push(`    // 登记一个自带前端的 WebUI 页面：webui/ 里的静态网页在宿主画的隔离框架里显示，只能经宿主调这里声明的数据源与
     // 动作。出现在本插件详情里；登记随这次激活撤回
     const items = ['示例条目一', '示例条目二', '示例条目三'];
-    const page = webui.definePage({
+    const page = webui.use.definePage({
       key: '${pageKey}',
       title: ${JSON.stringify(a.displayName)},
       // 宿主从这个模块往上找到插件包根，托管包根下 webui/ 里的文件
@@ -504,8 +507,8 @@ ${handler}
   }
   if (a.features.sessionSetting) {
     body.push(`    // 登记一个会话设置项：出现在会话设置里，各会话、各平台档可以各自设；登记随这次激活撤回，会话管理晚上线时自动补上。
-    // 读法：sessionManager.current?.resolveConfig(会话 id, 平台).${settingKey}，哪层都没设时没有这个键
-    sessionManager.registerSetting({
+    // 读法：sessionManager.use.resolveConfig(会话 id, 平台).${settingKey}，哪层都没设时没有这个键
+    sessionManager.use.registerSetting({
       key: '${settingKey}',
       // 字段：类型、标签与说明，写入时按它校验；default 只供界面显示，要与哪层都没设时的行为一致
       field: { type: 'string', label: '问候语', description: '示例设置项：按会话设一个问候语', default: '你好' },
@@ -525,7 +528,7 @@ export default definePlugin({
   // 用到的全部能力。可选依赖包一层 optional()：缺席不拦激活，到场后自动接上
   uses: ${usesObjectLiteral(a.features)},
   apply({ ${params.join(', ')} }) {
-    logger.info('插件已加载');
+    logger.use.info('插件已加载');
 ${body.length ? `\n${body.join('\n\n')}\n` : ''}  },
 });
 `;

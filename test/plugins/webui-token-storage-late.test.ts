@@ -186,7 +186,7 @@ describe('webui-server 的 token 与访问凭据文件', () => {
       provides: [storage],
       uses: { provide },
       apply(caps) {
-        caps.provide(storage, fake);
+        caps.provide.use(storage, fake);
       },
     });
     await app.pluginAll([webui(), { definition: fakeStorage, config: {} }]);

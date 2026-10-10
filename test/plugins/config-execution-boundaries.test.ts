@@ -27,11 +27,11 @@ async function start(
   const registerTool = vi.spyOn(registry, 'register');
   const registerGroup = vi.spyOn(registry, 'registerGroup');
   const registerChecker = vi.fn(() => () => {});
-  host.provide(tools, registry);
-  host.provide(sessionHistory, { registerAccessChecker: registerChecker } as never);
+  host.provide.use(tools, registry);
+  host.provide.use(sessionHistory, { registerAccessChecker: registerChecker } as never);
   if (plugin === codeRunner) {
-    host.provide(storage, {} as never);
-    host.provide(processService, {} as never);
+    host.provide.use(storage, {} as never);
+    host.provide.use(processService, {} as never);
   }
   await app.plugin(plugin, config);
   await app.plugins.idle();

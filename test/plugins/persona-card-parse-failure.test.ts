@@ -61,7 +61,7 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
     // 停在 pending 的插件一行都不跑，日志断言会退化成「什么都没发生」的假绿
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
     expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
-    const svc = app.bind({ services }).services.get(persona);
+    const svc = app.bind({ services }).services.use.get(persona);
     if (!svc) throw new Error('persona 服务未就绪');
     return svc;
   };

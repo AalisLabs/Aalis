@@ -227,13 +227,13 @@ describe('绑定门面', () => {
       },
     };
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
-    app.bind({ provide }).provide(webuiServer, service);
+    app.bind({ provide }).provide.use(webuiServer, service);
     let webui: BoundWebui | undefined;
     const owner = definePlugin({
       name: 'page-owner',
       uses: { webui: optional(webuiServer) },
       apply: caps => {
-        webui = caps.webui;
+        webui = caps.webui.use;
       },
     });
     try {

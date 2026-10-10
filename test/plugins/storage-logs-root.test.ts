@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway, storage as storageService } from '../../packages/api-storage/src/index.js';
+import { storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -54,7 +54,7 @@ describe('storage-local 日志根 logs', () => {
     });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(storageLocal.name)?.state).toBe('active');
-    const storage = createStorageGateway(app.bind({ storage: storageService }).storage);
+    const storage = app.bind({ storage: storageService }).storage.use;
     expect(new TextDecoder().decode((await storage.readFile('logs:/latest.log')) as Uint8Array)).toBe('current\n');
     expect(warns.some(w => w.includes('roots 跳过 logs'))).toBe(true);
     const info = storage.listRoots().find(r => r.name === 'logs');

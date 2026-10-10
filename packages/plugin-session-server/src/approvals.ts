@@ -10,7 +10,7 @@
 
 // biome-ignore lint/style/noRestrictedImports: 请求在发起的同一拍里定下去留与排队次序，内容哈希要同步算；异步的摘要会让并行的请求按完成先后乱序
 import { createHash } from 'node:crypto';
-// biome-ignore lint/style/noRestrictedImports: 审计是只追加的记录，存储网关没有追加写；位置取自 host-paths 给的家目录
+// biome-ignore lint/style/noRestrictedImports: 审计是只追加的记录，存储服务没有追加写；位置取自 host-paths 给的家目录
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type {

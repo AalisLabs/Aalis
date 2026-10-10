@@ -10,7 +10,7 @@
 // ============================================================
 
 import type { GatewayService } from '@aalis/api-gateway';
-import type { Events, Logger, ServiceRef } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import { awaitDelivery, type OutgoingMessage } from '@aalis/schema-message';
 import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
 import type { PaperConfig } from './config.js';
@@ -108,7 +108,7 @@ export function failedBeforeSubmission(task: TaskRecord): boolean {
 
 interface DeliverDeps {
   ledger: LedgerStore;
-  gateway: ServiceRef<GatewayService>;
+  gateway: ServiceSelection<GatewayService>;
   events: Events;
   logger: Logger;
   /** 插件的生命周期信号：停了就不再写账本 */
@@ -119,7 +119,7 @@ export type DeliveryOutcome = { ok: true } | { ok: false; error: string; unconfi
 
 /** 经网关发出；网关不在场时改走 outbound:message 事件（出站中间件链被跳过） */
 async function dispatch(deps: DeliverDeps, message: OutgoingMessage): Promise<void> {
-  const gateway = deps.gateway.current;
+  const gateway = deps.gateway.present ? deps.gateway.use : undefined;
   if (gateway) {
     await gateway.dispatchOutbound(message);
     return;

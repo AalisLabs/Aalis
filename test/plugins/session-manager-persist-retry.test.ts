@@ -26,10 +26,10 @@ async function setup(store: ReturnType<typeof fakeMemory>) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
-  host.provide(memory, store as never);
+  host.provide.use(memory, store as never);
   await app.plugin(sessionManagerPlugin, {});
   await app.plugins.idle();
-  return { app, sm: host.sessionManager.require() };
+  return { app, sm: host.sessionManager.use };
 }
 
 describe('session-manager 落盘失败后的重试', () => {

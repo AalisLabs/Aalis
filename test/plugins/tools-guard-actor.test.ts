@@ -22,14 +22,14 @@ describe('tools 守卫的 actor 接线', () => {
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.idle();
     const { tools } = app.bind({ tools: toolsService });
-    const svc = tools.current;
-    if (!svc) throw new Error('tools 服务未注册');
+    if (!tools.present) throw new Error('tools 服务未注册');
+    const svc = tools.use;
     let seen: ExecutionGuardContext | undefined;
     svc.setExecutionGuard(async g => {
       seen = g;
       return null;
     });
-    tools.register({
+    tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'probe_g', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -59,7 +59,7 @@ describe('tools 守卫的 actor 接线', () => {
       await app.plugins.idle();
       let ran = false;
       const { tools } = app.bind({ tools: toolsService });
-      tools.register({
+      tools.use.register({
         risk: 'sensitive',
         definition: {
           type: 'function',
@@ -70,8 +70,8 @@ describe('tools 守卫的 actor 接线', () => {
           return 'ok';
         },
       });
-      const svc = tools.current;
-      if (!svc) throw new Error('tools 服务未注册');
+      if (!tools.present) throw new Error('tools 服务未注册');
+      const svc = tools.use;
       await svc.execute('probe_s', {}, { sessionId: 's1', platform: 'onebot', ...(actor ? { actor } : {}) });
       await app.stop();
       return ran;

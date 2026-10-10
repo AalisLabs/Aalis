@@ -23,13 +23,13 @@ async function setup() {
   const app = new App({ name: 'T', logger });
   await registerHubs(app);
   const host = app.bind({ provide });
-  host.provide(embedding, {
+  host.provide.use(embedding, {
     async embed(_text: string, opts?: { signal?: AbortSignal }): Promise<number[]> {
       opts?.signal?.throwIfAborted();
       throw new Error('embedding 服务故障');
     },
   });
-  host.provide(vectorstore, {
+  host.provide.use(vectorstore, {
     async add(): Promise<void> {},
     async search() {
       return [];
@@ -41,7 +41,7 @@ async function setup() {
     async save(): Promise<void> {},
   });
   const handlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => {};

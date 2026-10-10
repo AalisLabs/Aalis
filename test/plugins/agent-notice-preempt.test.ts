@@ -61,7 +61,7 @@ async function boot() {
   const gate = new Promise<void>(resolve => {
     release = resolve;
   });
-  host.tools.register({
+  host.tools.use.register({
     definition: holdDefinition,
     handler: async (_args, ctx) => {
       held.push(ctx);
@@ -73,11 +73,11 @@ async function boot() {
     },
   });
   const turns: Array<{ source?: string; outcome: string }> = [];
-  host.hooks.middleware('agent:turn:after', async (data, next) => {
+  host.hooks.use.middleware('agent:turn:after', async (data, next) => {
     turns.push({ source: data.message.source, outcome: data.outcome });
     await next();
   });
-  return { agent: host.agent.require(), held, release, turns };
+  return { agent: host.agent.use, held, release, turns };
 }
 
 const notice = (callerUserId?: string): IncomingMessage => ({

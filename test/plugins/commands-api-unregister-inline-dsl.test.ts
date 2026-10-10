@@ -23,7 +23,7 @@ async function namesAfterProviderDown(declaration: string): Promise<string[]> {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
   const registry = new CommandRegistry(mkLogger() as never, () => undefined);
-  const handle = host.provide(commands, registry);
+  const handle = host.provide.use(commands, registry);
 
   // commands 声明为**可选**依赖：提供者下线时探针保持激活，清理只经门面的跟随回调。
   // 声明为 required 的话 core 会连带把插件降级、拆掉它的激活，引入与本 bug 无关的干扰。
@@ -31,7 +31,7 @@ async function namesAfterProviderDown(declaration: string): Promise<string[]> {
     name: 'dsl-probe',
     uses: { commands: optional(commands) },
     apply(caps) {
-      caps.commands.command(declaration, 'x').action(async () => 'ok');
+      caps.commands.use.command(declaration, 'x').action(async () => 'ok');
     },
   });
   await app.plugin(probe);

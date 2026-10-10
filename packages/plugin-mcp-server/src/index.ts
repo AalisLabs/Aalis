@@ -65,7 +65,7 @@ const uses = {
 type Caps = BoundOf<typeof uses>;
 
 async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promise<void> {
-  const config: Config = parseConfig(configSchema, rawConfig, logger);
+  const config: Config = parseConfig(configSchema, rawConfig.use, logger.use);
   if (!config.bind.trim()) throw configError('bind 不能为空');
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的
@@ -81,7 +81,7 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
     } catch (err) {
       // 回调是 async 且这里是它唯一的出口：漏一个异常就是一条 unhandledRejection，
       // 而 runtime 的处理器会判致命并结束进程（webui 走 express 自带兜底，这条没有）。
-      logger.warn(`MCP 请求处理失败: ${err instanceof Error ? err.message : String(err)}`);
+      logger.use.warn(`MCP 请求处理失败: ${err instanceof Error ? err.message : String(err)}`);
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'internal' }));
     }
@@ -91,12 +91,12 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
     if (req.method === 'GET' && url.pathname === '/sse') {
       // 每条新连接按当前提供者构建：工具服务换人之后连上来的 client 直接用新实例。
       // 提供者短暂缺席（换人的空档）时不建会话，让 client 重连。
-      const toolService = tools.current;
-      if (!toolService) {
+      if (!tools.present) {
         res.writeHead(503, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'tools service unavailable' }));
         return;
       }
+      const toolService = tools.use;
 
       // 新 SSE 连接
       if (currentTransport) {
@@ -111,13 +111,13 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
 
       mcpServer = buildMcpServer(toolService, config);
       await mcpServer.connect(transport);
-      logger.info('MCP client 已通过 SSE 连接');
+      logger.use.info('MCP client 已通过 SSE 连接');
 
       req.on('close', () => {
         if (currentTransport === transport) {
           currentTransport = undefined;
           mcpServer = undefined;
-          logger.info('MCP client 已断开');
+          logger.use.info('MCP client 已断开');
         }
       });
       return;
@@ -145,11 +145,11 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
     });
   });
 
-  logger.info(
+  logger.use.info(
     `MCP server 监听 http://${config.bind}:${config.port}/sse (allowRestricted=${config.allowRestricted}, groups=${config.toolGroups.length === 0 ? '*' : config.toolGroups.join(',')})`,
   );
 
-  lifecycle.onDispose(async () => {
+  lifecycle.use.onDispose(async () => {
     if (currentTransport) {
       try {
         await currentTransport.close();
@@ -158,7 +158,7 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
       }
     }
     await new Promise<void>(resolve => httpServer.close(() => resolve()));
-    logger.info('MCP server 已停止');
+    logger.use.info('MCP server 已停止');
   });
 }
 

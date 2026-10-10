@@ -293,7 +293,7 @@ describe('房间设置项设在窗口的场所上', () => {
       adapters: [{ platform: 'onebot', sessionTypes: ONEBOT_TYPES }],
     });
     try {
-      await recordRoom(host.events, ROOM, '群');
+      await recordRoom(host.events.use, ROOM, '群');
       expect(ROOM_SETTINGS.map(setting => setting.key).sort()).toEqual(Object.keys(SAMPLES).sort());
       for (const [key, value] of Object.entries(SAMPLES)) {
         await expect(sm.updateSession(ROOM, { config: { [key]: value } }), key).rejects.toThrow(
@@ -301,7 +301,7 @@ describe('房间设置项设在窗口的场所上', () => {
         );
       }
       await sm.updateLayer({ scope: 'place', key: 'onebot:group:20001' }, SAMPLES);
-      await recordRoom(host.events, 'onebot:10001:group:20001', '群');
+      await recordRoom(host.events.use, 'onebot:10001:group:20001', '群');
       expect(sm.resolveConfig('onebot:10001:group:20001')).toMatchObject(SAMPLES);
     } finally {
       await app.stop();

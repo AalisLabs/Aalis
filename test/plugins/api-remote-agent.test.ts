@@ -10,7 +10,8 @@ import {
   type RunStatus,
   resolveRemoteAgent,
 } from '../../packages/api-remote-agent/src/index.js';
-import type { ServiceRef, ServiceView } from '../../packages/core/src/index.js';
+import type { ServiceView } from '../../packages/core/src/index.js';
+import { ref as refOf } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // @aalis/api-remote-agent：远端代理契约里的纯函数。按名取提供者只做精确匹配，
@@ -23,22 +24,6 @@ const provider = (tag: string) => ({ tag }) as unknown as RemoteAgentProvider;
 const CURSOR = '@aalis/plugin-remote-agent-cursor';
 const CURSOR_ALT = '@aalis/plugin-remote-agent-cursor:alt';
 
-/** all() 按偏好排序；current 由调用方给（模拟偏好指向别的提供者） */
-function refOf(
-  entries: ServiceView<RemoteAgentProvider>[],
-  current: RemoteAgentProvider | undefined = entries[0]?.instance,
-): ServiceRef<RemoteAgentProvider> {
-  return {
-    current,
-    require: () => {
-      if (!current) throw new Error('没有提供者');
-      return current;
-    },
-    all: () => entries,
-    follow: () => () => {},
-  };
-}
-
 describe('resolveRemoteAgent', () => {
   const main = provider('main');
   const alt = provider('alt');
@@ -49,9 +34,9 @@ describe('resolveRemoteAgent', () => {
 
   it('两个提供者登记时按实例 id 各取各的', () => {
     const ref = refOf(entries);
-    expect(resolveRemoteAgent(ref, CURSOR)?.instance).toBe(main);
-    expect(resolveRemoteAgent(ref, CURSOR_ALT)?.instance).toBe(alt);
-    expect(resolveRemoteAgent(ref, CURSOR)).toMatchObject({ contextId: CURSOR, label: 'Cursor' });
+    expect(resolveRemoteAgent(ref, CURSOR)?.use).toBe(main);
+    expect(resolveRemoteAgent(ref, CURSOR_ALT)?.use).toBe(alt);
+    expect(resolveRemoteAgent(ref, CURSOR)).toMatchObject({ id: CURSOR, label: 'Cursor' });
   });
 
   it('名字不存在返回 undefined，也不按前缀认领', () => {
@@ -62,9 +47,9 @@ describe('resolveRemoteAgent', () => {
   });
 
   it('安全：偏好指向另一个提供者、要取的名字不在场时返回 undefined，不回落到胜者或第一个', () => {
-    // 偏好让 alt 成为胜者（排在 all() 首位、current 指向它）；配置点名的 CURSOR 不在场
-    const ref = refOf([entries[0]], alt);
-    expect(ref.current).toBe(alt);
+    // 偏好让 alt 成为胜者（排在 list() 首位、use 打到它）；配置点名的 CURSOR 不在场
+    const ref = refOf([entries[0]]);
+    expect(ref.use).toBe(alt);
     expect(resolveRemoteAgent(ref, CURSOR)).toBeUndefined();
   });
 });

@@ -85,14 +85,14 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
     const host = app.bind({ events, agent: agentService });
     const sent: OutgoingMessage[] = [];
     const archived: Message[] = [];
-    host.events.on('outbound:message', msg => {
+    host.events.use.on('outbound:message', msg => {
       sent.push(msg);
     });
-    host.events.on('assistant:message:archived', ({ message }) => {
+    host.events.use.on('assistant:message:archived', ({ message }) => {
       archived.push(message);
     });
     const say = () =>
-      host.agent.require().handleMessage({
+      host.agent.use.handleMessage({
         content: '你好',
         sessionId: 'test:envelope',
         platform: 'test',

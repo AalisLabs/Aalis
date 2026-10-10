@@ -147,16 +147,16 @@ async function boot(
   const model = new ScriptedLLM(decide);
   const host = app.bind({ provide, events, hooks, agent, memory, gateway, flowControl, tools });
 
-  host.provide(sessionManager, {
+  host.provide.use(sessionManager, {
     registerSetting: () => () => {},
     resolveConfig: (sessionId: string) => (sessionId === ROOM ? { ...ROOM_CONFIG } : {}),
     getSession: (id: string): SessionInfo => sessionInfoOf(id),
   } as unknown as SessionManagerService);
-  host.provide(storage, memoryStorage(files));
+  host.provide.use(storage, memoryStorage(files));
   const indexed: Array<Record<string, unknown>> = [];
   if (opts.vector) {
-    host.provide(embedding, { embed: async () => [0.1, 0.2, 0.3] });
-    host.provide(vectorstore, {
+    host.provide.use(embedding, { embed: async () => [0.1, 0.2, 0.3] });
+    host.provide.use(vectorstore, {
       async add(_v: number[], metadata: Record<string, unknown>) {
         indexed.push(metadata);
       },
@@ -172,7 +172,7 @@ async function boot(
       name: REMOTE,
       provides: [remoteAgent],
       uses: { provide },
-      apply: ({ provide }) => void provide(remoteAgent, remote),
+      apply: ({ provide }) => void provide.use(remoteAgent, remote),
     }),
   );
   await app.plugin(
@@ -180,7 +180,7 @@ async function boot(
       name: model.providerId,
       provides: [llm],
       uses: { provide },
-      apply: ({ provide }) => void provide(llm, model, { entryId: `${model.providerId}/${model.id}` }),
+      apply: ({ provide }) => void provide.use(llm, model, { entryId: `${model.providerId}/${model.id}` }),
     }),
   );
   await app.plugin(toolsPlugin, {});
@@ -205,12 +205,12 @@ async function boot(
   for (const name of names) expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
 
   const turns: Turn[] = [];
-  host.hooks.middleware('agent:turn:after', async (data, next) => {
+  host.hooks.use.middleware('agent:turn:after', async (data, next) => {
     turns.push({ source: data.message.source, outcome: data.outcome });
     await next();
   });
   const outbound: OutgoingMessage[] = [];
-  host.events.on('outbound:message', message => {
+  host.events.use.on('outbound:message', message => {
     outbound.push(message);
     // 充当目标平台适配器：同步认领并确认收下（paper_send 等这个回执才记已交付）
     message.delivery = Promise.resolve({ ok: true });
@@ -229,13 +229,11 @@ async function boot(
     ledger,
     /** 真人在房间里当面交一件任务（直接调工具，与她在真人回合里调用同一判据） */
     async accept(name: string): Promise<string> {
-      const res = await host.tools
-        .require()
-        .execute(
-          'paper_task',
-          { text: `${name}的原文`, name, publish: false },
-          { sessionId: ROOM, platform: 'onebot', userId: '30001', inbound: {}, enabledGroups: ['paper'] },
-        );
+      const res = await host.tools.use.execute(
+        'paper_task',
+        { text: `${name}的原文`, name, publish: false },
+        { sessionId: ROOM, platform: 'onebot', userId: '30001', inbound: {}, enabledGroups: ['paper'] },
+      );
       const parsed = JSON.parse(res.content) as { ok: boolean; taskId?: string; error?: string };
       if (!parsed.ok) throw new Error(`paper_task 未受理：${parsed.error}`);
       return String(parsed.taskId);
@@ -255,7 +253,7 @@ async function boot(
         nickname: '群友',
         triggerType: 'immediate',
       };
-      return host.gateway.require().ingressMessage(message);
+      return host.gateway.use.ingressMessage(message);
     },
   };
 }
@@ -276,7 +274,7 @@ describe('白纸通知进入 agent', () => {
       release = resolve;
     });
     let held = 0;
-    h.host.hooks.middleware('outbound:dispatch', async (data, next) => {
+    h.host.hooks.use.middleware('outbound:dispatch', async (data, next) => {
       if (data.message.attachments?.length) {
         held++;
         await gate;
@@ -348,13 +346,13 @@ describe('白纸通知进入 agent', () => {
       },
       { flow: true },
     );
-    const flow = h.host.flowControl.require();
+    const flow = h.host.flowControl.use;
     const t1 = await h.accept('任务一');
     h.remote.outputs.set(t1, [{ rel: 'one.png', data: PNG }]);
     flow.setMuted(ROOM, 600, 'onebot');
     h.remote.finish(await h.running(t1));
     await waitFor(() => h.ledger().tasks[t1].notice !== undefined, '通知已注入');
-    const history = async () => (await h.host.memory.require().getHistory(ROOM, 50)) as Message[];
+    const history = async () => (await h.host.memory.use.getHistory(ROOM, 50)) as Message[];
     const archivedNotice = async () => (await history()).some(m => m.kind === 'host-notice');
     for (let i = 0; i < 200 && !(await archivedNotice()); i++) await new Promise(r => setTimeout(r, 5));
     expect(await archivedNotice(), '禁言期的通知影子归档为 notice').toBe(true);

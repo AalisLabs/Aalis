@@ -5,7 +5,7 @@ import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -58,7 +58,7 @@ async function runTurn() {
   await app.plugins.idle();
 
   let seenCtx: ToolCallContext | undefined;
-  host.tools.register({
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: 'probe_img', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -69,26 +69,27 @@ async function runTurn() {
     },
   });
   const saved: Message[] = [];
-  const archive = host.messageArchive.require();
+  // 改提供者交出的实例本身：业务句柄是转发句柄，在它上面改方法落不到提供者
+  const archive = app.bind({ services }).services.use.get(messageArchive)!;
   const origSave = archive.saveMessage.bind(archive);
   archive.saveMessage = async (sid, msg) => {
     saved.push(msg);
     return origSave(sid, msg);
   };
   let hookResult: string | undefined;
-  host.hooks.middleware('agent:tool:after', async (data, next) => {
+  host.hooks.use.middleware('agent:tool:after', async (data, next) => {
     hookResult = data.result;
     return next();
   });
 
-  await host.agent.require().handleMessage({
+  await host.agent.use.handleMessage({
     content: '看图',
     sessionId: SESSION,
     platform: 'test',
     userId: 'u1',
     sessionType: 'private',
   });
-  const history = (await host.memory.current?.getHistory(SESSION, 50)) ?? [];
+  const history = (await host.memory.use.getHistory(SESSION, 50)) ?? [];
   await app.stop();
   return { recorder, hookResult, history, saved, seenCtx };
 }

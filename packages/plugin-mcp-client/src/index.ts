@@ -25,7 +25,7 @@ import {
   lifecycle as lifecycleService,
   logger as loggerService,
   optional,
-  type ServiceRef,
+  type ServiceSelection,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -41,11 +41,13 @@ interface BridgeCaps {
   logger: Logger;
 }
 
-interface Caps extends BridgeCaps {
-  lifecycle: LifecycleCap;
-  config: Readonly<Record<string, unknown>>;
-  hostConfig: ServiceRef<HostConfig>;
-  webui: BoundWebui;
+interface Caps {
+  tools: ServiceSelection<BoundTools>;
+  logger: ServiceSelection<Logger>;
+  lifecycle: ServiceSelection<LifecycleCap>;
+  config: ServiceSelection<Readonly<Record<string, unknown>>>;
+  hostConfig: ServiceSelection<HostConfig>;
+  webui: ServiceSelection<BoundWebui>;
 }
 
 const configSchema = defineConfig({
@@ -153,13 +155,13 @@ export function deriveMcpToolPolicy(
 }
 
 async function run(caps: Caps): Promise<void> {
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
   const servers = cfg.servers
-    .map(s => normalizeServerSpec(s, caps.logger))
+    .map(s => normalizeServerSpec(s, caps.logger.use))
     .filter((s): s is ServerSpec => s !== undefined);
 
   if (servers.length === 0) {
-    caps.logger.info('未配置任何 MCP server，仅注册元数据工具');
+    caps.logger.use.info('未配置任何 MCP server，仅注册元数据工具');
     registerSelfServiceTools(caps, servers);
     return;
   }
@@ -167,7 +169,7 @@ async function run(caps: Caps): Promise<void> {
   // 注册分组：每个 enabled server 一个分组，让平台可按需启用
   for (const spec of servers) {
     if (spec.enabled === false) continue;
-    caps.tools.registerGroup({
+    caps.tools.use.registerGroup({
       name: `mcp:${spec.id}`,
       label: `MCP / ${spec.id}`,
       description: `通过 plugin-mcp-client 桥接的远端 MCP server "${spec.id}"`,
@@ -180,10 +182,10 @@ async function run(caps: Caps): Promise<void> {
       .filter(s => s.enabled !== false)
       .map(spec =>
         connectServer(caps, spec).catch(err => {
-          if (caps.lifecycle.signal.aborted) return;
+          if (caps.lifecycle.use.signal.aborted) return;
           const reason = err instanceof Error ? err.message : String(err);
-          caps.logger.error(`连接 MCP server "${spec.id}" 失败: ${reason}`);
-          caps.webui.notify({
+          caps.logger.use.error(`连接 MCP server "${spec.id}" 失败: ${reason}`);
+          caps.webui.use.notify({
             id: `connect:${spec.id}`,
             level: 'error',
             title: `MCP 服务器「${spec.id}」连不上`,
@@ -193,7 +195,7 @@ async function run(caps: Caps): Promise<void> {
         }),
       ),
   );
-  caps.lifecycle.signal.throwIfAborted();
+  caps.lifecycle.use.signal.throwIfAborted();
 
   // 注册 agent 自服务工具：只读列表 + toggle 已配置 server 的启用开关。
   // 故意不提供「新增 server」工具——那等价于让 agent 任意 spawn 子进程，授权风险过大。
@@ -207,13 +209,13 @@ async function run(caps: Caps): Promise<void> {
  */
 function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[]): void {
   const { tools } = caps;
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'mcp:_meta',
     label: 'MCP / 元数据',
     description: '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）。',
   });
 
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -237,7 +239,7 @@ function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[])
     },
   });
 
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -266,8 +268,8 @@ function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[])
       if (!configured.some(s => s.id === id)) return `失败：没有 id="${id}" 的 server，请先用 mcp_list_servers 查看`;
 
       // 没有配置文档就不动运行态：改了却存不下，重启后会悄悄回退
-      const doc = caps.hostConfig.current;
-      if (!doc) return '失败：host-config 服务不可用';
+      if (!caps.hostConfig.present) return '失败：host-config 服务不可用';
+      const doc = caps.hostConfig.use;
 
       // 以配置文档为底改写：解析后的配置补了默认值、丢了坏值，以它为底会把这些永久写进配置文件；
       // 文档里的 env 是密钥引用，原样交回即保持原值
@@ -320,7 +322,7 @@ function normalizeServerSpec(spec: ServerSpec, logger: Logger): ServerSpec | und
 }
 
 async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
-  const { signal } = caps.lifecycle;
+  const { signal } = caps.lifecycle.use;
   const transport = new StdioClientTransport({
     command: spec.command,
     args: spec.args,
@@ -336,19 +338,19 @@ async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
   signal.addEventListener('abort', onAbort, { once: true });
   try {
     await client.connect(transport, { signal: bridge.signal });
-    caps.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${spec.args.join(' ')})`);
+    caps.logger.use.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${spec.args.join(' ')})`);
 
     // 连接生命周期：激活关闭时关闭。握手跨 await，关闭可能已开始——迟到的清理仍会被执行
-    caps.lifecycle.onDispose(async () => {
+    caps.lifecycle.use.onDispose(async () => {
       try {
         await client.close();
-        caps.logger.info(`MCP server "${spec.id}" 已关闭`);
+        caps.logger.use.info(`MCP server "${spec.id}" 已关闭`);
       } catch (err) {
-        caps.logger.debug(`关闭 MCP server "${spec.id}" 抛错（已忽略）:`, err);
+        caps.logger.use.debug(`关闭 MCP server "${spec.id}" 抛错（已忽略）:`, err);
       }
     });
 
-    await bridgeClientToTools(caps, client, spec, bridge.signal);
+    await bridgeClientToTools({ tools: caps.tools.use, logger: caps.logger.use }, client, spec, bridge.signal);
   } finally {
     signal.removeEventListener('abort', onAbort);
   }

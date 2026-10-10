@@ -67,17 +67,19 @@ export default definePlugin({
 
 function run(caps: Caps): void {
   const { logger, events, hooks, lifecycle, provide, flowControl, messageArchive } = caps;
-  const cfg = normalizeConfig(parseConfig(configSchema, caps.config, logger), logger);
+  const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
   const states = new Map<string, TriggerSessionState>();
   /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
-  const botNames = createBotNames(caps.persona, caps.sessionManager, logger, '[trigger]');
+  const botNames = createBotNames(caps.persona, caps.sessionManager, logger.use, '[trigger]');
 
-  // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行、闲置也不开口
+  // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行、
+  // 闲置也不开口
   const self: TriggerService = { label: '规则（计数/评分）' };
-  provide(trigger, self, { label: self.label });
-  const isActive = (): boolean => caps.trigger.current === self;
+  const selfId = lifecycle.use.id;
+  provide.use(trigger, self, { label: self.label });
+  const isActive = (): boolean => caps.trigger.list().find(p => p.selected)?.id === selfId;
 
-  const idleCaps: IdleCaps = { logger, gateway: caps.gateway, flowControl, isActive };
+  const idleCaps: IdleCaps = { logger: logger.use, gateway: caps.gateway, flowControl, isActive };
   const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
   /** 计数与活跃指数清零（禁言与判定放行时） */
@@ -139,7 +141,7 @@ function run(caps: Caps): void {
     return { speak, reason };
   }
 
-  logger.info(
+  logger.use.info(
     `[trigger] 已启用 (模式=${cfg.intervalMode}, 固定间隔=${cfg.fixedInterval}, ` +
       `阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, @提及=${cfg.triggerOnAt}, ` +
       `别名=${cfg.triggerNames.length}, mute关键词=${cfg.muteKeywords.length}, mute时长=${cfg.muteTimeSeconds}s, ` +
@@ -151,9 +153,9 @@ function run(caps: Caps): void {
   // 由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发。放行的消息写好 triggerType，
   // 交给 flow 相位做节流硬闸（immediate 穿透冷却与限速）。判定是同步的：记入站、判定、清零在同一拍做完，
   // 同一会话接连到达的消息按到达顺序逐条判定，放行顺序即到达顺序。
-  hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
+  hooks.use.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     // 不是生效的触发插件：什么都不做（不计数、不识别、不归档），交给生效者或往下走
-    if (!isActiveTrigger(data, caps.trigger, self)) return next();
+    if (!isActiveTrigger(data, caps.trigger, selfId)) return next();
     const { message } = data;
     // 内部注入（闲置触发、定时任务、workflow）都带 source，跳过策略：不计数、不改 triggerType。
     // 真人消息由平台适配器投递，不设 source。
@@ -165,7 +167,7 @@ function run(caps: Caps): void {
     if (!isScopeEnabled(cfg, message.platform, message.sessionType, tid)) return next();
 
     const sessionId = message.sessionId;
-    const flow = flowControl.current;
+    const flow = flowControl.present ? flowControl.use : undefined;
     // 作用域内的真人消息都是会话活动，禁言期内的也是：会话还没有状态（如平台禁言先于任何消息）就在这里建
     let s = states.get(sessionId);
     if (!s) {
@@ -185,11 +187,11 @@ function run(caps: Caps): void {
 
     // 禁言关键词：设置自禁言、计数与评分当场清零，记为真人活动，吞掉本条
     if (hitsMuteKeyword(message, e.muteKeywords)) {
-      logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
+      logger.use.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
       flow?.setMuted(sessionId, e.muteTimeSeconds, message.platform);
       resetCounters(s);
       recordActivity(sessionId, s);
-      await archiveSwallowed(message, messageArchive, logger, '[trigger]');
+      await archiveSwallowed(message, messageArchive, logger.use, '[trigger]');
       return; // swallow
     }
 
@@ -199,11 +201,11 @@ function run(caps: Caps): void {
     const addressed = isAddressed(message, botNames(e.triggerNames, message), e);
     const decision = decide(s, e, addressed);
     // 判定日志：不含消息正文
-    logger.debug(
+    logger.use.debug(
       `[trigger] 判定 | session=${sessionId} | speak=${decision.speak} | addressed=${addressed} | reason=${decision.reason}`,
     );
     if (!decision.speak) {
-      await archiveSwallowed(message, messageArchive, logger, '[trigger]');
+      await archiveSwallowed(message, messageArchive, logger.use, '[trigger]');
       return; // swallow
     }
 
@@ -216,7 +218,7 @@ function run(caps: Caps): void {
 
   // agent 真实回复：记为 bot 开口并重排 session 档 idle。不复位退避——bot 回复闲置提示不算真人活动。
   // 不生效时不记（闲置也不开口）
-  events.on('outbound:message', (msg: OutgoingMessage) => {
+  events.use.on('outbound:message', (msg: OutgoingMessage) => {
     if (msg.source !== 'agent' || !msg.sessionId || !isActive()) return;
     const s = states.get(msg.sessionId);
     if (!s) return;
@@ -225,7 +227,7 @@ function run(caps: Caps): void {
   });
 
   // 平台级 idle 启动
-  events.on('app:ready', () => {
+  events.use.on('app:ready', () => {
     platformIdle.start();
   });
 
@@ -233,11 +235,11 @@ function run(caps: Caps): void {
   const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
   const sweepTimer = setInterval(() => {
     const cleaned = sweepStaleStates(states, Date.now());
-    if (cleaned > 0) logger.debug(`[trigger] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
+    if (cleaned > 0) logger.use.debug(`[trigger] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);

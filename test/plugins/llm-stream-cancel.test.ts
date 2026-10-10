@@ -21,7 +21,7 @@ async function makeModel(): Promise<LLMModel> {
   await app.plugins.idle();
   const state = app.plugins.getPlugin(ollama.name)?.state;
   if (state !== 'active') throw new Error(`ollama 未激活（state=${state}）`);
-  const entries = app.bind({ services }).services.all(llm);
+  const entries = app.bind({ services }).services.use.all(llm);
   const model = entries.find(e => e.instance.id.includes('teststream'))?.instance ?? entries[0]?.instance;
   if (!model) throw new Error('未注册出 llm model entry');
   return model;

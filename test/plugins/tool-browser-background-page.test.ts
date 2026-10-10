@@ -63,7 +63,7 @@ beforeAll(async () => {
 
   app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
       handlers[t.definition.function.name] = t.handler;
       return () => {};

@@ -226,9 +226,9 @@ async function boot(
   await registerHubs(app);
   const host = app.bind({ provide, events });
   const files = new Map<string, Buffer>(Object.entries(opts.files ?? {}));
-  host.provide(storage, memStorage(files) as never);
+  host.provide.use(storage, memStorage(files) as never);
   // 转码一律失败：语音附件保留原数据，直接走内联前的文件头核对
-  host.provide(processService, {
+  host.provide.use(processService, {
     async makeTempDir() {
       throw new Error('测试里不转码');
     },
@@ -242,7 +242,7 @@ async function boot(
     },
   } as never);
   const notes: Array<{ sessionId: string; message: Message }> = [];
-  host.provide(messageArchive, {
+  host.provide.use(messageArchive, {
     async saveMessage(sessionId: string, message: Message) {
       notes.push({ sessionId, message });
     },
@@ -254,7 +254,7 @@ async function boot(
   if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
   const toolHandlers = new Map<string, ToolHandler>();
   if (opts.imageSender) {
-    host.provide(tools, {
+    host.provide.use(tools, {
       register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
         toolHandlers.set(tool.definition.function.name, tool.handler);
         return () => {};
@@ -273,7 +273,7 @@ async function boot(
   // 每条出站消息各自在后台投递，先交出的不一定先发完；flush 靠这些回执等它们结束。
   const deliveries: Array<Promise<unknown>> = [];
   const send = async (msg: OutgoingMessage) => {
-    await host.events.emit('outbound:message', msg);
+    await host.events.use.emit('outbound:message', msg);
     if (msg.delivery) deliveries.push(msg.delivery);
   };
   /** 等此前经 send 交出的消息都有了投递结果，再发一条哨兵文字并等它到达 */

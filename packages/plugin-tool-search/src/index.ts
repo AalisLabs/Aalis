@@ -340,7 +340,7 @@ export default definePlugin({
 });
 
 function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   const enabled = cfg.enabled;
   const showToolNames = cfg.showToolNames;
   const maxDirectTools = cfg.maxDirectTools;
@@ -349,7 +349,7 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
   const maxDiscoveredKeep = Math.max(0, Math.floor(cfg.maxDiscoveredKeep));
   const discoveredRegistry = new DiscoveredToolsRegistry(maxDiscoveredKeep);
   // /clear 等记忆清除时同步遗忘发现集,与"会话重新开始"的语义对齐;发现集属会话上下文,只随 context 清
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     if (!data.types || data.types.includes('context')) {
       if (data.scope === 'all') discoveredRegistry.clear();
       else if (data.sessionId) discoveredRegistry.clear(data.sessionId);
@@ -359,12 +359,12 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
   const warnedMissingDirectTools = new Set<string>();
 
   if (!enabled) {
-    logger.info('工具搜索层已禁用');
+    logger.use.info('工具搜索层已禁用');
     return;
   }
 
   // 注册 search_tools 工具（初始定义，钩子中会动态更新 description）
-  tools.register({
+  tools.use.register({
     definition: buildSearchToolDef(),
     async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
@@ -378,8 +378,8 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
       const effectiveLimit = Math.min(defaultLimit, requestedLimit);
 
       // handler 由 tools 提供者自己调起，正常情况下它必然在场；缺席只可能是拆卸竞态
-      const service = tools.current;
-      if (!service) return JSON.stringify({ error: '工具服务当前不可用，请稍后重试' });
+      if (!tools.present) return JSON.stringify({ error: '工具服务当前不可用，请稍后重试' });
+      const service = tools.use;
 
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
@@ -418,7 +418,7 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
       const totalAvailable = summaries.filter(s => s.name !== SEARCH_TOOL_NAME).length;
       const hasMore = offset + paged.length < allResults.length;
 
-      logger.debug(
+      logger.use.debug(
         `搜索工具 "${query}" → ${paged.length}/${totalAvailable} 条结果 (offset=${offset}, total=${allResults.length})`,
       );
 
@@ -451,7 +451,7 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
 
   // 注册 agent:llm:before 钩子 —— 整体替换 data.tools(agent 每轮迭代会重置
   // tools 为原始全量后重跑本钩子,过滤幂等重算,与其它 handler 顺序无关)
-  hooks.middleware('agent:llm:before', async (data, next) => {
+  hooks.use.middleware('agent:llm:before', async (data, next) => {
     const allDefs = data.tools;
 
     // 工具数量不超过阈值时，跳过搜索层 (+1 因为 search_tools 自身也在列表中)
@@ -468,7 +468,7 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
 
     // 本轮工具已由 agent 按 enabledToolGroups 过滤；仅取这些名字的摘要。
     const otherToolNames = allDefs.map(d => d.function.name).filter(n => n !== SEARCH_TOOL_NAME);
-    const service = tools.current;
+    const service = tools.present ? tools.use : undefined;
     const catalog = showToolNames
       ? capabilityCatalog(allDefs, service?.getSummaries({ groups: ['*'] }) ?? [], service?.getGroups() ?? [])
       : undefined;
@@ -496,13 +496,13 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
       for (const toolName of alwaysDirectTools) {
         if (!otherToolNames.includes(toolName) && !warnedMissingDirectTools.has(toolName)) {
           warnedMissingDirectTools.add(toolName);
-          logger.warn(`直出工具未注册或当前不可用: ${toolName}`);
+          logger.use.warn(`直出工具未注册或当前不可用: ${toolName}`);
         }
       }
     }
 
     data.tools = filtered;
-    logger.debug(
+    logger.use.debug(
       `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个` +
         ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discoveredVisibleCount}/${discovered.size}, 能力目录: ${showToolNames ? '是' : '否'})`,
     );

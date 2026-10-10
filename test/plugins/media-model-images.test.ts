@@ -88,8 +88,8 @@ describe('agent:llm:before 中间件：describe 模式也必须过形态闸', ()
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
     // media 把 process / storage 声明为 required：不放桩它就停在 pending，中间件根本没挂上。
-    host.provide(processService, {} as never);
-    host.provide(storage, {} as never);
+    host.provide.use(processService, {} as never);
+    host.provide.use(storage, {} as never);
     const media = (await import('../../packages/plugin-media/src/index.js')).default;
     await app.plugin(media, { vision: { delivery: 'describe' } });
     await app.plugins.idle();
@@ -104,7 +104,7 @@ describe('agent:llm:before 中间件：describe 模式也必须过形态闸', ()
       sessionId: 's',
       dryRun: false,
     };
-    await host.hooks.run('agent:llm:before', data as never);
+    await host.hooks.use.run('agent:llm:before', data as never);
     await app.stop();
 
     // 改前：中间件被 mode 闸挡住 → REF 原样进 provider → 400 illegal base64。

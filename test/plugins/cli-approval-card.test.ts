@@ -46,7 +46,7 @@ const webuiPlugin = (out: { surface?: ApprovalSurface }) =>
     name: '@test/webui-surface',
     uses: { approvals: optional(approvals) },
     apply: ({ approvals }) => {
-      out.surface = approvals.registerSurface('webui');
+      out.surface = approvals.use.registerSurface('webui');
     },
   });
 
@@ -87,12 +87,12 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
   await app.plugin(memoryInMemoryPlugin);
   const { state } = provideHostPaths(app, home);
   const host = app.bind({ provide, events, approvals, tools });
-  host.provide(storage, memoryStorage(new Map()));
-  host.provide(authority, { isOwner: owner } as never);
+  host.provide.use(storage, memoryStorage(new Map()));
+  host.provide.use(authority, { isOwner: owner } as never);
   // 卡上的事实按工具声明的展示种类取
   await app.plugin(toolsPlugin, {});
   await app.plugins.idle();
-  declareToolSystemDisplays(host.tools);
+  declareToolSystemDisplays(host.tools.use);
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
   await app.plugin(cliPlugin, { startupView });
@@ -107,7 +107,7 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
   await settle();
 
   const inbound: string[] = [];
-  host.events.on('inbound:message', msg => void inbound.push(msg.content));
+  host.events.use.on('inbound:message', msg => void inbound.push(msg.content));
   /** 最后一帧的原样输出 */
   const rawFrame = () => {
     const all = writes.join('');
@@ -127,7 +127,7 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
   };
   const request = (over: Partial<ApprovalRequest> = {}, signal?: AbortSignal) => {
     const box: { outcome?: ApprovalOutcome } = {};
-    const promise = host.approvals.require().request(
+    const promise = host.approvals.use.request(
       {
         sessionId: 'cli-default',
         origin: { kind: 'owner', ...CONSOLE },
@@ -143,7 +143,7 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
     });
     return Object.assign(box, { promise });
   };
-  const pending = () => host.approvals.require().list();
+  const pending = () => host.approvals.use.list();
   const audit = async (n: number) => {
     const file = join(state, 'audit', 'approvals.jsonl');
     const read = () =>

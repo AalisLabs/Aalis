@@ -42,7 +42,7 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
     vi.stubGlobal('fetch', hangingFetch());
     // 实现有 1000ms 地板（与 embedding-openai 同），故取 1000
     const app = await bootOpenai({ apiKey: 'k', timeoutMs: 1000 });
-    const service = app.bind({ asr }).asr.current;
+    const service = app.bind({ asr }).asr.present ? app.bind({ asr }).asr.use : undefined;
     expect(service).toBeDefined();
 
     const outcome = await Promise.race([
@@ -61,7 +61,7 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
       (async () => new Response(JSON.stringify({ text: '你好' }), { status: 200 })) as unknown as typeof fetch,
     );
     const app = await bootOpenai({ apiKey: 'k' });
-    const r = await app.bind({ asr }).asr.require().transcribe({ attachment: AUDIO });
+    const r = await app.bind({ asr }).asr.use.transcribe({ attachment: AUDIO });
     expect(r.text).toBe('你好');
   });
 });

@@ -67,10 +67,10 @@ describe('plugin-adapter-onebot：请求事件的系统通知', () => {
     cleanups.push(() => app.stop());
     await registerHubs(app);
     const host = app.bind({ provide, events });
-    host.provide(storage, { listRoots: () => [] } as never);
-    host.provide(processService, {} as never);
+    host.provide.use(storage, { listRoots: () => [] } as never);
+    host.provide.use(processService, {} as never);
     const inbound: IncomingMessage[] = [];
-    host.events.on('inbound:message', (m: IncomingMessage) => {
+    host.events.use.on('inbound:message', (m: IncomingMessage) => {
       inbound.push(m);
     });
     await app.plugins.register(onebotPlugin, {

@@ -55,6 +55,6 @@ export default definePlugin({
   provides: [contributions],
   uses: { provide },
   apply({ provide }) {
-    provide(contributions, new Registry());
+    provide.use(contributions, new Registry());
   },
 });

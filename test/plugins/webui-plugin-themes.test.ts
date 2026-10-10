@@ -45,12 +45,15 @@ const themePack = definePlugin({
   name: OWNER,
   uses: { contributions },
   apply: ({ contributions }) => {
-    contributions.contribute('webui:theme', {
+    contributions.use.contribute('webui:theme', {
       id: 'dusk',
       theme: theme('黄昏', 'dark', { '--color-bg': '#201a18', '--color-accent': '#c06a3a' }),
     });
-    contributions.contribute('webui:theme', { id: 'paper', theme: theme('纸', 'light', { '--color-bg': '#f7f3ea' }) });
-    contributions.contribute('webui:theme', {
+    contributions.use.contribute('webui:theme', {
+      id: 'paper',
+      theme: theme('纸', 'light', { '--color-bg': '#f7f3ea' }),
+    });
+    contributions.use.contribute('webui:theme', {
       id: 'broken',
       theme: { ...theme('坏的', 'dark', {}), colors: { '--color-bg': 'url(https://evil.invalid/x.png)' } },
     });

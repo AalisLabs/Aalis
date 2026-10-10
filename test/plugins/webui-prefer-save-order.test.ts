@@ -67,7 +67,7 @@ function clientProvider(name: string, dir: string) {
     provides: [webuiClient],
     uses: { provide },
     apply({ provide }) {
-      provide(webuiClient, { getClientDir: () => dir });
+      provide.use(webuiClient, { getClientDir: () => dir });
     },
   });
 }
@@ -96,7 +96,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     const token = 'test-fixed-token-placeholder-0000';
     apps.push(app);
     const host = app.bind({ provide, webuiClient });
-    host.provide(storage, makeFakeStorage());
+    host.provide.use(storage, makeFakeStorage());
     // 先注册者默认胜出：A 是启动时挂载的前端，B 是切换目标。逐个 await，登记顺序才确定。
     await app.plugin(clientProvider('clientA', dirA));
     await app.plugin(clientProvider('clientB', dirB));
@@ -154,7 +154,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     const res = await prefer();
     expect(res.status, '落盘失败必须以错误响应传出，不能报 200；写入失败（非拒写）回 500').toBe(500);
     expect(await res.json(), '以 JSON 说明改动已在运行态生效、未写入文件').toMatchObject({ applied: true });
-    expect(host.webuiClient.current?.getClientDir(), '服务解析已选 B').toBe(dirB);
+    expect(host.webuiClient.use.getClientDir(), '服务解析已选 B').toBe(dirB);
     expect(await home(), '偏好已指向 B，静态目录必须同步切到 B').toContain('CLIENT-B');
 
     // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然失败
@@ -170,7 +170,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     );
     const res = await prefer();
     expect(res.status).toBe(503);
-    expect(host.webuiClient.current?.getClientDir(), '改了却存不下：运行态不动').toBe(dirA);
+    expect(host.webuiClient.use.getClientDir(), '改了却存不下：运行态不动').toBe(dirA);
     expect(await home()).toContain('CLIENT-A');
     expect((await unprefer()).status).toBe(503);
   });

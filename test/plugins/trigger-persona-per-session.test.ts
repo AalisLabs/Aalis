@@ -85,9 +85,9 @@ async function boot() {
   ]);
   await app.plugins.idle();
   const host = app.bind({ provide, hooks, services });
-  host.provide(gateway, {} as never); // 满足 trigger-policy 的 required 依赖；相位判定本身不经过 gateway
+  host.provide.use(gateway, {} as never); // 满足 trigger-policy 的 required 依赖；相位判定本身不经过 gateway
   const resolved: Array<[sessionId: string, platform: string | undefined]> = [];
-  host.provide(sessionManager, {
+  host.provide.use(sessionManager, {
     resolveConfig(sessionId: string, platform?: string) {
       resolved.push([sessionId, platform]);
       return sessionId === SESSION_BOB ? { persona: 'bob' } : {};
@@ -101,7 +101,7 @@ async function boot() {
     const state = app.plugins.getPlugin(def.name)?.state;
     if (state !== 'active') throw new Error(`${def.name} 未激活（state=${state}）`);
   }
-  const svc = host.services.get(persona) as PersonaService;
+  const svc = host.services.use.get(persona) as PersonaService;
   // 前提：两张卡都已载入，否则下面测的是回落主卡（用提示词核：它早就按会话取卡）
   if (!svc.getSystemPrompt({ persona: 'bob' }).includes('副卡名')) throw new Error('卡 bob 未载入');
   return { host, resolved };
@@ -110,7 +110,7 @@ async function boot() {
 describe('名字表按会话取人设（trigger-policy + 真 persona）', () => {
   it('会话改用别的卡：那张卡的名字、昵称算点名，主卡的不算；别的会话照旧用主卡，两边不串', async () => {
     const { host, resolved } = await boot();
-    const send = (sid: string, content: string) => runTriggerPhase(host.hooks, groupMsg(sid, content));
+    const send = (sid: string, content: string) => runTriggerPhase(host.hooks.use, groupMsg(sid, content));
 
     expect(await send(SESSION_BOB, '副卡名 在吗')).toEqual({ reached: true, triggerType: 'immediate' });
     expect(await send(SESSION_BOB, '副卡昵称 在吗')).toEqual({ reached: true, triggerType: 'immediate' });

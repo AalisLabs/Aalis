@@ -88,7 +88,7 @@ export async function startReach(
   await registerHubs(app);
   provideHostPaths(app, dirs.home, opts.appPath ?? dirs.app);
   const host = app.bind({ provide, events, sessionManager, reach });
-  host.provide(memory, fakeMemory(opts.stored) as never);
+  host.provide.use(memory, fakeMemory(opts.stored) as never);
   await app.plugin(storageLocalPlugin);
   await app.plugin(processLocalPlugin);
   await app.plugin(sessionManagerPlugin);

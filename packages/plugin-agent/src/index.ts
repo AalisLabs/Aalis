@@ -11,7 +11,7 @@ import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { gateway as gatewayService } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
-import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry, ThinkingLevels } from '@aalis/api-llm';
+import type { ChatModelRequest, ChatResponse, LLMModel, ThinkingLevels } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
 import { media as mediaService } from '@aalis/api-media';
 import { memory as memoryService } from '@aalis/api-memory';
@@ -29,7 +29,7 @@ import {
   type SessionSetting,
   sessionManager as sessionManagerService,
 } from '@aalis/api-session-manager';
-import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
+import { storage as storageService } from '@aalis/api-storage';
 import {
   type ToolCallContext,
   type ToolDefinition,
@@ -45,6 +45,7 @@ import {
   lifecycle,
   logger as loggerCap,
   optional,
+  type ProviderEntry,
   pluginsService,
   provide,
   services,
@@ -211,7 +212,7 @@ class DefaultAgent implements AgentService {
 
   constructor(caps: AgentCaps, cfg: ConfigOf<typeof configSchema>) {
     this.caps = caps;
-    this.logger = caps.logger.child('agent');
+    this.logger = caps.logger.use.child('agent');
     this.systemPrompt = cfg.systemPrompt;
     this.memoryTokenBudget = cfg.memoryTokenBudget;
     this.promptBuildTimeoutMs = cfg.promptBuildTimeoutMs;
@@ -227,21 +228,21 @@ class DefaultAgent implements AgentService {
    * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到服务此刻解析到的那一个（偏好 > 提供者优先级 > 登记先后）。
    * 这时偏好指向的模型不在（模型删了、提供者在重载或激活失败），服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
    *
-   * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
+   * 返回 llm 的提供者条目（id 与这一家的业务句柄 use），条目固定那一个模型。
    */
-  private async resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined> {
-    const sm = this.caps.sessionManager.current;
+  private async resolveLLM(platform?: string, sessionId?: string): Promise<ProviderEntry<LLMModel> | undefined> {
+    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
     const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
     const entry = resolveLLMModel(this.caps.llm, ref, ['chat']);
-    const preferred = ref ? undefined : this.caps.services.preferred(llmService);
-    if (entry && preferred !== undefined && entry.contextId !== preferred) {
-      const combo = `${preferred}\n${entry.contextId}`;
+    const preferred = ref ? undefined : this.caps.services.use.preferred(llmService);
+    if (entry && preferred !== undefined && entry.id !== preferred) {
+      const combo = `${preferred}\n${entry.id}`;
       if (!this.preferenceFallbacks.has(combo)) {
         this.preferenceFallbacks.add(combo);
         this.logger.warn(
-          `llm 服务的偏好 ${preferred} 没有生效（指向的模型不在、提供者在重载或激活失败），实际用的是 ${entry.contextId}`,
+          `llm 服务的偏好 ${preferred} 没有生效（指向的模型不在、提供者在重载或激活失败），实际用的是 ${entry.id}`,
         );
       }
     }
@@ -250,16 +251,16 @@ class DefaultAgent implements AgentService {
 
   /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */
   private explainLLMFailure(platform?: string, sessionId?: string): string {
-    const available = listLLMModels(this.caps.llm, { caps: ['chat'] }).map(e => e.contextId);
-    const sm = this.caps.sessionManager.current;
+    const available = listLLMModels(this.caps.llm, { caps: ['chat'] }).map(e => e.id);
+    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
     const wanted = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
     return describeLLMFailure(available, wanted, this.erroredLLMPlugins());
   }
 
   /** 激活失败且声明提供 llm 的插件实例名——「一个模型都没有」时，病因通常就在它们身上（多为缺 apiKey）。 */
   private erroredLLMPlugins(): string[] {
-    const pm = this.caps.plugins.current;
-    if (!pm) return [];
+    if (!this.caps.plugins.present) return [];
+    const pm = this.caps.plugins.use;
     // 只取实例名：这串会拼进**发到聊天**（含群聊）的文案里，error 原文可能带内网地址与端口等部署细节，
     // 原因留在日志、WebUI 与 /doctor
     return pm
@@ -334,7 +335,7 @@ class DefaultAgent implements AgentService {
     // 同名替换
     this.preprocessors.get(name)?.dispose();
 
-    const dispose = this.caps.hooks.middleware('agent:input:before', async (data, next) => {
+    const dispose = this.caps.hooks.use.middleware('agent:input:before', async (data, next) => {
       await handler(data.message, next);
     });
 
@@ -366,8 +367,8 @@ class DefaultAgent implements AgentService {
    * （平台属于独立子系统，由 api-platform 的 helper 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
-    const pm = this.caps.plugins.current;
-    if (!pm) return [];
+    if (!this.caps.plugins.present) return [];
+    const pm = this.caps.plugins.use;
 
     // 子系统归属：Agent 域的服务（不含 platform——平台是独立子系统）
     const targetServices = new Set(['llm', 'memory', 'persona', 'message-archive']);
@@ -423,7 +424,7 @@ class DefaultAgent implements AgentService {
         content += chunk.contentDelta;
         appendDelta('text', chunk.contentDelta);
         if (emitProgress)
-          await this.caps.events.emit('outbound:stream', {
+          await this.caps.events.use.emit('outbound:stream', {
             sessionId,
             turnId,
             platform,
@@ -434,7 +435,7 @@ class DefaultAgent implements AgentService {
         reasoningContent += chunk.reasoningDelta;
         appendDelta('reasoning_text', chunk.reasoningDelta);
         if (emitProgress)
-          await this.caps.events.emit('outbound:stream', {
+          await this.caps.events.use.emit('outbound:stream', {
             sessionId,
             turnId,
             platform,
@@ -445,7 +446,7 @@ class DefaultAgent implements AgentService {
         const { index, name } = chunk.toolCallProgress;
         const callId = generating.get(index)?.callId ?? crypto.randomUUID();
         generating.set(index, { callId, name });
-        await this.caps.events.emit('outbound:stream', {
+        await this.caps.events.use.emit('outbound:stream', {
           sessionId,
           turnId,
           platform,
@@ -465,7 +466,7 @@ class DefaultAgent implements AgentService {
       // 兜底剥离 LLM 端漏出的特殊 token 残渣（DSML 等），同时修复 GFM 表格
       const { sanitized, hadLeak } = stripLeakedSpecialTokens(content);
       if (hadLeak) {
-        this.caps.logger.warn(
+        this.caps.logger.use.warn(
           `agent: 检测到 LLM 内容残留 DSML 标记，已剥离（session=${sessionId} platform=${platform} 原长=${content.length} 净化后=${sanitized.length}）`,
         );
       }
@@ -483,7 +484,10 @@ class DefaultAgent implements AgentService {
 
   /** 记账的用途：子会话里的回合是子任务，其余是对话 */
   private purposeOf(sessionId: string): string {
-    return this.caps.sessionManager.current?.getSession(sessionId)?.kind === 'task' ? '子任务' : '对话';
+    return (this.caps.sessionManager.present ? this.caps.sessionManager.use.getSession(sessionId)?.kind : undefined) ===
+      'task'
+      ? '子任务'
+      : '对话';
   }
 
   /**
@@ -649,7 +653,7 @@ class DefaultAgent implements AgentService {
 
     let handled = false;
 
-    await this.caps.hooks.run('agent:input:before', msgHookData, async () => {
+    await this.caps.hooks.use.run('agent:input:before', msgHookData, async () => {
       handled = true;
       // ===== defaultAction: 全部消息处理逻辑在此 =====
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
@@ -671,7 +675,7 @@ class DefaultAgent implements AgentService {
             source: 'system',
           });
         }
-        await this.caps.hooks.run('agent:turn:after', {
+        await this.caps.hooks.use.run('agent:turn:after', {
           message: incoming,
           reply: '',
           outcome: signal.aborted ? 'aborted' : 'error',
@@ -682,7 +686,7 @@ class DefaultAgent implements AgentService {
         });
         return;
       }
-      const llm = resolved.instance;
+      const llm = resolved.use;
 
       // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
       // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
@@ -697,7 +701,7 @@ class DefaultAgent implements AgentService {
 
       try {
         // 统一解析 session 配置（一次解析，多处复用）
-        const sessionMgr = this.caps.sessionManager.current;
+        const sessionMgr = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
         const resolved =
           sessionMgr && incoming.sessionId
             ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
@@ -726,7 +730,9 @@ class DefaultAgent implements AgentService {
         );
         const tools = reportOnly
           ? []
-          : (this.caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? []);
+          : this.caps.tools.present
+            ? this.caps.tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined)
+            : [];
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域都靠它们）；
@@ -775,7 +781,7 @@ class DefaultAgent implements AgentService {
           buildTimeoutMs: this.promptBuildTimeoutMs,
           signal,
         });
-        await this.caps.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+        await this.caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
         if (reportOnly) {
           llmBeforeData.tools = [];
           // 这是结果汇报，不续跑历史工具链。保留人设与对话，去掉会诱发继续查任务的工具协议。
@@ -889,7 +895,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:llm:after — 插件可以处理 LLM 返回结果
         const llmAfterData = { response, messages: llmBeforeData.messages };
-        await this.caps.hooks.run('agent:llm:after', llmAfterData);
+        await this.caps.hooks.use.run('agent:llm:after', llmAfterData);
         response = llmAfterData.response;
 
         // 收集工具调用摘要
@@ -946,7 +952,7 @@ class DefaultAgent implements AgentService {
                 toolArgs: Record<string, unknown>,
                 result?: string,
               ) =>
-                this.caps.events.emit('tool:execute', {
+                this.caps.events.use.emit('tool:execute', {
                   sessionId: incoming.sessionId,
                   turnId,
                   callId,
@@ -985,7 +991,7 @@ class DefaultAgent implements AgentService {
               let executeDone = false;
               let toolT0: number | undefined;
               try {
-                await this.caps.hooks.run('agent:tool:before', toolBeforeData);
+                await this.caps.hooks.use.run('agent:tool:before', toolBeforeData);
 
                 // 通知平台：工具开始执行
                 await announce('start', toolBeforeData.name, toolBeforeData.args);
@@ -993,11 +999,9 @@ class DefaultAgent implements AgentService {
                 toolT0 = Date.now();
 
                 this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${formatToolArgsForLog(toolBeforeData.args)}`);
-                const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
-                  toolBeforeData.name,
-                  toolBeforeData.args,
-                  callCtx,
-                ) ?? Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
+                const executed: ToolExecutionResult = await (this.caps.tools.present
+                  ? this.caps.tools.use.execute(toolBeforeData.name, toolBeforeData.args, callCtx)
+                  : Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
                 executeDone = true;
                 let result = executed.content;
                 // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
@@ -1011,7 +1015,7 @@ class DefaultAgent implements AgentService {
                   toolCallContext: callCtx,
                   metadata: {} as Record<string, unknown>,
                 };
-                await this.caps.hooks.run('agent:tool:after', toolAfterData);
+                await this.caps.hooks.use.run('agent:tool:after', toolAfterData);
                 result = toolAfterData.result;
 
                 // 工具结果截断：按上下文窗口比例限制单条工具结果长度
@@ -1140,7 +1144,7 @@ class DefaultAgent implements AgentService {
             buildTimeoutMs: this.promptBuildTimeoutMs,
             signal,
           });
-          await this.caps.hooks.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
+          await this.caps.hooks.use.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
           const nextSent = trimForCall(nextLlmData.messages);
@@ -1169,7 +1173,7 @@ class DefaultAgent implements AgentService {
           this.debugLogResponse(response, Date.now() - tN, iterations);
 
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
-          await this.caps.hooks.run('agent:llm:after', nextLlmAfterData);
+          await this.caps.hooks.use.run('agent:llm:after', nextLlmAfterData);
           response = nextLlmAfterData.response;
         }
 
@@ -1197,7 +1201,7 @@ class DefaultAgent implements AgentService {
         const validateReply = async (): Promise<void> => {
           const attemptedTools = reportOnly && !!response.toolCalls?.length;
           if (attemptedTools) responseData.content = '';
-          await this.caps.hooks.run('agent:reply:before', responseData);
+          await this.caps.hooks.use.run('agent:reply:before', responseData);
           // 误调用工具或静默先给模型一次纠正机会，复用格式重试预算，不能无限尝试或执行工具。
           const replyLinks: string[] = reportOnly ? (responseData.content.match(NOTICE_URL) ?? []) : [];
           const missingLink = noticeLinks.some(
@@ -1290,7 +1294,7 @@ class DefaultAgent implements AgentService {
         if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
 
         // 发出流结束标记
-        await this.caps.events.emit('outbound:stream', {
+        await this.caps.events.use.emit('outbound:stream', {
           sessionId: incoming.sessionId,
           turnId,
           platform: incoming.platform,
@@ -1349,7 +1353,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
         const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
-        await this.caps.hooks.run('agent:turn:after', {
+        await this.caps.hooks.use.run('agent:turn:after', {
           message: incoming,
           reply: replyContent,
           outcome: turnOutcome,
@@ -1377,7 +1381,7 @@ class DefaultAgent implements AgentService {
                 ? `（保留本轮已完成的 ${turnPersistedTimestamps.length} 条工具调用记录，便于下一轮 agent 感知）`
                 : ''),
           );
-          await this.caps.events.emit('outbound:stream', {
+          await this.caps.events.use.emit('outbound:stream', {
             sessionId: incoming.sessionId,
             turnId,
             platform: incoming.platform,
@@ -1387,7 +1391,7 @@ class DefaultAgent implements AgentService {
           // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
           // 编排的 agent 节点在等这一轮的结果，不发它就要等到超时才失败。
           // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
-          await this.caps.hooks.run('agent:turn:after', {
+          await this.caps.hooks.use.run('agent:turn:after', {
             message: incoming,
             reply: '',
             outcome: 'aborted',
@@ -1404,7 +1408,7 @@ class DefaultAgent implements AgentService {
 
         // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
         // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
-        await this.caps.events.emit('outbound:stream', {
+        await this.caps.events.use.emit('outbound:stream', {
           sessionId: incoming.sessionId,
           turnId,
           platform: incoming.platform,
@@ -1420,7 +1424,7 @@ class DefaultAgent implements AgentService {
         }
 
         // 异常也是回合终态：同样发 turn:after(outcome=error)，等这一轮结果的订阅方才收得了尾。
-        await this.caps.hooks.run('agent:turn:after', {
+        await this.caps.hooks.use.run('agent:turn:after', {
           message: incoming,
           reply: '',
           outcome: 'error',
@@ -1434,7 +1438,7 @@ class DefaultAgent implements AgentService {
 
     // 消息被拦截（如流控缓冲），通知前端结束 loading
     if (!handled) {
-      await this.caps.events.emit('outbound:stream', {
+      await this.caps.events.use.emit('outbound:stream', {
         sessionId: incoming.sessionId,
         turnId,
         platform: incoming.platform,
@@ -1461,7 +1465,7 @@ class DefaultAgent implements AgentService {
     messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
     // 2. 历史消息
-    const memory = this.caps.memory.current;
+    const memory = this.caps.memory.present ? this.caps.memory.use : undefined;
     if (memory) {
       try {
         const stored = await memory.getHistory(incoming.sessionId, historyLimit || Infinity);
@@ -1552,7 +1556,7 @@ class DefaultAgent implements AgentService {
     // 多模态：把 attachments 中的 image 项传递给 LLM（视觉模型多模态字段）
     const imageAtts = incoming.attachments?.filter(a => a.kind === 'image') ?? [];
     if (imageAtts.length > 0) {
-      if (this.caps.media.current !== undefined) {
+      if (this.caps.media.present) {
         // media 在场：原样透传。出口形态由 media 的 agent:llm:before 中间件规范化
         //（describe 剥离 / passthrough 物化），此处不做任何转换——它的描述缓存键与
         // 动图提示都按 attachment.data 原串命中，改形态会打散。
@@ -1579,7 +1583,7 @@ class DefaultAgent implements AgentService {
     // 秒级时间戳一变，人设 + 记忆 + 历史近 7 万 token 的前缀全部作废——实测每个
     // 新回合命中率恒为 0，只有同回合内的工具迭代（prompt 不重建）才命中。
     // 放到这里语义也更顺：它们本就是「此刻的事实」，紧挨当前消息说更自然。
-    const persona = this.caps.persona.current;
+    const persona = this.caps.persona.present ? this.caps.persona.use : undefined;
     const volatileCtx = persona?.getVolatilePrompt?.(personaOpts);
     if (volatileCtx) {
       messages.push({ role: 'system', content: volatileCtx, metadata: { injector: VOLATILE_INJECTOR } });
@@ -1608,7 +1612,7 @@ class DefaultAgent implements AgentService {
    * 构建系统提示词
    */
   private buildSystemPrompt(personaOpts?: PersonaSessionOptions): string {
-    const persona = this.caps.persona.current;
+    const persona = this.caps.persona.present ? this.caps.persona.use : undefined;
     const base = persona
       ? this.systemPrompt
         ? `${persona.getSystemPrompt(personaOpts)}\n\n${this.systemPrompt}`
@@ -1723,7 +1727,7 @@ class DefaultAgent implements AgentService {
         : systemTokens + historyTokens + toolResultTokens + toolDefsTokens;
     const usageRatio = contextWindow > 0 ? used / contextWindow : 0;
 
-    await this.caps.events.emit('token:usage', {
+    await this.caps.events.use.emit('token:usage', {
       sessionId,
       turnId,
       platform,
@@ -1795,9 +1799,8 @@ class DefaultAgent implements AgentService {
     const t = data.trim();
     const rel = t.match(/^data\/((?:images|videos|audios|files)\/.+)$/);
     if (!rel) return t;
-    // 经网关按 URI 路由：storage 按根逐条提供，胜者只是其中一个根（多根时通常是 workspace），
-    // 读不了 data:/。缺 data 根（含 storage 整体缺席）时网关抛错，落到下面的 catch
-    const storage = createStorageGateway(this.caps.storage);
+    // storage 按 URI 的根名路由；缺 data 根（含 storage 整体缺席）时抛错，落到下面的 catch
+    const storage = this.caps.storage.use;
     try {
       const raw = (await storage.readFile(`data:/${rel[1]}`)) as Uint8Array;
       // mime 优先取附件自带的 mimeType；缺省按 basename 扩展名推断（适配器落盘只产
@@ -2047,7 +2050,7 @@ class DefaultAgent implements AgentService {
   }
 
   private getArchiveForWrite() {
-    const archive = this.caps.messageArchive.current;
+    const archive = this.caps.messageArchive.present ? this.caps.messageArchive.use : undefined;
     if (!archive && !this.archiveUnavailableWarned) {
       this.archiveUnavailableWarned = true;
       this.logger.warn(
@@ -2197,13 +2200,13 @@ class DefaultAgent implements AgentService {
    * 生产部署务必确保 plugin-gateway 已加载，否则中间件链会被跳过。
    */
   private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
-    const gateway = this.caps.gateway.current;
+    const gateway = this.caps.gateway.present ? this.caps.gateway.use : undefined;
     if (gateway) {
       await gateway.dispatchOutbound(message);
       return;
     }
     this.logger.warn('Gateway 服务不可用，回退至 outbound:message 事件（中间件链被跳过）');
-    await this.caps.events.emit('outbound:message', message);
+    await this.caps.events.use.emit('outbound:message', message);
   }
 }
 
@@ -2320,7 +2323,7 @@ const SESSION_SETTINGS: SessionSetting[] = [
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
   promptBuildTimeoutMs: number;
-  resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined>;
+  resolveLLM(platform?: string, sessionId?: string): Promise<ProviderEntry<LLMModel> | undefined>;
   computeTokenBudget(contextLength: number, maxTokens: number): number;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   trimMessages(messages: Message[], budget: number): TrimmedMessages;
@@ -2328,19 +2331,19 @@ type InternalAgent = {
 };
 
 function run(caps: Caps): void {
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
-  for (const setting of SESSION_SETTINGS) caps.sessionManager.registerSetting(setting);
+  const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
+  for (const setting of SESSION_SETTINGS) caps.sessionManager.use.registerSetting(setting);
   const agentImpl = new DefaultAgent(caps, cfg);
-  caps.provide(agentService, agentImpl);
+  caps.provide.use(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。
   // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
   // session-manager 的 onDrain 兜的是未装 agent 或钩子未挂上的路径。
   // 超时沿用 core 对 onDrain 的 disposeTimeoutMs，不另加配置键。
-  caps.lifecycle.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
+  caps.lifecycle.use.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
   // 清理段再 abort 一次：drain 超时或未走到收尾时的兜底，表空则空操作。
-  caps.lifecycle.onDispose(() => agentImpl.abortAll(), '中止在飞回合（兜底）');
+  caps.lifecycle.use.onDispose(() => agentImpl.abortAll(), '中止在飞回合（兜底）');
   // 会话删除：丢弃该会话的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
-  caps.events.on('session:deleted', sessionId => agentImpl.dropTokenLogState(sessionId));
+  caps.events.use.on('session:deleted', sessionId => agentImpl.dropTokenLogState(sessionId));
   const agent = agentImpl as unknown as InternalAgent;
 
   // ===== 会话级配置指令 =====
@@ -2400,7 +2403,7 @@ function run(caps: Caps): void {
    * 模型不在时，服务落到别的模型上）
    */
   async function modelNote(smSvc: SessionManagerService, sessionId: string, platform: string): Promise<string> {
-    const actual = (await agent.resolveLLM(platform, sessionId))?.contextId;
+    const actual = (await agent.resolveLLM(platform, sessionId))?.id;
     const shown =
       fmtModel(smSvc.getOwnConfig(sessionId)) ?? fmtModel(smSvc.resolveInheritance(sessionId, platform).values);
     return actual && actual !== shown ? `  这一轮会用: ${actual}` : '';
@@ -2412,9 +2415,11 @@ function run(caps: Caps): void {
 
   /** /session 深度思考那一行之后：这一轮会用的模型的档位与默认档，生效的档位它没有时写明按默认 */
   async function thinkingNote(sessionId: string, platform: string): Promise<string> {
-    const thinking = (await agent.resolveLLM(platform, sessionId))?.instance.thinking;
+    const thinking = (await agent.resolveLLM(platform, sessionId))?.use.thinking;
     if (!thinking) return '  当前模型不能调';
-    const level = caps.sessionManager.current?.resolveConfig(sessionId, platform).think;
+    const level = caps.sessionManager.present
+      ? caps.sessionManager.use.resolveConfig(sessionId, platform).think
+      : undefined;
     const missing = level !== undefined && !thinking.levels.some(({ id }) => id === level);
     return `  当前模型的档位：${levelList(thinking)}，默认 ${thinking.default}${missing ? '；当前模型没有这一档，按默认' : ''}`;
   }
@@ -2436,37 +2441,37 @@ function run(caps: Caps): void {
     return lines.join('\n');
   }
 
-  caps.commands
+  caps.commands.use
     .command('model [keyword:string]', '列出/搜索可用对话模型。分页显示，-p 翻页；如 /model grok')
     .option('page', '-p <n:number>', { description: '页码（默认 1）' })
     .action(async (argv, keyword) => {
       const seen = new Set<string>();
       const ids: string[] = [];
       for (const e of listLLMModels(caps.llm, { caps: ['chat'] })) {
-        if (seen.has(e.contextId)) continue;
-        seen.add(e.contextId);
-        ids.push(e.contextId);
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        ids.push(e.id);
       }
       const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
       return renderPaged(ids, String(keyword ?? ''), page, '可用模型', '/model');
     });
 
-  caps.commands
+  caps.commands.use
     .command('persona [keyword:string]', '列出/搜索可用人设（分页，-p 翻页）')
     .option('page', '-p <n:number>', { description: '页码（默认 1）' })
     .action(async (argv, keyword) => {
-      const persona = caps.persona.current;
+      const persona = caps.persona.present ? caps.persona.use : undefined;
       const names = persona?.listModels ? await persona.listModels() : [];
       const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
       return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
     });
 
   // ---- 会话级「模型 + 人设 + 深度思考 + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
-  caps.commands
+  caps.commands.use
     .command('session', '查看当前对话生效的设定及来源。设定指模型、人设、深度思考与名称', { risk: 'sensitive' })
     .action(async argv => {
-      const smSvc = caps.sessionManager.current;
-      if (!smSvc) return NO_SESSION_MANAGER;
+      if (!caps.sessionManager.present) return NO_SESSION_MANAGER;
+      const smSvc = caps.sessionManager.use;
       const sid = argv.session.sessionId;
       const session = smSvc.getSession(sid);
       return [
@@ -2485,7 +2490,7 @@ function run(caps: Caps): void {
         .join('\n');
     });
 
-  caps.commands
+  caps.commands.use
     .command('session.set', '设定当前对话的模型、人设、深度思考或显示名。会话级覆盖，持久化，重启不丢', {
       risk: 'sensitive',
       examples: [
@@ -2502,8 +2507,8 @@ function run(caps: Caps): void {
     })
     .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
     .action(async argv => {
-      const smSvc = caps.sessionManager.current;
-      if (!smSvc) return NO_SESSION_MANAGER;
+      if (!caps.sessionManager.present) return NO_SESSION_MANAGER;
+      const smSvc = caps.sessionManager.use;
       const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
       const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
       const level = typeof argv.options.think === 'string' ? argv.options.think.trim() : '';
@@ -2513,14 +2518,14 @@ function run(caps: Caps): void {
       }
       const config: SessionConfigPatch = {};
       // 模型：校验存在再落，避免错名静默回退默认
-      let chosen: LLMModelEntry | undefined;
+      let chosen: ProviderEntry<LLMModel> | undefined;
       if (modelRef) {
         const lastSlash = modelRef.lastIndexOf('/');
         if (lastSlash <= 0 || lastSlash === modelRef.length - 1) {
           return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-llm-openai:main/gpt-4o`';
         }
         const chatModels = listLLMModels(caps.llm, { caps: ['chat'] });
-        chosen = chatModels.find(e => e.contextId === modelRef);
+        chosen = chatModels.find(e => e.id === modelRef);
         if (!chosen) {
           return `未知模型 "${modelRef}"。用 /model <关键词> 搜索（如 /model grok），共 ${chatModels.length} 个可用。`;
         }
@@ -2528,7 +2533,7 @@ function run(caps: Caps): void {
       }
       // 深度思考：按这一轮会用的模型（同时改了模型时按新模型）的档位校验
       if (level) {
-        const thinking = (chosen ?? (await agent.resolveLLM(argv.session.platform, argv.session.sessionId)))?.instance
+        const thinking = (chosen ?? (await agent.resolveLLM(argv.session.platform, argv.session.sessionId)))?.use
           .thinking;
         if (!thinking) return '当前模型不能调深度思考';
         if (!thinking.levels.some(({ id }) => id === level)) {
@@ -2538,7 +2543,7 @@ function run(caps: Caps): void {
       }
       // 人设：人设插件不在时这一项没有登记，session-manager 拒绝写入
       if (personaName) {
-        const persona = caps.persona.current;
+        const persona = caps.persona.present ? caps.persona.use : undefined;
         if (persona?.listModels) {
           const names = await persona.listModels();
           if (!names.includes(personaName)) {
@@ -2557,7 +2562,7 @@ function run(caps: Caps): void {
       return lines.join('\n');
     });
 
-  caps.commands
+  caps.commands.use
     .command('session.reset', '复位当前对话的会话级覆盖。默认清模型、人设与深度思考，-m/-p/-t 单独清对应项', {
       risk: 'sensitive',
       examples: ['/session.reset', '/session.reset -m', '/session.reset -p', '/session.reset -t'],
@@ -2566,8 +2571,8 @@ function run(caps: Caps): void {
     .option('persona', '-p', { description: '仅复位人设覆盖' })
     .option('think', '-t', { description: '仅复位深度思考覆盖' })
     .action(async argv => {
-      const smSvc = caps.sessionManager.current;
-      if (!smSvc) return NO_SESSION_MANAGER;
+      if (!caps.sessionManager.present) return NO_SESSION_MANAGER;
+      const smSvc = caps.sessionManager.use;
       const mFlag = argv.options.model === true;
       const pFlag = argv.options.persona === true;
       const tFlag = argv.options.think === true;
@@ -2595,19 +2600,19 @@ function run(caps: Caps): void {
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
-  caps.events.on('token:request', async data => {
+  caps.events.use.on('token:request', async data => {
     if (!data?.sessionId) return;
     // platform 是调用方的入口平台（owner 面会话的快照按它选档）；会话服务对房间不填、其余填连接的平台。
     // 缺省时 IM 房间按会话记下的出生平台（子会话取根会话的）、其余按 'webui'：它还是提示词贡献方的「当前平台」
     //（按平台取跨会话料），不能缺省成空
-    const sm = caps.sessionManager.current;
+    const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const origin = sm && rootSessionOf(sm.getSession(data.sessionId), id => sm.getSession(id))?.originPlatform;
     const platform = data.platform ?? origin ?? 'webui';
 
     try {
       const resolved = await agent.resolveLLM(platform, data.sessionId);
       if (!resolved) return;
-      const llm = resolved.instance;
+      const llm = resolved.use;
 
       const contextLength = llm.contextLength;
       const maxTokens = getModelMaxOutput(llm);
@@ -2617,7 +2622,7 @@ function run(caps: Caps): void {
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
 
       // 获取历史消息并构建基础消息列表
-      const memory = caps.memory.current;
+      const memory = caps.memory.present ? caps.memory.use : undefined;
       const messages: Message[] = [];
 
       // 系统提示
@@ -2631,7 +2636,9 @@ function run(caps: Caps): void {
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
-      const tools = caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
+      const tools = caps.tools.present
+        ? caps.tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined)
+        : [];
 
       const llmBeforeData = {
         messages,
@@ -2642,7 +2649,7 @@ function run(caps: Caps): void {
         dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
       };
       await assemblePromptContributions(caps, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
-      await caps.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+      await caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       // 与真实回合同样过硬裁剪，拆分按裁剪之后的消息算
       const sent = agent.trimMessages(llmBeforeData.messages, tokenBudget);
@@ -2659,7 +2666,7 @@ function run(caps: Caps): void {
         historyMessages: history.length,
       });
     } catch (err) {
-      caps.logger.debug('token:request 处理失败:', err);
+      caps.logger.use.debug('token:request 处理失败:', err);
     }
   });
 }

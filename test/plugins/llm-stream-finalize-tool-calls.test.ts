@@ -59,7 +59,7 @@ async function loadModel(plugin: PluginDefinition, config: Record<string, unknow
   await app.plugins.idle();
   const state = app.plugins.getPlugin(plugin.name)?.state;
   if (state !== 'active') throw new Error(`${plugin.name} 未激活（state=${state}）`);
-  const model = host.llm.all()[0]?.instance;
+  const model = host.llm.list()[0]?.use;
   if (!model) throw new Error('未注册出 llm model entry');
   return model;
 }

@@ -36,9 +36,9 @@ describe('历史消息的时间标注', () => {
     expect(app.plugins.getPlugin(agentPlugin.name)?.state).toBe('active');
     const host = app.bind({ agent, memory });
     const say = (content: string) =>
-      host.agent.require().handleMessage({ content, sessionId: SESSION, platform: 'webui', userId: 'console' });
+      host.agent.use.handleMessage({ content, sessionId: SESSION, platform: 'webui', userId: 'console' });
     const userMessages = async () =>
-      (await host.memory.require().getHistory(SESSION)).filter(m => m.role === 'user').map(m => m.content);
+      (await host.memory.use.getHistory(SESSION)).filter(m => m.role === 'user').map(m => m.content);
 
     await say('第一句');
     const stored = await userMessages();

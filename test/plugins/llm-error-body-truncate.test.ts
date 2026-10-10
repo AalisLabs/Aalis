@@ -60,7 +60,7 @@ async function start(plugin: PluginDefinition, config: Record<string, unknown>) 
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();
-  const entries = app.bind({ services }).services.all(llm);
+  const entries = app.bind({ services }).services.use.all(llm);
   return { app, warns, errors, model: (): LLMModel | undefined => entries[0]?.instance };
 }
 

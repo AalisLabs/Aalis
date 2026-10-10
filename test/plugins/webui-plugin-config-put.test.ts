@@ -1,4 +1,4 @@
-import type { AppService, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
@@ -7,13 +7,14 @@ import { App, appService, config, definePlugin, pluginsService } from '../../pac
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { type ConfigStore, createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // PUT /api/plugins/:name/config 必须与 YAML watch 同一政策：按 configSchema 裁未知键。
 // :name 非法时 core 抛 Error，路由映射为 400 并透出 message（不把管理面输入变成 500）。
 
-function refStub<T>(instance: unknown): ServiceRef<T> {
-  return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
+function refStub<T>(instance: unknown): ServiceSelection<T> {
+  return fixedRef(instance as T);
 }
 
 const apps: App[] = [];
@@ -51,11 +52,11 @@ function attachRoutes(opts: {
     expressApp,
     {
       app: refStub(opts.app),
-      source: { current: undefined },
+      source: ref(),
       plugins: refStub(opts.plugins),
       hostConfig: refStub(opts.hostConfig),
-      tools: { current: undefined },
-      commands: { current: undefined },
+      tools: ref(),
+      commands: ref(),
       services: { names: () => [] },
       self: 'zz-webui',
       versions: () => () => undefined,
@@ -102,7 +103,7 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
         configSchema: SCHEMA,
         uses: { config },
         apply({ config: cfg }) {
-          seen = cfg as Record<string, unknown>;
+          seen = cfg.use as Record<string, unknown>;
         },
       }),
     );
@@ -112,9 +113,9 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
 
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
 
     const put = await api.putPlugin('target', { timeoutMs: 60000 });
@@ -166,9 +167,9 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
 
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
       logger,
     });
     const unknown = await api.putPlugin('target', { timeoutMs: 70000, sneaky: true });
@@ -200,9 +201,9 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
 
     const reply = await api.putPlugin('target', { timeoutMs: 60000, sneaky: true });
@@ -241,9 +242,9 @@ describe('PUT /api/plugins/:name/config 按宿主的裁剪政策', () => {
     );
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
-    const host = bound.hostConfig.require();
+    const host = bound.hostConfig.use;
     expect(host.trimUnknownFields, 'host-config 如实声明宿主的裁剪政策').toBe(false);
-    const api = attachRoutes({ app: bound.app.require(), plugins: bound.plugins.require(), hostConfig: host });
+    const api = attachRoutes({ app: bound.app.use, plugins: bound.plugins.use, hostConfig: host });
 
     const reply = await api.putPlugin('target', { timeoutMs: 60000, sneaky: true });
     expect(reply.body).toEqual({ ok: true, message: '插件 target 配置已更新', ignored: [], removed: [] });
@@ -288,9 +289,9 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
       return persist();
     };
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
     return { app, store, api, applies: () => applies, saves: () => saves };
   }
@@ -334,9 +335,9 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
 
     const reply = await api.putPlugin('target', { ...FULL });
@@ -389,9 +390,9 @@ describe('PUT /api/plugins/:name/config 保存前校验：拦新不追旧', () =
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
     return { store, api };
   }
@@ -456,9 +457,9 @@ describe('PUT /api/plugins/:name/config 保留配置块键序', () => {
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
 
     expect((await api.putPlugin('target', { timeoutMs: 60000 })).status).toBe(200);
@@ -490,9 +491,9 @@ describe('PUT /api/plugins/:name/config 清空顶层字段', () => {
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
     return { app, store, api };
   }
@@ -548,9 +549,9 @@ describe('PUT /api/plugins/:name/config 请求体', () => {
     await app.plugins.idle();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
 
     expect(await api.putPlugin('loose', [{ timeoutMs: 5 }])).toEqual({
@@ -568,7 +569,7 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
     // 钉的是路由「core 抛 Error → 400 + message」而不是自己猜非法规则。
     const { app } = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
-    const inner = bound.hostConfig.require();
+    const inner = bound.hostConfig.use;
     const gated: HostConfig = Object.create(inner) as HostConfig;
     gated.getPluginConfig = (id: string) => {
       assertValidInstanceId(id);
@@ -579,8 +580,8 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
       inner.setPluginConfig(id, cfg);
     };
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
       hostConfig: gated,
     });
 
@@ -602,9 +603,9 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
     const { app } = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.require(),
-      plugins: bound.plugins.require(),
-      hostConfig: bound.hostConfig.require(),
+      app: bound.app.use,
+      plugins: bound.plugins.use,
+      hostConfig: bound.hostConfig.use,
     });
 
     const put = await api.putPlugin('__proto__', { timeoutMs: 1 });

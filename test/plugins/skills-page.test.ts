@@ -31,7 +31,7 @@ async function boot(deletable = true): Promise<SkillsService> {
   await registerHubs(app);
   provideHostPaths(app, base);
   pages = pageHost();
-  app.bind({ provide }).provide(webuiServer, pages.service);
+  app.bind({ provide }).provide.use(webuiServer, pages.service);
   await app.plugins.register(storageLocal, {
     roots: [
       {
@@ -48,7 +48,7 @@ async function boot(deletable = true): Promise<SkillsService> {
   });
   await app.plugins.register(skillsPlugin, { skillsUri: 'store:/skills' });
   await app.plugins.idle();
-  const svc = app.bind({ services }).services.get(skills) as SkillsService;
+  const svc = app.bind({ services }).services.use.get(skills) as SkillsService;
   await svc.rescan();
   return svc;
 }

@@ -30,20 +30,20 @@ describe('scheduler 一次性任务的远期 runAt', () => {
   it('runAt = +30 天：推进 25 天不执行，到点执行一次并删除', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, services, events });
-    host.provide(storage, memoryStorage().service as never);
-    host.provide(cronEngine, cronEngineStub as never);
+    host.provide.use(storage, memoryStorage().service as never);
+    host.provide.use(cronEngine, cronEngineStub as never);
     // 计划任务页的「新建」经 webui-server 的真实登记表调用
     const pages = pageHost();
-    host.provide(webuiServer, pages.service);
+    host.provide.use(webuiServer, pages.service);
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.register(schedulerPlugin, { jobs: [] });
     await app.plugins.idle();
 
     const started: string[] = [];
-    host.events.on('scheduler:job:start', name => {
+    host.events.use.on('scheduler:job:start', name => {
       started.push(name);
     });
-    const jobs = () => host.services.get(scheduler)?.getJobs() ?? [];
+    const jobs = () => host.services.use.get(scheduler)?.getJobs() ?? [];
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {

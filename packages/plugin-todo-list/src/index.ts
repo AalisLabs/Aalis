@@ -36,10 +36,10 @@ export default definePlugin({
   provides: [todoList],
   uses,
   apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     // 读与清空不随工具开关：工具关掉之后，之前留下的计划照样看得到、清得掉
     const service = createTodoList(caps);
-    caps.provide(todoList, service.api, { label: '任务计划' });
+    caps.provide.use(todoList, service.api, { label: '任务计划' });
     if (!cfg.enabled) return;
     registerTodoTool(caps, service);
   },
@@ -58,15 +58,15 @@ function createTodoList({ events, memory }: Caps) {
   const api: TodoListService = {
     /** 有 memory 时每次读当前胜者，没有时读 store */
     async get(sessionId) {
-      const mem = memory.current;
-      if (!mem) return store.get(sessionId) ?? [];
+      if (!memory.present) return store.get(sessionId) ?? [];
+      const mem = memory.use;
       const data = await mem.getMetadata(TODO_NAMESPACE, sessionId);
       return data?.items && Array.isArray(data.items) ? (data.items as TodoItem[]) : [];
     },
     async clear(sessionId) {
       store.delete(sessionId);
-      await memory.current?.deleteMetadata(TODO_NAMESPACE, sessionId);
-      await events.emit('todo:updated', sessionId, []);
+      if (memory.present) await memory.use.deleteMetadata(TODO_NAMESPACE, sessionId);
+      await events.use.emit('todo:updated', sessionId, []);
     },
   };
 
@@ -79,8 +79,8 @@ function createTodoList({ events, memory }: Caps) {
      */
     async save(sessionId: string, items: TodoItem[]): Promise<void> {
       store.set(sessionId, items);
-      await memory.current?.saveMetadata(TODO_NAMESPACE, sessionId, { items });
-      await events.emit('todo:updated', sessionId, items);
+      if (memory.present) await memory.use.saveMetadata(TODO_NAMESPACE, sessionId, { items });
+      await events.use.emit('todo:updated', sessionId, items);
     },
   };
 }
@@ -89,14 +89,14 @@ function registerTodoTool({ tools, events, logger, memory, hooks }: Caps, todos:
   const { store } = todos;
 
   // 注册工具分组
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'todo',
     label: '任务计划',
     description: '创建和管理任务计划列表，拆分复杂任务并追踪进度',
   });
 
   // ---- manage_todo_list ----
-  tools.register({
+  tools.use.register({
     groups: ['todo'],
     definition: {
       type: 'function',
@@ -194,16 +194,16 @@ function registerTodoTool({ tools, events, logger, memory, hooks }: Caps, todos:
   });
 
   // 参与 memory:clear：待办属会话级短期上下文，随 context 一起清。删除会话也经这条钩子（会话级、不带类型）
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('context')) {
       await next();
       return;
     }
     try {
       if (data.scope === 'all') {
-        const mem = memory.current;
+        const mem = memory.present ? memory.use : undefined;
         // 读不出的条目一并删除，计入会话数
-        const [keys] = mem ? await clearMetadataNamespaces(mem, [TODO_NAMESPACE], logger) : [[]];
+        const [keys] = mem ? await clearMetadataNamespaces(mem, [TODO_NAMESPACE], logger.use) : [[]];
         const cleared = [...new Set([...keys, ...store.keys()])];
         store.clear();
         data.results.push({
@@ -211,7 +211,7 @@ function registerTodoTool({ tools, events, logger, memory, hooks }: Caps, todos:
           success: true,
           message: `所有会话待办已清空（${cleared.length} 个会话）`,
         });
-        for (const sessionId of cleared) await events.emit('todo:updated', sessionId, []);
+        for (const sessionId of cleared) await events.use.emit('todo:updated', sessionId, []);
       } else if (data.sessionId) {
         await todos.api.clear(data.sessionId);
         data.results.push({ source: 'todo-list', success: true, message: '当前会话待办已清空' });

@@ -39,7 +39,7 @@ async function capabilitiesOf(
   await app.plugins.idle();
   const state = app.plugins.getPlugin(plugin.name)?.state;
   if (state !== 'active') throw new Error(`${plugin.name} 未激活（state=${state}）`);
-  const out = Object.fromEntries(host.llm.all().map(e => [e.instance.id, [...e.instance.capabilities]]));
+  const out = Object.fromEntries(host.llm.list().map(e => [e.use.id, [...e.use.capabilities]]));
   await app.stop();
   return out;
 }

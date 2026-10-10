@@ -28,7 +28,7 @@ async function collectTools(): Promise<Captured[]> {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, services });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: Captured & { definition: { function: { name: string } } }) {
       captured.push({
         name: tool.definition.function.name,

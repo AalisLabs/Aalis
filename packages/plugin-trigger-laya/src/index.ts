@@ -31,7 +31,7 @@ import {
   type TriggerService,
   trigger,
 } from '@aalis/api-trigger';
-import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import {
   buildIncomingContent,
@@ -145,6 +145,8 @@ const uses = {
   events,
   hooks,
   provide,
+  /** 本插件的实例 id：登记 trigger 的条目 id，判断生效者时与选中的那一条比 */
+  lifecycle,
   /** 本插件自己提供 trigger，只能声明成 optional（required 会把激活闸架在自己的产出上）；经它判断本插件是否生效 */
   trigger: optional(trigger),
   // 缺席时不设禁言：关键词照样吞掉本条，但不会写入禁言期
@@ -178,14 +180,16 @@ export default definePlugin({
 
 function run(caps: Caps): void {
   const { logger } = caps;
-  const cfg = normalizeConfig(parseConfig(configSchema, caps.config, logger), logger);
+  const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
   const url = `${cfg.endpoint}/v1/score`;
 
-  // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行
+  // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行
   const self: TriggerService = { label: 'Laya 模型' };
-  caps.provide(trigger, self, { priority: PRIORITY, label: self.label });
+  const selfId = caps.lifecycle.use.id;
+  caps.provide.use(trigger, self, { priority: PRIORITY, label: self.label });
+  const winner = () => caps.trigger.list().find(p => p.selected);
   /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
-  const botNames = createBotNames(caps.persona, caps.sessionManager, logger, '[laya]');
+  const botNames = createBotNames(caps.persona, caps.sessionManager, logger.use, '[laya]');
 
   // ----- 可用性：熔断与告警 -----
 
@@ -199,7 +203,7 @@ function run(caps: Caps): void {
   function goDown(reason: string): void {
     if (down === undefined) {
       downSince = Date.now();
-      logger.error(
+      logger.use.error(
         `[laya] 判定不可用（${reason}），已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档`,
       );
     }
@@ -212,7 +216,7 @@ function run(caps: Caps): void {
    */
   function fail(why: string): void {
     failures++;
-    logger.debug(`[laya] 侧车请求失败: ${why}`);
+    logger.use.debug(`[laya] 侧车请求失败: ${why}`);
     if (failures < CIRCUIT_FAILURES) return;
     openUntil = Date.now() + CIRCUIT_OPEN_MS;
     // 失败计数在侧车正常作答时清零（成功的判定与 422 / 413），恰好等于门限的那次是转入熔断。判定不可用期间
@@ -220,7 +224,7 @@ function run(caps: Caps): void {
     if (failures === CIRCUIT_FAILURES) {
       goDown(`侧车连续 ${failures} 次失败，最近一次: ${why}；熔断 ${CIRCUIT_OPEN_MS / 1000}s 后重试`);
     } else {
-      logger.debug(`[laya] 侧车连续 ${failures} 次失败（最近一次: ${why}），再熔断 ${CIRCUIT_OPEN_MS / 1000}s`);
+      logger.use.debug(`[laya] 侧车连续 ${failures} 次失败（最近一次: ${why}），再熔断 ${CIRCUIT_OPEN_MS / 1000}s`);
     }
   }
 
@@ -228,7 +232,7 @@ function run(caps: Caps): void {
   function healthy(): void {
     failures = 0;
     if (down === undefined) return;
-    logger.warn(`[laya] 判定恢复（不可用 ${Math.round((Date.now() - downSince) / 1000)}s，最后原因: ${down}）`);
+    logger.use.warn(`[laya] 判定恢复（不可用 ${Math.round((Date.now() - downSince) / 1000)}s，最后原因: ${down}）`);
     down = undefined;
   }
 
@@ -242,7 +246,7 @@ function run(caps: Caps): void {
   /** 托管的目标；undefined = 没配 sidecarDir，侧车由外部运行 */
   const target = cfg.sidecarDir ? sidecarTarget(cfg.sidecarDir, cfg.endpoint) : undefined;
   const managed = target && !('problem' in target) ? target : undefined;
-  if (target && 'problem' in target) logger.error(`[laya] 不托管侧车：${target.problem}`);
+  if (target && 'problem' in target) logger.use.error(`[laya] 不托管侧车：${target.problem}`);
   /** 正在托管的侧车；没配托管、应用还没就绪（如 CLI 子命令进程）、本插件不生效或停用后为 undefined */
   let sidecar: Sidecar | undefined;
 
@@ -263,31 +267,31 @@ function run(caps: Caps): void {
           }
           if (want && !sidecar) {
             sidecar = superviseSidecar({
-              process: () => caps.process.current,
+              process: () => (caps.process.present ? caps.process.use : undefined),
               dir: managed.dir,
               port: managed.port,
               parentPid: process.pid,
               probe: async () => !('error' in (await probe())),
-              log: logger,
+              log: logger.use,
               onExit: (reason, newRound) => {
                 // 失败计数属于退出了的那个进程，作废；新一轮故障（就绪后稳定运行过才退出）另记一条 error
                 failures = 0;
                 if (newRound) down = undefined;
-                else if (down !== undefined) logger.debug(`[laya] ${reason}`);
+                else if (down !== undefined) logger.use.debug(`[laya] ${reason}`);
                 goDown(reason);
               },
             });
           }
         })
-        .catch(err => logger.warn(`[laya] 起停侧车出错: ${err}`));
+        .catch(err => logger.use.warn(`[laya] 起停侧车出错: ${err}`));
       return chain;
     };
-    caps.events.on('app:ready', () => {
+    caps.events.use.on('app:ready', () => {
       appReady = true;
       void reconcile();
     });
-    caps.trigger.follow(winner => {
-      active = winner === self;
+    caps.trigger.follow(() => {
+      active = winner()?.id === selfId;
       void reconcile();
       return () => {
         active = false;
@@ -297,7 +301,7 @@ function run(caps: Caps): void {
     // 停机时 process-local 在 app:stopping 里强杀它拉起的全部子进程，早于本插件的清理：同步打上停止标记，
     // 那一下就不会被当成意外退出（记 error、排重启），之后也不再拉起。子进程的退出回调要等下一轮事件循环，
     // 只要两个监听器之间没有等 I/O 的监听器（目前其余的监听器都是同步的），就总在标记之后
-    caps.events.on('app:stopping', () => {
+    caps.events.use.on('app:stopping', () => {
       appReady = false;
       void sidecar?.stop();
       void reconcile();
@@ -311,8 +315,8 @@ function run(caps: Caps): void {
   const unsupported = new Set<string>();
 
   // 运行期自检：发请求前记下 cur，这条消息归档后与归档正文比对（归档事件带的 incoming 是拷贝，按键关联）
-  const selfCheck = createSelfCheck(line => logger.info(line));
-  caps.events.on('inbound:message:archived', ({ sessionId, incoming, archivedMessage }) =>
+  const selfCheck = createSelfCheck(line => logger.use.info(line));
+  caps.events.use.on('inbound:message:archived', ({ sessionId, incoming, archivedMessage }) =>
     selfCheck.settle(sessionId, incoming.messageId, archivedMessage.content ?? ''),
   );
 
@@ -329,7 +333,7 @@ function run(caps: Caps): void {
     const fallback = (why: string): Verdict => ({ speak: addressed, fallback: why });
     // 侧车按机器人账号认出窗口里哪些是她自己说的：取消息上收到它的账号；消息不带（从 WebUI 往房间插话）时取房间建档时
     // 记下的（子会话取根会话的），都没有的判定不了
-    const sm = caps.sessionManager.current;
+    const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const selfId =
       message.selfId ??
       (sm && rootSessionOf(sm.getSession(message.sessionId), id => sm.getSession(id))?.originChat?.selfId);
@@ -337,18 +341,18 @@ function run(caps: Caps): void {
       const kind = `${message.platform}:${message.sessionType ?? ''}`;
       if (!unsupported.has(kind)) {
         unsupported.add(kind);
-        logger.warn(
+        logger.use.warn(
           `[laya] ${kind} 的消息不带机器人账号，所在会话也没有记下（适配器没有填 selfId），这类消息一律按兜底只回点名；` +
             '要让它们照常回复，把它们移出 scopes，或切到 trigger-policy',
         );
       }
       return fallback('没有机器人账号');
     }
-    const mem = caps.memory.current;
-    if (!mem) {
+    if (!caps.memory.present) {
       goDown('memory 缺席，没有历史窗口');
       return fallback('memory 缺席');
     }
+    const mem = caps.memory.use;
     if (circuitOpen()) return fallback('侧车熔断中');
     // 托管的侧车没就绪：不发请求。首次启动是正常过程，不算不可用；重启中的原因已在退出时记下
     const state = sidecar?.state;
@@ -361,7 +365,7 @@ function run(caps: Caps): void {
     const history = await (mem.getFullHistory?.(sid, fetched) ?? mem.getHistory(sid, fetched));
     // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等识别（有上限，超时照常判定）；
     // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
-    await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger);
+    await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger.use);
     const pointerOnly = imagesPointerOnly(message);
     if (pointerOnly !== undefined) {
       recentImages.push(pointerOnly);
@@ -391,7 +395,7 @@ function run(caps: Caps): void {
     // 窗口才恢复，期间这个会话每条都走兜底，记 info 让用户看得到
     const bytes = Buffer.byteLength(body);
     if (bytes > MAX_BODY_BYTES) {
-      logger.info(`[laya] 请求体 ${bytes} 字节超过侧车上限 ${MAX_BODY_BYTES}，本条按兜底只回点名 | session=${sid}`);
+      logger.use.info(`[laya] 请求体 ${bytes} 字节超过侧车上限 ${MAX_BODY_BYTES}，本条按兜底只回点名 | session=${sid}`);
       return fallback('请求体超限');
     }
     // 确实要发请求才记：在此之前兜底与超限的判定不参与自检
@@ -452,9 +456,9 @@ function run(caps: Caps): void {
   // ===== inbound:trigger 相位：要不要开口 =====
   // 由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发。放行的消息写好 triggerType，
   // 交给 flow 相位做节流硬闸（immediate 穿透冷却与限速）。
-  caps.hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
+  caps.hooks.use.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     // 不是生效的触发插件：什么都不做（不请求、不识别、不归档），交给生效者或往下走
-    if (!isActiveTrigger(data, caps.trigger, self)) return next();
+    if (!isActiveTrigger(data, caps.trigger, selfId)) return next();
     const { message } = data;
     // 内部注入（闲置触发、定时任务、workflow）都带 source，不经判定、不改 triggerType
     if (message.source) return next();
@@ -464,15 +468,15 @@ function run(caps: Caps): void {
     if (!isScopeEnabled(cfg, message.platform, message.sessionType, tid)) return next();
 
     const sid = message.sessionId;
-    const flow = caps.flowControl.current;
+    const flow = caps.flowControl.present ? caps.flowControl.use : undefined;
     // 禁言期：放行给 flow 相位吞掉并归档；不再识别禁言关键词，避免缩短平台禁言
     if (flow?.isMuted(sid)) return next();
 
     // 禁言关键词：设置自禁言，吞掉本条
     if (hitsMuteKeyword(message, cfg.muteKeywords)) {
-      logger.info(`[laya] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${sid}`);
+      logger.use.info(`[laya] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${sid}`);
       flow?.setMuted(sid, cfg.muteTimeSeconds, message.platform);
-      await archiveSwallowed(message, caps.messageArchive, logger, '[laya]');
+      await archiveSwallowed(message, caps.messageArchive, logger.use, '[laya]');
       return; // swallow
     }
 
@@ -486,7 +490,7 @@ function run(caps: Caps): void {
       verdict = await judge(message, addressed, names, threshold);
     } catch (err) {
       // 取历史失败等意外：本条兜底，不计侧车失败
-      logger.warn(`[laya] 判定异常，本条按兜底只回点名: ${err}`);
+      logger.use.warn(`[laya] 判定异常，本条按兜底只回点名: ${err}`);
       verdict = { speak: addressed, fallback: '判定异常' };
     }
     // 判定日志：不含正文与昵称
@@ -494,14 +498,14 @@ function run(caps: Caps): void {
       'fallback' in verdict
         ? `兜底=${verdict.fallback}`
         : `logit=${verdict.logit.toFixed(3)} | 阈值=${verdict.threshold} | 版本=${verdict.version}`;
-    logger.debug(
+    logger.use.debug(
       `[laya] 判定 | session=${sid} | speak=${verdict.speak} | addressed=${addressed} | ${detail} | ` +
         `耗时=${Date.now() - started}ms`,
     );
 
     // 放行与吞掉都不等判定期间启动的附件识别（见 attachments.ts）
     if (!verdict.speak) {
-      await archiveSwallowed(message, caps.messageArchive, logger, '[laya]');
+      await archiveSwallowed(message, caps.messageArchive, logger.use, '[laya]');
       return; // swallow
     }
     markTriggered(message, addressed);
@@ -522,20 +526,20 @@ function run(caps: Caps): void {
     }
   }
 
-  caps.doctor.registerCheck({
+  caps.doctor.use.registerCheck({
     id: 'trigger.laya',
     category: 'service',
     async run(): Promise<CheckResult> {
-      const current = caps.trigger.current;
+      const current = winner();
       const detail = `endpoint=${cfg.endpoint}${managed ? `; sidecarDir=${managed.dir}` : ''}`;
       // 不生效时不判定、不拉起侧车，侧车在不在都不影响回复：不检查
-      if (current !== self) {
+      if (current?.id !== selfId) {
         return {
           id: 'trigger.laya',
           category: 'service',
           level: 'ok',
           message:
-            `Laya 触发判定未生效（${current ? `生效的触发插件是「${current.label}」` : '没有生效的触发插件'}），` +
+            `Laya 触发判定未生效（${current ? `生效的触发插件是「${current.use.label}」` : '没有生效的触发插件'}），` +
             '不检查侧车；要启用它，在配置文件的 servicePreferences 里把 trigger 指向 @aalis/plugin-trigger-laya',
           detail,
         };
@@ -569,7 +573,7 @@ function run(caps: Caps): void {
           );
         }
       }
-      if (!caps.memory.current) problems.push('memory 缺席');
+      if (!caps.memory.present) problems.push('memory 缺席');
       if (circuitOpen()) problems.push(`判定不可用（${down}）`);
       const parts = problems.length > 0 ? [`${problems.join('；')}，判定按兜底只回点名`] : online ? [online] : [];
       parts.push(...notes);
@@ -597,7 +601,7 @@ function run(caps: Caps): void {
     },
   });
 
-  logger.info(
+  logger.use.info(
     `[laya] 已启用 (阈值=${cfg.threshold ?? '侧车'}, endpoint=${cfg.endpoint}, ` +
       `侧车=${managed ? `托管 ${managed.dir}` : '外部运行'}, ` +
       `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,

@@ -667,7 +667,7 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     });
     await waitFor(() => hub.outbound.length === 1, '前一件直接发出');
     // 发布服务到场：两张图挑不出作品，转为直接发送，排在通知链上前一件之后
-    hub.app.bind({ provide }).provide(publish, {
+    hub.app.bind({ provide }).provide.use(publish, {
       listSurfaces: () => [{ name: 'works', available: true }],
       onChange: () => () => {},
     } as unknown as PublishService);

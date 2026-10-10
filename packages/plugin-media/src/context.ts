@@ -13,12 +13,12 @@
 // ============================================================
 
 import type { MemoryService } from '@aalis/api-memory';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 /** 构造上下文用到的能力：读历史与画像的 memory（可缺席），以及记降级原因的 logger */
 export interface ContextCaps {
-  memory: ServiceRef<MemoryService>;
+  memory: ServiceSelection<MemoryService>;
   logger: Logger;
 }
 
@@ -54,8 +54,8 @@ async function loadSenderProfileSummary(
 ): Promise<string> {
   if (maxChars <= 0 || !userId) return '';
   try {
-    const memory = caps.memory.current;
-    if (!memory) return '';
+    if (!caps.memory.present) return '';
+    const memory = caps.memory.use;
     const key = `${platform ?? ''}:${userId}`;
     const doc = await memory.getMetadata(USER_PROFILE_NAMESPACE, key);
     if (!doc) return '';
@@ -101,7 +101,7 @@ export async function buildIncomingImageContext(
 
   if (beforeLimit > 0 && msg.sessionId) {
     try {
-      const memory = caps.memory.current;
+      const memory = caps.memory.present ? caps.memory.use : undefined;
       if (memory) {
         const history = await memory.getHistory(msg.sessionId, beforeLimit);
         if (history.length > 0) {

@@ -20,7 +20,7 @@ async function world() {
   for (const s of ['s1', 's2']) await env.memory.saveMetadata('summary', s, { summary: `${s} 的摘要` });
   async function clear(scope: 'session' | 'all', types?: string[]) {
     const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 's1', results: [] };
-    await env.host.hooks.run('memory:clear', data, async () => {});
+    await env.host.hooks.use.run('memory:clear', data, async () => {});
     return data.results;
   }
   const has = async (s: string) => (await env.memory.getMetadata('summary', s)) !== undefined;
@@ -100,7 +100,7 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
     for (let i = 0; i < 35; i++)
       await env.memory.saveMessage('s1', { role: i % 2 === 0 ? 'user' : 'assistant', content: `第 ${i} 条` });
     const statuses: string[] = [];
-    env.host.events.on('session:compressing', info => void statuses.push(info.status));
+    env.host.events.use.on('session:compressing', info => void statuses.push(info.status));
     // 压缩一直等到模型返回才落定，不能在放行前 await
     const started =
       start === 'turn'
@@ -112,7 +112,7 @@ describe('plugin-memory-summary: 清理与在途摘要', () => {
     await expect.poll(() => state.calls).toBe(1);
     const clear = async (scope: 'session' | 'all', sessionId: string) => {
       const data: HookContextMap['memory:clear'] = { scope, sessionId, results: [] };
-      await env.host.hooks.run('memory:clear', data, async () => {});
+      await env.host.hooks.use.run('memory:clear', data, async () => {});
     };
     const finish = async () => {
       release();

@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CodeSandboxService, SandboxRunRequest } from '../../packages/api-code-sandbox/src/index.js';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions } from '../../packages/api-process/src/index.js';
-import type { StorageService } from '../../packages/api-storage/src/index.js';
+import type { BoundStorage, StorageService } from '../../packages/api-storage/src/index.js';
 import { type RegisteredTool, toolFailed } from '../../packages/api-tools/src/index.js';
 import type { LifecycleCap, Provide } from '../../packages/core/src/index.js';
 import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
@@ -13,7 +13,7 @@ import { LocalProcessService } from '../../packages/plugin-process-local/src/ind
 import codeRunner from '../../packages/plugin-tool-code-runner/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
-import { absentDoctor, ref } from '../fixtures/service-ref.js';
+import { absentDoctor, fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 代码执行声明可转后台，只认执行器给这次调用的中止信号，不另设超时：run_python、run_javascript 在沙箱与无沙箱
@@ -161,22 +161,24 @@ async function applyRunner(opts: {
   const handlers: Record<string, Handler> = {};
   const storage = localStorage();
   await codeRunner.apply({
-    tools: stubBoundTools({
-      onRegister: t => {
-        handlers[t.definition.function.name] = t.handler;
-      },
-    }),
-    storage: ref(view(storage)),
+    tools: fixedRef(
+      stubBoundTools({
+        onRegister: t => {
+          handlers[t.definition.function.name] = t.handler;
+        },
+      }),
+    ),
+    storage: ref(view(storage as BoundStorage)),
     proc: ref(view(opts.proc ?? new RecordingProcess(storage))),
     codeSandbox: ref(opts.sandbox ? view(opts.sandbox) : []),
-    logger: silentLogger(),
-    config: {
+    logger: fixedRef(silentLogger()),
+    config: fixedRef({
       python: { enabled: true, interpreter: pythonPath ?? 'python3' },
       javascript: { enabled: true, interpreter: process.execPath },
       maxOutputSize: 65_536,
       workingDirectory: 'workspace:/',
       sandbox: { mode: opts.mode, network: 'deny' },
-    },
+    }),
   });
   return handlers;
 }
@@ -197,9 +199,9 @@ async function applySandbox(proc: ProcessService): Promise<CodeSandboxService> {
   await codeSandboxOs.apply({
     processService: ref(view(proc)),
     doctor: absentDoctor(),
-    logger: silentLogger(),
-    provide,
-    lifecycle,
+    logger: fixedRef(silentLogger()),
+    provide: fixedRef(provide),
+    lifecycle: fixedRef(lifecycle),
   });
   if (!provided) throw new Error('code-sandbox-os 没有提供服务');
   return provided;
@@ -394,12 +396,12 @@ describe('代码执行的声明', () => {
   it('run_python、run_javascript 声明可转后台（让出时限用执行器的默认），参数只有 code', async () => {
     const registered: Array<Omit<RegisteredTool, 'pluginName'>> = [];
     await codeRunner.apply({
-      tools: stubBoundTools({ onRegister: t => registered.push(t) }),
-      storage: ref(view(localStorage())),
+      tools: fixedRef(stubBoundTools({ onRegister: t => registered.push(t) })),
+      storage: ref(view(localStorage() as BoundStorage)),
       proc: ref([]),
       codeSandbox: ref([]),
-      logger: silentLogger(),
-      config: {},
+      logger: fixedRef(silentLogger()),
+      config: fixedRef({}),
     });
     expect(registered.map(t => [t.definition.function.name, t.background])).toEqual([
       ['run_python', {}],

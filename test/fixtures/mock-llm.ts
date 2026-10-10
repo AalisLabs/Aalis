@@ -127,7 +127,7 @@ export function createMockLLMPlugin(options: MockLLMOptions = {}) {
     uses: { provide, events },
     apply({ provide, events }) {
       // 能力挂在 handle 自身的 `capabilities` 字段上，不是 provide 的选项
-      provide(llm, metered(service, events), { entryId: `${service.providerId}/${service.id}` });
+      provide.use(llm, metered(service, events.use), { entryId: `${service.providerId}/${service.id}` });
     },
   });
 }

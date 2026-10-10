@@ -53,14 +53,14 @@ function provider(name: string, models: string[], refreshable: boolean, thinking
       for (const id of models) {
         const handle = {
           id,
-          providerId: caps.lifecycle.id,
+          providerId: caps.lifecycle.use.id,
           contextLength: 8192,
           capabilities: ['chat'],
           chat: async () => ({ content: '' }),
           ...(refreshable ? { refresh } : {}),
           ...(thinking[id] ? { thinking: thinking[id] } : {}),
         } as unknown as LLMModel;
-        caps.provide(llm, handle, { entryId: `${caps.lifecycle.id}/${id}` });
+        caps.provide.use(llm, handle, { entryId: `${caps.lifecycle.use.id}/${id}` });
       }
     },
   });
@@ -109,7 +109,7 @@ it('模型的可选项按 provider 给出：contextId 是提供者的实例 id�
   ]);
   const source = app.bind({ llm }).llm;
   for (const { contextId, model } of providers) {
-    expect(resolveLLMModel(source, { provider: contextId, model })?.contextId).toBe(`${contextId}/${model}`);
+    expect(resolveLLMModel(source, { provider: contextId, model })?.id).toBe(`${contextId}/${model}`);
   }
 });
 
@@ -153,7 +153,7 @@ it('深度思考的可选项按依赖的模型给出它的档位，默认档标�
 it('深度思考的可选项没带依赖的值时按服务偏好解析', async () => {
   const { app, port } = await boot();
   expect((await thinkingOptions(port)).body).toMatchObject({ models: ['off', 'high', 'max'] });
-  app.bind({ services }).services.prefer(llm, 'zz-static/s1');
+  app.bind({ services }).services.use.prefer(llm, 'zz-static/s1');
   expect((await thinkingOptions(port)).body).toEqual({ models: [], details: [], labels: LABELS });
 });
 

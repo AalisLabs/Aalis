@@ -1,7 +1,7 @@
 // ----- 附件识别限时等待 -----
 
 import type { MediaService } from '@aalis/api-media';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 /**
@@ -13,11 +13,11 @@ import type { IncomingMessage } from '@aalis/schema-message';
  */
 export async function waitForAttachmentDescriptions(
   message: IncomingMessage,
-  media: Pick<ServiceRef<MediaService>, 'current'>,
+  media: Pick<ServiceSelection<MediaService>, 'present' | 'use'>,
   waitMs: number,
   logger: Logger,
 ): Promise<void> {
-  const svc = media.current;
+  const svc = media.present ? media.use : undefined;
   if (!svc || !message.attachments?.length || message._attachmentDescriptions) return;
   const recognition = Promise.resolve()
     .then(() => svc.processMessage(message))

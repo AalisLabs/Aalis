@@ -67,7 +67,7 @@ function probe(name: string, opts: { reusable?: boolean } = {}) {
     configSchema: SCHEMA,
     uses: { config },
     apply({ config: raw }) {
-      seen.push(parseConfig(SCHEMA, raw) as Record<string, unknown>);
+      seen.push(parseConfig(SCHEMA, raw.use) as Record<string, unknown>);
     },
   });
   return { definition, seen };
@@ -131,7 +131,7 @@ function world(doc: Partial<AalisConfig>, secrets: Record<string, unknown> = {})
     },
   });
   apps.push(app);
-  const host = (): HostConfig => app.bind({ hostConfig }).hostConfig.require();
+  const host = (): HostConfig => app.bind({ hostConfig }).hostConfig.use;
   return { app, store, host, order, savedConfigs, savedSecrets, failConfigSave, failSecretsSave, hold, emit, lines };
 }
 
@@ -498,7 +498,7 @@ describe('登记、同步与热重载', () => {
     await registerFromDoc(w.app, w.store, probe('p').definition);
     await registerFromDoc(w.app, w.store, probe('q').definition);
     const checks: CheckSpec[] = [];
-    w.app.bind({ provide }).provide(doctor, {
+    w.app.bind({ provide }).provide.use(doctor, {
       registerCheck: (spec: CheckSpec) => {
         checks.push(spec);
         return () => {};

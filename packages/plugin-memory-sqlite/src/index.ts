@@ -9,7 +9,7 @@ import {
   type RecentMessageRecord,
   type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
-import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
+import { storage, toStorageUri } from '@aalis/api-storage';
 import {
   config,
   definePlugin,
@@ -463,10 +463,10 @@ export default definePlugin({
     config,
   },
   async apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     // 解析数据库路径：storage URI → 本地路径
-    const gateway = createStorageGateway(caps.storage);
-    const dbUri = toUri(cfg.path, caps.lifecycle.id);
+    const gateway = caps.storage.use;
+    const dbUri = toUri(cfg.path, caps.lifecycle.use.id);
     let dbPath: string;
     try {
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');
@@ -475,7 +475,7 @@ export default definePlugin({
       throw new Error(`无法解析数据库路径 ${dbUri}（检查配置项 path）: ${msg}`, { cause: err });
     }
 
-    caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
+    caps.logger.use.info(`正在打开 SQLite 数据库: ${dbPath}`);
 
     // 经 process.getBuiltinModule 取 node:sqlite：插件源码也在 vitest 里加载，而 vitest 解析不了静态的 `import 'node:sqlite'`。
     // 取不到 process.getBuiltinModule 或 node:sqlite，或 node:sqlite 缺本插件要用的接口（22.16 之前、23.x）时，都按 Node 太旧报错
@@ -504,15 +504,15 @@ export default definePlugin({
       const { dev, ino } = statSync(dbPath, { bigint: true });
       const fileKey = ino === 0n ? dbPath : `${dev}:${ino}`;
       const holder = openedBy.get(fileKey);
-      if (holder && holder.lifecycle.id !== caps.lifecycle.id) {
+      if (holder && holder.lifecycle.id !== caps.lifecycle.use.id) {
         const via = holder.path === dbPath ? '' : `（经路径 ${holder.path} 打开）`;
         throw configError(
-          `数据库文件 ${dbPath} 已被实例 ${holder.lifecycle.id} 使用${via}，两个实例不能共用一个库：请给 ${caps.lifecycle.id} 另配 path`,
+          `数据库文件 ${dbPath} 已被实例 ${holder.lifecycle.id} 使用${via}，两个实例不能共用一个库：请给 ${caps.lifecycle.use.id} 另配 path`,
         );
       }
-      openedBy.set(fileKey, { lifecycle: caps.lifecycle, path: dbPath });
-      caps.lifecycle.onDispose(() => {
-        if (openedBy.get(fileKey)?.lifecycle === caps.lifecycle) openedBy.delete(fileKey);
+      openedBy.set(fileKey, { lifecycle: caps.lifecycle.use, path: dbPath });
+      caps.lifecycle.use.onDispose(() => {
+        if (openedBy.get(fileKey)?.lifecycle === caps.lifecycle.use) openedBy.delete(fileKey);
       });
 
       try {
@@ -522,19 +522,19 @@ export default definePlugin({
         const service = new SQLiteMemoryService(db, {
           rangeQueryLimit: cfg.rangeQueryLimit,
           crossSessionMaxLimit: cfg.crossSessionMaxLimit,
-          logger: caps.logger,
+          logger: caps.logger.use,
         });
 
-        caps.provide(memory, service, {
+        caps.provide.use(memory, service, {
           priority: 10,
         });
 
-        caps.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
+        caps.logger.use.info(`SQLite 数据库已就绪: ${dbPath}`);
 
         // 开库跨了 await：激活可能已在关闭，迟到的清理照样会被执行，句柄不会漏
-        caps.lifecycle.onDispose(() => {
+        caps.lifecycle.use.onDispose(() => {
           service.close();
-          caps.logger.info('SQLite 数据库已关闭');
+          caps.logger.use.info('SQLite 数据库已关闭');
         });
       } catch (err) {
         throw new Error(`SQLite 打开失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });

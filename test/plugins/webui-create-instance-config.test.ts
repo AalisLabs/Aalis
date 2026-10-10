@@ -1,9 +1,10 @@
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { type App, appService, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp } from '../fixtures/app.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // POST /api/plugins/:name/instances 的 config 与 PUT 插件配置同一套：按默认值深合并（只提交半块的分组不能把
@@ -14,8 +15,8 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
-function refStub<T>(instance: unknown): ServiceRef<T> {
-  return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
+function refStub<T>(instance: unknown): ServiceSelection<T> {
+  return fixedRef(instance as T);
 }
 
 const grouped = definePlugin({
@@ -57,12 +58,12 @@ async function setup(register: (app: App) => Promise<unknown> = app => app.plugi
   registerPluginRoutes(
     expressApp,
     {
-      app: refStub(bound.app.require()),
-      source: { current: undefined },
-      plugins: refStub(bound.plugins.require()),
-      hostConfig: refStub(bound.hostConfig.require()),
-      tools: { current: undefined },
-      commands: { current: undefined },
+      app: refStub(bound.app.use),
+      source: ref(),
+      plugins: refStub(bound.plugins.use),
+      hostConfig: refStub(bound.hostConfig.use),
+      tools: ref(),
+      commands: ref(),
       services: { names: () => [] },
       self: 'zz-webui',
       versions: () => () => undefined,

@@ -141,24 +141,27 @@ async function setup(opts: SetupOptions) {
 
   const received: IncomingMessage[] = [];
   const replied: string[] = [];
-  host.events.on('outbound:message', m => {
+  host.events.use.on('outbound:message', m => {
     if (m.source === 'agent' && m.sessionId) replied.push(m.sessionId);
   });
-  host.provide(agent, {
+  host.provide.use(agent, {
     async handleMessage(msg: IncomingMessage) {
       received.push(msg);
-      await host.gateway
-        .require()
-        .dispatchOutbound({ content: '好的', sessionId: msg.sessionId, platform: msg.platform, source: 'agent' });
+      await host.gateway.use.dispatchOutbound({
+        content: '好的',
+        sessionId: msg.sessionId,
+        platform: msg.platform,
+        source: 'agent',
+      });
     },
   } as never);
   const rooms = opts.rooms ?? [GROUP, OWNER_DM, OTHER_DM];
-  host.provide(memory, {
+  host.provide.use(memory, {
     ...fakeMemory(Object.fromEntries(rooms.map(id => [id, storedRoom(id)]))),
     getFullHistory: async () => [],
   } as never);
   if (!opts.noAuthority) {
-    host.provide(authority, {
+    host.provide.use(authority, {
       isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === OWNER,
     } as never);
   }
@@ -196,13 +199,13 @@ async function setup(opts: SetupOptions) {
 
   return {
     received,
-    sm: () => host.sessionManager.require(),
-    flow: () => host.flowControl.require(),
+    sm: () => host.sessionManager.use,
+    flow: () => host.flowControl.use,
     /** 真人入站经网关：等整条相位链跑完 */
-    send: (msg: IncomingMessage) => host.gateway.require().ingressMessage(msg),
+    send: (msg: IncomingMessage) => host.gateway.use.ingressMessage(msg),
     /** 平台适配器的投递：发入站事件，会话管理在同一个事件上收录房间 */
     emit: async (msg: IncomingMessage) => {
-      await host.events.emit('inbound:message', msg);
+      await host.events.use.emit('inbound:message', msg);
       await flush();
     },
     dispatched: (sid: string) => received.filter(m => m.sessionId === sid).map(m => m.content),

@@ -16,12 +16,12 @@ describe('关停：active 会话自行收口落盘', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
-    host.provide(memory, store as never);
+    host.provide.use(memory, store as never);
     await app.plugin(sessionManagerPlugin, {});
     await app.plugins.idle();
     expect(app.plugins.getPlugin(sessionManagerPlugin.name)?.state).toBe('active');
 
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     await sm.ensureSession('in-flight', { name: '在飞', status: 'active' });
     await sm.ensureSession('idle-waiting', { name: '空会话', status: 'waiting' });
     await sm.ensureSession('already-done', { name: '已完成', status: 'completed' });

@@ -33,13 +33,13 @@ async function setup(crossSessionMode: string) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide });
-  host.provide(embedding, {
+  host.provide.use(embedding, {
     async embed(): Promise<number[]> {
       return [0.1, 0.2, 0.3];
     },
   });
   const all = hits();
-  host.provide(vectorstore, {
+  host.provide.use(vectorstore, {
     async add(): Promise<void> {},
     async search(_q: number[], topK: number): Promise<VectorSearchResult[]> {
       return all.slice(0, topK);
@@ -51,7 +51,7 @@ async function setup(crossSessionMode: string) {
     async save(): Promise<void> {},
   });
   const toolHandlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};

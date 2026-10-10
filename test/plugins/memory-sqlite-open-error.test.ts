@@ -59,7 +59,7 @@ async function activate(path = join(dir, 'aalis.db'), resolveError?: Error, conf
   const logger = recordingLogger();
   const app = new App({ name: 'T', logger });
   apps.push(app);
-  app.bind({ provide }).provide(storage, fakeStorage(path, resolveError));
+  app.bind({ provide }).provide.use(storage, fakeStorage(path, resolveError));
   await app.plugins.register(memorySqlite, config);
   await app.plugins.idle();
   const entry = app.plugins.getStatus().find(p => p.name === '@aalis/plugin-memory-sqlite');

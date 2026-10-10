@@ -1,4 +1,4 @@
-import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
+import { storage, toStorageUri } from '@aalis/api-storage';
 import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -305,7 +305,7 @@ export class LanceDBVectorStore implements VectorStoreService {
 
 // ===== 插件入口 =====
 
-// storage 是 required 而非 optional：数据目录经存储网关解析（resolveLocalPath），没有它连库都开不了。
+// storage 是 required 而非 optional：数据目录经存储服务解析（resolveLocalPath），没有它连库都开不了。
 const uses = { storage, provide, config, logger, lifecycle };
 
 export default definePlugin({
@@ -316,23 +316,29 @@ export default definePlugin({
   provides: [vectorstore],
   uses,
   async apply({ storage, provide, config, logger, lifecycle }) {
-    const cfg: LanceDBConfig = parseConfig(configSchema, config, logger);
+    const cfg: LanceDBConfig = parseConfig(configSchema, config.use, logger.use);
     if (!cfg.tableName.trim()) throw configError('tableName 不能为空');
 
-    const gateway = createStorageGateway(storage);
+    const gateway = storage.use;
     const dbUri = toUri(cfg.path);
     const dbPath = await gateway.resolveLocalPath(dbUri, 'write');
-    const store = new LanceDBVectorStore(dbPath, cfg.tableName, cfg.optimizeEvery, cfg.cleanupRetentionMinutes, logger);
+    const store = new LanceDBVectorStore(
+      dbPath,
+      cfg.tableName,
+      cfg.optimizeEvery,
+      cfg.cleanupRetentionMinutes,
+      logger.use,
+    );
 
     await store.init();
 
     const count = await store.size();
-    logger.info(`LanceDB 向量数据库已加载: ${count} 条记录, URI=${dbUri}, 表=${cfg.tableName}`);
+    logger.use.info(`LanceDB 向量数据库已加载: ${count} 条记录, URI=${dbUri}, 表=${cfg.tableName}`);
 
-    provide(vectorstore, store, { priority: 10 });
+    provide.use(vectorstore, store, { priority: 10 });
 
     // 建库跨 await，激活可能已在关闭：迟到的清理照样被执行
-    lifecycle.onDispose(async () => {
+    lifecycle.use.onDispose(async () => {
       await store.close();
     }, 'lancedb:store.close');
   },

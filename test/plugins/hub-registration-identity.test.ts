@@ -73,7 +73,7 @@ function toolsProbe(name: string, onBound: (bound: BoundTools) => void) {
     // 声明为 optional：提供者换人期间探针必须留在激活态，否则测到的是「插件被重装」而非「绑定重挂」
     uses: { tools: optional(tools) },
     apply(caps) {
-      onBound(caps.tools);
+      onBound(caps.tools.use);
     },
   });
 }
@@ -95,7 +95,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     apps.push(app);
     const host = app.bind({ provide });
     const reg = makeToolRegistry(silentLogger());
-    const offProvide = host.provide(tools, reg);
+    const offProvide = host.provide.use(tools, reg);
     let bound!: BoundTools;
     await app.plugin(
       toolsProbe('p', b => {
@@ -126,7 +126,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
 
     offProvide();
     const reg2 = makeToolRegistry(silentLogger());
-    host.provide(tools, reg2);
+    host.provide.use(tools, reg2);
     await app.plugins.idle();
     expect(names(reg2), '旧登记已随替换出账，换提供者不复活它').toEqual([]);
     oldOff();
@@ -140,7 +140,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(names(reg)).toEqual([]);
     offProvide();
     const reg2 = makeToolRegistry(silentLogger());
-    host.provide(tools, reg2);
+    host.provide.use(tools, reg2);
     await app.plugins.idle();
     expect(names(reg2), '已退订的登记不随换提供者复活').toEqual([]);
     bound.register({ definition: def('t'), handler: async () => 'v2' });
@@ -154,7 +154,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     offProvide();
     const reg2 = makeToolRegistry(silentLogger());
     const registered = vi.spyOn(reg2, 'register');
-    host.provide(tools, reg2);
+    host.provide.use(tools, reg2);
     await app.plugins.idle();
     // 重挂是逐条发起的，调用次数即账上的条目数：刷新若各自留一条（或各自一条订阅），这里是 100
     expect(registered.mock.calls.length, '刷新不在账上堆条目').toBe(1);
@@ -167,7 +167,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     for (let i = 0; i < total; i++) bound.register({ definition: def(`t${i}`), handler: async () => '' });
     offProvide();
     const reg2 = makeToolRegistry(silentLogger());
-    host.provide(tools, reg2);
+    host.provide.use(tools, reg2);
     const seen = new Set<number>();
     for (let hop = 0; hop < 50; hop++) {
       seen.add(reg2.getAll().length);
@@ -188,7 +188,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     newOff();
     offProvide();
     const reg2 = makeToolRegistry(silentLogger());
-    host.provide(tools, reg2);
+    host.provide.use(tools, reg2);
     await app.plugins.idle();
     expect(reg2.getGroups(), '被替换的旧分组不随换提供者复活').toEqual([]);
     oldOff();
@@ -211,7 +211,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     });
     apps.push(app);
     const reg = makeToolRegistry(silentLogger());
-    app.bind({ provide }).provide(tools, reg);
+    app.bind({ provide }).provide.use(tools, reg);
     return { app, reg, warnings, refusals: () => warnings.filter(w => w.includes('忽略 tools 登记')).length };
   }
 
@@ -265,10 +265,10 @@ describe('tools 绑定：同名替换与整体重挂', () => {
       name: 'late-registrar',
       uses: { tools: optional(tools), lifecycle },
       async apply(caps) {
-        life = caps.lifecycle;
-        caps.tools.register({ definition: def('early'), handler: async () => '' });
+        life = caps.lifecycle.use;
+        caps.tools.use.register({ definition: def('early'), handler: async () => '' });
         await gate;
-        lateOff = caps.tools.register({ definition: def('late'), handler: async () => '' });
+        lateOff = caps.tools.use.register({ definition: def('late'), handler: async () => '' });
       },
     });
     const mounting = app.plugin(lateRegistrar);
@@ -285,15 +285,15 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(() => lateOff(), '拒收返回的退订可调、无动作').not.toThrow();
   });
 
-  it('withToolGroups 视图的枢纽引用是活取的，跟着提供者换人', async () => {
+  it('withToolGroups 视图的读接口是活的，跟着提供者换人', async () => {
     const { host, reg, offProvide, tools: bound } = await world();
     const view = withToolGroups(bound, ['g']);
-    expect(view.current).toBe(reg);
+    reg.register({ definition: def('only-in-first'), handler: async () => '' }, 'x');
+    expect(view.getAll().map(t => t.name)).toContain('only-in-first');
     offProvide();
-    expect(view.current).toBeUndefined();
-    const reg2 = makeToolRegistry(silentLogger());
-    host.provide(tools, reg2);
-    expect(view.current).toBe(reg2);
+    expect(() => view.getAll(), '提供者撤回后打不到').toThrow();
+    host.provide.use(tools, makeToolRegistry(silentLogger()));
+    expect(view.getAll().map(t => t.name)).not.toContain('only-in-first');
   });
 
   it('withToolGroups 登记的工具带上默认分组，且并不覆盖工具自带的分组', async () => {
@@ -314,14 +314,18 @@ describe('agent 预处理器退订按条目身份', () => {
     await app.plugins.register(agentPlugin, {});
     await app.plugins.idle();
     const host = app.bind({ services, hooks });
-    const svc = host.services.get(agent)!;
+    const svc = host.services.use.get(agent)!;
     const ran: string[] = [];
     const handler = (tag: string) => async (_m: unknown, next: () => Promise<void>) => {
       ran.push(tag);
       await next();
     };
     const run = () =>
-      host.hooks.run('agent:input:before', { message: {} as never, turnId: 't1', metadata: {} }, async () => undefined);
+      host.hooks.use.run(
+        'agent:input:before',
+        { message: {} as never, turnId: 't1', metadata: {} },
+        async () => undefined,
+      );
 
     const oldOff = svc.registerPreprocessor!('x', handler('old'));
     svc.registerPreprocessor!('x', handler('new'));

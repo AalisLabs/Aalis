@@ -37,7 +37,7 @@ async function setup(modelId: string) {
   await app.plugin(openaiPlugin, { apiKey: 'test-key' });
   await app.plugins.idle();
   const host = app.bind({ services });
-  const model = host.services.get(llm);
+  const model = host.services.use.get(llm);
   if (!model?.chatStream) throw new Error('llm entry 未注册');
   return { app, model, bodies };
 }

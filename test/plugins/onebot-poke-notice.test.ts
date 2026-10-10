@@ -62,17 +62,17 @@ async function boot(protocol: Protocol) {
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events });
-  host.provide(storage, { listRoots: () => [] } as never);
-  host.provide(processService, {} as never);
+  host.provide.use(storage, { listRoots: () => [] } as never);
+  host.provide.use(processService, {} as never);
   const directNotices: ArchiveNoticeOptions[] = [];
-  host.provide(messageArchive, {
+  host.provide.use(messageArchive, {
     async archiveNotice(opts: ArchiveNoticeOptions) {
       directNotices.push(opts);
       return null;
     },
   } as never);
   const inbound: IncomingMessage[] = [];
-  host.events.on('inbound:message', (msg: IncomingMessage) => {
+  host.events.use.on('inbound:message', (msg: IncomingMessage) => {
     inbound.push(msg);
   });
   await app.plugins.register(onebotPlugin, {

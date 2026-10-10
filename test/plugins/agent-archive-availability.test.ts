@@ -30,11 +30,11 @@ async function boot() {
   expect(app.plugins.getPlugin(agentPlugin.name)?.state).toBe('active');
   const host = app.bind({ agent, memory, events });
   const replies: string[] = [];
-  host.events.on('outbound:message', message => {
+  host.events.use.on('outbound:message', message => {
     replies.push(message.content);
   });
   const send = (sessionId: string, extra: Partial<IncomingMessage> = {}) =>
-    host.agent.require().handleMessage({
+    host.agent.use.handleMessage({
       sessionId,
       platform: 'cli',
       userId: 'u1',
@@ -54,8 +54,8 @@ describe('agent 可选归档服务', () => {
     expect(h.replies).toEqual(['已回复', '已回复']);
     expect(h.warnings).toHaveLength(1);
     expect(h.warnings[0]).toContain('不会写入记忆');
-    expect(await h.host.memory.require().getHistory('missing-a', 20)).toEqual([]);
-    expect(await h.host.memory.require().getHistory('missing-b', 20)).toEqual([]);
+    expect(await h.host.memory.use.getHistory('missing-a', 20)).toEqual([]);
+    expect(await h.host.memory.use.getHistory('missing-b', 20)).toEqual([]);
 
     await h.app.plugins.bounce(agentPlugin.name);
     await h.app.plugins.idle();
@@ -67,16 +67,16 @@ describe('agent 可选归档服务', () => {
 
   it('归档服务迟到后，无需重启 Agent 就恢复输入与回复归档；再次缺席不刷屏', async () => {
     const h = await boot();
-    const instance = h.host.agent.require();
+    const instance = h.host.agent.use;
     await h.send('before-archive');
     expect(h.warnings).toHaveLength(1);
 
     await h.app.plugin(archivePlugin, { debugLogs: false });
     await h.app.plugins.idle();
     expect(h.app.plugins.getPlugin(archivePlugin.name)?.state).toBe('active');
-    expect(h.host.agent.require()).toBe(instance);
+    expect(h.host.agent.use).toBe(instance);
     await h.send('after-archive');
-    const history = await h.host.memory.require().getHistory('after-archive', 20);
+    const history = await h.host.memory.use.getHistory('after-archive', 20);
     expect(history.map(message => [message.role, message.content])).toEqual([
       ['user', '你好'],
       ['assistant', '已回复'],
@@ -87,7 +87,7 @@ describe('agent 可选归档服务', () => {
     await h.app.plugins.idle();
     await h.send('missing-again');
     expect(h.warnings).toHaveLength(1);
-    expect(await h.host.memory.require().getHistory('missing-again', 20)).toEqual([]);
+    expect(await h.host.memory.use.getHistory('missing-again', 20)).toEqual([]);
   });
 
   it('跳过用户入档的主动回合，在保存助手回复时同样提示缺少归档', async () => {
@@ -95,6 +95,6 @@ describe('agent 可选归档服务', () => {
     await h.send('proactive', { source: 'idle-trigger' });
     expect(h.replies).toEqual(['已回复']);
     expect(h.warnings).toHaveLength(1);
-    expect(await h.host.memory.require().getHistory('proactive', 20)).toEqual([]);
+    expect(await h.host.memory.use.getHistory('proactive', 20)).toEqual([]);
   });
 });

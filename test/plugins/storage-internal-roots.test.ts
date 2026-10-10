@@ -2,11 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -45,7 +41,7 @@ describe('storage-local 内部路由根', () => {
   async function start(roots: unknown[]) {
     await app.plugin(storageLocal, { roots });
     await app.plugins.idle();
-    storage = createStorageGateway(app.bind({ storage: storageService }).storage);
+    storage = app.bind({ storage: storageService }).storage.use;
   }
 
   it('各内部根映射到家目录布局里的对应目录', async () => {

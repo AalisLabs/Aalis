@@ -44,18 +44,18 @@ async function setup(
   await registerHubs(app);
   const host = app.bind({ provide });
   const handlers = new Map<string, RegisteredTool['handler']>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => {};
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(memory, {
+  host.provide.use(memory, {
     getHistory: async (sessionId: string) => [{ role: 'user', content: `${sessionId} 的原文`, timestamp: 1 }],
   } as never);
-  host.provide(platform, adapter('onebot'));
-  if (room) host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles, ROOMS));
+  host.provide.use(platform, adapter('onebot'));
+  if (room) host.provide.use(sessionManager, roomScopeManager(room.rooms, room.profiles, ROOMS));
   await app.pluginAll([
     { definition: sessionTools, config: { scope: historyScope } },
     {

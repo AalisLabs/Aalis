@@ -82,11 +82,11 @@ async function boot(protocol: 'v11' | 'v12') {
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  host.provide(storage, { listRoots: () => [] } as never);
-  host.provide(processService, {} as never);
-  host.provide(memory, fakeMemory() as never);
+  host.provide.use(storage, { listRoots: () => [] } as never);
+  host.provide.use(processService, {} as never);
+  host.provide.use(memory, fakeMemory() as never);
   const inbound: IncomingMessage[] = [];
-  host.events.on('inbound:message', (msg: IncomingMessage) => void inbound.push(msg));
+  host.events.use.on('inbound:message', (msg: IncomingMessage) => void inbound.push(msg));
   await app.plugins.register(onebotPlugin, {
     connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol, selfId: SELF }],
   });
@@ -99,7 +99,7 @@ async function boot(protocol: 'v11' | 'v12') {
   await app.start();
   await until(() => socket !== undefined && actions.includes(protocol === 'v11' ? 'get_login_info' : 'get_self_info'));
 
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   return {
     sm,
     warns,

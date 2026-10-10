@@ -28,7 +28,7 @@ async function boot() {
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService, authority });
   // plugin-commands 把 gateway 声明为 required；本测直接调 execute，给一份只满足「在场」的桩
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   await app.plugin(commandsPlugin, {});
   await app.plugin(authorityPlugin, {});
   await app.plugin(doctorPlugin, {});
@@ -38,7 +38,7 @@ async function boot() {
     const state = app.plugins.getPlugin(p.name)?.state;
     if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
   }
-  return { commands: host.commands.require(), authority: host.authority.require() };
+  return { commands: host.commands.use, authority: host.authority.use };
 }
 
 const input = (userId: string): ExecutionInput => ({

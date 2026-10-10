@@ -18,7 +18,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { ref } from '../fixtures/service-ref.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 对话、子任务、摘要与识图的模型调用都带上用途与会话，经服务商登记的 metered 模型发出 llm:usage，记进用量账本：
@@ -50,7 +50,7 @@ const visionProvider = definePlugin({
       capabilities: [LLMCapabilities.Chat, LLMCapabilities.Vision],
       chat: async () => ({ content: '一个像素', usage: USAGE }),
     };
-    provide(llm, metered(model, events), { entryId: 'vision-llm/eyes' });
+    provide.use(llm, metered(model, events.use), { entryId: 'vision-llm/eyes' });
   },
 });
 
@@ -83,7 +83,7 @@ describe('模型调用的用途与会话', () => {
       expect(app.plugins.getPlugin(plugin.name)?.state, `${plugin.name} 未激活`).toBe('active');
     }
     const host = app.bind({ agent, sessionManager, compression, memory, llm });
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     const owner = await sm.createSession({ name: '我的会话' });
     const child = await sm.createChildSession(owner.id, { name: '子任务', inputContext: '查一下' });
     const message = (sessionId: string): IncomingMessage => ({
@@ -94,14 +94,14 @@ describe('模型调用的用途与会话', () => {
       sessionType: 'private',
     });
 
-    await host.agent.require().handleMessage(message(owner.id));
-    await host.agent.require().handleMessage(message(child.id));
+    await host.agent.use.handleMessage(message(owner.id));
+    await host.agent.use.handleMessage(message(child.id));
     for (const content of ['第一条', '第二条', '第三条']) {
-      await host.memory.require().saveMessage(owner.id, { role: 'user', content });
+      await host.memory.use.saveMessage(owner.id, { role: 'user', content });
     }
-    await host.compression.require().compress(owner.id, { reason: 'manual' });
+    await host.compression.use.compress(owner.id, { reason: 'manual' });
     const media = new MediaServiceImpl(
-      { logger: quiet, llm: host.llm, asr: ref(), sessionManager: ref(), memory: ref() },
+      { logger: fixedRef(quiet), llm: host.llm, asr: ref(), sessionManager: ref(), memory: ref() },
       MEDIA_CONFIG,
     );
     for (const processor of scanLLMProcessors({ llm: host.llm, logger: quiet })) media.registerProcessor(processor);

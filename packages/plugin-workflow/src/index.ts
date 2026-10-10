@@ -8,7 +8,7 @@
 
 import { cronEngine } from '@aalis/api-cron-engine';
 import { hooks } from '@aalis/api-hooks';
-import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
+import { isStorageUri, storage } from '@aalis/api-storage';
 import { type BoundTools, tools } from '@aalis/api-tools';
 import { type BoundWebui, markdownCode, webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
@@ -326,15 +326,15 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { events, hooks, lifecycle, provide, tools, webui } = caps;
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
   const config = {
     ...cfg,
     defsDir: resolveUri('defsDir', cfg.defsDir, configSchema.defsDir.default),
     runsFile: resolveUri('runsFile', cfg.runsFile, configSchema.runsFile.default),
     maxRuns: cfg.maxRuns > 0 ? cfg.maxRuns : configSchema.maxRuns.default,
   };
-  const logger = caps.logger.child('workflow');
-  const storageGateway = createStorageGateway(caps.storage);
+  const logger = caps.logger.use.child('workflow');
+  const storageGateway = caps.storage.use;
 
   const loader = new WorkflowLoader(storageGateway, config.defsDir, logger);
   const scanned = await loader.loadAll();
@@ -346,7 +346,7 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
   const triggers = new TriggerManager(
-    { cronEngine: caps.cronEngine, events, logger },
+    { cronEngine: caps.cronEngine, events: events.use, logger },
     (workflowId, source, payload) => {
       // 异步触发，不阻塞触发源；event 触发的 payload（{args}）作为 vars 注入，{{vars.X}} 才读得到
       runById(workflowId, payload ?? {}, source).catch(err => {
@@ -363,7 +363,7 @@ async function run(caps: Caps): Promise<void> {
   for (const def of loader.list()) triggers.register(def);
 
   // ── 订阅外部 trigger:fired（来自 scheduler / 其他触发源）──
-  events.on('trigger:fired', info => {
+  events.use.on('trigger:fired', info => {
     if (!info?.workflowId) return;
     runById(info.workflowId, info.payload ?? {}, info.source ?? `trigger:${info.type}`).catch(err => {
       logger.error(`trigger:fired workflow=${info.workflowId} 执行失败: ${err instanceof Error ? err.message : err}`);
@@ -397,14 +397,14 @@ async function run(caps: Caps): Promise<void> {
     };
     runStore.add(run);
     page.invalidate();
-    await events.emit('workflow:run:start', run);
+    await events.use.emit('workflow:run:start', run);
     logger.info(`run=${runId} 启动 (trigger=${triggerSource})`);
 
     try {
       const result = await runDag({
         tools,
-        events,
-        hooks,
+        events: events.use,
+        hooks: hooks.use,
         logger,
         def,
         runId,
@@ -423,7 +423,7 @@ async function run(caps: Caps): Promise<void> {
         onNodeDone: (info: NodeRunInfo) => {
           const idx = run.nodes.findIndex(n => n.id === info.id);
           if (idx >= 0) run.nodes[idx] = info;
-          events.emit('workflow:node:done', { runId, node: info }).catch(() => {});
+          events.use.emit('workflow:node:done', { runId, node: info }).catch(() => {});
         },
       });
       run.status = result.status;
@@ -432,10 +432,10 @@ async function run(caps: Caps): Promise<void> {
       run.finishedAt = Date.now();
       runStore.update(run);
       if (result.status === 'success') {
-        await events.emit('workflow:run:done', run);
+        await events.use.emit('workflow:run:done', run);
         logger.info(`run=${runId} 完成 (${run.finishedAt - run.startedAt}ms)`);
       } else {
-        await events.emit('workflow:run:error', run);
+        await events.use.emit('workflow:run:error', run);
         logger.warn(`run=${runId} ${result.status}: ${result.error ?? ''}`);
       }
     } catch (err) {
@@ -443,7 +443,7 @@ async function run(caps: Caps): Promise<void> {
       run.error = err instanceof Error ? err.message : String(err);
       run.finishedAt = Date.now();
       runStore.update(run);
-      await events.emit('workflow:run:error', run);
+      await events.use.emit('workflow:run:error', run);
       logger.error(`run=${runId} 异常: ${run.error}`);
     } finally {
       cancelTokens.delete(runId);
@@ -498,17 +498,17 @@ async function run(caps: Caps): Promise<void> {
     },
   };
 
-  provide(workflow, service);
-  const page = defineWorkflowPage(webui, service, () => runStore.onceLedgerReadable());
+  provide.use(workflow, service);
+  const page = defineWorkflowPage(webui.use, service, () => runStore.onceLedgerReadable());
 
   // ── AI 工具 ──
   // tools 晚上线也无妨：登记口在提供者缺席时先挂账，上线后自动补挂
   if (config.enableTools) {
-    registerTools(tools, service, () => runStore.onceLedgerReadable());
+    registerTools(tools.use, service, () => runStore.onceLedgerReadable());
   }
 
   // ── 清理 ──
-  lifecycle.onDispose(async () => {
+  lifecycle.use.onDispose(async () => {
     triggers.dispose();
     // 先置 cancelled 再清表：只 clear 的话在飞 run 仍持有自己的 token 引用，会继续跑完剩余
     // 节点、发事件，并把结果写回旧 RunStore 的历史快照

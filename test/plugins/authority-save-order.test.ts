@@ -37,8 +37,8 @@ async function boot() {
   const pages = pageHost();
   running.push({ app, pages });
   const host = app.bind({ provide, services });
-  host.provide(webuiServer, pages.service);
-  host.provide(storage, {
+  host.provide.use(webuiServer, pages.service);
+  host.provide.use(storage, {
     readFile: async () => {
       throw new Error('不存在');
     },
@@ -48,7 +48,7 @@ async function boot() {
   await app.plugins.register(authorityPlugin, {});
   await app.plugins.idle();
 
-  const manager = host.services.get(authority) as AuthorityManager | undefined;
+  const manager = host.services.use.get(authority) as AuthorityManager | undefined;
   if (!manager) throw new Error('authority 服务未注册 —— 插件没起来');
 
   return { manager, pages };

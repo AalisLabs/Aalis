@@ -3,6 +3,7 @@ import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import type { ReviewConfig } from '../../packages/plugin-publish-review/src/config.js';
 import { createReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
 import type { RenderRequest } from '../../packages/util-offline-render/src/index.js';
+import { ref } from '../fixtures/service-ref.js';
 
 function chunk(type: string, body: Uint8Array): Uint8Array {
   const payload = Buffer.concat([Buffer.from(type), body]);
@@ -28,7 +29,7 @@ const make = (textClassifier: { provider?: string; model?: string }) => {
   const chat = vi.fn(async (_request: ChatModelRequest) => ({
     content: '{"verdict":"allow","categories":[],"note":""}',
   }));
-  const llm = { all: () => [{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } }] };
+  const llm = ref([{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } as never }]);
   const renderer = { renderPng: vi.fn(async (_request: RenderRequest) => png) };
   const config = {
     ffmpegPath: 'ffmpeg',
@@ -38,7 +39,7 @@ const make = (textClassifier: { provider?: string; model?: string }) => {
   } as ReviewConfig;
   const pipeline = createReviewPipeline({
     config,
-    llm: llm as never,
+    llm,
     renderer: renderer as never,
     storage: {} as never,
   });
@@ -84,7 +85,7 @@ describe('publish review pipeline', () => {
         reviewEnabled: false,
         textClassifier: { provider: 'provider', model: 'model' },
       } as ReviewConfig,
-      llm: { all: () => [{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } }] } as never,
+      llm: ref([{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } as never }]),
       renderer: renderer as never,
       storage: {} as never,
     });

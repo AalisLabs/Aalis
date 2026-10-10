@@ -21,7 +21,7 @@ describe('image-sender 出站附件归档', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, events });
     const saved: Array<{ sessionId: string; message: Message }> = [];
-    host.provide(messageArchive, {
+    host.provide.use(messageArchive, {
       async saveMessage(sessionId: string, message: Message) {
         saved.push({ sessionId, message });
       },
@@ -30,7 +30,7 @@ describe('image-sender 出站附件归档', () => {
     await app.plugins.idle();
     if (app.plugins.getPlugin(imageSenderPlugin.name)?.state !== 'active') throw new Error('image-sender 未激活');
 
-    await host.events.emit('outbound:delivered', {
+    await host.events.use.emit('outbound:delivered', {
       sessionId: 'onebot:group:0',
       content: '',
       source: 'agent',

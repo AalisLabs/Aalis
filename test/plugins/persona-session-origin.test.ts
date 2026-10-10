@@ -31,8 +31,8 @@ describe('persona 会话环境按出生平台', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     host = app.bind(hostUses);
-    host.provide(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);
-    host.provide(platform, {
+    host.provide.use(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);
+    host.provide.use(platform, {
       adapterName: 'OneBot',
       platform: 'onebot',
       getConnections: () => [],
@@ -43,7 +43,7 @@ describe('persona 会话环境按出生平台', () => {
     await app.plugin(personaPlugin, { timeInjection: false });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
-    const found = host.services.get(persona);
+    const found = host.services.use.get(persona);
     if (!found) throw new Error('persona 服务未就绪');
     svc = found;
   };
@@ -51,7 +51,7 @@ describe('persona 会话环境按出生平台', () => {
   /** 经 agent:input:before 装上会话身份，在钩子链内取易变上下文 */
   const volatileFor = async (message: IncomingMessage): Promise<string> => {
     let prompt = '';
-    await host.hooks.run('agent:input:before', { message, turnId: 't1', metadata: {} }, async () => {
+    await host.hooks.use.run('agent:input:before', { message, turnId: 't1', metadata: {} }, async () => {
       prompt = svc.getVolatilePrompt?.() ?? '';
     });
     return prompt;

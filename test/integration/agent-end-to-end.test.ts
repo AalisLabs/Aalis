@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
-import { App, events } from '../../packages/core/src/index.js';
+import { App, events, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -28,7 +28,7 @@ async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModel
   const host = app.bind({ events, agent: agentService, memory: memoryService, llm: llmService });
 
   const outbound: OutgoingMessage[] = [];
-  host.events.on('outbound:message', (m: OutgoingMessage) => {
+  host.events.use.on('outbound:message', (m: OutgoingMessage) => {
     outbound.push(m);
   });
 
@@ -48,8 +48,8 @@ async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModel
     app,
     host,
     outbound,
-    agent: host.agent.require(),
-    memory: host.memory.require(),
+    agent: host.agent.use,
+    memory: host.memory.use,
     cleanup: () => app.stop(),
   };
 }
@@ -112,8 +112,8 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
     const stack = await loadStack({
       responses: [{ content: 'never' }],
     });
-    // 替换胜出 model 的 chat 让它抛错
-    const model = stack.host.llm.require();
+    // 替换胜出 model 的 chat 让它抛错：改提供者交出的实例本身，业务句柄上的写不落到提供者
+    const model = stack.app.bind({ services }).services.use.get(llmService)!;
     const orig = model.chat;
     model.chat = async () => {
       throw new Error('rate limited');

@@ -32,7 +32,7 @@ import type {
 } from '@aalis/api-session-protocol';
 import type { TodoItem, TodoListService } from '@aalis/api-todo-list';
 import { type ToolExecuteMessage, type ToolOutputMessage, toolFailed } from '@aalis/api-tools';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import {
   awaitDelivery,
   type IncomingMessage,
@@ -97,8 +97,8 @@ interface Turn {
 }
 
 interface TimelineDeps {
-  memory: ServiceRef<MemoryService>;
-  todoList: ServiceRef<TodoListService>;
+  memory: ServiceSelection<MemoryService>;
+  todoList: ServiceSelection<TodoListService>;
   isOwner: IsOwner;
   /** 给某个会话里她发出的文件签发下载句柄 */
   signFile(sessionId: string, uri: string, name: string): string | undefined;
@@ -616,13 +616,13 @@ export function createTimeline(deps: TimelineDeps) {
     pending.push(at);
     try {
       const history = await readHistory(
-        deps.memory.require(),
+        deps.memory.use,
         sessionId,
         { limit: HISTORY_PAGE, skip: skipFor(at, shown) },
         mergeContext(sessionId),
         deps.logger,
       );
-      const entries = (await deps.todoList.current?.get(sessionId)) ?? [];
+      const entries = (await (deps.todoList.present ? deps.todoList.use.get(sessionId) : undefined)) ?? [];
       afterReply(() => {
         release();
         if (!usage) deps.requestUsage(sessionId, conn.peer.identity.platform);
@@ -654,7 +654,7 @@ export function createTimeline(deps: TimelineDeps) {
       deps.requireSession(sessionId);
       const shown = new Set(unsettledOf(sessionId).map(turn => turn.turnId));
       return readHistory(
-        deps.memory.require(),
+        deps.memory.use,
         sessionId,
         { before, limit: limit ?? HISTORY_PAGE, skip: skipFor(seq, shown) },
         mergeContext(sessionId),

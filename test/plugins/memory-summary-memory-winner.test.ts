@@ -100,8 +100,8 @@ async function setup(first: StubMemory, model: LLMModel) {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, compression });
-  host.provide(memory, first as unknown as MemoryService);
-  host.provide(llm, model);
+  host.provide.use(memory, first as unknown as MemoryService);
+  host.provide.use(llm, model);
   await app.plugin(memorySummary);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
@@ -112,7 +112,7 @@ type Booted = Awaited<ReturnType<typeof setup>>;
 /** LLM 挂起期间让更高优先级的 B 上线成为胜者，再放行 */
 async function switchWinnerMidway({ app, host }: Booted, gated: ReturnType<typeof gatedLLM>, second: StubMemory) {
   await gated.calledOnce;
-  host.provide(memory, second as unknown as MemoryService, { priority: 10 });
+  host.provide.use(memory, second as unknown as MemoryService, { priority: 10, entryId: 'memory-b' });
   await app.plugins.idle();
   gated.release();
 }
@@ -127,14 +127,7 @@ async function settle(first: StubMemory, pending: Promise<unknown>): Promise<voi
 /** 两个入口：回合结束时用量到线的后台压缩（不阻塞钩子）与手动压缩（归档失败时以失败落定，这里只看写在哪） */
 const paths: Array<[string, (host: Booted['host']) => Promise<unknown>]> = [
   ['后台压缩', host => endTurn(host, SESSION, { used: 900, compressible: 500 })],
-  [
-    '手动压缩',
-    host =>
-      host.compression
-        .require()
-        .compress(SESSION, { reason: 'manual' })
-        .catch(() => {}),
-  ],
+  ['手动压缩', host => host.compression.use.compress(SESSION, { reason: 'manual' }).catch(() => {})],
 ];
 
 describe.each(paths)('plugin-memory-summary %s：一次操作只认开头取到的 memory 实例', (_name, trigger) => {

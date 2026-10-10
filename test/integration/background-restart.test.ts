@@ -54,7 +54,7 @@ describe('重启之后的后台任务', () => {
     await registerHubs(app);
     const host = app.bind({ provide, events, tools, backgroundTasks, agent, sessionManager, sessionProtocol });
     /** 插件数据：两次激活共用这一份 */
-    host.provide(storage, memoryStorage(new Map()));
+    host.provide.use(storage, memoryStorage(new Map()));
     const responses: ChatResponse[] = [
       { content: null, toolCalls: [callBackground('model-1', 'make build'), callBackground('model-2', 'npm run dev')] },
       { content: '两个都放到后台了' },
@@ -68,7 +68,7 @@ describe('重启之后的后台任务', () => {
     await app.plugin(sessionServerPlugin, {});
     await app.plugins.idle();
     const runs: Array<{ ctx: ToolCallContext; finish(result: string): void }> = [];
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: {
@@ -85,25 +85,23 @@ describe('重启之后的后台任务', () => {
           ctx.signal?.addEventListener('abort', () => resolve(JSON.stringify({ error: '已中止' })), { once: true });
         }),
     });
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     const s = await sm.createSession({ name: 'S' });
     await sm.updateSessionTitle(s.id, 'S');
 
-    await host.agent
-      .require()
-      .handleMessage({ content: '构建并起开发服务器', sessionId: s.id, platform: 'webui', userId: 'console' });
+    await host.agent.use.handleMessage({
+      content: '构建并起开发服务器',
+      sessionId: s.id,
+      platform: 'webui',
+      userId: 'console',
+    });
     expect(runs).toHaveLength(2);
     runs[0].finish(JSON.stringify({ exitCode: 0 }));
     await vi.waitFor(() =>
-      expect(
-        host.backgroundTasks
-          .require()
-          .list()
-          .map(task => task.status),
-      ).toEqual(['completed', 'running']),
+      expect(host.backgroundTasks.use.list().map(task => task.status)).toEqual(['completed', 'running']),
     );
 
-    await host.events.emit('app:stopping');
+    await host.events.use.emit('app:stopping');
     await app.plugins.unload(sessionServerPlugin.name);
     await app.plugins.unload(toolsPlugin.name);
     expect(runs[1].ctx.signal?.aborted, '停用时在跑的随之中止').toBe(true);
@@ -111,14 +109,14 @@ describe('重启之后的后台任务', () => {
     await app.plugin(sessionServerPlugin, {});
     await app.plugins.idle();
 
-    const registry = () => host.backgroundTasks.require().list();
+    const registry = () => host.backgroundTasks.use.list();
     await vi.waitFor(() => expect(registry()).toHaveLength(2));
     expect(registry().map(task => [task.call.tool, task.status, task.reason])).toEqual([
       [BG, 'completed', undefined],
       [BG, 'aborted', 'Aalis 重启时还在跑'],
     ]);
 
-    const c = client(host.sessionProtocol.require());
+    const c = client(host.sessionProtocol.use);
     await c.init();
     const { tasks } = await c.call('background/list', {});
     const cards = (await c.subscribe(s.id)).snapshot.items.filter(item => item.kind === 'tool-call');

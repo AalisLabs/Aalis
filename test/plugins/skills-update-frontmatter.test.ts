@@ -44,7 +44,7 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.register(skillsPlugin, { skillsUri: 'skills:/' });
     await app.plugins.idle();
-    svc = app.bind({ services }).services.get(skills)!;
+    svc = app.bind({ services }).services.use.get(skills)!;
     await svc.rescan();
   });
 

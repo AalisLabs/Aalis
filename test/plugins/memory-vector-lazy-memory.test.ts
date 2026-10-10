@@ -64,13 +64,13 @@ async function setup(opts: { memory?: MemoryService } = {}) {
   await registerHubs(app);
   // 宿主侧的根绑定：既用来摆桩服务，也是下面组装 agent:prompt 贡献要的那两样能力
   const host = app.bind({ provide, contributions, logger });
-  host.provide(embedding, makeEmbedder());
-  const memoryHandle = opts.memory ? host.provide(memory, opts.memory) : undefined;
-  host.provide(
+  host.provide.use(embedding, makeEmbedder());
+  const memoryHandle = opts.memory ? host.provide.use(memory, opts.memory) : undefined;
+  host.provide.use(
     vectorstore,
     makeStore([{ score: 0.9, metadata: { sessionId: 's-old', timestamp: BASE_TS, content: '命中本身' } }]),
   );
-  host.provide(tools, { register: () => () => {}, registerGroup: () => () => {} } as never);
+  host.provide.use(tools, { register: () => () => {}, registerGroup: () => () => {} } as never);
   await app.plugin(memoryVector, {
     search: { topK: 5, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
     contextExpand: { window: 2, crossSession: true },
@@ -99,7 +99,7 @@ async function injectedText(caps: PromptAssemblyCaps): Promise<string> {
 describe('plugin-memory-vector: memory 惰查', () => {
   it('memory provider 晚于本插件注册：扩窗立即可用（能力在调用点现算）', async () => {
     const { app, host } = await setup();
-    host.provide(
+    host.provide.use(
       memory,
       makeRangeMemory([
         { role: 'user', content: '命中本身', timestamp: BASE_TS },
@@ -124,7 +124,7 @@ describe('plugin-memory-vector: memory 惰查', () => {
     // bounce：撤掉旧 provider，换上新实例
     memoryHandle?.();
     await new Promise(r => setTimeout(r, 0));
-    host.provide(
+    host.provide.use(
       memory,
       makeRangeMemory([
         { role: 'user', content: '命中本身', timestamp: BASE_TS },

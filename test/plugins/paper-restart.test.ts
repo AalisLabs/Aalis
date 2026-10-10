@@ -323,7 +323,7 @@ describe('插件接线（真实 App，真实时钟）', () => {
 
     const before = new Map(files);
     const data: HookContextMap['memory:clear'] = { scope: 'all', results: [] };
-    await restarted.app.bind({ hooks }).hooks.run('memory:clear', data, async () => {});
+    await restarted.app.bind({ hooks }).hooks.use.run('memory:clear', data, async () => {});
     expect(files).toEqual(before);
   });
 });

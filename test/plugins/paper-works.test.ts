@@ -77,7 +77,9 @@ async function setup(
       options.surfaces ?? [{ name: 'works', label: '作品站', baseUrl: 'https://one.example.test', available: true }],
   );
   if (options.withPublish !== false) {
-    hub.app.bind({ provide }).provide(publish, { nominate, get, withdraw, listSurfaces } as unknown as PublishService);
+    hub.app
+      .bind({ provide })
+      .provide.use(publish, { nominate, get, withdraw, listSurfaces } as unknown as PublishService);
   }
   return { hub, nominate, get, withdraw, listSurfaces };
 }
@@ -585,7 +587,9 @@ describe('白纸作品工具', () => {
     const { hub, nominate, get, withdraw, listSurfaces } = await setup(undefined, { withPublish: false });
     const args = { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' };
     expect(await hub.call('works_nominate', args)).toMatchObject({ ok: false, error: '作品发布服务不可用' });
-    hub.app.bind({ provide }).provide(publish, { nominate, get, withdraw, listSurfaces } as unknown as PublishService);
+    hub.app
+      .bind({ provide })
+      .provide.use(publish, { nominate, get, withdraw, listSurfaces } as unknown as PublishService);
     expect(await hub.call('works_nominate', args)).toMatchObject({ ok: true });
     nominate.mockResolvedValueOnce({ refused: '封面不合格', fileIndex: -1 } as never);
     const denied = await hub.call('works_nominate', args);

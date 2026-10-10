@@ -52,21 +52,21 @@ async function setup({
   }
   const host = app.bind({ events, hooks, services, commands });
   let runs = 0;
-  host.commands.command('probe', '探针', { confirm }).action(async () => {
+  host.commands.use.command('probe', '探针', { confirm }).action(async () => {
     runs++;
     return 'ran';
   });
   const sent: OutgoingMessage[] = [];
-  host.events.on('outbound:message', msg => {
+  host.events.use.on('outbound:message', msg => {
     sent.push(msg);
   });
   /** 过了指令相位、往下走的消息（这里拦住，不交给 agent） */
   const passed: IncomingMessage[] = [];
-  host.hooks.middleware('inbound:dispatch', async data => {
+  host.hooks.use.middleware('inbound:dispatch', async data => {
     passed.push(data.message);
   });
   const say = (msg: Partial<IncomingMessage> & { content: string }) =>
-    host.events.emit('inbound:message', {
+    host.events.use.emit('inbound:message', {
       sessionId: DM,
       ...MEMBER,
       sessionType: 'private',
@@ -210,7 +210,7 @@ describe('没人可问的受信来源：skipConfirm 照旧', () => {
   it('定时任务触发的指令：always 档无从确认，拒绝', async () => {
     const s = await setup({ confirm: 'always' });
     const done = vi.fn();
-    s.host.events.on('gateway:phase:done', ({ phase }) => {
+    s.host.events.use.on('gateway:phase:done', ({ phase }) => {
       if (phase === 'inbound:command') done();
     });
     await s.say(scheduled);
@@ -222,12 +222,12 @@ describe('没人可问的受信来源：skipConfirm 照旧', () => {
   it('runtime 一次性子命令：session 档直接执行，always 档拒绝', async () => {
     const session = await setup();
     const printed: string[] = [];
-    expect(await tryDispatchSubcommand(session.host.services, ['probe'], m => printed.push(m))).toBe(0);
+    expect(await tryDispatchSubcommand(session.host.services.use, ['probe'], m => printed.push(m))).toBe(0);
     expect(printed).toEqual(['ran']);
 
     const always = await setup({ confirm: 'always' });
     const out: string[] = [];
-    await tryDispatchSubcommand(always.host.services, ['probe'], m => out.push(m));
+    await tryDispatchSubcommand(always.host.services.use, ['probe'], m => out.push(m));
     expect(always.runs()).toBe(0);
     expect(out[0]).toContain('需要发出者本人确认');
   });

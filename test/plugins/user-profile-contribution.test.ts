@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { App, logger, provide } from '../../packages/core/src/index.js';
+import { App, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
@@ -31,13 +31,13 @@ async function setup(config: Record<string, unknown> = {}) {
   const host = app.bind({ provide, contributions, logger, memory: memoryService });
   // user-profile 的 uses 含 required 的 llm；build 路径不会触达它，
   // 这里只需一个占位 provider 让插件能激活（不联网、不调真模型）。
-  host.provide(llm, { chat: async () => ({ content: '' }) } as never);
+  host.provide.use(llm, { chat: async () => ({ content: '' }) } as never);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const memory: MemoryService | undefined = host.memory.current;
-  if (!memory) throw new Error('memory 服务未就绪');
-  // 读取计数代理：透传原实现，只记 getMetadata/listMetadata 调用次数。
-  // 插件每次经绑定接口取到的都是同一实例，实例属性覆盖原型方法即全程生效。
+  if (!host.memory.present) throw new Error('memory 服务未就绪');
+  // 读取计数代理：透传原实现，只记 getMetadata/listMetadata 调用次数。改提供者交出的实例本身：业务句柄是转发句柄，
+  // 在它上面改方法落不到提供者；插件经句柄每次调用都读到实例上的属性，覆盖原型方法即全程生效。
+  const memory = app.bind({ services }).services.use.get(memoryService)!;
   const reads = { count: 0 };
   const rawGetMetadata = memory.getMetadata.bind(memory);
   const rawListMetadata = memory.listMetadata.bind(memory);

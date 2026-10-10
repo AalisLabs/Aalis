@@ -64,7 +64,7 @@ async function start(plugin: PluginDefinition, config: Record<string, unknown>) 
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();
-  const handle = app.bind({ services }).services.all(llm)[0]?.instance;
+  const handle = app.bind({ services }).services.use.all(llm)[0]?.instance;
   if (!handle) throw new Error(`${plugin.name} 未登记模型`);
   return { handle, warns };
 }

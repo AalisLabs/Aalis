@@ -121,9 +121,9 @@ export default definePlugin({
   provides: [remoteAgent],
   uses,
   apply({ provide, lifecycle, logger, config }) {
-    const parsed = parseConfig(configSchema, config, logger);
+    const parsed = parseConfig(configSchema, config.use, logger.use);
     const options = readOptions(parsed);
-    provide(remoteAgent, new CursorProvider(options, { logger, signal: lifecycle.signal }), {
+    provide.use(remoteAgent, new CursorProvider(options, { logger: logger.use, signal: lifecycle.use.signal }), {
       label: `Cursor / ${options.model.id}`,
     });
   },

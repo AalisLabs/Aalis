@@ -2,11 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -59,7 +55,7 @@ describe('storage-local 宿主控制文件兜底：超过 2^53 的文件 ID', ()
     provideHostPaths(app, home);
     await app.plugin(storageLocal, { roots: [{ name: 'other', path: join(base, 'other'), ...rw }] });
     await app.plugins.idle();
-    storage = createStorageGateway(app.bind({ storage: storageService }).storage);
+    storage = app.bind({ storage: storageService }).storage.use;
   });
 
   afterEach(async () => {

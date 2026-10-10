@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import type { LLMModel, LLMModelEntry } from '@aalis/api-llm';
+import type { LLMModel } from '@aalis/api-llm';
 import { LLMCapabilities, lightestThinking } from '@aalis/api-llm';
 import type {
   DescribeInput,
@@ -12,14 +12,14 @@ import type {
   TranscribeInput,
   TranscribeResult,
 } from '@aalis/api-media';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
 
 /** 包装 LLM 为 processor 用到的能力：枚举 LLM entry 的 llm，以及识别过程的 logger */
 export interface AdapterCaps {
-  llm: ServiceRef<LLMModel>;
+  llm: ServiceSelection<LLMModel>;
   logger: Logger;
 }
 
@@ -274,19 +274,19 @@ async function audioToBase64(data: string): Promise<string> {
   }
 }
 
-/** 把单个 LLMModelEntry 包装成 MediaProcessor。 */
+/** 把 llm 的一个提供者条目包装成 MediaProcessor。 */
 function wrapLLMAsProcessor(
-  entry: LLMModelEntry,
+  entry: ProviderEntry<LLMModel>,
   cap: 'vision' | 'audio',
   logger: Logger,
   opts: LlmProcessorOptions = {},
 ): MediaProcessor {
-  const llm: LLMModel = entry.instance;
-  const name = `llm:${entry.contextId}#${cap}`;
+  const llm: LLMModel = entry.use;
+  const name = `llm:${entry.id}#${cap}`;
   const proc: MediaProcessor = {
     name,
     capabilities: [cap],
-    displayName: `${entry.label ?? entry.contextId} (${cap})`,
+    displayName: `${entry.label ?? entry.id} (${cap})`,
     priority: 0,
   };
 
@@ -431,8 +431,8 @@ export function scanLLMProcessors(
   opts: { vision?: LlmProcessorOptions; audio?: LlmProcessorOptions } = {},
 ): MediaProcessor[] {
   const processors: MediaProcessor[] = [];
-  for (const entry of caps.llm.all()) {
-    const modelCaps = entry.instance.capabilities;
+  for (const entry of caps.llm.list()) {
+    const modelCaps = entry.use.capabilities;
     if (modelCaps.includes(LLMCapabilities.Vision)) {
       processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, opts.vision ?? {}));
     }

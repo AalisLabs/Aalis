@@ -83,14 +83,14 @@ async function bootAsr(plugin: PluginDefinition, config: Record<string, unknown>
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, asr });
-  host.provide(processService, {
+  host.provide.use(processService, {
     makeTempDir: async () => ({ path: '/tmp/unused', uri: 'tmp:/whisper-in', cleanup: async () => {} }),
     execFile: async () => {
       probe.downstream++;
       return { stdout: '转写文本', stderr: '', code: 0 };
     },
   } as never);
-  host.provide(storage, {
+  host.provide.use(storage, {
     listRoots: () => [
       { name: 'tmp', label: 'tmp', kind: 'tmp', browsable: false, readable: true, writable: true, deletable: true },
     ],
@@ -103,9 +103,8 @@ async function bootAsr(plugin: PluginDefinition, config: Record<string, unknown>
   await app.plugins.idle();
   const state = app.plugins.getPlugin(plugin.name)?.state;
   if (state !== 'active') throw new Error(`插件 ${plugin.name} 未激活（state=${state}）`);
-  const service = host.asr.current;
-  if (!service) throw new Error('插件未注册 asr');
-  return service;
+  if (!host.asr.present) throw new Error('插件未注册 asr');
+  return host.asr.use;
 }
 
 describe.each([
