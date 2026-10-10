@@ -79,7 +79,13 @@ interface BoundCommands extends ServiceRef<CommandService> {
 }
 ```
 
-`commands.command(...)` 把 `pluginName` 填成本次激活 id。builder 同时支持热转发与提供者换人重放：`follow` 在场即重放 `alias` / `option` / `action` 等调用；撤回时 `unregister(registryKey, pluginName)` 只摘自己那一层声明。不要自己调不带 `contextId` 的 `unregister`——那会摘掉同名指令的全部层。
+`commands.command(...)` 把 `pluginName` 填成本次激活 id，登记记在资源口的 `registrar` 上，按点路径名（去掉 inline 位置参数）为键：
+
+- 提供者在场时 builder 的 `alias` / `option` / `action` 等调用同步转发；缺席时记下，上线后按序重放。
+- 提供者换人时整体重挂到新提供者；本次激活关闭时与原语同一拍撤回，不等它所提供服务的下游交接。
+- 同一激活再登记同名指令，替换先前那次（只留一层）；不同激活的同名指令照旧各占一层，后来者生效。
+- 提供者在场时它拒收的登记（如指令名不合法）原样抛给调用方；缺席时登记照收，上线时再登记失败只记 warn、留待下次换人重试。
+- 撤回时调 `unregister(registryKey, pluginName)`，只摘自己那一层声明。不要自己调不带 `contextId` 的 `unregister`——那会摘掉同名指令的全部层。
 
 ## 服务接口（节选）
 
