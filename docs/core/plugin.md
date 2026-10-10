@@ -105,7 +105,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ### `register(definition, config?, instanceId?, options?)`
 
-注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`），以及定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装，各记一笔 error 并返回 false。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时同样记 error 并返回 false，不落账；`registerAll` 的其余条目照常登记。停机中立即返回 false，不落账。
+注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、危险键），以及定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装，各记一笔 error 并返回 false。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时同样记 error 并返回 false，不落账；`registerAll` 的其余条目照常登记。停机中立即返回 false，不落账。
 
 ### `unload(instanceId)`
 

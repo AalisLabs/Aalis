@@ -19,7 +19,7 @@ export interface PluginDefinition<U = {}> extends PluginMeta {
   /**
    * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
    * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，
-   * 且不含 instanceId 的 `:suffix`（parseInstanceId 以第一个 ':' 切开）与保留字符 `#`。
+   * 且不含 instanceId 的 `:suffix`（parseInstanceId 以第一个 ':' 切开）。
    */
   name: string;
   displayName?: string;
@@ -48,8 +48,8 @@ export interface PluginDefinition<U = {}> extends PluginMeta {
 }
 
 /**
- * id 形状的公共闸：trim 后非空，不是配置层危险键（`__proto__` / `constructor` / `prototype`），
- * 且不含保留字符 `#`。
+ * id 形状的公共闸：trim 后非空，不是配置层危险键（`__proto__` / `constructor` / `prototype`）。危险键闸只保证 id 写进
+ * 普通对象当键（配置文档、管理面索引）时安全，读取继承属性仍要用 Object.hasOwn。
  * `definition.name` 额外禁止 `:suffix`；`register` 第三参 instanceId 允许 `name:suffix`。
  */
 function assertValidId(id: unknown, kind: 'name' | 'instanceId'): asserts id is string {
@@ -58,21 +58,16 @@ function assertValidId(id: unknown, kind: 'name' | 'instanceId'): asserts id is 
       kind === 'name' ? '插件定义缺少合法 name（须为非空字符串）' : '插件缺少合法 instanceId（须为非空字符串）',
     );
   }
-  if (isUnsafeConfigKey(id) || isUnsafeConfigKey(id.trim())) {
+  if (isUnsafeConfigKey(id)) {
     throw new Error(
       kind === 'name'
         ? `插件 "${id}" 的 name 不能使用危险键（__proto__ / constructor / prototype）`
         : `instanceId "${id}" 不能使用危险键（__proto__ / constructor / prototype）`,
     );
   }
-  if (id.includes('#')) {
-    throw new Error(
-      kind === 'name' ? `插件 "${id}" 的 name 不能包含保留字符 "#"` : `instanceId "${id}" 不能包含保留字符 "#"`,
-    );
-  }
 }
 
-/** register 第三参：与 name 同一套非空 / `#` 闸；`:suffix` 合法（多实例）。 */
+/** register 第三参：与 name 同一套闸；`:suffix` 合法（多实例）。 */
 export function assertValidInstanceId(id: unknown): asserts id is string {
   assertValidId(id, 'instanceId');
 }

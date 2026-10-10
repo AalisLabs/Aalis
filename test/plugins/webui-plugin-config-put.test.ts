@@ -564,8 +564,8 @@ describe('PUT /api/plugins/:name/config 请求体', () => {
 });
 
 describe('PUT /api/plugins/:name/config 非法 id', () => {
-  it(':name 含 # 时 core 抛 Error，路由返回 400 并透出 message', async () => {
-    // `#` 是定义闸已拒的形状（保留字符）。在窄面外用同一道闸包一层，
+  it(':name 是危险键时 core 抛 Error，路由返回 400 并透出 message', async () => {
+    // `constructor` 是定义闸已拒的形状（危险键）。在窄面外用同一道闸包一层，
     // 钉的是路由「core 抛 Error → 400 + message」而不是自己猜非法规则。
     const { app } = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
@@ -585,7 +585,7 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
       hostConfig: gated,
     });
 
-    const illegal = 'evil#id';
+    const illegal = 'constructor';
     let thrown: Error | undefined;
     try {
       assertValidInstanceId(illegal);

@@ -203,10 +203,10 @@ export class MediaServiceImpl implements MediaService {
         if (exact) return exact;
       } else if (typeof prefer === 'object' && (prefer.provider || prefer.model)) {
         // ModelRef → 匹配 llm-adapter 生成的 processor name
-        // processor.name 格式：`llm:${provider}/${model}#${cap}`
+        // processor.name 格式：`llm:${provider}/${model}#${cap}`；实例 id 与模型名里都可能有 '#'，按最后一个切掉能力后缀
         const exact = candidates.find(p => {
           if (!p.name.startsWith('llm:')) return false;
-          const ctxPart = p.name.slice('llm:'.length).split('#')[0];
+          const ctxPart = p.name.slice('llm:'.length, p.name.lastIndexOf('#'));
           if (prefer.provider && prefer.model) return ctxPart === `${prefer.provider}/${prefer.model}`;
           if (prefer.provider) return ctxPart.startsWith(`${prefer.provider}/`);
           return ctxPart.endsWith(`/${prefer.model}`);

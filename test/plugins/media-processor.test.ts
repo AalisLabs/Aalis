@@ -57,6 +57,14 @@ describe('MediaService.pickProcessor（模型选择 / issue 3）', () => {
     );
   });
 
+  it('提供者的实例 id 带 "#"（core 不禁这个字符）：ModelRef 照样精确命中', () => {
+    const s = svc();
+    s.registerProcessor(proc('llm:@aalis/plugin-llm-openai:a#b/gpt-4o#vis', 5));
+    expect(s.pickProcessor('vision', { provider: '@aalis/plugin-llm-openai:a#b', model: 'gpt-4o' })?.name).toBe(
+      'llm:@aalis/plugin-llm-openai:a#b/gpt-4o#vis',
+    );
+  });
+
   it('字符串 prefer → 按 processor name 精确命中（历史格式仍兼容）', () => {
     expect(svc().pickProcessor('vision', 'llm:@aalis/plugin-llm-openai:main/gpt-4o#vis')?.name).toBe(
       'llm:@aalis/plugin-llm-openai:main/gpt-4o#vis',
