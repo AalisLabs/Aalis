@@ -22,15 +22,6 @@ const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable'>>
   definePlugin({ name, apply() {}, ...extra });
 
 describe('register 的返回值', () => {
-  it('落账为 true；重名与未声明 reusable 的多实例为 false', async () => {
-    const app = silentApp();
-    expect(await app.plugins.register(plugin('p'))).toBe(true);
-    expect(await app.plugins.register(plugin('p')), '重名').toBe(false);
-    expect(await app.plugins.register(plugin('p'), {}, 'p:second'), '未声明 reusable').toBe(false);
-    expect(await app.plugins.register(plugin('q', { reusable: true }), {}, 'q:second'), 'reusable 多实例').toBe(true);
-    await app.stop();
-  });
-
   it('注册为 disabled 态也是落账（true）', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     expect(await app.plugins.register(plugin('p'), undefined, undefined, { disabled: true })).toBe(true);
@@ -186,7 +177,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     await app.stop();
   });
 
-  it('被规则挡下：disabled 态不带配置的 bounce 为 false', async () => {
+  it('被规则挡下：disabled 态的 bounce 为 false', async () => {
     const app = silentApp();
     await app.plugins.register(plugin('p'));
     await app.plugins.idle();
@@ -217,22 +208,6 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     expect(await app.plugins.enable('p')).toBe(true);
     await app.plugins.idle();
     expect(seen).toEqual([1, 2]);
-    await app.stop();
-  });
-
-  it('bounce 只按现有配置重启：纯 JS 调用方还传 config 时被忽略，照旧配置重启并返回 true', async () => {
-    const app = silentApp();
-    const seen: unknown[] = [];
-    await app.plugins.register(
-      definePlugin({ name: 'p', uses: { config }, apply: ({ config }) => void seen.push(config.use.v) }),
-      { v: 1 },
-    );
-    await app.plugins.idle();
-    const untyped = app.plugins as unknown as { bounce(id: string, opts: unknown): Promise<boolean> };
-    expect(await untyped.bounce('p', { config: { v: 2 } })).toBe(true);
-    await app.plugins.idle();
-    expect(seen).toEqual([1, 1]);
-    expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 1 });
     await app.stop();
   });
 

@@ -41,7 +41,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 - 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
 - 服务身份是描述符的 `name`。契约包装了两份也指向同一服务；同一服务名以不同的描述符对象登记时照常登记，`provide` 处记一条 warn 点名两边（无关契约撞名，或同一契约包装了两份），不看 `devMode`。第三方契约的服务名带包名前缀，见 [契约包](../design/api-packages.md)。
-- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验处（`definePlugin` 与注册）一律拒绝，错误写明「来自另一份 @aalis/core」；`provide` 只按服务名登记，不查副本；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#two-cores)。
+- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验处（`definePlugin` 与注册）一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#two-cores)。
 - `provide.use(descriptor, impl)` 按描述符约束实现类型。
 - Core 默认登记的六项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
 - 领域能力（LLM 的 `vision` / `tool_calling`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
@@ -126,7 +126,7 @@ interface Services {
 
 动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的 `identity` 调用才得到门面，认不出的身份即抛错。要用内置服务，在 `uses` 里声明它。
 
-`prefer(key, contextId, scope?)` 设偏好，无视 priority：给 `scope.for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。一律记下：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。独占服务同样如此，独占条目存续期间没有别家可选，指向别家的偏好在那期间不生效，管理面据 `inspect` 条目的 `exclusive` 提示。切换偏好发出 `service:changed`，业务句柄随之打到新选中的那一家，`follow` 订阅者按选中的变化重挂。偏好只由用户经管理面写，普通插件不调 `prefer` / `unprefer`：WebUI 设置「系统」的服务偏好与配置项 `servicePreferences` 设的是全局偏好，插件详情的服务偏好与配置项 `pluginServicePreferences` 设的是本插件偏好（见 [运行态与配置文档](config.md#服务偏好)）。
+`prefer(key, contextId, scope?)` 设偏好，无视 priority：给 `scope.for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。一律记下：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。独占服务同样如此，独占条目存续期间没有别家可选，指向别家的偏好在那期间不生效。切换偏好发出 `service:changed`，业务句柄随之打到新选中的那一家，`follow` 订阅者按选中的变化重挂。偏好只由用户经管理面写，普通插件不调 `prefer` / `unprefer`：WebUI 设置「系统」的服务偏好与配置项 `servicePreferences` 设的是全局偏好，插件详情的服务偏好与配置项 `pluginServicePreferences` 设的是本插件偏好（见 [运行态与配置文档](config.md#服务偏好)）。
 
 跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是进程级的（全局，或按插件实例），不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#_13-用户偏好放哪里-——-per-user-不进容器)。
 
