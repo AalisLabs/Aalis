@@ -9,7 +9,7 @@
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
  * - plugins.pending 逐条列出缺服务的插件，沿链追到根（api-doctor 的共享判据，与 runtime 启动告警、WebUI 同一份）；
  *   只在等提供者启动的不算未就绪，列在 plugins.waiting
- * - plugins.slow 点名激活超过阈值、已转入后台的插件
+ * - plugins.slow 点名激活超过阈值、已转入后台的插件；plugins.lingering 点名旧实例超过宽限仍未停下的插件
  * - env.node 按最低版本 24.15.0 判定，不够时写明需要的版本与升级方法
  * - 诊断页过登记门槛；每次运行后推 invalidate，有错误或警告时发提示（跳到诊断页），全部通过后撤回
  */
@@ -18,7 +18,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { type CheckResult, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, definePlugin, defineService, logger, provide, services } from '../../packages/core/src/index.js';
+import {
+  App,
+  definePlugin,
+  defineService,
+  lifecycle,
+  logger,
+  provide,
+  services,
+} from '../../packages/core/src/index.js';
 import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -47,7 +55,7 @@ afterEach(() => {
   for (const host of hosts.splice(0)) host.dispose();
 });
 
-async function boot(options: { slowThresholdMs?: number } = {}) {
+async function boot(options: { slowThresholdMs?: number; disposeTimeoutMs?: number } = {}) {
   const app = new App({ name: 'T', logLevel: 'error', ...options });
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];
@@ -310,6 +318,35 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       message: '1 个插件激活超过阈值，仍在后台进行',
       detail:
         'zz-doctor-slow-probe\n等它完成即可；长时间不完成时看它的日志（多为在等网络或外部服务），停用再启用可重试',
+    });
+    release();
+    await app.stop();
+  });
+
+  it('plugins.lingering 点名旧实例超过宽限仍未停下的插件，说法与依赖链的根一致；没有时不出这一项', async () => {
+    const { app, doctor } = await boot({ disposeTimeoutMs: 20 });
+    expect((await doctor.runChecks()).checks.some(c => c.id === 'plugins.lingering')).toBe(false);
+
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    let applies = 0;
+    await app.plugins.register(
+      definePlugin({
+        name: 'zz-doctor-slowstop',
+        uses: { lifecycle },
+        apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.onDispose(() => gate)),
+      }),
+      {},
+    );
+    await app.plugins.bounce('zz-doctor-slowstop');
+    const report = await doctor.runChecks();
+    expect(report.checks.find(c => c.id === 'plugins.lingering')).toMatchObject({
+      level: 'warn',
+      message: '1 个插件的旧实例超过宽限仍未停下',
+      detail:
+        '等待 zz-doctor-slowstop 的旧实例停下\n停下后按目标态继续；一直不停时看它的日志（多为清理在等网络或外部进程），重启进程可解决',
     });
     release();
     await app.stop();

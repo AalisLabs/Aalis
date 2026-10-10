@@ -71,6 +71,8 @@ export interface PluginListItem extends PluginBlockers {
   error?: string;
   /** 激活超过慢激活阈值、已转入后台 */
   slow?: boolean;
+  /** 旧实例超过宽限仍未停下：停下之前同一 id 不起新实例 */
+  lingering?: boolean;
   /** 提供这个界面：不能从界面停用或卸载 */
   self?: true;
   provides: string[];
