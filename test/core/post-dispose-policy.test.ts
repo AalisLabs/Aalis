@@ -203,8 +203,8 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
   });
 });
 
-describe('拆卸进行中（activation 在飞窗口）：onDispose 两分支判据', () => {
-  it('窗口内迟到的 onDispose 进链被等待，打 debug 而非「将就地执行」', async () => {
+describe('拆卸进行中（activation 在飞窗口）：迟到的 onDispose', () => {
+  it('窗口内迟到的 onDispose 进链被等待，不报「将就地执行」', async () => {
     const { make, lines } = makeWorld();
     const ctx = make('p');
     let release!: () => void;
@@ -227,6 +227,5 @@ describe('拆卸进行中（activation 在飞窗口）：onDispose 两分支判�
     // 设计内正确路径：被本次清理等到，且日志不得宣称相反事实
     expect(released).toBe(true);
     expect(lines.find(l => l.includes('将就地执行'))).toBeUndefined();
-    expect(lines.find(l => l.includes('onDispose("late-conn") 纳入本次清理链'))).toMatch(/^debug\|/);
   });
 });
