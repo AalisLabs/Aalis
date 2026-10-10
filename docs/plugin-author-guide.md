@@ -60,7 +60,7 @@ await plugins.require().bounce(lifecycle.id);
 
 `provides` 是描述符数组。声明之后，激活结束时 core 按本次激活实际登记的条目校验确已提供；缺一个进入 `error`。
 
-以任何逻辑身份登记的条目（含 `entryId` 与 `provide(..., { onBehalfOf })` 代登记）都计入本次激活。
+以任何逻辑身份登记的条目（含以 `entryId` 替别的包登记的）都计入本次激活。
 
 dev 模式下，实际 `provide` 了但未在 `provides` 声明的服务名会 warn。除非有特殊理由，`provides` 应该和本次激活真正登记的服务名完全一致。
 

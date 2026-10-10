@@ -1075,11 +1075,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     for (const candidate of fresh) {
       clientProviderDisposers.set(
         candidate.id,
-        provide(
-          webuiClient,
-          { getClientDir: () => candidate.dir },
-          { label: candidate.label, onBehalfOf: candidate.id },
-        ),
+        provide(webuiClient, { getClientDir: () => candidate.dir }, { label: candidate.label, entryId: candidate.id }),
       );
       logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }

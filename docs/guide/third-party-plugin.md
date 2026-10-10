@@ -97,7 +97,7 @@ export default definePlugin({
 });
 ```
 
-`provide(descriptor, instance, options?)` 的 `options`：`priority`、`label`、`entryId`、`onBehalfOf`。
+`provide(descriptor, instance, options?)` 的 `options`：`priority`、`exclusive`、`label`、`entryId`。
 core 不做服务能力选择。服务选择只看「偏好 > 优先级 > 注册顺序」，跨实例的「按能力挑选」交给领域 helper。
 
 #### 能力挂在 handle 元数据上

@@ -34,9 +34,9 @@ async function boot(servicePreferences: Record<string, string>) {
 describe('诊断：服务偏好未生效', () => {
   it('偏好指向的提供者不在：每个这样的服务报一条警告，写明实际在用哪个；llm 以外的服务同样报', async () => {
     const { host, run } = await boot({ llm: 'zz-gone/m', asr: 'zz-asr-gone' });
-    host.provide(llm, {} as never, { onBehalfOf: 'zz-a/m1', label: 'm1' });
-    host.provide(llm, {} as never, { onBehalfOf: 'zz-b/m2', label: 'm2', priority: 5 });
-    host.provide(asr, {} as never, { onBehalfOf: 'zz-asr' });
+    host.provide(llm, {} as never, { entryId: 'zz-a/m1', label: 'm1' });
+    host.provide(llm, {} as never, { entryId: 'zz-b/m2', label: 'm2', priority: 5 });
+    host.provide(asr, {} as never, { entryId: 'zz-asr' });
 
     const results = await run();
     expect(results.map(({ id, category, level, message }) => ({ id, category, level, message }))).toEqual([
@@ -72,8 +72,8 @@ describe('诊断：服务偏好未生效', () => {
 
   it('偏好都在生效：一条通过', async () => {
     const { host, run } = await boot({ llm: 'zz-a/m1' });
-    host.provide(llm, {} as never, { onBehalfOf: 'zz-a/m1', label: 'm1' });
-    host.provide(llm, {} as never, { onBehalfOf: 'zz-b/m2', label: 'm2', priority: 5 });
+    host.provide(llm, {} as never, { entryId: 'zz-a/m1', label: 'm1' });
+    host.provide(llm, {} as never, { entryId: 'zz-b/m2', label: 'm2', priority: 5 });
     expect(await run()).toEqual([
       { id: 'services.preferences', category: 'service', level: 'ok', message: '没有未生效的服务偏好' },
     ]);

@@ -76,7 +76,7 @@ describe('内置能力', () => {
     expect(host.services.preferred('__t:kv')).toBeUndefined();
   });
 
-  it('provide 的 onBehalfOf 与 entryId：条目取给定的逻辑身份（core 不检查格式），清理仍归登记它的激活', async () => {
+  it('provide 的 entryId：条目取给定的逻辑身份（如托管的前端包名，core 不检查格式），清理仍归登记它的激活', async () => {
     const face = defineService<{ dir: string }>('__t:face');
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
@@ -85,14 +85,20 @@ describe('内置能力', () => {
         name: 'host-of-faces',
         uses: { provide },
         apply({ provide }) {
-          provide(face, { dir: '/a' }, { label: 'A', onBehalfOf: '@scope/face-a' });
+          provide(face, { dir: '/a' }, { label: 'A', entryId: '@scope/face-a' });
           provide(face, { dir: '/b' }, { entryId: 'not-prefixed' });
+          // 已删的 onBehalfOf 不再认：条目身份落回本激活 id
+          provide(face, { dir: '/c' }, { onBehalfOf: '@scope/face-c' } as never);
         },
       }),
     );
     await app.plugins.idle();
     const host = app.bind({ services });
-    expect(host.services.all(face).map(view => view.contextId)).toEqual(['@scope/face-a', 'not-prefixed']);
+    expect(host.services.all(face).map(view => view.contextId)).toEqual([
+      '@scope/face-a',
+      'not-prefixed',
+      'host-of-faces',
+    ]);
 
     await app.plugins.unload('host-of-faces');
     expect(host.services.all(face)).toEqual([]);

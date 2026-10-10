@@ -123,8 +123,7 @@ export default definePlugin({
 
 - `priority` / `label`：解析序与展示
 - `exclusive`：独占这个服务名；与已有登记冲突、或该条目存在期间添加其他提供者，都会抛错。Core 基础服务与第三方使用同一规则
-- `entryId`：条目的逻辑身份，缺省为本激活 id；一个激活登记多条时各给一个。格式由服务契约约定，core 不检查
-- `onBehalfOf`：代为登记。条目的逻辑身份取被代者 id（用于偏好与 WebUI 的服务偏好），清理仍归本激活。代登记的条目计入代理人的 `provides`；实际 owner 不同，也不能替被代者满足 `provides`。与 `entryId` 二选一。
+- `entryId`：条目的逻辑身份（偏好与展示认它），缺省为本激活 id。一个激活登记多条时各给一个；托管自己不运行代码的包（如 WebUI 服务端替扫描到的前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；清理与 `provides` 核对仍归本激活
 
 dev 模式下，实际注册了但未写入 `provides` 的服务会 warn：启动拓扑使用声明清单，遗漏会影响排序；关停依赖则按实际提供者身份建立。生产宿主应显式传入 `AppOptions.devMode: false`。
 
