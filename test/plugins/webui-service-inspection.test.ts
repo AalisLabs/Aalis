@@ -7,7 +7,7 @@ import { defineService, type Logger, provide } from '../../packages/core/src/ind
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
-import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
+import { createInspectableApp } from '../helpers/inspectable-app.js';
 
 /** 出核的两个服务及其默认提供者插件：服务目录与依赖图里按插件身份出现，而非「宿主」 */
 const HUB_PROVIDERS = [
@@ -229,16 +229,6 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     } finally {
       registry.mockRestore();
     }
-
-    const refuse = vi.spyOn(activationHost(app).runtime.services, 'prefer').mockReturnValueOnce(false);
-    const rejected = await fetch(`${base}/api/services/inspection-probe/prefer`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ contextId: 'probe-a' }),
-    });
-    refuse.mockRestore();
-    expect(rejected.status).toBe(409);
-    expect(store.getServicePreferences()['inspection-probe'], '容器拒绝时不能落盘假偏好').toBe('probe-b');
 
     const wrong = await fetch(`${base}/api/services/events/prefer`, {
       method: 'POST',

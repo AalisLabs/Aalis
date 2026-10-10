@@ -221,7 +221,7 @@ describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
       const s = new MediaServiceImpl(caps({ llm: host.llm }), cfg);
       // 注册顺序 A 在前；这一次调用同时建起缓存
       expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-a#vision');
-      expect(host.services.use.prefer(llm, 'zz-llm-b')).toBe(true);
+      host.services.use.prefer(llm, 'zz-llm-b');
       expect(host.llm.list()[0]?.id, '前提：容器已按偏好把 B 排到最前').toBe('zz-llm-b');
       expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-b#vision');
     } finally {

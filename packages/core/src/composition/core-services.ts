@@ -132,8 +132,11 @@ export interface Services {
   inspect(key: ServiceKey, scope?: PreferenceScope): ServiceInfo[];
   /** 偏好的提供者（contextId）；无偏好为 undefined */
   preferred(key: ServiceKey, scope?: PreferenceScope): string | undefined;
-  /** 设偏好：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。服务有独占条目且不是它时返回 false */
-  prefer(key: ServiceKey, contextId: string, scope?: PreferenceScope): boolean;
+  /**
+   * 设偏好，一律记下：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。独占服务同样记下，独占条目存续期间
+   * 没有别家可选，指向别家的偏好在那期间不生效（展示时看 inspect 条目的 exclusive）
+   */
+  prefer(key: ServiceKey, contextId: string, scope?: PreferenceScope): void;
   unprefer(key: ServiceKey, scope?: PreferenceScope): boolean;
 }
 export const services = builtin<Services>('services');
@@ -163,9 +166,8 @@ export function coreProviders(
     inspect: (key, scope) => container.inspect(keyName(key), scope?.for),
     preferred: (key, scope) => container.getPreferred(keyName(key), scope?.for),
     prefer: (key, contextId, scope) => {
-      const ok = container.prefer(keyName(key), contextId, scope?.for);
-      if (ok) runtime.notify('service:changed', keyName(key));
-      return ok;
+      container.prefer(keyName(key), contextId, scope?.for);
+      runtime.notify('service:changed', keyName(key));
     },
     unprefer: (key, scope) => {
       const ok = container.unprefer(keyName(key), scope?.for);

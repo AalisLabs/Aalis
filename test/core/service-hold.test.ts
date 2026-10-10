@@ -67,6 +67,5 @@ describe('ServiceContainer.hold', () => {
     c.register('solo', { v: 1 }, 'held', HELD, { exclusive: true });
     c.hold(HELD);
     expect(() => c.register('solo', { v: 2 }, 'other', OTHER)).toThrow('独占');
-    expect(c.prefer('solo', 'other')).toBe(false);
   });
 });

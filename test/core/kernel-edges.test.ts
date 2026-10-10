@@ -123,25 +123,25 @@ describe('账本登记的旧退订句柄', () => {
 });
 
 describe('ServiceContainer 偏好与独占登记', () => {
-  it('独占登记的服务：偏好指向别的 contextId 被拒且不记录、不通知；指向独占者本身则接受', async () => {
+  it('独占服务的偏好照常记下、发通知：独占期间指向别家不生效，独占者撤走、那一家登记后生效', async () => {
     const { app } = world();
     const Solo = defineService<{ v: number }>('__t:kernel-edges:solo');
     const host = app.bind({ provide, services, events });
-    host.provide.use(Solo, { v: 1 }, { exclusive: true });
+    const off = host.provide.use(Solo, { v: 1 }, { exclusive: true });
     await tick();
     const changed: string[] = [];
     host.events.use.on('service:changed', name => void changed.push(name));
 
-    expect(host.services.use.prefer(Solo, 'someone-else')).toBe(false);
-    expect(host.services.use.preferred(Solo)).toBeUndefined();
+    host.services.use.prefer(Solo, 'someone-else');
+    expect(host.services.use.preferred(Solo)).toBe('someone-else');
     expect(host.services.use.get(Solo)?.v).toBe(1);
     await tick();
-    expect(changed, '被拒的偏好不发变更通知').toEqual([]);
-
-    expect(host.services.use.prefer(Solo, 'root')).toBe(true);
-    expect(host.services.use.preferred(Solo)).toBe('root');
-    await tick();
     expect(changed).toEqual([Solo.name]);
+
+    off();
+    host.provide.use(Solo, { v: 2 }, { entryId: 'someone-else' });
+    host.provide.use(Solo, { v: 3 }, { entryId: 'third', priority: 10 });
+    expect(host.services.use.get(Solo)?.v).toBe(2);
   });
 });
 

@@ -72,9 +72,9 @@ describe('ServiceContainer', () => {
     expect(c.getAll('svc'), '条目已不在时再退订无动作，不误删同名的新条目').toHaveLength(1);
   });
 
-  it('没有任何提供者时 prefer 照收（返回 true），提供者登记后偏好生效', () => {
+  it('没有任何提供者时 prefer 照收，提供者登记后偏好生效', () => {
     const c = new ServiceContainer();
-    expect(c.prefer('__t:late', 'late')).toBe(true);
+    c.prefer('__t:late', 'late');
     c.register('__t:late', { v: 'early' }, 'early', OWNER, { priority: 10 });
     c.register('__t:late', { v: 'late' }, 'late', OWNER);
     expect(c.get('__t:late')).toEqual({ v: 'late' });

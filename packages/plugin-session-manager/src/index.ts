@@ -1184,13 +1184,13 @@ class SessionManager implements SessionManagerService {
     });
   }
 
-  /** 改 llm 服务的偏好（运行态与文档），返回撤回它的函数。运行态拒绝（服务有独占的提供者）时抛错，什么都不改 */
+  /** 改 llm 服务的偏好（运行态与文档），返回撤回它的函数 */
   private setPreference(host: HostConfig, contextId: string | undefined): () => void {
     const runtime = this.caps.services.use.preferred(llm);
     const documented = host.getServicePreferences()[llm.name];
     const apply = (live: string | undefined, doc: string | undefined) => {
       if (live === undefined) this.caps.services.use.unprefer(llm);
-      else if (!this.caps.services.use.prefer(llm, live)) throw new Error(`llm 服务不接受偏好 ${live}`);
+      else this.caps.services.use.prefer(llm, live);
       if (doc === undefined) host.removeServicePreference(llm.name);
       else host.setServicePreference(llm.name, doc);
     };

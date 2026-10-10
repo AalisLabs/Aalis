@@ -68,7 +68,7 @@ describe('内置能力', () => {
     expect(host.services.use.get('__t:nobody')).toBeUndefined();
 
     // 按名设的偏好，按描述符读得到，反之亦然
-    expect(host.services.use.prefer('__t:kv', 'kv-b')).toBe(true);
+    host.services.use.prefer('__t:kv', 'kv-b');
     expect(host.services.use.preferred(kv)).toBe('kv-b');
     expect(host.services.use.get(kv)?.tag).toBe('b');
     expect(host.services.use.unprefer(kv)).toBe(true);

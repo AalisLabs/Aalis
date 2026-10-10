@@ -190,7 +190,7 @@ async function startDoubles() {
     extra: [contract.plugin, requester, background.plugin],
     cleanups,
   });
-  expect(app.bind({ services }).services.use.prefer(backgroundTasks, background.plugin.name)).toBe(true);
+  app.bind({ services }).services.use.prefer(backgroundTasks, background.plugin.name);
   await app.start();
   await waitListening(port);
   return {

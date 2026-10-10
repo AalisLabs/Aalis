@@ -278,17 +278,13 @@ export class ServiceContainer {
 
   /**
    * 设置偏好（按 contextId）：给 consumer 是该消费者实例的本插件偏好，否则是全局偏好。
-   * 指向的那家不在场照样记下，登记后生效。管理面经 `services.prefer()` 调用（另发 service:changed）；
-   * 直接调用容器不会通知绑定层。
-   * @returns false 表示服务有独占条目且不是这个 contextId（拒绝）
+   * 一律记下：指向的那家不在场（含独占条目存续期间）就按下一级挑，它登记后生效。管理面经 `services.prefer()` 调用
+   * （另发 service:changed）；直接调用容器不会通知绑定层。
    * @internal
    */
-  prefer(name: string, contextId: string, consumer?: string): boolean {
-    const exclusive = this.#entries.get(name)?.find(entry => entry.exclusive);
-    if (exclusive && exclusive.contextId !== contextId) return false;
+  prefer(name: string, contextId: string, consumer?: string): void {
     if (!this.#preferences.has(name)) this.#preferences.set(name, new Map());
     this.#preferences.get(name)!.set(consumer, contextId);
-    return true;
   }
 
   /**
