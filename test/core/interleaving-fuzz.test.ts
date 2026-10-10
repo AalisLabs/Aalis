@@ -16,7 +16,7 @@ const ONE = Number(process.env.AALIS_FUZZ_SEED);
 const SEEDS = Number(process.env.AALIS_FUZZ_SEEDS) || 32;
 const seeds = ONE ? [ONE] : Array.from({ length: SEEDS }, (_, k) => k + 1);
 const BOUND = 250 * TIMEOUT;
-const KNOWN: Record<Profile, Violation['cause'][]> = { strict: ['overlap'], 'known-gaps': ['overlap'] };
+const KNOWN: Record<Profile, Violation['cause'][]> = { strict: [], 'known-gaps': [] };
 
 async function runWorld(seed: number, profile: Profile): Promise<Violation[]> {
   const w = createWorld(seed, profile);
@@ -84,7 +84,7 @@ describe('插件管理随机交错', () => {
   };
   it('S2：清理超时后同一 id 不会新旧实例并存（known-gaps seed=2）', pin('S2', 2, 'known-gaps'));
   it('S3：连锁退场时下游收尾不失去上游（known-gaps seed=28）', pin('S3', 28, 'known-gaps'));
-  it.fails('overlap 未修：后一份管理计划不等前一份里还没收尾的消费者（strict seed=38）', pin('overlap', 38, 'strict'));
+  it('overlap：后一份管理计划等前一份里还没收尾的消费者（strict seed=38）', pin('overlap', 38, 'strict'));
 });
 
 // X16：消费者经 optional 依赖按 contextId 从 all() 现选非胜者。关停边只连胜者；非胜者重启后排在消费者之后激活，

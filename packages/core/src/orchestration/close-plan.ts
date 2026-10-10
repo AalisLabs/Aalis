@@ -20,6 +20,10 @@
 // 环全由 required 边构成时才放行环内全部收尾并告警——drain 期间对方仍活着，双方 onDrain 都能 require，
 // 只是有的消费者清理时提供者已收尾。归属约束与环外的约束一条不松。
 //
+// 计划里除了本计划要关的激活，还有已在别的计划里、还没关完、又必须先于本计划某个成员关完的激活：成员的子激活，
+// 与依赖成员所提供服务的消费者。它们与本计划的成员按同一套边排序，只是不替那边收尾：轮到它关闭时按超时等那边关完。
+// 于是后一份计划拆提供者之前，会等前一份计划里还在收尾的消费者。
+//
 // 边只来自框架自己管理的关系：每个激活声明的依赖（含尚未访问的 optional）在编排
 // 那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。不追踪调用方缓存的裸引用，
 // 经 services 动态查到的服务不产生边。
@@ -66,7 +70,7 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
 /**
  * 关闭一组激活（连同它们的子树），返回时都已关完。roots 的给定次序就是无依赖关系时的关闭次序。
  * 逐阶段串行等待；关闭位与取消信号同步设置，收尾、撤回与清理回调都不在调用方的栈上执行（见 Resources.drain）。
- * 已在别的计划里的激活照样排进本计划，只是不替那边收尾：轮到它关闭时按超时等那边关完它。
+ * 已在别的计划里的激活（见文件头）照样排进本计划，只是不替那边收尾：轮到它关闭时按超时等那边关完它。
  *
  * `settle` 传入时复用已冻的计划（停机：先冻再发 `app:stopping`，监听器里的 dispose 汇入同一张图）。
  */
@@ -78,7 +82,7 @@ export async function closeActivations(
 ): Promise<void> {
   const owned = settle ?? freezeActivations(roots);
   try {
-    for (const { ctx, kind } of planClose(roots, logger)) {
+    for (const { ctx, kind } of planClose(roots, owned, logger)) {
       // 单阶段失败不拖垮同批：与清理链「单项失败继续后续」同一政策
       try {
         if (owned.has(ctx))
@@ -94,7 +98,7 @@ export async function closeActivations(
   }
 }
 
-function planClose(roots: Activation[], logger: Logger): Stage[] {
+function planClose(roots: Activation[], owned: Map<Activation, () => void>, logger: Logger): Stage[] {
   const drainOf = new Map<Activation, Stage>();
   const closeOf = new Map<Activation, Stage>();
   const parentOf = new Map<Activation, Activation>();
@@ -118,6 +122,8 @@ function planClose(roots: Activation[], logger: Logger): Stage[] {
     close.index = stages.push(close) - 1;
   };
   for (const root of roots) visit(root);
+  for (const ctx of owned.keys())
+    for (const consumer of ctx.closingConsumers()) if (!drainOf.has(consumer)) visit(consumer);
 
   const isAncestor = (ancestor: Activation, ctx: Activation): boolean => {
     for (let at = parentOf.get(ctx); at; at = parentOf.get(at)) if (at === ancestor) return true;

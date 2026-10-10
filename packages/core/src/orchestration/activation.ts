@@ -98,6 +98,13 @@ export class Activation {
     return pending.length === 0 ? undefined : Promise.all(pending);
   }
 
+  /** 已进了关闭计划、还没关完、依赖本激活所提供服务的其他激活 */
+  closingConsumers(): Activation[] {
+    return [...this.#owners.values()].filter(
+      other => other !== this && other.resources.disposed && other.closeInfo().providers.has(this),
+    );
+  }
+
   closeInfo(): { children: Activation[]; providers: Map<Activation, boolean> } {
     const providers = new Map<Activation, boolean>();
     const depend = (owner: symbol | undefined, required: boolean): void => {
