@@ -235,7 +235,7 @@ llm 服务:
 
 用户可通过配置（`servicePreferences`）或 WebUI Services 页切换首选提供者
 （`services.prefer(key, contextId)`）。偏好者总是 `current` 的第一返回值，
-即使其 priority 低于其他 entry；切换偏好会发出 `service:preference-changed`，
+即使其 priority 低于其他 entry；切换偏好会发出 `service:changed`，
 驱动 `follow` 订阅者按胜者变化重挂。
 
 ## 插件生命周期
@@ -256,7 +256,7 @@ disabled ←─(手动禁用)─ active
 
 ### 统一状态机：`recompute()`
 
-PluginManager 只有一个外部可见的状态变更入口：`recompute()`。`service:registered` / `service:unregistered`、enable / disable / updateConfig / bounce、转入后台的激活落定都汇入同一状态机。关机不经它：`App.stop()` 先冻好一张停机计划，`stopAll()` 执行它。
+PluginManager 只有一个外部可见的状态变更入口：`recompute()`。`service:changed`、enable / disable / updateConfig / bounce、转入后台的激活落定都汇入同一状态机。关机不经它：`App.stop()` 先冻好一张停机计划，`stopAll()` 执行它。
 
 optional 上下线与胜者替换不改变目标态，不级联 bounce。有状态接线走 `ServiceRef.follow`。
 

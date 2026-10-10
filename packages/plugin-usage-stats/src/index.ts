@@ -355,8 +355,7 @@ async function run(caps: Caps): Promise<void> {
     hasBalance = !hasBalance;
     page = definePage(hasBalance);
   };
-  events.on('service:registered', recheck);
-  events.on('service:unregistered', recheck);
+  events.on('service:changed', recheck);
 
   events.on('llm:usage', usage => {
     const line: LedgerLine = { at: Date.now(), ...usage };

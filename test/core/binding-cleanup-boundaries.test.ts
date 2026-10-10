@@ -93,7 +93,7 @@ describe('binding cleanup boundaries', () => {
   it.each([
     'sync',
     'async',
-  ] as const)('%s listener failure on service:unregistered does not strand a closed plugin identity', async failure => {
+  ] as const)('%s listener failure on service:changed does not strand a closed plugin identity', async failure => {
     const warnings: unknown[][] = [];
     const logger: Logger = {
       debug() {},
@@ -113,7 +113,7 @@ describe('binding cleanup boundaries', () => {
       },
     });
     let fail = false;
-    app.bind({ events }).events.on('service:unregistered', () => {
+    app.bind({ events }).events.on('service:changed', () => {
       if (!fail) return;
       const error = new Error(`${failure} notification failure`);
       if (failure === 'sync') throw error;

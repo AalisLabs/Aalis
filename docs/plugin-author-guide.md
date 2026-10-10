@@ -359,7 +359,7 @@ declare module '@aalis/core' {
 
 反模式：没写进 `uses`，又去 `services.get` 当依赖用——无激活闸、无关停边。
 
-`follow` 比自己监听 `service:registered` 轻量：已就绪立刻同步触发、反复上下线重接、关闭自动清理。
+`follow` 比自己监听 `service:changed` 轻量：已就绪立刻同步触发、反复上下线重接、关闭自动清理。
 
 ---
 

@@ -156,12 +156,12 @@ export function coreProviders(
     preferred: key => container.getPreferred(keyName(key)),
     prefer: (key, contextId) => {
       const ok = container.prefer(keyName(key), contextId);
-      if (ok) runtime.notify('service:preference-changed', keyName(key));
+      if (ok) runtime.notify('service:changed', keyName(key));
       return ok;
     },
     unprefer: key => {
       const ok = container.unprefer(keyName(key));
-      if (ok) runtime.notify('service:preference-changed', keyName(key));
+      if (ok) runtime.notify('service:changed', keyName(key));
       return ok;
     },
   };
@@ -183,12 +183,12 @@ export function coreProviders(
           `包名不同是撞名（服务名应带包名前缀），包名相同用 npm ls <包名> 查重复安装、去重后只留一份。`,
       );
     const off = container.register(name, implementation, entryId, c.owner, { ...options, descriptor });
-    // 暂不对外的激活（转入后台的）登记照收，上线时才通知
-    if (!container.isHeld(c.owner)) runtime.notify('service:registered', name);
+    runtime.notify('service:changed', name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
     c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);
     return () => {
-      if (off()) runtime.notify('service:unregistered', name);
+      off();
+      runtime.notify('service:changed', name);
     };
   });
   return {

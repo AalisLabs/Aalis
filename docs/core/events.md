@@ -41,7 +41,6 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 
 | 事件 | 参数 | 时机 |
 |---|---|---|
-| `app:starting` | — | `start()` 的第一步 |
 | `app:ready` | — | 启动第一相位（sticky） |
 | `app:started` | — | 启动第二相位：全部 `app:ready` 监听器完成之后（sticky）；CLI / TUI 在此接管终端 |
 | `app:restarting` | — | `restart()` 先发本事件，监听器全部完成后才把控制交给宿主的 `RestartStrategy` |
@@ -53,9 +52,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 
 | 事件 | 参数 | 时机 |
 |---|---|---|
-| `service:registered` | `name` | 某服务多了一个对外可见的提供者（`provide(descriptor, impl)`；转入后台的激活完成时，上线它登记的服务） |
-| `service:unregistered` | `name` | 某服务少了一个对外可见的提供者（退订闭包、激活拆卸；激活转入后台时撤下它已登记的服务） |
-| `service:preference-changed` | `name` | 该服务的偏好 provider 切换（`services.prefer` / `services.unprefer`）；`follow` 借此按胜者变化重挂 |
+| `service:changed` | `name` | 该服务的提供者或胜者可能变了，请重读（`get` / `all`）。`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换（`services.prefer` / `unprefer`）都发；可能变化时就发，不保证恰好一次，也不说明变了什么。`follow` 借此按胜者变化重挂 |
 | `plugin:loaded` | `instanceId` | 插件实例已激活；同一轮 recompute 可能紧接着激活下一个插件 |
 | `plugin:unloaded` | `instanceId` | 插件实例已拆卸；只发给发过 `plugin:loaded` 的激活：从未激活完成的（激活失败的回滚、仍在初始化时被拆）不发，关机拆卸也不发 |
 | `plugins:changed` | — | 一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 |
@@ -65,8 +62,8 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 `app:ready` / `app:started` 监听器可能在自己的 `apply` 完成之前被调用；需要自身就绪的逻辑放在 `apply` 末尾再挂
 （两个事件都是 sticky，晚挂照样收到），或在监听器里自查就绪。
 
-后台激活期间它登记的服务不对外，服务事件按「对外可见」计：阈值前已登记的在转入后台时发一次 `service:unregistered`，
-后台期间的登记与退订不发事件，激活成功时对仍在的服务发 `service:registered`，失败或被拆卸时不再发。
+后台激活期间它登记的服务不对外：转入后台、激活成功上线时对它名下的服务各发一次 `service:changed`；后台期间的登记、
+退订与失败后的拆卸照常发，此时重读看不到它的条目。
 
 `app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 都立即返回 false，不改条目状态或配置，也不加入额外拆卸；已有停机计划负责清理。`stop()` 在任何阶段都返回完整停机的同一 Promise。监听器不能 `await stop()` 或返回它，否则停机与正在执行的屏障监听器会互等；调用 `void stop()` 不会重复启动停机。
 

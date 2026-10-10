@@ -203,7 +203,7 @@ apply({ lifecycle }) {
 | 注册斜杠命令 | `uses: { commands }`，`commands.command(...)`（`@aalis/api-commands`） |
 | 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
 | 注册 agent 输入预处理器 | `uses: { agent }`，`agent.registerPreprocessor(...)`（`@aalis/api-agent`） |
-| 监听核心事件 | `uses: { events }`，`events.on('service:registered', …)` |
+| 监听核心事件 | `uses: { events }`，`events.on('service:changed', …)` |
 
 这些绑定门面内部已处理「服务晚上线或换人时重挂」。插件加载采用单遍式，无需关心依赖顺序；若还要在方法里 **读** hub（`require()` / `execute`），或希望激活闸清晰，把对应描述符写成 required（不要 `optional()`）。
 
