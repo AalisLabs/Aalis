@@ -168,6 +168,45 @@ describe('关停编排', () => {
     expect(w.app.plugins.getStatus().map(p => p.state)).toEqual(['pending', 'pending']);
   });
 
+  it('依赖丢失的连带退场：别的计划正关着的提供者不算还在，下游同批收尾', async () => {
+    const w = world();
+    const gate = defineService<object>('zz-aa-closing-gate');
+    const mem = defineService<object>('zz-aa-closing-mem');
+    const offGate = w.app.bind({ provide }).provide(gate, {});
+    const seen: boolean[] = [];
+    const memPlugin = (name: string, priority: number, drainMs: number) =>
+      definePlugin({
+        name,
+        provides: [mem],
+        uses: { gate, provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          provide(mem, {}, { priority });
+          lifecycle.onDrain(() => sleep(drainMs));
+        },
+      });
+    await w.app.pluginAll([
+      { definition: memPlugin('backup', 0, 40) },
+      { definition: memPlugin('main', 10, 0) },
+      {
+        definition: definePlugin({
+          name: 'agent',
+          uses: { mem, lifecycle },
+          apply: ({ mem, lifecycle }) => void lifecycle.onDrain(() => void seen.push(mem.current !== undefined)),
+        }),
+      },
+    ]);
+    await w.app.plugins.idle();
+    // 慢激活占住重算，下面的依赖丢失在 bounce 关着 backup 的时候判定
+    const registering = w.app.plugin(definePlugin({ name: 'busy', apply: () => sleep(30) }));
+    await sleep(2);
+    const bouncing = w.app.plugins.bounce('backup');
+    await sleep(2);
+    offGate(); // main 丢了 gate；backup 正在关，agent 的 mem 随 main 一起失去全部提供者
+    await Promise.all([registering, bouncing]);
+    await w.app.plugins.idle();
+    expect(seen, w.warnings.join(' | ')).toEqual([true]);
+  });
+
   it('停机计划在飞时并发 unload 一个提供者：汇入计划，不抢在消费者之前拆', async () => {
     const w = world();
     const store = defineService<Sink>('zz-aa-store2');
