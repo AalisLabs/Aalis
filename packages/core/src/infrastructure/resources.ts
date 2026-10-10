@@ -3,11 +3,11 @@ import { awaitWithTimeout, DisposableChain, isThenable } from '../kernel/disposa
 import type { Logger } from './logger.js';
 
 /**
- * afterWithdraw：切断之后、撤回链之前等下游对已撤回资源的交接落定（返回待等的 Promise，没有则 undefined）；
+ * afterCut：切断之后、撤回链之前等下游对已切断资源的交接落定（返回待等的 Promise，没有则 undefined）；
  * afterCleanup：清理链之后收尾（同步）。
  */
 interface ResourceHooks {
-  afterWithdraw?: () => Promise<unknown> | undefined;
+  afterCut?: () => Promise<unknown> | undefined;
   afterCleanup?: () => void;
 }
 
@@ -133,7 +133,7 @@ export class Resources {
     // 收尾段（等初始化、排空收尾链）已由编排者提前执行时只等它，不再等第二遍初始化
     await this.drain(timeoutMs);
     for (const cut of this.#cuts) cut();
-    const handover = this.#hooks.afterWithdraw?.();
+    const handover = this.#hooks.afterCut?.();
     if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
     // 撤回段整体先于清理段，段内逆序；每段收口等本段发起、还没落定的异步工作
     for (const chain of [this.withdrawals, this.disposables]) {
@@ -153,10 +153,7 @@ export class Resources {
     return rest.length === 0 ? undefined : Promise.all(rest).then(() => this.lingering());
   }
 
-  /**
-   * 已发起的异步清理只观察一次，在下一段收口时等待。关闭不在调用方的栈上收口：同步取得资源、拿到清理句柄的
-   * 那一段即使在中途发起了关闭，也在收口之前走完，句柄可以在这里补登。
-   */
+  /** 记一项在飞工作、就地接住拒绝。关闭不在调用方的栈上收口：同步段途中发起了关闭，拿到的句柄也来得及补登 */
   holdInflight(work: PromiseLike<unknown>, what: string): Promise<void> {
     const settled: Promise<void> = Promise.resolve(work)
       .then(

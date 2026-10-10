@@ -29,7 +29,7 @@ export class ActivationHost {
 
   /** 插件激活：一律挂在根激活名下 */
   create(id: string, config: Record<string, unknown> = {}): Activation {
-    if (this.root.resources.disposed) throw new Error(`激活 "${this.root.id}" 已 dispose，无法创建子激活 "${id}"`);
+    if (this.root.resources.disposed) throw new Error(`激活 "${this.root.id}" 已 dispose，无法创建插件激活 "${id}"`);
     const activation = this.#make(id, config, this.root.logger.child(id));
     this.root.children.add(activation);
     return activation;
@@ -40,7 +40,7 @@ export class ActivationHost {
     const runtime = this.runtime;
     const resources = new Resources(id, logger, {
       // 提供者自己的清理之前：挂在它上面的跟随者就地交接，落定后提供者才关
-      afterWithdraw: (): Promise<unknown> | undefined => activation.handover(),
+      afterCut: (): Promise<unknown> | undefined => activation.handover(),
       afterCleanup: () => {
         activation.dropOutbound();
         this.#owners.delete(owner);

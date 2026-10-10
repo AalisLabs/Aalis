@@ -134,7 +134,7 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     ref.follow(() => {});
     expect(ctx.activation.resources.disposables.labels()).toEqual([]);
     expect(registry.list()).toEqual([]);
-    expect(ctx.activation.resources.disposables.size).toBe(0);
+    expect(ctx.activation.resources.disposables.labels()).toHaveLength(0);
   });
 });
 
@@ -142,7 +142,7 @@ describe('构造类 post-dispose：抛错', () => {
   it('create：抛错且不残留孤儿子激活（此前会塞进 _children 永不排空）', async () => {
     const ctx = createActivationFixture();
     await ctx.activation.disposeAsync();
-    expect(() => bindActivationFixture(ctx.host, ctx.host.create('orphan'))).toThrowError(/无法创建子激活 "orphan"/);
+    expect(() => bindActivationFixture(ctx.host, ctx.host.create('orphan'))).toThrowError(/无法创建插件激活 "orphan"/);
     expect(ctx.activation.children.size).toBe(0);
   });
 });

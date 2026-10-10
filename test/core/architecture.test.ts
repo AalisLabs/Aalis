@@ -686,7 +686,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2542 → 2543：同批缺陷 3——依赖丢失的连带退场把别的计划正关着的提供者算作要走（survives 改收判定函数），抬高 1 行对应它。
 // 2543 → 2530：同批审查删减——isThenable 只留清理链里一份，track 的异步撤回与 follow / registrar 一样只进在飞账、
 // 段收口等一次（删去链上的第二次等待），注册账本的聚合不再重复记账。
-const CORE_CODE_LINE_CEILING = 2530;
+// 2530 → 2523：同批审查删减——关停计划经 children 遍历插件激活，closeInfo 只剩提供者（改名 providers，冻结计划
+// 不再调它）；删去清理链只供测试的 size、App 里根激活的别名；切断之后的交接钩子改名 afterCut。
+const CORE_CODE_LINE_CEILING = 2523;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

@@ -242,7 +242,7 @@ function activationViolations(source: string): string[] {
     'dropOutbound',
     'handover',
     'closingConsumers',
-    'closeInfo',
+    'providers',
     'joinPlan',
     'disposeAsync',
   ]);
@@ -325,7 +325,7 @@ describe('内部激活记录保持窄职责，旧 Context 不得回归', () => {
     'class Activation { provide() {} }',
     'class Activation { provide = () => {}; }',
     'class Activation { get events() { return this.bus; } }',
-    'class Activation { closeInfo() { this.#services.register("x", {}, "id"); } }',
+    'class Activation { providers() { this.#services.register("x", {}, "id"); } }',
     'import { events } from "../context/builtins.js"; class Activation {}',
   ])('变异被拒绝：%s', source => {
     expect(activationViolations(source).length).toBeGreaterThan(0);

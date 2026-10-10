@@ -98,11 +98,6 @@ export class DisposableChain {
     return this.#disposed;
   }
 
-  /** 当前登记的清理函数数量（诊断 / 测试用：可检测闭包是否如期自移除）。 */
-  get size(): number {
-    return this.#items.length;
-  }
-
   /**
    * 逆序**串行**等待所有清理函数完成。
    *

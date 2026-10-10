@@ -84,18 +84,18 @@ export class PluginManager implements PluginManagerService {
    * 试图 register 命令 / 监听服务等动作触发误重入。
    */
   #shuttingDown = false;
-  /** 停机计划的完成信号：beginShutdown 冻树时填，stopAll 执行该计划 */
+  /** 停机计划的完成信号：beginShutdown 冻计划时填，stopAll 执行该计划 */
   #shutdownSettle?: Map<Activation, () => void>;
   /** 激活序缓存：只随注册表增删失效（依赖声明与 provides 每条不变） */
   #order?: PluginRecord[];
 
   /**
-   * 停机截止点（App.stop 单飞，只调一次）：置 `#shuttingDown`，并把根激活整棵树冻进一张计划。
-   * 之后管理动作拒绝；对本树的 disposeAsync 汇入该计划。真正的 drain/close 由 stopAll 执行。
+   * 停机截止点（App.stop 单飞，只调一次）：置 `#shuttingDown`，并把根激活与全部插件激活冻进一张计划。
+   * 之后管理动作拒绝；对它们的 disposeAsync 汇入该计划。真正的 drain/close 由 stopAll 执行。
    */
   beginShutdown(): void {
     this.#shuttingDown = true;
-    // 普通重算已失效；清掉排队项，让在飞重算/手动拆卸结束后 idle 能落定。
+    // 排队的重算已无意义；清掉排队项，让在飞重算/手动拆卸结束后 idle 能落定。
     this.#queued = false;
     this.#shutdownSettle = freezeActivations([this.#host.root]);
   }
@@ -527,10 +527,10 @@ export class PluginManager implements PluginManagerService {
    * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先起、消费者后起）。
    * 4. 本轮有变动则继续下一轮，直到稳定或达到 maxRounds；最后发 plugins:changed。
    *
-   * 判据只有一条：服务此刻在不在容器里。
+   * 判据只有一条：服务此刻在不在容器里（别的计划正关着的提供者不算在）。
    */
   async recompute(): Promise<void> {
-    // 停机后普通重算无意义，拆卸全归停机计划。早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时
+    // 停机后重算无意义，拆卸全归停机计划。早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时
     // 状态机已静置，不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
     if (this.#shuttingDown) {
       this.#settleIdleWaiters();
@@ -589,7 +589,7 @@ export class PluginManager implements PluginManagerService {
     // 不属于单调级联，它的自动重试另按条目计预算（{@link #spendRetry}），`#queued` 补跑重置本函数的轮数也放不开它。
     let lastRoundFlips = new Set<string>();
 
-    // 停机后不再做普通状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
+    // 停机后不再做状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
     converge: while (changed && rounds < this.#maxRounds() && !this.#shuttingDown) {
       changed = false;
       rounds++;
