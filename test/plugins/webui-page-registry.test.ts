@@ -14,6 +14,7 @@ import {
   createPageRegistry,
   INVALIDATE_WINDOW_MS,
 } from '../../packages/plugin-webui-server/src/pages.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 页面登记表本身：invalidate 的合并、提示的替换与撤回、按条目身份撤回、会话面板 applies 的超时。
@@ -33,8 +34,8 @@ function registry(sessions: Record<string, SessionInfo['kind']> = {}) {
   const pages = createPageRegistry({
     logger,
     send: event => void sent.push(event),
-    sessions: () => ({
-      getSession: id => (sessions[id] ? ({ id, kind: sessions[id] } as SessionInfo) : undefined),
+    sessions: fixedRef({
+      getSession: (id: string) => (sessions[id] ? ({ id, kind: sessions[id] } as SessionInfo) : undefined),
     }),
     signFile: () => undefined,
   });

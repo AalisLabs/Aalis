@@ -22,6 +22,7 @@ import {
   type OptionRegisterOptions,
 } from '../../packages/api-commands/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ===== 桩 CommandService =====
 
@@ -310,7 +311,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
   it('两个插件注册同名指令，其中一个卸载后另一个仍在', async () => {
     const app = newApp();
     const host = app.bind({ provide });
-    const registry = new CommandRegistry(mkLogger() as never, () => undefined);
+    const registry = new CommandRegistry(mkLogger() as never, ref());
     host.provide.use(commands, registry);
 
     await loadProbe(
@@ -353,7 +354,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
     );
     off();
     await settle(app);
-    const registry = new CommandRegistry(mkLogger() as never, () => undefined);
+    const registry = new CommandRegistry(mkLogger() as never, ref());
     registry.command('ping', '原有的 ping', { pluginName: 'base' }).action(async () => 'base');
     const flaky = {
       command: (name: string, description?: string, meta?: InternalCommandMeta) =>
@@ -373,7 +374,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
   it('同一激活再登记同名指令：替换先前那次，只留一层', async () => {
     const app = newApp();
     const host = app.bind({ provide });
-    const registry = new CommandRegistry(mkLogger() as never, () => undefined);
+    const registry = new CommandRegistry(mkLogger() as never, ref());
     host.provide.use(commands, registry);
 
     await loadProbe(

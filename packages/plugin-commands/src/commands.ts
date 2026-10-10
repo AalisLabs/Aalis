@@ -20,7 +20,7 @@ import type {
   PositionalArgSpec,
   PositionalArgType,
 } from '@aalis/api-commands';
-import type { Logger } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { type Entry, renderDetail, renderOverview } from './help.js';
 
 // ============================================================================
@@ -138,13 +138,13 @@ export class CommandRegistry implements CommandService {
   /** 别名映射：aliasName → realName */
   private readonly aliases = new Map<string, string>();
   private readonly logger: Logger;
-  /** 当前的权限服务：帮助按它的 authorize 判调用者能用哪些指令，与执行守卫的等级裁决同一份 */
-  private readonly authority: () => AuthorityService | undefined;
+  /** 权限服务：帮助按它的 authorize 判调用者能用哪些指令，与执行守卫的等级裁决同一份 */
+  private readonly authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>;
   private _guard?: ExecutionGuard;
 
   prefix = '/';
 
-  constructor(logger: Logger, authority: () => AuthorityService | undefined) {
+  constructor(logger: Logger, authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>) {
     this.logger = logger.child('commands');
     this.authority = authority;
   }
@@ -565,10 +565,9 @@ export class CommandRegistry implements CommandService {
    * 没有时按执行时同样的 fail-closed
    */
   private permits(cmd: Command, caller: Caller): boolean {
-    const authority = this.authority();
-    if (!authority) return !needsAuthority(cmd);
+    if (!this.authority.present) return !needsAuthority(cmd);
     const request = { capability: `command:${cmd.name}`, visibility: cmd.visibility, risk: cmd.risk };
-    return authority.authorize(caller, request) === null;
+    return this.authority.use.authorize(caller, request) === null;
   }
 
   private directChildren(parent: string): string[] {

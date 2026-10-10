@@ -12,6 +12,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { ref } from '../fixtures/service-ref.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -68,7 +69,7 @@ function toolRegistry(): { registry: ToolRegistry; ran: string[] } {
 }
 
 function commandRegistry(): { registry: CommandRegistry; ran: string[] } {
-  const registry = new CommandRegistry(silent, () => undefined);
+  const registry = new CommandRegistry(silent, ref());
   const ran: string[] = [];
   for (const [name, policy] of Object.entries({ ...DENIED, ...ALLOWED })) {
     registry.command(name, name, policy).action(async () => {
@@ -141,7 +142,7 @@ describe('commands：没有守卫时 fail-closed（与 tools 同口径）', () =
   });
 
   it('restricted 父分组下的子指令按整条路径取严：同样被拒', async () => {
-    const registry = new CommandRegistry(silent, () => undefined);
+    const registry = new CommandRegistry(silent, ref());
     let ran = false;
     registry.command('admin', '管理', { visibility: 'restricted' });
     registry.command('admin.ping', 'ping').action(async () => {

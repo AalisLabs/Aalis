@@ -11,6 +11,7 @@ import { hashFiles, sha256 } from '../../packages/plugin-works-site/src/verify.j
 import { type FakePages, startFakePages } from '../fixtures/fake-pages.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 async function eventually(check: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
@@ -84,7 +85,7 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => ({
+      publish: fixedRef({
         listPublished,
         readFile: async () => new Uint8Array([1]),
         readThumbnail: async () => new Uint8Array(),
@@ -146,7 +147,7 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => published,
         readFile: async () => bytes,
         readThumbnail: async () => new Uint8Array(),
@@ -254,7 +255,7 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -324,7 +325,7 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -370,7 +371,14 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => provider,
+      publish: {
+        get present() {
+          return provider !== undefined;
+        },
+        get use() {
+          return provider!;
+        },
+      },
       live: () => {},
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,
@@ -450,7 +458,7 @@ describe('作品站独立故障交接审计', () => {
       config,
       store,
       client,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -513,7 +521,7 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [awaiting],
         readFile: async () => new Uint8Array([1]),
         readThumbnail: async () => new Uint8Array(),
@@ -591,7 +599,7 @@ describe('作品站独立故障交接审计', () => {
     const first = new WorksDeployer({
       ...firstDeps,
       store,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [item],
         readFile: async () => html,
         readThumbnail: async () => new Uint8Array(),
@@ -617,7 +625,7 @@ describe('作品站独立故障交接审计', () => {
       const second = new WorksDeployer({
         ...secondDeps,
         store: restarted,
-        publish: () => undefined,
+        publish: ref(),
         live: () => {},
         logger: { info: () => {}, warn: () => {} },
         signal: secondSignal.signal,
@@ -686,7 +694,7 @@ describe('作品站独立故障交接审计', () => {
     const deployer = new WorksDeployer({
       ...deps,
       store,
-      publish: () => undefined,
+      publish: ref(),
       live,
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,

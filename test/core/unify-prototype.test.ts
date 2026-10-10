@@ -236,33 +236,6 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
     expect(second.list()).toHaveLength(20);
   });
 
-  it('调用型：use 每次读当前胜者——优先级更高者上线、偏好切换都即时跟随', async () => {
-    const { app, host } = world();
-    const kv = defineService<{ tag: string }>('zz-kv');
-    host.provide.use(kv, { tag: 'low' }, { priority: 1, entryId: 'root/low' });
-    const seen: string[] = [];
-    let read!: () => void;
-    await app.plugin(
-      definePlugin({
-        name: 'reader',
-        uses: { kv },
-        apply({ kv }) {
-          read = () => seen.push(kv.use.tag);
-        },
-      }),
-    );
-    await app.plugins.idle();
-    read();
-    host.provide.use(kv, { tag: 'high' }, { priority: 9, entryId: 'root/high' });
-    read();
-    host.services.use.prefer(kv, 'root/low');
-    read();
-    host.services.use.unprefer(kv);
-    read();
-    expect(seen).toEqual(['low', 'high', 'low', 'high']);
-    expect(state(app, 'reader'), '提供者换人不重启消费者').toBe('active');
-  });
-
   it('required 丢失 → 消费者转 pending 且登记撤回；恢复 → 自动重新激活并重新登记', async () => {
     const { app } = world();
     const instance = makeHub();

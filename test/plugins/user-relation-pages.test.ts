@@ -30,7 +30,7 @@ async function boot() {
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   const mem = app.bind({ memory }).memory.use;
-  const service = new RelationService(new RelationStore(() => mem));
+  const service = new RelationService(new RelationStore(mem));
   await app.plugin(
     definePlugin({
       name: 'zz-relation-pages',

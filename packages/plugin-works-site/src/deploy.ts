@@ -1,5 +1,5 @@
 import { isIntegrityError, type PublishedItem } from '@aalis/api-publish';
-import type { Logger } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type { PagesClient, PagesDeployment } from './cloudflare/client.js';
 import { PagesApiError } from './cloudflare/client.js';
 import type { WorksSiteConfig } from './config.js';
@@ -38,7 +38,7 @@ interface DeployerInput {
   config: WorksSiteConfig;
   store: WorksStore;
   client: PagesClient;
-  publish: () => PublishPort | undefined;
+  publish: Pick<ServiceSelection<PublishPort>, 'present' | 'use'>;
   live: (ids: readonly string[]) => void;
   fetch?: ProbeFetch;
   logger: Pick<Logger, 'warn' | 'info'>;
@@ -57,7 +57,7 @@ export class WorksDeployer {
   readonly #config: WorksSiteConfig;
   readonly #store: WorksStore;
   readonly #client: PagesClient;
-  readonly #publish: () => PublishPort | undefined;
+  readonly #publish: Pick<ServiceSelection<PublishPort>, 'present' | 'use'>;
   readonly #live: (ids: readonly string[]) => void;
   readonly #fetch: ProbeFetch;
   readonly #logger: Pick<Logger, 'warn' | 'info'>;
@@ -135,7 +135,7 @@ export class WorksDeployer {
     this.#pending = true;
     if (!this.#started) return;
     const state = this.#store.data;
-    const published = this.#publish()?.listPublished(this.#config.targetId) ?? [];
+    const published = this.#publish.present ? this.#publish.use.listPublished(this.#config.targetId) : [];
     const live = Object.values(state?.current ?? {}).flatMap(item => item.works);
     this.#newDue = this.#now() + this.#debounce;
     if (live.some(item => !published.some(next => next.id === item.id))) {
@@ -285,7 +285,7 @@ export class WorksDeployer {
   }
 
   async #runOnce(force: boolean): Promise<boolean> {
-    const source = this.#publish();
+    const source = this.#publish.present ? this.#publish.use : undefined;
     if (source && this.#store.copy().inFlight) await this.#resumeInFlight(source);
     if (!source) {
       await this.#pruneKnownCurrent();
@@ -353,7 +353,7 @@ export class WorksDeployer {
 
   #hasWithdrawal(): boolean {
     const live = Object.values(this.#store.data?.current ?? {}).flatMap(item => item.works);
-    const published = this.#publish()?.listPublished(this.#config.targetId) ?? [];
+    const published = this.#publish.present ? this.#publish.use.listPublished(this.#config.targetId) : [];
     return live.some(item => !published.some(next => next.id === item.id));
   }
 

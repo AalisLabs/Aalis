@@ -62,7 +62,7 @@ async function makeWorld() {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  const store = new RelationStore(() => wrapped);
+  const store = new RelationStore(wrapped);
   const service = new RelationService(store);
   const onceAfterSave = (match: (key: string) => boolean, run: () => Promise<unknown>) => {
     afterSave = { match, run };

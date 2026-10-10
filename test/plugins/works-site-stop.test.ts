@@ -7,6 +7,7 @@ import { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
 import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 /** 默认实例的状态文件 */
 const STATE_URI = 'pluginData:/works-site/state.json';
@@ -42,7 +43,7 @@ function deployer(store: WorksStore, client: PagesClient, live: (ids: readonly s
     config,
     store,
     client,
-    publish: () => ({
+    publish: fixedRef({
       listPublished: () => [item],
       readFile: async () => new Uint8Array(),
       readThumbnail: async () => new Uint8Array(),

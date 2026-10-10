@@ -12,6 +12,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // /help：所有平台同一份纯文本（QQ 与终端原样显示，WebUI 按 Markdown 渲染成列表），不用加粗、反引号、代码围栏与空格对列；
@@ -52,7 +53,7 @@ describe('help: 摘要取描述的第一句', () => {
 
 describe('help: 各平台通用的纯文本', () => {
   function registry(): CommandRegistry {
-    const r = new CommandRegistry(silent, () => allowAll);
+    const r = new CommandRegistry(silent, fixedRef(allowAll));
     r.command('clear', '清空当前会话记忆；用 --type 选择类型', { examples: ['/clear', '/clear -t context,vector'] })
       .alias('cls')
       .option('type', '-t <type:string[]>', {
@@ -156,7 +157,7 @@ describe('help: 各平台通用的纯文本', () => {
 
 describe('help: 没有权限插件时按执行时的 fail-closed 列', () => {
   it('只列默认等级能用、不用确认的指令', () => {
-    const r = new CommandRegistry(silent, () => undefined);
+    const r = new CommandRegistry(silent, ref());
     r.command('open', '公开').action(() => 'ok');
     r.command('ask', '要确认', { confirm: 'session' }).action(() => 'ok');
     r.command('high', '要等级', { risk: 'sensitive' }).action(() => 'ok');
@@ -168,7 +169,7 @@ describe('help: 没有权限插件时按执行时的 fail-closed 列', () => {
 });
 
 describe('help: 登记', () => {
-  const r = () => new CommandRegistry(silent, () => allowAll);
+  const r = () => new CommandRegistry(silent, fixedRef(allowAll));
 
   it('-h 与 --help 是保留选项：声明它们的选项登记时抛错', () => {
     expect(() => r().command('a').option('help', '')).toThrow(/保留/);

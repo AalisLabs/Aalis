@@ -23,7 +23,7 @@ async function setup() {
   const state = app.plugins.getPlugin(memoryInMemory.name)?.state;
   if (state !== 'active') throw new Error(`memory-inmemory 插件未激活（state=${state}）`);
   const ref = app.bind({ memory }).memory.use;
-  return new RelationService(new RelationStore(() => ref));
+  return new RelationService(new RelationStore(ref));
 }
 
 describe('plugin-user-relation: 多层遍历', () => {

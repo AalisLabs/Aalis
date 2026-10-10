@@ -17,6 +17,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { ref } from '../fixtures/service-ref.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -86,7 +87,7 @@ function registry() {
     error: (...args: unknown[]) => void logs.push(`error ${args.map(String).join(' ')}`),
     child: () => logger,
   };
-  const pages = createPageRegistry({ logger, send: quiet, sessions: () => undefined, signFile: () => undefined });
+  const pages = createPageRegistry({ logger, send: quiet, sessions: ref(), signFile: () => undefined });
   /** 登记着的插件前端页面的框架地址里的 token */
   const tokenOf = (key: string) => {
     const page = pages.views().find(view => view.key === key);

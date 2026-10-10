@@ -22,6 +22,7 @@ import {
 import { startFakePages } from '../fixtures/fake-pages.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 /** 默认实例的状态文件 */
 const STATE_URI = 'pluginData:/works-site/state.json';
@@ -138,7 +139,7 @@ describe('作品站持久状态与内容核对', () => {
       config,
       store,
       client,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -204,7 +205,7 @@ describe('作品站持久状态与内容核对', () => {
       config,
       store,
       client,
-      publish: () => undefined,
+      publish: ref(),
       live: () => {},
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,
@@ -260,7 +261,7 @@ describe('作品站持久状态与内容核对', () => {
       config,
       store,
       client,
-      publish: () => undefined,
+      publish: ref(),
       live: () => {},
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,
@@ -318,7 +319,7 @@ describe('作品站持久状态与内容核对', () => {
       config,
       store,
       client,
-      publish: () => undefined,
+      publish: ref(),
       live: () => {},
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,
@@ -398,7 +399,7 @@ describe('作品站持久状态与内容核对', () => {
       config,
       store,
       client,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -775,7 +776,7 @@ describe('作品站编排与假 Pages', () => {
       config,
       store,
       client,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -833,7 +834,7 @@ describe('作品站编排与假 Pages', () => {
       config,
       store,
       client,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -904,7 +905,7 @@ describe('作品站编排与假 Pages', () => {
       config,
       store,
       client,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [],
         readFile: async () => new Uint8Array(),
         readThumbnail: async () => new Uint8Array(),
@@ -1006,7 +1007,7 @@ describe('作品站编排与假 Pages', () => {
       retryBaseMs: 20,
       convergenceMs: 40,
       convergencePauseMs: 10,
-      publish: () => ({
+      publish: fixedRef({
         listPublished: () => [...published],
         readFile: async id => (id === firstId ? html : html2),
         readThumbnail: async () => new Uint8Array(),
@@ -1264,7 +1265,7 @@ async function fakeSite(
     retryBaseMs: 20,
     convergenceMs: 100,
     convergencePauseMs: 5,
-    publish: () => publish,
+    publish: fixedRef(publish),
     live: () => {},
     logger: { info: () => {}, warn: () => {} },
     signal: controller.signal,

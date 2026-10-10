@@ -144,8 +144,6 @@ export default definePlugin({
       );
     }
     const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
-    const processGateway = proc.use;
-    const storageGateway = storage.use;
     // 每次调用现取：cwd 要按当时的 storage 实况解析，沙箱后端也可能中途上下线
     const runnerDeps = { storage, codeSandbox };
 
@@ -204,8 +202,8 @@ export default definePlugin({
           logger.use.debug(`run_python: ${code.length} 字符`);
           const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
           const result = await runCode(
-            processGateway,
-            storageGateway,
+            proc.use,
+            storage.use,
             cfg.python.interpreter,
             code,
             '.py',
@@ -260,8 +258,8 @@ export default definePlugin({
           logger.use.debug(`run_javascript: ${code.length} 字符`);
           const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
           const result = await runCode(
-            processGateway,
-            storageGateway,
+            proc.use,
+            storage.use,
             cfg.javascript.interpreter,
             code,
             '.mjs',

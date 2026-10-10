@@ -334,12 +334,11 @@ async function run(caps: Caps): Promise<void> {
     maxRuns: cfg.maxRuns > 0 ? cfg.maxRuns : configSchema.maxRuns.default,
   };
   const logger = caps.logger.use.child('workflow');
-  const storageGateway = caps.storage.use;
 
-  const loader = new WorkflowLoader(storageGateway, config.defsDir, logger);
+  const loader = new WorkflowLoader(caps.storage.use, config.defsDir, logger);
   const scanned = await loader.loadAll();
 
-  const runStore = new RunStore(storageGateway, config.runsFile, config.maxRuns, logger);
+  const runStore = new RunStore(caps.storage.use, config.runsFile, config.maxRuns, logger);
   await runStore.init();
 
   const cancelTokens = new Map<string, { cancelled: boolean }>();

@@ -17,7 +17,7 @@ import {
 } from '../../packages/create-aalis-plugin/src/cli.js';
 import { checkPage } from '../../packages/plugin-webui-server/src/page-check.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
-import { fixedRef } from '../fixtures/service-ref.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。生成的示例页面过 webui-server 登记时的质量门槛；
 // 选了自带前端时生成的插件包能被 webui-server 登记：包根名字对得上、webui/ 与入口都在。
@@ -166,7 +166,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
     const registry = createPageRegistry({
       logger: { ...logger, error: (...args: unknown[]) => void errors.push(args) } as never,
       send: quiet,
-      sessions: () => undefined,
+      sessions: ref(),
       signFile: () => undefined,
     });
     registry.addPage(page, a.packageName);

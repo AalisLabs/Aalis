@@ -107,15 +107,28 @@ describe('两层形状', () => {
 });
 
 describe('业务句柄是活的', () => {
-  it('存下来的 use 句柄换人后打到新的那一家，取到的方法在调用时才解析', async () => {
-    const { app, give } = world();
+  it('存下来的 use 句柄换人后打到新的那一家，取到的方法在调用时才解析；required 的提供者换人不重启消费者', async () => {
+    const { app, host, give } = world();
     give('a');
-    const kvs = await consumer(app);
+    let kvs!: ServiceSelection<Kv>;
+    await app.plugin(
+      definePlugin({
+        name: 'reader',
+        uses: { kv },
+        apply: caps => {
+          kvs = caps.kv;
+        },
+      }),
+    );
     const stored = kvs.use;
     const method = stored.get;
     give('b', 1);
     expect(stored.tag).toBe('b');
     expect(method()).toBe('b');
+    host.services.use.prefer(kv, 'a');
+    expect(stored.tag).toBe('a');
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('reader')?.state, '提供者换人不重启消费者').toBe('active');
   });
 
   it('of(id) 在那一家撤回后访问即抛错，同一个 id 回来后照常可用', async () => {
@@ -131,11 +144,12 @@ describe('业务句柄是活的', () => {
     expect(a.tag).toBe('a');
   });
 
-  it('选不到时访问 use 的成员同步抛 ServiceUnavailableError，present 为假', async () => {
+  it('选不到时访问 use 的成员同步抛 ServiceUnavailableError，点名是哪个服务、谁声明的；present 为假', async () => {
     const { app } = world();
     const kvs = await consumer(app);
     expect(kvs.present).toBe(false);
     expect(() => kvs.use.get).toThrow(expect.objectContaining({ name: 'ServiceUnavailableError' }));
+    expect(() => kvs.use.get).toThrow('服务 "zz-shape-kv" 不可用（"consumer" 声明的依赖当前没有提供者）');
   });
 
   it('then、symbol 键与 toJSON 不转发：await 句柄得到句柄本身，序列化与打印不触发解析', async () => {

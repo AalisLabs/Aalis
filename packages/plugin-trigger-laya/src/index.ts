@@ -267,7 +267,7 @@ function run(caps: Caps): void {
           }
           if (want && !sidecar) {
             sidecar = superviseSidecar({
-              process: () => (caps.process.present ? caps.process.use : undefined),
+              process: caps.process,
               dir: managed.dir,
               port: managed.port,
               parentPid: process.pid,

@@ -54,7 +54,7 @@ async function makeService() {
     throw new Error('memory 插件未激活');
   }
   const mem = app.bind({ memory }).memory.use;
-  const store = new RelationStore(() => mem);
+  const store = new RelationStore(mem);
   return { app, mem, store, service: new RelationService(store) };
 }
 

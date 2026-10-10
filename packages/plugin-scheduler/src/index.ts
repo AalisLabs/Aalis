@@ -292,7 +292,6 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
 
-  const storageGateway = storage.use;
   const persistUri = config.persistPath;
   /**
    * 激活时那次读失败了、又不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整表，
@@ -486,7 +485,7 @@ async function run(caps: Caps): Promise<void> {
     try {
       let raw: string;
       try {
-        raw = (await storageGateway.readFile(persistUri, 'utf-8')) as string;
+        raw = (await storage.use.readFile(persistUri, 'utf-8')) as string;
       } catch (err) {
         // 只有「文件不存在」算全新；「未知存储根」等其它失败不能当成空表
         if (isStorageNotFound(err)) return [];
@@ -560,7 +559,7 @@ async function run(caps: Caps): Promise<void> {
     const jobs = [...dynamicJobs.values()];
     const payload = JSON.stringify(jobs, null, 2);
     saveChain = saveChain
-      .then(() => storageGateway.writeFile(persistUri, payload))
+      .then(() => storage.use.writeFile(persistUri, payload))
       .then(
         () => {
           logger.use.debug(`已持久化 ${jobs.length} 个动态任务`);

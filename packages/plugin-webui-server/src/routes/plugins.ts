@@ -157,8 +157,6 @@ interface PluginRoutesCaps {
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
 export function registerPluginRoutes(expressApp: express.Express, caps: PluginRoutesCaps, gate: RouteGate): void {
-  const getApp = (): AppService | undefined => (caps.app.present ? caps.app.use : undefined);
-  const getPluginMgr = (): PluginManagerService | undefined => (caps.plugins.present ? caps.plugins.use : undefined);
   /** 配置文档由宿主提供；没有时读写文档的路由一律 503，与扫描、市场路由的缺席口径一致 */
   const docOr503 = (res: express.Response<ErrorResponse>): HostConfig | undefined => {
     const doc = caps.hostConfig.present ? caps.hostConfig.use : undefined;
@@ -214,8 +212,8 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
 
   // 获取插件列表及状态
   route(expressApp, 'GET /api/plugins', gate(), (_req, res) => {
-    const app = getApp();
-    const pm = getPluginMgr();
+    const app = caps.app.present ? caps.app.use : undefined;
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!app || !pm) {
       res.json({ plugins: [], secretRefCounts: {} });
       return;
@@ -357,7 +355,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   // 重启应用。发起之后的停机是异步的（core 先广播 app:restarting，何时停机由重启策略决定），这条回复来得及发出；
   // 宿主没注入重启策略时 restart() 同步抛错，回 500，界面据此不去等待重连
   route(expressApp, 'POST /api/restart', gate(), (_req, res) => {
-    const app = getApp();
+    const app = caps.app.present ? caps.app.use : undefined;
     if (!app) {
       res.status(500).json({ error: 'App 不可用' });
       return;
@@ -382,7 +380,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return;
     }
 
-    const pm = getPluginMgr();
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
       return;
@@ -508,7 +506,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   // 启用插件
   route(expressApp, 'POST /api/plugins/:name/enable', gate(), async (req, res) => {
     const pluginName = req.params.name;
-    const pm = getPluginMgr();
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
       return;
@@ -548,7 +546,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   route(expressApp, 'POST /api/plugins/:name/disable', gate(), async (req, res) => {
     const pluginName = req.params.name;
     if (refuseSelf(res, pluginName)) return;
-    const pm = getPluginMgr();
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
       return;
@@ -581,7 +579,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   // 重载：拆掉当前激活再按原配置重新激活，不写配置文件；失败的插件重载即重试
   route(expressApp, 'POST /api/plugins/:name/reload', gate(), async (req, res) => {
     const pluginName = req.params.name;
-    const pm = getPluginMgr();
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
       return;
@@ -645,7 +643,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       res.status(400).json({ error: 'config 字段必须是对象' });
       return;
     }
-    const pm = getPluginMgr();
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
       return;
@@ -736,7 +734,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   // 删除插件多实例
   route(expressApp, 'DELETE /api/plugins/:instanceId/instance', gate(), async (req, res) => {
     const instanceId = req.params.instanceId;
-    const pm = getPluginMgr();
+    const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
       res.status(500).json({ error: '插件管理服务不可用' });
       return;

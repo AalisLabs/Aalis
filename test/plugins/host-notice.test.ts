@@ -339,7 +339,7 @@ async function setupRelation(cfg: Partial<ExtractorConfig> = {}) {
     } as unknown as LLMModel,
     { entryId: 'fake/extractor' },
   );
-  const service = new RelationService(new RelationStore(() => mem));
+  const service = new RelationService(new RelationStore(mem));
   const extractor = new RelationExtractor(host, service, { ...RELATION_CFG, ...cfg });
   extractor.start();
   // 窗口里有一条可提取的真人消息与一条宿主通知

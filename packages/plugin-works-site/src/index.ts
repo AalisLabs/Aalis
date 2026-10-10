@@ -51,7 +51,7 @@ export default definePlugin({
         config: cfg,
         store,
         client,
-        publish: () => (caps.publish.present ? caps.publish.use : undefined),
+        publish: caps.publish,
         live: ids => binding?.live(ids),
         logger: caps.logger.use,
         signal: caps.lifecycle.use.signal,

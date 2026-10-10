@@ -86,7 +86,14 @@ function start(opts: { taken?: boolean; process?: ProcessService | null } = {}):
     current: { process: opts.process === null ? undefined : (opts.process ?? fake.service) },
   } as Harness;
   h.sc = superviseSidecar({
-    process: () => h.current.process,
+    process: {
+      get present() {
+        return h.current.process !== undefined;
+      },
+      get use() {
+        return h.current.process!;
+      },
+    },
     dir: DIR,
     port: 17878,
     parentPid: 999,
