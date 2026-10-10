@@ -100,11 +100,12 @@ export class Activation {
   /** 已进了关闭计划、还没关完、依赖本激活所提供服务的其他激活 */
   closingConsumers(): Activation[] {
     return [...this.#owners.values()].filter(
-      other => other !== this && other.resources.disposed && other.closeInfo().providers.has(this),
+      other => other !== this && other.resources.disposed && other.providers().has(this),
     );
   }
 
-  closeInfo(): { children: Activation[]; providers: Map<Activation, boolean> } {
+  /** 关闭时还要用到的提供者 → 是否 required：声明的依赖此刻的胜者，与撤回还没落定的跟随边 */
+  providers(): Map<Activation, boolean> {
     const providers = new Map<Activation, boolean>();
     const depend = (owner: symbol | undefined, required: boolean): void => {
       const provider = owner && this.#owners.get(owner);
@@ -112,7 +113,7 @@ export class Activation {
     };
     for (const [name, required] of this.declared) depend(this.#services.ownerOf(name), required);
     for (const edge of this.#outbound) depend(edge.owner, edge.required);
-    return { children: [...this.children], providers };
+    return providers;
   }
 
   joinPlan(): (() => void) | undefined {

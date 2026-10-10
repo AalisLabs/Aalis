@@ -56,7 +56,7 @@ describe('binding cleanup boundaries', () => {
     host.bind(second, { provide }).provide(service, { label: 'B' }, { priority: 1 });
     await tick();
     const during = [...active];
-    const edges = activation.closeInfo().providers;
+    const edges = activation.providers();
     await activation.disposeAsync();
     await host.root.disposeAsync();
     expect({ during, after: [...active] }).toEqual({ during: ['B'], after: [] });

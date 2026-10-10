@@ -3,7 +3,6 @@ import type { PluginManagerService } from '../types/app.js';
 import { EventBus } from '../primitives/events.js';
 import { ServiceContainer } from '../primitives/services.js';
 
-import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
 import { appService, narrow, pluginsService } from './host-services.js';
 import { PluginManager, type PluginRegistration } from './plugin.js';
@@ -99,8 +98,7 @@ export function createApp(options: AppOptions): App {
  * 不接触任何外部 I/O。宿主需要的环境能力经 `AppOptions` 注入。
  */
 export class App {
-  /** 根激活：宿主绑定（{@link bind}）与核心服务的归属，全部插件激活的父。不对外——宿主经 bind 取能力 */
-  readonly #root: Activation;
+  /** 激活装配。根激活（host.root）是宿主绑定（{@link bind}）与核心服务的归属，不对外：宿主经 bind 取能力 */
   readonly #host: ActivationHost;
   /** 插件管理面（契约类型）；停机编排用的内部方法经 #plugins */
   readonly plugins: PluginManagerService;
@@ -150,8 +148,7 @@ export class App {
       notify: notify({ events: this.#events }, this.logger),
     };
     this.#host = new ActivationHost(runtime, this.logger);
-    this.#root = this.#host.root;
-    const caps = this.#host.bind(this.#root, { provide });
+    const caps = this.#host.bind(this.#host.root, { provide });
 
     // 2. 插件管理器
     this.#plugins = new PluginManager(this.#host, this.logger, disposeTimeoutMs, slowMs);
@@ -193,7 +190,7 @@ export class App {
    * 插件拿的是自己激活的绑定，不复用这里的。
    */
   bind<U extends Uses>(uses: U): BoundOf<U> {
-    return this.#host.bind(this.#root, uses);
+    return this.#host.bind(this.#host.root, uses);
   }
 
   /**
