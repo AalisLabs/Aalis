@@ -36,6 +36,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { formatLogLine } from '../../packages/schema-log/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideHostLogs } from '../fixtures/host-logs.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { freePort, waitListening } from '../helpers/net.js';
 import { runTscProbe } from '../helpers/tsc-probe.js';
@@ -399,6 +400,7 @@ describe('管理面 REST 的回应与契约', () => {
       { logger, provider: { save() {} }, restartStrategy: { restart() {} } },
     ));
     provideHostPaths(app, home);
+    provideHostLogs(app, { file: join(home, 'logs', 'latest.log') });
     app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => join(home, 'client') });
     await app.pluginAll(
       [storageLocalPlugin, contributionsPlugin, doubles, model, failing, probe(home)].map(definition => ({

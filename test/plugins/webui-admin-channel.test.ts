@@ -22,6 +22,7 @@ import {
 } from '../../packages/core/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideHostLogs } from '../fixtures/host-logs.js';
 import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -50,9 +51,10 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 在 app 上装 webui-server（前面的插件由 setup 装）并启动 */
+/** 在 app 上装 webui-server（前面的插件由 setup 装）并启动；推给页面的日志取 host-logs，它接进程级的默认中枢 */
 async function start(app: App, setup?: (app: App) => Promise<void>) {
   apps.push(app);
+  provideHostLogs(app);
   const port = await freePort();
   await setup?.(app);
   await app.plugin(webuiServerPlugin, { ...WEBUI_CONFIG, port });
@@ -93,7 +95,7 @@ describe('/admin 管理面推送', () => {
   });
 
   it('日志：订阅之后才推、退订之后不推，可以再订阅；认不出的消息只告警，连接照常', async () => {
-    // webui-server 自己的告警进这个中枢；推给页面的日志取进程级的默认中枢，探针往那里写
+    // webui-server 自己的告警进这个中枢；推给页面的日志取 host-logs 接的默认中枢，探针往那里写
     const hub = new LogHub();
     const warns: string[] = [];
     hub.onEntry(e => {

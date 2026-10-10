@@ -23,6 +23,7 @@ export default definePlugin({
     provide,
     services,
     hostConfig: optional(hostConfig),
+    logs: optional(hostLogs),
     paths: optional(hostPaths),
     app: optional(appService),
     plugins: optional(pluginsService),
@@ -169,7 +170,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图。检索走 `marketplaceRegistry`，结果再按搜索词在包名、描述、关键词与提供的服务上过滤（不区分大小写，空格分隔的每个词都要命中）。检索源不可达时只列本地已装的包，同样按搜索词过滤，响应带 `warning` 说明。卡片的最新版（`version`）、`updatable` 与没装的包提供的服务（`provides`）、`/api/system-components` 的 `latest`、依赖图里未安装包的依赖与服务，都按包名向安装实际使用的源（`package-manager` 报告的 npm registry）查，卡片与系统组件每包取一次 `/{包}/latest`；`package-manager` 缺席时退回检索源；安装源查不到时不给最新版与可更新，响应带 `warning` 说明原因。已装的包提供的服务取本地 package.json 的 `aalis.service.provides`，与卡片上的本地版本对得上 |
 | `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`，卸载另收 `removeConfig`（布尔值，不给为 `false`，别的类型回 400）；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；卸载默认留着配置段与密钥，`removeConfig` 为 `true` 时一并删掉配置段与只有它用的密钥，停用标记都清掉；插件装上但激活失败、转为 `error` 态时仍返回 `{ ok: true }`，`message` 说明激活失败及原因；慢激活转入后台仍在进行、或在等 required 依赖时同样返回 `{ ok: true }`，`message` 说明尚未激活。装卸只接受插件与前端界面包；若有其它插件依赖该包正在提供的服务，且没有别的插件正在提供该服务，卸载被拒绝（该包自己激活失败、待配置或已停用时没在提供，卸掉它断不了谁，不拦）；正在提供这个界面（WebUI 服务端、前端、包管理）的包也不能卸。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }`。装上的是插件且已登记时，回执另带 `plugin`（它的主实例 id），界面据此打开它的详情 |
 | `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程；需 `package-manager` 服务（缺失时 503） |
-| `/api/logs/tail` · `/api/logs/range` | GET | 日志的历史，读 `logs:/latest.log`：最后 N 条（`?limit=`，默认 200，上限 5000）/ 往前翻（`?before=<seq>&limit=`，seq 小于 before 的最后 N 条）。两条都收筛选 `level`、`plugin`、`text`（api-webui 的 `LogFilter`，见下文「日志的筛选」），回的是符合筛选的最后 N 条；筛选写法不对（级别不是四种之一、同一项给了几次）回 400。从文件末尾往前最多扫 16 MiB，更早的去看文件本体。实时日志在 `/admin` 上订阅 |
+| `/api/logs/tail` · `/api/logs/range` | GET | 日志的历史，经宿主的 `host-logs`（[api-host-logs](../api/api-host-logs.md)）读：最后 N 条（`?limit=`，默认 200，上限 5000）/ 往前翻（`?before=<seq>&limit=`，seq 小于 before 的最后 N 条）。两条都收筛选 `level`、`plugin`、`text`（api-webui 的 `LogFilter`，见下文「日志的筛选」），回的是符合筛选的最后 N 条；筛选写法不对（级别不是四种之一、同一项给了几次）回 400；宿主不提供 `host-logs` 时回 503。Node 宿主从 `logs/latest.log` 末尾往前最多扫 16 MiB，更早的去看文件本体。实时日志在 `/admin` 上订阅 |
 | `/api/proxy/image` | GET | 图片代理 |
 | `/api/media` | GET | 聊天里的图片、视频、音频按存储地址取（`?uri=data:/images/x.png` 这类）：按文件头判定类型，只提供 PNG、JPEG、GIF、WebP、MP4、WebM 与 MP3、WAV、OGG、M4A，其余（含 HTML、SVG、JSON）回 415；响应带 `nosniff` 与 `sandbox` CSP。文件不存在回 404；其余读不出的（含存储拒绝的越界路径）回 500 并记告警。客户端把消息与会话历史里的存储地址换成这条路由 |
 | `/api/session-file` | GET | 会话条目里的文件按句柄下载（`?sessionId=<会话>&handle=<附件的 src>`）。句柄由会话服务签发，先经 `sessionProtocol.resolveFile` 核验，再按核验出的存储地址读出，一律以 `application/octet-stream`、`Content-Disposition: attachment`（文件名取句柄里的名字，`filename*` 按 RFC 8187 编码，另带 ASCII 的 `filename` 退路）与 `nosniff` 下发。句柄核验不过（伪造、改动过、别的会话的、会话服务重启之前签发的，或会话服务不在）回 403，文件已不在回 404，其余读不出的回 500 并记告警。这条路由不接受存储地址，哪些文件不签发见 [plugin-session-server](./plugin-session-server.md#文件句柄) |
@@ -234,7 +235,7 @@ socket.onmessage = event => {
 
 | 事件 | 来源 | 推给谁 |
 |---|---|---|
-| `log` | 进程级日志中枢的每条新日志，与写进 `logs:/latest.log` 的是同一份 | 发过 `log.subscribe`、还没退订的连接，只推符合它订阅时的筛选的 |
+| `log` | `host-logs` 送来的每条新日志（本插件激活时订阅，随激活撤回；Node 宿主送的与写进 `logs/latest.log` 的是同一份） | 发过 `log.subscribe`、还没退订的连接，只推符合它订阅时的筛选的 |
 | `plugins.changed` | core 每次重算插件状态之后的 `plugins:changed`；页面登记表的每次登记与撤回 | 全部 `/admin` 连接 |
 | `page.invalidate` | 插件调页面的 `invalidate`，以及页面登记时（插件重载后打开着的页面换成新一次激活的数据）；按实例、页面、组件与会话合并：同一组第一次立即推，一秒内再来的并成窗口结束时的一次 | 全部 `/admin` 连接 |
 | `layout.changed` | `POST /api/layout` 改动了记录（没有变化的操作不推） | 全部 `/admin` 连接 |

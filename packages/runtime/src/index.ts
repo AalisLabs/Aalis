@@ -6,6 +6,7 @@
 //   - createFsPluginLoader：monorepo 自托管（扫描 packages/ 目录）
 //   - createPluginDiscovery：把加载器发现的插件整批交给 core，并提供热扫描（plugin-source 服务的实现）
 //   - createConfigStore / installHostConfig：配置文档与 host-config 服务（core 只持运行态）
+//   - createHostLogs：host-logs 服务（读日志：文件日志里的历史 + 中枢的实时）
 //   - withPluginConfigSync：导入定义后、登记前把 schema 派生默认值深合并进文档
 //   - createFsYamlConfigProvider / createFsSecretsProvider / createProcessRespawnStrategy：YAML 配置与密钥文件 + 进程级重启
 //   - startAalis：组装以上 + 宿主件为实例并启动（带 options 开关，默认独立部署）
@@ -40,6 +41,7 @@ export {
   type ResolveHomeInput,
   resolveHome,
 } from './home.js';
+export { createHostLogs } from './host-logs.js';
 export { createNodeModulesPluginLoader } from './node-modules-loader.js';
 export {
   createPluginDiscovery,

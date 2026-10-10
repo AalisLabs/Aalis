@@ -48,9 +48,9 @@
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0",
     "express": "^5.1.0",
     "ws": "^8.18.0",
-    "@aalis/schema-log": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
@@ -69,6 +69,7 @@
     "service": {
       "optional": [
         "host-config",
+        "host-logs",
         "host-paths",
         "app",
         "plugins",

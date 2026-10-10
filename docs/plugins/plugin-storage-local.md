@@ -47,7 +47,7 @@ export default definePlugin({
 | `pluginData` | `<家目录>/state/plugins` | `pluginData` | 可读、可写、可删 | 各插件的私有数据目录 |
 | `tmp` | `<家目录>/tmp` | `tmp` | 可读、可写、可删 | 临时文件 |
 | `cache` | `<家目录>/cache` | `cache` | 可读、可写、可删 | 缓存 |
-| `logs` | `<家目录>/logs` | `logs` | 只读 | runtime 的文件日志 `latest.log` 所在，WebUI 与 CLI 的日志页经 `logs:/latest.log` 读取 |
+| `logs` | `<家目录>/logs` | `logs` | 只读 | runtime 的文件日志 `latest.log` 所在（WebUI 与 CLI 的日志页经宿主的 `host-logs` 读日志，不经这个根） |
 | `personas` | `<家目录>/self/personas` | `self` | 可读、可写、可删 | 人设卡，[plugin-persona](./plugin-persona.md) 的 `personasDir` 默认 `personas:/` |
 | `skills` | `<家目录>/self/skills` | `self` | 可读、可写、可删 | 技能，[plugin-skills](./plugin-skills.md) 的 `skillsUri` 默认 `skills:/` |
 | `workflows` | `<家目录>/self/workflows` | `self` | 可读、可写、可删 | 编排定义；[plugin-workflow](./plugin-workflow.md) 的 `defsDir` 目前仍默认 `workspace:/workflows` |

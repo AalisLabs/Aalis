@@ -341,6 +341,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-host-logs:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-host-paths:
     devDependencies:
       '@aalis/core':
@@ -1038,6 +1050,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-host-logs':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-logs
       '@aalis/api-persona':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-persona
@@ -3171,6 +3186,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-host-logs':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-logs
       '@aalis/api-host-paths':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-paths
@@ -3210,9 +3228,6 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../schema-config
-      '@aalis/schema-log':
-        specifier: workspace:>=0.2.0 <1.0.0
-        version: link:../schema-log
       '@aalis/schema-message':
         specifier: workspace:>=0.9.1 <1.0.0
         version: link:../schema-message
@@ -3327,6 +3342,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-host-logs':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-logs
       '@aalis/api-host-paths':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-paths

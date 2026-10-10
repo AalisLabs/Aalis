@@ -11,6 +11,7 @@ import { approvals } from '@aalis/api-approval';
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { hostConfig } from '@aalis/api-host-config';
+import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
 import { llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
@@ -46,7 +47,6 @@ import {
   definePlugin,
   events,
   type LogEntry,
-  LogHub,
   lifecycle,
   logger,
   optional,
@@ -72,7 +72,7 @@ import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshC
 import { CLIENT_SWITCH_SCRIPT, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { createLayoutStore } from './layout.js';
-import { logMatcher, parseLogFilter, readLogs } from './logs.js';
+import { logMatcher, parseLogFilter } from './logs.js';
 import { createPageFiles } from './page-files.js';
 import { createPageRegistry } from './pages.js';
 import { route } from './route.js';
@@ -280,6 +280,8 @@ const uses = {
   provide,
   services,
   hostConfig: optional(hostConfig),
+  /** 日志页的历史（/api/logs/*）与 /admin 上的实时推送 */
+  logs: optional(hostLogs),
   paths: optional(hostPaths),
   app: optional(appService),
   plugins: optional(pluginsService),
@@ -322,7 +324,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   };
   if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
 
-  // 创建 storage gateway；所有文件读写（token、访问凭据、日志、媒体与会话文件）都走这里
+  // 创建 storage gateway；所有文件读写（token、访问凭据、媒体与会话文件）都走这里
   const storage = caps.storage.use;
 
   // ---- Token 解析 ----
@@ -624,10 +626,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       res.status(400).json({ error: '日志筛选写法不对：level 只收 debug、info、warn、error，每一项最多给一次' });
       return;
     }
+    if (!caps.logs.present) {
+      res.status(503).json({ error: '宿主未提供日志服务（host-logs），读不到日志' });
+      return;
+    }
     const limit = Math.min(Math.max(Number(query.limit) || 200, 1), 5000);
-    res.json(await readLogs(storage, matchLogs(filter), limit, before));
+    res.json(await caps.logs.use.recent(limit, { before, match: matchLogs(filter) }));
   };
-  // 日志的历史以 logs/latest.log 为单一数据源：尾部 limit 条
+  // 日志的历史：最后 limit 条
   route(expressApp, 'GET /api/logs/tail', gate(), (req, res) => sendLogs(req.query, res));
   // 往前翻：seq 比 before 小的最后 limit 条
   route(expressApp, 'GET /api/logs/range', gate(), (req, res) => {
@@ -927,7 +933,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 管理面推送（/admin）：日志、插件状态、「需要处理」、重启。页面登记表与提示的变化、invalidate 在页面登记表（pages.ts）里推，
   // 布局记录的变化在它的路由里推，换前端在 remountActiveClient 里推
-  const removeAdminLogListener = LogHub.default.onEntry(entry => admin.send({ type: 'log', entry }));
+  caps.logs.use.subscribe(entry => admin.send({ type: 'log', entry }));
   events.use.on('plugins:changed', () => {
     admin.send({ type: 'plugins.changed' });
     attention.pluginsChanged();
@@ -1190,7 +1196,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   lifecycle.use.onDispose(() => {
     heartbeat.dispose();
     pages.dispose();
-    removeAdminLogListener();
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对
     // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 在插件卸载后
     // 仍然活着，照常把帧转给会话服务，发出的消息照样进入站事件。
