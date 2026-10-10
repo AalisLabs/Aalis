@@ -4,7 +4,7 @@
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
 import type { ToolDefinition } from '@aalis/api-tools';
-import type { Events, ServiceRef } from '@aalis/core';
+import type { Events, ProviderEntry, ServiceSelection } from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { Message, ToolCall } from '@aalis/schema-message';
 
@@ -332,20 +332,13 @@ declare module '@aalis/schema-config' {
      * LLM 模型引用：值为 {@link ModelRef}，前端渲染为
      * 联动 select（provider 列表来自 `/api/models/llm` 的 contextId 聚合；
      * model 列表由所选 provider 决定）。运行时由消费方用
-     * `resolveLLMModel(llm, value, caps)` 解析。parseConfig 不校验这个类型的取值，除 `''`（未选）外原样透传。
+     * `resolveLLMModel(caps.llm, value, caps)` 解析。parseConfig 不校验这个类型的取值，除 `''`（未选）外原样透传。
      */
     'llm-ref': ModelRef;
   }
 }
 
 // ----- LLM model entry 解析助手 -----
-
-/** 一个 'llm' entry 的快照（ServiceRef.all() 所返 ServiceView 的 instance/contextId/label 子集）。 */
-export interface LLMModelEntry {
-  instance: LLMModel;
-  contextId: string;
-  label?: string;
-}
 
 /**
  * LLM model 引用：`{ provider, model }` 二元组。
@@ -359,76 +352,67 @@ export interface ModelRef {
 }
 
 /**
- * 按能力过滤 LLM entries —— 能力源为 handle 元数据 `instance.capabilities`，
- * 不再依赖 core 的能力过滤（core 已不做能力选择，服务选择走配置 + 按名解析）。
+ * 按能力过滤 llm 的提供者条目 —— 能力源为模型自带的元数据 `use.capabilities`，
+ * 不是 core 的能力选择（服务选择走配置 + 按名解析）。
  */
-function listLLMEntries(source: ServiceRef<LLMModel>, caps?: readonly LLMCapability[]): LLMModelEntry[] {
-  const all = source.all();
+function listLLMEntries(
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
+  caps?: readonly LLMCapability[],
+): ProviderEntry<LLMModel>[] {
+  const all = source.list();
   if (!caps || caps.length === 0) return all;
-  return all.filter(e => caps.every(c => (e.instance.capabilities ?? []).includes(c)));
+  return all.filter(e => caps.every(c => (e.use.capabilities ?? []).includes(c)));
 }
 
 /**
- * 列出（可按能力过滤的）LLM model entries，供 `/model` 列表与前端下拉用。
- * 能力源为 `instance.capabilities`（model 自带元数据），是展示/列举用途，非 DI 选择。
+ * 列出（可按能力过滤的）llm 提供者条目，供 `/model` 列表与前端下拉用。
+ * 能力源为 `use.capabilities`（model 自带元数据），是展示/列举用途，非 DI 选择。
  */
 export function listLLMModels(
-  source: ServiceRef<LLMModel>,
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
   opts?: { caps?: readonly LLMCapability[] },
-): LLMModelEntry[] {
+): ProviderEntry<LLMModel>[] {
   return listLLMEntries(source, opts?.caps);
 }
 
 /**
- * 把 ref 解析为最匹配的 LLMModel entry。
+ * 在 `list()` 上把 ref 解析为最匹配的提供者条目。
  *
  * 解析顺序（命中即返回）：
- * 1. ref.provider + ref.model 都有 → 直接拼接 entryId `${provider}/${model}` 查找
- * 2. 仅 ref.provider → 在该 provider 名下 entries 中（按 capability 过滤后）取首个
- * 3. 仅 ref.model → 全局 'llm' entries 按 instance.id 严格匹配
- * 4. 都为空 → 取首个满足 capability 的 entry（preference / priority / 注册顺序）
+ * 1. ref.provider + ref.model 都有 → 直接拼接条目 id `${provider}/${model}` 查找
+ * 2. 仅 ref.provider → 在该 provider 名下的条目中（按 capability 过滤后）取首个
+ * 3. 仅 ref.model → 按模型自己的 `use.id` 严格匹配
+ * 4. 都为空 → 取首个满足 capability 的条目（本插件选中的那一家在前，其余按挑选规则排）
  *
- * requiredCaps 按 handle 元数据 `instance.capabilities` 过滤。找不到返回 undefined。
+ * requiredCaps 按模型元数据 `use.capabilities` 过滤。找不到返回 undefined。
  */
 export function resolveLLMModel(
-  source: ServiceRef<LLMModel>,
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
   ref?: ModelRef | null,
   requiredCaps?: LLMCapability[],
-): LLMModelEntry | undefined {
+): ProviderEntry<LLMModel> | undefined {
   const all = listLLMEntries(source, requiredCaps);
-  if (ref?.provider && ref?.model) return all.find(e => e.contextId === `${ref.provider}/${ref.model}`);
-  if (ref?.provider) return all.find(e => e.contextId.startsWith(`${ref.provider}/`));
-  if (ref?.model) return all.find(e => e.instance.id === ref.model);
+  if (ref?.provider && ref?.model) return all.find(e => e.id === `${ref.provider}/${ref.model}`);
+  if (ref?.provider) return all.find(e => e.id.startsWith(`${ref.provider}/`));
+  if (ref?.model) return all.find(e => e.use.id === ref.model);
   return all[0];
 }
 
 // ----- 服务描述符（按激活绑定）-----
 
 /**
- * 调用型，绑定接口是 ServiceRef。拿到的模型在请求里填上调用方这次激活的实例 id（{@link ChatModelRequest.caller}），
- * 同一个模型每次拿到的是同一个对象
+ * 调用型。业务层在请求里填上调用方这次激活的实例 id（{@link ChatModelRequest.caller}），其余成员照原样转发。
+ * 按模型选就是按条目 id 选：`caps.llm.of('<provider>/<model>')`；按能力筛遍历 `caps.llm.list()`，读条目的 `use.capabilities`
  */
-export const llm = defineService<LLMModel, ServiceRef<LLMModel>>('llm', port => {
-  const stamped = new WeakMap<LLMModel, LLMModel>();
-  const stamp = (model: LLMModel): LLMModel => {
-    let bound = stamped.get(model);
-    if (!bound) {
-      const { chatStream } = model;
-      bound = withCalls(model, {
-        chat: request => model.chat({ ...request, caller: port.id }),
-        chatStream: chatStream && (request => chatStream.call(model, { ...request, caller: port.id })),
-      });
-      stamped.set(model, bound);
-    }
-    return bound;
-  };
-  return {
-    get current() {
-      const model = port.current();
-      return model && stamp(model);
+export const llm = defineService<LLMModel, LLMModel>('llm', port =>
+  // chatStream 是可选成员：取的时候才看选中的那一家有没有
+  Object.create(port.provider, {
+    chat: { value: (request: ChatModelRequest) => port.provider.chat({ ...request, caller: port.id }) },
+    chatStream: {
+      get: () => {
+        const chatStream = port.provider.chatStream;
+        return chatStream && ((request: ChatModelRequest) => chatStream({ ...request, caller: port.id }));
+      },
     },
-    require: () => stamp(port.require()),
-    all: () => port.all().map(view => ({ ...view, instance: stamp(view.instance) })),
-    follow: attach => port.follow(model => attach(stamp(model))),
-  };
-});
+  }),
+);

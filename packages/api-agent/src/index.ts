@@ -11,8 +11,7 @@ import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 H
 import type { ChatResponse, ModelRef } from '@aalis/api-llm';
 import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import type { ToolCallContext, ToolDefinition } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
-import { defineService, serviceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 /**
@@ -349,8 +348,8 @@ declare module '@aalis/core' {
 
 // ===== 服务描述符（按激活绑定）=====
 
-/** `agent` 的绑定接口：对话调用走 ServiceRef，预处理器登记自动归属这次激活 */
-export interface BoundAgent extends ServiceRef<AgentService> {
+/** `agent` 的业务层：对话调用转发给选中的那一家，预处理器登记自动归属这次激活 */
+export interface BoundAgent extends AgentService {
   /**
    * 登记输入预处理器：同名替换，提供者换人自动重挂，随激活撤回。当前提供者不支持预处理器时
    * 本次不生效，换到支持的提供者时补上。
@@ -363,7 +362,7 @@ export const agent = defineService<AgentService, BoundAgent>('agent', port => {
     key: item => item.name,
     register: (service, item) => service.registerPreprocessor?.(item.name, item.handler) ?? (() => {}),
   });
-  return serviceRef(port, {
+  return Object.assign(Object.create(port.provider) as BoundAgent, {
     registerPreprocessor: (name: string, handler: PreprocessorFn) => preprocessors.add({ name, handler }),
   });
 });

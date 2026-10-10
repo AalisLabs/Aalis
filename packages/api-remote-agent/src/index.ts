@@ -14,7 +14,7 @@
 // 服务名：'remote-agent'
 // ============================================================
 
-import { defineService, type ServiceRef } from '@aalis/core';
+import { defineService, type ProviderEntry, type ServiceSelection } from '@aalis/core';
 
 export { sanitizeRunLog } from './log.js';
 
@@ -260,17 +260,10 @@ export const remoteAgent = defineService<RemoteAgentProvider>('remote-agent');
 
 // ----- 按名取提供者 -----
 
-/** 一个 'remote-agent' 提供者的快照（ServiceRef.all() 所返 ServiceView 的 instance/contextId/label 子集） */
-export interface RemoteAgentEntry {
-  instance: RemoteAgentProvider;
-  contextId: string;
-  label?: string;
-}
-
 /** 按提供者实例 id 精确取；不存在返回 undefined，不回落到别的提供者 */
 export function resolveRemoteAgent(
-  source: ServiceRef<RemoteAgentProvider>,
+  source: Pick<ServiceSelection<RemoteAgentProvider>, 'list'>,
   type: string,
-): RemoteAgentEntry | undefined {
-  return source.all().find(e => e.contextId === type);
+): ProviderEntry<RemoteAgentProvider> | undefined {
+  return source.list().find(e => e.id === type);
 }

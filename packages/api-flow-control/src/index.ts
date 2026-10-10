@@ -34,6 +34,6 @@ export interface FlowControlService {
   setMuted(sessionId: string, durationSec: number, platform?: string): void;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 // 下游把 `flowControl` 写入 uses；类型随描述符走，不必依赖实现包。
 export const flowControl = defineService<FlowControlService>('flow-control');
