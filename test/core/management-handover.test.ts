@@ -247,8 +247,9 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
 });
 
 describe('两份管理关闭计划重叠', () => {
-  it('后一份计划等前一份里还没关完、依赖它服务的消费者关完，提供者才收尾', async () => {
-    const app = world();
+  it('后一份计划等前一份里还没关完、依赖它服务的消费者关完，提供者才收尾（前一份关完它的总时长超过宽限也等）', async () => {
+    // 每项都在宽限 50ms 之内，前一份计划关完 b 却要约 80ms
+    const app = world(50);
     const S = defineService<object>('t:overlap:s');
     const T = defineService<object>('t:overlap:t');
     const seen: string[] = [];
@@ -277,8 +278,9 @@ describe('两份管理关闭计划重叠', () => {
         apply({ lifecycle }) {
           lifecycle.onDrain(async () => {
             entered();
-            await new Promise(resolve => setTimeout(resolve, 20));
+            await new Promise(resolve => setTimeout(resolve, 40));
           });
+          lifecycle.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, 40)));
         },
       }),
     );
