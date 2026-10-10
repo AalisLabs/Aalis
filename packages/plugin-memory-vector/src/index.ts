@@ -6,7 +6,17 @@ import { MEMORY_RECALL_SCOPE_SETTING, type MemoryRecallScope, memory } from '@aa
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
-import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
+import {
+  type BoundOf,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  logger,
+  optional,
+  provide,
+  type ServiceSelection,
+} from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
@@ -161,6 +171,14 @@ function recencyScore(timestampMs: number, nowMs: number): number {
  */
 const MAX_EMBED_CHARS = 4000;
 /** 代理对安全截断：裸 slice 会切出孤代理，经 JSON 送到 embedder 端点同样会被严格解析器拒收。 */
+/**
+ * 一段操作固定选中的那一家：算向量与记下 modelId（向量空间标识）、判方法与删除再落盘都要落在同一个实例上，
+ * 途中换了人也不会混用两家。选不到时退回业务句柄，访问成员即抛不可用错误
+ */
+function pinned<P>(selection: ServiceSelection<P>): P {
+  return selection.list().find(p => p.selected)?.use ?? selection.use;
+}
+
 function clipForEmbed(text: string): string {
   return truncateChars(text, MAX_EMBED_CHARS);
 }
@@ -656,7 +674,7 @@ async function run({
     // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
     const messageTimestamp = archived.timestamp ?? Date.now();
     try {
-      const provider = embedding.use;
+      const provider = pinned(embedding);
       const vec = await provider.embed(rawText);
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
@@ -713,7 +731,7 @@ async function run({
       const selfUserId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? '';
       // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
       const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
-      const provider = embedding.use;
+      const provider = pinned(embedding);
       const vec = await provider.embed(embedText);
       const metadata: Record<string, unknown> = {
         sessionId,
@@ -742,7 +760,7 @@ async function run({
   // === 按时间戳删除向量（供 plugin-checkpoint 回滚整轮对话使用） ===
   events.use.on('memory:messages-deleted', async data => {
     if (!data?.sessionId || !Array.isArray(data.timestamps) || data.timestamps.length === 0) return;
-    const currentStore = vectorstore.use;
+    const currentStore = pinned(vectorstore);
     if (!currentStore.deleteByFilter) {
       logger.use.warn('当前向量存储不支持按条件删除，跳过 memory:messages-deleted');
       return;
@@ -781,7 +799,7 @@ async function run({
         data.results.push({ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' });
         logger.use.info('向量记忆已全部清空');
       } else if (data.sessionId) {
-        const currentStore = vectorstore.use;
+        const currentStore = pinned(vectorstore);
         if (currentStore.deleteByFilter) {
           const deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
           await currentStore.save();
@@ -835,7 +853,7 @@ async function run({
         data.signal?.throwIfAborted();
         if (candidateCount === 0) return null;
 
-        const provider = embedding.use;
+        const provider = pinned(embedding);
         const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
         const ranked = await rankCandidates(queryVec, provider.modelId, candidateCount, {
@@ -1051,7 +1069,7 @@ async function run({
           return JSON.stringify({ ok: true, query, results: [], message: '向量库为空' });
         }
 
-        const provider = embedding.use;
+        const provider = pinned(embedding);
         const queryVec = await provider.embed(query, { signal: callCtx.signal });
         // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）
         const ranked = await rankCandidates(
