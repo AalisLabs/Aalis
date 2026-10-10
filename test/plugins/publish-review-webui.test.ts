@@ -4,6 +4,7 @@ import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { registerReviewPage } from '../../packages/plugin-publish-review/src/webui.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
@@ -36,7 +37,7 @@ async function fixture(opts: { failure?: string; reviewEnabled?: boolean } = {})
     },
     writeFile: async (uri: string, data: string | Buffer) => void files.set(uri, data),
   };
-  const store = new ReviewStore(storage as never);
+  const store = new ReviewStore(boundStorage(storage as never, 'publish-review'));
   store.failure = opts.failure;
   store.data.queue[id] = {
     id,

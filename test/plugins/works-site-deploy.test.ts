@@ -9,7 +9,7 @@ import {
 import { assetKey } from '../../packages/plugin-works-site/src/cloudflare/hash.js';
 import type { WorksSiteConfig } from '../../packages/plugin-works-site/src/config.js';
 import { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
-import { STATE_URI, WorksStore } from '../../packages/plugin-works-site/src/state.js';
+import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import {
   abortablePause,
   ContentMismatchError,
@@ -20,7 +20,11 @@ import {
   waitForSwitch,
 } from '../../packages/plugin-works-site/src/verify.js';
 import { startFakePages } from '../fixtures/fake-pages.js';
+import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
+
+/** 默认实例的状态文件 */
+const STATE_URI = 'pluginData:/works-site/state.json';
 
 const settings = { fail_open: false, env_vars: {}, kv_namespaces: [] };
 const project = {
@@ -102,7 +106,7 @@ describe('作品站部署前核对', () => {
 
 describe('作品站持久状态与内容核对', () => {
   it('stop 后迟到的预检结果不得创建在飞部署或写新状态', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     let release: ((value: unknown) => void) | undefined;
     const gate = new Promise(resolve => {
@@ -160,7 +164,7 @@ describe('作品站持久状态与内容核对', () => {
   });
 
   it('失败的新生产部署仍是远端当前版时保留 known，等待下一次主站替换', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const oldId = 'aaaaaaaa';
     const failedId = 'bbbbbbbb';
@@ -218,7 +222,7 @@ describe('作品站持久状态与内容核对', () => {
   });
 
   it('新分支回滚 DELETE 失败后，孤儿 known 部署自动重试强删', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const branch = 'p-12345678';
     const id = 'aaaaaaaa';
@@ -275,7 +279,7 @@ describe('作品站持久状态与内容核对', () => {
   });
 
   it('发布服务暂不在场时仍清理账内旧部署，停机后的动作拒绝', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const oldId = 'aaaaaaaa';
     const currentId = 'bbbbbbbb';
@@ -327,7 +331,7 @@ describe('作品站持久状态与内容核对', () => {
   });
 
   it('撤下部署别名不合格时仍清旧并把 current 指向已建成的新部署', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const id = 'abcdefghij';
     const branch = 'p-12345678';
@@ -418,7 +422,7 @@ describe('作品站持久状态与内容核对', () => {
 
   it('坏状态不得被新盐覆盖，也不得继续部署', async () => {
     const files = new Map<string, string | Uint8Array>([[STATE_URI, '{broken']]);
-    const store = new WorksStore(memoryStorage(files));
+    const store = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await store.load();
     expect(store.failure).toBeTruthy();
     expect(files.get(STATE_URI)).toBe('{broken');
@@ -696,7 +700,7 @@ describe('作品站持久状态与内容核对', () => {
   });
 
   it('并发页面告警已读与部署更新不互相覆盖', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     await store.update(state => {
       state.alerts.push({ id: 'one', kind: 'settings', detail: 'test', at: 1 });
@@ -735,7 +739,7 @@ describe('作品站编排与假 Pages', () => {
     const at = Date.now() - 10_000;
     fake.seedDeployment({ branch: 'main', manifest: { [`/v/${marker}.txt`]: 'a'.repeat(32) }, createdAt: at + 1 });
     fake.seedDeployment({ branch: 'main', manifest: { [`/v/${marker}.txt`]: 'a'.repeat(32) }, createdAt: at + 2 });
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     await store.update(state => {
       state.inFlight = { branch: 'main', nonce: marker, at, files: {}, works: [], changed: [], kind: 'new' };
@@ -803,7 +807,7 @@ describe('作品站编排与假 Pages', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       throw new Error('unexpected fetch');
     });
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const config: WorksSiteConfig = {
       targetId: 'works',
@@ -855,7 +859,7 @@ describe('作品站编排与假 Pages', () => {
     const fake = await startFakePages();
     const controller = new AbortController();
     const files = new Map<string, string | Uint8Array>();
-    const store = new WorksStore(memoryStorage(files));
+    const store = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await store.load();
     expect(store.data?.assetSalt).toMatch(/^[0-9a-f]{64}$/);
     expect(fake.requests).toHaveLength(0);
@@ -939,7 +943,7 @@ describe('作品站编排与假 Pages', () => {
     const fake = await startFakePages();
     const controller = new AbortController();
     const files = new Map<string, string | Uint8Array>();
-    const store = new WorksStore(memoryStorage(files));
+    const store = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await store.load();
     const token = 'test-token-sentinel';
     fake.tokens.set(token, { kind: 'account' });
@@ -1215,7 +1219,7 @@ async function fakeSite(
 ) {
   const fake = await startFakePages();
   const controller = new AbortController();
-  const store = new WorksStore(memoryStorage(new Map()));
+  const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
   await store.load();
   const token = 'test-token-sentinel';
   fake.tokens.set(token, { kind: 'account' });

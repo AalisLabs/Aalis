@@ -3,6 +3,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { paperBudgetUsage } from '../../packages/plugin-paper/src/budget.js';
 import { LedgerStore, type PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
+import { ownView } from '../fixtures/own-storage.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸账本的落盘（U10a）：写按调用顺序排队，每次写出的是调用 save 那一刻的账本。受理、取消、通知标记
@@ -30,7 +31,7 @@ describe('账本落盘', () => {
       reserves: { 't-00000001': { cents: 20, day: '2026-09-26', room: 'room', user: 'user' } },
     };
     const storage = { readFile: async () => JSON.stringify(legacy) } as unknown as StorageService;
-    const store = new LedgerStore(storage, quiet);
+    const store = new LedgerStore(ownView(storage, 'paper'), quiet);
     await store.load();
     expect(store.failure).toBeUndefined();
     expect(paperBudgetUsage(store.data, '2026-09-27', 'n:paper-a')).toEqual({
@@ -59,7 +60,7 @@ describe('账本落盘', () => {
         written.push(JSON.parse(data) as PaperLedger);
       },
     } as unknown as StorageService;
-    const store = new LedgerStore(storage, quiet);
+    const store = new LedgerStore(ownView(storage, 'paper'), quiet);
     await store.load();
 
     const inFlight = store.save();

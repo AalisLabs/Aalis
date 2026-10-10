@@ -6,11 +6,16 @@ import webuiPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { readConfig } from '../../packages/plugin-works-site/src/config.js';
 import worksSite from '../../packages/plugin-works-site/src/index.js';
 import { claimWorksTarget } from '../../packages/plugin-works-site/src/ownership.js';
-import { STATE_URI, stateUriForInstance, WorksStore } from '../../packages/plugin-works-site/src/state.js';
+import { statePathForInstance, WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { hostedApp } from '../fixtures/app.js';
+import { ownView } from '../fixtures/own-storage.js';
 import { pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { freePort } from '../helpers/net.js';
+
+/** 默认实例的状态文件 */
+const STATE_URI = 'pluginData:/works-site/state.json';
+const stateUriForInstance = (instanceId: string) => `pluginData:/works-site/${statePathForInstance(instanceId)}`;
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const accountId = '0'.repeat(32);
@@ -26,8 +31,8 @@ const parsed = (overrides: Record<string, unknown> = {}) => readConfig({ ...base
 describe('works-site target ownership', () => {
   it('keeps default state path and isolates other instance paths without sharing bytes', async () => {
     const disk = new Map<string, string>();
-    const first = new WorksStore(memoryStorage(disk));
-    const second = new WorksStore(memoryStorage(disk), '@aalis/plugin-works-site:draw');
+    const first = new WorksStore(ownView(memoryStorage(disk), 'works-site'));
+    const second = new WorksStore(ownView(memoryStorage(disk), 'works-site'), '@aalis/plugin-works-site:draw');
     expect(first.uri).toBe(STATE_URI);
     expect(second.uri).toBe(stateUriForInstance('@aalis/plugin-works-site:draw'));
     expect(second.uri).not.toBe(first.uri);
@@ -158,7 +163,7 @@ describe('works-site target ownership', () => {
 
   it('binds deployed state to its target, remote project, origin and directory', async () => {
     const disk = new Map<string, string>();
-    const store = new WorksStore(memoryStorage(disk));
+    const store = new WorksStore(ownView(memoryStorage(disk), 'works-site'));
     await store.load();
     await store.bindScope(parsed());
     await store.update(state => {
@@ -167,7 +172,7 @@ describe('works-site target ownership', () => {
     expect(disk.get(STATE_URI)).not.toContain(accountId);
     expect(disk.get(STATE_URI)).not.toContain('test-token');
     expect(store.data?.scope).toMatch(/^[a-f0-9]{64}$/);
-    const reopened = new WorksStore(memoryStorage(disk));
+    const reopened = new WorksStore(ownView(memoryStorage(disk), 'works-site'));
     await reopened.load();
     await expect(reopened.bindScope(parsed())).resolves.toBeUndefined();
     for (const change of [
@@ -184,7 +189,7 @@ describe('works-site target ownership', () => {
 
   it('treats a deployed legacy v1 state as root and refuses a silent directory migration', async () => {
     const disk = new Map<string, string>();
-    const legacy = new WorksStore(memoryStorage(disk));
+    const legacy = new WorksStore(ownView(memoryStorage(disk), 'works-site'));
     await legacy.load();
     await legacy.update(state => {
       state.known['12345678'] = { branch: 'main', at: 1 };
@@ -195,7 +200,7 @@ describe('works-site target ownership', () => {
 
   it('fails plugin activation before remote traffic when a deployed instance changes directory', async () => {
     const disk = new Map<string, string>();
-    const previous = new WorksStore(memoryStorage(disk));
+    const previous = new WorksStore(ownView(memoryStorage(disk), 'works-site'));
     await previous.load();
     await previous.bindScope(parsed({ targetId: 'works' }));
     await previous.update(state => {

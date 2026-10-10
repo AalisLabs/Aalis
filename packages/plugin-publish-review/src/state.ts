@@ -6,11 +6,19 @@ import {
   publicPathProblem,
   type WorkKind,
 } from '@aalis/api-publish';
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { type BoundStorage, isStorageNotFound } from '@aalis/api-storage';
 
-const STATE_URI = 'pluginData:/publish-review/state.json';
-export const ITEM_ROOT = 'pluginData:/publish-review/items';
+// 账本、审核记录与各作品条目在本插件的私有目录里；审核通过的文件在公开根里
+const STATE = 'state.json';
+/** 审核记录（私有目录下的相对路径） */
+export const AUDIT = 'audit.jsonl';
+const ITEMS = 'items';
 export const PUBLIC_ROOT = 'public:';
+
+/** 一件作品的条目目录（私有目录下的相对路径），给 path 时是其中的文件 */
+export function itemPath(id: string, path?: string): string {
+  return path === undefined ? `${ITEMS}/${id}` : `${ITEMS}/${id}/${path}`;
+}
 
 export interface FileRecord {
   path: string;
@@ -333,11 +341,20 @@ export class ReviewStore {
   auditFailure?: string;
   readonly #listeners = new Set<() => void>();
   #queue: Promise<void> = Promise.resolve();
-  constructor(readonly storage: StorageService) {}
+  /** 作品条目的总目录（完整的存储地址） */
+  readonly itemRoot: string;
+  constructor(readonly storage: BoundStorage) {
+    this.itemRoot = storage.own.uri(ITEMS);
+  }
+
+  /** 一件作品的条目目录（完整的存储地址），给 path 时是其中的文件 */
+  item(id: string, path?: string): string {
+    return this.storage.own.uri(itemPath(id, path));
+  }
 
   async load(): Promise<void> {
     try {
-      const source = await this.storage.readFile(STATE_URI, 'utf8');
+      const source = await this.storage.own.readFile(STATE, 'utf8');
       const parsed: unknown = JSON.parse(String(source));
       if (!valid(parsed)) throw new Error('结构不合法');
       this.data = {
@@ -377,7 +394,7 @@ export class ReviewStore {
     if (this.failure) throw new Error(this.failure);
     const entries = event ? (Array.isArray(event) ? event : [event]) : [];
     if (entries.length) next.history = [...next.history, ...entries].slice(-100);
-    await this.storage.writeFile(STATE_URI, JSON.stringify(next));
+    await this.storage.own.writeFile(STATE, JSON.stringify(next));
     this.data = next;
     for (const listener of this.#listeners) {
       try {
@@ -387,15 +404,14 @@ export class ReviewStore {
       }
     }
     if (entries.length) {
-      const uri = 'pluginData:/publish-review/audit.jsonl';
       try {
         let previous = '';
         try {
-          previous = String(await this.storage.readFile(uri, 'utf8'));
+          previous = String(await this.storage.own.readFile(AUDIT, 'utf8'));
         } catch (err) {
           if (!isStorageNotFound(err)) throw err;
         }
-        await this.storage.writeFile(uri, previous + entries.map(entry => `${JSON.stringify(entry)}\n`).join(''));
+        await this.storage.own.writeFile(AUDIT, previous + entries.map(entry => `${JSON.stringify(entry)}\n`).join(''));
         this.auditFailure = undefined;
       } catch {
         this.auditFailure = '审核记录追加失败';

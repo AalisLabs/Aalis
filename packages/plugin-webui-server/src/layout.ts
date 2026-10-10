@@ -6,7 +6,7 @@
 // 每个操作落盘成功才算数，落盘失败时记录不变。所属插件停用时记录保留，界面按当前的页面表决定显示哪些。
 // ============================================================
 
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import {
   HOST_PANEL_TABS,
   type LayoutOperation,
@@ -17,7 +17,8 @@ import {
 } from '@aalis/api-webui';
 import type { Logger } from '@aalis/core';
 
-const LAYOUT_URI = 'pluginData:/webui-server/layout.json';
+/** 私有目录下的布局记录 */
+const LAYOUT = 'layout.json';
 
 /** 实例 id 与页面 key 的长度上限 */
 const REF_MAX_LENGTH = 512;
@@ -163,7 +164,7 @@ const recordsOf = (parsed: Record<string, unknown>): LayoutRecords => ({
   panelTabs: panelTabsOf(parsed.panelTabs),
 });
 
-export function createLayoutStore(storage: StorageService, logger: Logger) {
+export function createLayoutStore(storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>, logger: Logger) {
   let records: LayoutRecords | undefined;
   let loading: Promise<LayoutRecords> | undefined;
   /** 操作排队：后一个在前一个落盘之后、基于它的结果应用 */
@@ -176,7 +177,7 @@ export function createLayoutStore(storage: StorageService, logger: Logger) {
   async function load(): Promise<LayoutRecords> {
     let text: string | undefined;
     try {
-      text = String(await storage.readFile(LAYOUT_URI, 'utf8'));
+      text = String(await storage.readFile(LAYOUT, 'utf8'));
     } catch (err) {
       if (!isStorageNotFound(err)) throw err;
     }
@@ -184,7 +185,7 @@ export function createLayoutStore(storage: StorageService, logger: Logger) {
     try {
       return recordsOf(JSON.parse(text) as Record<string, unknown>);
     } catch (err) {
-      logger.warn(`布局记录 ${LAYOUT_URI} 读不懂，按没有记录起步，下次改动时覆盖:`, err);
+      logger.warn(`布局记录 ${storage.uri(LAYOUT)} 读不懂，按没有记录起步，下次改动时覆盖:`, err);
       return recordsOf({});
     }
   }
@@ -210,7 +211,7 @@ export function createLayoutStore(storage: StorageService, logger: Logger) {
         const before = await current();
         const after = applied(before, operation);
         if (after === before) return { records: before, changed: false };
-        await storage.writeFile(LAYOUT_URI, JSON.stringify(after));
+        await storage.writeFile(LAYOUT, JSON.stringify(after));
         records = after;
         return { records: after, changed: true };
       });

@@ -15,12 +15,11 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 合并转发媒体落盘必须按 URI 路由到 data 根，不能只拿 storage 胜者。
+// 合并转发媒体落盘按 URI 路由到 data 根。
 //
-// storage-local 按根逐条提供，没有偏好时胜者是第一个登记的根（默认配置下是 workspace），
-// 它拒绝别的根的 URI。展开器曾取 `storage.current` 写 `data:/images/...`：写入抛错被
-// 下载阶段的 try 吞掉，回退原始 src——转发里的图片仍按会过期的 rkey URL 排队识别。
-// 单根假 storage 接受任意 URI，测不出这条；这里用真实 storage-local 配多根。
+// 展开器曾只拿到 workspace 根去写 `data:/images/...`：写入抛错被下载阶段的 try 吞掉，回退原始 src——
+// 转发里的图片仍按会过期的 rkey URL 排队识别。单根假 storage 接受任意 URI，测不出这条；这里用真实
+// storage-local 配多根（workspace 排第一）。
 // ════════════════════════════════════════════════════════════
 
 const CFG: ForwardConfig = {
@@ -78,10 +77,10 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
   });
 
   it('workspace 排第一时，转发内图片落盘到 data 根，识别拿到落盘 ref 而非原始 src', async () => {
-    // 前提锚：胜者是 workspace 根且写不了 data:/。夹具若改成单根或换了顺序，本用例就测不到这条
-    const winner = storageRef.use;
-    expect(winner.listRoots().map(r => r.name)).toEqual(['workspace']);
-    await expect(winner.writeFile('data:/probe.txt', 'x')).rejects.toThrow();
+    // 前提锚：storage 只有一家，workspace 排第一、data 也由它在内部路由
+    const roots = storageRef.use.listRoots().map(r => r.name);
+    expect(roots[0]).toBe('workspace');
+    expect(roots).toContain('data');
 
     const described: string[] = [];
     const media: Partial<MediaService> = {

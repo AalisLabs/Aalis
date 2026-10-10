@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TaskJournal } from '../../packages/plugin-paper/src/task-journal.js';
+import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage, type PaperFiles } from '../fixtures/paper.js';
 
 const TASK = 't-1234abcd';
@@ -8,7 +9,7 @@ const OTHER = 't-deadbeef';
 function setup(files: PaperFiles = new Map()) {
   const storage = memoryStorage(files);
   const warn = vi.fn();
-  const journal = new TaskJournal(storage, { warn }, () => 1234);
+  const journal = new TaskJournal(ownView(storage, 'paper'), { warn }, () => 1234);
   return { files, storage, warn, journal };
 }
 
@@ -29,7 +30,7 @@ describe('TaskJournal', () => {
     expect(await journal.record(TASK, undefined, { type: 'host', count: 2 })).toBe(true);
     expect(await journal.record(TASK, 'run-1:event-2', { type: 'remote_event', count: 3 })).toBe(true);
     const original = await journal.read(TASK);
-    const restarted = new TaskJournal(storage, { warn: vi.fn() }, () => 1234);
+    const restarted = new TaskJournal(ownView(storage, 'paper'), { warn: vi.fn() }, () => 1234);
     expect(await restarted.record(TASK, 'run-1:event-1', { type: 'different' })).toBe(true);
     expect(await restarted.read(TASK)).toBe(original);
     expect(parse(original).map(e => e.order)).toEqual([1, 2, 3]);
@@ -50,7 +51,7 @@ describe('TaskJournal', () => {
     expect(await journal.record(TASK, 'run:e2', { type: 'second' })).toBe(true);
     expect(warn).toHaveBeenCalled();
     expect(JSON.stringify(warn.mock.calls)).not.toContain('private storage details');
-    const restarted = new TaskJournal(storage, { warn: vi.fn() }, () => 1234);
+    const restarted = new TaskJournal(ownView(storage, 'paper'), { warn: vi.fn() }, () => 1234);
     expect(parse(await restarted.read(TASK))[0]).toMatchObject({
       type: 'task_journal_incomplete',
       reason: 'missing_sequence',

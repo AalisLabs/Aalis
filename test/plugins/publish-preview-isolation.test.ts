@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ReviewPreviewServer } from '../../packages/plugin-publish-review/src/preview.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 
 type FrameLike = { url(): string };
 
@@ -61,7 +62,7 @@ beforeAll(async () => {
       return file.data;
     },
   };
-  const store = new ReviewStore(storage as never);
+  const store = new ReviewStore(boundStorage(storage as never, 'publish-review'));
   store.data.queue[id] = {
     id,
     state: 'awaiting-owner',

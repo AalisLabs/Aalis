@@ -4,7 +4,7 @@ import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
 import type { ServiceSelection } from '@aalis/core';
 import type { OfflineRenderer } from '@aalis/util-offline-render';
 import type { ReviewConfig } from './config.js';
-import type { ReviewStore } from './state.js';
+import { AUDIT, type ReviewStore } from './state.js';
 
 export function registerReviewDoctor(deps: {
   doctor: BoundDoctor;
@@ -77,8 +77,7 @@ export function registerReviewDoctor(deps: {
         }
       }
       try {
-        if ((await deps.store.storage.stat('pluginData:/publish-review/audit.jsonl')).size > 5 * 1024 * 1024)
-          warnings.push('审核记录超过 5 MiB');
+        if ((await deps.store.storage.own.stat(AUDIT)).size > 5 * 1024 * 1024) warnings.push('审核记录超过 5 MiB');
       } catch {
         /* 首次还没有审计文件 */
       }

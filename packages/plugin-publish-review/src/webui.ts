@@ -10,7 +10,7 @@ import { WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
 import type { ReviewPreviewServer } from './preview.js';
 import type { PublishReviewService } from './service.js';
-import { ITEM_ROOT, type QueueItem, type ReviewStore } from './state.js';
+import type { QueueItem, ReviewStore } from './state.js';
 
 const PAGE_KEY = 'publish-review';
 
@@ -36,9 +36,9 @@ export function registerReviewPage(deps: {
   };
   const renderOf = (item: QueueItem) =>
     item.review?.hasRender
-      ? `${ITEM_ROOT}/${item.id}/review/render.png`
+      ? store.item(item.id, 'review/render.png')
       : item.thumbnailHash
-        ? `${ITEM_ROOT}/${item.id}/out/_thumb.png`
+        ? store.item(item.id, 'out/_thumb.png')
         : undefined;
 
   const page = webui.definePage({
@@ -185,7 +185,7 @@ export function registerReviewPage(deps: {
                     const item = pendingItem(rowKey);
                     return (item.review?.images ?? []).map(name => ({
                       name,
-                      image: `${ITEM_ROOT}/${item.id}/review/${name}`,
+                      image: store.item(item.id, `review/${name}`),
                     }));
                   },
                 },

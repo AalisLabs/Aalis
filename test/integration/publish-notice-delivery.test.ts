@@ -26,6 +26,7 @@ import type {
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin, type MockLLMOptions } from '../fixtures/mock-llm.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
@@ -516,7 +517,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
   it('真实持久账本在通知被拦时保留 pending，恢复后兜底派发再记 sent，重复 flush 不重复发', async () => {
     const h = await boot();
     const storage = memoryStorage(new Map());
-    const store = new ReviewStore(storage);
+    const store = new ReviewStore(boundStorage(storage, 'publish-review'));
     await store.load();
     const clock = { now: 1000 };
     const service = new PublishReviewService({
@@ -548,7 +549,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
       surface.live([result.id]);
       await store.exclusive(async () => {});
       await service.flushNotices();
-      const persisted = new ReviewStore(storage);
+      const persisted = new ReviewStore(boundStorage(storage, 'publish-review'));
       await persisted.load();
       expect(persisted.data.ledger[result.id].notice).toBe('pending');
       expect(persisted.data.notices[`${result.id}:live`]).toBeDefined();

@@ -1,7 +1,7 @@
 import type { CodeSandboxService } from '@aalis/api-code-sandbox';
 import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
 import type { PublishFile } from '@aalis/api-publish';
-import type { StorageService } from '@aalis/api-storage';
+import type { BoundStorage } from '@aalis/api-storage';
 import type { ServiceSelection } from '@aalis/core';
 import type { OfflineRenderer } from '@aalis/util-offline-render';
 import { contentType, markContent } from './checks.js';
@@ -9,6 +9,7 @@ import { type ClassificationVerdict, classifyImage, classifyText, combineVerdict
 import type { ReviewConfig } from './config.js';
 import { SandboxedMedia } from './media.js';
 import type { ReviewResult } from './policy.js';
+import { itemPath } from './state.js';
 import { stripEmbeddedDataUrls, stripStaticMedia } from './strip/index.js';
 
 export interface ReviewEvidence {
@@ -33,7 +34,7 @@ export interface ReviewPipeline {
 
 interface ReviewPipelineDeps {
   config: ReviewConfig;
-  storage: StorageService;
+  storage: BoundStorage;
   llm?: ServiceSelection<LLMModel>;
   sandbox?: ServiceSelection<CodeSandboxService>;
   renderer?: OfflineRenderer;
@@ -75,7 +76,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
         sandbox: deps.sandbox?.present ? deps.sandbox.use : undefined,
         ffmpegPath: deps.ffmpegPath ?? deps.config.ffmpegPath,
         ffprobePath: deps.ffprobePath,
-        id: input.id,
+        itemDir: deps.storage.own.uri(itemPath(input.id)),
         signal: input.signal,
       });
       const files: PublishFile[] = [];

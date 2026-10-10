@@ -287,13 +287,8 @@ async function ancestorIds(real: string): Promise<Set<string>> {
 }
 
 /**
- * Per-root 存储服务：每个 root 一个实例 + 一个 ServiceContainer entry。
- *
- * 与 service-granularity 整体方向对齐：每个 root 的真实权限由 StorageRootInfo 的
- * readable/writable/deletable 位携带；storage-api 网关按位路由，按 URI 调度交给
- * `createStorageGateway(storage)` helper。
- *
- * 自包含设计：URI→root 分发不依赖外部 router 插件，单文件即可理解整条数据流。
+ * 一个根的存储操作：真实权限由 StorageRootInfo 的 readable/writable/deletable 位携带，每个操作先核对。
+ * 不单独登记：{@link LocalStorage} 按 URI 的根名分给它。
  */
 class ScopedStorageService implements StorageService {
   constructor(
@@ -692,7 +687,7 @@ class ScopedStorageService implements StorageService {
   private parseSelfUri(uri: string): string {
     const { root, relPath } = parseUri(uri);
     if (root !== this.root.name) {
-      throw new Error(`URI 根 "${root}" 不属于本 entry (${this.root.name})`);
+      throw new Error(`URI 根 "${root}" 不是存储根 ${this.root.name}（不能跨根移动）`);
     }
     return relPath;
   }
@@ -761,6 +756,62 @@ class ScopedStorageService implements StorageService {
   private publicRoot(): StorageRootInfo {
     const { realPath: _realPath, ...info } = this.root;
     return info;
+  }
+}
+
+/**
+ * 本插件登记的唯一一个 storage 提供者：按 URI 的根名分给各根的 {@link ScopedStorageService}。根表在登记之前就建好，
+ * 依赖方激活时所有根都在。根名不认识时同步抛错并列出已有的根
+ */
+class LocalStorage implements StorageService {
+  constructor(private readonly roots: ReadonlyMap<string, ScopedStorageService>) {}
+
+  private route(uri: string): ScopedStorageService {
+    const { root } = parseUri(uri);
+    const scoped = this.roots.get(root);
+    if (!scoped) throw new Error(`未知存储根: ${root}（已注册根: ${[...this.roots.keys()].join(', ') || '(无)'}）`);
+    return scoped;
+  }
+
+  listRoots(): StorageRootInfo[] {
+    return [...this.roots.values()].flatMap(scoped => scoped.listRoots());
+  }
+  list(uri: string) {
+    return this.route(uri).list(uri);
+  }
+  stat(uri: string) {
+    return this.route(uri).stat(uri);
+  }
+  readFile(uri: string, encoding?: BufferEncoding) {
+    return this.route(uri).readFile(uri, encoding);
+  }
+  readFileRange(uri: string, start: number, end: number) {
+    return this.route(uri).readFileRange(uri, start, end);
+  }
+  createReadStream(uri: string) {
+    return this.route(uri).createReadStream(uri);
+  }
+  writeFile(uri: string, data: string | Buffer, options?: StorageWriteOptions) {
+    return this.route(uri).writeFile(uri, data, options);
+  }
+  rename(uri: string, newName: string) {
+    return this.route(uri).rename(uri, newName);
+  }
+  /** 只在同一个根里移动：目标的根由那个根自己核对 */
+  move(fromUri: string, toUri: string) {
+    return this.route(fromUri).move(fromUri, toUri);
+  }
+  mkdir(uri: string) {
+    return this.route(uri).mkdir(uri);
+  }
+  delete(uri: string) {
+    return this.route(uri).delete(uri);
+  }
+  resolveLocalPath(uri: string, access?: 'read' | 'write' | 'delete') {
+    return this.route(uri).resolveLocalPath(uri, access);
+  }
+  watch(uri: string, listener: StorageWatchListener) {
+    return this.route(uri).watch(uri, listener);
   }
 }
 
@@ -890,21 +941,19 @@ export default definePlugin({
       if (root) roots.push(root);
     }
 
-    // service-granularity：每个 root 单独注册一个 entry。
-    // - entryId = `${实例 id}/${root.name}`，便于在 ServiceContainer 中按根定位、避免跨实例同名冲突；
-    // - 权限由 root 的 readable/writable/deletable 位携带（StorageRootInfo），storage-api 网关按位路由；
-    // - URI 路由由 createStorageGateway(storage) helper 在调用方完成，不再有 facade。
+    // 全部根就绪之后整体登记一个提供者，根在它内部路由：依赖方激活时就看得到每一个根
+    const scoped = new Map<string, ScopedStorageService>();
     for (const root of roots) {
       if (!root.readable && !root.writable && !root.deletable) {
         logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
         continue;
       }
-      const scoped = new ScopedStorageService(root, guard, logger, caps.services.use, caps.lifecycle.use.onDispose);
-      caps.provide.use(storage, scoped, {
-        entryId: `${caps.lifecycle.use.id}/${root.name}`,
-        label: root.label || `本地根 ${root.name}`,
-      });
+      scoped.set(
+        root.name,
+        new ScopedStorageService(root, guard, logger, caps.services.use, caps.lifecycle.use.onDispose),
+      );
     }
+    caps.provide.use(storage, new LocalStorage(scoped), { label: '本地存储' });
 
     // 诊断检查项：探测每个 writable root 是否真的可写。
     // 由 storage 插件按全部根（含内置根）上报，而非 doctor 硬编码 fs.data：

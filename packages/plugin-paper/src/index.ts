@@ -74,11 +74,11 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
   );
   for (const setting of ROOM_SETTINGS) caps.sessionManager.use.registerSetting(setting);
   const storage = caps.storage.use;
-  const ledger = new LedgerStore(storage, logger.use);
+  const ledger = new LedgerStore(storage.own, logger.use);
   await ledger.load();
 
   const now = Date.now;
-  const journal = new TaskJournal(storage, logger.use, now);
+  const journal = new TaskJournal(storage.own, logger.use, now);
   const notices = new PaperNotices({
     ledger,
     events: caps.events.use,

@@ -569,7 +569,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     expressApp,
     {
       registry: pages,
-      layout: createLayoutStore(storage, logger.use),
+      layout: createLayoutStore(storage.own, logger.use),
       storageReady: () => caps.storage.present,
       send: event => admin.send(event),
       logger: logger.use,

@@ -64,7 +64,7 @@ describe('sandboxed media contract', () => {
       storage: storage as never,
       sandbox: sandbox as never,
       ffmpegPath: '/tools/ffmpeg',
-      id: 'abcdefghijklmnop',
+      itemDir: 'pluginData:/publish-review/items/abcdefghijklmnop',
       signal: new AbortController().signal,
     });
     const result = await media.stripMp4(Uint8Array.of(1, 2, 3));
@@ -85,7 +85,7 @@ describe('sandboxed media contract', () => {
       storage: storage as never,
       sandbox: sandbox as never,
       ffmpegPath: '/tools/ffmpeg',
-      id: 'abcdefghijklmnop',
+      itemDir: 'pluginData:/publish-review/items/abcdefghijklmnop',
       signal: new AbortController().signal,
     });
     await retry.stripMp4(Uint8Array.of(4, 5, 6));
@@ -143,7 +143,7 @@ describe('sandboxed media contract', () => {
       storage: storage as never,
       sandbox: sandbox as never,
       ffmpegPath: '/tools/ffmpeg',
-      id: 'abcdefghijklmnop',
+      itemDir: 'pluginData:/publish-review/items/abcdefghijklmnop',
       signal: new AbortController().signal,
     });
     await expect(media.extractFrames(Uint8Array.of(1, 2, 3), ext, 0.5)).rejects.toThrow('抽帧帧数不符');
@@ -152,7 +152,7 @@ describe('sandboxed media contract', () => {
       storage: storage as never,
       sandbox: sandbox as never,
       ffmpegPath: '/tools/ffmpeg',
-      id: 'abcdefghijklmnop',
+      itemDir: 'pluginData:/publish-review/items/abcdefghijklmnop',
       signal: new AbortController().signal,
     });
     await expect(retry.extractFrames(Uint8Array.of(1, 2, 3), ext, 0.5)).rejects.toThrow('抽帧帧数无法核对');

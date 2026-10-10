@@ -35,7 +35,7 @@ export default definePlugin({
     caps.lifecycle.use.onDispose(release);
     try {
       const storage = caps.storage.use;
-      const store = new WorksStore(storage, caps.lifecycle.use.id);
+      const store = new WorksStore(storage.own, caps.lifecycle.use.id);
       await store.load();
       await store.bindScope(cfg);
       const client = new PagesClient({

@@ -13,6 +13,7 @@ import type { Logger } from '../../packages/core/src/index.js';
 import { BackgroundTasks } from '../../packages/plugin-tools/src/background.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { type IncomingMessage, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import { ownView } from '../fixtures/own-storage.js';
 
 // ════════════════════════════════════════════════════════════
 // 工具执行器一层的转后台（plugin-tools）：声明了 background 的工具多两项参数（runInBackground、waitSeconds），
@@ -512,7 +513,7 @@ describe('输出口', () => {
   it('最后一行与最后输出时间变了发 background:changed，但不写盘', async () => {
     const w = world();
     const store = memoryStore();
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     w.slow();
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     await flush();
@@ -605,7 +606,7 @@ describe('停止、撤回、停用与会话删除', () => {
   it('plugin-tools 停用（收尾）时在跑的落成 aborted 并写盘，之后落定的不改结局、不通知', async () => {
     const w = world();
     const store = memoryStore();
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     w.slow('zz_slow', { hang: true });
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     await w.tasks.close();
@@ -658,7 +659,7 @@ describe('落盘', () => {
         { id: 'bg_bad', status: 'weird' },
       ],
     });
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     expect(w.tasks.list().map(t => [t.id, t.status, t.reason])).toEqual([
       ['bg_old_1', 'aborted', 'Aalis 重启时还在跑'],
       ['bg_old_2', 'completed', undefined],
@@ -672,7 +673,7 @@ describe('落盘', () => {
   it('只记字段，不记起它的身份、输出与结果；状态变了才写', async () => {
     const w = world();
     const store = memoryStore();
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     w.slow();
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     await flush();
@@ -691,7 +692,7 @@ describe('落盘', () => {
   it('每个会话只留在跑的与最近 20 条结束的，删掉的发 removed', async () => {
     const w = world({ maxPerSession: 30 });
     const store = memoryStore();
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     w.slow();
     const ids: string[] = [];
     for (let i = 0; i < 23; i++) {
@@ -712,7 +713,7 @@ describe('落盘', () => {
   it('存储读不出来时告警、只记在内存里，照常工作，不覆盖原文件', async () => {
     const w = world();
     const store = memoryStore(undefined, { broken: true });
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     expect(w.warnings.some(m => m.includes('background-tasks.json'))).toBe(true);
     w.slow();
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
@@ -727,7 +728,7 @@ describe('落盘', () => {
     w.slow();
     const early = parse(await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx));
     const store = memoryStore({ tasks: [stored({ status: 'completed', endedAt: 3_000 })] });
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     expect(
       w.tasks
         .list()
@@ -740,21 +741,21 @@ describe('落盘', () => {
   it('命令的退出码随登记落盘，读回后照样在', async () => {
     const w = world();
     const store = memoryStore();
-    await w.tasks.restore(store.service);
+    await w.tasks.restore(ownView(store.service, 'tools'));
     w.slow('zz_cmd', { display: { kind: 'command', fields: { command: 'text' }, result: { exitCode: 'exitCode' } } });
     await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx);
     w.runs[0].finish(JSON.stringify({ exitCode: 3 }));
     await flush();
     expect(store.saved()?.tasks[0].exitCode).toBe(3);
     const after = world();
-    await after.tasks.restore(store.service);
+    await after.tasks.restore(ownView(store.service, 'tools'));
     expect(after.tasks.list().map(t => [t.status, t.exitCode])).toEqual([['failed', 3]]);
   });
 
   it('读回时退出码不是整数的丢掉这一项，任务照留', async () => {
     const w = world();
     await w.tasks.restore(
-      memoryStore({ tasks: [stored({ status: 'failed', endedAt: 3_000, exitCode: '2' })] }).service,
+      ownView(memoryStore({ tasks: [stored({ status: 'failed', endedAt: 3_000, exitCode: '2' })] }).service, 'tools'),
     );
     expect(w.tasks.list().map(t => [t.status, t.exitCode])).toEqual([['failed', undefined]]);
   });

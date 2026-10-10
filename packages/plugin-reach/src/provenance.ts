@@ -1,5 +1,5 @@
 // ============================================================
-// 污点与来源账本：落在插件数据 pluginData:/reach/provenance.json
+// 污点与来源账本：落在本插件的私有目录里（pluginData:/reach/provenance.json）
 //
 // 污点：每个会话读进过谁的内容（来源称呼），粘在会话上，之后签发的凭据都带着。
 // 来源账本：受污染的会话经凭据写进白纸的文件（真实路径）→ 写入会话、来源称呼与时间。
@@ -8,10 +8,11 @@
 // ============================================================
 
 import type { ProvenanceRecord } from '@aalis/api-reach';
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
-const URI = 'pluginData:/reach/provenance.json';
+/** 私有目录下的账本文件 */
+const FILE = 'provenance.json';
 
 const isSources = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length > 0 && value.every(s => typeof s === 'string' && s.trim() !== '');
@@ -37,8 +38,8 @@ function parse(text: string): { taint: Map<string, readonly string[]>; ledger: M
   };
 }
 
-export async function openProvenance(storage: StorageService, logger: Logger) {
-  const text = await storage.readFile(URI, 'utf-8').then(
+export async function openProvenance(storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>, logger: Logger) {
+  const text = await storage.readFile(FILE, 'utf-8').then(
     data => String(data),
     err => {
       if (isStorageNotFound(err)) return undefined;
@@ -50,7 +51,7 @@ export async function openProvenance(storage: StorageService, logger: Logger) {
     state = text === undefined ? { taint: new Map(), ledger: new Map() } : parse(text);
   } catch (err) {
     throw new Error(
-      `污点与来源记录 ${URI}（家目录的 state/plugins/reach/provenance.json）读不出：${err instanceof Error ? err.message : String(err)}。修好或移走后重启`,
+      `污点与来源记录 ${storage.uri(FILE)}（家目录的 state/plugins/reach/provenance.json）读不出：${err instanceof Error ? err.message : String(err)}。修好或移走后重启`,
     );
   }
   const { taint, ledger } = state;
@@ -60,7 +61,7 @@ export async function openProvenance(storage: StorageService, logger: Logger) {
   const save = () => {
     const snapshot = JSON.stringify({ taint: Object.fromEntries(taint), ledger: Object.fromEntries(ledger) });
     saving = saving
-      .then(() => storage.writeFile(URI, snapshot))
+      .then(() => storage.writeFile(FILE, snapshot))
       .catch(err => logger.error('污点与来源记录写盘失败（本次运行里照常生效）:', err));
   };
 

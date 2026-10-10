@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Socket } from 'node:net';
 import { galleryHeaders, WORK_ID_PATTERN, WORK_IFRAME_SANDBOX, workHeaders } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
-import { ITEM_ROOT, type QueueItem, type ReviewStore } from './state.js';
+import type { QueueItem, ReviewStore } from './state.js';
 
 const SUBRESOURCE_ONLY = /\.(?:css|js|mjs|json|png|jpe?g|gif|webp|mp4|woff2)$/i;
 const digest = async (data: Uint8Array) =>
@@ -93,7 +93,7 @@ export class ReviewPreviewServer {
     for (const file of item.files) {
       const expected = item.outHashes?.[file.path];
       if (!expected) throw new Error('审核输出不完整，不能预览');
-      const raw = await this.#storage.readFile(`${ITEM_ROOT}/${item.id}/out/${file.path}`);
+      const raw = await this.#storage.readFile(this.#store.item(item.id, `out/${file.path}`));
       const bytes = new Uint8Array(Buffer.from(raw));
       if ((await digest(bytes)) !== expected) throw new Error('审核输出完整性核对失败，不能预览');
       files.set(file.path, { bytes, type: file.contentType });

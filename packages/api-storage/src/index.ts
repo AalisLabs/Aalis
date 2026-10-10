@@ -144,7 +144,7 @@ export interface StorageService {
   watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;
 }
 
-import { defineService } from '@aalis/core';
+import { defineService, parseInstanceId } from '@aalis/core';
 import { configError } from '@aalis/schema-config';
 
 /** 存储 URI 的 scheme 文法：`<root>:/<path>`，root 以字母开头 + 字母/数字/下划线/连字符。 */
@@ -392,8 +392,33 @@ export async function readTailLines(
 /** 业务层恒定义的几个可选方法：选中的那一家不支持时由调用本身抛错，调用方无需判存在 */
 type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
 
-/** `storage` 的业务层：调用转发给选中的那一家 */
-export type BoundStorage = StorageMethods;
+/**
+ * 本插件的私有目录 `pluginData:/<插件名>/` 上的存储视图（{@link BoundStorage.own}）。插件名取定义名的最后一段、去掉
+ * `plugin-` 前缀（`@aalis/plugin-paper` → `paper`），多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService}
+ * 相同，路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错；返回值里的地址是
+ * 完整的存储地址。
+ */
+export type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
+  /** 相对路径对应的完整存储地址（要交给别处、写进记录时用）；不给即目录本身 */
+  uri(path?: string): string;
+};
+
+/** `storage` 的业务层：调用转发给选中的那一家，另带本插件的私有目录 */
+export interface BoundStorage extends StorageMethods {
+  readonly own: OwnStorage;
+}
+
+/** 私有目录下的相对路径 → 完整存储地址；越不出目录 */
+function ownUri(dir: string, path: string): string {
+  if (isHostAbsolutePath(path) || STORAGE_URI_RE.test(path)) throw new Error(`插件私有目录只收相对路径: ${path}`);
+  const segments: string[] = [];
+  for (const segment of unifySlashes(path).split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment !== '..') segments.push(segment);
+    else if (segments.pop() === undefined) throw new Error(`路径越出插件私有目录 pluginData:/${dir}/: ${path}`);
+  }
+  return joinStorageUri('pluginData', [dir, ...segments]);
+}
 
 export const storage = defineService<StorageService, BoundStorage>('storage', port => {
   const provider = port.provider;
@@ -407,5 +432,24 @@ export const storage = defineService<StorageService, BoundStorage>('storage', po
     readFileRange: (uri, start, end) => supported('readFileRange')(uri, start, end),
     watch: (uri, listener) => supported('watch')(uri, listener),
   };
-  return Object.assign(Object.create(provider) as StorageMethods, extra);
+  const methods: StorageMethods = Object.assign(Object.create(provider) as StorageMethods, extra);
+  const { moduleName } = parseInstanceId(port.id);
+  const dir = moduleName.slice(moduleName.lastIndexOf('/') + 1).replace(/^plugin-/, '');
+  const uri = (path = '') => ownUri(dir, path);
+  const own: OwnStorage = {
+    uri,
+    list: path => methods.list(uri(path)),
+    stat: path => methods.stat(uri(path)),
+    readFile: (path, encoding) => methods.readFile(uri(path), encoding),
+    readFileRange: (path, start, end) => methods.readFileRange(uri(path), start, end),
+    createReadStream: path => methods.createReadStream(uri(path)),
+    writeFile: (path, data, options) => methods.writeFile(uri(path), data, options),
+    rename: (path, newName) => methods.rename(uri(path), newName),
+    move: (from, to) => methods.move(uri(from), uri(to)),
+    mkdir: path => methods.mkdir(uri(path)),
+    delete: path => methods.delete(uri(path)),
+    resolveLocalPath: (path, access) => methods.resolveLocalPath(uri(path), access),
+    watch: (path, listener) => methods.watch(uri(path), listener),
+  };
+  return Object.assign(methods, { own });
 });

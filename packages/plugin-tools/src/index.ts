@@ -80,7 +80,7 @@ export default definePlugin({
     caps.storage.follow(() => {
       if (restoring || !store.listRoots().some(root => root.name === 'pluginData')) return;
       restoring = true;
-      void tasks.restore(store);
+      void tasks.restore(store.own);
     });
 
     caps.provide.use(tools, new ToolRegistry(logger.use, tasks));
