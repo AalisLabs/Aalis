@@ -58,7 +58,7 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
    他实例不受影响，需各自调用 `bounce(instanceId)`。
 
 5. **integration / e2e 推荐在 bounce 后等 `plugins.idle()`**：直接调用 bounce
-   之后立即 assert 服务可用会读到拆卸中间态。`plugins:changed` 在非关机 recompute 收敛时发出，同样可用。
+   之后立即 assert 服务可用会读到拆卸中间态。`plugins:changed` 在 recompute 收敛时发出，同样可用。
 
 ## 整份快照的加载失败
 

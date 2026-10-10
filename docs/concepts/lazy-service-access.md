@@ -153,7 +153,7 @@ export default definePlugin({
 - 根激活用插件的服务（宿主经 `app.bind` 绑定）：根 drain 先于该插件 close；根收尾时插件仍活着。到根 close 时插件已按归属关闭。
 - 插件用根激活登记的服务：不往排序图加边。归属保证插件 close 先于根 close，故插件 drain 时根仍活着。根若同时用这个插件的服务，上一条把根 drain 插在插件 close 之前，两笔收尾都能用到对方。
 
-环：先只让仅被 optional 边挡着的成员 drain（不告警），required 消费者仍先关完；环全由 required 边构成时，环内成员先全部 drain 再关（告警；drain 期间双方都能 `require()`，`onDispose` 时提供者可能已收尾）。
+依赖成环时的处理见 [插件定义与能力](../core/context.md)。
 
 `App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。
 
