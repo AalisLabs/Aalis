@@ -189,7 +189,7 @@ lifecycle.onDispose(() => {
 用户在 WebUI 点保存 → WebUI 调 host-config 的 `applyPluginConfig(instanceId, newConfig)`，宿主拆出密钥、以解析后的配置调 `updateConfig`，成功后写配置文档并落盘。`updateConfig` 本身只改运行态：
 
 1. 配置先拷贝再挂进 entry
-2. 如果当前 active：`disposeAsync` 你的激活（`onDrain` 然后 `onDispose`，异步清理会被等待）→ pending → `recompute('changed')` 按拓扑重激活
+2. 如果当前 active：`disposeAsync` 你的激活（`onDrain` 然后 `onDispose`，异步清理会被等待）→ pending → `recompute()` 按拓扑重激活
 3. 如果之前 error：直接 pending → recompute 重试
 
 **你 apply 内不需要做任何特殊处理**。无状态服务的下游在下一次 `current` 查询时会自然拿到新实例。

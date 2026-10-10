@@ -110,7 +110,6 @@ export class App {
   readonly #events: EventBus;
 
   readonly #restartStrategy?: RestartStrategy;
-  readonly #disposeTimeoutMs: number;
   /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
   #stopping?: Promise<void>;
 
@@ -135,7 +134,7 @@ export class App {
     this.#restartStrategy = options.restartStrategy;
     // 定时器的最大延迟是 2³¹−1ms，更大的值（含 Infinity）会被运行时当成 1ms
     const cap = (ms: number): number => Math.min(ms, 2 ** 31 - 1);
-    this.#disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
+    const disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
     const slowMs = cap(options.slowThresholdMs ?? 60_000);
     // 屏障（app:*，与 types/events.ts 的分节同一判据）的单个监听器至多等 slowMs
     this.#events.handlerLimit = event => (event.startsWith('app:') ? slowMs : undefined);
@@ -155,7 +154,7 @@ export class App {
     const caps = this.#host.bind(this.#root, { provide });
 
     // 2. 插件管理器
-    this.#plugins = new PluginManager(this.#host, this.logger, this.#disposeTimeoutMs, slowMs);
+    this.#plugins = new PluginManager(this.#host, this.logger, disposeTimeoutMs, slowMs);
     this.plugins = this.#plugins;
 
     // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
@@ -302,14 +301,11 @@ export class App {
     this.#plugins.beginShutdown();
     await this.#plugins.idle();
     await this.#events.emit('app:stopping');
-    await this.#plugins.idle();
-    // 全部 active 插件与根激活进同一张关停计划——beginShutdown 已冻，这里执行 drain/close。
+    // 全部插件激活与根激活进 beginShutdown 冻好的同一张关停计划，这里执行 drain/close，返回时都已关完
     await this.#plugins.stopAll();
     // 清掉全部 sticky 缓存（'app:ready' + 'app:started'），防止后续 restart
     // 复用过时的"已启动"标记
     this.#events.clearSticky();
-    // 等待根激活的异步清理真正完成再宣告停止
-    await this.#root.disposeAsync(this.#disposeTimeoutMs);
     this.logger.info('已停止');
   }
 }

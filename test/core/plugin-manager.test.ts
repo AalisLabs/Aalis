@@ -11,7 +11,6 @@ import {
   provide,
   type ServiceRef,
 } from '../../packages/core/src/index.js';
-import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 
 // activating 窗口里的管理动作（unload / disable / bounce / updateConfig 撞上在飞 apply）
 // 由 admin-during-activation.test.ts 守；本文件钉调度稳态路径。
@@ -252,7 +251,7 @@ describe('App plugin lifecycle', () => {
     expect(log).toContainEqual({ v: 2 });
   });
 
-  it('stopAll: 按拓扑逆序 dispose（消费者先关、提供者后关）', async () => {
+  it('停机按拓扑逆序 dispose（消费者先关、提供者后关）', async () => {
     const { app } = makeApp();
     const order: string[] = [];
     await app.plugin(
@@ -282,12 +281,12 @@ describe('App plugin lifecycle', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('cons-B')?.state).toBe('active');
 
-    await (app.plugins as PluginManager).stopAll();
+    await app.stop();
     expect(order).toEqual(['cons-B.dispose', 'svc-A.dispose']);
     expect(await app.plugins.bounce('svc-A'), '停机后拒绝重建').toBe(false);
   });
 
-  it('stopAll: 关机标志屏蔽 service:unregistered 反应式重算', async () => {
+  it('停机：关机标志屏蔽 service:unregistered 反应式重算', async () => {
     const { app } = makeApp();
     const log: string[] = [];
     await app.plugin(
@@ -318,7 +317,7 @@ describe('App plugin lifecycle', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('c-svc')?.state).toBe('active');
 
-    await (app.plugins as PluginManager).stopAll();
+    await app.stop();
     // optional 消费者不应在停机期间被反应式拆一次再被停机计划拆一次
     expect(log.filter(e => e === 'c-svc.dispose')).toHaveLength(1);
     expect(log.indexOf('c-svc.dispose')).toBeLessThan(log.indexOf('p-svc.dispose'));
