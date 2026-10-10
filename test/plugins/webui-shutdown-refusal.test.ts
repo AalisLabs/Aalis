@@ -41,7 +41,7 @@ function world(config: Partial<AalisConfig>) {
           source: ref(),
           tools: ref(),
           commands: ref(),
-          services: { names: () => [], preferred: () => undefined },
+          services: { names: () => [], preferred: () => undefined, inspect: () => [] },
           self: 'console',
           versions: () => () => undefined,
         },

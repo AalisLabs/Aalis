@@ -393,10 +393,12 @@ export async function readTailLines(
 type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
 
 /**
- * 本插件的私有目录 `pluginData:/<插件名>/` 上的存储视图（{@link BoundStorage.own}）。插件名取定义名的最后一段、去掉
- * `plugin-` 前缀（`@aalis/plugin-paper` → `paper`），多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService}
- * 相同，路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错；返回值里的地址是
- * 完整的存储地址。
+ * 本插件的私有目录 `pluginData:/<目录名>/` 上的存储视图（{@link BoundStorage.own}）。目录名是包名去掉 `plugin-` 前缀：
+ * `@aalis` 与不带作用域的包只取包名（`@aalis/plugin-paper` → `paper`），别的作用域另带作用域、以 `+` 相连
+ * （`@acme/plugin-paper` → `acme+paper`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段目录名的
+ * 插件名在绑定时抛错。多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService} 相同，路径参数相对这个
+ * 目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')`
+ * 删掉整个私有目录）；返回值里的地址是完整的存储地址。
  */
 export type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
   /** 相对路径对应的完整存储地址（要交给别处、写进记录时用）；不给即目录本身 */
@@ -406,6 +408,17 @@ export type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
 /** `storage` 的业务层：调用转发给选中的那一家，另带本插件的私有目录 */
 export interface BoundStorage extends StorageMethods {
   readonly own: OwnStorage;
+}
+
+/** 插件名 → 私有目录名（规则见 {@link OwnStorage}） */
+function ownDir(moduleName: string): string {
+  const scoped = /^@([^/]+)\/(.*)$/.exec(moduleName);
+  const name = (scoped ? scoped[2] : moduleName).replace(/^plugin-/, '');
+  const dir = !scoped || scoped[1] === 'aalis' ? name : `${scoped[1]}+${name}`;
+  if (!name || name === '.' || name === '..' || /[/\\]/.test(dir)) {
+    throw new Error(`插件名 "${moduleName}" 取不出私有目录名（要是单段、不是 . 或 ..）`);
+  }
+  return dir;
 }
 
 /** 私有目录下的相对路径 → 完整存储地址；越不出目录 */
@@ -433,8 +446,7 @@ export const storage = defineService<StorageService, BoundStorage>('storage', po
     watch: (uri, listener) => supported('watch')(uri, listener),
   };
   const methods: StorageMethods = Object.assign(Object.create(provider) as StorageMethods, extra);
-  const { moduleName } = parseInstanceId(port.id);
-  const dir = moduleName.slice(moduleName.lastIndexOf('/') + 1).replace(/^plugin-/, '');
+  const dir = ownDir(parseInstanceId(port.id).moduleName);
   const uri = (path = '') => ownUri(dir, path);
   const own: OwnStorage = {
     uri,

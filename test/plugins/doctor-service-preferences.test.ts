@@ -17,10 +17,13 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function boot(servicePreferences: Record<string, string>) {
+async function boot(
+  servicePreferences: Record<string, string>,
+  pluginServicePreferences?: Record<string, Record<string, string>>,
+) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
-  installHostConfig(app, createConfigStore({ servicePreferences }));
+  installHostConfig(app, createConfigStore({ servicePreferences, pluginServicePreferences }));
   const host = app.bind({ provide, services });
   await app.plugins.register(doctorPlugin, {});
   await app.plugins.idle();
@@ -68,6 +71,21 @@ describe('诊断：服务偏好未生效', () => {
     const [result] = await run();
     expect(result).toMatchObject({ id: 'services.preferences.asr', level: 'warn' });
     expect(result.detail?.split('\n')[0]).toBe('这个服务现在没有提供者');
+  });
+
+  it('本插件偏好同样查：指向的提供者不在时报一条，点名是哪个插件的，写明它实际在用哪个', async () => {
+    const { host, run } = await boot({}, { 'zz-picky': { asr: 'zz-asr-gone' }, 'zz-fine': { asr: 'zz-asr' } });
+    host.provide.use(asr, {} as never, { entryId: 'zz-asr' });
+    const results = await run();
+    expect(results.map(({ id, level, message }) => ({ id, level, message }))).toEqual([
+      {
+        id: 'services.preferences.zz-picky.asr',
+        level: 'warn',
+        message: '插件 zz-picky 的服务 asr 偏好 zz-asr-gone 不在提供者里，没有生效',
+      },
+    ]);
+    expect(results[0].detail?.split('\n')[0]).toBe('实际在用：zz-asr');
+    expect(results[0].detail).toContain('pluginServicePreferences');
   });
 
   it('偏好都在生效：一条通过', async () => {

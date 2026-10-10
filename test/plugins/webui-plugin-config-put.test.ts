@@ -57,7 +57,7 @@ function attachRoutes(opts: {
       hostConfig: refStub(opts.hostConfig),
       tools: ref(),
       commands: ref(),
-      services: { names: () => [], preferred: () => undefined },
+      services: { names: () => [], preferred: () => undefined, inspect: () => [] },
       self: 'zz-webui',
       versions: () => () => undefined,
       logger: opts.logger,

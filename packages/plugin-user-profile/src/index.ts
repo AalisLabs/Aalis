@@ -414,6 +414,9 @@ function registerUserProfile({
     return facts;
   }
 
+  /** 一段先读后写或先查后删的操作固定在开头选中的那一家（见 {@link loadProfile}）；选不到时访问抛错，同 memory.use */
+  const pinnedMemory = (): MemoryService => memory.list().find(p => p.selected)?.use ?? memory.use;
+
   /**
    * 读取一个用户的现有档案（getMetadata 返回空才算不存在，返回 undefined）。
    *
@@ -492,7 +495,7 @@ function registerUserProfile({
         row: true,
         async handler({ rowKey }) {
           const [userKey, factId] = parseFactRef(rowKey);
-          const mem = memory.use;
+          const mem = pinnedMemory();
           const profile = await loadProfile(mem, userKey);
           const hit = profile?.facts.find(f => f.id === factId);
           if (!profile || !hit) throw new Error('这条事实已经不在档案里了');
@@ -511,7 +514,7 @@ function registerUserProfile({
         confirm: '这个人的全部事实连同关系强度、互动次数一起清空。',
         row: true,
         async handler({ rowKey }) {
-          const mem = memory.use;
+          const mem = pinnedMemory();
           if (!(await mem.getMetadata(PROFILE_NS, rowKey))) throw new Error(`${rowKey} 已经没有档案了`);
           await mem.deleteMetadata(PROFILE_NS, rowKey);
           page.invalidate();
@@ -1244,7 +1247,7 @@ function registerUserProfile({
       await next();
       return;
     }
-    const mem = memory.use;
+    const mem = pinnedMemory();
     try {
       // 批量提交：逐条 delete 中途失败会留下「删了一半」的档案，而用户看到的是报了成功。
       // 注意 commitMetadata 的原子性**按后端分档**（见 api-memory 契约）——sqlite/inmemory
@@ -1368,7 +1371,7 @@ function registerUserProfile({
     const userId = argv.session.userId;
     if (!userId) return '当前会话未识别用户身份，无法清除档案。';
     const userKey = userKeyOf(argv.session.platform, userId);
-    const mem = memory.use;
+    const mem = pinnedMemory();
     try {
       const existed = await mem.getMetadata(PROFILE_NS, userKey);
       if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
@@ -1418,7 +1421,7 @@ function registerUserProfile({
     });
 
   commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
-    const mem = memory.use;
+    const mem = pinnedMemory();
     try {
       const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger.use);
       page.invalidate();

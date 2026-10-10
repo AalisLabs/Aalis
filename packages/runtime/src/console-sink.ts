@@ -86,7 +86,7 @@ export interface ConsoleSinkHandle {
    * 当任何 UI 接管终端时自动停止写 stdout。
    *
    * 必须显式调用——`installConsoleSink()` 在 App 之前运行（需要捕获最早期日志），
-   * 此时还没有事件总线可订阅。传宿主根绑定的 events（`app.bind({ events }).events`）。
+   * 此时还没有事件总线可订阅。传宿主根绑定的 events（`app.bind({ events }).events.use`）。
    */
   bindEvents(events: Events): void;
   /** 当前是否染色输出（供调试 / 状态视图使用） */

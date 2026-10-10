@@ -12,7 +12,7 @@
 import type { UserIdentity } from '@aalis/api-authority';
 import type { InstallResult, UninstallOptions, UpdateResult, UpdateTarget } from '@aalis/api-package-manager';
 import type { PlatformConnection } from '@aalis/api-platform';
-import type { LogEntry, PluginState } from '@aalis/core';
+import type { LogEntry, PluginState, SelectionBasis } from '@aalis/core';
 import type { ConfigSchema, SchemaIssue } from '@aalis/schema-config';
 import type { DepOrigin } from '@aalis/util-dep-spec';
 import type { AttentionItem, ExtendDeclaration, LogFilter, PluginBlockers } from './index.js';
@@ -80,6 +80,8 @@ export interface PluginListItem extends PluginBlockers {
   optionalServices: string[];
   /** 本插件偏好（用户设的、只对这个实例生效）：服务名 → 偏好的提供者（contextId），只列它声明了的、设了的服务 */
   servicePreferences: Record<string, string>;
+  /** 它声明的服务此刻各落到哪一家、依据是什么（本插件偏好、全局偏好或排名），只列选得到的 */
+  serviceSelections: Record<string, { contextId: string; basis?: SelectionBasis }>;
   tools: string[];
   commands: string[];
   reusable: boolean;

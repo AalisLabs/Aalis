@@ -417,7 +417,7 @@ describe('详情', () => {
     if (href) expect(relations.getByRole('link').getAttribute('href')).toBe(href);
   });
 
-  it('服务偏好：它声明的、有几个提供者的服务各一行，写本插件偏好或跟随全局；改选与「跟随全局」按实例发，所选的不在时写明', async () => {
+  it('服务偏好：它声明的、有几个提供者的服务各一行，写本插件偏好或跟随全局与此刻用的那一家及依据；改选与「跟随全局」按实例发，所选的不在时写明', async () => {
     const provider = (contextId: string, displayName: string) => ({
       contextId,
       displayName,
@@ -436,6 +436,10 @@ describe('详情', () => {
       requiredServices: ['events', 'zz-store', 'zz-model'],
       optionalServices: ['zz-vision'],
       servicePreferences: { 'zz-vision': 'zz-eye2' },
+      serviceSelections: {
+        'zz-store': { contextId: 'zz-mongo', basis: 'rank' },
+        'zz-vision': { contextId: 'zz-eye2', basis: 'plugin' },
+      },
     });
     const own = (service: string) => `/api/plugins/zz-agent/services/${service}/prefer`;
     app = await renderApp(
@@ -458,6 +462,8 @@ describe('详情', () => {
     expect(row('zz-store').queryByText('本插件偏好')).toBeNull();
     expect(row('zz-vision').getByText('看图二')).toBeTruthy();
     expect(row('zz-vision').getByText('本插件偏好')).toBeTruthy();
+    expect(row('zz-store').getByText('现在用：文档库（没有偏好，按优先级）')).toBeTruthy();
+    expect(row('zz-vision').getByText('现在用：看图二（本插件偏好）')).toBeTruthy();
 
     fireEvent.click(row('zz-store').getByRole('button', { name: /zz-store/ }));
     choose(row('zz-store').getByRole('combobox', { name: 'zz-store' }), '本地库');
@@ -471,9 +477,10 @@ describe('详情', () => {
     const gone = plugin('zz-agent', {
       optionalServices: ['zz-vision'],
       servicePreferences: { 'zz-vision': 'zz-eye3' },
+      serviceSelections: { 'zz-vision': { contextId: 'zz-eye', basis: 'global' } },
     });
     app = await renderApp('/plugins/zz-agent', {}, pluginRest([gone], { '/api/services': services }));
-    expect(await detail().findByText('这一家现在不在，先按全局的选择')).toBeTruthy();
+    expect(await detail().findByText('这一家现在不在，现在用：看图（全局偏好）')).toBeTruthy();
   });
 
   it('页面：列出全部页面与位置，插件页面与设置里的一节可以点开；插件前端另写申请的宿主数据能力；没有页面时整块不出现', async () => {
