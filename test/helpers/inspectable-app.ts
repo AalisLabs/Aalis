@@ -33,3 +33,8 @@ export function activationHost(app: App): ActivationHost {
 export function rootActivation(app: App): Activation {
   return activationHost(app).root;
 }
+
+/** 白盒：这个实例 id 此刻挂在激活树上的激活（关完的已摘下）；宿主侧 getPlugin 只交快照，不带内部记录 */
+export function activationOf(app: App, instanceId: string): Activation | undefined {
+  return [...rootActivation(app).children].find(activation => activation.id === instanceId);
+}

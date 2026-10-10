@@ -141,7 +141,7 @@ src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`ty
 
 文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。JSDoc 描述在前、`@internal` 等标签收尾（单行式也展开成多行）；不用警示符号，告诫写成陈述句。
 
-插件能力与公开管理条目类型不包含内部激活记录；宿主两服务在容器里只放契约列出的方法，经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、须只读。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。私有成员一律写成 `#` 私有字段（不带 `_` 前缀），不用 TypeScript 的 `private` / `protected` / `public` 修饰符与构造函数参数属性：前者由 Biome 的 useConsistentMemberAccessibility 拦，后者由 core 编译选项 `erasableSyntaxOnly` 拦。公开面与分层分别由 purity / architecture 测试约束。
+插件能力与公开管理条目类型不包含内部激活记录；宿主两服务在容器里只放契约列出的方法，`getPlugin()`（宿主侧与 `pluginsService` 同一个）交出调用时刻的浅快照，`config` 与 `definition` 仍是运行中的同一对象、须只读。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。私有成员一律写成 `#` 私有字段（不带 `_` 前缀），不用 TypeScript 的 `private` / `protected` / `public` 修饰符与构造函数参数属性：前者由 Biome 的 useConsistentMemberAccessibility 拦，后者由 core 编译选项 `erasableSyntaxOnly` 拦。公开面与分层分别由 purity / architecture 测试约束。
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message，丢掉 stack 与 cause 链；日志行编码与转义由宿主负责。宿主 SPI

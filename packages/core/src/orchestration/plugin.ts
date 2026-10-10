@@ -434,11 +434,12 @@ export class PluginManager implements PluginManagerService {
     }));
   }
 
-  /**
-   * 获取单个插件
-   */
+  /** 获取单个插件：调用时刻的浅快照，不含内部记录（见 {@link PluginManagerService.getPlugin}） */
   getPlugin(instanceId: string): PluginEntry | undefined {
-    return this.#plugins.get(instanceId);
+    const entry = this.#plugins.get(instanceId);
+    if (!entry) return undefined;
+    const { definition, config, state, error } = entry;
+    return { definition, instanceId, config, state, error };
   }
 
   /**
