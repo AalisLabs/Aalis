@@ -67,7 +67,10 @@ export interface PluginStatusEntry {
 export interface PluginManagerService {
   /** 获取所有已注册插件的状态 */
   getStatus(): PluginStatusEntry[];
-  /** 获取单个插件条目 */
+  /**
+   * 获取单个插件条目：调用时刻的浅快照，之后的状态变化不改它（要最新的就再调一次，或看 getStatus），写它也进不了注册表。
+   * `config` 与 `definition` 仍是运行中的同一对象，只读：改配置走 updateConfig
+   */
   getPlugin(instanceId: string): PluginEntry | undefined;
   /**
    * 增量重载单个插件：拆掉当前激活 → 转 pending → 重算后重新激活。`opts.config` 换成新的运行配置。

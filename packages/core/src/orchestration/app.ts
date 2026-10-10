@@ -158,25 +158,17 @@ export class App {
     caps.provide.use(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
     caps.provide.use(
       pluginsService,
-      {
-        ...narrow(this.plugins, [
-          'getStatus',
-          'bounce',
-          'updateConfig',
-          'enable',
-          'disable',
-          'unload',
-          'register',
-          'idle',
-        ]),
-        // 交给插件的是快照：只有公开字段，内部激活记录不外露
-        getPlugin: instanceId => {
-          const entry = this.plugins.getPlugin(instanceId);
-          if (!entry) return undefined;
-          const { definition, config, state, error } = entry;
-          return { definition, instanceId: entry.instanceId, config, state, error };
-        },
-      },
+      narrow(this.plugins, [
+        'getStatus',
+        'getPlugin',
+        'bounce',
+        'updateConfig',
+        'enable',
+        'disable',
+        'unload',
+        'register',
+        'idle',
+      ]),
       { exclusive: true },
     );
 

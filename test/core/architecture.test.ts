@@ -706,7 +706,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2641 → 2635：b5 P0-8（用户选丁）——删 provide 处的副本检查与 ForeignCoreError；注册被拒、实例因此不会运行的一律记 error。
 // 2635 → 2629：b5 P1-11（用户选甲）——插件状态的依赖信息只留 uses：删 PluginStatusEntry.requiredServices / optionalServices
 // 与公开 PluginEntry.required / optional（required 留在内部 PluginRecord）。
-const CORE_CODE_LINE_CEILING = 2629;
+// 2629 → 2625：b5 X15（用户选甲）——宿主侧 getPlugin 也交调用时刻的浅快照，pluginsService 直接收窄同一个方法。
+const CORE_CODE_LINE_CEILING = 2625;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

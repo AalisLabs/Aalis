@@ -11,9 +11,8 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
-import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { deferred } from '../helpers/deferred.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, activationOf, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const dependency = defineService<{ value: number }>('activation-required-loss');
 // apply 解构的绑定会遮住描述符；恢复提供者仍使用契约描述符。
@@ -45,9 +44,7 @@ function world(options: Partial<AppOptions> = {}) {
   const host = app.bind({ provide, services });
   return { app, host, errors, warnings, debugs, logger };
 }
-function record(app: App) {
-  return app.plugins.getPlugin('consumer') as PluginRecord;
-}
+const consumer = (app: App) => app.plugins.getPlugin('consumer')!;
 afterEach(async () => {
   for (const release of releases.splice(0)) release();
   for (const app of apps.splice(0)) await app.stop();
@@ -97,15 +94,15 @@ describe('初始化期间 required 依赖消失', () => {
     cleanupGate.resolve();
     await registering;
     await app.plugins.idle();
-    expect(record(app).state).toBe('pending');
-    expect(record(app).activation).toBeUndefined();
-    expect(record(app).error).toBeUndefined();
+    expect(consumer(app).state).toBe('pending');
+    expect(activationOf(app, 'consumer')).toBeUndefined();
+    expect(consumer(app).error).toBeUndefined();
     expect(cleaned).toEqual([1]);
     expect([...live]).toEqual([]);
 
     host.provide.use(dependency, { value: 2 });
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
+    expect(consumer(app).state).toBe('active');
     expect(applies).toBe(2);
     expect(host.services.use.get(owned.name)).toEqual({ attempt: 2 });
     await app.stop();
@@ -142,7 +139,7 @@ describe('初始化期间 required 依赖消失', () => {
       }),
     );
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
+    expect(consumer(app).state).toBe('active');
     expect(applies).toBe(2);
     expect(trace).toEqual(['apply:1', 'cleanup:1', 'apply:2']);
   });
@@ -178,11 +175,11 @@ describe('初始化期间 required 依赖消失', () => {
     host.provide.use(dependency, { value: 2 });
     await tick();
     expect(applies).toBe(1);
-    expect(record(app).activation).toBeDefined();
+    expect(activationOf(app, 'consumer')).toBeDefined();
     cleanupGate.resolve();
     await registering;
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
+    expect(consumer(app).state).toBe('active');
     expect(trace).toEqual(['apply:1', 'cleanup:1', 'apply:2']);
   });
 
@@ -224,11 +221,11 @@ describe('初始化期间 required 依赖消失', () => {
       }),
     );
     await app.plugins.idle();
-    expect(record(app).state).toBe('error');
-    expect(record(app).activation).toBeUndefined();
+    expect(consumer(app).state).toBe('error');
+    expect(activationOf(app, 'consumer')).toBeUndefined();
     host.provide.use(dependency, { value: 2 });
     await app.plugins.idle();
-    expect(record(app).state).toBe('error');
+    expect(consumer(app).state).toBe('error');
     expect(applies).toBe(1);
   });
 
@@ -256,8 +253,8 @@ describe('初始化期间 required 依赖消失', () => {
     );
     await app.plugins.idle();
     expect(applies).toBe(2);
-    expect(record(app).state).toBe('error');
-    expect(record(app).activation).toBeUndefined();
+    expect(consumer(app).state).toBe('error');
+    expect(activationOf(app, 'consumer')).toBeUndefined();
   });
 
   it.each([
@@ -297,10 +294,10 @@ describe('初始化期间 required 依赖消失', () => {
     );
     await app.plugins.idle();
     expect(attempts).toBe(firstLimit);
-    expect(record(app).state).toBe('error');
-    expect(record(app).activation).toBeUndefined();
+    expect(consumer(app).state).toBe('error');
+    expect(activationOf(app, 'consumer')).toBeUndefined();
     // 点名的是 apply 抛出的不可用错误里的服务：apply 抛错前已把它恢复，此刻容器里并不缺
-    expect(record(app).error).toBe(
+    expect(consumer(app).error).toBe(
       '初始化期间 required 依赖反复缺失（最后一次缺 "activation-required-loss"），自动重试未收敛，已停止；enable 或 bounce 后重试',
     );
     expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
@@ -312,12 +309,12 @@ describe('初始化期间 required 依赖消失', () => {
     const previous = attempts;
     await (app.plugins as PluginManager).recompute();
     await app.plugins.idle();
-    expect(record(app).state, 'error 态不自动重试').toBe('error');
+    expect(consumer(app).state, 'error 态不自动重试').toBe('error');
     expect(attempts).toBe(previous);
     expect(await app.plugins.enable('consumer')).toBe(true);
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
-    expect(record(app).error).toBeUndefined();
+    expect(consumer(app).state).toBe('active');
+    expect(consumer(app).error).toBeUndefined();
     expect(attempts).toBe(previous + 1);
   });
 
@@ -344,11 +341,11 @@ describe('初始化期间 required 依赖消失', () => {
     await app.plugins.idle();
     // 只有 consumer 一个插件：额度 2×1+8
     expect(attempts).toBe(10);
-    expect(record(app).state).toBe('error');
+    expect(consumer(app).state).toBe('error');
     expect(await app.plugins[action]('consumer')).toBe(true);
     await app.plugins.idle();
     expect(attempts, '不能沿用已用尽的余额').toBe(20);
-    expect(record(app).state).toBe('error');
+    expect(consumer(app).state).toBe('error');
   });
 
   it('激活成功清零预算：此后再遇缺失重新计起', async () => {
@@ -377,17 +374,17 @@ describe('初始化期间 required 依赖消失', () => {
       }),
     );
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
+    expect(consumer(app).state).toBe('active');
     expect(attempts).toBe(7);
 
     // 已激活的插件依赖下线被拆不计预算：恢复后再失败 9 次，余额刚好还剩 1，仍须激活；多扣这 1 次就会转 error
     failures = 9;
     off();
     await app.plugins.idle();
-    expect(record(app).state).toBe('pending');
+    expect(consumer(app).state).toBe('pending');
     off = host.provide.use(dependencyDescriptor, { value: 0 });
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
+    expect(consumer(app).state).toBe('active');
     expect(attempts).toBe(17);
   });
 
@@ -417,18 +414,19 @@ describe('初始化期间 required 依赖消失', () => {
       }),
     );
     const deadline = Date.now() + 5000;
-    while (record(app).state !== 'error' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    while (consumer(app).state !== 'error' && Date.now() < deadline)
+      await new Promise(resolve => setTimeout(resolve, 5));
     await app.plugins.idle();
-    expect(record(app).state).toBe('error');
+    expect(consumer(app).state).toBe('error');
     // 只有 consumer 一个插件：额度 2×1+8
     expect(attempts).toBe(10);
-    expect(record(app).error).toContain('最后一次缺 "activation-required-loss"');
+    expect(consumer(app).error).toContain('最后一次缺 "activation-required-loss"');
     expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
 
     stable = true;
     expect(await app.plugins.enable('consumer')).toBe(true);
     await app.plugins.idle();
-    expect(record(app).state).toBe('active');
+    expect(consumer(app).state).toBe('active');
     expect(attempts).toBe(11);
   });
 
@@ -470,7 +468,7 @@ describe('初始化期间 required 依赖消失', () => {
     await app.plugins.idle();
     expect(acted).toBe(true);
     expect(attempts).toBeLessThanOrEqual(12);
-    expect(record(app).state).toBe('error');
+    expect(consumer(app).state).toBe('error');
     expect(app.plugins.getPlugin('inserted')?.state).toBe('active');
     expect(app.plugins.getPlugin('normal')?.state).toBe('active');
     expect([inserted, enabled]).toEqual([1, 2]);
@@ -507,10 +505,10 @@ describe('初始化期间 required 依赖消失', () => {
     await app.plugins.idle();
     expect(applies).toBe(1);
     expect(cleaned).toBe(1);
-    if (action === 'unload') expect(record(app)).toBeUndefined();
+    if (action === 'unload') expect(app.plugins.getPlugin('consumer')).toBeUndefined();
     else {
-      expect(record(app).state).toBe(action === 'stop' ? 'disposed' : 'disabled');
-      expect(record(app).activation).toBeUndefined();
+      expect(consumer(app).state).toBe(action === 'stop' ? 'disposed' : 'disabled');
+      expect(activationOf(app, 'consumer')).toBeUndefined();
     }
   });
 });
