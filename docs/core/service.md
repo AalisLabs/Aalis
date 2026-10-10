@@ -65,13 +65,13 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 钩子与贡献点不是内置服务：`hooks` / `contributions` 的契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，由插件 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 以普通（非独占）登记提供，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
 
-内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听与服务都归这次激活。内置描述符的 `bind` 是 `port => port.require()(port.identity)`，只用公开的资源口。提供者先核对该身份属于在 `uses` 里声明过本服务的激活，否则抛错「内置服务 "x" 只能由在 uses 里声明了它的激活取用」。不声明就拿不到门面：经 `services.get(events)` 动态查到的只是提供者函数，未声明 `events` 的激活无法用它取得接口。
+内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听与服务都归这次激活。内置描述符的 `bind` 是 `port => port.require()(port.identity)`，只用公开的资源口。提供者按身份认出调用方的激活，认不出就抛错。与第三方服务一样，提供者不核对 `uses` 里的声明：经 `services.get(events)` 动态查到的是提供者函数，以调用方自己的 `identity` 调用，得到的是它自己的门面。
 
 ## 资源身份
 
 资源口的 `identity` 是这次激活的不透明资源身份（`symbol`）。`id` 是日志、展示、路由用的逻辑名；归属与核对用 `identity`，不从 `id` 字符串推断。
 
-`identity` 是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。内置服务按这种方式为每个调用方交出门面；第三方契约包也可以同样提供按调用方区分的服务：提供者登记为 `(identity) => 接口`，描述符的 `bind` 以 `port.identity` 取用，提供者按身份保存的状态由 `bind` 经 `port.follow` 释放（attach 里以 `port.identity` 取得接口，返回的清理调用接口的释放方法），提供者换人与这次激活关闭时都会释放。binder 不应把 `identity` 转交给这次激活以外的代码。
+`identity` 是调用方身份：提供者据它认出调用方、把登记归到这次激活。它按激活区分，同一 `id` 的前后两次激活（如 bounce 前后）身份不同，旧激活迟到的释放不会落到新激活上；按插件持久的状态（命名空间、存档）用 `id`。内置服务按这种方式为每个调用方交出门面；第三方契约包也可以同样提供按调用方区分的服务：提供者登记为 `(identity) => 接口`，描述符的 `bind` 以 `port.identity` 取用，提供者按身份保存的状态由 `bind` 经 `port.follow` 释放（attach 里以 `port.identity` 取得接口，返回的清理调用接口的释放方法），提供者换人与这次激活关闭时都会释放。binder 不要把 `identity` 交给这次激活以外的代码，否则别处的登记会记到这次激活名下。
 
 ## 解析顺序
 
@@ -123,7 +123,7 @@ interface Services {
 
 `get` / `all` / `inspect` / `names` 与 `ServiceRef` 的读口同一口径：激活超过 `slowThresholdMs` 转入后台的提供者，在它激活完成前不参与解析，它登记的服务都看不到（`names` 只列有对外提供者的服务名）。
 
-动态查内置服务拿到的是提供者函数，不是门面：它只接受在 `uses` 里声明了该服务的激活身份，以其他身份调用即抛错。要用内置服务，在 `uses` 里声明它。
+动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的 `identity` 调用才得到门面，认不出的身份即抛错。要用内置服务，在 `uses` 里声明它。
 
 `prefer(key, contextId)` 把该服务的胜者钉到指定逻辑身份，无视 priority。偏好可在目标 entry 注册前提前设置。切换偏好发出 `service:changed`，驱动 `follow` 订阅者按胜者变化重挂。也可在 WebUI 的 Services 页设置；配置项为 `servicePreferences`。
 

@@ -19,7 +19,7 @@ declare module '@aalis/core' {
 }
 
 // 内置六项与第三方服务同一种登记：根激活经 provide 独占登记，提供者是「身份 → 门面」，
-// 只认在 uses 里声明过本服务的激活。原语登记按身份归属，拆卸时同栈整体切断。
+// 认得出调用方的激活就交出它的门面。原语登记按身份归属，拆卸时同栈整体切断。
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -30,7 +30,7 @@ function world() {
   apps.push(app);
   return app;
 }
-/** 只为测试造的描述符：把资源口的身份交给 apply，模拟拿到凭据的调用方 */
+/** 只为测试造的描述符：把资源口的身份交给 apply，供以调用方自己的身份调用内置提供者 */
 const me = defineService<unknown, symbol>('t:uniform:me', port => port.identity);
 
 const BUILTINS = ['events', 'lifecycle', 'logger', 'config', 'provide', 'services'];
@@ -47,35 +47,28 @@ describe('内置服务与第三方同一种登记', () => {
     expect(() => host.provide(events, () => ({}) as never)).toThrow('独占');
   });
 
-  it('只声明 services：动态查到的内置提供者对未声明者一律拒绝，凭自己的身份也不行', async () => {
+  it('只声明 services：动态查到的内置提供者凭自己的身份交出自己的门面，认不出的身份一律拒绝', async () => {
     const app = world();
-    const seen: string[] = [];
+    let ownId: string | undefined;
+    let unknown: unknown;
     await app.plugin(
       definePlugin({
-        name: 'sneaky',
+        name: 'lookup',
         uses: { services, me: optional(me) },
         apply({ services, me }) {
-          const eventsProvider = services.get(events)!;
-          const provideProvider = services.get(provide)!;
-          for (const attempt of [
-            () => eventsProvider(me),
-            () => provideProvider(me),
-            () => eventsProvider(Symbol('x')),
-          ]) {
-            try {
-              attempt();
-              seen.push('ok');
-            } catch (error) {
-              seen.push(String((error as Error).message));
-            }
+          ownId = services.get(lifecycle)!(me).id;
+          try {
+            services.get(events)!(Symbol('x'));
+          } catch (error) {
+            unknown = error;
           }
         },
       }),
     );
     await app.plugins.idle();
-    expect(app.plugins.getPlugin('sneaky')?.state).toBe('active');
-    expect(seen).toHaveLength(3);
-    for (const s of seen) expect(s).toContain('只能由在 uses 里声明了它的激活取用');
+    expect(app.plugins.getPlugin('lookup')?.state).toBe('active');
+    expect(ownId).toBe('lookup');
+    expect(String(unknown)).toContain('内置服务 "events" 收到的身份不属于任何在册的激活');
   });
 
   it('声明了 events 的插件经动态查询以自己身份登记的监听同样归自己、卸载即切断', async () => {

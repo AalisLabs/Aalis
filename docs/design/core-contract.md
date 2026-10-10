@@ -8,7 +8,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 
 ## 一、原语行为不变量
 
-插件在 `definePlugin({ uses })` 里声明描述符，`apply` 拿到按这次激活绑定的接口。没有默认注入。core 的原语只有两种：事件与服务。Core 默认登记的六项基础服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方共用容器、描述符、`bind` 和 required / optional 规则；它们由根激活经 `provide` 以通用 `exclusive` 登记策略登记（只有 `provide` 自身直接登记一次来自举），拒绝同名第二提供者；提供者只向在 `uses` 里声明了该服务的激活交出属于该激活的接口。
+插件在 `definePlugin({ uses })` 里声明描述符，`apply` 拿到按这次激活绑定的接口。没有默认注入。core 的原语只有两种：事件与服务。Core 默认登记的六项基础服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方共用容器、描述符、`bind` 和 required / optional 规则；它们由根激活经 `provide` 以通用 `exclusive` 登记策略登记（只有 `provide` 自身直接登记一次来自举），拒绝同名第二提供者；提供者按调用方身份交出属于该激活的接口，与第三方服务一样不核对 `uses` 声明。
 
 **events（`events.on` / `events.emit`）——广播**
 - 监听器错误互相隔离：单个 handler 抛错（同步或异步）不影响其余 handler，也不使 `emit` reject。
@@ -22,10 +22,10 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - `current` / `require()` 返回**当时点解析的实例**，不等待服务上线、不 await；不是自动转发所有调用的代理。把引用存起来须自行承担它失效。`require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。
 - `all()` 每次调用重新枚举全部对外可见的提供者，包括非胜者。手动缓存的引用不建立关停边、不自动转发，也不保护主动提前卸载的提供者。
 - `follow(attach)`：胜者不变则不动；胜者换人时先跑上次返回的清理，等其 Promise 落定之后才用新实例再挂；下线与关闭时清理。`attach` 必须同步——需要清理就返回函数，不需要就不返回；thenable 会被接住并 warn，不会当 cleanup。拒绝被隔离并报告，但不证明旧资源已释放。
-- `services.get` / `services.all` 是动态查询：不增加声明、不参与激活闸、不自动跟随、不建立依赖边，关停期可能拿空。需要声明等待与跟随就把描述符写进 `uses`。动态查到的内置服务是提供者函数，只接受在 `uses` 里声明了该服务的激活身份，以其他身份调用即抛错。
+- `services.get` / `services.all` 是动态查询：不增加声明、不参与激活闸、不自动跟随、不建立依赖边，关停期可能拿空。需要声明等待与跟随就把描述符写进 `uses`。动态查到的内置服务是提供者函数，以调用方自己的身份调用得到它自己的门面，认不出的身份即抛错。
 - `services.inspect` 只投影登记元数据，不返回实例。`services.get` / `services.all` 返回登记进容器的对象本身。
 - `provide(descriptor, impl, options?)` 是唯一发布入口。`options.onBehalfOf` 的条目逻辑身份取被代者，清理仍归本激活。`provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方。
-- 资源口的 `identity` 是这次激活的不透明资源身份，也是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。
+- 资源口的 `identity` 是这次激活的不透明资源身份，即调用方身份：提供者据它认出调用方、把登记归到这次激活。每次激活各不相同，同一 id 的前后两次激活也不同。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝（注册期按 error 记），宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。
 
 **钩子与贡献点不是 core 原语**：它们是普通服务，契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`（非独占）。登记经描述符的 `registrar`，撤回遵守下文生命周期不变量；各自的行为约定随契约包，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
