@@ -51,8 +51,6 @@ export interface Registrar<Item> {
  * 不含清扫凭据——经它登记的每一条都由这次激活的撤回段逐条撤回。
  */
 export interface BindingPort<P> {
-  /** 所绑定的服务名 */
-  readonly name: string;
   /** 实例 id：日志、展示、路由用的逻辑名，不是资源身份 */
   readonly id: string;
   /**

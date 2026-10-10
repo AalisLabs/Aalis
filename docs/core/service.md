@@ -46,6 +46,17 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 - Core 默认登记的六项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
 - 领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
 
+### 资源口：binder 的范围
+
+消费方每次激活装配 `uses` 时，每项声明调一次描述符的 `bind`，传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
+
+- `follow(attach)`：随提供者换人的有状态资源。换人时先跑上次返回的清理（异步的等它落定）再挂新实例，下线与关闭时清理。
+- `registrar({ key, register })`：按键登记到提供者上的条目。同键替换，提供者换人时整体重挂，关闭时与原语同一拍撤回。
+- `track(off, label?)`：binder 自己持有、不属于任何提供者的资源，例如它自建的定时器或对外部来源的订阅。`off` 在这次激活的撤回段执行；返回一次性的退订，手动退订启动的异步清理同样由关闭等到。
+- `id` / `identity` / `logger`：这次激活的逻辑名、资源身份（见下文）与日志器。`current()` / `require()` / `all()` 每次调用按当时的胜者解析。
+
+跟提供者有关的状态用 `follow`，按键登记的条目用 `registrar`，两者都不合适时才用 `track`。
+
 第三方登记契约（`BindingPort` / `Registrar`）见 [枢纽服务](../design/hub-services.md)。
 
 ## 内置服务的登记
@@ -60,7 +71,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 资源口的 `identity` 是这次激活的不透明资源身份（`symbol`）。`id` 是日志、展示、路由用的逻辑名；归属与核对用 `identity`，不从 `id` 字符串推断。
 
-`identity` 是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。内置服务按这种方式为每个调用方交出门面；第三方契约包也可以同样提供按调用方区分的服务：提供者登记为 `(identity) => 接口`，描述符的 `bind` 以 `port.identity` 取用，提供者按身份保存的状态由 `bind` 经 `port.track` 登记撤回、随这次激活关闭释放。binder 不应把 `identity` 转交给这次激活以外的代码。
+`identity` 是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。内置服务按这种方式为每个调用方交出门面；第三方契约包也可以同样提供按调用方区分的服务：提供者登记为 `(identity) => 接口`，描述符的 `bind` 以 `port.identity` 取用，提供者按身份保存的状态由 `bind` 经 `port.follow` 释放（attach 里以 `port.identity` 取得接口，返回的清理调用接口的释放方法），提供者换人与这次激活关闭时都会释放。binder 不应把 `identity` 转交给这次激活以外的代码。
 
 ## 解析顺序
 
