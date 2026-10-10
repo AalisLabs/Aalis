@@ -271,10 +271,10 @@ describe('重算振荡', () => {
     const gate = defineService<object>('zz-oe-osc-gate');
     const blocker = defineService<object>('zz-oe-osc-blocker');
     let offGate = w.host(gate, {});
-    const LIMIT = 6;
+    const LIMIT = 12;
     let takeovers = 0;
     // opener 有 gate 才起并提供 blocker；closer 有 blocker 才起，起来就收走 gate、关闭时还回去。
-    // 两者互相否定：每两轮翻转一次，直到 closer 第 LIMIT 次之后不再收 gate。
+    // 两者互相否定：closer 随 opener 同批退场、又同轮重新激活，每轮翻转一次，直到 closer 第 LIMIT 次之后不再收 gate。
     await w.app.plugin(
       definePlugin({
         name: 'opener',
@@ -303,7 +303,7 @@ describe('重算振荡', () => {
 
     const oscillation = w.at('warn').filter(x => x.includes('轮未收敛'));
     expect(oscillation).toEqual([
-      'recompute 12 轮未收敛（上限 12 = 2×插件数+8），疑似插件间状态振荡。最后一轮仍在翻转: opener',
+      'recompute 12 轮未收敛（上限 12 = 2×插件数+8），疑似插件间状态振荡。最后一轮仍在翻转: opener, closer',
     ]);
     expect(takeovers).toBe(LIMIT);
     expect(stateOf(w.app, 'opener')).toBe('active');

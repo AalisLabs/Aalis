@@ -332,24 +332,35 @@ export class PluginManager implements PluginManagerService {
    */
   #retire(entry: PluginRecord, target: PluginState): Promise<void> {
     const services = this.#host.runtime.services;
-    const batch = [entry];
-    const leaving = new Set<symbol>();
-    if (entry.activation) leaving.add(entry.activation.owner);
-    const stranded = (name: string): boolean => {
+    const batch = this.#closure([entry], [...this.#plugins.values()], (name, leaving) => {
       const owner = services.ownerOf(name);
       return owner !== undefined && leaving.has(owner);
-    };
+    });
+    return retireBatch(batch, item => (item === entry ? target : 'pending'), this.#deps);
+  }
+
+  /**
+   * 退场批的传递闭包：候选里在跑的插件（已激活，或仍在初始化），某个 required 服务按 lost 判定会随本批失去时并入，
+   * 直到不再增长。管理动作与依赖丢失共用，只是 lost 的判据不同
+   */
+  #closure(
+    seeds: PluginRecord[],
+    candidates: PluginRecord[],
+    lost: (name: string, leaving: ReadonlySet<symbol>) => boolean,
+  ): PluginRecord[] {
+    const batch = [...seeds];
+    const leaving = new Set(seeds.flatMap(seed => (seed.activation ? [seed.activation.owner] : [])));
     for (let grew = true; grew; ) {
       grew = false;
-      for (const other of this.#plugins.values()) {
+      for (const other of candidates) {
         if (!running(other) || !other.activation || batch.includes(other)) continue;
-        if (!other.required.some(stranded)) continue;
+        if (!other.required.some(name => lost(name, leaving))) continue;
         batch.push(other);
         leaving.add(other.activation.owner);
         grew = true;
       }
     }
-    return retireBatch(batch, item => (item === entry ? target : 'pending'), this.#deps);
+    return batch;
   }
 
   /**
@@ -575,31 +586,33 @@ export class PluginManager implements PluginManagerService {
     let rounds = 0;
     // 普通依赖级联的拆除波、激活波至多 {@link #maxRounds} 轮，超出即点名振荡。初始化期间 required 再次消失
     // 不属于单调级联，它的自动重试另按条目计预算（{@link #spendRetry}），`#queued` 补跑重置本函数的轮数也放不开它。
-    let lastRoundFlips: string[] = [];
+    let lastRoundFlips = new Set<string>();
 
     // 停机后不再做普通状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
     converge: while (changed && rounds < this.#maxRounds() && !this.#shuttingDown) {
       changed = false;
       rounds++;
-      lastRoundFlips = [];
+      lastRoundFlips = new Set();
 
       this.#order ??= topoSortByDeps([...this.#plugins.values()], this.#logger);
       const order = this.#order;
 
-      // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定。
-      // 后台激活同样看：required 不在了，它 apply 里拿到的已是旧实例（本 flight 此刻没有在飞的激活，
+      // Phase A: 本轮目标不再是 active 的成批关闭：某个 required 服务此刻没有提供者的，连同 required 服务会随这批一起
+      // 失去全部提供者的下游（传递闭包；还有后备的不算，非管理的换人不改目标态），它们之间的次序由关停编排按实际依赖定，
+      // 下游先收尾。后台激活同样看：required 不在了，它 apply 里拿到的已是旧实例（本 flight 此刻没有在飞的激活，
       // activating 即后台），拆它记入重试预算
-      const retiring = new Map<PluginRecord, PluginState>();
-      for (const entry of [...order].reverse()) {
-        if (!running(entry)) continue;
-        if (requiredSatisfied(entry, this.#host.runtime.services)) continue;
-        const unmet = entry.required.find(name => this.#host.runtime.services.get(name) === undefined)!;
-        this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
-        retiring.set(entry, entry.state === 'activating' ? this.#spendRetry(entry, unmet) : 'pending');
-        lastRoundFlips.push(entry.instanceId);
-      }
-      if (retiring.size > 0) {
-        await retireBatch([...retiring.keys()], e => retiring.get(e)!, this.#deps);
+      const services = this.#host.runtime.services;
+      const lost = (name: string, leaving: ReadonlySet<symbol>): boolean => !services.survives(name, leaving);
+      const retiring = this.#closure([], [...order].reverse(), lost);
+      if (retiring.length > 0) {
+        const leaving = new Set(retiring.map(entry => entry.activation!.owner));
+        const target = (entry: PluginRecord): PluginState => {
+          const unmet = entry.required.find(name => lost(name, leaving))!;
+          this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
+          lastRoundFlips.add(entry.instanceId);
+          return entry.state === 'activating' ? this.#spendRetry(entry, unmet) : 'pending';
+        };
+        await retireBatch(retiring, target, this.#deps);
         changed = true;
       }
 
@@ -618,7 +631,7 @@ export class PluginManager implements PluginManagerService {
         // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
         if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') {
           changed = true;
-          lastRoundFlips.push(entry.instanceId);
+          lastRoundFlips.add(entry.instanceId);
         }
       }
     }
@@ -629,7 +642,7 @@ export class PluginManager implements PluginManagerService {
       // 每处 changed = true 都登记了翻转者，走到这里名单必不为空。
       this.#logger.warn(
         `recompute ${rounds} 轮未收敛（上限 ${this.#maxRounds()} = 2×插件数+8），` +
-          `疑似插件间状态振荡。最后一轮仍在翻转: ${lastRoundFlips.join(', ')}`,
+          `疑似插件间状态振荡。最后一轮仍在翻转: ${[...lastRoundFlips].join(', ')}`,
       );
     }
 
