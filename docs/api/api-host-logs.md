@@ -6,7 +6,7 @@
 
 ## 概述
 
-写日志是 core 发给每个插件的 `logger`；读整个日志流是宿主的管理能力：日志里有用户消息、路径与报错细节，插件要在 `uses` 里声明本服务才拿得到，订阅也归本次激活。历史在宿主那里（Node 宿主是家目录的 `logs/latest.log`），core 只有实时的日志通道，所以读日志的服务由宿主提供，不进 core。
+写日志是 core 发给每个插件的 `logger`；读整个日志流是宿主的管理能力：日志里有用户消息、路径与报错细节，不随 `logger` 发给每个插件，要读的插件在 `uses` 里声明本服务，订阅归本次激活。历史在宿主那里（Node 宿主是家目录的 `logs/latest.log`），core 只有实时的日志通道，所以读日志的服务由宿主提供，不进 core。
 
 本包定义 `hostLogs` 描述符（服务名 `host-logs`）与服务接口 `HostLogs`，不含实现。Node 宿主 `@aalis/runtime` 在根上独占提供它；其他宿主要给插件读日志，需自行 provide 本描述符。除了 core 与 runtime，`packages` 下的源码不引用 core 的日志中枢 `LogHub`（architecture 守卫 `test/architecture/log-hub-readers.test.ts` 会拦下）。
 

@@ -35,8 +35,8 @@ export interface PersonaService {
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
 - `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件、终端的标题与署名都按会话传入（终端取它自己会话的生效人设）；没有会话的用途不传。
 - `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
-- `isClientSideJsonRendering(options?)` — 该卡是否声明「JSON 由客户端渲染」。为真时服务端不提取回复字段，整段 JSON 透传给前端。
-- `listModels()` — 列出已扫描到的全部角色卡名，供 WebUI 与 session-manager 的下拉框使用。
+- `isClientSideJsonRendering(options?)` — 是否由客户端渲染 JSON：`options.clientSideJsonRendering` 给了值时以它为准，否则看该卡的声明。为真时服务端不提取回复字段，整段 JSON 透传给前端。
+- `listModels()` — 列出已扫描到的全部角色卡名，供 WebUI 的人设下拉框（webui-server 的 `/models`）与 agent 的 `/persona` 指令使用。
 - `getNickNames(options?)` — 返回角色卡的 `nick_name` 列表，供触发检测匹配；按 `options` 取卡，同 `getPersonaName`。
 - `isTimeInjectionEnabled()` — persona 是否已注入当前时间。其它插件据此决定是否还要注册 `system_time` 工具。
 - `getPersonaSkills(options?)` — 返回角色卡的 skill 白名单。约定：返回 `undefined` 表示未声明白名单（全部开放），返回 `[]` 表示禁用所有 skill。
@@ -64,7 +64,7 @@ export interface PersonaSessionOptions {
 }
 ```
 
-`PersonaSessionOptions` 的来源约定很关键：persona 服务自身不依赖 session-manager，它只根据传入的选项调整行为。会话级的覆盖由调用方（agent、persona 自己的 reply 钩子，以及触发插件共用的名字表 `createBotNames`）从 `session-manager.resolveConfig()` 取出后构造，再传给 persona。
+`PersonaSessionOptions` 的来源约定很关键：persona 服务的方法不读 session-manager，只根据传入的选项调整行为。会话级的覆盖由调用方（agent、persona 自己的 reply 钩子，以及触发插件共用的名字表 `createBotNames`）从 `session-manager.resolveConfig()` 取出后构造，再传给 persona。
 
 服务描述符随契约包导出，类型随描述符走：
 
@@ -76,7 +76,7 @@ export const persona = defineService<PersonaService>('persona');
 
 ## 3. 谁提供 / 谁消费
 
-提供者是 `@aalis/plugin-persona`。其中 `PersonaServiceImpl` 实现接口，`apply()` 里通过 `provide.use(persona, service)` 注册。这是当前唯一的参考实现。
+提供者是 `@aalis/plugin-persona`。其中 `PersonaServiceImpl` 实现接口，`apply()` 里通过 `provide.use(persona, service)` 注册。这是当前唯一的参考实现。它还经 `sessionManager.use.registerSetting` 登记四项会话设置：`persona`（会话用的角色卡，可选项来自 `listModels()`）、`systemPromptExtra`、`disableOutputFormat`、`clientSideJsonRendering`，即 `PersonaSessionOptions` 的来源。
 
 典型消费点如下，它们全部走可选依赖 + 存在性判断：
 
@@ -84,11 +84,10 @@ export const persona = defineService<PersonaService>('persona');
 - `@aalis/plugin-skills` — 按会话取白名单：`getPersonaSkills({ persona })`（`persona` 取自 session-manager 解析的会话配置，没有会话管理或没有会话时不指定、即主卡）过滤 `list_skills`、`load_skill`、技能发现那一行与触发词自动激活看得到的 skill。
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`（`options.persona` 取自 session-manager 解析的会话配置），收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-tool-system` — 通过 `persona.present && persona.use.isTimeInjectionEnabled?.()` 判断，已注入时间则跳过注册 `system_time` 工具。
-- `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
-- `@aalis/plugin-webui-server` — 不声明 persona 依赖；`listModels()` 走通用的 `/models` 枚举（`services.use.all('persona')`）。
-- `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName(...)`，缺席时回退 `'Aalis'`，多处用作命令行标题。
+- `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）走通用的 `/models` 枚举（`services.use.all('persona')` 后调 `listModels()`）。
+- `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ persona })`（`persona` 取自终端会话的配置），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
 
-关于消费模式，有一点值得说明：多数消费者对类型做了结构化窄化，只声明自己用到的那部分（例如 tool-system 只声明 `{ isTimeInjectionEnabled?(): boolean }`），以避免 import 全量类型造成包循环。`caps.services.use.get(name)` 按字符串名查时不带类型，按设计由消费侧窄化。
+消费者都把描述符 `persona` 写进 `uses`（以 `optional` 声明），类型随描述符走。只有按字符串名动态查询时（如 webui-server 的 `services.use.all('persona')`）不带类型，由消费侧窄化。
 
 ## 4. 写一个 provider
 
@@ -157,9 +156,8 @@ export default definePlugin({
 ## 5. 标准消费方式
 
 - 业务句柄是活的。`persona.use` 的选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
-- persona 是可选依赖。在 `uses optional` 里声明它（agent、session-manager、tool-system 都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
+- persona 是可选依赖。在 `uses optional` 里声明它（agent、cli、skills、tool-system 与两个触发插件都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
 - 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`、`persona?.getPersonaSkills?.()`，因为第三方 provider 可能没有实现。
-- 用类型窄化避免包循环。如果只用一两个方法，按消费侧的需要声明窄类型（如按名字动态查询 `services.use.get('persona')` 的结果），不必 import 全量的 `PersonaService`。
 - 注意错误边界。跨会话与可选读取统一用 `try/catch` 后静默忽略（persona 自身读 session-manager 就这么处理），不要让 persona 不可用拖垮主链路。
 - 区分 `getPersonaSkills` 的三态语义：`undefined` 表示全开，`[]` 表示全禁，`['a','b']` 表示白名单。消费者必须区分 `undefined` 与 `[]`——skills 插件的判断是 `if (whitelist === undefined) return all`。
 
@@ -167,13 +165,13 @@ export default definePlugin({
 
 **`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时经 `caps.storage.use`，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
-**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时取会话管理给这个会话记下的聊天窗口（类型名与群号；子任务只取根会话的出生平台，不取聊天窗口），只用于提示词，不写回消息。
+**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。会话管理在场时，平台取它记下的出生平台（子任务取根会话的）；记下的聊天窗口是多方会话时，群号取窗口的目标；类型名在消息上没有时（定时、编排、空闲这类合成回合不经适配器）取聊天窗口的类型。这些只用于提示词，不写回消息。
 
 ::: warning 安全要点
 这是一处安全约束。第三方 provider 若也注入会话上下文，必须保证同等的隔离——不要用裸实例字段存储「当前会话」。
 :::
 
-**状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：当 scope 为 session 或 all、且 type 含 `context` 或 `persona` 时会被清除。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
+**状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：scope 为 all 时清全部会话的，否则清当前会话的；只在未指定 type、或 type 含 `context` 或 `persona` 时参与。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
 
 **outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自 `OutputFormat.retries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
 
@@ -183,13 +181,13 @@ export default definePlugin({
 
 **结构化输出的逻辑不在 service 方法里，而在 reply 钩子里。** `getOutputFormat()` 只返回声明本身；真正的解析、对 `data.content` 的回填、状态持久化与重试，全在 `agent:reply:before` 中间件里完成。仅调用 `getOutputFormat()` 并不能得到结构化结果。
 
-**reply 字段回退是尽力而为。** 当模型用错字段名时，会按别名表 `['response','reply','content','answer','text','msg']` 回退；或者在只有单个字符串字段时直接取它。没有 outputFormat 时，如果内容以 `{` 开头，也会尝试解包同类字段。这是容错行为，不是契约保证。
+**reply 字段回退是尽力而为。** 当模型用错字段名时，会按别名表 `['response','reply','content','answer','text','msg']` 回退；或者在只有单个字符串字段时直接取它。没有 outputFormat 时，如果内容以 `{` 开头，也会按同一张表加上 `message` 尝试解包。这是容错行为，不是契约保证。
 
 **角色卡加载是 cache-only + 跟随 storage 预扫 + watch。** `loadCard` 只查缓存。`app:ready` 起插件跟随 storage 提供者（`storage.follow`）：提供者在场即挂监听并用 `scanAll` 全量预填，提供者重启、改配置或晚于启动上线时先关旧监听再重挂、重扫；之后由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；目录所在根不支持 `watch` 时（调用抛错，记一条 warn），只有 storage 换代或重启才会刷新。目录列不出（不是不存在）时本次扫描失败并记 warn，已载入的卡不剔除。
 
-**YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。主角色卡解析失败时回退内置 default，日志说的是「存在但解析失败」而非「未找到」。
+**YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。启动时主角色卡解析失败则回退内置 default，日志说的是「存在但解析失败」而非「未找到」。运行中主角色卡被删或写坏时不回退：已载入的那份继续生效，直到它重新解析成功或重启。
 
-**找不到主角色卡时回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，`getPersonaName()` 在 `name` 为空时返回 `"<fileName>，未设置名字"`（按会话取的卡没写名字时是那张卡的文件名）。
+**启动时找不到主角色卡则回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，`getPersonaName()` 在 `name` 为空时返回 `"<fileName>，未设置名字"`（按会话取的卡没写名字时是那张卡的文件名）。
 
 **`reply: true` 必须有且仅有一个。** `parseRawOutputFormat` 取最后一个 `reply:true` 的 key 作为 `replyField`。如果没有任何 reply 字段，整段 outputFormat 作废并返回 `undefined`。存在多个 reply 字段时不会报错，但只有最后一个生效。
 

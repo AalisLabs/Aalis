@@ -72,7 +72,7 @@ interface PluginEntry {
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```
 
-公开类型不声明内部激活记录。`getPlugin()` 交出调用时刻的浅快照：之后的状态变化不改它，要最新的就再调一次或看 `getStatus()`，写它也进不了注册表；`config` 与 `definition` 仍是运行中的同一对象，只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `reusable`，以及激活超过 `slowThresholdMs` 仍未完成、已转入后台（`state` 为 `activating`）时的 `slow: true`、旧实例关完仍有工作没落定（停下之前同一 id 不起新实例）时的 `lingering: true`（否则都不给）；`uses` 是完整声明的快照，也是状态里唯一的依赖信息，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`；要 required 的服务名就写 `uses.filter(u => u.kind === 'required').map(u => u.service)`。Core 基础服务也计入，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
+公开类型不声明内部激活记录。`getPlugin()` 交出调用时刻的浅快照：之后的状态变化不改它，要最新的就再调一次或看 `getStatus()`，写它也进不了注册表；`config` 与 `definition` 仍是运行中的同一对象，只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `reusable`，以及激活超过 `slowThresholdMs` 仍未完成、已转入后台（`state` 为 `activating`）时的 `slow: true`、旧实例关完仍有工作没落定（停下之前同一 id 不起新实例）时的 `lingering: true`（否则都不给）；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
 
 ---
 

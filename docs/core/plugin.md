@@ -66,7 +66,7 @@ register(definition, config?, instanceId?, { disabled? })
 
 一个激活关完时还有工作没落定（`apply` 或某项清理超过 `disposeTimeoutMs` 被放弃等待，或关闭后就地执行的清理还在跑），core 把它记在实例 id 名下：条目照写目标态（`bounce` 为 `pending`、`disable` 为 `disabled`、依赖下线被拆的回到 `pending`），`getStatus()` 对它给出 `lingering: true`，记一条 warn；这些工作全部落定之前，同一 id 不起新实例，`bounce`、`updateConfig`、`enable`、依赖恢复与卸载后同 id 重新登记都一样。落定后去掉标记、补一次重算，按目标态继续。管理动作与 `idle()` 不等它。永不落定的工作会让这个 id 一直等下去，只有重启进程能解决。
 
-激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活 required 依赖的 `use` 句柄在 `apply` 中抛出的服务不可用错误原样传出，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。这类自动重试与后台激活因 required 依赖下线被拆，按插件记入同一份重试预算，跨重算累计，额度为首次取额时的 `2×插件数 + 8`；用尽转 `error`（「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），自动重试未收敛，已停止；enable 或 bounce 后重试」），不再自动重试。激活成功、`enable`、`bounce` / `updateConfig` 时预算清零。optional 依赖与 `of(id)` 句柄的错误、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。`plugin:unloaded` 只发给发过 `plugin:loaded` 的激活：失败激活、仍在初始化时被拆的激活都不发。
+激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活 required 依赖的 `use` 句柄在 `apply` 中抛出的服务不可用错误原样传出，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。这类自动重试与后台激活因 required 依赖下线被拆，按插件记入同一份重试预算，跨重算累计、有界；用尽转 `error`（「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），自动重试未收敛，已停止；enable 或 bounce 后重试」），不再自动重试。optional 依赖与 `of(id)` 句柄的错误、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。`plugin:unloaded` 只发给发过 `plugin:loaded` 的激活：失败激活、仍在初始化时被拆的激活都不发。
 
 ## 统一状态机：`recompute()`
 

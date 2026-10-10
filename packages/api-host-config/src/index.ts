@@ -4,7 +4,7 @@
  * 配置文档记的是「下次启动用什么」：插件配置、禁用名单、服务偏好与各域业务字段（owners 等）。
  * 运行态（实例配置、禁用态、服务偏好）在 core；文档与落盘在宿主。Node 宿主 @aalis/runtime 把文档
  * 作为 host-config 服务独占登记在根上；别的宿主要给插件读写文档，自己 provide 本描述符。
- * 管理类插件在 uses 里显式声明才拿得到，没有宿主提供时声明 optional 的插件要自行降级。
+ * 管理类插件在 uses 里声明它；没有宿主提供时，声明 optional 的插件要自行降级。
  */
 
 import { defineService, type PreferenceScope } from '@aalis/core';
