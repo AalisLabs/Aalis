@@ -73,7 +73,7 @@ export default definePlugin({
 });
 ```
 
-`llm` 是选择层：`llm.use` 是转发给本插件选中那一家的活句柄，存起来也会跟着换人；optional 依赖调用前先看 `llm.present`。有状态资源用 `follow`。详见 [惰性服务访问](../concepts/lazy-service-access.md)。
+`llm` 是选择层，`llm.use` 是活的业务句柄，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)；有状态资源用 [`follow`](../core/context.md#follow)。
 
 ### 2.2 自己 provide 一个服务
 
@@ -130,7 +130,7 @@ const model = resolveLLMModel(caps.llm, ref, [LLMCapabilities.Vision])?.use;
 上层跨 entry 调度请使用 `x.list()` / `x.of(id)` 或 `services.use.all(desc)`（只接收名字，**无** capabilities 参数）
 与各 `*-api` helper（`resolveLLMModel` / `listLLMModels` / `resolvePlatformBySession` 等）。
 
-`use` 默认打到「本插件偏好 > 全局偏好 > priority > 注册顺序」居首的那一家。偏好由用户在 WebUI 设置「系统」的服务偏好
+`use` 默认打到本插件选中的那一家，挑选规则见 [选择层与业务层](../core/context.md#选择层与业务层)。偏好由用户在 WebUI 设置「系统」的服务偏好
 或配置项 `servicePreferences` 里指定，插件不写偏好。
 
 ### 2.3 多提供者：per-entry 注册

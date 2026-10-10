@@ -100,7 +100,7 @@ default agent 用整个 service 注册（不是 per-entry）。自定义 `handle
 
 ## 5. 标准消费方式
 
-业务句柄 `agent.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人。选不到提供者时访问成员同步抛 `ServiceUnavailableError`，可选依赖先看 `present`。
+业务句柄 `agent.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ```ts
 if (agent.present) agent.use.abort?.(sessionId);

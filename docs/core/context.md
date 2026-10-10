@@ -151,7 +151,7 @@ interface ProviderEntry<B> {
   readonly priority: number;
   readonly selected: boolean;  // 是否为本插件当前选中的那一家
   readonly basis?: 'plugin' | 'global' | 'rank'; // 选中依据，只在选中的那一条上有
-  readonly use: B;             // 这一家的业务句柄，等同 of(id)
+  readonly use: B;             // 钉在这一条登记上的业务句柄，见下文
 }
 ```
 
@@ -161,12 +161,23 @@ interface ProviderEntry<B> {
 
 业务句柄是活的转发句柄：
 
-- 每次访问成员都重新解析到当前选中的那一家，存进字段或闭包也会跟着换人；已经开始的一次调用在原来那一家上完成。
-- 只转发属性读取与调用。`then`、symbol 键、`toJSON` 不转发，`await` 句柄不会把它当成 thenable；`in`、`Object.keys`、对象展开看不到提供者的成员；在句柄上写属性落不到提供者。
-- 选不到提供者时访问成员同步抛 `ServiceUnavailableError`。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 认；可选依赖先看 `present`。required 依赖丢失到调度收敛之间也可能短暂选不到。
-- 一段操作要固定同一家时取选中那一条的句柄：`const v = caps.x.list().find(p => p.selected)?.use`。比较身份就比条目 id，如 `caps.trigger.list().find(p => p.selected)?.id === caps.lifecycle.use.id`。
-- `of(id)` 的那一家不在时访问成员抛错，同一个 id 回来后照常可用。
+- `use` 每次访问成员都重新解析到本插件此刻选中的那一家，存进字段或闭包也会跟着换人；已经开始的一次调用在原来那一家上完成。
+- 选不到提供者时访问成员同步抛 `ServiceUnavailableError`。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 认；可选依赖先看 `present`，要「选不到就当没有」写 `caps.x.present ? caps.x.use : undefined`。required 依赖丢失到调度收敛之间也可能短暂选不到。
+- `of(id)` 按 id 解析：那一家不在时访问成员抛错，同一个 id 回来后（含换了新实例）照常可用。
+- `list()` 条目的 `use` 钉在那一条登记上：它对外时打到它，撤回之后访问抛错，同一个 id 换了新实例也不跟过去。同一条登记每次列出都是同一个句柄。
+- 一段操作（先读后写、先查后删、算向量与记下模型标识）要落在同一家上，取选中那一条的句柄：`const v = caps.x.list().find(p => p.selected)?.use`，选不到时是 `undefined`；要选不到时照样抛不可用错误，写 `?? caps.x.use`。途中那一家撤回，后续访问抛错，不会落到另一家上。比较身份就比条目 id，如 `caps.trigger.list().find(p => p.selected)?.id === caps.lifecycle.use.id`。
 - 要用提供者建立长期状态（SDK 句柄、订阅）走 `follow`。
+
+### 句柄的边界
+
+活句柄是一层代理，只转发属性读取与方法调用，以下几处与直接持有实例不同：
+
+- `typeof` 句柄是 `'function'`；提供者本身是函数时句柄可以直接调用。
+- `then`、symbol 键（含 `Symbol.iterator` / `Symbol.asyncIterator`）与 `toJSON` 不转发：`await` 句柄得到句柄本身，句柄不能 `for…of` 或展开迭代，打印与 `JSON.stringify` 不触发解析。
+- `in`、`Object.keys`、对象展开看不到提供者的成员，`structuredClone` 句柄抛错；在句柄上写属性落不到提供者。
+- 每次读方法得到一个新的包装函数（`h.m !== h.m`），调用时才再解析并以真实实例作 `this`，用 `#` 私有字段的提供者照常工作。包装函数不能 `new`：提供者成员里的类经句柄取出后无法构造，需要构造的由提供者给工厂方法。
+- 返回 `this` 的方法交出的是真实实例，它不再跟着换人。
+- 缺席时 `String(句柄)` 同样抛错（它要读 `toString`）。
 
 自定义 `bind` 要在转发之上加或改几个成员时，写 `Object.assign(Object.create(port.provider), { ... })`：没覆盖的成员沿原型链落到活句柄上。不要用对象展开去拼——展开看不到提供者的成员。
 
@@ -203,7 +214,9 @@ apply({ services }) {
 }
 ```
 
-`get` / `all` 给的是原始实例，按全局口径解析（不看本插件偏好），不享有业务句柄的转发语义。查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的身份调用才得到它自己的接口，认不出的身份即抛错。`services.use.inspect(key)` 只读元数据，适合服务列表。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
+`get` / `all` 给的是原始实例，按全局口径解析（不看本插件偏好），不享有业务句柄的转发语义。查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的身份调用才得到它自己的接口，认不出的身份即抛错。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
+
+`services.use.inspect(key, { for? })` 只读登记元数据（`contextId` / `priority` / `label` / `exclusive`，选中的那一条另带 `selected` 与 `basis`），适合服务列表与管理面：给 `for`（插件实例 id）即按那个插件的解析顺序排列，与它自己的 `list()` 同一条规则；不给即全局口径。
 
 `prefer(key, contextId, { for })` / `unprefer` / `preferred` 管理偏好：给 `for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。偏好只由用户经管理面写（WebUI、配置），普通插件不调。
 

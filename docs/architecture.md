@@ -219,12 +219,11 @@ provide.use(llm, deepseekService, { priority: 10 });
 const reply = await llm.use.chat({ messages }); // 业务句柄：每次调用打到本插件选中的那一家
 ```
 
-`use` 只在已经写进 `uses` 的描述符所装配的选择层上，转发给本插件选中的那一家（不再有 capabilities 参数）；一段操作要固定同一家时取 `llm.list().find(p => p.selected)?.use`。动态按名查询走 `services.use.get`，不产生依赖边。
+`use` 只在已经写进 `uses` 的描述符所装配的选择层上，转发给本插件选中的那一家（不再有 capabilities 参数），选择、缺席与固定同一家的规则见 [选择层与业务层](core/context.md#选择层与业务层)。动态按名查询走 `services.use.get`，不产生依赖边。
 
 ### 多实现解析顺序
 
-同一服务可有多个提供者。挑选规则为 **本插件偏好 > 全局偏好 > 优先级 > 注册顺序**：
-先看是否有为本插件或全局设的偏好 entry（且在场），否则取 priority 最高者（同优先级取先注册者）。
+同一服务可有多个提供者。挑选规则为 **本插件偏好 > 全局偏好 > 优先级 > 注册顺序**，细则见 [选择层与业务层](core/context.md#选择层与业务层)。
 
 ```
 llm 服务:

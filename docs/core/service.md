@@ -48,7 +48,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 ### 资源口：binder 的范围
 
-消费方每次激活装配 `uses` 时，core 为每项声明造一个选择层，并对每个目标（`use` 与各个 `of(id)`）各调一次描述符的 `bind`，返回值就是该目标的业务句柄：`use` 的目标是本插件选中的那一家（随偏好与上下线换人），`of(id)` 的目标固定那一家。bind 可以包装业务方法（如 `llm` 给请求盖上调用方 id：`chat: req => port.provider.chat({ ...req, caller: port.id })`）、加登记方法，改不了选谁。传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
+消费方每次激活装配 `uses` 时，core 为每项声明造一个选择层，并对每个目标各调一次描述符的 `bind`，返回值就是该目标的业务句柄：`use` 的目标是本插件选中的那一家（随偏好与上下线换人），`of(id)` 的目标按 id 固定那一家，`list()` 条目的 `use` 与 `follow` 交给 `attach` 的句柄的目标钉在那一条登记上（首次取用时各调一次 `bind`）。钉住的目标退役时（`follow` 这次挂载的清理落定；`list()` 的条目不再对外之后的下一次 `list()`），它的 `bind` 经资源口登记的跟随、登记与 `track` 随之撤回，不留到激活关闭。bind 可以包装业务方法（如 `llm` 给请求盖上调用方 id：`chat: req => port.provider.chat({ ...req, caller: port.id })`）、加登记方法，改不了选谁。传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
 
 - `follow(attach)`：随提供者换人的有状态资源。换人时先跑上次返回的清理（异步的等它落定）再挂新实例，下线与关闭时清理。
 - `registrar({ key, register })`：按键登记到提供者上的条目。同键替换，提供者换人时整体重挂，关闭时与原语同一拍撤回。
@@ -76,7 +76,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 ## 解析顺序
 
-同一服务名可有多个提供者。挑选规则只有一条：**本插件偏好 > 全局偏好 > 优先级 > 注册顺序**。业务句柄 `use` 打到本插件按这条规则选中的那一家：先看本插件偏好、再看全局偏好指向的那家是否在场，都不在就取优先级最高、最先注册者；偏好指向的那家回来后切回。`services.get` / `all` / `inspect` 按全局口径，不看本插件偏好。无提供者时 `present` 为 false，`get` 返回 `undefined`。
+同一服务名可有多个提供者，挑选规则只有一条，见 [选择层与业务层](context.md#选择层与业务层)。`services.get` / `all` 与不给 `for` 的 `inspect` 按全局口径，不看本插件偏好；无提供者时 `get` 返回 `undefined`。
 
 `provide.use(descriptor, impl, { exclusive: true })` 要求这个服务名下没有其他登记；该条目存在期间，任何第二条登记都被拒绝。它不改变解析顺序，也不赋予永久驻留权；退订后可以重新登记。
 
@@ -95,11 +95,11 @@ interface ServiceView<T = unknown> {
 
 `services.use.all(key)` 返回该投影的数组快照，顺序遵循「全局偏好 > 优先级 > 注册顺序」。选择层的 `list()` 给的是 `ProviderEntry`（`id` / `label` / `priority` / `selected` / `basis` / `use`），按本插件的口径排序，不含原始实例。
 
-`instance` 是登记进容器的对象本身。只查看登记信息应使用 `services.inspect(key)`：返回 `contextId` / `priority` / `label` 与 `exclusive`，不含实例。WebUI 服务列表使用这一元数据入口。
+`instance` 是登记进容器的对象本身。只查看登记信息应使用 `services.inspect(key, { for? })`：返回 `contextId` / `priority` / `label` / `exclusive`，选中的那一条另带 `selected` 与 `basis`，不含实例；给 `for`（插件实例 id）按那个插件的解析顺序排列，不给按全局口径。WebUI 的服务列表与插件详情里各插件此刻的选择都用这一元数据入口。
 
 ## 行为边界
 
-- 业务句柄是活的转发句柄：每次访问成员重新解析到本插件选中的那一家，存起来也会跟着换人；选不到时访问成员同步抛 `ServiceUnavailableError`。
+- 业务句柄的规则见 [选择层与业务层](context.md#选择层与业务层)。
 - 关停边对本插件已声明服务（required 与 optional）在编排那一刻对外的全部提供者建，不只是选中的那一家。
 - `services.get` / `services.all` 给的是原始实例：存起来不会跟着换人。它们不增加声明、不参与激活闸、不自动跟随，也不产生关停边。关停期仍可能拿空；需要声明等待与跟随的，写进 `uses` 并使用 `follow`。
 - 顶层 required 缺席会 `pending`，恢复重新激活；选中的那一家换人不一律重启消费者。
@@ -112,7 +112,7 @@ interface ServiceView<T = unknown> {
 interface Services {
   get(key: ServiceDescriptor | string): unknown | undefined;
   all(key: ServiceDescriptor | string): ServiceView[];
-  inspect(key: ServiceDescriptor | string): ServiceInfo[];
+  inspect(key: ServiceDescriptor | string, scope?: { for?: string }): ServiceInfo[];
   names(): string[];
   preferred(key: ServiceDescriptor | string, scope?: { for?: string }): string | undefined;
   prefer(key: ServiceDescriptor | string, contextId: string, scope?: { for?: string }): boolean;

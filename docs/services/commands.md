@@ -123,7 +123,7 @@ option syntax 速查：
 | `'-t <type:string[]>'` | `string[]`。 |
 | `''`（空） | 纯 boolean flag。 |
 
-登记侧不用判断 `commands` 是否存在：builder 在提供者未就绪时缓存调用、上线后重放。若要读 `getAll()`，先看 `commands.present`，再调 `commands.use.getAll()`；业务句柄是活的，存起来也会跟着换人。
+登记侧不用判断 `commands` 是否存在：builder 在提供者未就绪时缓存调用、上线后重放。若要读 `getAll()`，先看 `commands.present`，再调 `commands.use.getAll()`；业务句柄的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 写给 `/help` 看的几条：
 
