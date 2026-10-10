@@ -38,6 +38,7 @@ export default definePlugin({
     sessions: optional(sessionManager),
     tools: optional(tools),
     llm: optional(llm),
+    contributions: optional(contributions),
     archive: optional(messageArchive),
   },
   apply(caps) { /* 见源码 */ },

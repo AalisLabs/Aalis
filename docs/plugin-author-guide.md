@@ -357,7 +357,7 @@ declare module '@aalis/core' {
 | ③ | `uses: { x }`（required）+ `x.use.…` | 已声明依赖；激活时 provider 应在，但收敛间隙仍可能短暂选不到（访问成员抛 `ServiceUnavailableError`） |
 | ④ | `optional(x)` + 先看 `x.present` 再 `x.use.…` | 探测性可选依赖 |
 
-反模式：没写进 `uses`，又去 `services.use.get` 当依赖用——无激活闸、无关停边。
+反模式：没写进 `uses`，又去 `services.use.get` 当依赖用——无激活闸、无关停边。业务调用只经 `uses` 声明的选择层；`services.use.get` / `all` 只用来查在不在、列运行期服务名的提供者与取身份键，展示与对外输出用 `inspect`，见 [动态查询](core/context.md#动态查询-services)。
 
 `follow` 比自己监听 `service:changed` 轻量：已就绪立刻同步触发、反复上下线重接、关闭自动清理。
 
