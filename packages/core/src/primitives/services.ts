@@ -218,6 +218,14 @@ export class ServiceContainer {
     return this.#winner(this.#visible(name), name)?.owner;
   }
 
+  /**
+   * 去掉这些归属的条目之后，该服务是否还有对外的提供者（重算预判连带退场用）
+   * @internal
+   */
+  survives(name: string, leaving: ReadonlySet<symbol>): boolean {
+    return this.#visible(name).some(entry => !leaving.has(entry.owner));
+  }
+
   /** 只读登记元数据（不含实例）：展示与诊断用 */
   inspect(name: string): ServiceInfo[] {
     return this.#resolveEntries(name).map(entry => ({
