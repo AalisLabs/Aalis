@@ -1,3 +1,5 @@
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
@@ -163,7 +165,7 @@ describe('业务句柄是活的', () => {
 });
 
 describe('选择层', () => {
-  it('list() 选中的那一条在前、标记与 use 打到的一致，条目的 use 与 of(id) 是同一个句柄', async () => {
+  it('list() 选中的那一条在前、标记与 use 打到的一致，同一条登记再列出时是同一个句柄', async () => {
     const { app, give } = world();
     give('a');
     give('b', 1);
@@ -174,7 +176,20 @@ describe('选择层', () => {
       ['a', false, undefined],
     ]);
     expect(entries.find(p => p.selected)?.use.tag).toBe(kvs.use.tag);
-    expect(entries[1].use).toBe(kvs.of('a'));
+    expect(kvs.list()[1].use).toBe(entries[1].use);
+  });
+
+  it('list() 条目的 use 钉在那一条登记：同一个 id 换了新实例，钉住的句柄抛错而不打到新实例，of(id) 打到新的', async () => {
+    const { app, host } = world();
+    const off = host.provide.use(kv, impl('old'), { entryId: 'a' });
+    const kvs = await consumer(app);
+    const pinned = kvs.list().find(p => p.selected)!.use;
+    expect(pinned.get()).toBe('old');
+    off();
+    host.provide.use(kv, impl('new'), { entryId: 'a' });
+    expect(() => pinned.get()).toThrow(expect.objectContaining({ name: 'ServiceUnavailableError' }));
+    expect(kvs.of('a').get()).toBe('new');
+    expect(kvs.list()[0].use.get()).toBe('new');
   });
 
   it('本插件偏好优先于全局偏好，只作用于那一个插件', async () => {
@@ -191,6 +206,29 @@ describe('选择层', () => {
     expect([other.use.tag, other.list()[0].basis]).toEqual(['b', 'global']);
     host.services.use.unprefer(kv, { for: 'mine' });
     expect(mine.use.tag).toBe('b');
+  });
+
+  it('管理面的 inspect 给 { for } 按那个插件的解析顺序排列，选中的那一条标出依据', async () => {
+    const { app, host, give } = world();
+    give('a');
+    give('b', 1);
+    give('c');
+    await consumer(app, 'mine');
+    host.services.use.prefer(kv, 'c', { for: 'mine' });
+    host.services.use.prefer(kv, 'a');
+    const rows = (scope?: { for: string }) =>
+      host.services.use.inspect(kv, scope).map(info => [info.contextId, info.selected, info.basis]);
+    expect(rows({ for: 'mine' })).toEqual([
+      ['c', true, 'plugin'],
+      ['b', false, undefined],
+      ['a', false, undefined],
+    ]);
+    expect(rows({ for: 'other' })).toEqual([
+      ['a', true, 'global'],
+      ['b', false, undefined],
+      ['c', false, undefined],
+    ]);
+    expect(rows()).toEqual(rows({ for: 'other' }));
   });
 
   it('偏好指向的那家不在场时按下一级挑，回来后自动切回', async () => {
@@ -316,6 +354,42 @@ describe('follow 的句柄钉在挂上的那一条登记', () => {
     expect(hub.guard).toBeUndefined();
     expect(warns).toEqual([]);
     expect(() => held.guard).toThrow(expect.objectContaining({ name: 'ServiceUnavailableError' }));
+  });
+
+  it('钉住的句柄退役时撤掉它的 bind 登记的切断项：提供者换人多次，旧实例都可回收', async () => {
+    setFlagsFromString('--expose_gc');
+    const gc = runInNewContext('gc') as () => void;
+    const { app, host } = world();
+    let selection!: ServiceSelection<{ register(item: string): () => void }>;
+    await app.plugin(
+      definePlugin({
+        name: 'registrant',
+        uses: { registry: optional(registry) },
+        apply: caps => {
+          selection = caps.registry;
+        },
+      }),
+    );
+    let attached = 0;
+    selection.follow(handle => {
+      attached++;
+      handle.register('x');
+    });
+    const refs: WeakRef<Hub>[] = [];
+    // 每轮的局部量放在单独的函数里：留在测试函数的帧上会被当成仍可达
+    const round = async (): Promise<void> => {
+      const instance = hub();
+      refs.push(new WeakRef(instance));
+      const off = host.provide.use(registry, instance, { entryId: 'same' });
+      await app.plugins.idle();
+      off();
+      await app.plugins.idle();
+    };
+    for (let i = 0; i < 5; i++) await round();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    gc();
+    expect(attached).toBe(5);
+    expect(refs.filter(ref => ref.deref() !== undefined)).toHaveLength(0);
   });
 });
 

@@ -45,7 +45,7 @@ interface BindingScope {
   readonly owner: symbol;
   readonly logger: Logger;
   readonly resources: Resources;
-  readonly services: Pick<ServiceContainer, 'version' | 'ranked'>;
+  readonly services: Pick<ServiceContainer, 'ranked'>;
   readonly events: EventBus;
   /** 登记跟随边：挂上的那一条归 owner 提供；提供者撤回时经 pump 就地驱动交接；释放时带上撤回的落定 */
   retainBinding(owner: symbol, name: string, pump: () => void): (settling?: Promise<void>) => void;
@@ -80,12 +80,15 @@ export function createSelection<P, B>(
   descriptor: ServiceDescriptor<P, B>,
   required: boolean,
 ): ServiceSelection<B> {
-  const targets = new Map<string | undefined, ReturnType<typeof createTarget<P, B>>>();
+  type Target = ReturnType<typeof createTarget<P, B>>;
+  const targets = new Map<string | undefined, Target>();
   const target = (id?: string) => {
     if (!targets.has(id)) targets.set(id, createTarget(scope, descriptor, required && id === undefined, id));
     return targets.get(id)!;
   };
   const selected = target();
+  // list() 条目的句柄钉在那一条登记：对外时打到它，之后访问抛错；不再对外的在下次 list() 时退役
+  const listed = new Map<ServiceEntry, Target>();
   // follow 交给 attach 的句柄钉在挂上的这一条登记：同 id 换了新实例也打不到新的；这次挂载的清理落定之前一直可用
   const pin = (entry: ServiceEntry, attach: (handle: B) => FollowCleanup): FollowCleanup => {
     const pinned = createTarget(scope, descriptor, false, entry);
@@ -102,19 +105,23 @@ export function createSelection<P, B>(
       return ret;
     }
     return () => {
-      let pending = false;
+      let result: unknown;
       try {
-        const result = typeof ret === 'function' ? ret() : undefined;
-        pending = isThenable(result);
-        return pending ? Promise.resolve(result).finally(pinned.retire) : result;
+        result = typeof ret === 'function' ? ret() : undefined;
+        return isThenable(result) ? Promise.resolve(result).finally(pinned.retire) : result;
       } finally {
-        if (!pending) pinned.retire();
+        if (!isThenable(result)) pinned.retire();
       }
     };
   };
   return {
     list: () => {
       const { entries, basis } = scope.services.ranked(descriptor.name, scope.id);
+      for (const [entry, gone] of listed) {
+        if (entries.includes(entry)) continue;
+        listed.delete(entry);
+        gone.retire();
+      }
       return entries.map((entry, i) => ({
         id: entry.contextId,
         label: entry.label,
@@ -122,7 +129,8 @@ export function createSelection<P, B>(
         selected: i === 0,
         basis: i === 0 ? basis : undefined,
         get use() {
-          return target(entry.contextId).business;
+          if (!listed.has(entry)) listed.set(entry, createTarget(scope, descriptor, false, entry, true));
+          return listed.get(entry)!.business;
         },
       }));
     },
@@ -136,31 +144,27 @@ export function createSelection<P, B>(
 }
 
 /**
- * 一个目标：`use` 的是本插件选中的那一家（at 为 undefined），`of(id)` 的固定 id 那一家，follow 的钉在那一条登记上（at 为
- * 登记本身，retire 之前一直是它）。交出此刻对应的那一条（current）、跟随它的入口（follow，overlap 见 Follower）、bind 给它
- * 的业务句柄（business），以及退役（retire：钉住的目标失效，名下的跟随者收尾并退订）
+ * 一个目标：`use` 的是本插件选中的那一家（at 为 undefined），`of(id)` 的固定 id 那一家，钉住的是那一条登记本身（at 为
+ * 登记：follow 的 retire 之前一直是它，list() 的另要它仍对外，即 listed）。交出此刻对应的那一条（current）、跟随它的入口
+ * （follow，overlap 见 Follower）、bind 给它的业务句柄（business），以及退役（retire：钉住的目标失效，名下的跟随者收尾并
+ * 退订，bind 经资源口登记的切断项与 track 一并撤掉）
  */
 function createTarget<P, B>(
   scope: BindingScope,
   descriptor: ServiceDescriptor<P, B>,
   required: boolean,
   at?: string | ServiceEntry,
+  listed = false,
 ) {
   const { name } = descriptor;
   const id = typeof at === 'object' ? at.contextId : at;
   const withdraw = (off: () => unknown, what: string) => scope.resources.withdraw(off, what);
 
-  // 解析结果按容器版本缓存：登记、撤回、暂扣、偏好任何一项变了就作废，与 service:changed 同一批触发点
-  let cache: { version: number; entry: ServiceEntry | undefined } | undefined;
   let retired = false;
+  const ranked = (): readonly ServiceEntry[] => scope.services.ranked(name, scope.id).entries;
   const current = (): ServiceEntry | undefined => {
-    if (typeof at === 'object') return retired ? undefined : at;
-    const { version } = scope.services;
-    if (cache?.version !== version) {
-      const ranked = scope.services.ranked(name, scope.id).entries;
-      cache = { version, entry: id === undefined ? ranked[0] : ranked.find(entry => entry.contextId === id) };
-    }
-    return cache.entry;
+    if (typeof at === 'object') return retired || (listed && !ranked().includes(at)) ? undefined : at;
+    return id === undefined ? ranked()[0] : ranked().find(entry => entry.contextId === id);
   };
   const instance = (): P => {
     const entry = current();
@@ -185,6 +189,8 @@ function createTarget<P, B>(
   }
   const followers = new Set<Follower>();
   let unwatch: (() => unknown) | undefined;
+  /** 本目标经资源口登记的切断项与 track 的摘除：钉住的目标退役时撤掉，不留到激活关闭 */
+  const owned = new Set<() => unknown>();
 
   const desired = (follower: Follower): ServiceEntry | undefined =>
     follower.cancelled || scope.resources.disposed ? undefined : current();
@@ -271,7 +277,7 @@ function createTarget<P, B>(
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
     followers.add(follower);
     // 登记账本的条目是本激活对外可见的能力，关闭时与原语同一拍撤掉，不等下游交接
-    if (overlap) scope.resources.onCut(() => pump(follower));
+    if (overlap) owned.add(scope.resources.onCut(() => pump(follower)));
     if (!unwatch) subscribe();
     pump(follower);
     return () => {
@@ -291,7 +297,14 @@ function createTarget<P, B>(
     },
     provider: forward(instance),
     follow: attach => follow(entry => attach(entry.instance as P), false),
-    track: (off, label) => scope.resources.track(off, label ?? name),
+    track: (off, label) => {
+      const dispose = scope.resources.track(() => {
+        owned.delete(dispose);
+        return off();
+      }, label ?? name);
+      owned.add(dispose);
+      return dispose;
+    },
     registrar<Item>(options: {
       key(item: Item): string;
       register(provider: P, item: Item): () => unknown;
@@ -387,6 +400,7 @@ function createTarget<P, B>(
   const retire = (): void => {
     retired = true;
     unwatch?.();
+    for (const remove of [...owned]) remove();
   };
   return { current, follow, business: descriptor.bind(port), retire };
 }

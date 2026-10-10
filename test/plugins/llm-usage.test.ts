@@ -140,7 +140,8 @@ describe('模型调用的记账', () => {
     const model = bound.use;
     expect(bound.use).toBe(model);
     const [entry] = bound.list();
-    expect(entry?.use).toBe(bound.of(entry?.id ?? ''));
+    expect(bound.list()[0]?.use).toBe(entry?.use);
+    expect(bound.of(entry?.id ?? '')).toBe(bound.of(entry?.id ?? ''));
     expect([model.id, model.providerId, model.contextLength, model.capabilities]).toEqual([
       'm',
       'fake-llm',
