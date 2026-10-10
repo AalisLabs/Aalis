@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,8 +16,13 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 拆卸时在飞 run 必须真被取消：onDispose 只 cancelTokens.clear() 的话，
 // 在飞 run 手里握的是自己的 token 引用——清表清不到它，于是它会在已关闭的激活上
 // 跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照。
+// 拆卸还要等它收尾：被取消的 run 也要把终态写进运行历史，否则这笔写入落在拆卸返回之后，
+// bounce 时会盖掉新实例的运行历史与 once 记账。
 // 驱动面全部走公开面：真 fs storage + 真 tools + app.plugins.unload（生产卸载路径）。
 // ════════════════════════════════════════════════════════════
+
+/** 首节点进入后卡住的时长：远长于拆卸本身，拆卸不等在飞 run 就会先于它返回 */
+const GATE_MS = 300;
 
 /** 插件停在 pending（required 依赖缺席）时会让整条用例悄悄空转，装载后当场判死 */
 function assertActive(app: App, ids: string[]): void {
@@ -41,7 +46,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('unload 后被阻塞的首节点放行：下游节点 skipped、run 记 cancelled', async () => {
+  it('unload 取消在飞 run 并等它收尾：返回时 run 的 cancelled 终态已落盘，下游节点 skipped', async () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -63,14 +68,10 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
 
-    // gate：卡住第一个节点，直到测试放行；downstream：只记录"我被跑了"
+    // gate：第一个节点进入后卡 GATE_MS；downstream：只记录"我被跑了"
     let gateEntered!: () => void;
     const entered = new Promise<void>(r => {
       gateEntered = r;
-    });
-    let release!: () => void;
-    const released = new Promise<void>(r => {
-      release = r;
     });
     let downstreamRuns = 0;
     // 宿主侧登记测试工具：与插件同一套描述符装配，登记归属根激活
@@ -82,7 +83,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
       },
       handler: async () => {
         gateEntered();
-        await released;
+        await new Promise(r => setTimeout(r, GATE_MS));
         return { content: 'gate-ok' };
       },
     });
@@ -123,7 +124,10 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     await entered; // 第一个节点已进入执行，run 在飞
 
     await app.plugins.unload('@aalis/plugin-workflow');
-    release();
+    const { runs } = JSON.parse(readFileSync(join(base, 'state', 'workflow-runs.json'), 'utf-8')) as {
+      runs: WorkflowRun[];
+    };
+    expect(runs.find(r => r.workflowId === 'zz-dispose')?.status, '拆卸返回前终态已落盘').toBe('cancelled');
     const run = await runPromise;
 
     expect(downstreamRuns, '拆卸后不应再调度新节点').toBe(0);

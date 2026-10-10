@@ -195,14 +195,42 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 远期 once：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成立即触发，
-// 把"一个月后跑"变成"注册时就跑"。分段重排后必须在真正到点前一次都不触发、不记账。
-// 直接驱动 TriggerManager（once 分支只用 logger），配假时钟推进月级时间。
+// 直接驱动 TriggerManager（once 分支只用 logger），配假时钟：
+// - 远期 once：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成立即触发，
+//   把"一个月后跑"变成"注册时就跑"。分段重排后必须在真正到点前一次都不触发、不记账。
+// - runAt 已过的 once 注册时排一次补触发：注销或拆卸要把它一并撤掉，否则它在拆卸之后才触发，
+//   记账与运行历史落在 app.stop() 返回之后。
 // ════════════════════════════════════════════════════════════
 
 const DAY = 86_400_000;
 
-describe('once 触发器的远期 runAt 分段重排', () => {
+/** once 分支只排自己的定时器：cron-engine 与事件总线一旦被碰就当场报错，免得哪天走岔了路还静默通过 */
+function onceManager(fired: string[], ledger: Map<string, number>): TriggerManager {
+  const noopLogger = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
+  const unusable = (what: string) => (): never => {
+    throw new Error(`once 触发器不应使用 ${what}`);
+  };
+  const caps: TriggerCaps = {
+    cronEngine: ref(),
+    events: { on: unusable('事件总线'), emit: unusable('事件总线') },
+    logger: noopLogger,
+  };
+  return new TriggerManager(
+    caps,
+    id => {
+      fired.push(id);
+    },
+    {
+      onceLedgerReadable: () => true,
+      onceFiredAt: id => ledger.get(id),
+      markOnceFired: id => {
+        ledger.set(id, Date.now());
+      },
+    },
+  );
+}
+
+describe('once 触发器的定时（假时钟）', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -213,30 +241,7 @@ describe('once 触发器的远期 runAt 分段重排', () => {
   it('runAt = +30 天：推进 25 天不触发不记账，到点才触发一次', () => {
     const fired: string[] = [];
     const ledger = new Map<string, number>();
-    const noopLogger = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
-    // once 分支只排自己的 setTimeout：cron-engine 与事件总线一旦被碰就当场报错，
-    // 免得哪天走岔了路还静默通过
-    const unusable = (what: string) => (): never => {
-      throw new Error(`once 触发器不应使用 ${what}`);
-    };
-    const caps: TriggerCaps = {
-      cronEngine: ref(),
-      events: { on: unusable('事件总线'), emit: unusable('事件总线') },
-      logger: noopLogger,
-    };
-    const tm = new TriggerManager(
-      caps,
-      id => {
-        fired.push(id);
-      },
-      {
-        onceLedgerReadable: () => true,
-        onceFiredAt: id => ledger.get(id),
-        markOnceFired: id => {
-          ledger.set(id, Date.now());
-        },
-      },
-    );
+    const tm = onceManager(fired, ledger);
 
     const runAt = new Date(Date.now() + 30 * DAY).toISOString();
     tm.register({
@@ -258,5 +263,23 @@ describe('once 触发器的远期 runAt 分段重排', () => {
     vi.advanceTimersByTime(5 * DAY);
     expect(fired).toEqual(['zz-once-far']);
     tm.dispose();
+  });
+
+  it('runAt 已过：注册即排补触发；紧接着 unregister 或 dispose 的，补触发不再执行、不记账', () => {
+    const fired: string[] = [];
+    const ledger = new Map<string, number>();
+    const tm = onceManager(fired, ledger);
+
+    tm.register(pastOnce('zz-kept'));
+    vi.runAllTimers();
+    expect(fired, '对照：不撤的照常补触发').toEqual(['zz-kept']);
+
+    tm.register(pastOnce('zz-unregistered'));
+    tm.unregister('zz-unregistered');
+    tm.register(pastOnce('zz-disposed'));
+    tm.dispose();
+    vi.runAllTimers();
+    expect(fired).toEqual(['zz-kept']);
+    expect([...ledger.keys()]).toEqual(['zz-kept']);
   });
 });
