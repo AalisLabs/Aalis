@@ -5,6 +5,7 @@ import type { ReviewPipeline } from '../../packages/plugin-publish-review/src/pi
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
 const data = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 73, 72, 68, 82]);
@@ -28,7 +29,7 @@ async function open(
   signal?: AbortSignal,
 ) {
   const storage = memoryStorage(files);
-  const store = new ReviewStore(storage);
+  const store = new ReviewStore(boundStorage(storage, 'publish-review'));
   await store.load();
   const pipeline: ReviewPipeline = {
     run: async () => {

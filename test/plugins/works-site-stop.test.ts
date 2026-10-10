@@ -4,8 +4,12 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { PagesClient, PagesDeployment } from '../../packages/plugin-works-site/src/cloudflare/client.js';
 import { readConfig } from '../../packages/plugin-works-site/src/config.js';
 import { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
-import { STATE_URI, WorksStore } from '../../packages/plugin-works-site/src/state.js';
+import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
+import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
+
+/** 默认实例的状态文件 */
+const STATE_URI = 'pluginData:/works-site/state.json';
 
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
 const config = readConfig(
@@ -52,7 +56,7 @@ function deployer(store: WorksStore, client: PagesClient, live: (ids: readonly s
 describe('works-site shutdown ownership', () => {
   it('ignores a late remote list after stop, preserving the next instance ledger and suppressing old live', async () => {
     const files = new Map<string, string>();
-    const store = new WorksStore(memoryStorage(files));
+    const store = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await store.load();
     await store.update(state => {
       state.current.main = {
@@ -86,7 +90,7 @@ describe('works-site shutdown ownership', () => {
     old.start();
     await entered.promise;
     await old.stop(); // A replacement is allowed to take the same state URI after this resolves.
-    const replacement = new WorksStore(memoryStorage(files));
+    const replacement = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await replacement.load();
     expect(Object.keys(replacement.data?.known ?? {})).toEqual(['11111111', '22222222']);
     await replacement.update(state => {
@@ -117,7 +121,7 @@ describe('works-site shutdown ownership', () => {
         await memory.writeFile(uri, bytes);
       },
     } as StorageService;
-    const store = new WorksStore(storage);
+    const store = new WorksStore(ownView(storage, 'works-site'));
     await store.load();
     const old = deployer(store, {} as PagesClient, () => {});
     hold = true;
@@ -139,7 +143,7 @@ describe('works-site shutdown ownership', () => {
     await Promise.all([writing, stopping]);
     await queuedRejected;
     expect(stopped).toBe(true);
-    const replacement = new WorksStore(memoryStorage(files));
+    const replacement = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await replacement.load();
     expect(replacement.data?.known).toHaveProperty('33333333');
     expect(replacement.data?.known).not.toHaveProperty('44444444');

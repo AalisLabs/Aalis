@@ -94,7 +94,7 @@ async function run(caps: Caps): Promise<void> {
   // session-manager 是 required 依赖：它换提供者时本插件随之重新激活，这里存下的引用不会过期
   const sm = caps.sessionManager.use;
   const store = caps.storage.use;
-  const seen = await openSeenStore(store, logger.use);
+  const seen = await openSeenStore(store.own, logger.use);
   const files = createFileHandles(() => store.listRoots());
   const isOwner: IsOwner = (platformName, userId) =>
     userId !== undefined && (caps.authority.present ? caps.authority.use.isOwner(platformName, userId) : false);

@@ -6,6 +6,7 @@ import type { ReviewConfig } from '../../packages/plugin-publish-review/src/conf
 import type { ReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
 const image = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 73, 72, 68, 82]);
@@ -42,7 +43,7 @@ async function setup(
   clock = { now: 1000 },
 ) {
   const storage = memoryStorage(seed);
-  const store = new ReviewStore(storage);
+  const store = new ReviewStore(boundStorage(storage, 'publish-review'));
   await store.load();
   const notices: string[] = [];
   const service = new PublishReviewService({
@@ -68,7 +69,7 @@ describe('作品审核核心', () => {
     const old = h.store.copy();
     old.notices.legacy = { id: 'abcdefghij', origin: input().origin, content: '作品已上线：旧链接', live: false };
     await h.store.save(old);
-    const reloaded = new ReviewStore(memoryStorage(seed));
+    const reloaded = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await reloaded.load();
     expect(reloaded.failure).toBeUndefined();
     expect(reloaded.data.notices.legacy).toMatchObject({ content: '作品已上线：旧链接' });
@@ -285,7 +286,7 @@ describe('作品审核核心', () => {
     });
     expect(h.notices).toEqual([]);
 
-    const restarted = new ReviewStore(memoryStorage(seed));
+    const restarted = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await restarted.load();
     const emit = vi.fn().mockRejectedValue(new Error('temporary'));
     const service = new PublishReviewService({
@@ -459,7 +460,7 @@ describe('作品审核核心', () => {
 
   it('一个房间的通知发不出去不挡其他房间，失败条目按指数退避重试且封顶一小时', async () => {
     const clock = { now: 1000 };
-    const store = new ReviewStore(memoryStorage(new Map()));
+    const store = new ReviewStore(boundStorage(memoryStorage(new Map()), 'publish-review'));
     await store.load();
     const pending = (id: string, sessionId: string) => ({
       id,
@@ -510,7 +511,7 @@ describe('作品审核核心', () => {
   it('通知连续发不出去满 24 小时就放弃：落盘、不再自动重发、列给 owner；owner 重发后照常发出', async () => {
     const clock = { now: 1000 };
     const seed = new Map<string, string | Uint8Array>();
-    const store = new ReviewStore(memoryStorage(seed));
+    const store = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await store.load();
     const seeded = store.copy();
     seeded.notices.blocked = {
@@ -536,7 +537,7 @@ describe('作品审核核心', () => {
     await service.flushNotices();
     expect(store.data.notices.blocked.failingSince).toBe(1000);
     // 失败时刻落盘：重启后照样从第一次失败算起
-    const reloaded = new ReviewStore(memoryStorage(seed));
+    const reloaded = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await reloaded.load();
     expect(reloaded.data.notices.blocked.failingSince).toBe(1000);
 
@@ -567,7 +568,7 @@ describe('作品审核核心', () => {
   it('她转述过、平台却没确认收下：记下并落盘，之后重发直接发宿主原文', async () => {
     const clock = { now: 1000 };
     const seed = new Map<string, string | Uint8Array>();
-    const store = new ReviewStore(memoryStorage(seed));
+    const store = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await store.load();
     const seeded = store.copy();
     seeded.notices.live = {
@@ -594,7 +595,7 @@ describe('作品审核核心', () => {
     });
     await service.flushNotices();
     expect(store.data.notices.live.narrated).toBe(true);
-    const reloaded = new ReviewStore(memoryStorage(seed));
+    const reloaded = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await reloaded.load();
     expect(reloaded.data.notices.live.narrated, '落盘，重启后照样直接发').toBe(true);
     clock.now += 30_000;
@@ -605,7 +606,7 @@ describe('作品审核核心', () => {
   });
 
   it('通知通道没就绪（网关缺席或尚未开放）时本轮不发，也不计入单条退避', async () => {
-    const store = new ReviewStore(memoryStorage(new Map()));
+    const store = new ReviewStore(boundStorage(memoryStorage(new Map()), 'publish-review'));
     await store.load();
     const seeded = store.copy();
     for (const [key, id, sessionId] of [

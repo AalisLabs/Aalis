@@ -1,7 +1,6 @@
 import { dirname, join } from 'node:path';
 import type { CodeSandboxService } from '@aalis/api-code-sandbox';
 import type { StorageService } from '@aalis/api-storage';
-import { ITEM_ROOT } from './state.js';
 import { stripStaticMedia } from './strip/index.js';
 
 const asBytes = (value: string | Buffer): Uint8Array =>
@@ -66,7 +65,7 @@ export class SandboxedMedia {
   readonly #sandbox: CodeSandboxService | undefined;
   readonly #ffmpeg: string;
   readonly #ffprobe: string;
-  readonly #id: string;
+  readonly #itemDir: string;
   readonly #signal: AbortSignal;
   readonly #runId = Buffer.from(crypto.getRandomValues(new Uint8Array(8))).toString('hex');
   #sequence = 0;
@@ -76,14 +75,15 @@ export class SandboxedMedia {
     sandbox?: CodeSandboxService;
     ffmpegPath: string;
     ffprobePath?: string;
-    id: string;
+    /** 这件作品的条目目录（完整的存储地址）：媒体处理的工作文件放在它下面 */
+    itemDir: string;
     signal: AbortSignal;
   }) {
     this.#storage = input.storage;
     this.#sandbox = input.sandbox;
     this.#ffmpeg = input.ffmpegPath;
     this.#ffprobe = input.ffprobePath ?? ffprobeName(input.ffmpegPath);
-    this.#id = input.id;
+    this.#itemDir = input.itemDir;
     this.#signal = input.signal;
   }
 
@@ -97,7 +97,7 @@ export class SandboxedMedia {
     resultExt = ext === 'mp4' ? 'mp4' : 'png',
   ): Promise<{ input: string; output: string; outputUri: string; dir: string; outUri: string }> {
     if (!this.available || !this.#storage.resolveLocalPath) throw new Error('本机暂时不能处理媒体');
-    const root = `${ITEM_ROOT}/${this.#id}/work/${this.#runId}`;
+    const root = `${this.#itemDir}/work/${this.#runId}`;
     const inUri = `${root}/in`;
     const outUri = `${root}/out`;
     await this.#storage.mkdir(inUri);

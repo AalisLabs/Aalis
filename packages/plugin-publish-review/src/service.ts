@@ -17,7 +17,7 @@ import type { ReviewConfig } from './config.js';
 import { isNoticeUndelivered } from './notices.js';
 import type { ReviewPipeline } from './pipeline.js';
 import { decideReview } from './policy.js';
-import { ITEM_ROOT, type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore } from './state.js';
+import { type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore } from './state.js';
 
 const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
 const DAY = 86_400_000;
@@ -28,9 +28,6 @@ const NOTICE_RETRY_MS = 30_000;
 /** 一条通知连续发不出去这么久就放弃，等 owner 手动重发 */
 const NOTICE_GIVE_UP_MS = 24 * 3_600_000;
 const bytes = (value: string | Buffer) => new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value);
-const itemRoot = (id: string) => `${ITEM_ROOT}/${id}`;
-const src = (id: string, path: string) => `${itemRoot(id)}/src/${path}`;
-const out = (id: string, path: string) => `${itemRoot(id)}/out/${path}`;
 const publicFile = (id: string, path: string) => `${PUBLIC_ROOT}/${id}/files/${path}`;
 const publicThumb = (id: string) => `${PUBLIC_ROOT}/${id}/thumb.png`;
 const sourceKey = (origin: PublishOrigin) => origin.notify?.sessionId ?? origin.producer;
@@ -194,8 +191,9 @@ export class PublishReviewService implements PublishService {
         nominatedAt: now,
       };
       try {
-        for (const file of snapshot.files) await storage.writeFile(src(id, file.path), Buffer.from(file.bytes));
-        if (snapshot.cover) await storage.writeFile(src(id, '_cover'), Buffer.from(snapshot.cover));
+        for (const file of snapshot.files)
+          await storage.writeFile(store.item(id, `src/${file.path}`), Buffer.from(file.bytes));
+        if (snapshot.cover) await storage.writeFile(store.item(id, 'src/_cover'), Buffer.from(snapshot.cover));
         const next = store.copy();
         next.queue[id] = item;
         if (slot !== undefined && fingerprint !== undefined) next.submissions[slot] = { id, fingerprint };
@@ -203,7 +201,7 @@ export class PublishReviewService implements PublishService {
         next.nominations.push({ source: originKey, at: item.nominatedAt });
         await store.save(next, this.#event(id, 'nominated'));
       } catch {
-        await storage.delete(itemRoot(id)).catch(() => {});
+        await storage.delete(store.item(id)).catch(() => {});
         return { refused: '提名快照无法保存', retryAfterMs: QUOTA_RETRY_MS };
       }
       return { id };
@@ -299,10 +297,10 @@ export class PublishReviewService implements PublishService {
       const files = await Promise.all(
         item.files.map(async file => ({
           path: file.path,
-          bytes: bytes(await storage.readFile(src(item.id, file.path))),
+          bytes: bytes(await storage.readFile(store.item(item.id, `src/${file.path}`))),
         })),
       );
-      const cover = item.hasCover ? bytes(await storage.readFile(src(item.id, '_cover'))) : undefined;
+      const cover = item.hasCover ? bytes(await storage.readFile(store.item(item.id, 'src/_cover'))) : undefined;
       if (this.#stopped) return;
       result = await pipeline.run({
         id: item.id,
@@ -367,17 +365,17 @@ export class PublishReviewService implements PublishService {
     try {
       if (review) {
         for (const image of review.images)
-          await storage.writeFile(`${itemRoot(item.id)}/review/${image.name}`, Buffer.from(image.bytes));
+          await storage.writeFile(store.item(item.id, `review/${image.name}`), Buffer.from(image.bytes));
         if (review.render)
-          await storage.writeFile(`${itemRoot(item.id)}/review/render.png`, Buffer.from(review.render));
+          await storage.writeFile(store.item(item.id, 'review/render.png'), Buffer.from(review.render));
       }
       for (const file of result.files) {
         hashes[file.path] = await hash(file.bytes);
-        await storage.writeFile(out(item.id, file.path), Buffer.from(file.bytes));
+        await storage.writeFile(store.item(item.id, `out/${file.path}`), Buffer.from(file.bytes));
       }
       if (result.thumbnail) {
         hashes['_thumb.png'] = await hash(result.thumbnail);
-        await storage.writeFile(out(item.id, '_thumb.png'), Buffer.from(result.thumbnail));
+        await storage.writeFile(store.item(item.id, 'out/_thumb.png'), Buffer.from(result.thumbnail));
       }
     } catch {
       await this.#finishWithoutPublish(item.id, '审核输出无法保存');
@@ -432,7 +430,7 @@ export class PublishReviewService implements PublishService {
       this.#rememberTerminal(next, item, 'rejected');
       this.#queueNotice(next, item.origin, '作品未获批准，这次不发布', id, item.title);
       await store.save(next, this.#event(id, 'rejected', '人工拒绝'));
-      await storage.delete(itemRoot(id)).catch(() => {});
+      await storage.delete(store.item(id)).catch(() => {});
       return true;
     });
   }
@@ -517,9 +515,9 @@ export class PublishReviewService implements PublishService {
           ...expired.map(item => this.#event(item.id, 'expired')),
           ...delayed.map(item => this.#event(item.id, 'notice-delayed')),
         ]);
-      for (const item of expired) await storage.delete(itemRoot(item.id)).catch(() => {});
-      for (const id of duplicateIds) await storage.delete(itemRoot(id)).catch(() => {});
-      for (const root of [PUBLIC_ROOT, ITEM_ROOT]) {
+      for (const item of expired) await storage.delete(store.item(item.id)).catch(() => {});
+      for (const id of duplicateIds) await storage.delete(store.item(id)).catch(() => {});
+      for (const root of [PUBLIC_ROOT, store.itemRoot]) {
         try {
           const listed = await storage.list(`${root}/`);
           for (const entry of listed.entries) {
@@ -556,7 +554,7 @@ export class PublishReviewService implements PublishService {
       let thumbnail: LedgerItem['thumbnail'];
       try {
         for (const file of item.files) {
-          const value = bytes(await storage.readFile(out(id, file.path)));
+          const value = bytes(await storage.readFile(store.item(id, `out/${file.path}`)));
           const digest = await hash(value);
           if (digest !== item.outHashes[file.path]) throw new IntegrityError('审核后文件被改动');
           await storage.writeFile(publicFile(id, file.path), Buffer.from(value));
@@ -565,7 +563,7 @@ export class PublishReviewService implements PublishService {
           records.push({ ...file, size: value.length, sha256: digest });
         }
         if (item.thumbnailHash) {
-          const value = bytes(await storage.readFile(out(id, '_thumb.png')));
+          const value = bytes(await storage.readFile(store.item(id, 'out/_thumb.png')));
           if ((await hash(value)) !== item.thumbnailHash) throw new IntegrityError('审核后缩略图被改动');
           await storage.writeFile(publicThumb(id), Buffer.from(value));
           if ((await hash(bytes(await storage.readFile(publicThumb(id))))) !== item.thumbnailHash)
@@ -586,7 +584,7 @@ export class PublishReviewService implements PublishService {
         );
         await store.save(next, this.#event(id, 'integrity-failed'));
         await storage.delete(`${PUBLIC_ROOT}/${id}`).catch(() => {});
-        await storage.delete(itemRoot(id)).catch(() => {});
+        await storage.delete(store.item(id)).catch(() => {});
         return false;
       }
       const next = store.copy();
@@ -616,7 +614,7 @@ export class PublishReviewService implements PublishService {
               : '内容审核关闭，文件校验通过',
         ),
       );
-      await storage.delete(itemRoot(id)).catch(() => {});
+      await storage.delete(store.item(id)).catch(() => {});
       this.#changed();
       return true;
     });
@@ -633,7 +631,7 @@ export class PublishReviewService implements PublishService {
       const message = '作品暂时没法审核（审核步骤不可用），这次不发布';
       this.#queueNotice(next, item.origin, message, id, item.title);
       await store.save(next, this.#event(id, 'failed', reason));
-      await storage.delete(itemRoot(id)).catch(() => {});
+      await storage.delete(store.item(id)).catch(() => {});
     });
   }
 
@@ -706,7 +704,7 @@ export class PublishReviewService implements PublishService {
           JSON.stringify({ by: by.kind, actorKey: by.actorKey, reason }),
         ),
       );
-      await storage.delete(queued ? itemRoot(id) : `${PUBLIC_ROOT}/${id}`).catch(() => {});
+      await storage.delete(queued ? store.item(id) : `${PUBLIC_ROOT}/${id}`).catch(() => {});
       if (published) this.#changed();
       let degraded: string | undefined;
       for (const name of published?.surfaces ?? []) {

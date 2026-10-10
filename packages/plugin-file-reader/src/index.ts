@@ -119,9 +119,7 @@ const EXT_MIME_MAP: Record<string, string> = {
   '.doc': 'application/msword',
 };
 
-// ===== 存储布局 =====
-
-const ROOT_URI = 'pluginData:/file-reader';
+// ===== 存储布局：上传的文件在本插件的私有目录里，按会话分目录 =====
 
 /** 元信息 sidecar（与文件同目录、同名 + .meta.json） */
 interface FileMeta {
@@ -213,14 +211,15 @@ async function run(caps: Caps): Promise<void> {
   const HISTORY_HINT_SOURCE = 'file-reader-history';
 
   const storage = caps.storage.use;
+  const own = storage.own;
 
   // 启动时确保根目录存在（写入 .keep 触发建目录——避免目录不存在导致 list 失败）
   try {
-    await storage.list(ROOT_URI);
+    await own.list('');
   } catch {
     // 目录不存在，写入 .keep 触发建目录
     try {
-      await storage.writeFile(`${ROOT_URI}/.keep`, '');
+      await own.writeFile('.keep', '');
     } catch (err) {
       logger.use.warn('初始化 file-reader 根目录失败:', err);
     }
@@ -283,10 +282,10 @@ async function run(caps: Caps): Promise<void> {
     return sessionId.replace(/[:/\\]/g, '_');
   }
   function dataUri(sessionId: string, id: string, ext: string): string {
-    return `${ROOT_URI}/${sessionDirName(sessionId)}/${id}${ext}`;
+    return own.uri(`${sessionDirName(sessionId)}/${id}${ext}`);
   }
   function metaUri(sessionId: string, id: string): string {
-    return `${ROOT_URI}/${sessionDirName(sessionId)}/${id}.meta.json`;
+    return own.uri(`${sessionDirName(sessionId)}/${id}.meta.json`);
   }
 
   async function persistMeta(meta: FileMeta): Promise<FileEntry> {
@@ -318,7 +317,7 @@ async function run(caps: Caps): Promise<void> {
   /** 启动时从磁盘恢复 index */
   async function restoreIndex(): Promise<void> {
     try {
-      const rootList = await storage.list(ROOT_URI).catch(() => null);
+      const rootList = await own.list('').catch(() => null);
       if (!rootList) return;
       let restored = 0;
       for (const sessionDir of rootList.entries) {
@@ -548,7 +547,7 @@ async function run(caps: Caps): Promise<void> {
     let deleted = 0;
     for (const e of targets) if (await tryDeleteFile(e.id)) deleted++;
     // 顺带把目录删掉（连同未入索引的残留；失败忽略）
-    await storage.delete(`${ROOT_URI}/${sessionDirName(sessionId)}`).catch(() => undefined);
+    await own.delete(sessionDirName(sessionId)).catch(() => undefined);
     return deleted;
   }
 

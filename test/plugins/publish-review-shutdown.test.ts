@@ -3,6 +3,7 @@ import { configSchema } from '../../packages/plugin-publish-review/src/config.js
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
 const input = () => ({
@@ -18,7 +19,7 @@ const input = () => ({
 async function setup(manualReview = false, now: () => number = Date.now) {
   const files = new Map<string, string | Uint8Array>();
   const storage = memoryStorage(files);
-  const store = new ReviewStore(storage);
+  const store = new ReviewStore(boundStorage(storage, 'publish-review'));
   await store.load();
   const abort = new AbortController();
   const notice = vi.fn();
@@ -156,7 +157,7 @@ describe('作品审核停机交错', () => {
     release();
     await closing;
     expect(h.store.data.notices[`${second.id}:live`]).toBeDefined();
-    const restarted = new ReviewStore(memoryStorage(h.files));
+    const restarted = new ReviewStore(boundStorage(memoryStorage(h.files), 'publish-review'));
     await restarted.load();
     const replayed = vi.fn();
     const resumed = new PublishReviewService({
@@ -189,7 +190,7 @@ describe('作品审核停机交错', () => {
     expect(h.store.data.notices[`${h.id}:live`]).toBeDefined();
     expect(h.store.data.ledger[h.id]?.notice).toBe('pending');
     await h.service.close();
-    const restarted = new ReviewStore(memoryStorage(h.files));
+    const restarted = new ReviewStore(boundStorage(memoryStorage(h.files), 'publish-review'));
     await restarted.load();
     const replayed = vi.fn();
     const resumed = new PublishReviewService({

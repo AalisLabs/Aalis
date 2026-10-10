@@ -4,7 +4,7 @@
 // 状态变了写进插件数据。正常结束（含失败）时向起它的会话注入一条宿主通知，身份取起它的那次调用。
 // ════════════════════════════════════════════════════════════
 
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import {
   BACKGROUND_TASK_NOTICE,
   type BackgroundTask,
@@ -48,7 +48,8 @@ const STOP_GRACE_MS = 3000;
 /** 失败原因最多多少字 */
 const REASON_MAX = 200;
 const NOTICE_SOURCE_PREFIX = 'bg:';
-const STORE_URI = 'pluginData:/tools/background-tasks.json';
+/** 私有目录下的后台任务登记 */
+const STORE = 'background-tasks.json';
 const RESTART_REASON = 'Aalis 重启时还在跑';
 const CLOSED_REASON = '工具注册表停用时还在跑';
 const STATUSES: ReadonlySet<unknown> = new Set<BackgroundTaskStatus>([
@@ -313,7 +314,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   private readonly runTag = crypto.randomUUID().slice(0, 6);
   private counter = 0;
   /** 读回成功之后才写盘；读不出来时本次运行只记在内存里，不覆盖原文件 */
-  private storage?: StorageService;
+  private storage?: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>;
   private writing: Promise<void> = Promise.resolve();
   /** 已排上、还没开始的一次写：之后的变化由它一并写入 */
   private writeQueued = false;
@@ -455,18 +456,19 @@ export class BackgroundTasks implements BackgroundTaskService {
    * 变了就写。文件不存在按没有记录起步；内容读不懂告警后同样起步，下次写盘时覆盖；读不出来（权限、存储不可用）告警，
    * 本次运行只记在内存里，不覆盖它
    */
-  async restore(storage: StorageService): Promise<void> {
+  async restore(storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>): Promise<void> {
+    const where = storage.uri(STORE);
     let text: string | undefined;
     try {
-      text = String(await storage.readFile(STORE_URI, 'utf8'));
+      text = String(await storage.readFile(STORE, 'utf8'));
     } catch (err) {
       if (!isStorageNotFound(err)) {
-        this.logger.warn(`后台任务登记 ${STORE_URI} 读不出来，本次运行只记在内存里，不覆盖它:`, err);
+        this.logger.warn(`后台任务登记 ${where} 读不出来，本次运行只记在内存里，不覆盖它:`, err);
         return;
       }
     }
     this.storage = storage;
-    if (text !== undefined) this.adopt(text);
+    if (text !== undefined) this.adopt(text, where);
     this.persist();
   }
 
@@ -675,14 +677,14 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /** 并进读回的登记：读回之前起的任务照留，id 相同的以内存为准 */
-  private adopt(text: string): void {
+  private adopt(text: string, where: string): void {
     let entries: unknown[];
     try {
       const parsed: unknown = JSON.parse(text);
       if (!isRecord(parsed) || !Array.isArray(parsed.tasks)) throw new Error('顶层不是 { tasks: [...] }');
       entries = parsed.tasks;
     } catch (err) {
-      this.logger.warn(`后台任务登记 ${STORE_URI} 读不懂，按没有记录起步，下次写盘时覆盖:`, err);
+      this.logger.warn(`后台任务登记 ${where} 读不懂，按没有记录起步，下次写盘时覆盖:`, err);
       return;
     }
     let dropped = 0;
@@ -705,7 +707,7 @@ export class BackgroundTasks implements BackgroundTaskService {
       sessions.add(task.sessionId);
       this.changed(record);
     }
-    if (dropped > 0) this.logger.warn(`后台任务登记 ${STORE_URI} 里有 ${dropped} 条读不懂，已丢掉`);
+    if (dropped > 0) this.logger.warn(`后台任务登记 ${where} 里有 ${dropped} 条读不懂，已丢掉`);
     for (const sessionId of sessions) this.prune(sessionId);
   }
 
@@ -718,9 +720,9 @@ export class BackgroundTasks implements BackgroundTaskService {
       this.writeQueued = false;
       const tasks = [...this.records.values()].map(({ task: { result: _result, ...fields } }) => fields);
       try {
-        await storage.writeFile(STORE_URI, JSON.stringify({ tasks }));
+        await storage.writeFile(STORE, JSON.stringify({ tasks }));
       } catch (err) {
-        this.logger.warn(`后台任务登记写入 ${STORE_URI} 失败，下次状态变了再写:`, err);
+        this.logger.warn(`后台任务登记写入 ${storage.uri(STORE)} 失败，下次状态变了再写:`, err);
       }
     });
   }

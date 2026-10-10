@@ -1,10 +1,11 @@
 // biome-ignore lint/style/noRestrictedImports: 高频短事件键同步哈希，避免每次落盘前额外的线程池往返。
 import { createHash } from 'node:crypto';
 import { sanitizeRunLog } from '@aalis/api-remote-agent';
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
-const ROOT = 'pluginData:/paper/task-logs';
+/** 白纸私有目录下的日志目录 */
+const ROOT = 'task-logs';
 const FILE = /^(\d{12})-([a-f0-9]{64})\.json$/;
 const PREVIEW_CHARS = 8192;
 const PENDING_BYTES = 8 * 1024 * 1024;
@@ -43,14 +44,20 @@ export class TaskJournal {
   #missing = new Set<string>();
 
   constructor(
-    private readonly storage: StorageService,
+    private readonly storage: OwnStorage,
     private readonly logger: Pick<Logger, 'warn'>,
     private readonly now: () => number,
   ) {}
 
+  /** 这件任务的日志目录（完整的存储地址，以 / 结尾） */
   uri(taskId: string): string {
+    return `${this.storage.uri(this.#dir(taskId))}/`;
+  }
+
+  /** 这件任务的日志目录（私有目录下的相对路径） */
+  #dir(taskId: string): string {
     validTaskId(taskId);
-    return `${ROOT}/${taskId}/`;
+    return `${ROOT}/${taskId}`;
   }
 
   /** Returns true only when this key already exists or the event was persisted. */
@@ -128,17 +135,17 @@ export class TaskJournal {
           lines.push(marker('missing_sequence', { from: previous + 1, to: order - 1 }));
         }
         previous = order;
-        const uri = `${this.uri(taskId)}${file.name}`;
+        const path = `${this.#dir(taskId)}/${file.name}`;
         try {
           let preview: string;
-          if (file.size > PREVIEW_CHARS && this.storage.readFileRange) {
+          if (file.size > PREVIEW_CHARS) {
             try {
-              preview = (await this.storage.readFileRange(uri, 0, PREVIEW_CHARS)).toString('utf8');
+              preview = (await this.storage.readFileRange(path, 0, PREVIEW_CHARS)).toString('utf8');
             } catch {
-              preview = String(await this.storage.readFile(uri, 'utf8'));
+              preview = String(await this.storage.readFile(path, 'utf8'));
             }
           } else {
-            preview = String(await this.storage.readFile(uri, 'utf8'));
+            preview = String(await this.storage.readFile(path, 'utf8'));
           }
           if (file.size > PREVIEW_CHARS || preview.length > PREVIEW_CHARS) {
             lines.push(
@@ -196,7 +203,7 @@ export class TaskJournal {
       for (const dir of dirs) {
         if (!dir.isDirectory || !/^t-[a-f0-9]{8}$/.test(dir.name)) continue;
         try {
-          const entries = (await this.storage.list(this.uri(dir.name))).entries;
+          const entries = (await this.storage.list(this.#dir(dir.name))).entries;
           result.push({ taskId: dir.name, entries: entries.filter(e => !e.isDirectory && FILE.test(e.name)).length });
         } catch (error) {
           this.logger.warn(`白纸任务 ${dir.name} 操作日志清单读取失败`);
@@ -212,7 +219,7 @@ export class TaskJournal {
     validTaskId(taskId);
     return this.#enqueue(async () => {
       try {
-        await this.storage.delete(this.uri(taskId));
+        await this.storage.delete(this.#dir(taskId));
       } catch (error) {
         if (!isStorageNotFound(error)) throw error;
       }
@@ -232,7 +239,7 @@ export class TaskJournal {
     const cached = this.#indexes.get(taskId);
     if (cached) return cached;
     try {
-      const listing = await this.storage.list(this.uri(taskId));
+      const listing = await this.storage.list(this.#dir(taskId));
       const files = listing.entries
         .filter(e => !e.isDirectory)
         .map(e => FILE.exec(e.name))
@@ -258,7 +265,7 @@ export class TaskJournal {
       return true;
     }
     if (!item.order) item.order = index.next++;
-    const file = `${this.uri(item.taskId)}${String(item.order).padStart(12, '0')}-${item.hash}.json`;
+    const file = `${this.#dir(item.taskId)}/${String(item.order).padStart(12, '0')}-${item.hash}.json`;
     try {
       await this.storage.writeFile(
         file,
@@ -293,7 +300,7 @@ export class TaskJournal {
   async #files(taskId: string): Promise<Awaited<ReturnType<StorageService['list']>>['entries'] | string> {
     let entries: Awaited<ReturnType<StorageService['list']>>['entries'];
     try {
-      entries = (await this.storage.list(this.uri(taskId))).entries;
+      entries = (await this.storage.list(this.#dir(taskId))).entries;
     } catch (error) {
       if (isStorageNotFound(error)) entries = [];
       else {
@@ -314,7 +321,7 @@ export class TaskJournal {
       if (order > expected) lines.push(marker('missing_sequence', { from: expected, to: order - 1 }));
       expected = order + 1;
       try {
-        const raw = await this.storage.readFile(`${this.uri(taskId)}${file.name}`, 'utf8');
+        const raw = await this.storage.readFile(`${this.#dir(taskId)}/${file.name}`, 'utf8');
         const value = JSON.parse(String(raw));
         if (!value || typeof value !== 'object' || value.order !== order) throw new Error('invalid record');
         lines.push(JSON.stringify(value));

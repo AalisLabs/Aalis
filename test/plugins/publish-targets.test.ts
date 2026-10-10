@@ -4,11 +4,12 @@ import { configSchema } from '../../packages/plugin-publish-review/src/config.js
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
 async function world() {
   const storage = memoryStorage(new Map());
-  const store = new ReviewStore(storage);
+  const store = new ReviewStore(boundStorage(storage, 'publish-review'));
   await store.load();
   const notice = vi.fn();
   const service = new PublishReviewService({

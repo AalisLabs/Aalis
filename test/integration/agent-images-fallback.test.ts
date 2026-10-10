@@ -63,7 +63,7 @@ async function loadStack(
     await app.plugin(storageLocalPlugin, { roots: [root('workspace')] });
   } else if (opts.storage !== false) {
     const fakeStorage = {
-      // agent 经网关按根路由读取，假 storage 须声明自己服务 data 根
+      // agent 按根读取，假 storage 须声明自己服务 data 根
       listRoots: () => [
         { name: 'data', kind: 'data', browsable: false, readable: true, writable: false, deletable: false },
       ],
@@ -159,17 +159,17 @@ describe('media 缺席时的 images 兜底（真实 storage-local 多根）', ()
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('workspace 排第一：相对路径经网关读 data 根物化，不因胜者是 workspace 丢图', async () => {
+  it('workspace 排第一：相对路径按根路由读 data 根物化，不丢图', async () => {
     const recorder: ChatModelRequest[] = [];
     const stack = await loadStack(recorder, { storageRoots: base });
     app = stack.app;
-    // 前提锚：胜者是 workspace 根。夹具若改成单根或换了顺序，本用例就测不到只拿胜者读 data:/ 的形状
-    expect(
-      app
-        .bind({ storage })
-        .storage.use.listRoots()
-        .map(r => r.name),
-    ).toEqual(['workspace']);
+    // 前提锚：storage 只有一家，workspace 排第一、data 也由它在内部路由
+    const roots = app
+      .bind({ storage })
+      .storage.use.listRoots()
+      .map(r => r.name);
+    expect(roots[0]).toBe('workspace');
+    expect(roots).toContain('data');
     await stack.agent.handleMessage(incomingWith([REL_REF]));
     expect(lastUserImages(recorder), 'data 根里的落盘图应物化为 data URI').toEqual([PNG_DATA_URI]);
   });
