@@ -41,6 +41,19 @@ describe('宿主服务只交出契约方法', () => {
     expect(app.plugins.getPlugin('p')).not.toBe(entry);
   });
 
+  it('宿主侧 app.plugins.getPlugin 也是调用时刻的浅快照：写它进不了注册表，config 与 definition 仍是同一对象', async () => {
+    const app = world();
+    await app.plugin(definePlugin({ name: 'p', apply() {} }), { v: 1 });
+    await app.plugins.idle();
+    const snap = app.plugins.getPlugin('p')!;
+    expect(keysOf(snap)).toEqual(['config', 'definition', 'error', 'instanceId', 'state']);
+    snap.state = 'disabled';
+    const now = app.plugins.getPlugin('p')!;
+    expect(now.state).toBe('active');
+    expect(now.config).toBe(snap.config);
+    expect(now.definition).toBe(snap.definition);
+  });
+
   it('core 不登记 host-config：没有宿主时服务表里没有配置文档', () => {
     const app = world();
     expect(app.bind({ services }).services.use.get('host-config')).toBeUndefined();
