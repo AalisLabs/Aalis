@@ -348,5 +348,9 @@ describe('调度与类型面', () => {
     expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow('另一份 @aalis/core');
     const { provide: publish } = w.app.bind({ provide });
     expect(() => publish(B.defineService('copy-svc'), {})).toThrow('另一份 @aalis/core');
+    // 排查指引给文档站地址：npm 装的项目里没有仓库的 docs/ 目录
+    expect(() => publish(B.defineService('copy-svc'), {})).toThrow(
+      'https://aalis.acenyan.com/guide/third-party-plugin#two-cores',
+    );
   });
 });
