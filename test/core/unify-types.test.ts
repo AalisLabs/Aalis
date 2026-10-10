@@ -158,7 +158,7 @@ describe('定义对象的 name', () => {
     ).toThrow(/缺少合法 name/);
   });
 
-  it('name 不能含 instanceId 的 ":" 后缀分隔或子模块的 "#"', () => {
+  it('name 不能含 instanceId 的 ":" 后缀分隔；"#" 不受限', () => {
     expect(() =>
       definePlugin({
         name: 'mod:inst',
@@ -166,12 +166,8 @@ describe('定义对象的 name', () => {
       }),
     ).toThrow(/实例后缀/);
 
-    expect(() =>
-      definePlugin({
-        name: 'parent#child',
-        apply() {},
-      }),
-    ).toThrow('#');
+    expect(definePlugin({ name: 'parent#child', apply() {} }).name).toBe('parent#child');
+    expect(() => assertValidInstanceId('mod:a#b')).not.toThrow();
 
     // 作用域包名含 '/'，不含 ':'——这是合法 name
     expect(definePlugin({ name: '@scope/plugin', apply() {} }).name).toBe('@scope/plugin');
@@ -191,6 +187,8 @@ describe('定义对象的 name', () => {
     expect(() => assertValidInstanceId('__proto__')).toThrow(
       'instanceId "__proto__" 不能使用危险键（__proto__ / constructor / prototype）',
     );
+    // 闸只管写进普通对象当键时危险的原串；带空白的串本身不危险，id 存储时也不 trim
+    expect(definePlugin({ name: ' __proto__ ', apply() {} }).name).toBe(' __proto__ ');
   });
 });
 

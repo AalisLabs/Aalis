@@ -171,7 +171,7 @@ caps.provide.use(llm, handle, {
 4. **动态 `services.use.get` 当依赖**：无激活闸、无关停边、关停期可能拿空。
 5. **期待内核按能力选服务**：把能力写进实例元数据，靠 `*-api` helper 过滤。
 6. **manifest 与 `definePlugin` 不一致**：两条独立链路都要写、要对齐。
-7. **缺 `name` / 非法 `instanceId`**：`definePlugin` 与 `register` 两层拒绝（非空字符串；`name` 不含 `:suffix` 与 `#`；`instanceId` 允许 `name:suffix`）。
+7. **缺 `name` / 非法 `instanceId`**：`definePlugin` 与 `register` 两层拒绝（非空字符串、不是危险键；`name` 不含 `:suffix`；`instanceId` 允许 `name:suffix`）。
 
 ---
 
