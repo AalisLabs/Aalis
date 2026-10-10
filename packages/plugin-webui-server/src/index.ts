@@ -1086,6 +1086,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 冷启动时 storage 的激活在 app:ready 之前收敛；等晚到的读回落定，listen / autoOpen /
     // access.txt 用的就是持久化的 token
     if (tokenLoading) await tokenLoading;
+    // 等插件状态机静置再登记扫描到的前端：bounce 后 sticky 的 app:ready 在本实例激活途中补发，立刻登记会落在
+    // provides 核对之前（dev 多报「未在 provides 中声明」），等过之后与冷启动一样晚于全部激活，主动覆盖仍先登记。
+    // 代价：重算一直不收敛时，前端要等它收敛后才登记与挂上
+    await caps.plugins.current?.idle();
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();
